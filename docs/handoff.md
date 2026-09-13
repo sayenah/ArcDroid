@@ -2,207 +2,77 @@
 
 **Stage:** ARCHITECTURE  
 **Owner:** Fable  
-**Next:** Starting from current `main`, perform the initial ArcDroid architecture phase against the Founder-approved PRD, including the 2026-09-13 Windows/Android platform amendment. Reverify current upstream, libretro, Windows, and Android facts from primary sources; independently evaluate viable Archimedes emulation engines and integration strategies; obtain and adjudicate Astra's architecture challenge; then produce the reconciled architecture and first implementation-ready capability-slice handoff. **Do not authorize Sol until every `AC-ARCH-*` criterion below is satisfied and material Founder gates are resolved.**
+**Next:** Founder decides gates G1–G7 (PR #3 description). On approval Fable changes this header to `Stage: IMPLEMENTATION`, `Owner: Sol`, `Next: create branch slice/01-skeleton-boot from main and implement Slice 1 below`, with no other change to the work order. **Sol is not authorized until that header change is on `main`.**
 
 ## Objective
+Slice 1 — "one loose ADF boots on both platforms": a RetroArch/libretro core, built from the Arculator engine, that loads a loose ADF/ADL disc image passed by the frontend, identifies user-supplied firmware by content fingerprint, selects a conservative ARM2 machine automatically, runs the emulated Archimedes with video, audio, RetroPad/keyboard/mouse/pointer input and persistent CMOS, tears down cleanly, and does so identically on native Windows x86_64 RetroArch and physical Android arm64 RetroArch. Governing requirements: PRD §7–§9, §12–§15, §18–§21, §23 items 1–4, 6–7, 10–12; protocol §10–§12.
 
-Translate the Founder-approved ArcDroid PRD into an implementation-ready architecture for a **RetroArch/libretro core that plays Acorn Archimedes games with a game-first, select-and-play experience on both Windows and Android**.
+## Verified repository state (2026-09-13)
+- `main` = docs only (`CLAUDE.md`, `AGENTS.md`, `docs/*`); no code, no engine vendored. PRs #1, #2 merged; PR #3 = this architecture.
+- Architecture evidence (Fable research + compile probes + Astra rounds 1–2) is attached to PR #3 as comments; conclusions are recorded in `docs/decision-log.md` D-007…D-014.
+- Toolchains verified on the dev Mac: Apple clang 21, cmake 4.4, ninja, mingw-w64 14 (GCC 16.2, UCRT), Android NDK **29.0.14206865**, OpenJDK 26 (`/opt/homebrew/opt/openjdk`, unlinked). GitHub Actions enabled. No Windows VM; no Android device attached; RetroArch not installed locally.
+- Probe: upstream Arculator core + a third-party libretro layer compiled unmodified into a Windows DLL (UCRT-only imports) and an Android arm64 `.so` (system libs only, 16 KiB LOAD alignment). Runtime in RetroArch **not yet demonstrated**.
 
-Windows and Android are first-class shipping targets. Android additionally requires real-device/mobile lifecycle and performance validation; Windows is not merely a host-side development build.
+## Architecture (reconciled, binding for this slice)
+**Engine:** Arculator `7d3d2679589bba759197e3a9288a12749c797381`, GPL-2.0-only, imported as an **allowlisted source snapshot** (never `git subtree add` of the full upstream tree: excluded binaries must not enter history; every future re-import applies the same allowlist) under `engine/arculator/` with `engine/UPSTREAM.md` (URL, commit, date, file allowlist, excluded files and why). Import only `src/*.c|*.h` needed for the machine core (ARM/MEMC/IOC/IOEB/VIDC/sound/keyboard/mouse/joystick/WD1770/82C711/disc + ADF/ADL loaders/CMOS/DS2401/timer/config-free machine setup). **Exclude:** wx/SDL/platform files, podules (all), dlopen loaders, hostfs, ST506/IDE, FDI/APD/HFE/SCP/JFD/SSD/DSD readers (later hardened slices), fdi2raw, debugger console, `roms/arcrom_ext` (binary, no source), `cmos/*.bin`, `ddnoise/*.wav`, any `.dll/.so/.rom/.bin/.wav`. Keep `COPYING` (GPLv2), upstream `AUTHORS`, credits.
 
-The architecture must preserve the central product distinction: ArcDroid may internally reproduce all machine, firmware, OS, media, input, and timing complexity required for compatibility, but normal users should launch game content rather than operate an emulated Archimedes computer.
+**Layers** (one architecture for both platforms; platform-specific code only in `platform/`):
+- `libretro/` adapter — official pinned `libretro.h` (libretro-common, per-file MIT notices kept), lifecycle, options v2, input, disk-control EXT, messages/log, A/V submission, VFS.
+- `core/` launch/session services (C, no libretro types, no engine globals, host-unit-tested): media inspection → profile lookup (empty table in slice 1) → firmware inventory/fingerprints → validated **`LaunchPlan`** {machine identity, firmware components + assembly recipe, media slots, boot recipe, input profile, persistence identity} → media/persistence preparation.
+- `engine/` Arculator + ArcDroid implementations of its platform hooks (`plat_video.h`, `plat_sound.h`, `plat_input.h`, `plat_joystick.h`, GUI callback stubs). One active machine; one **session owner** with explicit init/reset/destroy of every subsystem; no multi-instance rewrite.
 
-## Governing product decisions
+**Engine execution contract:** `arc_run_frame()` runs the machine until one completed VIDC field (finishing the current instruction and due timers, completing field bookkeeping; execution residuals preserved) and returns elapsed guest time plus a stable image. Reported cadence is the stable field rate averaged across an interlaced pair; audio follows actual cumulative guest time. If video is unprogrammed or pathological, execution is bounded (≤ one nominal field of guest time) **with scheduler progress**, cadence falls back to the initial/last-valid value, and a blank or duplicate image is presented without claiming a field completed (`NULL` duplicate only when `GET_CAN_DUPE` is negotiated); the core never spins. Timestamp arithmetic is 32:32 (`arm.c`, `timer.c`); wraparound tested. Host refresh rate never drives guest CPU speed.
 
-`docs/PRD.md` is Founder-approved product law. Architecture must preserve these settled requirements:
+**Errors:** every `fatal()/error()/exit()/abort()/cdfatal()` path in imported files becomes a checked error at acquisition boundaries or a **latched machine fault** that unwinds safely; partial initialization is rolled back; register/memory dumps and configuration write-back are removed from the shipping path. `retro_load_game` returns false with a `SET_MESSAGE_EXT` explanation; a faulted machine reports once and presents blank frames until unload.
 
-- ArcDroid's primary product is a **libretro/RetroArch core**.
-- **Windows and Android are both first-class shipping platforms.**
-- Android requires representative real-device validation; Windows requires representative native RetroArch validation.
-- Normal UX is **Select game → Play**.
-- Supported loose content launches directly; no MAME-style ROM-set/software-list gate may determine whether content is attempted.
-- Unknown content in a supported media format must receive a real generic launch attempt rather than database denial.
-- Machine model, firmware/OS generation, disk/controller details, joystick interface, and boot flow should be selected/automated whenever reliable.
-- User-supplied game-relevant firmware must be supported broadly enough to pursue the full compatibility envelope and should be recognized/selected automatically after setup.
-- RetroPad is the default gaming abstraction, with keyboard and mouse/pointer support where games require them; RetroArch remapping must remain usable.
-- RetroArch-native mechanisms should be used for frontend integration such as disk control, core options, saves, messages, and input where appropriate.
-- The long-term compatibility target is **the game library Arculator can play**, not every non-game workstation peripheral or Arculator's UI.
-- Game-relevant media fidelity, including unusual/protected media where required for compatibility, must remain architecturally possible.
-- No unauthorized commercial game content, RISC OS/Arthur firmware, or other non-redistributable assets may be shipped or committed.
-- The PRD intentionally **does not select the emulation engine**.
+**Video:** XRGB8888; submit upstream's presented rectangle after each field — for interlaced modes upstream weaves fields into alternating rows and presents doubled height, so the woven full-height image is submitted as-is (no halved-height extraction); define clearing on mode transitions. `max_width/max_height` declared once, **derived by Sol from every `vidc.c` presentation path** (TV crop vs native-border geometry differ) and validated against renderer row accesses including the unchecked fallback path (`vidc.c:1158`); `SET_GEOMETRY` for size/aspect; `SET_SYSTEM_AV_INFO` only when cadence/sample-rate/maxima change, computed from completed emulated timing with register-change coalescing; result checked. Upstream 4096×2048 bitmap kept with checked allocation.
 
-## Verified repository state at handoff
+**Audio:** 48 kHz stereo int16 batch per `retro_run`; incremental flush of the engine resampler at frame boundaries preserving DMA timing/filter history; cumulative sample count = 48000 × elapsed emulated time with fractional carry; bounded queue with explicit overload policy; no CPU-speed changes or normal-buffer drops for sync. Drive noise: not in slice 1.
 
-- Repository: `sayenah/ArcDroid`, private; default branch `main`.
-- Root boot/configuration files: `CLAUDE.md` and `AGENTS.md`.
-- Binding governance: `docs/protocol.md`.
-- `docs/PRD.md` is Founder-approved product law and has been amended to make Windows and Android first-class targets.
-- `docs/decision-log.md` records platform decision D-006.
-- No production emulator/libretro implementation exists yet.
-- No emulation engine has been selected or vendored.
-- No implementation work is authorized by this handoff.
-- Arculator and CLK/Clock Signal are serious research leads, not accepted premises; reverify current source, capabilities, licensing, portability, and maintainability.
+**Input:** RetroPad ports 0–1 → a documented **RetroPad→keyboard mapping** in slice 1 (A3010 joystick ports exist only on the A3010 machine/IOEB, `ioeb.c:95`, `mem.c:321`; `LaunchPlan` validates any joystick interface against machine capability and rejects incompatible combinations); frontend-remappable RetroPad with input descriptors + controller info (device subclasses: "RetroPad → Archimedes keys", "Archimedes mouse"); keyboard via `SET_KEYBOARD_CALLBACK` with symbolic `RETROK_*` → KART scancode table, merged with mapped-key state without premature releases; mouse `RETRO_DEVICE_MOUSE` relative → quadrature deltas accumulated beyond KART's ±63/packet; pointer `RETRO_DEVICE_POINTER` → **relative trackpad mode** (first-contact jump suppressed, buttons released on contact loss) behind option `arcdroid_pointer_mode`; no double counting of frontend-synthesized mouse events.
 
-## Required architecture work
+**Media/disk control:** `need_fullpath=true`; `supports_no_game=false` (no content-less boot mode in slice 1); **ADF geometry subset: 320 KiB/800 KiB ADF and 640 KiB ADL (double density) only** — 1600 KiB high-density ADF mounts but the slice-1 WD1772 machine cannot read it (`wd1770.c:257`, `disc_adf.c:78`), so it is reported as unsupported by this slice; content read through the libretro VFS (`filestream_*`/`path_*` after `GET_VFS_INTERFACE`; never `chdir`, never CWD/system-dir writes, SAF URIs never treated as POSIX). Content staged to `<save>/arcdroid/media/<content-sha1>/` (copy-on-load); ADF/ADL writes go to the staged copy and are flushed before `retro_run` returns; option `arcdroid_disk_writes = shadow|original|off` (default shadow). Disk-control EXT implemented from `libretro.h` semantics: requested initial index/path retained until playlist validation, empty-drive index honored, eject/select/insert transactional, disk list = interchangeable media for drive 0. Slice 1 accepts a single image (m3u parsing present but multi-image playlists are slice 2).
 
-### A. Candidate engine and provenance evaluation
+**Firmware:** scan `<system>/arcdroid/firmware/**` via VFS; hash every file (CRC32 + SHA-1; MD5 for the 3.11 combined image); fingerprint table (per-chip and combined, MAME `aa310.cpp` + CLK ROM catalogue values recorded in `core/firmware_table.c` with source comments) → components + **assembly recipe** (merged image or ordered chips) → assembled image re-verified. Filenames irrelevant; `.info` firmware entries are informational only. Unknown firmware is usable only via an explicit override option, never auto-classified by size. Missing/truncated firmware → specific message naming the OS class needed and the directory.
 
-Evaluate Arculator, CLK, and any other materially credible candidate against the PRD. Verify from current primary sources and source inspection where necessary:
+**Machine policy (slice 1):** unrecognised floppy → A3000-class, ARM2, MEMC1a, 4 MiB, WD1772, RISC OS **3.11** (validated fingerprint); fallback order 3.10 → 3.19 → 3.00 → 2.00 → Arthur 1.20 only with matching machine constraints. Options (`Auto` default): `arcdroid_machine`, `arcdroid_cpu`, `arcdroid_memory`, `arcdroid_os`, `arcdroid_joystick_if`, `arcdroid_pointer_mode`, `arcdroid_disk_writes`, `arcdroid_aspect`, `arcdroid_borders`. Overrides win over heuristics; applied at load/reset.
 
-- exact upstream source/revision and license;
-- redistribution/source-disclosure obligations;
-- game-relevant Archimedes machine, CPU, memory, controller, firmware, and media breadth;
-- protected/metadata-rich disk and CD/non-floppy feasibility;
-- timing, audio, video, input, lifecycle, persistent state, and save-state feasibility;
-- separation from desktop GUI/framework dependencies;
-- **native Windows build feasibility and native Android/NDK build feasibility**;
-- code quality, maintainability, testability, and upstream synchronization cost;
-- credible path toward Arculator-class game compatibility.
+**Boot recipe (slice 1):** native disc boot only — CMOS defaults **generated by ArcDroid** from the documented RISC OS CMOS layout (boot enabled, ADFS, drive 0, floppies=1, monitor type), machine boots the inserted disc as real hardware would. No HostFS, no injected `!Boot`, no key injection.
 
-Do not equate reusing Arculator with automatic parity, and do not reject another candidate without evidence.
+**Persistence:** one owner — CMOS (256 B) is a **versioned, tagged record** {version, machine id, OS class, content id} exposed as `RETRO_MEMORY_SAVE_RAM` and validated before the first guest instruction; also written through to `<save>/arcdroid/cmos/<machine>.<osclass>.bin` on change. No upstream CMOS file is loaded. RTC seeding separate. Save states unsupported: `.info savestate=false`, `retro_serialize_size()==0`.
 
-### B. Libretro boundary
+**Build:** single **CMake/Ninja** definition (`CMakeLists.txt`; GNU C17 core), toolchain files `cmake/toolchain-mingw-w64-x86_64.cmake` and NDK `android.toolchain.cmake` (API 21, `arm64-v8a`), `-fvisibility=hidden` + version script/`.def` exporting only `retro_*`; MinGW static (`-static-libgcc`, static zlib pinned by version + licence file); Android links system `libz`; 16 KiB pages (NDK default) verified. Artifacts: `arcdroid_libretro.dll`, `arcdroid_libretro_android.so`, `arcdroid_libretro.info` (firmware entries informational, `savestate=false`, `supported_extensions=adf|adl`, `supports_no_game=false`). CI (GitHub Actions): ubuntu host build + unit tests + harness; windows-latest MSYS2/MinGW build + harness; NDK arm64 build + ELF checks; CI has **no firmware or game images**.
 
-Define lifecycle and ownership across init/load/run/reset/unload/deinit; direct loose-media loading; core options with `Auto` defaults; video/timing; audio; RetroPad/keyboard/mouse/pointer; disk control; system/save/content paths; messages/errors; and save-state policy.
+**Test firmware (ROM-free evidence):** ArcDroid authors its own **ARMv2 test ROM + ADF payload**, project-licensed, generated deterministically from checked-in source by a small checked-in encoder/assembler script (no GCC-8 toolchain dependency; GCC ≥9 and LLVM lack ARM2). ROM: initialise MEMC/IOC/VIDC, program a known mode, read the payload from floppy through the emulated WD1772, render a signature pattern, drive sound DMA with a known tone, echo keyboard/mouse/joystick events into guest memory counters, support a second programmed refresh mode. Arcflash (Apache-2.0) is **reference only**; no Apache code enters the core.
 
-The libretro-facing contract should be common across Windows and Android except where a verified platform constraint requires an explicit adapter.
+## Scope / non-goals for Slice 1
+Out: m3u multi-image and disk swapping UX (slice 2); APD/HFE/FDI/SCP/JFD readers and JFD metadata (each a hardened slice); compatibility-profile table content; HostFS/`!Boot`/Obey boot automation; podules, hard disc, CD/libchdr; drive noise; armeabi-v7a/x86 builds; ARM3/other machine presets beyond the option plumbing; save states; performance tuning; buildbot submission; any Makefile wrapper.
 
-### C. Game-launch orchestration
+## Acceptance criteria
+- **AC-1 Repo/provenance:** `engine/UPSTREAM.md` lists commit, allowlist, exclusions; `COPYING` GPLv2 at root; `THIRD_PARTY_NOTICES.md` covers libretro-common (MIT, per file), zlib; no binary blobs; CI guard fails on `*.rom|*.bin|*.hdf|*.adf|*.apd|*.jfd|*.hfe|*.wav` outside `tests/fixtures/generated/` (which is produced by scripts at build time, not committed).
+- **AC-2 Builds:** CMake produces host `.so/.dylib`, `arcdroid_libretro.dll` (MinGW, imports ⊆ {KERNEL32, api-ms-win-crt-*}), `arcdroid_libretro_android.so` (arm64-v8a, NEEDED ⊆ {libc, libm, libdl, libz}, LOAD align 0x4000); each exports exactly the 25 `retro_*` symbols and nothing else (automated check).
+- **AC-3 API conformance:** harness (POSIX `dlopen` + Windows `LoadLibrary`, implementing environment/options/keyboard/disk-control/message/log/VFS callbacks) verifies call-order rules (no-game/options in `retro_set_environment`, disk-control in `retro_init`, pixel format/controller info in `retro_load_game`, `SET_SYSTEM_AV_INFO` only from `retro_run`).
+- **AC-4 Firmware identification:** test-ROM fingerprints (and the real 3.11 fingerprints, table-only) are recognised regardless of filename; a renamed test ROM loads; missing firmware → `retro_load_game` false + message naming the requirement; truncated/corrupt firmware → false + message; no crash, no writes outside `<save>/arcdroid`.
+- **AC-5 Genuine loading:** with test ROM + generated 800 KiB ADF payload, the guest reads the payload through the emulated floppy controller: changing payload bytes changes a guest-computed signature visible in the frame/memory; an ADF absent from the (empty) profile table reaches the same generic path.
+- **AC-6 A/V measured:** deterministic frame signatures for the test pattern in two programmed refresh modes; audio sample count over N frames = 48000 × emulated time ± 1 frame's worth; `SET_GEOMETRY`/`SET_SYSTEM_AV_INFO` emitted only on actual change; no frontend reinit spam; timestamp-wraparound test passes.
+- **AC-7 Input observable:** guest counters confirm RetroPad (remapped) → mapped keyboard keys, and `LaunchPlan` rejects an A3010 joystick selection on a non-A3010 machine with a message, keyboard press/release via callback, mouse buttons/deltas (including >63/packet accumulation), pointer relative mode on a simulated touch sequence with contact loss releasing buttons.
+- **AC-8 Lifecycle:** 100 × load/run(≥100 frames)/reset/unload cycles in one process with stable owned allocations and file handles (measured), including failed loads followed by successful loads; CWD unchanged; source content hash unchanged; no `exit()`-class symbol reachable (static check) and fault injection (corrupt ADF geometry, truncated image, invalid VIDC program) produces messages, not termination.
+- **AC-9 Persistence:** CMOS record round-trips through `RETRO_MEMORY_SAVE_RAM` and the save-dir file; ADF writes land in the staged copy only (`shadow`), original untouched; mismatched/garbage SAVE_RAM is rejected and defaults regenerated.
+- **AC-10 Native Windows RetroArch:** current stable RetroArch x86_64 loads `arcdroid_libretro.dll` via "Install or Restore a Core", loads the test ADF with the test ROM in `system/arcdroid/firmware`, shows the pattern and plays the tone, survives 10 content reloads, logs no errors. Evidence: log excerpt + screenshots (no proprietary assets).
+- **AC-11 Physical Android RetroArch:** same on a named arm64 device/OS/RetroArch build via sideload; plus background → foreground and force-stop → relaunch preserve CMOS/disk writes. If no device is available, report **blocked**, never inferred.
+- **AC-12 Real-boot demonstration (Founder assets, local only):** privately supplied RISC OS 3.11 + a redistributable MIT demo ADF boots to running code on both platforms through the automatic path; recorded as text/hashes/screenshots without assets. Report blocked if assets unavailable.
 
-Define the path from selected content to gameplay:
+## Deterministic evidence required from Sol
+Commands actually run for: CMake configure/build for the three targets; unit tests; harness runs (host, Windows via CI runner or Founder PC); symbol/import/ELF checks; lifecycle leak test output; RetroArch logs for AC-10/11. Each `AC-N` mapped to evidence in the PR. No claim of a check that did not run in the session.
 
-1. media recognition/inspection;
-2. known compatibility-profile lookup;
-3. firmware inventory/fingerprint matching;
-4. machine/hardware profile selection;
-5. media mount/disk-set construction;
-6. safe deterministic boot/launch automation;
-7. controller/input-profile selection;
-8. generic fallback for unrecognized supported content;
-9. advanced user overrides for bad detection or unusual titles.
+## Licensing / security / provenance constraints
+GPL-2.0-only combined work; modification notices in touched upstream files; corresponding source available to every recipient of a binary (Founder gate G6). No Apache-2.0 or other GPLv2-incompatible code compiled into the core. No firmware, CMOS dumps, WAVs, support ROMs, game images in repo/CI. All parsers validate lengths/offsets/counts before use (ADF/ADL in this slice). Session-owned RNG with seeds; fix UB flagged by the Android compiler (`vidc.c:906` uninitialised pointer op, `fdi2raw` overflow — the latter excluded this slice).
 
-Compatibility metadata optimizes behavior; it must never become permission to launch.
+## QA focus (for Opus, when the baton advances)
+Direct loose-ADF launch without any database; firmware recognition by content not name; missing-firmware behavior; frame/audio cadence correctness across two VIDC modes; input delivery paths incl. pointer mode; 100-cycle lifecycle and fault injection; no writes outside save dir; identical observable behavior Windows vs Android except documented constraints; export/import/alignment hygiene; licence notices and provenance files; absence of any copyrighted asset in repo, CI, fixtures, logs, screenshots.
 
-### D. Firmware model
+## Branch / PR
+Architecture: `arch/initial-architecture` → PR #3 (this handoff, decision log D-007…D-014, build log). Implementation: `slice/01-skeleton-boot` → PR #4 (Sol), opened only after the header flip.
 
-Define firmware discovery, filename-independent identification where reliable, validation/fingerprints, machine/OS mapping, preferred and verified-compatible fallbacks, missing-firmware diagnostics, and troubleshooting visibility. The same firmware model should behave predictably across Windows and Android RetroArch system directories.
-
-Do not commit or redistribute copyrighted firmware unless rights are separately established.
-
-### E. Media and compatibility model
-
-Define the first milestone media subset while preserving expansion toward the full game-relevant Arculator envelope. Analyze normal floppy images, multi-disk titles, protected/metadata-rich formats, and CD/non-floppy content to the extent relevant to engine choice. Define only the compatibility-profile contract needed for the first slices; do not overdesign a database.
-
-### F. Windows and Android build/runtime architecture
-
-Define and verify:
-
-- initial Windows architecture/toolchain and native RetroArch core build/loading path;
-- initial Android ABI/API/NDK/toolchain strategy and RetroArch core build/loading path;
-- shared portable core/emulation layer versus narrowly scoped platform adapters;
-- native dependencies and their distribution/licensing implications on both platforms;
-- deterministic storage/path behavior on both platforms;
-- host-side test loop and native Windows smoke-test loop;
-- Android physical-device smoke-test loop;
-- representative Windows and Android performance/stability matrices.
-
-Do not import an upstream desktop GUI stack merely because the upstream emulator uses one.
-
-### G. Testing and compatibility evidence
-
-Design evidence that does not require copyrighted assets in git/public CI:
-
-- deterministic host/unit/integration tests for engine/core contracts;
-- redistributable/synthetic media and firmware substitutes where possible;
-- local private game/firmware corpus for compatibility evidence;
-- native Windows RetroArch smoke tests;
-- Android RetroArch physical-device smoke tests;
-- repeated load/unload/resource lifecycle testing on both platforms;
-- timing/audio/video regression evidence;
-- malformed/unsupported-media failure tests;
-- compatibility regression tracking once titles are accepted as working.
-
-## Architecture non-goals
-
-- Fable and Astra do not write production implementation, tests, CI, libretro glue, platform code, or emulator modifications.
-- Do not select an engine from earlier chat conclusions or popularity.
-- Do not inherit Arculator's UX or an upstream desktop GUI as ArcDroid product architecture.
-- Do not recreate MAME software-list gating.
-- Do not require full non-game Archimedes workstation/peripheral emulation merely for completeness.
-- Do not promise save states until complete state serialization is verified.
-- Do not add cloud/account/online launch dependencies; ArcDroid must work offline with installed firmware/content.
-- Do not create new permanent design documents without Founder authorization; keep the current baton here and durable decisions in `docs/decision-log.md`.
-
-## Founder gates during architecture
-
-Return to the Founder before implementation if evidence requires:
-
-- changing a settled Section 28 PRD product decision;
-- dropping either Windows or Android as a first-class shipping target;
-- abandoning RetroArch/libretro as the primary product;
-- materially weakening Arculator-class game compatibility;
-- accepting unresolved licensing/provenance risk;
-- choosing a materially different distribution model or effectively irreversible dependency with meaningful product/maintenance tradeoffs;
-- setting a v1 compatibility/platform/performance threshold that is a material product tradeoff rather than routine implementation detail.
-
-## Astra challenge requirement
-
-Before Sol authorization:
-
-1. Give Astra the objective, PRD/protocol constraints, verified upstream evidence, and candidate facts without Fable's preferred conclusion when practical.
-2. Ask for material disagreements, missing constraints, licensing/provenance issues, failure modes, unjustified complexity, and stronger alternatives.
-3. Then provide Fable's candidate architecture for comparison.
-4. Fable adjudicates every material finding as incorporated, rejected with rationale, or escalated to Founder.
-5. Unresolved material disagreement blocks implementation.
-
-Astra remains read-only and must not edit project files or authorize Sol.
-
-## Architecture acceptance criteria
-
-- **AC-ARCH-1 — Engine selection:** A specific engine/source strategy is chosen from current evidence, with serious alternatives compared against PRD requirements.
-- **AC-ARCH-2 — Licensing/provenance:** Exact upstream provenance and material dependency obligations are verified.
-- **AC-ARCH-3 — Libretro feasibility:** Lifecycle, content loading, options, video, audio, input, disk control, storage, messaging, teardown, and headless operation are defined without an upstream GUI dependency.
-- **AC-ARCH-4 — Windows feasibility:** The selected engine/dependencies have a verified native Windows RetroArch build/runtime path for the initial Windows target.
-- **AC-ARCH-5 — Android feasibility:** The selected engine/dependencies have a verified Android/NDK RetroArch build/runtime path for the initial Android ABI/API strategy.
-- **AC-ARCH-6 — Shared-platform architecture:** Windows and Android use one coherent emulation/core architecture with platform-specific code limited to justified boundaries.
-- **AC-ARCH-7 — Compatibility path:** The architecture has a credible path toward the game library Arculator can play.
-- **AC-ARCH-8 — Firmware model:** Discovery, validation, machine/OS mapping, auto-selection, fallback, storage, and missing-firmware diagnostics are defined without unauthorized redistribution.
-- **AC-ARCH-9 — Direct launch:** Frontend-selected media can become a mounted/configured machine and gameplay with safe boot automation for known titles.
-- **AC-ARCH-10 — Unknown-content fallback:** Supported but unrecognized media has a genuine generic launch path.
-- **AC-ARCH-11 — Input model:** RetroPad, keyboard, mouse/pointer, title defaults, joystick translation, ports, remapping, and overrides have coherent ownership.
-- **AC-ARCH-12 — Media model:** The first milestone media subset is defined with a credible path to multi-disk, protected/metadata-rich, and non-floppy game media.
-- **AC-ARCH-13 — Timing/video/audio:** Engine-to-libretro timing, video, audio, frame pacing, and synchronization are understood for both target platforms.
-- **AC-ARCH-14 — Persistence/lifecycle:** Save/persistent paths, writable media/state, reset, repeated load/unload, resource ownership, and save-state feasibility are resolved for Windows and Android.
-- **AC-ARCH-15 — Test strategy:** Automated tests, legal test assets, private compatibility evidence, native Windows validation, Android device validation, and regression tracking are defined.
-- **AC-ARCH-16 — First slice:** Fable identifies the smallest end-to-end slice that proves the architecture on both Windows and Android without prematurely building the whole parity layer.
-- **AC-ARCH-17 — Astra reconciliation:** Astra's independent challenge is completed and every material finding is adjudicated.
-- **AC-ARCH-18 — Implementation baton:** `docs/handoff.md` is replaced by an implementation-ready work order with `Stage: IMPLEMENTATION`, `Owner: Sol`, exact `Next`, branch/PR, scope/non-goals, numbered ACs, deterministic evidence, licensing/provenance constraints, and QA focus.
-
-## Required evidence before Sol authorization
-
-Preserve enough evidence in the handoff, decision log, and/or PR for a fresh session to recover the conclusion without chat history:
-
-- primary-source links/revisions for selected and rejected serious engines;
-- verified license/provenance conclusion;
-- concrete Windows/libretro feasibility evidence;
-- concrete Android/libretro feasibility evidence;
-- architecture mapping to PRD Section 30;
-- Astra findings and Fable adjudication;
-- exact first implementation slice and machine-verifiable evidence required from Sol.
-
-## QA focus for the first implementation slice
-
-When the baton advances to Opus, QA should focus on the actual slice plus the risk it proves, especially direct loose-content launch, lifecycle/repeated load-unload, firmware discovery/absence, input delivery, timing/audio/video stability, malformed content handling, no copyrighted/GUI/MAME/network dependency, and **equivalent core behavior on Windows and Android except for documented platform constraints**.
-
-## Current blockers
-
-No product blocker remains. Current blockers are architectural and owned by Fable:
-
-- upstream engine/source strategy is not selected;
-- license/provenance implications require verification;
-- libretro boundaries must be reconciled with the selected engine;
-- both Windows and Android build/runtime strategies must be proven;
-- first media/compatibility slice and evidence strategy must be selected;
-- Astra challenge and reconciliation are required before implementation.
-
-**Sol is not authorized to implement under this handoff.**
+## Known blockers / risks
+Founder gates G1–G7 (PR #3). AC-12 cannot be satisfied synthetically: without Founder-supplied RISC OS 3.11 the first-usable-milestone product-boot evidence remains missing and is reported as such. Android device and Windows validation host not yet provisioned (AC-11/AC-12 may report blocked). Astra round-2 findings, if any material ones remain, are adjudicated in PR #3 before the header flip.
