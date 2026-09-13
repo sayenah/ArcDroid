@@ -140,6 +140,6 @@ If `docs/handoff.md` does not say `Stage: QA`, `Owner: Opus`, stop and return co
 
 ## Session close
 
-For any run that changes governance/project state, leave branch/PR state explicit and `docs/handoff.md` as the exact current baton. Prefer git and canonical docs over conversational memory so a fresh session can recover accurately.
+For any run that changes governance/project state, leave branch/PR state explicit and, once it exists, `docs/handoff.md` as the exact current baton. Prefer git and canonical docs over conversational memory so a fresh session can recover accurately.
 
 `Looks right` is not evidence.
