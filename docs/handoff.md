@@ -9,7 +9,7 @@ Slice 1 — "one loose ADF boots on both platforms": a RetroArch/libretro core, 
 
 ## Verified repository state (2026-09-13)
 - `main` = docs only (`CLAUDE.md`, `AGENTS.md`, `docs/*`); no code, no engine vendored. PRs #1, #2 merged; PR #3 = this architecture.
-- Architecture evidence (Fable research + compile probes + Astra rounds 1–2) is attached to PR #3 as comments; conclusions are recorded in `docs/decision-log.md` D-007…D-014.
+- Architecture evidence (Fable research + compile probes + Astra rounds 1–2) is attached to PR #3 as comments; conclusions are recorded in `docs/decision-log.md` D-007…D-015.
 - Toolchains verified on the dev Mac: Apple clang 21, cmake 4.4, ninja, mingw-w64 14 (GCC 16.2, UCRT), Android NDK **29.0.14206865**, OpenJDK 26 (`/opt/homebrew/opt/openjdk`, unlinked). GitHub Actions enabled. No Windows VM; no Android device attached; RetroArch not installed locally.
 - Probe: upstream Arculator core + a third-party libretro layer compiled unmodified into a Windows DLL (UCRT-only imports) and an Android arm64 `.so` (system libs only, 16 KiB LOAD alignment). Runtime in RetroArch **not yet demonstrated**.
 
