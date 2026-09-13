@@ -1,10 +1,10 @@
 # ArcDroid Product Requirements Document
 
-**Status:** Draft — awaiting Founder approval  
+**Status:** Founder-approved — 2026-09-13  
 **Owner:** Founder  
 **Product:** ArcDroid  
 **Primary target:** RetroArch/libretro on Android  
-**Document role:** Product law after explicit Founder approval. This document defines **what ArcDroid must do**; it intentionally does not decide the implementation architecture or emulation engine except where product behavior requires a constraint.
+**Document role:** Product law. This document defines **what ArcDroid must do**; it intentionally does not decide the implementation architecture or emulation engine except where product behavior requires a constraint.
 
 ---
 
