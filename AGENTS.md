@@ -31,7 +31,7 @@ Astra is an independent, read-only architecture challenger. Fable remains the ac
 
 - inspect the PRD, protocol, handoff, decision log, repository state, code, tests, build configuration, upstream projects, and current primary documentation;
 - independently derive constraints before seeing Fable's candidate design when practical;
-- challenge emulator/core choice, Android/libretro architecture, licensing/provenance assumptions, timing/input/storage boundaries, build strategy, testability, failure modes, maintainability, and unnecessary complexity;
+- challenge emulator/core choice, Windows/Android/libretro architecture, licensing/provenance assumptions, timing/input/storage boundaries, build strategy, testability, failure modes, maintainability, and unnecessary complexity;
 - propose stronger alternatives and identify decisions that must be resolved before implementation.
 
 ## Astra must not
@@ -80,13 +80,13 @@ If any are missing, conflicting, or stale relative to the current branch/PR, sto
 
 ## ArcDroid-specific correctness
 
-For affected functionality, preserve the accepted contracts for emulator lifecycle, video/audio timing, frame pacing, input devices, controller mapping, keyboard/mouse behavior, media loading and disk swapping, save/state or persistent state, storage paths, Android lifecycle/resource ownership, and libretro callbacks/options. Do not invent behavior that the handoff leaves architecturally unresolved.
+For affected functionality, preserve the accepted contracts for emulator lifecycle, video/audio timing, frame pacing, input devices, controller mapping, keyboard/mouse behavior, media loading and disk swapping, save/state or persistent state, deterministic storage paths, Windows native/runtime behavior, Android lifecycle/resource ownership, and libretro callbacks/options. Windows and Android are both first-class shipping targets; do not treat a passing host build as a substitute for the platform evidence required by the handoff.
 
 Native crashes, undefined behavior, use-after-free, ABI mismatch, timing drift, audio underruns caused by the change, and nondeterministic lifecycle/resource bugs are correctness failures, not acceptable implementation tradeoffs unless explicitly accepted by the Founder.
 
 ## Verification
 
-Derive commands from repository configuration and the current handoff. Run work-order-specific checks plus applicable CI-equivalent checks before reporting completion. For platform behavior that can be exercised on Android/RetroArch or an available harness, use that evidence rather than relying on unit tests alone.
+Derive commands from repository configuration and the current handoff. Run work-order-specific checks plus applicable CI-equivalent checks before reporting completion. For platform behavior that can be exercised in native Windows RetroArch, on physical Android/RetroArch, or through an available harness, use that evidence rather than relying on unit tests alone.
 
 Never claim a command or test passed unless you actually ran it successfully in the current implementation session. If a required check cannot run, report exactly what is missing and what confidence remains absent.
 
