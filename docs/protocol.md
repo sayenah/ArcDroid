@@ -6,9 +6,9 @@
 
 ## 1. Purpose and product direction
 
-ArcDroid is an AI-first software project to deliver a high-quality **Acorn Archimedes emulation experience on Android**, with **RetroArch/libretro integration strongly preferred** and MAME not treated as the target emulator.
+ArcDroid is an AI-first software project to deliver a high-quality **Acorn Archimedes gaming experience through RetroArch/libretro on both Windows and Android**, with MAME not treated as the target emulator. Windows and Android are first-class shipping targets; Android additionally requires representative physical-device/mobile validation.
 
-The exact emulation engine and integration architecture are not fixed by this protocol. Arculator, CLK, or another technically and legally suitable engine may be evaluated. Selection must be based on verified current source, licensing/provenance, compatibility, portability, performance, maintainability, and the required Android/RetroArch user experience.
+The exact emulation engine and integration architecture are not fixed by this protocol. Arculator, CLK, or another technically and legally suitable engine may be evaluated. Selection must be based on verified current source, licensing/provenance, compatibility, portability, performance, maintainability, and the required Windows/Android/RetroArch user experience.
 
 This protocol governs how the project is built. The Founder-approved `docs/PRD.md` governs what the product must become.
 
@@ -143,13 +143,13 @@ Prefer primary sources:
 
 - upstream emulator repositories and official documentation;
 - libretro/RetroArch official documentation and headers;
-- Android/NDK/Gradle/SDL or other first-party platform documentation;
+- Microsoft/Windows, Android/NDK/Gradle/SDL, compiler/toolchain, or other first-party platform documentation;
 - authoritative license texts and upstream notices;
 - official release/changelog/build documentation.
 
 Distinguish verified fact from inference or recommendation. Cite material external premises in the handoff, decision log, PR, or Founder communication where the decision depends on them.
 
-Do not rely on remembered API shapes, build flags, Android behavior, emulator capabilities, license terms, or model/tool invocation syntax when the live source or environment can answer the question.
+Do not rely on remembered API shapes, build flags, Windows or Android behavior, emulator capabilities, license terms, or model/tool invocation syntax when the live source or environment can answer the question.
 
 ## 8. Architecture contract and Astra challenge
 
@@ -179,7 +179,7 @@ Implementation may begin only when `docs/handoff.md` says:
 - `Owner: Sol`
 - exact `Next: ...`
 
-Sol implements only the accepted scope and architecture. If implementation reveals a material conflict affecting architecture, public behavior, persistent formats, licensing/provenance, Android/libretro contracts, or a material dependency decision, Sol stops that decision path and returns it to Fable.
+Sol implements only the accepted scope and architecture. If implementation reveals a material conflict affecting architecture, public behavior, persistent formats, licensing/provenance, Windows/Android/libretro contracts, or a material dependency decision, Sol stops that decision path and returns it to Fable.
 
 Sol owns local implementation choices that are routine, reversible, and consistent with the accepted architecture.
 
@@ -222,9 +222,11 @@ For affected functionality, architecture and tests must explicitly consider the 
 - controller, keyboard, and mouse input;
 - media loading, disk swapping, and persistent state;
 - libretro callbacks/core options/save paths when applicable;
+- Windows native toolchain/runtime, architecture, filesystem/path, and RetroArch loading behavior when applicable;
 - Android lifecycle, storage/access model, ABI/API level, native boundaries, and packaging when applicable;
+- cross-platform behavioral consistency where platform differences do not require divergence;
 - crash safety, undefined behavior, threading/concurrency, and teardown/restart behavior;
-- performance on representative target hardware.
+- performance on representative Windows and Android target hardware.
 
 Not every work item needs every concern. Fable identifies the relevant subset in the handoff.
 
@@ -232,7 +234,7 @@ Not every work item needs every concern. Fable identifies the relevant subset in
 
 Acceptance criteria must be observable and, where practical, machine-verifiable.
 
-Use the smallest relevant test stack that gives credible evidence: unit tests, integration tests, deterministic emulator tests, host/native tests, Android instrumentation, RetroArch/libretro harnesses, sanitizer/static analysis, build checks, or device-level smoke tests as appropriate.
+Use the smallest relevant test stack that gives credible evidence: unit tests, integration tests, deterministic emulator tests, host/native tests, native Windows RetroArch tests, Android instrumentation/device tests, RetroArch/libretro harnesses, sanitizer/static analysis, build checks, or device-level smoke tests as appropriate.
 
 For emulator compatibility testing, prefer redistributable/open software, synthetic images, test ROMs designed for validation, or local private assets that are never committed. Do not make CI depend on private commercial content.
 
@@ -281,7 +283,7 @@ Opus independently reviews the accepted scope and resulting implementation again
 - regression risk;
 - architecture contracts;
 - licensing/provenance constraints;
-- Android/libretro/emulator lifecycle boundaries relevant to the change;
+- Windows/Android/libretro/emulator lifecycle boundaries relevant to the change;
 - failure states and adversarial inputs;
 - tests and actual observable behavior.
 
@@ -295,6 +297,7 @@ Fable may autonomously perform routine reversible orchestration once work is aut
 
 - changing the approved PRD or material product scope;
 - selecting a materially different product direction or distribution model;
+- dropping a Founder-approved first-class platform;
 - accepting unresolved material licensing/legal risk;
 - introducing a material or effectively irreversible third-party dependency when alternatives meaningfully differ;
 - publishing/releasing externally when the Founder has not already authorized that release step;
@@ -319,7 +322,7 @@ Prefer:
 - reusing mature upstream emulation work when technically and legally sound;
 - thin integration layers over unnecessary rewrites;
 - deterministic automated tests over repeated manual checks;
-- small vertical slices that exercise the real Android/libretro/emulator path;
+- small vertical slices that exercise the real Windows/Android/libretro/emulator path;
 - repository state and reproducible evidence over status prose.
 
 Do not use speed to justify licensing violations, copyrighted-content leakage, weak crash/resource safety, hidden binary dependencies, or knowingly broken emulator/platform behavior.

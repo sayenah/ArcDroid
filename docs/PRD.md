@@ -3,7 +3,7 @@
 **Status:** Founder-approved — 2026-09-13  
 **Owner:** Founder  
 **Product:** ArcDroid  
-**Primary target:** RetroArch/libretro on Android  
+**Primary target platforms:** RetroArch/libretro on Windows and Android  
 **Document role:** Product law. This document defines **what ArcDroid must do**; it intentionally does not decide the implementation architecture or emulation engine except where product behavior requires a constraint.
 
 ---
@@ -159,11 +159,11 @@ Unless the Founder explicitly changes scope, ArcDroid is **not** required to:
 
 ArcDroid shall be delivered as a libretro core suitable for use with RetroArch.
 
-### FR-2 — Android is the primary product target
+### FR-2 — Windows and Android are first-class product targets
 
-Android is the primary user platform. Architecture, build choices, dependencies, performance decisions, storage behavior, and input handling must be evaluated with Android as a first-class target rather than as an afterthought.
+ArcDroid shall ship as a supported libretro core on **both Windows and Android**. Architecture, build choices, dependencies, performance decisions, storage behavior, input handling, and release validation must treat both platforms as first-class product targets rather than treating one as merely a development host for the other.
 
-Host-platform builds may be used for development, testing, CI, and portability if useful, but they do not replace Android validation.
+Android additionally requires representative physical-device validation for mobile lifecycle, storage, input, thermal/performance, and RetroArch runtime behavior. Windows requires representative native RetroArch validation and is a shipping product target, not only a host-side development or CI environment.
 
 ### FR-3 — Frontend independence within libretro expectations
 
@@ -376,9 +376,9 @@ Users should not have to configure emulated monitors or desktop display modes be
 
 ### FR-39 — Real-time emulation
 
-ArcDroid shall target real-time emulation on representative supported Android hardware without requiring routine manual frameskip or speed adjustment.
+ArcDroid shall target real-time emulation on representative supported **Windows and Android hardware** without requiring routine manual frameskip or speed adjustment.
 
-The architecture phase must define a representative device/performance matrix before release acceptance.
+The architecture phase must define representative platform/performance matrices before release acceptance, including physical Android devices.
 
 ### FR-40 — Stable audio
 
@@ -390,7 +390,7 @@ Game logic, CPU timing, video timing, audio timing, and media behavior must prio
 
 ### FR-42 — Frame pacing
 
-ArcDroid should integrate with libretro timing in a way that produces stable frame pacing and avoids unnecessary latency or jitter on the primary Android target.
+ArcDroid should integrate with libretro timing in a way that produces stable frame pacing and avoids unnecessary latency or jitter on both Windows and Android targets.
 
 ---
 
@@ -412,7 +412,7 @@ If save states are implemented, the project must define their compatibility expe
 
 ### FR-46 — Clean restart and content switching
 
-Repeated load/unload/restart behavior must not depend on restarting the Android application or RetroArch process merely to recover emulator state.
+Repeated load/unload/restart behavior must not depend on restarting RetroArch or the host process on either supported platform merely to recover emulator state.
 
 ---
 
@@ -505,35 +505,35 @@ Malformed or unsupported media should not crash the frontend, corrupt unrelated 
 
 ---
 
-## 19. Android product requirements
+## 19. Windows and Android product requirements
 
-### FR-56 — Android-first native stability
+### FR-56 — First-class platform stability
 
-The core must behave correctly across repeated Android lifecycle and RetroArch content-load/unload patterns relevant to normal use.
+The core must behave correctly across repeated RetroArch content-load/unload, reset, teardown, and ordinary runtime patterns on both Windows and Android. Android-specific lifecycle behavior must additionally be validated on representative physical devices.
 
-### FR-57 — Supported ABI strategy
+### FR-57 — Supported platform and ABI strategy
 
-The architecture phase shall define the Android ABI set for release. At minimum, it must evaluate the current practical RetroArch Android environment and prioritize the ABI used by contemporary supported devices.
+The architecture phase shall define the supported Windows architecture/toolchain baseline and the Android ABI/API/NDK set for release. The first public-quality release must produce supported core builds for both Windows and Android.
 
-### FR-58 — No dependence on desktop-only UI frameworks
+### FR-58 — No dependence on upstream desktop GUI frameworks
 
-The shipping Android core must not require an upstream emulator's desktop GUI framework to run.
+The shipping core on either platform must not require an upstream emulator's desktop GUI framework or UI process to run. Windows support must be a native libretro-core product path, not an excuse to preserve a machine-emulator GUI.
 
 ### FR-59 — Storage behavior
 
-Firmware, saves, persistent state, compatibility metadata, and temporary files shall use deterministic locations compatible with RetroArch/Android constraints and must not rely on arbitrary desktop paths.
+Firmware, saves, persistent state, compatibility metadata, and temporary files shall use deterministic locations compatible with RetroArch on Windows and Android and must not rely on arbitrary upstream desktop paths.
 
 ### FR-60 — Offline operation
 
-Once installed with required firmware and user content, ArcDroid must be able to launch and play games without an internet connection.
+Once installed with required firmware and user content, ArcDroid must be able to launch and play games without an internet connection on both Windows and Android.
 
 ---
 
 ## 20. Performance and reliability requirements
 
-### FR-61 — Representative-device performance gate
+### FR-61 — Representative-platform performance gate
 
-Before the first public-quality release, the project shall define representative Android test hardware and demonstrate real-time gameplay across a representative compatibility corpus without persistent performance-related audio/video failure.
+Before the first public-quality release, the project shall define representative Windows and Android test hardware and demonstrate real-time gameplay across a representative compatibility corpus without persistent performance-related audio/video failure. Android validation must include representative physical hardware.
 
 ### FR-62 — No uncontrolled resource growth
 
@@ -589,7 +589,8 @@ The architecture process must evaluate candidate engines against the product req
 - controllability of machine configuration and boot flow;
 - ability to remove/bypass desktop UI dependencies;
 - libretro integration feasibility;
-- Android portability and native dependencies;
+- Windows portability, native dependencies, and build/runtime suitability;
+- Android portability, native dependencies, and NDK build/runtime suitability;
 - timing/audio/video architecture;
 - input flexibility;
 - disk swapping/media interfaces;
@@ -619,7 +620,7 @@ The exact version numbering and release channel are architecture/release decisio
 
 At minimum, that milestone must prove:
 
-1. A real libretro core loads in RetroArch on Android.
+1. A real libretro core loads in RetroArch on **both Windows and Android**.
 2. A user can launch representative loose Archimedes game media directly.
 3. Required firmware can be supplied through the defined firmware location and recognized reliably.
 4. At least one automatic machine/firmware profile path works without manual machine setup.
@@ -627,7 +628,7 @@ At minimum, that milestone must prove:
 6. RetroPad input reaches a representative game correctly.
 7. Keyboard and mouse paths are available for titles that require them.
 8. Multi-disk control is demonstrated if included in the selected first-release media scope; otherwise the architecture and interface for it must already be defined and not blocked by design.
-9. Audio and video run stably at real-time speed on representative Android hardware for the milestone corpus.
+9. Audio and video run stably at real-time speed on representative Windows hardware and representative physical Android hardware for the milestone corpus.
 10. Repeated content load/unload does not require restarting RetroArch.
 11. Missing required firmware produces a useful failure instead of an opaque crash/hang.
 12. No copyrighted commercial firmware or game image is required in the repository or CI.
@@ -647,7 +648,7 @@ After the first usable release, the project should progress toward:
 5. Better automatic controller mappings.
 6. Arculator-class game compatibility across the representative library.
 7. Stable save states if the chosen architecture can support them correctly.
-8. Performance optimization across a wider Android device range.
+8. Performance optimization across wider Windows and Android hardware ranges.
 9. Upstream-friendly maintenance where compatible with project goals and licensing.
 10. Potential submission/distribution through appropriate libretro/RetroArch channels once product quality justifies it.
 
@@ -675,17 +676,17 @@ Supported-format unknown content must be attempted rather than rejected for lack
 
 ### SM-5 — Stability
 
-Track crash-free repeated load/unload and gameplay sessions across representative Android hardware.
+Track crash-free repeated load/unload and gameplay sessions across representative Windows hardware and representative physical Android hardware.
 
 ### SM-6 — Performance
 
-Track sustained real-time emulation, frame pacing, and audio stability across the representative performance corpus and device matrix.
+Track sustained real-time emulation, frame pacing, and audio stability across the representative performance corpus and platform matrices.
 
 ### SM-7 — Regression control
 
 Previously accepted compatibility cases should remain passing through automated or reproducible regression testing.
 
-The exact numerical release thresholds shall be set by Fable with Founder approval once the representative corpus and device matrix are defined.
+The exact numerical release thresholds shall be set by Fable with Founder approval once the representative corpus and platform/device matrices are defined.
 
 ---
 
@@ -710,6 +711,8 @@ The corpus may use lawfully obtained private commercial content for local testin
 
 Open, redistributable, synthetic, or purpose-built test assets should be added wherever they can verify the same technical behavior without rights concerns.
 
+Release validation must pair this corpus with representative Windows and Android targets; Android coverage must include physical-device testing rather than emulator-only evidence.
+
 ---
 
 ## 27. UX requirements summary
@@ -718,9 +721,9 @@ A successful ArcDroid user should experience the product approximately as follow
 
 ### First-time setup
 
-- Install the ArcDroid libretro core.
+- Install the ArcDroid libretro core for Windows or Android.
 - Place legally obtained required Archimedes firmware in the documented RetroArch system location.
-- Launch games from RetroArch/ES-DE.
+- Launch games from RetroArch/ES-DE or another conforming libretro frontend.
 
 ### Normal known-title use
 
@@ -752,10 +755,10 @@ A successful ArcDroid user should experience the product approximately as follow
 
 ## 28. Explicit product decisions captured by this PRD
 
-Upon Founder approval, the following are settled product decisions unless the Founder later changes the PRD:
+The following are settled product decisions unless the Founder later changes the PRD:
 
 1. **ArcDroid is a libretro/RetroArch core, not a standalone machine-emulator UI as its primary product.**
-2. **Android is the primary user platform.**
+2. **Windows and Android are both first-class user and shipping platforms; Android additionally requires representative physical-device/mobile validation.**
 3. **The normal UX is game-first: select game and play.**
 4. **Machine and operating-system complexity should be automated and hidden from normal use.**
 5. **Loose supported media must be launchable without a curated ROM-set/software-list gate.**
@@ -773,12 +776,12 @@ Upon Founder approval, the following are settled product decisions unless the Fo
 
 ## 29. Open product questions to resolve before release
 
-These questions are intentionally left open because the current Founder discussion has not fixed them or because they require architecture evidence first:
+These questions are intentionally left open because the Founder has not fixed them or because they require architecture evidence first:
 
 1. What exact game/media set constitutes the v1 compatibility corpus?
 2. Which media formats are mandatory in the first public release versus later parity milestones?
-3. Which Android API levels and ABIs are supported at first release?
-4. What minimum representative device class defines acceptable real-time performance?
+3. Which Windows OS/architecture baseline and which Android API levels/ABIs are supported at first release?
+4. What representative Windows hardware class and Android physical-device class define acceptable real-time performance?
 5. Are save states required for v1, or accepted only if the selected engine supports complete reliable serialization?
 6. Is an explicit Computer Mode ever a product feature, or merely a development/troubleshooting mechanism?
 7. What numerical compatibility percentage is required for the first public-quality release?
@@ -798,9 +801,9 @@ Before implementation of the core begins, the architecture handoff must demonstr
 
 The proposed architecture must explain how the emulation engine will operate as a libretro core without depending on an upstream desktop UI.
 
-### AC-PRD-2 — Android feasibility
+### AC-PRD-2 — Windows and Android feasibility
 
-The architecture must verify Android build/runtime feasibility for the selected engine and its required dependencies.
+The architecture must verify native Windows and Android build/runtime feasibility for the selected engine and its required dependencies, define the supported initial Windows target and Android ABI/API strategy, and preserve one coherent libretro/emulation architecture across both platforms except where justified platform adapters are necessary.
 
 ### AC-PRD-3 — Compatibility path
 
@@ -828,11 +831,11 @@ The architecture must define how current and future media formats and multi-disk
 
 ### AC-PRD-9 — Timing/audio/video
 
-The architecture must identify the timing, audio, video, frame-pacing, and synchronization model and how it maps safely to libretro.
+The architecture must identify the timing, audio, video, frame-pacing, and synchronization model and how it maps safely to libretro on Windows and Android.
 
 ### AC-PRD-10 — Persistence and lifecycle
 
-The architecture must define save/persistent-data locations, lifecycle ownership, repeated load/unload behavior, and whether complete save states are technically feasible.
+The architecture must define save/persistent-data locations, lifecycle ownership, repeated load/unload behavior on Windows and Android, and whether complete save states are technically feasible.
 
 ### AC-PRD-11 — Licensing/provenance
 
@@ -840,7 +843,7 @@ The architecture must verify the selected upstream source and dependency license
 
 ### AC-PRD-12 — Test strategy
 
-The architecture must define deterministic automated tests plus representative local/device compatibility evidence sufficient to evaluate the requirements above without committing copyrighted assets.
+The architecture must define deterministic automated tests plus representative native Windows and physical Android compatibility evidence sufficient to evaluate the requirements above without committing copyrighted assets.
 
 ### AC-PRD-13 — Astra challenge
 
@@ -848,7 +851,7 @@ Because core/emulation-engine selection is a material architectural decision, Fa
 
 ### AC-PRD-14 — Founder gates
 
-Any material change to the product decisions in Section 28, unresolved licensing risk, or architecture choice that materially changes the promised UX must be surfaced to the Founder before implementation proceeds.
+Any material change to the product decisions in Section 28, unresolved licensing risk, or architecture choice that materially changes the promised UX or drops a first-class platform must be surfaced to the Founder before implementation proceeds.
 
 ---
 
