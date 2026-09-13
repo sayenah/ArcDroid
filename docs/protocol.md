@@ -72,7 +72,7 @@ The Founder's instruction creating this harness authorizes the initial placement
 
 on `main` as the repository bootstrap. This is the only direct-to-`main` bootstrap exception.
 
-After the first bootstrap commit, normal branch/PR discipline applies.
+Once all three bootstrap files above are present on `main`, normal branch/PR discipline applies.
 
 ### First Fable bootstrap session
 
