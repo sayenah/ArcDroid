@@ -40,6 +40,37 @@ jobs:
         run: cmake --build build/windows --verbose
       - name: Tests
         run: ctest --test-dir build/windows --output-on-failure
+      - name: Package native RetroArch inputs
+        run: |
+          mkdir -p build/windows/retroarch-package
+          cp build/windows/arcdroid_libretro.dll build/windows/arcdroid_libretro.info \
+            build/windows/tests/fixtures/generated/arcdroid-test.rom \
+            build/windows/tests/fixtures/generated/arcdroid-test.adf \
+            build/windows/retroarch-package/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: arcdroid-windows-retroarch-input
+          path: build/windows/retroarch-package/
+          if-no-files-found: error
+
+  windows-retroarch:
+    needs: windows
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: arcdroid-windows-retroarch-input
+          path: build/retroarch-input
+      - name: RetroArch 1.22.2 native load, screenshot, and reloads
+        shell: pwsh
+        run: tools/test-retroarch-windows.ps1 -InputDirectory build/retroarch-input -WorkDirectory build/retroarch-native
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: arcdroid-windows-retroarch-evidence
+          path: build/retroarch-native/evidence/
+          if-no-files-found: warn
 
   android-arm64:
     runs-on: ubuntu-latest

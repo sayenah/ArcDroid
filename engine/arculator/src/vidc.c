@@ -1,6 +1,7 @@
 /*Arculator 2.2 by Sarah Walker
   VIDC10 emulation*/
-/* ArcDroid modification: release the headless renderer bitmap at teardown. */
+/* ArcDroid modifications: release the renderer bitmap at teardown and remove
+ * an unused uninitialised pointer increment from the 4bpp draw path. */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -618,7 +619,6 @@ static void vidc_poll(void *__p)
 //        int col=0;
 	int x,xx;
 	uint32_t temp;
-	uint32_t *p;
 	uint8_t *bp;
 //        char s[256];
 	int l = vidc.line;
@@ -937,7 +937,6 @@ static void vidc_poll(void *__p)
 						{
 							for (c = 0; c < 8; c++)
 								((uint32_t *)bp)[x+c]=vidc.pal[(temp>>(c<<2))&0xF];
-							p+=8;
 						}
 						if (vidc.addr==vend+4) vidc.addr=vstart;
 					}

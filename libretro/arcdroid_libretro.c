@@ -261,6 +261,8 @@ static void arc_message(const char *text, enum retro_log_level level)
    struct retro_message legacy = {text, 300u};
    if (!arc_environment)
       return;
+   if (arc_log)
+      arc_log(level, "%s\n", text);
    if (!arc_environment(RETRO_ENVIRONMENT_SET_MESSAGE_EXT, &ext))
       arc_environment(RETRO_ENVIRONMENT_SET_MESSAGE, &legacy);
 }
