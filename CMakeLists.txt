@@ -84,6 +84,7 @@ else()
     target_link_options(arcdroid_libretro PRIVATE
       "-Wl,--version-script=${CMAKE_CURRENT_SOURCE_DIR}/libretro/link.T"
       "-Wl,-z,defs")
+    target_link_libraries(arcdroid_libretro PRIVATE m)
   endif()
 endif()
 
