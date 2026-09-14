@@ -177,29 +177,29 @@ if (-not (Test-Path $screenshot) -or (Get-Item $screenshot).Length -lt 128) {
 
 # The generated ADF's first-sector XOR is 0xcb. The authored ROM expands that
 # byte and its complement (0x34), and the programmed VIDC palette renders them
-# as cyan (#33bbff) and orange (#cc4400). Require both payload-derived colours
+# as cyan (#00aaff) and red (#bf1500). Require both payload-derived colours
 # and non-uniform output; a generic fixed blank/test image cannot satisfy this.
 Add-Type -AssemblyName System.Drawing
 $bitmap = [System.Drawing.Bitmap]::new($screenshot)
 $cyanPixels = 0
-$orangePixels = 0
+$redPixels = 0
 $colours = [System.Collections.Generic.HashSet[int]]::new()
 for ($y = 0; $y -lt $bitmap.Height; $y++) {
     for ($x = 0; $x -lt $bitmap.Width; $x++) {
         $pixel = $bitmap.GetPixel($x, $y)
         [void]$colours.Add($pixel.ToArgb())
-        if ($pixel.R -ge 35 -and $pixel.R -le 70 -and
-            $pixel.G -ge 165 -and $pixel.G -le 205 -and $pixel.B -ge 235) { $cyanPixels++ }
-        if ($pixel.R -ge 185 -and $pixel.R -le 225 -and
-            $pixel.G -ge 45 -and $pixel.G -le 90 -and $pixel.B -le 25) { $orangePixels++ }
+        if ($pixel.R -le 16 -and $pixel.G -ge 150 -and
+            $pixel.G -le 190 -and $pixel.B -ge 235) { $cyanPixels++ }
+        if ($pixel.R -ge 175 -and $pixel.R -le 210 -and
+            $pixel.G -le 40 -and $pixel.B -le 16) { $redPixels++ }
     }
 }
 $dimensions = "$($bitmap.Width)x$($bitmap.Height)"
 $bitmap.Dispose()
-"dimensions=$dimensions unique_colours=$($colours.Count) payload_cyan=$cyanPixels payload_orange=$orangePixels" |
+"dimensions=$dimensions unique_colours=$($colours.Count) payload_cyan=$cyanPixels payload_red=$redPixels" |
     Set-Content -Encoding ASCII (Join-Path $evidenceDirectory "screenshot-analysis.txt")
-if ($colours.Count -lt 2 -or $cyanPixels -lt 1000 -or $orangePixels -lt 1000) {
-    throw "Screenshot lacks the expected payload-derived cyan/orange signature"
+if ($colours.Count -ne 2 -or $cyanPixels -lt 1000 -or $redPixels -lt 1000) {
+    throw "Screenshot lacks the expected payload-derived cyan/red signature"
 }
 if (-not (Select-String -Quiet -SimpleMatch "Firmware: ArcDroid test ROM" $log)) {
     throw "RetroArch log does not contain the test-ROM firmware identification"
@@ -232,7 +232,7 @@ Write-Host $reloadEvidence
 Write-Host $audioEvidence
 if ($env:GITHUB_STEP_SUMMARY) {
     Add-Content -Encoding UTF8 $env:GITHUB_STEP_SUMMARY "### ArcDroid native Windows RetroArch"
-    Add-Content -Encoding UTF8 $env:GITHUB_STEP_SUMMARY "- Screenshot: expected payload-derived cyan/orange pattern observed ($dimensions; $cyanPixels/$orangePixels pixels)."
+    Add-Content -Encoding UTF8 $env:GITHUB_STEP_SUMMARY "- Screenshot: expected payload-derived cyan/red pattern observed ($dimensions; $cyanPixels/$redPixels pixels)."
     Add-Content -Encoding UTF8 $env:GITHUB_STEP_SUMMARY "- Reloads: $reloadEvidence."
     Add-Content -Encoding UTF8 $env:GITHUB_STEP_SUMMARY "- Audio: $audioEvidence."
 }
