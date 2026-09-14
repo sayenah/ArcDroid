@@ -69,10 +69,21 @@ function Invoke-ArcDroid([int]$Frames, [bool]$TakeScreenshot) {
         $arguments += "--max-frames-ss-path=$screenshot"
     }
     $arguments += $content
-    $output = & $retroArch @arguments 2>&1
-    $exitCode = $LASTEXITCODE
+    # retroarch.exe is a Windows GUI-subsystem executable. PowerShell does not
+    # wait for such processes when they are invoked with &, so an immediate
+    # return here would race the screenshot and make the reload check vacuous.
+    $runId = [Guid]::NewGuid().ToString("N")
+    $stdout = Join-Path $WorkDirectory "retroarch-$runId.stdout.log"
+    $stderr = Join-Path $WorkDirectory "retroarch-$runId.stderr.log"
+    $process = Start-Process -FilePath $retroArch -ArgumentList $arguments `
+        -Wait -PassThru -NoNewWindow `
+        -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+    $output = @()
+    if (Test-Path $stdout) { $output += Get-Content $stdout }
+    if (Test-Path $stderr) { $output += Get-Content $stderr }
     $output | Tee-Object -FilePath $log -Append | Write-Host
-    if ($exitCode -ne 0) { throw "RetroArch exited with code $exitCode" }
+    Remove-Item -Force -ErrorAction SilentlyContinue $stdout, $stderr
+    if ($process.ExitCode -ne 0) { throw "RetroArch exited with code $($process.ExitCode)" }
 }
 
 Invoke-ArcDroid 600 $true
