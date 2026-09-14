@@ -92,5 +92,5 @@ if ($errors) {
     $errors | ForEach-Object { Write-Error $_.Line }
     throw "RetroArch emitted error log lines"
 }
-Write-Host "RetroArch $retroArchVersion: initial 600-frame run and 10 content reloads passed"
+Write-Host "RetroArch ${retroArchVersion}: initial 600-frame run and 10 content reloads passed"
 Write-Host "Screenshot SHA-256: $((Get-FileHash -Algorithm SHA256 $screenshot).Hash.ToLowerInvariant())"
