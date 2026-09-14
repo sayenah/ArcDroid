@@ -103,10 +103,12 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
   set(FIXTURE_DIR "${CMAKE_CURRENT_BINARY_DIR}/tests/fixtures/generated")
   add_custom_command(
     OUTPUT "${FIXTURE_DIR}/arcdroid-test.rom" "${FIXTURE_DIR}/arcdroid-test.adf"
+      "${FIXTURE_DIR}/arcdroid-demo.adl"
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/generate_fixtures.py" "${FIXTURE_DIR}"
     DEPENDS tests/generate_fixtures.py VERBATIM)
   add_custom_target(test-fixtures ALL DEPENDS
-    "${FIXTURE_DIR}/arcdroid-test.rom" "${FIXTURE_DIR}/arcdroid-test.adf")
+    "${FIXTURE_DIR}/arcdroid-test.rom" "${FIXTURE_DIR}/arcdroid-test.adf"
+    "${FIXTURE_DIR}/arcdroid-demo.adl")
 
   if(WIN32)
     add_executable(windows_load_harness tests/windows_load_harness.c)

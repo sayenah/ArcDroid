@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate ArcDroid's deterministic ARMv2 validation ROM and 800 KiB ADF.
+"""Generate ArcDroid's deterministic validation ROM and floppy images.
 
 The tiny assembler emits ARM2 words directly because current GCC and LLVM no
 longer target ARMv2. The generated firmware configures MEMC/VIDC, reads sector
@@ -14,6 +14,10 @@ import struct
 
 ROM_SIZE = 512 * 1024
 ADF_SIZE = 800 * 1024
+ADL_SIZE = 640 * 1024
+OLD_MAP_SIZE = 512
+OLD_DIRECTORY_SIZE = 1280
+SECTOR_SIZE = 256
 
 
 class Arm2:
@@ -292,6 +296,108 @@ def build_adf() -> bytearray:
     return adf
 
 
+def _store_u24(image: bytearray, offset: int, value: int) -> None:
+    image[offset:offset + 3] = value.to_bytes(3, "little")
+
+
+def _old_map_checksum(block: bytes) -> int:
+    """Return FileCore's byte checksum for a 255-byte old-map block."""
+    checksum = 0xFF
+    for byte in reversed(block):
+        if checksum > 0xFF:
+            checksum = (checksum + 1) & 0xFF
+        checksum += byte
+    return checksum & 0xFF
+
+
+def _build_absolute_boot() -> bytes:
+    """Build a tiny ARM2 Absolute program that paints a stable VDU pattern."""
+    vdu = bytearray((22, 12, 17, 128 + 1, 12, 23, 1, 0, 0, 0, 0, 0, 0, 0, 0))
+    for row in range(4, 28):
+        vdu.extend((31, 8, row, 17, 2 + (row % 6)))
+        vdu.extend((b"##  " if row & 1 else b"  ##") * 16)
+    title = b"ARCDROID - PROJECT AUTHORED BOOT DISC"
+    vdu.extend((31, 20, 15, 17, 7))
+    vdu.extend(title)
+
+    # Load at &8000. The two literals point to VDU data and give its length.
+    # OS_WriteC is SWI 0; the final self-branch keeps the pattern presented.
+    words = [
+        0xE59F1014,             # ldr r1, [pc, #20]
+        0xE59F2014,             # ldr r2, [pc, #20]
+        0xE4D10001,             # ldrb r0, [r1], #1
+        0xEF000000,             # swi OS_WriteC
+        0xE2522001,             # subs r2, r2, #1
+        0x1AFFFFFB,             # bne byte loop
+        0xEAFFFFFE,             # b .
+        0x00008024,             # VDU byte stream address
+        len(vdu),
+    ]
+    return b"".join(struct.pack("<I", word) for word in words) + vdu
+
+
+def build_demo_adl() -> bytearray:
+    """Build a 640 KiB FileCore L-format disc with a runnable root !Boot.
+
+    The old-map and old-directory layouts are from the RISC OS 3 FileCore PRM:
+    https://www.riscos.com/support/developers/prm/filecore.html#69647
+    https://www.riscos.com/support/developers/prm/filecore.html#66109
+    The disc boot option is 2 (`*Opt 4,2`, Run). The directory checksum is zero,
+    the defined old-directory compatibility sentinel used by 32-bit ADFS.
+    """
+    image = bytearray(ADL_SIZE)
+    boot = _build_absolute_boot()
+    boot_sectors = (len(boot) + SECTOR_SIZE - 1) // SECTOR_SIZE
+    data_sector = (OLD_MAP_SIZE + OLD_DIRECTORY_SIZE) // SECTOR_SIZE
+    free_sector = data_sector + boot_sectors
+    total_sectors = ADL_SIZE // SECTOR_SIZE
+
+    # Old map: one contiguous free extent after the root directory and !Boot.
+    _store_u24(image, 0, free_sector)
+    image[247:252] = b"ACDMD"
+    _store_u24(image, 252, total_sectors)
+    image[255] = _old_map_checksum(image[0:255])
+    _store_u24(image, 256, total_sectors - free_sector)
+    image[502:507] = b"ROISO"
+    image[507:509] = (0xA6D1).to_bytes(2, "little")
+    image[509] = 2              # OldBoot: Run $.!Boot
+    image[510] = 3              # one three-byte free-list entry
+    image[511] = _old_map_checksum(image[256:511])
+
+    root = OLD_MAP_SIZE
+    image[root] = 1
+    image[root + 1:root + 5] = b"Hugo"
+    entry = root + 5
+    image[entry:entry + 10] = b"!Boot\r\r\r\r\r"
+    image[entry] |= 0x80        # owner read access
+    image[entry + 1] |= 0x80    # owner write access
+    image[entry + 10:entry + 14] = (0x8000).to_bytes(4, "little")
+    image[entry + 14:entry + 18] = (0x8000).to_bytes(4, "little")
+    image[entry + 18:entry + 22] = len(boot).to_bytes(4, "little")
+    _store_u24(image, entry + 22, data_sector)
+    image[entry + 25] = 0
+
+    tail = root + OLD_DIRECTORY_SIZE - 53
+    image[tail] = 0
+    image[tail + 1:tail + 11] = b"$".ljust(10, b"\r")
+    _store_u24(image, tail + 11, 2)
+    image[tail + 14:tail + 33] = b"ArcDroid demo".ljust(19, b"\0")
+    image[tail + 47] = 1
+    image[tail + 48:tail + 52] = b"Hugo"
+    image[tail + 52] = 0
+    data_offset = data_sector * SECTOR_SIZE
+    image[data_offset:data_offset + len(boot)] = boot
+
+    # Deterministic construction invariants double as a format round-trip.
+    assert int.from_bytes(image[252:255], "little") * SECTOR_SIZE == len(image)
+    assert int.from_bytes(image[entry + 22:entry + 25], "little") == data_sector
+    assert image[509] == 2
+    assert bytes(byte & 0x7F for byte in image[entry:entry + 5]) == b"!Boot"
+    assert image[255] == _old_map_checksum(image[0:255])
+    assert image[511] == _old_map_checksum(image[256:511])
+    return image
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("output", type=Path)
@@ -299,6 +405,7 @@ def main() -> None:
     args.output.mkdir(parents=True, exist_ok=True)
     (args.output / "arcdroid-test.rom").write_bytes(build_rom())
     (args.output / "arcdroid-test.adf").write_bytes(build_adf())
+    (args.output / "arcdroid-demo.adl").write_bytes(build_demo_adl())
 
 
 if __name__ == "__main__":
