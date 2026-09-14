@@ -64,6 +64,8 @@ void arc_print_error(const char *format, ...);
 #endif
 
 #ifdef DEBUG_DATABORT
+/* ArcDroid modification (2026-09-14): data-abort logging no longer invokes
+ * dumpregs(), and its obsolete declaration was removed from this header. */
 #define LOG_DATABORT(...) rpclog(__VA_ARGS__)
 #else
 #define LOG_DATABORT(...) ((void)0)
