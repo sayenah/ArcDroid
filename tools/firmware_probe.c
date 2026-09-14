@@ -27,9 +27,10 @@ int main(int argc, char **argv)
                 (unsigned)match->recipe, match->lane);
       else
       {
+         size_t nearest = 0u;
+         (void)arc_firmware_nearest_size(digest.size, 4096u, &nearest);
          printf("unrecognised size=%zu crc32=%08x sha1=%s nearest-size=%zu\n",
-                digest.size, digest.crc32, digest.sha1,
-                digest.size == 524289u ? (size_t)524288u : (size_t)0u);
+                digest.size, digest.crc32, digest.sha1, nearest);
          ++failures;
       }
    }

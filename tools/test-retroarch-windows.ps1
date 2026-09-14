@@ -139,6 +139,7 @@ function Try-InSessionReloads {
         [void]$udp.Send($quitBytes, $quitBytes.Length)
         $udp.Dispose()
         if (-not $process.WaitForExit(30000)) { throw "RetroArch did not exit after QUIT" }
+        $process.WaitForExit()
         $output = @()
         if (Test-Path $stdout) { $output += Get-Content $stdout }
         if (Test-Path $stderr) { $output += Get-Content $stderr }
@@ -151,6 +152,8 @@ function Try-InSessionReloads {
         return $true
     }
     catch {
+        if (Test-Path $stdout) { Get-Content $stdout | Add-Content -Encoding UTF8 $attemptLog }
+        if (Test-Path $stderr) { Get-Content $stderr | Add-Content -Encoding UTF8 $attemptLog }
         $_ | Out-String | Add-Content -Encoding UTF8 $attemptLog
         return $false
     }
