@@ -87,6 +87,7 @@ bool arc_cmos_encode(uint8_t record[ARC_CMOS_RECORD_SIZE],
 bool arc_cmos_decode(const uint8_t record[ARC_CMOS_RECORD_SIZE],
                      const ArcLaunchPlan *plan,
                      uint8_t payload[ARC_CMOS_PAYLOAD_SIZE]);
+bool arc_cmos_default(ArcOsClass os, uint8_t output[ARC_CMOS_PAYLOAD_SIZE]);
 
 typedef struct {
    bool keyboard[512];

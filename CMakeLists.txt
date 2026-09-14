@@ -6,14 +6,24 @@ set(CMAKE_C_STANDARD 17)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS ON)
 
+foreach(cmos_name IN ITEMS arthur riscos2 riscos3_old riscos3_new)
+  file(READ "${CMAKE_CURRENT_SOURCE_DIR}/engine/arculator/cmos/${cmos_name}/cmos.bin"
+       cmos_${cmos_name}_hex HEX LIMIT 192)
+  string(REGEX REPLACE "([0-9a-f][0-9a-f])" "0x\\1," cmos_${cmos_name}_bytes
+         "${cmos_${cmos_name}_hex}")
+endforeach()
+file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/generated")
+configure_file(core/cmos_defaults_data.h.in generated/cmos_defaults_data.h @ONLY)
+
 add_library(arcdroid_core STATIC
   core/hash.c
   core/input.c
   core/firmware_table.c
   core/launch.c
   core/persistence.c
+  core/cmos_defaults.c
 )
-target_include_directories(arcdroid_core PUBLIC core)
+target_include_directories(arcdroid_core PUBLIC core "${CMAKE_CURRENT_BINARY_DIR}/generated")
 target_compile_options(arcdroid_core PRIVATE
   $<$<C_COMPILER_ID:GNU,Clang,AppleClang>:-Wall;-Wextra;-Wpedantic;-Werror=implicit-function-declaration>
 )

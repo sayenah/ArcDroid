@@ -71,6 +71,10 @@ static void test_media_launch_and_cmos(void)
    assert(memcmp(payload, restored, sizeof(payload)) == 0);
    record[100] ^= 1u;
    assert(!arc_cmos_decode(record, &plan, restored));
+   assert(arc_cmos_default(ARC_OS_RISCOS_311, payload));
+   assert(payload[0] || payload[1] || payload[2]);
+   assert(arc_cmos_default(ARC_OS_TEST, payload));
+   for (unsigned i = 0; i < sizeof(payload); ++i) assert(payload[i] == 0u);
 }
 
 static void test_input(void)

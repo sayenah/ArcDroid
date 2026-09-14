@@ -53,11 +53,18 @@ static unsigned arc_initial_index;
 static char arc_initial_path[4096];
 
 typedef struct {
+   uint8_t *data;
+   size_t size;
+   const ArcFirmwareFingerprint *match;
+} ArcFirmwarePart;
+
+typedef struct {
    const ArcFirmwareFingerprint *match;
    uint8_t *data;
    size_t size;
    unsigned priority;
    size_t suspicious_size;
+   ArcFirmwarePart parts[ARC_OS_ARTHUR_030 + 1u][4];
 } ArcFirmwareSearch;
 
 static unsigned arc_firmware_priority(ArcOsClass os)
@@ -96,10 +103,75 @@ static bool arc_visit_firmware(const char *path, void *opaque)
          return true;
       }
    }
+   else if (match && match->recipe != ARC_RECIPE_COMBINED && match->lane < 4u)
+   {
+      ArcFirmwarePart *part = &search->parts[match->os][match->lane];
+      free(part->data);
+      part->data = data;
+      part->size = size;
+      part->match = match;
+      return true;
+   }
    else if (size == 524289u)
       search->suspicious_size = size;
    free(data);
    return true;
+}
+
+static void arc_finish_firmware_search(ArcFirmwareSearch *search)
+{
+   char error[160];
+   for (unsigned os = ARC_OS_TEST; os <= ARC_OS_ARTHUR_030; ++os)
+   {
+      ArcFirmwarePart *first = &search->parts[os][0];
+      if (!first->match) continue;
+      ArcFirmwareRecipe recipe = first->match->recipe;
+      unsigned count = recipe == ARC_RECIPE_BYTE_LANES_4 ? 4u :
+                       recipe == ARC_RECIPE_HALFWORD_LANES_2 ? 2u : 0u;
+      const uint8_t *parts[4] = {NULL, NULL, NULL, NULL};
+      size_t sizes[4] = {0u, 0u, 0u, 0u};
+      bool complete = count != 0u;
+      for (unsigned lane = 0; lane < count; ++lane)
+      {
+         ArcFirmwarePart *part = &search->parts[os][lane];
+         if (!part->match || part->match->os != (ArcOsClass)os ||
+             part->match->recipe != recipe || part->match->lane != lane)
+            complete = false;
+         parts[lane] = part->data;
+         sizes[lane] = part->size;
+      }
+      if (!complete || sizes[0] > SIZE_MAX / count) continue;
+      size_t assembled_size = sizes[0] * count;
+      uint8_t *assembled = malloc(assembled_size);
+      if (!assembled || !arc_firmware_assemble(parts, sizes, count, recipe,
+                                                assembled, assembled_size,
+                                                error, sizeof(error)))
+      {
+         free(assembled);
+         continue;
+      }
+      ArcDigest digest = arc_digest(assembled, assembled_size);
+      const ArcFirmwareFingerprint *combined = arc_firmware_match(&digest);
+      unsigned priority = arc_firmware_priority((ArcOsClass)os);
+      if (combined && combined->recipe == ARC_RECIPE_COMBINED &&
+          combined->os == (ArcOsClass)os &&
+          (!search->match || priority < search->priority))
+      {
+         free(search->data);
+         search->data = assembled;
+         search->size = assembled_size;
+         search->match = combined;
+         search->priority = priority;
+      }
+      else
+         free(assembled);
+   }
+   for (unsigned os = 0; os <= ARC_OS_ARTHUR_030; ++os)
+      for (unsigned lane = 0; lane < 4u; ++lane)
+      {
+         free(search->parts[os][lane].data);
+         search->parts[os][lane].data = NULL;
+      }
 }
 
 static const char *arc_os_slug(ArcOsClass os)
@@ -151,7 +223,11 @@ static void arc_seed_cmos(void)
        arc_cmos_decode((const uint8_t *)existing, &arc_plan, payload))
       memcpy(arc_cmos_record, existing, sizeof(arc_cmos_record));
    else
+   {
+      if (!arc_cmos_default(arc_plan.os, payload))
+         memset(payload, 0, sizeof(payload));
       arc_cmos_encode(arc_cmos_record, &arc_plan, payload);
+   }
    free(existing);
 }
 
@@ -416,7 +492,8 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game)
    char firmware_dir[4096];
    char media_dir[4096];
    char error[512] = {0};
-   ArcFirmwareSearch search = {NULL, NULL, 0u, 100u, 0u};
+   ArcFirmwareSearch search = {0};
+   search.priority = 100u;
    ArcMediaKind media;
    void *content = NULL;
    size_t content_size = 0u;
@@ -465,6 +542,7 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game)
       return false;
    }
    arc_io_walk(firmware_dir, 8u, arc_visit_firmware, &search);
+   arc_finish_firmware_search(&search);
    if (!search.match)
    {
       if (search.suspicious_size)

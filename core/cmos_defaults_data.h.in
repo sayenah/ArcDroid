@@ -1,0 +1,4 @@
+/* Generated at configure time from the four Founder-accepted D-018 CMOS dumps. */
+#define ARC_CMOS_ARTHUR_BYTES @cmos_arthur_bytes@
+#define ARC_CMOS_RISCOS2_BYTES @cmos_riscos2_bytes@
+#define ARC_CMOS_RISCOS3_OLD_BYTES @cmos_riscos3_old_bytes@

@@ -208,6 +208,12 @@ static void copy_file(const char *from, const char *to)
    assert(!ferror(a)); assert(!fclose(a)); assert(!fclose(b));
 }
 
+static void read_exact(const char *path, void *data, size_t size)
+{
+   FILE *file = fopen(path, "rb"); assert(file);
+   assert(fread(data, 1u, size, file) == size && fgetc(file) == EOF && !fclose(file));
+}
+
 static uint64_t hash_file(const char *path)
 {
    FILE *f = fopen(path, "rb"); assert(f);
@@ -220,7 +226,8 @@ static uint64_t hash_file(const char *path)
 #define LOAD(name) do { *(void **)(&name) = dlsym(module, #name); assert(name); } while (0)
 int main(int argc, char **argv)
 {
-   assert(argc == 5);
+   assert(argc == 5 || (argc == 6 && strcmp(argv[5], "--real-boot") == 0));
+   bool real_boot = argc == 6;
    void *module = dlopen(argv[1], RTLD_NOW | RTLD_LOCAL); assert(module);
    char system_path[4096], firmware_path[4096], save_path[4096], renamed[4096], cwd[4096], cwd_after[4096];
    snprintf(system_path, sizeof(system_path), "%s/system", argv[4]);
@@ -258,9 +265,40 @@ int main(int argc, char **argv)
    struct retro_game_info game = {argv[3], NULL, 0u, NULL};
    uint64_t source_hash = hash_file(argv[3]);
 
+   if (real_boot)
+   {
+      phase = PHASE_LOAD;
+      if (!retro_load_game(&game))
+      {
+         fprintf(stderr, "real_boot_harness: load failed: %s\n", last_message);
+         return 2;
+      }
+      char firmware_message[sizeof(last_message)];
+      snprintf(firmware_message, sizeof(firmware_message), "%s", last_message);
+      phase = PHASE_RUN;
+      for (unsigned frame = 0; frame < 1000u; ++frame) retro_run();
+      retro_unload_game();
+      retro_deinit();
+      assert(open_files == 0u && open_dirs == 0u && hash_file(argv[3]) == source_hash);
+      assert(video_frames == 1000u && audio_frames > 0u && video_signature_count > 1u);
+      assert(dlclose(module) == 0);
+      printf("real_boot_harness: %s; 1000 frames, %u signatures, %llu audio frames, "
+             "%llu nonzero samples\n", firmware_message, video_signature_count,
+             (unsigned long long)audio_frames,
+             (unsigned long long)nonzero_audio_samples);
+      return 0;
+   }
+
    char hidden[4096]; snprintf(hidden, sizeof(hidden), "%s/firmware.hidden", argv[4]);
    assert(rename(renamed, hidden) == 0);
    phase = PHASE_LOAD; assert(!retro_load_game(&game)); assert(strstr(last_message, "Missing RISC OS 3.11"));
+   char oversized[4096];
+   snprintf(oversized, sizeof(oversized), "%s/ROM120-size-check", firmware_path);
+   FILE *odd_rom = fopen(oversized, "wb"); assert(odd_rom);
+   assert(fseek(odd_rom, 524288, SEEK_SET) == 0 && fputc(0, odd_rom) != EOF && !fclose(odd_rom));
+   phase = PHASE_LOAD; assert(!retro_load_game(&game));
+   assert(strstr(last_message, "524289") && strstr(last_message, "524288"));
+   assert(remove(oversized) == 0);
    assert(rename(hidden, renamed) == 0);
 
    char corrupt[4096]; snprintf(corrupt, sizeof(corrupt), "%s/corrupt.adf", argv[4]);
@@ -303,18 +341,33 @@ int main(int argc, char **argv)
    assert(hash_file(argv[3]) == source_hash);
 
    uint8_t saved_cmos[256];
+   uint8_t final_cmos[256];
    for (unsigned cycle = 0; cycle < 100u; ++cycle)
    {
       phase = PHASE_LOAD; assert(retro_load_game(&game)); assert(keyboard.callback);
       assert(retro_get_memory_size(RETRO_MEMORY_SAVE_RAM) == 256u);
       assert(retro_get_memory_data(RETRO_MEMORY_SAVE_RAM));
-      if (cycle == 0u) memcpy(saved_cmos, retro_get_memory_data(RETRO_MEMORY_SAVE_RAM), sizeof(saved_cmos));
-      else assert(memcmp(saved_cmos, retro_get_memory_data(RETRO_MEMORY_SAVE_RAM), sizeof(saved_cmos)) == 0);
       phase = PHASE_RUN;
-      for (unsigned frame = 0; frame < 100u; ++frame) retro_run();
+      if (cycle == 0u)
+      {
+         memset(retro_get_memory_data(RETRO_MEMORY_SAVE_RAM), 0xa5, 256u);
+         retro_run();
+         assert(memcmp(retro_get_memory_data(RETRO_MEMORY_SAVE_RAM), "ARCCMOS1", 8u) == 0);
+         for (unsigned frame = 1u; frame < 100u; ++frame) retro_run();
+         memcpy(saved_cmos, retro_get_memory_data(RETRO_MEMORY_SAVE_RAM), sizeof(saved_cmos));
+      }
+      else
+      {
+         assert(memcmp(saved_cmos, retro_get_memory_data(RETRO_MEMORY_SAVE_RAM), sizeof(saved_cmos)) == 0);
+         for (unsigned frame = 0; frame < 100u; ++frame) retro_run();
+      }
       retro_reset(); retro_unload_game();
       assert(open_files == 0u && open_dirs == 0u);
    }
+   char cmos_file[4096];
+   snprintf(cmos_file, sizeof(cmos_file), "%s/arcdroid/cmos/A3000.test.bin", save_path);
+   read_exact(cmos_file, final_cmos, sizeof(final_cmos));
+   assert(memcmp(saved_cmos, final_cmos, sizeof(saved_cmos)) == 0);
    retro_deinit();
    assert(open_files == 0u && open_dirs == 0u);
    assert(getcwd(cwd_after, sizeof(cwd_after)) && strcmp(cwd, cwd_after) == 0);
