@@ -31,6 +31,11 @@ $systemDirectory = Join-Path $retroArchDirectory "system\arcdroid\firmware"
 $saveDirectory = Join-Path $WorkDirectory "save"
 New-Item -ItemType Directory -Force $coreDirectory, $infoDirectory, $systemDirectory, $saveDirectory | Out-Null
 
+# GitHub's Windows runners have no physical audio endpoint. The official
+# stable build includes SDL2, whose dummy backend still exercises RetroArch's
+# audio pipeline without producing frontend initialization errors.
+$env:SDL_AUDIODRIVER = "dummy"
+
 $core = Join-Path $coreDirectory "arcdroid_libretro.dll"
 $info = Join-Path $infoDirectory "arcdroid_libretro.info"
 $firmware = Join-Path $systemDirectory "renamed-test-firmware.data"
@@ -43,7 +48,8 @@ function ConfigPath([string]$Path) { return $Path.Replace('\', '/') }
 $config = Join-Path $WorkDirectory "retroarch-ci.cfg"
 @"
 video_driver = "gdi"
-audio_enable = "false"
+audio_driver = "sdl2"
+audio_enable = "true"
 midi_driver = "null"
 midi_input = "Null"
 midi_output = "Null"
