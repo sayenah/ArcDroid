@@ -33,7 +33,7 @@ jobs:
         with:
           msystem: MINGW64
           update: true
-          install: mingw-w64-x86_64-gcc mingw-w64-x86_64-cmake mingw-w64-x86_64-ninja
+          install: git mingw-w64-x86_64-gcc mingw-w64-x86_64-cmake mingw-w64-x86_64-ninja
       - name: Configure
         run: cmake -S . -B build/windows -G Ninja -DCMAKE_BUILD_TYPE=Release
       - name: Build
