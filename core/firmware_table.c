@@ -73,6 +73,23 @@ const ArcFirmwareFingerprint *arc_firmware_match(const ArcDigest *digest)
    return NULL;
 }
 
+unsigned arc_firmware_auto_priority(ArcOsClass os)
+{
+   switch (os)
+   {
+      case ARC_OS_RISCOS_311: return 1u;
+      case ARC_OS_RISCOS_310: return 2u;
+      case ARC_OS_RISCOS_319: return 3u;
+      case ARC_OS_RISCOS_300: return 4u;
+      case ARC_OS_RISCOS_200: return 5u;
+      case ARC_OS_ARTHUR_120: return 6u;
+      case ARC_OS_RISCOS_201: return 7u;
+      case ARC_OS_ARTHUR_030: return 8u;
+      case ARC_OS_TEST: return 9u;
+      default: return 100u;
+   }
+}
+
 bool arc_firmware_nearest_size(size_t actual, size_t margin, size_t *expected)
 {
    size_t nearest = 0u;

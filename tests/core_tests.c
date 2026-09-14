@@ -29,6 +29,10 @@ static void test_firmware_table(void)
    assert(arc_firmware_nearest_size(2097151u, 4096u, &nearest) && nearest == 2097152u);
    assert(arc_firmware_nearest_size(2097153u, 4096u, &nearest) && nearest == 2097152u);
    assert(!arc_firmware_nearest_size(42u, 4096u, &nearest));
+   unsigned test_priority = arc_firmware_auto_priority(ARC_OS_TEST);
+   assert(test_priority < arc_firmware_auto_priority(ARC_OS_UNKNOWN));
+   for (ArcOsClass os = ARC_OS_RISCOS_311; os <= ARC_OS_ARTHUR_030; ++os)
+      assert(arc_firmware_auto_priority(os) < test_priority);
 
    /* Exercise every catalogue row without redistributing firmware. For each
     * OS, derive synthetic lane files from one deterministic combined image,

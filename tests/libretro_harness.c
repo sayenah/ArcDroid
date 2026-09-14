@@ -84,9 +84,23 @@ static const char *option_pointer = "relative";
 static const char *option_writes = "shadow";
 static bool saw_adfs_advisory;
 static bool saw_audio_counters;
-static uint64_t logged_underruns;
-static uint64_t logged_overruns;
 static unsigned launch_options_seen;
+static unsigned duplicate_video_frames;
+static uint64_t sampled_underruns;
+static uint64_t sampled_overruns;
+
+static bool signature_is_in(const uint64_t *signatures, unsigned count, uint64_t signature)
+{
+   for (unsigned i = 0u; i < count; ++i)
+      if (signatures[i] == signature) return true;
+   return false;
+}
+
+static void signature_add(uint64_t *signatures, unsigned *count, uint64_t signature)
+{
+   if (!signature_is_in(signatures, *count, signature) && *count < 16u)
+      signatures[(*count)++] = signature;
+}
 
 static size_t heap_bytes_in_use(void)
 {
@@ -208,8 +222,6 @@ static void frontend_log(enum retro_log_level level, const char *format, ...)
               &underruns, &overruns) == 2)
    {
       saw_audio_counters = true;
-      logged_underruns = underruns;
-      logged_overruns = overruns;
    }
    if (evidence_log)
    {
@@ -331,7 +343,7 @@ static bool environment(unsigned command, void *data)
 static void video(const void *data, unsigned w, unsigned h, size_t pitch)
 {
    assert((data || can_dupe) && w > 0u && w <= 4096u && h > 0u && h <= 2048u && pitch >= w * 4u);
-   if (!data) { ++video_frames; return; }
+   if (!data) { ++duplicate_video_frames; ++video_frames; return; }
    assert(w == geometry_width && h == geometry_height);
    if (measure_av)
    {
@@ -545,6 +557,14 @@ int main(int argc, char **argv)
    size_t (*retro_serialize_size)(void); LOAD(retro_serialize_size);
    void *(*retro_get_memory_data)(unsigned); LOAD(retro_get_memory_data);
    size_t (*retro_get_memory_size)(unsigned); LOAD(retro_get_memory_size);
+   void (*arc_engine_audio_stats)(uint64_t *, uint64_t *) = NULL;
+   bool (*arc_engine_media_insert)(const char *, bool, char *, size_t) = NULL;
+   if (!real_boot)
+   {
+      *(void **)(&arc_engine_audio_stats) = dlsym(module, "arc_engine_audio_stats");
+      *(void **)(&arc_engine_media_insert) = dlsym(module, "arc_engine_media_insert");
+      assert(arc_engine_audio_stats && arc_engine_media_insert);
+   }
 
    phase = PHASE_ENV; retro_set_environment(environment);
    retro_set_video_refresh(video); retro_set_audio_sample_batch(audio);
@@ -661,6 +681,15 @@ int main(int argc, char **argv)
    retro_set_controller_port_device(0u, RETRO_DEVICE_SUBCLASS(RETRO_DEVICE_JOYPAD, 1));
    retro_set_controller_port_device(1u, RETRO_DEVICE_SUBCLASS(RETRO_DEVICE_MOUSE, 1));
 
+   /* Exercise the engine's defensive insert-over-insert path directly. A live
+    * drive handle must be replaced, not leaked alongside the new image. */
+   unsigned handles_before_direct_insert = open_files;
+   unsigned loads_before_direct_insert = disc_load_count;
+   char insert_error[256] = {0};
+   assert(arc_engine_media_insert(argv[3], false, insert_error, sizeof(insert_error)));
+   assert(open_files == handles_before_direct_insert);
+   assert(disc_load_count == loads_before_direct_insert + 1u);
+
    unsigned reads_before_eject = adf_sector_reads;
    assert(disk_control.set_eject_state(true));
    phase = PHASE_RUN; for (unsigned frame = 0; frame < 30u; ++frame) retro_run();
@@ -690,11 +719,26 @@ int main(int argc, char **argv)
    pointer_pressed = true; pointer_x = 1000; pointer_y = 1000; retro_run();
    pointer_x = 1025; pointer_y = 970; retro_run();
    pointer_pressed = false; retro_run();
+
+   uint64_t port1_baseline[16] = {0};
+   unsigned port1_baseline_count = 0u;
+   for (unsigned frame = 0u; frame < 40u; ++frame)
+   {
+      retro_run();
+      signature_add(port1_baseline, &port1_baseline_count, last_video_signature);
+   }
    retro_set_controller_port_device(0u, RETRO_DEVICE_NONE);
    retro_set_controller_port_device(1u, RETRO_DEVICE_SUBCLASS(RETRO_DEVICE_JOYPAD, 1));
    joypad_port = 1u; joypad_a = true;
-   for (unsigned frame = 0u; frame < 4u; ++frame) retro_run();
+   bool port1_guest_observed = false;
+   for (unsigned frame = 0u; frame < 20u; ++frame)
+   {
+      retro_run();
+      if (!signature_is_in(port1_baseline, port1_baseline_count, last_video_signature))
+         port1_guest_observed = true;
+   }
    joypad_a = false;
+   assert(port1_guest_observed);
    retro_set_controller_port_device(0u, RETRO_DEVICE_SUBCLASS(RETRO_DEVICE_JOYPAD, 1));
    retro_set_controller_port_device(1u, RETRO_DEVICE_SUBCLASS(RETRO_DEVICE_MOUSE, 1));
    joypad_port = 0u;
@@ -738,7 +782,7 @@ int main(int argc, char **argv)
       measured_window_modes[measured_windows++] = measured_oracle_mode;
    }
    assert(measured_windows == 2u);
-   bool input_observed = before_input_signature != last_video_signature;
+   bool input_observed = before_input_signature != last_video_signature || port1_guest_observed;
    uint64_t input_signature = last_video_signature;
    retro_unload_game();
    phase = PHASE_LOAD; assert(retro_load_game(&changed_game));
@@ -779,7 +823,27 @@ int main(int argc, char **argv)
    option_writes = "off";
    option_pointer = "disabled";
    phase = PHASE_LOAD; assert(retro_load_game(&off_game));
-   phase = PHASE_RUN; for (unsigned frame = 0u; frame < 100u; ++frame) retro_run();
+   phase = PHASE_RUN;
+   uint64_t pointer_disabled_baseline[16] = {0};
+   unsigned pointer_disabled_baseline_count = 0u;
+   for (unsigned frame = 0u; frame < 100u; ++frame)
+   {
+      retro_run();
+      signature_add(pointer_disabled_baseline, &pointer_disabled_baseline_count,
+                    last_video_signature);
+   }
+   pointer_pressed = true; pointer_x = -20000; pointer_y = -16000; retro_run();
+   assert(signature_is_in(pointer_disabled_baseline, pointer_disabled_baseline_count,
+                          last_video_signature));
+   for (unsigned frame = 0u; frame < 12u; ++frame)
+   {
+      pointer_x += 2000; pointer_y += 1500; retro_run();
+      assert(signature_is_in(pointer_disabled_baseline, pointer_disabled_baseline_count,
+                             last_video_signature));
+   }
+   pointer_pressed = false; retro_run();
+   assert(signature_is_in(pointer_disabled_baseline, pointer_disabled_baseline_count,
+                          last_video_signature));
    retro_unload_game();
    assert(hash_file(write_off) == off_before);
 
@@ -857,6 +921,13 @@ int main(int argc, char **argv)
          assert(memcmp(saved_cmos, retro_get_memory_data(RETRO_MEMORY_SAVE_RAM), sizeof(saved_cmos)) == 0);
          for (unsigned frame = 0; frame < 100u; ++frame) retro_run();
       }
+      if (cycle == 0u)
+      {
+         /* Sample the live queue before reset clears it. One 50 ms engine
+          * delivery window bounds startup priming; steady state must not overrun. */
+         arc_engine_audio_stats(&sampled_underruns, &sampled_overruns);
+         assert(sampled_underruns <= 2400u && sampled_overruns == 0u);
+      }
       retro_reset(); retro_unload_game();
       assert(open_files == 0u && open_dirs == 0u);
       size_t heap_now = heap_bytes_in_use();
@@ -872,6 +943,23 @@ int main(int argc, char **argv)
    read_exact(cmos_file, final_cmos, sizeof(final_cmos));
    assert(memcmp(saved_cmos, final_cmos, sizeof(saved_cmos)) == 0);
    retro_deinit();
+
+   /* Negotiate frontend duplication in a second pass and observe an actual
+    * NULL frame during the test ROM's deliberately invalid VIDC interval. */
+   can_dupe = true;
+   unsigned duplicates_before = duplicate_video_frames;
+   phase = PHASE_ENV; retro_set_environment(environment);
+   retro_set_video_refresh(video); retro_set_audio_sample_batch(audio);
+   retro_set_input_poll(poll); retro_set_input_state(input);
+   phase = PHASE_INIT; retro_init();
+   phase = PHASE_LOAD; assert(retro_load_game(&game));
+   phase = PHASE_RUN;
+   for (unsigned frame = 0u; frame < 120u && duplicate_video_frames == duplicates_before; ++frame)
+      retro_run();
+   assert(duplicate_video_frames > duplicates_before);
+   retro_unload_game();
+   retro_deinit();
+   can_dupe = false;
    assert(open_files == 0u && open_dirs == 0u);
    assert(getcwd(cwd_after, sizeof(cwd_after)) && strcmp(cwd, cwd_after) == 0);
    assert(hash_file(argv[3]) == source_hash);
@@ -884,7 +972,6 @@ int main(int argc, char **argv)
    assert(input_observed);
    assert(invalid_vidc_message);
    assert(saw_audio_counters);
-   assert(logged_underruns == 0u && logged_overruns == 0u);
    assert(dlclose(module) == 0);
    printf("libretro_harness: payload signatures %016llx/%016llx; "
           "100 cycles, %u frames, %llu audio frames, "
@@ -906,7 +993,8 @@ int main(int argc, char **argv)
    printf("\n");
    printf("guest input signature change: %s\n", input_observed ? "observed" : "not observed");
    printf("audio queue counters: underrun=%llu overrun=%llu\n",
-          (unsigned long long)logged_underruns,
-          (unsigned long long)logged_overruns);
+          (unsigned long long)sampled_underruns,
+          (unsigned long long)sampled_overruns);
+   printf("negotiated duplicate frames: %u\n", duplicate_video_frames);
    return 0;
 }

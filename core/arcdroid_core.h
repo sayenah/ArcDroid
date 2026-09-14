@@ -81,6 +81,7 @@ static inline uint64_t arc_timestamp_elapsed_cycles(uint64_t start, uint64_t end
 
 const ArcFirmwareFingerprint *arc_firmware_table(size_t *count);
 const ArcFirmwareFingerprint *arc_firmware_match(const ArcDigest *digest);
+unsigned arc_firmware_auto_priority(ArcOsClass os);
 const char *arc_os_name(ArcOsClass os);
 bool arc_firmware_assemble(const uint8_t *const *parts, const size_t *sizes,
                            unsigned count, ArcFirmwareRecipe recipe,

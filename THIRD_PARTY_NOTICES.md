@@ -25,7 +25,7 @@ The complete MIT notice remains at the top of the vendored file.
 
 ## zlib
 
-Android uses the NDK platform zlib. Windows uses the MinGW-w64 toolchain's static
-zlib. zlib is Copyright (C) 1995-2024 Jean-loup Gailly and Mark Adler and is
-provided "as-is"; permission is granted to use, alter, and redistribute it
+Android uses the NDK platform zlib. zlib is Copyright (C) 1995-2024 Jean-loup
+Gailly and Mark Adler and is provided "as-is"; permission is granted to use,
+alter, and redistribute it
 subject to preserving origin and notices. See https://zlib.net/zlib_license.html.

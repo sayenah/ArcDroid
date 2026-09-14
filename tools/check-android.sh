@@ -8,4 +8,8 @@ $readelf_bin -dW "$binary" | awk '/NEEDED/ {gsub(/[][]/, "", $5); print $5}' | w
   case "$lib" in libc.so|libm.so|libdl.so|libz.so) ;; *) printf 'unexpected Android dependency: %s\n' "$lib" >&2; exit 1 ;; esac
 done
 $readelf_bin -lW "$binary" | awk '/ LOAD / {if ($NF != "0x4000") exit 1}'
-printf 'Android guard: 25 exports; allowed NEEDED entries; LOAD alignment 0x4000\n'
+if $readelf_bin -Ws "$binary" | grep -E '[[:space:]]_?getenv(@[^[:space:]]*)?$' >/dev/null; then
+  printf '%s\n' 'Android guard: unexpected getenv import in shipping core' >&2
+  exit 1
+fi
+printf 'Android guard: 25 exports; allowed NEEDED entries; LOAD alignment 0x4000; no getenv import\n'

@@ -402,6 +402,8 @@ bool arc_engine_media_insert(const char *path, bool writable,
 {
    if (!arc_machine_live || !path || !path[0] ||
        strlen(path) >= sizeof(arc_saved_media)) return false;
+   /* Defence in depth for callers that replace a mounted image directly. */
+   disc_close(0);
    adf_set_writable(writable);
    disc_load(0, (char *)path);
    if (disc_empty(0))

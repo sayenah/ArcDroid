@@ -10,4 +10,8 @@ count=$($nm_bin -g --defined-only "$binary" | awk '$2 == "T" && $3 ~ /^retro_/ {
 $objdump_bin -p "$binary" | awk '/DLL Name:/ {print $3}' | while IFS= read -r dll; do
   case "$dll" in KERNEL32.dll|api-ms-win-crt-*) ;; *) printf 'unexpected DLL import: %s\n' "$dll" >&2; exit 1 ;; esac
 done
-printf 'Windows guard: 25 exports; imports limited to KERNEL32 and UCRT API sets\n'
+if $objdump_bin -p "$binary" | grep -E '(^|[[:space:]])_?getenv([[:space:]]|$)' >/dev/null; then
+  printf '%s\n' 'Windows guard: unexpected getenv import in shipping core' >&2
+  exit 1
+fi
+printf 'Windows guard: 25 exports; imports limited to KERNEL32 and UCRT API sets; no getenv import\n'

@@ -138,21 +138,6 @@ typedef struct {
    ArcFirmwarePart parts[ARC_OS_ARTHUR_030 + 1u][4];
 } ArcFirmwareSearch;
 
-static unsigned arc_firmware_priority(ArcOsClass os)
-{
-   switch (os)
-   {
-      case ARC_OS_TEST: return 0u;
-      case ARC_OS_RISCOS_311: return 1u;
-      case ARC_OS_RISCOS_310: return 2u;
-      case ARC_OS_RISCOS_319: return 3u;
-      case ARC_OS_RISCOS_300: return 4u;
-      case ARC_OS_RISCOS_200: return 5u;
-      case ARC_OS_ARTHUR_120: return 6u;
-      default: return 100u;
-   }
-}
-
 static bool arc_visit_firmware(const char *path, void *opaque)
 {
    ArcFirmwareSearch *search = (ArcFirmwareSearch *)opaque;
@@ -174,7 +159,7 @@ static bool arc_visit_firmware(const char *path, void *opaque)
          free(data);
          return true;
       }
-      unsigned priority = arc_firmware_priority(match->os);
+      unsigned priority = arc_firmware_auto_priority(match->os);
       if (!search->match || priority < search->priority)
       {
          free(search->data);
@@ -239,7 +224,7 @@ static void arc_finish_firmware_search(ArcFirmwareSearch *search)
       }
       ArcDigest digest = arc_digest(assembled, assembled_size);
       const ArcFirmwareFingerprint *combined = arc_firmware_match(&digest);
-      unsigned priority = arc_firmware_priority((ArcOsClass)os);
+      unsigned priority = arc_firmware_auto_priority((ArcOsClass)os);
       if (combined && combined->recipe == ARC_RECIPE_COMBINED &&
           combined->os == (ArcOsClass)os &&
           (!search->match || priority < search->priority))
