@@ -70,6 +70,10 @@ target_compile_options(arcdroid_libretro PRIVATE
 )
 set_target_properties(arcdroid_libretro PROPERTIES PREFIX "")
 target_link_libraries(arcdroid_libretro PRIVATE arcdroid_core)
+if(NOT WIN32 AND NOT APPLE)
+  set_property(TARGET arcdroid_libretro APPEND PROPERTY LINK_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/libretro/link.T")
+endif()
 
 if(ANDROID)
   set_target_properties(arcdroid_libretro PROPERTIES OUTPUT_NAME arcdroid_libretro_android)
