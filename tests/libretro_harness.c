@@ -50,7 +50,10 @@ static bool av_rate_changed_during_measure;
 static unsigned measured_oracle_mode;
 static bool measured_oracle_valid;
 static char last_message[512];
-static bool invalid_vidc_message;
+static unsigned vidc_osd_ext_calls;
+static unsigned vidc_osd_legacy_calls;
+static unsigned vidc_info_log_lines;
+static unsigned vidc_warning_log_lines;
 static struct retro_keyboard_callback keyboard;
 static bool joypad_a;
 static int mouse_x, mouse_y;
@@ -198,6 +201,11 @@ static void frontend_log(enum retro_log_level level, const char *format, ...)
    va_start(arguments, format);
    vsnprintf(message, sizeof(message), format, arguments);
    va_end(arguments);
+   if (strstr(message, "VIDC"))
+   {
+      if (level <= RETRO_LOG_INFO) ++vidc_info_log_lines;
+      else ++vidc_warning_log_lines;
+   }
    if (strstr(message, "FDC command="))
    {
       ++fdc_command_count;
@@ -331,11 +339,11 @@ static bool environment(unsigned command, void *data)
       }
       case RETRO_ENVIRONMENT_SET_MESSAGE_EXT:
          snprintf(last_message, sizeof(last_message), "%s", ((struct retro_message_ext *)data)->msg);
-         if (strstr(last_message, "VIDC")) invalid_vidc_message = true;
+         if (strstr(last_message, "VIDC")) ++vidc_osd_ext_calls;
          return true;
       case RETRO_ENVIRONMENT_SET_MESSAGE:
          snprintf(last_message, sizeof(last_message), "%s", ((struct retro_message *)data)->msg);
-         if (strstr(last_message, "VIDC")) invalid_vidc_message = true;
+         if (strstr(last_message, "VIDC")) ++vidc_osd_legacy_calls;
          return true;
       default: return false;
    }
@@ -559,11 +567,15 @@ int main(int argc, char **argv)
    size_t (*retro_get_memory_size)(unsigned); LOAD(retro_get_memory_size);
    void (*arc_engine_audio_stats)(uint64_t *, uint64_t *) = NULL;
    bool (*arc_engine_media_insert)(const char *, bool, char *, size_t) = NULL;
+   void (*arc_engine_test_set_vidc_noncompleting)(bool) = NULL;
    if (!real_boot)
    {
       *(void **)(&arc_engine_audio_stats) = dlsym(module, "arc_engine_audio_stats");
       *(void **)(&arc_engine_media_insert) = dlsym(module, "arc_engine_media_insert");
-      assert(arc_engine_audio_stats && arc_engine_media_insert);
+      *(void **)(&arc_engine_test_set_vidc_noncompleting) =
+         dlsym(module, "arc_engine_test_set_vidc_noncompleting");
+      assert(arc_engine_audio_stats && arc_engine_media_insert &&
+             arc_engine_test_set_vidc_noncompleting);
    }
 
    phase = PHASE_ENV; retro_set_environment(environment);
@@ -594,18 +606,21 @@ int main(int argc, char **argv)
       evidence_log = NULL;
       assert(open_files == 0u && open_dirs == 0u && hash_file(argv[3]) == source_hash);
       assert(video_frames == real_boot_frames && audio_frames > 0u && video_signature_count > 1u);
+      assert(vidc_osd_ext_calls == 0u && vidc_osd_legacy_calls == 0u);
       assert(dlclose(module) == 0);
       printf("real_boot_harness: %s; %u frames, %u signatures, trace %016llx, "
              "final %016llx, "
              "%llu audio frames, %llu nonzero samples; FDC commands %u (reads %u), "
-             "KART traffic %u, CMOS reads %u writes %u; evidence %s\n",
+             "KART traffic %u, CMOS reads %u writes %u; "
+             "VIDC OSD ext/legacy %u/%u, transient logs %u; evidence %s\n",
              firmware_message, real_boot_frames, video_signature_count,
              (unsigned long long)video_trace_signature,
              (unsigned long long)last_video_signature,
              (unsigned long long)audio_frames,
              (unsigned long long)nonzero_audio_samples,
              fdc_command_count, fdc_read_count, kart_traffic_count,
-             cmos_read_count, cmos_write_count, evidence_path);
+             cmos_read_count, cmos_write_count, vidc_osd_ext_calls,
+             vidc_osd_legacy_calls, vidc_info_log_lines, evidence_path);
       return 0;
    }
 
@@ -942,19 +957,81 @@ int main(int argc, char **argv)
    assert(memcmp(saved_cmos, final_cmos, sizeof(saved_cmos)) == 0);
    retro_deinit();
 
-   /* Negotiate frontend duplication in a second pass and observe an actual
-    * NULL frame during the test ROM's deliberately invalid VIDC interval. */
+   /* Negotiate frontend duplication in a second pass. The generated ROM's
+    * 25,000-iteration invalid-VIDC wait is about 50 ms of guest time at its
+    * 8 MHz ARM2 (the loop executes from four-cycle ROM), far below the
+    * adapter's two-second persistent-warning threshold. */
    can_dupe = true;
    unsigned duplicates_before = duplicate_video_frames;
+   unsigned vidc_osd_before = vidc_osd_ext_calls + vidc_osd_legacy_calls;
+   unsigned vidc_logs_before = vidc_info_log_lines;
    phase = PHASE_ENV; retro_set_environment(environment);
    retro_set_video_refresh(video); retro_set_audio_sample_batch(audio);
    retro_set_input_poll(poll); retro_set_input_state(input);
    phase = PHASE_INIT; retro_init();
    phase = PHASE_LOAD; assert(retro_load_game(&game));
    phase = PHASE_RUN;
-   for (unsigned frame = 0u; frame < 120u && duplicate_video_frames == duplicates_before; ++frame)
+   bool completed_before_invalid = false;
+   bool saw_short_invalid_episode = false;
+   bool in_incomplete_episode = false;
+   unsigned transient_episodes = 0u;
+   for (unsigned frame = 0u; frame < 120u && !saw_short_invalid_episode; ++frame)
+   {
+      unsigned frame_duplicates_before = duplicate_video_frames;
       retro_run();
+      bool incomplete = duplicate_video_frames != frame_duplicates_before;
+      assert(vidc_osd_ext_calls + vidc_osd_legacy_calls == vidc_osd_before);
+      if (incomplete && !in_incomplete_episode)
+      {
+         ++transient_episodes;
+         in_incomplete_episode = true;
+      }
+      else if (!incomplete)
+      {
+         if (completed_before_invalid && in_incomplete_episode)
+            saw_short_invalid_episode = true;
+         completed_before_invalid = true;
+         in_incomplete_episode = false;
+      }
+   }
+   assert(completed_before_invalid && saw_short_invalid_episode);
    assert(duplicate_video_frames > duplicates_before);
+   assert(vidc_info_log_lines - vidc_logs_before == transient_episodes);
+
+   /* The host-only fault hook suppresses field completion while retaining the
+    * bounded guest-time step. A sustained episode warns once, a completed
+    * field re-arms it, and a second sustained episode warns once again. */
+   unsigned persistent_osd_before = vidc_osd_ext_calls + vidc_osd_legacy_calls;
+   unsigned persistent_info_before = vidc_info_log_lines;
+   unsigned persistent_warning_before = vidc_warning_log_lines;
+   assert(persistent_osd_before == 0u);
+   arc_engine_test_set_vidc_noncompleting(true);
+   for (unsigned frame = 0u; frame < 40u; ++frame) retro_run();
+   assert(vidc_osd_ext_calls + vidc_osd_legacy_calls == persistent_osd_before);
+   assert(vidc_info_log_lines == persistent_info_before + 1u);
+   assert(vidc_warning_log_lines == persistent_warning_before);
+   for (unsigned frame = 0u; frame < 140u; ++frame) retro_run();
+   assert(vidc_osd_ext_calls + vidc_osd_legacy_calls == persistent_osd_before + 1u);
+   assert(vidc_info_log_lines == persistent_info_before + 1u);
+   assert(vidc_warning_log_lines == persistent_warning_before + 1u);
+   for (unsigned frame = 0u; frame < 60u; ++frame) retro_run();
+   assert(vidc_osd_ext_calls + vidc_osd_legacy_calls == persistent_osd_before + 1u);
+   arc_engine_test_set_vidc_noncompleting(false);
+   unsigned recovery_duplicates = duplicate_video_frames;
+   retro_run();
+   assert(duplicate_video_frames == recovery_duplicates);
+   arc_engine_test_set_vidc_noncompleting(true);
+   for (unsigned frame = 0u; frame < 40u; ++frame) retro_run();
+   assert(vidc_osd_ext_calls + vidc_osd_legacy_calls == persistent_osd_before + 1u);
+   assert(vidc_info_log_lines == persistent_info_before + 2u);
+   assert(vidc_warning_log_lines == persistent_warning_before + 1u);
+   for (unsigned frame = 0u; frame < 140u; ++frame) retro_run();
+   assert(vidc_osd_ext_calls + vidc_osd_legacy_calls == persistent_osd_before + 2u);
+   assert(vidc_info_log_lines == persistent_info_before + 2u);
+   assert(vidc_warning_log_lines == persistent_warning_before + 2u);
+   for (unsigned frame = 0u; frame < 60u; ++frame) retro_run();
+   assert(vidc_osd_ext_calls + vidc_osd_legacy_calls == persistent_osd_before + 2u);
+   arc_engine_test_set_vidc_noncompleting(false);
    retro_unload_game();
    retro_deinit();
    can_dupe = false;
@@ -968,7 +1045,7 @@ int main(int argc, char **argv)
    assert(av_notifications > 0u);
    assert(video_signature_count >= 1u && reported_rate_count >= 1u);
    assert(input_observed);
-   assert(invalid_vidc_message);
+   assert(vidc_osd_ext_calls + vidc_osd_legacy_calls == persistent_osd_before + 2u);
    assert(saw_audio_counters);
    assert(dlclose(module) == 0);
    printf("libretro_harness: payload signatures %016llx/%016llx; "
@@ -994,5 +1071,8 @@ int main(int argc, char **argv)
           (unsigned long long)sampled_underruns,
           (unsigned long long)sampled_overruns);
    printf("negotiated duplicate frames: %u\n", duplicate_video_frames);
+   printf("VIDC messages: OSD ext/legacy=%u/%u, transient info logs=%u, warning logs=%u\n",
+          vidc_osd_ext_calls, vidc_osd_legacy_calls,
+          vidc_info_log_lines, vidc_warning_log_lines);
    return 0;
 }

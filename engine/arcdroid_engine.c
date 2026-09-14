@@ -65,6 +65,14 @@ static uint8_t arc_saved_cmos[ARC_CMOS_MACHINE_SIZE];
 static double arc_last_refresh = 50.0;
 static ArcEngineLogCallback arc_log_callback;
 static void *arc_log_opaque;
+#if defined(ARCDROID_TEST_FAULTS)
+static bool arc_test_vidc_noncompleting;
+
+void arc_engine_test_set_vidc_noncompleting(bool enabled)
+{
+   arc_test_vidc_noncompleting = enabled;
+}
+#endif
 
 static void arc_latch_fault(const char *format, va_list arguments)
 {
@@ -335,6 +343,9 @@ void arc_engine_stop(void)
    arc_saved_media_writable = false;
    arc_active = false;
    arc_fault_boundary = false;
+#if defined(ARCDROID_TEST_FAULTS)
+   arc_test_vidc_noncompleting = false;
+#endif
 }
 
 bool arc_engine_run_frame(ArcInputState *input, ArcEngineFrame *frame)
@@ -363,7 +374,12 @@ bool arc_engine_run_frame(ArcInputState *input, ArcEngineFrame *frame)
    {
       execarm(2048);
       (void)arc_platform_video_frame(NULL, NULL, NULL, &sequence);
-   } while (sequence == start_sequence &&
+   } while (
+#if defined(ARCDROID_TEST_FAULTS)
+            (arc_test_vidc_noncompleting || sequence == start_sequence) &&
+#else
+            sequence == start_sequence &&
+#endif
             arc_timestamp_elapsed_cycles(start_tsc, tsc) < maximum_cycles);
    if (adf_flush_all()) fatal("Unable to flush the staged floppy image");
    arc_fault_boundary = false;
@@ -371,6 +387,9 @@ bool arc_engine_run_frame(ArcInputState *input, ArcEngineFrame *frame)
    frame->pixels = arc_platform_video_frame(&frame->width, &frame->height,
                                              &frame->pitch, &sequence);
    frame->field_completed = sequence != start_sequence;
+#if defined(ARCDROID_TEST_FAULTS)
+   if (arc_test_vidc_noncompleting) frame->field_completed = false;
+#endif
    frame->elapsed_us = arc_timestamp_elapsed_cycles(start_tsc, tsc) /
                        (uint64_t)speed_mhz;
    if (!frame->elapsed_us) frame->elapsed_us = 1u;

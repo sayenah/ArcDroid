@@ -20,6 +20,7 @@
 #define ARC_RATE 50.0
 #define ARC_AUDIO_RATE 48000.0
 #define ARC_FIRMWARE_SIZE_MARGIN 4096u
+#define ARC_VIDC_WARNING_THRESHOLD_US UINT64_C(2000000)
 #define ARC_DEVICE_KEYS RETRO_DEVICE_SUBCLASS(RETRO_DEVICE_JOYPAD, 1)
 #define ARC_DEVICE_MOUSE RETRO_DEVICE_SUBCLASS(RETRO_DEVICE_MOUSE, 1)
 
@@ -54,6 +55,8 @@ static unsigned arc_video_height = ARC_HEIGHT;
 static double arc_video_rate = ARC_RATE;
 static bool arc_fault_reported;
 static bool arc_vidc_warning_reported;
+static bool arc_vidc_transient_logged;
+static uint64_t arc_vidc_incomplete_us;
 static bool arc_audio_warning_reported;
 static bool arc_loaded;
 static bool arc_can_dupe;
@@ -345,6 +348,38 @@ static void arc_message(const char *text, enum retro_log_level level)
       arc_log(level, "%s\n", text);
    if (!arc_environment(RETRO_ENVIRONMENT_SET_MESSAGE_EXT, &ext))
       arc_environment(RETRO_ENVIRONMENT_SET_MESSAGE, &legacy);
+}
+
+static void arc_vidc_episode_update(bool field_completed, uint64_t elapsed_us)
+{
+   if (field_completed)
+   {
+      arc_vidc_warning_reported = false;
+      arc_vidc_transient_logged = false;
+      arc_vidc_incomplete_us = 0u;
+      return;
+   }
+   if (!arc_vidc_transient_logged)
+   {
+      if (arc_log)
+         arc_log(RETRO_LOG_INFO,
+                 "VIDC field incomplete; presenting bounded fallback while guest video is programmed.\n");
+      arc_vidc_transient_logged = true;
+   }
+   /* Two seconds is the midpoint of R-36's permitted 1--3 second range: long
+    * enough for normal boot/mode transitions, while still reporting a
+    * sustained bad program promptly. Count only bounded guest execution. */
+   if (elapsed_us >= ARC_VIDC_WARNING_THRESHOLD_US - arc_vidc_incomplete_us)
+      arc_vidc_incomplete_us = ARC_VIDC_WARNING_THRESHOLD_US;
+   else
+      arc_vidc_incomplete_us += elapsed_us;
+   if (arc_vidc_incomplete_us >= ARC_VIDC_WARNING_THRESHOLD_US &&
+       !arc_vidc_warning_reported)
+   {
+      arc_message("VIDC program did not complete a field; presenting bounded fallback.",
+                  RETRO_LOG_WARN);
+      arc_vidc_warning_reported = true;
+   }
 }
 
 static bool arc_prepare_disk(const char *source, ArcDiskWriteMode mode,
@@ -683,6 +718,8 @@ RETRO_API void retro_init(void)
    arc_video_rate = ARC_RATE;
    arc_fault_reported = false;
    arc_vidc_warning_reported = false;
+   arc_vidc_transient_logged = false;
+   arc_vidc_incomplete_us = 0u;
    arc_audio_warning_reported = false;
    arc_can_dupe = false;
    arc_release_session();
@@ -876,6 +913,8 @@ static bool arc_load_game(const struct retro_game_info *game, bool negotiate)
    (void)arc_engine_get_av_info(&arc_video_width, &arc_video_height, &arc_video_rate);
    arc_fault_reported = false;
    arc_vidc_warning_reported = false;
+   arc_vidc_transient_logged = false;
+   arc_vidc_incomplete_us = 0u;
    arc_audio_warning_reported = false;
    snprintf(error, sizeof(error), "Firmware: %s; CRC32 %08x; SHA-1 %s",
             arc_os_name(search.match->os), search.match->crc32, search.match->sha1);
@@ -915,6 +954,7 @@ RETRO_API void retro_run(void)
 {
    ArcEngineFrame frame;
    size_t count;
+   bool frame_ran;
    if (arc_input_poll) arc_input_poll();
    arc_poll_inputs();
    if (!arc_loaded)
@@ -923,7 +963,8 @@ RETRO_API void retro_run(void)
       return;
    }
    ++arc_frame_number;
-   if (!arc_engine_run_frame(&arc_inputs, &frame))
+   frame_ran = arc_engine_run_frame(&arc_inputs, &frame);
+   if (!frame_ran)
    {
       const char *fault = NULL;
       if (!arc_fault_reported && arc_engine_faulted(&fault))
@@ -939,12 +980,8 @@ RETRO_API void retro_run(void)
       frame.elapsed_us = 20000u;
       frame.refresh_hz = ARC_RATE;
    }
-   if (!frame.field_completed && !arc_vidc_warning_reported)
-   {
-      arc_message("VIDC program did not complete a field; presenting bounded fallback.",
-                  RETRO_LOG_WARN);
-      arc_vidc_warning_reported = true;
-   }
+   if (frame_ran)
+      arc_vidc_episode_update(frame.field_completed, frame.elapsed_us);
    if (frame.width != arc_video_width || frame.height != arc_video_height)
    {
       struct retro_game_geometry geometry = {
