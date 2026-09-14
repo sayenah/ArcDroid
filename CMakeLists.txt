@@ -82,7 +82,8 @@ else()
       "-Wl,-exported_symbols_list,${CMAKE_CURRENT_SOURCE_DIR}/libretro/arcdroid.exports")
   else()
     target_link_options(arcdroid_libretro PRIVATE
-      "-Wl,--version-script=${CMAKE_CURRENT_SOURCE_DIR}/libretro/link.T")
+      "-Wl,--version-script=${CMAKE_CURRENT_SOURCE_DIR}/libretro/link.T"
+      "-Wl,-z,defs")
   endif()
 endif()
 

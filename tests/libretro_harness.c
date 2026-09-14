@@ -263,7 +263,12 @@ int main(int argc, char **argv)
 {
    assert(argc == 5 || (argc == 6 && strcmp(argv[5], "--real-boot") == 0));
    bool real_boot = argc == 6;
-   void *module = dlopen(argv[1], RTLD_NOW | RTLD_LOCAL); assert(module);
+   void *module = dlopen(argv[1], RTLD_NOW | RTLD_LOCAL);
+   if (!module)
+   {
+      fprintf(stderr, "libretro_harness: dlopen failed: %s\n", dlerror());
+      return 2;
+   }
    char system_path[4096], firmware_path[4096], save_path[4096], renamed[4096], cwd[4096], cwd_after[4096];
    snprintf(system_path, sizeof(system_path), "%s/system", argv[4]);
    snprintf(firmware_path, sizeof(firmware_path), "%s/arcdroid", system_path);
