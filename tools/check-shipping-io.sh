@@ -38,13 +38,22 @@ platform/arcdroid_joystick.c
 platform/arcdroid_sound.c
 platform/arcdroid_video.c
 libretro/arc_io.c
-libretro/arcdroid_libretro.c'
+libretro/arcdroid_libretro.c
+core/*.h
+engine/*.h
+engine/compat/*.h
+engine/arculator/src/*.h
+platform/*.h
+libretro/*.h'
 
 scan_sources=${ARCDROID_SHIPPING_IO_SOURCES:-$sources}
-if matches=$(grep -En '(^|[^[:alnum:]_])(fopen|dumpregs)[[:space:]]*\(' $scan_sources); then
-  printf '%s\n' "$matches" >&2
-  printf '%s\n' 'shipping I/O guard: forbidden CWD/debug file path found' >&2
-  exit 1
+if all_matches=$(grep -En '(^|[^[:alnum:]_])(fopen|dumpregs)[[:space:]]*\(' $scan_sources); then
+  matches=$(printf '%s\n' "$all_matches" | grep -Ev '^engine/arculator/src/arc\.h:[0-9]+:[[:space:]]*\*[[:space:]]*dumpregs\(\), and its obsolete declaration was removed from this header\. \*/$' || true)
+  if [ -n "$matches" ]; then
+    printf '%s\n' "$matches" >&2
+    printf '%s\n' 'shipping I/O guard: forbidden CWD/debug file path found' >&2
+    exit 1
+  fi
 else
   status=$?
   if [ "$status" -ne 1 ]; then
@@ -64,7 +73,12 @@ case "${1:-}" in
       printf '%s\n' 'shipping I/O guard self-test: injected fopen was not rejected' >&2
       exit 1
     fi
-    printf '%s\n' 'shipping I/O guard self-test: injected fopen rejected'
+    printf '%s\n' 'void injected_header(void) { (void)fopen("injected", "wb"); }' > "$guard_tmp/injected.h"
+    if ARCDROID_SHIPPING_IO_SOURCES="$guard_tmp/injected.h" sh "$0" --scan-only >/dev/null 2>&1; then
+      printf '%s\n' 'shipping I/O guard self-test: injected header fopen was not rejected' >&2
+      exit 1
+    fi
+    printf '%s\n' 'shipping I/O guard self-test: injected source and header fopen rejected'
     ;;
   *)
     printf 'shipping I/O guard: unknown argument: %s\n' "$1" >&2

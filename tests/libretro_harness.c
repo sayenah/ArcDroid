@@ -782,8 +782,7 @@ int main(int argc, char **argv)
       measured_window_modes[measured_windows++] = measured_oracle_mode;
    }
    assert(measured_windows == 2u);
-   bool input_observed = before_input_signature != last_video_signature || port1_guest_observed;
-   uint64_t input_signature = last_video_signature;
+   bool input_observed = before_input_signature != last_video_signature;
    retro_unload_game();
    phase = PHASE_LOAD; assert(retro_load_game(&changed_game));
    phase = PHASE_RUN; for (unsigned frame = 0; frame < 60u; ++frame) retro_run();
@@ -799,7 +798,6 @@ int main(int argc, char **argv)
    phase = PHASE_LOAD; assert(retro_load_game(&game));
    retro_unload_game();
    assert(before_input_signature != changed_signature);
-   input_observed = input_observed || before_input_signature != input_signature;
    assert(hash_file(argv[3]) == source_hash);
    assert(hash_file(changed) == changed_source_hash);
    assert(modified_shadow_count(save_path, source_hash, changed_source_hash) >= 2u);
