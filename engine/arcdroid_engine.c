@@ -330,12 +330,18 @@ void arc_engine_stop(void)
 bool arc_engine_run_frame(ArcInputState *input, ArcEngineFrame *frame)
 {
    uint64_t start_tsc, start_sequence, sequence;
-   const uint64_t maximum_cycles = UINT64_C(8) * 20000u;
+   double programmed_rate;
+   uint64_t maximum_cycles;
    if (!frame || !arc_active || arc_fault) return false;
    memset(frame, 0, sizeof(*frame));
    arc_platform_input_apply(input);
    (void)arc_platform_video_frame(NULL, NULL, NULL, &start_sequence);
    start_tsc = tsc;
+   programmed_rate = vidc_get_refresh_rate();
+   if (programmed_rate < 20.0 || programmed_rate > 200.0)
+      programmed_rate = arc_last_refresh;
+   maximum_cycles = (uint64_t)speed_mhz *
+      ((uint64_t)(1000000.0 / programmed_rate) + 1u) + 2048u;
 
    arc_fault_boundary = true;
    if (setjmp(arc_fault_jump))

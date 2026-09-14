@@ -42,7 +42,7 @@ static bool arc_pad_keys[10];
 static char arc_cmos_path[4096];
 static char arc_staged_path[4096];
 static uint64_t arc_frame_number;
-static uint64_t arc_audio_fraction;
+static long double arc_audio_fraction;
 static unsigned arc_video_width = ARC_WIDTH;
 static unsigned arc_video_height = ARC_HEIGHT;
 static double arc_video_rate = ARC_RATE;
@@ -711,9 +711,12 @@ RETRO_API void retro_run(void)
       if (arc_environment) arc_environment(RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO, &av);
       arc_video_rate = frame.refresh_hz;
    }
-   arc_audio_fraction += frame.elapsed_us * UINT64_C(48000);
-   count = (size_t)(arc_audio_fraction / UINT64_C(1000000));
-   arc_audio_fraction %= UINT64_C(1000000);
+   if (frame.field_completed && frame.refresh_hz > 0.0)
+      arc_audio_fraction += 48000.0L / (long double)frame.refresh_hz;
+   else
+      arc_audio_fraction += (long double)frame.elapsed_us * 48000.0L / 1000000.0L;
+   count = (size_t)arc_audio_fraction;
+   arc_audio_fraction -= (long double)count;
    if (count > sizeof(arc_audio_frame) / (2u * sizeof(arc_audio_frame[0])))
       count = sizeof(arc_audio_frame) / (2u * sizeof(arc_audio_frame[0]));
    size_t produced = arc_engine_audio(arc_audio_frame, count);

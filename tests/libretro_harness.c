@@ -6,6 +6,11 @@
 #include <dlfcn.h>
 #include <errno.h>
 #include <fcntl.h>
+#if defined(__APPLE__)
+#include <malloc/malloc.h>
+#elif defined(__GLIBC__)
+#include <malloc.h>
+#endif
 #include <stdarg.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -31,6 +36,16 @@ static uint64_t video_trace_signature = UINT64_C(1469598103934665603);
 static double reported_rates[16];
 static unsigned reported_rate_count;
 static unsigned geometry_changes;
+static unsigned redundant_geometry_changes;
+static unsigned geometry_width = 640u;
+static unsigned geometry_height = 480u;
+static double current_reported_rate = 50.0;
+static double last_notified_rate = 50.0;
+static bool measure_av;
+static long double measured_expected_audio;
+static uint64_t measured_actual_audio;
+static unsigned measured_video_frames;
+static bool av_rate_changed_during_measure;
 static char last_message[512];
 static bool invalid_vidc_message;
 static struct retro_keyboard_callback keyboard;
@@ -48,6 +63,19 @@ static unsigned kart_traffic_count;
 static unsigned cmos_read_count;
 static unsigned cmos_write_count;
 static unsigned real_boot_frames = 3000u;
+
+static size_t heap_bytes_in_use(void)
+{
+#if defined(__APPLE__)
+   malloc_statistics_t statistics;
+   malloc_zone_statistics(malloc_default_zone(), &statistics);
+   return statistics.size_in_use;
+#elif defined(__GLIBC__)
+   return (size_t)mallinfo2().uordblks;
+#else
+#error "The lifecycle allocation check needs platform malloc statistics"
+#endif
+}
 
 struct retro_vfs_file_handle { FILE *file; char *path; };
 struct retro_vfs_dir_handle { DIR *dir; struct dirent *entry; char path[4096]; };
@@ -162,7 +190,10 @@ static bool environment(unsigned command, void *data)
          ((struct retro_log_callback *)data)->log = frontend_log;
          return true;
       case RETRO_ENVIRONMENT_SET_PIXEL_FORMAT:
-         assert(phase == PHASE_LOAD && *(enum retro_pixel_format *)data == RETRO_PIXEL_FORMAT_XRGB8888); return true;
+         assert(phase == PHASE_LOAD && *(enum retro_pixel_format *)data == RETRO_PIXEL_FORMAT_XRGB8888);
+         geometry_width = 640u; geometry_height = 480u;
+         current_reported_rate = last_notified_rate = 50.0;
+         return true;
       case RETRO_ENVIRONMENT_SET_CONTROLLER_INFO:
          assert(phase == PHASE_LOAD); return true;
       case RETRO_ENVIRONMENT_SET_KEYBOARD_CALLBACK:
@@ -170,11 +201,25 @@ static bool environment(unsigned command, void *data)
       case RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY: *(const char **)data = system_dir; return true;
       case RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY: *(const char **)data = save_dir; return true;
       case RETRO_ENVIRONMENT_SET_GEOMETRY:
-         assert(phase == PHASE_RUN); ++geometry_changes; return true;
+      {
+         const struct retro_game_geometry *geometry = data;
+         assert(phase == PHASE_RUN);
+         if (geometry->base_width == geometry_width &&
+             geometry->base_height == geometry_height)
+            ++redundant_geometry_changes;
+         geometry_width = geometry->base_width;
+         geometry_height = geometry->base_height;
+         ++geometry_changes;
+         return true;
+      }
       case RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO:
       {
          const struct retro_system_av_info *av = data;
          assert(phase == PHASE_RUN && av->timing.fps >= 20.0 && av->timing.fps <= 200.0);
+         assert(av->timing.fps < last_notified_rate - 0.01 ||
+                av->timing.fps > last_notified_rate + 0.01);
+         if (measure_av) av_rate_changed_during_measure = true;
+         current_reported_rate = last_notified_rate = av->timing.fps;
          bool seen = false;
          for (unsigned i = 0; i < reported_rate_count; ++i)
             if (reported_rates[i] > av->timing.fps - 0.01 &&
@@ -197,6 +242,12 @@ static bool environment(unsigned command, void *data)
 static void video(const void *data, unsigned w, unsigned h, size_t pitch)
 {
    assert(data && w > 0u && w <= 4096u && h > 0u && h <= 2048u && pitch >= w * 4u);
+   assert(w == geometry_width && h == geometry_height);
+   if (measure_av)
+   {
+      measured_expected_audio += 48000.0L / (long double)current_reported_rate;
+      ++measured_video_frames;
+   }
    uint64_t hash = UINT64_C(1469598103934665603);
    const uint8_t *row = data;
    for (unsigned y = 0; y < h; ++y, row += pitch)
@@ -245,6 +296,7 @@ static size_t audio(const int16_t *data, size_t frames)
    for (size_t i = 0; i < frames * 2u; ++i)
       if (data[i]) ++nonzero_audio_samples;
    audio_frames += frames;
+   if (measure_av) measured_actual_audio += frames;
    return frames;
 }
 static void poll(void) {}
@@ -449,6 +501,40 @@ int main(int argc, char **argv)
    pointer_x = 1025; pointer_y = 970; retro_run();
    pointer_pressed = false; retro_run();
    for (unsigned frame = 78u; frame < 100u; ++frame) retro_run();
+   uint64_t measured_expected_total = 0u;
+   uint64_t measured_actual_total = 0u;
+   uint64_t measured_max_difference = 0u;
+   double measured_window_rates[2] = {0.0, 0.0};
+   unsigned measured_windows = 0u;
+   unsigned av_probe_frames = 0u;
+   for (unsigned attempt = 0; attempt < 100u && measured_windows < 2u; ++attempt)
+   {
+      double window_rate = current_reported_rate;
+      measured_expected_audio = 0.0L;
+      measured_actual_audio = 0u;
+      measured_video_frames = 0u;
+      av_rate_changed_during_measure = false;
+      measure_av = true;
+      for (unsigned frame = 0; frame < 32u; ++frame) retro_run();
+      measure_av = false;
+      av_probe_frames += 32u;
+      if (av_rate_changed_during_measure) continue;
+      bool duplicate_rate = false;
+      for (unsigned i = 0; i < measured_windows; ++i)
+         if (measured_window_rates[i] > window_rate - 0.01 &&
+             measured_window_rates[i] < window_rate + 0.01) duplicate_rate = true;
+      if (duplicate_rate) continue;
+      uint64_t window_expected = (uint64_t)(measured_expected_audio + 0.5L);
+      uint64_t window_difference = measured_actual_audio > window_expected ?
+         measured_actual_audio - window_expected : window_expected - measured_actual_audio;
+      assert(window_difference <= 1u);
+      measured_expected_total += window_expected;
+      measured_actual_total += measured_actual_audio;
+      if (window_difference > measured_max_difference)
+         measured_max_difference = window_difference;
+      measured_window_rates[measured_windows++] = window_rate;
+   }
+   assert(measured_windows == 2u);
    bool input_observed = before_input_signature != last_video_signature;
    uint64_t input_signature = last_video_signature;
    retro_unload_game();
@@ -465,6 +551,8 @@ int main(int argc, char **argv)
 
    uint8_t saved_cmos[256];
    uint8_t final_cmos[256];
+   size_t heap_baseline = 0u;
+   size_t heap_maximum_delta = 0u;
    for (unsigned cycle = 0; cycle < 100u; ++cycle)
    {
       phase = PHASE_LOAD; assert(retro_load_game(&game)); assert(keyboard.callback);
@@ -486,6 +574,11 @@ int main(int argc, char **argv)
       }
       retro_reset(); retro_unload_game();
       assert(open_files == 0u && open_dirs == 0u);
+      size_t heap_now = heap_bytes_in_use();
+      if (cycle == 0u)
+         heap_baseline = heap_now;
+      else if (heap_now > heap_baseline && heap_now - heap_baseline > heap_maximum_delta)
+         heap_maximum_delta = heap_now - heap_baseline;
    }
    char cmos_file[4096];
    snprintf(cmos_file, sizeof(cmos_file), "%s/arcdroid/cmos/A3000.test.bin", save_path);
@@ -496,20 +589,28 @@ int main(int argc, char **argv)
    assert(getcwd(cwd_after, sizeof(cwd_after)) && strcmp(cwd, cwd_after) == 0);
    assert(hash_file(argv[3]) == source_hash);
    assert(modified_shadow_count(save_path, source_hash, changed_source_hash) >= 2u);
-   assert(video_frames == 10200u && audio_frames > 0u && nonzero_audio_samples > 0u);
+   assert(video_frames == 10200u + av_probe_frames && audio_frames > 0u && nonzero_audio_samples > 0u);
+   assert(heap_maximum_delta <= 65536u);
+   assert(redundant_geometry_changes == 0u);
    assert(video_signature_count >= 1u && reported_rate_count >= 1u);
    assert(input_observed);
    assert(invalid_vidc_message);
    assert(dlclose(module) == 0);
    printf("libretro_harness: payload signatures %016llx/%016llx; "
-          "100 cycles, 10200 frames, %llu audio frames, "
+          "100 cycles, %u frames, %llu audio frames, "
           "%llu nonzero samples, %u frame signatures, %u reported rates, "
-          "%u geometry changes, 0 leaked VFS handles\n",
+          "%u geometry changes (0 redundant), A/V windows actual %llu expected %llu "
+          "(max delta %llu), "
+          "heap peak delta %zu bytes (limit 65536), 0 leaked VFS handles\n",
           (unsigned long long)before_input_signature,
           (unsigned long long)changed_signature,
+          video_frames,
           (unsigned long long)audio_frames,
           (unsigned long long)nonzero_audio_samples, video_signature_count,
-          reported_rate_count, geometry_changes);
+          reported_rate_count, geometry_changes,
+          (unsigned long long)measured_actual_total,
+          (unsigned long long)measured_expected_total,
+          (unsigned long long)measured_max_difference, heap_maximum_delta);
    printf("reported rates:");
    for (unsigned i = 0; i < reported_rate_count; ++i) printf(" %.6f", reported_rates[i]);
    printf("\n");
