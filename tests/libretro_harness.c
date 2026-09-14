@@ -22,8 +22,20 @@ static unsigned open_files;
 static unsigned open_dirs;
 static unsigned video_frames;
 static uint64_t audio_frames;
+static uint64_t nonzero_audio_samples;
+static uint64_t video_signatures[16];
+static unsigned video_signature_count;
+static uint64_t last_video_signature;
+static double reported_rates[16];
+static unsigned reported_rate_count;
+static unsigned geometry_changes;
 static char last_message[512];
 static struct retro_keyboard_callback keyboard;
+static bool joypad_a;
+static int mouse_x, mouse_y;
+static unsigned mouse_buttons;
+static bool pointer_pressed;
+static int pointer_x, pointer_y;
 
 struct retro_vfs_file_handle { FILE *file; char *path; };
 struct retro_vfs_dir_handle { DIR *dir; struct dirent *entry; char path[4096]; };
@@ -118,7 +130,20 @@ static bool environment(unsigned command, void *data)
          assert(phase == PHASE_LOAD); keyboard = *(struct retro_keyboard_callback *)data; return true;
       case RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY: *(const char **)data = system_dir; return true;
       case RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY: *(const char **)data = save_dir; return true;
-      case RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO: assert(phase == PHASE_RUN); return true;
+      case RETRO_ENVIRONMENT_SET_GEOMETRY:
+         assert(phase == PHASE_RUN); ++geometry_changes; return true;
+      case RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO:
+      {
+         const struct retro_system_av_info *av = data;
+         assert(phase == PHASE_RUN && av->timing.fps >= 20.0 && av->timing.fps <= 200.0);
+         bool seen = false;
+         for (unsigned i = 0; i < reported_rate_count; ++i)
+            if (reported_rates[i] > av->timing.fps - 0.01 &&
+                reported_rates[i] < av->timing.fps + 0.01) seen = true;
+         if (!seen && reported_rate_count < 16u)
+            reported_rates[reported_rate_count++] = av->timing.fps;
+         return true;
+      }
       case RETRO_ENVIRONMENT_SET_MESSAGE_EXT:
          snprintf(last_message, sizeof(last_message), "%s", ((struct retro_message_ext *)data)->msg); return true;
       case RETRO_ENVIRONMENT_SET_MESSAGE:
@@ -129,12 +154,50 @@ static bool environment(unsigned command, void *data)
 static void video(const void *data, unsigned w, unsigned h, size_t pitch)
 {
    assert(data && w > 0u && w <= 4096u && h > 0u && h <= 2048u && pitch >= w * 4u);
+   uint64_t hash = UINT64_C(1469598103934665603);
+   const uint8_t *row = data;
+   for (unsigned y = 0; y < h; ++y, row += pitch)
+      for (unsigned x = 0; x < w * 4u; ++x)
+      {
+         hash ^= row[x];
+         hash *= UINT64_C(1099511628211);
+      }
+   bool seen = false;
+   for (unsigned i = 0; i < video_signature_count; ++i)
+      if (video_signatures[i] == hash) seen = true;
+   if (!seen && video_signature_count < 16u)
+      video_signatures[video_signature_count++] = hash;
+   last_video_signature = hash;
    ++video_frames;
 }
 static size_t audio(const int16_t *data, size_t frames)
-{ assert(data && frames <= 2048u); audio_frames += frames; return frames; }
+{
+   assert(data && frames <= 2048u);
+   for (size_t i = 0; i < frames * 2u; ++i)
+      if (data[i]) ++nonzero_audio_samples;
+   audio_frames += frames;
+   return frames;
+}
 static void poll(void) {}
-static int16_t input(unsigned p, unsigned d, unsigned i, unsigned id) { (void)p; (void)d; (void)i; (void)id; return 0; }
+static int16_t input(unsigned p, unsigned d, unsigned i, unsigned id)
+{
+   (void)p; (void)i;
+   if (d == RETRO_DEVICE_JOYPAD && id == RETRO_DEVICE_ID_JOYPAD_A) return joypad_a;
+   if (d == RETRO_DEVICE_MOUSE)
+   {
+      if (id == RETRO_DEVICE_ID_MOUSE_X) { int value = mouse_x; mouse_x = 0; return (int16_t)value; }
+      if (id == RETRO_DEVICE_ID_MOUSE_Y) { int value = mouse_y; mouse_y = 0; return (int16_t)value; }
+      if (id == RETRO_DEVICE_ID_MOUSE_LEFT) return (mouse_buttons & 1u) != 0u;
+      if (id == RETRO_DEVICE_ID_MOUSE_RIGHT) return (mouse_buttons & 2u) != 0u;
+   }
+   if (d == RETRO_DEVICE_POINTER)
+   {
+      if (id == RETRO_DEVICE_ID_POINTER_PRESSED) return pointer_pressed;
+      if (id == RETRO_DEVICE_ID_POINTER_X) return (int16_t)pointer_x;
+      if (id == RETRO_DEVICE_ID_POINTER_Y) return (int16_t)pointer_y;
+   }
+   return 0;
+}
 
 static void make_directory(const char *path) { if (mkdir(path, 0755) && errno != EEXIST) abort(); }
 static void copy_file(const char *from, const char *to)
@@ -205,6 +268,40 @@ int main(int argc, char **argv)
    struct retro_game_info bad_game = {corrupt, NULL, 0u, NULL};
    phase = PHASE_LOAD; assert(!retro_load_game(&bad_game)); assert(strstr(last_message, "geometry"));
 
+   /* The ARMv2 validation ROM reads sector zero through WD1772 and derives
+    * its pixels from that payload. A one-byte disc change must reach the guest. */
+   char changed[4096]; snprintf(changed, sizeof(changed), "%s/changed.adf", argv[4]);
+   copy_file(argv[3], changed);
+   FILE *changed_file = fopen(changed, "rb+"); assert(changed_file);
+   assert(fseek(changed_file, 64, SEEK_SET) == 0);
+   int changed_byte = fgetc(changed_file); assert(changed_byte != EOF);
+   assert(fseek(changed_file, 64, SEEK_SET) == 0);
+   assert(fputc(changed_byte ^ 0x5a, changed_file) != EOF && !fclose(changed_file));
+   struct retro_game_info changed_game = {changed, NULL, 0u, NULL};
+   phase = PHASE_LOAD; assert(retro_load_game(&game));
+   phase = PHASE_RUN; for (unsigned frame = 0; frame < 60u; ++frame) retro_run();
+   uint64_t before_input_signature = last_video_signature;
+   keyboard.callback(true, RETROK_a, 0u, 0u);
+   joypad_a = true; mouse_x = 150; mouse_y = -90; mouse_buttons = 1u;
+   for (unsigned frame = 0; frame < 15u; ++frame) retro_run();
+   keyboard.callback(false, RETROK_a, 0u, 0u);
+   joypad_a = false; mouse_buttons = 0u;
+   pointer_pressed = true; pointer_x = 1000; pointer_y = 1000; retro_run();
+   pointer_x = 1025; pointer_y = 970; retro_run();
+   pointer_pressed = false; retro_run();
+   for (unsigned frame = 78u; frame < 100u; ++frame) retro_run();
+   bool input_observed = before_input_signature != last_video_signature;
+   uint64_t input_signature = last_video_signature;
+   retro_unload_game();
+   phase = PHASE_LOAD; assert(retro_load_game(&changed_game));
+   phase = PHASE_RUN; for (unsigned frame = 0; frame < 60u; ++frame) retro_run();
+   uint64_t changed_signature = last_video_signature;
+   for (unsigned frame = 60u; frame < 100u; ++frame) retro_run();
+   retro_unload_game();
+   assert(before_input_signature != changed_signature);
+   input_observed = input_observed || before_input_signature != input_signature;
+   assert(hash_file(argv[3]) == source_hash);
+
    uint8_t saved_cmos[256];
    for (unsigned cycle = 0; cycle < 100u; ++cycle)
    {
@@ -222,9 +319,22 @@ int main(int argc, char **argv)
    assert(open_files == 0u && open_dirs == 0u);
    assert(getcwd(cwd_after, sizeof(cwd_after)) && strcmp(cwd, cwd_after) == 0);
    assert(hash_file(argv[3]) == source_hash);
-   assert(video_frames == 10000u && audio_frames > 0u);
+   assert(video_frames == 10200u && audio_frames > 0u && nonzero_audio_samples > 0u);
+   assert(video_signature_count >= 1u && reported_rate_count >= 1u);
+   assert(input_observed);
    assert(dlclose(module) == 0);
-   printf("libretro_harness: 100 cycles, 10000 frames, %llu audio frames, 0 leaked VFS handles\n",
-          (unsigned long long)audio_frames);
+   printf("libretro_harness: payload signatures %016llx/%016llx; "
+          "100 cycles, 10200 frames, %llu audio frames, "
+          "%llu nonzero samples, %u frame signatures, %u reported rates, "
+          "%u geometry changes, 0 leaked VFS handles\n",
+          (unsigned long long)before_input_signature,
+          (unsigned long long)changed_signature,
+          (unsigned long long)audio_frames,
+          (unsigned long long)nonzero_audio_samples, video_signature_count,
+          reported_rate_count, geometry_changes);
+   printf("reported rates:");
+   for (unsigned i = 0; i < reported_rate_count; ++i) printf(" %.6f", reported_rates[i]);
+   printf("\n");
+   printf("guest input signature change: %s\n", input_observed ? "observed" : "not observed");
    return 0;
 }

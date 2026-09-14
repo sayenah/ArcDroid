@@ -9,6 +9,7 @@ extern void vidc_setclock(int clock);
 void vidc_setclock_direct(int clock);
 extern int vidc_getclock();
 int vidc_get_hs();
+double vidc_get_refresh_rate(void);
 extern void closevideo();
 /*Attach device to VIDC extenal data port. vidc_data() provides device with a
   scanline's worth of pixels. vidc_vsync() indicates the start of VIDC's vsync*/

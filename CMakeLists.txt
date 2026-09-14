@@ -98,6 +98,7 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
 
   if(WIN32)
     add_executable(windows_load_harness tests/windows_load_harness.c)
+    target_include_directories(windows_load_harness PRIVATE libretro/include)
     target_compile_options(windows_load_harness PRIVATE $<$<C_COMPILER_ID:GNU,Clang>:-UNDEBUG>)
     add_dependencies(windows_load_harness arcdroid_libretro)
     add_test(NAME windows-load-harness COMMAND windows_load_harness $<TARGET_FILE:arcdroid_libretro>)

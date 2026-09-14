@@ -283,7 +283,8 @@ void sound_init(void)
 	sound_first_poll = 1;
 	SAMP_INC = ((int)((1000000.0 / 48000.0) * 16384.0));
 
-	samp_rp = 0xff000000;
+	/* ArcDroid: begin the resampler at the session-owned DMA ring origin. */
+	samp_rp = 0;
 	samp_wp = 0;
 	samp_fp = 0;
 	sound_write_ptr = 0;

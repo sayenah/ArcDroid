@@ -1383,6 +1383,23 @@ int vidc_get_hs()
 	return vidc.in_display;
 }
 
+/* ArcDroid: expose the programmed guest field rate without host-run-loop
+ * quantisation. The adapter publishes it only after a completed field. */
+double vidc_get_refresh_rate(void)
+{
+	double pixel_clock;
+	if (vidc.htot <= 0 || vidc.vtot <= 0)
+		return 0.0;
+	switch (vidc.cr & 3)
+	{
+		case 0: pixel_clock = (double)vidc.clock * 1000.0 / 3.0; break;
+		case 1: pixel_clock = (double)vidc.clock * 1000.0 / 2.0; break;
+		case 2: pixel_clock = (double)vidc.clock * 2000.0 / 3.0; break;
+		default: pixel_clock = (double)vidc.clock * 1000.0; break;
+	}
+	return pixel_clock / ((double)((vidc.htot * 2) + 2) * (double)vidc.vtot);
+}
+
 void vidc_reset()
 {
 	timer_add(&vidc.timer, vidc_poll, NULL, 1);

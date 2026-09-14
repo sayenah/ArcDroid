@@ -339,7 +339,7 @@ bool arc_engine_run_frame(ArcInputState *input, ArcEngineFrame *frame)
    if (!frame->elapsed_us) frame->elapsed_us = 1u;
    if (frame->field_completed)
    {
-      double measured = 1000000.0 / (double)frame->elapsed_us;
+      double measured = vidc_get_refresh_rate();
       if (measured >= 20.0 && measured <= 200.0) arc_last_refresh = measured;
    }
    frame->refresh_hz = arc_last_refresh;
