@@ -1,8 +1,8 @@
 # ArcDroid Handoff
 
-**Stage:** QA  
-**Owner:** Opus  
-**Next (re-QA):** Opus performs independent re-QA of **PR #5** at HEAD `35266ff` (`slice/01-skeleton-boot`) on a fresh read-only clone: verify every remediation item R-1…R-24 against its stated test/evidence, re-run the first QA's adversarial cases, confirm no regression in AC-5/AC-12(a), assess the Windows RetroArch log's `underrun_frames=1494` audio counter (frontend pacing at a 60 Hz target with dummy audio vs a core defect), and report findings ranked by severity. Do not implement, edit docs, or merge. Fable adjudicates; if no material findings remain, Fable presents the merge gate (AC-11, AC-12(b)/(c)) to the Founder.
+**Stage:** IMPLEMENTATION  
+**Owner:** Sol  
+**Next (run 5, final fixes):** Continue on `slice/01-skeleton-boot` (PR #5, HEAD `35266ff`). `git merge origin/main`, then implement **R-25…R-32** below exactly (small, evidence-focused), push once with the corrected PR #5 description. Fable verifies and dispatches a targeted Opus re-check; then the Founder merge gate.
 
 ## Objective
 Slice 1 — "one loose ADF boots on both platforms": a RetroArch/libretro core, built from the Arculator engine, that loads a loose ADF/ADL disc image passed by the frontend, identifies user-supplied firmware by content fingerprint, selects a conservative ARM2 machine automatically, runs the emulated Archimedes with video, audio, RetroPad/keyboard/mouse/pointer input and persistent CMOS, tears down cleanly, and does so identically on native Windows x86_64 RetroArch and physical Android arm64 RetroArch. Governing requirements: PRD §7–§9, §12–§15, §18–§21, §23 items 1–4, 6–7, 10–12; protocol §10–§12.
@@ -14,6 +14,19 @@ Slice 1 — "one loose ADF boots on both platforms": a RetroArch/libretro core, 
 - Provenance: tracked binaries = exactly the five D-018 files; 15 upstream files modified, 14 carry a modification notice (`vidc.h` does not).
 - Sol's AC table: AC-1…AC-10, AC-12(a) pass; **AC-11, AC-12(b), AC-12(c) blocked** (no Android device attached; no Founder Windows host with the private ROM). These three cannot be produced by Sol or Opus; the Founder must either attach devices/provide a host or explicitly accept the gap before merge (protocol §17).
 - Root causes fixed in run 3 worth QA attention: WD1772 seek completion had lived in the excluded drive-noise module (`disc.c`, notice present); CMOS boot recipe patches PRM bytes 5/11/16/135 conditionally with checksum preserved (`core/cmos_defaults.c`).
+
+## Opus re-QA of HEAD `35266ff` (2026-09-14) — Fable adjudication
+Verdict: functionally fit to merge subject to the Founder gate; no user-facing defect found; all adversarial cases pass; 16/16 upstream files byte-verified with dated notices; AC-5/AC-12(a) reproduced. Findings adjudicated: H-1, H-2, M-1, M-3, L-1, L-2, L-4, L-5 → R-25…R-32 below (evidence/test defects and small risks). **M-2 (audio underruns):** confirmed core-side, not frontend pacing — the engine delivers audio on its 50 ms `pollsound` boundary while the adapter demands per-field, so a shortfall is zero-filled: 0.033 % on a stable-mode RISC OS desktop (startup priming), 0.76 % on the mode-churning test ROM. **Accepted as a known limitation for Slice 1** (not audible on real content), recorded here for the audio-quality follow-up slice: make the resampler flush truly incremental per field. L-3 (dead store) and L-6 (cosmetic geometry after failed load) accepted as-is.
+
+## Final fixes R-25…R-32 (Sol, run 5)
+- **R-25 (H-1)** `tools/check-shipping-io.sh` must fail loudly if its search tool is missing (use `grep -E` or check `command -v rg`), must include `engine/arcdroid_stubs.c` and every compiled shipping source, and its self-check must prove it catches an injected `fopen` (add a negative self-test like the asset guard's). CI installs whatever it needs on all three jobs.
+- **R-26 (H-2)** Harness samples the audio counters **before** `retro_reset` so the steady-state assertion reads real values; assert the documented expectation (startup priming only on a stable mode: underruns bounded, overruns 0), not zero.
+- **R-27 (M-3)** `ARCDROID_TEST_FAULTS`/`getenv` fault hooks compile only into test executables or a separate test build of the core, never into the DLL/.so uploaded as the RetroArch-job or release artifact; the `windows-retroarch` job must consume a core built without the hook; static check: no `getenv` import in shipping binaries.
+- **R-28 (L-4)** Firmware auto-selection priority: the ArcDroid test ROM ranks **below** every real OS class on `Auto` (it is selectable only when no real firmware exists or via the override).
+- **R-29 (L-2)** `arc_engine_media_insert` closes any live drive handle before `disc_load` (defence in depth; add a harness insert-over-insert case).
+- **R-30 (L-1)** Harness asserts behaviour for port-1 polling and `arcdroid_pointer_mode=disabled` (guest-observable), not log substrings.
+- **R-31 (L-5)** `THIRD_PARTY_NOTICES.md`: drop the Windows static-zlib statement (Windows links no zlib) or link it if actually needed.
+- **R-32 (M-1)** PR #5 description corrected: HEAD SHA, "16 modified upstream files", the `can_dupe` path is verified by the harness only if the harness now sets `can_dupe=true` in a second pass (add it, then claim it), and the steady-state counter claim reflects R-26's real values.
 
 ## Sol run 4 (remediation) — Fable verification (2026-09-14)
 HEAD `35266ff` (12 commits after `83c9914` + `arc.h` notice). Fable rebuilt on the dev Mac: `ctest` 4/4 (core-services, shipping-io-guard, asset-guard-self-test, libretro-harness); harness A/V windows 69993/69993 (delta 0) against the generator-derived oracle, 0 redundant geometry changes, heap peak delta 7 680 B, 0 leaked handles; real boot with private `ROM311` + generated demo disc unchanged (84 FDC commands / 14 reads, pattern rendered); exactly 25 exports with explicit export lists on all three platforms; CI on UCRT64 with export/import/ELF/asset guards; all 16 modified upstream files carry dated notices. Windows RetroArch job now compares the screenshot to the generated pattern signature and states explicitly that reloads are process relaunches and the tone is not verifiable in CI. Sol reports R-1…R-24 complete; Opus verifies.
