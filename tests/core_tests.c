@@ -3,6 +3,7 @@
 
 #include <assert.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 static void test_hashes(void)
@@ -28,6 +29,77 @@ static void test_firmware_table(void)
    assert(arc_firmware_nearest_size(2097151u, 4096u, &nearest) && nearest == 2097152u);
    assert(arc_firmware_nearest_size(2097153u, 4096u, &nearest) && nearest == 2097152u);
    assert(!arc_firmware_nearest_size(42u, 4096u, &nearest));
+
+   /* Exercise every catalogue row without redistributing firmware. For each
+    * OS, derive synthetic lane files from one deterministic combined image,
+    * assemble them through the catalogue recipe, and compare recomputed
+    * fingerprints with the independently digested combined image. */
+   bool *visited = calloc(count, sizeof(*visited));
+   assert(visited);
+   for (size_t combined_index = 0u; combined_index < count; ++combined_index)
+   {
+      const ArcFirmwareFingerprint *combined = &table[combined_index];
+      if (combined->recipe != ARC_RECIPE_COMBINED) continue;
+      visited[combined_index] = true;
+      uint8_t *image = malloc(combined->size);
+      uint8_t *assembled = malloc(combined->size);
+      assert(image && assembled);
+      for (size_t i = 0u; i < combined->size; ++i)
+         image[i] = (uint8_t)((i * 73u) ^ (i >> 5u) ^ (unsigned)combined->os);
+      ArcDigest expected = arc_digest(image, combined->size);
+      ArcDigest recomputed = arc_digest(image, combined->size);
+      assert(expected.size == recomputed.size && expected.crc32 == recomputed.crc32 &&
+             strcmp(expected.sha1, recomputed.sha1) == 0);
+
+      for (ArcFirmwareRecipe recipe = ARC_RECIPE_BYTE_LANES_4;
+           recipe <= ARC_RECIPE_HALFWORD_LANES_2; ++recipe)
+      {
+         unsigned lane_count = recipe == ARC_RECIPE_BYTE_LANES_4 ? 4u : 2u;
+         const uint8_t *parts[4] = {NULL, NULL, NULL, NULL};
+         uint8_t *owned[4] = {NULL, NULL, NULL, NULL};
+         size_t sizes[4] = {0u, 0u, 0u, 0u};
+         unsigned found = 0u;
+         for (size_t entry_index = 0u; entry_index < count; ++entry_index)
+         {
+            const ArcFirmwareFingerprint *entry = &table[entry_index];
+            if (entry->os != combined->os || entry->recipe != recipe) continue;
+            assert(entry->lane < lane_count && !parts[entry->lane]);
+            assert(entry->size * lane_count == combined->size);
+            owned[entry->lane] = malloc(entry->size);
+            assert(owned[entry->lane]);
+            parts[entry->lane] = owned[entry->lane];
+            sizes[entry->lane] = entry->size;
+            visited[entry_index] = true;
+            ++found;
+         }
+         if (!found) continue;
+         assert(found == lane_count);
+         size_t lane_size = combined->size / lane_count;
+         if (recipe == ARC_RECIPE_BYTE_LANES_4)
+            for (size_t i = 0u; i < lane_size; ++i)
+               for (unsigned lane = 0u; lane < lane_count; ++lane)
+                  owned[lane][i] = image[i * 4u + lane];
+         else
+            for (size_t i = 0u; i < lane_size; i += 2u)
+               for (unsigned lane = 0u; lane < lane_count; ++lane)
+               {
+                  owned[lane][i] = image[(i / 2u) * 4u + lane * 2u];
+                  owned[lane][i + 1u] = image[(i / 2u) * 4u + lane * 2u + 1u];
+               }
+         char assembly_error[96] = {0};
+         assert(arc_firmware_assemble(parts, sizes, lane_count, recipe,
+                                      assembled, combined->size,
+                                      assembly_error, sizeof(assembly_error)));
+         recomputed = arc_digest(assembled, combined->size);
+         assert(expected.size == recomputed.size && expected.crc32 == recomputed.crc32 &&
+                strcmp(expected.sha1, recomputed.sha1) == 0);
+         for (unsigned lane = 0u; lane < lane_count; ++lane) free(owned[lane]);
+      }
+      free(assembled);
+      free(image);
+   }
+   for (size_t i = 0u; i < count; ++i) assert(visited[i]);
+   free(visited);
 }
 
 static void test_assembly(void)

@@ -50,6 +50,7 @@ $config = Join-Path $WorkDirectory "retroarch-ci.cfg"
 video_driver = "gdi"
 audio_driver = "sdl2"
 audio_enable = "true"
+record_driver = "wav"
 midi_driver = "null"
 midi_input = "Null"
 midi_output = "Null"
@@ -64,10 +65,13 @@ log_verbosity = "true"
 libretro_log_level = "0"
 pause_nonactive = "false"
 video_vsync = "false"
+network_cmd_enable = "true"
+network_cmd_port = "55355"
 "@ | Set-Content -Encoding ASCII $config
 
 $log = Join-Path $evidenceDirectory "retroarch.log"
 $screenshot = Join-Path $evidenceDirectory "arcdroid-pattern.png"
+$tone = Join-Path $evidenceDirectory "arcdroid-tone.wav"
 function Invoke-ArcDroid([int]$Frames, [bool]$TakeScreenshot) {
     $arguments = @(
         "--config=$config", "--libretro=$core", "--verbose",
@@ -76,6 +80,7 @@ function Invoke-ArcDroid([int]$Frames, [bool]$TakeScreenshot) {
     if ($TakeScreenshot) {
         $arguments += "--max-frames-ss"
         $arguments += "--max-frames-ss-path=$screenshot"
+        $arguments += "--record=$tone"
     }
     $arguments += $content
     # retroarch.exe is a Windows GUI-subsystem executable. PowerShell does not
@@ -96,13 +101,102 @@ function Invoke-ArcDroid([int]$Frames, [bool]$TakeScreenshot) {
 }
 
 Invoke-ArcDroid 600 $true
-for ($reload = 1; $reload -le 10; $reload++) {
-    Write-Host "RetroArch content reload $reload/10"
-    Invoke-ArcDroid 100 $false
+
+# RetroArch's network command API defines LOAD_CONTENT as
+# "<core path>|<content path>". Try ten reloads inside one process and retain
+# the attempt log. If this stable binary does not expose/respond on UDP 55355,
+# fall back to ten explicit process relaunches and say so in the job summary.
+function Try-InSessionReloads {
+    $arguments = @(
+        "--config=$config", "--libretro=$core", "--verbose",
+        "--max-frames=12000", $content
+    )
+    $stdout = Join-Path $WorkDirectory "network-reload.stdout.log"
+    $stderr = Join-Path $WorkDirectory "network-reload.stderr.log"
+    $attemptLog = Join-Path $evidenceDirectory "network-reload-attempt.log"
+    $process = Start-Process -FilePath $retroArch -ArgumentList $arguments `
+        -PassThru -NoNewWindow -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+    try {
+        Start-Sleep -Seconds 2
+        if ($process.HasExited) { throw "RetroArch exited before the network probe" }
+        $udp = [System.Net.Sockets.UdpClient]::new()
+        $udp.Client.ReceiveTimeout = 3000
+        $udp.Connect("127.0.0.1", 55355)
+        $statusBytes = [Text.Encoding]::ASCII.GetBytes("GET_STATUS")
+        [void]$udp.Send($statusBytes, $statusBytes.Length)
+        $remote = [System.Net.IPEndPoint]::new([System.Net.IPAddress]::Any, 0)
+        $statusReply = [Text.Encoding]::ASCII.GetString($udp.Receive([ref]$remote))
+        if (-not $statusReply) { throw "empty GET_STATUS reply" }
+        $loadCommand = "LOAD_CONTENT $(ConfigPath $core)|$(ConfigPath $content)"
+        for ($reload = 1; $reload -le 10; $reload++) {
+            Write-Host "RetroArch in-session content reload $reload/10"
+            $bytes = [Text.Encoding]::ASCII.GetBytes($loadCommand)
+            [void]$udp.Send($bytes, $bytes.Length)
+            Start-Sleep -Milliseconds 500
+            if ($process.HasExited) { throw "RetroArch exited during in-session reload $reload" }
+        }
+        $quitBytes = [Text.Encoding]::ASCII.GetBytes("QUIT")
+        [void]$udp.Send($quitBytes, $quitBytes.Length)
+        $udp.Dispose()
+        if (-not $process.WaitForExit(30000)) { throw "RetroArch did not exit after QUIT" }
+        $output = @()
+        if (Test-Path $stdout) { $output += Get-Content $stdout }
+        if (Test-Path $stderr) { $output += Get-Content $stderr }
+        $output | Set-Content -Encoding UTF8 $attemptLog
+        $identifications = @($output | Select-String -SimpleMatch "Firmware: ArcDroid test ROM").Count
+        if ($process.ExitCode -ne 0 -or $identifications -lt 11) {
+            throw "network commands did not produce 10 observable reloads (firmware identifications=$identifications)"
+        }
+        $output | Add-Content -Encoding UTF8 $log
+        return $true
+    }
+    catch {
+        $_ | Out-String | Add-Content -Encoding UTF8 $attemptLog
+        return $false
+    }
+    finally {
+        if (-not $process.HasExited) { Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue }
+        Remove-Item -Force -ErrorAction SilentlyContinue $stdout, $stderr
+    }
+}
+
+$inSessionReloads = Try-InSessionReloads
+if (-not $inSessionReloads) {
+    for ($reload = 1; $reload -le 10; $reload++) {
+        Write-Host "RetroArch process-relaunch content load $reload/10"
+        Invoke-ArcDroid 100 $false
+    }
 }
 
 if (-not (Test-Path $screenshot) -or (Get-Item $screenshot).Length -lt 128) {
     throw "RetroArch did not produce the required pattern screenshot"
+}
+
+# The generated ADF's first-sector XOR is 0xcb. The authored ROM expands that
+# byte and its complement (0x34), and the programmed VIDC palette renders them
+# as cyan (#33bbff) and orange (#cc4400). Require both payload-derived colours
+# and non-uniform output; a generic fixed blank/test image cannot satisfy this.
+Add-Type -AssemblyName System.Drawing
+$bitmap = [System.Drawing.Bitmap]::new($screenshot)
+$cyanPixels = 0
+$orangePixels = 0
+$colours = [System.Collections.Generic.HashSet[int]]::new()
+for ($y = 0; $y -lt $bitmap.Height; $y++) {
+    for ($x = 0; $x -lt $bitmap.Width; $x++) {
+        $pixel = $bitmap.GetPixel($x, $y)
+        [void]$colours.Add($pixel.ToArgb())
+        if ($pixel.R -ge 35 -and $pixel.R -le 70 -and
+            $pixel.G -ge 165 -and $pixel.G -le 205 -and $pixel.B -ge 235) { $cyanPixels++ }
+        if ($pixel.R -ge 185 -and $pixel.R -le 225 -and
+            $pixel.G -ge 45 -and $pixel.G -le 90 -and $pixel.B -le 25) { $orangePixels++ }
+    }
+}
+$dimensions = "$($bitmap.Width)x$($bitmap.Height)"
+$bitmap.Dispose()
+"dimensions=$dimensions unique_colours=$($colours.Count) payload_cyan=$cyanPixels payload_orange=$orangePixels" |
+    Set-Content -Encoding ASCII (Join-Path $evidenceDirectory "screenshot-analysis.txt")
+if ($colours.Count -lt 2 -or $cyanPixels -lt 1000 -or $orangePixels -lt 1000) {
+    throw "Screenshot lacks the expected payload-derived cyan/orange signature"
 }
 if (-not (Select-String -Quiet -SimpleMatch "Firmware: ArcDroid test ROM" $log)) {
     throw "RetroArch log does not contain the test-ROM firmware identification"
@@ -114,3 +208,28 @@ if ($errors) {
 }
 Write-Host "RetroArch ${retroArchVersion}: initial 600-frame run and 10 content reloads passed"
 Write-Host "Screenshot SHA-256: $((Get-FileHash -Algorithm SHA256 $screenshot).Hash.ToLowerInvariant())"
+$reloadEvidence = if ($inSessionReloads) {
+    "10 in-session reloads passed through the RetroArch UDP LOAD_CONTENT command"
+} else {
+    "RetroArch network reload was unavailable; the 10 reload checks are process relaunches"
+}
+$audioEvidence = "Tone not verifiable in CI: the RetroArch WAV recording driver did not produce a usable file"
+if (Test-Path $tone) {
+    $waveBytes = [IO.File]::ReadAllBytes($tone)
+    $waveHeader = if ($waveBytes.Length -ge 12) { [Text.Encoding]::ASCII.GetString($waveBytes, 0, 12) } else { "" }
+    $nonzeroPcmBytes = 0
+    for ($index = 44; $index -lt $waveBytes.Length; $index++) {
+        if ($waveBytes[$index] -ne 0) { $nonzeroPcmBytes++ }
+    }
+    if ($waveHeader.StartsWith("RIFF") -and $waveHeader.EndsWith("WAVE") -and $nonzeroPcmBytes -gt 1000) {
+        $audioEvidence = "WAV recording captured by RetroArch: $($waveBytes.Length) bytes, $nonzeroPcmBytes non-zero PCM bytes"
+    }
+}
+Write-Host $reloadEvidence
+Write-Host $audioEvidence
+if ($env:GITHUB_STEP_SUMMARY) {
+    Add-Content -Encoding UTF8 $env:GITHUB_STEP_SUMMARY "### ArcDroid native Windows RetroArch"
+    Add-Content -Encoding UTF8 $env:GITHUB_STEP_SUMMARY "- Screenshot: expected payload-derived cyan/orange pattern observed ($dimensions; $cyanPixels/$orangePixels pixels)."
+    Add-Content -Encoding UTF8 $env:GITHUB_STEP_SUMMARY "- Reloads: $reloadEvidence."
+    Add-Content -Encoding UTF8 $env:GITHUB_STEP_SUMMARY "- Audio: $audioEvidence."
+}

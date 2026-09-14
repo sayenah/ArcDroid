@@ -47,6 +47,8 @@ static long double measured_expected_audio;
 static uint64_t measured_actual_audio;
 static unsigned measured_video_frames;
 static bool av_rate_changed_during_measure;
+static unsigned measured_oracle_mode;
+static bool measured_oracle_valid;
 static char last_message[512];
 static bool invalid_vidc_message;
 static struct retro_keyboard_callback keyboard;
@@ -333,8 +335,20 @@ static void video(const void *data, unsigned w, unsigned h, size_t pitch)
    assert(w == geometry_width && h == geometry_height);
    if (measure_av)
    {
-      measured_expected_audio += 48000.0L / (long double)current_reported_rate;
-      ++measured_video_frames;
+      /* Independent test-ROM timing oracle. generate_fixtures.py programs a
+       * 1024-pixel line at 16 MHz and alternates 312/400 total lines. The
+       * woven renderer exposes those modes as 640x512 and 640x256. Never use
+       * the core's SET_SYSTEM_AV_INFO value to compute the expected samples. */
+      unsigned oracle_mode = h == 512u ? 1u : (h == 256u ? 2u : 0u);
+      long double field_period = oracle_mode == 1u ? 0.019968L : 0.0256L;
+      if (!oracle_mode || (measured_oracle_mode && measured_oracle_mode != oracle_mode))
+         measured_oracle_valid = false;
+      else
+      {
+         measured_oracle_mode = oracle_mode;
+         measured_expected_audio += 48000.0L * field_period;
+         ++measured_video_frames;
+      }
    }
    uint64_t hash = UINT64_C(1469598103934665603);
    const uint8_t *row = data;
@@ -688,26 +702,31 @@ int main(int argc, char **argv)
    uint64_t measured_expected_total = 0u;
    uint64_t measured_actual_total = 0u;
    uint64_t measured_max_difference = 0u;
-   double measured_window_rates[2] = {0.0, 0.0};
+   unsigned measured_window_modes[2] = {0u, 0u};
    unsigned measured_windows = 0u;
    unsigned av_probe_frames = 0u;
    for (unsigned attempt = 0; attempt < 100u && measured_windows < 2u; ++attempt)
    {
-      double window_rate = current_reported_rate;
       measured_expected_audio = 0.0L;
       measured_actual_audio = 0u;
       measured_video_frames = 0u;
       av_rate_changed_during_measure = false;
+      measured_oracle_mode = 0u;
+      measured_oracle_valid = true;
       measure_av = true;
       for (unsigned frame = 0; frame < 32u; ++frame) retro_run();
       measure_av = false;
       av_probe_frames += 32u;
-      if (av_rate_changed_during_measure) continue;
+      if (av_rate_changed_during_measure || !measured_oracle_valid ||
+          measured_video_frames != 32u) continue;
       bool duplicate_rate = false;
       for (unsigned i = 0; i < measured_windows; ++i)
-         if (measured_window_rates[i] > window_rate - 0.01 &&
-             measured_window_rates[i] < window_rate + 0.01) duplicate_rate = true;
+         if (measured_window_modes[i] == measured_oracle_mode) duplicate_rate = true;
       if (duplicate_rate) continue;
+      double oracle_rate = measured_oracle_mode == 1u ?
+         1.0 / 0.019968 : 1.0 / 0.0256;
+      assert(current_reported_rate > oracle_rate - 0.0001 &&
+             current_reported_rate < oracle_rate + 0.0001);
       uint64_t window_expected = (uint64_t)(measured_expected_audio + 0.5L);
       uint64_t window_difference = measured_actual_audio > window_expected ?
          measured_actual_audio - window_expected : window_expected - measured_actual_audio;
@@ -716,7 +735,7 @@ int main(int argc, char **argv)
       measured_actual_total += measured_actual_audio;
       if (window_difference > measured_max_difference)
          measured_max_difference = window_difference;
-      measured_window_rates[measured_windows++] = window_rate;
+      measured_window_modes[measured_windows++] = measured_oracle_mode;
    }
    assert(measured_windows == 2u);
    bool input_observed = before_input_signature != last_video_signature;
@@ -865,6 +884,7 @@ int main(int argc, char **argv)
    assert(input_observed);
    assert(invalid_vidc_message);
    assert(saw_audio_counters);
+   assert(logged_underruns == 0u && logged_overruns == 0u);
    assert(dlclose(module) == 0);
    printf("libretro_harness: payload signatures %016llx/%016llx; "
           "100 cycles, %u frames, %llu audio frames, "

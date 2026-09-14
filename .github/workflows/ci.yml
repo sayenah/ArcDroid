@@ -40,6 +40,8 @@ jobs:
         run: cmake --build build/windows --verbose
       - name: Tests
         run: ctest --test-dir build/windows --output-on-failure
+      - name: Windows import and export guard
+        run: tools/check-windows.sh build/windows/arcdroid_libretro.dll
       - name: Package native RetroArch inputs
         run: |
           mkdir -p build/windows/retroarch-package

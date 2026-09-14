@@ -106,6 +106,9 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
   add_test(NAME core-services COMMAND core_tests)
   add_test(NAME shipping-io-guard
     COMMAND sh "${CMAKE_CURRENT_SOURCE_DIR}/tools/check-shipping-io.sh")
+  add_test(NAME asset-guard-self-test
+    COMMAND sh "${CMAKE_CURRENT_SOURCE_DIR}/tests/check_assets_guard.sh"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tools/check-assets.sh")
   set_tests_properties(shipping-io-guard PROPERTIES
     WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
 
@@ -123,8 +126,12 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
     add_executable(windows_load_harness tests/windows_load_harness.c)
     target_include_directories(windows_load_harness PRIVATE libretro/include)
     target_compile_options(windows_load_harness PRIVATE $<$<C_COMPILER_ID:GNU,Clang>:-UNDEBUG>)
-    add_dependencies(windows_load_harness arcdroid_libretro)
-    add_test(NAME windows-load-harness COMMAND windows_load_harness $<TARGET_FILE:arcdroid_libretro>)
+    add_dependencies(windows_load_harness arcdroid_libretro test-fixtures)
+    add_test(NAME windows-load-harness COMMAND windows_load_harness
+      $<TARGET_FILE:arcdroid_libretro>
+      "${FIXTURE_DIR}/arcdroid-test.rom"
+      "${FIXTURE_DIR}/arcdroid-test.adf"
+      "${CMAKE_CURRENT_BINARY_DIR}/windows-harness-data")
   else()
     add_executable(libretro_harness tests/libretro_harness.c)
     target_include_directories(libretro_harness PRIVATE libretro/include)
