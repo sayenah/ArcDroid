@@ -185,13 +185,17 @@ def build_rom() -> bytearray:
     a.tst_imm(4, 1)
     a.branch("fdc_write_finish", "ne")
 
-    # Expand the guest checksum to all bytes and paint 640x256 at 8 bpp.
+    # Expand the guest checksum to all bytes and paint 640x256 at 8 bpp. The
+    # alternating complement makes the payload-derived signature visibly
+    # distinctive in native-frontend screenshots instead of a uniform colour.
     a.orr_lsl(6, 6, 6, 8)
     a.orr_lsl(6, 6, 6, 16)
+    a.ldr_const(7, 0x00FFFFFF)
     a.mov(1, 0)
     a.ldr_const(5, 40960)
     a.label("fill_video")
     a.str_post(6, 1)
+    a.eor(6, 6, 7)
     a.subs_imm(5, 5, 1)
     a.branch("fill_video", "ne")
 

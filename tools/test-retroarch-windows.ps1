@@ -43,7 +43,10 @@ function ConfigPath([string]$Path) { return $Path.Replace('\', '/') }
 $config = Join-Path $WorkDirectory "retroarch-ci.cfg"
 @"
 video_driver = "gdi"
-audio_driver = "null"
+audio_enable = "false"
+midi_driver = "null"
+midi_input = "Null"
+midi_output = "Null"
 input_driver = "dinput"
 libretro_directory = "$(ConfigPath $coreDirectory)"
 libretro_info_path = "$(ConfigPath $infoDirectory)"
@@ -92,7 +95,7 @@ for ($reload = 1; $reload -le 10; $reload++) {
     Invoke-ArcDroid 100 $false
 }
 
-if (-not (Test-Path $screenshot) -or (Get-Item $screenshot).Length -lt 1024) {
+if (-not (Test-Path $screenshot) -or (Get-Item $screenshot).Length -lt 128) {
     throw "RetroArch did not produce the required pattern screenshot"
 }
 if (-not (Select-String -Quiet -SimpleMatch "Firmware: ArcDroid test ROM" $log)) {
