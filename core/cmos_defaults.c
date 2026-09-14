@@ -65,11 +65,13 @@ bool arc_cmos_machine_image(ArcOsClass os,
    if (risc_os_3)
    {
       /* The PCF8583 maps RISC OS byte n at raw address n+0x40, wrapping
-       * past 255 to 16. PRMs: FS=ADFS(8), drive=0, Boot, one floppy. */
-      output[69] = 8u;                         /* logical byte 5 */
-      output[75] &= (uint8_t)~0x07u;           /* logical byte 11 */
-      output[80] |= 0x10u;                     /* logical byte 16 */
-      output[199] = (output[199] & (uint8_t)~0x07u) | 1u; /* byte 135 */
+       * past 255 to 16. PRMs: FS=ADFS(8), drive=0, Boot, at least one
+       * floppy. Preserve each accepted upstream value unless it does not
+       * satisfy that boot recipe. */
+      if (output[69] != 8u) output[69] = 8u;              /* byte 5 */
+      if (output[75] & 0x07u) output[75] &= (uint8_t)~0x07u; /* byte 11 */
+      if (!(output[80] & 0x10u)) output[80] |= 0x10u;     /* byte 16 */
+      if (!(output[199] & 0x07u)) output[199] |= 1u;      /* byte 135 */
    }
    /* RPCEmu's PCF8583 implementation documents the RISC OS checksum:
     * sum logical bytes 0..238 and store (sum+1) modulo 256 at byte 239. */

@@ -1,6 +1,8 @@
 /*Arculator 2.2 by Sarah Walker
   Disc support*/
-/* ArcDroid modification: Slice 1 registers only the validated ADF/ADL subset. */
+/* ArcDroid modification: Slice 1 registers only the validated ADF/ADL subset.
+ * WD1772 seek completion is kept independent of the excluded drive-noise
+ * mixer, which upstream also (incorrectly) used as its command timer owner. */
 #include <stdio.h>
 #include <string.h>
 #include "arc.h"
@@ -248,10 +250,17 @@ int disc_get_current_track(int drive)
 
 void disc_seek(int drive, int new_track)
 {
+	int distance = new_track - disc_current_track[drive];
 	if (drive_funcs[drive] && drive_funcs[drive]->seek)
 		drive_funcs[drive]->seek(drive, new_track);
 	if (new_track != disc_current_track[drive] && !disc_empty(drive))
 		ioc_discchange_clear(drive);
+	if (fdc_timer)
+	{
+		if (distance < 0) distance = -distance;
+		timer_set_delay_u64(fdc_timer,
+		                    (distance ? (uint64_t)distance * 6000u : 200u) * TIMER_USEC);
+	}
 	disc_current_track[drive] = new_track;
 }
 

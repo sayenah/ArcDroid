@@ -82,7 +82,7 @@ static void test_media_launch_and_cmos(void)
    assert(arc_cmos_default(ARC_OS_RISCOS_311, payload));
    assert(arc_cmos_machine_image(ARC_OS_RISCOS_311, payload, machine_cmos));
    assert(machine_cmos[69] == 8u && !(machine_cmos[75] & 7u));
-   assert((machine_cmos[80] & 0x10u) && (machine_cmos[199] & 7u) == 1u);
+   assert((machine_cmos[80] & 0x10u) && (machine_cmos[199] & 7u) >= 1u);
    unsigned checksum = 0u;
    for (unsigned i = 0; i < 239u; ++i)
    {
