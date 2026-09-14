@@ -1,5 +1,6 @@
 /*Arculator 2.2 by Sarah Walker
   Memory read/write functions*/
+/* ArcDroid modification: excluded Slice 1 hardware is supplied by inert shims. */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -234,7 +235,7 @@ uint32_t readmemf(uint32_t a)
 /*        sprintf(err2,"Bad fetch %06X %03X %04X\n",a,a>>15,a&0x7FFF);
 	MessageBox(NULL,err2,"Arc",MB_OK);
 	dumpregs();
-	exit(-1);*/
+	return 0;*/
 }
 
 uint8_t readmemfb(uint32_t a)
@@ -374,7 +375,7 @@ data_abort:
 /*        sprintf(err2,"Bad read byte %06X %03X %04X\n",a,a>>15,a&0x7FFF);
 	MessageBox(NULL,err2,"Arc",MB_OK);
 	dumpregs();
-	exit(-1);*/
+	return 0;*/
 }
 
 uint32_t readmemfl(uint32_t a)
@@ -515,7 +516,7 @@ data_abort:
 /*        sprintf(err2,"Bad read long %06X %03X %04X\n",a,a>>15,a&0x7FFF);
 	MessageBox(NULL,err2,"Arc",MB_OK);
 	dumpregs();
-	exit(-1);*/
+	return 0;*/
 }
 
 uint32_t readmemf_debug(uint32_t a)

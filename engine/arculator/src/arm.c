@@ -1,5 +1,6 @@
 /*Arculator 2.2 by Sarah Walker
   ARM2 & ARM3 emulation*/
+/* ArcDroid modification: machine failures unwind through the session fault latch. */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -2720,7 +2721,7 @@ void execarm(int cycles_to_execute)
 				{
 					output=0;
 //                                        dumpregs();
-//                                        exit(-1);
+//                                        ArcDroid latches machine faults instead.
 				}
 			}
 		}

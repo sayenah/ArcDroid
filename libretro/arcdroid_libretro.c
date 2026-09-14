@@ -2,6 +2,7 @@
 #include "libretro.h"
 #include "arc_io.h"
 #include "arcdroid_core.h"
+#include "arcdroid_engine.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -27,7 +28,7 @@ static retro_input_poll_t arc_input_poll;
 static retro_input_state_t arc_input_state;
 static struct retro_vfs_interface *arc_vfs;
 static uint32_t arc_frame[ARC_WIDTH * ARC_HEIGHT];
-static int16_t arc_audio_frame[960u * 2u];
+static int16_t arc_audio_frame[2048u * 2u];
 static uint8_t arc_cmos_record[256];
 static uint8_t *arc_content;
 static size_t arc_content_size;
@@ -40,6 +41,11 @@ static bool arc_pad_keys[10];
 static char arc_cmos_path[4096];
 static char arc_staged_path[4096];
 static uint64_t arc_frame_number;
+static uint64_t arc_audio_fraction;
+static unsigned arc_video_width = ARC_WIDTH;
+static unsigned arc_video_height = ARC_HEIGHT;
+static double arc_video_rate = ARC_RATE;
+static bool arc_fault_reported;
 static bool arc_loaded;
 static bool arc_ejected;
 static unsigned arc_image_index;
@@ -115,6 +121,7 @@ static const char *arc_os_slug(ArcOsClass os)
 
 static void arc_release_session(void)
 {
+   arc_engine_stop();
    free(arc_content);
    free(arc_firmware);
    arc_content = NULL;
@@ -122,6 +129,16 @@ static void arc_release_session(void)
    arc_content_size = arc_firmware_size = 0u;
    arc_cmos_path[0] = arc_staged_path[0] = '\0';
    memset(&arc_plan, 0, sizeof(arc_plan));
+}
+
+static void arc_sync_cmos(void)
+{
+   uint8_t payload[ARC_CMOS_PAYLOAD_SIZE];
+   if (!arc_loaded || !arc_engine_active()) return;
+   if (!arc_cmos_decode(arc_cmos_record, &arc_plan, payload))
+      memset(payload, 0, sizeof(payload));
+   arc_engine_cmos(payload);
+   arc_cmos_encode(arc_cmos_record, &arc_plan, payload);
 }
 
 static void arc_seed_cmos(void)
@@ -142,6 +159,7 @@ static void arc_persist_cmos(void)
 {
    uint8_t payload[ARC_CMOS_PAYLOAD_SIZE];
    if (!arc_cmos_path[0]) return;
+   arc_sync_cmos();
    if (!arc_cmos_decode(arc_cmos_record, &arc_plan, payload))
    {
       memset(payload, 0, sizeof(payload));
@@ -350,6 +368,11 @@ RETRO_API void retro_init(void)
    memset(arc_cmos_record, 0, sizeof(arc_cmos_record));
    arc_input_reset(&arc_inputs);
    memset(arc_pad_keys, 0, sizeof(arc_pad_keys));
+   arc_audio_fraction = 0u;
+   arc_video_width = ARC_WIDTH;
+   arc_video_height = ARC_HEIGHT;
+   arc_video_rate = ARC_RATE;
+   arc_fault_reported = false;
    arc_release_session();
    if (arc_environment)
    {
@@ -489,11 +512,27 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game)
       return false;
    }
    arc_seed_cmos();
+   {
+      uint8_t payload[ARC_CMOS_PAYLOAD_SIZE];
+      if (!arc_cmos_decode(arc_cmos_record, &arc_plan, payload) ||
+          !arc_engine_start(arc_firmware, arc_firmware_size, arc_staged_path,
+                            payload, error, sizeof(error)))
+      {
+         arc_message(error[0] ? error : "Unable to start the Arculator machine.", RETRO_LOG_ERROR);
+         arc_release_session();
+         return false;
+      }
+   }
    strcpy(arc_initial_path, game->path);
    arc_loaded = true;
    arc_image_index = arc_initial_index;
    memset(arc_frame, 0, sizeof(arc_frame));
    arc_frame_number = 0u;
+   arc_audio_fraction = 0u;
+   arc_video_width = ARC_WIDTH;
+   arc_video_height = ARC_HEIGHT;
+   arc_video_rate = ARC_RATE;
+   arc_fault_reported = false;
    snprintf(error, sizeof(error), "Firmware: %s; CRC32 %08x; SHA-1 %s",
             arc_os_name(search.match->os), search.match->crc32, search.match->sha1);
    arc_message(error, RETRO_LOG_INFO);
@@ -506,11 +545,21 @@ RETRO_API void retro_unload_game(void)
    arc_loaded = false;
    arc_release_session();
 }
-RETRO_API void retro_reset(void) { arc_frame_number = 0u; }
+RETRO_API void retro_reset(void)
+{
+   char error[512] = {0};
+   arc_sync_cmos();
+   if (arc_loaded && !arc_engine_reset(error, sizeof(error)))
+      arc_message(error[0] ? error : "Machine reset failed.", RETRO_LOG_ERROR);
+   arc_frame_number = 0u;
+   arc_audio_fraction = 0u;
+   arc_fault_reported = false;
+}
 
 RETRO_API void retro_run(void)
 {
-   size_t count = sizeof(arc_audio_frame) / (2u * sizeof(arc_audio_frame[0]));
+   ArcEngineFrame frame;
+   size_t count;
    if (arc_input_poll) arc_input_poll();
    arc_poll_inputs();
    if (!arc_loaded)
@@ -519,21 +568,53 @@ RETRO_API void retro_run(void)
       return;
    }
    ++arc_frame_number;
-   if (arc_frame_number == 1u)
-      for (unsigned y = 0; y < ARC_HEIGHT; ++y)
-         for (unsigned x = 0; x < ARC_WIDTH; ++x)
-         {
-            uint32_t bit = (arc_content_digest.crc32 >> ((x / 40u + y / 30u) & 31u)) & 1u;
-            arc_frame[y * ARC_WIDTH + x] = bit ? UINT32_C(0x00d0e8ff) : UINT32_C(0x00102030);
-         }
-   for (size_t i = 0; i < count; ++i)
+   if (!arc_engine_run_frame(&arc_inputs, &frame))
    {
-      int phase = (int)((arc_frame_number * count + i) % 96u);
-      int16_t sample = (int16_t)((phase < 48 ? phase : 95 - phase) * 512 - 12032);
-      arc_audio_frame[i * 2u] = arc_audio_frame[i * 2u + 1u] = sample;
+      const char *fault = NULL;
+      if (!arc_fault_reported && arc_engine_faulted(&fault))
+      {
+         arc_message(fault && fault[0] ? fault : "The emulated machine faulted.", RETRO_LOG_ERROR);
+         arc_fault_reported = true;
+      }
+      memset(&frame, 0, sizeof(frame));
+      frame.pixels = arc_frame;
+      frame.width = ARC_WIDTH;
+      frame.height = ARC_HEIGHT;
+      frame.pitch = ARC_WIDTH * sizeof(uint32_t);
+      frame.elapsed_us = 20000u;
+      frame.refresh_hz = ARC_RATE;
    }
+   if (frame.width != arc_video_width || frame.height != arc_video_height)
+   {
+      struct retro_game_geometry geometry = {
+         frame.width, frame.height, 4096u, 2048u, 4.0f / 3.0f
+      };
+      if (arc_environment) arc_environment(RETRO_ENVIRONMENT_SET_GEOMETRY, &geometry);
+      arc_video_width = frame.width;
+      arc_video_height = frame.height;
+   }
+   if (frame.refresh_hz > 0.0 &&
+       (frame.refresh_hz < arc_video_rate - 0.01 || frame.refresh_hz > arc_video_rate + 0.01))
+   {
+      struct retro_system_av_info av;
+      retro_get_system_av_info(&av);
+      av.geometry.base_width = frame.width;
+      av.geometry.base_height = frame.height;
+      av.timing.fps = frame.refresh_hz;
+      if (arc_environment) arc_environment(RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO, &av);
+      arc_video_rate = frame.refresh_hz;
+   }
+   arc_audio_fraction += frame.elapsed_us * UINT64_C(48000);
+   count = (size_t)(arc_audio_fraction / UINT64_C(1000000));
+   arc_audio_fraction %= UINT64_C(1000000);
+   if (count > sizeof(arc_audio_frame) / (2u * sizeof(arc_audio_frame[0])))
+      count = sizeof(arc_audio_frame) / (2u * sizeof(arc_audio_frame[0]));
+   size_t produced = arc_engine_audio(arc_audio_frame, count);
+   if (produced < count)
+      memset(arc_audio_frame + produced * 2u, 0,
+             (count - produced) * 2u * sizeof(arc_audio_frame[0]));
    arc_persist_cmos();
-   if (arc_video) arc_video(arc_frame, ARC_WIDTH, ARC_HEIGHT, ARC_WIDTH * sizeof(uint32_t));
+   if (arc_video) arc_video(frame.pixels, frame.width, frame.height, frame.pitch);
    if (arc_audio_batch) arc_audio_batch(arc_audio_frame, count);
    else if (arc_audio)
       for (size_t i = 0; i < count; ++i) arc_audio(arc_audio_frame[i * 2u], arc_audio_frame[i * 2u + 1u]);

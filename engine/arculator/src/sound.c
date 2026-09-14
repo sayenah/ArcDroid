@@ -1,5 +1,6 @@
 /*Arculator 2.2 by Sarah Walker
   Sound emulation*/
+/* ArcDroid modification: filter history is explicitly session-owned. */
 #include <math.h>
 #include <string.h>
 #include "arc.h"
@@ -57,6 +58,8 @@ static int vollevels[2][2][8]=
 
 static double ACoef[3];
 static double BCoef[3];
+static double filter_y_l[3], filter_x_l[3];
+static double filter_y_r[3], filter_x_r[3];
 
 static void iir_gen_coefficients(const int samplerate, const double cutoff, double* const ax, double* const by)
 {
@@ -74,8 +77,8 @@ static void iir_gen_coefficients(const int samplerate, const double cutoff, doub
 
 static int16_t iir_l(int16_t NewSample)
 {
-	static double y[3]; //output samples
-	static double x[3]; //input samples
+	double *y = filter_y_l;
+	double *x = filter_x_l;
 
 	//shift the old samples
 	x[2] = x[1];
@@ -93,8 +96,8 @@ static int16_t iir_l(int16_t NewSample)
 }
 static int16_t iir_r(int16_t NewSample)
 {
-	static double y[3]; //output samples
-	static double x[3]; //input samples
+	double *y = filter_y_r;
+	double *x = filter_x_r;
 
 	//shift the old samples
 	x[2] = x[1];
@@ -283,4 +286,11 @@ void sound_init(void)
 	samp_rp = 0xff000000;
 	samp_wp = 0;
 	samp_fp = 0;
+	sound_write_ptr = 0;
+	memset(sound_in_buffer, 0, sizeof(sound_in_buffer));
+	memset(sound_out_buffer, 0, sizeof(sound_out_buffer));
+	memset(filter_y_l, 0, sizeof(filter_y_l));
+	memset(filter_x_l, 0, sizeof(filter_x_l));
+	memset(filter_y_r, 0, sizeof(filter_y_r));
+	memset(filter_x_r, 0, sizeof(filter_x_r));
 }

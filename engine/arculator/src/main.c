@@ -1,5 +1,7 @@
 /*Arculator 2.2 by Sarah Walker
   Main init/close/run functions*/
+/* ArcDroid modification: the shipping core uses engine/arcdroid_engine.c as
+ * its session owner; this retained upstream shell no longer terminates a host. */
 #include <stdio.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -92,7 +94,7 @@ void rpclog(const char *format, ...)
 	   if (!rlog)
 	   {
 		   perror("fopen");
-		   exit(-1);
+		   return;
 	   }
    }
 
@@ -124,7 +126,7 @@ void fatal(const char *format, ...)
    fprintf(stderr, "%s", buf);
 
    dumpregs();
-   exit(-1);
+   return;
 }
 void error(const char *format, ...)
 {
@@ -142,7 +144,7 @@ void error(const char *format, ...)
    fprintf(stderr, "%s", buf);
 
    dumpregs();
-   exit(-1);
+   return;
 }
 
 void arc_set_cpu(int cpu, int memc);

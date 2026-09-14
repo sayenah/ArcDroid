@@ -1,5 +1,6 @@
 /*Arculator 2.2 by Sarah Walker
   Disc support*/
+/* ArcDroid modification: Slice 1 registers only the validated ADF/ADL subset. */
 #include <stdio.h>
 #include <string.h>
 #include "arc.h"
@@ -8,14 +9,6 @@
 #include "disc.h"
 
 #include "disc_adf.h"
-#include "disc_apd.h"
-#include "disc_fdi.h"
-#include "disc_hfe.h"
-#include "disc_jfd.h"
-#include "disc_scp.h"
-
-#include "ddnoise.h"
-
 #include "ioc.h"
 #include "timer.h"
 
@@ -62,17 +55,9 @@ static struct
 }
 loaders[]=
 {
-	{"SSD", ssd_load,         80*10* 256},
-	{"DSD", dsd_load,       2*80*10* 256},
 	{"ADF", adf_load,         80*16* 256},
 	{"ADF", adf_arcdd_load, 2*80* 5*1024},
-	{"ADF", adf_archd_load, 2*80*10*1024},
 	{"ADL", adl_load,       2*80*16* 256},
-	{"FDI", fdi_load,       -1},
-	{"APD", apd_load,       -1},
-	{"HFE", hfe_load,       -1},
-	{"SCP", scp_load,       -1},
-//        {"JFD", jfd_load,       -1},
 	{0,0,0}
 };
 
@@ -267,7 +252,6 @@ void disc_seek(int drive, int new_track)
 		drive_funcs[drive]->seek(drive, new_track);
 	if (new_track != disc_current_track[drive] && !disc_empty(drive))
 		ioc_discchange_clear(drive);
-	ddnoise_seek(new_track - disc_current_track[drive]);
 	disc_current_track[drive] = new_track;
 }
 

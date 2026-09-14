@@ -1,5 +1,6 @@
 /*Arculator 2.2 by Sarah Walker
   ADFS disc support (really all raw sector formats)*/
+/* ArcDroid modification: unavailable data never terminates the frontend. */
 #include <stdio.h>
 #include <string.h>
 #include "arc.h"
@@ -288,7 +289,7 @@ static void adf_poll()
 //Carlo Concari: do not write if data not ready yet
 			  return;
 //                        printf("Data overflow!\n");
-//                        exit(-1);
+//                        ArcDroid reports an unavailable data byte as a fault.
 		}
 		adf[adf_drive].track_data[adf_side][(adf_sector * adf[adf_drive].size) + adf_readpos] = c;
 		adf_readpos++;

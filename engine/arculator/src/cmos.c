@@ -1,5 +1,7 @@
 /*Arculator 2.2 by Sarah Walker
   I2C + CMOS RAM emulation*/
+/* ArcDroid modification: CMOS storage is owned by the libretro session and
+ * crosses this file only through the bounded in-memory accessors below. */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -74,53 +76,25 @@ static void cmos_get_time();
 
 void cmos_load()
 {
-	char fn[512];
-	char cmos_name[512];
-	FILE *cmosf;
-
-	LOG_CMOS("Read cmos %i\n", romset);
-	snprintf(cmos_name, sizeof(cmos_name), "cmos/%s.%s.cmos.bin", machine_config_name, config_get_cmos_name(romset, fdctype));
-	append_filename(fn, exname, cmos_name, 511);
-
-	cmosf = fopen(fn, "rb");
-	if (cmosf)
-	{
-		fread(cmos.ram, 256, 1, cmosf);
-		fclose(cmosf);
-		LOG_CMOS("Read CMOS contents from %s\n", fn);
-	}
-	else
-	{
-		LOG_CMOS("%s doesn't exist; resetting CMOS\n", fn);
-		snprintf(cmos_name, sizeof(cmos_name), "cmos/%s/cmos.bin", config_get_cmos_name(romset, fdctype));
-		append_filename(fn, exname, cmos_name, 511);
-
-		cmosf = fopen(fn, "rb");
-		if (cmosf)
-		{
-			fread(cmos.ram, 256, 1, cmosf);
-			fclose(cmosf);
-		}
-		else
-			memset(cmos.ram, 0, 256);
-	}
 	cmos_get_time();
 }
 
 void cmos_save()
 {
-	char fn[512];
-	char cmos_name[512];
-	FILE *cmosf;
+	cmos_changed = 0;
+}
 
-	LOG_CMOS("Writing CMOS %i\n", romset);
-	snprintf(cmos_name, sizeof(cmos_name), "cmos/%s.%s.cmos.bin", machine_config_name, config_get_cmos_name(romset, fdctype));
-	append_filename(fn, exname, cmos_name, 511);
+void cmos_set_image(const uint8_t *data, size_t size)
+{
+	memset(cmos.ram, 0, sizeof(cmos.ram));
+	if (data)
+		memcpy(cmos.ram, data, size < sizeof(cmos.ram) ? size : sizeof(cmos.ram));
+}
 
-	LOG_CMOS("Writing %s\n", fn);
-	cmosf = fopen(fn, "wb");
-	fwrite(cmos.ram, 256, 1, cmosf);
-	fclose(cmosf);
+void cmos_get_image(uint8_t *data, size_t size)
+{
+	if (data)
+		memcpy(data, cmos.ram, size < sizeof(cmos.ram) ? size : sizeof(cmos.ram));
 }
 
 static void cmos_stop()

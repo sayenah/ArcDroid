@@ -1,5 +1,6 @@
 /*Arculator 2.2 by Sarah Walker
   1770 FDC emulation*/
+/* ArcDroid modification: controller faults never terminate the frontend. */
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -181,7 +182,7 @@ void wd1770_write(uint16_t addr, uint8_t val)
 /*                        rpclog("Bad 1770 command %02X\n", val);
 			dumpregs();
 			mem_dump();
-			exit(-1);*/
+			return;*/
 		}
 		break;
 		case 0x4:

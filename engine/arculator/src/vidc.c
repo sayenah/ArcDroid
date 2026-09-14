@@ -1,5 +1,6 @@
 /*Arculator 2.2 by Sarah Walker
   VIDC10 emulation*/
+/* ArcDroid modification: release the headless renderer bitmap at teardown. */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -581,6 +582,11 @@ void setredrawall()
 
 void closevideo()
 {
+	if (buffer)
+	{
+		destroy_bitmap(buffer);
+		buffer = NULL;
+	}
 }
 
 void reinitvideo()
@@ -903,7 +909,6 @@ static void vidc_poll(void *__p)
 						{
 							for (xx = 0; xx < 16; xx++)
 								((uint32_t *)bp)[x+xx]=vidc.pal[temp>>(xx<<1)&3];
-							p+=16;
 						}
 						if (vidc.addr == vend + 4)
 							vidc.addr = vstart;

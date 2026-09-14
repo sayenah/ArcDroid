@@ -1,5 +1,7 @@
 /*Arculator 2.2 by Sarah Walker
   Timer system*/
+/* ArcDroid modification: timer faults unwind through the session latch and an
+ * empty timer list is handled without dereferencing a null head. */
 #include <string.h>
 #include "arc.h"
 #include "timer.h"
@@ -119,7 +121,7 @@ void timer_process()
 		timer->callback(timer->p);
 	}
 
-	timer_target = timer_head->ts_integer;
+	timer_target = timer_head ? timer_head->ts_integer : UINT32_MAX;
 }
 
 void timer_reset()

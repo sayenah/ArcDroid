@@ -19,13 +19,39 @@ target_compile_options(arcdroid_core PRIVATE
 )
 
 add_library(arcdroid_libretro SHARED
+  engine/arcdroid_engine.c
+  engine/arcdroid_stubs.c
+  engine/arculator/src/arm.c
+  engine/arculator/src/cmos.c
+  engine/arculator/src/cp15.c
+  engine/arculator/src/disc.c
+  engine/arculator/src/disc_adf.c
+  engine/arculator/src/ds2401.c
+  engine/arculator/src/fpa.c
+  engine/arculator/src/ioc.c
+  engine/arculator/src/ioeb.c
+  engine/arculator/src/joystick.c
+  engine/arculator/src/keyboard.c
+  engine/arculator/src/lc.c
+  engine/arculator/src/mem.c
+  engine/arculator/src/memc.c
+  engine/arculator/src/printer.c
+  engine/arculator/src/sound.c
+  engine/arculator/src/timer.c
+  engine/arculator/src/vidc.c
+  engine/arculator/src/wd1770.c
   libretro/arc_io.c
   libretro/arcdroid_libretro.c
+  platform/arcdroid_input.c
+  platform/arcdroid_joystick.c
+  platform/arcdroid_sound.c
+  platform/arcdroid_video.c
 )
-target_include_directories(arcdroid_libretro PRIVATE libretro/include)
+target_include_directories(arcdroid_libretro PRIVATE
+  engine engine/compat engine/arculator/src platform libretro/include core)
 target_compile_definitions(arcdroid_libretro PRIVATE ARCDROID_VERSION="${PROJECT_VERSION}")
 target_compile_options(arcdroid_libretro PRIVATE
-  $<$<C_COMPILER_ID:GNU,Clang,AppleClang>:-Wall;-Wextra;-Wpedantic;-Werror=implicit-function-declaration;-fvisibility=hidden>
+  $<$<C_COMPILER_ID:GNU,Clang,AppleClang>:-Wall;-Wextra;-Wpedantic;-Werror=implicit-function-declaration;-fvisibility=hidden;-fno-strict-aliasing>
 )
 set_target_properties(arcdroid_libretro PROPERTIES PREFIX "")
 target_link_libraries(arcdroid_libretro PRIVATE arcdroid_core)
