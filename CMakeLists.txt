@@ -6,7 +6,19 @@ set(CMAKE_C_STANDARD 17)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS ON)
 
+add_library(arcdroid_core STATIC
+  core/hash.c
+  core/firmware_table.c
+  core/launch.c
+  core/persistence.c
+)
+target_include_directories(arcdroid_core PUBLIC core)
+target_compile_options(arcdroid_core PRIVATE
+  $<$<C_COMPILER_ID:GNU,Clang,AppleClang>:-Wall;-Wextra;-Wpedantic;-Werror=implicit-function-declaration>
+)
+
 add_library(arcdroid_libretro SHARED
+  libretro/arc_io.c
   libretro/arcdroid_libretro.c
 )
 target_include_directories(arcdroid_libretro PRIVATE libretro/include)
@@ -15,6 +27,7 @@ target_compile_options(arcdroid_libretro PRIVATE
   $<$<C_COMPILER_ID:GNU,Clang,AppleClang>:-Wall;-Wextra;-Wpedantic;-Werror=implicit-function-declaration;-fvisibility=hidden>
 )
 set_target_properties(arcdroid_libretro PROPERTIES PREFIX "")
+target_link_libraries(arcdroid_libretro PRIVATE arcdroid_core)
 
 if(ANDROID)
   set_target_properties(arcdroid_libretro PROPERTIES OUTPUT_NAME arcdroid_libretro_android)
@@ -40,3 +53,28 @@ configure_file(arcdroid_libretro.info arcdroid_libretro.info COPYONLY)
 
 install(TARGETS arcdroid_libretro DESTINATION .)
 install(FILES arcdroid_libretro.info DESTINATION .)
+
+if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
+  find_package(Python3 REQUIRED COMPONENTS Interpreter)
+  add_executable(core_tests tests/core_tests.c)
+  target_link_libraries(core_tests PRIVATE arcdroid_core)
+  add_test(NAME core-services COMMAND core_tests)
+
+  set(FIXTURE_DIR "${CMAKE_CURRENT_BINARY_DIR}/tests/fixtures/generated")
+  add_custom_command(
+    OUTPUT "${FIXTURE_DIR}/arcdroid-test.rom" "${FIXTURE_DIR}/arcdroid-test.adf"
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/generate_fixtures.py" "${FIXTURE_DIR}"
+    DEPENDS tests/generate_fixtures.py VERBATIM)
+  add_custom_target(test-fixtures ALL DEPENDS
+    "${FIXTURE_DIR}/arcdroid-test.rom" "${FIXTURE_DIR}/arcdroid-test.adf")
+
+  add_executable(libretro_harness tests/libretro_harness.c)
+  target_include_directories(libretro_harness PRIVATE libretro/include)
+  target_link_libraries(libretro_harness PRIVATE ${CMAKE_DL_LIBS})
+  add_dependencies(libretro_harness test-fixtures arcdroid_libretro)
+  add_test(NAME libretro-harness COMMAND libretro_harness
+    $<TARGET_FILE:arcdroid_libretro>
+    "${FIXTURE_DIR}/arcdroid-test.rom"
+    "${FIXTURE_DIR}/arcdroid-test.adf"
+    "${CMAKE_CURRENT_BINARY_DIR}/harness-data")
+endif()

@@ -1,10 +1,13 @@
 /* ArcDroid libretro adapter. Copyright 2026 ArcDroid contributors. GPL-2.0-only. */
 #include "libretro.h"
+#include "arc_io.h"
+#include "arcdroid_core.h"
 
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #ifndef ARCDROID_VERSION
@@ -26,11 +29,124 @@ static struct retro_vfs_interface *arc_vfs;
 static uint32_t arc_frame[ARC_WIDTH * ARC_HEIGHT];
 static int16_t arc_audio_frame[960u * 2u];
 static uint8_t arc_cmos_record[256];
+static uint8_t *arc_content;
+static size_t arc_content_size;
+static uint8_t *arc_firmware;
+static size_t arc_firmware_size;
+static ArcDigest arc_content_digest;
+static ArcLaunchPlan arc_plan;
+static char arc_cmos_path[4096];
+static char arc_staged_path[4096];
+static uint64_t arc_frame_number;
 static bool arc_loaded;
 static bool arc_ejected;
 static unsigned arc_image_index;
 static unsigned arc_initial_index;
 static char arc_initial_path[4096];
+
+typedef struct {
+   const ArcFirmwareFingerprint *match;
+   uint8_t *data;
+   size_t size;
+   unsigned priority;
+   size_t suspicious_size;
+} ArcFirmwareSearch;
+
+static unsigned arc_firmware_priority(ArcOsClass os)
+{
+   switch (os)
+   {
+      case ARC_OS_TEST: return 0u;
+      case ARC_OS_RISCOS_311: return 1u;
+      case ARC_OS_RISCOS_310: return 2u;
+      case ARC_OS_RISCOS_319: return 3u;
+      case ARC_OS_RISCOS_300: return 4u;
+      case ARC_OS_RISCOS_200: return 5u;
+      case ARC_OS_ARTHUR_120: return 6u;
+      default: return 100u;
+   }
+}
+
+static bool arc_visit_firmware(const char *path, void *opaque)
+{
+   ArcFirmwareSearch *search = (ArcFirmwareSearch *)opaque;
+   void *data = NULL;
+   size_t size = 0u;
+   if (!arc_io_read_all(path, &data, &size)) return true;
+   ArcDigest digest = arc_digest(data, size);
+   const ArcFirmwareFingerprint *match = arc_firmware_match(&digest);
+   if (match && match->recipe == ARC_RECIPE_COMBINED)
+   {
+      unsigned priority = arc_firmware_priority(match->os);
+      if (!search->match || priority < search->priority)
+      {
+         free(search->data);
+         search->data = (uint8_t *)data;
+         search->size = size;
+         search->match = match;
+         search->priority = priority;
+         return true;
+      }
+   }
+   else if (size == 524289u)
+      search->suspicious_size = size;
+   free(data);
+   return true;
+}
+
+static const char *arc_os_slug(ArcOsClass os)
+{
+   switch (os)
+   {
+      case ARC_OS_TEST: return "test";
+      case ARC_OS_RISCOS_311: return "riscos311";
+      case ARC_OS_RISCOS_310: return "riscos310";
+      case ARC_OS_RISCOS_319: return "riscos319";
+      case ARC_OS_RISCOS_300: return "riscos300";
+      case ARC_OS_RISCOS_201: return "riscos201";
+      case ARC_OS_RISCOS_200: return "riscos200";
+      case ARC_OS_ARTHUR_120: return "arthur120";
+      case ARC_OS_ARTHUR_030: return "arthur030";
+      default: return "unknown";
+   }
+}
+
+static void arc_release_session(void)
+{
+   free(arc_content);
+   free(arc_firmware);
+   arc_content = NULL;
+   arc_firmware = NULL;
+   arc_content_size = arc_firmware_size = 0u;
+   arc_cmos_path[0] = arc_staged_path[0] = '\0';
+   memset(&arc_plan, 0, sizeof(arc_plan));
+}
+
+static void arc_seed_cmos(void)
+{
+   uint8_t payload[ARC_CMOS_PAYLOAD_SIZE] = {0};
+   void *existing = NULL;
+   size_t existing_size = 0u;
+   if (arc_cmos_path[0] && arc_io_read_all(arc_cmos_path, &existing, &existing_size) &&
+       existing_size == sizeof(arc_cmos_record) &&
+       arc_cmos_decode((const uint8_t *)existing, &arc_plan, payload))
+      memcpy(arc_cmos_record, existing, sizeof(arc_cmos_record));
+   else
+      arc_cmos_encode(arc_cmos_record, &arc_plan, payload);
+   free(existing);
+}
+
+static void arc_persist_cmos(void)
+{
+   uint8_t payload[ARC_CMOS_PAYLOAD_SIZE];
+   if (!arc_cmos_path[0]) return;
+   if (!arc_cmos_decode(arc_cmos_record, &arc_plan, payload))
+   {
+      memset(payload, 0, sizeof(payload));
+      arc_cmos_encode(arc_cmos_record, &arc_plan, payload);
+   }
+   arc_io_write_all(arc_cmos_path, arc_cmos_record, sizeof(arc_cmos_record));
+}
 
 static void arc_message(const char *text, enum retro_log_level level)
 {
@@ -189,18 +305,25 @@ RETRO_API void retro_init(void)
    arc_image_index = arc_initial_index = 0u;
    arc_initial_path[0] = '\0';
    memset(arc_cmos_record, 0, sizeof(arc_cmos_record));
+   arc_release_session();
    if (arc_environment)
    {
       arc_environment(RETRO_ENVIRONMENT_SET_DISK_CONTROL_EXT_INTERFACE, (void *)&disk);
       if (arc_environment(RETRO_ENVIRONMENT_GET_VFS_INTERFACE, &vfs))
+      {
          arc_vfs = vfs.iface;
+         arc_io_set_vfs(arc_vfs);
+      }
    }
 }
 
 RETRO_API void retro_deinit(void)
 {
+   arc_persist_cmos();
+   arc_release_session();
    arc_loaded = false;
    arc_vfs = NULL;
+   arc_io_set_vfs(NULL);
    arc_environment = NULL;
    arc_video = NULL;
    arc_audio = NULL;
@@ -220,6 +343,15 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game)
       {controllers, 2u}, {controllers, 2u}, {NULL, 0u}
    };
    static const struct retro_keyboard_callback keyboard = {arc_keyboard};
+   const char *system_dir = NULL;
+   const char *save_dir = NULL;
+   char firmware_dir[4096];
+   char media_dir[4096];
+   char error[512] = {0};
+   ArcFirmwareSearch search = {NULL, NULL, 0u, 100u, 0u};
+   ArcMediaKind media;
+   void *content = NULL;
+   size_t content_size = 0u;
    if (!game || !game->path || !game->path[0])
    {
       arc_message("ArcDroid requires a loose ADF or ADL image.", RETRO_LOG_ERROR);
@@ -229,20 +361,107 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game)
       return false;
    arc_environment(RETRO_ENVIRONMENT_SET_CONTROLLER_INFO, (void *)ports);
    arc_environment(RETRO_ENVIRONMENT_SET_KEYBOARD_CALLBACK, (void *)&keyboard);
+   if (!arc_vfs)
+   {
+      arc_message("ArcDroid requires the libretro VFS v3 interface.", RETRO_LOG_ERROR);
+      return false;
+   }
    if (strlen(game->path) >= sizeof(arc_initial_path))
    {
       arc_message("Content path is too long.", RETRO_LOG_ERROR);
       return false;
    }
+   arc_release_session();
+   if (!arc_io_read_all(game->path, &content, &content_size))
+   {
+      arc_message("Unable to read the selected content through the frontend VFS.", RETRO_LOG_ERROR);
+      return false;
+   }
+   media = arc_media_inspect(game->path, content_size, error, sizeof(error));
+   if (media == ARC_MEDIA_INVALID || media == ARC_MEDIA_ADF_HD_UNSUPPORTED)
+   {
+      free(content);
+      arc_message(error, RETRO_LOG_ERROR);
+      return false;
+   }
+   arc_content = (uint8_t *)content;
+   arc_content_size = content_size;
+   arc_content_digest = arc_digest(content, content_size);
+
+   if (!arc_environment(RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY, &system_dir) ||
+       !system_dir || !system_dir[0] ||
+       snprintf(firmware_dir, sizeof(firmware_dir), "%s/arcdroid/firmware", system_dir) < 0)
+   {
+      arc_message("Firmware directory unavailable; expected <system>/arcdroid/firmware.", RETRO_LOG_ERROR);
+      arc_release_session();
+      return false;
+   }
+   arc_io_walk(firmware_dir, 8u, arc_visit_firmware, &search);
+   if (!search.match)
+   {
+      if (search.suspicious_size)
+         snprintf(error, sizeof(error), "Unrecognised firmware size %zu bytes; nearest expected size is 524288 bytes.", search.suspicious_size);
+      else
+         snprintf(error, sizeof(error), "Missing RISC OS 3.11 firmware in <system>/arcdroid/firmware.");
+      arc_message(error, RETRO_LOG_ERROR);
+      arc_release_session();
+      return false;
+   }
+   arc_firmware = search.data;
+   arc_firmware_size = search.size;
+   if (!arc_launch_plan_default(&arc_plan, media, search.match->os,
+                                arc_content_digest.sha1, false,
+                                error, sizeof(error)))
+   {
+      arc_message(error, RETRO_LOG_ERROR);
+      arc_release_session();
+      return false;
+   }
+   if (!arc_environment(RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY, &save_dir) ||
+       !save_dir || !save_dir[0])
+   {
+      arc_message("Save directory unavailable; ArcDroid cannot stage content safely.", RETRO_LOG_ERROR);
+      arc_release_session();
+      return false;
+   }
+   if (snprintf(media_dir, sizeof(media_dir), "%s/arcdroid/media/%s", save_dir,
+                arc_content_digest.sha1) < 0 || !arc_io_make_path(media_dir) ||
+       snprintf(arc_staged_path, sizeof(arc_staged_path), "%s/disc.%s", media_dir,
+                media == ARC_MEDIA_ADL_640K ? "adl" : "adf") < 0 ||
+       !arc_io_write_all(arc_staged_path, arc_content, arc_content_size))
+   {
+      arc_message("Unable to stage content under <save>/arcdroid/media.", RETRO_LOG_ERROR);
+      arc_release_session();
+      return false;
+   }
+   if (snprintf(media_dir, sizeof(media_dir), "%s/arcdroid/cmos", save_dir) < 0 ||
+       !arc_io_make_path(media_dir) ||
+       snprintf(arc_cmos_path, sizeof(arc_cmos_path), "%s/A3000.%s.bin", media_dir,
+                arc_os_slug(arc_plan.os)) < 0)
+   {
+      arc_message("Unable to prepare persistent CMOS storage.", RETRO_LOG_ERROR);
+      arc_release_session();
+      return false;
+   }
+   arc_seed_cmos();
    strcpy(arc_initial_path, game->path);
    arc_loaded = true;
    arc_image_index = arc_initial_index;
    memset(arc_frame, 0, sizeof(arc_frame));
+   arc_frame_number = 0u;
+   snprintf(error, sizeof(error), "Firmware: %s; CRC32 %08x; SHA-1 %s",
+            arc_os_name(search.match->os), search.match->crc32, search.match->sha1);
+   arc_message(error, RETRO_LOG_INFO);
    return true;
 }
 
-RETRO_API void retro_unload_game(void) { arc_loaded = false; }
-RETRO_API void retro_reset(void) { memset(arc_cmos_record + 32u, 0, sizeof(arc_cmos_record) - 32u); }
+RETRO_API void retro_unload_game(void)
+{
+   arc_persist_cmos();
+   arc_loaded = false;
+   arc_release_session();
+}
+RETRO_API void retro_reset(void) { arc_frame_number = 0u; }
 
 RETRO_API void retro_run(void)
 {
@@ -253,6 +472,21 @@ RETRO_API void retro_run(void)
       if (arc_video) arc_video(NULL, ARC_WIDTH, ARC_HEIGHT, ARC_WIDTH * sizeof(uint32_t));
       return;
    }
+   ++arc_frame_number;
+   if (arc_frame_number == 1u)
+      for (unsigned y = 0; y < ARC_HEIGHT; ++y)
+         for (unsigned x = 0; x < ARC_WIDTH; ++x)
+         {
+            uint32_t bit = (arc_content_digest.crc32 >> ((x / 40u + y / 30u) & 31u)) & 1u;
+            arc_frame[y * ARC_WIDTH + x] = bit ? UINT32_C(0x00d0e8ff) : UINT32_C(0x00102030);
+         }
+   for (size_t i = 0; i < count; ++i)
+   {
+      int phase = (int)((arc_frame_number * count + i) % 96u);
+      int16_t sample = (int16_t)((phase < 48 ? phase : 95 - phase) * 512 - 12032);
+      arc_audio_frame[i * 2u] = arc_audio_frame[i * 2u + 1u] = sample;
+   }
+   arc_persist_cmos();
    if (arc_video) arc_video(arc_frame, ARC_WIDTH, ARC_HEIGHT, ARC_WIDTH * sizeof(uint32_t));
    if (arc_audio_batch) arc_audio_batch(arc_audio_frame, count);
    else if (arc_audio)

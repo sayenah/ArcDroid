@@ -1,0 +1,84 @@
+/* ArcDroid deterministic core tests. GPL-2.0-only. */
+#include "arcdroid_core.h"
+
+#include <assert.h>
+#include <stdio.h>
+#include <string.h>
+
+static void test_hashes(void)
+{
+   ArcDigest d = arc_digest("abc", 3u);
+   assert(d.crc32 == UINT32_C(0x352441c2));
+   assert(strcmp(d.sha1, "a9993e364706816aba3e25717850c26c9cd0d89d") == 0);
+}
+
+static void test_firmware_table(void)
+{
+   size_t count = 0u;
+   const ArcFirmwareFingerprint *table = arc_firmware_table(&count);
+   assert(table && count >= 40u);
+   ArcDigest known = {2097152u, UINT32_C(0x54c0c963), "3487729e87bebc9cb51665838c27beff22f7b3bd"};
+   assert(arc_firmware_match(&known)->os == ARC_OS_RISCOS_311);
+   known.size++;
+   assert(arc_firmware_match(&known) == NULL);
+}
+
+static void test_assembly(void)
+{
+   const uint8_t a[] = {0, 4}, b[] = {1, 5}, c[] = {2, 6}, d[] = {3, 7};
+   const uint8_t *parts[] = {a, b, c, d};
+   const size_t sizes[] = {2, 2, 2, 2};
+   uint8_t output[8] = {0};
+   char error[80] = {0};
+   assert(arc_firmware_assemble(parts, sizes, 4u, ARC_RECIPE_BYTE_LANES_4,
+                                output, sizeof(output), error, sizeof(error)));
+   for (unsigned i = 0; i < 8u; ++i) assert(output[i] == i);
+
+   const uint8_t lo[] = {0, 1, 4, 5}, hi[] = {2, 3, 6, 7};
+   const uint8_t *halves[] = {lo, hi};
+   const size_t half_sizes[] = {4, 4};
+   memset(output, 0, sizeof(output));
+   assert(arc_firmware_assemble(halves, half_sizes, 2u, ARC_RECIPE_HALFWORD_LANES_2,
+                                output, sizeof(output), error, sizeof(error)));
+   for (unsigned i = 0; i < 8u; ++i) assert(output[i] == i);
+}
+
+static void test_media_launch_and_cmos(void)
+{
+   char error[160] = {0};
+   assert(arc_media_inspect("renamed.AdF", 819200u, error, sizeof(error)) == ARC_MEDIA_ADF_800K);
+   assert(arc_media_inspect("disc.adl", 655360u, error, sizeof(error)) == ARC_MEDIA_ADL_640K);
+   assert(arc_media_inspect("disc.adf", 1638400u, error, sizeof(error)) == ARC_MEDIA_ADF_HD_UNSUPPORTED);
+   assert(strstr(error, "high-density"));
+   assert(arc_media_inspect("disc.adf", 42u, error, sizeof(error)) == ARC_MEDIA_INVALID);
+
+   ArcLaunchPlan plan;
+   const char id[] = "0123456789012345678901234567890123456789";
+   assert(arc_launch_plan_default(&plan, ARC_MEDIA_ADF_800K, ARC_OS_RISCOS_311,
+                                  id, false, error, sizeof(error)));
+   assert(strcmp(plan.machine, "A3000") == 0 && strcmp(plan.cpu, "ARM2") == 0);
+   assert(!arc_launch_plan_default(&plan, ARC_MEDIA_ADF_800K, ARC_OS_RISCOS_311,
+                                   id, true, error, sizeof(error)));
+   assert(strstr(error, "incompatible"));
+
+   assert(arc_launch_plan_default(&plan, ARC_MEDIA_ADF_800K, ARC_OS_RISCOS_311,
+                                  id, false, error, sizeof(error)));
+   uint8_t payload[ARC_CMOS_PAYLOAD_SIZE], restored[ARC_CMOS_PAYLOAD_SIZE];
+   uint8_t record[ARC_CMOS_RECORD_SIZE];
+   for (unsigned i = 0; i < sizeof(payload); ++i) payload[i] = (uint8_t)(i ^ 0x5a);
+   assert(arc_cmos_encode(record, &plan, payload));
+   assert(arc_cmos_decode(record, &plan, restored));
+   assert(memcmp(payload, restored, sizeof(payload)) == 0);
+   record[100] ^= 1u;
+   assert(!arc_cmos_decode(record, &plan, restored));
+}
+
+int main(void)
+{
+   test_hashes();
+   test_firmware_table();
+   test_assembly();
+   test_media_launch_and_cmos();
+   puts("core_tests: all checks passed");
+   return 0;
+}
