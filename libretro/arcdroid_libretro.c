@@ -27,6 +27,7 @@ static retro_audio_sample_batch_t arc_audio_batch;
 static retro_input_poll_t arc_input_poll;
 static retro_input_state_t arc_input_state;
 static struct retro_vfs_interface *arc_vfs;
+static retro_log_printf_t arc_log;
 static uint32_t arc_frame[ARC_WIDTH * ARC_HEIGHT];
 static int16_t arc_audio_frame[2048u * 2u];
 static uint8_t arc_cmos_record[256];
@@ -52,6 +53,12 @@ static bool arc_ejected;
 static unsigned arc_image_index;
 static unsigned arc_initial_index;
 static char arc_initial_path[4096];
+
+static void arc_engine_log(void *opaque, const char *message)
+{
+   (void)opaque;
+   if (arc_log && message) arc_log(RETRO_LOG_DEBUG, "%s", message);
+}
 
 typedef struct {
    uint8_t *data;
@@ -438,6 +445,7 @@ RETRO_API void retro_init(void)
       arc_disk_add, arc_disk_set_initial, arc_disk_get_path, arc_disk_get_label
    };
    struct retro_vfs_interface_info vfs = {3u, NULL};
+   struct retro_log_callback log = {NULL};
    arc_loaded = false;
    arc_ejected = false;
    arc_image_index = arc_initial_index = 0u;
@@ -452,6 +460,7 @@ RETRO_API void retro_init(void)
    arc_fault_reported = false;
    arc_vidc_warning_reported = false;
    arc_release_session();
+   arc_log = NULL;
    if (arc_environment)
    {
       arc_environment(RETRO_ENVIRONMENT_SET_DISK_CONTROL_EXT_INTERFACE, (void *)&disk);
@@ -460,13 +469,18 @@ RETRO_API void retro_init(void)
          arc_vfs = vfs.iface;
          arc_io_set_vfs(arc_vfs);
       }
+      if (arc_environment(RETRO_ENVIRONMENT_GET_LOG_INTERFACE, &log))
+         arc_log = log.log;
    }
+   arc_engine_set_log_callback(arc_engine_log, NULL);
 }
 
 RETRO_API void retro_deinit(void)
 {
    arc_persist_cmos();
    arc_release_session();
+   arc_engine_set_log_callback(NULL, NULL);
+   arc_log = NULL;
    arc_loaded = false;
    arc_vfs = NULL;
    arc_io_set_vfs(NULL);

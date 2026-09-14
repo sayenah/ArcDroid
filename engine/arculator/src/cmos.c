@@ -1,7 +1,8 @@
 /*Arculator 2.2 by Sarah Walker
   I2C + CMOS RAM emulation*/
 /* ArcDroid modification: CMOS storage is owned by the libretro session and
- * crosses this file only through the bounded in-memory accessors below. */
+ * crosses this file only through the bounded in-memory accessors below. Every
+ * guest byte access is exposed through the frontend debug logger. */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -106,6 +107,7 @@ static void cmos_stop()
 
 static void cmos_next_byte()
 {
+	int read_addr = cmos.addr;
 	LOG_CMOS("cmos_next_byte(%d)\n", cmos.addr);
 	if (!machine_is_a500() || cmos.device_addr == 0xa0)
 		i2c.byte = cmos.ram[(cmos.addr++) & 0xFF];
@@ -120,6 +122,7 @@ static void cmos_next_byte()
 			i2c.byte = 0;
 //                rpclog(" read RTC %02x %02x\n", cmos.addr-1, i2c.byte);
 	}
+	rpclog("CMOS read addr=%02X value=%02X\n", read_addr & 0xff, i2c.byte);
 }
 
 static void cmos_get_time()
@@ -258,9 +261,11 @@ void cmos_write(uint8_t byte)
 				i2c.transmit = TRANSMITTER_CMOS;
 				if (cmos.device_addr == 0xa0)
 				{
-					if (!machine_is_a500() && (cmos.addr < 0x10))
-						cmos_get_time();
-					i2c.byte = cmos.ram[(cmos.addr++) & 0xFF];
+						if (!machine_is_a500() && (cmos.addr < 0x10))
+							cmos_get_time();
+						rpclog("CMOS read addr=%02X value=%02X\n",
+						       cmos.addr & 0xff, cmos.ram[cmos.addr & 0xff]);
+						i2c.byte = cmos.ram[(cmos.addr++) & 0xFF];
 				}
 				else if (cmos.device_addr == 0xa2 && machine_type == MACHINE_TYPE_A4)
 				{
@@ -309,8 +314,9 @@ void cmos_write(uint8_t byte)
 		case CMOS_RECEIVEDATA:
 //                printf("CMOS write %02X %02X\n",cmosaddr,byte);
 //                log("%02X now %02X\n",cmosaddr,byte);
-		if (cmos.device_addr == 0xa0)
-		{
+			if (cmos.device_addr == 0xa0)
+			{
+				rpclog("CMOS write addr=%02X value=%02X\n", cmos.addr & 0xff, byte);
 			if (!cmos_changed)
 				cmos_changed = CMOS_CHANGE_DELAY;
 			cmos.ram[(cmos.addr++) & 0xFF] = byte;

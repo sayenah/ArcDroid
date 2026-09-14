@@ -6,6 +6,7 @@
 #include <dlfcn.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <stdarg.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -38,6 +39,15 @@ static int mouse_x, mouse_y;
 static unsigned mouse_buttons;
 static bool pointer_pressed;
 static int pointer_x, pointer_y;
+static bool real_boot_mode;
+static char evidence_path[4096];
+static FILE *evidence_log;
+static unsigned fdc_command_count;
+static unsigned fdc_read_count;
+static unsigned kart_traffic_count;
+static unsigned cmos_read_count;
+static unsigned cmos_write_count;
+static unsigned real_boot_frames = 3000u;
 
 struct retro_vfs_file_handle { FILE *file; char *path; };
 struct retro_vfs_dir_handle { DIR *dir; struct dirent *entry; char path[4096]; };
@@ -112,6 +122,29 @@ static struct retro_vfs_interface vfs = {
    vfs_closedir, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL
 };
 
+static void frontend_log(enum retro_log_level level, const char *format, ...)
+{
+   char message[2048];
+   va_list arguments;
+   (void)level;
+   va_start(arguments, format);
+   vsnprintf(message, sizeof(message), format, arguments);
+   va_end(arguments);
+   if (strstr(message, "FDC command="))
+   {
+      ++fdc_command_count;
+      if (strstr(message, "type=8")) ++fdc_read_count;
+   }
+   if (strstr(message, "KART ")) ++kart_traffic_count;
+   if (strstr(message, "CMOS read ")) ++cmos_read_count;
+   if (strstr(message, "CMOS write ")) ++cmos_write_count;
+   if (evidence_log)
+   {
+      fputs(message, evidence_log);
+      fflush(evidence_log);
+   }
+}
+
 static bool environment(unsigned command, void *data)
 {
    switch (command)
@@ -124,6 +157,10 @@ static bool environment(unsigned command, void *data)
          assert(phase == PHASE_INIT); return true;
       case RETRO_ENVIRONMENT_GET_VFS_INTERFACE:
          assert(phase == PHASE_INIT); ((struct retro_vfs_interface_info *)data)->iface = &vfs; return true;
+      case RETRO_ENVIRONMENT_GET_LOG_INTERFACE:
+         assert(phase == PHASE_INIT);
+         ((struct retro_log_callback *)data)->log = frontend_log;
+         return true;
       case RETRO_ENVIRONMENT_SET_PIXEL_FORMAT:
          assert(phase == PHASE_LOAD && *(enum retro_pixel_format *)data == RETRO_PIXEL_FORMAT_XRGB8888); return true;
       case RETRO_ENVIRONMENT_SET_CONTROLLER_INFO:
@@ -177,6 +214,30 @@ static void video(const void *data, unsigned w, unsigned h, size_t pitch)
    video_trace_signature ^= hash;
    video_trace_signature *= UINT64_C(1099511628211);
    ++video_frames;
+   if (real_boot_mode && (video_frames == 100u || video_frames == 300u ||
+                          video_frames == 600u || video_frames == 1000u ||
+                          video_frames == 1500u || video_frames == 2000u ||
+                          video_frames == real_boot_frames))
+   {
+      char path[4096];
+      snprintf(path, sizeof(path), "%s/field-%04u.ppm", evidence_path, video_frames);
+      FILE *ppm = fopen(path, "wb");
+      assert(ppm);
+      fprintf(ppm, "P6\n%u %u\n255\n", w, h);
+      const uint8_t *pixels = data;
+      for (unsigned y = 0; y < h; ++y, pixels += pitch)
+         for (unsigned x = 0; x < w; ++x)
+         {
+            uint32_t pixel;
+            uint8_t rgb[3];
+            memcpy(&pixel, pixels + x * 4u, sizeof(pixel));
+            rgb[0] = (uint8_t)(pixel >> 16);
+            rgb[1] = (uint8_t)(pixel >> 8);
+            rgb[2] = (uint8_t)pixel;
+            assert(fwrite(rgb, 1u, sizeof(rgb), ppm) == sizeof(rgb));
+         }
+      assert(!fclose(ppm));
+   }
 }
 static size_t audio(const int16_t *data, size_t frames)
 {
@@ -263,6 +324,7 @@ int main(int argc, char **argv)
 {
    assert(argc == 5 || (argc == 6 && strcmp(argv[5], "--real-boot") == 0));
    bool real_boot = argc == 6;
+   real_boot_mode = real_boot;
    void *module = dlopen(argv[1], RTLD_NOW | RTLD_LOCAL);
    if (!module)
    {
@@ -276,6 +338,15 @@ int main(int argc, char **argv)
    make_directory(argv[4]); make_directory(system_path); make_directory(firmware_path);
    strncat(firmware_path, "/firmware", sizeof(firmware_path) - strlen(firmware_path) - 1u); make_directory(firmware_path);
    make_directory(save_path);
+   if (real_boot)
+   {
+      snprintf(evidence_path, sizeof(evidence_path), "%s/evidence", argv[4]);
+      make_directory(evidence_path);
+      char log_path[4096];
+      snprintf(log_path, sizeof(log_path), "%s/real-boot.log", evidence_path);
+      evidence_log = fopen(log_path, "wb");
+      assert(evidence_log);
+   }
    snprintf(renamed, sizeof(renamed), "%s/renamed-firmware.data", firmware_path);
    char stale[4096]; snprintf(stale, sizeof(stale), "%s.hidden", renamed); (void)remove(stale);
    copy_file(argv[2], renamed);
@@ -316,20 +387,25 @@ int main(int argc, char **argv)
       char firmware_message[sizeof(last_message)];
       snprintf(firmware_message, sizeof(firmware_message), "%s", last_message);
       phase = PHASE_RUN;
-      for (unsigned frame = 0; frame < 1000u; ++frame) retro_run();
+      for (unsigned frame = 0; frame < real_boot_frames; ++frame) retro_run();
       retro_unload_game();
       retro_deinit();
+      assert(!fclose(evidence_log));
+      evidence_log = NULL;
       assert(open_files == 0u && open_dirs == 0u && hash_file(argv[3]) == source_hash);
-      assert(video_frames == 1000u && audio_frames > 0u && video_signature_count > 1u);
+      assert(video_frames == real_boot_frames && audio_frames > 0u && video_signature_count > 1u);
       assert(dlclose(module) == 0);
-      printf("real_boot_harness: %s; 1000 frames, %u signatures, trace %016llx, "
+      printf("real_boot_harness: %s; %u frames, %u signatures, trace %016llx, "
              "final %016llx, "
-             "%llu audio frames, %llu nonzero samples\n",
-             firmware_message, video_signature_count,
+             "%llu audio frames, %llu nonzero samples; FDC commands %u (reads %u), "
+             "KART traffic %u, CMOS reads %u writes %u; evidence %s\n",
+             firmware_message, real_boot_frames, video_signature_count,
              (unsigned long long)video_trace_signature,
              (unsigned long long)last_video_signature,
              (unsigned long long)audio_frames,
-             (unsigned long long)nonzero_audio_samples);
+             (unsigned long long)nonzero_audio_samples,
+             fdc_command_count, fdc_read_count, kart_traffic_count,
+             cmos_read_count, cmos_write_count, evidence_path);
       return 0;
    }
 

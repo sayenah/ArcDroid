@@ -18,10 +18,13 @@ typedef struct {
    bool field_completed;
 } ArcEngineFrame;
 
+typedef void (*ArcEngineLogCallback)(void *opaque, const char *message);
+
 bool arc_engine_start(const uint8_t *firmware, size_t firmware_size,
                       const char *media_path,
                       const uint8_t cmos[ARC_CMOS_MACHINE_SIZE],
                       char *error, size_t error_size);
+void arc_engine_set_log_callback(ArcEngineLogCallback callback, void *opaque);
 bool arc_engine_reset(char *error, size_t error_size);
 void arc_engine_stop(void);
 bool arc_engine_run_frame(ArcInputState *input, ArcEngineFrame *frame);

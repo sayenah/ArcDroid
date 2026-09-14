@@ -1,6 +1,7 @@
 /*Arculator 2.2 by Sarah Walker
   1770 FDC emulation*/
-/* ArcDroid modification: controller faults never terminate the frontend. */
+/* ArcDroid modification: controller faults never terminate the frontend;
+ * command traffic is exposed through the frontend debug logger. */
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -82,6 +83,9 @@ void wd1770_write(uint16_t addr, uint8_t val)
 //                   output = 1;
 
 		wd1770.command = val;
+		rpclog("FDC command=%02X type=%X drive=%i track=%u sector=%u side=%i density=%i\n",
+		       val, val >> 4, curdrive, wd1770.track, wd1770.sector,
+		       wd1770.curside, wd1770.density);
 		if ((val >> 4) != 0xD)/* && !(val&8)) */wd1770_spinup();
 		switch (val >> 4)
 		{

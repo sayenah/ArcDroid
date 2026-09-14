@@ -62,6 +62,8 @@ static size_t arc_saved_firmware_size;
 static char arc_saved_media[4096];
 static uint8_t arc_saved_cmos[ARC_CMOS_MACHINE_SIZE];
 static double arc_last_refresh = 50.0;
+static ArcEngineLogCallback arc_log_callback;
+static void *arc_log_opaque;
 
 static void arc_latch_fault(const char *format, va_list arguments)
 {
@@ -74,7 +76,22 @@ static void arc_latch_fault(const char *format, va_list arguments)
       longjmp(arc_fault_jump, 1);
 }
 
-void rpclog(const char *format, ...) { (void)format; }
+void rpclog(const char *format, ...)
+{
+   char message[1024];
+   va_list arguments;
+   if (!arc_log_callback || !format) return;
+   va_start(arguments, format);
+   vsnprintf(message, sizeof(message), format, arguments);
+   va_end(arguments);
+   arc_log_callback(arc_log_opaque, message);
+}
+
+void arc_engine_set_log_callback(ArcEngineLogCallback callback, void *opaque)
+{
+   arc_log_callback = callback;
+   arc_log_opaque = opaque;
+}
 void fatal(const char *format, ...)
 {
    va_list arguments;

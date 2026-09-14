@@ -1,5 +1,7 @@
 /*Arculator 2.2 by Sarah Walker
   Keyboard/mouse emulation*/
+/* ArcDroid modification: KART reset/handshake traffic is exposed through the
+ * frontend debug logger for deterministic boot diagnostics. */
 #include <stdio.h>
 #include "arc.h"
 #include "config.h"
@@ -58,6 +60,7 @@ enum
 
 void keyboard_send_single(uint8_t val)
 {
+	rpclog("KART device->guest value=%02X state=%i\n", val, keystat);
 	LOG_KB_MOUSE("keyboard_send_single %02X\n", val);
 	key_data[0] = val;
 
@@ -68,6 +71,7 @@ void keyboard_send_single(uint8_t val)
 
 void keyboard_send_double(uint8_t val1, uint8_t val2)
 {
+	rpclog("KART device->guest values=%02X,%02X state=%i\n", val1, val2, keystat);
 	LOG_KB_MOUSE("keyboard_send_double : %02X %02X\n", val1, val2);
 	key_data[0] = val1;
 	key_data[1] = val2;
@@ -307,6 +311,7 @@ static void keyboard_a500_write(uint8_t val)
 
 void keyboard_write(uint8_t val)
 {
+	rpclog("KART guest->device value=%02X state=%i\n", val, keystat);
 	timer_set_delay_u64(&keyboard_tx_timer, 1000 * TIMER_USEC);
 
 	LOG_KB_MOUSE("Keyboard write %02X %i %08X\n", val, keystat, PC);
