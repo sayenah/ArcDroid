@@ -1,0 +1,6 @@
+# Private local evidence only; never committed (protocol §10, PRD FR-68)
+ROMS/
+roms/private/
+
+# OS noise
+.DS_Store
