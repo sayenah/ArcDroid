@@ -1,8 +1,8 @@
 # ArcDroid Handoff
 
-**Stage:** IMPLEMENTATION  
-**Owner:** Sol  
-**Next (run 6, last fixes):** Continue on `slice/01-skeleton-boot` (PR #5, HEAD `51f052f`). `git merge origin/main`, implement **R-33…R-35** below, push once, update the PR #5 description. Fable verifies (trivial changes; no further Opus pass) and then presents the Founder merge gate (AC-11, AC-12(b)/(c)).
+**Stage:** MERGE GATE  
+**Owner:** Founder  
+**Next:** Founder decides the Slice 1 merge gate for **PR #5** (`slice/01-skeleton-boot`, HEAD `433d36f`, CI 4/4 green, Opus verdict "fit to merge subject to Founder acceptance of AC-11/AC-12(b)/(c)"). Options: (a) attach the Retroid Pocket or Odin 3 Ultra via adb (USB debugging on) and, for AC-12(b), name a Windows RetroArch host holding the private ROM — Fable then dispatches Sol to produce AC-11/AC-12(b)/(c) evidence before merge; or (b) explicitly accept AC-11, AC-12(b), AC-12(c) as open evidence for Slice 1 (protocol §17) — Fable then merges PR #5, consolidates `docs/build-log.md`, records decisions (per-content CMOS identity; audio-underrun limitation; test/shipping build split) and writes the Slice 2 architecture baton. No implementation is authorized until then.
 
 ## Objective
 Slice 1 — "one loose ADF boots on both platforms": a RetroArch/libretro core, built from the Arculator engine, that loads a loose ADF/ADL disc image passed by the frontend, identifies user-supplied firmware by content fingerprint, selects a conservative ARM2 machine automatically, runs the emulated Archimedes with video, audio, RetroPad/keyboard/mouse/pointer input and persistent CMOS, tears down cleanly, and does so identically on native Windows x86_64 RetroArch and physical Android arm64 RetroArch. Governing requirements: PRD §7–§9, §12–§15, §18–§21, §23 items 1–4, 6–7, 10–12; protocol §10–§12.
@@ -14,6 +14,9 @@ Slice 1 — "one loose ADF boots on both platforms": a RetroArch/libretro core, 
 - Provenance: tracked binaries = exactly the five D-018 files; 15 upstream files modified, 14 carry a modification notice (`vidc.h` does not).
 - Sol's AC table: AC-1…AC-10, AC-12(a) pass; **AC-11, AC-12(b), AC-12(c) blocked** (no Android device attached; no Founder Windows host with the private ROM). These three cannot be produced by Sol or Opus; the Founder must either attach devices/provide a host or explicitly accept the gap before merge (protocol §17).
 - Root causes fixed in run 3 worth QA attention: WD1772 seek completion had lived in the excluded drive-noise module (`disc.c`, notice present); CMOS boot recipe patches PRM bytes 5/11/16/135 conditionally with checksum preserved (`core/cmos_defaults.c`).
+
+## Sol run 6 — Fable verification (2026-09-14)
+HEAD `433d36f` (R-33/R-34 in code: `input_observed` depends only on the port-0 end-to-end signature; guard scans all shipping headers with an exact allowlist for the `arc.h` notice comment and self-tests an injected header `fopen`; R-35 PR text corrected, optional 2.01/0.30 option values deferred). CI 4/4 green. Slice 1 evidence complete except AC-11, AC-12(b), AC-12(c).
 
 ## Opus targeted re-check of HEAD `51f052f` (2026-09-14) — Fable adjudication
 Verdict: fit to merge subject to the Founder gate. R-25…R-32 all verified (R-25/R-29 by mutation testing, R-30 with a no-input control). Two-build split (`arcdroid_libretro` shipping vs `arcdroid_libretro_test` with hooks) confirmed: identical sources, differences limited to the test define, visibility/export list and install; real-boot behaviour byte-identical between the two; shipping DLL is what Windows harness + RetroArch load. Low findings → R-33…R-35; the host job's lack of an automated `dlopen` of the shipping library with generated fixtures is recorded as a follow-up for the next slice (not a blocker).
