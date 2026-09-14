@@ -88,4 +88,22 @@ bool arc_cmos_decode(const uint8_t record[ARC_CMOS_RECORD_SIZE],
                      const ArcLaunchPlan *plan,
                      uint8_t payload[ARC_CMOS_PAYLOAD_SIZE]);
 
+typedef struct {
+   bool keyboard[512];
+   bool mapped[512];
+   int mouse_x;
+   int mouse_y;
+   unsigned mouse_buttons;
+   bool pointer_contact;
+   int pointer_x;
+   int pointer_y;
+} ArcInputState;
+
+void arc_input_reset(ArcInputState *state);
+void arc_input_key(ArcInputState *state, unsigned scancode, bool down, bool mapped);
+bool arc_input_key_down(const ArcInputState *state, unsigned scancode);
+void arc_input_mouse_add(ArcInputState *state, int dx, int dy, unsigned buttons);
+void arc_input_mouse_packet(ArcInputState *state, int *dx, int *dy, unsigned *buttons);
+void arc_input_pointer(ArcInputState *state, bool pressed, int x, int y, unsigned buttons);
+
 #endif

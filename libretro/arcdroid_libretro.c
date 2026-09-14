@@ -35,6 +35,8 @@ static uint8_t *arc_firmware;
 static size_t arc_firmware_size;
 static ArcDigest arc_content_digest;
 static ArcLaunchPlan arc_plan;
+static ArcInputState arc_inputs;
+static bool arc_pad_keys[10];
 static char arc_cmos_path[4096];
 static char arc_staged_path[4096];
 static uint64_t arc_frame_number;
@@ -218,10 +220,51 @@ static bool arc_disk_get_label(unsigned index, char *label, size_t length)
 static void arc_keyboard(bool down, unsigned keycode, uint32_t character,
                          uint16_t modifiers)
 {
-   (void)down;
-   (void)keycode;
    (void)character;
    (void)modifiers;
+   arc_input_key(&arc_inputs, keycode, down, false);
+}
+
+static void arc_poll_inputs(void)
+{
+   static const unsigned ids[] = {
+      RETRO_DEVICE_ID_JOYPAD_UP, RETRO_DEVICE_ID_JOYPAD_DOWN,
+      RETRO_DEVICE_ID_JOYPAD_LEFT, RETRO_DEVICE_ID_JOYPAD_RIGHT,
+      RETRO_DEVICE_ID_JOYPAD_A, RETRO_DEVICE_ID_JOYPAD_B,
+      RETRO_DEVICE_ID_JOYPAD_X, RETRO_DEVICE_ID_JOYPAD_Y,
+      RETRO_DEVICE_ID_JOYPAD_START, RETRO_DEVICE_ID_JOYPAD_SELECT
+   };
+   static const unsigned keys[] = {
+      RETROK_UP, RETROK_DOWN, RETROK_LEFT, RETROK_RIGHT,
+      RETROK_SPACE, RETROK_RETURN, RETROK_LSHIFT, RETROK_LCTRL,
+      RETROK_ESCAPE, RETROK_TAB
+   };
+   if (!arc_input_state) return;
+   for (unsigned i = 0; i < sizeof(ids) / sizeof(ids[0]); ++i)
+   {
+      bool down = arc_input_state(0u, RETRO_DEVICE_JOYPAD, 0u, ids[i]) != 0;
+      if (down != arc_pad_keys[i])
+      {
+         arc_pad_keys[i] = down;
+         arc_input_key(&arc_inputs, keys[i], down, true);
+      }
+   }
+   bool pointer = arc_input_state(0u, RETRO_DEVICE_POINTER, 0u,
+                                  RETRO_DEVICE_ID_POINTER_PRESSED) != 0;
+   if (pointer || arc_inputs.pointer_contact)
+      arc_input_pointer(&arc_inputs, pointer,
+         arc_input_state(0u, RETRO_DEVICE_POINTER, 0u, RETRO_DEVICE_ID_POINTER_X),
+         arc_input_state(0u, RETRO_DEVICE_POINTER, 0u, RETRO_DEVICE_ID_POINTER_Y),
+         pointer ? 1u : 0u);
+   else
+   {
+      int dx = arc_input_state(0u, RETRO_DEVICE_MOUSE, 0u, RETRO_DEVICE_ID_MOUSE_X);
+      int dy = arc_input_state(0u, RETRO_DEVICE_MOUSE, 0u, RETRO_DEVICE_ID_MOUSE_Y);
+      unsigned buttons = (arc_input_state(0u, RETRO_DEVICE_MOUSE, 0u, RETRO_DEVICE_ID_MOUSE_LEFT) ? 1u : 0u) |
+                         (arc_input_state(0u, RETRO_DEVICE_MOUSE, 0u, RETRO_DEVICE_ID_MOUSE_RIGHT) ? 2u : 0u) |
+                         (arc_input_state(0u, RETRO_DEVICE_MOUSE, 0u, RETRO_DEVICE_ID_MOUSE_MIDDLE) ? 4u : 0u);
+      arc_input_mouse_add(&arc_inputs, dx, dy, buttons);
+   }
 }
 
 static const struct retro_core_option_v2_definition arc_options[] = {
@@ -305,6 +348,8 @@ RETRO_API void retro_init(void)
    arc_image_index = arc_initial_index = 0u;
    arc_initial_path[0] = '\0';
    memset(arc_cmos_record, 0, sizeof(arc_cmos_record));
+   arc_input_reset(&arc_inputs);
+   memset(arc_pad_keys, 0, sizeof(arc_pad_keys));
    arc_release_session();
    if (arc_environment)
    {
@@ -467,6 +512,7 @@ RETRO_API void retro_run(void)
 {
    size_t count = sizeof(arc_audio_frame) / (2u * sizeof(arc_audio_frame[0]));
    if (arc_input_poll) arc_input_poll();
+   arc_poll_inputs();
    if (!arc_loaded)
    {
       if (arc_video) arc_video(NULL, ARC_WIDTH, ARC_HEIGHT, ARC_WIDTH * sizeof(uint32_t));

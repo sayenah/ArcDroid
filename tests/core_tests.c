@@ -73,12 +73,45 @@ static void test_media_launch_and_cmos(void)
    assert(!arc_cmos_decode(record, &plan, restored));
 }
 
+static void test_input(void)
+{
+   ArcInputState state;
+   arc_input_reset(&state);
+   arc_input_key(&state, 42u, true, false);
+   arc_input_key(&state, 42u, true, true);
+   arc_input_key(&state, 42u, false, false);
+   assert(arc_input_key_down(&state, 42u));
+   arc_input_key(&state, 42u, false, true);
+   assert(!arc_input_key_down(&state, 42u));
+
+   arc_input_mouse_add(&state, 150, -90, 3u);
+   int x, y; unsigned buttons;
+   arc_input_mouse_packet(&state, &x, &y, &buttons);
+   assert(x == 63 && y == -63 && buttons == 3u);
+   arc_input_mouse_packet(&state, &x, &y, &buttons);
+   assert(x == 63 && y == -27);
+   arc_input_mouse_packet(&state, &x, &y, &buttons);
+   assert(x == 24 && y == 0);
+
+   arc_input_reset(&state);
+   arc_input_pointer(&state, true, 1000, 1000, 1u);
+   arc_input_mouse_packet(&state, &x, &y, &buttons);
+   assert(x == 0 && y == 0 && buttons == 1u);
+   arc_input_pointer(&state, true, 1025, 970, 1u);
+   arc_input_mouse_packet(&state, &x, &y, &buttons);
+   assert(x == 25 && y == -30 && buttons == 1u);
+   arc_input_pointer(&state, false, 0, 0, 0u);
+   arc_input_mouse_packet(&state, &x, &y, &buttons);
+   assert(buttons == 0u);
+}
+
 int main(void)
 {
    test_hashes();
    test_firmware_table();
    test_assembly();
    test_media_launch_and_cmos();
+   test_input();
    puts("core_tests: all checks passed");
    return 0;
 }

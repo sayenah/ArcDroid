@@ -141,6 +141,15 @@ static void copy_file(const char *from, const char *to)
    assert(!ferror(a)); assert(!fclose(a)); assert(!fclose(b));
 }
 
+static uint64_t hash_file(const char *path)
+{
+   FILE *f = fopen(path, "rb"); assert(f);
+   uint64_t hash = UINT64_C(1469598103934665603);
+   int byte;
+   while ((byte = fgetc(f)) != EOF) { hash ^= (uint8_t)byte; hash *= UINT64_C(1099511628211); }
+   assert(!ferror(f) && !fclose(f)); return hash;
+}
+
 #define LOAD(name) do { *(void **)(&name) = dlsym(module, #name); assert(name); } while (0)
 int main(int argc, char **argv)
 {
@@ -154,6 +163,7 @@ int main(int argc, char **argv)
    strncat(firmware_path, "/firmware", sizeof(firmware_path) - strlen(firmware_path) - 1u); make_directory(firmware_path);
    make_directory(save_path);
    snprintf(renamed, sizeof(renamed), "%s/renamed-firmware.data", firmware_path);
+   char stale[4096]; snprintf(stale, sizeof(stale), "%s.hidden", renamed); (void)remove(stale);
    copy_file(argv[2], renamed);
    system_dir = system_path; save_dir = save_path;
    assert(getcwd(cwd, sizeof(cwd)));
@@ -179,11 +189,26 @@ int main(int argc, char **argv)
    phase = PHASE_INIT; retro_init();
    assert(retro_serialize_size() == 0u);
    struct retro_game_info game = {argv[3], NULL, 0u, NULL};
+   uint64_t source_hash = hash_file(argv[3]);
+
+   char hidden[4096]; snprintf(hidden, sizeof(hidden), "%s/firmware.hidden", argv[4]);
+   assert(rename(renamed, hidden) == 0);
+   phase = PHASE_LOAD; assert(!retro_load_game(&game)); assert(strstr(last_message, "Missing RISC OS 3.11"));
+   assert(rename(hidden, renamed) == 0);
+
+   char corrupt[4096]; snprintf(corrupt, sizeof(corrupt), "%s/corrupt.adf", argv[4]);
+   FILE *bad = fopen(corrupt, "wb"); assert(bad); assert(fwrite("bad", 1u, 3u, bad) == 3u); assert(!fclose(bad));
+   struct retro_game_info bad_game = {corrupt, NULL, 0u, NULL};
+   phase = PHASE_LOAD; assert(!retro_load_game(&bad_game)); assert(strstr(last_message, "geometry"));
+
+   uint8_t saved_cmos[256];
    for (unsigned cycle = 0; cycle < 100u; ++cycle)
    {
       phase = PHASE_LOAD; assert(retro_load_game(&game)); assert(keyboard.callback);
       assert(retro_get_memory_size(RETRO_MEMORY_SAVE_RAM) == 256u);
       assert(retro_get_memory_data(RETRO_MEMORY_SAVE_RAM));
+      if (cycle == 0u) memcpy(saved_cmos, retro_get_memory_data(RETRO_MEMORY_SAVE_RAM), sizeof(saved_cmos));
+      else assert(memcmp(saved_cmos, retro_get_memory_data(RETRO_MEMORY_SAVE_RAM), sizeof(saved_cmos)) == 0);
       phase = PHASE_RUN;
       for (unsigned frame = 0; frame < 100u; ++frame) retro_run();
       retro_reset(); retro_unload_game();
@@ -192,6 +217,7 @@ int main(int argc, char **argv)
    retro_deinit();
    assert(open_files == 0u && open_dirs == 0u);
    assert(getcwd(cwd_after, sizeof(cwd_after)) && strcmp(cwd, cwd_after) == 0);
+   assert(hash_file(argv[3]) == source_hash);
    assert(video_frames == 10000u && audio_frames == UINT64_C(9600000));
    assert(dlclose(module) == 0);
    printf("libretro_harness: 100 cycles, 10000 frames, %llu audio frames, 0 leaked VFS handles\n",

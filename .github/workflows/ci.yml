@@ -1,0 +1,60 @@
+name: CI
+on:
+  push:
+    branches: [main, "slice/**"]
+  pull_request:
+
+jobs:
+  host:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build tools
+        run: sudo apt-get update && sudo apt-get install -y cmake ninja-build python3
+      - name: Asset guard
+        run: tools/check-assets.sh
+      - name: Configure
+        run: cmake -S . -B build/host -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo
+      - name: Build
+        run: cmake --build build/host --verbose
+      - name: Unit tests and harness
+        run: ctest --test-dir build/host --output-on-failure
+      - name: Export guard
+        run: tools/check-exports.sh build/host/arcdroid_libretro.so
+
+  windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: mingw-w64-x86_64-gcc mingw-w64-x86_64-cmake mingw-w64-x86_64-ninja
+      - name: Configure
+        run: cmake -S . -B build/windows -G Ninja -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build/windows --verbose
+      - name: Tests
+        run: ctest --test-dir build/windows --output-on-failure
+
+  android-arm64:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: nttld/setup-ndk@v1
+        id: setup-ndk
+        with:
+          ndk-version: r29
+          add-to-path: false
+      - name: Configure
+        run: cmake -S . -B build/android -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE=${{ steps.setup-ndk.outputs.ndk-path }}/build/cmake/android.toolchain.cmake -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-21
+      - name: Build
+        run: cmake --build build/android --verbose
+      - name: ELF guard
+        env:
+          LLVM_READELF: ${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf
+        run: tools/check-android.sh build/android/arcdroid_libretro_android.so

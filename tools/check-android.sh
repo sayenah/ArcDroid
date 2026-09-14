@@ -1,0 +1,11 @@
+#!/bin/sh
+set -eu
+binary=$1
+readelf_bin=${LLVM_READELF:-llvm-readelf}
+count=$($readelf_bin -Ws "$binary" | awk '$5 == "GLOBAL" && $6 == "DEFAULT" && $7 != "UND" && $8 ~ /^retro_/ {print $8}' | sed 's/@.*//' | sort -u | wc -l | tr -d ' ')
+[ "$count" = 25 ]
+$readelf_bin -dW "$binary" | awk '/NEEDED/ {gsub(/[][]/, "", $5); print $5}' | while IFS= read -r lib; do
+  case "$lib" in libc.so|libm.so|libdl.so|libz.so) ;; *) printf 'unexpected Android dependency: %s\n' "$lib" >&2; exit 1 ;; esac
+done
+$readelf_bin -lW "$binary" | awk '/ LOAD / {if ($NF != "0x4000") exit 1}'
+printf 'Android guard: 25 exports; allowed NEEDED entries; LOAD alignment 0x4000\n'

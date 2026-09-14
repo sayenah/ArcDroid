@@ -8,6 +8,7 @@ set(CMAKE_C_EXTENSIONS ON)
 
 add_library(arcdroid_core STATIC
   core/hash.c
+  core/input.c
   core/firmware_table.c
   core/launch.c
   core/persistence.c
@@ -58,6 +59,7 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
   find_package(Python3 REQUIRED COMPONENTS Interpreter)
   add_executable(core_tests tests/core_tests.c)
   target_link_libraries(core_tests PRIVATE arcdroid_core)
+  target_compile_options(core_tests PRIVATE $<$<C_COMPILER_ID:GNU,Clang,AppleClang>:-UNDEBUG>)
   add_test(NAME core-services COMMAND core_tests)
 
   set(FIXTURE_DIR "${CMAKE_CURRENT_BINARY_DIR}/tests/fixtures/generated")
@@ -68,13 +70,23 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
   add_custom_target(test-fixtures ALL DEPENDS
     "${FIXTURE_DIR}/arcdroid-test.rom" "${FIXTURE_DIR}/arcdroid-test.adf")
 
-  add_executable(libretro_harness tests/libretro_harness.c)
-  target_include_directories(libretro_harness PRIVATE libretro/include)
-  target_link_libraries(libretro_harness PRIVATE ${CMAKE_DL_LIBS})
-  add_dependencies(libretro_harness test-fixtures arcdroid_libretro)
-  add_test(NAME libretro-harness COMMAND libretro_harness
-    $<TARGET_FILE:arcdroid_libretro>
-    "${FIXTURE_DIR}/arcdroid-test.rom"
-    "${FIXTURE_DIR}/arcdroid-test.adf"
-    "${CMAKE_CURRENT_BINARY_DIR}/harness-data")
+  if(WIN32)
+    add_executable(windows_load_harness tests/windows_load_harness.c)
+    add_dependencies(windows_load_harness arcdroid_libretro)
+    add_test(NAME windows-load-harness COMMAND windows_load_harness $<TARGET_FILE:arcdroid_libretro>)
+  else()
+    add_executable(libretro_harness tests/libretro_harness.c)
+    target_include_directories(libretro_harness PRIVATE libretro/include)
+    target_link_libraries(libretro_harness PRIVATE ${CMAKE_DL_LIBS})
+    target_compile_options(libretro_harness PRIVATE $<$<C_COMPILER_ID:GNU,Clang,AppleClang>:-UNDEBUG>)
+    add_dependencies(libretro_harness test-fixtures arcdroid_libretro)
+    add_test(NAME libretro-harness COMMAND libretro_harness
+      $<TARGET_FILE:arcdroid_libretro>
+      "${FIXTURE_DIR}/arcdroid-test.rom"
+      "${FIXTURE_DIR}/arcdroid-test.adf"
+      "${CMAKE_CURRENT_BINARY_DIR}/harness-data")
+  endif()
+
+  add_executable(firmware_probe tools/firmware_probe.c)
+  target_link_libraries(firmware_probe PRIVATE arcdroid_core)
 endif()
