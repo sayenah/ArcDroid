@@ -69,12 +69,25 @@ static void test_media_launch_and_cmos(void)
    assert(arc_cmos_encode(record, &plan, payload));
    assert(arc_cmos_decode(record, &plan, restored));
    assert(memcmp(payload, restored, sizeof(payload)) == 0);
-   record[100] ^= 1u;
+   record[12] ^= 1u;
    assert(!arc_cmos_decode(record, &plan, restored));
    assert(arc_cmos_default(ARC_OS_RISCOS_311, payload));
    assert(payload[0] || payload[1] || payload[2]);
    assert(arc_cmos_default(ARC_OS_TEST, payload));
    for (unsigned i = 0; i < sizeof(payload); ++i) assert(payload[i] == 0u);
+   uint8_t machine_cmos[ARC_CMOS_MACHINE_SIZE];
+   assert(arc_cmos_default(ARC_OS_RISCOS_311, payload));
+   assert(arc_cmos_machine_image(ARC_OS_RISCOS_311, payload, machine_cmos));
+   assert(machine_cmos[69] == 8u && !(machine_cmos[75] & 7u));
+   assert((machine_cmos[80] & 0x10u) && (machine_cmos[199] & 7u) == 1u);
+   unsigned checksum = 0u;
+   for (unsigned i = 0; i < 239u; ++i)
+   {
+      unsigned raw = i + 0x40u;
+      if (raw > 255u) raw -= 240u;
+      checksum += machine_cmos[raw];
+   }
+   assert(machine_cmos[63] == (uint8_t)(checksum + 1u));
 }
 
 static void test_input(void)

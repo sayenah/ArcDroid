@@ -20,7 +20,7 @@ typedef struct {
 
 bool arc_engine_start(const uint8_t *firmware, size_t firmware_size,
                       const char *media_path,
-                      const uint8_t cmos[ARC_CMOS_PAYLOAD_SIZE],
+                      const uint8_t cmos[ARC_CMOS_MACHINE_SIZE],
                       char *error, size_t error_size);
 bool arc_engine_reset(char *error, size_t error_size);
 void arc_engine_stop(void);

@@ -33,6 +33,14 @@ static int adf_informat=0;
 static int adf_pause = 0;
 static int adf_index = 6250;
 
+int adf_flush_all(void)
+{
+	for (int drive = 0; drive < 4; ++drive)
+		if (adf[drive].f && fflush(adf[drive].f))
+			return -1;
+	return 0;
+}
+
 void adf_init()
 {
 	memset(adf, 0, sizeof(adf));

@@ -60,7 +60,8 @@ typedef struct {
 } ArcLaunchPlan;
 
 #define ARC_CMOS_RECORD_SIZE 256u
-#define ARC_CMOS_PAYLOAD_SIZE 192u
+#define ARC_CMOS_PAYLOAD_SIZE 240u
+#define ARC_CMOS_MACHINE_SIZE 256u
 
 uint32_t arc_crc32(const void *data, size_t size);
 void arc_sha1_hex(const void *data, size_t size, char output[41]);
@@ -88,6 +89,9 @@ bool arc_cmos_decode(const uint8_t record[ARC_CMOS_RECORD_SIZE],
                      const ArcLaunchPlan *plan,
                      uint8_t payload[ARC_CMOS_PAYLOAD_SIZE]);
 bool arc_cmos_default(ArcOsClass os, uint8_t output[ARC_CMOS_PAYLOAD_SIZE]);
+bool arc_cmos_machine_image(ArcOsClass os,
+                            const uint8_t payload[ARC_CMOS_PAYLOAD_SIZE],
+                            uint8_t output[ARC_CMOS_MACHINE_SIZE]);
 
 typedef struct {
    bool keyboard[512];

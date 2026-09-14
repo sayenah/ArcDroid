@@ -161,6 +161,26 @@ def build_rom() -> bytearray:
     a.tst_imm(4, 1)
     a.branch("fdc_read_finish", "ne")
 
+    # Write sector one through the same controller. The source ADF is immutable;
+    # the harness verifies that only the content-addressed shadow changes.
+    a.mov(1, 1)
+    a.str(1, 0, 8, byte=True)
+    a.mov(1, 0xA0)
+    a.str(1, 0, byte=True)
+    a.ldr_const(5, 1024)
+    a.mov(7, 0x5A)
+    a.label("fdc_write_wait")
+    a.ldr(4, 0, byte=True)
+    a.tst_imm(4, 2)
+    a.branch("fdc_write_wait", "eq")
+    a.str(7, 0, 12, byte=True)
+    a.subs_imm(5, 5, 1)
+    a.branch("fdc_write_wait", "ne")
+    a.label("fdc_write_finish")
+    a.ldr(4, 0, byte=True)
+    a.tst_imm(4, 1)
+    a.branch("fdc_write_finish", "ne")
+
     # Expand the guest checksum to all bytes and paint 640x256 at 8 bpp.
     a.orr_lsl(6, 6, 6, 8)
     a.orr_lsl(6, 6, 6, 16)
@@ -206,6 +226,17 @@ def build_rom() -> bytearray:
     a.mov(0, 0x33)
     a.str(0, 11, 4, byte=True)
     a.mov(8, 0)
+
+    # Exercise the bounded fallback with a zero-line VIDC program, then recover
+    # to the normal mode. The frontend must receive a warning, never terminate.
+    a.ldr_const(0, 0xA0000000)
+    a.str(0, 1)
+    a.ldr_const(5, 25000)
+    a.label("invalid_vidc_wait")
+    a.subs_imm(5, 5, 1)
+    a.branch("invalid_vidc_wait", "ne")
+    a.ldr_const(0, 0xA04DC000)
+    a.str(0, 1)
 
     # Two modes are programmed by the guest, with enough dwell for coalescing.
     a.mov(9, 0)

@@ -8,7 +8,7 @@ set(CMAKE_C_EXTENSIONS ON)
 
 foreach(cmos_name IN ITEMS arthur riscos2 riscos3_old riscos3_new)
   file(READ "${CMAKE_CURRENT_SOURCE_DIR}/engine/arculator/cmos/${cmos_name}/cmos.bin"
-       cmos_${cmos_name}_hex HEX LIMIT 192)
+       cmos_${cmos_name}_hex HEX LIMIT 256)
   string(REGEX REPLACE "([0-9a-f][0-9a-f])" "0x\\1," cmos_${cmos_name}_bytes
          "${cmos_${cmos_name}_hex}")
 endforeach()

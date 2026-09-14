@@ -10,7 +10,7 @@
 #define B(os_, name_, size_, crc_, sha_, lane_) {os_, name_, size_, UINT32_C(crc_), sha_, ARC_RECIPE_BYTE_LANES_4, lane_}
 #define H(os_, name_, size_, crc_, sha_, lane_) {os_, name_, size_, UINT32_C(crc_), sha_, ARC_RECIPE_HALFWORD_LANES_2, lane_}
 static const ArcFirmwareFingerprint fingerprints[] = {
-   C(ARC_OS_TEST, "ArcDroid test ROM", 524288u, 0x16f6928b, "265adc4485f18aa3ed1dff68e49d37f520e778d7"),
+   C(ARC_OS_TEST, "ArcDroid test ROM", 524288u, 0x5f74ec91, "34f6df998a8e90574c6aeb5cf8d1ef199066b762"),
    C(ARC_OS_RISCOS_311, "RISC OS 3.11", 2097152u, 0x54c0c963, "3487729e87bebc9cb51665838c27beff22f7b3bd"),
    C(ARC_OS_RISCOS_310, "RISC OS 3.10", 2097152u, 0xecac4ea6, "68533e0a93657a879c1697c04f32d517345b1a61"),
    C(ARC_OS_RISCOS_319, "RISC OS 3.19", 2097152u, 0x00c7a3d3, "be7a8cba5d6c6c0e1c4838712524056cf4b8c8cb"),

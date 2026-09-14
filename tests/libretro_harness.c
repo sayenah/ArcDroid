@@ -26,10 +26,12 @@ static uint64_t nonzero_audio_samples;
 static uint64_t video_signatures[16];
 static unsigned video_signature_count;
 static uint64_t last_video_signature;
+static uint64_t video_trace_signature = UINT64_C(1469598103934665603);
 static double reported_rates[16];
 static unsigned reported_rate_count;
 static unsigned geometry_changes;
 static char last_message[512];
+static bool invalid_vidc_message;
 static struct retro_keyboard_callback keyboard;
 static bool joypad_a;
 static int mouse_x, mouse_y;
@@ -145,9 +147,13 @@ static bool environment(unsigned command, void *data)
          return true;
       }
       case RETRO_ENVIRONMENT_SET_MESSAGE_EXT:
-         snprintf(last_message, sizeof(last_message), "%s", ((struct retro_message_ext *)data)->msg); return true;
+         snprintf(last_message, sizeof(last_message), "%s", ((struct retro_message_ext *)data)->msg);
+         if (strstr(last_message, "VIDC")) invalid_vidc_message = true;
+         return true;
       case RETRO_ENVIRONMENT_SET_MESSAGE:
-         snprintf(last_message, sizeof(last_message), "%s", ((struct retro_message *)data)->msg); return true;
+         snprintf(last_message, sizeof(last_message), "%s", ((struct retro_message *)data)->msg);
+         if (strstr(last_message, "VIDC")) invalid_vidc_message = true;
+         return true;
       default: return false;
    }
 }
@@ -168,6 +174,8 @@ static void video(const void *data, unsigned w, unsigned h, size_t pitch)
    if (!seen && video_signature_count < 16u)
       video_signatures[video_signature_count++] = hash;
    last_video_signature = hash;
+   video_trace_signature ^= hash;
+   video_trace_signature *= UINT64_C(1099511628211);
    ++video_frames;
 }
 static size_t audio(const int16_t *data, size_t frames)
@@ -221,6 +229,33 @@ static uint64_t hash_file(const char *path)
    int byte;
    while ((byte = fgetc(f)) != EOF) { hash ^= (uint8_t)byte; hash *= UINT64_C(1099511628211); }
    assert(!ferror(f) && !fclose(f)); return hash;
+}
+
+static unsigned modified_shadow_count(const char *save, uint64_t first, uint64_t second)
+{
+   char root[4096], candidate[4096];
+   unsigned count = 0u;
+   snprintf(root, sizeof(root), "%s/arcdroid/media", save);
+   DIR *directory = opendir(root);
+   assert(directory);
+   struct dirent *entry;
+   while ((entry = readdir(directory)) != NULL)
+   {
+      if (entry->d_name[0] == '.') continue;
+      for (unsigned kind = 0; kind < 2u; ++kind)
+      {
+         struct stat status;
+         snprintf(candidate, sizeof(candidate), "%s/%s/disc.%s", root,
+                  entry->d_name, kind ? "adl" : "adf");
+         if (!stat(candidate, &status) && S_ISREG(status.st_mode))
+         {
+            uint64_t hash = hash_file(candidate);
+            if (hash != first && hash != second) ++count;
+         }
+      }
+   }
+   assert(!closedir(directory));
+   return count;
 }
 
 #define LOAD(name) do { *(void **)(&name) = dlsym(module, #name); assert(name); } while (0)
@@ -282,8 +317,12 @@ int main(int argc, char **argv)
       assert(open_files == 0u && open_dirs == 0u && hash_file(argv[3]) == source_hash);
       assert(video_frames == 1000u && audio_frames > 0u && video_signature_count > 1u);
       assert(dlclose(module) == 0);
-      printf("real_boot_harness: %s; 1000 frames, %u signatures, %llu audio frames, "
-             "%llu nonzero samples\n", firmware_message, video_signature_count,
+      printf("real_boot_harness: %s; 1000 frames, %u signatures, trace %016llx, "
+             "final %016llx, "
+             "%llu audio frames, %llu nonzero samples\n",
+             firmware_message, video_signature_count,
+             (unsigned long long)video_trace_signature,
+             (unsigned long long)last_video_signature,
              (unsigned long long)audio_frames,
              (unsigned long long)nonzero_audio_samples);
       return 0;
@@ -315,6 +354,7 @@ int main(int argc, char **argv)
    int changed_byte = fgetc(changed_file); assert(changed_byte != EOF);
    assert(fseek(changed_file, 64, SEEK_SET) == 0);
    assert(fputc(changed_byte ^ 0x5a, changed_file) != EOF && !fclose(changed_file));
+   uint64_t changed_source_hash = hash_file(changed);
    struct retro_game_info changed_game = {changed, NULL, 0u, NULL};
    phase = PHASE_LOAD; assert(retro_load_game(&game));
    phase = PHASE_RUN; for (unsigned frame = 0; frame < 60u; ++frame) retro_run();
@@ -339,6 +379,8 @@ int main(int argc, char **argv)
    assert(before_input_signature != changed_signature);
    input_observed = input_observed || before_input_signature != input_signature;
    assert(hash_file(argv[3]) == source_hash);
+   assert(hash_file(changed) == changed_source_hash);
+   assert(modified_shadow_count(save_path, source_hash, changed_source_hash) >= 2u);
 
    uint8_t saved_cmos[256];
    uint8_t final_cmos[256];
@@ -352,7 +394,7 @@ int main(int argc, char **argv)
       {
          memset(retro_get_memory_data(RETRO_MEMORY_SAVE_RAM), 0xa5, 256u);
          retro_run();
-         assert(memcmp(retro_get_memory_data(RETRO_MEMORY_SAVE_RAM), "ARCCMOS1", 8u) == 0);
+         assert(memcmp(retro_get_memory_data(RETRO_MEMORY_SAVE_RAM), "ARCCMOS2", 8u) == 0);
          for (unsigned frame = 1u; frame < 100u; ++frame) retro_run();
          memcpy(saved_cmos, retro_get_memory_data(RETRO_MEMORY_SAVE_RAM), sizeof(saved_cmos));
       }
@@ -372,9 +414,11 @@ int main(int argc, char **argv)
    assert(open_files == 0u && open_dirs == 0u);
    assert(getcwd(cwd_after, sizeof(cwd_after)) && strcmp(cwd, cwd_after) == 0);
    assert(hash_file(argv[3]) == source_hash);
+   assert(modified_shadow_count(save_path, source_hash, changed_source_hash) >= 2u);
    assert(video_frames == 10200u && audio_frames > 0u && nonzero_audio_samples > 0u);
    assert(video_signature_count >= 1u && reported_rate_count >= 1u);
    assert(input_observed);
+   assert(invalid_vidc_message);
    assert(dlclose(module) == 0);
    printf("libretro_harness: payload signatures %016llx/%016llx; "
           "100 cycles, 10200 frames, %llu audio frames, "

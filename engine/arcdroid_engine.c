@@ -60,7 +60,7 @@ static char arc_fault_text[512];
 static uint8_t *arc_saved_firmware;
 static size_t arc_saved_firmware_size;
 static char arc_saved_media[4096];
-static uint8_t arc_saved_cmos[ARC_CMOS_PAYLOAD_SIZE];
+static uint8_t arc_saved_cmos[ARC_CMOS_MACHINE_SIZE];
 static double arc_last_refresh = 50.0;
 
 static void arc_latch_fault(const char *format, va_list arguments)
@@ -243,6 +243,7 @@ static bool arc_machine_create(char *failure, size_t failure_size)
    disc_load(0, arc_saved_media);
    if (disc_empty(0))
       fatal("The staged floppy image could not be mounted");
+   ioc_discchange(0);
 
    arc_platform_video_reset();
    arc_platform_audio_reset();
@@ -254,7 +255,7 @@ static bool arc_machine_create(char *failure, size_t failure_size)
 
 bool arc_engine_start(const uint8_t *firmware, size_t firmware_size,
                       const char *media_path,
-                      const uint8_t cmos[ARC_CMOS_PAYLOAD_SIZE],
+                      const uint8_t cmos[ARC_CMOS_MACHINE_SIZE],
                       char *failure, size_t failure_size)
 {
    arc_engine_stop();
@@ -330,6 +331,7 @@ bool arc_engine_run_frame(ArcInputState *input, ArcEngineFrame *frame)
       execarm(2048);
       (void)arc_platform_video_frame(NULL, NULL, NULL, &sequence);
    } while (sequence == start_sequence && ((tsc - start_tsc) >> 32) < maximum_cycles);
+   if (adf_flush_all()) fatal("Unable to flush the staged floppy image");
    arc_fault_boundary = false;
 
    frame->pixels = arc_platform_video_frame(&frame->width, &frame->height,
@@ -349,7 +351,14 @@ bool arc_engine_run_frame(ArcInputState *input, ArcEngineFrame *frame)
 size_t arc_engine_audio(int16_t *output, size_t capacity_frames)
 { return output ? arc_platform_audio_read(output, capacity_frames) : 0u; }
 void arc_engine_cmos(uint8_t output[ARC_CMOS_PAYLOAD_SIZE])
-{ if (output && arc_machine_live) cmos_get_image(output, ARC_CMOS_PAYLOAD_SIZE); }
+{
+   uint8_t machine[ARC_CMOS_MACHINE_SIZE];
+   if (output && arc_machine_live)
+   {
+      cmos_get_image(machine, sizeof(machine));
+      memcpy(output, machine + 16u, ARC_CMOS_PAYLOAD_SIZE);
+   }
+}
 bool arc_engine_faulted(const char **message)
 { if (message) *message = arc_fault_text; return arc_fault; }
 bool arc_engine_active(void) { return arc_active; }

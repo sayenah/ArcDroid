@@ -61,6 +61,18 @@ bool arc_io_write_all(const char *path, const void *data, size_t size)
    return wrote == (int64_t)size;
 }
 
+bool arc_io_file_size(const char *path, size_t *size)
+{
+   int32_t length = 0;
+   int result;
+   if (!arc_io_vfs || !arc_io_vfs->stat || !path || !size) return false;
+   result = arc_io_vfs->stat(path, &length);
+   if (!(result & RETRO_VFS_STAT_IS_VALID) ||
+       (result & RETRO_VFS_STAT_IS_DIRECTORY) || length < 0) return false;
+   *size = (size_t)length;
+   return true;
+}
+
 static bool arc_io_is_directory(const char *path)
 {
    int32_t result;

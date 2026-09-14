@@ -46,6 +46,7 @@ static unsigned arc_video_width = ARC_WIDTH;
 static unsigned arc_video_height = ARC_HEIGHT;
 static double arc_video_rate = ARC_RATE;
 static bool arc_fault_reported;
+static bool arc_vidc_warning_reported;
 static bool arc_loaded;
 static bool arc_ejected;
 static unsigned arc_image_index;
@@ -449,6 +450,7 @@ RETRO_API void retro_init(void)
    arc_video_height = ARC_HEIGHT;
    arc_video_rate = ARC_RATE;
    arc_fault_reported = false;
+   arc_vidc_warning_reported = false;
    arc_release_session();
    if (arc_environment)
    {
@@ -497,6 +499,7 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game)
    ArcMediaKind media;
    void *content = NULL;
    size_t content_size = 0u;
+   size_t staged_size = 0u;
    if (!game || !game->path || !game->path[0])
    {
       arc_message("ArcDroid requires a loose ADF or ADL image.", RETRO_LOG_ERROR);
@@ -574,7 +577,9 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game)
                 arc_content_digest.sha1) < 0 || !arc_io_make_path(media_dir) ||
        snprintf(arc_staged_path, sizeof(arc_staged_path), "%s/disc.%s", media_dir,
                 media == ARC_MEDIA_ADL_640K ? "adl" : "adf") < 0 ||
-       !arc_io_write_all(arc_staged_path, arc_content, arc_content_size))
+       ((!arc_io_file_size(arc_staged_path, &staged_size) ||
+         staged_size != arc_content_size) &&
+        !arc_io_write_all(arc_staged_path, arc_content, arc_content_size)))
    {
       arc_message("Unable to stage content under <save>/arcdroid/media.", RETRO_LOG_ERROR);
       arc_release_session();
@@ -592,9 +597,11 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game)
    arc_seed_cmos();
    {
       uint8_t payload[ARC_CMOS_PAYLOAD_SIZE];
+      uint8_t machine_cmos[ARC_CMOS_MACHINE_SIZE];
       if (!arc_cmos_decode(arc_cmos_record, &arc_plan, payload) ||
+          !arc_cmos_machine_image(arc_plan.os, payload, machine_cmos) ||
           !arc_engine_start(arc_firmware, arc_firmware_size, arc_staged_path,
-                            payload, error, sizeof(error)))
+                            machine_cmos, error, sizeof(error)))
       {
          arc_message(error[0] ? error : "Unable to start the Arculator machine.", RETRO_LOG_ERROR);
          arc_release_session();
@@ -611,6 +618,7 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game)
    arc_video_height = ARC_HEIGHT;
    arc_video_rate = ARC_RATE;
    arc_fault_reported = false;
+   arc_vidc_warning_reported = false;
    snprintf(error, sizeof(error), "Firmware: %s; CRC32 %08x; SHA-1 %s",
             arc_os_name(search.match->os), search.match->crc32, search.match->sha1);
    arc_message(error, RETRO_LOG_INFO);
@@ -632,6 +640,7 @@ RETRO_API void retro_reset(void)
    arc_frame_number = 0u;
    arc_audio_fraction = 0u;
    arc_fault_reported = false;
+   arc_vidc_warning_reported = false;
 }
 
 RETRO_API void retro_run(void)
@@ -661,6 +670,12 @@ RETRO_API void retro_run(void)
       frame.pitch = ARC_WIDTH * sizeof(uint32_t);
       frame.elapsed_us = 20000u;
       frame.refresh_hz = ARC_RATE;
+   }
+   if (!frame.field_completed && !arc_vidc_warning_reported)
+   {
+      arc_message("VIDC program did not complete a field; presenting bounded fallback.",
+                  RETRO_LOG_WARN);
+      arc_vidc_warning_reported = true;
    }
    if (frame.width != arc_video_width || frame.height != arc_video_height)
    {
