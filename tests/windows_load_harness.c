@@ -44,15 +44,19 @@ static bool environment(unsigned command, void *data)
 
 #define LOAD(type, name) type name = (type)GetProcAddress(module, #name); assert(name)
 
+typedef void (*SetEnvironmentFn)(retro_environment_t);
+typedef void (*VoidFn)(void);
+typedef bool (*LoadGameFn)(const struct retro_game_info *);
+
 int main(int argc, char **argv)
 {
    assert(argc == 2);
    HMODULE module = LoadLibraryA(argv[1]);
    assert(module);
-   LOAD(void (*)(retro_environment_t), retro_set_environment);
-   LOAD(void (*)(void), retro_init);
-   LOAD(void (*)(void), retro_deinit);
-   LOAD(bool (*)(const struct retro_game_info *), retro_load_game);
+   LOAD(SetEnvironmentFn, retro_set_environment);
+   LOAD(VoidFn, retro_init);
+   LOAD(VoidFn, retro_deinit);
+   LOAD(LoadGameFn, retro_load_game);
 
    phase = PHASE_ENV;
    retro_set_environment(environment);
