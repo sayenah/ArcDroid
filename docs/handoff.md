@@ -1,8 +1,8 @@
 # ArcDroid Handoff
 
-**Stage:** IMPLEMENTATION  
-**Owner:** Sol  
-**Next (run 5, final fixes):** Continue on `slice/01-skeleton-boot` (PR #5, HEAD `35266ff`). `git merge origin/main`, then implement **R-25…R-32** below exactly (small, evidence-focused), push once with the corrected PR #5 description. Fable verifies and dispatches a targeted Opus re-check; then the Founder merge gate.
+**Stage:** QA  
+**Owner:** Opus  
+**Next (targeted re-check):** Opus verifies R-25…R-32 on PR #5 HEAD `51f052f` (fresh read-only clone) plus one design question: the host harness now loads a separate `arcdroid_libretro_test` build (test fault hook + two extra exported hooks) while the shipping `arcdroid_libretro` is guard-checked and used by the Windows RetroArch job — confirm the two builds differ only by the test define and export list, and that the shipping host library is exercised by at least one host run. Report pass/fail per item with evidence; no implementation, no docs, no merge. If clean, Fable presents the Founder merge gate (AC-11, AC-12(b)/(c)).
 
 ## Objective
 Slice 1 — "one loose ADF boots on both platforms": a RetroArch/libretro core, built from the Arculator engine, that loads a loose ADF/ADL disc image passed by the frontend, identifies user-supplied firmware by content fingerprint, selects a conservative ARM2 machine automatically, runs the emulated Archimedes with video, audio, RetroPad/keyboard/mouse/pointer input and persistent CMOS, tears down cleanly, and does so identically on native Windows x86_64 RetroArch and physical Android arm64 RetroArch. Governing requirements: PRD §7–§9, §12–§15, §18–§21, §23 items 1–4, 6–7, 10–12; protocol §10–§12.
@@ -14,6 +14,9 @@ Slice 1 — "one loose ADF boots on both platforms": a RetroArch/libretro core, 
 - Provenance: tracked binaries = exactly the five D-018 files; 15 upstream files modified, 14 carry a modification notice (`vidc.h` does not).
 - Sol's AC table: AC-1…AC-10, AC-12(a) pass; **AC-11, AC-12(b), AC-12(c) blocked** (no Android device attached; no Founder Windows host with the private ROM). These three cannot be produced by Sol or Opus; the Founder must either attach devices/provide a host or explicitly accept the gap before merge (protocol §17).
 - Root causes fixed in run 3 worth QA attention: WD1772 seek completion had lived in the excluded drive-noise module (`disc.c`, notice present); CMOS boot recipe patches PRM bytes 5/11/16/135 conditionally with checksum preserved (`core/cmos_defaults.c`).
+
+## Sol run 5 — Fable verification (2026-09-14)
+HEAD `51f052f`, CI 4/4 green. Fable rebuilt on the dev Mac: `ctest` 4/4; `tools/check-shipping-io.sh` runs correctly without ripgrep and has a `--self-test` that rejects an injected `fopen`; shipping dylib imports no `getenv`; `ARCDROID_TEST_FAULTS` is confined to the `arcdroid_libretro_test` target; harness samples audio counters before `retro_reset` (observed 1471 underruns, bounded by the 2400-frame delivery window, 0 overruns); test ROM ranked last on Auto; insert-over-insert closes the drive; Windows zlib statement removed; PR text corrected (HEAD, 16 files, `can_dupe=true` second pass).
 
 ## Opus re-QA of HEAD `35266ff` (2026-09-14) — Fable adjudication
 Verdict: functionally fit to merge subject to the Founder gate; no user-facing defect found; all adversarial cases pass; 16/16 upstream files byte-verified with dated notices; AC-5/AC-12(a) reproduced. Findings adjudicated: H-1, H-2, M-1, M-3, L-1, L-2, L-4, L-5 → R-25…R-32 below (evidence/test defects and small risks). **M-2 (audio underruns):** confirmed core-side, not frontend pacing — the engine delivers audio on its 50 ms `pollsound` boundary while the adapter demands per-field, so a shortfall is zero-filled: 0.033 % on a stable-mode RISC OS desktop (startup priming), 0.76 % on the mode-churning test ROM. **Accepted as a known limitation for Slice 1** (not audible on real content), recorded here for the audio-quality follow-up slice: make the resampler flush truly incremental per field. L-3 (dead store) and L-6 (cosmetic geometry after failed load) accepted as-is.
