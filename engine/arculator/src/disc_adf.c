@@ -1,9 +1,9 @@
 /*Arculator 2.2 by Sarah Walker
   ADFS disc support (really all raw sector formats)*/
 /* ArcDroid modification: unavailable data never terminates the frontend. */
-#include <stdio.h>
 #include <string.h>
 #include "arc.h"
+#include "arc_io.h"
 #include "disc.h"
 #include "disc_adf.h"
 
@@ -13,7 +13,7 @@ static void adf_seek(int drive, int track);
 
 static struct
 {
-	FILE *f;
+	ArcIoFile *f;
 	uint8_t track_data[2][20*1024];
 
 	int dblside;
@@ -22,6 +22,7 @@ static struct
 	int density;
 	int maxsector;
 	int sector_offset;
+	int64_t image_size;
 } adf[4];
 
 static int adf_sector,   adf_track,   adf_side,    adf_drive;
@@ -32,11 +33,14 @@ static int adf_informat=0;
 
 static int adf_pause = 0;
 static int adf_index = 6250;
+static int adf_writable = 1;
+
+void adf_set_writable(int writable) { adf_writable = writable != 0; }
 
 int adf_flush_all(void)
 {
 	for (int drive = 0; drive < 4; ++drive)
-		if (adf[drive].f && fflush(adf[drive].f))
+		if (adf[drive].f && !arc_io_flush_file(adf[drive].f))
 			return -1;
 	return 0;
 }
@@ -51,21 +55,27 @@ void adf_init()
 void adf_loadex(int drive, char *fn, int sectors, int size, int sides, int dblstep, int density, int sector_offset)
 {
 	writeprot[drive] = 0;
-	adf[drive].f = fopen(fn, "rb+");
+	adf[drive].f = adf_writable ? arc_io_open_file(fn, true) : NULL;
 	if (!adf[drive].f)
 	{
-		adf[drive].f = fopen(fn, "rb");
+		adf[drive].f = arc_io_open_file(fn, false);
 		if (!adf[drive].f) return;
 		writeprot[drive] = 1;
 	}
-	fseek(adf[drive].f, -1, SEEK_END);
+	adf[drive].image_size = arc_io_file_length(adf[drive].f);
+	if (adf[drive].image_size < 0)
+	{
+		arc_io_close_file(adf[drive].f);
+		adf[drive].f = NULL;
+		return;
+	}
 	drive_funcs[drive] = &adf_disc_funcs;
 	adf[drive].sectors = sectors;
 	adf[drive].size = size;
 	adf[drive].dblside = sides;
 	adf[drive].dblstep = dblstep;
 	adf[drive].density = density;
-	adf[drive].maxsector = (ftell(adf[drive].f)+1 ) / size;
+	adf[drive].maxsector = (int)(adf[drive].image_size / size);
 	adf[drive].sector_offset = sector_offset;
 
 	adf_seek(drive, disc_get_current_track(drive));
@@ -104,7 +114,7 @@ void dsd_load(int drive, char *fn)
 
 static void adf_close(int drive)
 {
-	if (adf[drive].f) fclose(adf[drive].f);
+	if (adf[drive].f) arc_io_close_file(adf[drive].f);
 	adf[drive].f = NULL;
 }
 
@@ -115,17 +125,31 @@ static void adf_seek(int drive, int track)
 //        rpclog("Seek %i %i %i %i %i %i\n",drive,track,adfsectors[drive],adfsize[drive],adl[drive],adfsectors[drive]*adfsize[drive]);
 	if (adf[drive].dblstep)
 		track /= 2;
+	int64_t track_bytes = (int64_t)adf[drive].sectors * adf[drive].size *
+	                      (adf[drive].dblside ? 2 : 1);
+	int64_t offset = (int64_t)track * track_bytes;
+	memset(adf[drive].track_data, 0, sizeof(adf[drive].track_data));
+	if (track < 0 || track_bytes <= 0 || offset < 0 ||
+	    offset > adf[drive].image_size ||
+	    track_bytes > adf[drive].image_size - offset ||
+	    arc_io_seek_file(adf[drive].f, offset, RETRO_VFS_SEEK_POSITION_START) < 0)
+	{
+		adf[drive].track = -1;
+		return;
+	}
 	adf[drive].track = track;
 	if (adf[drive].dblside)
 	{
-		fseek(adf[drive].f, track * adf[drive].sectors * adf[drive].size * 2, SEEK_SET);
-		fread(adf[drive].track_data[0], adf[drive].sectors * adf[drive].size, 1, adf[drive].f);
-		fread(adf[drive].track_data[1], adf[drive].sectors * adf[drive].size, 1, adf[drive].f);
+		size_t side_bytes = (size_t)adf[drive].sectors * adf[drive].size;
+		if (arc_io_read_file(adf[drive].f, adf[drive].track_data[0], side_bytes) != side_bytes ||
+		    arc_io_read_file(adf[drive].f, adf[drive].track_data[1], side_bytes) != side_bytes)
+			adf[drive].track = -1;
 	}
 	else
 	{
-		fseek(adf[drive].f, track * adf[drive].sectors * adf[drive].size, SEEK_SET);
-		fread(adf[drive].track_data[0], adf[drive].sectors * adf[drive].size, 1, adf[drive].f);
+		size_t bytes = (size_t)adf[drive].sectors * adf[drive].size;
+		if (arc_io_read_file(adf[drive].f, adf[drive].track_data[0], bytes) != bytes)
+			adf[drive].track = -1;
 	}
 }
 static void adf_writeback(int drive, int track)
@@ -138,14 +162,20 @@ static void adf_writeback(int drive, int track)
 
 	if (adf[drive].dblside)
 	{
-		fseek(adf[drive].f, track * adf[drive].sectors * adf[drive].size * 2, SEEK_SET);
-		fwrite(adf[drive].track_data[0], adf[drive].sectors * adf[drive].size, 1, adf[drive].f);
-		fwrite(adf[drive].track_data[1], adf[drive].sectors * adf[drive].size, 1, adf[drive].f);
+		size_t bytes = (size_t)adf[drive].sectors * adf[drive].size;
+		int64_t offset = (int64_t)track * bytes * 2;
+		if (arc_io_seek_file(adf[drive].f, offset, RETRO_VFS_SEEK_POSITION_START) < 0 ||
+		    arc_io_write_file(adf[drive].f, adf[drive].track_data[0], bytes) != bytes ||
+		    arc_io_write_file(adf[drive].f, adf[drive].track_data[1], bytes) != bytes)
+			fatal("Unable to write complete floppy track");
 	}
 	else
 	{
-		fseek(adf[drive].f, track *  adf[drive].sectors * adf[drive].size, SEEK_SET);
-		fwrite(adf[drive].track_data[0], adf[drive].sectors * adf[drive].size, 1, adf[drive].f);
+		size_t bytes = (size_t)adf[drive].sectors * adf[drive].size;
+		int64_t offset = (int64_t)track * bytes;
+		if (arc_io_seek_file(adf[drive].f, offset, RETRO_VFS_SEEK_POSITION_START) < 0 ||
+		    arc_io_write_file(adf[drive].f, adf[drive].track_data[0], bytes) != bytes)
+			fatal("Unable to write complete floppy track");
 	}
 }
 
@@ -161,7 +191,7 @@ static void adf_readsector(int drive, int sector, int track, int side, int densi
 
 	if (!adf[drive].f || (side && !adf[drive].dblside) || (density != adf[drive].density) ||
 		(track != adf[drive].track) || (sector_nr >= adf[drive].maxsector) ||
-		(adf_sector > adf[drive].sectors))
+		(adf_sector < 0) || (adf_sector >= adf[drive].sectors))
 	{
 //                printf("Not found! %08X (%i %i) %i (%i %i)\n",adff[drive],side,adl[drive],density,track,adftrackc[drive]);
 		adf_notfound=500;
@@ -178,7 +208,6 @@ static void adf_writesector(int drive, int sector, int track, int side, int dens
 
 //        if (adfdblstep[drive]) track/=2;
 	adf_sector = sector - adf[drive].sector_offset;
-	adf_sector = sector;
 	adf_track  = track;
 	adf_side   = side;
 	adf_drive  = drive;
@@ -186,7 +215,7 @@ static void adf_writesector(int drive, int sector, int track, int side, int dens
 
 	if (!adf[drive].f || (side && !adf[drive].dblside) || (density != adf[drive].density) ||
 		(track != adf[drive].track) || (sector_nr >= adf[drive].maxsector) ||
-		(adf_sector > adf[drive].sectors))
+		(adf_sector < 0) || (adf_sector >= adf[drive].sectors))
 	{
 		adf_notfound = 500;
 		return;

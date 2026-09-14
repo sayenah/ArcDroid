@@ -58,8 +58,13 @@ add_library(arcdroid_libretro SHARED
   platform/arcdroid_video.c
 )
 target_include_directories(arcdroid_libretro PRIVATE
-  engine engine/compat engine/arculator/src platform libretro/include core)
-target_compile_definitions(arcdroid_libretro PRIVATE ARCDROID_VERSION="${PROJECT_VERSION}")
+  engine engine/compat engine/arculator/src platform libretro libretro/include core)
+target_compile_definitions(arcdroid_libretro PRIVATE
+  ARCDROID_VERSION="${PROJECT_VERSION}"
+  RELEASE_BUILD=1)
+if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
+  target_compile_definitions(arcdroid_libretro PRIVATE ARCDROID_TEST_FAULTS=1)
+endif()
 target_compile_options(arcdroid_libretro PRIVATE
   $<$<C_COMPILER_ID:GNU,Clang,AppleClang>:-Wall;-Wextra;-Wpedantic;-Werror=implicit-function-declaration;-fvisibility=hidden;-fno-strict-aliasing>
 )
@@ -99,6 +104,10 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
   target_link_libraries(core_tests PRIVATE arcdroid_core)
   target_compile_options(core_tests PRIVATE $<$<C_COMPILER_ID:GNU,Clang,AppleClang>:-UNDEBUG>)
   add_test(NAME core-services COMMAND core_tests)
+  add_test(NAME shipping-io-guard
+    COMMAND sh "${CMAKE_CURRENT_SOURCE_DIR}/tools/check-shipping-io.sh")
+  set_tests_properties(shipping-io-guard PROPERTIES
+    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
 
   set(FIXTURE_DIR "${CMAKE_CURRENT_BINARY_DIR}/tests/fixtures/generated")
   add_custom_command(
@@ -119,7 +128,8 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
   else()
     add_executable(libretro_harness tests/libretro_harness.c)
     target_include_directories(libretro_harness PRIVATE libretro/include)
-    target_link_libraries(libretro_harness PRIVATE ${CMAKE_DL_LIBS})
+    target_include_directories(libretro_harness PRIVATE core "${CMAKE_CURRENT_BINARY_DIR}/generated")
+    target_link_libraries(libretro_harness PRIVATE arcdroid_core ${CMAKE_DL_LIBS})
     target_compile_options(libretro_harness PRIVATE $<$<C_COMPILER_ID:GNU,Clang,AppleClang>:-UNDEBUG>)
     add_dependencies(libretro_harness test-fixtures arcdroid_libretro)
     add_test(NAME libretro-harness COMMAND libretro_harness

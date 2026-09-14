@@ -29,6 +29,10 @@ void arc_platform_video_reset(void)
 int video_renderer_init(void *window)
 {
    (void)window;
+#if defined(ARCDROID_TEST_FAULTS)
+   const char *fail = getenv("ARCDROID_TEST_FAIL_VIDEO_ALLOC");
+   if (fail && fail[0] == '1') return 0;
+#endif
    if (!arc_video_frame)
       arc_video_frame = calloc((size_t)ARC_VIDEO_MAX_WIDTH * ARC_VIDEO_MAX_HEIGHT,
                                sizeof(*arc_video_frame));

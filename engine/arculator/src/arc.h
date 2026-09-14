@@ -64,7 +64,7 @@ void arc_print_error(const char *format, ...);
 #endif
 
 #ifdef DEBUG_DATABORT
-#define LOG_DATABORT(...) do { rpclog(__VA_ARGS__); dumpregs(); } while (0)
+#define LOG_DATABORT(...) rpclog(__VA_ARGS__)
 #else
 #define LOG_DATABORT(...) ((void)0)
 #endif
@@ -94,7 +94,6 @@ extern int inscount;
 
 extern void resetarm();
 extern void execarm(int cycs);
-extern void dumpregs();
 extern int databort;
 extern uint32_t opcode;
 

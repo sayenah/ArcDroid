@@ -8,6 +8,10 @@
 
 static struct retro_vfs_interface *arc_io_vfs;
 
+struct ArcIoFile {
+   struct retro_vfs_file_handle *handle;
+};
+
 void arc_io_set_vfs(struct retro_vfs_interface *vfs) { arc_io_vfs = vfs; }
 
 bool arc_io_read_all(const char *path, void **data, size_t *size)
@@ -145,4 +149,63 @@ bool arc_io_walk(const char *directory, unsigned max_depth,
                  ArcIoVisit visit, void *opaque)
 {
    return directory && visit && arc_io_walk_inner(directory, max_depth, visit, opaque);
+}
+
+ArcIoFile *arc_io_open_file(const char *path, bool writable)
+{
+   if (!arc_io_vfs || !arc_io_vfs->open || !path) return NULL;
+   unsigned mode = writable ?
+      RETRO_VFS_FILE_ACCESS_READ_WRITE | RETRO_VFS_FILE_ACCESS_UPDATE_EXISTING :
+      RETRO_VFS_FILE_ACCESS_READ;
+   struct retro_vfs_file_handle *handle = arc_io_vfs->open(
+      path, mode, RETRO_VFS_FILE_ACCESS_HINT_FREQUENT_ACCESS);
+   if (!handle) return NULL;
+   ArcIoFile *file = malloc(sizeof(*file));
+   if (!file)
+   {
+      arc_io_vfs->close(handle);
+      return NULL;
+   }
+   file->handle = handle;
+   return file;
+}
+
+void arc_io_close_file(ArcIoFile *file)
+{
+   if (!file) return;
+   if (arc_io_vfs && arc_io_vfs->close && file->handle)
+      arc_io_vfs->close(file->handle);
+   free(file);
+}
+
+int64_t arc_io_file_length(ArcIoFile *file)
+{
+   return file && arc_io_vfs && arc_io_vfs->size ?
+      arc_io_vfs->size(file->handle) : -1;
+}
+
+int64_t arc_io_seek_file(ArcIoFile *file, int64_t offset, int origin)
+{
+   return file && arc_io_vfs && arc_io_vfs->seek ?
+      arc_io_vfs->seek(file->handle, offset, origin) : -1;
+}
+
+size_t arc_io_read_file(ArcIoFile *file, void *data, size_t size)
+{
+   if (!file || !data || !arc_io_vfs || !arc_io_vfs->read) return 0u;
+   int64_t count = arc_io_vfs->read(file->handle, data, size);
+   return count < 0 ? 0u : (size_t)count;
+}
+
+size_t arc_io_write_file(ArcIoFile *file, const void *data, size_t size)
+{
+   if (!file || !data || !arc_io_vfs || !arc_io_vfs->write) return 0u;
+   int64_t count = arc_io_vfs->write(file->handle, data, size);
+   return count < 0 ? 0u : (size_t)count;
+}
+
+bool arc_io_flush_file(ArcIoFile *file)
+{
+   return file && arc_io_vfs && (!arc_io_vfs->flush ||
+      arc_io_vfs->flush(file->handle) == 0);
 }

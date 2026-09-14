@@ -39,7 +39,6 @@ uint8_t backplane_mask;
 int bank;
 int ddensity;
 // static char err2[256];
-FILE *olog;
 int fdcside;
 int realmemsize;
 
@@ -234,7 +233,6 @@ uint32_t readmemf(uint32_t a)
 	return 0xdeadbeef;
 /*        sprintf(err2,"Bad fetch %06X %03X %04X\n",a,a>>15,a&0x7FFF);
 	MessageBox(NULL,err2,"Arc",MB_OK);
-	dumpregs();
 	return 0;*/
 }
 
@@ -249,9 +247,7 @@ uint8_t readmemfb(uint32_t a)
 //        if (((a)&~3)==0x2D8D0)
 /*        if (a==0x7DC)
 	{
-		if (!olog) olog=fopen("olog.txt","wt");
 		sprintf(err2,"Read byte %08X %07X\n",a,PC);
-		fputs(err2,olog);
 		return mempointb[((a)>>15)&0x7FF][((a)&0x7FFF)];
 	}*/
 /*        if (((a)&~0x7FFF)==0x8000)
@@ -374,7 +370,6 @@ data_abort:
 	return 0xef;
 /*        sprintf(err2,"Bad read byte %06X %03X %04X\n",a,a>>15,a&0x7FFF);
 	MessageBox(NULL,err2,"Arc",MB_OK);
-	dumpregs();
 	return 0;*/
 }
 
@@ -383,9 +378,7 @@ uint32_t readmemfl(uint32_t a)
 //        uint32_t temp;
 /*        if (a==0x7DC)
 	{
-		if (!olog) olog=fopen("olog.txt","wt");
 		sprintf(err2,"Read word %08X %07X\n",a,PC);
-		fputs(err2,olog);
 		return mempointb[((a)>>15)&0x7FF][((a)&0x7FFF)];
 	}*/
 /*        if (((a)&~0x7FFF)==0x8000)
@@ -515,7 +508,6 @@ data_abort:
 	return 0xdeadbeef;
 /*        sprintf(err2,"Bad read long %06X %03X %04X\n",a,a>>15,a&0x7FFF);
 	MessageBox(NULL,err2,"Arc",MB_OK);
-	dumpregs();
 	return 0;*/
 }
 
@@ -701,7 +693,6 @@ void writememfl(uint32_t a,uint32_t v)
 /*        if ((a<0x2000000) && modepritablew[memmode][memstat[((a)>>15)&0x7FF]])
 	{
 		sprintf(s,"Write %04X %08X %08X\n",a,v,PC);
-		fputs(s,olog);
 		mempoint[((a)>>15)&0x7FF][((a)&0x7FFF)>>2]=v;
 //                output=1; timetolive=50;
 		return;

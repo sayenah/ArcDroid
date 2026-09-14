@@ -5,6 +5,7 @@
  * mixer, which upstream also (incorrectly) used as its command timer owner. */
 #include <stdio.h>
 #include <string.h>
+#include <limits.h>
 #include "arc.h"
 #include "config.h"
 
@@ -12,6 +13,7 @@
 
 #include "disc_adf.h"
 #include "ioc.h"
+#include "arc_io.h"
 #include "timer.h"
 
 char discname[4][512];
@@ -49,152 +51,48 @@ emu_timer_t *fdc_timer;
 int fdc_overridden;
 int fdc_ready;
 
-static struct
-{
-	char *ext;
-	void (*load)(int drive, char *fn);
-	int size;
-}
-loaders[]=
-{
-	{"ADF", adf_load,         80*16* 256},
-	{"ADF", adf_arcdd_load, 2*80* 5*1024},
-	{"ADL", adl_load,       2*80*16* 256},
-	{0,0,0}
-};
-
 static int driveloaders[4];
 
 void disc_load(int drive, char *fn)
 {
-	int c = 0, size;
-	char *p;
-	FILE *f;
+	int size;
+	ArcIoFile *file;
 	rpclog("disc_load %i %s\n", drive, fn);
 //        setejecttext(drive, "");
 	if (!fn) return;
-	p = get_extension(fn);
-	if (!p) return;
-//        setejecttext(drive, fn);
-	rpclog("Loading :%i %s %s\n", drive, fn,p);
-	f = fopen(fn, "rb");
-	if (!f) return;
-	fseek(f, -1, SEEK_END);
-	size = ftell(f) + 1;
-	fclose(f);
-	while (loaders[c].ext)
-	{
-		if (!strcasecmp(p, loaders[c].ext) && (size <= loaders[c].size || loaders[c].size == -1))
-		{
-			rpclog("Loading as %s\n", p);
-			driveloaders[drive] = c;
-			loaders[c].load(drive, fn);
-			return;
-		}
-		c++;
-	}
-//        printf("Couldn't load %s %s\n",fn,p);
-	/*No extension match, so guess based on image size*/
+	file = arc_io_open_file(fn, false);
+	if (!file) return;
+	int64_t length = arc_io_file_length(file);
+	arc_io_close_file(file);
+	if (length < 0 || length > INT_MAX) return;
+	size = (int)length;
+	/* ArcDroid validates extensions at the frontend boundary, then selects the
+	 * raw geometry by exact size so .adf and .adl remain interchangeable hints. */
 	rpclog("Size %i\n", size);
-	if (size == (1680*1024)) /*1680k DOS - 80*2*21*512*/
-	{
-		driveloaders[drive] = 3;
-		adf_loadex(drive, fn, 21, 512, 1, 0, 2, 1);
-		return;
-	}
-	if (size == (1440*1024)) /*1440k DOS - 80*2*18*512*/
-	{
-		driveloaders[drive] = 3;
-		adf_loadex(drive, fn, 18, 512, 1, 0, 2, 1);
-		return;
-	}
 	if (size == (800*1024)) /*800k ADFS/DOS - 80*2*5*1024*/
 	{
-		driveloaders[drive] = 2;
-		loaders[2].load(drive, fn);
+		driveloaders[drive] = 1;
+		adf_arcdd_load(drive, fn);
 		return;
 	}
 	if (size == (640*1024)) /*640k ADFS/DOS - 80*2*16*256*/
 	{
-		driveloaders[drive] = 3;
-		loaders[3].load(drive, fn);
+		driveloaders[drive] = 2;
+		adl_load(drive, fn);
 		return;
 	}
-	if (size == (720*1024)) /*720k DOS - 80*2*9*512*/
-	{
-		driveloaders[drive] = 3;
-		adf_loadex(drive, fn, 9, 512, 1, 0, 1, 1);
-		return;
-	}
-	if (size == (360*1024)) /*360k DOS - 40*2*9*512*/
-	{
-		driveloaders[drive] = 3;
-		adf_loadex(drive, fn, 9, 512, 1, 1, 1, 1);
-		return;
-	}
-	if (size <= (200 * 1024)) /*200k DFS - 80*1*10*256*/
+	if (size == (320 * 1024))
 	{
 		driveloaders[drive] = 0;
-		loaders[0].load(drive, fn);
-		return;
-	}
-	if (size <= (400 * 1024)) /*400k DFS - 80*2*10*256*/
-	{
-		driveloaders[drive] = 1;
-		loaders[1].load(drive, fn);
+		adf_load(drive, fn);
 		return;
 	}
 }
 
 void disc_new(int drive, char *fn)
 {
-	int c = 0, d;
-	FILE *f;
-	char *p = get_extension(fn);
-	while (loaders[c].ext)
-	{
-		if (!strcasecmp(p, loaders[c].ext) && loaders[c].size != -1)
-		{
-			f=fopen(fn, "wb");
-			for (d = 0; d < loaders[c].size; d++) putc(0, f);
-			if (!strcasecmp(p, "ADF"))
-			{
-				fseek(f, 0, SEEK_SET);
-				putc(7, f);
-				fseek(f, 0xFD, SEEK_SET);
-				putc(5, f); putc(0, f); putc(0xC, f); putc(0xF9, f); putc(0x04, f);
-				fseek(f, 0x1FB, SEEK_SET);
-				putc(0x88,f); putc(0x39,f); putc(0,f); putc(3,f); putc(0xC1,f);
-				putc(0, f); putc('H', f); putc('u', f); putc('g', f); putc('o', f);
-				fseek(f, 0x6CC, SEEK_SET);
-				putc(0x24, f);
-				fseek(f, 0x6D6, SEEK_SET);
-				putc(2, f); putc(0, f); putc(0, f); putc(0x24, f);
-				fseek(f, 0x6FB, SEEK_SET);
-				putc('H', f); putc('u', f); putc('g', f); putc('o', f);
-			}
-			if (!strcasecmp(p, "ADL"))
-			{
-				fseek(f, 0, SEEK_SET);
-				putc(7, f);
-				fseek(f, 0xFD, SEEK_SET);
-				putc(0xA, f); putc(0, f); putc(0x11, f); putc(0xF9, f); putc(0x09, f);
-				fseek(f, 0x1FB, SEEK_SET);
-				putc(0x01, f); putc(0x84, f); putc(0, f); putc(3, f); putc(0x8A, f);
-				putc(0, f); putc('H', f); putc('u', f); putc('g', f); putc('o', f);
-				fseek(f, 0x6CC, SEEK_SET);
-				putc(0x24, f);
-				fseek(f, 0x6D6, SEEK_SET);
-				putc(2, f); putc(0, f); putc(0, f); putc(0x24, f);
-				fseek(f, 0x6FB, SEEK_SET);
-				putc('H', f); putc('u', f); putc('g', f); putc('o', f);
-			}
-			fclose(f);
-			disc_load(drive, fn);
-			return;
-		}
-		c++;
-	}
+	(void)drive; (void)fn;
+	fatal("Creating floppy images is outside ArcDroid Slice 1");
 }
 
 void disc_close(int drive)

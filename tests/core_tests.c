@@ -24,6 +24,10 @@ static void test_firmware_table(void)
    assert(arc_firmware_match(&known)->os == ARC_OS_RISCOS_311);
    known.size++;
    assert(arc_firmware_match(&known) == NULL);
+   size_t nearest = 0u;
+   assert(arc_firmware_nearest_size(2097151u, 4096u, &nearest) && nearest == 2097152u);
+   assert(arc_firmware_nearest_size(2097153u, 4096u, &nearest) && nearest == 2097152u);
+   assert(!arc_firmware_nearest_size(42u, 4096u, &nearest));
 }
 
 static void test_assembly(void)
@@ -51,6 +55,8 @@ static void test_media_launch_and_cmos(void)
    char error[160] = {0};
    assert(arc_media_inspect("renamed.AdF", 819200u, error, sizeof(error)) == ARC_MEDIA_ADF_800K);
    assert(arc_media_inspect("disc.adl", 655360u, error, sizeof(error)) == ARC_MEDIA_ADL_640K);
+   assert(arc_media_inspect("size-first.adl", 819200u, error, sizeof(error)) == ARC_MEDIA_ADF_800K);
+   assert(arc_media_inspect("size-first.adf", 655360u, error, sizeof(error)) == ARC_MEDIA_ADL_640K);
    assert(arc_media_inspect("disc.adf", 1638400u, error, sizeof(error)) == ARC_MEDIA_ADF_HD_UNSUPPORTED);
    assert(strstr(error, "high-density"));
    assert(arc_media_inspect("disc.adf", 42u, error, sizeof(error)) == ARC_MEDIA_INVALID);
@@ -123,6 +129,18 @@ static void test_input(void)
    arc_input_pointer(&state, false, 0, 0, 0u);
    arc_input_mouse_packet(&state, &x, &y, &buttons);
    assert(buttons == 0u);
+
+   arc_input_reset(&state);
+   arc_input_pointer_scaled(&state, true, -32767, -32767, 1u, 640u, 480u);
+   arc_input_pointer_scaled(&state, true, 32767, 32767, 1u, 640u, 480u);
+   int total_x = 0, total_y = 0;
+   unsigned packets = 0u;
+   do
+   {
+      arc_input_mouse_packet(&state, &x, &y, &buttons);
+      total_x += x; total_y += y; ++packets;
+   } while (x || y);
+   assert(total_x == 640 && total_y == 480 && packets <= 12u);
 }
 
 int main(void)

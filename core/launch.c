@@ -21,14 +21,11 @@ ArcMediaKind arc_media_inspect(const char *path, size_t size,
                                char *error, size_t error_size)
 {
    ArcMediaKind kind = ARC_MEDIA_INVALID;
-   if (arc_extension(path, "adf"))
-   {
-      if (size == 327680u) kind = ARC_MEDIA_ADF_320K;
-      else if (size == 819200u) kind = ARC_MEDIA_ADF_800K;
-      else if (size == 1638400u) kind = ARC_MEDIA_ADF_HD_UNSUPPORTED;
-   }
-   else if (arc_extension(path, "adl") && size == 655360u)
-      kind = ARC_MEDIA_ADL_640K;
+   bool supported_extension = arc_extension(path, "adf") || arc_extension(path, "adl");
+   if (supported_extension && size == 327680u) kind = ARC_MEDIA_ADF_320K;
+   else if (supported_extension && size == 819200u) kind = ARC_MEDIA_ADF_800K;
+   else if (supported_extension && size == 655360u) kind = ARC_MEDIA_ADL_640K;
+   else if (supported_extension && size == 1638400u) kind = ARC_MEDIA_ADF_HD_UNSUPPORTED;
    if (kind == ARC_MEDIA_ADF_HD_UNSUPPORTED)
    {
       if (error && error_size) snprintf(error, error_size, "1600 KiB high-density ADF is unsupported by the Slice 1 WD1772 machine");
@@ -36,6 +33,27 @@ ArcMediaKind arc_media_inspect(const char *path, size_t size,
    else if (kind == ARC_MEDIA_INVALID && error && error_size)
       snprintf(error, error_size, "unsupported or corrupt ADF/ADL geometry (%zu bytes)", size);
    return kind;
+}
+
+static uint8_t arc_old_map_checksum(const uint8_t *block)
+{
+   unsigned checksum = 0xffu;
+   for (unsigned index = 0u; index < 255u; ++index)
+   {
+      if (checksum > 0xffu) checksum = (checksum + 1u) & 0xffu;
+      checksum += block[index];
+   }
+   return (uint8_t)checksum;
+}
+
+bool arc_media_is_recognised_adfs(const uint8_t *data, size_t size)
+{
+   /* Slice 1 supports old-map ADFS geometries. Both 256-byte map sectors
+    * must carry FileCore's byte checksum; failure is advisory because many
+    * raw game floppies intentionally use non-FileCore layouts. */
+   return data && size >= 512u &&
+          data[255] == arc_old_map_checksum(data) &&
+          data[511] == arc_old_map_checksum(data + 256u);
 }
 
 bool arc_launch_plan_default(ArcLaunchPlan *plan, ArcMediaKind media,

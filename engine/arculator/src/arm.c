@@ -652,8 +652,6 @@ void resetarm()
 			if (c&(1<<d)) countbitstable[c]+=4;
 		}
 	}
-//        if (!olog)
-//           olog=fopen("armlog.txt","wt");
 	pccache=0xFFFFFFFF;
 	updatemode(SUPERVISOR);
 	for (c=0;c<16;c++)
@@ -725,37 +723,6 @@ void resetarm()
 	promote_fetch_to_n = PROMOTE_NONE;
 	prefabort = 0;
 	databort = 0;
-}
-
-int indumpregs=0;
-
-void dumpregs()
-{
-	int c;
-	FILE *f;
-	uint32_t l;
-
-	if (indumpregs) return;
-	indumpregs=1;
-
-	memmode = MEMMODE_SUPER;
-
-	f=fopen("modules.dmp","wb");
-	for (c=0x0000;c<0x100000;c+=4)
-	{
-		l=readmeml(c+0x1800000);
-		putc(l,f);
-		putc(l>>8,f);
-		putc(l>>16,f);
-		putc(l>>24,f);
-	}
-	fclose(f);
-/*        f=fopen("ram.dmp","wb");
-	for (c=0x0000;c<0x100000;c++)
-	    putc(readmemb(c),f);
-	fclose(f);*/
-	rpclog("R 0=%08X R 4=%08X R 8=%08X R12=%08X\nR 1=%08X R 5=%08X R 9=%08X R13=%08X\nR 2=%08X R 6=%08X R10=%08X R14=%08X\nR 3=%08X R 7=%08X R11=%08X R15=%08X\n%i %08X %08X\nf 8=%08X f 9=%08X f10=%08X f11=%08X\nf12=%08X f13=%08X f14=%08X\n",armregs[0],armregs[4],armregs[8],armregs[12],armregs[1],armregs[5],armregs[9],armregs[13],armregs[2],armregs[6],armregs[10],armregs[14],armregs[3],armregs[7],armregs[11],armregs[15],ins,opcode,opcode2,fiqregs[8],fiqregs[9],fiqregs[10],fiqregs[11],fiqregs[12],fiqregs[13],fiqregs[14]);
-	indumpregs=0;
 }
 
 #define checkneg(v) (v&0x80000000)
@@ -2705,7 +2672,6 @@ void execarm(int cycles_to_execute)
 #ifndef RELEASE_BUILD
 		if ((armregs[15] & 3) != mode)
 		{
-			dumpregs();
 			fatal("Mode mismatch\n");
 		}
 
@@ -2720,7 +2686,6 @@ void execarm(int cycles_to_execute)
 				if (!timetolive)
 				{
 					output=0;
-//                                        dumpregs();
 //                                        ArcDroid latches machine faults instead.
 				}
 			}

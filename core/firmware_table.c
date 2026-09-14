@@ -73,6 +73,25 @@ const ArcFirmwareFingerprint *arc_firmware_match(const ArcDigest *digest)
    return NULL;
 }
 
+bool arc_firmware_nearest_size(size_t actual, size_t margin, size_t *expected)
+{
+   size_t nearest = 0u;
+   size_t nearest_delta = SIZE_MAX;
+   for (size_t i = 0; i < sizeof(fingerprints) / sizeof(fingerprints[0]); ++i)
+   {
+      size_t candidate = fingerprints[i].size;
+      size_t delta = actual > candidate ? actual - candidate : candidate - actual;
+      if (delta < nearest_delta)
+      {
+         nearest = candidate;
+         nearest_delta = delta;
+      }
+   }
+   if (nearest_delta > margin) return false;
+   if (expected) *expected = nearest;
+   return true;
+}
+
 const char *arc_os_name(ArcOsClass os)
 {
    switch (os)

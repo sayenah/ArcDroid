@@ -184,7 +184,6 @@ void wd1770_write(uint16_t addr, uint8_t val)
 			wd1770_spindown(NULL);
 			break;
 /*                        rpclog("Bad 1770 command %02X\n", val);
-			dumpregs();
 			mem_dump();
 			return;*/
 		}

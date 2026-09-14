@@ -49,12 +49,20 @@ typedef enum {
    ARC_MEDIA_ADF_HD_UNSUPPORTED
 } ArcMediaKind;
 
+typedef enum {
+   ARC_DISK_WRITES_SHADOW = 0,
+   ARC_DISK_WRITES_ORIGINAL,
+   ARC_DISK_WRITES_OFF
+} ArcDiskWriteMode;
+
 typedef struct {
    ArcOsClass os;
    const char *machine;
    const char *cpu;
    unsigned memory_kib;
    bool a3010_joystick;
+   bool pointer_relative;
+   ArcDiskWriteMode disk_writes;
    ArcMediaKind media;
    char content_id[41];
 } ArcLaunchPlan;
@@ -81,6 +89,8 @@ bool arc_firmware_assemble(const uint8_t *const *parts, const size_t *sizes,
 
 ArcMediaKind arc_media_inspect(const char *path, size_t size,
                                char *error, size_t error_size);
+bool arc_media_is_recognised_adfs(const uint8_t *data, size_t size);
+bool arc_firmware_nearest_size(size_t actual, size_t margin, size_t *expected);
 bool arc_launch_plan_default(ArcLaunchPlan *plan, ArcMediaKind media,
                              ArcOsClass os, const char content_sha1[41],
                              bool request_a3010_joystick,
@@ -114,5 +124,7 @@ bool arc_input_key_down(const ArcInputState *state, unsigned scancode);
 void arc_input_mouse_add(ArcInputState *state, int dx, int dy, unsigned buttons);
 void arc_input_mouse_packet(ArcInputState *state, int *dx, int *dy, unsigned *buttons);
 void arc_input_pointer(ArcInputState *state, bool pressed, int x, int y, unsigned buttons);
+void arc_input_pointer_scaled(ArcInputState *state, bool pressed, int x, int y,
+                              unsigned buttons, unsigned width, unsigned height);
 
 #endif

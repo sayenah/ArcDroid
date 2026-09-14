@@ -60,6 +60,7 @@ static char arc_fault_text[512];
 static uint8_t *arc_saved_firmware;
 static size_t arc_saved_firmware_size;
 static char arc_saved_media[4096];
+static bool arc_saved_media_writable;
 static uint8_t arc_saved_cmos[ARC_CMOS_MACHINE_SIZE];
 static double arc_last_refresh = 50.0;
 static ArcEngineLogCallback arc_log_callback;
@@ -199,6 +200,9 @@ static bool arc_machine_create(char *failure, size_t failure_size)
    arc_fault = false;
    arc_fault_text[0] = '\0';
    arc_fault_boundary = true;
+   /* Own partial state before the first allocation so fault unwinding runs
+    * the same idempotent teardown used by a complete machine. */
+   arc_machine_live = true;
    if (setjmp(arc_fault_jump))
    {
       arc_fault_boundary = false;
@@ -227,7 +231,6 @@ static bool arc_machine_create(char *failure, size_t failure_size)
    if (!video_renderer_init(NULL))
       fatal("Unable to allocate the headless video surface");
    initvid();
-   arc_machine_live = true;
    arc_set_cpu(0, 1);
    timer_reset();
    initmem(memsize);
@@ -257,9 +260,13 @@ static bool arc_machine_create(char *failure, size_t failure_size)
    joystick_init();
    joystick_if_init();
    ioeb_init();
-   disc_load(0, arc_saved_media);
-   if (disc_empty(0))
-      fatal("The staged floppy image could not be mounted");
+   adf_set_writable(arc_saved_media_writable);
+   if (arc_saved_media[0])
+   {
+      disc_load(0, arc_saved_media);
+      if (disc_empty(0))
+         fatal("The selected floppy image could not be mounted");
+   }
    ioc_discchange(0);
 
    arc_platform_video_reset();
@@ -272,12 +279,13 @@ static bool arc_machine_create(char *failure, size_t failure_size)
 
 bool arc_engine_start(const uint8_t *firmware, size_t firmware_size,
                       const char *media_path,
+                      bool media_writable,
                       const uint8_t cmos[ARC_CMOS_MACHINE_SIZE],
                       char *failure, size_t failure_size)
 {
    arc_engine_stop();
    if (!firmware || (firmware_size != 524288u && firmware_size != 2097152u) ||
-       !media_path || !media_path[0] || !cmos)
+       !media_path || !cmos)
    {
       if (failure && failure_size) snprintf(failure, failure_size, "Invalid engine launch plan");
       return false;
@@ -297,6 +305,7 @@ bool arc_engine_start(const uint8_t *firmware, size_t firmware_size,
       return false;
    }
    strcpy(arc_saved_media, media_path);
+   arc_saved_media_writable = media_writable;
    memcpy(arc_saved_cmos, cmos, sizeof(arc_saved_cmos));
    if (!arc_machine_create(failure, failure_size))
    {
@@ -323,6 +332,7 @@ void arc_engine_stop(void)
    arc_saved_firmware = NULL;
    arc_saved_firmware_size = 0u;
    arc_saved_media[0] = '\0';
+   arc_saved_media_writable = false;
    arc_active = false;
    arc_fault_boundary = false;
 }
@@ -375,6 +385,45 @@ bool arc_engine_run_frame(ArcInputState *input, ArcEngineFrame *frame)
 
 size_t arc_engine_audio(int16_t *output, size_t capacity_frames)
 { return output ? arc_platform_audio_read(output, capacity_frames) : 0u; }
+void arc_engine_audio_stats(uint64_t *underrun_frames, uint64_t *overrun_frames)
+{ arc_platform_audio_stats(underrun_frames, overrun_frames); }
+
+bool arc_engine_media_eject(void)
+{
+   if (!arc_machine_live) return false;
+   disc_close(0);
+   arc_saved_media[0] = '\0';
+   ioc_discchange(0);
+   return true;
+}
+
+bool arc_engine_media_insert(const char *path, bool writable,
+                             char *failure, size_t failure_size)
+{
+   if (!arc_machine_live || !path || !path[0] ||
+       strlen(path) >= sizeof(arc_saved_media)) return false;
+   adf_set_writable(writable);
+   disc_load(0, (char *)path);
+   if (disc_empty(0))
+   {
+      if (failure && failure_size)
+         snprintf(failure, failure_size, "The selected floppy image could not be mounted");
+      return false;
+   }
+   strcpy(arc_saved_media, path);
+   arc_saved_media_writable = writable;
+   ioc_discchange(0);
+   return true;
+}
+
+bool arc_engine_get_av_info(unsigned *width, unsigned *height, double *refresh_hz)
+{
+   uint64_t sequence;
+   if (!arc_machine_live) return false;
+   (void)arc_platform_video_frame(width, height, NULL, &sequence);
+   if (refresh_hz) *refresh_hz = arc_last_refresh;
+   return true;
+}
 void arc_engine_cmos(uint8_t output[ARC_CMOS_PAYLOAD_SIZE])
 {
    uint8_t machine[ARC_CMOS_MACHINE_SIZE];
