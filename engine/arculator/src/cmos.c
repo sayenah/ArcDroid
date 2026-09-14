@@ -1,6 +1,6 @@
 /*Arculator 2.2 by Sarah Walker
   I2C + CMOS RAM emulation*/
-/* ArcDroid modification: CMOS storage is owned by the libretro session and
+/* ArcDroid modification (2026-09-14): CMOS storage is owned by the libretro session and
  * crosses this file only through the bounded in-memory accessors below. Every
  * guest byte access is exposed through the frontend debug logger. */
 #include <stdio.h>

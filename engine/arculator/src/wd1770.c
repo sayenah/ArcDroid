@@ -1,6 +1,6 @@
 /*Arculator 2.2 by Sarah Walker
   1770 FDC emulation*/
-/* ArcDroid modification: controller faults never terminate the frontend;
+/* ArcDroid modification (2026-09-14): controller faults never terminate the frontend;
  * command traffic is exposed through the frontend debug logger. */
 #include <stdio.h>
 #include <stdlib.h>

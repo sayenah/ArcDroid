@@ -1,6 +1,6 @@
 /*Arculator 2.2 by Sarah Walker
   Sound emulation*/
-/* ArcDroid modification: filter history is explicitly session-owned. */
+/* ArcDroid modification (2026-09-14): filter history is explicitly session-owned. */
 #include <math.h>
 #include <string.h>
 #include "arc.h"

@@ -2,7 +2,7 @@ void cmos_init();
 void cmos_load();
 void cmos_save();
 
-/* ArcDroid modification: explicit in-memory persistence boundary. */
+/* ArcDroid modification (2026-09-14): explicit in-memory persistence boundary. */
 void cmos_set_image(const uint8_t *data, size_t size);
 void cmos_get_image(uint8_t *data, size_t size);
 

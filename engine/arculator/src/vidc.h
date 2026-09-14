@@ -1,6 +1,9 @@
 #ifndef _VIDC_H_
 #define _VIDC_H_
 
+/* ArcDroid modification (2026-09-14): expose the programmed guest refresh
+ * rate to the bounded libretro execution adapter. */
+
 extern int vidc_displayon;
 
 extern void vidc_redovideotiming();

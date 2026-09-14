@@ -1,7 +1,7 @@
 #ifndef _PLAT_INPUT_H_
 #define _PLAT_INPUT_H_
 
-/* ArcDroid modification: use libretro's stable RETROK namespace directly;
+/* ArcDroid modification (2026-09-14): use libretro's stable RETROK namespace directly;
  * the SDL platform keyboard header is deliberately not part of this port. */
 #include "libretro.h"
 

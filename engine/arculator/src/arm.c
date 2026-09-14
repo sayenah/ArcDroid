@@ -1,6 +1,6 @@
 /*Arculator 2.2 by Sarah Walker
   ARM2 & ARM3 emulation*/
-/* ArcDroid modification: machine failures unwind through the session fault latch. */
+/* ArcDroid modification (2026-09-14): machine failures unwind through the session fault latch. */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

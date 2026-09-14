@@ -1,4 +1,4 @@
-/* ArcDroid modification: expose an explicit staged-media flush boundary. */
+/* ArcDroid modification (2026-09-14): expose an explicit staged-media flush boundary. */
 void adf_init();
 int adf_flush_all(void);
 void adf_set_writable(int writable);

@@ -1,6 +1,6 @@
 /*Arculator 2.2 by Sarah Walker
   Keyboard/mouse emulation*/
-/* ArcDroid modification: KART reset/handshake traffic is exposed through the
+/* ArcDroid modification (2026-09-14): KART reset/handshake traffic is exposed through the
  * frontend debug logger for deterministic boot diagnostics. */
 #include <stdio.h>
 #include "arc.h"

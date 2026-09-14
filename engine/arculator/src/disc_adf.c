@@ -1,6 +1,6 @@
 /*Arculator 2.2 by Sarah Walker
   ADFS disc support (really all raw sector formats)*/
-/* ArcDroid modification: unavailable data never terminates the frontend. */
+/* ArcDroid modification (2026-09-14): unavailable data never terminates the frontend. */
 #include <string.h>
 #include "arc.h"
 #include "arc_io.h"

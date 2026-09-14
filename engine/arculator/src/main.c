@@ -1,6 +1,6 @@
 /*Arculator 2.2 by Sarah Walker
   Main init/close/run functions*/
-/* ArcDroid modification: the shipping core uses engine/arcdroid_engine.c as
+/* ArcDroid modification (2026-09-14): the shipping core uses engine/arcdroid_engine.c as
  * its session owner; this retained upstream shell no longer terminates a host. */
 #include <stdio.h>
 #include <stdint.h>

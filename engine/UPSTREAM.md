@@ -42,6 +42,9 @@ src/wd1770.c src/wd1770.h
 This is an allowlisted copy, not a subtree. ArcDroid modifications carry an
 explicit notice in each modified upstream file.
 
+The pinned upstream `AUTHORS` file is empty. Upstream author and contributor
+credits are preserved in the imported `README.md`.
+
 ## Deliberate exclusions
 
 - wxWidgets, SDL, desktop platform, resource, generated autotools, and debugger

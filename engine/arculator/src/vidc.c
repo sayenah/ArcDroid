@@ -1,6 +1,6 @@
 /*Arculator 2.2 by Sarah Walker
   VIDC10 emulation*/
-/* ArcDroid modifications: release the renderer bitmap at teardown and remove
+/* ArcDroid modifications (2026-09-14): release the renderer bitmap at teardown and remove
  * an unused uninitialised pointer increment from the 4bpp draw path. */
 #include <stdio.h>
 #include <stdlib.h>

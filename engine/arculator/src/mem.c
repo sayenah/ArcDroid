@@ -1,6 +1,6 @@
 /*Arculator 2.2 by Sarah Walker
   Memory read/write functions*/
-/* ArcDroid modification: excluded Slice 1 hardware is supplied by inert shims. */
+/* ArcDroid modification (2026-09-14): excluded Slice 1 hardware is supplied by inert shims. */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

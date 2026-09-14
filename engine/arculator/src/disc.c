@@ -1,6 +1,6 @@
 /*Arculator 2.2 by Sarah Walker
   Disc support*/
-/* ArcDroid modification: Slice 1 registers only the validated ADF/ADL subset.
+/* ArcDroid modification (2026-09-14): Slice 1 registers only the validated ADF/ADL subset.
  * WD1772 seek completion is kept independent of the excluded drive-noise
  * mixer, which upstream also (incorrectly) used as its command timer owner. */
 #include <stdio.h>

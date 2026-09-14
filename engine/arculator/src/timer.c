@@ -1,6 +1,6 @@
 /*Arculator 2.2 by Sarah Walker
   Timer system*/
-/* ArcDroid modification: timer faults unwind through the session latch and an
+/* ArcDroid modification (2026-09-14): timer faults unwind through the session latch and an
  * empty timer list is handled without dereferencing a null head. */
 #include <string.h>
 #include "arc.h"
