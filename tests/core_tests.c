@@ -10,6 +10,9 @@ static void test_hashes(void)
    ArcDigest d = arc_digest("abc", 3u);
    assert(d.crc32 == UINT32_C(0x352441c2));
    assert(strcmp(d.sha1, "a9993e364706816aba3e25717850c26c9cd0d89d") == 0);
+   uint64_t start = UINT64_MAX - (UINT64_C(3) << 32);
+   uint64_t end = start + (UINT64_C(9) << 32);
+   assert(arc_timestamp_elapsed_cycles(start, end) == 9u);
 }
 
 static void test_firmware_table(void)

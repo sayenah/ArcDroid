@@ -66,6 +66,10 @@ typedef struct {
 uint32_t arc_crc32(const void *data, size_t size);
 void arc_sha1_hex(const void *data, size_t size, char output[41]);
 ArcDigest arc_digest(const void *data, size_t size);
+static inline uint64_t arc_timestamp_elapsed_cycles(uint64_t start, uint64_t end)
+{
+   return (end - start) >> 32;
+}
 
 const ArcFirmwareFingerprint *arc_firmware_table(size_t *count);
 const ArcFirmwareFingerprint *arc_firmware_match(const ArcDigest *digest);

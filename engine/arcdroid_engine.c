@@ -330,14 +330,16 @@ bool arc_engine_run_frame(ArcInputState *input, ArcEngineFrame *frame)
    {
       execarm(2048);
       (void)arc_platform_video_frame(NULL, NULL, NULL, &sequence);
-   } while (sequence == start_sequence && ((tsc - start_tsc) >> 32) < maximum_cycles);
+   } while (sequence == start_sequence &&
+            arc_timestamp_elapsed_cycles(start_tsc, tsc) < maximum_cycles);
    if (adf_flush_all()) fatal("Unable to flush the staged floppy image");
    arc_fault_boundary = false;
 
    frame->pixels = arc_platform_video_frame(&frame->width, &frame->height,
                                              &frame->pitch, &sequence);
    frame->field_completed = sequence != start_sequence;
-   frame->elapsed_us = ((tsc - start_tsc) >> 32) / (uint64_t)speed_mhz;
+   frame->elapsed_us = arc_timestamp_elapsed_cycles(start_tsc, tsc) /
+                       (uint64_t)speed_mhz;
    if (!frame->elapsed_us) frame->elapsed_us = 1u;
    if (frame->field_completed)
    {
