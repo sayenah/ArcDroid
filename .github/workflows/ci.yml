@@ -1,0 +1,99 @@
+name: CI
+on:
+  push:
+    branches: [main, "slice/**"]
+  pull_request:
+
+jobs:
+  host:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build tools
+        run: sudo apt-get update && sudo apt-get install -y cmake ninja-build python3
+      - name: Asset guard
+        run: tools/check-assets.sh
+      - name: Shipping source I/O guard self-test
+        run: tools/check-shipping-io.sh --self-test
+      - name: Configure
+        run: cmake -S . -B build/host -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo
+      - name: Build
+        run: cmake --build build/host --verbose
+      - name: Unit tests and harness
+        run: ctest --test-dir build/host --output-on-failure
+      - name: Export guard
+        run: tools/check-exports.sh build/host/arcdroid_libretro.so
+
+  windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: git mingw-w64-ucrt-x86_64-binutils mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-cmake mingw-w64-ucrt-x86_64-ninja
+      - name: Shipping source I/O guard self-test
+        run: tools/check-shipping-io.sh --self-test
+      - name: Configure
+        run: cmake -S . -B build/windows -G Ninja -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build/windows --verbose
+      - name: Tests
+        run: ctest --test-dir build/windows --output-on-failure
+      - name: Windows import and export guard
+        run: tools/check-windows.sh build/windows/arcdroid_libretro.dll
+      - name: Package native RetroArch inputs
+        run: |
+          mkdir -p build/windows/retroarch-package
+          cp build/windows/arcdroid_libretro.dll build/windows/arcdroid_libretro.info \
+            build/windows/tests/fixtures/generated/arcdroid-test.rom \
+            build/windows/tests/fixtures/generated/arcdroid-test.adf \
+            build/windows/retroarch-package/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: arcdroid-windows-retroarch-input
+          path: build/windows/retroarch-package/
+          if-no-files-found: error
+
+  windows-retroarch:
+    needs: windows
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: arcdroid-windows-retroarch-input
+          path: build/retroarch-input
+      - name: RetroArch 1.22.2 native load, screenshot, and reloads
+        shell: pwsh
+        run: tools/test-retroarch-windows.ps1 -InputDirectory build/retroarch-input -WorkDirectory build/retroarch-native
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: arcdroid-windows-retroarch-evidence
+          path: build/retroarch-native/evidence/
+          if-no-files-found: warn
+
+  android-arm64:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: nttld/setup-ndk@v1
+        id: setup-ndk
+        with:
+          ndk-version: r29
+          add-to-path: false
+      - name: Shipping source I/O guard self-test
+        run: tools/check-shipping-io.sh --self-test
+      - name: Configure
+        run: cmake -S . -B build/android -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE=${{ steps.setup-ndk.outputs.ndk-path }}/build/cmake/android.toolchain.cmake -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-21
+      - name: Build
+        run: cmake --build build/android --verbose
+      - name: ELF guard
+        env:
+          LLVM_READELF: ${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf
+        run: tools/check-android.sh build/android/arcdroid_libretro_android.so

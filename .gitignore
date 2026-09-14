@@ -4,3 +4,7 @@ roms/private/
 
 # OS noise
 .DS_Store
+
+# Local CMake/Ninja output
+build/
+out/
