@@ -99,6 +99,7 @@ static const char *option_pointer_stick = "right";
 static const char *option_pointer_speed = "600";
 static const char *option_pointer_deadzone = "15";
 static const char *option_writes = "shadow";
+static const char *option_launch = "auto";
 static bool variable_update;
 static bool saw_adfs_advisory;
 static bool saw_audio_counters;
@@ -109,6 +110,10 @@ static uint64_t sampled_overruns;
 static unsigned input_overflow_log_lines;
 static unsigned short_warning_log_lines;
 static unsigned short_warning_osd_calls;
+static unsigned launch_log_lines;
+static unsigned launch_warning_osd_calls;
+static char last_launch_log[2048];
+static char last_launch_warning[512];
 
 static bool signature_is_in(const uint64_t *signatures, unsigned count, uint64_t signature)
 {
@@ -276,6 +281,11 @@ static void frontend_log(enum retro_log_level level, const char *format, ...)
    if (strstr(message, "not a recognised ADFS image")) saw_adfs_advisory = true;
    if (strstr(message, "Input queue overflowed")) ++input_overflow_log_lines;
    if (strstr(message, "Short image padded with")) ++short_warning_log_lines;
+   if (!strncmp(message, "Launch:", 7u))
+   {
+      ++launch_log_lines;
+      snprintf(last_launch_log, sizeof(last_launch_log), "%s", message);
+   }
    if (strstr(message, "Launch options:"))
    {
       if (strstr(message, "pointer=relative")) launch_options_seen |= 1u;
@@ -309,11 +319,12 @@ static bool environment(unsigned command, void *data)
          const struct retro_core_options_v2 *options = data;
          unsigned count = 0u;
          while (options->definitions[count].key) ++count;
-         assert(count == 10u);
+         assert(count == 11u);
          assert(!strcmp(options->definitions[5].key, "arcdroid_pointer_mode"));
          assert(!strcmp(options->definitions[6].key, "arcdroid_pointer_stick"));
          assert(!strcmp(options->definitions[7].key, "arcdroid_pointer_speed"));
          assert(!strcmp(options->definitions[8].key, "arcdroid_pointer_deadzone"));
+         assert(!strcmp(options->definitions[9].key, "arcdroid_launch"));
          return true;
       }
       case RETRO_ENVIRONMENT_SET_DISK_CONTROL_EXT_INTERFACE:
@@ -396,6 +407,7 @@ static bool environment(unsigned command, void *data)
          else if (!strcmp(variable->key, "arcdroid_pointer_speed")) variable->value = option_pointer_speed;
          else if (!strcmp(variable->key, "arcdroid_pointer_deadzone")) variable->value = option_pointer_deadzone;
          else if (!strcmp(variable->key, "arcdroid_disk_writes")) variable->value = option_writes;
+         else if (!strcmp(variable->key, "arcdroid_launch")) variable->value = option_launch;
          else return false;
          return true;
       }
@@ -436,11 +448,25 @@ static bool environment(unsigned command, void *data)
          snprintf(last_message, sizeof(last_message), "%s", ((struct retro_message_ext *)data)->msg);
          if (strstr(last_message, "VIDC")) ++vidc_osd_ext_calls;
          if (strstr(last_message, "Short image padded with")) ++short_warning_osd_calls;
+         if (strstr(last_message, "Application choice refused") ||
+             strstr(last_message, "No unique application") ||
+             strstr(last_message, "Application inspection incomplete"))
+         {
+            ++launch_warning_osd_calls;
+            snprintf(last_launch_warning, sizeof(last_launch_warning), "%s", last_message);
+         }
          return true;
       case RETRO_ENVIRONMENT_SET_MESSAGE:
          snprintf(last_message, sizeof(last_message), "%s", ((struct retro_message *)data)->msg);
          if (strstr(last_message, "VIDC")) ++vidc_osd_legacy_calls;
          if (strstr(last_message, "Short image padded with")) ++short_warning_osd_calls;
+         if (strstr(last_message, "Application choice refused") ||
+             strstr(last_message, "No unique application") ||
+             strstr(last_message, "Application inspection incomplete"))
+         {
+            ++launch_warning_osd_calls;
+            snprintf(last_launch_warning, sizeof(last_launch_warning), "%s", last_message);
+         }
          return true;
       default: return false;
    }
@@ -625,6 +651,19 @@ static void staged_media_path(char output[4096], const char *save,
    assert(written > 0 && written < 4096);
 }
 
+static void remove_first_new_directory_entry(const char *path)
+{
+   FILE *file = fopen(path, "r+b");
+   uint8_t entries[3u * 26u];
+   assert(file && fseek(file, 1024 + 5, SEEK_SET) == 0);
+   assert(fread(entries, 1u, sizeof(entries), file) == sizeof(entries));
+   memmove(entries, entries + 26u, 52u);
+   memset(entries + 52u, 0, 26u);
+   assert(fseek(file, 1024 + 5, SEEK_SET) == 0);
+   assert(fwrite(entries, 1u, sizeof(entries), file) == sizeof(entries));
+   assert(!fflush(file) && !fclose(file));
+}
+
 static void assert_zero_padded_copy(const char *source, const char *staged,
                                     size_t declared)
 {
@@ -675,10 +714,10 @@ static unsigned modified_shadow_count(const char *save, uint64_t first, uint64_t
 #define LOAD(name) do { *(void **)(&name) = dlsym(module, #name); assert(name); } while (0)
 int main(int argc, char **argv)
 {
-   assert(argc == 5 || argc == 12 ||
+   assert(argc == 5 || argc == 13 ||
           (argc == 6 && strcmp(argv[5], "--real-boot") == 0));
    bool real_boot = argc == 6;
-   bool media_tests = argc == 12;
+   bool media_tests = argc == 13;
    real_boot_mode = real_boot;
    void *module = dlopen(argv[1], RTLD_NOW | RTLD_LOCAL);
    if (!module)
@@ -727,6 +766,9 @@ int main(int argc, char **argv)
    void (*arc_engine_audio_stats)(uint64_t *, uint64_t *) = NULL;
    bool (*arc_engine_media_insert)(const ArcEngineMedia *, char *, size_t) = NULL;
    void (*arc_engine_test_set_vidc_noncompleting)(bool) = NULL;
+   bool (*arc_engine_test_drive_media)(unsigned, bool *, char[41]) = NULL;
+   bool (*arc_engine_test_cmos_image)(uint8_t[ARC_CMOS_MACHINE_SIZE]) = NULL;
+   bool (*arc_engine_test_cmos_write)(unsigned, uint8_t) = NULL;
    void (*arc_platform_test_input_events_reset)(void) = NULL;
    size_t (*arc_platform_test_input_events)(ArcKartEvent *, size_t) = NULL;
    if (!real_boot)
@@ -735,12 +777,20 @@ int main(int argc, char **argv)
       *(void **)(&arc_engine_media_insert) = dlsym(module, "arc_engine_media_insert");
       *(void **)(&arc_engine_test_set_vidc_noncompleting) =
          dlsym(module, "arc_engine_test_set_vidc_noncompleting");
+      *(void **)(&arc_engine_test_drive_media) =
+         dlsym(module, "arc_engine_test_drive_media");
+      *(void **)(&arc_engine_test_cmos_image) =
+         dlsym(module, "arc_engine_test_cmos_image");
+      *(void **)(&arc_engine_test_cmos_write) =
+         dlsym(module, "arc_engine_test_cmos_write");
       *(void **)(&arc_platform_test_input_events_reset) =
          dlsym(module, "arc_platform_test_input_events_reset");
       *(void **)(&arc_platform_test_input_events) =
          dlsym(module, "arc_platform_test_input_events");
       assert(arc_engine_audio_stats && arc_engine_media_insert &&
              arc_engine_test_set_vidc_noncompleting &&
+             arc_engine_test_drive_media && arc_engine_test_cmos_image &&
+             arc_engine_test_cmos_write &&
              arc_platform_test_input_events_reset && arc_platform_test_input_events);
    }
 
@@ -2111,6 +2161,250 @@ int main(int argc, char **argv)
          assert(strstr(last_message, "short by") ||
                 strstr(last_message, "unsupported raw image geometry"));
       }
+
+      /* Test-target-only probes verify the helper mount and launch CMOS
+       * overlay without adding observability to the shipping core. */
+      option_writes = "off";
+      option_launch = "auto";
+      struct retro_game_info application_game = {argv[12], NULL, 0u, NULL};
+      ArcDigest application_digest = digest_file(argv[12]);
+      char application_cmos_file[4096];
+      snprintf(application_cmos_file, sizeof(application_cmos_file),
+               "%s/arcdroid/cmos/A3000.test.%s.bin",
+               save_path, application_digest.sha1);
+      (void)remove(application_cmos_file);
+      unsigned decisions = launch_log_lines;
+      phase = PHASE_LOAD; assert(retro_load_game(&application_game));
+      assert(launch_log_lines == decisions + 1u &&
+             strstr(last_launch_log, "Launch:") &&
+             strstr(last_launch_log, "decision=!Demo") &&
+             strstr(last_launch_log, "reason=single application"));
+      bool write_protected = false;
+      char mounted_digest[41];
+      assert(arc_engine_test_drive_media(1u, &write_protected, mounted_digest));
+      assert(write_protected);
+      char helper_file[4096];
+      snprintf(helper_file, sizeof(helper_file), "%s/arcdroid/launch/%s.adl",
+               save_path, application_digest.sha1);
+      ArcDigest helper_digest = digest_file(helper_file);
+      assert(!strcmp(mounted_digest, helper_digest.sha1));
+      uint8_t machine_cmos[ARC_CMOS_MACHINE_SIZE];
+      assert(arc_engine_test_cmos_image(machine_cmos));
+      assert((machine_cmos[75] & 7u) == 1u && (machine_cmos[199] & 7u) == 2u);
+
+      /* The helper-only overlay never enters either persistent surface. A
+       * separate guest-side CMOS mutation must survive the same sync. */
+      assert(arc_engine_test_cmos_write(16u + 42u, 0x5au));
+      phase = PHASE_RUN;
+      retro_run();
+      const uint8_t *launch_save_ram =
+         retro_get_memory_data(RETRO_MEMORY_SAVE_RAM);
+      assert(launch_save_ram && !memcmp(launch_save_ram, "ARCCMOS2", 8u));
+      assert((launch_save_ram[16u + 59u] & 7u) == 0u &&
+             (launch_save_ram[16u + 183u] & 7u) == 1u &&
+             launch_save_ram[16u + 42u] == 0x5au);
+      uint8_t launch_cmos_file[ARC_CMOS_RECORD_SIZE];
+      read_exact(application_cmos_file, launch_cmos_file,
+                 sizeof(launch_cmos_file));
+      assert(!memcmp(launch_cmos_file, launch_save_ram,
+                     sizeof(launch_cmos_file)));
+
+      /* Eject and replace within the first 200 frontend frames. The helper is
+       * retained, hidden from disk control, and no launch decision runs until
+       * the explicit machine restart. */
+      char ambiguous_path[4096];
+      snprintf(ambiguous_path, sizeof(ambiguous_path),
+               "%s/launch-family/ambiguous-l.adl", argv[11]);
+      struct retro_game_info ambiguous_replacement = {ambiguous_path, NULL, 0u, NULL};
+      phase = PHASE_RUN;
+      for (unsigned frame = 0u; frame < 50u; ++frame) retro_run();
+      assert(disk_control.get_num_images() == 1u && disk_control.set_eject_state(true));
+      assert(arc_engine_test_drive_media(1u, &write_protected, mounted_digest));
+      assert(disk_control.replace_image_index(0u, &ambiguous_replacement));
+      assert(disk_control.set_image_index(0u) && disk_control.set_eject_state(false));
+      for (unsigned frame = 50u; frame < 200u; ++frame) retro_run();
+      assert(launch_log_lines == decisions + 1u &&
+             arc_engine_test_drive_media(1u, &write_protected, mounted_digest));
+      retro_reset();
+      assert(launch_log_lines == decisions + 2u &&
+             strstr(last_launch_log, "reason=ambiguous") &&
+             !arc_engine_test_drive_media(1u, NULL, NULL));
+      option_launch = "off";
+      retro_reset();
+      assert(!arc_engine_test_drive_media(1u, NULL, NULL));
+      assert(arc_engine_test_cmos_image(machine_cmos));
+      assert((machine_cmos[75] & 7u) == 0u && (machine_cmos[199] & 7u) == 1u);
+      retro_unload_game();
+      launch_save_ram = retro_get_memory_data(RETRO_MEMORY_SAVE_RAM);
+      assert(launch_save_ram && (launch_save_ram[16u + 59u] & 7u) == 0u &&
+             (launch_save_ram[16u + 183u] & 7u) == 1u &&
+             launch_save_ram[16u + 42u] == 0x5au);
+      read_exact(application_cmos_file, launch_cmos_file,
+                 sizeof(launch_cmos_file));
+      assert(!memcmp(launch_cmos_file, launch_save_ram,
+                     sizeof(launch_cmos_file)));
+
+      /* Explicit ordinals override a non-zero FileCore boot option, refuse a
+       * non-application/beyond-list choice, and bind the resolved target. */
+      char explicit_source[4096], explicit_staged[4096], explicit_binding[4096];
+      snprintf(explicit_source, sizeof(explicit_source),
+               "%s/launch-family/explicit-d.adf", argv[11]);
+      struct retro_game_info explicit_game = {explicit_source, NULL, 0u, NULL};
+      option_writes = "shadow";
+      staged_media_path(explicit_staged, save_path, explicit_source, "disc.adf");
+      ArcDigest explicit_digest = digest_file(explicit_source);
+      snprintf(explicit_binding, sizeof(explicit_binding),
+               "%s/arcdroid/launch/%s.bind", save_path, explicit_digest.sha1);
+      (void)remove(explicit_staged);
+      (void)remove(explicit_binding);
+      unsigned warnings = launch_warning_osd_calls;
+      option_launch = "app1";
+      phase = PHASE_LOAD; assert(retro_load_game(&explicit_game));
+      assert(!arc_engine_test_drive_media(1u, NULL, NULL) &&
+             launch_warning_osd_calls == warnings + 1u &&
+             strstr(last_launch_warning, "candidate 1 has no !Run"));
+      option_launch = "app2";
+      retro_reset();
+      assert(arc_engine_test_drive_media(1u, &write_protected, mounted_digest) &&
+             strstr(last_launch_log, "boot=3") &&
+             strstr(last_launch_log, "decision=!Demo") &&
+             strstr(last_launch_log, "disc !Boot skipped"));
+      char binding_text[96];
+      FILE *binding_file = fopen(explicit_binding, "rb");
+      assert(binding_file);
+      size_t binding_size = fread(binding_text, 1u, sizeof(binding_text) - 1u, binding_file);
+      assert(!ferror(binding_file) && !fclose(binding_file));
+      binding_text[binding_size] = '\0';
+      assert(!strncmp(binding_text, "app2\n!Demo\n", 11u));
+      retro_unload_game();
+
+      /* A persistent shadow edit removes the earlier candidate, so app2 now
+       * resolves to !Other. The prior binding prevents silent retargeting. */
+      remove_first_new_directory_entry(explicit_staged);
+      warnings = launch_warning_osd_calls;
+      phase = PHASE_LOAD; assert(retro_load_game(&explicit_game));
+      assert(!arc_engine_test_drive_media(1u, NULL, NULL) &&
+             launch_warning_osd_calls == warnings + 1u &&
+             strstr(last_launch_warning, "binding changed target"));
+      option_launch = "off";
+      retro_reset();
+      option_launch = "app2";
+      retro_reset();
+      assert(arc_engine_test_drive_media(1u, &write_protected, mounted_digest) &&
+             strstr(last_launch_log, "decision=!Other"));
+      retro_unload_game();
+
+      /* A zero-length binding is invalid, but must never pass NULL to memcpy. */
+      FILE *empty_binding = fopen(explicit_binding, "wb");
+      assert(empty_binding && fclose(empty_binding) == 0);
+      warnings = launch_warning_osd_calls;
+      phase = PHASE_LOAD; assert(retro_load_game(&explicit_game));
+      assert(!arc_engine_test_drive_media(1u, NULL, NULL) &&
+             launch_warning_osd_calls == warnings + 1u &&
+             strstr(last_launch_warning, "binding is invalid"));
+      retro_unload_game();
+      assert(remove(explicit_binding) == 0);
+
+      char booted_path[4096];
+      snprintf(booted_path, sizeof(booted_path),
+               "%s/launch-family/boot-3-l.adl", argv[11]);
+      struct retro_game_info booted_game = {booted_path, NULL, 0u, NULL};
+      option_writes = "off";
+      option_launch = "app1";
+      phase = PHASE_LOAD; assert(retro_load_game(&booted_game));
+      assert(arc_engine_test_drive_media(1u, NULL, NULL) &&
+             strstr(last_launch_log, "boot=3") &&
+             strstr(last_launch_log, "disc !Boot skipped"));
+      retro_reset();
+      assert(arc_engine_test_drive_media(1u, &write_protected, mounted_digest) &&
+             write_protected);
+      retro_unload_game();
+
+      option_launch = "app8";
+      warnings = launch_warning_osd_calls;
+      phase = PHASE_LOAD; assert(retro_load_game(&application_game));
+      assert(!arc_engine_test_drive_media(1u, NULL, NULL) &&
+             launch_warning_osd_calls == warnings + 1u &&
+             strstr(last_launch_warning, "candidate 8 does not exist"));
+      retro_unload_game();
+
+      option_launch = "auto";
+      warnings = launch_warning_osd_calls;
+      phase = PHASE_LOAD; assert(retro_load_game(&booted_game));
+      assert(!arc_engine_test_drive_media(1u, NULL, NULL) &&
+             launch_warning_osd_calls == warnings &&
+             strstr(last_launch_log, "reason=disc boots itself"));
+      retro_unload_game();
+
+      char no_run_path[4096];
+      snprintf(no_run_path, sizeof(no_run_path),
+               "%s/launch-family/no-run-d.adf", argv[11]);
+      struct retro_game_info no_run_game = {no_run_path, NULL, 0u, NULL};
+      warnings = launch_warning_osd_calls;
+      phase = PHASE_LOAD; assert(retro_load_game(&no_run_game));
+      assert(!arc_engine_test_drive_media(1u, NULL, NULL) &&
+             launch_warning_osd_calls == warnings &&
+             strstr(last_launch_log, "reason=no applications"));
+      retro_unload_game();
+
+      option_launch = "auto";
+      warnings = launch_warning_osd_calls;
+      phase = PHASE_LOAD; assert(retro_load_game(&ambiguous_replacement));
+      assert(!arc_engine_test_drive_media(1u, NULL, NULL) &&
+             launch_warning_osd_calls == warnings + 1u &&
+             !strstr(last_launch_warning, "1 !Docs") &&
+             strstr(last_launch_warning, "2 !Foo") &&
+             strstr(last_launch_warning, "3 !Bar"));
+      retro_unload_game();
+
+      char incomplete_path[4096];
+      snprintf(incomplete_path, sizeof(incomplete_path),
+               "%s/launch-family/incomplete-l.adl", argv[11]);
+      struct retro_game_info incomplete_game = {incomplete_path, NULL, 0u, NULL};
+      warnings = launch_warning_osd_calls;
+      phase = PHASE_LOAD; assert(retro_load_game(&incomplete_game));
+      assert(!arc_engine_test_drive_media(1u, NULL, NULL) &&
+             launch_warning_osd_calls == warnings + 1u &&
+             strstr(last_launch_warning, "inspection incomplete") &&
+             strstr(last_launch_warning, "1 !Broken"));
+      retro_unload_game();
+
+      char unsafe_name_path[4096];
+      snprintf(unsafe_name_path, sizeof(unsafe_name_path),
+               "%s/launch-family/unsafe-disc-name-l.adl", argv[11]);
+      struct retro_game_info unsafe_name_game = {unsafe_name_path, NULL, 0u, NULL};
+      phase = PHASE_LOAD; assert(retro_load_game(&unsafe_name_game));
+      assert(strstr(last_launch_log, "disc=\"Bad?Name\"") &&
+             !arc_engine_test_drive_media(1u, NULL, NULL));
+      retro_unload_game();
+
+      /* JFD remains drive 0 while the independently discovered raw helper is
+       * drive 1. The helper is never reflected in the frontend disk count. */
+      char launch_jfd_path[4096];
+      snprintf(launch_jfd_path, sizeof(launch_jfd_path),
+               "%s/launch-family/single-l.jfd", argv[11]);
+      struct retro_game_info launch_jfd_game = {launch_jfd_path, NULL, 0u, NULL};
+      phase = PHASE_LOAD; assert(retro_load_game(&launch_jfd_game));
+      assert(disk_control.get_num_images() == 1u &&
+             arc_engine_test_drive_media(1u, &write_protected, mounted_digest) &&
+             write_protected);
+      retro_unload_game();
+
+      /* Repeated helper preparation reuses the deterministic published image
+       * and closes every VFS handle on teardown. */
+      option_writes = "off";
+      uint64_t stable_helper = hash_file(helper_file);
+      decisions = launch_log_lines;
+      for (unsigned cycle = 0u; cycle < 100u; ++cycle)
+      {
+         phase = PHASE_LOAD; assert(retro_load_game(&application_game));
+         assert(arc_engine_test_drive_media(1u, &write_protected, mounted_digest));
+         retro_unload_game();
+         assert(open_files == 0u && open_dirs == 0u && hash_file(helper_file) == stable_helper);
+      }
+      assert(launch_log_lines == decisions + 100u);
+      option_launch = "auto";
+      option_writes = "shadow";
       assert(hash_file(argv[7]) == disc1_hash && hash_file(argv[8]) == disc2_hash);
    }
    retro_deinit();

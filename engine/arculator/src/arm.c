@@ -658,7 +658,7 @@ void resetarm()
 	{
 		for (d=0;d<16;d++)
 		{
-			armregs[15]=d<<28;
+			armregs[15]=(uint32_t)d<<28;
 			switch (c)
 			{
 				case 0:  /*EQ*/ exec=ZFSET; break;

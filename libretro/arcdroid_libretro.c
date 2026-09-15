@@ -65,6 +65,7 @@ static bool arc_keyboard_lmeta;
 static unsigned arc_port_device[2] = {ARC_DEVICE_KEYS, ARC_DEVICE_MOUSE};
 static char arc_cmos_path[4096];
 static char arc_save_path[4096];
+static char arc_helper_path[4096];
 static uint64_t arc_frame_number;
 static long double arc_audio_fraction;
 static unsigned arc_video_width = ARC_WIDTH;
@@ -110,6 +111,19 @@ typedef enum {
    ARC_POINTER_STICK_DISABLED
 } ArcPointerStick;
 
+typedef enum {
+   ARC_LAUNCH_AUTO = 0,
+   ARC_LAUNCH_OFF,
+   ARC_LAUNCH_APP1,
+   ARC_LAUNCH_APP2,
+   ARC_LAUNCH_APP3,
+   ARC_LAUNCH_APP4,
+   ARC_LAUNCH_APP5,
+   ARC_LAUNCH_APP6,
+   ARC_LAUNCH_APP7,
+   ARC_LAUNCH_APP8
+} ArcLaunchOption;
+
 typedef struct {
    bool valid;
    int x;
@@ -140,6 +154,7 @@ typedef struct {
    unsigned pointer_speed;
    unsigned pointer_deadzone;
    ArcDiskWriteMode disk_writes;
+   ArcLaunchOption launch;
 } ArcCoreOptions;
 
 static ArcCoreOptions arc_core_options;
@@ -164,6 +179,7 @@ static bool arc_read_options(ArcCoreOptions *options, char *error, size_t error_
    const char *pointer_speed = arc_option_value("arcdroid_pointer_speed", "600");
    const char *pointer_deadzone = arc_option_value("arcdroid_pointer_deadzone", "15");
    const char *writes = arc_option_value("arcdroid_disk_writes", "shadow");
+   const char *launch = arc_option_value("arcdroid_launch", "auto");
    if (!options) return false;
    memset(options, 0, sizeof(*options));
    if ((strcmp(machine, "Auto") && strcmp(machine, "A3000")) ||
@@ -200,6 +216,11 @@ static bool arc_read_options(ArcCoreOptions *options, char *error, size_t error_
    if (!strcmp(writes, "original")) options->disk_writes = ARC_DISK_WRITES_ORIGINAL;
    else if (!strcmp(writes, "off")) options->disk_writes = ARC_DISK_WRITES_OFF;
    else if (strcmp(writes, "shadow")) goto invalid;
+   if (!strcmp(launch, "auto")) options->launch = ARC_LAUNCH_AUTO;
+   else if (!strcmp(launch, "off")) options->launch = ARC_LAUNCH_OFF;
+   else if (!strncmp(launch, "app", 3u) && launch[3] >= '1' && launch[3] <= '8' && !launch[4])
+      options->launch = (ArcLaunchOption)(ARC_LAUNCH_APP1 + launch[3] - '1');
+   else goto invalid;
    return true;
 invalid:
    if (error && error_size) snprintf(error, error_size, "Invalid ArcDroid core option value");
@@ -407,6 +428,7 @@ static void arc_release_session(void)
    arc_media_count = 0u;
    arc_image_index = 0u;
    arc_cmos_path[0] = '\0';
+   arc_helper_path[0] = '\0';
    arc_cmos_last_written_valid = false;
    memset(&arc_plan, 0, sizeof(arc_plan));
 }
@@ -421,6 +443,7 @@ static void arc_sync_cmos(void)
    }
    else
       arc_engine_cmos(payload);
+   arc_cmos_normalise_payload(payload);
    arc_cmos_encode(arc_cmos_record, &arc_plan, payload);
 }
 
@@ -443,6 +466,8 @@ static void arc_seed_cmos(void)
       arc_cmos_encode(arc_cmos_record, &arc_plan, payload);
       arc_cmos_last_written_valid = false;
    }
+   arc_cmos_normalise_payload(payload);
+   arc_cmos_encode(arc_cmos_record, &arc_plan, payload);
    free(existing);
 }
 
@@ -839,6 +864,253 @@ static bool arc_refresh_jfd(ArcMediaEntry *entry, char *error, size_t error_size
    arc_jfd_free(&entry->jfd);
    entry->jfd = parsed;
    return true;
+}
+
+static const char *arc_launch_option_name(ArcLaunchOption option)
+{
+   static const char *const names[] = {
+      "auto", "off", "app1", "app2", "app3", "app4", "app5", "app6", "app7", "app8"
+   };
+   return (unsigned)option < sizeof(names) / sizeof(names[0]) ? names[option] : "invalid";
+}
+
+static bool arc_launch_os_supported(ArcOsClass os)
+{
+#if defined(ARCDROID_TEST_FAULTS)
+   if (os == ARC_OS_TEST) return true;
+#endif
+   return os == ARC_OS_RISCOS_300 || os == ARC_OS_RISCOS_310 ||
+          os == ARC_OS_RISCOS_311 || os == ARC_OS_RISCOS_319;
+}
+
+static void arc_launch_sanitise(const char *source, char *output, size_t capacity)
+{
+   size_t at = 0u;
+   if (!capacity) return;
+   while (source && *source && at + 1u < capacity)
+   {
+      unsigned char c = (unsigned char)*source++;
+      output[at++] = c >= 0x20u && c <= 0x7eu ? (char)c : '?';
+   }
+   output[at] = '\0';
+}
+
+static void arc_launch_candidates_message(const ArcLaunchDiscovery *discovery,
+                                          const char *prefix,
+                                          bool applications_only)
+{
+   char message[512];
+   size_t at = (size_t)snprintf(message, sizeof(message), "%s", prefix);
+   bool listed = false;
+   for (unsigned i = 0u; i < discovery->candidate_count && at < sizeof(message); ++i)
+   {
+      if (applications_only && !discovery->candidates[i].application) continue;
+      char name[11];
+      arc_launch_sanitise(discovery->candidates[i].name, name, sizeof(name));
+      int written = snprintf(message + at, sizeof(message) - at, "%s%u %s",
+                             listed ? " " : "", i + 1u, name);
+      if (written < 0 || (size_t)written >= sizeof(message) - at)
+      { at = sizeof(message) - 1u; break; }
+      at += (size_t)written;
+      listed = true;
+   }
+   if (at < sizeof(message) - 28u)
+      snprintf(message + at, sizeof(message) - at, " — set Launch to Application N");
+   arc_message(message, RETRO_LOG_WARN);
+}
+
+static bool arc_launch_binding(const ArcLaunchDiscovery *discovery,
+                               ArcLaunchOption option, unsigned selected,
+                               bool reselected, char *reason, size_t reason_size)
+{
+   char directory[ARC_MEDIA_PATH_CAPACITY];
+   char path[ARC_MEDIA_PATH_CAPACITY];
+   int d = snprintf(directory, sizeof(directory), "%s/arcdroid/launch", arc_save_path);
+   int p = d >= 0 && (size_t)d < sizeof(directory) ?
+      snprintf(path, sizeof(path), "%s/%s.bind", directory, arc_plan.content_id) : -1;
+   if (d < 0 || (size_t)d >= sizeof(directory) || p < 0 ||
+       (size_t)p >= sizeof(path) || !arc_io_make_path(directory))
+   { snprintf(reason, reason_size, "binding storage unavailable"); return false; }
+
+   void *existing = NULL;
+   size_t existing_size = 0u;
+   bool exists = arc_io_read_all(path, &existing, &existing_size);
+   const char *option_name = arc_launch_option_name(option);
+   const char *target = discovery->candidates[selected].name;
+   if (exists && !reselected)
+   {
+      char bound_option[5] = {0}, bound_target[11] = {0}, bound_fingerprint[41] = {0};
+      char text[128];
+      char trailing = 0;
+      if (existing_size < sizeof(text))
+      {
+         if (existing_size && existing) memcpy(text, existing, existing_size);
+         text[existing_size] = '\0';
+      }
+      int fields = existing_size < sizeof(text) ?
+         sscanf(text, "%4[^\n]\n%10[^\n]\n%40[^\n]\n%c",
+                bound_option, bound_target, bound_fingerprint, &trailing) : 0;
+      if (fields < 3)
+      { free(existing); snprintf(reason, reason_size, "binding is invalid; re-select Launch"); return false; }
+      if (!strcmp(bound_option, option_name))
+      {
+         bool matches = !strcmp(bound_target, target);
+         free(existing);
+         if (!matches)
+         { snprintf(reason, reason_size, "binding changed target; re-select Launch"); return false; }
+         return true;
+      }
+   }
+   free(existing);
+   char binding[96];
+   int size = snprintf(binding, sizeof(binding), "%s\n%s\n%s\n", option_name,
+                       target, discovery->candidate_fingerprint);
+   if (size < 0 || (size_t)size >= sizeof(binding) ||
+       !arc_atomic_publish(path, (const uint8_t *)binding, (size_t)size,
+                           NULL, NULL, 0u))
+   { snprintf(reason, reason_size, "binding could not be published"); return false; }
+   return true;
+}
+
+static void arc_launch_log(const ArcLaunchDiscovery *discovery,
+                           const char *decision, const char *reason)
+{
+   if (!arc_log) return;
+   char candidates[1024] = "";
+   char applications[512] = "";
+   char disc_name[11];
+   size_t ca = 0u, aa = 0u;
+   arc_launch_sanitise(discovery->disc_name, disc_name, sizeof(disc_name));
+   for (unsigned i = 0u; i < discovery->candidate_count; ++i)
+   {
+      char name[11];
+      arc_launch_sanitise(discovery->candidates[i].name, name, sizeof(name));
+      int n = snprintf(candidates + ca, sizeof(candidates) - ca, "%s%u:%s",
+                       i ? "," : "", i + 1u, name);
+      if (n > 0 && (size_t)n < sizeof(candidates) - ca) ca += (size_t)n;
+      if (discovery->candidates[i].application)
+      {
+         n = snprintf(applications + aa, sizeof(applications) - aa, "%s%u:%s",
+                      aa ? "," : "", i + 1u, name);
+         if (n > 0 && (size_t)n < sizeof(applications) - aa) aa += (size_t)n;
+      }
+   }
+   arc_log(RETRO_LOG_INFO,
+      "Launch: boot=%u disc=\"%s\" candidates=[%s] applications=[%s] decision=%s reason=%s helper=%s\n",
+      discovery->boot_option, disc_name, candidates, applications,
+      decision, reason, arc_helper_path[0] ? arc_helper_path : "none");
+}
+
+static void arc_prepare_launch(ArcMediaEntry *entry, bool ejected,
+                               ArcLaunchOption option, bool reselected)
+{
+   ArcLaunchDiscovery discovery;
+   memset(&discovery, 0, sizeof(discovery));
+   discovery.target_index = -1;
+   discovery.reason = ARC_LAUNCH_REASON_UNREADABLE;
+   arc_helper_path[0] = '\0';
+   arc_plan.launch_helper = false;
+   arc_plan.launch_target[0] = '\0';
+   if (ejected || !entry || !entry->populated)
+   { arc_launch_log(&discovery, "none", "drive 0 empty"); return; }
+
+   void *raw = NULL;
+   size_t raw_size = 0u;
+   const ArcJfdImage *jfd = entry->info.kind == ARC_MEDIA_JFD ? &entry->jfd : NULL;
+   if (!jfd && !arc_io_read_all(entry->staged, &raw, &raw_size))
+   { arc_launch_log(&discovery, "none", "media read failed"); return; }
+   (void)arc_launch_discover(raw, raw_size, &entry->info, jfd, &discovery);
+   free(raw);
+   if (option == ARC_LAUNCH_OFF)
+   { arc_launch_log(&discovery, "none", "disabled"); return; }
+   if (!arc_launch_os_supported(arc_plan.os))
+   { arc_launch_log(&discovery, "none", "OS class unsupported"); return; }
+
+   int selected = discovery.target_index;
+   char refusal[160] = {0};
+   const char *reason = arc_launch_reason_name(discovery.reason);
+   if (option >= ARC_LAUNCH_APP1)
+   {
+      unsigned ordinal = (unsigned)(option - ARC_LAUNCH_APP1);
+      if (!discovery.readable)
+         snprintf(refusal, sizeof(refusal), "Application choice refused: inspection incomplete");
+      else if (ordinal >= discovery.candidate_count)
+         snprintf(refusal, sizeof(refusal), "Application choice refused: candidate %u does not exist", ordinal + 1u);
+      else if (!discovery.candidates[ordinal].application)
+         snprintf(refusal, sizeof(refusal), "Application choice refused: candidate %u has no !Run", ordinal + 1u);
+      else
+      {
+         selected = (int)ordinal;
+         if (!arc_launch_binding(&discovery, option, ordinal, reselected,
+                                 refusal, sizeof(refusal)))
+         {
+            char detail[sizeof(refusal)];
+            snprintf(detail, sizeof(detail), "%s", refusal);
+            snprintf(refusal, sizeof(refusal), "Application choice refused: %.120s", detail);
+         }
+         else
+            reason = discovery.boot_option ?
+               "explicit choice; disc !Boot skipped because helper is boot drive" :
+               "explicit application choice";
+      }
+      if (refusal[0])
+      {
+         arc_message(refusal, RETRO_LOG_WARN);
+         arc_launch_log(&discovery, "none", refusal);
+         return;
+      }
+   }
+   else if (selected < 0)
+   {
+      if (discovery.reason == ARC_LAUNCH_REASON_AMBIGUOUS &&
+          discovery.application_count >= 2u)
+         arc_launch_candidates_message(&discovery, "No unique application: ", true);
+      else if (discovery.reason == ARC_LAUNCH_REASON_INSPECTION_INCOMPLETE &&
+               discovery.candidate_count)
+         arc_launch_candidates_message(&discovery,
+            "Application inspection incomplete: ", false);
+      arc_launch_log(&discovery, "none", reason);
+      return;
+   }
+
+   uint8_t *helper = malloc(ARC_LAUNCH_DISC_SIZE);
+   if (!helper || !arc_launch_disc_build(discovery.disc_name,
+                                         discovery.candidates[selected].name,
+                                         helper))
+   {
+      free(helper);
+      arc_launch_log(&discovery, "none", "helper generation failed");
+      return;
+   }
+   char directory[ARC_MEDIA_PATH_CAPACITY];
+   int d = snprintf(directory, sizeof(directory), "%s/arcdroid/launch", arc_save_path);
+   int p = d >= 0 && (size_t)d < sizeof(directory) ?
+      snprintf(arc_helper_path, sizeof(arc_helper_path), "%s/%s.adl",
+               directory, arc_plan.content_id) : -1;
+   if (d < 0 || (size_t)d >= sizeof(directory) || p < 0 ||
+       (size_t)p >= sizeof(arc_helper_path) || !arc_io_make_path(directory))
+      arc_helper_path[0] = '\0';
+   bool valid = arc_helper_path[0] &&
+      arc_file_digest_matches(arc_helper_path, helper, ARC_LAUNCH_DISC_SIZE);
+   if (!valid && arc_helper_path[0])
+   {
+      size_t ignored = 0u;
+      if (arc_io_file_size(arc_helper_path, &ignored) &&
+          !arc_io_remove(arc_helper_path)) arc_helper_path[0] = '\0';
+      if (arc_helper_path[0] &&
+          !arc_atomic_publish(arc_helper_path, helper, ARC_LAUNCH_DISC_SIZE,
+                              NULL, NULL, 0u)) arc_helper_path[0] = '\0';
+   }
+   free(helper);
+   if (!arc_helper_path[0])
+   {
+      arc_launch_log(&discovery, "none", "helper publication failed");
+      return;
+   }
+   arc_plan.launch_helper = true;
+   memcpy(arc_plan.launch_target, discovery.candidates[selected].name,
+          sizeof(arc_plan.launch_target));
+   arc_launch_log(&discovery, arc_plan.launch_target, reason);
 }
 
 static bool arc_disk_set_eject(bool ejected)
@@ -1344,6 +1616,10 @@ static const struct retro_core_option_v2_definition arc_options[] = {
     NULL, {{"300", NULL}, {"450", NULL}, {"600", NULL}, {"900", NULL}, {"1200", NULL}, {NULL, NULL}}, "600"},
    {"arcdroid_pointer_deadzone", "Pointer Dead Zone", NULL, "Radial analog-stick dead zone percentage.", NULL,
     NULL, {{"0", "0 %"}, {"10", "10 %"}, {"15", "15 %"}, {"20", "20 %"}, {"25", "25 %"}, {NULL, NULL}}, "15"},
+   {"arcdroid_launch", "Launch", NULL, "Automatically launch a root application, disable launch automation, or choose a numbered candidate.", NULL,
+    NULL, {{"auto", "Auto"}, {"off", "Off"}, {"app1", "Application 1"}, {"app2", "Application 2"},
+           {"app3", "Application 3"}, {"app4", "Application 4"}, {"app5", "Application 5"},
+           {"app6", "Application 6"}, {"app7", "Application 7"}, {"app8", "Application 8"}, {NULL, NULL}}, "auto"},
    {"arcdroid_disk_writes", "Disk Writes", NULL, "Choose where floppy writes are stored.", NULL,
     NULL, {{"shadow", NULL}, {"original", NULL}, {"off", NULL}, {NULL, NULL}}, "shadow"},
    {NULL, NULL, NULL, NULL, NULL, NULL, {{0}}, NULL}
@@ -1639,11 +1915,17 @@ static bool arc_load_game(const struct retro_game_info *game, bool negotiate)
          arc_release_session();
          return false;
       }
+      arc_prepare_launch(&arc_media[arc_image_index], false,
+                         arc_core_options.launch, false);
       ArcEngineMedia media = arc_engine_media(&arc_media[arc_image_index]);
+      ArcEngineMedia helper = {arc_helper_path, false, ARC_MEDIA_ADL_640K,
+                               ARC_GEOMETRY_640K_L, NULL};
       if (!arc_cmos_decode(arc_cmos_record, &arc_plan, payload) ||
-          !arc_cmos_machine_image(arc_plan.os, payload, machine_cmos) ||
+          !arc_cmos_machine_image(arc_plan.os, payload,
+                                  arc_plan.launch_helper, machine_cmos) ||
           !arc_engine_start(arc_firmware, arc_firmware_size,
                             &media,
+                            arc_plan.launch_helper ? &helper : NULL,
                             machine_cmos, error, sizeof(error)))
       {
          arc_message(error[0] ? error : "Unable to start the Arculator machine.", RETRO_LOG_ERROR);
@@ -1705,6 +1987,7 @@ RETRO_API void retro_reset(void)
    ArcDigest frozen_identity = arc_content_digest;
    bool was_ejected = arc_ejected;
    unsigned selected = arc_image_index;
+   bool launch_reselected;
 
    arc_persist_cmos();
    if (!arc_read_options(&updated, error, sizeof(error)) ||
@@ -1712,6 +1995,7 @@ RETRO_API void retro_reset(void)
                             &new_firmware_size, &firmware_match,
                             error, sizeof(error)))
       goto failed;
+   launch_reselected = updated.launch != arc_core_options.launch;
 
    arc_engine_stop();
    if (updated.disk_writes != arc_core_options.disk_writes)
@@ -1768,9 +2052,15 @@ RETRO_API void retro_reset(void)
       mounted = arc_engine_media(&arc_media[selected]);
       mounted_pointer = &mounted;
    }
+   arc_prepare_launch(mounted_pointer ? &arc_media[selected] : NULL, was_ejected,
+                      updated.launch, launch_reselected);
+   ArcEngineMedia helper = {arc_helper_path, false, ARC_MEDIA_ADL_640K,
+                            ARC_GEOMETRY_640K_L, NULL};
    if (!arc_cmos_decode(arc_cmos_record, &arc_plan, payload) ||
-       !arc_cmos_machine_image(arc_plan.os, payload, machine_cmos) ||
+       !arc_cmos_machine_image(arc_plan.os, payload,
+                               arc_plan.launch_helper, machine_cmos) ||
        !arc_engine_start(arc_firmware, arc_firmware_size, mounted_pointer,
+                         arc_plan.launch_helper ? &helper : NULL,
                          machine_cmos, error, sizeof(error)))
       goto failed;
    arc_loaded = true;

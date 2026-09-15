@@ -35,9 +35,12 @@ static int adf_informat=0;
 
 static int adf_pause = 0;
 static int adf_index = 6250;
-static int adf_writable = 1;
+static int adf_writable[4] = {1, 1, 1, 1};
 
-void adf_set_writable(int writable) { adf_writable = writable != 0; }
+void adf_set_writable(int drive, int writable)
+{
+	if (drive >= 0 && drive < 4) adf_writable[drive] = writable != 0;
+}
 
 int adf_flush_all(void)
 {
@@ -54,12 +57,13 @@ void adf_init()
 	adf_inread = adf_readpos = adf_inwrite = adf_inreadaddr = 0;
 	adf_notfound = adf_rsector = adf_informat = adf_pause = 0;
 	adf_index = 6250;
+	for (int drive = 0; drive < 4; ++drive) adf_writable[drive] = 1;
 }
 
 void adf_loadex(int drive, char *fn, int sectors, int size, int sides, int dblstep, int density, int sector_offset)
 {
 	writeprot[drive] = 0;
-	adf[drive].f = adf_writable ? arc_io_open_file(fn, true) : NULL;
+	adf[drive].f = adf_writable[drive] ? arc_io_open_file(fn, true) : NULL;
 	if (!adf[drive].f)
 	{
 		adf[drive].f = arc_io_open_file(fn, false);

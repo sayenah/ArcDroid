@@ -108,7 +108,7 @@ static bool arc_old_map_geometry(const uint8_t *data, size_t size,
    if (!data || size < 512u ||
        data[255] != arc_old_map_checksum(data) ||
        data[511] != arc_old_map_checksum(data + 256u) ||
-       data[509] > 246u || data[509] % 3u) return false;
+       data[510] > 246u || data[510] % 3u) return false;
    uint32_t old_size = (uint32_t)data[252] | ((uint32_t)data[253] << 8u) |
                        ((uint32_t)data[254] << 16u);
    switch (old_size)
@@ -116,7 +116,19 @@ static bool arc_old_map_geometry(const uint8_t *data, size_t size,
       case 1280u: *geometry = ARC_GEOMETRY_320K; *declared_size = 327680u; *max_missing = 4096u; return true;
       case 2560u: *geometry = ARC_GEOMETRY_640K_L; *declared_size = 655360u; *max_missing = 8192u; return true;
       case 3200u: *geometry = ARC_GEOMETRY_800K_D; *declared_size = 819200u; *max_missing = 10240u; return true;
-      default: return false;
+      default:
+         /* Some real 800K D-format maps declare fewer usable sectors while
+          * retaining the standard 80x2x5 physical geometry. */
+         if (old_size >= 12u && old_size < 3200u &&
+             size >= 819200u - 10240u && size <= 819200u &&
+             size % 1024u == 0u)
+         {
+            *geometry = ARC_GEOMETRY_800K_D;
+            *declared_size = 819200u;
+            *max_missing = 10240u;
+            return true;
+         }
+         return false;
    }
 }
 
@@ -188,6 +200,26 @@ bool arc_media_inspect(const char *path, const uint8_t *data, size_t size,
       found.padding_required = missing;
       found.short_image = missing != 0u;
       found.recognition = ARC_MEDIA_RECOGNITION_DESCRIPTOR;
+      if (geometry == ARC_GEOMETRY_800K_E)
+      {
+         found.boot_option = data[11];
+         memcpy(found.disc_name, data + 26u, 10u);
+      }
+      else
+      {
+         found.boot_option = data[509];
+         for (unsigned i = 0u; i < 5u; ++i)
+         {
+            found.disc_name[i * 2u] = (char)data[247u + i];
+            found.disc_name[i * 2u + 1u] = (char)data[502u + i];
+         }
+      }
+      for (unsigned i = 10u; i > 0u; --i)
+      {
+         unsigned char c = (unsigned char)found.disc_name[i - 1u];
+         if (c > 0x20u && c != 0x7fu) break;
+         found.disc_name[i - 1u] = '\0';
+      }
    }
    else
    {

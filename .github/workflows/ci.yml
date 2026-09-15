@@ -65,7 +65,7 @@ jobs:
       - name: Package native RetroArch inputs
         run: |
           mkdir -p build/windows/retroarch-package
-          cp build/windows/arcdroid_libretro.dll build/windows/arcdroid_libretro.info \
+          cp build/windows/arcdroid_libretro.dll build/windows/arcdroid_libretro_test.dll build/windows/arcdroid_libretro.info \
             build/windows/tests/fixtures/generated/arcdroid-test.rom \
             build/windows/tests/fixtures/generated/arcdroid-test.adf \
             build/windows/tests/fixtures/generated/arcdroid-media-test.rom \
@@ -74,6 +74,7 @@ jobs:
             build/windows/tests/fixtures/generated/arcdroid-media-disc2.adf \
             build/windows/tests/fixtures/generated/arcdroid-test.jfd \
             build/windows/tests/fixtures/generated/arcdroid-test-two-member.jfd \
+            build/windows/tests/fixtures/generated/arcdroid-application-l.adl \
             build/windows/retroarch-package/
       - uses: actions/upload-artifact@v4
         with:

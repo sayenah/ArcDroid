@@ -8,8 +8,10 @@
 #include <string.h>
 
 #include "arc_io.h"
+#include "arcdroid_core.h"
 #include "config.h"
 #include "disc.h"
+#include "disc_adf.h"
 #include "ioc.h"
 #include "jfd.h"
 #include "timer.h"
@@ -23,6 +25,7 @@ static unsigned irq_assertions;
 static unsigned drq_assertions;
 static uint8_t transfer[2048];
 static size_t transfer_count;
+static uint8_t finish_command(uint8_t command, unsigned limit_us);
 
 void rpclog(const char *format, ...) { (void)format; }
 void error(const char *format, ...) { (void)format; abort(); }
@@ -39,21 +42,40 @@ void ioc_fiq(uint8_t value)
 }
 void ioc_fiqc(uint8_t value) { ioc.fiq &= (uint8_t)~value; }
 
-/* Raw ADF is linked into this test to keep the real drive/controller boundary
- * intact. It is not opened by these JFD cases, so a deliberately inert VFS
- * stub is sufficient. */
-struct ArcIoFile { int unused; };
+/* A single in-memory helper lets the real raw-drive and WD1772 path prove
+ * drive-1 selection without adding a production test hook. */
+struct ArcIoFile { size_t position; bool writable; };
+static uint8_t raw_helper[ARC_LAUNCH_DISC_SIZE];
+static struct ArcIoFile raw_file;
 ArcIoFile *arc_io_open_file(const char *path, bool writable)
-{ (void)path; (void)writable; return NULL; }
-bool arc_io_close_file(ArcIoFile *file) { (void)file; return false; }
-int64_t arc_io_file_length(ArcIoFile *file) { (void)file; return -1; }
+{
+   if (strcmp(path, "memory-helper.adl")) return NULL;
+   raw_file.position = 0u; raw_file.writable = writable;
+   return &raw_file;
+}
+bool arc_io_close_file(ArcIoFile *file) { return file == &raw_file; }
+int64_t arc_io_file_length(ArcIoFile *file)
+{ return file == &raw_file ? (int64_t)sizeof(raw_helper) : -1; }
 int64_t arc_io_seek_file(ArcIoFile *file, int64_t offset, int origin)
-{ (void)file; (void)offset; (void)origin; return -1; }
+{
+   if (file != &raw_file || origin != RETRO_VFS_SEEK_POSITION_START ||
+       offset < 0 || (uint64_t)offset > sizeof(raw_helper)) return -1;
+   file->position = (size_t)offset; return offset;
+}
 size_t arc_io_read_file(ArcIoFile *file, void *data, size_t size)
-{ (void)file; (void)data; (void)size; return 0u; }
+{
+   if (file != &raw_file || size > sizeof(raw_helper) - file->position) return 0u;
+   memcpy(data, raw_helper + file->position, size); file->position += size;
+   return size;
+}
 size_t arc_io_write_file(ArcIoFile *file, const void *data, size_t size)
-{ (void)file; (void)data; (void)size; return 0u; }
-bool arc_io_flush_file(ArcIoFile *file) { (void)file; return false; }
+{
+   if (file != &raw_file || !file->writable ||
+       size > sizeof(raw_helper) - file->position) return 0u;
+   memcpy(raw_helper + file->position, data, size); file->position += size;
+   return size;
+}
+bool arc_io_flush_file(ArcIoFile *file) { return file == &raw_file; }
 
 static uint8_t *read_all(const char *path, size_t *size)
 {
@@ -95,12 +117,60 @@ static void controller_reset(const ArcJfdImage *image)
    tsc = 0u;
    timer_reset();
    disc_init();
+   adf_init();
    fdctype = FDC_WD1770;
    wd1770_reset();
    disc_reset();
    if (image) assert(disc_load_jfd(0, image));
    wd1770_writelatch_a(0x9eu); /* drive 0, side 0, motor on */
    wd1770_writelatch_b(0x00u); /* double density */
+}
+
+static void test_drive_one_helper(const char *root)
+{
+   static const char boot_text[] =
+      "| ArcDroid launch disc\r"
+      "Desktop -File ADFS::1.$.ArcLaunch\r";
+   static const char launch_text[] =
+      "| ArcDroid desktop boot file\r"
+      "Dir ADFS::Demo.$\r"
+      "URD ADFS::Demo.$\r"
+      "Filer_Run ADFS::Demo.$.!Demo\r";
+   ArcJfdImage image = load_image(root, "size-1.jfd");
+   controller_reset(&image);
+   assert(arc_launch_disc_build("Demo", "!Demo", raw_helper));
+   adf_set_writable(1, 0);
+   assert(disc_load_raw(1, "memory-helper.adl", ARC_GEOMETRY_640K_L));
+   assert(writeprot[1] && !disc_empty(0) && !disc_empty(1));
+   wd1770_writelatch_a(0x9du); /* drive 1, side 0, motor on */
+   wd1770_write(0x08u, 0u);
+   assert(finish_command(0x80u, 1100000u) == 0x80u);
+   assert(transfer_count == 256u && !memcmp(transfer, raw_helper, 256u));
+
+   /* Logical sector 1279 is track 79, side 0, sector 15. */
+   wd1770_write(0x0cu, 79u);
+   assert(finish_command(0x10u, 1100000u) == 0x80u);
+   wd1770_writelatch_a(0x9du);
+   wd1770_write(0x08u, 15u);
+   assert(finish_command(0x80u, 1100000u) == 0x80u);
+   assert(transfer_count == 256u &&
+          !memcmp(transfer, boot_text, sizeof(boot_text) - 1u));
+
+   /* Logical sector 1280 wraps to track 0 on sequential side 1. */
+   wd1770_write(0x0cu, 0u);
+   assert(finish_command(0x10u, 1100000u) == 0x84u);
+   wd1770_writelatch_a(0x8du);
+   wd1770_write(0x08u, 0u);
+   assert(finish_command(0x80u, 1100000u) == 0x80u);
+   assert(transfer_count == 256u &&
+          !memcmp(transfer, launch_text, sizeof(launch_text) - 1u));
+
+   assert(finish_command(0xa0u, 1000u) == 0x40u);
+   assert(writeprot[1]);
+   assert(!disc_empty(0));
+   disc_close(1);
+   disc_close(0);
+   arc_jfd_free(&image);
 }
 
 static void step_controller(void)
@@ -342,6 +412,7 @@ int main(int argc, char **argv)
    test_rejections(argv[1]);
    test_empty_drive_cancellation();
    test_busy_jfd_read_is_not_replaced(argv[1]);
+   test_drive_one_helper(argv[1]);
    puts("jfd_controller_tests: all checks passed");
    return 0;
 }

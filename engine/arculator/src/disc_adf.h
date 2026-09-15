@@ -1,7 +1,7 @@
 /* ArcDroid modification (2026-09-14): expose an explicit staged-media flush boundary. */
 void adf_init();
 int adf_flush_all(void);
-void adf_set_writable(int writable);
+void adf_set_writable(int drive, int writable);
 
 void adf_load(int drive, char *fn);
 void adl_load(int drive, char *fn);
