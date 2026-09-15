@@ -364,7 +364,7 @@ typedef struct {
    unsigned height;
 } ArcOskKey;
 
-#define ARC_OSK_MAX_KEYS 96u
+#define ARC_OSK_MAX_KEYS 104u
 typedef struct {
    bool visible;
    bool disabled;

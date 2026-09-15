@@ -93,6 +93,33 @@ static int16_t arc_stick_y;
 static bool arc_stick_precision;
 static long double arc_stick_fraction_x;
 static long double arc_stick_fraction_y;
+static ArcOsk arc_osk;
+static uint32_t *arc_osk_surface;
+static size_t arc_osk_surface_pixels;
+static bool arc_osk_present_dirty;
+static bool arc_osk_toggle_level;
+static bool arc_osk_pad_levels[16];
+static bool arc_osk_too_narrow_reported;
+static bool arc_osk_failure_reported;
+#if defined(ARCDROID_TEST_FAULTS)
+static unsigned arc_osk_fail_allocations;
+static bool arc_osk_source_unchanged;
+static bool arc_osk_source_checked;
+void arc_libretro_test_fail_osk_allocations(unsigned count)
+{
+   arc_osk_fail_allocations = count;
+}
+void arc_libretro_test_drop_osk_surface(void)
+{
+   free(arc_osk_surface);
+   arc_osk_surface = NULL;
+   arc_osk_surface_pixels = 0u;
+}
+bool arc_libretro_test_osk_source_unchanged(void)
+{
+   return arc_osk_source_checked && arc_osk_source_unchanged;
+}
+#endif
 
 typedef struct {
    bool populated;
@@ -1335,6 +1362,210 @@ static void arc_input_sampling_reset(bool release_engine_levels)
    arc_stick_precision = false;
    arc_stick_fraction_x = arc_stick_fraction_y = 0.0L;
    memset(&arc_touch, 0, sizeof(arc_touch));
+   memset(arc_osk_pad_levels, 0, sizeof(arc_osk_pad_levels));
+   arc_osk_toggle_level = false;
+}
+
+static void arc_osk_restore_gameplay(void)
+{
+   arc_pad_neutral_gate[0] = true;
+   memset(arc_pad_keys[0], 0, sizeof(arc_pad_keys[0]));
+   arc_pad_pointer_buttons = 0u;
+   arc_touch_reset();
+   arc_stick_x = arc_stick_y = 0;
+   arc_stick_fraction_x = arc_stick_fraction_y = 0.0L;
+}
+
+static void arc_osk_presentation_failure(void)
+{
+   arc_osk_close(&arc_osk, &arc_inputs);
+   arc_osk.disabled = true;
+   arc_osk_present_dirty = true;
+   arc_osk_restore_gameplay();
+   if (!arc_osk_failure_reported)
+   {
+      arc_message("On-screen keyboard disabled: unable to allocate its presentation surface.",
+                  RETRO_LOG_ERROR);
+      arc_osk_failure_reported = true;
+   }
+}
+
+static bool arc_osk_prepare_surface(unsigned width, unsigned height)
+{
+   if (!width || !height || width > 4096u || height > 2048u ||
+       (size_t)width > SIZE_MAX / height) return false;
+   size_t needed = (size_t)width * height;
+   if (needed <= arc_osk_surface_pixels && arc_osk_surface) return true;
+#if defined(ARCDROID_TEST_FAULTS)
+   if (arc_osk_fail_allocations)
+   {
+      --arc_osk_fail_allocations;
+      return false;
+   }
+#endif
+   uint32_t *grown = realloc(arc_osk_surface, needed * sizeof(*grown));
+   if (!grown) return false;
+   arc_osk_surface = grown;
+   arc_osk_surface_pixels = needed;
+   return true;
+}
+
+static void arc_osk_free_surface(void)
+{
+   free(arc_osk_surface);
+   arc_osk_surface = NULL;
+   arc_osk_surface_pixels = 0u;
+}
+
+#if defined(ARCDROID_TEST_FAULTS)
+static uint64_t arc_osk_source_hash(const ArcEngineFrame *frame)
+{
+   uint64_t hash = UINT64_C(1469598103934665603);
+   for (unsigned row = 0u; row < frame->height; ++row)
+   {
+      const uint8_t *bytes = (const uint8_t *)frame->pixels +
+         (size_t)row * frame->pitch;
+      for (size_t byte = 0u; byte < (size_t)frame->width * sizeof(uint32_t); ++byte)
+      {
+         hash ^= bytes[byte];
+         hash *= UINT64_C(1099511628211);
+      }
+   }
+   return hash;
+}
+#endif
+
+static void arc_osk_set_visible(bool visible)
+{
+   if (visible)
+   {
+      if (arc_osk.disabled) return;
+      if (arc_video_width < 320u)
+      {
+         if (!arc_osk_too_narrow_reported)
+         {
+            arc_message("On-screen keyboard unavailable below 320 pixels wide.",
+                        RETRO_LOG_WARN);
+            arc_osk_too_narrow_reported = true;
+         }
+         return;
+      }
+      if (!arc_osk_prepare_surface(arc_video_width, arc_video_height))
+      {
+         arc_osk_presentation_failure();
+         return;
+      }
+      if (!arc_osk_open(&arc_osk, arc_video_width, arc_video_height)) return;
+      arc_input_clear_source(&arc_inputs, ARC_INPUT_SOURCE_PAD0);
+      arc_input_clear_source(&arc_inputs, ARC_INPUT_SOURCE_TOUCH);
+      arc_osk_restore_gameplay();
+   }
+   else
+   {
+      arc_osk_close(&arc_osk, &arc_inputs);
+      arc_osk_restore_gameplay();
+   }
+   arc_osk_present_dirty = true;
+}
+
+static int arc_pointer_to_pixel(int value, unsigned extent)
+{
+   int64_t scaled = ((int64_t)value + 32768) * extent;
+   int result = (int)(scaled / 65536);
+   if (result < 0) result = 0;
+   if (extent && result >= (int)extent) result = (int)extent - 1;
+   return result;
+}
+
+static void arc_poll_osk_controls(void)
+{
+   if (!arc_input_state) return;
+   unsigned toggle_id = arc_core_options.osk_toggle == ARC_OSK_TOGGLE_R3 ?
+      RETRO_DEVICE_ID_JOYPAD_R3 : RETRO_DEVICE_ID_JOYPAD_L3;
+   bool toggle = arc_core_options.osk_toggle != ARC_OSK_TOGGLE_OFF &&
+      arc_input_state(0u, RETRO_DEVICE_JOYPAD, 0u, toggle_id) != 0;
+   if (toggle && !arc_osk_toggle_level)
+      arc_osk_set_visible(!arc_osk.visible);
+   arc_osk_toggle_level = toggle;
+   if (!arc_osk.visible) return;
+
+   static const unsigned ids[] = {
+      RETRO_DEVICE_ID_JOYPAD_UP, RETRO_DEVICE_ID_JOYPAD_DOWN,
+      RETRO_DEVICE_ID_JOYPAD_LEFT, RETRO_DEVICE_ID_JOYPAD_RIGHT,
+      RETRO_DEVICE_ID_JOYPAD_A, RETRO_DEVICE_ID_JOYPAD_B,
+      RETRO_DEVICE_ID_JOYPAD_X, RETRO_DEVICE_ID_JOYPAD_Y,
+      RETRO_DEVICE_ID_JOYPAD_START, RETRO_DEVICE_ID_JOYPAD_SELECT
+   };
+   bool level[10];
+   for (unsigned i = 0u; i < 10u; ++i)
+      level[i] = arc_input_state(0u, RETRO_DEVICE_JOYPAD, 0u, ids[i]) != 0;
+   int dx = level[ARC_PAD_LEFT] ? -1 : level[ARC_PAD_RIGHT] ? 1 : 0;
+   int dy = level[ARC_PAD_UP] ? -1 : level[ARC_PAD_DOWN] ? 1 : 0;
+   bool direction_edge =
+      (level[ARC_PAD_LEFT] && !arc_osk_pad_levels[ARC_PAD_LEFT]) ||
+      (level[ARC_PAD_RIGHT] && !arc_osk_pad_levels[ARC_PAD_RIGHT]) ||
+      (level[ARC_PAD_UP] && !arc_osk_pad_levels[ARC_PAD_UP]) ||
+      (level[ARC_PAD_DOWN] && !arc_osk_pad_levels[ARC_PAD_DOWN]);
+   unsigned old_focus = arc_osk.focus;
+   if (dx || dy) arc_osk_move(&arc_osk, dx, dy, arc_guest_time_us, direction_edge);
+   if (old_focus != arc_osk.focus) arc_osk_present_dirty = true;
+   if (level[ARC_PAD_A] && !arc_osk_pad_levels[ARC_PAD_A])
+   {
+      (void)arc_osk_press_focused(&arc_osk, &arc_inputs);
+      arc_osk_present_dirty = true;
+   }
+   if (!level[ARC_PAD_A] && arc_osk_pad_levels[ARC_PAD_A])
+      arc_osk_release_activation(&arc_osk);
+   if (level[ARC_PAD_X] && !arc_osk_pad_levels[ARC_PAD_X])
+   {
+      (void)arc_osk_shortcut(&arc_osk, &arc_inputs, RETROK_BACKSPACE);
+      arc_osk_present_dirty = true;
+   }
+   if (level[ARC_PAD_Y] && !arc_osk_pad_levels[ARC_PAD_Y])
+   {
+      (void)arc_osk_shortcut(&arc_osk, &arc_inputs, RETROK_RETURN);
+      arc_osk_present_dirty = true;
+   }
+   if (level[ARC_PAD_SELECT] && !arc_osk_pad_levels[ARC_PAD_SELECT])
+   {
+      arc_osk.transparent = !arc_osk.transparent;
+      arc_osk_present_dirty = true;
+   }
+   if ((level[ARC_PAD_B] && !arc_osk_pad_levels[ARC_PAD_B]) ||
+       (level[ARC_PAD_START] && !arc_osk_pad_levels[ARC_PAD_START]))
+   {
+      memcpy(arc_osk_pad_levels, level, sizeof(level));
+      arc_osk_set_visible(false);
+      return;
+   }
+   memcpy(arc_osk_pad_levels, level, sizeof(level));
+
+   bool down = arc_input_state(0u, RETRO_DEVICE_POINTER, 0u,
+                               RETRO_DEVICE_ID_POINTER_PRESSED) != 0;
+   bool offscreen = arc_input_state(0u, RETRO_DEVICE_POINTER, 0u,
+                                    RETRO_DEVICE_ID_POINTER_IS_OFFSCREEN) != 0;
+   int raw_x = arc_input_state(0u, RETRO_DEVICE_POINTER, 0u,
+                               RETRO_DEVICE_ID_POINTER_X);
+   int raw_y = arc_input_state(0u, RETRO_DEVICE_POINTER, 0u,
+                               RETRO_DEVICE_ID_POINTER_Y);
+   bool before_contact = arc_osk.contact;
+   unsigned before_focus = arc_osk.focus;
+   if (offscreen || raw_x == -32768 || raw_y == -32768)
+   {
+      /* Keep an offscreen held contact down long enough to invalidate its
+       * capture; treating it as a release would activate the old key. */
+      if (arc_osk.contact)
+      {
+         (void)arc_osk_touch(&arc_osk, -1, -1, true, &arc_inputs);
+         if (!down) (void)arc_osk_touch(&arc_osk, -1, -1, false, &arc_inputs);
+      }
+   }
+   else
+      (void)arc_osk_touch(&arc_osk, arc_pointer_to_pixel(raw_x, arc_video_width),
+                          arc_pointer_to_pixel(raw_y, arc_video_height), down,
+                          &arc_inputs);
+   if (before_contact != arc_osk.contact || before_focus != arc_osk.focus)
+      arc_osk_present_dirty = true;
 }
 
 static void arc_poll_keyboard_snapshot(void)
@@ -1569,11 +1800,14 @@ static void arc_poll_inputs(void)
       RETRO_DEVICE_ID_JOYPAD_START, RETRO_DEVICE_ID_JOYPAD_SELECT
    };
    if (!arc_input_state) return;
+   arc_poll_osk_controls();
    bool sampled[2][10] = {{false}};
    bool desired[ARC_PAD_PORTS][ARC_INPUT_KEY_COUNT] = {{false}};
    for (unsigned port = 0u; port < 2u; ++port)
-      if (arc_port_device[port] == ARC_DEVICE_KEYS ||
+      if ((port || !arc_osk.visible) &&
+          (arc_port_device[port] == ARC_DEVICE_KEYS ||
           arc_port_device[port] == RETRO_DEVICE_JOYPAD)
+         )
          for (unsigned i = 0u; i < 10u; ++i)
             sampled[port][i] = arc_input_state(port, RETRO_DEVICE_JOYPAD, 0u, ids[i]) != 0;
    for (unsigned port = 0u; port < 2u; ++port)
@@ -1597,15 +1831,17 @@ static void arc_poll_inputs(void)
    }
    arc_input_pad_key_sets(&arc_inputs, desired[0], desired[1]);
 
-   bool pad_pointer = arc_port_device[0] == ARC_DEVICE_KEYS ||
-                      arc_port_device[0] == RETRO_DEVICE_JOYPAD;
+   bool pad_pointer = !arc_osk.visible &&
+      (arc_port_device[0] == ARC_DEVICE_KEYS ||
+       arc_port_device[0] == RETRO_DEVICE_JOYPAD);
    unsigned pad_buttons = pad_pointer ?
       (arc_input_state(0u, RETRO_DEVICE_JOYPAD, 0u, RETRO_DEVICE_ID_JOYPAD_R) ? 1u : 0u) |
       (arc_input_state(0u, RETRO_DEVICE_JOYPAD, 0u, RETRO_DEVICE_ID_JOYPAD_L) ? 2u : 0u) |
       (arc_input_state(0u, RETRO_DEVICE_JOYPAD, 0u, RETRO_DEVICE_ID_JOYPAD_L2) ? 4u : 0u) : 0u;
    arc_input_source_buttons(&arc_inputs, ARC_INPUT_SOURCE_PAD0,
                             arc_pad_pointer_buttons | pad_buttons);
-   arc_touch_poll();
+   if (!arc_osk.visible) arc_touch_poll();
+   else arc_input_source_buttons(&arc_inputs, ARC_INPUT_SOURCE_TOUCH, 0u);
 
    for (unsigned port = 0u; port < 2u; ++port)
       if (arc_port_device[port] == ARC_DEVICE_MOUSE ||
@@ -1949,6 +2185,15 @@ RETRO_API void retro_init(void)
    arc_guest_time_us = 0u;
    arc_can_dupe = false;
    arc_keyboard_polling = false;
+   arc_osk_free_surface();
+   arc_osk_reset(&arc_osk, &arc_inputs);
+   arc_osk_present_dirty = false;
+   arc_osk_too_narrow_reported = false;
+   arc_osk_failure_reported = false;
+#if defined(ARCDROID_TEST_FAULTS)
+   arc_osk_source_unchanged = true;
+   arc_osk_source_checked = false;
+#endif
    arc_release_session();
    arc_log = NULL;
    if (arc_environment)
@@ -1975,6 +2220,8 @@ RETRO_API void retro_deinit(void)
 {
    arc_persist_cmos();
    arc_release_session();
+   arc_osk_reset(&arc_osk, &arc_inputs);
+   arc_osk_free_surface();
    arc_engine_set_log_callback(NULL, NULL);
    arc_log = NULL;
    arc_loaded = false;
@@ -2017,6 +2264,11 @@ static bool arc_load_game(const struct retro_game_info *game, bool negotiate)
    arc_loaded = false;
    arc_release_session();
    arc_input_sampling_reset(false);
+   arc_osk_reset(&arc_osk, &arc_inputs);
+   arc_osk_free_surface();
+   arc_osk_present_dirty = false;
+   arc_osk_too_narrow_reported = false;
+   arc_osk_failure_reported = false;
    arc_guest_time_us = 0u;
    memset(arc_frame, 0, sizeof(arc_frame));
    if (!game || !game->path || !game->path[0])
@@ -2182,6 +2434,8 @@ static bool arc_load_game(const struct retro_game_info *game, bool negotiate)
    arc_vidc_transient_logged = false;
    arc_vidc_incomplete_us = 0u;
    arc_audio_warning_reported = false;
+   if (!arc_osk_prepare_surface(arc_video_width, arc_video_height))
+      arc_osk_presentation_failure();
    snprintf(error, sizeof(error), "Firmware: %s; CRC32 %08x; SHA-1 %s",
             arc_os_name(search.match->os), search.match->crc32, search.match->sha1);
    arc_message(error, RETRO_LOG_INFO);
@@ -2205,6 +2459,9 @@ RETRO_API void retro_unload_game(void)
    }
    arc_loaded = false;
    arc_release_session();
+   arc_osk_reset(&arc_osk, &arc_inputs);
+   arc_osk_free_surface();
+   arc_osk_present_dirty = false;
    arc_pending_initial = false;
    arc_pending_initial_path[0] = '\0';
    arc_input_sampling_reset(false);
@@ -2213,6 +2470,8 @@ RETRO_API void retro_unload_game(void)
 RETRO_API void retro_reset(void)
 {
    if (!arc_loaded) return;
+   arc_osk_reset(&arc_osk, &arc_inputs);
+   arc_osk_present_dirty = true;
    char error[512] = {0};
    ArcCoreOptions updated;
    uint8_t *new_firmware = NULL;
@@ -2320,6 +2579,69 @@ failed:
    arc_input_sampling_reset(false);
 }
 
+static void arc_present(const ArcEngineFrame *frame)
+{
+   if (!arc_video || !frame) return;
+   if (!arc_osk.visible)
+   {
+      bool duplicate = !frame->field_completed && arc_can_dupe &&
+                       !arc_osk_present_dirty;
+      arc_video(duplicate ? NULL : frame->pixels, frame->width, frame->height,
+                frame->pitch);
+      arc_osk_present_dirty = false;
+      return;
+   }
+   if (!arc_osk_prepare_surface(frame->width, frame->height) ||
+       ((arc_osk.width != frame->width || arc_osk.height != frame->height) &&
+        !arc_osk_layout(&arc_osk, frame->width, frame->height)))
+   {
+      arc_osk_presentation_failure();
+      arc_video(frame->pixels, frame->width, frame->height, frame->pitch);
+      arc_osk_present_dirty = false;
+      return;
+   }
+   if (!frame->field_completed && arc_can_dupe && !arc_osk_present_dirty)
+   {
+      arc_video(NULL, frame->width, frame->height, frame->pitch);
+      return;
+   }
+   if (!frame->pixels || frame->pitch < (size_t)frame->width * sizeof(uint32_t))
+   {
+      arc_osk_presentation_failure();
+      arc_video(frame->pixels, frame->width, frame->height, frame->pitch);
+      arc_osk_present_dirty = false;
+      return;
+   }
+#if defined(ARCDROID_TEST_FAULTS)
+   uint64_t source_before = !arc_osk_source_checked ?
+      arc_osk_source_hash(frame) : 0u;
+#endif
+   for (unsigned row = 0u; row < frame->height; ++row)
+      memcpy(arc_osk_surface + (size_t)row * frame->width,
+             (const uint8_t *)frame->pixels + (size_t)row * frame->pitch,
+             (size_t)frame->width * sizeof(uint32_t));
+   char profile[128];
+   snprintf(profile, sizeof(profile), "%s%s", arc_input_resolution.profile_name,
+            arc_input_resolution.custom ? " custom" : "");
+   if (!arc_osk_render(&arc_osk, arc_osk_surface, frame->width, frame->height,
+                       (size_t)frame->width * sizeof(uint32_t), profile))
+   {
+      arc_osk_presentation_failure();
+      arc_video(frame->pixels, frame->width, frame->height, frame->pitch);
+   }
+   else
+      arc_video(arc_osk_surface, frame->width, frame->height,
+                (size_t)frame->width * sizeof(uint32_t));
+#if defined(ARCDROID_TEST_FAULTS)
+   if (!arc_osk_source_checked)
+   {
+      if (source_before != arc_osk_source_hash(frame)) arc_osk_source_unchanged = false;
+      arc_osk_source_checked = true;
+   }
+#endif
+   arc_osk_present_dirty = false;
+}
+
 RETRO_API void retro_run(void)
 {
    ArcEngineFrame frame;
@@ -2404,6 +2726,14 @@ RETRO_API void retro_run(void)
       if (arc_environment) arc_environment(RETRO_ENVIRONMENT_SET_GEOMETRY, &geometry);
       arc_video_width = frame.width;
       arc_video_height = frame.height;
+      if (arc_osk.visible)
+      {
+         if (!arc_osk_prepare_surface(frame.width, frame.height) ||
+             !arc_osk_layout(&arc_osk, frame.width, frame.height))
+            arc_osk_presentation_failure();
+         else
+            arc_osk_present_dirty = true;
+      }
    }
    if (frame.refresh_hz > 0.0 &&
        (frame.refresh_hz < arc_video_rate - 0.01 || frame.refresh_hz > arc_video_rate + 0.01))
@@ -2423,9 +2753,18 @@ RETRO_API void retro_run(void)
    count = (size_t)arc_audio_fraction;
    arc_audio_fraction -= (long double)count;
    arc_persist_cmos();
-   if (arc_video)
-      arc_video(!frame.field_completed && arc_can_dupe ? NULL : frame.pixels,
-                frame.width, frame.height, frame.pitch);
+   unsigned old_phase = arc_osk.activation_phase;
+   bool old_busy = arc_osk.busy;
+   arc_osk_update(&arc_osk, &arc_inputs);
+   if (old_phase != arc_osk.activation_phase || old_busy != arc_osk.busy)
+      arc_osk_present_dirty = true;
+   if (arc_osk_take_interrupted(&arc_osk))
+   {
+      arc_message("On-screen keyboard input was interrupted; released held keys.",
+                  RETRO_LOG_WARN);
+      arc_osk_present_dirty = true;
+   }
+   arc_present(&frame);
    while (count)
    {
       size_t capacity = sizeof(arc_audio_frame) / (2u * sizeof(arc_audio_frame[0]));

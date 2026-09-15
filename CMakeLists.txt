@@ -49,6 +49,7 @@ add_library(arcdroid_core STATIC
   core/input.c
   core/input_mapping.c
   core/input_profiles.c
+  core/osk.c
   core/firmware_table.c
   core/launch.c
   core/launch_discovery.c

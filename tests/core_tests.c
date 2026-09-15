@@ -6,6 +6,7 @@
 #include "libretro.h"
 
 #include <assert.h>
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -1145,6 +1146,186 @@ static void test_input_mapping(void)
    assert(arc_input_reconcile_generation(&state) > generation);
 }
 
+static unsigned drain_input(ArcInputState *state, ArcInputEvent *events,
+                            unsigned capacity)
+{
+   unsigned count = 0u;
+   while (count < capacity && arc_input_consume(state, true, &events[count])) ++count;
+   return count;
+}
+
+static void test_osk(void)
+{
+   ArcOsk osk = {0};
+   ArcInputState input;
+   ArcInputEvent events[16];
+   arc_input_reset(&input);
+   assert(!arc_osk_open(&osk, 256u, 256u) && osk.disabled);
+   memset(&osk, 0, sizeof(osk));
+   assert(arc_osk_open(&osk, 320u, 256u) && osk.visible && osk.compact &&
+          osk.page_count == 2u && osk.key_count > 40u);
+   unsigned first_focus = osk.focus;
+   arc_osk_move(&osk, 1, 0, 100u, true);
+   assert(osk.focus != first_focus);
+   unsigned repeated = osk.focus;
+   arc_osk_move(&osk, 1, 0, 1000u, false);
+   assert(osk.focus == repeated);
+   arc_osk_move(&osk, 1, 0, 400000u, false);
+   assert(osk.focus != repeated);
+
+   unsigned page_key = UINT_MAX;
+   for (unsigned i = 0u; i < osk.key_count; ++i)
+      if (osk.keys[i].action == ARC_OSK_ACTION_PAGE) page_key = i;
+   assert(page_key != UINT_MAX);
+   osk.focus = page_key;
+   assert(arc_osk_press_focused(&osk, &input) && osk.page == 1u);
+
+   /* Captured touches activate only if they release on the original key. */
+   const ArcOskKey touch_key = osk.keys[0];
+   assert(arc_osk_touch(&osk, (int)touch_key.x + 1, (int)touch_key.y + 1,
+                        true, &input));
+   assert(!arc_osk_touch(&osk, (int)(touch_key.x + touch_key.width + 20u),
+                         (int)touch_key.y + 1, true, &input));
+   assert(!arc_osk_touch(&osk, 0, 0, false, &input) &&
+          !osk.activation_phase);
+
+   assert(arc_osk_layout(&osk, 640u, 480u) && !osk.compact);
+   unsigned shift = UINT_MAX, letter = UINT_MAX;
+   for (unsigned i = 0u; i < osk.key_count; ++i)
+   {
+      if (osk.keys[i].key == RETROK_LSHIFT) shift = i;
+      if (osk.keys[i].key == RETROK_a) letter = i;
+   }
+   bool saw_num_lock = false, saw_scroll_lock = false, saw_pause = false;
+   for (unsigned i = 0u; i < osk.key_count; ++i)
+   {
+      saw_num_lock |= osk.keys[i].key == RETROK_NUMLOCK;
+      saw_scroll_lock |= osk.keys[i].key == RETROK_SCROLLOCK;
+      saw_pause |= osk.keys[i].key == RETROK_PAUSE;
+      assert(osk.keys[i].key != RETROK_PRINT);
+   }
+   assert(saw_num_lock && saw_scroll_lock && saw_pause);
+   assert(shift != UINT_MAX && letter != UINT_MAX);
+   osk.focus = shift;
+   assert(arc_osk_press_focused(&osk, &input) &&
+          osk.modifiers[0] == ARC_OSK_MOD_ONESHOT);
+   osk.focus = letter;
+   assert(arc_osk_press_focused(&osk, &input));
+   arc_osk_update(&osk, &input);
+   assert(drain_input(&input, events, 16u) == 2u &&
+          events[0].code == RETROK_LSHIFT && events[0].down &&
+          events[1].code == RETROK_a && events[1].down);
+   arc_osk_release_activation(&osk);
+   arc_osk_update(&osk, &input);
+   assert(drain_input(&input, events, 16u) == 2u &&
+          events[0].code == RETROK_a && !events[0].down &&
+          events[1].code == RETROK_LSHIFT && !events[1].down);
+   arc_osk_update(&osk, &input);
+   assert(!osk.activation_phase && osk.modifiers[0] == ARC_OSK_MOD_OFF);
+
+   /* Locked modifiers persist for another activation but never remain as an
+    * invisible source level between activations. */
+   osk.focus = shift;
+   assert(arc_osk_press_focused(&osk, &input));
+   assert(arc_osk_press_focused(&osk, &input) &&
+          osk.modifiers[0] == ARC_OSK_MOD_LOCKED);
+   osk.focus = letter;
+   assert(arc_osk_press_focused(&osk, &input));
+   arc_osk_update(&osk, &input);
+   assert(drain_input(&input, events, 16u) == 2u &&
+          events[0].code == RETROK_LSHIFT && events[0].down &&
+          events[1].code == RETROK_a && events[1].down);
+   arc_osk_release_activation(&osk);
+   arc_osk_update(&osk, &input);
+   assert(drain_input(&input, events, 16u) == 2u &&
+          events[0].code == RETROK_a && !events[0].down &&
+          events[1].code == RETROK_LSHIFT && !events[1].down);
+   arc_osk_update(&osk, &input);
+   assert(!osk.activation_phase && osk.modifiers[0] == ARC_OSK_MOD_LOCKED &&
+          !arc_input_source_level(&input, ARC_INPUT_SOURCE_OSK, RETROK_LSHIFT));
+   osk.focus = shift;
+   assert(arc_osk_press_focused(&osk, &input) &&
+          osk.modifiers[0] == ARC_OSK_MOD_OFF);
+   osk.focus = letter;
+
+   /* An already-effective key completes without an edge or losing ownership. */
+   arc_input_source_key(&input, ARC_INPUT_SOURCE_KEYBOARD, RETROK_a, true, true);
+   assert(drain_input(&input, events, 16u) == 1u);
+   osk.focus = letter;
+   assert(arc_osk_press_focused(&osk, &input));
+   arc_osk_update(&osk, &input);
+   arc_osk_release_activation(&osk);
+   arc_osk_update(&osk, &input);
+   arc_osk_update(&osk, &input);
+   assert(!arc_input_pending(&input) && !osk.activation_phase &&
+          arc_input_source_level(&input, ARC_INPUT_SOURCE_KEYBOARD, RETROK_a) &&
+          arc_input_effective_level(&input, RETROK_a));
+
+   /* Reconciliation invalidates an activation once and recovers OSK levels. */
+   for (unsigned attempt = 0u; attempt < 3u; ++attempt)
+   {
+      assert(arc_osk_press_focused(&osk, &input));
+      arc_osk_update(&osk, &input);
+      arc_input_release_all(&input);
+      arc_osk_update(&osk, &input);
+      assert(!osk.activation_phase && arc_osk_take_interrupted(&osk) &&
+             !arc_osk_take_interrupted(&osk));
+      while (arc_input_pending(&input))
+         (void)arc_input_consume(&input, true, &events[0]);
+   }
+
+   /* A full queue reports busy and does not start a partial chord. */
+   arc_input_reset(&input);
+   for (unsigned i = 0u; i < ARC_INPUT_FIFO_CAPACITY / 2u; ++i)
+   {
+      arc_input_source_key(&input, ARC_INPUT_SOURCE_KEYBOARD, RETROK_b, true, true);
+      arc_input_source_key(&input, ARC_INPUT_SOURCE_KEYBOARD, RETROK_b, false, true);
+   }
+   assert(!arc_osk_shortcut(&osk, &input, RETROK_RETURN) && osk.busy);
+
+   static const unsigned widths[] = {320u, 640u, 640u};
+   static const unsigned heights[] = {256u, 256u, 480u};
+   static const char *goldens[3][2][2] = {
+      {{"9192b046572bc2a721edae679555088f2a3719a1", "d05ed375efaa6890bd9d8715bd81ea759f6b3f04"},
+       {"749e8dc6aafa53bfec97b9f66f250d06d0da6ba6", "103f9f683dbab656d3112f678f8bc9a956a3a371"}},
+      {{"04cb3f1e23aa7f7dde8acf91e06a29d22e4e0dbc", NULL},
+       {"237213d839093b0c89a1dc04a3df79b93ef41d7d", NULL}},
+      {{"8244c37ec50df162236c3640245620137eb58c13", NULL},
+       {"1292f41b947d6b9b320e06cf15a1d4fc347787a8", NULL}}
+   };
+   for (unsigned geometry = 0u; geometry < 3u; ++geometry)
+      for (unsigned alpha = 0u; alpha < 2u; ++alpha)
+      {
+         unsigned width = widths[geometry], height = heights[geometry];
+         size_t count = (size_t)width * height;
+         uint32_t *surface = malloc((count + 2u) * sizeof(*surface));
+         assert(surface);
+         surface[0] = UINT32_C(0xdeadbeef);
+         surface[count + 1u] = UINT32_C(0xcafef00d);
+         memset(&osk, 0, sizeof(osk));
+         assert(arc_osk_open(&osk, width, height));
+         osk.transparent = alpha != 0u;
+         unsigned pages = osk.page_count;
+         for (unsigned page = 0u; page < pages; ++page)
+         {
+            for (size_t i = 0u; i < count; ++i)
+               surface[i + 1u] = (uint32_t)(i * UINT32_C(2654435761));
+            osk.page = page;
+            assert(arc_osk_layout(&osk, width, height));
+            assert(arc_osk_render(&osk, surface + 1u, width, height,
+                                  (size_t)width * sizeof(uint32_t),
+                                  "Golden custom"));
+            char digest[41];
+            arc_sha1_hex(surface + 1u, count * sizeof(uint32_t), digest);
+            assert(goldens[geometry][alpha][page] &&
+                   !strcmp(digest, goldens[geometry][alpha][page]));
+         }
+         assert(surface[0] == UINT32_C(0xdeadbeef) &&
+                surface[count + 1u] == UINT32_C(0xcafef00d));
+         free(surface);
+      }
+}
+
 int main(int argc, char **argv)
 {
    assert(argc == 2);
@@ -1159,6 +1340,7 @@ int main(int argc, char **argv)
    test_jfd_parser(argv[1]);
    test_input();
    test_input_mapping();
+   test_osk();
    puts("core_tests: all checks passed");
    return 0;
 }

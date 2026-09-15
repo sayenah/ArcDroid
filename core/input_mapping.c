@@ -61,7 +61,7 @@ static const ArcInputKey arc_keys[] = {
    K(RETROK_BACKQUOTE,"backquote","`",1,0,false),
    K(RETROK_MINUS,"minus","-",1,11,false),
    K(RETROK_EQUALS,"equals","=",1,12,false),
-   K(RETROK_BACKSLASH,"pound","Pound",3,3,false),
+   K(RETROK_BACKSLASH,"pound","£",3,3,false),
    K(RETROK_LEFTBRACKET,"left_bracket","[",3,1,false),
    K(RETROK_RIGHTBRACKET,"right_bracket","]",3,2,false),
    K(RETROK_SEMICOLON,"semicolon",";",4,5,false),
