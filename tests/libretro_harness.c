@@ -133,6 +133,8 @@ static unsigned osk_failure_osd_calls;
 static unsigned osk_narrow_osd_calls;
 static unsigned profile_osd_calls;
 static bool expect_test_profile;
+static char application_profile_sha1[41];
+static char playlist_profile_sha1[41];
 static char last_launch_log[2048];
 static char last_launch_warning[512];
 static char last_flush_fault[512];
@@ -741,6 +743,32 @@ static ArcDigest digest_file(const char *path)
    return digest;
 }
 
+static unsigned digest_hex_nibble(char value)
+{
+   if (value >= '0' && value <= '9') return (unsigned)(value - '0');
+   assert(value >= 'a' && value <= 'f');
+   return (unsigned)(value - 'a' + 10);
+}
+
+static ArcDigest digest_playlist_pair(const char *first, const char *second)
+{
+   static const char domain[] = "arcdroid-playlist-v1";
+   ArcDigest members[2] = {digest_file(first), digest_file(second)};
+   uint8_t identity[sizeof(domain) - 1u + 4u + 40u];
+   size_t at = 0u;
+   memcpy(identity + at, domain, sizeof(domain) - 1u);
+   at += sizeof(domain) - 1u;
+   identity[at++] = 2u;
+   identity[at++] = 0u;
+   identity[at++] = 0u;
+   identity[at++] = 0u;
+   for (unsigned member = 0u; member < 2u; ++member)
+      for (unsigned byte = 0u; byte < 20u; ++byte)
+         identity[at++] = (uint8_t)((digest_hex_nibble(members[member].sha1[byte * 2u]) << 4u) |
+                                    digest_hex_nibble(members[member].sha1[byte * 2u + 1u]));
+   return arc_digest(identity, at);
+}
+
 static void staged_media_path(char output[4096], const char *save,
                               const char *source, const char *leaf)
 {
@@ -910,11 +938,17 @@ int main(int argc, char **argv)
              arc_libretro_test_register_input_profile &&
              arc_libretro_test_probe_osk_geometry &&
              arc_platform_test_input_events_reset && arc_platform_test_input_events);
+      ArcDigest application_profile_digest = digest_file(argv[12]);
+      ArcDigest playlist_profile_digest = digest_playlist_pair(argv[7], argv[8]);
+      memcpy(application_profile_sha1, application_profile_digest.sha1,
+             sizeof(application_profile_sha1));
+      memcpy(playlist_profile_sha1, playlist_profile_digest.sha1,
+             sizeof(playlist_profile_sha1));
       ArcInputProfile test_profile = {
          .id = "test-profile",
          .name = "Generated Test Profile",
-         .digests = {"0123456789abcdef0123456789abcdef01234567"},
-         .digest_count = 1u,
+         .digests = {application_profile_sha1, playlist_profile_sha1},
+         .digest_count = 2u,
          .has_port1 = true,
          .evidence = "project-authored harness registration"
       };
@@ -2356,6 +2390,17 @@ int main(int argc, char **argv)
       assert(hash_file(argv[7]) == disc1_hash && hash_file(argv[8]) == disc2_hash);
       save_dir = save_path;
 
+      /* A member image does not inherit the digest of its playlist set. */
+      option_input_profile = "Auto";
+      option_writes = "off";
+      option_launch = "off";
+      struct retro_game_info playlist_member_game = {argv[7], NULL, 0u, NULL};
+      last_input_resolution[0] = '\0';
+      phase = PHASE_LOAD; assert(retro_load_game(&playlist_member_game));
+      assert(strstr(last_input_resolution, "profile=Generic") &&
+             strstr(last_input_resolution, "[generic]"));
+      retro_unload_game();
+
       assert(!disk_control.set_initial_image(0u, NULL));
       char *overlong_initial = malloc(4097u);
       assert(overlong_initial);
@@ -2364,7 +2409,10 @@ int main(int argc, char **argv)
       free(overlong_initial);
 
       assert(disk_control.set_initial_image(1u, argv[8]));
+      last_input_resolution[0] = '\0';
       phase = PHASE_LOAD; assert(retro_load_game(&playlist_game));
+      assert(strstr(last_input_resolution, "profile=Generated Test Profile") &&
+             strstr(last_input_resolution, "[profile]"));
       assert(disk_control.get_num_images() == 2u &&
              disk_control.get_image_index() == 1u);
       assert(disk_control.get_image_path(1u, image_path, sizeof(image_path)) &&
@@ -2384,6 +2432,12 @@ int main(int argc, char **argv)
       assert(!disk_control.set_image_index(1u));
       assert(disk_control.set_eject_state(true));
       assert(disk_control.set_image_index(1u));
+      last_input_resolution[0] = '\0';
+      retro_reset();
+      assert(disk_control.get_eject_state() &&
+             disk_control.get_image_index() == 1u &&
+             strstr(last_input_resolution, "profile=Generated Test Profile") &&
+             strstr(last_input_resolution, "[profile]"));
       assert(disk_control.set_eject_state(false));
       for (unsigned frame = 0u; frame < 180u; ++frame) retro_run();
       assert(last_video_signature != disc1_signature);
@@ -2585,6 +2639,50 @@ int main(int argc, char **argv)
                "%s/arcdroid/cmos/A3000.test.%s.bin",
                save_path, application_digest.sha1);
       (void)remove(application_cmos_file);
+
+      /* Auto profiles are keyed by prepared content identity, never by path
+       * or disc title. The altered copy leaves its ADFS title bytes untouched
+       * while changing one unrelated byte near the end of the image. */
+      char application_copy[4096], application_changed[4096];
+      snprintf(application_copy, sizeof(application_copy),
+               "%s/application-renamed.adl", argv[4]);
+      snprintf(application_changed, sizeof(application_changed),
+               "%s/application-same-title-changed.adl", argv[4]);
+      copy_file(argv[12], application_copy);
+      copy_file(argv[12], application_changed);
+      FILE *application_changed_file = fopen(application_changed, "rb+");
+      assert(application_changed_file &&
+             fseek(application_changed_file, -1L, SEEK_END) == 0);
+      int application_tail = fgetc(application_changed_file);
+      assert(application_tail != EOF &&
+             fseek(application_changed_file, -1L, SEEK_END) == 0 &&
+             fputc(application_tail ^ 0x5a, application_changed_file) != EOF &&
+             !fclose(application_changed_file));
+      struct retro_game_info application_copy_game = {
+         application_copy, NULL, 0u, NULL
+      };
+      struct retro_game_info application_changed_game = {
+         application_changed, NULL, 0u, NULL
+      };
+      option_input_profile = "Auto";
+      option_writes = "off";
+      option_launch = "off";
+      last_input_resolution[0] = '\0';
+      phase = PHASE_LOAD; assert(retro_load_game(&application_game));
+      assert(strstr(last_input_resolution, "profile=Generated Test Profile") &&
+             strstr(last_input_resolution, "[profile]"));
+      retro_unload_game();
+      last_input_resolution[0] = '\0';
+      phase = PHASE_LOAD; assert(retro_load_game(&application_copy_game));
+      assert(strstr(last_input_resolution, "profile=Generated Test Profile") &&
+             strstr(last_input_resolution, "[profile]"));
+      retro_unload_game();
+      last_input_resolution[0] = '\0';
+      phase = PHASE_LOAD; assert(retro_load_game(&application_changed_game));
+      assert(strstr(last_input_resolution, "profile=Generic") &&
+             strstr(last_input_resolution, "[generic]"));
+      retro_unload_game();
+      assert(remove(application_copy) == 0 && remove(application_changed) == 0);
 
       char flush_save_path[4096];
       snprintf(flush_save_path, sizeof(flush_save_path), "%s/flush-save-%ld",
