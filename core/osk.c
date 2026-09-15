@@ -394,6 +394,7 @@ void arc_osk_update(ArcOsk *osk, ArcInputState *input)
 bool arc_osk_touch(ArcOsk *osk, int x, int y, bool down, ArcInputState *input)
 {
    if (!osk || !osk->visible) return false;
+   if (down && !osk->contact && osk->activation_held) return false;
    if (down && !osk->contact)
    {
       osk->contact = true;

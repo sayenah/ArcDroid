@@ -1339,6 +1339,13 @@ static void test_osk(void)
           events[0].code == RETROK_a && events[0].down);
    arc_osk_move(&osk, 1, 0, 500000u, true);
    assert(osk.focus == letter);
+   const ArcOskKey held_touch = osk.keys[shift];
+   assert(!arc_osk_touch(&osk, (int)held_touch.x + 1,
+                         (int)held_touch.y + 1, true, &input));
+   assert(osk.focus == letter && !osk.contact && !osk.contact_valid);
+   assert(!arc_osk_touch(&osk, (int)held_touch.x + 1,
+                         (int)held_touch.y + 1, false, &input));
+   assert(osk.focus == letter);
    arc_osk_release_activation(&osk);
    arc_osk_update(&osk, &input);
    assert(drain_input(&input, events, 16u) == 1u &&
