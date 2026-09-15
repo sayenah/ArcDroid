@@ -112,8 +112,11 @@ static unsigned short_warning_log_lines;
 static unsigned short_warning_osd_calls;
 static unsigned launch_log_lines;
 static unsigned launch_warning_osd_calls;
+static unsigned flush_fault_log_lines;
+static unsigned flush_fault_osd_calls;
 static char last_launch_log[2048];
 static char last_launch_warning[512];
+static char last_flush_fault[512];
 
 static bool signature_is_in(const uint64_t *signatures, unsigned count, uint64_t signature)
 {
@@ -282,6 +285,11 @@ static void frontend_log(enum retro_log_level level, const char *format, ...)
    if (strstr(message, "not a recognised ADFS image")) saw_adfs_advisory = true;
    if (strstr(message, "Input queue overflowed")) ++input_overflow_log_lines;
    if (strstr(message, "Short image padded with")) ++short_warning_log_lines;
+   if (strstr(message, "Unable to flush the staged floppy image"))
+   {
+      ++flush_fault_log_lines;
+      snprintf(last_flush_fault, sizeof(last_flush_fault), "%s", message);
+   }
    if (!strncmp(message, "Launch:", 7u))
    {
       ++launch_log_lines;
@@ -449,6 +457,11 @@ static bool environment(unsigned command, void *data)
          snprintf(last_message, sizeof(last_message), "%s", ((struct retro_message_ext *)data)->msg);
          if (strstr(last_message, "VIDC")) ++vidc_osd_ext_calls;
          if (strstr(last_message, "Short image padded with")) ++short_warning_osd_calls;
+         if (strstr(last_message, "Unable to flush the staged floppy image"))
+         {
+            ++flush_fault_osd_calls;
+            snprintf(last_flush_fault, sizeof(last_flush_fault), "%s", last_message);
+         }
          if (strstr(last_message, "Application choice refused") ||
              strstr(last_message, "No unique application") ||
              strstr(last_message, "Application inspection incomplete"))
@@ -461,6 +474,11 @@ static bool environment(unsigned command, void *data)
          snprintf(last_message, sizeof(last_message), "%s", ((struct retro_message *)data)->msg);
          if (strstr(last_message, "VIDC")) ++vidc_osd_legacy_calls;
          if (strstr(last_message, "Short image padded with")) ++short_warning_osd_calls;
+         if (strstr(last_message, "Unable to flush the staged floppy image"))
+         {
+            ++flush_fault_osd_calls;
+            snprintf(last_flush_fault, sizeof(last_flush_fault), "%s", last_message);
+         }
          if (strstr(last_message, "Application choice refused") ||
              strstr(last_message, "No unique application") ||
              strstr(last_message, "Application inspection incomplete"))
@@ -2174,6 +2192,68 @@ int main(int argc, char **argv)
                "%s/arcdroid/cmos/A3000.test.%s.bin",
                save_path, application_digest.sha1);
       (void)remove(application_cmos_file);
+
+      /* Android's bionic rejects fflush on read-only streams. Exercise the
+       * launch-helper path for at least 500 completed fields under that VFS
+       * contract, then prove drive 1 does not perturb the direct-boot result. */
+      unsigned flush_logs = flush_fault_log_lines;
+      unsigned flush_messages = flush_fault_osd_calls;
+      phase = PHASE_LOAD; assert(retro_load_game(&application_game));
+      assert(arc_engine_test_drive_media(1u, NULL, NULL));
+      unsigned completed_before = video_frames - duplicate_video_frames;
+      phase = PHASE_RUN;
+      for (unsigned frame = 0u; frame < 520u; ++frame) retro_run();
+      unsigned launch_completed =
+         video_frames - duplicate_video_frames - completed_before;
+      if (launch_completed < 500u)
+         fprintf(stderr, "launch-helper completed fields=%u flush logs/OSD=%u/%u fault=\"%s\"\n",
+                 launch_completed, flush_fault_log_lines - flush_logs,
+                 flush_fault_osd_calls - flush_messages, last_flush_fault);
+      assert(launch_completed >= 500u);
+      assert(flush_fault_log_lines == flush_logs &&
+             flush_fault_osd_calls == flush_messages);
+      uint64_t launch_signature = last_video_signature;
+      retro_unload_game();
+
+      option_launch = "off";
+      phase = PHASE_LOAD; assert(retro_load_game(&application_game));
+      assert(!arc_engine_test_drive_media(1u, NULL, NULL));
+      completed_before = video_frames - duplicate_video_frames;
+      phase = PHASE_RUN;
+      for (unsigned frame = 0u; frame < 520u; ++frame) retro_run();
+      assert(video_frames - duplicate_video_frames - completed_before >= 500u);
+      assert(flush_fault_log_lines == flush_logs &&
+             flush_fault_osd_calls == flush_messages &&
+             last_video_signature == launch_signature);
+      retro_unload_game();
+
+      /* Write-policy-off also opens an ordinary generated ADF read-only. */
+      struct retro_game_info readonly_adf_game = {argv[3], NULL, 0u, NULL};
+      phase = PHASE_LOAD; assert(retro_load_game(&readonly_adf_game));
+      completed_before = video_frames - duplicate_video_frames;
+      phase = PHASE_RUN;
+      for (unsigned frame = 0u; frame < 520u; ++frame) retro_run();
+      assert(video_frames - duplicate_video_frames - completed_before >= 500u);
+      assert(flush_fault_log_lines == flush_logs &&
+             flush_fault_osd_calls == flush_messages);
+      retro_unload_game();
+
+      /* A real flush error on a writable shadow remains a contained fatal. */
+      option_writes = "shadow";
+      phase = PHASE_LOAD; assert(retro_load_game(&readonly_adf_game));
+      fault_flush_substring = "/disc.adf";
+      phase = PHASE_RUN; retro_run();
+      assert(!fault_flush_substring &&
+             flush_fault_log_lines == flush_logs + 1u &&
+             flush_fault_osd_calls == flush_messages + 1u &&
+             strstr(last_flush_fault, "Unable to flush the staged floppy image"));
+      retro_run();
+      assert(flush_fault_log_lines == flush_logs + 1u &&
+             flush_fault_osd_calls == flush_messages + 1u);
+      retro_unload_game();
+
+      option_writes = "off";
+      option_launch = "auto";
       unsigned decisions = launch_log_lines;
       phase = PHASE_LOAD; assert(retro_load_game(&application_game));
       assert(launch_log_lines == decisions + 1u &&
