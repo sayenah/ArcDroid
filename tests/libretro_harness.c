@@ -223,8 +223,8 @@ static int64_t vfs_write(struct retro_vfs_file_handle *h, const void *s, uint64_
 }
 static int vfs_flush(struct retro_vfs_file_handle *h)
 {
-   if (!(h->mode & RETRO_VFS_FILE_ACCESS_WRITE)) return -1;
    if (fault_once(h->path, &fault_flush_substring)) return -1;
+   if (!(h->mode & RETRO_VFS_FILE_ACCESS_WRITE)) return -1;
    return fflush(h->file);
 }
 static int vfs_remove(const char *p) { return remove(p); }
@@ -2533,6 +2533,7 @@ int main(int argc, char **argv)
    assert(redundant_geometry_changes == 0u);
    assert(av_notifications > 0u);
    assert(video_signature_count >= 1u && reported_rate_count >= 1u);
+   assert(flush_fault_log_lines == 1u && flush_fault_osd_calls == 1u);
    assert(input_observed);
    assert(vidc_osd_ext_calls + vidc_osd_legacy_calls == persistent_osd_before + 2u);
    assert(saw_audio_counters);
@@ -2541,8 +2542,7 @@ int main(int argc, char **argv)
           "100 cycles, %u frames, %llu audio frames, "
           "%llu nonzero samples, %u frame signatures, %u reported rates, "
           "%u geometry changes (0 redundant), A/V windows actual %llu expected %llu "
-          "(max delta %llu), "
-          "heap peak delta %zu bytes (limit 65536), 0 leaked VFS handles\n",
+          "(max delta %llu), ",
           (unsigned long long)before_input_signature,
           (unsigned long long)changed_signature,
           video_frames,
@@ -2551,7 +2551,13 @@ int main(int argc, char **argv)
           reported_rate_count, geometry_changes,
           (unsigned long long)measured_actual_total,
           (unsigned long long)measured_expected_total,
-          (unsigned long long)measured_max_difference, heap_maximum_delta);
+          (unsigned long long)measured_max_difference);
+#if defined(ARCDROID_ADDRESS_SANITIZER)
+   printf("heap accounting disabled under ASan, 0 leaked VFS handles\n");
+#else
+   printf("heap peak delta %zu bytes (limit 65536), 0 leaked VFS handles\n",
+          heap_maximum_delta);
+#endif
    printf("reported rates:");
    for (unsigned i = 0; i < reported_rate_count; ++i) printf(" %.6f", reported_rates[i]);
    printf("\n");

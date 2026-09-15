@@ -282,6 +282,7 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
       "${FIXTURE_DIR}/arcdroid-test-two-member.jfd"
       "${FIXTURE_DIR}"
       "${FIXTURE_DIR}/arcdroid-application-l.adl")
+    set_tests_properties(libretro-harness PROPERTIES TIMEOUT 300)
   endif()
 
   add_executable(firmware_probe tools/firmware_probe.c)

@@ -75,7 +75,8 @@ size_t arc_io_write_file(ArcIoFile *file, const void *data, size_t size)
    memcpy(raw_helper + file->position, data, size); file->position += size;
    return size;
 }
-bool arc_io_flush_file(ArcIoFile *file) { return file == &raw_file; }
+bool arc_io_flush_file(ArcIoFile *file)
+{ return file == &raw_file && file->writable; }
 
 static uint8_t *read_all(const char *path, size_t *size)
 {
