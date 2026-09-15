@@ -41,6 +41,10 @@ static const char *arc_osk_key_label(const ArcInputKey *key)
       case RETROK_DELETE: return "Del";
       case RETROK_PAGEUP: return "PgUp";
       case RETROK_PAGEDOWN: return "PgDn";
+      case RETROK_UP: return "\x7d";
+      case RETROK_DOWN: return "\x7e";
+      case RETROK_LEFT: return "<";
+      case RETROK_RIGHT: return ">";
       case RETROK_LSHIFT: return "L Shift";
       case RETROK_RSHIFT: return "R Shift";
       case RETROK_LCTRL: return "L Ctrl";
@@ -142,6 +146,8 @@ bool arc_osk_open(ArcOsk *osk, unsigned width, unsigned height)
    if (!osk || !arc_osk_layout(osk, width, height)) return false;
    osk->visible = true;
    osk->busy = false;
+   osk->interrupted_pending = false;
+   osk->interrupted_visible = false;
    osk->repeat_dx = osk->repeat_dy = 0;
    return true;
 }
@@ -161,6 +167,8 @@ void arc_osk_close(ArcOsk *osk, ArcInputState *input)
    osk->activation_phase = 0u;
    osk->activation_held = false;
    osk->busy = false;
+   osk->interrupted_pending = false;
+   osk->interrupted_visible = false;
    osk->contact = false;
    osk->contact_valid = false;
    memset(osk->modifiers, 0, sizeof(osk->modifiers));
@@ -266,6 +274,7 @@ void arc_osk_update(ArcOsk *osk, ArcInputState *input)
       osk->activation_phase = 0u;
       osk->activation_held = false;
       osk->interrupted_pending = true;
+      osk->interrupted_visible = true;
       return;
    }
    if (osk->activation_phase == 1u)
@@ -354,6 +363,11 @@ bool arc_osk_take_interrupted(ArcOsk *osk)
    return true;
 }
 
+void arc_osk_acknowledge_render(ArcOsk *osk)
+{
+   if (osk) osk->interrupted_visible = false;
+}
+
 static uint32_t arc_osk_blend(uint32_t under, uint32_t over, unsigned alpha)
 {
    uint32_t rb = (uint32_t)((((uint64_t)(under & UINT32_C(0x00ff00ff)) *
@@ -394,7 +408,7 @@ static void arc_osk_text(uint32_t *pixels, unsigned width, unsigned height,
       {
          glyph = (unsigned char)*text++;
          if (glyph >= 'a' && glyph <= 'z') glyph -= 'a' - 'A';
-         if (glyph >= 125u) glyph = '?';
+         if (glyph >= 128u) glyph = '?';
       }
       for (unsigned row = 0u; row < 8u && y + row < height; ++row)
          for (unsigned column = 0u; column < 8u; ++column)
@@ -420,7 +434,7 @@ bool arc_osk_render(const ArcOsk *osk, uint32_t *pixels, unsigned width,
                 UINT32_C(0x00101824), alpha);
    char header[192];
    snprintf(header, sizeof(header), "ARCDROID OSK - %s%s%s", profile ? profile : "Generic",
-            osk->busy ? " - BUSY" : "", osk->interrupted_pending ? " - INTERRUPTED" : "");
+            osk->busy ? " - BUSY" : "", osk->interrupted_visible ? " - INTERRUPTED" : "");
    arc_osk_text(pixels, width, height, stride, 4u, panel_y + 4u, width, header,
                 UINT32_C(0x00ffffff));
    for (unsigned i = 0u; i < osk->key_count; ++i)

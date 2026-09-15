@@ -2729,8 +2729,11 @@ static void arc_present(const ArcEngineFrame *frame)
       arc_video(frame->pixels, frame->width, frame->height, frame->pitch);
    }
    else
+   {
       arc_video(arc_osk_surface, frame->width, frame->height,
                 (size_t)frame->width * sizeof(uint32_t));
+      arc_osk_acknowledge_render(&arc_osk);
+   }
 #if defined(ARCDROID_TEST_FAULTS)
    if (!arc_osk_source_checked)
    {

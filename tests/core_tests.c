@@ -1389,7 +1389,7 @@ static void test_osk(void)
       arc_input_release_all(&input);
       arc_osk_update(&osk, &input);
       assert(!osk.activation_phase && arc_osk_take_interrupted(&osk) &&
-             !arc_osk_take_interrupted(&osk));
+             !arc_osk_take_interrupted(&osk) && osk.interrupted_visible);
       while (arc_input_pending(&input))
          (void)arc_input_consume(&input, true, &events[0]);
    }
@@ -1426,12 +1426,12 @@ static void test_osk(void)
    static const unsigned widths[] = {320u, 640u, 640u};
    static const unsigned heights[] = {256u, 256u, 480u};
    static const char *goldens[3][2][2] = {
-      {{"293a217fc97548ea06694a637920f66118713b12", "aa378703b221944a2fb4500a7674722927b4e72c"},
-       {"c134265ed54b8370345a32b1c015cc412824b1c5", "7ce6650cd7bf860538dc42fefe5b07613c184f24"}},
-      {{"82a28a672e23752555d704a9f0a940ac3d3131db", NULL},
-       {"b661d69202c56dc74df375c5cf2816c18aa931ab", NULL}},
-      {{"88216c66b59eb9907d4edd04ff533475cfa198a6", NULL},
-       {"ea023c9e6b4e32ddf6aa826e38823ea3c0c7db99", NULL}}
+      {{"2c9fffc18203bb9f59e859595fe342767dd5dda7", "7e5a72326f920752a187242ab4f1c6e24f25689e"},
+       {"e6730f383c49f0ea6330441c6335891d5f23f998", "3021c3998857b3fe2a7293267fa748041fbf5a8a"}},
+      {{"d59424dc8af4492ef0902e97dc999bb799a53c18", NULL},
+       {"d95b6b2d8a4ec8e5e887bb3825a3023d7c386c1b", NULL}},
+      {{"0006ae8b21a942b5a6f72b664ec95b5dec934a00", NULL},
+       {"4dfd7a115f9fcc3cd407914c6ae0435cb1599acc", NULL}}
    };
    for (unsigned geometry = 0u; geometry < 3u; ++geometry)
       for (unsigned alpha = 0u; alpha < 2u; ++alpha)
@@ -1464,6 +1464,26 @@ static void test_osk(void)
                 surface[count + 1u] == UINT32_C(0xcafef00d));
          free(surface);
       }
+
+   /* The authored arrow byte reaches its bitmap and an acknowledged warning
+    * remains visible through exactly one successful render. */
+   memset(&osk, 0, sizeof(osk));
+   assert(arc_osk_open(&osk, 320u, 256u));
+   bool saw_up_arrow = false;
+   for (unsigned i = 0u; i < osk.key_count; ++i)
+      if (osk.keys[i].key == RETROK_UP)
+         saw_up_arrow = !strcmp(osk.keys[i].label, "\x7d");
+   assert(saw_up_arrow);
+   osk.interrupted_visible = true;
+   uint32_t *notice = calloc(320u * 256u, sizeof(*notice));
+   assert(notice && arc_osk_render(&osk, notice, 320u, 256u,
+                                   320u * sizeof(uint32_t), "Golden custom"));
+   char notice_digest[41];
+   arc_sha1_hex(notice, 320u * 256u * sizeof(*notice), notice_digest);
+   assert(!strcmp(notice_digest, "7ec78daed5f3b348cf17d32bf8b2bedbb4a29984"));
+   arc_osk_acknowledge_render(&osk);
+   assert(!osk.interrupted_visible);
+   free(notice);
 }
 
 int main(int argc, char **argv)

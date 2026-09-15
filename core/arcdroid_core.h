@@ -380,6 +380,7 @@ typedef struct {
    bool transparent;
    bool busy;
    bool interrupted_pending;
+   bool interrupted_visible;
    bool contact;
    bool contact_valid;
    bool activation_held;
@@ -415,6 +416,7 @@ void arc_osk_update(ArcOsk *osk, ArcInputState *input);
 bool arc_osk_touch(ArcOsk *osk, int x, int y, bool down,
                    ArcInputState *input);
 bool arc_osk_take_interrupted(ArcOsk *osk);
+void arc_osk_acknowledge_render(ArcOsk *osk);
 bool arc_osk_render(const ArcOsk *osk, uint32_t *pixels, unsigned width,
                     unsigned height, size_t pitch, const char *profile);
 
