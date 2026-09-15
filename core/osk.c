@@ -206,7 +206,7 @@ bool arc_osk_layout(ArcOsk *osk, unsigned width, unsigned height)
    }
    if (osk->compact)
       arc_osk_add(osk, ARC_OSK_ACTION_PAGE, 0u,
-                  osk->page ? "PAGE 1" : "PAGE 2", slot, columns,
+                  osk->page ? "Pg1" : "Pg2", slot, columns,
                   panel_y, cell_h);
    if (osk->focus >= osk->key_count) osk->focus = 0u;
    osk->contact = false;

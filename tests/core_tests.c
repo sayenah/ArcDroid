@@ -1335,7 +1335,6 @@ static void test_osk(void)
                   nonblank |= arc_osk_font[index][row] != 0u;
                assert(nonblank);
             }
-            if (key->action == ARC_OSK_ACTION_PAGE) continue;
             assert(strlen(key->label) <= (key->width - 2u) / 8u);
             for (unsigned previous = 0u; previous < label_count; ++previous)
                assert(strcmp(labels[previous], key->label));
@@ -1343,7 +1342,7 @@ static void test_osk(void)
             labels[label_count++] = key->label;
          }
       }
-      assert(label_count == 100u);
+      assert(label_count == (labelled.compact ? 102u : 100u));
    }
    unsigned first_focus = osk.focus;
    arc_osk_move(&osk, 1, 0, 100u, true);
@@ -1565,8 +1564,8 @@ static void test_osk(void)
    static const unsigned widths[] = {320u, 640u, 640u};
    static const unsigned heights[] = {256u, 256u, 480u};
    static const char *goldens[3][2][2] = {
-      {{"e5a78d1c316f1e039a1df3da6f65fecba6c878fd", "0fcbd1b271e0a8a93a2332fdbed8521a360da970"},
-       {"33bbd9c11debd198933ad94461141a6017419b79", "7e7bca7af324def6293429461af77f634fe96696"}},
+      {{"9b0da874225eaefd8568d1f2f28a23804204be6d", "50b2b877a44b554b0f5821e6294b707f58328fb0"},
+       {"5a57792c88e363f13b6622dacd5e821c6a4403fe", "9fb6083702982f7cb84acace06e975c9a9615537"}},
       {{"04a7ca1e1e0f740dfde60300a2f65619ab68b7fc", NULL},
        {"4096e7086cc7129b53928dc0dffa9296ded717e8", NULL}},
       {{"1a5ea3bb3c952f151c0f679de45f930e9a2dda52", NULL},
@@ -1635,9 +1634,9 @@ static void test_osk(void)
                                    320u * sizeof(uint32_t), "Golden custom"));
    char notice_digest[41];
    arc_sha1_hex(notice, 320u * 256u * sizeof(*notice), notice_digest);
-   if (strcmp(notice_digest, "b8cbda510d4981563b93acafb3cc18cccd3e231d"))
+   if (strcmp(notice_digest, "a850440bda9c7a8be1a715a4ed13cde2c6a3a4ce"))
       fprintf(stderr, "OSK compact INT golden = %s\n", notice_digest);
-   assert(!strcmp(notice_digest, "b8cbda510d4981563b93acafb3cc18cccd3e231d"));
+   assert(!strcmp(notice_digest, "a850440bda9c7a8be1a715a4ed13cde2c6a3a4ce"));
    assert(osk.interrupted_visible);
    memset(notice, 0, 320u * 256u * sizeof(*notice));
    assert(arc_osk_render(&osk, notice, 320u, 256u,
