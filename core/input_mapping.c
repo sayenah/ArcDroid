@@ -63,7 +63,7 @@ static const ArcInputKey arc_keys[] = {
    K(RETROK_RIGHTBRACKET,"right_bracket","]",3,2,false),
    K(RETROK_SEMICOLON,"semicolon",";",4,5,false),
    K(RETROK_QUOTE,"quote","'",4,6,false),
-   K(RETROK_BACKSLASH,"hash_backslash","Backslash",3,3,false),
+   K(RETROK_BACKSLASH,"backslash","Backslash",3,3,false),
    K(RETROK_COMMA,"comma",",",5,5,false),
    K(RETROK_PERIOD,"period",".",5,6,false),
    K(RETROK_SLASH,"slash","/",5,7,false),

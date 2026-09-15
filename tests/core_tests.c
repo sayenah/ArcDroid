@@ -1096,7 +1096,8 @@ static void test_input_mapping(void)
          assert(strcmp(keys[i].value, keys[prior].value));
    }
    assert(!arc_input_key_value("pound"));
-   const ArcInputKey *backslash = arc_input_key_value("hash_backslash");
+   const ArcInputKey *backslash = arc_input_key_value("backslash");
+   assert(!arc_input_key_value("hash_backslash"));
    assert(backslash && !strcmp(backslash->label, "Backslash") &&
           backslash->kart_row == 3u && backslash->kart_column == 3u);
    assert(!arc_input_key(RETROK_PRINT));
