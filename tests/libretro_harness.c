@@ -303,7 +303,8 @@ static bool environment(unsigned command, void *data)
          assert(phase == PHASE_LOAD);
          const struct retro_input_descriptor *descriptors = data;
          bool port0 = false, port1 = false, select = false, adjust = false;
-         bool menu = false, precision = false, analog_x = false, analog_y = false;
+         bool menu = false, precision = false, right_x = false, right_y = false;
+         bool left_x = false, left_y = false;
          for (; descriptors->description; ++descriptors)
          {
             if (descriptors->port == 0u) port0 = true;
@@ -318,12 +319,20 @@ static bool environment(unsigned command, void *data)
             if (descriptors->port == 0u && descriptors->device == RETRO_DEVICE_ANALOG &&
                 descriptors->index == RETRO_DEVICE_INDEX_ANALOG_RIGHT)
             {
-               if (descriptors->id == RETRO_DEVICE_ID_ANALOG_X) analog_x = true;
-               if (descriptors->id == RETRO_DEVICE_ID_ANALOG_Y) analog_y = true;
+               if (descriptors->id == RETRO_DEVICE_ID_ANALOG_X) right_x = true;
+               if (descriptors->id == RETRO_DEVICE_ID_ANALOG_Y) right_y = true;
+            }
+            if (descriptors->port == 0u && descriptors->device == RETRO_DEVICE_ANALOG &&
+                descriptors->index == RETRO_DEVICE_INDEX_ANALOG_LEFT)
+            {
+               bool labelled = strstr(descriptors->description,
+                                      "Pointer Stick = left") != NULL;
+               if (descriptors->id == RETRO_DEVICE_ID_ANALOG_X) left_x = labelled;
+               if (descriptors->id == RETRO_DEVICE_ID_ANALOG_Y) left_y = labelled;
             }
          }
          saw_input_descriptors = port0 && port1 && select && adjust && menu &&
-                                 precision && analog_x && analog_y;
+                                 precision && right_x && right_y && left_x && left_y;
          return true;
       }
       case RETRO_ENVIRONMENT_SET_KEYBOARD_CALLBACK:

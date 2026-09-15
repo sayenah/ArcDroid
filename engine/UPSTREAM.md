@@ -48,6 +48,10 @@ applies the next queued input event. Skipped polls never advance the queue and
 the upstream packet encoding, handshake, and one-event-per-poll logic remain
 unchanged.
 
+`platform/arcdroid_input.c` also clears the engine `keyena` and `mouseena`
+globals in `input_init` so each core initialization starts with disabled input
+channels.
+
 The pinned upstream `AUTHORS` file is empty. Upstream author and contributor
 credits are preserved in the imported `README.md`.
 

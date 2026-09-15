@@ -25,6 +25,20 @@
 #define ARC_DEVICE_KEYS RETRO_DEVICE_SUBCLASS(RETRO_DEVICE_JOYPAD, 1)
 #define ARC_DEVICE_MOUSE RETRO_DEVICE_SUBCLASS(RETRO_DEVICE_MOUSE, 1)
 
+enum {
+   ARC_INPUT_SUPPORTED_KEYS = 100u,
+   ARC_INPUT_PAD_KEYS = 10u,
+   ARC_INPUT_POINTER_BUTTONS = 3u,
+   /* Leave room for future adapter bindings without risking truncation when
+    * overflow reconciliation rebuilds every held discrete input level. */
+   ARC_INPUT_RECONCILE_MARGIN = 16u
+};
+
+_Static_assert(ARC_INPUT_SUPPORTED_KEYS + ARC_INPUT_PAD_KEYS +
+               ARC_INPUT_POINTER_BUTTONS + ARC_INPUT_RECONCILE_MARGIN <=
+               ARC_INPUT_FIFO_CAPACITY,
+               "supported input surface exceeds reconciliation capacity");
+
 static retro_environment_t arc_environment;
 static retro_video_refresh_t arc_video;
 static retro_audio_sample_t arc_audio;
@@ -1026,6 +1040,8 @@ static const struct retro_input_descriptor arc_input_descriptors[] = {
    {0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R2, "Pointer precision (quarter speed)"},
    {0, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_RIGHT, RETRO_DEVICE_ID_ANALOG_X, "Pointer horizontal velocity"},
    {0, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_RIGHT, RETRO_DEVICE_ID_ANALOG_Y, "Pointer vertical velocity"},
+   {0, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_LEFT, RETRO_DEVICE_ID_ANALOG_X, "Pointer horizontal velocity (Pointer Stick = left)"},
+   {0, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_LEFT, RETRO_DEVICE_ID_ANALOG_Y, "Pointer vertical velocity (Pointer Stick = left)"},
    {1, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_UP, "Archimedes Up"},
    {1, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_DOWN, "Archimedes Down"},
    {1, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_LEFT, "Archimedes Left"},

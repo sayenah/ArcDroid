@@ -313,6 +313,25 @@ static void test_input(void)
    }
 
    arc_input_reset(&state);
+   for (unsigned i = 0u; i < ARC_INPUT_FIFO_CAPACITY / 2u; ++i)
+   {
+      arc_input_source_key(&state, ARC_INPUT_SOURCE_KEYBOARD, 42u, true, true);
+      arc_input_source_key(&state, ARC_INPUT_SOURCE_KEYBOARD, 42u, false, true);
+   }
+   assert(arc_input_pending(&state) == ARC_INPUT_FIFO_CAPACITY);
+   arc_input_source_buttons(&state, ARC_INPUT_SOURCE_PAD0, 7u);
+   assert(arc_input_take_overflow_report(&state));
+   unsigned button_downs[8] = {0};
+   while (arc_input_pending(&state))
+   {
+      assert(arc_input_consume(&state, true, &event));
+      assert(event.type == ARC_INPUT_EVENT_BUTTON && event.down && event.code < 8u);
+      ++button_downs[event.code];
+   }
+   assert(button_downs[1] == 1u && button_downs[2] == 1u &&
+          button_downs[4] == 1u);
+
+   arc_input_reset(&state);
    for (unsigned i = 0u; i < 300u; ++i)
       arc_input_source_key(&state, ARC_INPUT_SOURCE_KEYBOARD, 42u,
                            (i & 1u) == 0u, true);

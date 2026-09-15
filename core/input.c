@@ -46,16 +46,17 @@ static void arc_reconcile(ArcInputState *state)
          arc_fifo_append_unchecked(state, (ArcInputEvent){ARC_INPUT_EVENT_BUTTON, button, true, false, 0, 0});
 }
 
-static void arc_fifo_append(ArcInputState *state, ArcInputEvent event)
+static bool arc_fifo_append(ArcInputState *state, ArcInputEvent event)
 {
    if (state->fifo_count >= ARC_INPUT_FIFO_CAPACITY)
    {
       state->overflow_report_pending = !state->overflow_reported;
       state->overflow_reported = true;
       arc_reconcile(state);
-      return;
+      return true;
    }
    arc_fifo_append_unchecked(state, event);
+   return false;
 }
 
 void arc_input_reset(ArcInputState *state)
@@ -108,8 +109,9 @@ void arc_input_source_buttons(ArcInputState *state, ArcInputSource source,
    state->effective_buttons = (uint8_t)effective;
    for (unsigned button = 1u; button <= 4u; button <<= 1u)
       if (changed & button)
-         arc_fifo_append(state, (ArcInputEvent){ARC_INPUT_EVENT_BUTTON, button,
-                     (effective & button) != 0u, false, 0, 0});
+         if (arc_fifo_append(state, (ArcInputEvent){ARC_INPUT_EVENT_BUTTON, button,
+                     (effective & button) != 0u, false, 0, 0}))
+            break;
 }
 
 void arc_input_source_click(ArcInputState *state, ArcInputSource source,
