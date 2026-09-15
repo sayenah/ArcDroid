@@ -1230,12 +1230,13 @@ static void test_input_mapping(void)
    arc_input_reset(&state);
    arc_input_source_key(&state, ARC_INPUT_SOURCE_OSK, RETROK_LSHIFT,
                         true, true);
-   arc_input_source_key(&state, ARC_INPUT_SOURCE_OSK, RETROK_a, true, true);
+   assert(RETROK_BREAK > RETROK_LSHIFT);
+   arc_input_source_key(&state, ARC_INPUT_SOURCE_OSK, RETROK_BREAK, true, true);
    assert(arc_input_consume(&state, true, &event) && event.down);
    assert(arc_input_consume(&state, true, &event) && event.down);
    arc_input_clear_source(&state, ARC_INPUT_SOURCE_OSK);
    assert(arc_input_consume(&state, true, &event) &&
-          event.code == RETROK_a && !event.down);
+          event.code == RETROK_BREAK && !event.down);
    assert(arc_input_consume(&state, true, &event) &&
           event.code == RETROK_LSHIFT && !event.down);
    assert(!arc_input_pending(&state));
