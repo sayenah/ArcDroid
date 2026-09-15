@@ -78,13 +78,20 @@ static void arc_osk_show_interrupted(ArcOsk *osk)
    osk->interrupted_action_generation = osk->action_generation;
 }
 
-static const ArcInputKey *arc_osk_catalogue_key(const ArcInputKey *shared,
-                                                size_t shared_count,
-                                                const ArcInputKey *osk_only,
-                                                size_t index)
+static const ArcInputKey *arc_osk_catalogue_position(const ArcInputKey *shared,
+                                                     size_t shared_count,
+                                                     const ArcInputKey *osk_only,
+                                                     size_t osk_only_count,
+                                                     unsigned row,
+                                                     unsigned column)
 {
-   return index < shared_count ? &shared[index] :
-      &osk_only[index - shared_count];
+   for (size_t i = 0u; i < shared_count; ++i)
+      if (shared[i].kart_row == row && shared[i].kart_column == column)
+         return &shared[i];
+   for (size_t i = 0u; i < osk_only_count; ++i)
+      if (osk_only[i].kart_row == row && osk_only[i].kart_column == column)
+         return &osk_only[i];
+   return NULL;
 }
 
 static int arc_osk_modifier_index(unsigned key)
@@ -111,22 +118,22 @@ static const char *arc_osk_key_label(const ArcInputKey *key, bool compact)
       case RETROK_END: return compact ? "Cpy" : "Copy";
       case RETROK_PAGEUP: return compact ? "PgU" : "PgUp";
       case RETROK_PAGEDOWN: return compact ? "PgD" : "PgDn";
-      case RETROK_SPACE: return compact ? "Spc" : "Space";
+      case RETROK_SPACE: return "Spc";
       case RETROK_UP: return "\x7d";
       case RETROK_DOWN: return "\x7e";
       case RETROK_LEFT: return "<";
       case RETROK_RIGHT: return ">";
-      case RETROK_LSHIFT: return compact ? "LSh" : "LShft";
-      case RETROK_RSHIFT: return compact ? "RSh" : "RShft";
-      case RETROK_LCTRL: return compact ? "LCt" : "LCtrl";
-      case RETROK_RCTRL: return compact ? "RCt" : "RCtrl";
+      case RETROK_LSHIFT: return compact ? "LSh" : "LSft";
+      case RETROK_RSHIFT: return compact ? "RSh" : "RSft";
+      case RETROK_LCTRL: return compact ? "LCt" : "LCtl";
+      case RETROK_RCTRL: return compact ? "RCt" : "RCtl";
       case RETROK_LALT: return compact ? "LAl" : "LAlt";
       case RETROK_RALT: return compact ? "RAl" : "RAlt";
       case RETROK_CAPSLOCK: return compact ? "Cps" : "Caps";
       case RETROK_NUMLOCK: return "Num";
       case RETROK_SCROLLOCK: return compact ? "Scr" : "Scrl";
-      case RETROK_PAUSE: return compact ? "Pau" : "Pause";
-      case RETROK_BACKSLASH: return compact ? "Bsl" : "Bslsh";
+      case RETROK_PAUSE: return compact ? "Pau" : "Paus";
+      case RETROK_BACKSLASH: return "Bsl";
       case RETROK_KP0: return compact ? "K0" : "KP0";
       case RETROK_KP1: return compact ? "K1" : "KP1";
       case RETROK_KP2: return compact ? "K2" : "KP2";
@@ -166,6 +173,13 @@ static void arc_osk_add(ArcOsk *osk, ArcOskAction action, unsigned key,
 bool arc_osk_layout(ArcOsk *osk, unsigned width, unsigned height)
 {
    if (!osk || !width || !height) return false;
+   ArcOskAction previous_action = ARC_OSK_ACTION_NONE;
+   unsigned previous_key = 0u;
+   if (osk->focus < osk->key_count)
+   {
+      previous_action = osk->keys[osk->focus].action;
+      previous_key = osk->keys[osk->focus].key;
+   }
    osk->width = width;
    osk->height = height;
    osk->key_count = 0u;
@@ -182,12 +196,17 @@ bool arc_osk_layout(ArcOsk *osk, unsigned width, unsigned height)
    const ArcInputKey *catalogue = arc_input_supported_keys(&shared_count);
    size_t osk_only_count = 0u;
    const ArcInputKey *osk_only = arc_input_osk_only_keys(&osk_only_count);
-   size_t count = shared_count + osk_only_count;
-   size_t first = osk->compact ? (count + 1u) / 2u * osk->page : 0u;
-   size_t last = osk->compact ? first + (count + 1u) / 2u : count;
-   if (last > count) last = count;
-   unsigned columns = osk->compact ? 10u : 14u;
-   unsigned rows = (unsigned)((last - first + columns - 1u) / columns);
+   unsigned first_row = osk->compact && osk->page ? 4u : 0u;
+   unsigned last_row = osk->compact && !osk->page ? 4u : 7u;
+   unsigned item_count = 0u;
+   for (unsigned row = first_row; row < last_row; ++row)
+      for (unsigned column = 0u; column < 16u; ++column)
+         if (arc_osk_catalogue_position(catalogue, shared_count, osk_only,
+                                        osk_only_count, row, column))
+            ++item_count;
+   unsigned columns = osk->compact ? 10u : 16u;
+   unsigned rows = osk->compact ?
+      (item_count + columns - 1u) / columns : 7u;
    if (osk->compact) ++rows;
    unsigned panel_h = height * 45u / 100u;
    if (panel_h < 48u) panel_h = 48u;
@@ -195,20 +214,45 @@ bool arc_osk_layout(ArcOsk *osk, unsigned width, unsigned height)
    unsigned panel_y = height - panel_h;
    unsigned cell_h = panel_h > 17u ? (panel_h - 17u) / (rows ? rows : 1u) : 1u;
    unsigned slot = 0u;
-   for (size_t i = first; i < last; ++i)
-   {
-      const ArcInputKey *item = arc_osk_catalogue_key(catalogue, shared_count,
-                                                       osk_only, i);
-      int modifier = arc_osk_modifier_index(item->key);
-      arc_osk_add(osk, modifier >= 0 ? ARC_OSK_ACTION_MODIFIER : ARC_OSK_ACTION_KEY,
-                  item->key, arc_osk_key_label(item, osk->compact), slot++, columns,
-                  panel_y, cell_h);
-   }
+   for (unsigned row = first_row; row < last_row; ++row)
+      for (unsigned column = 0u; column < 16u; ++column)
+      {
+         const ArcInputKey *item = arc_osk_catalogue_position(
+            catalogue, shared_count, osk_only, osk_only_count, row, column);
+         if (!item) continue;
+         int modifier = arc_osk_modifier_index(item->key);
+         arc_osk_add(osk,
+                     modifier >= 0 ? ARC_OSK_ACTION_MODIFIER : ARC_OSK_ACTION_KEY,
+                     item->key, arc_osk_key_label(item, osk->compact),
+                     osk->compact ? slot++ : row * columns + column,
+                     columns, panel_y, cell_h);
+      }
    if (osk->compact)
       arc_osk_add(osk, ARC_OSK_ACTION_PAGE, 0u,
                   osk->page ? "Pg1" : "Pg2", slot, columns,
                   panel_y, cell_h);
-   if (osk->focus >= osk->key_count) osk->focus = 0u;
+   bool restored = false;
+   for (unsigned i = 0u; i < osk->key_count; ++i)
+      if ((previous_action == ARC_OSK_ACTION_PAGE &&
+           osk->keys[i].action == ARC_OSK_ACTION_PAGE) ||
+          (previous_action != ARC_OSK_ACTION_NONE &&
+           previous_action != ARC_OSK_ACTION_PAGE &&
+           osk->keys[i].key == previous_key))
+      {
+         osk->focus = i;
+         restored = true;
+         break;
+      }
+   if (!restored)
+   {
+      osk->focus = 0u;
+      for (unsigned i = 0u; i < osk->key_count; ++i)
+         if (osk->keys[i].key == RETROK_a)
+         {
+            osk->focus = i;
+            break;
+         }
+   }
    osk->contact = false;
    osk->contact_valid = false;
    return true;

@@ -1146,6 +1146,7 @@ int main(int argc, char **argv)
    bool (*arc_libretro_test_register_input_profile)(const ArcInputProfile *) = NULL;
    void (*arc_libretro_test_probe_osk_geometry)(unsigned, unsigned) = NULL;
    bool (*arc_libretro_test_osk_focus_key)(unsigned) = NULL;
+   bool (*arc_libretro_test_osk_key_center)(unsigned, unsigned *, unsigned *) = NULL;
    void (*arc_libretro_test_stall_kart)(bool) = NULL;
    void (*arc_libretro_test_fill_input_queue)(void) = NULL;
    unsigned (*arc_libretro_test_input_pending)(void) = NULL;
@@ -1182,6 +1183,8 @@ int main(int argc, char **argv)
          dlsym(module, "arc_libretro_test_probe_osk_geometry");
       *(void **)(&arc_libretro_test_osk_focus_key) =
          dlsym(module, "arc_libretro_test_osk_focus_key");
+      *(void **)(&arc_libretro_test_osk_key_center) =
+         dlsym(module, "arc_libretro_test_osk_key_center");
       *(void **)(&arc_libretro_test_stall_kart) =
          dlsym(module, "arc_libretro_test_stall_kart");
       *(void **)(&arc_libretro_test_fill_input_queue) =
@@ -1215,6 +1218,7 @@ int main(int argc, char **argv)
              arc_libretro_test_register_input_profile &&
              arc_libretro_test_probe_osk_geometry &&
              arc_libretro_test_osk_focus_key &&
+             arc_libretro_test_osk_key_center &&
              arc_libretro_test_stall_kart &&
              arc_libretro_test_fill_input_queue &&
              arc_libretro_test_input_pending &&
@@ -2744,11 +2748,9 @@ int main(int argc, char **argv)
    retro_run();
    joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_Y] = false;
    for (unsigned frame = 0u; frame < 20u; ++frame) retro_run();
-   unsigned osk_panel = geometry_height * 45u / 100u;
-   if (osk_panel < 48u) osk_panel = 48u;
-   unsigned osk_cell = (osk_panel - 17u) / 8u;
-   unsigned osk_touch_x = geometry_width / 28u;
-   unsigned osk_touch_y = geometry_height - osk_panel + 17u + osk_cell / 2u;
+   unsigned osk_touch_x = 0u, osk_touch_y = 0u;
+   assert(arc_libretro_test_osk_key_center(RETROK_a, &osk_touch_x,
+                                           &osk_touch_y));
    pointer_x = (int)((uint64_t)osk_touch_x * 65536u / geometry_width) - 32768;
    pointer_y = (int)((uint64_t)osk_touch_y * 65536u / geometry_height) - 32768;
    pointer_pressed = true; retro_run();

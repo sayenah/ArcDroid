@@ -1563,6 +1563,19 @@ bool arc_libretro_test_osk_focus_key(unsigned key)
       }
    return false;
 }
+
+bool arc_libretro_test_osk_key_center(unsigned key, unsigned *x, unsigned *y)
+{
+   if (!arc_osk.visible || !x || !y) return false;
+   for (unsigned i = 0u; i < arc_osk.key_count; ++i)
+      if (arc_osk.keys[i].key == key)
+      {
+         *x = arc_osk.keys[i].x + arc_osk.keys[i].width / 2u;
+         *y = arc_osk.keys[i].y + arc_osk.keys[i].height / 2u;
+         return true;
+      }
+   return false;
+}
 #endif
 
 static int arc_pointer_to_pixel(int value, unsigned extent)

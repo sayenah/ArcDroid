@@ -1297,6 +1297,18 @@ static void complete_osk_chord(ArcOsk *osk, ArcInputState *input,
    assert(!osk->activation_phase);
 }
 
+static const ArcInputKey *osk_catalogue_key(unsigned key)
+{
+   size_t count = 0u;
+   const ArcInputKey *catalogue = arc_input_supported_keys(&count);
+   for (size_t i = 0u; i < count; ++i)
+      if (catalogue[i].key == key) return &catalogue[i];
+   catalogue = arc_input_osk_only_keys(&count);
+   for (size_t i = 0u; i < count; ++i)
+      if (catalogue[i].key == key) return &catalogue[i];
+   return NULL;
+}
+
 static void test_osk(void)
 {
    ArcOsk osk = {0};
@@ -1321,6 +1333,8 @@ static void test_osk(void)
       {
          labelled.page = page;
          assert(arc_osk_layout(&labelled, width, 256u));
+         unsigned previous_position = 0u;
+         bool have_previous_position = false;
          for (unsigned i = 0u; i < labelled.key_count; ++i)
          {
             const ArcOskKey *key = &labelled.keys[i];
@@ -1335,6 +1349,28 @@ static void test_osk(void)
                for (unsigned row = 0u; row < 8u; ++row)
                   nonblank |= arc_osk_font[index][row] != 0u;
                assert(nonblank);
+            }
+            if (key->action != ARC_OSK_ACTION_PAGE)
+            {
+               const ArcInputKey *catalogue = osk_catalogue_key(key->key);
+               assert(catalogue);
+               unsigned position = catalogue->kart_row * 16u +
+                                   catalogue->kart_column;
+               assert(!have_previous_position || position > previous_position);
+               previous_position = position;
+               have_previous_position = true;
+               if (labelled.compact)
+                  assert(page ? catalogue->kart_row >= 4u :
+                                catalogue->kart_row < 4u);
+               else
+               {
+                  unsigned panel_h = 256u * 45u / 100u;
+                  unsigned panel_y = 256u - panel_h;
+                  unsigned cell_h = (panel_h - 17u) / 7u;
+                  assert(key->x == catalogue->kart_column * width / 16u + 1u &&
+                         key->y == panel_y + 17u +
+                                   catalogue->kart_row * cell_h);
+               }
             }
             assert(strlen(key->label) <= (key->width - 2u) / 8u);
             for (unsigned previous = 0u; previous < label_count; ++previous)
@@ -1565,12 +1601,12 @@ static void test_osk(void)
    static const unsigned widths[] = {320u, 640u, 640u};
    static const unsigned heights[] = {256u, 256u, 480u};
    static const char *goldens[3][2][2] = {
-      {{"9b0da874225eaefd8568d1f2f28a23804204be6d", "50b2b877a44b554b0f5821e6294b707f58328fb0"},
-       {"5a57792c88e363f13b6622dacd5e821c6a4403fe", "9fb6083702982f7cb84acace06e975c9a9615537"}},
-      {{"04a7ca1e1e0f740dfde60300a2f65619ab68b7fc", NULL},
-       {"4096e7086cc7129b53928dc0dffa9296ded717e8", NULL}},
-      {{"1a5ea3bb3c952f151c0f679de45f930e9a2dda52", NULL},
-       {"11f0015ccdb21f1a5154657d99569ab3a5a1d2cd", NULL}}
+      {{"d74bc133ecbbb0bc51a074c2a07633ad7865663b", "455844640d87a496248222f1576c454d892a97a6"},
+       {"748f3ebb59d332023b47df5c152b67e988b1e682", "d6b35fd0080954eaccf9510bfab988dab2d4d422"}},
+      {{"990dcd6a49ba8c68fd165d9b2c48c715cc8e0d24", NULL},
+       {"eb36b3b921af455527251bc6bf2dbaf578d4a661", NULL}},
+      {{"f131693ab514e92e1e6696c676c041a39bb80248", NULL},
+       {"77f6448c096f1254110557c20467f11b901ebff7", NULL}}
    };
    for (unsigned geometry = 0u; geometry < 3u; ++geometry)
       for (unsigned alpha = 0u; alpha < 2u; ++alpha)
@@ -1615,10 +1651,17 @@ static void test_osk(void)
    arc_input_reset(&input);
    assert(arc_osk_open(&osk, 320u, 256u));
    bool saw_up_arrow = false;
-   for (unsigned i = 0u; i < osk.key_count; ++i)
-      if (osk.keys[i].key == RETROK_UP)
-         saw_up_arrow = !strcmp(osk.keys[i].label, "\x7d");
+   for (unsigned page = 0u; page < osk.page_count; ++page)
+   {
+      osk.page = page;
+      assert(arc_osk_layout(&osk, 320u, 256u));
+      for (unsigned i = 0u; i < osk.key_count; ++i)
+         if (osk.keys[i].key == RETROK_UP)
+            saw_up_arrow = !strcmp(osk.keys[i].label, "\x7d");
+   }
    assert(saw_up_arrow);
+   osk.page = 0u;
+   assert(arc_osk_layout(&osk, 320u, 256u));
    unsigned notice_key = UINT_MAX;
    for (unsigned i = 0u; i < osk.key_count; ++i)
       if (osk.keys[i].key == RETROK_a) notice_key = i;
@@ -1635,9 +1678,9 @@ static void test_osk(void)
                                    320u * sizeof(uint32_t), "Golden custom"));
    char notice_digest[41];
    arc_sha1_hex(notice, 320u * 256u * sizeof(*notice), notice_digest);
-   if (strcmp(notice_digest, "a850440bda9c7a8be1a715a4ed13cde2c6a3a4ce"))
+   if (strcmp(notice_digest, "885ae8cc1616bd7d3036c422e7d39035cef1bd56"))
       fprintf(stderr, "OSK compact INT golden = %s\n", notice_digest);
-   assert(!strcmp(notice_digest, "a850440bda9c7a8be1a715a4ed13cde2c6a3a4ce"));
+   assert(!strcmp(notice_digest, "885ae8cc1616bd7d3036c422e7d39035cef1bd56"));
    assert(osk.interrupted_visible);
    memset(notice, 0, 320u * 256u * sizeof(*notice));
    assert(arc_osk_render(&osk, notice, 320u, 256u,
