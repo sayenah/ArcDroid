@@ -94,6 +94,8 @@ static struct retro_disk_control_ext_callback disk_control;
 static bool can_dupe;
 static bool keyboard_poll_capability;
 static bool keyboard_levels[ARC_INPUT_KEY_COUNT];
+static bool legacy_only_options;
+static unsigned set_variable_calls;
 static bool saw_input_descriptors;
 static unsigned option_query_count;
 static unsigned cmos_write_opens;
@@ -461,6 +463,11 @@ static bool environment(unsigned command, void *data)
       {
          struct retro_variable *variable = data;
          ++option_query_count;
+         if (legacy_only_options &&
+             (!strcmp(variable->key, "arcdroid_input_profile") ||
+              !strcmp(variable->key, "arcdroid_osk_toggle") ||
+              !strncmp(variable->key, "arcdroid_pad", 12u)))
+            return false;
          if (!strcmp(variable->key, "arcdroid_machine")) variable->value = option_machine;
          else if (!strcmp(variable->key, "arcdroid_cpu")) variable->value = option_cpu;
          else if (!strcmp(variable->key, "arcdroid_memory")) variable->value = option_memory;
@@ -495,6 +502,9 @@ static bool environment(unsigned command, void *data)
          }
          return true;
       }
+      case RETRO_ENVIRONMENT_SET_VARIABLE:
+         ++set_variable_calls;
+         return false;
       case RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE:
          *(bool *)data = variable_update;
          variable_update = false;
@@ -1030,6 +1040,17 @@ int main(int argc, char **argv)
       assert(remove(oversized) == 0);
    }
    assert(rename(hidden, renamed) == 0);
+
+   /* A legacy per-content option file has no values for the 22 Slice 3a
+    * keys. Missing GET_VARIABLE entries must select defaults and still load. */
+   legacy_only_options = true;
+   last_input_resolution[0] = '\0';
+   phase = PHASE_LOAD; assert(retro_load_game(&game));
+   assert(strstr(last_input_resolution, "profile=Generic") &&
+          strstr(last_input_resolution, "p1.Up=Cursor Up[generic]") &&
+          strstr(last_input_resolution, "p2.Select=Tab[generic]"));
+   retro_unload_game();
+   legacy_only_options = false;
 
    char corrupt[4096]; snprintf(corrupt, sizeof(corrupt), "%s/corrupt.adf", argv[4]);
    FILE *bad = fopen(corrupt, "wb"); assert(bad); assert(fwrite("bad", 1u, 3u, bad) == 3u); assert(!fclose(bad));
@@ -1921,6 +1942,43 @@ int main(int argc, char **argv)
    retro_set_controller_port_device(1u, RETRO_DEVICE_SUBCLASS(RETRO_DEVICE_MOUSE, 1));
    joypad_port = 0u;
    bool input_observed = before_input_signature != last_video_signature;
+
+   /* Without the advertised keyboard capability, a polled-up level cannot
+    * release a key that is still held by the callback source. */
+   arc_platform_test_input_events_reset();
+   keyboard_levels[RETROK_a] = false;
+   keyboard.callback(true, RETROK_a, 0u, 0u);
+   for (unsigned frame = 0u; frame < 20u; ++frame) retro_run();
+   input_event_count = arc_platform_test_input_events(input_events, 512u);
+   unsigned capability_off_a_edges = 0u;
+   for (size_t i = 0u; i < input_event_count; ++i)
+      if (input_events[i].type == ARC_INPUT_EVENT_KEY &&
+          input_events[i].code == RETROK_a)
+      {
+         ++capability_off_a_edges;
+         assert(input_events[i].down);
+      }
+   assert(capability_off_a_edges == 1u);
+   for (unsigned frame = 0u; frame < 20u; ++frame) retro_run();
+   input_event_count = arc_platform_test_input_events(input_events, 512u);
+   capability_off_a_edges = 0u;
+   for (size_t i = 0u; i < input_event_count; ++i)
+      if (input_events[i].type == ARC_INPUT_EVENT_KEY &&
+          input_events[i].code == RETROK_a)
+         ++capability_off_a_edges;
+   assert(capability_off_a_edges == 1u);
+   keyboard.callback(false, RETROK_a, 0u, 0u);
+   for (unsigned frame = 0u; frame < 20u; ++frame) retro_run();
+   input_event_count = arc_platform_test_input_events(input_events, 512u);
+   capability_off_a_edges = 0u;
+   for (size_t i = 0u; i < input_event_count; ++i)
+      if (input_events[i].type == ARC_INPUT_EVENT_KEY &&
+          input_events[i].code == RETROK_a)
+      {
+         ++capability_off_a_edges;
+         if (capability_off_a_edges == 2u) assert(!input_events[i].down);
+      }
+   assert(capability_off_a_edges == 2u);
 
    /* A frontend-advertised keyboard snapshot repairs both missing edges. The
     * two Menu aliases remain one merged latch, and a callback tap is retained. */
@@ -3092,6 +3150,7 @@ int main(int argc, char **argv)
    assert(input_observed);
    assert(vidc_osd_ext_calls + vidc_osd_legacy_calls == persistent_osd_before + 2u);
    assert(saw_audio_counters);
+   assert(set_variable_calls == 0u);
    assert(dlclose(module) == 0);
    printf("libretro_harness: payload signatures %016llx/%016llx; "
           "100 cycles, %u frames, %llu audio frames, "
