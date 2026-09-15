@@ -131,9 +131,12 @@ static unsigned flush_fault_log_lines;
 static unsigned flush_fault_osd_calls;
 static unsigned osk_failure_osd_calls;
 static unsigned osk_narrow_osd_calls;
+static unsigned profile_osd_calls;
+static bool expect_test_profile;
 static char last_launch_log[2048];
 static char last_launch_warning[512];
 static char last_flush_fault[512];
+static char last_input_resolution[3072];
 
 static bool signature_is_in(const uint64_t *signatures, unsigned count, uint64_t signature)
 {
@@ -305,6 +308,8 @@ static void frontend_log(enum retro_log_level level, const char *format, ...)
    if (strstr(message, "CMOS write ")) ++cmos_write_count;
    if (strstr(message, "not a recognised ADFS image")) saw_adfs_advisory = true;
    if (strstr(message, "Input queue overflowed")) ++input_overflow_log_lines;
+   if (!strncmp(message, "Input resolution:", 17u))
+      snprintf(last_input_resolution, sizeof(last_input_resolution), "%s", message);
    if (strstr(message, "Short image padded with")) ++short_warning_log_lines;
    if (strstr(message, "Unable to flush the staged floppy image"))
    {
@@ -358,7 +363,15 @@ static bool environment(unsigned command, void *data)
          {
             const struct retro_core_option_v2_definition *definition =
                &options->definitions[n];
-            if (!strcmp(definition->key, "arcdroid_input_profile")) found_profile = true;
+            if (!strcmp(definition->key, "arcdroid_input_profile"))
+            {
+               found_profile = true;
+               bool found_test = false;
+               for (unsigned value = 0u; definition->values[value].value; ++value)
+                  if (!strcmp(definition->values[value].value, "test-profile"))
+                     found_test = true;
+               assert(found_test == expect_test_profile);
+            }
             if (!strcmp(definition->key, "arcdroid_osk_toggle")) found_osk = true;
             if (!strncmp(definition->key, "arcdroid_pad", 12u))
             {
@@ -524,6 +537,7 @@ static bool environment(unsigned command, void *data)
          }
          if (strstr(last_message, "On-screen keyboard disabled:")) ++osk_failure_osd_calls;
          if (strstr(last_message, "unavailable below 320")) ++osk_narrow_osd_calls;
+         if (!strncmp(last_message, "Controls: ", 10u)) ++profile_osd_calls;
          if (strstr(last_message, "Application choice refused") ||
              strstr(last_message, "No unique application") ||
              strstr(last_message, "Application inspection incomplete"))
@@ -541,6 +555,7 @@ static bool environment(unsigned command, void *data)
             ++flush_fault_osd_calls;
             snprintf(last_flush_fault, sizeof(last_flush_fault), "%s", last_message);
          }
+         if (!strncmp(last_message, "Controls: ", 10u)) ++profile_osd_calls;
          if (strstr(last_message, "Application choice refused") ||
              strstr(last_message, "No unique application") ||
              strstr(last_message, "Application inspection incomplete"))
@@ -856,6 +871,7 @@ int main(int argc, char **argv)
    void (*arc_libretro_test_fail_osk_allocations)(unsigned) = NULL;
    void (*arc_libretro_test_drop_osk_surface)(void) = NULL;
    bool (*arc_libretro_test_osk_source_unchanged)(void) = NULL;
+   bool (*arc_libretro_test_register_input_profile)(const ArcInputProfile *) = NULL;
    void (*arc_platform_test_input_events_reset)(void) = NULL;
    size_t (*arc_platform_test_input_events)(ArcKartEvent *, size_t) = NULL;
    if (!real_boot)
@@ -876,6 +892,8 @@ int main(int argc, char **argv)
          dlsym(module, "arc_libretro_test_drop_osk_surface");
       *(void **)(&arc_libretro_test_osk_source_unchanged) =
          dlsym(module, "arc_libretro_test_osk_source_unchanged");
+      *(void **)(&arc_libretro_test_register_input_profile) =
+         dlsym(module, "arc_libretro_test_register_input_profile");
       *(void **)(&arc_platform_test_input_events_reset) =
          dlsym(module, "arc_platform_test_input_events_reset");
       *(void **)(&arc_platform_test_input_events) =
@@ -886,7 +904,21 @@ int main(int argc, char **argv)
              arc_engine_test_cmos_write && arc_libretro_test_fail_osk_allocations &&
              arc_libretro_test_drop_osk_surface &&
              arc_libretro_test_osk_source_unchanged &&
+             arc_libretro_test_register_input_profile &&
              arc_platform_test_input_events_reset && arc_platform_test_input_events);
+      ArcInputProfile test_profile = {
+         .id = "test-profile",
+         .name = "Generated Test Profile",
+         .digests = {"0123456789abcdef0123456789abcdef01234567"},
+         .digest_count = 1u,
+         .has_port1 = true,
+         .evidence = "project-authored harness registration"
+      };
+      for (unsigned port = 0u; port < ARC_PAD_PORTS; ++port)
+         memcpy(test_profile.mapping[port], arc_input_generic_mapping(),
+                sizeof(test_profile.mapping[port]));
+      assert(arc_libretro_test_register_input_profile(&test_profile));
+      expect_test_profile = true;
    }
 
    phase = PHASE_ENV; retro_set_environment(environment);
@@ -1021,7 +1053,14 @@ int main(int argc, char **argv)
    assert(fputc(changed_byte ^ 0x5a, changed_file) != EOF && !fclose(changed_file));
    uint64_t changed_source_hash = hash_file(changed);
    struct retro_game_info changed_game = {changed, NULL, 0u, NULL};
+   unsigned profile_messages_before = profile_osd_calls;
+   option_input_profile = "test-profile";
    phase = PHASE_LOAD; assert(retro_load_game(&game));
+   assert(profile_osd_calls == profile_messages_before + 1u &&
+          strstr(last_input_resolution, "profile=Generated Test Profile") &&
+          strstr(last_input_resolution, "[preset]"));
+   option_input_profile = "Auto";
+   variable_update = true;
    assert(saw_input_descriptors && option_query_count >= 10u);
    struct retro_system_av_info loaded_av;
    retro_get_system_av_info(&loaded_av);

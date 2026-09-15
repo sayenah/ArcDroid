@@ -1093,6 +1093,26 @@ static void test_input_mapping(void)
    assert(!arc_input_key(RETROK_PRINT));
    assert(arc_input_profiles_validate(NULL, 0u));
 
+   ArcInputProfile test_profile = {
+      .id = "test-profile",
+      .name = "Generated Test Profile",
+      .digests = {"0123456789abcdef0123456789abcdef01234567"},
+      .digest_count = 1u,
+      .launch_target = "!TEST",
+      .has_port1 = true,
+      .evidence = "project-authored core test entry"
+   };
+   for (unsigned port = 0u; port < ARC_PAD_PORTS; ++port)
+      memcpy(test_profile.mapping[port], arc_input_generic_mapping(),
+             sizeof(test_profile.mapping[port]));
+   assert(arc_input_profiles_validate_table(&test_profile, 1u, NULL, 0u));
+   ArcInputProfile invalid_profile = test_profile;
+   invalid_profile.digests[0] = "0123456789ABCDEF0123456789ABCDEF01234567";
+   assert(!arc_input_profiles_validate_table(&invalid_profile, 1u, NULL, 0u));
+   ArcInputProfile duplicate_profiles[2] = {test_profile, test_profile};
+   duplicate_profiles[1].id = "other-profile";
+   assert(!arc_input_profiles_validate_table(duplicate_profiles, 2u, NULL, 0u));
+
    ArcInputOverride overrides[ARC_PAD_PORTS][ARC_PAD_INPUT_COUNT];
    memset(overrides, 0, sizeof(overrides));
    for (unsigned port = 0u; port < ARC_PAD_PORTS; ++port)
@@ -1115,6 +1135,17 @@ static void test_input_mapping(void)
    assert(resolution.custom && !resolution.binding[0][ARC_PAD_B].bound &&
           resolution.binding[1][ARC_PAD_A].key == RETROK_LSHIFT &&
           resolution.source[1][ARC_PAD_A] == ARC_MAPPING_SOURCE_OPTION);
+   overrides[0][ARC_PAD_B].automatic = true;
+   overrides[1][ARC_PAD_A].automatic = true;
+   assert(arc_input_resolve_table(&test_profile, 1u,
+            "0123456789abcdef0123456789abcdef01234567", "!TEST", "Auto",
+            overrides, &resolution));
+   assert(!strcmp(resolution.profile_id, "test-profile") &&
+          resolution.source[0][ARC_PAD_A] == ARC_MAPPING_SOURCE_PROFILE);
+   assert(arc_input_resolve_table(&test_profile, 1u,
+            "0000000000000000000000000000000000000000", "!OTHER",
+            "test-profile", overrides, &resolution));
+   assert(resolution.source[0][ARC_PAD_A] == ARC_MAPPING_SOURCE_PRESET);
 
    ArcInputState state;
    ArcInputEvent event;

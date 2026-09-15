@@ -105,6 +105,8 @@ static bool arc_osk_failure_reported;
 static unsigned arc_osk_fail_allocations;
 static bool arc_osk_source_unchanged;
 static bool arc_osk_source_checked;
+static ArcInputProfile arc_test_input_profile;
+static bool arc_test_input_profile_registered;
 void arc_libretro_test_fail_osk_allocations(unsigned count)
 {
    arc_osk_fail_allocations = count;
@@ -282,6 +284,10 @@ static bool arc_read_options(ArcCoreOptions *options, char *error, size_t error_
       const ArcInputProfile *profiles = arc_input_profiles(&count);
       for (size_t i = 0u; i < count; ++i)
          if (!strcmp(profile, profiles[i].id)) found = true;
+#if defined(ARCDROID_TEST_FAULTS)
+      if (arc_test_input_profile_registered &&
+          !strcmp(profile, arc_test_input_profile.id)) found = true;
+#endif
       if (!found) goto invalid;
    }
    for (unsigned port = 0u; port < ARC_PAD_PORTS; ++port)
@@ -1938,6 +1944,30 @@ static struct retro_core_options_v2 arc_options_v2 = {arc_option_categories, arc
 static char arc_pad_option_labels[ARC_PAD_PORTS][ARC_PAD_INPUT_COUNT][32];
 static bool arc_options_built;
 
+#if defined(ARCDROID_TEST_FAULTS)
+bool arc_libretro_test_register_input_profile(const ArcInputProfile *profile)
+{
+   char error[128];
+   if (arc_options_built || !profile ||
+       !arc_input_profiles_validate_table(profile, 1u,
+                                          error, sizeof(error)))
+      return false;
+   size_t shipped_count = 0u;
+   const ArcInputProfile *shipped = arc_input_profiles(&shipped_count);
+   for (size_t i = 0u; i < shipped_count; ++i)
+   {
+      if (!strcmp(profile->id, shipped[i].id)) return false;
+      for (unsigned digest = 0u; digest < profile->digest_count; ++digest)
+         for (unsigned other = 0u; other < shipped[i].digest_count; ++other)
+            if (!strcmp(profile->digests[digest], shipped[i].digests[other]))
+               return false;
+   }
+   arc_test_input_profile = *profile;
+   arc_test_input_profile_registered = true;
+   return true;
+}
+#endif
+
 static void arc_build_options(void)
 {
    if (arc_options_built) return;
@@ -1956,6 +1986,13 @@ static void arc_build_options(void)
    const ArcInputProfile *profiles = arc_input_profiles(&profile_count);
    for (size_t i = 0u; i < profile_count && i + 3u < RETRO_NUM_CORE_OPTION_VALUES_MAX; ++i)
       profile->values[i + 2u] = (struct retro_core_option_value){profiles[i].id, profiles[i].name};
+#if defined(ARCDROID_TEST_FAULTS)
+   if (arc_test_input_profile_registered &&
+       profile_count + 3u < RETRO_NUM_CORE_OPTION_VALUES_MAX)
+      profile->values[profile_count + 2u] = (struct retro_core_option_value){
+         arc_test_input_profile.id, arc_test_input_profile.name
+      };
+#endif
    profile->default_value = "Auto";
 
    size_t key_count = 0u;
@@ -2058,8 +2095,35 @@ static bool arc_resolve_inputs(const ArcCoreOptions *options,
                                bool mapping_change, bool notify)
 {
    ArcInputResolution resolved;
-   if (!arc_input_resolve(arc_content_digest.sha1, arc_plan.launch_target,
-                          options->input_profile, options->pad, &resolved))
+#if defined(ARCDROID_TEST_FAULTS)
+   bool use_test_profile = arc_test_input_profile_registered &&
+      !strcmp(options->input_profile, arc_test_input_profile.id);
+   if (arc_test_input_profile_registered &&
+       !strcmp(options->input_profile, "Auto"))
+   {
+      bool target_matches = !arc_test_input_profile.launch_target ||
+         !arc_test_input_profile.launch_target[0] ||
+         !strcmp(arc_test_input_profile.launch_target, arc_plan.launch_target);
+      for (unsigned digest = 0u;
+           target_matches && digest < arc_test_input_profile.digest_count;
+           ++digest)
+         if (!strcmp(arc_test_input_profile.digests[digest],
+                     arc_content_digest.sha1))
+            use_test_profile = true;
+   }
+   bool resolved_ok = use_test_profile ?
+      arc_input_resolve_table(&arc_test_input_profile, 1u,
+                              arc_content_digest.sha1, arc_plan.launch_target,
+                              options->input_profile, options->pad, &resolved) :
+      arc_input_resolve(arc_content_digest.sha1, arc_plan.launch_target,
+                        options->input_profile, options->pad, &resolved);
+#else
+   bool resolved_ok = arc_input_resolve(arc_content_digest.sha1,
+                                        arc_plan.launch_target,
+                                        options->input_profile, options->pad,
+                                        &resolved);
+#endif
+   if (!resolved_ok)
       return false;
    bool changed = memcmp(resolved.binding, arc_input_resolution.binding,
                          sizeof(resolved.binding)) != 0;

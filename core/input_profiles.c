@@ -13,15 +13,17 @@ const ArcInputProfile *arc_input_profiles(size_t *count)
    return arc_profiles;
 }
 
-bool arc_input_profiles_validate(char *error, size_t error_size)
+bool arc_input_profiles_validate_table(const ArcInputProfile *profiles,
+                                       size_t count, char *error,
+                                       size_t error_size)
 {
-   size_t count = 0u;
-   const ArcInputProfile *profiles = arc_input_profiles(&count);
+   if (count && !profiles) goto invalid;
    for (size_t i = 0u; i < count; ++i)
    {
       if (!profiles[i].id || !profiles[i].id[0] || !profiles[i].name ||
           !profiles[i].name[0] || !profiles[i].digest_count ||
-          profiles[i].digest_count > ARC_INPUT_PROFILE_MAX_DIGESTS)
+          profiles[i].digest_count > ARC_INPUT_PROFILE_MAX_DIGESTS ||
+          !profiles[i].evidence || !profiles[i].evidence[0])
          goto invalid;
       for (size_t prior = 0u; prior < i; ++prior)
          if (!strcmp(profiles[i].id, profiles[prior].id)) goto invalid;
@@ -29,6 +31,10 @@ bool arc_input_profiles_validate(char *error, size_t error_size)
       {
          const char *value = profiles[i].digests[digest];
          if (!value || strlen(value) != 40u) goto invalid;
+         for (unsigned character = 0u; character < 40u; ++character)
+            if (!((value[character] >= '0' && value[character] <= '9') ||
+                  (value[character] >= 'a' && value[character] <= 'f')))
+               goto invalid;
          for (size_t prior = 0u; prior <= i; ++prior)
          {
             unsigned limit = prior == i ? digest : profiles[prior].digest_count;
@@ -47,4 +53,11 @@ invalid:
    if (error && error_size)
       snprintf(error, error_size, "Invalid or duplicate ArcDroid input profile");
    return false;
+}
+
+bool arc_input_profiles_validate(char *error, size_t error_size)
+{
+   size_t count = 0u;
+   const ArcInputProfile *profiles = arc_input_profiles(&count);
+   return arc_input_profiles_validate_table(profiles, count, error, error_size);
 }

@@ -306,12 +306,18 @@ bool arc_input_resolve(const char content_id[41], const char *launch_target,
                        const char *profile_selection,
                        const ArcInputOverride overrides[ARC_PAD_PORTS][ARC_PAD_INPUT_COUNT],
                        ArcInputResolution *resolution);
+bool arc_input_resolve_table(const ArcInputProfile *profiles,
+                             size_t profile_count,
+                             const char content_id[41],
+                             const char *launch_target,
+                             const char *profile_selection,
+                             const ArcInputOverride overrides[ARC_PAD_PORTS][ARC_PAD_INPUT_COUNT],
+                             ArcInputResolution *resolution);
 const ArcInputProfile *arc_input_profiles(size_t *count);
 bool arc_input_profiles_validate(char *error, size_t error_size);
-#if defined(ARCDROID_TEST_FAULTS)
-bool arc_input_profile_test_register(const ArcInputProfile *profile);
-void arc_input_profile_test_clear(void);
-#endif
+bool arc_input_profiles_validate_table(const ArcInputProfile *profiles,
+                                       size_t count, char *error,
+                                       size_t error_size);
 
 void arc_input_reset(ArcInputState *state);
 void arc_input_release_all(ArcInputState *state);
