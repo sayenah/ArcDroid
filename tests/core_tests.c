@@ -266,9 +266,15 @@ static void test_launch_discovery_and_builder(const char *fixture_directory)
           !strcmp(discovery.candidates[0].name, "!Demo"));
    const uint8_t *application_root = application + test_l_offset(2u);
    const uint8_t *application_child = application + test_l_offset(20u);
-   assert(!memcmp(application_root + 5u, "!Demo", 5u));
-   assert(!memcmp(application_child + 5u, "!Run", 4u));
-   assert(!memcmp(application_child + 31u, "!RunImage", 9u));
+   static const uint8_t encoded_demo[] = {0xa1u, 0xc4u, 'e', 0xedu, 'o'};
+   static const uint8_t encoded_run[] = {0xa1u, 0xd2u, 'u', 'n'};
+   static const uint8_t encoded_run_image[] = {
+      0xa1u, 0xd2u, 'u', 'n', 'I', 'm', 'a', 'g', 'e'
+   };
+   assert(!memcmp(application_root + 5u, encoded_demo, sizeof(encoded_demo)));
+   assert(!memcmp(application_child + 5u, encoded_run, sizeof(encoded_run)));
+   assert(!memcmp(application_child + 31u, encoded_run_image,
+                  sizeof(encoded_run_image)));
    assert(application_child[31u + 18u] == 0u &&
           application_child[31u + 19u] == 20u &&
           application_child[31u + 22u] == 0xf6u &&

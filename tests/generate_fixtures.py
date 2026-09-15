@@ -585,7 +585,7 @@ def build_application_l() -> bytearray:
     run = b"Run <Obey$Dir>.!RunImage\r"
     absolute = _build_absolute_boot()
     run_image = absolute + bytes(
-        ((index * 37) ^ 0xA5) & 0xFF
+        ((index * 37) ^ (index >> 8) ^ 0xA5) & 0xFF
         for index in range(20 * SECTOR_SIZE - len(absolute)))
     free_extents = ((7, 13), (25, 15), (41, image_sector - 41),
                     (image_sector + 20, total_sectors - image_sector - 20))
