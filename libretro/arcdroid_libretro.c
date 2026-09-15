@@ -3,6 +3,8 @@
 #include "arc_io.h"
 #include "arcdroid_core.h"
 #include "arcdroid_engine.h"
+#include "jfd.h"
+#include "playlist.h"
 
 #include <stdbool.h>
 #include <math.h>
@@ -51,8 +53,6 @@ static uint32_t arc_frame[ARC_WIDTH * ARC_HEIGHT];
 static int16_t arc_audio_frame[2048u * 2u];
 static uint8_t arc_cmos_record[256];
 static uint8_t arc_cmos_last_written[256];
-static uint8_t *arc_content;
-static size_t arc_content_size;
 static uint8_t *arc_firmware;
 static size_t arc_firmware_size;
 static ArcDigest arc_content_digest;
@@ -64,7 +64,6 @@ static bool arc_keyboard_menu;
 static bool arc_keyboard_lmeta;
 static unsigned arc_port_device[2] = {ARC_DEVICE_KEYS, ARC_DEVICE_MOUSE};
 static char arc_cmos_path[4096];
-static char arc_staged_path[4096];
 static char arc_save_path[4096];
 static uint64_t arc_frame_number;
 static long double arc_audio_fraction;
@@ -81,14 +80,29 @@ static bool arc_can_dupe;
 static bool arc_cmos_last_written_valid;
 static bool arc_ejected;
 static unsigned arc_image_index;
-static unsigned arc_initial_index;
-static char arc_initial_path[4096];
+static bool arc_pending_initial;
+static unsigned arc_pending_initial_index;
+static char arc_pending_initial_path[4096];
 static uint64_t arc_guest_time_us;
 static int16_t arc_stick_x;
 static int16_t arc_stick_y;
 static bool arc_stick_precision;
 static long double arc_stick_fraction_x;
 static long double arc_stick_fraction_y;
+
+typedef struct {
+   bool populated;
+   bool created_this_preparation;
+   char source[ARC_MEDIA_PATH_CAPACITY];
+   char staged[ARC_MEDIA_PATH_CAPACITY];
+   char label[ARC_MEDIA_LABEL_CAPACITY];
+   ArcMediaInfo info;
+   ArcDigest digest;
+   ArcJfdImage jfd;
+} ArcMediaEntry;
+
+static ArcMediaEntry arc_media[ARC_PLAYLIST_MAX_ENTRIES];
+static unsigned arc_media_count;
 
 typedef enum {
    ARC_POINTER_STICK_RIGHT = 0,
@@ -323,6 +337,47 @@ static void arc_finish_firmware_search(ArcFirmwareSearch *search)
       }
 }
 
+static bool arc_select_firmware(ArcOsClass requested, uint8_t **data,
+                                size_t *size,
+                                const ArcFirmwareFingerprint **match,
+                                char *error, size_t error_size)
+{
+   const char *system_dir = NULL;
+   char firmware_dir[ARC_MEDIA_PATH_CAPACITY];
+   ArcFirmwareSearch search = {0};
+   search.priority = 100u;
+   search.requested_os = requested;
+   if (!arc_environment ||
+       !arc_environment(RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY, &system_dir) ||
+       !system_dir || !system_dir[0] ||
+       snprintf(firmware_dir, sizeof(firmware_dir), "%s/arcdroid/firmware", system_dir) < 0)
+   {
+      if (error && error_size) snprintf(error, error_size,
+         "Firmware directory unavailable; expected <system>/arcdroid/firmware.");
+      return false;
+   }
+   arc_io_walk(firmware_dir, 8u, arc_visit_firmware, &search);
+   arc_finish_firmware_search(&search);
+   if (!search.match)
+   {
+      if (error && error_size)
+      {
+         if (search.suspicious_size)
+            snprintf(error, error_size,
+               "Unrecognised firmware size %zu bytes; nearest expected size is %zu bytes.",
+               search.suspicious_size, search.nearest_size);
+         else
+            snprintf(error, error_size, "Missing %s firmware in <system>/arcdroid/firmware.",
+               arc_os_name(requested == ARC_OS_UNKNOWN ? ARC_OS_RISCOS_311 : requested));
+      }
+      return false;
+   }
+   *data = search.data;
+   *size = search.size;
+   if (match) *match = search.match;
+   return true;
+}
+
 static const char *arc_os_slug(ArcOsClass os)
 {
    switch (os)
@@ -343,12 +398,15 @@ static const char *arc_os_slug(ArcOsClass os)
 static void arc_release_session(void)
 {
    arc_engine_stop();
-   free(arc_content);
    free(arc_firmware);
-   arc_content = NULL;
    arc_firmware = NULL;
-   arc_content_size = arc_firmware_size = 0u;
-   arc_cmos_path[0] = arc_staged_path[0] = '\0';
+   arc_firmware_size = 0u;
+   for (unsigned i = 0u; i < ARC_PLAYLIST_MAX_ENTRIES; ++i)
+      arc_jfd_free(&arc_media[i].jfd);
+   memset(arc_media, 0, sizeof(arc_media));
+   arc_media_count = 0u;
+   arc_image_index = 0u;
+   arc_cmos_path[0] = '\0';
    arc_cmos_last_written_valid = false;
    memset(&arc_plan, 0, sizeof(arc_plan));
 }
@@ -456,164 +514,433 @@ static void arc_vidc_episode_update(bool field_completed, uint64_t elapsed_us)
    }
 }
 
-static bool arc_prepare_disk(const char *source, ArcDiskWriteMode mode,
-                             char output[4096], ArcMediaKind *kind,
-                             ArcDigest *digest, void **bytes, size_t *byte_count,
-                             char *error, size_t error_size)
+static void arc_media_stem(const char *path, char label[ARC_MEDIA_LABEL_CAPACITY])
 {
-   void *content = NULL;
-   size_t content_size = 0u;
-   ArcMediaKind media;
-   if (!source || !source[0] || !arc_io_read_all(source, &content, &content_size))
+   const char *slash = strrchr(path, '/');
+   const char *backslash = strrchr(path, '\\');
+   const char *name = slash && backslash ? (slash > backslash ? slash : backslash) + 1 :
+                      slash ? slash + 1 : backslash ? backslash + 1 : path;
+   const char *dot = strrchr(name, '.');
+   size_t length = dot && dot > name ? (size_t)(dot - name) : strlen(name);
+   if (length >= ARC_MEDIA_LABEL_CAPACITY) length = ARC_MEDIA_LABEL_CAPACITY - 1u;
+   memcpy(label, name, length);
+   label[length] = '\0';
+}
+
+static bool arc_atomic_publish(const char *target, const uint8_t *data, size_t size,
+                               bool *created, char *error, size_t error_size)
+{
+   char temporary[ARC_MEDIA_PATH_CAPACITY];
+   int written = snprintf(temporary, sizeof(temporary), "%s.tmp", target);
+   if (written < 0 || (size_t)written >= sizeof(temporary))
+      goto failure;
+   (void)arc_io_remove(temporary);
+   if (!arc_io_write_all(temporary, data, size) || !arc_io_rename(temporary, target))
    {
-      if (error && error_size) snprintf(error, error_size, "Unable to read the selected content through the frontend VFS.");
+      (void)arc_io_remove(temporary);
+      goto failure;
+   }
+   if (created) *created = true;
+   return true;
+failure:
+   if (error && error_size) snprintf(error, error_size,
+      "Unable to publish staged media with flush, close and rename.");
+   return false;
+}
+
+static bool arc_file_digest_matches(const char *path, const uint8_t *expected,
+                                    size_t expected_size)
+{
+   void *data = NULL;
+   size_t size = 0u;
+   if (!arc_io_read_all(path, &data, &size)) return false;
+   ArcDigest actual_digest = arc_digest(data, size);
+   ArcDigest expected_digest = arc_digest(expected, expected_size);
+   bool matches = size == expected_size &&
+      !strcmp(actual_digest.sha1, expected_digest.sha1);
+   free(data);
+   return matches;
+}
+
+static bool arc_prepare_source(const char *source, const char *playlist_label,
+                               ArcDiskWriteMode mode, ArcMediaEntry *entry,
+                               char *error, size_t error_size)
+{
+   void *source_data = NULL;
+   size_t source_size = 0u;
+   uint8_t *staged_data = NULL;
+   memset(entry, 0, sizeof(*entry));
+   if (!source || !source[0] || strlen(source) >= sizeof(entry->source) ||
+       !arc_io_read_all(source, &source_data, &source_size))
+   {
+      if (error && error_size) snprintf(error, error_size,
+         "unable to read media through the frontend VFS");
       return false;
    }
-   media = arc_media_inspect(source, content_size, error, error_size);
-   if (media == ARC_MEDIA_INVALID || media == ARC_MEDIA_ADF_HD_UNSUPPORTED)
+   if (!arc_media_inspect(source, source_data, source_size, &entry->info,
+                          error, error_size))
+   { free(source_data); return false; }
+   strcpy(entry->source, source);
+   if (playlist_label && playlist_label[0])
+      strcpy(entry->label, playlist_label);
+
+   const uint8_t *publish_data = source_data;
+   size_t publish_size = source_size;
+   bool immutable = mode == ARC_DISK_WRITES_OFF;
+   const char *extension = "adf";
+   if (entry->info.kind == ARC_MEDIA_JFD)
    {
-      free(content);
-      return false;
-   }
-   ArcDigest content_digest = arc_digest(content, content_size);
-   if (mode == ARC_DISK_WRITES_ORIGINAL)
-   {
-      if (strlen(source) >= 4096u)
+      bool decoded_source = source_size >= 4u && !memcmp(source_data, "JFDI", 4u);
+      bool parsed = decoded_source ?
+         arc_jfd_parse_owned(source_data, source_size, &entry->jfd, error, error_size) :
+         arc_jfd_parse(source_data, source_size, &entry->jfd, error, error_size);
+      if (decoded_source) source_data = NULL;
+      if (!parsed) { free(source_data); return false; }
+      if (arc_log)
       {
-         free(content);
-         return false;
+         arc_log(RETRO_LOG_INFO,
+            "JFD: title=\"%s\" sequence=%08x flags=%08x fps_x2=%u obey=%u bytes header=%s\n",
+            entry->jfd.title, entry->jfd.sequence, entry->jfd.flags,
+            entry->jfd.fps_times_two, entry->jfd.obey_length,
+            entry->jfd.extended ? "extended" : "legacy");
+         if (entry->jfd.ignored_header_fields)
+            arc_log(RETRO_LOG_WARN,
+               "JFD: unknown flags or reserved header bytes are ignored by Slice 2a.\n");
       }
-      strcpy(output, source);
+      entry->digest = arc_digest(entry->jfd.decoded, entry->jfd.decoded_size);
+      publish_data = entry->jfd.decoded;
+      publish_size = entry->jfd.decoded_size;
+      immutable = true;
+      extension = "jfd";
+      if (!entry->label[0] && entry->jfd.title[0])
+      {
+         size_t length = strlen(entry->jfd.title);
+         if (length >= sizeof(entry->label)) length = sizeof(entry->label) - 1u;
+         memcpy(entry->label, entry->jfd.title, length);
+         entry->label[length] = '\0';
+      }
    }
    else
    {
-      char directory[4096];
-      const char *extension = media == ARC_MEDIA_ADL_640K ? "adl" : "adf";
-      int written = snprintf(directory, sizeof(directory), "%s/arcdroid/media/%s",
-                             arc_save_path, content_digest.sha1);
-      if (written < 0 || (size_t)written >= sizeof(directory) ||
-          !arc_io_make_path(directory))
+      entry->digest = arc_digest(source_data, source_size);
+      extension = entry->info.geometry == ARC_GEOMETRY_640K_L ? "adl" : "adf";
+      if (entry->info.short_image)
       {
-         free(content);
-         if (error && error_size) snprintf(error, error_size, "Unable to prepare staged media directory.");
-         return false;
+         if (mode == ARC_DISK_WRITES_ORIGINAL)
+         {
+            if (error && error_size) snprintf(error, error_size,
+               "Short image cannot use original writes; choose shadow or off.");
+            free(source_data);
+            return false;
+         }
+         staged_data = calloc(1u, entry->info.declared_size);
+         if (!staged_data)
+         { free(source_data); if (error && error_size) snprintf(error, error_size, "out of memory"); return false; }
+         memcpy(staged_data, source_data, source_size);
+         publish_data = staged_data;
+         publish_size = entry->info.declared_size;
       }
-      written = snprintf(output, 4096u, "%s/%s.%s", directory,
-                         mode == ARC_DISK_WRITES_OFF ? "disc-readonly" : "disc",
-                         extension);
-      size_t staged_size = 0u;
-      bool needs_copy = mode == ARC_DISK_WRITES_OFF ||
-                        !arc_io_file_size(output, &staged_size) ||
-                        staged_size != content_size;
-      if (written < 0 || written >= 4096 ||
-          (needs_copy && !arc_io_write_all(output, content, content_size)))
+      if (entry->info.recognition == ARC_MEDIA_RECOGNITION_SIZE_FALLBACK &&
+          !arc_media_is_recognised_adfs(source_data, source_size))
+         arc_message("Media is not a recognised ADFS image; booting anyway.", RETRO_LOG_WARN);
+   }
+   if (!entry->label[0]) arc_media_stem(source, entry->label);
+
+   if (mode == ARC_DISK_WRITES_ORIGINAL && entry->info.kind != ARC_MEDIA_JFD)
+      strcpy(entry->staged, source);
+   else
+   {
+      char directory[ARC_MEDIA_PATH_CAPACITY];
+      int n = snprintf(directory, sizeof(directory), "%s/arcdroid/media/%s",
+                       arc_save_path, entry->digest.sha1);
+      int staged_n = n < 0 || (size_t)n >= sizeof(directory) ? -1 :
+         snprintf(entry->staged, sizeof(entry->staged), "%s/%s.%s", directory,
+                  immutable ? "disc-readonly" : "disc", extension);
+      if (n < 0 || (size_t)n >= sizeof(directory) || staged_n < 0 ||
+          (size_t)staged_n >= sizeof(entry->staged) || !arc_io_make_path(directory))
       {
-         free(content);
-         if (error && error_size) snprintf(error, error_size, "Unable to stage content under <save>/arcdroid/media.");
-         return false;
+         if (error && error_size) snprintf(error, error_size, "unable to prepare staged media directory");
+         goto reject;
+      }
+      size_t existing_size = 0u;
+      bool exists = arc_io_file_size(entry->staged, &existing_size);
+      if (exists && !immutable)
+      {
+         void *check = NULL;
+         size_t check_size = 0u;
+         if (existing_size != publish_size || !arc_io_read_all(entry->staged, &check, &check_size) ||
+             check_size != publish_size)
+         {
+            free(check);
+            if (error && error_size) snprintf(error, error_size,
+               "Writable media shadow has a structural fault and was not replaced.");
+            goto reject;
+         }
+         free(check);
+      }
+      else if (!exists || !arc_file_digest_matches(entry->staged, publish_data, publish_size))
+      {
+         if (exists && !arc_io_remove(entry->staged))
+         {
+            if (error && error_size) snprintf(error, error_size, "unable to replace invalid immutable staged media");
+            goto reject;
+         }
+         if (!arc_atomic_publish(entry->staged, publish_data, publish_size,
+                                 &entry->created_this_preparation, error, error_size))
+            goto reject;
       }
    }
-   if (kind) *kind = media;
-   if (digest) *digest = content_digest;
-   if (bytes) *bytes = content; else free(content);
-   if (byte_count) *byte_count = content_size;
+   entry->populated = true;
+   if (entry->info.short_image)
+   {
+      char warning[192];
+      snprintf(warning, sizeof(warning), "Short image padded with %zu missing bytes; source remains unchanged.",
+               entry->info.padding_required);
+      arc_message(warning, RETRO_LOG_WARN);
+   }
+   /* JFD staging is immutable. Retain its metadata, digest and label here,
+    * then re-read and parse only the selected image immediately before an
+    * insert. This keeps exactly one decoded JFD buffer live per session. */
+   if (entry->info.kind == ARC_MEDIA_JFD) arc_jfd_free(&entry->jfd);
+   free(staged_data);
+   free(source_data);
+   return true;
+reject:
+   arc_jfd_free(&entry->jfd);
+   free(staged_data);
+   free(source_data);
+   memset(entry, 0, sizeof(*entry));
+   return false;
+}
+
+static uint8_t arc_hex_nibble(char value)
+{
+   return (uint8_t)(value >= '0' && value <= '9' ? value - '0' :
+      value >= 'a' && value <= 'f' ? value - 'a' + 10 : value - 'A' + 10);
+}
+
+static void arc_cleanup_failed_preparation(void)
+{
+   for (unsigned i = 0u; i < arc_media_count; ++i)
+   {
+      if (arc_media[i].created_this_preparation && arc_media[i].staged[0])
+         (void)arc_io_remove(arc_media[i].staged);
+      arc_jfd_free(&arc_media[i].jfd);
+   }
+   memset(arc_media, 0, sizeof(arc_media));
+   arc_media_count = 0u;
+}
+
+static bool arc_prepare_media_list(const char *content_path,
+                                   ArcDiskWriteMode mode,
+                                   char *error, size_t error_size)
+{
+   void *top_data = NULL;
+   size_t top_size = 0u;
+   if (!arc_io_read_all(content_path, &top_data, &top_size))
+   {
+      if (error && error_size) snprintf(error, error_size,
+         "Unable to read the selected content through the frontend VFS.");
+      return false;
+   }
+   ArcPlaylist playlist;
+   bool is_playlist = arc_playlist_detect(content_path, top_data, top_size);
+   if (is_playlist)
+   {
+      unsigned error_line = 0u;
+#if defined(_WIN32)
+      const bool windows_host = true;
+#else
+      const bool windows_host = false;
+#endif
+      if (!arc_playlist_parse(content_path, top_data, top_size, windows_host,
+                              &playlist, &error_line, error, error_size))
+      { free(top_data); return false; }
+   }
+   free(top_data);
+   arc_media_count = is_playlist ? playlist.count : 1u;
+   size_t total = 0u;
+   for (unsigned i = 0u; i < arc_media_count; ++i)
+   {
+      const char *source = is_playlist ? playlist.entries[i].path : content_path;
+      const char *label = is_playlist ? playlist.entries[i].label : NULL;
+      if (!arc_prepare_source(source, label, mode, &arc_media[i], error, error_size))
+      {
+         if (is_playlist && error && error_size)
+         {
+            char reason[512];
+            snprintf(reason, sizeof(reason), "%s", error);
+            snprintf(error, error_size, "playlist line %u: %s", playlist.entries[i].line, reason);
+         }
+         arc_cleanup_failed_preparation();
+         return false;
+      }
+      bool duplicate = false;
+      for (unsigned previous = 0u; previous < i; ++previous)
+         if (!strcmp(arc_media[previous].digest.sha1, arc_media[i].digest.sha1))
+            duplicate = true;
+      if (!duplicate)
+      {
+         size_t logical = arc_media[i].info.declared_size;
+         if (logical > 256u * 1024u * 1024u - total)
+         {
+            if (error && error_size) snprintf(error, error_size,
+               "prepared logical media exceeds 256 MiB");
+            arc_cleanup_failed_preparation();
+            return false;
+         }
+         total += logical;
+      }
+   }
+   if (!is_playlist)
+      arc_content_digest = arc_media[0].digest;
+   else
+   {
+      static const char domain[] = "arcdroid-playlist-v1";
+      uint8_t identity[sizeof(domain) - 1u + 4u + ARC_PLAYLIST_MAX_ENTRIES * 20u];
+      size_t at = 0u;
+      memcpy(identity, domain, sizeof(domain) - 1u); at += sizeof(domain) - 1u;
+      identity[at++] = (uint8_t)arc_media_count;
+      identity[at++] = 0u;
+      identity[at++] = 0u;
+      identity[at++] = 0u;
+      for (unsigned i = 0u; i < arc_media_count; ++i)
+         for (unsigned byte = 0u; byte < 20u; ++byte)
+            identity[at++] = (uint8_t)((arc_hex_nibble(arc_media[i].digest.sha1[byte * 2u]) << 4u) |
+                                       arc_hex_nibble(arc_media[i].digest.sha1[byte * 2u + 1u]));
+      arc_content_digest = arc_digest(identity, at);
+   }
+   return true;
+}
+
+static ArcEngineMedia arc_engine_media(const ArcMediaEntry *entry)
+{
+   ArcEngineMedia media = {entry->staged,
+      entry->info.kind != ARC_MEDIA_JFD && arc_plan.disk_writes != ARC_DISK_WRITES_OFF,
+      entry->info.kind, entry->info.geometry,
+      entry->info.kind == ARC_MEDIA_JFD ? &entry->jfd : NULL};
+   return media;
+}
+
+static bool arc_refresh_jfd(ArcMediaEntry *entry, char *error, size_t error_size)
+{
+   if (entry->info.kind != ARC_MEDIA_JFD) return true;
+   void *data = NULL;
+   size_t size = 0u;
+   if (!arc_io_read_all(entry->staged, &data, &size) ||
+       strcmp(arc_digest(data, size).sha1, entry->digest.sha1))
+   {
+      free(data);
+      if (error && error_size) snprintf(error, error_size, "Staged JFD digest mismatch.");
+      return false;
+   }
+   ArcJfdImage parsed;
+   if (!arc_jfd_parse_owned(data, size, &parsed, error, error_size)) return false;
+   arc_jfd_free(&entry->jfd);
+   entry->jfd = parsed;
    return true;
 }
 
 static bool arc_disk_set_eject(bool ejected)
 {
-   char error[256] = {0};
-   if (ejected == arc_ejected) return true;
+   char error[512] = {0};
    if (!arc_loaded) return false;
+   if (ejected == arc_ejected) return true;
    if (ejected)
    {
       if (!arc_engine_media_eject()) return false;
+      if (arc_image_index < arc_media_count)
+         arc_jfd_free(&arc_media[arc_image_index].jfd);
+      arc_ejected = true;
+      return true;
    }
-   else if (arc_image_index == 0u)
+   if (arc_image_index < arc_media_count && arc_media[arc_image_index].populated)
    {
-      if (!arc_staged_path[0] ||
-          !arc_engine_media_insert(arc_staged_path,
-             arc_plan.disk_writes != ARC_DISK_WRITES_OFF,
-             error, sizeof(error)))
+      ArcMediaEntry *entry = &arc_media[arc_image_index];
+      if (!arc_refresh_jfd(entry, error, sizeof(error)))
       {
+         arc_message(error, RETRO_LOG_ERROR);
+         return false;
+      }
+      ArcEngineMedia media = arc_engine_media(entry);
+      if (!arc_engine_media_insert(&media, error, sizeof(error)))
+      {
+         arc_jfd_free(&entry->jfd);
          arc_message(error[0] ? error : "Unable to insert the selected floppy image.", RETRO_LOG_ERROR);
          return false;
       }
    }
-   arc_ejected = ejected;
+   arc_ejected = false;
    return true;
 }
 static bool arc_disk_get_eject(void) { return arc_ejected; }
 static unsigned arc_disk_get_index(void) { return arc_image_index; }
 static bool arc_disk_set_index(unsigned index)
 {
-   if (index > 1u || (!arc_ejected && index != arc_image_index))
-      return false;
-   arc_image_index = index;
+   if (!arc_loaded || !arc_ejected) return false;
+   if (index < arc_media_count && !arc_media[index].populated) return false;
+   arc_image_index = index < arc_media_count ? index : arc_media_count;
    return true;
 }
-static unsigned arc_disk_get_count(void) { return 2u; }
+static unsigned arc_disk_get_count(void) { return arc_media_count; }
 static bool arc_disk_replace(unsigned index, const struct retro_game_info *info)
 {
-   char candidate[4096];
-   char error[512] = {0};
-   ArcMediaKind media;
-   ArcDigest digest;
-   void *data = NULL;
-   size_t size = 0u;
-   if (index != 0u || !arc_ejected) return false;
+   if (!arc_loaded || !arc_ejected || index >= arc_media_count) return false;
    if (!info)
    {
-      arc_initial_path[0] = '\0';
-      arc_staged_path[0] = '\0';
+      bool selected = arc_image_index == index;
+      arc_jfd_free(&arc_media[index].jfd);
+      memmove(&arc_media[index], &arc_media[index + 1u],
+              (arc_media_count - index - 1u) * sizeof(arc_media[0]));
+      memset(&arc_media[arc_media_count - 1u], 0, sizeof(arc_media[0]));
+      --arc_media_count;
+      if (selected) arc_image_index = arc_media_count;
+      else if (arc_image_index > index && arc_image_index <= arc_media_count) --arc_image_index;
+      else if (arc_image_index > arc_media_count) arc_image_index = arc_media_count;
       return true;
    }
-   if (!info->path || strlen(info->path) >= sizeof(arc_initial_path) ||
-       !arc_prepare_disk(info->path, arc_plan.disk_writes, candidate, &media,
-                         &digest, &data, &size, error, sizeof(error)))
+   ArcMediaEntry replacement;
+   char error[512] = {0};
+   if (!info->path || !arc_prepare_source(info->path, NULL, arc_plan.disk_writes,
+                                           &replacement, error, sizeof(error)))
    {
+      if (!arc_media[index].populated && index + 1u == arc_media_count)
+         --arc_media_count;
       arc_message(error[0] ? error : "Replacement floppy image is invalid.", RETRO_LOG_ERROR);
       return false;
    }
-   if (!arc_media_is_recognised_adfs(data, size))
-      arc_message("Media is not a recognised ADFS image; booting anyway.", RETRO_LOG_WARN);
-   free(data);
-   strcpy(arc_initial_path, info->path);
-   strcpy(arc_staged_path, candidate);
+   arc_jfd_free(&arc_media[index].jfd);
+   arc_media[index] = replacement;
    return true;
 }
-static bool arc_disk_add(void) { return false; }
+static bool arc_disk_add(void)
+{
+   if (!arc_loaded || arc_media_count >= ARC_PLAYLIST_MAX_ENTRIES) return false;
+   memset(&arc_media[arc_media_count++], 0, sizeof(arc_media[0]));
+   return true;
+}
 static bool arc_disk_set_initial(unsigned index, const char *path)
 {
-   if (index > 1u) return false;
-   arc_initial_index = index;
-   if (path)
-   {
-      size_t length = strlen(path);
-      if (length >= sizeof(arc_initial_path))
-         return false;
-      memcpy(arc_initial_path, path, length + 1u);
-   }
-   else
-      arc_initial_path[0] = '\0';
+   if (!path || strlen(path) >= sizeof(arc_pending_initial_path)) return false;
+   arc_pending_initial_index = index;
+   strcpy(arc_pending_initial_path, path);
+   arc_pending_initial = true;
    return true;
 }
 static bool arc_disk_get_path(unsigned index, char *path, size_t length)
 {
-   const char *source = index == 0u ? arc_initial_path : "";
-   size_t needed = strlen(source) + 1u;
-   if (!path || needed > length || index > 1u)
-      return false;
-   memcpy(path, source, needed);
+   if (!path || index >= arc_media_count || !arc_media[index].populated) return false;
+   size_t needed = strlen(arc_media[index].source) + 1u;
+   if (needed > length) return false;
+   memcpy(path, arc_media[index].source, needed);
    return true;
 }
 static bool arc_disk_get_label(unsigned index, char *label, size_t length)
 {
-   const char *source = index == 0u ? "Disc 1" : "Empty drive";
-   size_t needed = strlen(source) + 1u;
-   if (!label || needed > length || index > 1u)
-      return false;
-   memcpy(label, source, needed);
+   if (!label || index >= arc_media_count || !arc_media[index].populated) return false;
+   size_t needed = strlen(arc_media[index].label) + 1u;
+   if (needed > length) return false;
+   memcpy(label, arc_media[index].label, needed);
    return true;
 }
 
@@ -1080,7 +1407,7 @@ RETRO_API void retro_get_system_info(struct retro_system_info *info)
    memset(info, 0, sizeof(*info));
    info->library_name = "ArcDroid";
    info->library_version = ARCDROID_VERSION;
-   info->valid_extensions = "adf|adl";
+   info->valid_extensions = "adf|adl|jfd|m3u";
    info->need_fullpath = true;
    info->block_extract = false;
 }
@@ -1109,8 +1436,10 @@ RETRO_API void retro_init(void)
    struct retro_log_callback log = {NULL};
    arc_loaded = false;
    arc_ejected = false;
-   arc_image_index = arc_initial_index = 0u;
-   arc_initial_path[0] = '\0';
+   arc_image_index = 0u;
+   arc_pending_initial = false;
+   arc_pending_initial_index = 0u;
+   arc_pending_initial_path[0] = '\0';
    memset(arc_cmos_record, 0, sizeof(arc_cmos_record));
    arc_input_sampling_reset(false);
    arc_port_device[0] = ARC_DEVICE_KEYS;
@@ -1150,6 +1479,8 @@ RETRO_API void retro_deinit(void)
    arc_engine_set_log_callback(NULL, NULL);
    arc_log = NULL;
    arc_loaded = false;
+   arc_pending_initial = false;
+   arc_pending_initial_path[0] = '\0';
    arc_vfs = NULL;
    arc_io_set_vfs(NULL);
    arc_environment = NULL;
@@ -1177,9 +1508,12 @@ static bool arc_load_game(const struct retro_game_info *game, bool negotiate)
    char error[512] = {0};
    ArcFirmwareSearch search = {0};
    search.priority = 100u;
-   ArcMediaKind media;
-   void *content = NULL;
-   size_t content_size = 0u;
+   bool pending_initial = arc_pending_initial;
+   unsigned pending_index = arc_pending_initial_index;
+   char pending_path[sizeof(arc_pending_initial_path)];
+   snprintf(pending_path, sizeof(pending_path), "%s", arc_pending_initial_path);
+   arc_pending_initial = false;
+   arc_pending_initial_path[0] = '\0';
    if (arc_loaded) arc_persist_cmos();
    arc_loaded = false;
    arc_release_session();
@@ -1188,7 +1522,7 @@ static bool arc_load_game(const struct retro_game_info *game, bool negotiate)
    memset(arc_frame, 0, sizeof(arc_frame));
    if (!game || !game->path || !game->path[0])
    {
-      arc_message("ArcDroid requires a loose ADF or ADL image.", RETRO_LOG_ERROR);
+      arc_message("ArcDroid requires an ADF, ADL, JFD or m3u playlist.", RETRO_LOG_ERROR);
       return false;
    }
    if (!arc_environment || (negotiate &&
@@ -1205,7 +1539,7 @@ static bool arc_load_game(const struct retro_game_info *game, bool negotiate)
       arc_message("ArcDroid requires the libretro VFS v3 interface.", RETRO_LOG_ERROR);
       return false;
    }
-   if (strlen(game->path) >= sizeof(arc_initial_path))
+   if (strlen(game->path) >= ARC_MEDIA_PATH_CAPACITY)
    {
       arc_message("Content path is too long.", RETRO_LOG_ERROR);
       return false;
@@ -1216,23 +1550,24 @@ static bool arc_load_game(const struct retro_game_info *game, bool negotiate)
       return false;
    }
    if (!arc_environment(RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY, &save_dir) ||
-       !save_dir || !save_dir[0] || strlen(save_dir) >= sizeof(arc_save_path))
+       !save_dir || !save_dir[0] || strlen(save_dir) >= sizeof(arc_save_path) ||
+       !strncmp(save_dir, "saf://", 6u))
    {
-      arc_message("Save directory unavailable; ArcDroid cannot stage content safely.", RETRO_LOG_ERROR);
+      arc_message("A native writable save directory is required; SAF save directories cannot publish staged media.", RETRO_LOG_ERROR);
       return false;
    }
    strcpy(arc_save_path, save_dir);
-   if (!arc_prepare_disk(game->path, arc_core_options.disk_writes,
-                         arc_staged_path, &media, &arc_content_digest,
-                         &content, &content_size, error, sizeof(error)))
+   if (!arc_prepare_media_list(game->path, arc_core_options.disk_writes,
+                               error, sizeof(error)))
    {
       arc_message(error, RETRO_LOG_ERROR);
       return false;
    }
-   if (!arc_media_is_recognised_adfs(content, content_size))
-      arc_message("Media is not a recognised ADFS image; booting anyway.", RETRO_LOG_WARN);
-   arc_content = (uint8_t *)content;
-   arc_content_size = content_size;
+   arc_image_index = 0u;
+   if (pending_initial && pending_index < arc_media_count &&
+       arc_media[pending_index].populated &&
+       !strcmp(arc_media[pending_index].source, pending_path))
+      arc_image_index = pending_index;
 
    if (!arc_environment(RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY, &system_dir) ||
        !system_dir || !system_dir[0] ||
@@ -1260,7 +1595,8 @@ static bool arc_load_game(const struct retro_game_info *game, bool negotiate)
    }
    arc_firmware = search.data;
    arc_firmware_size = search.size;
-   if (!arc_launch_plan_default(&arc_plan, media, search.match->os,
+   if (!arc_launch_plan_default(&arc_plan, arc_media[arc_image_index].info.kind,
+                                search.match->os,
                                 arc_content_digest.sha1,
                                 arc_core_options.request_a3010_joystick,
                                 error, sizeof(error)))
@@ -1297,11 +1633,17 @@ static bool arc_load_game(const struct retro_game_info *game, bool negotiate)
    {
       uint8_t payload[ARC_CMOS_PAYLOAD_SIZE];
       uint8_t machine_cmos[ARC_CMOS_MACHINE_SIZE];
+      if (!arc_refresh_jfd(&arc_media[arc_image_index], error, sizeof(error)))
+      {
+         arc_message(error, RETRO_LOG_ERROR);
+         arc_release_session();
+         return false;
+      }
+      ArcEngineMedia media = arc_engine_media(&arc_media[arc_image_index]);
       if (!arc_cmos_decode(arc_cmos_record, &arc_plan, payload) ||
           !arc_cmos_machine_image(arc_plan.os, payload, machine_cmos) ||
           !arc_engine_start(arc_firmware, arc_firmware_size,
-                            arc_initial_index == 1u ? "" : arc_staged_path,
-                            arc_plan.disk_writes != ARC_DISK_WRITES_OFF,
+                            &media,
                             machine_cmos, error, sizeof(error)))
       {
          arc_message(error[0] ? error : "Unable to start the Arculator machine.", RETRO_LOG_ERROR);
@@ -1309,9 +1651,7 @@ static bool arc_load_game(const struct retro_game_info *game, bool negotiate)
          return false;
       }
    }
-   strcpy(arc_initial_path, game->path);
    arc_loaded = true;
-   arc_image_index = arc_initial_index;
    arc_ejected = false;
    memset(arc_frame, 0, sizeof(arc_frame));
    arc_frame_number = 0u;
@@ -1349,17 +1689,109 @@ RETRO_API void retro_unload_game(void)
    }
    arc_loaded = false;
    arc_release_session();
+   arc_pending_initial = false;
+   arc_pending_initial_path[0] = '\0';
    arc_input_sampling_reset(false);
    arc_guest_time_us = 0u;
 }
 RETRO_API void retro_reset(void)
 {
    if (!arc_loaded) return;
-   char path[sizeof(arc_initial_path)];
-   snprintf(path, sizeof(path), "%s", arc_initial_path);
-   arc_initial_index = arc_image_index;
-   struct retro_game_info game = {path, NULL, 0u, NULL};
-   (void)arc_load_game(&game, false);
+   char error[512] = {0};
+   ArcCoreOptions updated;
+   uint8_t *new_firmware = NULL;
+   size_t new_firmware_size = 0u;
+   const ArcFirmwareFingerprint *firmware_match = NULL;
+   ArcDigest frozen_identity = arc_content_digest;
+   bool was_ejected = arc_ejected;
+   unsigned selected = arc_image_index;
+
+   arc_persist_cmos();
+   if (!arc_read_options(&updated, error, sizeof(error)) ||
+       !arc_select_firmware(updated.requested_os, &new_firmware,
+                            &new_firmware_size, &firmware_match,
+                            error, sizeof(error)))
+      goto failed;
+
+   arc_engine_stop();
+   if (updated.disk_writes != arc_core_options.disk_writes)
+   {
+      for (unsigned i = 0u; i < arc_media_count; ++i)
+      {
+         if (!arc_media[i].populated) continue;
+         ArcMediaEntry replacement;
+         if (!arc_prepare_source(arc_media[i].source, arc_media[i].label,
+                                 updated.disk_writes, &replacement,
+                                 error, sizeof(error)))
+            goto failed;
+         arc_jfd_free(&arc_media[i].jfd);
+         arc_media[i] = replacement;
+      }
+   }
+   if (!was_ejected && selected < arc_media_count &&
+       !arc_refresh_jfd(&arc_media[selected], error, sizeof(error)))
+      goto failed;
+
+   free(arc_firmware);
+   arc_firmware = new_firmware;
+   new_firmware = NULL;
+   arc_firmware_size = new_firmware_size;
+   arc_core_options = updated;
+   ArcMediaKind plan_media = selected < arc_media_count && arc_media[selected].populated ?
+      arc_media[selected].info.kind :
+      (arc_media_count ? arc_media[0].info.kind : arc_plan.media);
+   if (!arc_launch_plan_default(&arc_plan, plan_media, firmware_match->os,
+                                frozen_identity.sha1,
+                                updated.request_a3010_joystick,
+                                error, sizeof(error)))
+      goto failed;
+   arc_plan.pointer_relative = updated.pointer_relative;
+   arc_plan.disk_writes = updated.disk_writes;
+   arc_content_digest = frozen_identity;
+
+   char cmos_dir[ARC_MEDIA_PATH_CAPACITY];
+   int cmos_written = snprintf(cmos_dir, sizeof(cmos_dir), "%s/arcdroid/cmos", arc_save_path);
+   int path_written = cmos_written >= 0 && (size_t)cmos_written < sizeof(cmos_dir) ?
+      snprintf(arc_cmos_path, sizeof(arc_cmos_path), "%s/A3000.%s.%s.bin", cmos_dir,
+               arc_os_slug(arc_plan.os), arc_plan.content_id) : -1;
+   if (cmos_written < 0 || (size_t)cmos_written >= sizeof(cmos_dir) ||
+       !arc_io_make_path(cmos_dir) || path_written < 0 ||
+       (size_t)path_written >= sizeof(arc_cmos_path))
+   { snprintf(error, sizeof(error), "Unable to prepare persistent CMOS storage."); goto failed; }
+   arc_seed_cmos();
+   uint8_t payload[ARC_CMOS_PAYLOAD_SIZE];
+   uint8_t machine_cmos[ARC_CMOS_MACHINE_SIZE];
+   ArcEngineMedia mounted;
+   ArcEngineMedia *mounted_pointer = NULL;
+   if (!was_ejected && selected < arc_media_count && arc_media[selected].populated)
+   {
+      mounted = arc_engine_media(&arc_media[selected]);
+      mounted_pointer = &mounted;
+   }
+   if (!arc_cmos_decode(arc_cmos_record, &arc_plan, payload) ||
+       !arc_cmos_machine_image(arc_plan.os, payload, machine_cmos) ||
+       !arc_engine_start(arc_firmware, arc_firmware_size, mounted_pointer,
+                         machine_cmos, error, sizeof(error)))
+      goto failed;
+   arc_loaded = true;
+   arc_ejected = was_ejected;
+   arc_image_index = selected <= arc_media_count ? selected : arc_media_count;
+   arc_input_sampling_reset(false);
+   arc_guest_time_us = 0u;
+   arc_frame_number = 0u;
+   arc_audio_fraction = 0u;
+   arc_fault_reported = false;
+   arc_vidc_warning_reported = false;
+   arc_vidc_transient_logged = false;
+   arc_vidc_incomplete_us = 0u;
+   arc_audio_warning_reported = false;
+   return;
+failed:
+   free(new_firmware);
+   arc_message(error[0] ? error : "Unable to reset the ArcDroid session.", RETRO_LOG_ERROR);
+   arc_loaded = false;
+   arc_release_session();
+   arc_input_sampling_reset(false);
 }
 
 RETRO_API void retro_run(void)

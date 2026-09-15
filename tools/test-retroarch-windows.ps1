@@ -45,6 +45,12 @@ Copy-Item (Join-Path $InputDirectory "arcdroid_libretro.info") $info
 Copy-Item (Join-Path $InputDirectory "arcdroid-test.rom") $firmware
 
 function ConfigPath([string]$Path) { return $Path.Replace('\', '/') }
+function Send-QuitPair($Udp) {
+    $quitBytes = [Text.Encoding]::ASCII.GetBytes("QUIT")
+    [void]$Udp.Send($quitBytes, $quitBytes.Length)
+    Start-Sleep -Milliseconds 300
+    [void]$Udp.Send($quitBytes, $quitBytes.Length)
+}
 $config = Join-Path $WorkDirectory "retroarch-ci.cfg"
 @"
 video_driver = "gdi"
@@ -67,6 +73,8 @@ pause_nonactive = "false"
 video_vsync = "false"
 network_cmd_enable = "true"
 network_cmd_port = "55355"
+quit_press_twice = "false"
+initial_disk_change_enable = "true"
 "@ | Set-Content -Encoding ASCII $config
 
 $log = Join-Path $evidenceDirectory "retroarch.log"
@@ -135,8 +143,7 @@ function Try-InSessionReloads {
             Start-Sleep -Milliseconds 500
             if ($process.HasExited) { throw "RetroArch exited during in-session reload $reload" }
         }
-        $quitBytes = [Text.Encoding]::ASCII.GetBytes("QUIT")
-        [void]$udp.Send($quitBytes, $quitBytes.Length)
+        Send-QuitPair $udp
         $udp.Dispose()
         if (-not $process.WaitForExit(30000)) { throw "RetroArch did not exit after QUIT" }
         $process.WaitForExit()
@@ -235,4 +242,199 @@ if ($env:GITHUB_STEP_SUMMARY) {
     Add-Content -Encoding UTF8 $env:GITHUB_STEP_SUMMARY "- Screenshot: expected payload-derived cyan/red pattern observed ($dimensions; $cyanPixels/$redPixels pixels)."
     Add-Content -Encoding UTF8 $env:GITHUB_STEP_SUMMARY "- Reloads: $reloadEvidence."
     Add-Content -Encoding UTF8 $env:GITHUB_STEP_SUMMARY "- Audio: $audioEvidence."
+}
+
+# Slice 2a exercises disk control and initial-image replay with the generated
+# media ROM. Each network command is followed by an observed screenshot before
+# the next command is sent. Separate launches cover valid/stale .ldci records
+# and the JFD reader.
+Copy-Item -Force (Join-Path $InputDirectory "arcdroid-media-test.rom") $firmware
+$playlist = (Resolve-Path (Join-Path $InputDirectory "arcdroid-media.m3u")).Path
+$disc1 = (Resolve-Path (Join-Path $InputDirectory "arcdroid-media-disc1.adf")).Path
+$disc2 = (Resolve-Path (Join-Path $InputDirectory "arcdroid-media-disc2.adf")).Path
+$jfd = (Resolve-Path (Join-Path $InputDirectory "arcdroid-test-two-member.jfd")).Path
+
+function Start-MediaRun([string]$MediaPath, [string]$Name) {
+    $stdout = Join-Path $WorkDirectory "$Name.stdout.log"
+    $stderr = Join-Path $WorkDirectory "$Name.stderr.log"
+    $retroLog = Join-Path $evidenceDirectory "$Name.log"
+    Remove-Item -Force -ErrorAction SilentlyContinue $retroLog
+    $arguments = @("--config=$config", "--libretro=$core", "--verbose",
+        "--log-file=$retroLog", $MediaPath)
+    $process = Start-Process -FilePath $retroArch -ArgumentList $arguments `
+        -PassThru -NoNewWindow -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+    $udp = [System.Net.Sockets.UdpClient]::new()
+    $udp.Client.ReceiveTimeout = 500
+    $udp.Connect("127.0.0.1", 55355)
+    $deadline = [DateTime]::UtcNow.AddSeconds(10)
+    $ready = $false
+    while ([DateTime]::UtcNow -lt $deadline -and -not $ready) {
+        if ($process.HasExited) { throw "$Name exited before its command port became ready" }
+        try {
+            $bytes = [Text.Encoding]::ASCII.GetBytes("GET_STATUS")
+            [void]$udp.Send($bytes, $bytes.Length)
+            $remote = [System.Net.IPEndPoint]::new([System.Net.IPAddress]::Any, 0)
+            $reply = [Text.Encoding]::ASCII.GetString($udp.Receive([ref]$remote))
+            $ready = -not [string]::IsNullOrWhiteSpace($reply)
+        } catch [System.Net.Sockets.SocketException] {
+            Start-Sleep -Milliseconds 100
+        }
+    }
+    if (-not $ready) { throw "$Name did not answer GET_STATUS within 10 seconds" }
+    Start-Sleep -Seconds 2
+    return @{ Process = $process; Udp = $udp; Stdout = $stdout; Stderr = $stderr;
+        RetroLog = $retroLog; Name = $Name }
+}
+
+function Send-MediaCommand($Run, [string]$Command) {
+    if ($Run.Process.HasExited) { throw "$($Run.Name) exited before $Command" }
+    $bytes = [Text.Encoding]::ASCII.GetBytes($Command)
+    [void]$Run.Udp.Send($bytes, $bytes.Length)
+}
+
+function Stop-MediaRun($Run) {
+    try {
+        if (-not $Run.Process.HasExited) {
+            Send-QuitPair $Run.Udp
+            if (-not $Run.Process.WaitForExit(30000)) {
+                throw "$($Run.Name) did not exit within 30 seconds after QUIT"
+            }
+            $Run.Process.WaitForExit()
+        }
+        if ($Run.Process.ExitCode -ne 0) {
+            throw "$($Run.Name) exited with code $($Run.Process.ExitCode)"
+        }
+    } finally {
+        $Run.Udp.Dispose()
+        if (-not $Run.Process.HasExited) {
+            Stop-Process -Id $Run.Process.Id -Force -ErrorAction SilentlyContinue
+        }
+        $output = @()
+        if (Test-Path $Run.Stdout) { $output += Get-Content $Run.Stdout }
+        if (Test-Path $Run.Stderr) { $output += Get-Content $Run.Stderr }
+        $output | Set-Content -Encoding UTF8 (Join-Path $evidenceDirectory "$($Run.Name)-process.log")
+        Remove-Item -Force -ErrorAction SilentlyContinue $Run.Stdout, $Run.Stderr
+        if (-not (Test-Path $Run.RetroLog)) {
+            throw "$($Run.Name) did not produce its RetroArch log file"
+        }
+    }
+}
+
+function Get-MediaRowSignature([string]$Path, [string]$Name) {
+    $image = [System.Drawing.Bitmap]::new($Path)
+    $bestRatio = 0.0
+    $bestColour = 0
+    $bestY = -1
+    try {
+        for ($y = 0; $y -lt $image.Height; $y++) {
+            $counts = @{}
+            $sampleCount = 0
+            for ($x = 0; $x -lt $image.Width; $x += 4) {
+                $argb = $image.GetPixel($x, $y).ToArgb()
+                $rgb = $argb -band 0x00ffffff
+                if ($rgb -eq 0) { continue }
+                if ($counts.ContainsKey($argb)) { $counts[$argb]++ } else { $counts[$argb] = 1 }
+                $sampleCount++
+            }
+            if ($sampleCount -eq 0) { continue }
+            $dominant = $counts.GetEnumerator() | Sort-Object Value -Descending | Select-Object -First 1
+            $ratio = [double]$dominant.Value / $sampleCount
+            if ($ratio -gt $bestRatio) {
+                $bestRatio = $ratio
+                $bestColour = [int]$dominant.Key
+                $bestY = $y
+            }
+        }
+    } finally {
+        $dimensions = "$($image.Width)x$($image.Height)"
+        $image.Dispose()
+    }
+    if ($bestY -lt 0 -or $bestRatio -lt 0.85) {
+        throw "$Name did not contain a machine-decodable uniform media result row"
+    }
+    $signature = "{0:x8}" -f $bestColour
+    "$Name path=$Path dimensions=$dimensions row=$bestY ratio=$bestRatio argb=$signature" |
+        Add-Content -Encoding ASCII (Join-Path $evidenceDirectory "media-signatures.txt")
+    return $signature
+}
+
+function Capture-MediaSignature($Run, [string]$Name) {
+    $before = @((Get-ChildItem -Path $evidenceDirectory -Filter "*.png" -ErrorAction SilentlyContinue).FullName)
+    Send-MediaCommand $Run "SCREENSHOT"
+    $deadline = [DateTime]::UtcNow.AddSeconds(10)
+    $shot = $null
+    while ([DateTime]::UtcNow -lt $deadline -and -not $shot) {
+        Start-Sleep -Milliseconds 100
+        $shot = Get-ChildItem -Path $evidenceDirectory -Filter "*.png" -ErrorAction SilentlyContinue |
+            Where-Object { $before -notcontains $_.FullName } |
+            Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1
+    }
+    if (-not $shot) { throw "$Name screenshot was not observed within 10 seconds" }
+    $renamed = Join-Path $evidenceDirectory "$Name.png"
+    Move-Item -Force $shot.FullName $renamed
+    return Get-MediaRowSignature $renamed $Name
+}
+
+function Capture-ExpectedSignature($Run, [string]$Name, [string]$Expected, [bool]$Different) {
+    $deadline = [DateTime]::UtcNow.AddSeconds(10)
+    $attempt = 0
+    do {
+        $attempt++
+        $actual = Capture-MediaSignature $Run "$Name-$attempt"
+        $matched = $actual -eq $Expected
+        if ($matched -ne $Different) { return $actual }
+        Start-Sleep -Milliseconds 200
+    } while ([DateTime]::UtcNow -lt $deadline)
+    $relation = if ($Different) { "different from" } else { "equal to" }
+    throw "$Name did not become $relation $Expected within 10 seconds (last $actual)"
+}
+
+$mediaRun = Start-MediaRun $playlist "playlist-disk-control"
+try {
+    $disc1Signature = Capture-MediaSignature $mediaRun "playlist-disc1"
+    Send-MediaCommand $mediaRun "DISK_EJECT_TOGGLE"
+    [void](Capture-ExpectedSignature $mediaRun "playlist-ejected" $disc1Signature $false)
+    Send-MediaCommand $mediaRun "DISK_NEXT"
+    [void](Capture-ExpectedSignature $mediaRun "playlist-selected-disc2" $disc1Signature $false)
+    Send-MediaCommand $mediaRun "DISK_EJECT_TOGGLE"
+    $disc2Signature = Capture-ExpectedSignature $mediaRun "playlist-disc2" $disc1Signature $true
+} finally {
+    Stop-MediaRun $mediaRun
+}
+
+# RetroArch's per-core save sorting redirects this core's save directory to
+# <configured savefile_directory>/ArcDroid, and .ldci records live there.
+$indexDirectory = Join-Path $saveDirectory "ArcDroid"
+New-Item -ItemType Directory -Force $indexDirectory | Out-Null
+$indexRecord = Join-Path $indexDirectory "arcdroid-media.ldci"
+@{ version = "1.0"; image_index = 1; image_path = $disc2 } |
+    ConvertTo-Json | Set-Content -Encoding ASCII $indexRecord
+$validRun = Start-MediaRun $playlist "ldci-valid"
+try {
+    [void](Capture-ExpectedSignature $validRun "ldci-valid-disc2" $disc2Signature $false)
+} finally {
+    Stop-MediaRun $validRun
+}
+
+@{ version = "1.0"; image_index = 1; image_path = "$disc2.stale" } |
+    ConvertTo-Json | Set-Content -Encoding ASCII $indexRecord
+$staleRun = Start-MediaRun $playlist "ldci-stale"
+try {
+    [void](Capture-ExpectedSignature $staleRun "ldci-stale-disc1" $disc1Signature $false)
+} finally {
+    Stop-MediaRun $staleRun
+}
+
+$jfdRun = Start-MediaRun $jfd "jfd"
+try {
+    [void](Capture-ExpectedSignature $jfdRun "jfd-golden" $disc1Signature $false)
+} finally {
+    Stop-MediaRun $jfdRun
+}
+
+Write-Host "Slice 2a Windows RetroArch: disk commands, valid/stale initial image, and JFD golden region passed"
+if ($env:GITHUB_STEP_SUMMARY) {
+    Add-Content -Encoding UTF8 $env:GITHUB_STEP_SUMMARY "- Slice 2a media: playlist disc 1 observed; eject/next/close observed before successive commands; disc 2 region observed."
+    Add-Content -Encoding UTF8 $env:GITHUB_STEP_SUMMARY "- Initial disk replay: valid .ldci started on disc 2; stale .ldci started on disc 1."
+    Add-Content -Encoding UTF8 $env:GITHUB_STEP_SUMMARY "- JFD: generated fixture reached the disc 1 golden result region."
 }

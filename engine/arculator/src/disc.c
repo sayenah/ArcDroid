@@ -1,17 +1,16 @@
 /*Arculator 2.2 by Sarah Walker
   Disc support*/
-/* ArcDroid modification (2026-09-14): Slice 1 registers only the validated ADF/ADL subset.
- * WD1772 seek completion is kept independent of the excluded drive-noise
- * mixer, which upstream also (incorrectly) used as its command timer owner. */
+/* ArcDroid modification (2026-09-14): validated media kind and geometry cross
+ * the adapter boundary explicitly; empty-drive commands terminate normally. */
 #include <stdio.h>
 #include <string.h>
-#include <limits.h>
 #include "arc.h"
 #include "config.h"
 
 #include "disc.h"
 
 #include "disc_adf.h"
+#include "disc_jfd.h"
 #include "ioc.h"
 #include "arc_io.h"
 #include "timer.h"
@@ -51,42 +50,24 @@ emu_timer_t *fdc_timer;
 int fdc_overridden;
 int fdc_ready;
 
-static int driveloaders[4];
-
-void disc_load(int drive, char *fn)
+bool disc_load_raw(int drive, char *fn, ArcMediaGeometry geometry)
 {
-	int size;
-	ArcIoFile *file;
-	rpclog("disc_load %i %s\n", drive, fn);
-//        setejecttext(drive, "");
-	if (!fn) return;
-	file = arc_io_open_file(fn, false);
-	if (!file) return;
-	int64_t length = arc_io_file_length(file);
-	arc_io_close_file(file);
-	if (length < 0 || length > INT_MAX) return;
-	size = (int)length;
-	/* ArcDroid validates extensions at the frontend boundary, then selects the
-	 * raw geometry by exact size so .adf and .adl remain interchangeable hints. */
-	rpclog("Size %i\n", size);
-	if (size == (800*1024)) /*800k ADFS/DOS - 80*2*5*1024*/
+	if (!fn || drive < 0 || drive >= 4) return false;
+	rpclog("disc_load %i %s geometry=%i\n", drive, fn, (int)geometry);
+	switch (geometry)
 	{
-		driveloaders[drive] = 1;
-		adf_arcdd_load(drive, fn);
-		return;
+		case ARC_GEOMETRY_320K: adf_load(drive, fn); break;
+		case ARC_GEOMETRY_640K_L: adl_load(drive, fn); break;
+		case ARC_GEOMETRY_800K_D:
+		case ARC_GEOMETRY_800K_E: adf_arcdd_load(drive, fn); break;
+		default: return false;
 	}
-	if (size == (640*1024)) /*640k ADFS/DOS - 80*2*16*256*/
-	{
-		driveloaders[drive] = 2;
-		adl_load(drive, fn);
-		return;
-	}
-	if (size == (320 * 1024))
-	{
-		driveloaders[drive] = 0;
-		adf_load(drive, fn);
-		return;
-	}
+	return !disc_empty(drive);
+}
+
+bool disc_load_jfd(int drive, const ArcJfdImage *image)
+{
+	return jfd_load(drive, image);
 }
 
 void disc_new(int drive, char *fn)
@@ -100,10 +81,11 @@ void disc_close(int drive)
 	rpclog("disc_close %i\n", drive);
 	if (drive_funcs[drive])
 	{
+		drive_funcs[drive]->stop();
 		drive_funcs[drive]->close(drive);
 		drive_funcs[drive] = NULL;
 	}
-	disc_stop(drive);
+	disc_notfound = 0;
 }
 
 int disc_empty(int drive)
@@ -114,6 +96,11 @@ int disc_empty(int drive)
 void disc_init()
 {
 	memset(drive_funcs, 0, sizeof(drive_funcs));
+	memset(disc_current_track, 0, sizeof(disc_current_track));
+	memset(discchange, 0, sizeof(discchange));
+	memset(readflash, 0, sizeof(readflash));
+	disc_notfound = 0;
+	jfd_init();
 }
 
 void disc_reset()
@@ -132,12 +119,12 @@ void disc_poll(void *p)
 	{
 		if (drive_funcs[disc_drivesel]->poll)
 			drive_funcs[disc_drivesel]->poll();
-		if (disc_notfound)
-		{
-			disc_notfound--;
-			if (!disc_notfound)
-				fdc_funcs->notfound(fdc_p);
-		}
+	}
+	if (disc_notfound)
+	{
+		disc_notfound--;
+		if (!disc_notfound && fdc_funcs)
+			fdc_funcs->notfound(fdc_p);
 	}
 }
 
@@ -175,7 +162,10 @@ void disc_writesector(int drive, int sector, int track, int side, int density)
 	if (drive_funcs[drive] && drive_funcs[drive]->writesector)
 		drive_funcs[drive]->writesector(drive, sector, track, side, density);
 	else
-		disc_notfound = 10000;
+	{
+		disc_notfound = 0;
+		if (fdc_funcs) fdc_funcs->notfound(fdc_p);
+	}
 }
 
 void disc_readaddress(int drive, int track, int side, int density)
@@ -191,11 +181,15 @@ void disc_format(int drive, int track, int side, int density)
 	if (drive_funcs[drive] && drive_funcs[drive]->format)
 		drive_funcs[drive]->format(drive, track, side, density);
 	else
-		disc_notfound = 10000;
+	{
+		disc_notfound = 0;
+		if (fdc_funcs) fdc_funcs->notfound(fdc_p);
+	}
 }
 
 void disc_stop(int drive)
 {
+	disc_notfound = 0;
 	if (drive_funcs[drive] && drive_funcs[drive]->stop)
 		drive_funcs[drive]->stop();
 }
@@ -205,7 +199,10 @@ void disc_set_motor(int enable)
 	if (!enable)
 		timer_disable(&disc_timer);
 	else if (!timer_is_enabled(&disc_timer))
+	{
+		jfd_motor_start();
 		timer_set_delay_u64(&disc_timer, disc_poll_time);
+	}
 }
 
 void disc_set_density(int density)

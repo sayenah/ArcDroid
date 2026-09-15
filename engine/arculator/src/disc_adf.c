@@ -1,6 +1,7 @@
 /*Arculator 2.2 by Sarah Walker
   ADFS disc support (really all raw sector formats)*/
-/* ArcDroid modification (2026-09-14): unavailable data never terminates the frontend. */
+/* ArcDroid modification (2026-09-14): unavailable data never terminates the
+ * frontend and every command/rotation field is reset across media sessions. */
 #include <string.h>
 #include "arc.h"
 #include "arc_io.h"
@@ -10,6 +11,7 @@
 static disc_funcs_t adf_disc_funcs;
 
 static void adf_seek(int drive, int track);
+static void adf_stop(void);
 
 static struct
 {
@@ -48,8 +50,10 @@ int adf_flush_all(void)
 void adf_init()
 {
 	memset(adf, 0, sizeof(adf));
-//        adl[0] = adl[1] = 0;
-	adf_notfound = 0;
+	adf_sector = adf_track = adf_side = adf_drive = 0;
+	adf_inread = adf_readpos = adf_inwrite = adf_inreadaddr = 0;
+	adf_notfound = adf_rsector = adf_informat = adf_pause = 0;
+	adf_index = 6250;
 }
 
 void adf_loadex(int drive, char *fn, int sectors, int size, int sides, int dblstep, int density, int sector_offset)
@@ -114,6 +118,7 @@ void dsd_load(int drive, char *fn)
 
 static void adf_close(int drive)
 {
+	if (adf_drive == drive) adf_stop();
 	if (adf[drive].f) arc_io_close_file(adf[drive].f);
 	adf[drive].f = NULL;
 }
@@ -302,6 +307,7 @@ static void adf_poll()
 //                rpclog("Read pos %i\n", adf_readpos);
 //                if (!adfreadpos) rpclog("%i\n",adfsector*adfsize[adfdrive]);
 		fdc_funcs->data(adf[adf_drive].track_data[adf_side][(adf_sector * adf[adf_drive].size) + adf_readpos], fdc_p);
+		if (!adf_inread) return;
 		adf_readpos++;
 		if (adf_readpos == adf[adf_drive].size)
 		{

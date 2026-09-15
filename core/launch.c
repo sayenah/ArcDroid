@@ -1,44 +1,14 @@
 /* ArcDroid launch planning. Copyright 2026 ArcDroid contributors. GPL-2.0-only. */
 #include "arcdroid_core.h"
+#include "jfd.h"
 
-#include <ctype.h>
 #include <stdio.h>
 #include <string.h>
-
-static bool arc_extension(const char *path, const char *expected)
-{
-   const char *dot = path ? strrchr(path, '.') : NULL;
-   if (!dot) return false;
-   ++dot;
-   while (*dot && *expected)
-   {
-      if (tolower((unsigned char)*dot++) != tolower((unsigned char)*expected++)) return false;
-   }
-   return !*dot && !*expected;
-}
-
-ArcMediaKind arc_media_inspect(const char *path, size_t size,
-                               char *error, size_t error_size)
-{
-   ArcMediaKind kind = ARC_MEDIA_INVALID;
-   bool supported_extension = arc_extension(path, "adf") || arc_extension(path, "adl");
-   if (supported_extension && size == 327680u) kind = ARC_MEDIA_ADF_320K;
-   else if (supported_extension && size == 819200u) kind = ARC_MEDIA_ADF_800K;
-   else if (supported_extension && size == 655360u) kind = ARC_MEDIA_ADL_640K;
-   else if (supported_extension && size == 1638400u) kind = ARC_MEDIA_ADF_HD_UNSUPPORTED;
-   if (kind == ARC_MEDIA_ADF_HD_UNSUPPORTED)
-   {
-      if (error && error_size) snprintf(error, error_size, "1600 KiB high-density ADF is unsupported by the Slice 1 WD1772 machine");
-   }
-   else if (kind == ARC_MEDIA_INVALID && error && error_size)
-      snprintf(error, error_size, "unsupported or corrupt ADF/ADL geometry (%zu bytes)", size);
-   return kind;
-}
 
 static uint8_t arc_old_map_checksum(const uint8_t *block)
 {
    unsigned checksum = 0xffu;
-   for (unsigned index = 0u; index < 255u; ++index)
+   for (unsigned index = 255u; index-- > 0u;)
    {
       if (checksum > 0xffu) checksum = (checksum + 1u) & 0xffu;
       checksum += block[index];
@@ -78,9 +48,10 @@ static uint8_t arc_new_map_zone_checksum(const uint8_t *map, unsigned log2_secto
    return (uint8_t)((sum[0] ^ sum[1] ^ sum[2] ^ sum[3]) & 0xffu);
 }
 
-static bool arc_new_map_e_format(const uint8_t *data, size_t size)
+static bool arc_new_map_e_format(const uint8_t *data, size_t available,
+                                 size_t declared)
 {
-   if (!data || size < 1024u) return false;
+   if (!data || available < 1024u || declared != 819200u) return false;
    const uint8_t *record = data + 4u;
    unsigned log2_sector = record[0];
    /* Skew is formatter metadata, not a fixed E-format discriminator. */
@@ -88,9 +59,9 @@ static bool arc_new_map_e_format(const uint8_t *data, size_t size)
        record[3] != 2u || record[8] != 0u ||
        record[9] != 1u) return false;
    size_t sector_size = (size_t)1u << log2_sector;
-   if (size != 819200u || size % (sector_size * record[1] * record[2]) != 0u ||
-       size / (sector_size * record[1] * record[2]) != 80u) return false;
-   if (arc_read_le32(record + 16u) != size) return false;
+   if (declared % (sector_size * record[1] * record[2]) != 0u ||
+       declared / (sector_size * record[1] * record[2]) != 80u) return false;
+   if (arc_read_le32(record + 16u) != declared) return false;
 
    unsigned id_length = record[4];
    unsigned log2_bytes_per_map_bit = record[5];
@@ -102,7 +73,7 @@ static bool arc_new_map_e_format(const uint8_t *data, size_t size)
    /* The 32-bit zone header prefixes zone_size; only the 60-byte disc record
     * occupies allocation space in zone zero. */
    uint64_t allocation_bits = sector_bits - zone_spare - 480u;
-   uint64_t required_bits = size >> log2_bytes_per_map_bit;
+   uint64_t required_bits = declared >> log2_bytes_per_map_bit;
    uint64_t ids_per_zone = (sector_bits - zone_spare) / (id_length + 1u);
    if (allocation_bits < required_bits || allocation_bits - required_bits >= ids_per_zone ||
        ids_per_zone < 3u || ids_per_zone > (UINT64_C(1) << 15u))
@@ -127,7 +98,123 @@ bool arc_media_is_recognised_adfs(const uint8_t *data, size_t size)
    return (data && size >= 512u &&
            data[255] == arc_old_map_checksum(data) &&
            data[511] == arc_old_map_checksum(data + 256u)) ||
-          arc_new_map_e_format(data, size);
+          arc_new_map_e_format(data, size, size);
+}
+
+static bool arc_old_map_geometry(const uint8_t *data, size_t size,
+                                 ArcMediaGeometry *geometry,
+                                 size_t *declared_size, size_t *max_missing)
+{
+   if (!data || size < 512u ||
+       data[255] != arc_old_map_checksum(data) ||
+       data[511] != arc_old_map_checksum(data + 256u) ||
+       data[509] > 246u || data[509] % 3u) return false;
+   uint32_t old_size = (uint32_t)data[252] | ((uint32_t)data[253] << 8u) |
+                       ((uint32_t)data[254] << 16u);
+   switch (old_size)
+   {
+      case 1280u: *geometry = ARC_GEOMETRY_320K; *declared_size = 327680u; *max_missing = 4096u; return true;
+      case 2560u: *geometry = ARC_GEOMETRY_640K_L; *declared_size = 655360u; *max_missing = 8192u; return true;
+      case 3200u: *geometry = ARC_GEOMETRY_800K_D; *declared_size = 819200u; *max_missing = 10240u; return true;
+      default: return false;
+   }
+}
+
+static const char *arc_geometry_name(size_t size)
+{
+   size_t d320 = size > 327680u ? size - 327680u : 327680u - size;
+   size_t d640 = size > 655360u ? size - 655360u : 655360u - size;
+   size_t d800 = size > 819200u ? size - 819200u : 819200u - size;
+   if (d320 <= d640 && d320 <= d800) return "320K";
+   return d640 <= d800 ? "640K L" : "800K";
+}
+
+bool arc_media_inspect(const char *path, const uint8_t *data, size_t size,
+                       ArcMediaInfo *info, char *error, size_t error_size)
+{
+   (void)path;
+   ArcMediaInfo found;
+   memset(&found, 0, sizeof(found));
+   found.available_size = size;
+   if (!data || !info)
+   {
+      if (error && error_size) snprintf(error, error_size, "invalid media inspection input");
+      return false;
+   }
+   if (arc_jfd_has_signature(data, size))
+   {
+      ArcJfdImage jfd;
+      if (!arc_jfd_parse(data, size, &jfd, error, error_size)) return false;
+      found.kind = ARC_MEDIA_JFD;
+      found.declared_size = jfd.decoded_size;
+      found.recognition = ARC_MEDIA_RECOGNITION_CONTAINER;
+      arc_jfd_free(&jfd);
+      *info = found;
+      return true;
+   }
+
+   ArcMediaGeometry geometry = ARC_GEOMETRY_NONE;
+   size_t declared = 0u, max_missing = 0u;
+   bool descriptor = arc_new_map_e_format(data, size, 819200u);
+   if (descriptor)
+   {
+      geometry = ARC_GEOMETRY_800K_E;
+      declared = 819200u;
+      max_missing = 10240u;
+   }
+   else
+      descriptor = arc_old_map_geometry(data, size, &geometry, &declared, &max_missing);
+   if (descriptor)
+   {
+      if (size > declared)
+      {
+         if (error && error_size) snprintf(error, error_size,
+            "%s image overshoots declared geometry by %zu bytes",
+            arc_geometry_name(declared), size - declared);
+         return false;
+      }
+      size_t missing = declared - size;
+      size_t sector_size = geometry == ARC_GEOMETRY_800K_D ||
+                           geometry == ARC_GEOMETRY_800K_E ? 1024u : 256u;
+      if (missing && (missing > max_missing || missing % sector_size))
+      {
+         if (error && error_size) snprintf(error, error_size,
+            "%s image is short by %zu bytes (tail must be sector-aligned and no more than %zu bytes)",
+            arc_geometry_name(declared), missing, max_missing);
+         return false;
+      }
+      found.geometry = geometry;
+      found.declared_size = declared;
+      found.padding_required = missing;
+      found.short_image = missing != 0u;
+      found.recognition = ARC_MEDIA_RECOGNITION_DESCRIPTOR;
+   }
+   else
+   {
+      found.declared_size = size;
+      found.recognition = ARC_MEDIA_RECOGNITION_SIZE_FALLBACK;
+      if (size == 327680u) found.geometry = ARC_GEOMETRY_320K;
+      else if (size == 655360u) found.geometry = ARC_GEOMETRY_640K_L;
+      else if (size == 819200u) found.geometry = ARC_GEOMETRY_800K_E;
+      else if (size == 1638400u)
+      {
+         if (error && error_size) snprintf(error, error_size,
+            "1600 KiB high-density ADF is unsupported by the Slice 1 WD1772 machine");
+         return false;
+      }
+      else
+      {
+         if (error && error_size) snprintf(error, error_size,
+            "unsupported raw image geometry (%zu bytes; nearest %s)", size,
+            arc_geometry_name(size));
+         return false;
+      }
+   }
+   found.kind = found.geometry == ARC_GEOMETRY_320K ? ARC_MEDIA_ADF_320K :
+                found.geometry == ARC_GEOMETRY_640K_L ? ARC_MEDIA_ADL_640K :
+                ARC_MEDIA_ADF_800K;
+   *info = found;
+   return true;
 }
 
 bool arc_launch_plan_default(ArcLaunchPlan *plan, ArcMediaKind media,

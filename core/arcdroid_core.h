@@ -46,8 +46,34 @@ typedef enum {
    ARC_MEDIA_ADF_320K,
    ARC_MEDIA_ADF_800K,
    ARC_MEDIA_ADL_640K,
-   ARC_MEDIA_ADF_HD_UNSUPPORTED
+   ARC_MEDIA_ADF_HD_UNSUPPORTED,
+   ARC_MEDIA_JFD
 } ArcMediaKind;
+
+typedef enum {
+   ARC_GEOMETRY_NONE = 0,
+   ARC_GEOMETRY_320K,
+   ARC_GEOMETRY_640K_L,
+   ARC_GEOMETRY_800K_D,
+   ARC_GEOMETRY_800K_E
+} ArcMediaGeometry;
+
+typedef enum {
+   ARC_MEDIA_RECOGNITION_NONE = 0,
+   ARC_MEDIA_RECOGNITION_SIZE_FALLBACK,
+   ARC_MEDIA_RECOGNITION_DESCRIPTOR,
+   ARC_MEDIA_RECOGNITION_CONTAINER
+} ArcMediaRecognition;
+
+typedef struct {
+   ArcMediaKind kind;
+   ArcMediaGeometry geometry;
+   size_t declared_size;
+   size_t available_size;
+   size_t padding_required;
+   ArcMediaRecognition recognition;
+   bool short_image;
+} ArcMediaInfo;
 
 typedef enum {
    ARC_DISK_WRITES_SHADOW = 0,
@@ -88,8 +114,8 @@ bool arc_firmware_assemble(const uint8_t *const *parts, const size_t *sizes,
                            uint8_t *output, size_t output_size,
                            char *error, size_t error_size);
 
-ArcMediaKind arc_media_inspect(const char *path, size_t size,
-                               char *error, size_t error_size);
+bool arc_media_inspect(const char *path, const uint8_t *data, size_t size,
+                       ArcMediaInfo *info, char *error, size_t error_size);
 bool arc_media_is_recognised_adfs(const uint8_t *data, size_t size);
 bool arc_firmware_nearest_size(size_t actual, size_t margin, size_t *expected);
 bool arc_launch_plan_default(ArcLaunchPlan *plan, ArcMediaKind media,

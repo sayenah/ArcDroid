@@ -10,6 +10,8 @@ sources='core/hash.c
 core/input.c
 core/firmware_table.c
 core/launch.c
+core/playlist.c
+core/jfd.c
 core/persistence.c
 core/cmos_defaults.c
 engine/arcdroid_engine.c
@@ -19,6 +21,7 @@ engine/arculator/src/cmos.c
 engine/arculator/src/cp15.c
 engine/arculator/src/disc.c
 engine/arculator/src/disc_adf.c
+engine/arculator/src/disc_jfd.c
 engine/arculator/src/ds2401.c
 engine/arculator/src/fpa.c
 engine/arculator/src/ioc.c
@@ -46,8 +49,9 @@ engine/arculator/src/*.h
 platform/*.h
 libretro/*.h'
 
+pattern='(^|[^[:alnum:]_>.])(fopen|open|_wfopen|gz[a-z]*|CreateFile[A-Za-z]*)[[:space:]]*\(|(^|[^[:alnum:]_])dumpregs[[:space:]]*\('
 scan_sources=${ARCDROID_SHIPPING_IO_SOURCES:-$sources}
-if all_matches=$(grep -En '(^|[^[:alnum:]_])(fopen|dumpregs)[[:space:]]*\(' $scan_sources); then
+if all_matches=$(grep -En "$pattern" $scan_sources); then
   matches=$(printf '%s\n' "$all_matches" | grep -Ev '^engine/arculator/src/arc\.h:[0-9]+:[[:space:]]*\*[[:space:]]*dumpregs\(\), and its obsolete declaration was removed from this header\. \*/$' || true)
   if [ -n "$matches" ]; then
     printf '%s\n' "$matches" >&2
@@ -62,27 +66,73 @@ else
   fi
 fi
 
+# zlib is compiled with Z_SOLO, which removes its gz/file API declarations and
+# code-generator branches. Preprocess the exact vendored allowlist under that
+# definition, then scan what the compiler actually sees. The only raw-source
+# exceptions are zutil.h's two inactive F_OPEN macro bodies.
+if [ -z "${ARCDROID_SHIPPING_IO_SOURCES:-}" ]; then
+  zlib_files='third_party/zlib/adler32.c third_party/zlib/crc32.c third_party/zlib/crc32.h
+third_party/zlib/inffast.c third_party/zlib/inffast.h third_party/zlib/inffixed.h
+third_party/zlib/inflate.c third_party/zlib/inflate.h third_party/zlib/inftrees.c
+third_party/zlib/inftrees.h third_party/zlib/zconf.h third_party/zlib/zlib.h
+third_party/zlib/zutil.c third_party/zlib/zutil.h'
+  raw_zlib_matches=$(grep -HEn '(^|[^[:alnum:]_])(fopen|_wfopen)[[:space:]]*\(' third_party/zlib/zutil.h || true)
+  unexpected_zlib=$(printf '%s\n' "$raw_zlib_matches" | grep -Ev \
+    '^third_party/zlib/zutil\.h:124:[[:space:]]+fopen\(\(name\), \(mode\), "mbc=60", "ctx=stm", "rfm=fix", "mrs=512"\)$|^third_party/zlib/zutil\.h:192:#  define F_OPEN\(name, mode\) fopen\(\(name\), \(mode\)\)$' || true)
+  if [ -n "$unexpected_zlib" ]; then
+    printf '%s\n' "$unexpected_zlib" >&2
+    printf '%s\n' 'shipping I/O guard: unexpected zlib raw file-I/O reference' >&2
+    exit 1
+  fi
+  preprocess_tmp=$(mktemp "${TMPDIR:-/tmp}/arcdroid-zlib-preprocessed.XXXXXX")
+  for source in $zlib_files; do
+    "${CC:-cc}" -DZ_SOLO -Ithird_party/zlib -E -P "$source" >> "$preprocess_tmp"
+  done
+  if grep -En "$pattern" "$preprocess_tmp" >/dev/null; then
+    grep -En "$pattern" "$preprocess_tmp" >&2
+    rm -f "$preprocess_tmp"
+    printf '%s\n' 'shipping I/O guard: compiled zlib subset exposes file I/O' >&2
+    exit 1
+  fi
+  rm -f "$preprocess_tmp"
+
+  zlib_search_path='build/**/CMakeFiles/arcdroid_zlib.dir/**/*.{o,obj}'
+  zlib_objects=$(find build -type f -path '*arcdroid_zlib.dir*' \( -name '*.o' -o -name '*.obj' \) 2>/dev/null || true)
+  if [ -z "$zlib_objects" ]; then
+    printf 'shipping I/O guard: no compiled zlib objects found; searched %s\n' "$zlib_search_path" >&2
+    exit 1
+  fi
+  nm_bin=${LLVM_NM:-${NM:-nm}}
+  if zlib_imports=$($nm_bin -u $zlib_objects 2>/dev/null | grep -E '(^|[[:space:]])_?(fopen|open|_wfopen|gz[a-z]*|CreateFile[A-Za-z]*)$'); then
+    printf '%s\n' "$zlib_imports" >&2
+    printf '%s\n' 'shipping I/O guard: compiled zlib object references file I/O' >&2
+    exit 1
+  fi
+fi
+
 case "${1:-}" in
   '') ;;
   --scan-only) ;;
   --self-test)
     guard_tmp=$(mktemp -d "${TMPDIR:-/tmp}/arcdroid-shipping-io.XXXXXX")
     trap 'rm -rf "$guard_tmp"' EXIT HUP INT TERM
-    printf '%s\n' '#include <stdio.h>' 'void injected(void) { (void)fopen("injected", "wb"); }' > "$guard_tmp/injected.c"
-    if ARCDROID_SHIPPING_IO_SOURCES="$guard_tmp/injected.c" sh "$0" --scan-only >/dev/null 2>&1; then
-      printf '%s\n' 'shipping I/O guard self-test: injected fopen was not rejected' >&2
-      exit 1
-    fi
-    printf '%s\n' 'void injected_header(void) { (void)fopen("injected", "wb"); }' > "$guard_tmp/injected.h"
+    for call in 'fopen("x","r")' 'open("x",0)' '_wfopen(0,0)' 'gzopen("x","r")' 'CreateFileW(0,0,0,0,0,0,0)'; do
+      printf 'void injected(void) { (void)%s; }\n' "$call" > "$guard_tmp/injected.c"
+      if ARCDROID_SHIPPING_IO_SOURCES="$guard_tmp/injected.c" sh "$0" --scan-only >/dev/null 2>&1; then
+        printf 'shipping I/O guard self-test: injected %s was not rejected\n' "$call" >&2
+        exit 1
+      fi
+    done
+    printf '%s\n' 'void injected_header(void) { dumpregs(); }' > "$guard_tmp/injected.h"
     if ARCDROID_SHIPPING_IO_SOURCES="$guard_tmp/injected.h" sh "$0" --scan-only >/dev/null 2>&1; then
-      printf '%s\n' 'shipping I/O guard self-test: injected header fopen was not rejected' >&2
+      printf '%s\n' 'shipping I/O guard self-test: injected header dump was not rejected' >&2
       exit 1
     fi
-    printf '%s\n' 'shipping I/O guard self-test: injected source and header fopen rejected'
+    printf '%s\n' 'shipping I/O guard self-test: file, gzip, platform-open and dump injections rejected'
     ;;
   *)
     printf 'shipping I/O guard: unknown argument: %s\n' "$1" >&2
     exit 2
     ;;
 esac
-printf '%s\n' 'shipping I/O guard: no fopen or register-dump path outside the VFS bridge/harness'
+printf '%s\n' 'shipping I/O guard: no file/gzip/platform-open or register-dump path outside the VFS bridge/harness'

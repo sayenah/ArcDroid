@@ -1,11 +1,29 @@
 /* ArcDroid deterministic core tests. GPL-2.0-only. */
 #include "arcdroid_core.h"
 #include "e_format_fixture.h"
+#include "jfd.h"
+#include "playlist.h"
 
 #include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+static uint8_t *read_fixture(const char *directory, const char *name, size_t *size)
+{
+   char path[4096];
+   int written = snprintf(path, sizeof(path), "%s/%s", directory, name);
+   assert(written > 0 && (size_t)written < sizeof(path));
+   FILE *file = fopen(path, "rb");
+   assert(file && fseek(file, 0, SEEK_END) == 0);
+   long length = ftell(file);
+   assert(length >= 0 && fseek(file, 0, SEEK_SET) == 0);
+   uint8_t *data = malloc((size_t)length ? (size_t)length : 1u);
+   assert(data && fread(data, 1u, (size_t)length, file) == (size_t)length);
+   assert(fclose(file) == 0);
+   *size = (size_t)length;
+   return data;
+}
 
 static void test_hashes(void)
 {
@@ -130,13 +148,17 @@ static void test_assembly(void)
 static void test_media_launch_and_cmos(void)
 {
    char error[160] = {0};
-   assert(arc_media_inspect("renamed.AdF", 819200u, error, sizeof(error)) == ARC_MEDIA_ADF_800K);
-   assert(arc_media_inspect("disc.adl", 655360u, error, sizeof(error)) == ARC_MEDIA_ADL_640K);
-   assert(arc_media_inspect("size-first.adl", 819200u, error, sizeof(error)) == ARC_MEDIA_ADF_800K);
-   assert(arc_media_inspect("size-first.adf", 655360u, error, sizeof(error)) == ARC_MEDIA_ADL_640K);
-   assert(arc_media_inspect("disc.adf", 1638400u, error, sizeof(error)) == ARC_MEDIA_ADF_HD_UNSUPPORTED);
+   uint8_t *raw = calloc(1u, 1638400u);
+   ArcMediaInfo media;
+   assert(raw);
+   assert(arc_media_inspect("renamed.AdF", raw, 819200u, &media, error, sizeof(error)) && media.kind == ARC_MEDIA_ADF_800K);
+   assert(arc_media_inspect("disc.adl", raw, 655360u, &media, error, sizeof(error)) && media.kind == ARC_MEDIA_ADL_640K);
+   assert(arc_media_inspect("size-first.adl", raw, 819200u, &media, error, sizeof(error)) && media.kind == ARC_MEDIA_ADF_800K);
+   assert(arc_media_inspect("size-first.adf", raw, 655360u, &media, error, sizeof(error)) && media.kind == ARC_MEDIA_ADL_640K);
+   assert(!arc_media_inspect("disc.adf", raw, 1638400u, &media, error, sizeof(error)));
    assert(strstr(error, "high-density"));
-   assert(arc_media_inspect("disc.adf", 42u, error, sizeof(error)) == ARC_MEDIA_INVALID);
+   assert(!arc_media_inspect("disc.adf", raw, 42u, &media, error, sizeof(error)));
+   free(raw);
 
    ArcLaunchPlan plan;
    const char id[] = "0123456789012345678901234567890123456789";
@@ -179,12 +201,86 @@ static void test_media_launch_and_cmos(void)
 static uint8_t test_old_map_checksum(const uint8_t *block)
 {
    unsigned checksum = 0xffu;
-   for (unsigned index = 0u; index < 255u; ++index)
+   for (unsigned index = 255u; index-- > 0u;)
    {
       if (checksum > 0xffu) checksum = (checksum + 1u) & 0xffu;
       checksum += block[index];
    }
    return (uint8_t)checksum;
+}
+
+static void test_make_old_map(uint8_t *image, size_t size, uint32_t old_size)
+{
+   memset(image, 0, size);
+   image[252] = (uint8_t)old_size;
+   image[253] = (uint8_t)(old_size >> 8u);
+   image[254] = (uint8_t)(old_size >> 16u);
+   image[509] = 3u;
+   image[255] = test_old_map_checksum(image);
+   image[511] = test_old_map_checksum(image + 256u);
+}
+
+static void test_short_media_policy(void)
+{
+   char error[192] = {0};
+   ArcMediaInfo media;
+   uint8_t *image = malloc(819200u);
+   assert(image);
+
+   assert(arc_test_make_e_format(image, 819200u));
+   assert(arc_media_inspect("e.adf", image, 819200u - 5120u,
+                            &media, error, sizeof(error)));
+   assert(media.geometry == ARC_GEOMETRY_800K_E && media.short_image &&
+          media.padding_required == 5120u && media.declared_size == 819200u);
+   assert(arc_media_inspect("e.adf", image, 819200u - 1024u,
+                            &media, error, sizeof(error)));
+   assert(arc_media_inspect("e.adf", image, 819200u - 10240u,
+                            &media, error, sizeof(error)));
+   assert(!arc_media_inspect("e.adf", image, 819200u - 256u,
+                             &media, error, sizeof(error)));
+   assert(strstr(error, "sector-aligned"));
+   assert(!arc_media_inspect("e.adf", image, 819200u - 10241u,
+                             &media, error, sizeof(error)));
+   assert(!arc_media_inspect("e.adf", image, 819200u - 11264u,
+                             &media, error, sizeof(error)));
+
+   image[0] ^= 1u;
+   assert(!arc_media_inspect("e.adf", image, 819200u - 1024u,
+                             &media, error, sizeof(error)));
+   assert(arc_media_inspect("e.adf", image, 819200u,
+                            &media, error, sizeof(error)));
+   assert(media.recognition == ARC_MEDIA_RECOGNITION_SIZE_FALLBACK);
+
+   static const struct {
+      size_t size;
+      uint32_t old_size;
+      size_t sector_size;
+      size_t cap;
+      ArcMediaGeometry geometry;
+   } old_cases[] = {
+      {327680u, 1280u, 256u, 4096u, ARC_GEOMETRY_320K},
+      {655360u, 2560u, 256u, 8192u, ARC_GEOMETRY_640K_L},
+      {819200u, 3200u, 1024u, 10240u, ARC_GEOMETRY_800K_D},
+   };
+   for (size_t i = 0u; i < sizeof(old_cases) / sizeof(old_cases[0]); ++i)
+   {
+      test_make_old_map(image, old_cases[i].size, old_cases[i].old_size);
+      assert(arc_media_inspect("old.adf", image,
+         old_cases[i].size - old_cases[i].sector_size,
+         &media, error, sizeof(error)));
+      assert(media.geometry == old_cases[i].geometry &&
+             media.padding_required == old_cases[i].sector_size);
+      assert(arc_media_inspect("old.adf", image,
+         old_cases[i].size - old_cases[i].cap,
+         &media, error, sizeof(error)));
+      assert(!arc_media_inspect("old.adf", image,
+         old_cases[i].size - old_cases[i].sector_size - 1u,
+         &media, error, sizeof(error)));
+      assert(!arc_media_inspect("old.adf", image,
+         old_cases[i].size - old_cases[i].cap - old_cases[i].sector_size,
+         &media, error, sizeof(error)));
+   }
+   free(image);
 }
 
 static void test_adfs_recognition(void)
@@ -193,6 +289,21 @@ static void test_adfs_recognition(void)
    old_map[255] = test_old_map_checksum(old_map);
    old_map[511] = test_old_map_checksum(old_map + 256u);
    assert(arc_media_is_recognised_adfs(old_map, sizeof(old_map)));
+
+   /* Independent vector captured from the second old-map block of the
+    * project-authored L-format disc after its accepted RISC OS 3.11 mount.
+    * Its stored check byte is 6; the former forward traversal produced 7. */
+   uint8_t mounted_vector[256] = {0};
+   mounted_vector[0] = 242u; mounted_vector[1] = 9u;
+   memcpy(mounted_vector + 246u, "ROISO", 5u);
+   mounted_vector[251] = 209u; mounted_vector[252] = 166u;
+   mounted_vector[253] = 2u; mounted_vector[254] = 3u;
+   assert(test_old_map_checksum(mounted_vector) == 6u);
+   uint8_t mounted_image[512] = {0};
+   mounted_image[255] = test_old_map_checksum(mounted_image);
+   memcpy(mounted_image + 256u, mounted_vector, sizeof(mounted_vector));
+   mounted_image[511] = 6u;
+   assert(arc_media_is_recognised_adfs(mounted_image, sizeof(mounted_image)));
 
    size_t size = ARC_TEST_E_FORMAT_SIZE;
    uint8_t *e_format = calloc(1u, size);
@@ -222,6 +333,273 @@ static void test_adfs_recognition(void)
    memset(e_format, 0xa5, size);
    assert(!arc_media_is_recognised_adfs(e_format, size));
    free(e_format);
+}
+
+static void test_playlists(void)
+{
+   ArcPlaylist *playlist = malloc(sizeof(*playlist));
+   char error[256];
+   unsigned line = 0u;
+   assert(playlist);
+   static const uint8_t basic[] =
+      "\xef\xbb\xbf#EXTM3U\r\n# comment\r\n\r\n#EXTINF:1,First disc\r\n"
+      "one.adf\r\ndir\\two.jfd\r\none.adf\r\n";
+   assert(arc_playlist_detect("set.txt", basic, sizeof(basic) - 1u));
+   assert(arc_playlist_parse("/sets/game/list.m3u", basic, sizeof(basic) - 1u,
+                             false, playlist, &line, error, sizeof(error)));
+   assert(playlist->count == 3u);
+   assert(!strcmp(playlist->entries[0].path, "/sets/game/one.adf"));
+   assert(!strcmp(playlist->entries[0].label, "First disc"));
+   assert(!strcmp(playlist->entries[1].path, "/sets/game/dir\\two.jfd"));
+   assert(!strcmp(playlist->entries[2].path, playlist->entries[0].path));
+
+   static const uint8_t windows[] = "C:\\media\\one.adf\n\\\\server\\share\\two.adl\n";
+   assert(arc_playlist_parse("C:\\sets\\list.m3u", windows, sizeof(windows) - 1u,
+                             true, playlist, &line, error, sizeof(error)));
+   assert(!strcmp(playlist->entries[0].path, "C:\\media\\one.adf"));
+   assert(!strcmp(playlist->entries[1].path, "\\\\server\\share\\two.adl"));
+   static const char *bad_paths[] = {
+      "X:disc.adf\n", "\\disc.adf\n", "/dir/x.adf\n", "./disc.adf\n", "a/../disc.adf\n",
+      "https://example/disc.adf\n", "nested.m3u\n"
+   };
+   for (unsigned i = 0u; i < sizeof(bad_paths) / sizeof(bad_paths[0]); ++i)
+      assert(!arc_playlist_parse("C:\\sets\\list.m3u",
+         (const uint8_t *)bad_paths[i], strlen(bad_paths[i]), true,
+         playlist, &line, error, sizeof(error)) && line == 1u);
+   static const uint8_t saf[] = "saf://opaque.identifier/disc.adf\n";
+   assert(arc_playlist_parse("saf://playlist/list.m3u", saf, sizeof(saf) - 1u,
+                             false, playlist, &line, error, sizeof(error)));
+   assert(!strcmp(playlist->entries[0].path, "saf://opaque.identifier/disc.adf"));
+
+   char entries[1024] = {0};
+   size_t used = 0u;
+   for (unsigned i = 0u; i < 32u; ++i)
+      used += (size_t)snprintf(entries + used, sizeof(entries) - used, "d%u.adf\n", i);
+   assert(arc_playlist_parse("/x/list.m3u", (uint8_t *)entries, used, false,
+                             playlist, &line, error, sizeof(error)) && playlist->count == 32u);
+   used += (size_t)snprintf(entries + used, sizeof(entries) - used, "overflow.adf\n");
+   assert(!arc_playlist_parse("/x/list.m3u", (uint8_t *)entries, used, false,
+                              playlist, &line, error, sizeof(error)) && line == 33u);
+
+   char *long_path = malloc(4097u);
+   assert(long_path);
+   memset(long_path, 'a', 4090u); memcpy(long_path + 4090u, ".adf\n", 5u);
+   assert(arc_playlist_parse("/list.m3u", (uint8_t *)long_path, 4095u, false,
+                             playlist, &line, error, sizeof(error)));
+   memset(long_path, 'a', 4091u); memcpy(long_path + 4091u, ".adf\n", 5u);
+   assert(!arc_playlist_parse("/list.m3u", (uint8_t *)long_path, 4096u, false,
+                              playlist, &line, error, sizeof(error)));
+   free(long_path);
+
+   char labels[300];
+   memcpy(labels, "#EXTINF:0,", 10u); memset(labels + 10u, 'L', 127u);
+   memcpy(labels + 137u, "\ndisc.adf\n", 11u);
+   assert(arc_playlist_parse("list.m3u", (uint8_t *)labels, 147u, false,
+                             playlist, &line, error, sizeof(error)));
+   labels[137] = 'L'; labels[138] = '\n'; memcpy(labels + 139, "disc.adf\n", 9u);
+   assert(!arc_playlist_parse("list.m3u", (uint8_t *)labels, 148u, false,
+                              playlist, &line, error, sizeof(error)) && line == 1u);
+   uint8_t *oversize = calloc(1u, ARC_PLAYLIST_MAX_BYTES + 1u);
+   assert(oversize && !arc_playlist_parse("list.m3u", oversize,
+      ARC_PLAYLIST_MAX_BYTES + 1u, false, playlist, &line, error, sizeof(error)) && line == 0u);
+   free(oversize);
+   static const uint8_t nul[] = {'d','i','s','c',0,'.','a','d','f','\n'};
+   assert(!arc_playlist_parse("list.m3u", nul, sizeof(nul), false,
+                              playlist, &line, error, sizeof(error)));
+   static const uint8_t empty[] = "#EXTM3U\n# only comments\n";
+   assert(!arc_playlist_parse("list.m3u", empty, sizeof(empty) - 1u, false,
+                              playlist, &line, error, sizeof(error)) && line == 0u);
+   static const uint8_t spaced[] = "#EXTM3U \t\n \tdisc.adf\t \n";
+   assert(arc_playlist_detect("set.txt", spaced, sizeof(spaced) - 1u));
+   assert(arc_playlist_parse("/x/list.m3u", spaced, sizeof(spaced) - 1u,
+                             false, playlist, &line, error, sizeof(error)));
+   assert(playlist->count == 1u &&
+          !strcmp(playlist->entries[0].path, "/x/disc.adf"));
+   free(playlist);
+}
+
+static void store_u32(uint8_t *p, uint32_t value)
+{
+   p[0] = (uint8_t)value; p[1] = (uint8_t)(value >> 8u);
+   p[2] = (uint8_t)(value >> 16u); p[3] = (uint8_t)(value >> 24u);
+}
+
+static void make_plain_jfd(uint8_t image[452])
+{
+   memset(image, 0, 452u);
+   memcpy(image, "JFDI", 4u); store_u32(image + 8u, 452u);
+   store_u32(image + 24u, 304u); store_u32(image + 28u, 312u);
+   store_u32(image + 32u, 324u); memcpy(image + 48u, "Test", 4u);
+   store_u32(image + 304u, 0u); store_u32(image + 308u, UINT32_MAX);
+   store_u32(image + 312u, 1u << 16u); store_u32(image + 316u, 0u);
+   store_u32(image + 320u, UINT32_MAX);
+   for (unsigned i = 0u; i < 128u; ++i) image[324u + i] = (uint8_t)i;
+}
+
+static void test_jfd_parser(const char *fixture_directory)
+{
+   static const uint8_t gzip_jfd[] = {
+      0x1f,0x8b,0x08,0x00,0x00,0x00,0x00,0x00,0x02,0xff,0xf3,0x72,0x73,0xf1,0x64,0x00,
+      0x82,0x23,0x8c,0x0c,0x28,0xc0,0x00,0xc8,0xb7,0x00,0x62,0x17,0x34,0xf1,0x90,0xd4,
+      0xe2,0x12,0x86,0x11,0x0e,0xfe,0x03,0x01,0x03,0x03,0x23,0x82,0xcd,0xc8,0xc4,0xcc,
+      0xc2,0xca,0xc6,0xce,0xc1,0xc9,0xc5,0xcd,0xc3,0xcb,0xc7,0x2f,0x20,0x28,0x24,0x2c,
+      0x22,0x2a,0x26,0x2e,0x21,0x29,0x25,0x2d,0x23,0x2b,0x27,0xaf,0xa0,0xa8,0xa4,0xac,
+      0xa2,0xaa,0xa6,0xae,0xa1,0xa9,0xa5,0xad,0xa3,0xab,0xa7,0x6f,0x60,0x68,0x64,0x6c,
+      0x62,0x6a,0x66,0x6e,0x61,0x69,0x65,0x6d,0x63,0x6b,0x67,0xef,0xe0,0xe8,0xe4,0xec,
+      0xe2,0xea,0xe6,0xee,0xe1,0xe9,0xe5,0xed,0xe3,0xeb,0xe7,0x1f,0x10,0x18,0x14,0x1c,
+      0x12,0x1a,0x16,0x1e,0x11,0x19,0x15,0x1d,0x13,0x1b,0x17,0x9f,0x90,0x98,0x94,0x9c,
+      0x92,0x9a,0x96,0x9e,0x91,0x99,0x95,0x9d,0x93,0x9b,0x97,0x5f,0x50,0x58,0x54,0x5c,
+      0x52,0x5a,0x56,0x5e,0x51,0x59,0x55,0x5d,0x53,0x5b,0x57,0x0f,0x00,0x82,0xbf,0x6f,
+      0x5b,0xc4,0x01,0x00,0x00
+   };
+   uint8_t plain[452];
+   char error[256];
+   ArcJfdImage parsed;
+   make_plain_jfd(plain);
+   assert(arc_jfd_parse(plain, sizeof(plain), &parsed, error, sizeof(error)));
+   assert(parsed.track_count == 2u && parsed.sector_count == 1u &&
+          parsed.sectors[0].size == 128u && parsed.sectors[0].data_offset == 324u &&
+          !strcmp(parsed.title, "Test"));
+   arc_jfd_free(&parsed);
+   assert(arc_jfd_parse(gzip_jfd, sizeof(gzip_jfd), &parsed, error, sizeof(error)));
+   arc_jfd_free(&parsed);
+   uint8_t corrupt_gzip[sizeof(gzip_jfd)];
+   memcpy(corrupt_gzip, gzip_jfd, sizeof(gzip_jfd));
+   corrupt_gzip[sizeof(corrupt_gzip) - 8u] ^= 1u;
+   assert(!arc_jfd_parse(corrupt_gzip, sizeof(corrupt_gzip), &parsed, error, sizeof(error)));
+   memcpy(corrupt_gzip, gzip_jfd, sizeof(gzip_jfd));
+   corrupt_gzip[sizeof(corrupt_gzip) - 4u] ^= 1u;
+   assert(!arc_jfd_parse(corrupt_gzip, sizeof(corrupt_gzip), &parsed, error, sizeof(error)));
+   memcpy(corrupt_gzip, gzip_jfd, sizeof(gzip_jfd));
+   corrupt_gzip[10] ^= 1u;
+   assert(!arc_jfd_parse(corrupt_gzip, sizeof(corrupt_gzip), &parsed, error, sizeof(error)));
+   static const uint8_t gzip_optional_fields[] = "fixture.jfd\0ArcDroid";
+   uint8_t gzip_headers[sizeof(gzip_jfd) + sizeof(gzip_optional_fields)];
+   memcpy(gzip_headers, gzip_jfd, 10u);
+   gzip_headers[3] = 0x18u; /* ordinary FNAME + FCOMMENT variation */
+   gzip_headers[4] = 0x78u; gzip_headers[9] = 0x03u; /* timestamp + OS */
+   memcpy(gzip_headers + 10u, gzip_optional_fields, sizeof(gzip_optional_fields));
+   memcpy(gzip_headers + 10u + sizeof(gzip_optional_fields), gzip_jfd + 10u,
+          sizeof(gzip_jfd) - 10u);
+   assert(arc_jfd_parse(gzip_headers, sizeof(gzip_headers),
+                        &parsed, error, sizeof(error)));
+   arc_jfd_free(&parsed);
+   uint8_t trailing[sizeof(gzip_jfd) + 1u];
+   memcpy(trailing, gzip_jfd, sizeof(gzip_jfd)); trailing[sizeof(gzip_jfd)] = 0u;
+   assert(!arc_jfd_parse(trailing, sizeof(trailing), &parsed, error, sizeof(error)));
+   uint8_t two_members[sizeof(gzip_jfd) * 2u];
+   memcpy(two_members, gzip_jfd, sizeof(gzip_jfd));
+   memcpy(two_members + sizeof(gzip_jfd), gzip_jfd, sizeof(gzip_jfd));
+   assert(!arc_jfd_parse(two_members, sizeof(two_members),
+                         &parsed, error, sizeof(error)) && strstr(error, "declared"));
+
+   size_t multi_size = 0u;
+   uint8_t *multi = read_fixture(fixture_directory,
+      "arcdroid-test-two-member.jfd", &multi_size);
+   assert(multi_size > 36u && multi[9] == 13u);
+   assert(arc_jfd_parse(multi, multi_size, &parsed, error, sizeof(error)));
+   assert(parsed.extended && parsed.decoded_size == 592u);
+   arc_jfd_free(&parsed);
+   assert(!arc_jfd_parse(multi, multi_size - 5u, &parsed, error, sizeof(error)) &&
+          strstr(error, "truncated"));
+   uint8_t *garbage = malloc(multi_size + 1u);
+   assert(garbage);
+   memcpy(garbage, multi, multi_size); garbage[multi_size] = 0u;
+   assert(!arc_jfd_parse(garbage, multi_size + 1u, &parsed, error, sizeof(error)) &&
+          strstr(error, "trailing"));
+   free(garbage);
+   free(multi);
+   multi = read_fixture(fixture_directory,
+      "arcdroid-test-three-member.jfd", &multi_size);
+   assert(arc_jfd_parse(multi, multi_size, &parsed, error, sizeof(error)));
+   assert(parsed.extended && parsed.decoded_size == 592u);
+   arc_jfd_free(&parsed);
+   free(multi);
+
+   uint8_t *owned = malloc(sizeof(plain));
+   assert(owned);
+   memcpy(owned, plain, sizeof(plain));
+   assert(arc_jfd_parse_owned(owned, sizeof(plain), &parsed, error, sizeof(error)));
+   arc_jfd_free(&parsed);
+
+   uint8_t rejected[452];
+   memcpy(rejected, plain, sizeof(rejected)); store_u32(rejected + 36u, 4u);
+   assert(!arc_jfd_parse(rejected, sizeof(rejected), &parsed, error, sizeof(error)) && strstr(error, "delta"));
+   memcpy(rejected, plain, sizeof(rejected)); store_u32(rejected + 312u, 4u << 16u);
+   assert(!arc_jfd_parse(rejected, sizeof(rejected), &parsed, error, sizeof(error)) && strstr(error, "quad/octal"));
+   memcpy(rejected, plain, sizeof(rejected)); store_u32(rejected + 312u, (1u << 20u) | (1u << 16u));
+   assert(!arc_jfd_parse(rejected, sizeof(rejected), &parsed, error, sizeof(error)) && strstr(error, "DiscOp 3"));
+   memcpy(rejected, plain, sizeof(rejected)); store_u32(rejected + 320u, 0u);
+   assert(!arc_jfd_parse(rejected, sizeof(rejected), &parsed, error, sizeof(error)) &&
+          (strstr(error, "truncated") || strstr(error, "unterminated")));
+
+   static const uint32_t boundaries[] = {0u, 303u, 304u, 312u, 324u,
+                                         452u, 453u, UINT32_MAX};
+   static const unsigned offset_fields[] = {24u, 28u, 32u, 36u, 40u, 44u};
+   for (size_t field = 0u; field < sizeof(offset_fields) / sizeof(offset_fields[0]); ++field)
+      for (size_t value = 0u; value < sizeof(boundaries) / sizeof(boundaries[0]); ++value)
+      {
+         memcpy(rejected, plain, sizeof(rejected));
+         store_u32(rejected + offset_fields[field], boundaries[value]);
+         if (arc_jfd_parse(rejected, sizeof(rejected), &parsed, error, sizeof(error)))
+            arc_jfd_free(&parsed);
+      }
+
+   uint8_t extended[468];
+   memset(extended, 0, sizeof(extended));
+   memcpy(extended, "JFDI", 4u); store_u32(extended + 8u, sizeof(extended));
+   store_u32(extended + 24u, 316u); store_u32(extended + 28u, 324u);
+   store_u32(extended + 32u, 336u); store_u32(extended + 312u, 4u);
+   store_u32(extended + 316u, 0u); store_u32(extended + 320u, UINT32_MAX);
+   store_u32(extended + 324u, 1u << 16u); store_u32(extended + 328u, 0u);
+   store_u32(extended + 332u, UINT32_MAX);
+   assert(arc_jfd_parse(extended, sizeof(extended), &parsed, error, sizeof(error)) &&
+          parsed.extended && parsed.obey_length == 4u);
+   arc_jfd_free(&parsed);
+   store_u32(extended + 312u, 5u);
+   assert(!arc_jfd_parse(extended, sizeof(extended), &parsed, error, sizeof(error)) &&
+          strstr(error, "payload"));
+   store_u32(extended + 312u, UINT32_MAX);
+   assert(!arc_jfd_parse(extended, sizeof(extended), &parsed, error, sizeof(error)) &&
+          strstr(error, "obey"));
+
+   uint8_t *at_cap = calloc(1u, ARC_JFD_MAX_DECODED + 1u);
+   assert(at_cap);
+   make_plain_jfd(at_cap);
+   store_u32(at_cap + 8u, ARC_JFD_MAX_DECODED);
+   assert(arc_jfd_parse(at_cap, ARC_JFD_MAX_DECODED, &parsed, error, sizeof(error)));
+   arc_jfd_free(&parsed);
+   store_u32(at_cap + 8u, ARC_JFD_MAX_DECODED + 1u);
+   assert(!arc_jfd_parse(at_cap, ARC_JFD_MAX_DECODED + 1u,
+                         &parsed, error, sizeof(error)) && strstr(error, "8 MiB"));
+   free(at_cap);
+
+   uint32_t random = UINT32_C(0x4a464432);
+   for (unsigned iteration = 0u; iteration < 2000u; ++iteration)
+   {
+      random = random * UINT32_C(1664525) + UINT32_C(1013904223);
+      bool gzip = (iteration & 1u) != 0u;
+      size_t size = gzip ? sizeof(gzip_jfd) : sizeof(plain);
+      uint8_t *mutation = malloc(size);
+      assert(mutation);
+      memcpy(mutation, gzip ? gzip_jfd : plain, size);
+      unsigned changes = 1u + (random & 3u);
+      for (unsigned change = 0u; change < changes; ++change)
+      {
+         random = random * UINT32_C(1664525) + UINT32_C(1013904223);
+         size_t offset = random % size;
+         mutation[offset] ^= (uint8_t)(1u << ((random >> 16u) & 7u));
+      }
+      if (arc_jfd_parse(mutation, size, &parsed, error, sizeof(error)))
+      {
+         assert(parsed.decoded_size <= ARC_JFD_MAX_DECODED);
+         assert(parsed.track_count >= 2u && parsed.track_count <= ARC_JFD_MAX_TRACK_SIDES);
+         for (size_t i = 0u; i < parsed.sector_count; ++i)
+            assert(parsed.sectors[i].size >= 128u && parsed.sectors[i].size <= 1024u);
+         arc_jfd_free(&parsed);
+      }
+      free(mutation);
+   }
 }
 
 static void test_input(void)
@@ -346,13 +724,17 @@ static void test_input(void)
    assert(arc_input_consume(&state, true, &event) && !event.down);
 }
 
-int main(void)
+int main(int argc, char **argv)
 {
+   assert(argc == 2);
    test_hashes();
    test_firmware_table();
    test_assembly();
    test_media_launch_and_cmos();
    test_adfs_recognition();
+   test_short_media_policy();
+   test_playlists();
+   test_jfd_parser(argv[1]);
    test_input();
    puts("core_tests: all checks passed");
    return 0;

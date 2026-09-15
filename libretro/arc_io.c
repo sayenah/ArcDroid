@@ -61,9 +61,16 @@ bool arc_io_write_all(const char *path, const void *data, size_t size)
    wrote = arc_io_vfs->write(file, data, size);
    if (wrote == (int64_t)size && arc_io_vfs->flush)
       wrote = arc_io_vfs->flush(file) == 0 ? wrote : -1;
-   arc_io_vfs->close(file);
-   return wrote == (int64_t)size;
+   int closed = arc_io_vfs->close(file);
+   return wrote == (int64_t)size && closed == 0;
 }
+
+bool arc_io_remove(const char *path)
+{ return arc_io_vfs && arc_io_vfs->remove && path && arc_io_vfs->remove(path) == 0; }
+
+bool arc_io_rename(const char *old_path, const char *new_path)
+{ return arc_io_vfs && arc_io_vfs->rename && old_path && new_path &&
+         arc_io_vfs->rename(old_path, new_path) == 0; }
 
 bool arc_io_file_size(const char *path, size_t *size)
 {
@@ -170,12 +177,14 @@ ArcIoFile *arc_io_open_file(const char *path, bool writable)
    return file;
 }
 
-void arc_io_close_file(ArcIoFile *file)
+bool arc_io_close_file(ArcIoFile *file)
 {
-   if (!file) return;
+   if (!file) return false;
+   int result = -1;
    if (arc_io_vfs && arc_io_vfs->close && file->handle)
-      arc_io_vfs->close(file->handle);
+      result = arc_io_vfs->close(file->handle);
    free(file);
+   return result == 0;
 }
 
 int64_t arc_io_file_length(ArcIoFile *file)

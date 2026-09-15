@@ -25,7 +25,29 @@ The complete MIT notice remains at the top of the vendored file.
 
 ## zlib
 
-Android uses the NDK platform zlib. zlib is Copyright (C) 1995-2024 Jean-loup
-Gailly and Mark Adler and is provided "as-is"; permission is granted to use,
-alter, and redistribute it
-subject to preserving origin and notices. See https://zlib.net/zlib_license.html.
+ArcDroid vendors the in-memory inflate subset of zlib 1.3.2, Copyright (C)
+1995-2024 Jean-loup Gailly and Mark Adler, from tag `v1.3.2`:
+
+- tag commit: `da607da739fa6047df13e66a2af6b8bec7c2a498`
+- upstream tree: `79b5a06f88838dd54f90f821e8650254abfedb7e`
+- GitHub tag tarball SHA-256:
+  `b99a0b86c0ba9360ec7e78c4f1e43b1cbdf1e6936c8fa0f6835c0cd694a495a1`
+- compile definition: `Z_SOLO` (prevents inclusion of `gzguts.h` and requires
+  ArcDroid's in-memory allocator callbacks)
+
+The exact source allowlist is:
+
+```text
+adler32.c
+crc32.c crc32.h
+inffast.c inffast.h
+inffixed.h
+inflate.c inflate.h
+inftrees.c inftrees.h
+zconf.h zlib.h
+zutil.c zutil.h
+LICENSE
+```
+
+No `gz*`, deflate, file wrapper, or platform zlib is compiled or linked. The
+unmodified upstream licence is preserved at `third_party/zlib/LICENSE`.

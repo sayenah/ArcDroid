@@ -13,16 +13,32 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y cmake ninja-build python3
       - name: Asset guard
         run: tools/check-assets.sh
-      - name: Shipping source I/O guard self-test
-        run: tools/check-shipping-io.sh --self-test
       - name: Configure
         run: cmake -S . -B build/host -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo
       - name: Build
         run: cmake --build build/host --verbose
+      - name: Shipping source I/O guard self-test
+        run: tools/check-shipping-io.sh --self-test
       - name: Unit tests and harness
         run: ctest --test-dir build/host --output-on-failure
       - name: Export guard
         run: tools/check-exports.sh build/host/arcdroid_libretro.so
+
+  host-sanitizers:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build tools
+        run: sudo apt-get update && sudo apt-get install -y cmake ninja-build python3
+      - name: Configure ASan and UBSan
+        run: cmake -S . -B build/sanitize -G Ninja -DCMAKE_BUILD_TYPE=Debug -DARCDROID_SANITIZERS=ON
+      - name: Build ASan and UBSan
+        run: cmake --build build/sanitize --verbose
+      - name: Parser mutation and JFD reader suite under ASan and UBSan
+        env:
+          ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
+          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+        run: ctest --test-dir build/sanitize --output-on-failure -R '^(core-services|jfd-engine-reader|jfd-controller-golden)$'
 
   windows:
     runs-on: windows-latest
@@ -36,12 +52,12 @@ jobs:
           msystem: UCRT64
           update: true
           install: git mingw-w64-ucrt-x86_64-binutils mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-cmake mingw-w64-ucrt-x86_64-ninja
-      - name: Shipping source I/O guard self-test
-        run: tools/check-shipping-io.sh --self-test
       - name: Configure
         run: cmake -S . -B build/windows -G Ninja -DCMAKE_BUILD_TYPE=Release
       - name: Build
         run: cmake --build build/windows --verbose
+      - name: Shipping source I/O guard self-test
+        run: tools/check-shipping-io.sh --self-test
       - name: Tests
         run: ctest --test-dir build/windows --output-on-failure
       - name: Windows import and export guard
@@ -52,6 +68,12 @@ jobs:
           cp build/windows/arcdroid_libretro.dll build/windows/arcdroid_libretro.info \
             build/windows/tests/fixtures/generated/arcdroid-test.rom \
             build/windows/tests/fixtures/generated/arcdroid-test.adf \
+            build/windows/tests/fixtures/generated/arcdroid-media-test.rom \
+            build/windows/tests/fixtures/generated/arcdroid-media.m3u \
+            build/windows/tests/fixtures/generated/arcdroid-media-disc1.adf \
+            build/windows/tests/fixtures/generated/arcdroid-media-disc2.adf \
+            build/windows/tests/fixtures/generated/arcdroid-test.jfd \
+            build/windows/tests/fixtures/generated/arcdroid-test-two-member.jfd \
             build/windows/retroarch-package/
       - uses: actions/upload-artifact@v4
         with:
@@ -87,12 +109,12 @@ jobs:
         with:
           ndk-version: r29
           add-to-path: false
-      - name: Shipping source I/O guard self-test
-        run: tools/check-shipping-io.sh --self-test
       - name: Configure
         run: cmake -S . -B build/android -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE=${{ steps.setup-ndk.outputs.ndk-path }}/build/cmake/android.toolchain.cmake -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-21
       - name: Build
         run: cmake --build build/android --verbose
+      - name: Shipping source I/O guard self-test
+        run: tools/check-shipping-io.sh --self-test
       - name: ELF guard
         env:
           LLVM_READELF: ${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf
