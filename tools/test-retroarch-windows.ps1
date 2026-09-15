@@ -392,7 +392,11 @@ try {
     Stop-MediaRun $mediaRun
 }
 
-$indexRecord = Join-Path $saveDirectory "arcdroid-media.m3u.ldci"
+# RetroArch's per-core save sorting redirects this core's save directory to
+# <configured savefile_directory>/ArcDroid, and .ldci records live there.
+$indexDirectory = Join-Path $saveDirectory "ArcDroid"
+New-Item -ItemType Directory -Force $indexDirectory | Out-Null
+$indexRecord = Join-Path $indexDirectory "arcdroid-media.m3u.ldci"
 @{ version = "1.0"; image_index = 1; image_path = $disc2 } |
     ConvertTo-Json | Set-Content -Encoding ASCII $indexRecord
 $validRun = Start-MediaRun $playlist "ldci-valid"
