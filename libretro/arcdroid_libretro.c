@@ -990,10 +990,6 @@ static void arc_prepare_launch(ArcMediaEntry *entry, bool ejected,
    arc_helper_path[0] = '\0';
    arc_plan.launch_helper = false;
    arc_plan.launch_target[0] = '\0';
-   if (option == ARC_LAUNCH_OFF)
-   { arc_launch_log(&discovery, "none", "disabled"); return; }
-   if (!arc_launch_os_supported(arc_plan.os))
-   { arc_launch_log(&discovery, "none", "OS class unsupported"); return; }
    if (ejected || !entry || !entry->populated)
    { arc_launch_log(&discovery, "none", "drive 0 empty"); return; }
 
@@ -1004,6 +1000,10 @@ static void arc_prepare_launch(ArcMediaEntry *entry, bool ejected,
    { arc_launch_log(&discovery, "none", "media read failed"); return; }
    (void)arc_launch_discover(raw, raw_size, &entry->info, jfd, &discovery);
    free(raw);
+   if (option == ARC_LAUNCH_OFF)
+   { arc_launch_log(&discovery, "none", "disabled"); return; }
+   if (!arc_launch_os_supported(arc_plan.os))
+   { arc_launch_log(&discovery, "none", "OS class unsupported"); return; }
 
    int selected = discovery.target_index;
    char refusal[160] = {0};
@@ -1011,7 +1011,7 @@ static void arc_prepare_launch(ArcMediaEntry *entry, bool ejected,
    if (option >= ARC_LAUNCH_APP1)
    {
       unsigned ordinal = (unsigned)(option - ARC_LAUNCH_APP1);
-      if (!discovery.readable || discovery.reason == ARC_LAUNCH_REASON_INSPECTION_INCOMPLETE)
+      if (!discovery.readable)
          snprintf(refusal, sizeof(refusal), "Application choice refused: inspection incomplete");
       else if (ordinal >= discovery.candidate_count)
          snprintf(refusal, sizeof(refusal), "Application choice refused: candidate %u does not exist", ordinal + 1u);

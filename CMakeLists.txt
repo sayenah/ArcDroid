@@ -206,6 +206,7 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
     OUTPUT "${FIXTURE_DIR}/arcdroid-test.rom" "${FIXTURE_DIR}/arcdroid-test.adf"
       "${FIXTURE_DIR}/arcdroid-demo.adl"
       "${FIXTURE_DIR}/arcdroid-application-l.adl"
+      "${FIXTURE_DIR}/launch-family/single-l.adl"
       "${FIXTURE_DIR}/arcdroid-media-test.rom"
       "${FIXTURE_DIR}/arcdroid-media-disc1.adf"
       "${FIXTURE_DIR}/arcdroid-media-disc2.adf"
@@ -220,6 +221,7 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
     "${FIXTURE_DIR}/arcdroid-test.rom" "${FIXTURE_DIR}/arcdroid-test.adf"
     "${FIXTURE_DIR}/arcdroid-demo.adl"
     "${FIXTURE_DIR}/arcdroid-application-l.adl"
+    "${FIXTURE_DIR}/launch-family/single-l.adl"
     "${FIXTURE_DIR}/arcdroid-media-test.rom"
     "${FIXTURE_DIR}/arcdroid-media-disc1.adf"
     "${FIXTURE_DIR}/arcdroid-media-disc2.adf"
@@ -237,6 +239,11 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
   set_tests_properties(core-services PROPERTIES TIMEOUT 300)
 
   if(WIN32)
+    # The native RetroArch launch-automation probe uses the generated test ROM;
+    # test-only OS gating and probes remain outside the shipping DLL.
+    arcdroid_add_libretro(arcdroid_libretro_test FALSE)
+    target_compile_definitions(arcdroid_libretro_test PRIVATE ARCDROID_TEST_FAULTS=1)
+    set_target_properties(arcdroid_libretro_test PROPERTIES OUTPUT_NAME arcdroid_libretro_test)
     add_executable(windows_load_harness tests/windows_load_harness.c)
     target_include_directories(windows_load_harness PRIVATE libretro/include)
     target_compile_options(windows_load_harness PRIVATE $<$<C_COMPILER_ID:GNU,Clang>:-UNDEBUG>)

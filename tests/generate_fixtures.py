@@ -375,8 +375,11 @@ def build_jfd(payload: bytes, title: bytes = b"ArcDroid synthetic JFD") -> bytea
 
 
 def build_extended_jfd(payload: bytes,
-                       title: bytes = b"ArcDroid synthetic JFD") -> bytearray:
+                       title: bytes = b"ArcDroid synthetic JFD",
+                       disk_geometry: str | None = None) -> bytearray:
     """Build an extended-header JFD whose table begins at byte 316."""
+    if disk_geometry is not None:
+        return _build_jfd_disk(payload, disk_geometry, title, True)
     track_offset, sector_offset, data_offset = 316, 324, 336
     image = bytearray(data_offset + len(payload))
     image[:4] = b"JFDI"
@@ -398,8 +401,12 @@ def gzip_member(payload: bytes) -> bytes:
 
 
 def build_jfd_family(descriptors: list[tuple[int, int, int, int, int, bytes | None]],
-                     title: bytes = b"ArcDroid JFD family") -> bytearray:
+                     title: bytes = b"ArcDroid JFD family",
+                     disk_payload: bytes | None = None,
+                     disk_geometry: str | None = None) -> bytearray:
     """Build one track-side from (time, B, density, id, C, payload)."""
+    if disk_payload is not None and disk_geometry is not None:
+        return _build_jfd_disk(disk_payload, disk_geometry, title, False)
     track_offset, sector_offset = 304, 312
     data_offset = sector_offset + len(descriptors) * 8 + 4
     payloads = bytearray()
@@ -576,7 +583,10 @@ def build_application_l() -> bytearray:
     total_sectors = ADL_SIZE // SECTOR_SIZE
     child_sector, run_sector, image_sector = 20, 40, 1270
     run = b"Run <Obey$Dir>.!RunImage\r"
-    run_image = _build_absolute_boot().ljust(20 * SECTOR_SIZE, b"\0")
+    absolute = _build_absolute_boot()
+    run_image = absolute + bytes(
+        ((index * 37) ^ 0xA5) & 0xFF
+        for index in range(20 * SECTOR_SIZE - len(absolute)))
     free_extents = ((7, 13), (25, 15), (41, image_sector - 41),
                     (image_sector + 20, total_sectors - image_sector - 20))
     for index, (start, length) in enumerate(free_extents):
@@ -605,6 +615,202 @@ def build_application_l() -> bytearray:
     return image
 
 
+def _set_old_disc_name(image: bytearray, name: bytes) -> None:
+    padded = name[:10].ljust(10, b"\r")
+    image[247:252] = padded[0::2]
+    image[502:507] = padded[1::2]
+
+
+def build_l_discovery(candidates: list[tuple[bytes, bool]],
+                      disc_name: bytes = b"Fixture", boot: int = 0,
+                      incomplete: int | None = None) -> bytearray:
+    image = bytearray(ADL_SIZE)
+    _store_u24(image, 252, ADL_SIZE // 256)
+    _set_old_disc_name(image, disc_name)
+    image[509] = boot
+    image[510] = 0
+    image[255] = _old_map_checksum(image[:255])
+    image[511] = _old_map_checksum(image[256:511])
+    root = _old_directory()
+    for index, (name, application) in enumerate(candidates):
+        child_sector = 10 + index * 6
+        _old_entry(root, index, name, OLD_DIRECTORY_SIZE, child_sector, True)
+        if incomplete != index:
+            child = _old_directory(name)
+            if application:
+                _old_entry(child, 0, b"!Run", 1, 400 + index)
+                _l_write(image, 400 + index, b"\r")
+            _l_write(image, child_sector, child)
+    _l_write(image, 2, root)
+    return image
+
+
+def _new_entry(directory: bytearray, index: int, name: bytes, length: int,
+               address: int, directory_object: bool = False,
+               load: int = 0xFFF00000) -> None:
+    at = 5 + index * 26
+    directory[at:at + 10] = name.ljust(10, b"\r")
+    struct.pack_into("<II", directory, at + 10, load, load)
+    struct.pack_into("<I", directory, at + 18, length)
+    _store_u24(directory, at + 22, address)
+    directory[at + 25] = 0x33 | (0x08 if directory_object else 0)
+
+
+def _new_directory(name: bytes = b"$", signature: bytes = b"Hugo") -> bytearray:
+    directory = bytearray(2048)
+    directory[0] = 1
+    directory[1:5] = signature
+    tail = 2007
+    directory[tail] = 0
+    directory[tail + 3:tail + 6] = (2).to_bytes(3, "little")
+    directory[tail + 6:tail + 25] = b"ArcDroid fixture".ljust(19, b"\0")
+    directory[tail + 25:tail + 35] = name.ljust(10, b"\r")
+    directory[tail + 35] = 1
+    directory[tail + 36:tail + 40] = signature
+    return directory
+
+
+def build_d_discovery(candidates: list[tuple[bytes, bool]],
+                      disc_name: bytes = b"Fixture", boot: int = 0,
+                      signature: bytes = b"Hugo",
+                      incomplete: int | None = None) -> bytearray:
+    image = bytearray(ADF_SIZE)
+    _store_u24(image, 252, ADF_SIZE // 256)
+    _set_old_disc_name(image, disc_name)
+    image[509] = boot
+    image[510] = 0
+    image[255] = _old_map_checksum(image[:255])
+    image[511] = _old_map_checksum(image[256:511])
+    root = _new_directory(signature=signature)
+    for index, (name, application) in enumerate(candidates):
+        child_offset = 4096 + index * 2048
+        _new_entry(root, index, name, 2048, child_offset // 256, True)
+        if incomplete != index:
+            child = _new_directory(name, signature)
+            if application:
+                run_offset = 65536 + index * 1024
+                _new_entry(child, 0, b"!Run", 1, run_offset // 256)
+                image[run_offset] = 13
+            image[child_offset:child_offset + 2048] = child
+    image[1024:3072] = root
+    return image
+
+
+def _set_bits(image: bytearray, bit: int, count: int, value: int) -> None:
+    for index in range(count):
+        if value & (1 << index):
+            image[(bit + index) // 8] |= 1 << ((bit + index) & 7)
+
+
+def build_e_discovery(candidates: list[tuple[bytes, bool]],
+                      disc_name: bytes = b"Fixture", boot: int = 0,
+                      signature: bytes = b"Hugo", fragmented: int | None = None,
+                      unresolved: int | None = None) -> bytearray:
+    image = bytearray(ADF_SIZE)
+    record = memoryview(image)[4:64]
+    record[0:6] = bytes((10, 5, 2, 2, 15, 7))
+    record[7] = boot
+    record[9] = 1
+    record[10:12] = (0x0520).to_bytes(2, "little")
+    record[12:16] = (0x00000203).to_bytes(4, "little")
+    record[16:20] = ADF_SIZE.to_bytes(4, "little")
+    record[20:22] = (0x2B00).to_bytes(2, "little")
+    record[22:32] = disc_name[:10].ljust(10, b"\r")
+    image[3] = 0xFF
+
+    # Fragment 2 contains map + root (four sectors). Each later 16-map-bit
+    # fragment occupies two 1024-byte sectors. The final fragment is free.
+    bit = 512
+    _set_bits(image, bit, 15, 2); _set_bits(image, bit + 31, 1, 1)
+    bit += 32
+    allocations: list[tuple[int, int]] = []
+    for index, _candidate in enumerate(candidates):
+        child_id = 3 + index * 2
+        _set_bits(image, bit, 15, child_id); _set_bits(image, bit + 15, 1, 1)
+        child_offset = (bit - 512) * 128
+        bit += 16
+        run_id = child_id + 1
+        if fragmented == index:
+            _set_bits(image, bit, 15, run_id); _set_bits(image, bit + 15, 1, 1)
+            run_offset = (bit - 512) * 128
+            bit += 16
+            _set_bits(image, bit, 15, 100 + index); _set_bits(image, bit + 15, 1, 1)
+            bit += 16
+            _set_bits(image, bit, 15, run_id); _set_bits(image, bit + 15, 1, 1)
+            bit += 16
+        else:
+            _set_bits(image, bit, 15, run_id); _set_bits(image, bit + 15, 1, 1)
+            run_offset = (bit - 512) * 128
+            bit += 16
+        allocations.append((child_offset, run_offset))
+    _set_bits(image, 8, 15, bit - 8)
+    _set_bits(image, bit, 15, 0)
+    _set_bits(image, 6431, 1, 1)
+
+    root = _new_directory(signature=signature)
+    for index, (name, application) in enumerate(candidates):
+        child_id = 3 + index * 2
+        address = 0x7F00 if unresolved == index else child_id << 8
+        _new_entry(root, index, name, 2048, address, True)
+        child_offset, run_offset = allocations[index]
+        child = _new_directory(name, signature)
+        if application:
+            run_id = child_id + 1
+            run_length = 3072 if fragmented == index else 1
+            _new_entry(child, 0, b"!Run", run_length, run_id << 8)
+            image[run_offset] = 13
+        image[child_offset:child_offset + 2048] = child
+    image[2048:4096] = root
+    image[0] = 0
+    sums = [0, 0, 0, 0]
+    rover = 1020
+    while rover > 0:
+        sums[0] += image[rover] + (sums[3] >> 8); sums[3] &= 0xFF
+        sums[1] += image[rover + 1] + (sums[0] >> 8); sums[0] &= 0xFF
+        sums[2] += image[rover + 2] + (sums[1] >> 8); sums[1] &= 0xFF
+        sums[3] += image[rover + 3] + (sums[2] >> 8); sums[2] &= 0xFF
+        rover -= 4
+    sums[0] += sums[3] >> 8
+    sums[1] += image[1] + (sums[0] >> 8)
+    sums[2] += image[2] + (sums[1] >> 8)
+    sums[3] += image[3] + (sums[2] >> 8)
+    image[0] = (sums[0] ^ sums[1] ^ sums[2] ^ sums[3]) & 0xFF
+    return image
+
+
+def _build_jfd_disk(payload: bytes, geometry: str,
+                    title: bytes = b"ArcDroid application fixture",
+                    extended: bool = False) -> bytearray:
+    sector_size, sectors = (256, 16) if geometry == "L" else (1024, 5)
+    track_count = 160
+    track_offset = 316 if extended else 304
+    sector_offset = track_offset + track_count * 4
+    tables = bytearray()
+    track_offsets = []
+    data = bytearray()
+    for track_side in range(track_count):
+        track_offsets.append(len(tables))
+        for sector_id in range(sectors):
+            physical = (track_side * sectors + sector_id) * sector_size
+            header = (2 << 16) | (sector_id << 8) | {256: 1, 1024: 3}[sector_size]
+            tables += struct.pack("<II", header, len(data))
+            data += payload[physical:physical + sector_size]
+        tables += struct.pack("<I", 0xFFFFFFFF)
+    data_offset = sector_offset + len(tables)
+    image = bytearray(data_offset + len(data))
+    image[:4] = b"JFDI"
+    struct.pack_into("<I", image, 8, len(image))
+    struct.pack_into("<III", image, 24, track_offset, sector_offset, data_offset)
+    image[48:48 + min(len(title), 256)] = title[:256]
+    if extended:
+        struct.pack_into("<I", image, 304, 0)
+    for index, relative in enumerate(track_offsets):
+        struct.pack_into("<I", image, track_offset + index * 4, relative)
+    image[sector_offset:data_offset] = tables
+    image[data_offset:] = data
+    return image
+
+
 def build_old_map_media(size: int, old_size: int, seed: int) -> bytearray:
     image = bytearray(((index * 29) ^ seed) & 0xFF for index in range(size))
     image[:512] = bytes(512)
@@ -627,6 +833,46 @@ def main() -> None:
     (args.output / "arcdroid-test.adf").write_bytes(build_adf())
     (args.output / "arcdroid-demo.adl").write_bytes(build_demo_adl())
     (args.output / "arcdroid-application-l.adl").write_bytes(build_application_l())
+    launch = args.output / "launch-family"
+    launch.mkdir(exist_ok=True)
+    launch_images = {
+        "single-l.adl": (build_l_discovery([(b"!Demo", True)], b"Demo"), "L"),
+        "single-d-hugo.adf": (build_d_discovery([(b"!Demo", True)], b"Demo"), "D"),
+        "single-d-nick.adf": (build_d_discovery([(b"!Demo", True)], b"Demo", signature=b"Nick"), "D"),
+        "single-e-hugo.adf": (build_e_discovery([(b"!Demo", True)], b"Demo"), "E"),
+        "single-e-nick.adf": (build_e_discovery([(b"!Demo", True)], b"Demo", signature=b"Nick"), "E"),
+        "multiple-exact-d.adf": (build_d_discovery([(b"!Alpha", True), (b"!Beta", True)], b"Beta"), "D"),
+        "multiple-trailing-d.adf": (build_d_discovery([(b"!Alpha", True), (b"!Beta", True)], b"Beta2"), "D"),
+        "ambiguous-l.adl": (build_l_discovery([(b"!Foo", True), (b"!Bar", True)], b"Other"), "L"),
+        "no-run-d.adf": (build_d_discovery([(b"!Docs", False), (b"!Data", False)]), "D"),
+        "incomplete-l.adl": (build_l_discovery([(b"!Broken", True)], incomplete=0), "L"),
+        "more-eight-d.adf": (build_d_discovery(
+            [(f"!App{i}".encode(), i == 9) for i in range(10)]), "D"),
+        "fragmented-e.adf": (build_e_discovery([(b"!Demo", True)], b"Demo", fragmented=0), "E"),
+        "unresolved-e.adf": (build_e_discovery([(b"!Demo", True)], b"Demo", unresolved=0), "E"),
+        "explicit-d.adf": (build_d_discovery(
+            [(b"!Docs", False), (b"!Demo", True), (b"!Other", True)], b"Other", boot=3), "D"),
+    }
+    for boot in range(4):
+        launch_images[f"boot-{boot}-l.adl"] = (
+            build_l_discovery([(b"!Demo", True)], b"Demo", boot), "L")
+    illegal = (b"!Bad.Name", b"!Bad:Name", b"!Bad<Name", b"!Bad>Name",
+               b"!Bad|Name", b"!Bad$Name", b"!Bad&Name", b"!Bad@Name",
+               b"!Bad^Name", b"!Bad%Name", b"!Bad*Name", b"!Bad#Name",
+               b"!Bad\"Name", b"!Bad Name", b"!Bad\x01", b"!BadNameX\x80")
+    launch_images["illegal-l.adl"] = (
+        build_l_discovery([(name, True) for name in illegal]), "L")
+    for name, (payload, _geometry) in launch_images.items():
+        (launch / name).write_bytes(payload)
+    for base in ("single-l.adl", "single-d-hugo.adf", "single-e-hugo.adf"):
+        payload, geometry = launch_images[base]
+        stem = base.rsplit(".", 1)[0]
+        (launch / f"{stem}.jfd").write_bytes(
+            build_jfd_family([], b"ArcDroid application fixture",
+                             disk_payload=payload, disk_geometry=geometry))
+        (launch / f"{stem}-extended.jfd").write_bytes(
+            build_extended_jfd(payload, b"ArcDroid application fixture",
+                               disk_geometry=geometry))
     media_rom = build_rom(media_exerciser=True)
     disc1 = build_adf(0xA5, b"ARCDROID MEDIA DISC ONE v1\0")
     disc2 = build_adf(0x3C, b"ARCDROID MEDIA DISC TWO v1\0")

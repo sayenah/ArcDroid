@@ -438,3 +438,25 @@ if ($env:GITHUB_STEP_SUMMARY) {
     Add-Content -Encoding UTF8 $env:GITHUB_STEP_SUMMARY "- Initial disk replay: valid .ldci started on disc 2; stale .ldci started on disc 1."
     Add-Content -Encoding UTF8 $env:GITHUB_STEP_SUMMARY "- JFD: generated fixture reached the disc 1 golden result region."
 }
+
+# Slice 2b uses the host-test core because the generated firmware is the
+# project-authored test ROM, not one of the four shipping RISC OS 3 classes.
+# The shipping DLL above has already completed all native runs and guards.
+Copy-Item -Force (Join-Path $InputDirectory "arcdroid_libretro_test.dll") $core
+Copy-Item -Force (Join-Path $InputDirectory "arcdroid-test.rom") $firmware
+$content = (Resolve-Path (Join-Path $InputDirectory "arcdroid-application-l.adl")).Path
+Invoke-ArcDroid 100 $false
+$launchLines = Get-Content $log | Select-String -SimpleMatch "Launch:"
+if (-not ($launchLines.Line -match 'decision=!Demo')) {
+    throw "Slice 2b application run did not log the expected Launch: decision"
+}
+$contentSha1 = (Get-FileHash -Algorithm SHA1 $content).Hash.ToLowerInvariant()
+$helpers = @(Get-ChildItem -Path $saveDirectory -Filter "$contentSha1.adl" -File -Recurse |
+    Where-Object { $_.DirectoryName -match '[\\/]arcdroid[\\/]launch$' })
+if ($helpers.Count -ne 1 -or $helpers[0].Length -ne 655360) {
+    throw "Slice 2b application run did not publish exactly one 640 KiB helper under the saves directory"
+}
+Write-Host "Slice 2b Windows RetroArch: Launch: decision and helper publication passed"
+if ($env:GITHUB_STEP_SUMMARY) {
+    Add-Content -Encoding UTF8 $env:GITHUB_STEP_SUMMARY "- Slice 2b launch: generated option-0 application produced the Launch: decision and a 640 KiB save helper."
+}

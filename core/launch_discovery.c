@@ -369,23 +369,32 @@ static bool arc_object_read(const ArcFileCore *fs, uint32_t address,
    return true;
 }
 
-static void arc_entry_name(const uint8_t *source, bool old_directory,
+static bool arc_entry_name(const uint8_t *source, bool old_directory,
                            char output[11], unsigned *attributes)
 {
    unsigned attr = 0u, length = 0u;
+   bool ended = false;
    for (unsigned i = 0u; i < 10u; ++i)
    {
       uint8_t c = source[i];
       if (old_directory)
       {
          if (i < 8u && (c & 0x80u)) attr |= 1u << i;
+         else if (c & 0x80u) return false;
          c &= 0x7fu;
       }
-      if (c < 0x20u || c == 0x7fu) break;
+      if (c < 0x20u || c == 0x7fu)
+      {
+         if (c != 0u && c != '\r') return false;
+         ended = true;
+         continue;
+      }
+      if (ended) return false;
       output[length++] = (char)c;
    }
    output[length] = '\0';
    if (attributes) *attributes = attr;
+   return true;
 }
 
 static bool arc_directory_read(const ArcFileCore *fs, uint32_t address,
@@ -398,8 +407,13 @@ static bool arc_directory_read(const ArcFileCore *fs, uint32_t address,
    uint8_t directory[2048];
    if (root)
    {
-      if (!arc_reader_read(&fs->reader, fs->root_address,
-                           directory, directory_size)) return false;
+      if (fs->new_map)
+      {
+         if (!arc_object_read(fs, fs->root_address, 0u,
+                              directory, directory_size)) return false;
+      }
+      else if (!arc_reader_read(&fs->reader, fs->root_address,
+                                directory, directory_size)) return false;
    }
    else if (!arc_object_read(fs, address, 0u, directory, directory_size))
       return false;
@@ -420,8 +434,8 @@ static bool arc_directory_read(const ArcFileCore *fs, uint32_t address,
       ArcDirectoryEntry *entry = &entries[count];
       unsigned attributes = 0u;
       memset(entry, 0, sizeof(*entry));
-      arc_entry_name(raw, old, entry->name, &attributes);
-      if (!entry->name[0]) return false;
+      if (!arc_entry_name(raw, old, entry->name, &attributes) ||
+          !entry->name[0]) return false;
       entry->length = arc_le32(raw + 18u);
       entry->address = arc_le24(raw + 22u);
       entry->directory = old ? (attributes & 8u) != 0u :
@@ -451,7 +465,9 @@ static bool arc_candidate_name(const char *name)
    for (size_t i = 1u; i < length; ++i)
    {
       unsigned char c = (unsigned char)name[i];
-      if (!isalnum(c) && c != '_' && c != '-' && c != '+') return false;
+      bool alpha = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z');
+      bool digit = c >= '0' && c <= '9';
+      if (!alpha && !digit && c != '_' && c != '-' && c != '+') return false;
    }
    return !arc_ascii_equal(name, "!Boot") &&
           !arc_ascii_equal(name, "!System") &&
@@ -467,7 +483,9 @@ static void arc_normal_name(const char *source, bool strip_bang,
    while (*source && at < 10u)
    {
       unsigned char c = (unsigned char)*source++;
-      if (isalnum(c)) output[at++] = (char)tolower(c);
+      if (c >= 'A' && c <= 'Z') output[at++] = (char)(c - 'A' + 'a');
+      else if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9'))
+         output[at++] = (char)c;
    }
    output[at] = '\0';
 }
