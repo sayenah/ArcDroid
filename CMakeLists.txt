@@ -62,6 +62,7 @@ endif()
 target_compile_options(arcdroid_core PRIVATE
   $<$<C_COMPILER_ID:GNU,Clang,AppleClang>:-Wall;-Wextra;-Wpedantic;-Werror=implicit-function-declaration>
 )
+set_target_properties(arcdroid_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 set(ARCDROID_LIBRETRO_SOURCES
   engine/arcdroid_engine.c
