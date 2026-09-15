@@ -23,6 +23,15 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#if defined(__has_feature)
+#if __has_feature(address_sanitizer)
+#define ARCDROID_ADDRESS_SANITIZER 1
+#endif
+#endif
+#if defined(__SANITIZE_ADDRESS__) && !defined(ARCDROID_ADDRESS_SANITIZER)
+#define ARCDROID_ADDRESS_SANITIZER 1
+#endif
+
 enum Phase { PHASE_NONE, PHASE_ENV, PHASE_INIT, PHASE_LOAD, PHASE_RUN };
 static enum Phase phase;
 static const char *system_dir;
@@ -133,7 +142,11 @@ static void signature_add(uint64_t *signatures, unsigned *count, uint64_t signat
 
 static size_t heap_bytes_in_use(void)
 {
-#if defined(__APPLE__)
+#if defined(ARCDROID_ADDRESS_SANITIZER)
+   /* ASan quarantine deliberately retains freed allocations. Its leak check
+    * replaces allocator live-byte accounting in the instrumented build. */
+   return 0u;
+#elif defined(__APPLE__)
    malloc_statistics_t statistics;
    malloc_zone_statistics(malloc_default_zone(), &statistics);
    return statistics.size_in_use;
