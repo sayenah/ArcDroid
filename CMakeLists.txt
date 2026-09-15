@@ -163,7 +163,9 @@ install(FILES arcdroid_libretro.info DESTINATION .)
 
 if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
   find_package(Python3 REQUIRED COMPONENTS Interpreter)
-  add_executable(core_tests tests/core_tests.c)
+  add_executable(core_tests
+    tests/core_tests.c
+    tests/keytable_provenance.c)
   target_link_libraries(core_tests PRIVATE arcdroid_core)
   if(ARCDROID_SANITIZERS)
     target_link_libraries(core_tests PRIVATE arcdroid_sanitizer_link)

@@ -2,6 +2,7 @@
 #include "arcdroid_core.h"
 #include "e_format_fixture.h"
 #include "jfd.h"
+#include "keytable_provenance.h"
 #include "playlist.h"
 #include "libretro.h"
 
@@ -1081,8 +1082,13 @@ static void test_input_mapping(void)
    assert(keys && key_count == 97u && key_count + 3u <= 128u);
    for (size_t i = 0u; i < key_count; ++i)
    {
+      unsigned engine_row = UINT_MAX, engine_column = UINT_MAX;
       assert(keys[i].value && keys[i].label && keys[i].key < ARC_INPUT_KEY_COUNT);
       assert(keys[i].kart_row <= 6u && keys[i].kart_column <= 15u);
+      assert(arc_test_keytable_position(keys[i].key, &engine_row,
+                                        &engine_column));
+      assert(keys[i].kart_row == engine_row &&
+             keys[i].kart_column == engine_column);
       assert(arc_input_key_value(keys[i].value) == &keys[i]);
       assert(arc_input_is_modifier(keys[i].key) == keys[i].modifier);
       for (size_t prior = 0u; prior < i; ++prior)
@@ -1098,14 +1104,19 @@ static void test_input_mapping(void)
    static const unsigned osk_codes[] = {
       RETROK_NUMLOCK, RETROK_SCROLLOCK, RETROK_PAUSE
    };
-   static const unsigned osk_rows[] = {2u, 0u, 0u};
-   static const unsigned osk_columns[] = {2u, 14u, 15u};
    assert(osk_only && osk_only_count == 3u);
    for (size_t i = 0u; i < osk_only_count; ++i)
-      assert(osk_only[i].key == osk_codes[i] &&
-             osk_only[i].kart_row == osk_rows[i] &&
-             osk_only[i].kart_column == osk_columns[i] &&
-             !osk_only[i].modifier);
+   {
+      unsigned engine_row = UINT_MAX, engine_column = UINT_MAX;
+      assert(osk_only[i].key == osk_codes[i] && !osk_only[i].modifier);
+      assert(arc_test_keytable_position(osk_only[i].key, &engine_row,
+                                        &engine_column));
+      assert(osk_only[i].kart_row == engine_row &&
+             osk_only[i].kart_column == engine_column);
+   }
+   unsigned omitted_row = UINT_MAX, omitted_column = UINT_MAX;
+   assert(!arc_test_keytable_position(RETROK_PRINT, &omitted_row,
+                                      &omitted_column));
    assert(arc_input_profiles_validate(NULL, 0u));
 
    ArcInputProfile test_profile = {
