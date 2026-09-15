@@ -509,7 +509,7 @@ bool arc_osk_render(const ArcOsk *osk, uint32_t *pixels, unsigned width,
       (osk->compact ? "BUSY/INT" : "BUSY/INTERRUPTED") :
       osk->busy ? "BUSY" : osk->interrupted_visible ?
       (osk->compact ? "INT" : "INTERRUPTED") : NULL;
-   size_t glyph_capacity = width / 8u;
+   size_t glyph_capacity = width > 4u ? (width - 4u) / 8u : 0u;
    const char *prefix = "ARCDROID OSK - ";
    size_t fixed = strlen(prefix) + (state ? strlen(state) + 3u : 0u);
    size_t name_capacity = glyph_capacity > fixed ? glyph_capacity - fixed : 0u;

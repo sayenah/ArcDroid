@@ -1562,6 +1562,15 @@ static void test_osk(void)
       fprintf(stderr, "OSK compact INT golden = %s\n", notice_digest);
    assert(!strcmp(notice_digest, "9cc4312d1bf231f4a49d9a982bf635a587ca55be"));
    assert(osk.interrupted_visible);
+   memset(notice, 0, 320u * 256u * sizeof(*notice));
+   assert(arc_osk_render(&osk, notice, 320u, 256u,
+                         320u * sizeof(uint32_t),
+                         "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"));
+   /* The header begins at x=4 and fits 39 glyphs. Its long profile name is
+    * truncated so the final T in the short "INT" state remains rendered. */
+   unsigned notice_panel_y = 256u - 256u * 45u / 100u;
+   assert(notice[(notice_panel_y + 4u) * 320u + 309u] ==
+          UINT32_C(0x00ffffff));
    free(notice);
 }
 
