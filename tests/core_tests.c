@@ -1213,6 +1213,21 @@ static void test_input_mapping(void)
       else assert(false);
    }
    assert(seen_a == 1u && seen_b == 1u && seen_c == 1u);
+
+   /* Source teardown preserves chord meaning: ordinary keys are released
+    * before their modifiers regardless of numeric key-code order. */
+   arc_input_reset(&state);
+   arc_input_source_key(&state, ARC_INPUT_SOURCE_OSK, RETROK_LSHIFT,
+                        true, true);
+   arc_input_source_key(&state, ARC_INPUT_SOURCE_OSK, RETROK_a, true, true);
+   assert(arc_input_consume(&state, true, &event) && event.down);
+   assert(arc_input_consume(&state, true, &event) && event.down);
+   arc_input_clear_source(&state, ARC_INPUT_SOURCE_OSK);
+   assert(arc_input_consume(&state, true, &event) &&
+          event.code == RETROK_a && !event.down);
+   assert(arc_input_consume(&state, true, &event) &&
+          event.code == RETROK_LSHIFT && !event.down);
+   assert(!arc_input_pending(&state));
 }
 
 static unsigned drain_input(ArcInputState *state, ArcInputEvent *events,

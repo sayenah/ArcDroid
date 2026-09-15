@@ -89,7 +89,10 @@ void arc_input_clear_source(ArcInputState *state, ArcInputSource source)
 {
    if (!state || source >= ARC_INPUT_SOURCE_COUNT) return;
    for (unsigned code = 1u; code < ARC_INPUT_KEY_COUNT; ++code)
-      if (state->source_keys[source][code])
+      if (!arc_input_is_modifier(code) && state->source_keys[source][code])
+         arc_input_source_key(state, source, code, false, true);
+   for (unsigned code = 1u; code < ARC_INPUT_KEY_COUNT; ++code)
+      if (arc_input_is_modifier(code) && state->source_keys[source][code])
          arc_input_source_key(state, source, code, false, true);
    arc_input_source_buttons(state, source, 0u);
 }
