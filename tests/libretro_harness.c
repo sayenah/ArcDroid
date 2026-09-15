@@ -23,6 +23,15 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#if defined(__has_feature)
+#if __has_feature(address_sanitizer)
+#define ARCDROID_ADDRESS_SANITIZER 1
+#endif
+#endif
+#if defined(__SANITIZE_ADDRESS__) && !defined(ARCDROID_ADDRESS_SANITIZER)
+#define ARCDROID_ADDRESS_SANITIZER 1
+#endif
+
 enum Phase { PHASE_NONE, PHASE_ENV, PHASE_INIT, PHASE_LOAD, PHASE_RUN };
 static enum Phase phase;
 static const char *system_dir;
@@ -112,8 +121,11 @@ static unsigned short_warning_log_lines;
 static unsigned short_warning_osd_calls;
 static unsigned launch_log_lines;
 static unsigned launch_warning_osd_calls;
+static unsigned flush_fault_log_lines;
+static unsigned flush_fault_osd_calls;
 static char last_launch_log[2048];
 static char last_launch_warning[512];
+static char last_flush_fault[512];
 
 static bool signature_is_in(const uint64_t *signatures, unsigned count, uint64_t signature)
 {
@@ -130,7 +142,11 @@ static void signature_add(uint64_t *signatures, unsigned *count, uint64_t signat
 
 static size_t heap_bytes_in_use(void)
 {
-#if defined(__APPLE__)
+#if defined(ARCDROID_ADDRESS_SANITIZER)
+   /* ASan quarantine deliberately retains freed allocations. Its leak check
+    * replaces allocator live-byte accounting in the instrumented build. */
+   return 0u;
+#elif defined(__APPLE__)
    malloc_statistics_t statistics;
    malloc_zone_statistics(malloc_default_zone(), &statistics);
    return statistics.size_in_use;
@@ -141,7 +157,7 @@ static size_t heap_bytes_in_use(void)
 #endif
 }
 
-struct retro_vfs_file_handle { FILE *file; char *path; };
+struct retro_vfs_file_handle { FILE *file; char *path; unsigned mode; };
 struct retro_vfs_dir_handle { DIR *dir; struct dirent *entry; char path[4096]; };
 static const char *fault_open_substring;
 static const char *fault_read_substring;
@@ -177,7 +193,7 @@ static struct retro_vfs_file_handle *vfs_open(const char *path, unsigned mode, u
    if (!f) return NULL;
    struct retro_vfs_file_handle *h = calloc(1u, sizeof(*h));
    assert(h);
-   h->file = f; h->path = copy_string(path); ++open_files;
+   h->file = f; h->path = copy_string(path); h->mode = mode; ++open_files;
    if ((mode & RETRO_VFS_FILE_ACCESS_WRITE) && strstr(path, "/arcdroid/cmos/"))
       ++cmos_write_opens;
    return h;
@@ -208,6 +224,7 @@ static int64_t vfs_write(struct retro_vfs_file_handle *h, const void *s, uint64_
 static int vfs_flush(struct retro_vfs_file_handle *h)
 {
    if (fault_once(h->path, &fault_flush_substring)) return -1;
+   if (!(h->mode & RETRO_VFS_FILE_ACCESS_WRITE)) return -1;
    return fflush(h->file);
 }
 static int vfs_remove(const char *p) { return remove(p); }
@@ -281,6 +298,11 @@ static void frontend_log(enum retro_log_level level, const char *format, ...)
    if (strstr(message, "not a recognised ADFS image")) saw_adfs_advisory = true;
    if (strstr(message, "Input queue overflowed")) ++input_overflow_log_lines;
    if (strstr(message, "Short image padded with")) ++short_warning_log_lines;
+   if (strstr(message, "Unable to flush the staged floppy image"))
+   {
+      ++flush_fault_log_lines;
+      snprintf(last_flush_fault, sizeof(last_flush_fault), "%s", message);
+   }
    if (!strncmp(message, "Launch:", 7u))
    {
       ++launch_log_lines;
@@ -448,6 +470,11 @@ static bool environment(unsigned command, void *data)
          snprintf(last_message, sizeof(last_message), "%s", ((struct retro_message_ext *)data)->msg);
          if (strstr(last_message, "VIDC")) ++vidc_osd_ext_calls;
          if (strstr(last_message, "Short image padded with")) ++short_warning_osd_calls;
+         if (strstr(last_message, "Unable to flush the staged floppy image"))
+         {
+            ++flush_fault_osd_calls;
+            snprintf(last_flush_fault, sizeof(last_flush_fault), "%s", last_message);
+         }
          if (strstr(last_message, "Application choice refused") ||
              strstr(last_message, "No unique application") ||
              strstr(last_message, "Application inspection incomplete"))
@@ -460,6 +487,11 @@ static bool environment(unsigned command, void *data)
          snprintf(last_message, sizeof(last_message), "%s", ((struct retro_message *)data)->msg);
          if (strstr(last_message, "VIDC")) ++vidc_osd_legacy_calls;
          if (strstr(last_message, "Short image padded with")) ++short_warning_osd_calls;
+         if (strstr(last_message, "Unable to flush the staged floppy image"))
+         {
+            ++flush_fault_osd_calls;
+            snprintf(last_flush_fault, sizeof(last_flush_fault), "%s", last_message);
+         }
          if (strstr(last_message, "Application choice refused") ||
              strstr(last_message, "No unique application") ||
              strstr(last_message, "Application inspection incomplete"))
@@ -2164,8 +2196,6 @@ int main(int argc, char **argv)
 
       /* Test-target-only probes verify the helper mount and launch CMOS
        * overlay without adding observability to the shipping core. */
-      option_writes = "off";
-      option_launch = "auto";
       struct retro_game_info application_game = {argv[12], NULL, 0u, NULL};
       ArcDigest application_digest = digest_file(argv[12]);
       char application_cmos_file[4096];
@@ -2173,6 +2203,91 @@ int main(int argc, char **argv)
                "%s/arcdroid/cmos/A3000.test.%s.bin",
                save_path, application_digest.sha1);
       (void)remove(application_cmos_file);
+
+      char flush_save_path[4096];
+      snprintf(flush_save_path, sizeof(flush_save_path), "%s/flush-save-%ld",
+               argv[4], (long)getpid());
+      make_directory(flush_save_path);
+      save_dir = flush_save_path;
+
+      /* Android's bionic rejects fflush on read-only streams. Use a fresh
+       * writable drive-0 shadow so any failure in this launch session is
+       * isolated to the read-only helper in drive 1. */
+      option_writes = "shadow";
+      option_launch = "auto";
+      unsigned flush_logs = flush_fault_log_lines;
+      unsigned flush_messages = flush_fault_osd_calls;
+      phase = PHASE_LOAD; assert(retro_load_game(&application_game));
+      assert(arc_engine_test_drive_media(1u, NULL, NULL));
+      unsigned completed_before = video_frames - duplicate_video_frames;
+      phase = PHASE_RUN;
+      for (unsigned frame = 0u; frame < 520u; ++frame) retro_run();
+      unsigned launch_completed =
+         video_frames - duplicate_video_frames - completed_before;
+      if (launch_completed < 500u)
+         fprintf(stderr, "launch-helper completed fields=%u flush logs/OSD=%u/%u fault=\"%s\"\n",
+                 launch_completed, flush_fault_log_lines - flush_logs,
+                 flush_fault_osd_calls - flush_messages, last_flush_fault);
+      assert(launch_completed >= 500u);
+      assert(flush_fault_log_lines == flush_logs &&
+             flush_fault_osd_calls == flush_messages);
+      uint64_t launch_signature = last_video_signature;
+      retro_unload_game();
+
+      /* With the same source mounted directly and read-only, complete the
+       * same field count and retain the established final-signature equality. */
+      option_writes = "off";
+      option_launch = "off";
+      phase = PHASE_LOAD; assert(retro_load_game(&application_game));
+      assert(!arc_engine_test_drive_media(1u, NULL, NULL));
+      completed_before = video_frames - duplicate_video_frames;
+      phase = PHASE_RUN;
+      for (unsigned frame = 0u; frame < 520u; ++frame) retro_run();
+      unsigned direct_completed =
+         video_frames - duplicate_video_frames - completed_before;
+      for (unsigned frame = 0u;
+           frame < 200u && direct_completed >= 500u &&
+           last_video_signature != launch_signature;
+           ++frame)
+      {
+         retro_run();
+         direct_completed = video_frames - duplicate_video_frames - completed_before;
+      }
+      assert(direct_completed >= 500u && last_video_signature == launch_signature);
+      assert(flush_fault_log_lines == flush_logs &&
+             flush_fault_osd_calls == flush_messages);
+      retro_unload_game();
+
+      /* Write-policy-off also opens an ordinary generated ADF read-only. */
+      option_writes = "off";
+      option_launch = "off";
+      struct retro_game_info readonly_adf_game = {argv[3], NULL, 0u, NULL};
+      phase = PHASE_LOAD; assert(retro_load_game(&readonly_adf_game));
+      completed_before = video_frames - duplicate_video_frames;
+      phase = PHASE_RUN;
+      for (unsigned frame = 0u; frame < 520u; ++frame) retro_run();
+      assert(video_frames - duplicate_video_frames - completed_before >= 500u);
+      assert(flush_fault_log_lines == flush_logs &&
+             flush_fault_osd_calls == flush_messages);
+      retro_unload_game();
+
+      /* A real flush error on a writable shadow remains a contained fatal. */
+      option_writes = "shadow";
+      phase = PHASE_LOAD; assert(retro_load_game(&readonly_adf_game));
+      fault_flush_substring = "/disc.adf";
+      phase = PHASE_RUN; retro_run();
+      assert(!fault_flush_substring &&
+             flush_fault_log_lines == flush_logs + 1u &&
+             flush_fault_osd_calls == flush_messages + 1u &&
+             strstr(last_flush_fault, "Unable to flush the staged floppy image"));
+      retro_run();
+      assert(flush_fault_log_lines == flush_logs + 1u &&
+             flush_fault_osd_calls == flush_messages + 1u);
+      retro_unload_game();
+
+      save_dir = save_path;
+      option_writes = "off";
+      option_launch = "auto";
       unsigned decisions = launch_log_lines;
       phase = PHASE_LOAD; assert(retro_load_game(&application_game));
       assert(launch_log_lines == decisions + 1u &&
@@ -2418,6 +2533,7 @@ int main(int argc, char **argv)
    assert(redundant_geometry_changes == 0u);
    assert(av_notifications > 0u);
    assert(video_signature_count >= 1u && reported_rate_count >= 1u);
+   assert(flush_fault_log_lines == 1u && flush_fault_osd_calls == 1u);
    assert(input_observed);
    assert(vidc_osd_ext_calls + vidc_osd_legacy_calls == persistent_osd_before + 2u);
    assert(saw_audio_counters);
@@ -2426,8 +2542,7 @@ int main(int argc, char **argv)
           "100 cycles, %u frames, %llu audio frames, "
           "%llu nonzero samples, %u frame signatures, %u reported rates, "
           "%u geometry changes (0 redundant), A/V windows actual %llu expected %llu "
-          "(max delta %llu), "
-          "heap peak delta %zu bytes (limit 65536), 0 leaked VFS handles\n",
+          "(max delta %llu), ",
           (unsigned long long)before_input_signature,
           (unsigned long long)changed_signature,
           video_frames,
@@ -2436,7 +2551,13 @@ int main(int argc, char **argv)
           reported_rate_count, geometry_changes,
           (unsigned long long)measured_actual_total,
           (unsigned long long)measured_expected_total,
-          (unsigned long long)measured_max_difference, heap_maximum_delta);
+          (unsigned long long)measured_max_difference);
+#if defined(ARCDROID_ADDRESS_SANITIZER)
+   printf("heap accounting disabled under ASan, 0 leaked VFS handles\n");
+#else
+   printf("heap peak delta %zu bytes (limit 65536), 0 leaked VFS handles\n",
+          heap_maximum_delta);
+#endif
    printf("reported rates:");
    for (unsigned i = 0; i < reported_rate_count; ++i) printf(" %.6f", reported_rates[i]);
    printf("\n");

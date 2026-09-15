@@ -10,6 +10,7 @@ static struct retro_vfs_interface *arc_io_vfs;
 
 struct ArcIoFile {
    struct retro_vfs_file_handle *handle;
+   bool writable;
 };
 
 void arc_io_set_vfs(struct retro_vfs_interface *vfs) { arc_io_vfs = vfs; }
@@ -174,6 +175,7 @@ ArcIoFile *arc_io_open_file(const char *path, bool writable)
       return NULL;
    }
    file->handle = handle;
+   file->writable = writable;
    return file;
 }
 
@@ -215,6 +217,8 @@ size_t arc_io_write_file(ArcIoFile *file, const void *data, size_t size)
 
 bool arc_io_flush_file(ArcIoFile *file)
 {
-   return file && arc_io_vfs && (!arc_io_vfs->flush ||
-      arc_io_vfs->flush(file->handle) == 0);
+   if (!file) return false;
+   if (!file->writable) return true;
+   return arc_io_vfs && (!arc_io_vfs->flush ||
+                         arc_io_vfs->flush(file->handle) == 0);
 }
