@@ -1091,6 +1091,19 @@ static void test_input_mapping(void)
          assert(strcmp(keys[i].value, keys[prior].value));
    }
    assert(!arc_input_key(RETROK_PRINT));
+   size_t osk_only_count = 0u;
+   const ArcInputKey *osk_only = arc_input_osk_only_keys(&osk_only_count);
+   static const unsigned osk_codes[] = {
+      RETROK_NUMLOCK, RETROK_SCROLLOCK, RETROK_PAUSE
+   };
+   static const unsigned osk_rows[] = {2u, 0u, 0u};
+   static const unsigned osk_columns[] = {2u, 14u, 15u};
+   assert(osk_only && osk_only_count == 3u);
+   for (size_t i = 0u; i < osk_only_count; ++i)
+      assert(osk_only[i].key == osk_codes[i] &&
+             osk_only[i].kart_row == osk_rows[i] &&
+             osk_only[i].kart_column == osk_columns[i] &&
+             !osk_only[i].modifier);
    assert(arc_input_profiles_validate(NULL, 0u));
 
    ArcInputProfile test_profile = {
@@ -1191,7 +1204,7 @@ static void test_osk(void)
    ArcInputState input;
    ArcInputEvent events[16];
    arc_input_reset(&input);
-   assert(!arc_osk_open(&osk, 256u, 256u) && osk.disabled);
+   assert(!arc_osk_open(&osk, 256u, 256u) && !osk.disabled && !osk.visible);
    memset(&osk, 0, sizeof(osk));
    assert(arc_osk_open(&osk, 320u, 256u) && osk.visible && osk.compact &&
           osk.page_count == 2u && osk.key_count > 40u);

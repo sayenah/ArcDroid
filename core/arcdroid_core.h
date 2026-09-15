@@ -298,6 +298,7 @@ typedef struct {
 
 const ArcInputBinding *arc_input_generic_mapping(void);
 const ArcInputKey *arc_input_supported_keys(size_t *count);
+const ArcInputKey *arc_input_osk_only_keys(size_t *count);
 const ArcInputKey *arc_input_key(unsigned key);
 const ArcInputKey *arc_input_key_value(const char *value);
 bool arc_input_is_modifier(unsigned key);

@@ -872,6 +872,7 @@ int main(int argc, char **argv)
    void (*arc_libretro_test_drop_osk_surface)(void) = NULL;
    bool (*arc_libretro_test_osk_source_unchanged)(void) = NULL;
    bool (*arc_libretro_test_register_input_profile)(const ArcInputProfile *) = NULL;
+   void (*arc_libretro_test_probe_osk_geometry)(unsigned, unsigned) = NULL;
    void (*arc_platform_test_input_events_reset)(void) = NULL;
    size_t (*arc_platform_test_input_events)(ArcKartEvent *, size_t) = NULL;
    if (!real_boot)
@@ -894,6 +895,8 @@ int main(int argc, char **argv)
          dlsym(module, "arc_libretro_test_osk_source_unchanged");
       *(void **)(&arc_libretro_test_register_input_profile) =
          dlsym(module, "arc_libretro_test_register_input_profile");
+      *(void **)(&arc_libretro_test_probe_osk_geometry) =
+         dlsym(module, "arc_libretro_test_probe_osk_geometry");
       *(void **)(&arc_platform_test_input_events_reset) =
          dlsym(module, "arc_platform_test_input_events_reset");
       *(void **)(&arc_platform_test_input_events) =
@@ -905,6 +908,7 @@ int main(int argc, char **argv)
              arc_libretro_test_drop_osk_surface &&
              arc_libretro_test_osk_source_unchanged &&
              arc_libretro_test_register_input_profile &&
+             arc_libretro_test_probe_osk_geometry &&
              arc_platform_test_input_events_reset && arc_platform_test_input_events);
       ArcInputProfile test_profile = {
          .id = "test-profile",
@@ -2207,6 +2211,10 @@ int main(int argc, char **argv)
           osk_return_edges == 2u && modal_up_edges == 0u);
    assert(last_video_signature != before_osk_signature);
    assert(arc_libretro_test_osk_source_unchanged());
+   unsigned narrow_before = osk_narrow_osd_calls;
+   arc_libretro_test_probe_osk_geometry(256u, 256u);
+   arc_libretro_test_probe_osk_geometry(256u, 256u);
+   assert(osk_narrow_osd_calls == narrow_before + 1u);
    arc_engine_test_set_vidc_noncompleting(true);
    bool osk_duplicate = false;
    for (unsigned frame = 0u; frame < 10u && !osk_duplicate; ++frame)
@@ -2255,6 +2263,7 @@ int main(int argc, char **argv)
    phase = PHASE_LOAD; assert(retro_load_game(&game));
    phase = PHASE_RUN;
    assert(osk_failure_osd_calls == osk_failures + 1u);
+   retro_reset();
    joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_L3] = true; retro_run();
    joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_L3] = false; retro_run();
    arc_platform_test_input_events_reset();

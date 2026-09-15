@@ -88,6 +88,14 @@ static const ArcInputKey arc_keys[] = {
    K(RETROK_KP_ENTER,"kp_enter","Keypad Enter",6,7,false)
 };
 
+/* Verified A3000 keys that belong on the keyboard but not in the fixed
+ * per-button option list. */
+static const ArcInputKey arc_osk_keys[] = {
+   K(RETROK_NUMLOCK,"num_lock","Num Lock",2,2,false),
+   K(RETROK_SCROLLOCK,"scroll_lock","Scroll Lock",0,14,false),
+   K(RETROK_PAUSE,"pause","Pause",0,15,false)
+};
+
 static const ArcInputBinding arc_generic[ARC_PAD_INPUT_COUNT] = {
    {true, RETROK_UP}, {true, RETROK_DOWN}, {true, RETROK_LEFT},
    {true, RETROK_RIGHT}, {true, RETROK_SPACE}, {true, RETROK_RETURN},
@@ -101,6 +109,12 @@ const ArcInputKey *arc_input_supported_keys(size_t *count)
 {
    if (count) *count = sizeof(arc_keys) / sizeof(arc_keys[0]);
    return arc_keys;
+}
+
+const ArcInputKey *arc_input_osk_only_keys(size_t *count)
+{
+   if (count) *count = sizeof(arc_osk_keys) / sizeof(arc_osk_keys[0]);
+   return arc_osk_keys;
 }
 
 const ArcInputKey *arc_input_key(unsigned key)

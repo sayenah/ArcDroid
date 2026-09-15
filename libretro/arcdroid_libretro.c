@@ -28,15 +28,17 @@
 #define ARC_DEVICE_MOUSE RETRO_DEVICE_SUBCLASS(RETRO_DEVICE_MOUSE, 1)
 
 enum {
-   ARC_INPUT_SUPPORTED_KEYS = 98u,
-   ARC_INPUT_PAD_KEYS = 10u,
+   ARC_INPUT_CURATED_KEY_ROWS = 98u,
+   ARC_INPUT_SHARED_KEY_ALIASES = 1u,
+   ARC_INPUT_OSK_ONLY_KEYS = 3u,
    ARC_INPUT_POINTER_BUTTONS = 3u,
    /* Leave room for future adapter bindings without risking truncation when
     * overflow reconciliation rebuilds every held discrete input level. */
    ARC_INPUT_RECONCILE_MARGIN = 16u
 };
 
-_Static_assert(ARC_INPUT_SUPPORTED_KEYS + ARC_INPUT_PAD_KEYS +
+_Static_assert(ARC_INPUT_CURATED_KEY_ROWS - ARC_INPUT_SHARED_KEY_ALIASES +
+               ARC_INPUT_OSK_ONLY_KEYS +
                ARC_INPUT_POINTER_BUTTONS + ARC_INPUT_RECONCILE_MARGIN <=
                ARC_INPUT_FIFO_CAPACITY,
                "supported input surface exceeds reconciliation capacity");
@@ -1423,6 +1425,16 @@ static void arc_osk_free_surface(void)
    arc_osk_surface_pixels = 0u;
 }
 
+static void arc_osk_report_too_narrow(void)
+{
+   if (!arc_osk_too_narrow_reported)
+   {
+      arc_message("On-screen keyboard unavailable below 320 pixels wide.",
+                  RETRO_LOG_WARN);
+      arc_osk_too_narrow_reported = true;
+   }
+}
+
 #if defined(ARCDROID_TEST_FAULTS)
 static uint64_t arc_osk_source_hash(const ArcEngineFrame *frame)
 {
@@ -1448,12 +1460,7 @@ static void arc_osk_set_visible(bool visible)
       if (arc_osk.disabled) return;
       if (arc_video_width < 320u)
       {
-         if (!arc_osk_too_narrow_reported)
-         {
-            arc_message("On-screen keyboard unavailable below 320 pixels wide.",
-                        RETRO_LOG_WARN);
-            arc_osk_too_narrow_reported = true;
-         }
+         arc_osk_report_too_narrow();
          return;
       }
       if (!arc_osk_prepare_surface(arc_video_width, arc_video_height))
@@ -1473,6 +1480,19 @@ static void arc_osk_set_visible(bool visible)
    }
    arc_osk_present_dirty = true;
 }
+
+#if defined(ARCDROID_TEST_FAULTS)
+void arc_libretro_test_probe_osk_geometry(unsigned width, unsigned height)
+{
+   unsigned saved_width = arc_video_width;
+   unsigned saved_height = arc_video_height;
+   arc_video_width = width;
+   arc_video_height = height;
+   arc_osk_set_visible(true);
+   arc_video_width = saved_width;
+   arc_video_height = saved_height;
+}
+#endif
 
 static int arc_pointer_to_pixel(int value, unsigned extent)
 {
@@ -2534,7 +2554,9 @@ RETRO_API void retro_unload_game(void)
 RETRO_API void retro_reset(void)
 {
    if (!arc_loaded) return;
+   bool osk_session_disabled = arc_osk.disabled;
    arc_osk_reset(&arc_osk, &arc_inputs);
+   arc_osk.disabled = osk_session_disabled;
    arc_osk_present_dirty = true;
    char error[512] = {0};
    ArcCoreOptions updated;
@@ -2652,6 +2674,15 @@ static void arc_present(const ArcEngineFrame *frame)
                        !arc_osk_present_dirty;
       arc_video(duplicate ? NULL : frame->pixels, frame->width, frame->height,
                 frame->pitch);
+      arc_osk_present_dirty = false;
+      return;
+   }
+   if (frame->width < 320u)
+   {
+      arc_osk_close(&arc_osk, &arc_inputs);
+      arc_osk_restore_gameplay();
+      arc_osk_report_too_narrow();
+      arc_video(frame->pixels, frame->width, frame->height, frame->pitch);
       arc_osk_present_dirty = false;
       return;
    }
@@ -2792,7 +2823,14 @@ RETRO_API void retro_run(void)
       arc_video_height = frame.height;
       if (arc_osk.visible)
       {
-         if (!arc_osk_prepare_surface(frame.width, frame.height) ||
+         if (frame.width < 320u)
+         {
+            arc_osk_close(&arc_osk, &arc_inputs);
+            arc_osk_restore_gameplay();
+            arc_osk_report_too_narrow();
+            arc_osk_present_dirty = true;
+         }
+         else if (!arc_osk_prepare_surface(frame.width, frame.height) ||
              !arc_osk_layout(&arc_osk, frame.width, frame.height))
             arc_osk_presentation_failure();
          else

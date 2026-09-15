@@ -10,20 +10,13 @@
 
 enum { ARC_OSK_REPEAT_DELAY_US = 300000u, ARC_OSK_REPEAT_US = 90000u };
 
-/* These verified A3000 keys belong on the keyboard but not in the fixed
- * per-button option list. */
-static const ArcInputKey arc_osk_only_keys[] = {
-   {RETROK_NUMLOCK, "num_lock", "Num Lock", 2u, 2u, false},
-   {RETROK_SCROLLOCK, "scroll_lock", "Scroll Lock", 0u, 14u, false},
-   {RETROK_PAUSE, "pause", "Pause", 0u, 15u, false}
-};
-
 static const ArcInputKey *arc_osk_catalogue_key(const ArcInputKey *shared,
                                                 size_t shared_count,
+                                                const ArcInputKey *osk_only,
                                                 size_t index)
 {
    return index < shared_count ? &shared[index] :
-      &arc_osk_only_keys[index - shared_count];
+      &osk_only[index - shared_count];
 }
 
 static int arc_osk_modifier_index(unsigned key)
@@ -58,7 +51,6 @@ bool arc_osk_layout(ArcOsk *osk, unsigned width, unsigned height)
    osk->key_count = 0u;
    if (width < 320u)
    {
-      osk->disabled = true;
       osk->visible = false;
       return false;
    }
@@ -68,8 +60,9 @@ bool arc_osk_layout(ArcOsk *osk, unsigned width, unsigned height)
    if (osk->page >= osk->page_count) osk->page = 0u;
    size_t shared_count = 0u;
    const ArcInputKey *catalogue = arc_input_supported_keys(&shared_count);
-   size_t count = shared_count +
-      sizeof(arc_osk_only_keys) / sizeof(arc_osk_only_keys[0]);
+   size_t osk_only_count = 0u;
+   const ArcInputKey *osk_only = arc_input_osk_only_keys(&osk_only_count);
+   size_t count = shared_count + osk_only_count;
    size_t first = osk->compact ? (count + 1u) / 2u * osk->page : 0u;
    size_t last = osk->compact ? first + (count + 1u) / 2u : count;
    if (last > count) last = count;
@@ -84,7 +77,8 @@ bool arc_osk_layout(ArcOsk *osk, unsigned width, unsigned height)
    unsigned slot = 0u;
    for (size_t i = first; i < last; ++i)
    {
-      const ArcInputKey *item = arc_osk_catalogue_key(catalogue, shared_count, i);
+      const ArcInputKey *item = arc_osk_catalogue_key(catalogue, shared_count,
+                                                       osk_only, i);
       int modifier = arc_osk_modifier_index(item->key);
       arc_osk_add(osk, modifier >= 0 ? ARC_OSK_ACTION_MODIFIER : ARC_OSK_ACTION_KEY,
                   item->key, item->label, slot++, columns,
