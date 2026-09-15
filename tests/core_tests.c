@@ -1259,6 +1259,33 @@ static void test_osk(void)
    memset(&osk, 0, sizeof(osk));
    assert(arc_osk_open(&osk, 320u, 256u) && osk.visible && osk.compact &&
           osk.page_count == 2u && osk.key_count > 40u);
+   /* Every keyboard key has a tier-specific label which fits its cell and is
+    * distinct from every other rendered label at that tier. Compact pages
+    * are checked together rather than allowing collisions across pages. */
+   for (unsigned tier = 0u; tier < 2u; ++tier)
+   {
+      unsigned width = tier ? 640u : 320u;
+      ArcOsk labelled = {0};
+      const char *labels[ARC_OSK_MAX_KEYS] = {0};
+      unsigned label_count = 0u;
+      assert(arc_osk_open(&labelled, width, 256u));
+      for (unsigned page = 0u; page < labelled.page_count; ++page)
+      {
+         labelled.page = page;
+         assert(arc_osk_layout(&labelled, width, 256u));
+         for (unsigned i = 0u; i < labelled.key_count; ++i)
+         {
+            const ArcOskKey *key = &labelled.keys[i];
+            if (key->action == ARC_OSK_ACTION_PAGE) continue;
+            assert(strlen(key->label) <= (key->width - 2u) / 8u);
+            for (unsigned previous = 0u; previous < label_count; ++previous)
+               assert(strcmp(labels[previous], key->label));
+            assert(label_count < ARC_OSK_MAX_KEYS);
+            labels[label_count++] = key->label;
+         }
+      }
+      assert(label_count == 100u);
+   }
    unsigned first_focus = osk.focus;
    arc_osk_move(&osk, 1, 0, 100u, true);
    assert(osk.focus != first_focus);
@@ -1437,12 +1464,12 @@ static void test_osk(void)
    static const unsigned widths[] = {320u, 640u, 640u};
    static const unsigned heights[] = {256u, 256u, 480u};
    static const char *goldens[3][2][2] = {
-      {{"2c9fffc18203bb9f59e859595fe342767dd5dda7", "7e5a72326f920752a187242ab4f1c6e24f25689e"},
-       {"e6730f383c49f0ea6330441c6335891d5f23f998", "3021c3998857b3fe2a7293267fa748041fbf5a8a"}},
-      {{"d59424dc8af4492ef0902e97dc999bb799a53c18", NULL},
-       {"d95b6b2d8a4ec8e5e887bb3825a3023d7c386c1b", NULL}},
-      {{"0006ae8b21a942b5a6f72b664ec95b5dec934a00", NULL},
-       {"4dfd7a115f9fcc3cd407914c6ae0435cb1599acc", NULL}}
+      {{"f39cbacd864970c0a14cdcbc801678b17c54587c", "dca7cd25e17da28127c9ec1920eb6152e57c1082"},
+       {"b3c4b9f3b8a3fd77beee44de232ccf7215bc08a7", "b93378ff94945d88bad967d7ee10d0a1e5d5330e"}},
+      {{"337fd182b72bca2dfa76d3cef7840fae83c27b6f", NULL},
+       {"f7412551bce4aed80f8bea745d4d2fe4f0461d3c", NULL}},
+      {{"09ca2e607caf833544cfecd72e42b3c3ced756b4", NULL},
+       {"60a68cb5f0c003ade3158d6f4272efc3fb311f9a", NULL}}
    };
    for (unsigned geometry = 0u; geometry < 3u; ++geometry)
       for (unsigned alpha = 0u; alpha < 2u; ++alpha)
@@ -1468,6 +1495,10 @@ static void test_osk(void)
                                   "Golden custom"));
             char digest[41];
             arc_sha1_hex(surface + 1u, count * sizeof(uint32_t), digest);
+            if (!goldens[geometry][alpha][page] ||
+                strcmp(digest, goldens[geometry][alpha][page]))
+               fprintf(stderr, "OSK golden[%u][%u][%u] = %s\n",
+                       geometry, alpha, page, digest);
             assert(goldens[geometry][alpha][page] &&
                    !strcmp(digest, goldens[geometry][alpha][page]));
          }
@@ -1491,7 +1522,7 @@ static void test_osk(void)
                                    320u * sizeof(uint32_t), "Golden custom"));
    char notice_digest[41];
    arc_sha1_hex(notice, 320u * 256u * sizeof(*notice), notice_digest);
-   assert(!strcmp(notice_digest, "7ec78daed5f3b348cf17d32bf8b2bedbb4a29984"));
+   assert(!strcmp(notice_digest, "6c2d6b5222f5ab652dba1462f4415ed15fa1d415"));
    arc_osk_acknowledge_render(&osk);
    assert(!osk.interrupted_visible);
    free(notice);

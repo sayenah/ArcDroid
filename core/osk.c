@@ -30,46 +30,51 @@ static int arc_osk_modifier_index(unsigned key)
    return -1;
 }
 
-static const char *arc_osk_key_label(const ArcInputKey *key)
+static const char *arc_osk_key_label(const ArcInputKey *key, bool compact)
 {
    switch (key->key)
    {
-      case RETROK_BACKSPACE: return "Bksp";
+      case RETROK_BACKSPACE: return "Bks";
       case RETROK_ESCAPE: return "Esc";
       case RETROK_RETURN: return "Ret";
       case RETROK_INSERT: return "Ins";
       case RETROK_DELETE: return "Del";
-      case RETROK_PAGEUP: return "PgUp";
-      case RETROK_PAGEDOWN: return "PgDn";
+      case RETROK_HOME: return compact ? "Hom" : "Home";
+      case RETROK_END: return compact ? "Cpy" : "Copy";
+      case RETROK_PAGEUP: return compact ? "PgU" : "PgUp";
+      case RETROK_PAGEDOWN: return compact ? "PgD" : "PgDn";
+      case RETROK_SPACE: return compact ? "Spc" : "Space";
       case RETROK_UP: return "\x7d";
       case RETROK_DOWN: return "\x7e";
       case RETROK_LEFT: return "<";
       case RETROK_RIGHT: return ">";
-      case RETROK_LSHIFT: return "L Shift";
-      case RETROK_RSHIFT: return "R Shift";
-      case RETROK_LCTRL: return "L Ctrl";
-      case RETROK_RCTRL: return "R Ctrl";
-      case RETROK_LALT: return "L Alt";
-      case RETROK_RALT: return "R Alt";
-      case RETROK_CAPSLOCK: return "Caps";
+      case RETROK_LSHIFT: return compact ? "LSh" : "LShft";
+      case RETROK_RSHIFT: return compact ? "RSh" : "RShft";
+      case RETROK_LCTRL: return compact ? "LCt" : "LCtrl";
+      case RETROK_RCTRL: return compact ? "RCt" : "RCtrl";
+      case RETROK_LALT: return compact ? "LAl" : "LAlt";
+      case RETROK_RALT: return compact ? "RAl" : "RAlt";
+      case RETROK_CAPSLOCK: return compact ? "Cps" : "Caps";
       case RETROK_NUMLOCK: return "Num";
-      case RETROK_SCROLLOCK: return "Scroll";
-      case RETROK_KP0: return "KP 0";
-      case RETROK_KP1: return "KP 1";
-      case RETROK_KP2: return "KP 2";
-      case RETROK_KP3: return "KP 3";
-      case RETROK_KP4: return "KP 4";
-      case RETROK_KP5: return "KP 5";
-      case RETROK_KP6: return "KP 6";
-      case RETROK_KP7: return "KP 7";
-      case RETROK_KP8: return "KP 8";
-      case RETROK_KP9: return "KP 9";
-      case RETROK_KP_DIVIDE: return "KP /";
-      case RETROK_KP_MULTIPLY: return "KP *";
-      case RETROK_KP_MINUS: return "KP -";
-      case RETROK_KP_PLUS: return "KP +";
-      case RETROK_KP_PERIOD: return "KP .";
-      case RETROK_KP_ENTER: return "KP Ent";
+      case RETROK_SCROLLOCK: return compact ? "Scr" : "Scrl";
+      case RETROK_PAUSE: return compact ? "Pau" : "Pause";
+      case RETROK_BACKSLASH: return compact ? "Bsl" : "Bslsh";
+      case RETROK_KP0: return compact ? "K0" : "KP0";
+      case RETROK_KP1: return compact ? "K1" : "KP1";
+      case RETROK_KP2: return compact ? "K2" : "KP2";
+      case RETROK_KP3: return compact ? "K3" : "KP3";
+      case RETROK_KP4: return compact ? "K4" : "KP4";
+      case RETROK_KP5: return compact ? "K5" : "KP5";
+      case RETROK_KP6: return compact ? "K6" : "KP6";
+      case RETROK_KP7: return compact ? "K7" : "KP7";
+      case RETROK_KP8: return compact ? "K8" : "KP8";
+      case RETROK_KP9: return compact ? "K9" : "KP9";
+      case RETROK_KP_DIVIDE: return compact ? "K/" : "KP/";
+      case RETROK_KP_MULTIPLY: return compact ? "K*" : "KP*";
+      case RETROK_KP_MINUS: return compact ? "K-" : "KP-";
+      case RETROK_KP_PLUS: return compact ? "K+" : "KP+";
+      case RETROK_KP_PERIOD: return compact ? "K." : "KP.";
+      case RETROK_KP_ENTER: return compact ? "KEn" : "KPEn";
       default: return key->label;
    }
 }
@@ -128,7 +133,7 @@ bool arc_osk_layout(ArcOsk *osk, unsigned width, unsigned height)
                                                        osk_only, i);
       int modifier = arc_osk_modifier_index(item->key);
       arc_osk_add(osk, modifier >= 0 ? ARC_OSK_ACTION_MODIFIER : ARC_OSK_ACTION_KEY,
-                  item->key, arc_osk_key_label(item), slot++, columns,
+                  item->key, arc_osk_key_label(item, osk->compact), slot++, columns,
                   panel_y, cell_h);
    }
    if (osk->compact)
