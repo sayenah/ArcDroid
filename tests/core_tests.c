@@ -237,6 +237,9 @@ static void test_launch_discovery_and_builder(const char *fixture_directory)
       {"launch-family/single-d-nick.adf", ARC_GEOMETRY_800K_D, 1024u, "Nick", "Demo", 0u, 1u, 1u, 0, ARC_LAUNCH_REASON_SINGLE_APPLICATION, true},
       {"launch-family/single-e-hugo.adf", ARC_GEOMETRY_800K_E, 2048u, "Hugo", "Demo", 0u, 1u, 1u, 0, ARC_LAUNCH_REASON_SINGLE_APPLICATION, true},
       {"launch-family/single-e-nick.adf", ARC_GEOMETRY_800K_E, 2048u, "Nick", "Demo", 0u, 1u, 1u, 0, ARC_LAUNCH_REASON_SINGLE_APPLICATION, true},
+      {"launch-family/late-target-e.adf", ARC_GEOMETRY_800K_E, 2048u, "Hugo", "Demo", 0u, 1u, 1u, 0, ARC_LAUNCH_REASON_SINGLE_APPLICATION, true},
+      {"launch-family/stale-d.adf", ARC_GEOMETRY_800K_D, 1024u, "Hugo", "Demo", 0u, 1u, 1u, 0, ARC_LAUNCH_REASON_SINGLE_APPLICATION, true},
+      {"launch-family/stale-e.adf", ARC_GEOMETRY_800K_E, 2048u, "Hugo", "Demo", 0u, 1u, 1u, 0, ARC_LAUNCH_REASON_SINGLE_APPLICATION, true},
       {"launch-family/multiple-exact-d.adf", ARC_GEOMETRY_800K_D, 1024u, "Hugo", "Beta", 0u, 2u, 2u, 1, ARC_LAUNCH_REASON_DISC_NAME_MATCH, true},
       {"launch-family/multiple-trailing-d.adf", ARC_GEOMETRY_800K_D, 1024u, "Hugo", "Beta2", 0u, 2u, 2u, 1, ARC_LAUNCH_REASON_DISC_NAME_MATCH, true},
       {"launch-family/ambiguous-l.adl", ARC_GEOMETRY_640K_L, 512u, "Hugo", "Other", 0u, 2u, 2u, -1, ARC_LAUNCH_REASON_AMBIGUOUS, true},
@@ -314,6 +317,64 @@ static void test_launch_discovery_and_builder(const char *fixture_directory)
       free(bytes);
    }
 
+   /* PRM single-zone layout: four bytes of zone header plus the 60-byte
+    * disc record put allocation bit zero at map bit 512. The usable map has
+    * 8192 - ZoneSpare - 480 bits, independent of the fixture builder. */
+   uint8_t *late_e = read_fixture(fixture_directory,
+                                  "launch-family/late-target-e.adf", &size);
+   unsigned zone_spare = (unsigned)late_e[14] | ((unsigned)late_e[15] << 8u);
+   unsigned allocation_start = 4u * 8u + 60u * 8u;
+   unsigned allocation_bits = 8192u - zone_spare - 60u * 8u;
+   unsigned allocation_end = allocation_start + allocation_bits;
+   assert(zone_spare == 0x0520u && allocation_start == 512u &&
+          allocation_bits == (819200u >> 7u) && allocation_end == 6912u);
+   unsigned root_shared = 3u;
+   size_t root_offset = (size_t)((root_shared - 1u) * (1024u >> 7u)) << 7u;
+   unsigned late_child_bit = 6448u;
+   unsigned late_run_bit = late_child_bit + 16u;
+   size_t late_child_offset = (size_t)(late_child_bit - allocation_start) << 7u;
+   size_t late_run_offset = (size_t)(late_run_bit - allocation_start) << 7u;
+   assert(root_offset == 2048u && late_child_offset == 759808u &&
+          late_run_offset == 761856u);
+   assert(!memcmp(late_e + root_offset + 1u, "Hugo", 4u));
+   assert(late_e[root_offset + 5u + 22u] == 0u &&
+          late_e[root_offset + 5u + 23u] == 3u &&
+          late_e[root_offset + 5u + 24u] == 0u);
+   assert(!memcmp(late_e + late_child_offset + 1u, "Hugo", 4u));
+   assert(late_e[late_run_offset] == '\r');
+   assert(late_e[1] == 0x48u && late_e[2] == 0x19u);
+   assert(!(late_e[6431u >> 3u] & (1u << (6431u & 7u))));
+   assert(late_e[6911u >> 3u] & (1u << (6911u & 7u)));
+
+   ArcMediaInfo e_media = {0};
+   e_media.geometry = ARC_GEOMETRY_800K_E;
+   late_e[14] = 0x21u; /* allocation bits no longer match disc size */
+   late_e[0] = 0u;
+   late_e[0] = arc_test_e_format_zone_check(late_e);
+   assert(arc_launch_discover(late_e, size, &e_media, NULL, &discovery));
+   assert(!discovery.readable && discovery.reason == ARC_LAUNCH_REASON_UNREADABLE);
+   free(late_e);
+
+   static const uint8_t stale_demo[10] = {
+      '!', 'D', 'e', 'm', 'o', '\r', '\n', 0x01u, 0xffu, '\r'
+   };
+   static const uint8_t stale_run[10] = {
+      '!', 'R', 'u', 'n', '\r', '\n', 0x01u, 0xffu, '\r', '\r'
+   };
+   static const char *stale_files[] = {
+      "launch-family/stale-d.adf", "launch-family/stale-e.adf"
+   };
+   for (unsigned i = 0u; i < 2u; ++i)
+   {
+      uint8_t *stale = read_fixture(fixture_directory, stale_files[i], &size);
+      size_t stale_root = i ? root_offset : 1024u;
+      size_t stale_child = (size_t)(544u - allocation_start) << 7u;
+      assert(stale_child == 4096u);
+      assert(!memcmp(stale + stale_root + 5u, stale_demo, sizeof(stale_demo)));
+      assert(!memcmp(stale + stale_child + 5u, stale_run, sizeof(stale_run)));
+      free(stale);
+   }
+
    /* A shortened D-format declaration constrains object reads even when the
     * physical image retains its conventional 800 KiB container. */
    uint8_t *short_d = read_fixture(fixture_directory,
@@ -333,6 +394,7 @@ static void test_launch_discovery_and_builder(const char *fixture_directory)
       "launch-family/single-l.jfd", "launch-family/single-l-extended.jfd",
       "launch-family/single-d-hugo.jfd", "launch-family/single-d-hugo-extended.jfd",
       "launch-family/single-e-hugo.jfd", "launch-family/single-e-hugo-extended.jfd",
+      "launch-family/stale-d.jfd",
    };
    for (size_t index = 0u; index < sizeof(jfd_files) / sizeof(jfd_files[0]); ++index)
    {
@@ -382,7 +444,7 @@ static void test_launch_discovery_and_builder(const char *fixture_directory)
       "!Bad.Name", "!Bad:Name", "!Bad<Name", "!Bad>Name", "!Bad|Name",
       "!Bad$Name", "!Bad&Name", "!Bad@Name", "!Bad^Name", "!Bad%Name",
       "!Bad*Name", "!Bad#Name", "!Bad\"Name", "!Bad Name", "!Bad\001",
-      "!Bad\200"
+      "!Bad\177", "!Bad\200"
    };
    for (size_t i = 0u; i < sizeof(bad_targets) / sizeof(bad_targets[0]); ++i)
       assert(!arc_launch_disc_build("Demo", bad_targets[i], second));
@@ -393,11 +455,14 @@ static void test_launch_discovery_and_builder(const char *fixture_directory)
    uint32_t random = UINT32_C(0x32424c44);
    static const char *mutation_files[] = {
       "launch-family/single-l.adl", "launch-family/single-d-hugo.adf",
-      "launch-family/single-e-hugo.adf", "launch-family/fragmented-e.adf"
+      "launch-family/single-e-hugo.adf", "launch-family/fragmented-e.adf",
+      "launch-family/late-target-e.adf", "launch-family/stale-d.adf",
+      "launch-family/stale-e.adf"
    };
    for (unsigned iteration = 0u; iteration < 1000u; ++iteration)
    {
-      const char *name = mutation_files[iteration % 4u];
+      const char *name = mutation_files[
+         iteration % (sizeof(mutation_files) / sizeof(mutation_files[0]))];
       uint8_t *bytes = read_fixture(fixture_directory, name, &size);
       random = random * UINT32_C(1664525) + UINT32_C(1013904223);
       unsigned changes = 1u + (random & 3u);

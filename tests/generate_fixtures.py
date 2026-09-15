@@ -656,6 +656,14 @@ def _new_entry(directory: bytearray, index: int, name: bytes, length: int,
     directory[at + 25] = 0x33 | (0x08 if directory_object else 0)
 
 
+def _stale_new_name(directory: bytearray, index: int, name: bytes) -> None:
+    """Leave formatter-style stale bytes after the first name terminator."""
+    at = 5 + index * 26
+    remaining = 10 - len(name)
+    stale = bytes((0x0D, 0x0A, 0x01, 0xFF)) + b"\r" * 10
+    directory[at + len(name):at + 10] = stale[:remaining]
+
+
 def _new_directory(name: bytes = b"$", signature: bytes = b"Hugo") -> bytearray:
     directory = bytearray(2048)
     directory[0] = 1
@@ -674,7 +682,8 @@ def build_d_discovery(candidates: list[tuple[bytes, bool]],
                       disc_name: bytes = b"Fixture", boot: int = 0,
                       signature: bytes = b"Hugo",
                       incomplete: int | None = None,
-                      declared_sectors: int = ADF_SIZE // 256) -> bytearray:
+                      declared_sectors: int = ADF_SIZE // 256,
+                      stale_names: bool = False) -> bytearray:
     image = bytearray(ADF_SIZE)
     _store_u24(image, 252, declared_sectors)
     _set_old_disc_name(image, disc_name)
@@ -686,11 +695,15 @@ def build_d_discovery(candidates: list[tuple[bytes, bool]],
     for index, (name, application) in enumerate(candidates):
         child_offset = 4096 + index * 2048
         _new_entry(root, index, name, 2048, child_offset // 256, True)
+        if stale_names:
+            _stale_new_name(root, index, name)
         if incomplete != index:
             child = _new_directory(name, signature)
             if application:
                 run_offset = 65536 + index * 1024
                 _new_entry(child, 0, b"!Run", 1, run_offset // 256)
+                if stale_names:
+                    _stale_new_name(child, 0, b"!Run")
                 image[run_offset] = 13
             image[child_offset:child_offset + 2048] = child
     image[1024:3072] = root
@@ -706,7 +719,8 @@ def _set_bits(image: bytearray, bit: int, count: int, value: int) -> None:
 def build_e_discovery(candidates: list[tuple[bytes, bool]],
                       disc_name: bytes = b"Fixture", boot: int = 0,
                       signature: bytes = b"Hugo", fragmented: int | None = None,
-                      unresolved: int | None = None) -> bytearray:
+                      unresolved: int | None = None, stale_names: bool = False,
+                      late_target: bool = False) -> bytearray:
     image = bytearray(ADF_SIZE)
     record = memoryview(image)[4:64]
     record[0:6] = bytes((10, 5, 2, 2, 15, 7))
@@ -720,10 +734,16 @@ def build_e_discovery(candidates: list[tuple[bytes, bool]],
     image[3] = 0xFF
 
     # Fragment 2 contains map + root (four sectors). Each later 16-map-bit
-    # fragment occupies two 1024-byte sectors. The final fragment is free.
+    # fragment occupies two 1024-byte sectors. A late-target fixture inserts
+    # one large allocated filler so its application directory lands beyond
+    # the parser's former bit-6432 cutoff. The final fragment is free.
     bit = 512
     _set_bits(image, bit, 15, 2); _set_bits(image, bit + 31, 1, 1)
     bit += 32
+    if late_target:
+        _set_bits(image, bit, 15, 0x123)
+        _set_bits(image, 6447, 1, 1)
+        bit = 6448
     allocations: list[tuple[int, int]] = []
     for index, _candidate in enumerate(candidates):
         child_id = 3 + index * 2
@@ -746,19 +766,23 @@ def build_e_discovery(candidates: list[tuple[bytes, bool]],
         allocations.append((child_offset, run_offset))
     _set_bits(image, 8, 15, bit - 8)
     _set_bits(image, bit, 15, 0)
-    _set_bits(image, 6431, 1, 1)
+    _set_bits(image, 6911, 1, 1)
 
     root = _new_directory(signature=signature)
     for index, (name, application) in enumerate(candidates):
         child_id = 3 + index * 2
         address = 0x7F00 if unresolved == index else child_id << 8
         _new_entry(root, index, name, 2048, address, True)
+        if stale_names:
+            _stale_new_name(root, index, name)
         child_offset, run_offset = allocations[index]
         child = _new_directory(name, signature)
         if application:
             run_id = child_id + 1
             run_length = 3072 if fragmented == index else 1
             _new_entry(child, 0, b"!Run", run_length, run_id << 8)
+            if stale_names:
+                _stale_new_name(child, 0, b"!Run")
             image[run_offset] = 13
         image[child_offset:child_offset + 2048] = child
     image[2048:4096] = root
@@ -844,6 +868,12 @@ def main() -> None:
         "single-d-nick.adf": (build_d_discovery([(b"!Demo", True)], b"Demo", signature=b"Nick"), "D"),
         "single-e-hugo.adf": (build_e_discovery([(b"!Demo", True)], b"Demo"), "E"),
         "single-e-nick.adf": (build_e_discovery([(b"!Demo", True)], b"Demo", signature=b"Nick"), "E"),
+        "late-target-e.adf": (build_e_discovery(
+            [(b"!Demo", True)], b"Demo", late_target=True), "E"),
+        "stale-d.adf": (build_d_discovery(
+            [(b"!Demo", True)], b"Demo", stale_names=True), "D"),
+        "stale-e.adf": (build_e_discovery(
+            [(b"!Demo", True)], b"Demo", stale_names=True), "E"),
         "multiple-exact-d.adf": (build_d_discovery([(b"!Alpha", True), (b"!Beta", True)], b"Beta"), "D"),
         "multiple-trailing-d.adf": (build_d_discovery([(b"!Alpha", True), (b"!Beta", True)], b"Beta2"), "D"),
         "ambiguous-l.adl": (build_l_discovery([(b"!Foo", True), (b"!Bar", True)], b"Other"), "L"),
@@ -862,7 +892,8 @@ def main() -> None:
     illegal = (b"!Bad.Name", b"!Bad:Name", b"!Bad<Name", b"!Bad>Name",
                b"!Bad|Name", b"!Bad$Name", b"!Bad&Name", b"!Bad@Name",
                b"!Bad^Name", b"!Bad%Name", b"!Bad*Name", b"!Bad#Name",
-               b"!Bad\"Name", b"!Bad Name", b"!Bad\x01", b"!BadNameX\x80")
+               b"!Bad\"Name", b"!Bad Name", b"!Bad\x01", b"!Bad\x7f",
+               b"!BadNameX\x80")
     launch_images["illegal-l.adl"] = (
         build_l_discovery([(name, True) for name in illegal]), "L")
     for name, (payload, _geometry) in launch_images.items():
@@ -876,6 +907,11 @@ def main() -> None:
         (launch / f"{stem}-extended.jfd").write_bytes(
             build_extended_jfd(payload, b"ArcDroid application fixture",
                                disk_geometry=geometry))
+    stale_payload, stale_geometry = launch_images["stale-d.adf"]
+    (launch / "stale-d.jfd").write_bytes(
+        build_jfd_family([], b"ArcDroid stale-name fixture",
+                         disk_payload=stale_payload,
+                         disk_geometry=stale_geometry))
     media_rom = build_rom(media_exerciser=True)
     disc1 = build_adf(0xA5, b"ARCDROID MEDIA DISC ONE v1\0")
     disc2 = build_adf(0x3C, b"ARCDROID MEDIA DISC TWO v1\0")

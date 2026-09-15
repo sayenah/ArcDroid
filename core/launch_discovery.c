@@ -237,6 +237,9 @@ static bool arc_filecore_new(ArcFileCore *fs)
        fs->log2_bytes_per_map_bit < 7u ||
        fs->log2_bytes_per_map_bit > 10u || fs->zone_spare > 7712u)
       return false;
+   unsigned allocation_bits = 8192u - fs->zone_spare - 480u;
+   if (allocation_bits != (819200u >> fs->log2_bytes_per_map_bit))
+      return false;
    for (unsigned i = 36u; i < 60u; ++i)
       if (record[i]) return false;
    fs->new_map = true;
@@ -294,8 +297,12 @@ static bool arc_new_map_resolve(const ArcFileCore *fs, uint32_t address,
    if (sector_offset > SIZE_MAX / map_bits_per_sector) return false;
    size_t wanted = sector_offset * map_bits_per_sector;
    unsigned start = 512u;
-   unsigned end = 32u + (unsigned)(fs->disc_size >> fs->log2_bytes_per_map_bit);
-   if (end > 8192u - fs->zone_spare || start >= end) return false;
+   if (fs->zone_spare > 7712u) return false;
+   unsigned allocation_bits = 8192u - fs->zone_spare - 480u;
+   if (allocation_bits != (unsigned)(fs->disc_size >> fs->log2_bytes_per_map_bit))
+      return false;
+   unsigned end = start + allocation_bits;
+   if (end > 8192u || start >= end) return false;
    unsigned free_link = arc_map_bits(fs->map, 8u, fs->id_length) & 0x7fffu;
    unsigned free_at = free_link ? 8u + free_link : 0u;
    while (start < end)
@@ -374,7 +381,6 @@ static bool arc_entry_name(const uint8_t *source, bool old_directory,
                            char output[11], unsigned *attributes)
 {
    unsigned attr = 0u, length = 0u;
-   bool ended = false;
    for (unsigned i = 0u; i < 10u; ++i)
    {
       uint8_t c = source[i];
@@ -384,16 +390,13 @@ static bool arc_entry_name(const uint8_t *source, bool old_directory,
          else if (c & 0x80u) return false;
          c &= 0x7fu;
       }
-      if (c < 0x20u || c == 0x7fu)
-      {
-         if (c != 0u && c != '\r') return false;
-         ended = true;
-         continue;
-      }
-      if (ended) return false;
+      else if (c & 0x80u) return false;
+      if (c < 0x20u) break;
+      if (c == 0x7fu) return false;
       output[length++] = (char)c;
    }
    output[length] = '\0';
+   if (!length) return false;
    if (attributes) *attributes = attr;
    return true;
 }
