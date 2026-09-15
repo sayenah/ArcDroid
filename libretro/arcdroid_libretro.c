@@ -5,6 +5,7 @@
 #include "arcdroid_engine.h"
 
 #include <stdbool.h>
+#include <math.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -43,7 +44,10 @@ static size_t arc_firmware_size;
 static ArcDigest arc_content_digest;
 static ArcLaunchPlan arc_plan;
 static ArcInputState arc_inputs;
-static bool arc_pad_keys[10];
+static bool arc_pad_keys[2][10];
+static unsigned arc_pad_pointer_buttons;
+static bool arc_keyboard_menu;
+static bool arc_keyboard_lmeta;
 static unsigned arc_port_device[2] = {ARC_DEVICE_KEYS, ARC_DEVICE_MOUSE};
 static char arc_cmos_path[4096];
 static char arc_staged_path[4096];
@@ -65,11 +69,48 @@ static bool arc_ejected;
 static unsigned arc_image_index;
 static unsigned arc_initial_index;
 static char arc_initial_path[4096];
+static uint64_t arc_guest_time_us;
+static int16_t arc_stick_x;
+static int16_t arc_stick_y;
+static bool arc_stick_precision;
+static long double arc_stick_fraction_x;
+static long double arc_stick_fraction_y;
+
+typedef enum {
+   ARC_POINTER_STICK_RIGHT = 0,
+   ARC_POINTER_STICK_LEFT,
+   ARC_POINTER_STICK_DISABLED
+} ArcPointerStick;
+
+typedef struct {
+   bool valid;
+   int x;
+   int y;
+   int start_x;
+   int start_y;
+   uint64_t start_us;
+} ArcTouchContact;
+
+typedef struct {
+   ArcTouchContact contact[2];
+   unsigned count;
+   bool two_finger;
+   bool one_lifted;
+   bool candidate;
+   bool blocked_until_zero;
+   long double fraction_x;
+   long double fraction_y;
+} ArcTouchState;
+
+static ArcTouchState arc_touch;
 
 typedef struct {
    ArcOsClass requested_os;
    bool request_a3010_joystick;
    bool pointer_relative;
+   ArcPointerStick pointer_stick;
+   unsigned pointer_speed;
+   unsigned pointer_deadzone;
    ArcDiskWriteMode disk_writes;
 } ArcCoreOptions;
 
@@ -91,6 +132,9 @@ static bool arc_read_options(ArcCoreOptions *options, char *error, size_t error_
    const char *os = arc_option_value("arcdroid_os", "Auto");
    const char *joystick = arc_option_value("arcdroid_joystick_if", "Auto");
    const char *pointer = arc_option_value("arcdroid_pointer_mode", "relative");
+   const char *pointer_stick = arc_option_value("arcdroid_pointer_stick", "right");
+   const char *pointer_speed = arc_option_value("arcdroid_pointer_speed", "600");
+   const char *pointer_deadzone = arc_option_value("arcdroid_pointer_deadzone", "15");
    const char *writes = arc_option_value("arcdroid_disk_writes", "shadow");
    if (!options) return false;
    memset(options, 0, sizeof(*options));
@@ -109,6 +153,22 @@ static bool arc_read_options(ArcCoreOptions *options, char *error, size_t error_
    else if (strcmp(joystick, "Auto") && strcmp(joystick, "Keyboard")) goto invalid;
    if (!strcmp(pointer, "relative")) options->pointer_relative = true;
    else if (strcmp(pointer, "disabled")) goto invalid;
+   if (!strcmp(pointer_stick, "right")) options->pointer_stick = ARC_POINTER_STICK_RIGHT;
+   else if (!strcmp(pointer_stick, "left")) options->pointer_stick = ARC_POINTER_STICK_LEFT;
+   else if (!strcmp(pointer_stick, "disabled")) options->pointer_stick = ARC_POINTER_STICK_DISABLED;
+   else goto invalid;
+   if (!strcmp(pointer_speed, "300")) options->pointer_speed = 300u;
+   else if (!strcmp(pointer_speed, "450")) options->pointer_speed = 450u;
+   else if (!strcmp(pointer_speed, "600")) options->pointer_speed = 600u;
+   else if (!strcmp(pointer_speed, "900")) options->pointer_speed = 900u;
+   else if (!strcmp(pointer_speed, "1200")) options->pointer_speed = 1200u;
+   else goto invalid;
+   if (!strcmp(pointer_deadzone, "0")) options->pointer_deadzone = 0u;
+   else if (!strcmp(pointer_deadzone, "10")) options->pointer_deadzone = 10u;
+   else if (!strcmp(pointer_deadzone, "15")) options->pointer_deadzone = 15u;
+   else if (!strcmp(pointer_deadzone, "20")) options->pointer_deadzone = 20u;
+   else if (!strcmp(pointer_deadzone, "25")) options->pointer_deadzone = 25u;
+   else goto invalid;
    if (!strcmp(writes, "original")) options->disk_writes = ARC_DISK_WRITES_ORIGINAL;
    else if (!strcmp(writes, "off")) options->disk_writes = ARC_DISK_WRITES_OFF;
    else if (strcmp(writes, "shadow")) goto invalid;
@@ -548,7 +608,250 @@ static void arc_keyboard(bool down, unsigned keycode, uint32_t character,
 {
    (void)character;
    (void)modifiers;
-   arc_input_key(&arc_inputs, keycode, down, false);
+   if (keycode == RETROK_MENU || keycode == RETROK_LMETA)
+   {
+      if (keycode == RETROK_MENU) arc_keyboard_menu = down;
+      else arc_keyboard_lmeta = down;
+      arc_input_source_buttons(&arc_inputs, ARC_INPUT_SOURCE_KEYBOARD,
+                               (arc_keyboard_menu || arc_keyboard_lmeta) ? 4u : 0u);
+      return;
+   }
+   bool supported = (keycode >= RETROK_a && keycode <= RETROK_z) ||
+                    (keycode >= RETROK_0 && keycode <= RETROK_9) ||
+                    (keycode >= RETROK_KP0 && keycode <= RETROK_KP9) ||
+                    (keycode >= RETROK_F1 && keycode <= RETROK_F12);
+   switch (keycode)
+   {
+      case RETROK_ESCAPE: case RETROK_BACKQUOTE: case RETROK_MINUS:
+      case RETROK_EQUALS: case RETROK_BACKSPACE: case RETROK_TAB:
+      case RETROK_LEFTBRACKET: case RETROK_RIGHTBRACKET: case RETROK_RETURN:
+      case RETROK_SEMICOLON: case RETROK_QUOTE: case RETROK_SLASH:
+      case RETROK_BACKSLASH: case RETROK_COMMA: case RETROK_PERIOD:
+      case RETROK_SPACE: case RETROK_INSERT: case RETROK_DELETE:
+      case RETROK_HOME: case RETROK_END: case RETROK_PAGEUP:
+      case RETROK_PAGEDOWN: case RETROK_LEFT: case RETROK_RIGHT:
+      case RETROK_UP: case RETROK_DOWN: case RETROK_KP_DIVIDE:
+      case RETROK_KP_MULTIPLY: case RETROK_KP_MINUS: case RETROK_KP_PLUS:
+      case RETROK_KP_PERIOD: case RETROK_KP_ENTER: case RETROK_LSHIFT:
+      case RETROK_RSHIFT: case RETROK_LCTRL: case RETROK_RCTRL:
+      case RETROK_CAPSLOCK: case RETROK_SCROLLOCK: case RETROK_NUMLOCK:
+      case RETROK_LALT: case RETROK_RALT: case RETROK_PAUSE:
+         supported = true;
+         break;
+      default:
+         break;
+   }
+   arc_input_source_key(&arc_inputs, ARC_INPUT_SOURCE_KEYBOARD,
+                        keycode, down, supported);
+}
+
+static void arc_touch_reset(void)
+{
+   memset(&arc_touch, 0, sizeof(arc_touch));
+   arc_input_source_buttons(&arc_inputs, ARC_INPUT_SOURCE_TOUCH, 0u);
+}
+
+static void arc_input_sampling_reset(bool release_engine_levels)
+{
+   if (release_engine_levels) arc_input_release_all(&arc_inputs);
+   else arc_input_reset(&arc_inputs);
+   memset(arc_pad_keys, 0, sizeof(arc_pad_keys));
+   arc_pad_pointer_buttons = 0u;
+   arc_keyboard_menu = arc_keyboard_lmeta = false;
+   arc_stick_x = arc_stick_y = 0;
+   arc_stick_precision = false;
+   arc_stick_fraction_x = arc_stick_fraction_y = 0.0L;
+   memset(&arc_touch, 0, sizeof(arc_touch));
+}
+
+static uint64_t arc_touch_distance_squared(const ArcTouchContact *contact,
+                                           int x, int y)
+{
+   int64_t dx = (int64_t)x - contact->start_x;
+   int64_t dy = (int64_t)y - contact->start_y;
+   return (uint64_t)(dx * dx + dy * dy);
+}
+
+static bool arc_touch_tap_valid(const ArcTouchContact *contact, uint64_t now)
+{
+   return contact->valid && now - contact->start_us <= UINT64_C(250000) &&
+          arc_touch_distance_squared(contact, contact->x, contact->y) <=
+             UINT64_C(655) * UINT64_C(655);
+}
+
+static ArcTouchContact arc_touch_start(int x, int y, uint64_t now)
+{
+   ArcTouchContact contact = {true, x, y, x, y, now};
+   return contact;
+}
+
+static uint64_t arc_point_distance(int x0, int y0, int x1, int y1)
+{
+   int64_t dx = (int64_t)x0 - x1;
+   int64_t dy = (int64_t)y0 - y1;
+   return (uint64_t)(dx * dx + dy * dy);
+}
+
+static void arc_touch_motion(int64_t raw_x, int64_t raw_y, unsigned divisor)
+{
+   if (!divisor) return;
+   arc_touch.fraction_x += (long double)raw_x * arc_video_width /
+                           ((long double)65534.0L * divisor);
+   arc_touch.fraction_y += (long double)raw_y * arc_video_height /
+                           ((long double)65534.0L * divisor);
+   int64_t dx = (int64_t)truncl(arc_touch.fraction_x);
+   int64_t dy = (int64_t)truncl(arc_touch.fraction_y);
+   arc_touch.fraction_x -= dx;
+   arc_touch.fraction_y -= dy;
+   arc_input_motion(&arc_inputs, dx, dy, false);
+}
+
+static void arc_touch_poll(void)
+{
+   if (!arc_core_options.pointer_relative)
+   {
+      arc_touch_reset();
+      return;
+   }
+   int reported = arc_input_state(0u, RETRO_DEVICE_POINTER, 0u,
+                                  RETRO_DEVICE_ID_POINTER_COUNT);
+   unsigned count = reported > 0 ? (unsigned)reported : 0u;
+   if (count > 2u)
+   {
+      arc_touch_reset();
+      arc_touch.blocked_until_zero = true;
+      return;
+   }
+   if (!count)
+   {
+      if (!arc_touch.blocked_until_zero && arc_touch.candidate)
+      {
+         bool valid = false;
+         unsigned button = 1u;
+         if (arc_touch.two_finger)
+         {
+            if (arc_touch.count == 2u)
+               valid = arc_touch_tap_valid(&arc_touch.contact[0], arc_guest_time_us) &&
+                       arc_touch_tap_valid(&arc_touch.contact[1], arc_guest_time_us);
+            else if (arc_touch.count == 1u && arc_touch.one_lifted)
+               valid = arc_touch_tap_valid(&arc_touch.contact[0], arc_guest_time_us);
+            button = 4u;
+         }
+         else if (arc_touch.count == 1u)
+            valid = arc_touch_tap_valid(&arc_touch.contact[0], arc_guest_time_us);
+         if (valid)
+            arc_input_source_click(&arc_inputs, ARC_INPUT_SOURCE_TOUCH, button);
+      }
+      arc_touch_reset();
+      return;
+   }
+
+   int x[2] = {0, 0};
+   int y[2] = {0, 0};
+   for (unsigned index = 0u; index < count; ++index)
+   {
+      bool pressed = arc_input_state(0u, RETRO_DEVICE_POINTER, index,
+                                     RETRO_DEVICE_ID_POINTER_PRESSED) != 0;
+      x[index] = arc_input_state(0u, RETRO_DEVICE_POINTER, index,
+                                 RETRO_DEVICE_ID_POINTER_X);
+      y[index] = arc_input_state(0u, RETRO_DEVICE_POINTER, index,
+                                 RETRO_DEVICE_ID_POINTER_Y);
+      bool offscreen = arc_input_state(0u, RETRO_DEVICE_POINTER, index,
+                                       RETRO_DEVICE_ID_POINTER_IS_OFFSCREEN) != 0;
+      if (!pressed || offscreen || x[index] == -0x8000 || y[index] == -0x8000)
+      {
+         arc_touch_reset();
+         arc_touch.blocked_until_zero = true;
+         return;
+      }
+   }
+   if (arc_touch.blocked_until_zero) return;
+
+   if (!arc_touch.count && count == 1u)
+   {
+      arc_touch.contact[0] = arc_touch_start(x[0], y[0], arc_guest_time_us);
+      arc_touch.count = 1u;
+      arc_touch.candidate = true;
+      return;
+   }
+   if (!arc_touch.count && count == 2u)
+   {
+      arc_touch.contact[0] = arc_touch_start(x[0], y[0], arc_guest_time_us);
+      arc_touch.contact[1] = arc_touch_start(x[1], y[1], arc_guest_time_us);
+      arc_touch.count = 2u;
+      arc_touch.two_finger = true;
+      arc_touch.candidate = true;
+      return;
+   }
+   if (arc_touch.count == 1u && count == 2u && !arc_touch.two_finger)
+   {
+      ArcTouchContact existing = arc_touch.contact[0];
+      unsigned existing_index = arc_point_distance(existing.x, existing.y, x[1], y[1]) <
+                                arc_point_distance(existing.x, existing.y, x[0], y[0]) ? 1u : 0u;
+      existing.x = x[existing_index];
+      existing.y = y[existing_index];
+      arc_touch.contact[existing_index] = existing;
+      arc_touch.contact[1u - existing_index] =
+         arc_touch_start(x[1u - existing_index], y[1u - existing_index], arc_guest_time_us);
+      arc_touch.two_finger = true;
+      arc_touch.count = 2u;
+      arc_touch.candidate = arc_touch.candidate &&
+         arc_guest_time_us - existing.start_us <= UINT64_C(80000);
+      return;
+   }
+   if (arc_touch.count == 2u && count == 1u)
+   {
+      unsigned remaining = arc_point_distance(arc_touch.contact[1].x, arc_touch.contact[1].y,
+                                               x[0], y[0]) <
+                           arc_point_distance(arc_touch.contact[0].x, arc_touch.contact[0].y,
+                                               x[0], y[0]) ? 1u : 0u;
+      unsigned lifted = 1u - remaining;
+      arc_touch.candidate = arc_touch.candidate &&
+         arc_touch_tap_valid(&arc_touch.contact[lifted], arc_guest_time_us);
+      arc_touch.contact[0] = arc_touch.contact[remaining];
+      arc_touch.contact[0].x = x[0];
+      arc_touch.contact[0].y = y[0];
+      arc_touch.count = 1u;
+      arc_touch.one_lifted = true;
+      return;
+   }
+   if (arc_touch.count != count)
+   {
+      arc_touch_reset();
+      arc_touch.blocked_until_zero = true;
+      return;
+   }
+
+   if (count == 2u)
+   {
+      uint64_t straight = arc_point_distance(arc_touch.contact[0].x, arc_touch.contact[0].y,
+                                             x[0], y[0]) +
+                          arc_point_distance(arc_touch.contact[1].x, arc_touch.contact[1].y,
+                                             x[1], y[1]);
+      uint64_t crossed = arc_point_distance(arc_touch.contact[0].x, arc_touch.contact[0].y,
+                                            x[1], y[1]) +
+                         arc_point_distance(arc_touch.contact[1].x, arc_touch.contact[1].y,
+                                            x[0], y[0]);
+      if (crossed < straight)
+      {
+         ArcTouchContact swap = arc_touch.contact[0];
+         arc_touch.contact[0] = arc_touch.contact[1];
+         arc_touch.contact[1] = swap;
+      }
+   }
+   int64_t raw_x = 0;
+   int64_t raw_y = 0;
+   for (unsigned index = 0u; index < count; ++index)
+   {
+      raw_x += (int64_t)x[index] - arc_touch.contact[index].x;
+      raw_y += (int64_t)y[index] - arc_touch.contact[index].y;
+      arc_touch.contact[index].x = x[index];
+      arc_touch.contact[index].y = y[index];
+      if (arc_touch_distance_squared(&arc_touch.contact[index], x[index], y[index]) >
+          UINT64_C(655) * UINT64_C(655))
+         arc_touch.candidate = false;
+   }
+   arc_touch_motion(raw_x, raw_y, count);
 }
 
 static void arc_poll_inputs(void)
@@ -566,44 +869,114 @@ static void arc_poll_inputs(void)
       RETROK_ESCAPE, RETROK_TAB
    };
    if (!arc_input_state) return;
-   for (unsigned i = 0; i < sizeof(ids) / sizeof(ids[0]); ++i)
+   bool sampled[2][10] = {{false}};
+   for (unsigned port = 0u; port < 2u; ++port)
+      if (arc_port_device[port] == ARC_DEVICE_KEYS ||
+          arc_port_device[port] == RETRO_DEVICE_JOYPAD)
+         for (unsigned i = 0u; i < 10u; ++i)
+            sampled[port][i] = arc_input_state(port, RETRO_DEVICE_JOYPAD, 0u, ids[i]) != 0;
+   static const unsigned modifiers[] = {6u, 7u};
+   for (unsigned port = 0u; port < 2u; ++port)
    {
-      bool down = false;
-      for (unsigned port = 0u; port < 2u; ++port)
-         if (arc_port_device[port] == ARC_DEVICE_KEYS ||
-             arc_port_device[port] == RETRO_DEVICE_JOYPAD)
-            down = down || arc_input_state(port, RETRO_DEVICE_JOYPAD, 0u, ids[i]) != 0;
-      if (down != arc_pad_keys[i])
+      ArcInputSource source = port ? ARC_INPUT_SOURCE_PAD1 : ARC_INPUT_SOURCE_PAD0;
+      for (unsigned m = 0u; m < 2u; ++m)
       {
-         arc_pad_keys[i] = down;
-         arc_input_key(&arc_inputs, keys[i], down, true);
+         unsigned i = modifiers[m];
+         if (sampled[port][i] && !arc_pad_keys[port][i])
+            arc_input_source_key(&arc_inputs, source, keys[i], true, true);
       }
    }
-   bool pointer = arc_plan.pointer_relative &&
-      arc_input_state(0u, RETRO_DEVICE_POINTER, 0u,
-                      RETRO_DEVICE_ID_POINTER_PRESSED) != 0;
-   if (arc_plan.pointer_relative && (pointer || arc_inputs.pointer_contact))
-      arc_input_pointer_scaled(&arc_inputs, pointer,
-         arc_input_state(0u, RETRO_DEVICE_POINTER, 0u, RETRO_DEVICE_ID_POINTER_X),
-         arc_input_state(0u, RETRO_DEVICE_POINTER, 0u, RETRO_DEVICE_ID_POINTER_Y),
-         pointer ? 1u : 0u, arc_video_width, arc_video_height);
+   for (unsigned port = 0u; port < 2u; ++port)
+   {
+      ArcInputSource source = port ? ARC_INPUT_SOURCE_PAD1 : ARC_INPUT_SOURCE_PAD0;
+      for (unsigned i = 0u; i < 10u; ++i)
+         if (i != 6u && i != 7u && sampled[port][i] && !arc_pad_keys[port][i])
+            arc_input_source_key(&arc_inputs, source, keys[i], true, true);
+   }
+   for (unsigned port = 0u; port < 2u; ++port)
+   {
+      ArcInputSource source = port ? ARC_INPUT_SOURCE_PAD1 : ARC_INPUT_SOURCE_PAD0;
+      for (unsigned i = 0u; i < 10u; ++i)
+         if (i != 6u && i != 7u && !sampled[port][i] && arc_pad_keys[port][i])
+            arc_input_source_key(&arc_inputs, source, keys[i], false, true);
+   }
+   for (unsigned port = 0u; port < 2u; ++port)
+   {
+      ArcInputSource source = port ? ARC_INPUT_SOURCE_PAD1 : ARC_INPUT_SOURCE_PAD0;
+      for (unsigned m = 0u; m < 2u; ++m)
+      {
+         unsigned i = modifiers[m];
+         if (!sampled[port][i] && arc_pad_keys[port][i])
+            arc_input_source_key(&arc_inputs, source, keys[i], false, true);
+      }
+   }
+   for (unsigned port = 0u; port < 2u; ++port)
+      memcpy(arc_pad_keys[port], sampled[port], sizeof(sampled[port]));
+
+   bool pad_pointer = arc_port_device[0] == ARC_DEVICE_KEYS ||
+                      arc_port_device[0] == RETRO_DEVICE_JOYPAD;
+   unsigned pad_buttons = pad_pointer ?
+      (arc_input_state(0u, RETRO_DEVICE_JOYPAD, 0u, RETRO_DEVICE_ID_JOYPAD_R) ? 1u : 0u) |
+      (arc_input_state(0u, RETRO_DEVICE_JOYPAD, 0u, RETRO_DEVICE_ID_JOYPAD_L) ? 2u : 0u) |
+      (arc_input_state(0u, RETRO_DEVICE_JOYPAD, 0u, RETRO_DEVICE_ID_JOYPAD_L2) ? 4u : 0u) : 0u;
+   arc_input_source_buttons(&arc_inputs, ARC_INPUT_SOURCE_PAD0,
+                            arc_pad_pointer_buttons | pad_buttons);
+   arc_touch_poll();
+
+   for (unsigned port = 0u; port < 2u; ++port)
+      if (arc_port_device[port] == ARC_DEVICE_MOUSE ||
+          arc_port_device[port] == RETRO_DEVICE_MOUSE)
+      {
+         int dx = arc_input_state(port, RETRO_DEVICE_MOUSE, 0u, RETRO_DEVICE_ID_MOUSE_X);
+         int dy = arc_input_state(port, RETRO_DEVICE_MOUSE, 0u, RETRO_DEVICE_ID_MOUSE_Y);
+         unsigned buttons = (arc_input_state(port, RETRO_DEVICE_MOUSE, 0u, RETRO_DEVICE_ID_MOUSE_LEFT) ? 1u : 0u) |
+                            (arc_input_state(port, RETRO_DEVICE_MOUSE, 0u, RETRO_DEVICE_ID_MOUSE_RIGHT) ? 2u : 0u) |
+                            (arc_input_state(port, RETRO_DEVICE_MOUSE, 0u, RETRO_DEVICE_ID_MOUSE_MIDDLE) ? 4u : 0u);
+         arc_input_motion(&arc_inputs, dx, dy, false);
+         arc_input_source_buttons(&arc_inputs,
+            port ? ARC_INPUT_SOURCE_MOUSE1 : ARC_INPUT_SOURCE_MOUSE0, buttons);
+      }
+   arc_input_source_buttons(&arc_inputs, ARC_INPUT_SOURCE_PAD0, pad_buttons);
+   arc_pad_pointer_buttons = pad_buttons;
+
+   unsigned stick_index = arc_core_options.pointer_stick == ARC_POINTER_STICK_LEFT ?
+      RETRO_DEVICE_INDEX_ANALOG_LEFT : RETRO_DEVICE_INDEX_ANALOG_RIGHT;
+   if (pad_pointer && arc_core_options.pointer_stick != ARC_POINTER_STICK_DISABLED)
+   {
+      arc_stick_x = arc_input_state(0u, RETRO_DEVICE_ANALOG, stick_index,
+                                    RETRO_DEVICE_ID_ANALOG_X);
+      arc_stick_y = arc_input_state(0u, RETRO_DEVICE_ANALOG, stick_index,
+                                    RETRO_DEVICE_ID_ANALOG_Y);
+      arc_stick_precision = arc_input_state(0u, RETRO_DEVICE_JOYPAD, 0u,
+                                            RETRO_DEVICE_ID_JOYPAD_R2) != 0;
+   }
    else
    {
-      if (arc_inputs.pointer_contact)
-         arc_input_pointer_scaled(&arc_inputs, false, 0, 0, 0u,
-                                  arc_video_width, arc_video_height);
-      for (unsigned port = 0u; port < 2u; ++port)
-         if (arc_port_device[port] == ARC_DEVICE_MOUSE ||
-             arc_port_device[port] == RETRO_DEVICE_MOUSE)
-         {
-            int dx = arc_input_state(port, RETRO_DEVICE_MOUSE, 0u, RETRO_DEVICE_ID_MOUSE_X);
-            int dy = arc_input_state(port, RETRO_DEVICE_MOUSE, 0u, RETRO_DEVICE_ID_MOUSE_Y);
-            unsigned buttons = (arc_input_state(port, RETRO_DEVICE_MOUSE, 0u, RETRO_DEVICE_ID_MOUSE_LEFT) ? 1u : 0u) |
-                               (arc_input_state(port, RETRO_DEVICE_MOUSE, 0u, RETRO_DEVICE_ID_MOUSE_RIGHT) ? 2u : 0u) |
-                               (arc_input_state(port, RETRO_DEVICE_MOUSE, 0u, RETRO_DEVICE_ID_MOUSE_MIDDLE) ? 4u : 0u);
-            arc_input_mouse_add(&arc_inputs, dx, dy, buttons);
-         }
+      arc_stick_x = arc_stick_y = 0;
+      arc_stick_precision = false;
    }
+}
+
+static void arc_integrate_stick(uint64_t elapsed_us)
+{
+   long double x = arc_stick_x;
+   long double y = arc_stick_y;
+   long double magnitude = hypotl(x, y);
+   long double deadzone = (long double)arc_core_options.pointer_deadzone / 100.0L;
+   long double normal = magnitude > 32767.0L ? 1.0L : magnitude / 32767.0L;
+   if (normal <= deadzone || !elapsed_us) return;
+   long double response = (normal - deadzone) / (1.0L - deadzone);
+   response *= response;
+   long double speed = arc_core_options.pointer_speed *
+      (arc_stick_precision ? 0.25L : 1.0L);
+   long double distance = speed * response * elapsed_us / 1000000.0L;
+   arc_stick_fraction_x += distance * x / magnitude;
+   arc_stick_fraction_y += distance * y / magnitude;
+   int64_t dx = (int64_t)truncl(arc_stick_fraction_x);
+   int64_t dy = (int64_t)truncl(arc_stick_fraction_y);
+   arc_stick_fraction_x -= dx;
+   arc_stick_fraction_y -= dy;
+   arc_input_motion(&arc_inputs, dx, dy, true);
 }
 
 static const struct retro_core_option_v2_definition arc_options[] = {
@@ -621,6 +994,12 @@ static const struct retro_core_option_v2_definition arc_options[] = {
     NULL, {{"Auto", NULL}, {"Keyboard", NULL}, {"A3010", NULL}, {NULL, NULL}}, "Auto"},
    {"arcdroid_pointer_mode", "Pointer Mode", NULL, "Use pointer input as a relative trackpad.", NULL,
     NULL, {{"disabled", NULL}, {"relative", NULL}, {NULL, NULL}}, "relative"},
+   {"arcdroid_pointer_stick", "Pointer Stick", NULL, "Choose the analog stick that drives pointer velocity.", NULL,
+    NULL, {{"right", NULL}, {"left", NULL}, {"disabled", NULL}, {NULL, NULL}}, "right"},
+   {"arcdroid_pointer_speed", "Pointer Speed", NULL, "Maximum pointer speed in mickeys per guest second.", NULL,
+    NULL, {{"300", NULL}, {"450", NULL}, {"600", NULL}, {"900", NULL}, {"1200", NULL}, {NULL, NULL}}, "600"},
+   {"arcdroid_pointer_deadzone", "Pointer Dead Zone", NULL, "Radial analog-stick dead zone percentage.", NULL,
+    NULL, {{"0", "0 %"}, {"10", "10 %"}, {"15", "15 %"}, {"20", "20 %"}, {"25", "25 %"}, {NULL, NULL}}, "15"},
    {"arcdroid_disk_writes", "Disk Writes", NULL, "Choose where floppy writes are stored.", NULL,
     NULL, {{"shadow", NULL}, {"original", NULL}, {"off", NULL}, {NULL, NULL}}, "shadow"},
    {NULL, NULL, NULL, NULL, NULL, NULL, {{0}}, NULL}
@@ -638,6 +1017,12 @@ static const struct retro_input_descriptor arc_input_descriptors[] = {
    {0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_Y, "Left Control"},
    {0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_START, "Escape"},
    {0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_SELECT, "Tab"},
+   {0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R, "Mouse Select"},
+   {0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L, "Mouse Adjust"},
+   {0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L2, "Mouse Menu"},
+   {0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R2, "Pointer precision (quarter speed)"},
+   {0, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_RIGHT, RETRO_DEVICE_ID_ANALOG_X, "Pointer horizontal velocity"},
+   {0, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_RIGHT, RETRO_DEVICE_ID_ANALOG_Y, "Pointer vertical velocity"},
    {1, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_UP, "Archimedes Up"},
    {1, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_DOWN, "Archimedes Down"},
    {1, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_LEFT, "Archimedes Left"},
@@ -708,8 +1093,7 @@ RETRO_API void retro_init(void)
    arc_image_index = arc_initial_index = 0u;
    arc_initial_path[0] = '\0';
    memset(arc_cmos_record, 0, sizeof(arc_cmos_record));
-   arc_input_reset(&arc_inputs);
-   memset(arc_pad_keys, 0, sizeof(arc_pad_keys));
+   arc_input_sampling_reset(false);
    arc_port_device[0] = ARC_DEVICE_KEYS;
    arc_port_device[1] = ARC_DEVICE_MOUSE;
    arc_audio_fraction = 0u;
@@ -721,6 +1105,7 @@ RETRO_API void retro_init(void)
    arc_vidc_transient_logged = false;
    arc_vidc_incomplete_us = 0u;
    arc_audio_warning_reported = false;
+   arc_guest_time_us = 0u;
    arc_can_dupe = false;
    arc_release_session();
    arc_log = NULL;
@@ -760,7 +1145,7 @@ static bool arc_load_game(const struct retro_game_info *game, bool negotiate)
 {
    enum retro_pixel_format format = RETRO_PIXEL_FORMAT_XRGB8888;
    static const struct retro_controller_description controllers[] = {
-      {"RetroPad to Archimedes keys", ARC_DEVICE_KEYS},
+      {"RetroPad: keys and pointer", ARC_DEVICE_KEYS},
       {"Archimedes mouse", ARC_DEVICE_MOUSE}
    };
    static const struct retro_controller_info ports[] = {
@@ -779,6 +1164,8 @@ static bool arc_load_game(const struct retro_game_info *game, bool negotiate)
    if (arc_loaded) arc_persist_cmos();
    arc_loaded = false;
    arc_release_session();
+   arc_input_sampling_reset(false);
+   arc_guest_time_us = 0u;
    memset(arc_frame, 0, sizeof(arc_frame));
    if (!game || !game->path || !game->path[0])
    {
@@ -910,7 +1297,11 @@ static bool arc_load_game(const struct retro_game_info *game, bool negotiate)
    memset(arc_frame, 0, sizeof(arc_frame));
    arc_frame_number = 0u;
    arc_audio_fraction = 0u;
-   (void)arc_engine_get_av_info(&arc_video_width, &arc_video_height, &arc_video_rate);
+   /* A frontend retains the last advertised A/V state across retro_reset().
+    * Keep that state as our comparison baseline for a non-negotiating reload;
+    * the first genuinely different completed field will then notify it once. */
+   if (negotiate)
+      (void)arc_engine_get_av_info(&arc_video_width, &arc_video_height, &arc_video_rate);
    arc_fault_reported = false;
    arc_vidc_warning_reported = false;
    arc_vidc_transient_logged = false;
@@ -939,6 +1330,8 @@ RETRO_API void retro_unload_game(void)
    }
    arc_loaded = false;
    arc_release_session();
+   arc_input_sampling_reset(false);
+   arc_guest_time_us = 0u;
 }
 RETRO_API void retro_reset(void)
 {
@@ -955,8 +1348,34 @@ RETRO_API void retro_run(void)
    ArcEngineFrame frame;
    size_t count;
    bool frame_ran;
+   bool options_updated = false;
+   if (arc_environment &&
+       arc_environment(RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE, &options_updated) &&
+       options_updated)
+   {
+      ArcCoreOptions updated;
+      char option_error[160] = {0};
+      if (!arc_read_options(&updated, option_error, sizeof(option_error)))
+         arc_message(option_error, RETRO_LOG_ERROR);
+      else if (updated.pointer_relative != arc_core_options.pointer_relative ||
+               updated.pointer_stick != arc_core_options.pointer_stick ||
+               updated.pointer_speed != arc_core_options.pointer_speed ||
+               updated.pointer_deadzone != arc_core_options.pointer_deadzone)
+      {
+         arc_core_options.pointer_relative = updated.pointer_relative;
+         arc_core_options.pointer_stick = updated.pointer_stick;
+         arc_core_options.pointer_speed = updated.pointer_speed;
+         arc_core_options.pointer_deadzone = updated.pointer_deadzone;
+         arc_plan.pointer_relative = updated.pointer_relative;
+         arc_touch_reset();
+         arc_stick_x = arc_stick_y = 0;
+         arc_stick_fraction_x = arc_stick_fraction_y = 0.0L;
+      }
+   }
    if (arc_input_poll) arc_input_poll();
    arc_poll_inputs();
+   if (arc_input_take_overflow_report(&arc_inputs))
+      arc_message("Input queue overflowed; recovered to current input levels.", RETRO_LOG_WARN);
    if (!arc_loaded)
    {
       if (arc_video) arc_video(arc_frame, ARC_WIDTH, ARC_HEIGHT, ARC_WIDTH * sizeof(uint32_t));
@@ -982,6 +1401,11 @@ RETRO_API void retro_run(void)
    }
    if (frame_ran)
       arc_vidc_episode_update(frame.field_completed, frame.elapsed_us);
+   if (frame_ran)
+   {
+      arc_integrate_stick(frame.elapsed_us);
+      arc_guest_time_us += frame.elapsed_us;
+   }
    if (frame.width != arc_video_width || frame.height != arc_video_height)
    {
       struct retro_game_geometry geometry = {
@@ -1058,5 +1482,22 @@ RETRO_API void retro_set_controller_port_device(unsigned port, unsigned device)
    if (device == RETRO_DEVICE_NONE || device == RETRO_DEVICE_JOYPAD ||
        device == RETRO_DEVICE_MOUSE || device == ARC_DEVICE_KEYS ||
        device == ARC_DEVICE_MOUSE)
+   {
+      if (device != arc_port_device[port])
+      {
+         arc_input_clear_source(&arc_inputs,
+            port ? ARC_INPUT_SOURCE_PAD1 : ARC_INPUT_SOURCE_PAD0);
+         arc_input_clear_source(&arc_inputs,
+            port ? ARC_INPUT_SOURCE_MOUSE1 : ARC_INPUT_SOURCE_MOUSE0);
+         memset(arc_pad_keys[port], 0, sizeof(arc_pad_keys[port]));
+         if (!port)
+         {
+            arc_pad_pointer_buttons = 0u;
+            arc_touch_reset();
+            arc_stick_x = arc_stick_y = 0;
+            arc_stick_fraction_x = arc_stick_fraction_y = 0.0L;
+         }
+      }
       arc_port_device[port] = device;
+   }
 }

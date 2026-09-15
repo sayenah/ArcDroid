@@ -14,5 +14,11 @@ void arc_platform_audio_reset(void);
 size_t arc_platform_audio_read(int16_t *output, size_t capacity_frames);
 void arc_platform_audio_stats(uint64_t *underrun_frames, uint64_t *overrun_frames);
 void arc_platform_input_apply(ArcInputState *input);
+void arc_platform_input_consume(int mouse_enabled);
+
+#if defined(ARCDROID_TEST_FAULTS)
+void arc_platform_test_input_events_reset(void);
+size_t arc_platform_test_input_events(ArcKartEvent *events, size_t capacity);
+#endif
 
 #endif

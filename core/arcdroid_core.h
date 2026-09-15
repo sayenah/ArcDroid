@@ -108,24 +108,73 @@ bool arc_cmos_machine_image(ArcOsClass os,
                             const uint8_t payload[ARC_CMOS_PAYLOAD_SIZE],
                             uint8_t output[ARC_CMOS_MACHINE_SIZE]);
 
+#define ARC_INPUT_KEY_COUNT 512u
+#define ARC_INPUT_FIFO_CAPACITY 256u
+#define ARC_INPUT_MOTION_STARVATION_BOUND 8u
+
+typedef enum {
+   ARC_INPUT_SOURCE_KEYBOARD = 0,
+   ARC_INPUT_SOURCE_PAD0,
+   ARC_INPUT_SOURCE_PAD1,
+   ARC_INPUT_SOURCE_TOUCH,
+   ARC_INPUT_SOURCE_MOUSE0,
+   ARC_INPUT_SOURCE_MOUSE1,
+   ARC_INPUT_SOURCE_COUNT
+} ArcInputSource;
+
+typedef enum {
+   ARC_INPUT_EVENT_NONE = 0,
+   ARC_INPUT_EVENT_KEY,
+   ARC_INPUT_EVENT_BUTTON,
+   ARC_INPUT_EVENT_MOTION
+} ArcInputEventType;
+
 typedef struct {
-   bool keyboard[512];
-   bool mapped[512];
-   int mouse_x;
-   int mouse_y;
-   unsigned mouse_buttons;
-   bool pointer_contact;
-   int pointer_x;
-   int pointer_y;
+   ArcInputEventType type;
+   unsigned code;
+   bool down;
+   bool velocity;
+   int64_t dx;
+   int64_t dy;
+} ArcInputEvent;
+
+typedef struct {
+   ArcInputEventType type;
+   unsigned code;
+   bool down;
+   int dx;
+   int dy;
+   uint64_t guest_us;
+} ArcKartEvent;
+
+typedef struct {
+   bool source_keys[ARC_INPUT_SOURCE_COUNT][ARC_INPUT_KEY_COUNT];
+   uint8_t source_buttons[ARC_INPUT_SOURCE_COUNT];
+   bool effective_keys[ARC_INPUT_KEY_COUNT];
+   uint8_t effective_buttons;
+   bool applied_keys[ARC_INPUT_KEY_COUNT];
+   uint8_t applied_buttons;
+   ArcInputEvent fifo[ARC_INPUT_FIFO_CAPACITY];
+   unsigned fifo_count;
+   unsigned discrete_since_motion;
+   bool overflow_report_pending;
+   bool overflow_reported;
 } ArcInputState;
 
 void arc_input_reset(ArcInputState *state);
-void arc_input_key(ArcInputState *state, unsigned scancode, bool down, bool mapped);
-bool arc_input_key_down(const ArcInputState *state, unsigned scancode);
-void arc_input_mouse_add(ArcInputState *state, int dx, int dy, unsigned buttons);
-void arc_input_mouse_packet(ArcInputState *state, int *dx, int *dy, unsigned *buttons);
-void arc_input_pointer(ArcInputState *state, bool pressed, int x, int y, unsigned buttons);
-void arc_input_pointer_scaled(ArcInputState *state, bool pressed, int x, int y,
-                              unsigned buttons, unsigned width, unsigned height);
+void arc_input_release_all(ArcInputState *state);
+void arc_input_clear_source(ArcInputState *state, ArcInputSource source);
+void arc_input_source_key(ArcInputState *state, ArcInputSource source,
+                          unsigned scancode, bool down, bool supported);
+void arc_input_source_buttons(ArcInputState *state, ArcInputSource source,
+                              unsigned buttons);
+void arc_input_source_click(ArcInputState *state, ArcInputSource source,
+                            unsigned button);
+void arc_input_motion(ArcInputState *state, int64_t dx, int64_t dy,
+                      bool velocity);
+bool arc_input_consume(ArcInputState *state, bool mouse_enabled,
+                       ArcInputEvent *event);
+bool arc_input_take_overflow_report(ArcInputState *state);
+unsigned arc_input_pending(const ArcInputState *state);
 
 #endif

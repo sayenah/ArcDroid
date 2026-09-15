@@ -17,6 +17,7 @@ void mouse_capture_disable();
 void get_mouse_deltas(int *x, int *y, int *b);
 
 void keyboard_poll_host();
+void arc_platform_input_consume(int mouse_enabled);
 extern int key[512];
 
 #define KEY_ESC RETROK_ESCAPE

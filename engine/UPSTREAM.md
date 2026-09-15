@@ -42,6 +42,12 @@ src/wd1770.c src/wd1770.h
 This is an allowlisted copy, not a subtree. ArcDroid modifications carry an
 explicit notice in each modified upstream file.
 
+`src/keyboard.c` contains ArcDroid's single consumption-acknowledgement hook:
+after the existing KART-idle and keyboard-enabled guards, one platform call
+applies the next queued input event. Skipped polls never advance the queue and
+the upstream packet encoding, handshake, and one-event-per-poll logic remain
+unchanged.
+
 The pinned upstream `AUTHORS` file is empty. Upstream author and contributor
 credits are preserved in the imported `README.md`.
 

@@ -175,48 +175,161 @@ static void test_media_launch_and_cmos(void)
    assert(machine_cmos[63] == (uint8_t)(checksum + 1u));
 }
 
+static uint8_t test_old_map_checksum(const uint8_t *block)
+{
+   unsigned checksum = 0xffu;
+   for (unsigned index = 0u; index < 255u; ++index)
+   {
+      if (checksum > 0xffu) checksum = (checksum + 1u) & 0xffu;
+      checksum += block[index];
+   }
+   return (uint8_t)checksum;
+}
+
+static uint8_t test_new_map_checksum(const uint8_t *map)
+{
+   unsigned sum[4] = {0u, 0u, 0u, 0u};
+   size_t rover = 1020u;
+   while (rover > 0u)
+   {
+      sum[0] += map[rover] + (sum[3] >> 8u); sum[3] &= 0xffu;
+      sum[1] += map[rover + 1u] + (sum[0] >> 8u); sum[0] &= 0xffu;
+      sum[2] += map[rover + 2u] + (sum[1] >> 8u); sum[1] &= 0xffu;
+      sum[3] += map[rover + 3u] + (sum[2] >> 8u); sum[2] &= 0xffu;
+      rover -= 4u;
+   }
+   sum[0] += sum[3] >> 8u;
+   sum[1] += map[1] + (sum[0] >> 8u);
+   sum[2] += map[2] + (sum[1] >> 8u);
+   sum[3] += map[3] + (sum[2] >> 8u);
+   return (uint8_t)((sum[0] ^ sum[1] ^ sum[2] ^ sum[3]) & 0xffu);
+}
+
+static void test_adfs_recognition(void)
+{
+   uint8_t old_map[512] = {0};
+   old_map[255] = test_old_map_checksum(old_map);
+   old_map[511] = test_old_map_checksum(old_map + 256u);
+   assert(arc_media_is_recognised_adfs(old_map, sizeof(old_map)));
+
+   size_t size = 819200u;
+   uint8_t *e_format = calloc(1u, size);
+   assert(e_format);
+   uint8_t *record = e_format + 4u;
+   e_format[3] = 0xffu;
+   record[0] = 10u; record[1] = 5u; record[2] = 2u; record[3] = 2u;
+   record[4] = 15u; record[5] = 7u; record[9] = 1u;
+   record[10] = 0u; record[11] = 5u; /* 1280 spare bits. */
+   record[13] = 2u; /* Root is fragment 2, sector offset 0. */
+   record[16] = 0u; record[17] = 0x80u; record[18] = 0x0cu;
+   e_format[0] = test_new_map_checksum(e_format);
+   assert(arc_media_is_recognised_adfs(e_format, size));
+   assert(!arc_media_is_recognised_adfs(e_format, 63u));
+   e_format[0] ^= 1u;
+   assert(!arc_media_is_recognised_adfs(e_format, size));
+   e_format[0] ^= 1u;
+   e_format[3] = 0u;
+   assert(!arc_media_is_recognised_adfs(e_format, size));
+   e_format[3] = 0xffu;
+   record[4] = 12u;
+   e_format[0] = test_new_map_checksum(e_format);
+   assert(!arc_media_is_recognised_adfs(e_format, size));
+   record[4] = 15u;
+   record[8] = 0x80u;
+   e_format[0] = test_new_map_checksum(e_format);
+   assert(!arc_media_is_recognised_adfs(e_format, size));
+   memset(e_format, 0xa5, size);
+   assert(!arc_media_is_recognised_adfs(e_format, size));
+   free(e_format);
+}
+
 static void test_input(void)
 {
    ArcInputState state;
    arc_input_reset(&state);
-   arc_input_key(&state, 42u, true, false);
-   arc_input_key(&state, 42u, true, true);
-   arc_input_key(&state, 42u, false, false);
-   assert(arc_input_key_down(&state, 42u));
-   arc_input_key(&state, 42u, false, true);
-   assert(!arc_input_key_down(&state, 42u));
+   ArcInputEvent event;
+   arc_input_source_key(&state, ARC_INPUT_SOURCE_KEYBOARD, 42u, true, true);
+   arc_input_source_key(&state, ARC_INPUT_SOURCE_PAD0, 42u, true, true);
+   arc_input_source_key(&state, ARC_INPUT_SOURCE_KEYBOARD, 42u, false, true);
+   assert(arc_input_pending(&state) == 1u);
+   assert(arc_input_consume(&state, true, &event));
+   assert(event.type == ARC_INPUT_EVENT_KEY && event.code == 42u && event.down);
+   arc_input_source_key(&state, ARC_INPUT_SOURCE_PAD0, 42u, false, true);
+   assert(arc_input_consume(&state, true, &event) && !event.down);
+   arc_input_source_key(&state, ARC_INPUT_SOURCE_KEYBOARD, 500u, true, false);
+   assert(!arc_input_pending(&state));
 
-   arc_input_mouse_add(&state, 150, -90, 3u);
-   int x, y; unsigned buttons;
-   arc_input_mouse_packet(&state, &x, &y, &buttons);
-   assert(x == 63 && y == -63 && buttons == 3u);
-   arc_input_mouse_packet(&state, &x, &y, &buttons);
-   assert(x == 63 && y == -27);
-   arc_input_mouse_packet(&state, &x, &y, &buttons);
-   assert(x == 24 && y == 0);
+   arc_input_source_buttons(&state, ARC_INPUT_SOURCE_PAD0, 1u);
+   arc_input_source_buttons(&state, ARC_INPUT_SOURCE_MOUSE1, 1u);
+   arc_input_source_buttons(&state, ARC_INPUT_SOURCE_PAD0, 0u);
+   assert(arc_input_pending(&state) == 1u);
+   assert(arc_input_consume(&state, true, &event) && event.down);
+   arc_input_source_buttons(&state, ARC_INPUT_SOURCE_MOUSE1, 0u);
+   assert(arc_input_consume(&state, true, &event) && !event.down);
 
-   arc_input_reset(&state);
-   arc_input_pointer(&state, true, 1000, 1000, 1u);
-   arc_input_mouse_packet(&state, &x, &y, &buttons);
-   assert(x == 0 && y == 0 && buttons == 1u);
-   arc_input_pointer(&state, true, 1025, 970, 1u);
-   arc_input_mouse_packet(&state, &x, &y, &buttons);
-   assert(x == 25 && y == -30 && buttons == 1u);
-   arc_input_pointer(&state, false, 0, 0, 0u);
-   arc_input_mouse_packet(&state, &x, &y, &buttons);
-   assert(buttons == 0u);
-
-   arc_input_reset(&state);
-   arc_input_pointer_scaled(&state, true, -32767, -32767, 1u, 640u, 480u);
-   arc_input_pointer_scaled(&state, true, 32767, 32767, 1u, 640u, 480u);
+   arc_input_motion(&state, 150, -90, false);
    int total_x = 0, total_y = 0;
    unsigned packets = 0u;
-   do
+   while (arc_input_pending(&state))
    {
-      arc_input_mouse_packet(&state, &x, &y, &buttons);
-      total_x += x; total_y += y; ++packets;
-   } while (x || y);
-   assert(total_x == 640 && total_y == 480 && packets <= 12u);
+      assert(arc_input_consume(&state, true, &event));
+      assert(event.type == ARC_INPUT_EVENT_MOTION);
+      assert(event.dx >= -63 && event.dx <= 63 && event.dy >= -63 && event.dy <= 63);
+      total_x += (int)event.dx; total_y += (int)event.dy; ++packets;
+   }
+   assert(total_x == 150 && total_y == -90 && packets == 3u);
+
+   arc_input_motion(&state, 150, 0, false);
+   arc_input_source_buttons(&state, ARC_INPUT_SOURCE_MOUSE1, 1u);
+   arc_input_motion(&state, 70, 0, false);
+   arc_input_source_buttons(&state, ARC_INPUT_SOURCE_MOUSE1, 0u);
+   total_x = 0;
+   while (arc_input_pending(&state))
+   {
+      assert(arc_input_consume(&state, true, &event));
+      if (event.type == ARC_INPUT_EVENT_MOTION) total_x += (int)event.dx;
+      else if (event.down) assert(total_x == 150);
+      else assert(total_x == 220);
+   }
+   assert(total_x == 220);
+
+   arc_input_motion(&state, 10, 0, true);
+   arc_input_motion(&state, 20, -80, true);
+   assert(arc_input_pending(&state) == 1u);
+   assert(arc_input_consume(&state, true, &event));
+   assert(event.type == ARC_INPUT_EVENT_MOTION && event.velocity &&
+          event.dx == 20 && event.dy == -63 && !arc_input_pending(&state));
+
+   for (unsigned code = 1u; code <= 9u; ++code)
+      arc_input_source_key(&state, ARC_INPUT_SOURCE_KEYBOARD, code, true, true);
+   arc_input_motion(&state, 1, 1, false);
+   for (unsigned code = 10u; code <= 20u; ++code)
+      arc_input_source_key(&state, ARC_INPUT_SOURCE_KEYBOARD, code, true, true);
+   unsigned discrete = 0u;
+   while (arc_input_pending(&state))
+   {
+      assert(arc_input_consume(&state, true, &event));
+      if (event.type == ARC_INPUT_EVENT_MOTION)
+      {
+         assert(discrete <= ARC_INPUT_MOTION_STARVATION_BOUND);
+         break;
+      }
+      ++discrete;
+   }
+
+   arc_input_reset(&state);
+   for (unsigned i = 0u; i < 300u; ++i)
+      arc_input_source_key(&state, ARC_INPUT_SOURCE_KEYBOARD, 42u,
+                           (i & 1u) == 0u, true);
+   assert(arc_input_take_overflow_report(&state));
+   assert(!arc_input_take_overflow_report(&state));
+   while (arc_input_pending(&state)) assert(arc_input_consume(&state, true, &event));
+   assert(!state.applied_keys[42u]);
+
+   arc_input_source_key(&state, ARC_INPUT_SOURCE_KEYBOARD, 42u, true, true);
+   assert(arc_input_consume(&state, true, &event) && event.down);
+   arc_input_release_all(&state);
+   assert(arc_input_consume(&state, true, &event) && !event.down);
 }
 
 int main(void)
@@ -225,6 +338,7 @@ int main(void)
    test_firmware_table();
    test_assembly();
    test_media_launch_and_cmos();
+   test_adfs_recognition();
    test_input();
    puts("core_tests: all checks passed");
    return 0;

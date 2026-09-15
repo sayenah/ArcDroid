@@ -1,7 +1,8 @@
 /*Arculator 2.2 by Sarah Walker
   Keyboard/mouse emulation*/
-/* ArcDroid modification (2026-09-14): KART reset/handshake traffic is exposed through the
- * frontend debug logger for deterministic boot diagnostics. */
+/* ArcDroid modifications (2026-09-14): KART reset/handshake traffic is exposed through the
+ * frontend debug logger for deterministic boot diagnostics; one acknowledged input-service
+ * hook runs only when KART is idle and keyboard delivery is enabled. */
 #include <stdio.h>
 #include "arc.h"
 #include "config.h"
@@ -385,6 +386,7 @@ void keyboard_poll(void *p)
 		return;
 	if (!keyena)
 		return;
+	arc_platform_input_consume(mouseena);
 //        c = poll_keyboard();
 	for (c = 1; c < 512; c++)
 	{
