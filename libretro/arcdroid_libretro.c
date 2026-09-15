@@ -109,6 +109,7 @@ static bool arc_osk_source_unchanged;
 static bool arc_osk_source_checked;
 static ArcInputProfile arc_test_input_profile;
 static bool arc_test_input_profile_registered;
+static bool arc_test_stall_kart;
 void arc_libretro_test_fail_osk_allocations(unsigned count)
 {
    arc_osk_fail_allocations = count;
@@ -123,6 +124,26 @@ bool arc_libretro_test_osk_source_unchanged(void)
 {
    return arc_osk_source_checked && arc_osk_source_unchanged;
 }
+void arc_libretro_test_stall_kart(bool stalled)
+{
+   arc_test_stall_kart = stalled;
+}
+void arc_libretro_test_fill_input_queue(void)
+{
+   while (arc_input_available(&arc_inputs) >= 2u)
+   {
+      arc_input_source_key(&arc_inputs, ARC_INPUT_SOURCE_KEYBOARD,
+                           RETROK_b, true, true);
+      arc_input_source_key(&arc_inputs, ARC_INPUT_SOURCE_KEYBOARD,
+                           RETROK_b, false, true);
+   }
+}
+unsigned arc_libretro_test_input_pending(void)
+{
+   return arc_input_pending(&arc_inputs);
+}
+bool arc_libretro_test_osk_visible(void) { return arc_osk.visible; }
+bool arc_libretro_test_osk_busy(void) { return arc_osk.busy; }
 #endif
 
 typedef struct {
@@ -2294,6 +2315,7 @@ RETRO_API void retro_init(void)
 #if defined(ARCDROID_TEST_FAULTS)
    arc_osk_source_unchanged = true;
    arc_osk_source_checked = false;
+   arc_test_stall_kart = false;
 #endif
    arc_release_session();
    arc_log = NULL;
@@ -2809,7 +2831,12 @@ RETRO_API void retro_run(void)
       return;
    }
    ++arc_frame_number;
+#if defined(ARCDROID_TEST_FAULTS)
+   frame_ran = arc_engine_run_frame(arc_test_stall_kart ? NULL : &arc_inputs,
+                                    &frame);
+#else
    frame_ran = arc_engine_run_frame(&arc_inputs, &frame);
+#endif
    if (!frame_ran)
    {
       const char *fault = NULL;

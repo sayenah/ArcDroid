@@ -912,6 +912,11 @@ int main(int argc, char **argv)
    bool (*arc_libretro_test_register_input_profile)(const ArcInputProfile *) = NULL;
    void (*arc_libretro_test_probe_osk_geometry)(unsigned, unsigned) = NULL;
    bool (*arc_libretro_test_osk_focus_key)(unsigned) = NULL;
+   void (*arc_libretro_test_stall_kart)(bool) = NULL;
+   void (*arc_libretro_test_fill_input_queue)(void) = NULL;
+   unsigned (*arc_libretro_test_input_pending)(void) = NULL;
+   bool (*arc_libretro_test_osk_visible)(void) = NULL;
+   bool (*arc_libretro_test_osk_busy)(void) = NULL;
    void (*arc_platform_test_input_events_reset)(void) = NULL;
    size_t (*arc_platform_test_input_events)(ArcKartEvent *, size_t) = NULL;
    if (!real_boot)
@@ -938,6 +943,16 @@ int main(int argc, char **argv)
          dlsym(module, "arc_libretro_test_probe_osk_geometry");
       *(void **)(&arc_libretro_test_osk_focus_key) =
          dlsym(module, "arc_libretro_test_osk_focus_key");
+      *(void **)(&arc_libretro_test_stall_kart) =
+         dlsym(module, "arc_libretro_test_stall_kart");
+      *(void **)(&arc_libretro_test_fill_input_queue) =
+         dlsym(module, "arc_libretro_test_fill_input_queue");
+      *(void **)(&arc_libretro_test_input_pending) =
+         dlsym(module, "arc_libretro_test_input_pending");
+      *(void **)(&arc_libretro_test_osk_visible) =
+         dlsym(module, "arc_libretro_test_osk_visible");
+      *(void **)(&arc_libretro_test_osk_busy) =
+         dlsym(module, "arc_libretro_test_osk_busy");
       *(void **)(&arc_platform_test_input_events_reset) =
          dlsym(module, "arc_platform_test_input_events_reset");
       *(void **)(&arc_platform_test_input_events) =
@@ -951,6 +966,10 @@ int main(int argc, char **argv)
              arc_libretro_test_register_input_profile &&
              arc_libretro_test_probe_osk_geometry &&
              arc_libretro_test_osk_focus_key &&
+             arc_libretro_test_stall_kart &&
+             arc_libretro_test_fill_input_queue &&
+             arc_libretro_test_input_pending &&
+             arc_libretro_test_osk_visible && arc_libretro_test_osk_busy &&
              arc_platform_test_input_events_reset && arc_platform_test_input_events);
       ArcDigest application_profile_digest = digest_file(argv[12]);
       ArcDigest playlist_profile_digest = digest_playlist_pair(argv[7], argv[8]);
@@ -2313,6 +2332,78 @@ int main(int argc, char **argv)
    assert(vidc_osd_ext_calls + vidc_osd_legacy_calls == persistent_osd_before + 2u);
    arc_engine_test_set_vidc_noncompleting(false);
 
+   /* Stall KART consumption while real frontend samples enqueue a pad chord
+    * and two physical-mouse deltas. Entering the modal OSK preserves those
+    * accepted events; they drain once KART resumes. */
+   for (unsigned frame = 0u;
+        frame < 100u && arc_libretro_test_input_pending(); ++frame)
+      retro_run();
+   assert(arc_libretro_test_input_pending() == 0u);
+   arc_platform_test_input_events_reset();
+   arc_libretro_test_stall_kart(true);
+   joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_A] = true;
+   mouse_port_x[1] = 4; mouse_port_y[1] = -3;
+   retro_run();
+   joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_A] = false;
+   mouse_port_x[1] = 5; mouse_port_y[1] = 2;
+   retro_run();
+   joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_L3] = true; retro_run();
+   joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_L3] = false; retro_run();
+   assert(arc_libretro_test_osk_visible() &&
+          arc_libretro_test_input_pending() >= 4u);
+   arc_libretro_test_stall_kart(false);
+   for (unsigned frame = 0u;
+        frame < 200u && arc_libretro_test_input_pending(); ++frame)
+      retro_run();
+   assert(arc_libretro_test_input_pending() == 0u);
+   input_event_count = arc_platform_test_input_events(input_events, 512u);
+   unsigned stalled_space_edges = 0u;
+   int64_t stalled_mouse_x = 0, stalled_mouse_y = 0;
+   for (size_t i = 0u; i < input_event_count; ++i)
+   {
+      if (input_events[i].type == ARC_INPUT_EVENT_KEY &&
+          input_events[i].code == RETROK_SPACE)
+         ++stalled_space_edges;
+      if (input_events[i].type == ARC_INPUT_EVENT_MOTION)
+      {
+         stalled_mouse_x += input_events[i].dx;
+         stalled_mouse_y += input_events[i].dy;
+      }
+   }
+   assert(stalled_space_edges == 2u && stalled_mouse_x == 9 &&
+          stalled_mouse_y == -1);
+
+   /* Relayout a visible OSK across geometry tiers, then fill the stalled
+    * input FIFO so activation reports BUSY without beginning a partial key. */
+   arc_libretro_test_probe_osk_geometry(320u, 256u);
+   assert(arc_libretro_test_osk_visible());
+   retro_run();
+   assert(arc_libretro_test_osk_visible());
+   arc_libretro_test_stall_kart(true);
+   arc_libretro_test_fill_input_queue();
+   assert(arc_libretro_test_input_pending() == ARC_INPUT_FIFO_CAPACITY);
+   joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_A] = true; retro_run();
+   assert(arc_libretro_test_osk_busy());
+   joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_A] = false; retro_run();
+   arc_libretro_test_stall_kart(false);
+   for (unsigned frame = 0u;
+        frame < 600u && arc_libretro_test_input_pending(); ++frame)
+      retro_run();
+   assert(arc_libretro_test_input_pending() == 0u);
+   arc_platform_test_input_events_reset();
+   joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_A] = true; retro_run();
+   joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_A] = false;
+   for (unsigned frame = 0u;
+        frame < 120u && arc_platform_test_input_events(input_events, 512u) < 2u;
+        ++frame) retro_run();
+   input_event_count = arc_platform_test_input_events(input_events, 512u);
+   assert(!arc_libretro_test_osk_busy() && input_event_count == 2u &&
+          input_events[0].code == RETROK_a && input_events[0].down &&
+          input_events[1].code == RETROK_a && !input_events[1].down);
+   joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_START] = true; retro_run();
+   assert(!arc_libretro_test_osk_visible());
+   joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_START] = false; retro_run();
+
    /* The in-core OSK is modal only for pad 0 and touch. Its activation edges
     * remain consumption-acknowledged, while duplicate fields resume only once
     * the complete composed image is unchanged. */
@@ -2349,7 +2440,7 @@ int main(int argc, char **argv)
    for (unsigned frame = 0u; frame < 20u; ++frame) retro_run();
    unsigned osk_panel = geometry_height * 45u / 100u;
    if (osk_panel < 48u) osk_panel = 48u;
-   unsigned osk_cell = (osk_panel - 17u) / 7u;
+   unsigned osk_cell = (osk_panel - 17u) / 8u;
    unsigned osk_touch_x = geometry_width / 28u;
    unsigned osk_touch_y = geometry_height - osk_panel + 17u + osk_cell / 2u;
    pointer_x = (int)((uint64_t)osk_touch_x * 65536u / geometry_width) - 32768;
@@ -2470,13 +2561,30 @@ int main(int argc, char **argv)
    phase = PHASE_RUN;
    joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_L3] = true; retro_run();
    joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_L3] = false; retro_run();
+   arc_platform_test_input_events_reset();
    joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_A] = true; retro_run();
    arc_libretro_test_drop_osk_surface();
    arc_libretro_test_fail_osk_allocations(1u);
    retro_run();
    assert(osk_failure_osd_calls == osk_failures + 2u && !last_video_was_duplicate);
    joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_A] = false;
-   retro_run();
+   for (unsigned frame = 0u;
+        frame < 120u && arc_platform_test_input_events(input_events, 512u) < 2u;
+        ++frame) retro_run();
+   input_event_count = arc_platform_test_input_events(input_events, 512u);
+   assert(input_event_count == 2u &&
+          input_events[0].code == RETROK_a && input_events[0].down &&
+          input_events[1].code == RETROK_a && !input_events[1].down);
+   arc_platform_test_input_events_reset();
+   joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_A] = true; retro_run();
+   joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_A] = false;
+   for (unsigned frame = 0u;
+        frame < 120u && arc_platform_test_input_events(input_events, 512u) < 2u;
+        ++frame) retro_run();
+   input_event_count = arc_platform_test_input_events(input_events, 512u);
+   assert(input_event_count == 2u &&
+          input_events[0].code == RETROK_SPACE && input_events[0].down &&
+          input_events[1].code == RETROK_SPACE && !input_events[1].down);
    retro_unload_game();
 
    if (media_tests)
