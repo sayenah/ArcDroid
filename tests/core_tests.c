@@ -1190,6 +1190,29 @@ static void test_input_mapping(void)
       arc_input_source_key(&state, ARC_INPUT_SOURCE_KEYBOARD, RETROK_a,
                            (i & 1u) == 0u, true);
    assert(arc_input_reconcile_generation(&state) > generation);
+
+   /* A reconcile in the middle of a pad-key batch rebuilds the desired set
+    * once; no stale tail of the old batch may be appended afterwards. */
+   arc_input_reset(&state);
+   state.fifo_count = ARC_INPUT_FIFO_CAPACITY - 1u;
+   memset(port0, 0, sizeof(port0));
+   memset(port1, 0, sizeof(port1));
+   port0[RETROK_a] = true;
+   port0[RETROK_b] = true;
+   port0[RETROK_c] = true;
+   generation = arc_input_reconcile_generation(&state);
+   arc_input_pad_key_sets(&state, port0, port1);
+   assert(arc_input_reconcile_generation(&state) == generation + 1u);
+   unsigned seen_a = 0u, seen_b = 0u, seen_c = 0u;
+   while (arc_input_consume(&state, true, &event))
+   {
+      assert(event.type == ARC_INPUT_EVENT_KEY && event.down);
+      if (event.code == RETROK_a) ++seen_a;
+      else if (event.code == RETROK_b) ++seen_b;
+      else if (event.code == RETROK_c) ++seen_c;
+      else assert(false);
+   }
+   assert(seen_a == 1u && seen_b == 1u && seen_c == 1u);
 }
 
 static unsigned drain_input(ArcInputState *state, ArcInputEvent *events,

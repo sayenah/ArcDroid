@@ -289,21 +289,25 @@ void arc_input_pad_key_sets(ArcInputState *state,
    for (unsigned code = 1u; code < ARC_INPUT_KEY_COUNT; ++code)
       if (arc_input_is_modifier(code) && !before[code] &&
           state->effective_keys[code])
-         arc_fifo_append(state, (ArcInputEvent){ARC_INPUT_EVENT_KEY, code, true,
-                                                false, 0, 0});
+         if (arc_fifo_append(state, (ArcInputEvent){ARC_INPUT_EVENT_KEY, code,
+                                                    true, false, 0, 0}))
+            return;
    for (unsigned code = 1u; code < ARC_INPUT_KEY_COUNT; ++code)
       if (!arc_input_is_modifier(code) && !before[code] &&
           state->effective_keys[code])
-         arc_fifo_append(state, (ArcInputEvent){ARC_INPUT_EVENT_KEY, code, true,
-                                                false, 0, 0});
+         if (arc_fifo_append(state, (ArcInputEvent){ARC_INPUT_EVENT_KEY, code,
+                                                    true, false, 0, 0}))
+            return;
    for (unsigned code = 1u; code < ARC_INPUT_KEY_COUNT; ++code)
       if (!arc_input_is_modifier(code) && before[code] &&
           !state->effective_keys[code])
-         arc_fifo_append(state, (ArcInputEvent){ARC_INPUT_EVENT_KEY, code, false,
-                                                false, 0, 0});
+         if (arc_fifo_append(state, (ArcInputEvent){ARC_INPUT_EVENT_KEY, code,
+                                                    false, false, 0, 0}))
+            return;
    for (unsigned code = 1u; code < ARC_INPUT_KEY_COUNT; ++code)
       if (arc_input_is_modifier(code) && before[code] &&
           !state->effective_keys[code])
-         arc_fifo_append(state, (ArcInputEvent){ARC_INPUT_EVENT_KEY, code, false,
-                                                false, 0, 0});
+         if (arc_fifo_append(state, (ArcInputEvent){ARC_INPUT_EVENT_KEY, code,
+                                                    false, false, 0, 0}))
+            return;
 }
