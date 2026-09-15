@@ -2099,7 +2099,7 @@ static void arc_build_options(void)
                   port + 1u, arc_pad_input_name(input));
          definition->key = arc_pad_option_names[port][input];
          definition->desc = arc_pad_option_labels[port][input];
-         definition->desc_categorized = arc_pad_input_name(input);
+         definition->desc_categorized = arc_pad_option_labels[port][input];
          definition->info = "Auto uses the resolved profile; Unbound disables this input.";
          definition->category_key = "pad_mapping";
          definition->values[0] = (struct retro_core_option_value){"Auto", NULL};

@@ -365,6 +365,7 @@ static bool environment(unsigned command, void *data)
                 !strcmp(options->categories[0].desc, "Pad Mapping"));
          bool found_profile = false, found_osk = false;
          unsigned pads = 0u;
+         const char *categorized_pad_labels[ARC_PAD_PORTS * ARC_PAD_INPUT_COUNT] = {0};
          for (unsigned n = 0u; n < count; ++n)
          {
             const struct retro_core_option_v2_definition *definition =
@@ -381,10 +382,16 @@ static bool environment(unsigned command, void *data)
             if (!strcmp(definition->key, "arcdroid_osk_toggle")) found_osk = true;
             if (!strncmp(definition->key, "arcdroid_pad", 12u))
             {
-               ++pads;
                assert(!strcmp(definition->category_key, "pad_mapping") &&
                       !strcmp(definition->values[0].value, "Auto") &&
-                      !strcmp(definition->values[1].value, "Unbound"));
+                      !strcmp(definition->values[1].value, "Unbound") &&
+                      definition->desc_categorized &&
+                      !strcmp(definition->desc, definition->desc_categorized) &&
+                      !strncmp(definition->desc_categorized, "Pad ", 4u));
+               for (unsigned previous = 0u; previous < pads; ++previous)
+                  assert(strcmp(categorized_pad_labels[previous],
+                                definition->desc_categorized));
+               categorized_pad_labels[pads++] = definition->desc_categorized;
             }
          }
          assert(found_profile && found_osk && pads == 20u);
