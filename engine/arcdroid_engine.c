@@ -8,6 +8,7 @@
 #include "config.h"
 #include "disc.h"
 #include "disc_adf.h"
+#include "disc_jfd.h"
 #include "ds2401.h"
 #include "ioc.h"
 #include "ioeb.h"
@@ -61,6 +62,9 @@ static uint8_t *arc_saved_firmware;
 static size_t arc_saved_firmware_size;
 static char arc_saved_media[4096];
 static bool arc_saved_media_writable;
+static ArcMediaKind arc_saved_media_kind;
+static ArcMediaGeometry arc_saved_media_geometry;
+static const ArcJfdImage *arc_saved_jfd;
 static uint8_t arc_saved_cmos[ARC_CMOS_MACHINE_SIZE];
 static double arc_last_refresh = 50.0;
 static ArcEngineLogCallback arc_log_callback;
@@ -261,6 +265,7 @@ static bool arc_machine_create(char *failure, size_t failure_size)
    disc_init();
    disc_reset();
    adf_init();
+   jfd_init();
    wd1770_reset();
    cmos_init();
    cmos_set_image(arc_saved_cmos, sizeof(arc_saved_cmos));
@@ -271,8 +276,10 @@ static bool arc_machine_create(char *failure, size_t failure_size)
    adf_set_writable(arc_saved_media_writable);
    if (arc_saved_media[0])
    {
-      disc_load(0, arc_saved_media);
-      if (disc_empty(0))
+      bool mounted = arc_saved_media_kind == ARC_MEDIA_JFD ?
+         disc_load_jfd(0, arc_saved_jfd) :
+         disc_load_raw(0, arc_saved_media, arc_saved_media_geometry);
+      if (!mounted)
          fatal("The selected floppy image could not be mounted");
    }
    ioc_discchange(0);
@@ -286,14 +293,13 @@ static bool arc_machine_create(char *failure, size_t failure_size)
 }
 
 bool arc_engine_start(const uint8_t *firmware, size_t firmware_size,
-                      const char *media_path,
-                      bool media_writable,
+                      const ArcEngineMedia *media,
                       const uint8_t cmos[ARC_CMOS_MACHINE_SIZE],
                       char *failure, size_t failure_size)
 {
    arc_engine_stop();
    if (!firmware || (firmware_size != 524288u && firmware_size != 2097152u) ||
-       !media_path || !cmos)
+       !cmos)
    {
       if (failure && failure_size) snprintf(failure, failure_size, "Invalid engine launch plan");
       return false;
@@ -306,6 +312,7 @@ bool arc_engine_start(const uint8_t *firmware, size_t firmware_size,
    }
    memcpy(arc_saved_firmware, firmware, firmware_size);
    arc_saved_firmware_size = firmware_size;
+   const char *media_path = media && media->path ? media->path : "";
    if (strlen(media_path) >= sizeof(arc_saved_media))
    {
       arc_engine_stop();
@@ -313,7 +320,10 @@ bool arc_engine_start(const uint8_t *firmware, size_t firmware_size,
       return false;
    }
    strcpy(arc_saved_media, media_path);
-   arc_saved_media_writable = media_writable;
+   arc_saved_media_writable = media ? media->writable : false;
+   arc_saved_media_kind = media ? media->kind : ARC_MEDIA_INVALID;
+   arc_saved_media_geometry = media ? media->geometry : ARC_GEOMETRY_NONE;
+   arc_saved_jfd = media ? media->jfd : NULL;
    memcpy(arc_saved_cmos, cmos, sizeof(arc_saved_cmos));
    if (!arc_machine_create(failure, failure_size))
    {
@@ -341,6 +351,9 @@ void arc_engine_stop(void)
    arc_saved_firmware_size = 0u;
    arc_saved_media[0] = '\0';
    arc_saved_media_writable = false;
+   arc_saved_media_kind = ARC_MEDIA_INVALID;
+   arc_saved_media_geometry = ARC_GEOMETRY_NONE;
+   arc_saved_jfd = NULL;
    arc_active = false;
    arc_fault_boundary = false;
 #if defined(ARCDROID_TEST_FAULTS)
@@ -410,29 +423,45 @@ void arc_engine_audio_stats(uint64_t *underrun_frames, uint64_t *overrun_frames)
 bool arc_engine_media_eject(void)
 {
    if (!arc_machine_live) return false;
+   wd1770_media_change();
    disc_close(0);
    arc_saved_media[0] = '\0';
+   arc_saved_media_kind = ARC_MEDIA_INVALID;
+   arc_saved_media_geometry = ARC_GEOMETRY_NONE;
+   arc_saved_jfd = NULL;
    ioc_discchange(0);
    return true;
 }
 
-bool arc_engine_media_insert(const char *path, bool writable,
+bool arc_engine_media_insert(const ArcEngineMedia *media,
                              char *failure, size_t failure_size)
 {
-   if (!arc_machine_live || !path || !path[0] ||
-       strlen(path) >= sizeof(arc_saved_media)) return false;
+   const char *path = media && media->path ? media->path : "";
+   if (!arc_machine_live || !media || !path[0] ||
+       strlen(path) >= sizeof(arc_saved_media) ||
+       (media->kind == ARC_MEDIA_JFD && !media->jfd)) return false;
    /* Defence in depth for callers that replace a mounted image directly. */
+   wd1770_media_change();
    disc_close(0);
-   adf_set_writable(writable);
-   disc_load(0, (char *)path);
-   if (disc_empty(0))
+   adf_set_writable(media->writable);
+   bool mounted = media->kind == ARC_MEDIA_JFD ?
+      disc_load_jfd(0, media->jfd) :
+      disc_load_raw(0, (char *)path, media->geometry);
+   if (!mounted)
    {
+      arc_saved_media[0] = '\0';
+      arc_saved_media_kind = ARC_MEDIA_INVALID;
+      arc_saved_media_geometry = ARC_GEOMETRY_NONE;
+      arc_saved_jfd = NULL;
       if (failure && failure_size)
          snprintf(failure, failure_size, "The selected floppy image could not be mounted");
       return false;
    }
    strcpy(arc_saved_media, path);
-   arc_saved_media_writable = writable;
+   arc_saved_media_writable = media->writable;
+   arc_saved_media_kind = media->kind;
+   arc_saved_media_geometry = media->geometry;
+   arc_saved_jfd = media->jfd;
    ioc_discchange(0);
    return true;
 }

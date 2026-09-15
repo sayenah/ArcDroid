@@ -1,9 +1,10 @@
 /*Arculator 2.2 by Sarah Walker
   1770 FDC emulation*/
-/* ArcDroid modification (2026-09-14): controller faults never terminate the frontend;
- * command traffic is exposed through the frontend debug logger. */
+/* ArcDroid modification (2026-09-14): controller faults never terminate the
+ * frontend; terminal callbacks disarm RNF/timers and expose final IRQ/DRQ. */
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include "arc.h"
 #include "config.h"
@@ -34,7 +35,7 @@ struct
 
 void wd1770_reset()
 {
-	wd1770.status = 0;
+	memset(&wd1770, 0, sizeof(wd1770));
 	rpclog("Reset 1770\n");
 	if (fdctype != FDC_82C711)
 	{
@@ -130,17 +131,15 @@ void wd1770_write(uint16_t addr, uint8_t val)
 
 			case 0x8: /*Read sector*/
 			wd1770.status = 0x80 | 0x1;
+			wd1770.index_count = 0;
+			wd1770.rnf_detection = 1;
 			if (!fdc_overridden)
 				disc_readsector(curdrive, wd1770.sector, wd1770.track, wd1770.curside, wd1770.density);
 			//printf("Read sector %i %i %i %i %i\n",curdrive,wd1770.sector,wd1770.track,wd1770.curside,wd1770.density);
 			readflash[curdrive] = 1;
-			wd1770.index_count = 0;
-			wd1770.rnf_detection = 1;
 			break;
 			case 0xA: /*Write sector*/
 			wd1770.status = 0x80 | 0x1;
-			if (!fdc_overridden)
-				disc_writesector(curdrive, wd1770.sector, wd1770.track, wd1770.curside, wd1770.density);
 			ioc_fiq(IOC_FIQ_DISC_DATA);
 			wd1770.status |= 2;
 
@@ -148,17 +147,23 @@ void wd1770_write(uint16_t addr, uint8_t val)
 			wd1770.written = 0;
 			wd1770.index_count = 0;
 			wd1770.rnf_detection = 1;
+			if (!fdc_overridden)
+				disc_writesector(curdrive, wd1770.sector, wd1770.track, wd1770.curside, wd1770.density);
 			break;
 			case 0xC: /*Read address*/
 			wd1770.status = 0x80 | 0x1;
-			if (!fdc_overridden)
-				disc_readaddress(curdrive, wd1770.track, wd1770.curside, wd1770.density);
 			wd1770.index_count = 0;
 			wd1770.rnf_detection = 1;
+			if (!fdc_overridden)
+				disc_readaddress(curdrive, wd1770.track, wd1770.curside, wd1770.density);
 			break;
 			case 0xD: /*Force interrupt*/
 //                        rpclog("Force interrupt\n");
 			timer_disable(&wd1770.timer);
+			wd1770.rnf_detection = 0;
+			wd1770.index_count = 0;
+			wd1770.written = 0;
+			ioc_fiqc(IOC_FIQ_DISC_DATA | IOC_FIQ_DISC_IRQ);
 			wd1770.status = 0x80 | track0;
 			if (val & 8)
 			   ioc_fiq(IOC_FIQ_DISC_IRQ);
@@ -172,6 +177,8 @@ void wd1770_write(uint16_t addr, uint8_t val)
 			break;
 			case 0xF: /*Write track*/
 			wd1770.status = 0x80 | 0x1;
+			wd1770.index_count = 0;
+			wd1770.rnf_detection = 1;
 			if (!fdc_overridden)
 				disc_format(curdrive, wd1770.track, wd1770.curside, wd1770.density);
 			break;
@@ -270,6 +277,8 @@ void wd1770_writelatch_b(uint8_t val)
 static void wd1770_callback(void *p)
 {
 //        rpclog("FDC callback %02X\n", wd1770.command);
+	timer_disable(&wd1770.timer);
+	ioc_fiqc(IOC_FIQ_DISC_DATA | IOC_FIQ_DISC_IRQ);
 
 	switch (wd1770.command >> 4)
 	{
@@ -316,6 +325,8 @@ static void wd1770_callback(void *p)
 		break;
 	}
 	wd1770.rnf_detection = 0;
+	wd1770.index_count = 0;
+	wd1770.written = 0;
 }
 
 static void wd1770_data(uint8_t dat, void *p)
@@ -325,6 +336,10 @@ static void wd1770_data(uint8_t dat, void *p)
 	{
 		rpclog("Overrun\n");
 		wd1770.status = 0x84;
+		wd1770.rnf_detection = 0;
+		wd1770.written = 0;
+		timer_disable(&wd1770.timer);
+		ioc_fiqc(IOC_FIQ_DISC_DATA);
 		ioc_fiq(IOC_FIQ_DISC_IRQ);
 		disc_stop(curdrive);
 		return;
@@ -344,27 +359,42 @@ static void wd1770_notfound(void *p)
 {
 //        rpclog("Not found\n");
 	timer_disable(&wd1770.timer);
+	wd1770.rnf_detection = 0;
+	wd1770.index_count = 0;
+	wd1770.written = 0;
+	ioc_fiqc(IOC_FIQ_DISC_DATA | IOC_FIQ_DISC_IRQ);
 	ioc_fiq(IOC_FIQ_DISC_IRQ);
 	wd1770.status = 0x90;
 	wd1770_spindown(NULL);
+	disc_stop(curdrive);
 }
 
 static void wd1770_datacrcerror(void *p)
 {
 //        rpclog("Data CRC\n");
 	timer_disable(&wd1770.timer);
+	wd1770.rnf_detection = 0;
+	wd1770.index_count = 0;
+	wd1770.written = 0;
+	ioc_fiqc(IOC_FIQ_DISC_DATA | IOC_FIQ_DISC_IRQ);
 	ioc_fiq(IOC_FIQ_DISC_IRQ);
 	wd1770.status = 0x88;
 	wd1770_spindown(NULL);
+	disc_stop(curdrive);
 }
 
 static void wd1770_headercrcerror(void *p)
 {
 //        rpclog("Header CRC\n");
 	timer_disable(&wd1770.timer);
+	wd1770.rnf_detection = 0;
+	wd1770.index_count = 0;
+	wd1770.written = 0;
+	ioc_fiqc(IOC_FIQ_DISC_DATA | IOC_FIQ_DISC_IRQ);
 	ioc_fiq(IOC_FIQ_DISC_IRQ);
 	wd1770.status = 0x98;
 	wd1770_spindown(NULL);
+	disc_stop(curdrive);
 }
 
 static int wd1770_getdata(int last, void *p)
@@ -383,9 +413,24 @@ static int wd1770_getdata(int last, void *p)
 static void wd1770_writeprotect(void *p)
 {
 	timer_disable(&wd1770.timer);
+	wd1770.rnf_detection = 0;
+	wd1770.index_count = 0;
+	wd1770.written = 0;
+	ioc_fiqc(IOC_FIQ_DISC_DATA | IOC_FIQ_DISC_IRQ);
 	ioc_fiq(IOC_FIQ_DISC_IRQ);
 	wd1770.status = 0xC0;
 	wd1770_spindown(NULL);
+	disc_stop(curdrive);
+}
+
+void wd1770_media_change(void)
+{
+	timer_disable(&wd1770.timer);
+	wd1770.rnf_detection = 0;
+	wd1770.index_count = 0;
+	wd1770.written = 0;
+	wd1770.status = 0x80 | track0;
+	ioc_fiqc(IOC_FIQ_DISC_DATA | IOC_FIQ_DISC_IRQ);
 }
 
 static void wd1770_fdc_indexpulse(void *p)

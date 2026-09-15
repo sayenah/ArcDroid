@@ -6,6 +6,15 @@ set(CMAKE_C_STANDARD 17)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS ON)
 
+option(ARCDROID_SANITIZERS "Enable host AddressSanitizer and UndefinedBehaviorSanitizer" OFF)
+if(ARCDROID_SANITIZERS)
+  if(CMAKE_CROSSCOMPILING OR NOT CMAKE_C_COMPILER_ID MATCHES "GNU|Clang|AppleClang")
+    message(FATAL_ERROR "ARCDROID_SANITIZERS requires a native GCC or Clang build")
+  endif()
+  add_compile_options(-fsanitize=address,undefined -fno-omit-frame-pointer)
+  add_link_options(-fsanitize=address,undefined)
+endif()
+
 foreach(cmos_name IN ITEMS arthur riscos2 riscos3_old riscos3_new)
   file(READ "${CMAKE_CURRENT_SOURCE_DIR}/engine/arculator/cmos/${cmos_name}/cmos.bin"
        cmos_${cmos_name}_hex HEX LIMIT 256)
@@ -15,15 +24,32 @@ endforeach()
 file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/generated")
 configure_file(core/cmos_defaults_data.h.in generated/cmos_defaults_data.h @ONLY)
 
+add_library(arcdroid_zlib STATIC
+  third_party/zlib/adler32.c
+  third_party/zlib/crc32.c
+  third_party/zlib/inffast.c
+  third_party/zlib/inflate.c
+  third_party/zlib/inftrees.c
+  third_party/zlib/zutil.c
+)
+target_include_directories(arcdroid_zlib PUBLIC third_party/zlib)
+target_compile_definitions(arcdroid_zlib PRIVATE Z_SOLO)
+target_compile_options(arcdroid_zlib PRIVATE
+  $<$<C_COMPILER_ID:GNU,Clang,AppleClang>:-fvisibility=hidden>)
+set_target_properties(arcdroid_zlib PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
 add_library(arcdroid_core STATIC
   core/hash.c
   core/input.c
   core/firmware_table.c
   core/launch.c
+  core/playlist.c
+  core/jfd.c
   core/persistence.c
   core/cmos_defaults.c
 )
 target_include_directories(arcdroid_core PUBLIC core "${CMAKE_CURRENT_BINARY_DIR}/generated")
+target_link_libraries(arcdroid_core PRIVATE arcdroid_zlib)
 target_compile_options(arcdroid_core PRIVATE
   $<$<C_COMPILER_ID:GNU,Clang,AppleClang>:-Wall;-Wextra;-Wpedantic;-Werror=implicit-function-declaration>
 )
@@ -36,6 +62,7 @@ set(ARCDROID_LIBRETRO_SOURCES
   engine/arculator/src/cp15.c
   engine/arculator/src/disc.c
   engine/arculator/src/disc_adf.c
+  engine/arculator/src/disc_jfd.c
   engine/arculator/src/ds2401.c
   engine/arculator/src/fpa.c
   engine/arculator/src/ioc.c
@@ -86,7 +113,7 @@ function(arcdroid_add_libretro target shipping)
         "-Wl,--version-script=${CMAKE_CURRENT_SOURCE_DIR}/libretro/link.T"
         "-Wl,-z,max-page-size=16384")
     endif()
-    target_link_libraries(${target} PRIVATE m dl z)
+    target_link_libraries(${target} PRIVATE m dl)
   elseif(WIN32)
     if(shipping)
       set_target_properties(${target} PROPERTIES OUTPUT_NAME arcdroid_libretro)
@@ -122,6 +149,14 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
   target_link_libraries(core_tests PRIVATE arcdroid_core)
   target_compile_options(core_tests PRIVATE $<$<C_COMPILER_ID:GNU,Clang,AppleClang>:-UNDEBUG>)
   add_test(NAME core-services COMMAND core_tests)
+  set_tests_properties(core-services PROPERTIES TIMEOUT 300)
+  add_executable(jfd_reader_tests
+    tests/jfd_reader_tests.c engine/arculator/src/disc_jfd.c)
+  target_include_directories(jfd_reader_tests PRIVATE
+    core engine/compat engine/arculator/src)
+  target_compile_options(jfd_reader_tests PRIVATE
+    $<$<C_COMPILER_ID:GNU,Clang,AppleClang>:-UNDEBUG;-Wall;-Wextra;-Wpedantic>)
+  add_test(NAME jfd-engine-reader COMMAND jfd_reader_tests)
   add_test(NAME shipping-io-guard
     COMMAND sh "${CMAKE_CURRENT_SOURCE_DIR}/tools/check-shipping-io.sh" --self-test)
   add_test(NAME asset-guard-self-test
@@ -134,11 +169,23 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
   add_custom_command(
     OUTPUT "${FIXTURE_DIR}/arcdroid-test.rom" "${FIXTURE_DIR}/arcdroid-test.adf"
       "${FIXTURE_DIR}/arcdroid-demo.adl"
+      "${FIXTURE_DIR}/arcdroid-media-test.rom"
+      "${FIXTURE_DIR}/arcdroid-media-disc1.adf"
+      "${FIXTURE_DIR}/arcdroid-media-disc2.adf"
+      "${FIXTURE_DIR}/arcdroid-media.m3u"
+      "${FIXTURE_DIR}/arcdroid-test.jfd"
+      "${FIXTURE_DIR}/arcdroid-test-gzip.jfd"
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/generate_fixtures.py" "${FIXTURE_DIR}"
     DEPENDS tests/generate_fixtures.py VERBATIM)
   add_custom_target(test-fixtures ALL DEPENDS
     "${FIXTURE_DIR}/arcdroid-test.rom" "${FIXTURE_DIR}/arcdroid-test.adf"
-    "${FIXTURE_DIR}/arcdroid-demo.adl")
+    "${FIXTURE_DIR}/arcdroid-demo.adl"
+    "${FIXTURE_DIR}/arcdroid-media-test.rom"
+    "${FIXTURE_DIR}/arcdroid-media-disc1.adf"
+    "${FIXTURE_DIR}/arcdroid-media-disc2.adf"
+    "${FIXTURE_DIR}/arcdroid-media.m3u"
+    "${FIXTURE_DIR}/arcdroid-test.jfd"
+    "${FIXTURE_DIR}/arcdroid-test-gzip.jfd")
 
   if(WIN32)
     add_executable(windows_load_harness tests/windows_load_harness.c)
@@ -158,7 +205,7 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
     set_target_properties(arcdroid_libretro_test PROPERTIES OUTPUT_NAME arcdroid_libretro_test)
     add_executable(libretro_harness tests/libretro_harness.c)
     target_include_directories(libretro_harness PRIVATE libretro/include)
-    target_include_directories(libretro_harness PRIVATE core "${CMAKE_CURRENT_BINARY_DIR}/generated")
+    target_include_directories(libretro_harness PRIVATE core engine "${CMAKE_CURRENT_BINARY_DIR}/generated")
     target_link_libraries(libretro_harness PRIVATE arcdroid_core ${CMAKE_DL_LIBS})
     target_compile_options(libretro_harness PRIVATE $<$<C_COMPILER_ID:GNU,Clang,AppleClang>:-UNDEBUG>)
     add_dependencies(libretro_harness test-fixtures arcdroid_libretro_test)
@@ -166,7 +213,12 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
       $<TARGET_FILE:arcdroid_libretro_test>
       "${FIXTURE_DIR}/arcdroid-test.rom"
       "${FIXTURE_DIR}/arcdroid-test.adf"
-      "${CMAKE_CURRENT_BINARY_DIR}/harness-data")
+      "${CMAKE_CURRENT_BINARY_DIR}/harness-data"
+      "${FIXTURE_DIR}/arcdroid-media-test.rom"
+      "${FIXTURE_DIR}/arcdroid-media.m3u"
+      "${FIXTURE_DIR}/arcdroid-media-disc1.adf"
+      "${FIXTURE_DIR}/arcdroid-media-disc2.adf"
+      "${FIXTURE_DIR}/arcdroid-test.jfd")
   endif()
 
   add_executable(firmware_probe tools/firmware_probe.c)

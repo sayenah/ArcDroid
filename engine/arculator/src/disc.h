@@ -1,4 +1,6 @@
 #include "timer.h"
+#include "arcdroid_core.h"
+#include "jfd.h"
 
 typedef struct disc_funcs_t
 {
@@ -35,7 +37,8 @@ extern void *fdc_p;
 
 extern int curdrive;
 
-void disc_load(int drive, char *fn);
+bool disc_load_raw(int drive, char *fn, ArcMediaGeometry geometry);
+bool disc_load_jfd(int drive, const ArcJfdImage *image);
 void disc_new(int drive, char *fn);
 void disc_close(int drive);
 void disc_init();

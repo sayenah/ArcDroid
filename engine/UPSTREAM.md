@@ -52,6 +52,15 @@ unchanged.
 globals in `input_init` so each core initialization starts with disabled input
 channels.
 
+`src/disc_jfd.c` and `src/disc_jfd.h` are ArcDroid-authored replacements under
+GPL-2.0-only, credited to upstream Arculator for the surrounding drive
+integration. Upstream commit `7d3d267`'s incomplete, disabled JFD reader was
+used as historical reference but was not imported. The replacement consumes
+validated immutable descriptors from `core/jfd.c` and performs no file I/O,
+allocation, decompression, or parsing in the engine poll path. MAME's JFD
+reader was consulted only as an independent format reference; no MAME code was
+copied.
+
 The pinned upstream `AUTHORS` file is empty. Upstream author and contributor
 credits are preserved in the imported `README.md`.
 
@@ -62,7 +71,7 @@ credits are preserved in the imported `README.md`.
 - All podules and dynamic loaders: outside Slice 1 and unsuitable for arbitrary
   runtime loading on Android.
 - HostFS, ST506, and IDE: outside Slice 1.
-- FDI, APD, HFE, SCP, JFD, SSD, and DSD readers plus `fdi2raw`: deferred to
+- FDI, APD, HFE, SCP, SSD, and DSD readers plus `fdi2raw`: deferred to
   separately hardened media slices.
 - Drive-noise WAV files: outside Slice 1 and not redistributable evidence.
 - All upstream `.dll` and `.so` files: binaries are built from corresponding

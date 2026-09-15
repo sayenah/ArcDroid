@@ -10,6 +10,7 @@ Copyright 2026 ArcDroid contributors. GPL-2.0-only.
 """
 from pathlib import Path
 import argparse
+import gzip
 import struct
 
 ROM_SIZE = 512 * 1024
@@ -118,7 +119,7 @@ VIDC_MODE = (
 )
 
 
-def build_rom() -> bytearray:
+def build_rom(media_exerciser: bool = False) -> bytearray:
     rom = bytearray(b"\xFF" * ROM_SIZE)
     rom[0:4] = struct.pack("<I", 0xE59FF000)  # ldr pc, [pc]
     rom[8:12] = struct.pack("<I", 0x03800020)
@@ -173,17 +174,35 @@ def build_rom() -> bytearray:
     a.str(1, 0, byte=True)
     a.ldr_const(5, 1024)
     a.mov(7, 0x5A)
-    a.label("fdc_write_wait")
-    a.ldr(4, 0, byte=True)
-    a.tst_imm(4, 2)
-    a.branch("fdc_write_wait", "eq")
-    a.str(7, 0, 12, byte=True)
-    a.subs_imm(5, 5, 1)
-    a.branch("fdc_write_wait", "ne")
-    a.label("fdc_write_finish")
-    a.ldr(4, 0, byte=True)
-    a.tst_imm(4, 1)
-    a.branch("fdc_write_finish", "ne")
+    if media_exerciser:
+        a.ldr_const(3, 250000)
+        a.label("fdc_write_wait")
+        a.ldr(4, 0, byte=True)
+        a.tst_imm(4, 1)
+        a.branch("fdc_write_done", "eq")
+        a.tst_imm(4, 2)
+        a.branch("fdc_write_tick", "eq")
+        a.str(7, 0, 12, byte=True)
+        a.subs_imm(5, 5, 1)
+        a.branch("fdc_write_done", "eq")
+        a.label("fdc_write_tick")
+        a.subs_imm(3, 3, 1)
+        a.branch("fdc_write_wait", "ne")
+        a.mov(4, 0xD0)  # bounded cancellation if a reader never completes
+        a.str(4, 0, byte=True)
+        a.label("fdc_write_done")
+    else:
+        a.label("fdc_write_wait")
+        a.ldr(4, 0, byte=True)
+        a.tst_imm(4, 2)
+        a.branch("fdc_write_wait", "eq")
+        a.str(7, 0, 12, byte=True)
+        a.subs_imm(5, 5, 1)
+        a.branch("fdc_write_wait", "ne")
+        a.label("fdc_write_finish")
+        a.ldr(4, 0, byte=True)
+        a.tst_imm(4, 1)
+        a.branch("fdc_write_finish", "ne")
 
     # Expand the guest checksum to all bytes and paint 640x256 at 8 bpp. The
     # alternating complement makes the payload-derived signature visibly
@@ -257,6 +276,42 @@ def build_rom() -> bytearray:
     a.subs_imm(10, 10, 1)
     a.branch("idle", "ne")
     a.ldr_const(10, 250000)
+    if media_exerciser:
+        # Re-read sector zero on each dwell. The first 256 bytes are reduced to
+        # a result byte and painted into a full row, so a disk swap is visible
+        # and machine-decodable without firmware or game assets.
+        a.ldr_const(0, 0x03310000)
+        a.mov(4, 0)
+        a.str(4, 0, 4, byte=True)
+        a.str(4, 0, 8, byte=True)
+        a.mov(4, 0x80)
+        a.str(4, 0, byte=True)
+        a.mov(5, 0x100)
+        a.mov(6, 0)
+        a.ldr_const(3, 250000)
+        a.label("media_read_wait")
+        a.ldr(4, 0, byte=True)
+        a.tst_imm(4, 2)
+        a.branch("media_read_tick", "eq")
+        a.ldr(7, 0, 12, byte=True)
+        a.eor(6, 6, 7)
+        a.subs_imm(5, 5, 1)
+        a.branch("media_read_done", "eq")
+        a.label("media_read_tick")
+        a.subs_imm(3, 3, 1)
+        a.branch("media_read_wait", "ne")
+        a.mov(4, 0xD0)
+        a.str(4, 0, byte=True)
+        a.label("media_read_done")
+        a.orr_lsl(6, 6, 6, 8)
+        a.orr_lsl(6, 6, 6, 16)
+        a.mov(8, 0)
+        a.mov(2, 0xA0)
+        a.label("media_row")
+        a.str_post(6, 8)
+        a.subs_imm(2, 2, 1)
+        a.branch("media_row", "ne")
+        a.mov(8, 0)
     a.tst_imm(9, 1)
     a.branch("mode_fast", "ne")
     a.ldr_const(0, 0xA063C000)  # 400 total lines
@@ -287,18 +342,65 @@ def build_rom() -> bytearray:
 
     code = a.finish()
     rom[0x20:0x20 + len(code)] = code
-    marker = b"ARCDROID ARMV2 TEST ROM v2\0"
+    marker = (b"ARCDROID ARMV2 MEDIA EXERCISER ROM v1\0" if media_exerciser
+              else b"ARCDROID ARMV2 TEST ROM v2\0")
     rom[0x1F00:0x1F00 + len(marker)] = marker
     return rom
 
 
-def build_adf() -> bytearray:
+def build_adf(seed: int = 0xA5, marker: bytes = b"ARCDROID WD1772 PAYLOAD v2\0") -> bytearray:
     adf = bytearray(ADF_SIZE)
-    marker = b"ARCDROID WD1772 PAYLOAD v2\0"
     adf[:len(marker)] = marker
     for index in range(len(marker), ADF_SIZE):
-        adf[index] = ((index * 73) ^ (index >> 3) ^ 0xA5) & 0xFF
+        adf[index] = ((index * 73) ^ (index >> 3) ^ seed) & 0xFF
     return adf
+
+
+def build_jfd(payload: bytes, title: bytes = b"ArcDroid synthetic JFD") -> bytearray:
+    """Build the documented legacy-header JFD subset with one 256-byte sector."""
+    track_offset, sector_offset, data_offset = 304, 312, 324
+    image = bytearray(data_offset + len(payload))
+    image[:4] = b"JFDI"
+    struct.pack_into("<I", image, 8, len(image))
+    struct.pack_into("<I", image, 24, track_offset)
+    struct.pack_into("<I", image, 28, sector_offset)
+    struct.pack_into("<I", image, 32, data_offset)
+    image[48:48 + min(len(title), 256)] = title[:256]
+    struct.pack_into("<II", image, track_offset, 0, 0xFFFFFFFF)
+    # time=0, block flags=0, density=2, ID=0, CRC flags=0, size code=1
+    struct.pack_into("<II", image, sector_offset, (2 << 16) | 1, 0)
+    struct.pack_into("<I", image, sector_offset + 8, 0xFFFFFFFF)
+    image[data_offset:] = payload
+    return image
+
+
+def build_jfd_family(descriptors: list[tuple[int, int, int, int, int, bytes | None]],
+                     title: bytes = b"ArcDroid JFD family") -> bytearray:
+    """Build one track-side from (time, B, density, id, C, payload)."""
+    track_offset, sector_offset = 304, 312
+    data_offset = sector_offset + len(descriptors) * 8 + 4
+    payloads = bytearray()
+    table = bytearray()
+    for time, block, density, sector_id, crc, payload in descriptors:
+        size = len(payload) if payload is not None else 128
+        size_code = {128: 0, 256: 1, 512: 2, 1024: 3}[size]
+        header = ((time & 0xFF) << 24) | ((block & 0xF) << 20) | \
+                 ((density & 0xF) << 16) | ((sector_id & 0xFF) << 8) | \
+                 ((crc & 0xF) << 4) | size_code
+        offset = 0xFFFFFFFF if payload is None else len(payloads)
+        table += struct.pack("<II", header, offset)
+        if payload is not None:
+            payloads += payload
+    table += struct.pack("<I", 0xFFFFFFFF)
+    image = bytearray(data_offset + len(payloads))
+    image[:4] = b"JFDI"
+    struct.pack_into("<I", image, 8, len(image))
+    struct.pack_into("<III", image, 24, track_offset, sector_offset, data_offset)
+    image[48:48 + min(len(title), 256)] = title[:256]
+    struct.pack_into("<II", image, track_offset, 0, 0xFFFFFFFF)
+    image[sector_offset:data_offset] = table
+    image[data_offset:] = payloads
+    return image
 
 
 def _store_u24(image: bytearray, offset: int, value: int) -> None:
@@ -403,6 +505,19 @@ def build_demo_adl() -> bytearray:
     return image
 
 
+def build_old_map_media(size: int, old_size: int, seed: int) -> bytearray:
+    image = bytearray(((index * 29) ^ seed) & 0xFF for index in range(size))
+    image[:512] = bytes(512)
+    _store_u24(image, 0, 7)
+    _store_u24(image, 252, old_size)
+    _store_u24(image, 256, old_size - 7)
+    image[509] = 3
+    image[510] = 3
+    image[255] = _old_map_checksum(image[:255])
+    image[511] = _old_map_checksum(image[256:511])
+    return image
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("output", type=Path)
@@ -411,6 +526,131 @@ def main() -> None:
     (args.output / "arcdroid-test.rom").write_bytes(build_rom())
     (args.output / "arcdroid-test.adf").write_bytes(build_adf())
     (args.output / "arcdroid-demo.adl").write_bytes(build_demo_adl())
+    media_rom = build_rom(media_exerciser=True)
+    disc1 = build_adf(0xA5, b"ARCDROID MEDIA DISC ONE v1\0")
+    disc2 = build_adf(0x3C, b"ARCDROID MEDIA DISC TWO v1\0")
+    (args.output / "arcdroid-media-test.rom").write_bytes(media_rom)
+    (args.output / "arcdroid-media-disc1.adf").write_bytes(disc1)
+    (args.output / "arcdroid-media-disc2.adf").write_bytes(disc2)
+    (args.output / "arcdroid-media.m3u").write_text(
+        "#EXTM3U\narcdroid-media-disc1.adf\narcdroid-media-disc2.adf\n",
+        encoding="utf-8", newline="\n")
+    jfd = build_jfd(bytes(disc1[:256]))
+    (args.output / "arcdroid-test.jfd").write_bytes(jfd)
+    (args.output / "arcdroid-test-gzip.jfd").write_bytes(gzip.compress(jfd, mtime=0))
+    family = args.output / "jfd-family"
+    family.mkdir(exist_ok=True)
+    for size_code in range(4):
+        payload = bytes(((i * 17 + size_code) & 0xFF) for i in range(128 << size_code))
+        (family / f"size-{size_code}.jfd").write_bytes(
+            build_jfd_family([(0, 0, 2, size_code, 0, payload)]))
+    (family / "single-density.jfd").write_bytes(
+        build_jfd_family([(0, 0, 1, 0, 0, bytes(range(128)))]))
+    (family / "timed-duplicates.jfd").write_bytes(build_jfd_family([
+        (10, 0, 2, 7, 0, bytes([0x11]) * 256),
+        (20, 0, 2, 7, 0, bytes([0x22]) * 256)]))
+    (family / "wrap-equal-times.jfd").write_bytes(build_jfd_family([
+        (199, 0, 2, 1, 0, bytes([0x33]) * 128),
+        (0, 0, 2, 2, 0, bytes([0x44]) * 128),
+        (0, 0, 2, 3, 0, bytes([0x55]) * 128)]))
+    (family / "untimed.jfd").write_bytes(build_jfd_family([
+        (0xFF, 0, 2, 1, 0, bytes([0x66]) * 128),
+        (0xFF, 0, 2, 2, 0, bytes([0x77]) * 256)]))
+    for name, crc, payload in (
+        ("id-crc", 1, bytes([0x88]) * 128),
+        ("data-crc", 2, bytes([0x99]) * 128),
+        ("both-crc", 3, bytes([0xAA]) * 128),
+        ("id-only", 0, None),
+        ("data-crc-id-only", 2, None)):
+        (family / f"{name}.jfd").write_bytes(
+            build_jfd_family([(0, 0, 2, 4, crc, payload)]))
+    (family / "blank-track.jfd").write_bytes(build_jfd_family([]))
+    rejects = {
+        "reject-discop3.jfd": [(0, 1, 2, 1, 0, bytes(128))],
+        "reject-density4.jfd": [(0, 0, 4, 1, 0, bytes(128))],
+        "reject-mixed-time.jfd": [(0, 0, 2, 1, 0, bytes(128)),
+                                  (0xFF, 0, 2, 2, 0, bytes(128))],
+        "reject-untimed-duplicate.jfd": [(0xFF, 0, 2, 1, 0, bytes(128)),
+                                         (0xFF, 0, 2, 1, 0, bytes(128))],
+        "reject-long-schedule.jfd": [(0xFF, 0, 1, i, 0, bytes(1024)) for i in range(3)],
+    }
+    for name, descriptors in rejects.items():
+        (family / name).write_bytes(build_jfd_family(descriptors))
+    delta = build_jfd_family([(0, 0, 2, 1, 0, bytes(128))])
+    struct.pack_into("<I", delta, 36, 4)
+    (family / "reject-delta.jfd").write_bytes(delta)
+    # The Founder's private image is never used: short fixtures are truncations
+    # of this project-authored descriptor-bearing E-format image.
+    short_e = bytearray(ADF_SIZE)
+    record = short_e[4:64]
+    record[0:6] = bytes((10, 5, 2, 2, 15, 7))
+    record[6] = 1; record[9] = 1
+    record[10:12] = (0x0520).to_bytes(2, "little")
+    record[12:16] = (0x00000203).to_bytes(4, "little")
+    record[16:20] = ADF_SIZE.to_bytes(4, "little")
+    record[20:22] = (0x1234).to_bytes(2, "little")
+    record[22:32] = b"ArcShortE1"
+    short_e[4:64] = record
+    short_e[3] = 0xFF
+    # Same FileCore zone-check schedule as the independent C fixture.
+    sums = [0, 0, 0, 0]
+    rover = 1020
+    while rover > 0:
+        sums[0] += short_e[rover] + (sums[3] >> 8); sums[3] &= 0xFF
+        sums[1] += short_e[rover + 1] + (sums[0] >> 8); sums[0] &= 0xFF
+        sums[2] += short_e[rover + 2] + (sums[1] >> 8); sums[1] &= 0xFF
+        sums[3] += short_e[rover + 3] + (sums[2] >> 8); sums[2] &= 0xFF
+        rover -= 4
+    sums[0] += sums[3] >> 8
+    sums[1] += short_e[1] + (sums[0] >> 8)
+    sums[2] += short_e[2] + (sums[1] >> 8)
+    sums[3] += short_e[3] + (sums[2] >> 8)
+    short_e[0] = (sums[0] ^ sums[1] ^ sums[2] ^ sums[3]) & 0xFF
+    for missing in (1024, 10240, 10241, 11264, 513):
+        (args.output / f"short-e-missing-{missing}.adf").write_bytes(short_e[:-missing])
+    short_family = args.output / "short-family"
+    short_family.mkdir(exist_ok=True)
+    geometries = (
+        ("320k", build_old_map_media(320 * 1024, 1280, 0x31), 4096, 256, "adf"),
+        ("640k-l", build_old_map_media(640 * 1024, 2560, 0x64), 8192, 256, "adl"),
+        ("800k-d", build_old_map_media(800 * 1024, 3200, 0xD0), 10240, 1024, "adf"),
+        ("800k-e", short_e, 10240, 1024, "adf"),
+    )
+    for name, full, cap, sector_size, extension in geometries:
+        (short_family / f"{name}-full.{extension}").write_bytes(full)
+        cases = {
+            "one-sector": sector_size,
+            "cap": cap,
+            "cap-plus-one": cap + 1,
+            "cap-plus-sector": cap + sector_size,
+            "non-aligned": sector_size + 1,
+        }
+        for case, missing in cases.items():
+            (short_family / f"{name}-{case}.{extension}").write_bytes(full[:-missing])
+        bad_descriptor = bytearray(full[:-sector_size])
+        if name == "800k-e":
+            bad_descriptor[8] ^= 1
+            bad_descriptor[0] = 0
+            sums = [0, 0, 0, 0]
+            rover = 1020
+            while rover > 0:
+                sums[0] += bad_descriptor[rover] + (sums[3] >> 8); sums[3] &= 0xFF
+                sums[1] += bad_descriptor[rover + 1] + (sums[0] >> 8); sums[0] &= 0xFF
+                sums[2] += bad_descriptor[rover + 2] + (sums[1] >> 8); sums[1] &= 0xFF
+                sums[3] += bad_descriptor[rover + 3] + (sums[2] >> 8); sums[2] &= 0xFF
+                rover -= 4
+            sums[0] += sums[3] >> 8
+            sums[1] += bad_descriptor[1] + (sums[0] >> 8)
+            sums[2] += bad_descriptor[2] + (sums[1] >> 8)
+            sums[3] += bad_descriptor[3] + (sums[2] >> 8)
+            bad_descriptor[0] = (sums[0] ^ sums[1] ^ sums[2] ^ sums[3]) & 0xFF
+        else:
+            _store_u24(bad_descriptor, 252, 42)
+            bad_descriptor[255] = _old_map_checksum(bad_descriptor[:255])
+        (short_family / f"{name}-bad-descriptor.{extension}").write_bytes(bad_descriptor)
+        bad_checksum = bytearray(full[:-sector_size])
+        bad_checksum[255] ^= 1
+        (short_family / f"{name}-bad-checksum.{extension}").write_bytes(bad_checksum)
 
 
 if __name__ == "__main__":
