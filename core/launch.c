@@ -116,7 +116,19 @@ static bool arc_old_map_geometry(const uint8_t *data, size_t size,
       case 1280u: *geometry = ARC_GEOMETRY_320K; *declared_size = 327680u; *max_missing = 4096u; return true;
       case 2560u: *geometry = ARC_GEOMETRY_640K_L; *declared_size = 655360u; *max_missing = 8192u; return true;
       case 3200u: *geometry = ARC_GEOMETRY_800K_D; *declared_size = 819200u; *max_missing = 10240u; return true;
-      default: return false;
+      default:
+         /* Some real 800K D-format maps declare fewer usable sectors while
+          * retaining the standard 80x2x5 physical geometry. */
+         if (old_size >= 12u && old_size < 3200u &&
+             size >= 819200u - 10240u && size <= 819200u &&
+             size % 1024u == 0u)
+         {
+            *geometry = ARC_GEOMETRY_800K_D;
+            *declared_size = 819200u;
+            *max_missing = 10240u;
+            return true;
+         }
+         return false;
    }
 }
 

@@ -204,7 +204,8 @@ static bool arc_filecore_old(ArcFileCore *fs, ArcMediaGeometry geometry)
        fs->map[509] > 3u) return false;
    uint32_t sectors = arc_le24(fs->map + 252u);
    uint32_t expected = geometry == ARC_GEOMETRY_640K_L ? 2560u : 3200u;
-   if (sectors != expected) return false;
+   uint32_t minimum = geometry == ARC_GEOMETRY_640K_L ? 7u : 12u;
+   if (sectors < minimum || sectors > expected) return false;
    fs->new_map = false;
    fs->new_directory = geometry != ARC_GEOMETRY_640K_L;
    fs->disc_size = (size_t)sectors * 256u;

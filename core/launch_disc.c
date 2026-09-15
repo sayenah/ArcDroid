@@ -89,7 +89,7 @@ static void arc_old_entry(uint8_t *entry, const char *name, uint32_t load,
    entry[11] = (uint8_t)(load >> 8u);
    entry[12] = (uint8_t)(load >> 16u);
    entry[13] = (uint8_t)(load >> 24u);
-   memcpy(entry + 14u, entry + 10u, 4u);
+   memset(entry + 14u, 0, 4u);
    entry[18] = (uint8_t)length;
    entry[19] = (uint8_t)(length >> 8u);
    entry[20] = (uint8_t)(length >> 16u);

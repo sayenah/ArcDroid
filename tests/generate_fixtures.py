@@ -673,9 +673,10 @@ def _new_directory(name: bytes = b"$", signature: bytes = b"Hugo") -> bytearray:
 def build_d_discovery(candidates: list[tuple[bytes, bool]],
                       disc_name: bytes = b"Fixture", boot: int = 0,
                       signature: bytes = b"Hugo",
-                      incomplete: int | None = None) -> bytearray:
+                      incomplete: int | None = None,
+                      declared_sectors: int = ADF_SIZE // 256) -> bytearray:
     image = bytearray(ADF_SIZE)
-    _store_u24(image, 252, ADF_SIZE // 256)
+    _store_u24(image, 252, declared_sectors)
     _set_old_disc_name(image, disc_name)
     image[509] = boot
     image[510] = 0
@@ -838,6 +839,8 @@ def main() -> None:
     launch_images = {
         "single-l.adl": (build_l_discovery([(b"!Demo", True)], b"Demo"), "L"),
         "single-d-hugo.adf": (build_d_discovery([(b"!Demo", True)], b"Demo"), "D"),
+        "single-d-3180.adf": (build_d_discovery(
+            [(b"!Demo", True)], b"Demo", declared_sectors=3180), "D"),
         "single-d-nick.adf": (build_d_discovery([(b"!Demo", True)], b"Demo", signature=b"Nick"), "D"),
         "single-e-hugo.adf": (build_e_discovery([(b"!Demo", True)], b"Demo"), "E"),
         "single-e-nick.adf": (build_e_discovery([(b"!Demo", True)], b"Demo", signature=b"Nick"), "E"),
@@ -1000,7 +1003,7 @@ def main() -> None:
             sums[3] += bad_descriptor[3] + (sums[2] >> 8)
             bad_descriptor[0] = (sums[0] ^ sums[1] ^ sums[2] ^ sums[3]) & 0xFF
         else:
-            _store_u24(bad_descriptor, 252, 42)
+            _store_u24(bad_descriptor, 252, 11)
             bad_descriptor[255] = _old_map_checksum(bad_descriptor[:255])
         (short_family / f"{name}-bad-descriptor.{extension}").write_bytes(bad_descriptor)
         bad_checksum = bytearray(full[:-sector_size])

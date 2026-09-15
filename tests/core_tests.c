@@ -233,6 +233,7 @@ static void test_launch_discovery_and_builder(const char *fixture_directory)
    static const ExpectedLaunch expected[] = {
       {"launch-family/single-l.adl", ARC_GEOMETRY_640K_L, 512u, "Hugo", "Demo", 0u, 1u, 1u, 0, ARC_LAUNCH_REASON_SINGLE_APPLICATION, true},
       {"launch-family/single-d-hugo.adf", ARC_GEOMETRY_800K_D, 1024u, "Hugo", "Demo", 0u, 1u, 1u, 0, ARC_LAUNCH_REASON_SINGLE_APPLICATION, true},
+      {"launch-family/single-d-3180.adf", ARC_GEOMETRY_800K_D, 1024u, "Hugo", "Demo", 0u, 1u, 1u, 0, ARC_LAUNCH_REASON_SINGLE_APPLICATION, true},
       {"launch-family/single-d-nick.adf", ARC_GEOMETRY_800K_D, 1024u, "Nick", "Demo", 0u, 1u, 1u, 0, ARC_LAUNCH_REASON_SINGLE_APPLICATION, true},
       {"launch-family/single-e-hugo.adf", ARC_GEOMETRY_800K_E, 2048u, "Hugo", "Demo", 0u, 1u, 1u, 0, ARC_LAUNCH_REASON_SINGLE_APPLICATION, true},
       {"launch-family/single-e-nick.adf", ARC_GEOMETRY_800K_E, 2048u, "Nick", "Demo", 0u, 1u, 1u, 0, ARC_LAUNCH_REASON_SINGLE_APPLICATION, true},
@@ -290,6 +291,10 @@ static void test_launch_discovery_and_builder(const char *fixture_directory)
       assert(size == (item->geometry == ARC_GEOMETRY_640K_L ? 655360u : 819200u));
       assert(!memcmp(bytes + item->root_offset + 1u, item->signature, 4u));
       assert(arc_media_inspect(item->file, bytes, size, &media, error, sizeof(error)));
+      if (media.geometry != item->geometry || media.boot_option != item->boot ||
+          strcmp(media.disc_name, item->disc_name))
+         fprintf(stderr, "launch fixture %s media geometry=%u boot=%u disc=%s\n",
+                 item->file, media.geometry, media.boot_option, media.disc_name);
       assert(media.geometry == item->geometry && media.boot_option == item->boot &&
              !strcmp(media.disc_name, item->disc_name));
       assert(arc_launch_discover(bytes, size, &media, NULL, &discovery));
@@ -308,6 +313,21 @@ static void test_launch_discovery_and_builder(const char *fixture_directory)
              discovery.target_index == item->target && discovery.reason == item->reason);
       free(bytes);
    }
+
+   /* A shortened D-format declaration constrains object reads even when the
+    * physical image retains its conventional 800 KiB container. */
+   uint8_t *short_d = read_fixture(fixture_directory,
+                                   "launch-family/single-d-3180.adf", &size);
+   assert(arc_media_inspect("single-d-3180.adf", short_d, size,
+                            &media, error, sizeof(error)));
+   short_d[1024u + 5u + 22u] = 0x6cu; /* sector 3180, outside the declaration */
+   short_d[1024u + 5u + 23u] = 0x0cu;
+   short_d[1024u + 5u + 24u] = 0u;
+   assert(arc_launch_discover(short_d, size, &media, NULL, &discovery));
+   assert(!discovery.readable && !discovery.candidate_count &&
+          !discovery.application_count && discovery.target_index < 0 &&
+          discovery.reason == ARC_LAUNCH_REASON_UNREADABLE);
+   free(short_d);
 
    static const char *jfd_files[] = {
       "launch-family/single-l.jfd", "launch-family/single-l-extended.jfd",
@@ -346,12 +366,14 @@ static void test_launch_discovery_and_builder(const char *fixture_directory)
           arc_launch_disc_build("Demo", "!Demo", second));
    assert(!memcmp(first, second, ARC_LAUNCH_DISC_SIZE));
    assert(!strcmp(arc_digest(first, ARC_LAUNCH_DISC_SIZE).sha1,
-                  "18ed700dae692b8f4100550b547bef2400633501"));
+                  "507ee32561fa0a2fbc7c1044a6d92e63a0037dad"));
    assert(arc_media_inspect("helper.adl", first, ARC_LAUNCH_DISC_SIZE,
                             &media, error, sizeof(error)));
    assert(media.boot_option == 2u && !strcmp(media.disc_name, "ArcDroid"));
    const uint8_t *root = first + test_l_offset(2u);
    assert(!memcmp(root + 1u, "Hugo", 4u));
+   assert(!memcmp(root + 5u + 14u, "\0\0\0\0", 4u));
+   assert(!memcmp(root + 31u + 14u, "\0\0\0\0", 4u));
    assert(!memcmp(first + test_l_offset(1279u), "| ArcDroid launch disc", 22u));
    assert(!memcmp(first + test_l_offset(1280u), "| ArcDroid desktop boot file", 28u));
    assert(strstr((const char *)(first + test_l_offset(1280u)),
@@ -483,6 +505,8 @@ static void test_short_media_policy(void)
    } old_cases[] = {
       {327680u, 1280u, 256u, 4096u, ARC_GEOMETRY_320K},
       {655360u, 2560u, 256u, 8192u, ARC_GEOMETRY_640K_L},
+      {819200u, 12u, 1024u, 10240u, ARC_GEOMETRY_800K_D},
+      {819200u, 3180u, 1024u, 10240u, ARC_GEOMETRY_800K_D},
       {819200u, 3200u, 1024u, 10240u, ARC_GEOMETRY_800K_D},
    };
    for (size_t i = 0u; i < sizeof(old_cases) / sizeof(old_cases[0]); ++i)
