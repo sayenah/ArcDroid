@@ -1259,10 +1259,11 @@ static void test_osk(void)
           !osk.activation_phase);
 
    assert(arc_osk_layout(&osk, 640u, 480u) && !osk.compact);
-   unsigned shift = UINT_MAX, letter = UINT_MAX;
+   unsigned shift = UINT_MAX, right_shift = UINT_MAX, letter = UINT_MAX;
    for (unsigned i = 0u; i < osk.key_count; ++i)
    {
       if (osk.keys[i].key == RETROK_LSHIFT) shift = i;
+      if (osk.keys[i].key == RETROK_RSHIFT) right_shift = i;
       if (osk.keys[i].key == RETROK_a) letter = i;
    }
    bool saw_num_lock = false, saw_scroll_lock = false, saw_pause = false;
@@ -1274,7 +1275,7 @@ static void test_osk(void)
       assert(osk.keys[i].key != RETROK_PRINT);
    }
    assert(saw_num_lock && saw_scroll_lock && saw_pause);
-   assert(shift != UINT_MAX && letter != UINT_MAX);
+   assert(shift != UINT_MAX && right_shift != UINT_MAX && letter != UINT_MAX);
    osk.focus = shift;
    assert(arc_osk_press_focused(&osk, &input) &&
           osk.modifiers[0] == ARC_OSK_MOD_ONESHOT);
@@ -1291,6 +1292,26 @@ static void test_osk(void)
           events[1].code == RETROK_LSHIFT && !events[1].down);
    arc_osk_update(&osk, &input);
    assert(!osk.activation_phase && osk.modifiers[0] == ARC_OSK_MOD_OFF);
+
+   /* Left and right modifiers have independent sticky state and emit their
+    * own physical key identities. */
+   osk.focus = right_shift;
+   assert(arc_osk_press_focused(&osk, &input) &&
+          osk.modifiers[1] == ARC_OSK_MOD_ONESHOT &&
+          osk.modifiers[0] == ARC_OSK_MOD_OFF);
+   osk.focus = letter;
+   assert(arc_osk_press_focused(&osk, &input));
+   arc_osk_update(&osk, &input);
+   assert(drain_input(&input, events, 16u) == 2u &&
+          events[0].code == RETROK_RSHIFT && events[0].down &&
+          events[1].code == RETROK_a && events[1].down);
+   arc_osk_release_activation(&osk);
+   arc_osk_update(&osk, &input);
+   assert(drain_input(&input, events, 16u) == 2u &&
+          events[0].code == RETROK_a && !events[0].down &&
+          events[1].code == RETROK_RSHIFT && !events[1].down);
+   arc_osk_update(&osk, &input);
+   assert(!osk.activation_phase && osk.modifiers[1] == ARC_OSK_MOD_OFF);
 
    /* Locked modifiers persist for another activation but never remain as an
     * invisible source level between activations. */

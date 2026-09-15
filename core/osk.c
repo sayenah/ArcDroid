@@ -21,9 +21,12 @@ static const ArcInputKey *arc_osk_catalogue_key(const ArcInputKey *shared,
 
 static int arc_osk_modifier_index(unsigned key)
 {
-   if (key == RETROK_LSHIFT || key == RETROK_RSHIFT) return 0;
-   if (key == RETROK_LCTRL || key == RETROK_RCTRL) return 1;
-   if (key == RETROK_LALT || key == RETROK_RALT) return 2;
+   if (key == RETROK_LSHIFT) return 0;
+   if (key == RETROK_RSHIFT) return 1;
+   if (key == RETROK_LCTRL) return 2;
+   if (key == RETROK_RCTRL) return 3;
+   if (key == RETROK_LALT) return 4;
+   if (key == RETROK_RALT) return 5;
    return -1;
 }
 
@@ -161,8 +164,11 @@ static bool arc_osk_start(ArcOsk *osk, ArcInputState *input, unsigned key,
 {
    if (!osk || !input || osk->activation_phase || !key) return false;
    unsigned modifier_count = 0u;
-   static const unsigned modifier_keys[3] = {RETROK_LSHIFT, RETROK_LCTRL, RETROK_LALT};
-   for (unsigned i = 0u; i < 3u; ++i)
+   static const unsigned modifier_keys[ARC_OSK_MODIFIER_COUNT] = {
+      RETROK_LSHIFT, RETROK_RSHIFT, RETROK_LCTRL,
+      RETROK_RCTRL, RETROK_LALT, RETROK_RALT
+   };
+   for (unsigned i = 0u; i < ARC_OSK_MODIFIER_COUNT; ++i)
       if (osk->modifiers[i] != ARC_OSK_MOD_OFF)
          osk->activation_modifiers[modifier_count++] = modifier_keys[i];
    if (arc_input_available(input) < modifier_count * 2u + 2u)
@@ -251,7 +257,7 @@ void arc_osk_update(ArcOsk *osk, ArcInputState *input)
             arc_input_effective_level(input, osk->activation_modifiers[i]);
       if (settled)
       {
-         for (unsigned i = 0u; i < 3u; ++i)
+         for (unsigned i = 0u; i < ARC_OSK_MODIFIER_COUNT; ++i)
             if (osk->modifiers[i] == ARC_OSK_MOD_ONESHOT)
                osk->modifiers[i] = ARC_OSK_MOD_OFF;
          osk->activation_phase = 0u;

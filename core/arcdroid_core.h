@@ -372,6 +372,7 @@ typedef struct {
 } ArcOskKey;
 
 #define ARC_OSK_MAX_KEYS 104u
+#define ARC_OSK_MODIFIER_COUNT 6u
 typedef struct {
    bool visible;
    bool disabled;
@@ -391,11 +392,11 @@ typedef struct {
    uint64_t repeat_at_us;
    int repeat_dx;
    int repeat_dy;
-   ArcOskModifier modifiers[3];
+   ArcOskModifier modifiers[ARC_OSK_MODIFIER_COUNT];
    ArcOskKey keys[ARC_OSK_MAX_KEYS];
    unsigned key_count;
    unsigned activation_key;
-   unsigned activation_modifiers[3];
+   unsigned activation_modifiers[ARC_OSK_MODIFIER_COUNT];
    unsigned activation_modifier_count;
    unsigned activation_phase;
    uint64_t activation_generation;
