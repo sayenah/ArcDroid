@@ -153,20 +153,30 @@ static void expect_read(const char *root, const char *name, uint8_t sector,
    arc_jfd_free(&image);
 }
 
-static void expect_address(const char *root, const char *name)
+static void select_density(bool single_density)
+{
+   wd1770_writelatch_b(single_density ? 0x02u : 0x00u);
+}
+
+static void expect_address(const char *root, const char *name,
+                           bool single_density, uint8_t status, size_t bytes)
 {
    ArcJfdImage image = load_image(root, name);
    controller_reset(&image);
-   assert(finish_command(0xc0u, 1100000u) == 0x80u);
-   assert(transfer_count == 6u && transfer[0] == 0u);
+   select_density(single_density);
+   assert(finish_command(0xc0u, 1100000u) == status);
+   assert(transfer_count == bytes);
+   if (bytes) assert(transfer[0] == 0u);
    disc_close(0);
    arc_jfd_free(&image);
 }
 
-static void expect_write_protected(const char *root, const char *name)
+static void expect_write_protected(const char *root, const char *name,
+                                   bool single_density)
 {
    ArcJfdImage image = load_image(root, name);
    controller_reset(&image);
+   select_density(single_density);
    wd1770_write(0x08u, 0u);
    unsigned before = drq_assertions;
    assert(finish_command(0xa0u, 1000u) == 0x40u);
@@ -178,6 +188,28 @@ static void expect_write_protected(const char *root, const char *name)
    arc_jfd_free(&image);
 }
 
+static void expect_missing_id(const char *root, const char *name,
+                              bool single_density)
+{
+   ArcJfdImage image = load_image(root, name);
+   controller_reset(&image);
+   select_density(single_density);
+   wd1770_write(0x08u, 0xfeu);
+   assert(finish_command(0x80u, 1100000u) == 0x10u);
+   assert(transfer_count == 0u);
+   disc_close(0);
+   arc_jfd_free(&image);
+}
+
+static void expect_common_paths(const char *root, const char *name,
+                                bool single_density, uint8_t address_status,
+                                size_t address_bytes)
+{
+   expect_address(root, name, single_density, address_status, address_bytes);
+   expect_write_protected(root, name, single_density);
+   expect_missing_id(root, name, single_density);
+}
+
 static void test_family(const char *root)
 {
    for (unsigned code = 0u; code < 4u; ++code)
@@ -186,18 +218,26 @@ static void test_family(const char *root)
       snprintf(name, sizeof(name), "size-%u.jfd", code);
       expect_read(root, name, (uint8_t)code, 0x80u,
                   (size_t)128u << code, (uint8_t)code);
-      expect_address(root, name);
-      expect_write_protected(root, name);
+      expect_common_paths(root, name, false, 0x80u, 6u);
    }
    expect_read(root, "data-crc.jfd", 4u, 0x08u, 128u, 0x99u);
+   expect_common_paths(root, "data-crc.jfd", false, 0x80u, 6u);
    expect_read(root, "id-crc.jfd", 4u, 0x18u, 0u, 0u);
+   expect_common_paths(root, "id-crc.jfd", false, 0x18u, 0u);
    expect_read(root, "both-crc.jfd", 4u, 0x18u, 0u, 0u);
+   expect_common_paths(root, "both-crc.jfd", false, 0x18u, 0u);
    expect_read(root, "id-only.jfd", 4u, 0x10u, 0u, 0u);
+   expect_common_paths(root, "id-only.jfd", false, 0x80u, 6u);
    expect_read(root, "data-crc-id-only.jfd", 4u, 0x10u, 0u, 0u);
+   expect_common_paths(root, "data-crc-id-only.jfd", false, 0x80u, 6u);
    expect_read(root, "blank-track.jfd", 4u, 0x10u, 0u, 0u);
+   expect_common_paths(root, "blank-track.jfd", false, 0x10u, 0u);
    expect_read(root, "timed-duplicates.jfd", 7u, 0x80u, 256u, 0x11u);
+   expect_common_paths(root, "timed-duplicates.jfd", false, 0x80u, 6u);
    expect_read(root, "wrap-equal-times.jfd", 1u, 0x80u, 128u, 0x33u);
+   expect_common_paths(root, "wrap-equal-times.jfd", false, 0x80u, 6u);
    expect_read(root, "untimed.jfd", 1u, 0x80u, 128u, 0x66u);
+   expect_common_paths(root, "untimed.jfd", false, 0x80u, 6u);
 
    ArcJfdImage single = load_image(root, "single-density.jfd");
    controller_reset(&single);
@@ -206,6 +246,7 @@ static void test_family(const char *root)
    assert(transfer_count == 0u);
    disc_close(0);
    arc_jfd_free(&single);
+   expect_common_paths(root, "single-density.jfd", true, 0x80u, 6u);
 }
 
 static void test_rejections(const char *root)
