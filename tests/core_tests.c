@@ -1276,6 +1276,21 @@ static void test_osk(void)
    }
    assert(saw_num_lock && saw_scroll_lock && saw_pause);
    assert(shift != UINT_MAX && right_shift != UINT_MAX && letter != UINT_MAX);
+   /* Holding an activation freezes focus, and releasing still completes the
+    * key that originally accepted the activation. */
+   osk.focus = letter;
+   assert(arc_osk_press_focused(&osk, &input));
+   arc_osk_update(&osk, &input);
+   assert(drain_input(&input, events, 16u) == 1u &&
+          events[0].code == RETROK_a && events[0].down);
+   arc_osk_move(&osk, 1, 0, 500000u, true);
+   assert(osk.focus == letter);
+   arc_osk_release_activation(&osk);
+   arc_osk_update(&osk, &input);
+   assert(drain_input(&input, events, 16u) == 1u &&
+          events[0].code == RETROK_a && !events[0].down);
+   arc_osk_update(&osk, &input);
+   assert(!osk.activation_phase);
    osk.focus = shift;
    assert(arc_osk_press_focused(&osk, &input) &&
           osk.modifiers[0] == ARC_OSK_MOD_ONESHOT);

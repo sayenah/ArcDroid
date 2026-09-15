@@ -131,7 +131,8 @@ static unsigned arc_osk_center_y(const ArcOskKey *key) { return key->y + key->he
 
 void arc_osk_move(ArcOsk *osk, int dx, int dy, uint64_t guest_us, bool initial)
 {
-   if (!osk || !osk->visible || !osk->key_count || (!dx && !dy)) return;
+   if (!osk || !osk->visible || !osk->key_count || osk->activation_held ||
+       (!dx && !dy)) return;
    if (!initial)
    {
       if (guest_us < osk->repeat_at_us) return;

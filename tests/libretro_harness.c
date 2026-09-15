@@ -2159,6 +2159,14 @@ int main(int argc, char **argv)
    joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_A] = true;
    retro_run();
    for (unsigned frame = 0u; frame < 10u; ++frame) retro_run();
+   joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_RIGHT] = true;
+   retro_run();
+   joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_RIGHT] = false;
+   retro_run();
+   joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_A] = false;
+   for (unsigned frame = 0u; frame < 20u; ++frame) retro_run();
+   joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_A] = true;
+   retro_run();
    joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_A] = false;
    for (unsigned frame = 0u; frame < 20u; ++frame) retro_run();
    joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_UP] = true;
@@ -2197,18 +2205,22 @@ int main(int argc, char **argv)
    joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_SELECT] = false;
    for (unsigned frame = 0u; frame < 80u; ++frame) retro_run();
    input_event_count = arc_platform_test_input_events(input_events, 512u);
-   unsigned osk_a_edges = 0u, osk_backspace_edges = 0u, osk_return_edges = 0u;
-   unsigned modal_up_edges = 0u;
+   unsigned osk_a_edges = 0u, osk_b_edges = 0u;
+   unsigned osk_backspace_edges = 0u, osk_return_edges = 0u;
+   unsigned modal_direction_edges = 0u;
    for (size_t i = 0u; i < input_event_count; ++i)
    {
       if (input_events[i].type != ARC_INPUT_EVENT_KEY) continue;
       if (input_events[i].code == RETROK_a) ++osk_a_edges;
+      if (input_events[i].code == RETROK_b) ++osk_b_edges;
       if (input_events[i].code == RETROK_BACKSPACE) ++osk_backspace_edges;
       if (input_events[i].code == RETROK_RETURN) ++osk_return_edges;
-      if (input_events[i].code == RETROK_UP) ++modal_up_edges;
+      if (input_events[i].code == RETROK_UP ||
+          input_events[i].code == RETROK_RIGHT) ++modal_direction_edges;
    }
-   assert(osk_a_edges == 4u && osk_backspace_edges == 2u &&
-          osk_return_edges == 2u && modal_up_edges == 0u);
+   assert(osk_a_edges == 8u && osk_b_edges == 0u &&
+          osk_backspace_edges == 2u && osk_return_edges == 2u &&
+          modal_direction_edges == 0u);
    assert(last_video_signature != before_osk_signature);
    assert(arc_libretro_test_osk_source_unchanged());
    unsigned narrow_before = osk_narrow_osd_calls;
