@@ -1370,6 +1370,35 @@ static void test_osk(void)
    assert(!arc_osk_touch(&osk, 0, 0, false, &input) &&
           !osk.activation_phase);
 
+   unsigned captured = UINT_MAX;
+   for (unsigned i = 0u; i < osk.key_count; ++i)
+      if (osk.keys[i].action == ARC_OSK_ACTION_KEY)
+      {
+         captured = i;
+         break;
+      }
+   assert(captured != UINT_MAX);
+   const ArcOskKey captured_key = osk.keys[captured];
+   assert(arc_osk_touch(&osk, (int)captured_key.x + 1,
+                         (int)captured_key.y + 1, true, &input));
+   assert(osk.focus == captured && osk.contact_key == captured);
+   arc_osk_move(&osk, 1, 0, 500000u, true);
+   assert(osk.focus == captured && osk.contact_key == captured);
+   assert(arc_osk_touch(&osk, (int)captured_key.x + 1,
+                         (int)captured_key.y + 1, false, &input));
+   arc_osk_update(&osk, &input);
+   assert(drain_input(&input, events, 16u) == 1u &&
+          events[0].code == captured_key.key && events[0].down);
+   arc_osk_update(&osk, &input);
+   assert(!arc_osk_advance(&osk, osk.activation_deadline_us));
+   arc_osk_update(&osk, &input);
+   assert(drain_input(&input, events, 16u) == 1u &&
+          events[0].code == captured_key.key && !events[0].down);
+   arc_osk_update(&osk, &input);
+   assert(!arc_osk_advance(&osk, osk.activation_deadline_us));
+   arc_osk_update(&osk, &input);
+   assert(!osk.activation_phase);
+
    assert(arc_osk_layout(&osk, 640u, 480u) && !osk.compact);
    unsigned shift = UINT_MAX, right_shift = UINT_MAX, letter = UINT_MAX;
    for (unsigned i = 0u; i < osk.key_count; ++i)
