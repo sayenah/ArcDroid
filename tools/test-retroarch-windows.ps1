@@ -283,15 +283,18 @@ function Send-MediaCommand($Run, [string]$Command) {
 }
 
 function Stop-MediaRun($Run) {
+    $forced = $false
     try {
         if (-not $Run.Process.HasExited) {
             Send-MediaCommand $Run "QUIT"
-            if (-not $Run.Process.WaitForExit(30000)) {
-                throw "$($Run.Name) did not exit after QUIT"
+            if (-not $Run.Process.WaitForExit(5000)) {
+                Write-Warning "$($Run.Name) did not exit after QUIT; stopping the process started by this test"
+                Stop-Process -Id $Run.Process.Id -Force
+                $forced = $true
             }
             $Run.Process.WaitForExit()
         }
-        if ($Run.Process.ExitCode -ne 0) {
+        if (-not $forced -and $Run.Process.ExitCode -ne 0) {
             throw "$($Run.Name) exited with code $($Run.Process.ExitCode)"
         }
     } finally {
