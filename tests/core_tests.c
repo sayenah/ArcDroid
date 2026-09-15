@@ -213,6 +213,12 @@ static size_t test_l_offset(unsigned logical_sector)
                    logical_sector % 16u) * 256u;
 }
 
+static uint32_t test_le32(const uint8_t *p)
+{
+   return (uint32_t)p[0] | ((uint32_t)p[1] << 8u) |
+          ((uint32_t)p[2] << 16u) | ((uint32_t)p[3] << 24u);
+}
+
 static void test_launch_discovery_and_builder(const char *fixture_directory)
 {
    typedef struct {
@@ -242,7 +248,7 @@ static void test_launch_discovery_and_builder(const char *fixture_directory)
       {"launch-family/stale-e.adf", ARC_GEOMETRY_800K_E, 2048u, "Hugo", "Demo", 0u, 1u, 1u, 0, ARC_LAUNCH_REASON_SINGLE_APPLICATION, true},
       {"launch-family/multiple-exact-d.adf", ARC_GEOMETRY_800K_D, 1024u, "Hugo", "Beta", 0u, 2u, 2u, 1, ARC_LAUNCH_REASON_DISC_NAME_MATCH, true},
       {"launch-family/multiple-trailing-d.adf", ARC_GEOMETRY_800K_D, 1024u, "Hugo", "Beta2", 0u, 2u, 2u, 1, ARC_LAUNCH_REASON_DISC_NAME_MATCH, true},
-      {"launch-family/ambiguous-l.adl", ARC_GEOMETRY_640K_L, 512u, "Hugo", "Other", 0u, 2u, 2u, -1, ARC_LAUNCH_REASON_AMBIGUOUS, true},
+      {"launch-family/ambiguous-l.adl", ARC_GEOMETRY_640K_L, 512u, "Hugo", "Other", 0u, 3u, 2u, -1, ARC_LAUNCH_REASON_AMBIGUOUS, true},
       {"launch-family/no-run-d.adf", ARC_GEOMETRY_800K_D, 1024u, "Hugo", "Fixture", 0u, 2u, 0u, -1, ARC_LAUNCH_REASON_NO_APPLICATIONS, true},
       {"launch-family/incomplete-l.adl", ARC_GEOMETRY_640K_L, 512u, "Hugo", "Fixture", 0u, 1u, 0u, -1, ARC_LAUNCH_REASON_INSPECTION_INCOMPLETE, true},
       {"launch-family/more-eight-d.adf", ARC_GEOMETRY_800K_D, 1024u, "Hugo", "Fixture", 0u, 10u, 1u, 9, ARC_LAUNCH_REASON_SINGLE_APPLICATION, true},
@@ -257,6 +263,8 @@ static void test_launch_discovery_and_builder(const char *fixture_directory)
    size_t size = 0u;
    uint8_t *application = read_fixture(fixture_directory,
                                        "arcdroid-application-l.adl", &size);
+   assert(!strcmp(arc_digest(application, size).sha1,
+                  "ee4706d07234df5c83816fdc03e59efda34a4c40"));
    ArcMediaInfo media;
    ArcLaunchDiscovery discovery;
    char error[192] = {0};
@@ -279,6 +287,12 @@ static void test_launch_discovery_and_builder(const char *fixture_directory)
    assert(!memcmp(application_child + 5u, encoded_run, sizeof(encoded_run)));
    assert(!memcmp(application_child + 31u, encoded_run_image,
                   sizeof(encoded_run_image)));
+   assert(test_le32(application_root + 5u + 10u) == UINT32_C(0xfff00000) &&
+          test_le32(application_root + 5u + 14u) == 0u);
+   assert(test_le32(application_child + 5u + 10u) == UINT32_C(0xffffeb00) &&
+          test_le32(application_child + 5u + 14u) == 0u);
+   assert(test_le32(application_child + 31u + 10u) == UINT32_C(0x00008000) &&
+          test_le32(application_child + 31u + 14u) == UINT32_C(0x00008000));
    assert(application_child[31u + 18u] == 0u &&
           application_child[31u + 19u] == 20u &&
           application_child[31u + 22u] == 0xf6u &&
@@ -293,6 +307,9 @@ static void test_launch_discovery_and_builder(const char *fixture_directory)
       uint8_t *bytes = read_fixture(fixture_directory, item->file, &size);
       assert(size == (item->geometry == ARC_GEOMETRY_640K_L ? 655360u : 819200u));
       assert(!memcmp(bytes + item->root_offset + 1u, item->signature, 4u));
+      const uint8_t *first_entry = bytes + item->root_offset + 5u;
+      assert((test_le32(first_entry + 10u) >> 20u) == 0xfffu &&
+             test_le32(first_entry + 14u) == 0u);
       assert(arc_media_inspect(item->file, bytes, size, &media, error, sizeof(error)));
       if (media.geometry != item->geometry || media.boot_option != item->boot ||
           strcmp(media.disc_name, item->disc_name))
@@ -314,6 +331,23 @@ static void test_launch_discovery_and_builder(const char *fixture_directory)
              discovery.candidate_count == item->candidates &&
              discovery.application_count == item->applications &&
              discovery.target_index == item->target && discovery.reason == item->reason);
+      free(bytes);
+   }
+
+   /* Independent child offsets exercise typed !Run entries emitted by each
+    * launch-family directory format, including the late E allocation. */
+   static const struct { const char *file; size_t child_offset; } typed_children[] = {
+      {"launch-family/single-l.adl", 2560u},
+      {"launch-family/single-d-hugo.adf", 4096u},
+      {"launch-family/single-e-hugo.adf", 4096u},
+      {"launch-family/late-target-e.adf", 759808u},
+   };
+   for (size_t i = 0u; i < sizeof(typed_children) / sizeof(typed_children[0]); ++i)
+   {
+      uint8_t *bytes = read_fixture(fixture_directory, typed_children[i].file, &size);
+      const uint8_t *run_entry = bytes + typed_children[i].child_offset + 5u;
+      assert((test_le32(run_entry + 10u) >> 20u) == 0xfffu &&
+             test_le32(run_entry + 14u) == 0u);
       free(bytes);
    }
 
@@ -434,7 +468,9 @@ static void test_launch_discovery_and_builder(const char *fixture_directory)
    assert(media.boot_option == 2u && !strcmp(media.disc_name, "ArcDroid"));
    const uint8_t *root = first + test_l_offset(2u);
    assert(!memcmp(root + 1u, "Hugo", 4u));
+   assert(test_le32(root + 5u + 10u) == UINT32_C(0xffffeb00));
    assert(!memcmp(root + 5u + 14u, "\0\0\0\0", 4u));
+   assert(test_le32(root + 31u + 10u) == UINT32_C(0xffffea00));
    assert(!memcmp(root + 31u + 14u, "\0\0\0\0", 4u));
    assert(!memcmp(first + test_l_offset(1279u), "| ArcDroid launch disc", 22u));
    assert(!memcmp(first + test_l_offset(1280u), "| ArcDroid desktop boot file", 28u));

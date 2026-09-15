@@ -128,6 +128,14 @@ static void controller_reset(const ArcJfdImage *image)
 
 static void test_drive_one_helper(const char *root)
 {
+   static const char boot_text[] =
+      "| ArcDroid launch disc\r"
+      "Desktop -File ADFS::1.$.ArcLaunch\r";
+   static const char launch_text[] =
+      "| ArcDroid desktop boot file\r"
+      "Dir ADFS::Demo.$\r"
+      "URD ADFS::Demo.$\r"
+      "Filer_Run ADFS::Demo.$.!Demo\r";
    ArcJfdImage image = load_image(root, "size-1.jfd");
    controller_reset(&image);
    assert(arc_launch_disc_build("Demo", "!Demo", raw_helper));
@@ -138,6 +146,25 @@ static void test_drive_one_helper(const char *root)
    wd1770_write(0x08u, 0u);
    assert(finish_command(0x80u, 1100000u) == 0x80u);
    assert(transfer_count == 256u && !memcmp(transfer, raw_helper, 256u));
+
+   /* Logical sector 1279 is track 79, side 0, sector 15. */
+   wd1770_write(0x0cu, 79u);
+   assert(finish_command(0x10u, 1100000u) == 0x80u);
+   wd1770_writelatch_a(0x9du);
+   wd1770_write(0x08u, 15u);
+   assert(finish_command(0x80u, 1100000u) == 0x80u);
+   assert(transfer_count == 256u &&
+          !memcmp(transfer, boot_text, sizeof(boot_text) - 1u));
+
+   /* Logical sector 1280 wraps to track 0 on sequential side 1. */
+   wd1770_write(0x0cu, 0u);
+   assert(finish_command(0x10u, 1100000u) == 0x84u);
+   wd1770_writelatch_a(0x8du);
+   wd1770_write(0x08u, 0u);
+   assert(finish_command(0x80u, 1100000u) == 0x80u);
+   assert(transfer_count == 256u &&
+          !memcmp(transfer, launch_text, sizeof(launch_text) - 1u));
+
    assert(finish_command(0xa0u, 1000u) == 0x40u);
    assert(writeprot[1]);
    assert(!disc_empty(0));

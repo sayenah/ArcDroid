@@ -10,6 +10,8 @@ sources='core/hash.c
 core/input.c
 core/firmware_table.c
 core/launch.c
+core/launch_discovery.c
+core/launch_disc.c
 core/playlist.c
 core/jfd.c
 core/persistence.c
@@ -48,6 +50,25 @@ engine/compat/*.h
 engine/arculator/src/*.h
 platform/*.h
 libretro/*.h'
+
+if [ -z "${ARCDROID_SHIPPING_IO_SOURCES:-}" ]; then
+  cmake_sources=$(awk '
+    /^[[:space:]]*add_library\(arcdroid_core[[:space:]]+STATIC[[:space:]]*$/ { scan = 1; next }
+    /^[[:space:]]*set\(ARCDROID_LIBRETRO_SOURCES[[:space:]]*$/ { scan = 1; next }
+    scan && /^[[:space:]]*\)[[:space:]]*$/ { scan = 0; next }
+    scan && $1 ~ /^(core|libretro|platform|engine)\/.*\.c$/ { print $1 }
+  ' CMakeLists.txt | sort -u)
+  if [ -z "$cmake_sources" ]; then
+    printf '%s\n' 'shipping I/O guard: no shipping C sources parsed from CMakeLists.txt' >&2
+    exit 1
+  fi
+  for source in $cmake_sources; do
+    if ! printf '%s\n' "$sources" | grep -Fx "$source" >/dev/null; then
+      printf 'shipping I/O guard: CMake shipping source is not scanned: %s\n' "$source" >&2
+      exit 1
+    fi
+  done
+fi
 
 pattern='(^|[^[:alnum:]_>.])(fopen|open|_wfopen|gz[a-z]*|CreateFile[A-Za-z]*)[[:space:]]*\(|(^|[^[:alnum:]_])dumpregs[[:space:]]*\('
 scan_sources=${ARCDROID_SHIPPING_IO_SOURCES:-$sources}

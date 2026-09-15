@@ -89,6 +89,7 @@ static void arc_old_entry(uint8_t *entry, const char *name, uint32_t load,
    entry[11] = (uint8_t)(load >> 8u);
    entry[12] = (uint8_t)(load >> 16u);
    entry[13] = (uint8_t)(load >> 24u);
+   /* RISC OS 3.11 will not run a typed file whose exec field equals load. */
    memset(entry + 14u, 0, 4u);
    entry[18] = (uint8_t)length;
    entry[19] = (uint8_t)(length >> 8u);

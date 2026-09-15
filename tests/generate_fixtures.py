@@ -558,7 +558,10 @@ def _old_entry(directory: bytearray, index: int, name: bytes, length: int,
     directory[at + 1] |= 0x80
     if directory_object:
         directory[at + 3] |= 0x80
-    struct.pack_into("<II", directory, at + 10, load, load)
+    # Observed on RISC OS 3.11: a typed file is not runnable when its exec
+    # field repeats its load address. Absolute/untyped objects retain load.
+    exec_address = 0 if load >> 20 == 0xFFF else load
+    struct.pack_into("<II", directory, at + 10, load, exec_address)
     struct.pack_into("<I", directory, at + 18, length)
     _store_u24(directory, at + 22, sector)
 
@@ -650,7 +653,8 @@ def _new_entry(directory: bytearray, index: int, name: bytes, length: int,
                load: int = 0xFFF00000) -> None:
     at = 5 + index * 26
     directory[at:at + 10] = name.ljust(10, b"\r")
-    struct.pack_into("<II", directory, at + 10, load, load)
+    exec_address = 0 if load >> 20 == 0xFFF else load
+    struct.pack_into("<II", directory, at + 10, load, exec_address)
     struct.pack_into("<I", directory, at + 18, length)
     _store_u24(directory, at + 22, address)
     directory[at + 25] = 0x33 | (0x08 if directory_object else 0)
@@ -876,9 +880,12 @@ def main() -> None:
             [(b"!Demo", True)], b"Demo", stale_names=True), "E"),
         "multiple-exact-d.adf": (build_d_discovery([(b"!Alpha", True), (b"!Beta", True)], b"Beta"), "D"),
         "multiple-trailing-d.adf": (build_d_discovery([(b"!Alpha", True), (b"!Beta", True)], b"Beta2"), "D"),
-        "ambiguous-l.adl": (build_l_discovery([(b"!Foo", True), (b"!Bar", True)], b"Other"), "L"),
+        "ambiguous-l.adl": (build_l_discovery(
+            [(b"!Docs", False), (b"!Foo", True), (b"!Bar", True)], b"Other"), "L"),
         "no-run-d.adf": (build_d_discovery([(b"!Docs", False), (b"!Data", False)]), "D"),
         "incomplete-l.adl": (build_l_discovery([(b"!Broken", True)], incomplete=0), "L"),
+        "unsafe-disc-name-l.adl": (build_l_discovery(
+            [(b"!Foo", True), (b"!Bar", True)], b"Bad\nName"), "L"),
         "more-eight-d.adf": (build_d_discovery(
             [(f"!App{i}".encode(), i == 9) for i in range(10)]), "D"),
         "fragmented-e.adf": (build_e_discovery([(b"!Demo", True)], b"Demo", fragmented=0), "E"),

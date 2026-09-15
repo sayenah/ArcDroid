@@ -883,19 +883,36 @@ static bool arc_launch_os_supported(ArcOsClass os)
           os == ARC_OS_RISCOS_311 || os == ARC_OS_RISCOS_319;
 }
 
+static void arc_launch_sanitise(const char *source, char *output, size_t capacity)
+{
+   size_t at = 0u;
+   if (!capacity) return;
+   while (source && *source && at + 1u < capacity)
+   {
+      unsigned char c = (unsigned char)*source++;
+      output[at++] = c >= 0x20u && c <= 0x7eu ? (char)c : '?';
+   }
+   output[at] = '\0';
+}
+
 static void arc_launch_candidates_message(const ArcLaunchDiscovery *discovery,
-                                          const char *prefix)
+                                          const char *prefix,
+                                          bool applications_only)
 {
    char message[512];
    size_t at = (size_t)snprintf(message, sizeof(message), "%s", prefix);
+   bool listed = false;
    for (unsigned i = 0u; i < discovery->candidate_count && at < sizeof(message); ++i)
    {
+      if (applications_only && !discovery->candidates[i].application) continue;
+      char name[11];
+      arc_launch_sanitise(discovery->candidates[i].name, name, sizeof(name));
       int written = snprintf(message + at, sizeof(message) - at, "%s%u %s",
-                             i ? " " : "", i + 1u,
-                             discovery->candidates[i].name);
+                             listed ? " " : "", i + 1u, name);
       if (written < 0 || (size_t)written >= sizeof(message) - at)
       { at = sizeof(message) - 1u; break; }
       at += (size_t)written;
+      listed = true;
    }
    if (at < sizeof(message) - 28u)
       snprintf(message + at, sizeof(message) - at, " — set Launch to Application N");
@@ -927,7 +944,7 @@ static bool arc_launch_binding(const ArcLaunchDiscovery *discovery,
       char trailing = 0;
       if (existing_size < sizeof(text))
       {
-         memcpy(text, existing, existing_size);
+         if (existing_size && existing) memcpy(text, existing, existing_size);
          text[existing_size] = '\0';
       }
       int fields = existing_size < sizeof(text) ?
@@ -961,22 +978,26 @@ static void arc_launch_log(const ArcLaunchDiscovery *discovery,
    if (!arc_log) return;
    char candidates[1024] = "";
    char applications[512] = "";
+   char disc_name[11];
    size_t ca = 0u, aa = 0u;
+   arc_launch_sanitise(discovery->disc_name, disc_name, sizeof(disc_name));
    for (unsigned i = 0u; i < discovery->candidate_count; ++i)
    {
+      char name[11];
+      arc_launch_sanitise(discovery->candidates[i].name, name, sizeof(name));
       int n = snprintf(candidates + ca, sizeof(candidates) - ca, "%s%u:%s",
-                       i ? "," : "", i + 1u, discovery->candidates[i].name);
+                       i ? "," : "", i + 1u, name);
       if (n > 0 && (size_t)n < sizeof(candidates) - ca) ca += (size_t)n;
       if (discovery->candidates[i].application)
       {
          n = snprintf(applications + aa, sizeof(applications) - aa, "%s%u:%s",
-                      aa ? "," : "", i + 1u, discovery->candidates[i].name);
+                      aa ? "," : "", i + 1u, name);
          if (n > 0 && (size_t)n < sizeof(applications) - aa) aa += (size_t)n;
       }
    }
    arc_log(RETRO_LOG_INFO,
       "Launch: boot=%u disc=\"%s\" candidates=[%s] applications=[%s] decision=%s reason=%s helper=%s\n",
-      discovery->boot_option, discovery->disc_name, candidates, applications,
+      discovery->boot_option, disc_name, candidates, applications,
       decision, reason, arc_helper_path[0] ? arc_helper_path : "none");
 }
 
@@ -1041,8 +1062,13 @@ static void arc_prepare_launch(ArcMediaEntry *entry, bool ejected,
    }
    else if (selected < 0)
    {
-      if (discovery.candidate_count)
-         arc_launch_candidates_message(&discovery, "No unique application: ");
+      if (discovery.reason == ARC_LAUNCH_REASON_AMBIGUOUS &&
+          discovery.application_count >= 2u)
+         arc_launch_candidates_message(&discovery, "No unique application: ", true);
+      else if (discovery.reason == ARC_LAUNCH_REASON_INSPECTION_INCOMPLETE &&
+               discovery.candidate_count)
+         arc_launch_candidates_message(&discovery,
+            "Application inspection incomplete: ", false);
       arc_launch_log(&discovery, "none", reason);
       return;
    }

@@ -105,6 +105,16 @@ bool arc_engine_test_cmos_image(uint8_t output[ARC_CMOS_MACHINE_SIZE])
    cmos_get_image(output, ARC_CMOS_MACHINE_SIZE);
    return true;
 }
+
+bool arc_engine_test_cmos_write(unsigned offset, uint8_t value)
+{
+   uint8_t image[ARC_CMOS_MACHINE_SIZE];
+   if (!arc_machine_live || offset >= sizeof(image)) return false;
+   cmos_get_image(image, sizeof(image));
+   image[offset] = value;
+   cmos_set_image(image, sizeof(image));
+   return true;
+}
 #endif
 
 static void arc_latch_fault(const char *format, va_list arguments)
