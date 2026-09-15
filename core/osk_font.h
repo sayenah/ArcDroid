@@ -2,7 +2,8 @@
  *
  * Drawn specifically for ArcDroid in 2026. No glyph or font data was imported
  * from another core, font, project, or third-party source. GPL-2.0-only.
- * Indices 126/125 are the authored down/up arrow glyphs.
+ * The left/right angle glyphs and indices 126/125 (down/up arrows) are
+ * ArcDroid-authored directional marks.
  */
 #ifndef ARCDROID_OSK_FONT_H
 #define ARCDROID_OSK_FONT_H
@@ -22,7 +23,9 @@ static const uint8_t arc_osk_font[128][8] = {
    ['6']={28,32,64,124,66,66,60,0}, ['7']={126,2,4,8,16,16,16,0},
    ['8']={60,66,66,60,66,66,60,0}, ['9']={60,66,66,62,2,4,56,0},
    [':']={0,24,24,0,24,24,0,0}, [';']={0,24,24,0,24,16,32,0},
+   ['<']={12,16,32,64,32,16,12,0},
    ['=']={0,0,124,0,124,0,0,0}, ['?']={60,66,2,12,16,0,16,0},
+   ['>']={96,16,8,4,8,16,96,0},
    ['@']={60,66,94,82,94,64,60,0}, ['[']={60,32,32,32,32,32,60,0},
    ['\\']={64,32,16,8,4,2,0,0}, [']']={60,4,4,4,4,4,60,0},
    ['`']={32,16,8,0,0,0,0,0},

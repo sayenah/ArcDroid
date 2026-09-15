@@ -3,6 +3,7 @@
 #include "e_format_fixture.h"
 #include "jfd.h"
 #include "keytable_provenance.h"
+#include "osk_font.h"
 #include "playlist.h"
 #include "libretro.h"
 
@@ -1322,6 +1323,18 @@ static void test_osk(void)
          for (unsigned i = 0u; i < labelled.key_count; ++i)
          {
             const ArcOskKey *key = &labelled.keys[i];
+            for (const unsigned char *glyph =
+                    (const unsigned char *)key->label; *glyph; ++glyph)
+            {
+               unsigned index = *glyph;
+               if (index >= 'a' && index <= 'z') index -= 'a' - 'A';
+               assert(index < 128u);
+               if (index == ' ') continue;
+               bool nonblank = false;
+               for (unsigned row = 0u; row < 8u; ++row)
+                  nonblank |= arc_osk_font[index][row] != 0u;
+               assert(nonblank);
+            }
             if (key->action == ARC_OSK_ACTION_PAGE) continue;
             assert(strlen(key->label) <= (key->width - 2u) / 8u);
             for (unsigned previous = 0u; previous < label_count; ++previous)
@@ -1523,12 +1536,12 @@ static void test_osk(void)
    static const unsigned widths[] = {320u, 640u, 640u};
    static const unsigned heights[] = {256u, 256u, 480u};
    static const char *goldens[3][2][2] = {
-      {{"f39cbacd864970c0a14cdcbc801678b17c54587c", "dca7cd25e17da28127c9ec1920eb6152e57c1082"},
-       {"b3c4b9f3b8a3fd77beee44de232ccf7215bc08a7", "b93378ff94945d88bad967d7ee10d0a1e5d5330e"}},
-      {{"337fd182b72bca2dfa76d3cef7840fae83c27b6f", NULL},
-       {"f7412551bce4aed80f8bea745d4d2fe4f0461d3c", NULL}},
-      {{"09ca2e607caf833544cfecd72e42b3c3ced756b4", NULL},
-       {"60a68cb5f0c003ade3158d6f4272efc3fb311f9a", NULL}}
+      {{"e5a78d1c316f1e039a1df3da6f65fecba6c878fd", "0fcbd1b271e0a8a93a2332fdbed8521a360da970"},
+       {"33bbd9c11debd198933ad94461141a6017419b79", "7e7bca7af324def6293429461af77f634fe96696"}},
+      {{"04a7ca1e1e0f740dfde60300a2f65619ab68b7fc", NULL},
+       {"4096e7086cc7129b53928dc0dffa9296ded717e8", NULL}},
+      {{"1a5ea3bb3c952f151c0f679de45f930e9a2dda52", NULL},
+       {"11f0015ccdb21f1a5154657d99569ab3a5a1d2cd", NULL}}
    };
    for (unsigned geometry = 0u; geometry < 3u; ++geometry)
       for (unsigned alpha = 0u; alpha < 2u; ++alpha)
@@ -1593,9 +1606,9 @@ static void test_osk(void)
                                    320u * sizeof(uint32_t), "Golden custom"));
    char notice_digest[41];
    arc_sha1_hex(notice, 320u * 256u * sizeof(*notice), notice_digest);
-   if (strcmp(notice_digest, "9cc4312d1bf231f4a49d9a982bf635a587ca55be"))
+   if (strcmp(notice_digest, "b8cbda510d4981563b93acafb3cc18cccd3e231d"))
       fprintf(stderr, "OSK compact INT golden = %s\n", notice_digest);
-   assert(!strcmp(notice_digest, "9cc4312d1bf231f4a49d9a982bf635a587ca55be"));
+   assert(!strcmp(notice_digest, "b8cbda510d4981563b93acafb3cc18cccd3e231d"));
    assert(osk.interrupted_visible);
    memset(notice, 0, 320u * 256u * sizeof(*notice));
    assert(arc_osk_render(&osk, notice, 320u, 256u,
