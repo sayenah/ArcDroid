@@ -276,17 +276,26 @@ static void test_empty_drive_cancellation(void)
    controller_reset(NULL);
    wd1770_write(0x08u, 0u);
    wd1770_write(0x00u, 0x80u);
-   wd1770_write(0x00u, 0xd0u);
-   assert(!(ioc.fiq & IOC_FIQ_DISC_IRQ));
+   assert(wd1770_read(0x00u) == 0x81u);
    unsigned completions = irq_assertions;
+   wd1770_write(0x00u, 0x00u);
+   assert(wd1770_read(0x00u) == 0x81u);
+   assert(!(ioc.fiq & IOC_FIQ_DISC_IRQ));
    run_us(1000000u);
+   assert((ioc.fiq & IOC_FIQ_DISC_IRQ) && irq_assertions == completions + 1u);
+   assert(wd1770_read(0x00u) == 0x10u);
+   completions = irq_assertions;
+   run_us(210000u);
    assert(!(ioc.fiq & IOC_FIQ_DISC_IRQ) && irq_assertions == completions);
 
    wd1770_write(0x00u, 0x80u);
+   assert(wd1770_read(0x00u) == 0x81u);
+   wd1770_write(0x00u, 0xd0u);
+   assert(wd1770_read(0x00u) == 0x84u);
    wd1770_write(0x00u, 0x00u);
    run_us(1000u);
    assert(ioc.fiq & IOC_FIQ_DISC_IRQ);
-   (void)wd1770_read(0x00u);
+   assert(wd1770_read(0x00u) == 0x84u);
    completions = irq_assertions;
    run_us(1000000u);
    assert(!(ioc.fiq & IOC_FIQ_DISC_IRQ) && irq_assertions == completions);
@@ -299,12 +308,40 @@ static void test_empty_drive_cancellation(void)
    assert(transfer_count == 0u && drq_assertions == before);
 }
 
+static void test_busy_jfd_read_is_not_replaced(const char *root)
+{
+   ArcJfdImage image = load_image(root, "size-3.jfd");
+   controller_reset(&image);
+   transfer_count = 0u;
+   memset(transfer, 0, sizeof(transfer));
+   ioc.fiq = 0u;
+   wd1770_write(0x08u, 3u);
+   wd1770_write(0x00u, 0x80u);
+   assert(wd1770_read(0x00u) == 0x81u);
+
+   wd1770_write(0x08u, 0xfeu);
+   wd1770_write(0x00u, 0x80u);
+   assert(wd1770_read(0x00u) == 0x81u);
+
+   uint64_t end = tsc + (uint64_t)1100000u * TIMER_USEC;
+   while (!(ioc.fiq & IOC_FIQ_DISC_IRQ) && tsc < end) step_controller();
+   assert(ioc.fiq & IOC_FIQ_DISC_IRQ);
+   assert(wd1770_read(0x00u) == 0x80u);
+   assert(transfer_count == 1024u && transfer[0] == 3u);
+   unsigned completions = irq_assertions;
+   run_us(210000u);
+   assert(!(ioc.fiq & IOC_FIQ_DISC_IRQ) && irq_assertions == completions);
+   disc_close(0);
+   arc_jfd_free(&image);
+}
+
 int main(int argc, char **argv)
 {
    assert(argc == 2);
    test_family(argv[1]);
    test_rejections(argv[1]);
    test_empty_drive_cancellation();
+   test_busy_jfd_read_is_not_replaced(argv[1]);
    puts("jfd_controller_tests: all checks passed");
    return 0;
 }

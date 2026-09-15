@@ -77,9 +77,14 @@ void wd1770_write(uint16_t addr, uint8_t val)
 	switch (addr & 0xc)
 	{
 		case 0x0:
-		/* Every command supersedes pending media work. This is also required
-		 * for empty-drive RNF, which has no drive reader to stop. */
-		if (!fdc_overridden)
+		if (wd1770.status & 1 && (val >> 4) != 0xD)
+		{
+			rpclog("Command rejected\n");
+			return;
+		}
+		/* An accepted non-Force command supersedes pending media work. Force
+		 * Interrupt performs the same cancellation in its command case. */
+		if ((val >> 4) != 0xD && !fdc_overridden)
 		{
 			disc_stop(0);
 			disc_stop(1);
