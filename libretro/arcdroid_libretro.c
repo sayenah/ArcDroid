@@ -28,8 +28,8 @@
 #define ARC_DEVICE_MOUSE RETRO_DEVICE_SUBCLASS(RETRO_DEVICE_MOUSE, 1)
 
 enum {
-   ARC_INPUT_CURATED_KEY_ROWS = 98u,
-   ARC_INPUT_SHARED_KEY_ALIASES = 1u,
+   ARC_INPUT_CURATED_KEY_ROWS = 97u,
+   ARC_INPUT_SHARED_KEY_ALIASES = 0u,
    ARC_INPUT_OSK_ONLY_KEYS = 3u,
    ARC_INPUT_POINTER_BUTTONS = 3u,
    /* Leave room for future adapter bindings without risking truncation when

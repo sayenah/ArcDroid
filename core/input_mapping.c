@@ -8,9 +8,7 @@
 #define K(code, value, label, row, column, modifier) \
    {code, value, label, row, column, modifier}
 
-/* Every entry below is backed by keys[] in Arculator keytable.h.  Some
- * Archimedes legends share the stable libretro physical-key identity: the
- * pound and #/backslash legends both reach KART position 3,3. */
+/* Every entry below is backed by keys[] in Arculator keytable.h. */
 static const ArcInputKey arc_keys[] = {
    K(RETROK_a,"a","A",3,12,false), K(RETROK_b,"b","B",5,2,false),
    K(RETROK_c,"c","C",5,0,false), K(RETROK_d,"d","D",3,14,false),
@@ -61,12 +59,11 @@ static const ArcInputKey arc_keys[] = {
    K(RETROK_BACKQUOTE,"backquote","`",1,0,false),
    K(RETROK_MINUS,"minus","-",1,11,false),
    K(RETROK_EQUALS,"equals","=",1,12,false),
-   K(RETROK_BACKSLASH,"pound","£",3,3,false),
    K(RETROK_LEFTBRACKET,"left_bracket","[",3,1,false),
    K(RETROK_RIGHTBRACKET,"right_bracket","]",3,2,false),
    K(RETROK_SEMICOLON,"semicolon",";",4,5,false),
    K(RETROK_QUOTE,"quote","'",4,6,false),
-   K(RETROK_BACKSLASH,"hash_backslash","#/Backslash",3,3,false),
+   K(RETROK_BACKSLASH,"hash_backslash","Backslash",3,3,false),
    K(RETROK_COMMA,"comma",",",5,5,false),
    K(RETROK_PERIOD,"period",".",5,6,false),
    K(RETROK_SLASH,"slash","/",5,7,false),

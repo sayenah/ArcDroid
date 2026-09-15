@@ -1078,18 +1078,20 @@ static void test_input_mapping(void)
 {
    size_t key_count = 0u;
    const ArcInputKey *keys = arc_input_supported_keys(&key_count);
-   assert(keys && key_count == 98u && key_count + 3u <= 128u);
+   assert(keys && key_count == 97u && key_count + 3u <= 128u);
    for (size_t i = 0u; i < key_count; ++i)
    {
       assert(keys[i].value && keys[i].label && keys[i].key < ARC_INPUT_KEY_COUNT);
       assert(keys[i].kart_row <= 6u && keys[i].kart_column <= 15u);
       assert(arc_input_key_value(keys[i].value) == &keys[i]);
-      assert(arc_input_is_modifier(keys[i].key) == keys[i].modifier ||
-             /* Pound and #/backslash deliberately share one physical key. */
-             keys[i].key == RETROK_BACKSLASH);
+      assert(arc_input_is_modifier(keys[i].key) == keys[i].modifier);
       for (size_t prior = 0u; prior < i; ++prior)
          assert(strcmp(keys[i].value, keys[prior].value));
    }
+   assert(!arc_input_key_value("pound"));
+   const ArcInputKey *backslash = arc_input_key_value("hash_backslash");
+   assert(backslash && !strcmp(backslash->label, "Backslash") &&
+          backslash->kart_row == 3u && backslash->kart_column == 3u);
    assert(!arc_input_key(RETROK_PRINT));
    size_t osk_only_count = 0u;
    const ArcInputKey *osk_only = arc_input_osk_only_keys(&osk_only_count);
@@ -1330,12 +1332,12 @@ static void test_osk(void)
    static const unsigned widths[] = {320u, 640u, 640u};
    static const unsigned heights[] = {256u, 256u, 480u};
    static const char *goldens[3][2][2] = {
-      {{"9192b046572bc2a721edae679555088f2a3719a1", "d05ed375efaa6890bd9d8715bd81ea759f6b3f04"},
-       {"749e8dc6aafa53bfec97b9f66f250d06d0da6ba6", "103f9f683dbab656d3112f678f8bc9a956a3a371"}},
-      {{"04cb3f1e23aa7f7dde8acf91e06a29d22e4e0dbc", NULL},
-       {"237213d839093b0c89a1dc04a3df79b93ef41d7d", NULL}},
-      {{"8244c37ec50df162236c3640245620137eb58c13", NULL},
-       {"1292f41b947d6b9b320e06cf15a1d4fc347787a8", NULL}}
+      {{"f465e83bcb842199e59411fd9ea7ca65c3ebcaa2", "acd9758a101ce2c63f18271ea1e9a58908c0644c"},
+       {"79b7a0e3d1622fe46db0b836ad4c9aabf59dc6c1", "701c405ab64806ace5cee554621fbf245d7124fb"}},
+      {{"7018adb4dfffd417c4917451b09e7a175f4aa474", NULL},
+       {"9def35c5d2f6ab41d2f1253c361bf9cb4fba3e38", NULL}},
+      {{"f1cf1d564fd3ae464107fcfc2432560e5cbdc57b", NULL},
+       {"fe14df35a3cdf2befb4dbe68d381ef421d204eb7", NULL}}
    };
    for (unsigned geometry = 0u; geometry < 3u; ++geometry)
       for (unsigned alpha = 0u; alpha < 2u; ++alpha)
