@@ -99,6 +99,7 @@ static const char *option_pointer_stick = "right";
 static const char *option_pointer_speed = "600";
 static const char *option_pointer_deadzone = "15";
 static const char *option_writes = "shadow";
+static const char *option_launch = "auto";
 static bool variable_update;
 static bool saw_adfs_advisory;
 static bool saw_audio_counters;
@@ -309,11 +310,12 @@ static bool environment(unsigned command, void *data)
          const struct retro_core_options_v2 *options = data;
          unsigned count = 0u;
          while (options->definitions[count].key) ++count;
-         assert(count == 10u);
+         assert(count == 11u);
          assert(!strcmp(options->definitions[5].key, "arcdroid_pointer_mode"));
          assert(!strcmp(options->definitions[6].key, "arcdroid_pointer_stick"));
          assert(!strcmp(options->definitions[7].key, "arcdroid_pointer_speed"));
          assert(!strcmp(options->definitions[8].key, "arcdroid_pointer_deadzone"));
+         assert(!strcmp(options->definitions[9].key, "arcdroid_launch"));
          return true;
       }
       case RETRO_ENVIRONMENT_SET_DISK_CONTROL_EXT_INTERFACE:
@@ -396,6 +398,7 @@ static bool environment(unsigned command, void *data)
          else if (!strcmp(variable->key, "arcdroid_pointer_speed")) variable->value = option_pointer_speed;
          else if (!strcmp(variable->key, "arcdroid_pointer_deadzone")) variable->value = option_pointer_deadzone;
          else if (!strcmp(variable->key, "arcdroid_disk_writes")) variable->value = option_writes;
+         else if (!strcmp(variable->key, "arcdroid_launch")) variable->value = option_launch;
          else return false;
          return true;
       }
@@ -675,10 +678,10 @@ static unsigned modified_shadow_count(const char *save, uint64_t first, uint64_t
 #define LOAD(name) do { *(void **)(&name) = dlsym(module, #name); assert(name); } while (0)
 int main(int argc, char **argv)
 {
-   assert(argc == 5 || argc == 12 ||
+   assert(argc == 5 || argc == 13 ||
           (argc == 6 && strcmp(argv[5], "--real-boot") == 0));
    bool real_boot = argc == 6;
-   bool media_tests = argc == 12;
+   bool media_tests = argc == 13;
    real_boot_mode = real_boot;
    void *module = dlopen(argv[1], RTLD_NOW | RTLD_LOCAL);
    if (!module)
@@ -727,6 +730,8 @@ int main(int argc, char **argv)
    void (*arc_engine_audio_stats)(uint64_t *, uint64_t *) = NULL;
    bool (*arc_engine_media_insert)(const ArcEngineMedia *, char *, size_t) = NULL;
    void (*arc_engine_test_set_vidc_noncompleting)(bool) = NULL;
+   bool (*arc_engine_test_drive_media)(unsigned, bool *, char[41]) = NULL;
+   bool (*arc_engine_test_cmos_image)(uint8_t[ARC_CMOS_MACHINE_SIZE]) = NULL;
    void (*arc_platform_test_input_events_reset)(void) = NULL;
    size_t (*arc_platform_test_input_events)(ArcKartEvent *, size_t) = NULL;
    if (!real_boot)
@@ -735,12 +740,17 @@ int main(int argc, char **argv)
       *(void **)(&arc_engine_media_insert) = dlsym(module, "arc_engine_media_insert");
       *(void **)(&arc_engine_test_set_vidc_noncompleting) =
          dlsym(module, "arc_engine_test_set_vidc_noncompleting");
+      *(void **)(&arc_engine_test_drive_media) =
+         dlsym(module, "arc_engine_test_drive_media");
+      *(void **)(&arc_engine_test_cmos_image) =
+         dlsym(module, "arc_engine_test_cmos_image");
       *(void **)(&arc_platform_test_input_events_reset) =
          dlsym(module, "arc_platform_test_input_events_reset");
       *(void **)(&arc_platform_test_input_events) =
          dlsym(module, "arc_platform_test_input_events");
       assert(arc_engine_audio_stats && arc_engine_media_insert &&
              arc_engine_test_set_vidc_noncompleting &&
+             arc_engine_test_drive_media && arc_engine_test_cmos_image &&
              arc_platform_test_input_events_reset && arc_platform_test_input_events);
    }
 
@@ -2111,6 +2121,34 @@ int main(int argc, char **argv)
          assert(strstr(last_message, "short by") ||
                 strstr(last_message, "unsupported raw image geometry"));
       }
+
+      /* Test-target-only probes verify the helper mount and launch CMOS
+       * overlay without adding observability to the shipping core. */
+      option_writes = "off";
+      option_launch = "auto";
+      struct retro_game_info application_game = {argv[12], NULL, 0u, NULL};
+      phase = PHASE_LOAD; assert(retro_load_game(&application_game));
+      bool write_protected = false;
+      char mounted_digest[41];
+      assert(arc_engine_test_drive_media(1u, &write_protected, mounted_digest));
+      assert(write_protected);
+      char helper_file[4096];
+      ArcDigest application_digest = digest_file(argv[12]);
+      snprintf(helper_file, sizeof(helper_file), "%s/arcdroid/launch/%s.adl",
+               save_path, application_digest.sha1);
+      ArcDigest helper_digest = digest_file(helper_file);
+      assert(!strcmp(mounted_digest, helper_digest.sha1));
+      uint8_t machine_cmos[ARC_CMOS_MACHINE_SIZE];
+      assert(arc_engine_test_cmos_image(machine_cmos));
+      assert((machine_cmos[75] & 7u) == 1u && (machine_cmos[199] & 7u) == 2u);
+      option_launch = "off";
+      retro_reset();
+      assert(!arc_engine_test_drive_media(1u, NULL, NULL));
+      assert(arc_engine_test_cmos_image(machine_cmos));
+      assert((machine_cmos[75] & 7u) == 0u && (machine_cmos[199] & 7u) == 1u);
+      retro_unload_game();
+      option_launch = "auto";
+      option_writes = "shadow";
       assert(hash_file(argv[7]) == disc1_hash && hash_file(argv[8]) == disc2_hash);
    }
    retro_deinit();

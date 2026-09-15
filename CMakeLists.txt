@@ -49,6 +49,8 @@ add_library(arcdroid_core STATIC
   core/input.c
   core/firmware_table.c
   core/launch.c
+  core/launch_discovery.c
+  core/launch_disc.c
   core/playlist.c
   core/jfd.c
   core/persistence.c
@@ -203,6 +205,7 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
   add_custom_command(
     OUTPUT "${FIXTURE_DIR}/arcdroid-test.rom" "${FIXTURE_DIR}/arcdroid-test.adf"
       "${FIXTURE_DIR}/arcdroid-demo.adl"
+      "${FIXTURE_DIR}/arcdroid-application-l.adl"
       "${FIXTURE_DIR}/arcdroid-media-test.rom"
       "${FIXTURE_DIR}/arcdroid-media-disc1.adf"
       "${FIXTURE_DIR}/arcdroid-media-disc2.adf"
@@ -216,6 +219,7 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
   add_custom_target(test-fixtures ALL DEPENDS
     "${FIXTURE_DIR}/arcdroid-test.rom" "${FIXTURE_DIR}/arcdroid-test.adf"
     "${FIXTURE_DIR}/arcdroid-demo.adl"
+    "${FIXTURE_DIR}/arcdroid-application-l.adl"
     "${FIXTURE_DIR}/arcdroid-media-test.rom"
     "${FIXTURE_DIR}/arcdroid-media-disc1.adf"
     "${FIXTURE_DIR}/arcdroid-media-disc2.adf"
@@ -268,7 +272,8 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
       "${FIXTURE_DIR}/arcdroid-media-disc2.adf"
       "${FIXTURE_DIR}/arcdroid-test.jfd"
       "${FIXTURE_DIR}/arcdroid-test-two-member.jfd"
-      "${FIXTURE_DIR}")
+      "${FIXTURE_DIR}"
+      "${FIXTURE_DIR}/arcdroid-application-l.adl")
   endif()
 
   add_executable(firmware_probe tools/firmware_probe.c)

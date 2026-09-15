@@ -528,6 +528,83 @@ def build_demo_adl() -> bytearray:
     return image
 
 
+def _l_physical_sector(logical_sector: int) -> int:
+    track = logical_sector // 16
+    side = track // 80
+    cylinder = track % 80
+    return (cylinder * 2 + side) * 16 + logical_sector % 16
+
+
+def _l_write(image: bytearray, logical_sector: int, payload: bytes) -> None:
+    for at in range(0, len(payload), SECTOR_SIZE):
+        physical = _l_physical_sector(logical_sector + at // SECTOR_SIZE)
+        chunk = payload[at:at + SECTOR_SIZE]
+        image[physical * SECTOR_SIZE:physical * SECTOR_SIZE + len(chunk)] = chunk
+
+
+def _old_entry(directory: bytearray, index: int, name: bytes, length: int,
+               sector: int, directory_object: bool = False,
+               load: int = 0xFFF00000) -> None:
+    at = 5 + index * 26
+    directory[at:at + 10] = name.ljust(10, b"\r")
+    directory[at] |= 0x80
+    directory[at + 1] |= 0x80
+    if directory_object:
+        directory[at + 3] |= 0x80
+    struct.pack_into("<II", directory, at + 10, load, load)
+    struct.pack_into("<I", directory, at + 18, length)
+    _store_u24(directory, at + 22, sector)
+
+
+def _old_directory(name: bytes = b"$") -> bytearray:
+    directory = bytearray(OLD_DIRECTORY_SIZE)
+    directory[0] = 1
+    directory[1:5] = b"Hugo"
+    tail = OLD_DIRECTORY_SIZE - 53
+    directory[tail] = 0
+    directory[tail + 1:tail + 11] = name.ljust(10, b"\r")
+    _store_u24(directory, tail + 11, 2)
+    directory[tail + 14:tail + 33] = b"ArcDroid fixture".ljust(19, b"\0")
+    directory[tail + 47] = 1
+    directory[tail + 48:tail + 52] = b"Hugo"
+    return directory
+
+
+def build_application_l() -> bytearray:
+    """Option-0 L disc with one application and a cross-side Absolute file."""
+    image = bytearray(ADL_SIZE)
+    total_sectors = ADL_SIZE // SECTOR_SIZE
+    child_sector, run_sector, image_sector = 20, 40, 1270
+    run = b"Run <Obey$Dir>.!RunImage\r"
+    run_image = _build_absolute_boot().ljust(20 * SECTOR_SIZE, b"\0")
+    free_extents = ((7, 13), (25, 15), (41, image_sector - 41),
+                    (image_sector + 20, total_sectors - image_sector - 20))
+    for index, (start, length) in enumerate(free_extents):
+        _store_u24(image, index * 3, start)
+        _store_u24(image, 256 + index * 3, length)
+    image[247:252] = b"Dm\r\r\r"
+    image[502:507] = b"eo\r\r\r"
+    _store_u24(image, 252, total_sectors)
+    image[507:509] = (0xA2B0).to_bytes(2, "little")
+    image[509] = 0
+    image[510] = len(free_extents) * 3
+    image[255] = _old_map_checksum(image[:255])
+    image[511] = _old_map_checksum(image[256:511])
+
+    root = _old_directory()
+    _old_entry(root, 0, b"!Demo", OLD_DIRECTORY_SIZE, child_sector, True)
+    child = _old_directory(b"!Demo")
+    _old_entry(child, 0, b"!Run", len(run), run_sector,
+               load=0xFFFFEB00)
+    _old_entry(child, 1, b"!RunImage", len(run_image), image_sector,
+               load=0x00008000)
+    _l_write(image, 2, root)
+    _l_write(image, child_sector, child)
+    _l_write(image, run_sector, run)
+    _l_write(image, image_sector, run_image)
+    return image
+
+
 def build_old_map_media(size: int, old_size: int, seed: int) -> bytearray:
     image = bytearray(((index * 29) ^ seed) & 0xFF for index in range(size))
     image[:512] = bytes(512)
@@ -549,6 +626,7 @@ def main() -> None:
     (args.output / "arcdroid-test.rom").write_bytes(build_rom())
     (args.output / "arcdroid-test.adf").write_bytes(build_adf())
     (args.output / "arcdroid-demo.adl").write_bytes(build_demo_adl())
+    (args.output / "arcdroid-application-l.adl").write_bytes(build_application_l())
     media_rom = build_rom(media_exerciser=True)
     disc1 = build_adf(0xA5, b"ARCDROID MEDIA DISC ONE v1\0")
     disc2 = build_adf(0x3C, b"ARCDROID MEDIA DISC TWO v1\0")

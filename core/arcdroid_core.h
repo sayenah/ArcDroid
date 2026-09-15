@@ -6,6 +6,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "jfd.h"
+
 typedef enum {
    ARC_OS_UNKNOWN = 0,
    ARC_OS_TEST,
@@ -73,6 +75,8 @@ typedef struct {
    size_t padding_required;
    ArcMediaRecognition recognition;
    bool short_image;
+   unsigned boot_option;
+   char disc_name[11];
 } ArcMediaInfo;
 
 typedef enum {
@@ -91,7 +95,41 @@ typedef struct {
    ArcDiskWriteMode disk_writes;
    ArcMediaKind media;
    char content_id[41];
+   bool launch_helper;
+   char launch_target[11];
 } ArcLaunchPlan;
+
+#define ARC_LAUNCH_MAX_CANDIDATES 77u
+#define ARC_LAUNCH_DISC_SIZE 655360u
+
+typedef enum {
+   ARC_LAUNCH_REASON_UNREADABLE = 0,
+   ARC_LAUNCH_REASON_INSPECTION_INCOMPLETE,
+   ARC_LAUNCH_REASON_DISC_BOOTS_ITSELF,
+   ARC_LAUNCH_REASON_NO_CANDIDATES,
+   ARC_LAUNCH_REASON_NO_APPLICATIONS,
+   ARC_LAUNCH_REASON_AMBIGUOUS,
+   ARC_LAUNCH_REASON_SINGLE_APPLICATION,
+   ARC_LAUNCH_REASON_DISC_NAME_MATCH
+} ArcLaunchReason;
+
+typedef struct {
+   char name[11];
+   bool application;
+} ArcLaunchCandidate;
+
+typedef struct {
+   bool readable;
+   unsigned boot_option;
+   char disc_name[11];
+   ArcMediaGeometry geometry;
+   ArcLaunchCandidate candidates[ARC_LAUNCH_MAX_CANDIDATES];
+   unsigned candidate_count;
+   unsigned application_count;
+   int target_index;
+   ArcLaunchReason reason;
+   char candidate_fingerprint[41];
+} ArcLaunchDiscovery;
 
 #define ARC_CMOS_RECORD_SIZE 256u
 #define ARC_CMOS_PAYLOAD_SIZE 240u
@@ -117,6 +155,12 @@ bool arc_firmware_assemble(const uint8_t *const *parts, const size_t *sizes,
 bool arc_media_inspect(const char *path, const uint8_t *data, size_t size,
                        ArcMediaInfo *info, char *error, size_t error_size);
 bool arc_media_is_recognised_adfs(const uint8_t *data, size_t size);
+bool arc_launch_discover(const uint8_t *data, size_t size,
+                         const ArcMediaInfo *media, const ArcJfdImage *jfd,
+                         ArcLaunchDiscovery *discovery);
+const char *arc_launch_reason_name(ArcLaunchReason reason);
+bool arc_launch_disc_build(const char *disc_name, const char *target,
+                           uint8_t output[ARC_LAUNCH_DISC_SIZE]);
 bool arc_firmware_nearest_size(size_t actual, size_t margin, size_t *expected);
 bool arc_launch_plan_default(ArcLaunchPlan *plan, ArcMediaKind media,
                              ArcOsClass os, const char content_sha1[41],
@@ -132,7 +176,9 @@ bool arc_cmos_decode(const uint8_t record[ARC_CMOS_RECORD_SIZE],
 bool arc_cmos_default(ArcOsClass os, uint8_t output[ARC_CMOS_PAYLOAD_SIZE]);
 bool arc_cmos_machine_image(ArcOsClass os,
                             const uint8_t payload[ARC_CMOS_PAYLOAD_SIZE],
+                            bool launch_helper,
                             uint8_t output[ARC_CMOS_MACHINE_SIZE]);
+void arc_cmos_normalise_payload(uint8_t payload[ARC_CMOS_PAYLOAD_SIZE]);
 
 #define ARC_INPUT_KEY_COUNT 512u
 #define ARC_INPUT_FIFO_CAPACITY 256u

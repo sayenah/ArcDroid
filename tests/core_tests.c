@@ -185,9 +185,15 @@ static void test_media_launch_and_cmos(void)
    for (unsigned i = 0; i < sizeof(payload); ++i) assert(payload[i] == 0u);
    uint8_t machine_cmos[ARC_CMOS_MACHINE_SIZE];
    assert(arc_cmos_default(ARC_OS_RISCOS_311, payload));
-   assert(arc_cmos_machine_image(ARC_OS_RISCOS_311, payload, machine_cmos));
+   assert(arc_cmos_machine_image(ARC_OS_RISCOS_311, payload, false, machine_cmos));
    assert(machine_cmos[69] == 8u && !(machine_cmos[75] & 7u));
-   assert((machine_cmos[80] & 0x10u) && (machine_cmos[199] & 7u) >= 1u);
+   assert((machine_cmos[80] & 0x10u) && (machine_cmos[199] & 7u) == 1u);
+   assert(arc_cmos_machine_image(ARC_OS_RISCOS_311, payload, true, machine_cmos));
+   assert((machine_cmos[75] & 7u) == 1u && (machine_cmos[199] & 7u) == 2u);
+   payload[59] = 0xffu;
+   payload[183] = 0xfau;
+   arc_cmos_normalise_payload(payload);
+   assert((payload[59] & 7u) == 0u && (payload[183] & 7u) == 1u);
    unsigned checksum = 0u;
    for (unsigned i = 0; i < 239u; ++i)
    {
@@ -196,6 +202,47 @@ static void test_media_launch_and_cmos(void)
       checksum += machine_cmos[raw];
    }
    assert(machine_cmos[63] == (uint8_t)(checksum + 1u));
+}
+
+static size_t test_l_offset(unsigned logical_sector)
+{
+   unsigned track = logical_sector / 16u;
+   return (size_t)(((track % 80u) * 2u + track / 80u) * 16u +
+                   logical_sector % 16u) * 256u;
+}
+
+static void test_launch_discovery_and_builder(const char *fixture_directory)
+{
+   size_t size = 0u;
+   uint8_t *application = read_fixture(fixture_directory,
+                                       "arcdroid-application-l.adl", &size);
+   ArcMediaInfo media;
+   ArcLaunchDiscovery discovery;
+   char error[192] = {0};
+   assert(arc_media_inspect("application.adl", application, size,
+                            &media, error, sizeof(error)));
+   assert(media.geometry == ARC_GEOMETRY_640K_L && media.boot_option == 0u &&
+          !strcmp(media.disc_name, "Demo"));
+   assert(arc_launch_discover(application, size, &media, NULL, &discovery));
+   assert(discovery.readable && discovery.candidate_count == 1u &&
+          discovery.application_count == 1u && discovery.target_index == 0 &&
+          !strcmp(discovery.candidates[0].name, "!Demo"));
+   free(application);
+
+   uint8_t *first = malloc(ARC_LAUNCH_DISC_SIZE);
+   uint8_t *second = malloc(ARC_LAUNCH_DISC_SIZE);
+   assert(first && second && arc_launch_disc_build("Demo", "!Demo", first) &&
+          arc_launch_disc_build("Demo", "!Demo", second));
+   assert(!memcmp(first, second, ARC_LAUNCH_DISC_SIZE));
+   assert(arc_media_inspect("helper.adl", first, ARC_LAUNCH_DISC_SIZE,
+                            &media, error, sizeof(error)));
+   assert(media.boot_option == 2u && !strcmp(media.disc_name, "ArcDroid"));
+   const uint8_t *root = first + test_l_offset(2u);
+   assert(!memcmp(root + 1u, "Hugo", 4u));
+   assert(!memcmp(first + test_l_offset(1279u), "| ArcDroid launch disc", 22u));
+   assert(!memcmp(first + test_l_offset(1280u), "| ArcDroid desktop boot file", 28u));
+   free(second);
+   free(first);
 }
 
 static uint8_t test_old_map_checksum(const uint8_t *block)
@@ -731,6 +778,7 @@ int main(int argc, char **argv)
    test_firmware_table();
    test_assembly();
    test_media_launch_and_cmos();
+   test_launch_discovery_and_builder(argv[1]);
    test_adfs_recognition();
    test_short_media_policy();
    test_playlists();

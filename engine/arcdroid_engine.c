@@ -25,6 +25,7 @@
 #include "vidc.h"
 #include "video.h"
 #include "wd1770.h"
+#include "arc_io.h"
 
 #include <setjmp.h>
 #include <stdarg.h>
@@ -65,6 +66,8 @@ static bool arc_saved_media_writable;
 static ArcMediaKind arc_saved_media_kind;
 static ArcMediaGeometry arc_saved_media_geometry;
 static const ArcJfdImage *arc_saved_jfd;
+static char arc_saved_helper[4096];
+static ArcMediaGeometry arc_saved_helper_geometry;
 static uint8_t arc_saved_cmos[ARC_CMOS_MACHINE_SIZE];
 static double arc_last_refresh = 50.0;
 static ArcEngineLogCallback arc_log_callback;
@@ -75,6 +78,32 @@ static bool arc_test_vidc_noncompleting;
 void arc_engine_test_set_vidc_noncompleting(bool enabled)
 {
    arc_test_vidc_noncompleting = enabled;
+}
+
+bool arc_engine_test_drive_media(unsigned drive, bool *write_protected,
+                                 char digest[41])
+{
+   const char *path = drive == 0u ? arc_saved_media :
+                      drive == 1u ? arc_saved_helper : NULL;
+   if (!path || !path[0] || drive_funcs[drive] == NULL) return false;
+   if (write_protected) *write_protected = writeprot[drive] != 0;
+   if (digest)
+   {
+      void *data = NULL;
+      size_t size = 0u;
+      if (!arc_io_read_all(path, &data, &size)) return false;
+      ArcDigest found = arc_digest(data, size);
+      memcpy(digest, found.sha1, sizeof(found.sha1));
+      free(data);
+   }
+   return true;
+}
+
+bool arc_engine_test_cmos_image(uint8_t output[ARC_CMOS_MACHINE_SIZE])
+{
+   if (!output || !arc_machine_live) return false;
+   cmos_get_image(output, ARC_CMOS_MACHINE_SIZE);
+   return true;
 }
 #endif
 
@@ -273,7 +302,7 @@ static bool arc_machine_create(char *failure, size_t failure_size)
    joystick_init();
    joystick_if_init();
    ioeb_init();
-   adf_set_writable(arc_saved_media_writable);
+   adf_set_writable(0, arc_saved_media_writable);
    if (arc_saved_media[0])
    {
       bool mounted = arc_saved_media_kind == ARC_MEDIA_JFD ?
@@ -282,7 +311,14 @@ static bool arc_machine_create(char *failure, size_t failure_size)
       if (!mounted)
          fatal("The selected floppy image could not be mounted");
    }
+   if (arc_saved_helper[0])
+   {
+      adf_set_writable(1, 0);
+      if (!disc_load_raw(1, arc_saved_helper, arc_saved_helper_geometry))
+         fatal("The launch helper image could not be mounted");
+   }
    ioc_discchange(0);
+   ioc_discchange(1);
 
    arc_platform_video_reset();
    arc_platform_audio_reset();
@@ -294,12 +330,16 @@ static bool arc_machine_create(char *failure, size_t failure_size)
 
 bool arc_engine_start(const uint8_t *firmware, size_t firmware_size,
                       const ArcEngineMedia *media,
+                      const ArcEngineMedia *helper,
                       const uint8_t cmos[ARC_CMOS_MACHINE_SIZE],
                       char *failure, size_t failure_size)
 {
    arc_engine_stop();
    if (!firmware || (firmware_size != 524288u && firmware_size != 2097152u) ||
-       !cmos)
+       !cmos || (helper && (!helper->path || !helper->path[0] ||
+                           helper->kind != ARC_MEDIA_ADL_640K ||
+                           helper->geometry != ARC_GEOMETRY_640K_L ||
+                           helper->jfd)))
    {
       if (failure && failure_size) snprintf(failure, failure_size, "Invalid engine launch plan");
       return false;
@@ -324,6 +364,15 @@ bool arc_engine_start(const uint8_t *firmware, size_t firmware_size,
    arc_saved_media_kind = media ? media->kind : ARC_MEDIA_INVALID;
    arc_saved_media_geometry = media ? media->geometry : ARC_GEOMETRY_NONE;
    arc_saved_jfd = media ? media->jfd : NULL;
+   const char *helper_path = helper && helper->path ? helper->path : "";
+   if (strlen(helper_path) >= sizeof(arc_saved_helper))
+   {
+      arc_engine_stop();
+      if (failure && failure_size) snprintf(failure, failure_size, "Launch helper path is too long");
+      return false;
+   }
+   strcpy(arc_saved_helper, helper_path);
+   arc_saved_helper_geometry = helper ? helper->geometry : ARC_GEOMETRY_NONE;
    memcpy(arc_saved_cmos, cmos, sizeof(arc_saved_cmos));
    if (!arc_machine_create(failure, failure_size))
    {
@@ -354,6 +403,8 @@ void arc_engine_stop(void)
    arc_saved_media_kind = ARC_MEDIA_INVALID;
    arc_saved_media_geometry = ARC_GEOMETRY_NONE;
    arc_saved_jfd = NULL;
+   arc_saved_helper[0] = '\0';
+   arc_saved_helper_geometry = ARC_GEOMETRY_NONE;
    arc_active = false;
    arc_fault_boundary = false;
 #if defined(ARCDROID_TEST_FAULTS)
@@ -443,7 +494,7 @@ bool arc_engine_media_insert(const ArcEngineMedia *media,
    /* Defence in depth for callers that replace a mounted image directly. */
    wd1770_media_change();
    disc_close(0);
-   adf_set_writable(media->writable);
+   adf_set_writable(0, media->writable);
    bool mounted = media->kind == ARC_MEDIA_JFD ?
       disc_load_jfd(0, media->jfd) :
       disc_load_raw(0, (char *)path, media->geometry);
