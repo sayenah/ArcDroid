@@ -1738,7 +1738,8 @@ RETRO_API void retro_reset(void)
    arc_firmware_size = new_firmware_size;
    arc_core_options = updated;
    ArcMediaKind plan_media = selected < arc_media_count && arc_media[selected].populated ?
-      arc_media[selected].info.kind : arc_media[0].info.kind;
+      arc_media[selected].info.kind :
+      (arc_media_count ? arc_media[0].info.kind : arc_plan.media);
    if (!arc_launch_plan_default(&arc_plan, plan_media, firmware_match->os,
                                 frozen_identity.sha1,
                                 updated.request_a3010_joystick,

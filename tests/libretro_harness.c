@@ -107,6 +107,8 @@ static unsigned duplicate_video_frames;
 static uint64_t sampled_underruns;
 static uint64_t sampled_overruns;
 static unsigned input_overflow_log_lines;
+static unsigned short_warning_log_lines;
+static unsigned short_warning_osd_calls;
 
 static bool signature_is_in(const uint64_t *signatures, unsigned count, uint64_t signature)
 {
@@ -273,6 +275,7 @@ static void frontend_log(enum retro_log_level level, const char *format, ...)
    if (strstr(message, "CMOS write ")) ++cmos_write_count;
    if (strstr(message, "not a recognised ADFS image")) saw_adfs_advisory = true;
    if (strstr(message, "Input queue overflowed")) ++input_overflow_log_lines;
+   if (strstr(message, "Short image padded with")) ++short_warning_log_lines;
    if (strstr(message, "Launch options:"))
    {
       if (strstr(message, "pointer=relative")) launch_options_seen |= 1u;
@@ -432,10 +435,12 @@ static bool environment(unsigned command, void *data)
       case RETRO_ENVIRONMENT_SET_MESSAGE_EXT:
          snprintf(last_message, sizeof(last_message), "%s", ((struct retro_message_ext *)data)->msg);
          if (strstr(last_message, "VIDC")) ++vidc_osd_ext_calls;
+         if (strstr(last_message, "Short image padded with")) ++short_warning_osd_calls;
          return true;
       case RETRO_ENVIRONMENT_SET_MESSAGE:
          snprintf(last_message, sizeof(last_message), "%s", ((struct retro_message *)data)->msg);
          if (strstr(last_message, "VIDC")) ++vidc_osd_legacy_calls;
+         if (strstr(last_message, "Short image padded with")) ++short_warning_osd_calls;
          return true;
       default: return false;
    }
@@ -611,6 +616,35 @@ static ArcDigest digest_file(const char *path)
    return digest;
 }
 
+static void staged_media_path(char output[4096], const char *save,
+                              const char *source, const char *leaf)
+{
+   ArcDigest digest = digest_file(source);
+   int written = snprintf(output, 4096u, "%s/arcdroid/media/%s/%s",
+                          save, digest.sha1, leaf);
+   assert(written > 0 && written < 4096);
+}
+
+static void assert_zero_padded_copy(const char *source, const char *staged,
+                                    size_t declared)
+{
+   struct stat source_status, staged_status;
+   assert(stat(source, &source_status) == 0 && stat(staged, &staged_status) == 0);
+   assert(source_status.st_size >= 0 && staged_status.st_size == (off_t)declared &&
+          source_status.st_size < staged_status.st_size);
+   size_t source_size = (size_t)source_status.st_size;
+   uint8_t *source_bytes = malloc(source_size);
+   uint8_t *staged_bytes = malloc(declared);
+   assert(source_bytes && staged_bytes);
+   read_exact(source, source_bytes, source_size);
+   read_exact(staged, staged_bytes, declared);
+   assert(!memcmp(source_bytes, staged_bytes, source_size));
+   for (size_t i = source_size; i < declared; ++i) assert(staged_bytes[i] == 0u);
+   assert(hash_file(source) != hash_file(staged));
+   free(source_bytes);
+   free(staged_bytes);
+}
+
 static unsigned modified_shadow_count(const char *save, uint64_t first, uint64_t second)
 {
    char root[4096], candidate[4096];
@@ -641,10 +675,10 @@ static unsigned modified_shadow_count(const char *save, uint64_t first, uint64_t
 #define LOAD(name) do { *(void **)(&name) = dlsym(module, #name); assert(name); } while (0)
 int main(int argc, char **argv)
 {
-   assert(argc == 5 || argc == 10 ||
+   assert(argc == 5 || argc == 12 ||
           (argc == 6 && strcmp(argv[5], "--real-boot") == 0));
    bool real_boot = argc == 6;
-   bool media_tests = argc == 10;
+   bool media_tests = argc == 12;
    real_boot_mode = real_boot;
    void *module = dlopen(argv[1], RTLD_NOW | RTLD_LOCAL);
    if (!module)
@@ -1672,7 +1706,11 @@ int main(int argc, char **argv)
    size_t heap_maximum_delta = 0u;
    for (unsigned cycle = 0; cycle < 100u; ++cycle)
    {
-      phase = PHASE_LOAD; assert(retro_load_game(&game)); assert(keyboard.callback);
+      struct retro_game_info playlist_cycle = {media_tests ? argv[6] : argv[3], NULL, 0u, NULL};
+      struct retro_game_info jfd_cycle = {media_tests ? argv[10] : argv[3], NULL, 0u, NULL};
+      const struct retro_game_info *cycle_game = !media_tests || cycle % 3u == 0u ? &game :
+         (cycle % 3u == 1u ? &playlist_cycle : &jfd_cycle);
+      phase = PHASE_LOAD; assert(retro_load_game(cycle_game)); assert(keyboard.callback);
       assert(retro_get_memory_size(RETRO_MEMORY_SAVE_RAM) == 256u);
       assert(retro_get_memory_data(RETRO_MEMORY_SAVE_RAM));
       phase = PHASE_RUN;
@@ -1704,7 +1742,10 @@ int main(int argc, char **argv)
       }
       else
       {
-         assert(memcmp(saved_cmos, retro_get_memory_data(RETRO_MEMORY_SAVE_RAM), sizeof(saved_cmos)) == 0);
+         if (cycle % 3u == 0u)
+            assert(memcmp(saved_cmos, retro_get_memory_data(RETRO_MEMORY_SAVE_RAM), sizeof(saved_cmos)) == 0);
+         else
+            assert(!memcmp(retro_get_memory_data(RETRO_MEMORY_SAVE_RAM), "ARCCMOS2", 8u));
          for (unsigned frame = 0; frame < 100u; ++frame) retro_run();
       }
       if (cycle == 0u)
@@ -1813,7 +1854,7 @@ int main(int argc, char **argv)
        * No firmware or game bytes are present in these fixtures. */
       copy_file(argv[5], renamed);
       struct retro_game_info playlist_game = {argv[6], NULL, 0u, NULL};
-      struct retro_game_info jfd_game = {argv[9], NULL, 0u, NULL};
+      struct retro_game_info jfd_game = {argv[10], NULL, 0u, NULL};
       uint64_t disc1_hash = hash_file(argv[7]);
       uint64_t disc2_hash = hash_file(argv[8]);
       char image_path[4096], image_label[128];
@@ -1931,6 +1972,16 @@ int main(int argc, char **argv)
       assert(disk_control.get_num_images() == 2u &&
              disk_control.get_image_index() == 0u &&
              disk_control.get_eject_state());
+      assert(disk_control.replace_image_index(1u, NULL));
+      assert(disk_control.replace_image_index(0u, NULL));
+      assert(disk_control.get_num_images() == 0u &&
+             disk_control.get_image_index() == 0u &&
+             disk_control.get_eject_state());
+      assert(disk_control.set_eject_state(false));
+      retro_reset();
+      assert(disk_control.get_num_images() == 0u &&
+             disk_control.get_image_index() == 0u &&
+             !disk_control.get_eject_state());
       retro_unload_game();
 
       /* A pending request is cleared by a failed load. */
@@ -1947,6 +1998,119 @@ int main(int argc, char **argv)
       phase = PHASE_RUN;
       for (unsigned frame = 0u; frame < 250u; ++frame) retro_run();
       retro_unload_game();
+
+      /* Every accepted short-image geometry is staged as a source-identical
+       * prefix followed by zero padding. The warning is one log line and one
+       * OSD notification per load, and the content identity remains that of
+       * the unpadded source. */
+      static const struct {
+         const char *name;
+         size_t declared;
+         const char *leaf;
+      } short_valid[] = {
+         {"short-family/320k-one-sector.adf", 327680u, "disc-readonly.adf"},
+         {"short-family/320k-cap.adf", 327680u, "disc-readonly.adf"},
+         {"short-family/640k-l-one-sector.adl", 655360u, "disc-readonly.adl"},
+         {"short-family/640k-l-cap.adl", 655360u, "disc-readonly.adl"},
+         {"short-family/800k-d-one-sector.adf", 819200u, "disc-readonly.adf"},
+         {"short-family/800k-d-cap.adf", 819200u, "disc-readonly.adf"},
+         {"short-family/800k-e-one-sector.adf", 819200u, "disc-readonly.adf"},
+         {"short-family/800k-e-cap.adf", 819200u, "disc-readonly.adf"},
+         {"short-e-missing-1024.adf", 819200u, "disc-readonly.adf"},
+         {"short-e-missing-10240.adf", 819200u, "disc-readonly.adf"},
+      };
+      option_writes = "off";
+      for (size_t i = 0u; i < sizeof(short_valid) / sizeof(short_valid[0]); ++i)
+      {
+         char source[4096], staged[4096];
+         int written = snprintf(source, sizeof(source), "%s/%s", argv[11],
+                                short_valid[i].name);
+         assert(written > 0 && (size_t)written < sizeof(source));
+         uint64_t original = hash_file(source);
+         unsigned logs = short_warning_log_lines;
+         unsigned osd = short_warning_osd_calls;
+         struct retro_game_info short_game = {source, NULL, 0u, NULL};
+         phase = PHASE_LOAD; assert(retro_load_game(&short_game));
+         assert(short_warning_log_lines == logs + 1u &&
+                short_warning_osd_calls == osd + 1u);
+         staged_media_path(staged, save_path, source, short_valid[i].leaf);
+         assert_zero_padded_copy(source, staged, short_valid[i].declared);
+         retro_unload_game();
+         assert(hash_file(source) == original);
+      }
+
+      /* A shadow write survives retained-session reset; read-only staging does
+       * not change, and original mode refuses all short images. */
+      char short_source[4096], short_staged[4096];
+      snprintf(short_source, sizeof(short_source), "%s/short-family/800k-e-one-sector.adf",
+               argv[11]);
+      struct retro_game_info short_game = {short_source, NULL, 0u, NULL};
+      option_writes = "shadow";
+      staged_media_path(short_staged, save_path, short_source, "disc.adf");
+      (void)remove(short_staged);
+      phase = PHASE_LOAD; assert(retro_load_game(&short_game));
+      uint64_t shadow_before = hash_file(short_staged);
+      phase = PHASE_RUN;
+      for (unsigned frame = 0u; frame < 250u; ++frame) retro_run();
+      uint64_t shadow_after = hash_file(short_staged);
+      assert(shadow_after != shadow_before);
+      retro_reset();
+      assert(hash_file(short_staged) == shadow_after);
+      retro_unload_game();
+
+      option_writes = "off";
+      phase = PHASE_LOAD; assert(retro_load_game(&short_game));
+      staged_media_path(short_staged, save_path, short_source, "disc-readonly.adf");
+      uint64_t readonly_before = hash_file(short_staged);
+      phase = PHASE_RUN;
+      for (unsigned frame = 0u; frame < 250u; ++frame) retro_run();
+      retro_unload_game();
+      assert(hash_file(short_staged) == readonly_before);
+      option_writes = "original";
+      phase = PHASE_LOAD; assert(!retro_load_game(&short_game));
+      assert(strstr(last_message, "Short image cannot use original writes"));
+
+      option_writes = "shadow";
+      static const char *short_invalid[] = {
+         "short-e-missing-10241.adf", "short-e-missing-11264.adf",
+         "short-e-missing-513.adf",
+         "short-family/320k-cap-plus-one.adf",
+         "short-family/320k-cap-plus-sector.adf",
+         "short-family/320k-non-aligned.adf",
+         "short-family/320k-bad-descriptor.adf",
+         "short-family/320k-bad-checksum.adf",
+         "short-family/640k-l-cap-plus-one.adl",
+         "short-family/640k-l-cap-plus-sector.adl",
+         "short-family/640k-l-non-aligned.adl",
+         "short-family/640k-l-bad-descriptor.adl",
+         "short-family/640k-l-bad-checksum.adl",
+         "short-family/800k-d-cap-plus-one.adf",
+         "short-family/800k-d-cap-plus-sector.adf",
+         "short-family/800k-d-non-aligned.adf",
+         "short-family/800k-d-bad-descriptor.adf",
+         "short-family/800k-d-bad-checksum.adf",
+         "short-family/800k-e-cap-plus-one.adf",
+         "short-family/800k-e-cap-plus-sector.adf",
+         "short-family/800k-e-non-aligned.adf",
+         "short-family/800k-e-bad-descriptor.adf",
+         "short-family/800k-e-bad-checksum.adf",
+      };
+      for (size_t i = 0u; i < sizeof(short_invalid) / sizeof(short_invalid[0]); ++i)
+      {
+         char source[4096];
+         int written = snprintf(source, sizeof(source), "%s/%s", argv[11],
+                                short_invalid[i]);
+         assert(written > 0 && (size_t)written < sizeof(source));
+         struct retro_game_info invalid_short = {source, NULL, 0u, NULL};
+         phase = PHASE_LOAD;
+         if (retro_load_game(&invalid_short))
+         {
+            fprintf(stderr, "unexpected short-image acceptance: %s\n", short_invalid[i]);
+            abort();
+         }
+         assert(strstr(last_message, "short by") ||
+                strstr(last_message, "unsupported raw image geometry"));
+      }
       assert(hash_file(argv[7]) == disc1_hash && hash_file(argv[8]) == disc2_hash);
    }
    retro_deinit();
