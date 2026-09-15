@@ -163,6 +163,9 @@ static bool environment(unsigned command, void *data)
       {
          struct retro_variable *variable = data;
          if (!strcmp(variable->key, "arcdroid_pointer_mode")) variable->value = "relative";
+         else if (!strcmp(variable->key, "arcdroid_pointer_stick")) variable->value = "right";
+         else if (!strcmp(variable->key, "arcdroid_pointer_speed")) variable->value = "600";
+         else if (!strcmp(variable->key, "arcdroid_pointer_deadzone")) variable->value = "15";
          else if (!strcmp(variable->key, "arcdroid_disk_writes")) variable->value = "shadow";
          else variable->value = "Auto";
          return true;

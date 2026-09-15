@@ -236,7 +236,8 @@ def build_rom() -> bytearray:
     a.mov(8, 0)
 
     # Exercise the bounded fallback with a zero-line VIDC program, then recover
-    # to the normal mode. The frontend must receive a warning, never terminate.
+    # to the normal mode. A transient episode is debug-logged without an OSD
+    # warning (R-36), and must never terminate the frontend.
     a.ldr_const(0, 0xA0000000)
     a.str(0, 1)
     a.ldr_const(5, 25000)
