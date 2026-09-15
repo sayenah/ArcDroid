@@ -1403,15 +1403,35 @@ static void test_osk(void)
    }
    assert(!arc_osk_shortcut(&osk, &input, RETROK_RETURN) && osk.busy);
 
+   /* A long label is clipped at its own cell instead of painting over the
+    * neighbouring key. */
+   {
+      ArcOsk clipped = {0};
+      uint32_t pixels[64u * 48u] = {0};
+      clipped.visible = true;
+      clipped.width = 64u;
+      clipped.height = 48u;
+      clipped.key_count = 2u;
+      clipped.keys[0] = (ArcOskKey){ARC_OSK_ACTION_KEY, RETROK_a,
+                                    "MMMM", 1u, 24u, 15u, 12u};
+      clipped.keys[1] = (ArcOskKey){ARC_OSK_ACTION_KEY, RETROK_b,
+                                    "", 16u, 24u, 15u, 12u};
+      assert(arc_osk_render(&clipped, pixels, 64u, 48u,
+                            64u * sizeof(uint32_t), ""));
+      for (unsigned y = 25u; y < 33u; ++y)
+         for (unsigned x = 16u; x < 31u; ++x)
+            assert(pixels[y * 64u + x] != UINT32_C(0x00ffffff));
+   }
+
    static const unsigned widths[] = {320u, 640u, 640u};
    static const unsigned heights[] = {256u, 256u, 480u};
    static const char *goldens[3][2][2] = {
-      {{"f465e83bcb842199e59411fd9ea7ca65c3ebcaa2", "acd9758a101ce2c63f18271ea1e9a58908c0644c"},
-       {"79b7a0e3d1622fe46db0b836ad4c9aabf59dc6c1", "701c405ab64806ace5cee554621fbf245d7124fb"}},
-      {{"7018adb4dfffd417c4917451b09e7a175f4aa474", NULL},
-       {"9def35c5d2f6ab41d2f1253c361bf9cb4fba3e38", NULL}},
-      {{"f1cf1d564fd3ae464107fcfc2432560e5cbdc57b", NULL},
-       {"fe14df35a3cdf2befb4dbe68d381ef421d204eb7", NULL}}
+      {{"293a217fc97548ea06694a637920f66118713b12", "aa378703b221944a2fb4500a7674722927b4e72c"},
+       {"c134265ed54b8370345a32b1c015cc412824b1c5", "7ce6650cd7bf860538dc42fefe5b07613c184f24"}},
+      {{"82a28a672e23752555d704a9f0a940ac3d3131db", NULL},
+       {"b661d69202c56dc74df375c5cf2816c18aa931ab", NULL}},
+      {{"88216c66b59eb9907d4edd04ff533475cfa198a6", NULL},
+       {"ea023c9e6b4e32ddf6aa826e38823ea3c0c7db99", NULL}}
    };
    for (unsigned geometry = 0u; geometry < 3u; ++geometry)
       for (unsigned alpha = 0u; alpha < 2u; ++alpha)

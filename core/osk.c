@@ -30,6 +30,46 @@ static int arc_osk_modifier_index(unsigned key)
    return -1;
 }
 
+static const char *arc_osk_key_label(const ArcInputKey *key)
+{
+   switch (key->key)
+   {
+      case RETROK_BACKSPACE: return "Bksp";
+      case RETROK_ESCAPE: return "Esc";
+      case RETROK_RETURN: return "Ret";
+      case RETROK_INSERT: return "Ins";
+      case RETROK_DELETE: return "Del";
+      case RETROK_PAGEUP: return "PgUp";
+      case RETROK_PAGEDOWN: return "PgDn";
+      case RETROK_LSHIFT: return "L Shift";
+      case RETROK_RSHIFT: return "R Shift";
+      case RETROK_LCTRL: return "L Ctrl";
+      case RETROK_RCTRL: return "R Ctrl";
+      case RETROK_LALT: return "L Alt";
+      case RETROK_RALT: return "R Alt";
+      case RETROK_CAPSLOCK: return "Caps";
+      case RETROK_NUMLOCK: return "Num";
+      case RETROK_SCROLLOCK: return "Scroll";
+      case RETROK_KP0: return "KP 0";
+      case RETROK_KP1: return "KP 1";
+      case RETROK_KP2: return "KP 2";
+      case RETROK_KP3: return "KP 3";
+      case RETROK_KP4: return "KP 4";
+      case RETROK_KP5: return "KP 5";
+      case RETROK_KP6: return "KP 6";
+      case RETROK_KP7: return "KP 7";
+      case RETROK_KP8: return "KP 8";
+      case RETROK_KP9: return "KP 9";
+      case RETROK_KP_DIVIDE: return "KP /";
+      case RETROK_KP_MULTIPLY: return "KP *";
+      case RETROK_KP_MINUS: return "KP -";
+      case RETROK_KP_PLUS: return "KP +";
+      case RETROK_KP_PERIOD: return "KP .";
+      case RETROK_KP_ENTER: return "KP Ent";
+      default: return key->label;
+   }
+}
+
 static void arc_osk_add(ArcOsk *osk, ArcOskAction action, unsigned key,
                         const char *label, unsigned slot, unsigned columns,
                         unsigned panel_y, unsigned cell_h)
@@ -84,7 +124,7 @@ bool arc_osk_layout(ArcOsk *osk, unsigned width, unsigned height)
                                                        osk_only, i);
       int modifier = arc_osk_modifier_index(item->key);
       arc_osk_add(osk, modifier >= 0 ? ARC_OSK_ACTION_MODIFIER : ARC_OSK_ACTION_KEY,
-                  item->key, item->label, slot++, columns,
+                  item->key, arc_osk_key_label(item), slot++, columns,
                   panel_y, cell_h);
    }
    if (osk->compact)
@@ -341,10 +381,11 @@ static void arc_osk_rect(uint32_t *pixels, unsigned width, unsigned height,
 }
 
 static void arc_osk_text(uint32_t *pixels, unsigned width, unsigned height,
-                         size_t stride, unsigned x, unsigned y, const char *text,
-                         uint32_t colour)
+                         size_t stride, unsigned x, unsigned y,
+                         unsigned clip_right, const char *text, uint32_t colour)
 {
-   while (text && *text && x + 8u <= width)
+   if (clip_right > width) clip_right = width;
+   while (text && *text && x + 8u <= clip_right)
    {
       unsigned glyph;
       if ((unsigned char)text[0] == 0xc2u && (unsigned char)text[1] == 0xa3u)
@@ -380,7 +421,7 @@ bool arc_osk_render(const ArcOsk *osk, uint32_t *pixels, unsigned width,
    char header[192];
    snprintf(header, sizeof(header), "ARCDROID OSK - %s%s%s", profile ? profile : "Generic",
             osk->busy ? " - BUSY" : "", osk->interrupted_pending ? " - INTERRUPTED" : "");
-   arc_osk_text(pixels, width, height, stride, 4u, panel_y + 4u, header,
+   arc_osk_text(pixels, width, height, stride, 4u, panel_y + 4u, width, header,
                 UINT32_C(0x00ffffff));
    for (unsigned i = 0u; i < osk->key_count; ++i)
    {
@@ -394,7 +435,8 @@ bool arc_osk_render(const ArcOsk *osk, uint32_t *pixels, unsigned width,
                    key->width, key->height, colour, 225u);
       if (key->height >= 8u && key->width >= 8u)
          arc_osk_text(pixels, width, height, stride, key->x + 2u, key->y + 1u,
-                      key->label, UINT32_C(0x00ffffff));
+                      key->x + key->width, key->label,
+                      UINT32_C(0x00ffffff));
    }
    return true;
 }
