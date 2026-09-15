@@ -1245,6 +1245,9 @@ int main(int argc, char **argv)
           input_events[3].code == RETROK_LSHIFT && !input_events[3].down &&
           input_events[4].code == RETROK_a && input_events[4].down &&
           input_events[5].code == RETROK_a && !input_events[5].down);
+   for (unsigned edge = 1u; edge < 4u; ++edge)
+      assert(input_events[edge].guest_us - input_events[edge - 1u].guest_us >=
+             UINT64_C(60000));
    joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_B] = true; retro_run();
    joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_B] = false;
    for (unsigned frame = 0u; frame < 100u; ++frame) retro_run();
@@ -1261,6 +1264,7 @@ int main(int argc, char **argv)
    for (unsigned frame = 0u;
         frame < 120u && arc_platform_test_input_events(input_events, 512u) < 2u;
         ++frame) retro_run();
+   for (unsigned frame = 0u; frame < 4u; ++frame) retro_run();
    assert(arc_libretro_test_osk_focus_key(RETROK_LSHIFT));
    joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_A] = true; retro_run();
    joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_A] = false; retro_run();
@@ -1485,6 +1489,7 @@ int main(int argc, char **argv)
    int64_t response_totals[3] = {0, 0, 0};
    uint64_t response_first_us[3] = {0u, 0u, 0u};
    uint64_t response_last_us[3] = {0u, 0u, 0u};
+   bool saw_short_field = false, saw_long_field = false;
    const int16_t response_samples[3] = {9000, 20000, 32767};
    for (unsigned sample = 0u; sample < 3u; ++sample)
    {
@@ -1500,6 +1505,13 @@ int main(int argc, char **argv)
          {
             if (!response_first_us[sample])
                response_first_us[sample] = input_events[i].guest_us;
+            if (sample == 2u && response_last_us[sample])
+            {
+               uint64_t delta = input_events[i].guest_us -
+                                response_last_us[sample];
+               if (delta <= UINT64_C(20000)) saw_short_field = true;
+               if (delta >= UINT64_C(25000)) saw_long_field = true;
+            }
             response_last_us[sample] = input_events[i].guest_us;
             response_totals[sample] += input_events[i].dx;
          }
@@ -1517,7 +1529,6 @@ int main(int argc, char **argv)
    input_event_count = arc_platform_test_input_events(input_events, 512u);
    int64_t diagonal_x = 0, diagonal_y = 0;
    uint64_t diagonal_first_us = 0u, diagonal_last_us = 0u;
-   bool saw_short_field = false, saw_long_field = false;
    for (size_t i = 0u; i < input_event_count; ++i)
       if (input_events[i].type == ARC_INPUT_EVENT_MOTION)
       {

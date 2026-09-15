@@ -11,13 +11,32 @@
 enum {
    ARC_OSK_REPEAT_DELAY_US = 300000u,
    ARC_OSK_REPEAT_US = 90000u,
-   ARC_OSK_NOTICE_US = 1000000u
+   ARC_OSK_NOTICE_US = 1000000u,
+   ARC_OSK_HOLD_US = 60000u
+};
+
+enum {
+   ARC_OSK_ACT_IDLE = 0,
+   ARC_OSK_ACT_MODIFIERS_DOWN,
+   ARC_OSK_ACT_MODIFIERS_ACK,
+   ARC_OSK_ACT_MODIFIERS_HELD,
+   ARC_OSK_ACT_KEY_ACK,
+   ARC_OSK_ACT_KEY_HELD,
+   ARC_OSK_ACT_KEY_UP_ACK,
+   ARC_OSK_ACT_KEY_RELEASED,
+   ARC_OSK_ACT_MODIFIERS_UP_ACK
 };
 
 static uint64_t arc_osk_notice_deadline(uint64_t guest_us)
 {
    return guest_us > UINT64_MAX - ARC_OSK_NOTICE_US ?
       UINT64_MAX : guest_us + ARC_OSK_NOTICE_US;
+}
+
+static uint64_t arc_osk_hold_deadline(uint64_t guest_us)
+{
+   return guest_us > UINT64_MAX - ARC_OSK_HOLD_US ?
+      UINT64_MAX : guest_us + ARC_OSK_HOLD_US;
 }
 
 static bool arc_osk_refresh_notices(ArcOsk *osk)
@@ -297,7 +316,8 @@ static bool arc_osk_start(ArcOsk *osk, ArcInputState *input, unsigned key,
    osk->activation_modifier_count = modifier_count;
    osk->activation_held = held;
    osk->activation_generation = arc_input_reconcile_generation(input);
-   osk->activation_phase = 1u;
+   osk->activation_deadline_us = 0u;
+   osk->activation_phase = ARC_OSK_ACT_MODIFIERS_DOWN;
    return true;
 }
 
@@ -353,27 +373,71 @@ void arc_osk_update(ArcOsk *osk, ArcInputState *input)
       arc_osk_show_interrupted(osk);
       return;
    }
-   if (osk->activation_phase == 1u)
+   if (osk->activation_phase == ARC_OSK_ACT_MODIFIERS_DOWN)
    {
       for (unsigned i = 0u; i < osk->activation_modifier_count; ++i)
          arc_input_source_key(input, ARC_INPUT_SOURCE_OSK,
                               osk->activation_modifiers[i], true, true);
+      if (osk->activation_modifier_count)
+         osk->activation_phase = ARC_OSK_ACT_MODIFIERS_ACK;
+      else
+      {
+         arc_input_source_key(input, ARC_INPUT_SOURCE_OSK,
+                              osk->activation_key, true, true);
+         osk->activation_phase = ARC_OSK_ACT_KEY_ACK;
+      }
+      return;
+   }
+   if (osk->activation_phase == ARC_OSK_ACT_MODIFIERS_ACK)
+   {
+      bool applied = true;
+      for (unsigned i = 0u; i < osk->activation_modifier_count; ++i)
+         applied = applied &&
+            arc_input_applied_level(input, osk->activation_modifiers[i]);
+      if (!applied) return;
+      osk->activation_deadline_us = arc_osk_hold_deadline(osk->guest_us);
+      osk->activation_phase = ARC_OSK_ACT_MODIFIERS_HELD;
+   }
+   if (osk->activation_phase == ARC_OSK_ACT_MODIFIERS_HELD)
+   {
+      if (osk->guest_us < osk->activation_deadline_us) return;
       arc_input_source_key(input, ARC_INPUT_SOURCE_OSK,
                            osk->activation_key, true, true);
-      osk->activation_phase = 2u;
+      osk->activation_phase = ARC_OSK_ACT_KEY_ACK;
+      return;
    }
-   if (osk->activation_phase == 2u &&
-       arc_input_applied_level(input, osk->activation_key) &&
-       !osk->activation_held)
+   if (osk->activation_phase == ARC_OSK_ACT_KEY_ACK)
    {
+      if (!arc_input_applied_level(input, osk->activation_key)) return;
+      osk->activation_deadline_us = arc_osk_hold_deadline(osk->guest_us);
+      osk->activation_phase = ARC_OSK_ACT_KEY_HELD;
+   }
+   if (osk->activation_phase == ARC_OSK_ACT_KEY_HELD)
+   {
+      if (osk->activation_held || osk->guest_us < osk->activation_deadline_us)
+         return;
       arc_input_source_key(input, ARC_INPUT_SOURCE_OSK,
                            osk->activation_key, false, true);
+      osk->activation_phase = ARC_OSK_ACT_KEY_UP_ACK;
+      return;
+   }
+   if (osk->activation_phase == ARC_OSK_ACT_KEY_UP_ACK)
+   {
+      if (arc_input_applied_level(input, osk->activation_key) !=
+          arc_input_effective_level(input, osk->activation_key)) return;
+      osk->activation_deadline_us = arc_osk_hold_deadline(osk->guest_us);
+      osk->activation_phase = ARC_OSK_ACT_KEY_RELEASED;
+   }
+   if (osk->activation_phase == ARC_OSK_ACT_KEY_RELEASED)
+   {
+      if (osk->guest_us < osk->activation_deadline_us) return;
       for (unsigned i = osk->activation_modifier_count; i > 0u; --i)
          arc_input_source_key(input, ARC_INPUT_SOURCE_OSK,
                               osk->activation_modifiers[i - 1u], false, true);
-      osk->activation_phase = 3u;
+      osk->activation_phase = ARC_OSK_ACT_MODIFIERS_UP_ACK;
+      if (osk->activation_modifier_count) return;
    }
-   if (osk->activation_phase == 3u)
+   if (osk->activation_phase == ARC_OSK_ACT_MODIFIERS_UP_ACK)
    {
       bool settled = arc_input_applied_level(input, osk->activation_key) ==
                      arc_input_effective_level(input, osk->activation_key);

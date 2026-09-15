@@ -1250,6 +1250,51 @@ static unsigned drain_input(ArcInputState *state, ArcInputEvent *events,
    return count;
 }
 
+static void complete_osk_chord(ArcOsk *osk, ArcInputState *input,
+                               unsigned key, unsigned modifier,
+                               uint64_t *guest_us)
+{
+   ArcInputEvent events[4];
+   arc_osk_update(osk, input);
+   assert(drain_input(input, events, 4u) == 1u &&
+          events[0].code == modifier && events[0].down);
+   arc_osk_update(osk, input);
+   assert(osk->activation_deadline_us == *guest_us + UINT64_C(60000));
+   assert(!arc_osk_advance(osk, osk->activation_deadline_us - 1u));
+   arc_osk_update(osk, input);
+   assert(!arc_input_pending(input));
+   *guest_us = osk->activation_deadline_us;
+   assert(!arc_osk_advance(osk, *guest_us));
+   arc_osk_update(osk, input);
+   assert(drain_input(input, events, 4u) == 1u &&
+          events[0].code == key && events[0].down);
+
+   arc_osk_release_activation(osk);
+   arc_osk_update(osk, input);
+   assert(osk->activation_deadline_us == *guest_us + UINT64_C(60000));
+   assert(!arc_osk_advance(osk, osk->activation_deadline_us - 1u));
+   arc_osk_update(osk, input);
+   assert(!arc_input_pending(input));
+   *guest_us = osk->activation_deadline_us;
+   assert(!arc_osk_advance(osk, *guest_us));
+   arc_osk_update(osk, input);
+   assert(drain_input(input, events, 4u) == 1u &&
+          events[0].code == key && !events[0].down);
+
+   arc_osk_update(osk, input);
+   assert(osk->activation_deadline_us == *guest_us + UINT64_C(60000));
+   assert(!arc_osk_advance(osk, osk->activation_deadline_us - 1u));
+   arc_osk_update(osk, input);
+   assert(!arc_input_pending(input));
+   *guest_us = osk->activation_deadline_us;
+   assert(!arc_osk_advance(osk, *guest_us));
+   arc_osk_update(osk, input);
+   assert(drain_input(input, events, 4u) == 1u &&
+          events[0].code == modifier && !events[0].down);
+   arc_osk_update(osk, input);
+   assert(!osk->activation_phase);
+}
+
 static void test_osk(void)
 {
    ArcOsk osk = {0};
@@ -1346,10 +1391,19 @@ static void test_osk(void)
    assert(!arc_osk_touch(&osk, (int)held_touch.x + 1,
                          (int)held_touch.y + 1, false, &input));
    assert(osk.focus == letter);
+   arc_osk_update(&osk, &input);
+   uint64_t osk_time = osk.activation_deadline_us + UINT64_C(10000);
+   assert(!arc_osk_advance(&osk, osk_time));
+   arc_osk_update(&osk, &input);
+   assert(!arc_input_pending(&input));
    arc_osk_release_activation(&osk);
    arc_osk_update(&osk, &input);
    assert(drain_input(&input, events, 16u) == 1u &&
           events[0].code == RETROK_a && !events[0].down);
+   arc_osk_update(&osk, &input);
+   assert(osk.activation_deadline_us == osk_time + UINT64_C(60000));
+   osk_time = osk.activation_deadline_us;
+   assert(!arc_osk_advance(&osk, osk_time));
    arc_osk_update(&osk, &input);
    assert(!osk.activation_phase);
    osk.focus = shift;
@@ -1357,16 +1411,7 @@ static void test_osk(void)
           osk.modifiers[0] == ARC_OSK_MOD_ONESHOT);
    osk.focus = letter;
    assert(arc_osk_press_focused(&osk, &input));
-   arc_osk_update(&osk, &input);
-   assert(drain_input(&input, events, 16u) == 2u &&
-          events[0].code == RETROK_LSHIFT && events[0].down &&
-          events[1].code == RETROK_a && events[1].down);
-   arc_osk_release_activation(&osk);
-   arc_osk_update(&osk, &input);
-   assert(drain_input(&input, events, 16u) == 2u &&
-          events[0].code == RETROK_a && !events[0].down &&
-          events[1].code == RETROK_LSHIFT && !events[1].down);
-   arc_osk_update(&osk, &input);
+   complete_osk_chord(&osk, &input, RETROK_a, RETROK_LSHIFT, &osk_time);
    assert(!osk.activation_phase && osk.modifiers[0] == ARC_OSK_MOD_OFF);
 
    /* Left and right modifiers have independent sticky state and emit their
@@ -1377,16 +1422,7 @@ static void test_osk(void)
           osk.modifiers[0] == ARC_OSK_MOD_OFF);
    osk.focus = letter;
    assert(arc_osk_press_focused(&osk, &input));
-   arc_osk_update(&osk, &input);
-   assert(drain_input(&input, events, 16u) == 2u &&
-          events[0].code == RETROK_RSHIFT && events[0].down &&
-          events[1].code == RETROK_a && events[1].down);
-   arc_osk_release_activation(&osk);
-   arc_osk_update(&osk, &input);
-   assert(drain_input(&input, events, 16u) == 2u &&
-          events[0].code == RETROK_a && !events[0].down &&
-          events[1].code == RETROK_RSHIFT && !events[1].down);
-   arc_osk_update(&osk, &input);
+   complete_osk_chord(&osk, &input, RETROK_a, RETROK_RSHIFT, &osk_time);
    assert(!osk.activation_phase && osk.modifiers[1] == ARC_OSK_MOD_OFF);
 
    /* Locked modifiers persist for another activation but never remain as an
@@ -1397,16 +1433,7 @@ static void test_osk(void)
           osk.modifiers[0] == ARC_OSK_MOD_LOCKED);
    osk.focus = letter;
    assert(arc_osk_press_focused(&osk, &input));
-   arc_osk_update(&osk, &input);
-   assert(drain_input(&input, events, 16u) == 2u &&
-          events[0].code == RETROK_LSHIFT && events[0].down &&
-          events[1].code == RETROK_a && events[1].down);
-   arc_osk_release_activation(&osk);
-   arc_osk_update(&osk, &input);
-   assert(drain_input(&input, events, 16u) == 2u &&
-          events[0].code == RETROK_a && !events[0].down &&
-          events[1].code == RETROK_LSHIFT && !events[1].down);
-   arc_osk_update(&osk, &input);
+   complete_osk_chord(&osk, &input, RETROK_a, RETROK_LSHIFT, &osk_time);
    assert(!osk.activation_phase && osk.modifiers[0] == ARC_OSK_MOD_LOCKED &&
           !arc_input_source_level(&input, ARC_INPUT_SOURCE_OSK, RETROK_LSHIFT));
    osk.focus = shift;
@@ -1422,13 +1449,21 @@ static void test_osk(void)
    arc_osk_update(&osk, &input);
    arc_osk_release_activation(&osk);
    arc_osk_update(&osk, &input);
+   osk_time = osk.activation_deadline_us;
+   assert(!arc_osk_advance(&osk, osk_time));
+   arc_osk_update(&osk, &input);
+   osk_time = osk.activation_deadline_us;
+   assert(!arc_osk_advance(&osk, osk_time));
+   arc_osk_update(&osk, &input);
+   osk_time = osk.activation_deadline_us;
+   assert(!arc_osk_advance(&osk, osk_time));
    arc_osk_update(&osk, &input);
    assert(!arc_input_pending(&input) && !osk.activation_phase &&
           arc_input_source_level(&input, ARC_INPUT_SOURCE_KEYBOARD, RETROK_a) &&
           arc_input_effective_level(&input, RETROK_a));
 
    /* Reconciliation invalidates an activation once and recovers OSK levels. */
-   assert(!arc_osk_advance(&osk, 100u));
+   assert(!arc_osk_advance(&osk, osk_time + 100u));
    for (unsigned attempt = 0u; attempt < 3u; ++attempt)
    {
       assert(arc_osk_press_focused(&osk, &input));

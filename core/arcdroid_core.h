@@ -407,6 +407,7 @@ typedef struct {
    unsigned activation_modifier_count;
    unsigned activation_phase;
    uint64_t activation_generation;
+   uint64_t activation_deadline_us;
 } ArcOsk;
 
 void arc_osk_reset(ArcOsk *osk, ArcInputState *input);
