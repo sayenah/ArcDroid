@@ -47,6 +47,8 @@ set_target_properties(arcdroid_zlib PROPERTIES POSITION_INDEPENDENT_CODE ON)
 add_library(arcdroid_core STATIC
   core/hash.c
   core/input.c
+  core/input_mapping.c
+  core/input_profiles.c
   core/firmware_table.c
   core/launch.c
   core/launch_discovery.c
@@ -56,7 +58,7 @@ add_library(arcdroid_core STATIC
   core/persistence.c
   core/cmos_defaults.c
 )
-target_include_directories(arcdroid_core PUBLIC core "${CMAKE_CURRENT_BINARY_DIR}/generated")
+target_include_directories(arcdroid_core PUBLIC core libretro/include "${CMAKE_CURRENT_BINARY_DIR}/generated")
 target_link_libraries(arcdroid_core PRIVATE arcdroid_zlib)
 if(ARCDROID_SANITIZERS)
   target_link_libraries(arcdroid_core PRIVATE arcdroid_sanitizer_compile)

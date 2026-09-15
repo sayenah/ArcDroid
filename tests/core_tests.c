@@ -3,6 +3,7 @@
 #include "e_format_fixture.h"
 #include "jfd.h"
 #include "playlist.h"
+#include "libretro.h"
 
 #include <assert.h>
 #include <stdio.h>
@@ -1072,6 +1073,78 @@ static void test_input(void)
    assert(arc_input_consume(&state, true, &event) && !event.down);
 }
 
+static void test_input_mapping(void)
+{
+   size_t key_count = 0u;
+   const ArcInputKey *keys = arc_input_supported_keys(&key_count);
+   assert(keys && key_count == 98u && key_count + 3u <= 128u);
+   for (size_t i = 0u; i < key_count; ++i)
+   {
+      assert(keys[i].value && keys[i].label && keys[i].key < ARC_INPUT_KEY_COUNT);
+      assert(keys[i].kart_row <= 6u && keys[i].kart_column <= 15u);
+      assert(arc_input_key_value(keys[i].value) == &keys[i]);
+      assert(arc_input_is_modifier(keys[i].key) == keys[i].modifier ||
+             /* Pound and #/backslash deliberately share one physical key. */
+             keys[i].key == RETROK_BACKSLASH);
+      for (size_t prior = 0u; prior < i; ++prior)
+         assert(strcmp(keys[i].value, keys[prior].value));
+   }
+   assert(!arc_input_key(RETROK_PRINT));
+   assert(arc_input_profiles_validate(NULL, 0u));
+
+   ArcInputOverride overrides[ARC_PAD_PORTS][ARC_PAD_INPUT_COUNT];
+   memset(overrides, 0, sizeof(overrides));
+   for (unsigned port = 0u; port < ARC_PAD_PORTS; ++port)
+      for (unsigned input = 0u; input < ARC_PAD_INPUT_COUNT; ++input)
+         overrides[port][input].automatic = true;
+   ArcInputResolution resolution;
+   assert(arc_input_resolve("0000000000000000000000000000000000000000", "!TEST",
+                            "Auto", overrides, &resolution));
+   assert(!strcmp(resolution.profile_name, "Generic") &&
+          resolution.binding[0][ARC_PAD_A].key == RETROK_SPACE &&
+          resolution.source[0][ARC_PAD_A] == ARC_MAPPING_SOURCE_GENERIC);
+   assert(arc_input_resolve("0000000000000000000000000000000000000000", "!TEST",
+                            "Generic", overrides, &resolution));
+   overrides[1][ARC_PAD_A].automatic = false;
+   overrides[1][ARC_PAD_A].binding = (ArcInputBinding){true, RETROK_LSHIFT};
+   overrides[0][ARC_PAD_B].automatic = false;
+   overrides[0][ARC_PAD_B].binding = (ArcInputBinding){false, 0u};
+   assert(arc_input_resolve("0000000000000000000000000000000000000000", "!TEST",
+                            "Auto", overrides, &resolution));
+   assert(resolution.custom && !resolution.binding[0][ARC_PAD_B].bound &&
+          resolution.binding[1][ARC_PAD_A].key == RETROK_LSHIFT &&
+          resolution.source[1][ARC_PAD_A] == ARC_MAPPING_SOURCE_OPTION);
+
+   ArcInputState state;
+   ArcInputEvent event;
+   bool port0[ARC_INPUT_KEY_COUNT] = {false};
+   bool port1[ARC_INPUT_KEY_COUNT] = {false};
+   arc_input_reset(&state);
+   port0[RETROK_SPACE] = true;
+   port1[RETROK_SPACE] = true;
+   port1[RETROK_LSHIFT] = true;
+   arc_input_pad_key_sets(&state, port0, port1);
+   assert(arc_input_consume(&state, true, &event) &&
+          event.code == RETROK_LSHIFT && event.down);
+   assert(arc_input_consume(&state, true, &event) &&
+          event.code == RETROK_SPACE && event.down);
+   memset(port0, 0, sizeof(port0));
+   arc_input_pad_key_sets(&state, port0, port1);
+   assert(!arc_input_pending(&state));
+   memset(port1, 0, sizeof(port1));
+   arc_input_pad_key_sets(&state, port0, port1);
+   assert(arc_input_consume(&state, true, &event) &&
+          event.code == RETROK_SPACE && !event.down);
+   assert(arc_input_consume(&state, true, &event) &&
+          event.code == RETROK_LSHIFT && !event.down);
+
+   uint64_t generation = arc_input_reconcile_generation(&state);
+   for (unsigned i = 0u; i <= ARC_INPUT_FIFO_CAPACITY; ++i)
+      arc_input_source_key(&state, ARC_INPUT_SOURCE_KEYBOARD, RETROK_a,
+                           (i & 1u) == 0u, true);
+   assert(arc_input_reconcile_generation(&state) > generation);
+}
+
 int main(int argc, char **argv)
 {
    assert(argc == 2);
@@ -1085,6 +1158,7 @@ int main(int argc, char **argv)
    test_playlists();
    test_jfd_parser(argv[1]);
    test_input();
+   test_input_mapping();
    puts("core_tests: all checks passed");
    return 0;
 }

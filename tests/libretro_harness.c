@@ -91,6 +91,8 @@ static unsigned cmos_write_count;
 static unsigned real_boot_frames = 3000u;
 static struct retro_disk_control_ext_callback disk_control;
 static bool can_dupe;
+static bool keyboard_poll_capability;
+static bool keyboard_levels[ARC_INPUT_KEY_COUNT];
 static bool saw_input_descriptors;
 static unsigned option_query_count;
 static unsigned cmos_write_opens;
@@ -109,6 +111,9 @@ static const char *option_pointer_speed = "600";
 static const char *option_pointer_deadzone = "15";
 static const char *option_writes = "shadow";
 static const char *option_launch = "auto";
+static const char *option_input_profile = "Auto";
+static const char *option_osk_toggle = "L3";
+static const char *option_pad[2][10];
 static bool variable_update;
 static bool saw_adfs_advisory;
 static bool saw_audio_counters;
@@ -341,12 +346,26 @@ static bool environment(unsigned command, void *data)
          const struct retro_core_options_v2 *options = data;
          unsigned count = 0u;
          while (options->definitions[count].key) ++count;
-         assert(count == 11u);
-         assert(!strcmp(options->definitions[5].key, "arcdroid_pointer_mode"));
-         assert(!strcmp(options->definitions[6].key, "arcdroid_pointer_stick"));
-         assert(!strcmp(options->definitions[7].key, "arcdroid_pointer_speed"));
-         assert(!strcmp(options->definitions[8].key, "arcdroid_pointer_deadzone"));
-         assert(!strcmp(options->definitions[9].key, "arcdroid_launch"));
+         assert(count == 33u && options->categories &&
+                !strcmp(options->categories[0].key, "pad_mapping") &&
+                !strcmp(options->categories[0].desc, "Pad Mapping"));
+         bool found_profile = false, found_osk = false;
+         unsigned pads = 0u;
+         for (unsigned n = 0u; n < count; ++n)
+         {
+            const struct retro_core_option_v2_definition *definition =
+               &options->definitions[n];
+            if (!strcmp(definition->key, "arcdroid_input_profile")) found_profile = true;
+            if (!strcmp(definition->key, "arcdroid_osk_toggle")) found_osk = true;
+            if (!strncmp(definition->key, "arcdroid_pad", 12u))
+            {
+               ++pads;
+               assert(!strcmp(definition->category_key, "pad_mapping") &&
+                      !strcmp(definition->values[0].value, "Auto") &&
+                      !strcmp(definition->values[1].value, "Unbound"));
+            }
+         }
+         assert(found_profile && found_osk && pads == 20u);
          return true;
       }
       case RETRO_ENVIRONMENT_SET_DISK_CONTROL_EXT_INTERFACE:
@@ -355,6 +374,11 @@ static bool environment(unsigned command, void *data)
          return true;
       case RETRO_ENVIRONMENT_GET_CAN_DUPE:
          assert(phase == PHASE_INIT); *(bool *)data = can_dupe; return true;
+      case RETRO_ENVIRONMENT_GET_INPUT_DEVICE_CAPABILITIES:
+         assert(phase == PHASE_INIT || phase == PHASE_LOAD);
+         if (!keyboard_poll_capability) return false;
+         *(uint64_t *)data = UINT64_C(1) << RETRO_DEVICE_KEYBOARD;
+         return true;
       case RETRO_ENVIRONMENT_GET_VFS_INTERFACE:
          assert(phase == PHASE_INIT); ((struct retro_vfs_interface_info *)data)->iface = &vfs; return true;
       case RETRO_ENVIRONMENT_GET_LOG_INTERFACE:
@@ -368,7 +392,7 @@ static bool environment(unsigned command, void *data)
          return true;
       case RETRO_ENVIRONMENT_SET_CONTROLLER_INFO:
       {
-         assert(phase == PHASE_LOAD);
+         assert(phase == PHASE_LOAD || phase == PHASE_RUN);
          const struct retro_controller_info *ports = data;
          assert(ports[0].num_types == 2u && ports[1].num_types == 2u);
          assert(!strcmp(ports[0].types[0].desc, "RetroPad: keys and pointer"));
@@ -376,7 +400,7 @@ static bool environment(unsigned command, void *data)
       }
       case RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS:
       {
-         assert(phase == PHASE_LOAD);
+         assert(phase == PHASE_LOAD || phase == PHASE_RUN);
          const struct retro_input_descriptor *descriptors = data;
          bool port0 = false, port1 = false, select = false, adjust = false;
          bool menu = false, precision = false, right_x = false, right_y = false;
@@ -430,7 +454,27 @@ static bool environment(unsigned command, void *data)
          else if (!strcmp(variable->key, "arcdroid_pointer_deadzone")) variable->value = option_pointer_deadzone;
          else if (!strcmp(variable->key, "arcdroid_disk_writes")) variable->value = option_writes;
          else if (!strcmp(variable->key, "arcdroid_launch")) variable->value = option_launch;
-         else return false;
+         else if (!strcmp(variable->key, "arcdroid_input_profile")) variable->value = option_input_profile;
+         else if (!strcmp(variable->key, "arcdroid_osk_toggle")) variable->value = option_osk_toggle;
+         else
+         {
+            bool found = false;
+            static const char *names[10] = {"up","down","left","right","a","b","x","y","start","select"};
+            for (unsigned port = 0u; port < 2u; ++port)
+               for (unsigned input_index = 0u; input_index < 10u; ++input_index)
+               {
+                  char key[32];
+                  snprintf(key, sizeof(key), "arcdroid_pad%u_%s", port + 1u,
+                           names[input_index]);
+                  if (!strcmp(variable->key, key))
+                  {
+                     variable->value = option_pad[port][input_index] ?
+                        option_pad[port][input_index] : "Auto";
+                     found = true;
+                  }
+               }
+            if (!found) return false;
+         }
          return true;
       }
       case RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE:
@@ -579,6 +623,8 @@ static size_t audio(const int16_t *data, size_t frames)
 static void poll(void) {}
 static int16_t input(unsigned p, unsigned d, unsigned i, unsigned id)
 {
+   if (d == RETRO_DEVICE_KEYBOARD && id < ARC_INPUT_KEY_COUNT)
+      return keyboard_levels[id];
    if (d == RETRO_DEVICE_JOYPAD && p < 2u && id < 16u)
       return joypad_buttons[p][id] ||
          (p == joypad_port && id == RETRO_DEVICE_ID_JOYPAD_A && joypad_a);
@@ -1051,6 +1097,7 @@ int main(int argc, char **argv)
 
    /* Modifier ordering is global across both sampled RetroPad sources. */
    retro_set_controller_port_device(1u, RETRO_DEVICE_SUBCLASS(RETRO_DEVICE_JOYPAD, 1));
+   retro_run(); /* Device changes require one observed neutral sample. */
    arc_platform_test_input_events_reset();
    joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_A] = true;
    joypad_buttons[1][RETRO_DEVICE_ID_JOYPAD_X] = true;
@@ -1065,6 +1112,49 @@ int main(int argc, char **argv)
           input_events[2].code == RETROK_SPACE && !input_events[2].down &&
           input_events[3].code == RETROK_LSHIFT && !input_events[3].down);
    retro_set_controller_port_device(1u, RETRO_DEVICE_SUBCLASS(RETRO_DEVICE_MOUSE, 1));
+
+   /* Per-input values round-trip by key. Two pad inputs mapped to one key
+    * aggregate into one effective hold, and live remapping uses a neutral gate. */
+   option_pad[0][ARC_PAD_B] = "space";
+   variable_update = true;
+   retro_run();
+   arc_platform_test_input_events_reset();
+   joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_A] = true;
+   joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_B] = true;
+   retro_run();
+   joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_A] = false;
+   retro_run();
+   joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_B] = false;
+   for (unsigned frame = 0u; frame < 80u; ++frame) retro_run();
+   input_event_count = arc_platform_test_input_events(input_events, 512u);
+   assert(input_event_count == 2u && input_events[0].code == RETROK_SPACE &&
+          input_events[0].down && input_events[1].code == RETROK_SPACE &&
+          !input_events[1].down);
+
+   arc_platform_test_input_events_reset();
+   joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_A] = true;
+   retro_run();
+   option_pad[0][ARC_PAD_A] = "return";
+   variable_update = true;
+   retro_run();
+   for (unsigned frame = 0u; frame < 40u; ++frame) retro_run();
+   joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_A] = false;
+   retro_run();
+   joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_A] = true;
+   retro_run();
+   joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_A] = false;
+   for (unsigned frame = 0u; frame < 80u; ++frame) retro_run();
+   input_event_count = arc_platform_test_input_events(input_events, 512u);
+   unsigned return_edges = 0u;
+   for (size_t i = 0u; i < input_event_count; ++i)
+      if (input_events[i].code == RETROK_RETURN) ++return_edges;
+   assert(input_event_count == 4u && input_events[0].code == RETROK_SPACE &&
+          input_events[0].down && input_events[1].code == RETROK_SPACE &&
+          !input_events[1].down && return_edges == 2u);
+   option_pad[0][ARC_PAD_A] = NULL;
+   option_pad[0][ARC_PAD_B] = NULL;
+   variable_update = true;
+   retro_run();
 
    arc_platform_test_input_events_reset();
    joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_R] = true;
@@ -1627,6 +1717,7 @@ int main(int argc, char **argv)
    }
    assert(reassigned_space_edges == 2u && reassigned_select_edges == 2u);
    retro_set_controller_port_device(1u, RETRO_DEVICE_SUBCLASS(RETRO_DEVICE_JOYPAD, 1));
+   retro_run(); /* Clear the port-1 neutral gate before the new press. */
    joypad_port = 1u; joypad_a = true;
    bool port1_guest_observed = false;
    for (unsigned frame = 0u; frame < 20u; ++frame)
@@ -1640,6 +1731,45 @@ int main(int argc, char **argv)
    retro_set_controller_port_device(0u, RETRO_DEVICE_SUBCLASS(RETRO_DEVICE_JOYPAD, 1));
    retro_set_controller_port_device(1u, RETRO_DEVICE_SUBCLASS(RETRO_DEVICE_MOUSE, 1));
    joypad_port = 0u;
+   bool input_observed = before_input_signature != last_video_signature;
+
+   /* A frontend-advertised keyboard snapshot repairs both missing edges. The
+    * two Menu aliases remain one merged latch, and a callback tap is retained. */
+   keyboard_poll_capability = true;
+   retro_unload_game();
+   phase = PHASE_LOAD; assert(retro_load_game(&game));
+   phase = PHASE_RUN;
+   arc_platform_test_input_events_reset();
+   keyboard_levels[RETROK_a] = true;
+   for (unsigned frame = 0u; frame < 20u; ++frame) retro_run();
+   keyboard_levels[RETROK_a] = false;
+   for (unsigned frame = 0u; frame < 20u; ++frame) retro_run();
+   keyboard_levels[RETROK_MENU] = true;
+   keyboard_levels[RETROK_LMETA] = true;
+   for (unsigned frame = 0u; frame < 20u; ++frame) retro_run();
+   keyboard_levels[RETROK_MENU] = false;
+   for (unsigned frame = 0u; frame < 5u; ++frame) retro_run();
+   keyboard_levels[RETROK_LMETA] = false;
+   keyboard.callback(true, RETROK_b, 0u, 0u);
+   keyboard.callback(false, RETROK_b, 0u, 0u);
+   for (unsigned frame = 0u; frame < 40u; ++frame) retro_run();
+   input_event_count = arc_platform_test_input_events(input_events, 512u);
+   unsigned snapshot_a = 0u, snapshot_b = 0u, snapshot_menu = 0u;
+   for (size_t i = 0u; i < input_event_count; ++i)
+   {
+      if (input_events[i].type == ARC_INPUT_EVENT_KEY && input_events[i].code == RETROK_a)
+         ++snapshot_a;
+      if (input_events[i].type == ARC_INPUT_EVENT_KEY && input_events[i].code == RETROK_b)
+         ++snapshot_b;
+      if (input_events[i].type == ARC_INPUT_EVENT_BUTTON && input_events[i].code == 4u)
+         ++snapshot_menu;
+   }
+   assert(snapshot_a == 2u && snapshot_b == 2u && snapshot_menu == 2u);
+   keyboard_poll_capability = false;
+   retro_unload_game();
+   phase = PHASE_LOAD; assert(retro_load_game(&game));
+   phase = PHASE_RUN;
+
    for (unsigned frame = 78u; frame < 100u; ++frame) retro_run();
    uint64_t measured_expected_total = 0u;
    uint64_t measured_actual_total = 0u;
@@ -1680,7 +1810,6 @@ int main(int argc, char **argv)
       measured_window_modes[measured_windows++] = measured_oracle_mode;
    }
    assert(measured_windows == 2u);
-   bool input_observed = before_input_signature != last_video_signature;
    retro_unload_game();
    phase = PHASE_LOAD; assert(retro_load_game(&changed_game));
    phase = PHASE_RUN; for (unsigned frame = 0; frame < 60u; ++frame) retro_run();

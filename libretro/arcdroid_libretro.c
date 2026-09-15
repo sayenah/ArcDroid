@@ -28,7 +28,7 @@
 #define ARC_DEVICE_MOUSE RETRO_DEVICE_SUBCLASS(RETRO_DEVICE_MOUSE, 1)
 
 enum {
-   ARC_INPUT_SUPPORTED_KEYS = 100u,
+   ARC_INPUT_SUPPORTED_KEYS = 98u,
    ARC_INPUT_PAD_KEYS = 10u,
    ARC_INPUT_POINTER_BUTTONS = 3u,
    /* Leave room for future adapter bindings without risking truncation when
@@ -59,9 +59,12 @@ static ArcDigest arc_content_digest;
 static ArcLaunchPlan arc_plan;
 static ArcInputState arc_inputs;
 static bool arc_pad_keys[2][10];
+static bool arc_pad_neutral_gate[2];
+static ArcInputResolution arc_input_resolution;
 static unsigned arc_pad_pointer_buttons;
 static bool arc_keyboard_menu;
 static bool arc_keyboard_lmeta;
+static bool arc_keyboard_polling;
 static unsigned arc_port_device[2] = {ARC_DEVICE_KEYS, ARC_DEVICE_MOUSE};
 static char arc_cmos_path[4096];
 static char arc_save_path[4096];
@@ -124,6 +127,12 @@ typedef enum {
    ARC_LAUNCH_APP8
 } ArcLaunchOption;
 
+typedef enum {
+   ARC_OSK_TOGGLE_L3 = 0,
+   ARC_OSK_TOGGLE_R3,
+   ARC_OSK_TOGGLE_OFF
+} ArcOskToggle;
+
 typedef struct {
    bool valid;
    int x;
@@ -155,9 +164,23 @@ typedef struct {
    unsigned pointer_deadzone;
    ArcDiskWriteMode disk_writes;
    ArcLaunchOption launch;
+   char input_profile[64];
+   ArcInputOverride pad[ARC_PAD_PORTS][ARC_PAD_INPUT_COUNT];
+   ArcOskToggle osk_toggle;
 } ArcCoreOptions;
 
 static ArcCoreOptions arc_core_options;
+
+static const char *const arc_pad_option_names[ARC_PAD_PORTS][ARC_PAD_INPUT_COUNT] = {
+   {"arcdroid_pad1_up", "arcdroid_pad1_down", "arcdroid_pad1_left",
+    "arcdroid_pad1_right", "arcdroid_pad1_a", "arcdroid_pad1_b",
+    "arcdroid_pad1_x", "arcdroid_pad1_y", "arcdroid_pad1_start",
+    "arcdroid_pad1_select"},
+   {"arcdroid_pad2_up", "arcdroid_pad2_down", "arcdroid_pad2_left",
+    "arcdroid_pad2_right", "arcdroid_pad2_a", "arcdroid_pad2_b",
+    "arcdroid_pad2_x", "arcdroid_pad2_y", "arcdroid_pad2_start",
+    "arcdroid_pad2_select"}
+};
 
 static const char *arc_option_value(const char *key, const char *fallback)
 {
@@ -180,6 +203,8 @@ static bool arc_read_options(ArcCoreOptions *options, char *error, size_t error_
    const char *pointer_deadzone = arc_option_value("arcdroid_pointer_deadzone", "15");
    const char *writes = arc_option_value("arcdroid_disk_writes", "shadow");
    const char *launch = arc_option_value("arcdroid_launch", "auto");
+   const char *profile = arc_option_value("arcdroid_input_profile", "Auto");
+   const char *osk_toggle = arc_option_value("arcdroid_osk_toggle", "L3");
    if (!options) return false;
    memset(options, 0, sizeof(*options));
    if ((strcmp(machine, "Auto") && strcmp(machine, "A3000")) ||
@@ -220,6 +245,40 @@ static bool arc_read_options(ArcCoreOptions *options, char *error, size_t error_
    else if (!strcmp(launch, "off")) options->launch = ARC_LAUNCH_OFF;
    else if (!strncmp(launch, "app", 3u) && launch[3] >= '1' && launch[3] <= '8' && !launch[4])
       options->launch = (ArcLaunchOption)(ARC_LAUNCH_APP1 + launch[3] - '1');
+   else goto invalid;
+   if (strlen(profile) >= sizeof(options->input_profile)) goto invalid;
+   strcpy(options->input_profile, profile);
+   if (strcmp(profile, "Auto") && strcmp(profile, "Generic"))
+   {
+      bool found = false;
+      size_t count = 0u;
+      const ArcInputProfile *profiles = arc_input_profiles(&count);
+      for (size_t i = 0u; i < count; ++i)
+         if (!strcmp(profile, profiles[i].id)) found = true;
+      if (!found) goto invalid;
+   }
+   for (unsigned port = 0u; port < ARC_PAD_PORTS; ++port)
+      for (unsigned input = 0u; input < ARC_PAD_INPUT_COUNT; ++input)
+      {
+         const char *value = arc_option_value(arc_pad_option_names[port][input], "Auto");
+         ArcInputOverride *override = &options->pad[port][input];
+         if (!strcmp(value, "Auto")) override->automatic = true;
+         else if (!strcmp(value, "Unbound"))
+         {
+            override->automatic = false;
+            override->binding = (ArcInputBinding){false, 0u};
+         }
+         else
+         {
+            const ArcInputKey *key = arc_input_key_value(value);
+            if (!key) goto invalid;
+            override->automatic = false;
+            override->binding = (ArcInputBinding){true, key->key};
+         }
+      }
+   if (!strcmp(osk_toggle, "L3")) options->osk_toggle = ARC_OSK_TOGGLE_L3;
+   else if (!strcmp(osk_toggle, "R3")) options->osk_toggle = ARC_OSK_TOGGLE_R3;
+   else if (!strcmp(osk_toggle, "Off")) options->osk_toggle = ARC_OSK_TOGGLE_OFF;
    else goto invalid;
    return true;
 invalid:
@@ -1269,12 +1328,42 @@ static void arc_input_sampling_reset(bool release_engine_levels)
    if (release_engine_levels) arc_input_release_all(&arc_inputs);
    else arc_input_reset(&arc_inputs);
    memset(arc_pad_keys, 0, sizeof(arc_pad_keys));
+   memset(arc_pad_neutral_gate, 0, sizeof(arc_pad_neutral_gate));
    arc_pad_pointer_buttons = 0u;
    arc_keyboard_menu = arc_keyboard_lmeta = false;
    arc_stick_x = arc_stick_y = 0;
    arc_stick_precision = false;
    arc_stick_fraction_x = arc_stick_fraction_y = 0.0L;
    memset(&arc_touch, 0, sizeof(arc_touch));
+}
+
+static void arc_poll_keyboard_snapshot(void)
+{
+   if (!arc_keyboard_polling || !arc_input_state) return;
+   size_t count = 0u;
+   const ArcInputKey *keys = arc_input_supported_keys(&count);
+   bool seen[ARC_INPUT_KEY_COUNT] = {false};
+   for (size_t i = 0u; i < count; ++i)
+   {
+      unsigned key = keys[i].key;
+      if (key >= ARC_INPUT_KEY_COUNT || seen[key]) continue;
+      seen[key] = true;
+      bool down = arc_input_state(0u, RETRO_DEVICE_KEYBOARD, 0u, key) != 0;
+      arc_input_source_key(&arc_inputs, ARC_INPUT_SOURCE_KEYBOARD, key, down, true);
+   }
+   static const unsigned extra[] = {RETROK_NUMLOCK, RETROK_SCROLLOCK, RETROK_PAUSE};
+   for (unsigned i = 0u; i < sizeof(extra) / sizeof(extra[0]); ++i)
+   {
+      unsigned key = extra[i];
+      bool down = arc_input_state(0u, RETRO_DEVICE_KEYBOARD, 0u, key) != 0;
+      arc_input_source_key(&arc_inputs, ARC_INPUT_SOURCE_KEYBOARD, key, down, true);
+   }
+   arc_keyboard_menu = arc_input_state(0u, RETRO_DEVICE_KEYBOARD, 0u,
+                                        RETROK_MENU) != 0;
+   arc_keyboard_lmeta = arc_input_state(0u, RETRO_DEVICE_KEYBOARD, 0u,
+                                         RETROK_LMETA) != 0;
+   arc_input_source_buttons(&arc_inputs, ARC_INPUT_SOURCE_KEYBOARD,
+                            (arc_keyboard_menu || arc_keyboard_lmeta) ? 4u : 0u);
 }
 
 static uint64_t arc_touch_distance_squared(const ArcTouchContact *contact,
@@ -1479,55 +1568,34 @@ static void arc_poll_inputs(void)
       RETRO_DEVICE_ID_JOYPAD_X, RETRO_DEVICE_ID_JOYPAD_Y,
       RETRO_DEVICE_ID_JOYPAD_START, RETRO_DEVICE_ID_JOYPAD_SELECT
    };
-   static const unsigned keys[] = {
-      RETROK_UP, RETROK_DOWN, RETROK_LEFT, RETROK_RIGHT,
-      RETROK_SPACE, RETROK_RETURN, RETROK_LSHIFT, RETROK_LCTRL,
-      RETROK_ESCAPE, RETROK_TAB
-   };
    if (!arc_input_state) return;
    bool sampled[2][10] = {{false}};
+   bool desired[ARC_PAD_PORTS][ARC_INPUT_KEY_COUNT] = {{false}};
    for (unsigned port = 0u; port < 2u; ++port)
       if (arc_port_device[port] == ARC_DEVICE_KEYS ||
           arc_port_device[port] == RETRO_DEVICE_JOYPAD)
          for (unsigned i = 0u; i < 10u; ++i)
             sampled[port][i] = arc_input_state(port, RETRO_DEVICE_JOYPAD, 0u, ids[i]) != 0;
-   static const unsigned modifiers[] = {6u, 7u};
    for (unsigned port = 0u; port < 2u; ++port)
    {
-      ArcInputSource source = port ? ARC_INPUT_SOURCE_PAD1 : ARC_INPUT_SOURCE_PAD0;
-      for (unsigned m = 0u; m < 2u; ++m)
+      if (arc_pad_neutral_gate[port])
       {
-         unsigned i = modifiers[m];
-         if (sampled[port][i] && !arc_pad_keys[port][i])
-            arc_input_source_key(&arc_inputs, source, keys[i], true, true);
+         bool neutral = true;
+         for (unsigned input = 0u; input < ARC_PAD_INPUT_COUNT; ++input)
+            if (sampled[port][input]) neutral = false;
+         if (neutral) arc_pad_neutral_gate[port] = false;
+         else memset(sampled[port], 0, sizeof(sampled[port]));
       }
-   }
-   for (unsigned port = 0u; port < 2u; ++port)
-   {
-      ArcInputSource source = port ? ARC_INPUT_SOURCE_PAD1 : ARC_INPUT_SOURCE_PAD0;
-      for (unsigned i = 0u; i < 10u; ++i)
-         if (i != 6u && i != 7u && sampled[port][i] && !arc_pad_keys[port][i])
-            arc_input_source_key(&arc_inputs, source, keys[i], true, true);
-   }
-   for (unsigned port = 0u; port < 2u; ++port)
-   {
-      ArcInputSource source = port ? ARC_INPUT_SOURCE_PAD1 : ARC_INPUT_SOURCE_PAD0;
-      for (unsigned i = 0u; i < 10u; ++i)
-         if (i != 6u && i != 7u && !sampled[port][i] && arc_pad_keys[port][i])
-            arc_input_source_key(&arc_inputs, source, keys[i], false, true);
-   }
-   for (unsigned port = 0u; port < 2u; ++port)
-   {
-      ArcInputSource source = port ? ARC_INPUT_SOURCE_PAD1 : ARC_INPUT_SOURCE_PAD0;
-      for (unsigned m = 0u; m < 2u; ++m)
+      for (unsigned input = 0u; input < ARC_PAD_INPUT_COUNT; ++input)
       {
-         unsigned i = modifiers[m];
-         if (!sampled[port][i] && arc_pad_keys[port][i])
-            arc_input_source_key(&arc_inputs, source, keys[i], false, true);
+         const ArcInputBinding *binding = &arc_input_resolution.binding[port][input];
+         if (sampled[port][input] && binding->bound &&
+             binding->key < ARC_INPUT_KEY_COUNT)
+            desired[port][binding->key] = true;
       }
-   }
-   for (unsigned port = 0u; port < 2u; ++port)
       memcpy(arc_pad_keys[port], sampled[port], sizeof(sampled[port]));
+   }
+   arc_input_pad_key_sets(&arc_inputs, desired[0], desired[1]);
 
    bool pad_pointer = arc_port_device[0] == ARC_DEVICE_KEYS ||
                       arc_port_device[0] == RETRO_DEVICE_JOYPAD;
@@ -1571,6 +1639,7 @@ static void arc_poll_inputs(void)
       arc_stick_x = arc_stick_y = 0;
       arc_stick_precision = false;
    }
+   arc_poll_keyboard_snapshot();
 }
 
 static void arc_integrate_stick(uint64_t elapsed_us)
@@ -1595,7 +1664,7 @@ static void arc_integrate_stick(uint64_t elapsed_us)
    arc_input_motion(&arc_inputs, dx, dy, true);
 }
 
-static const struct retro_core_option_v2_definition arc_options[] = {
+static const struct retro_core_option_v2_definition arc_base_options[] = {
    {"arcdroid_machine", "Machine", NULL, "Automatic machine selection.", NULL,
     NULL, {{"Auto", NULL}, {"A3000", NULL}, {NULL, NULL}}, "Auto"},
    {"arcdroid_cpu", "CPU", NULL, "Automatic CPU selection.", NULL,
@@ -1624,9 +1693,69 @@ static const struct retro_core_option_v2_definition arc_options[] = {
     NULL, {{"shadow", NULL}, {"original", NULL}, {"off", NULL}, {NULL, NULL}}, "shadow"},
    {NULL, NULL, NULL, NULL, NULL, NULL, {{0}}, NULL}
 };
-static const struct retro_core_options_v2 arc_options_v2 = {NULL, (struct retro_core_option_v2_definition *)arc_options};
+static struct retro_core_option_v2_definition arc_options[34];
+static struct retro_core_option_v2_category arc_option_categories[] = {
+   {"pad_mapping", "Pad Mapping", "Map each RetroPad input to a physical Archimedes key."},
+   {NULL, NULL, NULL}
+};
+static struct retro_core_options_v2 arc_options_v2 = {arc_option_categories, arc_options};
+static char arc_pad_option_labels[ARC_PAD_PORTS][ARC_PAD_INPUT_COUNT][32];
+static bool arc_options_built;
 
-static const struct retro_input_descriptor arc_input_descriptors[] = {
+static void arc_build_options(void)
+{
+   if (arc_options_built) return;
+   memset(arc_options, 0, sizeof(arc_options));
+   memcpy(arc_options, arc_base_options,
+          11u * sizeof(struct retro_core_option_v2_definition));
+   unsigned at = 11u;
+   struct retro_core_option_v2_definition *profile = &arc_options[at++];
+   profile->key = "arcdroid_input_profile";
+   profile->desc = "Input Profile";
+   profile->info = "Use an exact-content profile, the generic mapping, or a selected preset.";
+   profile->category_key = "pad_mapping";
+   profile->values[0] = (struct retro_core_option_value){"Auto", NULL};
+   profile->values[1] = (struct retro_core_option_value){"Generic", NULL};
+   size_t profile_count = 0u;
+   const ArcInputProfile *profiles = arc_input_profiles(&profile_count);
+   for (size_t i = 0u; i < profile_count && i + 3u < RETRO_NUM_CORE_OPTION_VALUES_MAX; ++i)
+      profile->values[i + 2u] = (struct retro_core_option_value){profiles[i].id, profiles[i].name};
+   profile->default_value = "Auto";
+
+   size_t key_count = 0u;
+   const ArcInputKey *keys = arc_input_supported_keys(&key_count);
+   for (unsigned port = 0u; port < ARC_PAD_PORTS; ++port)
+      for (unsigned input = 0u; input < ARC_PAD_INPUT_COUNT; ++input)
+      {
+         struct retro_core_option_v2_definition *definition = &arc_options[at++];
+         snprintf(arc_pad_option_labels[port][input],
+                  sizeof(arc_pad_option_labels[port][input]), "Pad %u %s",
+                  port + 1u, arc_pad_input_name(input));
+         definition->key = arc_pad_option_names[port][input];
+         definition->desc = arc_pad_option_labels[port][input];
+         definition->desc_categorized = arc_pad_input_name(input);
+         definition->info = "Auto uses the resolved profile; Unbound disables this input.";
+         definition->category_key = "pad_mapping";
+         definition->values[0] = (struct retro_core_option_value){"Auto", NULL};
+         definition->values[1] = (struct retro_core_option_value){"Unbound", NULL};
+         for (size_t key = 0u; key < key_count && key + 3u < RETRO_NUM_CORE_OPTION_VALUES_MAX; ++key)
+            definition->values[key + 2u] =
+               (struct retro_core_option_value){keys[key].value, keys[key].label};
+         definition->default_value = "Auto";
+      }
+   struct retro_core_option_v2_definition *osk = &arc_options[at++];
+   osk->key = "arcdroid_osk_toggle";
+   osk->desc = "On-Screen Keyboard Toggle";
+   osk->info = "Choose the RetroPad stick button that opens the on-screen keyboard.";
+   osk->category_key = "pad_mapping";
+   osk->values[0] = (struct retro_core_option_value){"L3", NULL};
+   osk->values[1] = (struct retro_core_option_value){"R3", NULL};
+   osk->values[2] = (struct retro_core_option_value){"Off", NULL};
+   osk->default_value = "L3";
+   arc_options_built = true;
+}
+
+static struct retro_input_descriptor arc_input_descriptors[] = {
    {0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_UP, "Archimedes Up"},
    {0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_DOWN, "Archimedes Down"},
    {0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_LEFT, "Archimedes Left"},
@@ -1657,10 +1786,98 @@ static const struct retro_input_descriptor arc_input_descriptors[] = {
    {1, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_SELECT, "Tab"},
    {0, 0, 0, 0, NULL}
 };
+static char arc_descriptor_labels[ARC_PAD_PORTS][ARC_PAD_INPUT_COUNT][64];
+
+static const char *arc_mapping_source_name(ArcMappingSource source)
+{
+   switch (source)
+   {
+      case ARC_MAPPING_SOURCE_PROFILE: return "profile";
+      case ARC_MAPPING_SOURCE_PRESET: return "preset";
+      case ARC_MAPPING_SOURCE_OPTION: return "option";
+      default: return "generic";
+   }
+}
+
+static void arc_refresh_input_descriptors(void)
+{
+   static const unsigned offsets[ARC_PAD_PORTS] = {0u, 18u};
+   for (unsigned port = 0u; port < ARC_PAD_PORTS; ++port)
+      for (unsigned input = 0u; input < ARC_PAD_INPUT_COUNT; ++input)
+      {
+         const ArcInputBinding *binding = &arc_input_resolution.binding[port][input];
+         const ArcInputKey *key = binding->bound ? arc_input_key(binding->key) : NULL;
+         snprintf(arc_descriptor_labels[port][input],
+                  sizeof(arc_descriptor_labels[port][input]), "%s",
+                  key ? key->label : "Unbound");
+         arc_input_descriptors[offsets[port] + input].description =
+            arc_descriptor_labels[port][input];
+      }
+   if (arc_environment)
+      arc_environment(RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS,
+                      (void *)arc_input_descriptors);
+}
+
+static bool arc_resolve_inputs(const ArcCoreOptions *options,
+                               bool mapping_change, bool notify)
+{
+   ArcInputResolution resolved;
+   if (!arc_input_resolve(arc_content_digest.sha1, arc_plan.launch_target,
+                          options->input_profile, options->pad, &resolved))
+      return false;
+   bool changed = memcmp(resolved.binding, arc_input_resolution.binding,
+                         sizeof(resolved.binding)) != 0;
+   if (mapping_change && changed)
+   {
+      arc_input_clear_source(&arc_inputs, ARC_INPUT_SOURCE_PAD0);
+      arc_input_clear_source(&arc_inputs, ARC_INPUT_SOURCE_PAD1);
+      memset(arc_pad_keys, 0, sizeof(arc_pad_keys));
+      arc_pad_neutral_gate[0] = arc_pad_neutral_gate[1] = true;
+   }
+   arc_input_resolution = resolved;
+   arc_refresh_input_descriptors();
+   if (arc_log)
+   {
+      char line[3072];
+      size_t at = (size_t)snprintf(line, sizeof(line), "Input resolution: profile=%s%s",
+                                  resolved.profile_name,
+                                  resolved.custom ? " custom" : "");
+      for (unsigned port = 0u; port < ARC_PAD_PORTS && at < sizeof(line); ++port)
+         for (unsigned input = 0u; input < ARC_PAD_INPUT_COUNT && at < sizeof(line); ++input)
+         {
+            const ArcInputBinding *binding = &resolved.binding[port][input];
+            const ArcInputKey *key = binding->bound ? arc_input_key(binding->key) : NULL;
+            int written = snprintf(line + at, sizeof(line) - at, " p%u.%s=%s[%s]",
+                                   port + 1u, arc_pad_input_name(input),
+                                   key ? key->label : "Unbound",
+                                   arc_mapping_source_name(resolved.source[port][input]));
+            if (written < 0) break;
+            at += (size_t)written < sizeof(line) - at ? (size_t)written : sizeof(line) - at;
+         }
+      arc_log(RETRO_LOG_INFO, "%s\n", line);
+   }
+   if (notify)
+   {
+      bool applied = false;
+      for (unsigned port = 0u; port < ARC_PAD_PORTS; ++port)
+         for (unsigned input = 0u; input < ARC_PAD_INPUT_COUNT; ++input)
+            if (resolved.source[port][input] == ARC_MAPPING_SOURCE_PROFILE ||
+                resolved.source[port][input] == ARC_MAPPING_SOURCE_PRESET)
+               applied = true;
+      if (applied)
+      {
+         char message[128];
+         snprintf(message, sizeof(message), "Controls: %s", resolved.profile_name);
+         arc_message(message, RETRO_LOG_INFO);
+      }
+   }
+   return true;
+}
 
 RETRO_API void retro_set_environment(retro_environment_t callback)
 {
    bool no_game = false;
+   arc_build_options();
    arc_environment = callback;
    if (callback)
    {
@@ -1731,12 +1948,18 @@ RETRO_API void retro_init(void)
    arc_audio_warning_reported = false;
    arc_guest_time_us = 0u;
    arc_can_dupe = false;
+   arc_keyboard_polling = false;
    arc_release_session();
    arc_log = NULL;
    if (arc_environment)
    {
       arc_environment(RETRO_ENVIRONMENT_SET_DISK_CONTROL_EXT_INTERFACE, (void *)&disk);
       arc_environment(RETRO_ENVIRONMENT_GET_CAN_DUPE, &arc_can_dupe);
+      uint64_t capabilities = 0u;
+      if (arc_environment(RETRO_ENVIRONMENT_GET_INPUT_DEVICE_CAPABILITIES,
+                          &capabilities))
+         arc_keyboard_polling =
+            (capabilities & (UINT64_C(1) << RETRO_DEVICE_KEYBOARD)) != 0u;
       if (arc_environment(RETRO_ENVIRONMENT_GET_VFS_INTERFACE, &vfs))
       {
          arc_vfs = vfs.iface;
@@ -1809,6 +2032,11 @@ static bool arc_load_game(const struct retro_game_info *game, bool negotiate)
       arc_environment(RETRO_ENVIRONMENT_SET_CONTROLLER_INFO, (void *)ports);
       arc_environment(RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS, (void *)arc_input_descriptors);
       arc_environment(RETRO_ENVIRONMENT_SET_KEYBOARD_CALLBACK, (void *)&keyboard);
+      uint64_t capabilities = 0u;
+      arc_keyboard_polling =
+         arc_environment(RETRO_ENVIRONMENT_GET_INPUT_DEVICE_CAPABILITIES,
+                         &capabilities) &&
+         (capabilities & (UINT64_C(1) << RETRO_DEVICE_KEYBOARD)) != 0u;
    }
    if (!arc_vfs)
    {
@@ -1917,6 +2145,12 @@ static bool arc_load_game(const struct retro_game_info *game, bool negotiate)
       }
       arc_prepare_launch(&arc_media[arc_image_index], false,
                          arc_core_options.launch, false);
+      if (!arc_resolve_inputs(&arc_core_options, false, true))
+      {
+         arc_message("Unable to resolve ArcDroid input options.", RETRO_LOG_ERROR);
+         arc_release_session();
+         return false;
+      }
       ArcEngineMedia media = arc_engine_media(&arc_media[arc_image_index]);
       ArcEngineMedia helper = {arc_helper_path, false, ARC_MEDIA_ADL_640K,
                                ARC_GEOMETRY_640K_L, NULL};
@@ -2054,6 +2288,8 @@ RETRO_API void retro_reset(void)
    }
    arc_prepare_launch(mounted_pointer ? &arc_media[selected] : NULL, was_ejected,
                       updated.launch, launch_reselected);
+   if (!arc_resolve_inputs(&arc_core_options, true, false))
+   { snprintf(error, sizeof(error), "Unable to resolve ArcDroid input options."); goto failed; }
    ArcEngineMedia helper = {arc_helper_path, false, ARC_MEDIA_ADL_640K,
                             ARC_GEOMETRY_640K_L, NULL};
    if (!arc_cmos_decode(arc_cmos_record, &arc_plan, payload) ||
@@ -2111,6 +2347,19 @@ RETRO_API void retro_run(void)
          arc_touch_reset();
          arc_stick_x = arc_stick_y = 0;
          arc_stick_fraction_x = arc_stick_fraction_y = 0.0L;
+      }
+      if (strcmp(updated.input_profile, arc_core_options.input_profile) ||
+          memcmp(updated.pad, arc_core_options.pad, sizeof(updated.pad)) ||
+          updated.osk_toggle != arc_core_options.osk_toggle)
+      {
+         if (!arc_resolve_inputs(&updated, true, false))
+            arc_message("Unable to resolve ArcDroid input options.", RETRO_LOG_ERROR);
+         else
+         {
+            strcpy(arc_core_options.input_profile, updated.input_profile);
+            memcpy(arc_core_options.pad, updated.pad, sizeof(updated.pad));
+            arc_core_options.osk_toggle = updated.osk_toggle;
+         }
       }
    }
    if (arc_input_poll) arc_input_poll();
@@ -2231,6 +2480,7 @@ RETRO_API void retro_set_controller_port_device(unsigned port, unsigned device)
          arc_input_clear_source(&arc_inputs,
             port ? ARC_INPUT_SOURCE_MOUSE1 : ARC_INPUT_SOURCE_MOUSE0);
          memset(arc_pad_keys[port], 0, sizeof(arc_pad_keys[port]));
+         arc_pad_neutral_gate[port] = true;
          if (!port)
          {
             arc_pad_pointer_buttons = 0u;

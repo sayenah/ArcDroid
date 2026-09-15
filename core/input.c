@@ -27,23 +27,34 @@ static void arc_fifo_append_unchecked(ArcInputState *state, ArcInputEvent event)
 
 static void arc_reconcile(ArcInputState *state)
 {
+   ++state->reconcile_generation;
    state->fifo_count = 0u;
    state->discrete_since_motion = 0u;
    /* Releases are deliberately reserved ahead of presses so overflow recovery
     * can never strand an engine-visible level. The supported keyboard surface
     * is smaller than the 256-entry queue; excess presses are sampled again. */
    for (unsigned code = 1u; code < ARC_INPUT_KEY_COUNT; ++code)
-      if (state->applied_keys[code] && !state->effective_keys[code])
+      if (!arc_input_is_modifier(code) && state->applied_keys[code] &&
+          !state->effective_keys[code])
          arc_fifo_append_unchecked(state, (ArcInputEvent){ARC_INPUT_EVENT_KEY, code, false, false, 0, 0});
    for (unsigned button = 1u; button <= 4u; button <<= 1u)
       if ((state->applied_buttons & button) && !(state->effective_buttons & button))
          arc_fifo_append_unchecked(state, (ArcInputEvent){ARC_INPUT_EVENT_BUTTON, button, false, false, 0, 0});
    for (unsigned code = 1u; code < ARC_INPUT_KEY_COUNT; ++code)
-      if (!state->applied_keys[code] && state->effective_keys[code])
+      if (arc_input_is_modifier(code) && !state->applied_keys[code] &&
+          state->effective_keys[code])
+         arc_fifo_append_unchecked(state, (ArcInputEvent){ARC_INPUT_EVENT_KEY, code, true, false, 0, 0});
+   for (unsigned code = 1u; code < ARC_INPUT_KEY_COUNT; ++code)
+      if (!arc_input_is_modifier(code) && !state->applied_keys[code] &&
+          state->effective_keys[code])
          arc_fifo_append_unchecked(state, (ArcInputEvent){ARC_INPUT_EVENT_KEY, code, true, false, 0, 0});
    for (unsigned button = 1u; button <= 4u; button <<= 1u)
       if (!(state->applied_buttons & button) && (state->effective_buttons & button))
          arc_fifo_append_unchecked(state, (ArcInputEvent){ARC_INPUT_EVENT_BUTTON, button, true, false, 0, 0});
+   for (unsigned code = 1u; code < ARC_INPUT_KEY_COUNT; ++code)
+      if (arc_input_is_modifier(code) && state->applied_keys[code] &&
+          !state->effective_keys[code])
+         arc_fifo_append_unchecked(state, (ArcInputEvent){ARC_INPUT_EVENT_KEY, code, false, false, 0, 0});
 }
 
 static bool arc_fifo_append(ArcInputState *state, ArcInputEvent event)
@@ -231,4 +242,68 @@ bool arc_input_take_overflow_report(ArcInputState *state)
 unsigned arc_input_pending(const ArcInputState *state)
 {
    return state ? state->fifo_count : 0u;
+}
+
+unsigned arc_input_available(const ArcInputState *state)
+{
+   return state && state->fifo_count < ARC_INPUT_FIFO_CAPACITY ?
+      ARC_INPUT_FIFO_CAPACITY - state->fifo_count : 0u;
+}
+
+uint64_t arc_input_reconcile_generation(const ArcInputState *state)
+{
+   return state ? state->reconcile_generation : 0u;
+}
+
+bool arc_input_source_level(const ArcInputState *state, ArcInputSource source,
+                            unsigned key)
+{
+   return state && source < ARC_INPUT_SOURCE_COUNT && key < ARC_INPUT_KEY_COUNT &&
+          state->source_keys[source][key];
+}
+
+bool arc_input_effective_level(const ArcInputState *state, unsigned key)
+{
+   return state && key < ARC_INPUT_KEY_COUNT && state->effective_keys[key];
+}
+
+bool arc_input_applied_level(const ArcInputState *state, unsigned key)
+{
+   return state && key < ARC_INPUT_KEY_COUNT && state->applied_keys[key];
+}
+
+void arc_input_pad_key_sets(ArcInputState *state,
+                            const bool port0[ARC_INPUT_KEY_COUNT],
+                            const bool port1[ARC_INPUT_KEY_COUNT])
+{
+   if (!state || !port0 || !port1) return;
+   bool before[ARC_INPUT_KEY_COUNT];
+   memcpy(before, state->effective_keys, sizeof(before));
+   memcpy(state->source_keys[ARC_INPUT_SOURCE_PAD0], port0,
+          sizeof(state->source_keys[0]));
+   memcpy(state->source_keys[ARC_INPUT_SOURCE_PAD1], port1,
+          sizeof(state->source_keys[0]));
+   for (unsigned code = 1u; code < ARC_INPUT_KEY_COUNT; ++code)
+      state->effective_keys[code] = arc_effective_key(state, code);
+
+   for (unsigned code = 1u; code < ARC_INPUT_KEY_COUNT; ++code)
+      if (arc_input_is_modifier(code) && !before[code] &&
+          state->effective_keys[code])
+         arc_fifo_append(state, (ArcInputEvent){ARC_INPUT_EVENT_KEY, code, true,
+                                                false, 0, 0});
+   for (unsigned code = 1u; code < ARC_INPUT_KEY_COUNT; ++code)
+      if (!arc_input_is_modifier(code) && !before[code] &&
+          state->effective_keys[code])
+         arc_fifo_append(state, (ArcInputEvent){ARC_INPUT_EVENT_KEY, code, true,
+                                                false, 0, 0});
+   for (unsigned code = 1u; code < ARC_INPUT_KEY_COUNT; ++code)
+      if (!arc_input_is_modifier(code) && before[code] &&
+          !state->effective_keys[code])
+         arc_fifo_append(state, (ArcInputEvent){ARC_INPUT_EVENT_KEY, code, false,
+                                                false, 0, 0});
+   for (unsigned code = 1u; code < ARC_INPUT_KEY_COUNT; ++code)
+      if (arc_input_is_modifier(code) && before[code] &&
+          !state->effective_keys[code])
+         arc_fifo_append(state, (ArcInputEvent){ARC_INPUT_EVENT_KEY, code, false,
+                                                false, 0, 0});
 }
