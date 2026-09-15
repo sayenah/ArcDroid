@@ -20,7 +20,7 @@ static const char *system_dir, *save_dir;
 static unsigned open_files, open_dirs, video_frames;
 static uint64_t audio_frames;
 
-struct retro_vfs_file_handle { FILE *file; char *path; };
+struct retro_vfs_file_handle { FILE *file; char *path; unsigned mode; };
 struct retro_vfs_dir_handle { HANDLE find; WIN32_FIND_DATAA data; bool first; };
 
 static const char *vfs_get_path(struct retro_vfs_file_handle *h) { return h->path; }
@@ -36,6 +36,7 @@ static struct retro_vfs_file_handle *vfs_open(const char *path, unsigned mode, u
    handle->path = _strdup(path);
    assert(handle->path);
    handle->file = file;
+   handle->mode = mode;
    ++open_files;
    return handle;
 }
@@ -60,7 +61,10 @@ static int64_t vfs_read(struct retro_vfs_file_handle *h, void *data, uint64_t si
 { return (int64_t)fread(data, 1u, (size_t)size, h->file); }
 static int64_t vfs_write(struct retro_vfs_file_handle *h, const void *data, uint64_t size)
 { return (int64_t)fwrite(data, 1u, (size_t)size, h->file); }
-static int vfs_flush(struct retro_vfs_file_handle *h) { return fflush(h->file); }
+static int vfs_flush(struct retro_vfs_file_handle *h)
+{
+   return (h->mode & RETRO_VFS_FILE_ACCESS_WRITE) ? fflush(h->file) : -1;
+}
 static int vfs_remove(const char *path) { return remove(path); }
 static int vfs_rename(const char *from, const char *to) { return rename(from, to); }
 static int64_t vfs_truncate(struct retro_vfs_file_handle *h, int64_t size)

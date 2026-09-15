@@ -141,7 +141,7 @@ static size_t heap_bytes_in_use(void)
 #endif
 }
 
-struct retro_vfs_file_handle { FILE *file; char *path; };
+struct retro_vfs_file_handle { FILE *file; char *path; unsigned mode; };
 struct retro_vfs_dir_handle { DIR *dir; struct dirent *entry; char path[4096]; };
 static const char *fault_open_substring;
 static const char *fault_read_substring;
@@ -177,7 +177,7 @@ static struct retro_vfs_file_handle *vfs_open(const char *path, unsigned mode, u
    if (!f) return NULL;
    struct retro_vfs_file_handle *h = calloc(1u, sizeof(*h));
    assert(h);
-   h->file = f; h->path = copy_string(path); ++open_files;
+   h->file = f; h->path = copy_string(path); h->mode = mode; ++open_files;
    if ((mode & RETRO_VFS_FILE_ACCESS_WRITE) && strstr(path, "/arcdroid/cmos/"))
       ++cmos_write_opens;
    return h;
@@ -207,6 +207,7 @@ static int64_t vfs_write(struct retro_vfs_file_handle *h, const void *s, uint64_
 }
 static int vfs_flush(struct retro_vfs_file_handle *h)
 {
+   if (!(h->mode & RETRO_VFS_FILE_ACCESS_WRITE)) return -1;
    if (fault_once(h->path, &fault_flush_substring)) return -1;
    return fflush(h->file);
 }
