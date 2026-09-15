@@ -2220,12 +2220,25 @@ int main(int argc, char **argv)
    for (unsigned frame = 0u; frame < 10u && !osk_duplicate; ++frame)
    { retro_run(); osk_duplicate = last_video_was_duplicate; }
    assert(osk_duplicate);
+   /* Closing the modal OSK while its pointer contact is still held must not
+    * hand that contact to gameplay as motion or a click. */
+   arc_platform_test_input_events_reset();
+   pointer_pressed = true;
+   pointer_x = 1000;
+   pointer_y = 1000;
+   retro_run();
    joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_B] = true;
    retro_run();
    assert(!last_video_was_duplicate);
    arc_engine_test_set_vidc_noncompleting(false);
    joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_B] = false;
+   pointer_x = 6000;
+   pointer_y = -4000;
+   for (unsigned frame = 0u; frame < 4u; ++frame) retro_run();
+   pointer_pressed = false;
    retro_run();
+   input_event_count = arc_platform_test_input_events(input_events, 512u);
+   assert(input_event_count == 0u);
    arc_platform_test_input_events_reset();
    joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_A] = true;
    retro_run();

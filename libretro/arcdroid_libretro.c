@@ -1380,6 +1380,10 @@ static void arc_osk_restore_gameplay(void)
    memset(arc_pad_keys[0], 0, sizeof(arc_pad_keys[0]));
    arc_pad_pointer_buttons = 0u;
    arc_touch_reset();
+   /* A contact owned by the modal OSK must not become a fresh trackpad
+    * gesture when gameplay resumes.  arc_touch_poll clears this only after
+    * observing a fully neutral pointer sample. */
+   arc_touch.blocked_until_zero = true;
    arc_stick_x = arc_stick_y = 0;
    arc_stick_fraction_x = arc_stick_fraction_y = 0.0L;
 }
