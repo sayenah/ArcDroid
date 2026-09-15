@@ -162,7 +162,10 @@ void disc_writesector(int drive, int sector, int track, int side, int density)
 	if (drive_funcs[drive] && drive_funcs[drive]->writesector)
 		drive_funcs[drive]->writesector(drive, sector, track, side, density);
 	else
-		disc_notfound = 10000;
+	{
+		disc_notfound = 0;
+		if (fdc_funcs) fdc_funcs->notfound(fdc_p);
+	}
 }
 
 void disc_readaddress(int drive, int track, int side, int density)
@@ -178,11 +181,15 @@ void disc_format(int drive, int track, int side, int density)
 	if (drive_funcs[drive] && drive_funcs[drive]->format)
 		drive_funcs[drive]->format(drive, track, side, density);
 	else
-		disc_notfound = 10000;
+	{
+		disc_notfound = 0;
+		if (fdc_funcs) fdc_funcs->notfound(fdc_p);
+	}
 }
 
 void disc_stop(int drive)
 {
+	disc_notfound = 0;
 	if (drive_funcs[drive] && drive_funcs[drive]->stop)
 		drive_funcs[drive]->stop();
 }

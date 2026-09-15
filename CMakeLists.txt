@@ -164,8 +164,7 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
     target_link_libraries(core_tests PRIVATE arcdroid_sanitizer_link)
   endif()
   target_compile_options(core_tests PRIVATE $<$<C_COMPILER_ID:GNU,Clang,AppleClang>:-UNDEBUG>)
-  add_test(NAME core-services COMMAND core_tests)
-  set_tests_properties(core-services PROPERTIES TIMEOUT 300)
+  set(FIXTURE_DIR "${CMAKE_CURRENT_BINARY_DIR}/tests/fixtures/generated")
   add_executable(jfd_reader_tests
     tests/jfd_reader_tests.c engine/arculator/src/disc_jfd.c)
   target_include_directories(jfd_reader_tests PRIVATE
@@ -177,6 +176,22 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
       arcdroid_sanitizer_compile arcdroid_sanitizer_link)
   endif()
   add_test(NAME jfd-engine-reader COMMAND jfd_reader_tests)
+  add_executable(jfd_controller_tests
+    tests/jfd_controller_tests.c
+    engine/arculator/src/wd1770.c
+    engine/arculator/src/disc.c
+    engine/arculator/src/disc_adf.c
+    engine/arculator/src/disc_jfd.c
+    engine/arculator/src/timer.c)
+  target_include_directories(jfd_controller_tests PRIVATE
+    core engine/compat engine/arculator/src libretro libretro/include)
+  target_link_libraries(jfd_controller_tests PRIVATE arcdroid_core)
+  target_compile_options(jfd_controller_tests PRIVATE
+    $<$<C_COMPILER_ID:GNU,Clang,AppleClang>:-UNDEBUG;-Wall;-Wextra;-Wpedantic>)
+  if(ARCDROID_SANITIZERS)
+    target_link_libraries(jfd_controller_tests PRIVATE
+      arcdroid_sanitizer_compile arcdroid_sanitizer_link)
+  endif()
   add_test(NAME shipping-io-guard
     COMMAND sh "${CMAKE_CURRENT_SOURCE_DIR}/tools/check-shipping-io.sh" --self-test)
   add_test(NAME asset-guard-self-test
@@ -185,7 +200,6 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
   set_tests_properties(shipping-io-guard PROPERTIES
     WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
 
-  set(FIXTURE_DIR "${CMAKE_CURRENT_BINARY_DIR}/tests/fixtures/generated")
   add_custom_command(
     OUTPUT "${FIXTURE_DIR}/arcdroid-test.rom" "${FIXTURE_DIR}/arcdroid-test.adf"
       "${FIXTURE_DIR}/arcdroid-demo.adl"
@@ -195,6 +209,8 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
       "${FIXTURE_DIR}/arcdroid-media.m3u"
       "${FIXTURE_DIR}/arcdroid-test.jfd"
       "${FIXTURE_DIR}/arcdroid-test-gzip.jfd"
+      "${FIXTURE_DIR}/arcdroid-test-two-member.jfd"
+      "${FIXTURE_DIR}/arcdroid-test-three-member.jfd"
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/generate_fixtures.py" "${FIXTURE_DIR}"
     DEPENDS tests/generate_fixtures.py VERBATIM)
   add_custom_target(test-fixtures ALL DEPENDS
@@ -205,7 +221,16 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
     "${FIXTURE_DIR}/arcdroid-media-disc2.adf"
     "${FIXTURE_DIR}/arcdroid-media.m3u"
     "${FIXTURE_DIR}/arcdroid-test.jfd"
-    "${FIXTURE_DIR}/arcdroid-test-gzip.jfd")
+    "${FIXTURE_DIR}/arcdroid-test-gzip.jfd"
+    "${FIXTURE_DIR}/arcdroid-test-two-member.jfd"
+    "${FIXTURE_DIR}/arcdroid-test-three-member.jfd")
+
+  add_dependencies(core_tests test-fixtures)
+  add_dependencies(jfd_controller_tests test-fixtures)
+  add_test(NAME core-services COMMAND core_tests "${FIXTURE_DIR}")
+  add_test(NAME jfd-controller-golden COMMAND jfd_controller_tests "${FIXTURE_DIR}")
+  set_tests_properties(jfd-controller-golden PROPERTIES TIMEOUT 300)
+  set_tests_properties(core-services PROPERTIES TIMEOUT 300)
 
   if(WIN32)
     add_executable(windows_load_harness tests/windows_load_harness.c)
@@ -241,7 +266,9 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
       "${FIXTURE_DIR}/arcdroid-media.m3u"
       "${FIXTURE_DIR}/arcdroid-media-disc1.adf"
       "${FIXTURE_DIR}/arcdroid-media-disc2.adf"
-      "${FIXTURE_DIR}/arcdroid-test.jfd")
+      "${FIXTURE_DIR}/arcdroid-test.jfd"
+      "${FIXTURE_DIR}/arcdroid-test-two-member.jfd"
+      "${FIXTURE_DIR}")
   endif()
 
   add_executable(firmware_probe tools/firmware_probe.c)

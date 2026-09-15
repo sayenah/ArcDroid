@@ -77,7 +77,15 @@ void wd1770_write(uint16_t addr, uint8_t val)
 	switch (addr & 0xc)
 	{
 		case 0x0:
-		if (wd1770.status & 1 && (val >> 4) != 0xD) { rpclog("Command rejected\n"); return; }
+		/* Every command supersedes pending media work. This is also required
+		 * for empty-drive RNF, which has no drive reader to stop. */
+		if (!fdc_overridden)
+		{
+			disc_stop(0);
+			disc_stop(1);
+			disc_stop(2);
+			disc_stop(3);
+		}
 //                rpclog("FDC command %02X %i %i %i\n",val,wd1770.curside,wd1770.track,wd1770.sector);
 
 //                if (val == 0x8C && wd1770.curside == 1 && wd1770.track == 0 && wd1770.sector == 3)
@@ -140,15 +148,17 @@ void wd1770_write(uint16_t addr, uint8_t val)
 			break;
 			case 0xA: /*Write sector*/
 			wd1770.status = 0x80 | 0x1;
-			ioc_fiq(IOC_FIQ_DISC_DATA);
-			wd1770.status |= 2;
-
 //Carlo Concari: wait for first data byte before starting sector write
 			wd1770.written = 0;
 			wd1770.index_count = 0;
 			wd1770.rnf_detection = 1;
 			if (!fdc_overridden)
 				disc_writesector(curdrive, wd1770.sector, wd1770.track, wd1770.curside, wd1770.density);
+			if (wd1770.status & 1)
+			{
+				ioc_fiq(IOC_FIQ_DISC_DATA);
+				wd1770.status |= 2;
+			}
 			break;
 			case 0xC: /*Read address*/
 			wd1770.status = 0x80 | 0x1;

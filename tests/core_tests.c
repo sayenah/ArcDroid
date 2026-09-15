@@ -9,6 +9,22 @@
 #include <stdlib.h>
 #include <string.h>
 
+static uint8_t *read_fixture(const char *directory, const char *name, size_t *size)
+{
+   char path[4096];
+   int written = snprintf(path, sizeof(path), "%s/%s", directory, name);
+   assert(written > 0 && (size_t)written < sizeof(path));
+   FILE *file = fopen(path, "rb");
+   assert(file && fseek(file, 0, SEEK_END) == 0);
+   long length = ftell(file);
+   assert(length >= 0 && fseek(file, 0, SEEK_SET) == 0);
+   uint8_t *data = malloc((size_t)length ? (size_t)length : 1u);
+   assert(data && fread(data, 1u, (size_t)length, file) == (size_t)length);
+   assert(fclose(file) == 0);
+   *size = (size_t)length;
+   return data;
+}
+
 static void test_hashes(void)
 {
    ArcDigest d = arc_digest("abc", 3u);
@@ -283,6 +299,11 @@ static void test_adfs_recognition(void)
    mounted_vector[251] = 209u; mounted_vector[252] = 166u;
    mounted_vector[253] = 2u; mounted_vector[254] = 3u;
    assert(test_old_map_checksum(mounted_vector) == 6u);
+   uint8_t mounted_image[512] = {0};
+   mounted_image[255] = test_old_map_checksum(mounted_image);
+   memcpy(mounted_image + 256u, mounted_vector, sizeof(mounted_vector));
+   mounted_image[511] = 6u;
+   assert(arc_media_is_recognised_adfs(mounted_image, sizeof(mounted_image)));
 
    size_t size = ARC_TEST_E_FORMAT_SIZE;
    uint8_t *e_format = calloc(1u, size);
@@ -338,7 +359,7 @@ static void test_playlists(void)
    assert(!strcmp(playlist->entries[0].path, "C:\\media\\one.adf"));
    assert(!strcmp(playlist->entries[1].path, "\\\\server\\share\\two.adl"));
    static const char *bad_paths[] = {
-      "X:disc.adf\n", "\\disc.adf\n", "./disc.adf\n", "a/../disc.adf\n",
+      "X:disc.adf\n", "\\disc.adf\n", "/dir/x.adf\n", "./disc.adf\n", "a/../disc.adf\n",
       "https://example/disc.adf\n", "nested.m3u\n"
    };
    for (unsigned i = 0u; i < sizeof(bad_paths) / sizeof(bad_paths[0]); ++i)
@@ -388,6 +409,12 @@ static void test_playlists(void)
    static const uint8_t empty[] = "#EXTM3U\n# only comments\n";
    assert(!arc_playlist_parse("list.m3u", empty, sizeof(empty) - 1u, false,
                               playlist, &line, error, sizeof(error)) && line == 0u);
+   static const uint8_t spaced[] = "#EXTM3U \t\n \tdisc.adf\t \n";
+   assert(arc_playlist_detect("set.txt", spaced, sizeof(spaced) - 1u));
+   assert(arc_playlist_parse("/x/list.m3u", spaced, sizeof(spaced) - 1u,
+                             false, playlist, &line, error, sizeof(error)));
+   assert(playlist->count == 1u &&
+          !strcmp(playlist->entries[0].path, "/x/disc.adf"));
    free(playlist);
 }
 
@@ -409,7 +436,7 @@ static void make_plain_jfd(uint8_t image[452])
    for (unsigned i = 0u; i < 128u; ++i) image[324u + i] = (uint8_t)i;
 }
 
-static void test_jfd_parser(void)
+static void test_jfd_parser(const char *fixture_directory)
 {
    static const uint8_t gzip_jfd[] = {
       0x1f,0x8b,0x08,0x00,0x00,0x00,0x00,0x00,0x02,0xff,0xf3,0x72,0x73,0xf1,0x64,0x00,
@@ -464,7 +491,30 @@ static void test_jfd_parser(void)
    memcpy(two_members, gzip_jfd, sizeof(gzip_jfd));
    memcpy(two_members + sizeof(gzip_jfd), gzip_jfd, sizeof(gzip_jfd));
    assert(!arc_jfd_parse(two_members, sizeof(two_members),
-                         &parsed, error, sizeof(error)) && strstr(error, "trailing"));
+                         &parsed, error, sizeof(error)) && strstr(error, "declared"));
+
+   size_t multi_size = 0u;
+   uint8_t *multi = read_fixture(fixture_directory,
+      "arcdroid-test-two-member.jfd", &multi_size);
+   assert(multi_size > 36u && multi[9] == 13u);
+   assert(arc_jfd_parse(multi, multi_size, &parsed, error, sizeof(error)));
+   assert(parsed.extended && parsed.decoded_size == 592u);
+   arc_jfd_free(&parsed);
+   assert(!arc_jfd_parse(multi, multi_size - 5u, &parsed, error, sizeof(error)) &&
+          strstr(error, "truncated"));
+   uint8_t *garbage = malloc(multi_size + 1u);
+   assert(garbage);
+   memcpy(garbage, multi, multi_size); garbage[multi_size] = 0u;
+   assert(!arc_jfd_parse(garbage, multi_size + 1u, &parsed, error, sizeof(error)) &&
+          strstr(error, "trailing"));
+   free(garbage);
+   free(multi);
+   multi = read_fixture(fixture_directory,
+      "arcdroid-test-three-member.jfd", &multi_size);
+   assert(arc_jfd_parse(multi, multi_size, &parsed, error, sizeof(error)));
+   assert(parsed.extended && parsed.decoded_size == 592u);
+   arc_jfd_free(&parsed);
+   free(multi);
 
    uint8_t *owned = malloc(sizeof(plain));
    assert(owned);
@@ -674,8 +724,9 @@ static void test_input(void)
    assert(arc_input_consume(&state, true, &event) && !event.down);
 }
 
-int main(void)
+int main(int argc, char **argv)
 {
+   assert(argc == 2);
    test_hashes();
    test_firmware_table();
    test_assembly();
@@ -683,7 +734,7 @@ int main(void)
    test_adfs_recognition();
    test_short_media_policy();
    test_playlists();
-   test_jfd_parser();
+   test_jfd_parser(argv[1]);
    test_input();
    puts("core_tests: all checks passed");
    return 0;

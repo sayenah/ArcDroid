@@ -128,10 +128,8 @@ static void test_transfer_results(void)
 
    reset_results();
    drive_funcs[0]->writesector(0, 4, 0, 0, 1);
-   drive_funcs[0]->poll();
    assert(write_protect_count == 1u);
    drive_funcs[0]->format(0, 0, 0, 1);
-   drive_funcs[0]->poll();
    assert(write_protect_count == 2u);
    drive_funcs[0]->close(0);
 }

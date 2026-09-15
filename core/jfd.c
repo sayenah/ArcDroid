@@ -47,10 +47,6 @@ static bool arc_gzip_decode(const uint8_t *input, size_t input_size,
    memset(&stream, 0, sizeof(stream));
    stream.zalloc = arc_zalloc;
    stream.zfree = arc_zfree;
-   stream.next_in = (Bytef *)(uintptr_t)input;
-   stream.avail_in = (uInt)input_size;
-   stream.next_out = decoded;
-   stream.avail_out = ARC_JFD_MAX_DECODED;
    int status = inflateInit2(&stream, 15 + 16);
    if (status != Z_OK)
    {
@@ -58,52 +54,73 @@ static bool arc_gzip_decode(const uint8_t *input, size_t input_size,
       arc_jfd_error(error, error_size, "gzip inflater initialization failed");
       return false;
    }
-   uLong previous_in = ~(uLong)0;
-   uLong previous_out = ~(uLong)0;
-   while (status == Z_OK)
+   size_t input_at = 0u;
+   size_t decoded_size = 0u;
+   while (input_at < input_size)
    {
-      previous_in = stream.total_in;
-      previous_out = stream.total_out;
-      status = inflate(&stream, Z_NO_FLUSH);
-      if (status == Z_OK && previous_in == stream.total_in &&
-          previous_out == stream.total_out)
+      if (input_size - input_at < 18u || input[input_at] != 0x1fu ||
+          input[input_at + 1u] != 0x8bu)
       {
-         status = Z_BUF_ERROR;
-         break;
+         (void)inflateEnd(&stream);
+         free(decoded);
+         arc_jfd_error(error, error_size, input_at ?
+                       "non-gzip trailing data" : "truncated gzip stream");
+         return false;
       }
-      if (status == Z_OK && stream.avail_out == 0u) break;
+      stream.next_in = (Bytef *)(uintptr_t)(input + input_at);
+      stream.avail_in = (uInt)(input_size - input_at);
+      stream.next_out = decoded + decoded_size;
+      stream.avail_out = (uInt)(ARC_JFD_MAX_DECODED - decoded_size);
+      status = Z_OK;
+      uLong previous_in = ~(uLong)0;
+      uLong previous_out = ~(uLong)0;
+      while (status == Z_OK)
+      {
+         previous_in = stream.total_in;
+         previous_out = stream.total_out;
+         status = inflate(&stream, Z_NO_FLUSH);
+         if (status == Z_OK && previous_in == stream.total_in &&
+             previous_out == stream.total_out)
+         { status = Z_BUF_ERROR; break; }
+         if (status == Z_OK && stream.avail_out == 0u) break;
+      }
+      size_t member_size = (size_t)stream.total_out;
+      size_t consumed = (size_t)stream.total_in;
+      if (status != Z_STREAM_END || consumed < 18u)
+      {
+         bool at_cap = stream.avail_out == 0u;
+         (void)inflateEnd(&stream);
+         free(decoded);
+         arc_jfd_error(error, error_size, at_cap ?
+                       "decoded output exceeds 8 MiB" :
+                       "truncated or corrupt gzip stream");
+         return false;
+      }
+      uint32_t expected_crc = arc_le32(input + input_at + consumed - 8u);
+      uint32_t expected_size = arc_le32(input + input_at + consumed - 4u);
+      uint32_t actual_crc = (uint32_t)crc32(0L, decoded + decoded_size,
+                                            (uInt)member_size);
+      if (actual_crc != expected_crc || expected_size != (uint32_t)member_size)
+      {
+         (void)inflateEnd(&stream);
+         free(decoded);
+         arc_jfd_error(error, error_size, actual_crc != expected_crc ?
+                       "gzip CRC32 mismatch" : "gzip ISIZE mismatch");
+         return false;
+      }
+      input_at += consumed;
+      decoded_size += member_size;
+      if (input_at < input_size && inflateReset2(&stream, 15 + 16) != Z_OK)
+      {
+         (void)inflateEnd(&stream);
+         free(decoded);
+         arc_jfd_error(error, error_size, "gzip inflater reset failed");
+         return false;
+      }
    }
-   size_t decoded_size = (size_t)stream.total_out;
-   size_t consumed = (size_t)stream.total_in;
    (void)inflateEnd(&stream);
-   if (status != Z_STREAM_END)
-   {
-      free(decoded);
-      arc_jfd_error(error, error_size, stream.avail_out == 0u ?
-                    "decoded output exceeds 8 MiB" : "truncated or corrupt gzip stream");
-      return false;
-   }
-   if (consumed != input_size)
-   {
-      free(decoded);
-      arc_jfd_error(error, error_size, "trailing gzip member or data");
-      return false;
-   }
-   uint32_t expected_crc = arc_le32(input + input_size - 8u);
-   uint32_t expected_size = arc_le32(input + input_size - 4u);
-   uint32_t actual_crc = (uint32_t)crc32(0L, decoded, (uInt)decoded_size);
-   if (actual_crc != expected_crc)
-   {
-      free(decoded);
-      arc_jfd_error(error, error_size, "gzip CRC32 mismatch");
-      return false;
-   }
-   if (expected_size != (uint32_t)decoded_size)
-   {
-      free(decoded);
-      arc_jfd_error(error, error_size, "gzip ISIZE mismatch");
-      return false;
-   }
+   uint8_t *shrunk = realloc(decoded, decoded_size ? decoded_size : 1u);
+   if (shrunk) decoded = shrunk;
    *output = decoded;
    *output_size = decoded_size;
    return true;

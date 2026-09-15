@@ -374,6 +374,29 @@ def build_jfd(payload: bytes, title: bytes = b"ArcDroid synthetic JFD") -> bytea
     return image
 
 
+def build_extended_jfd(payload: bytes,
+                       title: bytes = b"ArcDroid synthetic JFD") -> bytearray:
+    """Build an extended-header JFD whose table begins at byte 316."""
+    track_offset, sector_offset, data_offset = 316, 324, 336
+    image = bytearray(data_offset + len(payload))
+    image[:4] = b"JFDI"
+    struct.pack_into("<I", image, 8, len(image))
+    struct.pack_into("<III", image, 24, track_offset, sector_offset, data_offset)
+    image[48:48 + min(len(title), 256)] = title[:256]
+    struct.pack_into("<II", image, track_offset, 0, 0xFFFFFFFF)
+    struct.pack_into("<II", image, sector_offset, (2 << 16) | 1, 0)
+    struct.pack_into("<I", image, sector_offset + 8, 0xFFFFFFFF)
+    image[data_offset:] = payload
+    return image
+
+
+def gzip_member(payload: bytes) -> bytes:
+    """Create a deterministic gzip member marked as Acorn RISC OS (OS 13)."""
+    member = bytearray(gzip.compress(payload, mtime=0))
+    member[9] = 13
+    return bytes(member)
+
+
 def build_jfd_family(descriptors: list[tuple[int, int, int, int, int, bytes | None]],
                      title: bytes = b"ArcDroid JFD family") -> bytearray:
     """Build one track-side from (time, B, density, id, C, payload)."""
@@ -537,7 +560,15 @@ def main() -> None:
         encoding="utf-8", newline="\n")
     jfd = build_jfd(bytes(disc1[:256]))
     (args.output / "arcdroid-test.jfd").write_bytes(jfd)
-    (args.output / "arcdroid-test-gzip.jfd").write_bytes(gzip.compress(jfd, mtime=0))
+    (args.output / "arcdroid-test-gzip.jfd").write_bytes(gzip_member(jfd))
+    extended_jfd = build_extended_jfd(bytes(disc1[:256]))
+    two_member = gzip_member(extended_jfd[:316]) + gzip_member(extended_jfd[316:])
+    body_midpoint = 316 + (len(extended_jfd) - 316) // 2
+    three_member = (gzip_member(extended_jfd[:316]) +
+                    gzip_member(extended_jfd[316:body_midpoint]) +
+                    gzip_member(extended_jfd[body_midpoint:]))
+    (args.output / "arcdroid-test-two-member.jfd").write_bytes(two_member)
+    (args.output / "arcdroid-test-three-member.jfd").write_bytes(three_member)
     family = args.output / "jfd-family"
     family.mkdir(exist_ok=True)
     for size_code in range(4):
@@ -629,7 +660,7 @@ def main() -> None:
             (short_family / f"{name}-{case}.{extension}").write_bytes(full[:-missing])
         bad_descriptor = bytearray(full[:-sector_size])
         if name == "800k-e":
-            bad_descriptor[8] ^= 1
+            bad_descriptor[8] = 12
             bad_descriptor[0] = 0
             sums = [0, 0, 0, 0]
             rover = 1020

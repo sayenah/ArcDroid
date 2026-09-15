@@ -99,7 +99,8 @@ static bool arc_resolve_path(const char *playlist_path, const char *entry,
    if (windows_host && entry_length >= 2u && isalpha((unsigned char)entry[0]) &&
        entry[1] == ':' && !drive_rooted)
    { *reason = "drive-relative paths are unsupported"; return false; }
-   if (windows_host && entry_length && entry[0] == '\\' && !unc)
+   if (windows_host && entry_length &&
+       ((entry[0] == '\\' && !unc) || entry[0] == '/'))
    { *reason = "root-relative paths are unsupported"; return false; }
    if (arc_has_forbidden_segment(entry, entry_length))
    { *reason = "'.' and '..' path segments are unsupported"; return false; }
@@ -139,8 +140,10 @@ bool arc_playlist_detect(const char *path, const uint8_t *data, size_t size)
    if (arc_case_extension(path, "m3u")) return true;
    if (!data) return false;
    size_t offset = size >= 3u && data[0] == 0xefu && data[1] == 0xbbu && data[2] == 0xbfu ? 3u : 0u;
-   return size - offset >= 7u && !memcmp(data + offset, "#EXTM3U", 7u) &&
-          (size - offset == 7u || data[offset + 7u] == '\r' || data[offset + 7u] == '\n');
+   if (size - offset < 7u || memcmp(data + offset, "#EXTM3U", 7u)) return false;
+   offset += 7u;
+   while (offset < size && (data[offset] == ' ' || data[offset] == '\t')) ++offset;
+   return offset == size || data[offset] == '\r' || data[offset] == '\n';
 }
 
 bool arc_playlist_parse(const char *playlist_path, const uint8_t *data,
@@ -170,6 +173,10 @@ bool arc_playlist_parse(const char *playlist_path, const uint8_t *data,
       if (offset < size && data[offset] == '\r') ++offset;
       if (offset < size && data[offset] == '\n') ++offset;
       ++line_number;
+      while (length && (data[start] == ' ' || data[start] == '\t'))
+      { ++start; --length; }
+      while (length && (data[start + length - 1u] == ' ' ||
+                         data[start + length - 1u] == '\t')) --length;
       if (!length) continue;
       const char *line = (const char *)data + start;
       if (line[0] == '#')

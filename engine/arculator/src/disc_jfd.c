@@ -17,7 +17,7 @@ typedef enum {
    JFD_FIND,
    JFD_READ_DATA,
    JFD_READ_ADDRESS,
-   JFD_WRITE_PROTECT
+   JFD_DATA_CRC_ERROR
 } JfdState;
 
 static disc_funcs_t jfd_disc_funcs;
@@ -100,7 +100,7 @@ static void jfd_writesector(int drive, int sector, int track, int side, int dens
    (void)sector;
    jfd_stop();
    if (!jfd_begin(drive, track, side, density)) return;
-   jfd_state = JFD_WRITE_PROTECT;
+   fdc_funcs->writeprotect(fdc_p);
 }
 
 static void jfd_readaddress(int drive, int track, int side, int density)
@@ -115,7 +115,7 @@ static void jfd_format(int drive, int track, int side, int density)
 {
    jfd_stop();
    if (!jfd_begin(drive, track, side, density)) return;
-   jfd_state = JFD_WRITE_PROTECT;
+   fdc_funcs->writeprotect(fdc_p);
 }
 
 static uint16_t jfd_crc_byte(uint16_t crc, uint8_t value)
@@ -183,10 +183,10 @@ static void jfd_poll(void)
    jfd_phase_us = new_phase;
    if (wrapped) fdc_funcs->indexpulse(fdc_p);
 
-   if (jfd_state == JFD_WRITE_PROTECT)
+   if (jfd_state == JFD_DATA_CRC_ERROR)
    {
       jfd_stop();
-      fdc_funcs->writeprotect(fdc_p);
+      fdc_funcs->datacrcerror(fdc_p);
       return;
    }
    if (jfd_state == JFD_FIND)
@@ -241,9 +241,12 @@ static void jfd_poll(void)
       if (jfd_transfer_pos == sector->size)
       {
          bool bad_crc = (sector->flags & ARC_JFD_DATA_CRC_BAD) != 0u;
-         jfd_stop();
-         if (bad_crc) fdc_funcs->datacrcerror(fdc_p);
-         else fdc_funcs->finishread(fdc_p);
+         if (bad_crc) jfd_state = JFD_DATA_CRC_ERROR;
+         else
+         {
+            jfd_stop();
+            fdc_funcs->finishread(fdc_p);
+         }
       }
    }
 }
