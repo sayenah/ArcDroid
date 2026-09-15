@@ -1421,6 +1421,7 @@ static void test_osk(void)
           arc_input_effective_level(&input, RETROK_a));
 
    /* Reconciliation invalidates an activation once and recovers OSK levels. */
+   assert(!arc_osk_advance(&osk, 100u));
    for (unsigned attempt = 0u; attempt < 3u; ++attempt)
    {
       assert(arc_osk_press_focused(&osk, &input));
@@ -1432,6 +1433,14 @@ static void test_osk(void)
       while (arc_input_pending(&input))
          (void)arc_input_consume(&input, true, &events[0]);
    }
+   /* Reaching the one-second deadline alone does not clear INTERRUPTED: an
+    * action after that deadline is the later boundary and clears it. */
+   uint64_t interrupted_until = osk.interrupted_until_us;
+   assert(!arc_osk_advance(&osk, interrupted_until) &&
+          osk.interrupted_visible);
+   unsigned interrupted_focus = osk.focus;
+   arc_osk_move(&osk, 1, 0, interrupted_until, true);
+   assert(osk.focus != interrupted_focus && !osk.interrupted_visible);
 
    /* A full queue reports busy and does not start a partial chord. */
    arc_input_reset(&input);
@@ -1441,6 +1450,13 @@ static void test_osk(void)
       arc_input_source_key(&input, ARC_INPUT_SOURCE_KEYBOARD, RETROK_b, false, true);
    }
    assert(!arc_osk_shortcut(&osk, &input, RETROK_RETURN) && osk.busy);
+   uint64_t busy_until = osk.busy_until_us;
+   while (arc_input_pending(&input))
+      (void)arc_input_consume(&input, true, &events[0]);
+   osk.focus = shift;
+   assert(arc_osk_press_focused(&osk, &input) && osk.busy);
+   assert(!arc_osk_advance(&osk, busy_until - 1u) && osk.busy);
+   assert(arc_osk_advance(&osk, busy_until) && !osk.busy);
 
    /* A long label is clipped at its own cell instead of painting over the
     * neighbouring key. */
@@ -1508,24 +1524,37 @@ static void test_osk(void)
          free(surface);
       }
 
-   /* The authored arrow byte reaches its bitmap and an acknowledged warning
-    * remains visible through exactly one successful render. */
+   /* The authored arrow byte reaches its bitmap. Derive the compact INT
+    * golden through a real generation interruption; rendering does not
+    * acknowledge or prematurely clear the guest-time/action-held notice. */
    memset(&osk, 0, sizeof(osk));
+   arc_input_reset(&input);
    assert(arc_osk_open(&osk, 320u, 256u));
    bool saw_up_arrow = false;
    for (unsigned i = 0u; i < osk.key_count; ++i)
       if (osk.keys[i].key == RETROK_UP)
          saw_up_arrow = !strcmp(osk.keys[i].label, "\x7d");
    assert(saw_up_arrow);
-   osk.interrupted_visible = true;
+   unsigned notice_key = UINT_MAX;
+   for (unsigned i = 0u; i < osk.key_count; ++i)
+      if (osk.keys[i].key == RETROK_a) notice_key = i;
+   assert(notice_key != UINT_MAX);
+   osk.focus = notice_key;
+   assert(arc_osk_advance(&osk, 500u) == false);
+   assert(arc_osk_press_focused(&osk, &input));
+   arc_osk_update(&osk, &input);
+   arc_input_release_all(&input);
+   arc_osk_update(&osk, &input);
+   assert(arc_osk_take_interrupted(&osk) && osk.interrupted_visible);
    uint32_t *notice = calloc(320u * 256u, sizeof(*notice));
    assert(notice && arc_osk_render(&osk, notice, 320u, 256u,
                                    320u * sizeof(uint32_t), "Golden custom"));
    char notice_digest[41];
    arc_sha1_hex(notice, 320u * 256u * sizeof(*notice), notice_digest);
-   assert(!strcmp(notice_digest, "6c2d6b5222f5ab652dba1462f4415ed15fa1d415"));
-   arc_osk_acknowledge_render(&osk);
-   assert(!osk.interrupted_visible);
+   if (strcmp(notice_digest, "9cc4312d1bf231f4a49d9a982bf635a587ca55be"))
+      fprintf(stderr, "OSK compact INT golden = %s\n", notice_digest);
+   assert(!strcmp(notice_digest, "9cc4312d1bf231f4a49d9a982bf635a587ca55be"));
+   assert(osk.interrupted_visible);
    free(notice);
 }
 

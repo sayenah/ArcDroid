@@ -8,7 +8,56 @@
 #include <stdio.h>
 #include <string.h>
 
-enum { ARC_OSK_REPEAT_DELAY_US = 300000u, ARC_OSK_REPEAT_US = 90000u };
+enum {
+   ARC_OSK_REPEAT_DELAY_US = 300000u,
+   ARC_OSK_REPEAT_US = 90000u,
+   ARC_OSK_NOTICE_US = 1000000u
+};
+
+static uint64_t arc_osk_notice_deadline(uint64_t guest_us)
+{
+   return guest_us > UINT64_MAX - ARC_OSK_NOTICE_US ?
+      UINT64_MAX : guest_us + ARC_OSK_NOTICE_US;
+}
+
+static bool arc_osk_refresh_notices(ArcOsk *osk)
+{
+   bool changed = false;
+   if (osk->busy && osk->guest_us >= osk->busy_until_us &&
+       osk->action_generation > osk->busy_action_generation)
+   {
+      osk->busy = false;
+      changed = true;
+   }
+   if (osk->interrupted_visible &&
+       osk->guest_us >= osk->interrupted_until_us &&
+       osk->action_generation > osk->interrupted_action_generation)
+   {
+      osk->interrupted_visible = false;
+      changed = true;
+   }
+   return changed;
+}
+
+static void arc_osk_note_action(ArcOsk *osk)
+{
+   if (osk->action_generation != UINT64_MAX) ++osk->action_generation;
+   (void)arc_osk_refresh_notices(osk);
+}
+
+static void arc_osk_show_busy(ArcOsk *osk)
+{
+   osk->busy = true;
+   osk->busy_until_us = arc_osk_notice_deadline(osk->guest_us);
+   osk->busy_action_generation = osk->action_generation;
+}
+
+static void arc_osk_show_interrupted(ArcOsk *osk)
+{
+   osk->interrupted_visible = true;
+   osk->interrupted_until_us = arc_osk_notice_deadline(osk->guest_us);
+   osk->interrupted_action_generation = osk->action_generation;
+}
 
 static const ArcInputKey *arc_osk_catalogue_key(const ArcInputKey *shared,
                                                 size_t shared_count,
@@ -153,6 +202,11 @@ bool arc_osk_open(ArcOsk *osk, unsigned width, unsigned height)
    osk->busy = false;
    osk->interrupted_pending = false;
    osk->interrupted_visible = false;
+   osk->busy_until_us = 0u;
+   osk->busy_action_generation = 0u;
+   osk->interrupted_until_us = 0u;
+   osk->interrupted_action_generation = 0u;
+   osk->action_generation = 0u;
    osk->repeat_dx = osk->repeat_dy = 0;
    return true;
 }
@@ -174,6 +228,11 @@ void arc_osk_close(ArcOsk *osk, ArcInputState *input)
    osk->busy = false;
    osk->interrupted_pending = false;
    osk->interrupted_visible = false;
+   osk->busy_until_us = 0u;
+   osk->busy_action_generation = 0u;
+   osk->interrupted_until_us = 0u;
+   osk->interrupted_action_generation = 0u;
+   osk->action_generation = 0u;
    osk->contact = false;
    osk->contact_valid = false;
    memset(osk->modifiers, 0, sizeof(osk->modifiers));
@@ -210,7 +269,11 @@ void arc_osk_move(ArcOsk *osk, int dx, int dy, uint64_t guest_us, bool initial)
       int64_t score = primary * primary + secondary * secondary * 4;
       if (score < best) { best = score; selected = i; }
    }
-   osk->focus = selected;
+   if (selected != osk->focus)
+   {
+      osk->focus = selected;
+      arc_osk_note_action(osk);
+   }
 }
 
 static bool arc_osk_start(ArcOsk *osk, ArcInputState *input, unsigned key,
@@ -227,10 +290,9 @@ static bool arc_osk_start(ArcOsk *osk, ArcInputState *input, unsigned key,
          osk->activation_modifiers[modifier_count++] = modifier_keys[i];
    if (arc_input_available(input) < modifier_count * 2u + 2u)
    {
-      osk->busy = true;
+      arc_osk_show_busy(osk);
       return false;
    }
-   osk->busy = false;
    osk->activation_key = key;
    osk->activation_modifier_count = modifier_count;
    osk->activation_held = held;
@@ -242,6 +304,7 @@ static bool arc_osk_start(ArcOsk *osk, ArcInputState *input, unsigned key,
 bool arc_osk_press_focused(ArcOsk *osk, ArcInputState *input)
 {
    if (!osk || !osk->visible || osk->focus >= osk->key_count) return false;
+   arc_osk_note_action(osk);
    ArcOskKey *key = &osk->keys[osk->focus];
    if (key->action == ARC_OSK_ACTION_PAGE)
    {
@@ -261,8 +324,16 @@ bool arc_osk_press_focused(ArcOsk *osk, ArcInputState *input)
 
 bool arc_osk_shortcut(ArcOsk *osk, ArcInputState *input, unsigned key)
 {
-   return osk && osk->visible && arc_input_key(key) &&
-          arc_osk_start(osk, input, key, false);
+   if (!osk || !osk->visible || !arc_input_key(key)) return false;
+   arc_osk_note_action(osk);
+   return arc_osk_start(osk, input, key, false);
+}
+
+bool arc_osk_advance(ArcOsk *osk, uint64_t guest_us)
+{
+   if (!osk) return false;
+   osk->guest_us = guest_us;
+   return arc_osk_refresh_notices(osk);
 }
 
 void arc_osk_release_activation(ArcOsk *osk)
@@ -279,7 +350,7 @@ void arc_osk_update(ArcOsk *osk, ArcInputState *input)
       osk->activation_phase = 0u;
       osk->activation_held = false;
       osk->interrupted_pending = true;
-      osk->interrupted_visible = true;
+      arc_osk_show_interrupted(osk);
       return;
    }
    if (osk->activation_phase == 1u)
@@ -335,7 +406,11 @@ bool arc_osk_touch(ArcOsk *osk, int x, int y, bool down, ArcInputState *input)
          {
             osk->contact_key = i;
             osk->contact_valid = true;
-            osk->focus = i;
+            if (osk->focus != i)
+            {
+               osk->focus = i;
+               arc_osk_note_action(osk);
+            }
             break;
          }
       }
@@ -366,11 +441,6 @@ bool arc_osk_take_interrupted(ArcOsk *osk)
    if (!osk || !osk->interrupted_pending) return false;
    osk->interrupted_pending = false;
    return true;
-}
-
-void arc_osk_acknowledge_render(ArcOsk *osk)
-{
-   if (osk) osk->interrupted_visible = false;
 }
 
 static uint32_t arc_osk_blend(uint32_t under, uint32_t over, unsigned alpha)
@@ -433,8 +503,23 @@ bool arc_osk_render(const ArcOsk *osk, uint32_t *pixels, unsigned width,
    arc_osk_rect(pixels, width, height, stride, 0u, panel_y, width, panel_h,
                 UINT32_C(0x00101824), alpha);
    char header[192];
-   snprintf(header, sizeof(header), "ARCDROID OSK - %s%s%s", profile ? profile : "Generic",
-            osk->busy ? " - BUSY" : "", osk->interrupted_visible ? " - INTERRUPTED" : "");
+   const char *name = profile ? profile : "Generic";
+   const char *state = osk->busy && osk->interrupted_visible ?
+      (osk->compact ? "BUSY/INT" : "BUSY/INTERRUPTED") :
+      osk->busy ? "BUSY" : osk->interrupted_visible ?
+      (osk->compact ? "INT" : "INTERRUPTED") : NULL;
+   size_t glyph_capacity = width / 8u;
+   const char *prefix = "ARCDROID OSK - ";
+   size_t fixed = strlen(prefix) + (state ? strlen(state) + 3u : 0u);
+   size_t name_capacity = glyph_capacity > fixed ? glyph_capacity - fixed : 0u;
+   if (name_capacity > sizeof(header) - 1u - fixed)
+      name_capacity = sizeof(header) - 1u - fixed;
+   if (state)
+      snprintf(header, sizeof(header), "%s%.*s - %s",
+               prefix, (int)name_capacity, name, state);
+   else
+      snprintf(header, sizeof(header), "%s%.*s",
+               prefix, (int)name_capacity, name);
    arc_osk_text(pixels, width, height, stride, 4u, panel_y + 4u, width, header,
                 UINT32_C(0x00ffffff));
    for (unsigned i = 0u; i < osk->key_count; ++i)

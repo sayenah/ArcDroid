@@ -110,6 +110,7 @@ static bool arc_osk_source_checked;
 static ArcInputProfile arc_test_input_profile;
 static bool arc_test_input_profile_registered;
 static bool arc_test_stall_kart;
+static unsigned arc_test_presented_osk_notice;
 void arc_libretro_test_fail_osk_allocations(unsigned count)
 {
    arc_osk_fail_allocations = count;
@@ -144,6 +145,23 @@ unsigned arc_libretro_test_input_pending(void)
 }
 bool arc_libretro_test_osk_visible(void) { return arc_osk.visible; }
 bool arc_libretro_test_osk_busy(void) { return arc_osk.busy; }
+unsigned arc_libretro_test_presented_osk_notice(void)
+{
+   return arc_test_presented_osk_notice;
+}
+void arc_libretro_test_force_input_reconcile(void)
+{
+   uint64_t generation = arc_input_reconcile_generation(&arc_inputs);
+   bool down = false;
+   while (arc_input_reconcile_generation(&arc_inputs) == generation)
+   {
+      down = !down;
+      arc_input_source_key(&arc_inputs, ARC_INPUT_SOURCE_KEYBOARD,
+                           RETROK_BREAK, down, true);
+   }
+   arc_input_source_key(&arc_inputs, ARC_INPUT_SOURCE_KEYBOARD,
+                        RETROK_BREAK, false, true);
+}
 #endif
 
 typedef struct {
@@ -1544,6 +1562,8 @@ static int arc_pointer_to_pixel(int value, unsigned extent)
 static void arc_poll_osk_controls(void)
 {
    if (!arc_input_state) return;
+   if (arc_osk_advance(&arc_osk, arc_guest_time_us))
+      arc_osk_present_dirty = true;
    unsigned toggle_id = arc_core_options.osk_toggle == ARC_OSK_TOGGLE_R3 ?
       RETRO_DEVICE_ID_JOYPAD_R3 : RETRO_DEVICE_ID_JOYPAD_L3;
    bool toggle = arc_core_options.osk_toggle != ARC_OSK_TOGGLE_OFF &&
@@ -2706,6 +2726,9 @@ failed:
 
 static void arc_present(const ArcEngineFrame *frame)
 {
+#if defined(ARCDROID_TEST_FAULTS)
+   arc_test_presented_osk_notice = 0u;
+#endif
    if (!arc_video || !frame) return;
    if (!arc_osk.visible)
    {
@@ -2767,7 +2790,10 @@ static void arc_present(const ArcEngineFrame *frame)
    {
       arc_video(arc_osk_surface, frame->width, frame->height,
                 (size_t)frame->width * sizeof(uint32_t));
-      arc_osk_acknowledge_render(&arc_osk);
+#if defined(ARCDROID_TEST_FAULTS)
+      arc_test_presented_osk_notice = (arc_osk.busy ? 1u : 0u) |
+         (arc_osk.interrupted_visible ? 2u : 0u);
+#endif
    }
 #if defined(ARCDROID_TEST_FAULTS)
    if (!arc_osk_source_checked)

@@ -390,7 +390,13 @@ typedef struct {
    unsigned page_count;
    unsigned focus;
    unsigned contact_key;
+   uint64_t guest_us;
    uint64_t repeat_at_us;
+   uint64_t action_generation;
+   uint64_t busy_until_us;
+   uint64_t busy_action_generation;
+   uint64_t interrupted_until_us;
+   uint64_t interrupted_action_generation;
    int repeat_dx;
    int repeat_dy;
    ArcOskModifier modifiers[ARC_OSK_MODIFIER_COUNT];
@@ -412,11 +418,11 @@ void arc_osk_move(ArcOsk *osk, int dx, int dy, uint64_t guest_us,
 bool arc_osk_press_focused(ArcOsk *osk, ArcInputState *input);
 void arc_osk_release_activation(ArcOsk *osk);
 bool arc_osk_shortcut(ArcOsk *osk, ArcInputState *input, unsigned key);
+bool arc_osk_advance(ArcOsk *osk, uint64_t guest_us);
 void arc_osk_update(ArcOsk *osk, ArcInputState *input);
 bool arc_osk_touch(ArcOsk *osk, int x, int y, bool down,
                    ArcInputState *input);
 bool arc_osk_take_interrupted(ArcOsk *osk);
-void arc_osk_acknowledge_render(ArcOsk *osk);
 bool arc_osk_render(const ArcOsk *osk, uint32_t *pixels, unsigned width,
                     unsigned height, size_t pitch, const char *profile);
 

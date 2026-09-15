@@ -917,6 +917,8 @@ int main(int argc, char **argv)
    unsigned (*arc_libretro_test_input_pending)(void) = NULL;
    bool (*arc_libretro_test_osk_visible)(void) = NULL;
    bool (*arc_libretro_test_osk_busy)(void) = NULL;
+   unsigned (*arc_libretro_test_presented_osk_notice)(void) = NULL;
+   void (*arc_libretro_test_force_input_reconcile)(void) = NULL;
    void (*arc_platform_test_input_events_reset)(void) = NULL;
    size_t (*arc_platform_test_input_events)(ArcKartEvent *, size_t) = NULL;
    if (!real_boot)
@@ -953,6 +955,10 @@ int main(int argc, char **argv)
          dlsym(module, "arc_libretro_test_osk_visible");
       *(void **)(&arc_libretro_test_osk_busy) =
          dlsym(module, "arc_libretro_test_osk_busy");
+      *(void **)(&arc_libretro_test_presented_osk_notice) =
+         dlsym(module, "arc_libretro_test_presented_osk_notice");
+      *(void **)(&arc_libretro_test_force_input_reconcile) =
+         dlsym(module, "arc_libretro_test_force_input_reconcile");
       *(void **)(&arc_platform_test_input_events_reset) =
          dlsym(module, "arc_platform_test_input_events_reset");
       *(void **)(&arc_platform_test_input_events) =
@@ -970,6 +976,8 @@ int main(int argc, char **argv)
              arc_libretro_test_fill_input_queue &&
              arc_libretro_test_input_pending &&
              arc_libretro_test_osk_visible && arc_libretro_test_osk_busy &&
+             arc_libretro_test_presented_osk_notice &&
+             arc_libretro_test_force_input_reconcile &&
              arc_platform_test_input_events_reset && arc_platform_test_input_events);
       ArcDigest application_profile_digest = digest_file(argv[12]);
       ArcDigest playlist_profile_digest = digest_playlist_pair(argv[7], argv[8]);
@@ -2481,6 +2489,18 @@ int main(int argc, char **argv)
           modal_direction_edges == 0u);
    assert(last_video_signature != before_osk_signature);
    assert(arc_libretro_test_osk_source_unchanged());
+   /* A generation change during a held activation reaches the compositor and
+    * remains on an actually presented frame 20 fields later (about 400 ms). */
+   assert(arc_libretro_test_osk_focus_key(RETROK_a));
+   joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_A] = true; retro_run();
+   arc_libretro_test_force_input_reconcile();
+   joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_A] = false;
+   for (unsigned frame = 0u; frame < 20u; ++frame) retro_run();
+   assert((arc_libretro_test_presented_osk_notice() & 2u) != 0u);
+   for (unsigned frame = 0u;
+        frame < 300u && arc_libretro_test_input_pending(); ++frame)
+      retro_run();
+   assert(arc_libretro_test_input_pending() == 0u);
    unsigned narrow_before = osk_narrow_osd_calls;
    arc_libretro_test_probe_osk_geometry(256u, 256u);
    arc_libretro_test_probe_osk_geometry(256u, 256u);
