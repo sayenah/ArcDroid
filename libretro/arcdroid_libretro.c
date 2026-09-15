@@ -145,6 +145,21 @@ unsigned arc_libretro_test_input_pending(void)
 }
 bool arc_libretro_test_osk_visible(void) { return arc_osk.visible; }
 bool arc_libretro_test_osk_busy(void) { return arc_osk.busy; }
+bool arc_libretro_test_osk_activation_active(void)
+{
+   return arc_osk.activation_phase != 0u;
+}
+void arc_libretro_test_force_present(void) { arc_osk_present_dirty = true; }
+unsigned arc_libretro_test_osk_modifier_state(unsigned key)
+{
+   static const unsigned modifier_keys[ARC_OSK_MODIFIER_COUNT] = {
+      RETROK_LSHIFT, RETROK_RSHIFT, RETROK_LCTRL,
+      RETROK_RCTRL, RETROK_LALT, RETROK_RALT
+   };
+   for (unsigned i = 0u; i < ARC_OSK_MODIFIER_COUNT; ++i)
+      if (modifier_keys[i] == key) return (unsigned)arc_osk.modifiers[i];
+   return UINT_MAX;
+}
 unsigned arc_libretro_test_presented_osk_notice(void)
 {
    return arc_test_presented_osk_notice;

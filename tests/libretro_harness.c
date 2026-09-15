@@ -5,6 +5,7 @@
 #include "e_format_fixture.h"
 
 #include <assert.h>
+#include <ctype.h>
 #include <dirent.h>
 #include <dlfcn.h>
 #include <errno.h>
@@ -83,6 +84,7 @@ static bool pointer_offscreen[3];
 static int pointer_contact_x[3], pointer_contact_y[3];
 static bool real_boot_mode;
 static char evidence_path[4096];
+static char pending_screenshot[256];
 static FILE *evidence_log;
 static unsigned fdc_command_count;
 static unsigned fdc_read_count;
@@ -579,6 +581,27 @@ static bool environment(unsigned command, void *data)
       default: return false;
    }
 }
+static void write_ppm(const char *path, const void *data, unsigned w,
+                      unsigned h, size_t pitch)
+{
+   FILE *ppm = fopen(path, "wb");
+   assert(ppm);
+   fprintf(ppm, "P6\n%u %u\n255\n", w, h);
+   const uint8_t *pixels = data;
+   for (unsigned y = 0; y < h; ++y, pixels += pitch)
+      for (unsigned x = 0; x < w; ++x)
+      {
+         uint32_t pixel;
+         uint8_t rgb[3];
+         memcpy(&pixel, pixels + x * 4u, sizeof(pixel));
+         rgb[0] = (uint8_t)(pixel >> 16);
+         rgb[1] = (uint8_t)(pixel >> 8);
+         rgb[2] = (uint8_t)pixel;
+         assert(fwrite(rgb, 1u, sizeof(rgb), ppm) == sizeof(rgb));
+      }
+   assert(!fclose(ppm));
+}
+
 static void video(const void *data, unsigned w, unsigned h, size_t pitch)
 {
    assert((data || can_dupe) && w > 0u && w <= 4096u && h > 0u && h <= 2048u && pitch >= w * 4u);
@@ -619,6 +642,14 @@ static void video(const void *data, unsigned w, unsigned h, size_t pitch)
    video_trace_signature ^= hash;
    video_trace_signature *= UINT64_C(1099511628211);
    ++video_frames;
+   if (pending_screenshot[0])
+   {
+      char path[4096];
+      snprintf(path, sizeof(path), "%s/%s.ppm", evidence_path,
+               pending_screenshot);
+      write_ppm(path, data, w, h, pitch);
+      pending_screenshot[0] = '\0';
+   }
    if (real_boot_mode && (video_frames == 100u || video_frames == 300u ||
                           video_frames == 600u || video_frames == 1000u ||
                           video_frames == 1500u || video_frames == 2000u ||
@@ -626,22 +657,7 @@ static void video(const void *data, unsigned w, unsigned h, size_t pitch)
    {
       char path[4096];
       snprintf(path, sizeof(path), "%s/field-%04u.ppm", evidence_path, video_frames);
-      FILE *ppm = fopen(path, "wb");
-      assert(ppm);
-      fprintf(ppm, "P6\n%u %u\n255\n", w, h);
-      const uint8_t *pixels = data;
-      for (unsigned y = 0; y < h; ++y, pixels += pitch)
-         for (unsigned x = 0; x < w; ++x)
-         {
-            uint32_t pixel;
-            uint8_t rgb[3];
-            memcpy(&pixel, pixels + x * 4u, sizeof(pixel));
-            rgb[0] = (uint8_t)(pixel >> 16);
-            rgb[1] = (uint8_t)(pixel >> 8);
-            rgb[2] = (uint8_t)pixel;
-            assert(fwrite(rgb, 1u, sizeof(rgb), ppm) == sizeof(rgb));
-         }
-      assert(!fclose(ppm));
+      write_ppm(path, data, w, h, pitch);
    }
 }
 static size_t audio(const int16_t *data, size_t frames)
@@ -848,12 +864,223 @@ static unsigned modified_shadow_count(const char *save, uint64_t first, uint64_t
    return count;
 }
 
+typedef struct {
+   void (*run)(void);
+   bool (*visible)(void);
+   bool (*focus_key)(unsigned);
+   bool (*activation_active)(void);
+   unsigned (*modifier_state)(unsigned);
+   void (*force_present)(void);
+} OskScriptApi;
+
+static void print_usage(FILE *stream, const char *program)
+{
+   fprintf(stream,
+      "Usage:\n"
+      "  %s CORE ROM CONTENT DATA\n"
+      "  %s CORE ROM CONTENT DATA --real-boot [--osk-script FILE]\n"
+      "  %s CORE ROM CONTENT DATA MEDIA_ROM PLAYLIST DISC1 DISC2 JFD JFD2 FIXTURES APP\n"
+      "\n"
+      "OSK script grammar (one command per line; # begins a comment):\n"
+      "  wait N                              run N emulated fields\n"
+      "  open | close                        set OSK visibility\n"
+      "  tap RETROK_NAME                     tap a verified OSK key\n"
+      "  modifier RETROK_NAME off|oneshot|locked\n"
+      "                                      set a sticky modifier state\n"
+      "  screenshot NAME                     capture the following presented field\n"
+      "Screenshots are written as DATA/evidence/NAME.ppm. NAME may contain\n"
+      "letters, digits, dot, underscore, or hyphen (but not . or ..).\n",
+      program, program, program);
+}
+
+static bool script_key(const char *name, unsigned *key)
+{
+   static const struct { const char *name; unsigned key; } named[] = {
+#define SCRIPT_KEY(name) {"RETROK_" #name, RETROK_##name}
+      SCRIPT_KEY(BACKSPACE), SCRIPT_KEY(TAB), SCRIPT_KEY(RETURN),
+      SCRIPT_KEY(PAUSE), SCRIPT_KEY(ESCAPE), SCRIPT_KEY(SPACE),
+      SCRIPT_KEY(QUOTE), SCRIPT_KEY(COMMA), SCRIPT_KEY(MINUS),
+      SCRIPT_KEY(PERIOD), SCRIPT_KEY(SLASH), SCRIPT_KEY(SEMICOLON),
+      SCRIPT_KEY(EQUALS), SCRIPT_KEY(LEFTBRACKET), SCRIPT_KEY(BACKSLASH),
+      SCRIPT_KEY(RIGHTBRACKET), SCRIPT_KEY(BACKQUOTE), SCRIPT_KEY(DELETE),
+      SCRIPT_KEY(KP_PERIOD), SCRIPT_KEY(KP_DIVIDE),
+      SCRIPT_KEY(KP_MULTIPLY), SCRIPT_KEY(KP_MINUS), SCRIPT_KEY(KP_PLUS),
+      SCRIPT_KEY(KP_ENTER), SCRIPT_KEY(UP), SCRIPT_KEY(DOWN),
+      SCRIPT_KEY(RIGHT), SCRIPT_KEY(LEFT), SCRIPT_KEY(INSERT),
+      SCRIPT_KEY(HOME), SCRIPT_KEY(END), SCRIPT_KEY(PAGEUP),
+      SCRIPT_KEY(PAGEDOWN), SCRIPT_KEY(NUMLOCK), SCRIPT_KEY(CAPSLOCK),
+      SCRIPT_KEY(SCROLLOCK), SCRIPT_KEY(RSHIFT), SCRIPT_KEY(LSHIFT),
+      SCRIPT_KEY(RCTRL), SCRIPT_KEY(LCTRL), SCRIPT_KEY(RALT),
+      SCRIPT_KEY(LALT)
+#undef SCRIPT_KEY
+   };
+   if (!name || !key || strncmp(name, "RETROK_", 7u)) return false;
+   const char *suffix = name + 7u;
+   if (suffix[0] && !suffix[1] && isalpha((unsigned char)suffix[0]))
+   {
+      *key = (unsigned)tolower((unsigned char)suffix[0]);
+      return arc_input_key(*key) != NULL;
+   }
+   if (suffix[0] && !suffix[1] && isdigit((unsigned char)suffix[0]))
+   {
+      *key = (unsigned)suffix[0];
+      return arc_input_key(*key) != NULL;
+   }
+   char *end = NULL;
+   if (suffix[0] == 'F')
+   {
+      unsigned long number = strtoul(suffix + 1u, &end, 10);
+      if (end && !*end && number >= 1u && number <= 12u)
+      {
+         *key = RETROK_F1 + (unsigned)number - 1u;
+         return true;
+      }
+   }
+   if (!strncmp(suffix, "KP", 2u) && suffix[2] && !suffix[3] &&
+       isdigit((unsigned char)suffix[2]))
+   {
+      *key = RETROK_KP0 + (unsigned)(suffix[2] - '0');
+      return true;
+   }
+   for (size_t i = 0u; i < sizeof(named) / sizeof(named[0]); ++i)
+      if (!strcmp(name, named[i].name))
+      {
+         *key = named[i].key;
+         return true;
+      }
+   return false;
+}
+
+static void script_button(OskScriptApi *api, unsigned button)
+{
+   joypad_buttons[0][button] = true;
+   api->run();
+   joypad_buttons[0][button] = false;
+   api->run();
+}
+
+static bool script_name(const char *name)
+{
+   if (!name || !name[0] || strlen(name) >= sizeof(pending_screenshot) ||
+       !strcmp(name, ".") || !strcmp(name, ".."))
+      return false;
+   for (const unsigned char *cursor = (const unsigned char *)name;
+        *cursor; ++cursor)
+      if (!isalnum(*cursor) && *cursor != '.' && *cursor != '_' &&
+          *cursor != '-') return false;
+   return true;
+}
+
+static bool run_osk_script(const char *path, OskScriptApi *api)
+{
+   FILE *script = fopen(path, "rb");
+   if (!script)
+   {
+      fprintf(stderr, "libretro_harness: cannot open OSK script %s: %s\n",
+              path, strerror(errno));
+      return false;
+   }
+   char line[512];
+   unsigned line_number = 0u;
+   bool ok = true;
+   while (ok && fgets(line, sizeof(line), script))
+   {
+      ++line_number;
+      if (!strchr(line, '\n') && !feof(script))
+      {
+         fprintf(stderr, "libretro_harness: OSK script line %u is too long\n",
+                 line_number);
+         ok = false;
+         break;
+      }
+      char *comment = strchr(line, '#');
+      if (comment) *comment = '\0';
+      char *save = NULL;
+      char *command = strtok_r(line, " \t\r\n", &save);
+      if (!command) continue;
+      char *first = strtok_r(NULL, " \t\r\n", &save);
+      char *second = strtok_r(NULL, " \t\r\n", &save);
+      char *extra = strtok_r(NULL, " \t\r\n", &save);
+      unsigned key = 0u;
+      if (!strcmp(command, "wait") && first && !second)
+      {
+         char *end = NULL;
+         unsigned long fields = strtoul(first, &end, 10);
+         if (!first[0] || !end || *end || fields > 1000000u) ok = false;
+         else for (unsigned long field = 0u; field < fields; ++field) api->run();
+      }
+      else if ((!strcmp(command, "open") || !strcmp(command, "close")) &&
+               !first)
+      {
+         bool wanted = !strcmp(command, "open");
+         if (api->visible() != wanted)
+            script_button(api, RETRO_DEVICE_ID_JOYPAD_L3);
+         ok = api->visible() == wanted;
+      }
+      else if (!strcmp(command, "tap") && first && !second &&
+               script_key(first, &key) && api->visible() &&
+               api->focus_key(key))
+      {
+         script_button(api, RETRO_DEVICE_ID_JOYPAD_A);
+         unsigned fields = 0u;
+         while (api->activation_active() && fields++ < 300u) api->run();
+         ok = !api->activation_active();
+      }
+      else if (!strcmp(command, "modifier") && first && second && !extra &&
+               script_key(first, &key) && arc_input_is_modifier(key) &&
+               api->visible() && api->focus_key(key))
+      {
+         unsigned wanted = !strcmp(second, "off") ? ARC_OSK_MOD_OFF :
+            !strcmp(second, "oneshot") ? ARC_OSK_MOD_ONESHOT :
+            !strcmp(second, "locked") ? ARC_OSK_MOD_LOCKED : UINT_MAX;
+         unsigned attempts = 0u;
+         while (wanted != UINT_MAX && api->modifier_state(key) != wanted &&
+                attempts++ < 3u)
+            script_button(api, RETRO_DEVICE_ID_JOYPAD_A);
+         ok = wanted != UINT_MAX && api->modifier_state(key) == wanted;
+      }
+      else if (!strcmp(command, "screenshot") && first && !second &&
+               script_name(first))
+      {
+         snprintf(pending_screenshot, sizeof(pending_screenshot), "%s", first);
+         api->force_present();
+         api->run();
+         ok = pending_screenshot[0] == '\0';
+      }
+      else
+         ok = false;
+      if (!ok)
+         fprintf(stderr, "libretro_harness: invalid or failed OSK script line %u\n",
+                 line_number);
+   }
+   if (ferror(script)) ok = false;
+   if (fclose(script)) ok = false;
+   return ok;
+}
+
 #define LOAD(name) do { *(void **)(&name) = dlsym(module, #name); assert(name); } while (0)
 int main(int argc, char **argv)
 {
-   assert(argc == 5 || argc == 13 ||
-          (argc == 6 && strcmp(argv[5], "--real-boot") == 0));
-   bool real_boot = argc == 6;
+   if (argc == 2 && !strcmp(argv[1], "--help"))
+   {
+      print_usage(stdout, argv[0]);
+      return 0;
+   }
+   bool real_boot = false;
+   const char *osk_script = NULL;
+   if (argc == 6 && !strcmp(argv[5], "--real-boot"))
+      real_boot = true;
+   else if (argc == 8 && !strcmp(argv[5], "--real-boot") &&
+            !strcmp(argv[6], "--osk-script"))
+   {
+      real_boot = true;
+      osk_script = argv[7];
+   }
+   else if (argc != 5 && argc != 13)
+   {
+      print_usage(stderr, argv[0]);
+      return 2;
+   }
    bool media_tests = argc == 13;
    real_boot_mode = real_boot;
    void *module = dlopen(argv[1], RTLD_NOW | RTLD_LOCAL);
@@ -917,6 +1144,9 @@ int main(int argc, char **argv)
    unsigned (*arc_libretro_test_input_pending)(void) = NULL;
    bool (*arc_libretro_test_osk_visible)(void) = NULL;
    bool (*arc_libretro_test_osk_busy)(void) = NULL;
+   bool (*arc_libretro_test_osk_activation_active)(void) = NULL;
+   unsigned (*arc_libretro_test_osk_modifier_state)(unsigned) = NULL;
+   void (*arc_libretro_test_force_present)(void) = NULL;
    unsigned (*arc_libretro_test_presented_osk_notice)(void) = NULL;
    void (*arc_libretro_test_force_input_reconcile)(void) = NULL;
    void (*arc_platform_test_input_events_reset)(void) = NULL;
@@ -955,6 +1185,12 @@ int main(int argc, char **argv)
          dlsym(module, "arc_libretro_test_osk_visible");
       *(void **)(&arc_libretro_test_osk_busy) =
          dlsym(module, "arc_libretro_test_osk_busy");
+      *(void **)(&arc_libretro_test_osk_activation_active) =
+         dlsym(module, "arc_libretro_test_osk_activation_active");
+      *(void **)(&arc_libretro_test_osk_modifier_state) =
+         dlsym(module, "arc_libretro_test_osk_modifier_state");
+      *(void **)(&arc_libretro_test_force_present) =
+         dlsym(module, "arc_libretro_test_force_present");
       *(void **)(&arc_libretro_test_presented_osk_notice) =
          dlsym(module, "arc_libretro_test_presented_osk_notice");
       *(void **)(&arc_libretro_test_force_input_reconcile) =
@@ -976,6 +1212,9 @@ int main(int argc, char **argv)
              arc_libretro_test_fill_input_queue &&
              arc_libretro_test_input_pending &&
              arc_libretro_test_osk_visible && arc_libretro_test_osk_busy &&
+             arc_libretro_test_osk_activation_active &&
+             arc_libretro_test_osk_modifier_state &&
+             arc_libretro_test_force_present &&
              arc_libretro_test_presented_osk_notice &&
              arc_libretro_test_force_input_reconcile &&
              arc_platform_test_input_events_reset && arc_platform_test_input_events);
@@ -999,6 +1238,28 @@ int main(int argc, char **argv)
       assert(arc_libretro_test_register_input_profile(&test_profile));
       expect_test_profile = true;
    }
+   else if (osk_script)
+   {
+      *(void **)(&arc_libretro_test_osk_focus_key) =
+         dlsym(module, "arc_libretro_test_osk_focus_key");
+      *(void **)(&arc_libretro_test_osk_visible) =
+         dlsym(module, "arc_libretro_test_osk_visible");
+      *(void **)(&arc_libretro_test_osk_activation_active) =
+         dlsym(module, "arc_libretro_test_osk_activation_active");
+      *(void **)(&arc_libretro_test_osk_modifier_state) =
+         dlsym(module, "arc_libretro_test_osk_modifier_state");
+      *(void **)(&arc_libretro_test_force_present) =
+         dlsym(module, "arc_libretro_test_force_present");
+      if (!arc_libretro_test_osk_focus_key || !arc_libretro_test_osk_visible ||
+          !arc_libretro_test_osk_activation_active ||
+          !arc_libretro_test_osk_modifier_state ||
+          !arc_libretro_test_force_present)
+      {
+         fprintf(stderr, "libretro_harness: --osk-script requires the test core\n");
+         assert(dlclose(module) == 0);
+         return 2;
+      }
+   }
 
    phase = PHASE_ENV; retro_set_environment(environment);
    retro_set_video_refresh(video); retro_set_audio_sample_batch(audio);
@@ -1021,13 +1282,32 @@ int main(int argc, char **argv)
       char firmware_message[sizeof(last_message)];
       snprintf(firmware_message, sizeof(firmware_message), "%s", last_message);
       phase = PHASE_RUN;
-      for (unsigned frame = 0; frame < real_boot_frames; ++frame) retro_run();
+      bool script_ok = true;
+      if (osk_script)
+      {
+         OskScriptApi script_api = {
+            retro_run, arc_libretro_test_osk_visible,
+            arc_libretro_test_osk_focus_key,
+            arc_libretro_test_osk_activation_active,
+            arc_libretro_test_osk_modifier_state,
+            arc_libretro_test_force_present
+         };
+         script_ok = run_osk_script(osk_script, &script_api);
+      }
+      else
+         for (unsigned frame = 0; frame < real_boot_frames; ++frame) retro_run();
       retro_unload_game();
       retro_deinit();
       assert(!fclose(evidence_log));
       evidence_log = NULL;
       assert(open_files == 0u && open_dirs == 0u && hash_file(argv[3]) == source_hash);
-      assert(video_frames == real_boot_frames && audio_frames > 0u && video_signature_count > 1u);
+      if (!script_ok)
+      {
+         assert(dlclose(module) == 0);
+         return 2;
+      }
+      assert((osk_script ? video_frames > 0u : video_frames == real_boot_frames) &&
+             audio_frames > 0u && video_signature_count > 0u);
       assert(vidc_osd_ext_calls == 0u && vidc_osd_legacy_calls == 0u);
       assert(dlclose(module) == 0);
       printf("real_boot_harness: %s; %u frames, %u signatures, trace %016llx, "
@@ -1035,7 +1315,7 @@ int main(int argc, char **argv)
              "%llu audio frames, %llu nonzero samples; FDC commands %u (reads %u), "
              "KART traffic %u, CMOS reads %u writes %u; "
              "VIDC OSD ext/legacy %u/%u, transient logs %u; evidence %s\n",
-             firmware_message, real_boot_frames, video_signature_count,
+             firmware_message, video_frames, video_signature_count,
              (unsigned long long)video_trace_signature,
              (unsigned long long)last_video_signature,
              (unsigned long long)audio_frames,
