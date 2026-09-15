@@ -31,8 +31,9 @@ static void arc_reconcile(ArcInputState *state)
    state->fifo_count = 0u;
    state->discrete_since_motion = 0u;
    /* Releases are deliberately reserved ahead of presses so overflow recovery
-    * can never strand an engine-visible level. The supported keyboard surface
-    * is smaller than the 256-entry queue; excess presses are sampled again. */
+    * can never strand an engine-visible level. The shipping adapter's static
+    * capacity assertion guarantees the rebuilt transition set fits; omitted
+    * presses would not be sampled again by this service. */
    for (unsigned code = 1u; code < ARC_INPUT_KEY_COUNT; ++code)
       if (!arc_input_is_modifier(code) && state->applied_keys[code] &&
           !state->effective_keys[code])
