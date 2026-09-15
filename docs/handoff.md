@@ -2,7 +2,7 @@
 
 **Stage:** IMPLEMENTATION  
 **Owner:** Sol  
-**Next:** Remediate PR #43 (`slice/03a-input-profiles-osk`, head `b976632`) per R-77…R-91 below, in that order, on the same branch; push and update the PR body (evidence rows per R-item, accurate AC claims). Do not add a real-title profile entry unless Fable posts the digest and controls to the PR thread (R-91). Stop and return to Fable on any item in "Return to Fable".
+**Next:** Remediate PR #43 (`slice/03a-input-profiles-osk`, head `df4d3c7`) per R-92…R-96 below on the same branch; push and update the PR body. R-77…R-81 and R-85…R-89 are closed at `df4d3c7` (Fable re-review); R-82, R-83, R-84, R-90 are partial and are re-stated as R-93, R-92, R-94, R-96. Do not add a real-title profile entry unless Fable posts the digest and controls to the PR thread (R-91). Stop and return to Fable on any item in "Return to Fable".
 
 ## Objective and governing requirement
 Unchanged from the Slice 3a work order (PR #42): a keyboard-driven title playable from the RetroPad alone through content-keyed profiles, static per-input overrides, and an in-core on-screen keyboard (PRD §23 proof 7; FR-28…FR-34, FR-47…FR-51; D-033, D-034). The full accepted scope, constraints and AC-1…AC-12 are in the PR #42 version of this file (`git show 5157482:docs/handoff.md`) and remain binding; this baton lists only the remediation.
@@ -29,6 +29,13 @@ Unchanged from the Slice 3a work order (PR #42): a keyboard-driven title playabl
 - **R-89 (Test) AC-6/AC-7/AC-8 gaps.** Harness: OSK entry with a stalled KART queue and mixed physical-mouse/pad motion (accepted events drain, no cancellation); busy state under stalled KART; Start closes; growth-failure during an activation asserts the held key's release is delivered and gameplay ownership restored; geometry change while the OSK is visible (relayout, no out-of-bounds under ASan); fix the touch-row arithmetic that assumes 7 rows for the 8-row full layout.
 - **R-90 (Docs) accurate PR evidence.** Rewrite the AC evidence table so each row states exactly what the tests assert (no "enumerated against keytable.h" unless R-85 makes it true; no OSK-typed signature claim unless R-87 exists). List every omitted legend (£, Print Screen, positions (0,13)/(1,13), right-hand modifiers if omitted).
 - **R-91 (Profile) real-title entry.** Add the entry only from Fable's PR-thread comment (digest, observed controls, evidence note). If none is posted by the time R-77…R-90 are done, push without it and state in the PR body that the slice remains profile-incomplete pending Founder input.
+
+### Round 2 (Fable re-review of `df4d3c7`, 2026-09-15)
+- **R-92 (Medium) compact-tier labels collapse.** At 320 px (10 columns, 30-px cells, 3 glyphs) every keypad key renders as "KP " and modifiers as "L S"/"R S"; at 640 px five glyphs. Give every key a distinct label per tier (e.g. compact `K0`…`K9`, `K/`, `K*`, `K-`, `K+`, `K.`, `KEn`, `LSh`, `RSh`, `LCt`, `RCt`, `LAl`, `RAl`, `Bsl`, `Cps`, `Ins`, `Hom`, `PgU`, `PgD`, `Del`, `Bks`, `Ret`, `Esc`, `Tab`, `Spc`, `Cpy`, arrows by glyph) and assert in a core test that no two keys share a rendered label at any tier; regenerate the goldens.
+- **R-93 (Low) discriminating release-order test.** The R-82 test uses LSHIFT (304) vs `a` (97), which ascending-code iteration already orders correctly. Use a non-catalogue ordinary code above the modifier codes (e.g. `RETROK_BREAK`, accepted by `arc_input_source_key`) so the test fails on code-ordered release.
+- **R-94 (Low) interrupted notice persists.** The "INTERRUPTED" header is presented for one frame because the surface is re-rendered every field. Hold the header (and the BUSY state) for at least 1 s of guest time or until the next OSK action, whichever is later; at 320 px show a short form ("INT", "BUSY") that fits after the profile name (truncate the name, never the state). Harness: after a forced reconcile during an activation, the header is visible on the presented frame 20 fields later.
+- **R-95 (Low) touch focus during a held activation.** `arc_osk_touch` moves focus on a new contact while `activation_held`; freeze focus for touch as for the d-pad (core test).
+- **R-96 (Docs) PR evidence accuracy.** Correct the rows for R-84 (golden sets the flag directly), R-82/AC-2 (test now discriminating per R-93), R-89/AC-8 (relayout asserted by visibility and ASan only, or add a layout assertion), and state the one-frame limitation is removed by R-94.
 
 Accepted as-is (no action): `core/` now includes `libretro/include` for RETROK codes (the handoff specified RETROK); alpha blend by `>>8`; renderer goldens as regression guards provided the sentinel and pixel-restoration assertions stay.
 
@@ -57,4 +64,4 @@ As in the PR #42 baton, plus: any legend whose engine position cannot be derived
 - Next-slice candidates after 3a: Slice 3b RTFM joystick; audio quality (D-022); New-IO machine class; save states (D-011); media formats; launch follow-ups; `.ldci` disk-control fix if confirmed.
 
 ## Branch / PR
-`main` = `5157482`. Implementation PR #43 `slice/03a-input-profiles-osk` at `b976632` (open; remediation pending). Evidence branches `evidence/slice1-android-run7`, `evidence/input-slice-s5`, `evidence/slice2a-odin3`, `evidence/slice2b-host`, `evidence/slice2b-odin3` (never merge).
+`main` = `5157482`. Implementation PR #43 `slice/03a-input-profiles-osk` at `df4d3c7` (open; round-2 remediation R-92…R-96 pending; fresh-clone `ctest` 6/6, guards and NDK build + Android guard pass at `df4d3c7`, sha256 `bcaa635d…558a`; CI 5/5). Evidence branches `evidence/slice1-android-run7`, `evidence/input-slice-s5`, `evidence/slice2a-odin3`, `evidence/slice2b-host`, `evidence/slice2b-odin3` (never merge).
