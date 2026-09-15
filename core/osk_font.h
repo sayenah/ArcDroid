@@ -2,7 +2,7 @@
  *
  * Drawn specifically for ArcDroid in 2026. No glyph or font data was imported
  * from another core, font, project, or third-party source. GPL-2.0-only.
- * Index 127 is the Archimedes pound legend; 126/125 are arrow glyphs.
+ * Indices 126/125 are the authored down/up arrow glyphs.
  */
 #ifndef ARCDROID_OSK_FONT_H
 #define ARCDROID_OSK_FONT_H
@@ -39,8 +39,7 @@ static const uint8_t arc_osk_font[128][8] = {
    ['U']={66,66,66,66,66,66,60,0}, ['V']={66,66,66,66,66,36,24,0},
    ['W']={66,66,66,90,90,102,66,0}, ['X']={66,66,36,24,36,66,66,0},
    ['Y']={68,68,40,16,16,16,16,0}, ['Z']={126,2,4,24,32,64,126,0},
-   [125]={16,56,84,16,16,16,16,0}, [126]={16,16,16,16,84,56,16,0},
-   [127]={28,34,32,120,32,32,126,0}
+   [125]={16,56,84,16,16,16,16,0}, [126]={16,16,16,16,84,56,16,0}
 };
 
 #endif

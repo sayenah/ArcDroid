@@ -402,14 +402,9 @@ static void arc_osk_text(uint32_t *pixels, unsigned width, unsigned height,
    while (text && *text && x + 8u <= clip_right)
    {
       unsigned glyph;
-      if ((unsigned char)text[0] == 0xc2u && (unsigned char)text[1] == 0xa3u)
-      { glyph = 127u; text += 2; }
-      else
-      {
-         glyph = (unsigned char)*text++;
-         if (glyph >= 'a' && glyph <= 'z') glyph -= 'a' - 'A';
-         if (glyph >= 128u) glyph = '?';
-      }
+      glyph = (unsigned char)*text++;
+      if (glyph >= 'a' && glyph <= 'z') glyph -= 'a' - 'A';
+      if (glyph >= 128u) glyph = '?';
       for (unsigned row = 0u; row < 8u && y + row < height; ++row)
          for (unsigned column = 0u; column < 8u; ++column)
             if (arc_osk_font[glyph][row] & (UINT8_C(1) << (7u - column)))
