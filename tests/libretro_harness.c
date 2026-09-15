@@ -901,6 +901,7 @@ int main(int argc, char **argv)
    bool (*arc_libretro_test_osk_source_unchanged)(void) = NULL;
    bool (*arc_libretro_test_register_input_profile)(const ArcInputProfile *) = NULL;
    void (*arc_libretro_test_probe_osk_geometry)(unsigned, unsigned) = NULL;
+   bool (*arc_libretro_test_osk_focus_key)(unsigned) = NULL;
    void (*arc_platform_test_input_events_reset)(void) = NULL;
    size_t (*arc_platform_test_input_events)(ArcKartEvent *, size_t) = NULL;
    if (!real_boot)
@@ -925,6 +926,8 @@ int main(int argc, char **argv)
          dlsym(module, "arc_libretro_test_register_input_profile");
       *(void **)(&arc_libretro_test_probe_osk_geometry) =
          dlsym(module, "arc_libretro_test_probe_osk_geometry");
+      *(void **)(&arc_libretro_test_osk_focus_key) =
+         dlsym(module, "arc_libretro_test_osk_focus_key");
       *(void **)(&arc_platform_test_input_events_reset) =
          dlsym(module, "arc_platform_test_input_events_reset");
       *(void **)(&arc_platform_test_input_events) =
@@ -937,6 +940,7 @@ int main(int argc, char **argv)
              arc_libretro_test_osk_source_unchanged &&
              arc_libretro_test_register_input_profile &&
              arc_libretro_test_probe_osk_geometry &&
+             arc_libretro_test_osk_focus_key &&
              arc_platform_test_input_events_reset && arc_platform_test_input_events);
       ArcDigest application_profile_digest = digest_file(argv[12]);
       ArcDigest playlist_profile_digest = digest_playlist_pair(argv[7], argv[8]);
@@ -1160,6 +1164,77 @@ int main(int argc, char **argv)
    for (unsigned frame = 0u; frame < 100u; ++frame) retro_run();
    uint64_t key_first_signature = last_video_signature;
    assert(modifier_first_signature != key_first_signature);
+
+   /* Exercise the same order-sensitive guest path through the OSK. A sticky
+    * Shift chord followed by a plain key has the same KART event multiset as
+    * the reversed activation order, but must paint a different guest result. */
+   retro_reset();
+   for (unsigned frame = 0u; frame < 180u; ++frame) retro_run();
+   arc_platform_test_input_events_reset();
+   joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_L3] = true; retro_run();
+   joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_L3] = false; retro_run();
+   assert(arc_libretro_test_osk_focus_key(RETROK_LSHIFT));
+   joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_A] = true; retro_run();
+   joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_A] = false; retro_run();
+   assert(arc_libretro_test_osk_focus_key(RETROK_a));
+   joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_A] = true; retro_run();
+   joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_A] = false; retro_run();
+   for (unsigned frame = 0u;
+        frame < 120u && arc_platform_test_input_events(input_events, 512u) < 4u;
+        ++frame) retro_run();
+   assert(arc_libretro_test_osk_focus_key(RETROK_a));
+   joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_A] = true; retro_run();
+   joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_A] = false; retro_run();
+   for (unsigned frame = 0u;
+        frame < 120u && arc_platform_test_input_events(input_events, 512u) < 6u;
+        ++frame) retro_run();
+   size_t osk_modifier_first_count =
+      arc_platform_test_input_events(input_events, 512u);
+   assert(osk_modifier_first_count == 6u);
+   assert(input_events[0].code == RETROK_LSHIFT && input_events[0].down &&
+          input_events[1].code == RETROK_a && input_events[1].down &&
+          input_events[2].code == RETROK_a && !input_events[2].down &&
+          input_events[3].code == RETROK_LSHIFT && !input_events[3].down &&
+          input_events[4].code == RETROK_a && input_events[4].down &&
+          input_events[5].code == RETROK_a && !input_events[5].down);
+   joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_B] = true; retro_run();
+   joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_B] = false;
+   for (unsigned frame = 0u; frame < 100u; ++frame) retro_run();
+   uint64_t osk_modifier_first_signature = last_video_signature;
+
+   retro_reset();
+   for (unsigned frame = 0u; frame < 180u; ++frame) retro_run();
+   arc_platform_test_input_events_reset();
+   joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_L3] = true; retro_run();
+   joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_L3] = false; retro_run();
+   assert(arc_libretro_test_osk_focus_key(RETROK_a));
+   joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_A] = true; retro_run();
+   joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_A] = false; retro_run();
+   for (unsigned frame = 0u;
+        frame < 120u && arc_platform_test_input_events(input_events, 512u) < 2u;
+        ++frame) retro_run();
+   assert(arc_libretro_test_osk_focus_key(RETROK_LSHIFT));
+   joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_A] = true; retro_run();
+   joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_A] = false; retro_run();
+   assert(arc_libretro_test_osk_focus_key(RETROK_a));
+   joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_A] = true; retro_run();
+   joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_A] = false; retro_run();
+   for (unsigned frame = 0u;
+        frame < 120u && arc_platform_test_input_events(input_events, 512u) < 6u;
+        ++frame) retro_run();
+   size_t osk_plain_first_count = arc_platform_test_input_events(input_events, 512u);
+   assert(osk_plain_first_count == 6u);
+   assert(input_events[0].code == RETROK_a && input_events[0].down &&
+          input_events[1].code == RETROK_a && !input_events[1].down &&
+          input_events[2].code == RETROK_LSHIFT && input_events[2].down &&
+          input_events[3].code == RETROK_a && input_events[3].down &&
+          input_events[4].code == RETROK_a && !input_events[4].down &&
+          input_events[5].code == RETROK_LSHIFT && !input_events[5].down);
+   joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_B] = true; retro_run();
+   joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_B] = false;
+   for (unsigned frame = 0u; frame < 100u; ++frame) retro_run();
+   uint64_t osk_plain_first_signature = last_video_signature;
+   assert(osk_modifier_first_signature != osk_plain_first_signature);
 
    /* Keyboard callbacks may contain a complete transition pair between two
     * frontend polls. Delivery is acknowledged by the real KART handshake. */

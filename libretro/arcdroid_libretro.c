@@ -1496,6 +1496,19 @@ void arc_libretro_test_probe_osk_geometry(unsigned width, unsigned height)
    arc_video_width = saved_width;
    arc_video_height = saved_height;
 }
+
+bool arc_libretro_test_osk_focus_key(unsigned key)
+{
+   if (!arc_osk.visible) return false;
+   for (unsigned i = 0u; i < arc_osk.key_count; ++i)
+      if (arc_osk.keys[i].key == key)
+      {
+         arc_osk.focus = i;
+         arc_osk_present_dirty = true;
+         return true;
+      }
+   return false;
+}
 #endif
 
 static int arc_pointer_to_pixel(int value, unsigned extent)
