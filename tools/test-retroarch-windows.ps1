@@ -246,12 +246,15 @@ Copy-Item -Force (Join-Path $InputDirectory "arcdroid-media-test.rom") $firmware
 $playlist = (Resolve-Path (Join-Path $InputDirectory "arcdroid-media.m3u")).Path
 $disc1 = (Resolve-Path (Join-Path $InputDirectory "arcdroid-media-disc1.adf")).Path
 $disc2 = (Resolve-Path (Join-Path $InputDirectory "arcdroid-media-disc2.adf")).Path
-$jfd = (Resolve-Path (Join-Path $InputDirectory "arcdroid-test.jfd")).Path
+$jfd = (Resolve-Path (Join-Path $InputDirectory "arcdroid-test-two-member.jfd")).Path
 
 function Start-MediaRun([string]$MediaPath, [string]$Name) {
     $stdout = Join-Path $WorkDirectory "$Name.stdout.log"
     $stderr = Join-Path $WorkDirectory "$Name.stderr.log"
-    $arguments = @("--config=$config", "--libretro=$core", "--verbose", $MediaPath)
+    $retroLog = Join-Path $evidenceDirectory "$Name.log"
+    Remove-Item -Force -ErrorAction SilentlyContinue $retroLog
+    $arguments = @("--config=$config", "--libretro=$core", "--verbose",
+        "--log-file=$retroLog", $MediaPath)
     $process = Start-Process -FilePath $retroArch -ArgumentList $arguments `
         -PassThru -NoNewWindow -RedirectStandardOutput $stdout -RedirectStandardError $stderr
     $udp = [System.Net.Sockets.UdpClient]::new()
@@ -273,7 +276,8 @@ function Start-MediaRun([string]$MediaPath, [string]$Name) {
     }
     if (-not $ready) { throw "$Name did not answer GET_STATUS within 10 seconds" }
     Start-Sleep -Seconds 2
-    return @{ Process = $process; Udp = $udp; Stdout = $stdout; Stderr = $stderr; Name = $Name }
+    return @{ Process = $process; Udp = $udp; Stdout = $stdout; Stderr = $stderr;
+        RetroLog = $retroLog; Name = $Name }
 }
 
 function Send-MediaCommand($Run, [string]$Command) {
@@ -283,18 +287,15 @@ function Send-MediaCommand($Run, [string]$Command) {
 }
 
 function Stop-MediaRun($Run) {
-    $forced = $false
     try {
         if (-not $Run.Process.HasExited) {
             Send-MediaCommand $Run "QUIT"
-            if (-not $Run.Process.WaitForExit(5000)) {
-                Write-Warning "$($Run.Name) did not exit after QUIT; stopping the process started by this test"
-                Stop-Process -Id $Run.Process.Id -Force
-                $forced = $true
+            if (-not $Run.Process.WaitForExit(30000)) {
+                throw "$($Run.Name) did not exit within 30 seconds after QUIT"
             }
             $Run.Process.WaitForExit()
         }
-        if (-not $forced -and $Run.Process.ExitCode -ne 0) {
+        if ($Run.Process.ExitCode -ne 0) {
             throw "$($Run.Name) exited with code $($Run.Process.ExitCode)"
         }
     } finally {
@@ -305,8 +306,11 @@ function Stop-MediaRun($Run) {
         $output = @()
         if (Test-Path $Run.Stdout) { $output += Get-Content $Run.Stdout }
         if (Test-Path $Run.Stderr) { $output += Get-Content $Run.Stderr }
-        $output | Set-Content -Encoding UTF8 (Join-Path $evidenceDirectory "$($Run.Name).log")
+        $output | Set-Content -Encoding UTF8 (Join-Path $evidenceDirectory "$($Run.Name)-process.log")
         Remove-Item -Force -ErrorAction SilentlyContinue $Run.Stdout, $Run.Stderr
+        if (-not (Test-Path $Run.RetroLog)) {
+            throw "$($Run.Name) did not produce its RetroArch log file"
+        }
     }
 }
 

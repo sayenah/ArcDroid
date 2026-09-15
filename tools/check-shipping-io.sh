@@ -96,14 +96,17 @@ third_party/zlib/zutil.c third_party/zlib/zutil.h'
   fi
   rm -f "$preprocess_tmp"
 
-  zlib_objects=$(find build -type f -path '*arcdroid_zlib.dir*' -name '*.o' 2>/dev/null || true)
-  if [ -n "$zlib_objects" ]; then
-    nm_bin=${LLVM_NM:-${NM:-nm}}
-    if zlib_imports=$($nm_bin -u $zlib_objects 2>/dev/null | grep -E '(^|[[:space:]])_?(fopen|open|_wfopen|gz[a-z]*|CreateFile[A-Za-z]*)$'); then
-      printf '%s\n' "$zlib_imports" >&2
-      printf '%s\n' 'shipping I/O guard: compiled zlib object references file I/O' >&2
-      exit 1
-    fi
+  zlib_search_path='build/**/CMakeFiles/arcdroid_zlib.dir/**/*.{o,obj}'
+  zlib_objects=$(find build -type f -path '*arcdroid_zlib.dir*' \( -name '*.o' -o -name '*.obj' \) 2>/dev/null || true)
+  if [ -z "$zlib_objects" ]; then
+    printf 'shipping I/O guard: no compiled zlib objects found; searched %s\n' "$zlib_search_path" >&2
+    exit 1
+  fi
+  nm_bin=${LLVM_NM:-${NM:-nm}}
+  if zlib_imports=$($nm_bin -u $zlib_objects 2>/dev/null | grep -E '(^|[[:space:]])_?(fopen|open|_wfopen|gz[a-z]*|CreateFile[A-Za-z]*)$'); then
+    printf '%s\n' "$zlib_imports" >&2
+    printf '%s\n' 'shipping I/O guard: compiled zlib object references file I/O' >&2
+    exit 1
   fi
 fi
 
