@@ -45,6 +45,12 @@ Copy-Item (Join-Path $InputDirectory "arcdroid_libretro.info") $info
 Copy-Item (Join-Path $InputDirectory "arcdroid-test.rom") $firmware
 
 function ConfigPath([string]$Path) { return $Path.Replace('\', '/') }
+function Send-QuitPair($Udp) {
+    $quitBytes = [Text.Encoding]::ASCII.GetBytes("QUIT")
+    [void]$Udp.Send($quitBytes, $quitBytes.Length)
+    Start-Sleep -Milliseconds 300
+    [void]$Udp.Send($quitBytes, $quitBytes.Length)
+}
 $config = Join-Path $WorkDirectory "retroarch-ci.cfg"
 @"
 video_driver = "gdi"
@@ -67,6 +73,7 @@ pause_nonactive = "false"
 video_vsync = "false"
 network_cmd_enable = "true"
 network_cmd_port = "55355"
+quit_press_twice = "false"
 initial_disk_change_enable = "true"
 "@ | Set-Content -Encoding ASCII $config
 
@@ -136,8 +143,7 @@ function Try-InSessionReloads {
             Start-Sleep -Milliseconds 500
             if ($process.HasExited) { throw "RetroArch exited during in-session reload $reload" }
         }
-        $quitBytes = [Text.Encoding]::ASCII.GetBytes("QUIT")
-        [void]$udp.Send($quitBytes, $quitBytes.Length)
+        Send-QuitPair $udp
         $udp.Dispose()
         if (-not $process.WaitForExit(30000)) { throw "RetroArch did not exit after QUIT" }
         $process.WaitForExit()
@@ -289,7 +295,7 @@ function Send-MediaCommand($Run, [string]$Command) {
 function Stop-MediaRun($Run) {
     try {
         if (-not $Run.Process.HasExited) {
-            Send-MediaCommand $Run "QUIT"
+            Send-QuitPair $Run.Udp
             if (-not $Run.Process.WaitForExit(30000)) {
                 throw "$($Run.Name) did not exit within 30 seconds after QUIT"
             }
