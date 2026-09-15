@@ -172,6 +172,9 @@ void arc_input_source_click(ArcInputState *state, ArcInputSource source,
                             unsigned button);
 void arc_input_motion(ArcInputState *state, int64_t dx, int64_t dy,
                       bool velocity);
+/* When the guest mouse channel is disabled, consumption discards both queued
+ * velocity and displacement motion so stale motion cannot block discrete input
+ * or jump after re-enable. Relative order among discrete events is preserved. */
 bool arc_input_consume(ArcInputState *state, bool mouse_enabled,
                        ArcInputEvent *event);
 bool arc_input_take_overflow_report(ArcInputState *state);

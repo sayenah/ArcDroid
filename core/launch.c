@@ -83,8 +83,9 @@ static bool arc_new_map_e_format(const uint8_t *data, size_t size)
    if (!data || size < 1024u) return false;
    const uint8_t *record = data + 4u;
    unsigned log2_sector = record[0];
+   /* Skew is formatter metadata, not a fixed E-format discriminator. */
    if (log2_sector != 10u || record[1] != 5u || record[2] != 2u ||
-       record[3] != 2u || record[6] != 0u || record[8] != 0u ||
+       record[3] != 2u || record[8] != 0u ||
        record[9] != 1u) return false;
    size_t sector_size = (size_t)1u << log2_sector;
    if (size != 819200u || size % (sector_size * record[1] * record[2]) != 0u ||
@@ -97,8 +98,10 @@ static bool arc_new_map_e_format(const uint8_t *data, size_t size)
    size_t sector_bits = sector_size * 8u;
    if (id_length < log2_sector + 3u || id_length > 15u ||
        log2_bytes_per_map_bit < 7u || log2_bytes_per_map_bit > log2_sector ||
-       zone_spare >= sector_bits - 512u) return false;
-   uint64_t allocation_bits = sector_bits - 512u - zone_spare;
+       zone_spare > sector_bits - 480u) return false;
+   /* The 32-bit zone header prefixes zone_size; only the 60-byte disc record
+    * occupies allocation space in zone zero. */
+   uint64_t allocation_bits = sector_bits - zone_spare - 480u;
    uint64_t required_bits = size >> log2_bytes_per_map_bit;
    uint64_t ids_per_zone = (sector_bits - zone_spare) / (id_length + 1u);
    if (allocation_bits < required_bits || allocation_bits - required_bits >= ids_per_zone ||

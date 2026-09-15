@@ -1,5 +1,6 @@
 /* ArcDroid deterministic core tests. GPL-2.0-only. */
 #include "arcdroid_core.h"
+#include "e_format_fixture.h"
 
 #include <assert.h>
 #include <stdio.h>
@@ -186,25 +187,6 @@ static uint8_t test_old_map_checksum(const uint8_t *block)
    return (uint8_t)checksum;
 }
 
-static uint8_t test_new_map_checksum(const uint8_t *map)
-{
-   unsigned sum[4] = {0u, 0u, 0u, 0u};
-   size_t rover = 1020u;
-   while (rover > 0u)
-   {
-      sum[0] += map[rover] + (sum[3] >> 8u); sum[3] &= 0xffu;
-      sum[1] += map[rover + 1u] + (sum[0] >> 8u); sum[0] &= 0xffu;
-      sum[2] += map[rover + 2u] + (sum[1] >> 8u); sum[1] &= 0xffu;
-      sum[3] += map[rover + 3u] + (sum[2] >> 8u); sum[2] &= 0xffu;
-      rover -= 4u;
-   }
-   sum[0] += sum[3] >> 8u;
-   sum[1] += map[1] + (sum[0] >> 8u);
-   sum[2] += map[2] + (sum[1] >> 8u);
-   sum[3] += map[3] + (sum[2] >> 8u);
-   return (uint8_t)((sum[0] ^ sum[1] ^ sum[2] ^ sum[3]) & 0xffu);
-}
-
 static void test_adfs_recognition(void)
 {
    uint8_t old_map[512] = {0};
@@ -212,31 +194,30 @@ static void test_adfs_recognition(void)
    old_map[511] = test_old_map_checksum(old_map + 256u);
    assert(arc_media_is_recognised_adfs(old_map, sizeof(old_map)));
 
-   size_t size = 819200u;
+   size_t size = ARC_TEST_E_FORMAT_SIZE;
    uint8_t *e_format = calloc(1u, size);
    assert(e_format);
+   assert(arc_test_make_e_format(e_format, size));
    uint8_t *record = e_format + 4u;
-   e_format[3] = 0xffu;
-   record[0] = 10u; record[1] = 5u; record[2] = 2u; record[3] = 2u;
-   record[4] = 15u; record[5] = 7u; record[9] = 1u;
-   record[10] = 0u; record[11] = 5u; /* 1280 spare bits. */
-   record[13] = 2u; /* Root is fragment 2, sector offset 0. */
-   record[16] = 0u; record[17] = 0x80u; record[18] = 0x0cu;
-   e_format[0] = test_new_map_checksum(e_format);
+   assert(record[6] == 1u && record[10] == 0x20u && record[11] == 0x05u &&
+          record[12] == 0x03u && record[13] == 0x02u &&
+          (record[20] || record[21]) &&
+          memcmp(record + 22u, "ArcDroidE1", 10u) == 0);
    assert(arc_media_is_recognised_adfs(e_format, size));
    assert(!arc_media_is_recognised_adfs(e_format, 63u));
    e_format[0] ^= 1u;
    assert(!arc_media_is_recognised_adfs(e_format, size));
    e_format[0] ^= 1u;
    e_format[3] = 0u;
+   e_format[0] = arc_test_e_format_zone_check(e_format);
    assert(!arc_media_is_recognised_adfs(e_format, size));
    e_format[3] = 0xffu;
    record[4] = 12u;
-   e_format[0] = test_new_map_checksum(e_format);
+   e_format[0] = arc_test_e_format_zone_check(e_format);
    assert(!arc_media_is_recognised_adfs(e_format, size));
    record[4] = 15u;
    record[8] = 0x80u;
-   e_format[0] = test_new_map_checksum(e_format);
+   e_format[0] = arc_test_e_format_zone_check(e_format);
    assert(!arc_media_is_recognised_adfs(e_format, size));
    memset(e_format, 0xa5, size);
    assert(!arc_media_is_recognised_adfs(e_format, size));
@@ -299,6 +280,20 @@ static void test_input(void)
    assert(arc_input_consume(&state, true, &event));
    assert(event.type == ARC_INPUT_EVENT_MOTION && event.velocity &&
           event.dx == 20 && event.dy == -63 && !arc_input_pending(&state));
+
+   arc_input_reset(&state);
+   arc_input_motion(&state, 30, -20, false);
+   arc_input_source_key(&state, ARC_INPUT_SOURCE_KEYBOARD, 42u, true, true);
+   assert(arc_input_pending(&state) == 2u);
+   assert(arc_input_consume(&state, false, &event));
+   assert(event.type == ARC_INPUT_EVENT_KEY && event.code == 42u && event.down);
+   assert(!arc_input_pending(&state));
+
+   arc_input_reset(&state);
+   arc_input_motion(&state, 5, 6, true);
+   assert(arc_input_pending(&state) == 1u);
+   assert(!arc_input_consume(&state, false, &event));
+   assert(!arc_input_pending(&state));
 
    for (unsigned code = 1u; code <= 9u; ++code)
       arc_input_source_key(&state, ARC_INPUT_SOURCE_KEYBOARD, code, true, true);

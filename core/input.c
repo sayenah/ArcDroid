@@ -177,6 +177,13 @@ bool arc_input_consume(ArcInputState *state, bool mouse_enabled,
                        ArcInputEvent *event)
 {
    if (!state || !event || !state->fifo_count) return false;
+   while (!mouse_enabled && state->fifo_count &&
+          state->fifo[0].type == ARC_INPUT_EVENT_MOTION)
+   {
+      arc_fifo_remove(state, 0u);
+      state->discrete_since_motion = 0u;
+   }
+   if (!state->fifo_count) return false;
    unsigned index = 0u;
    if (state->discrete_since_motion >= ARC_INPUT_MOTION_STARVATION_BOUND)
       for (unsigned i = 0u; i < state->fifo_count; ++i)
@@ -189,7 +196,6 @@ bool arc_input_consume(ArcInputState *state, bool mouse_enabled,
          }
       }
    ArcInputEvent queued = state->fifo[index];
-   if (queued.type == ARC_INPUT_EVENT_MOTION && !mouse_enabled) return false;
    *event = queued;
    if (queued.type == ARC_INPUT_EVENT_MOTION)
    {

@@ -1,6 +1,7 @@
 /* ArcDroid libretro lifecycle/API harness. GPL-2.0-only. */
 #include "libretro.h"
 #include "arcdroid_core.h"
+#include "e_format_fixture.h"
 
 #include <assert.h>
 #include <dirent.h>
@@ -491,7 +492,7 @@ static int16_t input(unsigned p, unsigned d, unsigned i, unsigned id)
          if (id == RETRO_DEVICE_ID_POINTER_X) return (int16_t)pointer_contact_x[i];
          if (id == RETRO_DEVICE_ID_POINTER_Y) return (int16_t)pointer_contact_y[i];
       }
-      if (id == RETRO_DEVICE_ID_POINTER_COUNT) return pointer_pressed ? 1 : 0;
+      if (id == RETRO_DEVICE_ID_POINTER_COUNT) return 0;
       if (id == RETRO_DEVICE_ID_POINTER_PRESSED) return pointer_pressed;
       if (id == RETRO_DEVICE_ID_POINTER_X) return (int16_t)pointer_x;
       if (id == RETRO_DEVICE_ID_POINTER_Y) return (int16_t)pointer_y;
@@ -531,40 +532,16 @@ static void make_sized_file(const char *path, size_t size)
    assert(fputc(0, file) != EOF && !fclose(file));
 }
 
-static uint8_t new_map_checksum(const uint8_t *map)
-{
-   unsigned sum[4] = {0u, 0u, 0u, 0u};
-   size_t rover = 1020u;
-   while (rover > 0u)
-   {
-      sum[0] += map[rover] + (sum[3] >> 8u); sum[3] &= 0xffu;
-      sum[1] += map[rover + 1u] + (sum[0] >> 8u); sum[0] &= 0xffu;
-      sum[2] += map[rover + 2u] + (sum[1] >> 8u); sum[1] &= 0xffu;
-      sum[3] += map[rover + 3u] + (sum[2] >> 8u); sum[2] &= 0xffu;
-      rover -= 4u;
-   }
-   sum[0] += sum[3] >> 8u;
-   sum[1] += map[1] + (sum[0] >> 8u);
-   sum[2] += map[2] + (sum[1] >> 8u);
-   sum[3] += map[3] + (sum[2] >> 8u);
-   return (uint8_t)((sum[0] ^ sum[1] ^ sum[2] ^ sum[3]) & 0xffu);
-}
-
 static void make_e_format_file(const char *path, bool corrupt_zone,
                                bool truncated_record)
 {
-   size_t size = 819200u;
+   size_t size = ARC_TEST_E_FORMAT_SIZE;
    uint8_t *image = calloc(1u, size);
    assert(image);
+   assert(arc_test_make_e_format(image, size));
    uint8_t *record = image + 4u;
-   image[3] = 0xffu;
-   record[0] = 10u; record[1] = 5u; record[2] = 2u; record[3] = 2u;
-   record[4] = 15u; record[5] = 7u; record[9] = 1u;
-   record[11] = 5u;
-   record[13] = 2u;
-   record[17] = 0x80u; record[18] = 0x0cu;
    if (truncated_record) memset(record + 16u, 0, 44u);
-   image[0] = new_map_checksum(image);
+   image[0] = arc_test_e_format_zone_check(image);
    if (corrupt_zone) image[0] ^= 1u;
    FILE *file = fopen(path, "wb");
    assert(file && fwrite(image, 1u, size, file) == size && !fclose(file));

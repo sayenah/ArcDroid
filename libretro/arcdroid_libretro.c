@@ -716,6 +716,9 @@ static void arc_touch_poll(void)
    int reported = arc_input_state(0u, RETRO_DEVICE_POINTER, 0u,
                                   RETRO_DEVICE_ID_POINTER_COUNT);
    unsigned count = reported > 0 ? (unsigned)reported : 0u;
+   bool primary_pressed = arc_input_state(0u, RETRO_DEVICE_POINTER, 0u,
+                                          RETRO_DEVICE_ID_POINTER_PRESSED) != 0;
+   if (primary_pressed && count < 1u) count = 1u;
    if (count > 2u)
    {
       arc_touch_reset();
