@@ -2,7 +2,7 @@
 
 **Stage:** IMPLEMENTATION  
 **Owner:** Sol  
-**Next:** Remediate PR #43 (`slice/03a-input-profiles-osk`, head `1f86dc7`) per R-109…R-111 below on the same branch; push and update the PR body. R-97…R-106 and R-108 are closed at `1f86dc7` (Fable re-review; R-99 verified on real RISC OS 3.11: `*hHHh`); R-107 is not closed. Stop and return to Fable on any item in "Return to Fable".
+**Next:** Remediate PR #43 (`slice/03a-input-profiles-osk`, head `acd75e4`) per R-112…R-114 in the "Remediation after Opus QA" section, on the same branch; push and update the PR body. R-77…R-111 are closed at `acd75e4` (Fable re-review; Opus targeted re-check confirmed all earlier findings fixed on the Odin3). Stop and return to Fable on any item in "Return to Fable".
 
 ## Objective and governing requirement
 Slice 3a: content-keyed input profiles, static per-input option overrides, and an in-core on-screen keyboard (PRD §23 proof 7; FR-28…FR-34, FR-47…FR-51, FR-22, FR-53, P-5; D-033, D-034).
