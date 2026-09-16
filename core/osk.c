@@ -430,11 +430,12 @@ static bool arc_osk_start(ArcOsk *osk, ArcInputState *input, unsigned key,
    return arc_osk_begin(osk, input, key, held);
 }
 
-bool arc_osk_press_focused(ArcOsk *osk, ArcInputState *input)
+static bool arc_osk_press_index(ArcOsk *osk, ArcInputState *input,
+                                unsigned index)
 {
-   if (!osk || !osk->visible || osk->focus >= osk->key_count) return false;
+   if (!osk || !osk->visible || index >= osk->key_count) return false;
    arc_osk_note_action(osk);
-   ArcOskKey *key = &osk->keys[osk->focus];
+   ArcOskKey *key = &osk->keys[index];
    if (key->action == ARC_OSK_ACTION_PAGE)
    {
       osk->page = (osk->page + 1u) % osk->page_count;
@@ -449,6 +450,11 @@ bool arc_osk_press_focused(ArcOsk *osk, ArcInputState *input)
    }
    return key->action == ARC_OSK_ACTION_KEY &&
           arc_osk_start(osk, input, key->key, true);
+}
+
+bool arc_osk_press_focused(ArcOsk *osk, ArcInputState *input)
+{
+   return osk ? arc_osk_press_index(osk, input, osk->focus) : false;
 }
 
 bool arc_osk_shortcut(ArcOsk *osk, ArcInputState *input, unsigned key)
@@ -615,9 +621,11 @@ bool arc_osk_touch(ArcOsk *osk, int x, int y, bool down, ArcInputState *input)
    if (!down && osk->contact)
    {
       bool activate = osk->contact_valid;
+      unsigned contact_key = osk->contact_key;
       osk->contact = false;
       osk->contact_valid = false;
-      bool started = activate && arc_osk_press_focused(osk, input);
+      bool started = activate &&
+         arc_osk_press_index(osk, input, contact_key);
       if (started) arc_osk_release_activation(osk);
       return started;
    }

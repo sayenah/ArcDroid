@@ -1535,8 +1535,12 @@ static void test_osk(void)
    assert(osk.focus == captured && osk.contact_key == captured);
    arc_osk_move(&osk, 1, 0, 500000u, true);
    assert(osk.focus == captured && osk.contact_key == captured);
+   unsigned displaced_focus = captured ? 0u : 1u;
+   assert(displaced_focus < osk.key_count && displaced_focus != captured);
+   osk.focus = displaced_focus;
    assert(arc_osk_touch(&osk, (int)captured_key.x + 1,
                          (int)captured_key.y + 1, false, &input));
+   assert(osk.focus == displaced_focus);
    arc_osk_update(&osk, &input);
    assert(drain_input(&input, events, 16u) == 1u &&
           events[0].code == captured_key.key && events[0].down);
