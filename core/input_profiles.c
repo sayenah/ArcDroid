@@ -1,15 +1,39 @@
 /* ArcDroid evidence-backed input profile table. GPL-2.0-only. */
 #include "arcdroid_core.h"
+#include "libretro.h"
 
 #include <stdio.h>
 #include <string.h>
 
 /* Real-title entries are added only with locally verified D-029 evidence. */
-static const ArcInputProfile arc_profiles[] = {{0}};
+static const ArcInputProfile arc_profiles[] = {
+   {
+      .id = "elite",
+      .name = "Elite (Hybrid Technology)",
+      .digests = {"fde0f540e0d5732646c1eebb54629a162f40db91"},
+      .digest_count = 1u,
+      .mapping = {
+         [0] = {
+            [ARC_PAD_UP] = {true, RETROK_s},
+            [ARC_PAD_DOWN] = {true, RETROK_x},
+            [ARC_PAD_LEFT] = {true, RETROK_COMMA},
+            [ARC_PAD_RIGHT] = {true, RETROK_PERIOD},
+            [ARC_PAD_A] = {true, RETROK_SPACE},
+            [ARC_PAD_B] = {true, RETROK_SLASH},
+            [ARC_PAD_X] = {true, RETROK_a},
+            [ARC_PAD_Y] = {true, RETROK_m},
+            [ARC_PAD_START] = {true, RETROK_F1},
+            [ARC_PAD_SELECT] = {true, RETROK_t}
+         }
+      },
+      .has_port1 = false,
+      .evidence = "Elite Flight Training Manual pp. 12–15, 20; Odin3 launch and key response observed by Fable 2026-09-15"
+   }
+};
 
 const ArcInputProfile *arc_input_profiles(size_t *count)
 {
-   if (count) *count = 0u;
+   if (count) *count = sizeof(arc_profiles) / sizeof(arc_profiles[0]);
    return arc_profiles;
 }
 

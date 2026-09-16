@@ -373,11 +373,18 @@ static bool environment(unsigned command, void *data)
             if (!strcmp(definition->key, "arcdroid_input_profile"))
             {
                found_profile = true;
-               bool found_test = false;
-               for (unsigned value = 0u; definition->values[value].value; ++value)
-                  if (!strcmp(definition->values[value].value, "test-profile"))
-                     found_test = true;
-               assert(found_test == expect_test_profile);
+               unsigned value_count = 0u;
+               while (definition->values[value_count].value) ++value_count;
+               assert(value_count == (expect_test_profile ? 4u : 3u) &&
+                      !strcmp(definition->values[0].value, "Auto") &&
+                      !strcmp(definition->values[1].value, "Generic") &&
+                      !strcmp(definition->values[2].value, "elite") &&
+                      !strcmp(definition->values[2].label,
+                              "Elite (Hybrid Technology)"));
+               if (expect_test_profile)
+                  assert(!strcmp(definition->values[3].value, "test-profile") &&
+                         !strcmp(definition->values[3].label,
+                                 "Generated Test Profile"));
             }
             if (!strcmp(definition->key, "arcdroid_osk_toggle")) found_osk = true;
             if (!strncmp(definition->key, "arcdroid_pad", 12u))

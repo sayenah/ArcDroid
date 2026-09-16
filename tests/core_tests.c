@@ -1130,6 +1130,28 @@ static void test_input_mapping(void)
    assert(!arc_test_keytable_position(RETROK_PRINT, &omitted_row,
                                       &omitted_column));
    assert(arc_input_profiles_validate(NULL, 0u));
+   size_t profile_count = 0u;
+   const ArcInputProfile *profiles = arc_input_profiles(&profile_count);
+   static const unsigned elite_mapping[ARC_PAD_INPUT_COUNT] = {
+      RETROK_s, RETROK_x, RETROK_COMMA, RETROK_PERIOD, RETROK_SPACE,
+      RETROK_SLASH, RETROK_a, RETROK_m, RETROK_F1, RETROK_t
+   };
+   assert(profiles && profile_count == 1u);
+   assert(!strcmp(profiles[0].id, "elite") &&
+          !strcmp(profiles[0].name, "Elite (Hybrid Technology)") &&
+          profiles[0].digest_count == 1u &&
+          !strcmp(profiles[0].digests[0],
+                  "fde0f540e0d5732646c1eebb54629a162f40db91") &&
+          !profiles[0].launch_target && !profiles[0].has_port1 &&
+          !strcmp(profiles[0].evidence,
+                  "Elite Flight Training Manual pp. 12–15, 20; Odin3 launch and key response observed by Fable 2026-09-15"));
+   for (unsigned input = 0u; input < ARC_PAD_INPUT_COUNT; ++input)
+   {
+      assert(profiles[0].mapping[0][input].bound &&
+             profiles[0].mapping[0][input].key == elite_mapping[input]);
+      assert(!profiles[0].mapping[1][input].bound &&
+             profiles[0].mapping[1][input].key == 0u);
+   }
 
    ArcInputProfile test_profile = {
       .id = "test-profile",
@@ -1175,6 +1197,22 @@ static void test_input_mapping(void)
           resolution.source[1][ARC_PAD_A] == ARC_MAPPING_SOURCE_OPTION);
    overrides[0][ARC_PAD_B].automatic = true;
    overrides[1][ARC_PAD_A].automatic = true;
+   assert(arc_input_resolve(
+            "fde0f540e0d5732646c1eebb54629a162f40db91", NULL,
+            "Auto", overrides, &resolution));
+   assert(!strcmp(resolution.profile_id, "elite") &&
+          resolution.source[0][ARC_PAD_UP] == ARC_MAPPING_SOURCE_PROFILE &&
+          resolution.binding[0][ARC_PAD_UP].key == RETROK_s &&
+          resolution.binding[0][ARC_PAD_SELECT].key == RETROK_t &&
+          resolution.source[1][ARC_PAD_UP] == ARC_MAPPING_SOURCE_GENERIC &&
+          resolution.binding[1][ARC_PAD_UP].key == RETROK_UP);
+   assert(arc_input_resolve(
+            "0000000000000000000000000000000000000000", NULL,
+            "elite", overrides, &resolution));
+   assert(!strcmp(resolution.profile_id, "elite") &&
+          resolution.source[0][ARC_PAD_START] == ARC_MAPPING_SOURCE_PRESET &&
+          resolution.binding[0][ARC_PAD_START].key == RETROK_F1 &&
+          resolution.source[1][ARC_PAD_START] == ARC_MAPPING_SOURCE_GENERIC);
    assert(arc_input_resolve_table(&test_profile, 1u,
             "0123456789abcdef0123456789abcdef01234567", "!TEST", "Auto",
             overrides, &resolution));
