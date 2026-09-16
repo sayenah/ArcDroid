@@ -78,18 +78,61 @@ static void arc_osk_show_interrupted(ArcOsk *osk)
    osk->interrupted_action_generation = osk->action_generation;
 }
 
-static const ArcInputKey *arc_osk_catalogue_position(const ArcInputKey *shared,
-                                                     size_t shared_count,
-                                                     const ArcInputKey *osk_only,
-                                                     size_t osk_only_count,
-                                                     unsigned row,
-                                                     unsigned column)
+enum {
+   ARC_OSK_PHYSICAL_ROWS = 6u,
+   ARC_OSK_FULL_COLUMNS = 21u,
+   ARC_OSK_COMPACT_COLUMNS = 10u
+};
+
+typedef struct {
+   unsigned count;
+   unsigned keys[ARC_OSK_FULL_COLUMNS];
+} ArcOskPhysicalRow;
+
+/* A3000 physical rows, left to right. Unsupported legends (Print, Pound and
+ * the keypad minus cell) are omitted rather than reserving empty cells. */
+static const ArcOskPhysicalRow arc_osk_physical_rows[ARC_OSK_PHYSICAL_ROWS] = {
+   {15u, {RETROK_ESCAPE,
+           RETROK_F1, RETROK_F2, RETROK_F3, RETROK_F4, RETROK_F5, RETROK_F6,
+           RETROK_F7, RETROK_F8, RETROK_F9, RETROK_F10, RETROK_F11, RETROK_F12,
+           RETROK_SCROLLOCK, RETROK_PAUSE}},
+   {21u, {RETROK_BACKQUOTE,
+           RETROK_1, RETROK_2, RETROK_3, RETROK_4, RETROK_5,
+           RETROK_6, RETROK_7, RETROK_8, RETROK_9, RETROK_0,
+           RETROK_MINUS, RETROK_EQUALS, RETROK_BACKSPACE,
+           RETROK_INSERT, RETROK_HOME, RETROK_PAGEUP, RETROK_NUMLOCK,
+           RETROK_KP_DIVIDE, RETROK_KP_MULTIPLY, RETROK_KP_MINUS}},
+   {20u, {RETROK_TAB,
+           RETROK_q, RETROK_w, RETROK_e, RETROK_r, RETROK_t,
+           RETROK_y, RETROK_u, RETROK_i, RETROK_o, RETROK_p,
+           RETROK_LEFTBRACKET, RETROK_RIGHTBRACKET, RETROK_BACKSLASH,
+           RETROK_DELETE, RETROK_END, RETROK_PAGEDOWN,
+           RETROK_KP7, RETROK_KP8, RETROK_KP9}},
+   {17u, {RETROK_LCTRL,
+           RETROK_a, RETROK_s, RETROK_d, RETROK_f, RETROK_g,
+           RETROK_h, RETROK_j, RETROK_k, RETROK_l,
+           RETROK_SEMICOLON, RETROK_QUOTE, RETROK_RETURN,
+           RETROK_KP4, RETROK_KP5, RETROK_KP6, RETROK_KP_PLUS}},
+   {16u, {RETROK_LSHIFT,
+           RETROK_z, RETROK_x, RETROK_c, RETROK_v, RETROK_b, RETROK_n, RETROK_m,
+           RETROK_COMMA, RETROK_PERIOD, RETROK_SLASH, RETROK_RSHIFT, RETROK_UP,
+           RETROK_KP1, RETROK_KP2, RETROK_KP3}},
+   {11u, {RETROK_CAPSLOCK, RETROK_LALT, RETROK_SPACE, RETROK_RALT, RETROK_RCTRL,
+           RETROK_LEFT, RETROK_DOWN, RETROK_RIGHT,
+           RETROK_KP0, RETROK_KP_PERIOD, RETROK_KP_ENTER}}
+};
+
+static const ArcInputKey *arc_osk_catalogue_key(const ArcInputKey *shared,
+                                                size_t shared_count,
+                                                const ArcInputKey *osk_only,
+                                                size_t osk_only_count,
+                                                unsigned key)
 {
    for (size_t i = 0u; i < shared_count; ++i)
-      if (shared[i].kart_row == row && shared[i].kart_column == column)
+      if (shared[i].key == key)
          return &shared[i];
    for (size_t i = 0u; i < osk_only_count; ++i)
-      if (osk_only[i].kart_row == row && osk_only[i].kart_column == column)
+      if (osk_only[i].key == key)
          return &osk_only[i];
    return NULL;
 }
@@ -114,25 +157,25 @@ static const char *arc_osk_key_label(const ArcInputKey *key, bool compact)
       case RETROK_RETURN: return "Ret";
       case RETROK_INSERT: return "Ins";
       case RETROK_DELETE: return "Del";
-      case RETROK_HOME: return compact ? "Hom" : "Home";
-      case RETROK_END: return compact ? "Cpy" : "Copy";
-      case RETROK_PAGEUP: return compact ? "PgU" : "PgUp";
-      case RETROK_PAGEDOWN: return compact ? "PgD" : "PgDn";
+      case RETROK_HOME: return "Hom";
+      case RETROK_END: return "Cpy";
+      case RETROK_PAGEUP: return "PgU";
+      case RETROK_PAGEDOWN: return "PgD";
       case RETROK_SPACE: return "Spc";
       case RETROK_UP: return "\x7d";
       case RETROK_DOWN: return "\x7e";
       case RETROK_LEFT: return "<";
       case RETROK_RIGHT: return ">";
-      case RETROK_LSHIFT: return compact ? "LSh" : "LSft";
-      case RETROK_RSHIFT: return compact ? "RSh" : "RSft";
-      case RETROK_LCTRL: return compact ? "LCt" : "LCtl";
-      case RETROK_RCTRL: return compact ? "RCt" : "RCtl";
-      case RETROK_LALT: return compact ? "LAl" : "LAlt";
-      case RETROK_RALT: return compact ? "RAl" : "RAlt";
-      case RETROK_CAPSLOCK: return compact ? "Cps" : "Caps";
+      case RETROK_LSHIFT: return "LSh";
+      case RETROK_RSHIFT: return "RSh";
+      case RETROK_LCTRL: return "LCt";
+      case RETROK_RCTRL: return "RCt";
+      case RETROK_LALT: return "LAl";
+      case RETROK_RALT: return "RAl";
+      case RETROK_CAPSLOCK: return "Cps";
       case RETROK_NUMLOCK: return "Num";
-      case RETROK_SCROLLOCK: return compact ? "Scr" : "Scrl";
-      case RETROK_PAUSE: return compact ? "Pau" : "Paus";
+      case RETROK_SCROLLOCK: return "Scr";
+      case RETROK_PAUSE: return "Pau";
       case RETROK_BACKSLASH: return "Bsl";
       case RETROK_KP0: return compact ? "K0" : "KP0";
       case RETROK_KP1: return compact ? "K1" : "KP1";
@@ -149,7 +192,7 @@ static const char *arc_osk_key_label(const ArcInputKey *key, bool compact)
       case RETROK_KP_MINUS: return compact ? "K-" : "KP-";
       case RETROK_KP_PLUS: return compact ? "K+" : "KP+";
       case RETROK_KP_PERIOD: return compact ? "K." : "KP.";
-      case RETROK_KP_ENTER: return compact ? "KEn" : "KPEn";
+      case RETROK_KP_ENTER: return "KEn";
       default: return key->label;
    }
 }
@@ -196,17 +239,15 @@ bool arc_osk_layout(ArcOsk *osk, unsigned width, unsigned height)
    const ArcInputKey *catalogue = arc_input_supported_keys(&shared_count);
    size_t osk_only_count = 0u;
    const ArcInputKey *osk_only = arc_input_osk_only_keys(&osk_only_count);
-   unsigned first_row = osk->compact && osk->page ? 4u : 0u;
-   unsigned last_row = osk->compact && !osk->page ? 4u : 7u;
+   unsigned first_row = osk->compact && osk->page ? 3u : 0u;
+   unsigned last_row = osk->compact && !osk->page ? 3u : ARC_OSK_PHYSICAL_ROWS;
    unsigned item_count = 0u;
    for (unsigned row = first_row; row < last_row; ++row)
-      for (unsigned column = 0u; column < 16u; ++column)
-         if (arc_osk_catalogue_position(catalogue, shared_count, osk_only,
-                                        osk_only_count, row, column))
-            ++item_count;
-   unsigned columns = osk->compact ? 10u : 16u;
+      item_count += arc_osk_physical_rows[row].count;
+   unsigned columns = osk->compact ? ARC_OSK_COMPACT_COLUMNS :
+                                     ARC_OSK_FULL_COLUMNS;
    unsigned rows = osk->compact ?
-      (item_count + columns - 1u) / columns : 7u;
+      (item_count + columns - 1u) / columns : ARC_OSK_PHYSICAL_ROWS;
    if (osk->compact) ++rows;
    unsigned panel_h = height * 45u / 100u;
    if (panel_h < 48u) panel_h = 48u;
@@ -215,10 +256,12 @@ bool arc_osk_layout(ArcOsk *osk, unsigned width, unsigned height)
    unsigned cell_h = panel_h > 17u ? (panel_h - 17u) / (rows ? rows : 1u) : 1u;
    unsigned slot = 0u;
    for (unsigned row = first_row; row < last_row; ++row)
-      for (unsigned column = 0u; column < 16u; ++column)
+      for (unsigned column = 0u;
+           column < arc_osk_physical_rows[row].count; ++column)
       {
-         const ArcInputKey *item = arc_osk_catalogue_position(
-            catalogue, shared_count, osk_only, osk_only_count, row, column);
+         const ArcInputKey *item = arc_osk_catalogue_key(
+            catalogue, shared_count, osk_only, osk_only_count,
+            arc_osk_physical_rows[row].keys[column]);
          if (!item) continue;
          int modifier = arc_osk_modifier_index(item->key);
          arc_osk_add(osk,

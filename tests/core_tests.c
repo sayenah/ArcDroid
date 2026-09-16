@@ -1309,8 +1309,101 @@ static const ArcInputKey *osk_catalogue_key(unsigned key)
    return NULL;
 }
 
+static void assert_osk_physical_row(const ArcOsk *osk, unsigned row,
+                                    const unsigned *expected,
+                                    size_t expected_count)
+{
+   assert(osk && !osk->compact && expected && expected_count <= 21u);
+   unsigned current_row = 0u;
+   size_t actual_count = 0u;
+   for (unsigned i = 0u; i < osk->key_count; ++i)
+   {
+      if (i > 0u && osk->keys[i].y != osk->keys[i - 1u].y) ++current_row;
+      if (current_row != row) continue;
+      assert(actual_count < expected_count);
+      assert(osk->keys[i].key == expected[actual_count++]);
+   }
+   assert(actual_count == expected_count);
+}
+
+static void assert_osk_compact_page(const ArcOsk *osk,
+                                    const unsigned *expected,
+                                    size_t expected_count)
+{
+   assert(osk && osk->compact && expected);
+   size_t seen = 0u;
+   unsigned row_count = 0u;
+   for (unsigned i = 0u; i < osk->key_count; ++i)
+   {
+      if (i > 0u && osk->keys[i].y != osk->keys[i - 1u].y)
+      {
+         assert(row_count <= 10u);
+         row_count = 0u;
+      }
+      ++row_count;
+      if (osk->keys[i].action != ARC_OSK_ACTION_PAGE)
+      {
+         assert(seen < expected_count);
+         assert(osk->keys[i].key == expected[seen++]);
+      }
+   }
+   assert(row_count <= 10u);
+   assert(seen == expected_count);
+}
+
 static void test_osk(void)
 {
+   static const unsigned row0[] = {
+      RETROK_ESCAPE,
+      RETROK_F1, RETROK_F2, RETROK_F3, RETROK_F4, RETROK_F5, RETROK_F6,
+      RETROK_F7, RETROK_F8, RETROK_F9, RETROK_F10, RETROK_F11, RETROK_F12,
+      RETROK_SCROLLOCK, RETROK_PAUSE
+   };
+   static const unsigned row1[] = {
+      RETROK_BACKQUOTE,
+      RETROK_1, RETROK_2, RETROK_3, RETROK_4, RETROK_5,
+      RETROK_6, RETROK_7, RETROK_8, RETROK_9, RETROK_0,
+      RETROK_MINUS, RETROK_EQUALS, RETROK_BACKSPACE,
+      RETROK_INSERT, RETROK_HOME, RETROK_PAGEUP, RETROK_NUMLOCK,
+      RETROK_KP_DIVIDE, RETROK_KP_MULTIPLY, RETROK_KP_MINUS
+   };
+   static const unsigned row2[] = {
+      RETROK_TAB,
+      RETROK_q, RETROK_w, RETROK_e, RETROK_r, RETROK_t,
+      RETROK_y, RETROK_u, RETROK_i, RETROK_o, RETROK_p,
+      RETROK_LEFTBRACKET, RETROK_RIGHTBRACKET, RETROK_BACKSLASH,
+      RETROK_DELETE, RETROK_END, RETROK_PAGEDOWN,
+      RETROK_KP7, RETROK_KP8, RETROK_KP9
+   };
+   static const unsigned row3[] = {
+      RETROK_LCTRL,
+      RETROK_a, RETROK_s, RETROK_d, RETROK_f, RETROK_g,
+      RETROK_h, RETROK_j, RETROK_k, RETROK_l,
+      RETROK_SEMICOLON, RETROK_QUOTE, RETROK_RETURN,
+      RETROK_KP4, RETROK_KP5, RETROK_KP6, RETROK_KP_PLUS
+   };
+   static const unsigned row4[] = {
+      RETROK_LSHIFT,
+      RETROK_z, RETROK_x, RETROK_c, RETROK_v, RETROK_b, RETROK_n, RETROK_m,
+      RETROK_COMMA, RETROK_PERIOD, RETROK_SLASH, RETROK_RSHIFT, RETROK_UP,
+      RETROK_KP1, RETROK_KP2, RETROK_KP3
+   };
+   static const unsigned row5[] = {
+      RETROK_CAPSLOCK, RETROK_LALT, RETROK_SPACE, RETROK_RALT, RETROK_RCTRL,
+      RETROK_LEFT, RETROK_DOWN, RETROK_RIGHT,
+      RETROK_KP0, RETROK_KP_PERIOD, RETROK_KP_ENTER
+   };
+   static const struct {
+      const unsigned *keys;
+      size_t count;
+   } physical_rows[] = {
+      {row0, sizeof(row0) / sizeof(row0[0])},
+      {row1, sizeof(row1) / sizeof(row1[0])},
+      {row2, sizeof(row2) / sizeof(row2[0])},
+      {row3, sizeof(row3) / sizeof(row3[0])},
+      {row4, sizeof(row4) / sizeof(row4[0])},
+      {row5, sizeof(row5) / sizeof(row5[0])}
+   };
    ArcOsk osk = {0};
    ArcInputState input;
    ArcInputEvent events[16];
@@ -1319,6 +1412,27 @@ static void test_osk(void)
    memset(&osk, 0, sizeof(osk));
    assert(arc_osk_open(&osk, 320u, 256u) && osk.visible && osk.compact &&
           osk.page_count == 2u && osk.key_count > 40u);
+   unsigned compact_expected[100u];
+   size_t compact_count = 0u;
+   for (unsigned row = 0u; row < 3u; ++row)
+      for (size_t key = 0u; key < physical_rows[row].count; ++key)
+         compact_expected[compact_count++] = physical_rows[row].keys[key];
+   assert_osk_compact_page(&osk, compact_expected, compact_count);
+   osk.page = 1u;
+   assert(arc_osk_layout(&osk, 320u, 256u));
+   compact_count = 0u;
+   for (unsigned row = 3u; row < 6u; ++row)
+      for (size_t key = 0u; key < physical_rows[row].count; ++key)
+         compact_expected[compact_count++] = physical_rows[row].keys[key];
+   assert_osk_compact_page(&osk, compact_expected, compact_count);
+   osk.page = 0u;
+   assert(arc_osk_layout(&osk, 320u, 256u));
+
+   ArcOsk full_layout = {0};
+   assert(arc_osk_open(&full_layout, 640u, 256u) && !full_layout.compact);
+   for (unsigned row = 0u; row < 6u; ++row)
+      assert_osk_physical_row(&full_layout, row, physical_rows[row].keys,
+                              physical_rows[row].count);
    /* Every keyboard key has a tier-specific label which fits its cell and is
     * distinct from every other rendered label at that tier. Compact pages
     * are checked together rather than allowing collisions across pages. */
@@ -1333,8 +1447,6 @@ static void test_osk(void)
       {
          labelled.page = page;
          assert(arc_osk_layout(&labelled, width, 256u));
-         unsigned previous_position = 0u;
-         bool have_previous_position = false;
          for (unsigned i = 0u; i < labelled.key_count; ++i)
          {
             const ArcOskKey *key = &labelled.keys[i];
@@ -1354,23 +1466,6 @@ static void test_osk(void)
             {
                const ArcInputKey *catalogue = osk_catalogue_key(key->key);
                assert(catalogue);
-               unsigned position = catalogue->kart_row * 16u +
-                                   catalogue->kart_column;
-               assert(!have_previous_position || position > previous_position);
-               previous_position = position;
-               have_previous_position = true;
-               if (labelled.compact)
-                  assert(page ? catalogue->kart_row >= 4u :
-                                catalogue->kart_row < 4u);
-               else
-               {
-                  unsigned panel_h = 256u * 45u / 100u;
-                  unsigned panel_y = 256u - panel_h;
-                  unsigned cell_h = (panel_h - 17u) / 7u;
-                  assert(key->x == catalogue->kart_column * width / 16u + 1u &&
-                         key->y == panel_y + 17u +
-                                   catalogue->kart_row * cell_h);
-               }
             }
             assert(strlen(key->label) <= (key->width - 2u) / 8u);
             for (unsigned previous = 0u; previous < label_count; ++previous)
@@ -1601,12 +1696,12 @@ static void test_osk(void)
    static const unsigned widths[] = {320u, 640u, 640u};
    static const unsigned heights[] = {256u, 256u, 480u};
    static const char *goldens[3][2][2] = {
-      {{"d74bc133ecbbb0bc51a074c2a07633ad7865663b", "455844640d87a496248222f1576c454d892a97a6"},
-       {"748f3ebb59d332023b47df5c152b67e988b1e682", "d6b35fd0080954eaccf9510bfab988dab2d4d422"}},
-      {{"990dcd6a49ba8c68fd165d9b2c48c715cc8e0d24", NULL},
-       {"eb36b3b921af455527251bc6bf2dbaf578d4a661", NULL}},
-      {{"f131693ab514e92e1e6696c676c041a39bb80248", NULL},
-       {"77f6448c096f1254110557c20467f11b901ebff7", NULL}}
+      {{"23b4e4495fe4587dbf7524dc9a9c46f3dffdf899", "c3448dc71a273dd554d196878fa566dfed344a3a"},
+       {"97163fa8fa4e7c54a2dfb3e0928777cc383b5a7b", "d93122c9d2101aa3772b9b8dee98b6bbcfbd367f"}},
+      {{"420e7ef55b1f03c7a3ef548371149c36a1730d0c", NULL},
+       {"ba0ec9ef6fd31f4bc1e3e44a1ab02abf3a73eea6", NULL}},
+      {{"0d25bd96a7f7be7c3be4d8660f7bb14128578797", NULL},
+       {"79c92b53e8cfe064156f9053f59c8bd1152210cc", NULL}}
    };
    for (unsigned geometry = 0u; geometry < 3u; ++geometry)
       for (unsigned alpha = 0u; alpha < 2u; ++alpha)
@@ -1660,7 +1755,7 @@ static void test_osk(void)
             saw_up_arrow = !strcmp(osk.keys[i].label, "\x7d");
    }
    assert(saw_up_arrow);
-   osk.page = 0u;
+   osk.page = 1u;
    assert(arc_osk_layout(&osk, 320u, 256u));
    unsigned notice_key = UINT_MAX;
    for (unsigned i = 0u; i < osk.key_count; ++i)
@@ -1678,9 +1773,9 @@ static void test_osk(void)
                                    320u * sizeof(uint32_t), "Golden custom"));
    char notice_digest[41];
    arc_sha1_hex(notice, 320u * 256u * sizeof(*notice), notice_digest);
-   if (strcmp(notice_digest, "885ae8cc1616bd7d3036c422e7d39035cef1bd56"))
+   if (strcmp(notice_digest, "e2634469f489ea06082bac3ac0decbe5abe27edd"))
       fprintf(stderr, "OSK compact INT golden = %s\n", notice_digest);
-   assert(!strcmp(notice_digest, "885ae8cc1616bd7d3036c422e7d39035cef1bd56"));
+   assert(!strcmp(notice_digest, "e2634469f489ea06082bac3ac0decbe5abe27edd"));
    assert(osk.interrupted_visible);
    memset(notice, 0, 320u * 256u * sizeof(*notice));
    assert(arc_osk_render(&osk, notice, 320u, 256u,

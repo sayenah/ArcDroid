@@ -2687,6 +2687,7 @@ int main(int argc, char **argv)
     * input FIFO so activation reports BUSY without beginning a partial key. */
    arc_libretro_test_probe_osk_geometry(320u, 256u);
    assert(arc_libretro_test_osk_visible());
+   assert(arc_libretro_test_osk_focus_key(RETROK_ESCAPE));
    retro_run();
    assert(arc_libretro_test_osk_visible());
    arc_libretro_test_stall_kart(true);
@@ -2708,8 +2709,8 @@ int main(int argc, char **argv)
         ++frame) retro_run();
    input_event_count = arc_platform_test_input_events(input_events, 512u);
    assert(!arc_libretro_test_osk_busy() && input_event_count == 2u &&
-          input_events[0].code == RETROK_a && input_events[0].down &&
-          input_events[1].code == RETROK_a && !input_events[1].down);
+          input_events[0].code == RETROK_ESCAPE && input_events[0].down &&
+          input_events[1].code == RETROK_ESCAPE && !input_events[1].down);
    joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_START] = true; retro_run();
    assert(!arc_libretro_test_osk_visible());
    joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_START] = false; retro_run();
@@ -2724,6 +2725,7 @@ int main(int argc, char **argv)
    assert(!last_video_was_duplicate);
    joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_L3] = false;
    retro_run();
+   assert(arc_libretro_test_osk_focus_key(RETROK_a));
    joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_A] = true;
    retro_run();
    for (unsigned frame = 0u; frame < 10u; ++frame) retro_run();
