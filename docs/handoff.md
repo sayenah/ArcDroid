@@ -1,8 +1,8 @@
 # ArcDroid Handoff
 
-**Stage:** QA  
-**Owner:** Opus  
-**Next:** Opus targeted re-check of PR #43 at `c0b9a71` (R-112…R-114 only; host suite, diff reading, device optional); then the Founder merge gate: PR #43 is complete on every acceptance criterion except the real-title profile (AC-12(a), blocked on Repton 4), so the Founder decides between merging now with the profile as an immediate follow-up PR or holding until a keyboard title is verified. Do not edit implementation, tests, architecture or this file.
+**Stage:** IMPLEMENTATION  
+**Owner:** Sol  
+**Next:** Add the R-91 real-title profile entry to PR #43 (`slice/03a-input-profiles-osk`, head `c0b9a71`) exactly as posted in Fable's PR #43 comment "real-title profile evidence for R-91 — Elite" (preset id `elite`, digest `fde0f540e0d5732646c1eebb54629a162f40db91`, ten port-0 mappings, no port-1 mapping, evidence note); update the `arcdroid_input_profile` value list, validator, harness option assertions and any affected golden; same verification as before; push and update the PR body. No other change. Then the Founder merge gate (Fable verifies Elite pad play on the Odin3 with the Founder).
 
 ## Objective and governing requirement
 Slice 3a: content-keyed input profiles, static per-input option overrides, and an in-core on-screen keyboard (PRD §23 proof 7; FR-28…FR-34, FR-47…FR-51, FR-22, FR-53, P-5; D-033, D-034).
@@ -10,7 +10,7 @@ Slice 3a: content-keyed input profiles, static per-input option overrides, and a
 ## Verified state (2026-09-15, Fable)
 - Fresh clone at `4273096`: `ctest` 6/6, asset/shipping-I/O/export guards, NDK arm64 build + Android guard (sha256 `8d6b8829…9c94`, pushed to the Odin3 `downloads/` for QA); CI 5/5 on push and PR runs (Sol runs 1–3). Fable reviews: run 1 findings R-77…R-90 all closed at `df4d3c7` except the four partials re-stated as R-92…R-96, closed at `4273096` per Fable's re-review (posted on PR #43) except two Lows carried into the post-QA remediation: **R-97** the OSK header renders `(width-4)/8` glyphs but computes capacity as `width/8`, so a profile name at capacity drops the last glyph of the state (`core/osk.c` header path; fix the capacity and add a long-name truncation test at 320 px); **R-98** the PR body must state that the one-frame notice limitation is removed by R-94. Noted Lows for follow-up, not defects of this slice: BUSY may stay displayed until 1 s plus the next action after the queue recovers (by design of R-94); a touch contact that began before a pad activation still presses its key on lift.
 - Device (Odin3, `b976632` build): Chess 3D launches as on `main`; the OSK opens on L3, touch hit-testing types into RISC OS (`*cat` executed from the F12 line). Not exercised over adb: d-pad focus navigation (synthetic d-pad keyevents reach RetroArch as keyboard arrows on this device), physical sticks.
-- Profile registry ships empty: the required Repton 4 profile is blocked because the title never leaves its title screen on the device (Founder question open). The slice is therefore **not complete for shipment** until that is resolved; QA proceeds on everything else.
+- Real-title profile: Repton 4 never leaves its title screen on the device (compatibility follow-up), so the Founder supplied Elite (Hybrid Technology, 1991): controls from the Elite Flight Training Manual pp. 12–15/20 (Founder's copy), launch and key response observed on the Odin3 by Fable; entry posted on PR #43 for R-91. Slice 2b follow-up found on this disc: the discovery reports a disc with a non-ASCII root entry (`!élite`) as unreadable instead of skipping the entry, so no launch helper is generated (manual launch via `Filer_Boot !System` + `Filer_Run` works).
 - Suspected regression on `main` (Slice 2a, outside this PR): with a RetroArch `saloon.ldci` present, disc changes after load through the disk-control interface did not take effect in two runs and worked in two runs without the file (Fable, Odin3, UDP disk commands). Reproduce with logging.
 
 ## Remediation after Opus QA (R-97…R-108)
