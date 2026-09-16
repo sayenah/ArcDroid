@@ -384,6 +384,8 @@ typedef struct {
    bool contact;
    bool contact_valid;
    bool activation_held;
+   bool queued_activation;
+   bool queued_activation_held;
    unsigned width;
    unsigned height;
    unsigned page;
@@ -408,6 +410,7 @@ typedef struct {
    unsigned activation_phase;
    uint64_t activation_generation;
    uint64_t activation_deadline_us;
+   unsigned queued_activation_key;
 } ArcOsk;
 
 void arc_osk_reset(ArcOsk *osk, ArcInputState *input);

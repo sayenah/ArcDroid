@@ -1547,11 +1547,14 @@ static void test_osk(void)
 
    assert(arc_osk_layout(&osk, 640u, 480u) && !osk.compact);
    unsigned shift = UINT_MAX, right_shift = UINT_MAX, letter = UINT_MAX;
+   unsigned letter_b = UINT_MAX, return_key = UINT_MAX;
    for (unsigned i = 0u; i < osk.key_count; ++i)
    {
       if (osk.keys[i].key == RETROK_LSHIFT) shift = i;
       if (osk.keys[i].key == RETROK_RSHIFT) right_shift = i;
       if (osk.keys[i].key == RETROK_a) letter = i;
+      if (osk.keys[i].key == RETROK_b) letter_b = i;
+      if (osk.keys[i].key == RETROK_RETURN) return_key = i;
    }
    bool saw_num_lock = false, saw_scroll_lock = false, saw_pause = false;
    for (unsigned i = 0u; i < osk.key_count; ++i)
@@ -1562,7 +1565,8 @@ static void test_osk(void)
       assert(osk.keys[i].key != RETROK_PRINT);
    }
    assert(saw_num_lock && saw_scroll_lock && saw_pause);
-   assert(shift != UINT_MAX && right_shift != UINT_MAX && letter != UINT_MAX);
+   assert(shift != UINT_MAX && right_shift != UINT_MAX && letter != UINT_MAX &&
+          letter_b != UINT_MAX && return_key != UINT_MAX);
    /* Holding an activation freezes focus, and releasing still completes the
     * key that originally accepted the activation. */
    osk.focus = letter;
@@ -1671,6 +1675,56 @@ static void test_osk(void)
    unsigned interrupted_focus = osk.focus;
    arc_osk_move(&osk, 1, 0, interrupted_until, true);
    assert(osk.focus != interrupted_focus && !osk.interrupted_visible);
+
+   /* One activation may wait behind the current activation. A third is
+    * refused with a persistent BUSY notice and cannot replace the queued key. */
+   arc_input_reset(&input);
+   osk.focus = letter;
+   assert(arc_osk_press_focused(&osk, &input));
+   arc_osk_update(&osk, &input);
+   assert(drain_input(&input, events, 16u) == 1u &&
+          events[0].code == RETROK_a && events[0].down);
+   arc_osk_release_activation(&osk);
+   osk.focus = letter_b;
+   assert(arc_osk_press_focused(&osk, &input) && osk.queued_activation &&
+          osk.queued_activation_key == RETROK_b);
+   arc_osk_release_activation(&osk);
+   osk.focus = return_key;
+   assert(!arc_osk_press_focused(&osk, &input) && osk.busy &&
+          osk.queued_activation && osk.queued_activation_key == RETROK_b);
+   uint64_t outstanding_busy_until = osk.busy_until_us;
+
+   arc_osk_update(&osk, &input);
+   osk_time = osk.activation_deadline_us;
+   assert(!arc_osk_advance(&osk, osk_time));
+   arc_osk_update(&osk, &input);
+   assert(drain_input(&input, events, 16u) == 1u &&
+          events[0].code == RETROK_a && !events[0].down);
+   arc_osk_update(&osk, &input);
+   osk_time = osk.activation_deadline_us;
+   assert(!arc_osk_advance(&osk, osk_time));
+   arc_osk_update(&osk, &input);
+   assert(osk.activation_phase && !osk.queued_activation &&
+          osk.activation_key == RETROK_b);
+   arc_osk_update(&osk, &input);
+   assert(drain_input(&input, events, 16u) == 1u &&
+          events[0].code == RETROK_b && events[0].down);
+   arc_osk_update(&osk, &input);
+   osk_time = osk.activation_deadline_us;
+   assert(!arc_osk_advance(&osk, osk_time));
+   arc_osk_update(&osk, &input);
+   assert(drain_input(&input, events, 16u) == 1u &&
+          events[0].code == RETROK_b && !events[0].down);
+   arc_osk_update(&osk, &input);
+   osk_time = osk.activation_deadline_us;
+   assert(!arc_osk_advance(&osk, osk_time));
+   arc_osk_update(&osk, &input);
+   assert(!osk.activation_phase && !osk.queued_activation &&
+          !arc_input_pending(&input) && osk.busy);
+   assert(!arc_osk_advance(&osk, outstanding_busy_until) && osk.busy);
+   osk.focus = letter;
+   arc_osk_move(&osk, 1, 0, outstanding_busy_until, true);
+   assert(!osk.busy);
 
    /* A full queue reports busy and does not start a partial chord. */
    arc_input_reset(&input);

@@ -2711,6 +2711,27 @@ int main(int argc, char **argv)
    assert(!arc_libretro_test_osk_busy() && input_event_count == 2u &&
           input_events[0].code == RETROK_ESCAPE && input_events[0].down &&
           input_events[1].code == RETROK_ESCAPE && !input_events[1].down);
+
+   /* Five 20 ms fields separate the two tap-down edges. The second arrives
+    * while the first activation is outstanding and must be delivered once. */
+   arc_platform_test_input_events_reset();
+   assert(arc_libretro_test_osk_focus_key(RETROK_ESCAPE));
+   joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_A] = true; retro_run();
+   joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_A] = false; retro_run();
+   for (unsigned field = 0u; field < 3u; ++field) retro_run();
+   assert(arc_libretro_test_osk_activation_active());
+   assert(arc_libretro_test_osk_focus_key(RETROK_F1));
+   joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_A] = true; retro_run();
+   joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_A] = false; retro_run();
+   for (unsigned frame = 0u;
+        frame < 120u && arc_platform_test_input_events(input_events, 512u) < 4u;
+        ++frame) retro_run();
+   input_event_count = arc_platform_test_input_events(input_events, 512u);
+   assert(input_event_count == 4u &&
+          input_events[0].code == RETROK_ESCAPE && input_events[0].down &&
+          input_events[1].code == RETROK_ESCAPE && !input_events[1].down &&
+          input_events[2].code == RETROK_F1 && input_events[2].down &&
+          input_events[3].code == RETROK_F1 && !input_events[3].down);
    joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_START] = true; retro_run();
    assert(!arc_libretro_test_osk_visible());
    joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_START] = false; retro_run();

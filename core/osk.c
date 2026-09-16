@@ -331,6 +331,8 @@ void arc_osk_close(ArcOsk *osk, ArcInputState *input)
    osk->visible = false;
    osk->activation_phase = 0u;
    osk->activation_held = false;
+   osk->queued_activation = false;
+   osk->queued_activation_held = false;
    osk->busy = false;
    osk->interrupted_pending = false;
    osk->interrupted_visible = false;
@@ -383,7 +385,7 @@ void arc_osk_move(ArcOsk *osk, int dx, int dy, uint64_t guest_us, bool initial)
    }
 }
 
-static bool arc_osk_start(ArcOsk *osk, ArcInputState *input, unsigned key,
+static bool arc_osk_begin(ArcOsk *osk, ArcInputState *input, unsigned key,
                           bool held)
 {
    if (!osk || !input || osk->activation_phase || !key) return false;
@@ -407,6 +409,25 @@ static bool arc_osk_start(ArcOsk *osk, ArcInputState *input, unsigned key,
    osk->activation_deadline_us = 0u;
    osk->activation_phase = ARC_OSK_ACT_MODIFIERS_DOWN;
    return true;
+}
+
+static bool arc_osk_start(ArcOsk *osk, ArcInputState *input, unsigned key,
+                          bool held)
+{
+   if (!osk || !input || !key) return false;
+   if (osk->activation_phase)
+   {
+      if (!osk->queued_activation)
+      {
+         osk->queued_activation = true;
+         osk->queued_activation_held = held;
+         osk->queued_activation_key = key;
+         return true;
+      }
+      arc_osk_show_busy(osk);
+      return false;
+   }
+   return arc_osk_begin(osk, input, key, held);
 }
 
 bool arc_osk_press_focused(ArcOsk *osk, ArcInputState *input)
@@ -446,7 +467,11 @@ bool arc_osk_advance(ArcOsk *osk, uint64_t guest_us)
 
 void arc_osk_release_activation(ArcOsk *osk)
 {
-   if (osk) osk->activation_held = false;
+   if (!osk) return;
+   if (osk->queued_activation && osk->queued_activation_held)
+      osk->queued_activation_held = false;
+   else
+      osk->activation_held = false;
 }
 
 void arc_osk_update(ArcOsk *osk, ArcInputState *input)
@@ -457,6 +482,8 @@ void arc_osk_update(ArcOsk *osk, ArcInputState *input)
       arc_input_clear_source(input, ARC_INPUT_SOURCE_OSK);
       osk->activation_phase = 0u;
       osk->activation_held = false;
+      osk->queued_activation = false;
+      osk->queued_activation_held = false;
       osk->interrupted_pending = true;
       arc_osk_show_interrupted(osk);
       return;
@@ -539,6 +566,14 @@ void arc_osk_update(ArcOsk *osk, ArcInputState *input)
             if (osk->modifiers[i] == ARC_OSK_MOD_ONESHOT)
                osk->modifiers[i] = ARC_OSK_MOD_OFF;
          osk->activation_phase = 0u;
+         if (osk->queued_activation)
+         {
+            unsigned queued_key = osk->queued_activation_key;
+            bool queued_held = osk->queued_activation_held;
+            osk->queued_activation = false;
+            osk->queued_activation_held = false;
+            (void)arc_osk_begin(osk, input, queued_key, queued_held);
+         }
       }
    }
 }
