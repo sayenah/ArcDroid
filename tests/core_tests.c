@@ -1121,6 +1121,11 @@ static void test_input_mapping(void)
       assert(osk_only[i].kart_row == engine_row &&
              osk_only[i].kart_column == engine_column);
    }
+   assert(!strcmp(osk_only[2].value, "break") &&
+          !strcmp(osk_only[2].label, "Break") &&
+          osk_only[2].kart_row == 0u && osk_only[2].kart_column == 15u);
+   for (size_t i = 0u; i < osk_only_count; ++i)
+      assert(strcmp(osk_only[i].value, "pause"));
    unsigned omitted_row = UINT_MAX, omitted_column = UINT_MAX;
    assert(!arc_test_keytable_position(RETROK_PRINT, &omitted_row,
                                       &omitted_column));
@@ -1556,15 +1561,16 @@ static void test_osk(void)
       if (osk.keys[i].key == RETROK_b) letter_b = i;
       if (osk.keys[i].key == RETROK_RETURN) return_key = i;
    }
-   bool saw_num_lock = false, saw_scroll_lock = false, saw_pause = false;
+   bool saw_num_lock = false, saw_scroll_lock = false, saw_break = false;
    for (unsigned i = 0u; i < osk.key_count; ++i)
    {
       saw_num_lock |= osk.keys[i].key == RETROK_NUMLOCK;
       saw_scroll_lock |= osk.keys[i].key == RETROK_SCROLLOCK;
-      saw_pause |= osk.keys[i].key == RETROK_PAUSE;
+      if (osk.keys[i].key == RETROK_PAUSE)
+         saw_break = !strcmp(osk.keys[i].label, "BRK");
       assert(osk.keys[i].key != RETROK_PRINT);
    }
-   assert(saw_num_lock && saw_scroll_lock && saw_pause);
+   assert(saw_num_lock && saw_scroll_lock && saw_break);
    assert(shift != UINT_MAX && right_shift != UINT_MAX && letter != UINT_MAX &&
           letter_b != UINT_MAX && return_key != UINT_MAX);
    /* Holding an activation freezes focus, and releasing still completes the
@@ -1765,12 +1771,12 @@ static void test_osk(void)
    static const unsigned widths[] = {320u, 640u, 640u};
    static const unsigned heights[] = {256u, 256u, 480u};
    static const char *goldens[3][2][2] = {
-      {{"0611ea4756ce637829860c23f7adad8191920114", "c3448dc71a273dd554d196878fa566dfed344a3a"},
-       {"083dc086df27017c5bf92d598739708fe24ff89d", "d93122c9d2101aa3772b9b8dee98b6bbcfbd367f"}},
-      {{"686f46d83fb0814797ba86444bcb20f26182149d", NULL},
-       {"343f7bd7eb4ef83c81708aaf6843a757e25582b8", NULL}},
-      {{"212092a86011546683042613cdfc3befbf765939", NULL},
-       {"c166b53cd5bac709a88cc895934734dd8d4f92bd", NULL}}
+      {{"d52cca88212e55f511eee1e0bd1725e4a79b0e64", "c3448dc71a273dd554d196878fa566dfed344a3a"},
+       {"7c7117e8a370d4d0376db323a162b5af64f568d5", "d93122c9d2101aa3772b9b8dee98b6bbcfbd367f"}},
+      {{"fcca267a752fdb89132fed048c69cec0af5e3758", NULL},
+       {"7d38270a10e38de0dbd7d5d5ad5fcd17c168432f", NULL}},
+      {{"ea7f9888e5a7d22d9e4f82975ac8f37273662803", NULL},
+       {"03140896bd4cffd368e958826c1dcb7f8b8705e3", NULL}}
    };
    for (unsigned geometry = 0u; geometry < 3u; ++geometry)
       for (unsigned alpha = 0u; alpha < 2u; ++alpha)

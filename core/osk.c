@@ -175,7 +175,7 @@ static const char *arc_osk_key_label(const ArcInputKey *key, bool compact)
       case RETROK_CAPSLOCK: return "Cps";
       case RETROK_NUMLOCK: return "Num";
       case RETROK_SCROLLOCK: return "Scr";
-      case RETROK_PAUSE: return "Pau";
+      case RETROK_PAUSE: return "BRK";
       case RETROK_BACKSLASH: return "Bsl";
       case RETROK_KP0: return compact ? "K0" : "KP0";
       case RETROK_KP1: return compact ? "K1" : "KP1";

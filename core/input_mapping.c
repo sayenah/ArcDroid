@@ -90,7 +90,7 @@ static const ArcInputKey arc_keys[] = {
 static const ArcInputKey arc_osk_keys[] = {
    K(RETROK_NUMLOCK,"num_lock","Num Lock",2,2,false),
    K(RETROK_SCROLLOCK,"scroll_lock","Scroll Lock",0,14,false),
-   K(RETROK_PAUSE,"pause","Pause",0,15,false)
+   K(RETROK_PAUSE,"break","Break",0,15,false)
 };
 
 static const ArcInputBinding arc_generic[ARC_PAD_INPUT_COUNT] = {
