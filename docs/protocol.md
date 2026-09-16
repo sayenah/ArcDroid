@@ -311,7 +311,21 @@ Use the live VS Code/Codex/Claude harness and repository tooling available in th
 
 Prefer automation for repetitive checks, builds, test matrices, and evidence gathering. Automation does not relax role boundaries or evidence requirements.
 
-If the harness supports asynchronous/background model runs, arm its watchdog/monitor at dispatch before continuing other work. The monitor must surface completion, failure, or stall from live process/output/repository evidence. If no reliable background monitor exists, use synchronous dispatch rather than claiming a run is progressing in the background.
+### Background runs
+
+Every background model run — Astra, Sol/Codex, Opus, or subagent — must have deterministic supervision armed at dispatch and re-armed on resume.
+
+- Prefer native lifecycle events; otherwise poll read-only at least every **5 minutes**. Runs supervised only by native events have completion and death detection, not stall detection; the dispatch record must say so.
+- Record the run/session ID, strongest available ownership handle, start time, log location, and checkout/worktree.
+- Monitor applicable run state, output growth, child activity, and working-tree change.
+- Healthy checks must not invoke the orchestrator or another frontier model. Renewing the supervision channel when the harness lease expires is not a check and is an accepted cost.
+- Silence alone is not a stall. Mark `STALLED` only after the configured threshold expires with no progress signal; default: **3 consecutive 5-minute checks**.
+- Surface `COMPLETED`, `DIED`, `STALLED`, or `NEEDS_INPUT` immediately with the run ID, elapsed time, latest evidence, log location, and bounded log tail. `NEEDS_INPUT` means the run's own event stream reports it is awaiting input.
+- The orchestrator chooses inspect, resume, re-dispatch, remediate, or escalate.
+- Status claims must come from the latest recorded watchdog/native state, never memory.
+- Never control a run whose ownership handle was not recorded at dispatch.
+
+The watchdog observes execution only; existing architecture, implementation, QA, and merge gates remain unchanged. If no reliable background monitor can be armed, dispatch synchronously rather than claiming a run is progressing in the background.
 
 ## 16. Speed without recklessness
 
