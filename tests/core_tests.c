@@ -1100,6 +1100,11 @@ static void test_input_mapping(void)
    assert(!arc_input_key_value("hash_backslash"));
    assert(backslash && !strcmp(backslash->label, "Backslash") &&
           backslash->kart_row == 3u && backslash->kart_column == 3u);
+   const ArcInputKey *keypad_hash = arc_input_key_value("kp_hash");
+   assert(!arc_input_key_value("kp_minus"));
+   assert(keypad_hash && keypad_hash->key == RETROK_KP_MINUS &&
+          !strcmp(keypad_hash->label, "Keypad #") &&
+          keypad_hash->kart_row == 2u && keypad_hash->kart_column == 5u);
    assert(!arc_input_key(RETROK_PRINT));
    size_t osk_only_count = 0u;
    const ArcInputKey *osk_only = arc_input_osk_only_keys(&osk_only_count);
@@ -1418,6 +1423,11 @@ static void test_osk(void)
       for (size_t key = 0u; key < physical_rows[row].count; ++key)
          compact_expected[compact_count++] = physical_rows[row].keys[key];
    assert_osk_compact_page(&osk, compact_expected, compact_count);
+   bool saw_compact_keypad_hash = false;
+   for (unsigned i = 0u; i < osk.key_count; ++i)
+      if (osk.keys[i].key == RETROK_KP_MINUS)
+         saw_compact_keypad_hash = !strcmp(osk.keys[i].label, "K#");
+   assert(saw_compact_keypad_hash);
    osk.page = 1u;
    assert(arc_osk_layout(&osk, 320u, 256u));
    compact_count = 0u;
@@ -1433,6 +1443,11 @@ static void test_osk(void)
    for (unsigned row = 0u; row < 6u; ++row)
       assert_osk_physical_row(&full_layout, row, physical_rows[row].keys,
                               physical_rows[row].count);
+   bool saw_full_keypad_hash = false;
+   for (unsigned i = 0u; i < full_layout.key_count; ++i)
+      if (full_layout.keys[i].key == RETROK_KP_MINUS)
+         saw_full_keypad_hash = !strcmp(full_layout.keys[i].label, "KP#");
+   assert(saw_full_keypad_hash);
    /* Every keyboard key has a tier-specific label which fits its cell and is
     * distinct from every other rendered label at that tier. Compact pages
     * are checked together rather than allowing collisions across pages. */
@@ -1696,12 +1711,12 @@ static void test_osk(void)
    static const unsigned widths[] = {320u, 640u, 640u};
    static const unsigned heights[] = {256u, 256u, 480u};
    static const char *goldens[3][2][2] = {
-      {{"23b4e4495fe4587dbf7524dc9a9c46f3dffdf899", "c3448dc71a273dd554d196878fa566dfed344a3a"},
-       {"97163fa8fa4e7c54a2dfb3e0928777cc383b5a7b", "d93122c9d2101aa3772b9b8dee98b6bbcfbd367f"}},
-      {{"420e7ef55b1f03c7a3ef548371149c36a1730d0c", NULL},
-       {"ba0ec9ef6fd31f4bc1e3e44a1ab02abf3a73eea6", NULL}},
-      {{"0d25bd96a7f7be7c3be4d8660f7bb14128578797", NULL},
-       {"79c92b53e8cfe064156f9053f59c8bd1152210cc", NULL}}
+      {{"0611ea4756ce637829860c23f7adad8191920114", "c3448dc71a273dd554d196878fa566dfed344a3a"},
+       {"083dc086df27017c5bf92d598739708fe24ff89d", "d93122c9d2101aa3772b9b8dee98b6bbcfbd367f"}},
+      {{"686f46d83fb0814797ba86444bcb20f26182149d", NULL},
+       {"343f7bd7eb4ef83c81708aaf6843a757e25582b8", NULL}},
+      {{"212092a86011546683042613cdfc3befbf765939", NULL},
+       {"c166b53cd5bac709a88cc895934734dd8d4f92bd", NULL}}
    };
    for (unsigned geometry = 0u; geometry < 3u; ++geometry)
       for (unsigned alpha = 0u; alpha < 2u; ++alpha)

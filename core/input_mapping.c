@@ -79,7 +79,7 @@ static const ArcInputKey arc_keys[] = {
    K(RETROK_KP9,"kp9","Keypad 9",3,9,false),
    K(RETROK_KP_DIVIDE,"kp_divide","Keypad /",2,3,false),
    K(RETROK_KP_MULTIPLY,"kp_multiply","Keypad *",2,4,false),
-   K(RETROK_KP_MINUS,"kp_minus","Keypad -",2,5,false),
+   K(RETROK_KP_MINUS,"kp_hash","Keypad #",2,5,false),
    K(RETROK_KP_PLUS,"kp_plus","Keypad +",4,11,false),
    K(RETROK_KP_PERIOD,"kp_period","Keypad .",6,6,false),
    K(RETROK_KP_ENTER,"kp_enter","Keypad Enter",6,7,false)

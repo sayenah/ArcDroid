@@ -189,7 +189,7 @@ static const char *arc_osk_key_label(const ArcInputKey *key, bool compact)
       case RETROK_KP9: return compact ? "K9" : "KP9";
       case RETROK_KP_DIVIDE: return compact ? "K/" : "KP/";
       case RETROK_KP_MULTIPLY: return compact ? "K*" : "KP*";
-      case RETROK_KP_MINUS: return compact ? "K-" : "KP-";
+      case RETROK_KP_MINUS: return compact ? "K#" : "KP#";
       case RETROK_KP_PLUS: return compact ? "K+" : "KP+";
       case RETROK_KP_PERIOD: return compact ? "K." : "KP.";
       case RETROK_KP_ENTER: return "KEn";
