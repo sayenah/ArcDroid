@@ -99,6 +99,7 @@ static bool keyboard_levels[ARC_INPUT_KEY_COUNT];
 static bool legacy_only_options;
 static unsigned set_variable_calls;
 static bool saw_input_descriptors;
+static bool saw_elite_port1_descriptors;
 static unsigned option_query_count;
 static unsigned cmos_write_opens;
 static unsigned adf_sector_reads;
@@ -438,6 +439,17 @@ static bool environment(unsigned command, void *data)
       {
          assert(phase == PHASE_LOAD || phase == PHASE_RUN);
          const struct retro_input_descriptor *descriptors = data;
+         static const unsigned profile_ids[ARC_PAD_INPUT_COUNT] = {
+            RETRO_DEVICE_ID_JOYPAD_UP, RETRO_DEVICE_ID_JOYPAD_DOWN,
+            RETRO_DEVICE_ID_JOYPAD_LEFT, RETRO_DEVICE_ID_JOYPAD_RIGHT,
+            RETRO_DEVICE_ID_JOYPAD_A, RETRO_DEVICE_ID_JOYPAD_B,
+            RETRO_DEVICE_ID_JOYPAD_X, RETRO_DEVICE_ID_JOYPAD_Y,
+            RETRO_DEVICE_ID_JOYPAD_START, RETRO_DEVICE_ID_JOYPAD_SELECT
+         };
+         static const char *profile_labels[ARC_PAD_INPUT_COUNT] = {
+            "S", "X", ",", ".", "Space", "/", "A", "M", "F1", "T"
+         };
+         bool elite_port1[ARC_PAD_INPUT_COUNT] = {false};
          bool port0 = false, port1 = false, select = false, adjust = false;
          bool menu = false, precision = false, right_x = false, right_y = false;
          bool left_x = false, left_y = false;
@@ -445,6 +457,13 @@ static bool environment(unsigned command, void *data)
          {
             if (descriptors->port == 0u) port0 = true;
             if (descriptors->port == 1u) port1 = true;
+            if (descriptors->port == 1u &&
+                descriptors->device == RETRO_DEVICE_JOYPAD &&
+                !strcmp(option_input_profile, "elite"))
+               for (unsigned input = 0u; input < ARC_PAD_INPUT_COUNT; ++input)
+                  if (descriptors->id == profile_ids[input] &&
+                      !strcmp(descriptors->description, profile_labels[input]))
+                     elite_port1[input] = true;
             if (descriptors->port == 0u && descriptors->device == RETRO_DEVICE_JOYPAD)
             {
                if (descriptors->id == RETRO_DEVICE_ID_JOYPAD_R) select = true;
@@ -469,6 +488,13 @@ static bool environment(unsigned command, void *data)
          }
          saw_input_descriptors = port0 && port1 && select && adjust && menu &&
                                  precision && right_x && right_y && left_x && left_y;
+         if (!strcmp(option_input_profile, "elite"))
+         {
+            saw_elite_port1_descriptors = true;
+            for (unsigned input = 0u; input < ARC_PAD_INPUT_COUNT; ++input)
+               saw_elite_port1_descriptors = saw_elite_port1_descriptors &&
+                  elite_port1[input];
+         }
          return true;
       }
       case RETRO_ENVIRONMENT_SET_KEYBOARD_CALLBACK:
@@ -1490,6 +1516,42 @@ int main(int argc, char **argv)
 
    phase = PHASE_RUN; for (unsigned frame = 0; frame < 60u; ++frame) retro_run();
    ArcKartEvent input_events[512];
+
+   /* Profiles without an explicit port-1 map mirror port 0. This covers
+    * handhelds whose built-in controls are split across frontend ports. */
+   retro_set_controller_port_device(1u,
+      RETRO_DEVICE_SUBCLASS(RETRO_DEVICE_JOYPAD, 1));
+   retro_run();
+   option_input_profile = "elite";
+   variable_update = true;
+   retro_run();
+   assert(saw_elite_port1_descriptors &&
+          strstr(last_input_resolution, "profile=Elite (Hybrid Technology)") &&
+          strstr(last_input_resolution, "p2.Start=F1[preset]"));
+   arc_platform_test_input_events_reset();
+   joypad_buttons[1][RETRO_DEVICE_ID_JOYPAD_START] = true;
+   for (unsigned frame = 0u; frame < 20u; ++frame) retro_run();
+   joypad_buttons[1][RETRO_DEVICE_ID_JOYPAD_START] = false;
+   for (unsigned frame = 0u; frame < 20u; ++frame) retro_run();
+   size_t mirrored_input_event_count =
+      arc_platform_test_input_events(input_events, 512u);
+   unsigned mirrored_f1_edges = 0u, generic_escape_edges = 0u;
+   for (size_t i = 0u; i < mirrored_input_event_count; ++i)
+      if (input_events[i].type == ARC_INPUT_EVENT_KEY)
+      {
+         if (input_events[i].code == RETROK_F1)
+         {
+            assert(input_events[i].down == (mirrored_f1_edges == 0u));
+            ++mirrored_f1_edges;
+         }
+         if (input_events[i].code == RETROK_ESCAPE) ++generic_escape_edges;
+      }
+   assert(mirrored_f1_edges == 2u && generic_escape_edges == 0u);
+   option_input_profile = "Auto";
+   variable_update = true;
+   retro_run();
+   retro_set_controller_port_device(1u,
+      RETRO_DEVICE_SUBCLASS(RETRO_DEVICE_MOUSE, 1));
 
    /* The generated ROM's multiply/XOR receive fold is order-sensitive. Equal
     * event sets in modifier-first and key-first order paint distinct frames. */

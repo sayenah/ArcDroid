@@ -1165,6 +1165,8 @@ static void test_input_mapping(void)
    for (unsigned port = 0u; port < ARC_PAD_PORTS; ++port)
       memcpy(test_profile.mapping[port], arc_input_generic_mapping(),
              sizeof(test_profile.mapping[port]));
+   test_profile.mapping[0][ARC_PAD_UP] = (ArcInputBinding){true, RETROK_s};
+   test_profile.mapping[1][ARC_PAD_UP] = (ArcInputBinding){true, RETROK_F2};
    assert(arc_input_profiles_validate_table(&test_profile, 1u, NULL, 0u));
    ArcInputProfile invalid_profile = test_profile;
    invalid_profile.digests[0] = "0123456789ABCDEF0123456789ABCDEF01234567";
@@ -1204,20 +1206,36 @@ static void test_input_mapping(void)
           resolution.source[0][ARC_PAD_UP] == ARC_MAPPING_SOURCE_PROFILE &&
           resolution.binding[0][ARC_PAD_UP].key == RETROK_s &&
           resolution.binding[0][ARC_PAD_SELECT].key == RETROK_t &&
-          resolution.source[1][ARC_PAD_UP] == ARC_MAPPING_SOURCE_GENERIC &&
-          resolution.binding[1][ARC_PAD_UP].key == RETROK_UP);
+          resolution.source[1][ARC_PAD_UP] == ARC_MAPPING_SOURCE_PROFILE);
+   for (unsigned input = 0u; input < ARC_PAD_INPUT_COUNT; ++input)
+      assert(resolution.binding[1][input].bound ==
+             resolution.binding[0][input].bound &&
+             resolution.binding[1][input].key ==
+             resolution.binding[0][input].key);
    assert(arc_input_resolve(
             "0000000000000000000000000000000000000000", NULL,
             "elite", overrides, &resolution));
    assert(!strcmp(resolution.profile_id, "elite") &&
           resolution.source[0][ARC_PAD_START] == ARC_MAPPING_SOURCE_PRESET &&
           resolution.binding[0][ARC_PAD_START].key == RETROK_F1 &&
-          resolution.source[1][ARC_PAD_START] == ARC_MAPPING_SOURCE_GENERIC);
+          resolution.source[1][ARC_PAD_START] == ARC_MAPPING_SOURCE_PRESET &&
+          resolution.binding[1][ARC_PAD_START].key == RETROK_F1);
+   overrides[1][ARC_PAD_START].automatic = false;
+   overrides[1][ARC_PAD_START].binding = (ArcInputBinding){true, RETROK_F3};
+   assert(arc_input_resolve(
+            "fde0f540e0d5732646c1eebb54629a162f40db91", NULL,
+            "Auto", overrides, &resolution));
+   assert(resolution.source[1][ARC_PAD_START] == ARC_MAPPING_SOURCE_OPTION &&
+          resolution.binding[1][ARC_PAD_START].key == RETROK_F3 &&
+          resolution.binding[0][ARC_PAD_START].key == RETROK_F1);
+   overrides[1][ARC_PAD_START].automatic = true;
    assert(arc_input_resolve_table(&test_profile, 1u,
             "0123456789abcdef0123456789abcdef01234567", "!TEST", "Auto",
             overrides, &resolution));
    assert(!strcmp(resolution.profile_id, "test-profile") &&
-          resolution.source[0][ARC_PAD_A] == ARC_MAPPING_SOURCE_PROFILE);
+          resolution.source[0][ARC_PAD_A] == ARC_MAPPING_SOURCE_PROFILE &&
+          resolution.binding[0][ARC_PAD_UP].key == RETROK_s &&
+          resolution.binding[1][ARC_PAD_UP].key == RETROK_F2);
    assert(arc_input_resolve_table(&test_profile, 1u,
             "0000000000000000000000000000000000000000", "!OTHER",
             "test-profile", overrides, &resolution));

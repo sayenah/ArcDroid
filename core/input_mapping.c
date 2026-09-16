@@ -198,9 +198,10 @@ bool arc_input_resolve_table(const ArcInputProfile *profiles,
       {
          ArcInputBinding binding = arc_generic[input];
          ArcMappingSource source = ARC_MAPPING_SOURCE_GENERIC;
-         if (profile && (!port || profile->has_port1))
+         if (profile)
          {
-            binding = profile->mapping[port][input];
+            unsigned profile_port = port && !profile->has_port1 ? 0u : port;
+            binding = profile->mapping[profile_port][input];
             source = preset ? ARC_MAPPING_SOURCE_PRESET : ARC_MAPPING_SOURCE_PROFILE;
          }
          if (overrides && !overrides[port][input].automatic)
