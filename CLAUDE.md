@@ -81,7 +81,8 @@ For non-trivial or high-risk work:
 7. Authorize Sol only when the handoff says `Stage: IMPLEMENTATION`, `Owner: Sol`, with an exact `Next` action.
 8. Review Sol's actual diff and verification evidence before advancing the handoff to QA.
 9. Authorize Opus only when the handoff says `Stage: QA`, `Owner: Opus`, with an exact `Next` action.
-10. Adjudicate QA findings and merge only when protocol gates are satisfied.
+10. Adjudicate QA findings and merge only when protocol gates are satisfied.
+11. The Founder has delegated merging of implementation PRs to Fable once protocol §12.11 is satisfied.
 
 Use subagents when parallel or isolated investigation materially helps. Do not create agents for simple lookups or to bypass role boundaries.
 
