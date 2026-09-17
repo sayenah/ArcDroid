@@ -69,6 +69,9 @@ class Arm2:
     def tst_imm(self, rn: int, value: int) -> None:
         self.emit(0xE3100000 | (rn << 16) | self._imm(value))
 
+    def cmp_imm(self, rn: int, value: int) -> None:
+        self.emit(0xE3500000 | (rn << 16) | self._imm(value))
+
     def ldr_const(self, rd: int, value: int) -> None:
         index = len(self.words)
         self.emit(rd << 12)
@@ -143,6 +146,54 @@ def build_rom(media_exerciser: bool = False) -> bytearray:
         a.ldr_const(0, cam)
         a.str(1, 0)
 
+    # IOEB device ID distinguishes New-IO without relying on a machine option.
+    a.ldr_const(0, 0x03350050)
+    a.ldr(1, 0, byte=True)
+    a.cmp_imm(1, 5)
+    a.branch("old_io_fdc", "ne")
+    a.ldr_const(0, 0x03310FC8)
+    a.mov(1, 0x1C)
+    a.str(1, 0, byte=True)
+    a.ldr_const(0, 0x03310FD4)
+    for value in (0x03, 0xDF, 0x02, 0x07, 0x00):
+        a.mov(1, value); a.str(1, 0, byte=True)
+    a.ldr_const(2, 0x03200020)
+    a.label("new_recal_irq")
+    a.ldr(1, 2, byte=True); a.tst_imm(1, 0x10); a.branch("new_recal_irq", "eq")
+    a.ldr_const(3, 0x03310FD0); a.ldr(1, 3, byte=True)
+    a.mov(1, 0x08); a.str(1, 0, byte=True)
+    a.ldr(1, 0, byte=True); a.ldr(1, 0, byte=True)
+    for value in (0x0F, 0x00, 0x00):
+        a.mov(1, value); a.str(1, 0, byte=True)
+    a.label("new_seek_irq")
+    a.ldr(1, 2, byte=True); a.tst_imm(1, 0x10); a.branch("new_seek_irq", "eq")
+    a.ldr(1, 3, byte=True)
+    a.mov(1, 0x08); a.str(1, 0, byte=True)
+    a.ldr(1, 0, byte=True); a.ldr(1, 0, byte=True)
+    for value in (0x0A, 0x00):
+        a.mov(1, value); a.str(1, 0, byte=True)
+    a.label("new_read_id_irq")
+    a.ldr(1, 2, byte=True); a.tst_imm(1, 0x10); a.branch("new_read_id_irq", "eq")
+    a.ldr(1, 3, byte=True)
+    for _ in range(7): a.ldr(1, 0, byte=True)
+    for value in (0x06, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x1B, 0xFF):
+        a.mov(1, value); a.str(1, 0, byte=True)
+    a.ldr_const(2, 0x03200030)
+    a.ldr_const(3, 0x03012000)
+    a.mov(5, 0x100); a.mov(6, 0)
+    a.label("new_dma_wait")
+    a.ldr(7, 2, byte=True); a.tst_imm(7, 1); a.branch("new_dma_wait", "eq")
+    a.subs_imm(5, 5, 1); a.branch("new_dma_last", "eq")
+    a.ldr(7, 3, byte=True); a.eor(6, 6, 7); a.branch("new_dma_wait")
+    a.label("new_dma_last")
+    a.ldr_const(3, 0x0302A000); a.ldr(7, 3, byte=True); a.eor(6, 6, 7)
+    a.label("new_data_irq")
+    a.ldr(1, 2, byte=True); a.tst_imm(1, 0x10); a.branch("new_data_irq", "eq")
+    a.ldr_const(3, 0x03310FD0); a.ldr(1, 3, byte=True)
+    for _ in range(7): a.ldr(1, 0, byte=True)
+    a.branch("fdc_done")
+
+    a.label("old_io_fdc")
     # Select drive 0, side 0, motor on, double density; read track 0 sector 0.
     for address, value in ((0x03350040, 0x9E), (0x03350018, 0x00)):
         a.ldr_const(0, address)
@@ -207,6 +258,7 @@ def build_rom(media_exerciser: bool = False) -> bytearray:
         a.tst_imm(4, 1)
         a.branch("fdc_write_finish", "ne")
 
+    a.label("fdc_done")
     # Expand the guest checksum to all bytes and paint 640x256 at 8 bpp. The
     # alternating complement makes the payload-derived signature visibly
     # distinctive in native-frontend screenshots instead of a uniform colour.

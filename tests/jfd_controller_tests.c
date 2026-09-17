@@ -16,6 +16,7 @@
 #include "jfd.h"
 #include "timer.h"
 #include "wd1770.h"
+#include "82c711_fdc.h"
 
 IOC_t ioc;
 int speed_mhz = 1;
@@ -26,6 +27,7 @@ static unsigned drq_assertions;
 static uint8_t transfer[2048];
 static size_t transfer_count;
 static uint8_t finish_command(uint8_t command, unsigned limit_us);
+static void idle_timer_callback(void *opaque) { (void)opaque; }
 
 void rpclog(const char *format, ...) { (void)format; }
 void error(const char *format, ...) { (void)format; abort(); }
@@ -41,6 +43,9 @@ void ioc_fiq(uint8_t value)
    if (value & IOC_FIQ_DISC_DATA) ++drq_assertions;
 }
 void ioc_fiqc(uint8_t value) { ioc.fiq &= (uint8_t)~value; }
+void ioc_irqa(uint8_t value) { ioc.irqa |= value; }
+void ioc_irqb(uint8_t value) { ioc.irqb |= value; }
+void ioc_irqbc(uint8_t value) { ioc.irqb &= (uint8_t)~value; }
 
 /* A single in-memory helper lets the real raw-drive and WD1772 path prove
  * drive-1 selection without adding a production test hook. */
@@ -406,6 +411,43 @@ static void test_busy_jfd_read_is_not_replaced(const char *root)
    arc_jfd_free(&image);
 }
 
+static void test_82c711_hardening(void)
+{
+   memset(&ioc, 0, sizeof(ioc));
+   tsc = 0u;
+   timer_reset();
+   disc_init();
+   disc_reset();
+   fdctype = FDC_82C711;
+   c82c711_fdc_init();
+
+   /* Guest-selected drives 2/3 must return an abnormal result without ever
+    * indexing the two-drive track/eot arrays. */
+   c82c711_fdc_write(5u, 0x06u, NULL);
+   const uint8_t read_drive_2[8] = {2u, 0u, 0u, 0u, 1u, 0u, 0x1bu, 0xffu};
+   for (unsigned i = 0; i < 8u; ++i) c82c711_fdc_write(5u, read_drive_2[i], NULL);
+   assert((c82c711_fdc_read(4u, NULL) & 0xf0u) == 0xd0u);
+   assert((c82c711_fdc_read(5u, NULL) & 0x43u) == 0x42u);
+   for (unsigned i = 1; i < 7u; ++i) (void)c82c711_fdc_read(5u, NULL);
+
+   /* Zero-sector FORMAT is rejected before accepting DMA bytes. */
+   c82c711_fdc_write(5u, 0x0du, NULL);
+   const uint8_t bad_format[5] = {0u, 1u, 0u, 0x1bu, 0u};
+   for (unsigned i = 0; i < 5u; ++i) c82c711_fdc_write(5u, bad_format[i], NULL);
+   assert((c82c711_fdc_read(4u, NULL) & 0xf0u) == 0xd0u);
+   for (unsigned i = 0; i < 7u; ++i) (void)c82c711_fdc_read(5u, NULL);
+
+   /* Unknown commands use the one-byte invalid-command result in every build. */
+   c82c711_fdc_write(5u, 0x19u, NULL);
+   emu_timer_t idle_timer;
+   timer_add(&idle_timer, idle_timer_callback, NULL, 0);
+   timer_set_delay_u64(&idle_timer, 1000u * TIMER_USEC);
+   tsc = (uint64_t)timer_target << 32u;
+   timer_process();
+   assert(c82c711_fdc_read(5u, NULL) == 0x80u);
+   c82c711_fdc_shutdown();
+}
+
 int main(int argc, char **argv)
 {
    assert(argc == 2);
@@ -414,6 +456,7 @@ int main(int argc, char **argv)
    test_empty_drive_cancellation();
    test_busy_jfd_read_is_not_replaced(argv[1]);
    test_drive_one_helper(argv[1]);
+   test_82c711_hardening();
    puts("jfd_controller_tests: all checks passed");
    return 0;
 }

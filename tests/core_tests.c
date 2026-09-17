@@ -168,10 +168,25 @@ static void test_media_launch_and_cmos(void)
    const char id[] = "0123456789012345678901234567890123456789";
    assert(arc_launch_plan_default(&plan, ARC_MEDIA_ADF_800K, ARC_OS_RISCOS_311,
                                   id, false, error, sizeof(error)));
-   assert(strcmp(plan.machine, "A3000") == 0 && strcmp(plan.cpu, "ARM2") == 0);
+   assert(plan.machine == ARC_MACHINE_A3000 && plan.cpu == ARC_CPU_ARM2);
    assert(!arc_launch_plan_default(&plan, ARC_MEDIA_ADF_800K, ARC_OS_RISCOS_311,
                                    id, true, error, sizeof(error)));
    assert(strstr(error, "incompatible"));
+   for (ArcMachine machine = ARC_MACHINE_A3000; machine < ARC_MACHINE_COUNT; ++machine)
+   {
+      const ArcMachineDescriptor *d = arc_machine_descriptor(machine);
+      assert(d && arc_machine_from_name(d->name) == d && d->memory_kib == 4096u);
+      assert(arc_launch_plan_resolve(&plan, ARC_MEDIA_ADF_800K,
+             machine == ARC_MACHINE_A3000 ? ARC_OS_RISCOS_300 : ARC_OS_RISCOS_310,
+             id, d->name, arc_cpu_name(d->cpu), false, error, sizeof(error)));
+      assert(plan.machine == machine && plan.cpu == d->cpu);
+   }
+   assert(!arc_launch_plan_resolve(&plan, ARC_MEDIA_ADF_800K, ARC_OS_RISCOS_300,
+                                   id, "A3010", "ARM250", false, error, sizeof(error)));
+   assert(strstr(error, "not supported on the A3010"));
+   assert(!arc_launch_plan_resolve(&plan, ARC_MEDIA_ADF_800K, ARC_OS_RISCOS_311,
+                                   id, "A3010", "ARM2", false, error, sizeof(error)));
+   assert(strstr(error, "ARM2 is incompatible with the A3010"));
 
    assert(arc_launch_plan_default(&plan, ARC_MEDIA_ADF_800K, ARC_OS_RISCOS_311,
                                   id, false, error, sizeof(error)));
@@ -183,23 +198,30 @@ static void test_media_launch_and_cmos(void)
    assert(memcmp(payload, restored, sizeof(payload)) == 0);
    record[12] ^= 1u;
    assert(!arc_cmos_decode(record, &plan, restored));
-   assert(arc_cmos_default(ARC_OS_RISCOS_311, payload));
+   assert(arc_cmos_default(ARC_OS_RISCOS_311, ARC_IO_OLD_WD1770, payload));
    assert(payload[0] || payload[1] || payload[2]);
-   assert(arc_cmos_default(ARC_OS_TEST, payload));
+   assert(arc_cmos_default(ARC_OS_TEST, ARC_IO_OLD_WD1770, payload));
    for (unsigned i = 0; i < sizeof(payload); ++i) assert(payload[i] == 0u);
    uint8_t machine_cmos[ARC_CMOS_MACHINE_SIZE];
-   assert(arc_cmos_default(ARC_OS_RISCOS_311, payload));
-   assert(arc_cmos_machine_image(ARC_OS_RISCOS_311, payload, false, machine_cmos));
+   assert(arc_cmos_default(ARC_OS_RISCOS_311, ARC_IO_OLD_WD1770, payload));
+   assert(arc_cmos_machine_image(ARC_OS_RISCOS_311, ARC_IO_OLD_WD1770, payload, false, machine_cmos));
    assert(machine_cmos[69] == 8u && !(machine_cmos[75] & 7u));
    assert((machine_cmos[80] & 0x10u) && (machine_cmos[199] & 7u) == 1u);
-   assert(arc_cmos_machine_image(ARC_OS_RISCOS_311, payload, true, machine_cmos));
+   assert(arc_cmos_machine_image(ARC_OS_RISCOS_311, ARC_IO_OLD_WD1770, payload, true, machine_cmos));
    assert((machine_cmos[75] & 7u) == 1u && (machine_cmos[199] & 7u) == 2u);
    payload[42] = 0x5au;
    payload[59] = 0xffu;
    payload[183] = 0xfau;
-   arc_cmos_normalise_payload(payload);
+   arc_cmos_normalise_payload(payload, ARC_IO_OLD_WD1770);
    assert(payload[42] == 0x5au && (payload[59] & 7u) == 0u &&
           (payload[183] & 7u) == 1u);
+   payload[183] = 0xc9u;
+   arc_cmos_normalise_payload(payload, ARC_IO_NEW_82C711);
+   assert(payload[183] == 1u);
+   assert(arc_cmos_default(ARC_OS_RISCOS_311, ARC_IO_NEW_82C711, payload));
+   assert(arc_cmos_machine_image(ARC_OS_RISCOS_311, ARC_IO_NEW_82C711,
+                                 payload, false, machine_cmos));
+   assert(machine_cmos[199] == 1u);
    unsigned checksum = 0u;
    for (unsigned i = 0; i < 239u; ++i)
    {

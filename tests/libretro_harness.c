@@ -2548,11 +2548,11 @@ int main(int argc, char **argv)
       const char id[] = "0123456789012345678901234567890123456789";
       assert(arc_launch_plan_default(&real_plan, ARC_MEDIA_ADF_800K,
              ARC_OS_RISCOS_311, id, false, error, sizeof(error)));
-      assert(arc_cmos_default(ARC_OS_RISCOS_311, real_default));
+      assert(arc_cmos_default(ARC_OS_RISCOS_311, ARC_IO_OLD_WD1770, real_default));
       assert(arc_cmos_encode(real_record, &real_plan, real_default));
       memset(real_record, 0xa5, sizeof(real_record));
       assert(!arc_cmos_decode(real_record, &real_plan, restored));
-      assert(arc_cmos_default(ARC_OS_RISCOS_311, restored));
+      assert(arc_cmos_default(ARC_OS_RISCOS_311, ARC_IO_OLD_WD1770, restored));
       bool any_nonzero = false;
       for (unsigned i = 0u; i < sizeof(restored); ++i)
          any_nonzero = any_nonzero || restored[i] != 0u;
