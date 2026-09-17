@@ -12,6 +12,10 @@
 int debugon;
 int st506_present;
 ide_t ide_internal;
+#if defined(ARCDROID_TEST_FAULTS)
+static unsigned arc_ide_access_count;
+unsigned arc_ide_test_accesses(void) { return arc_ide_access_count; }
+#endif
 void debugger_do(void) {}
 void debug_out(char *s) { (void)s; }
 void debug_trap(int trap, uint32_t opcode) { (void)trap; (void)opcode; }
@@ -19,15 +23,39 @@ void debug_writememb(uint32_t address, uint8_t value) { (void)address; (void)val
 void debug_writememl(uint32_t address, uint32_t value) { (void)address; (void)value; }
 uint8_t readeterna(uint32_t address) { (void)address; return 0xffu; }
 void writeeterna(uint32_t address, uint32_t value) { (void)address; (void)value; }
-uint16_t readidew(ide_t *ide) { (void)ide; return 0xffffu; }
-void writeidew(ide_t *ide, uint16_t value) { (void)ide; (void)value; }
-uint8_t readide(ide_t *ide, uint32_t address) { (void)ide; (void)address; return 0xffu; }
-void writeide(ide_t *ide, uint32_t address, uint8_t value) { (void)ide; (void)address; (void)value; }
+uint16_t readidew(ide_t *ide) {
+#if defined(ARCDROID_TEST_FAULTS)
+   arc_ide_access_count++;
+#endif
+   (void)ide; return 0xffffu;
+}
+void writeidew(ide_t *ide, uint16_t value) {
+#if defined(ARCDROID_TEST_FAULTS)
+   arc_ide_access_count++;
+#endif
+   (void)ide; (void)value;
+}
+uint8_t readide(ide_t *ide, uint32_t address) {
+#if defined(ARCDROID_TEST_FAULTS)
+   arc_ide_access_count++;
+#endif
+   (void)ide; (void)address; return 0xffu;
+}
+void writeide(ide_t *ide, uint32_t address, uint8_t value) {
+#if defined(ARCDROID_TEST_FAULTS)
+   arc_ide_access_count++;
+#endif
+   (void)ide; (void)address; (void)value;
+}
 void resetide(ide_t *ide, char *primary, int primary_spt, int primary_hpc,
               int primary_cyl, char *secondary, int secondary_spt,
               int secondary_hpc, int secondary_cyl,
               void (*irq_raise)(ide_t *), void (*irq_clear)(ide_t *))
-{ (void)ide; (void)primary; (void)primary_spt; (void)primary_hpc; (void)primary_cyl;
+{
+#if defined(ARCDROID_TEST_FAULTS)
+  arc_ide_access_count = 0u;
+#endif
+  (void)ide; (void)primary; (void)primary_spt; (void)primary_hpc; (void)primary_cyl;
   (void)secondary; (void)secondary_spt; (void)secondary_hpc; (void)secondary_cyl;
   (void)irq_raise; (void)irq_clear; }
 uint8_t podule_memc_read_b(int slot, uint32_t address) { (void)slot; (void)address; return 0xffu; }

@@ -1,8 +1,9 @@
 /*Arculator 2.2 by Sarah Walker
   82c711 FDC emulation*/
 /* ArcDroid modification (2026-09-16): bounds all guest-selected drives and
- * FORMAT input, makes invalid commands non-terminating, and adds deterministic
- * cold-reset/media-change cancellation. */
+ * FORMAT input, makes invalid commands non-terminating, adds deterministic
+ * cold-reset/media-change cancellation, and exposes test-build-only command
+ * counters for guest-path evidence. */
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
@@ -56,11 +57,16 @@ static FDC _fdc;
 static void (*c82711_fdc_irq)(int state, void *p);
 static void (*c82711_fdc_index_irq)(void *p);
 static void (*c82711_fdc_fiq)(int state, void *p);
+#if defined(ARCDROID_TEST_FAULTS)
+static unsigned arc_test_command_count;
+static unsigned arc_test_read_data_count;
+static unsigned arc_test_read_success_count;
+#endif
 
 static void c82c711_fdc_abnormal(FDC *fdc, unsigned drive, uint8_t st1)
 {
 	timer_disable(&fdc->timer);
-	if (fdc == fdc_p && drive < 4) disc_stop((int)drive);
+	if (fdc == fdc_p && drive < 2) disc_stop((int)drive);
 	c82711_fdc_fiq(0, fdc->p);
 	c82711_fdc_irq(1, fdc->p);
 	fdc->data_ready = fdc->written = fdc->inread = 0;
@@ -121,6 +127,11 @@ void c82c711_fdc_init(void)
 	if (fdctype == FDC_82C711)
 	{
 		FDC *fdc = &_fdc;
+#if defined(ARCDROID_TEST_FAULTS)
+		arc_test_command_count = 0;
+		arc_test_read_data_count = 0;
+		arc_test_read_success_count = 0;
+#endif
 		memset(fdc, 0, sizeof(*fdc));
 		c82c711_fdc_reset(fdc);
 
@@ -217,6 +228,13 @@ void c82c711_fdc_write(uint16_t addr, uint8_t val, void *p)
 			fdc->data_ready = 0;
 
 			fdc->command = val;
+#if defined(ARCDROID_TEST_FAULTS)
+			if (!p)
+			{
+				arc_test_command_count++;
+				if ((val & 0x1f) == 6) arc_test_read_data_count++;
+			}
+#endif
 //                        rpclog("Starting FDC command %02X\n",fdc.command);
 			switch (fdc->command & 0x1F)
 			{
@@ -355,7 +373,7 @@ void c82c711_fdc_write(uint16_t addr, uint8_t val, void *p)
 					fdc->written = 0;
 					readflash[curdrive] = 1;
 					fdc->pos = 0;
-					c82711_fdc_fiq(1, fdc->p);
+					if (!fdc->paramstogo) c82711_fdc_fiq(1, fdc->p);
 					break;
 
 					case 6: /*Read data*/
@@ -586,6 +604,9 @@ static void c82c711_fdc_callback(void *p)
 		if (fdc->tc)
 		{
 			fdc->inread = 0;
+#if defined(ARCDROID_TEST_FAULTS)
+			if (fdc == &_fdc) arc_test_read_success_count++;
+#endif
 			fdc->discint = -2;
 			c82711_fdc_irq(1, fdc->p);
 			fdc->stat = 0xD0;
@@ -642,6 +663,11 @@ static void c82c711_fdc_callback(void *p)
 		}
 		else if (fdc->format_state == 2)
 		{
+			if (fdc->tc && fdc->pos + 1 < fdc->params[2] * 4)
+			{
+				c82c711_fdc_abnormal(fdc, (unsigned)curdrive, 0x10);
+				return;
+			}
 			temp = c82c711_fdc_getdata(fdc->pos == ((fdc->params[2] * 4) - 1), fdc);
 			if (temp == -1)
 			{
@@ -761,6 +787,7 @@ static void fdc_overrun(void *p)
 	disc_stop(curdrive);
 	timer_disable(&fdc->timer);
 
+	c82711_fdc_fiq(0, fdc->p);
 	c82711_fdc_irq(1, fdc->p);
 	fdc->stat = 0xD0;
 	fdc->res[4] = 0x40 | (fdc->head ? 4 : 0) | curdrive;
@@ -810,6 +837,7 @@ static void c82c711_fdc_notfound(void *p)
 
 	timer_disable(&fdc->timer);
 
+	c82711_fdc_fiq(0, fdc->p);
 	c82711_fdc_irq(1, fdc->p);
 	fdc->stat = 0xD0;
 	fdc->res[4] = 0x40 | (fdc->head ? 4 : 0) | curdrive;
@@ -829,6 +857,7 @@ static void c82c711_fdc_datacrcerror(void *p)
 
 	timer_disable(&fdc->timer);
 
+	c82711_fdc_fiq(0, fdc->p);
 	c82711_fdc_irq(1, fdc->p);
 	fdc->stat = 0xD0;
 	fdc->res[4] = 0x40 | (fdc->head ? 4 : 0) | curdrive;
@@ -848,6 +877,7 @@ static void c82c711_fdc_headercrcerror(void *p)
 
 	timer_disable(&fdc->timer);
 
+	c82711_fdc_fiq(0, fdc->p);
 	c82711_fdc_irq(1, fdc->p);
 	fdc->stat = 0xD0;
 	fdc->res[4] = 0x40 | (fdc->head ? 4 : 0) | curdrive;
@@ -867,6 +897,7 @@ static void c82c711_fdc_writeprotect(void *p)
 
 	timer_disable(&fdc->timer);
 
+	c82711_fdc_fiq(0, fdc->p);
 	c82711_fdc_irq(1, fdc->p);
 	fdc->stat = 0xD0;
 	fdc->res[4] = 0x40 | (fdc->head ? 4 : 0) | curdrive;
@@ -970,3 +1001,13 @@ void c82c711_fdc_shutdown(void)
 	c82711_fdc_fiq(0, fdc->p);
 	fdc->data_ready = fdc->written = fdc->inread = fdc->format_state = 0;
 }
+
+#if defined(ARCDROID_TEST_FAULTS)
+void c82c711_fdc_test_counts(unsigned *commands, unsigned *read_data,
+                             unsigned *read_success)
+{
+	if (commands) *commands = arc_test_command_count;
+	if (read_data) *read_data = arc_test_read_data_count;
+	if (read_success) *read_success = arc_test_read_success_count;
+}
+#endif

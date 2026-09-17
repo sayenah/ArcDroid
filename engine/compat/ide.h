@@ -11,4 +11,7 @@ void resetide(ide_t *ide, char *primary, int primary_spt, int primary_hpc,
               int primary_cyl, char *secondary, int secondary_spt,
               int secondary_hpc, int secondary_cyl,
               void (*irq_raise)(ide_t *), void (*irq_clear)(ide_t *));
+#if defined(ARCDROID_TEST_FAULTS)
+unsigned arc_ide_test_accesses(void);
+#endif
 #endif

@@ -50,7 +50,9 @@ returns all-one reads, ignores writes, raises no IRQ, and imports no `ide.c`.
 `src/82c711_fdc.c` bounds guest-selected drives and FORMAT data, uses the
 controller invalid-command result in every build, cancels only the affected
 active transfer on media change, clears FIQ on terminal error paths, and fully
-reinitialises its static controller state on cold creation.
+reinitialises its static controller state on cold creation. Test-core builds
+also expose command/read-success counters used to prove the generated guest ROM
+executed the New-IO path; those counters are absent from shipping targets.
 
 `src/keyboard.c` contains ArcDroid's single consumption-acknowledgement hook:
 after the existing KART-idle and keyboard-enabled guards, one platform call

@@ -77,6 +77,7 @@ static ArcEngineLogCallback arc_log_callback;
 static void *arc_log_opaque;
 #if defined(ARCDROID_TEST_FAULTS)
 static bool arc_test_vidc_noncompleting;
+unsigned arc_ide_test_accesses(void);
 
 void arc_engine_test_set_vidc_noncompleting(bool enabled)
 {
@@ -118,6 +119,36 @@ bool arc_engine_test_cmos_write(unsigned offset, uint8_t value)
    cmos_set_image(image, sizeof(image));
    return true;
 }
+
+bool arc_engine_test_newio(unsigned *commands, unsigned *read_data,
+                           unsigned *read_success, unsigned *ide_accesses,
+                           uint8_t *device_id)
+{
+   const ArcMachineDescriptor *descriptor = arc_machine_descriptor(arc_saved_machine);
+   if (!arc_machine_live || !descriptor || descriptor->io != ARC_IO_NEW_82C711)
+      return false;
+   c82c711_fdc_test_counts(commands, read_data, read_success);
+   if (ide_accesses) *ide_accesses = arc_ide_test_accesses();
+   if (device_id) *device_id = ioeb_read(0x50u);
+   return true;
+}
+
+bool arc_engine_test_joystick(unsigned port, uint8_t *value)
+{
+   if (!arc_machine_live || !value || port >= 2u) return false;
+   *value = ioeb_read(0x78u | (port ? 4u : 0u));
+   return true;
+}
+
+bool arc_engine_test_ioeb_clock(unsigned clock)
+{
+   const ArcMachineDescriptor *descriptor = arc_machine_descriptor(arc_saved_machine);
+   if (!arc_machine_live || !descriptor || descriptor->io != ARC_IO_NEW_82C711 ||
+       clock > 2u) return false;
+   ioeb_write(0x48u, (uint8_t)clock);
+   return true;
+}
+unsigned arc_engine_test_vidc_clock(void) { return (unsigned)vidc_getclock(); }
 #endif
 
 static void arc_latch_fault(const char *format, va_list arguments)

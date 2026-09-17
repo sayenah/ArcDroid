@@ -411,6 +411,8 @@ typedef struct {
    uint8_t *data;
    size_t size;
    unsigned priority;
+   ArcOsClass best_available;
+   unsigned best_available_priority;
    ArcOsClass requested_os;
    ArcMachine machine;
    size_t suspicious_size;
@@ -426,6 +428,15 @@ static bool arc_visit_firmware(const char *path, void *opaque)
    if (!arc_io_read_all(path, &data, &size)) return true;
    ArcDigest digest = arc_digest(data, size);
    const ArcFirmwareFingerprint *match = arc_firmware_match(&digest);
+   if (match)
+   {
+      unsigned available_priority = arc_firmware_auto_priority(match->os);
+      if (available_priority < search->best_available_priority)
+      {
+         search->best_available = match->os;
+         search->best_available_priority = available_priority;
+      }
+   }
    if (match && !arc_machine_supports_os(search->machine, match->os))
    {
       free(data);
@@ -541,6 +552,7 @@ static bool arc_select_firmware(ArcOsClass requested, ArcMachine machine, uint8_
    char firmware_dir[ARC_MEDIA_PATH_CAPACITY];
    ArcFirmwareSearch search = {0};
    search.priority = 100u;
+   search.best_available_priority = 100u;
    search.requested_os = requested;
    search.machine = machine;
    if (!arc_environment ||
@@ -568,8 +580,11 @@ static bool arc_select_firmware(ArcOsClass requested, ArcMachine machine, uint8_
             else
             {
                const ArcMachineDescriptor *d = arc_machine_descriptor(machine);
-               snprintf(error, error_size, "%s requires RISC OS 3.10 or later firmware; found none",
-                        d ? d->name : "Machine");
+               snprintf(error, error_size,
+                        "%s requires RISC OS 3.10 or later firmware; found %s",
+                        d ? d->name : "Machine",
+                        search.best_available == ARC_OS_UNKNOWN ? "none" :
+                        arc_os_name(search.best_available));
             }
       }
       return false;
@@ -2470,6 +2485,7 @@ static bool arc_load_game(const struct retro_game_info *game, bool negotiate)
    char error[512] = {0};
    ArcFirmwareSearch search = {0};
    search.priority = 100u;
+   search.best_available_priority = 100u;
    bool pending_initial = arc_pending_initial;
    unsigned pending_index = arc_pending_initial_index;
    char pending_path[sizeof(arc_pending_initial_path)];
@@ -2565,8 +2581,11 @@ static bool arc_load_game(const struct retro_game_info *game, bool negotiate)
             snprintf(error, sizeof(error), "Missing %s firmware in <system>/arcdroid/firmware.",
                      arc_os_name(arc_core_options.requested_os));
          else if (requested_machine->io == ARC_IO_NEW_82C711)
-            snprintf(error, sizeof(error), "%s requires RISC OS 3.10 or later firmware; found none",
-                     requested_machine->name);
+            snprintf(error, sizeof(error),
+                     "%s requires RISC OS 3.10 or later firmware; found %s",
+                     requested_machine->name,
+                     search.best_available == ARC_OS_UNKNOWN ? "none" :
+                     arc_os_name(search.best_available));
          else
             snprintf(error, sizeof(error), "Missing RISC OS 3.11 firmware in <system>/arcdroid/firmware.");
       }
@@ -2710,6 +2729,7 @@ RETRO_API void retro_reset(void)
    bool was_ejected = arc_ejected;
    unsigned selected = arc_image_index;
    bool launch_reselected;
+   bool torn_down = false;
 
    arc_persist_cmos();
    if (!arc_read_options(&updated, error, sizeof(error)) ||
@@ -2720,6 +2740,7 @@ RETRO_API void retro_reset(void)
    launch_reselected = updated.launch != arc_core_options.launch;
 
    arc_engine_stop();
+   torn_down = true;
    if (updated.disk_writes != arc_core_options.disk_writes)
    {
       for (unsigned i = 0u; i < arc_media_count; ++i)
@@ -2806,6 +2827,7 @@ RETRO_API void retro_reset(void)
 failed:
    free(new_firmware);
    arc_message(error[0] ? error : "Unable to reset the ArcDroid session.", RETRO_LOG_ERROR);
+   if (!torn_down) return;
    arc_loaded = false;
    arc_release_session();
    arc_input_sampling_reset(false);
