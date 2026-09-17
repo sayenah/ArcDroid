@@ -1526,7 +1526,6 @@ int main(int argc, char **argv)
       joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_A] = false;
       retro_run();
       option_machine = "A3010";
-      retro_unload_game();
 
       uint8_t a3000_record[ARC_CMOS_RECORD_SIZE];
       read_exact(machine_cmos_path[0], a3000_record, sizeof(a3000_record));
@@ -1539,8 +1538,11 @@ int main(int argc, char **argv)
          option_joystick = index == 0u ? "A3010" : "Keyboard";
          retro_set_controller_port_device(0u, RETRO_DEVICE_JOYPAD);
          retro_set_controller_port_device(1u, RETRO_DEVICE_JOYPAD);
-         phase = PHASE_LOAD;
-         assert(retro_load_game(&game));
+         if (index)
+         {
+            phase = PHASE_LOAD;
+            assert(retro_load_game(&game));
+         }
          assert(arc_engine_test_cmos_write(216u, (uint8_t)(0xa1u + index)));
          unsigned video_before = video_frames;
          uint64_t audio_before = audio_frames;
