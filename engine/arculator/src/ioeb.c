@@ -92,5 +92,7 @@ void ioeb_write(uint32_t addr, uint8_t val)
 
 void ioeb_init()
 {
+	hs_invert = 0;
+	ioeb_clock_select = 0;
 	has_joystick_ports = !strcmp(machine, "a3010");
 }

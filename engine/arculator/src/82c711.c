@@ -1,5 +1,7 @@
 /*Arculator 2.2 by Sarah Walker
   82c711 SuperIO emulation*/
+/* ArcDroid modification (2026-09-16): cold reset owns configuration state and
+ * uses an intentionally absent IDE bus. */
 #include "arc.h"
 #include "82c711.h"
 #include "82c711_fdc.h"
@@ -7,6 +9,7 @@
 #include "ide.h"
 #include "ioc.h"
 #include "printer.h"
+#include <string.h>
 
 static int configmode, configindex;
 static uint8_t configregs[16];
@@ -92,6 +95,8 @@ static void c82c711_ide_irq_clear(ide_t *ide)
 
 void c82c711_init(void)
 {
+	configmode = configindex = 0;
+	memset(configregs, 0, sizeof(configregs));
 	resetide(&ide_internal,
 		 hd_fn[0], hd_spt[0], hd_hpc[0], hd_cyl[0],
 		 hd_fn[1], hd_spt[1], hd_hpc[1], hd_cyl[1],

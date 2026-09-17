@@ -15,6 +15,8 @@ below, and these machine-core sources:
 ```text
 src/arc.h
 src/arm.c src/arm.h
+src/82c711.c src/82c711.h
+src/82c711_fdc.c src/82c711_fdc.h
 src/cmos.c src/cmos.h
 src/config.c src/config.h
 src/cp15.c src/cp15.h
@@ -41,6 +43,14 @@ src/wd1770.c src/wd1770.h
 
 This is an allowlisted copy, not a subtree. ArcDroid modifications carry an
 explicit notice in each modified upstream file.
+
+`src/82c711.c` resets the SuperIO configuration state for each cold machine
+creation and connects to ArcDroid's absent-bus IDE implementation. That model
+returns all-one reads, ignores writes, raises no IRQ, and imports no `ide.c`.
+`src/82c711_fdc.c` bounds guest-selected drives and FORMAT data, uses the
+controller invalid-command result in every build, cancels only the affected
+active transfer on media change, clears FIQ on terminal error paths, and fully
+reinitialises its static controller state on cold creation.
 
 `src/keyboard.c` contains ArcDroid's single consumption-acknowledgement hook:
 after the existing KART-idle and keyboard-enabled guards, one platform call
@@ -70,7 +80,7 @@ credits are preserved in the imported `README.md`.
   console files: replaced by the libretro and ArcDroid platform layers.
 - All podules and dynamic loaders: outside Slice 1 and unsuitable for arbitrary
   runtime loading on Android.
-- HostFS, ST506, and IDE: outside Slice 1.
+- HostFS, ST506, and IDE controllers: excluded; New-IO exposes an absent IDE bus.
 - FDI, APD, HFE, SCP, SSD, and DSD readers plus `fdi2raw`: deferred to
   separately hardened media slices.
 - Drive-noise WAV files: outside Slice 1 and not redistributable evidence.

@@ -25,6 +25,8 @@
 #include "vidc.h"
 #include "video.h"
 #include "wd1770.h"
+#include "82c711.h"
+#include "82c711_fdc.h"
 #include "arc_io.h"
 
 #include <setjmp.h>
@@ -69,6 +71,7 @@ static const ArcJfdImage *arc_saved_jfd;
 static char arc_saved_helper[4096];
 static ArcMediaGeometry arc_saved_helper_geometry;
 static uint8_t arc_saved_cmos[ARC_CMOS_MACHINE_SIZE];
+static ArcMachine arc_saved_machine = ARC_MACHINE_A3000;
 static double arc_last_refresh = 50.0;
 static ArcEngineLogCallback arc_log_callback;
 static void *arc_log_opaque;
@@ -172,17 +175,17 @@ void arc_set_cpu(int cpu, int memc)
 {
    static const int memc_speed[] = {8, 8, 12, 16, 20, 24};
    static const int memc1[] = {1, 0, 0, 0, 0, 0};
-   if (cpu != 0 || memc < 0 || memc >= (int)(sizeof(memc_speed) / sizeof(memc_speed[0])))
+   if ((cpu != ARC_CPU_ARM2 && cpu != ARC_CPU_ARM250) || memc < 0 || memc >= (int)(sizeof(memc_speed) / sizeof(memc_speed[0])))
    {
       fatal("Unsupported Slice 1 CPU/MEMC selection");
       return;
    }
-   arm_cpu_type = 0;
+   arm_cpu_type = cpu;
    memc_type = memc;
    arm_mem_speed = memc_speed[memc];
    arm_cpu_speed = arm_mem_speed;
    memc_is_memc1 = memc1[memc];
-   arm_has_swp = 0;
+   arm_has_swp = cpu == ARC_CPU_ARM250;
    arm_has_cp15 = 0;
    speed_mhz = arm_cpu_speed;
    ref8m_period = (arm_cpu_speed * 1024) / 8;
@@ -232,6 +235,7 @@ void saveconfig(void) {}
 static void arc_machine_destroy(void)
 {
    if (!arc_machine_live) return;
+   if (fdctype == FDC_82C711) c82c711_fdc_shutdown();
    for (int drive = 0; drive < 4; ++drive) disc_close(drive);
    sound_dev_close();
    input_close();
@@ -248,6 +252,7 @@ static void arc_machine_destroy(void)
 
 static bool arc_machine_create(char *failure, size_t failure_size)
 {
+   const ArcMachineDescriptor *descriptor = arc_machine_descriptor(arc_saved_machine);
    arc_fault = false;
    arc_fault_text[0] = '\0';
    arc_fault_boundary = true;
@@ -263,11 +268,12 @@ static bool arc_machine_create(char *failure, size_t failure_size)
       return false;
    }
 
-   arm_cpu_type = 0;
-   memc_type = 1;
-   memsize = 4096;
-   fdctype = FDC_WD1770;
-   monitor_type = MONITOR_STANDARD;
+   if (!descriptor) fatal("Invalid machine descriptor");
+   arm_cpu_type = descriptor->cpu;
+   memc_type = descriptor->memc;
+   memsize = (int)descriptor->memory_kib;
+   fdctype = descriptor->io == ARC_IO_NEW_82C711 ? FDC_82C711 : FDC_WD1770;
+   monitor_type = descriptor->monitor;
    machine_type = MACHINE_TYPE_NORMAL;
    display_mode = DISPLAY_MODE_NO_BORDERS;
    dblscan = 1;
@@ -276,13 +282,13 @@ static bool arc_machine_create(char *failure, size_t failure_size)
    soundena = 1;
    stereo = 1;
    sound_filter = 0;
-   strcpy(machine, "a3000");
-   joystick_if[0] = '\0';
+   strcpy(machine, descriptor->engine_name);
+   strcpy(joystick_if, descriptor->id == ARC_MACHINE_A3010 ? "a3010" : "");
 
    if (!video_renderer_init(NULL))
       fatal("Unable to allocate the headless video surface");
    initvid();
-   arc_set_cpu(0, 1);
+   arc_set_cpu(descriptor->cpu, descriptor->memc);
    timer_reset();
    initmem(memsize);
    if (!ram || !rom || !rom_arcrom || !rom_5th_column)
@@ -301,11 +307,13 @@ static bool arc_machine_create(char *failure, size_t failure_size)
    sound_dev_init();
    sound_init();
    reinitvideo();
+   c82c711_init();
    disc_init();
    disc_reset();
    adf_init();
    jfd_init();
    wd1770_reset();
+   c82c711_fdc_init();
    cmos_init();
    cmos_set_image(arc_saved_cmos, sizeof(arc_saved_cmos));
    ds2401_init();
@@ -341,12 +349,13 @@ static bool arc_machine_create(char *failure, size_t failure_size)
 bool arc_engine_start(const uint8_t *firmware, size_t firmware_size,
                       const ArcEngineMedia *media,
                       const ArcEngineMedia *helper,
+                      const ArcMachineDescriptor *descriptor,
                       const uint8_t cmos[ARC_CMOS_MACHINE_SIZE],
                       char *failure, size_t failure_size)
 {
    arc_engine_stop();
    if (!firmware || (firmware_size != 524288u && firmware_size != 2097152u) ||
-       !cmos || (helper && (!helper->path || !helper->path[0] ||
+       !cmos || !descriptor || (helper && (!helper->path || !helper->path[0] ||
                            helper->kind != ARC_MEDIA_ADL_640K ||
                            helper->geometry != ARC_GEOMETRY_640K_L ||
                            helper->jfd)))
@@ -384,6 +393,7 @@ bool arc_engine_start(const uint8_t *firmware, size_t firmware_size,
    strcpy(arc_saved_helper, helper_path);
    arc_saved_helper_geometry = helper ? helper->geometry : ARC_GEOMETRY_NONE;
    memcpy(arc_saved_cmos, cmos, sizeof(arc_saved_cmos));
+   arc_saved_machine = descriptor->id;
    if (!arc_machine_create(failure, failure_size))
    {
       arc_engine_stop();
@@ -485,6 +495,7 @@ bool arc_engine_media_eject(void)
 {
    if (!arc_machine_live) return false;
    wd1770_media_change();
+   c82c711_fdc_media_change(0u);
    disc_close(0);
    arc_saved_media[0] = '\0';
    arc_saved_media_kind = ARC_MEDIA_INVALID;
@@ -503,6 +514,7 @@ bool arc_engine_media_insert(const ArcEngineMedia *media,
        (media->kind == ARC_MEDIA_JFD && !media->jfd)) return false;
    /* Defence in depth for callers that replace a mounted image directly. */
    wd1770_media_change();
+   c82c711_fdc_media_change(0u);
    disc_close(0);
    adf_set_writable(0, media->writable);
    bool mounted = media->kind == ARC_MEDIA_JFD ?

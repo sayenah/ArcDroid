@@ -21,6 +21,39 @@ typedef enum {
    ARC_OS_ARTHUR_030
 } ArcOsClass;
 
+#define ARC_OS_MASK(os_) (UINT32_C(1) << (unsigned)(os_))
+
+typedef enum {
+   ARC_MACHINE_A3000 = 0,
+   ARC_MACHINE_A3010,
+   ARC_MACHINE_A3020,
+   ARC_MACHINE_A4000,
+   ARC_MACHINE_COUNT
+} ArcMachine;
+
+typedef enum { ARC_IO_OLD_WD1770 = 0, ARC_IO_NEW_82C711 } ArcIoClass;
+typedef enum { ARC_CPU_ARM2 = 0, ARC_CPU_ARM250 } ArcCpu;
+
+typedef struct {
+   ArcMachine id;
+   const char *name;
+   const char *engine_name;
+   ArcIoClass io;
+   ArcCpu cpu;
+   int memc;
+   unsigned memory_kib;
+   uint32_t compatible_os;
+   const char *cmos_family;
+   int monitor;
+   bool joystick_ports;
+   bool ide_capable;
+} ArcMachineDescriptor;
+
+const ArcMachineDescriptor *arc_machine_descriptor(ArcMachine machine);
+const ArcMachineDescriptor *arc_machine_from_name(const char *name);
+const char *arc_cpu_name(ArcCpu cpu);
+bool arc_machine_supports_os(ArcMachine machine, ArcOsClass os);
+
 typedef enum {
    ARC_RECIPE_COMBINED = 0,
    ARC_RECIPE_BYTE_LANES_4,
@@ -87,8 +120,8 @@ typedef enum {
 
 typedef struct {
    ArcOsClass os;
-   const char *machine;
-   const char *cpu;
+   ArcMachine machine;
+   ArcCpu cpu;
    unsigned memory_kib;
    bool a3010_joystick;
    bool pointer_relative;
@@ -166,6 +199,11 @@ bool arc_launch_plan_default(ArcLaunchPlan *plan, ArcMediaKind media,
                              ArcOsClass os, const char content_sha1[41],
                              bool request_a3010_joystick,
                              char *error, size_t error_size);
+bool arc_launch_plan_resolve(ArcLaunchPlan *plan, ArcMediaKind media,
+                             ArcOsClass os, const char content_sha1[41],
+                             const char *machine, const char *cpu,
+                             bool request_a3010_joystick,
+                             char *error, size_t error_size);
 
 bool arc_cmos_encode(uint8_t record[ARC_CMOS_RECORD_SIZE],
                      const ArcLaunchPlan *plan,
@@ -173,12 +211,13 @@ bool arc_cmos_encode(uint8_t record[ARC_CMOS_RECORD_SIZE],
 bool arc_cmos_decode(const uint8_t record[ARC_CMOS_RECORD_SIZE],
                      const ArcLaunchPlan *plan,
                      uint8_t payload[ARC_CMOS_PAYLOAD_SIZE]);
-bool arc_cmos_default(ArcOsClass os, uint8_t output[ARC_CMOS_PAYLOAD_SIZE]);
-bool arc_cmos_machine_image(ArcOsClass os,
+bool arc_cmos_default(ArcOsClass os, ArcIoClass io,
+                      uint8_t output[ARC_CMOS_PAYLOAD_SIZE]);
+bool arc_cmos_machine_image(ArcOsClass os, ArcIoClass io,
                             const uint8_t payload[ARC_CMOS_PAYLOAD_SIZE],
                             bool launch_helper,
                             uint8_t output[ARC_CMOS_MACHINE_SIZE]);
-void arc_cmos_normalise_payload(uint8_t payload[ARC_CMOS_PAYLOAD_SIZE]);
+void arc_cmos_normalise_payload(uint8_t payload[ARC_CMOS_PAYLOAD_SIZE], ArcIoClass io);
 
 #define ARC_INPUT_KEY_COUNT 512u
 #define ARC_INPUT_FIFO_CAPACITY 256u

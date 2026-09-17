@@ -7,6 +7,7 @@ command -v grep >/dev/null 2>&1 || {
 }
 
 sources='core/hash.c
+core/machine.c
 core/input.c
 core/input_mapping.c
 core/input_profiles.c
@@ -21,6 +22,8 @@ core/persistence.c
 core/cmos_defaults.c
 engine/arcdroid_engine.c
 engine/arcdroid_stubs.c
+engine/arculator/src/82c711.c
+engine/arculator/src/82c711_fdc.c
 engine/arculator/src/arm.c
 engine/arculator/src/cmos.c
 engine/arculator/src/cp15.c

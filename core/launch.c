@@ -254,21 +254,62 @@ bool arc_launch_plan_default(ArcLaunchPlan *plan, ArcMediaKind media,
                              bool request_a3010_joystick,
                              char *error, size_t error_size)
 {
+   return arc_launch_plan_resolve(plan, media, os, content_sha1, "Auto", "Auto",
+                                  request_a3010_joystick, error, error_size);
+}
+
+bool arc_launch_plan_resolve(ArcLaunchPlan *plan, ArcMediaKind media,
+                             ArcOsClass os, const char content_sha1[41],
+                             const char *machine_name, const char *cpu_name,
+                             bool request_a3010_joystick,
+                             char *error, size_t error_size)
+{
+   const ArcMachineDescriptor *descriptor = arc_machine_from_name(machine_name);
    if (!plan || media == ARC_MEDIA_INVALID || media == ARC_MEDIA_ADF_HD_UNSUPPORTED || os == ARC_OS_UNKNOWN)
    {
       if (error && error_size) snprintf(error, error_size, "launch plan inputs are invalid");
       return false;
    }
-   if (request_a3010_joystick)
+   if (!descriptor)
    {
-      if (error && error_size) snprintf(error, error_size, "A3010 joystick interface is incompatible with the A3000 machine");
+      if (error && error_size) snprintf(error, error_size, "invalid machine option");
+      return false;
+   }
+   if (!arc_machine_supports_os(descriptor->id, os))
+   {
+      if (error && error_size) snprintf(error, error_size, "%s is not supported on the %s",
+                                        arc_os_name(os), descriptor->name);
+      return false;
+   }
+   ArcCpu requested_cpu = descriptor->cpu;
+   if (cpu_name && strcmp(cpu_name, "Auto"))
+   {
+      if (!strcmp(cpu_name, "ARM2")) requested_cpu = ARC_CPU_ARM2;
+      else if (!strcmp(cpu_name, "ARM250")) requested_cpu = ARC_CPU_ARM250;
+      else
+      {
+         if (error && error_size) snprintf(error, error_size, "invalid CPU option");
+         return false;
+      }
+      if (requested_cpu != descriptor->cpu)
+      {
+         if (error && error_size) snprintf(error, error_size, "%s is incompatible with the %s machine",
+                                           cpu_name, descriptor->name);
+         return false;
+      }
+   }
+   if (request_a3010_joystick && descriptor->id != ARC_MACHINE_A3010)
+   {
+      if (error && error_size) snprintf(error, error_size,
+         "A3010 joystick interface is incompatible with the %s machine", descriptor->name);
       return false;
    }
    memset(plan, 0, sizeof(*plan));
    plan->os = os;
-   plan->machine = "A3000";
-   plan->cpu = "ARM2";
-   plan->memory_kib = 4096u;
+   plan->machine = descriptor->id;
+   plan->cpu = requested_cpu;
+   plan->memory_kib = descriptor->memory_kib;
+   plan->a3010_joystick = request_a3010_joystick;
    plan->media = media;
    if (content_sha1) memcpy(plan->content_id, content_sha1, 41u);
    return true;

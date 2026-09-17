@@ -17,14 +17,19 @@ void debug_out(char *s) { (void)s; }
 void debug_trap(int trap, uint32_t opcode) { (void)trap; (void)opcode; }
 void debug_writememb(uint32_t address, uint8_t value) { (void)address; (void)value; }
 void debug_writememl(uint32_t address, uint32_t value) { (void)address; (void)value; }
-uint8_t c82c711_read(uint32_t address) { (void)address; return 0xffu; }
-void c82c711_write(uint32_t address, uint8_t value) { (void)address; (void)value; }
-uint8_t c82c711_fdc_dmaread(int terminal_count, void *opaque) { (void)terminal_count; (void)opaque; return 0xffu; }
-void c82c711_fdc_dmawrite(uint8_t value, int terminal_count, void *opaque) { (void)value; (void)terminal_count; (void)opaque; }
 uint8_t readeterna(uint32_t address) { (void)address; return 0xffu; }
 void writeeterna(uint32_t address, uint32_t value) { (void)address; (void)value; }
 uint16_t readidew(ide_t *ide) { (void)ide; return 0xffffu; }
 void writeidew(ide_t *ide, uint16_t value) { (void)ide; (void)value; }
+uint8_t readide(ide_t *ide, uint32_t address) { (void)ide; (void)address; return 0xffu; }
+void writeide(ide_t *ide, uint32_t address, uint8_t value) { (void)ide; (void)address; (void)value; }
+void resetide(ide_t *ide, char *primary, int primary_spt, int primary_hpc,
+              int primary_cyl, char *secondary, int secondary_spt,
+              int secondary_hpc, int secondary_cyl,
+              void (*irq_raise)(ide_t *), void (*irq_clear)(ide_t *))
+{ (void)ide; (void)primary; (void)primary_spt; (void)primary_hpc; (void)primary_cyl;
+  (void)secondary; (void)secondary_spt; (void)secondary_hpc; (void)secondary_cyl;
+  (void)irq_raise; (void)irq_clear; }
 uint8_t podule_memc_read_b(int slot, uint32_t address) { (void)slot; (void)address; return 0xffu; }
 uint32_t podule_memc_read_w(int slot, uint32_t address) { (void)slot; (void)address; return 0xffffffffu; }
 void podule_memc_write_b(int slot, uint32_t address, uint8_t value) { (void)slot; (void)address; (void)value; }

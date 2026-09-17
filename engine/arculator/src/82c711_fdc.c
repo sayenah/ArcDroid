@@ -1,5 +1,8 @@
 /*Arculator 2.2 by Sarah Walker
   82c711 FDC emulation*/
+/* ArcDroid modification (2026-09-16): bounds all guest-selected drives and
+ * FORMAT input, makes invalid commands non-terminating, and adds deterministic
+ * cold-reset/media-change cancellation. */
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
@@ -50,6 +53,29 @@ typedef struct FDC
 } FDC;
 
 static FDC _fdc;
+static void (*c82711_fdc_irq)(int state, void *p);
+static void (*c82711_fdc_index_irq)(void *p);
+static void (*c82711_fdc_fiq)(int state, void *p);
+
+static void c82c711_fdc_abnormal(FDC *fdc, unsigned drive, uint8_t st1)
+{
+	timer_disable(&fdc->timer);
+	if (fdc == fdc_p && drive < 4) disc_stop((int)drive);
+	c82711_fdc_fiq(0, fdc->p);
+	c82711_fdc_irq(1, fdc->p);
+	fdc->data_ready = fdc->written = fdc->inread = 0;
+	fdc->format_state = 0;
+	fdc->stat = 0xD0;
+	fdc->res[4] = (uint8_t)(0x40u | (fdc->head ? 4u : 0u) | (drive & 3u));
+	fdc->res[5] = st1;
+	fdc->res[6] = 0;
+	fdc->res[7] = drive < 2u ? (uint8_t)fdc->track[drive] : 0;
+	fdc->res[8] = (uint8_t)fdc->head;
+	fdc->res[9] = (uint8_t)fdc->sector;
+	fdc->res[10] = fdc->params[4];
+	fdc->paramstogo = 7;
+	fdc->discint = -2;
+}
 
 static void arc_fdc_irq(int state, void *p)
 {
@@ -71,10 +97,6 @@ static void arc_fdc_fiq(int state, void *p)
 	else
 		ioc_fiqc(IOC_FIQ_DISC_DATA);
 }
-
-static void (*c82711_fdc_irq)(int state, void *p);
-static void (*c82711_fdc_index_irq)(void *p);
-static void (*c82711_fdc_fiq)(int state, void *p);
 
 static void c82c711_fdc_reset(void *p)
 {
@@ -99,6 +121,7 @@ void c82c711_fdc_init(void)
 	if (fdctype == FDC_82C711)
 	{
 		FDC *fdc = &_fdc;
+		memset(fdc, 0, sizeof(*fdc));
 		c82c711_fdc_reset(fdc);
 
 		rpclog("82c711 present\n");
@@ -290,9 +313,6 @@ void c82c711_fdc_write(uint16_t addr, uint8_t val, void *p)
 				break;
 
 				default:
-#ifndef RELEASE_BUILD
-				fatal("Bad FDC command %02X\n",val);
-#endif
 				fdc->stat = 0x10;
 				fdc->discint = 0xfc;
 				timer_set_delay_u64(&fdc->timer, 25 * TIMER_USEC);
@@ -309,6 +329,19 @@ void c82c711_fdc_write(uint16_t addr, uint8_t val, void *p)
 				fdc->discint = fdc->command&0x1F;
 				timer_set_delay_u64(&fdc->timer, 128 * TIMER_USEC);
 				curdrive = fdc->params[0] & 3;
+				if ((fdc->discint == 5 || fdc->discint == 6 || fdc->discint == 7 ||
+				     fdc->discint == 0x0d || fdc->discint == 0x0f || fdc->discint == 10) &&
+				    (curdrive >= 2 || (fdc == fdc_p && !drive_funcs[curdrive])))
+				{
+					c82c711_fdc_abnormal(fdc, (unsigned)curdrive, 0x04);
+					return;
+				}
+				if (fdc->discint == 0x0d &&
+				    (fdc->params[2] == 0 || fdc->params[2] > sizeof(fdc->format_dat) / 4u))
+				{
+					c82c711_fdc_abnormal(fdc, (unsigned)curdrive, 0x10);
+					return;
+				}
 				switch (fdc->discint)
 				{
 					case 5: /*Write data*/
@@ -383,7 +416,6 @@ void c82c711_fdc_write(uint16_t addr, uint8_t val, void *p)
 		return;
 	}
 //        printf("Write FDC %04X %02X\n",addr,val);
-//        dumpregs();
 //        exit(-1);
 }
 
@@ -450,7 +482,6 @@ uint8_t c82c711_fdc_read(uint16_t addr, void *p)
 		default:
 			temp=0xFF;
 //                printf("Bad read FDC %04X\n",addr);
-//                dumpregs();
 //                exit(-1);
 	}
 //        /*if (addr!=0x3f4) */rpclog("%02X rate=%i\n",temp,fdc.rate);
@@ -617,7 +648,12 @@ static void c82c711_fdc_callback(void *p)
 				timer_advance_u64(&fdc->timer, 16 * TIMER_USEC);
 				return;
 			}
-			fdc->format_dat[fdc->pos++] = temp;
+			if (fdc->pos < 0 || (size_t)fdc->pos >= sizeof(fdc->format_dat))
+			{
+				c82c711_fdc_abnormal(fdc, (unsigned)curdrive, 0x10);
+				return;
+			}
+			fdc->format_dat[fdc->pos++] = (uint8_t)temp;
 			if (fdc->pos == (fdc->params[2] * 4))
 				fdc->format_state = 3;
 			timer_advance_u64(&fdc->timer, 16 * TIMER_USEC);
@@ -637,7 +673,7 @@ static void c82c711_fdc_callback(void *p)
 			fdc->res[5] = fdc->res[6] = 0;
 			fdc->res[7] = fdc->track[curdrive];
 			fdc->res[8] = fdc->head;
-			fdc->res[9] = fdc->format_dat[fdc->pos - 2] + 1;
+			fdc->res[9] = fdc->pos >= 2 ? (uint8_t)(fdc->format_dat[fdc->pos - 2] + 1u) : 0;
 			fdc->res[10] = fdc->params[4];
 			fdc->paramstogo=7;
 			fdc->format_state = 0;
@@ -715,7 +751,6 @@ static void c82c711_fdc_callback(void *p)
 		return;
 	}
 //        printf("Bad FDC disc int %i\n",fdc->discint);
-//        dumpregs();
 //        exit(-1);
 }
 
@@ -918,3 +953,20 @@ static fdc_funcs_t c82c711_fdc_funcs =
 	.sectorid       = c82c711_fdc_sectorid,
 	.indexpulse     = c82c711_fdc_indexpulse
 };
+
+void c82c711_fdc_media_change(unsigned drive)
+{
+	FDC *fdc = &_fdc;
+	if (drive >= 2u || curdrive != (int)drive) return;
+	if (!fdc->inread && !fdc->data_ready && !fdc->written &&
+	    !fdc->format_state && !timer_is_enabled(&fdc->timer)) return;
+	c82c711_fdc_abnormal(fdc, drive, 0x04);
+}
+
+void c82c711_fdc_shutdown(void)
+{
+	FDC *fdc = &_fdc;
+	timer_disable(&fdc->timer);
+	c82711_fdc_fiq(0, fdc->p);
+	fdc->data_ready = fdc->written = fdc->inread = fdc->format_state = 0;
+}
