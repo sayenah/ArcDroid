@@ -243,8 +243,10 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
   add_dependencies(core_tests test-fixtures)
   add_dependencies(jfd_controller_tests test-fixtures)
   add_test(NAME core-services COMMAND core_tests "${FIXTURE_DIR}")
-  add_test(NAME jfd-controller-golden COMMAND jfd_controller_tests "${FIXTURE_DIR}")
-  add_test(NAME newio-controller-golden COMMAND jfd_controller_tests "${FIXTURE_DIR}")
+  add_test(NAME jfd-controller-golden COMMAND jfd_controller_tests
+    "${FIXTURE_DIR}" --wd1770)
+  add_test(NAME newio-controller-golden COMMAND jfd_controller_tests
+    "${FIXTURE_DIR}" --82c711)
   set_tests_properties(jfd-controller-golden PROPERTIES TIMEOUT 300)
   set_tests_properties(newio-controller-golden PROPERTIES TIMEOUT 300)
   set_tests_properties(core-services PROPERTIES TIMEOUT 300)

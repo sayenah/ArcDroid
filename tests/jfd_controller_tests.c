@@ -436,6 +436,20 @@ static void test_82c711_hardening(void)
    fdctype = FDC_82C711;
    c82c711_fdc_init();
 
+   /* SENSE DRIVE STATUS returns one ST3 byte with READY clear for selectors
+    * 2/3 and must not poison the bounded current-drive state. */
+   for (uint8_t drive = 2u; drive < 4u; ++drive)
+   {
+      c82c711_fdc_write(5u, 0x04u, NULL);
+      c82c711_fdc_write(5u, drive, NULL);
+      assert((c82c711_fdc_read(4u, NULL) & 0xf0u) == 0xd0u);
+      assert(c82c711_fdc_read(5u, NULL) == (uint8_t)(0x08u | drive));
+   }
+   c82c711_fdc_write(5u, 0x08u, NULL);
+   assert((c82c711_fdc_read(4u, NULL) & 0xf0u) == 0xd0u);
+   (void)c82c711_fdc_read(5u, NULL);
+   assert(c82c711_fdc_read(5u, NULL) == 0u);
+
    /* Guest-selected drives 2/3 must return an abnormal result without ever
     * indexing the two-drive track/eot arrays. */
    c82c711_fdc_write(5u, 0x06u, NULL);
@@ -766,15 +780,37 @@ static void test_82c711_raw_geometries(void)
 
 int main(int argc, char **argv)
 {
-   assert(argc == 2);
-   test_family(argv[1]);
-   test_rejections(argv[1]);
-   test_empty_drive_cancellation();
-   test_busy_jfd_read_is_not_replaced(argv[1]);
-   test_drive_one_helper(argv[1]);
-   test_82c711_hardening();
-   test_82c711_golden(argv[1]);
-   test_82c711_raw_geometries();
+   bool run_wd1770 = true;
+   bool run_82c711 = true;
+   if (argc == 3)
+   {
+      run_wd1770 = !strcmp(argv[2], "--wd1770");
+      run_82c711 = !strcmp(argv[2], "--82c711");
+      if (!run_wd1770 && !run_82c711)
+      {
+         fprintf(stderr, "Usage: %s FIXTURES [--wd1770|--82c711]\n", argv[0]);
+         return 2;
+      }
+   }
+   else if (argc != 2)
+   {
+      fprintf(stderr, "Usage: %s FIXTURES [--wd1770|--82c711]\n", argv[0]);
+      return 2;
+   }
+   if (run_wd1770)
+   {
+      test_family(argv[1]);
+      test_rejections(argv[1]);
+      test_empty_drive_cancellation();
+      test_busy_jfd_read_is_not_replaced(argv[1]);
+      test_drive_one_helper(argv[1]);
+   }
+   if (run_82c711)
+   {
+      test_82c711_hardening();
+      test_82c711_golden(argv[1]);
+      test_82c711_raw_geometries();
+   }
    puts("jfd_controller_tests: all checks passed");
    return 0;
 }
