@@ -2,8 +2,9 @@
   82c711 FDC emulation*/
 /* ArcDroid modification (2026-09-16): bounds all guest-selected drives and
  * FORMAT input, makes invalid commands non-terminating, adds deterministic
- * cold-reset/media-change cancellation, and exposes test-build-only command
- * counters for guest-path evidence. */
+ * cold-reset/media-change cancellation, suppresses a stale WRITE DATA request
+ * after synchronous terminal media errors, and exposes test-build-only
+ * command counters for guest-path evidence. */
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
@@ -57,11 +58,39 @@ static FDC _fdc;
 static void (*c82711_fdc_irq)(int state, void *p);
 static void (*c82711_fdc_index_irq)(void *p);
 static void (*c82711_fdc_fiq)(int state, void *p);
+static int c82c711_fdc_initialized;
 #if defined(ARCDROID_TEST_FAULTS)
 static unsigned arc_test_command_count;
 static unsigned arc_test_read_data_count;
 static unsigned arc_test_read_success_count;
 #endif
+
+static int c82c711_fdc_command_selects_drive(int command)
+{
+	switch (command)
+	{
+		case 4: case 5: case 6: case 7: case 10: case 0x0d: case 0x0f:
+			return 1;
+		default:
+			return 0;
+	}
+}
+
+static int c82c711_fdc_drive_available(FDC *fdc, unsigned drive)
+{
+	return drive < 2u && (fdc != fdc_p || drive_funcs[drive]);
+}
+
+static void c82c711_fdc_sense_unavailable(FDC *fdc, unsigned drive)
+{
+	timer_disable(&fdc->timer);
+	/* ST3: preserve US/HD and the two-sided signal, but clear READY and
+	 * TRACK 0 because no selected drive is present. */
+	fdc->res[10] = (uint8_t)((drive & 3u) | (fdc->params[0] & 4u) | 0x08u);
+	fdc->stat = (fdc->stat & 0xf) | 0xd0;
+	fdc->paramstogo = 1;
+	fdc->discint = 0;
+}
 
 static void c82c711_fdc_abnormal(FDC *fdc, unsigned drive, uint8_t st1)
 {
@@ -146,6 +175,8 @@ void c82c711_fdc_init(void)
 		c82711_fdc_index_irq = arc_fdc_index_irq;
 		c82711_fdc_fiq = arc_fdc_fiq;
 		fdc->p = NULL;
+		curdrive = 0;
+		c82c711_fdc_initialized = 1;
 	}
 }
 
@@ -346,13 +377,18 @@ void c82c711_fdc_write(uint16_t addr, uint8_t val, void *p)
 				fdc->stat = 0x30;
 				fdc->discint = fdc->command&0x1F;
 				timer_set_delay_u64(&fdc->timer, 128 * TIMER_USEC);
-				curdrive = fdc->params[0] & 3;
-				if ((fdc->discint == 5 || fdc->discint == 6 || fdc->discint == 7 ||
-				     fdc->discint == 0x0d || fdc->discint == 0x0f || fdc->discint == 10) &&
-				    (curdrive >= 2 || (fdc == fdc_p && !drive_funcs[curdrive])))
+				if (c82c711_fdc_command_selects_drive(fdc->discint))
 				{
-					c82c711_fdc_abnormal(fdc, (unsigned)curdrive, 0x04);
-					return;
+					unsigned selected_drive = fdc->params[0] & 3u;
+					if (!c82c711_fdc_drive_available(fdc, selected_drive))
+					{
+						if (fdc->discint == 4)
+							c82c711_fdc_sense_unavailable(fdc, selected_drive);
+						else
+							c82c711_fdc_abnormal(fdc, selected_drive, 0x04);
+						return;
+					}
+					curdrive = (int)selected_drive;
 				}
 				if (fdc->discint == 0x0d &&
 				    (fdc->params[2] == 0 || fdc->params[2] > sizeof(fdc->format_dat) / 4u))
@@ -373,6 +409,9 @@ void c82c711_fdc_write(uint16_t addr, uint8_t val, void *p)
 					fdc->written = 0;
 					readflash[curdrive] = 1;
 					fdc->pos = 0;
+					/* ArcDroid media backends may synchronously finish this command
+					 * (for example, JFD reports write protect above). A result phase
+					 * must not be followed by a new DMA request. */
 					if (!fdc->paramstogo) c82711_fdc_fiq(1, fdc->p);
 					break;
 
@@ -988,6 +1027,7 @@ static fdc_funcs_t c82c711_fdc_funcs =
 void c82c711_fdc_media_change(unsigned drive)
 {
 	FDC *fdc = &_fdc;
+	if (!c82c711_fdc_initialized) return;
 	if (drive >= 2u || curdrive != (int)drive) return;
 	if (!fdc->inread && !fdc->data_ready && !fdc->written &&
 	    !fdc->format_state && !timer_is_enabled(&fdc->timer)) return;
@@ -997,9 +1037,11 @@ void c82c711_fdc_media_change(unsigned drive)
 void c82c711_fdc_shutdown(void)
 {
 	FDC *fdc = &_fdc;
+	if (!c82c711_fdc_initialized) return;
 	timer_disable(&fdc->timer);
 	c82711_fdc_fiq(0, fdc->p);
 	fdc->data_ready = fdc->written = fdc->inread = fdc->format_state = 0;
+	c82c711_fdc_initialized = 0;
 }
 
 #if defined(ARCDROID_TEST_FAULTS)
