@@ -774,6 +774,21 @@ static uint64_t hash_file(const char *path)
    assert(!ferror(f) && !fclose(f)); return hash;
 }
 
+static uint32_t hash_file_prefix(const char *path, size_t size)
+{
+   FILE *file = fopen(path, "rb");
+   assert(file);
+   uint32_t hash = UINT32_C(2166136261);
+   for (size_t index = 0u; index < size; ++index)
+   {
+      int byte = fgetc(file);
+      assert(byte != EOF);
+      hash = (hash ^ (uint8_t)byte) * UINT32_C(16777619);
+   }
+   assert(!fclose(file));
+   return hash;
+}
+
 static void make_sized_file(const char *path, size_t size)
 {
    FILE *file = fopen(path, "wb");
@@ -921,7 +936,7 @@ static void print_usage(FILE *stream, const char *program)
    fprintf(stream,
       "Usage:\n"
       "  %s CORE ROM CONTENT DATA\n"
-      "  %s CORE ROM CONTENT DATA --newio-smoke\n"
+      "  %s CORE ROM CONTENT DATA --newio-smoke PLAYLIST DISC1 DISC2 APP\n"
       "  %s CORE ROM CONTENT DATA --real-boot "
       "[--machine A3000|A3010|A3020|A4000] "
       "[--joystick Keyboard|A3010] [--osk-script FILE]\n"
@@ -1115,7 +1130,7 @@ int main(int argc, char **argv)
    bool real_boot = false;
    bool newio_smoke = false;
    const char *osk_script = NULL;
-   if (argc == 6 && !strcmp(argv[5], "--newio-smoke"))
+   if (argc == 10 && !strcmp(argv[5], "--newio-smoke"))
       newio_smoke = true;
    else if (argc >= 6 && !strcmp(argv[5], "--real-boot"))
    {
@@ -1221,6 +1236,10 @@ int main(int argc, char **argv)
    bool (*arc_engine_test_cmos_image)(uint8_t[ARC_CMOS_MACHINE_SIZE]) = NULL;
    bool (*arc_engine_test_cmos_write)(unsigned, uint8_t) = NULL;
    bool (*arc_engine_test_newio)(unsigned *, unsigned *, unsigned *, unsigned *, uint8_t *) = NULL;
+   bool (*arc_engine_test_newio_dir)(bool, uint8_t *) = NULL;
+   bool (*arc_engine_test_newio_read_start)(unsigned, uint8_t) = NULL;
+   bool (*arc_engine_test_newio_result)(uint8_t[7], bool *) = NULL;
+   bool (*arc_engine_test_newio_read_finish)(size_t, uint32_t *, uint8_t[7]) = NULL;
    bool (*arc_engine_test_joystick)(unsigned, uint8_t *) = NULL;
    bool (*arc_engine_test_ioeb_clock)(unsigned) = NULL;
    unsigned (*arc_engine_test_vidc_clock)(void) = NULL;
@@ -1337,10 +1356,23 @@ int main(int argc, char **argv)
    }
    else if (newio_smoke)
    {
+      *(void **)(&arc_engine_test_drive_media) =
+         dlsym(module, "arc_engine_test_drive_media");
+      *(void **)(&arc_engine_test_newio_dir) =
+         dlsym(module, "arc_engine_test_newio_dir");
+      *(void **)(&arc_engine_test_newio_read_start) =
+         dlsym(module, "arc_engine_test_newio_read_start");
+      *(void **)(&arc_engine_test_newio_result) =
+         dlsym(module, "arc_engine_test_newio_result");
+      *(void **)(&arc_engine_test_newio_read_finish) =
+         dlsym(module, "arc_engine_test_newio_read_finish");
       *(void **)(&arc_engine_test_joystick) = dlsym(module, "arc_engine_test_joystick");
       *(void **)(&arc_engine_test_ioeb_clock) = dlsym(module, "arc_engine_test_ioeb_clock");
       *(void **)(&arc_engine_test_vidc_clock) = dlsym(module, "arc_engine_test_vidc_clock");
-      assert(arc_engine_test_newio && arc_engine_test_joystick &&
+      assert(arc_engine_test_newio && arc_engine_test_drive_media &&
+             arc_engine_test_newio_dir && arc_engine_test_newio_read_start &&
+             arc_engine_test_newio_result && arc_engine_test_newio_read_finish &&
+             arc_engine_test_joystick &&
              arc_engine_test_ioeb_clock && arc_engine_test_vidc_clock);
    }
    else if (osk_script)
@@ -1582,10 +1614,71 @@ int main(int argc, char **argv)
          retro_unload_game();
          assert(open_files == 0u && open_dirs == 0u);
       }
+
+      /* Exercise New-IO media replacement through libretro disk control, not
+       * controller-only fixture plumbing. The inserted playlist member raises
+       * DIR until the first real track-changing seek. */
+      option_machine = "A3010";
+      option_cpu = "ARM250";
+      option_joystick = "Keyboard";
+      option_launch = "off";
+      struct retro_game_info newio_playlist = {argv[6], NULL, 0u, NULL};
+      phase = PHASE_LOAD;
+      assert(retro_load_game(&newio_playlist));
+      phase = PHASE_RUN;
+      for (unsigned frame = 0u; frame < 180u; ++frame) retro_run();
+      assert(disk_control.get_num_images() == 2u &&
+             disk_control.get_image_index() == 0u &&
+             disk_control.set_eject_state(true) &&
+             disk_control.set_image_index(1u) &&
+             disk_control.set_eject_state(false));
+      uint8_t dir = 0u;
+      assert(arc_engine_test_newio_dir(false, &dir) && (dir & 0x80u));
+      assert(arc_engine_test_newio_dir(true, &dir) && !(dir & 0x80u));
+      assert(arc_engine_test_newio_dir(true, &dir) && !(dir & 0x80u));
+
+      /* An active read is cancelled once. Reinsertion before result
+       * consumption preserves that result, after which the newly selected
+       * member can be read successfully by the controller. */
+      assert(arc_engine_test_newio_read_start(0u, 3u));
+      assert(disk_control.set_eject_state(true));
+      assert(disk_control.set_eject_state(false));
+      uint8_t media_result[7];
+      bool stale_fiq = true;
+      assert(arc_engine_test_newio_result(media_result, &stale_fiq) &&
+             (media_result[0] & 0x40u) && media_result[1] == 0x04u &&
+             !stale_fiq);
+      assert(arc_engine_test_newio_read_start(0u, 3u));
+      uint32_t guest_disc_signature = 0u;
+      assert(arc_engine_test_newio_read_finish(1024u, &guest_disc_signature,
+                                               media_result) &&
+             !(media_result[0] & 0xc0u) &&
+             guest_disc_signature == hash_file_prefix(argv[8], 1024u));
+      retro_unload_game();
+
+      /* The launch helper occupies drive 1. Ejecting frontend drive 0 while
+       * its read is active must leave the helper transfer undisturbed. */
+      option_launch = "auto";
+      struct retro_game_info newio_application = {argv[9], NULL, 0u, NULL};
+      phase = PHASE_LOAD;
+      assert(retro_load_game(&newio_application));
+      phase = PHASE_RUN;
+      for (unsigned frame = 0u; frame < 180u; ++frame) retro_run();
+      assert(arc_engine_test_drive_media(1u, NULL, NULL));
+      assert(arc_engine_test_newio_read_start(1u, 1u));
+      assert(disk_control.set_eject_state(true));
+      uint32_t helper_signature = 0u;
+      assert(arc_engine_test_newio_read_finish(256u, &helper_signature,
+                                               media_result) &&
+             !(media_result[0] & 0xc0u));
+      retro_unload_game();
+      option_launch = "auto";
+
       retro_deinit();
       assert(hash_file(argv[3]) == source_hash);
       assert(dlclose(module) == 0);
-      puts("newio_libretro_harness: A3010/A3020/A4000 executed 82C711 guest path");
+      printf("newio_libretro_harness: A3010/A3020/A4000 executed 82C711 guest "
+             "path; inserted disc signature %08x\n", guest_disc_signature);
       return 0;
    }
 

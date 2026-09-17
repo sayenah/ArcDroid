@@ -300,7 +300,11 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
       "${FIXTURE_DIR}/arcdroid-test.rom"
       "${FIXTURE_DIR}/arcdroid-test.adf"
       "${CMAKE_CURRENT_BINARY_DIR}/newio-harness-data"
-      --newio-smoke)
+      --newio-smoke
+      "${FIXTURE_DIR}/arcdroid-media.m3u"
+      "${FIXTURE_DIR}/arcdroid-media-disc1.adf"
+      "${FIXTURE_DIR}/arcdroid-media-disc2.adf"
+      "${FIXTURE_DIR}/arcdroid-application-l.adl")
     set_tests_properties(libretro-harness PROPERTIES TIMEOUT 300)
     set_tests_properties(newio-libretro-harness PROPERTIES TIMEOUT 300)
   endif()

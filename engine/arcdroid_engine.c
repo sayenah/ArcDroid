@@ -133,6 +133,112 @@ bool arc_engine_test_newio(unsigned *commands, unsigned *read_data,
    return true;
 }
 
+static bool arc_test_newio_live(void)
+{
+   const ArcMachineDescriptor *descriptor = arc_machine_descriptor(arc_saved_machine);
+   return arc_machine_live && descriptor && descriptor->io == ARC_IO_NEW_82C711;
+}
+
+static bool arc_test_advance_timer(void)
+{
+   if (timer_target == UINT32_MAX) return false;
+   tsc = (uint64_t)timer_target << 32u;
+   timer_process();
+   return true;
+}
+
+bool arc_engine_test_newio_dir(bool seek, uint8_t *value)
+{
+   if (!value || !arc_test_newio_live()) return false;
+   c82c711_fdc_write(2u, 0x1cu, NULL);
+   if (!seek)
+   {
+      *value = c82c711_fdc_read(7u, NULL);
+      return true;
+   }
+
+   unsigned new_track = disc_get_current_track(0) ? 0u : 1u;
+   c82c711_fdc_write(5u, 0x0fu, NULL);
+   c82c711_fdc_write(5u, 0u, NULL);
+   c82c711_fdc_write(5u, (uint8_t)new_track, NULL);
+   *value = c82c711_fdc_read(7u, NULL);
+   for (unsigned step = 0u; step < 100000u && !(ioc.irqb & IOC_IRQB_DISC_IRQ); ++step)
+      if (!arc_test_advance_timer()) return false;
+   if (!(ioc.irqb & IOC_IRQB_DISC_IRQ)) return false;
+   (void)c82c711_fdc_read(4u, NULL);
+   c82c711_fdc_write(5u, 0x08u, NULL);
+   for (unsigned step = 0u; step < 100000u &&
+        (c82c711_fdc_read(4u, NULL) & 0xf0u) != 0xd0u; ++step)
+      if (!arc_test_advance_timer()) return false;
+   if ((c82c711_fdc_read(4u, NULL) & 0xf0u) != 0xd0u) return false;
+   (void)c82c711_fdc_read(5u, NULL);
+   (void)c82c711_fdc_read(5u, NULL);
+   return true;
+}
+
+bool arc_engine_test_newio_read_start(unsigned drive, uint8_t size_code)
+{
+   if (!arc_test_newio_live() || drive >= 2u || !drive_funcs[drive]) return false;
+   const uint8_t params[8] = {
+      (uint8_t)drive, 0u, 0u, 0u, size_code, 0u, 0x1bu, 0xffu
+   };
+   /* Leave any guest command phase deterministically before the harness owns
+    * the controller, then consume all four reset-status reports. */
+   c82c711_fdc_write(2u, (uint8_t)drive, NULL);
+   c82c711_fdc_write(2u, (uint8_t)(0x0cu | (0x10u << drive) | drive), NULL);
+   for (unsigned step = 0u; step < 100000u && !(ioc.irqb & IOC_IRQB_DISC_IRQ); ++step)
+      if (!arc_test_advance_timer()) return false;
+   if (!(ioc.irqb & IOC_IRQB_DISC_IRQ)) return false;
+   (void)c82c711_fdc_read(4u, NULL);
+   for (unsigned reset_drive = 0u; reset_drive < 4u; ++reset_drive)
+   {
+      c82c711_fdc_write(5u, 0x08u, NULL);
+      (void)c82c711_fdc_read(5u, NULL);
+      (void)c82c711_fdc_read(5u, NULL);
+   }
+   c82c711_fdc_write(7u, 1u, NULL);
+   c82c711_fdc_write(5u, 0x06u, NULL);
+   for (unsigned index = 0u; index < sizeof(params); ++index)
+      c82c711_fdc_write(5u, params[index], NULL);
+   return true;
+}
+
+bool arc_engine_test_newio_result(uint8_t result[7], bool *fiq_asserted)
+{
+   if (!result || !arc_test_newio_live() || !(ioc.irqb & IOC_IRQB_DISC_IRQ))
+      return false;
+   if (fiq_asserted) *fiq_asserted = (ioc.fiq & IOC_FIQ_DISC_DATA) != 0u;
+   (void)c82c711_fdc_read(4u, NULL);
+   for (unsigned index = 0u; index < 7u; ++index)
+      result[index] = c82c711_fdc_read(5u, NULL);
+   return true;
+}
+
+bool arc_engine_test_newio_read_finish(size_t bytes, uint32_t *signature,
+                                       uint8_t result[7])
+{
+   if (!bytes || !signature || !result || !arc_test_newio_live()) return false;
+   size_t transferred = 0u;
+   uint32_t found = UINT32_C(2166136261);
+   for (unsigned step = 0u; step < 1000000u && !(ioc.irqb & IOC_IRQB_DISC_IRQ); ++step)
+   {
+      if (!arc_test_advance_timer()) return false;
+      if (ioc.fiq & IOC_FIQ_DISC_DATA)
+      {
+         if (transferred >= bytes) return false;
+         uint8_t value = c82c711_fdc_dmaread(transferred + 1u == bytes, NULL);
+         found = (found ^ value) * UINT32_C(16777619);
+         ++transferred;
+      }
+   }
+   bool fiq_asserted = false;
+   if (transferred != bytes ||
+       !arc_engine_test_newio_result(result, &fiq_asserted) || fiq_asserted)
+      return false;
+   *signature = found;
+   return true;
+}
+
 bool arc_engine_test_joystick(unsigned port, uint8_t *value)
 {
    if (!arc_machine_live || !value || port >= 2u) return false;
