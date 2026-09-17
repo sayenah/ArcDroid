@@ -28,15 +28,17 @@
 #define ARC_DEVICE_MOUSE RETRO_DEVICE_SUBCLASS(RETRO_DEVICE_MOUSE, 1)
 
 enum {
-   ARC_INPUT_SUPPORTED_KEYS = 100u,
-   ARC_INPUT_PAD_KEYS = 10u,
+   ARC_INPUT_CURATED_KEY_ROWS = 97u,
+   ARC_INPUT_SHARED_KEY_ALIASES = 0u,
+   ARC_INPUT_OSK_ONLY_KEYS = 3u,
    ARC_INPUT_POINTER_BUTTONS = 3u,
    /* Leave room for future adapter bindings without risking truncation when
     * overflow reconciliation rebuilds every held discrete input level. */
    ARC_INPUT_RECONCILE_MARGIN = 16u
 };
 
-_Static_assert(ARC_INPUT_SUPPORTED_KEYS + ARC_INPUT_PAD_KEYS +
+_Static_assert(ARC_INPUT_CURATED_KEY_ROWS - ARC_INPUT_SHARED_KEY_ALIASES +
+               ARC_INPUT_OSK_ONLY_KEYS +
                ARC_INPUT_POINTER_BUTTONS + ARC_INPUT_RECONCILE_MARGIN <=
                ARC_INPUT_FIFO_CAPACITY,
                "supported input surface exceeds reconciliation capacity");
@@ -59,9 +61,12 @@ static ArcDigest arc_content_digest;
 static ArcLaunchPlan arc_plan;
 static ArcInputState arc_inputs;
 static bool arc_pad_keys[2][10];
+static bool arc_pad_neutral_gate[2];
+static ArcInputResolution arc_input_resolution;
 static unsigned arc_pad_pointer_buttons;
 static bool arc_keyboard_menu;
 static bool arc_keyboard_lmeta;
+static bool arc_keyboard_polling;
 static unsigned arc_port_device[2] = {ARC_DEVICE_KEYS, ARC_DEVICE_MOUSE};
 static char arc_cmos_path[4096];
 static char arc_save_path[4096];
@@ -90,6 +95,89 @@ static int16_t arc_stick_y;
 static bool arc_stick_precision;
 static long double arc_stick_fraction_x;
 static long double arc_stick_fraction_y;
+static ArcOsk arc_osk;
+static uint32_t *arc_osk_surface;
+static size_t arc_osk_surface_pixels;
+static bool arc_osk_present_dirty;
+static bool arc_osk_toggle_level;
+static bool arc_osk_pad_levels[16];
+static bool arc_osk_too_narrow_reported;
+static bool arc_osk_failure_reported;
+#if defined(ARCDROID_TEST_FAULTS)
+static unsigned arc_osk_fail_allocations;
+static bool arc_osk_source_unchanged;
+static bool arc_osk_source_checked;
+static ArcInputProfile arc_test_input_profile;
+static bool arc_test_input_profile_registered;
+static bool arc_test_stall_kart;
+static unsigned arc_test_presented_osk_notice;
+void arc_libretro_test_fail_osk_allocations(unsigned count)
+{
+   arc_osk_fail_allocations = count;
+}
+void arc_libretro_test_drop_osk_surface(void)
+{
+   free(arc_osk_surface);
+   arc_osk_surface = NULL;
+   arc_osk_surface_pixels = 0u;
+}
+bool arc_libretro_test_osk_source_unchanged(void)
+{
+   return arc_osk_source_checked && arc_osk_source_unchanged;
+}
+void arc_libretro_test_stall_kart(bool stalled)
+{
+   arc_test_stall_kart = stalled;
+}
+void arc_libretro_test_fill_input_queue(void)
+{
+   while (arc_input_available(&arc_inputs) >= 2u)
+   {
+      arc_input_source_key(&arc_inputs, ARC_INPUT_SOURCE_KEYBOARD,
+                           RETROK_b, true, true);
+      arc_input_source_key(&arc_inputs, ARC_INPUT_SOURCE_KEYBOARD,
+                           RETROK_b, false, true);
+   }
+}
+unsigned arc_libretro_test_input_pending(void)
+{
+   return arc_input_pending(&arc_inputs);
+}
+bool arc_libretro_test_osk_visible(void) { return arc_osk.visible; }
+bool arc_libretro_test_osk_busy(void) { return arc_osk.busy; }
+bool arc_libretro_test_osk_activation_active(void)
+{
+   return arc_osk.activation_phase != 0u;
+}
+void arc_libretro_test_force_present(void) { arc_osk_present_dirty = true; }
+unsigned arc_libretro_test_osk_modifier_state(unsigned key)
+{
+   static const unsigned modifier_keys[ARC_OSK_MODIFIER_COUNT] = {
+      RETROK_LSHIFT, RETROK_RSHIFT, RETROK_LCTRL,
+      RETROK_RCTRL, RETROK_LALT, RETROK_RALT
+   };
+   for (unsigned i = 0u; i < ARC_OSK_MODIFIER_COUNT; ++i)
+      if (modifier_keys[i] == key) return (unsigned)arc_osk.modifiers[i];
+   return UINT_MAX;
+}
+unsigned arc_libretro_test_presented_osk_notice(void)
+{
+   return arc_test_presented_osk_notice;
+}
+void arc_libretro_test_force_input_reconcile(void)
+{
+   uint64_t generation = arc_input_reconcile_generation(&arc_inputs);
+   bool down = false;
+   while (arc_input_reconcile_generation(&arc_inputs) == generation)
+   {
+      down = !down;
+      arc_input_source_key(&arc_inputs, ARC_INPUT_SOURCE_KEYBOARD,
+                           RETROK_BREAK, down, true);
+   }
+   arc_input_source_key(&arc_inputs, ARC_INPUT_SOURCE_KEYBOARD,
+                        RETROK_BREAK, false, true);
+}
+#endif
 
 typedef struct {
    bool populated;
@@ -124,6 +212,12 @@ typedef enum {
    ARC_LAUNCH_APP8
 } ArcLaunchOption;
 
+typedef enum {
+   ARC_OSK_TOGGLE_L3 = 0,
+   ARC_OSK_TOGGLE_R3,
+   ARC_OSK_TOGGLE_OFF
+} ArcOskToggle;
+
 typedef struct {
    bool valid;
    int x;
@@ -155,9 +249,23 @@ typedef struct {
    unsigned pointer_deadzone;
    ArcDiskWriteMode disk_writes;
    ArcLaunchOption launch;
+   char input_profile[64];
+   ArcInputOverride pad[ARC_PAD_PORTS][ARC_PAD_INPUT_COUNT];
+   ArcOskToggle osk_toggle;
 } ArcCoreOptions;
 
 static ArcCoreOptions arc_core_options;
+
+static const char *const arc_pad_option_names[ARC_PAD_PORTS][ARC_PAD_INPUT_COUNT] = {
+   {"arcdroid_pad1_up", "arcdroid_pad1_down", "arcdroid_pad1_left",
+    "arcdroid_pad1_right", "arcdroid_pad1_a", "arcdroid_pad1_b",
+    "arcdroid_pad1_x", "arcdroid_pad1_y", "arcdroid_pad1_start",
+    "arcdroid_pad1_select"},
+   {"arcdroid_pad2_up", "arcdroid_pad2_down", "arcdroid_pad2_left",
+    "arcdroid_pad2_right", "arcdroid_pad2_a", "arcdroid_pad2_b",
+    "arcdroid_pad2_x", "arcdroid_pad2_y", "arcdroid_pad2_start",
+    "arcdroid_pad2_select"}
+};
 
 static const char *arc_option_value(const char *key, const char *fallback)
 {
@@ -180,6 +288,8 @@ static bool arc_read_options(ArcCoreOptions *options, char *error, size_t error_
    const char *pointer_deadzone = arc_option_value("arcdroid_pointer_deadzone", "15");
    const char *writes = arc_option_value("arcdroid_disk_writes", "shadow");
    const char *launch = arc_option_value("arcdroid_launch", "auto");
+   const char *profile = arc_option_value("arcdroid_input_profile", "Auto");
+   const char *osk_toggle = arc_option_value("arcdroid_osk_toggle", "L3");
    if (!options) return false;
    memset(options, 0, sizeof(*options));
    if ((strcmp(machine, "Auto") && strcmp(machine, "A3000")) ||
@@ -220,6 +330,44 @@ static bool arc_read_options(ArcCoreOptions *options, char *error, size_t error_
    else if (!strcmp(launch, "off")) options->launch = ARC_LAUNCH_OFF;
    else if (!strncmp(launch, "app", 3u) && launch[3] >= '1' && launch[3] <= '8' && !launch[4])
       options->launch = (ArcLaunchOption)(ARC_LAUNCH_APP1 + launch[3] - '1');
+   else goto invalid;
+   if (strlen(profile) >= sizeof(options->input_profile)) goto invalid;
+   strcpy(options->input_profile, profile);
+   if (strcmp(profile, "Auto") && strcmp(profile, "Generic"))
+   {
+      bool found = false;
+      size_t count = 0u;
+      const ArcInputProfile *profiles = arc_input_profiles(&count);
+      for (size_t i = 0u; i < count; ++i)
+         if (!strcmp(profile, profiles[i].id)) found = true;
+#if defined(ARCDROID_TEST_FAULTS)
+      if (arc_test_input_profile_registered &&
+          !strcmp(profile, arc_test_input_profile.id)) found = true;
+#endif
+      if (!found) goto invalid;
+   }
+   for (unsigned port = 0u; port < ARC_PAD_PORTS; ++port)
+      for (unsigned input = 0u; input < ARC_PAD_INPUT_COUNT; ++input)
+      {
+         const char *value = arc_option_value(arc_pad_option_names[port][input], "Auto");
+         ArcInputOverride *override = &options->pad[port][input];
+         if (!strcmp(value, "Auto")) override->automatic = true;
+         else if (!strcmp(value, "Unbound"))
+         {
+            override->automatic = false;
+            override->binding = (ArcInputBinding){false, 0u};
+         }
+         else
+         {
+            const ArcInputKey *key = arc_input_key_value(value);
+            if (!key) goto invalid;
+            override->automatic = false;
+            override->binding = (ArcInputBinding){true, key->key};
+         }
+      }
+   if (!strcmp(osk_toggle, "L3")) options->osk_toggle = ARC_OSK_TOGGLE_L3;
+   else if (!strcmp(osk_toggle, "R3")) options->osk_toggle = ARC_OSK_TOGGLE_R3;
+   else if (!strcmp(osk_toggle, "Off")) options->osk_toggle = ARC_OSK_TOGGLE_OFF;
    else goto invalid;
    return true;
 invalid:
@@ -1269,12 +1417,296 @@ static void arc_input_sampling_reset(bool release_engine_levels)
    if (release_engine_levels) arc_input_release_all(&arc_inputs);
    else arc_input_reset(&arc_inputs);
    memset(arc_pad_keys, 0, sizeof(arc_pad_keys));
+   memset(arc_pad_neutral_gate, 0, sizeof(arc_pad_neutral_gate));
    arc_pad_pointer_buttons = 0u;
    arc_keyboard_menu = arc_keyboard_lmeta = false;
    arc_stick_x = arc_stick_y = 0;
    arc_stick_precision = false;
    arc_stick_fraction_x = arc_stick_fraction_y = 0.0L;
    memset(&arc_touch, 0, sizeof(arc_touch));
+   memset(arc_osk_pad_levels, 0, sizeof(arc_osk_pad_levels));
+   arc_osk_toggle_level = false;
+}
+
+static void arc_osk_restore_gameplay(void)
+{
+   arc_pad_neutral_gate[0] = true;
+   memset(arc_pad_keys[0], 0, sizeof(arc_pad_keys[0]));
+   arc_pad_pointer_buttons = 0u;
+   arc_touch_reset();
+   /* A contact owned by the modal OSK must not become a fresh trackpad
+    * gesture when gameplay resumes.  arc_touch_poll clears this only after
+    * observing a fully neutral pointer sample. */
+   arc_touch.blocked_until_zero = true;
+   arc_stick_x = arc_stick_y = 0;
+   arc_stick_fraction_x = arc_stick_fraction_y = 0.0L;
+}
+
+static void arc_osk_presentation_failure(void)
+{
+   arc_osk_close(&arc_osk, &arc_inputs);
+   arc_osk.disabled = true;
+   arc_osk_present_dirty = true;
+   arc_osk_restore_gameplay();
+   if (!arc_osk_failure_reported)
+   {
+      arc_message("On-screen keyboard disabled: unable to allocate its presentation surface.",
+                  RETRO_LOG_ERROR);
+      arc_osk_failure_reported = true;
+   }
+}
+
+static bool arc_osk_prepare_surface(unsigned width, unsigned height)
+{
+   if (!width || !height || width > 4096u || height > 2048u ||
+       (size_t)width > SIZE_MAX / height) return false;
+   size_t needed = (size_t)width * height;
+   if (needed <= arc_osk_surface_pixels && arc_osk_surface) return true;
+#if defined(ARCDROID_TEST_FAULTS)
+   if (arc_osk_fail_allocations)
+   {
+      --arc_osk_fail_allocations;
+      return false;
+   }
+#endif
+   uint32_t *grown = realloc(arc_osk_surface, needed * sizeof(*grown));
+   if (!grown) return false;
+   arc_osk_surface = grown;
+   arc_osk_surface_pixels = needed;
+   return true;
+}
+
+static void arc_osk_free_surface(void)
+{
+   free(arc_osk_surface);
+   arc_osk_surface = NULL;
+   arc_osk_surface_pixels = 0u;
+}
+
+static void arc_osk_report_too_narrow(void)
+{
+   if (!arc_osk_too_narrow_reported)
+   {
+      arc_message("On-screen keyboard unavailable below 320 pixels wide.",
+                  RETRO_LOG_WARN);
+      arc_osk_too_narrow_reported = true;
+   }
+}
+
+#if defined(ARCDROID_TEST_FAULTS)
+static uint64_t arc_osk_source_hash(const ArcEngineFrame *frame)
+{
+   uint64_t hash = UINT64_C(1469598103934665603);
+   for (unsigned row = 0u; row < frame->height; ++row)
+   {
+      const uint8_t *bytes = (const uint8_t *)frame->pixels +
+         (size_t)row * frame->pitch;
+      for (size_t byte = 0u; byte < (size_t)frame->width * sizeof(uint32_t); ++byte)
+      {
+         hash ^= bytes[byte];
+         hash *= UINT64_C(1099511628211);
+      }
+   }
+   return hash;
+}
+#endif
+
+static void arc_osk_set_visible(bool visible)
+{
+   if (visible)
+   {
+      if (arc_osk.disabled) return;
+      if (arc_video_width < 320u)
+      {
+         arc_osk_report_too_narrow();
+         return;
+      }
+      if (!arc_osk_prepare_surface(arc_video_width, arc_video_height))
+      {
+         arc_osk_presentation_failure();
+         return;
+      }
+      if (!arc_osk_open(&arc_osk, arc_video_width, arc_video_height)) return;
+      arc_input_clear_source(&arc_inputs, ARC_INPUT_SOURCE_PAD0);
+      arc_input_clear_source(&arc_inputs, ARC_INPUT_SOURCE_TOUCH);
+      arc_osk_restore_gameplay();
+   }
+   else
+   {
+      arc_osk_close(&arc_osk, &arc_inputs);
+      arc_osk_restore_gameplay();
+   }
+   arc_osk_present_dirty = true;
+}
+
+#if defined(ARCDROID_TEST_FAULTS)
+void arc_libretro_test_probe_osk_geometry(unsigned width, unsigned height)
+{
+   unsigned saved_width = arc_video_width;
+   unsigned saved_height = arc_video_height;
+   arc_video_width = width;
+   arc_video_height = height;
+   arc_osk_set_visible(true);
+   arc_video_width = saved_width;
+   arc_video_height = saved_height;
+}
+
+bool arc_libretro_test_osk_focus_key(unsigned key)
+{
+   if (!arc_osk.visible) return false;
+   for (unsigned i = 0u; i < arc_osk.key_count; ++i)
+      if (arc_osk.keys[i].key == key)
+      {
+         arc_osk.focus = i;
+         arc_osk_present_dirty = true;
+         return true;
+      }
+   return false;
+}
+
+bool arc_libretro_test_osk_key_center(unsigned key, unsigned *x, unsigned *y)
+{
+   if (!arc_osk.visible || !x || !y) return false;
+   for (unsigned i = 0u; i < arc_osk.key_count; ++i)
+      if (arc_osk.keys[i].key == key)
+      {
+         *x = arc_osk.keys[i].x + arc_osk.keys[i].width / 2u;
+         *y = arc_osk.keys[i].y + arc_osk.keys[i].height / 2u;
+         return true;
+      }
+   return false;
+}
+#endif
+
+static int arc_pointer_to_pixel(int value, unsigned extent)
+{
+   int64_t scaled = ((int64_t)value + 32768) * extent;
+   int result = (int)(scaled / 65536);
+   if (result < 0) result = 0;
+   if (extent && result >= (int)extent) result = (int)extent - 1;
+   return result;
+}
+
+static void arc_poll_osk_controls(void)
+{
+   if (!arc_input_state) return;
+   if (arc_osk_advance(&arc_osk, arc_guest_time_us))
+      arc_osk_present_dirty = true;
+   unsigned toggle_id = arc_core_options.osk_toggle == ARC_OSK_TOGGLE_R3 ?
+      RETRO_DEVICE_ID_JOYPAD_R3 : RETRO_DEVICE_ID_JOYPAD_L3;
+   bool toggle = arc_core_options.osk_toggle != ARC_OSK_TOGGLE_OFF &&
+      arc_input_state(0u, RETRO_DEVICE_JOYPAD, 0u, toggle_id) != 0;
+   if (toggle && !arc_osk_toggle_level)
+      arc_osk_set_visible(!arc_osk.visible);
+   arc_osk_toggle_level = toggle;
+   if (!arc_osk.visible) return;
+
+   static const unsigned ids[] = {
+      RETRO_DEVICE_ID_JOYPAD_UP, RETRO_DEVICE_ID_JOYPAD_DOWN,
+      RETRO_DEVICE_ID_JOYPAD_LEFT, RETRO_DEVICE_ID_JOYPAD_RIGHT,
+      RETRO_DEVICE_ID_JOYPAD_A, RETRO_DEVICE_ID_JOYPAD_B,
+      RETRO_DEVICE_ID_JOYPAD_X, RETRO_DEVICE_ID_JOYPAD_Y,
+      RETRO_DEVICE_ID_JOYPAD_START, RETRO_DEVICE_ID_JOYPAD_SELECT
+   };
+   bool level[10];
+   for (unsigned i = 0u; i < 10u; ++i)
+      level[i] = arc_input_state(0u, RETRO_DEVICE_JOYPAD, 0u, ids[i]) != 0;
+   int dx = level[ARC_PAD_LEFT] ? -1 : level[ARC_PAD_RIGHT] ? 1 : 0;
+   int dy = level[ARC_PAD_UP] ? -1 : level[ARC_PAD_DOWN] ? 1 : 0;
+   bool direction_edge =
+      (level[ARC_PAD_LEFT] && !arc_osk_pad_levels[ARC_PAD_LEFT]) ||
+      (level[ARC_PAD_RIGHT] && !arc_osk_pad_levels[ARC_PAD_RIGHT]) ||
+      (level[ARC_PAD_UP] && !arc_osk_pad_levels[ARC_PAD_UP]) ||
+      (level[ARC_PAD_DOWN] && !arc_osk_pad_levels[ARC_PAD_DOWN]);
+   unsigned old_focus = arc_osk.focus;
+   if (dx || dy) arc_osk_move(&arc_osk, dx, dy, arc_guest_time_us, direction_edge);
+   if (old_focus != arc_osk.focus) arc_osk_present_dirty = true;
+   if (level[ARC_PAD_A] && !arc_osk_pad_levels[ARC_PAD_A])
+   {
+      (void)arc_osk_press_focused(&arc_osk, &arc_inputs);
+      arc_osk_present_dirty = true;
+   }
+   if (!level[ARC_PAD_A] && arc_osk_pad_levels[ARC_PAD_A])
+      arc_osk_release_activation(&arc_osk);
+   if (level[ARC_PAD_X] && !arc_osk_pad_levels[ARC_PAD_X])
+   {
+      (void)arc_osk_shortcut(&arc_osk, &arc_inputs, RETROK_BACKSPACE);
+      arc_osk_present_dirty = true;
+   }
+   if (level[ARC_PAD_Y] && !arc_osk_pad_levels[ARC_PAD_Y])
+   {
+      (void)arc_osk_shortcut(&arc_osk, &arc_inputs, RETROK_RETURN);
+      arc_osk_present_dirty = true;
+   }
+   if (level[ARC_PAD_SELECT] && !arc_osk_pad_levels[ARC_PAD_SELECT])
+   {
+      arc_osk.transparent = !arc_osk.transparent;
+      arc_osk_present_dirty = true;
+   }
+   if ((level[ARC_PAD_B] && !arc_osk_pad_levels[ARC_PAD_B]) ||
+       (level[ARC_PAD_START] && !arc_osk_pad_levels[ARC_PAD_START]))
+   {
+      memcpy(arc_osk_pad_levels, level, sizeof(level));
+      arc_osk_set_visible(false);
+      return;
+   }
+   memcpy(arc_osk_pad_levels, level, sizeof(level));
+
+   bool down = arc_input_state(0u, RETRO_DEVICE_POINTER, 0u,
+                               RETRO_DEVICE_ID_POINTER_PRESSED) != 0;
+   bool offscreen = arc_input_state(0u, RETRO_DEVICE_POINTER, 0u,
+                                    RETRO_DEVICE_ID_POINTER_IS_OFFSCREEN) != 0;
+   int raw_x = arc_input_state(0u, RETRO_DEVICE_POINTER, 0u,
+                               RETRO_DEVICE_ID_POINTER_X);
+   int raw_y = arc_input_state(0u, RETRO_DEVICE_POINTER, 0u,
+                               RETRO_DEVICE_ID_POINTER_Y);
+   bool before_contact = arc_osk.contact;
+   unsigned before_focus = arc_osk.focus;
+   if (offscreen || raw_x == -32768 || raw_y == -32768)
+   {
+      /* Keep an offscreen held contact down long enough to invalidate its
+       * capture; treating it as a release would activate the old key. */
+      if (arc_osk.contact)
+      {
+         (void)arc_osk_touch(&arc_osk, -1, -1, true, &arc_inputs);
+         if (!down) (void)arc_osk_touch(&arc_osk, -1, -1, false, &arc_inputs);
+      }
+   }
+   else
+      (void)arc_osk_touch(&arc_osk, arc_pointer_to_pixel(raw_x, arc_video_width),
+                          arc_pointer_to_pixel(raw_y, arc_video_height), down,
+                          &arc_inputs);
+   if (before_contact != arc_osk.contact || before_focus != arc_osk.focus)
+      arc_osk_present_dirty = true;
+}
+
+static void arc_poll_keyboard_snapshot(void)
+{
+   if (!arc_keyboard_polling || !arc_input_state) return;
+   size_t count = 0u;
+   const ArcInputKey *keys = arc_input_supported_keys(&count);
+   bool seen[ARC_INPUT_KEY_COUNT] = {false};
+   for (size_t i = 0u; i < count; ++i)
+   {
+      unsigned key = keys[i].key;
+      if (key >= ARC_INPUT_KEY_COUNT || seen[key]) continue;
+      seen[key] = true;
+      bool down = arc_input_state(0u, RETRO_DEVICE_KEYBOARD, 0u, key) != 0;
+      arc_input_source_key(&arc_inputs, ARC_INPUT_SOURCE_KEYBOARD, key, down, true);
+   }
+   static const unsigned extra[] = {RETROK_NUMLOCK, RETROK_SCROLLOCK, RETROK_PAUSE};
+   for (unsigned i = 0u; i < sizeof(extra) / sizeof(extra[0]); ++i)
+   {
+      unsigned key = extra[i];
+      bool down = arc_input_state(0u, RETRO_DEVICE_KEYBOARD, 0u, key) != 0;
+      arc_input_source_key(&arc_inputs, ARC_INPUT_SOURCE_KEYBOARD, key, down, true);
+   }
+   arc_keyboard_menu = arc_input_state(0u, RETRO_DEVICE_KEYBOARD, 0u,
+                                        RETROK_MENU) != 0;
+   arc_keyboard_lmeta = arc_input_state(0u, RETRO_DEVICE_KEYBOARD, 0u,
+                                         RETROK_LMETA) != 0;
+   arc_input_source_buttons(&arc_inputs, ARC_INPUT_SOURCE_KEYBOARD,
+                            (arc_keyboard_menu || arc_keyboard_lmeta) ? 4u : 0u);
 }
 
 static uint64_t arc_touch_distance_squared(const ArcTouchContact *contact,
@@ -1479,65 +1911,49 @@ static void arc_poll_inputs(void)
       RETRO_DEVICE_ID_JOYPAD_X, RETRO_DEVICE_ID_JOYPAD_Y,
       RETRO_DEVICE_ID_JOYPAD_START, RETRO_DEVICE_ID_JOYPAD_SELECT
    };
-   static const unsigned keys[] = {
-      RETROK_UP, RETROK_DOWN, RETROK_LEFT, RETROK_RIGHT,
-      RETROK_SPACE, RETROK_RETURN, RETROK_LSHIFT, RETROK_LCTRL,
-      RETROK_ESCAPE, RETROK_TAB
-   };
    if (!arc_input_state) return;
+   arc_poll_osk_controls();
    bool sampled[2][10] = {{false}};
+   bool desired[ARC_PAD_PORTS][ARC_INPUT_KEY_COUNT] = {{false}};
    for (unsigned port = 0u; port < 2u; ++port)
-      if (arc_port_device[port] == ARC_DEVICE_KEYS ||
+      if ((port || !arc_osk.visible) &&
+          (arc_port_device[port] == ARC_DEVICE_KEYS ||
           arc_port_device[port] == RETRO_DEVICE_JOYPAD)
+         )
          for (unsigned i = 0u; i < 10u; ++i)
             sampled[port][i] = arc_input_state(port, RETRO_DEVICE_JOYPAD, 0u, ids[i]) != 0;
-   static const unsigned modifiers[] = {6u, 7u};
    for (unsigned port = 0u; port < 2u; ++port)
    {
-      ArcInputSource source = port ? ARC_INPUT_SOURCE_PAD1 : ARC_INPUT_SOURCE_PAD0;
-      for (unsigned m = 0u; m < 2u; ++m)
+      if (arc_pad_neutral_gate[port])
       {
-         unsigned i = modifiers[m];
-         if (sampled[port][i] && !arc_pad_keys[port][i])
-            arc_input_source_key(&arc_inputs, source, keys[i], true, true);
+         bool neutral = true;
+         for (unsigned input = 0u; input < ARC_PAD_INPUT_COUNT; ++input)
+            if (sampled[port][input]) neutral = false;
+         if (neutral) arc_pad_neutral_gate[port] = false;
+         else memset(sampled[port], 0, sizeof(sampled[port]));
       }
-   }
-   for (unsigned port = 0u; port < 2u; ++port)
-   {
-      ArcInputSource source = port ? ARC_INPUT_SOURCE_PAD1 : ARC_INPUT_SOURCE_PAD0;
-      for (unsigned i = 0u; i < 10u; ++i)
-         if (i != 6u && i != 7u && sampled[port][i] && !arc_pad_keys[port][i])
-            arc_input_source_key(&arc_inputs, source, keys[i], true, true);
-   }
-   for (unsigned port = 0u; port < 2u; ++port)
-   {
-      ArcInputSource source = port ? ARC_INPUT_SOURCE_PAD1 : ARC_INPUT_SOURCE_PAD0;
-      for (unsigned i = 0u; i < 10u; ++i)
-         if (i != 6u && i != 7u && !sampled[port][i] && arc_pad_keys[port][i])
-            arc_input_source_key(&arc_inputs, source, keys[i], false, true);
-   }
-   for (unsigned port = 0u; port < 2u; ++port)
-   {
-      ArcInputSource source = port ? ARC_INPUT_SOURCE_PAD1 : ARC_INPUT_SOURCE_PAD0;
-      for (unsigned m = 0u; m < 2u; ++m)
+      for (unsigned input = 0u; input < ARC_PAD_INPUT_COUNT; ++input)
       {
-         unsigned i = modifiers[m];
-         if (!sampled[port][i] && arc_pad_keys[port][i])
-            arc_input_source_key(&arc_inputs, source, keys[i], false, true);
+         const ArcInputBinding *binding = &arc_input_resolution.binding[port][input];
+         if (sampled[port][input] && binding->bound &&
+             binding->key < ARC_INPUT_KEY_COUNT)
+            desired[port][binding->key] = true;
       }
-   }
-   for (unsigned port = 0u; port < 2u; ++port)
       memcpy(arc_pad_keys[port], sampled[port], sizeof(sampled[port]));
+   }
+   arc_input_pad_key_sets(&arc_inputs, desired[0], desired[1]);
 
-   bool pad_pointer = arc_port_device[0] == ARC_DEVICE_KEYS ||
-                      arc_port_device[0] == RETRO_DEVICE_JOYPAD;
+   bool pad_pointer = !arc_osk.visible &&
+      (arc_port_device[0] == ARC_DEVICE_KEYS ||
+       arc_port_device[0] == RETRO_DEVICE_JOYPAD);
    unsigned pad_buttons = pad_pointer ?
       (arc_input_state(0u, RETRO_DEVICE_JOYPAD, 0u, RETRO_DEVICE_ID_JOYPAD_R) ? 1u : 0u) |
       (arc_input_state(0u, RETRO_DEVICE_JOYPAD, 0u, RETRO_DEVICE_ID_JOYPAD_L) ? 2u : 0u) |
       (arc_input_state(0u, RETRO_DEVICE_JOYPAD, 0u, RETRO_DEVICE_ID_JOYPAD_L2) ? 4u : 0u) : 0u;
    arc_input_source_buttons(&arc_inputs, ARC_INPUT_SOURCE_PAD0,
                             arc_pad_pointer_buttons | pad_buttons);
-   arc_touch_poll();
+   if (!arc_osk.visible) arc_touch_poll();
+   else arc_input_source_buttons(&arc_inputs, ARC_INPUT_SOURCE_TOUCH, 0u);
 
    for (unsigned port = 0u; port < 2u; ++port)
       if (arc_port_device[port] == ARC_DEVICE_MOUSE ||
@@ -1571,6 +1987,7 @@ static void arc_poll_inputs(void)
       arc_stick_x = arc_stick_y = 0;
       arc_stick_precision = false;
    }
+   arc_poll_keyboard_snapshot();
 }
 
 static void arc_integrate_stick(uint64_t elapsed_us)
@@ -1595,7 +2012,7 @@ static void arc_integrate_stick(uint64_t elapsed_us)
    arc_input_motion(&arc_inputs, dx, dy, true);
 }
 
-static const struct retro_core_option_v2_definition arc_options[] = {
+static const struct retro_core_option_v2_definition arc_base_options[] = {
    {"arcdroid_machine", "Machine", NULL, "Automatic machine selection.", NULL,
     NULL, {{"Auto", NULL}, {"A3000", NULL}, {NULL, NULL}}, "Auto"},
    {"arcdroid_cpu", "CPU", NULL, "Automatic CPU selection.", NULL,
@@ -1624,9 +2041,100 @@ static const struct retro_core_option_v2_definition arc_options[] = {
     NULL, {{"shadow", NULL}, {"original", NULL}, {"off", NULL}, {NULL, NULL}}, "shadow"},
    {NULL, NULL, NULL, NULL, NULL, NULL, {{0}}, NULL}
 };
-static const struct retro_core_options_v2 arc_options_v2 = {NULL, (struct retro_core_option_v2_definition *)arc_options};
+static struct retro_core_option_v2_definition arc_options[34];
+static struct retro_core_option_v2_category arc_option_categories[] = {
+   {"pad_mapping", "Pad Mapping", "Map each RetroPad input to a physical Archimedes key."},
+   {NULL, NULL, NULL}
+};
+static struct retro_core_options_v2 arc_options_v2 = {arc_option_categories, arc_options};
+static char arc_pad_option_labels[ARC_PAD_PORTS][ARC_PAD_INPUT_COUNT][32];
+static bool arc_options_built;
 
-static const struct retro_input_descriptor arc_input_descriptors[] = {
+#if defined(ARCDROID_TEST_FAULTS)
+bool arc_libretro_test_register_input_profile(const ArcInputProfile *profile)
+{
+   char error[128];
+   if (arc_options_built || !profile ||
+       !arc_input_profiles_validate_table(profile, 1u,
+                                          error, sizeof(error)))
+      return false;
+   size_t shipped_count = 0u;
+   const ArcInputProfile *shipped = arc_input_profiles(&shipped_count);
+   for (size_t i = 0u; i < shipped_count; ++i)
+   {
+      if (!strcmp(profile->id, shipped[i].id)) return false;
+      for (unsigned digest = 0u; digest < profile->digest_count; ++digest)
+         for (unsigned other = 0u; other < shipped[i].digest_count; ++other)
+            if (!strcmp(profile->digests[digest], shipped[i].digests[other]))
+               return false;
+   }
+   arc_test_input_profile = *profile;
+   arc_test_input_profile_registered = true;
+   return true;
+}
+#endif
+
+static void arc_build_options(void)
+{
+   if (arc_options_built) return;
+   memset(arc_options, 0, sizeof(arc_options));
+   memcpy(arc_options, arc_base_options,
+          11u * sizeof(struct retro_core_option_v2_definition));
+   unsigned at = 11u;
+   struct retro_core_option_v2_definition *profile = &arc_options[at++];
+   profile->key = "arcdroid_input_profile";
+   profile->desc = "Input Profile";
+   profile->info = "Use an exact-content profile, the generic mapping, or a selected preset.";
+   profile->category_key = "pad_mapping";
+   profile->values[0] = (struct retro_core_option_value){"Auto", NULL};
+   profile->values[1] = (struct retro_core_option_value){"Generic", NULL};
+   size_t profile_count = 0u;
+   const ArcInputProfile *profiles = arc_input_profiles(&profile_count);
+   for (size_t i = 0u; i < profile_count && i + 3u < RETRO_NUM_CORE_OPTION_VALUES_MAX; ++i)
+      profile->values[i + 2u] = (struct retro_core_option_value){profiles[i].id, profiles[i].name};
+#if defined(ARCDROID_TEST_FAULTS)
+   if (arc_test_input_profile_registered &&
+       profile_count + 3u < RETRO_NUM_CORE_OPTION_VALUES_MAX)
+      profile->values[profile_count + 2u] = (struct retro_core_option_value){
+         arc_test_input_profile.id, arc_test_input_profile.name
+      };
+#endif
+   profile->default_value = "Auto";
+
+   size_t key_count = 0u;
+   const ArcInputKey *keys = arc_input_supported_keys(&key_count);
+   for (unsigned port = 0u; port < ARC_PAD_PORTS; ++port)
+      for (unsigned input = 0u; input < ARC_PAD_INPUT_COUNT; ++input)
+      {
+         struct retro_core_option_v2_definition *definition = &arc_options[at++];
+         snprintf(arc_pad_option_labels[port][input],
+                  sizeof(arc_pad_option_labels[port][input]), "Pad %u %s",
+                  port + 1u, arc_pad_input_name(input));
+         definition->key = arc_pad_option_names[port][input];
+         definition->desc = arc_pad_option_labels[port][input];
+         definition->desc_categorized = arc_pad_option_labels[port][input];
+         definition->info = "Auto uses the resolved profile; Unbound disables this input.";
+         definition->category_key = "pad_mapping";
+         definition->values[0] = (struct retro_core_option_value){"Auto", NULL};
+         definition->values[1] = (struct retro_core_option_value){"Unbound", NULL};
+         for (size_t key = 0u; key < key_count && key + 3u < RETRO_NUM_CORE_OPTION_VALUES_MAX; ++key)
+            definition->values[key + 2u] =
+               (struct retro_core_option_value){keys[key].value, keys[key].label};
+         definition->default_value = "Auto";
+      }
+   struct retro_core_option_v2_definition *osk = &arc_options[at++];
+   osk->key = "arcdroid_osk_toggle";
+   osk->desc = "On-Screen Keyboard Toggle";
+   osk->info = "Choose the RetroPad stick button that opens the on-screen keyboard.";
+   osk->category_key = "pad_mapping";
+   osk->values[0] = (struct retro_core_option_value){"L3", NULL};
+   osk->values[1] = (struct retro_core_option_value){"R3", NULL};
+   osk->values[2] = (struct retro_core_option_value){"Off", NULL};
+   osk->default_value = "L3";
+   arc_options_built = true;
+}
+
+static struct retro_input_descriptor arc_input_descriptors[] = {
    {0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_UP, "Archimedes Up"},
    {0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_DOWN, "Archimedes Down"},
    {0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_LEFT, "Archimedes Left"},
@@ -1657,10 +2165,125 @@ static const struct retro_input_descriptor arc_input_descriptors[] = {
    {1, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_SELECT, "Tab"},
    {0, 0, 0, 0, NULL}
 };
+static char arc_descriptor_labels[ARC_PAD_PORTS][ARC_PAD_INPUT_COUNT][64];
+
+static const char *arc_mapping_source_name(ArcMappingSource source)
+{
+   switch (source)
+   {
+      case ARC_MAPPING_SOURCE_PROFILE: return "profile";
+      case ARC_MAPPING_SOURCE_PRESET: return "preset";
+      case ARC_MAPPING_SOURCE_OPTION: return "option";
+      default: return "generic";
+   }
+}
+
+static void arc_refresh_input_descriptors(void)
+{
+   static const unsigned offsets[ARC_PAD_PORTS] = {0u, 18u};
+   for (unsigned port = 0u; port < ARC_PAD_PORTS; ++port)
+      for (unsigned input = 0u; input < ARC_PAD_INPUT_COUNT; ++input)
+      {
+         const ArcInputBinding *binding = &arc_input_resolution.binding[port][input];
+         const ArcInputKey *key = binding->bound ? arc_input_key(binding->key) : NULL;
+         snprintf(arc_descriptor_labels[port][input],
+                  sizeof(arc_descriptor_labels[port][input]), "%s",
+                  key ? key->label : "Unbound");
+         arc_input_descriptors[offsets[port] + input].description =
+            arc_descriptor_labels[port][input];
+      }
+   if (arc_environment)
+      arc_environment(RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS,
+                      (void *)arc_input_descriptors);
+}
+
+static bool arc_resolve_inputs(const ArcCoreOptions *options,
+                               bool mapping_change, bool notify)
+{
+   ArcInputResolution resolved;
+#if defined(ARCDROID_TEST_FAULTS)
+   bool use_test_profile = arc_test_input_profile_registered &&
+      !strcmp(options->input_profile, arc_test_input_profile.id);
+   if (arc_test_input_profile_registered &&
+       !strcmp(options->input_profile, "Auto"))
+   {
+      bool target_matches = !arc_test_input_profile.launch_target ||
+         !arc_test_input_profile.launch_target[0] ||
+         !strcmp(arc_test_input_profile.launch_target, arc_plan.launch_target);
+      for (unsigned digest = 0u;
+           target_matches && digest < arc_test_input_profile.digest_count;
+           ++digest)
+         if (!strcmp(arc_test_input_profile.digests[digest],
+                     arc_content_digest.sha1))
+            use_test_profile = true;
+   }
+   bool resolved_ok = use_test_profile ?
+      arc_input_resolve_table(&arc_test_input_profile, 1u,
+                              arc_content_digest.sha1, arc_plan.launch_target,
+                              options->input_profile, options->pad, &resolved) :
+      arc_input_resolve(arc_content_digest.sha1, arc_plan.launch_target,
+                        options->input_profile, options->pad, &resolved);
+#else
+   bool resolved_ok = arc_input_resolve(arc_content_digest.sha1,
+                                        arc_plan.launch_target,
+                                        options->input_profile, options->pad,
+                                        &resolved);
+#endif
+   if (!resolved_ok)
+      return false;
+   bool changed = memcmp(resolved.binding, arc_input_resolution.binding,
+                         sizeof(resolved.binding)) != 0;
+   if (mapping_change && changed)
+   {
+      arc_input_clear_source(&arc_inputs, ARC_INPUT_SOURCE_PAD0);
+      arc_input_clear_source(&arc_inputs, ARC_INPUT_SOURCE_PAD1);
+      memset(arc_pad_keys, 0, sizeof(arc_pad_keys));
+      arc_pad_neutral_gate[0] = arc_pad_neutral_gate[1] = true;
+   }
+   arc_input_resolution = resolved;
+   arc_refresh_input_descriptors();
+   if (arc_log)
+   {
+      char line[3072];
+      size_t at = (size_t)snprintf(line, sizeof(line), "Input resolution: profile=%s%s",
+                                  resolved.profile_name,
+                                  resolved.custom ? " custom" : "");
+      for (unsigned port = 0u; port < ARC_PAD_PORTS && at < sizeof(line); ++port)
+         for (unsigned input = 0u; input < ARC_PAD_INPUT_COUNT && at < sizeof(line); ++input)
+         {
+            const ArcInputBinding *binding = &resolved.binding[port][input];
+            const ArcInputKey *key = binding->bound ? arc_input_key(binding->key) : NULL;
+            int written = snprintf(line + at, sizeof(line) - at, " p%u.%s=%s[%s]",
+                                   port + 1u, arc_pad_input_name(input),
+                                   key ? key->label : "Unbound",
+                                   arc_mapping_source_name(resolved.source[port][input]));
+            if (written < 0) break;
+            at += (size_t)written < sizeof(line) - at ? (size_t)written : sizeof(line) - at;
+         }
+      arc_log(RETRO_LOG_INFO, "%s\n", line);
+   }
+   if (notify)
+   {
+      bool applied = false;
+      for (unsigned port = 0u; port < ARC_PAD_PORTS; ++port)
+         for (unsigned input = 0u; input < ARC_PAD_INPUT_COUNT; ++input)
+            if (resolved.source[port][input] == ARC_MAPPING_SOURCE_PROFILE ||
+                resolved.source[port][input] == ARC_MAPPING_SOURCE_PRESET)
+               applied = true;
+      if (applied)
+      {
+         char message[128];
+         snprintf(message, sizeof(message), "Controls: %s", resolved.profile_name);
+         arc_message(message, RETRO_LOG_INFO);
+      }
+   }
+   return true;
+}
 
 RETRO_API void retro_set_environment(retro_environment_t callback)
 {
    bool no_game = false;
+   arc_build_options();
    arc_environment = callback;
    if (callback)
    {
@@ -1731,12 +2354,28 @@ RETRO_API void retro_init(void)
    arc_audio_warning_reported = false;
    arc_guest_time_us = 0u;
    arc_can_dupe = false;
+   arc_keyboard_polling = false;
+   arc_osk_free_surface();
+   arc_osk_reset(&arc_osk, &arc_inputs);
+   arc_osk_present_dirty = false;
+   arc_osk_too_narrow_reported = false;
+   arc_osk_failure_reported = false;
+#if defined(ARCDROID_TEST_FAULTS)
+   arc_osk_source_unchanged = true;
+   arc_osk_source_checked = false;
+   arc_test_stall_kart = false;
+#endif
    arc_release_session();
    arc_log = NULL;
    if (arc_environment)
    {
       arc_environment(RETRO_ENVIRONMENT_SET_DISK_CONTROL_EXT_INTERFACE, (void *)&disk);
       arc_environment(RETRO_ENVIRONMENT_GET_CAN_DUPE, &arc_can_dupe);
+      uint64_t capabilities = 0u;
+      if (arc_environment(RETRO_ENVIRONMENT_GET_INPUT_DEVICE_CAPABILITIES,
+                          &capabilities))
+         arc_keyboard_polling =
+            (capabilities & (UINT64_C(1) << RETRO_DEVICE_KEYBOARD)) != 0u;
       if (arc_environment(RETRO_ENVIRONMENT_GET_VFS_INTERFACE, &vfs))
       {
          arc_vfs = vfs.iface;
@@ -1752,6 +2391,8 @@ RETRO_API void retro_deinit(void)
 {
    arc_persist_cmos();
    arc_release_session();
+   arc_osk_reset(&arc_osk, &arc_inputs);
+   arc_osk_free_surface();
    arc_engine_set_log_callback(NULL, NULL);
    arc_log = NULL;
    arc_loaded = false;
@@ -1794,6 +2435,11 @@ static bool arc_load_game(const struct retro_game_info *game, bool negotiate)
    arc_loaded = false;
    arc_release_session();
    arc_input_sampling_reset(false);
+   arc_osk_reset(&arc_osk, &arc_inputs);
+   arc_osk_free_surface();
+   arc_osk_present_dirty = false;
+   arc_osk_too_narrow_reported = false;
+   arc_osk_failure_reported = false;
    arc_guest_time_us = 0u;
    memset(arc_frame, 0, sizeof(arc_frame));
    if (!game || !game->path || !game->path[0])
@@ -1809,6 +2455,11 @@ static bool arc_load_game(const struct retro_game_info *game, bool negotiate)
       arc_environment(RETRO_ENVIRONMENT_SET_CONTROLLER_INFO, (void *)ports);
       arc_environment(RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS, (void *)arc_input_descriptors);
       arc_environment(RETRO_ENVIRONMENT_SET_KEYBOARD_CALLBACK, (void *)&keyboard);
+      uint64_t capabilities = 0u;
+      arc_keyboard_polling =
+         arc_environment(RETRO_ENVIRONMENT_GET_INPUT_DEVICE_CAPABILITIES,
+                         &capabilities) &&
+         (capabilities & (UINT64_C(1) << RETRO_DEVICE_KEYBOARD)) != 0u;
    }
    if (!arc_vfs)
    {
@@ -1917,6 +2568,12 @@ static bool arc_load_game(const struct retro_game_info *game, bool negotiate)
       }
       arc_prepare_launch(&arc_media[arc_image_index], false,
                          arc_core_options.launch, false);
+      if (!arc_resolve_inputs(&arc_core_options, false, true))
+      {
+         arc_message("Unable to resolve ArcDroid input options.", RETRO_LOG_ERROR);
+         arc_release_session();
+         return false;
+      }
       ArcEngineMedia media = arc_engine_media(&arc_media[arc_image_index]);
       ArcEngineMedia helper = {arc_helper_path, false, ARC_MEDIA_ADL_640K,
                                ARC_GEOMETRY_640K_L, NULL};
@@ -1948,6 +2605,8 @@ static bool arc_load_game(const struct retro_game_info *game, bool negotiate)
    arc_vidc_transient_logged = false;
    arc_vidc_incomplete_us = 0u;
    arc_audio_warning_reported = false;
+   if (!arc_osk_prepare_surface(arc_video_width, arc_video_height))
+      arc_osk_presentation_failure();
    snprintf(error, sizeof(error), "Firmware: %s; CRC32 %08x; SHA-1 %s",
             arc_os_name(search.match->os), search.match->crc32, search.match->sha1);
    arc_message(error, RETRO_LOG_INFO);
@@ -1971,6 +2630,9 @@ RETRO_API void retro_unload_game(void)
    }
    arc_loaded = false;
    arc_release_session();
+   arc_osk_reset(&arc_osk, &arc_inputs);
+   arc_osk_free_surface();
+   arc_osk_present_dirty = false;
    arc_pending_initial = false;
    arc_pending_initial_path[0] = '\0';
    arc_input_sampling_reset(false);
@@ -1979,6 +2641,10 @@ RETRO_API void retro_unload_game(void)
 RETRO_API void retro_reset(void)
 {
    if (!arc_loaded) return;
+   bool osk_session_disabled = arc_osk.disabled;
+   arc_osk_reset(&arc_osk, &arc_inputs);
+   arc_osk.disabled = osk_session_disabled;
+   arc_osk_present_dirty = true;
    char error[512] = {0};
    ArcCoreOptions updated;
    uint8_t *new_firmware = NULL;
@@ -2054,6 +2720,8 @@ RETRO_API void retro_reset(void)
    }
    arc_prepare_launch(mounted_pointer ? &arc_media[selected] : NULL, was_ejected,
                       updated.launch, launch_reselected);
+   if (!arc_resolve_inputs(&arc_core_options, true, false))
+   { snprintf(error, sizeof(error), "Unable to resolve ArcDroid input options."); goto failed; }
    ArcEngineMedia helper = {arc_helper_path, false, ARC_MEDIA_ADL_640K,
                             ARC_GEOMETRY_640K_L, NULL};
    if (!arc_cmos_decode(arc_cmos_record, &arc_plan, payload) ||
@@ -2084,6 +2752,87 @@ failed:
    arc_input_sampling_reset(false);
 }
 
+static void arc_present(const ArcEngineFrame *frame)
+{
+#if defined(ARCDROID_TEST_FAULTS)
+   arc_test_presented_osk_notice = 0u;
+#endif
+   if (!arc_video || !frame) return;
+   if (!arc_osk.visible)
+   {
+      bool duplicate = !frame->field_completed && arc_can_dupe &&
+                       !arc_osk_present_dirty;
+      arc_video(duplicate ? NULL : frame->pixels, frame->width, frame->height,
+                frame->pitch);
+      arc_osk_present_dirty = false;
+      return;
+   }
+   if (frame->width < 320u)
+   {
+      arc_osk_close(&arc_osk, &arc_inputs);
+      arc_osk_restore_gameplay();
+      arc_osk_report_too_narrow();
+      arc_video(frame->pixels, frame->width, frame->height, frame->pitch);
+      arc_osk_present_dirty = false;
+      return;
+   }
+   if (!arc_osk_prepare_surface(frame->width, frame->height) ||
+       ((arc_osk.width != frame->width || arc_osk.height != frame->height) &&
+        !arc_osk_layout(&arc_osk, frame->width, frame->height)))
+   {
+      arc_osk_presentation_failure();
+      arc_video(frame->pixels, frame->width, frame->height, frame->pitch);
+      arc_osk_present_dirty = false;
+      return;
+   }
+   if (!frame->field_completed && arc_can_dupe && !arc_osk_present_dirty)
+   {
+      arc_video(NULL, frame->width, frame->height, frame->pitch);
+      return;
+   }
+   if (!frame->pixels || frame->pitch < (size_t)frame->width * sizeof(uint32_t))
+   {
+      arc_osk_presentation_failure();
+      arc_video(frame->pixels, frame->width, frame->height, frame->pitch);
+      arc_osk_present_dirty = false;
+      return;
+   }
+#if defined(ARCDROID_TEST_FAULTS)
+   uint64_t source_before = !arc_osk_source_checked ?
+      arc_osk_source_hash(frame) : 0u;
+#endif
+   for (unsigned row = 0u; row < frame->height; ++row)
+      memcpy(arc_osk_surface + (size_t)row * frame->width,
+             (const uint8_t *)frame->pixels + (size_t)row * frame->pitch,
+             (size_t)frame->width * sizeof(uint32_t));
+   char profile[128];
+   snprintf(profile, sizeof(profile), "%s%s", arc_input_resolution.profile_name,
+            arc_input_resolution.custom ? " custom" : "");
+   if (!arc_osk_render(&arc_osk, arc_osk_surface, frame->width, frame->height,
+                       (size_t)frame->width * sizeof(uint32_t), profile))
+   {
+      arc_osk_presentation_failure();
+      arc_video(frame->pixels, frame->width, frame->height, frame->pitch);
+   }
+   else
+   {
+      arc_video(arc_osk_surface, frame->width, frame->height,
+                (size_t)frame->width * sizeof(uint32_t));
+#if defined(ARCDROID_TEST_FAULTS)
+      arc_test_presented_osk_notice = (arc_osk.busy ? 1u : 0u) |
+         (arc_osk.interrupted_visible ? 2u : 0u);
+#endif
+   }
+#if defined(ARCDROID_TEST_FAULTS)
+   if (!arc_osk_source_checked)
+   {
+      if (source_before != arc_osk_source_hash(frame)) arc_osk_source_unchanged = false;
+      arc_osk_source_checked = true;
+   }
+#endif
+   arc_osk_present_dirty = false;
+}
+
 RETRO_API void retro_run(void)
 {
    ArcEngineFrame frame;
@@ -2112,6 +2861,19 @@ RETRO_API void retro_run(void)
          arc_stick_x = arc_stick_y = 0;
          arc_stick_fraction_x = arc_stick_fraction_y = 0.0L;
       }
+      if (strcmp(updated.input_profile, arc_core_options.input_profile) ||
+          memcmp(updated.pad, arc_core_options.pad, sizeof(updated.pad)) ||
+          updated.osk_toggle != arc_core_options.osk_toggle)
+      {
+         if (!arc_resolve_inputs(&updated, true, false))
+            arc_message("Unable to resolve ArcDroid input options.", RETRO_LOG_ERROR);
+         else
+         {
+            strcpy(arc_core_options.input_profile, updated.input_profile);
+            memcpy(arc_core_options.pad, updated.pad, sizeof(updated.pad));
+            arc_core_options.osk_toggle = updated.osk_toggle;
+         }
+      }
    }
    if (arc_input_poll) arc_input_poll();
    arc_poll_inputs();
@@ -2123,7 +2885,12 @@ RETRO_API void retro_run(void)
       return;
    }
    ++arc_frame_number;
+#if defined(ARCDROID_TEST_FAULTS)
+   frame_ran = arc_engine_run_frame(arc_test_stall_kart ? NULL : &arc_inputs,
+                                    &frame);
+#else
    frame_ran = arc_engine_run_frame(&arc_inputs, &frame);
+#endif
    if (!frame_ran)
    {
       const char *fault = NULL;
@@ -2155,6 +2922,21 @@ RETRO_API void retro_run(void)
       if (arc_environment) arc_environment(RETRO_ENVIRONMENT_SET_GEOMETRY, &geometry);
       arc_video_width = frame.width;
       arc_video_height = frame.height;
+      if (arc_osk.visible)
+      {
+         if (frame.width < 320u)
+         {
+            arc_osk_close(&arc_osk, &arc_inputs);
+            arc_osk_restore_gameplay();
+            arc_osk_report_too_narrow();
+            arc_osk_present_dirty = true;
+         }
+         else if (!arc_osk_prepare_surface(frame.width, frame.height) ||
+             !arc_osk_layout(&arc_osk, frame.width, frame.height))
+            arc_osk_presentation_failure();
+         else
+            arc_osk_present_dirty = true;
+      }
    }
    if (frame.refresh_hz > 0.0 &&
        (frame.refresh_hz < arc_video_rate - 0.01 || frame.refresh_hz > arc_video_rate + 0.01))
@@ -2174,9 +2956,18 @@ RETRO_API void retro_run(void)
    count = (size_t)arc_audio_fraction;
    arc_audio_fraction -= (long double)count;
    arc_persist_cmos();
-   if (arc_video)
-      arc_video(!frame.field_completed && arc_can_dupe ? NULL : frame.pixels,
-                frame.width, frame.height, frame.pitch);
+   unsigned old_phase = arc_osk.activation_phase;
+   bool old_busy = arc_osk.busy;
+   arc_osk_update(&arc_osk, &arc_inputs);
+   if (old_phase != arc_osk.activation_phase || old_busy != arc_osk.busy)
+      arc_osk_present_dirty = true;
+   if (arc_osk_take_interrupted(&arc_osk))
+   {
+      arc_message("On-screen keyboard input was interrupted; released held keys.",
+                  RETRO_LOG_WARN);
+      arc_osk_present_dirty = true;
+   }
+   arc_present(&frame);
    while (count)
    {
       size_t capacity = sizeof(arc_audio_frame) / (2u * sizeof(arc_audio_frame[0]));
@@ -2231,6 +3022,7 @@ RETRO_API void retro_set_controller_port_device(unsigned port, unsigned device)
          arc_input_clear_source(&arc_inputs,
             port ? ARC_INPUT_SOURCE_MOUSE1 : ARC_INPUT_SOURCE_MOUSE0);
          memset(arc_pad_keys[port], 0, sizeof(arc_pad_keys[port]));
+         arc_pad_neutral_gate[port] = true;
          if (!port)
          {
             arc_pad_pointer_buttons = 0u;

@@ -2,9 +2,13 @@
 #include "arcdroid_core.h"
 #include "e_format_fixture.h"
 #include "jfd.h"
+#include "keytable_provenance.h"
+#include "osk_font.h"
 #include "playlist.h"
+#include "libretro.h"
 
 #include <assert.h>
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -1072,6 +1076,854 @@ static void test_input(void)
    assert(arc_input_consume(&state, true, &event) && !event.down);
 }
 
+static void test_input_mapping(void)
+{
+   size_t key_count = 0u;
+   const ArcInputKey *keys = arc_input_supported_keys(&key_count);
+   assert(keys && key_count == 97u && key_count + 3u <= 128u);
+   for (size_t i = 0u; i < key_count; ++i)
+   {
+      unsigned engine_row = UINT_MAX, engine_column = UINT_MAX;
+      assert(keys[i].value && keys[i].label && keys[i].key < ARC_INPUT_KEY_COUNT);
+      assert(keys[i].kart_row <= 6u && keys[i].kart_column <= 15u);
+      assert(arc_test_keytable_position(keys[i].key, &engine_row,
+                                        &engine_column));
+      assert(keys[i].kart_row == engine_row &&
+             keys[i].kart_column == engine_column);
+      assert(arc_input_key_value(keys[i].value) == &keys[i]);
+      assert(arc_input_is_modifier(keys[i].key) == keys[i].modifier);
+      for (size_t prior = 0u; prior < i; ++prior)
+         assert(strcmp(keys[i].value, keys[prior].value));
+   }
+   assert(!arc_input_key_value("pound"));
+   const ArcInputKey *backslash = arc_input_key_value("backslash");
+   assert(!arc_input_key_value("hash_backslash"));
+   assert(backslash && !strcmp(backslash->label, "Backslash") &&
+          backslash->kart_row == 3u && backslash->kart_column == 3u);
+   const ArcInputKey *keypad_hash = arc_input_key_value("kp_hash");
+   assert(!arc_input_key_value("kp_minus"));
+   assert(keypad_hash && keypad_hash->key == RETROK_KP_MINUS &&
+          !strcmp(keypad_hash->label, "Keypad #") &&
+          keypad_hash->kart_row == 2u && keypad_hash->kart_column == 5u);
+   assert(!arc_input_key(RETROK_PRINT));
+   size_t osk_only_count = 0u;
+   const ArcInputKey *osk_only = arc_input_osk_only_keys(&osk_only_count);
+   static const unsigned osk_codes[] = {
+      RETROK_NUMLOCK, RETROK_SCROLLOCK, RETROK_PAUSE
+   };
+   assert(osk_only && osk_only_count == 3u);
+   for (size_t i = 0u; i < osk_only_count; ++i)
+   {
+      unsigned engine_row = UINT_MAX, engine_column = UINT_MAX;
+      assert(osk_only[i].key == osk_codes[i] && !osk_only[i].modifier);
+      assert(arc_test_keytable_position(osk_only[i].key, &engine_row,
+                                        &engine_column));
+      assert(osk_only[i].kart_row == engine_row &&
+             osk_only[i].kart_column == engine_column);
+   }
+   assert(!strcmp(osk_only[2].value, "break") &&
+          !strcmp(osk_only[2].label, "Break") &&
+          osk_only[2].kart_row == 0u && osk_only[2].kart_column == 15u);
+   for (size_t i = 0u; i < osk_only_count; ++i)
+      assert(strcmp(osk_only[i].value, "pause"));
+   unsigned omitted_row = UINT_MAX, omitted_column = UINT_MAX;
+   assert(!arc_test_keytable_position(RETROK_PRINT, &omitted_row,
+                                      &omitted_column));
+   assert(arc_input_profiles_validate(NULL, 0u));
+   size_t profile_count = 0u;
+   const ArcInputProfile *profiles = arc_input_profiles(&profile_count);
+   static const unsigned elite_mapping[ARC_PAD_INPUT_COUNT] = {
+      RETROK_s, RETROK_x, RETROK_COMMA, RETROK_PERIOD, RETROK_SPACE,
+      RETROK_SLASH, RETROK_a, RETROK_m, RETROK_F1, RETROK_t
+   };
+   assert(profiles && profile_count == 1u);
+   assert(!strcmp(profiles[0].id, "elite") &&
+          !strcmp(profiles[0].name, "Elite (Hybrid Technology)") &&
+          profiles[0].digest_count == 1u &&
+          !strcmp(profiles[0].digests[0],
+                  "fde0f540e0d5732646c1eebb54629a162f40db91") &&
+          !profiles[0].launch_target && !profiles[0].has_port1 &&
+          !strcmp(profiles[0].evidence,
+                  "Elite Flight Training Manual pp. 12–15, 20; Odin3 launch and key response observed by Fable 2026-09-15"));
+   for (unsigned input = 0u; input < ARC_PAD_INPUT_COUNT; ++input)
+   {
+      assert(profiles[0].mapping[0][input].bound &&
+             profiles[0].mapping[0][input].key == elite_mapping[input]);
+      assert(!profiles[0].mapping[1][input].bound &&
+             profiles[0].mapping[1][input].key == 0u);
+   }
+
+   ArcInputProfile test_profile = {
+      .id = "test-profile",
+      .name = "Generated Test Profile",
+      .digests = {"0123456789abcdef0123456789abcdef01234567"},
+      .digest_count = 1u,
+      .launch_target = "!TEST",
+      .has_port1 = true,
+      .evidence = "project-authored core test entry"
+   };
+   for (unsigned port = 0u; port < ARC_PAD_PORTS; ++port)
+      memcpy(test_profile.mapping[port], arc_input_generic_mapping(),
+             sizeof(test_profile.mapping[port]));
+   test_profile.mapping[0][ARC_PAD_UP] = (ArcInputBinding){true, RETROK_s};
+   test_profile.mapping[1][ARC_PAD_UP] = (ArcInputBinding){true, RETROK_F2};
+   assert(arc_input_profiles_validate_table(&test_profile, 1u, NULL, 0u));
+   ArcInputProfile invalid_profile = test_profile;
+   invalid_profile.digests[0] = "0123456789ABCDEF0123456789ABCDEF01234567";
+   assert(!arc_input_profiles_validate_table(&invalid_profile, 1u, NULL, 0u));
+   ArcInputProfile duplicate_profiles[2] = {test_profile, test_profile};
+   duplicate_profiles[1].id = "other-profile";
+   assert(!arc_input_profiles_validate_table(duplicate_profiles, 2u, NULL, 0u));
+
+   ArcInputOverride overrides[ARC_PAD_PORTS][ARC_PAD_INPUT_COUNT];
+   memset(overrides, 0, sizeof(overrides));
+   for (unsigned port = 0u; port < ARC_PAD_PORTS; ++port)
+      for (unsigned input = 0u; input < ARC_PAD_INPUT_COUNT; ++input)
+         overrides[port][input].automatic = true;
+   ArcInputResolution resolution;
+   assert(arc_input_resolve("0000000000000000000000000000000000000000", "!TEST",
+                            "Auto", overrides, &resolution));
+   assert(!strcmp(resolution.profile_name, "Generic") &&
+          resolution.binding[0][ARC_PAD_A].key == RETROK_SPACE &&
+          resolution.source[0][ARC_PAD_A] == ARC_MAPPING_SOURCE_GENERIC);
+   assert(arc_input_resolve("0000000000000000000000000000000000000000", "!TEST",
+                            "Generic", overrides, &resolution));
+   overrides[1][ARC_PAD_A].automatic = false;
+   overrides[1][ARC_PAD_A].binding = (ArcInputBinding){true, RETROK_LSHIFT};
+   overrides[0][ARC_PAD_B].automatic = false;
+   overrides[0][ARC_PAD_B].binding = (ArcInputBinding){false, 0u};
+   assert(arc_input_resolve("0000000000000000000000000000000000000000", "!TEST",
+                            "Auto", overrides, &resolution));
+   assert(resolution.custom && !resolution.binding[0][ARC_PAD_B].bound &&
+          resolution.binding[1][ARC_PAD_A].key == RETROK_LSHIFT &&
+          resolution.source[1][ARC_PAD_A] == ARC_MAPPING_SOURCE_OPTION);
+   overrides[0][ARC_PAD_B].automatic = true;
+   overrides[1][ARC_PAD_A].automatic = true;
+   assert(arc_input_resolve(
+            "fde0f540e0d5732646c1eebb54629a162f40db91", NULL,
+            "Auto", overrides, &resolution));
+   assert(!strcmp(resolution.profile_id, "elite") &&
+          resolution.source[0][ARC_PAD_UP] == ARC_MAPPING_SOURCE_PROFILE &&
+          resolution.binding[0][ARC_PAD_UP].key == RETROK_s &&
+          resolution.binding[0][ARC_PAD_SELECT].key == RETROK_t &&
+          resolution.source[1][ARC_PAD_UP] == ARC_MAPPING_SOURCE_PROFILE);
+   for (unsigned input = 0u; input < ARC_PAD_INPUT_COUNT; ++input)
+      assert(resolution.binding[1][input].bound ==
+             resolution.binding[0][input].bound &&
+             resolution.binding[1][input].key ==
+             resolution.binding[0][input].key);
+   assert(arc_input_resolve(
+            "0000000000000000000000000000000000000000", NULL,
+            "elite", overrides, &resolution));
+   assert(!strcmp(resolution.profile_id, "elite") &&
+          resolution.source[0][ARC_PAD_START] == ARC_MAPPING_SOURCE_PRESET &&
+          resolution.binding[0][ARC_PAD_START].key == RETROK_F1 &&
+          resolution.source[1][ARC_PAD_START] == ARC_MAPPING_SOURCE_PRESET &&
+          resolution.binding[1][ARC_PAD_START].key == RETROK_F1);
+   overrides[1][ARC_PAD_START].automatic = false;
+   overrides[1][ARC_PAD_START].binding = (ArcInputBinding){true, RETROK_F3};
+   assert(arc_input_resolve(
+            "fde0f540e0d5732646c1eebb54629a162f40db91", NULL,
+            "Auto", overrides, &resolution));
+   assert(resolution.source[1][ARC_PAD_START] == ARC_MAPPING_SOURCE_OPTION &&
+          resolution.binding[1][ARC_PAD_START].key == RETROK_F3 &&
+          resolution.binding[0][ARC_PAD_START].key == RETROK_F1);
+   overrides[1][ARC_PAD_START].automatic = true;
+   assert(arc_input_resolve_table(&test_profile, 1u,
+            "0123456789abcdef0123456789abcdef01234567", "!TEST", "Auto",
+            overrides, &resolution));
+   assert(!strcmp(resolution.profile_id, "test-profile") &&
+          resolution.source[0][ARC_PAD_A] == ARC_MAPPING_SOURCE_PROFILE &&
+          resolution.binding[0][ARC_PAD_UP].key == RETROK_s &&
+          resolution.binding[1][ARC_PAD_UP].key == RETROK_F2);
+   assert(arc_input_resolve_table(&test_profile, 1u,
+            "0000000000000000000000000000000000000000", "!OTHER",
+            "test-profile", overrides, &resolution));
+   assert(resolution.source[0][ARC_PAD_A] == ARC_MAPPING_SOURCE_PRESET);
+
+   ArcInputState state;
+   ArcInputEvent event;
+   bool port0[ARC_INPUT_KEY_COUNT] = {false};
+   bool port1[ARC_INPUT_KEY_COUNT] = {false};
+   arc_input_reset(&state);
+   port0[RETROK_SPACE] = true;
+   port1[RETROK_SPACE] = true;
+   port1[RETROK_LSHIFT] = true;
+   arc_input_pad_key_sets(&state, port0, port1);
+   assert(arc_input_consume(&state, true, &event) &&
+          event.code == RETROK_LSHIFT && event.down);
+   assert(arc_input_consume(&state, true, &event) &&
+          event.code == RETROK_SPACE && event.down);
+   memset(port0, 0, sizeof(port0));
+   arc_input_pad_key_sets(&state, port0, port1);
+   assert(!arc_input_pending(&state));
+   memset(port1, 0, sizeof(port1));
+   arc_input_pad_key_sets(&state, port0, port1);
+   assert(arc_input_consume(&state, true, &event) &&
+          event.code == RETROK_SPACE && !event.down);
+   assert(arc_input_consume(&state, true, &event) &&
+          event.code == RETROK_LSHIFT && !event.down);
+
+   uint64_t generation = arc_input_reconcile_generation(&state);
+   for (unsigned i = 0u; i <= ARC_INPUT_FIFO_CAPACITY; ++i)
+      arc_input_source_key(&state, ARC_INPUT_SOURCE_KEYBOARD, RETROK_a,
+                           (i & 1u) == 0u, true);
+   assert(arc_input_reconcile_generation(&state) > generation);
+
+   /* A reconcile in the middle of a pad-key batch rebuilds the desired set
+    * once; no stale tail of the old batch may be appended afterwards. */
+   arc_input_reset(&state);
+   state.fifo_count = ARC_INPUT_FIFO_CAPACITY - 1u;
+   memset(port0, 0, sizeof(port0));
+   memset(port1, 0, sizeof(port1));
+   port0[RETROK_a] = true;
+   port0[RETROK_b] = true;
+   port0[RETROK_c] = true;
+   generation = arc_input_reconcile_generation(&state);
+   arc_input_pad_key_sets(&state, port0, port1);
+   assert(arc_input_reconcile_generation(&state) == generation + 1u);
+   unsigned seen_a = 0u, seen_b = 0u, seen_c = 0u;
+   while (arc_input_consume(&state, true, &event))
+   {
+      assert(event.type == ARC_INPUT_EVENT_KEY && event.down);
+      if (event.code == RETROK_a) ++seen_a;
+      else if (event.code == RETROK_b) ++seen_b;
+      else if (event.code == RETROK_c) ++seen_c;
+      else assert(false);
+   }
+   assert(seen_a == 1u && seen_b == 1u && seen_c == 1u);
+
+   /* Source teardown preserves chord meaning: ordinary keys are released
+    * before their modifiers regardless of numeric key-code order. */
+   arc_input_reset(&state);
+   arc_input_source_key(&state, ARC_INPUT_SOURCE_OSK, RETROK_LSHIFT,
+                        true, true);
+   assert(RETROK_BREAK > RETROK_LSHIFT);
+   arc_input_source_key(&state, ARC_INPUT_SOURCE_OSK, RETROK_BREAK, true, true);
+   assert(arc_input_consume(&state, true, &event) && event.down);
+   assert(arc_input_consume(&state, true, &event) && event.down);
+   arc_input_clear_source(&state, ARC_INPUT_SOURCE_OSK);
+   assert(arc_input_consume(&state, true, &event) &&
+          event.code == RETROK_BREAK && !event.down);
+   assert(arc_input_consume(&state, true, &event) &&
+          event.code == RETROK_LSHIFT && !event.down);
+   assert(!arc_input_pending(&state));
+}
+
+static unsigned drain_input(ArcInputState *state, ArcInputEvent *events,
+                            unsigned capacity)
+{
+   unsigned count = 0u;
+   while (count < capacity && arc_input_consume(state, true, &events[count])) ++count;
+   return count;
+}
+
+static void complete_osk_chord(ArcOsk *osk, ArcInputState *input,
+                               unsigned key, unsigned modifier,
+                               uint64_t *guest_us)
+{
+   ArcInputEvent events[4];
+   arc_osk_update(osk, input);
+   assert(drain_input(input, events, 4u) == 1u &&
+          events[0].code == modifier && events[0].down);
+   arc_osk_update(osk, input);
+   assert(osk->activation_deadline_us == *guest_us + UINT64_C(60000));
+   assert(!arc_osk_advance(osk, osk->activation_deadline_us - 1u));
+   arc_osk_update(osk, input);
+   assert(!arc_input_pending(input));
+   *guest_us = osk->activation_deadline_us;
+   assert(!arc_osk_advance(osk, *guest_us));
+   arc_osk_update(osk, input);
+   assert(drain_input(input, events, 4u) == 1u &&
+          events[0].code == key && events[0].down);
+
+   arc_osk_release_activation(osk);
+   arc_osk_update(osk, input);
+   assert(osk->activation_deadline_us == *guest_us + UINT64_C(60000));
+   assert(!arc_osk_advance(osk, osk->activation_deadline_us - 1u));
+   arc_osk_update(osk, input);
+   assert(!arc_input_pending(input));
+   *guest_us = osk->activation_deadline_us;
+   assert(!arc_osk_advance(osk, *guest_us));
+   arc_osk_update(osk, input);
+   assert(drain_input(input, events, 4u) == 1u &&
+          events[0].code == key && !events[0].down);
+
+   arc_osk_update(osk, input);
+   assert(osk->activation_deadline_us == *guest_us + UINT64_C(60000));
+   assert(!arc_osk_advance(osk, osk->activation_deadline_us - 1u));
+   arc_osk_update(osk, input);
+   assert(!arc_input_pending(input));
+   *guest_us = osk->activation_deadline_us;
+   assert(!arc_osk_advance(osk, *guest_us));
+   arc_osk_update(osk, input);
+   assert(drain_input(input, events, 4u) == 1u &&
+          events[0].code == modifier && !events[0].down);
+   arc_osk_update(osk, input);
+   assert(!osk->activation_phase);
+}
+
+static const ArcInputKey *osk_catalogue_key(unsigned key)
+{
+   size_t count = 0u;
+   const ArcInputKey *catalogue = arc_input_supported_keys(&count);
+   for (size_t i = 0u; i < count; ++i)
+      if (catalogue[i].key == key) return &catalogue[i];
+   catalogue = arc_input_osk_only_keys(&count);
+   for (size_t i = 0u; i < count; ++i)
+      if (catalogue[i].key == key) return &catalogue[i];
+   return NULL;
+}
+
+static void assert_osk_physical_row(const ArcOsk *osk, unsigned row,
+                                    const unsigned *expected,
+                                    size_t expected_count)
+{
+   assert(osk && !osk->compact && expected && expected_count <= 21u);
+   unsigned current_row = 0u;
+   size_t actual_count = 0u;
+   for (unsigned i = 0u; i < osk->key_count; ++i)
+   {
+      if (i > 0u && osk->keys[i].y != osk->keys[i - 1u].y) ++current_row;
+      if (current_row != row) continue;
+      assert(actual_count < expected_count);
+      assert(osk->keys[i].key == expected[actual_count++]);
+   }
+   assert(actual_count == expected_count);
+}
+
+static void assert_osk_compact_page(const ArcOsk *osk,
+                                    const unsigned *expected,
+                                    size_t expected_count)
+{
+   assert(osk && osk->compact && expected);
+   size_t seen = 0u;
+   unsigned row_count = 0u;
+   for (unsigned i = 0u; i < osk->key_count; ++i)
+   {
+      if (i > 0u && osk->keys[i].y != osk->keys[i - 1u].y)
+      {
+         assert(row_count <= 10u);
+         row_count = 0u;
+      }
+      ++row_count;
+      if (osk->keys[i].action != ARC_OSK_ACTION_PAGE)
+      {
+         assert(seen < expected_count);
+         assert(osk->keys[i].key == expected[seen++]);
+      }
+   }
+   assert(row_count <= 10u);
+   assert(seen == expected_count);
+}
+
+static void test_osk(void)
+{
+   static const unsigned row0[] = {
+      RETROK_ESCAPE,
+      RETROK_F1, RETROK_F2, RETROK_F3, RETROK_F4, RETROK_F5, RETROK_F6,
+      RETROK_F7, RETROK_F8, RETROK_F9, RETROK_F10, RETROK_F11, RETROK_F12,
+      RETROK_SCROLLOCK, RETROK_PAUSE
+   };
+   static const unsigned row1[] = {
+      RETROK_BACKQUOTE,
+      RETROK_1, RETROK_2, RETROK_3, RETROK_4, RETROK_5,
+      RETROK_6, RETROK_7, RETROK_8, RETROK_9, RETROK_0,
+      RETROK_MINUS, RETROK_EQUALS, RETROK_BACKSPACE,
+      RETROK_INSERT, RETROK_HOME, RETROK_PAGEUP, RETROK_NUMLOCK,
+      RETROK_KP_DIVIDE, RETROK_KP_MULTIPLY, RETROK_KP_MINUS
+   };
+   static const unsigned row2[] = {
+      RETROK_TAB,
+      RETROK_q, RETROK_w, RETROK_e, RETROK_r, RETROK_t,
+      RETROK_y, RETROK_u, RETROK_i, RETROK_o, RETROK_p,
+      RETROK_LEFTBRACKET, RETROK_RIGHTBRACKET, RETROK_BACKSLASH,
+      RETROK_DELETE, RETROK_END, RETROK_PAGEDOWN,
+      RETROK_KP7, RETROK_KP8, RETROK_KP9
+   };
+   static const unsigned row3[] = {
+      RETROK_LCTRL,
+      RETROK_a, RETROK_s, RETROK_d, RETROK_f, RETROK_g,
+      RETROK_h, RETROK_j, RETROK_k, RETROK_l,
+      RETROK_SEMICOLON, RETROK_QUOTE, RETROK_RETURN,
+      RETROK_KP4, RETROK_KP5, RETROK_KP6, RETROK_KP_PLUS
+   };
+   static const unsigned row4[] = {
+      RETROK_LSHIFT,
+      RETROK_z, RETROK_x, RETROK_c, RETROK_v, RETROK_b, RETROK_n, RETROK_m,
+      RETROK_COMMA, RETROK_PERIOD, RETROK_SLASH, RETROK_RSHIFT, RETROK_UP,
+      RETROK_KP1, RETROK_KP2, RETROK_KP3
+   };
+   static const unsigned row5[] = {
+      RETROK_CAPSLOCK, RETROK_LALT, RETROK_SPACE, RETROK_RALT, RETROK_RCTRL,
+      RETROK_LEFT, RETROK_DOWN, RETROK_RIGHT,
+      RETROK_KP0, RETROK_KP_PERIOD, RETROK_KP_ENTER
+   };
+   static const struct {
+      const unsigned *keys;
+      size_t count;
+   } physical_rows[] = {
+      {row0, sizeof(row0) / sizeof(row0[0])},
+      {row1, sizeof(row1) / sizeof(row1[0])},
+      {row2, sizeof(row2) / sizeof(row2[0])},
+      {row3, sizeof(row3) / sizeof(row3[0])},
+      {row4, sizeof(row4) / sizeof(row4[0])},
+      {row5, sizeof(row5) / sizeof(row5[0])}
+   };
+   ArcOsk osk = {0};
+   ArcInputState input;
+   ArcInputEvent events[16];
+   arc_input_reset(&input);
+   assert(!arc_osk_open(&osk, 256u, 256u) && !osk.disabled && !osk.visible);
+   memset(&osk, 0, sizeof(osk));
+   assert(arc_osk_open(&osk, 320u, 256u) && osk.visible && osk.compact &&
+          osk.page_count == 2u && osk.key_count > 40u);
+   unsigned compact_expected[100u];
+   size_t compact_count = 0u;
+   for (unsigned row = 0u; row < 3u; ++row)
+      for (size_t key = 0u; key < physical_rows[row].count; ++key)
+         compact_expected[compact_count++] = physical_rows[row].keys[key];
+   assert_osk_compact_page(&osk, compact_expected, compact_count);
+   bool saw_compact_keypad_hash = false;
+   for (unsigned i = 0u; i < osk.key_count; ++i)
+      if (osk.keys[i].key == RETROK_KP_MINUS)
+         saw_compact_keypad_hash = !strcmp(osk.keys[i].label, "K#");
+   assert(saw_compact_keypad_hash);
+   osk.page = 1u;
+   assert(arc_osk_layout(&osk, 320u, 256u));
+   compact_count = 0u;
+   for (unsigned row = 3u; row < 6u; ++row)
+      for (size_t key = 0u; key < physical_rows[row].count; ++key)
+         compact_expected[compact_count++] = physical_rows[row].keys[key];
+   assert_osk_compact_page(&osk, compact_expected, compact_count);
+   osk.page = 0u;
+   assert(arc_osk_layout(&osk, 320u, 256u));
+
+   ArcOsk full_layout = {0};
+   assert(arc_osk_open(&full_layout, 640u, 256u) && !full_layout.compact);
+   for (unsigned row = 0u; row < 6u; ++row)
+      assert_osk_physical_row(&full_layout, row, physical_rows[row].keys,
+                              physical_rows[row].count);
+   bool saw_full_keypad_hash = false;
+   for (unsigned i = 0u; i < full_layout.key_count; ++i)
+      if (full_layout.keys[i].key == RETROK_KP_MINUS)
+         saw_full_keypad_hash = !strcmp(full_layout.keys[i].label, "KP#");
+   assert(saw_full_keypad_hash);
+   /* Every keyboard key has a tier-specific label which fits its cell and is
+    * distinct from every other rendered label at that tier. Compact pages
+    * are checked together rather than allowing collisions across pages. */
+   for (unsigned tier = 0u; tier < 2u; ++tier)
+   {
+      unsigned width = tier ? 640u : 320u;
+      ArcOsk labelled = {0};
+      const char *labels[ARC_OSK_MAX_KEYS] = {0};
+      unsigned label_count = 0u;
+      assert(arc_osk_open(&labelled, width, 256u));
+      for (unsigned page = 0u; page < labelled.page_count; ++page)
+      {
+         labelled.page = page;
+         assert(arc_osk_layout(&labelled, width, 256u));
+         for (unsigned i = 0u; i < labelled.key_count; ++i)
+         {
+            const ArcOskKey *key = &labelled.keys[i];
+            for (const unsigned char *glyph =
+                    (const unsigned char *)key->label; *glyph; ++glyph)
+            {
+               unsigned index = *glyph;
+               if (index >= 'a' && index <= 'z') index -= 'a' - 'A';
+               assert(index < 128u);
+               if (index == ' ') continue;
+               bool nonblank = false;
+               for (unsigned row = 0u; row < 8u; ++row)
+                  nonblank |= arc_osk_font[index][row] != 0u;
+               assert(nonblank);
+            }
+            if (key->action != ARC_OSK_ACTION_PAGE)
+            {
+               const ArcInputKey *catalogue = osk_catalogue_key(key->key);
+               assert(catalogue);
+            }
+            assert(strlen(key->label) <= (key->width - 2u) / 8u);
+            for (unsigned previous = 0u; previous < label_count; ++previous)
+               assert(strcmp(labels[previous], key->label));
+            assert(label_count < ARC_OSK_MAX_KEYS);
+            labels[label_count++] = key->label;
+         }
+      }
+      assert(label_count == (labelled.compact ? 102u : 100u));
+   }
+   unsigned first_focus = osk.focus;
+   arc_osk_move(&osk, 1, 0, 100u, true);
+   assert(osk.focus != first_focus);
+   unsigned repeated = osk.focus;
+   arc_osk_move(&osk, 1, 0, 1000u, false);
+   assert(osk.focus == repeated);
+   arc_osk_move(&osk, 1, 0, 400000u, false);
+   assert(osk.focus != repeated);
+
+   unsigned page_key = UINT_MAX;
+   for (unsigned i = 0u; i < osk.key_count; ++i)
+      if (osk.keys[i].action == ARC_OSK_ACTION_PAGE) page_key = i;
+   assert(page_key != UINT_MAX);
+   osk.focus = page_key;
+   assert(arc_osk_press_focused(&osk, &input) && osk.page == 1u);
+
+   /* Captured touches activate only if they release on the original key. */
+   const ArcOskKey touch_key = osk.keys[0];
+   assert(arc_osk_touch(&osk, (int)touch_key.x + 1, (int)touch_key.y + 1,
+                        true, &input));
+   assert(!arc_osk_touch(&osk, (int)(touch_key.x + touch_key.width + 20u),
+                         (int)touch_key.y + 1, true, &input));
+   assert(!arc_osk_touch(&osk, 0, 0, false, &input) &&
+          !osk.activation_phase);
+
+   unsigned captured = UINT_MAX;
+   for (unsigned i = 0u; i < osk.key_count; ++i)
+      if (osk.keys[i].action == ARC_OSK_ACTION_KEY)
+      {
+         captured = i;
+         break;
+      }
+   assert(captured != UINT_MAX);
+   const ArcOskKey captured_key = osk.keys[captured];
+   assert(arc_osk_touch(&osk, (int)captured_key.x + 1,
+                         (int)captured_key.y + 1, true, &input));
+   assert(osk.focus == captured && osk.contact_key == captured);
+   arc_osk_move(&osk, 1, 0, 500000u, true);
+   assert(osk.focus == captured && osk.contact_key == captured);
+   unsigned displaced_focus = captured ? 0u : 1u;
+   assert(displaced_focus < osk.key_count && displaced_focus != captured);
+   osk.focus = displaced_focus;
+   assert(arc_osk_touch(&osk, (int)captured_key.x + 1,
+                         (int)captured_key.y + 1, false, &input));
+   assert(osk.focus == displaced_focus);
+   arc_osk_update(&osk, &input);
+   assert(drain_input(&input, events, 16u) == 1u &&
+          events[0].code == captured_key.key && events[0].down);
+   arc_osk_update(&osk, &input);
+   assert(!arc_osk_advance(&osk, osk.activation_deadline_us));
+   arc_osk_update(&osk, &input);
+   assert(drain_input(&input, events, 16u) == 1u &&
+          events[0].code == captured_key.key && !events[0].down);
+   arc_osk_update(&osk, &input);
+   assert(!arc_osk_advance(&osk, osk.activation_deadline_us));
+   arc_osk_update(&osk, &input);
+   assert(!osk.activation_phase);
+
+   assert(arc_osk_layout(&osk, 640u, 480u) && !osk.compact);
+   unsigned shift = UINT_MAX, right_shift = UINT_MAX, letter = UINT_MAX;
+   unsigned letter_b = UINT_MAX, return_key = UINT_MAX;
+   for (unsigned i = 0u; i < osk.key_count; ++i)
+   {
+      if (osk.keys[i].key == RETROK_LSHIFT) shift = i;
+      if (osk.keys[i].key == RETROK_RSHIFT) right_shift = i;
+      if (osk.keys[i].key == RETROK_a) letter = i;
+      if (osk.keys[i].key == RETROK_b) letter_b = i;
+      if (osk.keys[i].key == RETROK_RETURN) return_key = i;
+   }
+   bool saw_num_lock = false, saw_scroll_lock = false, saw_break = false;
+   for (unsigned i = 0u; i < osk.key_count; ++i)
+   {
+      saw_num_lock |= osk.keys[i].key == RETROK_NUMLOCK;
+      saw_scroll_lock |= osk.keys[i].key == RETROK_SCROLLOCK;
+      if (osk.keys[i].key == RETROK_PAUSE)
+         saw_break = !strcmp(osk.keys[i].label, "BRK");
+      assert(osk.keys[i].key != RETROK_PRINT);
+   }
+   assert(saw_num_lock && saw_scroll_lock && saw_break);
+   assert(shift != UINT_MAX && right_shift != UINT_MAX && letter != UINT_MAX &&
+          letter_b != UINT_MAX && return_key != UINT_MAX);
+   /* Holding an activation freezes focus, and releasing still completes the
+    * key that originally accepted the activation. */
+   osk.focus = letter;
+   assert(arc_osk_press_focused(&osk, &input));
+   arc_osk_update(&osk, &input);
+   assert(drain_input(&input, events, 16u) == 1u &&
+          events[0].code == RETROK_a && events[0].down);
+   arc_osk_move(&osk, 1, 0, 500000u, true);
+   assert(osk.focus == letter);
+   const ArcOskKey held_touch = osk.keys[shift];
+   assert(!arc_osk_touch(&osk, (int)held_touch.x + 1,
+                         (int)held_touch.y + 1, true, &input));
+   assert(osk.focus == letter && !osk.contact && !osk.contact_valid);
+   assert(!arc_osk_touch(&osk, (int)held_touch.x + 1,
+                         (int)held_touch.y + 1, false, &input));
+   assert(osk.focus == letter);
+   arc_osk_update(&osk, &input);
+   uint64_t osk_time = osk.activation_deadline_us + UINT64_C(10000);
+   assert(!arc_osk_advance(&osk, osk_time));
+   arc_osk_update(&osk, &input);
+   assert(!arc_input_pending(&input));
+   arc_osk_release_activation(&osk);
+   arc_osk_update(&osk, &input);
+   assert(drain_input(&input, events, 16u) == 1u &&
+          events[0].code == RETROK_a && !events[0].down);
+   arc_osk_update(&osk, &input);
+   assert(osk.activation_deadline_us == osk_time + UINT64_C(60000));
+   osk_time = osk.activation_deadline_us;
+   assert(!arc_osk_advance(&osk, osk_time));
+   arc_osk_update(&osk, &input);
+   assert(!osk.activation_phase);
+   osk.focus = shift;
+   assert(arc_osk_press_focused(&osk, &input) &&
+          osk.modifiers[0] == ARC_OSK_MOD_ONESHOT);
+   osk.focus = letter;
+   assert(arc_osk_press_focused(&osk, &input));
+   complete_osk_chord(&osk, &input, RETROK_a, RETROK_LSHIFT, &osk_time);
+   assert(!osk.activation_phase && osk.modifiers[0] == ARC_OSK_MOD_OFF);
+
+   /* Left and right modifiers have independent sticky state and emit their
+    * own physical key identities. */
+   osk.focus = right_shift;
+   assert(arc_osk_press_focused(&osk, &input) &&
+          osk.modifiers[1] == ARC_OSK_MOD_ONESHOT &&
+          osk.modifiers[0] == ARC_OSK_MOD_OFF);
+   osk.focus = letter;
+   assert(arc_osk_press_focused(&osk, &input));
+   complete_osk_chord(&osk, &input, RETROK_a, RETROK_RSHIFT, &osk_time);
+   assert(!osk.activation_phase && osk.modifiers[1] == ARC_OSK_MOD_OFF);
+
+   /* Locked modifiers persist for another activation but never remain as an
+    * invisible source level between activations. */
+   osk.focus = shift;
+   assert(arc_osk_press_focused(&osk, &input));
+   assert(arc_osk_press_focused(&osk, &input) &&
+          osk.modifiers[0] == ARC_OSK_MOD_LOCKED);
+   osk.focus = letter;
+   assert(arc_osk_press_focused(&osk, &input));
+   complete_osk_chord(&osk, &input, RETROK_a, RETROK_LSHIFT, &osk_time);
+   assert(!osk.activation_phase && osk.modifiers[0] == ARC_OSK_MOD_LOCKED &&
+          !arc_input_source_level(&input, ARC_INPUT_SOURCE_OSK, RETROK_LSHIFT));
+   osk.focus = shift;
+   assert(arc_osk_press_focused(&osk, &input) &&
+          osk.modifiers[0] == ARC_OSK_MOD_OFF);
+   osk.focus = letter;
+
+   /* An already-effective key completes without an edge or losing ownership. */
+   arc_input_source_key(&input, ARC_INPUT_SOURCE_KEYBOARD, RETROK_a, true, true);
+   assert(drain_input(&input, events, 16u) == 1u);
+   osk.focus = letter;
+   assert(arc_osk_press_focused(&osk, &input));
+   arc_osk_update(&osk, &input);
+   arc_osk_release_activation(&osk);
+   arc_osk_update(&osk, &input);
+   osk_time = osk.activation_deadline_us;
+   assert(!arc_osk_advance(&osk, osk_time));
+   arc_osk_update(&osk, &input);
+   osk_time = osk.activation_deadline_us;
+   assert(!arc_osk_advance(&osk, osk_time));
+   arc_osk_update(&osk, &input);
+   osk_time = osk.activation_deadline_us;
+   assert(!arc_osk_advance(&osk, osk_time));
+   arc_osk_update(&osk, &input);
+   assert(!arc_input_pending(&input) && !osk.activation_phase &&
+          arc_input_source_level(&input, ARC_INPUT_SOURCE_KEYBOARD, RETROK_a) &&
+          arc_input_effective_level(&input, RETROK_a));
+
+   /* Reconciliation invalidates an activation once and recovers OSK levels. */
+   assert(!arc_osk_advance(&osk, osk_time + 100u));
+   for (unsigned attempt = 0u; attempt < 3u; ++attempt)
+   {
+      assert(arc_osk_press_focused(&osk, &input));
+      arc_osk_update(&osk, &input);
+      arc_input_release_all(&input);
+      arc_osk_update(&osk, &input);
+      assert(!osk.activation_phase && arc_osk_take_interrupted(&osk) &&
+             !arc_osk_take_interrupted(&osk) && osk.interrupted_visible);
+      while (arc_input_pending(&input))
+         (void)arc_input_consume(&input, true, &events[0]);
+   }
+   /* Reaching the one-second deadline alone does not clear INTERRUPTED: an
+    * action after that deadline is the later boundary and clears it. */
+   uint64_t interrupted_until = osk.interrupted_until_us;
+   assert(!arc_osk_advance(&osk, interrupted_until) &&
+          osk.interrupted_visible);
+   unsigned interrupted_focus = osk.focus;
+   arc_osk_move(&osk, 1, 0, interrupted_until, true);
+   assert(osk.focus != interrupted_focus && !osk.interrupted_visible);
+
+   /* One activation may wait behind the current activation. A third is
+    * refused with a persistent BUSY notice and cannot replace the queued key. */
+   arc_input_reset(&input);
+   osk.focus = letter;
+   assert(arc_osk_press_focused(&osk, &input));
+   arc_osk_update(&osk, &input);
+   assert(drain_input(&input, events, 16u) == 1u &&
+          events[0].code == RETROK_a && events[0].down);
+   arc_osk_release_activation(&osk);
+   osk.focus = letter_b;
+   assert(arc_osk_press_focused(&osk, &input) && osk.queued_activation &&
+          osk.queued_activation_key == RETROK_b);
+   arc_osk_release_activation(&osk);
+   osk.focus = return_key;
+   assert(!arc_osk_press_focused(&osk, &input) && osk.busy &&
+          osk.queued_activation && osk.queued_activation_key == RETROK_b);
+   uint64_t outstanding_busy_until = osk.busy_until_us;
+
+   arc_osk_update(&osk, &input);
+   osk_time = osk.activation_deadline_us;
+   assert(!arc_osk_advance(&osk, osk_time));
+   arc_osk_update(&osk, &input);
+   assert(drain_input(&input, events, 16u) == 1u &&
+          events[0].code == RETROK_a && !events[0].down);
+   arc_osk_update(&osk, &input);
+   osk_time = osk.activation_deadline_us;
+   assert(!arc_osk_advance(&osk, osk_time));
+   arc_osk_update(&osk, &input);
+   assert(osk.activation_phase && !osk.queued_activation &&
+          osk.activation_key == RETROK_b);
+   arc_osk_update(&osk, &input);
+   assert(drain_input(&input, events, 16u) == 1u &&
+          events[0].code == RETROK_b && events[0].down);
+   arc_osk_update(&osk, &input);
+   osk_time = osk.activation_deadline_us;
+   assert(!arc_osk_advance(&osk, osk_time));
+   arc_osk_update(&osk, &input);
+   assert(drain_input(&input, events, 16u) == 1u &&
+          events[0].code == RETROK_b && !events[0].down);
+   arc_osk_update(&osk, &input);
+   osk_time = osk.activation_deadline_us;
+   assert(!arc_osk_advance(&osk, osk_time));
+   arc_osk_update(&osk, &input);
+   assert(!osk.activation_phase && !osk.queued_activation &&
+          !arc_input_pending(&input) && osk.busy);
+   assert(!arc_osk_advance(&osk, outstanding_busy_until) && osk.busy);
+   osk.focus = letter;
+   arc_osk_move(&osk, 1, 0, outstanding_busy_until, true);
+   assert(!osk.busy);
+
+   /* A full queue reports busy and does not start a partial chord. */
+   arc_input_reset(&input);
+   for (unsigned i = 0u; i < ARC_INPUT_FIFO_CAPACITY / 2u; ++i)
+   {
+      arc_input_source_key(&input, ARC_INPUT_SOURCE_KEYBOARD, RETROK_b, true, true);
+      arc_input_source_key(&input, ARC_INPUT_SOURCE_KEYBOARD, RETROK_b, false, true);
+   }
+   assert(!arc_osk_shortcut(&osk, &input, RETROK_RETURN) && osk.busy);
+   uint64_t busy_until = osk.busy_until_us;
+   while (arc_input_pending(&input))
+      (void)arc_input_consume(&input, true, &events[0]);
+   osk.focus = shift;
+   assert(arc_osk_press_focused(&osk, &input) && osk.busy);
+   assert(!arc_osk_advance(&osk, busy_until - 1u) && osk.busy);
+   assert(arc_osk_advance(&osk, busy_until) && !osk.busy);
+
+   /* A long label is clipped at its own cell instead of painting over the
+    * neighbouring key. */
+   {
+      ArcOsk clipped = {0};
+      uint32_t pixels[64u * 48u] = {0};
+      clipped.visible = true;
+      clipped.width = 64u;
+      clipped.height = 48u;
+      clipped.key_count = 2u;
+      clipped.keys[0] = (ArcOskKey){ARC_OSK_ACTION_KEY, RETROK_a,
+                                    "MMMM", 1u, 24u, 15u, 12u};
+      clipped.keys[1] = (ArcOskKey){ARC_OSK_ACTION_KEY, RETROK_b,
+                                    "", 16u, 24u, 15u, 12u};
+      assert(arc_osk_render(&clipped, pixels, 64u, 48u,
+                            64u * sizeof(uint32_t), ""));
+      for (unsigned y = 25u; y < 33u; ++y)
+         for (unsigned x = 16u; x < 31u; ++x)
+            assert(pixels[y * 64u + x] != UINT32_C(0x00ffffff));
+   }
+
+   static const unsigned widths[] = {320u, 640u, 640u};
+   static const unsigned heights[] = {256u, 256u, 480u};
+   static const char *goldens[3][2][2] = {
+      {{"d52cca88212e55f511eee1e0bd1725e4a79b0e64", "c3448dc71a273dd554d196878fa566dfed344a3a"},
+       {"7c7117e8a370d4d0376db323a162b5af64f568d5", "d93122c9d2101aa3772b9b8dee98b6bbcfbd367f"}},
+      {{"fcca267a752fdb89132fed048c69cec0af5e3758", NULL},
+       {"7d38270a10e38de0dbd7d5d5ad5fcd17c168432f", NULL}},
+      {{"ea7f9888e5a7d22d9e4f82975ac8f37273662803", NULL},
+       {"03140896bd4cffd368e958826c1dcb7f8b8705e3", NULL}}
+   };
+   for (unsigned geometry = 0u; geometry < 3u; ++geometry)
+      for (unsigned alpha = 0u; alpha < 2u; ++alpha)
+      {
+         unsigned width = widths[geometry], height = heights[geometry];
+         size_t count = (size_t)width * height;
+         uint32_t *surface = malloc((count + 2u) * sizeof(*surface));
+         assert(surface);
+         surface[0] = UINT32_C(0xdeadbeef);
+         surface[count + 1u] = UINT32_C(0xcafef00d);
+         memset(&osk, 0, sizeof(osk));
+         assert(arc_osk_open(&osk, width, height));
+         osk.transparent = alpha != 0u;
+         unsigned pages = osk.page_count;
+         for (unsigned page = 0u; page < pages; ++page)
+         {
+            for (size_t i = 0u; i < count; ++i)
+               surface[i + 1u] = (uint32_t)(i * UINT32_C(2654435761));
+            osk.page = page;
+            assert(arc_osk_layout(&osk, width, height));
+            assert(arc_osk_render(&osk, surface + 1u, width, height,
+                                  (size_t)width * sizeof(uint32_t),
+                                  "Golden custom"));
+            char digest[41];
+            arc_sha1_hex(surface + 1u, count * sizeof(uint32_t), digest);
+            if (!goldens[geometry][alpha][page] ||
+                strcmp(digest, goldens[geometry][alpha][page]))
+               fprintf(stderr, "OSK golden[%u][%u][%u] = %s\n",
+                       geometry, alpha, page, digest);
+            assert(goldens[geometry][alpha][page] &&
+                   !strcmp(digest, goldens[geometry][alpha][page]));
+         }
+         assert(surface[0] == UINT32_C(0xdeadbeef) &&
+                surface[count + 1u] == UINT32_C(0xcafef00d));
+         free(surface);
+      }
+
+   /* The authored arrow byte reaches its bitmap. Derive the compact INT
+    * golden through a real generation interruption; rendering does not
+    * acknowledge or prematurely clear the guest-time/action-held notice. */
+   memset(&osk, 0, sizeof(osk));
+   arc_input_reset(&input);
+   assert(arc_osk_open(&osk, 320u, 256u));
+   bool saw_up_arrow = false;
+   for (unsigned page = 0u; page < osk.page_count; ++page)
+   {
+      osk.page = page;
+      assert(arc_osk_layout(&osk, 320u, 256u));
+      for (unsigned i = 0u; i < osk.key_count; ++i)
+         if (osk.keys[i].key == RETROK_UP)
+            saw_up_arrow = !strcmp(osk.keys[i].label, "\x7d");
+   }
+   assert(saw_up_arrow);
+   osk.page = 1u;
+   assert(arc_osk_layout(&osk, 320u, 256u));
+   unsigned notice_key = UINT_MAX;
+   for (unsigned i = 0u; i < osk.key_count; ++i)
+      if (osk.keys[i].key == RETROK_a) notice_key = i;
+   assert(notice_key != UINT_MAX);
+   osk.focus = notice_key;
+   assert(arc_osk_advance(&osk, 500u) == false);
+   assert(arc_osk_press_focused(&osk, &input));
+   arc_osk_update(&osk, &input);
+   arc_input_release_all(&input);
+   arc_osk_update(&osk, &input);
+   assert(arc_osk_take_interrupted(&osk) && osk.interrupted_visible);
+   uint32_t *notice = calloc(320u * 256u, sizeof(*notice));
+   assert(notice && arc_osk_render(&osk, notice, 320u, 256u,
+                                   320u * sizeof(uint32_t), "Golden custom"));
+   char notice_digest[41];
+   arc_sha1_hex(notice, 320u * 256u * sizeof(*notice), notice_digest);
+   if (strcmp(notice_digest, "e2634469f489ea06082bac3ac0decbe5abe27edd"))
+      fprintf(stderr, "OSK compact INT golden = %s\n", notice_digest);
+   assert(!strcmp(notice_digest, "e2634469f489ea06082bac3ac0decbe5abe27edd"));
+   assert(osk.interrupted_visible);
+   memset(notice, 0, 320u * 256u * sizeof(*notice));
+   assert(arc_osk_render(&osk, notice, 320u, 256u,
+                         320u * sizeof(uint32_t),
+                         "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"));
+   /* The header begins at x=4 and fits 39 glyphs. Its long profile name is
+    * truncated so the final T in the short "INT" state remains rendered. */
+   unsigned notice_panel_y = 256u - 256u * 45u / 100u;
+   assert(notice[(notice_panel_y + 4u) * 320u + 309u] ==
+          UINT32_C(0x00ffffff));
+   free(notice);
+}
+
 int main(int argc, char **argv)
 {
    assert(argc == 2);
@@ -1085,6 +1937,8 @@ int main(int argc, char **argv)
    test_playlists();
    test_jfd_parser(argv[1]);
    test_input();
+   test_input_mapping();
+   test_osk();
    puts("core_tests: all checks passed");
    return 0;
 }

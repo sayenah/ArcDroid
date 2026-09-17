@@ -8,6 +8,9 @@ command -v grep >/dev/null 2>&1 || {
 
 sources='core/hash.c
 core/input.c
+core/input_mapping.c
+core/input_profiles.c
+core/osk.c
 core/firmware_table.c
 core/launch.c
 core/launch_discovery.c

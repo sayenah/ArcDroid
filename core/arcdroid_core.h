@@ -183,6 +183,8 @@ void arc_cmos_normalise_payload(uint8_t payload[ARC_CMOS_PAYLOAD_SIZE]);
 #define ARC_INPUT_KEY_COUNT 512u
 #define ARC_INPUT_FIFO_CAPACITY 256u
 #define ARC_INPUT_MOTION_STARVATION_BOUND 8u
+#define ARC_PAD_PORTS 2u
+#define ARC_PAD_INPUT_COUNT 10u
 
 typedef enum {
    ARC_INPUT_SOURCE_KEYBOARD = 0,
@@ -191,8 +193,68 @@ typedef enum {
    ARC_INPUT_SOURCE_TOUCH,
    ARC_INPUT_SOURCE_MOUSE0,
    ARC_INPUT_SOURCE_MOUSE1,
+   ARC_INPUT_SOURCE_OSK,
    ARC_INPUT_SOURCE_COUNT
 } ArcInputSource;
+
+typedef enum {
+   ARC_PAD_UP = 0,
+   ARC_PAD_DOWN,
+   ARC_PAD_LEFT,
+   ARC_PAD_RIGHT,
+   ARC_PAD_A,
+   ARC_PAD_B,
+   ARC_PAD_X,
+   ARC_PAD_Y,
+   ARC_PAD_START,
+   ARC_PAD_SELECT
+} ArcPadInput;
+
+typedef struct {
+   bool bound;
+   unsigned key;
+} ArcInputBinding;
+
+typedef enum {
+   ARC_MAPPING_SOURCE_GENERIC = 0,
+   ARC_MAPPING_SOURCE_PROFILE,
+   ARC_MAPPING_SOURCE_PRESET,
+   ARC_MAPPING_SOURCE_OPTION
+} ArcMappingSource;
+
+typedef struct {
+   bool automatic;
+   ArcInputBinding binding;
+} ArcInputOverride;
+
+typedef struct {
+   ArcInputBinding binding[ARC_PAD_PORTS][ARC_PAD_INPUT_COUNT];
+   ArcMappingSource source[ARC_PAD_PORTS][ARC_PAD_INPUT_COUNT];
+   const char *profile_id;
+   const char *profile_name;
+   bool custom;
+} ArcInputResolution;
+
+#define ARC_INPUT_PROFILE_MAX_DIGESTS 4u
+typedef struct {
+   const char *id;
+   const char *name;
+   const char *digests[ARC_INPUT_PROFILE_MAX_DIGESTS];
+   unsigned digest_count;
+   const char *launch_target;
+   ArcInputBinding mapping[ARC_PAD_PORTS][ARC_PAD_INPUT_COUNT];
+   bool has_port1;
+   const char *evidence;
+} ArcInputProfile;
+
+typedef struct {
+   unsigned key;
+   const char *value;
+   const char *label;
+   unsigned kart_row;
+   unsigned kart_column;
+   bool modifier;
+} ArcInputKey;
 
 typedef enum {
    ARC_INPUT_EVENT_NONE = 0,
@@ -231,7 +293,32 @@ typedef struct {
    unsigned discrete_since_motion;
    bool overflow_report_pending;
    bool overflow_reported;
+   uint64_t reconcile_generation;
 } ArcInputState;
+
+const ArcInputBinding *arc_input_generic_mapping(void);
+const ArcInputKey *arc_input_supported_keys(size_t *count);
+const ArcInputKey *arc_input_osk_only_keys(size_t *count);
+const ArcInputKey *arc_input_key(unsigned key);
+const ArcInputKey *arc_input_key_value(const char *value);
+bool arc_input_is_modifier(unsigned key);
+const char *arc_pad_input_name(unsigned input);
+bool arc_input_resolve(const char content_id[41], const char *launch_target,
+                       const char *profile_selection,
+                       const ArcInputOverride overrides[ARC_PAD_PORTS][ARC_PAD_INPUT_COUNT],
+                       ArcInputResolution *resolution);
+bool arc_input_resolve_table(const ArcInputProfile *profiles,
+                             size_t profile_count,
+                             const char content_id[41],
+                             const char *launch_target,
+                             const char *profile_selection,
+                             const ArcInputOverride overrides[ARC_PAD_PORTS][ARC_PAD_INPUT_COUNT],
+                             ArcInputResolution *resolution);
+const ArcInputProfile *arc_input_profiles(size_t *count);
+bool arc_input_profiles_validate(char *error, size_t error_size);
+bool arc_input_profiles_validate_table(const ArcInputProfile *profiles,
+                                       size_t count, char *error,
+                                       size_t error_size);
 
 void arc_input_reset(ArcInputState *state);
 void arc_input_release_all(ArcInputState *state);
@@ -251,5 +338,96 @@ bool arc_input_consume(ArcInputState *state, bool mouse_enabled,
                        ArcInputEvent *event);
 bool arc_input_take_overflow_report(ArcInputState *state);
 unsigned arc_input_pending(const ArcInputState *state);
+unsigned arc_input_available(const ArcInputState *state);
+uint64_t arc_input_reconcile_generation(const ArcInputState *state);
+bool arc_input_source_level(const ArcInputState *state, ArcInputSource source,
+                            unsigned key);
+bool arc_input_effective_level(const ArcInputState *state, unsigned key);
+bool arc_input_applied_level(const ArcInputState *state, unsigned key);
+void arc_input_pad_key_sets(ArcInputState *state,
+                            const bool port0[ARC_INPUT_KEY_COUNT],
+                            const bool port1[ARC_INPUT_KEY_COUNT]);
+
+typedef enum {
+   ARC_OSK_MOD_OFF = 0,
+   ARC_OSK_MOD_ONESHOT,
+   ARC_OSK_MOD_LOCKED
+} ArcOskModifier;
+
+typedef enum {
+   ARC_OSK_ACTION_NONE = 0,
+   ARC_OSK_ACTION_KEY,
+   ARC_OSK_ACTION_MODIFIER,
+   ARC_OSK_ACTION_PAGE
+} ArcOskAction;
+
+typedef struct {
+   ArcOskAction action;
+   unsigned key;
+   const char *label;
+   unsigned x;
+   unsigned y;
+   unsigned width;
+   unsigned height;
+} ArcOskKey;
+
+#define ARC_OSK_MAX_KEYS 104u
+#define ARC_OSK_MODIFIER_COUNT 6u
+typedef struct {
+   bool visible;
+   bool disabled;
+   bool compact;
+   bool transparent;
+   bool busy;
+   bool interrupted_pending;
+   bool interrupted_visible;
+   bool contact;
+   bool contact_valid;
+   bool activation_held;
+   bool queued_activation;
+   bool queued_activation_held;
+   unsigned width;
+   unsigned height;
+   unsigned page;
+   unsigned page_count;
+   unsigned focus;
+   unsigned contact_key;
+   uint64_t guest_us;
+   uint64_t repeat_at_us;
+   uint64_t action_generation;
+   uint64_t busy_until_us;
+   uint64_t busy_action_generation;
+   uint64_t interrupted_until_us;
+   uint64_t interrupted_action_generation;
+   int repeat_dx;
+   int repeat_dy;
+   ArcOskModifier modifiers[ARC_OSK_MODIFIER_COUNT];
+   ArcOskKey keys[ARC_OSK_MAX_KEYS];
+   unsigned key_count;
+   unsigned activation_key;
+   unsigned activation_modifiers[ARC_OSK_MODIFIER_COUNT];
+   unsigned activation_modifier_count;
+   unsigned activation_phase;
+   uint64_t activation_generation;
+   uint64_t activation_deadline_us;
+   unsigned queued_activation_key;
+} ArcOsk;
+
+void arc_osk_reset(ArcOsk *osk, ArcInputState *input);
+bool arc_osk_open(ArcOsk *osk, unsigned width, unsigned height);
+void arc_osk_close(ArcOsk *osk, ArcInputState *input);
+bool arc_osk_layout(ArcOsk *osk, unsigned width, unsigned height);
+void arc_osk_move(ArcOsk *osk, int dx, int dy, uint64_t guest_us,
+                  bool initial);
+bool arc_osk_press_focused(ArcOsk *osk, ArcInputState *input);
+void arc_osk_release_activation(ArcOsk *osk);
+bool arc_osk_shortcut(ArcOsk *osk, ArcInputState *input, unsigned key);
+bool arc_osk_advance(ArcOsk *osk, uint64_t guest_us);
+void arc_osk_update(ArcOsk *osk, ArcInputState *input);
+bool arc_osk_touch(ArcOsk *osk, int x, int y, bool down,
+                   ArcInputState *input);
+bool arc_osk_take_interrupted(ArcOsk *osk);
+bool arc_osk_render(const ArcOsk *osk, uint32_t *pixels, unsigned width,
+                    unsigned height, size_t pitch, const char *profile);
 
 #endif

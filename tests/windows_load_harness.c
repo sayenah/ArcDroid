@@ -138,7 +138,16 @@ static bool environment(unsigned command, void *data)
       case RETRO_ENVIRONMENT_SET_SUPPORT_NO_GAME:
          assert(phase == PHASE_ENV && !*(bool *)data); saw_no_game = true; return true;
       case RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2:
-         assert(phase == PHASE_ENV); saw_options = true; return true;
+      {
+         const struct retro_core_options_v2 *options = data;
+         unsigned count = 0u;
+         assert(phase == PHASE_ENV && options->categories &&
+                !strcmp(options->categories[0].key, "pad_mapping"));
+         while (options->definitions[count].key) ++count;
+         assert(count == 33u);
+         saw_options = true;
+         return true;
+      }
       case RETRO_ENVIRONMENT_SET_DISK_CONTROL_EXT_INTERFACE:
          assert(phase == PHASE_INIT); saw_disk = true; return true;
       case RETRO_ENVIRONMENT_GET_CAN_DUPE:
@@ -156,7 +165,15 @@ static bool environment(unsigned command, void *data)
       case RETRO_ENVIRONMENT_SET_CONTROLLER_INFO:
          assert(phase == PHASE_LOAD); saw_controllers = true; return true;
       case RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS:
-         assert(phase == PHASE_LOAD); saw_input_descriptors = true; return true;
+      {
+         const struct retro_input_descriptor *descriptors = data;
+         unsigned count = 0u;
+         assert(phase == PHASE_LOAD);
+         while (descriptors[count].description) ++count;
+         assert(count == 28u);
+         saw_input_descriptors = true;
+         return true;
+      }
       case RETRO_ENVIRONMENT_SET_KEYBOARD_CALLBACK:
          assert(phase == PHASE_LOAD); saw_keyboard = true; return true;
       case RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY:
@@ -172,6 +189,7 @@ static bool environment(unsigned command, void *data)
          else if (!strcmp(variable->key, "arcdroid_pointer_deadzone")) variable->value = "15";
          else if (!strcmp(variable->key, "arcdroid_disk_writes")) variable->value = "shadow";
          else if (!strcmp(variable->key, "arcdroid_launch")) variable->value = "auto";
+         else if (!strcmp(variable->key, "arcdroid_osk_toggle")) variable->value = "L3";
          else variable->value = "Auto";
          return true;
       }

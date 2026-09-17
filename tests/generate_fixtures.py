@@ -63,6 +63,9 @@ class Arm2:
     def orr_lsl(self, rd: int, rn: int, rm: int, shift: int) -> None:
         self.emit(0xE1800000 | (rn << 16) | (rd << 12) | (shift << 7) | rm)
 
+    def add_lsl(self, rd: int, rn: int, rm: int, shift: int) -> None:
+        self.emit(0xE0800000 | (rn << 16) | (rd << 12) | (shift << 7) | rm)
+
     def tst_imm(self, rn: int, value: int) -> None:
         self.emit(0xE3100000 | (rn << 16) | self._imm(value))
 
@@ -321,6 +324,9 @@ def build_rom(media_exerciser: bool = False) -> bytearray:
 
     a.label("input_event")
     a.ldr(0, 11, 4, byte=True)
+    # signature = signature * 33 XOR byte. Unlike the old XOR-only fold this
+    # proves the KART receive order (modifier,key differs from key,modifier).
+    a.add_lsl(6, 6, 6, 5)
     a.eor(6, 6, 0)
     a.mov(4, 0x3F)
     a.str(4, 11, 4, byte=True)
@@ -329,6 +335,7 @@ def build_rom(media_exerciser: bool = False) -> bytearray:
     a.tst_imm(0, 0x80)
     a.branch("input_second", "eq")
     a.ldr(0, 11, 4, byte=True)
+    a.add_lsl(6, 6, 6, 5)
     a.eor(6, 6, 0)
     a.mov(4, 0x33)
     a.str(4, 11, 4, byte=True)
