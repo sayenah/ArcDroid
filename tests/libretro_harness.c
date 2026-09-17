@@ -1357,6 +1357,10 @@ int main(int argc, char **argv)
    }
    else if (newio_smoke)
    {
+      *(void **)(&arc_engine_test_cmos_image) =
+         dlsym(module, "arc_engine_test_cmos_image");
+      *(void **)(&arc_engine_test_cmos_write) =
+         dlsym(module, "arc_engine_test_cmos_write");
       *(void **)(&arc_engine_test_drive_media) =
          dlsym(module, "arc_engine_test_drive_media");
       *(void **)(&arc_engine_test_newio_dir) =
@@ -1372,7 +1376,8 @@ int main(int argc, char **argv)
       *(void **)(&arc_engine_test_joystick) = dlsym(module, "arc_engine_test_joystick");
       *(void **)(&arc_engine_test_ioeb_clock) = dlsym(module, "arc_engine_test_ioeb_clock");
       *(void **)(&arc_engine_test_vidc_clock) = dlsym(module, "arc_engine_test_vidc_clock");
-      assert(arc_engine_test_newio && arc_engine_test_drive_media &&
+      assert(arc_engine_test_cmos_image && arc_engine_test_cmos_write &&
+             arc_engine_test_newio && arc_engine_test_drive_media &&
              arc_engine_test_newio_dir && arc_engine_test_newio_read_start &&
              arc_engine_test_newio_result && arc_engine_test_newio_read_finish &&
              arc_engine_test_arm2_swp_undefined &&
@@ -1415,6 +1420,18 @@ int main(int argc, char **argv)
    if (newio_smoke)
    {
       static const char *const machines[] = {"A3010", "A3020", "A4000"};
+      static const char *const cycle_machines[] = {
+         "A3000", "A3010", "A3020", "A4000"
+      };
+      ArcDigest source_digest = digest_file(argv[3]);
+      char machine_cmos_path[4][4096];
+      for (unsigned index = 0u; index < 4u; ++index)
+      {
+         snprintf(machine_cmos_path[index], sizeof(machine_cmos_path[index]),
+                  "%s/arcdroid/cmos/%s.test.%s.bin", save_path,
+                  cycle_machines[index], source_digest.sha1);
+         (void)remove(machine_cmos_path[index]);
+      }
 
       /* Option and firmware diagnostics are resolved before touching a live machine. */
       option_machine = "A3010";
@@ -1443,6 +1460,9 @@ int main(int argc, char **argv)
       phase = PHASE_RUN;
       for (unsigned frame = 0u; frame < 60u; ++frame) retro_run();
       assert(arc_engine_test_arm2_swp_undefined());
+      assert(arc_engine_test_cmos_write(216u, 0xa0u));
+      retro_reset();
+      retro_run();
       uint64_t live_audio = audio_frames;
       assert(rename(renamed, newio_hidden) == 0);
       retro_reset();
@@ -1508,6 +1528,10 @@ int main(int argc, char **argv)
       option_machine = "A3010";
       retro_unload_game();
 
+      uint8_t a3000_record[ARC_CMOS_RECORD_SIZE];
+      read_exact(machine_cmos_path[0], a3000_record, sizeof(a3000_record));
+      assert(a3000_record[216] == 0xa0u);
+
       for (unsigned index = 0u; index < 3u; ++index)
       {
          option_machine = machines[index];
@@ -1517,6 +1541,7 @@ int main(int argc, char **argv)
          retro_set_controller_port_device(1u, RETRO_DEVICE_JOYPAD);
          phase = PHASE_LOAD;
          assert(retro_load_game(&game));
+         assert(arc_engine_test_cmos_write(216u, (uint8_t)(0xa1u + index)));
          unsigned video_before = video_frames;
          uint64_t audio_before = audio_frames;
          phase = PHASE_RUN;
@@ -1618,7 +1643,31 @@ int main(int argc, char **argv)
          }
          retro_unload_game();
          assert(open_files == 0u && open_dirs == 0u);
+         uint8_t machine_record[ARC_CMOS_RECORD_SIZE];
+         read_exact(machine_cmos_path[index + 1u], machine_record,
+                    sizeof(machine_record));
+         assert(machine_record[216] == (uint8_t)(0xa1u + index));
       }
+
+      /* Complete the machine cycle and prove that New-IO persistence never
+       * rewrites or substitutes the established A3000 record. */
+      option_machine = "A3000";
+      option_cpu = "ARM2";
+      option_joystick = "Keyboard";
+      phase = PHASE_LOAD;
+      assert(retro_load_game(&game));
+      uint8_t restored_a3000[ARC_CMOS_MACHINE_SIZE];
+      assert(arc_engine_test_cmos_image(restored_a3000) &&
+             restored_a3000[216] == 0xa0u);
+      phase = PHASE_RUN;
+      for (unsigned frame = 0u; frame < 60u; ++frame) retro_run();
+      assert(arc_engine_test_arm2_swp_undefined());
+      retro_unload_game();
+      uint8_t final_a3000_record[ARC_CMOS_RECORD_SIZE];
+      read_exact(machine_cmos_path[0], final_a3000_record,
+                 sizeof(final_a3000_record));
+      assert(!memcmp(a3000_record, final_a3000_record,
+                     sizeof(a3000_record)));
 
       /* Exercise New-IO media replacement through libretro disk control, not
        * controller-only fixture plumbing. The inserted playlist member raises
