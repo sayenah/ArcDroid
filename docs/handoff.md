@@ -1,8 +1,15 @@
 # ArcDroid Handoff
 
-**Stage:** IMPLEMENTATION  
-**Owner:** Sol  
-**Next:** From current `main`, create branch `slice/04-new-io-machines`, implement Slice 4 below (scope S1–S10, hardening H1–H6, firmware rules F1–F4), ship the deterministic evidence E1–E5 in the same PR, run the full local verification (`cmake -S . -B build/host -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo && cmake --build build/host && ctest --test-dir build/host --output-on-failure`, plus the ASan/UBSan configuration used by CI), open one PR against `main` titled "Slice 4: New-IO machine class (A3010/A3020/A4000)", and report AC-by-AC evidence in the PR body. Stop and return to Fable on any decision listed under "Return to Fable".
+**Stage:** QA  
+**Owner:** Opus  
+**Next:** Claude Opus 5 performs independent QA of PR #61 `slice/04-new-io-machines` at head `eb226ec` on a fresh clone (never the main checkout): review the diff against this handoff (scope S1–S10, H1–H6, F1–F4, AC-1..AC-13), the PRD and protocol; build and run the full host test suite plus the sanitizer selection; execute adversarial cases in the areas under "QA focus"; report findings ranked by severity with file/line or reproducible evidence, distinguishing defects from suggestions. Do not edit code, tests or docs. Return control to Fable.
+
+## Fable review and merge-gate evidence (2026-09-16)
+- PR #61 opened by Sol; Fable review round R-1..R-5 (SENSE DRIVE STATUS drive guard, never-initialised controller shutdown guard, WRITE DATA FIQ justification, golden-test mode split, real-boot `--machine/--joystick` + New-IO counters) closed at `eb226ec`. Upstream import commit `53e6164` verified byte-identical to Arculator `7d3d267` for all four 82C711 files.
+- Fable fresh clone at `2d8a0a6` and `eb226ec`: `ctest` 8/8. CI at `eb226ec`: 5/5 green (host, host-sanitizers, windows, windows-retroarch incl. the A3010/ARM250 native branch assertion, android-arm64).
+- Private host evidence (RISC OS 3.11, Elite disc, 3000 frames, test core): A3000 boot-settle frame 764, trace identical to the `main` baseline (`a04ac03c50a2ef5f`); A3010 718, A3020 719, A4000 719, all IOEB id 0x05, 82C711 commands 92 / reads 2 / successes 2, **IDE accesses 0**, final desktop signature identical to A3000. AC-9 satisfied (New-IO settles ~0.9 s earlier, not later).
+- Odin3 (RetroArch 1.22.2, core built from `2d8a0a6`, sha256 `ac55ff63…`): A3010 RISC OS 3.11 desktop in ~20 s, ADFS reads the Elite disc through the 82C711, Elite loads to its verification screen, OSK works, Chess 3D auto-launches through the Slice 2b helper and runs, per-machine CMOS files `A3010.riscos311.*` written alongside untouched `A3000.*`, RetroArch ~12 % CPU. Founder is running the remaining device checks (Elite flight on A3010, content switch, A3000 regression); results will be recorded before merge.
+- No Return-to-Fable condition raised by Sol; no scope deviation found.
 
 ## Objective and governing requirement
 Make the New-IO Archimedes machines — **A3010, A3020, A4000** (ARM250, MEMC1a at 12 MHz, 82C711 combo I/O, IOEB, RISC OS 3.10+) — selectable and correctly emulated in the ArcDroid libretro core on Windows and Android, with the shipped A3000 path unchanged in behaviour. Governing: PRD FR-12 (access to the machine/firmware universe of the Arculator-class target), FR-13/FR-16/FR-17 (automatic, specific, non-guessing firmware handling), FR-7, FR-28/D-026, FR-64; D-007/D-008 (Arculator import model), D-013 (Auto default stays A3000-class), D-015 (fault containment), D-019 (CMOS identity), D-021 (no host I/O in shipping binaries), D-031/D-033 (static options), D-034 (A3010 joystick lands in this slice), D-036 (this slice's architecture decisions).
@@ -74,7 +81,7 @@ Two more GPL-2.0-only files from the already-accepted pinned upstream commit; no
 A3000 regression; H1–H6 memory safety and cancellation; New-IO media swap/eject; VIDC+sound clock changes vs D-015/D-022; ARM250/MEMC1a-12 cost on Odin3 and Windows; firmware messages; runtime machine switch ownership; CMOS normalisation and naming; joystick precedence rules.
 
 ## Branch / PR
-Sol: branch `slice/04-new-io-machines` from `main` (`4c42cba`); one PR. Governance baton PR for this handoff: `docs/slice4-newio-authorized`. Evidence branches remain `evidence/*` (never merge).
+Implementation PR #61 `slice/04-new-io-machines`, head `eb226ec`, CI green, awaiting Opus QA and the Founder's device runs; the Founder merges implementation PRs from the terminal (`gh pr merge 61 --merge`). Governance PRs: #60 (authorisation), this baton (`docs/slice4-qa`). Evidence branches remain `evidence/*` (never merge).
 
 ## Orchestration notes (Fable)
 - **Background runs (protocol §15)**: `watchdog2.sh <label> <pid> <stream> <report> <checkout> [poll=300] [stall-checks=3]` (session scratchpad; recreate from the description if lost: read-only 5-min polls of stream size, process-tree CPU and `git status` hash; emit only COMPLETED/DIED/STALLED/NEEDS_INPUT with run id, elapsed, log path and a bounded tail; record PID/start/log in `<stream>.watch`) under the harness Monitor with a 30-min lease, re-armed on expiry. Only PIDs recorded at dispatch are watched or stopped. Subagents use the harness's native completion notification.
