@@ -58,6 +58,9 @@ synchronous media callback has already entered a terminal result phase; cold
 creation fully reinitialises the static controller state. Test-core builds also
 expose command/read-success counters used to prove the generated guest ROM
 executed the New-IO path; those counters are absent from shipping targets.
+The three upstream commented-out `dumpregs()` calls are omitted because the
+shipping-I/O guard deliberately rejects that desktop debug-file entry point;
+their removal changes no compiled behaviour.
 
 `src/keyboard.c` contains ArcDroid's single consumption-acknowledgement hook:
 after the existing KART-idle and keyboard-enabled guards, one platform call
