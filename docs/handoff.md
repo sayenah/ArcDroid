@@ -2,10 +2,10 @@
 
 **Stage:** ARCHITECTURE  
 **Owner:** Fable  
-**Next:** (1) Fable confirms CI green on `main` at `7941854` and records it here. (2) Founder picks the next slice from the candidates below; Fable then grounds in `main`, verifies the changing external premises from primary sources, defines the capability slice with deterministic evidence, obtains the Astra challenge, and writes the `Stage: IMPLEMENTATION`, `Owner: Sol` work order. No implementation or test edits until that work order exists.
+**Next:** Founder picks the next slice from the candidates below; Fable then grounds in `main`, verifies the changing external premises from primary sources, defines the capability slice with deterministic evidence, obtains the Astra challenge, and writes the `Stage: IMPLEMENTATION`, `Owner: Sol` work order. No implementation or test edits until that work order exists.
 
 ## State of `main` (2026-09-16)
-- Slices merged: 1 (skeleton boot, PR #5), input slice, 2a, 2b (launch automation, PR #33 + #38), **3a (input profiles, per-input options, on-screen keyboard, PR #43 merged as `7941854`, final head `f3139b8`)**. Decisions through D-035.
+- Slices merged: 1 (skeleton boot, PR #5), input slice, 2a, 2b (launch automation, PR #33 + #38), **3a (input profiles, per-input options, on-screen keyboard, PR #43 merged as `7941854`, final head `f3139b8`)**. Decisions through D-035. CI on `main` at `7941854`: 5/5 green (host, host-sanitizers, windows, android-arm64, windows-retroarch); Fable fresh clone of `7941854`: `ctest` 6/6.
 - Slice 3a evidence: Opus full QA at `4273096` and targeted re-checks at `acd75e4`, `c0b9a71`, `f3139b8` (no defect); Fable fresh-clone `ctest` 6/6 at every head; CI 5/5 at `f3139b8`; Odin3 OSK typing, profile resolution and Elite pad play verified (`git show 7941854:docs/handoff.md` for the merge-gate baton with the full Elite evidence and the Opus adjudication).
 - Odin3 has the `f3139b8` core installed (sha256 `84ef312407c86403a2c04cbe786990a04dc684c3f15330ff5bb521750f1b71e4`); RetroArch stopped; no Fable files or `.ldci`/`.opt` left behind.
 
