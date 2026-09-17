@@ -48,13 +48,16 @@ explicit notice in each modified upstream file.
 creation and connects to ArcDroid's absent-bus IDE implementation. That model
 returns all-one reads, ignores writes, raises no IRQ, and imports no `ide.c`.
 `src/82c711_fdc.c` bounds guest-selected drives and FORMAT data, uses the
-controller invalid-command result in every build, cancels only the affected
-active transfer on media change, clears FIQ on terminal error paths, suppresses
-the upstream WRITE DATA request when a synchronous media callback has already
-entered a terminal result phase, and fully reinitialises its static controller
-state on cold creation. Test-core builds also expose command/read-success
-counters used to prove the generated guest ROM executed the New-IO path; those
-counters are absent from shipping targets.
+controller invalid-command result in every build, and assigns `curdrive` only
+for commands with a drive selector (not SPECIFY, CONFIGURE or PERPENDICULAR),
+so selectorless result paths remain within the two-drive arrays. The added
+`c82c711_fdc_media_change` cancels only the affected active transfer and the
+added `c82c711_fdc_shutdown` quiesces the controller during lifecycle teardown.
+Terminal error paths clear FIQ; a WRITE DATA request is suppressed when a
+synchronous media callback has already entered a terminal result phase; cold
+creation fully reinitialises the static controller state. Test-core builds also
+expose command/read-success counters used to prove the generated guest ROM
+executed the New-IO path; those counters are absent from shipping targets.
 
 `src/keyboard.c` contains ArcDroid's single consumption-acknowledgement hook:
 after the existing KART-idle and keyboard-enabled guards, one platform call

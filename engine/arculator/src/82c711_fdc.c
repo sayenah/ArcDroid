@@ -473,6 +473,7 @@ void c82c711_fdc_write(uint16_t addr, uint8_t val, void *p)
 		return;
 	}
 //        printf("Write FDC %04X %02X\n",addr,val);
+//        dumpregs();
 //        exit(-1);
 }
 
@@ -539,6 +540,7 @@ uint8_t c82c711_fdc_read(uint16_t addr, void *p)
 		default:
 			temp=0xFF;
 //                printf("Bad read FDC %04X\n",addr);
+//                dumpregs();
 //                exit(-1);
 	}
 //        /*if (addr!=0x3f4) */rpclog("%02X rate=%i\n",temp,fdc.rate);
@@ -816,6 +818,7 @@ static void c82c711_fdc_callback(void *p)
 		return;
 	}
 //        printf("Bad FDC disc int %i\n",fdc->discint);
+//        dumpregs();
 //        exit(-1);
 }
 
