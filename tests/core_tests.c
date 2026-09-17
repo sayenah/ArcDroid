@@ -215,9 +215,13 @@ static void test_media_launch_and_cmos(void)
    arc_cmos_normalise_payload(payload, ARC_IO_OLD_WD1770);
    assert(payload[42] == 0x5au && (payload[59] & 7u) == 0u &&
           (payload[183] & 7u) == 1u);
-   payload[183] = 0xc9u;
-   arc_cmos_normalise_payload(payload, ARC_IO_NEW_82C711);
-   assert(payload[183] == 1u);
+   static const uint8_t persisted_drive_counts[] = {0x41u, 0x81u, 0xc9u};
+   for (unsigned i = 0u; i < sizeof(persisted_drive_counts); ++i)
+   {
+      payload[183] = persisted_drive_counts[i];
+      arc_cmos_normalise_payload(payload, ARC_IO_NEW_82C711);
+      assert(payload[183] == 1u);
+   }
    assert(arc_cmos_default(ARC_OS_RISCOS_311, ARC_IO_NEW_82C711, payload));
    assert(arc_cmos_machine_image(ARC_OS_RISCOS_311, ARC_IO_NEW_82C711,
                                  payload, false, machine_cmos));
@@ -230,6 +234,11 @@ static void test_media_launch_and_cmos(void)
       checksum += machine_cmos[raw];
    }
    assert(machine_cmos[63] == (uint8_t)(checksum + 1u));
+
+   ArcLaunchPlan other_machine = plan;
+   other_machine.machine = ARC_MACHINE_A3010;
+   assert(arc_cmos_encode(record, &plan, payload));
+   assert(!arc_cmos_decode(record, &other_machine, restored));
 }
 
 static size_t test_l_offset(unsigned logical_sector)

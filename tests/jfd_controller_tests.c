@@ -26,8 +26,11 @@ static unsigned irq_assertions;
 static unsigned drq_assertions;
 static uint8_t transfer[2048];
 static size_t transfer_count;
+static size_t newio_transfer_limit;
+static bool newio_service_dma;
+static bool newio_dma_write;
+static uint8_t newio_write_value;
 static uint8_t finish_command(uint8_t command, unsigned limit_us);
-static void idle_timer_callback(void *opaque) { (void)opaque; }
 
 void rpclog(const char *format, ...) { (void)format; }
 void error(const char *format, ...) { (void)format; abort(); }
@@ -184,7 +187,17 @@ static void step_controller(void)
    assert(timer_target != UINT32_MAX);
    tsc = (uint64_t)timer_target << 32u;
    timer_process();
-   if (ioc.fiq & IOC_FIQ_DISC_DATA)
+   if ((ioc.fiq & IOC_FIQ_DISC_DATA) && fdctype == FDC_82C711 && newio_service_dma)
+   {
+      assert(transfer_count < sizeof(transfer));
+      bool terminal = newio_transfer_limit && transfer_count + 1u == newio_transfer_limit;
+      if (newio_dma_write)
+         c82c711_fdc_dmawrite(newio_write_value, terminal, NULL);
+      else
+         transfer[transfer_count] = c82c711_fdc_dmaread(terminal, NULL);
+      transfer_count++;
+   }
+   else if ((ioc.fiq & IOC_FIQ_DISC_DATA) && fdctype != FDC_82C711)
    {
       assert(transfer_count < sizeof(transfer));
       transfer[transfer_count++] = wd1770_read(0x0cu);
@@ -430,6 +443,13 @@ static void test_82c711_hardening(void)
    assert((c82c711_fdc_read(5u, NULL) & 0x43u) == 0x42u);
    for (unsigned i = 1; i < 7u; ++i) (void)c82c711_fdc_read(5u, NULL);
 
+   assert(arc_launch_disc_build("Demo", "!Demo", raw_helper));
+   adf_init();
+   adf_set_writable(0, 1);
+   assert(disc_load_raw(0, "memory-helper.adl", ARC_GEOMETRY_640K_L));
+   c82c711_fdc_write(2u, 0x1cu, NULL);
+   c82c711_fdc_write(7u, 1u, NULL);
+
    /* Zero-sector FORMAT is rejected before accepting DMA bytes. */
    c82c711_fdc_write(5u, 0x0du, NULL);
    const uint8_t bad_format[5] = {0u, 1u, 0u, 0x1bu, 0u};
@@ -437,15 +457,223 @@ static void test_82c711_hardening(void)
    assert((c82c711_fdc_read(4u, NULL) & 0xf0u) == 0xd0u);
    for (unsigned i = 0; i < 7u; ++i) (void)c82c711_fdc_read(5u, NULL);
 
+   /* A terminal count before the final CHRN byte is an abnormal completion,
+    * and the data request is cleared before the result becomes visible. */
+   c82c711_fdc_write(5u, 0x0du, NULL);
+   const uint8_t short_format[5] = {0u, 1u, 2u, 0x1bu, 0u};
+   for (unsigned i = 0; i < 5u; ++i) c82c711_fdc_write(5u, short_format[i], NULL);
+   while (!(ioc.fiq & IOC_FIQ_DISC_DATA)) step_controller();
+   c82c711_fdc_dmawrite(0u, 1, NULL);
+   step_controller();
+   assert(!(ioc.fiq & IOC_FIQ_DISC_DATA));
+   assert((c82c711_fdc_read(4u, NULL) & 0xf0u) == 0xd0u);
+   assert((c82c711_fdc_read(5u, NULL) & 0x40u) == 0x40u);
+   assert(c82c711_fdc_read(5u, NULL) == 0x10u);
+   for (unsigned i = 2u; i < 7u; ++i) (void)c82c711_fdc_read(5u, NULL);
+
+   /* An incomplete parameter sequence remains in command phase until reset. */
+   c82c711_fdc_write(5u, 0x0du, NULL);
+   for (unsigned i = 0u; i < 4u; ++i) c82c711_fdc_write(5u, short_format[i], NULL);
+   assert((c82c711_fdc_read(4u, NULL) & 0xf0u) == 0x90u);
+   c82c711_fdc_shutdown();
+   c82c711_fdc_init();
+
+   /* Counts beyond the 256-byte parameter buffer are rejected as well. */
+   c82c711_fdc_write(5u, 0x0du, NULL);
+   const uint8_t long_format[5] = {0u, 1u, 65u, 0x1bu, 0u};
+   for (unsigned i = 0; i < 5u; ++i) c82c711_fdc_write(5u, long_format[i], NULL);
+   assert((c82c711_fdc_read(4u, NULL) & 0xf0u) == 0xd0u);
+   for (unsigned i = 0; i < 7u; ++i) (void)c82c711_fdc_read(5u, NULL);
+
    /* Unknown commands use the one-byte invalid-command result in every build. */
    c82c711_fdc_write(5u, 0x19u, NULL);
-   emu_timer_t idle_timer;
-   timer_add(&idle_timer, idle_timer_callback, NULL, 0);
-   timer_set_delay_u64(&idle_timer, 1000u * TIMER_USEC);
-   tsc = (uint64_t)timer_target << 32u;
-   timer_process();
+   for (unsigned poll = 0u;
+        poll < 1000u && (c82c711_fdc_read(4u, NULL) & 0xf0u) != 0xd0u;
+        ++poll) step_controller();
    assert(c82c711_fdc_read(5u, NULL) == 0x80u);
    c82c711_fdc_shutdown();
+   disc_close(0);
+}
+
+static void newio_reset(const ArcJfdImage *image, bool helper)
+{
+   memset(&ioc, 0, sizeof(ioc));
+   tsc = 0u;
+   timer_reset();
+   disc_init();
+   adf_init();
+   disc_reset();
+   fdctype = FDC_82C711;
+   if (image) assert(disc_load_jfd(0, image));
+   if (helper)
+   {
+      assert(arc_launch_disc_build("Demo", "!Demo", raw_helper));
+      adf_set_writable(1, 0);
+      assert(disc_load_raw(1, "memory-helper.adl", ARC_GEOMETRY_640K_L));
+   }
+   c82c711_fdc_init();
+   c82c711_fdc_write(2u, 0x1cu, NULL); /* reset released, drive 0 motor */
+   c82c711_fdc_write(7u, 1u, NULL);    /* double density */
+}
+
+static void newio_start_read(unsigned drive, uint8_t sector, uint8_t size)
+{
+   const uint8_t params[8] = {
+      (uint8_t)drive, 0u, 0u, sector, size, sector, 0x1bu, 0xffu
+   };
+   c82c711_fdc_write(2u, 0x0cu, NULL);
+   c82c711_fdc_write(2u, (uint8_t)(0x0cu | (0x10u << drive) | drive), NULL);
+   c82c711_fdc_write(5u, 0x06u, NULL);
+   for (unsigned i = 0u; i < sizeof(params); ++i)
+      c82c711_fdc_write(5u, params[i], NULL);
+}
+
+static void newio_start_write(unsigned drive, uint8_t sector, uint8_t size)
+{
+   const uint8_t params[8] = {
+      (uint8_t)drive, 0u, 0u, sector, size, sector, 0x1bu, 0xffu
+   };
+   c82c711_fdc_write(2u, 0x0cu, NULL);
+   c82c711_fdc_write(2u, (uint8_t)(0x0cu | (0x10u << drive) | drive), NULL);
+   c82c711_fdc_write(5u, 0x05u, NULL);
+   for (unsigned i = 0u; i < sizeof(params); ++i)
+      c82c711_fdc_write(5u, params[i], NULL);
+}
+
+static void newio_wait_irq(unsigned limit_us)
+{
+   static unsigned wait_number;
+   ++wait_number;
+   uint64_t end = tsc + (uint64_t)limit_us * TIMER_USEC;
+   while (!(ioc.irqb & IOC_IRQB_DISC_IRQ) && tsc < end) step_controller();
+   if (!(ioc.irqb & IOC_IRQB_DISC_IRQ))
+      fprintf(stderr, "newio wait %u timed out after %zu DMA bytes\n",
+              wait_number, transfer_count);
+   assert(ioc.irqb & IOC_IRQB_DISC_IRQ);
+   (void)c82c711_fdc_read(4u, NULL); /* acknowledge completion interrupt */
+}
+
+static void newio_result(uint8_t result[7])
+{
+   for (unsigned i = 0u; i < 7u; ++i)
+      result[i] = c82c711_fdc_read(5u, NULL);
+}
+
+static void test_82c711_golden(const char *root)
+{
+   uint8_t result[7];
+   ArcJfdImage image = load_image(root, "size-3.jfd");
+   newio_reset(&image, true);
+
+   transfer_count = 0u;
+   newio_transfer_limit = 1024u;
+   newio_service_dma = true;
+   newio_dma_write = false;
+   newio_start_read(0u, 3u, 3u);
+   newio_wait_irq(1100000u);
+   newio_result(result);
+   assert(!(result[0] & 0xc0u) && result[1] == 0u && result[2] == 0u);
+   assert(transfer_count == 1024u && transfer[0] == 3u && !(ioc.fiq & IOC_FIQ_DISC_DATA));
+
+   /* The independently mounted raw helper exercises drive 1. */
+   transfer_count = 0u;
+   newio_transfer_limit = 256u;
+   newio_start_read(1u, 0u, 1u);
+   newio_wait_irq(1100000u);
+   newio_result(result);
+   assert(!(result[0] & 0xc0u) && transfer_count == 256u &&
+          !memcmp(transfer, raw_helper, 256u));
+
+   /* A writable raw backing receives the exact DMA payload. This is the
+    * controller-level oracle used beneath the libretro shadow policy. */
+   disc_close(1);
+   adf_set_writable(1, 1);
+   assert(disc_load_raw(1, "memory-helper.adl", ARC_GEOMETRY_640K_L));
+   transfer_count = 0u;
+   newio_transfer_limit = 256u;
+   newio_dma_write = true;
+   newio_write_value = 0xa6u;
+   newio_start_write(1u, 0u, 1u);
+   newio_wait_irq(1100000u);
+   newio_result(result);
+   assert(!(result[0] & 0xc0u) && transfer_count == 256u);
+   for (unsigned i = 0u; i < 256u; ++i) assert(raw_helper[i] == 0xa6u);
+   newio_dma_write = false;
+
+   /* Media removal terminates the active drive exactly once with no stale FIQ. */
+   c82c711_fdc_shutdown();
+   disc_close(1);
+   disc_close(0);
+   newio_reset(&image, true);
+   transfer_count = 0u;
+   newio_transfer_limit = 1024u;
+   newio_start_read(0u, 3u, 3u);
+   c82c711_fdc_media_change(0u);
+   assert(!(ioc.fiq & IOC_FIQ_DISC_DATA) && (ioc.irqb & IOC_IRQB_DISC_IRQ));
+   c82c711_fdc_media_change(0u);
+   (void)c82c711_fdc_read(4u, NULL);
+   newio_result(result);
+   assert((result[0] & 0x40u) && result[1] == 0x04u);
+
+   /* Removing drive 0 must not disturb an active helper-drive transfer. */
+   c82c711_fdc_shutdown();
+   disc_close(1);
+   disc_close(0);
+   newio_reset(&image, true);
+   transfer_count = 0u;
+   newio_transfer_limit = 256u;
+   newio_start_read(1u, 0u, 1u);
+   c82c711_fdc_media_change(0u);
+   assert(!(ioc.irqb & IOC_IRQB_DISC_IRQ));
+   while (!(ioc.irqb & IOC_IRQB_DISC_IRQ)) step_controller();
+   (void)c82c711_fdc_read(4u, NULL);
+   newio_result(result);
+   assert(!(result[0] & 0xc0u) && transfer_count == 256u);
+
+   /* Deliberately miss a DMA request: overrun clears FIQ and a later read recovers. */
+   transfer_count = 0u;
+   newio_service_dma = false;
+   newio_dma_write = false;
+   newio_start_read(0u, 3u, 3u);
+   newio_wait_irq(1100000u);
+   newio_result(result);
+   assert((result[0] & 0x40u) && result[1] == 0x10u &&
+          !(ioc.fiq & IOC_FIQ_DISC_DATA));
+   newio_service_dma = true;
+   newio_transfer_limit = 1024u;
+   newio_start_read(0u, 3u, 3u);
+   newio_wait_irq(1100000u);
+   newio_result(result);
+   assert(!(result[0] & 0xc0u) && transfer_count == 1024u);
+
+   /* JFD is read-only: write data completes with the controller WP result. */
+   c82c711_fdc_write(5u, 0x05u, NULL);
+   const uint8_t write_params[8] = {0u, 0u, 0u, 3u, 3u, 3u, 0x1bu, 0xffu};
+   for (unsigned i = 0u; i < sizeof(write_params); ++i)
+      c82c711_fdc_write(5u, write_params[i], NULL);
+   newio_wait_irq(1100000u);
+   newio_result(result);
+   assert((result[0] & 0x40u) && result[1] == 0x02u &&
+          !(ioc.fiq & IOC_FIQ_DISC_DATA));
+
+   c82c711_fdc_shutdown();
+   disc_close(1);
+   disc_close(0);
+   arc_jfd_free(&image);
+
+   ArcJfdImage crc = load_image(root, "data-crc.jfd");
+   newio_reset(&crc, false);
+   transfer_count = 0u;
+   newio_transfer_limit = 128u;
+   newio_service_dma = true;
+   newio_start_read(0u, 4u, 0u);
+   newio_wait_irq(1100000u);
+   newio_result(result);
+   assert((result[0] & 0x40u) && result[1] == 0x20u && result[2] == 0x20u &&
+          !(ioc.fiq & IOC_FIQ_DISC_DATA));
+   c82c711_fdc_shutdown();
+   disc_close(0);
+   arc_jfd_free(&crc);
 }
 
 int main(int argc, char **argv)
@@ -457,6 +685,7 @@ int main(int argc, char **argv)
    test_busy_jfd_read_is_not_replaced(argv[1]);
    test_drive_one_helper(argv[1]);
    test_82c711_hardening();
+   test_82c711_golden(argv[1]);
    puts("jfd_controller_tests: all checks passed");
    return 0;
 }

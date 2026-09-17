@@ -918,6 +918,7 @@ static void print_usage(FILE *stream, const char *program)
    fprintf(stream,
       "Usage:\n"
       "  %s CORE ROM CONTENT DATA\n"
+      "  %s CORE ROM CONTENT DATA --newio-smoke\n"
       "  %s CORE ROM CONTENT DATA --real-boot [--osk-script FILE]\n"
       "  %s CORE ROM CONTENT DATA MEDIA_ROM PLAYLIST DISC1 DISC2 JFD JFD2 FIXTURES APP\n"
       "\n"
@@ -930,7 +931,7 @@ static void print_usage(FILE *stream, const char *program)
       "  screenshot NAME                     capture the following presented field\n"
       "Screenshots are written as DATA/evidence/NAME.ppm. NAME may contain\n"
       "letters, digits, dot, underscore, or hyphen (but not . or ..).\n",
-      program, program, program);
+      program, program, program, program);
 }
 
 static bool script_key(const char *name, unsigned *key)
@@ -1107,8 +1108,11 @@ int main(int argc, char **argv)
       return 0;
    }
    bool real_boot = false;
+   bool newio_smoke = false;
    const char *osk_script = NULL;
-   if (argc == 6 && !strcmp(argv[5], "--real-boot"))
+   if (argc == 6 && !strcmp(argv[5], "--newio-smoke"))
+      newio_smoke = true;
+   else if (argc == 6 && !strcmp(argv[5], "--real-boot"))
       real_boot = true;
    else if (argc == 8 && !strcmp(argv[5], "--real-boot") &&
             !strcmp(argv[6], "--osk-script"))
@@ -1173,6 +1177,10 @@ int main(int argc, char **argv)
    bool (*arc_engine_test_drive_media)(unsigned, bool *, char[41]) = NULL;
    bool (*arc_engine_test_cmos_image)(uint8_t[ARC_CMOS_MACHINE_SIZE]) = NULL;
    bool (*arc_engine_test_cmos_write)(unsigned, uint8_t) = NULL;
+   bool (*arc_engine_test_newio)(unsigned *, unsigned *, unsigned *, unsigned *, uint8_t *) = NULL;
+   bool (*arc_engine_test_joystick)(unsigned, uint8_t *) = NULL;
+   bool (*arc_engine_test_ioeb_clock)(unsigned) = NULL;
+   unsigned (*arc_engine_test_vidc_clock)(void) = NULL;
    void (*arc_libretro_test_fail_osk_allocations)(unsigned) = NULL;
    void (*arc_libretro_test_drop_osk_surface)(void) = NULL;
    bool (*arc_libretro_test_osk_source_unchanged)(void) = NULL;
@@ -1192,7 +1200,7 @@ int main(int argc, char **argv)
    void (*arc_libretro_test_force_input_reconcile)(void) = NULL;
    void (*arc_platform_test_input_events_reset)(void) = NULL;
    size_t (*arc_platform_test_input_events)(ArcKartEvent *, size_t) = NULL;
-   if (!real_boot)
+   if (!real_boot && !newio_smoke)
    {
       *(void **)(&arc_engine_audio_stats) = dlsym(module, "arc_engine_audio_stats");
       *(void **)(&arc_engine_media_insert) = dlsym(module, "arc_engine_media_insert");
@@ -1282,6 +1290,15 @@ int main(int argc, char **argv)
       assert(arc_libretro_test_register_input_profile(&test_profile));
       expect_test_profile = true;
    }
+   else if (newio_smoke)
+   {
+      *(void **)(&arc_engine_test_newio) = dlsym(module, "arc_engine_test_newio");
+      *(void **)(&arc_engine_test_joystick) = dlsym(module, "arc_engine_test_joystick");
+      *(void **)(&arc_engine_test_ioeb_clock) = dlsym(module, "arc_engine_test_ioeb_clock");
+      *(void **)(&arc_engine_test_vidc_clock) = dlsym(module, "arc_engine_test_vidc_clock");
+      assert(arc_engine_test_newio && arc_engine_test_joystick &&
+             arc_engine_test_ioeb_clock && arc_engine_test_vidc_clock);
+   }
    else if (osk_script)
    {
       *(void **)(&arc_libretro_test_osk_focus_key) =
@@ -1314,6 +1331,174 @@ int main(int argc, char **argv)
    assert(retro_serialize_size() == 0u);
    struct retro_game_info game = {argv[3], NULL, 0u, NULL};
    uint64_t source_hash = hash_file(argv[3]);
+
+   if (newio_smoke)
+   {
+      static const char *const machines[] = {"A3010", "A3020", "A4000"};
+
+      /* Option and firmware diagnostics are resolved before touching a live machine. */
+      option_machine = "A3010";
+      option_cpu = "ARM2";
+      phase = PHASE_LOAD;
+      assert(!retro_load_game(&game) && strstr(last_message, "ARM2 is incompatible with the A3010"));
+      option_cpu = "ARM250";
+      option_os = "RISC OS 3.00";
+      assert(!retro_load_game(&game) && strstr(last_message, "RISC OS 3.00 is not supported on the A3010"));
+      option_os = "RISC OS 3.11";
+      assert(!retro_load_game(&game) && strstr(last_message, "Missing RISC OS 3.11 firmware"));
+      option_os = "Auto";
+      char newio_hidden[4096];
+      snprintf(newio_hidden, sizeof(newio_hidden), "%s/newio-firmware.hidden", argv[4]);
+      assert(rename(renamed, newio_hidden) == 0);
+      assert(!retro_load_game(&game) &&
+             strstr(last_message, "A3010 requires RISC OS 3.10 or later firmware; found none"));
+      assert(rename(newio_hidden, renamed) == 0);
+
+      /* A rejected runtime change leaves the A3000 session running; a valid
+       * A3010 change then recreates it and executes the New-IO branch. */
+      option_machine = "A3000";
+      option_cpu = "ARM2";
+      option_joystick = "Keyboard";
+      assert(retro_load_game(&game));
+      phase = PHASE_RUN;
+      for (unsigned frame = 0u; frame < 60u; ++frame) retro_run();
+      uint64_t live_audio = audio_frames;
+      option_machine = "A3010";
+      option_cpu = "ARM2";
+      retro_reset();
+      assert(strstr(last_message, "ARM2 is incompatible with the A3010"));
+      retro_run();
+      assert(audio_frames > live_audio);
+      option_cpu = "ARM250";
+      option_joystick = "A3010";
+      retro_reset();
+      for (unsigned frame = 0u; frame < 180u; ++frame) retro_run();
+      unsigned transition_commands = 0u, transition_reads = 0u;
+      unsigned transition_success = 0u, transition_ide = 0u;
+      uint8_t transition_id = 0u;
+      assert(arc_engine_test_newio(&transition_commands, &transition_reads,
+                                   &transition_success, &transition_ide,
+                                   &transition_id));
+      assert(transition_id == 0x05u && transition_success >= 1u);
+      retro_unload_game();
+
+      for (unsigned index = 0u; index < 3u; ++index)
+      {
+         option_machine = machines[index];
+         option_cpu = "ARM250";
+         option_joystick = index == 0u ? "A3010" : "Keyboard";
+         retro_set_controller_port_device(0u, RETRO_DEVICE_JOYPAD);
+         retro_set_controller_port_device(1u, RETRO_DEVICE_JOYPAD);
+         phase = PHASE_LOAD;
+         assert(retro_load_game(&game));
+         unsigned video_before = video_frames;
+         uint64_t audio_before = audio_frames;
+         phase = PHASE_RUN;
+         for (unsigned frame = 0u; frame < 180u; ++frame) retro_run();
+         unsigned commands = 0u, reads = 0u, read_success = 0u, ide_accesses = 0u;
+         uint8_t device_id = 0u;
+         assert(arc_engine_test_newio(&commands, &reads, &read_success,
+                                      &ide_accesses, &device_id));
+         assert(device_id == 0x05u && commands >= 5u && reads >= 1u &&
+                read_success >= 1u && ide_accesses >= 4u);
+         assert(video_frames > video_before && audio_frames > audio_before);
+         if (index == 0u)
+         {
+            struct retro_system_av_info baseline, clocked;
+            retro_get_system_av_info(&baseline);
+            assert(arc_engine_test_ioeb_clock(1u));
+            uint64_t clock_audio = audio_frames;
+            for (unsigned frame = 0u; frame < 12u; ++frame) retro_run();
+            retro_get_system_av_info(&clocked);
+            double clock1_rate = clocked.timing.fps;
+            assert(arc_engine_test_vidc_clock() == 25175u &&
+                   clocked.timing.fps != baseline.timing.fps &&
+                   audio_frames > clock_audio);
+            assert(arc_engine_test_ioeb_clock(2u));
+            for (unsigned frame = 0u; frame < 12u; ++frame) retro_run();
+            retro_get_system_av_info(&clocked);
+            assert(arc_engine_test_vidc_clock() == 36000u &&
+                   clocked.timing.fps != baseline.timing.fps &&
+                   clocked.timing.fps != clock1_rate);
+            assert(arc_engine_test_ioeb_clock(0u));
+            bool restored = false;
+            for (unsigned frame = 0u; frame < 60u && !restored; ++frame)
+            {
+               retro_run();
+               retro_get_system_av_info(&clocked);
+               double delta = clocked.timing.fps - baseline.timing.fps;
+               restored = delta > -0.01 && delta < 0.01;
+            }
+            assert(arc_engine_test_vidc_clock() == 24000u && restored);
+            uint8_t joystick = 0u;
+            retro_run(); /* release the controller-device neutral gate */
+            joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_UP] = true;
+            joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_A] = true;
+            joypad_buttons[1][RETRO_DEVICE_ID_JOYPAD_RIGHT] = true;
+            retro_run();
+            assert(arc_engine_test_joystick(0u, &joystick) && joystick == 0x6eu);
+            assert(arc_engine_test_joystick(1u, &joystick) && joystick == 0x77u);
+            joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_UP] = false;
+            joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_A] = false;
+            joypad_buttons[1][RETRO_DEVICE_ID_JOYPAD_RIGHT] = false;
+            retro_run();
+            assert(arc_engine_test_joystick(0u, &joystick) && joystick == 0x7fu);
+            assert(arc_engine_test_joystick(1u, &joystick) && joystick == 0x7fu);
+
+            /* Explicit overrides suppress only their joystick action. */
+            option_pad[0][ARC_PAD_UP] = "Unbound";
+            variable_update = true;
+            retro_run();
+            retro_run(); /* release the mapping-change neutral gate */
+            joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_UP] = true;
+            retro_run();
+            assert(arc_engine_test_joystick(0u, &joystick) && joystick == 0x7fu);
+            joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_UP] = false;
+            option_pad[0][ARC_PAD_UP] = NULL;
+            variable_update = true;
+            retro_run();
+
+            /* The modal OSK neutralises port 0 while leaving its own controls live. */
+            joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_L3] = true;
+            retro_run();
+            joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_L3] = false;
+            retro_run();
+            joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_UP] = true;
+            joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_A] = true;
+            retro_run();
+            assert(arc_engine_test_joystick(0u, &joystick) && joystick == 0x7fu);
+            joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_UP] = false;
+            joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_A] = false;
+            joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_L3] = true;
+            retro_run();
+            joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_L3] = false;
+            retro_run();
+
+            /* Device disconnect and machine reset both release held levels. */
+            joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_A] = true;
+            retro_run();
+            assert(arc_engine_test_joystick(0u, &joystick) && joystick == 0x6fu);
+            retro_set_controller_port_device(0u, RETRO_DEVICE_NONE);
+            retro_run();
+            assert(arc_engine_test_joystick(0u, &joystick) && joystick == 0x7fu);
+            retro_set_controller_port_device(0u, RETRO_DEVICE_JOYPAD);
+            joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_A] = false;
+            retro_run();
+            joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_A] = true;
+            retro_run();
+            retro_reset();
+            assert(arc_engine_test_joystick(0u, &joystick) && joystick == 0x7fu);
+            joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_A] = false;
+         }
+         retro_unload_game();
+         assert(open_files == 0u && open_dirs == 0u);
+      }
+      retro_deinit();
+      assert(hash_file(argv[3]) == source_hash);
+      assert(dlclose(module) == 0);
+      puts("newio_libretro_harness: A3010/A3020/A4000 executed 82C711 guest path");
+      return 0;
+   }
 
    if (real_boot)
    {
