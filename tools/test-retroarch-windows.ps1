@@ -29,7 +29,10 @@ $coreDirectory = Join-Path $retroArchDirectory "cores"
 $infoDirectory = Join-Path $retroArchDirectory "info"
 $systemDirectory = Join-Path $retroArchDirectory "system\arcdroid\firmware"
 $saveDirectory = Join-Path $WorkDirectory "save"
-New-Item -ItemType Directory -Force $coreDirectory, $infoDirectory, $systemDirectory, $saveDirectory | Out-Null
+$coreOptionsDirectory = Join-Path $retroArchDirectory "config\ArcDroid"
+$coreOptions = Join-Path $coreOptionsDirectory "ArcDroid.opt"
+New-Item -ItemType Directory -Force $coreDirectory, $infoDirectory, $systemDirectory, `
+    $saveDirectory, $coreOptionsDirectory | Out-Null
 
 # GitHub's Windows runners have no physical audio endpoint. The official
 # stable build includes SDL2, whose dummy backend still exercises RetroArch's
@@ -52,7 +55,6 @@ function Send-QuitPair($Udp) {
     [void]$Udp.Send($quitBytes, $quitBytes.Length)
 }
 $config = Join-Path $WorkDirectory "retroarch-ci.cfg"
-$coreOptions = Join-Path $WorkDirectory "retroarch-core-options.cfg"
 @"
 video_driver = "gdi"
 audio_driver = "sdl2"
@@ -76,7 +78,6 @@ network_cmd_enable = "true"
 network_cmd_port = "55355"
 quit_press_twice = "false"
 initial_disk_change_enable = "true"
-core_options_path = "$(ConfigPath $coreOptions)"
 "@ | Set-Content -Encoding ASCII $config
 
 $log = Join-Path $evidenceDirectory "retroarch.log"
