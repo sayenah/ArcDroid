@@ -45,6 +45,7 @@ static uint64_t nonzero_audio_samples;
 static uint64_t video_signatures[16];
 static unsigned video_signature_count;
 static uint64_t last_video_signature;
+static unsigned video_signature_last_change_frame;
 static bool last_video_was_duplicate;
 static uint64_t video_trace_signature = UINT64_C(1469598103934665603);
 static double reported_rates[16];
@@ -678,6 +679,8 @@ static void video(const void *data, unsigned w, unsigned h, size_t pitch)
       if (video_signatures[i] == hash) seen = true;
    if (!seen && video_signature_count < 16u)
       video_signatures[video_signature_count++] = hash;
+   if (hash != last_video_signature)
+      video_signature_last_change_frame = video_frames + 1u;
    last_video_signature = hash;
    video_trace_signature ^= hash;
    video_trace_signature *= UINT64_C(1099511628211);
@@ -919,7 +922,9 @@ static void print_usage(FILE *stream, const char *program)
       "Usage:\n"
       "  %s CORE ROM CONTENT DATA\n"
       "  %s CORE ROM CONTENT DATA --newio-smoke\n"
-      "  %s CORE ROM CONTENT DATA --real-boot [--osk-script FILE]\n"
+      "  %s CORE ROM CONTENT DATA --real-boot "
+      "[--machine A3000|A3010|A3020|A4000] "
+      "[--joystick Keyboard|A3010] [--osk-script FILE]\n"
       "  %s CORE ROM CONTENT DATA MEDIA_ROM PLAYLIST DISC1 DISC2 JFD JFD2 FIXTURES APP\n"
       "\n"
       "OSK script grammar (one command per line; # begins a comment):\n"
@@ -1112,13 +1117,51 @@ int main(int argc, char **argv)
    const char *osk_script = NULL;
    if (argc == 6 && !strcmp(argv[5], "--newio-smoke"))
       newio_smoke = true;
-   else if (argc == 6 && !strcmp(argv[5], "--real-boot"))
-      real_boot = true;
-   else if (argc == 8 && !strcmp(argv[5], "--real-boot") &&
-            !strcmp(argv[6], "--osk-script"))
+   else if (argc >= 6 && !strcmp(argv[5], "--real-boot"))
    {
       real_boot = true;
-      osk_script = argv[7];
+      bool machine_seen = false;
+      bool joystick_seen = false;
+      bool osk_script_seen = false;
+      for (int argument = 6; argument < argc; ++argument)
+      {
+         if (!strcmp(argv[argument], "--machine") && !machine_seen &&
+             argument + 1 < argc)
+         {
+            const char *machine = argv[++argument];
+            if (strcmp(machine, "A3000") && strcmp(machine, "A3010") &&
+                strcmp(machine, "A3020") && strcmp(machine, "A4000"))
+            {
+               print_usage(stderr, argv[0]);
+               return 2;
+            }
+            option_machine = machine;
+            machine_seen = true;
+         }
+         else if (!strcmp(argv[argument], "--joystick") && !joystick_seen &&
+                  argument + 1 < argc)
+         {
+            const char *joystick = argv[++argument];
+            if (strcmp(joystick, "Keyboard") && strcmp(joystick, "A3010"))
+            {
+               print_usage(stderr, argv[0]);
+               return 2;
+            }
+            option_joystick = joystick;
+            joystick_seen = true;
+         }
+         else if (!strcmp(argv[argument], "--osk-script") &&
+                  !osk_script_seen && argument + 1 < argc)
+         {
+            osk_script = argv[++argument];
+            osk_script_seen = true;
+         }
+         else
+         {
+            print_usage(stderr, argv[0]);
+            return 2;
+         }
+      }
    }
    else if (argc != 5 && argc != 13)
    {
@@ -1200,6 +1243,8 @@ int main(int argc, char **argv)
    void (*arc_libretro_test_force_input_reconcile)(void) = NULL;
    void (*arc_platform_test_input_events_reset)(void) = NULL;
    size_t (*arc_platform_test_input_events)(ArcKartEvent *, size_t) = NULL;
+   if (real_boot || newio_smoke)
+      *(void **)(&arc_engine_test_newio) = dlsym(module, "arc_engine_test_newio");
    if (!real_boot && !newio_smoke)
    {
       *(void **)(&arc_engine_audio_stats) = dlsym(module, "arc_engine_audio_stats");
@@ -1292,7 +1337,6 @@ int main(int argc, char **argv)
    }
    else if (newio_smoke)
    {
-      *(void **)(&arc_engine_test_newio) = dlsym(module, "arc_engine_test_newio");
       *(void **)(&arc_engine_test_joystick) = dlsym(module, "arc_engine_test_joystick");
       *(void **)(&arc_engine_test_ioeb_clock) = dlsym(module, "arc_engine_test_ioeb_clock");
       *(void **)(&arc_engine_test_vidc_clock) = dlsym(module, "arc_engine_test_vidc_clock");
@@ -1525,6 +1569,21 @@ int main(int argc, char **argv)
       }
       else
          for (unsigned frame = 0; frame < real_boot_frames; ++frame) retro_run();
+      unsigned newio_commands = 0u;
+      unsigned newio_reads = 0u;
+      unsigned newio_successes = 0u;
+      unsigned newio_ide_accesses = 0u;
+      uint8_t newio_id = 0u;
+      bool newio_evidence = false;
+      bool newio_machine = !strcmp(option_machine, "A3010") ||
+         !strcmp(option_machine, "A3020") || !strcmp(option_machine, "A4000");
+      if (newio_machine && arc_engine_test_newio)
+      {
+         newio_evidence = arc_engine_test_newio(
+            &newio_commands, &newio_reads, &newio_successes,
+            &newio_ide_accesses, &newio_id);
+         assert(newio_evidence);
+      }
       retro_unload_game();
       retro_deinit();
       assert(!fclose(evidence_log));
@@ -1543,7 +1602,7 @@ int main(int argc, char **argv)
              "final %016llx, "
              "%llu audio frames, %llu nonzero samples; FDC commands %u (reads %u), "
              "KART traffic %u, CMOS reads %u writes %u; "
-             "VIDC OSD ext/legacy %u/%u, transient logs %u; evidence %s\n",
+             "VIDC OSD ext/legacy %u/%u, transient logs %u; boot-settle frame %u",
              firmware_message, video_frames, video_signature_count,
              (unsigned long long)video_trace_signature,
              (unsigned long long)last_video_signature,
@@ -1551,7 +1610,13 @@ int main(int argc, char **argv)
              (unsigned long long)nonzero_audio_samples,
              fdc_command_count, fdc_read_count, kart_traffic_count,
              cmos_read_count, cmos_write_count, vidc_osd_ext_calls,
-             vidc_osd_legacy_calls, vidc_info_log_lines, evidence_path);
+             vidc_osd_legacy_calls, vidc_info_log_lines,
+             video_signature_last_change_frame);
+      if (newio_evidence)
+         printf("; IOEB id 0x%02x; FDC commands %u reads %u successes %u; "
+                "IDE accesses %u", newio_id, newio_commands, newio_reads,
+                newio_successes, newio_ide_accesses);
+      printf("; evidence %s\n", evidence_path);
       return 0;
    }
 
@@ -1635,6 +1700,9 @@ int main(int argc, char **argv)
    assert(strstr(last_message, "A3010 joystick interface"));
    option_joystick = "Keyboard";
 
+   /* The first New-IO creation faults before c82c711_fdc_init(); unwinding
+    * must treat the never-initialised controller as inert. */
+   option_machine = "A3010"; option_cpu = "ARM250";
    assert(setenv("ARCDROID_TEST_FAIL_VIDEO_ALLOC", "1", 1) == 0);
    phase = PHASE_LOAD; assert(!retro_load_game(&game));
    assert(strstr(last_message, "video surface") && open_files == 0u && open_dirs == 0u);
