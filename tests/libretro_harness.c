@@ -1407,6 +1407,13 @@ int main(int argc, char **argv)
       phase = PHASE_RUN;
       for (unsigned frame = 0u; frame < 60u; ++frame) retro_run();
       uint64_t live_audio = audio_frames;
+      assert(rename(renamed, newio_hidden) == 0);
+      retro_reset();
+      assert(strstr(last_message,
+                    "Missing RISC OS 3.11 firmware in <system>/arcdroid/firmware."));
+      retro_run();
+      assert(audio_frames > live_audio && rename(newio_hidden, renamed) == 0);
+      live_audio = audio_frames;
       option_machine = "A3010";
       option_cpu = "ARM2";
       retro_reset();
@@ -1424,6 +1431,44 @@ int main(int argc, char **argv)
                                    &transition_success, &transition_ide,
                                    &transition_id));
       assert(transition_id == 0x05u && transition_success >= 1u);
+
+      /* Reset-time firmware selection uses the same machine-specific wording
+       * as initial load and rejects before disturbing the live session. */
+      live_audio = audio_frames;
+      assert(rename(renamed, newio_hidden) == 0);
+      retro_reset();
+      assert(strstr(last_message,
+                    "A3010 requires RISC OS 3.10 or later firmware; found none"));
+      retro_run();
+      assert(audio_frames > live_audio &&
+             arc_engine_test_newio(NULL, NULL, NULL, NULL, &transition_id) &&
+             transition_id == 0x05u && rename(newio_hidden, renamed) == 0);
+
+      /* Joystick/machine compatibility is validated before teardown. Keep
+       * the A3010 machine, mounted media, and active control routing intact. */
+      unsigned preserved_count = disk_control.get_num_images();
+      unsigned preserved_index = disk_control.get_image_index();
+      bool preserved_ejected = disk_control.get_eject_state();
+      option_machine = "A3020";
+      option_cpu = "ARM250";
+      retro_reset();
+      assert(strstr(last_message,
+                    "A3010 joystick interface is incompatible with the A3020 machine"));
+      assert(disk_control.get_num_images() == preserved_count &&
+             disk_control.get_image_index() == preserved_index &&
+             disk_control.get_eject_state() == preserved_ejected &&
+             arc_engine_test_newio(NULL, NULL, NULL, NULL, &transition_id) &&
+             transition_id == 0x05u);
+      retro_set_controller_port_device(0u, RETRO_DEVICE_JOYPAD);
+      retro_run();
+      joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_A] = true;
+      retro_run();
+      uint8_t preserved_joystick = 0u;
+      assert(arc_engine_test_joystick(0u, &preserved_joystick) &&
+             preserved_joystick == 0x6fu);
+      joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_A] = false;
+      retro_run();
+      option_machine = "A3010";
       retro_unload_game();
 
       for (unsigned index = 0u; index < 3u; ++index)

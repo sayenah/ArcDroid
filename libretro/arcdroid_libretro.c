@@ -324,6 +324,13 @@ static bool arc_read_options(ArcCoreOptions *options, char *error, size_t error_
    }
    if (!strcmp(joystick, "A3010")) options->request_a3010_joystick = true;
    else if (strcmp(joystick, "Auto") && strcmp(joystick, "Keyboard")) goto invalid;
+   if (options->request_a3010_joystick && descriptor->id != ARC_MACHINE_A3010)
+   {
+      if (error && error_size) snprintf(error, error_size,
+         "A3010 joystick interface is incompatible with the %s machine",
+         descriptor->name);
+      return false;
+   }
    if (!strcmp(pointer, "relative")) options->pointer_relative = true;
    else if (strcmp(pointer, "disabled")) goto invalid;
    if (!strcmp(pointer_stick, "right")) options->pointer_stick = ARC_POINTER_STICK_RIGHT;
@@ -580,11 +587,15 @@ static bool arc_select_firmware(ArcOsClass requested, ArcMachine machine, uint8_
             else
             {
                const ArcMachineDescriptor *d = arc_machine_descriptor(machine);
-               snprintf(error, error_size,
-                        "%s requires RISC OS 3.10 or later firmware; found %s",
-                        d ? d->name : "Machine",
-                        search.best_available == ARC_OS_UNKNOWN ? "none" :
-                        arc_os_name(search.best_available));
+               if (d && d->io == ARC_IO_NEW_82C711)
+                  snprintf(error, error_size,
+                           "%s requires RISC OS 3.10 or later firmware; found %s",
+                           d->name,
+                           search.best_available == ARC_OS_UNKNOWN ? "none" :
+                           arc_os_name(search.best_available));
+               else
+                  snprintf(error, error_size,
+                           "Missing RISC OS 3.11 firmware in <system>/arcdroid/firmware.");
             }
       }
       return false;
