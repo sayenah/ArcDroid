@@ -1683,14 +1683,15 @@ int main(int argc, char **argv)
       assert(retro_load_game(&newio_playlist));
       phase = PHASE_RUN;
       for (unsigned frame = 0u; frame < 180u; ++frame) retro_run();
-      assert(disk_control.get_num_images() == 2u &&
-             disk_control.get_image_index() == 0u &&
-             disk_control.set_eject_state(true) &&
-             disk_control.set_image_index(1u) &&
-             disk_control.set_eject_state(false));
       uint8_t dir = 0u;
-      assert(arc_engine_test_newio_dir(false, &dir) && (dir & 0x80u));
+      assert(disk_control.get_num_images() == 2u &&
+             disk_control.get_image_index() == 0u);
       assert(arc_engine_test_newio_dir(true, &dir) && !(dir & 0x80u));
+      assert(disk_control.set_eject_state(true));
+      assert(arc_engine_test_newio_dir(false, &dir) && (dir & 0x80u));
+      assert(disk_control.set_image_index(1u));
+      assert(disk_control.set_eject_state(false));
+      assert(arc_engine_test_newio_dir(false, &dir) && (dir & 0x80u));
       assert(arc_engine_test_newio_dir(true, &dir) && !(dir & 0x80u));
 
       /* An active read is cancelled once. Reinsertion before result
@@ -2973,12 +2974,39 @@ int main(int argc, char **argv)
    option_writes = "shadow";
    option_pointer = "relative";
    phase = PHASE_LOAD; assert(retro_load_game(&game));
+   unsigned preserved_count = disk_control.get_num_images();
+   unsigned preserved_index = disk_control.get_image_index();
+   bool preserved_ejected = disk_control.get_eject_state();
+   bool preserved_write_protected = false;
+   char preserved_media_digest[41];
+   uint8_t preserved_cmos_identity[16];
+   assert(arc_engine_test_drive_media(0u, &preserved_write_protected,
+                                      preserved_media_digest));
+   assert(retro_get_memory_size(RETRO_MEMORY_SAVE_RAM) == ARC_CMOS_RECORD_SIZE);
+   memcpy(preserved_cmos_identity,
+          retro_get_memory_data(RETRO_MEMORY_SAVE_RAM),
+          sizeof(preserved_cmos_identity));
+   unsigned video_before_rejected_reset = video_frames;
+   uint64_t audio_before_rejected_reset = audio_frames;
    unsigned queries_before_reset = option_query_count;
    option_joystick = "A3010";
    phase = PHASE_RUN; retro_reset();
    assert(option_query_count >= queries_before_reset + 10u &&
           strstr(last_message, "A3010 joystick interface"));
-   retro_run();
+   for (unsigned frame = 0u; frame < 60u; ++frame) retro_run();
+   bool current_write_protected = false;
+   char current_media_digest[41];
+   assert(video_frames > video_before_rejected_reset &&
+          audio_frames > audio_before_rejected_reset &&
+          disk_control.get_num_images() == preserved_count &&
+          disk_control.get_image_index() == preserved_index &&
+          disk_control.get_eject_state() == preserved_ejected &&
+          arc_engine_test_drive_media(0u, &current_write_protected,
+                                      current_media_digest) &&
+          current_write_protected == preserved_write_protected &&
+          !strcmp(current_media_digest, preserved_media_digest) &&
+          !memcmp(retro_get_memory_data(RETRO_MEMORY_SAVE_RAM),
+                  preserved_cmos_identity, sizeof(preserved_cmos_identity)));
    option_joystick = "Keyboard";
    phase = PHASE_LOAD; assert(retro_load_game(&game));
    retro_unload_game();
