@@ -1236,6 +1236,7 @@ int main(int argc, char **argv)
    bool (*arc_engine_test_cmos_image)(uint8_t[ARC_CMOS_MACHINE_SIZE]) = NULL;
    bool (*arc_engine_test_cmos_write)(unsigned, uint8_t) = NULL;
    bool (*arc_engine_test_newio)(unsigned *, unsigned *, unsigned *, unsigned *, uint8_t *) = NULL;
+   bool (*arc_engine_test_arm2_swp_undefined)(void) = NULL;
    bool (*arc_engine_test_newio_dir)(bool, uint8_t *) = NULL;
    bool (*arc_engine_test_newio_read_start)(unsigned, uint8_t) = NULL;
    bool (*arc_engine_test_newio_result)(uint8_t[7], bool *) = NULL;
@@ -1366,12 +1367,15 @@ int main(int argc, char **argv)
          dlsym(module, "arc_engine_test_newio_result");
       *(void **)(&arc_engine_test_newio_read_finish) =
          dlsym(module, "arc_engine_test_newio_read_finish");
+      *(void **)(&arc_engine_test_arm2_swp_undefined) =
+         dlsym(module, "arc_engine_test_arm2_swp_undefined");
       *(void **)(&arc_engine_test_joystick) = dlsym(module, "arc_engine_test_joystick");
       *(void **)(&arc_engine_test_ioeb_clock) = dlsym(module, "arc_engine_test_ioeb_clock");
       *(void **)(&arc_engine_test_vidc_clock) = dlsym(module, "arc_engine_test_vidc_clock");
       assert(arc_engine_test_newio && arc_engine_test_drive_media &&
              arc_engine_test_newio_dir && arc_engine_test_newio_read_start &&
              arc_engine_test_newio_result && arc_engine_test_newio_read_finish &&
+             arc_engine_test_arm2_swp_undefined &&
              arc_engine_test_joystick &&
              arc_engine_test_ioeb_clock && arc_engine_test_vidc_clock);
    }
@@ -1438,6 +1442,7 @@ int main(int argc, char **argv)
       assert(retro_load_game(&game));
       phase = PHASE_RUN;
       for (unsigned frame = 0u; frame < 60u; ++frame) retro_run();
+      assert(arc_engine_test_arm2_swp_undefined());
       uint64_t live_audio = audio_frames;
       assert(rename(renamed, newio_hidden) == 0);
       retro_reset();
@@ -1521,7 +1526,7 @@ int main(int argc, char **argv)
          assert(arc_engine_test_newio(&commands, &reads, &read_success,
                                       &ide_accesses, &device_id));
          assert(device_id == 0x05u && commands >= 5u && reads >= 1u &&
-                read_success >= 1u && ide_accesses >= 4u);
+                read_success >= 1u && ide_accesses >= 18u);
          assert(video_frames > video_before && audio_frames > audio_before);
          if (index == 0u)
          {

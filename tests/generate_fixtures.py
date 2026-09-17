@@ -57,6 +57,9 @@ class Arm2:
     def subs_imm(self, rd: int, rn: int, value: int) -> None:
         self.emit(0xE2500000 | (rn << 16) | (rd << 12) | self._imm(value))
 
+    def add_imm(self, rd: int, rn: int, value: int) -> None:
+        self.emit(0xE2800000 | (rn << 16) | (rd << 12) | self._imm(value))
+
     def eor(self, rd: int, rn: int, rm: int) -> None:
         self.emit(0xE0200000 | (rn << 16) | (rd << 12) | rm)
 
@@ -150,6 +153,14 @@ def build_rom(media_exerciser: bool = False) -> bytearray:
         a.ldr_const(0, cam)
         a.str(1, 0)
 
+    # Install a minimal undefined-instruction handler in the mapped low page.
+    # The A3000 path below proves that both SWP encodings reach it on ARM2.
+    a.ldr_const(0, 0x00000008)
+    a.ldr_const(1, 0xE28CC001)  # add r12, r12, #1
+    a.str(1, 0)
+    a.ldr_const(1, 0xE1B0F00E)  # movs pc, lr
+    a.str(1, 0, 4)
+
     # IOEB device ID distinguishes New-IO without relying on a machine option.
     a.ldr_const(0, 0x03350050)
     a.ldr(1, 0, byte=True)
@@ -157,7 +168,8 @@ def build_rom(media_exerciser: bool = False) -> bytearray:
     a.branch("old_io_fdc", "ne")
     # The New-IO IDE interface is deliberately an absent bus. Exercise both
     # register ranges and require the open-bus value before touching the FDC.
-    for address in (0x033107C0, 0x03310FD8):
+    for address in tuple(0x033107C0 + register * 4 for register in range(8)) + \
+                   (0x03310FD8,):
         a.ldr_const(0, address)
         a.ldr(1, 0, byte=True)
         a.cmp_imm(1, 0xFF)
@@ -233,9 +245,20 @@ def build_rom(media_exerciser: bool = False) -> bytearray:
     a.branch("fdc_done")
 
     a.label("newio_fail")
-    a.branch("newio_fail")
+    a.ldr_const(6, 0x00DEAD00)
+    a.branch("fdc_done")
 
     a.label("old_io_fdc")
+    a.mov(12, 0)
+    a.ldr_const(0, 0x00010000)
+    a.mov(2, 0x5A)
+    a.swp(3, 2, 0)
+    a.swp(3, 2, 0, byte=True)
+    a.cmp_imm(12, 2)
+    a.branch("newio_fail", "ne")
+    a.ldr_const(0, 0x0002FFF0)
+    a.mov(1, 0xA2)
+    a.str(1, 0, byte=True)
     # Select drive 0, side 0, motor on, double density; read track 0 sector 0.
     for address, value in ((0x03350040, 0x9E), (0x03350018, 0x00)):
         a.ldr_const(0, address)

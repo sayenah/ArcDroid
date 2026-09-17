@@ -133,6 +133,12 @@ bool arc_engine_test_newio(unsigned *commands, unsigned *read_data,
    return true;
 }
 
+bool arc_engine_test_arm2_swp_undefined(void)
+{
+   return arc_machine_live && arc_saved_machine == ARC_MACHINE_A3000 &&
+          readmemb(0x0002fff0u) == 0xa2u;
+}
+
 static bool arc_test_newio_live(void)
 {
    const ArcMachineDescriptor *descriptor = arc_machine_descriptor(arc_saved_machine);
