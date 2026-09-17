@@ -53,7 +53,8 @@ void ioc_irqbc(uint8_t value) { ioc.irqb &= (uint8_t)~value; }
 /* A single in-memory helper lets the real raw-drive and WD1772 path prove
  * drive-1 selection without adding a production test hook. */
 struct ArcIoFile { size_t position; bool writable; };
-static uint8_t raw_helper[ARC_LAUNCH_DISC_SIZE];
+static uint8_t raw_helper[819200u];
+static size_t raw_helper_length = ARC_LAUNCH_DISC_SIZE;
 static struct ArcIoFile raw_file;
 ArcIoFile *arc_io_open_file(const char *path, bool writable)
 {
@@ -63,23 +64,23 @@ ArcIoFile *arc_io_open_file(const char *path, bool writable)
 }
 bool arc_io_close_file(ArcIoFile *file) { return file == &raw_file; }
 int64_t arc_io_file_length(ArcIoFile *file)
-{ return file == &raw_file ? (int64_t)sizeof(raw_helper) : -1; }
+{ return file == &raw_file ? (int64_t)raw_helper_length : -1; }
 int64_t arc_io_seek_file(ArcIoFile *file, int64_t offset, int origin)
 {
    if (file != &raw_file || origin != RETRO_VFS_SEEK_POSITION_START ||
-       offset < 0 || (uint64_t)offset > sizeof(raw_helper)) return -1;
+       offset < 0 || (uint64_t)offset > raw_helper_length) return -1;
    file->position = (size_t)offset; return offset;
 }
 size_t arc_io_read_file(ArcIoFile *file, void *data, size_t size)
 {
-   if (file != &raw_file || size > sizeof(raw_helper) - file->position) return 0u;
+   if (file != &raw_file || size > raw_helper_length - file->position) return 0u;
    memcpy(data, raw_helper + file->position, size); file->position += size;
    return size;
 }
 size_t arc_io_write_file(ArcIoFile *file, const void *data, size_t size)
 {
    if (file != &raw_file || !file->writable ||
-       size > sizeof(raw_helper) - file->position) return 0u;
+       size > raw_helper_length - file->position) return 0u;
    memcpy(raw_helper + file->position, data, size); file->position += size;
    return size;
 }
@@ -148,6 +149,7 @@ static void test_drive_one_helper(const char *root)
    ArcJfdImage image = load_image(root, "size-1.jfd");
    controller_reset(&image);
    assert(arc_launch_disc_build("Demo", "!Demo", raw_helper));
+   raw_helper_length = ARC_LAUNCH_DISC_SIZE;
    adf_set_writable(1, 0);
    assert(disc_load_raw(1, "memory-helper.adl", ARC_GEOMETRY_640K_L));
    assert(writeprot[1] && !disc_empty(0) && !disc_empty(1));
@@ -508,6 +510,7 @@ static void newio_reset(const ArcJfdImage *image, bool helper)
    if (helper)
    {
       assert(arc_launch_disc_build("Demo", "!Demo", raw_helper));
+      raw_helper_length = ARC_LAUNCH_DISC_SIZE;
       adf_set_writable(1, 0);
       assert(disc_load_raw(1, "memory-helper.adl", ARC_GEOMETRY_640K_L));
    }
@@ -562,6 +565,25 @@ static void newio_result(uint8_t result[7])
 static void test_82c711_golden(const char *root)
 {
    uint8_t result[7];
+   for (unsigned code = 0u; code < 3u; ++code)
+   {
+      char name[32];
+      snprintf(name, sizeof(name), "size-%u.jfd", code);
+      ArcJfdImage family = load_image(root, name);
+      newio_reset(&family, false);
+      transfer_count = 0u;
+      newio_transfer_limit = (size_t)128u << code;
+      newio_service_dma = true;
+      newio_dma_write = false;
+      newio_start_read(0u, (uint8_t)code, (uint8_t)code);
+      newio_wait_irq(1100000u);
+      newio_result(result);
+      assert(!(result[0] & 0xc0u) && transfer_count == ((size_t)128u << code) &&
+             transfer[0] == (uint8_t)code);
+      c82c711_fdc_shutdown();
+      disc_close(0);
+      arc_jfd_free(&family);
+   }
    ArcJfdImage image = load_image(root, "size-3.jfd");
    newio_reset(&image, true);
 
@@ -630,6 +652,22 @@ static void test_82c711_golden(const char *root)
    newio_result(result);
    assert(!(result[0] & 0xc0u) && transfer_count == 256u);
 
+   /* Restore drive 0 after the independent drive-isolation sequence. */
+   c82c711_fdc_shutdown();
+   disc_close(1);
+   disc_close(0);
+   newio_reset(&image, true);
+   newio_service_dma = true;
+   newio_dma_write = false;
+
+   transfer_count = 0u;
+   newio_transfer_limit = 1024u;
+   newio_start_read(1u, 0xfeu, 1u);
+   newio_wait_irq(1100000u);
+   newio_result(result);
+   assert((result[0] & 0x40u) && result[1] == 0x05u &&
+          transfer_count == 0u && !(ioc.fiq & IOC_FIQ_DISC_DATA));
+
    /* Deliberately miss a DMA request: overrun clears FIQ and a later read recovers. */
    transfer_count = 0u;
    newio_service_dma = false;
@@ -674,6 +712,56 @@ static void test_82c711_golden(const char *root)
    c82c711_fdc_shutdown();
    disc_close(0);
    arc_jfd_free(&crc);
+
+   ArcJfdImage header_crc = load_image(root, "id-crc.jfd");
+   newio_reset(&header_crc, false);
+   transfer_count = 0u;
+   newio_transfer_limit = 128u;
+   newio_service_dma = true;
+   newio_dma_write = false;
+   newio_start_read(0u, 4u, 0u);
+   newio_wait_irq(1100000u);
+   newio_result(result);
+   assert((result[0] & 0x40u) && result[1] == 0x20u && result[2] == 0u &&
+          transfer_count == 0u && !(ioc.fiq & IOC_FIQ_DISC_DATA));
+   c82c711_fdc_shutdown();
+   disc_close(0);
+   arc_jfd_free(&header_crc);
+}
+
+static void test_82c711_raw_geometries(void)
+{
+   static const struct {
+      ArcMediaGeometry geometry;
+      size_t image_size;
+      uint8_t sector_size_code;
+      size_t transfer_size;
+   } cases[] = {
+      {ARC_GEOMETRY_320K, 327680u, 1u, 256u},
+      {ARC_GEOMETRY_640K_L, 655360u, 1u, 256u},
+      {ARC_GEOMETRY_800K_E, 819200u, 3u, 1024u}
+   };
+   for (unsigned index = 0u; index < sizeof(cases) / sizeof(cases[0]); ++index)
+   {
+      memset(raw_helper, (int)(0x40u + index), cases[index].image_size);
+      raw_helper_length = cases[index].image_size;
+      newio_reset(NULL, false);
+      adf_set_writable(0, 0);
+      assert(disc_load_raw(0, "memory-helper.adl", cases[index].geometry));
+      transfer_count = 0u;
+      newio_transfer_limit = cases[index].transfer_size;
+      newio_service_dma = true;
+      newio_dma_write = false;
+      newio_start_read(0u, 0u, cases[index].sector_size_code);
+      newio_wait_irq(1100000u);
+      uint8_t result[7];
+      newio_result(result);
+      assert(!(result[0] & 0xc0u) && transfer_count == cases[index].transfer_size &&
+             transfer[0] == (uint8_t)(0x40u + index));
+      c82c711_fdc_shutdown();
+      disc_close(0);
+   }
+   raw_helper_length = ARC_LAUNCH_DISC_SIZE;
 }
 
 int main(int argc, char **argv)
@@ -686,6 +774,7 @@ int main(int argc, char **argv)
    test_drive_one_helper(argv[1]);
    test_82c711_hardening();
    test_82c711_golden(argv[1]);
+   test_82c711_raw_geometries();
    puts("jfd_controller_tests: all checks passed");
    return 0;
 }
