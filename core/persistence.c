@@ -9,11 +9,13 @@ static void arc_put32(uint8_t *p, uint32_t value)
    p[2] = (uint8_t)(value >> 16); p[3] = (uint8_t)(value >> 24);
 }
 
-static uint8_t arc_machine_tag(const char *machine)
+static uint8_t arc_machine_tag(ArcMachine machine)
 {
+   const ArcMachineDescriptor *descriptor = arc_machine_descriptor(machine);
+   const char *name = descriptor ? descriptor->name : NULL;
    uint8_t result = 0u;
-   if (machine)
-      while (*machine) result = (uint8_t)(result * 33u + (uint8_t)*machine++);
+   if (name)
+      while (*name) result = (uint8_t)(result * 33u + (uint8_t)*name++);
    return result;
 }
 

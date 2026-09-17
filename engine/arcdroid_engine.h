@@ -32,6 +32,7 @@ typedef struct {
 bool arc_engine_start(const uint8_t *firmware, size_t firmware_size,
                       const ArcEngineMedia *media,
                       const ArcEngineMedia *helper,
+                      const ArcMachineDescriptor *machine,
                       const uint8_t cmos[ARC_CMOS_MACHINE_SIZE],
                       char *error, size_t error_size);
 void arc_engine_set_log_callback(ArcEngineLogCallback callback, void *opaque);

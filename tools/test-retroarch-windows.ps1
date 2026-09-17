@@ -29,7 +29,10 @@ $coreDirectory = Join-Path $retroArchDirectory "cores"
 $infoDirectory = Join-Path $retroArchDirectory "info"
 $systemDirectory = Join-Path $retroArchDirectory "system\arcdroid\firmware"
 $saveDirectory = Join-Path $WorkDirectory "save"
-New-Item -ItemType Directory -Force $coreDirectory, $infoDirectory, $systemDirectory, $saveDirectory | Out-Null
+$coreOptionsDirectory = Join-Path $retroArchDirectory "config\ArcDroid"
+$coreOptions = Join-Path $coreOptionsDirectory "ArcDroid.opt"
+New-Item -ItemType Directory -Force $coreDirectory, $infoDirectory, $systemDirectory, `
+    $saveDirectory, $coreOptionsDirectory | Out-Null
 
 # GitHub's Windows runners have no physical audio endpoint. The official
 # stable build includes SDL2, whose dummy backend still exercises RetroArch's
@@ -216,6 +219,31 @@ if ($errors) {
     $errors | ForEach-Object { Write-Error $_.Line }
     throw "RetroArch emitted error log lines"
 }
+$a3000ScreenshotHash = (Get-FileHash -Algorithm SHA256 $screenshot).Hash.ToLowerInvariant()
+
+# Slice 4: select A3010/ARM250 through RetroArch's real core-options path. The
+# generated ROM perturbs its payload-derived palette only after the 82C711 DMA
+# result phase, so a different screenshot plus the launch log proves that the
+# native frontend executed the New-IO branch.
+@"
+arcdroid_machine = "A3010"
+arcdroid_cpu = "ARM250"
+arcdroid_joystick_if = "A3010"
+"@ | Set-Content -Encoding ASCII $coreOptions
+Invoke-ArcDroid 600 $true
+$newioScreenshotHash = (Get-FileHash -Algorithm SHA256 $screenshot).Hash.ToLowerInvariant()
+if ($newioScreenshotHash -eq $a3000ScreenshotHash) {
+    throw "A3010 screenshot matched A3000; generated New-IO branch was not observed"
+}
+if (-not (Select-String -Quiet -SimpleMatch "Launch options: machine=A3010 cpu=ARM250" $log)) {
+    throw "RetroArch log does not identify the A3010/ARM250 launch"
+}
+Copy-Item -Force $screenshot (Join-Path $evidenceDirectory "arcdroid-newio-pattern.png")
+@"
+arcdroid_machine = "A3000"
+arcdroid_cpu = "ARM2"
+arcdroid_joystick_if = "Keyboard"
+"@ | Set-Content -Encoding ASCII $coreOptions
 Write-Host "RetroArch ${retroArchVersion}: initial 600-frame run and 10 content reloads passed"
 Write-Host "Screenshot SHA-256: $((Get-FileHash -Algorithm SHA256 $screenshot).Hash.ToLowerInvariant())"
 $reloadEvidence = if ($inSessionReloads) {
@@ -242,6 +270,7 @@ if ($env:GITHUB_STEP_SUMMARY) {
     Add-Content -Encoding UTF8 $env:GITHUB_STEP_SUMMARY "- Screenshot: expected payload-derived cyan/red pattern observed ($dimensions; $cyanPixels/$redPixels pixels)."
     Add-Content -Encoding UTF8 $env:GITHUB_STEP_SUMMARY "- Reloads: $reloadEvidence."
     Add-Content -Encoding UTF8 $env:GITHUB_STEP_SUMMARY "- Audio: $audioEvidence."
+    Add-Content -Encoding UTF8 $env:GITHUB_STEP_SUMMARY "- Slice 4 New-IO: A3010/ARM250 launch logged and the executed-branch screenshot differed from A3000."
 }
 
 # Slice 2a exercises disk control and initial-image replay with the generated

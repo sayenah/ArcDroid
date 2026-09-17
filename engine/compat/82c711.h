@@ -3,4 +3,5 @@
 #include <stdint.h>
 uint8_t c82c711_read(uint32_t address);
 void c82c711_write(uint32_t address, uint8_t value);
+void c82c711_init(void);
 #endif

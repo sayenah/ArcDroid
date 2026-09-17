@@ -3,6 +3,7 @@
 #include "arc_io.h"
 #include "arcdroid_core.h"
 #include "arcdroid_engine.h"
+#include "arcdroid_platform.h"
 #include "jfd.h"
 #include "playlist.h"
 
@@ -242,6 +243,8 @@ static ArcTouchState arc_touch;
 
 typedef struct {
    ArcOsClass requested_os;
+   ArcMachine machine;
+   ArcCpu cpu;
    bool request_a3010_joystick;
    bool pointer_relative;
    ArcPointerStick pointer_stick;
@@ -292,10 +295,19 @@ static bool arc_read_options(ArcCoreOptions *options, char *error, size_t error_
    const char *osk_toggle = arc_option_value("arcdroid_osk_toggle", "L3");
    if (!options) return false;
    memset(options, 0, sizeof(*options));
-   if ((strcmp(machine, "Auto") && strcmp(machine, "A3000")) ||
-       (strcmp(cpu, "Auto") && strcmp(cpu, "ARM2")) ||
+   const ArcMachineDescriptor *descriptor = arc_machine_from_name(machine);
+   if (!descriptor || (strcmp(cpu, "Auto") && strcmp(cpu, "ARM2") && strcmp(cpu, "ARM250")) ||
        (strcmp(memory, "Auto") && strcmp(memory, "4 MB")))
       goto invalid;
+   options->machine = descriptor->id;
+   options->cpu = !strcmp(cpu, "ARM2") ? ARC_CPU_ARM2 :
+                  !strcmp(cpu, "ARM250") ? ARC_CPU_ARM250 : descriptor->cpu;
+   if (options->cpu != descriptor->cpu)
+   {
+      if (error && error_size) snprintf(error, error_size, "%s is incompatible with the %s machine",
+                                        cpu, descriptor->name);
+      return false;
+   }
    if (!strcmp(os, "RISC OS 3.11")) options->requested_os = ARC_OS_RISCOS_311;
    else if (!strcmp(os, "RISC OS 3.10")) options->requested_os = ARC_OS_RISCOS_310;
    else if (!strcmp(os, "RISC OS 3.19")) options->requested_os = ARC_OS_RISCOS_319;
@@ -303,8 +315,22 @@ static bool arc_read_options(ArcCoreOptions *options, char *error, size_t error_
    else if (!strcmp(os, "RISC OS 2.00")) options->requested_os = ARC_OS_RISCOS_200;
    else if (!strcmp(os, "Arthur 1.20")) options->requested_os = ARC_OS_ARTHUR_120;
    else if (strcmp(os, "Auto")) goto invalid;
+   if (options->requested_os != ARC_OS_UNKNOWN &&
+       !arc_machine_supports_os(options->machine, options->requested_os))
+   {
+      if (error && error_size) snprintf(error, error_size, "%s is not supported on the %s",
+         arc_os_name(options->requested_os), descriptor->name);
+      return false;
+   }
    if (!strcmp(joystick, "A3010")) options->request_a3010_joystick = true;
    else if (strcmp(joystick, "Auto") && strcmp(joystick, "Keyboard")) goto invalid;
+   if (options->request_a3010_joystick && descriptor->id != ARC_MACHINE_A3010)
+   {
+      if (error && error_size) snprintf(error, error_size,
+         "A3010 joystick interface is incompatible with the %s machine",
+         descriptor->name);
+      return false;
+   }
    if (!strcmp(pointer, "relative")) options->pointer_relative = true;
    else if (strcmp(pointer, "disabled")) goto invalid;
    if (!strcmp(pointer_stick, "right")) options->pointer_stick = ARC_POINTER_STICK_RIGHT;
@@ -392,7 +418,10 @@ typedef struct {
    uint8_t *data;
    size_t size;
    unsigned priority;
+   ArcOsClass best_available;
+   unsigned best_available_priority;
    ArcOsClass requested_os;
+   ArcMachine machine;
    size_t suspicious_size;
    size_t nearest_size;
    ArcFirmwarePart parts[ARC_OS_ARTHUR_030 + 1u][4];
@@ -406,6 +435,20 @@ static bool arc_visit_firmware(const char *path, void *opaque)
    if (!arc_io_read_all(path, &data, &size)) return true;
    ArcDigest digest = arc_digest(data, size);
    const ArcFirmwareFingerprint *match = arc_firmware_match(&digest);
+   if (match)
+   {
+      unsigned available_priority = arc_firmware_auto_priority(match->os);
+      if (available_priority < search->best_available_priority)
+      {
+         search->best_available = match->os;
+         search->best_available_priority = available_priority;
+      }
+   }
+   if (match && !arc_machine_supports_os(search->machine, match->os))
+   {
+      free(data);
+      return true;
+   }
    size_t nearest = 0u;
    if (!match && arc_firmware_nearest_size(size, ARC_FIRMWARE_SIZE_MARGIN, &nearest))
    {
@@ -455,6 +498,7 @@ static void arc_finish_firmware_search(ArcFirmwareSearch *search)
    {
       if (search->requested_os != ARC_OS_UNKNOWN &&
           (ArcOsClass)os != search->requested_os) continue;
+      if (!arc_machine_supports_os(search->machine, (ArcOsClass)os)) continue;
       ArcFirmwarePart *first = &search->parts[os][0];
       if (!first->match) continue;
       ArcFirmwareRecipe recipe = first->match->recipe;
@@ -506,7 +550,7 @@ static void arc_finish_firmware_search(ArcFirmwareSearch *search)
       }
 }
 
-static bool arc_select_firmware(ArcOsClass requested, uint8_t **data,
+static bool arc_select_firmware(ArcOsClass requested, ArcMachine machine, uint8_t **data,
                                 size_t *size,
                                 const ArcFirmwareFingerprint **match,
                                 char *error, size_t error_size)
@@ -515,7 +559,9 @@ static bool arc_select_firmware(ArcOsClass requested, uint8_t **data,
    char firmware_dir[ARC_MEDIA_PATH_CAPACITY];
    ArcFirmwareSearch search = {0};
    search.priority = 100u;
+   search.best_available_priority = 100u;
    search.requested_os = requested;
+   search.machine = machine;
    if (!arc_environment ||
        !arc_environment(RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY, &system_dir) ||
        !system_dir || !system_dir[0] ||
@@ -536,8 +582,21 @@ static bool arc_select_firmware(ArcOsClass requested, uint8_t **data,
                "Unrecognised firmware size %zu bytes; nearest expected size is %zu bytes.",
                search.suspicious_size, search.nearest_size);
          else
-            snprintf(error, error_size, "Missing %s firmware in <system>/arcdroid/firmware.",
-               arc_os_name(requested == ARC_OS_UNKNOWN ? ARC_OS_RISCOS_311 : requested));
+            if (requested != ARC_OS_UNKNOWN)
+               snprintf(error, error_size, "Missing %s firmware in <system>/arcdroid/firmware.", arc_os_name(requested));
+            else
+            {
+               const ArcMachineDescriptor *d = arc_machine_descriptor(machine);
+               if (d && d->io == ARC_IO_NEW_82C711)
+                  snprintf(error, error_size,
+                           "%s requires RISC OS 3.10 or later firmware; found %s",
+                           d->name,
+                           search.best_available == ARC_OS_UNKNOWN ? "none" :
+                           arc_os_name(search.best_available));
+               else
+                  snprintf(error, error_size,
+                           "Missing RISC OS 3.11 firmware in <system>/arcdroid/firmware.");
+            }
       }
       return false;
    }
@@ -583,20 +642,22 @@ static void arc_release_session(void)
 
 static void arc_sync_cmos(void)
 {
+   const ArcMachineDescriptor *machine = arc_machine_descriptor(arc_plan.machine);
    uint8_t payload[ARC_CMOS_PAYLOAD_SIZE];
    if (!arc_loaded || !arc_engine_active()) return;
    if (!arc_cmos_decode(arc_cmos_record, &arc_plan, payload))
    {
-      if (!arc_cmos_default(arc_plan.os, payload)) return;
+      if (!arc_cmos_default(arc_plan.os, machine->io, payload)) return;
    }
    else
       arc_engine_cmos(payload);
-   arc_cmos_normalise_payload(payload);
+   arc_cmos_normalise_payload(payload, machine->io);
    arc_cmos_encode(arc_cmos_record, &arc_plan, payload);
 }
 
 static void arc_seed_cmos(void)
 {
+   const ArcMachineDescriptor *machine = arc_machine_descriptor(arc_plan.machine);
    uint8_t payload[ARC_CMOS_PAYLOAD_SIZE] = {0};
    void *existing = NULL;
    size_t existing_size = 0u;
@@ -610,23 +671,24 @@ static void arc_seed_cmos(void)
    }
    else
    {
-      if (!arc_cmos_default(arc_plan.os, payload)) return;
+      if (!arc_cmos_default(arc_plan.os, machine->io, payload)) return;
       arc_cmos_encode(arc_cmos_record, &arc_plan, payload);
       arc_cmos_last_written_valid = false;
    }
-   arc_cmos_normalise_payload(payload);
+   arc_cmos_normalise_payload(payload, machine->io);
    arc_cmos_encode(arc_cmos_record, &arc_plan, payload);
    free(existing);
 }
 
 static void arc_persist_cmos(void)
 {
+   const ArcMachineDescriptor *machine = arc_machine_descriptor(arc_plan.machine);
    uint8_t payload[ARC_CMOS_PAYLOAD_SIZE];
    if (!arc_cmos_path[0]) return;
    arc_sync_cmos();
    if (!arc_cmos_decode(arc_cmos_record, &arc_plan, payload))
    {
-      if (!arc_cmos_default(arc_plan.os, payload)) return;
+      if (!arc_cmos_default(arc_plan.os, machine->io, payload)) return;
       arc_cmos_encode(arc_cmos_record, &arc_plan, payload);
    }
    if (!arc_cmos_last_written_valid ||
@@ -1935,13 +1997,22 @@ static void arc_poll_inputs(void)
       for (unsigned input = 0u; input < ARC_PAD_INPUT_COUNT; ++input)
       {
          const ArcInputBinding *binding = &arc_input_resolution.binding[port][input];
-         if (sampled[port][input] && binding->bound &&
+         bool joystick_owned = arc_loaded && arc_plan.a3010_joystick && input <= ARC_PAD_A &&
+                               arc_core_options.pad[port][input].automatic;
+         if (!joystick_owned && sampled[port][input] && binding->bound &&
              binding->key < ARC_INPUT_KEY_COUNT)
             desired[port][binding->key] = true;
       }
       memcpy(arc_pad_keys[port], sampled[port], sizeof(sampled[port]));
    }
    arc_input_pad_key_sets(&arc_inputs, desired[0], desired[1]);
+   bool joystick_levels[ARC_PAD_PORTS][5] = {{false}};
+   for (unsigned port = 0; port < ARC_PAD_PORTS; ++port)
+      for (unsigned input = 0; input < 5u; ++input)
+         joystick_levels[port][input] = sampled[port][input] &&
+            arc_core_options.pad[port][input].automatic;
+   arc_platform_joystick_snapshot(arc_loaded && arc_plan.a3010_joystick,
+                                  joystick_levels);
 
    bool pad_pointer = !arc_osk.visible &&
       (arc_port_device[0] == ARC_DEVICE_KEYS ||
@@ -2014,9 +2085,9 @@ static void arc_integrate_stick(uint64_t elapsed_us)
 
 static const struct retro_core_option_v2_definition arc_base_options[] = {
    {"arcdroid_machine", "Machine", NULL, "Automatic machine selection.", NULL,
-    NULL, {{"Auto", NULL}, {"A3000", NULL}, {NULL, NULL}}, "Auto"},
+    NULL, {{"Auto", NULL}, {"A3000", NULL}, {"A3010", NULL}, {"A3020", NULL}, {"A4000", NULL}, {NULL, NULL}}, "Auto"},
    {"arcdroid_cpu", "CPU", NULL, "Automatic CPU selection.", NULL,
-    NULL, {{"Auto", NULL}, {"ARM2", NULL}, {NULL, NULL}}, "Auto"},
+    NULL, {{"Auto", NULL}, {"ARM2", NULL}, {"ARM250", NULL}, {NULL, NULL}}, "Auto"},
    {"arcdroid_memory", "Memory", NULL, "Automatic memory selection.", NULL,
     NULL, {{"Auto", NULL}, {"4 MB", NULL}, {NULL, NULL}}, "Auto"},
    {"arcdroid_os", "Operating System", NULL, "Automatic firmware selection.", NULL,
@@ -2425,6 +2496,7 @@ static bool arc_load_game(const struct retro_game_info *game, bool negotiate)
    char error[512] = {0};
    ArcFirmwareSearch search = {0};
    search.priority = 100u;
+   search.best_available_priority = 100u;
    bool pending_initial = arc_pending_initial;
    unsigned pending_index = arc_pending_initial_index;
    char pending_path[sizeof(arc_pending_initial_path)];
@@ -2505,6 +2577,7 @@ static bool arc_load_game(const struct retro_game_info *game, bool negotiate)
       return false;
    }
    search.requested_os = arc_core_options.requested_os;
+   search.machine = arc_core_options.machine;
    arc_io_walk(firmware_dir, 8u, arc_visit_firmware, &search);
    arc_finish_firmware_search(&search);
    if (!search.match)
@@ -2513,20 +2586,31 @@ static bool arc_load_game(const struct retro_game_info *game, bool negotiate)
          snprintf(error, sizeof(error), "Unrecognised firmware size %zu bytes; nearest expected size is %zu bytes.",
                   search.suspicious_size, search.nearest_size);
       else
-         snprintf(error, sizeof(error), "Missing %s firmware in <system>/arcdroid/firmware.",
-                  arc_os_name(arc_core_options.requested_os == ARC_OS_UNKNOWN ?
-                              ARC_OS_RISCOS_311 : arc_core_options.requested_os));
+      {
+         const ArcMachineDescriptor *requested_machine = arc_machine_descriptor(arc_core_options.machine);
+         if (arc_core_options.requested_os != ARC_OS_UNKNOWN)
+            snprintf(error, sizeof(error), "Missing %s firmware in <system>/arcdroid/firmware.",
+                     arc_os_name(arc_core_options.requested_os));
+         else if (requested_machine->io == ARC_IO_NEW_82C711)
+            snprintf(error, sizeof(error),
+                     "%s requires RISC OS 3.10 or later firmware; found %s",
+                     requested_machine->name,
+                     search.best_available == ARC_OS_UNKNOWN ? "none" :
+                     arc_os_name(search.best_available));
+         else
+            snprintf(error, sizeof(error), "Missing RISC OS 3.11 firmware in <system>/arcdroid/firmware.");
+      }
       arc_message(error, RETRO_LOG_ERROR);
       arc_release_session();
       return false;
    }
    arc_firmware = search.data;
    arc_firmware_size = search.size;
-   if (!arc_launch_plan_default(&arc_plan, arc_media[arc_image_index].info.kind,
-                                search.match->os,
-                                arc_content_digest.sha1,
-                                arc_core_options.request_a3010_joystick,
-                                error, sizeof(error)))
+   const ArcMachineDescriptor *launch_machine = arc_machine_descriptor(arc_core_options.machine);
+   if (!arc_launch_plan_resolve(&arc_plan, arc_media[arc_image_index].info.kind,
+                                search.match->os, arc_content_digest.sha1,
+                                launch_machine->name, arc_cpu_name(arc_core_options.cpu),
+                                arc_core_options.request_a3010_joystick, error, sizeof(error)))
    {
       arc_message(error, RETRO_LOG_ERROR);
       arc_release_session();
@@ -2537,7 +2621,7 @@ static bool arc_load_game(const struct retro_game_info *game, bool negotiate)
    if (arc_log)
       arc_log(RETRO_LOG_INFO,
               "Launch options: machine=%s cpu=%s memory=%uKiB os=%s joystick=%s pointer=%s disk_writes=%s\n",
-              arc_plan.machine, arc_plan.cpu, arc_plan.memory_kib,
+              launch_machine->name, arc_cpu_name(arc_plan.cpu), arc_plan.memory_kib,
               arc_os_name(arc_plan.os),
               arc_plan.a3010_joystick ? "A3010" : "Keyboard",
               arc_plan.pointer_relative ? "relative" : "disabled",
@@ -2546,7 +2630,8 @@ static bool arc_load_game(const struct retro_game_info *game, bool negotiate)
    char cmos_dir[4096];
    int cmos_written = snprintf(cmos_dir, sizeof(cmos_dir), "%s/arcdroid/cmos", save_dir);
    int path_written = cmos_written >= 0 && (size_t)cmos_written < sizeof(cmos_dir) ?
-      snprintf(arc_cmos_path, sizeof(arc_cmos_path), "%s/A3000.%s.%s.bin", cmos_dir,
+      snprintf(arc_cmos_path, sizeof(arc_cmos_path), "%s/%s.%s.%s.bin", cmos_dir,
+               launch_machine->name,
                arc_os_slug(arc_plan.os), arc_plan.content_id) : -1;
    if (cmos_written < 0 || (size_t)cmos_written >= sizeof(cmos_dir) ||
        !arc_io_make_path(cmos_dir) || path_written < 0 ||
@@ -2578,11 +2663,12 @@ static bool arc_load_game(const struct retro_game_info *game, bool negotiate)
       ArcEngineMedia helper = {arc_helper_path, false, ARC_MEDIA_ADL_640K,
                                ARC_GEOMETRY_640K_L, NULL};
       if (!arc_cmos_decode(arc_cmos_record, &arc_plan, payload) ||
-          !arc_cmos_machine_image(arc_plan.os, payload,
+          !arc_cmos_machine_image(arc_plan.os, launch_machine->io, payload,
                                   arc_plan.launch_helper, machine_cmos) ||
           !arc_engine_start(arc_firmware, arc_firmware_size,
                             &media,
                             arc_plan.launch_helper ? &helper : NULL,
+                            launch_machine,
                             machine_cmos, error, sizeof(error)))
       {
          arc_message(error[0] ? error : "Unable to start the Arculator machine.", RETRO_LOG_ERROR);
@@ -2654,16 +2740,18 @@ RETRO_API void retro_reset(void)
    bool was_ejected = arc_ejected;
    unsigned selected = arc_image_index;
    bool launch_reselected;
+   bool torn_down = false;
 
    arc_persist_cmos();
    if (!arc_read_options(&updated, error, sizeof(error)) ||
-       !arc_select_firmware(updated.requested_os, &new_firmware,
+       !arc_select_firmware(updated.requested_os, updated.machine, &new_firmware,
                             &new_firmware_size, &firmware_match,
                             error, sizeof(error)))
       goto failed;
    launch_reselected = updated.launch != arc_core_options.launch;
 
    arc_engine_stop();
+   torn_down = true;
    if (updated.disk_writes != arc_core_options.disk_writes)
    {
       for (unsigned i = 0u; i < arc_media_count; ++i)
@@ -2690,9 +2778,10 @@ RETRO_API void retro_reset(void)
    ArcMediaKind plan_media = selected < arc_media_count && arc_media[selected].populated ?
       arc_media[selected].info.kind :
       (arc_media_count ? arc_media[0].info.kind : arc_plan.media);
-   if (!arc_launch_plan_default(&arc_plan, plan_media, firmware_match->os,
-                                frozen_identity.sha1,
-                                updated.request_a3010_joystick,
+   const ArcMachineDescriptor *reset_machine = arc_machine_descriptor(updated.machine);
+   if (!arc_launch_plan_resolve(&arc_plan, plan_media, firmware_match->os,
+                                frozen_identity.sha1, reset_machine->name,
+                                arc_cpu_name(updated.cpu), updated.request_a3010_joystick,
                                 error, sizeof(error)))
       goto failed;
    arc_plan.pointer_relative = updated.pointer_relative;
@@ -2702,7 +2791,8 @@ RETRO_API void retro_reset(void)
    char cmos_dir[ARC_MEDIA_PATH_CAPACITY];
    int cmos_written = snprintf(cmos_dir, sizeof(cmos_dir), "%s/arcdroid/cmos", arc_save_path);
    int path_written = cmos_written >= 0 && (size_t)cmos_written < sizeof(cmos_dir) ?
-      snprintf(arc_cmos_path, sizeof(arc_cmos_path), "%s/A3000.%s.%s.bin", cmos_dir,
+      snprintf(arc_cmos_path, sizeof(arc_cmos_path), "%s/%s.%s.%s.bin", cmos_dir,
+               reset_machine->name,
                arc_os_slug(arc_plan.os), arc_plan.content_id) : -1;
    if (cmos_written < 0 || (size_t)cmos_written >= sizeof(cmos_dir) ||
        !arc_io_make_path(cmos_dir) || path_written < 0 ||
@@ -2725,10 +2815,11 @@ RETRO_API void retro_reset(void)
    ArcEngineMedia helper = {arc_helper_path, false, ARC_MEDIA_ADL_640K,
                             ARC_GEOMETRY_640K_L, NULL};
    if (!arc_cmos_decode(arc_cmos_record, &arc_plan, payload) ||
-       !arc_cmos_machine_image(arc_plan.os, payload,
+       !arc_cmos_machine_image(arc_plan.os, reset_machine->io, payload,
                                arc_plan.launch_helper, machine_cmos) ||
        !arc_engine_start(arc_firmware, arc_firmware_size, mounted_pointer,
                          arc_plan.launch_helper ? &helper : NULL,
+                         reset_machine,
                          machine_cmos, error, sizeof(error)))
       goto failed;
    arc_loaded = true;
@@ -2747,6 +2838,7 @@ RETRO_API void retro_reset(void)
 failed:
    free(new_firmware);
    arc_message(error[0] ? error : "Unable to reset the ArcDroid session.", RETRO_LOG_ERROR);
+   if (!torn_down) return;
    arc_loaded = false;
    arc_release_session();
    arc_input_sampling_reset(false);
@@ -2845,7 +2937,8 @@ RETRO_API void retro_run(void)
    {
       ArcCoreOptions updated;
       char option_error[160] = {0};
-      if (!arc_read_options(&updated, option_error, sizeof(option_error)))
+      bool valid_update = arc_read_options(&updated, option_error, sizeof(option_error));
+      if (!valid_update)
          arc_message(option_error, RETRO_LOG_ERROR);
       else if (updated.pointer_relative != arc_core_options.pointer_relative ||
                updated.pointer_stick != arc_core_options.pointer_stick ||
@@ -2861,9 +2954,9 @@ RETRO_API void retro_run(void)
          arc_stick_x = arc_stick_y = 0;
          arc_stick_fraction_x = arc_stick_fraction_y = 0.0L;
       }
-      if (strcmp(updated.input_profile, arc_core_options.input_profile) ||
+      if (valid_update && (strcmp(updated.input_profile, arc_core_options.input_profile) ||
           memcmp(updated.pad, arc_core_options.pad, sizeof(updated.pad)) ||
-          updated.osk_toggle != arc_core_options.osk_toggle)
+          updated.osk_toggle != arc_core_options.osk_toggle))
       {
          if (!arc_resolve_inputs(&updated, true, false))
             arc_message("Unable to resolve ArcDroid input options.", RETRO_LOG_ERROR);

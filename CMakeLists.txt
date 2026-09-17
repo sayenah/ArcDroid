@@ -45,6 +45,7 @@ target_compile_options(arcdroid_zlib PRIVATE
 set_target_properties(arcdroid_zlib PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 add_library(arcdroid_core STATIC
+  core/machine.c
   core/hash.c
   core/input.c
   core/input_mapping.c
@@ -72,6 +73,8 @@ set_target_properties(arcdroid_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
 set(ARCDROID_LIBRETRO_SOURCES
   engine/arcdroid_engine.c
   engine/arcdroid_stubs.c
+  engine/arculator/src/82c711.c
+  engine/arculator/src/82c711_fdc.c
   engine/arculator/src/arm.c
   engine/arculator/src/cmos.c
   engine/arculator/src/cp15.c
@@ -186,6 +189,7 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
   add_executable(jfd_controller_tests
     tests/jfd_controller_tests.c
     engine/arculator/src/wd1770.c
+    engine/arculator/src/82c711_fdc.c
     engine/arculator/src/disc.c
     engine/arculator/src/disc_adf.c
     engine/arculator/src/disc_jfd.c
@@ -239,8 +243,12 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
   add_dependencies(core_tests test-fixtures)
   add_dependencies(jfd_controller_tests test-fixtures)
   add_test(NAME core-services COMMAND core_tests "${FIXTURE_DIR}")
-  add_test(NAME jfd-controller-golden COMMAND jfd_controller_tests "${FIXTURE_DIR}")
+  add_test(NAME jfd-controller-golden COMMAND jfd_controller_tests
+    "${FIXTURE_DIR}" --wd1770)
+  add_test(NAME newio-controller-golden COMMAND jfd_controller_tests
+    "${FIXTURE_DIR}" --82c711)
   set_tests_properties(jfd-controller-golden PROPERTIES TIMEOUT 300)
+  set_tests_properties(newio-controller-golden PROPERTIES TIMEOUT 300)
   set_tests_properties(core-services PROPERTIES TIMEOUT 300)
 
   if(WIN32)
@@ -287,7 +295,18 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
       "${FIXTURE_DIR}/arcdroid-test-two-member.jfd"
       "${FIXTURE_DIR}"
       "${FIXTURE_DIR}/arcdroid-application-l.adl")
+    add_test(NAME newio-libretro-harness COMMAND libretro_harness
+      $<TARGET_FILE:arcdroid_libretro_test>
+      "${FIXTURE_DIR}/arcdroid-test.rom"
+      "${FIXTURE_DIR}/arcdroid-test.adf"
+      "${CMAKE_CURRENT_BINARY_DIR}/newio-harness-data"
+      --newio-smoke
+      "${FIXTURE_DIR}/arcdroid-media.m3u"
+      "${FIXTURE_DIR}/arcdroid-media-disc1.adf"
+      "${FIXTURE_DIR}/arcdroid-media-disc2.adf"
+      "${FIXTURE_DIR}/arcdroid-application-l.adl")
     set_tests_properties(libretro-harness PROPERTIES TIMEOUT 300)
+    set_tests_properties(newio-libretro-harness PROPERTIES TIMEOUT 300)
   endif()
 
   add_executable(firmware_probe tools/firmware_probe.c)

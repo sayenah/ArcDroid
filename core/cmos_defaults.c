@@ -7,8 +7,9 @@
 static const uint8_t arthur[ARC_CMOS_MACHINE_SIZE] = { ARC_CMOS_ARTHUR_BYTES };
 static const uint8_t riscos2[ARC_CMOS_MACHINE_SIZE] = { ARC_CMOS_RISCOS2_BYTES };
 static const uint8_t riscos3_old[ARC_CMOS_MACHINE_SIZE] = { ARC_CMOS_RISCOS3_OLD_BYTES };
+static const uint8_t riscos3_new[ARC_CMOS_MACHINE_SIZE] = { ARC_CMOS_RISCOS3_NEW_BYTES };
 
-static const uint8_t *arc_cmos_source(ArcOsClass os)
+static const uint8_t *arc_cmos_source(ArcOsClass os, ArcIoClass io)
 {
    switch (os)
    {
@@ -22,13 +23,13 @@ static const uint8_t *arc_cmos_source(ArcOsClass os)
       case ARC_OS_RISCOS_310:
       case ARC_OS_RISCOS_311:
       case ARC_OS_RISCOS_319:
-         return riscos3_old;
+         return io == ARC_IO_NEW_82C711 ? riscos3_new : riscos3_old;
       default:
          return NULL;
    }
 }
 
-bool arc_cmos_default(ArcOsClass os, uint8_t output[ARC_CMOS_PAYLOAD_SIZE])
+bool arc_cmos_default(ArcOsClass os, ArcIoClass io, uint8_t output[ARC_CMOS_PAYLOAD_SIZE])
 {
    const uint8_t *source;
    if (!output) return false;
@@ -37,13 +38,13 @@ bool arc_cmos_default(ArcOsClass os, uint8_t output[ARC_CMOS_PAYLOAD_SIZE])
       memset(output, 0, ARC_CMOS_PAYLOAD_SIZE);
       return true;
    }
-   source = arc_cmos_source(os);
+   source = arc_cmos_source(os, io);
    if (!source) return false;
    memcpy(output, source + 16u, ARC_CMOS_PAYLOAD_SIZE);
    return true;
 }
 
-bool arc_cmos_machine_image(ArcOsClass os,
+bool arc_cmos_machine_image(ArcOsClass os, ArcIoClass io,
                             const uint8_t payload[ARC_CMOS_PAYLOAD_SIZE],
                             bool launch_helper,
                             uint8_t output[ARC_CMOS_MACHINE_SIZE])
@@ -56,7 +57,7 @@ bool arc_cmos_machine_image(ArcOsClass os,
       memset(output, 0, ARC_CMOS_MACHINE_SIZE);
    else
    {
-      source = arc_cmos_source(os);
+      source = arc_cmos_source(os, io);
       if (!source) return false;
       memcpy(output, source, ARC_CMOS_MACHINE_SIZE);
    }
@@ -76,6 +77,8 @@ bool arc_cmos_machine_image(ArcOsClass os,
                           (launch_helper ? 1u : 0u));       /* byte 11 */
    output[199] = (uint8_t)((output[199] & ~0x07u) |
                            (launch_helper ? 2u : 1u));      /* byte 135 */
+   if (io == ARC_IO_NEW_82C711)
+      output[199] &= 0x07u; /* no ST506 or IDE drives */
    /* RPCEmu's PCF8583 implementation documents the RISC OS checksum:
     * sum logical bytes 0..238 and store (sum+1) modulo 256 at byte 239. */
    for (unsigned i = 0; i < 239u; ++i)
@@ -88,11 +91,12 @@ bool arc_cmos_machine_image(ArcOsClass os,
    return true;
 }
 
-void arc_cmos_normalise_payload(uint8_t payload[ARC_CMOS_PAYLOAD_SIZE])
+void arc_cmos_normalise_payload(uint8_t payload[ARC_CMOS_PAYLOAD_SIZE], ArcIoClass io)
 {
    if (!payload) return;
    /* Logical CMOS bytes 11 and 135 live at raw PCF8583 addresses 75 and
     * 199, hence payload offsets 59 and 183. */
    payload[59] &= (uint8_t)~0x07u;
    payload[183] = (uint8_t)((payload[183] & ~0x07u) | 1u);
+   if (io == ARC_IO_NEW_82C711) payload[183] &= 0x07u;
 }

@@ -1,7 +1,8 @@
 /*Arculator 2.2 by Sarah Walker
   Disc support*/
-/* ArcDroid modification (2026-09-14): validated media kind and geometry cross
- * the adapter boundary explicitly; empty-drive commands terminate normally. */
+/* ArcDroid modification (2026-09-16): validated media kind and geometry cross
+ * the adapter boundary explicitly; empty-drive commands terminate normally;
+ * closing one drive leaves a transfer on another drive undisturbed. */
 #include <stdio.h>
 #include <string.h>
 #include "arc.h"
@@ -81,7 +82,6 @@ void disc_close(int drive)
 	rpclog("disc_close %i\n", drive);
 	if (drive_funcs[drive])
 	{
-		drive_funcs[drive]->stop();
 		drive_funcs[drive]->close(drive);
 		drive_funcs[drive] = NULL;
 	}

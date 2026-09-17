@@ -57,6 +57,9 @@ class Arm2:
     def subs_imm(self, rd: int, rn: int, value: int) -> None:
         self.emit(0xE2500000 | (rn << 16) | (rd << 12) | self._imm(value))
 
+    def add_imm(self, rd: int, rn: int, value: int) -> None:
+        self.emit(0xE2800000 | (rn << 16) | (rd << 12) | self._imm(value))
+
     def eor(self, rd: int, rn: int, rm: int) -> None:
         self.emit(0xE0200000 | (rn << 16) | (rd << 12) | rm)
 
@@ -68,6 +71,13 @@ class Arm2:
 
     def tst_imm(self, rn: int, value: int) -> None:
         self.emit(0xE3100000 | (rn << 16) | self._imm(value))
+
+    def cmp_imm(self, rn: int, value: int) -> None:
+        self.emit(0xE3500000 | (rn << 16) | self._imm(value))
+
+    def swp(self, rd: int, rm: int, rn: int, byte: bool = False) -> None:
+        self.emit(0xE1000090 | (0x00400000 if byte else 0) |
+                  (rn << 16) | (rd << 12) | rm)
 
     def ldr_const(self, rd: int, value: int) -> None:
         index = len(self.words)
@@ -143,6 +153,112 @@ def build_rom(media_exerciser: bool = False) -> bytearray:
         a.ldr_const(0, cam)
         a.str(1, 0)
 
+    # Install a minimal undefined-instruction handler in the mapped low page.
+    # The A3000 path below proves that both SWP encodings reach it on ARM2.
+    a.ldr_const(0, 0x00000008)
+    a.ldr_const(1, 0xE28CC001)  # add r12, r12, #1
+    a.str(1, 0)
+    a.ldr_const(1, 0xE1B0F00E)  # movs pc, lr
+    a.str(1, 0, 4)
+
+    # IOEB device ID distinguishes New-IO without relying on a machine option.
+    a.ldr_const(0, 0x03350050)
+    a.ldr(1, 0, byte=True)
+    a.cmp_imm(1, 5)
+    a.branch("old_io_fdc", "ne")
+    # The New-IO IDE interface is deliberately an absent bus. Exercise both
+    # register ranges and require the open-bus value before touching the FDC.
+    for address in tuple(0x033107C0 + register * 4 for register in range(8)) + \
+                   (0x03310FD8,):
+        a.ldr_const(0, address)
+        a.ldr(1, 0, byte=True)
+        a.cmp_imm(1, 0xFF)
+        a.branch("newio_fail", "ne")
+        a.mov(1, 0x5A)
+        a.str(1, 0, byte=True)
+    # ARM250 implements both SWP forms. Validate the returned and stored values
+    # before continuing; this block is unreachable on the A3000 ARM2 path.
+    a.ldr_const(0, 0x00010000)
+    a.mov(1, 0x5A)
+    a.str(1, 0)
+    a.mov(2, 0xA5)
+    a.swp(3, 2, 0)
+    a.cmp_imm(3, 0x5A)
+    a.branch("newio_fail", "ne")
+    a.ldr(3, 0)
+    a.cmp_imm(3, 0xA5)
+    a.branch("newio_fail", "ne")
+    a.mov(1, 0x3C)
+    a.str(1, 0, byte=True)
+    a.mov(2, 0xC3)
+    a.swp(3, 2, 0, byte=True)
+    a.cmp_imm(3, 0x3C)
+    a.branch("newio_fail", "ne")
+    a.ldr(3, 0, byte=True)
+    a.cmp_imm(3, 0xC3)
+    a.branch("newio_fail", "ne")
+    a.ldr_const(0, 0x03310FC8)
+    a.mov(1, 0x1C)
+    a.str(1, 0, byte=True)
+    a.ldr_const(0, 0x03310FDC)
+    a.mov(1, 0x01)
+    a.str(1, 0, byte=True)
+    a.ldr_const(0, 0x03310FD4)
+    for value in (0x03, 0xDF, 0x02, 0x07, 0x00):
+        a.mov(1, value); a.str(1, 0, byte=True)
+    a.ldr_const(2, 0x03200020)
+    a.label("new_recal_irq")
+    a.ldr(1, 2, byte=True); a.tst_imm(1, 0x10); a.branch("new_recal_irq", "eq")
+    a.ldr_const(3, 0x03310FD0); a.ldr(1, 3, byte=True)
+    a.mov(1, 0x08); a.str(1, 0, byte=True)
+    a.ldr(1, 0, byte=True); a.ldr(1, 0, byte=True)
+    for value in (0x0F, 0x00, 0x00):
+        a.mov(1, value); a.str(1, 0, byte=True)
+    a.label("new_seek_irq")
+    a.ldr(1, 2, byte=True); a.tst_imm(1, 0x10); a.branch("new_seek_irq", "eq")
+    a.ldr(1, 3, byte=True)
+    a.mov(1, 0x08); a.str(1, 0, byte=True)
+    a.ldr(1, 0, byte=True); a.ldr(1, 0, byte=True)
+    for value in (0x0A, 0x00):
+        a.mov(1, value); a.str(1, 0, byte=True)
+    a.label("new_read_id_irq")
+    a.ldr(1, 2, byte=True); a.tst_imm(1, 0x10); a.branch("new_read_id_irq", "eq")
+    a.ldr(1, 3, byte=True)
+    for _ in range(7): a.ldr(1, 0, byte=True)
+    for value in (0x06, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x1B, 0xFF):
+        a.mov(1, value); a.str(1, 0, byte=True)
+    a.ldr_const(2, 0x03200030)
+    a.ldr_const(3, 0x03012000)
+    a.mov(5, 0x100); a.mov(6, 0)
+    a.label("new_dma_wait")
+    a.ldr(7, 2, byte=True); a.tst_imm(7, 1); a.branch("new_dma_wait", "eq")
+    a.subs_imm(5, 5, 1); a.branch("new_dma_last", "eq")
+    a.ldr(7, 3, byte=True); a.eor(6, 6, 7); a.branch("new_dma_wait")
+    a.label("new_dma_last")
+    a.ldr_const(3, 0x0302A000); a.ldr(7, 3, byte=True); a.eor(6, 6, 7)
+    a.ldr_const(2, 0x03200020)
+    a.label("new_data_irq")
+    a.ldr(1, 2, byte=True); a.tst_imm(1, 0x10); a.branch("new_data_irq", "eq")
+    a.ldr_const(3, 0x03310FD0); a.ldr(1, 3, byte=True)
+    for _ in range(7): a.ldr(1, 0, byte=True)
+    a.mov(7, 0x5A); a.eor(6, 6, 7)  # native-frontend branch proof
+    a.branch("fdc_done")
+
+    a.label("newio_fail")
+    a.ldr_const(6, 0x00DEAD00)
+    a.branch("fdc_done")
+
+    a.label("old_io_fdc")
+    a.mov(12, 0)
+    a.ldr_const(0, 0x00010000)
+    a.mov(2, 0x5A)
+    a.swp(3, 2, 0)
+    a.swp(3, 2, 0, byte=True)
+    a.cmp_imm(12, 2)
+    a.branch("newio_fail", "ne")
+    a.ldr_const(0, 0x0002FFF0)
+    a.mov(1, 0xA2)
+    a.str(1, 0, byte=True)
     # Select drive 0, side 0, motor on, double density; read track 0 sector 0.
     for address, value in ((0x03350040, 0x9E), (0x03350018, 0x00)):
         a.ldr_const(0, address)
@@ -207,6 +323,7 @@ def build_rom(media_exerciser: bool = False) -> bytearray:
         a.tst_imm(4, 1)
         a.branch("fdc_write_finish", "ne")
 
+    a.label("fdc_done")
     # Expand the guest checksum to all bytes and paint 640x256 at 8 bpp. The
     # alternating complement makes the payload-derived signature visibly
     # distinctive in native-frontend screenshots instead of a uniform colour.
