@@ -140,6 +140,7 @@ static unsigned flush_fault_osd_calls;
 static unsigned folder_set_log_lines;
 static unsigned folder_set_omission_log_lines;
 static unsigned folder_set_warning_osd_calls;
+static unsigned total_osd_calls;
 static unsigned osk_failure_osd_calls;
 static unsigned osk_narrow_osd_calls;
 static unsigned profile_osd_calls;
@@ -622,6 +623,7 @@ static bool environment(unsigned command, void *data)
          return true;
       }
       case RETRO_ENVIRONMENT_SET_MESSAGE_EXT:
+         ++total_osd_calls;
          snprintf(last_message, sizeof(last_message), "%s", ((struct retro_message_ext *)data)->msg);
          if (!strncmp(last_message, "Folder disc set", 15u))
             ++folder_set_warning_osd_calls;
@@ -644,6 +646,7 @@ static bool environment(unsigned command, void *data)
          }
          return true;
       case RETRO_ENVIRONMENT_SET_MESSAGE:
+         ++total_osd_calls;
          snprintf(last_message, sizeof(last_message), "%s", ((struct retro_message *)data)->msg);
          if (!strncmp(last_message, "Folder disc set", 15u))
             ++folder_set_warning_osd_calls;
@@ -3610,11 +3613,14 @@ int main(int argc, char **argv)
       retro_unload_game();
 
       char folder_directory[4096], folder_selected[4096], folder_disc2[4096];
-      char folder_adl[4096], folder_duplicate[4096], folder_jfd[4096];
+      char folder_adl[4096], folder_short[4096], folder_duplicate[4096];
+      char folder_jfd[4096], folder_rejected[4096];
       snprintf(folder_directory, sizeof(folder_directory), "%s/Qaventra.adf", argv[11]);
       snprintf(folder_selected, sizeof(folder_selected), "%s/Qaventra.adf", folder_directory);
       snprintf(folder_disc2, sizeof(folder_disc2), "%s/Qaventra 2.adf", folder_directory);
       snprintf(folder_adl, sizeof(folder_adl), "%s/Qaventra 3.adl", folder_directory);
+      snprintf(folder_rejected, sizeof(folder_rejected), "%s/Qaventra 4.jfd", folder_directory);
+      snprintf(folder_short, sizeof(folder_short), "%s/Qaventra 5.adl", folder_directory);
       snprintf(folder_duplicate, sizeof(folder_duplicate), "%s/Qaventra 9.adf", folder_directory);
       snprintf(folder_jfd, sizeof(folder_jfd), "%s/Qaventra 10.JFD", folder_directory);
       struct retro_game_info folder_game = {folder_selected, NULL, 0u, NULL};
@@ -3624,21 +3630,26 @@ int main(int argc, char **argv)
       unsigned folder_messages = folder_set_warning_osd_calls;
       unsigned folder_logs = folder_set_log_lines;
       unsigned omission_logs = folder_set_omission_log_lines;
+      unsigned all_messages = total_osd_calls;
+      unsigned short_messages = short_warning_osd_calls;
       phase = PHASE_LOAD; assert(retro_load_game(&folder_game));
       assert(!strcmp(arc_libretro_test_content_id(), standalone_identity.sha1));
       assert(folder_set_warning_osd_calls == folder_messages + 1u &&
              folder_set_log_lines == folder_logs + 1u &&
-             folder_set_omission_log_lines == omission_logs + 1u);
-      assert(disk_control.get_num_images() == 5u &&
+             folder_set_omission_log_lines == omission_logs + 1u &&
+             short_warning_osd_calls == short_messages &&
+             total_osd_calls == all_messages + 3u);
+      assert(disk_control.get_num_images() == 6u &&
              disk_control.get_image_index() == 0u);
-      const char *expected_folder_paths[5] = {
-         folder_selected, folder_disc2, folder_adl, folder_duplicate, folder_jfd
+      const char *expected_folder_paths[6] = {
+         folder_selected, folder_disc2, folder_adl, folder_short,
+         folder_duplicate, folder_jfd
       };
       static const char *const folder_labels[] = {
-         "Qaventra", "Qaventra 2", "Qaventra 3", "Qaventra 9",
-         "ArcDroid folder JFD"
+         "Qaventra", "Qaventra 2", "Qaventra 3", "Qaventra 5",
+         "Qaventra 9", "ArcDroid folder JFD"
       };
-      for (unsigned index = 0u; index < 5u; ++index)
+      for (unsigned index = 0u; index < 6u; ++index)
       {
          assert(disk_control.get_image_path(index, image_path, sizeof(image_path)) &&
                 !strcmp(image_path, expected_folder_paths[index]));
@@ -3651,16 +3662,20 @@ int main(int argc, char **argv)
       assert(disk_control.set_eject_state(true));
       assert(disk_control.set_image_index(1u));
       assert(disk_control.set_eject_state(false));
+      char folder_mounted_digest[41];
+      ArcDigest folder_disc2_digest = digest_file(folder_disc2);
+      assert(arc_engine_test_drive_media(0u, NULL, folder_mounted_digest) &&
+             !strcmp(folder_mounted_digest, folder_disc2_digest.sha1));
       for (unsigned frame = 0u; frame < 180u; ++frame) retro_run();
       assert(last_video_signature != folder_disc1_signature);
       assert(disk_control.set_eject_state(true));
       assert(disk_control.set_image_index(0u));
       assert(disk_control.add_image_index());
       struct retro_game_info folder_append = {argv[7], NULL, 0u, NULL};
-      assert(disk_control.replace_image_index(5u, &folder_append) &&
+      assert(disk_control.replace_image_index(6u, &folder_append) &&
+             disk_control.get_num_images() == 7u);
+      assert(disk_control.replace_image_index(6u, NULL) &&
              disk_control.get_num_images() == 6u);
-      assert(disk_control.replace_image_index(5u, NULL) &&
-             disk_control.get_num_images() == 5u);
       assert(disk_control.set_eject_state(false));
       retro_unload_game();
 
@@ -3690,6 +3705,122 @@ int main(int argc, char **argv)
       retro_unload_game();
       assert(rename(renamed_adl, folder_adl) == 0);
 
+      /* A remembered sibling which still qualifies structurally but is
+       * omitted under the new write policy must fall back to index 0. In
+       * original mode every retained callback path is its source path, and
+       * preparing/unloading the set removes none of those source files. */
+      const char *folder_sources[] = {
+         folder_selected, folder_disc2, folder_adl, folder_rejected,
+         folder_short, folder_duplicate, folder_jfd
+      };
+      uint64_t folder_source_hashes[sizeof(folder_sources) / sizeof(folder_sources[0])];
+      for (unsigned i = 0u;
+           i < sizeof(folder_sources) / sizeof(folder_sources[0]); ++i)
+         folder_source_hashes[i] = hash_file(folder_sources[i]);
+      assert(disk_control.set_initial_image(3u, folder_short));
+      option_writes = "original";
+      folder_messages = folder_set_warning_osd_calls;
+      omission_logs = folder_set_omission_log_lines;
+      all_messages = total_osd_calls;
+      short_messages = short_warning_osd_calls;
+      phase = PHASE_LOAD; assert(retro_load_game(&folder_game));
+      assert(disk_control.get_num_images() == 5u &&
+             disk_control.get_image_index() == 0u &&
+             folder_set_warning_osd_calls == folder_messages + 1u &&
+             folder_set_omission_log_lines == omission_logs + 2u &&
+             short_warning_osd_calls == short_messages &&
+             total_osd_calls == all_messages + 3u);
+      const char *original_paths[] = {
+         folder_selected, folder_disc2, folder_adl, folder_duplicate, folder_jfd
+      };
+      for (unsigned i = 0u; i < 5u; ++i)
+         assert(disk_control.get_image_path(i, image_path, sizeof(image_path)) &&
+                !strcmp(image_path, original_paths[i]));
+      for (unsigned i = 0u; i < 4u; ++i)
+      {
+         if (i)
+            assert(disk_control.set_eject_state(true) &&
+                   disk_control.set_image_index(i) &&
+                   disk_control.set_eject_state(false));
+         ArcDigest source_digest = digest_file(original_paths[i]);
+         assert(arc_engine_test_drive_media(0u, NULL, folder_mounted_digest) &&
+                !strcmp(folder_mounted_digest, source_digest.sha1));
+      }
+      retro_unload_game();
+      for (unsigned i = 0u;
+           i < sizeof(folder_sources) / sizeof(folder_sources[0]); ++i)
+         assert(hash_file(folder_sources[i]) == folder_source_hashes[i]);
+
+      /* R-1: changing a live folder set from shadow to original omits the
+       * short sibling instead of tearing down the session. Because that was
+       * the selected path, selection falls back to the full index-0 image. */
+      char reset_directory[4096], reset_selected[4096], reset_short[4096];
+      snprintf(reset_directory, sizeof(reset_directory),
+               "%s/Remora.adf", argv[4]);
+      make_directory(reset_directory);
+      snprintf(reset_selected, sizeof(reset_selected),
+               "%s/Remora.adf", reset_directory);
+      snprintf(reset_short, sizeof(reset_short),
+               "%s/Remora 2.adl", reset_directory);
+      copy_file(folder_selected, reset_selected);
+      copy_file(folder_short, reset_short);
+      struct retro_game_info reset_folder_game = {reset_selected, NULL, 0u, NULL};
+      ArcDigest reset_selected_digest = digest_file(reset_selected);
+      option_writes = "shadow";
+      phase = PHASE_LOAD; assert(retro_load_game(&reset_folder_game));
+      assert(disk_control.get_num_images() == 2u &&
+             disk_control.set_eject_state(true) &&
+             disk_control.set_image_index(1u) &&
+             disk_control.set_eject_state(false) &&
+             arc_engine_test_drive_media(0u, NULL, folder_mounted_digest));
+      folder_messages = folder_set_warning_osd_calls;
+      omission_logs = folder_set_omission_log_lines;
+      all_messages = total_osd_calls;
+      short_messages = short_warning_osd_calls;
+      option_writes = "original";
+      phase = PHASE_RUN; retro_reset();
+      assert(disk_control.get_num_images() == 1u &&
+             disk_control.get_image_index() == 0u &&
+             !disk_control.get_eject_state() &&
+             !strcmp(arc_libretro_test_content_id(), reset_selected_digest.sha1) &&
+             folder_set_warning_osd_calls == folder_messages + 1u &&
+             folder_set_omission_log_lines == omission_logs + 1u &&
+             short_warning_osd_calls == short_messages &&
+             total_osd_calls == all_messages + 2u &&
+             arc_engine_test_drive_media(0u, NULL, folder_mounted_digest) &&
+             !strcmp(folder_mounted_digest, reset_selected_digest.sha1));
+      unsigned folder_reset_video = video_frames;
+      uint64_t folder_reset_audio = audio_frames;
+      for (unsigned frame = 0u; frame < 60u; ++frame) retro_run();
+      assert(video_frames > folder_reset_video && audio_frames > folder_reset_audio);
+      retro_unload_game();
+
+      /* More than 31 qualifying siblings is exercised through the VFS and
+       * complete load path, not only the pure membership unit. */
+      char overflow_directory[4096], overflow_selected[4096], overflow_member[4096];
+      snprintf(overflow_directory, sizeof(overflow_directory),
+               "%s/Orivane.adf", argv[4]);
+      make_directory(overflow_directory);
+      snprintf(overflow_selected, sizeof(overflow_selected),
+               "%s/Orivane.adf", overflow_directory);
+      copy_file(argv[7], overflow_selected);
+      for (unsigned i = 1u; i <= 32u; ++i)
+      {
+         snprintf(overflow_member, sizeof(overflow_member),
+                  "%s/Orivane %02u.adf", overflow_directory, i);
+         copy_file(argv[8], overflow_member);
+      }
+      struct retro_game_info overflow_game = {overflow_selected, NULL, 0u, NULL};
+      option_writes = "off";
+      folder_messages = folder_set_warning_osd_calls;
+      all_messages = total_osd_calls;
+      phase = PHASE_LOAD; assert(retro_load_game(&overflow_game));
+      assert(disk_control.get_num_images() == 1u &&
+             disk_control.get_image_index() == 0u &&
+             folder_set_warning_osd_calls == folder_messages + 1u &&
+             total_osd_calls == all_messages + 3u);
+      retro_unload_game();
+
       /* First create and mutate index 0's writable shadow while discovery is
        * unavailable. The next load rejects one sibling and fault-injects a
        * second sibling's publish. Both are omitted with one summary, while a
@@ -3711,7 +3842,7 @@ int main(int argc, char **argv)
       fault_rename_destination[0] = '\0';
       phase = PHASE_LOAD; assert(retro_load_game(&folder_game));
       assert(!fault_rename_substring && fault_rename_destination[0] &&
-             disk_control.get_num_images() == 4u &&
+             disk_control.get_num_images() == 5u &&
              disk_control.get_image_index() == 0u &&
              hash_file(selected_shadow) == selected_shadow_hash &&
              folder_set_warning_osd_calls == folder_messages + 1u &&

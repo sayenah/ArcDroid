@@ -1510,6 +1510,10 @@ static void test_folder_sets(void)
    ArcFolderSet *set = malloc(sizeof(*set));
    assert(set);
    assert(arc_folder_set_begin("/sets/Qaventra.adf/Qaventra.adf", false,
+                               NULL) == ARC_FOLDER_SET_READY);
+   assert(arc_folder_set_begin("/sets/Other.adf/Qaventra.adf", false,
+                               NULL) == ARC_FOLDER_SET_NONE);
+   assert(arc_folder_set_begin("/sets/Qaventra.adf/Qaventra.adf", false,
                                set) == ARC_FOLDER_SET_READY);
    assert(!strcmp(set->directory, "/sets/Qaventra.adf") &&
           !strcmp(set->selected_name, "Qaventra.adf") && set->separator == '/');

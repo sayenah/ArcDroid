@@ -440,7 +440,7 @@ try {
     Send-MediaCommand $folderRun "DISK_NEXT"
     [void](Capture-ExpectedSignature $folderRun "folder-set-selected-disc2" $disc1Signature $false)
     Send-MediaCommand $folderRun "DISK_EJECT_TOGGLE"
-    [void](Capture-ExpectedSignature $folderRun "folder-set-disc2" $disc1Signature $true)
+    [void](Capture-ExpectedSignature $folderRun "folder-set-disc2" $disc2Signature $false)
 } finally {
     Stop-MediaRun $folderRun
 }
@@ -476,12 +476,12 @@ try {
 }
 
 Write-Host "Slice 2a Windows RetroArch: disk commands, valid/stale initial image, and JFD golden region passed"
-Write-Host "Slice 5b Windows RetroArch: folder disc 1 and eject/next/insert sibling passed"
+Write-Host "Slice 5b Windows RetroArch: folder disc 1 and eject/next/insert matched the playlist disc-2 signature"
 if ($env:GITHUB_STEP_SUMMARY) {
     Add-Content -Encoding UTF8 $env:GITHUB_STEP_SUMMARY "- Slice 2a media: playlist disc 1 observed; eject/next/close observed before successive commands; disc 2 region observed."
     Add-Content -Encoding UTF8 $env:GITHUB_STEP_SUMMARY "- Initial disk replay: valid .ldci started on disc 2; stale .ldci started on disc 1."
     Add-Content -Encoding UTF8 $env:GITHUB_STEP_SUMMARY "- JFD: generated fixture reached the disc 1 golden result region."
-    Add-Content -Encoding UTF8 $env:GITHUB_STEP_SUMMARY "- Slice 5b folder set: selected disc observed; eject/next/insert reached the sibling payload."
+    Add-Content -Encoding UTF8 $env:GITHUB_STEP_SUMMARY "- Slice 5b folder set: selected disc observed; eject/next/insert matched the playlist disc-2 signature."
 }
 
 # Slice 2b uses the host-test core because the generated firmware is the

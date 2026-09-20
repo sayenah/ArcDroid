@@ -1310,11 +1310,12 @@ def main() -> None:
     folder_set.mkdir(exist_ok=True)
     (folder_set / "Qaventra.adf").write_bytes(disc1)
     (folder_set / "Qaventra 2.adf").write_bytes(disc2)
-    (folder_set / "Qaventra 3.adl").write_bytes(
-        build_old_map_media(640 * 1024, 2560, 0x53))
+    folder_adl = build_old_map_media(640 * 1024, 2560, 0x53)
+    (folder_set / "Qaventra 3.adl").write_bytes(folder_adl)
     (folder_set / "Qaventra 4.jfd").write_bytes(
         build_jfd_family([(0, 0, 4, 1, 0, bytes(128))],
                          b"ArcDroid rejected folder JFD"))
+    (folder_set / "Qaventra 5.adl").write_bytes(folder_adl[:-256])
     (folder_set / "Qaventra 9.adf").write_bytes(disc1)
     (folder_set / "Qaventra 10.JFD").write_bytes(
         build_jfd(bytes(disc1[:256]), b"ArcDroid folder JFD"))

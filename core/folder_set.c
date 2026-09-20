@@ -89,8 +89,7 @@ ArcFolderSetTrigger arc_folder_set_begin(const char *content_path,
                                          bool windows_host,
                                          ArcFolderSet *set)
 {
-   if (!set) return ARC_FOLDER_SET_NONE;
-   memset(set, 0, sizeof(*set));
+   if (set) memset(set, 0, sizeof(*set));
    if (!content_path || !content_path[0] || strstr(content_path, "://"))
       return ARC_FOLDER_SET_NONE;
    size_t path_size = strlen(content_path);
@@ -109,11 +108,14 @@ ArcFolderSetTrigger arc_folder_set_begin(const char *content_path,
    if (!parent_size || !arc_name_equal(parent_name, parent_size, last + 1,
                                         selected_size, windows_host))
       return ARC_FOLDER_SET_NONE;
-   memcpy(set->directory, content_path, directory_size);
-   set->directory[directory_size] = '\0';
-   memcpy(set->selected_name, last + 1, selected_size + 1u);
-   set->separator = *last;
-   set->windows_host = windows_host;
+   if (set)
+   {
+      memcpy(set->directory, content_path, directory_size);
+      set->directory[directory_size] = '\0';
+      memcpy(set->selected_name, last + 1, selected_size + 1u);
+      set->separator = *last;
+      set->windows_host = windows_host;
+   }
    return directory_size > ARC_FOLDER_SET_MAX_DIRECTORY ?
       ARC_FOLDER_SET_DIRECTORY_TOO_LONG : ARC_FOLDER_SET_READY;
 }
@@ -137,10 +139,7 @@ ArcFolderMemberResult arc_folder_set_add(ArcFolderSet *set, const char *name,
    size_t directory_size = strlen(set->directory);
    if (name_size >= ARC_MEDIA_PATH_CAPACITY ||
        directory_size + 1u + name_size >= ARC_MEDIA_PATH_CAPACITY)
-   {
-      ++set->path_omissions;
       return ARC_FOLDER_MEMBER_PATH_TOO_LONG;
-   }
    memcpy(set->siblings[set->count++], name, name_size + 1u);
    return ARC_FOLDER_MEMBER_ADDED;
 }

@@ -29,7 +29,6 @@ typedef struct {
    char siblings[ARC_FOLDER_SET_MAX_SIBLINGS][ARC_MEDIA_PATH_CAPACITY];
    unsigned count;
    unsigned qualified_count;
-   unsigned path_omissions;
    char separator;
    bool windows_host;
    bool overflow;

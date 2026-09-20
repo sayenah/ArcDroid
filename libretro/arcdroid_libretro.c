@@ -198,6 +198,7 @@ typedef struct {
 
 static ArcMediaEntry arc_media[ARC_PLAYLIST_MAX_ENTRIES];
 static unsigned arc_media_count;
+static bool arc_folder_set_active;
 
 typedef enum {
    ARC_POINTER_STICK_RIGHT = 0,
@@ -638,6 +639,7 @@ static void arc_release_session(void)
       arc_jfd_free(&arc_media[i].jfd);
    memset(arc_media, 0, sizeof(arc_media));
    arc_media_count = 0u;
+   arc_folder_set_active = false;
    arc_image_index = 0u;
    arc_cmos_path[0] = '\0';
    arc_helper_path[0] = '\0';
@@ -722,6 +724,16 @@ static void arc_message(const char *text, enum retro_log_level level)
       arc_environment(RETRO_ENVIRONMENT_SET_MESSAGE, &legacy);
 }
 
+static void arc_media_notice(const char *text, bool notify_user,
+                             bool *notice_reported)
+{
+   if (notice_reported) *notice_reported = true;
+   if (notify_user)
+      arc_message(text, RETRO_LOG_WARN);
+   else if (arc_log)
+      arc_log(RETRO_LOG_WARN, "%s\n", text);
+}
+
 static void arc_vidc_episode_update(bool field_completed, uint64_t elapsed_us)
 {
    if (field_completed)
@@ -803,7 +815,8 @@ static bool arc_file_digest_matches(const char *path, const uint8_t *expected,
 }
 
 static bool arc_prepare_source(const char *source, const char *playlist_label,
-                               ArcDiskWriteMode mode, ArcMediaEntry *entry,
+                               ArcDiskWriteMode mode, bool notify_user,
+                               bool *notice_reported, ArcMediaEntry *entry,
                                char *error, size_t error_size)
 {
    void *source_data = NULL;
@@ -882,7 +895,8 @@ static bool arc_prepare_source(const char *source, const char *playlist_label,
       }
       if (entry->info.recognition == ARC_MEDIA_RECOGNITION_SIZE_FALLBACK &&
           !arc_media_is_recognised_adfs(source_data, source_size))
-         arc_message("Media is not a recognised ADFS image; booting anyway.", RETRO_LOG_WARN);
+         arc_media_notice("Media is not a recognised ADFS image; booting anyway.",
+                          notify_user, notice_reported);
    }
    if (!entry->label[0]) arc_media_stem(source, entry->label);
 
@@ -936,7 +950,7 @@ static bool arc_prepare_source(const char *source, const char *playlist_label,
       char warning[192];
       snprintf(warning, sizeof(warning), "Short image padded with %zu missing bytes; source remains unchanged.",
                entry->info.padding_required);
-      arc_message(warning, RETRO_LOG_WARN);
+      arc_media_notice(warning, notify_user, notice_reported);
    }
    /* JFD staging is immutable. Retain its metadata, digest and label here,
     * then re-read and parse only the selected image immediately before an
@@ -1012,6 +1026,18 @@ static void arc_log_folder_result(const ArcFolderSet *set, unsigned omissions)
               set->directory, set->qualified_count, arc_media_count, omissions);
 }
 
+static void arc_folder_summary(const char *action, unsigned omissions,
+                               unsigned notices)
+{
+   char message[192];
+   if (!omissions && !notices) return;
+   snprintf(message, sizeof(message),
+            "Folder disc set %s with %u sibling%s omitted and %u media notice%s; see the log for details.",
+            action, omissions, omissions == 1u ? "" : "s",
+            notices, notices == 1u ? "" : "s");
+   arc_message(message, RETRO_LOG_WARN);
+}
+
 static void arc_discard_candidate(ArcMediaEntry *entry)
 {
    if (entry->created_this_preparation && entry->staged[0])
@@ -1020,24 +1046,14 @@ static void arc_discard_candidate(ArcMediaEntry *entry)
    memset(entry, 0, sizeof(*entry));
 }
 
-static void arc_prepare_folder_siblings(const char *content_path,
+static bool arc_prepare_folder_siblings(const char *content_path,
                                         bool windows_host,
                                         ArcDiskWriteMode mode,
                                         size_t selected_logical)
 {
-   ArcFolderSet *set = malloc(sizeof(*set));
-   if (!set)
-   {
-      arc_message("Folder disc set discovery ran out of memory; loading the selected image alone.",
-                  RETRO_LOG_WARN);
-      return;
-   }
-   ArcFolderSetTrigger trigger = arc_folder_set_begin(content_path, windows_host, set);
-   if (trigger == ARC_FOLDER_SET_NONE)
-   {
-      free(set);
-      return;
-   }
+   ArcFolderSetTrigger trigger = arc_folder_set_begin(content_path, windows_host,
+                                                       NULL);
+   if (trigger == ARC_FOLDER_SET_NONE) return false;
    if (trigger == ARC_FOLDER_SET_DIRECTORY_TOO_LONG)
    {
       if (arc_log)
@@ -1045,9 +1061,16 @@ static void arc_prepare_folder_siblings(const char *content_path,
                  "Folder disc set enumeration skipped: parent directory exceeds 1021 bytes.\n");
       arc_message("Folder disc set directory is too long to enumerate safely; loading the selected image alone.",
                   RETRO_LOG_WARN);
-      free(set);
-      return;
+      return true;
    }
+   ArcFolderSet *set = malloc(sizeof(*set));
+   if (!set)
+   {
+      arc_message("Folder disc set discovery ran out of memory; loading the selected image alone.",
+                  RETRO_LOG_WARN);
+      return true;
+   }
+   (void)arc_folder_set_begin(content_path, windows_host, set);
 
    ArcFolderCollection collection = {set, 0u};
    if (!arc_io_list_directory(set->directory, arc_collect_folder_member,
@@ -1060,7 +1083,7 @@ static void arc_prepare_folder_siblings(const char *content_path,
       arc_message("Folder disc set directory could not be opened; loading the selected image alone.",
                   RETRO_LOG_WARN);
       free(set);
-      return;
+      return true;
    }
    if (set->overflow)
    {
@@ -1068,18 +1091,20 @@ static void arc_prepare_folder_siblings(const char *content_path,
       arc_message("Folder disc set has more than 31 siblings; loading the selected image alone.",
                   RETRO_LOG_WARN);
       free(set);
-      return;
+      return true;
    }
 
    arc_folder_set_sort(set);
    size_t total = selected_logical;
+   unsigned notices = 0u;
    for (unsigned sibling = 0u; sibling < set->count; ++sibling)
    {
       char source[ARC_MEDIA_PATH_CAPACITY];
       char reason[512] = {0};
       ArcMediaEntry candidate;
+      bool notice = false;
       if (!arc_folder_set_path(set, sibling, source) ||
-          !arc_prepare_source(source, NULL, mode, &candidate,
+          !arc_prepare_source(source, NULL, mode, false, &notice, &candidate,
                               reason, sizeof(reason)))
       {
          ++collection.omissions;
@@ -1091,6 +1116,7 @@ static void arc_prepare_folder_siblings(const char *content_path,
                     reason[0] ? reason : "resolved path is invalid");
          continue;
       }
+      if (notice) ++notices;
       bool duplicate = false;
       for (unsigned previous = 0u; previous < arc_media_count; ++previous)
          if (!strcmp(arc_media[previous].digest.sha1, candidate.digest.sha1))
@@ -1104,21 +1130,15 @@ static void arc_prepare_folder_siblings(const char *content_path,
          arc_message("Folder disc set exceeds 256 MiB of logical media; loading the selected image alone.",
                      RETRO_LOG_WARN);
          free(set);
-         return;
+         return true;
       }
       if (!duplicate) total += logical;
       arc_media[arc_media_count++] = candidate;
    }
    arc_log_folder_result(set, collection.omissions);
-   if (collection.omissions)
-   {
-      char message[160];
-      snprintf(message, sizeof(message),
-               "Folder disc set loaded with %u sibling%s omitted; see the log for details.",
-               collection.omissions, collection.omissions == 1u ? "" : "s");
-      arc_message(message, RETRO_LOG_WARN);
-   }
+   arc_folder_summary("loaded", collection.omissions, notices);
    free(set);
+   return true;
 }
 
 static bool arc_prepare_media_list(const char *content_path,
@@ -1154,7 +1174,8 @@ static bool arc_prepare_media_list(const char *content_path,
    {
       const char *source = is_playlist ? playlist.entries[i].path : content_path;
       const char *label = is_playlist ? playlist.entries[i].label : NULL;
-      if (!arc_prepare_source(source, label, mode, &arc_media[i], error, error_size))
+      if (!arc_prepare_source(source, label, mode, true, NULL, &arc_media[i],
+                              error, error_size))
       {
          if (is_playlist && error && error_size)
          {
@@ -1185,8 +1206,8 @@ static bool arc_prepare_media_list(const char *content_path,
    if (!is_playlist)
    {
       arc_content_digest = arc_media[0].digest;
-      arc_prepare_folder_siblings(content_path, windows_host, mode,
-                                  arc_media[0].info.declared_size);
+      arc_folder_set_active = arc_prepare_folder_siblings(
+         content_path, windows_host, mode, arc_media[0].info.declared_size);
    }
    else
    {
@@ -1204,6 +1225,94 @@ static bool arc_prepare_media_list(const char *content_path,
                                        arc_hex_nibble(arc_media[i].digest.sha1[byte * 2u + 1u]));
       arc_content_digest = arc_digest(identity, at);
    }
+   return true;
+}
+
+static bool arc_reprepare_folder_media(ArcDiskWriteMode mode,
+                                       unsigned *selected,
+                                       char *error, size_t error_size)
+{
+   const unsigned old_count = arc_media_count;
+   const bool selected_at_end = selected && *selected == old_count;
+   char selected_source[ARC_MEDIA_PATH_CAPACITY] = {0};
+   if (selected && *selected < old_count && arc_media[*selected].populated)
+      snprintf(selected_source, sizeof(selected_source), "%s",
+               arc_media[*selected].source);
+
+   unsigned kept = 0u;
+   unsigned omissions = 0u;
+   unsigned notices = 0u;
+   for (unsigned i = 0u; i < old_count; ++i)
+   {
+      if (!arc_media[i].populated)
+      {
+         if (kept != i)
+         {
+            arc_media[kept] = arc_media[i];
+            memset(&arc_media[i], 0, sizeof(arc_media[i]));
+         }
+         ++kept;
+         continue;
+      }
+
+      char source[ARC_MEDIA_PATH_CAPACITY];
+      char label[ARC_MEDIA_LABEL_CAPACITY];
+      snprintf(source, sizeof(source), "%s", arc_media[i].source);
+      snprintf(label, sizeof(label), "%s", arc_media[i].label);
+      ArcMediaEntry replacement;
+      char reason[512] = {0};
+      bool notice = false;
+      if (!arc_prepare_source(source, label, mode, i == 0u, &notice,
+                              &replacement, reason, sizeof(reason)))
+      {
+         if (i == 0u)
+         {
+            if (error && error_size)
+               snprintf(error, error_size, "%s", reason[0] ? reason :
+                        "unable to re-prepare the selected folder-set image");
+            return false;
+         }
+         ++omissions;
+         if (arc_log)
+            arc_log(RETRO_LOG_WARN,
+                    "Folder disc set sibling omitted: path=\"%s\" reason=%s phase=reset\n",
+                    source, reason[0] ? reason : "media preparation failed");
+         arc_jfd_free(&arc_media[i].jfd);
+         memset(&arc_media[i], 0, sizeof(arc_media[i]));
+         continue;
+      }
+      if (i && notice) ++notices;
+      arc_jfd_free(&arc_media[i].jfd);
+      if (kept != i)
+      {
+         arc_media[kept] = replacement;
+         memset(&arc_media[i], 0, sizeof(arc_media[i]));
+      }
+      else
+         arc_media[i] = replacement;
+      ++kept;
+   }
+   for (unsigned i = kept; i < old_count; ++i)
+      memset(&arc_media[i], 0, sizeof(arc_media[i]));
+   arc_media_count = kept;
+
+   if (selected)
+   {
+      if (selected_at_end)
+         *selected = arc_media_count;
+      else if (selected_source[0])
+      {
+         unsigned matched = arc_media_count;
+         for (unsigned i = 0u; i < arc_media_count; ++i)
+            if (arc_media[i].populated &&
+                !strcmp(arc_media[i].source, selected_source))
+            { matched = i; break; }
+         *selected = matched < arc_media_count ? matched : 0u;
+      }
+      else if (*selected > arc_media_count)
+         *selected = arc_media_count;
+   }
+   arc_folder_summary("reset", omissions, notices);
    return true;
 }
 
@@ -1635,7 +1744,8 @@ static bool arc_disk_replace(unsigned index, const struct retro_game_info *info)
    ArcMediaEntry replacement;
    char error[512] = {0};
    if (!info->path || !arc_prepare_source(info->path, NULL, arc_plan.disk_writes,
-                                           &replacement, error, sizeof(error)))
+                                           true, NULL, &replacement,
+                                           error, sizeof(error)))
    {
       if (!arc_media[index].populated && index + 1u == arc_media_count)
          --arc_media_count;
@@ -3013,16 +3123,25 @@ RETRO_API void retro_reset(void)
    torn_down = true;
    if (updated.disk_writes != arc_core_options.disk_writes)
    {
-      for (unsigned i = 0u; i < arc_media_count; ++i)
+      if (arc_folder_set_active)
       {
-         if (!arc_media[i].populated) continue;
-         ArcMediaEntry replacement;
-         if (!arc_prepare_source(arc_media[i].source, arc_media[i].label,
-                                 updated.disk_writes, &replacement,
-                                 error, sizeof(error)))
+         if (!arc_reprepare_folder_media(updated.disk_writes, &selected,
+                                         error, sizeof(error)))
             goto failed;
-         arc_jfd_free(&arc_media[i].jfd);
-         arc_media[i] = replacement;
+      }
+      else
+      {
+         for (unsigned i = 0u; i < arc_media_count; ++i)
+         {
+            if (!arc_media[i].populated) continue;
+            ArcMediaEntry replacement;
+            if (!arc_prepare_source(arc_media[i].source, arc_media[i].label,
+                                    updated.disk_writes, true, NULL,
+                                    &replacement, error, sizeof(error)))
+               goto failed;
+            arc_jfd_free(&arc_media[i].jfd);
+            arc_media[i] = replacement;
+         }
       }
    }
    if (!was_ejected && selected < arc_media_count &&
