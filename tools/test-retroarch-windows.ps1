@@ -425,6 +425,12 @@ $indexDirectory = Join-Path $saveDirectory "ArcDroid"
 New-Item -ItemType Directory -Force $indexDirectory | Out-Null
 $indexRecord = Join-Path $indexDirectory "arcdroid-media.ldci"
 Remove-Item -Force -ErrorAction SilentlyContinue $indexRecord
+function Assert-No-LdciRecords([string]$Context) {
+    $records = @(Get-ChildItem -LiteralPath $saveDirectory -Filter "*.ldci" -File -Recurse)
+    if ($records.Count -ne 0) {
+        throw "$Context unexpectedly created .ldci records: $($records.FullName -join ', ')"
+    }
+}
 
 $mediaRun = Start-MediaRun $playlist "playlist-disk-control"
 try {
@@ -438,9 +444,11 @@ try {
 } finally {
     Stop-MediaRun $mediaRun
 }
-if (Test-Path $indexRecord) {
-    throw "Swap and clean quit unexpectedly created an .ldci record"
+$coreSaveDirectory = Join-Path $indexDirectory "arcdroid"
+if (-not (Test-Path -LiteralPath $coreSaveDirectory -PathType Container)) {
+    throw "ArcDroid save directory was not created under RetroArch's per-core save directory"
 }
+Assert-No-LdciRecords "Swap and clean quit"
 
 $relaunchRun = Start-MediaRun $playlist "playlist-swap-relaunch"
 try {
@@ -448,9 +456,7 @@ try {
 } finally {
     Stop-MediaRun $relaunchRun
 }
-if (Test-Path $indexRecord) {
-    throw "Relaunch unexpectedly created an .ldci record"
-}
+Assert-No-LdciRecords "Relaunch"
 
 $folderRun = Start-MediaRun $folderSet "folder-set-disk-control"
 try {
@@ -464,6 +470,7 @@ try {
 } finally {
     Stop-MediaRun $folderRun
 }
+Assert-No-LdciRecords "Folder-set run"
 
 @{ version = "1.0"; image_index = 1; image_path = $disc2 } |
     ConvertTo-Json | Set-Content -Encoding ASCII $indexRecord
@@ -480,6 +487,11 @@ if (Select-String -Path $seededRun.RetroLog -SimpleMatch "Failed to set initial"
 $seededRecordAfter = [Convert]::ToBase64String([IO.File]::ReadAllBytes($indexRecord))
 if ($seededRecordAfter -ne $seededRecord) {
     throw "Seeded .ldci record changed during the clean launch and quit"
+}
+$ldciRecords = @(Get-ChildItem -LiteralPath $saveDirectory -Filter "*.ldci" -File -Recurse)
+if ($ldciRecords.Count -ne 1 -or
+    $ldciRecords[0].FullName -ne [IO.Path]::GetFullPath($indexRecord)) {
+    throw "Seeded run did not leave exactly the seeded .ldci record"
 }
 
 $jfdRun = Start-MediaRun $jfd "jfd"

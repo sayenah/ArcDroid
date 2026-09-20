@@ -3661,6 +3661,20 @@ int main(int argc, char **argv)
              launch_log_lines == launch_decisions + 1u &&
              strstr(last_launch_log, "candidates=[1:!Virelai:app]") &&
              !strstr(last_launch_log, "!Nulvane"));
+      assert(disk_control.set_eject_state(true) &&
+             disk_control.set_image_index(1u) &&
+             disk_control.set_eject_state(false) &&
+             disk_control.get_image_index() == 1u &&
+             !disk_control.get_eject_state());
+      retro_unload_game();
+      launch_decisions = launch_log_lines;
+      phase = PHASE_LOAD; assert(retro_load_game(&launch_folder_game));
+      assert(disk_control.get_num_images() == 2u &&
+             disk_control.get_image_index() == 0u &&
+             !disk_control.get_eject_state() &&
+             launch_log_lines == launch_decisions + 1u &&
+             strstr(last_launch_log, "candidates=[1:!Virelai:app]") &&
+             !strstr(last_launch_log, "!Nulvane"));
       retro_unload_game();
 
       unsigned folder_messages = folder_set_warning_osd_calls;
@@ -3907,6 +3921,19 @@ int main(int argc, char **argv)
       phase = PHASE_LOAD; assert(retro_load_game(&playlist_game));
       assert(strstr(last_input_resolution, "profile=Generated Test Profile") &&
              strstr(last_input_resolution, "[profile]"));
+      assert(disk_control.get_num_images() == 2u &&
+             disk_control.get_image_index() == 0u &&
+             !disk_control.get_eject_state());
+      assert(disk_control.set_eject_state(true) &&
+             disk_control.set_image_index(1u) &&
+             disk_control.set_eject_state(false) &&
+             disk_control.get_image_index() == 1u &&
+             !disk_control.get_eject_state());
+      retro_unload_game();
+
+      /* Unload/reload in one process cannot carry a valid later index into
+       * the new playlist session. */
+      phase = PHASE_LOAD; assert(retro_load_game(&playlist_game));
       assert(disk_control.get_num_images() == 2u &&
              disk_control.get_image_index() == 0u &&
              !disk_control.get_eject_state());
