@@ -1,6 +1,7 @@
 /* ArcDroid deterministic core tests. GPL-2.0-only. */
 #include "arcdroid_core.h"
 #include "e_format_fixture.h"
+#include "folder_set.h"
 #include "jfd.h"
 #include "keytable_provenance.h"
 #include "osk_font.h"
@@ -1490,6 +1491,98 @@ static void test_playlists(void)
    free(playlist);
 }
 
+static void make_folder_boundary_path(char path[ARC_MEDIA_PATH_CAPACITY],
+                                      size_t directory_size)
+{
+   static const char leaf[] = "Same.adf";
+   assert(directory_size > sizeof(leaf) + 1u);
+   size_t filler = directory_size - sizeof(leaf) - 1u;
+   path[0] = '/';
+   memset(path + 1u, 'p', filler);
+   path[1u + filler] = '/';
+   memcpy(path + 2u + filler, leaf, sizeof(leaf) - 1u);
+   path[directory_size] = '/';
+   memcpy(path + directory_size + 1u, leaf, sizeof(leaf));
+}
+
+static void test_folder_sets(void)
+{
+   ArcFolderSet *set = malloc(sizeof(*set));
+   assert(set);
+   assert(arc_folder_set_begin("/sets/Qaventra.adf/Qaventra.adf", false,
+                               NULL) == ARC_FOLDER_SET_READY);
+   assert(arc_folder_set_begin("/sets/Other.adf/Qaventra.adf", false,
+                               NULL) == ARC_FOLDER_SET_NONE);
+   assert(arc_folder_set_begin("/sets/Qaventra.adf/Qaventra.adf", false,
+                               set) == ARC_FOLDER_SET_READY);
+   assert(!strcmp(set->directory, "/sets/Qaventra.adf") &&
+          !strcmp(set->selected_name, "Qaventra.adf") && set->separator == '/');
+   assert(arc_folder_set_add(set, "qaventra.adf", true) ==
+          ARC_FOLDER_MEMBER_ADDED);
+   assert(arc_folder_set_begin("C:\\sets\\Qaventra.adf\\Qaventra.adf", false,
+                               set) == ARC_FOLDER_SET_READY && set->separator == '\\');
+   assert(arc_folder_set_begin("/sets/Qaventra.adf/qaventra.adf", false,
+                               set) == ARC_FOLDER_SET_NONE);
+   assert(arc_folder_set_begin("C:\\sets\\Qaventra.ADF\\qaventra.adf", true,
+                               set) == ARC_FOLDER_SET_READY);
+   assert(arc_folder_set_add(set, "QAVENTRA.ADF", true) ==
+          ARC_FOLDER_MEMBER_IGNORED);
+   assert(arc_folder_set_begin("/sets/Other.adf/Qaventra.adf", false, set) ==
+          ARC_FOLDER_SET_NONE);
+   assert(arc_folder_set_begin("/sets/Qaventra.adf", false, set) ==
+          ARC_FOLDER_SET_NONE);
+   assert(arc_folder_set_begin("content://sets/Qaventra.adf/Qaventra.adf", false,
+                               set) == ARC_FOLDER_SET_NONE);
+   assert(arc_folder_set_begin("saf://sets/Qaventra.adf/Qaventra.adf", false,
+                               set) == ARC_FOLDER_SET_NONE);
+
+   assert(arc_folder_set_begin("/sets/Set.adf/Set.adf", false, set) ==
+          ARC_FOLDER_SET_READY);
+   static const char *const unordered[] = {
+      "Set 10.adf", "set 2.ADF", "Set 1.jfd", "Set 01.adf", "set 3.adl",
+      "Set 20.adf", "Set 11.adf", "set 9.adf", "Set 4.adf", "Set 02.adf"
+   };
+   for (unsigned i = 0u; i < 10u; ++i)
+      assert(arc_folder_set_add(set, unordered[i], true) == ARC_FOLDER_MEMBER_ADDED);
+   assert(arc_folder_set_add(set, ".Set 0.adf", true) == ARC_FOLDER_MEMBER_IGNORED);
+   assert(arc_folder_set_add(set, "Set 5.m3u", true) == ARC_FOLDER_MEMBER_IGNORED);
+   assert(arc_folder_set_add(set, "Set 6.txt", true) == ARC_FOLDER_MEMBER_IGNORED);
+   assert(arc_folder_set_add(set, "Set 7.adf", false) == ARC_FOLDER_MEMBER_IGNORED);
+   assert(arc_folder_set_add(set, "Set.adf", true) == ARC_FOLDER_MEMBER_IGNORED);
+   arc_folder_set_sort(set);
+   static const char *const ordered[] = {
+      "Set 01.adf", "Set 1.jfd", "Set 02.adf", "set 2.ADF", "set 3.adl",
+      "Set 4.adf", "set 9.adf", "Set 10.adf", "Set 11.adf", "Set 20.adf"
+   };
+   for (unsigned i = 0u; i < 10u; ++i)
+      assert(!strcmp(set->siblings[i], ordered[i]));
+   char resolved[ARC_MEDIA_PATH_CAPACITY];
+   assert(arc_folder_set_path(set, 0u, resolved) &&
+          !strcmp(resolved, "/sets/Set.adf/Set 01.adf"));
+
+   assert(arc_folder_set_begin("Root.adf/Root.adf", false, set) ==
+          ARC_FOLDER_SET_READY);
+   char sibling[64];
+   for (unsigned i = 0u; i < ARC_FOLDER_SET_MAX_SIBLINGS; ++i)
+   {
+      snprintf(sibling, sizeof(sibling), "Sibling %u.adf", i);
+      assert(arc_folder_set_add(set, sibling, true) == ARC_FOLDER_MEMBER_ADDED);
+   }
+   assert(set->count == 31u && !set->overflow);
+   assert(arc_folder_set_add(set, "Sibling 31.adf", true) ==
+          ARC_FOLDER_MEMBER_LIMIT_EXCEEDED);
+   assert(set->overflow && set->qualified_count == 32u);
+
+   char boundary[ARC_MEDIA_PATH_CAPACITY];
+   make_folder_boundary_path(boundary, 1021u);
+   assert(arc_folder_set_begin(boundary, false, set) == ARC_FOLDER_SET_READY &&
+          strlen(set->directory) == 1021u);
+   make_folder_boundary_path(boundary, 1022u);
+   assert(arc_folder_set_begin(boundary, false, set) ==
+          ARC_FOLDER_SET_DIRECTORY_TOO_LONG && strlen(set->directory) == 1022u);
+   free(set);
+}
+
 static void store_u32(uint8_t *p, uint32_t value)
 {
    p[0] = (uint8_t)value; p[1] = (uint8_t)(value >> 8u);
@@ -2656,6 +2749,7 @@ int main(int argc, char **argv)
    test_adfs_recognition();
    test_short_media_policy();
    test_playlists();
+   test_folder_sets();
    test_jfd_parser(argv[1]);
    test_input();
    test_input_mapping();

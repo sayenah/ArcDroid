@@ -7,6 +7,8 @@
 #include <stddef.h>
 
 typedef bool (*ArcIoVisit)(const char *path, void *opaque);
+typedef bool (*ArcIoDirectoryVisit)(const char *name, bool regular_file,
+                                    void *opaque);
 typedef struct ArcIoFile ArcIoFile;
 
 void arc_io_set_vfs(struct retro_vfs_interface *vfs);
@@ -18,6 +20,8 @@ bool arc_io_file_size(const char *path, size_t *size);
 bool arc_io_make_path(const char *path);
 bool arc_io_directory_contains(const char *directory, const char *name,
                                bool *contains);
+bool arc_io_list_directory(const char *directory, ArcIoDirectoryVisit visit,
+                           void *opaque);
 bool arc_io_walk(const char *directory, unsigned max_depth,
                  ArcIoVisit visit, void *opaque);
 ArcIoFile *arc_io_open_file(const char *path, bool writable);
