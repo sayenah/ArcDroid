@@ -1076,14 +1076,6 @@ static bool arc_refresh_jfd(ArcMediaEntry *entry, char *error, size_t error_size
    return true;
 }
 
-static const char *arc_launch_option_name(ArcLaunchOption option)
-{
-   static const char *const names[] = {
-      "auto", "off", "app1", "app2", "app3", "app4", "app5", "app6", "app7", "app8"
-   };
-   return (unsigned)option < sizeof(names) / sizeof(names[0]) ? names[option] : "invalid";
-}
-
 static bool arc_launch_os_supported(ArcOsClass os)
 {
 #if defined(ARCDROID_TEST_FAULTS)
@@ -1091,14 +1083,6 @@ static bool arc_launch_os_supported(ArcOsClass os)
 #endif
    return os == ARC_OS_RISCOS_300 || os == ARC_OS_RISCOS_310 ||
           os == ARC_OS_RISCOS_311 || os == ARC_OS_RISCOS_319;
-}
-
-static bool arc_guest_name_cstr(const ArcGuestName *name, char output[11])
-{
-   if (!name || name->length > ARC_GUEST_NAME_MAX) return false;
-   memcpy(output, name->bytes, name->length);
-   output[name->length] = '\0';
-   return true;
 }
 
 static void arc_launch_candidates_message(const ArcLaunchDiscovery *discovery,
@@ -1128,57 +1112,130 @@ static void arc_launch_candidates_message(const ArcLaunchDiscovery *discovery,
    arc_message(message, RETRO_LOG_WARN);
 }
 
+static bool arc_launch_binding_publish(const char *path, bool replacing,
+                                       const uint8_t *data, size_t size)
+{
+   if (!replacing)
+      return arc_atomic_publish(path, data, size, NULL, NULL, 0u);
+
+   /* The libretro VFS rename contract forbids an existing destination. Keep
+    * the old binding recoverable while installing the fully-written record. */
+   char temporary[ARC_MEDIA_PATH_CAPACITY];
+   char previous[ARC_MEDIA_PATH_CAPACITY];
+   int t = snprintf(temporary, sizeof(temporary), "%s.tmp", path);
+   int p = snprintf(previous, sizeof(previous), "%s.previous", path);
+   if (t < 0 || (size_t)t >= sizeof(temporary) ||
+       p < 0 || (size_t)p >= sizeof(previous)) return false;
+   (void)arc_io_remove(temporary);
+   size_t previous_size = 0u;
+   if (arc_io_file_size(previous, &previous_size) &&
+       !arc_io_remove(previous)) return false;
+   if (!arc_io_write_all(temporary, data, size))
+   {
+      (void)arc_io_remove(temporary);
+      return false;
+   }
+   if (!arc_io_rename(path, previous))
+   {
+      size_t target_size = 0u;
+      if (!arc_io_file_size(path, &target_size) &&
+          arc_io_file_size(previous, &previous_size))
+         (void)arc_io_rename(previous, path);
+      else
+         (void)arc_io_remove(previous);
+      (void)arc_io_remove(temporary);
+      return false;
+   }
+   if (!arc_io_rename(temporary, path))
+   {
+      (void)arc_io_remove(path);
+      (void)arc_io_rename(previous, path);
+      (void)arc_io_remove(temporary);
+      return false;
+   }
+   (void)arc_io_remove(previous);
+   return true;
+}
+
 static bool arc_launch_binding(const ArcLaunchDiscovery *discovery,
-                               ArcLaunchOption option, unsigned selected,
-                               bool reselected, char *reason, size_t reason_size)
+                               unsigned selected, bool reselected,
+                               char *reason, size_t reason_size)
 {
    char directory[ARC_MEDIA_PATH_CAPACITY];
    char path[ARC_MEDIA_PATH_CAPACITY];
+   char leaf[46];
    int d = snprintf(directory, sizeof(directory), "%s/arcdroid/launch", arc_save_path);
-   int p = d >= 0 && (size_t)d < sizeof(directory) ?
-      snprintf(path, sizeof(path), "%s/%s.bind", directory, arc_plan.content_id) : -1;
+   int l = snprintf(leaf, sizeof(leaf), "%s.bind", arc_plan.content_id);
+   int p = d >= 0 && (size_t)d < sizeof(directory) &&
+           l >= 0 && (size_t)l < sizeof(leaf) ?
+      snprintf(path, sizeof(path), "%s/%s", directory, leaf) : -1;
    if (d < 0 || (size_t)d >= sizeof(directory) || p < 0 ||
-       (size_t)p >= sizeof(path) || !arc_io_make_path(directory))
+       (size_t)p >= sizeof(path) || l < 0 || (size_t)l >= sizeof(leaf) ||
+       !arc_io_make_path(directory))
    { snprintf(reason, reason_size, "binding storage unavailable"); return false; }
 
-   void *existing = NULL;
+   bool exists = false;
+   if (!arc_io_directory_contains(directory, leaf, &exists))
+   { snprintf(reason, reason_size, "binding directory could not be listed"); return false; }
+
+   uint8_t existing[ARC_LAUNCH_BINDING_MAX_SIZE];
    size_t existing_size = 0u;
-   bool exists = arc_io_read_all(path, &existing, &existing_size);
-   const char *option_name = arc_launch_option_name(option);
-   char target[11];
-   if (!arc_guest_name_cstr(&discovery->candidates[selected].name, target))
-   { snprintf(reason, reason_size, "binding target is invalid"); return false; }
-   if (exists && !reselected)
+   if (exists)
    {
-      char bound_option[5] = {0}, bound_target[11] = {0}, bound_fingerprint[41] = {0};
-      char text[128];
-      char trailing = 0;
-      if (existing_size < sizeof(text))
+      size_t declared_size = 0u;
+      if (!arc_io_file_size(path, &declared_size))
       {
-         if (existing_size && existing) memcpy(text, existing, existing_size);
-         text[existing_size] = '\0';
+         snprintf(reason, reason_size,
+                  "binding could not be read; existing binding preserved");
+         return false;
       }
-      int fields = existing_size < sizeof(text) ?
-         sscanf(text, "%4[^\n]\n%10[^\n]\n%40[^\n]\n%c",
-                bound_option, bound_target, bound_fingerprint, &trailing) : 0;
-      if (fields < 3)
-      { free(existing); snprintf(reason, reason_size, "binding is invalid; re-select Launch"); return false; }
-      if (!strcmp(bound_option, option_name))
+      if (declared_size > sizeof(existing))
       {
-         bool matches = !strcmp(bound_target, target);
-         free(existing);
-         if (!matches)
-         { snprintf(reason, reason_size, "binding changed target; re-select Launch"); return false; }
+         snprintf(reason, reason_size,
+                  "binding is invalid; existing binding preserved");
+         return false;
+      }
+      ArcIoFile *file = arc_io_open_file(path, false);
+      int64_t opened_size = file ? arc_io_file_length(file) : -1;
+      existing_size = file ? arc_io_read_file(file, existing, declared_size) : 0u;
+      uint8_t trailing;
+      size_t trailing_size = file ? arc_io_read_file(file, &trailing, 1u) : 0u;
+      bool closed = file && arc_io_close_file(file);
+      if (opened_size < 0 || (uint64_t)opened_size != declared_size ||
+          existing_size != declared_size || trailing_size || !closed)
+      {
+         snprintf(reason, reason_size,
+                  "binding could not be read; existing binding preserved");
+         return false;
+      }
+      ArcLaunchBinding binding;
+      if (!arc_launch_binding_parse(existing, existing_size, &binding))
+      {
+         snprintf(reason, reason_size,
+                  "binding is invalid; existing binding preserved");
+         return false;
+      }
+      const ArcGuestName *target = &discovery->candidates[selected].name;
+      if (!reselected)
+      {
+         if (binding.target.length != target->length ||
+             memcmp(binding.target.bytes, target->bytes, target->length))
+         {
+            snprintf(reason, reason_size,
+                     "binding changed target; re-select Launch");
+            return false;
+         }
          return true;
       }
    }
-   free(existing);
-   char binding[96];
-   int size = snprintf(binding, sizeof(binding), "%s\n%s\n%s\n", option_name,
-                       target, discovery->candidate_fingerprint);
-   if (size < 0 || (size_t)size >= sizeof(binding) ||
-       !arc_atomic_publish(path, (const uint8_t *)binding, (size_t)size,
-                           NULL, NULL, 0u))
+
+   uint8_t binding[ARC_LAUNCH_BINDING_MAX_SIZE];
+   size_t binding_size = 0u;
+   if (!arc_launch_binding_format(selected,
+          &discovery->candidates[selected].name,
+          discovery->candidate_fingerprint,
+          binding, sizeof(binding), &binding_size) ||
+       !arc_launch_binding_publish(path, exists, binding, binding_size))
    { snprintf(reason, reason_size, "binding could not be published"); return false; }
    return true;
 }
@@ -1266,7 +1323,7 @@ static void arc_prepare_launch(ArcMediaEntry *entry, bool ejected,
       else
       {
          selected = (int)ordinal;
-         if (!arc_launch_binding(&discovery, option, ordinal, reselected,
+         if (!arc_launch_binding(&discovery, ordinal, reselected,
                                  refusal, sizeof(refusal)))
          {
             char detail[sizeof(refusal)];

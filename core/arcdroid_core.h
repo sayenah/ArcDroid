@@ -182,6 +182,15 @@ typedef struct {
    char candidate_fingerprint[41];
 } ArcLaunchDiscovery;
 
+#define ARC_LAUNCH_BINDING_MAX_SIZE 96u
+
+typedef struct {
+   unsigned version;
+   unsigned ordinal;
+   ArcGuestName target;
+   char candidate_fingerprint[41];
+} ArcLaunchBinding;
+
 #define ARC_CMOS_RECORD_SIZE 256u
 #define ARC_CMOS_PAYLOAD_SIZE 240u
 #define ARC_CMOS_MACHINE_SIZE 256u
@@ -220,6 +229,12 @@ bool arc_launch_disc_build(const ArcLaunchDiscovery *discovery,
                            unsigned target_index,
                            uint8_t output[ARC_LAUNCH_DISC_SIZE],
                            char *error, size_t error_size);
+bool arc_launch_binding_parse(const void *data, size_t size,
+                              ArcLaunchBinding *binding);
+bool arc_launch_binding_format(unsigned ordinal, const ArcGuestName *target,
+                               const char candidate_fingerprint[41],
+                               uint8_t *output, size_t capacity,
+                               size_t *output_size);
 bool arc_filecore_e_map_layout_valid(unsigned id_length,
                                      unsigned log2_bytes_per_map_bit,
                                      unsigned zone_spare,

@@ -184,6 +184,8 @@ static const char *fault_write_substring;
 static const char *fault_flush_substring;
 static const char *fault_close_substring;
 static const char *fault_rename_substring;
+static const char *fault_opendir_substring;
+static const char *fault_closedir_substring;
 static char fault_rename_destination[4096];
 
 static bool fault_once(const char *path, const char **substring)
@@ -269,7 +271,9 @@ static int32_t vfs_stat(const char *p, int32_t *size)
 static int vfs_mkdir(const char *p) { return mkdir(p, 0755); }
 static struct retro_vfs_dir_handle *vfs_opendir(const char *p, bool hidden)
 {
-   (void)hidden; DIR *d = opendir(p); if (!d) return NULL;
+   (void)hidden;
+   if (fault_once(p, &fault_opendir_substring)) return NULL;
+   DIR *d = opendir(p); if (!d) return NULL;
    struct retro_vfs_dir_handle *h = calloc(1u, sizeof(*h)); assert(h);
    h->dir = d; snprintf(h->path, sizeof(h->path), "%s", p); ++open_dirs; return h;
 }
@@ -282,7 +286,14 @@ static bool vfs_dirent_is_dir(struct retro_vfs_dir_handle *h)
    snprintf(p, sizeof(p), "%s/%s", h->path, h->entry->d_name);
    return !stat(p, &st) && S_ISDIR(st.st_mode);
 }
-static int vfs_closedir(struct retro_vfs_dir_handle *h) { int r = closedir(h->dir); free(h); --open_dirs; return r; }
+static int vfs_closedir(struct retro_vfs_dir_handle *h)
+{
+   bool fail = fault_once(h->path, &fault_closedir_substring);
+   int result = closedir(h->dir);
+   free(h);
+   --open_dirs;
+   return fail ? -1 : result;
+}
 
 static struct retro_vfs_interface vfs = {
    vfs_get_path, vfs_open, vfs_close, vfs_size, vfs_tell, vfs_seek, vfs_read,
@@ -763,6 +774,21 @@ static void read_exact(const char *path, void *data, size_t size)
 {
    FILE *file = fopen(path, "rb"); assert(file);
    assert(fread(data, 1u, size, file) == size && fgetc(file) == EOF && !fclose(file));
+}
+
+static size_t read_bounded(const char *path, void *data, size_t capacity)
+{
+   FILE *file = fopen(path, "rb");
+   assert(file);
+   size_t size = fread(data, 1u, capacity, file);
+   assert(!ferror(file) && fgetc(file) == EOF && !fclose(file));
+   return size;
+}
+
+static void write_exact(const char *path, const void *data, size_t size)
+{
+   FILE *file = fopen(path, "wb");
+   assert(file && fwrite(data, 1u, size, file) == size && !fclose(file));
 }
 
 static uint64_t hash_file(const char *path)
@@ -3968,7 +3994,7 @@ int main(int argc, char **argv)
                      sizeof(launch_cmos_file)));
 
       /* Explicit ordinals override a non-zero FileCore boot option, refuse a
-       * non-application/beyond-list choice, and bind the resolved target. */
+       * non-application/beyond-list choice, and bind the resolved raw target. */
       char explicit_source[4096], explicit_staged[4096], explicit_binding[4096];
       snprintf(explicit_source, sizeof(explicit_source),
                "%s/launch-family/explicit-d.adf", argv[11]);
@@ -3992,18 +4018,74 @@ int main(int argc, char **argv)
              strstr(last_launch_log, "boot=3") &&
              strstr(last_launch_log, "decision=!Demo") &&
              strstr(last_launch_log, "disc !Boot skipped"));
-      char binding_text[96];
-      FILE *binding_file = fopen(explicit_binding, "rb");
-      assert(binding_file);
-      size_t binding_size = fread(binding_text, 1u, sizeof(binding_text) - 1u, binding_file);
-      assert(!ferror(binding_file) && !fclose(binding_file));
-      binding_text[binding_size] = '\0';
-      assert(!strncmp(binding_text, "app2\n!Demo\n", 11u));
+      uint8_t binding_text[ARC_LAUNCH_BINDING_MAX_SIZE];
+      size_t binding_size = read_bounded(explicit_binding, binding_text,
+                                         sizeof(binding_text));
+      ArcLaunchBinding parsed_binding;
+      assert(arc_launch_binding_parse(binding_text, binding_size,
+                                      &parsed_binding) &&
+             parsed_binding.version == 2u && parsed_binding.ordinal == 1u &&
+             parsed_binding.target.length == 5u &&
+             !memcmp(parsed_binding.target.bytes, "!Demo", 5u));
       retro_unload_game();
 
-      /* A persistent shadow edit removes the earlier candidate, so app2 now
-       * resolves to !Other. The prior binding prevents silent retargeting. */
+      /* An unchanged ordinal/target accepts the existing binding without
+       * rewriting it. */
+      option_launch = "app2";
+      phase = PHASE_LOAD; assert(retro_load_game(&explicit_game));
+      assert(arc_engine_test_drive_media(1u, NULL, NULL) &&
+             strstr(last_launch_log, "decision=!Demo"));
+      uint8_t binding_check[ARC_LAUNCH_BINDING_MAX_SIZE];
+      size_t binding_check_size = read_bounded(explicit_binding, binding_check,
+                                               sizeof(binding_check));
+      assert(binding_check_size == binding_size &&
+             !memcmp(binding_check, binding_text, binding_size));
+      retro_unload_game();
+
+      /* A persistent shadow edit removes the earlier candidate. The same raw
+       * target moved from ordinal 2 to ordinal 1 and remains accepted, without
+       * rewriting the old ordinal or candidate fingerprint. */
       remove_first_new_directory_entry(explicit_staged);
+      option_launch = "app1";
+      phase = PHASE_LOAD; assert(retro_load_game(&explicit_game));
+      assert(arc_engine_test_drive_media(1u, NULL, NULL) &&
+             strstr(last_launch_log, "decision=!Demo"));
+      binding_check_size = read_bounded(explicit_binding, binding_check,
+                                        sizeof(binding_check));
+      assert(binding_check_size == binding_size &&
+             !memcmp(binding_check, binding_text, binding_size));
+      retro_unload_game();
+
+      /* The old ordinal now resolves to !Other. Same ordinal/different target
+       * refuses, and the existing binding is preserved. */
+      option_launch = "app2";
+      warnings = launch_warning_osd_calls;
+      phase = PHASE_LOAD; assert(retro_load_game(&explicit_game));
+      assert(!arc_engine_test_drive_media(1u, NULL, NULL) &&
+             launch_warning_osd_calls == warnings + 1u &&
+             strstr(last_launch_warning, "binding changed target"));
+      binding_check_size = read_bounded(explicit_binding, binding_check,
+                                        sizeof(binding_check));
+      assert(binding_check_size == binding_size &&
+             !memcmp(binding_check, binding_text, binding_size));
+      option_launch = "off";
+      retro_reset();
+      option_launch = "app2";
+      retro_reset();
+      assert(arc_engine_test_drive_media(1u, &write_protected, mounted_digest) &&
+             strstr(last_launch_log, "decision=!Other"));
+      size_t other_binding_size = read_bounded(explicit_binding, binding_text,
+                                               sizeof(binding_text));
+      assert(arc_launch_binding_parse(binding_text, other_binding_size,
+                                      &parsed_binding) &&
+             parsed_binding.version == 2u && parsed_binding.ordinal == 1u &&
+             parsed_binding.target.length == 6u &&
+             !memcmp(parsed_binding.target.bytes, "!Other", 6u));
+      retro_unload_game();
+
+      /* A different ordinal and different raw target is also refused. An
+       * actual reselection is the only event that replaces the valid binding. */
+      option_launch = "app1";
       warnings = launch_warning_osd_calls;
       phase = PHASE_LOAD; assert(retro_load_game(&explicit_game));
       assert(!arc_engine_test_drive_media(1u, NULL, NULL) &&
@@ -4011,20 +4093,182 @@ int main(int argc, char **argv)
              strstr(last_launch_warning, "binding changed target"));
       option_launch = "off";
       retro_reset();
-      option_launch = "app2";
+      option_launch = "app1";
       retro_reset();
-      assert(arc_engine_test_drive_media(1u, &write_protected, mounted_digest) &&
-             strstr(last_launch_log, "decision=!Other"));
+      assert(arc_engine_test_drive_media(1u, NULL, NULL) &&
+             strstr(last_launch_log, "decision=!Demo"));
+      binding_size = read_bounded(explicit_binding, binding_text,
+                                  sizeof(binding_text));
+      assert(arc_launch_binding_parse(binding_text, binding_size,
+                                      &parsed_binding) &&
+             parsed_binding.version == 2u && parsed_binding.ordinal == 0u &&
+             parsed_binding.target.length == 5u &&
+             !memcmp(parsed_binding.target.bytes, "!Demo", 5u));
       retro_unload_game();
 
-      /* A zero-length binding is invalid, but must never pass NULL to memcpy. */
-      FILE *empty_binding = fopen(explicit_binding, "wb");
-      assert(empty_binding && fclose(empty_binding) == 0);
+      /* Legacy v1 is accepted byte-for-byte and is migrated only after an
+       * actual option reselection. */
+      static const uint8_t legacy_binding[] =
+         "app1\n!Demo\n0000000000000000000000000000000000000000\n";
+      write_exact(explicit_binding, legacy_binding, sizeof(legacy_binding) - 1u);
+      option_launch = "app1";
+      phase = PHASE_LOAD; assert(retro_load_game(&explicit_game));
+      assert(arc_engine_test_drive_media(1u, NULL, NULL));
+      binding_check_size = read_bounded(explicit_binding, binding_check,
+                                        sizeof(binding_check));
+      assert(binding_check_size == sizeof(legacy_binding) - 1u &&
+             !memcmp(binding_check, legacy_binding, binding_check_size));
+      option_launch = "off";
+      retro_reset();
+      option_launch = "app1";
+      retro_reset();
+      assert(arc_engine_test_drive_media(1u, NULL, NULL));
+      binding_size = read_bounded(explicit_binding, binding_text,
+                                  sizeof(binding_text));
+      assert(arc_launch_binding_parse(binding_text, binding_size,
+                                      &parsed_binding) &&
+             parsed_binding.version == 2u && parsed_binding.ordinal == 0u &&
+             parsed_binding.target.length == 5u &&
+             !memcmp(parsed_binding.target.bytes, "!Demo", 5u));
+      retro_unload_game();
+
+      /* Empty, malformed, and trailing-content bindings all refuse and remain
+       * byte-for-byte unchanged. */
+      static const uint8_t malformed_v2[] =
+         "v2\n1\n2144656d6f\n000000000000000000000000000000000000000g\n";
+      static const uint8_t trailing_v2[] =
+         "v2\n1\n2144656d6f\n0000000000000000000000000000000000000000\nX";
+      static const uint8_t trailing_v1[] =
+         "app1\n!Demo\n0000000000000000000000000000000000000000\nX";
+      struct InvalidBinding {
+         const uint8_t *data;
+         size_t size;
+      } invalid_bindings[] = {
+         {(const uint8_t *)"", 0u},
+         {malformed_v2, sizeof(malformed_v2) - 1u},
+         {trailing_v2, sizeof(trailing_v2) - 1u},
+         {trailing_v1, sizeof(trailing_v1) - 1u},
+      };
+      for (size_t invalid = 0u;
+           invalid < sizeof(invalid_bindings) / sizeof(invalid_bindings[0]);
+           ++invalid)
+      {
+         write_exact(explicit_binding, invalid_bindings[invalid].data,
+                     invalid_bindings[invalid].size);
+         warnings = launch_warning_osd_calls;
+         option_launch = "app1";
+         phase = PHASE_LOAD; assert(retro_load_game(&explicit_game));
+         assert(!arc_engine_test_drive_media(1u, NULL, NULL) &&
+                launch_warning_osd_calls == warnings + 1u &&
+                strstr(last_launch_warning, "binding is invalid"));
+         binding_check_size = read_bounded(explicit_binding, binding_check,
+                                           sizeof(binding_check));
+         assert(binding_check_size == invalid_bindings[invalid].size &&
+                !memcmp(binding_check, invalid_bindings[invalid].data,
+                        binding_check_size));
+         retro_unload_game();
+      }
+
+      /* Read and directory-listing failures are not interpreted as absence;
+       * neither one modifies the existing valid binding. */
+      write_exact(explicit_binding, binding_text, binding_size);
+      fault_read_substring = ".bind";
       warnings = launch_warning_osd_calls;
       phase = PHASE_LOAD; assert(retro_load_game(&explicit_game));
-      assert(!arc_engine_test_drive_media(1u, NULL, NULL) &&
+      assert(!fault_read_substring &&
+             !arc_engine_test_drive_media(1u, NULL, NULL) &&
              launch_warning_osd_calls == warnings + 1u &&
-             strstr(last_launch_warning, "binding is invalid"));
+             strstr(last_launch_warning, "binding could not be read"));
+      binding_check_size = read_bounded(explicit_binding, binding_check,
+                                        sizeof(binding_check));
+      assert(binding_check_size == binding_size &&
+             !memcmp(binding_check, binding_text, binding_size));
+      retro_unload_game();
+
+      fault_opendir_substring = "/arcdroid/launch";
+      warnings = launch_warning_osd_calls;
+      phase = PHASE_LOAD; assert(retro_load_game(&explicit_game));
+      assert(!fault_opendir_substring &&
+             !arc_engine_test_drive_media(1u, NULL, NULL) &&
+             launch_warning_osd_calls == warnings + 1u &&
+             strstr(last_launch_warning, "binding directory could not be listed"));
+      binding_check_size = read_bounded(explicit_binding, binding_check,
+                                        sizeof(binding_check));
+      assert(binding_check_size == binding_size &&
+             !memcmp(binding_check, binding_text, binding_size));
+      retro_unload_game();
+
+      fault_closedir_substring = "/arcdroid/launch";
+      warnings = launch_warning_osd_calls;
+      phase = PHASE_LOAD; assert(retro_load_game(&explicit_game));
+      assert(!fault_closedir_substring &&
+             !arc_engine_test_drive_media(1u, NULL, NULL) &&
+             launch_warning_osd_calls == warnings + 1u &&
+             strstr(last_launch_warning, "binding directory could not be listed"));
+      binding_check_size = read_bounded(explicit_binding, binding_check,
+                                        sizeof(binding_check));
+      assert(binding_check_size == binding_size &&
+             !memcmp(binding_check, binding_text, binding_size));
+      retro_unload_game();
+
+      /* Atomic publish failure during reselection preserves the existing
+       * binding and refuses the launch. */
+      phase = PHASE_LOAD; assert(retro_load_game(&explicit_game));
+      assert(arc_engine_test_drive_media(1u, NULL, NULL));
+      option_launch = "app2";
+      fault_write_substring = ".tmp";
+      warnings = launch_warning_osd_calls;
+      retro_reset();
+      assert(!fault_write_substring &&
+             !arc_engine_test_drive_media(1u, NULL, NULL) &&
+             launch_warning_osd_calls == warnings + 1u &&
+             strstr(last_launch_warning, "binding could not be published"));
+      binding_check_size = read_bounded(explicit_binding, binding_check,
+                                        sizeof(binding_check));
+      assert(binding_check_size == binding_size &&
+             !memcmp(binding_check, binding_text, binding_size));
+      retro_unload_game();
+
+      option_launch = "app1";
+      phase = PHASE_LOAD; assert(retro_load_game(&explicit_game));
+      assert(arc_engine_test_drive_media(1u, NULL, NULL));
+      option_launch = "app2";
+      fault_rename_substring = ".previous";
+      warnings = launch_warning_osd_calls;
+      retro_reset();
+      assert(!fault_rename_substring &&
+             !arc_engine_test_drive_media(1u, NULL, NULL) &&
+             launch_warning_osd_calls == warnings + 1u &&
+             strstr(last_launch_warning, "binding could not be published"));
+      binding_check_size = read_bounded(explicit_binding, binding_check,
+                                        sizeof(binding_check));
+      assert(binding_check_size == binding_size &&
+             !memcmp(binding_check, binding_text, binding_size));
+      retro_unload_game();
+
+      /* Only a successful directory listing can establish absence. A listing
+       * failure creates nothing; the next successful load publishes v2. */
+      assert(remove(explicit_binding) == 0);
+      option_launch = "app1";
+      fault_opendir_substring = "/arcdroid/launch";
+      warnings = launch_warning_osd_calls;
+      phase = PHASE_LOAD; assert(retro_load_game(&explicit_game));
+      assert(!fault_opendir_substring &&
+             !arc_engine_test_drive_media(1u, NULL, NULL) &&
+             launch_warning_osd_calls == warnings + 1u &&
+             strstr(last_launch_warning, "binding directory could not be listed"));
+      struct stat binding_status;
+      assert(stat(explicit_binding, &binding_status) != 0);
+      retro_unload_game();
+      phase = PHASE_LOAD; assert(retro_load_game(&explicit_game));
+      assert(arc_engine_test_drive_media(1u, NULL, NULL));
+      binding_size = read_bounded(explicit_binding, binding_text,
+                                  sizeof(binding_text));
+      assert(arc_launch_binding_parse(binding_text, binding_size,
+                                      &parsed_binding) &&
+             parsed_binding.version == 2u && parsed_binding.ordinal == 0u &&
+             parsed_binding.target.length == 5u &&
+             !memcmp(parsed_binding.target.bytes, "!Demo", 5u));
       retro_unload_game();
       assert(remove(explicit_binding) == 0);
 

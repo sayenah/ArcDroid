@@ -440,6 +440,81 @@ static ArcLaunchDiscovery test_launch_spec(const void *target, size_t length)
    return discovery;
 }
 
+static void test_launch_bindings(void)
+{
+   static const char fingerprint[] =
+      "0123456789abcdef0123456789abcdef01234567";
+   static const uint8_t expected[] =
+      "v2\n3\n214e696da0566f78\n"
+      "0123456789abcdef0123456789abcdef01234567\n";
+   static const uint8_t legacy[] =
+      "app3\n!Nim\xa0" "Vox\n"
+      "0123456789abcdef0123456789abcdef01234567\n";
+   static const uint8_t raw_name[] =
+      {'!', 'N', 'i', 'm', 0xa0u, 'V', 'o', 'x'};
+   assert(sizeof(fingerprint) == 41u);
+   ArcGuestName target = test_guest_name(raw_name, sizeof(raw_name));
+   uint8_t encoded[ARC_LAUNCH_BINDING_MAX_SIZE];
+   size_t encoded_size = 0u;
+   assert(arc_launch_binding_format(2u, &target, fingerprint, NULL, 0u,
+                                    &encoded_size) &&
+          encoded_size == sizeof(expected) - 1u &&
+          !arc_launch_binding_format(2u, &target, fingerprint, encoded,
+                                     encoded_size - 1u, &encoded_size) &&
+          arc_launch_binding_format(2u, &target, fingerprint, encoded,
+                                    sizeof(encoded), &encoded_size) &&
+          !memcmp(encoded, expected, sizeof(expected) - 1u));
+
+   ArcLaunchBinding binding;
+   assert(arc_launch_binding_parse(encoded, encoded_size, &binding) &&
+          binding.version == 2u && binding.ordinal == 2u &&
+          binding.target.length == sizeof(raw_name) &&
+          !memcmp(binding.target.bytes, raw_name, sizeof(raw_name)) &&
+          !strcmp(binding.candidate_fingerprint, fingerprint));
+   assert(arc_launch_binding_parse(legacy, sizeof(legacy) - 1u, &binding) &&
+          binding.version == 1u && binding.ordinal == 2u &&
+          binding.target.length == sizeof(raw_name) &&
+          !memcmp(binding.target.bytes, raw_name, sizeof(raw_name)) &&
+          !strcmp(binding.candidate_fingerprint, fingerprint));
+
+   static const char *const malformed[] = {
+      "", "v2\n", "v2\n0\n2141\n0123456789abcdef0123456789abcdef01234567\n",
+      "v2\n1\n214\n0123456789abcdef0123456789abcdef01234567\n",
+      "v2\n1\n21xz\n0123456789abcdef0123456789abcdef01234567\n",
+      "v2\n1\n2141\n0123456789abcdef0123456789abcdef0123456z\n",
+      "v2\n1\n2141\n0123456789abcdef0123456789abcdef01234567\ntrailing",
+      "app1\n!A\n0123456789abcdef0123456789abcdef01234567",
+      "app1\n!A\n0123456789abcdef0123456789abcdef01234567\ntrailing",
+      "app9\n!A\n0123456789abcdef0123456789abcdef01234567\n",
+   };
+   for (size_t i = 0u; i < sizeof(malformed) / sizeof(malformed[0]); ++i)
+      assert(!arc_launch_binding_parse(malformed[i], strlen(malformed[i]),
+                                       &binding));
+   uint8_t oversized[ARC_LAUNCH_BINDING_MAX_SIZE + 1u] = {0};
+   assert(!arc_launch_binding_parse(oversized, sizeof(oversized), &binding));
+
+   /* Mutate every bit in the canonical record. Accepted mutations must still
+    * round-trip through the bounded formatter; rejected ones exercise each
+    * strict parser boundary under the sanitizer configuration. */
+   for (size_t byte = 0u; byte < sizeof(expected) - 1u; ++byte)
+      for (unsigned bit = 0u; bit < 8u; ++bit)
+      {
+         memcpy(encoded, expected, sizeof(expected) - 1u);
+         encoded[byte] ^= (uint8_t)(1u << bit);
+         if (arc_launch_binding_parse(encoded, sizeof(expected) - 1u, &binding))
+         {
+            size_t round_trip_size = 0u;
+            assert(binding.version == 2u && binding.ordinal < 8u &&
+                   binding.target.length &&
+                   binding.target.length <= ARC_GUEST_NAME_MAX &&
+                   arc_launch_binding_format(binding.ordinal, &binding.target,
+                      binding.candidate_fingerprint, NULL, 0u,
+                      &round_trip_size) &&
+                   round_trip_size <= sizeof(encoded));
+         }
+      }
+}
+
 static void test_launch_discovery_and_builder(const char *fixture_directory)
 {
    typedef struct {
@@ -2515,6 +2590,7 @@ int main(int argc, char **argv)
    test_firmware_table();
    test_assembly();
    test_media_launch_and_cmos();
+   test_launch_bindings();
    test_launch_discovery_and_builder(argv[1]);
    test_adfs_recognition();
    test_short_media_policy();
