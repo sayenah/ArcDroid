@@ -1,8 +1,8 @@
 # ArcDroid Handoff
 
-**Stage:** IMPLEMENTATION  
-**Owner:** Sol  
-**Next:** Remediate **PR #80** (`slice/05b-folder-disc-sets`, from head `e3c770e`) exactly as "Remediation — Slice 5b run 2" below; the work order and its ACs are unchanged. Report R-by-R evidence. After Sol: Fable review → Opus targeted re-check of the delta → AC-11 Odin3 evidence (device not yet connected) → merge → **Slice 5c — launch chooser** (D-039).
+**Stage:** QA  
+**Owner:** Opus  
+**Next:** Targeted re-check of **PR #80** delta `e3c770e..2d82b41` (Sol run 2) against "Remediation — Slice 5b run 2" below (R-1 … R-5) and for regressions it could introduce; report to Fable. AC-11 (Odin3 evidence) is Fable's, still open (device not connected) and remains a merge gate. After QA: Fable adjudicates → AC-11 → merge → **Slice 5c — launch chooser** (D-039).
 
 ## Work order — Slice 5b: folder disc sets (D-041; Astra challenge 2026-09-20, all four findings incorporated)
 **Objective (PRD FR-8, FR-4, FR-5; Founder order 2026-09-19):** a multi-disc game stored without a playlist gets working libretro disk control with no user setup. **Verified state:** `arc_prepare_media_list` (`libretro/arcdroid_libretro.c`) loads one image or an `.m3u` (≤ 32 entries, 256 MiB logical bound, every entry inspected, digested and staged at load; any failing playlist entry fails the load; `arc_cleanup_failed_preparation` clears the whole list including index 0). `libretro/arc_io.c` already lists directories through the frontend VFS. The initial index restored by `set_initial_image` selects the image that boots and that launch discovery inspects. Library evidence (private; shapes only): 65 folders, 171 images, 2–10 per folder, `.jfd` and `.adf`, one folder mixing both; siblings carry a catalogue number ending `…02`, `…03` or `(Disk 2)` … `(Disk 10)`; some siblings are images the reader rejects.
@@ -36,6 +36,8 @@ Not remediated (recorded): L-3 a `closedir` failure discards a complete listing 
 
 ## Implementation evidence — Slice 5b (2026-09-20)
 Sol run 1, committed verbatim by Fable as `e3c770e` (Sol's sandbox could not write `.git`). Sol's report: all of AC-1 … AC-10 implemented, no deviation. Verified by Fable on the PR head: host `ctest` 8/8; Android arm64 core built (NDK r29, API 21, Release, sha256 `0406a2c7…`) and `tools/check-android.sh` pass; CI 10/10 including the `windows-retroarch` folder-set disc exchange; diff reviewed (new I/O-free `core/folder_set.c`, one VFS listing helper in `libretro/arc_io.c`, sibling preparation after index 0 in `libretro/arcdroid_libretro.c`; no governing document touched). Fable's note for QA: the harness disc-exchange check asserts that the video signature changes after the swap rather than identifying the sibling's payload.
+
+Run 2 (R-1 … R-5), committed verbatim by Fable as `2d82b41`: Sol reports no deviation. Verified by Fable on that head: host `ctest` 8/8; Android arm64 core (sha256 `c719c1fe…`) builds and passes `tools/check-android.sh`; CI 10/10, the `windows-retroarch` folder-set check now requiring the exact disc-2 signature; reset-path change reviewed (folder sets re-prepare through a sibling-omitting path, playlists keep the fail-fast loop).
 
 ## State (2026-09-20, Fable, sessions S14–S15)
 - **Slice 5a (launch robustness) merged**: PR #72, final head `4c2f62b`, merge `0c6a1a7`; Sol runs 1–4; CI 10/10; Opus QA at `4c2f62b`: no blocking findings (D-040). Checkpoint A passed on private RISC OS 3.00/3.10/3.11/3.19: boot order `!System`, `!Fonts`, `!Scrap`, other `!Boot`-bearing siblings, target; exactly once; sibling-defined aliases capture nothing; a sibling `!Boot` error raises a blocking error box and the target is reached once it is dismissed (accepted platform rule).
