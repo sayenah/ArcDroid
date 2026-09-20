@@ -354,9 +354,11 @@ static void test_mark_extent(bool *sectors, unsigned total,
 static void test_validate_checkpoint_d_image(const uint8_t *image, size_t size,
                                              unsigned expected_root_entries)
 {
+   const unsigned units_per_sector = 1024u / 256u;
    assert(size == 819200u && test_le24(image + 252u) == 3200u &&
           image[255] == test_old_map_checksum(image) &&
-          image[511] == test_old_map_checksum(image + 256u));
+          image[511] == test_old_map_checksum(image + 256u) &&
+          4u % units_per_sector == 0u);
    unsigned total = test_le24(image + 252u);
    bool *allocated = calloc(total, sizeof(*allocated));
    bool *free_map = calloc(total, sizeof(*free_map));
@@ -371,7 +373,8 @@ static void test_validate_checkpoint_d_image(const uint8_t *image, size_t size,
       const uint8_t *root_entry = root + 5u + i * 26u;
       unsigned child_start = test_le24(root_entry + 22u);
       unsigned child_sectors = (test_le32(root_entry + 18u) + 255u) / 256u;
-      assert((root_entry[25] & 8u) && child_sectors == 8u);
+      assert((root_entry[25] & 8u) && child_sectors == 8u &&
+             child_start % units_per_sector == 0u);
       test_mark_extent(allocated, total, child_start, child_sectors);
       const uint8_t *child = image + (size_t)child_start * 256u;
       unsigned child_entries = test_validate_new_directory(child, 4u);
@@ -379,8 +382,11 @@ static void test_validate_checkpoint_d_image(const uint8_t *image, size_t size,
       {
          const uint8_t *entry = child + 5u + j * 26u;
          unsigned file_start = test_le24(entry + 22u);
-         unsigned file_sectors = (test_le32(entry + 18u) + 255u) / 256u;
-         assert(!(entry[25] & 8u) && file_sectors);
+         unsigned file_length = test_le32(entry + 18u);
+         unsigned file_sectors =
+            ((file_length + 1023u) / 1024u) * units_per_sector;
+         assert(!(entry[25] & 8u) && file_sectors &&
+                file_start % units_per_sector == 0u);
          test_mark_extent(allocated, total, file_start, file_sectors);
       }
    }

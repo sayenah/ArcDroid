@@ -1103,18 +1103,20 @@ def build_d_guest_applications(
                        key=lambda item: _adfs_name_key(item[0]))
         for filename, payload in files:
             assert payload is not None
+            data_offset = (data_offset + 1023) & ~1023
             if data_offset + len(payload) > len(image):
                 raise ValueError("guest fixture data exceeds the image")
             _new_entry(child, child_entry, filename, len(payload),
                        data_offset // 256, load=0xFFFFEB00)
             child_entry += 1
             image[data_offset:data_offset + len(payload)] = payload
-            data_offset += (len(payload) + 255) & ~255
+            data_offset += len(payload)
         _finish_new_directory(child, child_entry, 4)
         image[child_offset:child_offset + 2048] = child
     _finish_new_directory(root, len(ordered), 4)
     image[1024:3072] = root
-    free_start = (data_offset + 255) // 256
+    data_offset = (data_offset + 1023) & ~1023
+    free_start = data_offset // 256
     if free_start >= total_sectors:
         raise ValueError("guest fixture leaves no valid free extent")
     _store_u24(image, 0, free_start)
