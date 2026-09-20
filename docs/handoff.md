@@ -1,8 +1,8 @@
 # ArcDroid Handoff
 
-**Stage:** IMPLEMENTATION  
-**Owner:** Sol  
-**Next:** Implement **Slice 5b — folder disc sets** exactly as the work order below, on branch `slice/05b-folder-disc-sets` from `main`, open a PR against `main`, and report AC-by-AC evidence. Stop and return to Fable on any conflict with the constraints. After Sol: Fable review → Odin3 evidence (Fable asks the Founder to connect the device) → Opus QA → merge. Then **Slice 5c — launch chooser** (D-039).
+**Stage:** QA  
+**Owner:** Opus  
+**Next:** Independent QA of **PR #80** (`slice/05b-folder-disc-sets`, head `e3c770e`) against the Slice 5b work order below (AC-1 … AC-10), D-041, the PRD and the protocol; report findings ranked by severity to Fable. AC-11 (Odin3 evidence) is Fable's and is still open: the device was not connected when QA was dispatched, and it remains a merge gate. After QA: Fable adjudicates → AC-11 → merge → **Slice 5c — launch chooser** (D-039).
 
 ## Work order — Slice 5b: folder disc sets (D-041; Astra challenge 2026-09-20, all four findings incorporated)
 **Objective (PRD FR-8, FR-4, FR-5; Founder order 2026-09-19):** a multi-disc game stored without a playlist gets working libretro disk control with no user setup. **Verified state:** `arc_prepare_media_list` (`libretro/arcdroid_libretro.c`) loads one image or an `.m3u` (≤ 32 entries, 256 MiB logical bound, every entry inspected, digested and staged at load; any failing playlist entry fails the load; `arc_cleanup_failed_preparation` clears the whole list including index 0). `libretro/arc_io.c` already lists directories through the frontend VFS. The initial index restored by `set_initial_image` selects the image that boots and that launch discovery inspects. Library evidence (private; shapes only): 65 folders, 171 images, 2–10 per folder, `.jfd` and `.adf`, one folder mixing both; siblings carry a catalogue number ending `…02`, `…03` or `(Disk 2)` … `(Disk 10)`; some siblings are images the reader rejects.
@@ -24,6 +24,9 @@
 
 **Non-goals:** automatic disc swapping, a boot-always-from-disc-1 rule (Founder decision 3), playlist writing, lazy staging or staging clean-up, SAF/`content://` discovery, the chooser (5c), media-format or protection work, the Follow-up Lows.
 **Constraints:** all file access through the frontend VFS (D-021 guards); no new dependency; project-authored code only; no firmware, game bytes or real title names in code, fixtures, logs or the PR. **QA focus:** index-0 preservation under sibling failures, shadow safety with duplicate digests, the path guard, Windows case handling, restore-contract cases, that no name or number vocabulary crept into ordering.
+
+## Implementation evidence — Slice 5b (2026-09-20)
+Sol run 1, committed verbatim by Fable as `e3c770e` (Sol's sandbox could not write `.git`). Sol's report: all of AC-1 … AC-10 implemented, no deviation. Verified by Fable on the PR head: host `ctest` 8/8; Android arm64 core built (NDK r29, API 21, Release, sha256 `0406a2c7…`) and `tools/check-android.sh` pass; CI 10/10 including the `windows-retroarch` folder-set disc exchange; diff reviewed (new I/O-free `core/folder_set.c`, one VFS listing helper in `libretro/arc_io.c`, sibling preparation after index 0 in `libretro/arcdroid_libretro.c`; no governing document touched). Fable's note for QA: the harness disc-exchange check asserts that the video signature changes after the swap rather than identifying the sibling's payload.
 
 ## State (2026-09-20, Fable, sessions S14–S15)
 - **Slice 5a (launch robustness) merged**: PR #72, final head `4c2f62b`, merge `0c6a1a7`; Sol runs 1–4; CI 10/10; Opus QA at `4c2f62b`: no blocking findings (D-040). Checkpoint A passed on private RISC OS 3.00/3.10/3.11/3.19: boot order `!System`, `!Fonts`, `!Scrap`, other `!Boot`-bearing siblings, target; exactly once; sibling-defined aliases capture nothing; a sibling `!Boot` error raises a blocking error box and the target is reached once it is dismissed (accepted platform rule).
