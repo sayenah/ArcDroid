@@ -75,6 +75,7 @@ jobs:
             build/windows/tests/fixtures/generated/arcdroid-test.jfd \
             build/windows/tests/fixtures/generated/arcdroid-test-two-member.jfd \
             build/windows/tests/fixtures/generated/arcdroid-application-l.adl \
+            build/windows/tests/fixtures/generated/launch-family/checkpoint-a-top-bit.adf \
             build/windows/retroarch-package/
       - uses: actions/upload-artifact@v4
         with:
