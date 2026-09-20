@@ -254,6 +254,41 @@ static uint32_t test_le32(const uint8_t *p)
           ((uint32_t)p[2] << 16u) | ((uint32_t)p[3] << 24u);
 }
 
+static uint32_t test_le24(const uint8_t *p)
+{
+   return (uint32_t)p[0] | ((uint32_t)p[1] << 8u) |
+          ((uint32_t)p[2] << 16u);
+}
+
+static ArcGuestName test_guest_name(const void *bytes, size_t length)
+{
+   ArcGuestName name = {{0}, 0};
+   assert(length <= ARC_GUEST_NAME_MAX);
+   memcpy(name.bytes, bytes, length);
+   name.length = (uint8_t)length;
+   return name;
+}
+
+static bool test_guest_name_equal(const ArcGuestName *name, const char *text)
+{
+   size_t length = strlen(text);
+   return name->length == length && !memcmp(name->bytes, text, length);
+}
+
+static ArcLaunchDiscovery test_launch_spec(const void *target, size_t length)
+{
+   ArcLaunchDiscovery discovery;
+   memset(&discovery, 0, sizeof(discovery));
+   discovery.readable = true;
+   discovery.candidate_count = 1u;
+   discovery.application_count = 1u;
+   discovery.target_index = 0;
+   discovery.candidates[0].name = test_guest_name(target, length);
+   discovery.candidates[0].state = ARC_LAUNCH_CANDIDATE_APPLICATION;
+   discovery.candidates[0].launchable = true;
+   return discovery;
+}
+
 static void test_launch_discovery_and_builder(const char *fixture_directory)
 {
    typedef struct {
@@ -281,15 +316,31 @@ static void test_launch_discovery_and_builder(const char *fixture_directory)
       {"launch-family/late-target-e.adf", ARC_GEOMETRY_800K_E, 2048u, "Hugo", "Demo", 0u, 1u, 1u, 0, ARC_LAUNCH_REASON_SINGLE_APPLICATION, true},
       {"launch-family/stale-d.adf", ARC_GEOMETRY_800K_D, 1024u, "Hugo", "Demo", 0u, 1u, 1u, 0, ARC_LAUNCH_REASON_SINGLE_APPLICATION, true},
       {"launch-family/stale-e.adf", ARC_GEOMETRY_800K_E, 2048u, "Hugo", "Demo", 0u, 1u, 1u, 0, ARC_LAUNCH_REASON_SINGLE_APPLICATION, true},
+      {"launch-family/short-name-attr-l.adl", ARC_GEOMETRY_640K_L, 512u, "Hugo", "A", 0u, 1u, 1u, 0, ARC_LAUNCH_REASON_SINGLE_APPLICATION, true},
+      {"launch-family/top-bit-d.adf", ARC_GEOMETRY_800K_D, 1024u, "Hugo", "Zorvex", 0u, 1u, 1u, 0, ARC_LAUNCH_REASON_SINGLE_APPLICATION, true},
+      {"launch-family/hard-space-e.adf", ARC_GEOMETRY_800K_E, 2048u, "Hugo", "NimVox", 0u, 1u, 1u, 0, ARC_LAUNCH_REASON_SINGLE_APPLICATION, true},
+      {"launch-family/full-ten-d.adf", ARC_GEOMETRY_800K_D, 1024u, "Hugo", "Fixture", 0u, 1u, 1u, 0, ARC_LAUNCH_REASON_SINGLE_APPLICATION, true},
+      {"launch-family/attr-88-d.adf", ARC_GEOMETRY_800K_D, 1024u, "Hugo", "Zorvex", 0u, 1u, 1u, 0, ARC_LAUNCH_REASON_SINGLE_APPLICATION, true},
+      {"launch-family/irrelevant-extent-e.adf", ARC_GEOMETRY_800K_E, 2048u, "Hugo", "Zorvex", 0u, 1u, 1u, 0, ARC_LAUNCH_REASON_SINGLE_APPLICATION, true},
       {"launch-family/multiple-exact-d.adf", ARC_GEOMETRY_800K_D, 1024u, "Hugo", "Beta", 0u, 2u, 2u, 1, ARC_LAUNCH_REASON_DISC_NAME_MATCH, true},
       {"launch-family/multiple-trailing-d.adf", ARC_GEOMETRY_800K_D, 1024u, "Hugo", "Beta2", 0u, 2u, 2u, 1, ARC_LAUNCH_REASON_DISC_NAME_MATCH, true},
       {"launch-family/ambiguous-l.adl", ARC_GEOMETRY_640K_L, 512u, "Hugo", "Other", 0u, 3u, 2u, -1, ARC_LAUNCH_REASON_AMBIGUOUS, true},
       {"launch-family/no-run-d.adf", ARC_GEOMETRY_800K_D, 1024u, "Hugo", "Fixture", 0u, 2u, 0u, -1, ARC_LAUNCH_REASON_NO_APPLICATIONS, true},
       {"launch-family/incomplete-l.adl", ARC_GEOMETRY_640K_L, 512u, "Hugo", "Fixture", 0u, 1u, 0u, -1, ARC_LAUNCH_REASON_INSPECTION_INCOMPLETE, true},
+      {"launch-family/incomplete-d.adf", ARC_GEOMETRY_800K_D, 1024u, "Hugo", "Fixture", 0u, 1u, 0u, -1, ARC_LAUNCH_REASON_INSPECTION_INCOMPLETE, true},
+      {"launch-family/incomplete-e.adf", ARC_GEOMETRY_800K_E, 2048u, "Hugo", "Fixture", 0u, 1u, 0u, -1, ARC_LAUNCH_REASON_INSPECTION_INCOMPLETE, true},
+      {"launch-family/label-with-unknown-d.adf", ARC_GEOMETRY_800K_D, 1024u, "Hugo", "Zorvex", 0u, 2u, 1u, 0, ARC_LAUNCH_REASON_DISC_NAME_MATCH, true},
+      {"launch-family/label-is-unknown-d.adf", ARC_GEOMETRY_800K_D, 1024u, "Hugo", "Nulvane", 0u, 2u, 1u, -1, ARC_LAUNCH_REASON_INSPECTION_INCOMPLETE, true},
+      {"launch-family/duplicate-root-d.adf", ARC_GEOMETRY_800K_D, 1024u, "Hugo", "Qarvox", 0u, 2u, 0u, -1, ARC_LAUNCH_REASON_INSPECTION_INCOMPLETE, true},
+      {"launch-family/duplicate-root-file-d.adf", ARC_GEOMETRY_800K_D, 1024u, "Hugo", "Qarvox", 0u, 1u, 0u, -1, ARC_LAUNCH_REASON_INSPECTION_INCOMPLETE, true},
+      {"launch-family/duplicate-run-d.adf", ARC_GEOMETRY_800K_D, 1024u, "Hugo", "Zorvex", 0u, 1u, 0u, -1, ARC_LAUNCH_REASON_INSPECTION_INCOMPLETE, true},
+      {"launch-family/duplicate-boot-e.adf", ARC_GEOMETRY_800K_E, 2048u, "Hugo", "Zorvex", 0u, 1u, 0u, -1, ARC_LAUNCH_REASON_INSPECTION_INCOMPLETE, true},
+      {"launch-family/has-boot-d.adf", ARC_GEOMETRY_800K_D, 1024u, "Hugo", "Zorvex", 0u, 1u, 1u, 0, ARC_LAUNCH_REASON_SINGLE_APPLICATION, true},
+      {"launch-family/self-boot-unknown-d.adf", ARC_GEOMETRY_800K_D, 1024u, "Hugo", "Broken", 2u, 1u, 0u, -1, ARC_LAUNCH_REASON_DISC_BOOTS_ITSELF, true},
       {"launch-family/more-eight-d.adf", ARC_GEOMETRY_800K_D, 1024u, "Hugo", "Fixture", 0u, 10u, 1u, 9, ARC_LAUNCH_REASON_SINGLE_APPLICATION, true},
       {"launch-family/fragmented-e.adf", ARC_GEOMETRY_800K_E, 2048u, "Hugo", "Demo", 0u, 1u, 1u, 0, ARC_LAUNCH_REASON_SINGLE_APPLICATION, true},
-      {"launch-family/unresolved-e.adf", ARC_GEOMETRY_800K_E, 2048u, "Hugo", "Demo", 0u, 0u, 0u, -1, ARC_LAUNCH_REASON_UNREADABLE, false},
-      {"launch-family/illegal-l.adl", ARC_GEOMETRY_640K_L, 512u, "Hugo", "Fixture", 0u, 0u, 0u, -1, ARC_LAUNCH_REASON_UNREADABLE, false},
+      {"launch-family/unresolved-e.adf", ARC_GEOMETRY_800K_E, 2048u, "Hugo", "Demo", 0u, 1u, 0u, -1, ARC_LAUNCH_REASON_INSPECTION_INCOMPLETE, true},
+      {"launch-family/illegal-l.adl", ARC_GEOMETRY_640K_L, 512u, "Hugo", "Fixture", 0u, 18u, 18u, -1, ARC_LAUNCH_REASON_AMBIGUOUS, true},
       {"launch-family/boot-0-l.adl", ARC_GEOMETRY_640K_L, 512u, "Hugo", "Demo", 0u, 1u, 1u, 0, ARC_LAUNCH_REASON_SINGLE_APPLICATION, true},
       {"launch-family/boot-1-l.adl", ARC_GEOMETRY_640K_L, 512u, "Hugo", "Demo", 1u, 1u, 1u, -1, ARC_LAUNCH_REASON_DISC_BOOTS_ITSELF, true},
       {"launch-family/boot-2-l.adl", ARC_GEOMETRY_640K_L, 512u, "Hugo", "Demo", 2u, 1u, 1u, -1, ARC_LAUNCH_REASON_DISC_BOOTS_ITSELF, true},
@@ -310,7 +361,7 @@ static void test_launch_discovery_and_builder(const char *fixture_directory)
    assert(arc_launch_discover(application, size, &media, NULL, &discovery));
    assert(discovery.readable && discovery.candidate_count == 1u &&
           discovery.application_count == 1u && discovery.target_index == 0 &&
-          !strcmp(discovery.candidates[0].name, "!Demo"));
+          test_guest_name_equal(&discovery.candidates[0].name, "!Demo"));
    const uint8_t *application_root = application + test_l_offset(2u);
    const uint8_t *application_child = application + test_l_offset(20u);
    static const uint8_t encoded_demo[] = {0xa1u, 0xc4u, 'e', 0xedu, 'o'};
@@ -366,6 +417,42 @@ static void test_launch_discovery_and_builder(const char *fixture_directory)
              discovery.candidate_count == item->candidates &&
              discovery.application_count == item->applications &&
              discovery.target_index == item->target && discovery.reason == item->reason);
+      if (strstr(item->file, "incomplete") || strstr(item->file, "unresolved") ||
+          strstr(item->file, "duplicate-") || strstr(item->file, "label-is-unknown") ||
+          strstr(item->file, "self-boot-unknown"))
+         assert(discovery.unknown_count >= 1u);
+      if (!strcmp(item->file, "launch-family/top-bit-d.adf"))
+      {
+         static const uint8_t expected_name[] = {'!', 'Z', 0xf6u, 'r', 'v', 'e', 'x'};
+         assert(discovery.candidates[0].name.length == sizeof(expected_name) &&
+                !memcmp(discovery.candidates[0].name.bytes, expected_name,
+                        sizeof(expected_name)));
+      }
+      if (!strcmp(item->file, "launch-family/hard-space-e.adf"))
+         assert(discovery.candidates[0].name.length == 8u &&
+                discovery.candidates[0].name.bytes[4] == 0xa0u);
+      if (!strcmp(item->file, "launch-family/full-ten-d.adf"))
+         assert(discovery.candidates[0].name.length == 10u);
+      if (!strcmp(item->file, "launch-family/attr-88-d.adf"))
+         assert(discovery.ignored_attribute_bits);
+      if (!strcmp(item->file, "launch-family/short-name-attr-l.adl"))
+         assert(discovery.ignored_attribute_bits);
+      if (!strcmp(item->file, "launch-family/has-boot-d.adf"))
+         assert(discovery.candidates[0].has_boot);
+      if (!strcmp(item->file, "launch-family/illegal-l.adl"))
+      {
+         static const bool launchable[] = {
+            false, false, true, true, true, false, false, false, false,
+            false, false, false, true, false, false, true, false, true
+         };
+         assert(discovery.candidate_count == sizeof(launchable) / sizeof(launchable[0]));
+         for (unsigned i = 0u; i < discovery.candidate_count; ++i)
+            assert(discovery.candidates[i].launchable == launchable[i]);
+      }
+      if (strstr(item->file, "duplicate-"))
+         for (unsigned i = 0u; i < discovery.candidate_count; ++i)
+            assert(discovery.candidates[i].state == ARC_LAUNCH_CANDIDATE_UNKNOWN &&
+                   !discovery.candidates[i].launchable);
       free(bytes);
    }
 
@@ -417,6 +504,14 @@ static void test_launch_discovery_and_builder(const char *fixture_directory)
 
    ArcMediaInfo e_media = {0};
    e_media.geometry = ARC_GEOMETRY_800K_E;
+   late_e[14] = 0x1fu; /* one bounded excess allocation bit */
+   late_e[6912u >> 3u] |= (uint8_t)(1u << (6912u & 7u));
+   late_e[0] = 0u;
+   late_e[0] = arc_test_e_format_zone_check(late_e);
+   assert(arc_media_inspect("bounded-excess-e.adf", late_e, size,
+                            &media, error, sizeof(error)) &&
+          arc_launch_discover(late_e, size, &media, NULL, &discovery) &&
+          discovery.readable && discovery.target_index == 0);
    late_e[14] = 0x21u; /* allocation bits no longer match disc size */
    late_e[0] = 0u;
    late_e[0] = arc_test_e_format_zone_check(late_e);
@@ -454,9 +549,10 @@ static void test_launch_discovery_and_builder(const char *fixture_directory)
    short_d[1024u + 5u + 23u] = 0x0cu;
    short_d[1024u + 5u + 24u] = 0u;
    assert(arc_launch_discover(short_d, size, &media, NULL, &discovery));
-   assert(!discovery.readable && !discovery.candidate_count &&
-          !discovery.application_count && discovery.target_index < 0 &&
-          discovery.reason == ARC_LAUNCH_REASON_UNREADABLE);
+   assert(discovery.readable && discovery.candidate_count == 1u &&
+          !discovery.application_count && discovery.unknown_count == 1u &&
+          discovery.target_index < 0 &&
+          discovery.reason == ARC_LAUNCH_REASON_INSPECTION_INCOMPLETE);
    free(short_d);
 
    static const char *jfd_files[] = {
@@ -473,7 +569,7 @@ static void test_launch_discovery_and_builder(const char *fixture_directory)
       assert(arc_launch_discover(NULL, 0u, NULL, &jfd, &discovery));
       assert(discovery.readable && discovery.candidate_count == 1u &&
              discovery.application_count == 1u && discovery.target_index == 0 &&
-             !strcmp(discovery.candidates[0].name, "!Demo"));
+             test_guest_name_equal(&discovery.candidates[0].name, "!Demo"));
       if (index == 0u)
       {
          unsigned first = jfd.tracks[0].first_sector;
@@ -491,13 +587,189 @@ static void test_launch_discovery_and_builder(const char *fixture_directory)
       free(bytes);
    }
 
+   static const struct {
+      const char *file;
+      ArcLaunchCandidateState state;
+      const uint8_t *name;
+      size_t name_length;
+      unsigned candidates;
+      unsigned applications;
+      unsigned unknowns;
+      int target;
+      ArcLaunchReason reason;
+      bool launchable;
+      bool has_boot;
+      bool ignored_attributes;
+   } robust_jfds[] = {
+      {"launch-family/short-name-attr-l.jfd", ARC_LAUNCH_CANDIDATE_APPLICATION,
+       (const uint8_t *)"!A", 2u, 1u, 1u, 0u, 0,
+       ARC_LAUNCH_REASON_SINGLE_APPLICATION, true, false, true},
+      {"launch-family/top-bit-d.jfd", ARC_LAUNCH_CANDIDATE_APPLICATION,
+       (const uint8_t *)"!Z\xf6rvex", 7u, 1u, 1u, 0u, 0,
+       ARC_LAUNCH_REASON_SINGLE_APPLICATION, true, false, false},
+      {"launch-family/hard-space-e.jfd", ARC_LAUNCH_CANDIDATE_APPLICATION,
+       (const uint8_t *)"!Nim\xa0" "Vox", 8u, 1u, 1u, 0u, 0,
+       ARC_LAUNCH_REASON_SINGLE_APPLICATION, true, false, false},
+      {"launch-family/full-ten-d.jfd", ARC_LAUNCH_CANDIDATE_APPLICATION,
+       (const uint8_t *)"!ABCDEFGHI", 10u, 1u, 1u, 0u, 0,
+       ARC_LAUNCH_REASON_SINGLE_APPLICATION, true, false, false},
+      {"launch-family/attr-88-d.jfd", ARC_LAUNCH_CANDIDATE_APPLICATION,
+       (const uint8_t *)"!Zorvex", 7u, 1u, 1u, 0u, 0,
+       ARC_LAUNCH_REASON_SINGLE_APPLICATION, true, false, true},
+      {"launch-family/irrelevant-extent-e.jfd", ARC_LAUNCH_CANDIDATE_APPLICATION,
+       (const uint8_t *)"!Zorvex", 7u, 1u, 1u, 0u, 0,
+       ARC_LAUNCH_REASON_SINGLE_APPLICATION, true, false, false},
+      {"launch-family/incomplete-l.jfd", ARC_LAUNCH_CANDIDATE_UNKNOWN,
+       (const uint8_t *)"!Broken", 7u, 1u, 0u, 1u, -1,
+       ARC_LAUNCH_REASON_INSPECTION_INCOMPLETE, true, false, false},
+      {"launch-family/incomplete-d.jfd", ARC_LAUNCH_CANDIDATE_UNKNOWN,
+       (const uint8_t *)"!Broken", 7u, 1u, 0u, 1u, -1,
+       ARC_LAUNCH_REASON_INSPECTION_INCOMPLETE, true, false, false},
+      {"launch-family/incomplete-e.jfd", ARC_LAUNCH_CANDIDATE_UNKNOWN,
+       (const uint8_t *)"!Broken", 7u, 1u, 0u, 1u, -1,
+       ARC_LAUNCH_REASON_INSPECTION_INCOMPLETE, true, false, false},
+      {"launch-family/label-with-unknown-d.jfd", ARC_LAUNCH_CANDIDATE_APPLICATION,
+       (const uint8_t *)"!Zorvex", 7u, 2u, 1u, 1u, 0,
+       ARC_LAUNCH_REASON_DISC_NAME_MATCH, true, false, false},
+      {"launch-family/label-is-unknown-d.jfd", ARC_LAUNCH_CANDIDATE_APPLICATION,
+       (const uint8_t *)"!Zorvex", 7u, 2u, 1u, 1u, -1,
+       ARC_LAUNCH_REASON_INSPECTION_INCOMPLETE, true, false, false},
+      {"launch-family/duplicate-root-d.jfd", ARC_LAUNCH_CANDIDATE_UNKNOWN,
+       (const uint8_t *)"!Qarvox", 7u, 2u, 0u, 2u, -1,
+       ARC_LAUNCH_REASON_INSPECTION_INCOMPLETE, false, false, false},
+      {"launch-family/duplicate-root-file-d.jfd", ARC_LAUNCH_CANDIDATE_UNKNOWN,
+       (const uint8_t *)"!Qarvox", 7u, 1u, 0u, 1u, -1,
+       ARC_LAUNCH_REASON_INSPECTION_INCOMPLETE, false, false, false},
+      {"launch-family/duplicate-run-d.jfd", ARC_LAUNCH_CANDIDATE_UNKNOWN,
+       (const uint8_t *)"!Zorvex", 7u, 1u, 0u, 1u, -1,
+       ARC_LAUNCH_REASON_INSPECTION_INCOMPLETE, false, false, false},
+      {"launch-family/duplicate-boot-e.jfd", ARC_LAUNCH_CANDIDATE_UNKNOWN,
+       (const uint8_t *)"!Zorvex", 7u, 1u, 0u, 1u, -1,
+       ARC_LAUNCH_REASON_INSPECTION_INCOMPLETE, false, false, false},
+      {"launch-family/has-boot-d.jfd", ARC_LAUNCH_CANDIDATE_APPLICATION,
+       (const uint8_t *)"!Zorvex", 7u, 1u, 1u, 0u, 0,
+       ARC_LAUNCH_REASON_SINGLE_APPLICATION, true, true, false},
+      {"launch-family/self-boot-unknown-d.jfd", ARC_LAUNCH_CANDIDATE_UNKNOWN,
+       (const uint8_t *)"!Broken", 7u, 1u, 0u, 1u, -1,
+       ARC_LAUNCH_REASON_DISC_BOOTS_ITSELF, true, false, false},
+      {"launch-family/illegal-l.jfd", ARC_LAUNCH_CANDIDATE_APPLICATION,
+       (const uint8_t *)"!Bad.Name", 9u, 18u, 18u, 0u, -1,
+       ARC_LAUNCH_REASON_AMBIGUOUS, false, false, false},
+   };
+   for (size_t index = 0u; index < sizeof(robust_jfds) / sizeof(robust_jfds[0]); ++index)
+   {
+      uint8_t *bytes = read_fixture(fixture_directory,
+                                    robust_jfds[index].file, &size);
+      ArcJfdImage jfd;
+      assert(arc_jfd_parse(bytes, size, &jfd, error, sizeof(error)));
+      assert(arc_launch_discover(NULL, 0u, NULL, &jfd, &discovery));
+      assert(discovery.readable &&
+             discovery.candidate_count == robust_jfds[index].candidates &&
+             discovery.application_count == robust_jfds[index].applications &&
+             discovery.unknown_count == robust_jfds[index].unknowns &&
+             discovery.target_index == robust_jfds[index].target &&
+             discovery.reason == robust_jfds[index].reason &&
+             discovery.ignored_attribute_bits == robust_jfds[index].ignored_attributes &&
+             discovery.candidates[0].state == robust_jfds[index].state &&
+             discovery.candidates[0].launchable == robust_jfds[index].launchable &&
+             discovery.candidates[0].has_boot == robust_jfds[index].has_boot &&
+             discovery.candidates[0].name.length == robust_jfds[index].name_length &&
+             !memcmp(discovery.candidates[0].name.bytes,
+                     robust_jfds[index].name, robust_jfds[index].name_length));
+      arc_jfd_free(&jfd);
+      free(bytes);
+   }
+
+   uint8_t *checkpoint = read_fixture(fixture_directory,
+      "launch-family/checkpoint-a-guest.adf", &size);
+   assert(arc_media_inspect("checkpoint-a-guest.adf", checkpoint, size,
+                            &media, error, sizeof(error)) &&
+          arc_launch_discover(checkpoint, size, &media, NULL, &discovery));
+   static const char *const checkpoint_names[] = {
+      "!Alias", "!Fault", "!Prep", "!System", "!Fonts", "!Scrap", "!Qaventra"
+   };
+   static const char *const checkpoint_boots[] = {
+      "Set ArcDroid$Trace <ArcDroid$Trace>A\r"
+      "Set ArcDroid$Count <ArcDroid$Count>1\r"
+      "Set Alias$Dir Echo ARCDROID-DIR-ALIAS-CAPTURED\r"
+      "Set Alias$Filer_Run Echo ARCDROID-RUN-ALIAS-CAPTURED\r",
+      "Set ArcDroid$Trace <ArcDroid$Trace>E\r"
+      "Set ArcDroid$Count <ArcDroid$Count>1\r"
+      "Error ArcDroid synthetic sibling error\r",
+      "Set ArcDroid$Trace <ArcDroid$Trace>P\r"
+      "Set ArcDroid$Count <ArcDroid$Count>1\rSet ArcDroid$Ready Yes\r",
+      "Set ArcDroid$Trace S\rSet ArcDroid$Count 1\r",
+      "Set ArcDroid$Trace <ArcDroid$Trace>F\r"
+      "Set ArcDroid$Count <ArcDroid$Count>1\r",
+      "Set ArcDroid$Trace <ArcDroid$Trace>W\r"
+      "Set ArcDroid$Count <ArcDroid$Count>1\r"
+      "Echo ArcDroid-write-attempt { > ADFS::0.$.ArcWrite }\r",
+      "Set ArcDroid$Trace <ArcDroid$Trace>T\r"
+      "Set ArcDroid$Count <ArcDroid$Count>1\r",
+   };
+   assert(discovery.readable && discovery.candidate_count == 7u &&
+          discovery.application_count == 1u && !discovery.unknown_count &&
+          discovery.target_index == 6 &&
+          discovery.reason == ARC_LAUNCH_REASON_SINGLE_APPLICATION);
+   for (unsigned i = 0u; i < 7u; ++i)
+   {
+      assert(test_guest_name_equal(&discovery.candidates[i].name,
+                                   checkpoint_names[i]) &&
+             discovery.candidates[i].has_boot);
+      const uint8_t *root_entry = checkpoint + 1024u + 5u + i * 26u;
+      assert(!memcmp(root_entry, checkpoint_names[i], strlen(checkpoint_names[i])));
+      size_t child_offset = (size_t)test_le24(root_entry + 22u) * 256u;
+      const uint8_t *boot_entry = checkpoint + child_offset + 5u;
+      assert(!memcmp(boot_entry, "!Boot", 5u));
+      size_t boot_length = test_le32(boot_entry + 18u);
+      size_t boot_offset = (size_t)test_le24(boot_entry + 22u) * 256u;
+      assert(boot_length == strlen(checkpoint_boots[i]) &&
+             !memcmp(checkpoint + boot_offset, checkpoint_boots[i], boot_length));
+   }
+   static const char checkpoint_run[] =
+      "If \"<ArcDroid$Ready>\" <> \"Yes\" Then Error ArcDroid prerequisite missing\r"
+      "If \"<ArcDroid$Trace>\" <> \"SFWAEPT\" Then Error ArcDroid boot order wrong\r"
+      "If \"<ArcDroid$Count>\" <> \"1111111\" Then Error ArcDroid boot count wrong\r"
+      "Echo ARCDROID CHECKPOINT TARGET REACHED <ArcDroid$Trace> <ArcDroid$Count>\r";
+   const uint8_t *target_run = checkpoint + 4096u + 6u * 2048u + 31u;
+   size_t target_run_length = test_le32(target_run + 18u);
+   size_t target_run_offset = (size_t)test_le24(target_run + 22u) * 256u;
+   assert(!memcmp(target_run, "!Run", 4u) &&
+          target_run_length == sizeof(checkpoint_run) - 1u &&
+          !memcmp(checkpoint + target_run_offset, checkpoint_run,
+                  sizeof(checkpoint_run) - 1u));
+   free(checkpoint);
+
+   checkpoint = read_fixture(fixture_directory,
+      "launch-family/checkpoint-a-names.adf", &size);
+   assert(arc_media_inspect("checkpoint-a-names.adf", checkpoint, size,
+                            &media, error, sizeof(error)) &&
+          arc_launch_discover(checkpoint, size, &media, NULL, &discovery));
+   static const uint8_t checkpoint_raw_names[][10] = {
+      {'!', 'P', 'i', 'v', '|', 'r', 'a', 'x'},
+      {'!', 'Q', 'u', '"', 'v', 'e', 'x'},
+      {'!', 'A', 'n', '<', 'z', 'l', 'o'},
+      {'!', 'Z', 0xf6u, 'r', 'v', 'e', 'x'},
+      {'!', 'N', 'i', 'm', 0xa0u, 'V', 'o', 'x'},
+   };
+   static const uint8_t checkpoint_raw_lengths[] = {8u, 7u, 7u, 7u, 8u};
+   assert(discovery.readable && discovery.candidate_count == 5u &&
+          discovery.application_count == 5u && !discovery.unknown_count &&
+          discovery.target_index < 0 && discovery.reason == ARC_LAUNCH_REASON_AMBIGUOUS);
+   for (unsigned i = 0u; i < discovery.candidate_count; ++i)
+      assert(discovery.candidates[i].launchable &&
+             discovery.candidates[i].name.length == checkpoint_raw_lengths[i] &&
+             !memcmp(discovery.candidates[i].name.bytes,
+                     checkpoint_raw_names[i], checkpoint_raw_lengths[i]));
+   free(checkpoint);
+
    uint8_t *first = malloc(ARC_LAUNCH_DISC_SIZE);
    uint8_t *second = malloc(ARC_LAUNCH_DISC_SIZE);
-   assert(first && second && arc_launch_disc_build("Demo", "!Demo", first) &&
-          arc_launch_disc_build("Demo", "!Demo", second));
+   ArcLaunchDiscovery helper_spec = test_launch_spec("!Demo", 5u);
+   assert(first && second &&
+          arc_launch_disc_build(&helper_spec, 0u, first, error, sizeof(error)) &&
+          arc_launch_disc_build(&helper_spec, 0u, second, error, sizeof(error)));
    assert(!memcmp(first, second, ARC_LAUNCH_DISC_SIZE));
-   assert(!strcmp(arc_digest(first, ARC_LAUNCH_DISC_SIZE).sha1,
-                  "507ee32561fa0a2fbc7c1044a6d92e63a0037dad"));
    assert(arc_media_inspect("helper.adl", first, ARC_LAUNCH_DISC_SIZE,
                             &media, error, sizeof(error)));
    assert(media.boot_option == 2u && !strcmp(media.disc_name, "ArcDroid"));
@@ -510,18 +782,114 @@ static void test_launch_discovery_and_builder(const char *fixture_directory)
    assert(!memcmp(first + test_l_offset(1279u), "| ArcDroid launch disc", 22u));
    assert(!memcmp(first + test_l_offset(1280u), "| ArcDroid desktop boot file", 28u));
    assert(strstr((const char *)(first + test_l_offset(1280u)),
-                 "Dir ADFS::Demo.$\rURD ADFS::Demo.$\rFiler_Run ADFS::Demo.$.!Demo\r"));
+                 "%Filer_Boot \"ADFS::0.$.!Demo\"\r"
+                 "%Dir \"ADFS::0.$\"\r%URD \"ADFS::0.$\"\r"
+                 "%Filer_Run \"ADFS::0.$.!Demo\"\r"));
    static const char *bad_targets[] = {
-      "!Bad.Name", "!Bad:Name", "!Bad<Name", "!Bad>Name", "!Bad|Name",
+      "!Bad.Name", "!Bad:Name",
       "!Bad$Name", "!Bad&Name", "!Bad@Name", "!Bad^Name", "!Bad%Name",
-      "!Bad*Name", "!Bad#Name", "!Bad\"Name", "!Bad Name", "!Bad\001",
-      "!Bad\177", "!Bad\200"
+      "!Bad*Name", "!Bad#Name", "!Bad Name", "!Bad\\Name", "!Bad\001",
+      "!Bad\177"
    };
    for (size_t i = 0u; i < sizeof(bad_targets) / sizeof(bad_targets[0]); ++i)
-      assert(!arc_launch_disc_build("Demo", bad_targets[i], second));
-   assert(arc_launch_disc_build("Bad.Name", "!Demo", second));
-   assert(strstr((const char *)(second + test_l_offset(1280u)),
-                 "Filer_Run ADFS::0.$.!Demo\r"));
+   {
+      helper_spec = test_launch_spec(bad_targets[i], strlen(bad_targets[i]));
+      helper_spec.candidates[0].launchable = false;
+      assert(!arc_launch_disc_build(&helper_spec, 0u, second,
+                                    error, sizeof(error)));
+   }
+   helper_spec = test_launch_spec("!Demo", 5u);
+   assert(arc_launch_disc_build(&helper_spec, 0u, second,
+                                error, sizeof(error)));
+
+   ArcLaunchDiscovery literals;
+   memset(&literals, 0, sizeof(literals));
+   static const uint8_t literal_names[][10] = {
+      {'!', 'O', 'r', 'd'},
+      {'!', 'S', 'y', 's', 't', 'e', 'm'},
+      {'!', 'F', 'o', 'n', 't', 's'},
+      {'!', 'S', 'c', 'r', 'a', 'p'},
+      {'!', 'P', 'i', 'v', '|', 'r', 'a', 'x'},
+      {'!', 'Q', 'u', '"', 'v', 'e', 'x'},
+      {'!', 'A', 'n', '<', 'z', 'l', 'o'},
+      {'!', 'Z', 0xf6u, 'r', 'v', 'e', 'x'},
+      {'!', 'N', 'i', 'm', 0xa0u, 'V', 'o', 'x'},
+   };
+   static const uint8_t literal_lengths[] = {4u, 7u, 6u, 6u, 8u, 7u, 7u, 7u, 8u};
+   literals.candidate_count = (unsigned)(sizeof(literal_lengths) / sizeof(literal_lengths[0]));
+   literals.application_count = 1u;
+   for (unsigned i = 0u; i < literals.candidate_count; ++i)
+   {
+      literals.candidates[i].name = test_guest_name(literal_names[i], literal_lengths[i]);
+      literals.candidates[i].state = i + 1u == literals.candidate_count ?
+         ARC_LAUNCH_CANDIDATE_APPLICATION : ARC_LAUNCH_CANDIDATE_NOT_APPLICATION;
+      literals.candidates[i].launchable = true;
+      literals.candidates[i].has_boot = i + 1u != literals.candidate_count;
+   }
+   static const uint8_t expected_script[] =
+      "| ArcDroid desktop boot file\r"
+      "%Filer_Boot \"ADFS::0.$.!System\"\r"
+      "%Filer_Boot \"ADFS::0.$.!Fonts\"\r"
+      "%Filer_Boot \"ADFS::0.$.!Scrap\"\r"
+      "%Filer_Boot \"ADFS::0.$.!Ord\"\r"
+      "%Filer_Boot \"ADFS::0.$.!Piv||rax\"\r"
+      "%Filer_Boot \"ADFS::0.$.!Qu|\"vex\"\r"
+      "%Filer_Boot \"ADFS::0.$.!An|<zlo\"\r"
+      "%Filer_Boot \"ADFS::0.$.!Z\xf6rvex\"\r"
+      "%Filer_Boot \"ADFS::0.$.!Nim\xa0" "Vox\"\r"
+      "%Dir \"ADFS::0.$\"\r"
+      "%URD \"ADFS::0.$\"\r"
+      "%Filer_Run \"ADFS::0.$.!Nim\xa0" "Vox\"\r";
+   size_t script_size = 0u;
+   assert(arc_launch_script_build(&literals, literals.candidate_count - 1u,
+                                  NULL, 0u, &script_size, error, sizeof(error)) &&
+          script_size == sizeof(expected_script) - 1u);
+   uint8_t *script = malloc(script_size);
+   assert(script && arc_launch_script_build(&literals,
+          literals.candidate_count - 1u, script, script_size, &script_size,
+          error, sizeof(error)) &&
+          !memcmp(script, expected_script, sizeof(expected_script) - 1u));
+   free(script);
+
+   ArcGuestName diagnostic = test_guest_name("A\"\\\xa0", 4u);
+   char escaped[32];
+   assert(arc_launch_escape_name(&diagnostic, escaped, sizeof(escaped)) &&
+          !strcmp(escaped, "A\\\"\\\\\\xA0"));
+
+   ArcLaunchDiscovery maximum;
+   memset(&maximum, 0, sizeof(maximum));
+   maximum.candidate_count = ARC_LAUNCH_MAX_CANDIDATES;
+   maximum.application_count = 1u;
+   for (unsigned i = 0u; i < maximum.candidate_count; ++i)
+   {
+      char name[11];
+      assert(snprintf(name, sizeof(name), "!Boot%05u", i) == 10);
+      maximum.candidates[i].name = test_guest_name(name, 10u);
+      maximum.candidates[i].state = i + 1u == maximum.candidate_count ?
+         ARC_LAUNCH_CANDIDATE_APPLICATION : ARC_LAUNCH_CANDIDATE_NOT_APPLICATION;
+      maximum.candidates[i].launchable = true;
+      maximum.candidates[i].has_boot = i + 1u != maximum.candidate_count;
+   }
+   assert(arc_launch_disc_build(&maximum, maximum.candidate_count - 1u,
+                                second, error, sizeof(error)));
+   const uint8_t *max_root = second + test_l_offset(2u);
+   uint32_t max_launch_length = test_le32(max_root + 31u + 18u);
+   unsigned max_launch_sectors = (max_launch_length + 255u) / 256u;
+   assert(max_launch_sectors > 1u && second[510] == 6u);
+   unsigned free_start_0 = second[0] | ((unsigned)second[1] << 8u) |
+                           ((unsigned)second[2] << 16u);
+   unsigned free_start_1 = second[3] | ((unsigned)second[4] << 8u) |
+                           ((unsigned)second[5] << 16u);
+   unsigned free_length_0 = second[256] | ((unsigned)second[257] << 8u) |
+                            ((unsigned)second[258] << 16u);
+   unsigned free_length_1 = second[259] | ((unsigned)second[260] << 8u) |
+                            ((unsigned)second[261] << 16u);
+   assert(free_start_0 == 7u && free_start_1 == 1280u + max_launch_sectors &&
+          free_start_0 + free_length_0 == 1279u &&
+          free_start_1 + free_length_1 == 2560u &&
+          free_length_0 + free_length_1 + 7u + 1u + max_launch_sectors == 2560u &&
+          free_start_0 + free_length_0 <= 1279u &&
+          1280u + max_launch_sectors <= free_start_1);
 
    uint32_t random = UINT32_C(0x32424c44);
    static const char *mutation_files[] = {
@@ -1213,18 +1581,18 @@ static void test_input_mapping(void)
          overrides[port][input].automatic = true;
    ArcInputResolution resolution;
    assert(arc_input_resolve("0000000000000000000000000000000000000000", "!TEST",
-                            "Auto", overrides, &resolution));
+                            5u, "Auto", overrides, &resolution));
    assert(!strcmp(resolution.profile_name, "Generic") &&
           resolution.binding[0][ARC_PAD_A].key == RETROK_SPACE &&
           resolution.source[0][ARC_PAD_A] == ARC_MAPPING_SOURCE_GENERIC);
    assert(arc_input_resolve("0000000000000000000000000000000000000000", "!TEST",
-                            "Generic", overrides, &resolution));
+                            5u, "Generic", overrides, &resolution));
    overrides[1][ARC_PAD_A].automatic = false;
    overrides[1][ARC_PAD_A].binding = (ArcInputBinding){true, RETROK_LSHIFT};
    overrides[0][ARC_PAD_B].automatic = false;
    overrides[0][ARC_PAD_B].binding = (ArcInputBinding){false, 0u};
    assert(arc_input_resolve("0000000000000000000000000000000000000000", "!TEST",
-                            "Auto", overrides, &resolution));
+                            5u, "Auto", overrides, &resolution));
    assert(resolution.custom && !resolution.binding[0][ARC_PAD_B].bound &&
           resolution.binding[1][ARC_PAD_A].key == RETROK_LSHIFT &&
           resolution.source[1][ARC_PAD_A] == ARC_MAPPING_SOURCE_OPTION);
@@ -1232,7 +1600,7 @@ static void test_input_mapping(void)
    overrides[1][ARC_PAD_A].automatic = true;
    assert(arc_input_resolve(
             "fde0f540e0d5732646c1eebb54629a162f40db91", NULL,
-            "Auto", overrides, &resolution));
+            0u, "Auto", overrides, &resolution));
    assert(!strcmp(resolution.profile_id, "elite") &&
           resolution.source[0][ARC_PAD_UP] == ARC_MAPPING_SOURCE_PROFILE &&
           resolution.binding[0][ARC_PAD_UP].key == RETROK_s &&
@@ -1245,7 +1613,7 @@ static void test_input_mapping(void)
              resolution.binding[0][input].key);
    assert(arc_input_resolve(
             "0000000000000000000000000000000000000000", NULL,
-            "elite", overrides, &resolution));
+            0u, "elite", overrides, &resolution));
    assert(!strcmp(resolution.profile_id, "elite") &&
           resolution.source[0][ARC_PAD_START] == ARC_MAPPING_SOURCE_PRESET &&
           resolution.binding[0][ARC_PAD_START].key == RETROK_F1 &&
@@ -1255,13 +1623,13 @@ static void test_input_mapping(void)
    overrides[1][ARC_PAD_START].binding = (ArcInputBinding){true, RETROK_F3};
    assert(arc_input_resolve(
             "fde0f540e0d5732646c1eebb54629a162f40db91", NULL,
-            "Auto", overrides, &resolution));
+            0u, "Auto", overrides, &resolution));
    assert(resolution.source[1][ARC_PAD_START] == ARC_MAPPING_SOURCE_OPTION &&
           resolution.binding[1][ARC_PAD_START].key == RETROK_F3 &&
           resolution.binding[0][ARC_PAD_START].key == RETROK_F1);
    overrides[1][ARC_PAD_START].automatic = true;
    assert(arc_input_resolve_table(&test_profile, 1u,
-            "0123456789abcdef0123456789abcdef01234567", "!TEST", "Auto",
+            "0123456789abcdef0123456789abcdef01234567", "!TEST", 5u, "Auto",
             overrides, &resolution));
    assert(!strcmp(resolution.profile_id, "test-profile") &&
           resolution.source[0][ARC_PAD_A] == ARC_MAPPING_SOURCE_PROFILE &&
@@ -1269,7 +1637,7 @@ static void test_input_mapping(void)
           resolution.binding[1][ARC_PAD_UP].key == RETROK_F2);
    assert(arc_input_resolve_table(&test_profile, 1u,
             "0000000000000000000000000000000000000000", "!OTHER",
-            "test-profile", overrides, &resolution));
+            6u, "test-profile", overrides, &resolution));
    assert(resolution.source[0][ARC_PAD_A] == ARC_MAPPING_SOURCE_PRESET);
 
    ArcInputState state;

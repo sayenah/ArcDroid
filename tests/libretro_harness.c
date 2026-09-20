@@ -4092,12 +4092,31 @@ int main(int argc, char **argv)
              strstr(last_launch_warning, "1 !Broken"));
       retro_unload_game();
 
+      char attr_name_path[4096];
+      snprintf(attr_name_path, sizeof(attr_name_path),
+               "%s/launch-family/attr-88-d.adf", argv[11]);
+      struct retro_game_info attr_name_game = {attr_name_path, NULL, 0u, NULL};
+      phase = PHASE_LOAD; assert(retro_load_game(&attr_name_game));
+      assert(arc_engine_test_drive_media(1u, &write_protected, mounted_digest) &&
+             write_protected && strstr(last_launch_log, "ignored-attribute-bits=yes"));
+      retro_unload_game();
+
+      char top_bit_path[4096];
+      snprintf(top_bit_path, sizeof(top_bit_path),
+               "%s/launch-family/top-bit-d.adf", argv[11]);
+      struct retro_game_info top_bit_game = {top_bit_path, NULL, 0u, NULL};
+      phase = PHASE_LOAD; assert(retro_load_game(&top_bit_game));
+      assert(arc_engine_test_drive_media(1u, &write_protected, mounted_digest) &&
+             write_protected && strstr(last_launch_log, "decision=!Z\\xF6rvex") &&
+             strstr(last_launch_log, "reason=single application"));
+      retro_unload_game();
+
       char unsafe_name_path[4096];
       snprintf(unsafe_name_path, sizeof(unsafe_name_path),
                "%s/launch-family/unsafe-disc-name-l.adl", argv[11]);
       struct retro_game_info unsafe_name_game = {unsafe_name_path, NULL, 0u, NULL};
       phase = PHASE_LOAD; assert(retro_load_game(&unsafe_name_game));
-      assert(strstr(last_launch_log, "disc=\"Bad?Name\"") &&
+      assert(strstr(last_launch_log, "disc=\"Bad\\x0AName\"") &&
              !arc_engine_test_drive_media(1u, NULL, NULL));
       retro_unload_game();
 

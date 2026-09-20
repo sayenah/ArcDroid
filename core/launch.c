@@ -48,6 +48,24 @@ static uint8_t arc_new_map_zone_checksum(const uint8_t *map, unsigned log2_secto
    return (uint8_t)((sum[0] ^ sum[1] ^ sum[2] ^ sum[3]) & 0xffu);
 }
 
+bool arc_filecore_e_map_layout_valid(unsigned id_length,
+                                     unsigned log2_bytes_per_map_bit,
+                                     unsigned zone_spare,
+                                     size_t disc_size)
+{
+   const unsigned sector_bits = 1024u * 8u;
+   if (id_length < 13u || id_length > 15u ||
+       log2_bytes_per_map_bit < 7u || log2_bytes_per_map_bit > 10u ||
+       zone_spare > sector_bits - 480u)
+      return false;
+   uint64_t allocation_bits = sector_bits - zone_spare - 480u;
+   uint64_t required_bits = (uint64_t)disc_size >> log2_bytes_per_map_bit;
+   uint64_t ids_per_zone = (sector_bits - zone_spare) / (id_length + 1u);
+   return allocation_bits >= required_bits &&
+          allocation_bits - required_bits < ids_per_zone &&
+          ids_per_zone >= 3u && ids_per_zone <= (UINT64_C(1) << 15u);
+}
+
 static bool arc_new_map_e_format(const uint8_t *data, size_t available,
                                  size_t declared)
 {
@@ -66,18 +84,11 @@ static bool arc_new_map_e_format(const uint8_t *data, size_t available,
    unsigned id_length = record[4];
    unsigned log2_bytes_per_map_bit = record[5];
    unsigned zone_spare = arc_read_le16(record + 10u);
-   size_t sector_bits = sector_size * 8u;
-   if (id_length < log2_sector + 3u || id_length > 15u ||
-       log2_bytes_per_map_bit < 7u || log2_bytes_per_map_bit > log2_sector ||
-       zone_spare > sector_bits - 480u) return false;
-   /* The 32-bit zone header prefixes zone_size; only the 60-byte disc record
-    * occupies allocation space in zone zero. */
-   uint64_t allocation_bits = sector_bits - zone_spare - 480u;
-   uint64_t required_bits = declared >> log2_bytes_per_map_bit;
-   uint64_t ids_per_zone = (sector_bits - zone_spare) / (id_length + 1u);
-   if (allocation_bits < required_bits || allocation_bits - required_bits >= ids_per_zone ||
-       ids_per_zone < 3u || ids_per_zone > (UINT64_C(1) << 15u))
-      return false;
+   if (!arc_filecore_e_map_layout_valid(id_length,
+                                        log2_bytes_per_map_bit,
+                                        zone_spare, declared)) return false;
+   uint64_t ids_per_zone = (sector_size * 8u - zone_spare) /
+                           (id_length + 1u);
    uint32_t root = arc_read_le32(record + 12u);
    uint32_t root_fragment = (root >> 8u) & 0x7fffu;
    if ((root >> 29u) != 0u || root_fragment < 2u || root_fragment >= ids_per_zone)
@@ -220,6 +231,7 @@ bool arc_media_inspect(const char *path, const uint8_t *data, size_t size,
          if (c > 0x20u && c != 0x7fu) break;
          found.disc_name[i - 1u] = '\0';
       }
+      found.disc_name_length = (uint8_t)strlen(found.disc_name);
    }
    else
    {
