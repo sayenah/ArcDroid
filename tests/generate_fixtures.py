@@ -1326,6 +1326,12 @@ def main() -> None:
     nested_folder = folder_set / "Nested.adf"
     nested_folder.mkdir(exist_ok=True)
     (nested_folder / "Nested.adf").write_bytes(disc2)
+    launch_folder_set = args.output / "Virelai.adf"
+    launch_folder_set.mkdir(exist_ok=True)
+    (launch_folder_set / "Virelai.adf").write_bytes(
+        build_d_discovery([(b"!Virelai", True)], b"Virelai"))
+    (launch_folder_set / "Virelai 2.adf").write_bytes(
+        build_d_discovery([(b"!Nulvane", True)], b"Nulvane"))
     jfd = build_jfd(bytes(disc1[:256]))
     (args.output / "arcdroid-test.jfd").write_bytes(jfd)
     (args.output / "arcdroid-test-gzip.jfd").write_bytes(gzip_member(jfd))

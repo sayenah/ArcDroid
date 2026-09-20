@@ -1492,8 +1492,11 @@ int main(int argc, char **argv)
    retro_set_video_refresh(video); retro_set_audio_sample_batch(audio);
    retro_set_input_poll(poll); retro_set_input_state(input);
    phase = PHASE_INIT; retro_init();
-   assert(disk_control.set_eject_state && disk_control.set_image_index &&
-          disk_control.replace_image_index && disk_control.set_initial_image);
+   assert(disk_control.set_eject_state && disk_control.get_eject_state &&
+          disk_control.get_image_index && disk_control.set_image_index &&
+          disk_control.get_num_images && disk_control.replace_image_index &&
+          disk_control.add_image_index && !disk_control.set_initial_image &&
+          disk_control.get_image_path && disk_control.get_image_label);
    assert(retro_serialize_size() == 0u);
    struct retro_game_info game = {argv[3], NULL, 0u, NULL};
    uint64_t source_hash = hash_file(argv[3]);
@@ -3627,6 +3630,53 @@ int main(int argc, char **argv)
       ArcDigest folder_identity = digest_file(folder_selected);
       assert(!strcmp(folder_identity.sha1, standalone_identity.sha1));
 
+      /* Both members of a dedicated generated folder set have distinct
+       * launch candidates. A direct load proves the later fixture's candidate
+       * before the folder load proves that discovery inspects only image 1. */
+      char launch_folder_directory[4096], launch_folder_selected[4096];
+      char launch_folder_disc2[4096];
+      snprintf(launch_folder_directory, sizeof(launch_folder_directory),
+               "%s/Virelai.adf", argv[11]);
+      snprintf(launch_folder_selected, sizeof(launch_folder_selected),
+               "%s/Virelai.adf", launch_folder_directory);
+      snprintf(launch_folder_disc2, sizeof(launch_folder_disc2),
+               "%s/Virelai 2.adf", launch_folder_directory);
+      struct retro_game_info later_folder_game = {
+         launch_folder_disc2, NULL, 0u, NULL
+      };
+      unsigned launch_decisions = launch_log_lines;
+      phase = PHASE_LOAD; assert(retro_load_game(&later_folder_game));
+      assert(launch_log_lines == launch_decisions + 1u &&
+             strstr(last_launch_log, "candidates=[1:!Nulvane:app]") &&
+             !strstr(last_launch_log, "!Virelai"));
+      retro_unload_game();
+      struct retro_game_info launch_folder_game = {
+         launch_folder_selected, NULL, 0u, NULL
+      };
+      launch_decisions = launch_log_lines;
+      phase = PHASE_LOAD; assert(retro_load_game(&launch_folder_game));
+      assert(disk_control.get_num_images() == 2u &&
+             disk_control.get_image_index() == 0u &&
+             !disk_control.get_eject_state() &&
+             launch_log_lines == launch_decisions + 1u &&
+             strstr(last_launch_log, "candidates=[1:!Virelai:app]") &&
+             !strstr(last_launch_log, "!Nulvane"));
+      assert(disk_control.set_eject_state(true) &&
+             disk_control.set_image_index(1u) &&
+             disk_control.set_eject_state(false) &&
+             disk_control.get_image_index() == 1u &&
+             !disk_control.get_eject_state());
+      retro_unload_game();
+      launch_decisions = launch_log_lines;
+      phase = PHASE_LOAD; assert(retro_load_game(&launch_folder_game));
+      assert(disk_control.get_num_images() == 2u &&
+             disk_control.get_image_index() == 0u &&
+             !disk_control.get_eject_state() &&
+             launch_log_lines == launch_decisions + 1u &&
+             strstr(last_launch_log, "candidates=[1:!Virelai:app]") &&
+             !strstr(last_launch_log, "!Nulvane"));
+      retro_unload_game();
+
       unsigned folder_messages = folder_set_warning_osd_calls;
       unsigned folder_logs = folder_set_log_lines;
       unsigned omission_logs = folder_set_omission_log_lines;
@@ -3679,36 +3729,9 @@ int main(int argc, char **argv)
       assert(disk_control.set_eject_state(false));
       retro_unload_game();
 
-      /* A matching remembered path boots that sibling. Removing or renaming
-       * it must not silently select the different path now at the same index. */
-      assert(disk_control.set_initial_image(1u, folder_disc2));
-      phase = PHASE_LOAD; assert(retro_load_game(&folder_game));
-      assert(disk_control.get_image_index() == 1u);
-      retro_unload_game();
-
-      char removed_disc2[4096];
-      snprintf(removed_disc2, sizeof(removed_disc2), "%s.removed", folder_disc2);
-      assert(disk_control.set_initial_image(1u, folder_disc2));
-      assert(rename(folder_disc2, removed_disc2) == 0);
-      phase = PHASE_LOAD; assert(retro_load_game(&folder_game));
-      assert(disk_control.get_image_index() == 0u);
-      retro_unload_game();
-      assert(rename(removed_disc2, folder_disc2) == 0);
-
-      char renamed_adl[4096];
-      snprintf(renamed_adl, sizeof(renamed_adl), "%s/Qaventra 30.adl",
-               folder_directory);
-      assert(disk_control.set_initial_image(2u, folder_adl));
-      assert(rename(folder_adl, renamed_adl) == 0);
-      phase = PHASE_LOAD; assert(retro_load_game(&folder_game));
-      assert(disk_control.get_image_index() == 0u);
-      retro_unload_game();
-      assert(rename(renamed_adl, folder_adl) == 0);
-
-      /* A remembered sibling which still qualifies structurally but is
-       * omitted under the new write policy must fall back to index 0. In
-       * original mode every retained callback path is its source path, and
-       * preparing/unloading the set removes none of those source files. */
+      /* Original mode omits the short sibling and starts on image 1. Every
+       * retained callback path is its source path, and preparing/unloading
+       * the set removes none of those source files. */
       const char *folder_sources[] = {
          folder_selected, folder_disc2, folder_adl, folder_rejected,
          folder_short, folder_duplicate, folder_jfd
@@ -3717,7 +3740,6 @@ int main(int argc, char **argv)
       for (unsigned i = 0u;
            i < sizeof(folder_sources) / sizeof(folder_sources[0]); ++i)
          folder_source_hashes[i] = hash_file(folder_sources[i]);
-      assert(disk_control.set_initial_image(3u, folder_short));
       option_writes = "original";
       folder_messages = folder_set_warning_osd_calls;
       omission_logs = folder_set_omission_log_lines;
@@ -3895,25 +3917,29 @@ int main(int argc, char **argv)
       aliased_vfs_directory_path = NULL;
       aliased_vfs_directory_source = NULL;
 
-      assert(!disk_control.set_initial_image(0u, NULL));
-      char *overlong_initial = malloc(4097u);
-      assert(overlong_initial);
-      memset(overlong_initial, 'x', 4096u); overlong_initial[4096] = '\0';
-      assert(!disk_control.set_initial_image(0u, overlong_initial));
-      free(overlong_initial);
-
-      assert(disk_control.set_initial_image(1u, argv[8]));
       last_input_resolution[0] = '\0';
       phase = PHASE_LOAD; assert(retro_load_game(&playlist_game));
       assert(strstr(last_input_resolution, "profile=Generated Test Profile") &&
              strstr(last_input_resolution, "[profile]"));
       assert(disk_control.get_num_images() == 2u &&
-             disk_control.get_image_index() == 1u);
-      assert(disk_control.get_image_path(1u, image_path, sizeof(image_path)) &&
-             !strcmp(image_path, argv[8]));
+             disk_control.get_image_index() == 0u &&
+             !disk_control.get_eject_state());
+      assert(disk_control.set_eject_state(true) &&
+             disk_control.set_image_index(1u) &&
+             disk_control.set_eject_state(false) &&
+             disk_control.get_image_index() == 1u &&
+             !disk_control.get_eject_state());
       retro_unload_game();
 
-      /* The request is consumed exactly once. */
+      /* Unload/reload in one process cannot carry a valid later index into
+       * the new playlist session. */
+      phase = PHASE_LOAD; assert(retro_load_game(&playlist_game));
+      assert(disk_control.get_num_images() == 2u &&
+             disk_control.get_image_index() == 0u &&
+             !disk_control.get_eject_state());
+      retro_unload_game();
+
+      /* Every successful playlist load starts on image 1. */
       phase = PHASE_LOAD; assert(retro_load_game(&playlist_game));
       assert(disk_control.get_image_index() == 0u);
       assert(disk_control.get_image_label(0u, image_label, sizeof(image_label)) &&
@@ -3996,8 +4022,7 @@ int main(int argc, char **argv)
              !disk_control.get_eject_state());
       retro_unload_game();
 
-      /* A pending request is cleared by a failed load. */
-      assert(disk_control.set_initial_image(1u, argv[8]));
+      /* A failed load cannot affect the next session's initial index. */
       phase = PHASE_LOAD; assert(!retro_load_game(&bad_game));
       phase = PHASE_LOAD; assert(retro_load_game(&playlist_game));
       assert(disk_control.get_image_index() == 0u);
