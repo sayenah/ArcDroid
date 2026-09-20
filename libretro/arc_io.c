@@ -114,6 +114,33 @@ bool arc_io_make_path(const char *path)
    return arc_io_is_directory(buffer) || arc_io_vfs->mkdir(buffer) == 0;
 }
 
+bool arc_io_directory_contains(const char *directory, const char *name,
+                               bool *contains)
+{
+   if (contains) *contains = false;
+   if (!arc_io_vfs || !arc_io_vfs->opendir || !arc_io_vfs->readdir ||
+       !arc_io_vfs->dirent_get_name || !arc_io_vfs->closedir ||
+       !directory || !name || !name[0] || !contains ||
+       strchr(name, '/') || strchr(name, '\\')) return false;
+   struct retro_vfs_dir_handle *dir = arc_io_vfs->opendir(directory, false);
+   if (!dir) return false;
+   while (arc_io_vfs->readdir(dir))
+   {
+      const char *entry = arc_io_vfs->dirent_get_name(dir);
+      if (entry && !strcmp(entry, name))
+      {
+         *contains = true;
+         break;
+      }
+   }
+   if (arc_io_vfs->closedir(dir) != 0)
+   {
+      *contains = false;
+      return false;
+   }
+   return true;
+}
+
 static bool arc_io_walk_inner(const char *directory, unsigned depth,
                               ArcIoVisit visit, void *opaque)
 {

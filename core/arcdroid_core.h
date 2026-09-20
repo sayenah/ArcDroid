@@ -110,6 +110,7 @@ typedef struct {
    bool short_image;
    unsigned boot_option;
    char disc_name[11];
+   uint8_t disc_name_length;
 } ArcMediaInfo;
 
 typedef enum {
@@ -130,10 +131,17 @@ typedef struct {
    char content_id[41];
    bool launch_helper;
    char launch_target[11];
+   uint8_t launch_target_length;
 } ArcLaunchPlan;
 
 #define ARC_LAUNCH_MAX_CANDIDATES 77u
 #define ARC_LAUNCH_DISC_SIZE 655360u
+#define ARC_GUEST_NAME_MAX 10u
+
+typedef struct {
+   uint8_t bytes[ARC_GUEST_NAME_MAX];
+   uint8_t length;
+} ArcGuestName;
 
 typedef enum {
    ARC_LAUNCH_REASON_UNREADABLE = 0,
@@ -146,23 +154,42 @@ typedef enum {
    ARC_LAUNCH_REASON_DISC_NAME_MATCH
 } ArcLaunchReason;
 
+typedef enum {
+   ARC_LAUNCH_CANDIDATE_NOT_APPLICATION = 0,
+   ARC_LAUNCH_CANDIDATE_APPLICATION,
+   ARC_LAUNCH_CANDIDATE_UNKNOWN
+} ArcLaunchCandidateState;
+
 typedef struct {
-   char name[11];
-   bool application;
+   ArcGuestName name;
+   ArcLaunchCandidateState state;
+   bool launchable;
+   bool has_boot;
 } ArcLaunchCandidate;
 
 typedef struct {
    bool readable;
    unsigned boot_option;
-   char disc_name[11];
+   ArcGuestName disc_name;
    ArcMediaGeometry geometry;
    ArcLaunchCandidate candidates[ARC_LAUNCH_MAX_CANDIDATES];
    unsigned candidate_count;
    unsigned application_count;
+   unsigned unknown_count;
    int target_index;
    ArcLaunchReason reason;
+   bool ignored_attribute_bits;
    char candidate_fingerprint[41];
 } ArcLaunchDiscovery;
+
+#define ARC_LAUNCH_BINDING_MAX_SIZE 96u
+
+typedef struct {
+   unsigned version;
+   unsigned ordinal;
+   ArcGuestName target;
+   char candidate_fingerprint[41];
+} ArcLaunchBinding;
 
 #define ARC_CMOS_RECORD_SIZE 256u
 #define ARC_CMOS_PAYLOAD_SIZE 240u
@@ -192,8 +219,27 @@ bool arc_launch_discover(const uint8_t *data, size_t size,
                          const ArcMediaInfo *media, const ArcJfdImage *jfd,
                          ArcLaunchDiscovery *discovery);
 const char *arc_launch_reason_name(ArcLaunchReason reason);
-bool arc_launch_disc_build(const char *disc_name, const char *target,
-                           uint8_t output[ARC_LAUNCH_DISC_SIZE]);
+bool arc_launch_escape_name(const ArcGuestName *name, char *output,
+                            size_t capacity);
+bool arc_launch_sibling_bootable(const ArcLaunchCandidate *candidate);
+bool arc_launch_script_build(const ArcLaunchDiscovery *discovery,
+                             unsigned target_index, uint8_t *output,
+                             size_t capacity, size_t *output_size,
+                             char *error, size_t error_size);
+bool arc_launch_disc_build(const ArcLaunchDiscovery *discovery,
+                           unsigned target_index,
+                           uint8_t output[ARC_LAUNCH_DISC_SIZE],
+                           char *error, size_t error_size);
+bool arc_launch_binding_parse(const void *data, size_t size,
+                              ArcLaunchBinding *binding);
+bool arc_launch_binding_format(unsigned ordinal, const ArcGuestName *target,
+                               const char candidate_fingerprint[41],
+                               uint8_t *output, size_t capacity,
+                               size_t *output_size);
+bool arc_filecore_e_map_layout_valid(unsigned id_length,
+                                     unsigned log2_bytes_per_map_bit,
+                                     unsigned zone_spare,
+                                     size_t disc_size);
 bool arc_firmware_nearest_size(size_t actual, size_t margin, size_t *expected);
 bool arc_launch_plan_default(ArcLaunchPlan *plan, ArcMediaKind media,
                              ArcOsClass os, const char content_sha1[41],
@@ -342,14 +388,16 @@ const ArcInputKey *arc_input_key(unsigned key);
 const ArcInputKey *arc_input_key_value(const char *value);
 bool arc_input_is_modifier(unsigned key);
 const char *arc_pad_input_name(unsigned input);
-bool arc_input_resolve(const char content_id[41], const char *launch_target,
+bool arc_input_resolve(const char content_id[41], const void *launch_target,
+                       size_t launch_target_length,
                        const char *profile_selection,
                        const ArcInputOverride overrides[ARC_PAD_PORTS][ARC_PAD_INPUT_COUNT],
                        ArcInputResolution *resolution);
 bool arc_input_resolve_table(const ArcInputProfile *profiles,
                              size_t profile_count,
                              const char content_id[41],
-                             const char *launch_target,
+                             const void *launch_target,
+                             size_t launch_target_length,
                              const char *profile_selection,
                              const ArcInputOverride overrides[ARC_PAD_PORTS][ARC_PAD_INPUT_COUNT],
                              ArcInputResolution *resolution);

@@ -119,6 +119,21 @@ static ArcJfdImage load_image(const char *root, const char *name)
    return image;
 }
 
+static bool build_launch_helper(void)
+{
+   ArcLaunchDiscovery discovery;
+   char error_text[128];
+   memset(&discovery, 0, sizeof(discovery));
+   discovery.candidate_count = 1u;
+   discovery.application_count = 1u;
+   discovery.candidates[0].name.length = 5u;
+   memcpy(discovery.candidates[0].name.bytes, "!Demo", 5u);
+   discovery.candidates[0].state = ARC_LAUNCH_CANDIDATE_APPLICATION;
+   discovery.candidates[0].launchable = true;
+   return arc_launch_disc_build(&discovery, 0u, raw_helper,
+                                error_text, sizeof(error_text));
+}
+
 static void controller_reset(const ArcJfdImage *image)
 {
    memset(&ioc, 0, sizeof(ioc));
@@ -140,15 +155,16 @@ static void test_drive_one_helper(const char *root)
 {
    static const char boot_text[] =
       "| ArcDroid launch disc\r"
-      "Desktop -File ADFS::1.$.ArcLaunch\r";
+      "%Desktop -File \"ADFS::1.$.ArcLaunch\"\r";
    static const char launch_text[] =
       "| ArcDroid desktop boot file\r"
-      "Dir ADFS::Demo.$\r"
-      "URD ADFS::Demo.$\r"
-      "Filer_Run ADFS::Demo.$.!Demo\r";
+      "%Filer_Boot ADFS::0.$.!Demo\r"
+      "%Dir ADFS::0.$\r"
+      "%URD ADFS::0.$\r"
+      "%Filer_Run ADFS::0.$.!Demo\r";
    ArcJfdImage image = load_image(root, "size-1.jfd");
    controller_reset(&image);
-   assert(arc_launch_disc_build("Demo", "!Demo", raw_helper));
+   assert(build_launch_helper());
    raw_helper_length = ARC_LAUNCH_DISC_SIZE;
    adf_set_writable(1, 0);
    assert(disc_load_raw(1, "memory-helper.adl", ARC_GEOMETRY_640K_L));
@@ -459,7 +475,7 @@ static void test_82c711_hardening(void)
    assert((c82c711_fdc_read(5u, NULL) & 0x43u) == 0x42u);
    for (unsigned i = 1; i < 7u; ++i) (void)c82c711_fdc_read(5u, NULL);
 
-   assert(arc_launch_disc_build("Demo", "!Demo", raw_helper));
+   assert(build_launch_helper());
    adf_init();
    adf_set_writable(0, 1);
    assert(disc_load_raw(0, "memory-helper.adl", ARC_GEOMETRY_640K_L));
@@ -523,7 +539,7 @@ static void newio_reset(const ArcJfdImage *image, bool helper)
    if (image) assert(disc_load_jfd(0, image));
    if (helper)
    {
-      assert(arc_launch_disc_build("Demo", "!Demo", raw_helper));
+      assert(build_launch_helper());
       raw_helper_length = ARC_LAUNCH_DISC_SIZE;
       adf_set_writable(1, 0);
       assert(disc_load_raw(1, "memory-helper.adl", ARC_GEOMETRY_640K_L));

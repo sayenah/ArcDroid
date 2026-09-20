@@ -146,7 +146,8 @@ const char *arc_pad_input_name(unsigned input)
 
 static const ArcInputProfile *arc_find_profile(const char *id,
                                                 const char content_id[41],
-                                                const char *launch_target,
+                                                const void *launch_target,
+                                                size_t launch_target_length,
                                                 bool by_id,
                                                 const ArcInputProfile *profiles,
                                                 size_t count)
@@ -160,7 +161,8 @@ static const ArcInputProfile *arc_find_profile(const char *id,
          continue;
       }
       if (profile->launch_target && profile->launch_target[0] &&
-          (!launch_target || strcmp(profile->launch_target, launch_target)))
+          (!launch_target || strlen(profile->launch_target) != launch_target_length ||
+           memcmp(profile->launch_target, launch_target, launch_target_length)))
          continue;
       for (unsigned digest = 0u; digest < profile->digest_count; ++digest)
          if (content_id && !strcmp(content_id, profile->digests[digest]))
@@ -172,7 +174,8 @@ static const ArcInputProfile *arc_find_profile(const char *id,
 bool arc_input_resolve_table(const ArcInputProfile *profiles,
                              size_t profile_count,
                              const char content_id[41],
-                             const char *launch_target,
+                             const void *launch_target,
+                             size_t launch_target_length,
                              const char *profile_selection,
                              const ArcInputOverride overrides[ARC_PAD_PORTS][ARC_PAD_INPUT_COUNT],
                              ArcInputResolution *resolution)
@@ -181,12 +184,13 @@ bool arc_input_resolve_table(const ArcInputProfile *profiles,
    const ArcInputProfile *profile = NULL;
    bool preset = false;
    if (!strcmp(profile_selection, "Auto"))
-      profile = arc_find_profile(NULL, content_id, launch_target, false,
+      profile = arc_find_profile(NULL, content_id, launch_target,
+                                 launch_target_length, false,
                                  profiles, profile_count);
    else if (strcmp(profile_selection, "Generic"))
    {
       preset = true;
-      profile = arc_find_profile(profile_selection, NULL, NULL, true,
+      profile = arc_find_profile(profile_selection, NULL, NULL, 0u, true,
                                  profiles, profile_count);
       if (!profile) return false;
    }
@@ -216,7 +220,8 @@ bool arc_input_resolve_table(const ArcInputProfile *profiles,
    return true;
 }
 
-bool arc_input_resolve(const char content_id[41], const char *launch_target,
+bool arc_input_resolve(const char content_id[41], const void *launch_target,
+                       size_t launch_target_length,
                        const char *profile_selection,
                        const ArcInputOverride overrides[ARC_PAD_PORTS][ARC_PAD_INPUT_COUNT],
                        ArcInputResolution *resolution)
@@ -224,5 +229,6 @@ bool arc_input_resolve(const char content_id[41], const char *launch_target,
    size_t count = 0u;
    const ArcInputProfile *profiles = arc_input_profiles(&count);
    return arc_input_resolve_table(profiles, count, content_id, launch_target,
-                                  profile_selection, overrides, resolution);
+                                  launch_target_length, profile_selection,
+                                  overrides, resolution);
 }

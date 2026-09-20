@@ -21,7 +21,7 @@ typedef struct {
    bool new_directory;
    size_t disc_size;
    unsigned boot_option;
-   char disc_name[11];
+   ArcGuestName disc_name;
    uint8_t map[1024];
    unsigned id_length;
    unsigned log2_bytes_per_map_bit;
@@ -30,7 +30,7 @@ typedef struct {
 } ArcFileCore;
 
 typedef struct {
-   char name[11];
+   ArcGuestName name;
    uint32_t length;
    uint32_t address;
    bool directory;
@@ -183,15 +183,12 @@ static bool arc_reader_read(const ArcDiscReader *reader, size_t offset,
    return true;
 }
 
-static void arc_trim_name(char name[11])
+static void arc_guest_name_trim(ArcGuestName *name, const uint8_t source[10])
 {
-   name[10] = '\0';
-   for (unsigned i = 10u; i > 0u; --i)
-   {
-      unsigned char c = (unsigned char)name[i - 1u];
-      if (c > 0x20u && c != 0x7fu) break;
-      name[i - 1u] = '\0';
-   }
+   unsigned length = 10u;
+   memcpy(name->bytes, source, 10u);
+   while (length && source[length - 1u] <= 0x20u) --length;
+   name->length = (uint8_t)length;
 }
 
 static bool arc_filecore_old(ArcFileCore *fs, ArcMediaGeometry geometry)
@@ -210,12 +207,13 @@ static bool arc_filecore_old(ArcFileCore *fs, ArcMediaGeometry geometry)
    fs->new_directory = geometry != ARC_GEOMETRY_640K_L;
    fs->disc_size = (size_t)sectors * 256u;
    fs->boot_option = fs->map[509];
+   uint8_t disc_name[10];
    for (unsigned i = 0u; i < 5u; ++i)
    {
-      fs->disc_name[i * 2u] = (char)fs->map[247u + i];
-      fs->disc_name[i * 2u + 1u] = (char)fs->map[502u + i];
+      disc_name[i * 2u] = fs->map[247u + i];
+      disc_name[i * 2u + 1u] = fs->map[502u + i];
    }
-   arc_trim_name(fs->disc_name);
+   arc_guest_name_trim(&fs->disc_name, disc_name);
    fs->root_address = (uint32_t)(geometry == ARC_GEOMETRY_640K_L ? 512u : 1024u);
    return true;
 }
@@ -237,9 +235,9 @@ static bool arc_filecore_new(ArcFileCore *fs)
        fs->log2_bytes_per_map_bit < 7u ||
        fs->log2_bytes_per_map_bit > 10u || fs->zone_spare > 7712u)
       return false;
-   unsigned allocation_bits = 8192u - fs->zone_spare - 480u;
-   if (allocation_bits != (819200u >> fs->log2_bytes_per_map_bit))
-      return false;
+   if (!arc_filecore_e_map_layout_valid(fs->id_length,
+                                        fs->log2_bytes_per_map_bit,
+                                        fs->zone_spare, 819200u)) return false;
    for (unsigned i = 36u; i < 60u; ++i)
       if (record[i]) return false;
    fs->new_map = true;
@@ -247,8 +245,7 @@ static bool arc_filecore_new(ArcFileCore *fs)
    fs->disc_size = 819200u;
    fs->boot_option = record[7];
    fs->root_address = arc_le32(record + 12u) & 0x00ffffffu;
-   memcpy(fs->disc_name, record + 22u, 10u);
-   arc_trim_name(fs->disc_name);
+   arc_guest_name_trim(&fs->disc_name, record + 22u);
    return true;
 }
 
@@ -297,10 +294,11 @@ static bool arc_new_map_resolve(const ArcFileCore *fs, uint32_t address,
    if (sector_offset > SIZE_MAX / map_bits_per_sector) return false;
    size_t wanted = sector_offset * map_bits_per_sector;
    unsigned start = 512u;
-   if (fs->zone_spare > 7712u) return false;
-   unsigned allocation_bits = 8192u - fs->zone_spare - 480u;
-   if (allocation_bits != (unsigned)(fs->disc_size >> fs->log2_bytes_per_map_bit))
+   if (!arc_filecore_e_map_layout_valid(fs->id_length,
+                                        fs->log2_bytes_per_map_bit,
+                                        fs->zone_spare, fs->disc_size))
       return false;
+   unsigned allocation_bits = 8192u - fs->zone_spare - 480u;
    unsigned end = start + allocation_bits;
    if (end > 8192u || start >= end) return false;
    unsigned free_link = arc_map_bits(fs->map, 8u, fs->id_length) & 0x7fffu;
@@ -333,22 +331,6 @@ static bool arc_new_map_resolve(const ArcFileCore *fs, uint32_t address,
    return false;
 }
 
-static bool arc_object_extent(const ArcFileCore *fs, uint32_t address,
-                              size_t length)
-{
-   if (!length) return true;
-   if (!fs->new_map)
-   {
-      size_t offset = (size_t)address * 256u;
-      return offset <= fs->disc_size && length <= fs->disc_size - offset;
-   }
-   size_t first, last;
-   return arc_new_map_resolve(fs, address, 0u, &first) &&
-          arc_new_map_resolve(fs, address, (length - 1u) / 1024u, &last) &&
-          last <= fs->disc_size &&
-          ((length - 1u) % 1024u) < fs->disc_size - last;
-}
-
 static bool arc_object_read(const ArcFileCore *fs, uint32_t address,
                             size_t offset, void *output, size_t size)
 {
@@ -378,24 +360,27 @@ static bool arc_object_read(const ArcFileCore *fs, uint32_t address,
 }
 
 static bool arc_entry_name(const uint8_t *source, bool old_directory,
-                           char output[11], unsigned *attributes)
+                           ArcGuestName *output, unsigned *attributes)
 {
    unsigned attr = 0u, length = 0u;
+   bool terminated = false;
    for (unsigned i = 0u; i < 10u; ++i)
    {
       uint8_t c = source[i];
       if (old_directory)
       {
          if (i < 8u && (c & 0x80u)) attr |= 1u << i;
-         else if (c & 0x80u) return false;
          c &= 0x7fu;
       }
-      else if (c & 0x80u) return false;
-      if (c < 0x20u) break;
-      if (c == 0x7fu) return false;
-      output[length++] = (char)c;
+      if (terminated) continue;
+      if (c < 0x20u)
+      {
+         terminated = true;
+         continue;
+      }
+      output->bytes[length++] = c;
    }
-   output[length] = '\0';
+   output->length = (uint8_t)length;
    if (!length) return false;
    if (attributes) *attributes = attr;
    return true;
@@ -403,7 +388,8 @@ static bool arc_entry_name(const uint8_t *source, bool old_directory,
 
 static bool arc_directory_read(const ArcFileCore *fs, uint32_t address,
                                bool root, ArcDirectoryEntry *entries,
-                               unsigned *entry_count)
+                               unsigned *entry_count,
+                               bool *ignored_attribute_bits)
 {
    bool old = !fs->new_directory;
    size_t directory_size = old ? 1280u : 2048u;
@@ -438,74 +424,97 @@ static bool arc_directory_read(const ArcFileCore *fs, uint32_t address,
       ArcDirectoryEntry *entry = &entries[count];
       unsigned attributes = 0u;
       memset(entry, 0, sizeof(*entry));
-      if (!arc_entry_name(raw, old, entry->name, &attributes) ||
-          !entry->name[0]) return false;
+      if (!arc_entry_name(raw, old, &entry->name, &attributes)) continue;
       entry->length = arc_le32(raw + 18u);
       entry->address = arc_le24(raw + 22u);
       entry->directory = old ? (attributes & 8u) != 0u :
                                (raw[25] & 8u) != 0u;
-      if (!old && (raw[25] & 0xc0u)) return false;
-      if (!arc_object_extent(fs, entry->address, entry->length)) return false;
+      if ((old ? attributes : raw[25]) & 0xc0u)
+      {
+         if (ignored_attribute_bits) *ignored_attribute_bits = true;
+      }
       ++count;
    }
    *entry_count = count;
    return true;
 }
 
-static bool arc_ascii_equal(const char *a, const char *b)
+static uint8_t arc_ascii_fold(uint8_t c)
 {
-   while (*a && *b)
-   {
-      if (tolower((unsigned char)*a) != tolower((unsigned char)*b)) return false;
-      ++a; ++b;
-   }
-   return !*a && !*b;
+   return c >= 'A' && c <= 'Z' ? (uint8_t)(c - 'A' + 'a') : c;
 }
 
-static bool arc_candidate_name(const char *name)
+static bool arc_name_ascii_equal(const ArcGuestName *a, const ArcGuestName *b)
 {
-   size_t length = strlen(name);
-   if (length < 2u || length > 10u || name[0] != '!') return false;
-   for (size_t i = 1u; i < length; ++i)
-   {
-      unsigned char c = (unsigned char)name[i];
-      bool alpha = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z');
-      bool digit = c >= '0' && c <= '9';
-      if (!alpha && !digit && c != '_' && c != '-' && c != '+') return false;
-   }
-   return !arc_ascii_equal(name, "!Boot") &&
-          !arc_ascii_equal(name, "!System") &&
-          !arc_ascii_equal(name, "!Fonts") &&
-          !arc_ascii_equal(name, "!Scrap");
+   if (!a || !b || a->length != b->length) return false;
+   for (unsigned i = 0u; i < a->length; ++i)
+      if (arc_ascii_fold(a->bytes[i]) != arc_ascii_fold(b->bytes[i]))
+         return false;
+   return true;
 }
 
-static void arc_normal_name(const char *source, bool strip_bang,
+static bool arc_name_ascii_literal(const ArcGuestName *name,
+                                   const char *literal)
+{
+   size_t length = strlen(literal);
+   if (!name || length != name->length) return false;
+   for (size_t i = 0u; i < length; ++i)
+      if (arc_ascii_fold(name->bytes[i]) !=
+          arc_ascii_fold((uint8_t)literal[i])) return false;
+   return true;
+}
+
+static bool arc_candidate_name(const ArcGuestName *name)
+{
+   return name && name->length && name->bytes[0] == '!';
+}
+
+static bool arc_candidate_launchable(const ArcGuestName *name)
+{
+   if (!name || name->length < 2u || name->length > 10u ||
+       name->bytes[0] != '!') return false;
+   for (unsigned i = 1u; i < name->length; ++i)
+   {
+      uint8_t c = name->bytes[i];
+      if (c < 0x20u || c == 0x20u || c == 0x7fu || c == '.' || c == ':' ||
+          c == '*' || c == '#' || c == '$' || c == '&' || c == '@' ||
+          c == '^' || c == '%' || c == '\\' || c == '|' || c == '"' ||
+          c == '<') return false;
+   }
+   return true;
+}
+
+static bool arc_normal_name(const ArcGuestName *source, bool strip_bang,
                             char output[11])
 {
    size_t at = 0u;
-   if (strip_bang && *source == '!') ++source;
-   while (*source && at < 10u)
+   unsigned start = strip_bang && source->length && source->bytes[0] == '!' ? 1u : 0u;
+   for (unsigned i = start; i < source->length && at < 10u; ++i)
    {
-      unsigned char c = (unsigned char)*source++;
+      uint8_t c = source->bytes[i];
+      if (c > 0x7eu) { output[0] = '\0'; return false; }
       if (c >= 'A' && c <= 'Z') output[at++] = (char)(c - 'A' + 'a');
       else if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9'))
          output[at++] = (char)c;
    }
    output[at] = '\0';
+   return true;
 }
 
 static void arc_fingerprint(ArcLaunchDiscovery *discovery)
 {
-   uint8_t bytes[1u + ARC_LAUNCH_MAX_CANDIDATES * 12u];
+   uint8_t bytes[1u + ARC_LAUNCH_MAX_CANDIDATES * 14u];
    size_t at = 0u;
    bytes[at++] = (uint8_t)discovery->candidate_count;
    for (unsigned i = 0u; i < discovery->candidate_count; ++i)
    {
-      size_t length = strlen(discovery->candidates[i].name);
-      bytes[at++] = (uint8_t)length;
-      memcpy(bytes + at, discovery->candidates[i].name, length);
-      at += length;
-      bytes[at++] = discovery->candidates[i].application ? 1u : 0u;
+      const ArcLaunchCandidate *candidate = &discovery->candidates[i];
+      bytes[at++] = candidate->name.length;
+      memcpy(bytes + at, candidate->name.bytes, candidate->name.length);
+      at += candidate->name.length;
+      bytes[at++] = (uint8_t)candidate->state;
+      bytes[at++] = candidate->launchable ? 1u : 0u;
+      bytes[at++] = candidate->has_boot ? 1u : 0u;
    }
    arc_sha1_hex(bytes, at, discovery->candidate_fingerprint);
 }
@@ -525,51 +534,87 @@ bool arc_launch_discover(const uint8_t *data, size_t size,
    discovery->readable = true;
    discovery->boot_option = fs.boot_option;
    discovery->geometry = fs.reader.geometry;
-   memcpy(discovery->disc_name, fs.disc_name, sizeof(discovery->disc_name));
-   if (!arc_directory_read(&fs, 0u, true, root, &root_count))
+   discovery->disc_name = fs.disc_name;
+   if (!arc_directory_read(&fs, 0u, true, root, &root_count,
+                           &discovery->ignored_attribute_bits))
    { discovery->readable = false; return true; }
 
-   bool incomplete = false;
    for (unsigned i = 0u; i < root_count; ++i)
    {
-      if (!root[i].directory || !arc_candidate_name(root[i].name)) continue;
+      if (!root[i].directory || !arc_candidate_name(&root[i].name)) continue;
       ArcLaunchCandidate *candidate =
          &discovery->candidates[discovery->candidate_count++];
-      memcpy(candidate->name, root[i].name, sizeof(candidate->name));
+      candidate->name = root[i].name;
+      candidate->launchable = arc_candidate_launchable(&candidate->name);
+      candidate->state = ARC_LAUNCH_CANDIDATE_UNKNOWN;
       size_t expected = fs.new_directory ? 2048u : 1280u;
       ArcDirectoryEntry child[77];
       unsigned child_count = 0u;
       if (root[i].length != expected ||
-          !arc_directory_read(&fs, root[i].address, false, child, &child_count))
-      { incomplete = true; continue; }
+          !arc_directory_read(&fs, root[i].address, false, child, &child_count,
+                              &discovery->ignored_attribute_bits))
+         continue;
+      unsigned run_count = 0u, boot_count = 0u;
       for (unsigned item = 0u; item < child_count; ++item)
-         if (!child[item].directory && arc_ascii_equal(child[item].name, "!Run"))
-         {
-            candidate->application = true;
-            ++discovery->application_count;
-            break;
-         }
+      {
+         if (child[item].directory) continue;
+         if (arc_name_ascii_literal(&child[item].name, "!Run")) ++run_count;
+         if (arc_name_ascii_literal(&child[item].name, "!Boot")) ++boot_count;
+      }
+      if (run_count > 1u || boot_count > 1u)
+      {
+         candidate->launchable = false;
+         continue;
+      }
+      candidate->has_boot = boot_count == 1u;
+      candidate->state = run_count == 1u ? ARC_LAUNCH_CANDIDATE_APPLICATION :
+                                           ARC_LAUNCH_CANDIDATE_NOT_APPLICATION;
+   }
+
+   for (unsigned i = 0u; i < discovery->candidate_count; ++i)
+   {
+      unsigned matches = 0u;
+      for (unsigned j = 0u; j < root_count; ++j)
+         if (arc_name_ascii_equal(&discovery->candidates[i].name,
+                                  &root[j].name)) ++matches;
+      if (matches > 1u)
+      {
+         discovery->candidates[i].state = ARC_LAUNCH_CANDIDATE_UNKNOWN;
+         discovery->candidates[i].launchable = false;
+      }
+   }
+
+   for (unsigned i = 0u; i < discovery->candidate_count; ++i)
+   {
+      if (discovery->candidates[i].state == ARC_LAUNCH_CANDIDATE_APPLICATION)
+         ++discovery->application_count;
+      else if (discovery->candidates[i].state == ARC_LAUNCH_CANDIDATE_UNKNOWN)
+         ++discovery->unknown_count;
    }
    arc_fingerprint(discovery);
-   if (incomplete)
-   { discovery->reason = ARC_LAUNCH_REASON_INSPECTION_INCOMPLETE; return true; }
    if (fs.boot_option)
    { discovery->reason = ARC_LAUNCH_REASON_DISC_BOOTS_ITSELF; return true; }
    if (!discovery->candidate_count)
    { discovery->reason = ARC_LAUNCH_REASON_NO_CANDIDATES; return true; }
-   if (!discovery->application_count)
+   if (!discovery->application_count && !discovery->unknown_count)
    { discovery->reason = ARC_LAUNCH_REASON_NO_APPLICATIONS; return true; }
-   if (discovery->application_count == 1u)
+   if (discovery->application_count == 1u && !discovery->unknown_count)
    {
       for (unsigned i = 0u; i < discovery->candidate_count; ++i)
-         if (discovery->candidates[i].application)
-         { discovery->target_index = (int)i; break; }
-      discovery->reason = ARC_LAUNCH_REASON_SINGLE_APPLICATION;
-      return true;
+         if (discovery->candidates[i].state == ARC_LAUNCH_CANDIDATE_APPLICATION)
+         {
+            if (discovery->candidates[i].launchable)
+            {
+               discovery->target_index = (int)i;
+               discovery->reason = ARC_LAUNCH_REASON_SINGLE_APPLICATION;
+               return true;
+            }
+            break;
+         }
    }
 
    char disc[11], stripped[11];
-   arc_normal_name(fs.disc_name, false, disc);
+   bool ascii_disc = arc_normal_name(&fs.disc_name, false, disc);
    memcpy(stripped, disc, sizeof(stripped));
    size_t end = strlen(stripped);
    while (end && isdigit((unsigned char)stripped[end - 1u])) stripped[--end] = '\0';
@@ -577,20 +622,55 @@ bool arc_launch_discover(const uint8_t *data, size_t size,
    unsigned matches = 0u;
    for (unsigned i = 0u; i < discovery->candidate_count; ++i)
    {
-      if (!discovery->candidates[i].application) continue;
+      if (discovery->candidates[i].state != ARC_LAUNCH_CANDIDATE_APPLICATION &&
+          discovery->candidates[i].state != ARC_LAUNCH_CANDIDATE_UNKNOWN) continue;
       char candidate[11];
-      arc_normal_name(discovery->candidates[i].name, true, candidate);
+      if (!ascii_disc ||
+          !arc_normal_name(&discovery->candidates[i].name, true, candidate))
+         continue;
       if ((disc[0] && !strcmp(candidate, disc)) ||
           (stripped[0] && strcmp(stripped, disc) && !strcmp(candidate, stripped)))
       { selected = (int)i; ++matches; }
    }
-   if (matches == 1u)
+   if (matches == 1u &&
+       discovery->candidates[selected].state == ARC_LAUNCH_CANDIDATE_APPLICATION &&
+       discovery->candidates[selected].launchable)
    {
       discovery->target_index = selected;
       discovery->reason = ARC_LAUNCH_REASON_DISC_NAME_MATCH;
    }
    else
-      discovery->reason = ARC_LAUNCH_REASON_AMBIGUOUS;
+      discovery->reason = discovery->unknown_count ?
+         ARC_LAUNCH_REASON_INSPECTION_INCOMPLETE : ARC_LAUNCH_REASON_AMBIGUOUS;
+   return true;
+}
+
+bool arc_launch_escape_name(const ArcGuestName *name, char *output,
+                            size_t capacity)
+{
+   static const char hex[] = "0123456789ABCDEF";
+   size_t at = 0u;
+   if (!output || !capacity) return false;
+   if (!name) { output[0] = '\0'; return true; }
+   for (unsigned i = 0u; i < name->length; ++i)
+   {
+      uint8_t c = name->bytes[i];
+      size_t needed = c >= 0x20u && c <= 0x7eu ?
+         (c == '"' || c == '\\' ? 2u : 1u) : 4u;
+      if (needed >= capacity - at)
+      { output[at] = '\0'; return false; }
+      if (needed == 4u)
+      {
+         output[at++] = '\\'; output[at++] = 'x';
+         output[at++] = hex[c >> 4u]; output[at++] = hex[c & 15u];
+      }
+      else
+      {
+         if (needed == 2u) output[at++] = '\\';
+         output[at++] = (char)c;
+      }
+   }
+   output[at] = '\0';
    return true;
 }
 

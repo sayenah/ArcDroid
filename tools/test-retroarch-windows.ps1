@@ -489,3 +489,25 @@ Write-Host "Slice 2b Windows RetroArch: Launch: decision and helper publication 
 if ($env:GITHUB_STEP_SUMMARY) {
     Add-Content -Encoding UTF8 $env:GITHUB_STEP_SUMMARY "- Slice 2b launch: generated option-0 application produced the Launch: decision and a 640 KiB save helper."
 }
+
+# Slice 5a proves that a top-bit guest leaf survives native Windows frontend
+# loading, discovery, escaped diagnostics, and helper publication.
+$content = (Resolve-Path (Join-Path $InputDirectory "checkpoint-a-top-bit.adf")).Path
+Invoke-ArcDroid 100 $false
+$topBitLaunchLines = Get-Content $log | Select-String -SimpleMatch "Launch:"
+$topBitDecision = $topBitLaunchLines | Where-Object {
+    $_.Line.Contains('decision=!Z\xF6rvex') -and $_.Line.Contains('reason=single application')
+}
+if (-not $topBitDecision) {
+    throw "Slice 5a top-bit application run did not log its escaped Launch: decision"
+}
+$contentSha1 = (Get-FileHash -Algorithm SHA1 $content).Hash.ToLowerInvariant()
+$helpers = @(Get-ChildItem -Path $saveDirectory -Filter "$contentSha1.adl" -File -Recurse |
+    Where-Object { $_.DirectoryName -match '[\\/]arcdroid[\\/]launch$' })
+if ($helpers.Count -ne 1 -or $helpers[0].Length -ne 655360) {
+    throw "Slice 5a top-bit application run did not publish exactly one 640 KiB helper"
+}
+Write-Host "Slice 5a Windows RetroArch: top-bit Launch: decision and helper publication passed"
+if ($env:GITHUB_STEP_SUMMARY) {
+    Add-Content -Encoding UTF8 $env:GITHUB_STEP_SUMMARY "- Slice 5a launch: top-bit application produced the escaped Launch: decision and a 640 KiB save helper."
+}

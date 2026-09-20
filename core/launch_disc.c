@@ -2,6 +2,7 @@
 #include "arcdroid_core.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 enum {
@@ -30,22 +31,134 @@ static uint8_t arc_old_checksum(const uint8_t *block)
    return (uint8_t)checksum;
 }
 
-static bool arc_launch_name_valid(const char *name, bool application)
+static uint8_t arc_ascii_fold(uint8_t c)
 {
-   if (!name) return false;
-   size_t length = strlen(name);
-   if (application)
+   return c >= 'A' && c <= 'Z' ? (uint8_t)(c - 'A' + 'a') : c;
+}
+
+static bool arc_name_literal(const ArcGuestName *name, const char *literal)
+{
+   size_t length = strlen(literal);
+   if (!name || name->length != length) return false;
+   for (size_t i = 0u; i < length; ++i)
+      if (arc_ascii_fold(name->bytes[i]) !=
+          arc_ascii_fold((uint8_t)literal[i])) return false;
+   return true;
+}
+
+static bool arc_leaf_representable(const ArcGuestName *name)
+{
+   if (!name || name->length < 2u || name->length > ARC_GUEST_NAME_MAX ||
+       name->bytes[0] != '!') return false;
+   for (unsigned i = 1u; i < name->length; ++i)
    {
-      if (length < 2u || length > 10u || name[0] != '!') return false;
+      uint8_t c = name->bytes[i];
+      if (c <= 0x20u || c == 0x7fu || c == '.' || c == ':' || c == '*' ||
+          c == '#' || c == '$' || c == '&' || c == '@' || c == '^' ||
+          c == '%' || c == '\\' || c == '|' || c == '"' || c == '<')
+         return false;
    }
-   else if (!length || length > 10u) return false;
-   for (size_t i = application ? 1u : 0u; i < length; ++i)
+   return true;
+}
+
+bool arc_launch_sibling_bootable(const ArcLaunchCandidate *candidate)
+{
+   return candidate && candidate->has_boot && candidate->launchable &&
+          arc_leaf_representable(&candidate->name);
+}
+
+typedef struct {
+   uint8_t *output;
+   size_t capacity;
+   size_t size;
+   bool ok;
+} ArcScriptWriter;
+
+static void arc_script_bytes(ArcScriptWriter *writer, const void *data,
+                             size_t size)
+{
+   if (!writer->ok || size > SIZE_MAX - writer->size)
+   { writer->ok = false; return; }
+   if (writer->output)
    {
-      unsigned char c = (unsigned char)name[i];
-      bool alpha = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z');
-      bool digit = c >= '0' && c <= '9';
-      if (!alpha && !digit && c != '_' && c != '-' && c != '+') return false;
+      if (writer->size > writer->capacity ||
+          size > writer->capacity - writer->size)
+      { writer->ok = false; return; }
+      memcpy(writer->output + writer->size, data, size);
    }
+   writer->size += size;
+}
+
+static void arc_script_text(ArcScriptWriter *writer, const char *text)
+{
+   arc_script_bytes(writer, text, strlen(text));
+}
+
+static void arc_script_leaf(ArcScriptWriter *writer, const ArcGuestName *name)
+{
+   arc_script_bytes(writer, name->bytes, name->length);
+}
+
+static void arc_script_path(ArcScriptWriter *writer, const ArcGuestName *name)
+{
+   arc_script_text(writer, "ADFS::0.$.");
+   arc_script_leaf(writer, name);
+}
+
+static void arc_script_boot(ArcScriptWriter *writer,
+                            const ArcLaunchCandidate *candidate)
+{
+   arc_script_text(writer, "%Filer_Boot ");
+   arc_script_path(writer, &candidate->name);
+   arc_script_text(writer, "\r");
+}
+
+static void arc_launch_error(char *error, size_t error_size,
+                             const char *message)
+{
+   if (error && error_size) snprintf(error, error_size, "%s", message);
+}
+
+bool arc_launch_script_build(const ArcLaunchDiscovery *discovery,
+                             unsigned target_index, uint8_t *output,
+                             size_t capacity, size_t *output_size,
+                             char *error, size_t error_size)
+{
+   if (output_size) *output_size = 0u;
+   if (!discovery || target_index >= discovery->candidate_count)
+   { arc_launch_error(error, error_size, "launch target does not exist"); return false; }
+   const ArcLaunchCandidate *target = &discovery->candidates[target_index];
+   if (target->state != ARC_LAUNCH_CANDIDATE_APPLICATION || !target->launchable ||
+       !arc_leaf_representable(&target->name))
+   { arc_launch_error(error, error_size, "launch target leaf is not representable"); return false; }
+
+   ArcScriptWriter writer = {output, capacity, 0u, true};
+   arc_script_text(&writer, "| ArcDroid desktop boot file\r");
+   static const char *const preferred[] = {"!System", "!Fonts", "!Scrap"};
+   for (unsigned p = 0u; p < sizeof(preferred) / sizeof(preferred[0]); ++p)
+      for (unsigned i = 0u; i < discovery->candidate_count; ++i)
+         if (i != target_index &&
+             arc_launch_sibling_bootable(&discovery->candidates[i]) &&
+             arc_name_literal(&discovery->candidates[i].name, preferred[p]))
+            arc_script_boot(&writer, &discovery->candidates[i]);
+   for (unsigned i = 0u; i < discovery->candidate_count; ++i)
+   {
+      const ArcLaunchCandidate *candidate = &discovery->candidates[i];
+      if (i == target_index || !arc_launch_sibling_bootable(candidate) ||
+          arc_name_literal(&candidate->name, "!System") ||
+          arc_name_literal(&candidate->name, "!Fonts") ||
+          arc_name_literal(&candidate->name, "!Scrap")) continue;
+      arc_script_boot(&writer, candidate);
+   }
+   arc_script_boot(&writer, target);
+   arc_script_text(&writer, "%Dir ADFS::0.$\r");
+   arc_script_text(&writer, "%URD ADFS::0.$\r");
+   arc_script_text(&writer, "%Filer_Run ");
+   arc_script_path(&writer, &target->name);
+   arc_script_text(&writer, "\r");
+   if (!writer.ok)
+   { arc_launch_error(error, error_size, "desktop boot file buffer is too small"); return false; }
+   if (output_size) *output_size = writer.size;
    return true;
 }
 
@@ -99,34 +212,41 @@ static void arc_old_entry(uint8_t *entry, const char *name, uint32_t load,
    entry[25] = 0u;
 }
 
-bool arc_launch_disc_build(const char *disc_name, const char *target,
-                           uint8_t output[ARC_LAUNCH_DISC_SIZE])
+bool arc_launch_disc_build(const ArcLaunchDiscovery *discovery,
+                           unsigned target_index,
+                           uint8_t output[ARC_LAUNCH_DISC_SIZE],
+                           char *error, size_t error_size)
 {
    static const char boot[] =
       "| ArcDroid launch disc\r"
-      "Desktop -File ADFS::1.$.ArcLaunch\r";
-   char disc[24];
-   char launch[256];
-   if (!output || !arc_launch_name_valid(target, true)) return false;
-   if (arc_launch_name_valid(disc_name, false))
-      snprintf(disc, sizeof(disc), "ADFS::%s", disc_name);
-   else
-      snprintf(disc, sizeof(disc), "ADFS::0");
-   int launch_size = snprintf(launch, sizeof(launch),
-      "| ArcDroid desktop boot file\r"
-      "Dir %s.$\r"
-      "URD %s.$\r"
-      "Filer_Run %s.$.%s\r", disc, disc, disc, target);
-   if (launch_size < 0 || (size_t)launch_size >= sizeof(launch)) return false;
+      "%Desktop -File \"ADFS::1.$.ArcLaunch\"\r";
+   size_t launch_size = 0u;
+   if (!output || !arc_launch_script_build(discovery, target_index, NULL, 0u,
+                                            &launch_size, error, error_size))
+      return false;
+   size_t launch_sectors = (launch_size + ARC_L_SECTOR_SIZE - 1u) /
+                           ARC_L_SECTOR_SIZE;
+   if (!launch_sectors || launch_sectors > ARC_L_TOTAL_SECTORS - ARC_L_LAUNCH_SECTOR)
+   { arc_launch_error(error, error_size, "desktop boot file does not fit helper disc"); return false; }
+   uint8_t *launch = malloc(launch_size);
+   if (!launch)
+   { arc_launch_error(error, error_size, "desktop boot file allocation failed"); return false; }
+   size_t written = 0u;
+   if (!arc_launch_script_build(discovery, target_index, launch, launch_size,
+                                &written, error, error_size) ||
+       written != launch_size)
+   { free(launch); return false; }
 
    memset(output, 0, ARC_LAUNCH_DISC_SIZE);
-   /* Two free extents surround the two allocated bootstrap sectors. */
+   /* Free extents surround the boot sector and the exact launch-file extent. */
    arc_store_u24(output, 7u);
-   arc_store_u24(output + 3u, ARC_L_LAUNCH_SECTOR + 1u);
+   arc_store_u24(output + 3u, ARC_L_LAUNCH_SECTOR + (unsigned)launch_sectors);
    memcpy(output + 247u, "Acri\r", 5u); /* ArcDroid, interleaved halves. */
    arc_store_u24(output + 252u, ARC_L_TOTAL_SECTORS);
    arc_store_u24(output + 256u, ARC_L_BOOT_SECTOR - 7u);
-   arc_store_u24(output + 259u, ARC_L_TOTAL_SECTORS - ARC_L_LAUNCH_SECTOR - 1u);
+   arc_store_u24(output + 259u,
+                 ARC_L_TOTAL_SECTORS - ARC_L_LAUNCH_SECTOR -
+                 (unsigned)launch_sectors);
    memcpy(output + 502u, "rDod\r", 5u);
    output[507] = 0x44u;
    output[508] = 0x41u;
@@ -141,7 +261,7 @@ bool arc_launch_disc_build(const char *disc_name, const char *target,
    arc_old_entry(root + 5u, "!Boot", UINT32_C(0xffffeb00),
                  sizeof(boot) - 1u, ARC_L_BOOT_SECTOR);
    arc_old_entry(root + 31u, "ArcLaunch", UINT32_C(0xffffea00),
-                 (size_t)launch_size, ARC_L_LAUNCH_SECTOR);
+                 launch_size, ARC_L_LAUNCH_SECTOR);
    uint8_t *tail = root + 1227u;
    tail[0] = 0u;
    memset(tail + 1u, '\r', 10u);
@@ -152,8 +272,10 @@ bool arc_launch_disc_build(const char *disc_name, const char *target,
    memcpy(tail + 48u, "Hugo", 4u);
    tail[52] = 0u; /* FileCore's accepted old-directory sentinel. */
 
-   return arc_l_write(output, ARC_L_BOOT_SECTOR,
-                      (const uint8_t *)boot, sizeof(boot) - 1u) &&
-          arc_l_write(output, ARC_L_LAUNCH_SECTOR,
-                      (const uint8_t *)launch, (size_t)launch_size);
+   bool ok = arc_l_write(output, ARC_L_BOOT_SECTOR,
+                         (const uint8_t *)boot, sizeof(boot) - 1u) &&
+             arc_l_write(output, ARC_L_LAUNCH_SECTOR, launch, launch_size);
+   free(launch);
+   if (!ok) arc_launch_error(error, error_size, "helper disc write failed");
+   return ok;
 }

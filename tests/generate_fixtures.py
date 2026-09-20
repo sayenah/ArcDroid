@@ -750,7 +750,11 @@ def _set_old_disc_name(image: bytearray, name: bytes) -> None:
 
 def build_l_discovery(candidates: list[tuple[bytes, bool]],
                       disc_name: bytes = b"Fixture", boot: int = 0,
-                      incomplete: int | None = None) -> bytearray:
+                      incomplete: int | None = None,
+                      boot_children: set[int] | None = None,
+                      duplicate_run: int | None = None,
+                      duplicate_boot: int | None = None,
+                      root_attribute_high: int | None = None) -> bytearray:
     image = bytearray(ADL_SIZE)
     _store_u24(image, 252, ADL_SIZE // 256)
     _set_old_disc_name(image, disc_name)
@@ -762,11 +766,25 @@ def build_l_discovery(candidates: list[tuple[bytes, bool]],
     for index, (name, application) in enumerate(candidates):
         child_sector = 10 + index * 6
         _old_entry(root, index, name, OLD_DIRECTORY_SIZE, child_sector, True)
+        if root_attribute_high == index:
+            root[5 + index * 26 + 6] |= 0x80
+            root[5 + index * 26 + 7] |= 0x80
         if incomplete != index:
             child = _old_directory(name)
+            child_entry = 0
             if application:
-                _old_entry(child, 0, b"!Run", 1, 400 + index)
+                _old_entry(child, child_entry, b"!Run", 1, 400 + index)
+                child_entry += 1
+                if duplicate_run == index:
+                    _old_entry(child, child_entry, b"!rUN", 1, 400 + index)
+                    child_entry += 1
                 _l_write(image, 400 + index, b"\r")
+            if boot_children and index in boot_children:
+                _old_entry(child, child_entry, b"!Boot", 1, 500 + index)
+                child_entry += 1
+                if duplicate_boot == index:
+                    _old_entry(child, child_entry, b"!bOOT", 1, 500 + index)
+                _l_write(image, 500 + index, b"\r")
             _l_write(image, child_sector, child)
     _l_write(image, 2, root)
     return image
@@ -806,12 +824,50 @@ def _new_directory(name: bytes = b"$", signature: bytes = b"Hugo") -> bytearray:
     return directory
 
 
+def _adfs_name_key(name: bytes) -> bytes:
+    """Return FileCore's case-insensitive byte ordering key."""
+    return bytes(value + 0x20 if 0x41 <= value <= 0x5A else value
+                 for value in name)
+
+
+def _ror32(value: int, shift: int) -> int:
+    return ((value >> shift) | (value << (32 - shift))) & 0xFFFFFFFF
+
+
+def _finish_new_directory(directory: bytearray, entry_count: int,
+                          parent: int) -> None:
+    """Set the parent and FileCore new-directory check byte."""
+    if not 0 <= entry_count <= 77:
+        raise ValueError("new-directory entry count is out of range")
+    tail = 2007
+    _store_u24(directory, tail + 3, parent)
+    used_end = 5 + entry_count * 26
+    check = 0
+    word_end = used_end & ~3
+    for offset in range(0, word_end, 4):
+        value = int.from_bytes(directory[offset:offset + 4], "little")
+        check = value ^ _ror32(check, 13)
+    for offset in range(word_end, used_end):
+        check = directory[offset] ^ _ror32(check, 13)
+    for offset in range(tail + 1, tail + 37, 4):
+        value = int.from_bytes(directory[offset:offset + 4], "little")
+        check = value ^ _ror32(check, 13)
+    directory[2047] = (check ^ (check >> 8) ^
+                       (check >> 16) ^ (check >> 24)) & 0xFF
+
+
 def build_d_discovery(candidates: list[tuple[bytes, bool]],
                       disc_name: bytes = b"Fixture", boot: int = 0,
                       signature: bytes = b"Hugo",
                       incomplete: int | None = None,
                       declared_sectors: int = ADF_SIZE // 256,
-                      stale_names: bool = False) -> bytearray:
+                      stale_names: bool = False,
+                      boot_children: set[int] | None = None,
+                      duplicate_run: int | None = None,
+                      duplicate_boot: int | None = None,
+                      root_attribute_high: int | None = None,
+                      irrelevant_malformed: bool = False,
+                      duplicate_root_file: int | None = None) -> bytearray:
     image = bytearray(ADF_SIZE)
     _store_u24(image, 252, declared_sectors)
     _set_old_disc_name(image, disc_name)
@@ -823,17 +879,39 @@ def build_d_discovery(candidates: list[tuple[bytes, bool]],
     for index, (name, application) in enumerate(candidates):
         child_offset = 4096 + index * 2048
         _new_entry(root, index, name, 2048, child_offset // 256, True)
+        if root_attribute_high == index:
+            root[5 + index * 26 + 25] = 0x88
         if stale_names:
             _stale_new_name(root, index, name)
         if incomplete != index:
             child = _new_directory(name, signature)
+            child_entry = 0
             if application:
                 run_offset = 65536 + index * 1024
-                _new_entry(child, 0, b"!Run", 1, run_offset // 256)
+                _new_entry(child, child_entry, b"!Run", 1, run_offset // 256)
+                child_entry += 1
+                if duplicate_run == index:
+                    _new_entry(child, child_entry, b"!rUN", 1,
+                               run_offset // 256)
+                    child_entry += 1
                 if stale_names:
                     _stale_new_name(child, 0, b"!Run")
                 image[run_offset] = 13
+            if boot_children and index in boot_children:
+                boot_offset = 131072 + index * 1024
+                _new_entry(child, child_entry, b"!Boot", 1,
+                           boot_offset // 256)
+                child_entry += 1
+                if duplicate_boot == index:
+                    _new_entry(child, child_entry, b"!bOOT", 1,
+                               boot_offset // 256)
+                image[boot_offset] = 13
             image[child_offset:child_offset + 2048] = child
+    if irrelevant_malformed:
+        _new_entry(root, len(candidates), b"Oddity", 0xFFFFFFFF, 0xFFFFFF)
+    if duplicate_root_file is not None:
+        _new_entry(root, len(candidates), candidates[duplicate_root_file][0],
+                   1, 0xFFFFFF)
     image[1024:3072] = root
     return image
 
@@ -848,7 +926,12 @@ def build_e_discovery(candidates: list[tuple[bytes, bool]],
                       disc_name: bytes = b"Fixture", boot: int = 0,
                       signature: bytes = b"Hugo", fragmented: int | None = None,
                       unresolved: int | None = None, stale_names: bool = False,
-                      late_target: bool = False) -> bytearray:
+                      late_target: bool = False,
+                      boot_children: set[int] | None = None,
+                      duplicate_run: int | None = None,
+                      duplicate_boot: int | None = None,
+                      root_attribute_high: int | None = None,
+                      irrelevant_malformed: bool = False) -> bytearray:
     image = bytearray(ADF_SIZE)
     record = memoryview(image)[4:64]
     record[0:6] = bytes((10, 5, 2, 2, 15, 7))
@@ -901,18 +984,35 @@ def build_e_discovery(candidates: list[tuple[bytes, bool]],
         child_id = 3 + index * 2
         address = 0x7F00 if unresolved == index else child_id << 8
         _new_entry(root, index, name, 2048, address, True)
+        if root_attribute_high == index:
+            root[5 + index * 26 + 25] = 0x88
         if stale_names:
             _stale_new_name(root, index, name)
         child_offset, run_offset = allocations[index]
         child = _new_directory(name, signature)
+        child_entry = 0
         if application:
             run_id = child_id + 1
             run_length = 3072 if fragmented == index else 1
-            _new_entry(child, 0, b"!Run", run_length, run_id << 8)
+            _new_entry(child, child_entry, b"!Run", run_length, run_id << 8)
+            child_entry += 1
+            if duplicate_run == index:
+                _new_entry(child, child_entry, b"!rUN", run_length,
+                           run_id << 8)
+                child_entry += 1
             if stale_names:
                 _stale_new_name(child, 0, b"!Run")
             image[run_offset] = 13
+        if boot_children and index in boot_children:
+            _new_entry(child, child_entry, b"!Boot", 1,
+                       (3 + index * 2 + 1) << 8)
+            child_entry += 1
+            if duplicate_boot == index:
+                _new_entry(child, child_entry, b"!bOOT", 1,
+                           (3 + index * 2 + 1) << 8)
         image[child_offset:child_offset + 2048] = child
+    if irrelevant_malformed:
+        _new_entry(root, len(candidates), b"Oddity", 0xFFFFFFFF, 0xFFFFFF)
     image[2048:4096] = root
     image[0] = 0
     sums = [0, 0, 0, 0]
@@ -977,9 +1077,105 @@ def build_old_map_media(size: int, old_size: int, seed: int) -> bytearray:
     return image
 
 
+def build_d_guest_applications(
+        applications: list[tuple[bytes, bytes | None, bytes | None]],
+        disc_name: bytes) -> bytearray:
+    """Build project-authored D-format applications with Obey !Boot/!Run files."""
+    image = bytearray(ADF_SIZE)
+    total_sectors = ADF_SIZE // 256
+    _store_u24(image, 252, total_sectors)
+    _set_old_disc_name(image, disc_name)
+    image[509] = 0
+    root = _new_directory()
+    ordered = sorted(applications, key=lambda application:
+                     _adfs_name_key(application[0]))
+    data_offset = 3072 + len(ordered) * 2048
+    for index, (name, boot, run) in enumerate(ordered):
+        if not 1 <= len(name) <= 10:
+            raise ValueError("guest application leaf must be 1..10 bytes")
+        child_offset = 3072 + index * 2048
+        _new_entry(root, index, name, 2048, child_offset // 256, True)
+        child = _new_directory(name)
+        child_entry = 0
+        files = sorted(((filename, payload) for filename, payload in
+                        ((b"!Boot", boot), (b"!Run", run))
+                        if payload is not None),
+                       key=lambda item: _adfs_name_key(item[0]))
+        for filename, payload in files:
+            assert payload is not None
+            data_offset = (data_offset + 1023) & ~1023
+            if data_offset + len(payload) > len(image):
+                raise ValueError("guest fixture data exceeds the image")
+            _new_entry(child, child_entry, filename, len(payload),
+                       data_offset // 256, load=0xFFFFEB00)
+            child_entry += 1
+            image[data_offset:data_offset + len(payload)] = payload
+            data_offset += len(payload)
+        _finish_new_directory(child, child_entry, 4)
+        image[child_offset:child_offset + 2048] = child
+    _finish_new_directory(root, len(ordered), 4)
+    image[1024:3072] = root
+    data_offset = (data_offset + 1023) & ~1023
+    free_start = data_offset // 256
+    if free_start >= total_sectors:
+        raise ValueError("guest fixture leaves no valid free extent")
+    _store_u24(image, 0, free_start)
+    _store_u24(image, 256, total_sectors - free_start)
+    image[510] = 3
+    image[255] = _old_map_checksum(image[:255])
+    image[511] = _old_map_checksum(image[256:511])
+    return image
+
+
+def build_checkpoint_guest_disc() -> bytearray:
+    """Disc used by Fable to check sibling boot order, errors, writes and aliases."""
+    apps = [
+        (b"!Alias", b"Set ArcDroid$Trace <ArcDroid$Trace>A\r"
+                     b"Set ArcDroid$Count <ArcDroid$Count>1\r"
+                     b"Set Alias$Dir Echo ARCDROID-DIR-ALIAS-CAPTURED\r"
+                     b"Set Alias$Filer_Run Echo ARCDROID-RUN-ALIAS-CAPTURED\r", None),
+        (b"!Fault", b"Set ArcDroid$Trace <ArcDroid$Trace>E\r"
+                     b"Set ArcDroid$Count <ArcDroid$Count>1\r"
+                     b"Error ArcDroid synthetic sibling error\r", None),
+        (b"!Prep", b"Set ArcDroid$Trace <ArcDroid$Trace>P\r"
+                    b"Set ArcDroid$Count <ArcDroid$Count>1\r"
+                    b"Set ArcDroid$Ready Yes\r", None),
+        (b"!System", b"Set ArcDroid$Trace S\rSet ArcDroid$Count 1\r", None),
+        (b"!Fonts", b"Set ArcDroid$Trace <ArcDroid$Trace>F\r"
+                     b"Set ArcDroid$Count <ArcDroid$Count>1\r", None),
+        (b"!Scrap", b"Set ArcDroid$Trace <ArcDroid$Trace>W\r"
+                     b"Set ArcDroid$Count <ArcDroid$Count>1\r"
+                     b"Echo ArcDroid-write-attempt { > ADFS::0.$.ArcWrite }\r", None),
+        (b"!Qaventra", b"Set ArcDroid$Trace <ArcDroid$Trace>T\r"
+                    b"Set ArcDroid$Count <ArcDroid$Count>1\r",
+         b"Echo ARCDROID CHECKPOINT TRACE <ArcDroid$Trace> COUNT <ArcDroid$Count>\r"
+         b"If \"<ArcDroid$Ready>\" <> \"Yes\" Then Error ArcDroid prerequisite missing\r"
+         b"If \"<ArcDroid$Trace>\" <> \"SFWAEPT\" Then Error ArcDroid boot order wrong\r"
+         b"If \"<ArcDroid$Count>\" <> \"1111111\" Then Error ArcDroid boot count wrong\r"
+         b"Echo ARCDROID CHECKPOINT TARGET REACHED <ArcDroid$Trace> <ArcDroid$Count>\r"),
+    ]
+    return build_d_guest_applications(apps, b"ArcCheckA")
+
+
+def build_checkpoint_name_discs() -> dict[str, bytearray]:
+    """One valid, lone-application disc for each addressable unusual leaf."""
+    cases = (
+        ("checkpoint-a-top-bit.adf", b"!Z\xf6rvex", b"ArcTopBit",
+         b"Echo ARCDROID TOP-BIT NAME REACHED\r"),
+        ("checkpoint-a-hard-space.adf", b"!Nim\xa0Vox", b"ArcHardSp",
+         b"Echo ARCDROID HARD-SPACE NAME REACHED\r"),
+        ("checkpoint-a-greater-than.adf", b"!Vor>nex", b"ArcGreater",
+         b"Echo ARCDROID GREATER-THAN NAME REACHED\r"),
+    )
+    return {filename: build_d_guest_applications([(name, None, run)], disc_name)
+            for filename, name, disc_name, run in cases}
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("output", type=Path)
+    parser.add_argument("--checkpoint-guest-disc", type=Path)
+    parser.add_argument("--checkpoint-name-discs", type=Path)
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
     (args.output / "arcdroid-test.rom").write_bytes(build_rom())
@@ -1002,12 +1198,40 @@ def main() -> None:
             [(b"!Demo", True)], b"Demo", stale_names=True), "D"),
         "stale-e.adf": (build_e_discovery(
             [(b"!Demo", True)], b"Demo", stale_names=True), "E"),
+        "short-name-attr-l.adl": (build_l_discovery(
+            [(b"!A", True)], b"A", root_attribute_high=0), "L"),
+        "top-bit-d.adf": (build_d_discovery([(b"!Z\xf6rvex", True)], b"Zorvex"), "D"),
+        "hard-space-e.adf": (build_e_discovery([(b"!Nim\xa0Vox", True)], b"NimVox"), "E"),
+        "full-ten-d.adf": (build_d_discovery([(b"!ABCDEFGHI", True)]), "D"),
+        "attr-88-d.adf": (build_d_discovery(
+            [(b"!Zorvex", True)], b"Zorvex", root_attribute_high=0), "D"),
+        "irrelevant-extent-e.adf": (build_e_discovery(
+            [(b"!Zorvex", True)], b"Zorvex", irrelevant_malformed=True), "E"),
         "multiple-exact-d.adf": (build_d_discovery([(b"!Alpha", True), (b"!Beta", True)], b"Beta"), "D"),
         "multiple-trailing-d.adf": (build_d_discovery([(b"!Alpha", True), (b"!Beta", True)], b"Beta2"), "D"),
         "ambiguous-l.adl": (build_l_discovery(
             [(b"!Docs", False), (b"!Foo", True), (b"!Bar", True)], b"Other"), "L"),
         "no-run-d.adf": (build_d_discovery([(b"!Docs", False), (b"!Data", False)]), "D"),
         "incomplete-l.adl": (build_l_discovery([(b"!Broken", True)], incomplete=0), "L"),
+        "incomplete-d.adf": (build_d_discovery([(b"!Broken", True)], incomplete=0), "D"),
+        "incomplete-e.adf": (build_e_discovery([(b"!Broken", True)], unresolved=0), "E"),
+        "label-with-unknown-d.adf": (build_d_discovery(
+            [(b"!Zorvex", True), (b"!Nulvane", False)], b"Zorvex", incomplete=1), "D"),
+        "label-is-unknown-d.adf": (build_d_discovery(
+            [(b"!Zorvex", True), (b"!Nulvane", False)], b"Nulvane", incomplete=1), "D"),
+        "duplicate-root-d.adf": (build_d_discovery(
+            [(b"!Qarvox", True), (b"!qARVOX", True)], b"Qarvox"), "D"),
+        "duplicate-root-file-d.adf": (build_d_discovery(
+            [(b"!Qarvox", True)], b"Qarvox", duplicate_root_file=0), "D"),
+        "duplicate-run-d.adf": (build_d_discovery(
+            [(b"!Zorvex", True)], b"Zorvex", duplicate_run=0), "D"),
+        "duplicate-boot-e.adf": (build_e_discovery(
+            [(b"!Zorvex", True)], b"Zorvex", boot_children={0},
+            duplicate_boot=0), "E"),
+        "has-boot-d.adf": (build_d_discovery(
+            [(b"!Zorvex", True)], b"Zorvex", boot_children={0}), "D"),
+        "self-boot-unknown-d.adf": (build_d_discovery(
+            [(b"!Broken", False)], b"Broken", boot=2, incomplete=0), "D"),
         "unsafe-disc-name-l.adl": (build_l_discovery(
             [(b"!Foo", True), (b"!Bar", True)], b"Bad\nName"), "L"),
         "more-eight-d.adf": (build_d_discovery(
@@ -1016,6 +1240,12 @@ def main() -> None:
         "unresolved-e.adf": (build_e_discovery([(b"!Demo", True)], b"Demo", unresolved=0), "E"),
         "explicit-d.adf": (build_d_discovery(
             [(b"!Docs", False), (b"!Demo", True), (b"!Other", True)], b"Other", boot=3), "D"),
+        "sibling-pipe-l.adl": (build_l_discovery(
+            [(b"!Bad|Name", False), (b"!Qaventra", True)], b"Qaventra",
+            boot_children={0}), "L"),
+        "duplicate-siblings-l.adl": (build_l_discovery(
+            [(b"!Twin", False), (b"!tWIN", False), (b"!Qaventra", True)],
+            b"Qaventra", boot_children={0, 1}), "L"),
     }
     for boot in range(4):
         launch_images[f"boot-{boot}-l.adl"] = (
@@ -1023,7 +1253,7 @@ def main() -> None:
     illegal = (b"!Bad.Name", b"!Bad:Name", b"!Bad<Name", b"!Bad>Name",
                b"!Bad|Name", b"!Bad$Name", b"!Bad&Name", b"!Bad@Name",
                b"!Bad^Name", b"!Bad%Name", b"!Bad*Name", b"!Bad#Name",
-               b"!Bad\"Name", b"!Bad Name", b"!Bad\x01", b"!Bad\x7f",
+               b"!Bad\"Name", b"!Bad Name", b"!Bad\\Name", b"!Bad\x01", b"!Bad\x7f",
                b"!BadNameX\x80")
     launch_images["illegal-l.adl"] = (
         build_l_discovery([(name, True) for name in illegal]), "L")
@@ -1043,6 +1273,30 @@ def main() -> None:
         build_jfd_family([], b"ArcDroid stale-name fixture",
                          disk_payload=stale_payload,
                          disk_geometry=stale_geometry))
+    for base in ("short-name-attr-l.adl", "top-bit-d.adf", "hard-space-e.adf",
+                 "full-ten-d.adf", "attr-88-d.adf", "irrelevant-extent-e.adf",
+                 "incomplete-l.adl", "incomplete-d.adf", "incomplete-e.adf",
+                 "label-with-unknown-d.adf", "label-is-unknown-d.adf",
+                 "duplicate-root-d.adf", "duplicate-root-file-d.adf",
+                 "duplicate-run-d.adf", "duplicate-boot-e.adf",
+                 "has-boot-d.adf", "self-boot-unknown-d.adf", "illegal-l.adl"):
+        payload, geometry = launch_images[base]
+        stem = base.rsplit(".", 1)[0]
+        (launch / f"{stem}.jfd").write_bytes(
+            build_jfd_family([], b"ArcDroid launch robustness fixture",
+                             disk_payload=payload, disk_geometry=geometry))
+    checkpoint_guest = build_checkpoint_guest_disc()
+    checkpoint_names = build_checkpoint_name_discs()
+    (launch / "checkpoint-a-guest.adf").write_bytes(checkpoint_guest)
+    for filename, image in checkpoint_names.items():
+        (launch / filename).write_bytes(image)
+    if args.checkpoint_guest_disc:
+        args.checkpoint_guest_disc.parent.mkdir(parents=True, exist_ok=True)
+        args.checkpoint_guest_disc.write_bytes(checkpoint_guest)
+    if args.checkpoint_name_discs:
+        args.checkpoint_name_discs.mkdir(parents=True, exist_ok=True)
+        for filename, image in checkpoint_names.items():
+            (args.checkpoint_name_discs / filename).write_bytes(image)
     media_rom = build_rom(media_exerciser=True)
     disc1 = build_adf(0xA5, b"ARCDROID MEDIA DISC ONE v1\0")
     disc2 = build_adf(0x3C, b"ARCDROID MEDIA DISC TWO v1\0")
