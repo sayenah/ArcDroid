@@ -273,10 +273,10 @@ if ($env:GITHUB_STEP_SUMMARY) {
     Add-Content -Encoding UTF8 $env:GITHUB_STEP_SUMMARY "- Slice 4 New-IO: A3010/ARM250 launch logged and the executed-branch screenshot differed from A3000."
 }
 
-# Slice 2a exercises disk control and initial-image replay with the generated
-# media ROM. Each network command is followed by an observed screenshot before
-# the next command is sent. Separate launches cover valid/stale .ldci records
-# and the JFD reader.
+# Slice 2a exercises disk control with the generated media ROM. Each network
+# command is followed by an observed screenshot before the next command is
+# sent. Separate launches prove that disk-index recording is disabled and
+# retain the JFD reader check.
 Copy-Item -Force (Join-Path $InputDirectory "arcdroid-media-test.rom") $firmware
 $playlist = (Resolve-Path (Join-Path $InputDirectory "arcdroid-media.m3u")).Path
 $disc1 = (Resolve-Path (Join-Path $InputDirectory "arcdroid-media-disc1.adf")).Path
@@ -419,6 +419,13 @@ function Capture-ExpectedSignature($Run, [string]$Name, [string]$Expected, [bool
     throw "$Name did not become $relation $Expected within 10 seconds (last $actual)"
 }
 
+# RetroArch's per-core save sorting redirects this core's save directory to
+# <configured savefile_directory>/ArcDroid, and .ldci records live there.
+$indexDirectory = Join-Path $saveDirectory "ArcDroid"
+New-Item -ItemType Directory -Force $indexDirectory | Out-Null
+$indexRecord = Join-Path $indexDirectory "arcdroid-media.ldci"
+Remove-Item -Force -ErrorAction SilentlyContinue $indexRecord
+
 $mediaRun = Start-MediaRun $playlist "playlist-disk-control"
 try {
     $disc1Signature = Capture-MediaSignature $mediaRun "playlist-disc1"
@@ -430,6 +437,19 @@ try {
     $disc2Signature = Capture-ExpectedSignature $mediaRun "playlist-disc2" $disc1Signature $true
 } finally {
     Stop-MediaRun $mediaRun
+}
+if (Test-Path $indexRecord) {
+    throw "Swap and clean quit unexpectedly created an .ldci record"
+}
+
+$relaunchRun = Start-MediaRun $playlist "playlist-swap-relaunch"
+try {
+    [void](Capture-ExpectedSignature $relaunchRun "playlist-relaunch-disc1" $disc1Signature $false)
+} finally {
+    Stop-MediaRun $relaunchRun
+}
+if (Test-Path $indexRecord) {
+    throw "Relaunch unexpectedly created an .ldci record"
 }
 
 $folderRun = Start-MediaRun $folderSet "folder-set-disk-control"
@@ -445,27 +465,21 @@ try {
     Stop-MediaRun $folderRun
 }
 
-# RetroArch's per-core save sorting redirects this core's save directory to
-# <configured savefile_directory>/ArcDroid, and .ldci records live there.
-$indexDirectory = Join-Path $saveDirectory "ArcDroid"
-New-Item -ItemType Directory -Force $indexDirectory | Out-Null
-$indexRecord = Join-Path $indexDirectory "arcdroid-media.ldci"
 @{ version = "1.0"; image_index = 1; image_path = $disc2 } |
     ConvertTo-Json | Set-Content -Encoding ASCII $indexRecord
-$validRun = Start-MediaRun $playlist "ldci-valid"
+$seededRecord = [Convert]::ToBase64String([IO.File]::ReadAllBytes($indexRecord))
+$seededRun = Start-MediaRun $playlist "ldci-seeded"
 try {
-    [void](Capture-ExpectedSignature $validRun "ldci-valid-disc2" $disc2Signature $false)
+    [void](Capture-ExpectedSignature $seededRun "ldci-seeded-disc1" $disc1Signature $false)
 } finally {
-    Stop-MediaRun $validRun
+    Stop-MediaRun $seededRun
 }
-
-@{ version = "1.0"; image_index = 1; image_path = "$disc2.stale" } |
-    ConvertTo-Json | Set-Content -Encoding ASCII $indexRecord
-$staleRun = Start-MediaRun $playlist "ldci-stale"
-try {
-    [void](Capture-ExpectedSignature $staleRun "ldci-stale-disc1" $disc1Signature $false)
-} finally {
-    Stop-MediaRun $staleRun
+if (Select-String -Path $seededRun.RetroLog -SimpleMatch "Failed to set initial" -Quiet) {
+    throw "Seeded .ldci run logged an initial-disk failure"
+}
+$seededRecordAfter = [Convert]::ToBase64String([IO.File]::ReadAllBytes($indexRecord))
+if ($seededRecordAfter -ne $seededRecord) {
+    throw "Seeded .ldci record changed during the clean launch and quit"
 }
 
 $jfdRun = Start-MediaRun $jfd "jfd"
@@ -475,11 +489,11 @@ try {
     Stop-MediaRun $jfdRun
 }
 
-Write-Host "Slice 2a Windows RetroArch: disk commands, valid/stale initial image, and JFD golden region passed"
+Write-Host "Slice 2a Windows RetroArch: disk commands, image-1 relaunch, inert seeded .ldci, and JFD golden region passed"
 Write-Host "Slice 5b Windows RetroArch: folder disc 1 and eject/next/insert matched the playlist disc-2 signature"
 if ($env:GITHUB_STEP_SUMMARY) {
     Add-Content -Encoding UTF8 $env:GITHUB_STEP_SUMMARY "- Slice 2a media: playlist disc 1 observed; eject/next/close observed before successive commands; disc 2 region observed."
-    Add-Content -Encoding UTF8 $env:GITHUB_STEP_SUMMARY "- Initial disk replay: valid .ldci started on disc 2; stale .ldci started on disc 1."
+    Add-Content -Encoding UTF8 $env:GITHUB_STEP_SUMMARY "- Slice 5b-2 boot image: swap, clean quit and relaunch started on disc 1 without creating an .ldci; a seeded valid disc-2 record was ignored without an initial-disc error and remained byte-identical."
     Add-Content -Encoding UTF8 $env:GITHUB_STEP_SUMMARY "- JFD: generated fixture reached the disc 1 golden result region."
     Add-Content -Encoding UTF8 $env:GITHUB_STEP_SUMMARY "- Slice 5b folder set: selected disc observed; eject/next/insert matched the playlist disc-2 signature."
 }

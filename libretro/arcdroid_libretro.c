@@ -88,9 +88,6 @@ static bool arc_can_dupe;
 static bool arc_cmos_last_written_valid;
 static bool arc_ejected;
 static unsigned arc_image_index;
-static bool arc_pending_initial;
-static unsigned arc_pending_initial_index;
-static char arc_pending_initial_path[4096];
 static uint64_t arc_guest_time_us;
 static int16_t arc_stick_x;
 static int16_t arc_stick_y;
@@ -1762,14 +1759,6 @@ static bool arc_disk_add(void)
    memset(&arc_media[arc_media_count++], 0, sizeof(arc_media[0]));
    return true;
 }
-static bool arc_disk_set_initial(unsigned index, const char *path)
-{
-   if (!path || strlen(path) >= sizeof(arc_pending_initial_path)) return false;
-   arc_pending_initial_index = index;
-   strcpy(arc_pending_initial_path, path);
-   arc_pending_initial = true;
-   return true;
-}
 static bool arc_disk_get_path(unsigned index, char *path, size_t length)
 {
    if (!path || index >= arc_media_count || !arc_media[index].populated) return false;
@@ -2769,16 +2758,13 @@ RETRO_API void retro_init(void)
    static const struct retro_disk_control_ext_callback disk = {
       arc_disk_set_eject, arc_disk_get_eject, arc_disk_get_index,
       arc_disk_set_index, arc_disk_get_count, arc_disk_replace,
-      arc_disk_add, arc_disk_set_initial, arc_disk_get_path, arc_disk_get_label
+      arc_disk_add, NULL, arc_disk_get_path, arc_disk_get_label
    };
    struct retro_vfs_interface_info vfs = {3u, NULL};
    struct retro_log_callback log = {NULL};
    arc_loaded = false;
    arc_ejected = false;
    arc_image_index = 0u;
-   arc_pending_initial = false;
-   arc_pending_initial_index = 0u;
-   arc_pending_initial_path[0] = '\0';
    memset(arc_cmos_record, 0, sizeof(arc_cmos_record));
    arc_input_sampling_reset(false);
    arc_port_device[0] = ARC_DEVICE_KEYS;
@@ -2836,8 +2822,6 @@ RETRO_API void retro_deinit(void)
    arc_engine_set_log_callback(NULL, NULL);
    arc_log = NULL;
    arc_loaded = false;
-   arc_pending_initial = false;
-   arc_pending_initial_path[0] = '\0';
    arc_vfs = NULL;
    arc_io_set_vfs(NULL);
    arc_environment = NULL;
@@ -2866,12 +2850,6 @@ static bool arc_load_game(const struct retro_game_info *game, bool negotiate)
    ArcFirmwareSearch search = {0};
    search.priority = 100u;
    search.best_available_priority = 100u;
-   bool pending_initial = arc_pending_initial;
-   unsigned pending_index = arc_pending_initial_index;
-   char pending_path[sizeof(arc_pending_initial_path)];
-   snprintf(pending_path, sizeof(pending_path), "%s", arc_pending_initial_path);
-   arc_pending_initial = false;
-   arc_pending_initial_path[0] = '\0';
    if (arc_loaded) arc_persist_cmos();
    arc_loaded = false;
    arc_release_session();
@@ -2932,10 +2910,6 @@ static bool arc_load_game(const struct retro_game_info *game, bool negotiate)
       return false;
    }
    arc_image_index = 0u;
-   if (pending_initial && pending_index < arc_media_count &&
-       arc_media[pending_index].populated &&
-       !strcmp(arc_media[pending_index].source, pending_path))
-      arc_image_index = pending_index;
 
    if (!arc_environment(RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY, &system_dir) ||
        !system_dir || !system_dir[0] ||
@@ -3088,8 +3062,6 @@ RETRO_API void retro_unload_game(void)
    arc_osk_reset(&arc_osk, &arc_inputs);
    arc_osk_free_surface();
    arc_osk_present_dirty = false;
-   arc_pending_initial = false;
-   arc_pending_initial_path[0] = '\0';
    arc_input_sampling_reset(false);
    arc_guest_time_us = 0u;
 }
