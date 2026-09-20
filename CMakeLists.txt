@@ -55,6 +55,7 @@ add_library(arcdroid_core STATIC
   core/launch.c
   core/launch_discovery.c
   core/launch_disc.c
+  core/folder_set.c
   core/playlist.c
   core/jfd.c
   core/persistence.c
@@ -226,6 +227,12 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
       "${FIXTURE_DIR}/arcdroid-media-disc1.adf"
       "${FIXTURE_DIR}/arcdroid-media-disc2.adf"
       "${FIXTURE_DIR}/arcdroid-media.m3u"
+      "${FIXTURE_DIR}/Qaventra.adf/Qaventra.adf"
+      "${FIXTURE_DIR}/Qaventra.adf/Qaventra 2.adf"
+      "${FIXTURE_DIR}/Qaventra.adf/Qaventra 3.adl"
+      "${FIXTURE_DIR}/Qaventra.adf/Qaventra 4.jfd"
+      "${FIXTURE_DIR}/Qaventra.adf/Qaventra 9.adf"
+      "${FIXTURE_DIR}/Qaventra.adf/Qaventra 10.JFD"
       "${FIXTURE_DIR}/arcdroid-test.jfd"
       "${FIXTURE_DIR}/arcdroid-test-gzip.jfd"
       "${FIXTURE_DIR}/arcdroid-test-two-member.jfd"
@@ -247,6 +254,12 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
     "${FIXTURE_DIR}/arcdroid-media-disc1.adf"
     "${FIXTURE_DIR}/arcdroid-media-disc2.adf"
     "${FIXTURE_DIR}/arcdroid-media.m3u"
+    "${FIXTURE_DIR}/Qaventra.adf/Qaventra.adf"
+    "${FIXTURE_DIR}/Qaventra.adf/Qaventra 2.adf"
+    "${FIXTURE_DIR}/Qaventra.adf/Qaventra 3.adl"
+    "${FIXTURE_DIR}/Qaventra.adf/Qaventra 4.jfd"
+    "${FIXTURE_DIR}/Qaventra.adf/Qaventra 9.adf"
+    "${FIXTURE_DIR}/Qaventra.adf/Qaventra 10.JFD"
     "${FIXTURE_DIR}/arcdroid-test.jfd"
     "${FIXTURE_DIR}/arcdroid-test-gzip.jfd"
     "${FIXTURE_DIR}/arcdroid-test-two-member.jfd"

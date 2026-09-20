@@ -4,6 +4,7 @@
 #include "arcdroid_core.h"
 #include "arcdroid_engine.h"
 #include "arcdroid_platform.h"
+#include "folder_set.h"
 #include "jfd.h"
 #include "playlist.h"
 
@@ -164,6 +165,10 @@ unsigned arc_libretro_test_osk_modifier_state(unsigned key)
 unsigned arc_libretro_test_presented_osk_notice(void)
 {
    return arc_test_presented_osk_notice;
+}
+const char *arc_libretro_test_content_id(void)
+{
+   return arc_content_digest.sha1;
 }
 void arc_libretro_test_force_input_reconcile(void)
 {
@@ -966,6 +971,156 @@ static void arc_cleanup_failed_preparation(void)
    arc_media_count = 0u;
 }
 
+static void arc_cleanup_folder_siblings(void)
+{
+   for (unsigned i = 1u; i < arc_media_count; ++i)
+   {
+      if (arc_media[i].created_this_preparation && arc_media[i].staged[0])
+         (void)arc_io_remove(arc_media[i].staged);
+      arc_jfd_free(&arc_media[i].jfd);
+      memset(&arc_media[i], 0, sizeof(arc_media[i]));
+   }
+   arc_media_count = arc_media_count ? 1u : 0u;
+}
+
+typedef struct {
+   ArcFolderSet *set;
+   unsigned omissions;
+} ArcFolderCollection;
+
+static bool arc_collect_folder_member(const char *name, bool regular_file,
+                                      void *opaque)
+{
+   ArcFolderCollection *collection = opaque;
+   ArcFolderMemberResult result = arc_folder_set_add(collection->set, name,
+                                                      regular_file);
+   if (result == ARC_FOLDER_MEMBER_PATH_TOO_LONG)
+   {
+      ++collection->omissions;
+      if (arc_log)
+         arc_log(RETRO_LOG_WARN,
+                 "Folder disc set sibling omitted: path exceeds 4095 bytes.\n");
+   }
+   return true;
+}
+
+static void arc_log_folder_result(const ArcFolderSet *set, unsigned omissions)
+{
+   if (arc_log)
+      arc_log(RETRO_LOG_INFO,
+              "Folder disc set: VFS directory=\"%s\" qualified=%u prepared=%u omitted=%u\n",
+              set->directory, set->qualified_count, arc_media_count, omissions);
+}
+
+static void arc_discard_candidate(ArcMediaEntry *entry)
+{
+   if (entry->created_this_preparation && entry->staged[0])
+      (void)arc_io_remove(entry->staged);
+   arc_jfd_free(&entry->jfd);
+   memset(entry, 0, sizeof(*entry));
+}
+
+static void arc_prepare_folder_siblings(const char *content_path,
+                                        bool windows_host,
+                                        ArcDiskWriteMode mode,
+                                        size_t selected_logical)
+{
+   ArcFolderSet *set = malloc(sizeof(*set));
+   if (!set)
+   {
+      arc_message("Folder disc set discovery ran out of memory; loading the selected image alone.",
+                  RETRO_LOG_WARN);
+      return;
+   }
+   ArcFolderSetTrigger trigger = arc_folder_set_begin(content_path, windows_host, set);
+   if (trigger == ARC_FOLDER_SET_NONE)
+   {
+      free(set);
+      return;
+   }
+   if (trigger == ARC_FOLDER_SET_DIRECTORY_TOO_LONG)
+   {
+      if (arc_log)
+         arc_log(RETRO_LOG_WARN,
+                 "Folder disc set enumeration skipped: parent directory exceeds 1021 bytes.\n");
+      arc_message("Folder disc set directory is too long to enumerate safely; loading the selected image alone.",
+                  RETRO_LOG_WARN);
+      free(set);
+      return;
+   }
+
+   ArcFolderCollection collection = {set, 0u};
+   if (!arc_io_list_directory(set->directory, arc_collect_folder_member,
+                              &collection))
+   {
+      if (arc_log)
+         arc_log(RETRO_LOG_WARN,
+                 "Folder disc set enumeration failed for VFS directory=\"%s\".\n",
+                 set->directory);
+      arc_message("Folder disc set directory could not be opened; loading the selected image alone.",
+                  RETRO_LOG_WARN);
+      free(set);
+      return;
+   }
+   if (set->overflow)
+   {
+      arc_log_folder_result(set, set->qualified_count);
+      arc_message("Folder disc set has more than 31 siblings; loading the selected image alone.",
+                  RETRO_LOG_WARN);
+      free(set);
+      return;
+   }
+
+   arc_folder_set_sort(set);
+   size_t total = selected_logical;
+   for (unsigned sibling = 0u; sibling < set->count; ++sibling)
+   {
+      char source[ARC_MEDIA_PATH_CAPACITY];
+      char reason[512] = {0};
+      ArcMediaEntry candidate;
+      if (!arc_folder_set_path(set, sibling, source) ||
+          !arc_prepare_source(source, NULL, mode, &candidate,
+                              reason, sizeof(reason)))
+      {
+         ++collection.omissions;
+         if (arc_log)
+            arc_log(RETRO_LOG_WARN,
+                    "Folder disc set sibling omitted: path=\"%s\" reason=%s\n",
+                    arc_folder_set_path(set, sibling, source) ? source :
+                       set->siblings[sibling],
+                    reason[0] ? reason : "resolved path is invalid");
+         continue;
+      }
+      bool duplicate = false;
+      for (unsigned previous = 0u; previous < arc_media_count; ++previous)
+         if (!strcmp(arc_media[previous].digest.sha1, candidate.digest.sha1))
+            duplicate = true;
+      size_t logical = candidate.info.declared_size;
+      if (!duplicate && logical > 256u * 1024u * 1024u - total)
+      {
+         arc_discard_candidate(&candidate);
+         arc_cleanup_folder_siblings();
+         arc_log_folder_result(set, collection.omissions);
+         arc_message("Folder disc set exceeds 256 MiB of logical media; loading the selected image alone.",
+                     RETRO_LOG_WARN);
+         free(set);
+         return;
+      }
+      if (!duplicate) total += logical;
+      arc_media[arc_media_count++] = candidate;
+   }
+   arc_log_folder_result(set, collection.omissions);
+   if (collection.omissions)
+   {
+      char message[160];
+      snprintf(message, sizeof(message),
+               "Folder disc set loaded with %u sibling%s omitted; see the log for details.",
+               collection.omissions, collection.omissions == 1u ? "" : "s");
+      arc_message(message, RETRO_LOG_WARN);
+   }
+   free(set);
+}
+
 static bool arc_prepare_media_list(const char *content_path,
                                    ArcDiskWriteMode mode,
                                    char *error, size_t error_size)
@@ -980,14 +1135,14 @@ static bool arc_prepare_media_list(const char *content_path,
    }
    ArcPlaylist playlist;
    bool is_playlist = arc_playlist_detect(content_path, top_data, top_size);
+#if defined(_WIN32)
+   const bool windows_host = true;
+#else
+   const bool windows_host = false;
+#endif
    if (is_playlist)
    {
       unsigned error_line = 0u;
-#if defined(_WIN32)
-      const bool windows_host = true;
-#else
-      const bool windows_host = false;
-#endif
       if (!arc_playlist_parse(content_path, top_data, top_size, windows_host,
                               &playlist, &error_line, error, error_size))
       { free(top_data); return false; }
@@ -1028,7 +1183,11 @@ static bool arc_prepare_media_list(const char *content_path,
       }
    }
    if (!is_playlist)
+   {
       arc_content_digest = arc_media[0].digest;
+      arc_prepare_folder_siblings(content_path, windows_host, mode,
+                                  arc_media[0].info.declared_size);
+   }
    else
    {
       static const char domain[] = "arcdroid-playlist-v1";

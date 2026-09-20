@@ -1306,6 +1306,25 @@ def main() -> None:
     (args.output / "arcdroid-media.m3u").write_text(
         "#EXTM3U\narcdroid-media-disc1.adf\narcdroid-media-disc2.adf\n",
         encoding="utf-8", newline="\n")
+    folder_set = args.output / "Qaventra.adf"
+    folder_set.mkdir(exist_ok=True)
+    (folder_set / "Qaventra.adf").write_bytes(disc1)
+    (folder_set / "Qaventra 2.adf").write_bytes(disc2)
+    (folder_set / "Qaventra 3.adl").write_bytes(
+        build_old_map_media(640 * 1024, 2560, 0x53))
+    (folder_set / "Qaventra 4.jfd").write_bytes(
+        build_jfd_family([(0, 0, 4, 1, 0, bytes(128))],
+                         b"ArcDroid rejected folder JFD"))
+    (folder_set / "Qaventra 9.adf").write_bytes(disc1)
+    (folder_set / "Qaventra 10.JFD").write_bytes(
+        build_jfd(bytes(disc1[:256]), b"ArcDroid folder JFD"))
+    (folder_set / ".Qaventra 1.adf").write_bytes(disc2)
+    (folder_set / "Qaventra.m3u").write_text(
+        "#EXTM3U\nQaventra.adf\nQaventra 2.adf\n",
+        encoding="utf-8", newline="\n")
+    nested_folder = folder_set / "Nested.adf"
+    nested_folder.mkdir(exist_ok=True)
+    (nested_folder / "Nested.adf").write_bytes(disc2)
     jfd = build_jfd(bytes(disc1[:256]))
     (args.output / "arcdroid-test.jfd").write_bytes(jfd)
     (args.output / "arcdroid-test-gzip.jfd").write_bytes(gzip_member(jfd))

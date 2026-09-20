@@ -281,6 +281,7 @@ Copy-Item -Force (Join-Path $InputDirectory "arcdroid-media-test.rom") $firmware
 $playlist = (Resolve-Path (Join-Path $InputDirectory "arcdroid-media.m3u")).Path
 $disc1 = (Resolve-Path (Join-Path $InputDirectory "arcdroid-media-disc1.adf")).Path
 $disc2 = (Resolve-Path (Join-Path $InputDirectory "arcdroid-media-disc2.adf")).Path
+$folderSet = (Resolve-Path (Join-Path $InputDirectory "Qaventra.adf\Qaventra.adf")).Path
 $jfd = (Resolve-Path (Join-Path $InputDirectory "arcdroid-test-two-member.jfd")).Path
 
 function Start-MediaRun([string]$MediaPath, [string]$Name) {
@@ -431,6 +432,19 @@ try {
     Stop-MediaRun $mediaRun
 }
 
+$folderRun = Start-MediaRun $folderSet "folder-set-disk-control"
+try {
+    [void](Capture-ExpectedSignature $folderRun "folder-set-disc1" $disc1Signature $false)
+    Send-MediaCommand $folderRun "DISK_EJECT_TOGGLE"
+    [void](Capture-ExpectedSignature $folderRun "folder-set-ejected" $disc1Signature $false)
+    Send-MediaCommand $folderRun "DISK_NEXT"
+    [void](Capture-ExpectedSignature $folderRun "folder-set-selected-disc2" $disc1Signature $false)
+    Send-MediaCommand $folderRun "DISK_EJECT_TOGGLE"
+    [void](Capture-ExpectedSignature $folderRun "folder-set-disc2" $disc1Signature $true)
+} finally {
+    Stop-MediaRun $folderRun
+}
+
 # RetroArch's per-core save sorting redirects this core's save directory to
 # <configured savefile_directory>/ArcDroid, and .ldci records live there.
 $indexDirectory = Join-Path $saveDirectory "ArcDroid"
@@ -462,10 +476,12 @@ try {
 }
 
 Write-Host "Slice 2a Windows RetroArch: disk commands, valid/stale initial image, and JFD golden region passed"
+Write-Host "Slice 5b Windows RetroArch: folder disc 1 and eject/next/insert sibling passed"
 if ($env:GITHUB_STEP_SUMMARY) {
     Add-Content -Encoding UTF8 $env:GITHUB_STEP_SUMMARY "- Slice 2a media: playlist disc 1 observed; eject/next/close observed before successive commands; disc 2 region observed."
     Add-Content -Encoding UTF8 $env:GITHUB_STEP_SUMMARY "- Initial disk replay: valid .ldci started on disc 2; stale .ldci started on disc 1."
     Add-Content -Encoding UTF8 $env:GITHUB_STEP_SUMMARY "- JFD: generated fixture reached the disc 1 golden result region."
+    Add-Content -Encoding UTF8 $env:GITHUB_STEP_SUMMARY "- Slice 5b folder set: selected disc observed; eject/next/insert reached the sibling payload."
 }
 
 # Slice 2b uses the host-test core because the generated firmware is the
