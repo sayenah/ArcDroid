@@ -221,6 +221,7 @@ bool arc_launch_discover(const uint8_t *data, size_t size,
 const char *arc_launch_reason_name(ArcLaunchReason reason);
 bool arc_launch_escape_name(const ArcGuestName *name, char *output,
                             size_t capacity);
+bool arc_launch_sibling_bootable(const ArcLaunchCandidate *candidate);
 bool arc_launch_script_build(const ArcLaunchDiscovery *discovery,
                              unsigned target_index, uint8_t *output,
                              size_t capacity, size_t *output_size,

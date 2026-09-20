@@ -61,6 +61,12 @@ static bool arc_leaf_representable(const ArcGuestName *name)
    return true;
 }
 
+bool arc_launch_sibling_bootable(const ArcLaunchCandidate *candidate)
+{
+   return candidate && candidate->has_boot && candidate->launchable &&
+          arc_leaf_representable(&candidate->name);
+}
+
 typedef struct {
    uint8_t *output;
    size_t capacity;
@@ -126,24 +132,19 @@ bool arc_launch_script_build(const ArcLaunchDiscovery *discovery,
        !arc_leaf_representable(&target->name))
    { arc_launch_error(error, error_size, "launch target leaf is not representable"); return false; }
 
-   for (unsigned i = 0u; i < discovery->candidate_count; ++i)
-      if (i != target_index && discovery->candidates[i].has_boot &&
-          (!discovery->candidates[i].launchable ||
-           !arc_leaf_representable(&discovery->candidates[i].name)))
-      { arc_launch_error(error, error_size, "sibling boot leaf is not representable"); return false; }
-
    ArcScriptWriter writer = {output, capacity, 0u, true};
    arc_script_text(&writer, "| ArcDroid desktop boot file\r");
    static const char *const preferred[] = {"!System", "!Fonts", "!Scrap"};
    for (unsigned p = 0u; p < sizeof(preferred) / sizeof(preferred[0]); ++p)
       for (unsigned i = 0u; i < discovery->candidate_count; ++i)
-         if (i != target_index && discovery->candidates[i].has_boot &&
+         if (i != target_index &&
+             arc_launch_sibling_bootable(&discovery->candidates[i]) &&
              arc_name_literal(&discovery->candidates[i].name, preferred[p]))
             arc_script_boot(&writer, &discovery->candidates[i]);
    for (unsigned i = 0u; i < discovery->candidate_count; ++i)
    {
       const ArcLaunchCandidate *candidate = &discovery->candidates[i];
-      if (i == target_index || !candidate->has_boot ||
+      if (i == target_index || !arc_launch_sibling_bootable(candidate) ||
           arc_name_literal(&candidate->name, "!System") ||
           arc_name_literal(&candidate->name, "!Fonts") ||
           arc_name_literal(&candidate->name, "!Scrap")) continue;

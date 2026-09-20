@@ -1240,6 +1240,12 @@ def main() -> None:
         "unresolved-e.adf": (build_e_discovery([(b"!Demo", True)], b"Demo", unresolved=0), "E"),
         "explicit-d.adf": (build_d_discovery(
             [(b"!Docs", False), (b"!Demo", True), (b"!Other", True)], b"Other", boot=3), "D"),
+        "sibling-pipe-l.adl": (build_l_discovery(
+            [(b"!Bad|Name", False), (b"!Qaventra", True)], b"Qaventra",
+            boot_children={0}), "L"),
+        "duplicate-siblings-l.adl": (build_l_discovery(
+            [(b"!Twin", False), (b"!tWIN", False), (b"!Qaventra", True)],
+            b"Qaventra", boot_children={0, 1}), "L"),
     }
     for boot in range(4):
         launch_images[f"boot-{boot}-l.adl"] = (

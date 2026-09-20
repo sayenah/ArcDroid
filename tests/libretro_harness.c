@@ -132,6 +132,8 @@ static unsigned input_overflow_log_lines;
 static unsigned short_warning_log_lines;
 static unsigned short_warning_osd_calls;
 static unsigned launch_log_lines;
+static unsigned skipped_sibling_log_lines;
+static unsigned skipped_sibling_names;
 static unsigned launch_warning_osd_calls;
 static unsigned flush_fault_log_lines;
 static unsigned flush_fault_osd_calls;
@@ -339,6 +341,14 @@ static void frontend_log(enum retro_log_level level, const char *format, ...)
    {
       ++launch_log_lines;
       snprintf(last_launch_log, sizeof(last_launch_log), "%s", message);
+   }
+   if (!strncmp(message, "Launch sibling boot skipped:",
+                sizeof("Launch sibling boot skipped:") - 1u))
+   {
+      ++skipped_sibling_log_lines;
+      if (strstr(message, "leaf=!Bad|Name")) skipped_sibling_names |= 1u;
+      if (strstr(message, "leaf=!Twin")) skipped_sibling_names |= 2u;
+      if (strstr(message, "leaf=!tWIN")) skipped_sibling_names |= 4u;
    }
    if (strstr(message, "Launch options:"))
    {
@@ -3992,6 +4002,40 @@ int main(int argc, char **argv)
                  sizeof(launch_cmos_file));
       assert(!memcmp(launch_cmos_file, launch_save_ram,
                      sizeof(launch_cmos_file)));
+
+      /* R-1 diagnostics are emitted once for each omitted sibling during a
+       * load. The escaped log rendering must preserve the identity of the
+       * raw leaf while the helper remains mounted for the valid target. */
+      option_launch = "auto";
+      char sibling_pipe_path[4096];
+      snprintf(sibling_pipe_path, sizeof(sibling_pipe_path),
+               "%s/launch-family/sibling-pipe-l.adl", argv[11]);
+      struct retro_game_info sibling_pipe_game = {
+         sibling_pipe_path, NULL, 0u, NULL
+      };
+      unsigned skipped_logs = skipped_sibling_log_lines;
+      unsigned skipped_names = skipped_sibling_names;
+      phase = PHASE_LOAD; assert(retro_load_game(&sibling_pipe_game));
+      assert(arc_engine_test_drive_media(1u, &write_protected, mounted_digest) &&
+             strstr(last_launch_log, "decision=!Qaventra") &&
+             skipped_sibling_log_lines == skipped_logs + 1u &&
+             (skipped_sibling_names & ~skipped_names) == 1u);
+      retro_unload_game();
+
+      char duplicate_siblings_path[4096];
+      snprintf(duplicate_siblings_path, sizeof(duplicate_siblings_path),
+               "%s/launch-family/duplicate-siblings-l.adl", argv[11]);
+      struct retro_game_info duplicate_siblings_game = {
+         duplicate_siblings_path, NULL, 0u, NULL
+      };
+      skipped_logs = skipped_sibling_log_lines;
+      skipped_names = skipped_sibling_names;
+      phase = PHASE_LOAD; assert(retro_load_game(&duplicate_siblings_game));
+      assert(arc_engine_test_drive_media(1u, &write_protected, mounted_digest) &&
+             strstr(last_launch_log, "decision=!Qaventra") &&
+             skipped_sibling_log_lines == skipped_logs + 2u &&
+             (skipped_sibling_names & ~skipped_names) == 6u);
+      retro_unload_game();
 
       /* Explicit ordinals override a non-zero FileCore boot option, refuse a
        * non-application/beyond-list choice, and bind the resolved raw target. */

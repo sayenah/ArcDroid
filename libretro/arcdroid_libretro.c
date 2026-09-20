@@ -1280,6 +1280,23 @@ static void arc_launch_log(const ArcLaunchDiscovery *discovery,
       arc_helper_path[0] ? arc_helper_path : "none");
 }
 
+static void arc_launch_log_skipped_siblings(
+   const ArcLaunchDiscovery *discovery, unsigned target_index)
+{
+   if (!arc_log || !discovery) return;
+   for (unsigned i = 0u; i < discovery->candidate_count; ++i)
+   {
+      const ArcLaunchCandidate *candidate = &discovery->candidates[i];
+      if (i == target_index || !candidate->has_boot ||
+          arc_launch_sibling_bootable(candidate)) continue;
+      char name[4u * ARC_GUEST_NAME_MAX + 1u];
+      (void)arc_launch_escape_name(&candidate->name, name, sizeof(name));
+      arc_log(RETRO_LOG_WARN,
+         "Launch sibling boot skipped: candidate=%u leaf=%s reason=not launchable or representable\n",
+         i + 1u, name);
+   }
+}
+
 static void arc_prepare_launch(ArcMediaEntry *entry, bool ejected,
                                ArcLaunchOption option, bool reselected)
 {
@@ -1394,6 +1411,7 @@ static void arc_prepare_launch(ArcMediaEntry *entry, bool ejected,
    memcpy(arc_plan.launch_target, discovery.candidates[selected].name.bytes,
           arc_plan.launch_target_length);
    arc_plan.launch_target[arc_plan.launch_target_length] = '\0';
+   arc_launch_log_skipped_siblings(&discovery, (unsigned)selected);
    arc_launch_log(&discovery, selected, reason);
 }
 

@@ -571,6 +571,8 @@ static void test_launch_discovery_and_builder(const char *fixture_directory)
       {"launch-family/boot-1-l.adl", ARC_GEOMETRY_640K_L, 512u, "Hugo", "Demo", 1u, 1u, 1u, -1, ARC_LAUNCH_REASON_DISC_BOOTS_ITSELF, true},
       {"launch-family/boot-2-l.adl", ARC_GEOMETRY_640K_L, 512u, "Hugo", "Demo", 2u, 1u, 1u, -1, ARC_LAUNCH_REASON_DISC_BOOTS_ITSELF, true},
       {"launch-family/boot-3-l.adl", ARC_GEOMETRY_640K_L, 512u, "Hugo", "Demo", 3u, 1u, 1u, -1, ARC_LAUNCH_REASON_DISC_BOOTS_ITSELF, true},
+      {"launch-family/sibling-pipe-l.adl", ARC_GEOMETRY_640K_L, 512u, "Hugo", "Qaventra", 0u, 2u, 1u, 1, ARC_LAUNCH_REASON_SINGLE_APPLICATION, true},
+      {"launch-family/duplicate-siblings-l.adl", ARC_GEOMETRY_640K_L, 512u, "Hugo", "Qaventra", 0u, 3u, 1u, 2, ARC_LAUNCH_REASON_DISC_NAME_MATCH, true},
    };
    size_t size = 0u;
    uint8_t *application = read_fixture(fixture_directory,
@@ -675,10 +677,69 @@ static void test_launch_discovery_and_builder(const char *fixture_directory)
          for (unsigned i = 0u; i < discovery.candidate_count; ++i)
             assert(discovery.candidates[i].launchable == launchable[i]);
       }
-      if (strstr(item->file, "duplicate-"))
+      if (strstr(item->file, "duplicate-") &&
+          !strstr(item->file, "duplicate-siblings"))
          for (unsigned i = 0u; i < discovery.candidate_count; ++i)
             assert(discovery.candidates[i].state == ARC_LAUNCH_CANDIDATE_UNKNOWN &&
                    !discovery.candidates[i].launchable);
+      free(bytes);
+   }
+
+   /* R-1: a boot-bearing sibling that cannot be addressed is omitted without
+    * changing the valid target's byte-exact helper script. Duplicate sibling
+    * leaves are likewise non-launchable and both omitted. */
+   static const struct {
+      const char *file;
+      unsigned skipped;
+   } r1_cases[] = {
+      {"launch-family/sibling-pipe-l.adl", 1u},
+      {"launch-family/duplicate-siblings-l.adl", 2u},
+   };
+   static const uint8_t r1_script[] =
+      "| ArcDroid desktop boot file\r"
+      "%Filer_Boot ADFS::0.$.!Qaventra\r"
+      "%Dir ADFS::0.$\r"
+      "%URD ADFS::0.$\r"
+      "%Filer_Run ADFS::0.$.!Qaventra\r";
+   for (size_t i = 0u; i < sizeof(r1_cases) / sizeof(r1_cases[0]); ++i)
+   {
+      uint8_t *bytes = read_fixture(fixture_directory, r1_cases[i].file, &size);
+      assert(arc_media_inspect(r1_cases[i].file, bytes, size,
+                               &media, error, sizeof(error)) &&
+             arc_launch_discover(bytes, size, &media, NULL, &discovery) &&
+             discovery.target_index >= 0 &&
+             test_guest_name_equal(
+                &discovery.candidates[discovery.target_index].name,
+                "!Qaventra"));
+      unsigned skipped = 0u;
+      for (unsigned candidate = 0u;
+           candidate < discovery.candidate_count; ++candidate)
+         if ((int)candidate != discovery.target_index &&
+             discovery.candidates[candidate].has_boot &&
+             !arc_launch_sibling_bootable(&discovery.candidates[candidate]))
+            ++skipped;
+      assert(skipped == r1_cases[i].skipped);
+      size_t r1_size = 0u;
+      assert(arc_launch_script_build(&discovery,
+                (unsigned)discovery.target_index, NULL, 0u, &r1_size,
+                error, sizeof(error)) &&
+             r1_size == sizeof(r1_script) - 1u);
+      uint8_t *r1_output = malloc(r1_size);
+      uint8_t *r1_helper = malloc(ARC_LAUNCH_DISC_SIZE);
+      assert(r1_output && r1_helper &&
+             arc_launch_script_build(&discovery,
+                (unsigned)discovery.target_index, r1_output, r1_size,
+                &r1_size, error, sizeof(error)) &&
+             !memcmp(r1_output, r1_script, sizeof(r1_script) - 1u) &&
+             arc_launch_disc_build(&discovery,
+                (unsigned)discovery.target_index, r1_helper,
+                error, sizeof(error)));
+      const uint8_t *r1_root = r1_helper + test_l_offset(2u);
+      assert(test_le32(r1_root + 31u + 18u) == sizeof(r1_script) - 1u &&
+             !memcmp(r1_helper + test_l_offset(1280u), r1_script,
+                     sizeof(r1_script) - 1u));
+      free(r1_helper);
+      free(r1_output);
       free(bytes);
    }
 
