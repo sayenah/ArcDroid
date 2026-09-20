@@ -478,7 +478,8 @@ static bool arc_candidate_launchable(const ArcGuestName *name)
       uint8_t c = name->bytes[i];
       if (c < 0x20u || c == 0x20u || c == 0x7fu || c == '.' || c == ':' ||
           c == '*' || c == '#' || c == '$' || c == '&' || c == '@' ||
-          c == '^' || c == '%' || c == '\\') return false;
+          c == '^' || c == '%' || c == '\\' || c == '|' || c == '"' ||
+          c == '<') return false;
    }
    return true;
 }

@@ -260,6 +260,151 @@ static uint32_t test_le24(const uint8_t *p)
           ((uint32_t)p[2] << 16u);
 }
 
+static uint8_t test_old_map_checksum(const uint8_t *block)
+{
+   unsigned checksum = 0xffu;
+   for (unsigned index = 255u; index-- > 0u;)
+   {
+      if (checksum > 0xffu) checksum = (checksum + 1u) & 0xffu;
+      checksum += block[index];
+   }
+   return (uint8_t)checksum;
+}
+
+static uint32_t test_ror32(uint32_t value, unsigned shift)
+{
+   return (value >> shift) | (value << (32u - shift));
+}
+
+static size_t test_new_name_length(const uint8_t name[10])
+{
+   size_t length = 0u;
+   while (length < 10u && name[length] >= 0x20u) ++length;
+   return length;
+}
+
+static uint8_t test_ascii_fold(uint8_t value)
+{
+   return value >= 'A' && value <= 'Z' ?
+      (uint8_t)(value - 'A' + 'a') : value;
+}
+
+static int test_adfs_name_order(const uint8_t a[10], const uint8_t b[10])
+{
+   size_t a_length = test_new_name_length(a);
+   size_t b_length = test_new_name_length(b);
+   size_t common = a_length < b_length ? a_length : b_length;
+   for (size_t i = 0u; i < common; ++i)
+   {
+      uint8_t folded_a = test_ascii_fold(a[i]);
+      uint8_t folded_b = test_ascii_fold(b[i]);
+      if (folded_a != folded_b) return folded_a < folded_b ? -1 : 1;
+   }
+   if (a_length == b_length) return 0;
+   return a_length < b_length ? -1 : 1;
+}
+
+static uint8_t test_new_directory_checksum(const uint8_t directory[2048],
+                                           unsigned entries)
+{
+   size_t used_end = 5u + (size_t)entries * 26u;
+   size_t word_end = used_end & ~(size_t)3u;
+   uint32_t check = 0u;
+   for (size_t offset = 0u; offset < word_end; offset += 4u)
+      check = test_le32(directory + offset) ^ test_ror32(check, 13u);
+   for (size_t offset = word_end; offset < used_end; ++offset)
+      check = directory[offset] ^ test_ror32(check, 13u);
+   for (size_t offset = 2008u; offset < 2044u; offset += 4u)
+      check = test_le32(directory + offset) ^ test_ror32(check, 13u);
+   return (uint8_t)(check ^ (check >> 8u) ^
+                    (check >> 16u) ^ (check >> 24u));
+}
+
+static unsigned test_validate_new_directory(const uint8_t directory[2048],
+                                            uint32_t parent)
+{
+   assert(directory[0] == directory[2042] &&
+          (!memcmp(directory + 1u, "Hugo", 4u) ||
+           !memcmp(directory + 1u, "Nick", 4u)) &&
+          !memcmp(directory + 1u, directory + 2043u, 4u) &&
+          !directory[2007] && !directory[2008] && !directory[2009] &&
+          test_le24(directory + 2010u) == parent);
+   unsigned entries = 0u;
+   while (entries < 77u && directory[5u + entries * 26u]) ++entries;
+   assert(entries < 77u);
+   for (unsigned i = 1u; i < entries; ++i)
+      assert(test_adfs_name_order(directory + 5u + (i - 1u) * 26u,
+                                  directory + 5u + i * 26u) < 0);
+   assert(directory[2047] ==
+          test_new_directory_checksum(directory, entries));
+   return entries;
+}
+
+static void test_mark_extent(bool *sectors, unsigned total,
+                             unsigned start, unsigned length)
+{
+   assert(start <= total && length <= total - start);
+   for (unsigned sector = start; sector < start + length; ++sector)
+   {
+      assert(!sectors[sector]);
+      sectors[sector] = true;
+   }
+}
+
+static void test_validate_checkpoint_d_image(const uint8_t *image, size_t size,
+                                             unsigned expected_root_entries)
+{
+   assert(size == 819200u && test_le24(image + 252u) == 3200u &&
+          image[255] == test_old_map_checksum(image) &&
+          image[511] == test_old_map_checksum(image + 256u));
+   unsigned total = test_le24(image + 252u);
+   bool *allocated = calloc(total, sizeof(*allocated));
+   bool *free_map = calloc(total, sizeof(*free_map));
+   assert(allocated && free_map);
+   test_mark_extent(allocated, total, 0u, 4u);
+   const uint8_t *root = image + 1024u;
+   unsigned root_entries = test_validate_new_directory(root, 4u);
+   assert(root_entries == expected_root_entries);
+   test_mark_extent(allocated, total, 4u, 8u);
+   for (unsigned i = 0u; i < root_entries; ++i)
+   {
+      const uint8_t *root_entry = root + 5u + i * 26u;
+      unsigned child_start = test_le24(root_entry + 22u);
+      unsigned child_sectors = (test_le32(root_entry + 18u) + 255u) / 256u;
+      assert((root_entry[25] & 8u) && child_sectors == 8u);
+      test_mark_extent(allocated, total, child_start, child_sectors);
+      const uint8_t *child = image + (size_t)child_start * 256u;
+      unsigned child_entries = test_validate_new_directory(child, 4u);
+      for (unsigned j = 0u; j < child_entries; ++j)
+      {
+         const uint8_t *entry = child + 5u + j * 26u;
+         unsigned file_start = test_le24(entry + 22u);
+         unsigned file_sectors = (test_le32(entry + 18u) + 255u) / 256u;
+         assert(!(entry[25] & 8u) && file_sectors);
+         test_mark_extent(allocated, total, file_start, file_sectors);
+      }
+   }
+   assert(image[510] && image[510] % 3u == 0u);
+   unsigned previous_end = 0u;
+   for (unsigned offset = 0u; offset < image[510]; offset += 3u)
+   {
+      unsigned start = test_le24(image + offset);
+      unsigned length = test_le24(image + 256u + offset);
+      assert(length && start >= previous_end && start <= total &&
+             length <= total - start);
+      for (unsigned sector = start; sector < start + length; ++sector)
+      {
+         assert(!free_map[sector]);
+         free_map[sector] = true;
+      }
+      previous_end = start + length;
+   }
+   for (unsigned sector = 0u; sector < total; ++sector)
+      assert(allocated[sector] != free_map[sector]);
+   free(free_map);
+   free(allocated);
+}
+
 static ArcGuestName test_guest_name(const void *bytes, size_t length)
 {
    ArcGuestName name = {{0}, 0};
@@ -442,8 +587,8 @@ static void test_launch_discovery_and_builder(const char *fixture_directory)
       if (!strcmp(item->file, "launch-family/illegal-l.adl"))
       {
          static const bool launchable[] = {
-            false, false, true, true, true, false, false, false, false,
-            false, false, false, true, false, false, true, false, true
+            false, false, false, true, false, false, false, false, false,
+            false, false, false, false, false, false, true, false, true
          };
          assert(discovery.candidate_count == sizeof(launchable) / sizeof(launchable[0]));
          for (unsigned i = 0u; i < discovery.candidate_count; ++i)
@@ -685,8 +830,9 @@ static void test_launch_discovery_and_builder(const char *fixture_directory)
    assert(arc_media_inspect("checkpoint-a-guest.adf", checkpoint, size,
                             &media, error, sizeof(error)) &&
           arc_launch_discover(checkpoint, size, &media, NULL, &discovery));
+   test_validate_checkpoint_d_image(checkpoint, size, 7u);
    static const char *const checkpoint_names[] = {
-      "!Alias", "!Fault", "!Prep", "!System", "!Fonts", "!Scrap", "!Qaventra"
+      "!Alias", "!Fault", "!Fonts", "!Prep", "!Qaventra", "!Scrap", "!System"
    };
    static const char *const checkpoint_boots[] = {
       "Set ArcDroid$Trace <ArcDroid$Trace>A\r"
@@ -696,20 +842,20 @@ static void test_launch_discovery_and_builder(const char *fixture_directory)
       "Set ArcDroid$Trace <ArcDroid$Trace>E\r"
       "Set ArcDroid$Count <ArcDroid$Count>1\r"
       "Error ArcDroid synthetic sibling error\r",
+      "Set ArcDroid$Trace <ArcDroid$Trace>F\r"
+      "Set ArcDroid$Count <ArcDroid$Count>1\r",
       "Set ArcDroid$Trace <ArcDroid$Trace>P\r"
       "Set ArcDroid$Count <ArcDroid$Count>1\rSet ArcDroid$Ready Yes\r",
-      "Set ArcDroid$Trace S\rSet ArcDroid$Count 1\r",
-      "Set ArcDroid$Trace <ArcDroid$Trace>F\r"
+      "Set ArcDroid$Trace <ArcDroid$Trace>T\r"
       "Set ArcDroid$Count <ArcDroid$Count>1\r",
       "Set ArcDroid$Trace <ArcDroid$Trace>W\r"
       "Set ArcDroid$Count <ArcDroid$Count>1\r"
       "Echo ArcDroid-write-attempt { > ADFS::0.$.ArcWrite }\r",
-      "Set ArcDroid$Trace <ArcDroid$Trace>T\r"
-      "Set ArcDroid$Count <ArcDroid$Count>1\r",
+      "Set ArcDroid$Trace S\rSet ArcDroid$Count 1\r",
    };
    assert(discovery.readable && discovery.candidate_count == 7u &&
           discovery.application_count == 1u && !discovery.unknown_count &&
-          discovery.target_index == 6 &&
+          discovery.target_index == 4 &&
           discovery.reason == ARC_LAUNCH_REASON_SINGLE_APPLICATION);
    for (unsigned i = 0u; i < 7u; ++i)
    {
@@ -727,41 +873,89 @@ static void test_launch_discovery_and_builder(const char *fixture_directory)
              !memcmp(checkpoint + boot_offset, checkpoint_boots[i], boot_length));
    }
    static const char checkpoint_run[] =
+      "Echo ARCDROID CHECKPOINT TRACE <ArcDroid$Trace> COUNT <ArcDroid$Count>\r"
       "If \"<ArcDroid$Ready>\" <> \"Yes\" Then Error ArcDroid prerequisite missing\r"
       "If \"<ArcDroid$Trace>\" <> \"SFWAEPT\" Then Error ArcDroid boot order wrong\r"
       "If \"<ArcDroid$Count>\" <> \"1111111\" Then Error ArcDroid boot count wrong\r"
       "Echo ARCDROID CHECKPOINT TARGET REACHED <ArcDroid$Trace> <ArcDroid$Count>\r";
-   const uint8_t *target_run = checkpoint + 4096u + 6u * 2048u + 31u;
+   const uint8_t *target_entry = checkpoint + 1024u + 5u + 4u * 26u;
+   size_t target_offset = (size_t)test_le24(target_entry + 22u) * 256u;
+   const uint8_t *target_run = checkpoint + target_offset + 31u;
    size_t target_run_length = test_le32(target_run + 18u);
    size_t target_run_offset = (size_t)test_le24(target_run + 22u) * 256u;
    assert(!memcmp(target_run, "!Run", 4u) &&
           target_run_length == sizeof(checkpoint_run) - 1u &&
           !memcmp(checkpoint + target_run_offset, checkpoint_run,
                   sizeof(checkpoint_run) - 1u));
+   static const uint8_t checkpoint_script[] =
+      "| ArcDroid desktop boot file\r"
+      "%Filer_Boot ADFS::0.$.!System\r"
+      "%Filer_Boot ADFS::0.$.!Fonts\r"
+      "%Filer_Boot ADFS::0.$.!Scrap\r"
+      "%Filer_Boot ADFS::0.$.!Alias\r"
+      "%Filer_Boot ADFS::0.$.!Fault\r"
+      "%Filer_Boot ADFS::0.$.!Prep\r"
+      "%Filer_Boot ADFS::0.$.!Qaventra\r"
+      "%Dir ADFS::0.$\r"
+      "%URD ADFS::0.$\r"
+      "%Filer_Run ADFS::0.$.!Qaventra\r";
+   size_t checkpoint_script_size = 0u;
+   assert(arc_launch_script_build(&discovery, 4u, NULL, 0u,
+                                  &checkpoint_script_size, error, sizeof(error)) &&
+          checkpoint_script_size == sizeof(checkpoint_script) - 1u);
+   uint8_t *checkpoint_script_output = malloc(checkpoint_script_size);
+   assert(checkpoint_script_output &&
+          arc_launch_script_build(&discovery, 4u, checkpoint_script_output,
+                                  checkpoint_script_size,
+                                  &checkpoint_script_size, error, sizeof(error)) &&
+          !memcmp(checkpoint_script_output, checkpoint_script,
+                  sizeof(checkpoint_script) - 1u));
+   free(checkpoint_script_output);
    free(checkpoint);
 
-   checkpoint = read_fixture(fixture_directory,
-      "launch-family/checkpoint-a-names.adf", &size);
-   assert(arc_media_inspect("checkpoint-a-names.adf", checkpoint, size,
-                            &media, error, sizeof(error)) &&
-          arc_launch_discover(checkpoint, size, &media, NULL, &discovery));
-   static const uint8_t checkpoint_raw_names[][10] = {
-      {'!', 'P', 'i', 'v', '|', 'r', 'a', 'x'},
-      {'!', 'Q', 'u', '"', 'v', 'e', 'x'},
-      {'!', 'A', 'n', '<', 'z', 'l', 'o'},
-      {'!', 'Z', 0xf6u, 'r', 'v', 'e', 'x'},
-      {'!', 'N', 'i', 'm', 0xa0u, 'V', 'o', 'x'},
+   typedef struct {
+      const char *file;
+      const uint8_t name[10];
+      uint8_t name_length;
+      const char *run;
+   } CheckpointNameDisc;
+   static const CheckpointNameDisc checkpoint_name_discs[] = {
+      {"launch-family/checkpoint-a-top-bit.adf",
+       {'!', 'Z', 0xf6u, 'r', 'v', 'e', 'x'}, 7u,
+       "Echo ARCDROID TOP-BIT NAME REACHED\r"},
+      {"launch-family/checkpoint-a-hard-space.adf",
+       {'!', 'N', 'i', 'm', 0xa0u, 'V', 'o', 'x'}, 8u,
+       "Echo ARCDROID HARD-SPACE NAME REACHED\r"},
+      {"launch-family/checkpoint-a-greater-than.adf",
+       {'!', 'V', 'o', 'r', '>', 'n', 'e', 'x'}, 8u,
+       "Echo ARCDROID GREATER-THAN NAME REACHED\r"},
    };
-   static const uint8_t checkpoint_raw_lengths[] = {8u, 7u, 7u, 7u, 8u};
-   assert(discovery.readable && discovery.candidate_count == 5u &&
-          discovery.application_count == 5u && !discovery.unknown_count &&
-          discovery.target_index < 0 && discovery.reason == ARC_LAUNCH_REASON_AMBIGUOUS);
-   for (unsigned i = 0u; i < discovery.candidate_count; ++i)
-      assert(discovery.candidates[i].launchable &&
-             discovery.candidates[i].name.length == checkpoint_raw_lengths[i] &&
-             !memcmp(discovery.candidates[i].name.bytes,
-                     checkpoint_raw_names[i], checkpoint_raw_lengths[i]));
-   free(checkpoint);
+   for (size_t i = 0u; i < sizeof(checkpoint_name_discs) /
+                                sizeof(checkpoint_name_discs[0]); ++i)
+   {
+      const CheckpointNameDisc *item = &checkpoint_name_discs[i];
+      checkpoint = read_fixture(fixture_directory, item->file, &size);
+      test_validate_checkpoint_d_image(checkpoint, size, 1u);
+      assert(arc_media_inspect(item->file, checkpoint, size,
+                               &media, error, sizeof(error)) &&
+             arc_launch_discover(checkpoint, size, &media, NULL, &discovery));
+      assert(discovery.readable && discovery.candidate_count == 1u &&
+             discovery.application_count == 1u && !discovery.unknown_count &&
+             discovery.target_index == 0 &&
+             discovery.reason == ARC_LAUNCH_REASON_SINGLE_APPLICATION &&
+             discovery.candidates[0].launchable &&
+             discovery.candidates[0].name.length == item->name_length &&
+             !memcmp(discovery.candidates[0].name.bytes,
+                     item->name, item->name_length));
+      const uint8_t *root_entry = checkpoint + 1024u + 5u;
+      size_t child_offset = (size_t)test_le24(root_entry + 22u) * 256u;
+      const uint8_t *run_entry = checkpoint + child_offset + 5u;
+      size_t run_length = test_le32(run_entry + 18u);
+      size_t run_offset = (size_t)test_le24(run_entry + 22u) * 256u;
+      assert(!memcmp(run_entry, "!Run", 4u) && run_length == strlen(item->run) &&
+             !memcmp(checkpoint + run_offset, item->run, run_length));
+      free(checkpoint);
+   }
 
    uint8_t *first = malloc(ARC_LAUNCH_DISC_SIZE);
    uint8_t *second = malloc(ARC_LAUNCH_DISC_SIZE);
@@ -782,21 +976,21 @@ static void test_launch_discovery_and_builder(const char *fixture_directory)
    assert(!memcmp(first + test_l_offset(1279u), "| ArcDroid launch disc", 22u));
    assert(!memcmp(first + test_l_offset(1280u), "| ArcDroid desktop boot file", 28u));
    assert(strstr((const char *)(first + test_l_offset(1280u)),
-                 "%Filer_Boot \"ADFS::0.$.!Demo\"\r"
-                 "%Dir \"ADFS::0.$\"\r%URD \"ADFS::0.$\"\r"
-                 "%Filer_Run \"ADFS::0.$.!Demo\"\r"));
+                 "%Filer_Boot ADFS::0.$.!Demo\r"
+                 "%Dir ADFS::0.$\r%URD ADFS::0.$\r"
+                 "%Filer_Run ADFS::0.$.!Demo\r"));
    static const char *bad_targets[] = {
       "!Bad.Name", "!Bad:Name",
       "!Bad$Name", "!Bad&Name", "!Bad@Name", "!Bad^Name", "!Bad%Name",
-      "!Bad*Name", "!Bad#Name", "!Bad Name", "!Bad\\Name", "!Bad\001",
-      "!Bad\177"
+      "!Bad*Name", "!Bad#Name", "!Bad|Name", "!Bad\"Name", "!Bad<Name",
+      "!Bad Name", "!Bad\\Name", "!Bad\001", "!Bad\177"
    };
    for (size_t i = 0u; i < sizeof(bad_targets) / sizeof(bad_targets[0]); ++i)
    {
       helper_spec = test_launch_spec(bad_targets[i], strlen(bad_targets[i]));
-      helper_spec.candidates[0].launchable = false;
       assert(!arc_launch_disc_build(&helper_spec, 0u, second,
-                                    error, sizeof(error)));
+                                    error, sizeof(error)) &&
+             !strcmp(error, "launch target leaf is not representable"));
    }
    helper_spec = test_launch_spec("!Demo", 5u);
    assert(arc_launch_disc_build(&helper_spec, 0u, second,
@@ -809,13 +1003,11 @@ static void test_launch_discovery_and_builder(const char *fixture_directory)
       {'!', 'S', 'y', 's', 't', 'e', 'm'},
       {'!', 'F', 'o', 'n', 't', 's'},
       {'!', 'S', 'c', 'r', 'a', 'p'},
-      {'!', 'P', 'i', 'v', '|', 'r', 'a', 'x'},
-      {'!', 'Q', 'u', '"', 'v', 'e', 'x'},
-      {'!', 'A', 'n', '<', 'z', 'l', 'o'},
+      {'!', 'V', 'o', 'r', '>', 'n', 'e', 'x'},
       {'!', 'Z', 0xf6u, 'r', 'v', 'e', 'x'},
       {'!', 'N', 'i', 'm', 0xa0u, 'V', 'o', 'x'},
    };
-   static const uint8_t literal_lengths[] = {4u, 7u, 6u, 6u, 8u, 7u, 7u, 7u, 8u};
+   static const uint8_t literal_lengths[] = {4u, 7u, 6u, 6u, 8u, 7u, 8u};
    literals.candidate_count = (unsigned)(sizeof(literal_lengths) / sizeof(literal_lengths[0]));
    literals.application_count = 1u;
    for (unsigned i = 0u; i < literals.candidate_count; ++i)
@@ -828,18 +1020,16 @@ static void test_launch_discovery_and_builder(const char *fixture_directory)
    }
    static const uint8_t expected_script[] =
       "| ArcDroid desktop boot file\r"
-      "%Filer_Boot \"ADFS::0.$.!System\"\r"
-      "%Filer_Boot \"ADFS::0.$.!Fonts\"\r"
-      "%Filer_Boot \"ADFS::0.$.!Scrap\"\r"
-      "%Filer_Boot \"ADFS::0.$.!Ord\"\r"
-      "%Filer_Boot \"ADFS::0.$.!Piv||rax\"\r"
-      "%Filer_Boot \"ADFS::0.$.!Qu|\"vex\"\r"
-      "%Filer_Boot \"ADFS::0.$.!An|<zlo\"\r"
-      "%Filer_Boot \"ADFS::0.$.!Z\xf6rvex\"\r"
-      "%Filer_Boot \"ADFS::0.$.!Nim\xa0" "Vox\"\r"
-      "%Dir \"ADFS::0.$\"\r"
-      "%URD \"ADFS::0.$\"\r"
-      "%Filer_Run \"ADFS::0.$.!Nim\xa0" "Vox\"\r";
+      "%Filer_Boot ADFS::0.$.!System\r"
+      "%Filer_Boot ADFS::0.$.!Fonts\r"
+      "%Filer_Boot ADFS::0.$.!Scrap\r"
+      "%Filer_Boot ADFS::0.$.!Ord\r"
+      "%Filer_Boot ADFS::0.$.!Vor>nex\r"
+      "%Filer_Boot ADFS::0.$.!Z\xf6rvex\r"
+      "%Filer_Boot ADFS::0.$.!Nim\xa0" "Vox\r"
+      "%Dir ADFS::0.$\r"
+      "%URD ADFS::0.$\r"
+      "%Filer_Run ADFS::0.$.!Nim\xa0" "Vox\r";
    size_t script_size = 0u;
    assert(arc_launch_script_build(&literals, literals.candidate_count - 1u,
                                   NULL, 0u, &script_size, error, sizeof(error)) &&
@@ -919,17 +1109,6 @@ static void test_launch_discovery_and_builder(const char *fixture_directory)
    }
    free(second);
    free(first);
-}
-
-static uint8_t test_old_map_checksum(const uint8_t *block)
-{
-   unsigned checksum = 0xffu;
-   for (unsigned index = 255u; index-- > 0u;)
-   {
-      if (checksum > 0xffu) checksum = (checksum + 1u) & 0xffu;
-      checksum += block[index];
-   }
-   return (uint8_t)checksum;
 }
 
 static void test_make_old_map(uint8_t *image, size_t size, uint32_t old_size)

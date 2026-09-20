@@ -158,10 +158,10 @@ static void test_drive_one_helper(const char *root)
       "%Desktop -File \"ADFS::1.$.ArcLaunch\"\r";
    static const char launch_text[] =
       "| ArcDroid desktop boot file\r"
-      "%Filer_Boot \"ADFS::0.$.!Demo\"\r"
-      "%Dir \"ADFS::0.$\"\r"
-      "%URD \"ADFS::0.$\"\r"
-      "%Filer_Run \"ADFS::0.$.!Demo\"\r";
+      "%Filer_Boot ADFS::0.$.!Demo\r"
+      "%Dir ADFS::0.$\r"
+      "%URD ADFS::0.$\r"
+      "%Filer_Run ADFS::0.$.!Demo\r";
    ArcJfdImage image = load_image(root, "size-1.jfd");
    controller_reset(&image);
    assert(build_launch_helper());

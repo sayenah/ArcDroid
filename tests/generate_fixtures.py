@@ -824,6 +824,38 @@ def _new_directory(name: bytes = b"$", signature: bytes = b"Hugo") -> bytearray:
     return directory
 
 
+def _adfs_name_key(name: bytes) -> bytes:
+    """Return FileCore's case-insensitive byte ordering key."""
+    return bytes(value + 0x20 if 0x41 <= value <= 0x5A else value
+                 for value in name)
+
+
+def _ror32(value: int, shift: int) -> int:
+    return ((value >> shift) | (value << (32 - shift))) & 0xFFFFFFFF
+
+
+def _finish_new_directory(directory: bytearray, entry_count: int,
+                          parent: int) -> None:
+    """Set the parent and FileCore new-directory check byte."""
+    if not 0 <= entry_count <= 77:
+        raise ValueError("new-directory entry count is out of range")
+    tail = 2007
+    _store_u24(directory, tail + 3, parent)
+    used_end = 5 + entry_count * 26
+    check = 0
+    word_end = used_end & ~3
+    for offset in range(0, word_end, 4):
+        value = int.from_bytes(directory[offset:offset + 4], "little")
+        check = value ^ _ror32(check, 13)
+    for offset in range(word_end, used_end):
+        check = directory[offset] ^ _ror32(check, 13)
+    for offset in range(tail + 1, tail + 37, 4):
+        value = int.from_bytes(directory[offset:offset + 4], "little")
+        check = value ^ _ror32(check, 13)
+    directory[2047] = (check ^ (check >> 8) ^
+                       (check >> 16) ^ (check >> 24)) & 0xFF
+
+
 def build_d_discovery(candidates: list[tuple[bytes, bool]],
                       disc_name: bytes = b"Fixture", boot: int = 0,
                       signature: bytes = b"Hugo",
@@ -1050,24 +1082,27 @@ def build_d_guest_applications(
         disc_name: bytes) -> bytearray:
     """Build project-authored D-format applications with Obey !Boot/!Run files."""
     image = bytearray(ADF_SIZE)
-    _store_u24(image, 252, ADF_SIZE // 256)
+    total_sectors = ADF_SIZE // 256
+    _store_u24(image, 252, total_sectors)
     _set_old_disc_name(image, disc_name)
     image[509] = 0
-    image[510] = 0
-    image[255] = _old_map_checksum(image[:255])
-    image[511] = _old_map_checksum(image[256:511])
     root = _new_directory()
-    data_offset = 256 * 1024
-    for index, (name, boot, run) in enumerate(applications):
+    ordered = sorted(applications, key=lambda application:
+                     _adfs_name_key(application[0]))
+    data_offset = 3072 + len(ordered) * 2048
+    for index, (name, boot, run) in enumerate(ordered):
         if not 1 <= len(name) <= 10:
             raise ValueError("guest application leaf must be 1..10 bytes")
-        child_offset = 4096 + index * 2048
+        child_offset = 3072 + index * 2048
         _new_entry(root, index, name, 2048, child_offset // 256, True)
         child = _new_directory(name)
         child_entry = 0
-        for filename, payload in ((b"!Boot", boot), (b"!Run", run)):
-            if payload is None:
-                continue
+        files = sorted(((filename, payload) for filename, payload in
+                        ((b"!Boot", boot), (b"!Run", run))
+                        if payload is not None),
+                       key=lambda item: _adfs_name_key(item[0]))
+        for filename, payload in files:
+            assert payload is not None
             if data_offset + len(payload) > len(image):
                 raise ValueError("guest fixture data exceeds the image")
             _new_entry(child, child_entry, filename, len(payload),
@@ -1075,8 +1110,18 @@ def build_d_guest_applications(
             child_entry += 1
             image[data_offset:data_offset + len(payload)] = payload
             data_offset += (len(payload) + 255) & ~255
+        _finish_new_directory(child, child_entry, 4)
         image[child_offset:child_offset + 2048] = child
+    _finish_new_directory(root, len(ordered), 4)
     image[1024:3072] = root
+    free_start = (data_offset + 255) // 256
+    if free_start >= total_sectors:
+        raise ValueError("guest fixture leaves no valid free extent")
+    _store_u24(image, 0, free_start)
+    _store_u24(image, 256, total_sectors - free_start)
+    image[510] = 3
+    image[255] = _old_map_checksum(image[:255])
+    image[511] = _old_map_checksum(image[256:511])
     return image
 
 
@@ -1101,6 +1146,7 @@ def build_checkpoint_guest_disc() -> bytearray:
                      b"Echo ArcDroid-write-attempt { > ADFS::0.$.ArcWrite }\r", None),
         (b"!Qaventra", b"Set ArcDroid$Trace <ArcDroid$Trace>T\r"
                     b"Set ArcDroid$Count <ArcDroid$Count>1\r",
+         b"Echo ARCDROID CHECKPOINT TRACE <ArcDroid$Trace> COUNT <ArcDroid$Count>\r"
          b"If \"<ArcDroid$Ready>\" <> \"Yes\" Then Error ArcDroid prerequisite missing\r"
          b"If \"<ArcDroid$Trace>\" <> \"SFWAEPT\" Then Error ArcDroid boot order wrong\r"
          b"If \"<ArcDroid$Count>\" <> \"1111111\" Then Error ArcDroid boot count wrong\r"
@@ -1109,21 +1155,25 @@ def build_checkpoint_guest_disc() -> bytearray:
     return build_d_guest_applications(apps, b"ArcCheckA")
 
 
-def build_checkpoint_name_disc() -> bytearray:
-    """Disc with invented literal-metacharacter and high-byte application leaves."""
-    names = (b"!Piv|rax", b"!Qu\"vex", b"!An<zlo", b"!Z\xf6rvex", b"!Nim\xa0Vox")
-    apps = []
-    for index, name in enumerate(names, 1):
-        apps.append((name, None,
-                     f"Echo ARCDROID INVENTED NAME {index} REACHED\r".encode("ascii")))
-    return build_d_guest_applications(apps, b"ArcNames")
+def build_checkpoint_name_discs() -> dict[str, bytearray]:
+    """One valid, lone-application disc for each addressable unusual leaf."""
+    cases = (
+        ("checkpoint-a-top-bit.adf", b"!Z\xf6rvex", b"ArcTopBit",
+         b"Echo ARCDROID TOP-BIT NAME REACHED\r"),
+        ("checkpoint-a-hard-space.adf", b"!Nim\xa0Vox", b"ArcHardSp",
+         b"Echo ARCDROID HARD-SPACE NAME REACHED\r"),
+        ("checkpoint-a-greater-than.adf", b"!Vor>nex", b"ArcGreater",
+         b"Echo ARCDROID GREATER-THAN NAME REACHED\r"),
+    )
+    return {filename: build_d_guest_applications([(name, None, run)], disc_name)
+            for filename, name, disc_name, run in cases}
 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("output", type=Path)
     parser.add_argument("--checkpoint-guest-disc", type=Path)
-    parser.add_argument("--checkpoint-name-disc", type=Path)
+    parser.add_argument("--checkpoint-name-discs", type=Path)
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
     (args.output / "arcdroid-test.rom").write_bytes(build_rom())
@@ -1228,15 +1278,17 @@ def main() -> None:
             build_jfd_family([], b"ArcDroid launch robustness fixture",
                              disk_payload=payload, disk_geometry=geometry))
     checkpoint_guest = build_checkpoint_guest_disc()
-    checkpoint_names = build_checkpoint_name_disc()
+    checkpoint_names = build_checkpoint_name_discs()
     (launch / "checkpoint-a-guest.adf").write_bytes(checkpoint_guest)
-    (launch / "checkpoint-a-names.adf").write_bytes(checkpoint_names)
+    for filename, image in checkpoint_names.items():
+        (launch / filename).write_bytes(image)
     if args.checkpoint_guest_disc:
         args.checkpoint_guest_disc.parent.mkdir(parents=True, exist_ok=True)
         args.checkpoint_guest_disc.write_bytes(checkpoint_guest)
-    if args.checkpoint_name_disc:
-        args.checkpoint_name_disc.parent.mkdir(parents=True, exist_ok=True)
-        args.checkpoint_name_disc.write_bytes(checkpoint_names)
+    if args.checkpoint_name_discs:
+        args.checkpoint_name_discs.mkdir(parents=True, exist_ok=True)
+        for filename, image in checkpoint_names.items():
+            (args.checkpoint_name_discs / filename).write_bytes(image)
     media_rom = build_rom(media_exerciser=True)
     disc1 = build_adf(0xA5, b"ARCDROID MEDIA DISC ONE v1\0")
     disc2 = build_adf(0x3C, b"ARCDROID MEDIA DISC TWO v1\0")

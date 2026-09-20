@@ -55,7 +55,8 @@ static bool arc_leaf_representable(const ArcGuestName *name)
       uint8_t c = name->bytes[i];
       if (c <= 0x20u || c == 0x7fu || c == '.' || c == ':' || c == '*' ||
           c == '#' || c == '$' || c == '&' || c == '@' || c == '^' ||
-          c == '%' || c == '\\') return false;
+          c == '%' || c == '\\' || c == '|' || c == '"' || c == '<')
+         return false;
    }
    return true;
 }
@@ -89,21 +90,13 @@ static void arc_script_text(ArcScriptWriter *writer, const char *text)
 
 static void arc_script_leaf(ArcScriptWriter *writer, const ArcGuestName *name)
 {
-   for (unsigned i = 0u; i < name->length; ++i)
-   {
-      uint8_t c = name->bytes[i];
-      if (c == '|') arc_script_text(writer, "||");
-      else if (c == '"') arc_script_text(writer, "|\"");
-      else if (c == '<') arc_script_text(writer, "|<");
-      else arc_script_bytes(writer, &c, 1u);
-   }
+   arc_script_bytes(writer, name->bytes, name->length);
 }
 
 static void arc_script_path(ArcScriptWriter *writer, const ArcGuestName *name)
 {
-   arc_script_text(writer, "\"ADFS::0.$.");
+   arc_script_text(writer, "ADFS::0.$.");
    arc_script_leaf(writer, name);
-   arc_script_text(writer, "\"");
 }
 
 static void arc_script_boot(ArcScriptWriter *writer,
@@ -157,8 +150,8 @@ bool arc_launch_script_build(const ArcLaunchDiscovery *discovery,
       arc_script_boot(&writer, candidate);
    }
    arc_script_boot(&writer, target);
-   arc_script_text(&writer, "%Dir \"ADFS::0.$\"\r");
-   arc_script_text(&writer, "%URD \"ADFS::0.$\"\r");
+   arc_script_text(&writer, "%Dir ADFS::0.$\r");
+   arc_script_text(&writer, "%URD ADFS::0.$\r");
    arc_script_text(&writer, "%Filer_Run ");
    arc_script_path(&writer, &target->name);
    arc_script_text(&writer, "\r");
