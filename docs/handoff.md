@@ -1,8 +1,22 @@
 # ArcDroid Handoff
 
-**Stage:** IMPLEMENTATION  
-**Owner:** Sol  
-**Next:** Sol run 4 on `slice/05a-launch-robustness` (PR #72, head `45a0199`): apply R-1 below with tests, keep CI green, hand back to Fable. Fable then finishes the Odin3 before/after evidence and sets the QA baton. Afterwards (later sessions, Founder order 2026-09-19): Slice 5b (multi-disc sets), then Slice 5c (launch chooser); the self-boot JFD media-fidelity investigation stays separate.
+**Stage:** QA  
+**Owner:** Opus  
+**Next:** independent QA of PR #72 (`slice/05a-launch-robustness`, head `4c2f62b`) against the Slice 5a work order below (AC-1…AC-4, AC-6…AC-11, R-1; AC-5 is deleted), D-038/D-039, PRD FR-4…FR-7/FR-25/FR-34 and the QA focus line; report findings to Fable. Fable adjudicates, sends validated remediation to Sol, and merges under protocol §12.11. Afterwards (later sessions, Founder order 2026-09-19): Slice 5b (multi-disc sets), then Slice 5c (launch chooser); the self-boot JFD media-fidelity investigation stays separate.
+
+## Device evidence — Slice 5a (2026-09-20, Fable; private, scratchpad only; counts and words only)
+Odin3, Android core built by Fable from PR head `45a0199` (NDK r29 arm64-v8a, `tools/check-android.sh` pass, sha256 `daafd703…`), same 218-entry set, same method as S13 (40 s pass, then 120 s pass on the 45 launched-but-not-in-game titles), list order identical to S13. R-1 (`4c2f62b`) changes only a refusal path that no title in the set reached (0 refusals in 218 logs), so this evidence carries to the head. RetroArch never died; 0 core faults; helper refusals 0.
+- **Zero regressions on screen**: every title that reached a game/loader screen in S13 does so again (40 s or 120 s pass). Rejected-at-load titles (20, unchanged) show only frontend screen noise.
+- **Decisions** (S13 → now): launch decision 91 → 111 (`single application` 66 → 80, `disc-name match` 25 → 31); `disc boots itself` 50 → 52; `ambiguous` 18 → 28; `inspection incomplete` 20 → 0; `unreadable` 16 → 3 (the 3 have no FileCore structure at all); `no candidates` 2 → 3; `no applications` 1 → 1; rejected at load 20 → 20.
+- **Gains**: 19 more titles on a game/loader screen at 40 s and 4 more at 120 s; further newly launched titles stop at their own dialogs (original-disc prompts ×3, icon-bar applications, `Cfs has no temp directory` ×2 — writable-scrap provisioning is a stated non-goal).
+- **One accepted decision change (Founder may veto):** a title that launched in S13 only because the old ASCII whitelist silently dropped its second application (`!Help!`) is now correctly `ambiguous` (D-039: no name vocabulary; resolved by Slice 5c). `ambiguous` is 28 in total; 4 of those sets contain `!System`/`!Fonts` beside the game, including both Elite dumps — see Founder decisions.
+- **Unchanged title problems (identical screens in S13):** `System: not present` ×1 (disc carries no `!System`), abort on instruction fetch ×1, original-disc prompt ×1, protected-disc `Disc error 10` ×1, multi-disc prompt (5b). The S13 "System resources cannot be found" boxes did not appear in any second-pass screenshot.
+- SD card: 5 sampled images byte-identical to their S13 copies. Launch latency (host harness, RISC OS 3.11, same lone-application disc): boot-settle field 2998 on `main`, 2987 on the branch (deterministic, two runs each).
+- **Reference source (Founder, 2026-09-20):** the Founder's library was built from the JASPP forum game threads (`https://forums.jaspp.org.uk/forum/viewforum.php?f=25`); use each title's thread for title-specific notes. The site refuses automated fetches (HTTP 403 challenge — do not work around it); a web search restricted to `forums.jaspp.org.uk` returns thread excerpts. First findings: JFDs are original dumps with protection intact, meant to be loaded through ADFFS; the Eterna titles (KerBang!, Bubble Fair, Fine Racer) drive the FDC directly via IOC and even ADFFS does not support that protection; The Time Machine's protection is recorded in its JFD. These belong to the media-fidelity investigation (PRD FR-10), not to launch.
+
+## Founder decisions waiting (none blocks Slice 5a)
+1. Should Auto ignore the three RISC OS resource directories `!System`, `!Fonts`, `!Scrap` as launch candidates (they are already named in AC-7 as platform resources, a closed OS-defined set, not a helper list)? It would make Elite and 3 other titles launch without the chooser. Fable recommends yes, as part of Slice 5c; D-039 currently forbids any name rule, so it needs the Founder.
+2. Veto or accept the `!Help!` decision change above (Fable accepted it under D-039).
 
 ## Checkpoint A result — PASSED (2026-09-20, Fable, S14; private RISC OS 3.00/3.10/3.11/3.19, host harness, scratch discs only)
 Sol run 1 (PR #72 `40a98f4`): host 8/8, CI all jobs green, verified by Fable on a fresh clone. On real firmware the generated boot file stops at its first line with an error box `Syntax: *Filer_Boot <application>`, and the AC-11 fixture discs are refused by ADFS with `Broken directory`. Platform facts established with Fable's scratch probe discs (self-booting `Desktop -File` context and launched-application context):
@@ -82,7 +96,7 @@ Slice 4: the A3010 joystick gate tests the machine id instead of the descriptor'
 No open item. Slice 4 added two GPL-2.0-only upstream files from the already-accepted pinned commit (`engine/UPSTREAM.md` updated); no firmware or game bytes are in the repository, CI, logs or PRs; private firmware and game images stay local and git-ignored.
 
 ## Branch / PR
-Implementation branch `slice/05a-launch-robustness`, PR #72 (ready for review, head `45a0199` after Sol run 3; Checkpoint A passed and re-verified on the unmodified run-3 fixture discs on RISC OS 3.00/3.10/3.11/3.19). `main` = `1f92329` plus governance batons (latest `docs/slice5a-r1`). Evidence branches remain `evidence/*` (never merge).
+Implementation branch `slice/05a-launch-robustness`, PR #72 (ready for review, head `4c2f62b` after Sol run 4 / R-1, CI 10/10 green, host 8/8 verified by Fable; Checkpoint A passed and re-verified on the unmodified run-3 fixture discs on RISC OS 3.00/3.10/3.11/3.19). `main` = `1f92329` plus governance batons (latest `docs/slice5a-qa`). Evidence branches remain `evidence/*` (never merge).
 
 ## Orchestration notes (Fable)
 - **Background runs (protocol §15)**: `watchdog2.sh <label> <pid> <stream> <report> <checkout> [poll=300] [stall-checks=3]` (session scratchpad; recreate from the description if lost: read-only 5-min polls of stream size, process-tree CPU and `git status` hash; emit only COMPLETED/DIED/STALLED/NEEDS_INPUT with run id, elapsed, log path and a bounded tail; record PID/start/log in `<stream>.watch`) under the harness Monitor with a 30-min lease, re-armed on expiry. Only PIDs recorded at dispatch are watched or stopped. Subagents use the harness's native completion notification.
