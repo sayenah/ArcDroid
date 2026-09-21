@@ -162,8 +162,8 @@ static const char *arc_osk_key_label(const ArcInputKey *key, bool compact)
       case RETROK_PAGEUP: return "PgU";
       case RETROK_PAGEDOWN: return "PgD";
       case RETROK_SPACE: return "Spc";
-      case RETROK_UP: return "\x7d";
-      case RETROK_DOWN: return "\x7e";
+      case RETROK_UP: return "\x80";
+      case RETROK_DOWN: return "\x81";
       case RETROK_LEFT: return "<";
       case RETROK_RIGHT: return ">";
       case RETROK_LSHIFT: return "LSh";
@@ -675,7 +675,7 @@ static void arc_osk_text(uint32_t *pixels, unsigned width, unsigned height,
       unsigned glyph;
       glyph = (unsigned char)*text++;
       if (glyph >= 'a' && glyph <= 'z') glyph -= 'a' - 'A';
-      if (glyph >= 128u) glyph = '?';
+      if (glyph >= 130u) glyph = '?';
       for (unsigned row = 0u; row < 8u && y + row < height; ++row)
          for (unsigned column = 0u; column < 8u; ++column)
             if (arc_osk_font[glyph][row] & (UINT8_C(1) << (7u - column)))

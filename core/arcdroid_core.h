@@ -165,6 +165,7 @@ typedef struct {
    ArcLaunchCandidateState state;
    bool launchable;
    bool has_boot;
+   bool resource;
 } ArcLaunchCandidate;
 
 typedef struct {
@@ -183,6 +184,8 @@ typedef struct {
 } ArcLaunchDiscovery;
 
 #define ARC_LAUNCH_BINDING_MAX_SIZE 96u
+#define ARC_LAUNCH_CHOICE_MAX_SIZE 96u
+#define ARC_LAUNCH_CHOOSER_MAX_ROWS (ARC_LAUNCH_MAX_CANDIDATES + 1u)
 
 typedef struct {
    unsigned version;
@@ -190,6 +193,20 @@ typedef struct {
    ArcGuestName target;
    char candidate_fingerprint[41];
 } ArcLaunchBinding;
+
+typedef struct {
+   bool desktop;
+   ArcGuestName target;
+   char candidate_fingerprint[41];
+} ArcLaunchChoiceRecord;
+
+typedef struct {
+   uint8_t candidate_index[ARC_LAUNCH_CHOOSER_MAX_ROWS];
+   unsigned row_count;
+   unsigned focus;
+   unsigned first_visible;
+   bool inspection_incomplete;
+} ArcLaunchChooser;
 
 #define ARC_CMOS_RECORD_SIZE 256u
 #define ARC_CMOS_PAYLOAD_SIZE 240u
@@ -236,6 +253,30 @@ bool arc_launch_binding_format(unsigned ordinal, const ArcGuestName *target,
                                const char candidate_fingerprint[41],
                                uint8_t *output, size_t capacity,
                                size_t *output_size);
+bool arc_launch_candidate_is_resource(const ArcLaunchCandidate *candidate);
+bool arc_launch_candidate_is_target(const ArcLaunchCandidate *candidate);
+unsigned arc_launch_candidate_index(const ArcLaunchDiscovery *discovery,
+                                    unsigned ordinal);
+bool arc_launch_choice_parse(const void *data, size_t size,
+                             ArcLaunchChoiceRecord *choice);
+bool arc_launch_choice_format(const ArcGuestName *target, bool desktop,
+                              const char candidate_fingerprint[41],
+                              uint8_t *output, size_t capacity,
+                              size_t *output_size);
+int arc_launch_choice_match(const ArcLaunchDiscovery *discovery,
+                            const ArcLaunchChoiceRecord *choice);
+bool arc_launch_chooser_init(ArcLaunchChooser *chooser,
+                             const ArcLaunchDiscovery *discovery,
+                             bool remembered, int remembered_candidate);
+void arc_launch_chooser_move(ArcLaunchChooser *chooser, int direction);
+int arc_launch_chooser_selection(const ArcLaunchChooser *chooser);
+int arc_launch_chooser_hit(const ArcLaunchChooser *chooser,
+                           unsigned x, unsigned y);
+bool arc_launch_chooser_focus(ArcLaunchChooser *chooser, unsigned row);
+bool arc_launch_chooser_render(const ArcLaunchChooser *chooser,
+                               const ArcLaunchDiscovery *discovery,
+                               uint32_t *pixels, unsigned width,
+                               unsigned height, size_t pitch);
 bool arc_filecore_e_map_layout_valid(unsigned id_length,
                                      unsigned log2_bytes_per_map_bit,
                                      unsigned zone_spare,

@@ -144,7 +144,7 @@ static bool environment(unsigned command, void *data)
          assert(phase == PHASE_ENV && options->categories &&
                 !strcmp(options->categories[0].key, "pad_mapping"));
          while (options->definitions[count].key) ++count;
-         assert(count == 33u);
+         assert(count == 34u);
          saw_options = true;
          return true;
       }
@@ -189,6 +189,7 @@ static bool environment(unsigned command, void *data)
          else if (!strcmp(variable->key, "arcdroid_pointer_deadzone")) variable->value = "15";
          else if (!strcmp(variable->key, "arcdroid_disk_writes")) variable->value = "shadow";
          else if (!strcmp(variable->key, "arcdroid_launch")) variable->value = "auto";
+         else if (!strcmp(variable->key, "arcdroid_launch_chooser")) variable->value = "remember";
          else if (!strcmp(variable->key, "arcdroid_osk_toggle")) variable->value = "L3";
          else variable->value = "Auto";
          return true;

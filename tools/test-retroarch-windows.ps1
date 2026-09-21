@@ -54,6 +54,166 @@ function Send-QuitPair($Udp) {
     Start-Sleep -Milliseconds 300
     [void]$Udp.Send($quitBytes, $quitBytes.Length)
 }
+
+function Get-EventDataMap($EventRecord) {
+    $map = @{}
+    try {
+        $xml = [xml]$EventRecord.ToXml()
+        foreach ($item in @($xml.Event.EventData.Data)) {
+            $name = [string]$item.GetAttribute("Name")
+            if (-not [string]::IsNullOrWhiteSpace($name)) {
+                $map[$name] = [string]$item.'#text'
+            }
+        }
+    } catch {
+        # The formatted event message remains useful if one record has an
+        # unexpected XML shape. Crash collection must never replace the run's
+        # original failure.
+    }
+    return $map
+}
+
+function Get-EventField($Map, [string[]]$Names, $Values, [int]$Fallback) {
+    foreach ($name in $Names) {
+        if ($Map.ContainsKey($name) -and
+            -not [string]::IsNullOrWhiteSpace([string]$Map[$name])) {
+            return [string]$Map[$name]
+        }
+    }
+    if ($Fallback -ge 0 -and $Fallback -lt $Values.Count) {
+        return [string]$Values[$Fallback]
+    }
+    return "<not present>"
+}
+
+function Write-RetroArchFailureEvidence([string]$Name, $Process,
+                                        [DateTime]$StartUtc,
+                                        [string[]]$LogPaths,
+                                        [string]$Context) {
+    # This function is deliberately failure-contained: inability to read the
+    # event log or save the evidence must not mask the RetroArch exit that
+    # caused this diagnostic path to run.
+    try {
+        $safeName = $Name -replace '[^A-Za-z0-9_.-]', '_'
+        $path = Join-Path $evidenceDirectory "$safeName-crash-forensics.txt"
+        $lines = [System.Collections.Generic.List[string]]::new()
+        $endUtc = [DateTime]::UtcNow
+        $exitCode = "<still running>"
+        $pidValue = "<unknown>"
+        if ($Process) {
+            $pidValue = [string]$Process.Id
+            if ($Process.HasExited) { $exitCode = [string]$Process.ExitCode }
+        }
+        $lines.Add("run=$Name pid=$pidValue exit_code=$exitCode")
+        $lines.Add("context=$Context")
+        $lines.Add("window_utc=$($StartUtc.ToString('o'))..$($endUtc.ToString('o'))")
+        $lines.Add("Windows Application crash events:")
+
+        $matching = @()
+        $queryError = $null
+        $eventDeadline = [DateTime]::UtcNow.AddSeconds(5)
+        do {
+            try {
+                $events = @(Get-WinEvent -FilterHashtable @{
+                    LogName = "Application"
+                    ProviderName = @("Application Error", "Windows Error Reporting")
+                    Id = @(1000, 1001)
+                    StartTime = $StartUtc.AddSeconds(-2).ToLocalTime()
+                    EndTime = [DateTime]::Now.AddSeconds(1)
+                } -ErrorAction SilentlyContinue)
+                $matching = @($events | Where-Object {
+                    $eventMap = Get-EventDataMap $_
+                    $eventValues = @()
+                    try {
+                        $eventXml = [xml]$_.ToXml()
+                        $eventValues = @($eventXml.Event.EventData.Data | ForEach-Object {
+                            [string]$_.'#text'
+                        })
+                    } catch {}
+                    $eventText = (($_.Message, ($eventValues -join " ")) -join " ")
+                    $appMatch = $eventText -match '(?i)(^|[^A-Za-z0-9_])retroarch\.exe([^A-Za-z0-9_]|$)'
+                    $eventPid = Get-EventField $eventMap @("ProcessId") $eventValues -1
+                    $pidMatch = $true
+                    if ($eventPid -ne "<not present>" -and $Process) {
+                        $parsedPid = 0L
+                        if ($eventPid -match '^0x[0-9a-fA-F]+$') {
+                            $parsedPid = [Convert]::ToInt64($eventPid.Substring(2), 16)
+                        } elseif ($eventPid -match '^\d+$') {
+                            $parsedPid = [Convert]::ToInt64($eventPid, 10)
+                        }
+                        if ($parsedPid -ne 0L) { $pidMatch = $parsedPid -eq $Process.Id }
+                    }
+                    $appMatch -and $pidMatch
+                } | Sort-Object RecordId -Unique)
+            } catch {
+                $queryError = $_.Exception.Message
+            }
+            $providers = @($matching | Select-Object -ExpandProperty ProviderName -Unique)
+            if ($providers -contains "Application Error" -and
+                $providers -contains "Windows Error Reporting") { break }
+            if ([DateTime]::UtcNow -lt $eventDeadline) {
+                Start-Sleep -Milliseconds 500
+            }
+        } while ([DateTime]::UtcNow -lt $eventDeadline)
+
+        $endUtc = [DateTime]::UtcNow
+        $lines[2] = "window_utc=$($StartUtc.ToString('o'))..$($endUtc.ToString('o'))"
+        if ($queryError) { $lines.Add("  query_error=$queryError") }
+        if ($matching.Count -eq 0) {
+            $lines.Add("  <no matching Application Error 1000 or Windows Error Reporting 1001 records found>")
+        }
+        foreach ($event in $matching) {
+            $eventMap = Get-EventDataMap $event
+            $eventXml = [xml]$event.ToXml()
+            $values = @($eventXml.Event.EventData.Data | ForEach-Object {
+                [string]$_.'#text'
+            })
+            if ($event.Id -eq 1000) {
+                $module = Get-EventField $eventMap @("FaultingModuleName", "ModuleName") $values 3
+                $exception = Get-EventField $eventMap @("ExceptionCode") $values 6
+                $offset = Get-EventField $eventMap @("FaultingOffset", "FaultOffset") $values 7
+            } else {
+                $module = Get-EventField $eventMap @("P4", "Param4", "param4") $values -1
+                $exception = Get-EventField $eventMap @("P7", "Param7", "param7") $values -1
+                $offset = Get-EventField $eventMap @("P8", "Param8", "param8") $values -1
+            }
+            $message = ($event.Message -replace '[\r\n]+', ' ').Trim()
+            if ($module -eq "<not present>" -and
+                $message -match '(?i)Faulting module name:\s*([^,]+)') {
+                $module = $Matches[1].Trim()
+            }
+            if ($exception -eq "<not present>" -and
+                $message -match '(?i)Exception code:\s*(\S+)') {
+                $exception = $Matches[1]
+            }
+            if ($offset -eq "<not present>" -and
+                $message -match '(?i)Fault offset:\s*(\S+)') {
+                $offset = $Matches[1]
+            }
+            $lines.Add("  time=$($event.TimeCreated.ToUniversalTime().ToString('o')) provider=$($event.ProviderName) id=$($event.Id) record_id=$($event.RecordId) faulting_module=$module exception_code=$exception fault_offset=$offset")
+            $lines.Add("  message=$message")
+        }
+
+        $uniqueLogs = @($LogPaths | Where-Object {
+            -not [string]::IsNullOrWhiteSpace($_)
+        } | Select-Object -Unique)
+        foreach ($logPath in $uniqueLogs) {
+            $lines.Add("Last 40 log lines: $logPath")
+            if (Test-Path -LiteralPath $logPath) {
+                foreach ($line in @(Get-Content -LiteralPath $logPath -Tail 40)) {
+                    $lines.Add([string]$line)
+                }
+            } else {
+                $lines.Add("  <missing>")
+            }
+        }
+        $lines | Set-Content -Encoding UTF8 $path
+        Write-Host "RetroArch failure forensics saved to $path"
+        $lines | ForEach-Object { Write-Host $_ }
+    } catch {
+        Write-Warning "Unable to collect RetroArch failure forensics for $Name without changing the original failure: $($_.Exception.Message)"
+    }
+}
 $config = Join-Path $WorkDirectory "retroarch-ci.cfg"
 @"
 video_driver = "gdi"
@@ -100,6 +260,7 @@ function Invoke-ArcDroid([int]$Frames, [bool]$TakeScreenshot) {
     $runId = [Guid]::NewGuid().ToString("N")
     $stdout = Join-Path $WorkDirectory "retroarch-$runId.stdout.log"
     $stderr = Join-Path $WorkDirectory "retroarch-$runId.stderr.log"
+    $runStartUtc = [DateTime]::UtcNow
     $process = Start-Process -FilePath $retroArch -ArgumentList $arguments `
         -Wait -PassThru -NoNewWindow `
         -RedirectStandardOutput $stdout -RedirectStandardError $stderr
@@ -107,8 +268,14 @@ function Invoke-ArcDroid([int]$Frames, [bool]$TakeScreenshot) {
     if (Test-Path $stdout) { $output += Get-Content $stdout }
     if (Test-Path $stderr) { $output += Get-Content $stderr }
     $output | Tee-Object -FilePath $log -Append | Write-Host
+    if ($process.ExitCode -ne 0) {
+        Write-RetroArchFailureEvidence "invoke-arcdroid-$runId" $process `
+            $runStartUtc @($log, $stdout, $stderr) `
+            "Invoke-ArcDroid expected exit code 0"
+        Remove-Item -Force -ErrorAction SilentlyContinue $stdout, $stderr
+        throw "RetroArch exited with code $($process.ExitCode)"
+    }
     Remove-Item -Force -ErrorAction SilentlyContinue $stdout, $stderr
-    if ($process.ExitCode -ne 0) { throw "RetroArch exited with code $($process.ExitCode)" }
 }
 
 Invoke-ArcDroid 600 $true
@@ -125,6 +292,7 @@ function Try-InSessionReloads {
     $stdout = Join-Path $WorkDirectory "network-reload.stdout.log"
     $stderr = Join-Path $WorkDirectory "network-reload.stderr.log"
     $attemptLog = Join-Path $evidenceDirectory "network-reload-attempt.log"
+    $runStartUtc = [DateTime]::UtcNow
     $process = Start-Process -FilePath $retroArch -ArgumentList $arguments `
         -PassThru -NoNewWindow -RedirectStandardOutput $stdout -RedirectStandardError $stderr
     try {
@@ -165,6 +333,11 @@ function Try-InSessionReloads {
         if (Test-Path $stdout) { Get-Content $stdout | Add-Content -Encoding UTF8 $attemptLog }
         if (Test-Path $stderr) { Get-Content $stderr | Add-Content -Encoding UTF8 $attemptLog }
         $_ | Out-String | Add-Content -Encoding UTF8 $attemptLog
+        if ($process.HasExited) {
+            Write-RetroArchFailureEvidence "network-reload" $process `
+                $runStartUtc @($attemptLog, $stdout, $stderr) `
+                "in-session reload exited unexpectedly"
+        }
         return $false
     }
     finally {
@@ -291,15 +464,25 @@ function Start-MediaRun([string]$MediaPath, [string]$Name) {
     Remove-Item -Force -ErrorAction SilentlyContinue $retroLog
     $arguments = @("--config=$config", "--libretro=$core", "--verbose",
         "--log-file=$retroLog", $MediaPath)
+    $runStartUtc = [DateTime]::UtcNow
     $process = Start-Process -FilePath $retroArch -ArgumentList $arguments `
         -PassThru -NoNewWindow -RedirectStandardOutput $stdout -RedirectStandardError $stderr
     $udp = [System.Net.Sockets.UdpClient]::new()
     $udp.Client.ReceiveTimeout = 500
     $udp.Connect("127.0.0.1", 55355)
+    $run = @{ Process = $process; Udp = $udp; Stdout = $stdout; Stderr = $stderr;
+        RetroLog = $retroLog; Name = $Name; StartUtc = $runStartUtc;
+        FailureEvidenceWritten = $false; FailureReported = $false }
     $deadline = [DateTime]::UtcNow.AddSeconds(10)
     $ready = $false
     while ([DateTime]::UtcNow -lt $deadline -and -not $ready) {
-        if ($process.HasExited) { throw "$Name exited before its command port became ready" }
+        if ($process.HasExited) {
+            Write-MediaRunFailureEvidence $run `
+                "exited before its command port became ready"
+            $run["FailureReported"] = $true
+            $udp.Dispose()
+            throw "$Name exited before its command port became ready with code $($process.ExitCode)"
+        }
         try {
             $bytes = [Text.Encoding]::ASCII.GetBytes("GET_STATUS")
             [void]$udp.Send($bytes, $bytes.Length)
@@ -312,17 +495,28 @@ function Start-MediaRun([string]$MediaPath, [string]$Name) {
     }
     if (-not $ready) { throw "$Name did not answer GET_STATUS within 10 seconds" }
     Start-Sleep -Seconds 2
-    return @{ Process = $process; Udp = $udp; Stdout = $stdout; Stderr = $stderr;
-        RetroLog = $retroLog; Name = $Name }
+    return $run
+}
+
+function Write-MediaRunFailureEvidence($Run, [string]$Context) {
+    if ($Run["FailureEvidenceWritten"]) { return }
+    $Run["FailureEvidenceWritten"] = $true
+    Write-RetroArchFailureEvidence $Run.Name $Run.Process $Run.StartUtc `
+        @($Run.RetroLog, $Run.Stdout, $Run.Stderr) $Context
 }
 
 function Send-MediaCommand($Run, [string]$Command) {
-    if ($Run.Process.HasExited) { throw "$($Run.Name) exited before $Command" }
+    if ($Run.Process.HasExited) {
+        Write-MediaRunFailureEvidence $Run "exited before network command $Command"
+        $Run["FailureReported"] = $true
+        throw "$($Run.Name) exited before $Command with code $($Run.Process.ExitCode)"
+    }
     $bytes = [Text.Encoding]::ASCII.GetBytes($Command)
     [void]$Run.Udp.Send($bytes, $bytes.Length)
 }
 
 function Stop-MediaRun($Run) {
+    $unexpectedAtEntry = $Run.Process.HasExited
     try {
         if (-not $Run.Process.HasExited) {
             Send-QuitPair $Run.Udp
@@ -331,8 +525,16 @@ function Stop-MediaRun($Run) {
             }
             $Run.Process.WaitForExit()
         }
-        if ($Run.Process.ExitCode -ne 0) {
-            throw "$($Run.Name) exited with code $($Run.Process.ExitCode)"
+        if ($unexpectedAtEntry -or $Run.Process.ExitCode -ne 0) {
+            $context = if ($unexpectedAtEntry) {
+                "process had already exited before Stop-MediaRun requested QUIT"
+            } else {
+                "Stop-MediaRun expected exit code 0 after QUIT"
+            }
+            Write-MediaRunFailureEvidence $Run $context
+            if (-not $Run["FailureReported"]) {
+                throw "$($Run.Name) exited unexpectedly with code $($Run.Process.ExitCode)"
+            }
         }
     } finally {
         $Run.Udp.Dispose()
@@ -395,6 +597,12 @@ function Capture-MediaSignature($Run, [string]$Name) {
     $shot = $null
     while ([DateTime]::UtcNow -lt $deadline -and -not $shot) {
         Start-Sleep -Milliseconds 100
+        if ($Run.Process.HasExited) {
+            Write-MediaRunFailureEvidence $Run `
+                "died while a SCREENSHOT request was outstanding for $Name"
+            $Run["FailureReported"] = $true
+            throw "$($Run.Name) died with code $($Run.Process.ExitCode) while the $Name SCREENSHOT request was outstanding"
+        }
         $shot = Get-ChildItem -Path $evidenceDirectory -Filter "*.png" -ErrorAction SilentlyContinue |
             Where-Object { $before -notcontains $_.FullName } |
             Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1
@@ -552,4 +760,628 @@ if ($helpers.Count -ne 1 -or $helpers[0].Length -ne 655360) {
 Write-Host "Slice 5a Windows RetroArch: top-bit Launch: decision and helper publication passed"
 if ($env:GITHUB_STEP_SUMMARY) {
     Add-Content -Encoding UTF8 $env:GITHUB_STEP_SUMMARY "- Slice 5a launch: top-bit application produced the escaped Launch: decision and a 640 KiB save helper."
+}
+
+# Slice 5c is intentionally interactive: no choice record is seeded. Capture
+# explicit Application 1 and Application 2 guest signatures, show the chooser
+# under Auto,
+# inject Down/Return into RetroArch's actual window, and prove both the pick
+# and its subsequent remembered replay from frontend screenshots and logs.
+function Get-RunLogTail($Run) {
+    if (Test-Path -LiteralPath $Run.RetroLog) {
+        return (@((Get-Content $Run.RetroLog -Tail 20) -replace '[\r\n]+', ' ') -join ' | ')
+    }
+    return "<missing $($Run.RetroLog)>"
+}
+
+function Capture-RawScreenshot($Run, [string]$Name) {
+    $before = @{}
+    Get-ChildItem -Path $evidenceDirectory -Filter "*.png" -ErrorAction SilentlyContinue |
+        ForEach-Object { $before[$_.FullName] = "$($_.LastWriteTimeUtc.Ticks):$($_.Length)" }
+    Send-MediaCommand $Run "SCREENSHOT"
+    $deadline = [DateTime]::UtcNow.AddSeconds(10)
+    $shot = $null
+    while ([DateTime]::UtcNow -lt $deadline -and -not $shot) {
+        Start-Sleep -Milliseconds 100
+        if ($Run.Process.HasExited) {
+            Write-MediaRunFailureEvidence $Run `
+                "died while a SCREENSHOT request was outstanding for $Name"
+            $Run["FailureReported"] = $true
+            throw "$($Run.Name) died with code $($Run.Process.ExitCode) while the $Name SCREENSHOT request was outstanding"
+        }
+        $shot = Get-ChildItem -Path $evidenceDirectory -Filter "*.png" -ErrorAction SilentlyContinue |
+            Where-Object {
+                $stamp = "$($_.LastWriteTimeUtc.Ticks):$($_.Length)"
+                (-not $before.ContainsKey($_.FullName)) -or
+                    $before[$_.FullName] -ne $stamp
+            } |
+            Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1
+    }
+    if (-not $shot) {
+        $processState = if ($Run.Process.HasExited) {
+            "exited code=$($Run.Process.ExitCode)"
+        } else { "running pid=$($Run.Process.Id)" }
+        $files = @(Get-ChildItem -Path $evidenceDirectory -ErrorAction SilentlyContinue |
+            Sort-Object Name | ForEach-Object {
+                "$($_.Name):$($_.Length)b:$($_.LastWriteTimeUtc.ToString('o'))"
+            }) -join ", "
+        $logTail = Get-RunLogTail $Run
+        throw "$Name screenshot step timed out after 10 seconds; process=$processState; evidence_files=[$files]; retroarch_log_tail=[$logTail]"
+    }
+    $renamed = Join-Path $evidenceDirectory "$Name.png"
+    Move-Item -Force $shot.FullName $renamed
+    $image = [System.Drawing.Bitmap]::new($renamed)
+    $sampledColours = [System.Collections.Generic.HashSet[int]]::new()
+    $canonical = $null
+    $graphics = $null
+    $bitmapData = $null
+    $pixelHasher = $null
+    try {
+        # RetroArch screenshots are frontend-sized representations of the
+        # current core frame. Hash every decoded pixel: the chooser fixture's
+        # guest applications can differ in a narrow row that a grid sampler
+        # misses when the woven renderer exposes the mode as 640x512.
+        $canonical = [System.Drawing.Bitmap]::new(
+            $image.Width, $image.Height,
+            [System.Drawing.Imaging.PixelFormat]::Format32bppArgb)
+        $graphics = [System.Drawing.Graphics]::FromImage($canonical)
+        $graphics.DrawImageUnscaled($image, 0, 0)
+        $graphics.Dispose()
+        $graphics = $null
+        $rectangle = [System.Drawing.Rectangle]::new(
+            0, 0, $canonical.Width, $canonical.Height)
+        $bitmapData = $canonical.LockBits(
+            $rectangle,
+            [System.Drawing.Imaging.ImageLockMode]::ReadOnly,
+            [System.Drawing.Imaging.PixelFormat]::Format32bppArgb)
+        $rowBytes = $canonical.Width * 4
+        $pixels = [byte[]]::new($rowBytes * $canonical.Height)
+        for ($y = 0; $y -lt $canonical.Height; $y++) {
+            $source = [IntPtr]::Add(
+                $bitmapData.Scan0, $y * $bitmapData.Stride)
+            [Runtime.InteropServices.Marshal]::Copy(
+                $source, $pixels, $y * $rowBytes, $rowBytes)
+            for ($x = 0; $x -lt $canonical.Width; $x++) {
+                $offset = $y * $rowBytes + $x * 4
+                $rgb = (([int]$pixels[$offset + 2] -shl 16) -bor ([int]$pixels[$offset + 1] -shl 8) -bor [int]$pixels[$offset])
+                [void]$sampledColours.Add($rgb)
+            }
+        }
+        $canonical.UnlockBits($bitmapData)
+        $bitmapData = $null
+        $pixelHasher = [Security.Cryptography.SHA256]::Create()
+        $visualSignature = ([BitConverter]::ToString(
+            $pixelHasher.ComputeHash($pixels))).Replace("-", "").ToLowerInvariant()
+        $dimensions = "$($image.Width)x$($image.Height)"
+        $backgroundPixel = "{0:x6}" -f
+            ($image.GetPixel(0, 0).ToArgb() -band 0x00ffffff)
+        $chooserFocusPixel = "{0:x6}" -f
+            ($image.GetPixel(60, 100).ToArgb() -band 0x00ffffff)
+        $chooserRow2Pixel = "{0:x6}" -f
+            ($image.GetPixel(60, 120).ToArgb() -band 0x00ffffff)
+        $chooserRow3Pixel = "{0:x6}" -f
+            ($image.GetPixel(60, 140).ToArgb() -band 0x00ffffff)
+    } finally {
+        if ($pixelHasher) { $pixelHasher.Dispose() }
+        if ($bitmapData) { $canonical.UnlockBits($bitmapData) }
+        if ($graphics) { $graphics.Dispose() }
+        if ($canonical) { $canonical.Dispose() }
+        $image.Dispose()
+    }
+    $hash = (Get-FileHash -Algorithm SHA256 $renamed).Hash.ToLowerInvariant()
+    "$Name path=$renamed dimensions=$dimensions sampled_colours=$($sampledColours.Count) background_rgb=$backgroundPixel chooser_row1_rgb=$chooserFocusPixel chooser_row2_rgb=$chooserRow2Pixel chooser_row3_rgb=$chooserRow3Pixel visual_signature=$visualSignature png_sha256=$hash" |
+        Add-Content -Encoding ASCII (Join-Path $evidenceDirectory "launch-chooser-signatures.txt")
+    return @{ Path = $renamed; Hash = $hash; Dimensions = $dimensions;
+        Colours = $sampledColours.Count; BackgroundPixel = $backgroundPixel;
+        ChooserFocusPixel = $chooserFocusPixel; ChooserRow2Pixel = $chooserRow2Pixel;
+        ChooserRow3Pixel = $chooserRow3Pixel; VisualSignature = $visualSignature }
+}
+
+function Capture-ExpectedVisualSignature($Run, [string]$Name, $Expected) {
+    $deadline = [DateTime]::UtcNow.AddSeconds(12)
+    $attempt = 0
+    do {
+        $attempt++
+        $capture = Capture-RawScreenshot $Run "$Name-$attempt"
+        if ($capture.VisualSignature -eq $Expected.VisualSignature -and
+            $capture.Dimensions -eq $Expected.Dimensions) { return $capture }
+        Start-Sleep -Milliseconds 250
+    } while ([DateTime]::UtcNow -lt $deadline)
+    $logTail = Get-RunLogTail $Run
+    throw "$Name guest-signature step did not reach expected visual_signature=$($Expected.VisualSignature) dimensions=$($Expected.Dimensions) within 12 seconds; observed visual_signature=$($capture.VisualSignature) png_sha256=$($capture.Hash) dimensions=$($capture.Dimensions) sampled_colours=$($capture.Colours); retroarch_log_tail=[$logTail]"
+}
+
+function Capture-StableRawScreenshot($Run, [string]$Name) {
+    $deadline = [DateTime]::UtcNow.AddSeconds(12)
+    $attempt = 0
+    $previous = $null
+    do {
+        $attempt++
+        $capture = Capture-RawScreenshot $Run "$Name-$attempt"
+        if ($previous -and
+            $capture.VisualSignature -eq $previous.VisualSignature -and
+            $capture.Dimensions -eq $previous.Dimensions) { return $capture }
+        $previous = $capture
+        Start-Sleep -Milliseconds 250
+    } while ([DateTime]::UtcNow -lt $deadline)
+    $observed = if ($capture) {
+        "visual_signature=$($capture.VisualSignature) png_sha256=$($capture.Hash) dimensions=$($capture.Dimensions) sampled_colours=$($capture.Colours)"
+    } else { "no capture" }
+    $logTail = Get-RunLogTail $Run
+    throw "$Name guest-signature step did not stabilize within 12 seconds; observed $observed; retroarch_log_tail=[$logTail]"
+}
+
+Add-Type @"
+using System;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+
+public static class ArcDroidWindowInput {
+    private const uint INPUT_KEYBOARD = 1;
+    private const uint KEYEVENTF_EXTENDEDKEY = 0x0001;
+    private const uint KEYEVENTF_KEYUP = 0x0002;
+    private const uint KEYEVENTF_SCANCODE = 0x0008;
+
+    [StructLayout(LayoutKind.Sequential, Pack = 8)]
+    public struct KEYBDINPUT {
+        public ushort wVk;
+        public ushort wScan;
+        public uint dwFlags;
+        public uint time;
+        public UIntPtr dwExtraInfo;
+    }
+
+    // RetroArch-Win64 and this runner are x64. Native INPUT is 40 bytes on
+    // x64: the four-byte type is followed by four bytes of alignment, then
+    // the union at offset 8. Its size is set by 32-byte MOUSEINPUT even when
+    // the KEYBDINPUT (24 bytes) member is used.
+    [StructLayout(LayoutKind.Explicit, Size = 40)]
+    public struct INPUT {
+        [FieldOffset(0)] public uint type;
+        [FieldOffset(8)] public KEYBDINPUT ki;
+    }
+
+    [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr window, int command);
+    [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr window);
+    [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")] public static extern bool BringWindowToTop(IntPtr window);
+    [DllImport("user32.dll")] public static extern IntPtr SetFocus(IntPtr window);
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern bool AttachThreadInput(uint attach, uint attachTo, bool attachInput);
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern uint GetWindowThreadProcessId(IntPtr window, out uint processId);
+    [DllImport("kernel32.dll")] public static extern uint GetCurrentThreadId();
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern uint SendInput(uint count, INPUT[] inputs, int size);
+
+    public static int InputSize() { return Marshal.SizeOf(typeof(INPUT)); }
+    public static int KeyboardInputSize() { return Marshal.SizeOf(typeof(KEYBDINPUT)); }
+    public static int KeyboardUnionOffset() {
+        return Marshal.OffsetOf(typeof(INPUT), "ki").ToInt32();
+    }
+
+    public static void SendScanCode(ushort scanCode, bool extended, bool keyUp) {
+        if (IntPtr.Size != 8 || InputSize() != 40 ||
+            KeyboardInputSize() != 24 || KeyboardUnionOffset() != 8)
+            throw new InvalidOperationException(String.Format(
+                "Unexpected Win32 input layout: pointer={0} INPUT={1} KEYBDINPUT={2} union_offset={3}",
+                IntPtr.Size, InputSize(), KeyboardInputSize(), KeyboardUnionOffset()));
+        INPUT input = new INPUT();
+        input.type = INPUT_KEYBOARD;
+        input.ki.wVk = 0;
+        input.ki.wScan = scanCode;
+        input.ki.dwFlags = KEYEVENTF_SCANCODE;
+        if (extended) input.ki.dwFlags |= KEYEVENTF_EXTENDEDKEY;
+        if (keyUp) input.ki.dwFlags |= KEYEVENTF_KEYUP;
+        uint sent = SendInput(1, new INPUT[] { input }, InputSize());
+        if (sent != 1)
+            throw new Win32Exception(Marshal.GetLastWin32Error(), String.Format(
+                "SendInput inserted {0} of 1 scan-code events", sent));
+    }
+}
+"@
+
+$chooserInputDiagnostics = Join-Path $evidenceDirectory "launch-chooser-input.txt"
+Remove-Item -Force -ErrorAction SilentlyContinue $chooserInputDiagnostics
+function Write-ChooserInputDiagnostic([string]$Message) {
+    $line = "$(Get-Date -Format o) $Message"
+    Write-Host $line
+    $line | Add-Content -Encoding ASCII $chooserInputDiagnostics
+}
+
+$inputSize = [ArcDroidWindowInput]::InputSize()
+$keyboardInputSize = [ArcDroidWindowInput]::KeyboardInputSize()
+$keyboardUnionOffset = [ArcDroidWindowInput]::KeyboardUnionOffset()
+Write-ChooserInputDiagnostic "input_layout pointer_bytes=$([IntPtr]::Size) input_bytes=$inputSize keybdinput_bytes=$keyboardInputSize keyboard_union_offset=$keyboardUnionOffset"
+if ([IntPtr]::Size -ne 8 -or $inputSize -ne 40 -or
+    $keyboardInputSize -ne 24 -or $keyboardUnionOffset -ne 8) {
+    throw "Unexpected Win32 input layout before keyboard injection: pointer=$([IntPtr]::Size) INPUT=$inputSize KEYBDINPUT=$keyboardInputSize union_offset=$keyboardUnionOffset; diagnostics=$chooserInputDiagnostics"
+}
+
+function Format-WindowHandle([IntPtr]$Handle) {
+    return ("0x{0:x}" -f $Handle.ToInt64())
+}
+
+function Send-HardwareScanCode([UInt16]$ScanCode, [bool]$Extended,
+                               [string]$Name, [int]$HoldMilliseconds) {
+    Write-ChooserInputDiagnostic "$Name key-down scan_code=0x$($ScanCode.ToString('x2')) extended=$Extended hold_ms=$HoldMilliseconds"
+    [ArcDroidWindowInput]::SendScanCode($ScanCode, $Extended, $false)
+    try {
+        Start-Sleep -Milliseconds $HoldMilliseconds
+    } finally {
+        [ArcDroidWindowInput]::SendScanCode($ScanCode, $Extended, $true)
+        Write-ChooserInputDiagnostic "$Name key-up scan_code=0x$($ScanCode.ToString('x2')) extended=$Extended"
+    }
+}
+
+function Set-ChooserWindowForeground($Run) {
+    $deadline = [DateTime]::UtcNow.AddSeconds(10)
+    $handle = [IntPtr]::Zero
+    while ([DateTime]::UtcNow -lt $deadline -and $handle -eq [IntPtr]::Zero) {
+        if ($Run.Process.HasExited) {
+            Write-MediaRunFailureEvidence $Run `
+                "died while acquiring the window for keyboard injection"
+            $Run["FailureReported"] = $true
+            throw "$($Run.Name) keyboard-injection step found an exited process code=$($Run.Process.ExitCode); retroarch_log_tail=[$(Get-RunLogTail $Run)]"
+        }
+        $Run.Process.Refresh()
+        $handle = $Run.Process.MainWindowHandle
+        if ($handle -eq [IntPtr]::Zero) { Start-Sleep -Milliseconds 100 }
+    }
+    if ($handle -eq [IntPtr]::Zero) {
+        throw "$($Run.Name) keyboard-injection step observed no main window within 10 seconds; process_pid=$($Run.Process.Id); retroarch_log_tail=[$(Get-RunLogTail $Run)]"
+    }
+    [void][ArcDroidWindowInput]::ShowWindow($handle, 9)
+    $setResult = [ArcDroidWindowInput]::SetForegroundWindow($handle)
+    Start-Sleep -Milliseconds 250
+    $foreground = [ArcDroidWindowInput]::GetForegroundWindow()
+    Write-ChooserInputDiagnostic "focus direct_set=$setResult target=$(Format-WindowHandle $handle) foreground=$(Format-WindowHandle $foreground) process_pid=$($Run.Process.Id)"
+    if ($foreground -ne $handle) {
+        # Windows can refuse SetForegroundWindow even when it returns success.
+        # A real Alt tap marks this process as the most recent input source,
+        # after which another foreground request is normally allowed.
+        Send-HardwareScanCode 0x38 $false "Alt-focus-workaround" 50
+        $setResult = [ArcDroidWindowInput]::SetForegroundWindow($handle)
+        Start-Sleep -Milliseconds 250
+        $foreground = [ArcDroidWindowInput]::GetForegroundWindow()
+        Write-ChooserInputDiagnostic "focus after_alt_set=$setResult target=$(Format-WindowHandle $handle) foreground=$(Format-WindowHandle $foreground)"
+    }
+    if ($foreground -ne $handle) {
+        # If the runner still owns foreground activation elsewhere, temporarily
+        # share that thread's input queue (and the target's queue) while moving
+        # focus. Always detach the queues before injecting the chooser keys.
+        [uint32]$foregroundPid = 0
+        [uint32]$targetPid = 0
+        $currentThread = [ArcDroidWindowInput]::GetCurrentThreadId()
+        $foregroundThread = if ($foreground -ne [IntPtr]::Zero) {
+            [ArcDroidWindowInput]::GetWindowThreadProcessId($foreground, [ref]$foregroundPid)
+        } else { 0 }
+        $targetThread = [ArcDroidWindowInput]::GetWindowThreadProcessId($handle, [ref]$targetPid)
+        $attachedForeground = $false
+        $attachedTarget = $false
+        try {
+            if ($foregroundThread -and $foregroundThread -ne $currentThread) {
+                $attachedForeground = [ArcDroidWindowInput]::AttachThreadInput(
+                    $currentThread, $foregroundThread, $true)
+            }
+            if ($targetThread -and $targetThread -ne $currentThread -and
+                $targetThread -ne $foregroundThread) {
+                $attachedTarget = [ArcDroidWindowInput]::AttachThreadInput(
+                    $currentThread, $targetThread, $true)
+            }
+            $topResult = [ArcDroidWindowInput]::BringWindowToTop($handle)
+            $setResult = [ArcDroidWindowInput]::SetForegroundWindow($handle)
+            $focusResult = [ArcDroidWindowInput]::SetFocus($handle)
+            Write-ChooserInputDiagnostic "focus attached current_thread=$currentThread foreground_thread=$foregroundThread foreground_pid=$foregroundPid target_thread=$targetThread target_pid=$targetPid attached_foreground=$attachedForeground attached_target=$attachedTarget bring_to_top=$topResult set=$setResult set_focus=$(Format-WindowHandle $focusResult)"
+        } finally {
+            if ($attachedTarget) {
+                [void][ArcDroidWindowInput]::AttachThreadInput(
+                    $currentThread, $targetThread, $false)
+            }
+            if ($attachedForeground) {
+                [void][ArcDroidWindowInput]::AttachThreadInput(
+                    $currentThread, $foregroundThread, $false)
+            }
+        }
+        Start-Sleep -Milliseconds 250
+        $foreground = [ArcDroidWindowInput]::GetForegroundWindow()
+        Write-ChooserInputDiagnostic "focus after_attach target=$(Format-WindowHandle $handle) foreground=$(Format-WindowHandle $foreground)"
+    }
+    if ($foreground -ne $handle) {
+        throw "$($Run.Name) keyboard-injection step could not verify the RetroArch foreground window after direct, Alt-tap, and AttachThreadInput attempts; target=$(Format-WindowHandle $handle) foreground=$(Format-WindowHandle $foreground) process_pid=$($Run.Process.Id); diagnostics=$chooserInputDiagnostics; retroarch_log_tail=[$(Get-RunLogTail $Run)]"
+    }
+    return $handle
+}
+
+function Get-ChooserFocusState($Capture) {
+    if ($Capture.Dimensions -ne "640x480") { return "wrong-dimensions" }
+    if ($Capture.ChooserFocusPixel -eq "a8d8ff" -and
+        $Capture.ChooserRow2Pixel -eq "101a2a") { return "row1" }
+    if ($Capture.ChooserFocusPixel -eq "101a2a" -and
+        $Capture.ChooserRow2Pixel -eq "a8d8ff") { return "row2" }
+    if ($Capture.ChooserFocusPixel -eq "101a2a" -and
+        $Capture.ChooserRow2Pixel -eq "101a2a" -and
+        $Capture.ChooserRow3Pixel -eq "a8d8ff") { return "row3" }
+    return "unrecognized"
+}
+
+function Move-ChooserFocusToSecondRow($Run, $InitialCapture,
+                                      [IntPtr]$TargetHandle) {
+    $observations = [System.Collections.Generic.List[string]]::new()
+    for ($downAttempt = 1; $downAttempt -le 3; $downAttempt++) {
+        $foreground = [ArcDroidWindowInput]::GetForegroundWindow()
+        if ($foreground -ne $TargetHandle) {
+            Write-ChooserInputDiagnostic "Down attempt=$downAttempt lost_foreground target=$(Format-WindowHandle $TargetHandle) foreground=$(Format-WindowHandle $foreground); retrying focus acquisition"
+            $TargetHandle = Set-ChooserWindowForeground $Run
+            $foreground = [ArcDroidWindowInput]::GetForegroundWindow()
+        }
+        Write-ChooserInputDiagnostic "Down attempt=$downAttempt foreground=$(Format-WindowHandle $foreground)"
+        Send-HardwareScanCode 0x50 $true "Down" 150
+        Start-Sleep -Milliseconds 200
+        $recognized = $false
+        for ($captureAttempt = 1; $captureAttempt -le 3; $captureAttempt++) {
+            $capture = Capture-RawScreenshot $Run "launch-chooser-down-$downAttempt-$captureAttempt"
+            $state = Get-ChooserFocusState $capture
+            $observation = "down_attempt=$downAttempt capture_attempt=$captureAttempt state=$state visual_signature=$($capture.VisualSignature) png_sha256=$($capture.Hash) dimensions=$($capture.Dimensions) row1_rgb=$($capture.ChooserFocusPixel) row2_rgb=$($capture.ChooserRow2Pixel) row3_rgb=$($capture.ChooserRow3Pixel)"
+            $observations.Add($observation)
+            Write-ChooserInputDiagnostic $observation
+            if ($state -eq "row2" -and
+                $capture.VisualSignature -ne $InitialCapture.VisualSignature) {
+                return $capture
+            }
+            if ($state -eq "row1" -or $state -eq "row3") {
+                $recognized = $true
+                break
+            }
+            Start-Sleep -Milliseconds 150
+        }
+        if ($recognized -and $state -eq "row3") { break }
+    }
+    $foreground = [ArcDroidWindowInput]::GetForegroundWindow()
+    throw "$($Run.Name) Down injection never moved chooser focus from row 1 to row 2 after 3 hardware scan-code attempts; foreground=$(Format-WindowHandle $foreground); observations=[$($observations -join ' | ')]; diagnostics=$chooserInputDiagnostics; retroarch_log_tail=[$(Get-RunLogTail $Run)]"
+}
+
+function Send-ChooserKeyboardPick($Run, $InitialCapture) {
+    $handle = Set-ChooserWindowForeground $Run
+    [void](Move-ChooserFocusToSecondRow $Run $InitialCapture $handle)
+    Start-Sleep -Milliseconds 250
+    $foreground = [ArcDroidWindowInput]::GetForegroundWindow()
+    if ($foreground -ne $handle) {
+        Write-ChooserInputDiagnostic "Enter lost_foreground target=$(Format-WindowHandle $handle) foreground=$(Format-WindowHandle $foreground); retrying focus acquisition"
+        $handle = Set-ChooserWindowForeground $Run
+        $foreground = [ArcDroidWindowInput]::GetForegroundWindow()
+    }
+    Write-ChooserInputDiagnostic "Enter foreground=$(Format-WindowHandle $foreground)"
+    Send-HardwareScanCode 0x1c $false "Enter" 150
+
+    $deadline = [DateTime]::UtcNow.AddSeconds(10)
+    while ([DateTime]::UtcNow -lt $deadline) {
+        if ($Run.Process.HasExited) {
+            Write-MediaRunFailureEvidence $Run `
+                "died after Enter injection while awaiting the chooser decision"
+            $Run["FailureReported"] = $true
+            throw "$($Run.Name) exited after Enter injection code=$($Run.Process.ExitCode); diagnostics=$chooserInputDiagnostics; retroarch_log_tail=[$(Get-RunLogTail $Run)]"
+        }
+        if ((Test-Path -LiteralPath $Run.RetroLog) -and
+            (Select-String -Path $Run.RetroLog -SimpleMatch "chooser chose target" -Quiet)) {
+            Write-ChooserInputDiagnostic "Enter observed chooser chose target"
+            return
+        }
+        Start-Sleep -Milliseconds 100
+    }
+    throw "$($Run.Name) Enter injection did not produce 'chooser chose target' within 10 seconds; foreground=$(Format-WindowHandle ([ArcDroidWindowInput]::GetForegroundWindow())); diagnostics=$chooserInputDiagnostics; retroarch_log_tail=[$(Get-RunLogTail $Run)]"
+}
+
+function Wait-ChooserPostReinitQuiet($Run) {
+    $deadline = [DateTime]::UtcNow.AddSeconds(15)
+    $transitionObservedUtc = $null
+    $transitionKind = $null
+    Write-ChooserInputDiagnostic "post-choice quiet wait started; no SCREENSHOT request outstanding"
+    while ([DateTime]::UtcNow -lt $deadline) {
+        if ($Run.Process.HasExited) {
+            Write-MediaRunFailureEvidence $Run `
+                "died during the post-choice video-driver quiet wait with NO screenshot request outstanding"
+            $Run["FailureReported"] = $true
+            throw "$($Run.Name) died with code $($Run.Process.ExitCode) during the post-choice video-driver quiet wait with NO screenshot request outstanding"
+        }
+
+        $lines = if (Test-Path -LiteralPath $Run.RetroLog) {
+            @(Get-Content -LiteralPath $Run.RetroLog)
+        } else { @() }
+        $choiceIndex = -1
+        for ($index = $lines.Count - 1; $index -ge 0; --$index) {
+            if ($lines[$index].Contains("chooser chose target")) {
+                $choiceIndex = $index
+                break
+            }
+        }
+        if ($choiceIndex -ge 0) {
+            $postChoice = if ($choiceIndex + 1 -lt $lines.Count) {
+                @($lines[($choiceIndex + 1)..($lines.Count - 1)])
+            } else { @() }
+            $hasAvInfo = @($postChoice | Where-Object {
+                $_.Contains("SET_SYSTEM_AV_INFO")
+            }).Count -gt 0
+            $hasGeometry = @($postChoice | Where-Object {
+                $_.Contains("SET_GEOMETRY")
+            }).Count -gt 0
+            $hasGdiDisplay = @($postChoice | Where-Object {
+                $_.Contains('Found display driver: "gdi"')
+            }).Count -gt 0
+            $hasMidiInput = @($postChoice | Where-Object {
+                $_.Contains('[MIDI] Input device:')
+            }).Count -gt 0
+            $hasMidiOutput = @($postChoice | Where-Object {
+                $_.Contains('[MIDI] Output device:')
+            }).Count -gt 0
+            if (-not $transitionObservedUtc -and $hasAvInfo -and $hasGdiDisplay -and
+                $hasMidiInput -and $hasMidiOutput) {
+                $transitionObservedUtc = [DateTime]::UtcNow
+                $transitionKind = "SET_SYSTEM_AV_INFO with driver re-initialisation"
+                Write-ChooserInputDiagnostic "post-choice reinit markers observed: SET_SYSTEM_AV_INFO, gdi display, MIDI input/output; continuing quiet wait for 1500 ms"
+            } elseif (-not $transitionObservedUtc -and -not $hasAvInfo -and
+                $hasGeometry) {
+                $transitionObservedUtc = [DateTime]::UtcNow
+                $transitionKind = "SET_GEOMETRY without driver re-initialisation"
+                Write-ChooserInputDiagnostic "post-choice geometry marker observed: SET_GEOMETRY; continuing quiet wait for 1500 ms"
+            }
+        }
+        if ($transitionObservedUtc -and
+            ([DateTime]::UtcNow - $transitionObservedUtc).TotalMilliseconds -ge 1500) {
+            if ($Run.Process.HasExited) {
+                Write-MediaRunFailureEvidence $Run `
+                    "died at the end of the post-choice video-driver quiet wait with NO screenshot request outstanding"
+                $Run["FailureReported"] = $true
+                throw "$($Run.Name) died with code $($Run.Process.ExitCode) during the post-choice video-driver quiet wait with NO screenshot request outstanding"
+            }
+            Write-ChooserInputDiagnostic "post-choice quiet wait complete; transition=$transitionKind process_alive=True elapsed_after_markers_ms=$([int]([DateTime]::UtcNow - $transitionObservedUtc).TotalMilliseconds)"
+            return
+        }
+        Start-Sleep -Milliseconds 100
+    }
+    throw "$($Run.Name) did not show either post-choice SET_GEOMETRY or SET_SYSTEM_AV_INFO/GDI/MIDI completion markers and survive the 1500 ms quiet interval within 15 seconds; no SCREENSHOT request was sent; retroarch_log_tail=[$(Get-RunLogTail $Run)]"
+}
+
+Copy-Item -Force (Join-Path $InputDirectory "arcdroid-chooser-test.rom") $firmware
+$chooserContent = (Resolve-Path (Join-Path $InputDirectory "arcdroid-chooser-l.adl")).Path
+$chooserContentSha1 = (Get-FileHash -Algorithm SHA1 $chooserContent).Hash.ToLowerInvariant()
+$chooserRecords = @(Get-ChildItem -LiteralPath $saveDirectory -Filter "$chooserContentSha1.choice" -File -Recurse -ErrorAction SilentlyContinue)
+if ($chooserRecords.Count) { Remove-Item -Force $chooserRecords.FullName }
+
+@"
+arcdroid_machine = "A3000"
+arcdroid_cpu = "ARM2"
+arcdroid_joystick_if = "Keyboard"
+arcdroid_disk_writes = "off"
+arcdroid_launch = "app1"
+arcdroid_launch_chooser = "remember"
+"@ | Set-Content -Encoding ASCII $coreOptions
+$explicitApp1Run = Start-MediaRun $chooserContent "launch-chooser-explicit-app1"
+try {
+    $app1Capture = Capture-StableRawScreenshot $explicitApp1Run "launch-chooser-app1-reference"
+} finally {
+    Stop-MediaRun $explicitApp1Run
+}
+if (-not (Select-String -Path $explicitApp1Run.RetroLog -SimpleMatch "decision=!Nulvane" -Quiet)) {
+    $observed = @(Get-Content $explicitApp1Run.RetroLog | Select-String -SimpleMatch "Launch:") -join " | "
+    throw "Explicit Application 1 oracle did not launch !Nulvane; observed Launch lines=[$observed]"
+}
+$helpers = @(Get-ChildItem -LiteralPath $saveDirectory -Filter "$chooserContentSha1.adl" -File -Recurse |
+    Where-Object { $_.DirectoryName -match '[\\/]arcdroid[\\/]launch$' })
+if ($helpers.Count -ne 1) {
+    throw "Explicit Application 1 oracle expected one helper, observed $($helpers.Count): $($helpers.FullName -join ', ')"
+}
+$app1HelperHash = (Get-FileHash -Algorithm SHA256 $helpers[0].FullName).Hash.ToLowerInvariant()
+$bindings = @(Get-ChildItem -LiteralPath $saveDirectory -Filter "$chooserContentSha1.bind" -File -Recurse -ErrorAction SilentlyContinue)
+if ($bindings.Count) { Remove-Item -Force $bindings.FullName }
+
+@"
+arcdroid_machine = "A3000"
+arcdroid_cpu = "ARM2"
+arcdroid_joystick_if = "Keyboard"
+arcdroid_disk_writes = "off"
+arcdroid_launch = "app2"
+arcdroid_launch_chooser = "remember"
+"@ | Set-Content -Encoding ASCII $coreOptions
+$explicitApp2Run = Start-MediaRun $chooserContent "launch-chooser-explicit-app2"
+try {
+    $app2Capture = Capture-StableRawScreenshot $explicitApp2Run "launch-chooser-app2-reference"
+} finally {
+    Stop-MediaRun $explicitApp2Run
+}
+if (-not (Select-String -Path $explicitApp2Run.RetroLog -SimpleMatch "decision=!Qaventra" -Quiet)) {
+    $observed = @(Get-Content $explicitApp2Run.RetroLog | Select-String -SimpleMatch "Launch:") -join " | "
+    throw "Explicit Application 2 oracle did not launch !Qaventra; observed Launch lines=[$observed]"
+}
+$helpers = @(Get-ChildItem -LiteralPath $saveDirectory -Filter "$chooserContentSha1.adl" -File -Recurse |
+    Where-Object { $_.DirectoryName -match '[\\/]arcdroid[\\/]launch$' })
+if ($helpers.Count -ne 1) {
+    throw "Explicit Application 2 oracle expected one helper, observed $($helpers.Count): $($helpers.FullName -join ', ')"
+}
+$app2HelperHash = (Get-FileHash -Algorithm SHA256 $helpers[0].FullName).Hash.ToLowerInvariant()
+# Guest geometry belongs to the programmed VIDC mode, not the chooser's
+# adapter-owned 640x480 surface. Require the two stable reference captures to
+# agree with each other instead of assuming how RetroArch exposes that mode.
+if ($app1Capture.Dimensions -ne $app2Capture.Dimensions) {
+    throw "Application-oracle screenshot step expected matching stable guest dimensions; observed app1=$($app1Capture.Dimensions) app2=$($app2Capture.Dimensions); app1_log_tail=[$(Get-RunLogTail $explicitApp1Run)]; app2_log_tail=[$(Get-RunLogTail $explicitApp2Run)]"
+}
+if ($app1Capture.VisualSignature -eq $app2Capture.VisualSignature -or
+    $app1HelperHash -eq $app2HelperHash) {
+    throw "Application-oracle setup was not discriminating: app1 visual_signature=$($app1Capture.VisualSignature) helper=$app1HelperHash; app2 visual_signature=$($app2Capture.VisualSignature) helper=$app2HelperHash; app1_log_tail=[$(Get-RunLogTail $explicitApp1Run)]; app2_log_tail=[$(Get-RunLogTail $explicitApp2Run)]"
+}
+
+@"
+arcdroid_machine = "A3000"
+arcdroid_cpu = "ARM2"
+arcdroid_joystick_if = "Keyboard"
+arcdroid_disk_writes = "off"
+arcdroid_launch = "auto"
+arcdroid_launch_chooser = "remember"
+"@ | Set-Content -Encoding ASCII $coreOptions
+$chooserRun = Start-MediaRun $chooserContent "launch-chooser-interactive"
+try {
+    $chooserCapture = Capture-RawScreenshot $chooserRun "launch-chooser-visible"
+    if ($chooserCapture.Dimensions -ne "640x480" -or $chooserCapture.Colours -lt 4 -or
+        $chooserCapture.BackgroundPixel -ne "101a2a" -or
+        $chooserCapture.ChooserFocusPixel -ne "a8d8ff" -or
+        $chooserCapture.ChooserRow2Pixel -ne "101a2a" -or
+        $chooserCapture.ChooserRow3Pixel -ne "101a2a" -or
+        $chooserCapture.VisualSignature -eq $app1Capture.VisualSignature -or
+        $chooserCapture.VisualSignature -eq $app2Capture.VisualSignature) {
+        throw "Chooser-recognition step expected the 640x480 ArcDroid renderer with >=4 sampled colours, background_rgb=101a2a, row1_rgb=a8d8ff, row2_rgb=101a2a and row3_rgb=101a2a; observed dimensions=$($chooserCapture.Dimensions) sampled_colours=$($chooserCapture.Colours) background_rgb=$($chooserCapture.BackgroundPixel) row1_rgb=$($chooserCapture.ChooserFocusPixel) row2_rgb=$($chooserCapture.ChooserRow2Pixel) row3_rgb=$($chooserCapture.ChooserRow3Pixel) visual_signature=$($chooserCapture.VisualSignature) png_sha256=$($chooserCapture.Hash); app1=$($app1Capture.VisualSignature) app2=$($app2Capture.VisualSignature); retroarch_log_tail=[$(Get-RunLogTail $chooserRun)]"
+    }
+    Send-ChooserKeyboardPick $chooserRun $chooserCapture
+    Wait-ChooserPostReinitQuiet $chooserRun
+    [void](Capture-ExpectedVisualSignature $chooserRun "launch-chooser-picked-app2" $app2Capture)
+} finally {
+    Stop-MediaRun $chooserRun
+}
+if (-not (Select-String -Path $chooserRun.RetroLog -SimpleMatch "chooser shown" -Quiet) -or
+    -not (Select-String -Path $chooserRun.RetroLog -SimpleMatch "chooser chose target" -Quiet) -or
+    -not (Select-String -Path $chooserRun.RetroLog -SimpleMatch "decision=!Qaventra" -Quiet)) {
+    $observed = @(Get-Content $chooserRun.RetroLog | Select-String -Pattern 'Launch:|chooser') -join " | "
+    throw "Interactive chooser log-verification step expected chooser shown, chooser chose target, and decision=!Qaventra; observed=[$observed]"
+}
+$helpers = @(Get-ChildItem -LiteralPath $saveDirectory -Filter "$chooserContentSha1.adl" -File -Recurse |
+    Where-Object { $_.DirectoryName -match '[\\/]arcdroid[\\/]launch$' })
+if ($helpers.Count -ne 1) {
+    throw "Interactive chooser helper-verification step expected one helper, observed $($helpers.Count): $($helpers.FullName -join ', ')"
+}
+$interactiveHelperHash = (Get-FileHash -Algorithm SHA256 $helpers[0].FullName).Hash.ToLowerInvariant()
+if ($interactiveHelperHash -ne $app2HelperHash -or $interactiveHelperHash -eq $app1HelperHash) {
+    throw "Interactive chooser selected the wrong helper: observed=$interactiveHelperHash expected_app2=$app2HelperHash app1=$app1HelperHash"
+}
+$chooserRecords = @(Get-ChildItem -LiteralPath $saveDirectory -Filter "$chooserContentSha1.choice" -File -Recurse)
+if ($chooserRecords.Count -ne 1) {
+    throw "Interactive chooser record-publication step expected exactly one $chooserContentSha1.choice, observed $($chooserRecords.Count): $($chooserRecords.FullName -join ', ')"
+}
+$rememberedChoice = [Convert]::ToBase64String([IO.File]::ReadAllBytes($chooserRecords[0].FullName))
+
+$rememberedRun = Start-MediaRun $chooserContent "launch-chooser-remembered"
+try {
+    [void](Capture-ExpectedVisualSignature $rememberedRun "launch-chooser-replayed-app2" $app2Capture)
+} finally {
+    Stop-MediaRun $rememberedRun
+}
+if (-not (Select-String -Path $rememberedRun.RetroLog -SimpleMatch "chooser remembered target" -Quiet) -or
+    (Select-String -Path $rememberedRun.RetroLog -SimpleMatch "chooser shown" -Quiet)) {
+    $observed = @(Get-Content $rememberedRun.RetroLog | Select-String -Pattern 'Launch:|chooser') -join " | "
+    throw "Remembered-replay log step expected chooser remembered target and no chooser shown; observed=[$observed]"
+}
+$helpers = @(Get-ChildItem -LiteralPath $saveDirectory -Filter "$chooserContentSha1.adl" -File -Recurse |
+    Where-Object { $_.DirectoryName -match '[\\/]arcdroid[\\/]launch$' })
+if ($helpers.Count -ne 1) {
+    throw "Remembered-replay helper-verification step expected one helper, observed $($helpers.Count): $($helpers.FullName -join ', ')"
+}
+$rememberedHelperHash = (Get-FileHash -Algorithm SHA256 $helpers[0].FullName).Hash.ToLowerInvariant()
+if ($rememberedHelperHash -ne $app2HelperHash -or $rememberedHelperHash -eq $app1HelperHash) {
+    throw "Remembered replay used the wrong helper: observed=$rememberedHelperHash expected_app2=$app2HelperHash app1=$app1HelperHash"
+}
+$rememberedChoiceAfter = [Convert]::ToBase64String([IO.File]::ReadAllBytes($chooserRecords[0].FullName))
+if ($rememberedChoiceAfter -ne $rememberedChoice) {
+    throw "Remembered-replay persistence step changed the choice record: before_base64=$rememberedChoice after_base64=$rememberedChoiceAfter"
+}
+Write-Host "Slice 5c Windows RetroArch: chooser screenshot, row-2 focus after held scan-code Down, scan-code Enter pick, guest signature and remembered replay passed"
+if ($env:GITHUB_STEP_SUMMARY) {
+    Add-Content -Encoding UTF8 $env:GITHUB_STEP_SUMMARY "- Slice 5c chooser: distinct 640x480 chooser observed; held hardware scan-code Down visibly moved focus to row 2 before scan-code Enter selected !Qaventra; relaunch replayed the same guest screenshot without the chooser."
 }
