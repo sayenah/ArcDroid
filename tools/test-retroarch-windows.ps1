@@ -598,22 +598,56 @@ function Capture-RawScreenshot($Run, [string]$Name) {
     Move-Item -Force $shot.FullName $renamed
     $image = [System.Drawing.Bitmap]::new($renamed)
     $sampledColours = [System.Collections.Generic.HashSet[int]]::new()
+    $canonical = $null
+    $graphics = $null
+    $bitmapData = $null
+    $pixelHasher = $null
     try {
-        for ($y = 0; $y -lt $image.Height; $y += 8) {
-            for ($x = 0; $x -lt $image.Width; $x += 8) {
-                [void]$sampledColours.Add($image.GetPixel($x, $y).ToArgb())
+        # RetroArch screenshots are frontend-sized representations of the
+        # current core frame. Hash every decoded pixel: the chooser fixture's
+        # guest applications can differ in a narrow row that a grid sampler
+        # misses when the woven renderer exposes the mode as 640x512.
+        $canonical = [System.Drawing.Bitmap]::new(
+            $image.Width, $image.Height,
+            [System.Drawing.Imaging.PixelFormat]::Format32bppArgb)
+        $graphics = [System.Drawing.Graphics]::FromImage($canonical)
+        $graphics.DrawImageUnscaled($image, 0, 0)
+        $graphics.Dispose()
+        $graphics = $null
+        $rectangle = [System.Drawing.Rectangle]::new(
+            0, 0, $canonical.Width, $canonical.Height)
+        $bitmapData = $canonical.LockBits(
+            $rectangle,
+            [System.Drawing.Imaging.ImageLockMode]::ReadOnly,
+            [System.Drawing.Imaging.PixelFormat]::Format32bppArgb)
+        $rowBytes = $canonical.Width * 4
+        $pixels = [byte[]]::new($rowBytes * $canonical.Height)
+        for ($y = 0; $y -lt $canonical.Height; $y++) {
+            $source = [IntPtr]::Add(
+                $bitmapData.Scan0, $y * $bitmapData.Stride)
+            [Runtime.InteropServices.Marshal]::Copy(
+                $source, $pixels, $y * $rowBytes, $rowBytes)
+            for ($x = 0; $x -lt $canonical.Width; $x++) {
+                $offset = $y * $rowBytes + $x * 4
+                $rgb = (([int]$pixels[$offset + 2] -shl 16) -bor ([int]$pixels[$offset + 1] -shl 8) -bor [int]$pixels[$offset])
+                [void]$sampledColours.Add($rgb)
             }
         }
+        $canonical.UnlockBits($bitmapData)
+        $bitmapData = $null
+        $pixelHasher = [Security.Cryptography.SHA256]::Create()
+        $visualSignature = ([BitConverter]::ToString(
+            $pixelHasher.ComputeHash($pixels))).Replace("-", "").ToLowerInvariant()
         $dimensions = "$($image.Width)x$($image.Height)"
         $backgroundPixel = "{0:x6}" -f
             ($image.GetPixel(0, 0).ToArgb() -band 0x00ffffff)
         $chooserFocusPixel = "{0:x6}" -f
             ($image.GetPixel(60, 100).ToArgb() -band 0x00ffffff)
-        $signaturePixels = for ($x = 0; $x -lt 8; $x++) {
-            "{0:x6}" -f ($image.GetPixel($x, 0).ToArgb() -band 0x00ffffff)
-        }
-        $visualSignature = $signaturePixels -join ","
     } finally {
+        if ($pixelHasher) { $pixelHasher.Dispose() }
+        if ($bitmapData) { $canonical.UnlockBits($bitmapData) }
+        if ($graphics) { $graphics.Dispose() }
+        if ($canonical) { $canonical.Dispose() }
         $image.Dispose()
     }
     $hash = (Get-FileHash -Algorithm SHA256 $renamed).Hash.ToLowerInvariant()
@@ -624,17 +658,18 @@ function Capture-RawScreenshot($Run, [string]$Name) {
         ChooserFocusPixel = $chooserFocusPixel; VisualSignature = $visualSignature }
 }
 
-function Capture-ExpectedVisualSignature($Run, [string]$Name, [string]$Expected) {
+function Capture-ExpectedVisualSignature($Run, [string]$Name, $Expected) {
     $deadline = [DateTime]::UtcNow.AddSeconds(12)
     $attempt = 0
     do {
         $attempt++
         $capture = Capture-RawScreenshot $Run "$Name-$attempt"
-        if ($capture.VisualSignature -eq $Expected) { return $capture }
+        if ($capture.VisualSignature -eq $Expected.VisualSignature -and
+            $capture.Dimensions -eq $Expected.Dimensions) { return $capture }
         Start-Sleep -Milliseconds 250
     } while ([DateTime]::UtcNow -lt $deadline)
     $logTail = Get-RunLogTail $Run
-    throw "$Name guest-signature step did not reach expected visual_signature=$Expected within 12 seconds; observed visual_signature=$($capture.VisualSignature) png_sha256=$($capture.Hash) dimensions=$($capture.Dimensions) sampled_colours=$($capture.Colours); retroarch_log_tail=[$logTail]"
+    throw "$Name guest-signature step did not reach expected visual_signature=$($Expected.VisualSignature) dimensions=$($Expected.Dimensions) within 12 seconds; observed visual_signature=$($capture.VisualSignature) png_sha256=$($capture.Hash) dimensions=$($capture.Dimensions) sampled_colours=$($capture.Colours); retroarch_log_tail=[$logTail]"
 }
 
 function Capture-StableRawScreenshot($Run, [string]$Name) {
@@ -747,9 +782,11 @@ if ($helpers.Count -ne 1) {
     throw "Explicit Application 2 oracle expected one helper, observed $($helpers.Count): $($helpers.FullName -join ', ')"
 }
 $app2HelperHash = (Get-FileHash -Algorithm SHA256 $helpers[0].FullName).Hash.ToLowerInvariant()
-if ($app1Capture.Dimensions -ne "640x256" -or
-    $app2Capture.Dimensions -ne "640x256") {
-    throw "Application-oracle screenshot step expected two 640x256 guest frames; observed app1=$($app1Capture.Dimensions) app2=$($app2Capture.Dimensions); app1_log_tail=[$(Get-RunLogTail $explicitApp1Run)]; app2_log_tail=[$(Get-RunLogTail $explicitApp2Run)]"
+# Guest geometry belongs to the programmed VIDC mode, not the chooser's
+# adapter-owned 640x480 surface. Require the two stable reference captures to
+# agree with each other instead of assuming how RetroArch exposes that mode.
+if ($app1Capture.Dimensions -ne $app2Capture.Dimensions) {
+    throw "Application-oracle screenshot step expected matching stable guest dimensions; observed app1=$($app1Capture.Dimensions) app2=$($app2Capture.Dimensions); app1_log_tail=[$(Get-RunLogTail $explicitApp1Run)]; app2_log_tail=[$(Get-RunLogTail $explicitApp2Run)]"
 }
 if ($app1Capture.VisualSignature -eq $app2Capture.VisualSignature -or
     $app1HelperHash -eq $app2HelperHash) {
@@ -775,7 +812,7 @@ try {
         throw "Chooser-recognition step expected the 640x480 ArcDroid renderer with >=4 sampled colours, background_rgb=101a2a and focused-row_rgb=a8d8ff; observed dimensions=$($chooserCapture.Dimensions) sampled_colours=$($chooserCapture.Colours) background_rgb=$($chooserCapture.BackgroundPixel) focused-row_rgb=$($chooserCapture.ChooserFocusPixel) visual_signature=$($chooserCapture.VisualSignature) png_sha256=$($chooserCapture.Hash); app1=$($app1Capture.VisualSignature) app2=$($app2Capture.VisualSignature); retroarch_log_tail=[$(Get-RunLogTail $chooserRun)]"
     }
     Send-ChooserKeyboardPick $chooserRun
-    [void](Capture-ExpectedVisualSignature $chooserRun "launch-chooser-picked-app2" $app2Capture.VisualSignature)
+    [void](Capture-ExpectedVisualSignature $chooserRun "launch-chooser-picked-app2" $app2Capture)
 } finally {
     Stop-MediaRun $chooserRun
 }
@@ -802,7 +839,7 @@ $rememberedChoice = [Convert]::ToBase64String([IO.File]::ReadAllBytes($chooserRe
 
 $rememberedRun = Start-MediaRun $chooserContent "launch-chooser-remembered"
 try {
-    [void](Capture-ExpectedVisualSignature $rememberedRun "launch-chooser-replayed-app2" $app2Capture.VisualSignature)
+    [void](Capture-ExpectedVisualSignature $rememberedRun "launch-chooser-replayed-app2" $app2Capture)
 } finally {
     Stop-MediaRun $rememberedRun
 }
