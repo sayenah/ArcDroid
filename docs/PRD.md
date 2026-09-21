@@ -1,6 +1,6 @@
 # ArcDroid Product Requirements Document
 
-**Status:** Founder-approved — 2026-09-13  
+**Status:** Founder-approved — 2026-09-13; amended by Founder instruction 2026-09-21 (FR-10a)  
 **Owner:** Founder  
 **Product:** ArcDroid  
 **Primary target platforms:** RetroArch/libretro on Windows and Android  
@@ -215,6 +215,22 @@ The PRD intentionally does not freeze the exact v1 extension list before that in
 ### FR-10 — Media fidelity
 
 For titles whose behavior depends on disk layout, protection, timing, sector metadata, or other media characteristics, ArcDroid must preserve the information needed for correct emulation rather than normalizing everything to a lowest-common-denominator disk representation.
+
+### FR-10a — Zipped game content
+
+*Added by Founder instruction, 2026-09-21.*
+
+ArcDroid must launch supported game media directly from an ordinary `.zip` file chosen by the user, on Windows and Android alike, without requiring the user to unpack it and without depending on the frontend's own archive handling.
+
+- A zip that contains **one** supported disk image launches as that game, exactly as the unzipped image would.
+- A zip that contains **several** supported disk images is one multi-disk game: it starts from its first disk and the remaining disks are offered through the normal disk-control behavior of FR-8, in a predictable order the user can anticipate from the file names.
+- Files in the zip that are not supported media are ignored. An image in the zip that cannot be used must not prevent the rest of the game from loading; the user is told what was skipped. A zip with no usable image fails with a clear, actionable message.
+- A zipped game is the same game as its unzipped form for every product behavior that follows a game — automatic configuration, launch choices, per-game settings and persistence (FR-22, FR-43) — unless the design phase shows this cannot be done safely, in which case the difference must be stated to the user.
+- ArcDroid never modifies the user's zip file. Anything the game writes is kept under the existing persistence rules.
+- A zip is untrusted input: malformed, oversized or hostile archives must be refused safely and must never crash the core or the frontend.
+- Zipped content gains every boot path available to the same image unzipped, including the user-supplied ADFFS boot path.
+
+The exact limits (archive and image sizes, folders inside a zip, mixed image formats, playlists that point at zips) are decided in the architecture phase and recorded in the decision log.
 
 ---
 
