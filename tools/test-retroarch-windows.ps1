@@ -555,21 +555,45 @@ if ($env:GITHUB_STEP_SUMMARY) {
 }
 
 # Slice 5c is intentionally interactive: no choice record is seeded. Capture
-# an explicit Application 2 guest signature, show the chooser under Auto,
+# explicit Application 1 and Application 2 guest signatures, show the chooser
+# under Auto,
 # inject Down/Return into RetroArch's actual window, and prove both the pick
 # and its subsequent remembered replay from frontend screenshots and logs.
+function Get-RunLogTail($Run) {
+    if (Test-Path -LiteralPath $Run.RetroLog) {
+        return (@((Get-Content $Run.RetroLog -Tail 20) -replace '[\r\n]+', ' ') -join ' | ')
+    }
+    return "<missing $($Run.RetroLog)>"
+}
+
 function Capture-RawScreenshot($Run, [string]$Name) {
-    $before = @((Get-ChildItem -Path $evidenceDirectory -Filter "*.png" -ErrorAction SilentlyContinue).FullName)
+    $before = @{}
+    Get-ChildItem -Path $evidenceDirectory -Filter "*.png" -ErrorAction SilentlyContinue |
+        ForEach-Object { $before[$_.FullName] = "$($_.LastWriteTimeUtc.Ticks):$($_.Length)" }
     Send-MediaCommand $Run "SCREENSHOT"
     $deadline = [DateTime]::UtcNow.AddSeconds(10)
     $shot = $null
     while ([DateTime]::UtcNow -lt $deadline -and -not $shot) {
         Start-Sleep -Milliseconds 100
         $shot = Get-ChildItem -Path $evidenceDirectory -Filter "*.png" -ErrorAction SilentlyContinue |
-            Where-Object { $before -notcontains $_.FullName } |
+            Where-Object {
+                $stamp = "$($_.LastWriteTimeUtc.Ticks):$($_.Length)"
+                (-not $before.ContainsKey($_.FullName)) -or
+                    $before[$_.FullName] -ne $stamp
+            } |
             Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1
     }
-    if (-not $shot) { throw "$Name screenshot was not observed within 10 seconds" }
+    if (-not $shot) {
+        $processState = if ($Run.Process.HasExited) {
+            "exited code=$($Run.Process.ExitCode)"
+        } else { "running pid=$($Run.Process.Id)" }
+        $files = @(Get-ChildItem -Path $evidenceDirectory -ErrorAction SilentlyContinue |
+            Sort-Object Name | ForEach-Object {
+                "$($_.Name):$($_.Length)b:$($_.LastWriteTimeUtc.ToString('o'))"
+            }) -join ", "
+        $logTail = Get-RunLogTail $Run
+        throw "$Name screenshot step timed out after 10 seconds; process=$processState; evidence_files=[$files]; retroarch_log_tail=[$logTail]"
+    }
     $renamed = Join-Path $evidenceDirectory "$Name.png"
     Move-Item -Force $shot.FullName $renamed
     $image = [System.Drawing.Bitmap]::new($renamed)
@@ -581,26 +605,36 @@ function Capture-RawScreenshot($Run, [string]$Name) {
             }
         }
         $dimensions = "$($image.Width)x$($image.Height)"
+        $backgroundPixel = "{0:x6}" -f
+            ($image.GetPixel(0, 0).ToArgb() -band 0x00ffffff)
+        $chooserFocusPixel = "{0:x6}" -f
+            ($image.GetPixel(60, 100).ToArgb() -band 0x00ffffff)
+        $signaturePixels = for ($x = 0; $x -lt 8; $x++) {
+            "{0:x6}" -f ($image.GetPixel($x, 0).ToArgb() -band 0x00ffffff)
+        }
+        $visualSignature = $signaturePixels -join ","
     } finally {
         $image.Dispose()
     }
     $hash = (Get-FileHash -Algorithm SHA256 $renamed).Hash.ToLowerInvariant()
-    "$Name path=$renamed dimensions=$dimensions sampled_colours=$($sampledColours.Count) sha256=$hash" |
+    "$Name path=$renamed dimensions=$dimensions sampled_colours=$($sampledColours.Count) background_rgb=$backgroundPixel chooser_focus_rgb=$chooserFocusPixel visual_signature=$visualSignature png_sha256=$hash" |
         Add-Content -Encoding ASCII (Join-Path $evidenceDirectory "launch-chooser-signatures.txt")
     return @{ Path = $renamed; Hash = $hash; Dimensions = $dimensions;
-        Colours = $sampledColours.Count }
+        Colours = $sampledColours.Count; BackgroundPixel = $backgroundPixel;
+        ChooserFocusPixel = $chooserFocusPixel; VisualSignature = $visualSignature }
 }
 
-function Capture-ExpectedRawHash($Run, [string]$Name, [string]$Expected) {
+function Capture-ExpectedVisualSignature($Run, [string]$Name, [string]$Expected) {
     $deadline = [DateTime]::UtcNow.AddSeconds(12)
     $attempt = 0
     do {
         $attempt++
         $capture = Capture-RawScreenshot $Run "$Name-$attempt"
-        if ($capture.Hash -eq $Expected) { return $capture }
+        if ($capture.VisualSignature -eq $Expected) { return $capture }
         Start-Sleep -Milliseconds 250
     } while ([DateTime]::UtcNow -lt $deadline)
-    throw "$Name did not reach expected guest screenshot $Expected within 12 seconds (last $($capture.Hash))"
+    $logTail = Get-RunLogTail $Run
+    throw "$Name guest-signature step did not reach expected visual_signature=$Expected within 12 seconds; observed visual_signature=$($capture.VisualSignature) png_sha256=$($capture.Hash) dimensions=$($capture.Dimensions) sampled_colours=$($capture.Colours); retroarch_log_tail=[$logTail]"
 }
 
 function Capture-StableRawScreenshot($Run, [string]$Name) {
@@ -610,11 +644,17 @@ function Capture-StableRawScreenshot($Run, [string]$Name) {
     do {
         $attempt++
         $capture = Capture-RawScreenshot $Run "$Name-$attempt"
-        if ($previous -and $capture.Hash -eq $previous.Hash) { return $capture }
+        if ($previous -and
+            $capture.VisualSignature -eq $previous.VisualSignature -and
+            $capture.Dimensions -eq $previous.Dimensions) { return $capture }
         $previous = $capture
         Start-Sleep -Milliseconds 250
     } while ([DateTime]::UtcNow -lt $deadline)
-    throw "$Name did not reach a stable guest screenshot within 12 seconds"
+    $observed = if ($capture) {
+        "visual_signature=$($capture.VisualSignature) png_sha256=$($capture.Hash) dimensions=$($capture.Dimensions) sampled_colours=$($capture.Colours)"
+    } else { "no capture" }
+    $logTail = Get-RunLogTail $Run
+    throw "$Name guest-signature step did not stabilize within 12 seconds; observed $observed; retroarch_log_tail=[$logTail]"
 }
 
 Add-Type -AssemblyName System.Windows.Forms
@@ -630,15 +670,19 @@ function Send-ChooserKeyboardPick($Run) {
     $deadline = [DateTime]::UtcNow.AddSeconds(10)
     $handle = [IntPtr]::Zero
     while ([DateTime]::UtcNow -lt $deadline -and $handle -eq [IntPtr]::Zero) {
-        if ($Run.Process.HasExited) { throw "$($Run.Name) exited before keyboard injection" }
+        if ($Run.Process.HasExited) {
+            throw "$($Run.Name) keyboard-injection step found an exited process code=$($Run.Process.ExitCode); retroarch_log_tail=[$(Get-RunLogTail $Run)]"
+        }
         $Run.Process.Refresh()
         $handle = $Run.Process.MainWindowHandle
         if ($handle -eq [IntPtr]::Zero) { Start-Sleep -Milliseconds 100 }
     }
-    if ($handle -eq [IntPtr]::Zero) { throw "$($Run.Name) exposed no window for keyboard injection" }
+    if ($handle -eq [IntPtr]::Zero) {
+        throw "$($Run.Name) keyboard-injection step observed no main window within 10 seconds; process_pid=$($Run.Process.Id); retroarch_log_tail=[$(Get-RunLogTail $Run)]"
+    }
     [void][ArcDroidWindowInput]::ShowWindow($handle, 9)
     if (-not [ArcDroidWindowInput]::SetForegroundWindow($handle)) {
-        throw "$($Run.Name) window could not be foregrounded for keyboard injection"
+        throw "$($Run.Name) keyboard-injection step could not foreground window_handle=$handle; process_pid=$($Run.Process.Id); retroarch_log_tail=[$(Get-RunLogTail $Run)]"
     }
     Start-Sleep -Milliseconds 250
     [System.Windows.Forms.SendKeys]::SendWait("{DOWN}")
@@ -646,6 +690,7 @@ function Send-ChooserKeyboardPick($Run) {
     [System.Windows.Forms.SendKeys]::SendWait("{ENTER}")
 }
 
+Copy-Item -Force (Join-Path $InputDirectory "arcdroid-chooser-test.rom") $firmware
 $chooserContent = (Resolve-Path (Join-Path $InputDirectory "arcdroid-chooser-l.adl")).Path
 $chooserContentSha1 = (Get-FileHash -Algorithm SHA1 $chooserContent).Hash.ToLowerInvariant()
 $chooserRecords = @(Get-ChildItem -LiteralPath $saveDirectory -Filter "$chooserContentSha1.choice" -File -Recurse -ErrorAction SilentlyContinue)
@@ -656,17 +701,59 @@ arcdroid_machine = "A3000"
 arcdroid_cpu = "ARM2"
 arcdroid_joystick_if = "Keyboard"
 arcdroid_disk_writes = "off"
+arcdroid_launch = "app1"
+arcdroid_launch_chooser = "remember"
+"@ | Set-Content -Encoding ASCII $coreOptions
+$explicitApp1Run = Start-MediaRun $chooserContent "launch-chooser-explicit-app1"
+try {
+    $app1Capture = Capture-StableRawScreenshot $explicitApp1Run "launch-chooser-app1-reference"
+} finally {
+    Stop-MediaRun $explicitApp1Run
+}
+if (-not (Select-String -Path $explicitApp1Run.RetroLog -SimpleMatch "decision=!Nulvane" -Quiet)) {
+    $observed = @(Get-Content $explicitApp1Run.RetroLog | Select-String -SimpleMatch "Launch:") -join " | "
+    throw "Explicit Application 1 oracle did not launch !Nulvane; observed Launch lines=[$observed]"
+}
+$helpers = @(Get-ChildItem -LiteralPath $saveDirectory -Filter "$chooserContentSha1.adl" -File -Recurse |
+    Where-Object { $_.DirectoryName -match '[\\/]arcdroid[\\/]launch$' })
+if ($helpers.Count -ne 1) {
+    throw "Explicit Application 1 oracle expected one helper, observed $($helpers.Count): $($helpers.FullName -join ', ')"
+}
+$app1HelperHash = (Get-FileHash -Algorithm SHA256 $helpers[0].FullName).Hash.ToLowerInvariant()
+$bindings = @(Get-ChildItem -LiteralPath $saveDirectory -Filter "$chooserContentSha1.bind" -File -Recurse -ErrorAction SilentlyContinue)
+if ($bindings.Count) { Remove-Item -Force $bindings.FullName }
+
+@"
+arcdroid_machine = "A3000"
+arcdroid_cpu = "ARM2"
+arcdroid_joystick_if = "Keyboard"
+arcdroid_disk_writes = "off"
 arcdroid_launch = "app2"
 arcdroid_launch_chooser = "remember"
 "@ | Set-Content -Encoding ASCII $coreOptions
-$explicitChooserRun = Start-MediaRun $chooserContent "launch-chooser-explicit-app2"
+$explicitApp2Run = Start-MediaRun $chooserContent "launch-chooser-explicit-app2"
 try {
-    $app2Capture = Capture-StableRawScreenshot $explicitChooserRun "launch-chooser-app2-reference"
+    $app2Capture = Capture-StableRawScreenshot $explicitApp2Run "launch-chooser-app2-reference"
 } finally {
-    Stop-MediaRun $explicitChooserRun
+    Stop-MediaRun $explicitApp2Run
 }
-if (-not (Select-String -Path $explicitChooserRun.RetroLog -SimpleMatch "decision=!Qaventra" -Quiet)) {
-    throw "Explicit Application 2 did not launch !Qaventra"
+if (-not (Select-String -Path $explicitApp2Run.RetroLog -SimpleMatch "decision=!Qaventra" -Quiet)) {
+    $observed = @(Get-Content $explicitApp2Run.RetroLog | Select-String -SimpleMatch "Launch:") -join " | "
+    throw "Explicit Application 2 oracle did not launch !Qaventra; observed Launch lines=[$observed]"
+}
+$helpers = @(Get-ChildItem -LiteralPath $saveDirectory -Filter "$chooserContentSha1.adl" -File -Recurse |
+    Where-Object { $_.DirectoryName -match '[\\/]arcdroid[\\/]launch$' })
+if ($helpers.Count -ne 1) {
+    throw "Explicit Application 2 oracle expected one helper, observed $($helpers.Count): $($helpers.FullName -join ', ')"
+}
+$app2HelperHash = (Get-FileHash -Algorithm SHA256 $helpers[0].FullName).Hash.ToLowerInvariant()
+if ($app1Capture.Dimensions -ne "640x256" -or
+    $app2Capture.Dimensions -ne "640x256") {
+    throw "Application-oracle screenshot step expected two 640x256 guest frames; observed app1=$($app1Capture.Dimensions) app2=$($app2Capture.Dimensions); app1_log_tail=[$(Get-RunLogTail $explicitApp1Run)]; app2_log_tail=[$(Get-RunLogTail $explicitApp2Run)]"
+}
+if ($app1Capture.VisualSignature -eq $app2Capture.VisualSignature -or
+    $app1HelperHash -eq $app2HelperHash) {
+    throw "Application-oracle setup was not discriminating: app1 visual_signature=$($app1Capture.VisualSignature) helper=$app1HelperHash; app2 visual_signature=$($app2Capture.VisualSignature) helper=$app2HelperHash; app1_log_tail=[$(Get-RunLogTail $explicitApp1Run)]; app2_log_tail=[$(Get-RunLogTail $explicitApp2Run)]"
 }
 
 @"
@@ -681,38 +768,61 @@ $chooserRun = Start-MediaRun $chooserContent "launch-chooser-interactive"
 try {
     $chooserCapture = Capture-RawScreenshot $chooserRun "launch-chooser-visible"
     if ($chooserCapture.Dimensions -ne "640x480" -or $chooserCapture.Colours -lt 4 -or
-        $chooserCapture.Hash -eq $app2Capture.Hash) {
-        throw "Ambiguous Auto launch did not produce the expected distinct 640x480 chooser signature"
+        $chooserCapture.BackgroundPixel -ne "101a2a" -or
+        $chooserCapture.ChooserFocusPixel -ne "a8d8ff" -or
+        $chooserCapture.VisualSignature -eq $app1Capture.VisualSignature -or
+        $chooserCapture.VisualSignature -eq $app2Capture.VisualSignature) {
+        throw "Chooser-recognition step expected the 640x480 ArcDroid renderer with >=4 sampled colours, background_rgb=101a2a and focused-row_rgb=a8d8ff; observed dimensions=$($chooserCapture.Dimensions) sampled_colours=$($chooserCapture.Colours) background_rgb=$($chooserCapture.BackgroundPixel) focused-row_rgb=$($chooserCapture.ChooserFocusPixel) visual_signature=$($chooserCapture.VisualSignature) png_sha256=$($chooserCapture.Hash); app1=$($app1Capture.VisualSignature) app2=$($app2Capture.VisualSignature); retroarch_log_tail=[$(Get-RunLogTail $chooserRun)]"
     }
     Send-ChooserKeyboardPick $chooserRun
-    [void](Capture-ExpectedRawHash $chooserRun "launch-chooser-picked-app2" $app2Capture.Hash)
+    [void](Capture-ExpectedVisualSignature $chooserRun "launch-chooser-picked-app2" $app2Capture.VisualSignature)
 } finally {
     Stop-MediaRun $chooserRun
 }
 if (-not (Select-String -Path $chooserRun.RetroLog -SimpleMatch "chooser shown" -Quiet) -or
     -not (Select-String -Path $chooserRun.RetroLog -SimpleMatch "chooser chose target" -Quiet) -or
     -not (Select-String -Path $chooserRun.RetroLog -SimpleMatch "decision=!Qaventra" -Quiet)) {
-    throw "Interactive chooser run did not log show and chosen !Qaventra outcomes"
+    $observed = @(Get-Content $chooserRun.RetroLog | Select-String -Pattern 'Launch:|chooser') -join " | "
+    throw "Interactive chooser log-verification step expected chooser shown, chooser chose target, and decision=!Qaventra; observed=[$observed]"
+}
+$helpers = @(Get-ChildItem -LiteralPath $saveDirectory -Filter "$chooserContentSha1.adl" -File -Recurse |
+    Where-Object { $_.DirectoryName -match '[\\/]arcdroid[\\/]launch$' })
+if ($helpers.Count -ne 1) {
+    throw "Interactive chooser helper-verification step expected one helper, observed $($helpers.Count): $($helpers.FullName -join ', ')"
+}
+$interactiveHelperHash = (Get-FileHash -Algorithm SHA256 $helpers[0].FullName).Hash.ToLowerInvariant()
+if ($interactiveHelperHash -ne $app2HelperHash -or $interactiveHelperHash -eq $app1HelperHash) {
+    throw "Interactive chooser selected the wrong helper: observed=$interactiveHelperHash expected_app2=$app2HelperHash app1=$app1HelperHash"
 }
 $chooserRecords = @(Get-ChildItem -LiteralPath $saveDirectory -Filter "$chooserContentSha1.choice" -File -Recurse)
 if ($chooserRecords.Count -ne 1) {
-    throw "Interactive chooser did not publish exactly one per-content choice record"
+    throw "Interactive chooser record-publication step expected exactly one $chooserContentSha1.choice, observed $($chooserRecords.Count): $($chooserRecords.FullName -join ', ')"
 }
 $rememberedChoice = [Convert]::ToBase64String([IO.File]::ReadAllBytes($chooserRecords[0].FullName))
 
 $rememberedRun = Start-MediaRun $chooserContent "launch-chooser-remembered"
 try {
-    [void](Capture-ExpectedRawHash $rememberedRun "launch-chooser-replayed-app2" $app2Capture.Hash)
+    [void](Capture-ExpectedVisualSignature $rememberedRun "launch-chooser-replayed-app2" $app2Capture.VisualSignature)
 } finally {
     Stop-MediaRun $rememberedRun
 }
 if (-not (Select-String -Path $rememberedRun.RetroLog -SimpleMatch "chooser remembered target" -Quiet) -or
     (Select-String -Path $rememberedRun.RetroLog -SimpleMatch "chooser shown" -Quiet)) {
-    throw "Relaunch did not replay the remembered choice without the chooser"
+    $observed = @(Get-Content $rememberedRun.RetroLog | Select-String -Pattern 'Launch:|chooser') -join " | "
+    throw "Remembered-replay log step expected chooser remembered target and no chooser shown; observed=[$observed]"
+}
+$helpers = @(Get-ChildItem -LiteralPath $saveDirectory -Filter "$chooserContentSha1.adl" -File -Recurse |
+    Where-Object { $_.DirectoryName -match '[\\/]arcdroid[\\/]launch$' })
+if ($helpers.Count -ne 1) {
+    throw "Remembered-replay helper-verification step expected one helper, observed $($helpers.Count): $($helpers.FullName -join ', ')"
+}
+$rememberedHelperHash = (Get-FileHash -Algorithm SHA256 $helpers[0].FullName).Hash.ToLowerInvariant()
+if ($rememberedHelperHash -ne $app2HelperHash -or $rememberedHelperHash -eq $app1HelperHash) {
+    throw "Remembered replay used the wrong helper: observed=$rememberedHelperHash expected_app2=$app2HelperHash app1=$app1HelperHash"
 }
 $rememberedChoiceAfter = [Convert]::ToBase64String([IO.File]::ReadAllBytes($chooserRecords[0].FullName))
 if ($rememberedChoiceAfter -ne $rememberedChoice) {
-    throw "Remembered choice record changed during replay"
+    throw "Remembered-replay persistence step changed the choice record: before_base64=$rememberedChoice after_base64=$rememberedChoiceAfter"
 }
 Write-Host "Slice 5c Windows RetroArch: chooser screenshot, injected keyboard pick, guest signature and remembered replay passed"
 if ($env:GITHUB_STEP_SUMMARY) {

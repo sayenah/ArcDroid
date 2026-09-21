@@ -44,14 +44,13 @@ target_compile_options(arcdroid_zlib PRIVATE
   $<$<C_COMPILER_ID:GNU,Clang,AppleClang>:-fvisibility=hidden>)
 set_target_properties(arcdroid_zlib PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
-add_library(arcdroid_core STATIC
+set(ARCDROID_CORE_SOURCES
   core/machine.c
   core/hash.c
   core/input.c
   core/input_mapping.c
   core/input_profiles.c
   core/osk.c
-  core/firmware_table.c
   core/launch.c
   core/launch_discovery.c
   core/launch_disc.c
@@ -62,6 +61,7 @@ add_library(arcdroid_core STATIC
   core/persistence.c
   core/cmos_defaults.c
 )
+add_library(arcdroid_core STATIC ${ARCDROID_CORE_SOURCES} core/firmware_table.c)
 target_include_directories(arcdroid_core PUBLIC core libretro/include "${CMAKE_CURRENT_BINARY_DIR}/generated")
 target_link_libraries(arcdroid_core PRIVATE arcdroid_zlib)
 if(ARCDROID_SANITIZERS)
@@ -106,6 +106,10 @@ set(ARCDROID_LIBRETRO_SOURCES
 )
 
 function(arcdroid_add_libretro target shipping)
+  set(core_target arcdroid_core)
+  if(ARGC GREATER 2)
+    set(core_target "${ARGV2}")
+  endif()
   add_library(${target} SHARED ${ARCDROID_LIBRETRO_SOURCES})
   target_include_directories(${target} PRIVATE
     engine engine/compat engine/arculator/src platform libretro libretro/include core)
@@ -115,7 +119,7 @@ function(arcdroid_add_libretro target shipping)
   target_compile_options(${target} PRIVATE
     $<$<C_COMPILER_ID:GNU,Clang,AppleClang>:-Wall;-Wextra;-Wpedantic;-Werror=implicit-function-declaration;-fno-strict-aliasing>)
   set_target_properties(${target} PROPERTIES PREFIX "")
-  target_link_libraries(${target} PRIVATE arcdroid_core)
+  target_link_libraries(${target} PRIVATE ${core_target})
   if(ARCDROID_SANITIZERS)
     target_link_libraries(${target} PRIVATE arcdroid_sanitizer_link)
   endif()
@@ -177,6 +181,17 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
   endif()
   target_compile_options(core_tests PRIVATE $<$<C_COMPILER_ID:GNU,Clang,AppleClang>:-UNDEBUG>)
   set(FIXTURE_DIR "${CMAKE_CURRENT_BINARY_DIR}/tests/fixtures/generated")
+  add_library(arcdroid_core_test STATIC
+    ${ARCDROID_CORE_SOURCES} tests/firmware_table_test.c)
+  target_include_directories(arcdroid_core_test PUBLIC
+    core libretro/include "${CMAKE_CURRENT_BINARY_DIR}/generated")
+  target_link_libraries(arcdroid_core_test PRIVATE arcdroid_zlib)
+  target_compile_options(arcdroid_core_test PRIVATE
+    $<$<C_COMPILER_ID:GNU,Clang,AppleClang>:-Wall;-Wextra;-Wpedantic;-Werror=implicit-function-declaration>)
+  set_target_properties(arcdroid_core_test PROPERTIES POSITION_INDEPENDENT_CODE ON)
+  if(ARCDROID_SANITIZERS)
+    target_link_libraries(arcdroid_core_test PRIVATE arcdroid_sanitizer_compile)
+  endif()
   add_executable(jfd_reader_tests
     tests/jfd_reader_tests.c engine/arculator/src/disc_jfd.c)
   target_include_directories(jfd_reader_tests PRIVATE
@@ -215,6 +230,7 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
 
   add_custom_command(
     OUTPUT "${FIXTURE_DIR}/arcdroid-test.rom" "${FIXTURE_DIR}/arcdroid-test.adf"
+      "${FIXTURE_DIR}/arcdroid-chooser-test.rom"
       "${FIXTURE_DIR}/arcdroid-demo.adl"
       "${FIXTURE_DIR}/arcdroid-application-l.adl"
       "${FIXTURE_DIR}/arcdroid-chooser-l.adl"
@@ -252,6 +268,7 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
     DEPENDS tests/generate_fixtures.py VERBATIM)
   add_custom_target(test-fixtures ALL DEPENDS
     "${FIXTURE_DIR}/arcdroid-test.rom" "${FIXTURE_DIR}/arcdroid-test.adf"
+    "${FIXTURE_DIR}/arcdroid-chooser-test.rom"
     "${FIXTURE_DIR}/arcdroid-demo.adl"
     "${FIXTURE_DIR}/arcdroid-application-l.adl"
     "${FIXTURE_DIR}/arcdroid-chooser-l.adl"
@@ -298,9 +315,9 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
   set_tests_properties(core-services PROPERTIES TIMEOUT 300)
 
   if(WIN32)
-    # The native RetroArch launch-automation probe uses the generated test ROM;
+    # Native RetroArch launch probes use generated test ROMs;
     # test-only OS gating and probes remain outside the shipping DLL.
-    arcdroid_add_libretro(arcdroid_libretro_test FALSE)
+    arcdroid_add_libretro(arcdroid_libretro_test FALSE arcdroid_core_test)
     target_compile_definitions(arcdroid_libretro_test PRIVATE ARCDROID_TEST_FAULTS=1)
     set_target_properties(arcdroid_libretro_test PROPERTIES OUTPUT_NAME arcdroid_libretro_test)
     add_executable(windows_load_harness tests/windows_load_harness.c)
@@ -315,7 +332,7 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
   else()
     # Fault injection and engine test probes live only in this non-installed
     # host test core; release/RetroArch artifacts use arcdroid_libretro above.
-    arcdroid_add_libretro(arcdroid_libretro_test FALSE)
+    arcdroid_add_libretro(arcdroid_libretro_test FALSE arcdroid_core_test)
     target_compile_definitions(arcdroid_libretro_test PRIVATE ARCDROID_TEST_FAULTS=1)
     set_target_properties(arcdroid_libretro_test PROPERTIES OUTPUT_NAME arcdroid_libretro_test)
     add_executable(libretro_harness tests/libretro_harness.c)

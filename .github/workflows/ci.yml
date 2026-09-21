@@ -68,6 +68,7 @@ jobs:
           cp build/windows/arcdroid_libretro.dll build/windows/arcdroid_libretro_test.dll build/windows/arcdroid_libretro.info \
             build/windows/tests/fixtures/generated/arcdroid-test.rom \
             build/windows/tests/fixtures/generated/arcdroid-test.adf \
+            build/windows/tests/fixtures/generated/arcdroid-chooser-test.rom \
             build/windows/tests/fixtures/generated/arcdroid-media-test.rom \
             build/windows/tests/fixtures/generated/arcdroid-media.m3u \
             build/windows/tests/fixtures/generated/arcdroid-media-disc1.adf \

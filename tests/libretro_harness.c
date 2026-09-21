@@ -4190,8 +4190,12 @@ int main(int argc, char **argv)
       (void)remove(application_cmos_file);
 
       /* Slice 5c generated media contains two independently observable
-       * applications. First capture the explicit Application N oracle for
+       * applications. First capture each explicit-application oracle for
        * helper bytes, machine CMOS and final guest video. */
+      char chooser_rom[4096];
+      snprintf(chooser_rom, sizeof(chooser_rom),
+               "%s/arcdroid-chooser-test.rom", argv[11]);
+      copy_file(chooser_rom, renamed);
       char chooser_source[4096];
       snprintf(chooser_source, sizeof(chooser_source),
                "%s/arcdroid-chooser-l.adl", argv[11]);
@@ -4633,6 +4637,7 @@ int main(int argc, char **argv)
       retro_unload_game();
 
       free(expected_helper[0]); free(expected_helper[1]);
+      copy_file(argv[5], renamed);
       option_launch_chooser = "remember";
       option_launch = "auto";
 

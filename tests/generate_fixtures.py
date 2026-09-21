@@ -54,6 +54,9 @@ class Arm2:
     def mov(self, rd: int, value: int) -> None:
         self.emit(0xE3A00000 | (rd << 12) | self._imm(value))
 
+    def mov_reg(self, rd: int, rm: int) -> None:
+        self.emit(0xE1A00000 | (rd << 12) | rm)
+
     def subs_imm(self, rd: int, rn: int, value: int) -> None:
         self.emit(0xE2500000 | (rn << 16) | (rd << 12) | self._imm(value))
 
@@ -92,8 +95,10 @@ class Arm2:
         self.emit(0xE5800000 | (0x00400000 if byte else 0) |
                   (rn << 16) | (rd << 12) | offset)
 
-    def str_post(self, rd: int, rn: int, offset: int = 4) -> None:
-        self.emit(0xE4800000 | (rn << 16) | (rd << 12) | offset)
+    def str_post(self, rd: int, rn: int, offset: int = 4,
+                 byte: bool = False) -> None:
+        self.emit(0xE4800000 | (0x00400000 if byte else 0) |
+                  (rn << 16) | (rd << 12) | offset)
 
     def branch(self, label: str, condition: str = "al") -> None:
         index = len(self.words)
@@ -472,6 +477,185 @@ def build_rom(media_exerciser: bool = False) -> bytearray:
     return rom
 
 
+def _chooser_signature_application(title: bytes, colour: int) -> bytes:
+    """One-sector RISC OS Absolute app also executable by the chooser ROM."""
+    vdu = bytes((22, 12, 17, colour, 12, 31, 8, 15)) + title
+    words = [
+        0xE59F1014,             # ldr r1, [pc, #20]
+        0xE59F2014,             # ldr r2, [pc, #20]
+        0xE4D10001,             # ldrb r0, [r1], #1
+        0xEF000000,             # swi OS_WriteC
+        0xE2522001,             # subs r2, r2, #1
+        0x1AFFFFFB,             # bne byte loop
+        0xEAFFFFFE,             # b .
+        0x00008024,             # VDU byte stream address
+        len(vdu),
+    ]
+    program = b"".join(struct.pack("<I", word) for word in words) + vdu
+    if len(program) > SECTOR_SIZE:
+        raise ValueError("chooser signature application exceeds one sector")
+    return program
+
+
+def build_chooser_rom() -> bytearray:
+    """Run the executable named by ArcDroid's drive-1 launch helper.
+
+    The helper's ArcLaunch file is fixed at logical sector 1280, which is
+    physical track 0, side 1, sector 0 on an L-format disc. The two invented
+    fixture applications keep their Absolute executables in physical sectors
+    7 and 8. This ROM reads the helper target, loads the matching executable at
+    its declared &8000 address, and runs it. A tiny OS_WriteC handler folds the
+    application's VDU stream into a full-width framebuffer signature row.
+    """
+    rom = bytearray(b"\xFF" * ROM_SIZE)
+    rom[0:4] = struct.pack("<I", 0xE59FF000)
+    rom[8:12] = struct.pack("<I", 0x03800020)
+    a = Arm2(0x03800020)
+
+    a.ldr_const(0, 0x036E050C)
+    a.mov(1, 0)
+    a.str(1, 0)
+    for page in range(6):
+        cam = (0x03800000 | ((page & 0x0F) << 3) |
+               ((page & 0x10) >> 4) | ((page & 0x20) >> 3) |
+               ((page & 0x40) >> 5) | (page & 0x80) |
+               ((page & 0x100) << 4) | (3 << 8) |
+               ((page & 0xFF) << 15) | ((page & 0x300) << 2))
+        a.ldr_const(0, cam)
+        a.str(1, 0)
+
+    a.ldr_const(6, 0x22222222)
+    a.mov(1, 0)
+    a.ldr_const(5, 40960)
+    a.label("chooser_fill_video")
+    a.str_post(6, 1)
+    a.subs_imm(5, 5, 1)
+    a.branch("chooser_fill_video", "ne")
+    a.ldr_const(1, 0x00028000)
+    a.mov(5, 0x100)
+    a.ldr_const(7, 0xFEFEFEFE)
+    a.label("chooser_fill_sound")
+    a.str_post(7, 1)
+    a.subs_imm(5, 5, 1)
+    a.branch("chooser_fill_sound", "ne")
+
+    a.ldr_const(1, 0x03400000)
+    for register in VIDC_MODE:
+        a.ldr_const(0, register)
+        a.str(0, 1)
+    for address in (0x03600000, 0x03620000, 0x0364A000,
+                    0x0368A000, 0x036AA0FC, 0x036CA000):
+        a.ldr_const(0, address)
+        a.str(1, 0)
+    a.ldr_const(0, 0x036E0D0C)
+    a.str(1, 0)
+
+    handler_address = 0x0002F000
+    handler = Arm2(handler_address)
+    handler.add_lsl(12, 12, 12, 5)
+    handler.eor(12, 12, 0)
+    handler.mov(4, 0)
+    handler.mov(3, 0xA0)
+    handler.label("chooser_signature_row")
+    handler.str_post(12, 4)
+    handler.subs_imm(3, 3, 1)
+    handler.branch("chooser_signature_row", "ne")
+    handler.emit(0xE1B0F00E)  # movs pc, lr
+    handler_code = handler.finish()
+    vector_branch = 0xEA000000 | (((handler_address - 0x10) // 4) & 0xFFFFFF)
+    a.ldr_const(0, 0x00000008)
+    a.ldr_const(1, vector_branch)
+    a.str(1, 0)
+    a.ldr_const(0, handler_address)
+    for offset in range(0, len(handler_code), 4):
+        a.ldr_const(1, struct.unpack_from("<I", handler_code, offset)[0])
+        a.str(1, 0, offset)
+
+    # ArcLaunch is on drive 1, side 1. Byte 52 is the first target byte after !.
+    a.ldr_const(0, 0x03350040)
+    a.mov(1, 0x8D)
+    a.str(1, 0, byte=True)
+    a.ldr_const(0, 0x03350018)
+    a.mov(1, 0)
+    a.str(1, 0, byte=True)
+    a.ldr_const(0, 0x03310000)
+    a.mov(1, 0)
+    a.str(1, 0, 4, byte=True)
+    a.str(1, 0, 8, byte=True)
+    a.mov(1, 0x80)
+    a.str(1, 0, byte=True)
+    a.mov(5, 0x100)
+    a.mov(6, 0)
+    a.label("chooser_helper_wait")
+    a.ldr(7, 0, byte=True)
+    a.tst_imm(7, 2)
+    a.branch("chooser_helper_wait", "eq")
+    a.ldr(7, 0, 12, byte=True)
+    a.cmp_imm(5, 204)
+    a.branch("chooser_helper_not_target", "ne")
+    a.mov_reg(6, 7)
+    a.label("chooser_helper_not_target")
+    a.subs_imm(5, 5, 1)
+    a.branch("chooser_helper_wait", "ne")
+    a.label("chooser_helper_finish")
+    a.ldr(7, 0, byte=True)
+    a.tst_imm(7, 1)
+    a.branch("chooser_helper_finish", "ne")
+
+    a.cmp_imm(6, ord("N"))
+    a.branch("chooser_app_one", "eq")
+    a.cmp_imm(6, ord("Q"))
+    a.branch("chooser_app_two", "eq")
+    a.label("chooser_bad_helper")
+    a.ldr_const(12, 0x00FF00FF)
+    a.mov(4, 0)
+    a.mov(3, 0xA0)
+    a.label("chooser_bad_row")
+    a.str_post(12, 4)
+    a.subs_imm(3, 3, 1)
+    a.branch("chooser_bad_row", "ne")
+    a.branch("chooser_bad_helper")
+    a.label("chooser_app_one")
+    a.mov(6, 7)
+    a.branch("chooser_load_app")
+    a.label("chooser_app_two")
+    a.mov(6, 8)
+
+    a.label("chooser_load_app")
+    a.ldr_const(0, 0x03350040)
+    a.mov(1, 0x9E)
+    a.str(1, 0, byte=True)
+    a.ldr_const(0, 0x03310000)
+    a.mov(1, 0)
+    a.str(1, 0, 4, byte=True)
+    a.str(6, 0, 8, byte=True)
+    a.mov(1, 0x80)
+    a.str(1, 0, byte=True)
+    a.mov(5, 0x100)
+    a.ldr_const(8, 0x00008000)
+    a.label("chooser_app_wait")
+    a.ldr(7, 0, byte=True)
+    a.tst_imm(7, 2)
+    a.branch("chooser_app_wait", "eq")
+    a.ldr(7, 0, 12, byte=True)
+    a.str_post(7, 8, 1, byte=True)
+    a.subs_imm(5, 5, 1)
+    a.branch("chooser_app_wait", "ne")
+    a.label("chooser_app_finish")
+    a.ldr(7, 0, byte=True)
+    a.tst_imm(7, 1)
+    a.branch("chooser_app_finish", "ne")
+    a.mov(12, 0)
+    a.ldr_const(0, 0x00008000)
+    a.mov_reg(15, 0)
+
+    code = a.finish()
+    rom[0x20:0x20 + len(code)] = code
+    marker = b"ARCDROID ARMV2 CHOOSER APPLICATION ROM v1\0"
+    rom[0x1F00:0x1F00 + len(marker)] = marker
+    return rom
+
+
 def build_adf(seed: int = 0xA5, marker: bytes = b"ARCDROID WD1772 PAYLOAD v2\0") -> bytearray:
     adf = bytearray(ADF_SIZE)
     adf[:len(marker)] = marker
@@ -748,14 +932,13 @@ def build_chooser_application_l() -> bytearray:
     total_sectors = ADL_SIZE // SECTOR_SIZE
     children = (20, 26)
     runs = (40, 42)
-    images = (1200, 1270)
+    images = (7, 8)
     names = (b"!Nulvane", b"!Qaventra")
     titles = (b"ARCDROID - NULVANE SELECTED",
               b"ARCDROID - QAVENTRA SELECTED")
-    free_extents = ((7, 13), (25, 1), (31, 9), (41, 1),
-                    (43, images[0] - 43),
-                    (images[0] + 20, images[1] - images[0] - 20),
-                    (images[1] + 20, total_sectors - images[1] - 20))
+    colours = (3, 6)
+    free_extents = ((9, 11), (25, 1), (31, 9), (41, 1),
+                    (43, total_sectors - 43))
     for index, (start, length) in enumerate(free_extents):
         _store_u24(image, index * 3, start)
         _store_u24(image, 256 + index * 3, length)
@@ -768,11 +951,7 @@ def build_chooser_application_l() -> bytearray:
     root = _old_directory()
     for index, name in enumerate(names):
         run = b"Run <Obey$Dir>.!RunImage\r"
-        absolute = _build_absolute_boot(titles[index])
-        run_image = absolute + bytes(
-            ((position * (31 + index * 12)) ^ (position >> 7) ^
-             (0x57 + index * 0x36)) & 0xFF
-            for position in range(20 * SECTOR_SIZE - len(absolute)))
+        run_image = _chooser_signature_application(titles[index], colours[index])
         _old_entry(root, index, name, OLD_DIRECTORY_SIZE, children[index], True)
         child = _old_directory(name)
         _old_entry(child, 0, b"!Run", len(run), runs[index],
@@ -1223,6 +1402,7 @@ def main() -> None:
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
     (args.output / "arcdroid-test.rom").write_bytes(build_rom())
+    (args.output / "arcdroid-chooser-test.rom").write_bytes(build_chooser_rom())
     (args.output / "arcdroid-test.adf").write_bytes(build_adf())
     (args.output / "arcdroid-demo.adl").write_bytes(build_demo_adl())
     (args.output / "arcdroid-application-l.adl").write_bytes(build_application_l())
