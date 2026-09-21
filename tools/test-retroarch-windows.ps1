@@ -553,3 +553,168 @@ Write-Host "Slice 5a Windows RetroArch: top-bit Launch: decision and helper publ
 if ($env:GITHUB_STEP_SUMMARY) {
     Add-Content -Encoding UTF8 $env:GITHUB_STEP_SUMMARY "- Slice 5a launch: top-bit application produced the escaped Launch: decision and a 640 KiB save helper."
 }
+
+# Slice 5c is intentionally interactive: no choice record is seeded. Capture
+# an explicit Application 2 guest signature, show the chooser under Auto,
+# inject Down/Return into RetroArch's actual window, and prove both the pick
+# and its subsequent remembered replay from frontend screenshots and logs.
+function Capture-RawScreenshot($Run, [string]$Name) {
+    $before = @((Get-ChildItem -Path $evidenceDirectory -Filter "*.png" -ErrorAction SilentlyContinue).FullName)
+    Send-MediaCommand $Run "SCREENSHOT"
+    $deadline = [DateTime]::UtcNow.AddSeconds(10)
+    $shot = $null
+    while ([DateTime]::UtcNow -lt $deadline -and -not $shot) {
+        Start-Sleep -Milliseconds 100
+        $shot = Get-ChildItem -Path $evidenceDirectory -Filter "*.png" -ErrorAction SilentlyContinue |
+            Where-Object { $before -notcontains $_.FullName } |
+            Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1
+    }
+    if (-not $shot) { throw "$Name screenshot was not observed within 10 seconds" }
+    $renamed = Join-Path $evidenceDirectory "$Name.png"
+    Move-Item -Force $shot.FullName $renamed
+    $image = [System.Drawing.Bitmap]::new($renamed)
+    $sampledColours = [System.Collections.Generic.HashSet[int]]::new()
+    try {
+        for ($y = 0; $y -lt $image.Height; $y += 8) {
+            for ($x = 0; $x -lt $image.Width; $x += 8) {
+                [void]$sampledColours.Add($image.GetPixel($x, $y).ToArgb())
+            }
+        }
+        $dimensions = "$($image.Width)x$($image.Height)"
+    } finally {
+        $image.Dispose()
+    }
+    $hash = (Get-FileHash -Algorithm SHA256 $renamed).Hash.ToLowerInvariant()
+    "$Name path=$renamed dimensions=$dimensions sampled_colours=$($sampledColours.Count) sha256=$hash" |
+        Add-Content -Encoding ASCII (Join-Path $evidenceDirectory "launch-chooser-signatures.txt")
+    return @{ Path = $renamed; Hash = $hash; Dimensions = $dimensions;
+        Colours = $sampledColours.Count }
+}
+
+function Capture-ExpectedRawHash($Run, [string]$Name, [string]$Expected) {
+    $deadline = [DateTime]::UtcNow.AddSeconds(12)
+    $attempt = 0
+    do {
+        $attempt++
+        $capture = Capture-RawScreenshot $Run "$Name-$attempt"
+        if ($capture.Hash -eq $Expected) { return $capture }
+        Start-Sleep -Milliseconds 250
+    } while ([DateTime]::UtcNow -lt $deadline)
+    throw "$Name did not reach expected guest screenshot $Expected within 12 seconds (last $($capture.Hash))"
+}
+
+function Capture-StableRawScreenshot($Run, [string]$Name) {
+    $deadline = [DateTime]::UtcNow.AddSeconds(12)
+    $attempt = 0
+    $previous = $null
+    do {
+        $attempt++
+        $capture = Capture-RawScreenshot $Run "$Name-$attempt"
+        if ($previous -and $capture.Hash -eq $previous.Hash) { return $capture }
+        $previous = $capture
+        Start-Sleep -Milliseconds 250
+    } while ([DateTime]::UtcNow -lt $deadline)
+    throw "$Name did not reach a stable guest screenshot within 12 seconds"
+}
+
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+public static class ArcDroidWindowInput {
+    [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr window, int command);
+    [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr window);
+}
+"@
+function Send-ChooserKeyboardPick($Run) {
+    $deadline = [DateTime]::UtcNow.AddSeconds(10)
+    $handle = [IntPtr]::Zero
+    while ([DateTime]::UtcNow -lt $deadline -and $handle -eq [IntPtr]::Zero) {
+        if ($Run.Process.HasExited) { throw "$($Run.Name) exited before keyboard injection" }
+        $Run.Process.Refresh()
+        $handle = $Run.Process.MainWindowHandle
+        if ($handle -eq [IntPtr]::Zero) { Start-Sleep -Milliseconds 100 }
+    }
+    if ($handle -eq [IntPtr]::Zero) { throw "$($Run.Name) exposed no window for keyboard injection" }
+    [void][ArcDroidWindowInput]::ShowWindow($handle, 9)
+    if (-not [ArcDroidWindowInput]::SetForegroundWindow($handle)) {
+        throw "$($Run.Name) window could not be foregrounded for keyboard injection"
+    }
+    Start-Sleep -Milliseconds 250
+    [System.Windows.Forms.SendKeys]::SendWait("{DOWN}")
+    Start-Sleep -Milliseconds 150
+    [System.Windows.Forms.SendKeys]::SendWait("{ENTER}")
+}
+
+$chooserContent = (Resolve-Path (Join-Path $InputDirectory "arcdroid-chooser-l.adl")).Path
+$chooserContentSha1 = (Get-FileHash -Algorithm SHA1 $chooserContent).Hash.ToLowerInvariant()
+$chooserRecords = @(Get-ChildItem -LiteralPath $saveDirectory -Filter "$chooserContentSha1.choice" -File -Recurse -ErrorAction SilentlyContinue)
+if ($chooserRecords.Count) { Remove-Item -Force $chooserRecords.FullName }
+
+@"
+arcdroid_machine = "A3000"
+arcdroid_cpu = "ARM2"
+arcdroid_joystick_if = "Keyboard"
+arcdroid_disk_writes = "off"
+arcdroid_launch = "app2"
+arcdroid_launch_chooser = "remember"
+"@ | Set-Content -Encoding ASCII $coreOptions
+$explicitChooserRun = Start-MediaRun $chooserContent "launch-chooser-explicit-app2"
+try {
+    $app2Capture = Capture-StableRawScreenshot $explicitChooserRun "launch-chooser-app2-reference"
+} finally {
+    Stop-MediaRun $explicitChooserRun
+}
+if (-not (Select-String -Path $explicitChooserRun.RetroLog -SimpleMatch "decision=!Qaventra" -Quiet)) {
+    throw "Explicit Application 2 did not launch !Qaventra"
+}
+
+@"
+arcdroid_machine = "A3000"
+arcdroid_cpu = "ARM2"
+arcdroid_joystick_if = "Keyboard"
+arcdroid_disk_writes = "off"
+arcdroid_launch = "auto"
+arcdroid_launch_chooser = "remember"
+"@ | Set-Content -Encoding ASCII $coreOptions
+$chooserRun = Start-MediaRun $chooserContent "launch-chooser-interactive"
+try {
+    $chooserCapture = Capture-RawScreenshot $chooserRun "launch-chooser-visible"
+    if ($chooserCapture.Dimensions -ne "640x480" -or $chooserCapture.Colours -lt 4 -or
+        $chooserCapture.Hash -eq $app2Capture.Hash) {
+        throw "Ambiguous Auto launch did not produce the expected distinct 640x480 chooser signature"
+    }
+    Send-ChooserKeyboardPick $chooserRun
+    [void](Capture-ExpectedRawHash $chooserRun "launch-chooser-picked-app2" $app2Capture.Hash)
+} finally {
+    Stop-MediaRun $chooserRun
+}
+if (-not (Select-String -Path $chooserRun.RetroLog -SimpleMatch "chooser shown" -Quiet) -or
+    -not (Select-String -Path $chooserRun.RetroLog -SimpleMatch "chooser chose target" -Quiet) -or
+    -not (Select-String -Path $chooserRun.RetroLog -SimpleMatch "decision=!Qaventra" -Quiet)) {
+    throw "Interactive chooser run did not log show and chosen !Qaventra outcomes"
+}
+$chooserRecords = @(Get-ChildItem -LiteralPath $saveDirectory -Filter "$chooserContentSha1.choice" -File -Recurse)
+if ($chooserRecords.Count -ne 1) {
+    throw "Interactive chooser did not publish exactly one per-content choice record"
+}
+$rememberedChoice = [Convert]::ToBase64String([IO.File]::ReadAllBytes($chooserRecords[0].FullName))
+
+$rememberedRun = Start-MediaRun $chooserContent "launch-chooser-remembered"
+try {
+    [void](Capture-ExpectedRawHash $rememberedRun "launch-chooser-replayed-app2" $app2Capture.Hash)
+} finally {
+    Stop-MediaRun $rememberedRun
+}
+if (-not (Select-String -Path $rememberedRun.RetroLog -SimpleMatch "chooser remembered target" -Quiet) -or
+    (Select-String -Path $rememberedRun.RetroLog -SimpleMatch "chooser shown" -Quiet)) {
+    throw "Relaunch did not replay the remembered choice without the chooser"
+}
+$rememberedChoiceAfter = [Convert]::ToBase64String([IO.File]::ReadAllBytes($chooserRecords[0].FullName))
+if ($rememberedChoiceAfter -ne $rememberedChoice) {
+    throw "Remembered choice record changed during replay"
+}
+Write-Host "Slice 5c Windows RetroArch: chooser screenshot, injected keyboard pick, guest signature and remembered replay passed"
+if ($env:GITHUB_STEP_SUMMARY) {
+    Add-Content -Encoding UTF8 $env:GITHUB_STEP_SUMMARY "- Slice 5c chooser: distinct 640x480 chooser observed; Down/Return injected into the RetroArch window selected !Qaventra; relaunch replayed the same guest screenshot without the chooser."
+}

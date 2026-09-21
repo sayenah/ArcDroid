@@ -55,6 +55,7 @@ add_library(arcdroid_core STATIC
   core/launch.c
   core/launch_discovery.c
   core/launch_disc.c
+  core/launch_chooser.c
   core/folder_set.c
   core/playlist.c
   core/jfd.c
@@ -216,7 +217,11 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
     OUTPUT "${FIXTURE_DIR}/arcdroid-test.rom" "${FIXTURE_DIR}/arcdroid-test.adf"
       "${FIXTURE_DIR}/arcdroid-demo.adl"
       "${FIXTURE_DIR}/arcdroid-application-l.adl"
+      "${FIXTURE_DIR}/arcdroid-chooser-l.adl"
       "${FIXTURE_DIR}/launch-family/single-l.adl"
+      "${FIXTURE_DIR}/launch-family/ambiguous-l.adl"
+      "${FIXTURE_DIR}/launch-family/chooser-resources-d.adf"
+      "${FIXTURE_DIR}/launch-family/chooser-incomplete-d.adf"
       "${FIXTURE_DIR}/launch-family/checkpoint-a-guest.adf"
       "${FIXTURE_DIR}/launch-family/checkpoint-a-top-bit.adf"
       "${FIXTURE_DIR}/launch-family/checkpoint-a-hard-space.adf"
@@ -249,7 +254,11 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
     "${FIXTURE_DIR}/arcdroid-test.rom" "${FIXTURE_DIR}/arcdroid-test.adf"
     "${FIXTURE_DIR}/arcdroid-demo.adl"
     "${FIXTURE_DIR}/arcdroid-application-l.adl"
+    "${FIXTURE_DIR}/arcdroid-chooser-l.adl"
     "${FIXTURE_DIR}/launch-family/single-l.adl"
+    "${FIXTURE_DIR}/launch-family/ambiguous-l.adl"
+    "${FIXTURE_DIR}/launch-family/chooser-resources-d.adf"
+    "${FIXTURE_DIR}/launch-family/chooser-incomplete-d.adf"
     "${FIXTURE_DIR}/launch-family/checkpoint-a-guest.adf"
     "${FIXTURE_DIR}/launch-family/checkpoint-a-top-bit.adf"
     "${FIXTURE_DIR}/launch-family/checkpoint-a-hard-space.adf"

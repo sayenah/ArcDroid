@@ -16,6 +16,7 @@ core/firmware_table.c
 core/launch.c
 core/launch_discovery.c
 core/launch_disc.c
+core/launch_chooser.c
 core/folder_set.c
 core/playlist.c
 core/jfd.c

@@ -8,6 +8,7 @@
 #include "jfd.h"
 #include "playlist.h"
 
+#include <limits.h>
 #include <stdbool.h>
 #include <math.h>
 #include <stddef.h>
@@ -57,6 +58,7 @@ static uint32_t arc_frame[ARC_WIDTH * ARC_HEIGHT];
 static int16_t arc_audio_frame[2048u * 2u];
 static uint8_t arc_cmos_record[256];
 static uint8_t arc_cmos_last_written[256];
+static uint8_t arc_cmos_prepared[256];
 static uint8_t *arc_firmware;
 static size_t arc_firmware_size;
 static ArcDigest arc_content_digest;
@@ -102,6 +104,24 @@ static bool arc_osk_toggle_level;
 static bool arc_osk_pad_levels[16];
 static bool arc_osk_too_narrow_reported;
 static bool arc_osk_failure_reported;
+typedef enum {
+   ARC_SESSION_EMPTY = 0,
+   ARC_SESSION_PREPARED,
+   ARC_SESSION_CHOOSING,
+   ARC_SESSION_RUNNING,
+   ARC_SESSION_FAILED
+} ArcSessionState;
+static ArcSessionState arc_session;
+static ArcLaunchDiscovery arc_chooser_discovery;
+static ArcLaunchChooser arc_chooser;
+static char arc_choice_path[4096];
+static bool arc_chooser_pad_levels[4];
+static bool arc_chooser_keyboard_levels[3];
+static bool arc_keyboard_raw[ARC_INPUT_KEY_COUNT];
+static bool arc_chooser_pointer_down;
+static int arc_chooser_pointer_row = -1;
+static bool arc_chooser_release_gate;
+static bool arc_av_transition_pending;
 #if defined(ARCDROID_TEST_FAULTS)
 static unsigned arc_osk_fail_allocations;
 static bool arc_osk_source_unchanged;
@@ -167,6 +187,9 @@ const char *arc_libretro_test_content_id(void)
 {
    return arc_content_digest.sha1;
 }
+unsigned arc_libretro_test_session_state(void) { return (unsigned)arc_session; }
+unsigned arc_libretro_test_chooser_focus(void) { return arc_chooser.focus; }
+unsigned arc_libretro_test_chooser_rows(void) { return arc_chooser.row_count; }
 void arc_libretro_test_force_input_reconcile(void)
 {
    uint64_t generation = arc_input_reconcile_generation(&arc_inputs);
@@ -217,6 +240,11 @@ typedef enum {
 } ArcLaunchOption;
 
 typedef enum {
+   ARC_LAUNCH_CHOOSER_REMEMBER = 0,
+   ARC_LAUNCH_CHOOSER_ASK
+} ArcLaunchChooserOption;
+
+typedef enum {
    ARC_OSK_TOGGLE_L3 = 0,
    ARC_OSK_TOGGLE_R3,
    ARC_OSK_TOGGLE_OFF
@@ -255,6 +283,7 @@ typedef struct {
    unsigned pointer_deadzone;
    ArcDiskWriteMode disk_writes;
    ArcLaunchOption launch;
+   ArcLaunchChooserOption launch_chooser;
    char input_profile[64];
    ArcInputOverride pad[ARC_PAD_PORTS][ARC_PAD_INPUT_COUNT];
    ArcOskToggle osk_toggle;
@@ -294,6 +323,8 @@ static bool arc_read_options(ArcCoreOptions *options, char *error, size_t error_
    const char *pointer_deadzone = arc_option_value("arcdroid_pointer_deadzone", "15");
    const char *writes = arc_option_value("arcdroid_disk_writes", "shadow");
    const char *launch = arc_option_value("arcdroid_launch", "auto");
+   const char *launch_chooser =
+      arc_option_value("arcdroid_launch_chooser", "remember");
    const char *profile = arc_option_value("arcdroid_input_profile", "Auto");
    const char *osk_toggle = arc_option_value("arcdroid_osk_toggle", "L3");
    if (!options) return false;
@@ -339,6 +370,11 @@ static bool arc_read_options(ArcCoreOptions *options, char *error, size_t error_
    if (!strcmp(pointer_stick, "right")) options->pointer_stick = ARC_POINTER_STICK_RIGHT;
    else if (!strcmp(pointer_stick, "left")) options->pointer_stick = ARC_POINTER_STICK_LEFT;
    else if (!strcmp(pointer_stick, "disabled")) options->pointer_stick = ARC_POINTER_STICK_DISABLED;
+   else goto invalid;
+   if (!strcmp(launch_chooser, "remember"))
+      options->launch_chooser = ARC_LAUNCH_CHOOSER_REMEMBER;
+   else if (!strcmp(launch_chooser, "ask"))
+      options->launch_chooser = ARC_LAUNCH_CHOOSER_ASK;
    else goto invalid;
    if (!strcmp(pointer_speed, "300")) options->pointer_speed = 300u;
    else if (!strcmp(pointer_speed, "450")) options->pointer_speed = 450u;
@@ -640,7 +676,11 @@ static void arc_release_session(void)
    arc_image_index = 0u;
    arc_cmos_path[0] = '\0';
    arc_helper_path[0] = '\0';
+   arc_choice_path[0] = '\0';
    arc_cmos_last_written_valid = false;
+   arc_session = ARC_SESSION_EMPTY;
+   memset(&arc_chooser_discovery, 0, sizeof(arc_chooser_discovery));
+   memset(&arc_chooser, 0, sizeof(arc_chooser));
    memset(&arc_plan, 0, sizeof(arc_plan));
 }
 
@@ -681,6 +721,7 @@ static void arc_seed_cmos(void)
    }
    arc_cmos_normalise_payload(payload, machine->io);
    arc_cmos_encode(arc_cmos_record, &arc_plan, payload);
+   memcpy(arc_cmos_prepared, arc_cmos_record, sizeof(arc_cmos_prepared));
    free(existing);
 }
 
@@ -688,7 +729,8 @@ static void arc_persist_cmos(void)
 {
    const ArcMachineDescriptor *machine = arc_machine_descriptor(arc_plan.machine);
    uint8_t payload[ARC_CMOS_PAYLOAD_SIZE];
-   if (!arc_cmos_path[0]) return;
+   if (!arc_cmos_path[0] || arc_session != ARC_SESSION_RUNNING ||
+       !arc_engine_active()) return;
    arc_sync_cmos();
    if (!arc_cmos_decode(arc_cmos_record, &arc_plan, payload))
    {
@@ -1357,8 +1399,11 @@ static void arc_launch_candidates_message(const ArcLaunchDiscovery *discovery,
    char message[512];
    size_t at = (size_t)snprintf(message, sizeof(message), "%s", prefix);
    bool listed = false;
+   unsigned ordinal = 0u;
    for (unsigned i = 0u; i < discovery->candidate_count && at < sizeof(message); ++i)
    {
+      if (discovery->candidates[i].resource) continue;
+      ++ordinal;
       if (applications_only &&
           discovery->candidates[i].state != ARC_LAUNCH_CANDIDATE_APPLICATION)
          continue;
@@ -1366,7 +1411,7 @@ static void arc_launch_candidates_message(const ArcLaunchDiscovery *discovery,
       (void)arc_launch_escape_name(&discovery->candidates[i].name,
                                    name, sizeof(name));
       int written = snprintf(message + at, sizeof(message) - at, "%s%u %s",
-                             listed ? " " : "", i + 1u, name);
+                             listed ? " " : "", ordinal, name);
       if (written < 0 || (size_t)written >= sizeof(message) - at)
       { at = sizeof(message) - 1u; break; }
       at += (size_t)written;
@@ -1494,9 +1539,12 @@ static bool arc_launch_binding(const ArcLaunchDiscovery *discovery,
       }
    }
 
+   unsigned ordinal = 0u;
+   for (unsigned i = 0u; i < selected; ++i)
+      if (!discovery->candidates[i].resource) ++ordinal;
    uint8_t binding[ARC_LAUNCH_BINDING_MAX_SIZE];
    size_t binding_size = 0u;
-   if (!arc_launch_binding_format(selected,
+   if (!arc_launch_binding_format(ordinal,
           &discovery->candidates[selected].name,
           discovery->candidate_fingerprint,
           binding, sizeof(binding), &binding_size) ||
@@ -1514,6 +1562,7 @@ static void arc_launch_log(const ArcLaunchDiscovery *discovery,
    char disc_name[4u * ARC_GUEST_NAME_MAX + 1u];
    char decision[4u * ARC_GUEST_NAME_MAX + 1u] = "none";
    size_t ca = 0u, aa = 0u;
+   unsigned ordinal = 0u;
    (void)arc_launch_escape_name(&discovery->disc_name,
                                 disc_name, sizeof(disc_name));
    if (decision_index >= 0 &&
@@ -1528,13 +1577,16 @@ static void arc_launch_log(const ArcLaunchDiscovery *discovery,
                                    name, sizeof(name));
       const char *state = discovery->candidates[i].state == ARC_LAUNCH_CANDIDATE_APPLICATION ? "app" :
                           discovery->candidates[i].state == ARC_LAUNCH_CANDIDATE_UNKNOWN ? "unknown" : "other";
+      if (discovery->candidates[i].resource) state = "resource";
       int n = snprintf(candidates + ca, sizeof(candidates) - ca, "%s%u:%s:%s",
                        i ? "," : "", i + 1u, name, state);
       if (n > 0 && (size_t)n < sizeof(candidates) - ca) ca += (size_t)n;
-      if (discovery->candidates[i].state == ARC_LAUNCH_CANDIDATE_APPLICATION)
+      if (!discovery->candidates[i].resource) ++ordinal;
+      if (discovery->candidates[i].state == ARC_LAUNCH_CANDIDATE_APPLICATION &&
+          !discovery->candidates[i].resource)
       {
          n = snprintf(applications + aa, sizeof(applications) - aa, "%s%u:%s",
-                      aa ? "," : "", i + 1u, name);
+                      aa ? "," : "", ordinal, name);
          if (n > 0 && (size_t)n < sizeof(applications) - aa) aa += (size_t)n;
       }
    }
@@ -1562,89 +1614,77 @@ static void arc_launch_log_skipped_siblings(
    }
 }
 
-static void arc_prepare_launch(ArcMediaEntry *entry, bool ejected,
-                               ArcLaunchOption option, bool reselected)
+static bool arc_choice_path_build(bool create_directory)
 {
-   ArcLaunchDiscovery discovery;
-   memset(&discovery, 0, sizeof(discovery));
-   discovery.target_index = -1;
-   discovery.reason = ARC_LAUNCH_REASON_UNREADABLE;
-   arc_helper_path[0] = '\0';
-   arc_plan.launch_helper = false;
-   arc_plan.launch_target[0] = '\0';
-   arc_plan.launch_target_length = 0u;
-   if (ejected || !entry || !entry->populated)
-   { arc_launch_log(&discovery, -1, "drive 0 empty"); return; }
-
-   void *raw = NULL;
-   size_t raw_size = 0u;
-   const ArcJfdImage *jfd = entry->info.kind == ARC_MEDIA_JFD ? &entry->jfd : NULL;
-   if (!jfd && !arc_io_read_all(entry->staged, &raw, &raw_size))
-   { arc_launch_log(&discovery, -1, "media read failed"); return; }
-   (void)arc_launch_discover(raw, raw_size, &entry->info, jfd, &discovery);
-   free(raw);
-   if (option == ARC_LAUNCH_OFF)
-   { arc_launch_log(&discovery, -1, "disabled"); return; }
-   if (!arc_launch_os_supported(arc_plan.os))
-   { arc_launch_log(&discovery, -1, "OS class unsupported"); return; }
-
-   int selected = discovery.target_index;
-   char refusal[160] = {0};
-   const char *reason = arc_launch_reason_name(discovery.reason);
-   if (option >= ARC_LAUNCH_APP1)
+   char directory[ARC_MEDIA_PATH_CAPACITY];
+   int d = snprintf(directory, sizeof(directory), "%s/arcdroid/launch",
+                    arc_save_path);
+   int p = d >= 0 && (size_t)d < sizeof(directory) ?
+      snprintf(arc_choice_path, sizeof(arc_choice_path), "%s/%s.choice",
+               directory, arc_plan.content_id) : -1;
+   if (d < 0 || (size_t)d >= sizeof(directory) || p < 0 ||
+       (size_t)p >= sizeof(arc_choice_path) ||
+       (create_directory && !arc_io_make_path(directory)))
    {
-      unsigned ordinal = (unsigned)(option - ARC_LAUNCH_APP1);
-      if (!discovery.readable)
-         snprintf(refusal, sizeof(refusal), "Application choice refused: inspection incomplete");
-      else if (ordinal >= discovery.candidate_count)
-         snprintf(refusal, sizeof(refusal), "Application choice refused: candidate %u does not exist", ordinal + 1u);
-      else if (discovery.candidates[ordinal].state != ARC_LAUNCH_CANDIDATE_APPLICATION)
-         snprintf(refusal, sizeof(refusal), "Application choice refused: candidate %u has no !Run", ordinal + 1u);
-      else if (!discovery.candidates[ordinal].launchable)
-         snprintf(refusal, sizeof(refusal), "Application choice refused: candidate %u leaf is not launchable", ordinal + 1u);
-      else
-      {
-         selected = (int)ordinal;
-         if (!arc_launch_binding(&discovery, ordinal, reselected,
-                                 refusal, sizeof(refusal)))
-         {
-            char detail[sizeof(refusal)];
-            snprintf(detail, sizeof(detail), "%s", refusal);
-            snprintf(refusal, sizeof(refusal), "Application choice refused: %.120s", detail);
-         }
-         else
-            reason = discovery.boot_option ?
-               "explicit choice; disc !Boot skipped because helper is boot drive" :
-               "explicit application choice";
-      }
-      if (refusal[0])
-      {
-         arc_message(refusal, RETRO_LOG_WARN);
-         arc_launch_log(&discovery, -1, refusal);
-         return;
-      }
+      arc_choice_path[0] = '\0';
+      return false;
    }
-   else if (selected < 0)
-   {
-      if (discovery.reason == ARC_LAUNCH_REASON_AMBIGUOUS &&
-          discovery.application_count >= 2u)
-         arc_launch_candidates_message(&discovery, "No unique application: ", true);
-      else if (discovery.reason == ARC_LAUNCH_REASON_INSPECTION_INCOMPLETE &&
-               discovery.candidate_count)
-         arc_launch_candidates_message(&discovery,
-            "Application inspection incomplete: ", false);
-      arc_launch_log(&discovery, -1, reason);
-      return;
-   }
+   return true;
+}
 
+static bool arc_choice_load(const ArcLaunchDiscovery *discovery,
+                            bool *valid, int *selected)
+{
+   *valid = false;
+   *selected = INT_MIN;
+   if (!arc_choice_path_build(false)) return false;
+   size_t declared = 0u;
+   if (!arc_io_file_size(arc_choice_path, &declared)) return true;
+   if (!declared || declared > ARC_LAUNCH_CHOICE_MAX_SIZE) return true;
+   uint8_t data[ARC_LAUNCH_CHOICE_MAX_SIZE];
+   ArcIoFile *file = arc_io_open_file(arc_choice_path, false);
+   int64_t opened = file ? arc_io_file_length(file) : -1;
+   size_t got = file ? arc_io_read_file(file, data, declared) : 0u;
+   uint8_t trailing = 0u;
+   size_t extra = file ? arc_io_read_file(file, &trailing, 1u) : 0u;
+   bool closed = file && arc_io_close_file(file);
+   if (opened < 0 || (uint64_t)opened != declared || got != declared ||
+       extra || !closed) return false;
+   ArcLaunchChoiceRecord choice;
+   if (!arc_launch_choice_parse(data, declared, &choice)) return true;
+   int match = arc_launch_choice_match(discovery, &choice);
+   if (match == INT_MIN) return true;
+   *valid = true;
+   *selected = match;
+   return true;
+}
+
+static bool arc_choice_publish(const ArcLaunchDiscovery *discovery,
+                               int selected)
+{
+   if (!arc_choice_path_build(true)) return false;
+   uint8_t data[ARC_LAUNCH_CHOICE_MAX_SIZE];
+   size_t size = 0u;
+   const ArcGuestName *target = selected >= 0 ?
+      &discovery->candidates[selected].name : NULL;
+   if (!arc_launch_choice_format(target, selected < 0,
+                                 discovery->candidate_fingerprint,
+                                 data, sizeof(data), &size)) return false;
+   size_t ignored = 0u;
+   bool replacing = arc_io_file_size(arc_choice_path, &ignored);
+   return arc_launch_binding_publish(arc_choice_path, replacing, data, size);
+}
+
+static bool arc_launch_helper_publish(const ArcLaunchDiscovery *discovery,
+                                      unsigned selected, char *refusal,
+                                      size_t refusal_size)
+{
    uint8_t *helper = malloc(ARC_LAUNCH_DISC_SIZE);
-   if (!helper || !arc_launch_disc_build(&discovery, (unsigned)selected,
-                                         helper, refusal, sizeof(refusal)))
+   if (!helper || !arc_launch_disc_build(discovery, selected, helper,
+                                         refusal, refusal_size))
    {
       free(helper);
-      arc_launch_log(&discovery, -1,
-                     refusal[0] ? refusal : "helper generation failed");
-      return;
+      return false;
    }
    char directory[ARC_MEDIA_PATH_CAPACITY];
    int d = snprintf(directory, sizeof(directory), "%s/arcdroid/launch", arc_save_path);
@@ -1666,24 +1706,145 @@ static void arc_prepare_launch(ArcMediaEntry *entry, bool ejected,
                               NULL, NULL, 0u)) arc_helper_path[0] = '\0';
    }
    free(helper);
-   if (!arc_helper_path[0])
-   {
-      arc_launch_log(&discovery, -1, "helper publication failed");
-      return;
-   }
+   if (!arc_helper_path[0]) return false;
    arc_plan.launch_helper = true;
-   arc_plan.launch_target_length = discovery.candidates[selected].name.length;
-   memcpy(arc_plan.launch_target, discovery.candidates[selected].name.bytes,
+   arc_plan.launch_target_length = discovery->candidates[selected].name.length;
+   memcpy(arc_plan.launch_target, discovery->candidates[selected].name.bytes,
           arc_plan.launch_target_length);
    arc_plan.launch_target[arc_plan.launch_target_length] = '\0';
-   arc_launch_log_skipped_siblings(&discovery, (unsigned)selected);
+   arc_launch_log_skipped_siblings(discovery, selected);
+   return true;
+}
+
+static bool arc_prepare_launch(ArcMediaEntry *entry, bool ejected,
+                               ArcLaunchOption option, bool reselected)
+{
+   ArcLaunchDiscovery discovery;
+   memset(&discovery, 0, sizeof(discovery));
+   discovery.target_index = -1;
+   discovery.reason = ARC_LAUNCH_REASON_UNREADABLE;
+   arc_helper_path[0] = '\0';
+   arc_plan.launch_helper = false;
+   arc_plan.launch_target[0] = '\0';
+   arc_plan.launch_target_length = 0u;
+   if (ejected || !entry || !entry->populated)
+   { arc_launch_log(&discovery, -1, "drive 0 empty"); return false; }
+
+   void *raw = NULL;
+   size_t raw_size = 0u;
+   const ArcJfdImage *jfd = entry->info.kind == ARC_MEDIA_JFD ? &entry->jfd : NULL;
+   if (!jfd && !arc_io_read_all(entry->staged, &raw, &raw_size))
+   { arc_launch_log(&discovery, -1, "media read failed"); return false; }
+   (void)arc_launch_discover(raw, raw_size, &entry->info, jfd, &discovery);
+   free(raw);
+   if (option == ARC_LAUNCH_OFF)
+   { arc_launch_log(&discovery, -1, "disabled"); return false; }
+   if (!arc_launch_os_supported(arc_plan.os))
+   { arc_launch_log(&discovery, -1, "OS class unsupported"); return false; }
+
+   int selected = discovery.target_index;
+   char refusal[160] = {0};
+   const char *reason = arc_launch_reason_name(discovery.reason);
+   if (option >= ARC_LAUNCH_APP1)
+   {
+      unsigned ordinal = (unsigned)(option - ARC_LAUNCH_APP1);
+      unsigned candidate = arc_launch_candidate_index(&discovery, ordinal);
+      if (!discovery.readable)
+         snprintf(refusal, sizeof(refusal), "Application choice refused: inspection incomplete");
+      else if (candidate == UINT_MAX)
+         snprintf(refusal, sizeof(refusal), "Application choice refused: candidate %u does not exist", ordinal + 1u);
+      else if (discovery.candidates[candidate].state != ARC_LAUNCH_CANDIDATE_APPLICATION)
+         snprintf(refusal, sizeof(refusal), "Application choice refused: candidate %u has no !Run", ordinal + 1u);
+      else if (!discovery.candidates[candidate].launchable)
+         snprintf(refusal, sizeof(refusal), "Application choice refused: candidate %u leaf is not launchable", ordinal + 1u);
+      else
+      {
+         selected = (int)candidate;
+         if (!arc_launch_binding(&discovery, candidate, reselected,
+                                 refusal, sizeof(refusal)))
+         {
+            char detail[sizeof(refusal)];
+            snprintf(detail, sizeof(detail), "%s", refusal);
+            snprintf(refusal, sizeof(refusal), "Application choice refused: %.120s", detail);
+         }
+         else
+            reason = discovery.boot_option ?
+               "explicit choice; disc !Boot skipped because helper is boot drive" :
+               "explicit application choice";
+      }
+      if (refusal[0])
+      {
+         arc_message(refusal, RETRO_LOG_WARN);
+         arc_launch_log(&discovery, -1, refusal);
+         return false;
+      }
+   }
+   else if (selected < 0)
+   {
+      unsigned verified_targets = 0u;
+      for (unsigned i = 0u; i < discovery.candidate_count; ++i)
+         if (arc_launch_candidate_is_target(&discovery.candidates[i]))
+            ++verified_targets;
+      bool chooser_eligible = arc_image_index == 0u &&
+         (discovery.reason == ARC_LAUNCH_REASON_AMBIGUOUS ||
+          discovery.reason == ARC_LAUNCH_REASON_INSPECTION_INCOMPLETE) &&
+         verified_targets >= 1u;
+      if (chooser_eligible)
+      {
+         bool remembered = false;
+         int remembered_target = INT_MIN;
+         (void)arc_choice_load(&discovery, &remembered, &remembered_target);
+         if (remembered &&
+             arc_core_options.launch_chooser == ARC_LAUNCH_CHOOSER_REMEMBER)
+         {
+            if (remembered_target >= 0 &&
+                !arc_launch_helper_publish(&discovery,
+                   (unsigned)remembered_target, refusal, sizeof(refusal)))
+            {
+               arc_launch_log(&discovery, -1,
+                  refusal[0] ? refusal : "remembered helper publication failed");
+               return false;
+            }
+            arc_launch_log(&discovery, remembered_target,
+               remembered_target < 0 ? "chooser remembered desktop" :
+                                       "chooser remembered target");
+            return false;
+         }
+         if (arc_launch_chooser_init(&arc_chooser, &discovery, remembered,
+                                     remembered_target))
+         {
+            arc_chooser_discovery = discovery;
+            arc_launch_log(&discovery, -1,
+               arc_core_options.launch_chooser == ARC_LAUNCH_CHOOSER_ASK ?
+                  "chooser asked" : "chooser shown");
+            return true;
+         }
+      }
+      if (discovery.reason == ARC_LAUNCH_REASON_AMBIGUOUS &&
+          discovery.application_count >= 2u)
+         arc_launch_candidates_message(&discovery, "No unique application: ", true);
+      else if (discovery.reason == ARC_LAUNCH_REASON_INSPECTION_INCOMPLETE &&
+               discovery.candidate_count)
+         arc_launch_candidates_message(&discovery,
+            "Application inspection incomplete: ", false);
+      arc_launch_log(&discovery, -1, reason);
+      return false;
+   }
+   if (!arc_launch_helper_publish(&discovery, (unsigned)selected,
+                                  refusal, sizeof(refusal)))
+   {
+      arc_launch_log(&discovery, -1,
+         refusal[0] ? refusal : "helper publication failed");
+      return false;
+   }
    arc_launch_log(&discovery, selected, reason);
+   return false;
 }
 
 static bool arc_disk_set_eject(bool ejected)
 {
    char error[512] = {0};
-   if (!arc_loaded) return false;
+   if (!arc_loaded || arc_session != ARC_SESSION_RUNNING) return false;
    if (ejected == arc_ejected) return true;
    if (ejected)
    {
@@ -1716,7 +1877,7 @@ static bool arc_disk_get_eject(void) { return arc_ejected; }
 static unsigned arc_disk_get_index(void) { return arc_image_index; }
 static bool arc_disk_set_index(unsigned index)
 {
-   if (!arc_loaded || !arc_ejected) return false;
+   if (!arc_loaded || arc_session != ARC_SESSION_RUNNING || !arc_ejected) return false;
    if (index < arc_media_count && !arc_media[index].populated) return false;
    arc_image_index = index < arc_media_count ? index : arc_media_count;
    return true;
@@ -1724,7 +1885,8 @@ static bool arc_disk_set_index(unsigned index)
 static unsigned arc_disk_get_count(void) { return arc_media_count; }
 static bool arc_disk_replace(unsigned index, const struct retro_game_info *info)
 {
-   if (!arc_loaded || !arc_ejected || index >= arc_media_count) return false;
+   if (!arc_loaded || arc_session != ARC_SESSION_RUNNING || !arc_ejected ||
+       index >= arc_media_count) return false;
    if (!info)
    {
       bool selected = arc_image_index == index;
@@ -1755,7 +1917,8 @@ static bool arc_disk_replace(unsigned index, const struct retro_game_info *info)
 }
 static bool arc_disk_add(void)
 {
-   if (!arc_loaded || arc_media_count >= ARC_PLAYLIST_MAX_ENTRIES) return false;
+   if (!arc_loaded || arc_session != ARC_SESSION_RUNNING ||
+       arc_media_count >= ARC_PLAYLIST_MAX_ENTRIES) return false;
    memset(&arc_media[arc_media_count++], 0, sizeof(arc_media[0]));
    return true;
 }
@@ -1781,6 +1944,8 @@ static void arc_keyboard(bool down, unsigned keycode, uint32_t character,
 {
    (void)character;
    (void)modifiers;
+   if (keycode < ARC_INPUT_KEY_COUNT) arc_keyboard_raw[keycode] = down;
+   if (arc_session == ARC_SESSION_CHOOSING || arc_chooser_release_gate) return;
    if (keycode == RETROK_MENU || keycode == RETROK_LMETA)
    {
       if (keycode == RETROK_MENU) arc_keyboard_menu = down;
@@ -2324,6 +2489,44 @@ static void arc_poll_inputs(void)
       RETRO_DEVICE_ID_JOYPAD_START, RETRO_DEVICE_ID_JOYPAD_SELECT
    };
    if (!arc_input_state) return;
+   if (arc_chooser_release_gate)
+   {
+      bool neutral = true;
+      for (unsigned port = 0u; port < 2u; ++port)
+      {
+         for (unsigned id = 0u; id < 16u; ++id)
+            if (arc_input_state(port, RETRO_DEVICE_JOYPAD, 0u, id)) neutral = false;
+         for (unsigned stick = 0u; stick < 2u; ++stick)
+            for (unsigned axis = 0u; axis < 2u; ++axis)
+               if (arc_input_state(port, RETRO_DEVICE_ANALOG, stick, axis)) neutral = false;
+         if (arc_input_state(port, RETRO_DEVICE_MOUSE, 0u,
+                             RETRO_DEVICE_ID_MOUSE_LEFT) ||
+             arc_input_state(port, RETRO_DEVICE_MOUSE, 0u,
+                             RETRO_DEVICE_ID_MOUSE_RIGHT) ||
+             arc_input_state(port, RETRO_DEVICE_MOUSE, 0u,
+                             RETRO_DEVICE_ID_MOUSE_MIDDLE)) neutral = false;
+         (void)arc_input_state(port, RETRO_DEVICE_MOUSE, 0u,
+                              RETRO_DEVICE_ID_MOUSE_X);
+         (void)arc_input_state(port, RETRO_DEVICE_MOUSE, 0u,
+                              RETRO_DEVICE_ID_MOUSE_Y);
+      }
+      if (arc_input_state(0u, RETRO_DEVICE_POINTER, 0u,
+                          RETRO_DEVICE_ID_POINTER_PRESSED)) neutral = false;
+      for (unsigned key = 0u; key < ARC_INPUT_KEY_COUNT; ++key)
+         if (arc_keyboard_raw[key] ||
+             (arc_keyboard_polling &&
+              arc_input_state(0u, RETRO_DEVICE_KEYBOARD, 0u, key)))
+            neutral = false;
+      arc_input_reset(&arc_inputs);
+      arc_platform_joystick_snapshot(false, NULL);
+      arc_stick_x = arc_stick_y = 0;
+      if (neutral)
+      {
+         arc_chooser_release_gate = false;
+         memset(arc_keyboard_raw, 0, sizeof(arc_keyboard_raw));
+      }
+      return;
+   }
    arc_poll_osk_controls();
    bool sampled[2][10] = {{false}};
    bool desired[ARC_PAD_PORTS][ARC_INPUT_KEY_COUNT] = {{false}};
@@ -2458,11 +2661,15 @@ static const struct retro_core_option_v2_definition arc_base_options[] = {
     NULL, {{"auto", "Auto"}, {"off", "Off"}, {"app1", "Application 1"}, {"app2", "Application 2"},
            {"app3", "Application 3"}, {"app4", "Application 4"}, {"app5", "Application 5"},
            {"app6", "Application 6"}, {"app7", "Application 7"}, {"app8", "Application 8"}, {NULL, NULL}}, "auto"},
+   {"arcdroid_launch_chooser", "Launch Chooser", NULL,
+    "Remember the selected application, or ask on every eligible launch.", NULL,
+    NULL, {{"remember", "Remember"}, {"ask", "Ask every time"},
+           {NULL, NULL}}, "remember"},
    {"arcdroid_disk_writes", "Disk Writes", NULL, "Choose where floppy writes are stored.", NULL,
     NULL, {{"shadow", NULL}, {"original", NULL}, {"off", NULL}, {NULL, NULL}}, "shadow"},
    {NULL, NULL, NULL, NULL, NULL, NULL, {{0}}, NULL}
 };
-static struct retro_core_option_v2_definition arc_options[34];
+static struct retro_core_option_v2_definition arc_options[35];
 static struct retro_core_option_v2_category arc_option_categories[] = {
    {"pad_mapping", "Pad Mapping", "Map each RetroPad input to a physical Archimedes key."},
    {NULL, NULL, NULL}
@@ -2500,8 +2707,8 @@ static void arc_build_options(void)
    if (arc_options_built) return;
    memset(arc_options, 0, sizeof(arc_options));
    memcpy(arc_options, arc_base_options,
-          11u * sizeof(struct retro_core_option_v2_definition));
-   unsigned at = 11u;
+          12u * sizeof(struct retro_core_option_v2_definition));
+   unsigned at = 12u;
    struct retro_core_option_v2_definition *profile = &arc_options[at++];
    profile->key = "arcdroid_input_profile";
    profile->desc = "Input Profile";
@@ -2786,6 +2993,9 @@ RETRO_API void retro_init(void)
    arc_osk_present_dirty = false;
    arc_osk_too_narrow_reported = false;
    arc_osk_failure_reported = false;
+   arc_chooser_release_gate = false;
+   arc_av_transition_pending = false;
+   memset(arc_keyboard_raw, 0, sizeof(arc_keyboard_raw));
 #if defined(ARCDROID_TEST_FAULTS)
    arc_osk_source_unchanged = true;
    arc_osk_source_checked = false;
@@ -2832,6 +3042,184 @@ RETRO_API void retro_deinit(void)
    arc_input_state = NULL;
 }
 
+static bool arc_construct_machine(const ArcMachineDescriptor *machine,
+                                  ArcEngineMedia *mounted,
+                                  char *error, size_t error_size)
+{
+   uint8_t payload[ARC_CMOS_PAYLOAD_SIZE];
+   uint8_t machine_cmos[ARC_CMOS_MACHINE_SIZE];
+   ArcEngineMedia helper = {arc_helper_path, false, ARC_MEDIA_ADL_640K,
+                            ARC_GEOMETRY_640K_L, NULL};
+   memcpy(arc_cmos_record, arc_cmos_prepared, sizeof(arc_cmos_record));
+   if (!arc_cmos_decode(arc_cmos_prepared, &arc_plan, payload) ||
+       !arc_cmos_machine_image(arc_plan.os, machine->io, payload,
+                               arc_plan.launch_helper, machine_cmos) ||
+       !arc_engine_start(arc_firmware, arc_firmware_size, mounted,
+                         arc_plan.launch_helper ? &helper : NULL,
+                         machine, machine_cmos, error, error_size))
+      return false;
+   arc_session = ARC_SESSION_RUNNING;
+   return true;
+}
+
+static void arc_chooser_reset_input(void)
+{
+   memset(arc_chooser_pad_levels, 0, sizeof(arc_chooser_pad_levels));
+   memset(arc_chooser_keyboard_levels, 0, sizeof(arc_chooser_keyboard_levels));
+   arc_chooser_pointer_down = false;
+   arc_chooser_pointer_row = -1;
+   arc_input_reset(&arc_inputs);
+   arc_platform_joystick_snapshot(false, NULL);
+}
+
+static bool arc_chooser_confirm(void)
+{
+   int selected = arc_launch_chooser_selection(&arc_chooser);
+   if (selected == INT_MIN) return false;
+   bool remembered = arc_choice_publish(&arc_chooser_discovery, selected);
+   if (!remembered)
+      arc_message("Launch choice not remembered; starting this time only.",
+                  RETRO_LOG_WARN);
+   char error[512] = {0};
+   arc_helper_path[0] = '\0';
+   arc_plan.launch_helper = false;
+   arc_plan.launch_target[0] = '\0';
+   arc_plan.launch_target_length = 0u;
+   if (selected >= 0 &&
+       !arc_launch_helper_publish(&arc_chooser_discovery, (unsigned)selected,
+                                  error, sizeof(error)))
+      goto failed;
+   arc_launch_log(&arc_chooser_discovery, selected,
+                  selected < 0 ? "chooser chose desktop" :
+                                 "chooser chose target");
+   if (!arc_resolve_inputs(&arc_core_options, true, false))
+   {
+      snprintf(error, sizeof(error), "Unable to resolve ArcDroid input options.");
+      goto failed;
+   }
+   ArcEngineMedia mounted = arc_engine_media(&arc_media[arc_image_index]);
+   const ArcMachineDescriptor *machine = arc_machine_descriptor(arc_plan.machine);
+   if (!arc_construct_machine(machine, &mounted, error, sizeof(error)))
+      goto failed;
+   arc_chooser_release_gate = true;
+   arc_chooser_reset_input();
+   arc_frame_number = 0u;
+   arc_audio_fraction = 0u;
+   arc_guest_time_us = 0u;
+   arc_fault_reported = false;
+   arc_vidc_warning_reported = false;
+   arc_vidc_transient_logged = false;
+   arc_vidc_incomplete_us = 0u;
+   arc_audio_warning_reported = false;
+   arc_av_transition_pending = true;
+   return true;
+failed:
+   arc_message(error[0] ? error :
+      "Unable to start the ArcDroid machine after the launch choice.",
+      RETRO_LOG_ERROR);
+   arc_loaded = false;
+   arc_release_session();
+   arc_session = ARC_SESSION_FAILED;
+   return false;
+}
+
+static void arc_poll_chooser(void)
+{
+   if (!arc_input_state) return;
+   for (unsigned port = 0u; port < 2u; ++port)
+   {
+      (void)arc_input_state(port, RETRO_DEVICE_MOUSE, 0u,
+                           RETRO_DEVICE_ID_MOUSE_X);
+      (void)arc_input_state(port, RETRO_DEVICE_MOUSE, 0u,
+                           RETRO_DEVICE_ID_MOUSE_Y);
+   }
+   bool levels[4] = {
+      arc_input_state(0u, RETRO_DEVICE_JOYPAD, 0u,
+                      RETRO_DEVICE_ID_JOYPAD_UP) != 0 ||
+      arc_input_state(0u, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_LEFT,
+                      RETRO_DEVICE_ID_ANALOG_Y) < -16384,
+      arc_input_state(0u, RETRO_DEVICE_JOYPAD, 0u,
+                      RETRO_DEVICE_ID_JOYPAD_DOWN) != 0 ||
+      arc_input_state(0u, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_LEFT,
+                      RETRO_DEVICE_ID_ANALOG_Y) > 16384,
+      arc_input_state(0u, RETRO_DEVICE_JOYPAD, 0u,
+                      RETRO_DEVICE_ID_JOYPAD_A) != 0,
+      arc_input_state(0u, RETRO_DEVICE_JOYPAD, 0u,
+                      RETRO_DEVICE_ID_JOYPAD_START) != 0
+   };
+   bool key[3] = {
+      arc_keyboard_raw[RETROK_UP], arc_keyboard_raw[RETROK_DOWN],
+      arc_keyboard_raw[RETROK_RETURN]
+   };
+   if (arc_keyboard_polling)
+   {
+      key[0] = arc_input_state(0u, RETRO_DEVICE_KEYBOARD, 0u, RETROK_UP) != 0;
+      key[1] = arc_input_state(0u, RETRO_DEVICE_KEYBOARD, 0u, RETROK_DOWN) != 0;
+      key[2] = arc_input_state(0u, RETRO_DEVICE_KEYBOARD, 0u, RETROK_RETURN) != 0;
+      arc_keyboard_raw[RETROK_UP] = key[0];
+      arc_keyboard_raw[RETROK_DOWN] = key[1];
+      arc_keyboard_raw[RETROK_RETURN] = key[2];
+   }
+   if ((levels[0] && !arc_chooser_pad_levels[0]) ||
+       (key[0] && !arc_chooser_keyboard_levels[0]))
+      arc_launch_chooser_move(&arc_chooser, -1);
+   if ((levels[1] && !arc_chooser_pad_levels[1]) ||
+       (key[1] && !arc_chooser_keyboard_levels[1]))
+      arc_launch_chooser_move(&arc_chooser, 1);
+   bool confirm = (levels[2] && !arc_chooser_pad_levels[2]) ||
+                  (levels[3] && !arc_chooser_pad_levels[3]) ||
+                  (key[2] && !arc_chooser_keyboard_levels[2]);
+   memcpy(arc_chooser_pad_levels, levels, sizeof(levels));
+   memcpy(arc_chooser_keyboard_levels, key, sizeof(key));
+
+   bool pointer = arc_input_state(0u, RETRO_DEVICE_POINTER, 0u,
+                                  RETRO_DEVICE_ID_POINTER_PRESSED) != 0;
+   bool offscreen = arc_input_state(0u, RETRO_DEVICE_POINTER, 0u,
+                                    RETRO_DEVICE_ID_POINTER_IS_OFFSCREEN) != 0;
+   int row = -1;
+   if (!offscreen)
+   {
+      int raw_x = arc_input_state(0u, RETRO_DEVICE_POINTER, 0u,
+                                  RETRO_DEVICE_ID_POINTER_X);
+      int raw_y = arc_input_state(0u, RETRO_DEVICE_POINTER, 0u,
+                                  RETRO_DEVICE_ID_POINTER_Y);
+      if (raw_x != -32768 && raw_y != -32768)
+         row = arc_launch_chooser_hit(&arc_chooser,
+            (unsigned)arc_pointer_to_pixel(raw_x, ARC_WIDTH),
+            (unsigned)arc_pointer_to_pixel(raw_y, ARC_HEIGHT));
+   }
+   if (pointer && !arc_chooser_pointer_down)
+   {
+      arc_chooser_pointer_row = row;
+      if (row >= 0) (void)arc_launch_chooser_focus(&arc_chooser, (unsigned)row);
+   }
+   else if (!pointer && arc_chooser_pointer_down)
+   {
+      if (row >= 0 && row == arc_chooser_pointer_row)
+      {
+         (void)arc_launch_chooser_focus(&arc_chooser, (unsigned)row);
+         confirm = true;
+      }
+      arc_chooser_pointer_row = -1;
+   }
+   arc_chooser_pointer_down = pointer;
+   if (confirm) (void)arc_chooser_confirm();
+}
+
+static void arc_notify_av(unsigned width, unsigned height, double rate)
+{
+   struct retro_system_av_info av;
+   retro_get_system_av_info(&av);
+   av.geometry.base_width = width;
+   av.geometry.base_height = height;
+   av.timing.fps = rate;
+   if (arc_environment)
+      arc_environment(RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO, &av);
+   arc_video_width = width;
+   arc_video_height = height;
+   arc_video_rate = rate;
+}
+
 static bool arc_load_game(const struct retro_game_info *game, bool negotiate)
 {
    enum retro_pixel_format format = RETRO_PIXEL_FORMAT_XRGB8888;
@@ -2859,6 +3247,9 @@ static bool arc_load_game(const struct retro_game_info *game, bool negotiate)
    arc_osk_present_dirty = false;
    arc_osk_too_narrow_reported = false;
    arc_osk_failure_reported = false;
+   arc_chooser_release_gate = false;
+   arc_av_transition_pending = false;
+   memset(arc_keyboard_raw, 0, sizeof(arc_keyboard_raw));
    arc_guest_time_us = 0u;
    memset(arc_frame, 0, sizeof(arc_frame));
    if (!game || !game->path || !game->path[0])
@@ -2985,38 +3376,40 @@ static bool arc_load_game(const struct retro_game_info *game, bool negotiate)
       return false;
    }
    arc_seed_cmos();
+   arc_session = ARC_SESSION_PREPARED;
    {
-      uint8_t payload[ARC_CMOS_PAYLOAD_SIZE];
-      uint8_t machine_cmos[ARC_CMOS_MACHINE_SIZE];
       if (!arc_refresh_jfd(&arc_media[arc_image_index], error, sizeof(error)))
       {
          arc_message(error, RETRO_LOG_ERROR);
          arc_release_session();
          return false;
       }
-      arc_prepare_launch(&arc_media[arc_image_index], false,
-                         arc_core_options.launch, false);
-      if (!arc_resolve_inputs(&arc_core_options, false, true))
+      bool choosing = arc_prepare_launch(&arc_media[arc_image_index], false,
+                                         arc_core_options.launch, false);
+      if (choosing)
+      {
+         arc_session = ARC_SESSION_CHOOSING;
+         arc_loaded = true;
+         arc_ejected = false;
+         arc_chooser_reset_input();
+         arc_av_transition_pending = true;
+      }
+      else if (!arc_resolve_inputs(&arc_core_options, false, true))
       {
          arc_message("Unable to resolve ArcDroid input options.", RETRO_LOG_ERROR);
          arc_release_session();
          return false;
       }
-      ArcEngineMedia media = arc_engine_media(&arc_media[arc_image_index]);
-      ArcEngineMedia helper = {arc_helper_path, false, ARC_MEDIA_ADL_640K,
-                               ARC_GEOMETRY_640K_L, NULL};
-      if (!arc_cmos_decode(arc_cmos_record, &arc_plan, payload) ||
-          !arc_cmos_machine_image(arc_plan.os, launch_machine->io, payload,
-                                  arc_plan.launch_helper, machine_cmos) ||
-          !arc_engine_start(arc_firmware, arc_firmware_size,
-                            &media,
-                            arc_plan.launch_helper ? &helper : NULL,
-                            launch_machine,
-                            machine_cmos, error, sizeof(error)))
+      else
       {
-         arc_message(error[0] ? error : "Unable to start the Arculator machine.", RETRO_LOG_ERROR);
-         arc_release_session();
-         return false;
+         ArcEngineMedia media = arc_engine_media(&arc_media[arc_image_index]);
+         if (!arc_construct_machine(launch_machine, &media,
+                                    error, sizeof(error)))
+         {
+            arc_message(error[0] ? error : "Unable to start the Arculator machine.", RETRO_LOG_ERROR);
+            arc_release_session();
+            return false;
+         }
       }
    }
    arc_loaded = true;
@@ -3027,14 +3420,21 @@ static bool arc_load_game(const struct retro_game_info *game, bool negotiate)
    /* A frontend retains the last advertised A/V state across retro_reset().
     * Keep that state as our comparison baseline for a non-negotiating reload;
     * the first genuinely different completed field will then notify it once. */
-   if (negotiate)
+   if (negotiate && arc_session == ARC_SESSION_RUNNING)
       (void)arc_engine_get_av_info(&arc_video_width, &arc_video_height, &arc_video_rate);
+   else if (arc_session == ARC_SESSION_CHOOSING)
+   {
+      arc_video_width = ARC_WIDTH;
+      arc_video_height = ARC_HEIGHT;
+      arc_video_rate = ARC_RATE;
+   }
    arc_fault_reported = false;
    arc_vidc_warning_reported = false;
    arc_vidc_transient_logged = false;
    arc_vidc_incomplete_us = 0u;
    arc_audio_warning_reported = false;
-   if (!arc_osk_prepare_surface(arc_video_width, arc_video_height))
+   if (arc_session == ARC_SESSION_RUNNING &&
+       !arc_osk_prepare_surface(arc_video_width, arc_video_height))
       arc_osk_presentation_failure();
    snprintf(error, sizeof(error), "Firmware: %s; CRC32 %08x; SHA-1 %s",
             arc_os_name(search.match->os), search.match->crc32, search.match->sha1);
@@ -3082,6 +3482,7 @@ RETRO_API void retro_reset(void)
    unsigned selected = arc_image_index;
    bool launch_reselected;
    bool torn_down = false;
+   ArcSessionState previous_session = arc_session;
 
    arc_persist_cmos();
    if (!arc_read_options(&updated, error, sizeof(error)) ||
@@ -3092,6 +3493,7 @@ RETRO_API void retro_reset(void)
    launch_reselected = updated.launch != arc_core_options.launch;
 
    arc_engine_stop();
+   arc_session = ARC_SESSION_PREPARED;
    torn_down = true;
    if (updated.disk_writes != arc_core_options.disk_writes)
    {
@@ -3149,8 +3551,6 @@ RETRO_API void retro_reset(void)
        (size_t)path_written >= sizeof(arc_cmos_path))
    { snprintf(error, sizeof(error), "Unable to prepare persistent CMOS storage."); goto failed; }
    arc_seed_cmos();
-   uint8_t payload[ARC_CMOS_PAYLOAD_SIZE];
-   uint8_t machine_cmos[ARC_CMOS_MACHINE_SIZE];
    ArcEngineMedia mounted;
    ArcEngineMedia *mounted_pointer = NULL;
    if (!was_ejected && selected < arc_media_count && arc_media[selected].populated)
@@ -3158,23 +3558,28 @@ RETRO_API void retro_reset(void)
       mounted = arc_engine_media(&arc_media[selected]);
       mounted_pointer = &mounted;
    }
-   arc_prepare_launch(mounted_pointer ? &arc_media[selected] : NULL, was_ejected,
-                      updated.launch, launch_reselected);
-   if (!arc_resolve_inputs(&arc_core_options, true, false))
-   { snprintf(error, sizeof(error), "Unable to resolve ArcDroid input options."); goto failed; }
-   ArcEngineMedia helper = {arc_helper_path, false, ARC_MEDIA_ADL_640K,
-                            ARC_GEOMETRY_640K_L, NULL};
-   if (!arc_cmos_decode(arc_cmos_record, &arc_plan, payload) ||
-       !arc_cmos_machine_image(arc_plan.os, reset_machine->io, payload,
-                               arc_plan.launch_helper, machine_cmos) ||
-       !arc_engine_start(arc_firmware, arc_firmware_size, mounted_pointer,
-                         arc_plan.launch_helper ? &helper : NULL,
-                         reset_machine,
-                         machine_cmos, error, sizeof(error)))
-      goto failed;
+   arc_image_index = selected <= arc_media_count ? selected : arc_media_count;
+   bool choosing = arc_prepare_launch(
+      mounted_pointer ? &arc_media[selected] : NULL, was_ejected,
+      updated.launch, launch_reselected);
+   if (choosing)
+   {
+      arc_session = ARC_SESSION_CHOOSING;
+      arc_chooser_reset_input();
+      if (previous_session != ARC_SESSION_CHOOSING)
+         arc_av_transition_pending = true;
+   }
+   else
+   {
+      if (!arc_resolve_inputs(&arc_core_options, true, false))
+      { snprintf(error, sizeof(error), "Unable to resolve ArcDroid input options."); goto failed; }
+      if (!arc_construct_machine(reset_machine, mounted_pointer,
+                                 error, sizeof(error))) goto failed;
+      if (previous_session == ARC_SESSION_CHOOSING)
+         arc_av_transition_pending = true;
+   }
    arc_loaded = true;
    arc_ejected = was_ejected;
-   arc_image_index = selected <= arc_media_count ? selected : arc_media_count;
    arc_input_sampling_reset(false);
    arc_guest_time_us = 0u;
    arc_frame_number = 0u;
@@ -3280,6 +3685,7 @@ RETRO_API void retro_run(void)
    ArcEngineFrame frame;
    size_t count;
    bool frame_ran;
+   bool chooser_exit_transition = false;
    bool options_updated = false;
    if (arc_environment &&
        arc_environment(RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE, &options_updated) &&
@@ -3319,10 +3725,36 @@ RETRO_API void retro_run(void)
       }
    }
    if (arc_input_poll) arc_input_poll();
+   if (arc_session == ARC_SESSION_CHOOSING)
+   {
+      if (arc_av_transition_pending)
+      {
+         arc_notify_av(ARC_WIDTH, ARC_HEIGHT, ARC_RATE);
+         arc_av_transition_pending = false;
+      }
+      arc_poll_chooser();
+      if (!arc_launch_chooser_render(&arc_chooser, &arc_chooser_discovery,
+                                     arc_frame, ARC_WIDTH, ARC_HEIGHT,
+                                     ARC_WIDTH * sizeof(uint32_t)))
+         memset(arc_frame, 0, sizeof(arc_frame));
+      if (arc_video)
+         arc_video(arc_frame, ARC_WIDTH, ARC_HEIGHT,
+                   ARC_WIDTH * sizeof(uint32_t));
+      memset(arc_audio_frame, 0, 960u * 2u * sizeof(arc_audio_frame[0]));
+      if (arc_audio_batch) arc_audio_batch(arc_audio_frame, 960u);
+      else if (arc_audio)
+         for (unsigned i = 0u; i < 960u; ++i) arc_audio(0, 0);
+      return;
+   }
+   if (arc_session == ARC_SESSION_RUNNING && arc_av_transition_pending)
+   {
+      chooser_exit_transition = true;
+      arc_av_transition_pending = false;
+   }
    arc_poll_inputs();
    if (arc_input_take_overflow_report(&arc_inputs))
       arc_message("Input queue overflowed; recovered to current input levels.", RETRO_LOG_WARN);
-   if (!arc_loaded)
+   if (!arc_loaded || arc_session != ARC_SESSION_RUNNING)
    {
       if (arc_video) arc_video(arc_frame, ARC_WIDTH, ARC_HEIGHT, ARC_WIDTH * sizeof(uint32_t));
       return;
@@ -3357,6 +3789,9 @@ RETRO_API void retro_run(void)
       arc_integrate_stick(frame.elapsed_us);
       arc_guest_time_us += frame.elapsed_us;
    }
+   if (chooser_exit_transition)
+      arc_notify_av(frame.width, frame.height,
+                    frame.refresh_hz > 0.0 ? frame.refresh_hz : ARC_RATE);
    if (frame.width != arc_video_width || frame.height != arc_video_height)
    {
       struct retro_game_geometry geometry = {

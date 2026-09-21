@@ -516,6 +516,177 @@ static void test_launch_bindings(void)
       }
 }
 
+static uint64_t test_pixels_hash(const uint32_t *pixels, size_t count)
+{
+   uint64_t hash = UINT64_C(1469598103934665603);
+   const uint8_t *bytes = (const uint8_t *)pixels;
+   for (size_t i = 0u; i < count * sizeof(*pixels); ++i)
+   {
+      hash ^= bytes[i];
+      hash *= UINT64_C(1099511628211);
+   }
+   return hash;
+}
+
+static void test_launch_choices_and_chooser(void)
+{
+   static const char fingerprint[] =
+      "0123456789abcdef0123456789abcdef01234567";
+   static const uint8_t expected[] =
+      "v1\napp\n214e696da0566f78\n"
+      "0123456789abcdef0123456789abcdef01234567\n";
+   static const uint8_t desktop[] =
+      "v1\ndesktop\n-\n"
+      "0123456789abcdef0123456789abcdef01234567\n";
+   static const uint8_t raw_name[] =
+      {'!', 'N', 'i', 'm', 0xa0u, 'V', 'o', 'x'};
+   ArcGuestName target = test_guest_name(raw_name, sizeof(raw_name));
+   uint8_t encoded[ARC_LAUNCH_CHOICE_MAX_SIZE];
+   size_t encoded_size = 0u;
+   assert(arc_launch_choice_format(&target, false, fingerprint, NULL, 0u,
+                                   &encoded_size) &&
+          encoded_size == sizeof(expected) - 1u &&
+          arc_launch_choice_format(&target, false, fingerprint, encoded,
+                                   sizeof(encoded), &encoded_size) &&
+          !memcmp(encoded, expected, encoded_size));
+   ArcLaunchChoiceRecord choice;
+   assert(arc_launch_choice_parse(encoded, encoded_size, &choice) &&
+          !choice.desktop && choice.target.length == sizeof(raw_name) &&
+          !memcmp(choice.target.bytes, raw_name, sizeof(raw_name)) &&
+          !strcmp(choice.candidate_fingerprint, fingerprint));
+   assert(arc_launch_choice_format(NULL, true, fingerprint, encoded,
+                                   sizeof(encoded), &encoded_size) &&
+          encoded_size == sizeof(desktop) - 1u &&
+          !memcmp(encoded, desktop, encoded_size) &&
+          arc_launch_choice_parse(encoded, encoded_size, &choice) &&
+          choice.desktop && !choice.target.length);
+   static const char *const malformed[] = {
+      "", "v2\ndesktop\n-\n0123456789abcdef0123456789abcdef01234567\n",
+      "v1\napp\n21A0\n0123456789abcdef0123456789abcdef01234567\n",
+      "v1\napp\n214\n0123456789abcdef0123456789abcdef01234567\n",
+      "v1\ndesktop\n21\n0123456789abcdef0123456789abcdef01234567\n",
+      "v1\napp\n2141\n0123456789abcdef0123456789abcdef0123456g\n",
+      "v1\napp\n2141\n0123456789abcdef0123456789abcdef01234567\nX"
+   };
+   for (size_t i = 0u; i < sizeof(malformed) / sizeof(malformed[0]); ++i)
+      assert(!arc_launch_choice_parse(malformed[i], strlen(malformed[i]),
+                                      &choice));
+   uint8_t oversized[ARC_LAUNCH_CHOICE_MAX_SIZE + 1u] = {0};
+   assert(!arc_launch_choice_parse(oversized, sizeof(oversized), &choice));
+   for (size_t byte = 0u; byte < sizeof(expected) - 1u; ++byte)
+      for (unsigned bit = 0u; bit < 8u; ++bit)
+      {
+         memcpy(encoded, expected, sizeof(expected) - 1u);
+         encoded[byte] ^= (uint8_t)(1u << bit);
+         if (arc_launch_choice_parse(encoded, sizeof(expected) - 1u, &choice))
+         {
+            size_t round_trip = 0u;
+            assert(arc_launch_choice_format(&choice.target, choice.desktop,
+                     choice.candidate_fingerprint, NULL, 0u, &round_trip) &&
+                   round_trip <= sizeof(encoded));
+         }
+      }
+
+   for (unsigned c = 0x21u; c <= 0x7eu; ++c)
+   {
+      bool nonblank = false;
+      for (unsigned row = 0u; row < 8u; ++row)
+         nonblank |= arc_osk_font[c][row] != 0u;
+      assert(nonblank);
+   }
+   for (unsigned c = 'a'; c <= 'z'; ++c)
+      assert(memcmp(arc_osk_font[c], arc_osk_font[c - 'a' + 'A'], 8u));
+
+   ArcLaunchDiscovery discovery;
+   memset(&discovery, 0, sizeof(discovery));
+   discovery.reason = ARC_LAUNCH_REASON_INSPECTION_INCOMPLETE;
+   memcpy(discovery.candidate_fingerprint, fingerprint, sizeof(fingerprint));
+   discovery.candidate_count = ARC_LAUNCH_MAX_CANDIDATES;
+   discovery.application_count = ARC_LAUNCH_MAX_CANDIDATES;
+   for (unsigned i = 0u; i < discovery.candidate_count; ++i)
+   {
+      char name[11];
+      int length = snprintf(name, sizeof(name), "!app%02u", i);
+      assert(length == 6);
+      discovery.candidates[i].name = test_guest_name(name, (size_t)length);
+      discovery.candidates[i].state = ARC_LAUNCH_CANDIDATE_APPLICATION;
+      discovery.candidates[i].launchable = true;
+   }
+   ArcLaunchChooser chooser;
+   assert(arc_launch_chooser_init(&chooser, &discovery, true, 76) &&
+          chooser.row_count == 78u && chooser.focus == 76u &&
+          chooser.first_visible > 0u &&
+          arc_launch_chooser_selection(&chooser) == 76);
+   for (unsigned i = 0u; i < chooser.row_count; ++i)
+   {
+      assert(arc_launch_chooser_focus(&chooser, i) &&
+             arc_launch_chooser_selection(&chooser) ==
+                (i == 77u ? -1 : (int)i));
+   }
+   arc_launch_chooser_move(&chooser, 1);
+   assert(chooser.focus == 0u && chooser.first_visible == 0u);
+   assert(arc_launch_chooser_hit(&chooser, 64u, 92u) == 0 &&
+          arc_launch_chooser_hit(&chooser, 63u, 92u) < 0);
+
+   uint32_t *pixels = calloc(640u * 480u, sizeof(*pixels));
+   assert(pixels && arc_launch_chooser_render(&chooser, &discovery, pixels,
+          640u, 480u, 640u * sizeof(*pixels)));
+   uint64_t long_list_hash = test_pixels_hash(pixels, 640u * 480u);
+   assert(long_list_hash != 0u);
+
+   static const uint8_t distinct_names[][7] = {
+      {'!', 'A', 'l', 'p', 'h', 'a', 0},
+      {'!', 'A', 'l', 'p', 'h', 'A', 0},
+      {'!', 0xa0u, 0, 0, 0, 0, 0},
+      {'!', '\\', 'x', 'A', '0', 0, 0}
+   };
+   uint64_t hashes[4];
+   for (unsigned i = 0u; i < 4u; ++i)
+   {
+      memset(&discovery, 0, sizeof(discovery));
+      discovery.reason = ARC_LAUNCH_REASON_AMBIGUOUS;
+      discovery.candidate_count = discovery.application_count = 1u;
+      size_t length = 1u;
+      while (length < sizeof(distinct_names[i]) && distinct_names[i][length])
+         ++length;
+      discovery.candidates[0].name =
+         test_guest_name(distinct_names[i], length);
+      discovery.candidates[0].state = ARC_LAUNCH_CANDIDATE_APPLICATION;
+      discovery.candidates[0].launchable = true;
+      assert(arc_launch_chooser_init(&chooser, &discovery, false, INT_MIN) &&
+             arc_launch_chooser_render(&chooser, &discovery, pixels,
+                640u, 480u, 640u * sizeof(*pixels)));
+      hashes[i] = test_pixels_hash(pixels, 640u * 480u);
+      for (unsigned previous = 0u; previous < i; ++previous)
+         assert(hashes[i] != hashes[previous]);
+   }
+   static const uint8_t escaped_tail_names[2][10] = {
+      {'!', 0x80u, 0x81u, 0x82u, 0x83u, 0x84u, 0x85u, 0x86u, 0x87u, 0xa0u},
+      {'!', 0x80u, 0x81u, 0x82u, 0x83u, 0x84u, 0x85u, 0x86u, 0x87u, 0xa1u}
+   };
+   uint64_t escaped_tail_hashes[2];
+   for (unsigned i = 0u; i < 2u; ++i)
+   {
+      discovery.candidates[0].name =
+         test_guest_name(escaped_tail_names[i], sizeof(escaped_tail_names[i]));
+      assert(arc_launch_chooser_init(&chooser, &discovery, false, INT_MIN) &&
+             arc_launch_chooser_render(&chooser, &discovery, pixels,
+                640u, 480u, 640u * sizeof(*pixels)));
+      escaped_tail_hashes[i] = test_pixels_hash(pixels, 640u * 480u);
+   }
+   assert(escaped_tail_hashes[0] != escaped_tail_hashes[1]);
+   choice.desktop = false;
+   choice.target = discovery.candidates[0].name;
+   memset(choice.candidate_fingerprint, '0', 40u);
+   choice.candidate_fingerprint[40] = '\0';
+   assert(arc_launch_choice_match(&discovery, &choice) == 0);
+   discovery.candidates[0].resource = true;
+   assert(arc_launch_choice_match(&discovery, &choice) == INT_MIN);
+   choice.desktop = true;
+   assert(arc_launch_choice_match(&discovery, &choice) == -1);
+   free(pixels);
+}
+
 static void test_launch_discovery_and_builder(const char *fixture_directory)
 {
    typedef struct {
@@ -552,6 +723,8 @@ static void test_launch_discovery_and_builder(const char *fixture_directory)
       {"launch-family/multiple-exact-d.adf", ARC_GEOMETRY_800K_D, 1024u, "Hugo", "Beta", 0u, 2u, 2u, 1, ARC_LAUNCH_REASON_DISC_NAME_MATCH, true},
       {"launch-family/multiple-trailing-d.adf", ARC_GEOMETRY_800K_D, 1024u, "Hugo", "Beta2", 0u, 2u, 2u, 1, ARC_LAUNCH_REASON_DISC_NAME_MATCH, true},
       {"launch-family/ambiguous-l.adl", ARC_GEOMETRY_640K_L, 512u, "Hugo", "Other", 0u, 3u, 2u, -1, ARC_LAUNCH_REASON_AMBIGUOUS, true},
+      {"launch-family/chooser-resources-d.adf", ARC_GEOMETRY_800K_D, 1024u, "Hugo", "Other", 0u, 4u, 1u, 3, ARC_LAUNCH_REASON_SINGLE_APPLICATION, true},
+      {"launch-family/chooser-incomplete-d.adf", ARC_GEOMETRY_800K_D, 1024u, "Hugo", "Other", 0u, 2u, 1u, -1, ARC_LAUNCH_REASON_INSPECTION_INCOMPLETE, true},
       {"launch-family/no-run-d.adf", ARC_GEOMETRY_800K_D, 1024u, "Hugo", "Fixture", 0u, 2u, 0u, -1, ARC_LAUNCH_REASON_NO_APPLICATIONS, true},
       {"launch-family/incomplete-l.adl", ARC_GEOMETRY_640K_L, 512u, "Hugo", "Fixture", 0u, 1u, 0u, -1, ARC_LAUNCH_REASON_INSPECTION_INCOMPLETE, true},
       {"launch-family/incomplete-d.adf", ARC_GEOMETRY_800K_D, 1024u, "Hugo", "Fixture", 0u, 1u, 0u, -1, ARC_LAUNCH_REASON_INSPECTION_INCOMPLETE, true},
@@ -668,6 +841,15 @@ static void test_launch_discovery_and_builder(const char *fixture_directory)
          assert(discovery.ignored_attribute_bits);
       if (!strcmp(item->file, "launch-family/has-boot-d.adf"))
          assert(discovery.candidates[0].has_boot);
+      if (!strcmp(item->file, "launch-family/chooser-resources-d.adf"))
+      {
+         assert(discovery.candidates[0].resource &&
+                discovery.candidates[1].resource &&
+                discovery.candidates[2].resource &&
+                !discovery.candidates[3].resource &&
+                arc_launch_candidate_index(&discovery, 0u) == 3u &&
+                arc_launch_candidate_index(&discovery, 1u) == UINT_MAX);
+      }
       if (!strcmp(item->file, "launch-family/illegal-l.adl"))
       {
          static const bool launchable[] = {
@@ -1000,6 +1182,18 @@ static void test_launch_discovery_and_builder(const char *fixture_directory)
           discovery.application_count == 1u && !discovery.unknown_count &&
           discovery.target_index == 4 &&
           discovery.reason == ARC_LAUNCH_REASON_SINGLE_APPLICATION);
+   assert(!discovery.candidates[0].resource &&
+          !discovery.candidates[1].resource &&
+          discovery.candidates[2].resource &&
+          !discovery.candidates[3].resource &&
+          !discovery.candidates[4].resource &&
+          discovery.candidates[5].resource &&
+          discovery.candidates[6].resource &&
+          arc_launch_candidate_index(&discovery, 0u) == 0u &&
+          arc_launch_candidate_index(&discovery, 1u) == 1u &&
+          arc_launch_candidate_index(&discovery, 2u) == 3u &&
+          arc_launch_candidate_index(&discovery, 3u) == 4u &&
+          arc_launch_candidate_index(&discovery, 4u) == UINT_MAX);
    for (unsigned i = 0u; i < 7u; ++i)
    {
       assert(test_guest_name_equal(&discovery.candidates[i].name,
@@ -2344,7 +2538,7 @@ static void test_osk(void)
             {
                unsigned index = *glyph;
                if (index >= 'a' && index <= 'z') index -= 'a' - 'A';
-               assert(index < 128u);
+               assert(index < 130u);
                if (index == ' ') continue;
                bool nonblank = false;
                for (unsigned row = 0u; row < 8u; ++row)
@@ -2700,7 +2894,7 @@ static void test_osk(void)
       assert(arc_osk_layout(&osk, 320u, 256u));
       for (unsigned i = 0u; i < osk.key_count; ++i)
          if (osk.keys[i].key == RETROK_UP)
-            saw_up_arrow = !strcmp(osk.keys[i].label, "\x7d");
+            saw_up_arrow = !strcmp(osk.keys[i].label, "\x80");
    }
    assert(saw_up_arrow);
    osk.page = 1u;
@@ -2745,6 +2939,7 @@ int main(int argc, char **argv)
    test_assembly();
    test_media_launch_and_cmos();
    test_launch_bindings();
+   test_launch_choices_and_chooser();
    test_launch_discovery_and_builder(argv[1]);
    test_adfs_recognition();
    test_short_media_policy();

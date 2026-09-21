@@ -118,6 +118,7 @@ static const char *option_pointer_speed = "600";
 static const char *option_pointer_deadzone = "15";
 static const char *option_writes = "shadow";
 static const char *option_launch = "auto";
+static const char *option_launch_chooser = "remember";
 static const char *option_input_profile = "Auto";
 static const char *option_osk_toggle = "L3";
 static const char *option_pad[2][10];
@@ -403,10 +404,10 @@ static bool environment(unsigned command, void *data)
          const struct retro_core_options_v2 *options = data;
          unsigned count = 0u;
          while (options->definitions[count].key) ++count;
-         assert(count == 33u && options->categories &&
+         assert(count == 34u && options->categories &&
                 !strcmp(options->categories[0].key, "pad_mapping") &&
                 !strcmp(options->categories[0].desc, "Pad Mapping"));
-         bool found_profile = false, found_osk = false;
+         bool found_profile = false, found_osk = false, found_chooser = false;
          unsigned pads = 0u;
          const char *categorized_pad_labels[ARC_PAD_PORTS * ARC_PAD_INPUT_COUNT] = {0};
          for (unsigned n = 0u; n < count; ++n)
@@ -430,6 +431,13 @@ static bool environment(unsigned command, void *data)
                                  "Generated Test Profile"));
             }
             if (!strcmp(definition->key, "arcdroid_osk_toggle")) found_osk = true;
+            if (!strcmp(definition->key, "arcdroid_launch_chooser"))
+            {
+               found_chooser = true;
+               assert(!strcmp(definition->default_value, "remember") &&
+                      !strcmp(definition->values[0].value, "remember") &&
+                      !strcmp(definition->values[1].value, "ask"));
+            }
             if (!strncmp(definition->key, "arcdroid_pad", 12u))
             {
                assert(!strcmp(definition->category_key, "pad_mapping") &&
@@ -444,7 +452,7 @@ static bool environment(unsigned command, void *data)
                categorized_pad_labels[pads++] = definition->desc_categorized;
             }
          }
-         assert(found_profile && found_osk && pads == 20u);
+         assert(found_profile && found_osk && found_chooser && pads == 20u);
          return true;
       }
       case RETRO_ENVIRONMENT_SET_DISK_CONTROL_EXT_INTERFACE:
@@ -563,6 +571,8 @@ static bool environment(unsigned command, void *data)
          else if (!strcmp(variable->key, "arcdroid_pointer_deadzone")) variable->value = option_pointer_deadzone;
          else if (!strcmp(variable->key, "arcdroid_disk_writes")) variable->value = option_writes;
          else if (!strcmp(variable->key, "arcdroid_launch")) variable->value = option_launch;
+         else if (!strcmp(variable->key, "arcdroid_launch_chooser"))
+            variable->value = option_launch_chooser;
          else if (!strcmp(variable->key, "arcdroid_input_profile")) variable->value = option_input_profile;
          else if (!strcmp(variable->key, "arcdroid_osk_toggle")) variable->value = option_osk_toggle;
          else
@@ -609,9 +619,9 @@ static bool environment(unsigned command, void *data)
       {
          const struct retro_system_av_info *av = data;
          assert(phase == PHASE_RUN && av->timing.fps >= 20.0 && av->timing.fps <= 200.0);
-         assert(av->timing.fps < last_notified_rate - 0.01 ||
-                av->timing.fps > last_notified_rate + 0.01);
          if (measure_av) av_rate_changed_during_measure = true;
+         geometry_width = av->geometry.base_width;
+         geometry_height = av->geometry.base_height;
          current_reported_rate = last_notified_rate = av->timing.fps;
          ++av_notifications;
          bool seen = false;
@@ -840,6 +850,12 @@ static void write_exact(const char *path, const void *data, size_t size)
 {
    FILE *file = fopen(path, "wb");
    assert(file && fwrite(data, 1u, size, file) == size && !fclose(file));
+}
+
+static bool file_exists(const char *path)
+{
+   struct stat status;
+   return path && !stat(path, &status) && S_ISREG(status.st_mode);
 }
 
 static uint64_t hash_file(const char *path)
@@ -1301,6 +1317,8 @@ int main(int argc, char **argv)
    void (*retro_unload_game)(void); LOAD(retro_unload_game);
    void (*retro_reset)(void); LOAD(retro_reset);
    void (*retro_run)(void); LOAD(retro_run);
+   void (*retro_cheat_reset)(void); LOAD(retro_cheat_reset);
+   void (*retro_cheat_set)(unsigned, bool, const char *); LOAD(retro_cheat_set);
    void (*retro_get_system_av_info)(struct retro_system_av_info *); LOAD(retro_get_system_av_info);
    void (*retro_set_controller_port_device)(unsigned, unsigned); LOAD(retro_set_controller_port_device);
    size_t (*retro_serialize_size)(void); LOAD(retro_serialize_size);
@@ -1338,6 +1356,9 @@ int main(int argc, char **argv)
    void (*arc_libretro_test_force_present)(void) = NULL;
    unsigned (*arc_libretro_test_presented_osk_notice)(void) = NULL;
    const char *(*arc_libretro_test_content_id)(void) = NULL;
+   unsigned (*arc_libretro_test_session_state)(void) = NULL;
+   unsigned (*arc_libretro_test_chooser_focus)(void) = NULL;
+   unsigned (*arc_libretro_test_chooser_rows)(void) = NULL;
    void (*arc_libretro_test_force_input_reconcile)(void) = NULL;
    void (*arc_platform_test_input_events_reset)(void) = NULL;
    size_t (*arc_platform_test_input_events)(ArcKartEvent *, size_t) = NULL;
@@ -1389,6 +1410,12 @@ int main(int argc, char **argv)
          dlsym(module, "arc_libretro_test_presented_osk_notice");
       *(void **)(&arc_libretro_test_content_id) =
          dlsym(module, "arc_libretro_test_content_id");
+      *(void **)(&arc_libretro_test_session_state) =
+         dlsym(module, "arc_libretro_test_session_state");
+      *(void **)(&arc_libretro_test_chooser_focus) =
+         dlsym(module, "arc_libretro_test_chooser_focus");
+      *(void **)(&arc_libretro_test_chooser_rows) =
+         dlsym(module, "arc_libretro_test_chooser_rows");
       *(void **)(&arc_libretro_test_force_input_reconcile) =
          dlsym(module, "arc_libretro_test_force_input_reconcile");
       *(void **)(&arc_platform_test_input_events_reset) =
@@ -1414,6 +1441,9 @@ int main(int argc, char **argv)
              arc_libretro_test_force_present &&
              arc_libretro_test_presented_osk_notice &&
              arc_libretro_test_content_id &&
+             arc_libretro_test_session_state &&
+             arc_libretro_test_chooser_focus &&
+             arc_libretro_test_chooser_rows &&
              arc_libretro_test_force_input_reconcile &&
              arc_platform_test_input_events_reset && arc_platform_test_input_events);
       ArcDigest application_profile_digest = digest_file(argv[12]);
@@ -4159,6 +4189,548 @@ int main(int argc, char **argv)
                save_path, application_digest.sha1);
       (void)remove(application_cmos_file);
 
+      /* Slice 5c generated media contains two independently observable
+       * applications. First capture the explicit Application N oracle for
+       * helper bytes, machine CMOS and final guest video. */
+      char chooser_source[4096];
+      snprintf(chooser_source, sizeof(chooser_source),
+               "%s/arcdroid-chooser-l.adl", argv[11]);
+      struct retro_game_info chooser_game = {chooser_source, NULL, 0u, NULL};
+      ArcDigest chooser_digest = digest_file(chooser_source);
+      char chooser_helper[4096], chooser_binding[4096], chooser_choice[4096];
+      char chooser_cmos[4096];
+      snprintf(chooser_helper, sizeof(chooser_helper),
+               "%s/arcdroid/launch/%s.adl", save_path, chooser_digest.sha1);
+      snprintf(chooser_binding, sizeof(chooser_binding),
+               "%s/arcdroid/launch/%s.bind", save_path, chooser_digest.sha1);
+      snprintf(chooser_choice, sizeof(chooser_choice),
+               "%s/arcdroid/launch/%s.choice", save_path, chooser_digest.sha1);
+      snprintf(chooser_cmos, sizeof(chooser_cmos),
+               "%s/arcdroid/cmos/A3000.test.%s.bin",
+               save_path, chooser_digest.sha1);
+      (void)remove(chooser_helper); (void)remove(chooser_binding);
+      (void)remove(chooser_choice); (void)remove(chooser_cmos);
+      uint8_t *expected_helper[2] = {
+         malloc(ARC_LAUNCH_DISC_SIZE), malloc(ARC_LAUNCH_DISC_SIZE)
+      };
+      assert(expected_helper[0] && expected_helper[1]);
+      uint64_t expected_guest_signature[2];
+      uint8_t clean_machine_cmos[ARC_CMOS_MACHINE_SIZE];
+      uint8_t chooser_machine_cmos[ARC_CMOS_MACHINE_SIZE];
+      uint8_t clean_cmos_record[ARC_CMOS_RECORD_SIZE];
+      uint8_t clean_persisted_cmos[ARC_CMOS_RECORD_SIZE];
+      option_writes = "off";
+      option_launch_chooser = "remember";
+      option_input_profile = "Auto";
+      for (unsigned choice = 0u; choice < 2u; ++choice)
+      {
+         (void)remove(chooser_helper); (void)remove(chooser_binding);
+         (void)remove(chooser_cmos);
+         option_launch = choice ? "app2" : "app1";
+         phase = PHASE_LOAD; assert(retro_load_game(&chooser_game));
+         assert(arc_libretro_test_session_state() == 3u &&
+                arc_engine_test_drive_media(1u, NULL, NULL));
+         read_exact(chooser_helper, expected_helper[choice],
+                    ARC_LAUNCH_DISC_SIZE);
+         if (!choice)
+         {
+            assert(arc_engine_test_cmos_image(clean_machine_cmos));
+            memcpy(clean_cmos_record,
+                   retro_get_memory_data(RETRO_MEMORY_SAVE_RAM),
+                   sizeof(clean_cmos_record));
+         }
+         unsigned completed = video_frames - duplicate_video_frames;
+         phase = PHASE_RUN;
+         for (unsigned frame = 0u; frame < 6u; ++frame) retro_run();
+         if (!choice)
+            read_exact(chooser_cmos, clean_persisted_cmos,
+                       sizeof(clean_persisted_cmos));
+         for (unsigned frame = 6u; frame < 520u; ++frame) retro_run();
+         assert(video_frames - duplicate_video_frames - completed >= 500u);
+         expected_guest_signature[choice] = last_video_signature;
+         retro_unload_game();
+      }
+      assert(expected_guest_signature[0] != expected_guest_signature[1]);
+      (void)remove(chooser_helper); (void)remove(chooser_binding);
+      (void)remove(chooser_choice); (void)remove(chooser_cmos);
+
+      /* Auto enters a core-owned, completely pre-boot state. Reset remains in
+       * that state and no guest or persistent surface advances. */
+      option_launch = "auto";
+      unsigned chooser_fdc = fdc_command_count;
+      unsigned chooser_kart = kart_traffic_count;
+      unsigned chooser_cmos_reads = cmos_read_count;
+      unsigned chooser_cmos_writes = cmos_write_count;
+      unsigned chooser_cmos_opens = cmos_write_opens;
+      phase = PHASE_LOAD; assert(retro_load_game(&chooser_game));
+      assert(arc_libretro_test_session_state() == 2u &&
+             arc_libretro_test_chooser_rows() == 3u &&
+             arc_libretro_test_chooser_focus() == 0u &&
+             retro_serialize_size() == 0u &&
+             disk_control.get_num_images() == 1u &&
+             disk_control.get_image_index() == 0u &&
+             !disk_control.get_eject_state() &&
+             !disk_control.set_eject_state(true) &&
+             !disk_control.set_image_index(0u) &&
+             !disk_control.add_image_index() &&
+             !disk_control.replace_image_index(0u, NULL) &&
+             !arc_engine_test_drive_media(0u, NULL, NULL) &&
+             !arc_engine_test_cmos_image(clean_machine_cmos) &&
+             !file_exists(chooser_helper) && !file_exists(chooser_cmos) &&
+             !file_exists(chooser_choice));
+      retro_cheat_set(0u, true, "invented-code");
+      retro_cheat_reset();
+      assert(arc_libretro_test_session_state() == 2u);
+      unsigned chooser_video = video_frames;
+      uint64_t chooser_audio = audio_frames;
+      uint64_t chooser_nonzero = nonzero_audio_samples;
+      unsigned chooser_av = av_notifications;
+      phase = PHASE_RUN;
+      for (unsigned frame = 0u; frame < 5u; ++frame) retro_run();
+      assert(video_frames == chooser_video + 5u &&
+             audio_frames == chooser_audio + 5u * 960u &&
+             nonzero_audio_samples == chooser_nonzero &&
+             av_notifications == chooser_av + 1u &&
+             geometry_width == 640u && geometry_height == 480u &&
+             current_reported_rate == 50.0 &&
+             fdc_command_count == chooser_fdc &&
+             kart_traffic_count == chooser_kart &&
+             cmos_read_count == chooser_cmos_reads &&
+             cmos_write_count == chooser_cmos_writes &&
+             cmos_write_opens == chooser_cmos_opens &&
+             !file_exists(chooser_helper) && !file_exists(chooser_cmos));
+      retro_reset();
+      assert(arc_libretro_test_session_state() == 2u &&
+             arc_libretro_test_chooser_focus() == 0u &&
+             !file_exists(chooser_helper) && !file_exists(chooser_cmos));
+
+      /* Full SAVE_RAM contamination is discarded in favour of the private
+       * prepared seed. Every held input source is gated across confirmation. */
+      uint8_t *chooser_save_ram = retro_get_memory_data(RETRO_MEMORY_SAVE_RAM);
+      assert(chooser_save_ram &&
+             retro_get_memory_size(RETRO_MEMORY_SAVE_RAM) == ARC_CMOS_RECORD_SIZE);
+      memset(chooser_save_ram, 0xa5, ARC_CMOS_RECORD_SIZE);
+      arc_platform_test_input_events_reset();
+      joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_A] = true;
+      joypad_buttons[1][RETRO_DEVICE_ID_JOYPAD_RIGHT] = true;
+      keyboard.callback(true, RETROK_a, 0u, 0u);
+      mouse_x = 200; mouse_y = -100;
+      pointer_x = (int)((100u * 65535u) / 640u) - 32768;
+      pointer_y = (int)((100u * 65535u) / 480u) - 32768;
+      pointer_pressed = true;
+      unsigned chooser_exit_av = av_notifications;
+      retro_run();
+      assert(arc_libretro_test_session_state() == 3u &&
+             arc_engine_test_cmos_image(chooser_machine_cmos) &&
+             !memcmp(chooser_machine_cmos, clean_machine_cmos,
+                     sizeof(chooser_machine_cmos)) &&
+             !memcmp(retro_get_memory_data(RETRO_MEMORY_SAVE_RAM),
+                     clean_cmos_record, sizeof(clean_cmos_record)) &&
+             file_exists(chooser_choice));
+      uint8_t actual_helper[ARC_LAUNCH_DISC_SIZE];
+      read_exact(chooser_helper, actual_helper, sizeof(actual_helper));
+      assert(!memcmp(actual_helper, expected_helper[0], sizeof(actual_helper)));
+      for (unsigned frame = 0u; frame < 4u; ++frame) retro_run();
+      assert(arc_platform_test_input_events(NULL, 0u) == 0u);
+      joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_A] = false;
+      joypad_buttons[1][RETRO_DEVICE_ID_JOYPAD_RIGHT] = false;
+      keyboard.callback(false, RETROK_a, 0u, 0u);
+      pointer_pressed = false;
+      retro_run();
+      assert(arc_platform_test_input_events(NULL, 0u) == 0u &&
+             av_notifications == chooser_exit_av + 1u);
+      retro_run();
+      assert(arc_platform_test_input_events(NULL, 0u) == 0u);
+      uint8_t persisted_clean[ARC_CMOS_RECORD_SIZE];
+      read_exact(chooser_cmos, persisted_clean, sizeof(persisted_clean));
+      assert(!memcmp(persisted_clean, clean_persisted_cmos,
+                     sizeof(persisted_clean)));
+      unsigned completed = video_frames - duplicate_video_frames;
+      for (unsigned frame = 0u; frame < 520u; ++frame) retro_run();
+      assert(video_frames - duplicate_video_frames - completed >= 500u &&
+             last_video_signature == expected_guest_signature[0]);
+      uint8_t remembered_app1[ARC_LAUNCH_CHOICE_MAX_SIZE];
+      size_t remembered_app1_size = read_bounded(
+         chooser_choice, remembered_app1, sizeof(remembered_app1));
+      retro_unload_game();
+
+      /* Remember replays byte-identically without visiting the chooser. */
+      (void)remove(chooser_helper);
+      phase = PHASE_LOAD; assert(retro_load_game(&chooser_game));
+      assert(arc_libretro_test_session_state() == 3u &&
+             arc_engine_test_drive_media(1u, NULL, NULL));
+      uint8_t replay_record[ARC_LAUNCH_CHOICE_MAX_SIZE];
+      assert(read_bounded(chooser_choice, replay_record, sizeof(replay_record)) ==
+             remembered_app1_size &&
+             !memcmp(replay_record, remembered_app1, remembered_app1_size));
+      read_exact(chooser_helper, actual_helper, sizeof(actual_helper));
+      assert(!memcmp(actual_helper, expected_helper[0], sizeof(actual_helper)));
+      retro_unload_game();
+
+      /* Ask focuses the remembered row. A touch tap chooses the other app;
+       * a partial SAVE_RAM overwrite is isolated in the same way. */
+      option_launch_chooser = "ask";
+      (void)remove(chooser_helper); (void)remove(chooser_cmos);
+      phase = PHASE_LOAD; assert(retro_load_game(&chooser_game));
+      assert(arc_libretro_test_session_state() == 2u &&
+             arc_libretro_test_chooser_focus() == 0u);
+      chooser_save_ram = retro_get_memory_data(RETRO_MEMORY_SAVE_RAM);
+      memset(chooser_save_ram + 7u, 0x3c, 37u);
+      phase = PHASE_RUN;
+      pointer_x = (int)((100u * 65535u) / 640u) - 32768;
+      pointer_y = (int)((122u * 65535u) / 480u) - 32768;
+      pointer_pressed = true; retro_run();
+      assert(arc_libretro_test_chooser_focus() == 1u &&
+             arc_libretro_test_session_state() == 2u);
+      pointer_pressed = false; retro_run();
+      assert(arc_libretro_test_session_state() == 3u &&
+             arc_engine_test_cmos_image(chooser_machine_cmos) &&
+             !memcmp(chooser_machine_cmos, clean_machine_cmos,
+                     sizeof(chooser_machine_cmos)) &&
+             !memcmp(retro_get_memory_data(RETRO_MEMORY_SAVE_RAM),
+                     clean_cmos_record, sizeof(clean_cmos_record)));
+      read_exact(chooser_helper, actual_helper, sizeof(actual_helper));
+      assert(!memcmp(actual_helper, expected_helper[1], sizeof(actual_helper)));
+      completed = video_frames - duplicate_video_frames;
+      for (unsigned frame = 0u; frame < 520u; ++frame) retro_run();
+      assert(video_frames - duplicate_video_frames - completed >= 500u &&
+             last_video_signature == expected_guest_signature[1]);
+      uint8_t remembered_app2[ARC_LAUNCH_CHOICE_MAX_SIZE];
+      size_t remembered_app2_size = read_bounded(
+         chooser_choice, remembered_app2, sizeof(remembered_app2));
+      assert(remembered_app2_size != remembered_app1_size ||
+             memcmp(remembered_app2, remembered_app1, remembered_app1_size));
+      retro_unload_game();
+
+      option_launch_chooser = "remember";
+      (void)remove(chooser_helper);
+      phase = PHASE_LOAD; assert(retro_load_game(&chooser_game));
+      assert(arc_libretro_test_session_state() == 3u);
+      read_exact(chooser_helper, actual_helper, sizeof(actual_helper));
+      assert(!memcmp(actual_helper, expected_helper[1], sizeof(actual_helper)) &&
+             read_bounded(chooser_choice, replay_record, sizeof(replay_record)) ==
+                remembered_app2_size &&
+             !memcmp(replay_record, remembered_app2, remembered_app2_size));
+      retro_unload_game();
+
+      /* Keyboard navigation confirms a real application and then Desktop.
+       * Desktop is persisted and replayed as an ordinary no-helper launch. */
+      option_launch_chooser = "ask";
+      (void)remove(chooser_helper);
+      phase = PHASE_LOAD; assert(retro_load_game(&chooser_game));
+      assert(arc_libretro_test_chooser_focus() == 1u);
+      phase = PHASE_RUN;
+      keyboard.callback(true, RETROK_UP, 0u, 0u); retro_run();
+      keyboard.callback(false, RETROK_UP, 0u, 0u); retro_run();
+      keyboard.callback(true, RETROK_RETURN, 0u, 0u); retro_run();
+      keyboard.callback(false, RETROK_RETURN, 0u, 0u); retro_run();
+      assert(arc_libretro_test_session_state() == 3u);
+      read_exact(chooser_helper, actual_helper, sizeof(actual_helper));
+      assert(!memcmp(actual_helper, expected_helper[0], sizeof(actual_helper)));
+      completed = video_frames - duplicate_video_frames;
+      for (unsigned frame = 0u; frame < 520u; ++frame) retro_run();
+      assert(video_frames - duplicate_video_frames - completed >= 500u &&
+             last_video_signature == expected_guest_signature[0]);
+      retro_unload_game();
+
+      (void)remove(chooser_helper);
+      phase = PHASE_LOAD; assert(retro_load_game(&chooser_game));
+      assert(arc_libretro_test_chooser_focus() == 0u);
+      phase = PHASE_RUN;
+      for (unsigned row = 0u; row < 2u; ++row)
+      {
+         keyboard.callback(true, RETROK_DOWN, 0u, 0u); retro_run();
+         keyboard.callback(false, RETROK_DOWN, 0u, 0u); retro_run();
+      }
+      assert(arc_libretro_test_chooser_focus() == 2u);
+      keyboard.callback(true, RETROK_RETURN, 0u, 0u); retro_run();
+      keyboard.callback(false, RETROK_RETURN, 0u, 0u); retro_run();
+      assert(arc_libretro_test_session_state() == 3u &&
+             !arc_engine_test_drive_media(1u, NULL, NULL) &&
+             !file_exists(chooser_helper));
+      uint8_t remembered_desktop[ARC_LAUNCH_CHOICE_MAX_SIZE];
+      size_t remembered_desktop_size = read_bounded(
+         chooser_choice, remembered_desktop, sizeof(remembered_desktop));
+      retro_unload_game();
+      option_launch_chooser = "remember";
+      phase = PHASE_LOAD; assert(retro_load_game(&chooser_game));
+      assert(arc_libretro_test_session_state() == 3u &&
+             !arc_engine_test_drive_media(1u, NULL, NULL) &&
+             read_bounded(chooser_choice, replay_record, sizeof(replay_record)) ==
+                remembered_desktop_size &&
+             !memcmp(replay_record, remembered_desktop,
+                     remembered_desktop_size));
+      retro_unload_game();
+
+      /* Malformed, oversized, trailing and unmatched records are never
+       * repaired merely by loading or unloading the chooser. */
+      static const uint8_t choice_invalid[] = "not-a-choice\n";
+      static const uint8_t choice_trailing[] =
+         "v1\napp\n214e756c76616e65\n"
+         "0000000000000000000000000000000000000000\nX";
+      static const uint8_t choice_unmatched[] =
+         "v1\napp\n21556e6b6e6f776e\n"
+         "0000000000000000000000000000000000000000\n";
+      uint8_t choice_oversized[ARC_LAUNCH_CHOICE_MAX_SIZE + 1u];
+      memset(choice_oversized, 'x', sizeof(choice_oversized));
+      const struct { const uint8_t *data; size_t size; } bad_choices[] = {
+         {choice_invalid, sizeof(choice_invalid) - 1u},
+         {choice_oversized, sizeof(choice_oversized)},
+         {choice_trailing, sizeof(choice_trailing) - 1u},
+         {choice_unmatched, sizeof(choice_unmatched) - 1u},
+      };
+      option_launch_chooser = "remember";
+      for (unsigned bad_choice = 0u;
+           bad_choice < sizeof(bad_choices) / sizeof(bad_choices[0]);
+           ++bad_choice)
+      {
+         write_exact(chooser_choice, bad_choices[bad_choice].data,
+                     bad_choices[bad_choice].size);
+         uint64_t unchanged = hash_file(chooser_choice);
+         (void)remove(chooser_helper);
+         phase = PHASE_LOAD; assert(retro_load_game(&chooser_game));
+         assert(arc_libretro_test_session_state() == 2u &&
+                hash_file(chooser_choice) == unchanged);
+         retro_unload_game();
+         assert(hash_file(chooser_choice) == unchanged);
+      }
+      write_exact(chooser_choice, choice_unmatched,
+                  sizeof(choice_unmatched) - 1u);
+      uint64_t unmatched_hash = hash_file(chooser_choice);
+      fault_read_substring = ".choice";
+      phase = PHASE_LOAD; assert(retro_load_game(&chooser_game));
+      assert(!fault_read_substring && arc_libretro_test_session_state() == 2u &&
+             hash_file(chooser_choice) == unmatched_hash);
+      retro_unload_game();
+
+      /* A failed write and an interrupted replacement both preserve the old
+       * record, warn visibly, and still start the selected application. */
+      write_exact(chooser_choice, choice_unmatched,
+                  sizeof(choice_unmatched) - 1u);
+      unmatched_hash = hash_file(chooser_choice);
+      phase = PHASE_LOAD; assert(retro_load_game(&chooser_game));
+      fault_write_substring = ".choice.tmp";
+      phase = PHASE_RUN;
+      joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_A] = true; retro_run();
+      joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_A] = false; retro_run();
+      assert(!fault_write_substring && arc_libretro_test_session_state() == 3u &&
+             strstr(last_message, "choice not remembered") &&
+             hash_file(chooser_choice) == unmatched_hash &&
+             arc_engine_test_drive_media(1u, NULL, NULL));
+      retro_unload_game();
+
+      phase = PHASE_LOAD; assert(retro_load_game(&chooser_game));
+      fault_rename_substring = ".choice.previous";
+      phase = PHASE_RUN;
+      joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_A] = true; retro_run();
+      joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_A] = false; retro_run();
+      assert(!fault_rename_substring && arc_libretro_test_session_state() == 3u &&
+             strstr(last_message, "choice not remembered") &&
+             hash_file(chooser_choice) == unmatched_hash &&
+             arc_engine_test_drive_media(1u, NULL, NULL));
+      retro_unload_game();
+
+      /* A retry after the interrupted replace installs a parseable record. */
+      phase = PHASE_LOAD; assert(retro_load_game(&chooser_game));
+      phase = PHASE_RUN;
+      joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_A] = true; retro_run();
+      joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_A] = false; retro_run();
+      assert(arc_libretro_test_session_state() == 3u &&
+             hash_file(chooser_choice) != unmatched_hash);
+      ArcLaunchChoiceRecord installed_choice;
+      size_t installed_size = read_bounded(
+         chooser_choice, replay_record, sizeof(replay_record));
+      assert(arc_launch_choice_parse(replay_record, installed_size,
+                                     &installed_choice));
+      retro_unload_game();
+
+      /* A construction failure after confirmation is reported and leaves an
+       * explicit failed session, not a half-started chooser or guest. */
+      write_exact(chooser_choice, choice_invalid, sizeof(choice_invalid) - 1u);
+      phase = PHASE_LOAD; assert(retro_load_game(&chooser_game));
+      assert(setenv("ARCDROID_TEST_FAIL_VIDEO_ALLOC", "1", 1) == 0);
+      phase = PHASE_RUN;
+      joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_A] = true; retro_run();
+      joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_A] = false;
+      assert(unsetenv("ARCDROID_TEST_FAIL_VIDEO_ALLOC") == 0 &&
+             arc_libretro_test_session_state() == 4u &&
+             strstr(last_message, "video surface"));
+      retro_unload_game();
+
+      free(expected_helper[0]); free(expected_helper[1]);
+      option_launch_chooser = "remember";
+      option_launch = "auto";
+
+      /* Resource directories remain diagnostic/boot records, but the one
+       * game beside them is Application 1 and launches directly. Historical
+       * v2 and v1 bindings retain their exact target guard without rewrite. */
+      char resource_source[4096];
+      snprintf(resource_source, sizeof(resource_source),
+               "%s/launch-family/chooser-resources-d.adf", argv[11]);
+      struct retro_game_info resource_game = {
+         resource_source, NULL, 0u, NULL
+      };
+      ArcDigest resource_digest = digest_file(resource_source);
+      char resource_binding[4096], resource_choice[4096];
+      snprintf(resource_binding, sizeof(resource_binding),
+               "%s/arcdroid/launch/%s.bind", save_path, resource_digest.sha1);
+      snprintf(resource_choice, sizeof(resource_choice),
+               "%s/arcdroid/launch/%s.choice", save_path, resource_digest.sha1);
+      ArcGuestName virelai = {{'!', 'V', 'i', 'r', 'e', 'l', 'a', 'i'}, 8u};
+      char zero_fingerprint[41];
+      memset(zero_fingerprint, '0', 40u); zero_fingerprint[40] = '\0';
+      uint8_t old_v2[ARC_LAUNCH_BINDING_MAX_SIZE];
+      size_t old_v2_size = 0u;
+      assert(arc_launch_binding_format(3u, &virelai, zero_fingerprint,
+                                       old_v2, sizeof(old_v2), &old_v2_size));
+      write_exact(resource_binding, old_v2, old_v2_size);
+      uint64_t old_binding_hash = hash_file(resource_binding);
+      option_launch = "app1";
+      phase = PHASE_LOAD; assert(retro_load_game(&resource_game));
+      assert(arc_libretro_test_session_state() == 3u &&
+             arc_engine_test_drive_media(1u, NULL, NULL) &&
+             hash_file(resource_binding) == old_binding_hash &&
+             strstr(last_launch_log, "1:!System:resource") &&
+             strstr(last_launch_log, "2:!Fonts:resource") &&
+             strstr(last_launch_log, "3:!Scrap:resource") &&
+             strstr(last_launch_log, "applications=[1:!Virelai]"));
+      retro_unload_game();
+      static const uint8_t old_v1[] =
+         "app4\n!Virelai\n0000000000000000000000000000000000000000\n";
+      write_exact(resource_binding, old_v1, sizeof(old_v1) - 1u);
+      old_binding_hash = hash_file(resource_binding);
+      phase = PHASE_LOAD; assert(retro_load_game(&resource_game));
+      assert(arc_libretro_test_session_state() == 3u &&
+             arc_engine_test_drive_media(1u, NULL, NULL) &&
+             hash_file(resource_binding) == old_binding_hash);
+      retro_unload_game();
+      assert(remove(resource_binding) == 0);
+      option_launch = "auto";
+      fault_open_substring = ".choice";
+      phase = PHASE_LOAD; assert(retro_load_game(&resource_game));
+      assert(fault_open_substring && arc_libretro_test_session_state() == 3u &&
+             arc_engine_test_drive_media(1u, NULL, NULL) &&
+             strstr(last_launch_log, "reason=single application"));
+      fault_open_substring = NULL;
+      retro_unload_game();
+      (void)remove(resource_choice);
+
+      /* The shared eligibility gate prevents record IO for direct targets,
+       * self-boot media, off/appN, unsupported firmware and later images. */
+      static const uint8_t choice_sentinel[] = "choice-sentinel";
+      char application_choice[4096];
+      snprintf(application_choice, sizeof(application_choice),
+               "%s/arcdroid/launch/%s.choice", save_path,
+               application_digest.sha1);
+      write_exact(application_choice, choice_sentinel,
+                  sizeof(choice_sentinel) - 1u);
+      fault_open_substring = ".choice";
+      fault_write_substring = ".choice";
+      option_launch = "auto";
+      phase = PHASE_LOAD; assert(retro_load_game(&application_game));
+      assert(fault_open_substring && fault_write_substring &&
+             arc_libretro_test_session_state() == 3u);
+      retro_unload_game();
+      fault_open_substring = fault_write_substring = NULL;
+      uint8_t sentinel_read[sizeof(choice_sentinel) - 1u];
+      read_exact(application_choice, sentinel_read, sizeof(sentinel_read));
+      assert(!memcmp(sentinel_read, choice_sentinel, sizeof(sentinel_read)));
+
+      char booted_choice_source[4096];
+      snprintf(booted_choice_source, sizeof(booted_choice_source),
+               "%s/launch-family/boot-3-l.adl", argv[11]);
+      struct retro_game_info booted_choice_game = {
+         booted_choice_source, NULL, 0u, NULL
+      };
+      fault_open_substring = ".choice";
+      fault_write_substring = ".choice";
+      phase = PHASE_LOAD; assert(retro_load_game(&booted_choice_game));
+      assert(fault_open_substring && fault_write_substring &&
+             arc_libretro_test_session_state() == 3u &&
+             strstr(last_launch_log, "disc boots itself"));
+      retro_unload_game();
+      fault_open_substring = fault_write_substring = NULL;
+
+      for (unsigned explicit_mode = 0u; explicit_mode < 2u; ++explicit_mode)
+      {
+         option_launch = explicit_mode ? "app1" : "off";
+         fault_open_substring = ".choice";
+         fault_write_substring = ".choice";
+         phase = PHASE_LOAD; assert(retro_load_game(&chooser_game));
+         assert(fault_open_substring && fault_write_substring &&
+                arc_libretro_test_session_state() == 3u);
+         retro_unload_game();
+         fault_open_substring = fault_write_substring = NULL;
+         (void)remove(chooser_binding);
+      }
+
+      option_launch = "auto";
+      option_os = "RISC OS 2.00";
+      fault_open_substring = ".choice";
+      fault_write_substring = ".choice";
+      phase = PHASE_LOAD; assert(!retro_load_game(&chooser_game));
+      assert(fault_open_substring && fault_write_substring &&
+             strstr(last_message, "Missing RISC OS 2.00"));
+      fault_open_substring = fault_write_substring = NULL;
+      option_os = "Auto";
+
+      char incomplete_choice_source[4096];
+      snprintf(incomplete_choice_source, sizeof(incomplete_choice_source),
+               "%s/launch-family/chooser-incomplete-d.adf", argv[11]);
+      struct retro_game_info incomplete_choice_game = {
+         incomplete_choice_source, NULL, 0u, NULL
+      };
+      phase = PHASE_LOAD; assert(retro_load_game(&incomplete_choice_game));
+      assert(arc_libretro_test_session_state() == 2u &&
+             arc_libretro_test_chooser_rows() == 2u);
+      phase = PHASE_RUN;
+      retro_run();
+      assert(strstr(last_launch_log, "chooser shown"));
+      retro_unload_game();
+
+      /* Live option updates do not alter the pre-boot state; reset applies
+       * them and, with Launch=Off, still does no choice-record IO. */
+      write_exact(chooser_choice, choice_invalid, sizeof(choice_invalid) - 1u);
+      option_launch = "auto";
+      phase = PHASE_LOAD; assert(retro_load_game(&chooser_game));
+      option_launch = "off";
+      variable_update = true;
+      fault_open_substring = ".choice";
+      phase = PHASE_RUN;
+      retro_run();
+      assert(arc_libretro_test_session_state() == 2u && fault_open_substring);
+      retro_reset();
+      assert(arc_libretro_test_session_state() == 3u && fault_open_substring);
+      fault_open_substring = NULL;
+      retro_unload_game();
+
+      char later_playlist[4096];
+      snprintf(later_playlist, sizeof(later_playlist),
+               "%s/chooser-later.m3u", argv[4]);
+      FILE *later_file = fopen(later_playlist, "wb");
+      assert(later_file && fprintf(later_file, "%s\n%s\n",
+                                  argv[12], chooser_source) > 0 &&
+             !fclose(later_file));
+      struct retro_game_info later_game = {later_playlist, NULL, 0u, NULL};
+      option_launch = "off";
+      phase = PHASE_LOAD; assert(retro_load_game(&later_game));
+      assert(disk_control.get_num_images() == 2u &&
+             disk_control.set_eject_state(true) &&
+             disk_control.set_image_index(1u) &&
+             disk_control.set_eject_state(false));
+      option_launch = "auto";
+      variable_update = true;
+      fault_open_substring = ".choice";
+      fault_write_substring = ".choice";
+      retro_reset();
+      assert(arc_libretro_test_session_state() == 3u &&
+             disk_control.get_image_index() == 1u &&
+             fault_open_substring && fault_write_substring);
+      fault_open_substring = fault_write_substring = NULL;
+      retro_unload_game();
+      assert(remove(later_playlist) == 0);
+      option_launch = "auto";
+
       /* Auto profiles are keyed by prepared content identity, never by path
        * or disc title. The altered copy leaves its ADFS title bytes untouched
        * while changing one unrelated byte near the end of the image. */
@@ -4341,7 +4913,7 @@ int main(int argc, char **argv)
              arc_engine_test_drive_media(1u, &write_protected, mounted_digest));
       retro_reset();
       assert(launch_log_lines == decisions + 2u &&
-             strstr(last_launch_log, "reason=ambiguous") &&
+             strstr(last_launch_log, "chooser shown") &&
              !arc_engine_test_drive_media(1u, NULL, NULL));
       option_launch = "off";
       retro_reset();
@@ -4717,10 +5289,10 @@ int main(int argc, char **argv)
       warnings = launch_warning_osd_calls;
       phase = PHASE_LOAD; assert(retro_load_game(&ambiguous_replacement));
       assert(!arc_engine_test_drive_media(1u, NULL, NULL) &&
-             launch_warning_osd_calls == warnings + 1u &&
-             !strstr(last_launch_warning, "1 !Docs") &&
-             strstr(last_launch_warning, "2 !Foo") &&
-             strstr(last_launch_warning, "3 !Bar"));
+             launch_warning_osd_calls == warnings &&
+             arc_libretro_test_session_state() == 2u &&
+             arc_libretro_test_chooser_rows() == 3u &&
+             strstr(last_launch_log, "chooser shown"));
       retro_unload_game();
 
       char incomplete_path[4096];

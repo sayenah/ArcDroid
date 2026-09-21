@@ -469,6 +469,30 @@ static bool arc_candidate_name(const ArcGuestName *name)
    return name && name->length && name->bytes[0] == '!';
 }
 
+bool arc_launch_candidate_is_resource(const ArcLaunchCandidate *candidate)
+{
+   return candidate && candidate->resource;
+}
+
+bool arc_launch_candidate_is_target(const ArcLaunchCandidate *candidate)
+{
+   return candidate && !candidate->resource && candidate->launchable &&
+          candidate->state == ARC_LAUNCH_CANDIDATE_APPLICATION;
+}
+
+unsigned arc_launch_candidate_index(const ArcLaunchDiscovery *discovery,
+                                    unsigned ordinal)
+{
+   if (!discovery) return UINT_MAX;
+   for (unsigned i = 0u; i < discovery->candidate_count; ++i)
+   {
+      if (discovery->candidates[i].resource) continue;
+      if (!ordinal) return i;
+      --ordinal;
+   }
+   return UINT_MAX;
+}
+
 static bool arc_candidate_launchable(const ArcGuestName *name)
 {
    if (!name || name->length < 2u || name->length > 10u ||
@@ -545,6 +569,10 @@ bool arc_launch_discover(const uint8_t *data, size_t size,
       ArcLaunchCandidate *candidate =
          &discovery->candidates[discovery->candidate_count++];
       candidate->name = root[i].name;
+      candidate->resource =
+         arc_name_ascii_literal(&candidate->name, "!System") ||
+         arc_name_ascii_literal(&candidate->name, "!Fonts") ||
+         arc_name_ascii_literal(&candidate->name, "!Scrap");
       candidate->launchable = arc_candidate_launchable(&candidate->name);
       candidate->state = ARC_LAUNCH_CANDIDATE_UNKNOWN;
       size_t expected = fs.new_directory ? 2048u : 1280u;
@@ -586,6 +614,7 @@ bool arc_launch_discover(const uint8_t *data, size_t size,
 
    for (unsigned i = 0u; i < discovery->candidate_count; ++i)
    {
+      if (discovery->candidates[i].resource) continue;
       if (discovery->candidates[i].state == ARC_LAUNCH_CANDIDATE_APPLICATION)
          ++discovery->application_count;
       else if (discovery->candidates[i].state == ARC_LAUNCH_CANDIDATE_UNKNOWN)
@@ -601,7 +630,8 @@ bool arc_launch_discover(const uint8_t *data, size_t size,
    if (discovery->application_count == 1u && !discovery->unknown_count)
    {
       for (unsigned i = 0u; i < discovery->candidate_count; ++i)
-         if (discovery->candidates[i].state == ARC_LAUNCH_CANDIDATE_APPLICATION)
+         if (!discovery->candidates[i].resource &&
+             discovery->candidates[i].state == ARC_LAUNCH_CANDIDATE_APPLICATION)
          {
             if (discovery->candidates[i].launchable)
             {
@@ -622,6 +652,7 @@ bool arc_launch_discover(const uint8_t *data, size_t size,
    unsigned matches = 0u;
    for (unsigned i = 0u; i < discovery->candidate_count; ++i)
    {
+      if (discovery->candidates[i].resource) continue;
       if (discovery->candidates[i].state != ARC_LAUNCH_CANDIDATE_APPLICATION &&
           discovery->candidates[i].state != ARC_LAUNCH_CANDIDATE_UNKNOWN) continue;
       char candidate[11];

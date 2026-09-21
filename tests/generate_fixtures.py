@@ -571,13 +571,13 @@ def _old_map_checksum(block: bytes) -> int:
     return checksum & 0xFF
 
 
-def _build_absolute_boot() -> bytes:
+def _build_absolute_boot(
+        title: bytes = b"ARCDROID - PROJECT AUTHORED BOOT DISC") -> bytes:
     """Build a tiny ARM2 Absolute program that paints a stable VDU pattern."""
     vdu = bytearray((22, 12, 17, 128 + 1, 12, 23, 1, 0, 0, 0, 0, 0, 0, 0, 0))
     for row in range(4, 28):
         vdu.extend((31, 8, row, 17, 2 + (row % 6)))
         vdu.extend((b"##  " if row & 1 else b"  ##") * 16)
-    title = b"ARCDROID - PROJECT AUTHORED BOOT DISC"
     vdu.extend((31, 20, 15, 17, 7))
     vdu.extend(title)
 
@@ -739,6 +739,50 @@ def build_application_l() -> bytearray:
     _l_write(image, child_sector, child)
     _l_write(image, run_sector, run)
     _l_write(image, image_sector, run_image)
+    return image
+
+
+def build_chooser_application_l() -> bytearray:
+    """Two invented runnable applications with distinct guest video output."""
+    image = bytearray(ADL_SIZE)
+    total_sectors = ADL_SIZE // SECTOR_SIZE
+    children = (20, 26)
+    runs = (40, 42)
+    images = (1200, 1270)
+    names = (b"!Nulvane", b"!Qaventra")
+    titles = (b"ARCDROID - NULVANE SELECTED",
+              b"ARCDROID - QAVENTRA SELECTED")
+    free_extents = ((7, 13), (25, 1), (31, 9), (41, 1),
+                    (43, images[0] - 43),
+                    (images[0] + 20, images[1] - images[0] - 20),
+                    (images[1] + 20, total_sectors - images[1] - 20))
+    for index, (start, length) in enumerate(free_extents):
+        _store_u24(image, index * 3, start)
+        _store_u24(image, 256 + index * 3, length)
+    _set_old_disc_name(image, b"Other")
+    _store_u24(image, 252, total_sectors)
+    image[509] = 0
+    image[510] = len(free_extents) * 3
+    image[255] = _old_map_checksum(image[:255])
+    image[511] = _old_map_checksum(image[256:511])
+    root = _old_directory()
+    for index, name in enumerate(names):
+        run = b"Run <Obey$Dir>.!RunImage\r"
+        absolute = _build_absolute_boot(titles[index])
+        run_image = absolute + bytes(
+            ((position * (31 + index * 12)) ^ (position >> 7) ^
+             (0x57 + index * 0x36)) & 0xFF
+            for position in range(20 * SECTOR_SIZE - len(absolute)))
+        _old_entry(root, index, name, OLD_DIRECTORY_SIZE, children[index], True)
+        child = _old_directory(name)
+        _old_entry(child, 0, b"!Run", len(run), runs[index],
+                   load=0xFFFFEB00)
+        _old_entry(child, 1, b"!RunImage", len(run_image), images[index],
+                   load=0x00008000)
+        _l_write(image, children[index], child)
+        _l_write(image, runs[index], run)
+        _l_write(image, images[index], run_image)
+    _l_write(image, 2, root)
     return image
 
 
@@ -1182,6 +1226,7 @@ def main() -> None:
     (args.output / "arcdroid-test.adf").write_bytes(build_adf())
     (args.output / "arcdroid-demo.adl").write_bytes(build_demo_adl())
     (args.output / "arcdroid-application-l.adl").write_bytes(build_application_l())
+    (args.output / "arcdroid-chooser-l.adl").write_bytes(build_chooser_application_l())
     launch = args.output / "launch-family"
     launch.mkdir(exist_ok=True)
     launch_images = {
@@ -1211,6 +1256,12 @@ def main() -> None:
         "multiple-trailing-d.adf": (build_d_discovery([(b"!Alpha", True), (b"!Beta", True)], b"Beta2"), "D"),
         "ambiguous-l.adl": (build_l_discovery(
             [(b"!Docs", False), (b"!Foo", True), (b"!Bar", True)], b"Other"), "L"),
+        "chooser-resources-d.adf": (build_d_discovery(
+            [(b"!System", True), (b"!Fonts", True), (b"!Scrap", True),
+             (b"!Virelai", True)], b"Other"), "D"),
+        "chooser-incomplete-d.adf": (build_d_discovery(
+            [(b"!Nulvane", False), (b"!Qaventra", True)], b"Other",
+            incomplete=0), "D"),
         "no-run-d.adf": (build_d_discovery([(b"!Docs", False), (b"!Data", False)]), "D"),
         "incomplete-l.adl": (build_l_discovery([(b"!Broken", True)], incomplete=0), "L"),
         "incomplete-d.adf": (build_d_discovery([(b"!Broken", True)], incomplete=0), "D"),
