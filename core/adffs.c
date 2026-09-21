@@ -628,9 +628,10 @@ static const char launcher_text[] =
     "| ArcDroid ADFFS RAM launcher\r"
     "Set ADFFS$Dir RAM::0.$.!ADFFS\rSet ADFFS$Path RAM::0.$.!ADFFS.\r"
     "Run RAM::0.$.!ADFFS.SetVars\rSetEval ADFFS$FileSizeLimit 2048\r"
-    "Set Alias$StoreCSD ADFDoNothing\rSet Alias$RestoreCSD ADFDoNothing\r"
-    "Set Alias$ADFClipScreen ADFDoNothing\rSet Alias$ADFScreenBorders "
-    "ADFDoNothing\rSetEval ADFFS$JIT 0\rSetEval ADFFS$CRC 0\r"
+    "Set Alias$StoreCSD ADFDoNothing %%*0\rSet Alias$RestoreCSD ADFDoNothing "
+    "%%*0\rSet Alias$ADFClipScreen ADFDoNothing %%*0\rSet "
+    "Alias$ADFScreenBorders ADFDoNothing %%*0\rSetEval ADFFS$JIT 0\r"
+    "SetEval ADFFS$CRC 0\r"
     "Set ADFFS$LCDGM N\r"
     "RMEnsure SharedCLibrary 5.17 RMLoad RAM::0.$.!ADFFS.3rdParty.CLib\r"
     "RMEnsure SharedCLibrary 5.17 Error ArcDroid ADFFS step CLib failed\r"
@@ -660,11 +661,11 @@ bool arc_adffs_stage1(uint32_t ram_size, uint8_t *o, size_t cap, size_t *sz) {
   char text[512];
   int length = snprintf(
       text, sizeof(text),
-      "| ArcDroid ADFFS RAM copy\rSetEval RamFS$Size %u\rRMReInit RamFS\r"
-      "Copy ADFS::1.$.!ADFFS RAM::0.$.!ADFFS ~Confirm Force Quiet Recurse "
-      "~Verbose\rCopy ADFS::1.$.ArcStage2 RAM::0.$.ArcStage2 ~Confirm Force "
-      "Quiet Recurse ~Verbose\rFiler_Run RAM::0.$.ArcStage2\r",
-      ram_size);
+      "ChangeDynamicArea -RamFsSize %uK\r"
+      "Copy ADFS::1.$.!ADFFS RAM::0.$.!ADFFS ~C~VRFQ\r"
+      "Copy ADFS::1.$.ArcStage2 RAM::0.$.ArcStage2 ~C~VFQ\r"
+      "Filer_Run RAM::0.$.ArcStage2\r",
+      ram_size / 1024u);
   if (length < 0 || (size_t)length >= sizeof(text))
     return false;
   if (sz)

@@ -83,6 +83,13 @@ static bool selected_member(const ArcAdffsPackage *package,
       return selection->member[i];
   return false;
 }
+static unsigned substring_count(const char *text, const char *needle) {
+  unsigned count = 0u;
+  size_t length = strlen(needle);
+  for (const char *at = text; (at = strstr(at, needle)); at += length)
+    ++count;
+  return count;
+}
 static void walk_directory(const uint8_t *disc, uint32_t sector,
                            uint32_t parent, unsigned depth,
                            uint32_t *used_end) {
@@ -292,10 +299,10 @@ int main(int argc, char **argv) {
   static const char launcher_golden[] =
       "| ArcDroid ADFFS RAM launcher\rSet ADFFS$Dir RAM::0.$.!ADFFS\rSet "
       "ADFFS$Path RAM::0.$.!ADFFS.\rRun RAM::0.$.!ADFFS.SetVars\rSetEval "
-      "ADFFS$FileSizeLimit 2048\rSet Alias$StoreCSD ADFDoNothing\rSet "
-      "Alias$RestoreCSD ADFDoNothing\rSet Alias$ADFClipScreen "
-      "ADFDoNothing\rSet Alias$ADFScreenBorders ADFDoNothing\rSetEval "
-      "ADFFS$JIT 0\rSetEval ADFFS$CRC 0\rSet ADFFS$LCDGM N\rRMEnsure "
+      "ADFFS$FileSizeLimit 2048\rSet Alias$StoreCSD ADFDoNothing %%*0\rSet "
+      "Alias$RestoreCSD ADFDoNothing %%*0\rSet Alias$ADFClipScreen "
+      "ADFDoNothing %%*0\rSet Alias$ADFScreenBorders ADFDoNothing %%*0\r"
+      "SetEval ADFFS$JIT 0\rSetEval ADFFS$CRC 0\rSet ADFFS$LCDGM N\rRMEnsure "
       "SharedCLibrary 5.17 RMLoad RAM::0.$.!ADFFS.3rdParty.CLib\rRMEnsure "
       "SharedCLibrary 5.17 Error ArcDroid ADFFS step CLib failed\rRMEnsure "
       "CallASWI 0.02 RMLoad RAM::0.$.!ADFFS.3rdParty.CallASWI\rRMEnsure "
@@ -321,6 +328,11 @@ int main(int argc, char **argv) {
          strstr(launch, "SetEval ADFFS$JIT 0") &&
          strstr(launch, "SetEval ADFFS$CRC 0") &&
          strstr(launch, "Set ADFFS$LCDGM N"));
+  assert(substring_count(launch, "ADFDoNothing %%*0\r") == 4u &&
+         strstr(launch, "Set Alias$StoreCSD ADFDoNothing %%*0\r") &&
+         strstr(launch, "Set Alias$RestoreCSD ADFDoNothing %%*0\r") &&
+         strstr(launch, "Set Alias$ADFClipScreen ADFDoNothing %%*0\r") &&
+         strstr(launch, "Set Alias$ADFScreenBorders ADFDoNothing %%*0\r"));
   char *mount = strstr(launch, "ADFMount"), *drive0 = strstr(launch, "ADFS::0"),
        *dismount = strstr(launch, "Dismount :0"),
        *boot = strstr(launch, "ADFBootFloppy");
@@ -333,17 +345,27 @@ int main(int argc, char **argv) {
   char stage1_golden[512];
   int stage1_golden_size = snprintf(
       stage1_golden, sizeof(stage1_golden),
-      "| ArcDroid ADFFS RAM copy\rSetEval RamFS$Size %u\rRMReInit RamFS\r"
-      "Copy ADFS::1.$.!ADFFS RAM::0.$.!ADFFS ~Confirm Force Quiet Recurse "
-      "~Verbose\rCopy ADFS::1.$.ArcStage2 RAM::0.$.ArcStage2 ~Confirm Force "
-      "Quiet Recurse ~Verbose\rFiler_Run RAM::0.$.ArcStage2\r",
-      selection.ram_size);
+      "ChangeDynamicArea -RamFsSize %uK\r"
+      "Copy ADFS::1.$.!ADFFS RAM::0.$.!ADFFS ~C~VRFQ\r"
+      "Copy ADFS::1.$.ArcStage2 RAM::0.$.ArcStage2 ~C~VFQ\r"
+      "Filer_Run RAM::0.$.ArcStage2\r",
+      selection.ram_size / 1024u);
   assert(stage1_golden_size > 0 &&
          stage1_size == (size_t)stage1_golden_size &&
          !memcmp(stage1, stage1_golden, stage1_size));
+  char ram_size_command[64];
+  int ram_size_command_length =
+      snprintf(ram_size_command, sizeof(ram_size_command),
+               "ChangeDynamicArea -RamFsSize %uK\r",
+               selection.ram_size / 1024u);
+  assert(!(selection.ram_size % 1024u) && ram_size_command_length > 0 &&
+         substring_count(stage1, "ChangeDynamicArea -RamFsSize ") == 1u &&
+         strstr(stage1, ram_size_command));
   assert(!strstr(stage1, "Echo") && !strstr(stage1, "RMEnsure") &&
          !strstr(stage1, "RMLoad") && !strstr(stage1, "ADFMount") &&
-         strstr(stage1, "~Confirm Force Quiet Recurse ~Verbose"));
+         !strstr(stage1, "Confirm") && !strstr(stage1, "Verbose") &&
+         !strstr(stage1, "Recurse") && !strstr(stage1, "Force") &&
+         !strstr(stage1, "Quiet"));
   const uint8_t *desktop_entry = find_entry(root, "ArcLaunch");
   const uint8_t *stage1_entry = find_entry(root, "ArcStage1");
   const uint8_t *stage2_entry = find_entry(root, "ArcStage2");
