@@ -619,6 +619,8 @@ static bool environment(unsigned command, void *data)
       {
          const struct retro_system_av_info *av = data;
          assert(phase == PHASE_RUN && av->timing.fps >= 20.0 && av->timing.fps <= 200.0);
+         assert(av->timing.fps < last_notified_rate - 0.01 ||
+                av->timing.fps > last_notified_rate + 0.01);
          if (measure_av) av_rate_changed_during_measure = true;
          geometry_width = av->geometry.base_width;
          geometry_height = av->geometry.base_height;
@@ -4289,12 +4291,14 @@ int main(int argc, char **argv)
       uint64_t chooser_audio = audio_frames;
       uint64_t chooser_nonzero = nonzero_audio_samples;
       unsigned chooser_av = av_notifications;
+      unsigned chooser_geometry = geometry_changes;
       phase = PHASE_RUN;
       for (unsigned frame = 0u; frame < 5u; ++frame) retro_run();
       assert(video_frames == chooser_video + 5u &&
              audio_frames == chooser_audio + 5u * 960u &&
              nonzero_audio_samples == chooser_nonzero &&
-             av_notifications == chooser_av + 1u &&
+             av_notifications == chooser_av &&
+             geometry_changes == chooser_geometry &&
              geometry_width == 640u && geometry_height == 480u &&
              current_reported_rate == 50.0 &&
              fdc_command_count == chooser_fdc &&
@@ -4307,6 +4311,7 @@ int main(int argc, char **argv)
       assert(arc_libretro_test_session_state() == 2u &&
              arc_libretro_test_chooser_focus() == 0u &&
              !file_exists(chooser_helper) && !file_exists(chooser_cmos));
+      retro_run();
 
       /* Full SAVE_RAM contamination is discarded in favour of the private
        * prepared seed. Every held input source is gated across confirmation. */
@@ -4318,11 +4323,14 @@ int main(int argc, char **argv)
       joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_A] = true;
       joypad_buttons[1][RETRO_DEVICE_ID_JOYPAD_RIGHT] = true;
       keyboard.callback(true, RETROK_a, 0u, 0u);
+      mouse_buttons = 1u;
+      analog_state[RETRO_DEVICE_INDEX_ANALOG_RIGHT][RETRO_DEVICE_ID_ANALOG_X] = 300;
       mouse_x = 200; mouse_y = -100;
       pointer_x = (int)((100u * 65535u) / 640u) - 32768;
       pointer_y = (int)((100u * 65535u) / 480u) - 32768;
       pointer_pressed = true;
       unsigned chooser_exit_av = av_notifications;
+      unsigned chooser_exit_geometry = geometry_changes;
       retro_run();
       assert(arc_libretro_test_session_state() == 3u &&
              arc_engine_test_cmos_image(chooser_machine_cmos) &&
@@ -4339,12 +4347,17 @@ int main(int argc, char **argv)
       joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_A] = false;
       joypad_buttons[1][RETRO_DEVICE_ID_JOYPAD_RIGHT] = false;
       keyboard.callback(false, RETROK_a, 0u, 0u);
+      mouse_buttons = 0u;
       pointer_pressed = false;
       retro_run();
       assert(arc_platform_test_input_events(NULL, 0u) == 0u &&
-             av_notifications == chooser_exit_av + 1u);
+             av_notifications == chooser_exit_av &&
+             geometry_changes == chooser_exit_geometry + 1u &&
+             geometry_width == 640u && geometry_height != 480u &&
+             current_reported_rate == 50.0);
       retro_run();
       assert(arc_platform_test_input_events(NULL, 0u) == 0u);
+
       uint8_t persisted_clean[ARC_CMOS_RECORD_SIZE];
       read_exact(chooser_cmos, persisted_clean, sizeof(persisted_clean));
       assert(!memcmp(persisted_clean, clean_persisted_cmos,
@@ -4352,7 +4365,10 @@ int main(int argc, char **argv)
       unsigned completed = video_frames - duplicate_video_frames;
       for (unsigned frame = 0u; frame < 520u; ++frame) retro_run();
       assert(video_frames - duplicate_video_frames - completed >= 500u &&
-             last_video_signature == expected_guest_signature[0]);
+             last_video_signature == expected_guest_signature[0] &&
+             arc_platform_test_input_events(NULL, 0u) == 0u);
+
+      analog_state[RETRO_DEVICE_INDEX_ANALOG_RIGHT][RETRO_DEVICE_ID_ANALOG_X] = 0;
       uint8_t remembered_app1[ARC_LAUNCH_CHOICE_MAX_SIZE];
       size_t remembered_app1_size = read_bounded(
          chooser_choice, remembered_app1, sizeof(remembered_app1));
@@ -4371,6 +4387,122 @@ int main(int argc, char **argv)
       assert(!memcmp(actual_helper, expected_helper[0], sizeof(actual_helper)));
       retro_unload_game();
 
+      /* This firmware completes the KART handshake, so the mouse event counter
+       * is a positive control for the exact option set used below. */
+      char gate_source[4096];
+      snprintf(gate_source, sizeof(gate_source),
+               "%s/launch-family/chooser-resource-pair-d.adf", argv[11]);
+      char gate_shadow[4096];
+      staged_media_path(gate_shadow, save_path, gate_source, "disc.adf");
+      (void)remove(gate_shadow);
+      char gate_playlist[4096];
+      snprintf(gate_playlist, sizeof(gate_playlist),
+               "%s/chooser-release-gate.m3u", argv[4]);
+      FILE *gate_file = fopen(gate_playlist, "wb");
+      assert(gate_file && fprintf(gate_file, "%s\n%s\n", gate_source, argv[3]) > 0 &&
+             !fclose(gate_file));
+      struct retro_game_info gate_game = {gate_playlist, NULL, 0u, NULL};
+      copy_file(argv[2], renamed);
+      option_writes = "shadow";
+      option_launch = "app1";
+      option_launch_chooser = "remember";
+      phase = PHASE_LOAD; assert(retro_load_game(&gate_game));
+      phase = PHASE_RUN;
+      assert(disk_control.set_eject_state(true) &&
+             disk_control.set_image_index(1u) &&
+             disk_control.set_eject_state(false));
+      for (unsigned frame = 0u; frame < 520u; ++frame) retro_run();
+      arc_platform_test_input_events_reset();
+      mouse_buttons = 1u;
+      for (unsigned frame = 0u;
+           frame < 120u && arc_platform_test_input_events(input_events, 512u) < 1u;
+           ++frame) retro_run();
+      mouse_buttons = 0u;
+      for (unsigned frame = 0u;
+           frame < 120u && arc_platform_test_input_events(input_events, 512u) < 2u;
+           ++frame) retro_run();
+      assert(arc_platform_test_input_events(input_events, 512u) >= 2u);
+      assert(disk_control.set_eject_state(true) &&
+             disk_control.set_image_index(0u) &&
+             disk_control.set_eject_state(false));
+
+      /* A running guest at another refresh rate announces exactly one rate
+       * change when reset enters the 50 Hz chooser. A/Return held across that
+       * reset cannot confirm until both are released and Return is pressed
+       * again. A 300-unit resting offset then clears the post-pick gate within
+       * a few runs; the held mouse produces no guest event, while its later
+       * re-press demonstrably does. */
+      assert(current_reported_rate < 49.99 || current_reported_rate > 50.01);
+      option_launch = "auto";
+      option_launch_chooser = "ask";
+      joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_A] = true;
+      keyboard.callback(true, RETROK_RETURN, 0u, 0u);
+      unsigned reset_to_chooser_av = av_notifications;
+      retro_reset();
+      arc_platform_test_input_events_reset();
+      retro_run();
+      assert(arc_libretro_test_session_state() == 2u &&
+             av_notifications == reset_to_chooser_av + 1u &&
+             current_reported_rate == 50.0);
+      joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_A] = false;
+      keyboard.callback(false, RETROK_RETURN, 0u, 0u);
+      retro_run();
+      keyboard.callback(true, RETROK_RETURN, 0u, 0u);
+      mouse_buttons = 1u;
+      analog_state[RETRO_DEVICE_INDEX_ANALOG_RIGHT][RETRO_DEVICE_ID_ANALOG_X] = 300;
+      retro_run();
+      assert(arc_libretro_test_session_state() == 3u);
+      keyboard.callback(false, RETROK_RETURN, 0u, 0u);
+      mouse_buttons = 0u;
+      arc_platform_test_input_events_reset();
+      for (unsigned frame = 0u; frame < 160u; ++frame) retro_run();
+      assert(arc_platform_test_input_events(NULL, 0u) == 0u);
+      mouse_buttons = 1u;
+      for (unsigned frame = 0u; frame < 10u; ++frame) retro_run();
+      mouse_buttons = 0u;
+      for (unsigned frame = 0u; frame < 10u; ++frame) retro_run();
+      assert(arc_platform_test_input_events(input_events, 512u) >= 2u);
+
+      /* A second confirmation with an axis outside the deadzone keeps the
+       * release gate closed even when the held mouse is released/re-pressed. */
+      copy_file(gate_source, gate_shadow);
+      option_launch_chooser = "ask";
+      retro_reset();
+      phase = PHASE_RUN;
+      retro_run();
+      assert(arc_libretro_test_session_state() == 2u);
+      analog_state[RETRO_DEVICE_INDEX_ANALOG_RIGHT][RETRO_DEVICE_ID_ANALOG_X] = 12000;
+      mouse_buttons = 1u;
+      joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_A] = true;
+      retro_run();
+      joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_A] = false;
+      assert(arc_libretro_test_session_state() == 3u);
+      arc_platform_test_input_events_reset();
+      for (unsigned frame = 0u; frame < 160u; ++frame) retro_run();
+      mouse_buttons = 0u; retro_run();
+      mouse_buttons = 1u;
+      for (unsigned frame = 0u; frame < 10u; ++frame) retro_run();
+      assert(arc_platform_test_input_events(NULL, 0u) == 0u);
+
+      option_launch = "off";
+      retro_reset();
+      mouse_buttons = 0u;
+      phase = PHASE_RUN;
+      for (unsigned frame = 0u; frame < 160u; ++frame) retro_run();
+      arc_platform_test_input_events_reset();
+      mouse_buttons = 1u;
+      for (unsigned frame = 0u; frame < 10u; ++frame) retro_run();
+      mouse_buttons = 0u;
+      for (unsigned frame = 0u; frame < 10u; ++frame) retro_run();
+      assert(arc_platform_test_input_events(input_events, 512u) >= 2u);
+      analog_state[RETRO_DEVICE_INDEX_ANALOG_RIGHT][RETRO_DEVICE_ID_ANALOG_X] = 0;
+      option_launch = "auto";
+      option_launch_chooser = "remember";
+      option_writes = "off";
+      retro_unload_game();
+      copy_file(chooser_rom, renamed);
+      assert(remove(gate_playlist) == 0);
+
       /* Ask focuses the remembered row. A touch tap chooses the other app;
        * a partial SAVE_RAM overwrite is isolated in the same way. */
       option_launch_chooser = "ask";
@@ -4381,6 +4513,7 @@ int main(int argc, char **argv)
       chooser_save_ram = retro_get_memory_data(RETRO_MEMORY_SAVE_RAM);
       memset(chooser_save_ram + 7u, 0x3c, 37u);
       phase = PHASE_RUN;
+      retro_run();
       pointer_x = (int)((100u * 65535u) / 640u) - 32768;
       pointer_y = (int)((122u * 65535u) / 480u) - 32768;
       pointer_pressed = true; retro_run();
@@ -4411,6 +4544,7 @@ int main(int argc, char **argv)
       (void)remove(chooser_helper);
       phase = PHASE_LOAD; assert(retro_load_game(&chooser_game));
       phase = PHASE_RUN;
+      retro_run();
       pointer_x = (int)((100u * 65535u) / 640u) - 32768;
       pointer_y = (int)((102u * 65535u) / 480u) - 32768;
       pointer_pressed = true; retro_run();
@@ -4426,6 +4560,7 @@ int main(int argc, char **argv)
       indexed_pointer_mode = true;
       phase = PHASE_LOAD; assert(retro_load_game(&chooser_game));
       phase = PHASE_RUN;
+      retro_run();
       pointer_count = 1u; pointer_contact_pressed[0] = true;
       pointer_contact_x[0] = (int)((100u * 65535u) / 640u) - 32768;
       pointer_contact_y[0] = (int)((122u * 65535u) / 480u) - 32768;
@@ -4443,6 +4578,7 @@ int main(int argc, char **argv)
       (void)remove(chooser_helper);
       phase = PHASE_LOAD; assert(retro_load_game(&chooser_game));
       phase = PHASE_RUN;
+      retro_run();
       pointer_x = (int)((100u * 65535u) / 640u) - 32768;
       pointer_y = (int)((122u * 65535u) / 480u) - 32768;
       pointer_pressed = true; retro_run();
@@ -4459,6 +4595,7 @@ int main(int argc, char **argv)
       (void)remove(chooser_helper);
       phase = PHASE_LOAD; assert(retro_load_game(&chooser_game));
       phase = PHASE_RUN;
+      retro_run();
       pointer_x = (int)((100u * 65535u) / 640u) - 32768;
       pointer_y = (int)((122u * 65535u) / 480u) - 32768;
       pointer_pressed = true; retro_run();
@@ -4471,6 +4608,7 @@ int main(int argc, char **argv)
 
       phase = PHASE_LOAD; assert(retro_load_game(&chooser_game));
       phase = PHASE_RUN;
+      retro_run();
       pointer_x = (int)((100u * 65535u) / 640u) - 32768;
       pointer_y = (int)((122u * 65535u) / 480u) - 32768;
       pointer_pressed = true; retro_run();
@@ -4499,6 +4637,7 @@ int main(int argc, char **argv)
       phase = PHASE_LOAD; assert(retro_load_game(&chooser_game));
       assert(arc_libretro_test_chooser_focus() == 1u);
       phase = PHASE_RUN;
+      retro_run();
       keyboard.callback(true, RETROK_UP, 0u, 0u); retro_run();
       keyboard.callback(false, RETROK_UP, 0u, 0u); retro_run();
       keyboard.callback(true, RETROK_RETURN, 0u, 0u); retro_run();
@@ -4516,6 +4655,7 @@ int main(int argc, char **argv)
       phase = PHASE_LOAD; assert(retro_load_game(&chooser_game));
       assert(arc_libretro_test_chooser_focus() == 0u);
       phase = PHASE_RUN;
+      retro_run();
       for (unsigned row = 0u; row < 2u; ++row)
       {
          keyboard.callback(true, RETROK_DOWN, 0u, 0u); retro_run();
@@ -4590,6 +4730,7 @@ int main(int argc, char **argv)
       phase = PHASE_LOAD; assert(retro_load_game(&chooser_game));
       fault_write_substring = ".choice.tmp";
       phase = PHASE_RUN;
+      retro_run();
       joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_A] = true; retro_run();
       joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_A] = false; retro_run();
       assert(!fault_write_substring && arc_libretro_test_session_state() == 3u &&
@@ -4601,6 +4742,7 @@ int main(int argc, char **argv)
       phase = PHASE_LOAD; assert(retro_load_game(&chooser_game));
       fault_rename_substring = ".choice.previous";
       phase = PHASE_RUN;
+      retro_run();
       joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_A] = true; retro_run();
       joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_A] = false; retro_run();
       assert(!fault_rename_substring && arc_libretro_test_session_state() == 3u &&
@@ -4612,6 +4754,7 @@ int main(int argc, char **argv)
       /* A retry after the interrupted replace installs a parseable record. */
       phase = PHASE_LOAD; assert(retro_load_game(&chooser_game));
       phase = PHASE_RUN;
+      retro_run();
       joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_A] = true; retro_run();
       joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_A] = false; retro_run();
       assert(arc_libretro_test_session_state() == 3u &&
@@ -4629,6 +4772,7 @@ int main(int argc, char **argv)
       phase = PHASE_LOAD; assert(retro_load_game(&chooser_game));
       assert(setenv("ARCDROID_TEST_FAIL_VIDEO_ALLOC", "1", 1) == 0);
       phase = PHASE_RUN;
+      retro_run();
       joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_A] = true; retro_run();
       joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_A] = false;
       assert(unsetenv("ARCDROID_TEST_FAIL_VIDEO_ALLOC") == 0 &&
@@ -4695,6 +4839,31 @@ int main(int argc, char **argv)
       retro_unload_game();
       (void)remove(resource_choice);
 
+      /* Three boot resources beside two verified applications produce only
+       * the two contiguous application rows followed by Desktop. */
+      char resource_pair_source[4096];
+      snprintf(resource_pair_source, sizeof(resource_pair_source),
+               "%s/launch-family/chooser-resource-pair-d.adf", argv[11]);
+      struct retro_game_info resource_pair_game = {
+         resource_pair_source, NULL, 0u, NULL
+      };
+      ArcDigest resource_pair_digest = digest_file(resource_pair_source);
+      char resource_pair_choice[4096];
+      snprintf(resource_pair_choice, sizeof(resource_pair_choice),
+               "%s/arcdroid/launch/%s.choice", save_path,
+               resource_pair_digest.sha1);
+      (void)remove(resource_pair_choice);
+      phase = PHASE_LOAD; assert(retro_load_game(&resource_pair_game));
+      assert(arc_libretro_test_session_state() == 2u &&
+             arc_libretro_test_chooser_rows() == 3u &&
+             arc_libretro_test_chooser_focus() == 0u &&
+             strstr(last_launch_log, "1:!System:resource") &&
+             strstr(last_launch_log, "2:!Fonts:resource") &&
+             strstr(last_launch_log, "3:!Scrap:resource") &&
+             strstr(last_launch_log,
+                    "applications=[1:!Nulvane,2:!Qaventra]"));
+      retro_unload_game();
+
       /* The shared eligibility gate prevents record IO for direct targets,
        * self-boot media, off/appN, unsupported firmware and later images. */
       static const uint8_t choice_sentinel[] = "choice-sentinel";
@@ -4746,13 +4915,20 @@ int main(int argc, char **argv)
 
       option_launch = "auto";
       option_os = "RISC OS 2.00";
+      char unsupported_launch_rom[4096];
+      snprintf(unsupported_launch_rom, sizeof(unsupported_launch_rom),
+               "%s/arcdroid-unsupported-launch-test.rom", argv[11]);
+      copy_file(unsupported_launch_rom, renamed);
       fault_open_substring = ".choice";
       fault_write_substring = ".choice";
-      phase = PHASE_LOAD; assert(!retro_load_game(&chooser_game));
+      phase = PHASE_LOAD; assert(retro_load_game(&chooser_game));
       assert(fault_open_substring && fault_write_substring &&
-             strstr(last_message, "Missing RISC OS 2.00"));
+             arc_libretro_test_session_state() == 3u &&
+             strstr(last_launch_log, "OS class unsupported"));
+      retro_unload_game();
       fault_open_substring = fault_write_substring = NULL;
       option_os = "Auto";
+      copy_file(argv[5], renamed);
 
       char incomplete_choice_source[4096];
       snprintf(incomplete_choice_source, sizeof(incomplete_choice_source),
@@ -4789,7 +4965,7 @@ int main(int argc, char **argv)
                "%s/chooser-later.m3u", argv[4]);
       FILE *later_file = fopen(later_playlist, "wb");
       assert(later_file && fprintf(later_file, "%s\n%s\n",
-                                  argv[12], chooser_source) > 0 &&
+                                  argv[12], resource_pair_source) > 0 &&
              !fclose(later_file));
       struct retro_game_info later_game = {later_playlist, NULL, 0u, NULL};
       option_launch = "off";
@@ -4802,10 +4978,16 @@ int main(int argc, char **argv)
       variable_update = true;
       fault_open_substring = ".choice";
       fault_write_substring = ".choice";
+      last_launch_warning[0] = '\0';
       retro_reset();
       assert(arc_libretro_test_session_state() == 3u &&
              disk_control.get_image_index() == 1u &&
-             fault_open_substring && fault_write_substring);
+             fault_open_substring && fault_write_substring &&
+             strstr(last_launch_warning,
+                    "No unique application: 1 !Nulvane 2 !Qaventra") &&
+             !strstr(last_launch_warning, "!System") &&
+             !strstr(last_launch_warning, "!Fonts") &&
+             !strstr(last_launch_warning, "!Scrap"));
       fault_open_substring = fault_write_substring = NULL;
       retro_unload_game();
       assert(remove(later_playlist) == 0);

@@ -136,6 +136,12 @@ VIDC_MODE = (
     0x70000003, 0x74000003, 0x78000003, 0x7C000003,
 )
 
+# Keep the chooser application ROM at exactly 50 Hz while retaining the same
+# 640-pixel guest display: 1000 pixel clocks per line * 320 lines at 16 MHz.
+CHOOSER_VIDC_MODE = (
+    VIDC_MODE[0], 0x807CC000, *VIDC_MODE[2:8], 0xA04FC000, *VIDC_MODE[9:]
+)
+
 
 def build_rom(media_exerciser: bool = False) -> bytearray:
     rom = bytearray(b"\xFF" * ROM_SIZE)
@@ -540,7 +546,7 @@ def build_chooser_rom() -> bytearray:
     a.branch("chooser_fill_sound", "ne")
 
     a.ldr_const(1, 0x03400000)
-    for register in VIDC_MODE:
+    for register in CHOOSER_VIDC_MODE:
         a.ldr_const(0, register)
         a.str(0, 1)
     for address in (0x03600000, 0x03620000, 0x0364A000,
@@ -1403,6 +1409,10 @@ def main() -> None:
     args.output.mkdir(parents=True, exist_ok=True)
     (args.output / "arcdroid-test.rom").write_bytes(build_rom())
     (args.output / "arcdroid-chooser-test.rom").write_bytes(build_chooser_rom())
+    unsupported_launch_rom = build_chooser_rom()
+    unsupported_launch_rom[-1] = 0x42
+    (args.output / "arcdroid-unsupported-launch-test.rom").write_bytes(
+        unsupported_launch_rom)
     (args.output / "arcdroid-test.adf").write_bytes(build_adf())
     (args.output / "arcdroid-demo.adl").write_bytes(build_demo_adl())
     (args.output / "arcdroid-application-l.adl").write_bytes(build_application_l())
@@ -1439,6 +1449,9 @@ def main() -> None:
         "chooser-resources-d.adf": (build_d_discovery(
             [(b"!System", True), (b"!Fonts", True), (b"!Scrap", True),
              (b"!Virelai", True)], b"Other"), "D"),
+        "chooser-resource-pair-d.adf": (build_d_discovery(
+            [(b"!System", True), (b"!Fonts", True), (b"!Scrap", True),
+             (b"!Nulvane", True), (b"!Qaventra", True)], b"Other"), "D"),
         "chooser-incomplete-d.adf": (build_d_discovery(
             [(b"!Nulvane", False), (b"!Qaventra", True)], b"Other",
             incomplete=0), "D"),

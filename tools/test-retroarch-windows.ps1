@@ -1174,7 +1174,8 @@ function Send-ChooserKeyboardPick($Run, $InitialCapture) {
 
 function Wait-ChooserPostReinitQuiet($Run) {
     $deadline = [DateTime]::UtcNow.AddSeconds(15)
-    $reinitObservedUtc = $null
+    $transitionObservedUtc = $null
+    $transitionKind = $null
     Write-ChooserInputDiagnostic "post-choice quiet wait started; no SCREENSHOT request outstanding"
     while ([DateTime]::UtcNow -lt $deadline) {
         if ($Run.Process.HasExited) {
@@ -1201,6 +1202,9 @@ function Wait-ChooserPostReinitQuiet($Run) {
             $hasAvInfo = @($postChoice | Where-Object {
                 $_.Contains("SET_SYSTEM_AV_INFO")
             }).Count -gt 0
+            $hasGeometry = @($postChoice | Where-Object {
+                $_.Contains("SET_GEOMETRY")
+            }).Count -gt 0
             $hasGdiDisplay = @($postChoice | Where-Object {
                 $_.Contains('Found display driver: "gdi"')
             }).Count -gt 0
@@ -1210,26 +1214,32 @@ function Wait-ChooserPostReinitQuiet($Run) {
             $hasMidiOutput = @($postChoice | Where-Object {
                 $_.Contains('[MIDI] Output device:')
             }).Count -gt 0
-            if (-not $reinitObservedUtc -and $hasAvInfo -and $hasGdiDisplay -and
+            if (-not $transitionObservedUtc -and $hasAvInfo -and $hasGdiDisplay -and
                 $hasMidiInput -and $hasMidiOutput) {
-                $reinitObservedUtc = [DateTime]::UtcNow
+                $transitionObservedUtc = [DateTime]::UtcNow
+                $transitionKind = "SET_SYSTEM_AV_INFO with driver re-initialisation"
                 Write-ChooserInputDiagnostic "post-choice reinit markers observed: SET_SYSTEM_AV_INFO, gdi display, MIDI input/output; continuing quiet wait for 1500 ms"
+            } elseif (-not $transitionObservedUtc -and -not $hasAvInfo -and
+                $hasGeometry) {
+                $transitionObservedUtc = [DateTime]::UtcNow
+                $transitionKind = "SET_GEOMETRY without driver re-initialisation"
+                Write-ChooserInputDiagnostic "post-choice geometry marker observed: SET_GEOMETRY; continuing quiet wait for 1500 ms"
             }
         }
-        if ($reinitObservedUtc -and
-            ([DateTime]::UtcNow - $reinitObservedUtc).TotalMilliseconds -ge 1500) {
+        if ($transitionObservedUtc -and
+            ([DateTime]::UtcNow - $transitionObservedUtc).TotalMilliseconds -ge 1500) {
             if ($Run.Process.HasExited) {
                 Write-MediaRunFailureEvidence $Run `
                     "died at the end of the post-choice video-driver quiet wait with NO screenshot request outstanding"
                 $Run["FailureReported"] = $true
                 throw "$($Run.Name) died with code $($Run.Process.ExitCode) during the post-choice video-driver quiet wait with NO screenshot request outstanding"
             }
-            Write-ChooserInputDiagnostic "post-choice reinit quiet wait complete; process_alive=True elapsed_after_markers_ms=$([int]([DateTime]::UtcNow - $reinitObservedUtc).TotalMilliseconds)"
+            Write-ChooserInputDiagnostic "post-choice quiet wait complete; transition=$transitionKind process_alive=True elapsed_after_markers_ms=$([int]([DateTime]::UtcNow - $transitionObservedUtc).TotalMilliseconds)"
             return
         }
         Start-Sleep -Milliseconds 100
     }
-    throw "$($Run.Name) did not show the post-choice SET_SYSTEM_AV_INFO/GDI/MIDI completion markers and survive the 1500 ms quiet interval within 15 seconds; no SCREENSHOT request was sent; retroarch_log_tail=[$(Get-RunLogTail $Run)]"
+    throw "$($Run.Name) did not show either post-choice SET_GEOMETRY or SET_SYSTEM_AV_INFO/GDI/MIDI completion markers and survive the 1500 ms quiet interval within 15 seconds; no SCREENSHOT request was sent; retroarch_log_tail=[$(Get-RunLogTail $Run)]"
 }
 
 Copy-Item -Force (Join-Path $InputDirectory "arcdroid-chooser-test.rom") $firmware

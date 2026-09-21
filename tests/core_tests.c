@@ -762,6 +762,7 @@ static void test_launch_discovery_and_builder(const char *fixture_directory)
       {"launch-family/multiple-trailing-d.adf", ARC_GEOMETRY_800K_D, 1024u, "Hugo", "Beta2", 0u, 2u, 2u, 1, ARC_LAUNCH_REASON_DISC_NAME_MATCH, true},
       {"launch-family/ambiguous-l.adl", ARC_GEOMETRY_640K_L, 512u, "Hugo", "Other", 0u, 3u, 2u, -1, ARC_LAUNCH_REASON_AMBIGUOUS, true},
       {"launch-family/chooser-resources-d.adf", ARC_GEOMETRY_800K_D, 1024u, "Hugo", "Other", 0u, 4u, 1u, 3, ARC_LAUNCH_REASON_SINGLE_APPLICATION, true},
+      {"launch-family/chooser-resource-pair-d.adf", ARC_GEOMETRY_800K_D, 1024u, "Hugo", "Other", 0u, 5u, 2u, -1, ARC_LAUNCH_REASON_AMBIGUOUS, true},
       {"launch-family/chooser-incomplete-d.adf", ARC_GEOMETRY_800K_D, 1024u, "Hugo", "Other", 0u, 2u, 1u, -1, ARC_LAUNCH_REASON_INSPECTION_INCOMPLETE, true},
       {"launch-family/no-run-d.adf", ARC_GEOMETRY_800K_D, 1024u, "Hugo", "Fixture", 0u, 2u, 0u, -1, ARC_LAUNCH_REASON_NO_APPLICATIONS, true},
       {"launch-family/incomplete-l.adl", ARC_GEOMETRY_640K_L, 512u, "Hugo", "Fixture", 0u, 1u, 0u, -1, ARC_LAUNCH_REASON_INSPECTION_INCOMPLETE, true},
@@ -887,6 +888,26 @@ static void test_launch_discovery_and_builder(const char *fixture_directory)
                 !discovery.candidates[3].resource &&
                 arc_launch_candidate_index(&discovery, 0u) == 3u &&
                 arc_launch_candidate_index(&discovery, 1u) == UINT_MAX);
+      }
+      if (!strcmp(item->file, "launch-family/chooser-resource-pair-d.adf"))
+      {
+         ArcLaunchChooser resource_chooser;
+         assert(discovery.candidates[0].resource &&
+                discovery.candidates[1].resource &&
+                discovery.candidates[2].resource &&
+                !discovery.candidates[3].resource &&
+                !discovery.candidates[4].resource &&
+                arc_launch_chooser_init(&resource_chooser, &discovery,
+                                        false, INT_MIN) &&
+                resource_chooser.row_count == 3u &&
+                resource_chooser.candidate_index[0] == 3u &&
+                resource_chooser.candidate_index[1] == 4u &&
+                resource_chooser.candidate_index[2] == UINT8_MAX &&
+                arc_launch_chooser_selection(&resource_chooser) == 3 &&
+                arc_launch_chooser_focus(&resource_chooser, 1u) &&
+                arc_launch_chooser_selection(&resource_chooser) == 4 &&
+                arc_launch_chooser_focus(&resource_chooser, 2u) &&
+                arc_launch_chooser_selection(&resource_chooser) == -1);
       }
       if (!strcmp(item->file, "launch-family/illegal-l.adl"))
       {

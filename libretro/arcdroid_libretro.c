@@ -24,6 +24,7 @@
 #define ARC_WIDTH 640u
 #define ARC_HEIGHT 480u
 #define ARC_RATE 50.0
+#define ARC_DEFAULT_POINTER_DEADZONE 15u
 #define ARC_AUDIO_RATE 48000.0
 #define ARC_FIRMWARE_SIZE_MARGIN 4096u
 #define ARC_VIDC_WARNING_THRESHOLD_US UINT64_C(2000000)
@@ -120,6 +121,7 @@ static bool arc_chooser_keyboard_levels[3];
 static bool arc_keyboard_raw[ARC_INPUT_KEY_COUNT];
 static bool arc_chooser_pointer_down;
 static int arc_chooser_pointer_row = -1;
+static bool arc_chooser_input_armed;
 static bool arc_chooser_release_gate;
 static bool arc_av_transition_pending;
 #if defined(ARCDROID_TEST_FAULTS)
@@ -664,6 +666,8 @@ static const char *arc_os_slug(ArcOsClass os)
 
 static void arc_release_session(void)
 {
+   arc_chooser_input_armed = false;
+   arc_chooser_release_gate = false;
    arc_engine_stop();
    free(arc_firmware);
    arc_firmware = NULL;
@@ -2492,13 +2496,21 @@ static void arc_poll_inputs(void)
    if (arc_chooser_release_gate)
    {
       bool neutral = true;
+      unsigned deadzone_percent = arc_core_options.pointer_deadzone;
+      if (deadzone_percent < ARC_DEFAULT_POINTER_DEADZONE)
+         deadzone_percent = ARC_DEFAULT_POINTER_DEADZONE;
+      int analog_deadzone = (int)(INT16_MAX * deadzone_percent / 100u);
       for (unsigned port = 0u; port < 2u; ++port)
       {
          for (unsigned id = 0u; id < 16u; ++id)
             if (arc_input_state(port, RETRO_DEVICE_JOYPAD, 0u, id)) neutral = false;
          for (unsigned stick = 0u; stick < 2u; ++stick)
             for (unsigned axis = 0u; axis < 2u; ++axis)
-               if (arc_input_state(port, RETRO_DEVICE_ANALOG, stick, axis)) neutral = false;
+            {
+               int value = arc_input_state(port, RETRO_DEVICE_ANALOG, stick, axis);
+               if (value < -analog_deadzone || value > analog_deadzone)
+                  neutral = false;
+            }
          if (arc_input_state(port, RETRO_DEVICE_MOUSE, 0u,
                              RETRO_DEVICE_ID_MOUSE_LEFT) ||
              arc_input_state(port, RETRO_DEVICE_MOUSE, 0u,
@@ -3068,6 +3080,7 @@ static void arc_chooser_reset_input(void)
    memset(arc_chooser_keyboard_levels, 0, sizeof(arc_chooser_keyboard_levels));
    arc_chooser_pointer_down = false;
    arc_chooser_pointer_row = -1;
+   arc_chooser_input_armed = false;
    arc_input_reset(&arc_inputs);
    arc_platform_joystick_snapshot(false, NULL);
 }
@@ -3160,18 +3173,6 @@ static void arc_poll_chooser(void)
       arc_keyboard_raw[RETROK_DOWN] = key[1];
       arc_keyboard_raw[RETROK_RETURN] = key[2];
    }
-   if ((levels[0] && !arc_chooser_pad_levels[0]) ||
-       (key[0] && !arc_chooser_keyboard_levels[0]))
-      arc_launch_chooser_move(&arc_chooser, -1);
-   if ((levels[1] && !arc_chooser_pad_levels[1]) ||
-       (key[1] && !arc_chooser_keyboard_levels[1]))
-      arc_launch_chooser_move(&arc_chooser, 1);
-   bool confirm = (levels[2] && !arc_chooser_pad_levels[2]) ||
-                  (levels[3] && !arc_chooser_pad_levels[3]) ||
-                  (key[2] && !arc_chooser_keyboard_levels[2]);
-   memcpy(arc_chooser_pad_levels, levels, sizeof(levels));
-   memcpy(arc_chooser_keyboard_levels, key, sizeof(key));
-
    bool pointer = arc_input_state(0u, RETRO_DEVICE_POINTER, 0u,
                                   RETRO_DEVICE_ID_POINTER_PRESSED) != 0;
    int row = -1;
@@ -3191,6 +3192,31 @@ static void arc_poll_chooser(void)
                (unsigned)arc_pointer_to_pixel(raw_y, ARC_HEIGHT));
       }
    }
+   if (!arc_chooser_input_armed)
+   {
+      bool neutral = !pointer;
+      for (unsigned i = 0u; i < 4u; ++i)
+         if (levels[i]) neutral = false;
+      for (unsigned i = 0u; i < 3u; ++i)
+         if (key[i]) neutral = false;
+      memcpy(arc_chooser_pad_levels, levels, sizeof(levels));
+      memcpy(arc_chooser_keyboard_levels, key, sizeof(key));
+      arc_chooser_pointer_down = pointer;
+      arc_chooser_pointer_row = -1;
+      if (neutral) arc_chooser_input_armed = true;
+      return;
+   }
+   if ((levels[0] && !arc_chooser_pad_levels[0]) ||
+       (key[0] && !arc_chooser_keyboard_levels[0]))
+      arc_launch_chooser_move(&arc_chooser, -1);
+   if ((levels[1] && !arc_chooser_pad_levels[1]) ||
+       (key[1] && !arc_chooser_keyboard_levels[1]))
+      arc_launch_chooser_move(&arc_chooser, 1);
+   bool confirm = (levels[2] && !arc_chooser_pad_levels[2]) ||
+                  (levels[3] && !arc_chooser_pad_levels[3]) ||
+                  (key[2] && !arc_chooser_keyboard_levels[2]);
+   memcpy(arc_chooser_pad_levels, levels, sizeof(levels));
+   memcpy(arc_chooser_keyboard_levels, key, sizeof(key));
    if (pointer && !arc_chooser_pointer_down)
    {
       arc_chooser_pointer_row = row;
@@ -3213,18 +3239,35 @@ static void arc_poll_chooser(void)
    if (confirm) (void)arc_chooser_confirm();
 }
 
-static void arc_notify_av(unsigned width, unsigned height, double rate)
+static void arc_notify_av_change(unsigned width, unsigned height, double rate)
 {
-   struct retro_system_av_info av;
-   retro_get_system_av_info(&av);
-   av.geometry.base_width = width;
-   av.geometry.base_height = height;
-   av.timing.fps = rate;
-   if (arc_environment)
-      arc_environment(RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO, &av);
-   arc_video_width = width;
-   arc_video_height = height;
-   arc_video_rate = rate;
+   bool rate_changed = rate < arc_video_rate - 0.01 ||
+                       rate > arc_video_rate + 0.01;
+   bool geometry_changed = width != arc_video_width ||
+                           height != arc_video_height;
+   if (rate_changed)
+   {
+      struct retro_system_av_info av;
+      retro_get_system_av_info(&av);
+      av.geometry.base_width = width;
+      av.geometry.base_height = height;
+      av.timing.fps = rate;
+      if (arc_environment)
+         arc_environment(RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO, &av);
+      arc_video_width = width;
+      arc_video_height = height;
+      arc_video_rate = rate;
+   }
+   else if (geometry_changed)
+   {
+      struct retro_game_geometry geometry = {
+         width, height, 4096u, 2048u, 4.0f / 3.0f
+      };
+      if (arc_environment)
+         arc_environment(RETRO_ENVIRONMENT_SET_GEOMETRY, &geometry);
+      arc_video_width = width;
+      arc_video_height = height;
+   }
 }
 
 static bool arc_load_game(const struct retro_game_info *game, bool negotiate)
@@ -3399,7 +3442,7 @@ static bool arc_load_game(const struct retro_game_info *game, bool negotiate)
          arc_loaded = true;
          arc_ejected = false;
          arc_chooser_reset_input();
-         arc_av_transition_pending = true;
+         arc_av_transition_pending = !negotiate;
       }
       else if (!arc_resolve_inputs(&arc_core_options, false, true))
       {
@@ -3429,7 +3472,7 @@ static bool arc_load_game(const struct retro_game_info *game, bool negotiate)
     * the first genuinely different completed field will then notify it once. */
    if (negotiate && arc_session == ARC_SESSION_RUNNING)
       (void)arc_engine_get_av_info(&arc_video_width, &arc_video_height, &arc_video_rate);
-   else if (arc_session == ARC_SESSION_CHOOSING)
+   else if (negotiate && arc_session == ARC_SESSION_CHOOSING)
    {
       arc_video_width = ARC_WIDTH;
       arc_video_height = ARC_HEIGHT;
@@ -3475,6 +3518,7 @@ RETRO_API void retro_unload_game(void)
 RETRO_API void retro_reset(void)
 {
    if (!arc_loaded) return;
+   arc_chooser_release_gate = false;
    bool osk_session_disabled = arc_osk.disabled;
    arc_osk_reset(&arc_osk, &arc_inputs);
    arc_osk.disabled = osk_session_disabled;
@@ -3736,7 +3780,7 @@ RETRO_API void retro_run(void)
    {
       if (arc_av_transition_pending)
       {
-         arc_notify_av(ARC_WIDTH, ARC_HEIGHT, ARC_RATE);
+         arc_notify_av_change(ARC_WIDTH, ARC_HEIGHT, ARC_RATE);
          arc_av_transition_pending = false;
       }
       arc_poll_chooser();
@@ -3797,8 +3841,8 @@ RETRO_API void retro_run(void)
       arc_guest_time_us += frame.elapsed_us;
    }
    if (chooser_exit_transition)
-      arc_notify_av(frame.width, frame.height,
-                    frame.refresh_hz > 0.0 ? frame.refresh_hz : ARC_RATE);
+      arc_notify_av_change(frame.width, frame.height,
+                           frame.refresh_hz > 0.0 ? frame.refresh_hz : ARC_RATE);
    if (frame.width != arc_video_width || frame.height != arc_video_height)
    {
       struct retro_game_geometry geometry = {
