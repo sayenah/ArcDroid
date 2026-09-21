@@ -41,6 +41,9 @@ typedef struct {
    unsigned track_count;
    char title[256];
    uint32_t sequence;
+   uint16_t disc_number;
+   uint16_t disc_count;
+   uint32_t game_id;
    uint32_t flags;
    uint32_t obey_length;
    uint8_t fps_times_two;

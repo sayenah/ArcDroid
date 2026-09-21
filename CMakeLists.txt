@@ -45,6 +45,7 @@ target_compile_options(arcdroid_zlib PRIVATE
 set_target_properties(arcdroid_zlib PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 set(ARCDROID_CORE_SOURCES
+  core/adffs.c
   core/machine.c
   core/hash.c
   core/input.c
@@ -61,7 +62,7 @@ set(ARCDROID_CORE_SOURCES
   core/persistence.c
   core/cmos_defaults.c
 )
-add_library(arcdroid_core STATIC ${ARCDROID_CORE_SOURCES} core/firmware_table.c)
+add_library(arcdroid_core STATIC ${ARCDROID_CORE_SOURCES} core/adffs_profiles.c core/firmware_table.c)
 target_include_directories(arcdroid_core PUBLIC core libretro/include "${CMAKE_CURRENT_BINARY_DIR}/generated")
 target_link_libraries(arcdroid_core PRIVATE arcdroid_zlib)
 if(ARCDROID_SANITIZERS)
@@ -170,7 +171,7 @@ configure_file(arcdroid_libretro.info arcdroid_libretro.info COPYONLY)
 install(TARGETS arcdroid_libretro DESTINATION .)
 install(FILES arcdroid_libretro.info DESTINATION .)
 
-if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
+if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
   find_package(Python3 REQUIRED COMPONENTS Interpreter)
   add_executable(core_tests
     tests/core_tests.c
@@ -180,9 +181,15 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
     target_link_libraries(core_tests PRIVATE arcdroid_sanitizer_link)
   endif()
   target_compile_options(core_tests PRIVATE $<$<C_COMPILER_ID:GNU,Clang,AppleClang>:-UNDEBUG>)
+  add_executable(adffs_shipping_profile_test tests/adffs_shipping_profile_test.c)
+  target_link_libraries(adffs_shipping_profile_test PRIVATE arcdroid_core)
+  if(ARCDROID_SANITIZERS)
+    target_link_libraries(adffs_shipping_profile_test PRIVATE arcdroid_sanitizer_link)
+  endif()
+  target_compile_options(adffs_shipping_profile_test PRIVATE $<$<C_COMPILER_ID:GNU,Clang,AppleClang>:-UNDEBUG>)
   set(FIXTURE_DIR "${CMAKE_CURRENT_BINARY_DIR}/tests/fixtures/generated")
   add_library(arcdroid_core_test STATIC
-    ${ARCDROID_CORE_SOURCES} tests/firmware_table_test.c)
+    ${ARCDROID_CORE_SOURCES} tests/adffs_profiles_test.c tests/firmware_table_test.c)
   target_include_directories(arcdroid_core_test PUBLIC
     core libretro/include "${CMAKE_CURRENT_BINARY_DIR}/generated")
   target_link_libraries(arcdroid_core_test PRIVATE arcdroid_zlib)
@@ -228,6 +235,53 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
   set_tests_properties(shipping-io-guard PROPERTIES
     WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
 
+  set(ADFFS_FIXTURES
+    "${FIXTURE_DIR}/adffs/synthetic.zip"
+    "${FIXTURE_DIR}/adffs/stored.zip"
+    "${FIXTURE_DIR}/adffs/descriptor.zip"
+    "${FIXTURE_DIR}/adffs/reordered.zip"
+    "${FIXTURE_DIR}/adffs/untested.zip"
+    "${FIXTURE_DIR}/adffs/truncated.zip"
+    "${FIXTURE_DIR}/adffs/bad-crc.zip"
+    "${FIXTURE_DIR}/adffs/encrypted.zip"
+    "${FIXTURE_DIR}/adffs/zip64.zip"
+    "${FIXTURE_DIR}/adffs/zip64-extra.zip"
+    "${FIXTURE_DIR}/adffs/descriptor-mismatch.zip"
+    "${FIXTURE_DIR}/adffs/local-mismatch.zip"
+    "${FIXTURE_DIR}/adffs/extra-mismatch.zip"
+    "${FIXTURE_DIR}/adffs/central-size-mismatch.zip"
+    "${FIXTURE_DIR}/adffs/inflated-lie.zip"
+    "${FIXTURE_DIR}/adffs/missing-arc0.zip"
+    "${FIXTURE_DIR}/adffs/duplicate.zip"
+    "${FIXTURE_DIR}/adffs/case-collision.zip"
+    "${FIXTURE_DIR}/adffs/unsafe-name.zip"
+    "${FIXTURE_DIR}/adffs/absolute-name.zip"
+    "${FIXTURE_DIR}/adffs/backslash-name.zip"
+    "${FIXTURE_DIR}/adffs/entry-limit.zip"
+    "${FIXTURE_DIR}/adffs/oversize.zip"
+    "${FIXTURE_DIR}/adffs/used-total.zip"
+    "${FIXTURE_DIR}/adffs/excluded-trackers.zip"
+    "${FIXTURE_DIR}/adffs/version-control.zip"
+    "${FIXTURE_DIR}/adffs/version-quote.zip"
+    "${FIXTURE_DIR}/adffs/version-backslash.zip"
+    "${FIXTURE_DIR}/adffs/missing-obey.zip"
+    "${FIXTURE_DIR}/adffs/missing-runtypes.zip"
+    "${FIXTURE_DIR}/adffs/missing-fixobey.zip"
+    "${FIXTURE_DIR}/adffs/invalid-obey-name.zip"
+    "${FIXTURE_DIR}/adffs/eligible.jfd"
+    "${FIXTURE_DIR}/adffs/embedded-only.jfd"
+    "${FIXTURE_DIR}/adffs/no-script.jfd"
+    "${FIXTURE_DIR}/adffs/game-only.jfd"
+    "${FIXTURE_DIR}/adffs/disc-two.jfd"
+    "${FIXTURE_DIR}/adffs/count-two.jfd"
+    "${FIXTURE_DIR}/adffs/missing-resource.jfd"
+    "${FIXTURE_DIR}/adffs/comment-reference.jfd"
+    "${FIXTURE_DIR}/adffs/closure-too-large.jfd"
+    "${FIXTURE_DIR}/adffs/capacity.jfd"
+    "${FIXTURE_DIR}/adffs/too-large.jfd"
+    "${FIXTURE_DIR}/adffs/decoded-limit.jfd"
+    "${FIXTURE_DIR}/adffs/decoded-too-large.jfd"
+    "${FIXTURE_DIR}/adffs/multi.m3u")
   add_custom_command(
     OUTPUT "${FIXTURE_DIR}/arcdroid-test.rom" "${FIXTURE_DIR}/arcdroid-test.adf"
       "${FIXTURE_DIR}/arcdroid-chooser-test.rom"
@@ -266,6 +320,7 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
       "${FIXTURE_DIR}/arcdroid-test-gzip.jfd"
       "${FIXTURE_DIR}/arcdroid-test-two-member.jfd"
       "${FIXTURE_DIR}/arcdroid-test-three-member.jfd"
+      ${ADFFS_FIXTURES}
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/generate_fixtures.py" "${FIXTURE_DIR}"
     DEPENDS tests/generate_fixtures.py VERBATIM)
   add_custom_target(test-fixtures ALL DEPENDS
@@ -305,9 +360,29 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
     "${FIXTURE_DIR}/arcdroid-test.jfd"
     "${FIXTURE_DIR}/arcdroid-test-gzip.jfd"
     "${FIXTURE_DIR}/arcdroid-test-two-member.jfd"
-    "${FIXTURE_DIR}/arcdroid-test-three-member.jfd")
+    "${FIXTURE_DIR}/arcdroid-test-three-member.jfd"
+    ${ADFFS_FIXTURES})
 
   add_dependencies(core_tests test-fixtures)
+  add_executable(adffs_tests tests/adffs_tests.c)
+  target_link_libraries(adffs_tests PRIVATE arcdroid_core_test)
+  target_compile_options(adffs_tests PRIVATE
+    $<$<C_COMPILER_ID:GNU,Clang,AppleClang>:-UNDEBUG;-Wall;-Wextra;-Wpedantic>)
+  if(ARCDROID_SANITIZERS)
+    target_link_libraries(adffs_tests PRIVATE arcdroid_sanitizer_link)
+  endif()
+  add_dependencies(adffs_tests test-fixtures)
+  add_test(NAME adffs-package-media COMMAND adffs_tests "${FIXTURE_DIR}")
+  add_test(NAME adffs-shipping-profile COMMAND adffs_shipping_profile_test)
+  add_executable(arc_io_tests tests/arc_io_tests.c libretro/arc_io.c)
+  target_include_directories(arc_io_tests PRIVATE libretro libretro/include)
+  target_compile_options(arc_io_tests PRIVATE
+    $<$<C_COMPILER_ID:GNU,Clang,AppleClang>:-UNDEBUG;-Wall;-Wextra;-Wpedantic>)
+  if(ARCDROID_SANITIZERS)
+    target_link_libraries(arc_io_tests PRIVATE
+      arcdroid_sanitizer_compile arcdroid_sanitizer_link)
+  endif()
+  add_test(NAME arc-io-write-guards COMMAND arc_io_tests)
   add_dependencies(jfd_controller_tests test-fixtures)
   add_test(NAME core-services COMMAND core_tests "${FIXTURE_DIR}")
   add_test(NAME jfd-controller-golden COMMAND jfd_controller_tests
@@ -327,12 +402,19 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
     add_executable(windows_load_harness tests/windows_load_harness.c)
     target_include_directories(windows_load_harness PRIVATE libretro/include)
     target_compile_options(windows_load_harness PRIVATE $<$<C_COMPILER_ID:GNU,Clang>:-UNDEBUG>)
-    add_dependencies(windows_load_harness arcdroid_libretro test-fixtures)
+    add_dependencies(windows_load_harness arcdroid_libretro arcdroid_libretro_test test-fixtures)
     add_test(NAME windows-load-harness COMMAND windows_load_harness
       $<TARGET_FILE:arcdroid_libretro>
       "${FIXTURE_DIR}/arcdroid-test.rom"
       "${FIXTURE_DIR}/arcdroid-test.adf"
-      "${CMAKE_CURRENT_BINARY_DIR}/windows-harness-data")
+      "${CMAKE_CURRENT_BINARY_DIR}/windows-shipping-harness-data")
+    add_test(NAME windows-test-core-load-harness COMMAND windows_load_harness
+      $<TARGET_FILE:arcdroid_libretro_test>
+      "${FIXTURE_DIR}/arcdroid-test.rom"
+      "${FIXTURE_DIR}/arcdroid-test.adf"
+      "${CMAKE_CURRENT_BINARY_DIR}/windows-harness-data"
+      "${FIXTURE_DIR}/adffs/synthetic.zip"
+      "${FIXTURE_DIR}/adffs/eligible.jfd")
   else()
     # Fault injection and engine test probes live only in this non-installed
     # host test core; release/RetroArch artifacts use arcdroid_libretro above.
@@ -361,7 +443,9 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
       "${FIXTURE_DIR}/arcdroid-test.jfd"
       "${FIXTURE_DIR}/arcdroid-test-two-member.jfd"
       "${FIXTURE_DIR}"
-      "${FIXTURE_DIR}/arcdroid-application-l.adl")
+      "${FIXTURE_DIR}/arcdroid-application-l.adl"
+      "${FIXTURE_DIR}/adffs/synthetic.zip"
+      "${FIXTURE_DIR}/adffs/eligible.jfd")
     add_test(NAME newio-libretro-harness COMMAND libretro_harness
       $<TARGET_FILE:arcdroid_libretro_test>
       "${FIXTURE_DIR}/arcdroid-test.rom"

@@ -27,6 +27,8 @@ typedef struct {
    ArcMediaKind kind;
    ArcMediaGeometry geometry;
    const ArcJfdImage *jfd;
+   const uint8_t *data;
+   size_t size;
 } ArcEngineMedia;
 
 bool arc_engine_start(const uint8_t *firmware, size_t firmware_size,

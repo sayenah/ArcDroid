@@ -6,7 +6,8 @@ command -v grep >/dev/null 2>&1 || {
   exit 2
 }
 
-sources='core/hash.c
+sources='core/adffs.c
+core/hash.c
 core/machine.c
 core/input.c
 core/input_mapping.c

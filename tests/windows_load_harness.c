@@ -19,6 +19,17 @@ static bool saw_keyboard, saw_vfs, saw_input_descriptors;
 static const char *system_dir, *save_dir;
 static unsigned open_files, open_dirs, video_frames;
 static uint64_t audio_frames;
+static bool saw_adffs_log;
+
+static void check_failed(const char *file, int line, const char *expression)
+{
+   fprintf(stderr, "%s:%d: check failed: %s\n", file, line, expression);
+   fflush(stderr);
+   exit(EXIT_FAILURE);
+}
+#undef assert
+#define assert(expression) do { if (!(expression)) \
+   check_failed(__FILE__, __LINE__, #expression); } while (0)
 
 struct retro_vfs_file_handle { FILE *file; char *path; unsigned mode; };
 struct retro_vfs_dir_handle { HANDLE find; WIN32_FIND_DATAA data; bool first; };
@@ -128,7 +139,15 @@ static void frontend_log(enum retro_log_level level, const char *format, ...)
 {
    (void)level;
    va_list args;
-   va_start(args, format); vfprintf(stderr, format, args); va_end(args);
+   va_start(args, format);
+   va_list copy;
+   va_copy(copy, args);
+   char line[512];
+   vsnprintf(line, sizeof(line), format, copy);
+   va_end(copy);
+   if (strstr(line, "JFD boot: path=adffs")) saw_adffs_log = true;
+   vfprintf(stderr, format, args);
+   va_end(args);
 }
 
 static bool environment(unsigned command, void *data)
@@ -144,7 +163,7 @@ static bool environment(unsigned command, void *data)
          assert(phase == PHASE_ENV && options->categories &&
                 !strcmp(options->categories[0].key, "pad_mapping"));
          while (options->definitions[count].key) ++count;
-         assert(count == 34u);
+         assert(count == 36u);
          saw_options = true;
          return true;
       }
@@ -190,6 +209,8 @@ static bool environment(unsigned command, void *data)
          else if (!strcmp(variable->key, "arcdroid_disk_writes")) variable->value = "shadow";
          else if (!strcmp(variable->key, "arcdroid_launch")) variable->value = "auto";
          else if (!strcmp(variable->key, "arcdroid_launch_chooser")) variable->value = "remember";
+         else if (!strcmp(variable->key, "arcdroid_jfd_boot")) variable->value = "auto";
+         else if (!strcmp(variable->key, "arcdroid_adffs_package")) variable->value = "verified";
          else if (!strcmp(variable->key, "arcdroid_osk_toggle")) variable->value = "L3";
          else variable->value = "Auto";
          return true;
@@ -228,16 +249,26 @@ typedef bool (*LoadGameFn)(const struct retro_game_info *);
 
 int main(int argc, char **argv)
 {
-   assert(argc == 5);
+   assert(argc == 5 || argc == 7);
    char system_path[4096], arcdroid_path[4096], firmware_path[4096];
-   char save_path[4096], firmware_file[4096];
+   char save_path[4096], firmware_file[4096], adffs_path[4096], package_file[4096];
    make_directory(argv[4]);
    join_path(system_path, sizeof(system_path), argv[4], "system"); make_directory(system_path);
    join_path(arcdroid_path, sizeof(arcdroid_path), system_path, "arcdroid"); make_directory(arcdroid_path);
    join_path(firmware_path, sizeof(firmware_path), arcdroid_path, "firmware"); make_directory(firmware_path);
+   if (argc == 7)
+   {
+      join_path(adffs_path, sizeof(adffs_path), arcdroid_path, "adffs");
+      make_directory(adffs_path);
+   }
    join_path(save_path, sizeof(save_path), argv[4], "save"); make_directory(save_path);
    join_path(firmware_file, sizeof(firmware_file), firmware_path, "renamed-test-firmware.data");
    assert(CopyFileA(argv[2], firmware_file, FALSE));
+   if (argc == 7)
+   {
+      join_path(package_file, sizeof(package_file), adffs_path, "synthetic.zip");
+      assert(CopyFileA(argv[5], package_file, FALSE));
+   }
    system_dir = system_path; save_dir = save_path;
 
    HMODULE module = LoadLibraryA(argv[1]);
@@ -264,7 +295,15 @@ int main(int argc, char **argv)
    phase = PHASE_LOAD; assert(retro_load_game(&game));
    phase = PHASE_RUN;
    for (unsigned frame = 0u; frame < 100u; ++frame) retro_run();
-   retro_unload_game(); retro_deinit();
+   retro_unload_game();
+   if (argc == 7)
+   {
+      struct retro_game_info adffs_game = {argv[6], NULL, 0u, NULL};
+      phase = PHASE_LOAD; assert(retro_load_game(&adffs_game));
+      assert(saw_adffs_log);
+      retro_unload_game();
+   }
+   retro_deinit();
    assert(saw_options && saw_no_game && saw_disk && saw_pixel && saw_controllers &&
           saw_keyboard && saw_vfs && saw_input_descriptors);
    assert(video_frames == 100u && audio_frames > 0u);

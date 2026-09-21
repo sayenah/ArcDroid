@@ -11,7 +11,9 @@ Copyright 2026 ArcDroid contributors. GPL-2.0-only.
 from pathlib import Path
 import argparse
 import gzip
+import io
 import struct
+import zipfile
 
 ROM_SIZE = 512 * 1024
 ADF_SIZE = 800 * 1024
@@ -714,6 +716,284 @@ def gzip_member(payload: bytes) -> bytes:
     return bytes(member)
 
 
+def _zip_bytes(entries: list[tuple[str, bytes, bool]],
+               compression: int = zipfile.ZIP_DEFLATED,
+               streaming: bool = False) -> bytes:
+    class StreamingBuffer(io.BytesIO):
+        def seekable(self) -> bool:
+            return False
+
+        def seek(self, *args, **kwargs):
+            raise io.UnsupportedOperation
+
+    output = StreamingBuffer() if streaming else io.BytesIO()
+    with zipfile.ZipFile(output, "w", compression=compression) as archive:
+        for name, payload, metadata in entries:
+            info = zipfile.ZipInfo(name, (2026, 1, 1, 0, 0, 0))
+            info.compress_type = compression
+            if metadata:
+                info.extra = struct.pack("<HH4sIII", 0x4341, 16,
+                                         b"ARC0", 0xFFF00000,
+                                         0, 0x33)
+            archive.writestr(info, payload)
+    return output.getvalue()
+
+
+def _zip_name_records(payload: bytes | bytearray) -> \
+        list[tuple[int, int, bytes, int, int, bytes]]:
+    """Return exact local/central name fields without zipfile normalisation."""
+    eocd = payload.rfind(b"PK\x05\x06")
+    if eocd < 0 or eocd + 22 > len(payload):
+        raise ValueError("generated ZIP has no complete end record")
+    count = struct.unpack_from("<H", payload, eocd + 10)[0]
+    central_size, central = struct.unpack_from("<II", payload, eocd + 12)
+    central_end = central + central_size
+    if central_end > eocd:
+        raise ValueError("generated ZIP central directory is out of bounds")
+    records = []
+    position = central
+    for _ in range(count):
+        if position + 46 > central_end or payload[position:position + 4] != b"PK\x01\x02":
+            raise ValueError("generated ZIP central entry is invalid")
+        name_size, extra_size, comment_size = struct.unpack_from(
+            "<HHH", payload, position + 28)
+        record_end = position + 46 + name_size + extra_size + comment_size
+        if record_end > central_end:
+            raise ValueError("generated ZIP central name is out of bounds")
+        local = struct.unpack_from("<I", payload, position + 42)[0]
+        if local + 30 > len(payload) or payload[local:local + 4] != b"PK\x03\x04":
+            raise ValueError("generated ZIP local entry is invalid")
+        local_name_size = struct.unpack_from("<H", payload, local + 26)[0]
+        local_name = local + 30
+        if local_name + local_name_size > len(payload):
+            raise ValueError("generated ZIP local name is out of bounds")
+        central_name = position + 46
+        records.append((local_name, local_name_size,
+                        bytes(payload[local_name:local_name + local_name_size]),
+                        central_name, name_size,
+                        bytes(payload[central_name:central_name + name_size])))
+        position = record_end
+    if position != central_end:
+        raise ValueError("generated ZIP central directory size disagrees")
+    return records
+
+
+def _write_raw_name_fixture(path: Path,
+                            entries: list[tuple[str, bytes, bool]],
+                            raw_name: bytes, member: bytes, metadata: bool,
+                            expected_count: int = 1) -> None:
+    """Write an exact malformed name, bypassing host path normalisation."""
+    placeholder = b"X" * len(raw_name)
+    archive = bytearray(_zip_bytes(
+        entries + [(placeholder.decode("ascii"), member, metadata)]))
+    records = _zip_name_records(archive)
+    local, local_size, local_value, central, central_size, central_value = records[-1]
+    if (local_size != len(raw_name) or central_size != len(raw_name) or
+            local_value != placeholder or central_value != placeholder):
+        raise ValueError(f"cannot patch exact ZIP name for {path.name}")
+    archive[local:local + local_size] = raw_name
+    archive[central:central + central_size] = raw_name
+    path.write_bytes(archive)
+
+    # Read the completed fixture back and fail generation if either header was
+    # normalised, omitted, or patched differently from the requested bytes.
+    checked = _zip_name_records(path.read_bytes())
+    local_names = [record[2] for record in checked]
+    central_names = [record[5] for record in checked]
+    if (local_names[-1] != raw_name or central_names[-1] != raw_name or
+            local_names.count(raw_name) != expected_count or
+            central_names.count(raw_name) != expected_count):
+        raise ValueError(f"raw ZIP name self-check failed for {path.name}")
+
+
+def build_adffs_fixtures(output: Path) -> None:
+    """Invented package/JFD data; no JASPP byte is an input."""
+    output.mkdir(exist_ok=True)
+    built_in = b"Set ArcFixture Builtin\rADFFS:trackers.QTMModule.extra\r"
+    obey_entries = [
+        ("F0012301", built_in, False),
+        ("F0012301A", b"Set ArcFixture Auxiliary\r", False),
+        ("ChainA", b"ADFFS:extras.JoyMod\rADFFS:obey.ChainB\r", False),
+        ("ChainB", b"adffs:TRACKERS.CaseTrack.ext\r", False),
+        ("CycleA", b"ADFFS:obey.CycleB\r", False),
+        ("CycleB", b"ADFFS:obey.CycleA\r", False),
+        ("Depth1", b"ADFFS:obey.Depth2\r", False),
+        ("Depth2", b"ADFFS:obey.Depth3\r", False),
+        ("Depth3", b"ADFFS:obey.Depth4\r", False),
+        ("Depth4", b"ADFFS:obey.Depth5\r", False),
+        ("Depth5", b"Set ArcFixture TooDeep\r", False),
+    ]
+    obey = _zip_bytes(obey_entries)
+    runtime_names = ("ADFFS", "SetVars", "CLib", "CallASWI", "ZLib", "BootCmds")
+    runtime_paths = ("!ADFFS/ADFFS", "!ADFFS/SetVars",
+                     "!ADFFS/3rdParty/CLib", "!ADFFS/3rdParty/CallASWI",
+                     "!ADFFS/3rdParty/ZLib", "!ADFFS/3rdParty/BootCmds")
+    module = bytearray(24)
+    struct.pack_into("<I", module, 20, len(module))
+    module += b"Synthetic 1.0\0"
+    entries = [(runtime_paths[0], bytes(module), True)]
+    entries += [(path, f"ArcDroid synthetic ADFFS {name} fixture\n".encode(), True)
+                for name, path in zip(runtime_names[1:], runtime_paths[1:])]
+    entries += [("!ADFFS/obey", obey, True),
+                ("!ADFFS/!RunTypes", b"synthetic run types\n", True),
+                ("!ADFFS/!fixObey", b"synthetic fix obey\n", True),
+                ("!ADFFS/trackers/QTMModule", b"synthetic tracker\n", True),
+                ("!ADFFS/trackers/CaseTrack", b"case tracker\n", True),
+                ("!ADFFS/trackers/Huge", bytes(780 * 1024), True),
+                ("!ADFFS/extras/JoyMod", b"synthetic extra\n", True),
+                ("unrelated/readme", b"ignored", False)]
+    package = _zip_bytes(entries)
+    (output / "synthetic.zip").write_bytes(package)
+    (output / "stored.zip").write_bytes(_zip_bytes(entries, zipfile.ZIP_STORED))
+    (output / "descriptor.zip").write_bytes(_zip_bytes(
+        entries, zipfile.ZIP_DEFLATED, streaming=True))
+    (output / "reordered.zip").write_bytes(_zip_bytes(list(reversed(entries))))
+    untested_entries = list(entries)
+    flipped_runtime = bytearray(untested_entries[0][1])
+    flipped_runtime[0] ^= 1
+    untested_entries[0] = (untested_entries[0][0], bytes(flipped_runtime), True)
+    (output / "untested.zip").write_bytes(_zip_bytes(untested_entries))
+    (output / "truncated.zip").write_bytes(package[:-7])
+
+    def patched(payload: bytes, local_change=None, central_change=None,
+                eocd_change=None) -> bytes:
+        value = bytearray(payload)
+        local = value.index(b"PK\x03\x04")
+        central = value.index(b"PK\x01\x02")
+        eocd = value.rindex(b"PK\x05\x06")
+        if local_change:
+            local_change(value, local)
+        if central_change:
+            central_change(value, central)
+        if eocd_change:
+            eocd_change(value, eocd)
+        return bytes(value)
+
+    (output / "bad-crc.zip").write_bytes(patched(
+        package,
+        lambda b, p: struct.pack_into("<I", b, p + 14,
+                                       struct.unpack_from("<I", b, p + 14)[0] ^ 1),
+        lambda b, p: struct.pack_into("<I", b, p + 16,
+                                       struct.unpack_from("<I", b, p + 16)[0] ^ 1)))
+    (output / "encrypted.zip").write_bytes(patched(
+        package,
+        lambda b, p: struct.pack_into("<H", b, p + 6,
+                                       struct.unpack_from("<H", b, p + 6)[0] | 1),
+        lambda b, p: struct.pack_into("<H", b, p + 8,
+                                       struct.unpack_from("<H", b, p + 8)[0] | 1)))
+    (output / "zip64.zip").write_bytes(patched(
+        package, eocd_change=lambda b, p: struct.pack_into("<H", b, p + 10, 0xFFFF)))
+    zip64_extra = bytearray(package)
+    for search_at in (0, zip64_extra.index(b"PK\x01\x02")):
+        marker = zip64_extra.index(b"ARC0", search_at)
+        struct.pack_into("<H", zip64_extra, marker - 4, 0x0001)
+    (output / "zip64-extra.zip").write_bytes(zip64_extra)
+    (output / "descriptor-mismatch.zip").write_bytes(patched(
+        package,
+        lambda b, p: (struct.pack_into("<H", b, p + 6,
+                                        struct.unpack_from("<H", b, p + 6)[0] | 8),
+                       struct.pack_into("<III", b, p + 14, 0, 0, 0)),
+        lambda b, p: struct.pack_into("<H", b, p + 8,
+                                       struct.unpack_from("<H", b, p + 8)[0] | 8)))
+    (output / "local-mismatch.zip").write_bytes(patched(
+        package, local_change=lambda b, p: struct.pack_into("<H", b, p + 8, 0)))
+    extra_mismatch = bytearray(package)
+    first_central = extra_mismatch.index(b"PK\x01\x02")
+    local_arc0 = extra_mismatch.index(b"ARC0", 0, first_central)
+    extra_mismatch[local_arc0] ^= 1
+    (output / "extra-mismatch.zip").write_bytes(extra_mismatch)
+    (output / "central-size-mismatch.zip").write_bytes(patched(
+        package, eocd_change=lambda b, p: struct.pack_into(
+            "<I", b, p + 12, struct.unpack_from("<I", b, p + 12)[0] - 1)))
+    bomb = patched(package,
+        local_change=lambda b, p: struct.pack_into("<I", b, p + 22,
+             struct.unpack_from("<I", b, p + 22)[0] + 1),
+        central_change=lambda b, p: struct.pack_into("<I", b, p + 24,
+             struct.unpack_from("<I", b, p + 24)[0] + 1))
+    (output / "inflated-lie.zip").write_bytes(bomb)
+    no_arc = bytearray(package.replace(b"ARC0", b"NOPE"))
+    (output / "missing-arc0.zip").write_bytes(no_arc)
+    _write_raw_name_fixture(output / "duplicate.zip", entries,
+                            b"!ADFFS/ADFFS", entries[0][1], True, 2)
+    _write_raw_name_fixture(output / "case-collision.zip", entries,
+                            b"!adffs/adffs", b"case collision", True)
+    _write_raw_name_fixture(output / "unsafe-name.zip", entries,
+                            b"../bad", b"x", False)
+    _write_raw_name_fixture(output / "absolute-name.zip", entries,
+                            b"/bad", b"x", False)
+    _write_raw_name_fixture(output / "backslash-name.zip", entries,
+                            b"bad\\name", b"x", False)
+    (output / "entry-limit.zip").write_bytes(_zip_bytes(
+        [(f"unused/{i:04d}", b"", False) for i in range(1025)], zipfile.ZIP_STORED))
+    (output / "oversize.zip").write_bytes(_zip_bytes(
+        entries + [("unused/large", bytes(2 * 1024 * 1024 + 1), False)]))
+    (output / "used-total.zip").write_bytes(_zip_bytes(entries + [
+        ("!ADFFS/trackers/LimitA", bytes(2 * 1024 * 1024), True),
+        ("!ADFFS/trackers/LimitB", bytes(2 * 1024 * 1024), True),
+    ]))
+    (output / "excluded-trackers.zip").write_bytes(_zip_bytes(entries + [
+        ("!ADFFS/trackers/TimPlayer", b"excluded player", False),
+        ("!ADFFS/trackers/!Help", b"excluded help", False),
+    ]))
+    for filename, help_text in (
+            ("version-control.zip", b"Synthetic\x01control\0"),
+            ("version-quote.zip", b'Synthetic "quote\0'),
+            ("version-backslash.zip", b"Synthetic \\path\0")):
+        changed_module = bytearray(24)
+        struct.pack_into("<I", changed_module, 20, len(changed_module))
+        changed_module += help_text
+        (output / filename).write_bytes(_zip_bytes([
+            (name, bytes(changed_module) if name == "!ADFFS/ADFFS" else payload,
+             metadata)
+            for name, payload, metadata in entries]))
+    for filename, omitted in (("missing-obey.zip", "!ADFFS/obey"),
+                              ("missing-runtypes.zip", "!ADFFS/!RunTypes"),
+                              ("missing-fixobey.zip", "!ADFFS/!fixObey")):
+        (output / filename).write_bytes(_zip_bytes(
+            [entry for entry in entries if entry[0] != omitted]))
+    invalid_obey = _zip_bytes(obey_entries + [("Bad-Name", b"x", False)])
+    (output / "invalid-obey-name.zip").write_bytes(_zip_bytes([
+        (name, invalid_obey if name == "!ADFFS/obey" else payload, metadata)
+        for name, payload, metadata in entries]))
+
+    def adffs_jfd(game: int, disc: int = 1, count: int = 1,
+                  embedded: bytes = b"", decoded_size: int | None = None) -> bytearray:
+        image = build_extended_jfd(bytes(256), b"ArcDroid ADFFS fixture")
+        if decoded_size is not None:
+            assert decoded_size >= len(image) + len(embedded)
+            image += bytes(decoded_size - len(image) - len(embedded))
+        image += embedded
+        struct.pack_into("<I", image, 8, len(image))
+        struct.pack_into("<HHI", image, 12, disc, count, game)
+        struct.pack_into("<I", image, 312, len(embedded))
+        return image
+
+    embedded = b"Set ArcFixture Embedded\rADFFS:extras.JoyMod\r"
+    (output / "eligible.jfd").write_bytes(adffs_jfd(123, embedded=embedded))
+    (output / "embedded-only.jfd").write_bytes(adffs_jfd(99999, embedded=embedded))
+    (output / "no-script.jfd").write_bytes(adffs_jfd(0))
+    (output / "game-only.jfd").write_bytes(adffs_jfd(99999))
+    (output / "disc-two.jfd").write_bytes(adffs_jfd(123, disc=2))
+    (output / "count-two.jfd").write_bytes(adffs_jfd(123, count=2))
+    (output / "missing-resource.jfd").write_bytes(adffs_jfd(
+        0, embedded=b"ADFFS:ExTrAs.Absent.module\r"))
+    (output / "comment-reference.jfd").write_bytes(adffs_jfd(
+        0, embedded=b" \t | ADFFS:ExTrAs.Absent.module\r"))
+    (output / "closure-too-large.jfd").write_bytes(adffs_jfd(
+        0, embedded=b"ADFFS:trackers.Huge\r"))
+    carrier_capacity = 819200 - 4096
+    (output / "capacity.jfd").write_bytes(adffs_jfd(
+        123, decoded_size=carrier_capacity))
+    (output / "too-large.jfd").write_bytes(adffs_jfd(
+        123, decoded_size=carrier_capacity + 1))
+    decoded_limit = 2048 * 1024
+    (output / "decoded-limit.jfd").write_bytes(gzip_member(bytes(adffs_jfd(
+        123, decoded_size=decoded_limit))))
+    (output / "decoded-too-large.jfd").write_bytes(gzip_member(bytes(adffs_jfd(
+        123, decoded_size=decoded_limit + 256))))
+    (output / "multi.m3u").write_text("eligible.jfd\nembedded-only.jfd\n")
+
+
 def build_jfd_family(descriptors: list[tuple[int, int, int, int, int, bytes | None]],
                      title: bytes = b"ArcDroid JFD family",
                      disk_payload: bytes | None = None,
@@ -1414,6 +1694,7 @@ def main() -> None:
     (args.output / "arcdroid-unsupported-launch-test.rom").write_bytes(
         unsupported_launch_rom)
     (args.output / "arcdroid-test.adf").write_bytes(build_adf())
+    build_adffs_fixtures(args.output / "adffs")
     (args.output / "arcdroid-demo.adl").write_bytes(build_demo_adl())
     (args.output / "arcdroid-application-l.adl").write_bytes(build_application_l())
     (args.output / "arcdroid-chooser-l.adl").write_bytes(build_chooser_application_l())

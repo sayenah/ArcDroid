@@ -217,6 +217,9 @@ static bool arc_jfd_parse_internal(const uint8_t *input, size_t input_size,
    { arc_jfd_error(error, error_size, "track-side count is outside 2..166"); goto reject; }
    image->track_count = track_count;
    image->sequence = arc_le32(decoded + 12u);
+   image->disc_number = (uint16_t)(decoded[12] | ((uint16_t)decoded[13] << 8u));
+   image->disc_count = (uint16_t)(decoded[14] | ((uint16_t)decoded[15] << 8u));
+   image->game_id = arc_le32(decoded + 16u);
    if (image->extended)
    {
       if (decoded_size < 316u)

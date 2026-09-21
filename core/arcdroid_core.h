@@ -214,6 +214,7 @@ typedef struct {
 
 uint32_t arc_crc32(const void *data, size_t size);
 void arc_sha1_hex(const void *data, size_t size, char output[41]);
+void arc_sha256_hex(const void *data, size_t size, char output[65]);
 ArcDigest arc_digest(const void *data, size_t size);
 static inline uint64_t arc_timestamp_elapsed_cycles(uint64_t start, uint64_t end)
 {

@@ -22,4 +22,17 @@ case "$output" in
   *"forbidden tracked binary: payload"*) ;;
   *) printf 'asset guard failed without identifying payload: %s\n' "$output" >&2; exit 1 ;;
 esac
-printf 'asset guard self-test: extensionless binary rejected\n'
+git rm --cached -q payload
+rm payload
+
+printf 'synthetic archive name only\n' > payload.zip
+git add payload.zip
+if output=$("$guard" 2>&1); then
+  printf 'asset guard accepted a tracked zip by extension\n' >&2
+  exit 1
+fi
+case "$output" in
+  *"forbidden tracked binary: payload.zip"*) ;;
+  *) printf 'asset guard failed without identifying payload.zip: %s\n' "$output" >&2; exit 1 ;;
+esac
+printf 'asset guard self-test: extensionless binary and zip extension rejected\n'

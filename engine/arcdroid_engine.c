@@ -68,13 +68,26 @@ static bool arc_saved_media_writable;
 static ArcMediaKind arc_saved_media_kind;
 static ArcMediaGeometry arc_saved_media_geometry;
 static const ArcJfdImage *arc_saved_jfd;
+static const uint8_t *arc_saved_media_data;
+static size_t arc_saved_media_size;
 static char arc_saved_helper[4096];
 static ArcMediaGeometry arc_saved_helper_geometry;
+static const uint8_t *arc_saved_helper_data;
+static size_t arc_saved_helper_size;
 static uint8_t arc_saved_cmos[ARC_CMOS_MACHINE_SIZE];
 static ArcMachine arc_saved_machine = ARC_MACHINE_A3000;
 static double arc_last_refresh = 50.0;
 static ArcEngineLogCallback arc_log_callback;
 static void *arc_log_opaque;
+static bool arc_helper_media_valid(const ArcEngineMedia *helper)
+{
+   return !helper ||
+      (((helper->path && helper->path[0]) || helper->data) && !helper->jfd &&
+       ((helper->kind == ARC_MEDIA_ADL_640K &&
+         helper->geometry == ARC_GEOMETRY_640K_L) ||
+        (helper->kind == ARC_MEDIA_ADF_800K &&
+         helper->geometry == ARC_GEOMETRY_800K_D)));
+}
 #if defined(ARCDROID_TEST_FAULTS)
 static bool arc_test_vidc_noncompleting;
 unsigned arc_ide_test_accesses(void);
@@ -82,6 +95,19 @@ unsigned arc_ide_test_accesses(void);
 void arc_engine_test_set_vidc_noncompleting(bool enabled)
 {
    arc_test_vidc_noncompleting = enabled;
+}
+
+bool arc_engine_test_helper_media_valid(ArcMediaKind kind,
+                                        ArcMediaGeometry geometry)
+{
+   static const uint8_t data = 0u;
+   ArcEngineMedia helper;
+   memset(&helper, 0, sizeof(helper));
+   helper.data = &data;
+   helper.size = 1u;
+   helper.kind = kind;
+   helper.geometry = geometry;
+   return arc_helper_media_valid(&helper);
 }
 
 bool arc_engine_test_drive_media(unsigned drive, bool *write_protected,
@@ -463,6 +489,9 @@ static bool arc_machine_create(char *failure, size_t failure_size)
    joystick_init();
    joystick_if_init();
    ioeb_init();
+   arc_io_clear_memory_sources();
+   if (arc_saved_media_data) arc_io_set_memory_source(0u, arc_saved_media_data, arc_saved_media_size);
+   if (arc_saved_helper_data) arc_io_set_memory_source(1u, arc_saved_helper_data, arc_saved_helper_size);
    adf_set_writable(0, arc_saved_media_writable);
    if (arc_saved_media[0])
    {
@@ -498,10 +527,7 @@ bool arc_engine_start(const uint8_t *firmware, size_t firmware_size,
 {
    arc_engine_stop();
    if (!firmware || (firmware_size != 524288u && firmware_size != 2097152u) ||
-       !cmos || !descriptor || (helper && (!helper->path || !helper->path[0] ||
-                           helper->kind != ARC_MEDIA_ADL_640K ||
-                           helper->geometry != ARC_GEOMETRY_640K_L ||
-                           helper->jfd)))
+       !cmos || !descriptor || !arc_helper_media_valid(helper))
    {
       if (failure && failure_size) snprintf(failure, failure_size, "Invalid engine launch plan");
       return false;
@@ -514,7 +540,8 @@ bool arc_engine_start(const uint8_t *firmware, size_t firmware_size,
    }
    memcpy(arc_saved_firmware, firmware, firmware_size);
    arc_saved_firmware_size = firmware_size;
-   const char *media_path = media && media->path ? media->path : "";
+   const char *media_path = media && media->data ? ":arcdroid-memory-0:" :
+                            media && media->path ? media->path : "";
    if (strlen(media_path) >= sizeof(arc_saved_media))
    {
       arc_engine_stop();
@@ -526,7 +553,10 @@ bool arc_engine_start(const uint8_t *firmware, size_t firmware_size,
    arc_saved_media_kind = media ? media->kind : ARC_MEDIA_INVALID;
    arc_saved_media_geometry = media ? media->geometry : ARC_GEOMETRY_NONE;
    arc_saved_jfd = media ? media->jfd : NULL;
-   const char *helper_path = helper && helper->path ? helper->path : "";
+   arc_saved_media_data = media ? media->data : NULL;
+   arc_saved_media_size = media ? media->size : 0u;
+   const char *helper_path = helper && helper->data ? ":arcdroid-memory-1:" :
+                             helper && helper->path ? helper->path : "";
    if (strlen(helper_path) >= sizeof(arc_saved_helper))
    {
       arc_engine_stop();
@@ -535,6 +565,8 @@ bool arc_engine_start(const uint8_t *firmware, size_t firmware_size,
    }
    strcpy(arc_saved_helper, helper_path);
    arc_saved_helper_geometry = helper ? helper->geometry : ARC_GEOMETRY_NONE;
+   arc_saved_helper_data = helper ? helper->data : NULL;
+   arc_saved_helper_size = helper ? helper->size : 0u;
    memcpy(arc_saved_cmos, cmos, sizeof(arc_saved_cmos));
    arc_saved_machine = descriptor->id;
    if (!arc_machine_create(failure, failure_size))
@@ -566,8 +598,13 @@ void arc_engine_stop(void)
    arc_saved_media_kind = ARC_MEDIA_INVALID;
    arc_saved_media_geometry = ARC_GEOMETRY_NONE;
    arc_saved_jfd = NULL;
+   arc_saved_media_data = NULL;
+   arc_saved_media_size = 0u;
    arc_saved_helper[0] = '\0';
    arc_saved_helper_geometry = ARC_GEOMETRY_NONE;
+   arc_saved_helper_data = NULL;
+   arc_saved_helper_size = 0u;
+   arc_io_clear_memory_sources();
    arc_active = false;
    arc_fault_boundary = false;
 #if defined(ARCDROID_TEST_FAULTS)
@@ -651,7 +688,8 @@ bool arc_engine_media_eject(void)
 bool arc_engine_media_insert(const ArcEngineMedia *media,
                              char *failure, size_t failure_size)
 {
-   const char *path = media && media->path ? media->path : "";
+   const char *path = media && media->data ? ":arcdroid-memory-0:" :
+                      media && media->path ? media->path : "";
    if (!arc_machine_live || !media || !path[0] ||
        strlen(path) >= sizeof(arc_saved_media) ||
        (media->kind == ARC_MEDIA_JFD && !media->jfd)) return false;
@@ -659,6 +697,7 @@ bool arc_engine_media_insert(const ArcEngineMedia *media,
    wd1770_media_change();
    c82c711_fdc_media_change(0u);
    disc_close(0);
+   if (media->data) arc_io_set_memory_source(0u, media->data, media->size);
    adf_set_writable(0, media->writable);
    bool mounted = media->kind == ARC_MEDIA_JFD ?
       disc_load_jfd(0, media->jfd) :
@@ -678,6 +717,8 @@ bool arc_engine_media_insert(const ArcEngineMedia *media,
    arc_saved_media_kind = media->kind;
    arc_saved_media_geometry = media->geometry;
    arc_saved_jfd = media->jfd;
+   arc_saved_media_data = media->data;
+   arc_saved_media_size = media->size;
    ioc_discchange(0);
    return true;
 }
