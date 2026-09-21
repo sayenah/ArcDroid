@@ -643,6 +643,10 @@ function Capture-RawScreenshot($Run, [string]$Name) {
             ($image.GetPixel(0, 0).ToArgb() -band 0x00ffffff)
         $chooserFocusPixel = "{0:x6}" -f
             ($image.GetPixel(60, 100).ToArgb() -band 0x00ffffff)
+        $chooserRow2Pixel = "{0:x6}" -f
+            ($image.GetPixel(60, 120).ToArgb() -band 0x00ffffff)
+        $chooserRow3Pixel = "{0:x6}" -f
+            ($image.GetPixel(60, 140).ToArgb() -band 0x00ffffff)
     } finally {
         if ($pixelHasher) { $pixelHasher.Dispose() }
         if ($bitmapData) { $canonical.UnlockBits($bitmapData) }
@@ -651,11 +655,12 @@ function Capture-RawScreenshot($Run, [string]$Name) {
         $image.Dispose()
     }
     $hash = (Get-FileHash -Algorithm SHA256 $renamed).Hash.ToLowerInvariant()
-    "$Name path=$renamed dimensions=$dimensions sampled_colours=$($sampledColours.Count) background_rgb=$backgroundPixel chooser_focus_rgb=$chooserFocusPixel visual_signature=$visualSignature png_sha256=$hash" |
+    "$Name path=$renamed dimensions=$dimensions sampled_colours=$($sampledColours.Count) background_rgb=$backgroundPixel chooser_row1_rgb=$chooserFocusPixel chooser_row2_rgb=$chooserRow2Pixel chooser_row3_rgb=$chooserRow3Pixel visual_signature=$visualSignature png_sha256=$hash" |
         Add-Content -Encoding ASCII (Join-Path $evidenceDirectory "launch-chooser-signatures.txt")
     return @{ Path = $renamed; Hash = $hash; Dimensions = $dimensions;
         Colours = $sampledColours.Count; BackgroundPixel = $backgroundPixel;
-        ChooserFocusPixel = $chooserFocusPixel; VisualSignature = $visualSignature }
+        ChooserFocusPixel = $chooserFocusPixel; ChooserRow2Pixel = $chooserRow2Pixel;
+        ChooserRow3Pixel = $chooserRow3Pixel; VisualSignature = $visualSignature }
 }
 
 function Capture-ExpectedVisualSignature($Run, [string]$Name, $Expected) {
@@ -692,16 +697,110 @@ function Capture-StableRawScreenshot($Run, [string]$Name) {
     throw "$Name guest-signature step did not stabilize within 12 seconds; observed $observed; retroarch_log_tail=[$logTail]"
 }
 
-Add-Type -AssemblyName System.Windows.Forms
 Add-Type @"
 using System;
+using System.ComponentModel;
 using System.Runtime.InteropServices;
+
 public static class ArcDroidWindowInput {
+    private const uint INPUT_KEYBOARD = 1;
+    private const uint KEYEVENTF_EXTENDEDKEY = 0x0001;
+    private const uint KEYEVENTF_KEYUP = 0x0002;
+    private const uint KEYEVENTF_SCANCODE = 0x0008;
+
+    [StructLayout(LayoutKind.Sequential, Pack = 8)]
+    public struct KEYBDINPUT {
+        public ushort wVk;
+        public ushort wScan;
+        public uint dwFlags;
+        public uint time;
+        public UIntPtr dwExtraInfo;
+    }
+
+    // RetroArch-Win64 and this runner are x64. Native INPUT is 40 bytes on
+    // x64: the four-byte type is followed by four bytes of alignment, then
+    // the union at offset 8. Its size is set by 32-byte MOUSEINPUT even when
+    // the KEYBDINPUT (24 bytes) member is used.
+    [StructLayout(LayoutKind.Explicit, Size = 40)]
+    public struct INPUT {
+        [FieldOffset(0)] public uint type;
+        [FieldOffset(8)] public KEYBDINPUT ki;
+    }
+
     [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr window, int command);
     [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr window);
+    [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")] public static extern bool BringWindowToTop(IntPtr window);
+    [DllImport("user32.dll")] public static extern IntPtr SetFocus(IntPtr window);
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern bool AttachThreadInput(uint attach, uint attachTo, bool attachInput);
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern uint GetWindowThreadProcessId(IntPtr window, out uint processId);
+    [DllImport("kernel32.dll")] public static extern uint GetCurrentThreadId();
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern uint SendInput(uint count, INPUT[] inputs, int size);
+
+    public static int InputSize() { return Marshal.SizeOf(typeof(INPUT)); }
+    public static int KeyboardInputSize() { return Marshal.SizeOf(typeof(KEYBDINPUT)); }
+    public static int KeyboardUnionOffset() {
+        return Marshal.OffsetOf(typeof(INPUT), "ki").ToInt32();
+    }
+
+    public static void SendScanCode(ushort scanCode, bool extended, bool keyUp) {
+        if (IntPtr.Size != 8 || InputSize() != 40 ||
+            KeyboardInputSize() != 24 || KeyboardUnionOffset() != 8)
+            throw new InvalidOperationException(String.Format(
+                "Unexpected Win32 input layout: pointer={0} INPUT={1} KEYBDINPUT={2} union_offset={3}",
+                IntPtr.Size, InputSize(), KeyboardInputSize(), KeyboardUnionOffset()));
+        INPUT input = new INPUT();
+        input.type = INPUT_KEYBOARD;
+        input.ki.wVk = 0;
+        input.ki.wScan = scanCode;
+        input.ki.dwFlags = KEYEVENTF_SCANCODE;
+        if (extended) input.ki.dwFlags |= KEYEVENTF_EXTENDEDKEY;
+        if (keyUp) input.ki.dwFlags |= KEYEVENTF_KEYUP;
+        uint sent = SendInput(1, new INPUT[] { input }, InputSize());
+        if (sent != 1)
+            throw new Win32Exception(Marshal.GetLastWin32Error(), String.Format(
+                "SendInput inserted {0} of 1 scan-code events", sent));
+    }
 }
 "@
-function Send-ChooserKeyboardPick($Run) {
+
+$chooserInputDiagnostics = Join-Path $evidenceDirectory "launch-chooser-input.txt"
+Remove-Item -Force -ErrorAction SilentlyContinue $chooserInputDiagnostics
+function Write-ChooserInputDiagnostic([string]$Message) {
+    $line = "$(Get-Date -Format o) $Message"
+    Write-Host $line
+    $line | Add-Content -Encoding ASCII $chooserInputDiagnostics
+}
+
+$inputSize = [ArcDroidWindowInput]::InputSize()
+$keyboardInputSize = [ArcDroidWindowInput]::KeyboardInputSize()
+$keyboardUnionOffset = [ArcDroidWindowInput]::KeyboardUnionOffset()
+Write-ChooserInputDiagnostic "input_layout pointer_bytes=$([IntPtr]::Size) input_bytes=$inputSize keybdinput_bytes=$keyboardInputSize keyboard_union_offset=$keyboardUnionOffset"
+if ([IntPtr]::Size -ne 8 -or $inputSize -ne 40 -or
+    $keyboardInputSize -ne 24 -or $keyboardUnionOffset -ne 8) {
+    throw "Unexpected Win32 input layout before keyboard injection: pointer=$([IntPtr]::Size) INPUT=$inputSize KEYBDINPUT=$keyboardInputSize union_offset=$keyboardUnionOffset; diagnostics=$chooserInputDiagnostics"
+}
+
+function Format-WindowHandle([IntPtr]$Handle) {
+    return ("0x{0:x}" -f $Handle.ToInt64())
+}
+
+function Send-HardwareScanCode([UInt16]$ScanCode, [bool]$Extended,
+                               [string]$Name, [int]$HoldMilliseconds) {
+    Write-ChooserInputDiagnostic "$Name key-down scan_code=0x$($ScanCode.ToString('x2')) extended=$Extended hold_ms=$HoldMilliseconds"
+    [ArcDroidWindowInput]::SendScanCode($ScanCode, $Extended, $false)
+    try {
+        Start-Sleep -Milliseconds $HoldMilliseconds
+    } finally {
+        [ArcDroidWindowInput]::SendScanCode($ScanCode, $Extended, $true)
+        Write-ChooserInputDiagnostic "$Name key-up scan_code=0x$($ScanCode.ToString('x2')) extended=$Extended"
+    }
+}
+
+function Set-ChooserWindowForeground($Run) {
     $deadline = [DateTime]::UtcNow.AddSeconds(10)
     $handle = [IntPtr]::Zero
     while ([DateTime]::UtcNow -lt $deadline -and $handle -eq [IntPtr]::Zero) {
@@ -716,13 +815,141 @@ function Send-ChooserKeyboardPick($Run) {
         throw "$($Run.Name) keyboard-injection step observed no main window within 10 seconds; process_pid=$($Run.Process.Id); retroarch_log_tail=[$(Get-RunLogTail $Run)]"
     }
     [void][ArcDroidWindowInput]::ShowWindow($handle, 9)
-    if (-not [ArcDroidWindowInput]::SetForegroundWindow($handle)) {
-        throw "$($Run.Name) keyboard-injection step could not foreground window_handle=$handle; process_pid=$($Run.Process.Id); retroarch_log_tail=[$(Get-RunLogTail $Run)]"
-    }
+    $setResult = [ArcDroidWindowInput]::SetForegroundWindow($handle)
     Start-Sleep -Milliseconds 250
-    [System.Windows.Forms.SendKeys]::SendWait("{DOWN}")
-    Start-Sleep -Milliseconds 150
-    [System.Windows.Forms.SendKeys]::SendWait("{ENTER}")
+    $foreground = [ArcDroidWindowInput]::GetForegroundWindow()
+    Write-ChooserInputDiagnostic "focus direct_set=$setResult target=$(Format-WindowHandle $handle) foreground=$(Format-WindowHandle $foreground) process_pid=$($Run.Process.Id)"
+    if ($foreground -ne $handle) {
+        # Windows can refuse SetForegroundWindow even when it returns success.
+        # A real Alt tap marks this process as the most recent input source,
+        # after which another foreground request is normally allowed.
+        Send-HardwareScanCode 0x38 $false "Alt-focus-workaround" 50
+        $setResult = [ArcDroidWindowInput]::SetForegroundWindow($handle)
+        Start-Sleep -Milliseconds 250
+        $foreground = [ArcDroidWindowInput]::GetForegroundWindow()
+        Write-ChooserInputDiagnostic "focus after_alt_set=$setResult target=$(Format-WindowHandle $handle) foreground=$(Format-WindowHandle $foreground)"
+    }
+    if ($foreground -ne $handle) {
+        # If the runner still owns foreground activation elsewhere, temporarily
+        # share that thread's input queue (and the target's queue) while moving
+        # focus. Always detach the queues before injecting the chooser keys.
+        [uint32]$foregroundPid = 0
+        [uint32]$targetPid = 0
+        $currentThread = [ArcDroidWindowInput]::GetCurrentThreadId()
+        $foregroundThread = if ($foreground -ne [IntPtr]::Zero) {
+            [ArcDroidWindowInput]::GetWindowThreadProcessId($foreground, [ref]$foregroundPid)
+        } else { 0 }
+        $targetThread = [ArcDroidWindowInput]::GetWindowThreadProcessId($handle, [ref]$targetPid)
+        $attachedForeground = $false
+        $attachedTarget = $false
+        try {
+            if ($foregroundThread -and $foregroundThread -ne $currentThread) {
+                $attachedForeground = [ArcDroidWindowInput]::AttachThreadInput(
+                    $currentThread, $foregroundThread, $true)
+            }
+            if ($targetThread -and $targetThread -ne $currentThread -and
+                $targetThread -ne $foregroundThread) {
+                $attachedTarget = [ArcDroidWindowInput]::AttachThreadInput(
+                    $currentThread, $targetThread, $true)
+            }
+            $topResult = [ArcDroidWindowInput]::BringWindowToTop($handle)
+            $setResult = [ArcDroidWindowInput]::SetForegroundWindow($handle)
+            $focusResult = [ArcDroidWindowInput]::SetFocus($handle)
+            Write-ChooserInputDiagnostic "focus attached current_thread=$currentThread foreground_thread=$foregroundThread foreground_pid=$foregroundPid target_thread=$targetThread target_pid=$targetPid attached_foreground=$attachedForeground attached_target=$attachedTarget bring_to_top=$topResult set=$setResult set_focus=$(Format-WindowHandle $focusResult)"
+        } finally {
+            if ($attachedTarget) {
+                [void][ArcDroidWindowInput]::AttachThreadInput(
+                    $currentThread, $targetThread, $false)
+            }
+            if ($attachedForeground) {
+                [void][ArcDroidWindowInput]::AttachThreadInput(
+                    $currentThread, $foregroundThread, $false)
+            }
+        }
+        Start-Sleep -Milliseconds 250
+        $foreground = [ArcDroidWindowInput]::GetForegroundWindow()
+        Write-ChooserInputDiagnostic "focus after_attach target=$(Format-WindowHandle $handle) foreground=$(Format-WindowHandle $foreground)"
+    }
+    if ($foreground -ne $handle) {
+        throw "$($Run.Name) keyboard-injection step could not verify the RetroArch foreground window after direct, Alt-tap, and AttachThreadInput attempts; target=$(Format-WindowHandle $handle) foreground=$(Format-WindowHandle $foreground) process_pid=$($Run.Process.Id); diagnostics=$chooserInputDiagnostics; retroarch_log_tail=[$(Get-RunLogTail $Run)]"
+    }
+    return $handle
+}
+
+function Get-ChooserFocusState($Capture) {
+    if ($Capture.Dimensions -ne "640x480") { return "wrong-dimensions" }
+    if ($Capture.ChooserFocusPixel -eq "a8d8ff" -and
+        $Capture.ChooserRow2Pixel -eq "101a2a") { return "row1" }
+    if ($Capture.ChooserFocusPixel -eq "101a2a" -and
+        $Capture.ChooserRow2Pixel -eq "a8d8ff") { return "row2" }
+    if ($Capture.ChooserFocusPixel -eq "101a2a" -and
+        $Capture.ChooserRow2Pixel -eq "101a2a" -and
+        $Capture.ChooserRow3Pixel -eq "a8d8ff") { return "row3" }
+    return "unrecognized"
+}
+
+function Move-ChooserFocusToSecondRow($Run, $InitialCapture,
+                                      [IntPtr]$TargetHandle) {
+    $observations = [System.Collections.Generic.List[string]]::new()
+    for ($downAttempt = 1; $downAttempt -le 3; $downAttempt++) {
+        $foreground = [ArcDroidWindowInput]::GetForegroundWindow()
+        if ($foreground -ne $TargetHandle) {
+            Write-ChooserInputDiagnostic "Down attempt=$downAttempt lost_foreground target=$(Format-WindowHandle $TargetHandle) foreground=$(Format-WindowHandle $foreground); retrying focus acquisition"
+            $TargetHandle = Set-ChooserWindowForeground $Run
+            $foreground = [ArcDroidWindowInput]::GetForegroundWindow()
+        }
+        Write-ChooserInputDiagnostic "Down attempt=$downAttempt foreground=$(Format-WindowHandle $foreground)"
+        Send-HardwareScanCode 0x50 $true "Down" 150
+        Start-Sleep -Milliseconds 200
+        $recognized = $false
+        for ($captureAttempt = 1; $captureAttempt -le 3; $captureAttempt++) {
+            $capture = Capture-RawScreenshot $Run "launch-chooser-down-$downAttempt-$captureAttempt"
+            $state = Get-ChooserFocusState $capture
+            $observation = "down_attempt=$downAttempt capture_attempt=$captureAttempt state=$state visual_signature=$($capture.VisualSignature) png_sha256=$($capture.Hash) dimensions=$($capture.Dimensions) row1_rgb=$($capture.ChooserFocusPixel) row2_rgb=$($capture.ChooserRow2Pixel) row3_rgb=$($capture.ChooserRow3Pixel)"
+            $observations.Add($observation)
+            Write-ChooserInputDiagnostic $observation
+            if ($state -eq "row2" -and
+                $capture.VisualSignature -ne $InitialCapture.VisualSignature) {
+                return $capture
+            }
+            if ($state -eq "row1" -or $state -eq "row3") {
+                $recognized = $true
+                break
+            }
+            Start-Sleep -Milliseconds 150
+        }
+        if ($recognized -and $state -eq "row3") { break }
+    }
+    $foreground = [ArcDroidWindowInput]::GetForegroundWindow()
+    throw "$($Run.Name) Down injection never moved chooser focus from row 1 to row 2 after 3 hardware scan-code attempts; foreground=$(Format-WindowHandle $foreground); observations=[$($observations -join ' | ')]; diagnostics=$chooserInputDiagnostics; retroarch_log_tail=[$(Get-RunLogTail $Run)]"
+}
+
+function Send-ChooserKeyboardPick($Run, $InitialCapture) {
+    $handle = Set-ChooserWindowForeground $Run
+    [void](Move-ChooserFocusToSecondRow $Run $InitialCapture $handle)
+    Start-Sleep -Milliseconds 250
+    $foreground = [ArcDroidWindowInput]::GetForegroundWindow()
+    if ($foreground -ne $handle) {
+        Write-ChooserInputDiagnostic "Enter lost_foreground target=$(Format-WindowHandle $handle) foreground=$(Format-WindowHandle $foreground); retrying focus acquisition"
+        $handle = Set-ChooserWindowForeground $Run
+        $foreground = [ArcDroidWindowInput]::GetForegroundWindow()
+    }
+    Write-ChooserInputDiagnostic "Enter foreground=$(Format-WindowHandle $foreground)"
+    Send-HardwareScanCode 0x1c $false "Enter" 150
+
+    $deadline = [DateTime]::UtcNow.AddSeconds(10)
+    while ([DateTime]::UtcNow -lt $deadline) {
+        if ($Run.Process.HasExited) {
+            throw "$($Run.Name) exited after Enter injection code=$($Run.Process.ExitCode); diagnostics=$chooserInputDiagnostics; retroarch_log_tail=[$(Get-RunLogTail $Run)]"
+        }
+        if ((Test-Path -LiteralPath $Run.RetroLog) -and
+            (Select-String -Path $Run.RetroLog -SimpleMatch "chooser chose target" -Quiet)) {
+            Write-ChooserInputDiagnostic "Enter observed chooser chose target"
+            return
+        }
+        Start-Sleep -Milliseconds 100
+    }
+    throw "$($Run.Name) Enter injection did not produce 'chooser chose target' within 10 seconds; foreground=$(Format-WindowHandle ([ArcDroidWindowInput]::GetForegroundWindow())); diagnostics=$chooserInputDiagnostics; retroarch_log_tail=[$(Get-RunLogTail $Run)]"
 }
 
 Copy-Item -Force (Join-Path $InputDirectory "arcdroid-chooser-test.rom") $firmware
@@ -807,11 +1034,13 @@ try {
     if ($chooserCapture.Dimensions -ne "640x480" -or $chooserCapture.Colours -lt 4 -or
         $chooserCapture.BackgroundPixel -ne "101a2a" -or
         $chooserCapture.ChooserFocusPixel -ne "a8d8ff" -or
+        $chooserCapture.ChooserRow2Pixel -ne "101a2a" -or
+        $chooserCapture.ChooserRow3Pixel -ne "101a2a" -or
         $chooserCapture.VisualSignature -eq $app1Capture.VisualSignature -or
         $chooserCapture.VisualSignature -eq $app2Capture.VisualSignature) {
-        throw "Chooser-recognition step expected the 640x480 ArcDroid renderer with >=4 sampled colours, background_rgb=101a2a and focused-row_rgb=a8d8ff; observed dimensions=$($chooserCapture.Dimensions) sampled_colours=$($chooserCapture.Colours) background_rgb=$($chooserCapture.BackgroundPixel) focused-row_rgb=$($chooserCapture.ChooserFocusPixel) visual_signature=$($chooserCapture.VisualSignature) png_sha256=$($chooserCapture.Hash); app1=$($app1Capture.VisualSignature) app2=$($app2Capture.VisualSignature); retroarch_log_tail=[$(Get-RunLogTail $chooserRun)]"
+        throw "Chooser-recognition step expected the 640x480 ArcDroid renderer with >=4 sampled colours, background_rgb=101a2a, row1_rgb=a8d8ff, row2_rgb=101a2a and row3_rgb=101a2a; observed dimensions=$($chooserCapture.Dimensions) sampled_colours=$($chooserCapture.Colours) background_rgb=$($chooserCapture.BackgroundPixel) row1_rgb=$($chooserCapture.ChooserFocusPixel) row2_rgb=$($chooserCapture.ChooserRow2Pixel) row3_rgb=$($chooserCapture.ChooserRow3Pixel) visual_signature=$($chooserCapture.VisualSignature) png_sha256=$($chooserCapture.Hash); app1=$($app1Capture.VisualSignature) app2=$($app2Capture.VisualSignature); retroarch_log_tail=[$(Get-RunLogTail $chooserRun)]"
     }
-    Send-ChooserKeyboardPick $chooserRun
+    Send-ChooserKeyboardPick $chooserRun $chooserCapture
     [void](Capture-ExpectedVisualSignature $chooserRun "launch-chooser-picked-app2" $app2Capture)
 } finally {
     Stop-MediaRun $chooserRun
@@ -861,7 +1090,7 @@ $rememberedChoiceAfter = [Convert]::ToBase64String([IO.File]::ReadAllBytes($choo
 if ($rememberedChoiceAfter -ne $rememberedChoice) {
     throw "Remembered-replay persistence step changed the choice record: before_base64=$rememberedChoice after_base64=$rememberedChoiceAfter"
 }
-Write-Host "Slice 5c Windows RetroArch: chooser screenshot, injected keyboard pick, guest signature and remembered replay passed"
+Write-Host "Slice 5c Windows RetroArch: chooser screenshot, row-2 focus after held scan-code Down, scan-code Enter pick, guest signature and remembered replay passed"
 if ($env:GITHUB_STEP_SUMMARY) {
-    Add-Content -Encoding UTF8 $env:GITHUB_STEP_SUMMARY "- Slice 5c chooser: distinct 640x480 chooser observed; Down/Return injected into the RetroArch window selected !Qaventra; relaunch replayed the same guest screenshot without the chooser."
+    Add-Content -Encoding UTF8 $env:GITHUB_STEP_SUMMARY "- Slice 5c chooser: distinct 640x480 chooser observed; held hardware scan-code Down visibly moved focus to row 2 before scan-code Enter selected !Qaventra; relaunch replayed the same guest screenshot without the chooser."
 }
