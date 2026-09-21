@@ -5844,6 +5844,18 @@ int main(int argc, char **argv)
       COPY_ADFFS_FIXTURE("bad-crc.zip");
       EXPECT_NATIVE(adffs_eligible, "invalid-package:member-crc32-mismatch", 1u,
                     "invalid-package:member-crc32-mismatch");
+      COPY_ADFFS_FIXTURE("missing-obey.zip");
+      EXPECT_NATIVE(adffs_eligible,
+                    "invalid-package:missing-required-member-adffs-obey", 1u,
+                    "missing-required-member-adffs-obey");
+      COPY_ADFFS_FIXTURE("missing-runtypes.zip");
+      EXPECT_NATIVE(adffs_eligible,
+                    "invalid-package:missing-required-member-adffs-runtypes",
+                    1u, "missing-required-member-adffs-runtypes");
+      COPY_ADFFS_FIXTURE("missing-fixobey.zip");
+      EXPECT_NATIVE(adffs_eligible,
+                    "invalid-package:missing-required-member-adffs-fixobey",
+                    1u, "missing-required-member-adffs-fixobey");
       COPY_ADFFS_FIXTURE("untested.zip");
       EXPECT_NATIVE(adffs_eligible, "untested-package", 1u, "untested-package");
       option_adffs_package = "untested";
@@ -5859,6 +5871,8 @@ int main(int argc, char **argv)
                     1u, "missing-resource:!ADFFS/ExTrAs/Absent/module");
       ADFFS_GAME("too-large.jfd", adffs_too_large);
       EXPECT_NATIVE(adffs_too_large, "too-large", 1u, "too-large");
+      ADFFS_GAME("closure-too-large.jfd", adffs_closure_too_large);
+      EXPECT_NATIVE(adffs_closure_too_large, "too-large", 1u, "too-large");
       ADFFS_GAME("decoded-too-large.jfd", adffs_decoded_too_large);
       EXPECT_NATIVE(adffs_decoded_too_large, "decoded-too-large", 1u,
                     "decoded-too-large");

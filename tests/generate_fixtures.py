@@ -744,7 +744,20 @@ def build_adffs_fixtures(output: Path) -> None:
     """Invented package/JFD data; no JASPP byte is an input."""
     output.mkdir(exist_ok=True)
     built_in = b"Set ArcFixture Builtin\rADFFS:trackers.QTMModule.extra\r"
-    obey = _zip_bytes([("F0012301", built_in, False)])
+    obey_entries = [
+        ("F0012301", built_in, False),
+        ("F0012301A", b"Set ArcFixture Auxiliary\r", False),
+        ("ChainA", b"ADFFS:extras.JoyMod\rADFFS:obey.ChainB\r", False),
+        ("ChainB", b"adffs:TRACKERS.CaseTrack.ext\r", False),
+        ("CycleA", b"ADFFS:obey.CycleB\r", False),
+        ("CycleB", b"ADFFS:obey.CycleA\r", False),
+        ("Depth1", b"ADFFS:obey.Depth2\r", False),
+        ("Depth2", b"ADFFS:obey.Depth3\r", False),
+        ("Depth3", b"ADFFS:obey.Depth4\r", False),
+        ("Depth4", b"ADFFS:obey.Depth5\r", False),
+        ("Depth5", b"Set ArcFixture TooDeep\r", False),
+    ]
+    obey = _zip_bytes(obey_entries)
     runtime_names = ("ADFFS", "SetVars", "CLib", "CallASWI", "ZLib", "BootCmds")
     runtime_paths = ("!ADFFS/ADFFS", "!ADFFS/SetVars",
                      "!ADFFS/3rdParty/CLib", "!ADFFS/3rdParty/CallASWI",
@@ -756,7 +769,11 @@ def build_adffs_fixtures(output: Path) -> None:
     entries += [(path, f"ArcDroid synthetic ADFFS {name} fixture\n".encode(), True)
                 for name, path in zip(runtime_names[1:], runtime_paths[1:])]
     entries += [("!ADFFS/obey", obey, True),
+                ("!ADFFS/!RunTypes", b"synthetic run types\n", True),
+                ("!ADFFS/!fixObey", b"synthetic fix obey\n", True),
                 ("!ADFFS/trackers/QTMModule", b"synthetic tracker\n", True),
+                ("!ADFFS/trackers/CaseTrack", b"case tracker\n", True),
+                ("!ADFFS/trackers/Huge", bytes(780 * 1024), True),
                 ("!ADFFS/extras/JoyMod", b"synthetic extra\n", True),
                 ("unrelated/readme", b"ignored", False)]
     package = _zip_bytes(entries)
@@ -835,6 +852,15 @@ def build_adffs_fixtures(output: Path) -> None:
         [(f"unused/{i:04d}", b"", False) for i in range(1025)], zipfile.ZIP_STORED))
     (output / "oversize.zip").write_bytes(_zip_bytes(
         entries + [("unused/large", bytes(2 * 1024 * 1024 + 1), False)]))
+    for filename, omitted in (("missing-obey.zip", "!ADFFS/obey"),
+                              ("missing-runtypes.zip", "!ADFFS/!RunTypes"),
+                              ("missing-fixobey.zip", "!ADFFS/!fixObey")):
+        (output / filename).write_bytes(_zip_bytes(
+            [entry for entry in entries if entry[0] != omitted]))
+    invalid_obey = _zip_bytes(obey_entries + [("Bad-Name", b"x", False)])
+    (output / "invalid-obey-name.zip").write_bytes(_zip_bytes([
+        (name, invalid_obey if name == "!ADFFS/obey" else payload, metadata)
+        for name, payload, metadata in entries]))
 
     def adffs_jfd(game: int, disc: int = 1, count: int = 1,
                   embedded: bytes = b"", decoded_size: int | None = None) -> bytearray:
@@ -857,6 +883,8 @@ def build_adffs_fixtures(output: Path) -> None:
     (output / "count-two.jfd").write_bytes(adffs_jfd(123, count=2))
     (output / "missing-resource.jfd").write_bytes(adffs_jfd(
         0, embedded=b"ADFFS:ExTrAs.Absent.module\r"))
+    (output / "closure-too-large.jfd").write_bytes(adffs_jfd(
+        0, embedded=b"ADFFS:trackers.Huge\r"))
     carrier_capacity = 819200 - 4096
     (output / "capacity.jfd").write_bytes(adffs_jfd(
         123, decoded_size=carrier_capacity))

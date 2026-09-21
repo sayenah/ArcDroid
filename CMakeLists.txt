@@ -257,6 +257,10 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
     "${FIXTURE_DIR}/adffs/backslash-name.zip"
     "${FIXTURE_DIR}/adffs/entry-limit.zip"
     "${FIXTURE_DIR}/adffs/oversize.zip"
+    "${FIXTURE_DIR}/adffs/missing-obey.zip"
+    "${FIXTURE_DIR}/adffs/missing-runtypes.zip"
+    "${FIXTURE_DIR}/adffs/missing-fixobey.zip"
+    "${FIXTURE_DIR}/adffs/invalid-obey-name.zip"
     "${FIXTURE_DIR}/adffs/eligible.jfd"
     "${FIXTURE_DIR}/adffs/embedded-only.jfd"
     "${FIXTURE_DIR}/adffs/no-script.jfd"
@@ -264,6 +268,7 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
     "${FIXTURE_DIR}/adffs/disc-two.jfd"
     "${FIXTURE_DIR}/adffs/count-two.jfd"
     "${FIXTURE_DIR}/adffs/missing-resource.jfd"
+    "${FIXTURE_DIR}/adffs/closure-too-large.jfd"
     "${FIXTURE_DIR}/adffs/capacity.jfd"
     "${FIXTURE_DIR}/adffs/too-large.jfd"
     "${FIXTURE_DIR}/adffs/decoded-limit.jfd"
@@ -379,12 +384,14 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
     add_executable(windows_load_harness tests/windows_load_harness.c)
     target_include_directories(windows_load_harness PRIVATE libretro/include)
     target_compile_options(windows_load_harness PRIVATE $<$<C_COMPILER_ID:GNU,Clang>:-UNDEBUG>)
-    add_dependencies(windows_load_harness arcdroid_libretro test-fixtures)
+    add_dependencies(windows_load_harness arcdroid_libretro_test test-fixtures)
     add_test(NAME windows-load-harness COMMAND windows_load_harness
-      $<TARGET_FILE:arcdroid_libretro>
+      $<TARGET_FILE:arcdroid_libretro_test>
       "${FIXTURE_DIR}/arcdroid-test.rom"
       "${FIXTURE_DIR}/arcdroid-test.adf"
-      "${CMAKE_CURRENT_BINARY_DIR}/windows-harness-data")
+      "${CMAKE_CURRENT_BINARY_DIR}/windows-harness-data"
+      "${FIXTURE_DIR}/adffs/synthetic.zip"
+      "${FIXTURE_DIR}/adffs/eligible.jfd")
   else()
     # Fault injection and engine test probes live only in this non-installed
     # host test core; release/RetroArch artifacts use arcdroid_libretro above.

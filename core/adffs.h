@@ -26,6 +26,12 @@ typedef struct {
 } ArcAdffsPackage;
 
 typedef struct {
+  bool member[ARC_ADFFS_MAX_MEMBERS];
+  unsigned count;
+  uint32_t ram_size;
+} ArcAdffsSelection;
+
+typedef struct {
   const char *name;
   const char *sha256[6];
   const char *version;
@@ -42,14 +48,17 @@ bool arc_adffs_builtin_script(const ArcAdffsPackage *package, unsigned game_id,
                               unsigned disc_number, uint8_t **script,
                               size_t *script_size, char *error,
                               size_t error_size);
-bool arc_adffs_script_resources(const ArcAdffsPackage *package,
-                                const uint8_t *script, size_t script_size,
-                                char missing[128]);
+bool arc_adffs_select(const ArcAdffsPackage *package, const uint8_t *script,
+                      size_t script_size, ArcAdffsSelection *selection,
+                      char missing[128]);
 bool arc_adffs_launcher(uint8_t *output, size_t capacity, size_t *size);
+bool arc_adffs_stage1(uint32_t ram_size, uint8_t *output, size_t capacity,
+                      size_t *size);
 bool arc_adffs_carrier_build(const uint8_t *jfd, size_t jfd_size,
                              uint8_t output[ARC_ADFFS_DISC_SIZE], char *error,
                              size_t error_size);
 bool arc_adffs_support_build(const ArcAdffsPackage *package,
+                             const ArcAdffsSelection *selection,
                              uint8_t output[ARC_ADFFS_DISC_SIZE], char *error,
                              size_t error_size);
 

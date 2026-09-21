@@ -89,7 +89,8 @@ static bool used_name(const char *n) {
       "!ADFFS/ADFFS",         "!ADFFS/SetVars",
       "!ADFFS/3rdParty/CLib", "!ADFFS/3rdParty/CallASWI",
       "!ADFFS/3rdParty/ZLib", "!ADFFS/3rdParty/BootCmds",
-      "!ADFFS/obey",          "!ADFFS/extras/JoyMod",
+      "!ADFFS/obey",          "!ADFFS/!RunTypes",
+      "!ADFFS/!fixObey",      "!ADFFS/extras/JoyMod",
       "!ADFFS/extras/LZWD",   "!ADFFS/extras/LZWD103"};
   for (unsigned i = 0; i < sizeof(exact) / sizeof(exact[0]); ++i)
     if (!foldcmp(n, exact[i]))
@@ -337,20 +338,23 @@ static bool obey_index(const ArcAdffsMember *obey, Ze **entries,
   if (!zip_index(obey->data, obey->size, entries, count, e, en))
     return false;
   for (unsigned i = 0; i < *count; ++i) {
-    if ((*entries)[i].name[0] != 'F' || strlen((*entries)[i].name) != 8u) {
+    size_t length = strlen((*entries)[i].name);
+    if (!length || length > 10u) {
       fail(e, en, "invalid obey member name");
       free(*entries);
       return false;
     }
-    for (unsigned k = 1; k < 8u; ++k)
-      if (!isdigit((unsigned char)(*entries)[i].name[k])) {
+    for (size_t k = 0; k < length; ++k)
+      if (!isalnum((unsigned char)(*entries)[i].name[k])) {
         fail(e, en, "invalid obey member name");
         free(*entries);
         return false;
       }
     for (unsigned j = 0; j < i; ++j)
-      if (!strcmp((*entries)[i].name, (*entries)[j].name)) {
-        fail(e, en, "duplicate obey member name");
+      if (!foldcmp((*entries)[i].name, (*entries)[j].name)) {
+        fail(e, en, !strcmp((*entries)[i].name, (*entries)[j].name)
+                        ? "duplicate obey member name"
+                        : "case-colliding obey member names");
         free(*entries);
         return false;
       }
@@ -433,15 +437,23 @@ bool arc_adffs_package_parse(const uint8_t *a, size_t n, ArcAdffsPackage *pkg,
       fail(e, en, "missing runtime member");
       goto bad;
     }
+  static const char *const required_data[] = {
+      "!ADFFS/obey", "!ADFFS/!RunTypes", "!ADFFS/!fixObey"};
+  for (unsigned r = 0; r < sizeof(required_data) / sizeof(required_data[0]); ++r)
+    if (!arc_adffs_member(pkg, required_data[r])) {
+      char message[96];
+      snprintf(message, sizeof(message), "missing required member %s",
+               required_data[r]);
+      fail(e, en, message);
+      goto bad;
+    }
   module_help_version(arc_adffs_member(pkg, runtime_names[0]), pkg->version);
   const ArcAdffsMember *obey = arc_adffs_member(pkg, "!ADFFS/obey");
-  if (obey) {
-    Ze *nested = NULL;
-    unsigned nested_count = 0;
-    if (!obey_index(obey, &nested, &nested_count, e, en))
-      goto bad;
-    free(nested);
-  }
+  Ze *nested = NULL;
+  unsigned nested_count = 0;
+  if (!obey_index(obey, &nested, &nested_count, e, en))
+    goto bad;
+  free(nested);
   size_t pc = 0;
   const ArcAdffsProfile *profiles = arc_adffs_profiles(&pc);
   for (size_t p = 0; p < pc; ++p) {
@@ -519,57 +531,93 @@ bool arc_adffs_builtin_script(const ArcAdffsPackage *p, unsigned game,
   return found;
 }
 
-bool arc_adffs_script_resources(const ArcAdffsPackage *p, const uint8_t *s,
-                                size_t n, char missing[128]) {
-  if (missing)
-    missing[0] = 0;
+typedef struct {
+  const ArcAdffsPackage *package;
+  const ArcAdffsMember *obey;
+  Ze *obey_entries;
+  unsigned obey_count;
+  bool obey_visited[ZIP_ENTRIES];
+  ArcAdffsSelection *selection;
+  char *missing;
+} SelectionContext;
+
+static void select_member(SelectionContext *c, unsigned index) {
+  if (!c->selection->member[index]) {
+    c->selection->member[index] = true;
+    ++c->selection->count;
+  }
+}
+
+static bool set_missing(SelectionContext *c, const char *name) {
+  if (c->missing)
+    snprintf(c->missing, 128u, "%s", name);
+  return false;
+}
+
+static bool select_script(SelectionContext *c, const uint8_t *s, size_t n,
+                          unsigned depth) {
   for (size_t i = 0; i + 6u <= n; ++i)
-    if (tolower(s[i]) == 'a' && tolower(s[i + 1]) == 'd' &&
-        tolower(s[i + 2]) == 'f' && tolower(s[i + 3]) == 'f' &&
-        tolower(s[i + 4]) == 's' && s[i + 5] == ':') {
+    if (tolower((unsigned char)s[i]) == 'a' &&
+        tolower((unsigned char)s[i + 1]) == 'd' &&
+        tolower((unsigned char)s[i + 2]) == 'f' &&
+        tolower((unsigned char)s[i + 3]) == 'f' &&
+        tolower((unsigned char)s[i + 4]) == 's' && s[i + 5] == ':') {
       char ref[128] = "!ADFFS/";
       size_t at = 7u, j = i + 6u;
       while (j < n && at + 1u < sizeof(ref)) {
-        unsigned char c = s[j];
-        if (!(isalnum(c) || c == '!' || c == '_' || c == '-' || c == '.'))
+        unsigned char ch = s[j];
+        if (!(isalnum(ch) || ch == '!' || ch == '_' || ch == '-' || ch == '.'))
           break;
-        ref[at++] = (char)(c == '.' ? '/' : c);
+        ref[at++] = (char)(ch == '.' ? '/' : ch);
         ++j;
       }
       ref[at] = 0;
       if (at == 7u)
         continue;
-      bool ok = false;
       if (foldprefix(ref, "!ADFFS/obey/")) {
-        const ArcAdffsMember *obey = arc_adffs_member(p, "!ADFFS/obey");
-        Ze *z = NULL;
-        unsigned zn = 0;
-        if (obey && obey_index(obey, &z, &zn, NULL, 0u)) {
-          const char *key = ref + sizeof("!ADFFS/obey/") - 1u;
-          for (unsigned k = 0; k < zn; ++k)
-            if (!foldcmp(z[k].name, key))
-              ok = true;
+        const char *key = ref + sizeof("!ADFFS/obey/") - 1u;
+        int found = -1;
+        for (unsigned k = 0; k < c->obey_count; ++k)
+          if (!foldcmp(c->obey_entries[k].name, key)) {
+            found = (int)k;
+            break;
+          }
+        if (found < 0)
+          return set_missing(c, ref);
+        if (!c->obey_visited[found]) {
+          if (depth >= 4u)
+            return set_missing(c, ref);
+          uint8_t *nested = NULL;
+          if (!extract(c->obey->data, c->obey->size,
+                       &c->obey_entries[found], &nested, NULL, 0u))
+            return set_missing(c, ref);
+          c->obey_visited[found] = true;
+          bool ok = select_script(c, nested, c->obey_entries[found].size,
+                                  depth + 1u);
+          free(nested);
+          if (!ok)
+            return false;
         }
-        free(z);
       } else {
         char trial[128];
         snprintf(trial, sizeof(trial), "%s", ref);
+        int found = -1;
         for (;;) {
-          for (unsigned m = 0; m < p->count; ++m)
-            if (!foldcmp(p->members[m].name, trial))
-              ok = true;
-          if (ok)
+          for (unsigned m = 0; m < c->package->count; ++m)
+            if (!foldcmp(c->package->members[m].name, trial)) {
+              found = (int)m;
+              break;
+            }
+          if (found >= 0)
             break;
           char *slash = strrchr(trial, '/');
-          if (!slash || slash < trial + 16u)
+          if (!slash || slash <= trial + sizeof("!ADFFS/") - 1u)
             break;
           *slash = 0;
         }
-      }
-      if (!ok) {
-        if (missing)
-          snprintf(missing, 128, "%s", ref);
-        return false;
+        if (found < 0)
+          return set_missing(c, ref);
+        select_member(c, (unsigned)found);
       }
       i = j ? j - 1u : i;
     }
@@ -577,24 +625,23 @@ bool arc_adffs_script_resources(const ArcAdffsPackage *p, const uint8_t *s,
 }
 
 static const char launcher_text[] =
-    "| ArcDroid ADFFS launcher\r"
-    "Set ADFFS$Dir ADFS::1.$.!ADFFS\rSet ADFFS$Path ADFS::1.$.!ADFFS.\r"
-    "Run ADFS::1.$.!ADFFS.SetVars\rSet ADFFS$FileSizeLimit 2048\r"
-    "Set Alias$StoreCSD Set ADFFS$CSD <FileSwitch$CurrentFilingSystem>#<Dir>\r"
-    "Set Alias$RestoreCSD FilingSystem <ADFFS$CSD>\rSet Alias$ADFClipScreen "
-    "ADFDoNothing\rSet Alias$ADFScreenBorders ADFDoNothing\r"
-    "Set ADFFS$JIT 0\rSet ADFFS$CRC 0\rUnset ADFFS$LCDGM\r"
-    "RMEnsure SharedCLibrary 5.17 RMLoad "
-    "ADFS::1.$.!ADFFS.3rdParty.CLib\rRMEnsure SharedCLibrary 5.17 Error "
-    "ArcDroid ADFFS step CLib failed\r"
-    "RMEnsure CallASWI 0 RMLoad ADFS::1.$.!ADFFS.3rdParty.CallASWI\rRMEnsure "
-    "CallASWI 0 Error ArcDroid ADFFS step CallASWI failed\r"
-    "RMEnsure ZLib 0 RMLoad ADFS::1.$.!ADFFS.3rdParty.ZLib\rRMEnsure ZLib 0 "
-    "Error ArcDroid ADFFS step ZLib failed\r"
-    "RMEnsure BootCmds 0 RMLoad ADFS::1.$.!ADFFS.3rdParty.BootCmds\rRMEnsure "
-    "BootCmds 0 Error ArcDroid ADFFS step BootCmds failed\r"
-    "RMEnsure ADFFS 0 RMLoad ADFS::1.$.!ADFFS.ADFFS\rRMEnsure ADFFS 0 Error "
-    "ArcDroid ADFFS step ADFFS failed\r"
+    "| ArcDroid ADFFS RAM launcher\r"
+    "Set ADFFS$Dir RAM::0.$.!ADFFS\rSet ADFFS$Path RAM::0.$.!ADFFS.\r"
+    "Run RAM::0.$.!ADFFS.SetVars\rSetEval ADFFS$FileSizeLimit 2048\r"
+    "Set Alias$StoreCSD ADFDoNothing\rSet Alias$RestoreCSD ADFDoNothing\r"
+    "Set Alias$ADFClipScreen ADFDoNothing\rSet Alias$ADFScreenBorders "
+    "ADFDoNothing\rSetEval ADFFS$JIT 0\rSetEval ADFFS$CRC 0\r"
+    "Set ADFFS$LCDGM N\r"
+    "RMEnsure SharedCLibrary 5.17 RMLoad RAM::0.$.!ADFFS.3rdParty.CLib\r"
+    "RMEnsure SharedCLibrary 5.17 Error ArcDroid ADFFS step CLib failed\r"
+    "RMEnsure CallASWI 0.02 RMLoad RAM::0.$.!ADFFS.3rdParty.CallASWI\r"
+    "RMEnsure CallASWI 0.02 Error ArcDroid ADFFS step CallASWI failed\r"
+    "RMEnsure ZLib 0.05 RMLoad RAM::0.$.!ADFFS.3rdParty.ZLib\r"
+    "RMEnsure ZLib 0.05 Error ArcDroid ADFFS step ZLib failed\r"
+    "RMEnsure BootCommands 0.00 RMLoad RAM::0.$.!ADFFS.3rdParty.BootCmds\r"
+    "RMEnsure BootCommands 0.00 Error ArcDroid ADFFS step BootCommands failed\r"
+    "RMEnsure ADFFS 0.00 RMLoad RAM::0.$.!ADFFS.ADFFS\r"
+    "RMEnsure ADFFS 0.00 Error ArcDroid ADFFS step ADFFS failed\r"
     "ADFMount ADFS::0.$.Game\rADFS\rNoDir\rNoLib\rNoURD\rDismount "
     ":0\rADFBootFloppy\r";
 bool arc_adffs_launcher(uint8_t *o, size_t cap, size_t *sz) {
@@ -606,6 +653,103 @@ bool arc_adffs_launcher(uint8_t *o, size_t cap, size_t *sz) {
   if (cap < n)
     return false;
   memcpy(o, launcher_text, n);
+  return true;
+}
+
+bool arc_adffs_stage1(uint32_t ram_size, uint8_t *o, size_t cap, size_t *sz) {
+  char text[512];
+  int length = snprintf(
+      text, sizeof(text),
+      "| ArcDroid ADFFS RAM copy\rSetEval RamFS$Size %u\rRMReInit RamFS\r"
+      "Copy ADFS::1.$.!ADFFS RAM::0.$.!ADFFS ~Confirm Force Quiet Recurse "
+      "~Verbose\rCopy ADFS::1.$.ArcStage2 RAM::0.$.ArcStage2 ~Confirm Force "
+      "Quiet Recurse ~Verbose\rFiler_Run RAM::0.$.ArcStage2\r",
+      ram_size);
+  if (length < 0 || (size_t)length >= sizeof(text))
+    return false;
+  if (sz)
+    *sz = (size_t)length;
+  if (!o)
+    return true;
+  if (cap < (size_t)length)
+    return false;
+  memcpy(o, text, (size_t)length);
+  return true;
+}
+
+static uint32_t selection_ram_size(const ArcAdffsPackage *p,
+                                   const ArcAdffsSelection *selection) {
+  char directories[ARC_ADFFS_MAX_MEMBERS * 3u][128];
+  unsigned directory_count = 0u;
+  uint32_t bytes = 64u * 1024u;
+  for (unsigned i = 0; i < p->count; ++i) {
+    if (!selection->member[i])
+      continue;
+    bytes += ((uint32_t)p->members[i].size + 1023u) & ~1023u;
+    char path[128];
+    snprintf(path, sizeof(path), "%s", p->members[i].name);
+    for (char *slash = strchr(path, '/'); slash; slash = strchr(slash + 1, '/')) {
+      char saved = *slash;
+      *slash = 0;
+      bool known = false;
+      for (unsigned d = 0; d < directory_count; ++d)
+        if (!foldcmp(directories[d], path)) {
+          known = true;
+          break;
+        }
+      if (!known && directory_count < sizeof(directories) / sizeof(directories[0]))
+        snprintf(directories[directory_count++], sizeof(directories[0]), "%s",
+                 path);
+      *slash = saved;
+    }
+  }
+  bytes += directory_count * D_DIRECTORY;
+  bytes += ((uint32_t)(sizeof(launcher_text) - 1u) + 1023u) & ~1023u;
+  return (bytes + 32767u) & ~32767u;
+}
+
+bool arc_adffs_select(const ArcAdffsPackage *p, const uint8_t *script,
+                      size_t script_size, ArcAdffsSelection *selection,
+                      char missing[128]) {
+  if (!p || !script || !selection)
+    return false;
+  memset(selection, 0, sizeof(*selection));
+  if (missing)
+    missing[0] = 0;
+  SelectionContext context;
+  memset(&context, 0, sizeof(context));
+  context.package = p;
+  context.selection = selection;
+  context.missing = missing;
+  context.obey = arc_adffs_member(p, "!ADFFS/obey");
+  if (!context.obey ||
+      !obey_index(context.obey, &context.obey_entries, &context.obey_count,
+                  NULL, 0u))
+    return false;
+  static const char *const baseline[] = {
+      "!ADFFS/ADFFS",          "!ADFFS/SetVars",
+      "!ADFFS/3rdParty/CLib",  "!ADFFS/3rdParty/CallASWI",
+      "!ADFFS/3rdParty/ZLib",  "!ADFFS/3rdParty/BootCmds",
+      "!ADFFS/obey",           "!ADFFS/!RunTypes",
+      "!ADFFS/!fixObey"};
+  for (unsigned r = 0; r < sizeof(baseline) / sizeof(baseline[0]); ++r) {
+    bool found = false;
+    for (unsigned i = 0; i < p->count; ++i)
+      if (!strcmp(p->members[i].name, baseline[r])) {
+        select_member(&context, i);
+        found = true;
+        break;
+      }
+    if (!found) {
+      free(context.obey_entries);
+      return false;
+    }
+  }
+  bool ok = select_script(&context, script, script_size, 0u);
+  free(context.obey_entries);
+  if (!ok)
+    return false;
+  selection->ram_size = selection_ram_size(p, selection);
   return true;
 }
 
@@ -801,31 +945,57 @@ bool arc_adffs_carrier_build(const uint8_t *jfd, size_t n,
   return make_disc(root, out, e, en);
 }
 bool arc_adffs_support_build(const ArcAdffsPackage *p,
+                             const ArcAdffsSelection *selection,
                              uint8_t out[ARC_ADFFS_DISC_SIZE], char *e,
                              size_t en) {
-  Node pool[ARC_ADFFS_MAX_MEMBERS + 16];
-  memset(pool, 0, sizeof(pool));
+  if (!p || !selection) {
+    fail(e, en, "support selection is missing");
+    return false;
+  }
+  Node *pool = calloc(ARC_ADFFS_MAX_MEMBERS + 16u, sizeof(*pool));
+  if (!pool) {
+    fail(e, en, "out of memory");
+    return false;
+  }
   unsigned used = 1;
   Node *root = &pool[0];
   root->dir = true;
   strcpy(root->name, "$");
   static uint8_t boot[] = "%Desktop -File \"ADFS::1.$.ArcLaunch\"\r";
+  static uint8_t desktop[] = "Filer_Run ADFS::1.$.ArcStage1\r";
+  uint8_t stage1[512];
+  size_t stage1_size;
+  if (!arc_adffs_stage1(selection->ram_size, stage1, sizeof(stage1),
+                        &stage1_size)) {
+    fail(e, en, "first-stage launcher is invalid");
+    free(pool);
+    return false;
+  }
   size_t lsz;
   arc_adffs_launcher(NULL, 0, &lsz);
   if (!addpath(root, pool, &used, "!Boot", boot, sizeof(boot) - 1, 0xffffeb00u,
                0, 0x33u) ||
-      !addpath(root, pool, &used, "ArcLaunch",
+      !addpath(root, pool, &used, "ArcLaunch", desktop,
+               sizeof(desktop) - 1u, 0xffffeb00u, 0, 0x33u) ||
+      !addpath(root, pool, &used, "ArcStage1", stage1, stage1_size,
+               0xffffeb00u, 0, 0x33u) ||
+      !addpath(root, pool, &used, "ArcStage2",
                (uint8_t *)(uintptr_t)launcher_text, lsz, 0xffffeb00u, 0,
                0x33u)) {
     fail(e, en, "support disc tree is invalid");
+    free(pool);
     return false;
   }
   for (unsigned i = 0; i < p->count; ++i)
-    if (!addpath(root, pool, &used, p->members[i].name, p->members[i].data,
+    if (selection->member[i] &&
+        !addpath(root, pool, &used, p->members[i].name, p->members[i].data,
                  p->members[i].size, p->members[i].load, p->members[i].exec,
                  p->members[i].attr)) {
       fail(e, en, "package path cannot be represented on FileCore");
+      free(pool);
       return false;
     }
-  return make_disc(root, out, e, en);
+  bool ok = make_disc(root, out, e, en);
+  free(pool);
+  return ok;
 }

@@ -1605,7 +1605,8 @@ static bool arc_prepare_adffs(bool notify) {
       return false;
    }
    char missing[128];
-   if (!arc_adffs_script_resources(&package, script, script_size, missing)) {
+   ArcAdffsSelection selection;
+   if (!arc_adffs_select(&package, script, script_size, &selection, missing)) {
       char full[192];
       snprintf(full, sizeof(full), "missing-resource:%s", missing);
       free(builtin);
@@ -1647,11 +1648,19 @@ static bool arc_prepare_adffs(bool notify) {
    bool built = arc_adffs_carrier && arc_adffs_support &&
                 arc_adffs_carrier_build(raw, raw_size, arc_adffs_carrier,
                                         build_error, sizeof(build_error)) &&
-                arc_adffs_support_build(&package, arc_adffs_support,
+                arc_adffs_support_build(&package, &selection, arc_adffs_support,
                                         build_error, sizeof(build_error));
    free(raw);
    free(builtin);
    if (!built) {
+      if (!strcmp(build_error, "carried set does not fit support disc")) {
+         arc_adffs_package_free(&package);
+         arc_adffs_discard();
+         arc_jfd_boot_log("too-large");
+         if (notify)
+            arc_jfd_boot_notice("too-large", jfd);
+         return false;
+      }
       char why[96];
       arc_reason_token(build_error[0] ? build_error : "out-of-memory", why);
       char full[128];

@@ -3,10 +3,21 @@
 #include "arcdroid_core.h"
 #include "jfd.h"
 
-#include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+static void check_failed(const char *file, int line, const char *expression) {
+  fprintf(stderr, "%s:%d: check failed: %s\n", file, line, expression);
+  fflush(stderr);
+  exit(EXIT_FAILURE);
+}
+#define CHECK(expression)                                                       \
+  do {                                                                          \
+    if (!(expression))                                                          \
+      check_failed(__FILE__, __LINE__, #expression);                            \
+  } while (0)
+#define assert(expression) CHECK(expression)
 
 static uint8_t *read_file(const char *dir, const char *name, size_t *size) {
   char path[4096];
@@ -63,6 +74,14 @@ static const uint8_t *find_entry(const uint8_t *d, const char *name) {
       return x;
   }
   return NULL;
+}
+static bool selected_member(const ArcAdffsPackage *package,
+                            const ArcAdffsSelection *selection,
+                            const char *name) {
+  for (unsigned i = 0; i < package->count; ++i)
+    if (!strcmp(package->members[i].name, name))
+      return selection->member[i];
+  return false;
 }
 static void walk_directory(const uint8_t *disc, uint32_t sector,
                            uint32_t parent, unsigned depth,
@@ -130,7 +149,7 @@ int main(int argc, char **argv) {
     fprintf(stderr, "synthetic parse: %s\n", error);
     abort();
   }
-  assert(p.verified && !strcmp(p.profile, "synthetic-test") && p.count == 9u);
+  assert(p.verified && !strcmp(p.profile, "synthetic-test") && p.count == 13u);
   for (unsigned variant = 0u; variant < 2u; ++variant) {
     size_t variant_size;
     uint8_t *variant_zip = read_file(
@@ -159,19 +178,51 @@ int main(int argc, char **argv) {
                                   sizeof(error)));
   assert(script_size >= 7u && !memcmp(script, "Set Arc", 7u));
   char missing[128];
+  ArcAdffsSelection selection;
   const char *r1 = "adffs:TRACKERS.qTMMODULE.extra",
              *r2 = "ADFFS:extras.Absent", *r3 = "ADFFS:obey.F0012301",
              *r4 = "ADFFS:obey.F9999901";
-  assert(
-      arc_adffs_script_resources(&p, (const uint8_t *)r1, strlen(r1), missing));
-  assert(!arc_adffs_script_resources(&p, (const uint8_t *)r2, strlen(r2),
-                                     missing) &&
+  assert(arc_adffs_select(&p, (const uint8_t *)r1, strlen(r1), &selection,
+                          missing) &&
+         selection.count == 10u);
+  assert(!arc_adffs_select(&p, (const uint8_t *)r2, strlen(r2), &selection,
+                           missing) &&
          strstr(missing, "Absent"));
-  assert(
-      arc_adffs_script_resources(&p, (const uint8_t *)r3, strlen(r3), missing));
-  assert(!arc_adffs_script_resources(&p, (const uint8_t *)r4, strlen(r4),
-                                     missing) &&
+  assert(arc_adffs_select(&p, (const uint8_t *)r3, strlen(r3), &selection,
+                          missing));
+  assert(!arc_adffs_select(&p, (const uint8_t *)r4, strlen(r4), &selection,
+                           missing) &&
          strstr(missing, "F9999901"));
+  const char *chain = "adffs:ObEy.cHaInA";
+  assert(arc_adffs_select(&p, (const uint8_t *)chain, strlen(chain), &selection,
+                          missing) &&
+         selection.count == 11u &&
+         selected_member(&p, &selection, "!ADFFS/extras/JoyMod") &&
+         selected_member(&p, &selection, "!ADFFS/trackers/CaseTrack") &&
+         !selected_member(&p, &selection, "!ADFFS/trackers/QTMModule") &&
+         !selected_member(&p, &selection, "!ADFFS/trackers/Huge"));
+  const char *cycle = "ADFFS:obey.CycleA";
+  assert(arc_adffs_select(&p, (const uint8_t *)cycle, strlen(cycle), &selection,
+                          missing) &&
+         selection.count == 9u);
+  const char *depth = "ADFFS:obey.Depth1";
+  assert(!arc_adffs_select(&p, (const uint8_t *)depth, strlen(depth),
+                           &selection, missing) &&
+         strstr(missing, "Depth5"));
+  assert(arc_adffs_select(&p, script, script_size, &selection, missing) &&
+         selection.count == 10u &&
+         selected_member(&p, &selection, "!ADFFS/trackers/QTMModule") &&
+         !selected_member(&p, &selection, "!ADFFS/extras/JoyMod"));
+  uint32_t expected_ram = 64u * 1024u;
+  for (unsigned i = 0; i < p.count; ++i)
+    if (selection.member[i])
+      expected_ram += ((uint32_t)p.members[i].size + 1023u) & ~1023u;
+  size_t launcher_size = 0u;
+  assert(arc_adffs_launcher(NULL, 0u, &launcher_size));
+  expected_ram += 3u * 2048u;
+  expected_ram += ((uint32_t)launcher_size + 1023u) & ~1023u;
+  expected_ram = (expected_ram + 32767u) & ~32767u;
+  assert(selection.ram_size == expected_ram && !(selection.ram_size & 32767u));
   free(script);
 
   size_t jn;
@@ -201,42 +252,60 @@ int main(int argc, char **argv) {
   assert(!arc_adffs_carrier_build(limit, ARC_ADFFS_CARRIER_CAPACITY + 1u,
                                   carrier, error, sizeof(error)));
   free(limit);
-  assert(arc_adffs_support_build(&p, support, error, sizeof(error)));
+  assert(arc_adffs_support_build(&p, &selection, support, error, sizeof(error)));
   walk_disc(support);
   root = support + 1024u;
   const uint8_t *adffs = find_entry(root, "!ADFFS");
-  assert(adffs && (adffs[25] & 8u) && !(le24(adffs + 22u) & 3u));
+  assert(adffs && (adffs[25] & 8u) && (adffs[25] & 2u) &&
+         !(le24(adffs + 22u) & 3u));
   const uint8_t *adir = support + le24(adffs + 22u) * 256u;
   assert(dircheck(adir));
   const uint8_t *module = find_entry(adir, "ADFFS");
   assert(module && le32t(module + 10u) == runtime->load &&
          le32t(module + 14u) == runtime->exec && module[25] == runtime->attr);
+  assert(find_entry(adir, "obey") && find_entry(adir, "!RunTypes") &&
+         find_entry(adir, "!fixObey") && !find_entry(adir, "extras"));
+  const uint8_t *trackers = find_entry(adir, "trackers");
+  assert(trackers && (trackers[25] & 8u));
+  const uint8_t *trackers_dir = support + le24(trackers + 22u) * 256u;
+  assert(find_entry(trackers_dir, "QTMModule") &&
+         !find_entry(trackers_dir, "CaseTrack") &&
+         !find_entry(trackers_dir, "Huge"));
   size_t rzn;
   uint8_t *rzip = read_file(argv[1], "reordered.zip", &rzn);
   ArcAdffsPackage reordered;
+  uint8_t *reordered_script = NULL;
+  size_t reordered_script_size = 0u;
+  ArcAdffsSelection reordered_selection;
   assert(arc_adffs_package_parse(rzip, rzn, &reordered, error, sizeof(error)) &&
-         arc_adffs_support_build(&reordered, carrier2, error, sizeof(error)) &&
+         arc_adffs_builtin_script(&reordered, 123u, 1u, &reordered_script,
+                                  &reordered_script_size, error,
+                                  sizeof(error)) &&
+         arc_adffs_select(&reordered, reordered_script, reordered_script_size,
+                          &reordered_selection, missing) &&
+         arc_adffs_support_build(&reordered, &reordered_selection, carrier2,
+                                 error, sizeof(error)) &&
          !memcmp(support, carrier2, ARC_ADFFS_DISC_SIZE));
+  free(reordered_script);
   arc_adffs_package_free(&reordered);
   free(rzip);
   static const char launcher_golden[] =
-      "| ArcDroid ADFFS launcher\rSet ADFFS$Dir ADFS::1.$.!ADFFS\rSet "
-      "ADFFS$Path ADFS::1.$.!ADFFS.\rRun ADFS::1.$.!ADFFS.SetVars\rSet "
-      "ADFFS$FileSizeLimit 2048\rSet Alias$StoreCSD Set ADFFS$CSD "
-      "<FileSwitch$CurrentFilingSystem>#<Dir>\rSet Alias$RestoreCSD "
-      "FilingSystem <ADFFS$CSD>\rSet Alias$ADFClipScreen ADFDoNothing\rSet "
-      "Alias$ADFScreenBorders ADFDoNothing\rSet ADFFS$JIT 0\rSet ADFFS$CRC "
-      "0\rUnset ADFFS$LCDGM\rRMEnsure SharedCLibrary 5.17 RMLoad "
-      "ADFS::1.$.!ADFFS.3rdParty.CLib\rRMEnsure SharedCLibrary 5.17 Error "
-      "ArcDroid ADFFS step CLib failed\rRMEnsure CallASWI 0 RMLoad "
-      "ADFS::1.$.!ADFFS.3rdParty.CallASWI\rRMEnsure CallASWI 0 Error ArcDroid "
-      "ADFFS step CallASWI failed\rRMEnsure ZLib 0 RMLoad "
-      "ADFS::1.$.!ADFFS.3rdParty.ZLib\rRMEnsure ZLib 0 Error ArcDroid ADFFS "
-      "step ZLib failed\rRMEnsure BootCmds 0 RMLoad "
-      "ADFS::1.$.!ADFFS.3rdParty.BootCmds\rRMEnsure BootCmds 0 Error ArcDroid "
-      "ADFFS step BootCmds failed\rRMEnsure ADFFS 0 RMLoad "
-      "ADFS::1.$.!ADFFS.ADFFS\rRMEnsure ADFFS 0 Error ArcDroid ADFFS step "
-      "ADFFS failed\rADFMount "
+      "| ArcDroid ADFFS RAM launcher\rSet ADFFS$Dir RAM::0.$.!ADFFS\rSet "
+      "ADFFS$Path RAM::0.$.!ADFFS.\rRun RAM::0.$.!ADFFS.SetVars\rSetEval "
+      "ADFFS$FileSizeLimit 2048\rSet Alias$StoreCSD ADFDoNothing\rSet "
+      "Alias$RestoreCSD ADFDoNothing\rSet Alias$ADFClipScreen "
+      "ADFDoNothing\rSet Alias$ADFScreenBorders ADFDoNothing\rSetEval "
+      "ADFFS$JIT 0\rSetEval ADFFS$CRC 0\rSet ADFFS$LCDGM N\rRMEnsure "
+      "SharedCLibrary 5.17 RMLoad RAM::0.$.!ADFFS.3rdParty.CLib\rRMEnsure "
+      "SharedCLibrary 5.17 Error ArcDroid ADFFS step CLib failed\rRMEnsure "
+      "CallASWI 0.02 RMLoad RAM::0.$.!ADFFS.3rdParty.CallASWI\rRMEnsure "
+      "CallASWI 0.02 Error ArcDroid ADFFS step CallASWI failed\rRMEnsure "
+      "ZLib 0.05 RMLoad RAM::0.$.!ADFFS.3rdParty.ZLib\rRMEnsure ZLib 0.05 "
+      "Error ArcDroid ADFFS step ZLib failed\rRMEnsure BootCommands 0.00 "
+      "RMLoad RAM::0.$.!ADFFS.3rdParty.BootCmds\rRMEnsure BootCommands 0.00 "
+      "Error ArcDroid ADFFS step BootCommands failed\rRMEnsure ADFFS 0.00 "
+      "RMLoad RAM::0.$.!ADFFS.ADFFS\rRMEnsure ADFFS 0.00 Error ArcDroid "
+      "ADFFS step ADFFS failed\rADFMount "
       "ADFS::0.$.Game\rADFS\rNoDir\rNoLib\rNoURD\rDismount :0\rADFBootFloppy\r";
   size_t lsz;
   assert(arc_adffs_launcher(NULL, 0, &lsz));
@@ -244,14 +313,51 @@ int main(int argc, char **argv) {
   assert(launch && arc_adffs_launcher((uint8_t *)launch, lsz, &lsz) &&
          lsz == sizeof(launcher_golden) - 1u &&
          !memcmp(launch, launcher_golden, lsz));
-  assert(!strstr(launch, "Echo") && !strstr(launch, "RAM") &&
+  assert(!strstr(launch, "Echo") && !strstr(launch, "ADFS::1") &&
          !strstr(launch, "ArcFixture") &&
          !strstr(launch, "ArcDroid synthetic ADFFS") &&
-         strstr(launch, "ADFFS$Dir ADFS::1.$.!ADFFS"));
+         strstr(launch, "ADFFS$Dir RAM::0.$.!ADFFS") &&
+         strstr(launch, "SetEval ADFFS$FileSizeLimit 2048") &&
+         strstr(launch, "SetEval ADFFS$JIT 0") &&
+         strstr(launch, "SetEval ADFFS$CRC 0") &&
+         strstr(launch, "Set ADFFS$LCDGM N"));
   char *mount = strstr(launch, "ADFMount"), *drive0 = strstr(launch, "ADFS::0"),
        *dismount = strstr(launch, "Dismount :0"),
        *boot = strstr(launch, "ADFBootFloppy");
   assert(mount && drive0 == mount + 9 && dismount > mount && boot > dismount);
+  size_t stage1_size = 0u;
+  assert(arc_adffs_stage1(selection.ram_size, NULL, 0u, &stage1_size));
+  char *stage1 = calloc(1u, stage1_size + 1u);
+  assert(stage1 && arc_adffs_stage1(selection.ram_size, (uint8_t *)stage1,
+                                    stage1_size, &stage1_size));
+  char stage1_golden[512];
+  int stage1_golden_size = snprintf(
+      stage1_golden, sizeof(stage1_golden),
+      "| ArcDroid ADFFS RAM copy\rSetEval RamFS$Size %u\rRMReInit RamFS\r"
+      "Copy ADFS::1.$.!ADFFS RAM::0.$.!ADFFS ~Confirm Force Quiet Recurse "
+      "~Verbose\rCopy ADFS::1.$.ArcStage2 RAM::0.$.ArcStage2 ~Confirm Force "
+      "Quiet Recurse ~Verbose\rFiler_Run RAM::0.$.ArcStage2\r",
+      selection.ram_size);
+  assert(stage1_golden_size > 0 &&
+         stage1_size == (size_t)stage1_golden_size &&
+         !memcmp(stage1, stage1_golden, stage1_size));
+  assert(!strstr(stage1, "Echo") && !strstr(stage1, "RMEnsure") &&
+         !strstr(stage1, "RMLoad") && !strstr(stage1, "ADFMount") &&
+         strstr(stage1, "~Confirm Force Quiet Recurse ~Verbose"));
+  const uint8_t *desktop_entry = find_entry(root, "ArcLaunch");
+  const uint8_t *stage1_entry = find_entry(root, "ArcStage1");
+  const uint8_t *stage2_entry = find_entry(root, "ArcStage2");
+  static const char desktop_golden[] = "Filer_Run ADFS::1.$.ArcStage1\r";
+  assert(desktop_entry && stage1_entry && stage2_entry &&
+         le32t(desktop_entry + 18u) == sizeof(desktop_golden) - 1u &&
+         !memcmp(support + le24(desktop_entry + 22u) * 256u, desktop_golden,
+                 sizeof(desktop_golden) - 1u) &&
+         le32t(stage1_entry + 18u) == stage1_size &&
+         !memcmp(support + le24(stage1_entry + 22u) * 256u, stage1,
+                 stage1_size) &&
+         le32t(stage2_entry + 18u) == lsz &&
+         !memcmp(support + le24(stage2_entry + 22u) * 256u, launch, lsz));
+  free(stage1);
   free(launch);
   ArcMediaInfo info = {0};
   info.kind = ARC_MEDIA_ADF_800K;
@@ -263,17 +369,13 @@ int main(int argc, char **argv) {
   assert(arc_launch_discover(support, ARC_ADFFS_DISC_SIZE, &info, NULL,
                              &discovery) &&
          discovery.readable);
-  ArcAdffsPackage huge = p;
-  huge.count = ARC_ADFFS_MAX_MEMBERS;
-  for (unsigned i = p.count; i < huge.count; ++i) {
-    snprintf(huge.members[i].name, sizeof(huge.members[i].name),
-             "!ADFFS/trackers/R%02u", i);
-    huge.members[i].data = calloc(1, 20000u);
-    huge.members[i].size = 20000u;
-  }
-  assert(!arc_adffs_support_build(&huge, support, error, sizeof(error)));
-  for (unsigned i = p.count; i < huge.count; ++i)
-    free(huge.members[i].data);
+  const char *huge_reference = "ADFFS:trackers.Huge";
+  ArcAdffsSelection huge_selection;
+  assert(arc_adffs_select(&p, (const uint8_t *)huge_reference,
+                          strlen(huge_reference), &huge_selection, missing) &&
+         !arc_adffs_support_build(&p, &huge_selection, support, error,
+                                  sizeof(error)) &&
+         strstr(error, "does not fit"));
   arc_adffs_package_free(&p);
   free(zip);
   free(jfd);
@@ -297,6 +399,10 @@ int main(int argc, char **argv) {
   reject_fixture(argv[1], "unsafe-name.zip", "unsafe");
   reject_fixture(argv[1], "absolute-name.zip", "unsafe");
   reject_fixture(argv[1], "backslash-name.zip", "unsafe");
+  reject_fixture(argv[1], "missing-obey.zip", "!ADFFS/obey");
+  reject_fixture(argv[1], "missing-runtypes.zip", "!ADFFS/!RunTypes");
+  reject_fixture(argv[1], "missing-fixobey.zip", "!ADFFS/!fixObey");
+  reject_fixture(argv[1], "invalid-obey-name.zip", "obey member name");
   puts("ADFFS synthetic package and media tests passed");
   return 0;
 }
