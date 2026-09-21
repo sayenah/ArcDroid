@@ -166,7 +166,7 @@ static bool zip_index(const uint8_t *a, size_t n, Ze **out, unsigned *count,
                                : "multi-disk archive is unsupported");
     return false;
   }
-  if ((size_t)coff + csize > eo) {
+  if ((size_t)coff > eo || (size_t)csize > eo - (size_t)coff) {
     fail(e, en, "central directory is out of bounds");
     return false;
   }
@@ -177,14 +177,15 @@ static bool zip_index(const uint8_t *a, size_t n, Ze **out, unsigned *count,
   }
   size_t p = coff;
   for (unsigned i = 0; i < total; ++i) {
-    if (p + 46u > eo || le32(a + p) != 0x02014b50u) {
+    if (p > eo || eo - p < 46u || le32(a + p) != 0x02014b50u) {
       fail(e, en, "truncated central entry");
       free(z);
       return false;
     }
     uint16_t nl = le16(a + p + 28), xl = le16(a + p + 30),
              cl = le16(a + p + 32);
-    if (!nl || nl >= sizeof(z[i].name) || p + 46u + nl + xl + cl > eo) {
+    size_t variable = (size_t)nl + xl + cl;
+    if (!nl || nl >= sizeof(z[i].name) || variable > eo - p - 46u) {
       fail(e, en, "invalid central entry length");
       free(z);
       return false;
@@ -239,14 +240,15 @@ static bool zip_index(const uint8_t *a, size_t n, Ze **out, unsigned *count,
 static bool extract(const uint8_t *a, size_t n, const Ze *z, uint8_t **data,
                     char *e, size_t en) {
   size_t p = z->local;
-  if (p + 30u > n || le32(a + p) != 0x04034b50u) {
+  if (p > n || n - p < 30u || le32(a + p) != 0x04034b50u) {
     fail(e, en, "local header is missing");
     return false;
   }
   uint16_t flags = le16(a + p + 6), method = le16(a + p + 8),
            nl = le16(a + p + 26), xl = le16(a + p + 28);
   uint32_t crc = le32(a + p + 14), pk = le32(a + p + 18), sz = le32(a + p + 22);
-  if (p + 30u + nl + xl > n || strlen(z->name) != nl ||
+  size_t variable = (size_t)nl + xl;
+  if (variable > n - p - 30u || strlen(z->name) != nl ||
       memcmp(a + p + 30u, z->name, nl) || flags != z->flags ||
       method != z->method ||
       (!(flags & 8u) && (crc != z->crc || pk != z->packed || sz != z->size)) ||
@@ -271,13 +273,13 @@ static bool extract(const uint8_t *a, size_t n, const Ze *z, uint8_t **data,
   }
   if (flags & 8u) {
     size_t dd = (size_t)(src - a) + z->packed;
-    if (dd + 12u > n) {
+    if (dd > n || n - dd < 12u) {
       fail(e, en, "truncated data descriptor");
       return false;
     }
     if (le32(a + dd) == 0x08074b50u) {
       dd += 4u;
-      if (dd + 12u > n) {
+      if (dd > n || n - dd < 12u) {
         fail(e, en, "truncated data descriptor");
         return false;
       }
@@ -678,9 +680,13 @@ bool arc_adffs_stage1(uint32_t ram_size, uint8_t *o, size_t cap, size_t *sz) {
   return true;
 }
 
-static uint32_t selection_ram_size(const ArcAdffsPackage *p,
-                                   const ArcAdffsSelection *selection) {
-  char directories[ARC_ADFFS_MAX_MEMBERS * 3u][128];
+static bool selection_ram_size(const ArcAdffsPackage *p,
+                               const ArcAdffsSelection *selection,
+                               uint32_t *ram_size) {
+  enum { MAX_DIRECTORIES = ARC_ADFFS_MAX_MEMBERS * 3u };
+  char (*directories)[128] = calloc(MAX_DIRECTORIES, sizeof(*directories));
+  if (!directories)
+    return false;
   unsigned directory_count = 0u;
   uint32_t bytes = 64u * 1024u;
   for (unsigned i = 0; i < p->count; ++i) {
@@ -698,7 +704,7 @@ static uint32_t selection_ram_size(const ArcAdffsPackage *p,
           known = true;
           break;
         }
-      if (!known && directory_count < sizeof(directories) / sizeof(directories[0]))
+      if (!known && directory_count < MAX_DIRECTORIES)
         snprintf(directories[directory_count++], sizeof(directories[0]), "%s",
                  path);
       *slash = saved;
@@ -706,7 +712,9 @@ static uint32_t selection_ram_size(const ArcAdffsPackage *p,
   }
   bytes += directory_count * D_DIRECTORY;
   bytes += ((uint32_t)(sizeof(launcher_text) - 1u) + 1023u) & ~1023u;
-  return (bytes + 32767u) & ~32767u;
+  *ram_size = (bytes + 32767u) & ~32767u;
+  free(directories);
+  return true;
 }
 
 bool arc_adffs_select(const ArcAdffsPackage *p, const uint8_t *script,
@@ -750,8 +758,7 @@ bool arc_adffs_select(const ArcAdffsPackage *p, const uint8_t *script,
   free(context.obey_entries);
   if (!ok)
     return false;
-  selection->ram_size = selection_ram_size(p, selection);
-  return true;
+  return selection_ram_size(p, selection, &selection->ram_size);
 }
 
 typedef struct Node Node;

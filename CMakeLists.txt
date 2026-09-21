@@ -171,7 +171,7 @@ configure_file(arcdroid_libretro.info arcdroid_libretro.info COPYONLY)
 install(TARGETS arcdroid_libretro DESTINATION .)
 install(FILES arcdroid_libretro.info DESTINATION .)
 
-if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
+if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
   find_package(Python3 REQUIRED COMPONENTS Interpreter)
   add_executable(core_tests
     tests/core_tests.c
@@ -358,7 +358,8 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
   add_dependencies(core_tests test-fixtures)
   add_executable(adffs_tests tests/adffs_tests.c)
   target_link_libraries(adffs_tests PRIVATE arcdroid_core_test)
-  target_compile_options(adffs_tests PRIVATE $<$<C_COMPILER_ID:GNU,Clang,AppleClang>:-UNDEBUG>)
+  target_compile_options(adffs_tests PRIVATE
+    $<$<C_COMPILER_ID:GNU,Clang,AppleClang>:-UNDEBUG;-Wall;-Wextra;-Wpedantic>)
   if(ARCDROID_SANITIZERS)
     target_link_libraries(adffs_tests PRIVATE arcdroid_sanitizer_link)
   endif()
