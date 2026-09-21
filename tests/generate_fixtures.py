@@ -14,7 +14,6 @@ import gzip
 import io
 import struct
 import zipfile
-import warnings
 
 ROM_SIZE = 512 * 1024
 ADF_SIZE = 800 * 1024
@@ -740,6 +739,73 @@ def _zip_bytes(entries: list[tuple[str, bytes, bool]],
     return output.getvalue()
 
 
+def _zip_name_records(payload: bytes | bytearray) -> \
+        list[tuple[int, int, bytes, int, int, bytes]]:
+    """Return exact local/central name fields without zipfile normalisation."""
+    eocd = payload.rfind(b"PK\x05\x06")
+    if eocd < 0 or eocd + 22 > len(payload):
+        raise ValueError("generated ZIP has no complete end record")
+    count = struct.unpack_from("<H", payload, eocd + 10)[0]
+    central_size, central = struct.unpack_from("<II", payload, eocd + 12)
+    central_end = central + central_size
+    if central_end > eocd:
+        raise ValueError("generated ZIP central directory is out of bounds")
+    records = []
+    position = central
+    for _ in range(count):
+        if position + 46 > central_end or payload[position:position + 4] != b"PK\x01\x02":
+            raise ValueError("generated ZIP central entry is invalid")
+        name_size, extra_size, comment_size = struct.unpack_from(
+            "<HHH", payload, position + 28)
+        record_end = position + 46 + name_size + extra_size + comment_size
+        if record_end > central_end:
+            raise ValueError("generated ZIP central name is out of bounds")
+        local = struct.unpack_from("<I", payload, position + 42)[0]
+        if local + 30 > len(payload) or payload[local:local + 4] != b"PK\x03\x04":
+            raise ValueError("generated ZIP local entry is invalid")
+        local_name_size = struct.unpack_from("<H", payload, local + 26)[0]
+        local_name = local + 30
+        if local_name + local_name_size > len(payload):
+            raise ValueError("generated ZIP local name is out of bounds")
+        central_name = position + 46
+        records.append((local_name, local_name_size,
+                        bytes(payload[local_name:local_name + local_name_size]),
+                        central_name, name_size,
+                        bytes(payload[central_name:central_name + name_size])))
+        position = record_end
+    if position != central_end:
+        raise ValueError("generated ZIP central directory size disagrees")
+    return records
+
+
+def _write_raw_name_fixture(path: Path,
+                            entries: list[tuple[str, bytes, bool]],
+                            raw_name: bytes, member: bytes, metadata: bool,
+                            expected_count: int = 1) -> None:
+    """Write an exact malformed name, bypassing host path normalisation."""
+    placeholder = b"X" * len(raw_name)
+    archive = bytearray(_zip_bytes(
+        entries + [(placeholder.decode("ascii"), member, metadata)]))
+    records = _zip_name_records(archive)
+    local, local_size, local_value, central, central_size, central_value = records[-1]
+    if (local_size != len(raw_name) or central_size != len(raw_name) or
+            local_value != placeholder or central_value != placeholder):
+        raise ValueError(f"cannot patch exact ZIP name for {path.name}")
+    archive[local:local + local_size] = raw_name
+    archive[central:central + central_size] = raw_name
+    path.write_bytes(archive)
+
+    # Read the completed fixture back and fail generation if either header was
+    # normalised, omitted, or patched differently from the requested bytes.
+    checked = _zip_name_records(path.read_bytes())
+    local_names = [record[2] for record in checked]
+    central_names = [record[5] for record in checked]
+    if (local_names[-1] != raw_name or central_names[-1] != raw_name or
+            local_names.count(raw_name) != expected_count or
+            central_names.count(raw_name) != expected_count):
+        raise ValueError(f"raw ZIP name self-check failed for {path.name}")
+
+
 def build_adffs_fixtures(output: Path) -> None:
     """Invented package/JFD data; no JASPP byte is an input."""
     output.mkdir(exist_ok=True)
@@ -839,15 +905,16 @@ def build_adffs_fixtures(output: Path) -> None:
     (output / "inflated-lie.zip").write_bytes(bomb)
     no_arc = bytearray(package.replace(b"ARC0", b"NOPE"))
     (output / "missing-arc0.zip").write_bytes(no_arc)
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", UserWarning)
-        (output / "duplicate.zip").write_bytes(_zip_bytes(entries + [entries[0]]))
-    duplicate_case = list(entries)
-    duplicate_case.append(("!adffs/adffs", b"case collision", True))
-    (output / "case-collision.zip").write_bytes(_zip_bytes(duplicate_case))
-    (output / "unsafe-name.zip").write_bytes(_zip_bytes(entries + [("../bad", b"x", False)]))
-    (output / "absolute-name.zip").write_bytes(_zip_bytes(entries + [("/bad", b"x", False)]))
-    (output / "backslash-name.zip").write_bytes(_zip_bytes(entries + [("bad\\name", b"x", False)]))
+    _write_raw_name_fixture(output / "duplicate.zip", entries,
+                            b"!ADFFS/ADFFS", entries[0][1], True, 2)
+    _write_raw_name_fixture(output / "case-collision.zip", entries,
+                            b"!adffs/adffs", b"case collision", True)
+    _write_raw_name_fixture(output / "unsafe-name.zip", entries,
+                            b"../bad", b"x", False)
+    _write_raw_name_fixture(output / "absolute-name.zip", entries,
+                            b"/bad", b"x", False)
+    _write_raw_name_fixture(output / "backslash-name.zip", entries,
+                            b"bad\\name", b"x", False)
     (output / "entry-limit.zip").write_bytes(_zip_bytes(
         [(f"unused/{i:04d}", b"", False) for i in range(1025)], zipfile.ZIP_STORED))
     (output / "oversize.zip").write_bytes(_zip_bytes(
