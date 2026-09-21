@@ -3174,30 +3174,37 @@ static void arc_poll_chooser(void)
 
    bool pointer = arc_input_state(0u, RETRO_DEVICE_POINTER, 0u,
                                   RETRO_DEVICE_ID_POINTER_PRESSED) != 0;
-   bool offscreen = arc_input_state(0u, RETRO_DEVICE_POINTER, 0u,
-                                    RETRO_DEVICE_ID_POINTER_IS_OFFSCREEN) != 0;
    int row = -1;
-   if (!offscreen)
+   if (pointer)
    {
-      int raw_x = arc_input_state(0u, RETRO_DEVICE_POINTER, 0u,
-                                  RETRO_DEVICE_ID_POINTER_X);
-      int raw_y = arc_input_state(0u, RETRO_DEVICE_POINTER, 0u,
-                                  RETRO_DEVICE_ID_POINTER_Y);
-      if (raw_x != -32768 && raw_y != -32768)
-         row = arc_launch_chooser_hit(&arc_chooser,
-            (unsigned)arc_pointer_to_pixel(raw_x, ARC_WIDTH),
-            (unsigned)arc_pointer_to_pixel(raw_y, ARC_HEIGHT));
+      bool offscreen = arc_input_state(0u, RETRO_DEVICE_POINTER, 0u,
+         RETRO_DEVICE_ID_POINTER_IS_OFFSCREEN) != 0;
+      if (!offscreen)
+      {
+         int raw_x = arc_input_state(0u, RETRO_DEVICE_POINTER, 0u,
+                                     RETRO_DEVICE_ID_POINTER_X);
+         int raw_y = arc_input_state(0u, RETRO_DEVICE_POINTER, 0u,
+                                     RETRO_DEVICE_ID_POINTER_Y);
+         if (raw_x != -32768 && raw_y != -32768)
+            row = arc_launch_chooser_hit(&arc_chooser,
+               (unsigned)arc_pointer_to_pixel(raw_x, ARC_WIDTH),
+               (unsigned)arc_pointer_to_pixel(raw_y, ARC_HEIGHT));
+      }
    }
    if (pointer && !arc_chooser_pointer_down)
    {
       arc_chooser_pointer_row = row;
       if (row >= 0) (void)arc_launch_chooser_focus(&arc_chooser, (unsigned)row);
    }
+   else if (pointer && arc_chooser_pointer_down &&
+            arc_chooser_pointer_row >= 0 && row != arc_chooser_pointer_row)
+      arc_chooser_pointer_row = -1;
    else if (!pointer && arc_chooser_pointer_down)
    {
-      if (row >= 0 && row == arc_chooser_pointer_row)
+      if (arc_chooser_pointer_row >= 0)
       {
-         (void)arc_launch_chooser_focus(&arc_chooser, (unsigned)row);
+         (void)arc_launch_chooser_focus(&arc_chooser,
+                                        (unsigned)arc_chooser_pointer_row);
          confirm = true;
       }
       arc_chooser_pointer_row = -1;

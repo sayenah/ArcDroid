@@ -254,9 +254,18 @@ static unsigned arc_text(uint32_t *pixels, unsigned width, unsigned height,
    return x;
 }
 
+static unsigned arc_name_characters(const ArcGuestName *name)
+{
+   unsigned characters = 0u;
+   for (unsigned i = 0u; name && i < name->length; ++i)
+      characters += name->bytes[i] < 0x20u || name->bytes[i] > 0x7eu ? 4u : 1u;
+   return characters;
+}
+
 static void arc_name(uint32_t *pixels, unsigned width, unsigned height,
                      size_t stride, unsigned x, unsigned y,
-                     const ArcGuestName *name, uint32_t colour)
+                     const ArcGuestName *name, unsigned scale,
+                     uint32_t colour)
 {
    static const char hex[] = "0123456789ABCDEF";
    for (unsigned i = 0u; name && i < name->length; ++i)
@@ -270,13 +279,14 @@ static void arc_name(uint32_t *pixels, unsigned width, unsigned height,
          rendered[2] = hex[c >> 4u]; rendered[3] = hex[c & 15u];
          rendered_colour = UINT32_C(0x00ffd060);
       }
-      for (unsigned character = 0u; rendered[character]; ++character, x += 8u)
+      for (unsigned character = 0u; rendered[character];
+           ++character, x += 8u * scale)
          for (unsigned row = 0u; row < 8u; ++row)
             for (unsigned bit = 0u; bit < 8u; ++bit)
                if ((arc_osk_font[(uint8_t)rendered[character]][row] >>
                     (7u - bit)) & 1u)
-                  arc_fill(pixels, width, height, stride, x + bit, y + row,
-                           1u, 1u, rendered_colour);
+                  arc_fill(pixels, width, height, stride, x + bit * scale,
+                           y + row * scale, scale, scale, rendered_colour);
    }
 }
 
@@ -321,8 +331,12 @@ bool arc_launch_chooser_render(const ArcLaunchChooser *chooser,
          (void)arc_text(pixels, width, height, stride, x, y,
                         "Desktop (no launch)", foreground);
       else
-         arc_name(pixels, width, height, stride, x, y,
-                  &discovery->candidates[candidate].name, foreground);
+      {
+         const ArcGuestName *name = &discovery->candidates[candidate].name;
+         unsigned scale = arc_name_characters(name) * 16u <=
+            ARC_CHOOSER_RIGHT - x ? 2u : 1u;
+         arc_name(pixels, width, height, stride, x, y, name, scale, foreground);
+      }
    }
    if (chooser->first_visible)
       (void)arc_text(pixels, width, height, stride, 584u, 92u, "^",

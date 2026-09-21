@@ -4402,6 +4402,81 @@ int main(int argc, char **argv)
              memcmp(remembered_app2, remembered_app1, remembered_app1_size));
       retro_unload_game();
 
+      /* A release has no reliable coordinates on a real touchscreen. The
+       * row captured while pressed confirms for each release-frame encoding. */
+      (void)remove(chooser_helper);
+      phase = PHASE_LOAD; assert(retro_load_game(&chooser_game));
+      phase = PHASE_RUN;
+      pointer_x = (int)((100u * 65535u) / 640u) - 32768;
+      pointer_y = (int)((102u * 65535u) / 480u) - 32768;
+      pointer_pressed = true; retro_run();
+      assert(arc_libretro_test_chooser_focus() == 0u);
+      pointer_x = pointer_y = -32768;
+      pointer_pressed = false; retro_run();
+      assert(arc_libretro_test_session_state() == 3u);
+      read_exact(chooser_helper, actual_helper, sizeof(actual_helper));
+      assert(!memcmp(actual_helper, expected_helper[0], sizeof(actual_helper)));
+      retro_unload_game();
+
+      (void)remove(chooser_helper);
+      indexed_pointer_mode = true;
+      phase = PHASE_LOAD; assert(retro_load_game(&chooser_game));
+      phase = PHASE_RUN;
+      pointer_count = 1u; pointer_contact_pressed[0] = true;
+      pointer_contact_x[0] = (int)((100u * 65535u) / 640u) - 32768;
+      pointer_contact_y[0] = (int)((122u * 65535u) / 480u) - 32768;
+      retro_run();
+      assert(arc_libretro_test_chooser_focus() == 1u);
+      pointer_count = 0u; pointer_contact_pressed[0] = false;
+      pointer_offscreen[0] = true; retro_run();
+      assert(arc_libretro_test_session_state() == 3u);
+      read_exact(chooser_helper, actual_helper, sizeof(actual_helper));
+      assert(!memcmp(actual_helper, expected_helper[1], sizeof(actual_helper)));
+      pointer_offscreen[0] = false;
+      indexed_pointer_mode = false;
+      retro_unload_game();
+
+      (void)remove(chooser_helper);
+      phase = PHASE_LOAD; assert(retro_load_game(&chooser_game));
+      phase = PHASE_RUN;
+      pointer_x = (int)((100u * 65535u) / 640u) - 32768;
+      pointer_y = (int)((122u * 65535u) / 480u) - 32768;
+      pointer_pressed = true; retro_run();
+      assert(arc_libretro_test_chooser_focus() == 1u);
+      pointer_x = pointer_y = 0;
+      pointer_pressed = false; retro_run();
+      assert(arc_libretro_test_session_state() == 3u);
+      read_exact(chooser_helper, actual_helper, sizeof(actual_helper));
+      assert(!memcmp(actual_helper, expected_helper[1], sizeof(actual_helper)));
+      retro_unload_game();
+
+      /* Leaving the captured row while still down permanently cancels that
+       * contact, whether it crosses another row or leaves the list. */
+      (void)remove(chooser_helper);
+      phase = PHASE_LOAD; assert(retro_load_game(&chooser_game));
+      phase = PHASE_RUN;
+      pointer_x = (int)((100u * 65535u) / 640u) - 32768;
+      pointer_y = (int)((122u * 65535u) / 480u) - 32768;
+      pointer_pressed = true; retro_run();
+      pointer_y = (int)((102u * 65535u) / 480u) - 32768;
+      retro_run();
+      pointer_pressed = false; pointer_x = pointer_y = -32768; retro_run();
+      assert(arc_libretro_test_session_state() == 2u &&
+             !file_exists(chooser_helper));
+      retro_unload_game();
+
+      phase = PHASE_LOAD; assert(retro_load_game(&chooser_game));
+      phase = PHASE_RUN;
+      pointer_x = (int)((100u * 65535u) / 640u) - 32768;
+      pointer_y = (int)((122u * 65535u) / 480u) - 32768;
+      pointer_pressed = true; retro_run();
+      pointer_x = (int)((10u * 65535u) / 640u) - 32768;
+      retro_run();
+      pointer_pressed = false; pointer_x = pointer_y = 0; retro_run();
+      assert(arc_libretro_test_session_state() == 2u &&
+             !file_exists(chooser_helper));
+      retro_unload_game();
+
       option_launch_chooser = "remember";
       (void)remove(chooser_helper);
       phase = PHASE_LOAD; assert(retro_load_game(&chooser_game));

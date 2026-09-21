@@ -675,6 +675,44 @@ static void test_launch_choices_and_chooser(void)
       escaped_tail_hashes[i] = test_pixels_hash(pixels, 640u * 480u);
    }
    assert(escaped_tail_hashes[0] != escaped_tail_hashes[1]);
+
+   /* A normal maximum-length name uses the same 2x glyph cells as its row
+    * number. Only a name whose escaped form cannot fit falls back to 1x; the
+    * final hex glyph proves that even the longest such name is not clipped. */
+   static const uint8_t typical_name[10] =
+      {'!', 'C', 'l', 'o', 'u', 'd', 'v', 'a', 'l', 'e'};
+   discovery.candidates[0].name =
+      test_guest_name(typical_name, sizeof(typical_name));
+   assert(arc_launch_chooser_init(&chooser, &discovery, false, INT_MIN) &&
+          arc_launch_chooser_focus(&chooser, 1u) &&
+          arc_launch_chooser_render(&chooser, &discovery, pixels,
+             640u, 480u, 640u * sizeof(*pixels)));
+   bool typical_wide = false, typical_tall = false;
+   for (unsigned y = 92u; y < 108u; ++y)
+      for (unsigned x = 104u; x < 264u; ++x)
+      {
+         if (x >= 184u && pixels[(size_t)y * 640u + x] == UINT32_C(0x00e8edf5))
+            typical_wide = true;
+         if (y >= 100u && pixels[(size_t)y * 640u + x] == UINT32_C(0x00e8edf5))
+            typical_tall = true;
+      }
+   assert(typical_wide && typical_tall);
+
+   static const uint8_t maximal_escaped_name[10] =
+      {'!', 0x80u, 0x81u, 0x82u, 0x83u, 0x84u, 0x85u, 0x86u, 0x87u, 0x88u};
+   discovery.candidates[0].name =
+      test_guest_name(maximal_escaped_name, sizeof(maximal_escaped_name));
+   assert(arc_launch_chooser_init(&chooser, &discovery, false, INT_MIN) &&
+          arc_launch_chooser_focus(&chooser, 1u) &&
+          arc_launch_chooser_render(&chooser, &discovery, pixels,
+             640u, 480u, 640u * sizeof(*pixels)));
+   bool escaped_tail_visible = false;
+   for (unsigned y = 92u; y < 100u; ++y)
+      for (unsigned x = 392u; x < 400u; ++x)
+         escaped_tail_visible |=
+            pixels[(size_t)y * 640u + x] == UINT32_C(0x00ffd060);
+   assert(escaped_tail_visible);
+
    choice.desktop = false;
    choice.target = discovery.candidates[0].name;
    memset(choice.candidate_fingerprint, '0', 40u);

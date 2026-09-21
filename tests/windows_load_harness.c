@@ -144,7 +144,7 @@ static bool environment(unsigned command, void *data)
          assert(phase == PHASE_ENV && options->categories &&
                 !strcmp(options->categories[0].key, "pad_mapping"));
          while (options->definitions[count].key) ++count;
-         assert(count == 33u);
+         assert(count == 34u);
          saw_options = true;
          return true;
       }
