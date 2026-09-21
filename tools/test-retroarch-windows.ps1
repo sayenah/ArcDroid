@@ -54,6 +54,166 @@ function Send-QuitPair($Udp) {
     Start-Sleep -Milliseconds 300
     [void]$Udp.Send($quitBytes, $quitBytes.Length)
 }
+
+function Get-EventDataMap($EventRecord) {
+    $map = @{}
+    try {
+        $xml = [xml]$EventRecord.ToXml()
+        foreach ($item in @($xml.Event.EventData.Data)) {
+            $name = [string]$item.GetAttribute("Name")
+            if (-not [string]::IsNullOrWhiteSpace($name)) {
+                $map[$name] = [string]$item.'#text'
+            }
+        }
+    } catch {
+        # The formatted event message remains useful if one record has an
+        # unexpected XML shape. Crash collection must never replace the run's
+        # original failure.
+    }
+    return $map
+}
+
+function Get-EventField($Map, [string[]]$Names, $Values, [int]$Fallback) {
+    foreach ($name in $Names) {
+        if ($Map.ContainsKey($name) -and
+            -not [string]::IsNullOrWhiteSpace([string]$Map[$name])) {
+            return [string]$Map[$name]
+        }
+    }
+    if ($Fallback -ge 0 -and $Fallback -lt $Values.Count) {
+        return [string]$Values[$Fallback]
+    }
+    return "<not present>"
+}
+
+function Write-RetroArchFailureEvidence([string]$Name, $Process,
+                                        [DateTime]$StartUtc,
+                                        [string[]]$LogPaths,
+                                        [string]$Context) {
+    # This function is deliberately failure-contained: inability to read the
+    # event log or save the evidence must not mask the RetroArch exit that
+    # caused this diagnostic path to run.
+    try {
+        $safeName = $Name -replace '[^A-Za-z0-9_.-]', '_'
+        $path = Join-Path $evidenceDirectory "$safeName-crash-forensics.txt"
+        $lines = [System.Collections.Generic.List[string]]::new()
+        $endUtc = [DateTime]::UtcNow
+        $exitCode = "<still running>"
+        $pidValue = "<unknown>"
+        if ($Process) {
+            $pidValue = [string]$Process.Id
+            if ($Process.HasExited) { $exitCode = [string]$Process.ExitCode }
+        }
+        $lines.Add("run=$Name pid=$pidValue exit_code=$exitCode")
+        $lines.Add("context=$Context")
+        $lines.Add("window_utc=$($StartUtc.ToString('o'))..$($endUtc.ToString('o'))")
+        $lines.Add("Windows Application crash events:")
+
+        $matching = @()
+        $queryError = $null
+        $eventDeadline = [DateTime]::UtcNow.AddSeconds(5)
+        do {
+            try {
+                $events = @(Get-WinEvent -FilterHashtable @{
+                    LogName = "Application"
+                    ProviderName = @("Application Error", "Windows Error Reporting")
+                    Id = @(1000, 1001)
+                    StartTime = $StartUtc.AddSeconds(-2).ToLocalTime()
+                    EndTime = [DateTime]::Now.AddSeconds(1)
+                } -ErrorAction SilentlyContinue)
+                $matching = @($events | Where-Object {
+                    $eventMap = Get-EventDataMap $_
+                    $eventValues = @()
+                    try {
+                        $eventXml = [xml]$_.ToXml()
+                        $eventValues = @($eventXml.Event.EventData.Data | ForEach-Object {
+                            [string]$_.'#text'
+                        })
+                    } catch {}
+                    $eventText = (($_.Message, ($eventValues -join " ")) -join " ")
+                    $appMatch = $eventText -match '(?i)(^|[^A-Za-z0-9_])retroarch\.exe([^A-Za-z0-9_]|$)'
+                    $eventPid = Get-EventField $eventMap @("ProcessId") $eventValues -1
+                    $pidMatch = $true
+                    if ($eventPid -ne "<not present>" -and $Process) {
+                        $parsedPid = 0L
+                        if ($eventPid -match '^0x[0-9a-fA-F]+$') {
+                            $parsedPid = [Convert]::ToInt64($eventPid.Substring(2), 16)
+                        } elseif ($eventPid -match '^\d+$') {
+                            $parsedPid = [Convert]::ToInt64($eventPid, 10)
+                        }
+                        if ($parsedPid -ne 0L) { $pidMatch = $parsedPid -eq $Process.Id }
+                    }
+                    $appMatch -and $pidMatch
+                } | Sort-Object RecordId -Unique)
+            } catch {
+                $queryError = $_.Exception.Message
+            }
+            $providers = @($matching | Select-Object -ExpandProperty ProviderName -Unique)
+            if ($providers -contains "Application Error" -and
+                $providers -contains "Windows Error Reporting") { break }
+            if ([DateTime]::UtcNow -lt $eventDeadline) {
+                Start-Sleep -Milliseconds 500
+            }
+        } while ([DateTime]::UtcNow -lt $eventDeadline)
+
+        $endUtc = [DateTime]::UtcNow
+        $lines[2] = "window_utc=$($StartUtc.ToString('o'))..$($endUtc.ToString('o'))"
+        if ($queryError) { $lines.Add("  query_error=$queryError") }
+        if ($matching.Count -eq 0) {
+            $lines.Add("  <no matching Application Error 1000 or Windows Error Reporting 1001 records found>")
+        }
+        foreach ($event in $matching) {
+            $eventMap = Get-EventDataMap $event
+            $eventXml = [xml]$event.ToXml()
+            $values = @($eventXml.Event.EventData.Data | ForEach-Object {
+                [string]$_.'#text'
+            })
+            if ($event.Id -eq 1000) {
+                $module = Get-EventField $eventMap @("FaultingModuleName", "ModuleName") $values 3
+                $exception = Get-EventField $eventMap @("ExceptionCode") $values 6
+                $offset = Get-EventField $eventMap @("FaultingOffset", "FaultOffset") $values 7
+            } else {
+                $module = Get-EventField $eventMap @("P4", "Param4", "param4") $values -1
+                $exception = Get-EventField $eventMap @("P7", "Param7", "param7") $values -1
+                $offset = Get-EventField $eventMap @("P8", "Param8", "param8") $values -1
+            }
+            $message = ($event.Message -replace '[\r\n]+', ' ').Trim()
+            if ($module -eq "<not present>" -and
+                $message -match '(?i)Faulting module name:\s*([^,]+)') {
+                $module = $Matches[1].Trim()
+            }
+            if ($exception -eq "<not present>" -and
+                $message -match '(?i)Exception code:\s*(\S+)') {
+                $exception = $Matches[1]
+            }
+            if ($offset -eq "<not present>" -and
+                $message -match '(?i)Fault offset:\s*(\S+)') {
+                $offset = $Matches[1]
+            }
+            $lines.Add("  time=$($event.TimeCreated.ToUniversalTime().ToString('o')) provider=$($event.ProviderName) id=$($event.Id) record_id=$($event.RecordId) faulting_module=$module exception_code=$exception fault_offset=$offset")
+            $lines.Add("  message=$message")
+        }
+
+        $uniqueLogs = @($LogPaths | Where-Object {
+            -not [string]::IsNullOrWhiteSpace($_)
+        } | Select-Object -Unique)
+        foreach ($logPath in $uniqueLogs) {
+            $lines.Add("Last 40 log lines: $logPath")
+            if (Test-Path -LiteralPath $logPath) {
+                foreach ($line in @(Get-Content -LiteralPath $logPath -Tail 40)) {
+                    $lines.Add([string]$line)
+                }
+            } else {
+                $lines.Add("  <missing>")
+            }
+        }
+        $lines | Set-Content -Encoding UTF8 $path
+        Write-Host "RetroArch failure forensics saved to $path"
+        $lines | ForEach-Object { Write-Host $_ }
+    } catch {
+        Write-Warning "Unable to collect RetroArch failure forensics for $Name without changing the original failure: $($_.Exception.Message)"
+    }
+}
 $config = Join-Path $WorkDirectory "retroarch-ci.cfg"
 @"
 video_driver = "gdi"
@@ -100,6 +260,7 @@ function Invoke-ArcDroid([int]$Frames, [bool]$TakeScreenshot) {
     $runId = [Guid]::NewGuid().ToString("N")
     $stdout = Join-Path $WorkDirectory "retroarch-$runId.stdout.log"
     $stderr = Join-Path $WorkDirectory "retroarch-$runId.stderr.log"
+    $runStartUtc = [DateTime]::UtcNow
     $process = Start-Process -FilePath $retroArch -ArgumentList $arguments `
         -Wait -PassThru -NoNewWindow `
         -RedirectStandardOutput $stdout -RedirectStandardError $stderr
@@ -107,8 +268,14 @@ function Invoke-ArcDroid([int]$Frames, [bool]$TakeScreenshot) {
     if (Test-Path $stdout) { $output += Get-Content $stdout }
     if (Test-Path $stderr) { $output += Get-Content $stderr }
     $output | Tee-Object -FilePath $log -Append | Write-Host
+    if ($process.ExitCode -ne 0) {
+        Write-RetroArchFailureEvidence "invoke-arcdroid-$runId" $process `
+            $runStartUtc @($log, $stdout, $stderr) `
+            "Invoke-ArcDroid expected exit code 0"
+        Remove-Item -Force -ErrorAction SilentlyContinue $stdout, $stderr
+        throw "RetroArch exited with code $($process.ExitCode)"
+    }
     Remove-Item -Force -ErrorAction SilentlyContinue $stdout, $stderr
-    if ($process.ExitCode -ne 0) { throw "RetroArch exited with code $($process.ExitCode)" }
 }
 
 Invoke-ArcDroid 600 $true
@@ -125,6 +292,7 @@ function Try-InSessionReloads {
     $stdout = Join-Path $WorkDirectory "network-reload.stdout.log"
     $stderr = Join-Path $WorkDirectory "network-reload.stderr.log"
     $attemptLog = Join-Path $evidenceDirectory "network-reload-attempt.log"
+    $runStartUtc = [DateTime]::UtcNow
     $process = Start-Process -FilePath $retroArch -ArgumentList $arguments `
         -PassThru -NoNewWindow -RedirectStandardOutput $stdout -RedirectStandardError $stderr
     try {
@@ -165,6 +333,11 @@ function Try-InSessionReloads {
         if (Test-Path $stdout) { Get-Content $stdout | Add-Content -Encoding UTF8 $attemptLog }
         if (Test-Path $stderr) { Get-Content $stderr | Add-Content -Encoding UTF8 $attemptLog }
         $_ | Out-String | Add-Content -Encoding UTF8 $attemptLog
+        if ($process.HasExited) {
+            Write-RetroArchFailureEvidence "network-reload" $process `
+                $runStartUtc @($attemptLog, $stdout, $stderr) `
+                "in-session reload exited unexpectedly"
+        }
         return $false
     }
     finally {
@@ -291,15 +464,25 @@ function Start-MediaRun([string]$MediaPath, [string]$Name) {
     Remove-Item -Force -ErrorAction SilentlyContinue $retroLog
     $arguments = @("--config=$config", "--libretro=$core", "--verbose",
         "--log-file=$retroLog", $MediaPath)
+    $runStartUtc = [DateTime]::UtcNow
     $process = Start-Process -FilePath $retroArch -ArgumentList $arguments `
         -PassThru -NoNewWindow -RedirectStandardOutput $stdout -RedirectStandardError $stderr
     $udp = [System.Net.Sockets.UdpClient]::new()
     $udp.Client.ReceiveTimeout = 500
     $udp.Connect("127.0.0.1", 55355)
+    $run = @{ Process = $process; Udp = $udp; Stdout = $stdout; Stderr = $stderr;
+        RetroLog = $retroLog; Name = $Name; StartUtc = $runStartUtc;
+        FailureEvidenceWritten = $false; FailureReported = $false }
     $deadline = [DateTime]::UtcNow.AddSeconds(10)
     $ready = $false
     while ([DateTime]::UtcNow -lt $deadline -and -not $ready) {
-        if ($process.HasExited) { throw "$Name exited before its command port became ready" }
+        if ($process.HasExited) {
+            Write-MediaRunFailureEvidence $run `
+                "exited before its command port became ready"
+            $run["FailureReported"] = $true
+            $udp.Dispose()
+            throw "$Name exited before its command port became ready with code $($process.ExitCode)"
+        }
         try {
             $bytes = [Text.Encoding]::ASCII.GetBytes("GET_STATUS")
             [void]$udp.Send($bytes, $bytes.Length)
@@ -312,17 +495,28 @@ function Start-MediaRun([string]$MediaPath, [string]$Name) {
     }
     if (-not $ready) { throw "$Name did not answer GET_STATUS within 10 seconds" }
     Start-Sleep -Seconds 2
-    return @{ Process = $process; Udp = $udp; Stdout = $stdout; Stderr = $stderr;
-        RetroLog = $retroLog; Name = $Name }
+    return $run
+}
+
+function Write-MediaRunFailureEvidence($Run, [string]$Context) {
+    if ($Run["FailureEvidenceWritten"]) { return }
+    $Run["FailureEvidenceWritten"] = $true
+    Write-RetroArchFailureEvidence $Run.Name $Run.Process $Run.StartUtc `
+        @($Run.RetroLog, $Run.Stdout, $Run.Stderr) $Context
 }
 
 function Send-MediaCommand($Run, [string]$Command) {
-    if ($Run.Process.HasExited) { throw "$($Run.Name) exited before $Command" }
+    if ($Run.Process.HasExited) {
+        Write-MediaRunFailureEvidence $Run "exited before network command $Command"
+        $Run["FailureReported"] = $true
+        throw "$($Run.Name) exited before $Command with code $($Run.Process.ExitCode)"
+    }
     $bytes = [Text.Encoding]::ASCII.GetBytes($Command)
     [void]$Run.Udp.Send($bytes, $bytes.Length)
 }
 
 function Stop-MediaRun($Run) {
+    $unexpectedAtEntry = $Run.Process.HasExited
     try {
         if (-not $Run.Process.HasExited) {
             Send-QuitPair $Run.Udp
@@ -331,8 +525,16 @@ function Stop-MediaRun($Run) {
             }
             $Run.Process.WaitForExit()
         }
-        if ($Run.Process.ExitCode -ne 0) {
-            throw "$($Run.Name) exited with code $($Run.Process.ExitCode)"
+        if ($unexpectedAtEntry -or $Run.Process.ExitCode -ne 0) {
+            $context = if ($unexpectedAtEntry) {
+                "process had already exited before Stop-MediaRun requested QUIT"
+            } else {
+                "Stop-MediaRun expected exit code 0 after QUIT"
+            }
+            Write-MediaRunFailureEvidence $Run $context
+            if (-not $Run["FailureReported"]) {
+                throw "$($Run.Name) exited unexpectedly with code $($Run.Process.ExitCode)"
+            }
         }
     } finally {
         $Run.Udp.Dispose()
@@ -395,6 +597,12 @@ function Capture-MediaSignature($Run, [string]$Name) {
     $shot = $null
     while ([DateTime]::UtcNow -lt $deadline -and -not $shot) {
         Start-Sleep -Milliseconds 100
+        if ($Run.Process.HasExited) {
+            Write-MediaRunFailureEvidence $Run `
+                "died while a SCREENSHOT request was outstanding for $Name"
+            $Run["FailureReported"] = $true
+            throw "$($Run.Name) died with code $($Run.Process.ExitCode) while the $Name SCREENSHOT request was outstanding"
+        }
         $shot = Get-ChildItem -Path $evidenceDirectory -Filter "*.png" -ErrorAction SilentlyContinue |
             Where-Object { $before -notcontains $_.FullName } |
             Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1
@@ -575,6 +783,12 @@ function Capture-RawScreenshot($Run, [string]$Name) {
     $shot = $null
     while ([DateTime]::UtcNow -lt $deadline -and -not $shot) {
         Start-Sleep -Milliseconds 100
+        if ($Run.Process.HasExited) {
+            Write-MediaRunFailureEvidence $Run `
+                "died while a SCREENSHOT request was outstanding for $Name"
+            $Run["FailureReported"] = $true
+            throw "$($Run.Name) died with code $($Run.Process.ExitCode) while the $Name SCREENSHOT request was outstanding"
+        }
         $shot = Get-ChildItem -Path $evidenceDirectory -Filter "*.png" -ErrorAction SilentlyContinue |
             Where-Object {
                 $stamp = "$($_.LastWriteTimeUtc.Ticks):$($_.Length)"
@@ -805,6 +1019,9 @@ function Set-ChooserWindowForeground($Run) {
     $handle = [IntPtr]::Zero
     while ([DateTime]::UtcNow -lt $deadline -and $handle -eq [IntPtr]::Zero) {
         if ($Run.Process.HasExited) {
+            Write-MediaRunFailureEvidence $Run `
+                "died while acquiring the window for keyboard injection"
+            $Run["FailureReported"] = $true
             throw "$($Run.Name) keyboard-injection step found an exited process code=$($Run.Process.ExitCode); retroarch_log_tail=[$(Get-RunLogTail $Run)]"
         }
         $Run.Process.Refresh()
@@ -940,6 +1157,9 @@ function Send-ChooserKeyboardPick($Run, $InitialCapture) {
     $deadline = [DateTime]::UtcNow.AddSeconds(10)
     while ([DateTime]::UtcNow -lt $deadline) {
         if ($Run.Process.HasExited) {
+            Write-MediaRunFailureEvidence $Run `
+                "died after Enter injection while awaiting the chooser decision"
+            $Run["FailureReported"] = $true
             throw "$($Run.Name) exited after Enter injection code=$($Run.Process.ExitCode); diagnostics=$chooserInputDiagnostics; retroarch_log_tail=[$(Get-RunLogTail $Run)]"
         }
         if ((Test-Path -LiteralPath $Run.RetroLog) -and
@@ -950,6 +1170,66 @@ function Send-ChooserKeyboardPick($Run, $InitialCapture) {
         Start-Sleep -Milliseconds 100
     }
     throw "$($Run.Name) Enter injection did not produce 'chooser chose target' within 10 seconds; foreground=$(Format-WindowHandle ([ArcDroidWindowInput]::GetForegroundWindow())); diagnostics=$chooserInputDiagnostics; retroarch_log_tail=[$(Get-RunLogTail $Run)]"
+}
+
+function Wait-ChooserPostReinitQuiet($Run) {
+    $deadline = [DateTime]::UtcNow.AddSeconds(15)
+    $reinitObservedUtc = $null
+    Write-ChooserInputDiagnostic "post-choice quiet wait started; no SCREENSHOT request outstanding"
+    while ([DateTime]::UtcNow -lt $deadline) {
+        if ($Run.Process.HasExited) {
+            Write-MediaRunFailureEvidence $Run `
+                "died during the post-choice video-driver quiet wait with NO screenshot request outstanding"
+            $Run["FailureReported"] = $true
+            throw "$($Run.Name) died with code $($Run.Process.ExitCode) during the post-choice video-driver quiet wait with NO screenshot request outstanding"
+        }
+
+        $lines = if (Test-Path -LiteralPath $Run.RetroLog) {
+            @(Get-Content -LiteralPath $Run.RetroLog)
+        } else { @() }
+        $choiceIndex = -1
+        for ($index = $lines.Count - 1; $index -ge 0; --$index) {
+            if ($lines[$index].Contains("chooser chose target")) {
+                $choiceIndex = $index
+                break
+            }
+        }
+        if ($choiceIndex -ge 0) {
+            $postChoice = if ($choiceIndex + 1 -lt $lines.Count) {
+                @($lines[($choiceIndex + 1)..($lines.Count - 1)])
+            } else { @() }
+            $hasAvInfo = @($postChoice | Where-Object {
+                $_.Contains("SET_SYSTEM_AV_INFO")
+            }).Count -gt 0
+            $hasGdiDisplay = @($postChoice | Where-Object {
+                $_.Contains('Found display driver: "gdi"')
+            }).Count -gt 0
+            $hasMidiInput = @($postChoice | Where-Object {
+                $_.Contains('[MIDI] Input device:')
+            }).Count -gt 0
+            $hasMidiOutput = @($postChoice | Where-Object {
+                $_.Contains('[MIDI] Output device:')
+            }).Count -gt 0
+            if (-not $reinitObservedUtc -and $hasAvInfo -and $hasGdiDisplay -and
+                $hasMidiInput -and $hasMidiOutput) {
+                $reinitObservedUtc = [DateTime]::UtcNow
+                Write-ChooserInputDiagnostic "post-choice reinit markers observed: SET_SYSTEM_AV_INFO, gdi display, MIDI input/output; continuing quiet wait for 1500 ms"
+            }
+        }
+        if ($reinitObservedUtc -and
+            ([DateTime]::UtcNow - $reinitObservedUtc).TotalMilliseconds -ge 1500) {
+            if ($Run.Process.HasExited) {
+                Write-MediaRunFailureEvidence $Run `
+                    "died at the end of the post-choice video-driver quiet wait with NO screenshot request outstanding"
+                $Run["FailureReported"] = $true
+                throw "$($Run.Name) died with code $($Run.Process.ExitCode) during the post-choice video-driver quiet wait with NO screenshot request outstanding"
+            }
+            Write-ChooserInputDiagnostic "post-choice reinit quiet wait complete; process_alive=True elapsed_after_markers_ms=$([int]([DateTime]::UtcNow - $reinitObservedUtc).TotalMilliseconds)"
+            return
+        }
+        Start-Sleep -Milliseconds 100
+    }
+    throw "$($Run.Name) did not show the post-choice SET_SYSTEM_AV_INFO/GDI/MIDI completion markers and survive the 1500 ms quiet interval within 15 seconds; no SCREENSHOT request was sent; retroarch_log_tail=[$(Get-RunLogTail $Run)]"
 }
 
 Copy-Item -Force (Join-Path $InputDirectory "arcdroid-chooser-test.rom") $firmware
@@ -1041,6 +1321,7 @@ try {
         throw "Chooser-recognition step expected the 640x480 ArcDroid renderer with >=4 sampled colours, background_rgb=101a2a, row1_rgb=a8d8ff, row2_rgb=101a2a and row3_rgb=101a2a; observed dimensions=$($chooserCapture.Dimensions) sampled_colours=$($chooserCapture.Colours) background_rgb=$($chooserCapture.BackgroundPixel) row1_rgb=$($chooserCapture.ChooserFocusPixel) row2_rgb=$($chooserCapture.ChooserRow2Pixel) row3_rgb=$($chooserCapture.ChooserRow3Pixel) visual_signature=$($chooserCapture.VisualSignature) png_sha256=$($chooserCapture.Hash); app1=$($app1Capture.VisualSignature) app2=$($app2Capture.VisualSignature); retroarch_log_tail=[$(Get-RunLogTail $chooserRun)]"
     }
     Send-ChooserKeyboardPick $chooserRun $chooserCapture
+    Wait-ChooserPostReinitQuiet $chooserRun
     [void](Capture-ExpectedVisualSignature $chooserRun "launch-chooser-picked-app2" $app2Capture)
 } finally {
     Stop-MediaRun $chooserRun
