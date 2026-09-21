@@ -11,7 +11,25 @@ static struct retro_vfs_interface *arc_io_vfs;
 struct ArcIoFile {
    struct retro_vfs_file_handle *handle;
    bool writable;
+   const uint8_t *memory;
+   size_t memory_size;
+   size_t memory_at;
 };
+
+typedef struct { const uint8_t *data; size_t size; } ArcMemorySource;
+static ArcMemorySource arc_memory[2];
+static const char *const arc_memory_names[2] = {
+   ":arcdroid-memory-0:", ":arcdroid-memory-1:"
+};
+
+bool arc_io_set_memory_source(unsigned slot, const void *data, size_t size)
+{
+   if (slot >= 2u || (!data && size)) return false;
+   arc_memory[slot].data = data; arc_memory[slot].size = size; return true;
+}
+void arc_io_clear_memory_sources(void) { memset(arc_memory, 0, sizeof(arc_memory)); }
+static int arc_io_memory_slot(const char *path)
+{ for (unsigned i=0;i<2u;++i) if (path && !strcmp(path,arc_memory_names[i])) return (int)i; return -1; }
 
 void arc_io_set_vfs(struct retro_vfs_interface *vfs) { arc_io_vfs = vfs; }
 
@@ -20,7 +38,16 @@ bool arc_io_read_all(const char *path, void **data, size_t *size)
    struct retro_vfs_file_handle *file;
    int64_t length, got;
    void *buffer;
-   if (!arc_io_vfs || !path || !data || !size || !arc_io_vfs->open ||
+   if (!path || !data || !size) return false;
+   int memory_slot = arc_io_memory_slot(path);
+   if (memory_slot >= 0 && arc_memory[memory_slot].data)
+   {
+      void *copy = malloc(arc_memory[memory_slot].size ? arc_memory[memory_slot].size : 1u);
+      if (!copy) return false;
+      memcpy(copy, arc_memory[memory_slot].data, arc_memory[memory_slot].size);
+      *data = copy; *size = arc_memory[memory_slot].size; return true;
+   }
+   if (!arc_io_vfs || !arc_io_vfs->open ||
        !arc_io_vfs->size || !arc_io_vfs->read || !arc_io_vfs->close)
       return false;
    file = arc_io_vfs->open(path, RETRO_VFS_FILE_ACCESS_READ,
@@ -211,6 +238,16 @@ bool arc_io_walk(const char *directory, unsigned max_depth,
 
 ArcIoFile *arc_io_open_file(const char *path, bool writable)
 {
+   int memory_slot = arc_io_memory_slot(path);
+   if (memory_slot >= 0)
+   {
+      if (writable || !arc_memory[memory_slot].data) return NULL;
+      ArcIoFile *file = calloc(1u, sizeof(*file));
+      if (!file) return NULL;
+      file->memory = arc_memory[memory_slot].data;
+      file->memory_size = arc_memory[memory_slot].size;
+      return file;
+   }
    if (!arc_io_vfs || !arc_io_vfs->open || !path) return NULL;
    unsigned mode = writable ?
       RETRO_VFS_FILE_ACCESS_READ_WRITE | RETRO_VFS_FILE_ACCESS_UPDATE_EXISTING :
@@ -224,6 +261,7 @@ ArcIoFile *arc_io_open_file(const char *path, bool writable)
       arc_io_vfs->close(handle);
       return NULL;
    }
+   memset(file, 0, sizeof(*file));
    file->handle = handle;
    file->writable = writable;
    return file;
@@ -232,6 +270,7 @@ ArcIoFile *arc_io_open_file(const char *path, bool writable)
 bool arc_io_close_file(ArcIoFile *file)
 {
    if (!file) return false;
+   if (file->memory) { free(file); return true; }
    int result = -1;
    if (arc_io_vfs && arc_io_vfs->close && file->handle)
       result = arc_io_vfs->close(file->handle);
@@ -241,18 +280,32 @@ bool arc_io_close_file(ArcIoFile *file)
 
 int64_t arc_io_file_length(ArcIoFile *file)
 {
+   if (file && file->memory) return (int64_t)file->memory_size;
    return file && arc_io_vfs && arc_io_vfs->size ?
       arc_io_vfs->size(file->handle) : -1;
 }
 
 int64_t arc_io_seek_file(ArcIoFile *file, int64_t offset, int origin)
 {
+   if (file && file->memory)
+   {
+      int64_t base = origin == RETRO_VFS_SEEK_POSITION_START ? 0 :
+         origin == RETRO_VFS_SEEK_POSITION_CURRENT ? (int64_t)file->memory_at :
+         origin == RETRO_VFS_SEEK_POSITION_END ? (int64_t)file->memory_size : -1;
+      if (base < 0 || offset < -base || offset > (int64_t)file->memory_size - base) return -1;
+      file->memory_at = (size_t)(base + offset); return (int64_t)file->memory_at;
+   }
    return file && arc_io_vfs && arc_io_vfs->seek ?
       arc_io_vfs->seek(file->handle, offset, origin) : -1;
 }
 
 size_t arc_io_read_file(ArcIoFile *file, void *data, size_t size)
 {
+   if (file && file->memory && data)
+   {
+      size_t left=file->memory_size-file->memory_at;if(size>left)size=left;
+      memcpy(data,file->memory+file->memory_at,size);file->memory_at+=size;return size;
+   }
    if (!file || !data || !arc_io_vfs || !arc_io_vfs->read) return 0u;
    int64_t count = arc_io_vfs->read(file->handle, data, size);
    return count < 0 ? 0u : (size_t)count;
@@ -268,6 +321,7 @@ size_t arc_io_write_file(ArcIoFile *file, const void *data, size_t size)
 bool arc_io_flush_file(ArcIoFile *file)
 {
    if (!file) return false;
+   if (file->memory) return true;
    if (!file->writable) return true;
    return arc_io_vfs && (!arc_io_vfs->flush ||
                          arc_io_vfs->flush(file->handle) == 0);

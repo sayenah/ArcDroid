@@ -119,6 +119,8 @@ static const char *option_pointer_deadzone = "15";
 static const char *option_writes = "shadow";
 static const char *option_launch = "auto";
 static const char *option_launch_chooser = "remember";
+static const char *option_jfd_boot = "auto";
+static const char *option_adffs_package = "verified";
 static const char *option_input_profile = "Auto";
 static const char *option_osk_toggle = "L3";
 static const char *option_pad[2][10];
@@ -133,6 +135,13 @@ static unsigned input_overflow_log_lines;
 static unsigned short_warning_log_lines;
 static unsigned short_warning_osd_calls;
 static unsigned launch_log_lines;
+static unsigned jfd_boot_log_lines;
+static char last_jfd_boot_log[512];
+static unsigned adffs_notice_calls;
+static char last_adffs_notice[512];
+static bool adffs_log_leak;
+static unsigned adffs_package_log_lines;
+static char last_adffs_package_log[512];
 static unsigned skipped_sibling_log_lines;
 static unsigned skipped_sibling_names;
 static unsigned launch_warning_osd_calls;
@@ -330,6 +339,8 @@ static void frontend_log(enum retro_log_level level, const char *format, ...)
    va_start(arguments, format);
    vsnprintf(message, sizeof(message), format, arguments);
    va_end(arguments);
+   if (strstr(message, "ArcFixture") || strstr(message, "ArcDroid synthetic ADFFS"))
+      adffs_log_leak = true;
    if (strstr(message, "VIDC"))
    {
       if (level <= RETRO_LOG_INFO) ++vidc_info_log_lines;
@@ -362,6 +373,16 @@ static void frontend_log(enum retro_log_level level, const char *format, ...)
    {
       ++launch_log_lines;
       snprintf(last_launch_log, sizeof(last_launch_log), "%s", message);
+   }
+   if (!strncmp(message, "JFD boot:", 9u))
+   {
+      ++jfd_boot_log_lines;
+      snprintf(last_jfd_boot_log, sizeof(last_jfd_boot_log), "%s", message);
+   }
+   if (!strncmp(message, "ADFFS package:", 14u))
+   {
+      ++adffs_package_log_lines;
+      snprintf(last_adffs_package_log, sizeof(last_adffs_package_log), "%s", message);
    }
    if (!strncmp(message, "Launch sibling boot skipped:",
                 sizeof("Launch sibling boot skipped:") - 1u))
@@ -404,10 +425,11 @@ static bool environment(unsigned command, void *data)
          const struct retro_core_options_v2 *options = data;
          unsigned count = 0u;
          while (options->definitions[count].key) ++count;
-         assert(count == 34u && options->categories &&
+         assert(count == 36u && options->categories &&
                 !strcmp(options->categories[0].key, "pad_mapping") &&
                 !strcmp(options->categories[0].desc, "Pad Mapping"));
          bool found_profile = false, found_osk = false, found_chooser = false;
+         bool found_jfd_boot = false, found_adffs_package = false;
          unsigned pads = 0u;
          const char *categorized_pad_labels[ARC_PAD_PORTS * ARC_PAD_INPUT_COUNT] = {0};
          for (unsigned n = 0u; n < count; ++n)
@@ -438,6 +460,20 @@ static bool environment(unsigned command, void *data)
                       !strcmp(definition->values[0].value, "remember") &&
                       !strcmp(definition->values[1].value, "ask"));
             }
+            if (!strcmp(definition->key, "arcdroid_jfd_boot"))
+            {
+               found_jfd_boot = true;
+               assert(!strcmp(definition->default_value, "auto") &&
+                      !strcmp(definition->values[0].value, "auto") &&
+                      !strcmp(definition->values[1].value, "native"));
+            }
+            if (!strcmp(definition->key, "arcdroid_adffs_package"))
+            {
+               found_adffs_package = true;
+               assert(!strcmp(definition->default_value, "verified") &&
+                      !strcmp(definition->values[0].value, "verified") &&
+                      !strcmp(definition->values[1].value, "untested"));
+            }
             if (!strncmp(definition->key, "arcdroid_pad", 12u))
             {
                assert(!strcmp(definition->category_key, "pad_mapping") &&
@@ -452,7 +488,8 @@ static bool environment(unsigned command, void *data)
                categorized_pad_labels[pads++] = definition->desc_categorized;
             }
          }
-         assert(found_profile && found_osk && found_chooser && pads == 20u);
+         assert(found_profile && found_osk && found_chooser && found_jfd_boot &&
+                found_adffs_package && pads == 20u);
          return true;
       }
       case RETRO_ENVIRONMENT_SET_DISK_CONTROL_EXT_INTERFACE:
@@ -573,6 +610,10 @@ static bool environment(unsigned command, void *data)
          else if (!strcmp(variable->key, "arcdroid_launch")) variable->value = option_launch;
          else if (!strcmp(variable->key, "arcdroid_launch_chooser"))
             variable->value = option_launch_chooser;
+         else if (!strcmp(variable->key, "arcdroid_jfd_boot"))
+            variable->value = option_jfd_boot;
+         else if (!strcmp(variable->key, "arcdroid_adffs_package"))
+            variable->value = option_adffs_package;
          else if (!strcmp(variable->key, "arcdroid_input_profile")) variable->value = option_input_profile;
          else if (!strcmp(variable->key, "arcdroid_osk_toggle")) variable->value = option_osk_toggle;
          else
@@ -637,6 +678,13 @@ static bool environment(unsigned command, void *data)
       case RETRO_ENVIRONMENT_SET_MESSAGE_EXT:
          ++total_osd_calls;
          snprintf(last_message, sizeof(last_message), "%s", ((struct retro_message_ext *)data)->msg);
+         if (strstr(last_message, "ADFFS boot unavailable") ||
+             strstr(last_message, "JASPP boot script") ||
+             strstr(last_message, "may boot better with ADFFS"))
+         {
+            ++adffs_notice_calls;
+            snprintf(last_adffs_notice, sizeof(last_adffs_notice), "%s", last_message);
+         }
          if (!strncmp(last_message, "Folder disc set", 15u))
             ++folder_set_warning_osd_calls;
          if (strstr(last_message, "VIDC")) ++vidc_osd_ext_calls;
@@ -660,6 +708,13 @@ static bool environment(unsigned command, void *data)
       case RETRO_ENVIRONMENT_SET_MESSAGE:
          ++total_osd_calls;
          snprintf(last_message, sizeof(last_message), "%s", ((struct retro_message *)data)->msg);
+         if (strstr(last_message, "ADFFS boot unavailable") ||
+             strstr(last_message, "JASPP boot script") ||
+             strstr(last_message, "may boot better with ADFFS"))
+         {
+            ++adffs_notice_calls;
+            snprintf(last_adffs_notice, sizeof(last_adffs_notice), "%s", last_message);
+         }
          if (!strncmp(last_message, "Folder disc set", 15u))
             ++folder_set_warning_osd_calls;
          if (strstr(last_message, "VIDC")) ++vidc_osd_legacy_calls;
@@ -867,6 +922,73 @@ static uint64_t hash_file(const char *path)
    int byte;
    while ((byte = fgetc(f)) != EOF) { hash ^= (uint8_t)byte; hash *= UINT64_C(1099511628211); }
    assert(!ferror(f) && !fclose(f)); return hash;
+}
+
+typedef struct {
+   uint64_t sum;
+   uint64_t exclusive_or;
+   unsigned files;
+} TreeSnapshot;
+
+static uint64_t hash_text(const char *text)
+{
+   uint64_t hash = UINT64_C(1469598103934665603);
+   for (; *text; ++text)
+   {
+      hash ^= (uint8_t)*text;
+      hash *= UINT64_C(1099511628211);
+   }
+   return hash;
+}
+
+static void snapshot_walk(const char *path, const char *relative,
+                          bool ignore_cmos, TreeSnapshot *snapshot)
+{
+   DIR *directory = opendir(path);
+   assert(directory);
+   struct dirent *entry;
+   while ((entry = readdir(directory)) != NULL)
+   {
+      if (!strcmp(entry->d_name, ".") || !strcmp(entry->d_name, "..")) continue;
+      char child[4096], child_relative[4096];
+      int child_n = snprintf(child, sizeof(child), "%s/%s", path, entry->d_name);
+      int relative_n = relative[0] ?
+         snprintf(child_relative, sizeof(child_relative), "%s/%s", relative, entry->d_name) :
+         snprintf(child_relative, sizeof(child_relative), "%s", entry->d_name);
+      assert(child_n > 0 && (size_t)child_n < sizeof(child) &&
+             relative_n > 0 && (size_t)relative_n < sizeof(child_relative));
+      struct stat status;
+      assert(stat(child, &status) == 0);
+      if (S_ISDIR(status.st_mode))
+         snapshot_walk(child, child_relative, ignore_cmos, snapshot);
+      else if (S_ISREG(status.st_mode))
+      {
+         if (ignore_cmos && !strncmp(child_relative, "arcdroid/cmos/", 14u))
+            continue;
+         uint64_t value = hash_text(child_relative) ^ hash_file(child) ^
+                          (uint64_t)status.st_size;
+         snapshot->sum += value;
+         snapshot->exclusive_or ^= value * UINT64_C(0x9e3779b97f4a7c15);
+         ++snapshot->files;
+      }
+   }
+   assert(closedir(directory) == 0);
+}
+
+static TreeSnapshot snapshot_tree_filtered(const char *path, bool ignore_cmos)
+{
+   TreeSnapshot snapshot = {0};
+   snapshot_walk(path, "", ignore_cmos, &snapshot);
+   return snapshot;
+}
+
+static TreeSnapshot snapshot_tree(const char *path)
+{ return snapshot_tree_filtered(path, false); }
+
+static bool same_snapshot(TreeSnapshot a, TreeSnapshot b)
+{
+   return a.sum == b.sum && a.exclusive_or == b.exclusive_or &&
+          a.files == b.files;
 }
 
 static uint32_t hash_file_prefix(const char *path, size_t size)
@@ -1273,12 +1395,12 @@ int main(int argc, char **argv)
          }
       }
    }
-   else if (argc != 5 && argc != 13)
+   else if (argc != 5 && argc != 15)
    {
       print_usage(stderr, argv[0]);
       return 2;
    }
-   bool media_tests = argc == 13;
+   bool media_tests = argc == 15;
    real_boot_mode = real_boot;
    void *module = dlopen(argv[1], RTLD_NOW | RTLD_LOCAL);
    if (!module)
@@ -1293,6 +1415,14 @@ int main(int argc, char **argv)
    make_directory(argv[4]); make_directory(system_path); make_directory(firmware_path);
    strncat(firmware_path, "/firmware", sizeof(firmware_path) - strlen(firmware_path) - 1u); make_directory(firmware_path);
    make_directory(save_path);
+   if (media_tests)
+   {
+      char adffs_dir[4096], package_path[4096];
+      snprintf(adffs_dir, sizeof(adffs_dir), "%s/arcdroid/adffs", system_path);
+      make_directory(adffs_dir);
+      snprintf(package_path, sizeof(package_path), "%s/synthetic.zip", adffs_dir);
+      copy_file(argv[13], package_path);
+   }
    if (real_boot)
    {
       snprintf(evidence_path, sizeof(evidence_path), "%s/evidence", argv[4]);
@@ -1362,6 +1492,7 @@ int main(int argc, char **argv)
    unsigned (*arc_libretro_test_chooser_focus)(void) = NULL;
    unsigned (*arc_libretro_test_chooser_rows)(void) = NULL;
    void (*arc_libretro_test_force_input_reconcile)(void) = NULL;
+   void (*arc_libretro_test_adffs_accept_test_os)(bool) = NULL;
    void (*arc_platform_test_input_events_reset)(void) = NULL;
    size_t (*arc_platform_test_input_events)(ArcKartEvent *, size_t) = NULL;
    if (real_boot || newio_smoke)
@@ -1420,6 +1551,8 @@ int main(int argc, char **argv)
          dlsym(module, "arc_libretro_test_chooser_rows");
       *(void **)(&arc_libretro_test_force_input_reconcile) =
          dlsym(module, "arc_libretro_test_force_input_reconcile");
+      *(void **)(&arc_libretro_test_adffs_accept_test_os) =
+         dlsym(module, "arc_libretro_test_adffs_accept_test_os");
       *(void **)(&arc_platform_test_input_events_reset) =
          dlsym(module, "arc_platform_test_input_events_reset");
       *(void **)(&arc_platform_test_input_events) =
@@ -1447,6 +1580,7 @@ int main(int argc, char **argv)
              arc_libretro_test_chooser_focus &&
              arc_libretro_test_chooser_rows &&
              arc_libretro_test_force_input_reconcile &&
+             arc_libretro_test_adffs_accept_test_os &&
              arc_platform_test_input_events_reset && arc_platform_test_input_events);
       ArcDigest application_profile_digest = digest_file(argv[12]);
       ArcDigest playlist_profile_digest = digest_playlist_pair(argv[7], argv[8]);
@@ -5622,7 +5756,263 @@ int main(int argc, char **argv)
          assert(open_files == 0u && open_dirs == 0u && hash_file(helper_file) == stable_helper);
       }
       assert(launch_log_lines == decisions + 100u);
+
+      /* Every Slice 6a eligibility exit has a stable diagnostic contract.
+       * These generated JFDs and zip files contain only invented bytes. */
+      char adffs_fixture[4096], package_path[4096];
+      snprintf(package_path, sizeof(package_path), "%s/arcdroid/adffs/synthetic.zip",
+               system_path);
+#define COPY_ADFFS_FIXTURE(name) do { \
+         snprintf(adffs_fixture, sizeof(adffs_fixture), "%s/adffs/%s", argv[11], (name)); \
+         copy_file(adffs_fixture, package_path); \
+      } while (0)
+#define ADFFS_GAME(name, variable) \
+      char variable##_path[4096]; \
+      snprintf(variable##_path, sizeof(variable##_path), "%s/adffs/%s", argv[11], (name)); \
+      struct retro_game_info variable = {variable##_path, NULL, 0u, NULL}
+#define EXPECT_NATIVE(variable, why, notices, fragment) do { \
+         unsigned before_lines = jfd_boot_log_lines; \
+         unsigned before_notices = adffs_notice_calls; \
+         char expected_line[512]; \
+         snprintf(expected_line, sizeof(expected_line), \
+                  "JFD boot: path=native reason=%s\n", (why)); \
+         phase = PHASE_LOAD; assert(retro_load_game(&(variable))); \
+         assert(jfd_boot_log_lines == before_lines + 1u && \
+                !strcmp(last_jfd_boot_log, expected_line) && \
+                adffs_notice_calls == before_notices + (notices)); \
+         if ((fragment) != NULL) assert(strstr(last_adffs_notice, (fragment))); \
+         retro_unload_game(); \
+      } while (0)
+#define EXPECT_ADFFS(variable, line) do { \
+         unsigned before_lines = jfd_boot_log_lines; \
+         unsigned before_notices = adffs_notice_calls; \
+         phase = PHASE_LOAD; assert(retro_load_game(&(variable))); \
+         assert(jfd_boot_log_lines == before_lines + 1u && \
+                !strcmp(last_jfd_boot_log, (line)) && \
+                adffs_notice_calls == before_notices); \
+         retro_unload_game(); \
+      } while (0)
+
+      option_writes = "off";
       option_launch = "auto";
+      option_jfd_boot = "auto";
+      option_adffs_package = "verified";
+      COPY_ADFFS_FIXTURE("synthetic.zip");
+      EXPECT_NATIVE(game, "not-jfd", 0u, NULL);
+
+      ADFFS_GAME("multi.m3u", adffs_multi);
+      EXPECT_NATIVE(adffs_multi, "multi-image", 0u, NULL);
+      ADFFS_GAME("disc-two.jfd", adffs_disc_two);
+      EXPECT_NATIVE(adffs_disc_two, "multi-disc", 0u, NULL);
+      ADFFS_GAME("count-two.jfd", adffs_count_two);
+      EXPECT_NATIVE(adffs_count_two, "multi-disc", 0u, NULL);
+      ADFFS_GAME("eligible.jfd", adffs_eligible);
+      option_jfd_boot = "native";
+      EXPECT_NATIVE(adffs_eligible, "option", 0u, NULL);
+      option_jfd_boot = "auto";
+      option_launch = "app1";
+      EXPECT_NATIVE(adffs_eligible, "launch-option", 0u, NULL);
+      option_launch = "auto";
+      arc_libretro_test_adffs_accept_test_os(false);
+      EXPECT_NATIVE(adffs_eligible, "os", 0u, NULL);
+      arc_libretro_test_adffs_accept_test_os(true);
+
+      char invalid_first[4096], valid_second[4096];
+      snprintf(invalid_first, sizeof(invalid_first), "%s/arcdroid/adffs/a-invalid.zip",
+               system_path);
+      snprintf(valid_second, sizeof(valid_second), "%s/arcdroid/adffs/b-valid.zip",
+               system_path);
+      assert(remove(package_path) == 0);
+      snprintf(adffs_fixture, sizeof(adffs_fixture), "%s/adffs/bad-crc.zip", argv[11]);
+      copy_file(adffs_fixture, invalid_first);
+      snprintf(adffs_fixture, sizeof(adffs_fixture), "%s/adffs/synthetic.zip", argv[11]);
+      copy_file(adffs_fixture, valid_second);
+      unsigned package_lines = adffs_package_log_lines;
+      EXPECT_ADFFS(adffs_eligible,
+         "JFD boot: path=adffs script=builtin profile=synthetic-test version=\"Synthetic 1.0\"\n");
+      assert(adffs_package_log_lines == package_lines + 1u &&
+             !strcmp(last_adffs_package_log, "ADFFS package: file=b-valid.zip\n") &&
+             remove(invalid_first) == 0 && remove(valid_second) == 0);
+
+      ADFFS_GAME("embedded-only.jfd", adffs_embedded);
+      EXPECT_NATIVE(adffs_embedded, "no-package", 1u,
+                    "carries a JASPP boot script");
+      ADFFS_GAME("game-only.jfd", adffs_game_only);
+      EXPECT_NATIVE(adffs_game_only, "no-package", 1u,
+                    "may boot better with ADFFS");
+
+      COPY_ADFFS_FIXTURE("bad-crc.zip");
+      EXPECT_NATIVE(adffs_eligible, "invalid-package:member-crc32-mismatch", 1u,
+                    "invalid-package:member-crc32-mismatch");
+      COPY_ADFFS_FIXTURE("untested.zip");
+      EXPECT_NATIVE(adffs_eligible, "untested-package", 1u, "untested-package");
+      option_adffs_package = "untested";
+      EXPECT_ADFFS(adffs_eligible,
+         "JFD boot: path=adffs script=builtin profile=untested version=\"Synthetic 1.0\"\n");
+      option_adffs_package = "verified";
+
+      COPY_ADFFS_FIXTURE("synthetic.zip");
+      ADFFS_GAME("no-script.jfd", adffs_no_script);
+      EXPECT_NATIVE(adffs_no_script, "no-script", 0u, NULL);
+      ADFFS_GAME("missing-resource.jfd", adffs_missing);
+      EXPECT_NATIVE(adffs_missing, "missing-resource:!ADFFS/ExTrAs/Absent/module",
+                    1u, "missing-resource:!ADFFS/ExTrAs/Absent/module");
+      ADFFS_GAME("too-large.jfd", adffs_too_large);
+      EXPECT_NATIVE(adffs_too_large, "too-large", 1u, "too-large");
+      ADFFS_GAME("decoded-too-large.jfd", adffs_decoded_too_large);
+      EXPECT_NATIVE(adffs_decoded_too_large, "decoded-too-large", 1u,
+                    "decoded-too-large");
+      ADFFS_GAME("capacity.jfd", adffs_capacity);
+      EXPECT_ADFFS(adffs_capacity,
+         "JFD boot: path=adffs script=builtin profile=synthetic-test version=\"Synthetic 1.0\"\n");
+      ADFFS_GAME("decoded-limit.jfd", adffs_decoded_limit);
+      EXPECT_ADFFS(adffs_decoded_limit,
+         "JFD boot: path=adffs script=builtin profile=synthetic-test version=\"Synthetic 1.0\"\n");
+      EXPECT_ADFFS(adffs_embedded,
+         "JFD boot: path=adffs script=embedded profile=synthetic-test version=\"Synthetic 1.0\"\n");
+      EXPECT_ADFFS(adffs_eligible,
+         "JFD boot: path=adffs script=builtin profile=synthetic-test version=\"Synthetic 1.0\"\n");
+
+#undef EXPECT_ADFFS
+#undef EXPECT_NATIVE
+#undef ADFFS_GAME
+#undef COPY_ADFFS_FIXTURE
+
+      /* Slice 6a: pre-warm every native write mode for this exact content so
+       * the following ADFFS sessions may not create any native-path files.
+       * The user package and JFD remain byte-identical throughout. */
+      struct retro_game_info adffs_game = {argv[14], NULL, 0u, NULL};
+      const char *write_modes[] = {"shadow", "original", "off"};
+      uint64_t package_hash = hash_file(package_path);
+      uint64_t adffs_source_hash = hash_file(argv[14]);
+      char adffs_native_save[4096], adffs_memory_save[4096];
+      snprintf(adffs_native_save, sizeof(adffs_native_save),
+               "%s/adffs-native-save-%ld", argv[4], (long)getpid());
+      snprintf(adffs_memory_save, sizeof(adffs_memory_save),
+               "%s/adffs-memory-save-%ld", argv[4], (long)getpid());
+      make_directory(adffs_native_save);
+      make_directory(adffs_memory_save);
+      save_dir = adffs_native_save;
+      option_jfd_boot = "native";
+      option_launch = "auto";
+      for (unsigned mode = 0u; mode < 3u; ++mode)
+      {
+         option_writes = write_modes[mode];
+         unsigned boot_lines = jfd_boot_log_lines;
+         phase = PHASE_LOAD;
+         if (!retro_load_game(&adffs_game))
+         {
+            fprintf(stderr, "native ADFFS fixture load failed (mode %s): %s\n",
+                    write_modes[mode], last_message);
+            abort();
+         }
+         assert(jfd_boot_log_lines == boot_lines + 1u &&
+                !strcmp(last_jfd_boot_log, "JFD boot: path=native reason=option\n"));
+         retro_reset();
+         retro_unload_game();
+      }
+      /* CMOS is the one native-path write allowed by AC-10; its emulated RTC
+       * byte is time-dependent. Compare every other file against a native
+       * run of the same content and operations. */
+      TreeSnapshot adffs_native_save_result =
+         snapshot_tree_filtered(adffs_native_save, true);
+      char adffs_fixture_dir[4096];
+      snprintf(adffs_fixture_dir, sizeof(adffs_fixture_dir), "%s/adffs", argv[11]);
+      TreeSnapshot adffs_system_before = snapshot_tree(system_path);
+      TreeSnapshot adffs_content_before = snapshot_tree(adffs_fixture_dir);
+
+      /* Both generated D-format discs are memory-only and immutable for all
+       * Disk Writes settings. Reset must rebuild byte-identical images, and
+       * every frontend mutation callback is refused without changing them. */
+      option_jfd_boot = "auto";
+      option_adffs_package = "verified";
+      save_dir = adffs_memory_save;
+      char carrier_digest[41] = {0}, support_digest[41] = {0};
+      for (unsigned mode = 0u; mode < 3u; ++mode)
+      {
+         option_writes = write_modes[mode];
+         unsigned boot_lines = jfd_boot_log_lines;
+         phase = PHASE_LOAD; assert(retro_load_game(&adffs_game));
+         assert(jfd_boot_log_lines == boot_lines + 1u &&
+                !strcmp(last_jfd_boot_log,
+                   "JFD boot: path=adffs script=builtin profile=synthetic-test version=\"Synthetic 1.0\"\n") &&
+                disk_control.get_num_images() == 1u &&
+                disk_control.get_image_index() == 0u &&
+                !disk_control.get_eject_state());
+         char carrier_now[41], support_now[41];
+         assert(arc_engine_test_drive_media(0u, &write_protected, carrier_now) &&
+                write_protected &&
+                arc_engine_test_drive_media(1u, &write_protected, support_now) &&
+                write_protected);
+         if (!mode)
+         {
+            memcpy(carrier_digest, carrier_now, sizeof(carrier_digest));
+            memcpy(support_digest, support_now, sizeof(support_digest));
+         }
+         else
+            assert(!strcmp(carrier_digest, carrier_now) &&
+                   !strcmp(support_digest, support_now));
+         assert(!disk_control.set_eject_state(true) &&
+                !disk_control.set_image_index(0u) &&
+                !disk_control.replace_image_index(0u, NULL) &&
+                !disk_control.add_image_index());
+         char unchanged_carrier[41], unchanged_support[41];
+         assert(arc_engine_test_drive_media(0u, &write_protected, unchanged_carrier) &&
+                write_protected &&
+                arc_engine_test_drive_media(1u, &write_protected, unchanged_support) &&
+                write_protected &&
+                !strcmp(carrier_now, unchanged_carrier) &&
+                !strcmp(support_now, unchanged_support));
+         retro_reset();
+         assert(arc_engine_test_drive_media(0u, &write_protected, unchanged_carrier) &&
+                write_protected &&
+                arc_engine_test_drive_media(1u, &write_protected, unchanged_support) &&
+                write_protected &&
+                !strcmp(carrier_digest, unchanged_carrier) &&
+                !strcmp(support_digest, unchanged_support));
+         retro_unload_game();
+         assert(!arc_engine_test_drive_media(0u, NULL, NULL) &&
+                !arc_engine_test_drive_media(1u, NULL, NULL) &&
+                open_files == 0u && open_dirs == 0u &&
+                hash_file(package_path) == package_hash &&
+                hash_file(argv[14]) == adffs_source_hash);
+      }
+      TreeSnapshot adffs_system_after = snapshot_tree(system_path);
+      TreeSnapshot adffs_save_after =
+         snapshot_tree_filtered(adffs_memory_save, true);
+      TreeSnapshot adffs_content_after = snapshot_tree(adffs_fixture_dir);
+      if (!same_snapshot(adffs_system_before, adffs_system_after) ||
+          !same_snapshot(adffs_native_save_result, adffs_save_after) ||
+          !same_snapshot(adffs_content_before, adffs_content_after) ||
+          adffs_log_leak)
+      {
+         fprintf(stderr,
+            "ADFFS host-write snapshot changed: system=%u/%u save=%u/%u content=%u/%u leak=%u\n",
+            adffs_system_before.files, adffs_system_after.files,
+            adffs_native_save_result.files, adffs_save_after.files,
+            adffs_content_before.files, adffs_content_after.files,
+            adffs_log_leak ? 1u : 0u);
+         abort();
+      }
+
+      /* Switching in either direction cannot retain a memory media source. */
+      save_dir = save_path;
+      option_writes = "off";
+      phase = PHASE_LOAD; assert(retro_load_game(&adffs_game));
+      retro_unload_game();
+      phase = PHASE_LOAD; assert(retro_load_game(&game));
+      assert(arc_engine_test_drive_media(0u, &write_protected, mounted_digest) &&
+             strcmp(mounted_digest, carrier_digest));
+      retro_unload_game();
+      phase = PHASE_LOAD; assert(retro_load_game(&game));
+      retro_unload_game();
+      phase = PHASE_LOAD; assert(retro_load_game(&adffs_game));
+      assert(arc_engine_test_drive_media(0u, &write_protected, mounted_digest) &&
+             !strcmp(mounted_digest, carrier_digest));
+      retro_unload_game();
+
+      option_launch = "auto";
+      option_jfd_boot = "auto";
       option_writes = "shadow";
       assert(hash_file(argv[7]) == disc1_hash && hash_file(argv[8]) == disc2_hash);
    }

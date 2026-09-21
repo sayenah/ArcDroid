@@ -723,6 +723,21 @@ if ($env:GITHUB_STEP_SUMMARY) {
 # The shipping DLL above has already completed all native runs and guards.
 Copy-Item -Force (Join-Path $InputDirectory "arcdroid_libretro_test.dll") $core
 Copy-Item -Force (Join-Path $InputDirectory "arcdroid-test.rom") $firmware
+$adffsDirectory = Join-Path (Split-Path $systemDirectory) "adffs"
+New-Item -ItemType Directory -Force $adffsDirectory | Out-Null
+Copy-Item -Force (Join-Path $InputDirectory "synthetic.zip") `
+    (Join-Path $adffsDirectory "synthetic.zip")
+$content = (Resolve-Path (Join-Path $InputDirectory "eligible.jfd")).Path
+Invoke-ArcDroid 100 $false
+$adffsLines = Get-Content $log | Select-String -SimpleMatch "JFD boot: path=adffs"
+if (-not ($adffsLines.Line -match 'script=builtin profile=synthetic-test version="Synthetic 1.0"')) {
+    throw "Slice 6a synthetic JFD did not select the ADFFS path through RetroArch VFS"
+}
+Write-Host "Slice 6a Windows RetroArch: synthetic package selected through frontend VFS"
+if ($env:GITHUB_STEP_SUMMARY) {
+    Add-Content -Encoding UTF8 $env:GITHUB_STEP_SUMMARY "- Slice 6a ADFFS: generated package and JFD selected path=adffs through RetroArch's frontend VFS."
+}
+
 $content = (Resolve-Path (Join-Path $InputDirectory "arcdroid-application-l.adl")).Path
 Invoke-ArcDroid 100 $false
 $launchLines = Get-Content $log | Select-String -SimpleMatch "Launch:"
