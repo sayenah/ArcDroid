@@ -12,7 +12,7 @@ allowed_binary()
 git ls-files | while IFS= read -r path; do
   lower=$(printf '%s' "$path" | tr '[:upper:]' '[:lower:]')
   case "$lower" in
-    *.rom|*.bin|*.hdf|*.adf|*.apd|*.jfd|*.hfe|*.wav)
+    *.rom|*.bin|*.hdf|*.adf|*.apd|*.jfd|*.hfe|*.wav|*.zip)
       if ! allowed_binary "$path"; then
         printf 'forbidden tracked binary: %s\n' "$path" >&2
         exit 1

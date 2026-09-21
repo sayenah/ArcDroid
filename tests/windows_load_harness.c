@@ -249,19 +249,26 @@ typedef bool (*LoadGameFn)(const struct retro_game_info *);
 
 int main(int argc, char **argv)
 {
-   assert(argc == 7);
+   assert(argc == 5 || argc == 7);
    char system_path[4096], arcdroid_path[4096], firmware_path[4096];
    char save_path[4096], firmware_file[4096], adffs_path[4096], package_file[4096];
    make_directory(argv[4]);
    join_path(system_path, sizeof(system_path), argv[4], "system"); make_directory(system_path);
    join_path(arcdroid_path, sizeof(arcdroid_path), system_path, "arcdroid"); make_directory(arcdroid_path);
    join_path(firmware_path, sizeof(firmware_path), arcdroid_path, "firmware"); make_directory(firmware_path);
-   join_path(adffs_path, sizeof(adffs_path), arcdroid_path, "adffs"); make_directory(adffs_path);
+   if (argc == 7)
+   {
+      join_path(adffs_path, sizeof(adffs_path), arcdroid_path, "adffs");
+      make_directory(adffs_path);
+   }
    join_path(save_path, sizeof(save_path), argv[4], "save"); make_directory(save_path);
    join_path(firmware_file, sizeof(firmware_file), firmware_path, "renamed-test-firmware.data");
    assert(CopyFileA(argv[2], firmware_file, FALSE));
-   join_path(package_file, sizeof(package_file), adffs_path, "synthetic.zip");
-   assert(CopyFileA(argv[5], package_file, FALSE));
+   if (argc == 7)
+   {
+      join_path(package_file, sizeof(package_file), adffs_path, "synthetic.zip");
+      assert(CopyFileA(argv[5], package_file, FALSE));
+   }
    system_dir = system_path; save_dir = save_path;
 
    HMODULE module = LoadLibraryA(argv[1]);
@@ -289,10 +296,14 @@ int main(int argc, char **argv)
    phase = PHASE_RUN;
    for (unsigned frame = 0u; frame < 100u; ++frame) retro_run();
    retro_unload_game();
-   struct retro_game_info adffs_game = {argv[6], NULL, 0u, NULL};
-   phase = PHASE_LOAD; assert(retro_load_game(&adffs_game));
-   assert(saw_adffs_log);
-   retro_unload_game(); retro_deinit();
+   if (argc == 7)
+   {
+      struct retro_game_info adffs_game = {argv[6], NULL, 0u, NULL};
+      phase = PHASE_LOAD; assert(retro_load_game(&adffs_game));
+      assert(saw_adffs_log);
+      retro_unload_game();
+   }
+   retro_deinit();
    assert(saw_options && saw_no_game && saw_disk && saw_pixel && saw_controllers &&
           saw_keyboard && saw_vfs && saw_input_descriptors);
    assert(video_frames == 100u && audio_frames > 0u);

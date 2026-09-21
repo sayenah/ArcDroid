@@ -313,7 +313,8 @@ size_t arc_io_read_file(ArcIoFile *file, void *data, size_t size)
 
 size_t arc_io_write_file(ArcIoFile *file, const void *data, size_t size)
 {
-   if (!file || !data || !arc_io_vfs || !arc_io_vfs->write) return 0u;
+   if (!file || !data || file->memory || !file->writable ||
+       !arc_io_vfs || !arc_io_vfs->write) return 0u;
    int64_t count = arc_io_vfs->write(file->handle, data, size);
    return count < 0 ? 0u : (size_t)count;
 }

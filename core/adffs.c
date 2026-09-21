@@ -557,7 +557,10 @@ static bool set_missing(SelectionContext *c, const char *name) {
 }
 
 static bool select_script(SelectionContext *c, const uint8_t *s, size_t n,
-                          unsigned depth) {
+                          unsigned depth);
+
+static bool select_script_line(SelectionContext *c, const uint8_t *s, size_t n,
+                               unsigned depth) {
   for (size_t i = 0; i + 6u <= n; ++i)
     if (tolower((unsigned char)s[i]) == 'a' &&
         tolower((unsigned char)s[i + 1]) == 'd' &&
@@ -623,6 +626,24 @@ static bool select_script(SelectionContext *c, const uint8_t *s, size_t n,
       }
       i = j ? j - 1u : i;
     }
+  return true;
+}
+
+static bool select_script(SelectionContext *c, const uint8_t *s, size_t n,
+                          unsigned depth) {
+  size_t line = 0u;
+  while (line < n) {
+    size_t end = line;
+    while (end < n && s[end] != '\r' && s[end] != '\n')
+      ++end;
+    size_t first = line;
+    while (first < end && isspace((unsigned char)s[first]))
+      ++first;
+    if (first < end && s[first] != '|' &&
+        !select_script_line(c, s + first, end - first, depth))
+      return false;
+    line = end + (end < n ? 1u : 0u);
+  }
   return true;
 }
 

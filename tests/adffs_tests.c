@@ -152,6 +152,35 @@ static bool selected_member(const ArcAdffsPackage *package,
       return selection->member[i];
   return false;
 }
+static unsigned selected_directory_count(const ArcAdffsPackage *package,
+                                         const ArcAdffsSelection *selection) {
+  char(*directories)[128] = calloc(ARC_ADFFS_MAX_MEMBERS * 3u,
+                                   sizeof(*directories));
+  assert(directories);
+  unsigned count = 0u;
+  for (unsigned i = 0u; i < package->count; ++i) {
+    if (!selection->member[i])
+      continue;
+    char path[128];
+    snprintf(path, sizeof(path), "%s", package->members[i].name);
+    for (char *slash = strchr(path, '/'); slash;
+         slash = strchr(slash + 1, '/')) {
+      char saved = *slash;
+      *slash = 0;
+      bool known = false;
+      for (unsigned d = 0u; d < count; ++d)
+        if (!strcmp(directories[d], path))
+          known = true;
+      if (!known) {
+        assert(count < ARC_ADFFS_MAX_MEMBERS * 3u);
+        snprintf(directories[count++], sizeof(directories[0]), "%s", path);
+      }
+      *slash = saved;
+    }
+  }
+  free(directories);
+  return count;
+}
 static unsigned substring_count(const char *text, const char *needle) {
   unsigned count = 0u;
   size_t length = strlen(needle);
@@ -313,6 +342,16 @@ int main(int argc, char **argv) {
          selection.count == 10u &&
          selected_member(p, &selection, "!ADFFS/trackers/QTMModule") &&
          !selected_member(p, &selection, "!ADFFS/extras/JoyMod"));
+  test_stage("Obey comment reference filtering");
+  const char *comment_only = " \t | ADFFS:extras.Absent\r",
+             *live_reference = " \t ADFFS:extras.Absent\r";
+  assert(arc_adffs_select(p, (const uint8_t *)comment_only,
+                          strlen(comment_only), &selection, missing) &&
+         selection.count == 9u);
+  assert(!arc_adffs_select(p, (const uint8_t *)live_reference,
+                           strlen(live_reference), &selection, missing) &&
+         strstr(missing, "Absent"));
+  assert(arc_adffs_select(p, script, script_size, &selection, missing));
   test_stage("RAM size computation");
   uint32_t expected_ram = 64u * 1024u;
   for (unsigned i = 0; i < p->count; ++i)
@@ -320,7 +359,7 @@ int main(int argc, char **argv) {
       expected_ram += ((uint32_t)p->members[i].size + 1023u) & ~1023u;
   size_t launcher_size = 0u;
   assert(arc_adffs_launcher(NULL, 0u, &launcher_size));
-  expected_ram += 3u * 2048u;
+  expected_ram += selected_directory_count(p, &selection) * 2048u;
   expected_ram += ((uint32_t)launcher_size + 1023u) & ~1023u;
   expected_ram = (expected_ram + 32767u) & ~32767u;
   assert(selection.ram_size == expected_ram && !(selection.ram_size & 32767u));
@@ -500,6 +539,42 @@ int main(int argc, char **argv) {
          !arc_adffs_support_build(p, &huge_selection, support, error,
                                   sizeof(error)) &&
          strstr(error, "does not fit"));
+  test_stage("support closure capacity boundary");
+  ArcAdffsMember *huge = NULL;
+  for (unsigned i = 0u; i < p->count; ++i)
+    if (!strcmp(p->members[i].name, "!ADFFS/trackers/Huge"))
+      huge = &p->members[i];
+  assert(huge);
+  uint8_t *saved_huge_data = huge->data;
+  size_t saved_huge_size = huge->size;
+  uint8_t one = 0u;
+  huge->data = &one;
+  huge->size = 1u;
+  assert(arc_adffs_support_build(p, &huge_selection, support, error,
+                                 sizeof(error)));
+  root = support + 1024u;
+  adffs = find_entry(root, "!ADFFS");
+  adir = support + le24(adffs + 22u) * 256u;
+  trackers = find_entry(adir, "trackers");
+  trackers_dir = support + le24(trackers + 22u) * 256u;
+  const uint8_t *huge_entry = find_entry(trackers_dir, "Huge");
+  assert(huge_entry);
+  uint32_t huge_offset = le24(huge_entry + 22u) * 256u;
+  size_t boundary_size = ARC_ADFFS_DISC_SIZE - 1024u - huge_offset;
+  uint8_t *boundary_data = calloc(1u, boundary_size + 1024u);
+  assert(boundary_data && boundary_size > 0u);
+  huge->data = boundary_data;
+  huge->size = boundary_size;
+  assert(arc_adffs_support_build(p, &huge_selection, support, error,
+                                 sizeof(error)) &&
+         le24(support) * 256u == ARC_ADFFS_DISC_SIZE - 1024u);
+  huge->size = boundary_size + 1024u;
+  assert(!arc_adffs_support_build(p, &huge_selection, support, error,
+                                  sizeof(error)) &&
+         strstr(error, "does not fit"));
+  free(boundary_data);
+  huge->data = saved_huge_data;
+  huge->size = saved_huge_size;
   arc_adffs_package_free(p);
   free(p);
   free(zip);
@@ -520,6 +595,8 @@ int main(int argc, char **argv) {
   reject_fixture(argv[1], "duplicate.zip", "duplicate");
   reject_fixture(argv[1], "case-collision.zip", "case-colliding");
   reject_fixture(argv[1], "local-mismatch.zip", "local/central");
+  reject_fixture(argv[1], "extra-mismatch.zip", "local/central");
+  reject_fixture(argv[1], "central-size-mismatch.zip", "central directory size");
   reject_fixture(argv[1], "missing-arc0.zip", "ARC0");
   reject_fixture(argv[1], "unsafe-name.zip", "unsafe");
   reject_fixture(argv[1], "absolute-name.zip", "unsafe");
@@ -528,6 +605,38 @@ int main(int argc, char **argv) {
   reject_fixture(argv[1], "missing-runtypes.zip", "!ADFFS/!RunTypes");
   reject_fixture(argv[1], "missing-fixobey.zip", "!ADFFS/!fixObey");
   reject_fixture(argv[1], "invalid-obey-name.zip", "obey member name");
+  reject_fixture(argv[1], "used-total.zip", "used members exceed limits");
+
+  test_stage("excluded tracker names");
+  size_t excluded_size;
+  uint8_t *excluded_zip = read_file(argv[1], "excluded-trackers.zip",
+                                    &excluded_size);
+  ArcAdffsPackage *excluded = calloc(1u, sizeof(*excluded));
+  assert(excluded && arc_adffs_package_parse(excluded_zip, excluded_size,
+                                              excluded, error,
+                                              sizeof(error)) &&
+         excluded->count == 13u &&
+         !arc_adffs_member(excluded, "!ADFFS/trackers/TimPlayer") &&
+         !arc_adffs_member(excluded, "!ADFFS/trackers/!Help"));
+  arc_adffs_package_free(excluded);
+  free(excluded);
+  free(excluded_zip);
+
+  test_stage("module help version sanitization");
+  static const char *const unsafe_versions[] = {
+      "version-control.zip", "version-quote.zip", "version-backslash.zip"};
+  for (unsigned i = 0u; i < sizeof(unsafe_versions) / sizeof(unsafe_versions[0]);
+       ++i) {
+    size_t unsafe_size;
+    uint8_t *unsafe_zip = read_file(argv[1], unsafe_versions[i], &unsafe_size);
+    ArcAdffsPackage *unsafe = calloc(1u, sizeof(*unsafe));
+    assert(unsafe && arc_adffs_package_parse(unsafe_zip, unsafe_size, unsafe,
+                                             error, sizeof(error)) &&
+           !strcmp(unsafe->version, "unknown"));
+    arc_adffs_package_free(unsafe);
+    free(unsafe);
+    free(unsafe_zip);
+  }
   test_stage("complete");
   puts("ADFFS synthetic package and media tests passed");
   return 0;

@@ -248,6 +248,8 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
     "${FIXTURE_DIR}/adffs/zip64-extra.zip"
     "${FIXTURE_DIR}/adffs/descriptor-mismatch.zip"
     "${FIXTURE_DIR}/adffs/local-mismatch.zip"
+    "${FIXTURE_DIR}/adffs/extra-mismatch.zip"
+    "${FIXTURE_DIR}/adffs/central-size-mismatch.zip"
     "${FIXTURE_DIR}/adffs/inflated-lie.zip"
     "${FIXTURE_DIR}/adffs/missing-arc0.zip"
     "${FIXTURE_DIR}/adffs/duplicate.zip"
@@ -257,6 +259,11 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
     "${FIXTURE_DIR}/adffs/backslash-name.zip"
     "${FIXTURE_DIR}/adffs/entry-limit.zip"
     "${FIXTURE_DIR}/adffs/oversize.zip"
+    "${FIXTURE_DIR}/adffs/used-total.zip"
+    "${FIXTURE_DIR}/adffs/excluded-trackers.zip"
+    "${FIXTURE_DIR}/adffs/version-control.zip"
+    "${FIXTURE_DIR}/adffs/version-quote.zip"
+    "${FIXTURE_DIR}/adffs/version-backslash.zip"
     "${FIXTURE_DIR}/adffs/missing-obey.zip"
     "${FIXTURE_DIR}/adffs/missing-runtypes.zip"
     "${FIXTURE_DIR}/adffs/missing-fixobey.zip"
@@ -268,6 +275,7 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
     "${FIXTURE_DIR}/adffs/disc-two.jfd"
     "${FIXTURE_DIR}/adffs/count-two.jfd"
     "${FIXTURE_DIR}/adffs/missing-resource.jfd"
+    "${FIXTURE_DIR}/adffs/comment-reference.jfd"
     "${FIXTURE_DIR}/adffs/closure-too-large.jfd"
     "${FIXTURE_DIR}/adffs/capacity.jfd"
     "${FIXTURE_DIR}/adffs/too-large.jfd"
@@ -366,6 +374,15 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
   add_dependencies(adffs_tests test-fixtures)
   add_test(NAME adffs-package-media COMMAND adffs_tests "${FIXTURE_DIR}")
   add_test(NAME adffs-shipping-profile COMMAND adffs_shipping_profile_test)
+  add_executable(arc_io_tests tests/arc_io_tests.c libretro/arc_io.c)
+  target_include_directories(arc_io_tests PRIVATE libretro libretro/include)
+  target_compile_options(arc_io_tests PRIVATE
+    $<$<C_COMPILER_ID:GNU,Clang,AppleClang>:-UNDEBUG;-Wall;-Wextra;-Wpedantic>)
+  if(ARCDROID_SANITIZERS)
+    target_link_libraries(arc_io_tests PRIVATE
+      arcdroid_sanitizer_compile arcdroid_sanitizer_link)
+  endif()
+  add_test(NAME arc-io-write-guards COMMAND arc_io_tests)
   add_dependencies(jfd_controller_tests test-fixtures)
   add_test(NAME core-services COMMAND core_tests "${FIXTURE_DIR}")
   add_test(NAME jfd-controller-golden COMMAND jfd_controller_tests
@@ -385,8 +402,13 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
     add_executable(windows_load_harness tests/windows_load_harness.c)
     target_include_directories(windows_load_harness PRIVATE libretro/include)
     target_compile_options(windows_load_harness PRIVATE $<$<C_COMPILER_ID:GNU,Clang>:-UNDEBUG>)
-    add_dependencies(windows_load_harness arcdroid_libretro_test test-fixtures)
+    add_dependencies(windows_load_harness arcdroid_libretro arcdroid_libretro_test test-fixtures)
     add_test(NAME windows-load-harness COMMAND windows_load_harness
+      $<TARGET_FILE:arcdroid_libretro>
+      "${FIXTURE_DIR}/arcdroid-test.rom"
+      "${FIXTURE_DIR}/arcdroid-test.adf"
+      "${CMAKE_CURRENT_BINARY_DIR}/windows-shipping-harness-data")
+    add_test(NAME windows-test-core-load-harness COMMAND windows_load_harness
       $<TARGET_FILE:arcdroid_libretro_test>
       "${FIXTURE_DIR}/arcdroid-test.rom"
       "${FIXTURE_DIR}/arcdroid-test.adf"

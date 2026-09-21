@@ -897,6 +897,14 @@ def build_adffs_fixtures(output: Path) -> None:
                                        struct.unpack_from("<H", b, p + 8)[0] | 8)))
     (output / "local-mismatch.zip").write_bytes(patched(
         package, local_change=lambda b, p: struct.pack_into("<H", b, p + 8, 0)))
+    extra_mismatch = bytearray(package)
+    first_central = extra_mismatch.index(b"PK\x01\x02")
+    local_arc0 = extra_mismatch.index(b"ARC0", 0, first_central)
+    extra_mismatch[local_arc0] ^= 1
+    (output / "extra-mismatch.zip").write_bytes(extra_mismatch)
+    (output / "central-size-mismatch.zip").write_bytes(patched(
+        package, eocd_change=lambda b, p: struct.pack_into(
+            "<I", b, p + 12, struct.unpack_from("<I", b, p + 12)[0] - 1)))
     bomb = patched(package,
         local_change=lambda b, p: struct.pack_into("<I", b, p + 22,
              struct.unpack_from("<I", b, p + 22)[0] + 1),
@@ -919,6 +927,25 @@ def build_adffs_fixtures(output: Path) -> None:
         [(f"unused/{i:04d}", b"", False) for i in range(1025)], zipfile.ZIP_STORED))
     (output / "oversize.zip").write_bytes(_zip_bytes(
         entries + [("unused/large", bytes(2 * 1024 * 1024 + 1), False)]))
+    (output / "used-total.zip").write_bytes(_zip_bytes(entries + [
+        ("!ADFFS/trackers/LimitA", bytes(2 * 1024 * 1024), True),
+        ("!ADFFS/trackers/LimitB", bytes(2 * 1024 * 1024), True),
+    ]))
+    (output / "excluded-trackers.zip").write_bytes(_zip_bytes(entries + [
+        ("!ADFFS/trackers/TimPlayer", b"excluded player", False),
+        ("!ADFFS/trackers/!Help", b"excluded help", False),
+    ]))
+    for filename, help_text in (
+            ("version-control.zip", b"Synthetic\x01control\0"),
+            ("version-quote.zip", b'Synthetic "quote\0'),
+            ("version-backslash.zip", b"Synthetic \\path\0")):
+        changed_module = bytearray(24)
+        struct.pack_into("<I", changed_module, 20, len(changed_module))
+        changed_module += help_text
+        (output / filename).write_bytes(_zip_bytes([
+            (name, bytes(changed_module) if name == "!ADFFS/ADFFS" else payload,
+             metadata)
+            for name, payload, metadata in entries]))
     for filename, omitted in (("missing-obey.zip", "!ADFFS/obey"),
                               ("missing-runtypes.zip", "!ADFFS/!RunTypes"),
                               ("missing-fixobey.zip", "!ADFFS/!fixObey")):
@@ -950,6 +977,8 @@ def build_adffs_fixtures(output: Path) -> None:
     (output / "count-two.jfd").write_bytes(adffs_jfd(123, count=2))
     (output / "missing-resource.jfd").write_bytes(adffs_jfd(
         0, embedded=b"ADFFS:ExTrAs.Absent.module\r"))
+    (output / "comment-reference.jfd").write_bytes(adffs_jfd(
+        0, embedded=b" \t | ADFFS:ExTrAs.Absent.module\r"))
     (output / "closure-too-large.jfd").write_bytes(adffs_jfd(
         0, embedded=b"ADFFS:trackers.Huge\r"))
     carrier_capacity = 819200 - 4096

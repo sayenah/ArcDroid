@@ -1460,6 +1460,8 @@ int main(int argc, char **argv)
    bool (*arc_engine_media_insert)(const ArcEngineMedia *, char *, size_t) = NULL;
    void (*arc_engine_test_set_vidc_noncompleting)(bool) = NULL;
    bool (*arc_engine_test_drive_media)(unsigned, bool *, char[41]) = NULL;
+   bool (*arc_engine_test_helper_media_valid)(ArcMediaKind,
+                                               ArcMediaGeometry) = NULL;
    bool (*arc_engine_test_cmos_image)(uint8_t[ARC_CMOS_MACHINE_SIZE]) = NULL;
    bool (*arc_engine_test_cmos_write)(unsigned, uint8_t) = NULL;
    bool (*arc_engine_test_newio)(unsigned *, unsigned *, unsigned *, unsigned *, uint8_t *) = NULL;
@@ -1493,6 +1495,8 @@ int main(int argc, char **argv)
    unsigned (*arc_libretro_test_chooser_rows)(void) = NULL;
    void (*arc_libretro_test_force_input_reconcile)(void) = NULL;
    void (*arc_libretro_test_adffs_accept_test_os)(bool) = NULL;
+   void (*arc_libretro_test_fail_adffs_content_read)(bool) = NULL;
+   bool (*arc_libretro_test_adffs_content_read_failure_pending)(void) = NULL;
    void (*arc_platform_test_input_events_reset)(void) = NULL;
    size_t (*arc_platform_test_input_events)(ArcKartEvent *, size_t) = NULL;
    if (real_boot || newio_smoke)
@@ -1505,6 +1509,8 @@ int main(int argc, char **argv)
          dlsym(module, "arc_engine_test_set_vidc_noncompleting");
       *(void **)(&arc_engine_test_drive_media) =
          dlsym(module, "arc_engine_test_drive_media");
+      *(void **)(&arc_engine_test_helper_media_valid) =
+         dlsym(module, "arc_engine_test_helper_media_valid");
       *(void **)(&arc_engine_test_cmos_image) =
          dlsym(module, "arc_engine_test_cmos_image");
       *(void **)(&arc_engine_test_cmos_write) =
@@ -1553,13 +1559,18 @@ int main(int argc, char **argv)
          dlsym(module, "arc_libretro_test_force_input_reconcile");
       *(void **)(&arc_libretro_test_adffs_accept_test_os) =
          dlsym(module, "arc_libretro_test_adffs_accept_test_os");
+      *(void **)(&arc_libretro_test_fail_adffs_content_read) =
+         dlsym(module, "arc_libretro_test_fail_adffs_content_read");
+      *(void **)(&arc_libretro_test_adffs_content_read_failure_pending) =
+         dlsym(module, "arc_libretro_test_adffs_content_read_failure_pending");
       *(void **)(&arc_platform_test_input_events_reset) =
          dlsym(module, "arc_platform_test_input_events_reset");
       *(void **)(&arc_platform_test_input_events) =
          dlsym(module, "arc_platform_test_input_events");
       assert(arc_engine_audio_stats && arc_engine_media_insert &&
              arc_engine_test_set_vidc_noncompleting &&
-             arc_engine_test_drive_media && arc_engine_test_cmos_image &&
+             arc_engine_test_drive_media && arc_engine_test_helper_media_valid &&
+             arc_engine_test_cmos_image &&
              arc_engine_test_cmos_write && arc_libretro_test_fail_osk_allocations &&
              arc_libretro_test_drop_osk_surface &&
              arc_libretro_test_osk_source_unchanged &&
@@ -1581,7 +1592,17 @@ int main(int argc, char **argv)
              arc_libretro_test_chooser_rows &&
              arc_libretro_test_force_input_reconcile &&
              arc_libretro_test_adffs_accept_test_os &&
+             arc_libretro_test_fail_adffs_content_read &&
+             arc_libretro_test_adffs_content_read_failure_pending &&
              arc_platform_test_input_events_reset && arc_platform_test_input_events);
+      assert(arc_engine_test_helper_media_valid(ARC_MEDIA_ADL_640K,
+                                                 ARC_GEOMETRY_640K_L) &&
+             arc_engine_test_helper_media_valid(ARC_MEDIA_ADF_800K,
+                                                 ARC_GEOMETRY_800K_D) &&
+             !arc_engine_test_helper_media_valid(ARC_MEDIA_ADL_640K,
+                                                  ARC_GEOMETRY_800K_D) &&
+             !arc_engine_test_helper_media_valid(ARC_MEDIA_ADF_800K,
+                                                  ARC_GEOMETRY_640K_L));
       ArcDigest application_profile_digest = digest_file(argv[12]);
       ArcDigest playlist_profile_digest = digest_playlist_pair(argv[7], argv[8]);
       memcpy(application_profile_sha1, application_profile_digest.sha1,
@@ -5817,22 +5838,21 @@ int main(int argc, char **argv)
       EXPECT_NATIVE(adffs_eligible, "os", 0u, NULL);
       arc_libretro_test_adffs_accept_test_os(true);
 
-      char invalid_first[4096], valid_second[4096];
-      snprintf(invalid_first, sizeof(invalid_first), "%s/arcdroid/adffs/a-invalid.zip",
+      char valid_first[4096], valid_second[4096];
+      snprintf(valid_first, sizeof(valid_first), "%s/arcdroid/adffs/A-valid.ZIP",
                system_path);
-      snprintf(valid_second, sizeof(valid_second), "%s/arcdroid/adffs/b-valid.zip",
+      snprintf(valid_second, sizeof(valid_second), "%s/arcdroid/adffs/b-valid.ZiP",
                system_path);
       assert(remove(package_path) == 0);
-      snprintf(adffs_fixture, sizeof(adffs_fixture), "%s/adffs/bad-crc.zip", argv[11]);
-      copy_file(adffs_fixture, invalid_first);
       snprintf(adffs_fixture, sizeof(adffs_fixture), "%s/adffs/synthetic.zip", argv[11]);
+      copy_file(adffs_fixture, valid_first);
       copy_file(adffs_fixture, valid_second);
       unsigned package_lines = adffs_package_log_lines;
       EXPECT_ADFFS(adffs_eligible,
          "JFD boot: path=adffs script=builtin profile=synthetic-test version=\"Synthetic 1.0\"\n");
       assert(adffs_package_log_lines == package_lines + 1u &&
-             !strcmp(last_adffs_package_log, "ADFFS package: file=b-valid.zip\n") &&
-             remove(invalid_first) == 0 && remove(valid_second) == 0);
+             !strcmp(last_adffs_package_log, "ADFFS package: file=A-valid.ZIP\n") &&
+             remove(valid_first) == 0 && remove(valid_second) == 0);
 
       ADFFS_GAME("embedded-only.jfd", adffs_embedded);
       EXPECT_NATIVE(adffs_embedded, "no-package", 1u,
@@ -5869,8 +5889,24 @@ int main(int argc, char **argv)
       ADFFS_GAME("missing-resource.jfd", adffs_missing);
       EXPECT_NATIVE(adffs_missing, "missing-resource:!ADFFS/ExTrAs/Absent/module",
                     1u, "missing-resource:!ADFFS/ExTrAs/Absent/module");
+      ADFFS_GAME("comment-reference.jfd", adffs_comment_reference);
+      EXPECT_ADFFS(adffs_comment_reference,
+         "JFD boot: path=adffs script=embedded profile=synthetic-test version=\"Synthetic 1.0\"\n");
+      unsigned unreadable_lines = jfd_boot_log_lines;
+      unsigned unreadable_notices = adffs_notice_calls;
+      arc_libretro_test_fail_adffs_content_read(true);
+      phase = PHASE_LOAD; assert(retro_load_game(&adffs_eligible));
+      assert(jfd_boot_log_lines == unreadable_lines + 1u &&
+             !strcmp(last_jfd_boot_log,
+                     "JFD boot: path=native reason=content-unreadable\n") &&
+             adffs_notice_calls == unreadable_notices &&
+             !arc_libretro_test_adffs_content_read_failure_pending());
+      retro_unload_game();
       ADFFS_GAME("too-large.jfd", adffs_too_large);
+      arc_libretro_test_fail_adffs_content_read(true);
       EXPECT_NATIVE(adffs_too_large, "too-large", 1u, "too-large");
+      assert(arc_libretro_test_adffs_content_read_failure_pending());
+      arc_libretro_test_fail_adffs_content_read(false);
       ADFFS_GAME("closure-too-large.jfd", adffs_closure_too_large);
       EXPECT_NATIVE(adffs_closure_too_large, "too-large", 1u, "too-large");
       ADFFS_GAME("decoded-too-large.jfd", adffs_decoded_too_large);
@@ -5954,10 +5990,14 @@ int main(int argc, char **argv)
                 disk_control.get_image_index() == 0u &&
                 !disk_control.get_eject_state());
          char carrier_now[41], support_now[41];
-         assert(arc_engine_test_drive_media(0u, &write_protected, carrier_now) &&
-                write_protected &&
-                arc_engine_test_drive_media(1u, &write_protected, support_now) &&
-                write_protected);
+         bool carrier_write_protected = false;
+         bool support_write_protected = false;
+         assert(arc_engine_test_drive_media(0u, &carrier_write_protected,
+                                            carrier_now));
+         assert(carrier_write_protected);
+         assert(arc_engine_test_drive_media(1u, &support_write_protected,
+                                            support_now));
+         assert(support_write_protected);
          if (!mode)
          {
             memcpy(carrier_digest, carrier_now, sizeof(carrier_digest));
@@ -5971,17 +6011,25 @@ int main(int argc, char **argv)
                 !disk_control.replace_image_index(0u, NULL) &&
                 !disk_control.add_image_index());
          char unchanged_carrier[41], unchanged_support[41];
-         assert(arc_engine_test_drive_media(0u, &write_protected, unchanged_carrier) &&
-                write_protected &&
-                arc_engine_test_drive_media(1u, &write_protected, unchanged_support) &&
-                write_protected &&
+         carrier_write_protected = false;
+         support_write_protected = false;
+         assert(arc_engine_test_drive_media(0u, &carrier_write_protected,
+                                            unchanged_carrier));
+         assert(carrier_write_protected);
+         assert(arc_engine_test_drive_media(1u, &support_write_protected,
+                                            unchanged_support));
+         assert(support_write_protected &&
                 !strcmp(carrier_now, unchanged_carrier) &&
                 !strcmp(support_now, unchanged_support));
          retro_reset();
-         assert(arc_engine_test_drive_media(0u, &write_protected, unchanged_carrier) &&
-                write_protected &&
-                arc_engine_test_drive_media(1u, &write_protected, unchanged_support) &&
-                write_protected &&
+         carrier_write_protected = false;
+         support_write_protected = false;
+         assert(arc_engine_test_drive_media(0u, &carrier_write_protected,
+                                            unchanged_carrier));
+         assert(carrier_write_protected);
+         assert(arc_engine_test_drive_media(1u, &support_write_protected,
+                                            unchanged_support));
+         assert(support_write_protected &&
                 !strcmp(carrier_digest, unchanged_carrier) &&
                 !strcmp(support_digest, unchanged_support));
          retro_unload_game();

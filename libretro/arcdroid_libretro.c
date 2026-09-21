@@ -131,9 +131,18 @@ static uint8_t *arc_adffs_carrier;
 static uint8_t *arc_adffs_support;
 #if defined(ARCDROID_TEST_FAULTS)
 static bool arc_test_adffs_accept_test_os = true;
+static bool arc_test_fail_adffs_content_read;
 void arc_libretro_test_adffs_accept_test_os(bool accept)
 {
    arc_test_adffs_accept_test_os = accept;
+}
+void arc_libretro_test_fail_adffs_content_read(bool fail)
+{
+   arc_test_fail_adffs_content_read = fail;
+}
+bool arc_libretro_test_adffs_content_read_failure_pending(void)
+{
+   return arc_test_fail_adffs_content_read;
 }
 #endif
 static char arc_system_path[4096];
@@ -1424,7 +1433,10 @@ typedef struct {
 static bool arc_collect_zip(const char *name, bool regular, void *opaque) {
    ArcZipNames *z = opaque;
    size_t n = name ? strlen(name) : 0u;
-   if (!regular || n <= 4u || strcmp(name + n - 4u, ".zip"))
+   if (!regular || n <= 4u || name[n - 4u] != '.' ||
+       tolower((unsigned char)name[n - 3u]) != 'z' ||
+       tolower((unsigned char)name[n - 2u]) != 'i' ||
+       tolower((unsigned char)name[n - 1u]) != 'p')
       return true;
    if (n >= sizeof(z->names[0]) || z->count == 1024u) {
       z->failed = true;
@@ -1521,8 +1533,14 @@ static bool arc_prepare_adffs(bool notify) {
    if (names.count > 1u)
       qsort(names.names, names.count, sizeof(names.names[0]),
             arc_zip_name_compare);
-   ArcAdffsPackage package;
-   memset(&package, 0, sizeof(package));
+   ArcAdffsPackage *package = calloc(1u, sizeof(*package));
+   if (!package) {
+      free(names.names);
+      arc_jfd_boot_log("invalid-package:out-of-memory");
+      if (notify)
+         arc_jfd_boot_notice("invalid-package:out-of-memory", jfd);
+      return false;
+   }
    char parse_error[160] = "";
    char chosen[256] = "";
    bool valid = false;
@@ -1530,15 +1548,23 @@ static bool arc_prepare_adffs(bool notify) {
       snprintf(parse_error, sizeof(parse_error),
                "package directory exceeds limits");
    for (unsigned i = 0; i < names.count && !valid && !names.failed; ++i) {
-      char path[4096];
       void *bytes = NULL;
       size_t size = 0;
+      size_t path_capacity = strlen(dir) + 1u + strlen(names.names[i]) + 1u;
+      char *path = malloc(path_capacity);
+      if (!path) {
+         snprintf(parse_error, sizeof(parse_error), "out of memory");
+         break;
+      }
       int path_length =
-         snprintf(path, sizeof(path), "%s/%s", dir, names.names[i]);
-      if (path_length < 0 || (size_t)path_length >= sizeof(path) ||
-          !arc_io_read_all(path, &bytes, &size))
+         snprintf(path, path_capacity, "%s/%s", dir, names.names[i]);
+      if (path_length < 0 || (size_t)path_length >= path_capacity ||
+          !arc_io_read_all(path, &bytes, &size)) {
+         free(path);
          continue;
-      if (arc_adffs_package_parse(bytes, size, &package, parse_error,
+      }
+      free(path);
+      if (arc_adffs_package_parse(bytes, size, package, parse_error,
                                   sizeof(parse_error))) {
          valid = true;
          strcpy(chosen, names.names[i]);
@@ -1562,13 +1588,15 @@ static bool arc_prepare_adffs(bool notify) {
          if (notify && (jfd->obey_length || jfd->game_id))
             arc_jfd_boot_notice("no-package", jfd);
       }
+      free(package);
       return false;
    }
    if (arc_log)
       arc_log(RETRO_LOG_INFO, "ADFFS package: file=%s\n", chosen);
-   if (!package.verified &&
+   if (!package->verified &&
        arc_core_options.adffs_package == ARC_ADFFS_VERIFIED_ONLY) {
-      arc_adffs_package_free(&package);
+      arc_adffs_package_free(package);
+      free(package);
       arc_jfd_boot_log("untested-package");
       if (notify)
          arc_jfd_boot_notice("untested-package", jfd);
@@ -1579,14 +1607,15 @@ static bool arc_prepare_adffs(bool notify) {
    parse_error[0] = 0;
    bool have_builtin =
       jfd->game_id && arc_adffs_builtin_script(
-                         &package, jfd->game_id, jfd->disc_number, &builtin,
+                         package, jfd->game_id, jfd->disc_number, &builtin,
                          &builtin_size, parse_error, sizeof(parse_error));
    if (parse_error[0] && !have_builtin) {
       char why[96];
       arc_reason_token(parse_error, why);
       char full[128];
       snprintf(full, sizeof(full), "invalid-package:%s", why);
-      arc_adffs_package_free(&package);
+      arc_adffs_package_free(package);
+      free(package);
       arc_jfd_boot_log(full);
       if (notify)
          arc_jfd_boot_notice(full, jfd);
@@ -1600,17 +1629,19 @@ static bool arc_prepare_adffs(bool notify) {
    size_t script_size = have_builtin ? builtin_size : jfd->obey_length;
    if (!script) {
       free(builtin);
-      arc_adffs_package_free(&package);
+      arc_adffs_package_free(package);
+      free(package);
       arc_jfd_boot_log("no-script");
       return false;
    }
    char missing[128];
    ArcAdffsSelection selection;
-   if (!arc_adffs_select(&package, script, script_size, &selection, missing)) {
+   if (!arc_adffs_select(package, script, script_size, &selection, missing)) {
       char full[192];
       snprintf(full, sizeof(full), "missing-resource:%s", missing);
       free(builtin);
-      arc_adffs_package_free(&package);
+      arc_adffs_package_free(package);
+      free(package);
       arc_jfd_boot_log(full);
       if (notify)
          arc_jfd_boot_notice(full, jfd);
@@ -1618,16 +1649,37 @@ static bool arc_prepare_adffs(bool notify) {
    }
    void *raw = NULL;
    size_t raw_size = 0;
-   if (!arc_io_read_all(entry->source, &raw, &raw_size)) {
+   size_t declared_size = 0;
+   if (arc_io_file_size(entry->source, &declared_size) &&
+       declared_size > ARC_ADFFS_CARRIER_CAPACITY) {
       free(builtin);
-      arc_adffs_package_free(&package);
+      arc_adffs_package_free(package);
+      free(package);
       arc_jfd_boot_log("too-large");
+      if (notify)
+         arc_jfd_boot_notice("too-large", jfd);
+      return false;
+   }
+   bool content_read = true;
+#if defined(ARCDROID_TEST_FAULTS)
+   if (arc_test_fail_adffs_content_read) {
+      arc_test_fail_adffs_content_read = false;
+      content_read = false;
+   } else
+#endif
+      content_read = arc_io_read_all(entry->source, &raw, &raw_size);
+   if (!content_read) {
+      free(builtin);
+      arc_adffs_package_free(package);
+      free(package);
+      arc_jfd_boot_log("content-unreadable");
       return false;
    }
    if (raw_size > ARC_ADFFS_CARRIER_CAPACITY) {
       free(raw);
       free(builtin);
-      arc_adffs_package_free(&package);
+      arc_adffs_package_free(package);
+      free(package);
       arc_jfd_boot_log("too-large");
       if (notify)
          arc_jfd_boot_notice("too-large", jfd);
@@ -1636,7 +1688,8 @@ static bool arc_prepare_adffs(bool notify) {
    if (jfd->decoded_size > 2048u * 1024u) {
       free(raw);
       free(builtin);
-      arc_adffs_package_free(&package);
+      arc_adffs_package_free(package);
+      free(package);
       arc_jfd_boot_log("decoded-too-large");
       if (notify)
          arc_jfd_boot_notice("decoded-too-large", jfd);
@@ -1648,13 +1701,14 @@ static bool arc_prepare_adffs(bool notify) {
    bool built = arc_adffs_carrier && arc_adffs_support &&
                 arc_adffs_carrier_build(raw, raw_size, arc_adffs_carrier,
                                         build_error, sizeof(build_error)) &&
-                arc_adffs_support_build(&package, &selection, arc_adffs_support,
+                arc_adffs_support_build(package, &selection, arc_adffs_support,
                                         build_error, sizeof(build_error));
    free(raw);
    free(builtin);
    if (!built) {
       if (!strcmp(build_error, "carried set does not fit support disc")) {
-         arc_adffs_package_free(&package);
+         arc_adffs_package_free(package);
+         free(package);
          arc_adffs_discard();
          arc_jfd_boot_log("too-large");
          if (notify)
@@ -1665,7 +1719,8 @@ static bool arc_prepare_adffs(bool notify) {
       arc_reason_token(build_error[0] ? build_error : "out-of-memory", why);
       char full[128];
       snprintf(full, sizeof(full), "invalid-package:%s", why);
-      arc_adffs_package_free(&package);
+      arc_adffs_package_free(package);
+      free(package);
       arc_adffs_discard();
       arc_jfd_boot_log(full);
       if (notify)
@@ -1676,8 +1731,9 @@ static bool arc_prepare_adffs(bool notify) {
       arc_log(RETRO_LOG_INFO,
               "JFD boot: path=adffs script=%s profile=%s version=\"%s\"\n",
               have_builtin ? "builtin" : "embedded",
-              package.verified ? package.profile : "untested", package.version);
-   arc_adffs_package_free(&package);
+              package->verified ? package->profile : "untested", package->version);
+   arc_adffs_package_free(package);
+   free(package);
    arc_adffs_active = true;
    arc_plan.launch_helper = true;
    arc_plan.launch_target[0] = 0;

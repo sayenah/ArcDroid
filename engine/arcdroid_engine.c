@@ -79,6 +79,15 @@ static ArcMachine arc_saved_machine = ARC_MACHINE_A3000;
 static double arc_last_refresh = 50.0;
 static ArcEngineLogCallback arc_log_callback;
 static void *arc_log_opaque;
+static bool arc_helper_media_valid(const ArcEngineMedia *helper)
+{
+   return !helper ||
+      (((helper->path && helper->path[0]) || helper->data) && !helper->jfd &&
+       ((helper->kind == ARC_MEDIA_ADL_640K &&
+         helper->geometry == ARC_GEOMETRY_640K_L) ||
+        (helper->kind == ARC_MEDIA_ADF_800K &&
+         helper->geometry == ARC_GEOMETRY_800K_D)));
+}
 #if defined(ARCDROID_TEST_FAULTS)
 static bool arc_test_vidc_noncompleting;
 unsigned arc_ide_test_accesses(void);
@@ -86,6 +95,19 @@ unsigned arc_ide_test_accesses(void);
 void arc_engine_test_set_vidc_noncompleting(bool enabled)
 {
    arc_test_vidc_noncompleting = enabled;
+}
+
+bool arc_engine_test_helper_media_valid(ArcMediaKind kind,
+                                        ArcMediaGeometry geometry)
+{
+   static const uint8_t data = 0u;
+   ArcEngineMedia helper;
+   memset(&helper, 0, sizeof(helper));
+   helper.data = &data;
+   helper.size = 1u;
+   helper.kind = kind;
+   helper.geometry = geometry;
+   return arc_helper_media_valid(&helper);
 }
 
 bool arc_engine_test_drive_media(unsigned drive, bool *write_protected,
@@ -505,10 +527,7 @@ bool arc_engine_start(const uint8_t *firmware, size_t firmware_size,
 {
    arc_engine_stop();
    if (!firmware || (firmware_size != 524288u && firmware_size != 2097152u) ||
-       !cmos || !descriptor || (helper && (((!helper->path || !helper->path[0]) && !helper->data) ||
-                           (helper->kind != ARC_MEDIA_ADL_640K && helper->kind != ARC_MEDIA_ADF_800K) ||
-                           (helper->geometry != ARC_GEOMETRY_640K_L && helper->geometry != ARC_GEOMETRY_800K_D) ||
-                           helper->jfd)))
+       !cmos || !descriptor || !arc_helper_media_valid(helper))
    {
       if (failure && failure_size) snprintf(failure, failure_size, "Invalid engine launch plan");
       return false;

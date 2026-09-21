@@ -2,9 +2,9 @@
 
 ArcDroid can use ADFFS to boot an eligible, single-disc JASPP JFD image. Put
 the ADFFS zip, unchanged, in the frontend system directory at
-`arcdroid/adffs/`. If several zip files are present, ArcDroid uses the
-byte-wise lowest filename whose package validates and records that filename in
-the frontend log.
+`arcdroid/adffs/`. The `.zip` extension is matched without regard to case. If
+several zip files are present, ArcDroid uses the byte-wise lowest filename
+whose package validates and records that filename in the frontend log.
 
 ArcDroid is not affiliated with JASPP and does not include or distribute
 ADFFS. Obtain information from the
@@ -22,7 +22,8 @@ changes to the mounted image are not written back, regardless of the `Disk
 Writes` option. At boot, ArcDroid's project-authored launcher copies only the
 package files needed by the selected title to a temporary guest RAM disc. This
 lets ADFFS create its working script without modifying the package or writing
-anything to host storage.
+anything to host storage. References on Obey comment lines (whose first
+nonblank character is `|`) do not add files to that per-title set.
 
 If the package is absent or unusable, ArcDroid keeps the native boot path and
 shows a short notice when user action may help. The two new options and these
