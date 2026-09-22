@@ -156,9 +156,14 @@ static unsigned folder_set_log_lines;
 static unsigned folder_set_omission_log_lines;
 static unsigned folder_set_warning_osd_calls;
 static unsigned zip_summary_log_lines;
+static unsigned zip_order_log_lines;
 static unsigned zip_omission_log_lines;
+static unsigned zip_summary_osd_calls;
+static unsigned zip_fallback_osd_calls;
 static char last_zip_summary[2048];
+static char last_zip_order[18000];
 static char last_zip_omission[2048];
+static char last_zip_fallback[1152];
 static unsigned total_osd_calls;
 static unsigned osk_failure_osd_calls;
 static unsigned osk_narrow_osd_calls;
@@ -388,10 +393,16 @@ static void frontend_log(enum retro_log_level level, const char *format, ...)
    if (strstr(message, "Folder disc set: VFS directory=")) ++folder_set_log_lines;
    if (strstr(message, "Folder disc set sibling omitted:"))
       ++folder_set_omission_log_lines;
-   if (!strncmp(message, "Zip content:", sizeof("Zip content:") - 1u))
+   if (!strncmp(message, "Zip content: file=", sizeof("Zip content: file=") - 1u))
    {
       ++zip_summary_log_lines;
       snprintf(last_zip_summary, sizeof(last_zip_summary), "%s", message);
+   }
+   if (!strncmp(message, "Zip content order:",
+                sizeof("Zip content order:") - 1u))
+   {
+      ++zip_order_log_lines;
+      snprintf(last_zip_order, sizeof(last_zip_order), "%s", message);
    }
    if (!strncmp(message, "Zip member omitted:",
                 sizeof("Zip member omitted:") - 1u))
@@ -717,6 +728,14 @@ static bool environment(unsigned command, void *data)
          }
          if (!strncmp(last_message, "Folder disc set", 15u))
             ++folder_set_warning_osd_calls;
+         if (!strncmp(last_message, "Zip content loaded with", 23u))
+            ++zip_summary_osd_calls;
+         if (!strncmp(last_message, "Zip preferred image ", 20u))
+         {
+            ++zip_fallback_osd_calls;
+            snprintf(last_zip_fallback, sizeof(last_zip_fallback), "%s",
+                     last_message);
+         }
          if (strstr(last_message, "VIDC")) ++vidc_osd_ext_calls;
          if (strstr(last_message, "Short image padded with")) ++short_warning_osd_calls;
          if (strstr(last_message, "Unable to flush the staged floppy image"))
@@ -747,6 +766,14 @@ static bool environment(unsigned command, void *data)
          }
          if (!strncmp(last_message, "Folder disc set", 15u))
             ++folder_set_warning_osd_calls;
+         if (!strncmp(last_message, "Zip content loaded with", 23u))
+            ++zip_summary_osd_calls;
+         if (!strncmp(last_message, "Zip preferred image ", 20u))
+         {
+            ++zip_fallback_osd_calls;
+            snprintf(last_zip_fallback, sizeof(last_zip_fallback), "%s",
+                     last_message);
+         }
          if (strstr(last_message, "VIDC")) ++vidc_osd_legacy_calls;
          if (strstr(last_message, "Short image padded with")) ++short_warning_osd_calls;
          if (strstr(last_message, "Unable to flush the staged floppy image"))
@@ -3859,7 +3886,7 @@ int main(int argc, char **argv)
 
       /* A member image does not inherit the digest of its playlist set. */
       option_input_profile = "Auto";
-      option_writes = "off";
+      option_writes = "shadow";
       option_launch = "off";
       struct retro_game_info playlist_member_game = {argv[7], NULL, 0u, NULL};
       last_input_resolution[0] = '\0';
@@ -3878,14 +3905,43 @@ int main(int argc, char **argv)
       phase = PHASE_RUN;
       for (unsigned frame = 0u; frame < 180u; ++frame) retro_run();
       uint64_t standalone_signature = last_video_signature;
+      assert(arc_engine_test_cmos_write(16u + 42u, 0x5au));
+      retro_run();
+      uint8_t standalone_cmos_record[ARC_CMOS_RECORD_SIZE];
+      memcpy(standalone_cmos_record,
+             retro_get_memory_data(RETRO_MEMORY_SAVE_RAM),
+             sizeof(standalone_cmos_record));
       retro_unload_game();
+
+      ArcDigest previous_natural_identity = digest_file(argv[8]);
+      char previous_natural_shadow[4096], previous_natural_cmos[4096];
+      snprintf(previous_natural_shadow, sizeof(previous_natural_shadow),
+               "%s/arcdroid/media/%s/disc.adf", save_path,
+               previous_natural_identity.sha1);
+      const char *standalone_id_at = strstr(standalone_cmos,
+                                            standalone_identity.sha1);
+      assert(standalone_id_at);
+      size_t cmos_prefix = (size_t)(standalone_id_at - standalone_cmos);
+      int previous_cmos_length = snprintf(
+         previous_natural_cmos, sizeof(previous_natural_cmos), "%.*s%s%s",
+         (int)cmos_prefix, standalone_cmos, previous_natural_identity.sha1,
+         standalone_id_at + strlen(standalone_identity.sha1));
+      assert(previous_cmos_length > 0 &&
+             (size_t)previous_cmos_length < sizeof(previous_natural_cmos));
+      uint8_t previous_natural_record[ARC_CMOS_RECORD_SIZE];
+      memcpy(previous_natural_record, standalone_cmos_record,
+             sizeof(previous_natural_record));
+      previous_natural_record[16u + 43u] = 0x6bu;
+      write_exact(previous_natural_cmos, previous_natural_record,
+                  sizeof(previous_natural_record));
+      uint64_t previous_natural_cmos_hash = hash_file(previous_natural_cmos);
 
       char zip_single[4096], zip_multi[4096], zip_partial[4096];
       char zip_only_corrupt[4096], zip_no_media[4096], zip_too_many[4096];
       char zip_unsupported[4096], zip_playlist[4096], zip_member_playlist[4096];
       char zip_single_jfd[4096], zip_two_jfd[4096], zip_replaced[4096];
       char zip_too_large_jfd[4096], zip_decoded_too_large_jfd[4096];
-      char zip_second_replaced[4096];
+      char zip_second_replaced[4096], zip_reset_multi[4096];
       snprintf(zip_single, sizeof(zip_single), "%s/single.zip", argv[15]);
       snprintf(zip_multi, sizeof(zip_multi), "%s/multi.zip", argv[15]);
       snprintf(zip_partial, sizeof(zip_partial), "%s/partial-first.zip", argv[15]);
@@ -3905,12 +3961,16 @@ int main(int argc, char **argv)
       snprintf(zip_replaced, sizeof(zip_replaced), "%s/multi-replaced.zip", argv[15]);
       snprintf(zip_second_replaced, sizeof(zip_second_replaced),
                "%s/multi-second-replaced.zip", argv[15]);
+      snprintf(zip_reset_multi, sizeof(zip_reset_multi), "%s/reset-multi.zip",
+               argv[15]);
 
       struct retro_game_info zip_game = {zip_single, NULL, 0u, NULL};
       unsigned zip_summaries = zip_summary_log_lines;
       phase = PHASE_LOAD; assert(retro_load_game(&zip_game));
       assert(zip_summary_log_lines == zip_summaries + 1u &&
              strstr(last_zip_summary, "entries=1 images=1 prepared=1 omitted=0") &&
+             strstr(last_zip_summary,
+                    "rule=disc1 candidates=1 preferred=\"Disc1.adf\" boot=\"Disc1.adf\" fallback=no") &&
              !strcmp(arc_libretro_test_content_id(), standalone_identity.sha1) &&
              !strcmp(arc_libretro_test_staged_path(0u), standalone_staged) &&
              !strcmp(arc_libretro_test_cmos_path(), standalone_cmos) &&
@@ -3932,10 +3992,12 @@ int main(int argc, char **argv)
       struct retro_game_info selected_game = {selected_path, NULL, 0u, NULL};
       phase = PHASE_LOAD; assert(retro_load_game(&selected_game));
       assert(!strcmp(arc_libretro_test_content_id(), standalone_identity.sha1) &&
-             strstr(last_zip_summary, "selected=Disc1.adf"));
+             strstr(last_zip_summary, "selected=\"Disc1.adf\""));
       retro_unload_game();
 
-      static const char *const selected_members[] = {"Disc1.adf", "Disc2.adf"};
+      static const char *const selected_members[] = {
+         "multi.adf", "multi (Disk 2).adf"
+      };
       for (unsigned member_index = 0u; member_index < 2u; ++member_index)
       {
          snprintf(selected_path, sizeof(selected_path), "%s#%s", zip_multi,
@@ -3976,16 +4038,30 @@ int main(int argc, char **argv)
                      "Unsupported archive container; ArcDroid supports .zip files only."));
 
       zip_game.path = zip_multi;
+      zip_summaries = zip_summary_log_lines;
+      unsigned zip_orders = zip_order_log_lines;
       phase = PHASE_LOAD; assert(retro_load_game(&zip_game));
-      assert(disk_control.get_num_images() == 2u &&
+      assert(zip_summary_log_lines == zip_summaries + 1u &&
+             zip_order_log_lines == zip_orders + 1u &&
+             strstr(last_zip_summary,
+                    "rule=name candidates=1 preferred=\"multi.adf\" boot=\"multi.adf\" fallback=no") &&
+             !strcmp(last_zip_order,
+                     "Zip content order: 1=\"multi.adf\" 2=\"multi (Disk 2).adf\"\n") &&
+             !strcmp(arc_libretro_test_content_id(), standalone_identity.sha1) &&
+             !strcmp(arc_libretro_test_cmos_path(), standalone_cmos) &&
+             ((const uint8_t *)retro_get_memory_data(RETRO_MEMORY_SAVE_RAM))
+                [16u + 42u] == 0x5au &&
+             !strcmp(arc_libretro_test_staged_path(0u), standalone_staged) &&
+             !strcmp(arc_libretro_test_staged_path(1u), previous_natural_shadow) &&
+             disk_control.get_num_images() == 2u &&
              disk_control.get_image_path(0u, image_path, sizeof(image_path)) &&
-             strstr(image_path, "multi.zip#Disc1.adf") &&
+             strstr(image_path, "multi.zip#multi.adf") &&
              disk_control.get_image_label(0u, image_label, sizeof(image_label)) &&
-             !strcmp(image_label, "Disc1") &&
+             !strcmp(image_label, "multi") &&
              disk_control.get_image_path(1u, image_path, sizeof(image_path)) &&
-             strstr(image_path, "multi.zip#Disc2.adf") &&
+             strstr(image_path, "multi.zip#multi (Disk 2).adf") &&
              disk_control.get_image_label(1u, image_label, sizeof(image_label)) &&
-             !strcmp(image_label, "Disc2"));
+             !strcmp(image_label, "multi (Disk 2)"));
       phase = PHASE_RUN;
       for (unsigned frame = 0u; frame < 180u; ++frame) retro_run();
       uint64_t zip_disc1_signature = last_video_signature;
@@ -4007,6 +4083,7 @@ int main(int argc, char **argv)
              disk_control.get_num_images() == 2u &&
              disk_control.set_image_index(0u) && disk_control.set_eject_state(false));
       retro_unload_game();
+      assert(hash_file(previous_natural_cmos) == previous_natural_cmos_hash);
 
       /* R1-2: zip-reset-selected-plain-slot. A plain disk-control append has
        * no zip_member string, so reset compaction must map its original slot
@@ -4025,6 +4102,10 @@ int main(int argc, char **argv)
       retro_reset();
       assert(disk_control.get_num_images() == 3u &&
              disk_control.get_image_index() == 2u &&
+             disk_control.get_image_path(0u, image_path, sizeof(image_path)) &&
+             strstr(image_path, "multi.zip#multi.adf") &&
+             disk_control.get_image_path(1u, image_path, sizeof(image_path)) &&
+             strstr(image_path, "multi.zip#multi (Disk 2).adf") &&
              disk_control.get_image_path(2u, image_path, sizeof(image_path)) &&
              !strcmp(image_path, argv[7]));
       retro_unload_game();
@@ -4032,12 +4113,23 @@ int main(int argc, char **argv)
       variable_update = true;
 
       unsigned omission_before = zip_omission_log_lines;
+      unsigned fallback_messages = zip_fallback_osd_calls;
+      unsigned count_messages = zip_summary_osd_calls;
       zip_game.path = zip_partial;
       phase = PHASE_LOAD; assert(retro_load_game(&zip_game));
       assert(disk_control.get_num_images() == 1u &&
              zip_omission_log_lines == omission_before + 1u &&
-             strstr(last_zip_omission, "member=Disc1.adf") &&
-             strstr(last_zip_summary, "prepared=1 omitted=1"));
+             strstr(last_zip_omission, "member=Game \" (Disk 1).adf") &&
+             strstr(last_zip_summary,
+                    "prepared=1 omitted=1 rule=disc1 candidates=1 preferred=\"Game \\\" (Disk 1).adf\" boot=\"Disc2.adf\" fallback=yes") &&
+             !strcmp(last_zip_order,
+                     "Zip content order: 1=\"Disc2.adf\"\n") &&
+             zip_fallback_osd_calls == fallback_messages + 1u &&
+             zip_summary_osd_calls == count_messages &&
+             strstr(last_zip_fallback, "\"Game \\\" (Disk 1).adf\"") &&
+             strstr(last_zip_fallback, "\"Disc2.adf\"") &&
+             !strcmp(arc_libretro_test_content_id(),
+                     previous_natural_identity.sha1));
       retro_unload_game();
       zip_game.path = zip_only_corrupt;
       phase = PHASE_LOAD; assert(!retro_load_game(&zip_game));
@@ -4092,7 +4184,7 @@ int main(int argc, char **argv)
 
       char mutable_zip[4096];
       snprintf(mutable_zip, sizeof(mutable_zip), "%s/reset-mutable.zip", argv[4]);
-      copy_file(zip_multi, mutable_zip);
+      copy_file(zip_reset_multi, mutable_zip);
       zip_game.path = mutable_zip;
       phase = PHASE_LOAD; assert(retro_load_game(&zip_game));
       copy_file(zip_second_replaced, mutable_zip);
@@ -4102,13 +4194,13 @@ int main(int argc, char **argv)
              strstr(last_zip_omission, "member=Disc2.adf") &&
              strstr(last_zip_omission, "phase=reset"));
       retro_unload_game();
-      copy_file(zip_multi, mutable_zip);
+      copy_file(zip_reset_multi, mutable_zip);
       phase = PHASE_LOAD; assert(retro_load_game(&zip_game));
       copy_file(zip_replaced, mutable_zip);
       option_writes = "off"; variable_update = true; retro_reset();
       assert(strstr(last_message, "Zip reset verification failed for Disc1.adf") &&
              arc_libretro_test_session_state() == 0u && open_files == 0u);
-      copy_file(zip_multi, mutable_zip);
+      copy_file(zip_reset_multi, mutable_zip);
       phase = PHASE_LOAD; assert(retro_load_game(&zip_game));
       assert(remove(mutable_zip) == 0);
       option_writes = "shadow"; variable_update = true; retro_reset();
