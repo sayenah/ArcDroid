@@ -80,7 +80,7 @@ For non-trivial or high-risk work:
 6. Put the reconciled work order in `docs/handoff.md`.
 7. Authorize Sol only when the handoff says `Stage: IMPLEMENTATION`, `Owner: Sol`, with an exact `Next` action.
 8. Review Sol's actual diff and verification evidence before advancing the handoff to QA.
-9. Authorize Opus only when the handoff says `Stage: QA`, `Owner: Opus`, with an exact `Next` action.
+9. Authorize Opus only when the handoff says `Stage: QA`, `Owner: Opus`, with an exact `Next` action. **Model effort parameter for QA: Opus 5.5 at reasoning effort `high` or above, always.** Dispatch either with the project agent definition `.claude/agents/opus-qa.md` (`model: opus`, `effort: high`; the Agent tool loads agent types at session start, so it exists only in sessions started after the file was committed) or, when that type is not listed, through the CLI with an explicit flag: `claude -p --model opus --effort high …` from the QA clone, detached. A plain `general-purpose` Agent with `model: opus` does **not** inherit the session effort (verified 2026-09-22: it reported `low`), so never use it for QA. Require the QA report's first line to state the effort; a report that does not say `high` or above is not a QA pass and must be re-run.
 10. Adjudicate QA findings and merge only when protocol gates are satisfied.
 11. The Founder has delegated merging of implementation PRs to Fable once protocol §12.11 is satisfied.
 
@@ -132,7 +132,7 @@ When enough information exists to act, act. Ask a focused question only when the
 
 # Opus — Independent QA
 
-When explicitly dispatched as **Claude Opus 5.5 QA** (always at reasoning effort **high or above** — Opus 5.5 defaults to medium, which is not accepted for QA; Fable sets it in the dispatch and Opus states the effort in its report):
+When explicitly dispatched as **Claude Opus 5.5 QA** (always at reasoning effort **high or above** — Opus 5.5 defaults to medium, which is not accepted for QA; Fable sets it in the dispatch per workflow step 9 and Opus states the effort in the first line of its report; if you can determine that you are running below `high`, say so in that line and stop after reporting it):
 
 - Read the governing documents and inspect the actual branch/PR/diff and relevant tests before judging the work.
 - Remain independent of Fable's confidence and Sol's self-review narrative; use them only as evidence when needed.
