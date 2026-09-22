@@ -168,6 +168,8 @@ int main(int argc, char **argv) {
                               archive, member) &&
          !strcmp(archive, "C:\\My Games\\Set One.zip") &&
          !strcmp(member, "Dir/Disc 1.adf"));
+  assert(arc_zip_content_path("C:\\Games\\Set.zip#", archive, member) &&
+         !strcmp(archive, "C:\\Games\\Set.zip") && !member[0]);
   puts("zip-content: shared reader, selection, hostile mutants and allocation fault passed");
   return 0;
 }

@@ -238,6 +238,13 @@ static struct retro_vfs_file_handle *vfs_open(const char *path, unsigned mode, u
 {
    (void)hints;
    if (fault_once(path, &fault_open_substring)) return NULL;
+   /* Count attempted opens before the host fopen: a forbidden pseudo-path
+    * access must remain observable even when no literal sibling exists. */
+   if (observed_vfs_path && !strcmp(path, observed_vfs_path))
+   {
+      if (mode & RETRO_VFS_FILE_ACCESS_WRITE) ++observed_vfs_write_opens;
+      else ++observed_vfs_read_opens;
+   }
    const char *m = (mode & RETRO_VFS_FILE_ACCESS_WRITE) ?
       ((mode & RETRO_VFS_FILE_ACCESS_UPDATE_EXISTING) ? "rb+" : "wb") : "rb";
    const char *native_path = aliased_vfs_file_path &&
@@ -247,11 +254,6 @@ static struct retro_vfs_file_handle *vfs_open(const char *path, unsigned mode, u
    struct retro_vfs_file_handle *h = calloc(1u, sizeof(*h));
    assert(h);
    h->file = f; h->path = copy_string(path); h->mode = mode; ++open_files;
-   if (observed_vfs_path && !strcmp(path, observed_vfs_path))
-   {
-      if (mode & RETRO_VFS_FILE_ACCESS_WRITE) ++observed_vfs_write_opens;
-      else ++observed_vfs_read_opens;
-   }
    if ((mode & RETRO_VFS_FILE_ACCESS_WRITE) && strstr(path, "/arcdroid/cmos/"))
       ++cmos_write_opens;
    return h;
@@ -3880,6 +3882,7 @@ int main(int argc, char **argv)
       char zip_only_corrupt[4096], zip_no_media[4096], zip_too_many[4096];
       char zip_unsupported[4096], zip_playlist[4096], zip_member_playlist[4096];
       char zip_single_jfd[4096], zip_two_jfd[4096], zip_replaced[4096];
+      char zip_too_large_jfd[4096], zip_decoded_too_large_jfd[4096];
       char zip_second_replaced[4096];
       snprintf(zip_single, sizeof(zip_single), "%s/single.zip", argv[15]);
       snprintf(zip_multi, sizeof(zip_multi), "%s/multi.zip", argv[15]);
@@ -3893,6 +3896,10 @@ int main(int argc, char **argv)
                "%s/zip-member-entry.m3u", argv[15]);
       snprintf(zip_single_jfd, sizeof(zip_single_jfd), "%s/single-jfd.zip", argv[15]);
       snprintf(zip_two_jfd, sizeof(zip_two_jfd), "%s/two-jfd.zip", argv[15]);
+      snprintf(zip_too_large_jfd, sizeof(zip_too_large_jfd),
+               "%s/too-large-jfd.zip", argv[15]);
+      snprintf(zip_decoded_too_large_jfd, sizeof(zip_decoded_too_large_jfd),
+               "%s/decoded-too-large-jfd.zip", argv[15]);
       snprintf(zip_replaced, sizeof(zip_replaced), "%s/multi-replaced.zip", argv[15]);
       snprintf(zip_second_replaced, sizeof(zip_second_replaced),
                "%s/multi-second-replaced.zip", argv[15]);
@@ -3955,6 +3962,16 @@ int main(int argc, char **argv)
       selected_game.path = selected_path;
       phase = PHASE_LOAD; assert(!retro_load_game(&selected_game));
       assert(strstr(last_message, "Absent.adf is not a supported disc image in single.zip"));
+      snprintf(selected_path, sizeof(selected_path), "%s#", zip_single);
+      selected_game.path = selected_path;
+      phase = PHASE_LOAD; assert(!retro_load_game(&selected_game));
+      assert(!strcmp(last_message,
+                     "Empty zip member is not a supported disc image in single.zip"));
+      snprintf(selected_path, sizeof(selected_path), "%s#y.adf", zip_unsupported);
+      selected_game.path = selected_path;
+      phase = PHASE_LOAD; assert(!retro_load_game(&selected_game));
+      assert(!strcmp(last_message,
+                     "Unsupported archive container; ArcDroid supports .zip files only."));
 
       zip_game.path = zip_multi;
       phase = PHASE_LOAD; assert(retro_load_game(&zip_game));
@@ -3989,6 +4006,29 @@ int main(int argc, char **argv)
              disk_control.set_image_index(0u) && disk_control.set_eject_state(false));
       retro_unload_game();
 
+      /* R1-2: zip-reset-selected-plain-slot. A plain disk-control append has
+       * no zip_member string, so reset compaction must map its original slot
+       * by index instead of matching the first empty string. */
+      option_writes = "off";
+      variable_update = true;
+      zip_game.path = zip_multi;
+      phase = PHASE_LOAD; assert(retro_load_game(&zip_game));
+      assert(disk_control.set_eject_state(true) &&
+             disk_control.add_image_index());
+      struct retro_game_info zip_plain_append = {argv[7], NULL, 0u, NULL};
+      assert(disk_control.replace_image_index(2u, &zip_plain_append) &&
+             disk_control.set_image_index(2u));
+      option_writes = "shadow";
+      variable_update = true;
+      retro_reset();
+      assert(disk_control.get_num_images() == 3u &&
+             disk_control.get_image_index() == 2u &&
+             disk_control.get_image_path(2u, image_path, sizeof(image_path)) &&
+             !strcmp(image_path, argv[7]));
+      retro_unload_game();
+      option_writes = "off";
+      variable_update = true;
+
       unsigned omission_before = zip_omission_log_lines;
       zip_game.path = zip_partial;
       phase = PHASE_LOAD; assert(retro_load_game(&zip_game));
@@ -4006,7 +4046,8 @@ int main(int argc, char **argv)
                      "No supported disc image (adf, adl, jfd) in no-media.zip"));
       zip_game.path = zip_too_many;
       phase = PHASE_LOAD; assert(!retro_load_game(&zip_game));
-      assert(strstr(last_message, "more than 32 supported disc images"));
+      assert(!strcmp(last_message,
+                     "Zip too-many.zip contains more than 32 supported disc images"));
       zip_game.path = zip_unsupported;
       phase = PHASE_LOAD; assert(!retro_load_game(&zip_game));
       assert(!strcmp(last_message,
@@ -4096,17 +4137,111 @@ int main(int argc, char **argv)
              !disk_control.set_eject_state(true) &&
              !disk_control.add_image_index() &&
              !disk_control.replace_image_index(0u, &zip_replacement));
-      free(eligible_bytes);
+      /* R1-1a: zip-adffs-retained-three-resets. */
+      for (unsigned reset = 0u; reset < 3u; ++reset)
+      {
+         unsigned boot_lines = jfd_boot_log_lines;
+         retro_reset();
+         assert(jfd_boot_log_lines == boot_lines + 1u &&
+                strstr(last_jfd_boot_log, "JFD boot: path=adffs") &&
+                arc_libretro_test_adffs_carrier_matches(eligible_bytes,
+                                                        eligible_size));
+      }
       phase = PHASE_RUN;
       for (unsigned frame = 0u; frame < 10u; ++frame) retro_run();
       assert(observed_vfs_reads == reads_after_load && observed_vfs_write_opens == 0u);
       retro_unload_game();
       observed_vfs_path = NULL;
+
+      /* R1-1b: zip-adffs-hostile-pseudo-path. The literal sibling is valid
+       * host content, making any accidental pseudo-path open observable. */
+      char hostile_zip[4096], hostile_pseudo[4096];
+      snprintf(hostile_zip, sizeof(hostile_zip), "%s/hostile-single-jfd.zip",
+               argv[4]);
+      snprintf(hostile_pseudo, sizeof(hostile_pseudo), "%s#Game.jfd",
+               hostile_zip);
+      copy_file(zip_single_jfd, hostile_zip);
+      static const char hostile_bytes[] = "Invented hostile sibling!";
+      assert(sizeof(hostile_bytes) - 1u == 25u);
+      write_exact(hostile_pseudo, hostile_bytes, sizeof(hostile_bytes) - 1u);
+      zip_game.path = hostile_zip;
+      observed_vfs_path = hostile_pseudo;
+      observed_vfs_read_opens = observed_vfs_write_opens = observed_vfs_reads = 0u;
+      phase = PHASE_LOAD; assert(retro_load_game(&zip_game));
+      assert(strstr(last_jfd_boot_log, "JFD boot: path=adffs") &&
+             arc_libretro_test_adffs_carrier_matches(eligible_bytes, eligible_size));
+      for (unsigned reset = 0u; reset < 2u; ++reset)
+      {
+         retro_reset();
+         assert(strstr(last_jfd_boot_log, "JFD boot: path=adffs") &&
+                arc_libretro_test_adffs_carrier_matches(eligible_bytes,
+                                                        eligible_size));
+      }
+      assert(observed_vfs_read_opens == 0u &&
+             observed_vfs_write_opens == 0u);
+      retro_unload_game();
+      observed_vfs_path = NULL;
+      assert(remove(hostile_pseudo) == 0 && remove(hostile_zip) == 0);
+
+      /* R1-1c: zip-adffs-carrier-too-large. */
+      char zip_jfd_pseudo[4096];
+      snprintf(zip_jfd_pseudo, sizeof(zip_jfd_pseudo), "%s#Game.jfd",
+               zip_too_large_jfd);
+      observed_vfs_path = zip_jfd_pseudo;
+      observed_vfs_read_opens = observed_vfs_write_opens = observed_vfs_reads = 0u;
+      zip_game.path = zip_too_large_jfd;
+      phase = PHASE_LOAD; assert(retro_load_game(&zip_game));
+      assert(!strcmp(last_jfd_boot_log,
+                     "JFD boot: path=native reason=too-large\n") &&
+             observed_vfs_read_opens == 0u &&
+             observed_vfs_write_opens == 0u);
+      retro_unload_game();
+      observed_vfs_path = NULL;
+
+      /* R1-1d: zip-adffs-native-reinsert-retains-reason. decoded-too-large
+       * is decided after the retained raw member has been acquired. */
+      snprintf(zip_jfd_pseudo, sizeof(zip_jfd_pseudo), "%s#Game.jfd",
+               zip_decoded_too_large_jfd);
+      observed_vfs_path = zip_jfd_pseudo;
+      observed_vfs_read_opens = observed_vfs_write_opens = observed_vfs_reads = 0u;
+      zip_game.path = zip_decoded_too_large_jfd;
+      phase = PHASE_LOAD; assert(retro_load_game(&zip_game));
+      assert(!strcmp(last_jfd_boot_log,
+                     "JFD boot: path=native reason=decoded-too-large\n"));
+      assert(disk_control.set_eject_state(true) &&
+             disk_control.set_eject_state(false));
+      unsigned reinsert_boot_lines = jfd_boot_log_lines;
+      retro_reset();
+      assert(!strcmp(last_jfd_boot_log,
+                     "JFD boot: path=native reason=decoded-too-large\n") &&
+             jfd_boot_log_lines == reinsert_boot_lines + 1u &&
+             observed_vfs_read_opens == 0u &&
+             observed_vfs_write_opens == 0u);
+      retro_unload_game();
+      observed_vfs_path = NULL;
+      free(eligible_bytes);
+
       zip_game.path = zip_two_jfd;
+      snprintf(zip_jfd_pseudo, sizeof(zip_jfd_pseudo), "%s#Disc1.jfd",
+               zip_two_jfd);
+      observed_vfs_path = zip_jfd_pseudo;
+      observed_vfs_read_opens = observed_vfs_write_opens = observed_vfs_reads = 0u;
       phase = PHASE_LOAD; assert(retro_load_game(&zip_game));
       assert(!strcmp(last_jfd_boot_log,
                      "JFD boot: path=native reason=multi-image\n"));
+      /* R1-1e: zip-adffs-missing-retained-bytes. Reducing a multi-image zip
+       * through disk control cannot invent retained bytes or open a member
+       * pseudo-path; the single remaining JFD falls back deterministically. */
+      assert(disk_control.set_eject_state(true) &&
+             disk_control.replace_image_index(1u, NULL) &&
+             disk_control.set_eject_state(false));
+      retro_reset();
+      assert(!strcmp(last_jfd_boot_log,
+                     "JFD boot: path=native reason=content-unreadable\n") &&
+             observed_vfs_read_opens == 0u &&
+             observed_vfs_write_opens == 0u);
       retro_unload_game();
+      observed_vfs_path = NULL;
 
       option_launch = "off";
       option_writes = "off";

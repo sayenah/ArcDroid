@@ -857,7 +857,9 @@ def _manual_zip(entries: list[dict], comment: bytes = b"") -> bytes:
 
 
 def build_zip_content_fixtures(output: Path, disc1: bytes, disc2: bytes,
-                               jfd: bytes, adffs_jfd: bytes) -> None:
+                               jfd: bytes, adffs_jfd: bytes,
+                               too_large_adffs_jfd: bytes,
+                               decoded_too_large_adffs_jfd: bytes) -> None:
     """Invented ZIP content and hostile mutants; no external content."""
     output.mkdir(exist_ok=True)
     media = [{"name": "Disc1.adf", "payload": disc1},
@@ -918,6 +920,10 @@ def build_zip_content_fixtures(output: Path, disc1: bytes, disc2: bytes,
         media[0], {"name": "Disc2.adf", "payload": disc1}]))
     (output / "single-jfd.zip").write_bytes(_manual_zip([
         {"name": "Game.jfd", "payload": adffs_jfd}]))
+    (output / "too-large-jfd.zip").write_bytes(_manual_zip([
+        {"name": "Game.jfd", "payload": too_large_adffs_jfd}]))
+    (output / "decoded-too-large-jfd.zip").write_bytes(_manual_zip([
+        {"name": "Game.jfd", "payload": decoded_too_large_adffs_jfd}]))
     (output / "two-jfd.zip").write_bytes(_manual_zip([
         {"name": "Disc1.jfd", "payload": adffs_jfd},
         {"name": "Disc2.jfd", "payload": adffs_jfd}]))
@@ -2081,7 +2087,9 @@ def main() -> None:
     (args.output / "arcdroid-test.jfd").write_bytes(jfd)
     build_zip_content_fixtures(args.output / "zip-content", bytes(disc1),
                                bytes(disc2), bytes(jfd),
-                               (args.output / "adffs/eligible.jfd").read_bytes())
+                               (args.output / "adffs/eligible.jfd").read_bytes(),
+                               (args.output / "adffs/too-large.jfd").read_bytes(),
+                               (args.output / "adffs/decoded-too-large.jfd").read_bytes())
     (args.output / "arcdroid-test-gzip.jfd").write_bytes(gzip_member(jfd))
     extended_jfd = build_extended_jfd(bytes(disc1[:256]))
     two_member = gzip_member(extended_jfd[:316]) + gzip_member(extended_jfd[316:])

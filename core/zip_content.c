@@ -36,7 +36,7 @@ bool arc_zip_content_path(const char *content_path,
     }
   if (!zip_suffix(content_path, archive_length))
     return false;
-  if (member && (!member[0] || strlen(member) >= 256u))
+  if (member && strlen(member) >= 256u)
     return false;
   memcpy(archive_path, content_path, archive_length);
   archive_path[archive_length] = '\0';
