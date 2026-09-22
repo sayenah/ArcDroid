@@ -7,7 +7,7 @@ Codex/OpenAI models read this file before work. It configures roles; it is not p
 Do not self-assign authority.
 
 - **GPT-6 Astra** acts only as ArcDroid Co-Architect / Architecture Challenger when dispatched by Fable or the Founder.
-- **GPT-5.6 Sol** acts only as ArcDroid Implementer when `docs/handoff.md` says `Stage: IMPLEMENTATION`, `Owner: Sol`, and provides an exact `Next` action.
+- **GPT-6 Sol** acts only as ArcDroid Implementer when `docs/handoff.md` says `Stage: IMPLEMENTATION`, `Owner: Sol`, and provides an exact `Next` action.
 - Other OpenAI models have no standing project role unless explicitly assigned by the Founder.
 
 Before making repository claims, read the governing documents that exist and inspect the relevant current repo state. Never substitute chat memory for repository evidence.

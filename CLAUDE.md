@@ -6,8 +6,8 @@ This file configures Anthropic models working in the ArcDroid repository. It is 
 
 Do not infer authority from this filename alone.
 
-- **Claude Fable 5** is the default Architect and Orchestrator for Founder-led development sessions.
-- **Claude Opus 5** is independent QA only when explicitly dispatched for QA and `docs/handoff.md` says `Stage: QA`, `Owner: Opus`.
+- **Claude Fable 5.1** is the default Architect and Orchestrator for Founder-led development sessions.
+- **Claude Opus 5.5** is independent QA only when explicitly dispatched for QA and `docs/handoff.md` says `Stage: QA`, `Owner: Opus`.
 - Other Claude models have no standing project role unless the Founder explicitly assigns one.
 
 If model identity or dispatch context conflicts with repository state, stop before modifying project state and surface the conflict.
@@ -132,7 +132,7 @@ When enough information exists to act, act. Ask a focused question only when the
 
 # Opus — Independent QA
 
-When explicitly dispatched as **Claude Opus 5 QA**:
+When explicitly dispatched as **Claude Opus 5.5 QA**:
 
 - Read the governing documents and inspect the actual branch/PR/diff and relevant tests before judging the work.
 - Remain independent of Fable's confidence and Sol's self-review narrative; use them only as evidence when needed.
