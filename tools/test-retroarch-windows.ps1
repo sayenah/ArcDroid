@@ -11,6 +11,7 @@ $retroArchUrl = "https://buildbot.libretro.com/stable/$retroArchVersion/windows/
 $archive = Join-Path $WorkDirectory "RetroArch.7z"
 $extractDirectory = Join-Path $WorkDirectory "distribution"
 $evidenceDirectory = Join-Path $WorkDirectory "evidence"
+$ciRetryAttempts = 3
 
 New-Item -ItemType Directory -Force $WorkDirectory, $extractDirectory, $evidenceDirectory | Out-Null
 curl.exe --fail --location --silent --show-error $retroArchUrl --output $archive
@@ -53,6 +54,24 @@ function Send-QuitPair($Udp) {
     [void]$Udp.Send($quitBytes, $quitBytes.Length)
     Start-Sleep -Milliseconds 300
     [void]$Udp.Send($quitBytes, $quitBytes.Length)
+}
+
+function Move-ItemWithSharingRetry([string]$Source, [string]$Destination,
+                                   [string]$Context) {
+    for ($attempt = 1; $attempt -le $ciRetryAttempts; $attempt++) {
+        Write-Host "$Context move attempt $attempt/$ciRetryAttempts"
+        try {
+            Move-Item -Force -LiteralPath $Source -Destination $Destination -ErrorAction Stop
+            return
+        } catch {
+            $message = $_.Exception.Message
+            if ($message -notmatch '(?i)being used by another process') { throw }
+            if ($attempt -eq $ciRetryAttempts) {
+                throw "$message (attempt $attempt/$ciRetryAttempts)"
+            }
+            Start-Sleep -Milliseconds 200
+        }
+    }
 }
 
 function Get-EventDataMap($EventRecord) {
@@ -284,7 +303,7 @@ Invoke-ArcDroid 600 $true
 # "<core path>|<content path>". Try ten reloads inside one process and retain
 # the attempt log. If this stable binary does not expose/respond on UDP 55355,
 # fall back to ten explicit process relaunches and say so in the job summary.
-function Try-InSessionReloads {
+function Try-InSessionReloads([int]$Attempt) {
     $arguments = @(
         "--config=$config", "--libretro=$core", "--verbose",
         "--max-frames=12000", $content
@@ -321,15 +340,20 @@ function Try-InSessionReloads {
         $output = @()
         if (Test-Path $stdout) { $output += Get-Content $stdout }
         if (Test-Path $stderr) { $output += Get-Content $stderr }
-        $output | Set-Content -Encoding UTF8 $attemptLog
+        if ($Attempt -eq 1) {
+            $output | Set-Content -Encoding UTF8 $attemptLog
+        } else {
+            $output | Add-Content -Encoding UTF8 $attemptLog
+        }
         $identifications = @($output | Select-String -SimpleMatch "Firmware: ArcDroid test ROM").Count
         if ($process.ExitCode -ne 0 -or $identifications -lt 11) {
-            throw "network commands did not produce 10 observable reloads (firmware identifications=$identifications)"
+            throw "network commands did not produce 10 observable reloads (firmware identifications=$identifications) (attempt $Attempt/$ciRetryAttempts)"
         }
         $output | Add-Content -Encoding UTF8 $log
         return $true
     }
     catch {
+        $observableReloadFailure = $_.Exception.Message -like "network commands did not produce 10 observable reloads*"
         if (Test-Path $stdout) { Get-Content $stdout | Add-Content -Encoding UTF8 $attemptLog }
         if (Test-Path $stderr) { Get-Content $stderr | Add-Content -Encoding UTF8 $attemptLog }
         $_ | Out-String | Add-Content -Encoding UTF8 $attemptLog
@@ -338,6 +362,8 @@ function Try-InSessionReloads {
                 $runStartUtc @($attemptLog, $stdout, $stderr) `
                 "in-session reload exited unexpectedly"
         }
+        if ($observableReloadFailure -and $Attempt -eq $ciRetryAttempts) { throw }
+        $script:retryInSessionReloads = $observableReloadFailure
         return $false
     }
     finally {
@@ -346,7 +372,12 @@ function Try-InSessionReloads {
     }
 }
 
-$inSessionReloads = Try-InSessionReloads
+$inSessionReloads = $false
+$script:retryInSessionReloads = $true
+for ($attempt = 1; $attempt -le $ciRetryAttempts -and -not $inSessionReloads -and $script:retryInSessionReloads; $attempt++) {
+    Write-Host "RetroArch in-session reload attempt $attempt/$ciRetryAttempts"
+    $inSessionReloads = Try-InSessionReloads $attempt
+}
 if (-not $inSessionReloads) {
     for ($reload = 1; $reload -le 10; $reload++) {
         Write-Host "RetroArch process-relaunch content load $reload/10"
@@ -617,7 +648,7 @@ function Capture-MediaSignature($Run, [string]$Name) {
     }
     if (-not $shot) { throw "$Name screenshot was not observed within 10 seconds" }
     $renamed = Join-Path $evidenceDirectory "$Name.png"
-    Move-Item -Force $shot.FullName $renamed
+    Move-ItemWithSharingRetry $shot.FullName $renamed "$Name screenshot"
     return Get-MediaRowSignature $renamed $Name
 }
 
@@ -933,7 +964,7 @@ function Capture-RawScreenshot($Run, [string]$Name) {
         throw "$Name screenshot step timed out after 10 seconds; process=$processState; evidence_files=[$files]; retroarch_log_tail=[$logTail]"
     }
     $renamed = Join-Path $evidenceDirectory "$Name.png"
-    Move-Item -Force $shot.FullName $renamed
+    Move-ItemWithSharingRetry $shot.FullName $renamed "$Name screenshot"
     $image = [System.Drawing.Bitmap]::new($renamed)
     $sampledColours = [System.Collections.Generic.HashSet[int]]::new()
     $canonical = $null
@@ -1508,4 +1539,13 @@ if ($rememberedChoiceAfter -ne $rememberedChoice) {
 Write-Host "Slice 5c Windows RetroArch: chooser screenshot, row-2 focus after held scan-code Down, scan-code Enter pick, guest signature and remembered replay passed"
 if ($env:GITHUB_STEP_SUMMARY) {
     Add-Content -Encoding UTF8 $env:GITHUB_STEP_SUMMARY "- Slice 5c chooser: distinct 640x480 chooser observed; held hardware scan-code Down visibly moved focus to row 2 before scan-code Enter selected !Qaventra; relaunch replayed the same guest screenshot without the chooser."
+}
+
+$srmRecords = @(Get-ChildItem -LiteralPath $saveDirectory -Filter "*.srm" -File -Recurse -ErrorAction Stop)
+if ($srmRecords.Count -ne 0) {
+    throw "ArcDroid runs unexpectedly created .srm files: $($srmRecords.FullName -join ', ')"
+}
+Write-Host "Slice 6b Windows RetroArch: no .srm files were created under the saves directory"
+if ($env:GITHUB_STEP_SUMMARY) {
+    Add-Content -Encoding UTF8 $env:GITHUB_STEP_SUMMARY "- Slice 6b persistence: no per-game .srm files were created under the saves directory."
 }

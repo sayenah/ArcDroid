@@ -896,6 +896,15 @@ def build_zip_content_fixtures(output: Path, disc1: bytes, disc2: bytes,
         media[0], {"name": "large.bin", "payload": b"", "size": 8 * 1024 * 1024 + 1}]))
     (output / "false-eocd-comment.zip").write_bytes(_manual_zip(
         [media[0]], b"comment PK\x05\x06 false"))
+    unix_version = (3 << 8) | 20
+    (output / "unix-mode-0600.zip").write_bytes(_manual_zip([{
+        **media[0], "external": 0o600 << 16, "version_made": unix_version}]))
+    (output / "unix-mode-symlink.zip").write_bytes(_manual_zip([{
+        **media[0], "external": 0o120777 << 16,
+        "version_made": unix_version}]))
+    (output / "unix-mode-directory.zip").write_bytes(_manual_zip([{
+        **media[0], "external": 0o40755 << 16,
+        "version_made": unix_version}]))
     ordered = [
         {"name": "Disc10.adf", "payload": disc1},
         {"name": "disc3.adf", "payload": disc1},

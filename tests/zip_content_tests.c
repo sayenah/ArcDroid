@@ -265,6 +265,29 @@ static void member_failures(const char *root) {
   }
 }
 
+static void unix_member_modes(const char *root) {
+  const struct {
+    const char *fixture;
+    unsigned images;
+  } cases[] = {{"unix-mode-0600.zip", 1u},
+               {"unix-mode-symlink.zip", 0u},
+               {"unix-mode-directory.zip", 0u}};
+  for (unsigned i = 0u; i < sizeof(cases) / sizeof(cases[0]); ++i) {
+    uint8_t *bytes;
+    size_t size;
+    ArcZipArchive archive =
+        index_fixture(root, cases[i].fixture, &bytes, &size);
+    ArcZipContent content;
+    char error[256] = {0};
+    assert(arc_zip_content_index(&archive, cases[i].fixture, NULL, &content,
+                                 error, sizeof(error)) &&
+           content.count == cases[i].images &&
+           content.qualifying_count == cases[i].images);
+    arc_zip_free(&archive);
+    free(bytes);
+  }
+}
+
 static void allocation_failure(const char *root) {
   uint8_t *bytes;
   size_t size;
@@ -306,6 +329,7 @@ int main(int argc, char **argv) {
     reject(argv[1], rejected[i].name, rejected[i].reason);
   selection(argv[1]);
   boot_selection(argv[1]);
+  unix_member_modes(argv[1]);
   member_failures(argv[1]);
   allocation_failure(argv[1]);
   char archive[ARC_MEDIA_PATH_CAPACITY], member[256];

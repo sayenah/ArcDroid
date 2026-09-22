@@ -31,6 +31,10 @@ images; a zip with no usable supported image is refused. Classic stored and
 deflated zip members are supported. Zip64, encrypted archives, other
 compression methods, and other archive formats are not supported.
 
+For zip entries made on Unix, a mode with no file-type bits is treated as a
+regular file. Entries explicitly typed as directories, links, sockets, FIFOs,
+or devices are not game media and are skipped.
+
 The limits are 32 MiB per archive, 1,024 entries, 8 MiB per uncompressed
 member, 32 supported disc images, and 256 MiB of prepared logical media.
 ArcDroid validates the whole zip structure before extracting any member.
@@ -45,6 +49,14 @@ RetroArch names its own per-game overrides, remaps, and options from the zip
 stem for a bare zip and from the member stem for the member form. Name the zip
 like the image, or use the member form, when keeping those frontend-side
 settings matters.
+
+When scanning content in RetroArch, leave `Scan Inside Archives` off to create
+one playlist entry per zip. With it on, RetroArch creates one entry per member;
+every such entry still boots ArcDroid's selected image 1 for the zip.
+
+ArcDroid keeps CMOS only in its write-through file under the configured saves
+directory. `.srm` files created by earlier ArcDroid builds are inert and may be
+deleted.
 
 The disc that actually starts supplies the game's ArcDroid identity used for
 CMOS, launch choices, and title profiles. Renaming a zip can therefore change
