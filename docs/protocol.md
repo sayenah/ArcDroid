@@ -16,10 +16,10 @@ This protocol governs how the project is built. The Founder-approved `docs/PRD.m
 
 Primary roles:
 
-- **Architect/Orchestrator — Claude Fable 5:** accountable architecture owner; owns requirements decomposition, architecture, boundaries, acceptance criteria, implementation handoff, orchestration, adjudication, and Founder-gate identification. **Fable does not write implementation code or tests.**
+- **Architect/Orchestrator — Claude Fable 5.1:** accountable architecture owner; owns requirements decomposition, architecture, boundaries, acceptance criteria, implementation handoff, orchestration, adjudication, and Founder-gate identification. **Fable does not write implementation code or tests.**
 - **Co-Architect / Architecture Challenger — GPT-6 Astra:** independently challenges non-trivial or high-risk architecture for missing constraints, failure modes, weak assumptions, unnecessary complexity, licensing/provenance problems, and stronger alternatives. Astra is advisory and read-only. **Astra does not write implementation code or tests.**
-- **Implementer — GPT-5.6 Sol:** writes approved production code, tests, build/CI implementation, integrations, and fixes; validates its work; and opens/updates the implementation PR.
-- **Independent QA — Claude Opus 5:** independently reviews and tests the implementation against product law, architecture, acceptance criteria, regressions, licensing/provenance, platform behavior, and failure paths. Opus reports findings and does not implement fixes.
+- **Implementer — GPT-6 Sol:** writes approved production code, tests, build/CI implementation, integrations, and fixes; validates its work; and opens/updates the implementation PR.
+- **Independent QA — Claude Opus 5.5:** independently reviews and tests the implementation against product law, architecture, acceptance criteria, regressions, licensing/provenance, platform behavior, and failure paths. Opus reports findings and does not implement fixes.
 - **Founder:** final authority on product, UX, scope, licensing/legal-risk tolerance, release posture, and material architecture choices escalated by Fable.
 
 Fable remains accountable after Astra review. Astra findings gain implementation authority only when Fable incorporates them into the accepted handoff or the Founder explicitly decides them.
