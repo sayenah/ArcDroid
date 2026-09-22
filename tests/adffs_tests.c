@@ -595,7 +595,7 @@ int main(int argc, char **argv) {
   reject_fixture(argv[1], "duplicate.zip", "duplicate");
   reject_fixture(argv[1], "case-collision.zip", "case-colliding");
   reject_fixture(argv[1], "local-mismatch.zip", "local/central");
-  reject_fixture(argv[1], "extra-mismatch.zip", "local/central");
+  reject_fixture(argv[1], "extra-mismatch.zip", "conflicting ARC0");
   reject_fixture(argv[1], "central-size-mismatch.zip", "central directory size");
   reject_fixture(argv[1], "missing-arc0.zip", "ARC0");
   reject_fixture(argv[1], "unsafe-name.zip", "unsafe");

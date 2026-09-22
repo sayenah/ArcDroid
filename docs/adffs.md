@@ -17,6 +17,7 @@ do not match ArcDroid's known profile.
 
 The ADFFS path currently supports only one JFD image whose header describes a
 single disc. Playlists, folder sets, and multi-disc titles use the native path.
+A zip containing one eligible JFD image is eligible for the same ADFFS path.
 The two guest discs used for an ADFFS session are memory-backed and read-only:
 changes to the mounted image are not written back, regardless of the `Disk
 Writes` option. At boot, ArcDroid's project-authored launcher copies only the

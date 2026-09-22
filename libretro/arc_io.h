@@ -15,6 +15,8 @@ void arc_io_set_vfs(struct retro_vfs_interface *vfs);
 bool arc_io_set_memory_source(unsigned slot, const void *data, size_t size);
 void arc_io_clear_memory_sources(void);
 bool arc_io_read_all(const char *path, void **data, size_t *size);
+bool arc_io_read_all_limit(const char *path, void **data, size_t *size,
+                           size_t limit, bool *limit_exceeded);
 bool arc_io_write_all(const char *path, const void *data, size_t size);
 bool arc_io_remove(const char *path);
 bool arc_io_rename(const char *old_path, const char *new_path);

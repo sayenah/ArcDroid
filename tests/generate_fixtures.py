@@ -14,6 +14,7 @@ import gzip
 import io
 import struct
 import zipfile
+import zlib
 
 ROM_SIZE = 512 * 1024
 ADF_SIZE = 800 * 1024
@@ -804,6 +805,231 @@ def _write_raw_name_fixture(path: Path,
             local_names.count(raw_name) != expected_count or
             central_names.count(raw_name) != expected_count):
         raise ValueError(f"raw ZIP name self-check failed for {path.name}")
+
+
+def _manual_zip(entries: list[dict], comment: bytes = b"") -> bytes:
+    """Build a deterministic classic ZIP for structural boundary fixtures."""
+    local = bytearray()
+    central = bytearray()
+    for item in entries:
+        name = item["name"]
+        if isinstance(name, str):
+            name = name.encode("utf-8")
+        payload = item.get("payload", b"")
+        method = item.get("method", 0)
+        flags = item.get("flags", 0)
+        local_extra = item.get("local_extra", b"")
+        central_extra = item.get("central_extra", local_extra)
+        descriptor = item.get("descriptor", False)
+        if method == 8:
+            compressor = zlib.compressobj(9, zlib.DEFLATED, -15)
+            packed_data = compressor.compress(payload) + compressor.flush()
+        else:
+            packed_data = item.get("packed_data", payload)
+        crc = item.get("crc", zlib.crc32(payload) & 0xFFFFFFFF)
+        packed = item.get("packed", len(packed_data))
+        size = item.get("size", len(payload))
+        local_at = len(local)
+        local_flags = flags | (8 if descriptor else 0)
+        local_crc = 0 if descriptor else crc
+        local_packed = 0 if descriptor else packed
+        local_size = 0 if descriptor else size
+        local += struct.pack("<IHHHHHIIIHH", 0x04034B50, 20, local_flags,
+                             method, 0, 0, local_crc, local_packed, local_size,
+                             len(name), len(local_extra))
+        local += name + local_extra + packed_data
+        if descriptor:
+            local += struct.pack("<IIII", 0x08074B50, crc, packed, size)
+        version_made = item.get("version_made", 20)
+        external = item.get("external", 0)
+        disk = item.get("disk", 0)
+        central += struct.pack(
+            "<IHHHHHHIIIHHHHHII", 0x02014B50, version_made, 20,
+            local_flags, method, 0, 0, crc, packed, size, len(name),
+            len(central_extra), 0, disk, 0, external, local_at)
+        central += name + central_extra
+    central_at = len(local)
+    result = local + central
+    result += struct.pack("<IHHHHIIH", 0x06054B50, 0, 0, len(entries),
+                          len(entries), len(central), central_at, len(comment))
+    result += comment
+    return bytes(result)
+
+
+def build_zip_content_fixtures(output: Path, disc1: bytes, disc2: bytes,
+                               jfd: bytes, adffs_jfd: bytes,
+                               too_large_adffs_jfd: bytes,
+                               decoded_too_large_adffs_jfd: bytes) -> None:
+    """Invented ZIP content and hostile mutants; no external content."""
+    output.mkdir(exist_ok=True)
+    media = [{"name": "Disc1.adf", "payload": disc1},
+             {"name": "Disc2.adf", "payload": disc2}]
+    (output / "stored.zip").write_bytes(_manual_zip([media[0]]))
+    (output / "deflated.zip").write_bytes(_manual_zip([
+        {**media[0], "method": 8}]))
+    (output / "descriptor.zip").write_bytes(_manual_zip([
+        {**media[0], "method": 8, "descriptor": True}]))
+    # Info-ZIP commonly emits longer local timestamp/UID records than central
+    # records. These are exactly 28 and 24 bytes respectively.
+    ut_local = struct.pack("<HHBII", 0x5455, 9, 3, 1, 2) + \
+        struct.pack("<HHBBIBI", 0x7875, 11, 1, 4, 3, 4, 4)
+    ut_central = struct.pack("<HHBI", 0x5455, 5, 1, 1) + \
+        struct.pack("<HHBBIBI", 0x7875, 11, 1, 4, 3, 4, 4)
+    assert len(ut_local) == 28 and len(ut_central) == 24
+    (output / "infozip-extra.zip").write_bytes(_manual_zip([
+        {**media[0], "local_extra": ut_local,
+         "central_extra": ut_central}]))
+    ditto_local = struct.pack("<HHIII", 0x5455, 12, 1, 2, 3)
+    ditto_central = struct.pack("<HHII", 0x5455, 8, 1, 2)
+    (output / "ditto-extra.zip").write_bytes(_manual_zip([
+        {**media[0], "method": 8, "descriptor": True,
+         "local_extra": ditto_local, "central_extra": ditto_central}]))
+    (output / "utf8.zip").write_bytes(_manual_zip([
+        {"name": "Élan.adf", "payload": disc1, "flags": 1 << 11}]))
+    (output / "nested.zip").write_bytes(_manual_zip([
+        {"name": "Games/Arc/Disc1.adf", "payload": disc1}]))
+    (output / "mixed.zip").write_bytes(_manual_zip([
+        media[0], {"name": "Disc2.jfd", "payload": jfd}]))
+    (output / "unsupported-nonmedia.zip").write_bytes(_manual_zip([
+        media[0], {"name": "notes.bin", "payload": b"", "method": 99}]))
+    (output / "oversize-nonmedia.zip").write_bytes(_manual_zip([
+        media[0], {"name": "large.bin", "payload": b"", "size": 8 * 1024 * 1024 + 1}]))
+    (output / "false-eocd-comment.zip").write_bytes(_manual_zip(
+        [media[0]], b"comment PK\x05\x06 false"))
+    ordered = [
+        {"name": "Disc10.adf", "payload": disc1},
+        {"name": "disc3.adf", "payload": disc1},
+        {"name": "Disc2.adf", "payload": disc1},
+        {"name": "a/Disc0.adf", "payload": disc1},
+        {"name": "Disc1.adf", "payload": disc1},
+        {"name": "__MACOSX/Disc1.adf", "payload": disc2},
+        {"name": ".hidden/Disc1.adf", "payload": disc2},
+        {"name": "._Disc1.adf", "payload": disc2},
+        {"name": "folder/", "payload": b"", "external": 0o40755 << 16,
+         "version_made": (3 << 8) | 20},
+        {"name": "link.adf", "payload": b"target", "external": 0o120777 << 16,
+         "version_made": (3 << 8) | 20},
+    ]
+    (output / "order.zip").write_bytes(_manual_zip(ordered))
+    (output / "order-reversed.zip").write_bytes(_manual_zip(list(reversed(ordered))))
+    (output / "single.zip").write_bytes(_manual_zip([media[0]]))
+    (output / "multi.zip").write_bytes(_manual_zip(media))
+    (output / "multi-replaced.zip").write_bytes(_manual_zip([
+        {"name": "Disc1.adf", "payload": disc2}, media[1]]))
+    (output / "multi-second-replaced.zip").write_bytes(_manual_zip([
+        media[0], {"name": "Disc2.adf", "payload": disc1}]))
+    (output / "single-jfd.zip").write_bytes(_manual_zip([
+        {"name": "Game.jfd", "payload": adffs_jfd}]))
+    (output / "too-large-jfd.zip").write_bytes(_manual_zip([
+        {"name": "Game.jfd", "payload": too_large_adffs_jfd}]))
+    (output / "decoded-too-large-jfd.zip").write_bytes(_manual_zip([
+        {"name": "Game.jfd", "payload": decoded_too_large_adffs_jfd}]))
+    (output / "two-jfd.zip").write_bytes(_manual_zip([
+        {"name": "Disc1.jfd", "payload": adffs_jfd},
+        {"name": "Disc2.jfd", "payload": adffs_jfd}]))
+    bad_first = _manual_zip(media)
+    bad_first = bytearray(bad_first)
+    first_central = bad_first.index(b"PK\x01\x02")
+    struct.pack_into("<I", bad_first, 14,
+                     struct.unpack_from("<I", bad_first, 14)[0] ^ 1)
+    struct.pack_into("<I", bad_first, first_central + 16,
+                     struct.unpack_from("<I", bad_first, first_central + 16)[0] ^ 1)
+    (output / "partial-first.zip").write_bytes(bad_first)
+    (output / "bad-crc.zip").write_bytes(bad_first)
+    (output / "only-corrupt.zip").write_bytes(_manual_zip([
+        {"name": "Disc1.adf", "payload": disc1, "crc": 1}]))
+    (output / "no-media.zip").write_bytes(_manual_zip([
+        {"name": "readme.txt", "payload": b"invented notes"}]))
+    (output / "too-many.zip").write_bytes(_manual_zip([
+        {"name": f"Disc{i:02d}.adf", "payload": disc1} for i in range(33)]))
+    (output / "entry-limit.zip").write_bytes(_manual_zip([
+        {"name": f"unused/{i:04d}.txt", "payload": b""}
+        for i in range(1025)]))
+    (output / "zip-entry.m3u").write_text("single.zip\n")
+    (output / "zip-member-entry.m3u").write_text("single.zip#Disc1.adf\n")
+    (output / "unsupported.7z").write_bytes(b"7z\xbc\xaf\x27\x1c invented")
+    (output / "oversize-media.zip").write_bytes(_manual_zip([
+        {"name": "Large.adf", "payload": b"", "size": 8 * 1024 * 1024 + 1},
+        media[1]]))
+    (output / "unsupported-media.zip").write_bytes(_manual_zip([
+        {"name": "Broken.adf", "payload": b"", "method": 99}, media[1]]))
+
+    def mutant(name: str, data: bytes, change) -> None:
+        value = bytearray(data)
+        change(value)
+        (output / name).write_bytes(value)
+
+    base = _manual_zip([media[0]])
+    two = _manual_zip(media)
+    mutant("encrypted.zip", base, lambda b: (
+        struct.pack_into("<H", b, 6, struct.unpack_from("<H", b, 6)[0] | 1),
+        struct.pack_into("<H", b, b.index(b"PK\x01\x02") + 8,
+                         struct.unpack_from("<H", b, b.index(b"PK\x01\x02") + 8)[0] | 1)))
+    mutant("zip64.zip", base, lambda b: struct.pack_into(
+        "<H", b, b.rindex(b"PK\x05\x06") + 10, 0xFFFF))
+    zip64_extra = struct.pack("<HH", 1, 0)
+    (output / "zip64-extra.zip").write_bytes(_manual_zip([
+        {**media[0], "local_extra": zip64_extra,
+         "central_extra": zip64_extra}]))
+    duplicate = bytearray(two)
+    records = _zip_name_records(duplicate)
+    for at, size, _, cat, csize, _ in [records[1]]:
+        duplicate[at:at + size] = b"Disc1.adf"
+        duplicate[cat:cat + csize] = b"Disc1.adf"
+    (output / "duplicate.zip").write_bytes(duplicate)
+    (output / "truncated.zip").write_bytes(base[:-5])
+    descriptor = bytearray(_manual_zip([{**media[0], "descriptor": True}]))
+    first_central = descriptor.index(b"PK\x01\x02")
+    descriptor[first_central - 12] ^= 1
+    (output / "descriptor-mismatch.zip").write_bytes(descriptor)
+    mutant("local-mismatch.zip", base, lambda b: struct.pack_into("<H", b, 8, 8))
+    mutant("central-size-mismatch.zip", base, lambda b: struct.pack_into(
+        "<I", b, b.rindex(b"PK\x05\x06") + 12,
+        struct.unpack_from("<I", b, b.rindex(b"PK\x05\x06") + 12)[0] - 1))
+    for filename, raw_name in (("unsafe.zip", b"../bad.adf"),
+                               ("absolute.zip", b"/badxxxxx"),
+                               ("backslash.zip", b"bad\\x.adf"),
+                               ("dot-component.zip", b"./bad.adf"),
+                               ("nul-name.zip", b"bad\0x.adf")):
+        value = bytearray(base)
+        record = _zip_name_records(value)[0]
+        raw_name = raw_name.ljust(record[1], b"x")[:record[1]]
+        value[record[0]:record[0] + record[1]] = raw_name
+        value[record[3]:record[3] + record[4]] = raw_name
+        (output / filename).write_bytes(value)
+    malformed = struct.pack("<HH", 0x5455, 2) + b"x"
+    (output / "malformed-extra.zip").write_bytes(_manual_zip([
+        {**media[0], "local_extra": malformed,
+         "central_extra": malformed}]))
+    arc0_a = struct.pack("<HH4sIII", 0x4341, 16, b"ARC0", 1, 2, 3)
+    arc0_b = struct.pack("<HH4sIII", 0x4341, 16, b"ARC0", 4, 5, 6)
+    (output / "conflicting-arc0.zip").write_bytes(_manual_zip([
+        {**media[0], "local_extra": arc0_a, "central_extra": arc0_b}]))
+    mutant("entry-disk.zip", base, lambda b: struct.pack_into(
+        "<H", b, b.index(b"PK\x01\x02") + 34, 1))
+    inflated = bytearray(_manual_zip([{**media[0], "method": 8}, media[1]]))
+    central_at = inflated.index(b"PK\x01\x02")
+    struct.pack_into("<I", inflated, 22,
+                     struct.unpack_from("<I", inflated, 22)[0] + 1)
+    struct.pack_into("<I", inflated, central_at + 24,
+                     struct.unpack_from("<I", inflated, central_at + 24)[0] + 1)
+    (output / "inflated-lie.zip").write_bytes(inflated)
+    overlap = bytearray(two)
+    overlap_records = _zip_name_records(overlap)
+    first_central = overlap.index(b"PK\x01\x02")
+    first_data = overlap_records[0][0] + overlap_records[0][1]
+    second_local = struct.unpack_from("<I", overlap,
+        overlap.index(b"PK\x01\x02", first_central + 4) + 42)[0]
+    overlap_size = second_local - first_data + 8
+    struct.pack_into("<II", overlap, 18, overlap_size, overlap_size)
+    struct.pack_into("<II", overlap, first_central + 20,
+                     overlap_size, overlap_size)
+    (output / "overlap.zip").write_bytes(overlap)
+    central_overlap = bytearray(base)
+    central_at = central_overlap.index(b"PK\x01\x02")
+    struct.pack_into("<I", central_overlap, 18, central_at)
+    struct.pack_into("<I", central_overlap, central_at + 20, central_at)
+    (output / "central-overlap.zip").write_bytes(central_overlap)
 
 
 def build_adffs_fixtures(output: Path) -> None:
@@ -1859,6 +2085,11 @@ def main() -> None:
         build_d_discovery([(b"!Nulvane", True)], b"Nulvane"))
     jfd = build_jfd(bytes(disc1[:256]))
     (args.output / "arcdroid-test.jfd").write_bytes(jfd)
+    build_zip_content_fixtures(args.output / "zip-content", bytes(disc1),
+                               bytes(disc2), bytes(jfd),
+                               (args.output / "adffs/eligible.jfd").read_bytes(),
+                               (args.output / "adffs/too-large.jfd").read_bytes(),
+                               (args.output / "adffs/decoded-too-large.jfd").read_bytes())
     (args.output / "arcdroid-test-gzip.jfd").write_bytes(gzip_member(jfd))
     extended_jfd = build_extended_jfd(bytes(disc1[:256]))
     two_member = gzip_member(extended_jfd[:316]) + gzip_member(extended_jfd[316:])

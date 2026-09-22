@@ -2,7 +2,7 @@
  * No ADFFS source or binary data is incorporated here. GPL-2.0-only. */
 #include "adffs.h"
 #include "arcdroid_core.h"
-#include "zlib.h"
+#include "zip.h"
 
 #include <ctype.h>
 #include <stdio.h>
@@ -50,40 +50,6 @@ static bool foldprefix(const char *s, const char *prefix) {
   return true;
 }
 
-typedef struct {
-  char name[256];
-  uint16_t flags, method;
-  uint32_t crc, packed, size, local;
-  const uint8_t *extra;
-  uint16_t extra_size;
-} Ze;
-static voidpf zalloc_fn(voidpf opaque, uInt items, uInt size) {
-  (void)opaque;
-  if (size && items > SIZE_MAX / size)
-    return Z_NULL;
-  return calloc(items, size);
-}
-static void zfree_fn(voidpf opaque, voidpf p) {
-  (void)opaque;
-  free(p);
-}
-
-static bool safe_name(const char *s) {
-  if (!s[0] || s[0] == '/' || s[0] == '\\' || strchr(s, '\\'))
-    return false;
-  const char *p = s;
-  while (*p) {
-    const char *q = strchr(p, '/');
-    size_t n = q ? (size_t)(q - p) : strlen(p);
-    if (!n || (n == 1 && p[0] == '.') || (n == 2 && p[0] == '.' && p[1] == '.'))
-      return false;
-    if (!q)
-      break;
-    p = q + 1;
-  }
-  return true;
-}
-
 static bool used_name(const char *n) {
   static const char *const exact[] = {
       "!ADFFS/ADFFS",         "!ADFFS/SetVars",
@@ -120,246 +86,38 @@ static bool arc_extra(const uint8_t *p, size_t n, uint32_t *load,
   return false;
 }
 
-static bool extra_has(const uint8_t *p, size_t n, uint16_t wanted) {
-  while (n >= 4u) {
-    uint16_t id = le16(p), z = le16(p + 2);
-    p += 4;
-    n -= 4;
-    if (z > n)
-      return false;
-    if (id == wanted)
-      return true;
-    p += z;
-    n -= z;
-  }
-  return false;
-}
-
-static bool zip_index(const uint8_t *a, size_t n, Ze **out, unsigned *count,
-                      char *e, size_t en) {
-  if (!a || n > ZIP_MAX || n < 22u) {
-    fail(e, en, n > ZIP_MAX ? "archive exceeds 8 MiB" : "truncated archive");
+static bool obey_index(const ArcAdffsMember *obey, ArcZipArchive *archive,
+                       char *e, size_t en) {
+  const ArcZipLimits limits = {ZIP_MAX, ZIP_ENTRIES, ZIP_MEMBER};
+  if (!arc_zip_index(obey->data, obey->size, &limits, archive, e, en))
     return false;
-  }
-  size_t low = n > 65557u ? n - 65557u : 0u, eo = n;
-  for (size_t p = n - 22u;; --p) {
-    if (le32(a + p) == 0x06054b50u) {
-      eo = p;
-      break;
-    }
-    if (p == low)
-      break;
-  }
-  if (eo == n) {
-    fail(e, en, "missing central directory");
-    return false;
-  }
-  unsigned total = le16(a + eo + 10);
-  uint32_t csize = le32(a + eo + 12), coff = le32(a + eo + 16);
-  if (le16(a + eo + 4) || le16(a + eo + 6) || le16(a + eo + 8) != total ||
-      total > ZIP_ENTRIES || total == 0xffffu || csize == 0xffffffffu ||
-      coff == 0xffffffffu) {
-    fail(e, en,
-         (total == 0xffffu || csize == 0xffffffffu || coff == 0xffffffffu)
-             ? "zip64 archive is unsupported"
-         : total > ZIP_ENTRIES ? "archive has more than 1024 entries"
-                               : "multi-disk archive is unsupported");
-    return false;
-  }
-  if ((size_t)coff > eo || (size_t)csize > eo - (size_t)coff) {
-    fail(e, en, "central directory is out of bounds");
-    return false;
-  }
-  Ze *z = calloc(total ? total : 1u, sizeof(*z));
-  if (!z) {
-    fail(e, en, "out of memory");
-    return false;
-  }
-  size_t p = coff;
-  for (unsigned i = 0; i < total; ++i) {
-    if (p > eo || eo - p < 46u || le32(a + p) != 0x02014b50u) {
-      fail(e, en, "truncated central entry");
-      free(z);
-      return false;
-    }
-    uint16_t nl = le16(a + p + 28), xl = le16(a + p + 30),
-             cl = le16(a + p + 32);
-    size_t variable = (size_t)nl + xl + cl;
-    if (!nl || nl >= sizeof(z[i].name) || variable > eo - p - 46u) {
-      fail(e, en, "invalid central entry length");
-      free(z);
-      return false;
-    }
-    memcpy(z[i].name, a + p + 46u, nl);
-    z[i].name[nl] = 0;
-    if (!safe_name(z[i].name)) {
-      fail(e, en, "unsafe archive name");
-      free(z);
-      return false;
-    }
-    z[i].flags = le16(a + p + 8);
-    z[i].method = le16(a + p + 10);
-    z[i].crc = le32(a + p + 16);
-    z[i].packed = le32(a + p + 20);
-    z[i].size = le32(a + p + 24);
-    z[i].extra = a + p + 46u + nl;
-    z[i].extra_size = xl;
-    z[i].local = le32(a + p + 42);
-    if (extra_has(z[i].extra, z[i].extra_size, 1u)) {
-      fail(e, en, "zip64 archive is unsupported");
-      free(z);
-      return false;
-    }
-    if (z[i].flags & 1u) {
-      fail(e, en, "encrypted entry");
-      free(z);
-      return false;
-    }
-    if (z[i].method != 0u && z[i].method != 8u) {
-      fail(e, en, "unsupported compression method");
-      free(z);
-      return false;
-    }
-    if (z[i].size > ZIP_MEMBER) {
-      fail(e, en, "member exceeds 2 MiB");
-      free(z);
-      return false;
-    }
-    p += 46u + nl + xl + cl;
-  }
-  if (p != (size_t)coff + csize) {
-    fail(e, en, "central directory size mismatch");
-    free(z);
-    return false;
-  }
-  *out = z;
-  *count = total;
-  return true;
-}
-
-static bool extract(const uint8_t *a, size_t n, const Ze *z, uint8_t **data,
-                    char *e, size_t en) {
-  size_t p = z->local;
-  if (p > n || n - p < 30u || le32(a + p) != 0x04034b50u) {
-    fail(e, en, "local header is missing");
-    return false;
-  }
-  uint16_t flags = le16(a + p + 6), method = le16(a + p + 8),
-           nl = le16(a + p + 26), xl = le16(a + p + 28);
-  uint32_t crc = le32(a + p + 14), pk = le32(a + p + 18), sz = le32(a + p + 22);
-  size_t variable = (size_t)nl + xl;
-  if (variable > n - p - 30u || strlen(z->name) != nl ||
-      memcmp(a + p + 30u, z->name, nl) || flags != z->flags ||
-      method != z->method ||
-      (!(flags & 8u) && (crc != z->crc || pk != z->packed || sz != z->size)) ||
-      ((flags & 8u) && ((crc && crc != z->crc) || (pk && pk != z->packed) ||
-                        (sz && sz != z->size)))) {
-    fail(e, en, "local/central header mismatch");
-    return false;
-  }
-  const uint8_t *local_extra = a + p + 30u + nl;
-  if (xl != z->extra_size || memcmp(local_extra, z->extra, xl)) {
-    fail(e, en, "local/central header mismatch");
-    return false;
-  }
-  if (extra_has(local_extra, xl, 1u)) {
-    fail(e, en, "zip64 archive is unsupported");
-    return false;
-  }
-  const uint8_t *src = local_extra + xl;
-  if (z->packed > n - (size_t)(src - a)) {
-    fail(e, en, "truncated member data");
-    return false;
-  }
-  if (flags & 8u) {
-    size_t dd = (size_t)(src - a) + z->packed;
-    if (dd > n || n - dd < 12u) {
-      fail(e, en, "truncated data descriptor");
-      return false;
-    }
-    if (le32(a + dd) == 0x08074b50u) {
-      dd += 4u;
-      if (dd > n || n - dd < 12u) {
-        fail(e, en, "truncated data descriptor");
-        return false;
-      }
-    }
-    if (le32(a + dd) != z->crc || le32(a + dd + 4u) != z->packed ||
-        le32(a + dd + 8u) != z->size) {
-      fail(e, en, "data descriptor mismatch");
-      return false;
-    }
-  }
-  uint8_t *dst = malloc(z->size ? z->size : 1u);
-  if (!dst) {
-    fail(e, en, "out of memory");
-    return false;
-  }
-  if (z->method == 0u) {
-    if (z->packed != z->size) {
-      free(dst);
-      fail(e, en, "stored member size mismatch");
-      return false;
-    }
-    memcpy(dst, src, z->size);
-  } else {
-    z_stream s;
-    memset(&s, 0, sizeof(s));
-    s.zalloc = zalloc_fn;
-    s.zfree = zfree_fn;
-    s.next_in = (Bytef *)(uintptr_t)src;
-    s.avail_in = z->packed;
-    s.next_out = dst;
-    s.avail_out = z->size;
-    if (inflateInit2(&s, -15) != Z_OK) {
-      free(dst);
-      fail(e, en, "inflater initialization failed");
-      return false;
-    }
-    int r = inflate(&s, Z_FINISH);
-    bool ok =
-        r == Z_STREAM_END && s.total_in == z->packed && s.total_out == z->size;
-    inflateEnd(&s);
-    if (!ok) {
-      free(dst);
-      fail(e, en, "inflated-size mismatch");
-      return false;
-    }
-  }
-  if (arc_crc32(dst, z->size) != z->crc) {
-    free(dst);
-    fail(e, en, "member CRC32 mismatch");
-    return false;
-  }
-  *data = dst;
-  return true;
-}
-
-static bool obey_index(const ArcAdffsMember *obey, Ze **entries,
-                       unsigned *count, char *e, size_t en) {
-  if (!zip_index(obey->data, obey->size, entries, count, e, en))
-    return false;
-  for (unsigned i = 0; i < *count; ++i) {
-    size_t length = strlen((*entries)[i].name);
+  for (unsigned i = 0; i < archive->count; ++i) {
+    ArcZipEntry *entry = &archive->entries[i];
+    size_t length = strlen(entry->name);
     if (!length || length > 10u) {
       fail(e, en, "invalid obey member name");
-      free(*entries);
+      arc_zip_free(archive);
       return false;
     }
     for (size_t k = 0; k < length; ++k)
-      if (!isalnum((unsigned char)(*entries)[i].name[k])) {
+      if (!isalnum((unsigned char)entry->name[k])) {
         fail(e, en, "invalid obey member name");
-        free(*entries);
+        arc_zip_free(archive);
         return false;
       }
     for (unsigned j = 0; j < i; ++j)
-      if (!foldcmp((*entries)[i].name, (*entries)[j].name)) {
-        fail(e, en, !strcmp((*entries)[i].name, (*entries)[j].name)
+      if (!foldcmp(entry->name, archive->entries[j].name)) {
+        fail(e, en, !strcmp(entry->name, archive->entries[j].name)
                         ? "duplicate obey member name"
                         : "case-colliding obey member names");
-        free(*entries);
+        arc_zip_free(archive);
         return false;
       }
+    if (entry->status != ARC_ZIP_MEMBER_OK) {
+      fail(e, en, arc_zip_member_status_reason(entry->status));
+      arc_zip_free(archive);
+      return false;
+    }
   }
   return true;
 }
@@ -399,41 +157,54 @@ bool arc_adffs_package_parse(const uint8_t *a, size_t n, ArcAdffsPackage *pkg,
   if (!pkg)
     return false;
   memset(pkg, 0, sizeof(*pkg));
-  Ze *z = NULL;
-  unsigned zn = 0;
-  if (!zip_index(a, n, &z, &zn, e, en))
+  ArcZipArchive archive;
+  const ArcZipLimits limits = {ZIP_MAX, ZIP_ENTRIES, ZIP_MEMBER};
+  if (!arc_zip_index(a, n, &limits, &archive, e, en))
     return false;
   size_t total = 0;
-  for (unsigned i = 0; i < zn; ++i)
-    if (used_name(z[i].name))
+  for (unsigned i = 0; i < archive.count; ++i) {
+    ArcZipEntry *entry = &archive.entries[i];
+    if (entry->status != ARC_ZIP_MEMBER_OK) {
+      if (entry->status == ARC_ZIP_MEMBER_TOO_LARGE)
+        fail(e, en, "member exceeds 2 MiB");
+      else
+        fail(e, en, "unsupported compression method");
+      arc_zip_free(&archive);
+      return false;
+    }
+    if (used_name(entry->name))
       for (unsigned j = 0; j < i; ++j)
-        if (used_name(z[j].name) && !foldcmp(z[i].name, z[j].name)) {
+        if (used_name(archive.entries[j].name) &&
+            !foldcmp(entry->name, archive.entries[j].name)) {
           fail(e, en,
-               !strcmp(z[i].name, z[j].name) ? "duplicate used name"
-                                             : "case-colliding used names");
-          free(z);
+               !strcmp(entry->name, archive.entries[j].name)
+                   ? "duplicate used name"
+                   : "case-colliding used names");
+          arc_zip_free(&archive);
           return false;
         }
-  for (unsigned i = 0; i < zn; ++i)
-    if (used_name(z[i].name)) {
+  }
+  for (unsigned i = 0; i < archive.count; ++i) {
+    ArcZipEntry *entry = &archive.entries[i];
+    if (used_name(entry->name)) {
       if (pkg->count == ARC_ADFFS_MAX_MEMBERS ||
-          z[i].size > ZIP_USED_TOTAL - total) {
+          entry->size > ZIP_USED_TOTAL - total) {
         fail(e, en, "used members exceed limits");
         goto bad;
       }
       ArcAdffsMember *m = &pkg->members[pkg->count];
-      if (!arc_extra(z[i].extra, z[i].extra_size, &m->load, &m->exec,
-                     &m->attr)) {
+      if (!arc_extra(entry->central_extra, entry->central_extra_size,
+                     &m->load, &m->exec, &m->attr)) {
         fail(e, en, "used member lacks ARC0 metadata");
         goto bad;
       }
-      if (!extract(a, n, &z[i], &m->data, e, en))
+      if (!arc_zip_extract(a, n, entry, &m->data, &m->size, e, en))
         goto bad;
-      snprintf(m->name, sizeof(m->name), "%s", z[i].name);
-      m->size = z[i].size;
+      snprintf(m->name, sizeof(m->name), "%s", entry->name);
       total += m->size;
       ++pkg->count;
     }
+  }
   for (unsigned r = 0; r < 6u; ++r)
     if (!arc_adffs_member(pkg, runtime_names[r])) {
       fail(e, en, "missing runtime member");
@@ -451,11 +222,10 @@ bool arc_adffs_package_parse(const uint8_t *a, size_t n, ArcAdffsPackage *pkg,
     }
   module_help_version(arc_adffs_member(pkg, runtime_names[0]), pkg->version);
   const ArcAdffsMember *obey = arc_adffs_member(pkg, "!ADFFS/obey");
-  Ze *nested = NULL;
-  unsigned nested_count = 0;
-  if (!obey_index(obey, &nested, &nested_count, e, en))
+  ArcZipArchive nested;
+  if (!obey_index(obey, &nested, e, en))
     goto bad;
-  free(nested);
+  arc_zip_free(&nested);
   size_t pc = 0;
   const ArcAdffsProfile *profiles = arc_adffs_profiles(&pc);
   for (size_t p = 0; p < pc; ++p) {
@@ -477,10 +247,10 @@ bool arc_adffs_package_parse(const uint8_t *a, size_t n, ArcAdffsPackage *pkg,
   if (!pkg->verified) {
     snprintf(pkg->profile, sizeof(pkg->profile), "untested");
   }
-  free(z);
+  arc_zip_free(&archive);
   return true;
 bad:
-  free(z);
+  arc_zip_free(&archive);
   arc_adffs_package_free(pkg);
   return false;
 }
@@ -511,32 +281,31 @@ bool arc_adffs_builtin_script(const ArcAdffsPackage *p, unsigned game,
   const ArcAdffsMember *obey = arc_adffs_member(p, "!ADFFS/obey");
   if (!obey)
     return false;
-  Ze *z = NULL;
-  unsigned zn = 0;
-  if (!obey_index(obey, &z, &zn, e, en))
+  ArcZipArchive archive;
+  if (!obey_index(obey, &archive, e, en))
     return false;
   char key[16];
   snprintf(key, sizeof(key), "F%05u%02u", game, disc);
   bool found = false;
-  for (unsigned i = 0; i < zn; ++i) {
-    if (!strcmp(z[i].name, key)) {
-      if (!extract(obey->data, obey->size, &z[i], script, e, en)) {
-        free(z);
+  for (unsigned i = 0; i < archive.count; ++i) {
+    ArcZipEntry *entry = &archive.entries[i];
+    if (!strcmp(entry->name, key)) {
+      if (!arc_zip_extract(obey->data, obey->size, entry, script, size, e,
+                           en)) {
+        arc_zip_free(&archive);
         return false;
       }
-      if (size)
-        *size = z[i].size;
       found = true;
     }
   }
-  free(z);
+  arc_zip_free(&archive);
   return found;
 }
 
 typedef struct {
   const ArcAdffsPackage *package;
   const ArcAdffsMember *obey;
-  Ze *obey_entries;
+  ArcZipArchive obey_archive;
   unsigned obey_count;
   bool obey_visited[ZIP_ENTRIES];
   ArcAdffsSelection *selection;
@@ -583,7 +352,7 @@ static bool select_script_line(SelectionContext *c, const uint8_t *s, size_t n,
         const char *key = ref + sizeof("!ADFFS/obey/") - 1u;
         int found = -1;
         for (unsigned k = 0; k < c->obey_count; ++k)
-          if (!foldcmp(c->obey_entries[k].name, key)) {
+          if (!foldcmp(c->obey_archive.entries[k].name, key)) {
             found = (int)k;
             break;
           }
@@ -593,12 +362,13 @@ static bool select_script_line(SelectionContext *c, const uint8_t *s, size_t n,
           if (depth >= 4u)
             return set_missing(c, ref);
           uint8_t *nested = NULL;
-          if (!extract(c->obey->data, c->obey->size,
-                       &c->obey_entries[found], &nested, NULL, 0u))
+          size_t nested_size = 0u;
+          if (!arc_zip_extract(c->obey->data, c->obey->size,
+                               &c->obey_archive.entries[found], &nested,
+                               &nested_size, NULL, 0u))
             return set_missing(c, ref);
           c->obey_visited[found] = true;
-          bool ok = select_script(c, nested, c->obey_entries[found].size,
-                                  depth + 1u);
+          bool ok = select_script(c, nested, nested_size, depth + 1u);
           free(nested);
           if (!ok)
             return false;
@@ -753,9 +523,9 @@ bool arc_adffs_select(const ArcAdffsPackage *p, const uint8_t *script,
   context.missing = missing;
   context.obey = arc_adffs_member(p, "!ADFFS/obey");
   if (!context.obey ||
-      !obey_index(context.obey, &context.obey_entries, &context.obey_count,
-                  NULL, 0u))
+      !obey_index(context.obey, &context.obey_archive, NULL, 0u))
     return false;
+  context.obey_count = context.obey_archive.count;
   static const char *const baseline[] = {
       "!ADFFS/ADFFS",          "!ADFFS/SetVars",
       "!ADFFS/3rdParty/CLib",  "!ADFFS/3rdParty/CallASWI",
@@ -771,12 +541,12 @@ bool arc_adffs_select(const ArcAdffsPackage *p, const uint8_t *script,
         break;
       }
     if (!found) {
-      free(context.obey_entries);
+      arc_zip_free(&context.obey_archive);
       return false;
     }
   }
   bool ok = select_script(&context, script, script_size, 0u);
-  free(context.obey_entries);
+  arc_zip_free(&context.obey_archive);
   if (!ok)
     return false;
   return selection_ram_size(p, selection, &selection->ram_size);

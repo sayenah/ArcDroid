@@ -85,11 +85,26 @@ static bool arc_supported_media_path(const char *path)
           arc_case_extension(path, "jfd");
 }
 
+static bool arc_zip_reference(const char *path, size_t length)
+{
+   for (size_t i = 4u; i <= length; ++i)
+   {
+      bool suffix = path[i - 4u] == '.' &&
+         tolower((unsigned char)path[i - 3u]) == 'z' &&
+         tolower((unsigned char)path[i - 2u]) == 'i' &&
+         tolower((unsigned char)path[i - 1u]) == 'p';
+      if (suffix && (i == length || path[i] == '#')) return true;
+   }
+   return false;
+}
+
 static bool arc_resolve_path(const char *playlist_path, const char *entry,
                              size_t entry_length, bool windows_host,
                              char output[ARC_MEDIA_PATH_CAPACITY],
                              const char **reason)
 {
+   if (arc_zip_reference(entry, entry_length))
+   { *reason = "zip entries are unsupported in playlists"; return false; }
    bool saf = entry_length >= 6u && !memcmp(entry, "saf://", 6u);
    bool posix_absolute = !windows_host && entry_length && entry[0] == '/';
    bool drive_rooted = windows_host && entry_length >= 3u &&
