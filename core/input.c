@@ -4,6 +4,19 @@
 #include <limits.h>
 #include <string.h>
 
+enum {
+   ARC_INPUT_ACT_IDLE = 0,
+   ARC_INPUT_ACT_MODIFIERS_DOWN,
+   ARC_INPUT_ACT_MODIFIERS_ACK,
+   ARC_INPUT_ACT_MODIFIERS_HELD,
+   ARC_INPUT_ACT_KEY_ACK,
+   ARC_INPUT_ACT_KEY_HELD,
+   ARC_INPUT_ACT_KEY_UP_ACK,
+   ARC_INPUT_ACT_KEY_RELEASED,
+   ARC_INPUT_ACT_MODIFIERS_UP_ACK,
+   ARC_INPUT_ACT_HOLD_US = 60000u
+};
+
 static bool arc_effective_key(const ArcInputState *state, unsigned code)
 {
    for (unsigned source = 0u; source < ARC_INPUT_SOURCE_COUNT; ++source)
@@ -83,6 +96,7 @@ void arc_input_release_all(ArcInputState *state)
    memset(state->source_buttons, 0, sizeof(state->source_buttons));
    memset(state->effective_keys, 0, sizeof(state->effective_keys));
    state->effective_buttons = 0u;
+   state->activation_claimed = false;
    arc_reconcile(state);
 }
 
@@ -314,4 +328,152 @@ void arc_input_pad_key_sets(ArcInputState *state,
          if (arc_fifo_append(state, (ArcInputEvent){ARC_INPUT_EVENT_KEY, code,
                                                     false, false, 0, 0}))
             return;
+}
+
+bool arc_input_activation_claim(ArcInputState *state, ArcInputSource source)
+{
+   if (!state || source >= ARC_INPUT_SOURCE_COUNT || state->activation_claimed)
+      return false;
+   state->activation_claimed = true;
+   state->activation_source = source;
+   return true;
+}
+
+void arc_input_activation_release(ArcInputState *state, ArcInputSource source)
+{
+   if (state && state->activation_claimed && state->activation_source == source)
+      state->activation_claimed = false;
+}
+
+static uint64_t arc_input_activation_deadline(uint64_t guest_us)
+{
+   return guest_us > UINT64_MAX - ARC_INPUT_ACT_HOLD_US ?
+      UINT64_MAX : guest_us + ARC_INPUT_ACT_HOLD_US;
+}
+
+bool arc_input_activation_begin(ArcInputActivation *activation,
+                                ArcInputState *state, ArcInputSource source,
+                                unsigned key, const unsigned *modifiers,
+                                unsigned modifier_count)
+{
+   if (!activation || !state || !key || activation->phase ||
+       modifier_count > ARC_INPUT_ACTIVATION_MODIFIERS ||
+       (modifier_count && !modifiers) ||
+       arc_input_available(state) < modifier_count * 2u + 2u ||
+       !arc_input_activation_claim(state, source))
+      return false;
+   memset(activation, 0, sizeof(*activation));
+   activation->key = key;
+   activation->modifier_count = modifier_count;
+   if (modifier_count)
+      memcpy(activation->modifiers, modifiers,
+             modifier_count * sizeof(modifiers[0]));
+   activation->generation = arc_input_reconcile_generation(state);
+   activation->phase = ARC_INPUT_ACT_MODIFIERS_DOWN;
+   return true;
+}
+
+void arc_input_activation_cancel(ArcInputActivation *activation,
+                                 ArcInputState *state, ArcInputSource source)
+{
+   if (!activation || !state) return;
+   arc_input_clear_source(state, source);
+   memset(activation, 0, sizeof(*activation));
+   arc_input_activation_release(state, source);
+}
+
+bool arc_input_activation_active(const ArcInputActivation *activation)
+{
+   return activation && activation->phase != ARC_INPUT_ACT_IDLE;
+}
+
+ArcInputActivationResult arc_input_activation_update(
+   ArcInputActivation *activation, ArcInputState *state,
+   ArcInputSource source, uint64_t guest_us)
+{
+   if (!activation || !state || !activation->phase)
+      return ARC_INPUT_ACTIVATION_COMPLETE;
+   if (arc_input_reconcile_generation(state) != activation->generation)
+   {
+      arc_input_activation_cancel(activation, state, source);
+      return ARC_INPUT_ACTIVATION_INTERRUPTED;
+   }
+   if (activation->phase == ARC_INPUT_ACT_MODIFIERS_DOWN)
+   {
+      for (unsigned i = 0u; i < activation->modifier_count; ++i)
+         arc_input_source_key(state, source, activation->modifiers[i], true,
+                              true);
+      if (activation->modifier_count)
+         activation->phase = ARC_INPUT_ACT_MODIFIERS_ACK;
+      else
+      {
+         arc_input_source_key(state, source, activation->key, true, true);
+         activation->phase = ARC_INPUT_ACT_KEY_ACK;
+      }
+      return ARC_INPUT_ACTIVATION_RUNNING;
+   }
+   if (activation->phase == ARC_INPUT_ACT_MODIFIERS_ACK)
+   {
+      for (unsigned i = 0u; i < activation->modifier_count; ++i)
+         if (!arc_input_applied_level(state, activation->modifiers[i]))
+            return ARC_INPUT_ACTIVATION_RUNNING;
+      activation->deadline_us = arc_input_activation_deadline(guest_us);
+      activation->phase = ARC_INPUT_ACT_MODIFIERS_HELD;
+   }
+   if (activation->phase == ARC_INPUT_ACT_MODIFIERS_HELD)
+   {
+      if (guest_us < activation->deadline_us)
+         return ARC_INPUT_ACTIVATION_RUNNING;
+      arc_input_source_key(state, source, activation->key, true, true);
+      activation->phase = ARC_INPUT_ACT_KEY_ACK;
+      return ARC_INPUT_ACTIVATION_RUNNING;
+   }
+   if (activation->phase == ARC_INPUT_ACT_KEY_ACK)
+   {
+      if (!arc_input_applied_level(state, activation->key))
+         return ARC_INPUT_ACTIVATION_RUNNING;
+      activation->deadline_us = arc_input_activation_deadline(guest_us);
+      activation->phase = ARC_INPUT_ACT_KEY_HELD;
+   }
+   if (activation->phase == ARC_INPUT_ACT_KEY_HELD)
+   {
+      if (guest_us < activation->deadline_us)
+         return ARC_INPUT_ACTIVATION_RUNNING;
+      arc_input_source_key(state, source, activation->key, false, true);
+      activation->phase = ARC_INPUT_ACT_KEY_UP_ACK;
+      return ARC_INPUT_ACTIVATION_RUNNING;
+   }
+   if (activation->phase == ARC_INPUT_ACT_KEY_UP_ACK)
+   {
+      if (arc_input_applied_level(state, activation->key) !=
+          arc_input_effective_level(state, activation->key))
+         return ARC_INPUT_ACTIVATION_RUNNING;
+      activation->deadline_us = arc_input_activation_deadline(guest_us);
+      activation->phase = ARC_INPUT_ACT_KEY_RELEASED;
+   }
+   if (activation->phase == ARC_INPUT_ACT_KEY_RELEASED)
+   {
+      if (guest_us < activation->deadline_us)
+         return ARC_INPUT_ACTIVATION_RUNNING;
+      for (unsigned i = activation->modifier_count; i > 0u; --i)
+         arc_input_source_key(state, source, activation->modifiers[i - 1u],
+                              false, true);
+      activation->phase = ARC_INPUT_ACT_MODIFIERS_UP_ACK;
+      if (activation->modifier_count)
+         return ARC_INPUT_ACTIVATION_RUNNING;
+   }
+   if (activation->phase == ARC_INPUT_ACT_MODIFIERS_UP_ACK)
+   {
+      bool settled = arc_input_applied_level(state, activation->key) ==
+                     arc_input_effective_level(state, activation->key);
+      for (unsigned i = 0u; i < activation->modifier_count; ++i)
+         settled = settled &&
+            arc_input_applied_level(state, activation->modifiers[i]) ==
+            arc_input_effective_level(state, activation->modifiers[i]);
+      if (!settled) return ARC_INPUT_ACTIVATION_RUNNING;
+      memset(activation, 0, sizeof(*activation));
+      arc_input_activation_release(state, source);
+      return ARC_INPUT_ACTIVATION_COMPLETE;
+   }
+   return ARC_INPUT_ACTIVATION_RUNNING;
 }

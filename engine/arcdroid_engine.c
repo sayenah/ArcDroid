@@ -90,11 +90,25 @@ static bool arc_helper_media_valid(const ArcEngineMedia *helper)
 }
 #if defined(ARCDROID_TEST_FAULTS)
 static bool arc_test_vidc_noncompleting;
+static bool arc_test_fail_drive1_insert;
 unsigned arc_ide_test_accesses(void);
 
 void arc_engine_test_set_vidc_noncompleting(bool enabled)
 {
    arc_test_vidc_noncompleting = enabled;
+}
+
+void arc_engine_test_fail_drive1_insert(bool fail)
+{
+   arc_test_fail_drive1_insert = fail;
+}
+
+bool arc_engine_test_drive_read(unsigned drive)
+{
+   if (!arc_machine_live || drive >= 2u || !drive_funcs[drive]) return false;
+   disc_readsector((int)drive, 0, 0, 0, 0);
+   disc_stop((int)drive);
+   return true;
 }
 
 bool arc_engine_test_helper_media_valid(ArcMediaKind kind,
@@ -609,6 +623,7 @@ void arc_engine_stop(void)
    arc_fault_boundary = false;
 #if defined(ARCDROID_TEST_FAULTS)
    arc_test_vidc_noncompleting = false;
+   arc_test_fail_drive1_insert = false;
 #endif
 }
 
@@ -720,6 +735,82 @@ bool arc_engine_media_insert(const ArcEngineMedia *media,
    arc_saved_media_data = media->data;
    arc_saved_media_size = media->size;
    ioc_discchange(0);
+   return true;
+}
+
+bool arc_engine_drive1_eject(void)
+{
+   if (!arc_machine_live) return false;
+   wd1770_media_change();
+   c82c711_fdc_media_change(1u);
+   disc_close(1);
+   (void)arc_io_set_memory_source(1u, NULL, 0u);
+   arc_saved_helper[0] = '\0';
+   arc_saved_helper_geometry = ARC_GEOMETRY_NONE;
+   arc_saved_helper_data = NULL;
+   arc_saved_helper_size = 0u;
+   ioc_discchange(1);
+   return true;
+}
+
+bool arc_engine_drive1_insert(const uint8_t *data, size_t size,
+                              char *failure, size_t failure_size)
+{
+   static const char path[] = ":arcdroid-memory-1:";
+   if (!arc_machine_live || !data || size != 800u * 1024u) return false;
+   const uint8_t *previous_data = arc_saved_helper_data;
+   size_t previous_size = arc_saved_helper_size;
+   ArcMediaGeometry previous_geometry = arc_saved_helper_geometry;
+   bool had_previous = arc_saved_helper[0] && drive_funcs[1] != NULL;
+
+   wd1770_media_change();
+   c82c711_fdc_media_change(1u);
+   disc_close(1);
+   (void)arc_io_set_memory_source(1u, data, size);
+   adf_set_writable(1, 0);
+   bool mounted = false;
+#if defined(ARCDROID_TEST_FAULTS)
+   if (arc_test_fail_drive1_insert)
+      arc_test_fail_drive1_insert = false;
+   else
+#endif
+      mounted = disc_load_raw(1, (char *)path, ARC_GEOMETRY_800K_D);
+   if (!mounted)
+   {
+      bool restored = !had_previous;
+      (void)arc_io_set_memory_source(1u, previous_data, previous_size);
+      if (had_previous)
+         restored = disc_load_raw(1, (char *)path, previous_geometry);
+      if (!restored)
+      {
+         arc_saved_helper[0] = '\0';
+         arc_saved_helper_geometry = ARC_GEOMETRY_NONE;
+         arc_saved_helper_data = NULL;
+         arc_saved_helper_size = 0u;
+      }
+      ioc_discchange(1);
+      if (failure && failure_size)
+         snprintf(failure, failure_size, "%s",
+                  restored ? "The selected ADFFS carrier could not be mounted"
+                           : "The selected ADFFS carrier failed and the previous carrier could not be restored");
+      return false;
+   }
+   strcpy(arc_saved_helper, path);
+   arc_saved_helper_geometry = ARC_GEOMETRY_800K_D;
+   arc_saved_helper_data = data;
+   arc_saved_helper_size = size;
+   ioc_discchange(1);
+   return true;
+}
+
+bool arc_engine_drive_activity(unsigned drive, uint64_t *activity_generation,
+                               uint64_t *read_generation)
+{
+   if (!arc_machine_live || drive >= 2u) return false;
+   if (activity_generation)
+      *activity_generation = disc_activity_generation(drive);
+   if (read_generation)
+      *read_generation = disc_read_generation(drive);
    return true;
 }
 

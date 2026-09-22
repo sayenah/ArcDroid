@@ -303,7 +303,7 @@ bool arc_cmos_default(ArcOsClass os, ArcIoClass io,
                       uint8_t output[ARC_CMOS_PAYLOAD_SIZE]);
 bool arc_cmos_machine_image(ArcOsClass os, ArcIoClass io,
                             const uint8_t payload[ARC_CMOS_PAYLOAD_SIZE],
-                            bool launch_helper,
+                            bool boot_drive_one, bool two_floppies,
                             uint8_t output[ARC_CMOS_MACHINE_SIZE]);
 void arc_cmos_normalise_payload(uint8_t payload[ARC_CMOS_PAYLOAD_SIZE], ArcIoClass io);
 
@@ -320,6 +320,7 @@ typedef enum {
    ARC_INPUT_SOURCE_TOUCH,
    ARC_INPUT_SOURCE_MOUSE0,
    ARC_INPUT_SOURCE_MOUSE1,
+   ARC_INPUT_SOURCE_CORE,
    ARC_INPUT_SOURCE_OSK,
    ARC_INPUT_SOURCE_COUNT
 } ArcInputSource;
@@ -421,7 +422,25 @@ typedef struct {
    bool overflow_report_pending;
    bool overflow_reported;
    uint64_t reconcile_generation;
+   bool activation_claimed;
+   ArcInputSource activation_source;
 } ArcInputState;
+
+#define ARC_INPUT_ACTIVATION_MODIFIERS 6u
+typedef struct {
+   unsigned key;
+   unsigned modifiers[ARC_INPUT_ACTIVATION_MODIFIERS];
+   unsigned modifier_count;
+   unsigned phase;
+   uint64_t generation;
+   uint64_t deadline_us;
+} ArcInputActivation;
+
+typedef enum {
+   ARC_INPUT_ACTIVATION_RUNNING = 0,
+   ARC_INPUT_ACTIVATION_COMPLETE,
+   ARC_INPUT_ACTIVATION_INTERRUPTED
+} ArcInputActivationResult;
 
 const ArcInputBinding *arc_input_generic_mapping(void);
 const ArcInputKey *arc_input_supported_keys(size_t *count);
@@ -476,6 +495,20 @@ bool arc_input_applied_level(const ArcInputState *state, unsigned key);
 void arc_input_pad_key_sets(ArcInputState *state,
                             const bool port0[ARC_INPUT_KEY_COUNT],
                             const bool port1[ARC_INPUT_KEY_COUNT]);
+bool arc_input_activation_claim(ArcInputState *state, ArcInputSource source);
+void arc_input_activation_release(ArcInputState *state,
+                                  ArcInputSource source);
+bool arc_input_activation_begin(ArcInputActivation *activation,
+                                ArcInputState *state, ArcInputSource source,
+                                unsigned key, const unsigned *modifiers,
+                                unsigned modifier_count);
+ArcInputActivationResult arc_input_activation_update(
+   ArcInputActivation *activation, ArcInputState *state,
+   ArcInputSource source, uint64_t guest_us);
+void arc_input_activation_cancel(ArcInputActivation *activation,
+                                 ArcInputState *state,
+                                 ArcInputSource source);
+bool arc_input_activation_active(const ArcInputActivation *activation);
 
 typedef enum {
    ARC_OSK_MOD_OFF = 0,

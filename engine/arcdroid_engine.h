@@ -46,6 +46,11 @@ void arc_engine_audio_stats(uint64_t *underrun_frames, uint64_t *overrun_frames)
 bool arc_engine_media_eject(void);
 bool arc_engine_media_insert(const ArcEngineMedia *media,
                              char *error, size_t error_size);
+bool arc_engine_drive1_eject(void);
+bool arc_engine_drive1_insert(const uint8_t *data, size_t size,
+                              char *error, size_t error_size);
+bool arc_engine_drive_activity(unsigned drive, uint64_t *activity_generation,
+                               uint64_t *read_generation);
 bool arc_engine_get_av_info(unsigned *width, unsigned *height, double *refresh_hz);
 void arc_engine_cmos(uint8_t output[ARC_CMOS_PAYLOAD_SIZE]);
 bool arc_engine_faulted(const char **message);

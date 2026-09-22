@@ -358,7 +358,7 @@ int main(int argc, char **argv) {
     if (selection.member[i])
       expected_ram += ((uint32_t)p->members[i].size + 1023u) & ~1023u;
   size_t launcher_size = 0u;
-  assert(arc_adffs_launcher(NULL, 0u, &launcher_size));
+  assert(arc_adffs_launcher(1u, 0u, NULL, 0u, &launcher_size));
   expected_ram += selected_directory_count(p, &selection) * 2048u;
   expected_ram += ((uint32_t)launcher_size + 1023u) & ~1023u;
   expected_ram = (expected_ram + 32767u) & ~32767u;
@@ -377,24 +377,37 @@ int main(int argc, char **argv) {
           *carrier2 = malloc(ARC_ADFFS_DISC_SIZE),
           *support = malloc(ARC_ADFFS_DISC_SIZE);
   assert(carrier && carrier2 && support);
-  assert(arc_adffs_carrier_build(jfd, jn, carrier, error, sizeof(error)));
-  assert(arc_adffs_carrier_build(jfd, jn, carrier2, error, sizeof(error)) &&
+  assert(arc_adffs_carrier_build(jfd, jn, "Disc3", ARC_GEOMETRY_800K_D,
+                                 ARC_ADFFS_CARRIER_CAPACITY, carrier,
+                                 error, sizeof(error)));
+  assert(arc_adffs_carrier_build(jfd, jn, "Disc3", ARC_GEOMETRY_800K_D,
+                                 ARC_ADFFS_CARRIER_CAPACITY, carrier2,
+                                 error, sizeof(error)) &&
          !memcmp(carrier, carrier2, ARC_ADFFS_DISC_SIZE));
   walk_disc(carrier);
   const uint8_t *root = carrier + 1024u;
-  const uint8_t *game = find_entry(root, "Game");
+  const uint8_t *game = find_entry(root, "Disc3");
   assert(game && !(le24(game + 22u) & 3u) && le32t(game + 18u) == jn &&
          !memcmp(carrier + le24(game + 22u) * 256u, jfd, jn));
   uint8_t *limit = malloc(ARC_ADFFS_CARRIER_CAPACITY + 1u);
   assert(limit);
   memset(limit, 0x5a, ARC_ADFFS_CARRIER_CAPACITY + 1u);
-  assert(arc_adffs_carrier_build(limit, ARC_ADFFS_CARRIER_CAPACITY, carrier,
+  assert(arc_adffs_carrier_build(limit, ARC_ADFFS_CARRIER_CAPACITY, "Disc1",
+                                 ARC_GEOMETRY_800K_D,
+                                 ARC_ADFFS_CARRIER_CAPACITY, carrier,
                                  error, sizeof(error)));
   assert(!arc_adffs_carrier_build(limit, ARC_ADFFS_CARRIER_CAPACITY + 1u,
-                                  carrier, error, sizeof(error)));
+                                  "Disc1", ARC_GEOMETRY_800K_D,
+                                  ARC_ADFFS_CARRIER_CAPACITY, carrier,
+                                  error, sizeof(error)) &&
+         !arc_adffs_carrier_build(limit, 1u, "Disc1",
+                                  ARC_GEOMETRY_640K_L,
+                                  ARC_ADFFS_CARRIER_CAPACITY, carrier,
+                                  error, sizeof(error)));
   free(limit);
   test_stage("support disc and independent FileCore walk");
-  assert(arc_adffs_support_build(p, &selection, support, error, sizeof(error)));
+  assert(arc_adffs_support_build(p, &selection, 1u, 0u, support,
+                                 error, sizeof(error)));
   walk_disc(support);
   root = support + 1024u;
   const uint8_t *adffs = find_entry(root, "!ADFFS");
@@ -427,7 +440,8 @@ int main(int argc, char **argv) {
                                   sizeof(error)) &&
          arc_adffs_select(reordered, reordered_script, reordered_script_size,
                           &reordered_selection, missing) &&
-         arc_adffs_support_build(reordered, &reordered_selection, carrier2,
+         arc_adffs_support_build(reordered, &reordered_selection, 1u, 0u,
+                                 carrier2,
                                  error, sizeof(error)) &&
          !memcmp(support, carrier2, ARC_ADFFS_DISC_SIZE));
   free(reordered_script);
@@ -452,14 +466,14 @@ int main(int argc, char **argv) {
       "Error ArcDroid ADFFS step BootCommands failed\rRMEnsure ADFFS 0.00 "
       "RMLoad RAM::0.$.!ADFFS.ADFFS\rRMEnsure ADFFS 0.00 Error ArcDroid "
       "ADFFS step ADFFS failed\rADFMount "
-      "ADFS::0.$.Game\rADFS\rNoDir\rNoLib\rNoURD\rDismount :0\rADFBootFloppy\r";
+      "ADFS::1.$.Disc1\rADFS\rNoDir\rNoLib\rNoURD\rDismount :1\rDismount :0\rADFBootFloppy\r";
   size_t lsz;
-  assert(arc_adffs_launcher(NULL, 0, &lsz));
+  assert(arc_adffs_launcher(1u, 0u, NULL, 0u, &lsz));
   char *launch = calloc(1, lsz + 1u);
-  assert(launch && arc_adffs_launcher((uint8_t *)launch, lsz, &lsz) &&
+  assert(launch && arc_adffs_launcher(1u, 0u, (uint8_t *)launch, lsz, &lsz) &&
          lsz == sizeof(launcher_golden) - 1u &&
          !memcmp(launch, launcher_golden, lsz));
-  assert(!strstr(launch, "Echo") && !strstr(launch, "ADFS::1") &&
+  assert(!strstr(launch, "Echo") &&
          !strstr(launch, "ArcFixture") &&
          !strstr(launch, "ArcDroid synthetic ADFFS") &&
          strstr(launch, "ADFFS$Dir RAM::0.$.!ADFFS") &&
@@ -472,10 +486,22 @@ int main(int argc, char **argv) {
          strstr(launch, "Set Alias$RestoreCSD ADFDoNothing %%*0\r") &&
          strstr(launch, "Set Alias$ADFClipScreen ADFDoNothing %%*0\r") &&
          strstr(launch, "Set Alias$ADFScreenBorders ADFDoNothing %%*0\r"));
-  char *mount = strstr(launch, "ADFMount"), *drive0 = strstr(launch, "ADFS::0"),
+  char *mount = strstr(launch, "ADFMount"), *drive1 = strstr(launch, "ADFS::1"),
+       *dismount1 = strstr(launch, "Dismount :1"),
        *dismount = strstr(launch, "Dismount :0"),
        *boot = strstr(launch, "ADFBootFloppy");
-  assert(mount && drive0 == mount + 9 && dismount > mount && boot > dismount);
+  assert(mount && drive1 == mount + 9 && dismount1 > mount &&
+         dismount > dismount1 && boot > dismount);
+  size_t multi_lsz = 0u;
+  assert(arc_adffs_launcher(3u, 1537u, NULL, 0u, &multi_lsz));
+  assert(!arc_adffs_launcher(0u, 0u, NULL, 0u, NULL) &&
+         !arc_adffs_launcher(10u, 0u, NULL, 0u, NULL));
+  char *multi_launch = calloc(1u, multi_lsz + 1u);
+  assert(multi_launch && arc_adffs_launcher(3u, 1537u,
+         (uint8_t *)multi_launch, multi_lsz, &multi_lsz) &&
+         strstr(multi_launch, "ADFReserveMemory 2K\r") &&
+         !strstr(launch, "ADFReserveMemory"));
+  free(multi_launch);
   size_t stage1_size = 0u;
   assert(arc_adffs_stage1(selection.ram_size, NULL, 0u, &stage1_size));
   char *stage1 = calloc(1u, stage1_size + 1u);
@@ -485,8 +511,8 @@ int main(int argc, char **argv) {
   int stage1_golden_size = snprintf(
       stage1_golden, sizeof(stage1_golden),
       "ChangeDynamicArea -RamFsSize %uK\r"
-      "Copy ADFS::1.$.!ADFFS RAM::0.$.!ADFFS ~C~VRFQ\r"
-      "Copy ADFS::1.$.ArcStage2 RAM::0.$.ArcStage2 ~C~VFQ\r"
+      "Copy ADFS::0.$.!ADFFS RAM::0.$.!ADFFS ~C~VRFQ\r"
+      "Copy ADFS::0.$.ArcStage2 RAM::0.$.ArcStage2 ~C~VFQ\r"
       "Filer_Run RAM::0.$.ArcStage2\r",
       selection.ram_size / 1024u);
   assert(stage1_golden_size > 0 &&
@@ -508,7 +534,7 @@ int main(int argc, char **argv) {
   const uint8_t *desktop_entry = find_entry(root, "ArcLaunch");
   const uint8_t *stage1_entry = find_entry(root, "ArcStage1");
   const uint8_t *stage2_entry = find_entry(root, "ArcStage2");
-  static const char desktop_golden[] = "Filer_Run ADFS::1.$.ArcStage1\r";
+  static const char desktop_golden[] = "Filer_Run ADFS::0.$.ArcStage1\r";
   assert(desktop_entry && stage1_entry && stage2_entry &&
          le32t(desktop_entry + 18u) == sizeof(desktop_golden) - 1u &&
          !memcmp(support + le24(desktop_entry + 22u) * 256u, desktop_golden,
@@ -536,7 +562,7 @@ int main(int argc, char **argv) {
   ArcAdffsSelection huge_selection;
   assert(arc_adffs_select(p, (const uint8_t *)huge_reference,
                           strlen(huge_reference), &huge_selection, missing) &&
-         !arc_adffs_support_build(p, &huge_selection, support, error,
+         !arc_adffs_support_build(p, &huge_selection, 1u, 0u, support, error,
                                   sizeof(error)) &&
          strstr(error, "does not fit"));
   test_stage("support closure capacity boundary");
@@ -550,7 +576,7 @@ int main(int argc, char **argv) {
   uint8_t one = 0u;
   huge->data = &one;
   huge->size = 1u;
-  assert(arc_adffs_support_build(p, &huge_selection, support, error,
+  assert(arc_adffs_support_build(p, &huge_selection, 1u, 0u, support, error,
                                  sizeof(error)));
   root = support + 1024u;
   adffs = find_entry(root, "!ADFFS");
@@ -565,11 +591,11 @@ int main(int argc, char **argv) {
   assert(boundary_data && boundary_size > 0u);
   huge->data = boundary_data;
   huge->size = boundary_size;
-  assert(arc_adffs_support_build(p, &huge_selection, support, error,
+  assert(arc_adffs_support_build(p, &huge_selection, 1u, 0u, support, error,
                                  sizeof(error)) &&
          le24(support) * 256u == ARC_ADFFS_DISC_SIZE - 1024u);
   huge->size = boundary_size + 1024u;
-  assert(!arc_adffs_support_build(p, &huge_selection, support, error,
+  assert(!arc_adffs_support_build(p, &huge_selection, 1u, 0u, support, error,
                                   sizeof(error)) &&
          strstr(error, "does not fit"));
   free(boundary_data);

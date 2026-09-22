@@ -320,14 +320,22 @@ bool arc_osk_open(ArcOsk *osk, unsigned width, unsigned height)
 void arc_osk_reset(ArcOsk *osk, ArcInputState *input)
 {
    if (!osk) return;
-   if (input) arc_input_clear_source(input, ARC_INPUT_SOURCE_OSK);
+   if (input)
+   {
+      arc_input_clear_source(input, ARC_INPUT_SOURCE_OSK);
+      arc_input_activation_release(input, ARC_INPUT_SOURCE_OSK);
+   }
    memset(osk, 0, sizeof(*osk));
 }
 
 void arc_osk_close(ArcOsk *osk, ArcInputState *input)
 {
    if (!osk) return;
-   if (input) arc_input_clear_source(input, ARC_INPUT_SOURCE_OSK);
+   if (input)
+   {
+      arc_input_clear_source(input, ARC_INPUT_SOURCE_OSK);
+      arc_input_activation_release(input, ARC_INPUT_SOURCE_OSK);
+   }
    osk->visible = false;
    osk->activation_phase = 0u;
    osk->activation_held = false;
@@ -398,6 +406,11 @@ static bool arc_osk_begin(ArcOsk *osk, ArcInputState *input, unsigned key,
       if (osk->modifiers[i] != ARC_OSK_MOD_OFF)
          osk->activation_modifiers[modifier_count++] = modifier_keys[i];
    if (arc_input_available(input) < modifier_count * 2u + 2u)
+   {
+      arc_osk_show_busy(osk);
+      return false;
+   }
+   if (!arc_input_activation_claim(input, ARC_INPUT_SOURCE_OSK))
    {
       arc_osk_show_busy(osk);
       return false;
@@ -490,6 +503,7 @@ void arc_osk_update(ArcOsk *osk, ArcInputState *input)
       osk->activation_held = false;
       osk->queued_activation = false;
       osk->queued_activation_held = false;
+      arc_input_activation_release(input, ARC_INPUT_SOURCE_OSK);
       osk->interrupted_pending = true;
       arc_osk_show_interrupted(osk);
       return;
@@ -572,6 +586,7 @@ void arc_osk_update(ArcOsk *osk, ArcInputState *input)
             if (osk->modifiers[i] == ARC_OSK_MOD_ONESHOT)
                osk->modifiers[i] = ARC_OSK_MOD_OFF;
          osk->activation_phase = 0u;
+         arc_input_activation_release(input, ARC_INPUT_SOURCE_OSK);
          if (osk->queued_activation)
          {
             unsigned queued_key = osk->queued_activation_key;

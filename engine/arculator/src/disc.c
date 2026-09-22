@@ -35,6 +35,8 @@ int motoron;
 int writeprot[4];
 
 static int disc_current_track[4] = {0, 0, 0, 0};
+static uint64_t disc_activity_generations[4];
+static uint64_t disc_read_generations[4];
 
 static uint64_t disc_poll_time;
 static const int disc_poll_times[4] =
@@ -99,6 +101,8 @@ void disc_init()
 	memset(disc_current_track, 0, sizeof(disc_current_track));
 	memset(discchange, 0, sizeof(discchange));
 	memset(readflash, 0, sizeof(readflash));
+	memset(disc_activity_generations, 0, sizeof(disc_activity_generations));
+	memset(disc_read_generations, 0, sizeof(disc_read_generations));
 	disc_notfound = 0;
 	jfd_init();
 }
@@ -133,8 +137,19 @@ int disc_get_current_track(int drive)
 	return disc_current_track[drive];
 }
 
+uint64_t disc_activity_generation(unsigned drive)
+{
+	return drive < 4u ? disc_activity_generations[drive] : 0u;
+}
+
+uint64_t disc_read_generation(unsigned drive)
+{
+	return drive < 4u ? disc_read_generations[drive] : 0u;
+}
+
 void disc_seek(int drive, int new_track)
 {
+	if (drive >= 0 && drive < 4) ++disc_activity_generations[drive];
 	int distance = new_track - disc_current_track[drive];
 	if (drive_funcs[drive] && drive_funcs[drive]->seek)
 		drive_funcs[drive]->seek(drive, new_track);
@@ -151,6 +166,10 @@ void disc_seek(int drive, int new_track)
 
 void disc_readsector(int drive, int sector, int track, int side, int density)
 {
+	if (drive >= 0 && drive < 4) {
+		++disc_activity_generations[drive];
+		++disc_read_generations[drive];
+	}
 	if (drive_funcs[drive] && drive_funcs[drive]->readsector)
 		drive_funcs[drive]->readsector(drive, sector, track, side, density);
 	else
@@ -159,6 +178,7 @@ void disc_readsector(int drive, int sector, int track, int side, int density)
 
 void disc_writesector(int drive, int sector, int track, int side, int density)
 {
+	if (drive >= 0 && drive < 4) ++disc_activity_generations[drive];
 	if (drive_funcs[drive] && drive_funcs[drive]->writesector)
 		drive_funcs[drive]->writesector(drive, sector, track, side, density);
 	else
@@ -170,6 +190,10 @@ void disc_writesector(int drive, int sector, int track, int side, int density)
 
 void disc_readaddress(int drive, int track, int side, int density)
 {
+	if (drive >= 0 && drive < 4) {
+		++disc_activity_generations[drive];
+		++disc_read_generations[drive];
+	}
 	if (drive_funcs[drive] && drive_funcs[drive]->readaddress)
 		drive_funcs[drive]->readaddress(drive, track, side, density);
 	else
@@ -178,6 +202,7 @@ void disc_readaddress(int drive, int track, int side, int density)
 
 void disc_format(int drive, int track, int side, int density)
 {
+	if (drive >= 0 && drive < 4) ++disc_activity_generations[drive];
 	if (drive_funcs[drive] && drive_funcs[drive]->format)
 		drive_funcs[drive]->format(drive, track, side, density);
 	else

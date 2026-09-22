@@ -205,11 +205,13 @@ static void test_media_launch_and_cmos(void)
    for (unsigned i = 0; i < sizeof(payload); ++i) assert(payload[i] == 0u);
    uint8_t machine_cmos[ARC_CMOS_MACHINE_SIZE];
    assert(arc_cmos_default(ARC_OS_RISCOS_311, ARC_IO_OLD_WD1770, payload));
-   assert(arc_cmos_machine_image(ARC_OS_RISCOS_311, ARC_IO_OLD_WD1770, payload, false, machine_cmos));
+   assert(arc_cmos_machine_image(ARC_OS_RISCOS_311, ARC_IO_OLD_WD1770, payload, false, false, machine_cmos));
    assert(machine_cmos[69] == 8u && !(machine_cmos[75] & 7u));
    assert((machine_cmos[80] & 0x10u) && (machine_cmos[199] & 7u) == 1u);
-   assert(arc_cmos_machine_image(ARC_OS_RISCOS_311, ARC_IO_OLD_WD1770, payload, true, machine_cmos));
+   assert(arc_cmos_machine_image(ARC_OS_RISCOS_311, ARC_IO_OLD_WD1770, payload, true, true, machine_cmos));
    assert((machine_cmos[75] & 7u) == 1u && (machine_cmos[199] & 7u) == 2u);
+   assert(arc_cmos_machine_image(ARC_OS_RISCOS_311, ARC_IO_OLD_WD1770, payload, false, true, machine_cmos));
+   assert((machine_cmos[75] & 7u) == 0u && (machine_cmos[199] & 7u) == 2u);
    payload[42] = 0x5au;
    payload[59] = 0xffu;
    payload[183] = 0xfau;
@@ -225,7 +227,7 @@ static void test_media_launch_and_cmos(void)
    }
    assert(arc_cmos_default(ARC_OS_RISCOS_311, ARC_IO_NEW_82C711, payload));
    assert(arc_cmos_machine_image(ARC_OS_RISCOS_311, ARC_IO_NEW_82C711,
-                                 payload, false, machine_cmos));
+                                 payload, false, false, machine_cmos));
    assert(machine_cmos[199] == 1u);
    unsigned checksum = 0u;
    for (unsigned i = 0; i < 239u; ++i)

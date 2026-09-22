@@ -417,7 +417,7 @@ static bool select_script(SelectionContext *c, const uint8_t *s, size_t n,
   return true;
 }
 
-static const char launcher_text[] =
+static const char launcher_prefix[] =
     "| ArcDroid ADFFS RAM launcher\r"
     "Set ADFFS$Dir RAM::0.$.!ADFFS\rSet ADFFS$Path RAM::0.$.!ADFFS.\r"
     "Run RAM::0.$.!ADFFS.SetVars\rSetEval ADFFS$FileSizeLimit 2048\r"
@@ -435,18 +435,36 @@ static const char launcher_text[] =
     "RMEnsure BootCommands 0.00 RMLoad RAM::0.$.!ADFFS.3rdParty.BootCmds\r"
     "RMEnsure BootCommands 0.00 Error ArcDroid ADFFS step BootCommands failed\r"
     "RMEnsure ADFFS 0.00 RMLoad RAM::0.$.!ADFFS.ADFFS\r"
-    "RMEnsure ADFFS 0.00 Error ArcDroid ADFFS step ADFFS failed\r"
-    "ADFMount ADFS::0.$.Game\rADFS\rNoDir\rNoLib\rNoURD\rDismount "
-    ":0\rADFBootFloppy\r";
-bool arc_adffs_launcher(uint8_t *o, size_t cap, size_t *sz) {
-  size_t n = sizeof(launcher_text) - 1u;
+    "RMEnsure ADFFS 0.00 Error ArcDroid ADFFS step ADFFS failed\r";
+static const char launcher_suffix[] =
+    "ADFMount ADFS::1.$.Disc1\rADFS\rNoDir\rNoLib\rNoURD\r"
+    "Dismount :1\rDismount :0\rADFBootFloppy\r";
+bool arc_adffs_launcher(unsigned disc_count, size_t maximum_decoded_size,
+                        uint8_t *o, size_t cap, size_t *sz) {
+  char reserve[64] = "";
+  int reserve_size = 0;
+  if (!disc_count || disc_count > 9u ||
+      maximum_decoded_size > SIZE_MAX - 1023u)
+    return false;
+  if (disc_count > 1u) {
+    size_t kib = (maximum_decoded_size + 1023u) / 1024u;
+    reserve_size = snprintf(reserve, sizeof(reserve),
+                            "ADFReserveMemory %zuK\r", kib);
+    if (reserve_size < 0 || (size_t)reserve_size >= sizeof(reserve))
+      return false;
+  }
+  size_t prefix_size = sizeof(launcher_prefix) - 1u;
+  size_t suffix_size = sizeof(launcher_suffix) - 1u;
+  size_t n = prefix_size + (size_t)reserve_size + suffix_size;
   if (sz)
     *sz = n;
   if (!o)
     return true;
   if (cap < n)
     return false;
-  memcpy(o, launcher_text, n);
+  memcpy(o, launcher_prefix, prefix_size);
+  memcpy(o + prefix_size, reserve, (size_t)reserve_size);
+  memcpy(o + prefix_size + (size_t)reserve_size, launcher_suffix, suffix_size);
   return true;
 }
 
@@ -455,8 +473,8 @@ bool arc_adffs_stage1(uint32_t ram_size, uint8_t *o, size_t cap, size_t *sz) {
   int length = snprintf(
       text, sizeof(text),
       "ChangeDynamicArea -RamFsSize %uK\r"
-      "Copy ADFS::1.$.!ADFFS RAM::0.$.!ADFFS ~C~VRFQ\r"
-      "Copy ADFS::1.$.ArcStage2 RAM::0.$.ArcStage2 ~C~VFQ\r"
+      "Copy ADFS::0.$.!ADFFS RAM::0.$.!ADFFS ~C~VRFQ\r"
+      "Copy ADFS::0.$.ArcStage2 RAM::0.$.ArcStage2 ~C~VFQ\r"
       "Filer_Run RAM::0.$.ArcStage2\r",
       ram_size / 1024u);
   if (length < 0 || (size_t)length >= sizeof(text))
@@ -502,7 +520,12 @@ static bool selection_ram_size(const ArcAdffsPackage *p,
     }
   }
   bytes += directory_count * D_DIRECTORY;
-  bytes += ((uint32_t)(sizeof(launcher_text) - 1u) + 1023u) & ~1023u;
+  size_t launcher_size = 0u;
+  if (!arc_adffs_launcher(1u, 0u, NULL, 0u, &launcher_size)) {
+    free(directories);
+    return false;
+  }
+  bytes += ((uint32_t)launcher_size + 1023u) & ~1023u;
   *ram_size = (bytes + 32767u) & ~32767u;
   free(directories);
   return true;
@@ -726,10 +749,15 @@ static bool addpath(Node *root, Node *pool, unsigned *used, const char *path,
   p->child[p->count++] = n;
   return true;
 }
-bool arc_adffs_carrier_build(const uint8_t *jfd, size_t n,
+bool arc_adffs_carrier_build(const uint8_t *jfd, size_t n, const char *name,
+                             ArcMediaGeometry geometry,
+                             size_t carrier_capacity,
                              uint8_t out[ARC_ADFFS_DISC_SIZE], char *e,
                              size_t en) {
-  if (!jfd || n > ARC_ADFFS_CARRIER_CAPACITY) {
+  if (!jfd || !name || !name[0] || strlen(name) > 10u ||
+      geometry != ARC_GEOMETRY_800K_D ||
+      carrier_capacity > ARC_ADFFS_CARRIER_CAPACITY ||
+      n > carrier_capacity) {
     fail(e, en, "JFD file does not fit carrier");
     return false;
   }
@@ -738,13 +766,15 @@ bool arc_adffs_carrier_build(const uint8_t *jfd, size_t n,
   Node *root = &pool[0];
   root->dir = true;
   strcpy(root->name, "$");
-  if (!addpath(root, pool, &used, "Game", (uint8_t *)(uintptr_t)jfd, n,
+  if (!addpath(root, pool, &used, name, (uint8_t *)(uintptr_t)jfd, n,
                0xffffce00u, 0, 0x33u))
     return false;
   return make_disc(root, out, e, en);
 }
 bool arc_adffs_support_build(const ArcAdffsPackage *p,
                              const ArcAdffsSelection *selection,
+                             unsigned disc_count,
+                             size_t maximum_decoded_size,
                              uint8_t out[ARC_ADFFS_DISC_SIZE], char *e,
                              size_t en) {
   if (!p || !selection) {
@@ -760,8 +790,8 @@ bool arc_adffs_support_build(const ArcAdffsPackage *p,
   Node *root = &pool[0];
   root->dir = true;
   strcpy(root->name, "$");
-  static uint8_t boot[] = "%Desktop -File \"ADFS::1.$.ArcLaunch\"\r";
-  static uint8_t desktop[] = "Filer_Run ADFS::1.$.ArcStage1\r";
+  static uint8_t boot[] = "%Desktop -File \"ADFS::0.$.ArcLaunch\"\r";
+  static uint8_t desktop[] = "Filer_Run ADFS::0.$.ArcStage1\r";
   uint8_t stage1[512];
   size_t stage1_size;
   if (!arc_adffs_stage1(selection->ram_size, stage1, sizeof(stage1),
@@ -771,17 +801,29 @@ bool arc_adffs_support_build(const ArcAdffsPackage *p,
     return false;
   }
   size_t lsz;
-  arc_adffs_launcher(NULL, 0, &lsz);
+  if (!arc_adffs_launcher(disc_count, maximum_decoded_size, NULL, 0u, &lsz)) {
+    fail(e, en, "second-stage launcher is invalid");
+    free(pool);
+    return false;
+  }
+  uint8_t *launcher = malloc(lsz);
+  if (!launcher || !arc_adffs_launcher(disc_count, maximum_decoded_size,
+                                        launcher, lsz, &lsz)) {
+    fail(e, en, "out of memory");
+    free(launcher);
+    free(pool);
+    return false;
+  }
   if (!addpath(root, pool, &used, "!Boot", boot, sizeof(boot) - 1, 0xffffeb00u,
                0, 0x33u) ||
       !addpath(root, pool, &used, "ArcLaunch", desktop,
                sizeof(desktop) - 1u, 0xffffeb00u, 0, 0x33u) ||
       !addpath(root, pool, &used, "ArcStage1", stage1, stage1_size,
                0xffffeb00u, 0, 0x33u) ||
-      !addpath(root, pool, &used, "ArcStage2",
-               (uint8_t *)(uintptr_t)launcher_text, lsz, 0xffffeb00u, 0,
+      !addpath(root, pool, &used, "ArcStage2", launcher, lsz, 0xffffeb00u, 0,
                0x33u)) {
     fail(e, en, "support disc tree is invalid");
+    free(launcher);
     free(pool);
     return false;
   }
@@ -795,6 +837,7 @@ bool arc_adffs_support_build(const ArcAdffsPackage *p,
       return false;
     }
   bool ok = make_disc(root, out, e, en);
+  free(launcher);
   free(pool);
   return ok;
 }

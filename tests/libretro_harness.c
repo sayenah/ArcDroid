@@ -147,6 +147,11 @@ static char last_adffs_notice[512];
 static bool adffs_log_leak;
 static unsigned adffs_package_log_lines;
 static char last_adffs_package_log[512];
+static unsigned adffs_disc_log_lines;
+static unsigned adffs_disc_requested_lines;
+static unsigned adffs_disc_read_lines;
+static unsigned adffs_disc_not_read_lines;
+static char last_adffs_disc_log[512];
 static unsigned skipped_sibling_log_lines;
 static unsigned skipped_sibling_names;
 static unsigned launch_warning_osd_calls;
@@ -424,6 +429,14 @@ static void frontend_log(enum retro_log_level level, const char *format, ...)
    {
       ++adffs_package_log_lines;
       snprintf(last_adffs_package_log, sizeof(last_adffs_package_log), "%s", message);
+   }
+   if (!strncmp(message, "ADFFS disc:", 11u))
+   {
+      ++adffs_disc_log_lines;
+      if (strstr(message, "phase=requested")) ++adffs_disc_requested_lines;
+      if (strstr(message, "phase=read-observed")) ++adffs_disc_read_lines;
+      if (strstr(message, "phase=not-read")) ++adffs_disc_not_read_lines;
+      snprintf(last_adffs_disc_log, sizeof(last_adffs_disc_log), "%s", message);
    }
    if (!strncmp(message, "Launch sibling boot skipped:",
                 sizeof("Launch sibling boot skipped:") - 1u))
@@ -1224,7 +1237,8 @@ static void print_usage(FILE *stream, const char *program)
       "  %s CORE ROM CONTENT DATA --newio-smoke PLAYLIST DISC1 DISC2 APP\n"
       "  %s CORE ROM CONTENT DATA --real-boot "
       "[--machine A3000|A3010|A3020|A4000] "
-      "[--joystick Keyboard|A3010] [--osk-script FILE]\n"
+      "[--joystick Keyboard|A3010] [--osk-script FILE] "
+      "[--adffs-swap FRAME DISC]\n"
       "  %s CORE ROM CONTENT DATA MEDIA_ROM PLAYLIST DISC1 DISC2 JFD JFD2 "
       "FIXTURES APP ADFFS_PACKAGE ADFFS_JFD ZIP_FIXTURES\n"
       "\n"
@@ -1416,6 +1430,8 @@ int main(int argc, char **argv)
    bool real_boot = false;
    bool newio_smoke = false;
    const char *osk_script = NULL;
+   unsigned adffs_swap_frame = 0u;
+   unsigned adffs_swap_disc = 0u;
    if (argc == 10 && !strcmp(argv[5], "--newio-smoke"))
       newio_smoke = true;
    else if (argc >= 6 && !strcmp(argv[5], "--real-boot"))
@@ -1424,6 +1440,7 @@ int main(int argc, char **argv)
       bool machine_seen = false;
       bool joystick_seen = false;
       bool osk_script_seen = false;
+      bool adffs_swap_seen = false;
       for (int argument = 6; argument < argc; ++argument)
       {
          if (!strcmp(argv[argument], "--machine") && !machine_seen &&
@@ -1457,11 +1474,33 @@ int main(int argc, char **argv)
             osk_script = argv[++argument];
             osk_script_seen = true;
          }
+         else if (!strcmp(argv[argument], "--adffs-swap") &&
+                  !adffs_swap_seen && argument + 2 < argc)
+         {
+            char *frame_end = NULL;
+            char *disc_end = NULL;
+            unsigned long frame = strtoul(argv[++argument], &frame_end, 10);
+            unsigned long disc = strtoul(argv[++argument], &disc_end, 10);
+            if (!frame || frame > real_boot_frames || !frame_end || *frame_end ||
+                disc < 1u || disc > 9u || !disc_end || *disc_end)
+            {
+               print_usage(stderr, argv[0]);
+               return 2;
+            }
+            adffs_swap_frame = (unsigned)frame;
+            adffs_swap_disc = (unsigned)disc;
+            adffs_swap_seen = true;
+         }
          else
          {
             print_usage(stderr, argv[0]);
             return 2;
          }
+      }
+      if (osk_script && adffs_swap_frame)
+      {
+         print_usage(stderr, argv[0]);
+         return 2;
       }
    }
    else if (argc != 5 && argc != 16)
@@ -1529,6 +1568,8 @@ int main(int argc, char **argv)
    void (*arc_engine_audio_stats)(uint64_t *, uint64_t *) = NULL;
    bool (*arc_engine_media_insert)(const ArcEngineMedia *, char *, size_t) = NULL;
    void (*arc_engine_test_set_vidc_noncompleting)(bool) = NULL;
+   bool (*arc_engine_test_drive_read)(unsigned) = NULL;
+   void (*arc_engine_test_fail_drive1_insert)(bool) = NULL;
    bool (*arc_engine_test_drive_media)(unsigned, bool *, char[41]) = NULL;
    bool (*arc_engine_test_helper_media_valid)(ArcMediaKind,
                                                ArcMediaGeometry) = NULL;
@@ -1571,7 +1612,8 @@ int main(int argc, char **argv)
    void (*arc_libretro_test_adffs_accept_test_os)(bool) = NULL;
    void (*arc_libretro_test_fail_adffs_content_read)(bool) = NULL;
    bool (*arc_libretro_test_adffs_content_read_failure_pending)(void) = NULL;
-   bool (*arc_libretro_test_adffs_carrier_matches)(const void *, size_t) = NULL;
+   bool (*arc_libretro_test_adffs_carrier_matches)(unsigned, const void *,
+                                                    size_t) = NULL;
    void (*arc_platform_test_input_events_reset)(void) = NULL;
    size_t (*arc_platform_test_input_events)(ArcKartEvent *, size_t) = NULL;
    if (real_boot || newio_smoke)
@@ -1582,6 +1624,10 @@ int main(int argc, char **argv)
       *(void **)(&arc_engine_media_insert) = dlsym(module, "arc_engine_media_insert");
       *(void **)(&arc_engine_test_set_vidc_noncompleting) =
          dlsym(module, "arc_engine_test_set_vidc_noncompleting");
+      *(void **)(&arc_engine_test_drive_read) =
+         dlsym(module, "arc_engine_test_drive_read");
+      *(void **)(&arc_engine_test_fail_drive1_insert) =
+         dlsym(module, "arc_engine_test_fail_drive1_insert");
       *(void **)(&arc_engine_test_drive_media) =
          dlsym(module, "arc_engine_test_drive_media");
       *(void **)(&arc_engine_test_helper_media_valid) =
@@ -1654,6 +1700,7 @@ int main(int argc, char **argv)
          dlsym(module, "arc_platform_test_input_events");
       assert(arc_engine_audio_stats && arc_engine_media_insert &&
              arc_engine_test_set_vidc_noncompleting &&
+             arc_engine_test_drive_read && arc_engine_test_fail_drive1_insert &&
              arc_engine_test_drive_media && arc_engine_test_helper_media_valid &&
              arc_engine_test_cmos_image &&
              arc_engine_test_cmos_write && arc_libretro_test_fail_osk_allocations &&
@@ -2129,7 +2176,25 @@ int main(int argc, char **argv)
          script_ok = run_osk_script(osk_script, &script_api);
       }
       else
-         for (unsigned frame = 0; frame < real_boot_frames; ++frame) retro_run();
+         for (unsigned frame = 0; frame < real_boot_frames; ++frame)
+         {
+            retro_run();
+            if (frame + 1u == adffs_swap_frame)
+            {
+               bool swapped = disk_control.get_num_images() >= adffs_swap_disc &&
+                  disk_control.set_eject_state(true) &&
+                  disk_control.set_image_index(adffs_swap_disc - 1u) &&
+                  disk_control.set_eject_state(false);
+               if (!swapped)
+               {
+                  fprintf(stderr,
+                          "real_boot_harness: ADFFS swap to Disc%u refused at frame %u: %s\n",
+                          adffs_swap_disc, adffs_swap_frame, last_message);
+                  script_ok = false;
+                  break;
+               }
+            }
+         }
       unsigned newio_commands = 0u;
       unsigned newio_reads = 0u;
       unsigned newio_successes = 0u;
@@ -2157,7 +2222,9 @@ int main(int argc, char **argv)
       }
       assert((osk_script ? video_frames > 0u : video_frames == real_boot_frames) &&
              audio_frames > 0u && video_signature_count > 0u);
-      assert(vidc_osd_ext_calls == 0u && vidc_osd_legacy_calls == 0u);
+      assert((adffs_swap_frame ||
+              (vidc_osd_ext_calls == 0u && vidc_osd_legacy_calls == 0u)) &&
+             (!adffs_swap_frame || adffs_disc_requested_lines == 1u));
       assert(dlclose(module) == 0);
       printf("real_boot_harness: %s; %u frames, %u signatures, trace %016llx, "
              "final %016llx, "
@@ -4287,13 +4354,13 @@ int main(int argc, char **argv)
       zip_game.path = zip_decoded_too_large_jfd;
       phase = PHASE_LOAD; assert(retro_load_game(&zip_game));
       assert(!strcmp(last_jfd_boot_log,
-                     "JFD boot: path=native reason=decoded-too-large\n") &&
+                     "JFD boot: path=native reason=decoded-too-large disc=1\n") &&
              disk_control.set_eject_state(true) &&
              disk_control.replace_image_index(0u, &direct_adffs_game) &&
              disk_control.set_eject_state(false));
       retro_reset();
       assert(strstr(last_jfd_boot_log, "JFD boot: path=adffs") &&
-             arc_libretro_test_adffs_carrier_matches(eligible_bytes,
+             arc_libretro_test_adffs_carrier_matches(1u, eligible_bytes,
                                                      eligible_size) &&
              disk_control.get_image_path(0u, image_path, sizeof(image_path)) &&
              !strcmp(image_path, argv[14]) &&
@@ -4317,7 +4384,7 @@ int main(int argc, char **argv)
       arc_libretro_test_fail_adffs_content_read(true);
       retro_reset();
       assert(!strcmp(last_jfd_boot_log,
-                     "JFD boot: path=native reason=too-large\n") &&
+                     "JFD boot: path=native reason=too-large disc=1\n") &&
              arc_libretro_test_adffs_content_read_failure_pending() &&
              observed_vfs_hash_opens == 0u);
       arc_libretro_test_fail_adffs_content_read(false);
@@ -4340,13 +4407,13 @@ int main(int argc, char **argv)
       variable_update = true;
       retro_reset();
       assert(strstr(last_jfd_boot_log, "JFD boot: path=adffs") &&
-             arc_libretro_test_adffs_carrier_matches(eligible_bytes,
+             arc_libretro_test_adffs_carrier_matches(1u, eligible_bytes,
                                                      eligible_size));
       option_writes = "shadow";
       variable_update = true;
       retro_reset();
       assert(strstr(last_jfd_boot_log, "JFD boot: path=adffs") &&
-             arc_libretro_test_adffs_carrier_matches(eligible_bytes,
+             arc_libretro_test_adffs_carrier_matches(1u, eligible_bytes,
                                                      eligible_size) &&
              disk_control.get_image_path(0u, image_path, sizeof(image_path)) &&
              !strcmp(image_path, argv[14]) &&
@@ -4363,9 +4430,9 @@ int main(int argc, char **argv)
       unsigned reads_after_load = observed_vfs_reads;
       assert(strstr(last_jfd_boot_log, "JFD boot: path=adffs") &&
              !strcmp(arc_libretro_test_content_id(), direct_jfd_identity) &&
-             arc_libretro_test_adffs_carrier_matches(eligible_bytes, eligible_size) &&
+             arc_libretro_test_adffs_carrier_matches(1u, eligible_bytes,
+                                                     eligible_size) &&
              disk_control.get_num_images() == 1u &&
-             !disk_control.set_eject_state(true) &&
              !disk_control.add_image_index() &&
              !disk_control.replace_image_index(0u, &zip_replacement));
       /* R1-1a: zip-adffs-retained-three-resets. */
@@ -4375,7 +4442,7 @@ int main(int argc, char **argv)
          retro_reset();
          assert(jfd_boot_log_lines == boot_lines + 1u &&
                 strstr(last_jfd_boot_log, "JFD boot: path=adffs") &&
-                arc_libretro_test_adffs_carrier_matches(eligible_bytes,
+                arc_libretro_test_adffs_carrier_matches(1u, eligible_bytes,
                                                         eligible_size));
       }
       phase = PHASE_RUN;
@@ -4402,12 +4469,13 @@ int main(int argc, char **argv)
       observed_vfs_hash_opens = 0u;
       phase = PHASE_LOAD; assert(retro_load_game(&zip_game));
       assert(strstr(last_jfd_boot_log, "JFD boot: path=adffs") &&
-             arc_libretro_test_adffs_carrier_matches(eligible_bytes, eligible_size));
+             arc_libretro_test_adffs_carrier_matches(1u, eligible_bytes,
+                                                     eligible_size));
       for (unsigned reset = 0u; reset < 2u; ++reset)
       {
          retro_reset();
          assert(strstr(last_jfd_boot_log, "JFD boot: path=adffs") &&
-                arc_libretro_test_adffs_carrier_matches(eligible_bytes,
+                arc_libretro_test_adffs_carrier_matches(1u, eligible_bytes,
                                                         eligible_size));
       }
       assert(observed_vfs_read_opens == 0u &&
@@ -4426,7 +4494,7 @@ int main(int argc, char **argv)
       zip_game.path = zip_too_large_jfd;
       phase = PHASE_LOAD; assert(retro_load_game(&zip_game));
       assert(!strcmp(last_jfd_boot_log,
-                     "JFD boot: path=native reason=too-large\n") &&
+                     "JFD boot: path=native reason=too-large disc=1\n") &&
              observed_vfs_read_opens == 0u &&
              observed_vfs_write_opens == 0u);
       retro_unload_game();
@@ -4441,13 +4509,13 @@ int main(int argc, char **argv)
       zip_game.path = zip_decoded_too_large_jfd;
       phase = PHASE_LOAD; assert(retro_load_game(&zip_game));
       assert(!strcmp(last_jfd_boot_log,
-                     "JFD boot: path=native reason=decoded-too-large\n"));
+                     "JFD boot: path=native reason=decoded-too-large disc=1\n"));
       assert(disk_control.set_eject_state(true) &&
              disk_control.set_eject_state(false));
       unsigned reinsert_boot_lines = jfd_boot_log_lines;
       retro_reset();
       assert(!strcmp(last_jfd_boot_log,
-                     "JFD boot: path=native reason=decoded-too-large\n") &&
+                     "JFD boot: path=native reason=decoded-too-large disc=1\n") &&
              jfd_boot_log_lines == reinsert_boot_lines + 1u &&
              observed_vfs_read_opens == 0u &&
              observed_vfs_write_opens == 0u);
@@ -4461,17 +4529,15 @@ int main(int argc, char **argv)
       observed_vfs_path = zip_jfd_pseudo;
       observed_vfs_read_opens = observed_vfs_write_opens = observed_vfs_reads = 0u;
       phase = PHASE_LOAD; assert(retro_load_game(&zip_game));
-      assert(!strcmp(last_jfd_boot_log,
-                     "JFD boot: path=native reason=multi-image\n"));
-      /* R1-1e: zip-adffs-missing-retained-bytes. Reducing a multi-image zip
-       * through disk control cannot invent retained bytes or open a member
-       * pseudo-path; the single remaining JFD falls back deterministically. */
-      assert(disk_control.set_eject_state(true) &&
-             disk_control.replace_image_index(1u, NULL) &&
-             disk_control.set_eject_state(false));
+      assert(strstr(last_jfd_boot_log, "JFD boot: path=adffs") &&
+             strstr(last_jfd_boot_log, "discs=2") &&
+             disk_control.get_num_images() == 2u);
+      /* Multi-JFD zip members are retained at load and ADFFS refuses set
+       * mutation; reset must not open a member pseudo-path. */
+      assert(!disk_control.replace_image_index(1u, NULL));
       retro_reset();
-      assert(!strcmp(last_jfd_boot_log,
-                     "JFD boot: path=native reason=content-unreadable\n") &&
+      assert(strstr(last_jfd_boot_log, "JFD boot: path=adffs") &&
+             strstr(last_jfd_boot_log, "discs=2") &&
              observed_vfs_read_opens == 0u &&
              observed_vfs_write_opens == 0u);
       retro_unload_game();
@@ -6491,6 +6557,19 @@ int main(int argc, char **argv)
                 adffs_notice_calls == before_notices); \
          retro_unload_game(); \
       } while (0)
+#define EXPECT_NATIVE_DISC(variable, why, notices, fragment) do { \
+         unsigned before_lines = jfd_boot_log_lines; \
+         unsigned before_notices = adffs_notice_calls; \
+         char expected_line[512]; \
+         snprintf(expected_line, sizeof(expected_line), \
+                  "JFD boot: path=native reason=%s disc=1\n", (why)); \
+         phase = PHASE_LOAD; assert(retro_load_game(&(variable))); \
+         assert(jfd_boot_log_lines == before_lines + 1u && \
+                !strcmp(last_jfd_boot_log, expected_line) && \
+                adffs_notice_calls == before_notices + (notices)); \
+         if ((fragment) != NULL) assert(strstr(last_adffs_notice, (fragment))); \
+         retro_unload_game(); \
+      } while (0)
 
       option_writes = "off";
       option_launch = "auto";
@@ -6500,11 +6579,13 @@ int main(int argc, char **argv)
       EXPECT_NATIVE(game, "not-jfd", 0u, NULL);
 
       ADFFS_GAME("multi.m3u", adffs_multi);
-      EXPECT_NATIVE(adffs_multi, "multi-image", 0u, NULL);
+      EXPECT_ADFFS(adffs_multi,
+         "JFD boot: path=adffs script=builtin profile=synthetic-test version=\"Synthetic 1.0\" discs=2\n");
       ADFFS_GAME("disc-two.jfd", adffs_disc_two);
       EXPECT_NATIVE(adffs_disc_two, "multi-disc", 0u, NULL);
       ADFFS_GAME("count-two.jfd", adffs_count_two);
-      EXPECT_NATIVE(adffs_count_two, "multi-disc", 0u, NULL);
+      EXPECT_ADFFS(adffs_count_two,
+         "JFD boot: path=adffs script=builtin profile=synthetic-test version=\"Synthetic 1.0\" discs=1\n");
       ADFFS_GAME("eligible.jfd", adffs_eligible);
       option_jfd_boot = "native";
       EXPECT_NATIVE(adffs_eligible, "option", 0u, NULL);
@@ -6527,7 +6608,7 @@ int main(int argc, char **argv)
       copy_file(adffs_fixture, valid_second);
       unsigned package_lines = adffs_package_log_lines;
       EXPECT_ADFFS(adffs_eligible,
-         "JFD boot: path=adffs script=builtin profile=synthetic-test version=\"Synthetic 1.0\"\n");
+         "JFD boot: path=adffs script=builtin profile=synthetic-test version=\"Synthetic 1.0\" discs=1\n");
       assert(adffs_package_log_lines == package_lines + 1u &&
              !strcmp(last_adffs_package_log, "ADFFS package: file=A-valid.ZIP\n") &&
              remove(valid_first) == 0 && remove(valid_second) == 0);
@@ -6558,7 +6639,7 @@ int main(int argc, char **argv)
       EXPECT_NATIVE(adffs_eligible, "untested-package", 1u, "untested-package");
       option_adffs_package = "untested";
       EXPECT_ADFFS(adffs_eligible,
-         "JFD boot: path=adffs script=builtin profile=untested version=\"Synthetic 1.0\"\n");
+         "JFD boot: path=adffs script=builtin profile=untested version=\"Synthetic 1.0\" discs=1\n");
       option_adffs_package = "verified";
 
       COPY_ADFFS_FIXTURE("synthetic.zip");
@@ -6569,7 +6650,7 @@ int main(int argc, char **argv)
                     1u, "missing-resource:!ADFFS/ExTrAs/Absent/module");
       ADFFS_GAME("comment-reference.jfd", adffs_comment_reference);
       EXPECT_ADFFS(adffs_comment_reference,
-         "JFD boot: path=adffs script=embedded profile=synthetic-test version=\"Synthetic 1.0\"\n");
+         "JFD boot: path=adffs script=embedded profile=synthetic-test version=\"Synthetic 1.0\" discs=1\n");
       unsigned unreadable_lines = jfd_boot_log_lines;
       unsigned unreadable_notices = adffs_notice_calls;
       arc_libretro_test_fail_adffs_content_read(true);
@@ -6582,29 +6663,198 @@ int main(int argc, char **argv)
       retro_unload_game();
       ADFFS_GAME("too-large.jfd", adffs_too_large);
       arc_libretro_test_fail_adffs_content_read(true);
-      EXPECT_NATIVE(adffs_too_large, "too-large", 1u, "too-large");
+      EXPECT_NATIVE_DISC(adffs_too_large, "too-large", 1u, "too-large");
       assert(arc_libretro_test_adffs_content_read_failure_pending());
       arc_libretro_test_fail_adffs_content_read(false);
       ADFFS_GAME("closure-too-large.jfd", adffs_closure_too_large);
       EXPECT_NATIVE(adffs_closure_too_large, "too-large", 1u, "too-large");
       ADFFS_GAME("decoded-too-large.jfd", adffs_decoded_too_large);
-      EXPECT_NATIVE(adffs_decoded_too_large, "decoded-too-large", 1u,
-                    "decoded-too-large");
+      EXPECT_NATIVE_DISC(adffs_decoded_too_large, "decoded-too-large", 1u,
+                         "decoded-too-large");
       ADFFS_GAME("capacity.jfd", adffs_capacity);
       EXPECT_ADFFS(adffs_capacity,
-         "JFD boot: path=adffs script=builtin profile=synthetic-test version=\"Synthetic 1.0\"\n");
+         "JFD boot: path=adffs script=builtin profile=synthetic-test version=\"Synthetic 1.0\" discs=1\n");
       ADFFS_GAME("decoded-limit.jfd", adffs_decoded_limit);
       EXPECT_ADFFS(adffs_decoded_limit,
-         "JFD boot: path=adffs script=builtin profile=synthetic-test version=\"Synthetic 1.0\"\n");
+         "JFD boot: path=adffs script=builtin profile=synthetic-test version=\"Synthetic 1.0\" discs=1\n");
       EXPECT_ADFFS(adffs_embedded,
-         "JFD boot: path=adffs script=embedded profile=synthetic-test version=\"Synthetic 1.0\"\n");
+         "JFD boot: path=adffs script=embedded profile=synthetic-test version=\"Synthetic 1.0\" discs=1\n");
       EXPECT_ADFFS(adffs_eligible,
-         "JFD boot: path=adffs script=builtin profile=synthetic-test version=\"Synthetic 1.0\"\n");
+         "JFD boot: path=adffs script=builtin profile=synthetic-test version=\"Synthetic 1.0\" discs=1\n");
 
 #undef EXPECT_ADFFS
+#undef EXPECT_NATIVE_DISC
 #undef EXPECT_NATIVE
 #undef ADFFS_GAME
 #undef COPY_ADFFS_FIXTURE
+
+      /* Slice 6b Run 1: all three set containers use the same support/carrier
+       * topology and retain every ordered JFD member for later exchanges. */
+      char multi_zip_path[4096], multi_m3u_path[4096], multi_folder_path[4096];
+      char multi_disc1_path[4096], multi_disc2_path[4096], multi_disc3_path[4096];
+      snprintf(multi_zip_path, sizeof(multi_zip_path),
+               "%s/adffs/multi-three.zip", argv[11]);
+      snprintf(multi_m3u_path, sizeof(multi_m3u_path),
+               "%s/adffs/multi-three.m3u", argv[11]);
+      snprintf(multi_folder_path, sizeof(multi_folder_path),
+               "%s/adffs/multi-three.jfd/multi-three.jfd", argv[11]);
+      snprintf(multi_disc1_path, sizeof(multi_disc1_path),
+               "%s/adffs/multi-three-disc1.jfd", argv[11]);
+      snprintf(multi_disc2_path, sizeof(multi_disc2_path),
+               "%s/adffs/multi-three-disc2.jfd", argv[11]);
+      snprintf(multi_disc3_path, sizeof(multi_disc3_path),
+               "%s/adffs/multi-three-disc3.jfd", argv[11]);
+      struct retro_game_info multi_games[] = {
+         {multi_zip_path, NULL, 0u, NULL},
+         {multi_folder_path, NULL, 0u, NULL},
+         {multi_m3u_path, NULL, 0u, NULL}
+      };
+      size_t multi_disc1_size = 0u;
+      uint8_t *multi_disc1 = read_alloc(multi_disc1_path, &multi_disc1_size);
+      for (unsigned container = 0u;
+           container < sizeof(multi_games) / sizeof(multi_games[0]); ++container)
+      {
+         phase = PHASE_LOAD;
+         if (!retro_load_game(&multi_games[container]))
+         {
+            fprintf(stderr, "multi-JFD container %u load failed: %s\n",
+                    container, last_message);
+            abort();
+         }
+         bool carrier_matches = arc_libretro_test_adffs_carrier_matches(
+            1u, multi_disc1, multi_disc1_size);
+         if (!strstr(last_jfd_boot_log, "JFD boot: path=adffs") ||
+             !strstr(last_jfd_boot_log, "discs=3") ||
+             disk_control.get_num_images() != 3u ||
+             disk_control.get_image_index() != 0u ||
+             disk_control.get_eject_state() || !carrier_matches ||
+             arc_libretro_test_adffs_carrier_matches(
+                0u, multi_disc1, multi_disc1_size))
+         {
+            fprintf(stderr,
+                    "multi-JFD container %u mismatch: log=%s count=%u index=%u eject=%u carrier=%u\n",
+                    container, last_jfd_boot_log,
+                    disk_control.get_num_images(), disk_control.get_image_index(),
+                    disk_control.get_eject_state() ? 1u : 0u,
+                    carrier_matches ? 1u : 0u);
+            abort();
+         }
+         bool support_protected = false, carrier_protected = false;
+         assert(arc_engine_test_drive_media(0u, &support_protected, NULL) &&
+                support_protected &&
+                arc_engine_test_drive_media(1u, &carrier_protected, NULL) &&
+                carrier_protected);
+         uint8_t adffs_cmos[ARC_CMOS_MACHINE_SIZE];
+         assert(arc_engine_test_cmos_image(adffs_cmos) &&
+                (adffs_cmos[75] & 7u) == 0u &&
+                (adffs_cmos[199] & 7u) == 2u);
+         retro_unload_game();
+      }
+
+      /* The frontend transaction is readiness-gated, swaps only drive 1,
+       * emits a phased core-source chord, and reports progress without
+       * claiming guest-side completion. */
+      size_t multi_disc2_size = 0u, multi_disc3_size = 0u;
+      uint8_t *multi_disc2 = read_alloc(multi_disc2_path, &multi_disc2_size);
+      uint8_t *multi_disc3 = read_alloc(multi_disc3_path, &multi_disc3_size);
+      phase = PHASE_LOAD; assert(retro_load_game(&multi_games[0]));
+      assert(disk_control.set_eject_state(true) &&
+             disk_control.set_image_index(2u) &&
+             !disk_control.set_eject_state(false) &&
+             strstr(last_message, "ADFFS busy"));
+      retro_reset();
+      phase = PHASE_RUN;
+      assert(arc_engine_test_drive_read(1u));
+      retro_run();
+      for (unsigned frame = 0u; frame < 26u; ++frame) retro_run();
+
+      assert(disk_control.set_eject_state(true) &&
+             disk_control.set_image_index(1u));
+      keyboard.callback(true, RETROK_LCTRL, 0u, 0u);
+      assert(!disk_control.set_eject_state(false) &&
+             strstr(last_message, "ADFFS keys are held"));
+      keyboard.callback(false, RETROK_LCTRL, 0u, 0u);
+      retro_run();
+      retro_run();
+      arc_engine_test_fail_drive1_insert(true);
+      assert(!disk_control.set_eject_state(false) &&
+             disk_control.get_image_index() == 0u &&
+             arc_libretro_test_adffs_carrier_matches(
+                1u, multi_disc1, multi_disc1_size));
+      assert(disk_control.set_image_index(2u));
+      unsigned requested_before = adffs_disc_requested_lines;
+      arc_platform_test_input_events_reset();
+      assert(disk_control.set_eject_state(false) &&
+             disk_control.get_image_index() == 2u &&
+             arc_libretro_test_adffs_carrier_matches(
+                1u, multi_disc3, multi_disc3_size) &&
+             adffs_disc_requested_lines == requested_before + 1u &&
+             !strcmp(last_adffs_disc_log,
+                "ADFFS disc: index=2 name=Disc3 chord=ctrl-shift-f3 source=frontend phase=requested\n") &&
+             !disk_control.set_eject_state(true) &&
+             !disk_control.set_image_index(0u) &&
+             !disk_control.replace_image_index(0u, NULL) &&
+             !disk_control.add_image_index());
+      for (unsigned frame = 0u; frame < 30u; ++frame) retro_run();
+      ArcKartEvent swap_events[16];
+      size_t swap_event_count =
+         arc_platform_test_input_events(swap_events,
+                                        sizeof(swap_events) / sizeof(swap_events[0]));
+      assert(swap_event_count == 6u &&
+             swap_events[0].type == ARC_INPUT_EVENT_KEY &&
+             swap_events[0].code == RETROK_LCTRL && swap_events[0].down &&
+             swap_events[1].type == ARC_INPUT_EVENT_KEY &&
+             swap_events[1].code == RETROK_LSHIFT && swap_events[1].down &&
+             swap_events[2].type == ARC_INPUT_EVENT_KEY &&
+             swap_events[2].code == RETROK_F3 && swap_events[2].down &&
+             swap_events[3].type == ARC_INPUT_EVENT_KEY &&
+             swap_events[3].code == RETROK_F3 && !swap_events[3].down &&
+             swap_events[4].type == ARC_INPUT_EVENT_KEY &&
+             swap_events[4].code == RETROK_LSHIFT && !swap_events[4].down &&
+             swap_events[5].type == ARC_INPUT_EVENT_KEY &&
+             swap_events[5].code == RETROK_LCTRL && !swap_events[5].down);
+      unsigned reads_before = adffs_disc_read_lines;
+      assert(arc_engine_test_drive_read(1u));
+      retro_run();
+      assert(adffs_disc_read_lines == reads_before + 1u &&
+             strstr(last_adffs_disc_log, "index=2") &&
+             strstr(last_adffs_disc_log, "phase=read-observed") &&
+             !strcmp(last_message, "Disc 3: ADFFS reading"));
+
+      for (unsigned frame = 0u; frame < 26u; ++frame) retro_run();
+      requested_before = adffs_disc_requested_lines;
+      assert(disk_control.set_eject_state(true) &&
+             disk_control.set_image_index(2u) &&
+             disk_control.set_eject_state(false) &&
+             adffs_disc_requested_lines == requested_before + 1u);
+      unsigned not_read_before = adffs_disc_not_read_lines;
+      for (unsigned frame = 0u; frame < 301u; ++frame) retro_run();
+      assert(adffs_disc_not_read_lines == not_read_before + 1u &&
+             disk_control.get_image_index() == 2u &&
+             strstr(last_adffs_disc_log, "phase=not-read") &&
+             !strcmp(last_message, "Disc 3: ADFFS did not read the disc"));
+
+      requested_before = adffs_disc_requested_lines;
+      assert(disk_control.set_eject_state(true) &&
+             disk_control.set_image_index(1u) &&
+             disk_control.set_eject_state(false) &&
+             adffs_disc_requested_lines == requested_before + 1u &&
+             arc_libretro_test_adffs_carrier_matches(
+                1u, multi_disc2, multi_disc2_size));
+      retro_reset();
+      assert(disk_control.get_image_index() == 0u &&
+             !disk_control.get_eject_state() &&
+             arc_libretro_test_adffs_carrier_matches(
+                1u, multi_disc1, multi_disc1_size));
+      arc_platform_test_input_events_reset();
+      retro_run();
+      assert(arc_platform_test_input_events(swap_events,
+                                            sizeof(swap_events) /
+                                               sizeof(swap_events[0])) == 0u);
+      retro_unload_game();
+      free(multi_disc3);
+      free(multi_disc2);
+      free(multi_disc1);
 
       /* Slice 6a: pre-warm every native write mode for this exact content so
        * the following ADFFS sessions may not create any native-path files.
@@ -6650,8 +6900,8 @@ int main(int argc, char **argv)
       TreeSnapshot adffs_content_before = snapshot_tree(adffs_fixture_dir);
 
       /* Both generated D-format discs are memory-only and immutable for all
-       * Disk Writes settings. Reset must rebuild byte-identical images, and
-       * every frontend mutation callback is refused without changing them. */
+       * Disk Writes settings. Reset must rebuild byte-identical images; the
+       * support disc is drive 0 and the current carrier is drive 1. */
       option_jfd_boot = "auto";
       option_adffs_package = "verified";
       save_dir = adffs_memory_save;
@@ -6663,19 +6913,19 @@ int main(int argc, char **argv)
          phase = PHASE_LOAD; assert(retro_load_game(&adffs_game));
          assert(jfd_boot_log_lines == boot_lines + 1u &&
                 !strcmp(last_jfd_boot_log,
-                   "JFD boot: path=adffs script=builtin profile=synthetic-test version=\"Synthetic 1.0\"\n") &&
+                   "JFD boot: path=adffs script=builtin profile=synthetic-test version=\"Synthetic 1.0\" discs=1\n") &&
                 disk_control.get_num_images() == 1u &&
                 disk_control.get_image_index() == 0u &&
                 !disk_control.get_eject_state());
          char carrier_now[41], support_now[41];
          bool carrier_write_protected = false;
          bool support_write_protected = false;
-         assert(arc_engine_test_drive_media(0u, &carrier_write_protected,
-                                            carrier_now));
-         assert(carrier_write_protected);
-         assert(arc_engine_test_drive_media(1u, &support_write_protected,
+         assert(arc_engine_test_drive_media(0u, &support_write_protected,
                                             support_now));
          assert(support_write_protected);
+         assert(arc_engine_test_drive_media(1u, &carrier_write_protected,
+                                            carrier_now));
+         assert(carrier_write_protected);
          if (!mode)
          {
             memcpy(carrier_digest, carrier_now, sizeof(carrier_digest));
@@ -6684,30 +6934,28 @@ int main(int argc, char **argv)
          else
             assert(!strcmp(carrier_digest, carrier_now) &&
                    !strcmp(support_digest, support_now));
-         assert(!disk_control.set_eject_state(true) &&
-                !disk_control.set_image_index(0u) &&
-                !disk_control.replace_image_index(0u, NULL) &&
+         assert(!disk_control.replace_image_index(0u, NULL) &&
                 !disk_control.add_image_index());
          char unchanged_carrier[41], unchanged_support[41];
          carrier_write_protected = false;
          support_write_protected = false;
-         assert(arc_engine_test_drive_media(0u, &carrier_write_protected,
-                                            unchanged_carrier));
-         assert(carrier_write_protected);
-         assert(arc_engine_test_drive_media(1u, &support_write_protected,
+         assert(arc_engine_test_drive_media(0u, &support_write_protected,
                                             unchanged_support));
          assert(support_write_protected &&
+                arc_engine_test_drive_media(1u, &carrier_write_protected,
+                                            unchanged_carrier) &&
+                carrier_write_protected &&
                 !strcmp(carrier_now, unchanged_carrier) &&
                 !strcmp(support_now, unchanged_support));
          retro_reset();
          carrier_write_protected = false;
          support_write_protected = false;
-         assert(arc_engine_test_drive_media(0u, &carrier_write_protected,
-                                            unchanged_carrier));
-         assert(carrier_write_protected);
-         assert(arc_engine_test_drive_media(1u, &support_write_protected,
+         assert(arc_engine_test_drive_media(0u, &support_write_protected,
                                             unchanged_support));
          assert(support_write_protected &&
+                arc_engine_test_drive_media(1u, &carrier_write_protected,
+                                            unchanged_carrier) &&
+                carrier_write_protected &&
                 !strcmp(carrier_digest, unchanged_carrier) &&
                 !strcmp(support_digest, unchanged_support));
          retro_unload_game();
@@ -6747,7 +6995,7 @@ int main(int argc, char **argv)
       phase = PHASE_LOAD; assert(retro_load_game(&game));
       retro_unload_game();
       phase = PHASE_LOAD; assert(retro_load_game(&adffs_game));
-      assert(arc_engine_test_drive_media(0u, &write_protected, mounted_digest) &&
+      assert(arc_engine_test_drive_media(1u, &write_protected, mounted_digest) &&
              !strcmp(mounted_digest, carrier_digest));
       retro_unload_game();
 

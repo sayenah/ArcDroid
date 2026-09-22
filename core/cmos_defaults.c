@@ -46,7 +46,7 @@ bool arc_cmos_default(ArcOsClass os, ArcIoClass io, uint8_t output[ARC_CMOS_PAYL
 
 bool arc_cmos_machine_image(ArcOsClass os, ArcIoClass io,
                             const uint8_t payload[ARC_CMOS_PAYLOAD_SIZE],
-                            bool launch_helper,
+                            bool boot_drive_one, bool two_floppies,
                             uint8_t output[ARC_CMOS_MACHINE_SIZE])
 {
    const uint8_t *source;
@@ -74,9 +74,9 @@ bool arc_cmos_machine_image(ArcOsClass os, ArcIoClass io,
       if (!(output[80] & 0x10u)) output[80] |= 0x10u;     /* byte 16 */
    }
    output[75] = (uint8_t)((output[75] & ~0x07u) |
-                          (launch_helper ? 1u : 0u));       /* byte 11 */
+                          (boot_drive_one ? 1u : 0u));       /* byte 11 */
    output[199] = (uint8_t)((output[199] & ~0x07u) |
-                           (launch_helper ? 2u : 1u));      /* byte 135 */
+                           (two_floppies ? 2u : 1u));       /* byte 135 */
    if (io == ARC_IO_NEW_82C711)
       output[199] &= 0x07u; /* no ST506 or IDE drives */
    /* RPCEmu's PCF8583 implementation documents the RISC OS checksum:

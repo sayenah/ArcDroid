@@ -31,6 +31,8 @@
 #define ARC_AUDIO_RATE 48000.0
 #define ARC_FIRMWARE_SIZE_MARGIN 4096u
 #define ARC_VIDC_WARNING_THRESHOLD_US UINT64_C(2000000)
+#define ARC_ADFFS_QUIESCENCE_FRAMES 25u
+#define ARC_ADFFS_READ_WAIT_FRAMES 300u
 #define ARC_DEVICE_KEYS RETRO_DEVICE_SUBCLASS(RETRO_DEVICE_JOYPAD, 1)
 #define ARC_DEVICE_MOUSE RETRO_DEVICE_SUBCLASS(RETRO_DEVICE_MOUSE, 1)
 
@@ -130,9 +132,22 @@ static bool arc_av_transition_pending;
 static bool arc_adffs_active;
 static uint8_t *arc_adffs_carrier;
 static uint8_t *arc_adffs_support;
+static unsigned arc_adffs_carrier_index;
+static ArcInputActivation arc_adffs_chord;
+static bool arc_adffs_swap_pending;
+static unsigned arc_adffs_swap_index;
+static uint64_t arc_adffs_swap_read_generation;
+static uint64_t arc_adffs_swap_requested_frame;
+static uint64_t arc_adffs_drive1_read_generation;
+static uint64_t arc_adffs_drive1_activity_generation;
+static uint64_t arc_adffs_last_activity_frame;
+static bool arc_adffs_initial_read;
+static unsigned arc_adffs_last_read_observed_index;
 #if defined(ARCDROID_TEST_FAULTS)
 static bool arc_test_adffs_accept_test_os = true;
 static bool arc_test_fail_adffs_content_read;
+bool arc_engine_test_drive_media(unsigned drive, bool *write_protected,
+                                 char digest[41]);
 void arc_libretro_test_adffs_accept_test_os(bool accept)
 {
    arc_test_adffs_accept_test_os = accept;
@@ -145,20 +160,26 @@ bool arc_libretro_test_adffs_content_read_failure_pending(void)
 {
    return arc_test_fail_adffs_content_read;
 }
-bool arc_libretro_test_adffs_carrier_matches(const void *data, size_t size)
+bool arc_libretro_test_adffs_carrier_matches(unsigned drive,
+                                             const void *data, size_t size)
 {
    uint8_t *expected = malloc(ARC_ADFFS_DISC_SIZE);
    char error[128] = {0};
-   bool matches = expected && arc_adffs_carrier &&
-      arc_adffs_carrier_build(data, size, expected, error, sizeof(error)) &&
-      !memcmp(expected, arc_adffs_carrier, ARC_ADFFS_DISC_SIZE);
+   char name[11];
+   char mounted_digest[41];
+   snprintf(name, sizeof(name), "Disc%u", arc_adffs_carrier_index + 1u);
+   bool matches = expected &&
+      arc_adffs_carrier_build(data, size, name, ARC_GEOMETRY_800K_D,
+                              ARC_ADFFS_CARRIER_CAPACITY, expected,
+                              error, sizeof(error)) &&
+      arc_engine_test_drive_media(drive, NULL, mounted_digest) &&
+      !strcmp(arc_digest(expected, ARC_ADFFS_DISC_SIZE).sha1, mounted_digest);
    free(expected);
    return matches;
 }
 #endif
 static char arc_system_path[4096];
 static void arc_adffs_discard(void);
-static void arc_zip_adffs_raw_discard(void);
 #if defined(ARCDROID_TEST_FAULTS)
 static unsigned arc_osk_fail_allocations;
 static bool arc_osk_source_unchanged;
@@ -255,6 +276,11 @@ typedef struct {
    uint32_t zip_crc32;
    uint32_t zip_packed_size;
    uint32_t zip_size;
+   uint8_t *adffs_raw;
+   size_t adffs_raw_size;
+   size_t jfd_raw_size;
+   size_t jfd_decoded_size;
+   unsigned jfd_disc_number;
 } ArcMediaEntry;
 
 static ArcMediaEntry arc_media[ARC_PLAYLIST_MAX_ENTRIES];
@@ -271,9 +297,6 @@ const char *arc_libretro_test_choice_path(void) { return arc_choice_path; }
 static bool arc_folder_set_active;
 static bool arc_zip_active;
 static char arc_zip_path[ARC_MEDIA_PATH_CAPACITY];
-static uint8_t *arc_zip_adffs_raw;
-static size_t arc_zip_adffs_raw_size;
-static char arc_zip_adffs_member[256];
 
 typedef enum {
    ARC_POINTER_STICK_RIGHT = 0,
@@ -740,13 +763,15 @@ static void arc_release_session(void)
    arc_firmware = NULL;
    arc_firmware_size = 0u;
    for (unsigned i = 0u; i < ARC_PLAYLIST_MAX_ENTRIES; ++i)
+   {
       arc_jfd_free(&arc_media[i].jfd);
+      free(arc_media[i].adffs_raw);
+   }
    memset(arc_media, 0, sizeof(arc_media));
    arc_media_count = 0u;
    arc_folder_set_active = false;
    arc_zip_active = false;
    arc_zip_path[0] = '\0';
-   arc_zip_adffs_raw_discard();
    arc_image_index = 0u;
    arc_cmos_path[0] = '\0';
    arc_helper_path[0] = '\0';
@@ -932,6 +957,7 @@ static bool arc_prepare_bytes(const char *source, const char *playlist_label,
                               bool *notice_reported,
                               const uint8_t *source_data, size_t source_size,
                               bool take_decoded_jfd_ownership,
+                              bool retain_adffs_raw,
                               ArcMediaEntry *entry, char *error,
                               size_t error_size)
 {
@@ -973,6 +999,20 @@ static bool arc_prepare_bytes(const char *source, const char *playlist_label,
                        error_size);
       if (!parsed)
          return false;
+      entry->jfd_decoded_size = entry->jfd.decoded_size;
+      entry->jfd_raw_size = source_size;
+      entry->jfd_disc_number = entry->jfd.disc_number;
+      if (retain_adffs_raw && source_size <= ARC_ADFFS_CARRIER_CAPACITY)
+      {
+         entry->adffs_raw = malloc(source_size ? source_size : 1u);
+         if (!entry->adffs_raw)
+         {
+            if (error && error_size) snprintf(error, error_size, "out of memory");
+            goto reject;
+         }
+         memcpy(entry->adffs_raw, source_data, source_size);
+         entry->adffs_raw_size = source_size;
+      }
       if (arc_log)
       {
          arc_log(RETRO_LOG_INFO,
@@ -1083,6 +1123,7 @@ static bool arc_prepare_bytes(const char *source, const char *playlist_label,
    return true;
 reject:
    arc_jfd_free(&entry->jfd);
+   free(entry->adffs_raw);
    free(staged_data);
    memset(entry, 0, sizeof(*entry));
    return false;
@@ -1090,7 +1131,8 @@ reject:
 
 static bool arc_prepare_source(const char *source, const char *playlist_label,
                                ArcDiskWriteMode mode, bool notify_user,
-                               bool *notice_reported, ArcMediaEntry *entry,
+                               bool *notice_reported, bool retain_adffs_raw,
+                               ArcMediaEntry *entry,
                                char *error, size_t error_size)
 {
    void *source_data = NULL;
@@ -1107,6 +1149,7 @@ static bool arc_prepare_source(const char *source, const char *playlist_label,
    bool prepared = arc_prepare_bytes(source, playlist_label, mode, notify_user,
                                      notice_reported, source_data, source_size,
                                      decoded_source,
+                                     retain_adffs_raw,
                                      entry, error, error_size);
    if (!decoded_source) free(source_data);
    return prepared;
@@ -1125,6 +1168,7 @@ static void arc_cleanup_failed_preparation(void)
       if (arc_media[i].created_this_preparation && arc_media[i].staged[0])
          (void)arc_io_remove(arc_media[i].staged);
       arc_jfd_free(&arc_media[i].jfd);
+      free(arc_media[i].adffs_raw);
    }
    memset(arc_media, 0, sizeof(arc_media));
    arc_media_count = 0u;
@@ -1137,6 +1181,7 @@ static void arc_cleanup_folder_siblings(void)
       if (arc_media[i].created_this_preparation && arc_media[i].staged[0])
          (void)arc_io_remove(arc_media[i].staged);
       arc_jfd_free(&arc_media[i].jfd);
+      free(arc_media[i].adffs_raw);
       memset(&arc_media[i], 0, sizeof(arc_media[i]));
    }
    arc_media_count = arc_media_count ? 1u : 0u;
@@ -1188,6 +1233,7 @@ static void arc_discard_candidate(ArcMediaEntry *entry)
    if (entry->created_this_preparation && entry->staged[0])
       (void)arc_io_remove(entry->staged);
    arc_jfd_free(&entry->jfd);
+   free(entry->adffs_raw);
    memset(entry, 0, sizeof(*entry));
 }
 
@@ -1249,7 +1295,8 @@ static bool arc_prepare_folder_siblings(const char *content_path,
       ArcMediaEntry candidate;
       bool notice = false;
       if (!arc_folder_set_path(set, sibling, source) ||
-          !arc_prepare_source(source, NULL, mode, false, &notice, &candidate,
+          !arc_prepare_source(source, NULL, mode, false, &notice,
+                              set->count + 1u <= 9u, &candidate,
                               reason, sizeof(reason)))
       {
          ++collection.omissions;
@@ -1489,8 +1536,6 @@ static bool arc_prepare_zip_content(const char *archive_path,
    unsigned notices = 0u;
    size_t logical_total = 0u;
    char first_reason[512] = {0};
-   uint8_t *adffs_raw = NULL;
-   size_t adffs_raw_size = 0u;
    char preferred_member[256];
    snprintf(preferred_member, sizeof(preferred_member), "%s",
             archive.entries[content.preferred_index].name);
@@ -1500,8 +1545,8 @@ static bool arc_prepare_zip_content(const char *archive_path,
     * one extracted member (<=8 MiB), one decoded JFD copy for a zip member
     * (<=8 MiB), and one staging verification buffer (<=8 MiB). A plain
     * decoded JFDI file instead transfers its read buffer to the parser. The
-    * archive never survives machine construction; only an eligible single
-    * JFD's member buffer may survive as the bounded ADFFS carrier source. */
+    * archive never survives machine construction; only the bounded raw
+    * buffers for an ADFFS-eligible JFD set may survive it. */
    for (unsigned image = 0u; image < content.count; ++image)
    {
       ArcZipEntry *zip_entry = &archive.entries[content.entries[image]];
@@ -1526,7 +1571,8 @@ static bool arc_prepare_zip_content(const char *archive_path,
       bool prepared = !reason[0] && source_length >= 0 &&
          (size_t)source_length < sizeof(source) &&
          arc_prepare_bytes(source, label, prepare_mode, false, &notice,
-                           member, member_size, false, &candidate, reason,
+                           member, member_size, false, content.count <= 9u,
+                           &candidate, reason,
                            sizeof(reason));
       if (!prepared)
       {
@@ -1555,7 +1601,6 @@ static bool arc_prepare_zip_content(const char *archive_path,
       {
          arc_discard_candidate(&candidate);
          free(member);
-         free(adffs_raw);
          arc_zip_free(&archive);
          free(archive_data);
          arc_cleanup_failed_preparation();
@@ -1566,19 +1611,6 @@ static bool arc_prepare_zip_content(const char *archive_path,
       }
       logical_total += candidate.info.declared_size;
       if (notice) ++notices;
-      if (!arc_media_count && candidate.info.kind == ARC_MEDIA_JFD &&
-          member_size <= ARC_ADFFS_CARRIER_CAPACITY)
-      {
-         adffs_raw = member;
-         adffs_raw_size = member_size;
-         member = NULL;
-      }
-      else if (arc_media_count)
-      {
-         free(adffs_raw);
-         adffs_raw = NULL;
-         adffs_raw_size = 0u;
-      }
       arc_media[arc_media_count++] = candidate;
       free(member);
    }
@@ -1591,22 +1623,11 @@ static bool arc_prepare_zip_content(const char *archive_path,
    free(archive_data);
    if (!arc_media_count)
    {
-      free(adffs_raw);
       if (error && error_size)
          snprintf(error, error_size, "No usable disc image in %s (%s)", leaf,
                   first_reason[0] ? first_reason : "media preparation failed");
       return false;
    }
-   if (arc_media_count != 1u || arc_media[0].info.kind != ARC_MEDIA_JFD)
-   {
-      free(adffs_raw);
-      adffs_raw = NULL;
-      adffs_raw_size = 0u;
-   }
-   arc_zip_adffs_raw = adffs_raw;
-   arc_zip_adffs_raw_size = adffs_raw_size;
-   snprintf(arc_zip_adffs_member, sizeof(arc_zip_adffs_member), "%s",
-            adffs_raw ? arc_media[0].zip_member : "");
    arc_content_digest = arc_media[0].digest;
    arc_zip_active = true;
    snprintf(arc_zip_path, sizeof(arc_zip_path), "%s", archive_path);
@@ -1675,7 +1696,8 @@ static bool arc_prepare_media_list(const char *content_path,
    {
       const char *source = is_playlist ? playlist.entries[i].path : content_path;
       const char *label = is_playlist ? playlist.entries[i].label : NULL;
-      if (!arc_prepare_source(source, label, mode, true, NULL, &arc_media[i],
+      if (!arc_prepare_source(source, label, mode, true, NULL,
+                              arc_media_count <= 9u, &arc_media[i],
                               error, error_size))
       {
          if (is_playlist && error && error_size)
@@ -1764,6 +1786,7 @@ static bool arc_reprepare_folder_media(ArcDiskWriteMode mode,
       char reason[512] = {0};
       bool notice = false;
       if (!arc_prepare_source(source, label, mode, i == 0u, &notice,
+                              old_count <= 9u,
                               &replacement, reason, sizeof(reason)))
       {
          if (i == 0u)
@@ -1779,11 +1802,13 @@ static bool arc_reprepare_folder_media(ArcDiskWriteMode mode,
                     "Folder disc set sibling omitted: path=\"%s\" reason=%s phase=reset\n",
                     source, reason[0] ? reason : "media preparation failed");
          arc_jfd_free(&arc_media[i].jfd);
+         free(arc_media[i].adffs_raw);
          memset(&arc_media[i], 0, sizeof(arc_media[i]));
          continue;
       }
       if (i && notice) ++notices;
       arc_jfd_free(&arc_media[i].jfd);
+      free(arc_media[i].adffs_raw);
       if (kept != i)
       {
          arc_media[kept] = replacement;
@@ -1865,8 +1890,6 @@ static bool arc_reprepare_zip_media(ArcDiskWriteMode mode,
    unsigned kept = 0u;
    unsigned omissions = 0u;
    unsigned notices = 0u;
-   uint8_t *adffs_raw = NULL;
-   size_t adffs_raw_size = 0u;
    for (unsigned i = 0u; i < old_count; ++i)
    {
       ArcMediaEntry *old = &arc_media[i];
@@ -1876,13 +1899,13 @@ static bool arc_reprepare_zip_media(ArcDiskWriteMode mode,
          bool notice = false;
          reason[0] = '\0';
          if (!arc_prepare_source(old->source, old->label, mode, i == 0u,
-                                 &notice, &replacement, reason, sizeof(reason)))
+                                 &notice, old_count <= 9u, &replacement,
+                                 reason, sizeof(reason)))
          {
             if (i == 0u)
             {
                arc_zip_free(&archive);
                free(archive_data);
-               free(adffs_raw);
                if (error && error_size)
                   snprintf(error, error_size, "%s", reason[0] ? reason :
                            "unable to re-prepare replacement media");
@@ -1890,14 +1913,13 @@ static bool arc_reprepare_zip_media(ArcDiskWriteMode mode,
             }
             ++omissions;
             arc_jfd_free(&old->jfd);
+            free(old->adffs_raw);
             memset(old, 0, sizeof(*old));
             continue;
          }
          if (notice) ++notices;
-         free(adffs_raw);
-         adffs_raw = NULL;
-         adffs_raw_size = 0u;
          arc_jfd_free(&old->jfd);
+         free(old->adffs_raw);
          if (kept != i)
          {
             arc_media[kept] = replacement;
@@ -1933,7 +1955,8 @@ static bool arc_reprepare_zip_media(ArcDiskWriteMode mode,
       bool notice = false;
       if (!reason[0])
          (void)arc_prepare_bytes(old->source, old->label, prepare_mode, i == 0u,
-                                 &notice, member, member_size, false, &replacement,
+                                 &notice, member, member_size, false,
+                                 old_count <= 9u, &replacement,
                                  reason, sizeof(reason));
       if (!reason[0] && strcmp(replacement.digest.sha1, old->digest.sha1))
          snprintf(reason, sizeof(reason), "archive member digest changed");
@@ -1944,7 +1967,6 @@ static bool arc_reprepare_zip_media(ArcDiskWriteMode mode,
          {
             arc_zip_free(&archive);
             free(archive_data);
-            free(adffs_raw);
             if (error && error_size)
                snprintf(error, error_size,
                         "Zip reset verification failed for %s: %s",
@@ -1957,6 +1979,7 @@ static bool arc_reprepare_zip_media(ArcDiskWriteMode mode,
                     "Zip member omitted: member=%s reason=%s phase=reset\n",
                     old->zip_member, reason);
          arc_jfd_free(&old->jfd);
+         free(old->adffs_raw);
          memset(old, 0, sizeof(*old));
          continue;
       }
@@ -1966,20 +1989,8 @@ static bool arc_reprepare_zip_media(ArcDiskWriteMode mode,
       snprintf(replacement.zip_member, sizeof(replacement.zip_member), "%s",
                old->zip_member);
       if (notice) ++notices;
-      if (!kept && replacement.info.kind == ARC_MEDIA_JFD &&
-          member_size <= ARC_ADFFS_CARRIER_CAPACITY)
-      {
-         adffs_raw = member;
-         adffs_raw_size = member_size;
-         member = NULL;
-      }
-      else if (kept)
-      {
-         free(adffs_raw);
-         adffs_raw = NULL;
-         adffs_raw_size = 0u;
-      }
       arc_jfd_free(&old->jfd);
+      free(old->adffs_raw);
       if (kept != i)
       {
          arc_media[kept] = replacement;
@@ -2005,17 +2016,6 @@ static bool arc_reprepare_zip_media(ArcDiskWriteMode mode,
       else
          *selected = selected_retained ? remapped_selected : 0u;
    }
-   if (kept != 1u || arc_media[0].info.kind != ARC_MEDIA_JFD)
-   {
-      free(adffs_raw);
-      adffs_raw = NULL;
-      adffs_raw_size = 0u;
-   }
-   arc_zip_adffs_raw_discard();
-   arc_zip_adffs_raw = adffs_raw;
-   arc_zip_adffs_raw_size = adffs_raw_size;
-   snprintf(arc_zip_adffs_member, sizeof(arc_zip_adffs_member), "%s",
-            adffs_raw ? arc_media[0].zip_member : "");
    arc_zip_free(&archive);
    free(archive_data);
    arc_zip_summary(omissions, notices, false, "", "");
@@ -2085,17 +2085,16 @@ static int arc_zip_name_compare(const void *a, const void *b) {
    return strcmp(a, b);
 }
 static void arc_adffs_discard(void) {
+   arc_input_activation_cancel(&arc_adffs_chord, &arc_inputs,
+                               ARC_INPUT_SOURCE_CORE);
    free(arc_adffs_carrier);
    free(arc_adffs_support);
    arc_adffs_carrier = NULL;
    arc_adffs_support = NULL;
    arc_adffs_active = false;
-}
-static void arc_zip_adffs_raw_discard(void) {
-   free(arc_zip_adffs_raw);
-   arc_zip_adffs_raw = NULL;
-   arc_zip_adffs_raw_size = 0u;
-   arc_zip_adffs_member[0] = '\0';
+   arc_adffs_swap_pending = false;
+   arc_adffs_carrier_index = 0u;
+   arc_adffs_initial_read = false;
 }
 static void arc_jfd_boot_log(const char *reason) {
    if (arc_log)
@@ -2132,17 +2131,24 @@ static bool arc_prepare_adffs(bool notify) {
    ArcMediaEntry *entry = arc_media_count ? &arc_media[0] : NULL;
    const ArcJfdImage *jfd = entry ? &entry->jfd : NULL;
    const char *reason = NULL;
-   if (!entry || entry->info.kind != ARC_MEDIA_JFD)
+   if (!entry)
       reason = "not-jfd";
-   else if (arc_media_count != 1u || arc_folder_set_active)
-      reason = "multi-image";
-   else if (jfd->disc_number != 1u || jfd->disc_count != 1u)
+   else if (arc_media_count > 9u)
+      reason = "too-many-discs";
+   else
+      for (unsigned i = 0u; i < arc_media_count; ++i)
+         if (!arc_media[i].populated || arc_media[i].info.kind != ARC_MEDIA_JFD)
+         {
+            reason = arc_media_count > 1u ? "mixed-formats" : "not-jfd";
+            break;
+         }
+   if (!reason && jfd->disc_number > 1u)
       reason = "multi-disc";
-   else if (arc_core_options.jfd_boot == ARC_JFD_BOOT_NATIVE)
+   else if (!reason && arc_core_options.jfd_boot == ARC_JFD_BOOT_NATIVE)
       reason = "option";
-   else if (arc_core_options.launch != ARC_LAUNCH_AUTO)
+   else if (!reason && arc_core_options.launch != ARC_LAUNCH_AUTO)
       reason = "launch-option";
-   else if (arc_plan.os != ARC_OS_RISCOS_311
+   else if (!reason && arc_plan.os != ARC_OS_RISCOS_311
 #if defined(ARCDROID_TEST_FAULTS)
             && !(arc_plan.os == ARC_OS_TEST && arc_test_adffs_accept_test_os)
 #endif
@@ -2151,6 +2157,59 @@ static bool arc_prepare_adffs(bool notify) {
    if (reason) {
       arc_jfd_boot_log(reason);
       return false;
+   }
+
+   size_t maximum_decoded_size = 0u;
+   for (unsigned i = 0u; i < arc_media_count; ++i)
+   {
+      if (arc_media[i].jfd_raw_size > ARC_ADFFS_CARRIER_CAPACITY)
+      {
+         if (arc_log)
+            arc_log(RETRO_LOG_INFO,
+                    "JFD boot: path=native reason=too-large disc=%u\n", i + 1u);
+         if (notify) arc_jfd_boot_notice("too-large", jfd);
+         return false;
+      }
+#if defined(ARCDROID_TEST_FAULTS)
+      if (arc_test_fail_adffs_content_read)
+      {
+         arc_test_fail_adffs_content_read = false;
+         arc_jfd_boot_log("content-unreadable");
+         return false;
+      }
+#endif
+      if (!arc_media[i].adffs_raw ||
+          arc_media[i].adffs_raw_size != arc_media[i].jfd_raw_size)
+      {
+         arc_jfd_boot_log("content-unreadable");
+         return false;
+      }
+      ArcJfdImage check;
+      memset(&check, 0, sizeof(check));
+      char check_error[160] = "";
+      if (!arc_jfd_parse(arc_media[i].adffs_raw,
+                         arc_media[i].adffs_raw_size, &check,
+                         check_error, sizeof(check_error)) ||
+          strcmp(arc_digest(check.decoded, check.decoded_size).sha1,
+                 arc_media[i].digest.sha1))
+      {
+         arc_jfd_free(&check);
+         arc_jfd_boot_log("content-unreadable");
+         return false;
+      }
+      size_t decoded_size = check.decoded_size;
+      arc_jfd_free(&check);
+      if (decoded_size > 2048u * 1024u)
+      {
+         if (arc_log)
+            arc_log(RETRO_LOG_INFO,
+                    "JFD boot: path=native reason=decoded-too-large disc=%u\n",
+                    i + 1u);
+         if (notify) arc_jfd_boot_notice("decoded-too-large", jfd);
+         return false;
+      }
+      if (decoded_size > maximum_decoded_size)
+         maximum_decoded_size = decoded_size;
    }
 
    char dir[4096];
@@ -2279,79 +2338,20 @@ static bool arc_prepare_adffs(bool notify) {
          arc_jfd_boot_notice(full, jfd);
       return false;
    }
-   void *raw = NULL;
-   size_t raw_size = 0;
-   size_t declared_size = 0;
-   bool zip_member = entry->zip_member[0] != '\0';
-   bool carrier_too_large = zip_member ?
-      entry->zip_size > ARC_ADFFS_CARRIER_CAPACITY :
-      (arc_io_file_size(entry->source, &declared_size) &&
-       declared_size > ARC_ADFFS_CARRIER_CAPACITY);
-   if (carrier_too_large) {
-      free(builtin);
-      arc_adffs_package_free(package);
-      free(package);
-      arc_jfd_boot_log("too-large");
-      if (notify)
-         arc_jfd_boot_notice("too-large", jfd);
-      return false;
-   }
-   bool content_read = true;
-   bool raw_owned = false;
-   if (zip_member) {
-      if (arc_zip_adffs_raw &&
-          !strcmp(arc_zip_adffs_member, entry->zip_member)) {
-         raw = arc_zip_adffs_raw;
-         raw_size = arc_zip_adffs_raw_size;
-      } else {
-         content_read = false;
-      }
-   } else {
-#if defined(ARCDROID_TEST_FAULTS)
-      if (arc_test_fail_adffs_content_read) {
-         arc_test_fail_adffs_content_read = false;
-         content_read = false;
-      } else
-#endif
-         content_read = arc_io_read_all(entry->source, &raw, &raw_size);
-      raw_owned = content_read;
-   }
-   if (!content_read) {
-      free(builtin);
-      arc_adffs_package_free(package);
-      free(package);
-      arc_jfd_boot_log("content-unreadable");
-      return false;
-   }
-   if (raw_size > ARC_ADFFS_CARRIER_CAPACITY) {
-      if (raw_owned) free(raw);
-      free(builtin);
-      arc_adffs_package_free(package);
-      free(package);
-      arc_jfd_boot_log("too-large");
-      if (notify)
-         arc_jfd_boot_notice("too-large", jfd);
-      return false;
-   }
-   if (jfd->decoded_size > 2048u * 1024u) {
-      if (raw_owned) free(raw);
-      free(builtin);
-      arc_adffs_package_free(package);
-      free(package);
-      arc_jfd_boot_log("decoded-too-large");
-      if (notify)
-         arc_jfd_boot_notice("decoded-too-large", jfd);
-      return false;
-   }
    arc_adffs_carrier = malloc(ARC_ADFFS_DISC_SIZE);
    arc_adffs_support = malloc(ARC_ADFFS_DISC_SIZE);
    char build_error[160] = "";
    bool built = arc_adffs_carrier && arc_adffs_support &&
-                arc_adffs_carrier_build(raw, raw_size, arc_adffs_carrier,
+                arc_adffs_carrier_build(entry->adffs_raw,
+                                        entry->adffs_raw_size, "Disc1",
+                                        ARC_GEOMETRY_800K_D,
+                                        ARC_ADFFS_CARRIER_CAPACITY,
+                                        arc_adffs_carrier,
                                         build_error, sizeof(build_error)) &&
-                arc_adffs_support_build(package, &selection, arc_adffs_support,
+                arc_adffs_support_build(package, &selection, arc_media_count,
+                                        maximum_decoded_size,
+                                        arc_adffs_support,
                                         build_error, sizeof(build_error));
-   if (raw_owned) free(raw);
    free(builtin);
    if (!built) {
       if (!strcmp(build_error, "carried set does not fit support disc")) {
@@ -2377,9 +2377,10 @@ static bool arc_prepare_adffs(bool notify) {
    }
    if (arc_log)
       arc_log(RETRO_LOG_INFO,
-              "JFD boot: path=adffs script=%s profile=%s version=\"%s\"\n",
+              "JFD boot: path=adffs script=%s profile=%s version=\"%s\" discs=%u\n",
               have_builtin ? "builtin" : "embedded",
-              package->verified ? package->profile : "untested", package->version);
+              package->verified ? package->profile : "untested", package->version,
+              arc_media_count);
    arc_adffs_package_free(package);
    free(package);
    arc_adffs_active = true;
@@ -2850,7 +2851,103 @@ static bool arc_prepare_launch(ArcMediaEntry *entry, bool ejected,
 static bool arc_disk_set_eject(bool ejected)
 {
    char error[512] = {0};
-   if (!arc_loaded || arc_session != ARC_SESSION_RUNNING || arc_adffs_active) return false;
+   if (!arc_loaded || arc_session != ARC_SESSION_RUNNING) return false;
+   if (arc_adffs_active)
+   {
+      if (arc_adffs_swap_pending)
+      {
+         arc_message("ADFFS disc change is already pending", RETRO_LOG_WARN);
+         return false;
+      }
+      if (ejected)
+      {
+         arc_ejected = true;
+         return true;
+      }
+      static const unsigned neutral_keys[] = {
+         RETROK_LCTRL, RETROK_RCTRL, RETROK_LSHIFT, RETROK_RSHIFT,
+         RETROK_LALT, RETROK_RALT,
+         RETROK_F1, RETROK_F2, RETROK_F3, RETROK_F4, RETROK_F5, RETROK_F6,
+         RETROK_F7, RETROK_F8, RETROK_F9, RETROK_F10, RETROK_F11, RETROK_F12
+      };
+      bool neutral = !arc_inputs.activation_claimed;
+      for (unsigned i = 0u;
+           neutral && i < sizeof(neutral_keys) / sizeof(neutral_keys[0]); ++i)
+         neutral = !arc_keyboard_raw[neutral_keys[i]] &&
+                   !arc_input_effective_level(&arc_inputs, neutral_keys[i]);
+      for (unsigned i = 0u; neutral && i < ARC_OSK_MODIFIER_COUNT; ++i)
+         neutral = arc_osk.modifiers[i] == ARC_OSK_MOD_OFF;
+      if (!neutral)
+      {
+         arc_message("ADFFS keys are held — release modifiers and function keys, then try again.",
+                     RETRO_LOG_WARN);
+         return false;
+      }
+      if (!arc_adffs_initial_read ||
+          arc_frame_number - arc_adffs_last_activity_frame <
+             ARC_ADFFS_QUIESCENCE_FRAMES)
+      {
+         arc_message("ADFFS busy — try again", RETRO_LOG_WARN);
+         return false;
+      }
+      if (arc_image_index >= arc_media_count ||
+          !arc_media[arc_image_index].populated ||
+          !arc_media[arc_image_index].adffs_raw)
+      {
+         arc_message("ADFFS selected disc is unavailable", RETRO_LOG_WARN);
+         return false;
+      }
+      uint8_t *next = malloc(ARC_ADFFS_DISC_SIZE);
+      char name[11];
+      snprintf(name, sizeof(name), "Disc%u", arc_image_index + 1u);
+      if (!next || !arc_adffs_carrier_build(
+             arc_media[arc_image_index].adffs_raw,
+             arc_media[arc_image_index].adffs_raw_size, name,
+             ARC_GEOMETRY_800K_D, ARC_ADFFS_CARRIER_CAPACITY, next,
+             error, sizeof(error)))
+      {
+         free(next);
+         arc_message(error[0] ? error : "Unable to build the selected ADFFS carrier.",
+                     RETRO_LOG_ERROR);
+         return false;
+      }
+      uint8_t *previous = arc_adffs_carrier;
+      if (!arc_engine_drive1_insert(next, ARC_ADFFS_DISC_SIZE,
+                                    error, sizeof(error)))
+      {
+         free(next);
+         arc_image_index = arc_adffs_carrier_index;
+         arc_message(error[0] ? error : "Unable to insert the selected ADFFS carrier.",
+                     RETRO_LOG_ERROR);
+         return false;
+      }
+      const unsigned modifiers[] = {RETROK_LCTRL, RETROK_LSHIFT};
+      if (!arc_input_activation_begin(&arc_adffs_chord, &arc_inputs,
+                                      ARC_INPUT_SOURCE_CORE,
+                                      RETROK_F1 + arc_image_index,
+                                      modifiers, 2u))
+      {
+         (void)arc_engine_drive1_insert(previous, ARC_ADFFS_DISC_SIZE,
+                                        NULL, 0u);
+         free(next);
+         arc_image_index = arc_adffs_carrier_index;
+         arc_message("ADFFS keys are busy — try again", RETRO_LOG_WARN);
+         return false;
+      }
+      arc_adffs_carrier = next;
+      free(previous);
+      arc_adffs_carrier_index = arc_image_index;
+      arc_adffs_swap_index = arc_image_index;
+      arc_adffs_swap_pending = true;
+      arc_adffs_swap_requested_frame = arc_frame_number;
+      arc_engine_drive_activity(1u, NULL, &arc_adffs_swap_read_generation);
+      arc_ejected = false;
+      if (arc_log)
+         arc_log(RETRO_LOG_INFO,
+                 "ADFFS disc: index=%u name=%s chord=ctrl-shift-f%u source=frontend phase=requested\n",
+                 arc_image_index, name, arc_image_index + 1u);
+      return true;
+   }
    if (ejected == arc_ejected) return true;
    if (ejected)
    {
@@ -2879,16 +2976,23 @@ static bool arc_disk_set_eject(bool ejected)
    arc_ejected = false;
    return true;
 }
-static bool arc_disk_get_eject(void) { return arc_adffs_active ? false : arc_ejected; }
-static unsigned arc_disk_get_index(void) { return arc_adffs_active ? 0u : arc_image_index; }
+static bool arc_disk_get_eject(void) { return arc_ejected; }
+static unsigned arc_disk_get_index(void) { return arc_image_index; }
 static bool arc_disk_set_index(unsigned index)
 {
-   if (!arc_loaded || arc_session != ARC_SESSION_RUNNING || arc_adffs_active || !arc_ejected) return false;
+   if (!arc_loaded || arc_session != ARC_SESSION_RUNNING)
+      return false;
+   if (arc_adffs_active && arc_adffs_swap_pending)
+   {
+      arc_message("ADFFS disc change is already pending", RETRO_LOG_WARN);
+      return false;
+   }
+   if (!arc_ejected) return false;
    if (index < arc_media_count && !arc_media[index].populated) return false;
    arc_image_index = index < arc_media_count ? index : arc_media_count;
    return true;
 }
-static unsigned arc_disk_get_count(void) { return arc_adffs_active ? 1u : arc_media_count; }
+static unsigned arc_disk_get_count(void) { return arc_media_count; }
 static bool arc_disk_replace(unsigned index, const struct retro_game_info *info)
 {
    if (!arc_loaded || arc_session != ARC_SESSION_RUNNING || arc_adffs_active || !arc_ejected ||
@@ -2897,6 +3001,7 @@ static bool arc_disk_replace(unsigned index, const struct retro_game_info *info)
    {
       bool selected = arc_image_index == index;
       arc_jfd_free(&arc_media[index].jfd);
+      free(arc_media[index].adffs_raw);
       memmove(&arc_media[index], &arc_media[index + 1u],
               (arc_media_count - index - 1u) * sizeof(arc_media[0]));
       memset(&arc_media[arc_media_count - 1u], 0, sizeof(arc_media[0]));
@@ -2917,7 +3022,8 @@ static bool arc_disk_replace(unsigned index, const struct retro_game_info *info)
                "Zip files cannot be added through disk control; load the zip as content.");
    if (!info->path || zip ||
        !arc_prepare_source(info->path, NULL, arc_plan.disk_writes,
-                                           true, NULL, &replacement,
+                                           true, NULL, arc_media_count <= 9u,
+                                           &replacement,
                                            error, sizeof(error)))
    {
       if (!arc_media[index].populated && index + 1u == arc_media_count)
@@ -2926,6 +3032,7 @@ static bool arc_disk_replace(unsigned index, const struct retro_game_info *info)
       return false;
    }
    arc_jfd_free(&arc_media[index].jfd);
+   free(arc_media[index].adffs_raw);
    arc_media[index] = replacement;
    return true;
 }
@@ -2938,7 +3045,6 @@ static bool arc_disk_add(void)
 }
 static bool arc_disk_get_path(unsigned index, char *path, size_t length)
 {
-   if (arc_adffs_active && index != 0u) return false;
    if (!path || index >= arc_media_count || !arc_media[index].populated) return false;
    size_t needed = strlen(arc_media[index].source) + 1u;
    if (needed > length) return false;
@@ -2947,12 +3053,55 @@ static bool arc_disk_get_path(unsigned index, char *path, size_t length)
 }
 static bool arc_disk_get_label(unsigned index, char *label, size_t length)
 {
-   if (arc_adffs_active && index != 0u) return false;
    if (!label || index >= arc_media_count || !arc_media[index].populated) return false;
    size_t needed = strlen(arc_media[index].label) + 1u;
    if (needed > length) return false;
    memcpy(label, arc_media[index].label, needed);
    return true;
+}
+
+static void arc_adffs_progress_update(void)
+{
+   if (!arc_adffs_active || arc_session != ARC_SESSION_RUNNING) return;
+   uint64_t activity = 0u, reads = 0u;
+   if (!arc_engine_drive_activity(1u, &activity, &reads)) return;
+   if (activity != arc_adffs_drive1_activity_generation)
+   {
+      arc_adffs_drive1_activity_generation = activity;
+      arc_adffs_last_activity_frame = arc_frame_number;
+   }
+   if (reads != arc_adffs_drive1_read_generation)
+   {
+      arc_adffs_drive1_read_generation = reads;
+      arc_adffs_initial_read = true;
+   }
+   if (!arc_adffs_swap_pending) return;
+   unsigned disc = arc_adffs_swap_index + 1u;
+   if (reads != arc_adffs_swap_read_generation)
+   {
+      arc_adffs_last_read_observed_index = arc_adffs_swap_index;
+      arc_adffs_swap_pending = false;
+      if (arc_log)
+         arc_log(RETRO_LOG_INFO,
+                 "ADFFS disc: index=%u name=Disc%u chord=ctrl-shift-f%u source=frontend phase=read-observed\n",
+                 arc_adffs_swap_index, disc, disc);
+      char message[96];
+      snprintf(message, sizeof(message), "Disc %u: ADFFS reading", disc);
+      arc_message(message, RETRO_LOG_INFO);
+   }
+   else if (arc_frame_number - arc_adffs_swap_requested_frame >=
+            ARC_ADFFS_READ_WAIT_FRAMES)
+   {
+      arc_adffs_swap_pending = false;
+      if (arc_log)
+         arc_log(RETRO_LOG_WARN,
+                 "ADFFS disc: index=%u name=Disc%u chord=ctrl-shift-f%u source=frontend phase=not-read\n",
+                 arc_adffs_swap_index, disc, disc);
+      char message[112];
+      snprintf(message, sizeof(message),
+               "Disc %u: ADFFS did not read the disc", disc);
+      arc_message(message, RETRO_LOG_WARN);
+   }
 }
 
 static void arc_keyboard(bool down, unsigned keycode, uint32_t character,
@@ -4080,21 +4229,33 @@ static bool arc_construct_machine(const ArcMachineDescriptor *machine,
    uint8_t machine_cmos[ARC_CMOS_MACHINE_SIZE];
    ArcEngineMedia helper = {arc_helper_path, false, ARC_MEDIA_ADL_640K,
                             ARC_GEOMETRY_640K_L, NULL, NULL, 0u};
-   ArcEngineMedia carrier = {":arcdroid-memory-0:", false, ARC_MEDIA_ADF_800K,
-                             ARC_GEOMETRY_800K_D, NULL,
-                             arc_adffs_carrier, ARC_ADFFS_DISC_SIZE};
-   ArcEngineMedia support = {":arcdroid-memory-1:", false, ARC_MEDIA_ADF_800K,
+   ArcEngineMedia support = {":arcdroid-memory-0:", false, ARC_MEDIA_ADF_800K,
                              ARC_GEOMETRY_800K_D, NULL,
                              arc_adffs_support, ARC_ADFFS_DISC_SIZE};
-   if (arc_adffs_active) { mounted = &carrier; helper = support; }
+   ArcEngineMedia carrier = {":arcdroid-memory-1:", false, ARC_MEDIA_ADF_800K,
+                             ARC_GEOMETRY_800K_D, NULL,
+                             arc_adffs_carrier, ARC_ADFFS_DISC_SIZE};
+   if (arc_adffs_active) { mounted = &support; helper = carrier; }
    memcpy(arc_cmos_record, arc_cmos_prepared, sizeof(arc_cmos_record));
    if (!arc_cmos_decode(arc_cmos_prepared, &arc_plan, payload) ||
        !arc_cmos_machine_image(arc_plan.os, machine->io, payload,
+                               arc_plan.launch_helper && !arc_adffs_active,
                                arc_plan.launch_helper, machine_cmos) ||
        !arc_engine_start(arc_firmware, arc_firmware_size, mounted,
                          arc_plan.launch_helper ? &helper : NULL,
                          machine, machine_cmos, error, error_size))
       return false;
+   if (arc_adffs_active)
+   {
+      arc_adffs_carrier_index = 0u;
+      arc_image_index = 0u;
+      arc_ejected = false;
+      arc_adffs_swap_pending = false;
+      arc_adffs_initial_read = false;
+      arc_engine_drive_activity(1u, &arc_adffs_drive1_activity_generation,
+                                &arc_adffs_drive1_read_generation);
+      arc_adffs_last_activity_frame = arc_frame_number;
+   }
    arc_session = ARC_SESSION_RUNNING;
    return true;
 }
@@ -4562,11 +4723,22 @@ RETRO_API void retro_reset(void)
    size_t new_firmware_size = 0u;
    const ArcFirmwareFingerprint *firmware_match = NULL;
    ArcDigest frozen_identity = arc_content_digest;
+   bool was_adffs = arc_adffs_active;
    bool was_ejected = arc_ejected;
    unsigned selected = arc_image_index;
    bool launch_reselected;
    bool torn_down = false;
    ArcSessionState previous_session = arc_session;
+
+   if (was_adffs)
+   {
+      was_ejected = false;
+      selected = 0u;
+      arc_image_index = 0u;
+      arc_adffs_swap_pending = false;
+      arc_input_activation_cancel(&arc_adffs_chord, &arc_inputs,
+                                  ARC_INPUT_SOURCE_CORE);
+   }
 
    arc_persist_cmos();
    if (!arc_read_options(&updated, error, sizeof(error)) ||
@@ -4601,9 +4773,11 @@ RETRO_API void retro_reset(void)
             ArcMediaEntry replacement;
             if (!arc_prepare_source(arc_media[i].source, arc_media[i].label,
                                     updated.disk_writes, true, NULL,
+                                    arc_media_count <= 9u,
                                     &replacement, error, sizeof(error)))
                goto failed;
             arc_jfd_free(&arc_media[i].jfd);
+            free(arc_media[i].adffs_raw);
             arc_media[i] = replacement;
          }
       }
@@ -4879,6 +5053,19 @@ RETRO_API void retro_run(void)
    {
       arc_integrate_stick(frame.elapsed_us);
       arc_guest_time_us += frame.elapsed_us;
+   }
+   if (arc_adffs_active)
+   {
+      ArcInputActivationResult activation = arc_input_activation_update(
+         &arc_adffs_chord, &arc_inputs, ARC_INPUT_SOURCE_CORE,
+         arc_guest_time_us);
+      if (activation == ARC_INPUT_ACTIVATION_INTERRUPTED)
+      {
+         arc_adffs_swap_pending = false;
+         arc_message("ADFFS disc key chord was interrupted; released held keys.",
+                     RETRO_LOG_WARN);
+      }
+      arc_adffs_progress_update();
    }
    if (chooser_exit_transition)
       arc_notify_av_change(frame.width, frame.height,

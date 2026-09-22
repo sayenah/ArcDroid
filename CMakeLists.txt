@@ -284,7 +284,15 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
     "${FIXTURE_DIR}/adffs/too-large.jfd"
     "${FIXTURE_DIR}/adffs/decoded-limit.jfd"
     "${FIXTURE_DIR}/adffs/decoded-too-large.jfd"
-    "${FIXTURE_DIR}/adffs/multi.m3u")
+    "${FIXTURE_DIR}/adffs/multi.m3u"
+    "${FIXTURE_DIR}/adffs/multi-three-disc1.jfd"
+    "${FIXTURE_DIR}/adffs/multi-three-disc2.jfd"
+    "${FIXTURE_DIR}/adffs/multi-three-disc3.jfd"
+    "${FIXTURE_DIR}/adffs/multi-three.m3u"
+    "${FIXTURE_DIR}/adffs/multi-three.zip"
+    "${FIXTURE_DIR}/adffs/multi-three.jfd/multi-three.jfd"
+    "${FIXTURE_DIR}/adffs/multi-three.jfd/multi-three 2.jfd"
+    "${FIXTURE_DIR}/adffs/multi-three.jfd/multi-three 3.jfd")
   add_custom_command(
     OUTPUT "${FIXTURE_DIR}/arcdroid-test.rom" "${FIXTURE_DIR}/arcdroid-test.adf"
       "${FIXTURE_DIR}/arcdroid-chooser-test.rom"

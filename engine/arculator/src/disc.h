@@ -54,6 +54,8 @@ int disc_empty(int drive);
 void disc_set_motor(int enable);
 void disc_set_density(int density);
 int disc_get_current_track(int drive);
+uint64_t disc_activity_generation(unsigned drive);
+uint64_t disc_read_generation(unsigned drive);
 extern int disc_drivesel;
 
 extern int fdc_ready;

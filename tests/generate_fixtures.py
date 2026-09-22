@@ -1290,6 +1290,22 @@ def build_adffs_fixtures(output: Path) -> None:
     (output / "decoded-too-large.jfd").write_bytes(gzip_member(bytes(adffs_jfd(
         123, decoded_size=decoded_limit + 256))))
     (output / "multi.m3u").write_text("eligible.jfd\nembedded-only.jfd\n")
+    multi = [bytes(adffs_jfd(123, disc=disc, count=3,
+                             embedded=embedded if disc == 1 else b""))
+             for disc in range(1, 4)]
+    for disc, payload in enumerate(multi, 1):
+        (output / f"multi-three-disc{disc}.jfd").write_bytes(payload)
+    (output / "multi-three.m3u").write_text(
+        "multi-three-disc1.jfd\nmulti-three-disc2.jfd\nmulti-three-disc3.jfd\n")
+    (output / "multi-three.zip").write_bytes(_manual_zip([
+        {"name": f"Disc{disc}.jfd", "payload": payload}
+        for disc, payload in enumerate(multi, 1)
+    ]))
+    folder = output / "multi-three.jfd"
+    folder.mkdir(exist_ok=True)
+    for disc, payload in enumerate(multi, 1):
+        leaf = "multi-three.jfd" if disc == 1 else f"multi-three {disc}.jfd"
+        (folder / leaf).write_bytes(payload)
 
 
 def build_jfd_family(descriptors: list[tuple[int, int, int, int, int, bytes | None]],
