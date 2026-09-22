@@ -273,6 +273,7 @@ static bool arc_zip_active;
 static char arc_zip_path[ARC_MEDIA_PATH_CAPACITY];
 static uint8_t *arc_zip_adffs_raw;
 static size_t arc_zip_adffs_raw_size;
+static char arc_zip_adffs_member[256];
 
 typedef enum {
    ARC_POINTER_STICK_RIGHT = 0,
@@ -745,9 +746,7 @@ static void arc_release_session(void)
    arc_folder_set_active = false;
    arc_zip_active = false;
    arc_zip_path[0] = '\0';
-   free(arc_zip_adffs_raw);
-   arc_zip_adffs_raw = NULL;
-   arc_zip_adffs_raw_size = 0u;
+   arc_zip_adffs_raw_discard();
    arc_image_index = 0u;
    arc_cmos_path[0] = '\0';
    arc_helper_path[0] = '\0';
@@ -1520,6 +1519,8 @@ static bool arc_prepare_zip_content(const char *archive_path,
    }
    arc_zip_adffs_raw = adffs_raw;
    arc_zip_adffs_raw_size = adffs_raw_size;
+   snprintf(arc_zip_adffs_member, sizeof(arc_zip_adffs_member), "%s",
+            adffs_raw ? arc_media[0].zip_member : "");
    arc_content_digest = arc_media[0].digest;
    arc_zip_active = true;
    snprintf(arc_zip_path, sizeof(arc_zip_path), "%s", archive_path);
@@ -1927,6 +1928,8 @@ static bool arc_reprepare_zip_media(ArcDiskWriteMode mode,
    arc_zip_adffs_raw_discard();
    arc_zip_adffs_raw = adffs_raw;
    arc_zip_adffs_raw_size = adffs_raw_size;
+   snprintf(arc_zip_adffs_member, sizeof(arc_zip_adffs_member), "%s",
+            adffs_raw ? arc_media[0].zip_member : "");
    arc_zip_free(&archive);
    free(archive_data);
    arc_zip_summary(omissions, notices);
@@ -2006,6 +2009,7 @@ static void arc_zip_adffs_raw_discard(void) {
    free(arc_zip_adffs_raw);
    arc_zip_adffs_raw = NULL;
    arc_zip_adffs_raw_size = 0u;
+   arc_zip_adffs_member[0] = '\0';
 }
 static void arc_jfd_boot_log(const char *reason) {
    if (arc_log)
@@ -2192,7 +2196,8 @@ static bool arc_prepare_adffs(bool notify) {
    void *raw = NULL;
    size_t raw_size = 0;
    size_t declared_size = 0;
-   bool carrier_too_large = arc_zip_active ?
+   bool zip_member = entry->zip_member[0] != '\0';
+   bool carrier_too_large = zip_member ?
       entry->zip_size > ARC_ADFFS_CARRIER_CAPACITY :
       (arc_io_file_size(entry->source, &declared_size) &&
        declared_size > ARC_ADFFS_CARRIER_CAPACITY);
@@ -2207,8 +2212,9 @@ static bool arc_prepare_adffs(bool notify) {
    }
    bool content_read = true;
    bool raw_owned = false;
-   if (arc_zip_active) {
-      if (arc_zip_adffs_raw) {
+   if (zip_member) {
+      if (arc_zip_adffs_raw &&
+          !strcmp(arc_zip_adffs_member, entry->zip_member)) {
          raw = arc_zip_adffs_raw;
          raw_size = arc_zip_adffs_raw_size;
       } else {
