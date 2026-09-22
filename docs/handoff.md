@@ -1,8 +1,8 @@
 # ArcDroid Handoff
 
-**Stage:** IMPLEMENTATION  
-**Owner:** Sol  
-**Next:** Sol **run 2** on `slice/06b-riders` (PR #131, head `f3b170f`): remove the in-session reload retry added in run 1 and restore that step to its `main` behaviour (single attempt, process-relaunch fallback) per the amended R-2/AC-4 below; keep the `Move-Item` retries and the `.srm` assertion; tree left uncommitted for Fable to commit verbatim. Fable reviews the diff and evidence, then sets `Stage: QA`. In parallel Fable runs the full-library playability sweep on the host (§Sweep in State); the Odin3 is **not** needed until the sweep's device pass, in a later session.
+**Stage:** QA  
+**Owner:** Opus  
+**Next:** Opus 5.5 (agent `opus-qa`, effort high) reviews **PR #131 `slice/06b-riders` head `c7b1fea`** (Slice 6b re-scoped: riders R-1, R-2 as amended, R-3) against the work order below in a fresh clone; runs host `ctest` and the `zip-content`/harness cases, adversarial checks listed under QA focus; reports findings ranked by severity with file/line, first line stating the reasoning effort. Fable then adjudicates and merges under the §12.11 delegation. Evidence so far: Sol host ctest 12/12, sanitizer harness 100 cycles clean, Android build + guard (Sol); Fable's own ctest 12/12 on `f3b170f`; CI green on both runs of `c7b1fea` (windows-retroarch included: process-relaunch fallback, `Move-Item` attempt 1/3 logged, no `.srm` assertion passed). Run 1 head `f3b170f` failed windows-retroarch by the reload retry (R-2 amended, run 2 reverted it).
 
 **Founder mandate (S21, verbatim intent):** make these Archimedes games accessible and easy to play without any unnecessary hurdles. Judge every slice and every gate against that.
 
@@ -50,7 +50,7 @@ Harness cases for AC-1 on every load path (a hook or file read that exposes the 
 R-1 changes the persistence surface: QA verifies the CMOS lifecycle (mutation → file → reload) on every path and that nothing reads a `.srm`. R-3 relaxes a qualification rule: QA verifies that directory/symlink/device-typed members and the D-054 hostile-archive cases are still rejected and that the change is exactly the zero-type-bits case. R-2: QA checks the retries cannot mask a genuine failure (the last attempt still throws). No third-party material.
 
 ### Branch / PR
-`slice/06b-riders` from the S24 baton commit; PR title "Slice 6b (re-scoped): no per-game .srm; CI driver retries; zip member mode". Sol's sandbox cannot write `.git`: leave the tree uncommitted; Fable commits verbatim, pushes and opens the PR.
+`slice/06b-riders` — PR #131, head `c7b1fea` (run 1 `f3b170f` + run 2 `c7b1fea`, both Sol trees committed verbatim by Fable).
 
 ## State (2026-09-22, Fable, session S24)
 - **Founder decision (S24): option (a).** ADFFS multi-disc shelved (D-059). Checkpoint A (S23, real package, host): the mechanism works at the RISC OS desktop (ADFFS reads the exchanged drive-1 carrier on Ctrl-Shift-F2, `phase=read-observed`) but the probed 2-disc game ignores the chord at its own disc prompt on both controllers, the 3-disc title stops on a RISC OS error box (newer-OS resource) and the 8-disc title stops on `File Not Found` because its JASPP script assumes a hard-disc install; both play natively via the launch chooser. None of the 55 multi-disc sets is on the S18 list of ADFFS-needing titles (all 17 are single JFD zips, already served by 6a). Private evidence in the S23 scratchpad (`ckA/`, `probe/`). Branch `slice/06b-adffs-multidisc` `25446fd` pushed in S24 (it had not been pushed in S23) and kept unmerged as evidence; logical eject and progress-only reporting lapse with the mechanism.
