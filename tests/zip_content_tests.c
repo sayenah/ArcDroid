@@ -206,13 +206,16 @@ static void boot_selection(const char *root) {
       "Extras/Extras.adf", "Root 2.adf", "Root.adf"};
   selection_pair(root, "select-folder-isolated", "NoMatch.zip", NULL,
                  ARC_ZIP_RULE_ORDER, 3u, folder_isolated, 3u);
-  static const char *const folder_prefix[] = {"a/x.adf", "ab/ab.adf"};
+  static const char *const folder_prefix[] = {
+      "Game.adf/Game.adf", "Game.adfX/other.adf"};
   selection_pair(root, "select-folder-prefix", "NoMatch.zip", NULL,
                  ARC_ZIP_RULE_ORDER, 2u, folder_prefix, 2u);
-  static const char *const folder_peers[] = {"aa/aa.adf", "ab/ab.adf"};
+  static const char *const folder_peers[] = {
+      "Game.adf/Game.adf", "Othe.adf/Othe.adf"};
   selection_pair(root, "select-folder-peers", "NoMatch.zip", NULL,
                  ARC_ZIP_RULE_ORDER, 2u, folder_peers, 2u);
-  static const char *const folder_depth[] = {"a/a.adf", "a/b/c.adf"};
+  static const char *const folder_depth[] = {
+      "Game.adf/Game.adf", "Game.adf/sub/Game.adf"};
   selection_pair(root, "select-folder-depth", "NoMatch.zip", NULL,
                  ARC_ZIP_RULE_ORDER, 2u, folder_depth, 2u);
   static const char *const folder_single[] = {"Solo.adf/Solo.adf"};

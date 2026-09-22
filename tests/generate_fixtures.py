@@ -946,9 +946,12 @@ def build_zip_content_fixtures(output: Path, disc1: bytes, disc2: bytes,
         "Game/Game.adf", "Game/Game 2.adf"])
     selection_pair("select-folder-isolated", [
         "Extras/Extras.adf", "Root.adf", "Root 2.adf"])
-    selection_pair("select-folder-prefix", ["a/x.adf", "ab/ab.adf"])
-    selection_pair("select-folder-peers", ["aa/aa.adf", "ab/ab.adf"])
-    selection_pair("select-folder-depth", ["a/a.adf", "a/b/c.adf"])
+    selection_pair("select-folder-prefix", [
+        "Game.adf/Game.adf", "Game.adfX/other.adf"])
+    selection_pair("select-folder-peers", [
+        "Game.adf/Game.adf", "Othe.adf/Othe.adf"])
+    selection_pair("select-folder-depth", [
+        "Game.adf/Game.adf", "Game.adf/sub/Game.adf"])
     selection_pair("select-folder-single", ["Solo.adf/Solo.adf"])
     selection_pair("select-windows-name", ["Title.adf"])
     selection_pair("select-nested", [
