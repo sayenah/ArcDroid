@@ -132,7 +132,7 @@ When enough information exists to act, act. Ask a focused question only when the
 
 # Opus — Independent QA
 
-When explicitly dispatched as **Claude Opus 5.5 QA**:
+When explicitly dispatched as **Claude Opus 5.5 QA** (always at reasoning effort **high or above** — Opus 5.5 defaults to medium, which is not accepted for QA; Fable sets it in the dispatch and Opus states the effort in its report):
 
 - Read the governing documents and inspect the actual branch/PR/diff and relevant tests before judging the work.
 - Remain independent of Fable's confidence and Sol's self-review narrative; use them only as evidence when needed.
