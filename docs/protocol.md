@@ -287,7 +287,7 @@ Opus independently reviews the accepted scope and resulting implementation again
 - failure states and adversarial inputs;
 - tests and actual observable behavior.
 
-Initial QA should not be primed with Fable's confidence, Sol's preferred verdict, or praise. Opus reports concise findings ranked by severity and backed by reproducible evidence where possible. Opus does not implement fixes, redefine scope, approve architecture, or merge.
+Opus QA runs at reasoning effort **high or above** (Founder instruction 2026-09-22: Opus 5.5 defaults to medium, which is not accepted for QA); the dispatch must set it explicitly and the QA report must state the effort it ran at. Initial QA should not be primed with Fable's confidence, Sol's preferred verdict, or praise. Opus reports concise findings ranked by severity and backed by reproducible evidence where possible. Opus does not implement fixes, redefine scope, approve architecture, or merge.
 
 Fable adjudicates findings. Only validated remediation returns to Sol.
 
