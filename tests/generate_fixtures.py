@@ -912,8 +912,67 @@ def build_zip_content_fixtures(output: Path, disc1: bytes, disc2: bytes,
     ]
     (output / "order.zip").write_bytes(_manual_zip(ordered))
     (output / "order-reversed.zip").write_bytes(_manual_zip(list(reversed(ordered))))
+
+    def selection_pair(name: str, names: list[str]) -> None:
+        entries = [{"name": member,
+                    "payload": b"ArcDroid invented selection fixture"}
+                   for member in names]
+        (output / f"{name}.zip").write_bytes(_manual_zip(entries))
+        (output / f"{name}-reversed.zip").write_bytes(
+            _manual_zip(list(reversed(entries))))
+
+    selection_pair("select-library-jfd", [
+        "Title (1997) (Pub) F1012502.jfd", "Title.jfd"])
+    selection_pair("select-title-adf", [
+        "Title.adf", "Title (Europe) (Disk 2).adf"])
+    selection_pair("select-disc1-bonus", [
+        "Game (Bonus).adf", "Game (Disk 1).adf"])
+    selection_pair("grammar-disc1", ["Game Disc1.adf", "Zzz.adf"])
+    selection_pair("grammar-disk01", ["Game (Disk 01).adf", "Zzz.adf"])
+    selection_pair("grammar-disc-1", ["Game disc-1.adf", "Zzz.adf"])
+    selection_pair("grammar-disk-of", ["Game Disk 1 of 3.adf", "Zzz.adf"])
+    selection_pair("grammar-disk10", ["Game Disk10.adf", "Zzz.adf"])
+    selection_pair("grammar-disk1a", ["Game Disk1a.adf", "Zzz.adf"])
+    selection_pair("grammar-harddisk1", ["Game HardDisk1.adf", "Zzz.adf"])
+    selection_pair("grammar-side-a", ["Game Side A.adf", "Zzz.adf"])
+    selection_pair("grammar-contradictory", [
+        "Game Disk 1 Disk 2.adf", "Zzz.adf"])
+    selection_pair("select-t1-over-name", [
+        "Title.adf", "Other (Disk 1).adf"])
+    selection_pair("select-t2-tie", ["Title.adf", "Title.jfd"])
+    selection_pair("select-folder", [
+        "Game.adf/Game.adf", "Game.adf/Game (Disk 2).adf"])
+    selection_pair("select-folder-stem-negative", [
+        "Game/Game.adf", "Game/Game 2.adf"])
+    selection_pair("select-folder-isolated", [
+        "Extras/Extras.adf", "Root.adf", "Root 2.adf"])
+    selection_pair("select-folder-prefix", [
+        "Game.adf/Game.adf", "Game.adfX/other.adf"])
+    selection_pair("select-folder-peers", [
+        "Game.adf/Game.adf", "Othe.adf/Othe.adf"])
+    selection_pair("select-folder-depth", [
+        "Game.adf/Game.adf", "Game.adf/sub/Game.adf"])
+    selection_pair("select-folder-single", ["Solo.adf/Solo.adf"])
+    selection_pair("select-windows-name", ["Title.adf"])
+    selection_pair("select-nested", [
+        "outer/Game (Disk 2).adf", "inner/Game (Disk 1).adf", "A.adf"])
+    selection_pair("select-32", [f"Image {i:02d}.adf" for i in range(1, 33)])
+    selection_pair("select-33", [f"Image {i:02d}.adf" for i in range(1, 34)])
+
     (output / "single.zip").write_bytes(_manual_zip([media[0]]))
-    (output / "multi.zip").write_bytes(_manual_zip(media))
+    (output / "multi.zip").write_bytes(_manual_zip([
+        {"name": "multi (Disk 2).adf", "payload": disc2},
+        {"name": "multi.adf", "payload": disc1}]))
+    (output / "natural.zip").write_bytes(_manual_zip([
+        {"name": "Alpha.adf", "payload": disc1},
+        {"name": "Beta.adf", "payload": disc2}]))
+    (output / "Title.zip").write_bytes(_manual_zip([
+        {"name": "Title (Europe) (Disk 2).adf", "payload": disc2},
+        {"name": "Title.adf", "payload": disc1}]))
+    (output / "DiscRule.zip").write_bytes(_manual_zip([
+        {"name": "Game (Bonus).adf", "payload": disc2},
+        {"name": "Game (Disk 1).adf", "payload": disc1}]))
+    (output / "reset-multi.zip").write_bytes(_manual_zip(media))
     (output / "multi-replaced.zip").write_bytes(_manual_zip([
         {"name": "Disc1.adf", "payload": disc2}, media[1]]))
     (output / "multi-second-replaced.zip").write_bytes(_manual_zip([
@@ -934,8 +993,21 @@ def build_zip_content_fixtures(output: Path, disc1: bytes, disc2: bytes,
                      struct.unpack_from("<I", bad_first, 14)[0] ^ 1)
     struct.pack_into("<I", bad_first, first_central + 16,
                      struct.unpack_from("<I", bad_first, first_central + 16)[0] ^ 1)
-    (output / "partial-first.zip").write_bytes(bad_first)
     (output / "bad-crc.zip").write_bytes(bad_first)
+    partial_first = _manual_zip([
+        {"name": 'Game " (Disk 1).adf', "payload": disc1}, media[1]])
+    partial_first = bytearray(partial_first)
+    partial_central = partial_first.index(b"PK\x01\x02")
+    struct.pack_into("<I", partial_first, 14,
+                     struct.unpack_from("<I", partial_first, 14)[0] ^ 1)
+    struct.pack_into("<I", partial_first, partial_central + 16,
+                     struct.unpack_from("<I", partial_first,
+                                        partial_central + 16)[0] ^ 1)
+    (output / "partial-first.zip").write_bytes(partial_first)
+    (output / "partial-multiple.zip").write_bytes(_manual_zip([
+        {"name": "Game (Disk 1).adf", "payload": disc1, "crc": 1},
+        {"name": "Broken.adf", "payload": disc2, "crc": 1},
+        {"name": "Survivor.adf", "payload": disc2}]))
     (output / "only-corrupt.zip").write_bytes(_manual_zip([
         {"name": "Disc1.adf", "payload": disc1, "crc": 1}]))
     (output / "no-media.zip").write_bytes(_manual_zip([

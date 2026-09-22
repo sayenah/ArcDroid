@@ -1294,8 +1294,40 @@ static const char *arc_path_leaf(const char *path)
       slash ? slash + 1u : backslash ? backslash + 1u : path;
 }
 
-static void arc_zip_summary(unsigned omissions, unsigned notices)
+static void arc_zip_escape_member(const char *member, char escaped[513])
 {
+   size_t output = 0u;
+   for (size_t input = 0u; member && member[input] && output < 512u; ++input)
+   {
+      if ((member[input] == '"' || member[input] == '\\') && output < 511u)
+         escaped[output++] = '\\';
+      escaped[output++] = member[input];
+   }
+   escaped[output] = '\0';
+}
+
+static void arc_zip_summary(unsigned omissions, unsigned notices, bool fallback,
+                            const char *preferred, const char *boot)
+{
+   if (fallback)
+   {
+      char skipped[513], started[513], message[1152];
+      arc_zip_escape_member(preferred, skipped);
+      arc_zip_escape_member(boot, started);
+      unsigned other_omissions = omissions ? omissions - 1u : 0u;
+      if (other_omissions || notices)
+         snprintf(message, sizeof(message),
+                  "Zip preferred image \"%s\" could not be used; started \"%s\" instead (%u other image%s omitted, %u media notice%s).",
+                  skipped, started, other_omissions,
+                  other_omissions == 1u ? "" : "s", notices,
+                  notices == 1u ? "" : "s");
+      else
+         snprintf(message, sizeof(message),
+                  "Zip preferred image \"%s\" could not be used; started \"%s\" instead.",
+                  skipped, started);
+      arc_message(message, RETRO_LOG_WARN);
+      return;
+   }
    if (!omissions && !notices) return;
    char message[256];
    snprintf(message, sizeof(message),
@@ -1307,17 +1339,62 @@ static void arc_zip_summary(unsigned omissions, unsigned notices)
 
 static void arc_zip_log(const char *leaf, unsigned entries, unsigned images,
                         unsigned prepared, unsigned omitted,
-                        const char *selected)
+                        const ArcZipContent *content, const char *preferred,
+                        const char *boot, bool fallback, const char *selected)
 {
    if (!arc_log) return;
-   if (selected && selected[0])
+   char escaped_preferred[513], escaped_boot[513], escaped_selected[513];
+   arc_zip_escape_member(preferred, escaped_preferred);
+   arc_zip_escape_member(boot, escaped_boot);
+   arc_zip_escape_member(selected, escaped_selected);
+   if (selected && selected[0] && boot && boot[0])
       arc_log(RETRO_LOG_INFO,
-              "Zip content: file=%s entries=%u images=%u prepared=%u omitted=%u selected=%s\n",
-              leaf, entries, images, prepared, omitted, selected);
+              "Zip content: file=%s entries=%u images=%u prepared=%u omitted=%u rule=%s candidates=%u preferred=\"%s\" boot=\"%s\" fallback=%s selected=\"%s\"\n",
+              leaf, entries, images, prepared, omitted,
+              arc_zip_content_rule_name(content->rule), content->candidate_count,
+              escaped_preferred, escaped_boot, fallback ? "yes" : "no",
+              escaped_selected);
+   else if (selected && selected[0])
+      arc_log(RETRO_LOG_INFO,
+              "Zip content: file=%s entries=%u images=%u prepared=%u omitted=%u rule=%s candidates=%u preferred=\"%s\" boot=none fallback=%s selected=\"%s\"\n",
+              leaf, entries, images, prepared, omitted,
+              arc_zip_content_rule_name(content->rule), content->candidate_count,
+              escaped_preferred, fallback ? "yes" : "no", escaped_selected);
+   else if (boot && boot[0])
+      arc_log(RETRO_LOG_INFO,
+              "Zip content: file=%s entries=%u images=%u prepared=%u omitted=%u rule=%s candidates=%u preferred=\"%s\" boot=\"%s\" fallback=%s\n",
+              leaf, entries, images, prepared, omitted,
+              arc_zip_content_rule_name(content->rule), content->candidate_count,
+              escaped_preferred, escaped_boot, fallback ? "yes" : "no");
    else
       arc_log(RETRO_LOG_INFO,
-              "Zip content: file=%s entries=%u images=%u prepared=%u omitted=%u\n",
-              leaf, entries, images, prepared, omitted);
+              "Zip content: file=%s entries=%u images=%u prepared=%u omitted=%u rule=%s candidates=%u preferred=\"%s\" boot=none fallback=%s\n",
+              leaf, entries, images, prepared, omitted,
+              arc_zip_content_rule_name(content->rule), content->candidate_count,
+              escaped_preferred, fallback ? "yes" : "no");
+   if (!prepared) return;
+   const size_t order_size = 18000u;
+   char *order = malloc(order_size);
+   if (!order) return;
+   size_t used = (size_t)snprintf(order, order_size, "Zip content order:");
+   for (unsigned i = 0u; i < prepared && used < order_size; ++i)
+   {
+      char member[513];
+      arc_zip_escape_member(arc_media[i].zip_member, member);
+      int written = snprintf(order + used, order_size - used, " %u=\"%s\"",
+                             i + 1u, member);
+      if (written < 0 || (size_t)written >= order_size - used)
+      {
+         used = order_size - 1u;
+         break;
+      }
+      used += (size_t)written;
+   }
+   if (used < order_size - 1u)
+      order[used++] = '\n';
+   order[used] = '\0';
+   arc_log(RETRO_LOG_INFO, "%s", order);
+   free(order);
 }
 
 static bool arc_prepare_zip_content(const char *archive_path,
@@ -1361,7 +1438,7 @@ static bool arc_prepare_zip_content(const char *archive_path,
       return false;
    }
    ArcZipContent content;
-   if (!arc_zip_content_index(&archive, selected_member, &content, reason,
+   if (!arc_zip_content_index(&archive, archive_path, selected_member, &content, reason,
                               sizeof(reason)))
    {
       if (error && error_size)
@@ -1379,7 +1456,7 @@ static bool arc_prepare_zip_content(const char *archive_path,
             snprintf(error, error_size, "%s", reason);
       }
       arc_zip_log(leaf, archive.count, content.qualifying_count, 0u, 0u,
-                  selected_member);
+                  &content, "", "", false, selected_member);
       arc_zip_free(&archive);
       free(archive_data);
       return false;
@@ -1389,7 +1466,8 @@ static bool arc_prepare_zip_content(const char *archive_path,
       if (error && error_size)
          snprintf(error, error_size,
                   "No supported disc image (adf, adl, jfd) in %s", leaf);
-      arc_zip_log(leaf, archive.count, 0u, 0u, 0u, selected_member);
+      arc_zip_log(leaf, archive.count, 0u, 0u, 0u, &content, "", "", false,
+                  selected_member);
       arc_zip_free(&archive);
       free(archive_data);
       return false;
@@ -1413,6 +1491,10 @@ static bool arc_prepare_zip_content(const char *archive_path,
    char first_reason[512] = {0};
    uint8_t *adffs_raw = NULL;
    size_t adffs_raw_size = 0u;
+   char preferred_member[256];
+   snprintf(preferred_member, sizeof(preferred_member), "%s",
+            archive.entries[content.preferred_index].name);
+   bool preferred_omitted = false;
 
    /* Peak ownership is deliberately sequential: the archive (<=32 MiB),
     * one extracted member (<=8 MiB), one decoded JFD copy for a zip member
@@ -1455,6 +1537,7 @@ static bool arc_prepare_zip_content(const char *archive_path,
          if (!first_reason[0])
             snprintf(first_reason, sizeof(first_reason), "%s", reason);
          ++omissions;
+         if (!image) preferred_omitted = true;
          if (arc_log)
             arc_log(RETRO_LOG_WARN,
                     "Zip member omitted: member=%s reason=%s\n",
@@ -1499,8 +1582,11 @@ static bool arc_prepare_zip_content(const char *archive_path,
       arc_media[arc_media_count++] = candidate;
       free(member);
    }
+   bool fallback = preferred_omitted;
+   const char *boot_member = arc_media_count ? arc_media[0].zip_member : "";
    arc_zip_log(leaf, archive.count, content.qualifying_count, arc_media_count,
-               omissions, selected_member);
+               omissions, &content, preferred_member, boot_member, fallback,
+               selected_member);
    arc_zip_free(&archive);
    free(archive_data);
    if (!arc_media_count)
@@ -1524,7 +1610,7 @@ static bool arc_prepare_zip_content(const char *archive_path,
    arc_content_digest = arc_media[0].digest;
    arc_zip_active = true;
    snprintf(arc_zip_path, sizeof(arc_zip_path), "%s", archive_path);
-   arc_zip_summary(omissions, notices);
+   arc_zip_summary(omissions, notices, fallback, preferred_member, boot_member);
    return true;
 }
 
@@ -1932,7 +2018,7 @@ static bool arc_reprepare_zip_media(ArcDiskWriteMode mode,
             adffs_raw ? arc_media[0].zip_member : "");
    arc_zip_free(&archive);
    free(archive_data);
-   arc_zip_summary(omissions, notices);
+   arc_zip_summary(omissions, notices, false, "", "");
    return true;
 }
 

@@ -458,8 +458,12 @@ $folderSet = (Resolve-Path (Join-Path $InputDirectory "Qaventra.adf\Qaventra.adf
 $jfd = (Resolve-Path (Join-Path $InputDirectory "arcdroid-test-two-member.jfd")).Path
 $zipSingle = (Resolve-Path (Join-Path $InputDirectory "zip-content\single.zip")).Path
 $zipMulti = (Resolve-Path (Join-Path $InputDirectory "zip-content\multi.zip")).Path
+$zipNameSelected = (Resolve-Path (Join-Path $InputDirectory "zip-content\Title.zip")).Path
+$zipDisc1Selected = (Resolve-Path (Join-Path $InputDirectory "zip-content\DiscRule.zip")).Path
 $zipSingleHash = (Get-FileHash -Algorithm SHA256 $zipSingle).Hash.ToLowerInvariant()
 $zipMultiHash = (Get-FileHash -Algorithm SHA256 $zipMulti).Hash.ToLowerInvariant()
+$zipNameSelectedHash = (Get-FileHash -Algorithm SHA256 $zipNameSelected).Hash.ToLowerInvariant()
+$zipDisc1SelectedHash = (Get-FileHash -Algorithm SHA256 $zipDisc1Selected).Hash.ToLowerInvariant()
 
 function Start-MediaRun([string]$MediaPath, [string]$Name) {
     $stdout = Join-Path $WorkDirectory "$Name.stdout.log"
@@ -694,6 +698,18 @@ function Assert-ZipRunLog($Run, [string]$Context) {
     }
 }
 
+function Assert-ZipSelectionLog($Run, [string]$Context, [string]$Rule, [string]$Boot) {
+    Assert-ZipRunLog $Run $Context
+    $ruleField = "rule=$Rule"
+    $bootField = "boot=`"$Boot`""
+    if (-not (Select-String -Path $Run.RetroLog -SimpleMatch $ruleField -Quiet)) {
+        throw "${Context}: expected $ruleField in ArcDroid's zip summary; log=$($Run.RetroLog)"
+    }
+    if (-not (Select-String -Path $Run.RetroLog -SimpleMatch $bootField -Quiet)) {
+        throw "${Context}: expected $bootField in ArcDroid's zip summary; log=$($Run.RetroLog)"
+    }
+}
+
 $zipSingleRun = Start-MediaRun $zipSingle "zip-single"
 try {
     [void](Capture-ExpectedSignature $zipSingleRun "zip-single-disc1" $disc1Signature $false)
@@ -724,15 +740,51 @@ try {
 }
 Assert-ZipRunLog $zipMultiRun "Multi-image zip"
 
+$zipNameRun = Start-MediaRun $zipNameSelected "zip-name-selected"
+try {
+    [void](Capture-ExpectedSignature $zipNameRun "zip-name-disc1" $disc1Signature $false)
+    Send-MediaCommand $zipNameRun "DISK_EJECT_TOGGLE"
+    [void](Capture-ExpectedSignature $zipNameRun "zip-name-ejected" $disc1Signature $false)
+    Send-MediaCommand $zipNameRun "DISK_NEXT"
+    [void](Capture-ExpectedSignature $zipNameRun "zip-name-selected-disc2" $disc1Signature $false)
+    Send-MediaCommand $zipNameRun "DISK_EJECT_TOGGLE"
+    [void](Capture-ExpectedSignature $zipNameRun "zip-name-disc2" $disc2Signature $false)
+} finally {
+    Stop-MediaRun $zipNameRun
+}
+Assert-ZipSelectionLog $zipNameRun "Zip-name selection" "name" "Title.adf"
+
+$zipDisc1Run = Start-MediaRun $zipDisc1Selected "zip-disc1-selected"
+try {
+    [void](Capture-ExpectedSignature $zipDisc1Run "zip-rule-disc1" $disc1Signature $false)
+    Send-MediaCommand $zipDisc1Run "DISK_EJECT_TOGGLE"
+    [void](Capture-ExpectedSignature $zipDisc1Run "zip-rule-ejected" $disc1Signature $false)
+    Send-MediaCommand $zipDisc1Run "DISK_NEXT"
+    [void](Capture-ExpectedSignature $zipDisc1Run "zip-rule-selected-disc2" $disc1Signature $false)
+    Send-MediaCommand $zipDisc1Run "DISK_EJECT_TOGGLE"
+    [void](Capture-ExpectedSignature $zipDisc1Run "zip-rule-disc2" $disc2Signature $false)
+} finally {
+    Stop-MediaRun $zipDisc1Run
+}
+Assert-ZipSelectionLog $zipDisc1Run "Explicit disc-1 selection" "disc1" "Game (Disk 1).adf"
+
 $zipSingleHashAfter = (Get-FileHash -Algorithm SHA256 $zipSingle).Hash.ToLowerInvariant()
 $zipMultiHashAfter = (Get-FileHash -Algorithm SHA256 $zipMulti).Hash.ToLowerInvariant()
+$zipNameSelectedHashAfter = (Get-FileHash -Algorithm SHA256 $zipNameSelected).Hash.ToLowerInvariant()
+$zipDisc1SelectedHashAfter = (Get-FileHash -Algorithm SHA256 $zipDisc1Selected).Hash.ToLowerInvariant()
 if ($zipSingleHashAfter -ne $zipSingleHash) {
     throw "Single-image zip changed during native RetroArch runs: before=$zipSingleHash after=$zipSingleHashAfter path=$zipSingle"
 }
 if ($zipMultiHashAfter -ne $zipMultiHash) {
     throw "Multi-image zip changed during native RetroArch run: before=$zipMultiHash after=$zipMultiHashAfter path=$zipMulti"
 }
-"single_before=$zipSingleHash single_after=$zipSingleHashAfter multi_before=$zipMultiHash multi_after=$zipMultiHashAfter" |
+if ($zipNameSelectedHashAfter -ne $zipNameSelectedHash) {
+    throw "Zip-name fixture changed during native RetroArch run: before=$zipNameSelectedHash after=$zipNameSelectedHashAfter path=$zipNameSelected"
+}
+if ($zipDisc1SelectedHashAfter -ne $zipDisc1SelectedHash) {
+    throw "Disc-1 fixture changed during native RetroArch run: before=$zipDisc1SelectedHash after=$zipDisc1SelectedHashAfter path=$zipDisc1Selected"
+}
+"single_before=$zipSingleHash single_after=$zipSingleHashAfter multi_before=$zipMultiHash multi_after=$zipMultiHashAfter name_before=$zipNameSelectedHash name_after=$zipNameSelectedHashAfter disc1_before=$zipDisc1SelectedHash disc1_after=$zipDisc1SelectedHashAfter" |
     Set-Content -Encoding ASCII (Join-Path $evidenceDirectory "zip-sha256.txt")
 
 @{ version = "1.0"; image_index = 1; image_path = $disc2 } |
