@@ -303,7 +303,7 @@ Invoke-ArcDroid 600 $true
 # "<core path>|<content path>". Try ten reloads inside one process and retain
 # the attempt log. If this stable binary does not expose/respond on UDP 55355,
 # fall back to ten explicit process relaunches and say so in the job summary.
-function Try-InSessionReloads([int]$Attempt) {
+function Try-InSessionReloads {
     $arguments = @(
         "--config=$config", "--libretro=$core", "--verbose",
         "--max-frames=12000", $content
@@ -340,20 +340,15 @@ function Try-InSessionReloads([int]$Attempt) {
         $output = @()
         if (Test-Path $stdout) { $output += Get-Content $stdout }
         if (Test-Path $stderr) { $output += Get-Content $stderr }
-        if ($Attempt -eq 1) {
-            $output | Set-Content -Encoding UTF8 $attemptLog
-        } else {
-            $output | Add-Content -Encoding UTF8 $attemptLog
-        }
+        $output | Set-Content -Encoding UTF8 $attemptLog
         $identifications = @($output | Select-String -SimpleMatch "Firmware: ArcDroid test ROM").Count
         if ($process.ExitCode -ne 0 -or $identifications -lt 11) {
-            throw "network commands did not produce 10 observable reloads (firmware identifications=$identifications) (attempt $Attempt/$ciRetryAttempts)"
+            throw "network commands did not produce 10 observable reloads (firmware identifications=$identifications)"
         }
         $output | Add-Content -Encoding UTF8 $log
         return $true
     }
     catch {
-        $observableReloadFailure = $_.Exception.Message -like "network commands did not produce 10 observable reloads*"
         if (Test-Path $stdout) { Get-Content $stdout | Add-Content -Encoding UTF8 $attemptLog }
         if (Test-Path $stderr) { Get-Content $stderr | Add-Content -Encoding UTF8 $attemptLog }
         $_ | Out-String | Add-Content -Encoding UTF8 $attemptLog
@@ -362,8 +357,6 @@ function Try-InSessionReloads([int]$Attempt) {
                 $runStartUtc @($attemptLog, $stdout, $stderr) `
                 "in-session reload exited unexpectedly"
         }
-        if ($observableReloadFailure -and $Attempt -eq $ciRetryAttempts) { throw }
-        $script:retryInSessionReloads = $observableReloadFailure
         return $false
     }
     finally {
@@ -372,12 +365,7 @@ function Try-InSessionReloads([int]$Attempt) {
     }
 }
 
-$inSessionReloads = $false
-$script:retryInSessionReloads = $true
-for ($attempt = 1; $attempt -le $ciRetryAttempts -and -not $inSessionReloads -and $script:retryInSessionReloads; $attempt++) {
-    Write-Host "RetroArch in-session reload attempt $attempt/$ciRetryAttempts"
-    $inSessionReloads = Try-InSessionReloads $attempt
-}
+$inSessionReloads = Try-InSessionReloads
 if (-not $inSessionReloads) {
     for ($reload = 1; $reload -le 10; $reload++) {
         Write-Host "RetroArch process-relaunch content load $reload/10"
