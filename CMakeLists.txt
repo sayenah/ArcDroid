@@ -46,6 +46,8 @@ set_target_properties(arcdroid_zlib PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 set(ARCDROID_CORE_SOURCES
   core/adffs.c
+  core/zip.c
+  core/zip_content.c
   core/machine.c
   core/hash.c
   core/input.c
@@ -193,6 +195,7 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
   target_include_directories(arcdroid_core_test PUBLIC
     core libretro/include "${CMAKE_CURRENT_BINARY_DIR}/generated")
   target_link_libraries(arcdroid_core_test PRIVATE arcdroid_zlib)
+  target_compile_definitions(arcdroid_core_test PUBLIC ARCDROID_TEST_FAULTS=1)
   target_compile_options(arcdroid_core_test PRIVATE
     $<$<C_COMPILER_ID:GNU,Clang,AppleClang>:-Wall;-Wextra;-Wpedantic;-Werror=implicit-function-declaration>)
   set_target_properties(arcdroid_core_test PROPERTIES POSITION_INDEPENDENT_CODE ON)
@@ -320,6 +323,7 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
       "${FIXTURE_DIR}/arcdroid-test-gzip.jfd"
       "${FIXTURE_DIR}/arcdroid-test-two-member.jfd"
       "${FIXTURE_DIR}/arcdroid-test-three-member.jfd"
+      "${FIXTURE_DIR}/zip-content/single.zip"
       ${ADFFS_FIXTURES}
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/generate_fixtures.py" "${FIXTURE_DIR}"
     DEPENDS tests/generate_fixtures.py VERBATIM)
@@ -361,6 +365,7 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
     "${FIXTURE_DIR}/arcdroid-test-gzip.jfd"
     "${FIXTURE_DIR}/arcdroid-test-two-member.jfd"
     "${FIXTURE_DIR}/arcdroid-test-three-member.jfd"
+    "${FIXTURE_DIR}/zip-content/single.zip"
     ${ADFFS_FIXTURES})
 
   add_dependencies(core_tests test-fixtures)
@@ -373,6 +378,15 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
   endif()
   add_dependencies(adffs_tests test-fixtures)
   add_test(NAME adffs-package-media COMMAND adffs_tests "${FIXTURE_DIR}")
+  add_executable(zip_content_tests tests/zip_content_tests.c)
+  target_link_libraries(zip_content_tests PRIVATE arcdroid_core_test)
+  target_compile_options(zip_content_tests PRIVATE
+    $<$<C_COMPILER_ID:GNU,Clang,AppleClang>:-UNDEBUG;-Wall;-Wextra;-Wpedantic>)
+  if(ARCDROID_SANITIZERS)
+    target_link_libraries(zip_content_tests PRIVATE arcdroid_sanitizer_link)
+  endif()
+  add_dependencies(zip_content_tests test-fixtures)
+  add_test(NAME zip-content COMMAND zip_content_tests "${FIXTURE_DIR}")
   add_test(NAME adffs-shipping-profile COMMAND adffs_shipping_profile_test)
   add_executable(arc_io_tests tests/arc_io_tests.c libretro/arc_io.c)
   target_include_directories(arc_io_tests PRIVATE libretro libretro/include)
@@ -445,7 +459,8 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
       "${FIXTURE_DIR}"
       "${FIXTURE_DIR}/arcdroid-application-l.adl"
       "${FIXTURE_DIR}/adffs/synthetic.zip"
-      "${FIXTURE_DIR}/adffs/eligible.jfd")
+      "${FIXTURE_DIR}/adffs/eligible.jfd"
+      "${FIXTURE_DIR}/zip-content")
     add_test(NAME newio-libretro-harness COMMAND libretro_harness
       $<TARGET_FILE:arcdroid_libretro_test>
       "${FIXTURE_DIR}/arcdroid-test.rom"

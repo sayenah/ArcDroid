@@ -33,15 +33,22 @@ static int arc_io_memory_slot(const char *path)
 
 void arc_io_set_vfs(struct retro_vfs_interface *vfs) { arc_io_vfs = vfs; }
 
-bool arc_io_read_all(const char *path, void **data, size_t *size)
+bool arc_io_read_all_limit(const char *path, void **data, size_t *size,
+                           size_t limit, bool *limit_exceeded)
 {
    struct retro_vfs_file_handle *file;
    int64_t length, got;
    void *buffer;
+   if (limit_exceeded) *limit_exceeded = false;
    if (!path || !data || !size) return false;
    int memory_slot = arc_io_memory_slot(path);
    if (memory_slot >= 0 && arc_memory[memory_slot].data)
    {
+      if (arc_memory[memory_slot].size > limit)
+      {
+         if (limit_exceeded) *limit_exceeded = true;
+         return false;
+      }
       void *copy = malloc(arc_memory[memory_slot].size ? arc_memory[memory_slot].size : 1u);
       if (!copy) return false;
       memcpy(copy, arc_memory[memory_slot].data, arc_memory[memory_slot].size);
@@ -54,8 +61,10 @@ bool arc_io_read_all(const char *path, void **data, size_t *size)
                            RETRO_VFS_FILE_ACCESS_HINT_NONE);
    if (!file) return false;
    length = arc_io_vfs->size(file);
-   if (length < 0 || (uint64_t)length > SIZE_MAX || (uint64_t)length > UINT64_C(16) * 1024u * 1024u)
+   if (length < 0 || (uint64_t)length > SIZE_MAX || (uint64_t)length > limit)
    {
+      if (limit_exceeded && length >= 0 && (uint64_t)length > limit)
+         *limit_exceeded = true;
       arc_io_vfs->close(file);
       return false;
    }
@@ -75,6 +84,11 @@ bool arc_io_read_all(const char *path, void **data, size_t *size)
    *data = buffer;
    *size = (size_t)length;
    return true;
+}
+
+bool arc_io_read_all(const char *path, void **data, size_t *size)
+{
+   return arc_io_read_all_limit(path, data, size, 16u * 1024u * 1024u, NULL);
 }
 
 bool arc_io_write_all(const char *path, const void *data, size_t size)

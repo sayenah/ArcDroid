@@ -1,6 +1,6 @@
 display_name = "ArcDroid"
 authors = "ArcDroid contributors; Sarah Walker"
-supported_extensions = "adf|adl|jfd|m3u"
+supported_extensions = "adf|adl|jfd|m3u|zip"
 corename = "ArcDroid"
 manufacturer = "Acorn"
 categories = "Emulator"

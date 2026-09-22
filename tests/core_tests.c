@@ -1692,6 +1692,16 @@ static void test_playlists(void)
       assert(!arc_playlist_parse("C:\\sets\\list.m3u",
          (const uint8_t *)bad_paths[i], strlen(bad_paths[i]), true,
          playlist, &line, error, sizeof(error)) && line == 1u);
+   static const char *zip_paths[] = {
+      "game.zip\n", "game.ZIP#Disc1.adf\n"
+   };
+   for (unsigned i = 0u; i < sizeof(zip_paths) / sizeof(zip_paths[0]); ++i)
+   {
+      assert(!arc_playlist_parse("/sets/list.m3u",
+         (const uint8_t *)zip_paths[i], strlen(zip_paths[i]), false,
+         playlist, &line, error, sizeof(error)) && line == 1u);
+      assert(strstr(error, "zip entries are unsupported in playlists"));
+   }
    static const uint8_t saf[] = "saf://opaque.identifier/disc.adf\n";
    assert(arc_playlist_parse("saf://playlist/list.m3u", saf, sizeof(saf) - 1u,
                              false, playlist, &line, error, sizeof(error)));

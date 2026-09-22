@@ -8,6 +8,7 @@
 #include "folder_set.h"
 #include "jfd.h"
 #include "playlist.h"
+#include "zip_content.h"
 
 #include <limits.h>
 #include <ctype.h>
@@ -144,9 +145,20 @@ bool arc_libretro_test_adffs_content_read_failure_pending(void)
 {
    return arc_test_fail_adffs_content_read;
 }
+bool arc_libretro_test_adffs_carrier_matches(const void *data, size_t size)
+{
+   uint8_t *expected = malloc(ARC_ADFFS_DISC_SIZE);
+   char error[128] = {0};
+   bool matches = expected && arc_adffs_carrier &&
+      arc_adffs_carrier_build(data, size, expected, error, sizeof(error)) &&
+      !memcmp(expected, arc_adffs_carrier, ARC_ADFFS_DISC_SIZE);
+   free(expected);
+   return matches;
+}
 #endif
 static char arc_system_path[4096];
 static void arc_adffs_discard(void);
+static void arc_zip_adffs_raw_discard(void);
 #if defined(ARCDROID_TEST_FAULTS)
 static unsigned arc_osk_fail_allocations;
 static bool arc_osk_source_unchanged;
@@ -239,11 +251,28 @@ typedef struct {
    ArcMediaInfo info;
    ArcDigest digest;
    ArcJfdImage jfd;
+   char zip_member[256];
+   uint32_t zip_crc32;
+   uint32_t zip_packed_size;
+   uint32_t zip_size;
 } ArcMediaEntry;
 
 static ArcMediaEntry arc_media[ARC_PLAYLIST_MAX_ENTRIES];
 static unsigned arc_media_count;
+#if defined(ARCDROID_TEST_FAULTS)
+const char *arc_libretro_test_staged_path(unsigned index)
+{
+   return index < arc_media_count && arc_media[index].populated ?
+      arc_media[index].staged : NULL;
+}
+const char *arc_libretro_test_cmos_path(void) { return arc_cmos_path; }
+const char *arc_libretro_test_choice_path(void) { return arc_choice_path; }
+#endif
 static bool arc_folder_set_active;
+static bool arc_zip_active;
+static char arc_zip_path[ARC_MEDIA_PATH_CAPACITY];
+static uint8_t *arc_zip_adffs_raw;
+static size_t arc_zip_adffs_raw_size;
 
 typedef enum {
    ARC_POINTER_STICK_RIGHT = 0,
@@ -714,6 +743,11 @@ static void arc_release_session(void)
    memset(arc_media, 0, sizeof(arc_media));
    arc_media_count = 0u;
    arc_folder_set_active = false;
+   arc_zip_active = false;
+   arc_zip_path[0] = '\0';
+   free(arc_zip_adffs_raw);
+   arc_zip_adffs_raw = NULL;
+   arc_zip_adffs_raw_size = 0u;
    arc_image_index = 0u;
    arc_cmos_path[0] = '\0';
    arc_helper_path[0] = '\0';
@@ -894,25 +928,25 @@ static bool arc_file_digest_matches(const char *path, const uint8_t *expected,
    return matches;
 }
 
-static bool arc_prepare_source(const char *source, const char *playlist_label,
-                               ArcDiskWriteMode mode, bool notify_user,
-                               bool *notice_reported, ArcMediaEntry *entry,
-                               char *error, size_t error_size)
+static bool arc_prepare_bytes(const char *source, const char *playlist_label,
+                              ArcDiskWriteMode mode, bool notify_user,
+                              bool *notice_reported,
+                              const uint8_t *source_data, size_t source_size,
+                              ArcMediaEntry *entry, char *error,
+                              size_t error_size)
 {
-   void *source_data = NULL;
-   size_t source_size = 0u;
    uint8_t *staged_data = NULL;
    memset(entry, 0, sizeof(*entry));
    if (!source || !source[0] || strlen(source) >= sizeof(entry->source) ||
-       !arc_io_read_all(source, &source_data, &source_size))
+       !source_data)
    {
       if (error && error_size) snprintf(error, error_size,
-         "unable to read media through the frontend VFS");
+         "invalid media preparation input");
       return false;
    }
    if (!arc_media_inspect(source, source_data, source_size, &entry->info,
                           error, error_size))
-   { free(source_data); return false; }
+      return false;
    strcpy(entry->source, source);
    if (playlist_label && playlist_label[0])
       strcpy(entry->label, playlist_label);
@@ -923,12 +957,9 @@ static bool arc_prepare_source(const char *source, const char *playlist_label,
    const char *extension = "adf";
    if (entry->info.kind == ARC_MEDIA_JFD)
    {
-      bool decoded_source = source_size >= 4u && !memcmp(source_data, "JFDI", 4u);
-      bool parsed = decoded_source ?
-         arc_jfd_parse_owned(source_data, source_size, &entry->jfd, error, error_size) :
-         arc_jfd_parse(source_data, source_size, &entry->jfd, error, error_size);
-      if (decoded_source) source_data = NULL;
-      if (!parsed) { free(source_data); return false; }
+      if (!arc_jfd_parse(source_data, source_size, &entry->jfd, error,
+                         error_size))
+         return false;
       if (arc_log)
       {
          arc_log(RETRO_LOG_INFO,
@@ -963,12 +994,11 @@ static bool arc_prepare_source(const char *source, const char *playlist_label,
          {
             if (error && error_size) snprintf(error, error_size,
                "Short image cannot use original writes; choose shadow or off.");
-            free(source_data);
             return false;
          }
          staged_data = calloc(1u, entry->info.declared_size);
          if (!staged_data)
-         { free(source_data); if (error && error_size) snprintf(error, error_size, "out of memory"); return false; }
+         { if (error && error_size) snprintf(error, error_size, "out of memory"); return false; }
          memcpy(staged_data, source_data, source_size);
          publish_data = staged_data;
          publish_size = entry->info.declared_size;
@@ -1037,14 +1067,33 @@ static bool arc_prepare_source(const char *source, const char *playlist_label,
     * insert. This keeps exactly one decoded JFD buffer live per session. */
    if (entry->info.kind == ARC_MEDIA_JFD) arc_jfd_free(&entry->jfd);
    free(staged_data);
-   free(source_data);
    return true;
 reject:
    arc_jfd_free(&entry->jfd);
    free(staged_data);
-   free(source_data);
    memset(entry, 0, sizeof(*entry));
    return false;
+}
+
+static bool arc_prepare_source(const char *source, const char *playlist_label,
+                               ArcDiskWriteMode mode, bool notify_user,
+                               bool *notice_reported, ArcMediaEntry *entry,
+                               char *error, size_t error_size)
+{
+   void *source_data = NULL;
+   size_t source_size = 0u;
+   if (!source || !source[0] ||
+       !arc_io_read_all(source, &source_data, &source_size))
+   {
+      if (error && error_size) snprintf(error, error_size,
+         "unable to read media through the frontend VFS");
+      return false;
+   }
+   bool prepared = arc_prepare_bytes(source, playlist_label, mode, notify_user,
+                                     notice_reported, source_data, source_size,
+                                     entry, error, error_size);
+   free(source_data);
+   return prepared;
 }
 
 static uint8_t arc_hex_nibble(char value)
@@ -1221,10 +1270,257 @@ static bool arc_prepare_folder_siblings(const char *content_path,
    return true;
 }
 
+static const char *arc_path_leaf(const char *path)
+{
+   const char *slash = path ? strrchr(path, '/') : NULL;
+   const char *backslash = path ? strrchr(path, '\\') : NULL;
+   return slash && backslash ? (slash > backslash ? slash : backslash) + 1u :
+      slash ? slash + 1u : backslash ? backslash + 1u : path;
+}
+
+static void arc_zip_summary(unsigned omissions, unsigned notices)
+{
+   if (!omissions && !notices) return;
+   char message[256];
+   snprintf(message, sizeof(message),
+            "Zip content loaded with %u image%s omitted and %u media notice%s; see the log for details.",
+            omissions, omissions == 1u ? "" : "s",
+            notices, notices == 1u ? "" : "s");
+   arc_message(message, RETRO_LOG_WARN);
+}
+
+static void arc_zip_log(const char *leaf, unsigned entries, unsigned images,
+                        unsigned prepared, unsigned omitted,
+                        const char *selected)
+{
+   if (!arc_log) return;
+   if (selected && selected[0])
+      arc_log(RETRO_LOG_INFO,
+              "Zip content: file=%s entries=%u images=%u prepared=%u omitted=%u selected=%s\n",
+              leaf, entries, images, prepared, omitted, selected);
+   else
+      arc_log(RETRO_LOG_INFO,
+              "Zip content: file=%s entries=%u images=%u prepared=%u omitted=%u\n",
+              leaf, entries, images, prepared, omitted);
+}
+
+static bool arc_prepare_zip_content(const char *archive_path,
+                                    const char *selected_member,
+                                    ArcDiskWriteMode mode,
+                                    char *error, size_t error_size)
+{
+   const char *leaf = arc_path_leaf(archive_path);
+   void *archive_data = NULL;
+   size_t archive_size = 0u;
+   bool too_large = false;
+   if (!arc_io_read_all_limit(archive_path, &archive_data, &archive_size,
+                              ARC_ZIP_CONTENT_ARCHIVE_MAX, &too_large))
+   {
+      if (error && error_size)
+         snprintf(error, error_size, "%s",
+                  too_large ? "Zip archive exceeds 32 MiB."
+                            : "Unable to read the zip through the frontend VFS.");
+      return false;
+   }
+   const ArcZipLimits limits = {ARC_ZIP_CONTENT_ARCHIVE_MAX, 1024u,
+                                ARC_ZIP_CONTENT_MEMBER_MAX};
+   ArcZipArchive archive;
+   char reason[512] = {0};
+   if (!arc_zip_index(archive_data, archive_size, &limits, &archive, reason,
+                      sizeof(reason)))
+   {
+      if (error && error_size)
+         snprintf(error, error_size, "Invalid zip archive %s: %s", leaf,
+                  reason[0] ? reason : "invalid archive structure");
+      free(archive_data);
+      return false;
+   }
+   ArcZipContent content;
+   if (!arc_zip_content_index(&archive, selected_member, &content, reason,
+                              sizeof(reason)))
+   {
+      if (error && error_size)
+      {
+         if (selected_member && selected_member[0] &&
+             strstr(reason, "not a supported disc image"))
+            snprintf(error, error_size,
+                     "%s is not a supported disc image in %s",
+                     selected_member, leaf);
+         else
+            snprintf(error, error_size, "%s", reason);
+      }
+      arc_zip_log(leaf, archive.count, content.qualifying_count, 0u, 0u,
+                  selected_member);
+      arc_zip_free(&archive);
+      free(archive_data);
+      return false;
+   }
+   if (!content.count)
+   {
+      if (error && error_size)
+         snprintf(error, error_size,
+                  "No supported disc image (adf, adl, jfd) in %s", leaf);
+      arc_zip_log(leaf, archive.count, 0u, 0u, 0u, selected_member);
+      arc_zip_free(&archive);
+      free(archive_data);
+      return false;
+   }
+
+   ArcDiskWriteMode prepare_mode = mode;
+   if (mode == ARC_DISK_WRITES_ORIGINAL)
+   {
+      prepare_mode = ARC_DISK_WRITES_SHADOW;
+      if (arc_log)
+         arc_log(RETRO_LOG_INFO,
+                 "Zip content: original writes redirected to shadow copies.\n");
+      arc_message("Zip content is never written in place; writes go to the shadow copy.",
+                  RETRO_LOG_WARN);
+   }
+
+   arc_media_count = 0u;
+   unsigned omissions = 0u;
+   unsigned notices = 0u;
+   size_t logical_total = 0u;
+   char first_reason[512] = {0};
+   uint8_t *adffs_raw = NULL;
+   size_t adffs_raw_size = 0u;
+
+   /* Peak ownership is deliberately sequential: the archive (<=32 MiB),
+    * one extracted member (<=8 MiB), one decoded JFD (<=8 MiB), and one
+    * staging verification buffer (<=8 MiB). The archive and member buffers
+    * never survive machine construction. */
+   for (unsigned image = 0u; image < content.count; ++image)
+   {
+      ArcZipEntry *zip_entry = &archive.entries[content.entries[image]];
+      uint8_t *member = NULL;
+      size_t member_size = 0u;
+      reason[0] = '\0';
+      const char *status = arc_zip_member_status_reason(zip_entry->status);
+      if (status)
+         snprintf(reason, sizeof(reason), "%s", status);
+      else if (!arc_zip_extract(archive_data, archive_size, zip_entry, &member,
+                                &member_size, reason, sizeof(reason)))
+      {
+         if (!reason[0]) snprintf(reason, sizeof(reason), "extraction-failed");
+      }
+      char source[ARC_MEDIA_PATH_CAPACITY];
+      int source_length = snprintf(source, sizeof(source), "%s#%s",
+                                   archive_path, zip_entry->name);
+      ArcMediaEntry candidate;
+      bool notice = false;
+      char label[ARC_MEDIA_LABEL_CAPACITY];
+      arc_media_stem(zip_entry->name, label);
+      bool prepared = !reason[0] && source_length >= 0 &&
+         (size_t)source_length < sizeof(source) &&
+         arc_prepare_bytes(source, label, prepare_mode, false, &notice,
+                           member, member_size, &candidate, reason,
+                           sizeof(reason));
+      if (!prepared)
+      {
+         if (!reason[0])
+            snprintf(reason, sizeof(reason),
+                     source_length < 0 || (size_t)source_length >= sizeof(source)
+                        ? "content-path-too-long" : "media-preparation-failed");
+         if (!first_reason[0])
+            snprintf(first_reason, sizeof(first_reason), "%s", reason);
+         ++omissions;
+         if (arc_log)
+            arc_log(RETRO_LOG_WARN,
+                    "Zip member omitted: member=%s reason=%s\n",
+                    zip_entry->name, reason);
+         free(member);
+         continue;
+      }
+      candidate.zip_crc32 = zip_entry->crc32;
+      candidate.zip_packed_size = zip_entry->packed_size;
+      candidate.zip_size = zip_entry->size;
+      snprintf(candidate.zip_member, sizeof(candidate.zip_member), "%s",
+               zip_entry->name);
+      if (candidate.info.declared_size >
+          ARC_ZIP_CONTENT_LOGICAL_MAX - logical_total)
+      {
+         arc_discard_candidate(&candidate);
+         free(member);
+         free(adffs_raw);
+         arc_zip_free(&archive);
+         free(archive_data);
+         arc_cleanup_failed_preparation();
+         if (error && error_size)
+            snprintf(error, error_size,
+                     "Zip content exceeds 256 MiB of prepared logical media.");
+         return false;
+      }
+      logical_total += candidate.info.declared_size;
+      if (notice) ++notices;
+      if (!arc_media_count && candidate.info.kind == ARC_MEDIA_JFD &&
+          member_size <= ARC_ADFFS_CARRIER_CAPACITY)
+      {
+         adffs_raw = member;
+         adffs_raw_size = member_size;
+         member = NULL;
+      }
+      else if (arc_media_count)
+      {
+         free(adffs_raw);
+         adffs_raw = NULL;
+         adffs_raw_size = 0u;
+      }
+      arc_media[arc_media_count++] = candidate;
+      free(member);
+   }
+   arc_zip_log(leaf, archive.count, content.qualifying_count, arc_media_count,
+               omissions, selected_member);
+   arc_zip_free(&archive);
+   free(archive_data);
+   if (!arc_media_count)
+   {
+      free(adffs_raw);
+      if (error && error_size)
+         snprintf(error, error_size, "No usable disc image in %s (%s)", leaf,
+                  first_reason[0] ? first_reason : "media preparation failed");
+      return false;
+   }
+   if (arc_media_count != 1u || arc_media[0].info.kind != ARC_MEDIA_JFD)
+   {
+      free(adffs_raw);
+      adffs_raw = NULL;
+      adffs_raw_size = 0u;
+   }
+   arc_zip_adffs_raw = adffs_raw;
+   arc_zip_adffs_raw_size = adffs_raw_size;
+   arc_content_digest = arc_media[0].digest;
+   arc_zip_active = true;
+   snprintf(arc_zip_path, sizeof(arc_zip_path), "%s", archive_path);
+   arc_zip_summary(omissions, notices);
+   return true;
+}
+
 static bool arc_prepare_media_list(const char *content_path,
                                    ArcDiskWriteMode mode,
                                    char *error, size_t error_size)
 {
+   char archive_path[ARC_MEDIA_PATH_CAPACITY];
+   char selected_member[256];
+   if (arc_zip_content_path(content_path, archive_path, selected_member))
+      return arc_prepare_zip_content(archive_path, selected_member, mode,
+                                     error, error_size);
+   const char *extension = strrchr(content_path, '.');
+   if (extension)
+   {
+      char lowered[8] = {0};
+      size_t length = strlen(extension);
+      if (length < sizeof(lowered))
+         for (size_t i = 0u; i < length; ++i)
+            lowered[i] = (char)tolower((unsigned char)extension[i]);
+      if (!strcmp(lowered, ".7z") || !strcmp(lowered, ".rar") ||
+          !strcmp(lowered, ".tar") || !strcmp(lowered, ".gz"))
+      {
+         if (error && error_size)
+            snprintf(error, error_size,
+                     "Unsupported archive container; ArcDroid supports .zip files only.");
+         return false;
+      }
+   }
    void *top_data = NULL;
    size_t top_size = 0u;
    if (!arc_io_read_all(content_path, &top_data, &top_size))
@@ -1396,6 +1692,204 @@ static bool arc_reprepare_folder_media(ArcDiskWriteMode mode,
    return true;
 }
 
+static bool arc_reprepare_zip_media(ArcDiskWriteMode mode,
+                                    unsigned *selected,
+                                    char *error, size_t error_size)
+{
+   void *archive_data = NULL;
+   size_t archive_size = 0u;
+   bool too_large = false;
+   if (!arc_io_read_all_limit(arc_zip_path, &archive_data, &archive_size,
+                              ARC_ZIP_CONTENT_ARCHIVE_MAX, &too_large))
+   {
+      if (error && error_size)
+         snprintf(error, error_size, "%s",
+                  too_large ? "Zip archive exceeds 32 MiB during reset."
+                            : "Unable to re-open the zip during reset.");
+      return false;
+   }
+   const ArcZipLimits limits = {ARC_ZIP_CONTENT_ARCHIVE_MAX, 1024u,
+                                ARC_ZIP_CONTENT_MEMBER_MAX};
+   ArcZipArchive archive;
+   char reason[512] = {0};
+   if (!arc_zip_index(archive_data, archive_size, &limits, &archive, reason,
+                      sizeof(reason)))
+   {
+      if (error && error_size)
+         snprintf(error, error_size, "Zip reset verification failed: %s",
+                  reason[0] ? reason : "invalid archive structure");
+      free(archive_data);
+      return false;
+   }
+   ArcDiskWriteMode prepare_mode = mode == ARC_DISK_WRITES_ORIGINAL ?
+      ARC_DISK_WRITES_SHADOW : mode;
+   if (mode == ARC_DISK_WRITES_ORIGINAL)
+   {
+      if (arc_log)
+         arc_log(RETRO_LOG_INFO,
+                 "Zip content: original writes redirected to shadow copies.\n");
+      arc_message("Zip content is never written in place; writes go to the shadow copy.",
+                  RETRO_LOG_WARN);
+   }
+   unsigned old_count = arc_media_count;
+   bool selected_at_end = selected && *selected == old_count;
+   char selected_member[256] = {0};
+   if (selected && *selected < old_count)
+      snprintf(selected_member, sizeof(selected_member), "%s",
+               arc_media[*selected].zip_member);
+   unsigned kept = 0u;
+   unsigned omissions = 0u;
+   unsigned notices = 0u;
+   uint8_t *adffs_raw = NULL;
+   size_t adffs_raw_size = 0u;
+   for (unsigned i = 0u; i < old_count; ++i)
+   {
+      ArcMediaEntry *old = &arc_media[i];
+      if (!old->zip_member[0])
+      {
+         ArcMediaEntry replacement;
+         bool notice = false;
+         reason[0] = '\0';
+         if (!arc_prepare_source(old->source, old->label, mode, i == 0u,
+                                 &notice, &replacement, reason, sizeof(reason)))
+         {
+            if (i == 0u)
+            {
+               arc_zip_free(&archive);
+               free(archive_data);
+               free(adffs_raw);
+               if (error && error_size)
+                  snprintf(error, error_size, "%s", reason[0] ? reason :
+                           "unable to re-prepare replacement media");
+               return false;
+            }
+            ++omissions;
+            arc_jfd_free(&old->jfd);
+            memset(old, 0, sizeof(*old));
+            continue;
+         }
+         if (notice) ++notices;
+         free(adffs_raw);
+         adffs_raw = NULL;
+         adffs_raw_size = 0u;
+         arc_jfd_free(&old->jfd);
+         if (kept != i)
+         {
+            arc_media[kept] = replacement;
+            memset(old, 0, sizeof(*old));
+         }
+         else
+            *old = replacement;
+         ++kept;
+         continue;
+      }
+      ArcZipEntry *zip_entry = NULL;
+      for (unsigned z = 0u; z < archive.count; ++z)
+         if (!strcmp(archive.entries[z].name, old->zip_member))
+         { zip_entry = &archive.entries[z]; break; }
+      uint8_t *member = NULL;
+      size_t member_size = 0u;
+      reason[0] = '\0';
+      if (!zip_entry || !arc_zip_content_member(zip_entry))
+         snprintf(reason, sizeof(reason), "member is missing or no longer supported");
+      else if (zip_entry->crc32 != old->zip_crc32 ||
+               zip_entry->packed_size != old->zip_packed_size ||
+               zip_entry->size != old->zip_size)
+         snprintf(reason, sizeof(reason), "archive member metadata changed");
+      else
+         (void)arc_zip_extract(archive_data, archive_size, zip_entry, &member,
+                               &member_size, reason, sizeof(reason));
+      ArcMediaEntry replacement;
+      bool notice = false;
+      if (!reason[0])
+         (void)arc_prepare_bytes(old->source, old->label, prepare_mode, i == 0u,
+                                 &notice, member, member_size, &replacement,
+                                 reason, sizeof(reason));
+      if (!reason[0] && strcmp(replacement.digest.sha1, old->digest.sha1))
+         snprintf(reason, sizeof(reason), "archive member digest changed");
+      if (reason[0])
+      {
+         free(member);
+         if (i == 0u)
+         {
+            arc_zip_free(&archive);
+            free(archive_data);
+            free(adffs_raw);
+            if (error && error_size)
+               snprintf(error, error_size,
+                        "Zip reset verification failed for %s: %s",
+                        old->zip_member, reason);
+            return false;
+         }
+         ++omissions;
+         if (arc_log)
+            arc_log(RETRO_LOG_WARN,
+                    "Zip member omitted: member=%s reason=%s phase=reset\n",
+                    old->zip_member, reason);
+         arc_jfd_free(&old->jfd);
+         memset(old, 0, sizeof(*old));
+         continue;
+      }
+      replacement.zip_crc32 = old->zip_crc32;
+      replacement.zip_packed_size = old->zip_packed_size;
+      replacement.zip_size = old->zip_size;
+      snprintf(replacement.zip_member, sizeof(replacement.zip_member), "%s",
+               old->zip_member);
+      if (notice) ++notices;
+      if (!kept && replacement.info.kind == ARC_MEDIA_JFD &&
+          member_size <= ARC_ADFFS_CARRIER_CAPACITY)
+      {
+         adffs_raw = member;
+         adffs_raw_size = member_size;
+         member = NULL;
+      }
+      else if (kept)
+      {
+         free(adffs_raw);
+         adffs_raw = NULL;
+         adffs_raw_size = 0u;
+      }
+      arc_jfd_free(&old->jfd);
+      if (kept != i)
+      {
+         arc_media[kept] = replacement;
+         memset(old, 0, sizeof(*old));
+      }
+      else
+         *old = replacement;
+      ++kept;
+      free(member);
+   }
+   for (unsigned i = kept; i < old_count; ++i)
+      memset(&arc_media[i], 0, sizeof(arc_media[i]));
+   arc_media_count = kept;
+   if (selected)
+   {
+      if (selected_at_end)
+         *selected = kept;
+      else
+      {
+         *selected = 0u;
+         for (unsigned i = 0u; i < kept; ++i)
+            if (!strcmp(arc_media[i].zip_member, selected_member))
+            { *selected = i; break; }
+      }
+   }
+   if (kept != 1u || arc_media[0].info.kind != ARC_MEDIA_JFD)
+   {
+      free(adffs_raw);
+      adffs_raw = NULL;
+      adffs_raw_size = 0u;
+   }
+   arc_zip_adffs_raw_discard();
+   arc_zip_adffs_raw = adffs_raw;
+   arc_zip_adffs_raw_size = adffs_raw_size;
+   arc_zip_free(&archive);
+   free(archive_data);
+   arc_zip_summary(omissions, notices);
+   return true;
+}
+
 static ArcEngineMedia arc_engine_media(const ArcMediaEntry *entry)
 {
    ArcEngineMedia media = {entry->staged,
@@ -1465,7 +1959,13 @@ static void arc_adffs_discard(void) {
    arc_adffs_support = NULL;
    arc_adffs_active = false;
 }
+static void arc_zip_adffs_raw_discard(void) {
+   free(arc_zip_adffs_raw);
+   arc_zip_adffs_raw = NULL;
+   arc_zip_adffs_raw_size = 0u;
+}
 static void arc_jfd_boot_log(const char *reason) {
+   arc_zip_adffs_raw_discard();
    if (arc_log)
       arc_log(RETRO_LOG_INFO, "JFD boot: path=native reason=%s\n", reason);
 }
@@ -1650,7 +2150,7 @@ static bool arc_prepare_adffs(bool notify) {
    void *raw = NULL;
    size_t raw_size = 0;
    size_t declared_size = 0;
-   if (arc_io_file_size(entry->source, &declared_size) &&
+   if (!arc_zip_active && arc_io_file_size(entry->source, &declared_size) &&
        declared_size > ARC_ADFFS_CARRIER_CAPACITY) {
       free(builtin);
       arc_adffs_package_free(package);
@@ -1661,13 +2161,20 @@ static bool arc_prepare_adffs(bool notify) {
       return false;
    }
    bool content_read = true;
+   if (arc_zip_active && arc_zip_adffs_raw) {
+      raw = arc_zip_adffs_raw;
+      raw_size = arc_zip_adffs_raw_size;
+      arc_zip_adffs_raw = NULL;
+      arc_zip_adffs_raw_size = 0u;
+   } else {
 #if defined(ARCDROID_TEST_FAULTS)
-   if (arc_test_fail_adffs_content_read) {
-      arc_test_fail_adffs_content_read = false;
-      content_read = false;
-   } else
+      if (arc_test_fail_adffs_content_read) {
+         arc_test_fail_adffs_content_read = false;
+         content_read = false;
+      } else
 #endif
-      content_read = arc_io_read_all(entry->source, &raw, &raw_size);
+         content_read = arc_io_read_all(entry->source, &raw, &raw_size);
+   }
    if (!content_read) {
       free(builtin);
       arc_adffs_package_free(package);
@@ -1734,6 +2241,7 @@ static bool arc_prepare_adffs(bool notify) {
               package->verified ? package->profile : "untested", package->version);
    arc_adffs_package_free(package);
    free(package);
+   arc_zip_adffs_raw_discard();
    arc_adffs_active = true;
    arc_plan.launch_helper = true;
    arc_plan.launch_target[0] = 0;
@@ -2260,7 +2768,15 @@ static bool arc_disk_replace(unsigned index, const struct retro_game_info *info)
    }
    ArcMediaEntry replacement;
    char error[512] = {0};
-   if (!info->path || !arc_prepare_source(info->path, NULL, arc_plan.disk_writes,
+   char zip_path[ARC_MEDIA_PATH_CAPACITY];
+   char zip_member[256];
+   bool zip = info->path &&
+      arc_zip_content_path(info->path, zip_path, zip_member);
+   if (zip)
+      snprintf(error, sizeof(error),
+               "Zip files cannot be added through disk control; load the zip as content.");
+   if (!info->path || zip ||
+       !arc_prepare_source(info->path, NULL, arc_plan.disk_writes,
                                            true, NULL, &replacement,
                                            error, sizeof(error)))
    {
@@ -3316,9 +3832,9 @@ RETRO_API void retro_get_system_info(struct retro_system_info *info)
    memset(info, 0, sizeof(*info));
    info->library_name = "ArcDroid";
    info->library_version = ARCDROID_VERSION;
-   info->valid_extensions = "adf|adl|jfd|m3u";
+   info->valid_extensions = "adf|adl|jfd|m3u|zip";
    info->need_fullpath = true;
-   info->block_extract = false;
+   info->block_extract = true;
 }
 
 RETRO_API void retro_get_system_av_info(struct retro_system_av_info *info)
@@ -3673,7 +4189,7 @@ static bool arc_load_game(const struct retro_game_info *game, bool negotiate)
    memset(arc_frame, 0, sizeof(arc_frame));
    if (!game || !game->path || !game->path[0])
    {
-      arc_message("ArcDroid requires an ADF, ADL, JFD or m3u playlist.", RETRO_LOG_ERROR);
+      arc_message("ArcDroid requires an ADF, ADL, JFD, m3u playlist or zip.", RETRO_LOG_ERROR);
       return false;
    }
    if (!arc_environment || (negotiate &&
@@ -3925,7 +4441,13 @@ RETRO_API void retro_reset(void)
    torn_down = true;
    if (updated.disk_writes != arc_core_options.disk_writes)
    {
-      if (arc_folder_set_active)
+      if (arc_zip_active)
+      {
+         if (!arc_reprepare_zip_media(updated.disk_writes, &selected,
+                                      error, sizeof(error)))
+            goto failed;
+      }
+      else if (arc_folder_set_active)
       {
          if (!arc_reprepare_folder_media(updated.disk_writes, &selected,
                                          error, sizeof(error)))

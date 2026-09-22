@@ -21,7 +21,7 @@ static bool arc_name_equal(const char *left, size_t left_size,
    return true;
 }
 
-static bool arc_media_extension(const char *name)
+bool arc_media_extension(const char *name)
 {
    const char *dot = name ? strrchr(name, '.') : NULL;
    if (!dot) return false;
@@ -76,13 +76,17 @@ static int arc_natural_primary(const char *left, const char *right)
    return 0;
 }
 
-static int arc_natural_compare(const void *left_pointer, const void *right_pointer)
+int arc_natural_compare(const char *left, const char *right)
 {
-   const char *left = left_pointer;
-   const char *right = right_pointer;
    int primary = arc_natural_primary(left, right);
    if (primary) return primary;
    return strcmp(left, right);
+}
+
+static int arc_natural_qsort_compare(const void *left_pointer,
+                                     const void *right_pointer)
+{
+   return arc_natural_compare(left_pointer, right_pointer);
 }
 
 ArcFolderSetTrigger arc_folder_set_begin(const char *content_path,
@@ -148,7 +152,7 @@ void arc_folder_set_sort(ArcFolderSet *set)
 {
    if (set && set->count > 1u)
       qsort(set->siblings, set->count, sizeof(set->siblings[0]),
-            arc_natural_compare);
+            arc_natural_qsort_compare);
 }
 
 bool arc_folder_set_path(const ArcFolderSet *set, unsigned index,

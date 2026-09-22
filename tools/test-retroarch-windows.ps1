@@ -456,6 +456,10 @@ $disc1 = (Resolve-Path (Join-Path $InputDirectory "arcdroid-media-disc1.adf")).P
 $disc2 = (Resolve-Path (Join-Path $InputDirectory "arcdroid-media-disc2.adf")).Path
 $folderSet = (Resolve-Path (Join-Path $InputDirectory "Qaventra.adf\Qaventra.adf")).Path
 $jfd = (Resolve-Path (Join-Path $InputDirectory "arcdroid-test-two-member.jfd")).Path
+$zipSingle = (Resolve-Path (Join-Path $InputDirectory "zip-content\single.zip")).Path
+$zipMulti = (Resolve-Path (Join-Path $InputDirectory "zip-content\multi.zip")).Path
+$zipSingleHash = (Get-FileHash -Algorithm SHA256 $zipSingle).Hash.ToLowerInvariant()
+$zipMultiHash = (Get-FileHash -Algorithm SHA256 $zipMulti).Hash.ToLowerInvariant()
 
 function Start-MediaRun([string]$MediaPath, [string]$Name) {
     $stdout = Join-Path $WorkDirectory "$Name.stdout.log"
@@ -680,6 +684,57 @@ try {
 }
 Assert-No-LdciRecords "Folder-set run"
 
+function Assert-ZipRunLog($Run, [string]$Context) {
+    if (Select-String -Path $Run.RetroLog -SimpleMatch "Core requires uncompressed content" -Quiet) {
+        throw "${Context}: RetroArch extracted or rejected the archive instead of passing it to ArcDroid; log=$($Run.RetroLog)"
+    }
+    if (-not (Select-String -Path $Run.RetroLog -SimpleMatch "Zip content:" -Quiet)) {
+        $tail = (Get-Content -LiteralPath $Run.RetroLog -Tail 40) -join " | "
+        throw "${Context}: ArcDroid's Zip content summary was absent; log_tail=[$tail]"
+    }
+}
+
+$zipSingleRun = Start-MediaRun $zipSingle "zip-single"
+try {
+    [void](Capture-ExpectedSignature $zipSingleRun "zip-single-disc1" $disc1Signature $false)
+} finally {
+    Stop-MediaRun $zipSingleRun
+}
+Assert-ZipRunLog $zipSingleRun "Single-image zip"
+
+$zipMemberRun = Start-MediaRun "$zipSingle#Disc1.adf" "zip-member"
+try {
+    [void](Capture-ExpectedSignature $zipMemberRun "zip-member-disc1" $disc1Signature $false)
+} finally {
+    Stop-MediaRun $zipMemberRun
+}
+Assert-ZipRunLog $zipMemberRun "zip#member"
+
+$zipMultiRun = Start-MediaRun $zipMulti "zip-multi-disk-control"
+try {
+    [void](Capture-ExpectedSignature $zipMultiRun "zip-multi-disc1" $disc1Signature $false)
+    Send-MediaCommand $zipMultiRun "DISK_EJECT_TOGGLE"
+    [void](Capture-ExpectedSignature $zipMultiRun "zip-multi-ejected" $disc1Signature $false)
+    Send-MediaCommand $zipMultiRun "DISK_NEXT"
+    [void](Capture-ExpectedSignature $zipMultiRun "zip-multi-selected-disc2" $disc1Signature $false)
+    Send-MediaCommand $zipMultiRun "DISK_EJECT_TOGGLE"
+    [void](Capture-ExpectedSignature $zipMultiRun "zip-multi-disc2" $disc2Signature $false)
+} finally {
+    Stop-MediaRun $zipMultiRun
+}
+Assert-ZipRunLog $zipMultiRun "Multi-image zip"
+
+$zipSingleHashAfter = (Get-FileHash -Algorithm SHA256 $zipSingle).Hash.ToLowerInvariant()
+$zipMultiHashAfter = (Get-FileHash -Algorithm SHA256 $zipMulti).Hash.ToLowerInvariant()
+if ($zipSingleHashAfter -ne $zipSingleHash) {
+    throw "Single-image zip changed during native RetroArch runs: before=$zipSingleHash after=$zipSingleHashAfter path=$zipSingle"
+}
+if ($zipMultiHashAfter -ne $zipMultiHash) {
+    throw "Multi-image zip changed during native RetroArch run: before=$zipMultiHash after=$zipMultiHashAfter path=$zipMulti"
+}
+"single_before=$zipSingleHash single_after=$zipSingleHashAfter multi_before=$zipMultiHash multi_after=$zipMultiHashAfter" |
+    Set-Content -Encoding ASCII (Join-Path $evidenceDirectory "zip-sha256.txt")
+
 @{ version = "1.0"; image_index = 1; image_path = $disc2 } |
     ConvertTo-Json | Set-Content -Encoding ASCII $indexRecord
 $seededRecord = [Convert]::ToBase64String([IO.File]::ReadAllBytes($indexRecord))
@@ -711,11 +766,13 @@ try {
 
 Write-Host "Slice 2a Windows RetroArch: disk commands, image-1 relaunch, inert seeded .ldci, and JFD golden region passed"
 Write-Host "Slice 5b Windows RetroArch: folder disc 1 and eject/next/insert matched the playlist disc-2 signature"
+Write-Host "Slice 7a Windows RetroArch: bare single, zip#member, multi-image swap, pass-through logs, and unchanged SHA-256 passed"
 if ($env:GITHUB_STEP_SUMMARY) {
     Add-Content -Encoding UTF8 $env:GITHUB_STEP_SUMMARY "- Slice 2a media: playlist disc 1 observed; eject/next/close observed before successive commands; disc 2 region observed."
     Add-Content -Encoding UTF8 $env:GITHUB_STEP_SUMMARY "- Slice 5b-2 boot image: swap, clean quit and relaunch started on disc 1 without creating an .ldci; a seeded valid disc-2 record was ignored without an initial-disc error and remained byte-identical."
     Add-Content -Encoding UTF8 $env:GITHUB_STEP_SUMMARY "- JFD: generated fixture reached the disc 1 golden result region."
     Add-Content -Encoding UTF8 $env:GITHUB_STEP_SUMMARY "- Slice 5b folder set: selected disc observed; eject/next/insert matched the playlist disc-2 signature."
+    Add-Content -Encoding UTF8 $env:GITHUB_STEP_SUMMARY "- Slice 7a zip: single and zip#member matched unzipped disc 1; multi-image swap matched disc 2; archives remained byte-identical."
 }
 
 # Slice 2b uses the host-test core because the generated firmware is the

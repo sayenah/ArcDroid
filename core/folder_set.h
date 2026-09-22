@@ -39,6 +39,8 @@ ArcFolderSetTrigger arc_folder_set_begin(const char *content_path,
                                          ArcFolderSet *set);
 ArcFolderMemberResult arc_folder_set_add(ArcFolderSet *set, const char *name,
                                          bool regular_file);
+bool arc_media_extension(const char *name);
+int arc_natural_compare(const char *left, const char *right);
 void arc_folder_set_sort(ArcFolderSet *set);
 bool arc_folder_set_path(const ArcFolderSet *set, unsigned index,
                          char path[ARC_MEDIA_PATH_CAPACITY]);
