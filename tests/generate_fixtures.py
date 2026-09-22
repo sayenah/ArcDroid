@@ -946,6 +946,11 @@ def build_zip_content_fixtures(output: Path, disc1: bytes, disc2: bytes,
         "Game/Game.adf", "Game/Game 2.adf"])
     selection_pair("select-folder-isolated", [
         "Extras/Extras.adf", "Root.adf", "Root 2.adf"])
+    selection_pair("select-folder-prefix", ["a/x.adf", "ab/ab.adf"])
+    selection_pair("select-folder-peers", ["aa/aa.adf", "ab/ab.adf"])
+    selection_pair("select-folder-depth", ["a/a.adf", "a/b/c.adf"])
+    selection_pair("select-folder-single", ["Solo.adf/Solo.adf"])
+    selection_pair("select-windows-name", ["Title.adf"])
     selection_pair("select-nested", [
         "outer/Game (Disk 2).adf", "inner/Game (Disk 1).adf", "A.adf"])
     selection_pair("select-32", [f"Image {i:02d}.adf" for i in range(1, 33)])
@@ -955,6 +960,9 @@ def build_zip_content_fixtures(output: Path, disc1: bytes, disc2: bytes,
     (output / "multi.zip").write_bytes(_manual_zip([
         {"name": "multi (Disk 2).adf", "payload": disc2},
         {"name": "multi.adf", "payload": disc1}]))
+    (output / "natural.zip").write_bytes(_manual_zip([
+        {"name": "Alpha.adf", "payload": disc1},
+        {"name": "Beta.adf", "payload": disc2}]))
     (output / "Title.zip").write_bytes(_manual_zip([
         {"name": "Title (Europe) (Disk 2).adf", "payload": disc2},
         {"name": "Title.adf", "payload": disc1}]))
@@ -993,6 +1001,10 @@ def build_zip_content_fixtures(output: Path, disc1: bytes, disc2: bytes,
                      struct.unpack_from("<I", partial_first,
                                         partial_central + 16)[0] ^ 1)
     (output / "partial-first.zip").write_bytes(partial_first)
+    (output / "partial-multiple.zip").write_bytes(_manual_zip([
+        {"name": "Game (Disk 1).adf", "payload": disc1, "crc": 1},
+        {"name": "Broken.adf", "payload": disc2, "crc": 1},
+        {"name": "Survivor.adf", "payload": disc2}]))
     (output / "only-corrupt.zip").write_bytes(_manual_zip([
         {"name": "Disc1.adf", "payload": disc1, "crc": 1}]))
     (output / "no-media.zip").write_bytes(_manual_zip([

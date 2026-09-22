@@ -206,6 +206,21 @@ static void boot_selection(const char *root) {
       "Extras/Extras.adf", "Root 2.adf", "Root.adf"};
   selection_pair(root, "select-folder-isolated", "NoMatch.zip", NULL,
                  ARC_ZIP_RULE_ORDER, 3u, folder_isolated, 3u);
+  static const char *const folder_prefix[] = {"a/x.adf", "ab/ab.adf"};
+  selection_pair(root, "select-folder-prefix", "NoMatch.zip", NULL,
+                 ARC_ZIP_RULE_ORDER, 2u, folder_prefix, 2u);
+  static const char *const folder_peers[] = {"aa/aa.adf", "ab/ab.adf"};
+  selection_pair(root, "select-folder-peers", "NoMatch.zip", NULL,
+                 ARC_ZIP_RULE_ORDER, 2u, folder_peers, 2u);
+  static const char *const folder_depth[] = {"a/a.adf", "a/b/c.adf"};
+  selection_pair(root, "select-folder-depth", "NoMatch.zip", NULL,
+                 ARC_ZIP_RULE_ORDER, 2u, folder_depth, 2u);
+  static const char *const folder_single[] = {"Solo.adf/Solo.adf"};
+  selection_pair(root, "select-folder-single", "NoMatch.zip", NULL,
+                 ARC_ZIP_RULE_FOLDER, 1u, folder_single, 1u);
+  static const char *const windows_name[] = {"Title.adf"};
+  selection_pair(root, "select-windows-name", "C:\\games\\Title.ZIP", NULL,
+                 ARC_ZIP_RULE_NAME, 1u, windows_name, 1u);
   static const char *const nested[] = {
       "inner/Game (Disk 1).adf", "A.adf", "outer/Game (Disk 2).adf"};
   selection_pair(root, "select-nested", "NoMatch.zip", NULL,

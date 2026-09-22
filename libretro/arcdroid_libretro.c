@@ -1314,9 +1314,17 @@ static void arc_zip_summary(unsigned omissions, unsigned notices, bool fallback,
       char skipped[513], started[513], message[1152];
       arc_zip_escape_member(preferred, skipped);
       arc_zip_escape_member(boot, started);
-      snprintf(message, sizeof(message),
-               "Zip preferred image \"%s\" could not be used; started \"%s\" instead.",
-               skipped, started);
+      unsigned other_omissions = omissions ? omissions - 1u : 0u;
+      if (other_omissions || notices)
+         snprintf(message, sizeof(message),
+                  "Zip preferred image \"%s\" could not be used; started \"%s\" instead (%u other image%s omitted, %u media notice%s).",
+                  skipped, started, other_omissions,
+                  other_omissions == 1u ? "" : "s", notices,
+                  notices == 1u ? "" : "s");
+      else
+         snprintf(message, sizeof(message),
+                  "Zip preferred image \"%s\" could not be used; started \"%s\" instead.",
+                  skipped, started);
       arc_message(message, RETRO_LOG_WARN);
       return;
    }
@@ -1364,6 +1372,7 @@ static void arc_zip_log(const char *leaf, unsigned entries, unsigned images,
               leaf, entries, images, prepared, omitted,
               arc_zip_content_rule_name(content->rule), content->candidate_count,
               escaped_preferred, fallback ? "yes" : "no");
+   if (!prepared) return;
    const size_t order_size = 18000u;
    char *order = malloc(order_size);
    if (!order) return;
@@ -1573,7 +1582,7 @@ static bool arc_prepare_zip_content(const char *archive_path,
       arc_media[arc_media_count++] = candidate;
       free(member);
    }
-   bool fallback = preferred_omitted && arc_media_count;
+   bool fallback = preferred_omitted;
    const char *boot_member = arc_media_count ? arc_media[0].zip_member : "";
    arc_zip_log(leaf, archive.count, content.qualifying_count, arc_media_count,
                omissions, &content, preferred_member, boot_member, fallback,

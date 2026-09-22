@@ -3936,7 +3936,8 @@ int main(int argc, char **argv)
                   sizeof(previous_natural_record));
       uint64_t previous_natural_cmos_hash = hash_file(previous_natural_cmos);
 
-      char zip_single[4096], zip_multi[4096], zip_partial[4096];
+      char zip_single[4096], zip_multi[4096], zip_natural[4096];
+      char zip_partial[4096], zip_partial_multiple[4096];
       char zip_only_corrupt[4096], zip_no_media[4096], zip_too_many[4096];
       char zip_unsupported[4096], zip_playlist[4096], zip_member_playlist[4096];
       char zip_single_jfd[4096], zip_two_jfd[4096], zip_replaced[4096];
@@ -3944,7 +3945,10 @@ int main(int argc, char **argv)
       char zip_second_replaced[4096], zip_reset_multi[4096];
       snprintf(zip_single, sizeof(zip_single), "%s/single.zip", argv[15]);
       snprintf(zip_multi, sizeof(zip_multi), "%s/multi.zip", argv[15]);
+      snprintf(zip_natural, sizeof(zip_natural), "%s/natural.zip", argv[15]);
       snprintf(zip_partial, sizeof(zip_partial), "%s/partial-first.zip", argv[15]);
+      snprintf(zip_partial_multiple, sizeof(zip_partial_multiple),
+               "%s/partial-multiple.zip", argv[15]);
       snprintf(zip_only_corrupt, sizeof(zip_only_corrupt), "%s/only-corrupt.zip", argv[15]);
       snprintf(zip_no_media, sizeof(zip_no_media), "%s/no-media.zip", argv[15]);
       snprintf(zip_too_many, sizeof(zip_too_many), "%s/too-many.zip", argv[15]);
@@ -4085,6 +4089,28 @@ int main(int argc, char **argv)
       retro_unload_game();
       assert(hash_file(previous_natural_cmos) == previous_natural_cmos_hash);
 
+      zip_game.path = zip_natural;
+      zip_summaries = zip_summary_log_lines;
+      zip_orders = zip_order_log_lines;
+      phase = PHASE_LOAD; assert(retro_load_game(&zip_game));
+      assert(zip_summary_log_lines == zip_summaries + 1u &&
+             zip_order_log_lines == zip_orders + 1u &&
+             strstr(last_zip_summary,
+                    "rule=order candidates=2 preferred=\"Alpha.adf\" boot=\"Alpha.adf\" fallback=no") &&
+             !strcmp(last_zip_order,
+                     "Zip content order: 1=\"Alpha.adf\" 2=\"Beta.adf\"\n") &&
+             !strcmp(arc_libretro_test_content_id(), standalone_identity.sha1) &&
+             disk_control.get_num_images() == 2u &&
+             disk_control.get_image_path(0u, image_path, sizeof(image_path)) &&
+             strstr(image_path, "natural.zip#Alpha.adf") &&
+             disk_control.get_image_label(0u, image_label, sizeof(image_label)) &&
+             !strcmp(image_label, "Alpha") &&
+             disk_control.get_image_path(1u, image_path, sizeof(image_path)) &&
+             strstr(image_path, "natural.zip#Beta.adf") &&
+             disk_control.get_image_label(1u, image_label, sizeof(image_label)) &&
+             !strcmp(image_label, "Beta"));
+      retro_unload_game();
+
       /* R1-2: zip-reset-selected-plain-slot. A plain disk-control append has
        * no zip_member string, so reset compaction must map its original slot
        * by index instead of matching the first empty string. */
@@ -4115,33 +4141,67 @@ int main(int argc, char **argv)
       unsigned omission_before = zip_omission_log_lines;
       unsigned fallback_messages = zip_fallback_osd_calls;
       unsigned count_messages = zip_summary_osd_calls;
+      zip_orders = zip_order_log_lines;
       zip_game.path = zip_partial;
       phase = PHASE_LOAD; assert(retro_load_game(&zip_game));
+      assert(disk_control.get_num_images() == 1u);
+      assert(zip_omission_log_lines == omission_before + 1u);
+      assert(zip_order_log_lines == zip_orders + 1u);
+      assert(strstr(last_zip_omission, "member=Game \" (Disk 1).adf"));
+      assert(strstr(last_zip_summary,
+                    "prepared=1 omitted=1 rule=disc1 candidates=1 preferred=\"Game \\\" (Disk 1).adf\" boot=\"Disc2.adf\" fallback=yes"));
+      assert(!strcmp(last_zip_order,
+                     "Zip content order: 1=\"Disc2.adf\"\n"));
+      assert(zip_fallback_osd_calls == fallback_messages + 1u);
+      assert(zip_summary_osd_calls == count_messages);
+      assert(!strcmp(last_zip_fallback,
+                     "Zip preferred image \"Game \\\" (Disk 1).adf\" could not be used; started \"Disc2.adf\" instead (0 other images omitted, 1 media notice)."));
+      assert(!strcmp(arc_libretro_test_content_id(),
+                     previous_natural_identity.sha1));
+      retro_unload_game();
+
+      omission_before = zip_omission_log_lines;
+      fallback_messages = zip_fallback_osd_calls;
+      count_messages = zip_summary_osd_calls;
+      zip_orders = zip_order_log_lines;
+      zip_game.path = zip_partial_multiple;
+      phase = PHASE_LOAD; assert(retro_load_game(&zip_game));
       assert(disk_control.get_num_images() == 1u &&
-             zip_omission_log_lines == omission_before + 1u &&
-             strstr(last_zip_omission, "member=Game \" (Disk 1).adf") &&
+             zip_omission_log_lines == omission_before + 2u &&
+             zip_order_log_lines == zip_orders + 1u &&
              strstr(last_zip_summary,
-                    "prepared=1 omitted=1 rule=disc1 candidates=1 preferred=\"Game \\\" (Disk 1).adf\" boot=\"Disc2.adf\" fallback=yes") &&
+                    "prepared=1 omitted=2 rule=disc1 candidates=1 preferred=\"Game (Disk 1).adf\" boot=\"Survivor.adf\" fallback=yes") &&
              !strcmp(last_zip_order,
-                     "Zip content order: 1=\"Disc2.adf\"\n") &&
+                     "Zip content order: 1=\"Survivor.adf\"\n") &&
              zip_fallback_osd_calls == fallback_messages + 1u &&
              zip_summary_osd_calls == count_messages &&
-             strstr(last_zip_fallback, "\"Game \\\" (Disk 1).adf\"") &&
-             strstr(last_zip_fallback, "\"Disc2.adf\"") &&
+             !strcmp(last_zip_fallback,
+                     "Zip preferred image \"Game (Disk 1).adf\" could not be used; started \"Survivor.adf\" instead (1 other image omitted, 1 media notice).") &&
              !strcmp(arc_libretro_test_content_id(),
                      previous_natural_identity.sha1));
       retro_unload_game();
+
+      zip_summaries = zip_summary_log_lines;
+      zip_orders = zip_order_log_lines;
       zip_game.path = zip_only_corrupt;
       phase = PHASE_LOAD; assert(!retro_load_game(&zip_game));
-      assert(strstr(last_message, "No usable disc image in only-corrupt.zip"));
+      assert(strstr(last_message, "No usable disc image in only-corrupt.zip") &&
+             zip_summary_log_lines == zip_summaries + 1u &&
+             zip_order_log_lines == zip_orders &&
+             strstr(last_zip_summary,
+                    "prepared=0 omitted=1 rule=disc1 candidates=1 preferred=\"Disc1.adf\" boot=none fallback=yes"));
+      zip_orders = zip_order_log_lines;
       zip_game.path = zip_no_media;
       phase = PHASE_LOAD; assert(!retro_load_game(&zip_game));
       assert(!strcmp(last_message,
-                     "No supported disc image (adf, adl, jfd) in no-media.zip"));
+                     "No supported disc image (adf, adl, jfd) in no-media.zip") &&
+             zip_order_log_lines == zip_orders);
+      zip_orders = zip_order_log_lines;
       zip_game.path = zip_too_many;
       phase = PHASE_LOAD; assert(!retro_load_game(&zip_game));
       assert(!strcmp(last_message,
-                     "Zip too-many.zip contains more than 32 supported disc images"));
+                     "Zip too-many.zip contains more than 32 supported disc images") &&
+             zip_order_log_lines == zip_orders);
       zip_game.path = zip_unsupported;
       phase = PHASE_LOAD; assert(!retro_load_game(&zip_game));
       assert(!strcmp(last_message,
