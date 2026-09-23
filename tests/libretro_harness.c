@@ -33,6 +33,12 @@
 #define ARCDROID_ADDRESS_SANITIZER 1
 #endif
 
+#define ASSERT_NO_SAVE_RAM()                                                   \
+   do {                                                                        \
+      assert(retro_get_memory_size(RETRO_MEMORY_SAVE_RAM) == 0u);             \
+      assert(retro_get_memory_data(RETRO_MEMORY_SAVE_RAM) == NULL);           \
+   } while (0)
+
 enum Phase { PHASE_NONE, PHASE_ENV, PHASE_INIT, PHASE_LOAD, PHASE_RUN };
 static enum Phase phase;
 static const char *system_dir;
@@ -3340,17 +3346,22 @@ int main(int argc, char **argv)
    option_writes = "shadow";
    option_pointer = "relative";
    phase = PHASE_LOAD; assert(retro_load_game(&game));
+   ASSERT_NO_SAVE_RAM();
    unsigned preserved_count = disk_control.get_num_images();
    unsigned preserved_index = disk_control.get_image_index();
    bool preserved_ejected = disk_control.get_eject_state();
    bool preserved_write_protected = false;
    char preserved_media_digest[41];
+   char preserved_cmos_path[4096];
    uint8_t preserved_cmos_identity[16];
+   uint8_t preserved_cmos_record[ARC_CMOS_RECORD_SIZE];
    assert(arc_engine_test_drive_media(0u, &preserved_write_protected,
                                       preserved_media_digest));
-   assert(retro_get_memory_size(RETRO_MEMORY_SAVE_RAM) == ARC_CMOS_RECORD_SIZE);
-   memcpy(preserved_cmos_identity,
-          retro_get_memory_data(RETRO_MEMORY_SAVE_RAM),
+   snprintf(preserved_cmos_path, sizeof(preserved_cmos_path), "%s",
+            arc_libretro_test_cmos_path());
+   read_exact(preserved_cmos_path, preserved_cmos_record,
+              sizeof(preserved_cmos_record));
+   memcpy(preserved_cmos_identity, preserved_cmos_record,
           sizeof(preserved_cmos_identity));
    unsigned video_before_rejected_reset = video_frames;
    uint64_t audio_before_rejected_reset = audio_frames;
@@ -3362,6 +3373,8 @@ int main(int argc, char **argv)
    for (unsigned frame = 0u; frame < 60u; ++frame) retro_run();
    bool current_write_protected = false;
    char current_media_digest[41];
+   read_exact(preserved_cmos_path, preserved_cmos_record,
+              sizeof(preserved_cmos_record));
    assert(video_frames > video_before_rejected_reset &&
           audio_frames > audio_before_rejected_reset &&
           disk_control.get_num_images() == preserved_count &&
@@ -3371,7 +3384,7 @@ int main(int argc, char **argv)
                                       current_media_digest) &&
           current_write_protected == preserved_write_protected &&
           !strcmp(current_media_digest, preserved_media_digest) &&
-          !memcmp(retro_get_memory_data(RETRO_MEMORY_SAVE_RAM),
+          !memcmp(preserved_cmos_record,
                   preserved_cmos_identity, sizeof(preserved_cmos_identity)));
    option_joystick = "Keyboard";
    phase = PHASE_LOAD; assert(retro_load_game(&game));
@@ -3401,6 +3414,7 @@ int main(int argc, char **argv)
    }
    size_t heap_baseline = 0u;
    size_t heap_maximum_delta = 0u;
+   uint8_t lifecycle_mutation = 0u;
    for (unsigned cycle = 0; cycle < 100u; ++cycle)
    {
       struct retro_game_info playlist_cycle = {media_tests ? argv[6] : argv[3], NULL, 0u, NULL};
@@ -3408,8 +3422,7 @@ int main(int argc, char **argv)
       const struct retro_game_info *cycle_game = !media_tests || cycle % 3u == 0u ? &game :
          (cycle % 3u == 1u ? &playlist_cycle : &jfd_cycle);
       phase = PHASE_LOAD; assert(retro_load_game(cycle_game)); assert(keyboard.callback);
-      assert(retro_get_memory_size(RETRO_MEMORY_SAVE_RAM) == 256u);
-      assert(retro_get_memory_data(RETRO_MEMORY_SAVE_RAM));
+      ASSERT_NO_SAVE_RAM();
       phase = PHASE_RUN;
       option_osk_toggle = cycle & 1u ? "R3" : "L3";
       variable_update = true;
@@ -3418,38 +3431,52 @@ int main(int argc, char **argv)
                                                 RETRO_DEVICE_ID_JOYPAD_L3;
       joypad_buttons[0][lifecycle_toggle] = true; retro_run();
       joypad_buttons[0][lifecycle_toggle] = false; retro_run();
+      char cycle_cmos_file[4096];
+      snprintf(cycle_cmos_file, sizeof(cycle_cmos_file), "%s",
+               arc_libretro_test_cmos_path());
       if (cycle == 0u)
       {
-         memset(retro_get_memory_data(RETRO_MEMORY_SAVE_RAM), 0xa5, 256u);
          uint8_t previous_record[256];
-         memcpy(previous_record, retro_get_memory_data(RETRO_MEMORY_SAVE_RAM), 256u);
+         uint8_t current_record[256];
+         read_exact(cycle_cmos_file, previous_record, sizeof(previous_record));
          unsigned record_changes = 0u;
          unsigned writes_before_frames = cmos_write_opens;
+         lifecycle_mutation = (uint8_t)(previous_record[216u] ^ 0xffu);
+         assert(arc_engine_test_cmos_write(216u, lifecycle_mutation));
          retro_run();
-         assert(memcmp(retro_get_memory_data(RETRO_MEMORY_SAVE_RAM), "ARCCMOS2", 8u) == 0);
-         if (memcmp(previous_record, retro_get_memory_data(RETRO_MEMORY_SAVE_RAM), 256u))
+         read_exact(cycle_cmos_file, current_record, sizeof(current_record));
+         assert(!memcmp(current_record, "ARCCMOS2", 8u) &&
+                current_record[216u] == lifecycle_mutation);
+         if (memcmp(previous_record, current_record, sizeof(previous_record)))
          {
             ++record_changes;
-            memcpy(previous_record, retro_get_memory_data(RETRO_MEMORY_SAVE_RAM), 256u);
+            memcpy(previous_record, current_record, sizeof(previous_record));
          }
          for (unsigned frame = 1u; frame < 100u; ++frame)
          {
             retro_run();
-            if (memcmp(previous_record, retro_get_memory_data(RETRO_MEMORY_SAVE_RAM), 256u))
+            read_exact(cycle_cmos_file, current_record, sizeof(current_record));
+            if (memcmp(previous_record, current_record, sizeof(previous_record)))
             {
                ++record_changes;
-               memcpy(previous_record, retro_get_memory_data(RETRO_MEMORY_SAVE_RAM), 256u);
+               memcpy(previous_record, current_record, sizeof(previous_record));
             }
          }
          assert(cmos_write_opens - writes_before_frames <= record_changes);
-         memcpy(saved_cmos, retro_get_memory_data(RETRO_MEMORY_SAVE_RAM), sizeof(saved_cmos));
       }
       else
       {
+         uint8_t reloaded_cmos[ARC_CMOS_RECORD_SIZE];
+         read_exact(cycle_cmos_file, reloaded_cmos, sizeof(reloaded_cmos));
          if (cycle % 3u == 0u)
-            assert(memcmp(saved_cmos, retro_get_memory_data(RETRO_MEMORY_SAVE_RAM), sizeof(saved_cmos)) == 0);
+         {
+            assert(!memcmp(saved_cmos, reloaded_cmos, sizeof(saved_cmos)));
+            uint8_t reloaded_machine_cmos[ARC_CMOS_MACHINE_SIZE];
+            assert(arc_engine_test_cmos_image(reloaded_machine_cmos) &&
+                   reloaded_machine_cmos[216u] == lifecycle_mutation);
+         }
          else
-            assert(!memcmp(retro_get_memory_data(RETRO_MEMORY_SAVE_RAM), "ARCCMOS2", 8u));
+            assert(!memcmp(reloaded_cmos, "ARCCMOS2", 8u));
          for (unsigned frame = 0; frame < 100u; ++frame) retro_run();
       }
       if (cycle == 0u)
@@ -3460,6 +3487,12 @@ int main(int argc, char **argv)
          assert(sampled_underruns <= 2400u && sampled_overruns == 0u);
       }
       retro_reset(); retro_unload_game();
+      if (cycle == 0u)
+      {
+         read_exact(cycle_cmos_file, saved_cmos, sizeof(saved_cmos));
+         assert(!memcmp(saved_cmos, "ARCCMOS2", 8u) &&
+                saved_cmos[216u] == lifecycle_mutation);
+      }
       assert(open_files == 0u && open_dirs == 0u);
       size_t heap_now = heap_bytes_in_use();
       if (cycle == 0u)
@@ -3891,6 +3924,7 @@ int main(int argc, char **argv)
       struct retro_game_info playlist_member_game = {argv[7], NULL, 0u, NULL};
       last_input_resolution[0] = '\0';
       phase = PHASE_LOAD; assert(retro_load_game(&playlist_member_game));
+      ASSERT_NO_SAVE_RAM();
       assert(strstr(last_input_resolution, "profile=Generic") &&
              strstr(last_input_resolution, "[generic]"));
       ArcDigest standalone_identity = digest_file(argv[7]);
@@ -3908,9 +3942,10 @@ int main(int argc, char **argv)
       assert(arc_engine_test_cmos_write(16u + 42u, 0x5au));
       retro_run();
       uint8_t standalone_cmos_record[ARC_CMOS_RECORD_SIZE];
-      memcpy(standalone_cmos_record,
-             retro_get_memory_data(RETRO_MEMORY_SAVE_RAM),
-             sizeof(standalone_cmos_record));
+      read_exact(standalone_cmos, standalone_cmos_record,
+                 sizeof(standalone_cmos_record));
+      assert(!memcmp(standalone_cmos_record, "ARCCMOS2", 8u) &&
+             standalone_cmos_record[16u + 42u] == 0x5au);
       retro_unload_game();
 
       ArcDigest previous_natural_identity = digest_file(argv[8]);
@@ -3971,6 +4006,7 @@ int main(int argc, char **argv)
       struct retro_game_info zip_game = {zip_single, NULL, 0u, NULL};
       unsigned zip_summaries = zip_summary_log_lines;
       phase = PHASE_LOAD; assert(retro_load_game(&zip_game));
+      ASSERT_NO_SAVE_RAM();
       assert(zip_summary_log_lines == zip_summaries + 1u &&
              strstr(last_zip_summary, "entries=1 images=1 prepared=1 omitted=0") &&
              strstr(last_zip_summary,
@@ -4045,6 +4081,10 @@ int main(int argc, char **argv)
       zip_summaries = zip_summary_log_lines;
       unsigned zip_orders = zip_order_log_lines;
       phase = PHASE_LOAD; assert(retro_load_game(&zip_game));
+      ASSERT_NO_SAVE_RAM();
+      uint8_t zip_cmos_record[ARC_CMOS_RECORD_SIZE];
+      uint8_t zip_machine_cmos[ARC_CMOS_MACHINE_SIZE];
+      read_exact(standalone_cmos, zip_cmos_record, sizeof(zip_cmos_record));
       assert(zip_summary_log_lines == zip_summaries + 1u &&
              zip_order_log_lines == zip_orders + 1u &&
              strstr(last_zip_summary,
@@ -4053,8 +4093,10 @@ int main(int argc, char **argv)
                      "Zip content order: 1=\"multi.adf\" 2=\"multi (Disk 2).adf\"\n") &&
              !strcmp(arc_libretro_test_content_id(), standalone_identity.sha1) &&
              !strcmp(arc_libretro_test_cmos_path(), standalone_cmos) &&
-             ((const uint8_t *)retro_get_memory_data(RETRO_MEMORY_SAVE_RAM))
-                [16u + 42u] == 0x5au &&
+             !memcmp(zip_cmos_record, "ARCCMOS2", 8u) &&
+             zip_cmos_record[16u + 42u] == 0x5au &&
+             arc_engine_test_cmos_image(zip_machine_cmos) &&
+             zip_machine_cmos[16u + 42u] == 0x5au &&
              !strcmp(arc_libretro_test_staged_path(0u), standalone_staged) &&
              !strcmp(arc_libretro_test_staged_path(1u), previous_natural_shadow) &&
              disk_control.get_num_images() == 2u &&
@@ -4272,6 +4314,7 @@ int main(int argc, char **argv)
       option_launch = "auto";
       struct retro_game_info direct_adffs_game = {argv[14], NULL, 0u, NULL};
       phase = PHASE_LOAD; assert(retro_load_game(&direct_adffs_game));
+      ASSERT_NO_SAVE_RAM();
       char direct_jfd_identity[41];
       snprintf(direct_jfd_identity, sizeof(direct_jfd_identity), "%s",
                arc_libretro_test_content_id());
@@ -4548,6 +4591,7 @@ int main(int argc, char **argv)
       unsigned all_messages = total_osd_calls;
       unsigned short_messages = short_warning_osd_calls;
       phase = PHASE_LOAD; assert(retro_load_game(&folder_game));
+      ASSERT_NO_SAVE_RAM();
       assert(!strcmp(arc_libretro_test_content_id(), standalone_identity.sha1));
       assert(folder_set_warning_osd_calls == folder_messages + 1u &&
              folder_set_log_lines == folder_logs + 1u &&
@@ -5056,7 +5100,6 @@ int main(int argc, char **argv)
       uint64_t expected_guest_signature[2];
       uint8_t clean_machine_cmos[ARC_CMOS_MACHINE_SIZE];
       uint8_t chooser_machine_cmos[ARC_CMOS_MACHINE_SIZE];
-      uint8_t clean_cmos_record[ARC_CMOS_RECORD_SIZE];
       uint8_t clean_persisted_cmos[ARC_CMOS_RECORD_SIZE];
       option_writes = "off";
       option_launch_chooser = "remember";
@@ -5072,12 +5115,8 @@ int main(int argc, char **argv)
          read_exact(chooser_helper, expected_helper[choice],
                     ARC_LAUNCH_DISC_SIZE);
          if (!choice)
-         {
             assert(arc_engine_test_cmos_image(clean_machine_cmos));
-            memcpy(clean_cmos_record,
-                   retro_get_memory_data(RETRO_MEMORY_SAVE_RAM),
-                   sizeof(clean_cmos_record));
-         }
+         ASSERT_NO_SAVE_RAM();
          unsigned completed = video_frames - duplicate_video_frames;
          phase = PHASE_RUN;
          for (unsigned frame = 0u; frame < 6u; ++frame) retro_run();
@@ -5146,12 +5185,9 @@ int main(int argc, char **argv)
              !file_exists(chooser_helper) && !file_exists(chooser_cmos));
       retro_run();
 
-      /* Full SAVE_RAM contamination is discarded in favour of the private
-       * prepared seed. Every held input source is gated across confirmation. */
-      uint8_t *chooser_save_ram = retro_get_memory_data(RETRO_MEMORY_SAVE_RAM);
-      assert(chooser_save_ram &&
-             retro_get_memory_size(RETRO_MEMORY_SAVE_RAM) == ARC_CMOS_RECORD_SIZE);
-      memset(chooser_save_ram, 0xa5, ARC_CMOS_RECORD_SIZE);
+      /* No frontend SAVE_RAM surface can contaminate the private prepared
+       * seed. Every held input source is gated across confirmation. */
+      ASSERT_NO_SAVE_RAM();
       arc_platform_test_input_events_reset();
       joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_A] = true;
       joypad_buttons[1][RETRO_DEVICE_ID_JOYPAD_RIGHT] = true;
@@ -5169,9 +5205,8 @@ int main(int argc, char **argv)
              arc_engine_test_cmos_image(chooser_machine_cmos) &&
              !memcmp(chooser_machine_cmos, clean_machine_cmos,
                      sizeof(chooser_machine_cmos)) &&
-             !memcmp(retro_get_memory_data(RETRO_MEMORY_SAVE_RAM),
-                     clean_cmos_record, sizeof(clean_cmos_record)) &&
              file_exists(chooser_choice));
+      ASSERT_NO_SAVE_RAM();
       uint8_t actual_helper[ARC_LAUNCH_DISC_SIZE];
       read_exact(chooser_helper, actual_helper, sizeof(actual_helper));
       assert(!memcmp(actual_helper, expected_helper[0], sizeof(actual_helper)));
@@ -5337,14 +5372,13 @@ int main(int argc, char **argv)
       assert(remove(gate_playlist) == 0);
 
       /* Ask focuses the remembered row. A touch tap chooses the other app;
-       * a partial SAVE_RAM overwrite is isolated in the same way. */
+       * the private CMOS seed remains isolated from frontend persistence. */
       option_launch_chooser = "ask";
       (void)remove(chooser_helper); (void)remove(chooser_cmos);
       phase = PHASE_LOAD; assert(retro_load_game(&chooser_game));
       assert(arc_libretro_test_session_state() == 2u &&
              arc_libretro_test_chooser_focus() == 0u);
-      chooser_save_ram = retro_get_memory_data(RETRO_MEMORY_SAVE_RAM);
-      memset(chooser_save_ram + 7u, 0x3c, 37u);
+      ASSERT_NO_SAVE_RAM();
       phase = PHASE_RUN;
       retro_run();
       pointer_x = (int)((100u * 65535u) / 640u) - 32768;
@@ -5356,13 +5390,21 @@ int main(int argc, char **argv)
       assert(arc_libretro_test_session_state() == 3u &&
              arc_engine_test_cmos_image(chooser_machine_cmos) &&
              !memcmp(chooser_machine_cmos, clean_machine_cmos,
-                     sizeof(chooser_machine_cmos)) &&
-             !memcmp(retro_get_memory_data(RETRO_MEMORY_SAVE_RAM),
-                     clean_cmos_record, sizeof(clean_cmos_record)));
+                     sizeof(chooser_machine_cmos)));
+      ASSERT_NO_SAVE_RAM();
       read_exact(chooser_helper, actual_helper, sizeof(actual_helper));
       assert(!memcmp(actual_helper, expected_helper[1], sizeof(actual_helper)));
       completed = video_frames - duplicate_video_frames;
-      for (unsigned frame = 0u; frame < 520u; ++frame) retro_run();
+      for (unsigned frame = 0u; frame < 520u; ++frame)
+      {
+         retro_run();
+         if (frame == 0u)
+         {
+            read_exact(chooser_cmos, persisted_clean, sizeof(persisted_clean));
+            assert(!memcmp(persisted_clean, clean_persisted_cmos,
+                           sizeof(persisted_clean)));
+         }
+      }
       assert(video_frames - duplicate_video_frames - completed >= 500u &&
              last_video_signature == expected_guest_signature[1]);
       uint8_t remembered_app2[ARC_LAUNCH_CHOICE_MAX_SIZE];
@@ -5611,6 +5653,7 @@ int main(int argc, char **argv)
       assert(unsetenv("ARCDROID_TEST_FAIL_VIDEO_ALLOC") == 0 &&
              arc_libretro_test_session_state() == 4u &&
              strstr(last_message, "video surface"));
+      ASSERT_NO_SAVE_RAM();
       retro_unload_game();
 
       free(expected_helper[0]); free(expected_helper[1]);
@@ -5978,17 +6021,14 @@ int main(int argc, char **argv)
       assert(arc_engine_test_cmos_write(16u + 42u, 0x5au));
       phase = PHASE_RUN;
       retro_run();
-      const uint8_t *launch_save_ram =
-         retro_get_memory_data(RETRO_MEMORY_SAVE_RAM);
-      assert(launch_save_ram && !memcmp(launch_save_ram, "ARCCMOS2", 8u));
-      assert((launch_save_ram[16u + 59u] & 7u) == 0u &&
-             (launch_save_ram[16u + 183u] & 7u) == 1u &&
-             launch_save_ram[16u + 42u] == 0x5au);
       uint8_t launch_cmos_file[ARC_CMOS_RECORD_SIZE];
       read_exact(application_cmos_file, launch_cmos_file,
                  sizeof(launch_cmos_file));
-      assert(!memcmp(launch_cmos_file, launch_save_ram,
-                     sizeof(launch_cmos_file)));
+      assert(!memcmp(launch_cmos_file, "ARCCMOS2", 8u) &&
+             (launch_cmos_file[16u + 59u] & 7u) == 0u &&
+             (launch_cmos_file[16u + 183u] & 7u) == 1u &&
+             launch_cmos_file[16u + 42u] == 0x5au);
+      ASSERT_NO_SAVE_RAM();
 
       /* Eject and replace within the first 200 frontend frames. The helper is
        * retained, hidden from disk control, and no launch decision runs until
@@ -6016,14 +6056,14 @@ int main(int argc, char **argv)
       assert(arc_engine_test_cmos_image(machine_cmos));
       assert((machine_cmos[75] & 7u) == 0u && (machine_cmos[199] & 7u) == 1u);
       retro_unload_game();
-      launch_save_ram = retro_get_memory_data(RETRO_MEMORY_SAVE_RAM);
-      assert(launch_save_ram && (launch_save_ram[16u + 59u] & 7u) == 0u &&
-             (launch_save_ram[16u + 183u] & 7u) == 1u &&
-             launch_save_ram[16u + 42u] == 0x5au);
-      read_exact(application_cmos_file, launch_cmos_file,
-                 sizeof(launch_cmos_file));
-      assert(!memcmp(launch_cmos_file, launch_save_ram,
-                     sizeof(launch_cmos_file)));
+      uint8_t launch_cmos_after_reset[ARC_CMOS_RECORD_SIZE];
+      read_exact(application_cmos_file, launch_cmos_after_reset,
+                 sizeof(launch_cmos_after_reset));
+      assert(!memcmp(launch_cmos_after_reset, "ARCCMOS2", 8u) &&
+             (launch_cmos_after_reset[16u + 59u] & 7u) == 0u &&
+             (launch_cmos_after_reset[16u + 183u] & 7u) == 1u &&
+             launch_cmos_after_reset[16u + 42u] == 0x5au);
+      ASSERT_NO_SAVE_RAM();
 
       /* R-1 diagnostics are emitted once for each omitted sibling during a
        * load. The escaped log rendering must preserve the identity of the

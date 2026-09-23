@@ -4968,8 +4968,8 @@ RETRO_API void retro_run(void)
 }
 
 RETRO_API unsigned retro_get_region(void) { return RETRO_REGION_PAL; }
-RETRO_API void *retro_get_memory_data(unsigned id) { return id == RETRO_MEMORY_SAVE_RAM ? arc_cmos_record : NULL; }
-RETRO_API size_t retro_get_memory_size(unsigned id) { return id == RETRO_MEMORY_SAVE_RAM ? sizeof(arc_cmos_record) : 0u; }
+RETRO_API void *retro_get_memory_data(unsigned id) { (void)id; return NULL; }
+RETRO_API size_t retro_get_memory_size(unsigned id) { (void)id; return 0u; }
 RETRO_API size_t retro_serialize_size(void) { return 0u; }
 RETRO_API bool retro_serialize(void *data, size_t size) { (void)data; (void)size; return false; }
 RETRO_API bool retro_unserialize(const void *data, size_t size) { (void)data; (void)size; return false; }

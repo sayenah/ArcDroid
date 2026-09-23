@@ -69,7 +69,8 @@ bool arc_zip_content_member(const ArcZipEntry *entry) {
     return false;
   if ((entry->version_made >> 8u) == 3u) {
     unsigned mode = entry->external_attributes >> 16u;
-    if (mode && (mode & 0170000u) != 0100000u)
+    unsigned type = mode & 0170000u;
+    if (type && type != 0100000u)
       return false;
   }
   return true;
