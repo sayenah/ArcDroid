@@ -3469,7 +3469,12 @@ int main(int argc, char **argv)
          uint8_t reloaded_cmos[ARC_CMOS_RECORD_SIZE];
          read_exact(cycle_cmos_file, reloaded_cmos, sizeof(reloaded_cmos));
          if (cycle % 3u == 0u)
+         {
             assert(!memcmp(saved_cmos, reloaded_cmos, sizeof(saved_cmos)));
+            uint8_t reloaded_machine_cmos[ARC_CMOS_MACHINE_SIZE];
+            assert(arc_engine_test_cmos_image(reloaded_machine_cmos) &&
+                   reloaded_machine_cmos[216u] == lifecycle_mutation);
+         }
          else
             assert(!memcmp(reloaded_cmos, "ARCCMOS2", 8u));
          for (unsigned frame = 0; frame < 100u; ++frame) retro_run();
@@ -5390,7 +5395,16 @@ int main(int argc, char **argv)
       read_exact(chooser_helper, actual_helper, sizeof(actual_helper));
       assert(!memcmp(actual_helper, expected_helper[1], sizeof(actual_helper)));
       completed = video_frames - duplicate_video_frames;
-      for (unsigned frame = 0u; frame < 520u; ++frame) retro_run();
+      for (unsigned frame = 0u; frame < 520u; ++frame)
+      {
+         retro_run();
+         if (frame == 0u)
+         {
+            read_exact(chooser_cmos, persisted_clean, sizeof(persisted_clean));
+            assert(!memcmp(persisted_clean, clean_persisted_cmos,
+                           sizeof(persisted_clean)));
+         }
+      }
       assert(video_frames - duplicate_video_frames - completed >= 500u &&
              last_video_signature == expected_guest_signature[1]);
       uint8_t remembered_app2[ARC_LAUNCH_CHOICE_MAX_SIZE];
