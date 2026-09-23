@@ -53,7 +53,10 @@ settings matters.
 When scanning content in RetroArch, leave `Scan Inside Archives` off to create
 one playlist entry per zip. With it on, RetroArch creates one entry per member;
 entries naming qualifying image members boot ArcDroid's selected image 1 for
-the zip, while entries naming skipped members are refused.
+the zip. An entry naming something ArcDroid never treats as an image (hidden or
+`__MACOSX` entries, links, directories, or unsupported extensions) is refused.
+If a named image fails preparation but another image survives, the set still
+boots its selected image 1 with a `Zip member omitted` notice.
 
 ArcDroid keeps CMOS only in its write-through file under the configured saves
 directory. `.srm` files created by earlier ArcDroid builds are inert and may be
