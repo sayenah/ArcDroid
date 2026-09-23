@@ -80,6 +80,7 @@ typedef enum {
    ARC_MEDIA_INVALID = 0,
    ARC_MEDIA_ADF_320K,
    ARC_MEDIA_ADF_800K,
+   ARC_MEDIA_ADF_1600K,
    ARC_MEDIA_ADL_640K,
    ARC_MEDIA_ADF_HD_UNSUPPORTED,
    ARC_MEDIA_JFD
@@ -90,7 +91,8 @@ typedef enum {
    ARC_GEOMETRY_320K,
    ARC_GEOMETRY_640K_L,
    ARC_GEOMETRY_800K_D,
-   ARC_GEOMETRY_800K_E
+   ARC_GEOMETRY_800K_E,
+   ARC_GEOMETRY_1600K_F
 } ArcMediaGeometry;
 
 typedef enum {
@@ -180,6 +182,8 @@ typedef struct {
    int target_index;
    ArcLaunchReason reason;
    bool ignored_attribute_bits;
+   bool backup_map_used;
+   bool old_map_clamped;
    char candidate_fingerprint[41];
 } ArcLaunchDiscovery;
 

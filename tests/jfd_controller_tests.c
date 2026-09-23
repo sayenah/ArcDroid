@@ -31,6 +31,8 @@ static bool newio_service_dma;
 static bool newio_dma_write;
 static uint8_t newio_write_value;
 static uint8_t finish_command(uint8_t command, unsigned limit_us);
+static void newio_wait_irq(unsigned limit_us);
+static void newio_result(uint8_t result[7]);
 
 void rpclog(const char *format, ...) { (void)format; }
 void error(const char *format, ...) { (void)format; abort(); }
@@ -53,7 +55,7 @@ void ioc_irqbc(uint8_t value) { ioc.irqb &= (uint8_t)~value; }
 /* A single in-memory helper lets the real raw-drive and WD1772 path prove
  * drive-1 selection without adding a production test hook. */
 struct ArcIoFile { size_t position; bool writable; };
-static uint8_t raw_helper[819200u];
+static uint8_t raw_helper[1638400u];
 static size_t raw_helper_length = ARC_LAUNCH_DISC_SIZE;
 static struct ArcIoFile raw_file;
 ArcIoFile *arc_io_open_file(const char *path, bool writable)
@@ -360,7 +362,7 @@ static void test_rejections(const char *root)
 {
    static const struct { const char *name; const char *reason; } cases[] = {
       {"reject-discop3.jfd", "DiscOp 3"},
-      {"reject-density4.jfd", "quad/octal"},
+      {"reject-density8.jfd", "octal density"},
       {"reject-mixed-time.jfd", "mixes timed"},
       {"reject-untimed-duplicate.jfd", "duplicate"},
       {"reject-long-schedule.jfd", "one revolution"},
@@ -559,6 +561,208 @@ static void newio_start_read(unsigned drive, uint8_t sector, uint8_t size)
    c82c711_fdc_write(5u, 0x06u, NULL);
    for (unsigned i = 0u; i < sizeof(params); ++i)
       c82c711_fdc_write(5u, params[i], NULL);
+}
+
+static void newio_start_id(unsigned side)
+{
+   c82c711_fdc_write(5u, 0x0au, NULL);
+   c82c711_fdc_write(5u, side ? 4u : 0u, NULL);
+}
+
+static unsigned observed_index_pulses;
+static void (*controller_indexpulse)(void *);
+static unsigned observed_notfound_calls;
+static void (*controller_notfound)(void *);
+static fdc_funcs_t *original_controller_funcs;
+static void observed_indexpulse(void *opaque)
+{
+   ++observed_index_pulses;
+   controller_indexpulse(opaque);
+}
+static void observe_indexes(fdc_funcs_t *copy)
+{
+   original_controller_funcs = fdc_funcs;
+   *copy = *fdc_funcs;
+   controller_indexpulse = copy->indexpulse;
+   copy->indexpulse = observed_indexpulse;
+   fdc_funcs = copy;
+   observed_index_pulses = 0u;
+}
+
+static void observed_notfound(void *opaque)
+{
+   ++observed_notfound_calls;
+   controller_notfound(opaque);
+}
+
+static void observe_notfound(fdc_funcs_t *copy)
+{
+   original_controller_funcs = fdc_funcs;
+   *copy = *fdc_funcs;
+   controller_notfound = copy->notfound;
+   copy->notfound = observed_notfound;
+   fdc_funcs = copy;
+   observed_notfound_calls = 0u;
+}
+
+static void test_82c711_quad(const char *root)
+{
+   uint8_t result[7];
+   ArcJfdImage image = load_image(root, "quad-data.jfd");
+   newio_reset(&image, false);
+   c82c711_fdc_write(7u, 0u, NULL);
+   newio_start_id(0u);
+   newio_wait_irq(400000u);
+   newio_result(result);
+   assert(result[0] == 0u && result[3] == 0u && result[4] == 0u &&
+          result[5] == 3u && result[6] == 3u);
+   transfer_count = 0u;
+   newio_transfer_limit = 1024u;
+   newio_service_dma = true;
+   newio_start_read(0u, 3u, 3u);
+   newio_wait_irq(400000u);
+   newio_result(result);
+   assert(!(result[0] & 0xc0u) && transfer_count == 1024u &&
+          transfer[0] == 0x5au && transfer[1023] == 0x5au);
+   c82c711_fdc_shutdown();
+   disc_close(0);
+   arc_jfd_free(&image);
+
+   image = load_image(root, "quad-id-only.jfd");
+   newio_reset(&image, false);
+   c82c711_fdc_write(7u, 0u, NULL);
+   newio_start_id(0u);
+   newio_wait_irq(400000u);
+   newio_result(result);
+   assert(result[5] == 3u);
+   fdc_funcs_t observed;
+   observe_indexes(&observed);
+   newio_start_read(0u, 3u, 0u);
+   while (observed_index_pulses < 1u) step_controller();
+   assert(!(ioc.irqb & IOC_IRQB_DISC_IRQ));
+   while (observed_index_pulses < 2u) step_controller();
+   assert(ioc.irqb & IOC_IRQB_DISC_IRQ);
+   (void)c82c711_fdc_read(4u, NULL);
+   newio_result(result);
+   assert((result[0] & 0x40u) && result[1] == 5u && result[2] == 0u);
+   run_us(250000u);
+   assert(!(ioc.irqb & IOC_IRQB_DISC_IRQ));
+   fdc_funcs = original_controller_funcs;
+   c82c711_fdc_shutdown();
+   disc_close(0);
+   arc_jfd_free(&image);
+}
+
+static void test_82c711_jfd_search_failures(const char *root)
+{
+   ArcJfdImage image = load_image(root, "quad-data.jfd");
+   for (unsigned failure = 0u; failure < 5u; ++failure)
+   {
+      newio_reset(&image, false);
+      c82c711_fdc_write(7u, failure == 0u ? 1u : failure == 1u ? 3u : 0u,
+                        NULL);
+      fdc_funcs_t observed;
+      observe_indexes(&observed);
+      if (failure == 3u) image.tracks[0].sector_count = 0u;
+      if (failure == 4u) image.track_count = 1u;
+      if (failure == 4u) newio_start_id(1u);
+      else newio_start_read(0u, failure == 2u ? 99u : 3u, 3u);
+      while (observed_index_pulses < 1u) step_controller();
+      assert(!(ioc.irqb & IOC_IRQB_DISC_IRQ));
+      while (observed_index_pulses < 2u) step_controller();
+      assert(ioc.irqb & IOC_IRQB_DISC_IRQ);
+      (void)c82c711_fdc_read(4u, NULL);
+      uint8_t result[7];
+      newio_result(result);
+      assert((result[0] & 0x40u) && result[1] == 5u && result[2] == 0u);
+      run_us(250000u);
+      assert(!(ioc.irqb & IOC_IRQB_DISC_IRQ));
+      fdc_funcs = original_controller_funcs;
+      image.tracks[0].sector_count = 1u;
+      image.track_count = 2u;
+      c82c711_fdc_shutdown();
+      disc_close(0);
+   }
+   arc_jfd_free(&image);
+
+   image = load_image(root, "size-0.jfd");
+   newio_reset(&image, false);
+   newio_start_id(0u);
+   newio_wait_irq(400000u);
+   uint8_t result[7];
+   newio_result(result);
+   assert(!(result[0] & 0xc0u) && result[5] == 0u && result[6] == 0u);
+   c82c711_fdc_shutdown();
+   disc_close(0);
+   arc_jfd_free(&image);
+
+   image = load_image(root, "quad-data.jfd");
+   newio_reset(&image, false);
+   c82c711_fdc_write(7u, 1u, NULL); /* unmatched DD search */
+   newio_start_read(0u, 3u, 3u);
+   run_us(100000u);
+   assert(!(ioc.irqb & IOC_IRQB_DISC_IRQ));
+   c82c711_fdc_media_change(0u);
+   assert(ioc.irqb & IOC_IRQB_DISC_IRQ);
+   (void)c82c711_fdc_read(4u, NULL);
+   newio_result(result);
+   assert((result[0] & 0x40u) && result[1] == 0x04u);
+   run_us(500000u);
+   assert(!(ioc.irqb & IOC_IRQB_DISC_IRQ));
+   c82c711_fdc_shutdown();
+   disc_close(0);
+   arc_jfd_free(&image);
+
+   image = load_image(root, "quad-id-crc.jfd");
+   newio_reset(&image, false);
+   c82c711_fdc_write(7u, 0u, NULL);
+   newio_start_id(0u);
+   newio_wait_irq(400000u);
+   newio_result(result);
+   assert((result[0] & 0x40u) && result[1] == 0x20u);
+   c82c711_fdc_shutdown();
+   disc_close(0);
+   arc_jfd_free(&image);
+
+   image = load_image(root, "quad-data-crc.jfd");
+   newio_reset(&image, false);
+   c82c711_fdc_write(7u, 0u, NULL);
+   transfer_count = 0u;
+   newio_transfer_limit = 1024u;
+   newio_service_dma = true;
+   newio_start_read(0u, 3u, 3u);
+   newio_wait_irq(400000u);
+   newio_result(result);
+   assert((result[0] & 0x40u) && result[1] == 0x20u &&
+          result[2] == 0x20u && transfer_count == 1024u);
+   c82c711_fdc_shutdown();
+   disc_close(0);
+   arc_jfd_free(&image);
+}
+
+static void test_82c711_search_cancellation(const char *root)
+{
+   ArcJfdImage image = load_image(root, "quad-data.jfd");
+   for (unsigned reset = 0u; reset < 2u; ++reset)
+   {
+      newio_reset(&image, false);
+      c82c711_fdc_write(7u, 1u, NULL); /* DD cannot match the HD sector. */
+      fdc_funcs_t observed;
+      observe_notfound(&observed);
+      newio_start_read(0u, 3u, 3u);
+      run_us(100000u);
+      assert(observed_notfound_calls == 0u);
+      if (reset)
+         c82c711_fdc_write(4u, 0x80u, NULL); /* controller reset */
+      else
+         disc_stop(0); /* command cancellation */
+      run_us(500000u);
+      assert(observed_notfound_calls == 0u);
+      fdc_funcs = original_controller_funcs;
+      c82c711_fdc_shutdown();
+      disc_close(0);
+   }
+   arc_jfd_free(&image);
 }
 
 static void newio_start_write(unsigned drive, uint8_t sector, uint8_t size)
@@ -769,13 +973,16 @@ static void test_82c711_raw_geometries(void)
    } cases[] = {
       {ARC_GEOMETRY_320K, 327680u, 1u, 256u},
       {ARC_GEOMETRY_640K_L, 655360u, 1u, 256u},
-      {ARC_GEOMETRY_800K_E, 819200u, 3u, 1024u}
+      {ARC_GEOMETRY_800K_E, 819200u, 3u, 1024u},
+      {ARC_GEOMETRY_1600K_F, 1638400u, 3u, 1024u}
    };
    for (unsigned index = 0u; index < sizeof(cases) / sizeof(cases[0]); ++index)
    {
       memset(raw_helper, (int)(0x40u + index), cases[index].image_size);
       raw_helper_length = cases[index].image_size;
       newio_reset(NULL, false);
+      if (cases[index].geometry == ARC_GEOMETRY_1600K_F)
+         c82c711_fdc_write(7u, 0u, NULL);
       adf_set_writable(0, 0);
       assert(disc_load_raw(0, "memory-helper.adl", cases[index].geometry));
       transfer_count = 0u;
@@ -791,6 +998,37 @@ static void test_82c711_raw_geometries(void)
       c82c711_fdc_shutdown();
       disc_close(0);
    }
+   raw_helper_length = ARC_LAUNCH_DISC_SIZE;
+}
+
+static void test_raw_index_cadence(void)
+{
+   raw_helper_length = 1638400u;
+   newio_reset(NULL, false);
+   assert(disc_load_raw(0, "memory-helper.adl", ARC_GEOMETRY_1600K_F));
+   fdc_funcs_t observed;
+   observe_indexes(&observed);
+   for (unsigned density = 1u; density <= 3u; ++density)
+   {
+      disc_set_density((int)density);
+      unsigned period = disc_poll_period_us();
+      observed_index_pulses = 0u;
+      for (unsigned i = 0u; i < 200000u / period; ++i)
+         drive_funcs[0]->poll();
+      assert(observed_index_pulses == 1u);
+   }
+   disc_set_density(1);
+   observed_index_pulses = 0u;
+   for (unsigned i = 0u; i < 100000u / 32u; ++i)
+      drive_funcs[0]->poll();
+   assert(observed_index_pulses == 0u);
+   disc_set_density(2);
+   for (unsigned i = 0u; i < 100000u / 16u; ++i)
+      drive_funcs[0]->poll();
+   assert(observed_index_pulses == 1u);
+   fdc_funcs = original_controller_funcs;
+   c82c711_fdc_shutdown();
+   disc_close(0);
    raw_helper_length = ARC_LAUNCH_DISC_SIZE;
 }
 
@@ -825,7 +1063,11 @@ int main(int argc, char **argv)
    {
       test_82c711_hardening();
       test_82c711_golden(argv[1]);
+      test_82c711_quad(argv[1]);
+      test_82c711_jfd_search_failures(argv[1]);
+      test_82c711_search_cancellation(argv[1]);
       test_82c711_raw_geometries();
+      test_raw_index_cadence();
    }
    puts("jfd_controller_tests: all checks passed");
    return 0;

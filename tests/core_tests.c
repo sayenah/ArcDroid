@@ -160,8 +160,10 @@ static void test_media_launch_and_cmos(void)
    assert(arc_media_inspect("disc.adl", raw, 655360u, &media, error, sizeof(error)) && media.kind == ARC_MEDIA_ADL_640K);
    assert(arc_media_inspect("size-first.adl", raw, 819200u, &media, error, sizeof(error)) && media.kind == ARC_MEDIA_ADF_800K);
    assert(arc_media_inspect("size-first.adf", raw, 655360u, &media, error, sizeof(error)) && media.kind == ARC_MEDIA_ADL_640K);
-   assert(!arc_media_inspect("disc.adf", raw, 1638400u, &media, error, sizeof(error)));
-   assert(strstr(error, "high-density"));
+   assert(arc_media_inspect("disc.adf", raw, 1638400u, &media, error, sizeof(error)));
+   assert(media.geometry == ARC_GEOMETRY_1600K_F &&
+          media.kind == ARC_MEDIA_ADF_1600K &&
+          media.recognition == ARC_MEDIA_RECOGNITION_SIZE_FALLBACK);
    assert(!arc_media_inspect("disc.adf", raw, 42u, &media, error, sizeof(error)));
    free(raw);
 
@@ -1560,12 +1562,14 @@ static void test_short_media_policy(void)
                             &media, error, sizeof(error)));
    assert(arc_media_inspect("e.adf", image, 819200u - 10240u,
                             &media, error, sizeof(error)));
+   assert(arc_media_inspect("e.adf", image, 819200u - 20480u,
+                            &media, error, sizeof(error)));
    assert(!arc_media_inspect("e.adf", image, 819200u - 256u,
                              &media, error, sizeof(error)));
    assert(strstr(error, "sector-aligned"));
    assert(!arc_media_inspect("e.adf", image, 819200u - 10241u,
                              &media, error, sizeof(error)));
-   assert(!arc_media_inspect("e.adf", image, 819200u - 11264u,
+   assert(!arc_media_inspect("e.adf", image, 819200u - 21504u,
                              &media, error, sizeof(error)));
 
    image[0] ^= 1u;
@@ -1584,9 +1588,9 @@ static void test_short_media_policy(void)
    } old_cases[] = {
       {327680u, 1280u, 256u, 4096u, ARC_GEOMETRY_320K},
       {655360u, 2560u, 256u, 8192u, ARC_GEOMETRY_640K_L},
-      {819200u, 12u, 1024u, 10240u, ARC_GEOMETRY_800K_D},
-      {819200u, 3180u, 1024u, 10240u, ARC_GEOMETRY_800K_D},
-      {819200u, 3200u, 1024u, 10240u, ARC_GEOMETRY_800K_D},
+      {819200u, 12u, 1024u, 20480u, ARC_GEOMETRY_800K_D},
+      {819200u, 3180u, 1024u, 20480u, ARC_GEOMETRY_800K_D},
+      {819200u, 3200u, 1024u, 20480u, ARC_GEOMETRY_800K_D},
    };
    for (size_t i = 0u; i < sizeof(old_cases) / sizeof(old_cases[0]); ++i)
    {
@@ -1953,8 +1957,8 @@ static void test_jfd_parser(const char *fixture_directory)
    uint8_t rejected[452];
    memcpy(rejected, plain, sizeof(rejected)); store_u32(rejected + 36u, 4u);
    assert(!arc_jfd_parse(rejected, sizeof(rejected), &parsed, error, sizeof(error)) && strstr(error, "delta"));
-   memcpy(rejected, plain, sizeof(rejected)); store_u32(rejected + 312u, 4u << 16u);
-   assert(!arc_jfd_parse(rejected, sizeof(rejected), &parsed, error, sizeof(error)) && strstr(error, "quad/octal"));
+   memcpy(rejected, plain, sizeof(rejected)); store_u32(rejected + 312u, 8u << 16u);
+   assert(!arc_jfd_parse(rejected, sizeof(rejected), &parsed, error, sizeof(error)) && strstr(error, "octal density"));
    memcpy(rejected, plain, sizeof(rejected)); store_u32(rejected + 312u, (1u << 20u) | (1u << 16u));
    assert(!arc_jfd_parse(rejected, sizeof(rejected), &parsed, error, sizeof(error)) && strstr(error, "DiscOp 3"));
    memcpy(rejected, plain, sizeof(rejected)); store_u32(rejected + 320u, 0u);
@@ -3000,6 +3004,129 @@ static void test_osk(void)
    free(notice);
 }
 
+static void test_f_media(const char *directory)
+{
+   char error[256] = {0};
+   ArcMediaInfo media;
+   ArcLaunchDiscovery discovery;
+   for (unsigned choice = 0u; choice < 2u; ++choice)
+   {
+      size_t size;
+      uint8_t *image = read_fixture(directory,
+         choice ? "hd-family/backup-f.adf" : "hd-family/valid-f.adf", &size);
+      assert(size == 1638400u);
+      assert(arc_media_inspect("f.adf", image, size, &media, error, sizeof(error)));
+      assert(media.kind == ARC_MEDIA_ADF_1600K &&
+             media.geometry == ARC_GEOMETRY_1600K_F &&
+             media.recognition == ARC_MEDIA_RECOGNITION_DESCRIPTOR);
+      assert(arc_launch_discover(image, size, &media, NULL, &discovery));
+      if (!discovery.readable || discovery.application_count != 1u)
+         fprintf(stderr, "F discovery %u: readable=%d candidates=%u applications=%u reason=%s\n",
+            choice, discovery.readable, discovery.candidate_count,
+            discovery.application_count, arc_launch_reason_name(discovery.reason));
+      assert(discovery.readable && discovery.application_count == 1u &&
+             discovery.target_index == 0 &&
+             discovery.backup_map_used == (choice != 0u));
+      free(image);
+   }
+   for (unsigned case_index = 0u; case_index < 2u; ++case_index)
+   {
+      size_t size;
+      uint8_t *image = read_fixture(directory, case_index ?
+         "hd-family/long-f.adf" : "hd-family/short-f.adf", &size);
+      assert(!arc_media_inspect("bad-f.adf", image, size,
+                                &media, error, sizeof(error)));
+      assert(strstr(error, "unsupported raw image geometry"));
+      free(image);
+   }
+   size_t size;
+   uint8_t *jfd_bytes = read_fixture(directory, "hd-family/valid-f.jfd", &size);
+   ArcJfdImage jfd;
+   assert(arc_jfd_parse_owned(jfd_bytes, size, &jfd, error, sizeof(error)));
+   assert(arc_launch_discover(NULL, 0u, NULL, &jfd, &discovery));
+   assert(discovery.readable && discovery.application_count == 1u &&
+          discovery.target_index == 0);
+   arc_jfd_free(&jfd);
+   static const struct {
+      const char *name;
+      unsigned count;
+      unsigned density;
+      unsigned time_us;
+      unsigned flags;
+      bool id_only;
+   } quad_cases[] = {
+      {"quad-data.jfd", 1u, 4u, 0u, 0u, false},
+      {"quad-timed.jfd", 1u, 4u, 17000u, 0u, false},
+      {"quad-id-only.jfd", 1u, 4u, 0u, 0u, true},
+      {"quad-id-crc.jfd", 1u, 4u, 0u, ARC_JFD_ID_CRC_BAD, false},
+      {"quad-data-crc.jfd", 1u, 4u, 0u, ARC_JFD_DATA_CRC_BAD, false},
+      {"mixed-density.jfd", 2u, 2u, 0u, 0u, false}
+   };
+   for (size_t i = 0u; i < sizeof(quad_cases) / sizeof(quad_cases[0]); ++i)
+   {
+      char path[128];
+      snprintf(path, sizeof(path), "jfd-family/%s", quad_cases[i].name);
+      jfd_bytes = read_fixture(directory, path, &size);
+      assert(arc_jfd_parse_owned(jfd_bytes, size, &jfd, error, sizeof(error)));
+      assert(jfd.sector_count == quad_cases[i].count &&
+             jfd.sectors[0].density == quad_cases[i].density &&
+             jfd.sectors[0].time_us == quad_cases[i].time_us &&
+             jfd.sectors[0].flags == quad_cases[i].flags &&
+             (jfd.sectors[0].data_offset == UINT32_MAX) == quad_cases[i].id_only);
+      if (i == 5u)
+         assert(jfd.sectors[1].density == 4u &&
+                jfd.sectors[1].time_us == 7680u);
+      arc_jfd_free(&jfd);
+   }
+   for (unsigned case_index = 0u; case_index < 2u; ++case_index)
+   {
+      jfd_bytes = read_fixture(directory, case_index ?
+         "hd-family/unreadable-primary-f.jfd" : "hd-family/backup-f.jfd", &size);
+      assert(arc_jfd_parse_owned(jfd_bytes, size, &jfd, error, sizeof(error)));
+      assert(arc_launch_discover(NULL, 0u, NULL, &jfd, &discovery));
+      assert(discovery.readable && discovery.backup_map_used &&
+             discovery.application_count == 1u);
+      arc_jfd_free(&jfd);
+   }
+   uint8_t *old = read_fixture(directory,
+      "hd-family/old-overdeclared-d.adf", &size);
+   assert(arc_media_inspect("old.adf", old, size, &media, error, sizeof(error)));
+   assert(arc_launch_discover(old, size, &media, NULL, &discovery));
+   assert(discovery.readable && discovery.old_map_clamped &&
+          discovery.application_count == 1u);
+   free(old);
+   jfd_bytes = read_fixture(directory, "hd-family/old-overdeclared-d.jfd", &size);
+   assert(arc_jfd_parse_owned(jfd_bytes, size, &jfd, error, sizeof(error)));
+   assert(arc_launch_discover(NULL, 0u, NULL, &jfd, &discovery));
+   assert(discovery.readable && discovery.old_map_clamped &&
+          discovery.application_count == 1u);
+   arc_jfd_free(&jfd);
+   jfd_bytes = read_fixture(directory, "hd-family/old-overdeclared-hole-d.jfd", &size);
+   assert(arc_jfd_parse_owned(jfd_bytes, size, &jfd, error, sizeof(error)));
+   assert(arc_launch_discover(NULL, 0u, NULL, &jfd, &discovery));
+   assert(!discovery.readable && discovery.old_map_clamped);
+   arc_jfd_free(&jfd);
+   const char *bad[] = {"corrupt-both-f.adf", "invalid-zones-f.adf",
+                        "invalid-free-f.adf", "invalid-id-f.adf",
+                        "invalid-cross-f.adf"};
+   for (size_t i = 0u; i < sizeof(bad) / sizeof(bad[0]); ++i)
+   {
+      char path[128];
+      snprintf(path, sizeof(path), "hd-family/%s", bad[i]);
+      uint8_t *image = read_fixture(directory, path, &size);
+      assert(arc_media_inspect(path, image, size, &media, error, sizeof(error)));
+      assert(arc_launch_discover(image, size, &media, NULL, &discovery));
+      if (discovery.readable) fprintf(stderr, "unexpected readable F fixture: %s\n", bad[i]);
+      assert(!discovery.readable);
+      free(image);
+   }
+   jfd_bytes = read_fixture(directory, "hd-family/sparse-map-holes-f.jfd", &size);
+   assert(arc_jfd_parse_owned(jfd_bytes, size, &jfd, error, sizeof(error)));
+   assert(arc_launch_discover(NULL, 0u, NULL, &jfd, &discovery));
+   assert(!discovery.readable);
+   arc_jfd_free(&jfd);
+}
+
 int main(int argc, char **argv)
 {
    assert(argc == 2);
@@ -3010,6 +3137,7 @@ int main(int argc, char **argv)
    test_launch_bindings();
    test_launch_choices_and_chooser();
    test_launch_discovery_and_builder(argv[1]);
+   test_f_media(argv[1]);
    test_adfs_recognition();
    test_short_media_policy();
    test_playlists();

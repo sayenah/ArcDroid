@@ -12,6 +12,8 @@ disc_funcs_t *drive_funcs[4];
 fdc_funcs_t *fdc_funcs;
 void *fdc_p;
 int writeprot[4];
+static unsigned test_period_us = 32u;
+unsigned disc_poll_period_us(void) { return test_period_us; }
 
 static unsigned data_count, finish_count, notfound_count, data_crc_count;
 static unsigned header_crc_count, write_protect_count, index_count;
@@ -47,7 +49,7 @@ static void on_index(void *opaque) { (void)opaque; ++index_count; }
 
 static fdc_funcs_t callbacks = {
    on_data, on_void, on_finish, on_notfound, on_data_crc, on_header_crc,
-   on_write_protect, on_get_data, on_sector_id, on_index
+   on_write_protect, on_get_data, NULL, on_index
 };
 
 static void reset_results(void)
@@ -179,12 +181,39 @@ static void test_rotation_and_search(void)
    drive_funcs[0]->close(0);
 }
 
+static void test_index_cadence(void)
+{
+   uint8_t decoded[2048] = {0};
+   ArcJfdSector sector = {0u, 0u, 128u, 0u, 2u, 0u};
+   ArcJfdImage image = make_image(decoded, &sector, 1u);
+   assert(jfd_load(0, &image));
+   for (unsigned period = 32u; period >= 8u; period /= 2u)
+   {
+      test_period_us = period;
+      jfd_motor_start();
+      reset_results();
+      poll_count(200000u / period);
+      assert(index_count == 1u);
+   }
+   test_period_us = 32u;
+   jfd_motor_start();
+   reset_results();
+   poll_count(100000u / 32u);
+   assert(index_count == 0u);
+   test_period_us = 16u;
+   poll_count(100000u / 16u);
+   assert(index_count == 1u);
+   drive_funcs[0]->close(0);
+   test_period_us = 32u;
+}
+
 int main(void)
 {
    fdc_funcs = &callbacks;
    jfd_init();
    test_transfer_results();
    test_rotation_and_search();
+   test_index_cadence();
    puts("jfd_reader_tests: all checks passed");
    return 0;
 }

@@ -70,6 +70,9 @@ static bool av_rate_changed_during_measure;
 static unsigned measured_oracle_mode;
 static bool measured_oracle_valid;
 static char last_message[512];
+static char machine_resolution_log[128];
+static unsigned riscpc_log_count;
+static unsigned riscpc_osd_count;
 static unsigned vidc_osd_ext_calls;
 static unsigned vidc_osd_legacy_calls;
 static unsigned vidc_info_log_lines;
@@ -369,6 +372,10 @@ static void frontend_log(enum retro_log_level level, const char *format, ...)
    va_start(arguments, format);
    vsnprintf(message, sizeof(message), format, arguments);
    va_end(arguments);
+   if (!strncmp(message, "Machine: requested=", 19u))
+      snprintf(machine_resolution_log, sizeof(machine_resolution_log), "%s", message);
+   if (strstr(message, "flagged for RiscPC-class machines"))
+      ++riscpc_log_count;
    if (strstr(message, "ArcFixture") || strstr(message, "ArcDroid synthetic ADFFS"))
       adffs_log_leak = true;
    if (strstr(message, "VIDC"))
@@ -725,6 +732,8 @@ static bool environment(unsigned command, void *data)
       case RETRO_ENVIRONMENT_SET_MESSAGE_EXT:
          ++total_osd_calls;
          snprintf(last_message, sizeof(last_message), "%s", ((struct retro_message_ext *)data)->msg);
+         if (strstr(last_message, "flagged for RiscPC-class machines"))
+            ++riscpc_osd_count;
          if (strstr(last_message, "ADFFS boot unavailable") ||
              strstr(last_message, "JASPP boot script") ||
              strstr(last_message, "may boot better with ADFFS"))
@@ -763,6 +772,8 @@ static bool environment(unsigned command, void *data)
       case RETRO_ENVIRONMENT_SET_MESSAGE:
          ++total_osd_calls;
          snprintf(last_message, sizeof(last_message), "%s", ((struct retro_message *)data)->msg);
+         if (strstr(last_message, "flagged for RiscPC-class machines"))
+            ++riscpc_osd_count;
          if (strstr(last_message, "ADFFS boot unavailable") ||
              strstr(last_message, "JASPP boot script") ||
              strstr(last_message, "may boot better with ADFFS"))
@@ -1069,6 +1080,21 @@ static uint32_t hash_file_prefix(const char *path, size_t size)
 {
    FILE *file = fopen(path, "rb");
    assert(file);
+   uint32_t hash = UINT32_C(2166136261);
+   for (size_t index = 0u; index < size; ++index)
+   {
+      int byte = fgetc(file);
+      assert(byte != EOF);
+      hash = (hash ^ (uint8_t)byte) * UINT32_C(16777619);
+   }
+   assert(!fclose(file));
+   return hash;
+}
+
+static uint32_t hash_file_segment(const char *path, size_t offset, size_t size)
+{
+   FILE *file = fopen(path, "rb");
+   assert(file && fseek(file, (long)offset, SEEK_SET) == 0);
    uint32_t hash = UINT32_C(2166136261);
    for (size_t index = 0u; index < size; ++index)
    {
@@ -1422,7 +1448,7 @@ int main(int argc, char **argv)
    bool real_boot = false;
    bool newio_smoke = false;
    const char *osk_script = NULL;
-   if (argc == 10 && !strcmp(argv[5], "--newio-smoke"))
+   if (argc == 11 && !strcmp(argv[5], "--newio-smoke"))
       newio_smoke = true;
    else if (argc >= 6 && !strcmp(argv[5], "--real-boot"))
    {
@@ -2103,6 +2129,168 @@ int main(int argc, char **argv)
       retro_unload_game();
       option_launch = "auto";
 
+      /* F media selects A3020 after the whole media list is prepared. */
+      struct retro_game_info f_game = {argv[10], NULL, 0u, NULL};
+      option_machine = "Auto";
+      option_cpu = "Auto";
+      option_joystick = "Keyboard";
+      option_launch = "off";
+      phase = PHASE_LOAD;
+      assert(retro_load_game(&f_game));
+      assert(strstr(machine_resolution_log,
+                    "requested=Auto resolved=A3020 reason=hd-media"));
+      phase = PHASE_RUN;
+      for (unsigned frame = 0u; frame < 60u; ++frame) retro_run();
+      option_machine = "A3000";
+      variable_update = true;
+      retro_run();
+      assert(arc_engine_test_newio(NULL, NULL, NULL, NULL, &transition_id) &&
+             transition_id == 0x05u);
+      option_machine = "Auto";
+      variable_update = true;
+      retro_run();
+      assert(arc_engine_test_newio_read_start(0u, 3u));
+      uint32_t f_signature = 0u;
+      assert(arc_engine_test_newio_read_finish(1024u, &f_signature,
+                                               media_result) &&
+             !(media_result[0] & 0xc0u) &&
+             f_signature == hash_file_segment(argv[10], 3u * 1024u, 1024u));
+      retro_reset();
+      assert(arc_engine_test_newio(NULL, NULL, NULL, NULL, &transition_id) &&
+             transition_id == 0x05u);
+      retro_unload_game();
+      option_machine = "A3000";
+      phase = PHASE_LOAD;
+      assert(!retro_load_game(&f_game) &&
+             strstr(last_message, "High-density media requires A3010, A3020 or A4000"));
+      option_machine = "Auto";
+      phase = PHASE_LOAD;
+      assert(retro_load_game(&game));
+      assert(strstr(machine_resolution_log,
+                    "requested=Auto resolved=A3000 reason=default"));
+      assert(disk_control.set_eject_state(true));
+      struct retro_game_info hd_replacement = {argv[10], NULL, 0u, NULL};
+      char original_path[4096];
+      assert(disk_control.get_image_path(0u, original_path,
+                                         sizeof(original_path)));
+      assert(!disk_control.replace_image_index(0u, &hd_replacement) &&
+             strstr(last_message, "hd-media-needs-new-io"));
+      char retained_path[4096];
+      assert(disk_control.get_image_path(0u, retained_path,
+                                         sizeof(retained_path)) &&
+             !strcmp(retained_path, original_path));
+      assert(disk_control.add_image_index() && disk_control.get_num_images() == 2u);
+      assert(!disk_control.replace_image_index(1u, &hd_replacement) &&
+             strstr(last_message, "hd-media-needs-new-io") &&
+             disk_control.get_num_images() == 1u);
+      char refused_source[4096];
+      assert(snprintf(refused_source, sizeof(refused_source),
+                      "%s/unique-refused-hd.adf", argv[4]) <
+             (int)sizeof(refused_source));
+      make_sized_file(refused_source, 1638400u);
+      ArcDigest refused_digest = digest_file(refused_source);
+      char refused_staged[4096];
+      assert(snprintf(refused_staged, sizeof(refused_staged),
+                      "%s/arcdroid/media/%s/disc.adf", save_dir,
+                      refused_digest.sha1) < (int)sizeof(refused_staged));
+      assert(access(refused_staged, F_OK) != 0);
+      struct retro_game_info refused_game = {refused_source, NULL, 0u, NULL};
+      assert(!disk_control.replace_image_index(0u, &refused_game) &&
+             strstr(last_message, "hd-media-needs-new-io") &&
+             access(refused_staged, F_OK) != 0);
+      retro_unload_game();
+
+      char f_directory[4096];
+      snprintf(f_directory, sizeof(f_directory), "%s", argv[10]);
+      char *separator = strrchr(f_directory, '/');
+      assert(separator);
+      *separator = '\0';
+      static const char *const f_sets[] = {
+         "f-boot.m3u", "f-sibling.m3u", "f-boot.zip", "f-sibling.zip",
+         "Fset.adf/Fset.adf", "DDset.adf/DDset.adf"
+      };
+      for (unsigned set = 0u; set < 6u; ++set)
+      {
+         char set_path[4096];
+         assert(snprintf(set_path, sizeof(set_path), "%s/%s",
+                         f_directory, f_sets[set]) < (int)sizeof(set_path));
+         struct retro_game_info set_game = {set_path, NULL, 0u, NULL};
+         phase = PHASE_LOAD;
+         bool set_loaded = retro_load_game(&set_game);
+         if (!set_loaded)
+            fprintf(stderr, "F set %s failed: %s\n", f_sets[set], last_message);
+         assert(set_loaded);
+         assert(strstr(machine_resolution_log,
+                       "requested=Auto resolved=A3020 reason=hd-media") &&
+                disk_control.get_num_images() == 2u);
+         if (set & 1u)
+         {
+            assert(disk_control.set_eject_state(true));
+            assert(disk_control.set_image_index(1u));
+            assert(disk_control.set_eject_state(false));
+            assert(arc_engine_test_newio(NULL, NULL, NULL, NULL, &transition_id) &&
+                   transition_id == 0x05u);
+            assert(disk_control.set_eject_state(true));
+            assert(disk_control.replace_image_index(1u, NULL));
+            retro_reset();
+            assert(arc_engine_test_newio(NULL, NULL, NULL, NULL, &transition_id) &&
+                   transition_id == 0x05u);
+         }
+         retro_unload_game();
+      }
+      char zip_member_path[4096];
+      assert(snprintf(zip_member_path, sizeof(zip_member_path),
+                      "%s/f-boot.zip#Disc2.adf", f_directory) <
+             (int)sizeof(zip_member_path));
+      struct retro_game_info member_game = {zip_member_path, NULL, 0u, NULL};
+      phase = PHASE_LOAD;
+      assert(retro_load_game(&member_game));
+      assert(strstr(machine_resolution_log,
+                    "requested=Auto resolved=A3020 reason=hd-media"));
+      char boot_path[4096];
+      assert(disk_control.get_image_path(0u, boot_path, sizeof(boot_path)) &&
+             strstr(boot_path, "Disc1.adf"));
+      retro_unload_game();
+
+      option_cpu = "ARM2";
+      phase = PHASE_LOAD;
+      assert(!retro_load_game(&f_game) &&
+             strstr(last_message, "ARM2 is incompatible with the A3020"));
+      option_cpu = "Auto";
+      option_os = "RISC OS 3.00";
+      assert(!retro_load_game(&f_game) &&
+             strstr(last_message, "RISC OS 3.00 is not supported on the A3020"));
+      option_os = "Auto";
+      option_joystick = "A3010";
+      assert(!retro_load_game(&f_game) &&
+             strstr(last_message, "A3010 joystick interface is incompatible with the A3020"));
+      option_joystick = "Keyboard";
+      assert(rename(renamed, newio_hidden) == 0);
+      assert(!retro_load_game(&f_game) &&
+             strstr(last_message, "A3020 requires RISC OS 3.10 or later firmware"));
+      assert(rename(newio_hidden, renamed) == 0);
+
+      static const char *const compatibility[] = {
+         "riscpc-f.jfd", "arm250-f.jfd", "arm3-f.jfd",
+         "riscos2-f.jfd", "riscos31-f.jfd", "legacy-f.jfd",
+         "zero-cpu-f.jfd", "zero-os-f.jfd", "write-protected-f.jfd"
+      };
+      for (unsigned item = 0u; item < 9u; ++item)
+      {
+         char jfd_path[4096];
+         assert(snprintf(jfd_path, sizeof(jfd_path), "%s/%s",
+                         f_directory, compatibility[item]) <
+                (int)sizeof(jfd_path));
+         struct retro_game_info jfd_game = {jfd_path, NULL, 0u, NULL};
+         unsigned logs_before = riscpc_log_count;
+         unsigned osd_before = riscpc_osd_count;
+         phase = PHASE_LOAD;
+         assert(retro_load_game(&jfd_game));
+         assert(riscpc_log_count == logs_before + (item == 0u) &&
+                riscpc_osd_count == osd_before + (item == 0u));
+         retro_unload_game();
+      }
+
       retro_deinit();
       assert(hash_file(argv[3]) == source_hash);
       assert(dlclose(module) == 0);
@@ -2259,8 +2447,10 @@ int main(int argc, char **argv)
    char high_adl[4096]; snprintf(high_adl, sizeof(high_adl), "%s/high-density.adl", argv[4]);
    make_sized_file(high_adl, 1638400u);
    struct retro_game_info high_game = {high_adl, NULL, 0u, NULL};
-   phase = PHASE_LOAD; assert(!retro_load_game(&high_game));
-   assert(strstr(last_message, "unsupported by the Slice 1"));
+   phase = PHASE_LOAD; assert(retro_load_game(&high_game));
+   assert(strstr(machine_resolution_log,
+                 "requested=Auto resolved=A3020 reason=hd-media"));
+   retro_unload_game();
 
    option_joystick = "A3010";
    phase = PHASE_LOAD; assert(!retro_load_game(&game));
@@ -4964,6 +5154,7 @@ int main(int argc, char **argv)
          {"short-family/800k-e-cap.adf", 819200u, "disc-readonly.adf"},
          {"short-e-missing-1024.adf", 819200u, "disc-readonly.adf"},
          {"short-e-missing-10240.adf", 819200u, "disc-readonly.adf"},
+         {"short-e-missing-20480.adf", 819200u, "disc-readonly.adf"},
       };
       option_writes = "off";
       for (size_t i = 0u; i < sizeof(short_valid) / sizeof(short_valid[0]); ++i)
@@ -5018,7 +5209,7 @@ int main(int argc, char **argv)
 
       option_writes = "shadow";
       static const char *short_invalid[] = {
-         "short-e-missing-10241.adf", "short-e-missing-11264.adf",
+         "short-e-missing-20481.adf", "short-e-missing-21504.adf",
          "short-e-missing-513.adf",
          "short-family/320k-cap-plus-one.adf",
          "short-family/320k-cap-plus-sector.adf",

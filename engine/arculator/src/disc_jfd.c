@@ -30,6 +30,7 @@ static unsigned jfd_sector_id;
 static unsigned jfd_transfer_pos;
 static size_t jfd_selected;
 static uint32_t jfd_phase_us;
+static unsigned jfd_search_indexes;
 static uint8_t jfd_address[6];
 
 static void jfd_stop(void)
@@ -37,6 +38,7 @@ static void jfd_stop(void)
    jfd_state = JFD_IDLE;
    jfd_transfer_pos = 0u;
    jfd_selected = 0u;
+   jfd_search_indexes = 0u;
 }
 
 static void jfd_close(int drive)
@@ -82,7 +84,9 @@ static bool jfd_begin(int drive, int track, int side, int density)
       return false;
    jfd_track = (unsigned)track;
    jfd_side = (unsigned)side;
-   jfd_density = density ? 2u : 1u;
+   jfd_density = fdc_funcs && fdc_funcs->sectorid ?
+      (density == 2 ? 4u : density == 3 ? 8u : 2u) :
+      (density ? 2u : 1u);
    jfd_transfer_pos = 0u;
    return true;
 }
@@ -177,11 +181,23 @@ static bool jfd_find_sector(uint32_t old_phase, uint32_t new_phase, size_t *sele
 static void jfd_poll(void)
 {
    uint32_t old_phase = jfd_phase_us;
-   uint32_t new_phase = old_phase + 32u;
+   uint32_t new_phase = old_phase + disc_poll_period_us();
    bool wrapped = new_phase >= 200000u;
    if (wrapped) new_phase -= 200000u;
    jfd_phase_us = new_phase;
-   if (wrapped) fdc_funcs->indexpulse(fdc_p);
+   if (wrapped)
+   {
+      if (jfd_state == JFD_FIND && fdc_funcs->sectorid)
+         ++jfd_search_indexes;
+      fdc_funcs->indexpulse(fdc_p);
+      if (jfd_state == JFD_FIND && fdc_funcs->sectorid &&
+          jfd_search_indexes >= 2u)
+      {
+         jfd_stop();
+         fdc_funcs->notfound(fdc_p);
+         return;
+      }
+   }
 
    if (jfd_state == JFD_DATA_CRC_ERROR)
    {
@@ -202,10 +218,20 @@ static void jfd_poll(void)
             fdc_funcs->headercrcerror(fdc_p);
             return;
          }
-         jfd_selected = selected;
          jfd_make_address(sector);
-         jfd_transfer_pos = 0u;
-         jfd_state = JFD_READ_ADDRESS;
+         if (fdc_funcs->sectorid)
+         {
+            jfd_stop();
+            fdc_funcs->sectorid(jfd_address[0], jfd_address[1],
+               jfd_address[2], jfd_address[3], jfd_address[4],
+               jfd_address[5], fdc_p);
+         }
+         else
+         {
+            jfd_selected = selected;
+            jfd_transfer_pos = 0u;
+            jfd_state = JFD_READ_ADDRESS;
+         }
       }
       else if (sector->flags & ARC_JFD_ID_CRC_BAD)
       {

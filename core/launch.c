@@ -100,6 +100,15 @@ static bool arc_new_map_e_format(const uint8_t *data, size_t available,
    return data[3] == 0xffu && data[0] == arc_new_map_zone_checksum(data, log2_sector);
 }
 
+static bool arc_new_map_f_format(const uint8_t *data, size_t size)
+{
+   if (!data || size != 1638400u) return false;
+   const uint8_t *record = data + 0xdc0u;
+   return record[0] == 10u && record[1] == 10u && record[2] == 2u &&
+          record[3] == 4u && record[4] == 15u && record[5] == 6u &&
+          record[9] >= 2u && arc_read_le32(record + 16u) == 1638400u;
+}
+
 bool arc_media_is_recognised_adfs(const uint8_t *data, size_t size)
 {
    /* Old-map media retain the two FileCore byte checks. E-format is the
@@ -126,17 +135,33 @@ static bool arc_old_map_geometry(const uint8_t *data, size_t size,
    {
       case 1280u: *geometry = ARC_GEOMETRY_320K; *declared_size = 327680u; *max_missing = 4096u; return true;
       case 2560u: *geometry = ARC_GEOMETRY_640K_L; *declared_size = 655360u; *max_missing = 8192u; return true;
-      case 3200u: *geometry = ARC_GEOMETRY_800K_D; *declared_size = 819200u; *max_missing = 10240u; return true;
+      case 3200u: *geometry = ARC_GEOMETRY_800K_D; *declared_size = 819200u; *max_missing = 20480u; return true;
       default:
+         if (old_size > 3200u && size >= 819200u - 20480u &&
+             size <= 819200u && size % 1024u == 0u)
+         {
+            *geometry = ARC_GEOMETRY_800K_D;
+            *declared_size = 819200u;
+            *max_missing = 20480u;
+            return true;
+         }
+         if (old_size > 2560u && size >= 655360u - 8192u &&
+             size <= 655360u && size % 256u == 0u)
+         {
+            *geometry = ARC_GEOMETRY_640K_L;
+            *declared_size = 655360u;
+            *max_missing = 8192u;
+            return true;
+         }
          /* Some real 800K D-format maps declare fewer usable sectors while
           * retaining the standard 80x2x5 physical geometry. */
          if (old_size >= 12u && old_size < 3200u &&
-             size >= 819200u - 10240u && size <= 819200u &&
+             size >= 819200u - 20480u && size <= 819200u &&
              size % 1024u == 0u)
          {
             *geometry = ARC_GEOMETRY_800K_D;
             *declared_size = 819200u;
-            *max_missing = 10240u;
+            *max_missing = 20480u;
             return true;
          }
          return false;
@@ -178,12 +203,18 @@ bool arc_media_inspect(const char *path, const uint8_t *data, size_t size,
 
    ArcMediaGeometry geometry = ARC_GEOMETRY_NONE;
    size_t declared = 0u, max_missing = 0u;
-   bool descriptor = arc_new_map_e_format(data, size, 819200u);
+   bool descriptor = arc_new_map_f_format(data, size);
    if (descriptor)
    {
+      geometry = ARC_GEOMETRY_1600K_F;
+      declared = 1638400u;
+   }
+   else if (arc_new_map_e_format(data, size, 819200u))
+   {
+      descriptor = true;
       geometry = ARC_GEOMETRY_800K_E;
       declared = 819200u;
-      max_missing = 10240u;
+      max_missing = 20480u;
    }
    else
       descriptor = arc_old_map_geometry(data, size, &geometry, &declared, &max_missing);
@@ -211,10 +242,13 @@ bool arc_media_inspect(const char *path, const uint8_t *data, size_t size,
       found.padding_required = missing;
       found.short_image = missing != 0u;
       found.recognition = ARC_MEDIA_RECOGNITION_DESCRIPTOR;
-      if (geometry == ARC_GEOMETRY_800K_E)
+      if (geometry == ARC_GEOMETRY_800K_E ||
+          geometry == ARC_GEOMETRY_1600K_F)
       {
-         found.boot_option = data[11];
-         memcpy(found.disc_name, data + 26u, 10u);
+         const uint8_t *record = data +
+            (geometry == ARC_GEOMETRY_1600K_F ? 0xdc0u : 4u);
+         found.boot_option = record[7];
+         memcpy(found.disc_name, record + 22u, 10u);
       }
       else
       {
@@ -240,12 +274,7 @@ bool arc_media_inspect(const char *path, const uint8_t *data, size_t size,
       if (size == 327680u) found.geometry = ARC_GEOMETRY_320K;
       else if (size == 655360u) found.geometry = ARC_GEOMETRY_640K_L;
       else if (size == 819200u) found.geometry = ARC_GEOMETRY_800K_E;
-      else if (size == 1638400u)
-      {
-         if (error && error_size) snprintf(error, error_size,
-            "1600 KiB high-density ADF is unsupported by the Slice 1 WD1772 machine");
-         return false;
-      }
+      else if (size == 1638400u) found.geometry = ARC_GEOMETRY_1600K_F;
       else
       {
          if (error && error_size) snprintf(error, error_size,
@@ -256,6 +285,7 @@ bool arc_media_inspect(const char *path, const uint8_t *data, size_t size,
    }
    found.kind = found.geometry == ARC_GEOMETRY_320K ? ARC_MEDIA_ADF_320K :
                 found.geometry == ARC_GEOMETRY_640K_L ? ARC_MEDIA_ADL_640K :
+                found.geometry == ARC_GEOMETRY_1600K_F ? ARC_MEDIA_ADF_1600K :
                 ARC_MEDIA_ADF_800K;
    *info = found;
    return true;

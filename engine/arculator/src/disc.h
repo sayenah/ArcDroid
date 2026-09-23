@@ -53,6 +53,7 @@ void disc_stop(int drive);
 int disc_empty(int drive);
 void disc_set_motor(int enable);
 void disc_set_density(int density);
+unsigned disc_poll_period_us(void);
 int disc_get_current_track(int drive);
 extern int disc_drivesel;
 

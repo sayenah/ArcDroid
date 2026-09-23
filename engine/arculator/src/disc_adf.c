@@ -1,7 +1,8 @@
 /*Arculator 2.2 by Sarah Walker
   ADFS disc support (really all raw sector formats)*/
-/* ArcDroid modification (2026-09-14): unavailable data never terminates the
- * frontend and every command/rotation field is reset across media sessions. */
+/* ArcDroid modifications (2026-09-14, 2026-09-23): unavailable data never
+ * terminates the frontend; command/rotation state resets across sessions;
+ * index pulses count elapsed guest time at each controller poll period. */
 #include <string.h>
 #include "arc.h"
 #include "arc_io.h"
@@ -34,7 +35,7 @@ static int adf_rsector=0;
 static int adf_informat=0;
 
 static int adf_pause = 0;
-static int adf_index = 6250;
+static unsigned adf_phase_us;
 static int adf_writable[4] = {1, 1, 1, 1};
 
 void adf_set_writable(int drive, int writable)
@@ -56,7 +57,7 @@ void adf_init()
 	adf_sector = adf_track = adf_side = adf_drive = 0;
 	adf_inread = adf_readpos = adf_inwrite = adf_inreadaddr = 0;
 	adf_notfound = adf_rsector = adf_informat = adf_pause = 0;
-	adf_index = 6250;
+	adf_phase_us = 0u;
 	for (int drive = 0; drive < 4; ++drive) adf_writable[drive] = 1;
 }
 
@@ -283,10 +284,10 @@ static void adf_poll()
 {
 	int c;
 
-	adf_index--;
-	if (!adf_index)
+	adf_phase_us += disc_poll_period_us();
+	if (adf_phase_us >= 200000u)
 	{
-		adf_index = 6250;
+		adf_phase_us -= 200000u;
 		fdc_funcs->indexpulse(fdc_p);
 	}
 
