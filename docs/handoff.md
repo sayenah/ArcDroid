@@ -1,8 +1,15 @@
 # ArcDroid Handoff
 
-**Stage:** QA  
-**Owner:** Opus (Claude Opus 5.5 QA, effort high), dispatched by the orchestrator (Claude Opus 5.5 by Founder assignment while Fable is unavailable, S26–S27b)  
-**Next:** **Opus QA of Slice 9, PR #156 (`slice/09-adffs-install`), head `f07aef0`, against the work order below.** Sol runs 1 and 2 are committed verbatim: `97f65a6`, `f07aef0`. After QA, the orchestrator adjudicates, runs the AC-12 Odin3 leg, and merges when protocol §12.11 is satisfied.
+**Stage:** QA (passed; Odin3 leg pending)  
+**Owner:** Fable (orchestrator role; held by Claude Opus 5.5 by Founder assignment while Fable is unavailable, S26–S27b)  
+**Next:** **Orchestrator runs the AC-12 Odin3 leg on a core built from `48a199b`, then merges PR #156 under §12.11.** QA passed with Lows at `48a199b` (effort 15). CI is green on both runs of `48a199b`. The Android arm64 core is built from `48a199b` (guard green) in the S27b scratchpad at `sol/clone/build/android/arcdroid_libretro_android.so`, but it is not yet installed: the Odin3 was disconnected when the leg was due. AC-12 checks:
+  - the three titles through RetroArch from the device library: E-Type, E-Type Compendium (both variants via the chooser, by pad and by touch), and Premier Manager [SA] with its window reached by touch;
+  - that the D-069 disclosure stays readable next to the Firmware OSD line (QA N-3);
+  - load and reset times against QA N-1 (repeated per-variant zip reads);
+  - 0 `[ERROR]`, peak PSS;
+  - an A3000 sample unchanged.
+
+  The ADFFS package must be at `/storage/emulated/0/BIOS/arcdroid/adffs/` (check first). **S27b note:** the orchestrator ran `adb kill-server`/`start-server` on the Mac while no device was attached. That stopped the shared adb daemon, which this session had not started (a process-ownership slip). It was restarted at once.
 
 **Founder mandate (S21, verbatim intent):** make these Archimedes games accessible and easy to play without any unnecessary hurdles. Judge every slice and every gate against that.
 
@@ -27,6 +34,13 @@ Observation (S27): the Android core embeds absolute source paths (`__FILE__` in 
   - Populous [RPC] now takes the ADFFS path on the A3020 and hangs as recorded; not a gate.
 - **S-8 finding.** Desktop clicks work with Sol's `move`/`click` in small steps. The S27b probe used one large move and a different harness.
 - **For QA to weigh** (orchestrator notes; judge independently):
+- **Opus QA at `f07aef0`: fail on M-1.** A Compendium variant whose carrier cannot fit was still offered, and a remembered failed pick made every later load fail. Sol run 3 (`48a199b`) fixed M-1, L-1…L-5, L-7 and N-1 as adjudicated. L-6 was closed by orchestrator guest evidence: an evidence-only test-table edit made the real guest stop with a clean "ArcDroid install: data failed" box.
+- **Opus targeted re-check at `48a199b`: pass with Lows** (effort 15). M-1 was re-probed and is now covered by CI; the mutations are caught. Carried, not scheduled:
+  - L-1: the failed-pick fallback into a native chooser is untested; correct by reading.
+  - N-1: each load reads and decodes the zip roughly once per variant, about 10 times for the Compendium; check load time on the Odin3.
+  - N-2: the machine-override wording would be wrong on a hypothetical RAM refusal.
+  - N-3: a failed confirmed pick deletes any existing `.choice` file.
+- **AC-11 re-verified on `48a199b`.** All four installs log correctly, and the race, credits and A3020 DD frames are byte-identical to `f07aef0`. CI is green on both runs of `48a199b`.
   - A single-disc profile whose digest mismatches (another release of the same ID) now refuses to native, where it previously took the single-disc ADFFS path.
   - RISC OS's own `Copy` error text on a failed copy is garbled, and the `ArcDroid install:` guard never runs because Obey stops first.
   - The harness has no pad-button command for chooser automation.
