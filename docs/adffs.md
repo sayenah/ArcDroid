@@ -1,6 +1,6 @@
 # Using a user-supplied ADFFS package
 
-ArcDroid can use ADFFS to boot an eligible, single-disc JASPP JFD image. Put
+ArcDroid can use ADFFS to boot an eligible JASPP JFD image. Put
 the ADFFS zip, unchanged, in the frontend system directory at
 `arcdroid/adffs/`. The `.zip` extension is matched without regard to case. If
 several zip files are present, ArcDroid uses the byte-wise lowest filename
@@ -15,9 +15,18 @@ path even when a usable package is installed. `ADFFS Package` defaults to
 `Verified only`; `Allow untested` permits package versions whose runtime files
 do not match ArcDroid's known profile.
 
-The ADFFS path currently supports only one JFD image whose header describes a
-single disc. Playlists, folder sets, and multi-disc titles use the native path.
-A zip containing one eligible JFD image is eligible for the same ADFFS path.
+The ordinary ADFFS path supports one JFD image whose header describes a single
+disc. It works on both WD1772 and New-IO machines. A zip containing one eligible
+JFD image is eligible for the same path. Other multi-image sets use the native
+path unless they match a verified install recipe.
+
+Exact disc sets for E-Type and E-Type Compendium, and the single-disc Premier
+Manager [SA] image, can be installed automatically under the verified package
+and RISC OS 3.11. Put all required discs in one zip, playlist, or folder set.
+The Compendium chooser offers each game whose required disc is present. The
+install uses a temporary guest RAM disc. **Saves made there disappear on reset
+or exit.** ArcDroid shows this warning on every install boot. A different
+revision of any image or built-in script stays on the native path.
 The two guest discs used for an ADFFS session are memory-backed and read-only:
 changes to the mounted image are not written back, regardless of the `Disk
 Writes` option. At boot, ArcDroid's project-authored launcher copies only the
@@ -27,5 +36,4 @@ anything to host storage. References on Obey comment lines (whose first
 nonblank character is `|`) do not add files to that per-title set.
 
 If the package is absent or unusable, ArcDroid keeps the native boot path and
-shows a short notice when user action may help. The two new options and these
-notices are part of the Slice 6a release notes.
+shows a short notice when user action may help.

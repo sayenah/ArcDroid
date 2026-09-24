@@ -37,6 +37,70 @@ typedef struct {
   const char *version;
 } ArcAdffsProfile;
 
+#define ARC_INSTALL_MAX_DISCS 4u
+#define ARC_INSTALL_MAX_VARIANTS 2u
+typedef struct {
+  unsigned number;
+  size_t size;
+  const char *sha1;
+} ArcInstallDisc;
+typedef struct {
+  const char *key;
+  const char *label;
+  ArcInstallDisc discs[ARC_INSTALL_MAX_DISCS];
+  unsigned disc_count;
+  const char *app;
+  unsigned data_disc;
+  const char *data_file;
+  const char *data_dir;
+  bool image_in_app;
+  bool eject;
+  unsigned ram_kib;
+} ArcInstallVariant;
+typedef struct {
+  unsigned game_id;
+  unsigned disc_count;
+  unsigned revision;
+  const char *script_sha256;
+  unsigned io_mask; /* bit 0: WD1772, bit 1: New-IO */
+  ArcInstallVariant variants[ARC_INSTALL_MAX_VARIANTS];
+  unsigned variant_count;
+} ArcInstallProfile;
+typedef struct {
+  unsigned game_id, disc_number, disc_count;
+  size_t decoded_size;
+  char sha1[41];
+} ArcInstallMedia;
+typedef struct {
+  const ArcInstallProfile *profile;
+  const ArcInstallVariant *variant;
+  unsigned media_index[ARC_INSTALL_MAX_DISCS];
+  char binding[41];
+} ArcInstallPlan;
+
+const ArcInstallProfile *arc_install_profiles(size_t *count);
+const ArcInstallProfile *arc_install_profile(unsigned game_id,
+                                             unsigned disc_count);
+/* Returns presentable variants; each plan is immutable after matching. */
+unsigned arc_install_match(const ArcInstallProfile *profile,
+                           const ArcInstallMedia *media, unsigned media_count,
+                           ArcInstallPlan plans[ARC_INSTALL_MAX_VARIANTS],
+                           const char **reason);
+bool arc_install_script_matches(const ArcInstallProfile *profile,
+                                const uint8_t *script, size_t size);
+bool arc_install_launcher(const ArcInstallPlan *plan, uint8_t *output,
+                          size_t capacity, size_t *size);
+bool arc_install_carrier_build(const ArcInstallPlan *plan,
+                               const uint8_t *const raw[ARC_INSTALL_MAX_DISCS],
+                               const size_t sizes[ARC_INSTALL_MAX_DISCS],
+                               uint8_t output[ARC_ADFFS_DISC_SIZE],
+                               char *error, size_t error_size);
+bool arc_install_support_build(const ArcAdffsPackage *package,
+                               const ArcAdffsSelection *selection,
+                               const ArcInstallPlan *plan,
+                               uint8_t output[ARC_ADFFS_DISC_SIZE],
+                               char *error, size_t error_size);
+
 const ArcAdffsProfile *arc_adffs_profiles(size_t *count);
 bool arc_adffs_package_parse(const uint8_t *archive, size_t archive_size,
                              ArcAdffsPackage *package, char *error,

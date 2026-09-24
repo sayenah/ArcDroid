@@ -46,6 +46,7 @@ set_target_properties(arcdroid_zlib PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 set(ARCDROID_CORE_SOURCES
   core/adffs.c
+  core/adffs_install.c
   core/zip.c
   core/zip_content.c
   core/machine.c
@@ -64,7 +65,7 @@ set(ARCDROID_CORE_SOURCES
   core/persistence.c
   core/cmos_defaults.c
 )
-add_library(arcdroid_core STATIC ${ARCDROID_CORE_SOURCES} core/adffs_profiles.c core/firmware_table.c)
+add_library(arcdroid_core STATIC ${ARCDROID_CORE_SOURCES} core/adffs_profiles.c core/adffs_install_profiles.c core/firmware_table.c)
 target_include_directories(arcdroid_core PUBLIC core libretro/include "${CMAKE_CURRENT_BINARY_DIR}/generated")
 target_link_libraries(arcdroid_core PRIVATE arcdroid_zlib)
 if(ARCDROID_SANITIZERS)
@@ -183,7 +184,8 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
     target_link_libraries(core_tests PRIVATE arcdroid_sanitizer_link)
   endif()
   target_compile_options(core_tests PRIVATE $<$<C_COMPILER_ID:GNU,Clang,AppleClang>:-UNDEBUG>)
-  add_executable(adffs_shipping_profile_test tests/adffs_shipping_profile_test.c)
+  add_executable(adffs_shipping_profile_test
+    tests/adffs_shipping_profile_test.c tests/adffs_install_profiles_test.c)
   target_link_libraries(adffs_shipping_profile_test PRIVATE arcdroid_core)
   if(ARCDROID_SANITIZERS)
     target_link_libraries(adffs_shipping_profile_test PRIVATE arcdroid_sanitizer_link)
@@ -191,7 +193,7 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
   target_compile_options(adffs_shipping_profile_test PRIVATE $<$<C_COMPILER_ID:GNU,Clang,AppleClang>:-UNDEBUG>)
   set(FIXTURE_DIR "${CMAKE_CURRENT_BINARY_DIR}/tests/fixtures/generated")
   add_library(arcdroid_core_test STATIC
-    ${ARCDROID_CORE_SOURCES} tests/adffs_profiles_test.c tests/firmware_table_test.c)
+    ${ARCDROID_CORE_SOURCES} tests/adffs_profiles_test.c tests/adffs_install_profiles_test.c tests/firmware_table_test.c)
   target_include_directories(arcdroid_core_test PUBLIC
     core libretro/include "${CMAKE_CURRENT_BINARY_DIR}/generated")
   target_link_libraries(arcdroid_core_test PRIVATE arcdroid_zlib)
@@ -240,6 +242,8 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
 
   set(ADFFS_FIXTURES
     "${FIXTURE_DIR}/adffs/synthetic.zip"
+    "${FIXTURE_DIR}/adffs/missing-install-resource.zip"
+    "${FIXTURE_DIR}/adffs/script-changed.zip"
     "${FIXTURE_DIR}/adffs/stored.zip"
     "${FIXTURE_DIR}/adffs/descriptor.zip"
     "${FIXTURE_DIR}/adffs/reordered.zip"
@@ -285,6 +289,24 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
     "${FIXTURE_DIR}/adffs/decoded-limit.jfd"
     "${FIXTURE_DIR}/adffs/decoded-too-large.jfd"
     "${FIXTURE_DIR}/adffs/multi.m3u")
+  list(APPEND ADFFS_FIXTURES
+    "${FIXTURE_DIR}/adffs/install-1.jfd"
+    "${FIXTURE_DIR}/adffs/install-2.jfd"
+    "${FIXTURE_DIR}/adffs/install-3.jfd"
+    "${FIXTURE_DIR}/adffs/install.m3u"
+    "${FIXTURE_DIR}/adffs/install-first.m3u"
+    "${FIXTURE_DIR}/adffs/install.zip"
+    "${FIXTURE_DIR}/adffs/Install.jfd/Install.jfd"
+    "${FIXTURE_DIR}/adffs/Install.jfd/Install 2.jfd"
+    "${FIXTURE_DIR}/adffs/Install.jfd/Install 3.jfd"
+    "${FIXTURE_DIR}/adffs/install-fat-3.jfd"
+    "${FIXTURE_DIR}/adffs/install-fat.m3u"
+    "${FIXTURE_DIR}/adffs/install-too-large.m3u"
+    "${FIXTURE_DIR}/adffs/install-raw-limit-2.jfd"
+    "${FIXTURE_DIR}/adffs/install-raw-limit.m3u"
+    "${FIXTURE_DIR}/adffs/install-wrong-2.jfd"
+    "${FIXTURE_DIR}/adffs/install-wrong.m3u"
+    "${FIXTURE_DIR}/adffs/eligible-hd.jfd")
   add_custom_command(
     OUTPUT "${FIXTURE_DIR}/arcdroid-test.rom" "${FIXTURE_DIR}/arcdroid-test.adf"
       "${FIXTURE_DIR}/arcdroid-chooser-test.rom"
@@ -472,6 +494,12 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
       "${FIXTURE_DIR}/arcdroid-media-disc2.adf"
       "${FIXTURE_DIR}/arcdroid-application-l.adl"
       "${FIXTURE_DIR}/hd-family/valid-f.adf")
+    add_test(NAME mouse-script-harness COMMAND libretro_harness
+      $<TARGET_FILE:arcdroid_libretro_test>
+      "${FIXTURE_DIR}/arcdroid-test.rom"
+      "${FIXTURE_DIR}/arcdroid-test.adf"
+      "${CMAKE_CURRENT_BINARY_DIR}/mouse-script-data"
+      --real-boot --osk-script "${CMAKE_CURRENT_SOURCE_DIR}/tests/mouse-script.txt")
     set_tests_properties(libretro-harness PROPERTIES TIMEOUT 300)
     set_tests_properties(newio-libretro-harness PROPERTIES TIMEOUT 300)
   endif()

@@ -637,6 +637,236 @@ int main(int argc, char **argv) {
     free(unsafe);
     free(unsafe_zip);
   }
+  test_stage("install profile matching and guest media");
+  ArcInstallMedia media[4] = {{0}};
+  uint8_t *install_raw[3] = {0};
+  size_t install_sizes[3] = {0};
+  for (unsigned i = 0u; i < 3u; ++i) {
+    char leaf[24];
+    snprintf(leaf, sizeof(leaf), "install-%u.jfd", i + 1u);
+    install_raw[i] = read_file(argv[1], leaf, &install_sizes[i]);
+    ArcDigest digest = arc_digest(install_raw[i], install_sizes[i]);
+    media[i].game_id = 123u;
+    media[i].disc_number = i + 1u;
+    media[i].disc_count = 4u;
+    media[i].decoded_size = digest.size;
+    strcpy(media[i].sha1, digest.sha1);
+  }
+  const ArcInstallProfile *profile = arc_install_profile(123u, 4u);
+  ArcInstallPlan plans[ARC_INSTALL_MAX_VARIANTS];
+  const char *why = NULL;
+  assert(profile && arc_install_match(profile, media, 3u, plans, &why) == 2u &&
+         !why && plans[0].media_index[1] == 1u &&
+         plans[1].media_index[1] == 2u &&
+         strcmp(plans[0].binding, plans[1].binding));
+  assert(arc_install_match(profile, media, 1u, plans, &why) == 0u &&
+         !strcmp(why, "incomplete-set"));
+  media[3] = media[1];
+  assert(arc_install_match(profile, media, 4u, plans, &why) == 1u &&
+         plans[0].variant == &profile->variants[1]);
+  media[1].sha1[0] ^= 1;
+  assert(arc_install_match(profile, media, 3u, plans, &why) == 1u &&
+         plans[0].variant == &profile->variants[1]);
+  media[1].sha1[0] ^= 1;
+  char original_disc1[41];
+  strcpy(original_disc1, media[0].sha1);
+  strcpy(media[0].sha1, media[1].sha1);
+  media[1].sha1[0] ^= 1;
+  assert(arc_install_match(profile, media, 3u, plans, &why) == 0u &&
+         !strcmp(why, "identity"));
+  strcpy(media[0].sha1, original_disc1);
+  media[1].sha1[0] ^= 1;
+  assert(arc_install_match(profile, media, 3u, plans, &why) == 2u);
+  ArcInstallProfile oversize_profile = *profile;
+  oversize_profile.variant_count = 1u;
+  oversize_profile.variants[0].discs[0].size = 2u * 1024u * 1024u + 1u;
+  media[0].decoded_size = oversize_profile.variants[0].discs[0].size;
+  assert(arc_install_match(&oversize_profile, media, 3u, plans, &why) == 0u &&
+         !strcmp(why, "decoded-too-large"));
+  media[0].decoded_size = install_sizes[0];
+  size_t install_zip_size = 0u;
+  uint8_t *install_zip = read_file(argv[1], "synthetic.zip",
+                                   &install_zip_size);
+  ArcAdffsPackage *install_package = calloc(1u, sizeof(*install_package));
+  assert(install_package && arc_adffs_package_parse(install_zip,
+         install_zip_size, install_package, error, sizeof(error)) &&
+         install_package->verified);
+  uint8_t *install_script = NULL;
+  size_t install_script_size = 0u;
+  assert(arc_adffs_builtin_script(install_package, 123u, 1u,
+         &install_script, &install_script_size, error, sizeof(error)) &&
+         arc_install_script_matches(profile, install_script,
+                                    install_script_size));
+  install_script[0] ^= 1u;
+  assert(!arc_install_script_matches(profile, install_script,
+                                     install_script_size));
+  install_script[0] ^= 1u;
+  ArcAdffsSelection install_selection;
+  char install_missing[128];
+  assert(arc_adffs_select(install_package, install_script,
+                          install_script_size, &install_selection,
+                          install_missing));
+  const uint8_t *raw[ARC_INSTALL_MAX_DISCS] = {
+      install_raw[0], install_raw[1], NULL, NULL};
+  size_t sizes[ARC_INSTALL_MAX_DISCS] = {
+      install_sizes[0], install_sizes[1], 0u, 0u};
+  uint8_t *install_carrier = malloc(ARC_ADFFS_DISC_SIZE);
+  uint8_t *install_support = malloc(ARC_ADFFS_DISC_SIZE);
+  assert(install_carrier && install_support &&
+         arc_install_carrier_build(&plans[0], raw, sizes, install_carrier,
+                                    error, sizeof(error)) &&
+         arc_install_support_build(install_package, &install_selection,
+                                    &plans[0], install_support,
+                                    error, sizeof(error)));
+  const uint8_t *install_root = install_carrier + 1024u;
+  const uint8_t *disc1 = find_entry(install_root, "D1");
+  const uint8_t *disc2 = find_entry(install_root, "D2");
+  const uint8_t *run = find_entry(install_root, "Run");
+  assert(dircheck(install_root) && disc1 && disc2 && run &&
+         !find_entry(install_root, "D3") &&
+         le32t(disc1 + 18u) == sizes[0] &&
+         le32t(disc2 + 18u) == sizes[1] &&
+         le32t(run + 10u) == 0xffffeb00u &&
+         le32t(run + 18u) == strlen("ADFBootFloppy F0012301\r") &&
+         !memcmp(install_carrier + le24(disc1 + 22u) * 256u,
+                 raw[0], sizes[0]) &&
+         !memcmp(install_carrier + le24(disc2 + 22u) * 256u,
+                 raw[1], sizes[1]) &&
+         !memcmp(install_carrier + le24(run + 22u) * 256u,
+                 "ADFBootFloppy F0012301\r",
+                 strlen("ADFBootFloppy F0012301\r")));
+  const uint8_t *support_root = install_support + 1024u;
+  const uint8_t *install_stage1 = find_entry(support_root, "ArcStage1");
+  const uint8_t *stage2 = find_entry(support_root, "ArcStage2");
+  assert(dircheck(support_root) && install_stage1 && stage2);
+  const char *stage1_text = (const char *)(install_support +
+                                          le24(install_stage1 + 22u) * 256u);
+  assert(!memcmp(stage1_text, "ChangeDynamicArea -RamFsSize 1600K\r",
+                 strlen("ChangeDynamicArea -RamFsSize 1600K\r")));
+  char generated[4096];
+  size_t generated_size = 0u;
+  assert(arc_install_launcher(&plans[0], (uint8_t *)generated,
+                               sizeof(generated), &generated_size) &&
+         generated_size == le32t(stage2 + 18u) &&
+         !memcmp(generated, install_support +
+                 le24(stage2 + 22u) * 256u, generated_size));
+  generated[generated_size] = 0;
+  static const char golden_two_disc[] =
+      "IfThere ADFS::0.$.D1 Then Copy ADFS::0.$.D1 RAM::0.$.D1 ~C~VFQ Else Error ArcDroid install: stage failed\r"
+      "IfThere RAM::0.$.D1 Then Set ArcDroid$Guard 1 Else Error ArcDroid install: stage failed\r"
+      "IfThere ADFS::0.$.D2 Then Copy ADFS::0.$.D2 RAM::0.$.D2 ~C~VFQ Else Error ArcDroid install: stage failed\r"
+      "IfThere RAM::0.$.D2 Then Set ArcDroid$Guard 1 Else Error ArcDroid install: stage failed\r"
+      "IfThere ADFS::0.$.Run Then Copy ADFS::0.$.Run RAM::0.$.Run ~C~VFQ Else Error ArcDroid install: stage failed\r"
+      "IfThere RAM::0.$.Run Then Set ArcDroid$Guard 1 Else Error ArcDroid install: stage failed\r"
+      "ADFMount RAM::0.$.D1\rADFS\rNoDir\rNoLib\rNoURD\rDismount :0\r"
+      "IfThere ADFS::0.$.!Fixture Then Copy ADFS::0.$.!Fixture RAM::0.$.!Fixture ~C~VRFQ Else Error ArcDroid install: app failed\r"
+      "IfThere RAM::0.$.!Fixture Then Set ArcDroid$Guard 1 Else Error ArcDroid install: app failed\r"
+      "ADFMount RAM::0.$.D2\rADFS\rNoDir\rNoLib\rNoURD\rDismount :0\r"
+      "IfThere ADFS::0.$.DATA Then Copy ADFS::0.$.DATA RAM::0.$.!Fixture.DATA ~C~VFQ Else Error ArcDroid install: data failed\r"
+      "IfThere RAM::0.$.!Fixture.DATA Then Set ArcDroid$Guard 1 Else Error ArcDroid install: data failed\r"
+      "IfThere ADFS::0.$.TRACKS Then Copy ADFS::0.$.TRACKS RAM::0.$.!Fixture.TRACKS ~C~VRFQ Else Error ArcDroid install: data failed\r"
+      "IfThere RAM::0.$.!Fixture.TRACKS Then Set ArcDroid$Guard 1 Else Error ArcDroid install: data failed\r"
+      "Remove RAM::0.$.D2\r"
+      "IfThere RAM::0.$.D2 Then Error ArcDroid install: cleanup failed\r"
+      "Rename RAM::0.$.D1 RAM::0.$.!Fixture.F0012301\r"
+      "IfThere RAM::0.$.D1 Then Error ArcDroid install: image failed\r"
+      "IfThere RAM::0.$.!Fixture.F0012301 Then Set ArcDroid$Guard 1 Else Error ArcDroid install: image failed\r"
+      "IfThere RAM::0.$.!Fixture.!Run Then Remove RAM::0.$.!Fixture.!Run\r"
+      "IfThere RAM::0.$.!Fixture.!Run Then Error ArcDroid install: run-file failed\r"
+      "Copy RAM::0.$.Run RAM::0.$.!Fixture.!Run ~C~VFQ\r"
+      "IfThere RAM::0.$.!Fixture.!Run Then Set ArcDroid$Guard 1 Else Error ArcDroid install: run-file failed\r"
+      "Remove RAM::0.$.Run\r"
+      "IfThere RAM::0.$.Run Then Error ArcDroid install: cleanup failed\r"
+      "Dir RAM::0.$.!Fixture\rRun RAM::0.$.!Fixture.!Run\r";
+  const char *two_disc_tail = strstr(generated, "IfThere ADFS::0.$.D1");
+  assert(two_disc_tail && !strcmp(two_disc_tail, golden_two_disc));
+  const char *copy1 = strstr(generated, "Copy ADFS::0.$.D1");
+  const char *copy2 = strstr(generated, "Copy ADFS::0.$.D2");
+  const char *mount1 = strstr(generated, "ADFMount RAM::0.$.D1");
+  const char *mount2 = strstr(generated, "ADFMount RAM::0.$.D2");
+  const char *copy_data = strstr(generated, "Copy ADFS::0.$.DATA");
+  const char *drop2 = strstr(generated, "Remove RAM::0.$.D2");
+  const char *rename1 = strstr(generated, "Rename RAM::0.$.D1");
+  const char *remove_old_run = strstr(generated,
+      "IfThere RAM::0.$.!Fixture.!Run Then Remove");
+  const char *replace_run = strstr(generated, "Copy RAM::0.$.Run");
+  const char *launch_run = strstr(generated, "Run RAM::0.$.!Fixture.!Run");
+  assert(copy1 && copy2 && mount1 && mount2 && copy_data && drop2 &&
+         rename1 && remove_old_run && replace_run && launch_run &&
+         copy1 < copy2 && copy2 < mount1 && mount1 < mount2 &&
+         mount2 < copy_data && copy_data < drop2 && drop2 < rename1 &&
+         rename1 < remove_old_run && remove_old_run < replace_run &&
+         replace_run < launch_run &&
+         strstr(generated, "Else Error ArcDroid install: stage failed") &&
+         strstr(generated, "Else Error ArcDroid install: app failed") &&
+         strstr(generated, "Else Error ArcDroid install: data failed") &&
+         strstr(generated, "Else Error ArcDroid install: run-file failed") &&
+         !strstr(generated, "ADFMount ADFS::0.$.Game"));
+  raw[1] = install_raw[2];
+  sizes[1] = install_sizes[2];
+  assert(arc_install_carrier_build(&plans[1], raw, sizes, install_carrier,
+                                    error, sizeof(error)));
+  install_root = install_carrier + 1024u;
+  assert(dircheck(install_root) && find_entry(install_root, "D1") &&
+         find_entry(install_root, "D3") &&
+         !find_entry(install_root, "D2"));
+  ArcInstallProfile single_profile = {0};
+  single_profile.game_id = 124u;
+  single_profile.disc_count = 1u;
+  single_profile.variants[0].app = "!Solo";
+  single_profile.variants[0].disc_count = 1u;
+  single_profile.variants[0].discs[0].number = 1u;
+  single_profile.variants[0].image_in_app = false;
+  single_profile.variants[0].eject = true;
+  ArcInstallPlan single_plan = {0};
+  single_plan.profile = &single_profile;
+  single_plan.variant = &single_profile.variants[0];
+  assert(arc_install_launcher(&single_plan, (uint8_t *)generated,
+                              sizeof(generated), &generated_size));
+  generated[generated_size] = 0;
+  static const char golden_single_disc[] =
+      "IfThere ADFS::0.$.D1 Then Copy ADFS::0.$.D1 RAM::0.$.D1 ~C~VFQ Else Error ArcDroid install: stage failed\r"
+      "IfThere RAM::0.$.D1 Then Set ArcDroid$Guard 1 Else Error ArcDroid install: stage failed\r"
+      "IfThere ADFS::0.$.Run Then Copy ADFS::0.$.Run RAM::0.$.Run ~C~VFQ Else Error ArcDroid install: stage failed\r"
+      "IfThere RAM::0.$.Run Then Set ArcDroid$Guard 1 Else Error ArcDroid install: stage failed\r"
+      "ADFMount RAM::0.$.D1\rADFS\rNoDir\rNoLib\rNoURD\rDismount :0\r"
+      "IfThere ADFS::0.$.!Solo Then Copy ADFS::0.$.!Solo RAM::0.$.!Solo ~C~VRFQ Else Error ArcDroid install: app failed\r"
+      "IfThere RAM::0.$.!Solo Then Set ArcDroid$Guard 1 Else Error ArcDroid install: app failed\r"
+      "Remove RAM::0.$.D1\r"
+      "IfThere RAM::0.$.D1 Then Error ArcDroid install: cleanup failed\r"
+      "IfThere RAM::0.$.!Solo.!Run Then Remove RAM::0.$.!Solo.!Run\r"
+      "IfThere RAM::0.$.!Solo.!Run Then Error ArcDroid install: run-file failed\r"
+      "Copy RAM::0.$.Run RAM::0.$.!Solo.!Run ~C~VFQ\r"
+      "IfThere RAM::0.$.!Solo.!Run Then Set ArcDroid$Guard 1 Else Error ArcDroid install: run-file failed\r"
+      "Remove RAM::0.$.Run\r"
+      "IfThere RAM::0.$.Run Then Error ArcDroid install: cleanup failed\r"
+      "ADFEject\rDir RAM::0.$.!Solo\rRun RAM::0.$.!Solo.!Run\r";
+  const char *single_tail = strstr(generated, "IfThere ADFS::0.$.D1");
+  assert(single_tail && !strcmp(single_tail, golden_single_disc));
+  test_stage("install carrier allocation boundary");
+  uint8_t *large1 = calloc(1u, 390u * 1024u);
+  uint8_t *large2 = calloc(1u, 420u * 1024u);
+  assert(large1 && large2);
+  raw[0] = large1; raw[1] = large2;
+  sizes[0] = 390u * 1024u;
+  sizes[1] = 400u * 1024u;
+  while (sizes[1] + 1024u <= 420u * 1024u &&
+         arc_install_carrier_build(&plans[0], raw, sizes, install_carrier,
+                                    error, sizeof(error)))
+    sizes[1] += 1024u;
+  assert(sizes[1] > 400u * 1024u &&
+         !arc_install_carrier_build(&plans[0], raw, sizes, install_carrier,
+                                    error, sizeof(error)) &&
+         strstr(error, "does not fit"));
+  sizes[1] -= 1024u;
+  assert(arc_install_carrier_build(&plans[0], raw, sizes, install_carrier,
+                                    error, sizeof(error)));
+  free(large1); free(large2);
+  free(install_carrier); free(install_support);
+  free(install_script);
+  arc_adffs_package_free(install_package); free(install_package);
+  free(install_zip);
+  for (unsigned i = 0u; i < 3u; ++i) free(install_raw[i]);
   test_stage("complete");
   puts("ADFFS synthetic package and media tests passed");
   return 0;

@@ -38,7 +38,7 @@ jobs:
         env:
           ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
           UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
-        run: ctest --test-dir build/sanitize --output-on-failure -R '^(zip-content|core-services|adffs-package-media|adffs-shipping-profile|jfd-engine-reader|jfd-controller-golden|newio-controller-golden|libretro-harness|newio-libretro-harness)$'
+        run: ctest --test-dir build/sanitize --output-on-failure -R '^(zip-content|core-services|adffs-package-media|adffs-shipping-profile|jfd-engine-reader|jfd-controller-golden|newio-controller-golden|libretro-harness|newio-libretro-harness|mouse-script-harness)$'
 
   windows:
     runs-on: windows-latest
