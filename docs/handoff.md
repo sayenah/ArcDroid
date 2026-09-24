@@ -2,7 +2,12 @@
 
 **Stage:** ARCHITECTURE  
 **Owner:** Fable (orchestrator role; held by Claude Opus 5.5 by Founder assignment while Fable is unavailable, S26–S27b)  
-**Next:** **Orchestrator grounds roadmap Slice 10** (the F-format 1600 K carrier and a persisted install disc, ending the D-069 save exception; consumers Exodus, SpeedBall 2 [RPC], the RiscPC workstream). Slice 9 is merged as `d1720e9` (PR #156). First check that CI on `main` at `d1720e9` is green. Then ground from primary evidence, run the two-stage Astra challenge, and write the Sol work order. **S27b: no process left running.** Every RetroArch instance on the Odin3 was started and stopped by this session; Sol runs 1–3 and the Opus QA agent have finished.
+**Next:** **Orchestrator grounds save persistence for the Slice 9 install path (D-071: Founder requires saves to work; D-069 withdrawn).** First establish, per title (E-Type, both Compendium games, Premier Manager [SA]), where the game writes its saves. Then choose a persistence mechanism from evidence. Candidates:
+  - a writable, persisted install disc (1600 K F-format for the ~0.9 MB installs, which constrains the A3000 titles);
+  - persisting only each profile's save files through a writable host-backed disc and restoring them at install;
+  - host-side extraction from the guest RAM disc.
+
+  Nothing persisted may contain ADFFS material (D-049). Then run the two-stage Astra challenge and write the Sol work order. First check that CI on `main` at `d1720e9` is green. **S27b: no process left running.**
   - the three titles through RetroArch from the device library: E-Type, E-Type Compendium (both variants via the chooser, by pad and by touch), and Premier Manager [SA] with its window reached by touch;
   - that the D-069 disclosure stays readable next to the Firmware OSD line (QA N-3);
   - load and reset times against QA N-1 (repeated per-variant zip reads);
@@ -74,7 +79,7 @@ Private logs and frames are in the S27b scratchpad (`ac11/`, `odin3/`); never co
 ## Roadmap after Slice 8 (Founder order, S25)
 Dependency-clearing slices first, then the small items, then the rest. Every dependency and its associated project is cleared before the item that needs it.
 1. ~~Slice 9~~ — **done** (`d1720e9`, S27b).
-2. **Slice 10 — F-format 1600 K carrier and a persisted install disc** (ends the D-069 exception; opens Exodus and SpeedBall 2 [RPC] if memory allows).
+2. **Slice 10 — save persistence for install-path titles (D-071, Founder priority)**; the F-format 1600 K carrier is built here if the chosen mechanism needs it, otherwise it follows with Exodus, SpeedBall 2 [RPC] and the RiscPC workstream.
 3. **Slice 11 — engine and input tidy-up (the remaining small items):** ARM3-class machines A5000/A540 (Founder decision S25: wanted for completeness; Arculator ARM3 + New-IO I/O already present), Slice 3b joystick interfaces (D-034: RTFM, printer port), audio resampler flush (D-022). The two protection-check titles are tried on the host with the harness OSK script during the Slice 8 evidence run (evidence only).
 4. **Release baseline:** armeabi-v7a, `.info` beside the core, title-profile notes, the owed release notes (5b-2 … Slice 8), libretro buildbot submission per D-016.
 5. **RiscPC workstream (D-063, four to five slices):** RPCEmu evaluation (architecture only, Founder gate on the engine choice) → engine import and hardening → adapter integration → JFD-flag-driven machine selection (S-7 notice retired for reachable titles) → Odin3/Windows validation and performance gate.
