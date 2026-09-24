@@ -1,8 +1,8 @@
 # ArcDroid Handoff
 
-**Stage:** IMPLEMENTATION  
-**Owner:** Sol  
-**Next:** **Orchestrator verifies Slice 8 at `7a23f4a`** (Sol runs 1–5 committed; D-066 narrows AC-11): CI on both runs; the Odin3 leg with a `7a23f4a` core (2 HD titles reach RISC OS without the error; the 6 quad JFDs load natively with `reason=new-io-machine`, no crash); then `Stage: QA`, targeted Opus re-check of runs 4–5 (`dd2b8e7..7a23f4a`) on the same QA agent/clone, adjudication, and merge under §12.11.
+**Stage:** QA  
+**Owner:** Opus  
+**Next:** **Targeted Opus 5.5 QA re-check (effort `high`, same `opus-qa` agent and QA clone) of Slice 8 runs 4–5** (`dd2b8e7..7a23f4a` on PR #142): the per-drive READ ID fix in `disc_adf.c` and its mixed-drive golden test, the valid F fixture, the Windows F-step error pattern, `docs/zip.md`, and D-065's native-JFD rule on New-IO; confirm the full suite at `7a23f4a` and that D-066's amended AC-11 is reflected. CI on `7a23f4a` is green on both runs (10/10). In parallel the orchestrator runs the Odin3 leg with a `7a23f4a` core. Then adjudication and merge under §12.11.
 
 **Founder mandate (S21, verbatim intent):** make these Archimedes games accessible and easy to play without any unnecessary hurdles. Judge every slice and every gate against that.
 
