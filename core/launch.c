@@ -145,7 +145,8 @@ static bool arc_old_map_geometry(const uint8_t *data, size_t size,
             *max_missing = 20480u;
             return true;
          }
-         if (old_size > 2560u && size >= 655360u - 8192u &&
+         if (old_size > 2560u && old_size <= 3200u &&
+             size >= 655360u - 8192u &&
              size <= 655360u && size % 256u == 0u)
          {
             *geometry = ARC_GEOMETRY_640K_L;

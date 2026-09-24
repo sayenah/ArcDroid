@@ -2252,6 +2252,26 @@ int main(int argc, char **argv)
              strstr(boot_path, "Disc1.adf"));
       retro_unload_game();
 
+      static const char *const f_launch[] = {
+         "blank-boot-name-f.adf", "valid-f.jfd"
+      };
+      option_launch = "auto";
+      for (unsigned item = 0u; item < 2u; ++item)
+      {
+         char launch_path[4096];
+         assert(snprintf(launch_path, sizeof(launch_path), "%s/%s",
+                         f_directory, f_launch[item]) < (int)sizeof(launch_path));
+         struct retro_game_info launch_game = {launch_path, NULL, 0u, NULL};
+         phase = PHASE_LOAD;
+         assert(retro_load_game(&launch_game));
+         assert(strstr(last_launch_log, "disc=\"ArcFTest\"") &&
+                strstr(last_launch_log, "decision=!Demo") &&
+                strstr(last_launch_log, "reason=single application"));
+         assert(arc_engine_test_drive_media(1u, NULL, NULL));
+         retro_unload_game();
+      }
+      option_launch = "off";
+
       option_cpu = "ARM2";
       phase = PHASE_LOAD;
       assert(!retro_load_game(&f_game) &&

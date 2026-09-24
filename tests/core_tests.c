@@ -1610,6 +1610,18 @@ static void test_short_media_policy(void)
          old_cases[i].size - old_cases[i].cap - old_cases[i].sector_size,
          &media, error, sizeof(error)));
    }
+   test_make_old_map(image, 655360u, 3199u);
+   assert(arc_media_inspect("old.adl", image, 655360u - 256u,
+                            &media, error, sizeof(error)));
+   assert(media.geometry == ARC_GEOMETRY_640K_L &&
+          media.recognition == ARC_MEDIA_RECOGNITION_DESCRIPTOR);
+   test_make_old_map(image, 655360u, 3201u);
+   assert(!arc_media_inspect("old.adl", image, 655360u - 256u,
+                             &media, error, sizeof(error)));
+   assert(arc_media_inspect("old.adl", image, 655360u,
+                            &media, error, sizeof(error)));
+   assert(media.geometry == ARC_GEOMETRY_640K_L &&
+          media.recognition == ARC_MEDIA_RECOGNITION_SIZE_FALLBACK);
    free(image);
 }
 
@@ -3027,6 +3039,23 @@ static void test_f_media(const char *directory)
       assert(discovery.readable && discovery.application_count == 1u &&
              discovery.target_index == 0 &&
              discovery.backup_map_used == (choice != 0u));
+      assert(discovery.disc_name.length == 8u &&
+             !memcmp(discovery.disc_name.bytes, "ArcFTest", 8u));
+      free(image);
+   }
+   for (unsigned choice = 0u; choice < 2u; ++choice)
+   {
+      size_t size;
+      uint8_t *image = read_fixture(directory, choice ?
+         "hd-family/stray-tail-bits-f.adf" :
+         "hd-family/blank-boot-name-f.adf", &size);
+      assert(arc_media_inspect("f.adf", image, size, &media, error,
+                               sizeof(error)));
+      if (!choice) assert(media.disc_name_length == 0u);
+      assert(arc_launch_discover(image, size, &media, NULL, &discovery));
+      assert(discovery.readable && discovery.application_count == 1u &&
+             discovery.disc_name.length == 8u &&
+             !memcmp(discovery.disc_name.bytes, "ArcFTest", 8u));
       free(image);
    }
    for (unsigned case_index = 0u; case_index < 2u; ++case_index)
@@ -3108,7 +3137,8 @@ static void test_f_media(const char *directory)
    arc_jfd_free(&jfd);
    const char *bad[] = {"corrupt-both-f.adf", "invalid-zones-f.adf",
                         "invalid-free-f.adf", "invalid-id-f.adf",
-                        "invalid-cross-f.adf"};
+                        "invalid-cross-f.adf", "small-zone-spare-f.adf",
+                        "unterminated-last-f.adf"};
    for (size_t i = 0u; i < sizeof(bad) / sizeof(bad[0]); ++i)
    {
       char path[128];

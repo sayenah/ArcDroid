@@ -724,8 +724,7 @@ $fRun = Start-MediaRun $fContent "f-format-auto"
 try {
     [void](Capture-MediaSignature $fRun "f-format-frame")
 } finally { Stop-MediaRun $fRun }
-if (-not (Select-String -Path $fRun.RetroLog -SimpleMatch
-        "Machine: requested=Auto resolved=A3020 reason=hd-media" -Quiet)) {
+if (-not (Select-String -Path $fRun.RetroLog -SimpleMatch "Machine: requested=Auto resolved=A3020 reason=hd-media" -Quiet)) {
     throw "F-format RetroArch run did not resolve A3020; log=$($fRun.RetroLog)"
 }
 @"

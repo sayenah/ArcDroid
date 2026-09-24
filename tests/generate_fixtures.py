@@ -1907,8 +1907,11 @@ def build_f_discovery() -> bytearray:
     record[22:32] = b"ArcFTest\r\r"
     image[0xdc0:0xdc0 + 60] = record
     blocks = [bytearray(1024) for _ in range(4)]
+    zone_bits = 8192 - 1600
+    last_end = 32 + (len(image) // 64 + 480 - 3 * zone_bits)
     for zone, block in enumerate(blocks):
-        start, end = (512 if zone == 0 else 32), 8192 - 1600
+        start = 512 if zone == 0 else 32
+        end = last_end if zone == 3 else 32 + zone_bits
         if zone == 0:
             block[4:64] = record
         elif zone == 2:
@@ -2194,6 +2197,30 @@ def main() -> None:
     f_image = build_f_discovery()
     (hd / "valid-f.adf").write_bytes(f_image)
     (hd / "valid-f.jfd").write_bytes(build_sparse_f_jfd(f_image))
+    map_address = ((8192 - 1600 - 480) + (8192 - 1600)) * 64
+    last_end = 32 + (len(f_image) // 64 + 480 - 3 * (8192 - 1600))
+    blank_boot = bytearray(f_image)
+    blank_boot[0xdc0 + 20:0xdc0 + 32] = bytes(12)
+    (hd / "blank-boot-name-f.adf").write_bytes(blank_boot)
+    stray_tail = bytearray(f_image)
+    missing_terminator = bytearray(f_image)
+    for copy in (0, 4096):
+        block_at = map_address + copy + 3 * 1024
+        block = bytearray(stray_tail[block_at:block_at + 1024])
+        _set_bits(block, last_end + 9, 1, 1)
+        _set_bits(block, 32 + 8192 - 1600 - 1, 1, 1)
+        block[0] = _zone_check(block)
+        stray_tail[block_at:block_at + 1024] = block
+        block = bytearray(missing_terminator[block_at:block_at + 1024])
+        block[(last_end - 1) // 8] &= ~(1 << ((last_end - 1) & 7))
+        _set_bits(block, last_end + 9, 1, 1)
+        block[0] = _zone_check(block)
+        missing_terminator[block_at:block_at + 1024] = block
+    (hd / "stray-tail-bits-f.adf").write_bytes(stray_tail)
+    (hd / "unterminated-last-f.adf").write_bytes(missing_terminator)
+    small_spare = bytearray(f_image)
+    small_spare[0xdc0 + 10:0xdc0 + 12] = (31).to_bytes(2, "little")
+    (hd / "small-zone-spare-f.adf").write_bytes(small_spare)
     (hd / "riscpc-f.jfd").write_bytes(build_sparse_f_jfd(
         f_image, (0x10 << 8) | (0x18 << 16)))
     (hd / "legacy-f.jfd").write_bytes(build_sparse_f_jfd(
@@ -2209,7 +2236,6 @@ def main() -> None:
         (hd / f"{tag}-f.jfd").write_bytes(build_sparse_f_jfd(
             f_image, flags | (0x18 << 16) | (0x10 << 8)))
     corrupted = bytearray(f_image)
-    map_address = ((8192 - 1600 - 480) + (8192 - 1600)) * 64
     corrupted[map_address] ^= 1
     (hd / "backup-f.adf").write_bytes(corrupted)
     (hd / "backup-f.jfd").write_bytes(build_sparse_f_jfd(corrupted))

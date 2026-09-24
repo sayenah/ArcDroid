@@ -262,6 +262,45 @@ static bool arc_filecore_new(ArcFileCore *fs)
    return true;
 }
 
+static bool arc_f_record_valid(const uint8_t record[60])
+{
+   unsigned id_length = record[4];
+   unsigned log2_bytes_per_map_bit = record[5];
+   unsigned zone_count = record[9];
+   unsigned zone_spare = (unsigned)record[10] | ((unsigned)record[11] << 8u);
+   if (record[0] != 10u || record[1] != 10u || record[2] != 2u ||
+       record[3] != 4u || record[7] > 3u ||
+       arc_le32(record + 16u) != 1638400u ||
+       id_length < 13u || id_length > 15u ||
+       log2_bytes_per_map_bit < 6u || log2_bytes_per_map_bit > 10u ||
+       zone_count < 1u || zone_count > 8u ||
+       zone_spare < 32u ||
+       zone_spare > 8192u - 480u - (id_length + 1u)) return false;
+   unsigned zone_bits = 8192u - zone_spare;
+   size_t disc_bits = 1638400u >> log2_bytes_per_map_bit;
+   size_t preceding_bits = (size_t)(zone_count - 1u) * zone_bits;
+   if (preceding_bits > disc_bits + 480u) return false;
+   size_t last_bits = disc_bits + 480u - preceding_bits;
+   unsigned last_start = zone_count == 1u ? 480u : 0u;
+   if (last_bits < last_start + id_length + 1u ||
+       last_bits > zone_bits) return false;
+   unsigned middle = zone_count / 2u;
+   size_t map_bits = middle ? (size_t)middle * zone_bits - 480u : 0u;
+   size_t map_address = map_bits << log2_bytes_per_map_bit;
+   size_t map_size = (size_t)zone_count * 1024u;
+   return map_address <= 1638400u &&
+          2u * map_size <= 1638400u - map_address;
+}
+
+static unsigned arc_f_zone_end(const ArcFileCore *fs, unsigned zone)
+{
+   unsigned zone_bits = 8192u - fs->zone_spare;
+   if (zone + 1u != fs->zone_count) return 32u + zone_bits;
+   size_t disc_bits = fs->disc_size >> fs->log2_bytes_per_map_bit;
+   return 32u + (unsigned)(disc_bits + 480u -
+      (size_t)(fs->zone_count - 1u) * zone_bits);
+}
+
 static bool arc_f_map_valid(const ArcFileCore *fs, const uint8_t record[60])
 {
    uint8_t cross = 0u;
@@ -269,10 +308,11 @@ static bool arc_f_map_valid(const ArcFileCore *fs, const uint8_t record[60])
    {
       const uint8_t *map = fs->map + (size_t)zone * 1024u;
       unsigned start = zone ? 32u : 512u;
-      unsigned end = 8192u - fs->zone_spare;
+      unsigned end = arc_f_zone_end(fs, zone);
       if (map[0] != arc_zone_checksum(map)) return false;
       cross ^= map[3];
-      if (zone == 0u && memcmp(map + 4u, record, 60u)) return false;
+      if (zone == 0u && (!arc_f_record_valid(map + 4u) ||
+                         memcmp(map + 4u, record, 20u))) return false;
       unsigned link = 0u;
       for (unsigned bit = 0u; bit < fs->id_length; ++bit)
          link |= (unsigned)((map[(8u + bit) >> 3u] >> ((8u + bit) & 7u)) & 1u) << bit;
@@ -306,25 +346,18 @@ static bool arc_filecore_f(ArcFileCore *fs)
 {
    uint8_t boot[60];
    if (!arc_reader_configure(&fs->reader, ARC_GEOMETRY_1600K_F) ||
-       !arc_reader_read(&fs->reader, 0xdc0u, boot, sizeof(boot))) return false;
+       !arc_reader_read(&fs->reader, 0xdc0u, boot, sizeof(boot)) ||
+       !arc_f_record_valid(boot)) return false;
    fs->id_length = boot[4];
    fs->log2_bytes_per_map_bit = boot[5];
    fs->zone_count = boot[9];
    fs->zone_spare = (unsigned)boot[10] | ((unsigned)boot[11] << 8u);
-   if (boot[0] != 10u || boot[1] != 10u || boot[2] != 2u || boot[3] != 4u ||
-       boot[7] > 3u || arc_le32(boot + 16u) != 1638400u ||
-       fs->id_length < 13u || fs->id_length > 15u ||
-       fs->log2_bytes_per_map_bit < 6u || fs->log2_bytes_per_map_bit > 10u ||
-       fs->zone_count < 1u || fs->zone_count > 8u ||
-       fs->zone_spare > 8192u - 480u - (fs->id_length + 1u)) return false;
+   fs->disc_size = 1638400u;
    unsigned zone_bits = 8192u - fs->zone_spare;
    unsigned middle = fs->zone_count / 2u;
-   size_t preceding_bits = middle ?
-      (size_t)zone_bits - 480u + (size_t)(middle - 1u) * zone_bits : 0u;
+   size_t preceding_bits = middle ? (size_t)middle * zone_bits - 480u : 0u;
    size_t map_address = preceding_bits << fs->log2_bytes_per_map_bit;
    size_t map_size = (size_t)fs->zone_count * 1024u;
-   if (map_address > 1638400u ||
-       2u * map_size > 1638400u - map_address) return false;
    bool primary_read = arc_reader_read(&fs->reader, map_address,
                                         fs->map, map_size);
    if (!primary_read || !arc_f_map_valid(fs, boot))
@@ -336,10 +369,10 @@ static bool arc_filecore_f(ArcFileCore *fs)
    }
    fs->new_map = true;
    fs->new_directory = true;
-   fs->disc_size = 1638400u;
-   fs->boot_option = boot[7];
-   fs->root_address = arc_le32(boot + 12u) & 0x00ffffffu;
-   arc_guest_name_trim(&fs->disc_name, boot + 22u);
+   const uint8_t *map_record = fs->map + 4u;
+   fs->boot_option = map_record[7];
+   fs->root_address = arc_le32(map_record + 12u) & 0x00ffffffu;
+   arc_guest_name_trim(&fs->disc_name, map_record + 22u);
    return true;
 }
 
@@ -400,17 +433,19 @@ static bool arc_f_map_resolve(const ArcFileCore *fs, uint32_t address,
       unsigned zone = (first_zone + step) % fs->zone_count;
       const uint8_t *map = fs->map + (size_t)zone * 1024u;
       unsigned start = zone ? 32u : 512u;
-      unsigned end = 8192u - fs->zone_spare;
+      unsigned end = arc_f_zone_end(fs, zone);
       unsigned link = arc_map_bits(map, 8u, fs->id_length);
       unsigned free_at = link ? 8u + link : 0u;
       size_t zone_base = zone ?
          (size_t)zone_bits - 480u + (size_t)(zone - 1u) * zone_bits : 0u;
       while (start < end)
       {
+         if (start + fs->id_length >= end) return false;
          unsigned id = arc_map_bits(map, start, fs->id_length);
          unsigned stop = start + fs->id_length;
          while (stop < end && !((map[stop >> 3u] >> (stop & 7u)) & 1u))
             ++stop;
+         if (stop >= end) return false;
          size_t length = (size_t)stop + 1u - start;
          if (start == free_at)
             free_at = id ? free_at + id : 0u;

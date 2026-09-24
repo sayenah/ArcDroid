@@ -4718,9 +4718,6 @@ RETRO_API void retro_reset(void)
    if (!was_ejected && selected < arc_media_count &&
        !arc_refresh_jfd(&arc_media[selected], error, sizeof(error)))
       goto failed;
-   for (unsigned i = 0u; i < arc_media_count; ++i)
-      if (!arc_machine_accepts_media(reset_choice, &arc_media[i],
-                                      error, sizeof(error))) goto failed;
 
    free(arc_firmware);
    arc_firmware = new_firmware;
