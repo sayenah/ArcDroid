@@ -722,10 +722,24 @@ arcdroid_launch = "off"
 $fContent = (Resolve-Path (Join-Path $InputDirectory "valid-f.adf")).Path
 $fRun = Start-MediaRun $fContent "f-format-auto"
 try {
-    [void](Capture-MediaSignature $fRun "f-format-frame")
+    $fRun.Udp.Client.ReceiveTimeout = 5000
+    for ($sample = 1; $sample -le 2; $sample++) {
+        if ($sample -eq 2) { Start-Sleep -Seconds 2 }
+        if ($fRun.Process.HasExited) { throw "F-format RetroArch exited before GET_STATUS sample $sample" }
+        Send-MediaCommand $fRun "GET_STATUS"
+        $fRemote = [System.Net.IPEndPoint]::new([System.Net.IPAddress]::Any, 0)
+        $fStatus = [Text.Encoding]::ASCII.GetString($fRun.Udp.Receive([ref]$fRemote))
+        if ($fRun.Process.HasExited -or $fStatus -notmatch '^GET_STATUS PLAYING\b' -or -not $fStatus.Contains("valid-f")) { throw "F-format GET_STATUS sample $sample did not report live valid-f content: $fStatus" }
+    }
 } finally { Stop-MediaRun $fRun }
 if (-not (Select-String -Path $fRun.RetroLog -SimpleMatch "Machine: requested=Auto resolved=A3020 reason=hd-media" -Quiet)) {
     throw "F-format RetroArch run did not resolve A3020; log=$($fRun.RetroLog)"
+}
+if (-not (Select-String -Path $fRun.RetroLog -Pattern 'presenting bounded fallback|SET_GEOMETRY|SET_SYSTEM_AV_INFO' -Quiet)) {
+    throw "F-format RetroArch run did not present frames; log=$($fRun.RetroLog)"
+}
+if (Select-String -Path $fRun.RetroLog -Pattern '\[ERROR\]' -Quiet) {
+    throw "F-format RetroArch run logged an error; log=$($fRun.RetroLog)"
 }
 @"
 arcdroid_machine = "A3000"
