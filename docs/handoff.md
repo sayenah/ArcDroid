@@ -2,7 +2,7 @@
 
 **Stage:** ARCHITECTURE  
 **Owner:** Fable (orchestrator role; held by Claude Opus 5.5 by Founder assignment while Fable is unavailable, S26–S27b)  
-**Next:** **Founder decision: Slice 9 scope (question below).** S27b grounding showed that roadmap item 1 as written would make at most one or two titles playable. After the Founder chooses, the orchestrator writes that slice's work order: an install-path feasibility probe first if option A is chosen; then the two-stage Astra challenge, adjudication, and the Sol work order here with `Stage: IMPLEMENTATION`, `Owner: Sol`. CI on `main` at `3b93737` is green (both runs). **S27b: no process left running.** No Sol, Astra or Opus run was started, and the Odin3 was not used.
+**Next:** **Orchestrator writes the Slice 9 work order (Founder chose option A, S27b; D-068).** The install-path feasibility probe is done (below). Remaining: the two-stage Astra challenge on the draft, adjudication, then the Sol work order here with `Stage: IMPLEMENTATION`, `Owner: Sol`. **S27b: no process left running.** No Sol, Astra or Opus run has been started yet, and the Odin3 is not used until the slice's device leg.
 
 **Founder mandate (S21, verbatim intent):** make these Archimedes games accessible and easy to play without any unnecessary hurdles. Judge every slice and every gate against that.
 
@@ -27,6 +27,12 @@ Observation (S27): the Android core embeds absolute source paths (`__FILE__` in 
   - **A (recommended): merge roadmap items 1 and 2.** One slice covers ADFFS on the New-IO class (D-065 flip) and the ADFFS hard-disc-install path. Targets: the 3 `Disc error 10` DD sets, the install-only HD title, Premier Manager [SA], and possibly Drifter [SA]. The first architecture step is a feasibility probe of where "installed" files live (a guest RAM disc vs a writable carrier) within 4 MB. The F-format carrier becomes its own later slice, when Exodus, SpeedBall 2 [RPC] or the RiscPC workstream needs it.
   - **B: keep Slice 9 as written.** Build the F carrier and flip D-065; payoff is 1–2 titles, plus infrastructure for later.
   - **C: move to roadmap Slice 11 (small items) now** and revisit the ADFFS work after.
+- **Install-path feasibility (S27b, host, throwaway probe; D-068).** The probe used env-gated hooks in the scratch clone: extra carrier files, a replacement launcher tail, a larger RAM disc, the multi-disc and D-065 gates off, and harness `move`/`click` commands. The guest-side install ran under ADFFS 2.88 on RISC OS 3.11. Each title's images were copied to the guest RAM disc, and the recipe's app and data items were copied under ADFFS into a RAM-disc app. Where the recipe asks, the disc-1 image went inside the app, with a `!Run` that calls ADFFS's boot for the title. The current directory was then set to the app and the app run. Results:
+  - E-Type (2 discs, A3000, 1600 K RAM disc) plays; a race runs.
+  - E-Type Compendium: each of its two games plays when installed alone with its own data disc. Installing both at once overflows 4 MB; disc 4 is not part of the recipe.
+  - Premier Manager [SA] (A3020, HD image) reaches its icon bar, but only with the current directory set to the app. The harness pointer cannot drive desktop clicks, so its game window is left for the device leg.
+  - RISC OS 3.11 truncates names to 10 characters. Install-path saves live on the RAM disc and are lost at exit.
+  - Out of this slice: Drifter [SA] (install needs a third-party extractor), Exodus (needs the F-format carrier), The Time Machine (interactive five-disc installer, 2.3 MB), and Populous [RPC] (hangs after the mount).
 - Carried: QA L-3 (an ≤ 800 K quad JFD auto-resolves the A3020) and N-1 (the WD1770 READ ADDRESS drive-alternation test) ride on whichever slice touches them. D-066's reader contract stands: an omitted ID is Record-Not-Found in the native reader.
 
 ## State (carried)
