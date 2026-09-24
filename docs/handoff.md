@@ -2,7 +2,20 @@
 
 **Stage:** ARCHITECTURE  
 **Owner:** Fable (orchestrator role; held by Claude Opus 5.5 by Founder assignment while Fable is unavailable, S26–S27b)  
-**Next:** **Orchestrator grounds Slice 10 per D-072:** a persisted install disc (saves everywhere, D-071), the F-format 1600 K carrier, SpeedBall 2 [RPC], Exodus, The Time Machine, and a Populous [RPC] diagnosis. Probes to run first, in a throwaway scratch clone with private media:
+**Next:** **(1) Re-baseline against D-073.**
+  - Re-run the full library sweep on current `main` (the S24 sweep tooling is in the S24 scratchpad `16ff5ea2…/scratchpad/sweep/`; runs are private, never committed).
+  - Record, per game: playable, launch friction (chooser, icon bar, disc prompt, boot time), and whether in-game saves persist.
+  - Publish the scoreboard as private evidence plus a count summary in the build log.
+
+  **(2) Order the work by games fixed per slice.** Recommended:
+  - save write-back for ADFFS and JFD titles, and faster ADFFS/install boots;
+  - Slice 10 (persisted install disc, F carrier, SpeedBall 2 [RPC], Exodus, The Time Machine, Populous [RPC] diagnosis), with the Slice 10 probes listed in D-072;
+  - per-title batches;
+  - ARM3 machines (Botkiller2);
+  - save states (D-011);
+  - the RiscPC engine (D-063).
+
+  Then ground, run the two-stage Astra challenge and write the Sol work order as usual. First check CI on `main`: the `a329f3b` windows-retroarch job hit the known reload flake and was re-run in S27b (`gh run view 36041822929`). **S27b: no process left running.**
   1. a blank writable 1600 K image on drive 1 of the A3020 that the guest formats (`*Format` F) and installs onto, then reboot from it with no reinstall, and a save persisting (E-Type's hall of fame; a Premier Manager saved game);
   2. the drive and boot layout, with ADFFS only on the RAM disc and never in the persisted image (D-049);
   3. whether Exodus's and The Time Machine's own installers can run into it (interactive or scripted);
@@ -77,6 +90,19 @@ Private logs and frames are in the S27b scratchpad (`ac11/`, `odin3/`); never co
 - Exodus and SpeedBall 2 [RPC] (need the F carrier);
 - The Time Machine (interactive five-disc installer);
 - Populous [RPC] (hangs after mount under ADFFS; per-title diagnosis).
+
+## Session relay (Founder request, S27b)
+The Founder opened several ArcDroid session windows and asked for work to pass between them automatically.
+- **One baton holder at a time.** Only the session holding the orchestrator baton may change project state.
+- **When to hand off:** after a merged slice, a closed baton, or when context grows long. Before handing off, merge this handoff to `main` with an exact Next, and leave no process running that you started.
+- **How to hand off:**
+  1. Run `ListAgents`.
+  2. `SendMessage` the relay brief (below) to the next **idle** session whose name starts with `arcdroid-`. Order used: `arcdroid-cb`, `arcdroid-fa`, `arcdroid-cc`, `arcdroid-9d`, `arcdroid-c9`.
+  3. Say in your own window that you handed off, and stop.
+- **Founder decisions:** ask in your own window and do not hand off past an unanswered Founder question.
+- **Never** message or affect non-ArcDroid sessions, or processes you did not start.
+
+**Relay brief:** "ArcDroid baton handoff from <session>. The Founder asked (S27b) for ArcDroid work to continue automatically across the ArcDroid session windows. You now hold the ArcDroid orchestrator baton in /Users/mac0918/dev/ArcDroid (Fable role per CLAUDE.md; the Founder assigned Claude Opus 5.5 while Fable is unavailable). Read CLAUDE.md, then docs/handoff.md (the Next and the Session relay section), and work towards the Founder vision D-073. When your stretch is done, hand off per the Session relay section. If the Founder has not yet confirmed in your window, ask them once to confirm you should take the baton."
 
 ## State (carried)
 - **Role note (Founder, S26–S27):** Fable is unavailable; the Founder assigned the orchestrator role to Claude Opus 5.5 (S26 second half, S27). QA independence is kept by dispatching QA to a separate `opus-qa` agent with a fresh clone and no conversation context; the orchestrator does not write implementation or tests.
