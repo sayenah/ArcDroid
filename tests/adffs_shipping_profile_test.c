@@ -2,6 +2,45 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+const ArcInstallProfile *arc_test_install_profiles(size_t *count);
+
+static bool same_text(const char *left, const char *right) {
+  return left == right || (left && right && !strcmp(left, right));
+}
+
+static bool same_variant(const ArcInstallVariant *left,
+                         const ArcInstallVariant *right) {
+  if (!same_text(left->key, right->key) ||
+      !same_text(left->label, right->label) ||
+      left->disc_count != right->disc_count ||
+      !same_text(left->app, right->app) ||
+      left->data_disc != right->data_disc ||
+      !same_text(left->data_file, right->data_file) ||
+      !same_text(left->data_dir, right->data_dir) ||
+      left->image_in_app != right->image_in_app ||
+      left->eject != right->eject ||
+      left->ram_kib != right->ram_kib) return false;
+  for (unsigned d = 0u; d < ARC_INSTALL_MAX_DISCS; ++d)
+    if (left->discs[d].number != right->discs[d].number ||
+        left->discs[d].size != right->discs[d].size ||
+        !same_text(left->discs[d].sha1, right->discs[d].sha1)) return false;
+  return true;
+}
+
+static bool same_profile(const ArcInstallProfile *left,
+                         const ArcInstallProfile *right) {
+  if (left->game_id != right->game_id ||
+      left->disc_count != right->disc_count ||
+      left->revision != right->revision ||
+      !same_text(left->script_sha256, right->script_sha256) ||
+      left->io_mask != right->io_mask ||
+      left->variant_count != right->variant_count) return false;
+  for (unsigned v = 0u; v < ARC_INSTALL_MAX_VARIANTS; ++v)
+    if (!same_variant(&left->variants[v], &right->variants[v])) return false;
+  return true;
+}
+
 #define CHECK(expression)                                                       \
   do {                                                                          \
     if (!(expression)) {                                                        \
@@ -27,6 +66,15 @@ int main(void) {
   size_t installs = 0u;
   const ArcInstallProfile *profiles = arc_install_profiles(&installs);
   CHECK(profiles && installs == 3u);
+  size_t test_count = 0u;
+  const ArcInstallProfile *test_profiles = arc_test_install_profiles(&test_count);
+  CHECK(test_profiles && test_count == installs + 1u &&
+        test_profiles[installs].game_id == 123u);
+  for (size_t i = 0u; i < installs; ++i)
+    CHECK(same_profile(&profiles[i], &test_profiles[i]));
+  CHECK(profiles[0].variants[0].ram_kib == 2000u &&
+        profiles[1].variants[0].ram_kib == 2000u &&
+        profiles[1].variants[1].ram_kib == 2000u);
   for (size_t i = 0u; i < installs; ++i) {
     const ArcInstallProfile *profile = &profiles[i];
     CHECK(profile->game_id && profile->disc_count && profile->revision &&
