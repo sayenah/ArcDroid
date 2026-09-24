@@ -1896,8 +1896,35 @@ def _zone_check(block: bytearray) -> int:
     return (sums[0] ^ sums[1] ^ sums[2] ^ sums[3]) & 0xff
 
 
+def _filecore_boot_checksum(block: bytes) -> int:
+    """FileCore's end-around-carry sum of the first 511 boot-block bytes."""
+    checksum = sum(block[:511])
+    while checksum > 0xff:
+        checksum = (checksum & 0xff) + (checksum >> 8)
+    return checksum
+
+
+def _set_f_boot_checksum(image: bytearray) -> None:
+    image[0xdff] = _filecore_boot_checksum(image[0xc00:0xe00])
+
+
+def _finish_f_directory(directory: bytearray, entry_count: int) -> None:
+    """Set the new-directory check byte over its used header and tail."""
+    used = 5 + 26 * entry_count
+    checksum = 0
+    for offset in range(0, used & ~3, 4):
+        checksum = struct.unpack_from("<I", directory, offset)[0] ^ _ror32(checksum, 13)
+    for offset in range(used & ~3, used):
+        checksum = directory[offset] ^ _ror32(checksum, 13)
+    for offset in range(2008, 2044, 4):
+        checksum = struct.unpack_from("<I", directory, offset)[0] ^ _ror32(checksum, 13)
+    directory[2047] = (checksum ^ (checksum >> 8) ^
+                       (checksum >> 16) ^ (checksum >> 24)) & 0xff
+
+
 def build_f_discovery() -> bytearray:
     image = bytearray(1638400)
+    image[0xc00:0xc04] = (0x20000000).to_bytes(4, "little")
     record = bytearray(60)
     record[:6] = bytes((10, 10, 2, 4, 15, 6))
     record[9] = 4
@@ -1922,7 +1949,12 @@ def build_f_discovery() -> bytearray:
             _set_bits(block, start, 15, 3)
             _set_bits(block, start + 15, 1, 1)
             start += 16
+            if zone == 3:
+                _set_bits(block, start, 15, 4)
+                _set_bits(block, start + 15, 1, 1)
+                start += 16
         _set_bits(block, 8, 15, start - 8)
+        _set_bits(block, 23, 1, 1)
         _set_bits(block, end - 1, 1, 1)
         block[3] = 0xff if zone == 0 else 0
         block[0] = _zone_check(block)
@@ -1932,13 +1964,18 @@ def build_f_discovery() -> bytearray:
     image[map_address + len(map_bytes):map_address + 2 * len(map_bytes)] = map_bytes
     root = _new_directory()
     _new_entry(root, 0, b"!Demo", 2048, 3 << 8, True)
+    _finish_f_directory(root, 1)
     image[map_address + 8 * 1024:map_address + 10 * 1024] = root
     child = _new_directory(b"!Demo")
-    _new_entry(child, 0, b"!Run", 1, 4 << 8)
+    run_text = b"*Echo ArcDroid synthetic application\r"
+    _new_entry(child, 0, b"!Run", len(run_text), 4 << 8, load=0xffffeb00)
+    _finish_f_directory(child, 1)
     zone1 = (8192 - 1600 - 480) * 64
     zone3 = (8192 - 1600 - 480 + 2 * (8192 - 1600)) * 64
     image[zone1:zone1 + 1024] = child[:1024]
     image[zone3:zone3 + 1024] = child[1024:]
+    image[zone3 + 1024:zone3 + 1024 + len(run_text)] = run_text
+    _set_f_boot_checksum(image)
     return image
 
 
@@ -2201,6 +2238,7 @@ def main() -> None:
     last_end = 32 + (len(f_image) // 64 + 480 - 3 * (8192 - 1600))
     blank_boot = bytearray(f_image)
     blank_boot[0xdc0 + 20:0xdc0 + 32] = bytes(12)
+    _set_f_boot_checksum(blank_boot)
     (hd / "blank-boot-name-f.adf").write_bytes(blank_boot)
     stray_tail = bytearray(f_image)
     missing_terminator = bytearray(f_image)
@@ -2220,6 +2258,7 @@ def main() -> None:
     (hd / "unterminated-last-f.adf").write_bytes(missing_terminator)
     small_spare = bytearray(f_image)
     small_spare[0xdc0 + 10:0xdc0 + 12] = (31).to_bytes(2, "little")
+    _set_f_boot_checksum(small_spare)
     (hd / "small-zone-spare-f.adf").write_bytes(small_spare)
     (hd / "riscpc-f.jfd").write_bytes(build_sparse_f_jfd(
         f_image, (0x10 << 8) | (0x18 << 16)))
@@ -2245,6 +2284,7 @@ def main() -> None:
     (hd / "corrupt-both-f.adf").write_bytes(corrupted)
     invalid_zones = bytearray(f_image)
     invalid_zones[0xdc0 + 9] = 9
+    _set_f_boot_checksum(invalid_zones)
     (hd / "invalid-zones-f.adf").write_bytes(invalid_zones)
     bad_free = bytearray(f_image)
     bad_free[map_address + 1024 + 1] = 0xff
@@ -2257,6 +2297,7 @@ def main() -> None:
     invalid_id = bytearray(f_image)
     for record_at in (0xdc0, map_address + 4, map_address + 4096 + 4):
         struct.pack_into("<I", invalid_id, record_at + 12, 0x7fff00)
+    _set_f_boot_checksum(invalid_id)
     for copy_at in (map_address, map_address + 4096):
         invalid_id[copy_at] = _zone_check(bytearray(
             invalid_id[copy_at:copy_at + 1024]))

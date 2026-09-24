@@ -738,7 +738,7 @@ if (-not (Select-String -Path $fRun.RetroLog -SimpleMatch "Machine: requested=Au
 if (-not (Select-String -Path $fRun.RetroLog -Pattern 'presenting bounded fallback|SET_GEOMETRY|SET_SYSTEM_AV_INFO' -Quiet)) {
     throw "F-format RetroArch run did not present frames; log=$($fRun.RetroLog)"
 }
-if (Select-String -Path $fRun.RetroLog -Pattern '\[ERROR\]' -Quiet) {
+if (Select-String -Path $fRun.RetroLog -Pattern '\[(?:libretro )?ERROR\]' -Quiet) {
     throw "F-format RetroArch run logged an error; log=$($fRun.RetroLog)"
 }
 @"

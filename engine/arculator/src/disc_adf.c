@@ -2,7 +2,8 @@
   ADFS disc support (really all raw sector formats)*/
 /* ArcDroid modifications (2026-09-14, 2026-09-23): unavailable data never
  * terminates the frontend; command/rotation state resets across sessions;
- * index pulses count elapsed guest time at each controller poll period. */
+ * index pulses count elapsed guest time at each controller poll period;
+ * READ ID sector positions stay with their respective drives. */
 #include <string.h>
 #include "arc.h"
 #include "arc_io.h"
@@ -26,12 +27,12 @@ static struct
 	int maxsector;
 	int sector_offset;
 	int64_t image_size;
+	int read_id_sector;
 } adf[4];
 
 static int adf_sector,   adf_track,   adf_side,    adf_drive;
 static int adf_inread,   adf_readpos, adf_inwrite, adf_inreadaddr;
 static int adf_notfound;
-static int adf_rsector=0;
 static int adf_informat=0;
 
 static int adf_pause = 0;
@@ -56,7 +57,7 @@ void adf_init()
 	memset(adf, 0, sizeof(adf));
 	adf_sector = adf_track = adf_side = adf_drive = 0;
 	adf_inread = adf_readpos = adf_inwrite = adf_inreadaddr = 0;
-	adf_notfound = adf_rsector = adf_informat = adf_pause = 0;
+	adf_notfound = adf_informat = adf_pause = 0;
 	adf_phase_us = 0u;
 	for (int drive = 0; drive < 4; ++drive) adf_writable[drive] = 1;
 }
@@ -86,6 +87,7 @@ void adf_loadex(int drive, char *fn, int sectors, int size, int sides, int dblst
 	adf[drive].density = density;
 	adf[drive].maxsector = (int)(adf[drive].image_size / size);
 	adf[drive].sector_offset = sector_offset;
+	adf[drive].read_id_sector = 0;
 
 	adf_seek(drive, disc_get_current_track(drive));
 }
@@ -354,12 +356,12 @@ static void adf_poll()
 //                rpclog("adf_inreadaddr %08X\n", fdc_sectorid);
 		if (fdc_funcs->sectorid)
 		{
-			fdc_funcs->sectorid(adf_track, adf_side, adf_rsector + ((adf[adf_drive].size == 512) ? 1 : 0), (adf[adf_drive].size == 256) ? 1 : ((adf[adf_drive].size == 512) ? 2 : 3), 0, 0, fdc_p);
+			fdc_funcs->sectorid(adf_track, adf_side, adf[adf_drive].read_id_sector + ((adf[adf_drive].size == 512) ? 1 : 0), (adf[adf_drive].size == 256) ? 1 : ((adf[adf_drive].size == 512) ? 2 : 3), 0, 0, fdc_p);
 			adf_inreadaddr = 0;
-			adf_rsector++;
-			if (adf_rsector >= adf[adf_drive].sectors)
+			adf[adf_drive].read_id_sector++;
+			if (adf[adf_drive].read_id_sector >= adf[adf_drive].sectors)
 			{
-				adf_rsector=0;
+				adf[adf_drive].read_id_sector = 0;
 				rpclog("adf_rsector reset\n");
 			}
 		}
@@ -369,18 +371,18 @@ static void adf_poll()
 			{
 				case 0: fdc_funcs->data(adf_track, fdc_p); break;
 				case 1: fdc_funcs->data(adf_side, fdc_p); break;
-				case 2: fdc_funcs->data(adf_rsector + adf[adf_drive].sector_offset, fdc_p); break;
+				case 2: fdc_funcs->data(adf[adf_drive].read_id_sector + adf[adf_drive].sector_offset, fdc_p); break;
 				case 3: fdc_funcs->data((adf[adf_drive].size == 256) ? 1 : ((adf[adf_drive].size == 512) ? 2 : 3), fdc_p); break;
 				case 4: fdc_funcs->data(0, fdc_p); break;
 				case 5: fdc_funcs->data(0, fdc_p); break;
 				case 6:
 				adf_inreadaddr = 0;
 				fdc_funcs->finishread(fdc_p);
-				rpclog("Read addr - %i %i %i %i 0 0 (%i %i %i)\n", adf_track, adf_side, adf_rsector + adf[adf_drive].sector_offset, (adf[adf_drive].size == 256) ? 1 : ((adf[adf_drive].size == 512) ? 2 : 3), adf[adf_drive].sectors, adf_drive, adf_rsector);
-				adf_rsector++;
-				if (adf_rsector >= adf[adf_drive].sectors)
+				rpclog("Read addr - %i %i %i %i 0 0 (%i %i %i)\n", adf_track, adf_side, adf[adf_drive].read_id_sector + adf[adf_drive].sector_offset, (adf[adf_drive].size == 256) ? 1 : ((adf[adf_drive].size == 512) ? 2 : 3), adf[adf_drive].sectors, adf_drive, adf[adf_drive].read_id_sector);
+				adf[adf_drive].read_id_sector++;
+				if (adf[adf_drive].read_id_sector >= adf[adf_drive].sectors)
 				{
-					adf_rsector=0;
+					adf[adf_drive].read_id_sector = 0;
 					rpclog("adf_rsector reset\n");
 				}
 				break;

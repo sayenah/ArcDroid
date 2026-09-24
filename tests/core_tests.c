@@ -3027,6 +3027,13 @@ static void test_f_media(const char *directory)
       uint8_t *image = read_fixture(directory,
          choice ? "hd-family/backup-f.adf" : "hd-family/valid-f.adf", &size);
       assert(size == 1638400u);
+      unsigned boot_checksum = 0u;
+      for (size_t byte = 0xc00u; byte < 0xdffu; ++byte)
+      {
+         unsigned sum = boot_checksum + image[byte];
+         boot_checksum = (sum & 0xffu) + (sum >> 8u);
+      }
+      assert(image[0xdffu] == boot_checksum && boot_checksum == 0xd6u);
       assert(arc_media_inspect("f.adf", image, size, &media, error, sizeof(error)));
       assert(media.kind == ARC_MEDIA_ADF_1600K &&
              media.geometry == ARC_GEOMETRY_1600K_F &&
@@ -3049,6 +3056,13 @@ static void test_f_media(const char *directory)
       uint8_t *image = read_fixture(directory, choice ?
          "hd-family/stray-tail-bits-f.adf" :
          "hd-family/blank-boot-name-f.adf", &size);
+      unsigned boot_checksum = 0u;
+      for (size_t byte = 0xc00u; byte < 0xdffu; ++byte)
+      {
+         unsigned sum = boot_checksum + image[byte];
+         boot_checksum = (sum & 0xffu) + (sum >> 8u);
+      }
+      assert(image[0xdffu] == boot_checksum);
       assert(arc_media_inspect("f.adf", image, size, &media, error,
                                sizeof(error)));
       if (!choice) assert(media.disc_name_length == 0u);

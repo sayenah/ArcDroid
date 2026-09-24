@@ -56,38 +56,60 @@ void ioc_irqbc(uint8_t value) { ioc.irqb &= (uint8_t)~value; }
  * drive-1 selection without adding a production test hook. */
 struct ArcIoFile { size_t position; bool writable; };
 static uint8_t raw_helper[1638400u];
+static uint8_t raw_hd[1638400u];
 static size_t raw_helper_length = ARC_LAUNCH_DISC_SIZE;
+static size_t raw_hd_length = sizeof(raw_hd);
 static struct ArcIoFile raw_file;
+static struct ArcIoFile raw_hd_file;
+static bool raw_backing(ArcIoFile *file, uint8_t **bytes, size_t *length)
+{
+   if (file == &raw_file)
+   { *bytes = raw_helper; *length = raw_helper_length; return true; }
+   if (file == &raw_hd_file)
+   { *bytes = raw_hd; *length = raw_hd_length; return true; }
+   return false;
+}
 ArcIoFile *arc_io_open_file(const char *path, bool writable)
 {
-   if (strcmp(path, "memory-helper.adl")) return NULL;
-   raw_file.position = 0u; raw_file.writable = writable;
-   return &raw_file;
+   ArcIoFile *file = !strcmp(path, "memory-helper.adl") ? &raw_file :
+                     !strcmp(path, "memory-hd.adf") ? &raw_hd_file : NULL;
+   if (!file) return NULL;
+   file->position = 0u; file->writable = writable;
+   return file;
 }
-bool arc_io_close_file(ArcIoFile *file) { return file == &raw_file; }
+bool arc_io_close_file(ArcIoFile *file)
+{ return file == &raw_file || file == &raw_hd_file; }
 int64_t arc_io_file_length(ArcIoFile *file)
-{ return file == &raw_file ? (int64_t)raw_helper_length : -1; }
+{
+   uint8_t *bytes; size_t length;
+   return raw_backing(file, &bytes, &length) ? (int64_t)length : -1;
+}
 int64_t arc_io_seek_file(ArcIoFile *file, int64_t offset, int origin)
 {
-   if (file != &raw_file || origin != RETRO_VFS_SEEK_POSITION_START ||
-       offset < 0 || (uint64_t)offset > raw_helper_length) return -1;
+   uint8_t *bytes; size_t length;
+   if (!raw_backing(file, &bytes, &length) ||
+       origin != RETRO_VFS_SEEK_POSITION_START || offset < 0 ||
+       (uint64_t)offset > length) return -1;
    file->position = (size_t)offset; return offset;
 }
 size_t arc_io_read_file(ArcIoFile *file, void *data, size_t size)
 {
-   if (file != &raw_file || size > raw_helper_length - file->position) return 0u;
-   memcpy(data, raw_helper + file->position, size); file->position += size;
+   uint8_t *bytes; size_t length;
+   if (!raw_backing(file, &bytes, &length) ||
+       size > length - file->position) return 0u;
+   memcpy(data, bytes + file->position, size); file->position += size;
    return size;
 }
 size_t arc_io_write_file(ArcIoFile *file, const void *data, size_t size)
 {
-   if (file != &raw_file || !file->writable ||
-       size > raw_helper_length - file->position) return 0u;
-   memcpy(raw_helper + file->position, data, size); file->position += size;
+   uint8_t *bytes; size_t length;
+   if (!raw_backing(file, &bytes, &length) || !file->writable ||
+       size > length - file->position) return 0u;
+   memcpy(bytes + file->position, data, size); file->position += size;
    return size;
 }
 bool arc_io_flush_file(ArcIoFile *file)
-{ return file == &raw_file && file->writable; }
+{ return (file == &raw_file || file == &raw_hd_file) && file->writable; }
 
 static uint8_t *read_all(const char *path, size_t *size)
 {
@@ -1001,6 +1023,116 @@ static void test_82c711_raw_geometries(void)
    raw_helper_length = ARC_LAUNCH_DISC_SIZE;
 }
 
+static void mixed_select(unsigned drive, uint8_t rate)
+{
+   c82c711_fdc_write(2u, (uint8_t)(0x3cu | drive), NULL);
+   c82c711_fdc_write(7u, rate, NULL);
+}
+
+static void mixed_read_id(unsigned drive, uint8_t result[7])
+{
+   c82c711_fdc_write(5u, 0x0au, NULL);
+   c82c711_fdc_write(5u, (uint8_t)drive, NULL);
+   newio_wait_irq(400000u);
+   newio_result(result);
+}
+
+static void mixed_seek_zero(unsigned drive)
+{
+   c82c711_fdc_write(2u, (uint8_t)(0x3cu | drive), NULL);
+   c82c711_fdc_write(5u, 0x0fu, NULL);
+   c82c711_fdc_write(5u, (uint8_t)drive, NULL);
+   c82c711_fdc_write(5u, 0u, NULL);
+   newio_wait_irq(400000u);
+   c82c711_fdc_write(5u, 0x08u, NULL);
+   assert((c82c711_fdc_read(4u, NULL) & 0xf0u) == 0xd0u);
+   uint8_t status = c82c711_fdc_read(5u, NULL);
+   uint8_t track = c82c711_fdc_read(5u, NULL);
+   assert(!(status & 0xc0u) && track == 0u);
+}
+
+static void mixed_read_data(unsigned drive, uint8_t sector, uint8_t size,
+                            size_t bytes, const uint8_t *expected)
+{
+   const uint8_t params[8] = {
+      (uint8_t)drive, 0u, 0u, sector, size, sector, 0x1bu, 0xffu
+   };
+   transfer_count = 0u;
+   newio_transfer_limit = bytes;
+   newio_service_dma = true;
+   newio_dma_write = false;
+   c82c711_fdc_write(5u, 0x06u, NULL);
+   for (unsigned i = 0u; i < sizeof(params); ++i)
+      c82c711_fdc_write(5u, params[i], NULL);
+   newio_wait_irq(400000u);
+   uint8_t result[7];
+   newio_result(result);
+   assert(!(result[0] & 0xc0u) && transfer_count == bytes &&
+          !memcmp(transfer, expected, bytes));
+}
+
+static void test_82c711_mixed_raw_drives(const char *root)
+{
+   char path[4096];
+   assert(snprintf(path, sizeof(path), "%s/hd-family/valid-f.adf", root) <
+          (int)sizeof(path));
+   size_t image_size;
+   uint8_t *image = read_all(path, &image_size);
+   assert(image_size == sizeof(raw_hd));
+   memcpy(raw_hd, image, image_size);
+   free(image);
+   raw_hd_length = image_size;
+   assert(build_launch_helper());
+   raw_helper_length = ARC_LAUNCH_DISC_SIZE;
+   newio_reset(NULL, false);
+   adf_set_writable(0, 0);
+   adf_set_writable(1, 0);
+   assert(disc_load_raw(0, "memory-hd.adf", ARC_GEOMETRY_1600K_F));
+   assert(disc_load_raw(1, "memory-helper.adl", ARC_GEOMETRY_640K_L));
+
+   uint8_t result[7];
+   mixed_select(0u, 0u); /* HD in drive 0 at the controller's 500 kbps rate. */
+   mixed_read_id(0u, result);
+   assert(!(result[0] & 0xc0u) && result[5] == 0u && result[6] == 3u);
+   mixed_read_data(0u, 0u, 3u, 1024u, raw_hd);
+
+   mixed_select(1u, 0u); /* ADFS first probes the DD helper at the HD rate. */
+   mixed_read_id(1u, result);
+   assert((result[0] & 0x40u) && result[1] == 5u);
+   mixed_select(1u, 2u);
+   for (unsigned sector = 0u; sector < 10u; ++sector)
+   {
+      mixed_read_id(1u, result);
+      assert(!(result[0] & 0xc0u) && result[5] == sector && result[6] == 1u);
+   }
+   mixed_read_data(1u, 0u, 1u, 256u, raw_helper);
+
+   mixed_select(0u, 0u);
+   mixed_seek_zero(0u);
+   mixed_read_id(0u, result);
+   assert(!(result[0] & 0xc0u) && result[5] == 1u && result[6] == 3u);
+   mixed_read_data(0u, 3u, 3u, 1024u, raw_hd + 3072u);
+
+   mixed_seek_zero(0u);
+   mixed_select(0u, 2u); /* The reverse, DD probe of HD media, also recovers. */
+   mixed_read_id(0u, result);
+   assert((result[0] & 0x40u) && result[1] == 5u);
+   mixed_select(1u, 2u);
+   mixed_seek_zero(1u);
+   mixed_read_id(1u, result);
+   assert(!(result[0] & 0xc0u) && result[5] == 10u && result[6] == 1u);
+   mixed_read_data(1u, 0u, 1u, 256u, raw_helper);
+   mixed_select(0u, 0u);
+   mixed_seek_zero(0u);
+   mixed_read_id(0u, result);
+   assert(!(result[0] & 0xc0u) && result[5] == 2u && result[6] == 3u);
+   mixed_read_data(0u, 0u, 3u, 1024u, raw_hd);
+
+   c82c711_fdc_shutdown();
+   disc_close(1);
+   disc_close(0);
+}
+
 static void test_raw_index_cadence(void)
 {
    raw_helper_length = 1638400u;
@@ -1067,6 +1199,7 @@ int main(int argc, char **argv)
       test_82c711_jfd_search_failures(argv[1]);
       test_82c711_search_cancellation(argv[1]);
       test_82c711_raw_geometries();
+      test_82c711_mixed_raw_drives(argv[1]);
       test_raw_index_cadence();
    }
    puts("jfd_controller_tests: all checks passed");

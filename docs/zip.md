@@ -13,12 +13,12 @@ matches wins:
    inside that same `Game.adf` directory.
 4. Otherwise, the first member in natural full-path order.
 
-1600 K F-format ADF images are supported on New-IO machines.
-
 Within a rule, natural full-path order breaks ties. Every image after the
 chosen one also stays in natural full-path order, so `Disc2.adf` comes before
 `Disc10.adf`. An explicit disk/disc 1 name takes precedence over a zip-title
 match.
+
+1600 K F-format ADF images are supported on New-IO machines.
 
 Disk 1 recognition is ASCII case-insensitive and accepts `Disc1`, `(Disk 01)`,
 `disc-1`, and `Disk 1 of 3`. The word `disk` or `disc`, its complete decimal
