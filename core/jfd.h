@@ -32,7 +32,22 @@ typedef struct {
    bool timed;
 } ArcJfdTrack;
 
-typedef struct {
+struct ArcJfdImage;
+typedef struct ArcJfdOverlay {
+   uint8_t **data;                 /* One owned replacement per descriptor. */
+   uint8_t *eligible;
+   uint64_t generation;
+   unsigned records;
+   bool writable;
+   bool visible;
+   bool damaged;
+   bool failed;
+   const char *reason;             /* Static diagnostic reason from preparation. */
+   bool (*commit)(struct ArcJfdImage *, size_t, const uint8_t *);
+   void *store;
+} ArcJfdOverlay;
+
+typedef struct ArcJfdImage {
    uint8_t *decoded;
    size_t decoded_size;
    ArcJfdSector *sectors;
@@ -49,7 +64,42 @@ typedef struct {
    uint8_t fps_times_two;
    bool extended;
    bool ignored_header_fields;
+   ArcJfdOverlay *overlay;
 } ArcJfdImage;
+
+static inline bool arc_jfd_sector_write_eligible(const ArcJfdImage *image,
+                                                  size_t index)
+{
+   if (!image || index >= image->sector_count) return false;
+   const ArcJfdSector *sector = &image->sectors[index];
+   if (sector->data_offset == UINT32_MAX ||
+       (sector->flags & (ARC_JFD_ID_CRC_BAD | ARC_JFD_DATA_CRC_BAD |
+                         ARC_JFD_SLOW_SECTOR))) return false;
+   size_t track_side = 0u;
+   while (track_side < image->track_count &&
+          index >= (size_t)image->tracks[track_side].first_sector +
+                   image->tracks[track_side].sector_count) ++track_side;
+   if (track_side == image->track_count) return false;
+   const ArcJfdTrack *track = &image->tracks[track_side];
+   for (unsigned i = 0u; i < track->sector_count; ++i)
+   {
+      size_t other_index = (size_t)track->first_sector + i;
+      if (other_index == index) continue;
+      const ArcJfdSector *other = &image->sectors[other_index];
+      if (other->id == sector->id && other->density == sector->density)
+         return false;
+   }
+   for (size_t i = 0u; i < image->sector_count; ++i)
+   {
+      if (i == index) continue;
+      const ArcJfdSector *other = &image->sectors[i];
+      if (other->data_offset != UINT32_MAX &&
+          (uint64_t)sector->data_offset < (uint64_t)other->data_offset + other->size &&
+          (uint64_t)other->data_offset < (uint64_t)sector->data_offset + sector->size)
+         return false;
+   }
+   return true;
+}
 
 bool arc_jfd_has_signature(const uint8_t *input, size_t input_size);
 bool arc_jfd_parse(const uint8_t *input, size_t input_size, ArcJfdImage *image,

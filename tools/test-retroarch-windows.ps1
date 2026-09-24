@@ -916,6 +916,53 @@ try {
 }
 
 Write-Host "Slice 2a Windows RetroArch: disk commands, image-1 relaunch, inert seeded .ldci, and JFD golden region passed"
+
+# Slice 10a: the project-authored ROM reads sector 1 before writing 0x5A
+# bytes to that sector. Its first frame therefore shows the pristine data;
+# a fresh RetroArch process must show the committed data on the next run.
+Copy-Item -Force (Join-Path $InputDirectory "arcdroid-jfd-save-test.rom") $firmware
+$rwJfd = (Resolve-Path (Join-Path $InputDirectory "jfd-writes/rw-d.jfd")).Path
+$wpJfd = (Resolve-Path (Join-Path $InputDirectory "jfd-writes/wp-d.jfd")).Path
+$rwZip = (Resolve-Path (Join-Path $InputDirectory "jfd-writes/rw-d.zip")).Path
+$rwHash = (Get-FileHash -Algorithm SHA256 $rwJfd).Hash
+$wpHash = (Get-FileHash -Algorithm SHA256 $wpJfd).Hash
+$zipHash = (Get-FileHash -Algorithm SHA256 $rwZip).Hash
+$rwDigest = (Get-FileHash -Algorithm SHA1 $rwJfd).Hash.ToLowerInvariant()
+$wpDigest = (Get-FileHash -Algorithm SHA1 $wpJfd).Hash.ToLowerInvariant()
+$jfdSaveDirectory = Join-Path $coreSaveDirectory "jfd"
+$rwFirst = Start-MediaRun $rwJfd "jfd-rw-first"
+try {
+    $rwBeforeSignature = Capture-MediaSignature $rwFirst "jfd-rw-pristine"
+} finally { Stop-MediaRun $rwFirst }
+if (-not (Select-String -Path $rwFirst.RetroLog -SimpleMatch "JFD writes: image=1 state=writable reason=rw-flag" -Quiet)) {
+    throw "RW JFD did not enter the native writable path"
+}
+if (-not ((Test-Path (Join-Path $jfdSaveDirectory "$rwDigest.a")) -or
+           (Test-Path (Join-Path $jfdSaveDirectory "$rwDigest.b")))) {
+    throw "RW JFD did not publish a committed save slot"
+}
+$rwSecond = Start-MediaRun $rwJfd "jfd-rw-relaunch"
+try {
+    [void](Capture-ExpectedSignature $rwSecond "jfd-rw-saved" $rwBeforeSignature $true)
+} finally { Stop-MediaRun $rwSecond }
+$wpFirst = Start-MediaRun $wpJfd "jfd-wp-first"
+try {
+    [void](Capture-ExpectedSignature $wpFirst "jfd-wp-pristine" $rwBeforeSignature $false)
+} finally { Stop-MediaRun $wpFirst }
+if (-not (Select-String -Path $wpFirst.RetroLog -SimpleMatch "JFD writes: image=1 state=protected reason=wp-flag" -Quiet)) {
+    throw "WP JFD did not remain protected"
+}
+if ((Test-Path (Join-Path $jfdSaveDirectory "$wpDigest.a")) -or
+    (Test-Path (Join-Path $jfdSaveDirectory "$wpDigest.b"))) {
+    throw "WP JFD unexpectedly published a save slot"
+}
+if ((Get-FileHash -Algorithm SHA256 $rwJfd).Hash -ne $rwHash -or
+    (Get-FileHash -Algorithm SHA256 $wpJfd).Hash -ne $wpHash -or
+    (Get-FileHash -Algorithm SHA256 $rwZip).Hash -ne $zipHash) {
+    throw "JFD or zip source changed during native write tests"
+}
+Write-Host "Slice 10a Windows RetroArch: RW commit survived process relaunch; WP and source files unchanged"
+Copy-Item -Force (Join-Path $InputDirectory "arcdroid-media-test.rom") $firmware
 Write-Host "Slice 5b Windows RetroArch: folder disc 1 and eject/next/insert matched the playlist disc-2 signature"
 Write-Host "Slice 7a Windows RetroArch: bare single, zip#member, multi-image swap, pass-through logs, and unchanged SHA-256 passed"
 if ($env:GITHUB_STEP_SUMMARY) {

@@ -146,7 +146,8 @@ CHOOSER_VIDC_MODE = (
 )
 
 
-def build_rom(media_exerciser: bool = False) -> bytearray:
+def build_rom(media_exerciser: bool = False,
+              jfd_save_probe: bool = False) -> bytearray:
     rom = bytearray(b"\xFF" * ROM_SIZE)
     rom[0:4] = struct.pack("<I", 0xE59FF000)  # ldr pc, [pc]
     rom[8:12] = struct.pack("<I", 0x03800020)
@@ -281,6 +282,8 @@ def build_rom(media_exerciser: bool = False) -> bytearray:
     a.ldr_const(0, 0x03310000)
     a.mov(1, 0)
     a.str(1, 0, 4, byte=True)
+    if jfd_save_probe:
+        a.mov(1, 1)
     a.str(1, 0, 8, byte=True)
     a.mov(1, 0x80)
     a.str(1, 0, byte=True)
@@ -291,6 +294,8 @@ def build_rom(media_exerciser: bool = False) -> bytearray:
     a.tst_imm(7, 2)
     a.branch("fdc_wait", "eq")
     a.ldr(7, 0, 12, byte=True)
+    if jfd_save_probe:
+        a.add_lsl(6, 6, 6, 5)
     a.eor(6, 6, 7)
     a.subs_imm(5, 5, 1)
     a.branch("fdc_wait", "ne")
@@ -1352,11 +1357,13 @@ def build_adffs_fixtures(output: Path) -> None:
 def build_jfd_family(descriptors: list[tuple[int, int, int, int, int, bytes | None]],
                      title: bytes = b"ArcDroid JFD family",
                      disk_payload: bytes | None = None,
-                     disk_geometry: str | None = None) -> bytearray:
+                     disk_geometry: str | None = None,
+                     extended: bool = False) -> bytearray:
     """Build one track-side from (time, B, density, id, C, payload)."""
     if disk_payload is not None and disk_geometry is not None:
         return _build_jfd_disk(disk_payload, disk_geometry, title, False)
-    track_offset, sector_offset = 304, 312
+    track_offset = 316 if extended else 304
+    sector_offset = track_offset + 8
     data_offset = sector_offset + len(descriptors) * 8 + 4
     payloads = bytearray()
     table = bytearray()
@@ -1376,6 +1383,8 @@ def build_jfd_family(descriptors: list[tuple[int, int, int, int, int, bytes | No
     struct.pack_into("<I", image, 8, len(image))
     struct.pack_into("<III", image, 24, track_offset, sector_offset, data_offset)
     image[48:48 + min(len(title), 256)] = title[:256]
+    if extended:
+        struct.pack_into("<I", image, 304, 2)
     struct.pack_into("<II", image, track_offset, 0, 0xFFFFFFFF)
     image[sector_offset:data_offset] = table
     image[data_offset:] = payloads
@@ -2429,9 +2438,11 @@ def main() -> None:
         for filename, image in checkpoint_names.items():
             (args.checkpoint_name_discs / filename).write_bytes(image)
     media_rom = build_rom(media_exerciser=True)
+    jfd_save_rom = build_rom(media_exerciser=True, jfd_save_probe=True)
     disc1 = build_adf(0xA5, b"ARCDROID MEDIA DISC ONE v1\0")
     disc2 = build_adf(0x3C, b"ARCDROID MEDIA DISC TWO v1\0")
     (args.output / "arcdroid-media-test.rom").write_bytes(media_rom)
+    (args.output / "arcdroid-jfd-save-test.rom").write_bytes(jfd_save_rom)
     (args.output / "arcdroid-media-disc1.adf").write_bytes(disc1)
     (args.output / "arcdroid-media-disc2.adf").write_bytes(disc2)
     (args.output / "arcdroid-media.m3u").write_text(
@@ -2465,6 +2476,36 @@ def main() -> None:
         build_d_discovery([(b"!Nulvane", True)], b"Nulvane"))
     jfd = build_jfd(bytes(disc1[:256]))
     (args.output / "arcdroid-test.jfd").write_bytes(jfd)
+    writes = args.output / "jfd-writes"
+    writes.mkdir(exist_ok=True)
+    writable = build_extended_jfd(bytes(disc1), b"ArcDroid JFD save probe",
+                                   disk_geometry="D")
+    struct.pack_into("<I", writable, 304, 2)
+    (writes / "rw-d.jfd").write_bytes(writable)
+    adffs_writable = build_jfd_family([
+        (0xFF, 0, 2, 0, 0, bytes(1024)),
+        (0xFF, 0, 2, 1, 0, bytes(1024)),
+    ], b"ArcDroid ADFFS native-save fixture", extended=True)
+    struct.pack_into("<HHI", adffs_writable, 12, 1, 1, 123)
+    (writes / "adffs-rw.jfd").write_bytes(adffs_writable)
+    protected = bytearray(writable)
+    struct.pack_into("<I", protected, 304, 3)
+    (writes / "wp-d.jfd").write_bytes(protected)
+    folder = writes / "SaveSet.jfd"
+    folder.mkdir(exist_ok=True)
+    (folder / "SaveSet.jfd").write_bytes(writable)
+    (folder / "SaveSet 2.jfd").write_bytes(protected)
+    neither = bytearray(writable)
+    struct.pack_into("<I", neither, 304, 0)
+    (writes / "neither-d.jfd").write_bytes(neither)
+    (writes / "rw-d-gzip.jfd").write_bytes(gzip_member(writable))
+    (writes / "legacy-d.jfd").write_bytes(
+        _build_jfd_disk(bytes(disc1), "D", b"ArcDroid JFD legacy probe"))
+    (writes / "mixed.adf").write_bytes(disc1)
+    (writes / "mixed.m3u").write_text(
+        "mixed.adf\nrw-d.jfd\nwp-d.jfd\n",
+        encoding="utf-8", newline="\n")
+    (writes / "rw-d.zip").write_bytes(_zip_bytes([("RW.jfd", bytes(writable), True)]))
     build_zip_content_fixtures(args.output / "zip-content", bytes(disc1),
                                bytes(disc2), bytes(jfd),
                                (args.output / "adffs/eligible.jfd").read_bytes(),
@@ -2497,6 +2538,19 @@ def main() -> None:
     (family / "untimed.jfd").write_bytes(build_jfd_family([
         (0xFF, 0, 2, 1, 0, bytes([0x66]) * 128),
         (0xFF, 0, 2, 2, 0, bytes([0x77]) * 256)]))
+    (family / "write-two.jfd").write_bytes(build_jfd_family([
+        (0xFF, 0, 2, 3, 0, bytes(128)),
+        (0xFF, 0, 2, 4, 0, bytes(128))]))
+    (family / "write-slow.jfd").write_bytes(build_jfd_family([
+        (10, 0, 2, 3, 8, bytes(128))]))
+    (family / "write-duplicate.jfd").write_bytes(build_jfd_family([
+        (10, 0, 2, 3, 0, bytes([0x11]) * 128),
+        (20, 0, 2, 3, 0, bytes([0x22]) * 128)]))
+    shared = build_jfd_family([
+        (10, 0, 2, 3, 0, bytes([0x11]) * 128),
+        (20, 0, 2, 4, 0, bytes([0x22]) * 128)])
+    struct.pack_into("<I", shared, 324, 0)
+    (family / "write-shared.jfd").write_bytes(shared)
     (family / "quad-data.jfd").write_bytes(build_jfd_family([
         (0xff, 0, 4, 3, 0, bytes([0x5a]) * 1024)]))
     (family / "quad-timed.jfd").write_bytes(build_jfd_family([

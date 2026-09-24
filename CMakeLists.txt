@@ -102,6 +102,7 @@ set(ARCDROID_LIBRETRO_SOURCES
   engine/arculator/src/vidc.c
   engine/arculator/src/wd1770.c
   libretro/arc_io.c
+  libretro/jfd_store.c
   libretro/arcdroid_libretro.c
   platform/arcdroid_input.c
   platform/arcdroid_joystick.c
@@ -326,6 +327,7 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
       "${FIXTURE_DIR}/launch-family/sibling-pipe-l.adl"
       "${FIXTURE_DIR}/launch-family/duplicate-siblings-l.adl"
       "${FIXTURE_DIR}/arcdroid-media-test.rom"
+      "${FIXTURE_DIR}/arcdroid-jfd-save-test.rom"
       "${FIXTURE_DIR}/arcdroid-media-disc1.adf"
       "${FIXTURE_DIR}/arcdroid-media-disc2.adf"
       "${FIXTURE_DIR}/arcdroid-media.m3u"
@@ -342,6 +344,15 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
       "${FIXTURE_DIR}/Virelai.adf/Virelai.adf"
       "${FIXTURE_DIR}/Virelai.adf/Virelai 2.adf"
       "${FIXTURE_DIR}/arcdroid-test.jfd"
+      "${FIXTURE_DIR}/jfd-writes/rw-d.jfd"
+      "${FIXTURE_DIR}/jfd-writes/adffs-rw.jfd"
+      "${FIXTURE_DIR}/jfd-writes/wp-d.jfd"
+      "${FIXTURE_DIR}/jfd-writes/SaveSet.jfd/SaveSet 2.jfd"
+      "${FIXTURE_DIR}/jfd-writes/neither-d.jfd"
+      "${FIXTURE_DIR}/jfd-writes/legacy-d.jfd"
+      "${FIXTURE_DIR}/jfd-writes/rw-d-gzip.jfd"
+      "${FIXTURE_DIR}/jfd-writes/rw-d.zip"
+      "${FIXTURE_DIR}/jfd-writes/mixed.m3u"
       "${FIXTURE_DIR}/arcdroid-test-gzip.jfd"
       "${FIXTURE_DIR}/arcdroid-test-two-member.jfd"
       "${FIXTURE_DIR}/arcdroid-test-three-member.jfd"
@@ -368,6 +379,7 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
     "${FIXTURE_DIR}/launch-family/sibling-pipe-l.adl"
     "${FIXTURE_DIR}/launch-family/duplicate-siblings-l.adl"
     "${FIXTURE_DIR}/arcdroid-media-test.rom"
+    "${FIXTURE_DIR}/arcdroid-jfd-save-test.rom"
     "${FIXTURE_DIR}/arcdroid-media-disc1.adf"
     "${FIXTURE_DIR}/arcdroid-media-disc2.adf"
     "${FIXTURE_DIR}/arcdroid-media.m3u"
@@ -384,6 +396,15 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
     "${FIXTURE_DIR}/Virelai.adf/Virelai.adf"
     "${FIXTURE_DIR}/Virelai.adf/Virelai 2.adf"
     "${FIXTURE_DIR}/arcdroid-test.jfd"
+    "${FIXTURE_DIR}/jfd-writes/rw-d.jfd"
+    "${FIXTURE_DIR}/jfd-writes/adffs-rw.jfd"
+    "${FIXTURE_DIR}/jfd-writes/wp-d.jfd"
+    "${FIXTURE_DIR}/jfd-writes/SaveSet.jfd/SaveSet 2.jfd"
+    "${FIXTURE_DIR}/jfd-writes/neither-d.jfd"
+    "${FIXTURE_DIR}/jfd-writes/legacy-d.jfd"
+    "${FIXTURE_DIR}/jfd-writes/rw-d-gzip.jfd"
+    "${FIXTURE_DIR}/jfd-writes/rw-d.zip"
+    "${FIXTURE_DIR}/jfd-writes/mixed.m3u"
     "${FIXTURE_DIR}/arcdroid-test-gzip.jfd"
     "${FIXTURE_DIR}/arcdroid-test-two-member.jfd"
     "${FIXTURE_DIR}/arcdroid-test-three-member.jfd"
@@ -419,6 +440,18 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
       arcdroid_sanitizer_compile arcdroid_sanitizer_link)
   endif()
   add_test(NAME arc-io-write-guards COMMAND arc_io_tests)
+  add_executable(jfd_store_tests
+    tests/jfd_store_tests.c libretro/arc_io.c libretro/jfd_store.c)
+  target_include_directories(jfd_store_tests PRIVATE
+    core libretro libretro/include)
+  target_link_libraries(jfd_store_tests PRIVATE arcdroid_core)
+  target_compile_options(jfd_store_tests PRIVATE
+    $<$<C_COMPILER_ID:GNU,Clang,AppleClang>:-UNDEBUG;-Wall;-Wextra;-Wpedantic>)
+  if(ARCDROID_SANITIZERS)
+    target_link_libraries(jfd_store_tests PRIVATE
+      arcdroid_sanitizer_compile arcdroid_sanitizer_link)
+  endif()
+  add_test(NAME jfd-store COMMAND jfd_store_tests)
   add_dependencies(jfd_controller_tests test-fixtures)
   add_test(NAME core-services COMMAND core_tests "${FIXTURE_DIR}")
   add_test(NAME jfd-controller-golden COMMAND jfd_controller_tests
@@ -483,6 +516,12 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
       "${FIXTURE_DIR}/adffs/synthetic.zip"
       "${FIXTURE_DIR}/adffs/eligible.jfd"
       "${FIXTURE_DIR}/zip-content")
+    add_test(NAME jfd-writes-libretro-harness COMMAND libretro_harness
+      $<TARGET_FILE:arcdroid_libretro_test>
+      "${FIXTURE_DIR}/arcdroid-jfd-save-test.rom"
+      "${FIXTURE_DIR}/jfd-writes/rw-d.jfd"
+      "${CMAKE_CURRENT_BINARY_DIR}/jfd-writes-harness-data"
+      --jfd-writes "${FIXTURE_DIR}/jfd-writes")
     add_test(NAME newio-libretro-harness COMMAND libretro_harness
       $<TARGET_FILE:arcdroid_libretro_test>
       "${FIXTURE_DIR}/arcdroid-test.rom"

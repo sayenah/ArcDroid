@@ -166,7 +166,13 @@ static bool arc_reader_sector(const ArcDiscReader *reader,
        match->data_offset > reader->jfd->decoded_size ||
        match->size > reader->jfd->decoded_size - match->data_offset)
       return false;
-   memcpy(output, reader->jfd->decoded + match->data_offset,
+   size_t match_index = (size_t)(match - reader->jfd->sectors);
+   const uint8_t *effective = reader->jfd->overlay &&
+      reader->jfd->overlay->visible && reader->jfd->overlay->data &&
+      reader->jfd->overlay->data[match_index] ?
+      reader->jfd->overlay->data[match_index] :
+      reader->jfd->decoded + match->data_offset;
+   memcpy(output, effective,
           reader->sector_size);
    return true;
 }

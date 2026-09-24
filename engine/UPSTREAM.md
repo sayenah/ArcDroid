@@ -86,6 +86,16 @@ allocation, decompression, or parsing in the engine poll path. MAME's JFD
 reader was consulted only as an independent format reference; no MAME code was
 copied.
 
+Slice 10a extends ArcDroid's shared `disc_funcs_t.writesector` callback with
+the controller's requested size and deleted-data intent. The native JFD
+reader now buffers a complete WRITE SECTOR, checks descriptor eligibility,
+and calls the ArcDroid overlay publisher before reporting success; read data
+comes from the committed record view. `wd1770.c` handles its multiple-sector
+write variant and bounds missing-byte failure; `82c711_fdc.c` passes N and
+deleted-data intent, refuses early terminal count, and suppresses DMA after a
+synchronous continuation error. FORMAT and WRITE TRACK remain refused. The
+engine never owns a host file handle or writes the supplied JFD.
+
 The pinned upstream `AUTHORS` file is empty. Upstream author and contributor
 credits are preserved in the imported `README.md`.
 

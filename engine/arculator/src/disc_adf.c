@@ -214,8 +214,11 @@ static void adf_readsector(int drive, int sector, int track, int side, int densi
 	adf_readpos = 0;
 }
 
-static void adf_writesector(int drive, int sector, int track, int side, int density)
+static void adf_writesector(int drive, int sector, int track, int side, int density,
+                            int requested_size, int deleted)
 {
+	(void)requested_size;
+	(void)deleted;
 	int sector_nr = (sector - adf[drive].sector_offset) + adf[drive].sectors * (track * (adf[drive].dblside ? 2 : 1) + (side ? 1 : 0));
 
 //        if (adfdblstep[drive]) track/=2;

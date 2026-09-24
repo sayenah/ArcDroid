@@ -52,6 +52,7 @@ platform/arcdroid_joystick.c
 platform/arcdroid_sound.c
 platform/arcdroid_video.c
 libretro/arc_io.c
+libretro/jfd_store.c
 libretro/arcdroid_libretro.c
 core/*.h
 engine/*.h

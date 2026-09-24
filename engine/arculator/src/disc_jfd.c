@@ -17,7 +17,8 @@ typedef enum {
    JFD_FIND,
    JFD_READ_DATA,
    JFD_READ_ADDRESS,
-   JFD_DATA_CRC_ERROR
+   JFD_DATA_CRC_ERROR,
+   JFD_WRITE_DATA
 } JfdState;
 
 static disc_funcs_t jfd_disc_funcs;
@@ -31,7 +32,11 @@ static unsigned jfd_transfer_pos;
 static size_t jfd_selected;
 static uint32_t jfd_phase_us;
 static unsigned jfd_search_indexes;
+static bool jfd_writing;
 static uint8_t jfd_address[6];
+static uint8_t jfd_write_buffer[1024];
+static unsigned jfd_write_wait;
+static int jfd_requested_size;
 
 static void jfd_stop(void)
 {
@@ -39,6 +44,8 @@ static void jfd_stop(void)
    jfd_transfer_pos = 0u;
    jfd_selected = 0u;
    jfd_search_indexes = 0u;
+   jfd_write_wait = 0u;
+   jfd_writing = false;
 }
 
 static void jfd_close(int drive)
@@ -62,7 +69,7 @@ bool jfd_load(int drive, const ArcJfdImage *image)
    if (drive != 0 || !image || !image->decoded || !image->track_count) return false;
    jfd_init();
    jfd_image = image;
-   writeprot[drive] = 1;
+   writeprot[drive] = !(image->overlay && image->overlay->writable);
    drive_funcs[drive] = &jfd_disc_funcs;
    rpclog("Loaded validated JFD descriptors: tracksides=%u sectors=%u\n",
           image->track_count, (unsigned)image->sector_count);
@@ -99,12 +106,17 @@ static void jfd_readsector(int drive, int sector, int track, int side, int densi
    jfd_state = JFD_FIND;
 }
 
-static void jfd_writesector(int drive, int sector, int track, int side, int density)
+static void jfd_writesector(int drive, int sector, int track, int side, int density,
+                            int requested_size, int deleted)
 {
-   (void)sector;
    jfd_stop();
    if (!jfd_begin(drive, track, side, density)) return;
-   fdc_funcs->writeprotect(fdc_p);
+   if (!jfd_image->overlay || !jfd_image->overlay->writable || deleted)
+   { fdc_funcs->writeprotect(fdc_p); return; }
+   jfd_sector_id = (unsigned)sector & 0xffu;
+   jfd_requested_size = requested_size;
+   jfd_writing = true;
+   jfd_state = JFD_FIND;
 }
 
 static void jfd_readaddress(int drive, int track, int side, int density)
@@ -242,7 +254,19 @@ static void jfd_poll(void)
       {
          jfd_selected = selected;
          jfd_transfer_pos = 0u;
-         jfd_state = JFD_READ_DATA;
+         if (jfd_writing)
+         {
+            if ((jfd_requested_size >= 0 &&
+                 (unsigned)jfd_requested_size != sector->size) ||
+                !arc_jfd_sector_write_eligible(jfd_image, selected))
+            {
+               jfd_stop();
+               fdc_funcs->datacrcerror(fdc_p);
+               return;
+            }
+            jfd_state = JFD_WRITE_DATA;
+         }
+         else jfd_state = JFD_READ_DATA;
       }
       /* An ID-only sector remains searchable until controller RNF timeout. */
       return;
@@ -261,7 +285,12 @@ static void jfd_poll(void)
    if (jfd_state == JFD_READ_DATA)
    {
       const ArcJfdSector *sector = &jfd_image->sectors[jfd_selected];
-      fdc_funcs->data(jfd_image->decoded[sector->data_offset + jfd_transfer_pos], fdc_p);
+      const uint8_t *source = jfd_image->overlay && jfd_image->overlay->visible &&
+         jfd_image->overlay->data &&
+         jfd_image->overlay->data[jfd_selected] ?
+         jfd_image->overlay->data[jfd_selected] :
+         jfd_image->decoded + sector->data_offset;
+      fdc_funcs->data(source[jfd_transfer_pos], fdc_p);
       if (jfd_state != JFD_READ_DATA) return;
       ++jfd_transfer_pos;
       if (jfd_transfer_pos == sector->size)
@@ -275,6 +304,32 @@ static void jfd_poll(void)
          }
       }
    }
+   if (jfd_state == JFD_WRITE_DATA)
+   {
+      const ArcJfdSector *sector = &jfd_image->sectors[jfd_selected];
+      int value = fdc_funcs->getdata(jfd_transfer_pos + 1u == sector->size, fdc_p);
+      if (value < 0)
+      {
+         if (++jfd_write_wait >= 16u)
+         {
+            jfd_stop();
+            if (fdc_funcs->lostdata) fdc_funcs->lostdata(fdc_p);
+            else fdc_funcs->writeprotect(fdc_p);
+         }
+         return;
+      }
+      jfd_write_wait = 0u;
+      jfd_write_buffer[jfd_transfer_pos++] = (uint8_t)value;
+      if (jfd_transfer_pos == sector->size)
+      {
+         bool committed = jfd_image->overlay->commit &&
+            jfd_image->overlay->commit((ArcJfdImage *)(uintptr_t)jfd_image,
+                                       jfd_selected, jfd_write_buffer);
+         jfd_stop();
+         if (committed) fdc_funcs->finishread(fdc_p);
+         else fdc_funcs->writeprotect(fdc_p);
+      }
+   }
 }
 
 static disc_funcs_t jfd_disc_funcs = {
@@ -285,5 +340,6 @@ static disc_funcs_t jfd_disc_funcs = {
    .format = jfd_format,
    .stop = jfd_stop,
    .poll = jfd_poll,
-   .close = jfd_close
+   .close = jfd_close,
+   .multiwrite = 1
 };

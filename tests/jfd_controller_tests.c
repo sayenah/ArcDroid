@@ -30,6 +30,36 @@ static size_t newio_transfer_limit;
 static bool newio_service_dma;
 static bool newio_dma_write;
 static uint8_t newio_write_value;
+static bool wd_write_mode;
+static uint8_t wd_write_value;
+static unsigned jfd_commits;
+static bool jfd_fail_commit;
+static bool test_jfd_commit(ArcJfdImage *image, size_t index, const uint8_t *data)
+{
+   assert(image->overlay && index < image->sector_count);
+   if (jfd_fail_commit)
+   {
+      image->overlay->writable = false;
+      image->overlay->failed = true;
+      return false;
+   }
+   uint8_t *copy = malloc(image->sectors[index].size);
+   assert(copy);
+   memcpy(copy, data, image->sectors[index].size);
+   free(image->overlay->data[index]);
+   image->overlay->data[index] = copy;
+   ++jfd_commits;
+   return true;
+}
+static void make_jfd_writable(ArcJfdImage *image)
+{
+   image->overlay = calloc(1u, sizeof(*image->overlay));
+   assert(image->overlay);
+   image->overlay->data = calloc(image->sector_count, sizeof(uint8_t *));
+   assert(image->overlay->data);
+   image->overlay->writable = image->overlay->visible = true;
+   image->overlay->commit = test_jfd_commit;
+}
 static uint8_t finish_command(uint8_t command, unsigned limit_us);
 static void newio_wait_irq(unsigned limit_us);
 static void newio_result(uint8_t result[7]);
@@ -222,6 +252,7 @@ static void test_drive_one_helper(const char *root)
    disc_close(1);
    disc_close(0);
    arc_jfd_free(&image);
+
 }
 
 static void step_controller(void)
@@ -242,7 +273,12 @@ static void step_controller(void)
    else if ((ioc.fiq & IOC_FIQ_DISC_DATA) && fdctype != FDC_82C711)
    {
       assert(transfer_count < sizeof(transfer));
-      transfer[transfer_count++] = wd1770_read(0x0cu);
+      if (wd_write_mode)
+      {
+         wd1770_write(0x0cu, wd_write_value);
+         ++transfer_count;
+      }
+      else transfer[transfer_count++] = wd1770_read(0x0cu);
    }
 }
 
@@ -280,6 +316,113 @@ static void expect_read(const char *root, const char *name, uint8_t sector,
               name, transfer_count, bytes);
    assert(transfer_count == bytes);
    if (bytes) assert(transfer[0] == first);
+   disc_close(0);
+   arc_jfd_free(&image);
+}
+
+static void test_wd_jfd_write(const char *root)
+{
+   for (unsigned code = 0u; code < 3u; ++code)
+   {
+      char name[32];
+      snprintf(name, sizeof(name), "size-%u.jfd", code);
+      ArcJfdImage sized = load_image(root, name);
+      make_jfd_writable(&sized);
+      controller_reset(&sized);
+      wd1770_write(0x08u, (uint8_t)code);
+      wd_write_mode = true; wd_write_value = (uint8_t)(0x40u + code);
+      jfd_commits = 0u;
+      assert(finish_command(0xa0u, 1100000u) == 0x80u &&
+             transfer_count == ((size_t)128u << code) &&
+             jfd_commits == 1u &&
+             sized.overlay->data[0][0] == wd_write_value);
+      wd_write_mode = false;
+      disc_close(0); arc_jfd_free(&sized);
+   }
+   static const struct { const char *name; uint8_t status; } refusals[] = {
+      {"write-slow.jfd", 0x08u}, {"write-duplicate.jfd", 0x08u},
+      {"write-shared.jfd", 0x08u}, {"data-crc.jfd", 0x08u},
+      {"id-crc.jfd", 0x18u}, {"id-only.jfd", 0x10u},
+      {"blank-track.jfd", 0x10u}
+   };
+   for (size_t i = 0u; i < sizeof(refusals) / sizeof(refusals[0]); ++i)
+   {
+      ArcJfdImage refusal = load_image(root, refusals[i].name);
+      make_jfd_writable(&refusal);
+      controller_reset(&refusal);
+      wd1770_write(0x08u, i < 3u ? 3u : 4u);
+      wd_write_mode = false; jfd_commits = 0u;
+      uint8_t refusal_status = finish_command(0xa0u, 1100000u);
+      if (refusal_status != refusals[i].status || transfer_count > 1u || jfd_commits)
+         fprintf(stderr, "WD %s status=%02x transfer=%zu commits=%u\n",
+                 refusals[i].name, refusal_status, transfer_count, jfd_commits);
+      assert(refusal_status == refusals[i].status &&
+             jfd_commits == 0u && transfer_count <= 1u);
+      disc_close(0);
+      arc_jfd_free(&refusal);
+   }
+   ArcJfdImage image = load_image(root, "size-3.jfd");
+   make_jfd_writable(&image);
+   controller_reset(&image);
+   assert(!writeprot[0]);
+   wd1770_write(0x08u, 3u);
+   wd_write_mode = true; wd_write_value = 0x5au; jfd_commits = 0u;
+   assert(finish_command(0xa0u, 1100000u) == 0x80u);
+   wd_write_mode = false;
+   assert(transfer_count == 1024u && jfd_commits == 1u &&
+          image.overlay->data[0][0] == 0x5au);
+   wd1770_write(0x08u, 3u);
+   assert(finish_command(0x80u, 1100000u) == 0x80u);
+   assert(transfer_count == 1024u && transfer[0] == 0x5au);
+   disc_close(0);
+   arc_jfd_free(&image);
+
+   image = load_image(root, "size-3.jfd");
+   make_jfd_writable(&image);
+   controller_reset(&image);
+   wd1770_write(0x08u, 3u);
+   wd_write_mode = true; wd_write_value = 0x69u; jfd_commits = 0u;
+   transfer_count = 0u; ioc.fiq = 0u;
+   wd1770_write(0x00u, 0xa0u);
+   uint64_t partial_deadline = tsc + (uint64_t)1100000u * TIMER_USEC;
+   while (transfer_count < 32u && tsc < partial_deadline) step_controller();
+   assert(transfer_count == 32u && jfd_commits == 0u);
+   wd1770_write(0x00u, 0xd0u); /* Force Interrupt discards the partial buffer. */
+   wd_write_mode = false;
+   run_us(40000u);
+   assert(jfd_commits == 0u && !image.overlay->data[0] &&
+          !(ioc.fiq & IOC_FIQ_DISC_DATA));
+   disc_close(0);
+   arc_jfd_free(&image);
+
+   image = load_image(root, "size-3.jfd");
+   make_jfd_writable(&image);
+   controller_reset(&image);
+   wd1770_write(0x08u, 3u);
+   wd_write_mode = jfd_fail_commit = true;
+   wd_write_value = 0x91u; jfd_commits = 0u;
+   assert(finish_command(0xa0u, 1100000u) == 0x40u);
+   assert(image.overlay->failed && !image.overlay->data[0] &&
+          jfd_commits == 0u);
+   assert(finish_command(0xa0u, 1100000u) == 0x40u && jfd_commits == 0u);
+   wd_write_mode = jfd_fail_commit = false;
+   disc_close(0);
+   arc_jfd_free(&image);
+
+   image = load_image(root, "write-two.jfd");
+   make_jfd_writable(&image);
+   controller_reset(&image);
+   wd1770_write(0x08u, 3u);
+   wd_write_mode = true; wd_write_value = 0x7cu; jfd_commits = 0u;
+   transfer_count = 0u; ioc.fiq = 0u;
+   wd1770_write(0x00u, 0xb0u);
+   uint64_t deadline = tsc + (uint64_t)1100000u * TIMER_USEC;
+   while (jfd_commits < 2u && tsc < deadline) step_controller();
+   assert(jfd_commits == 2u && (wd1770_read(0x00u) & 1u));
+   wd1770_write(0x00u, 0xd0u);
+   wd_write_mode = false;
+   assert(jfd_commits == 2u && image.overlay->data[0][0] == 0x7cu &&
+          image.overlay->data[1][0] == 0x7cu);
    disc_close(0);
    arc_jfd_free(&image);
 }
@@ -818,6 +961,108 @@ static void newio_result(uint8_t result[7])
       result[i] = c82c711_fdc_read(5u, NULL);
 }
 
+static void test_newio_jfd_write(const char *root)
+{
+   for (unsigned code = 0u; code < 3u; ++code)
+   {
+      char name[32];
+      snprintf(name, sizeof(name), "size-%u.jfd", code);
+      ArcJfdImage sized = load_image(root, name);
+      make_jfd_writable(&sized);
+      newio_reset(&sized, false);
+      uint8_t result[7];
+      transfer_count = jfd_commits = 0u;
+      newio_transfer_limit = (size_t)128u << code;
+      newio_service_dma = newio_dma_write = true;
+      newio_write_value = (uint8_t)(0x50u + code);
+      newio_start_write(0u, (uint8_t)code, (uint8_t)code);
+      newio_wait_irq(1100000u);
+      newio_result(result);
+      assert(!(result[0] & 0xc0u) &&
+             transfer_count == ((size_t)128u << code) &&
+             jfd_commits == 1u &&
+             sized.overlay->data[0][0] == newio_write_value);
+      c82c711_fdc_shutdown(); disc_close(0); arc_jfd_free(&sized);
+   }
+   static const char *const refusals[] = {
+      "write-slow.jfd", "write-duplicate.jfd", "write-shared.jfd",
+      "data-crc.jfd", "id-crc.jfd", "id-only.jfd", "blank-track.jfd"
+   };
+   for (size_t i = 0u; i < sizeof(refusals) / sizeof(refusals[0]); ++i)
+   {
+      ArcJfdImage refusal = load_image(root, refusals[i]);
+      make_jfd_writable(&refusal);
+      newio_reset(&refusal, false);
+      uint8_t refused[7];
+      transfer_count = jfd_commits = 0u;
+      newio_transfer_limit = 128u;
+      newio_service_dma = newio_dma_write = true;
+      newio_write_value = 0x90u;
+      newio_start_write(0u, i < 3u ? 3u : 4u, 0u);
+      newio_wait_irq(1100000u);
+      newio_result(refused);
+      if (!(refused[0] & 0x40u) || transfer_count > 1u || jfd_commits)
+         fprintf(stderr, "82 %s st0=%02x st1=%02x st2=%02x transfer=%zu commits=%u\n",
+                 refusals[i], refused[0], refused[1], refused[2],
+                 transfer_count, jfd_commits);
+      assert((refused[0] & 0x40u) && transfer_count <= 1u &&
+             jfd_commits == 0u);
+      c82c711_fdc_shutdown(); disc_close(0); arc_jfd_free(&refusal);
+   }
+   ArcJfdImage image = load_image(root, "size-3.jfd");
+   make_jfd_writable(&image);
+   newio_reset(&image, false);
+   uint8_t result[7];
+   transfer_count = 0u;
+   newio_transfer_limit = 1024u;
+   newio_service_dma = newio_dma_write = true;
+   newio_write_value = 0x6bu;
+   jfd_commits = 0u;
+   newio_start_write(0u, 3u, 3u);
+   newio_wait_irq(1100000u);
+   newio_result(result);
+   assert(!(result[0] & 0xc0u) && transfer_count == 1024u &&
+          jfd_commits == 1u && image.overlay->data[0][0] == 0x6bu);
+   newio_dma_write = false;
+   transfer_count = 0u;
+   newio_start_read(0u, 3u, 3u);
+   newio_wait_irq(1100000u);
+   newio_result(result);
+   assert(!(result[0] & 0xc0u) && transfer[0] == 0x6bu);
+   /* Wrong N is a synchronous refusal and must not request a DMA byte. */
+   transfer_count = 0u;
+   newio_dma_write = true;
+   newio_start_write(0u, 3u, 2u);
+   newio_wait_irq(1100000u);
+   newio_result(result);
+   assert((result[0] & 0x40u) && transfer_count == 0u && jfd_commits == 1u);
+   /* Early terminal count cannot publish the incomplete sector. */
+   newio_transfer_limit = 128u;
+   transfer_count = 0u;
+   newio_start_write(0u, 3u, 3u);
+   newio_wait_irq(1100000u);
+   newio_result(result);
+   assert((result[0] & 0x40u) && transfer_count == 128u &&
+          jfd_commits == 1u && image.overlay->data[0][0] == 0x6bu &&
+          !(ioc.fiq & IOC_FIQ_DISC_DATA));
+   newio_transfer_limit = 1024u;
+   jfd_fail_commit = true;
+   transfer_count = 0u;
+   newio_start_write(0u, 3u, 3u);
+   newio_wait_irq(1100000u);
+   newio_result(result);
+   assert((result[0] & 0x40u) && jfd_commits == 1u &&
+          image.overlay->failed && image.overlay->data[0][0] == 0x6bu);
+   transfer_count = 0u;
+   newio_start_write(0u, 3u, 3u);
+   newio_wait_irq(1100000u);
+   newio_result(result);
+   assert((result[0] & 0x40u) && transfer_count == 0u && jfd_commits == 1u);
+   jfd_fail_commit = false;
+   newio_dma_write = false;
+   c82c711_fdc_shutdown(); disc_close(0); arc_jfd_free(&image);
+}
+
 static void test_82c711_golden(const char *root)
 {
    uint8_t result[7];
@@ -1190,6 +1435,7 @@ int main(int argc, char **argv)
       test_empty_drive_cancellation();
       test_busy_jfd_read_is_not_replaced(argv[1]);
       test_drive_one_helper(argv[1]);
+      test_wd_jfd_write(argv[1]);
    }
    if (run_82c711)
    {
@@ -1201,6 +1447,7 @@ int main(int argc, char **argv)
       test_82c711_raw_geometries();
       test_82c711_mixed_raw_drives(argv[1]);
       test_raw_index_cadence();
+      test_newio_jfd_write(argv[1]);
    }
    puts("jfd_controller_tests: all checks passed");
    return 0;
