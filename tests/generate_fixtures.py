@@ -1880,6 +1880,144 @@ def _build_jfd_disk(payload: bytes, geometry: str,
     return image
 
 
+def _zone_check(block: bytearray) -> int:
+    sums = [0, 0, 0, 0]
+    rover = 1020
+    while rover > 0:
+        sums[0] += block[rover] + (sums[3] >> 8); sums[3] &= 0xff
+        sums[1] += block[rover + 1] + (sums[0] >> 8); sums[0] &= 0xff
+        sums[2] += block[rover + 2] + (sums[1] >> 8); sums[1] &= 0xff
+        sums[3] += block[rover + 3] + (sums[2] >> 8); sums[2] &= 0xff
+        rover -= 4
+    sums[0] += sums[3] >> 8
+    sums[1] += block[1] + (sums[0] >> 8)
+    sums[2] += block[2] + (sums[1] >> 8)
+    sums[3] += block[3] + (sums[2] >> 8)
+    return (sums[0] ^ sums[1] ^ sums[2] ^ sums[3]) & 0xff
+
+
+def _filecore_boot_checksum(block: bytes) -> int:
+    """FileCore's end-around-carry sum of the first 511 boot-block bytes."""
+    checksum = sum(block[:511])
+    while checksum > 0xff:
+        checksum = (checksum & 0xff) + (checksum >> 8)
+    return checksum
+
+
+def _set_f_boot_checksum(image: bytearray) -> None:
+    image[0xdff] = _filecore_boot_checksum(image[0xc00:0xe00])
+
+
+def _finish_f_directory(directory: bytearray, entry_count: int) -> None:
+    """Set the new-directory check byte over its used header and tail."""
+    used = 5 + 26 * entry_count
+    checksum = 0
+    for offset in range(0, used & ~3, 4):
+        checksum = struct.unpack_from("<I", directory, offset)[0] ^ _ror32(checksum, 13)
+    for offset in range(used & ~3, used):
+        checksum = directory[offset] ^ _ror32(checksum, 13)
+    for offset in range(2008, 2044, 4):
+        checksum = struct.unpack_from("<I", directory, offset)[0] ^ _ror32(checksum, 13)
+    directory[2047] = (checksum ^ (checksum >> 8) ^
+                       (checksum >> 16) ^ (checksum >> 24)) & 0xff
+
+
+def build_f_discovery() -> bytearray:
+    image = bytearray(1638400)
+    image[0xc00:0xc04] = (0x20000000).to_bytes(4, "little")
+    record = bytearray(60)
+    record[:6] = bytes((10, 10, 2, 4, 15, 6))
+    record[9] = 4
+    record[10:12] = (1600).to_bytes(2, "little")
+    record[12:16] = (0x209).to_bytes(4, "little")
+    record[16:20] = len(image).to_bytes(4, "little")
+    record[22:32] = b"ArcFTest\r\r"
+    image[0xdc0:0xdc0 + 60] = record
+    blocks = [bytearray(1024) for _ in range(4)]
+    zone_bits = 8192 - 1600
+    last_end = 32 + (len(image) // 64 + 480 - 3 * zone_bits)
+    for zone, block in enumerate(blocks):
+        start = 512 if zone == 0 else 32
+        end = last_end if zone == 3 else 32 + zone_bits
+        if zone == 0:
+            block[4:64] = record
+        elif zone == 2:
+            _set_bits(block, start, 15, 2)
+            _set_bits(block, start + 191, 1, 1)
+            start += 192
+        else:
+            _set_bits(block, start, 15, 3)
+            _set_bits(block, start + 15, 1, 1)
+            start += 16
+            if zone == 3:
+                _set_bits(block, start, 15, 4)
+                _set_bits(block, start + 15, 1, 1)
+                start += 16
+        _set_bits(block, 8, 15, start - 8)
+        _set_bits(block, 23, 1, 1)
+        _set_bits(block, end - 1, 1, 1)
+        block[3] = 0xff if zone == 0 else 0
+        block[0] = _zone_check(block)
+    map_address = ((8192 - 1600 - 480) + (8192 - 1600)) * 64
+    map_bytes = b"".join(blocks)
+    image[map_address:map_address + len(map_bytes)] = map_bytes
+    image[map_address + len(map_bytes):map_address + 2 * len(map_bytes)] = map_bytes
+    root = _new_directory()
+    _new_entry(root, 0, b"!Demo", 2048, 3 << 8, True)
+    _finish_f_directory(root, 1)
+    image[map_address + 8 * 1024:map_address + 10 * 1024] = root
+    child = _new_directory(b"!Demo")
+    run_text = b"*Echo ArcDroid synthetic application\r"
+    _new_entry(child, 0, b"!Run", len(run_text), 4 << 8, load=0xffffeb00)
+    _finish_f_directory(child, 1)
+    zone1 = (8192 - 1600 - 480) * 64
+    zone3 = (8192 - 1600 - 480 + 2 * (8192 - 1600)) * 64
+    image[zone1:zone1 + 1024] = child[:1024]
+    image[zone3:zone3 + 1024] = child[1024:]
+    image[zone3 + 1024:zone3 + 1024 + len(run_text)] = run_text
+    _set_f_boot_checksum(image)
+    return image
+
+
+def build_sparse_f_jfd(image: bytes, flags: int = 0,
+                       skipped: frozenset[int] = frozenset(),
+                       extended: bool = True) -> bytearray:
+    tracks = bytearray()
+    sectors = bytearray()
+    data = bytearray()
+    for track_side in range(160):
+        entries = bytearray()
+        for sector_id in range(10):
+            if track_side * 10 + sector_id in skipped:
+                continue
+            payload = image[(track_side * 10 + sector_id) * 1024:
+                            (track_side * 10 + sector_id + 1) * 1024]
+            if not any(payload):
+                continue
+            entries += struct.pack("<II", (4 << 16) | (sector_id << 8) | 3,
+                                   len(data))
+            data += payload
+        if entries:
+            tracks += struct.pack("<I", len(sectors))
+            sectors += entries + struct.pack("<I", 0xffffffff)
+        else:
+            tracks += struct.pack("<I", 0xffffffff)
+    track_offset = 316 if extended else 304
+    sector_offset = track_offset + len(tracks)
+    data_offset = sector_offset + len(sectors)
+    output = bytearray(data_offset + len(data))
+    output[:4] = b"JFDI"
+    struct.pack_into("<I", output, 8, len(output))
+    struct.pack_into("<III", output, 24, track_offset, sector_offset, data_offset)
+    output[48:68] = b"ArcDroid F fixture".ljust(20, b"\0")
+    if extended:
+        struct.pack_into("<I", output, 304, flags)
+    output[track_offset:sector_offset] = tracks
+    output[sector_offset:data_offset] = sectors
+    output[data_offset:] = data
+    return output
+
+
 def build_old_map_media(size: int, old_size: int, seed: int) -> bytearray:
     image = bytearray(((index * 29) ^ seed) & 0xFF for index in range(size))
     image[:512] = bytes(512)
@@ -2091,6 +2229,119 @@ def main() -> None:
         build_l_discovery([(name, True) for name in illegal]), "L")
     for name, (payload, _geometry) in launch_images.items():
         (launch / name).write_bytes(payload)
+    hd = args.output / "hd-family"
+    hd.mkdir(exist_ok=True)
+    f_image = build_f_discovery()
+    (hd / "valid-f.adf").write_bytes(f_image)
+    (hd / "valid-f.jfd").write_bytes(build_sparse_f_jfd(f_image))
+    map_address = ((8192 - 1600 - 480) + (8192 - 1600)) * 64
+    last_end = 32 + (len(f_image) // 64 + 480 - 3 * (8192 - 1600))
+    blank_boot = bytearray(f_image)
+    blank_boot[0xdc0 + 20:0xdc0 + 32] = bytes(12)
+    _set_f_boot_checksum(blank_boot)
+    (hd / "blank-boot-name-f.adf").write_bytes(blank_boot)
+    stray_tail = bytearray(f_image)
+    missing_terminator = bytearray(f_image)
+    for copy in (0, 4096):
+        block_at = map_address + copy + 3 * 1024
+        block = bytearray(stray_tail[block_at:block_at + 1024])
+        _set_bits(block, last_end + 9, 1, 1)
+        _set_bits(block, 32 + 8192 - 1600 - 1, 1, 1)
+        block[0] = _zone_check(block)
+        stray_tail[block_at:block_at + 1024] = block
+        block = bytearray(missing_terminator[block_at:block_at + 1024])
+        block[(last_end - 1) // 8] &= ~(1 << ((last_end - 1) & 7))
+        _set_bits(block, last_end + 9, 1, 1)
+        block[0] = _zone_check(block)
+        missing_terminator[block_at:block_at + 1024] = block
+    (hd / "stray-tail-bits-f.adf").write_bytes(stray_tail)
+    (hd / "unterminated-last-f.adf").write_bytes(missing_terminator)
+    small_spare = bytearray(f_image)
+    small_spare[0xdc0 + 10:0xdc0 + 12] = (31).to_bytes(2, "little")
+    _set_f_boot_checksum(small_spare)
+    (hd / "small-zone-spare-f.adf").write_bytes(small_spare)
+    (hd / "riscpc-f.jfd").write_bytes(build_sparse_f_jfd(
+        f_image, (0x10 << 8) | (0x18 << 16)))
+    (hd / "legacy-f.jfd").write_bytes(build_sparse_f_jfd(
+        f_image, extended=False))
+    (hd / "zero-cpu-f.jfd").write_bytes(build_sparse_f_jfd(
+        f_image, 0x18 << 16))
+    (hd / "zero-os-f.jfd").write_bytes(build_sparse_f_jfd(
+        f_image, 0x10 << 8))
+    (hd / "write-protected-f.jfd").write_bytes(build_sparse_f_jfd(
+        f_image, 1))
+    for tag, flags in (("arm250", 1 << 9), ("arm3", 1 << 8),
+                       ("riscos2", 1 << 16), ("riscos31", 1 << 17)):
+        (hd / f"{tag}-f.jfd").write_bytes(build_sparse_f_jfd(
+            f_image, flags | (0x18 << 16) | (0x10 << 8)))
+    corrupted = bytearray(f_image)
+    corrupted[map_address] ^= 1
+    (hd / "backup-f.adf").write_bytes(corrupted)
+    (hd / "backup-f.jfd").write_bytes(build_sparse_f_jfd(corrupted))
+    (hd / "unreadable-primary-f.jfd").write_bytes(build_sparse_f_jfd(
+        f_image, skipped=frozenset({map_address // 1024 + 1})))
+    corrupted[map_address + 4096] ^= 1
+    (hd / "corrupt-both-f.adf").write_bytes(corrupted)
+    invalid_zones = bytearray(f_image)
+    invalid_zones[0xdc0 + 9] = 9
+    _set_f_boot_checksum(invalid_zones)
+    (hd / "invalid-zones-f.adf").write_bytes(invalid_zones)
+    bad_free = bytearray(f_image)
+    bad_free[map_address + 1024 + 1] = 0xff
+    bad_free[map_address + 1024 + 2] = 0x7f
+    bad_free[map_address + 1024] = _zone_check(bytearray(
+        bad_free[map_address + 1024:map_address + 2048]))
+    bad_free[map_address + 4096:map_address + 8192] = \
+        bad_free[map_address:map_address + 4096]
+    (hd / "invalid-free-f.adf").write_bytes(bad_free)
+    invalid_id = bytearray(f_image)
+    for record_at in (0xdc0, map_address + 4, map_address + 4096 + 4):
+        struct.pack_into("<I", invalid_id, record_at + 12, 0x7fff00)
+    _set_f_boot_checksum(invalid_id)
+    for copy_at in (map_address, map_address + 4096):
+        invalid_id[copy_at] = _zone_check(bytearray(
+            invalid_id[copy_at:copy_at + 1024]))
+    (hd / "invalid-id-f.adf").write_bytes(invalid_id)
+    bad_cross = bytearray(f_image)
+    for copy_at in (map_address, map_address + 4096):
+        bad_cross[copy_at + 3] = 0
+        bad_cross[copy_at] = _zone_check(bytearray(
+            bad_cross[copy_at:copy_at + 1024]))
+    (hd / "invalid-cross-f.adf").write_bytes(bad_cross)
+    (hd / "sparse-map-holes-f.jfd").write_bytes(build_sparse_f_jfd(
+        f_image, skipped=frozenset({map_address // 1024 + 1,
+                                    map_address // 1024 + 5})))
+    (hd / "filler-f.adf").write_bytes(bytes(1638400))
+    (hd / "short-f.adf").write_bytes(f_image[:-1])
+    (hd / "long-f.adf").write_bytes(f_image + b"\0")
+    old_over = build_d_discovery([(b"!Demo", True)], b"Demo")
+    _store_u24(old_over, 252, 3263)
+    old_over[255] = _old_map_checksum(old_over[:255])
+    (hd / "old-overdeclared-d.adf").write_bytes(old_over)
+    (hd / "old-overdeclared-d.jfd").write_bytes(
+        _build_jfd_disk(old_over, "D"))
+    old_hole = _build_jfd_disk(old_over, "D")
+    old_sector_table = struct.unpack_from("<I", old_hole, 28)[0]
+    struct.pack_into("<I", old_hole, old_sector_table + 8 + 4, 0xffffffff)
+    (hd / "old-overdeclared-hole-d.jfd").write_bytes(old_hole)
+    dd_image = build_adf(0xA5, b"ARCDROID MEDIA DISC ONE v1\0")
+    (hd / "dd-sibling.adf").write_bytes(dd_image)
+    (hd / "f-boot.m3u").write_text("valid-f.adf\ndd-sibling.adf\n")
+    (hd / "f-sibling.m3u").write_text("dd-sibling.adf\nvalid-f.adf\n")
+    with zipfile.ZipFile(hd / "f-boot.zip", "w", zipfile.ZIP_STORED) as archive:
+        archive.writestr("Disc1.adf", f_image)
+        archive.writestr("Disc2.adf", dd_image)
+    with zipfile.ZipFile(hd / "f-sibling.zip", "w", zipfile.ZIP_STORED) as archive:
+        archive.writestr("Disc1.adf", dd_image)
+        archive.writestr("Disc2.adf", f_image)
+    f_folder = hd / "Fset.adf"
+    f_folder.mkdir(exist_ok=True)
+    (f_folder / "Fset.adf").write_bytes(f_image)
+    (f_folder / "Fset 2.adf").write_bytes(dd_image)
+    dd_folder = hd / "DDset.adf"
+    dd_folder.mkdir(exist_ok=True)
+    (dd_folder / "DDset.adf").write_bytes(dd_image)
+    (dd_folder / "DDset 2.adf").write_bytes(f_image)
     for base in ("single-l.adl", "single-d-hugo.adf", "single-e-hugo.adf"):
         payload, geometry = launch_images[base]
         stem = base.rsplit(".", 1)[0]
@@ -2145,7 +2396,7 @@ def main() -> None:
     folder_adl = build_old_map_media(640 * 1024, 2560, 0x53)
     (folder_set / "Qaventra 3.adl").write_bytes(folder_adl)
     (folder_set / "Qaventra 4.jfd").write_bytes(
-        build_jfd_family([(0, 0, 4, 1, 0, bytes(128))],
+        build_jfd_family([(0, 0, 8, 1, 0, bytes(128))],
                          b"ArcDroid rejected folder JFD"))
     (folder_set / "Qaventra 5.adl").write_bytes(folder_adl[:-256])
     (folder_set / "Qaventra 9.adf").write_bytes(disc1)
@@ -2198,6 +2449,19 @@ def main() -> None:
     (family / "untimed.jfd").write_bytes(build_jfd_family([
         (0xFF, 0, 2, 1, 0, bytes([0x66]) * 128),
         (0xFF, 0, 2, 2, 0, bytes([0x77]) * 256)]))
+    (family / "quad-data.jfd").write_bytes(build_jfd_family([
+        (0xff, 0, 4, 3, 0, bytes([0x5a]) * 1024)]))
+    (family / "quad-timed.jfd").write_bytes(build_jfd_family([
+        (17, 0, 4, 3, 0, bytes([0x5a]) * 1024)]))
+    (family / "quad-id-only.jfd").write_bytes(build_jfd_family([
+        (0, 0, 4, 3, 0, None)]))
+    (family / "quad-id-crc.jfd").write_bytes(build_jfd_family([
+        (0, 0, 4, 3, 1, bytes([0x5a]) * 1024)]))
+    (family / "quad-data-crc.jfd").write_bytes(build_jfd_family([
+        (0, 0, 4, 3, 2, bytes([0x5a]) * 1024)]))
+    (family / "mixed-density.jfd").write_bytes(build_jfd_family([
+        (0xff, 0, 2, 1, 0, bytes([0x33]) * 128),
+        (0xff, 0, 4, 3, 0, bytes([0x5a]) * 1024)]))
     for name, crc, payload in (
         ("id-crc", 1, bytes([0x88]) * 128),
         ("data-crc", 2, bytes([0x99]) * 128),
@@ -2209,7 +2473,7 @@ def main() -> None:
     (family / "blank-track.jfd").write_bytes(build_jfd_family([]))
     rejects = {
         "reject-discop3.jfd": [(0, 1, 2, 1, 0, bytes(128))],
-        "reject-density4.jfd": [(0, 0, 4, 1, 0, bytes(128))],
+        "reject-density8.jfd": [(0, 0, 8, 1, 0, bytes(128))],
         "reject-mixed-time.jfd": [(0, 0, 2, 1, 0, bytes(128)),
                                   (0xFF, 0, 2, 2, 0, bytes(128))],
         "reject-untimed-duplicate.jfd": [(0xFF, 0, 2, 1, 0, bytes(128)),
@@ -2248,15 +2512,15 @@ def main() -> None:
     sums[2] += short_e[2] + (sums[1] >> 8)
     sums[3] += short_e[3] + (sums[2] >> 8)
     short_e[0] = (sums[0] ^ sums[1] ^ sums[2] ^ sums[3]) & 0xFF
-    for missing in (1024, 10240, 10241, 11264, 513):
+    for missing in (1024, 10240, 10241, 20480, 20481, 21504, 513):
         (args.output / f"short-e-missing-{missing}.adf").write_bytes(short_e[:-missing])
     short_family = args.output / "short-family"
     short_family.mkdir(exist_ok=True)
     geometries = (
         ("320k", build_old_map_media(320 * 1024, 1280, 0x31), 4096, 256, "adf"),
         ("640k-l", build_old_map_media(640 * 1024, 2560, 0x64), 8192, 256, "adl"),
-        ("800k-d", build_old_map_media(800 * 1024, 3200, 0xD0), 10240, 1024, "adf"),
-        ("800k-e", short_e, 10240, 1024, "adf"),
+        ("800k-d", build_old_map_media(800 * 1024, 3200, 0xD0), 20480, 1024, "adf"),
+        ("800k-e", short_e, 20480, 1024, "adf"),
     )
     for name, full, cap, sector_size, extension in geometries:
         (short_family / f"{name}-full.{extension}").write_bytes(full)

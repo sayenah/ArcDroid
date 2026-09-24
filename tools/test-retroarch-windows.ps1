@@ -26,6 +26,46 @@ if ($actualSha256 -ne $retroArchSha256) {
 if ($LASTEXITCODE -ne 0) { throw "7-Zip failed with exit code $LASTEXITCODE" }
 $retroArchDirectory = Join-Path $extractDirectory "RetroArch-Win64"
 $retroArch = Join-Path $retroArchDirectory "retroarch.exe"
+$script:RetroArchStartedProcesses = [System.Collections.Generic.List[object]]::new()
+function Wait-RetroArchStartReady {
+    $deadline = [DateTime]::UtcNow.AddSeconds(30)
+    do {
+        $live = @($script:RetroArchStartedProcesses | Where-Object {
+            $_.Refresh(); -not $_.HasExited
+        } | ForEach-Object { $_.Id })
+        $holders = @(Get-NetUDPEndpoint -LocalPort 55355 -ErrorAction SilentlyContinue |
+            Select-Object -ExpandProperty OwningProcess -Unique)
+        $known = @($script:RetroArchStartedProcesses | ForEach-Object { $_.Id })
+        $foreign = @($holders | Where-Object { $known -notcontains $_ })
+        if ($foreign.Count) {
+            $details = @($foreign | ForEach-Object {
+                $owner = Get-Process -Id $_ -ErrorAction SilentlyContinue
+                "pid=$_ name=$(if ($owner) { $owner.ProcessName } else { 'exited' })"
+            }) -join ', '
+            throw "UDP 55355 is held by a process this script did not start: $details"
+        }
+        if (-not $live.Count) {
+            $probe = [System.Net.Sockets.Socket]::new(
+                [System.Net.Sockets.AddressFamily]::InterNetwork,
+                [System.Net.Sockets.SocketType]::Dgram,
+                [System.Net.Sockets.ProtocolType]::Udp)
+            try {
+                $probe.ExclusiveAddressUse = $true
+                $probe.Bind([System.Net.IPEndPoint]::new(
+                    [System.Net.IPAddress]::Any, 55355))
+                return
+            } catch [System.Net.Sockets.SocketException] {
+                # The owner may be exiting between the endpoint query and bind.
+            } finally { $probe.Dispose() }
+        }
+        Start-Sleep -Milliseconds 100
+    } while ([DateTime]::UtcNow -lt $deadline)
+    $holderDetails = @($holders | ForEach-Object {
+        $owner = Get-Process -Id $_ -ErrorAction SilentlyContinue
+        "pid=$_ name=$(if ($owner) { $owner.ProcessName } else { 'exited' })"
+    }) -join ', '
+    throw "RetroArch start timed out after 30 s: live script PIDs=$($live -join ',') UDP 55355 holders=$holderDetails"
+}
 $coreDirectory = Join-Path $retroArchDirectory "cores"
 $infoDirectory = Join-Path $retroArchDirectory "info"
 $systemDirectory = Join-Path $retroArchDirectory "system\arcdroid\firmware"
@@ -280,9 +320,11 @@ function Invoke-ArcDroid([int]$Frames, [bool]$TakeScreenshot) {
     $stdout = Join-Path $WorkDirectory "retroarch-$runId.stdout.log"
     $stderr = Join-Path $WorkDirectory "retroarch-$runId.stderr.log"
     $runStartUtc = [DateTime]::UtcNow
+    Wait-RetroArchStartReady
     $process = Start-Process -FilePath $retroArch -ArgumentList $arguments `
         -Wait -PassThru -NoNewWindow `
         -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+    $script:RetroArchStartedProcesses.Add($process)
     $output = @()
     if (Test-Path $stdout) { $output += Get-Content $stdout }
     if (Test-Path $stderr) { $output += Get-Content $stderr }
@@ -312,8 +354,10 @@ function Try-InSessionReloads {
     $stderr = Join-Path $WorkDirectory "network-reload.stderr.log"
     $attemptLog = Join-Path $evidenceDirectory "network-reload-attempt.log"
     $runStartUtc = [DateTime]::UtcNow
+    Wait-RetroArchStartReady
     $process = Start-Process -FilePath $retroArch -ArgumentList $arguments `
         -PassThru -NoNewWindow -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+    $script:RetroArchStartedProcesses.Add($process)
     try {
         Start-Sleep -Seconds 2
         if ($process.HasExited) { throw "RetroArch exited before the network probe" }
@@ -492,8 +536,10 @@ function Start-MediaRun([string]$MediaPath, [string]$Name) {
     $arguments = @("--config=$config", "--libretro=$core", "--verbose",
         "--log-file=$retroLog", $MediaPath)
     $runStartUtc = [DateTime]::UtcNow
+    Wait-RetroArchStartReady
     $process = Start-Process -FilePath $retroArch -ArgumentList $arguments `
         -PassThru -NoNewWindow -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+    $script:RetroArchStartedProcesses.Add($process)
     $udp = [System.Net.Sockets.UdpClient]::new()
     $udp.Client.ReceiveTimeout = 500
     $udp.Connect("127.0.0.1", 55355)
@@ -666,6 +712,40 @@ function Assert-No-LdciRecords([string]$Context) {
         throw "$Context unexpectedly created .ldci records: $($records.FullName -join ', ')"
     }
 }
+
+@"
+arcdroid_machine = "Auto"
+arcdroid_cpu = "Auto"
+arcdroid_joystick_if = "Keyboard"
+arcdroid_launch = "off"
+"@ | Set-Content -Encoding ASCII $coreOptions
+$fContent = (Resolve-Path (Join-Path $InputDirectory "valid-f.adf")).Path
+$fRun = Start-MediaRun $fContent "f-format-auto"
+try {
+    $fRun.Udp.Client.ReceiveTimeout = 5000
+    for ($sample = 1; $sample -le 2; $sample++) {
+        if ($sample -eq 2) { Start-Sleep -Seconds 2 }
+        if ($fRun.Process.HasExited) { throw "F-format RetroArch exited before GET_STATUS sample $sample" }
+        Send-MediaCommand $fRun "GET_STATUS"
+        $fRemote = [System.Net.IPEndPoint]::new([System.Net.IPAddress]::Any, 0)
+        $fStatus = [Text.Encoding]::ASCII.GetString($fRun.Udp.Receive([ref]$fRemote))
+        if ($fRun.Process.HasExited -or $fStatus -notmatch '^GET_STATUS PLAYING\b' -or -not $fStatus.Contains("valid-f")) { throw "F-format GET_STATUS sample $sample did not report live valid-f content: $fStatus" }
+    }
+} finally { Stop-MediaRun $fRun }
+if (-not (Select-String -Path $fRun.RetroLog -SimpleMatch "Machine: requested=Auto resolved=A3020 reason=hd-media" -Quiet)) {
+    throw "F-format RetroArch run did not resolve A3020; log=$($fRun.RetroLog)"
+}
+if (-not (Select-String -Path $fRun.RetroLog -Pattern 'presenting bounded fallback|SET_GEOMETRY|SET_SYSTEM_AV_INFO' -Quiet)) {
+    throw "F-format RetroArch run did not present frames; log=$($fRun.RetroLog)"
+}
+if (Select-String -Path $fRun.RetroLog -Pattern '\[(?:libretro )?ERROR\]' -Quiet) {
+    throw "F-format RetroArch run logged an error; log=$($fRun.RetroLog)"
+}
+@"
+arcdroid_machine = "A3000"
+arcdroid_cpu = "ARM2"
+arcdroid_joystick_if = "Keyboard"
+"@ | Set-Content -Encoding ASCII $coreOptions
 
 $mediaRun = Start-MediaRun $playlist "playlist-disk-control"
 try {
@@ -1251,7 +1331,11 @@ function Get-ChooserFocusState($Capture) {
 function Move-ChooserFocusToSecondRow($Run, $InitialCapture,
                                       [IntPtr]$TargetHandle) {
     $observations = [System.Collections.Generic.List[string]]::new()
-    for ($downAttempt = 1; $downAttempt -le 3; $downAttempt++) {
+    $deadline = [DateTime]::UtcNow.AddSeconds(3)
+    $totalSamples = 0
+    for ($downAttempt = 1; $downAttempt -le 3 -and
+            $totalSamples -lt 5 -and [DateTime]::UtcNow -lt $deadline;
+            $downAttempt++) {
         $foreground = [ArcDroidWindowInput]::GetForegroundWindow()
         if ($foreground -ne $TargetHandle) {
             Write-ChooserInputDiagnostic "Down attempt=$downAttempt lost_foreground target=$(Format-WindowHandle $TargetHandle) foreground=$(Format-WindowHandle $foreground); retrying focus acquisition"
@@ -1262,8 +1346,10 @@ function Move-ChooserFocusToSecondRow($Run, $InitialCapture,
         Send-HardwareScanCode 0x50 $true "Down" 150
         Start-Sleep -Milliseconds 200
         $recognized = $false
-        for ($captureAttempt = 1; $captureAttempt -le 3; $captureAttempt++) {
+        for ($captureAttempt = 1; $totalSamples -lt 5 -and
+                [DateTime]::UtcNow -lt $deadline; $captureAttempt++) {
             $capture = Capture-RawScreenshot $Run "launch-chooser-down-$downAttempt-$captureAttempt"
+            $totalSamples++
             $state = Get-ChooserFocusState $capture
             $observation = "down_attempt=$downAttempt capture_attempt=$captureAttempt state=$state visual_signature=$($capture.VisualSignature) png_sha256=$($capture.Hash) dimensions=$($capture.Dimensions) row1_rgb=$($capture.ChooserFocusPixel) row2_rgb=$($capture.ChooserRow2Pixel) row3_rgb=$($capture.ChooserRow3Pixel)"
             $observations.Add($observation)
@@ -1278,7 +1364,7 @@ function Move-ChooserFocusToSecondRow($Run, $InitialCapture,
             }
             Start-Sleep -Milliseconds 150
         }
-        if ($recognized -and $state -eq "row3") { break }
+        if (-not $recognized -or $state -eq "row3") { break }
     }
     $foreground = [ArcDroidWindowInput]::GetForegroundWindow()
     throw "$($Run.Name) Down injection never moved chooser focus from row 1 to row 2 after 3 hardware scan-code attempts; foreground=$(Format-WindowHandle $foreground); observations=[$($observations -join ' | ')]; diagnostics=$chooserInputDiagnostics; retroarch_log_tail=[$(Get-RunLogTail $Run)]"
@@ -1463,14 +1549,23 @@ arcdroid_launch_chooser = "remember"
 "@ | Set-Content -Encoding ASCII $coreOptions
 $chooserRun = Start-MediaRun $chooserContent "launch-chooser-interactive"
 try {
-    $chooserCapture = Capture-RawScreenshot $chooserRun "launch-chooser-visible"
-    if ($chooserCapture.Dimensions -ne "640x480" -or $chooserCapture.Colours -lt 4 -or
-        $chooserCapture.BackgroundPixel -ne "101a2a" -or
-        $chooserCapture.ChooserFocusPixel -ne "a8d8ff" -or
-        $chooserCapture.ChooserRow2Pixel -ne "101a2a" -or
-        $chooserCapture.ChooserRow3Pixel -ne "101a2a" -or
-        $chooserCapture.VisualSignature -eq $app1Capture.VisualSignature -or
-        $chooserCapture.VisualSignature -eq $app2Capture.VisualSignature) {
+    $recognized = $false
+    $recognitionDeadline = [DateTime]::UtcNow.AddSeconds(3)
+    for ($sample = 1; $sample -le 5 -and
+            [DateTime]::UtcNow -lt $recognitionDeadline; $sample++) {
+        $chooserCapture = Capture-RawScreenshot $chooserRun "launch-chooser-visible-$sample"
+        $recognized = $chooserCapture.Dimensions -eq "640x480" -and
+            $chooserCapture.Colours -ge 4 -and
+            $chooserCapture.BackgroundPixel -eq "101a2a" -and
+            $chooserCapture.ChooserFocusPixel -eq "a8d8ff" -and
+            $chooserCapture.ChooserRow2Pixel -eq "101a2a" -and
+            $chooserCapture.ChooserRow3Pixel -eq "101a2a" -and
+            $chooserCapture.VisualSignature -ne $app1Capture.VisualSignature -and
+            $chooserCapture.VisualSignature -ne $app2Capture.VisualSignature
+        if ($recognized) { break }
+        Start-Sleep -Milliseconds 150
+    }
+    if (-not $recognized) {
         throw "Chooser-recognition step expected the 640x480 ArcDroid renderer with >=4 sampled colours, background_rgb=101a2a, row1_rgb=a8d8ff, row2_rgb=101a2a and row3_rgb=101a2a; observed dimensions=$($chooserCapture.Dimensions) sampled_colours=$($chooserCapture.Colours) background_rgb=$($chooserCapture.BackgroundPixel) row1_rgb=$($chooserCapture.ChooserFocusPixel) row2_rgb=$($chooserCapture.ChooserRow2Pixel) row3_rgb=$($chooserCapture.ChooserRow3Pixel) visual_signature=$($chooserCapture.VisualSignature) png_sha256=$($chooserCapture.Hash); app1=$($app1Capture.VisualSignature) app2=$($app2Capture.VisualSignature); retroarch_log_tail=[$(Get-RunLogTail $chooserRun)]"
     }
     Send-ChooserKeyboardPick $chooserRun $chooserCapture

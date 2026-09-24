@@ -211,8 +211,10 @@ bool arc_engine_test_newio_dir(bool seek, uint8_t *value)
 bool arc_engine_test_newio_read_start(unsigned drive, uint8_t size_code)
 {
    if (!arc_test_newio_live() || drive >= 2u || !drive_funcs[drive]) return false;
+   bool hd = drive == 0u && arc_saved_media_geometry == ARC_GEOMETRY_1600K_F;
    const uint8_t params[8] = {
-      (uint8_t)drive, 0u, 0u, 0u, size_code, 0u, 0x1bu, 0xffu
+      (uint8_t)drive, 0u, 0u, hd ? 3u : 0u, size_code,
+      hd ? 3u : 0u, 0x1bu, 0xffu
    };
    /* Leave any guest command phase deterministically before the harness owns
     * the controller, then consume all four reset-status reports. */
@@ -228,7 +230,7 @@ bool arc_engine_test_newio_read_start(unsigned drive, uint8_t size_code)
       (void)c82c711_fdc_read(5u, NULL);
       (void)c82c711_fdc_read(5u, NULL);
    }
-   c82c711_fdc_write(7u, 1u, NULL);
+   c82c711_fdc_write(7u, hd ? 0u : 1u, NULL);
    c82c711_fdc_write(5u, 0x06u, NULL);
    for (unsigned index = 0u; index < sizeof(params); ++index)
       c82c711_fdc_write(5u, params[index], NULL);

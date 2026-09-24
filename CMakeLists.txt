@@ -470,7 +470,8 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
       "${FIXTURE_DIR}/arcdroid-media.m3u"
       "${FIXTURE_DIR}/arcdroid-media-disc1.adf"
       "${FIXTURE_DIR}/arcdroid-media-disc2.adf"
-      "${FIXTURE_DIR}/arcdroid-application-l.adl")
+      "${FIXTURE_DIR}/arcdroid-application-l.adl"
+      "${FIXTURE_DIR}/hd-family/valid-f.adf")
     set_tests_properties(libretro-harness PROPERTIES TIMEOUT 300)
     set_tests_properties(newio-libretro-harness PROPERTIES TIMEOUT 300)
   endif()

@@ -272,9 +272,9 @@ static bool arc_jfd_parse_internal(const uint8_t *input, size_t input_size,
          bool timed = time != 0xffu;
          if (size_code > 3u)
          { arc_jfd_error(error, error_size, "unsupported sector size code"); goto reject; }
-         if (density == 4u || density == 8u)
-         { arc_jfd_error(error, error_size, "quad/octal density unsupported"); goto reject; }
-         if (density != 1u && density != 2u)
+         if (density == 8u)
+         { arc_jfd_error(error, error_size, "octal density unsupported"); goto reject; }
+         if (density != 1u && density != 2u && density != 4u)
          { arc_jfd_error(error, error_size, "invalid sector density"); goto reject; }
          if (block_flags & 1u)
          { arc_jfd_error(error, error_size, "DiscOp 3 whole-track data unsupported"); goto reject; }
@@ -306,7 +306,7 @@ static bool arc_jfd_parse_internal(const uint8_t *input, size_t input_size,
          if (sector.data_offset != UINT32_MAX) sector.data_offset += offset_data;
          if (!timed)
          {
-            uint32_t cadence = density == 2u ? 32u : 64u;
+            uint32_t cadence = density == 4u ? 16u : density == 2u ? 32u : 64u;
             uint32_t duration = (112u + sector.size) * cadence;
             if (synthetic_time > 200000u - duration)
             { arc_jfd_error(error, error_size, "synthesised track schedule exceeds one revolution"); goto reject; }

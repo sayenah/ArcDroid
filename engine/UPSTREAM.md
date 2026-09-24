@@ -55,7 +55,12 @@ so selectorless result paths remain within the two-drive arrays. The added
 added `c82c711_fdc_shutdown` quiesces the controller during lifecycle teardown.
 Terminal error paths clear FIQ; a WRITE DATA request is suppressed when a
 synchronous media callback has already entered a terminal result phase; cold
-creation fully reinitialises the static controller state. Test-core builds also
+creation fully reinitialises the static controller state. The unchanged HD
+ADF loader is now selected by ArcDroid for F-format media; `src/disc.c`
+exposes the active poll period to the ArcDroid JFD reader, and `src/disc_adf.c`
+counts elapsed guest microseconds for 200 ms index pulses at DD and HD, and
+keeps the READ ID sector position per drive when media geometries differ.
+Test-core builds also
 expose command/read-success counters used to prove the generated guest ROM
 executed the New-IO path; those counters are absent from shipping targets.
 The three upstream commented-out `dumpregs()` calls are omitted because the

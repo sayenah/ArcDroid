@@ -244,6 +244,7 @@ void arc_libretro_test_force_input_reconcile(void)
 
 typedef struct {
    bool populated;
+   bool high_density;
    bool created_this_preparation;
    char source[ARC_MEDIA_PATH_CAPACITY];
    char staged[ARC_MEDIA_PATH_CAPACITY];
@@ -333,7 +334,10 @@ static ArcTouchState arc_touch;
 typedef struct {
    ArcOsClass requested_os;
    ArcMachine machine;
+   ArcMachine requested_machine;
+   bool machine_auto;
    ArcCpu cpu;
+   bool cpu_auto;
    bool request_a3010_joystick;
    bool pointer_relative;
    ArcPointerStick pointer_stick;
@@ -350,6 +354,56 @@ typedef struct {
 } ArcCoreOptions;
 
 static ArcCoreOptions arc_core_options;
+static ArcMachine arc_session_machine;
+static bool arc_riscpc_notice_shown;
+
+static bool arc_media_is_hd(const ArcMediaEntry *entry)
+{
+   return entry && entry->populated && entry->high_density;
+}
+
+static bool arc_options_resolve(ArcCoreOptions *options, ArcMachine machine,
+                                char *error, size_t error_size)
+{
+   const ArcMachineDescriptor *descriptor = arc_machine_descriptor(machine);
+   if (!descriptor) return false;
+   options->machine = machine;
+   if (options->cpu_auto) options->cpu = descriptor->cpu;
+   if (options->cpu != descriptor->cpu)
+   {
+      if (error && error_size) snprintf(error, error_size,
+         "%s is incompatible with the %s machine",
+         arc_cpu_name(options->cpu), descriptor->name);
+      return false;
+   }
+   if (options->requested_os != ARC_OS_UNKNOWN &&
+       !arc_machine_supports_os(machine, options->requested_os))
+   {
+      if (error && error_size) snprintf(error, error_size,
+         "%s is not supported on the %s",
+         arc_os_name(options->requested_os), descriptor->name);
+      return false;
+   }
+   if (options->request_a3010_joystick && machine != ARC_MACHINE_A3010)
+   {
+      if (error && error_size) snprintf(error, error_size,
+         "A3010 joystick interface is incompatible with the %s machine",
+         descriptor->name);
+      return false;
+   }
+   return true;
+}
+
+static bool arc_machine_accepts_media(ArcMachine machine,
+                                      const ArcMediaEntry *entry,
+                                      char *error, size_t error_size)
+{
+   if (!arc_media_is_hd(entry) ||
+       arc_machine_descriptor(machine)->io == ARC_IO_NEW_82C711) return true;
+   if (error && error_size) snprintf(error, error_size,
+      "hd-media-needs-new-io: High-density media requires A3010, A3020 or A4000.");
+   return false;
+}
 
 static const char *const arc_pad_option_names[ARC_PAD_PORTS][ARC_PAD_INPUT_COUNT] = {
    {"arcdroid_pad1_up", "arcdroid_pad1_down", "arcdroid_pad1_left",
@@ -396,14 +450,11 @@ static bool arc_read_options(ArcCoreOptions *options, char *error, size_t error_
        (strcmp(memory, "Auto") && strcmp(memory, "4 MB")))
       goto invalid;
    options->machine = descriptor->id;
+   options->requested_machine = descriptor->id;
+   options->machine_auto = !strcmp(machine, "Auto");
+   options->cpu_auto = !strcmp(cpu, "Auto");
    options->cpu = !strcmp(cpu, "ARM2") ? ARC_CPU_ARM2 :
                   !strcmp(cpu, "ARM250") ? ARC_CPU_ARM250 : descriptor->cpu;
-   if (options->cpu != descriptor->cpu)
-   {
-      if (error && error_size) snprintf(error, error_size, "%s is incompatible with the %s machine",
-                                        cpu, descriptor->name);
-      return false;
-   }
    if (!strcmp(os, "RISC OS 3.11")) options->requested_os = ARC_OS_RISCOS_311;
    else if (!strcmp(os, "RISC OS 3.10")) options->requested_os = ARC_OS_RISCOS_310;
    else if (!strcmp(os, "RISC OS 3.19")) options->requested_os = ARC_OS_RISCOS_319;
@@ -411,22 +462,8 @@ static bool arc_read_options(ArcCoreOptions *options, char *error, size_t error_
    else if (!strcmp(os, "RISC OS 2.00")) options->requested_os = ARC_OS_RISCOS_200;
    else if (!strcmp(os, "Arthur 1.20")) options->requested_os = ARC_OS_ARTHUR_120;
    else if (strcmp(os, "Auto")) goto invalid;
-   if (options->requested_os != ARC_OS_UNKNOWN &&
-       !arc_machine_supports_os(options->machine, options->requested_os))
-   {
-      if (error && error_size) snprintf(error, error_size, "%s is not supported on the %s",
-         arc_os_name(options->requested_os), descriptor->name);
-      return false;
-   }
    if (!strcmp(joystick, "A3010")) options->request_a3010_joystick = true;
    else if (strcmp(joystick, "Auto") && strcmp(joystick, "Keyboard")) goto invalid;
-   if (options->request_a3010_joystick && descriptor->id != ARC_MACHINE_A3010)
-   {
-      if (error && error_size) snprintf(error, error_size,
-         "A3010 joystick interface is incompatible with the %s machine",
-         descriptor->name);
-      return false;
-   }
    if (!strcmp(pointer, "relative")) options->pointer_relative = true;
    else if (strcmp(pointer, "disabled")) goto invalid;
    if (!strcmp(pointer_stick, "right")) options->pointer_stick = ARC_POINTER_STICK_RIGHT;
@@ -973,6 +1010,9 @@ static bool arc_prepare_bytes(const char *source, const char *playlist_label,
                        error_size);
       if (!parsed)
          return false;
+      for (size_t i = 0u; i < entry->jfd.sector_count; ++i)
+         if (entry->jfd.sectors[i].density == 4u)
+            entry->high_density = true;
       if (arc_log)
       {
          arc_log(RETRO_LOG_INFO,
@@ -983,6 +1023,17 @@ static bool arc_prepare_bytes(const char *source, const char *playlist_label,
          if (entry->jfd.ignored_header_fields)
             arc_log(RETRO_LOG_WARN,
                "JFD: unknown flags or reserved header bytes are ignored by Slice 2a.\n");
+      }
+      if (entry->jfd.extended && !arc_riscpc_notice_shown)
+      {
+         unsigned cpu_mask = (entry->jfd.flags >> 8u) & 0x3fu;
+         unsigned os_mask = (entry->jfd.flags >> 16u) & 0x7fu;
+         if (cpu_mask && os_mask && !(cpu_mask & 3u) && !(os_mask & 3u))
+         {
+            arc_riscpc_notice_shown = true;
+            arc_media_notice("This title is flagged for RiscPC-class machines (StrongARM/RISC OS 3.5+), which ArcDroid does not emulate; booting anyway.",
+                             notify_user, notice_reported);
+         }
       }
       entry->digest = arc_digest(entry->jfd.decoded, entry->jfd.decoded_size);
       publish_data = entry->jfd.decoded;
@@ -999,6 +1050,7 @@ static bool arc_prepare_bytes(const char *source, const char *playlist_label,
    }
    else
    {
+      entry->high_density = entry->info.geometry == ARC_GEOMETRY_1600K_F;
       entry->digest = arc_digest(source_data, source_size);
       extension = entry->info.geometry == ARC_GEOMETRY_640K_L ? "adl" : "adf";
       if (entry->info.short_image)
@@ -2134,6 +2186,8 @@ static bool arc_prepare_adffs(bool notify) {
    const char *reason = NULL;
    if (!entry || entry->info.kind != ARC_MEDIA_JFD)
       reason = "not-jfd";
+   else if (arc_machine_descriptor(arc_session_machine)->io == ARC_IO_NEW_82C711)
+      reason = "new-io-machine";
    else if (arc_media_count != 1u || arc_folder_set_active)
       reason = "multi-image";
    else if (jfd->disc_number != 1u || jfd->disc_count != 1u)
@@ -2743,6 +2797,10 @@ static bool arc_prepare_launch(ArcMediaEntry *entry, bool ejected,
    { arc_launch_log(&discovery, -1, "media read failed"); return false; }
    (void)arc_launch_discover(raw, raw_size, &entry->info, jfd, &discovery);
    free(raw);
+   if (arc_log && discovery.backup_map_used)
+      arc_log(RETRO_LOG_WARN, "FileCore: primary map invalid or unreadable; using backup map.\n");
+   if (arc_log && discovery.old_map_clamped)
+      arc_log(RETRO_LOG_WARN, "FileCore: declared old-map sector count exceeds physical geometry; clamped.\n");
    if (option == ARC_LAUNCH_OFF)
    { arc_launch_log(&discovery, -1, "disabled"); return false; }
    if (!arc_launch_os_supported(arc_plan.os))
@@ -2863,6 +2921,12 @@ static bool arc_disk_set_eject(bool ejected)
    if (arc_image_index < arc_media_count && arc_media[arc_image_index].populated)
    {
       ArcMediaEntry *entry = &arc_media[arc_image_index];
+      if (!arc_machine_accepts_media(arc_session_machine, entry,
+                                     error, sizeof(error)))
+      {
+         arc_message(error, RETRO_LOG_ERROR);
+         return false;
+      }
       if (!arc_refresh_jfd(entry, error, sizeof(error)))
       {
          arc_message(error, RETRO_LOG_ERROR);
@@ -2923,6 +2987,15 @@ static bool arc_disk_replace(unsigned index, const struct retro_game_info *info)
       if (!arc_media[index].populated && index + 1u == arc_media_count)
          --arc_media_count;
       arc_message(error[0] ? error : "Replacement floppy image is invalid.", RETRO_LOG_ERROR);
+      return false;
+   }
+   if (!arc_machine_accepts_media(arc_session_machine, &replacement,
+                                  error, sizeof(error)))
+   {
+      arc_discard_candidate(&replacement);
+      if (!arc_media[index].populated && index + 1u == arc_media_count)
+         --arc_media_count;
+      arc_message(error, RETRO_LOG_ERROR);
       return false;
    }
    arc_jfd_free(&arc_media[index].jfd);
@@ -4369,6 +4442,7 @@ static bool arc_load_game(const struct retro_game_info *game, bool negotiate)
       return false;
    }
    strcpy(arc_save_path, save_dir);
+   arc_riscpc_notice_shown = false;
    if (!arc_prepare_media_list(game->path, arc_core_options.disk_writes,
                                error, sizeof(error)))
    {
@@ -4376,6 +4450,35 @@ static bool arc_load_game(const struct retro_game_info *game, bool negotiate)
       return false;
    }
    arc_image_index = 0u;
+   bool has_hd_media = false;
+   for (unsigned i = 0u; i < arc_media_count; ++i)
+      if (arc_media_is_hd(&arc_media[i])) has_hd_media = true;
+   arc_session_machine = arc_core_options.machine_auto ?
+      (has_hd_media ? ARC_MACHINE_A3020 : ARC_MACHINE_A3000) :
+      arc_core_options.requested_machine;
+   if (has_hd_media &&
+       arc_machine_descriptor(arc_session_machine)->io != ARC_IO_NEW_82C711)
+   {
+      snprintf(error, sizeof(error),
+         "hd-media-needs-new-io: High-density media requires A3010, A3020 or A4000.");
+      arc_message(error, RETRO_LOG_ERROR);
+      arc_release_session();
+      return false;
+   }
+   if (!arc_options_resolve(&arc_core_options, arc_session_machine,
+                            error, sizeof(error)))
+   {
+      arc_message(error, RETRO_LOG_ERROR);
+      arc_release_session();
+      return false;
+   }
+   if (arc_log)
+      arc_log(RETRO_LOG_INFO, "Machine: requested=%s resolved=%s reason=%s\n",
+         arc_core_options.machine_auto ? "Auto" :
+            arc_machine_descriptor(arc_core_options.requested_machine)->name,
+         arc_machine_descriptor(arc_session_machine)->name,
+         arc_core_options.machine_auto ?
+            (has_hd_media ? "hd-media" : "default") : "option");
 
    if (!arc_environment(RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY, &system_dir) ||
        !system_dir || !system_dir[0] ||
@@ -4569,8 +4672,14 @@ RETRO_API void retro_reset(void)
    ArcSessionState previous_session = arc_session;
 
    arc_persist_cmos();
-   if (!arc_read_options(&updated, error, sizeof(error)) ||
-       !arc_select_firmware(updated.requested_os, updated.machine, &new_firmware,
+   if (!arc_read_options(&updated, error, sizeof(error))) goto failed;
+   ArcMachine reset_choice = updated.machine_auto ? arc_session_machine :
+      updated.requested_machine;
+   if (!arc_options_resolve(&updated, reset_choice, error, sizeof(error))) goto failed;
+   for (unsigned i = 0u; i < arc_media_count; ++i)
+      if (!arc_machine_accepts_media(reset_choice, &arc_media[i],
+                                      error, sizeof(error))) goto failed;
+   if (!arc_select_firmware(updated.requested_os, reset_choice, &new_firmware,
                             &new_firmware_size, &firmware_match,
                             error, sizeof(error)))
       goto failed;
@@ -4617,6 +4726,7 @@ RETRO_API void retro_reset(void)
    new_firmware = NULL;
    arc_firmware_size = new_firmware_size;
    arc_core_options = updated;
+   arc_session_machine = reset_choice;
    ArcMediaKind plan_media = selected < arc_media_count && arc_media[selected].populated ?
       arc_media[selected].info.kind :
       (arc_media_count ? arc_media[0].info.kind : arc_plan.media);
@@ -4785,6 +4895,10 @@ RETRO_API void retro_run(void)
       ArcCoreOptions updated;
       char option_error[160] = {0};
       bool valid_update = arc_read_options(&updated, option_error, sizeof(option_error));
+      if (valid_update)
+         valid_update = arc_options_resolve(&updated,
+            updated.machine_auto ? arc_session_machine : updated.requested_machine,
+            option_error, sizeof(option_error));
       if (!valid_update)
          arc_message(option_error, RETRO_LOG_ERROR);
       else if (updated.pointer_relative != arc_core_options.pointer_relative ||

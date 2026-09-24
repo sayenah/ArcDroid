@@ -1,8 +1,9 @@
 /*Arculator 2.2 by Sarah Walker
   Disc support*/
-/* ArcDroid modification (2026-09-16): validated media kind and geometry cross
- * the adapter boundary explicitly; empty-drive commands terminate normally;
- * closing one drive leaves a transfer on another drive undisturbed. */
+/* ArcDroid modifications (2026-09-16, 2026-09-23): validated media kind and
+ * geometry cross the adapter boundary; empty-drive commands terminate
+ * normally; closing one drive leaves another transfer undisturbed. F media
+ * selects the existing HD loader, and readers can query the poll period. */
 #include <stdio.h>
 #include <string.h>
 #include "arc.h"
@@ -61,6 +62,7 @@ bool disc_load_raw(int drive, char *fn, ArcMediaGeometry geometry)
 		case ARC_GEOMETRY_640K_L: adl_load(drive, fn); break;
 		case ARC_GEOMETRY_800K_D:
 		case ARC_GEOMETRY_800K_E: adf_arcdd_load(drive, fn); break;
+		case ARC_GEOMETRY_1600K_F: adf_archd_load(drive, fn); break;
 		default: return false;
 	}
 	return !disc_empty(drive);
@@ -208,4 +210,9 @@ void disc_set_motor(int enable)
 void disc_set_density(int density)
 {
 	disc_poll_time = (disc_poll_times[density] * TIMER_USEC);
+}
+
+unsigned disc_poll_period_us(void)
+{
+	return (unsigned)(disc_poll_time / TIMER_USEC);
 }

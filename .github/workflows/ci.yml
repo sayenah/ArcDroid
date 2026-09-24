@@ -80,6 +80,7 @@ jobs:
             build/windows/tests/fixtures/generated/adffs/synthetic.zip \
             build/windows/tests/fixtures/generated/adffs/eligible.jfd \
             build/windows/tests/fixtures/generated/launch-family/checkpoint-a-top-bit.adf \
+            build/windows/tests/fixtures/generated/hd-family/valid-f.adf \
             build/windows/retroarch-package/
           cp -R build/windows/tests/fixtures/generated/Qaventra.adf \
             build/windows/retroarch-package/
