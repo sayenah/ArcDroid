@@ -1151,6 +1151,12 @@ def build_adffs_fixtures(output: Path) -> None:
                 ("unrelated/readme", b"ignored", False)]
     package = _zip_bytes(entries)
     (output / "synthetic.zip").write_bytes(package)
+    changed_obey = _zip_bytes([
+        (name, payload + b"\r" if name == "F0012301" else payload, meta)
+        for name, payload, meta in obey_entries])
+    (output / "script-changed.zip").write_bytes(_zip_bytes([
+        (name, changed_obey if name == "!ADFFS/obey" else payload, metadata)
+        for name, payload, metadata in entries]))
     (output / "stored.zip").write_bytes(_zip_bytes(entries, zipfile.ZIP_STORED))
     (output / "descriptor.zip").write_bytes(_zip_bytes(
         entries, zipfile.ZIP_DEFLATED, streaming=True))
@@ -1299,6 +1305,12 @@ def build_adffs_fixtures(output: Path) -> None:
     (output / "decoded-too-large.jfd").write_bytes(gzip_member(bytes(adffs_jfd(
         123, decoded_size=decoded_limit + 256))))
     (output / "multi.m3u").write_text("eligible.jfd\nembedded-only.jfd\n")
+    for disc in (1, 2, 3):
+        image = adffs_jfd(123, disc=disc, count=4)
+        image[-1] = disc
+        (output / f"install-{disc}.jfd").write_bytes(image)
+    (output / "install.m3u").write_text(
+        "install-1.jfd\ninstall-2.jfd\ninstall-3.jfd\n")
 
 
 def build_jfd_family(descriptors: list[tuple[int, int, int, int, int, bytes | None]],

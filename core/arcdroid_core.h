@@ -188,7 +188,7 @@ typedef struct {
 } ArcLaunchDiscovery;
 
 #define ARC_LAUNCH_BINDING_MAX_SIZE 96u
-#define ARC_LAUNCH_CHOICE_MAX_SIZE 96u
+#define ARC_LAUNCH_CHOICE_MAX_SIZE 128u
 #define ARC_LAUNCH_CHOOSER_MAX_ROWS (ARC_LAUNCH_MAX_CANDIDATES + 1u)
 
 typedef struct {
@@ -210,6 +210,8 @@ typedef struct {
    unsigned focus;
    unsigned first_visible;
    bool inspection_incomplete;
+   bool install_mode;
+   char install_labels[2][32];
 } ArcLaunchChooser;
 
 #define ARC_CMOS_RECORD_SIZE 256u
@@ -273,6 +275,9 @@ int arc_launch_choice_match(const ArcLaunchDiscovery *discovery,
 bool arc_launch_chooser_init(ArcLaunchChooser *chooser,
                              const ArcLaunchDiscovery *discovery,
                              bool remembered, int remembered_candidate);
+bool arc_launch_chooser_install_init(ArcLaunchChooser *chooser,
+                                    const char *const *labels, unsigned count,
+                                    int remembered_candidate);
 void arc_launch_chooser_move(ArcLaunchChooser *chooser, int direction);
 int arc_launch_chooser_selection(const ArcLaunchChooser *chooser);
 int arc_launch_chooser_hit(const ArcLaunchChooser *chooser,

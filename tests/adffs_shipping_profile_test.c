@@ -24,5 +24,47 @@ int main(void) {
         !strcmp(p[0].version, "ADFFS 2.88 (28 Mar 2026) IOC"));
   for (unsigned i = 0; i < 6u; ++i)
     CHECK(!strcmp(p[0].sha256[i], expected[i]));
+  size_t installs = 0u;
+  const ArcInstallProfile *profiles = arc_install_profiles(&installs);
+  CHECK(profiles && installs == 3u);
+  for (size_t i = 0u; i < installs; ++i) {
+    const ArcInstallProfile *profile = &profiles[i];
+    CHECK(profile->game_id && profile->disc_count && profile->revision &&
+          profile->io_mask && !(profile->io_mask & ~3u) &&
+          strlen(profile->script_sha256) == 64u &&
+          profile->variant_count >= 1u &&
+          profile->variant_count <= ARC_INSTALL_MAX_VARIANTS);
+    for (size_t earlier = 0u; earlier < i; ++earlier)
+      CHECK(profiles[earlier].game_id != profile->game_id);
+    for (unsigned v = 0u; v < profile->variant_count; ++v) {
+      const ArcInstallVariant *variant = &profile->variants[v];
+      CHECK(variant->key && variant->label && variant->app &&
+            strlen(variant->app) <= 10u &&
+            (!variant->data_file || strlen(variant->data_file) <= 10u) &&
+            (!variant->data_dir || strlen(variant->data_dir) <= 10u) &&
+            variant->disc_count >= 1u &&
+            variant->disc_count <= ARC_INSTALL_MAX_DISCS &&
+            variant->discs[0].number == 1u &&
+            variant->ram_kib <= 4096u &&
+            !strstr(variant->label, "ADFFS") &&
+            !strstr(variant->app, "ADFFS"));
+      for (unsigned old = 0u; old < v; ++old)
+        CHECK(strcmp(variant->key, profile->variants[old].key));
+      for (unsigned d = 0u; d < variant->disc_count; ++d) {
+        CHECK(variant->discs[d].number >= 1u &&
+              variant->discs[d].number <= profile->disc_count &&
+              strlen(variant->discs[d].sha1) == 40u &&
+              variant->discs[d].size <= 2u * 1024u * 1024u);
+        for (unsigned old = 0u; old < d; ++old)
+          CHECK(variant->discs[old].number < variant->discs[d].number);
+      }
+      if (variant->data_file || variant->data_dir) {
+        bool found = false;
+        for (unsigned d = 1u; d < variant->disc_count; ++d)
+          if (variant->discs[d].number == variant->data_disc) found = true;
+        CHECK(found);
+      }
+    }
+  }
   return 0;
 }

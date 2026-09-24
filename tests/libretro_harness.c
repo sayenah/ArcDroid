@@ -1246,6 +1246,7 @@ typedef struct {
    bool (*activation_active)(void);
    unsigned (*modifier_state)(unsigned);
    void (*force_present)(void);
+   unsigned (*mouse_samples)(void);
 } OskScriptApi;
 
 static void print_usage(FILE *stream, const char *program)
@@ -1267,6 +1268,9 @@ static void print_usage(FILE *stream, const char *program)
       "  modifier RETROK_NAME off|oneshot|locked\n"
       "                                      set a sticky modifier state\n"
       "  screenshot NAME                     capture the following presented field\n"
+      "  move DX DY                          send one libretro mouse delta\n"
+      "  click MASK HOLD                     hold mouse buttons for HOLD fields\n"
+      "                                      MASK: 1 Select, 2 Adjust, 4 Menu\n"
       "Screenshots are written as DATA/evidence/NAME.ppm. NAME may contain\n"
       "letters, digits, dot, underscore, or hyphen (but not . or ..).\n",
       program, program, program, program);
@@ -1352,6 +1356,9 @@ static bool script_name(const char *name)
 
 static bool run_osk_script(const char *path, OskScriptApi *api)
 {
+   /* Private S27b probe: an in-game click registered, while desktop Select
+    * and Menu did not. These commands prove delivery to the core input layer;
+    * AC-11 uses device touch if the desktop remains unresponsive. */
    FILE *script = fopen(path, "rb");
    if (!script)
    {
@@ -1425,6 +1432,42 @@ static bool run_osk_script(const char *path, OskScriptApi *api)
          api->force_present();
          api->run();
          ok = pending_screenshot[0] == '\0';
+      }
+      else if (!strcmp(command, "move") && first && second && !extra)
+      {
+         char *end_x = NULL, *end_y = NULL;
+         long dx = strtol(first, &end_x, 10);
+         long dy = strtol(second, &end_y, 10);
+         if (!first[0] || !second[0] || !end_x || *end_x || !end_y || *end_y ||
+             dx < INT16_MIN || dx > INT16_MAX ||
+             dy < INT16_MIN || dy > INT16_MAX || (!dx && !dy)) ok = false;
+         else
+         {
+            unsigned before = api->mouse_samples();
+            mouse_port_x[1] = (int)dx;
+            mouse_port_y[1] = (int)dy;
+            api->run();
+            ok = api->mouse_samples() > before &&
+                 !mouse_port_x[1] && !mouse_port_y[1];
+         }
+      }
+      else if (!strcmp(command, "click") && first && second && !extra)
+      {
+         char *end_mask = NULL, *end_hold = NULL;
+         unsigned long mask = strtoul(first, &end_mask, 10);
+         unsigned long hold = strtoul(second, &end_hold, 10);
+         if (!first[0] || !second[0] || !end_mask || *end_mask ||
+             !end_hold || *end_hold || !mask || mask > 7u ||
+             !hold || hold > 1000000u) ok = false;
+         else
+         {
+            unsigned before = api->mouse_samples();
+            mouse_port_buttons[1] = (unsigned)mask;
+            for (unsigned long field = 0u; field < hold; ++field) api->run();
+            mouse_port_buttons[1] = 0u;
+            api->run();
+            ok = api->mouse_samples() >= before + hold;
+         }
       }
       else
          ok = false;
@@ -1574,6 +1617,7 @@ int main(int argc, char **argv)
    bool (*arc_engine_test_newio_read_finish)(size_t, uint32_t *, uint8_t[7]) = NULL;
    bool (*arc_engine_test_joystick)(unsigned, uint8_t *) = NULL;
    bool (*arc_engine_test_ioeb_clock)(unsigned) = NULL;
+   unsigned (*arc_libretro_test_mouse_input_samples)(void) = NULL;
    unsigned (*arc_engine_test_vidc_clock)(void) = NULL;
    void (*arc_libretro_test_fail_osk_allocations)(unsigned) = NULL;
    void (*arc_libretro_test_drop_osk_surface)(void) = NULL;
@@ -1602,6 +1646,7 @@ int main(int argc, char **argv)
    void (*arc_libretro_test_force_input_reconcile)(void) = NULL;
    void (*arc_libretro_test_adffs_accept_test_os)(bool) = NULL;
    void (*arc_libretro_test_fail_adffs_content_read)(bool) = NULL;
+   void (*arc_libretro_test_fail_install_build)(bool) = NULL;
    bool (*arc_libretro_test_adffs_content_read_failure_pending)(void) = NULL;
    bool (*arc_libretro_test_adffs_carrier_matches)(const void *, size_t) = NULL;
    void (*arc_platform_test_input_events_reset)(void) = NULL;
@@ -1652,6 +1697,8 @@ int main(int argc, char **argv)
          dlsym(module, "arc_libretro_test_osk_modifier_state");
       *(void **)(&arc_libretro_test_force_present) =
          dlsym(module, "arc_libretro_test_force_present");
+      *(void **)(&arc_libretro_test_mouse_input_samples) =
+         dlsym(module, "arc_libretro_test_mouse_input_samples");
       *(void **)(&arc_libretro_test_presented_osk_notice) =
          dlsym(module, "arc_libretro_test_presented_osk_notice");
       *(void **)(&arc_libretro_test_content_id) =
@@ -1676,6 +1723,8 @@ int main(int argc, char **argv)
          dlsym(module, "arc_libretro_test_adffs_accept_test_os");
       *(void **)(&arc_libretro_test_fail_adffs_content_read) =
          dlsym(module, "arc_libretro_test_fail_adffs_content_read");
+      *(void **)(&arc_libretro_test_fail_install_build) =
+         dlsym(module, "arc_libretro_test_fail_install_build");
       *(void **)(&arc_libretro_test_adffs_content_read_failure_pending) =
          dlsym(module, "arc_libretro_test_adffs_content_read_failure_pending");
       *(void **)(&arc_libretro_test_adffs_carrier_matches) =
@@ -1713,6 +1762,7 @@ int main(int argc, char **argv)
              arc_libretro_test_force_input_reconcile &&
              arc_libretro_test_adffs_accept_test_os &&
              arc_libretro_test_fail_adffs_content_read &&
+             arc_libretro_test_fail_install_build &&
              arc_libretro_test_adffs_content_read_failure_pending &&
              arc_libretro_test_adffs_carrier_matches &&
              arc_platform_test_input_events_reset && arc_platform_test_input_events);
@@ -1775,6 +1825,8 @@ int main(int argc, char **argv)
    }
    else if (osk_script)
    {
+      *(void **)(&arc_libretro_test_mouse_input_samples) =
+         dlsym(module, "arc_libretro_test_mouse_input_samples");
       *(void **)(&arc_libretro_test_osk_focus_key) =
          dlsym(module, "arc_libretro_test_osk_focus_key");
       *(void **)(&arc_libretro_test_osk_visible) =
@@ -1788,7 +1840,8 @@ int main(int argc, char **argv)
       if (!arc_libretro_test_osk_focus_key || !arc_libretro_test_osk_visible ||
           !arc_libretro_test_osk_activation_active ||
           !arc_libretro_test_osk_modifier_state ||
-          !arc_libretro_test_force_present)
+          !arc_libretro_test_force_present ||
+          !arc_libretro_test_mouse_input_samples)
       {
          fprintf(stderr, "libretro_harness: --osk-script requires the test core\n");
          assert(dlclose(module) == 0);
@@ -2338,7 +2391,8 @@ int main(int argc, char **argv)
             arc_libretro_test_osk_focus_key,
             arc_libretro_test_osk_activation_active,
             arc_libretro_test_osk_modifier_state,
-            arc_libretro_test_force_present
+            arc_libretro_test_force_present,
+            arc_libretro_test_mouse_input_samples
          };
          script_ok = run_osk_script(osk_script, &script_api);
       }
@@ -6757,22 +6811,44 @@ int main(int argc, char **argv)
       ADFFS_GAME("count-two.jfd", adffs_count_two);
       EXPECT_NATIVE(adffs_count_two, "multi-disc", 0u, NULL);
       ADFFS_GAME("eligible.jfd", adffs_eligible);
-      option_machine = "A3020";
+      size_t newio_eligible_size = 0u;
+      uint8_t *newio_eligible_bytes = read_alloc(adffs_eligible_path,
+                                                  &newio_eligible_size);
+      static const char *const adffs_newio_machines[] = {
+         "A3010", "A3020", "A4000"
+      };
       option_cpu = "ARM250";
       variable_update = true;
-      unsigned newio_package_lines = adffs_package_log_lines;
-      unsigned newio_boot_lines = jfd_boot_log_lines;
-      unsigned newio_notices = adffs_notice_calls;
-      phase = PHASE_LOAD; assert(retro_load_game(&adffs_eligible));
-      assert(jfd_boot_log_lines == newio_boot_lines + 1u &&
-             !strcmp(last_jfd_boot_log,
-                     "JFD boot: path=native reason=new-io-machine\n") &&
-             adffs_package_log_lines == newio_package_lines &&
-             adffs_notice_calls == newio_notices &&
-             !arc_libretro_test_adffs_carrier_matches(eligible_bytes,
-                                                     eligible_size) &&
-             disk_control.get_num_images() == 1u);
-      retro_unload_game();
+      for (unsigned machine = 0u; machine < 3u; ++machine) {
+         option_machine = adffs_newio_machines[machine];
+         unsigned newio_package_lines = adffs_package_log_lines;
+         unsigned newio_boot_lines = jfd_boot_log_lines;
+         unsigned newio_notices = adffs_notice_calls;
+         phase = PHASE_LOAD; assert(retro_load_game(&adffs_eligible));
+         if (jfd_boot_log_lines != newio_boot_lines + 1u ||
+             strcmp(last_jfd_boot_log,
+                    "JFD boot: path=adffs script=builtin profile=synthetic-test version=\"Synthetic 1.0\"\n") ||
+             adffs_package_log_lines != newio_package_lines + 1u ||
+             adffs_notice_calls != newio_notices ||
+             !arc_libretro_test_adffs_carrier_matches(newio_eligible_bytes,
+                                                     newio_eligible_size))
+            fprintf(stderr, "New-IO ADFFS %s: boot=%s package_delta=%u notice_delta=%u carrier=%d\n",
+                    option_machine, last_jfd_boot_log,
+                    adffs_package_log_lines - newio_package_lines,
+                    adffs_notice_calls - newio_notices,
+                    arc_libretro_test_adffs_carrier_matches(newio_eligible_bytes,
+                                                            newio_eligible_size));
+         assert(jfd_boot_log_lines == newio_boot_lines + 1u &&
+                !strcmp(last_jfd_boot_log,
+                        "JFD boot: path=adffs script=builtin profile=synthetic-test version=\"Synthetic 1.0\"\n") &&
+                adffs_package_log_lines == newio_package_lines + 1u &&
+                adffs_notice_calls == newio_notices &&
+                arc_libretro_test_adffs_carrier_matches(newio_eligible_bytes,
+                                                        newio_eligible_size) &&
+                disk_control.get_num_images() == 1u);
+         retro_unload_game();
+      }
+      free(newio_eligible_bytes);
       option_machine = "Auto";
       option_cpu = "ARM2";
       variable_update = true;
@@ -6870,6 +6946,143 @@ int main(int argc, char **argv)
          "JFD boot: path=adffs script=embedded profile=synthetic-test version=\"Synthetic 1.0\"\n");
       EXPECT_ADFFS(adffs_eligible,
          "JFD boot: path=adffs script=builtin profile=synthetic-test version=\"Synthetic 1.0\"\n");
+
+      /* Exact invented multi-disc identities enter the install chooser. */
+      ADFFS_GAME("install.m3u", adffs_install_set);
+      ADFFS_GAME("install-1.jfd", adffs_install_one);
+      char install_choice[4096];
+      phase = PHASE_LOAD; assert(retro_load_game(&adffs_install_set));
+      assert(arc_libretro_test_session_state() == 2u &&
+             arc_libretro_test_chooser_rows() == 2u &&
+             !arc_engine_test_drive_media(0u, NULL, NULL));
+      snprintf(install_choice, sizeof(install_choice), "%s",
+               arc_libretro_test_choice_path());
+      retro_unload_game();
+      (void)remove(install_choice);
+      phase = PHASE_LOAD; assert(retro_load_game(&adffs_install_set));
+      assert(arc_libretro_test_session_state() == 2u &&
+             arc_libretro_test_chooser_rows() == 2u);
+      phase = PHASE_RUN; retro_run();
+      joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_DOWN] = true; retro_run();
+      joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_DOWN] = false; retro_run();
+      assert(arc_libretro_test_chooser_focus() == 1u);
+      joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_A] = true; retro_run();
+      joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_A] = false; retro_run();
+      assert(arc_libretro_test_session_state() == 3u &&
+             strstr(last_jfd_boot_log,
+                    "path=adffs-install profile=F00123 rev=1 variant=second discs=1,3 ram=1600K") &&
+             strstr(last_message, "temporary RAM disc") &&
+             arc_engine_test_drive_media(0u, &write_protected, NULL) &&
+             write_protected);
+      retro_reset();
+      assert(arc_libretro_test_session_state() == 3u &&
+             strstr(last_jfd_boot_log, "variant=second"));
+      retro_unload_game();
+      uint8_t install_record[ARC_LAUNCH_CHOICE_MAX_SIZE];
+      size_t install_record_size = read_bounded(install_choice,
+         install_record, sizeof(install_record));
+      assert(install_record_size &&
+             !memcmp(install_record, "v2\ninstall\n", 11u));
+      write_exact(chooser_choice, install_record, install_record_size);
+      phase = PHASE_LOAD; assert(retro_load_game(&chooser_game));
+      assert(arc_libretro_test_session_state() == 2u);
+      retro_unload_game();
+      (void)remove(chooser_choice);
+      phase = PHASE_LOAD; assert(retro_load_game(&adffs_install_set));
+      assert(arc_libretro_test_session_state() == 3u &&
+             strstr(last_jfd_boot_log, "variant=second"));
+      retro_unload_game();
+      option_launch_chooser = "ask";
+      variable_update = true;
+      phase = PHASE_LOAD; assert(retro_load_game(&adffs_install_set));
+      assert(arc_libretro_test_session_state() == 2u &&
+             arc_libretro_test_chooser_rows() == 2u &&
+             arc_libretro_test_chooser_focus() == 1u);
+      retro_unload_game();
+      option_launch_chooser = "remember";
+      variable_update = true;
+      static const uint8_t stale_install[] = "v1\napp\n2141\n0000000000000000000000000000000000000000\n";
+      write_exact(install_choice, stale_install, sizeof(stale_install) - 1u);
+      phase = PHASE_LOAD; assert(retro_load_game(&adffs_install_set));
+      assert(arc_libretro_test_session_state() == 2u &&
+             arc_libretro_test_chooser_focus() == 0u);
+      phase = PHASE_RUN; retro_run();
+      joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_A] = true; retro_run();
+      joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_A] = false; retro_run();
+      assert(arc_libretro_test_session_state() == 3u &&
+             strstr(last_jfd_boot_log, "variant=first discs=1,2"));
+      retro_reset();
+      assert(arc_libretro_test_session_state() == 3u &&
+             strstr(last_jfd_boot_log, "variant=first"));
+      retro_unload_game();
+      phase = PHASE_LOAD; assert(retro_load_game(&adffs_install_set));
+      assert(arc_libretro_test_session_state() == 3u &&
+             strstr(last_jfd_boot_log, "variant=first"));
+      retro_unload_game();
+      (void)remove(install_choice);
+      arc_libretro_test_fail_install_build(true);
+      phase = PHASE_LOAD; assert(retro_load_game(&adffs_install_set));
+      phase = PHASE_RUN; retro_run();
+      joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_A] = true; retro_run();
+      joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_A] = false; retro_run();
+      assert(arc_libretro_test_session_state() == 4u &&
+             strstr(last_message, "Unable to construct the selected install session"));
+      retro_unload_game();
+      (void)remove(install_choice);
+      EXPECT_NATIVE(adffs_install_one, "install-incomplete-set", 1u,
+                    "all required discs");
+      char duplicate_set_path[4096], install_two_path[4096];
+      snprintf(duplicate_set_path, sizeof(duplicate_set_path),
+               "%s/install-duplicate.m3u", argv[4]);
+      snprintf(install_two_path, sizeof(install_two_path),
+               "%s/adffs/install-2.jfd", argv[11]);
+      FILE *duplicate_set = fopen(duplicate_set_path, "wb");
+      assert(duplicate_set && fprintf(duplicate_set, "%s\n%s\n%s\n",
+             adffs_install_one_path, install_two_path, install_two_path) > 0 &&
+             !fclose(duplicate_set));
+      struct retro_game_info duplicate_set_game = {
+         duplicate_set_path, NULL, 0u, NULL
+      };
+      EXPECT_NATIVE(duplicate_set_game, "install-duplicate-disc", 1u,
+                    "all required discs");
+      assert(remove(duplicate_set_path) == 0);
+      assert(remove(package_path) == 0);
+      EXPECT_NATIVE(adffs_install_set, "install-no-package", 1u,
+                    "place a valid package");
+      COPY_ADFFS_FIXTURE("synthetic.zip");
+      arc_libretro_test_adffs_accept_test_os(false);
+      EXPECT_NATIVE(adffs_install_set, "install-os", 0u, NULL);
+      arc_libretro_test_adffs_accept_test_os(true);
+      option_launch = "app1";
+      EXPECT_NATIVE(adffs_install_set, "install-launch-option", 0u, NULL);
+      option_launch = "auto";
+      COPY_ADFFS_FIXTURE("script-changed.zip");
+      EXPECT_NATIVE(adffs_install_set, "install-script-mismatch", 1u,
+                    "matching built-in install script");
+      COPY_ADFFS_FIXTURE("untested.zip");
+      option_adffs_package = "untested";
+      EXPECT_NATIVE(adffs_install_set, "install-untested-package", 1u,
+                    "verified ADFFS package");
+      option_adffs_package = "verified";
+      COPY_ADFFS_FIXTURE("synthetic.zip");
+      option_jfd_boot = "native";
+      EXPECT_NATIVE(adffs_install_set, "install-option", 0u, NULL);
+      option_jfd_boot = "auto";
+      option_machine = "A3020";
+      option_cpu = "ARM250";
+      EXPECT_NATIVE(adffs_install_set, "install-machine", 0u, NULL);
+      option_machine = "Auto";
+      option_cpu = "ARM2";
+      (void)remove(install_choice);
+      phase = PHASE_LOAD; assert(retro_load_game(&adffs_install_set));
+      assert(arc_libretro_test_session_state() == 2u);
+      phase = PHASE_RUN; retro_run();
+      joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_A] = true; retro_run();
+      joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_A] = false; retro_run();
+      assert(arc_libretro_test_session_state() == 3u &&
+             strstr(last_jfd_boot_log, "path=adffs-install"));
+      retro_unload_game();
+      (void)remove(install_choice);
 
 #undef EXPECT_ADFFS
 #undef EXPECT_NATIVE

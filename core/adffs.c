@@ -5,6 +5,7 @@
 #include "zip.h"
 
 #include <ctype.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -450,6 +451,96 @@ bool arc_adffs_launcher(uint8_t *o, size_t cap, size_t *sz) {
   return true;
 }
 
+static bool append_step(char *text, size_t capacity, size_t *at,
+                        const char *format, ...) {
+  if (*at >= capacity) return false;
+  va_list args;
+  va_start(args, format);
+  int written = vsnprintf(text + *at, capacity - *at, format, args);
+  va_end(args);
+  if (written < 0 || (size_t)written >= capacity - *at) return false;
+  *at += (size_t)written;
+  return true;
+}
+
+bool arc_install_launcher(const ArcInstallPlan *plan, uint8_t *output,
+                          size_t capacity, size_t *size) {
+  if (!plan || !plan->profile || !plan->variant) return false;
+  const ArcInstallVariant *v = plan->variant;
+  const char *tail = strstr(launcher_text, "ADFMount ADFS::0.$.Game");
+  if (!tail) return false;
+  char text[4096];
+  size_t at = (size_t)(tail - launcher_text);
+  memcpy(text, launcher_text, at);
+  char boot_name[16];
+  snprintf(boot_name, sizeof(boot_name), "F%05u01", plan->profile->game_id);
+  for (unsigned i = 0u; i < v->disc_count; ++i) {
+    if (!append_step(text, sizeof(text), &at,
+                     "IfThere ADFS::0.$.D%u Then Copy ADFS::0.$.D%u RAM::0.$.D%u ~C~VFQ Else Error ArcDroid install: stage failed\r"
+                     "IfThere RAM::0.$.D%u Then Set ArcDroid$Guard 1 Else Error ArcDroid install: stage failed\r",
+                     v->discs[i].number, v->discs[i].number,
+                     v->discs[i].number, v->discs[i].number)) return false;
+  }
+  if (!append_step(text, sizeof(text), &at,
+                   "IfThere ADFS::0.$.Run Then Copy ADFS::0.$.Run RAM::0.$.Run ~C~VFQ Else Error ArcDroid install: stage failed\r"
+                   "IfThere RAM::0.$.Run Then Set ArcDroid$Guard 1 Else Error ArcDroid install: stage failed\r"
+                   "ADFMount RAM::0.$.D1\rADFS\rNoDir\rNoLib\rNoURD\rDismount :0\r"
+                   "IfThere ADFS::0.$.%s Then Copy ADFS::0.$.%s RAM::0.$.%s ~C~VRFQ Else Error ArcDroid install: app failed\r"
+                   "IfThere RAM::0.$.%s Then Set ArcDroid$Guard 1 Else Error ArcDroid install: app failed\r",
+                   v->app, v->app, v->app, v->app)) return false;
+  for (unsigned i = 1u; i < v->disc_count; ++i) {
+    unsigned disc = v->discs[i].number;
+    if (!append_step(text, sizeof(text), &at,
+                     "ADFMount RAM::0.$.D%u\rADFS\rNoDir\rNoLib\rNoURD\rDismount :0\r",
+                     disc)) return false;
+    if (disc == v->data_disc && v->data_file) {
+      if (!append_step(text, sizeof(text), &at,
+                       "IfThere ADFS::0.$.%s Then Copy ADFS::0.$.%s RAM::0.$.%s.%s ~C~VFQ Else Error ArcDroid install: data failed\r"
+                       "IfThere RAM::0.$.%s.%s Then Set ArcDroid$Guard 1 Else Error ArcDroid install: data failed\r",
+                       v->data_file, v->data_file, v->app, v->data_file,
+                       v->app, v->data_file)) return false;
+    }
+    if (disc == v->data_disc && v->data_dir) {
+      if (!append_step(text, sizeof(text), &at,
+                       "IfThere ADFS::0.$.%s Then Copy ADFS::0.$.%s RAM::0.$.%s.%s ~C~VRFQ Else Error ArcDroid install: data failed\r"
+                       "IfThere RAM::0.$.%s.%s Then Set ArcDroid$Guard 1 Else Error ArcDroid install: data failed\r",
+                       v->data_dir, v->data_dir, v->app, v->data_dir,
+                       v->app, v->data_dir)) return false;
+    }
+    if (!append_step(text, sizeof(text), &at,
+                     "Remove RAM::0.$.D%u\r"
+                     "IfThere RAM::0.$.D%u Then Error ArcDroid install: cleanup failed\r",
+                     disc, disc)) return false;
+  }
+  if (v->image_in_app) {
+    if (!append_step(text, sizeof(text), &at,
+                     "Rename RAM::0.$.D1 RAM::0.$.%s.%s\r"
+                     "IfThere RAM::0.$.D1 Then Error ArcDroid install: image failed\r"
+                     "IfThere RAM::0.$.%s.%s Then Set ArcDroid$Guard 1 Else Error ArcDroid install: image failed\r",
+                     v->app, boot_name, v->app, boot_name)) return false;
+  } else if (!append_step(text, sizeof(text), &at,
+                          "Remove RAM::0.$.D1\r"
+                          "IfThere RAM::0.$.D1 Then Error ArcDroid install: cleanup failed\r")) return false;
+  if (!append_step(text, sizeof(text), &at,
+                   "IfThere RAM::0.$.%s.!Run Then Remove RAM::0.$.%s.!Run\r"
+                   "IfThere RAM::0.$.%s.!Run Then Error ArcDroid install: run-file failed\r"
+                   "Copy RAM::0.$.Run RAM::0.$.%s.!Run ~C~VFQ\r"
+                   "IfThere RAM::0.$.%s.!Run Then Set ArcDroid$Guard 1 Else Error ArcDroid install: run-file failed\r"
+                   "Remove RAM::0.$.Run\r"
+                   "IfThere RAM::0.$.Run Then Error ArcDroid install: cleanup failed\r",
+                   v->app, v->app, v->app, v->app, v->app)) return false;
+  if (v->eject && !append_step(text, sizeof(text), &at, "ADFEject\r"))
+    return false;
+  if (!append_step(text, sizeof(text), &at,
+                   "Dir RAM::0.$.%s\rRun RAM::0.$.%s.!Run\r",
+                   v->app, v->app)) return false;
+  if (size) *size = at;
+  if (!output) return true;
+  if (capacity < at) return false;
+  memcpy(output, text, at);
+  return true;
+}
+
 bool arc_adffs_stage1(uint32_t ram_size, uint8_t *o, size_t cap, size_t *sz) {
   char text[512];
   int length = snprintf(
@@ -743,10 +834,43 @@ bool arc_adffs_carrier_build(const uint8_t *jfd, size_t n,
     return false;
   return make_disc(root, out, e, en);
 }
-bool arc_adffs_support_build(const ArcAdffsPackage *p,
-                             const ArcAdffsSelection *selection,
-                             uint8_t out[ARC_ADFFS_DISC_SIZE], char *e,
-                             size_t en) {
+bool arc_install_carrier_build(const ArcInstallPlan *plan,
+                               const uint8_t *const raw[ARC_INSTALL_MAX_DISCS],
+                               const size_t sizes[ARC_INSTALL_MAX_DISCS],
+                               uint8_t out[ARC_ADFFS_DISC_SIZE], char *e,
+                               size_t en) {
+  if (!plan || !plan->profile || !plan->variant || !raw || !sizes || !out)
+    return false;
+  Node pool[ARC_INSTALL_MAX_DISCS + 2u] = {{0}};
+  unsigned used = 1u;
+  Node *root = &pool[0];
+  root->dir = true;
+  strcpy(root->name, "$");
+  for (unsigned i = 0u; i < plan->variant->disc_count; ++i) {
+    char leaf[11];
+    snprintf(leaf, sizeof(leaf), "D%u", plan->variant->discs[i].number);
+    if (!raw[i] || sizes[i] > 2u * 1024u * 1024u ||
+        !addpath(root, pool, &used, leaf, (uint8_t *)(uintptr_t)raw[i],
+                 sizes[i], 0xffffce00u, 0u, 0x33u)) {
+      fail(e, en, "install carrier member is invalid");
+      return false;
+    }
+  }
+  char run[40];
+  int length = snprintf(run, sizeof(run), "ADFBootFloppy F%05u01\r",
+                        plan->profile->game_id);
+  if (length < 0 || (size_t)length >= sizeof(run) ||
+      !addpath(root, pool, &used, "Run", (uint8_t *)run, (size_t)length,
+               0xffffeb00u, 0u, 0x33u)) return false;
+  return make_disc(root, out, e, en);
+}
+
+static bool support_build(const ArcAdffsPackage *p,
+                          const ArcAdffsSelection *selection,
+                          const ArcInstallPlan *plan,
+                          uint8_t out[ARC_ADFFS_DISC_SIZE], char *e,
+                          size_t en) {
+  if (plan && !plan->variant) return false;
   if (!p || !selection) {
     fail(e, en, "support selection is missing");
     return false;
@@ -764,14 +888,20 @@ bool arc_adffs_support_build(const ArcAdffsPackage *p,
   static uint8_t desktop[] = "Filer_Run ADFS::1.$.ArcStage1\r";
   uint8_t stage1[512];
   size_t stage1_size;
-  if (!arc_adffs_stage1(selection->ram_size, stage1, sizeof(stage1),
+  uint32_t ram_size = plan ? plan->variant->ram_kib * 1024u :
+                             selection->ram_size;
+  if (!arc_adffs_stage1(ram_size, stage1, sizeof(stage1),
                         &stage1_size)) {
     fail(e, en, "first-stage launcher is invalid");
     free(pool);
     return false;
   }
+  uint8_t install_launcher[4096];
   size_t lsz;
-  arc_adffs_launcher(NULL, 0, &lsz);
+  bool launcher_ok = plan ?
+    arc_install_launcher(plan, install_launcher, sizeof(install_launcher), &lsz) :
+    arc_adffs_launcher(NULL, 0u, &lsz);
+  if (!launcher_ok) { free(pool); return false; }
   if (!addpath(root, pool, &used, "!Boot", boot, sizeof(boot) - 1, 0xffffeb00u,
                0, 0x33u) ||
       !addpath(root, pool, &used, "ArcLaunch", desktop,
@@ -779,8 +909,8 @@ bool arc_adffs_support_build(const ArcAdffsPackage *p,
       !addpath(root, pool, &used, "ArcStage1", stage1, stage1_size,
                0xffffeb00u, 0, 0x33u) ||
       !addpath(root, pool, &used, "ArcStage2",
-               (uint8_t *)(uintptr_t)launcher_text, lsz, 0xffffeb00u, 0,
-               0x33u)) {
+               plan ? install_launcher : (uint8_t *)(uintptr_t)launcher_text,
+               lsz, 0xffffeb00u, 0, 0x33u)) {
     fail(e, en, "support disc tree is invalid");
     free(pool);
     return false;
@@ -797,4 +927,18 @@ bool arc_adffs_support_build(const ArcAdffsPackage *p,
   bool ok = make_disc(root, out, e, en);
   free(pool);
   return ok;
+}
+bool arc_adffs_support_build(const ArcAdffsPackage *p,
+                             const ArcAdffsSelection *selection,
+                             uint8_t out[ARC_ADFFS_DISC_SIZE], char *e,
+                             size_t en) {
+  return support_build(p, selection, NULL, out, e, en);
+}
+
+bool arc_install_support_build(const ArcAdffsPackage *p,
+                               const ArcAdffsSelection *selection,
+                               const ArcInstallPlan *plan,
+                               uint8_t out[ARC_ADFFS_DISC_SIZE], char *e,
+                               size_t en) {
+  return support_build(p, selection, plan, out, e, en);
 }

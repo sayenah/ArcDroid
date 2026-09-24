@@ -130,9 +130,24 @@ static bool arc_av_transition_pending;
 static bool arc_adffs_active;
 static uint8_t *arc_adffs_carrier;
 static uint8_t *arc_adffs_support;
+static bool arc_install_choosing;
+static ArcInstallPlan arc_install_plans[ARC_INSTALL_MAX_VARIANTS];
+static unsigned arc_install_plan_count;
+static int arc_install_requested = -1;
+static bool arc_install_hard_failure;
 #if defined(ARCDROID_TEST_FAULTS)
 static bool arc_test_adffs_accept_test_os = true;
 static bool arc_test_fail_adffs_content_read;
+static unsigned arc_test_mouse_input_samples;
+static bool arc_test_fail_install_build;
+void arc_libretro_test_fail_install_build(bool fail)
+{
+   arc_test_fail_install_build = fail;
+}
+unsigned arc_libretro_test_mouse_input_samples(void)
+{
+   return arc_test_mouse_input_samples;
+}
 void arc_libretro_test_adffs_accept_test_os(bool accept)
 {
    arc_test_adffs_accept_test_os = accept;
@@ -252,6 +267,9 @@ typedef struct {
    ArcMediaInfo info;
    ArcDigest digest;
    ArcJfdImage jfd;
+   uint32_t jfd_game_id;
+   uint16_t jfd_disc_number;
+   uint16_t jfd_disc_count;
    char zip_member[256];
    uint32_t zip_crc32;
    uint32_t zip_packed_size;
@@ -773,6 +791,10 @@ static void arc_release_session(void)
    arc_chooser_release_gate = false;
    arc_engine_stop();
    arc_adffs_discard();
+   arc_install_choosing = false;
+   arc_install_plan_count = 0u;
+   arc_install_requested = -1;
+   arc_install_hard_failure = false;
    free(arc_firmware);
    arc_firmware = NULL;
    arc_firmware_size = 0u;
@@ -1036,6 +1058,9 @@ static bool arc_prepare_bytes(const char *source, const char *playlist_label,
          }
       }
       entry->digest = arc_digest(entry->jfd.decoded, entry->jfd.decoded_size);
+      entry->jfd_game_id = entry->jfd.game_id;
+      entry->jfd_disc_number = entry->jfd.disc_number;
+      entry->jfd_disc_count = entry->jfd.disc_count;
       publish_data = entry->jfd.decoded;
       publish_size = entry->jfd.decoded_size;
       immutable = true;
@@ -2179,18 +2204,125 @@ static void arc_reason_token(const char *input, char output[96]) {
       --at;
    output[at] = 0;
 }
+static void arc_install_refuse(const char *why, bool notify) {
+   char reason[128];
+   snprintf(reason, sizeof(reason), "install-%s", why);
+   arc_jfd_boot_log(reason);
+   if (notify) {
+      if (!strcmp(why, "incomplete-set") || !strcmp(why, "duplicate-disc"))
+         arc_message("JFD ADFFS boot unavailable: This title needs all required discs together in one zip, playlist, or folder set.", RETRO_LOG_WARN);
+      else if (!strcmp(why, "untested-package") || !strcmp(why, "script-mismatch"))
+         arc_message("JFD ADFFS boot unavailable: This title needs the verified ADFFS package and matching built-in install script.", RETRO_LOG_WARN);
+      else if (!strcmp(why, "too-large") || !strcmp(why, "decoded-too-large"))
+         arc_message("JFD ADFFS boot unavailable: This title's install carrier exceeds the supported disc size.", RETRO_LOG_WARN);
+      else if (!strcmp(why, "no-package") || !strcmp(why, "invalid-package"))
+         arc_message("JFD ADFFS boot unavailable: place a valid package in <system>/arcdroid/adffs.", RETRO_LOG_WARN);
+   }
+}
+
+static bool arc_install_raw(const ArcMediaEntry *entry, uint8_t **raw,
+                            size_t *size) {
+   *raw = NULL;
+   *size = 0u;
+   if (!entry->zip_member[0])
+      return arc_io_read_all(entry->source, (void **)raw, size);
+   void *archive_data = NULL;
+   size_t archive_size = 0u;
+   bool too_large = false;
+   if (!arc_io_read_all_limit(arc_zip_path, &archive_data, &archive_size,
+                              ARC_ZIP_CONTENT_ARCHIVE_MAX, &too_large))
+      return false;
+   ArcZipArchive archive;
+   const ArcZipLimits limits = {ARC_ZIP_CONTENT_ARCHIVE_MAX, 1024u,
+                                 ARC_ZIP_CONTENT_MEMBER_MAX};
+   char error[128] = {0};
+   bool ok = arc_zip_index(archive_data, archive_size, &limits, &archive,
+                            error, sizeof(error));
+   if (ok) {
+      bool found = false;
+      for (unsigned i = 0u; i < archive.count; ++i)
+         if (!strcmp(archive.entries[i].name, entry->zip_member) &&
+             archive.entries[i].crc32 == entry->zip_crc32 &&
+             archive.entries[i].size == entry->zip_size &&
+             archive.entries[i].packed_size == entry->zip_packed_size) {
+            found = arc_zip_extract(archive_data, archive_size,
+                                    &archive.entries[i], raw, size,
+                                    error, sizeof(error));
+            break;
+         }
+      ok = found;
+      arc_zip_free(&archive);
+   }
+   free(archive_data);
+   return ok;
+}
+
+static bool arc_install_build(const ArcInstallPlan *plan,
+                              const ArcAdffsPackage *package,
+                              const ArcAdffsSelection *selection,
+                              const char **reason) {
+   uint8_t *raw[ARC_INSTALL_MAX_DISCS] = {0};
+   size_t sizes[ARC_INSTALL_MAX_DISCS] = {0};
+   bool okay = true;
+   *reason = "content-unreadable";
+#if defined(ARCDROID_TEST_FAULTS)
+   if (arc_test_fail_install_build) {
+      arc_test_fail_install_build = false;
+      *reason = "construction";
+      return false;
+   }
+#endif
+   for (unsigned d = 0u; d < plan->variant->disc_count; ++d) {
+      ArcMediaEntry *entry = &arc_media[plan->media_index[d]];
+      if (!arc_install_raw(entry, &raw[d], &sizes[d])) { okay = false; break; }
+      if (sizes[d] > 2u * 1024u * 1024u) {
+         *reason = "too-large"; okay = false; break;
+      }
+      ArcJfdImage fresh = {0};
+      char parse_error[128] = {0};
+      if (!arc_jfd_parse(raw[d], sizes[d], &fresh,
+                         parse_error, sizeof(parse_error))) {
+         *reason = "identity"; okay = false; break;
+      }
+      ArcDigest digest = arc_digest(fresh.decoded, fresh.decoded_size);
+      const ArcInstallDisc *expected = &plan->variant->discs[d];
+      okay = fresh.game_id == plan->profile->game_id &&
+         fresh.disc_count == plan->profile->disc_count &&
+         fresh.disc_number == expected->number &&
+         digest.size == expected->size &&
+         !strcmp(digest.sha1, expected->sha1);
+      arc_jfd_free(&fresh);
+      if (!okay) { *reason = "identity"; break; }
+   }
+   if (okay) {
+      arc_adffs_carrier = malloc(ARC_ADFFS_DISC_SIZE);
+      arc_adffs_support = malloc(ARC_ADFFS_DISC_SIZE);
+      char error[160] = {0};
+      okay = arc_adffs_carrier && arc_adffs_support &&
+         arc_install_carrier_build(plan, (const uint8_t *const *)raw, sizes,
+                                    arc_adffs_carrier, error, sizeof(error)) &&
+         arc_install_support_build(package, selection, plan,
+                                    arc_adffs_support, error, sizeof(error));
+      *reason = strstr(error, "fit") ? "too-large" : "construction";
+   }
+   for (unsigned d = 0u; d < ARC_INSTALL_MAX_DISCS; ++d) free(raw[d]);
+   if (!okay) arc_adffs_discard();
+   return okay;
+}
 static bool arc_prepare_adffs(bool notify) {
    arc_adffs_discard();
+   arc_install_choosing = false;
+   arc_install_plan_count = 0u;
    ArcMediaEntry *entry = arc_media_count ? &arc_media[0] : NULL;
    const ArcJfdImage *jfd = entry ? &entry->jfd : NULL;
+   const ArcInstallProfile *install = jfd ?
+      arc_install_profile(jfd->game_id, jfd->disc_count) : NULL;
    const char *reason = NULL;
    if (!entry || entry->info.kind != ARC_MEDIA_JFD)
       reason = "not-jfd";
-   else if (arc_machine_descriptor(arc_session_machine)->io == ARC_IO_NEW_82C711)
-      reason = "new-io-machine";
-   else if (arc_media_count != 1u || arc_folder_set_active)
+   else if (!install && (arc_media_count != 1u || arc_folder_set_active))
       reason = "multi-image";
-   else if (jfd->disc_number != 1u || jfd->disc_count != 1u)
+   else if (!install && (jfd->disc_number != 1u || jfd->disc_count != 1u))
       reason = "multi-disc";
    else if (arc_core_options.jfd_boot == ARC_JFD_BOOT_NATIVE)
       reason = "option";
@@ -2203,7 +2335,8 @@ static bool arc_prepare_adffs(bool notify) {
    )
       reason = "os";
    if (reason) {
-      arc_jfd_boot_log(reason);
+      if (install) arc_install_refuse(reason, notify);
+      else arc_jfd_boot_log(reason);
       return false;
    }
 
@@ -2211,7 +2344,8 @@ static bool arc_prepare_adffs(bool notify) {
    int dir_length =
       snprintf(dir, sizeof(dir), "%s/arcdroid/adffs", arc_system_path);
    if (dir_length < 0 || (size_t)dir_length >= sizeof(dir)) {
-      arc_jfd_boot_log("no-package");
+      if (install) arc_install_refuse("no-package", notify);
+      else arc_jfd_boot_log("no-package");
       return false;
    }
    ArcZipNames names = {0};
@@ -2222,9 +2356,12 @@ static bool arc_prepare_adffs(bool notify) {
    ArcAdffsPackage *package = calloc(1u, sizeof(*package));
    if (!package) {
       free(names.names);
-      arc_jfd_boot_log("invalid-package:out-of-memory");
-      if (notify)
-         arc_jfd_boot_notice("invalid-package:out-of-memory", jfd);
+      if (install) arc_install_refuse("invalid-package", notify);
+      else {
+         arc_jfd_boot_log("invalid-package:out-of-memory");
+         if (notify)
+            arc_jfd_boot_notice("invalid-package:out-of-memory", jfd);
+      }
       return false;
    }
    char parse_error[160] = "";
@@ -2260,6 +2397,8 @@ static bool arc_prepare_adffs(bool notify) {
    bool found_package = names.count != 0u || names.failed;
    free(names.names);
    if (!valid) {
+      if (install) arc_install_refuse(found_package ? "invalid-package" : "no-package", notify);
+      else {
       if (found_package) {
          char why[96];
          arc_reason_token(parse_error[0] ? parse_error : "invalid-archive",
@@ -2274,18 +2413,20 @@ static bool arc_prepare_adffs(bool notify) {
          if (notify && (jfd->obey_length || jfd->game_id))
             arc_jfd_boot_notice("no-package", jfd);
       }
+      }
       free(package);
       return false;
    }
    if (arc_log)
       arc_log(RETRO_LOG_INFO, "ADFFS package: file=%s\n", chosen);
    if (!package->verified &&
-       arc_core_options.adffs_package == ARC_ADFFS_VERIFIED_ONLY) {
+       (install || arc_core_options.adffs_package == ARC_ADFFS_VERIFIED_ONLY)) {
       arc_adffs_package_free(package);
       free(package);
-      arc_jfd_boot_log("untested-package");
+      if (install) arc_install_refuse("untested-package", notify);
+      else arc_jfd_boot_log("untested-package");
       if (notify)
-         arc_jfd_boot_notice("untested-package", jfd);
+         if (!install) arc_jfd_boot_notice("untested-package", jfd);
       return false;
    }
    uint8_t *builtin = NULL;
@@ -2293,9 +2434,15 @@ static bool arc_prepare_adffs(bool notify) {
    parse_error[0] = 0;
    bool have_builtin =
       jfd->game_id && arc_adffs_builtin_script(
-                         package, jfd->game_id, jfd->disc_number, &builtin,
+                         package, jfd->game_id, install ? 1u : jfd->disc_number, &builtin,
                          &builtin_size, parse_error, sizeof(parse_error));
    if (parse_error[0] && !have_builtin) {
+      if (install) {
+         arc_adffs_package_free(package);
+         free(package);
+         arc_install_refuse("invalid-package", notify);
+         return false;
+      }
       char why[96];
       arc_reason_token(parse_error, why);
       char full[128];
@@ -2305,6 +2452,14 @@ static bool arc_prepare_adffs(bool notify) {
       arc_jfd_boot_log(full);
       if (notify)
          arc_jfd_boot_notice(full, jfd);
+      return false;
+   }
+   if (install && (!have_builtin ||
+       !arc_install_script_matches(install, builtin, builtin_size))) {
+      free(builtin);
+      arc_adffs_package_free(package);
+      free(package);
+      arc_install_refuse("script-mismatch", notify);
       return false;
    }
    const uint8_t *script =
@@ -2323,6 +2478,13 @@ static bool arc_prepare_adffs(bool notify) {
    char missing[128];
    ArcAdffsSelection selection;
    if (!arc_adffs_select(package, script, script_size, &selection, missing)) {
+      if (install) {
+         free(builtin);
+         arc_adffs_package_free(package);
+         free(package);
+         arc_install_refuse("missing-resource", notify);
+         return false;
+      }
       char full[192];
       snprintf(full, sizeof(full), "missing-resource:%s", missing);
       free(builtin);
@@ -2332,6 +2494,71 @@ static bool arc_prepare_adffs(bool notify) {
       if (notify)
          arc_jfd_boot_notice(full, jfd);
       return false;
+   }
+   if (install) {
+      ArcInstallMedia media[ARC_PLAYLIST_MAX_ENTRIES] = {{0}};
+      for (unsigned i = 0u; i < arc_media_count; ++i) {
+         media[i].game_id = arc_media[i].jfd_game_id;
+         media[i].disc_number = arc_media[i].jfd_disc_number;
+         media[i].disc_count = arc_media[i].jfd_disc_count;
+         media[i].decoded_size = arc_media[i].digest.size;
+         snprintf(media[i].sha1, sizeof(media[i].sha1), "%s",
+                   arc_media[i].digest.sha1);
+      }
+      const char *why = NULL;
+      arc_install_plan_count = arc_install_match(install, media,
+         arc_media_count, arc_install_plans, &why);
+      if (!arc_install_plan_count) {
+         free(builtin); arc_adffs_package_free(package); free(package);
+         arc_install_refuse(why ? why : "incomplete-set", notify);
+         return false;
+      }
+      unsigned io_bit = arc_machine_descriptor(arc_session_machine)->io ==
+         ARC_IO_NEW_82C711 ? 2u : 1u;
+      if (!(install->io_mask & io_bit) ||
+          install->variants[0].ram_kib >
+             arc_machine_descriptor(arc_session_machine)->memory_kib) {
+         free(builtin); arc_adffs_package_free(package); free(package);
+         arc_install_refuse("machine", notify);
+         return false;
+      }
+      if (arc_install_plan_count > 1u && arc_install_requested < 0) {
+         arc_install_choosing = true;
+         free(builtin); arc_adffs_package_free(package); free(package);
+         return false;
+      }
+      unsigned pick = arc_install_requested < 0 ? 0u :
+         (unsigned)arc_install_requested;
+      if (pick >= arc_install_plan_count) {
+         free(builtin); arc_adffs_package_free(package); free(package);
+         arc_install_refuse("stale-choice", notify);
+         return false;
+      }
+      bool built = arc_install_build(&arc_install_plans[pick], package,
+                                       &selection, &why);
+      free(builtin); arc_adffs_package_free(package); free(package);
+      if (!built) {
+         arc_install_refuse(why, notify);
+         return false;
+      }
+      const ArcInstallPlan *plan = &arc_install_plans[pick];
+      if (arc_log) {
+         char discs[32] = {0};
+         size_t at = 0u;
+         for (unsigned d = 0u; d < plan->variant->disc_count; ++d)
+            at += (size_t)snprintf(discs + at, sizeof(discs) - at,
+               "%s%u", d ? "," : "", plan->variant->discs[d].number);
+         arc_log(RETRO_LOG_INFO,
+            "JFD boot: path=adffs-install profile=F%05u rev=%u variant=%s discs=%s ram=%uK\n",
+            plan->profile->game_id, plan->profile->revision,
+            plan->variant->key, discs, plan->variant->ram_kib);
+      }
+      arc_message("Installed to a temporary RAM disc; saves are lost after exit or reset.", RETRO_LOG_WARN);
+      arc_adffs_active = true;
+      arc_plan.launch_helper = true;
+      arc_plan.launch_target[0] = 0;
+      arc_plan.launch_target_length = 0;
+      return true;
    }
    void *raw = NULL;
    size_t raw_size = 0;
@@ -2733,6 +2960,77 @@ static bool arc_choice_publish(const ArcLaunchDiscovery *discovery,
    size_t ignored = 0u;
    bool replacing = arc_io_file_size(arc_choice_path, &ignored);
    return arc_launch_binding_publish(arc_choice_path, replacing, data, size);
+}
+
+static bool arc_install_choice_text(const ArcInstallPlan *plan,
+                                    uint8_t data[ARC_LAUNCH_CHOICE_MAX_SIZE],
+                                    size_t *size)
+{
+   int length = snprintf((char *)data, ARC_LAUNCH_CHOICE_MAX_SIZE,
+      "v2\ninstall\nF%05u\nrev=%u\nvariant=%s\nset=%s\n",
+      plan->profile->game_id, plan->profile->revision,
+      plan->variant->key, plan->binding);
+   if (length < 0 || length >= (int)ARC_LAUNCH_CHOICE_MAX_SIZE) return false;
+   *size = (size_t)length;
+   return true;
+}
+
+static int arc_install_choice_load(void)
+{
+   if (!arc_choice_path_build(false)) return -1;
+   size_t declared = 0u;
+   if (!arc_io_file_size(arc_choice_path, &declared) ||
+       !declared || declared > ARC_LAUNCH_CHOICE_MAX_SIZE) return -1;
+   uint8_t data[ARC_LAUNCH_CHOICE_MAX_SIZE];
+   ArcIoFile *file = arc_io_open_file(arc_choice_path, false);
+   int64_t opened = file ? arc_io_file_length(file) : -1;
+   size_t got = file ? arc_io_read_file(file, data, declared) : 0u;
+   uint8_t extra;
+   size_t trailing = file ? arc_io_read_file(file, &extra, 1u) : 0u;
+   bool closed = file && arc_io_close_file(file);
+   if (opened < 0 || (uint64_t)opened != declared || got != declared ||
+       trailing || !closed) return -1;
+   for (unsigned i = 0u; i < arc_install_plan_count; ++i) {
+      uint8_t expected[ARC_LAUNCH_CHOICE_MAX_SIZE];
+      size_t size = 0u;
+      if (arc_install_choice_text(&arc_install_plans[i], expected, &size) &&
+          size == declared && !memcmp(data, expected, size)) return (int)i;
+   }
+   return -1;
+}
+
+static bool arc_install_choice_publish(unsigned selected)
+{
+   if (selected >= arc_install_plan_count || !arc_choice_path_build(true))
+      return false;
+   uint8_t data[ARC_LAUNCH_CHOICE_MAX_SIZE];
+   size_t size = 0u;
+   if (!arc_install_choice_text(&arc_install_plans[selected], data, &size))
+      return false;
+   size_t ignored;
+   return arc_launch_binding_publish(arc_choice_path,
+      arc_io_file_size(arc_choice_path, &ignored), data, size);
+}
+
+static bool arc_install_offer(void)
+{
+   if (!arc_install_choosing) return false;
+   int remembered = arc_install_choice_load();
+   if (remembered >= 0 &&
+       arc_core_options.launch_chooser == ARC_LAUNCH_CHOOSER_REMEMBER) {
+      arc_install_requested = remembered;
+      bool built = arc_prepare_adffs(false);
+      arc_install_requested = -1;
+      if (!built) arc_install_hard_failure = true;
+      return built;
+   }
+   const char *labels[ARC_INSTALL_MAX_VARIANTS];
+   for (unsigned i = 0u; i < arc_install_plan_count; ++i)
+      labels[i] = arc_install_plans[i].variant->label;
+   arc_install_choosing = arc_launch_chooser_install_init(&arc_chooser,
+      labels, arc_install_plan_count, remembered);
+   if (!arc_install_choosing) arc_install_hard_failure = true;
+   return false;
 }
 
 static bool arc_launch_helper_publish(const ArcLaunchDiscovery *discovery,
@@ -3688,6 +3986,9 @@ static void arc_poll_inputs(void)
          arc_input_motion(&arc_inputs, dx, dy, false);
          arc_input_source_buttons(&arc_inputs,
             port ? ARC_INPUT_SOURCE_MOUSE1 : ARC_INPUT_SOURCE_MOUSE0, buttons);
+#if defined(ARCDROID_TEST_FAULTS)
+         if (dx || dy || buttons) ++arc_test_mouse_input_samples;
+#endif
       }
    arc_input_source_buttons(&arc_inputs, ARC_INPUT_SOURCE_PAD0, pad_buttons);
    arc_pad_pointer_buttons = pad_buttons;
@@ -4187,7 +4488,10 @@ static bool arc_chooser_confirm(void)
 {
    int selected = arc_launch_chooser_selection(&arc_chooser);
    if (selected == INT_MIN) return false;
-   bool remembered = arc_choice_publish(&arc_chooser_discovery, selected);
+   bool install_mode = arc_chooser.install_mode;
+   bool remembered = install_mode ?
+      arc_install_choice_publish((unsigned)selected) :
+      arc_choice_publish(&arc_chooser_discovery, selected);
    if (!remembered)
       arc_message("Launch choice not remembered; starting this time only.",
                   RETRO_LOG_WARN);
@@ -4196,11 +4500,21 @@ static bool arc_chooser_confirm(void)
    arc_plan.launch_helper = false;
    arc_plan.launch_target[0] = '\0';
    arc_plan.launch_target_length = 0u;
-   if (selected >= 0 &&
+   if (install_mode) {
+      arc_install_requested = selected;
+      bool built = arc_prepare_adffs(false);
+      arc_install_requested = -1;
+      if (!built) {
+         snprintf(error, sizeof(error),
+                  "Unable to construct the selected install session.");
+         goto failed;
+      }
+   }
+   else if (selected >= 0 &&
        !arc_launch_helper_publish(&arc_chooser_discovery, (unsigned)selected,
                                   error, sizeof(error)))
       goto failed;
-   arc_launch_log(&arc_chooser_discovery, selected,
+   if (!install_mode) arc_launch_log(&arc_chooser_discovery, selected,
                   selected < 0 ? "chooser chose desktop" :
                                  "chooser chose target");
    if (!arc_resolve_inputs(&arc_core_options, true, false))
@@ -4570,8 +4884,14 @@ static bool arc_load_game(const struct retro_game_info *game, bool negotiate)
          return false;
       }
       bool adffs = arc_prepare_adffs(true);
-      bool choosing = !adffs && arc_prepare_launch(&arc_media[arc_image_index], false,
-                                                   arc_core_options.launch, false);
+      if (arc_install_choosing) adffs = arc_install_offer();
+      if (arc_install_hard_failure) {
+         arc_message("Unable to prepare the chosen install session.", RETRO_LOG_ERROR);
+         arc_release_session();
+         return false;
+      }
+      bool choosing = arc_install_choosing || (!adffs && arc_prepare_launch(&arc_media[arc_image_index], false,
+                                                   arc_core_options.launch, false));
       if (choosing)
       {
          arc_session = ARC_SESSION_CHOOSING;
@@ -4752,6 +5072,11 @@ RETRO_API void retro_reset(void)
    { snprintf(error, sizeof(error), "Unable to prepare persistent CMOS storage."); goto failed; }
    arc_seed_cmos();
    bool adffs = !was_ejected && selected == 0u && arc_prepare_adffs(false);
+   if (arc_install_choosing) adffs = arc_install_offer();
+   if (arc_install_hard_failure) {
+      snprintf(error, sizeof(error), "Unable to prepare the chosen install session.");
+      goto failed;
+   }
    ArcEngineMedia mounted;
    ArcEngineMedia *mounted_pointer = NULL;
    if (!was_ejected && selected < arc_media_count && arc_media[selected].populated)
@@ -4760,9 +5085,9 @@ RETRO_API void retro_reset(void)
       mounted_pointer = &mounted;
    }
    arc_image_index = selected <= arc_media_count ? selected : arc_media_count;
-   bool choosing = !adffs && arc_prepare_launch(
+   bool choosing = arc_install_choosing || (!adffs && arc_prepare_launch(
       mounted_pointer ? &arc_media[selected] : NULL, was_ejected,
-      updated.launch, launch_reselected);
+      updated.launch, launch_reselected));
    if (choosing)
    {
       arc_session = ARC_SESSION_CHOOSING;
