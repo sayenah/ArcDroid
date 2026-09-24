@@ -2,7 +2,15 @@
 
 **Stage:** ARCHITECTURE  
 **Owner:** Fable (orchestrator role; held by Claude Opus 5.5 by Founder assignment while Fable is unavailable, S26–S27b)  
-**Next:** **Orchestrator grounds save persistence for the Slice 9 install path (D-071: Founder requires saves to work; D-069 withdrawn).** First establish, per title (E-Type, both Compendium games, Premier Manager [SA]), where the game writes its saves. Then choose a persistence mechanism from evidence. Candidates:
+**Next:** **Orchestrator grounds Slice 10 per D-072:** a persisted install disc (saves everywhere, D-071), the F-format 1600 K carrier, SpeedBall 2 [RPC], Exodus, The Time Machine, and a Populous [RPC] diagnosis. Probes to run first, in a throwaway scratch clone with private media:
+  1. a blank writable 1600 K image on drive 1 of the A3020 that the guest formats (`*Format` F) and installs onto, then reboot from it with no reinstall, and a save persisting (E-Type's hall of fame; a Premier Manager saved game);
+  2. the drive and boot layout, with ADFFS only on the RAM disc and never in the persisted image (D-049);
+  3. whether Exodus's and The Time Machine's own installers can run into it (interactive or scripted);
+  4. SpeedBall 2 [RPC] under ADFFS on the A3020 once a 1600 K carrier exists (a probe carrier formatted by the guest may do);
+  5. Populous [RPC]'s hang;
+  6. Drifter [SA] alternatives.
+
+  S27b already showed that the E-Type install plays on the A3020 (test-table machine edit). Then run the two-stage Astra challenge and write the Sol work order. First check that CI on `main` is green. **S27b: no process left running.**
   - a writable, persisted install disc (1600 K F-format for the ~0.9 MB installs, which constrains the A3000 titles);
   - persisting only each profile's save files through a writable host-backed disc and restoring them at install;
   - host-side extraction from the guest RAM disc.
@@ -79,7 +87,7 @@ Private logs and frames are in the S27b scratchpad (`ac11/`, `odin3/`); never co
 ## Roadmap after Slice 8 (Founder order, S25)
 Dependency-clearing slices first, then the small items, then the rest. Every dependency and its associated project is cleared before the item that needs it.
 1. ~~Slice 9~~ — **done** (`d1720e9`, S27b).
-2. **Slice 10 — save persistence for install-path titles (D-071, Founder priority)**; the F-format 1600 K carrier is built here if the chosen mechanism needs it, otherwise it follows with Exodus, SpeedBall 2 [RPC] and the RiscPC workstream.
+2. **Slice 10 — persisted install disc (saves everywhere, D-071) + F-format 1600 K carrier + SpeedBall 2 [RPC], Exodus, The Time Machine + Populous [RPC] diagnosis (D-072).** Botkiller2 follows the ARM3 machines (Slice 11, more RAM); Drifter [SA] pending an extractor alternative.
 3. **Slice 11 — engine and input tidy-up (the remaining small items):** ARM3-class machines A5000/A540 (Founder decision S25: wanted for completeness; Arculator ARM3 + New-IO I/O already present), Slice 3b joystick interfaces (D-034: RTFM, printer port), audio resampler flush (D-022). The two protection-check titles are tried on the host with the harness OSK script during the Slice 8 evidence run (evidence only).
 4. **Release baseline:** armeabi-v7a, `.info` beside the core, title-profile notes, the owed release notes (5b-2 … Slice 8), libretro buildbot submission per D-016.
 5. **RiscPC workstream (D-063, four to five slices):** RPCEmu evaluation (architecture only, Founder gate on the engine choice) → engine import and hardening → adapter integration → JFD-flag-driven machine selection (S-7 notice retired for reachable titles) → Odin3/Windows validation and performance gate.
