@@ -25,6 +25,11 @@
   The ADFFS package must be at `/storage/emulated/0/BIOS/arcdroid/adffs/` (check first). **S27b note:** the orchestrator ran `adb kill-server`/`start-server` on the Mac while no device was attached. That stopped the shared adb daemon, which this session had not started (a process-ownership slip). It was restarted at once.
 
 **Founder mandate (S21, verbatim intent):** make these Archimedes games accessible and easy to play without any unnecessary hurdles. Judge every slice and every gate against that.
+**Founder vision (S27b, D-073):** every game in the library working, with saves, pick-up-and-play with minimal fuss; slice order is the orchestrator's to choose. Gap estimate (S27b, from the S24 sweep plus Slices 8–9; re-baseline with a fresh sweep):
+- about 170 of 213 games play today;
+- in-game saves persist only on the native ADF path (shadow copies), not on the ~70 ADFFS-path titles, the native JFD titles, or the install path;
+- there are no save states (D-011);
+- ADFFS/install boots take 1–2.5 minutes.
 
 ## Slice 8 — closed (merged S27 as `3b93737`, PR #142, head `7a23f4a`)
 Delivered: F-format 1600 K HD ADFs (`ARC_GEOMETRY_1600K_F`), quad-density JFD parsing, the 82C711 JFD READ ID/RNF contract (two index pulses), elapsed-time rotation for both readers, per-drive raw READ ID cursor, media-resolved machine (`Auto` + HD → A3020, frozen per session; D-061), F-format multi-zone discovery with backup-map fallback and old-map over-declaration clamp, RiscPC compatibility notice (D-062), 20 480-byte short-tail tolerance (D-064), native JFD boot on New-IO (D-065), Windows CI rider R-W. Out of the slice by D-066: guest access to sparse quad JFDs.
