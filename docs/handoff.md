@@ -1,8 +1,8 @@
 # ArcDroid Handoff
 
-**Stage:** IMPLEMENTATION  
-**Owner:** Sol (GPT-6 Sol), dispatched by the orchestrator (Claude Opus 5.5 by Founder assignment while Fable is unavailable, S26–S27b)  
-**Next:** **Sol implements Slice 9 per the work order below** on `slice/09-adffs-install`, cut from this baton commit. Sol leaves the tree uncommitted and reports. The orchestrator then commits it, reviews it, runs AC-11 privately, and dispatches Opus QA. **S27b:** the Astra two-stage challenge is done (PROCEED WITH CHANGES; A-1…A-5 incorporated, see D-070).
+**Stage:** QA  
+**Owner:** Opus (Claude Opus 5.5 QA, effort high), dispatched by the orchestrator (Claude Opus 5.5 by Founder assignment while Fable is unavailable, S26–S27b)  
+**Next:** **Opus QA of Slice 9, PR #156 (`slice/09-adffs-install`), head `f07aef0`, against the work order below.** Sol runs 1 and 2 are committed verbatim: `97f65a6`, `f07aef0`. After QA, the orchestrator adjudicates, runs the AC-12 Odin3 leg, and merges when protocol §12.11 is satisfied.
 
 **Founder mandate (S21, verbatim intent):** make these Archimedes games accessible and easy to play without any unnecessary hurdles. Judge every slice and every gate against that.
 
@@ -10,6 +10,26 @@
 Delivered: F-format 1600 K HD ADFs (`ARC_GEOMETRY_1600K_F`), quad-density JFD parsing, the 82C711 JFD READ ID/RNF contract (two index pulses), elapsed-time rotation for both readers, per-drive raw READ ID cursor, media-resolved machine (`Auto` + HD → A3020, frozen per session; D-061), F-format multi-zone discovery with backup-map fallback and old-map over-declaration clamp, RiscPC compatibility notice (D-062), 20 480-byte short-tail tolerance (D-064), native JFD boot on New-IO (D-065), Windows CI rider R-W. Out of the slice by D-066: guest access to sparse quad JFDs.
 Evidence: Opus QA at `dd2b8e7` and targeted at `7a23f4a` (effort 15): Lows only, adjudicated; CI 10/10 on both runs of `7a23f4a` plus the S-9 manual rerun; host AC-11 per S26. **Odin3 leg (S27, core built from `7a23f4a`, Android guard green, installed through Install or Restore a Core, RISC OS 3.11):** both HD ADFs resolve A3020 and boot without "Disc not understood" — one reaches its in-game screen at 120 s, the other launches its application onto the icon bar; the 6 ARM250-compatible quad JFD titles resolve A3020, log `JFD boot: path=native reason=new-io-machine`, are discovered core-side with a single launch decision each, run the full dwell and exit cleanly (guest shows "Disc not understood", as D-066 expects); A3000 regression sample on the same core (an icon-bar title, two multi-disc zips with `rule=disc1`, a JFD through ADFFS 2.88, a three-disc JFD set) unchanged from S20–S22 — this also closes QA N-2 on the device. 13 runs, 0 `[ERROR]`, peak PSS 172–199 MB. Private logs and frames in the S27 scratchpad `odin3/` (never commit).
 Observation (S27): the Android core embeds absolute source paths (`__FILE__` in engine assertions), so its SHA-256 differs per checkout directory (S26 `884b6b20…`, S27 `4cc6c36d…` from the same commit). Prove an installed core by behaviour, not by hash; reproducible release builds (e.g. `-ffile-prefix-map`) belong to the release baseline.
+
+## Slice 9 — implementation status (S27b)
+- **Sol run 1 (`97f65a6`)** implemented S-1…S-8. CI was green on both runs.
+- **Orchestrator review.** The generated tail follows S-4. The profile data matches the table. Eligibility is as specified, and the untested package never enables install mode.
+- **AC-11 on `97f65a6` found two defects:**
+  - The E-Type installs failed with RAM-disc-full while copying the data directory. The order in S-4 (disc 1's app first) keeps disc 2's image resident, so the peak exceeds 1600 KiB. The failure was visible (a RISC OS error box whose text was garbled by the failing `Copy`), and no game launched.
+  - The test core's install table held only invented profiles, so the real package could not be exercised on the test core.
+- **Sol run 2 (`f07aef0`)** fixed both: all E-Type variants now use 2000 KiB, and the test table carries the shipping profiles with a field-by-field drift check.
+- **AC-11 on `f07aef0`** (private host, real ADFFS 2.88, RISC OS 3.11, test core; the evidence clone adds only an evidence-only harness `pad` command to drive the chooser). All four installs log `path=adffs-install` with the S-7 line and show the D-069 disclosure.
+  - E-Type: race runs after a harness click.
+  - Compendium: the chooser ("Choose game", two rows) by pad; each variant's race runs.
+  - Premier Manager [SA] on the A3020: icon-bar click, the game's own colour-depth dialog, OK, game window, and a click advances to its credits page.
+  - A DD JFD on the A3020 through ADFFS: title frame byte-identical to the A3000 and to the pre-slice run.
+  - A3000 sample: a second ADFFS JFD reaches its title; an unrelated two-disc set stays native (`multi-image`) and reaches its own disc-2 prompt.
+  - Populous [RPC] now takes the ADFFS path on the A3020 and hangs as recorded; not a gate.
+- **S-8 finding.** Desktop clicks work with Sol's `move`/`click` in small steps. The S27b probe used one large move and a different harness.
+- **For QA to weigh** (orchestrator notes; judge independently):
+  - A single-disc profile whose digest mismatches (another release of the same ID) now refuses to native, where it previously took the single-disc ADFFS path.
+  - RISC OS's own `Copy` error text on a failed copy is garbled, and the `ArcDroid install:` guard never runs because Obey stops first.
+  - The harness has no pad-button command for chooser automation.
 
 ## Slice 9 work order — ADFFS on the New-IO class and the ADFFS install path (D-068, D-069, D-070)
 **Objective.** Make three multi-disc or HD titles playable through the user's own ADFFS by installing them, at boot, to a temporary guest RAM disc the way ADFFS's own install recipes describe. The titles are E-Type (2 discs), E-Type Compendium (2 games) and Premier Manager [SA] (HD quad, New-IO). In the same slice, let New-IO machines use the existing single-disc ADFFS path. Governing: the Founder mandate (S21), D-068 (scope), D-069 (temporary FR-43 exception), D-070 (architecture), D-049 (ADFFS is user-supplied only), D-039 as clarified by D-070, PRD FR-46/47/52/53/54.
