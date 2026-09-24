@@ -1,8 +1,8 @@
 # ArcDroid Handoff
 
-**Stage:** QA (passed; Odin3 leg pending)  
+**Stage:** ARCHITECTURE  
 **Owner:** Fable (orchestrator role; held by Claude Opus 5.5 by Founder assignment while Fable is unavailable, S26–S27b)  
-**Next:** **Orchestrator runs the AC-12 Odin3 leg on a core built from `48a199b`, then merges PR #156 under §12.11.** QA passed with Lows at `48a199b` (effort 15). CI is green on both runs of `48a199b`. The Android arm64 core is built from `48a199b` (guard green) in the S27b scratchpad at `sol/clone/build/android/arcdroid_libretro_android.so`, but it is not yet installed: the Odin3 was disconnected when the leg was due. AC-12 checks:
+**Next:** **Orchestrator grounds roadmap Slice 10** (the F-format 1600 K carrier and a persisted install disc, ending the D-069 save exception; consumers Exodus, SpeedBall 2 [RPC], the RiscPC workstream). Slice 9 is merged as `d1720e9` (PR #156). First check that CI on `main` at `d1720e9` is green. Then ground from primary evidence, run the two-stage Astra challenge, and write the Sol work order. **S27b: no process left running.** Every RetroArch instance on the Odin3 was started and stopped by this session; Sol runs 1–3 and the Opus QA agent have finished.
   - the three titles through RetroArch from the device library: E-Type, E-Type Compendium (both variants via the chooser, by pad and by touch), and Premier Manager [SA] with its window reached by touch;
   - that the D-069 disclosure stays readable next to the Firmware OSD line (QA N-3);
   - load and reset times against QA N-1 (repeated per-variant zip reads);
@@ -18,159 +18,47 @@ Delivered: F-format 1600 K HD ADFs (`ARC_GEOMETRY_1600K_F`), quad-density JFD pa
 Evidence: Opus QA at `dd2b8e7` and targeted at `7a23f4a` (effort 15): Lows only, adjudicated; CI 10/10 on both runs of `7a23f4a` plus the S-9 manual rerun; host AC-11 per S26. **Odin3 leg (S27, core built from `7a23f4a`, Android guard green, installed through Install or Restore a Core, RISC OS 3.11):** both HD ADFs resolve A3020 and boot without "Disc not understood" — one reaches its in-game screen at 120 s, the other launches its application onto the icon bar; the 6 ARM250-compatible quad JFD titles resolve A3020, log `JFD boot: path=native reason=new-io-machine`, are discovered core-side with a single launch decision each, run the full dwell and exit cleanly (guest shows "Disc not understood", as D-066 expects); A3000 regression sample on the same core (an icon-bar title, two multi-disc zips with `rule=disc1`, a JFD through ADFFS 2.88, a three-disc JFD set) unchanged from S20–S22 — this also closes QA N-2 on the device. 13 runs, 0 `[ERROR]`, peak PSS 172–199 MB. Private logs and frames in the S27 scratchpad `odin3/` (never commit).
 Observation (S27): the Android core embeds absolute source paths (`__FILE__` in engine assertions), so its SHA-256 differs per checkout directory (S26 `884b6b20…`, S27 `4cc6c36d…` from the same commit). Prove an installed core by behaviour, not by hash; reproducible release builds (e.g. `-ffile-prefix-map`) belong to the release baseline.
 
-## Slice 9 — implementation status (S27b)
-- **Sol run 1 (`97f65a6`)** implemented S-1…S-8. CI was green on both runs.
-- **Orchestrator review.** The generated tail follows S-4. The profile data matches the table. Eligibility is as specified, and the untested package never enables install mode.
-- **AC-11 on `97f65a6` found two defects:**
-  - The E-Type installs failed with RAM-disc-full while copying the data directory. The order in S-4 (disc 1's app first) keeps disc 2's image resident, so the peak exceeds 1600 KiB. The failure was visible (a RISC OS error box whose text was garbled by the failing `Copy`), and no game launched.
-  - The test core's install table held only invented profiles, so the real package could not be exercised on the test core.
-- **Sol run 2 (`f07aef0`)** fixed both: all E-Type variants now use 2000 KiB, and the test table carries the shipping profiles with a field-by-field drift check.
-- **AC-11 on `f07aef0`** (private host, real ADFFS 2.88, RISC OS 3.11, test core; the evidence clone adds only an evidence-only harness `pad` command to drive the chooser). All four installs log `path=adffs-install` with the S-7 line and show the D-069 disclosure.
-  - E-Type: race runs after a harness click.
-  - Compendium: the chooser ("Choose game", two rows) by pad; each variant's race runs.
-  - Premier Manager [SA] on the A3020: icon-bar click, the game's own colour-depth dialog, OK, game window, and a click advances to its credits page.
-  - A DD JFD on the A3020 through ADFFS: title frame byte-identical to the A3000 and to the pre-slice run.
-  - A3000 sample: a second ADFFS JFD reaches its title; an unrelated two-disc set stays native (`multi-image`) and reaches its own disc-2 prompt.
-  - Populous [RPC] now takes the ADFFS path on the A3020 and hangs as recorded; not a gate.
-- **S-8 finding.** Desktop clicks work with Sol's `move`/`click` in small steps. The S27b probe used one large move and a different harness.
-- **For QA to weigh** (orchestrator notes; judge independently):
-- **Opus QA at `f07aef0`: fail on M-1.** A Compendium variant whose carrier cannot fit was still offered, and a remembered failed pick made every later load fail. Sol run 3 (`48a199b`) fixed M-1, L-1…L-5, L-7 and N-1 as adjudicated. L-6 was closed by orchestrator guest evidence: an evidence-only test-table edit made the real guest stop with a clean "ArcDroid install: data failed" box.
-- **Opus targeted re-check at `48a199b`: pass with Lows** (effort 15). M-1 was re-probed and is now covered by CI; the mutations are caught. Carried, not scheduled:
-  - L-1: the failed-pick fallback into a native chooser is untested; correct by reading.
-  - N-1: each load reads and decodes the zip roughly once per variant, about 10 times for the Compendium; check load time on the Odin3.
-  - N-2: the machine-override wording would be wrong on a hypothetical RAM refusal.
-  - N-3: a failed confirmed pick deletes any existing `.choice` file.
-- **AC-11 re-verified on `48a199b`.** All four installs log correctly, and the race, credits and A3020 DD frames are byte-identical to `f07aef0`. CI is green on both runs of `48a199b`.
-  - A single-disc profile whose digest mismatches (another release of the same ID) now refuses to native, where it previously took the single-disc ADFFS path.
-  - RISC OS's own `Copy` error text on a failed copy is garbled, and the `ArcDroid install:` guard never runs because Obey stops first.
-  - The harness has no pad-button command for chooser automation.
+## Slice 9 — closed (merged S27b as `d1720e9`, PR #156, head `48a199b`)
+**Delivered** (D-068, D-069, D-070):
+- ADFFS on the New-IO class (D-065 reversed by eligibility);
+- a guest-side ADFFS install path to a temporary RAM disc, driven by compiled exact-identity profiles (disc SHA-1, built-in script SHA-256, verified package) for E-Type, E-Type Compendium (two variants) and Premier Manager [SA];
+- per-variant preflight;
+- an install-variant chooser mode with its own record;
+- the D-069 disclosure;
+- harness `move`/`click`.
 
-## Slice 9 work order — ADFFS on the New-IO class and the ADFFS install path (D-068, D-069, D-070)
-**Objective.** Make three multi-disc or HD titles playable through the user's own ADFFS by installing them, at boot, to a temporary guest RAM disc the way ADFFS's own install recipes describe. The titles are E-Type (2 discs), E-Type Compendium (2 games) and Premier Manager [SA] (HD quad, New-IO). In the same slice, let New-IO machines use the existing single-disc ADFFS path. Governing: the Founder mandate (S21), D-068 (scope), D-069 (temporary FR-43 exception), D-070 (architecture), D-049 (ADFFS is user-supplied only), D-039 as clarified by D-070, PRD FR-46/47/52/53/54.
+Sol runs 1–3 are committed verbatim: `97f65a6`, `f07aef0`, `48a199b`.
 
-**Verified repository state (`main` after this baton; S27b evidence in the grounding and feasibility bullets below).**
-- The ADFFS path lives in `arc_prepare_adffs`, `libretro/arcdroid_libretro.c:2182-2442`. Its gates, in order: not-jfd, `new-io-machine` (:2190, D-065), `multi-image` (:2192), `multi-disc` (:2194), option, launch-option, OS. It is followed by package discovery and validation, the built-in or embedded script, the per-title selection (`arc_adffs_select`), and the carrier and support builders (`core/adffs.c:729`, `:746`).
-- The carrier holds one file, `Game`, within `ARC_ADFFS_CARRIER_CAPACITY` (800 K − 4 K, `core/adffs.h:10`). Stage 1 (`core/adffs.c:453`) sizes RAMFS and copies `!ADFFS` and `ArcStage2` to `RAM::0`. Stage 2 (`launcher_text`, `:420-440`) loads the modules, then runs `ADFMount ADFS::0.$.Game`, `ADFS`, `NoDir`/`NoLib`/`NoURD`, `Dismount :0`, `ADFBootFloppy`.
-- Package verification hashes only the six runtime files (`core/adffs.c:125`, `:233`). The zip ADFFS cache retains one raw member (`arc_zip_adffs_raw`).
-- `arc_media[]` entries carry `digest` (SHA-1 + size of the **decoded** JFD, `:1038`) and the JFD header (`game_id`, `disc_number`, `disc_count`).
-- The Slice 5c chooser is in `core/launch_chooser.c`. Its record parser knows only `app`/`desktop` (`:136`), ADFFS bypasses chooser preparation (`libretro/arcdroid_libretro.c:4572`), and confirmation publishes a native helper (`:4199`).
-- Profiles with SHA-1 digests are precedent: `core/input_profiles.c:13` (D-033).
+**Evidence:**
+- **Opus QA** (effort 15): fail on M-1 at `f07aef0`; pass with Lows at `48a199b`.
+- **CI:** green on both runs of every head.
+- **AC-11 (private host, real ADFFS 2.88, RISC OS 3.11):**
+  - E-Type and both Compendium variants reach a running race;
+  - Premier Manager [SA] opens its window and responds on the A3020;
+  - the guest guard failure is visible;
+  - the A3020 DD and A3000 samples are unchanged.
+- **AC-12 (Odin3, core built from `48a199b`, guard green, installed through Install or Restore a Core):**
+  - E-Type plays;
+  - Compendium: Xtra by touch, E-Type by pad, the remembered pick skips the chooser, the machine starts within 6 s (QA N-1: no visible cost), and the disclosure is readable next to the Firmware and audio lines (QA N-3);
+  - Premier Manager [SA] on the A3020: icon, dialog, window and credits by touch;
+  - A3000 sample: an ADFFS JFD title and a native two-disc set unchanged;
+  - 9 runs, 0 `[ERROR]`, peak PSS 175–180 MB.
 
-**Scope**
-- **S-1 — D-065 reversed by eligibility.** Remove the `new-io-machine` gate. A3010, A3020 and A4000 sessions get exactly the A3000 ADFFS eligibility; the reason token disappears. Machine resolution and D-066's Record-Not-Found contract are unchanged.
-- **S-2 — Install profiles.** A compiled table of project-authored functional metadata, keyed by JASPP game ID + disc count. Per profile:
-  - a revision number;
-  - the SHA-256 of the ADFFS built-in script member for `<id>` disc 1 (the `!ADFFS/obey` nested zip entry named `F<id5><01>`);
-  - allowed machine IO classes;
-  - one or more variants.
+Private logs and frames are in the S27b scratchpad (`ac11/`, `odin3/`); never commit them.
 
-  Per variant:
-  - a stable key and a display label;
-  - the required discs, as (disc number, decoded size, decoded SHA-1);
-  - the app leaf (≤ 10 chars) copied from disc 1 root;
-  - the data items, as (disc number, root leaf, file or directory) copied into the app;
-  - `image_in_app`: disc 1 placed in the app as `F<id5>01`;
-  - `eject` before launch;
-  - the RAM-disc KiB (peak).
+**Carried Lows (not scheduled):**
+- QA re-check L-1: the failed-pick fallback into a native chooser is untested (correct by reading).
+- N-2: the machine-override wording would be wrong on a hypothetical RAM refusal.
+- N-3: a failed confirmed pick deletes any `.choice` file.
+- First-run QA N-2: a support-disc overflow is reported as carrier `too-large`.
+- The real-boot harness has no pad-button command; S27b evidence used an evidence-only `pad`.
+- A failed guest `Copy` shows RISC OS's own garbled error text before any guard runs; guards show `ArcDroid install: …`.
 
-  No ADFFS text, comments or script bodies go in the repository (D-049). Names serve only as recipe operands and never influence discovery (D-070 / D-039).
-- **S-3 — Eligibility and plan (host).** Install mode applies when all of these hold:
-  - JFD Boot = Auto and Launch = Auto;
-  - the package validates as the *verified* profile (`Allow untested` never enables install mode);
-  - the built-in script digest matches the profile;
-  - a profile matches `game_id`;
-  - every required disc of the chosen variant is present exactly once in `arc_media` (zip, playlist or folder set), matched by header and digest, not by position;
-  - the machine IO class is allowed;
-  - the OS is RISC OS 3.11;
-  - the carrier fits, counting all staged files plus FileCore allocation overhead;
-  - each decoded image is ≤ 2 MB.
-
-  An immutable install plan is built before machine construction. Raw bytes are retained only for the required members. Refusals keep today's path (native for multi-image) and log `JFD boot: path=native reason=install-<why>` (`incomplete-set`, `too-large`, `machine`, `script-mismatch`, `untested-package`, …). They raise an FR-52 notice when user action helps, e.g. "E-Type needs all its discs in one zip or playlist".
-- **S-4 — Guest install (generated stage-2 tail replacing `ADFMount … ADFBootFloppy`).**
-  - **Carrier (drive 0, read-only):** `D<n>` for each required disc, plus `Run`, an Obey file containing the single line `ADFBootFloppy F<id5>01`.
-  - **Order:**
-    1. While drive 0 is still the carrier, copy every carrier file to `RAM::0.$`.
-    2. Mount `RAM::0.$.D1` (`ADFMount`, `ADFS`, `Dismount :0`), guard that the app exists, and copy it to `RAM::0.$.<app>`.
-    3. For each other required disc in ascending order: mount it, guard each item, copy it into the app, guard that the copy landed, then delete `D<n>`.
-    4. If `image_in_app`, rename `D1` to `<app>.F<id5>01`; otherwise delete it.
-    5. Replace `<app>.!Run` with the staged `Run`.
-    6. If `eject`, run `ADFEject`.
-    7. Set the CSD to `RAM::0.$.<app>`, then `Run RAM::0.$.<app>.!Run`.
-  - **Every step is guarded.** A failure stops with a visible `ArcDroid install: <step> failed` error, and the session never falls back to another path. Stage 1 sizes RAMFS to the profile's peak. The single-disc ADFFS path is unchanged.
-- **S-5 — Variant choice (extends D-047).** A profile with more than one presentable variant (all its discs present) shows the 5c pre-boot surface in an explicit **install-variant mode**. It reuses the renderer, input and deferred construction, lists variants only (no Desktop row), and constructs only the chosen variant.
-  - The record gets a new discriminator (e.g. `install`) and binds the profile ID + revision, the sorted required-disc digests of the set and the variant key. Native and install records never cross-match. A stale or mismatched record re-asks.
-  - `remember` reuses the valid pick on load and reset; `ask` re-offers.
-  - Failed construction and unload during selection behave as in 5c.
-  - A variant missing a disc is not listed. If no variant is presentable, the reason is `install-incomplete-set`.
-- **S-6 — Saves disclosure (D-069).** Every install-path boot shows an on-screen line before play: installed to a temporary RAM disc, saves are not kept after exit or reset. Update `docs/adffs.md` and add a release note.
-- **S-7 — Diagnostics.** Log `JFD boot: path=adffs-install profile=F<id5> rev=<r> variant=<key> discs=<list> ram=<K>K`, plus one short OSD line.
-- **S-8 — Harness.** Add `move DX DY` and `click MASK HOLD` to the input script through normal libretro mouse input. S27b note: a throwaway probe's desktop Select/Menu clicks did not register, while an in-game click did. Find the cause or document it; the orchestrator falls back to Odin3 touch for desktop evidence.
-
-**Initial profile data (orchestrator-verified privately, S27b).** RAM KiB values are the probe values; the orchestrator re-verifies peaks on the implementation.
-
-| Profile | Variant | Machines | Disc 1 | Other disc | App / data | Image in app | Eject | RAM (KiB) | Script SHA-256 |
-|---|---|---|---|---|---|---|---|---|---|
-| `F10140`, 2 discs | one variant, label "E-Type" | WD1772 only | 445748 B, `42b39361f1c4131222104d5a22b2ada69114344e` | disc 2: 510152 B, `31a5a3756d620327d08bad3b62048a98cab32826` | app `!E-Type`; data `HIGH` (file) and `TRACKS` (dir) from disc 2 | yes | no | 1600 | `0b1bf84fb117513d9715178be94fcec2d5b271095fae70d571d4ddec2dffd599` |
-| `F10609`, 4 discs | A "E-Type" | WD1772 only | 428286 B, `64f48cff5eeaddbbbfb04dcfb44e34db4b69642c` | disc 2: 510152 B, `6c953f23904a01606699dc2c14561fe1fbead464` | app `!E-Type`; data `HIGH` and `TRACKS` from disc 2 | yes | no | 1600 | `744046fd32b92da2c47f651109b3420c462e90a5a45ccde617de2cfbfac01222` |
-| `F10609`, 4 discs | B "E-Type Xtra" | WD1772 only | same as A | disc 3: 510152 B, `89d6dfe9dd349de13e99ffffc215b4e5d3f1bf9e` | app `!E-Type`; data `HIGH` and `TRACKS` from disc 3 | yes | no | 1600 | same as A |
-| `F10587`, 1 disc | one variant, label "Premier Manager" | New-IO only | 910536 B, `b23b57d1723cdd4c19df7f86ae7bd513b52d4ee7` | — | app `!Premier`; no data | no | yes | 2000 | `9074d67cb21cafd219e5541f7f20e7c8b192230d5cc5e568d553d4b36dbac734` |
-
-Compendium disc 4 is not used by either variant and is not required.
-
-**Non-goals.** The F-format carrier; save persistence (follows with the F-carrier slice); Drifter [SA], Exodus, The Time Machine, Populous [RPC]; the D-059 swap mechanism; host-side FileCore extraction; parsing ADFFS comments; installing both Compendium games at once; loading-speed work; R-1/N-1 (stays carried).
-
-**Acceptance criteria**
-- **AC-1:** S-1 holds. Tests cover A3010/A3020/A4000, the A3000 regression, HD auto-resolution, explicit machine override, absent, invalid and untested packages, over-capacity media, and unrelated multi-image sets staying native.
-- **AC-2:** The profile table is statically validated by a test: unique IDs, variant keys, ≤ 10-char leaves, discs within count, RAM ≤ machine RAM, and no ADFFS text.
-- **AC-3:** Every S-3 gate and refusal reason, including a package with matching runtime files but a changed built-in script, and duplicate or missing required discs.
-- **AC-4:** The install plan and carrier. The carrier contents are verified through the existing FileCore walker, including the capacity boundary with overhead. Raw members are retained only for required discs.
-- **AC-5:** The generated stage-2 tail follows the S-4 order and object lifetimes (golden text plus structural assertions), and stage 1 sizes RAMFS from the profile.
-- **AC-6:** The install-variant chooser, record discriminator and binding, stale, cross-mode and remember/ask cases, reset, unload during selection, and failed construction.
-- **AC-7:** The S-6 disclosure is shown on every install boot, and `docs/adffs.md` is updated.
-- **AC-8:** FR-46 lifecycle: install → native → install; both variants across reset and reload; no leaks under the Linux sanitizer job; no stale selection or input state.
-- **AC-9:** The S-7 log and OSD line.
-- **AC-10:** The harness `move`/`click` commands, with a deterministic test that events reach the core input layer.
-- **AC-11 (orchestrator, private host, real package, RISC OS 3.11):**
-  - E-Type reaches a running race; both Compendium variants reach a race; Premier Manager [SA] reaches its window with one meaningful interaction (harness or Odin3).
-  - A forced guest failure (a private edited copy) stops visibly.
-  - A DD JFD boots through ADFFS on the A3020.
-  - The A3000 AC-16 sample is unchanged.
-  - The Populous [RPC] hang is recorded, not a gate.
-- **AC-12 (orchestrator, Odin3):** the three titles through RetroArch, including the variant chooser by pad and touch; 0 `[ERROR]`; peak PSS recorded.
-- **AC-13:** CI green on both runs of the head (Linux, sanitizers, Windows ctest, windows-retroarch). Windows real-package evidence stays a carried Founder check.
-
-**Tests and evidence.** CI stays synthetic, with invented JFD headers and bytes. Test profiles are injected under `ARCDROID_TEST_FAULTS`, and the real table is checked only statically. There is no ADFFS in CI.
-
-**Risks and QA focus**
-- Exact-identity matching: a different release of a title must refuse cleanly.
-- Guest failure visibility.
-- Staged-object lifetimes and peak RAM on a 4 MB machine.
-- Chooser record cross-matching.
-- D-049: no ADFFS bytes, text or script names beyond the functional command.
-- Profile names must not leak into discovery.
-- The first boot takes about 60–90 s because the carrier loads at floppy speed.
-
-**Branch.** `slice/09-adffs-install` from this baton commit. Sol leaves the tree uncommitted; the orchestrator commits it verbatim, opens the PR, reviews, and dispatches Opus QA.
-
-### Slice 9 grounding evidence (S27b)
-- **The omitted-sector rule (handoff Next (1)).** The ADFFS 2.88 `!Help` does not state it. The package's JFD imager defines the header as follows: word +4 is the *minimum ADFFS version* (206 on 16 of the library's 17 over-capacity JFDs, 220 on one), and word +20 is the *title's own major/minor release*, not an ADFFS minimum. This corrects the S26 reading. The per-sector "not found" bit is explicit in the sector table. So the rule lives only inside the ADFFS module, and ArcDroid does not need it (D-067).
-- **ADFFS on New-IO (Next (2)): proven on the host.** Scratch clone of `3b93737` with only the D-065 gate removed, real RISC OS 3.11. User-supplied ADFFS 2.88 boots a DD JFD to its title screen on the A3020, and the frame is byte-identical to the A3000 run. The S18 scratchpad also holds pre-Slice-8 runs of three DD titles on the A3010, A3020 and A4000; the two frames checked reach their title screens. **Mount-only probe** (`ADFBootFloppy` dropped from the launcher): the sparse quad Populous [RPC] mounts under ADFFS on the A3020, both directory levels catalogue, and a 100 K+ file loads without error.
-- **The six sparse ARM250-compatible quad JFDs, per ADFFS's built-in scripts (facts only):**
-  - Drifter [SA], Exodus (3 discs) and Premier Manager [SA] run only from a hard-disc install. Their scripts refuse or fail when run from the floppy, which matches the S26 device errors. They belong to roadmap Slice 10. Drifter [SA]'s install step also needs a third-party archive extractor.
-  - Populous [RPC] fits today's 800 K carrier. Under the full ADFFS boot it hangs after the mount: static desktop, no key response, FDC idle. This needs per-title diagnosis.
-  - Botkiller2 and SpeedBall 2 [RPC] need the 1600 K carrier: 837 K and 874 K compressed, and even `gzip -9` does not bring them under the 815 104-byte capacity. Botkiller2's script asks for a 2 848 K wimp slot, which together with its 1.29 MB image exceeds the A3020's 4 MB.
-- **The 7 over-capacity single-disc JFDs:**
-  - 4 are RiscPC-only by header flags (Chuck Rock [SA], Gods [RPC], James Pond [SA], Lemmings 2 [SA]) and belong to the D-063 workstream.
-  - Zool 32-bit has no ADFFS script (`no-script`).
-  - Botkiller2 and SpeedBall 2 [RPC] are covered above.
-- **Net.** Roadmap item 1 as written (F-format carrier plus D-065 flip) plausibly makes one title playable (SpeedBall 2 [RPC], unproven); Botkiller2 is doubtful, and Populous [RPC] reaches ADFFS but hangs. Flipping D-065 alone makes no title playable: three native "Disc not understood" results would become ADFFS's own install-required errors, and one would become a hang.
-- **Install-path feasibility (S27b, host, throwaway probe; D-068).** The probe used env-gated hooks in the scratch clone: extra carrier files, a replacement launcher tail, a larger RAM disc, the multi-disc and D-065 gates off, and harness `move`/`click` commands. The guest-side install ran under ADFFS 2.88 on RISC OS 3.11. Each title's images were copied to the guest RAM disc, and the recipe's app and data items were copied under ADFFS into a RAM-disc app. Where the recipe asks, the disc-1 image went inside the app, with a `!Run` that calls ADFFS's boot for the title. The current directory was then set to the app and the app run. Results:
-  - E-Type (2 discs, A3000, 1600 K RAM disc) plays; a race runs.
-  - E-Type Compendium: each of its two games plays when installed alone with its own data disc. Installing both at once overflows 4 MB; disc 4 is not part of the recipe.
-  - Premier Manager [SA] (A3020, HD image) reaches its icon bar, but only with the current directory set to the app. The harness pointer cannot drive desktop clicks, so its game window is left for the device leg.
-  - RISC OS 3.11 truncates names to 10 characters. Install-path saves live on the RAM disc and are lost at exit.
-  - Out of this slice: Drifter [SA] (install needs a third-party extractor), Exodus (needs the F-format carrier), The Time Machine (interactive five-disc installer, 2.3 MB), and Populous [RPC] (hangs after the mount).
-- Carried: QA L-3 (an ≤ 800 K quad JFD auto-resolves the A3020) and N-1 (the WD1770 READ ADDRESS drive-alternation test) ride on whichever slice touches them. D-066's reader contract stands: an omitted ID is Record-Not-Found in the native reader.
+**Out of Slice 9:**
+- Drifter [SA] (needs a third-party extractor);
+- Exodus and SpeedBall 2 [RPC] (need the F carrier);
+- The Time Machine (interactive five-disc installer);
+- Populous [RPC] (hangs after mount under ADFFS; per-title diagnosis).
 
 ## State (carried)
 - **Role note (Founder, S26–S27):** Fable is unavailable; the Founder assigned the orchestrator role to Claude Opus 5.5 (S26 second half, S27). QA independence is kept by dispatching QA to a separate `opus-qa` agent with a fresh clone and no conversation context; the orchestrator does not write implementation or tests.
@@ -180,12 +68,12 @@ Compendium disc 4 is not used by either variant and is not required.
 - **QA effort rule (Founder S24, D-060):** Opus 5.5 QA at effort `high` (= 15 on the model's scale) via `opus-qa` agent or CLI `--effort high`; a `general-purpose` Agent ran at 10 and is never used for QA.
 - **Follow-up Lows from 6b QA (accepted, not scheduled):** `.ps1` retry match is locale-bound; the lifecycle loop's m3u/JFD cycles check only the `ARCCMOS2` tag; unreachable decode-fallback branches around `arc_sync_cmos`/`arc_persist_cmos`; one extra `move attempt 1/3` log line per screenshot.
 - **ADFFS multi-disc shelved (D-059)**; evidence branch `slice/06b-adffs-multidisc` `25446fd` unmerged, keep.
-- **Release notes owed** (collect at the release baseline): 5b-2, 5c, 6a, 5a M-1, 7a, 7b, 6b (no per-game `.srm`, scan note, Unix zip member mode), and Slice 8 (F-format/HD media on the A3020, quad JFD parsing, RiscPC notice, short-tail tolerance, native JFD boot on New-IO).
-- **Open after 6a (unchanged):** one eligible 633 KB title returns to the desktop; floppy-speed carrier loading; AC-16 items not run; one transient `unable to prepare staged media directory` on the Odin3 (S18). **Device state (S27):** RetroArch stopped; the Slice 8 core (`7a23f4a`) and the `7a23f4a` `.info` (`RetroArch/info/arcdroid_libretro.info`) installed; library = Desktop (218 zips).
+- **Release notes owed** (collect at the release baseline): 5b-2, 5c, 6a, 5a M-1, 7a, 7b, 6b (no per-game `.srm`, scan note, Unix zip member mode), and Slice 8 (F-format/HD media on the A3020, quad JFD parsing, RiscPC notice, short-tail tolerance, native JFD boot on New-IO), and Slice 9 (`docs/release-notes-slice9.md`: ADFFS on New-IO, the RAM-disc install path and its temporary-saves disclosure).
+- **Open after 6a (unchanged):** one eligible 633 KB title returns to the desktop; floppy-speed carrier loading; AC-16 items not run; one transient `unable to prepare staged media directory` on the Odin3 (S18). **Device state (S27b):** RetroArch stopped; the Slice 9 core (`48a199b`) and its `.info` installed; S27b runner `/data/local/tmp/s27.sh` (its `start` call blocks the adb session; run it detached); library = Desktop (218 zips).
 
 ## Roadmap after Slice 8 (Founder order, S25)
 Dependency-clearing slices first, then the small items, then the rest. Every dependency and its associated project is cleared before the item that needs it.
-1. **Slice 9 — ADFFS on the New-IO class and the ADFFS install path** (D-068; work order above). **The F-format 1600 K carrier follows as its own slice**, with install-disc persistence (D-069), Exodus, SpeedBall 2 [RPC] and the RiscPC workstream as its consumers.
+1. ~~Slice 9~~ — **done** (`d1720e9`, S27b).
 2. **Slice 10 — F-format 1600 K carrier and a persisted install disc** (ends the D-069 exception; opens Exodus and SpeedBall 2 [RPC] if memory allows).
 3. **Slice 11 — engine and input tidy-up (the remaining small items):** ARM3-class machines A5000/A540 (Founder decision S25: wanted for completeness; Arculator ARM3 + New-IO I/O already present), Slice 3b joystick interfaces (D-034: RTFM, printer port), audio resampler flush (D-022). The two protection-check titles are tried on the host with the harness OSK script during the Slice 8 evidence run (evidence only).
 4. **Release baseline:** armeabi-v7a, `.info` beside the core, title-profile notes, the owed release notes (5b-2 … Slice 8), libretro buildbot submission per D-016.
