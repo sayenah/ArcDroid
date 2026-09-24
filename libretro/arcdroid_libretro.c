@@ -134,12 +134,23 @@ static bool arc_install_choosing;
 static ArcInstallPlan arc_install_plans[ARC_INSTALL_MAX_VARIANTS];
 static unsigned arc_install_plan_count;
 static int arc_install_requested = -1;
+static char arc_install_requested_binding[41];
 static bool arc_install_hard_failure;
 #if defined(ARCDROID_TEST_FAULTS)
 static bool arc_test_adffs_accept_test_os = true;
 static bool arc_test_fail_adffs_content_read;
 static unsigned arc_test_mouse_input_samples;
 static bool arc_test_fail_install_build;
+static bool arc_test_fail_install_raw;
+void arc_libretro_test_fail_install_raw(bool fail)
+{
+   arc_test_fail_install_raw = fail;
+}
+void arc_libretro_test_install_chooser_media(bool ejected, unsigned index)
+{
+   arc_ejected = ejected;
+   arc_image_index = index;
+}
 void arc_libretro_test_fail_install_build(bool fail)
 {
    arc_test_fail_install_build = fail;
@@ -794,6 +805,7 @@ static void arc_release_session(void)
    arc_install_choosing = false;
    arc_install_plan_count = 0u;
    arc_install_requested = -1;
+   arc_install_requested_binding[0] = '\0';
    arc_install_hard_failure = false;
    free(arc_firmware);
    arc_firmware = NULL;
@@ -2217,20 +2229,42 @@ static void arc_install_refuse(const char *why, bool notify) {
          arc_message("JFD ADFFS boot unavailable: This title's install carrier exceeds the supported disc size.", RETRO_LOG_WARN);
       else if (!strcmp(why, "no-package") || !strcmp(why, "invalid-package"))
          arc_message("JFD ADFFS boot unavailable: place a valid package in <system>/arcdroid/adffs.", RETRO_LOG_WARN);
+      else if (!strcmp(why, "missing-resource"))
+         arc_message("JFD ADFFS boot unavailable: the package is missing a required install resource.", RETRO_LOG_WARN);
+      else if (!strcmp(why, "content-unreadable"))
+         arc_message("JFD ADFFS boot unavailable: a required disc could not be read.", RETRO_LOG_WARN);
+      else if (!strcmp(why, "construction") || !strcmp(why, "stale-choice"))
+         arc_message("JFD ADFFS boot unavailable: the install could not be prepared; native boot will continue.", RETRO_LOG_WARN);
+      else if (!strcmp(why, "machine") && !arc_core_options.machine_auto) {
+         const ArcInstallProfile *profile = arc_media_count ?
+            arc_install_profile(arc_media[0].jfd_game_id,
+                                arc_media[0].jfd_disc_count) : NULL;
+         arc_message(profile && profile->io_mask == 2u ?
+            "JFD ADFFS boot unavailable: This title installs on A3010/A3020/A4000 machines; set Machine to Auto." :
+            "JFD ADFFS boot unavailable: This title installs on A3000 machines; set Machine to Auto.",
+            RETRO_LOG_WARN);
+      }
    }
 }
 
 static bool arc_install_raw(const ArcMediaEntry *entry, uint8_t **raw,
-                            size_t *size) {
+                            size_t *size, bool *too_large) {
    *raw = NULL;
    *size = 0u;
+   *too_large = false;
+#if defined(ARCDROID_TEST_FAULTS)
+   if (arc_test_fail_install_raw) {
+      arc_test_fail_install_raw = false;
+      return false;
+   }
+#endif
    if (!entry->zip_member[0])
-      return arc_io_read_all(entry->source, (void **)raw, size);
+      return arc_io_read_all_limit(entry->source, (void **)raw, size,
+                                   2u * 1024u * 1024u, too_large);
    void *archive_data = NULL;
    size_t archive_size = 0u;
-   bool too_large = false;
    if (!arc_io_read_all_limit(arc_zip_path, &archive_data, &archive_size,
-                              ARC_ZIP_CONTENT_ARCHIVE_MAX, &too_large))
+                              ARC_ZIP_CONTENT_ARCHIVE_MAX, too_large))
       return false;
    ArcZipArchive archive;
    const ArcZipLimits limits = {ARC_ZIP_CONTENT_ARCHIVE_MAX, 1024u,
@@ -2257,24 +2291,20 @@ static bool arc_install_raw(const ArcMediaEntry *entry, uint8_t **raw,
    return ok;
 }
 
-static bool arc_install_build(const ArcInstallPlan *plan,
-                              const ArcAdffsPackage *package,
-                              const ArcAdffsSelection *selection,
-                              const char **reason) {
+static bool arc_install_carrier_prepare(const ArcInstallPlan *plan,
+                                        uint8_t carrier[ARC_ADFFS_DISC_SIZE],
+                                        const char **reason) {
    uint8_t *raw[ARC_INSTALL_MAX_DISCS] = {0};
    size_t sizes[ARC_INSTALL_MAX_DISCS] = {0};
    bool okay = true;
    *reason = "content-unreadable";
-#if defined(ARCDROID_TEST_FAULTS)
-   if (arc_test_fail_install_build) {
-      arc_test_fail_install_build = false;
-      *reason = "construction";
-      return false;
-   }
-#endif
    for (unsigned d = 0u; d < plan->variant->disc_count; ++d) {
       ArcMediaEntry *entry = &arc_media[plan->media_index[d]];
-      if (!arc_install_raw(entry, &raw[d], &sizes[d])) { okay = false; break; }
+      bool too_large = false;
+      if (!arc_install_raw(entry, &raw[d], &sizes[d], &too_large)) {
+         if (too_large) *reason = "too-large";
+         okay = false; break;
+      }
       if (sizes[d] > 2u * 1024u * 1024u) {
          *reason = "too-large"; okay = false; break;
       }
@@ -2295,17 +2325,47 @@ static bool arc_install_build(const ArcInstallPlan *plan,
       if (!okay) { *reason = "identity"; break; }
    }
    if (okay) {
-      arc_adffs_carrier = malloc(ARC_ADFFS_DISC_SIZE);
-      arc_adffs_support = malloc(ARC_ADFFS_DISC_SIZE);
       char error[160] = {0};
-      okay = arc_adffs_carrier && arc_adffs_support &&
-         arc_install_carrier_build(plan, (const uint8_t *const *)raw, sizes,
-                                    arc_adffs_carrier, error, sizeof(error)) &&
-         arc_install_support_build(package, selection, plan,
-                                    arc_adffs_support, error, sizeof(error));
+      okay = arc_install_carrier_build(plan, (const uint8_t *const *)raw, sizes,
+                                       carrier, error, sizeof(error));
       *reason = strstr(error, "fit") ? "too-large" : "construction";
    }
    for (unsigned d = 0u; d < ARC_INSTALL_MAX_DISCS; ++d) free(raw[d]);
+   return okay;
+}
+static bool arc_install_preflight(const ArcInstallPlan *plan,
+                                  const char **reason) {
+   uint8_t *carrier = malloc(ARC_ADFFS_DISC_SIZE);
+   if (!carrier) { *reason = "construction"; return false; }
+   bool okay = arc_install_carrier_prepare(plan, carrier, reason);
+   free(carrier);
+   return okay;
+}
+static bool arc_install_build(const ArcInstallPlan *plan,
+                              const ArcAdffsPackage *package,
+                              const ArcAdffsSelection *selection,
+                              const char **reason) {
+#if defined(ARCDROID_TEST_FAULTS)
+   if (arc_test_fail_install_build) {
+      arc_test_fail_install_build = false;
+      *reason = "construction";
+      return false;
+   }
+#endif
+   arc_adffs_carrier = malloc(ARC_ADFFS_DISC_SIZE);
+   arc_adffs_support = malloc(ARC_ADFFS_DISC_SIZE);
+   if (!arc_adffs_carrier || !arc_adffs_support) {
+      *reason = "construction";
+      arc_adffs_discard();
+      return false;
+   }
+   bool okay = arc_install_carrier_prepare(plan, arc_adffs_carrier, reason);
+   if (okay) {
+      char error[160] = {0};
+      okay = arc_install_support_build(package, selection, plan,
+                                       arc_adffs_support, error, sizeof(error));
+      if (!okay) *reason = "construction";
+   }
    if (!okay) arc_adffs_discard();
    return okay;
 }
@@ -2477,7 +2537,8 @@ static bool arc_prepare_adffs(bool notify) {
    }
    char missing[128];
    ArcAdffsSelection selection;
-   if (!arc_adffs_select(package, script, script_size, &selection, missing)) {
+   if (!arc_adffs_select(package, script, script_size,
+                         &selection, missing)) {
       if (install) {
          free(builtin);
          arc_adffs_package_free(package);
@@ -2513,13 +2574,26 @@ static bool arc_prepare_adffs(bool notify) {
          arc_install_refuse(why ? why : "incomplete-set", notify);
          return false;
       }
-      unsigned io_bit = arc_machine_descriptor(arc_session_machine)->io ==
-         ARC_IO_NEW_82C711 ? 2u : 1u;
-      if (!(install->io_mask & io_bit) ||
-          install->variants[0].ram_kib >
-             arc_machine_descriptor(arc_session_machine)->memory_kib) {
+      const ArcMachineDescriptor *machine =
+         arc_machine_descriptor(arc_session_machine);
+      unsigned io_bit = machine->io == ARC_IO_NEW_82C711 ? 2u : 1u;
+      unsigned eligible = 0u;
+      const char *preflight_reason = "machine";
+      for (unsigned i = 0u; i < arc_install_plan_count; ++i) {
+         ArcInstallPlan plan = arc_install_plans[i];
+         if (!(install->io_mask & io_bit) ||
+             plan.variant->ram_kib > machine->memory_kib) continue;
+         const char *variant_reason = NULL;
+         if (!arc_install_preflight(&plan, &variant_reason)) {
+            preflight_reason = variant_reason;
+            continue;
+         }
+         arc_install_plans[eligible++] = plan;
+      }
+      arc_install_plan_count = eligible;
+      if (!eligible) {
          free(builtin); arc_adffs_package_free(package); free(package);
-         arc_install_refuse("machine", notify);
+         arc_install_refuse(preflight_reason, notify);
          return false;
       }
       if (arc_install_plan_count > 1u && arc_install_requested < 0) {
@@ -2529,7 +2603,10 @@ static bool arc_prepare_adffs(bool notify) {
       }
       unsigned pick = arc_install_requested < 0 ? 0u :
          (unsigned)arc_install_requested;
-      if (pick >= arc_install_plan_count) {
+      if (pick >= arc_install_plan_count ||
+          (arc_install_requested_binding[0] &&
+           strcmp(arc_install_requested_binding,
+                  arc_install_plans[pick].binding))) {
          free(builtin); arc_adffs_package_free(package); free(package);
          arc_install_refuse("stale-choice", notify);
          return false;
@@ -3012,6 +3089,11 @@ static bool arc_install_choice_publish(unsigned selected)
       arc_io_file_size(arc_choice_path, &ignored), data, size);
 }
 
+static void arc_install_choice_discard(void)
+{
+   if (arc_choice_path_build(false)) (void)arc_io_remove(arc_choice_path);
+}
+
 static bool arc_install_offer(void)
 {
    if (!arc_install_choosing) return false;
@@ -3019,9 +3101,13 @@ static bool arc_install_offer(void)
    if (remembered >= 0 &&
        arc_core_options.launch_chooser == ARC_LAUNCH_CHOOSER_REMEMBER) {
       arc_install_requested = remembered;
-      bool built = arc_prepare_adffs(false);
+      snprintf(arc_install_requested_binding,
+         sizeof(arc_install_requested_binding), "%s",
+         arc_install_plans[remembered].binding);
+      bool built = arc_prepare_adffs(true);
       arc_install_requested = -1;
-      if (!built) arc_install_hard_failure = true;
+      arc_install_requested_binding[0] = '\0';
+      if (!built) arc_install_choice_discard();
       return built;
    }
    const char *labels[ARC_INSTALL_MAX_VARIANTS];
@@ -4489,8 +4575,10 @@ static bool arc_chooser_confirm(void)
    int selected = arc_launch_chooser_selection(&arc_chooser);
    if (selected == INT_MIN) return false;
    bool install_mode = arc_chooser.install_mode;
-   bool remembered = install_mode ?
-      arc_install_choice_publish((unsigned)selected) :
+   if (install_mode && (selected < 0 || (unsigned)selected >= arc_install_plan_count))
+      return false;
+   bool native_choice = !install_mode;
+   bool remembered = install_mode ? true :
       arc_choice_publish(&arc_chooser_discovery, selected);
    if (!remembered)
       arc_message("Launch choice not remembered; starting this time only.",
@@ -4502,19 +4590,32 @@ static bool arc_chooser_confirm(void)
    arc_plan.launch_target_length = 0u;
    if (install_mode) {
       arc_install_requested = selected;
-      bool built = arc_prepare_adffs(false);
+      snprintf(arc_install_requested_binding,
+         sizeof(arc_install_requested_binding), "%s",
+         arc_install_plans[selected].binding);
+      bool built = arc_prepare_adffs(true);
       arc_install_requested = -1;
+      arc_install_requested_binding[0] = '\0';
       if (!built) {
-         snprintf(error, sizeof(error),
-                  "Unable to construct the selected install session.");
-         goto failed;
+         arc_install_choice_discard();
+         if (arc_prepare_launch(&arc_media[arc_image_index], false,
+                                arc_core_options.launch, false)) {
+            arc_chooser_reset_input();
+            return true;
+         }
+         install_mode = false;
+      } else {
+         remembered = arc_install_choice_publish((unsigned)selected);
+         if (!remembered)
+            arc_message("Launch choice not remembered; starting this time only.",
+                        RETRO_LOG_WARN);
       }
    }
    else if (selected >= 0 &&
        !arc_launch_helper_publish(&arc_chooser_discovery, (unsigned)selected,
                                   error, sizeof(error)))
       goto failed;
-   if (!install_mode) arc_launch_log(&arc_chooser_discovery, selected,
+   if (native_choice) arc_launch_log(&arc_chooser_discovery, selected,
                   selected < 0 ? "chooser chose desktop" :
                                  "chooser chose target");
    if (!arc_resolve_inputs(&arc_core_options, true, false))
@@ -5071,6 +5172,8 @@ RETRO_API void retro_reset(void)
        (size_t)path_written >= sizeof(arc_cmos_path))
    { snprintf(error, sizeof(error), "Unable to prepare persistent CMOS storage."); goto failed; }
    arc_seed_cmos();
+   arc_install_choosing = false;
+   arc_install_plan_count = 0u;
    bool adffs = !was_ejected && selected == 0u && arc_prepare_adffs(false);
    if (arc_install_choosing) adffs = arc_install_offer();
    if (arc_install_hard_failure) {

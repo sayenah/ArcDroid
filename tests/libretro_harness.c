@@ -152,6 +152,7 @@ static unsigned launch_log_lines;
 static unsigned jfd_boot_log_lines;
 static char last_jfd_boot_log[512];
 static unsigned adffs_notice_calls;
+static unsigned install_disclosure_calls;
 static char last_adffs_notice[512];
 static bool adffs_log_leak;
 static unsigned adffs_package_log_lines;
@@ -732,6 +733,8 @@ static bool environment(unsigned command, void *data)
       case RETRO_ENVIRONMENT_SET_MESSAGE_EXT:
          ++total_osd_calls;
          snprintf(last_message, sizeof(last_message), "%s", ((struct retro_message_ext *)data)->msg);
+         if (strstr(last_message, "Installed to a temporary RAM disc"))
+            ++install_disclosure_calls;
          if (strstr(last_message, "flagged for RiscPC-class machines"))
             ++riscpc_osd_count;
          if (strstr(last_message, "ADFFS boot unavailable") ||
@@ -772,6 +775,8 @@ static bool environment(unsigned command, void *data)
       case RETRO_ENVIRONMENT_SET_MESSAGE:
          ++total_osd_calls;
          snprintf(last_message, sizeof(last_message), "%s", ((struct retro_message *)data)->msg);
+         if (strstr(last_message, "Installed to a temporary RAM disc"))
+            ++install_disclosure_calls;
          if (strstr(last_message, "flagged for RiscPC-class machines"))
             ++riscpc_osd_count;
          if (strstr(last_message, "ADFFS boot unavailable") ||
@@ -1356,9 +1361,8 @@ static bool script_name(const char *name)
 
 static bool run_osk_script(const char *path, OskScriptApi *api)
 {
-   /* Private S27b probe: an in-game click registered, while desktop Select
-    * and Menu did not. These commands prove delivery to the core input layer;
-    * AC-11 uses device touch if the desktop remains unresponsive. */
+   /* Small-step desktop clicks and in-game clicks register in the private
+    * guest probe. These commands also verify core input delivery in CI. */
    FILE *script = fopen(path, "rb");
    if (!script)
    {
@@ -1647,6 +1651,8 @@ int main(int argc, char **argv)
    void (*arc_libretro_test_adffs_accept_test_os)(bool) = NULL;
    void (*arc_libretro_test_fail_adffs_content_read)(bool) = NULL;
    void (*arc_libretro_test_fail_install_build)(bool) = NULL;
+   void (*arc_libretro_test_fail_install_raw)(bool) = NULL;
+   void (*arc_libretro_test_install_chooser_media)(bool, unsigned) = NULL;
    bool (*arc_libretro_test_adffs_content_read_failure_pending)(void) = NULL;
    bool (*arc_libretro_test_adffs_carrier_matches)(const void *, size_t) = NULL;
    void (*arc_platform_test_input_events_reset)(void) = NULL;
@@ -1725,6 +1731,10 @@ int main(int argc, char **argv)
          dlsym(module, "arc_libretro_test_fail_adffs_content_read");
       *(void **)(&arc_libretro_test_fail_install_build) =
          dlsym(module, "arc_libretro_test_fail_install_build");
+      *(void **)(&arc_libretro_test_fail_install_raw) =
+         dlsym(module, "arc_libretro_test_fail_install_raw");
+      *(void **)(&arc_libretro_test_install_chooser_media) =
+         dlsym(module, "arc_libretro_test_install_chooser_media");
       *(void **)(&arc_libretro_test_adffs_content_read_failure_pending) =
          dlsym(module, "arc_libretro_test_adffs_content_read_failure_pending");
       *(void **)(&arc_libretro_test_adffs_carrier_matches) =
@@ -1763,6 +1773,8 @@ int main(int argc, char **argv)
              arc_libretro_test_adffs_accept_test_os &&
              arc_libretro_test_fail_adffs_content_read &&
              arc_libretro_test_fail_install_build &&
+             arc_libretro_test_fail_install_raw &&
+             arc_libretro_test_install_chooser_media &&
              arc_libretro_test_adffs_content_read_failure_pending &&
              arc_libretro_test_adffs_carrier_matches &&
              arc_platform_test_input_events_reset && arc_platform_test_input_events);
@@ -6850,6 +6862,20 @@ int main(int argc, char **argv)
       }
       free(newio_eligible_bytes);
       option_machine = "Auto";
+      option_cpu = "Auto";
+      variable_update = true;
+      ADFFS_GAME("eligible-hd.jfd", adffs_hd);
+      EXPECT_ADFFS(adffs_hd,
+         "JFD boot: path=adffs script=builtin profile=synthetic-test version=\"Synthetic 1.0\"\n");
+      assert(strstr(machine_resolution_log, "resolved=A3020 reason=hd-media"));
+      assert(remove(package_path) == 0);
+      EXPECT_NATIVE(adffs_hd, "no-package", 1u, "place the ADFFS zip");
+      COPY_ADFFS_FIXTURE("bad-crc.zip");
+      EXPECT_NATIVE(adffs_hd, "invalid-package:member-crc32-mismatch", 1u,
+                    "member-crc32-mismatch");
+      COPY_ADFFS_FIXTURE("untested.zip");
+      EXPECT_NATIVE(adffs_hd, "untested-package", 1u, "untested-package");
+      COPY_ADFFS_FIXTURE("synthetic.zip");
       option_cpu = "ARM2";
       variable_update = true;
       option_jfd_boot = "native";
@@ -6951,14 +6977,21 @@ int main(int argc, char **argv)
       ADFFS_GAME("install.m3u", adffs_install_set);
       ADFFS_GAME("install-1.jfd", adffs_install_one);
       char install_choice[4096];
+      char install_content_id[41];
+      option_launch_chooser = "ask";
+      variable_update = true;
       phase = PHASE_LOAD; assert(retro_load_game(&adffs_install_set));
       assert(arc_libretro_test_session_state() == 2u &&
              arc_libretro_test_chooser_rows() == 2u &&
              !arc_engine_test_drive_media(0u, NULL, NULL));
       snprintf(install_choice, sizeof(install_choice), "%s",
                arc_libretro_test_choice_path());
+      snprintf(install_content_id, sizeof(install_content_id), "%s",
+               arc_libretro_test_content_id());
       retro_unload_game();
       (void)remove(install_choice);
+      option_launch_chooser = "remember";
+      variable_update = true;
       phase = PHASE_LOAD; assert(retro_load_game(&adffs_install_set));
       assert(arc_libretro_test_session_state() == 2u &&
              arc_libretro_test_chooser_rows() == 2u);
@@ -6966,16 +6999,19 @@ int main(int argc, char **argv)
       joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_DOWN] = true; retro_run();
       joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_DOWN] = false; retro_run();
       assert(arc_libretro_test_chooser_focus() == 1u);
+      unsigned disclosures = install_disclosure_calls;
       joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_A] = true; retro_run();
       joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_A] = false; retro_run();
       assert(arc_libretro_test_session_state() == 3u &&
              strstr(last_jfd_boot_log,
                     "path=adffs-install profile=F00123 rev=1 variant=second discs=1,3 ram=1600K") &&
              strstr(last_message, "temporary RAM disc") &&
+             install_disclosure_calls == disclosures + 1u &&
              arc_engine_test_drive_media(0u, &write_protected, NULL) &&
              write_protected);
       retro_reset();
       assert(arc_libretro_test_session_state() == 3u &&
+             install_disclosure_calls == disclosures + 2u &&
              strstr(last_jfd_boot_log, "variant=second"));
       retro_unload_game();
       uint8_t install_record[ARC_LAUNCH_CHOICE_MAX_SIZE];
@@ -6988,8 +7024,10 @@ int main(int argc, char **argv)
       assert(arc_libretro_test_session_state() == 2u);
       retro_unload_game();
       (void)remove(chooser_choice);
+      disclosures = install_disclosure_calls;
       phase = PHASE_LOAD; assert(retro_load_game(&adffs_install_set));
       assert(arc_libretro_test_session_state() == 3u &&
+             install_disclosure_calls == disclosures + 1u &&
              strstr(last_jfd_boot_log, "variant=second"));
       retro_unload_game();
       option_launch_chooser = "ask";
@@ -7019,18 +7057,94 @@ int main(int argc, char **argv)
       assert(arc_libretro_test_session_state() == 3u &&
              strstr(last_jfd_boot_log, "variant=first"));
       retro_unload_game();
+      unsigned before_fallback_notices = adffs_notice_calls;
+      arc_libretro_test_fail_install_build(true);
+      phase = PHASE_LOAD; assert(retro_load_game(&adffs_install_set));
+      assert(arc_libretro_test_session_state() == 3u &&
+             adffs_notice_calls == before_fallback_notices + 1u &&
+             strstr(last_jfd_boot_log, "reason=install-construction"));
+      retro_unload_game();
+      assert(!file_exists(install_choice));
       (void)remove(install_choice);
+      before_fallback_notices = adffs_notice_calls;
       arc_libretro_test_fail_install_build(true);
       phase = PHASE_LOAD; assert(retro_load_game(&adffs_install_set));
       phase = PHASE_RUN; retro_run();
       joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_A] = true; retro_run();
       joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_A] = false; retro_run();
-      assert(arc_libretro_test_session_state() == 4u &&
-             strstr(last_message, "Unable to construct the selected install session"));
+      assert(arc_libretro_test_session_state() == 3u &&
+             adffs_notice_calls == before_fallback_notices + 1u &&
+             strstr(last_jfd_boot_log, "reason=install-construction"));
       retro_unload_game();
+      assert(!file_exists(install_choice));
       (void)remove(install_choice);
+      write_exact(install_choice, install_record, install_record_size);
+      ADFFS_GAME("install-fat.m3u", adffs_install_fat);
+      phase = PHASE_LOAD; assert(retro_load_game(&adffs_install_fat));
+      assert(file_exists(install_choice) &&
+             !strcmp(install_content_id, arc_libretro_test_content_id()) &&
+             arc_libretro_test_session_state() == 3u &&
+             strstr(last_jfd_boot_log, "variant=first discs=1,2"));
+      retro_unload_game();
+      ADFFS_GAME("install-too-large.m3u", adffs_install_too_large);
+      EXPECT_NATIVE(adffs_install_too_large, "install-too-large", 1u,
+                    "carrier exceeds");
+      ADFFS_GAME("install-raw-limit.m3u", adffs_install_raw_limit);
+      EXPECT_NATIVE(adffs_install_raw_limit, "install-too-large", 1u,
+                    "carrier exceeds");
+      ADFFS_GAME("install-wrong.m3u", adffs_install_wrong);
+      EXPECT_NATIVE(adffs_install_wrong, "install-identity", 0u, NULL);
+      (void)remove(install_choice);
+      option_launch_chooser = "ask";
+      variable_update = true;
+      ADFFS_GAME("install.zip", adffs_install_zip);
+      phase = PHASE_LOAD; assert(retro_load_game(&adffs_install_zip));
+      assert(arc_libretro_test_session_state() == 2u &&
+             arc_libretro_test_chooser_rows() == 2u);
+      phase = PHASE_RUN; retro_run();
+      joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_A] = true; retro_run();
+      joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_A] = false; retro_run();
+      assert(arc_libretro_test_session_state() == 3u &&
+             strstr(last_jfd_boot_log, "path=adffs-install"));
+      retro_unload_game();
+      ADFFS_GAME("Install.jfd/Install.jfd", adffs_install_folder);
+      phase = PHASE_LOAD; assert(retro_load_game(&adffs_install_folder));
+      assert(arc_libretro_test_session_state() == 2u &&
+             arc_libretro_test_chooser_rows() == 2u);
+      phase = PHASE_RUN; retro_run();
+      joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_A] = true; retro_run();
+      joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_A] = false; retro_run();
+      assert(arc_libretro_test_session_state() == 3u &&
+             strstr(last_jfd_boot_log, "path=adffs-install"));
+      retro_unload_game();
+      phase = PHASE_LOAD; assert(retro_load_game(&adffs_install_set));
+      assert(arc_libretro_test_session_state() == 2u);
+      arc_libretro_test_install_chooser_media(true, 1u);
+      unsigned before_reset_lines = jfd_boot_log_lines;
+      retro_reset();
+      assert(arc_libretro_test_session_state() == 3u &&
+             jfd_boot_log_lines == before_reset_lines);
+      retro_unload_game();
+      phase = PHASE_LOAD; assert(retro_load_game(&adffs_install_set));
+      assert(arc_libretro_test_session_state() == 2u);
+      arc_libretro_test_install_chooser_media(false, 1u);
+      before_reset_lines = jfd_boot_log_lines;
+      retro_reset();
+      assert(arc_libretro_test_session_state() == 3u &&
+             jfd_boot_log_lines == before_reset_lines);
+      retro_unload_game();
+      option_launch_chooser = "remember";
+      variable_update = true;
       EXPECT_NATIVE(adffs_install_one, "install-incomplete-set", 1u,
                     "all required discs");
+      ADFFS_GAME("install-first.m3u", adffs_install_first);
+      arc_libretro_test_fail_install_raw(true);
+      EXPECT_NATIVE(adffs_install_first, "install-content-unreadable", 1u,
+                    "required disc could not be read");
+      COPY_ADFFS_FIXTURE("missing-install-resource.zip");
+      EXPECT_NATIVE(adffs_install_first, "install-missing-resource", 1u,
+                    "missing a required install resource");
+      COPY_ADFFS_FIXTURE("synthetic.zip");
       char duplicate_set_path[4096], install_two_path[4096];
       snprintf(duplicate_set_path, sizeof(duplicate_set_path),
                "%s/install-duplicate.m3u", argv[4]);
@@ -7048,6 +7162,9 @@ int main(int argc, char **argv)
       assert(remove(duplicate_set_path) == 0);
       assert(remove(package_path) == 0);
       EXPECT_NATIVE(adffs_install_set, "install-no-package", 1u,
+                    "place a valid package");
+      COPY_ADFFS_FIXTURE("bad-crc.zip");
+      EXPECT_NATIVE(adffs_install_set, "install-invalid-package", 1u,
                     "place a valid package");
       COPY_ADFFS_FIXTURE("synthetic.zip");
       arc_libretro_test_adffs_accept_test_os(false);
@@ -7070,7 +7187,8 @@ int main(int argc, char **argv)
       option_jfd_boot = "auto";
       option_machine = "A3020";
       option_cpu = "ARM250";
-      EXPECT_NATIVE(adffs_install_set, "install-machine", 0u, NULL);
+      EXPECT_NATIVE(adffs_install_set, "install-machine", 1u,
+                    "set Machine to Auto");
       option_machine = "Auto";
       option_cpu = "ARM2";
       (void)remove(install_choice);

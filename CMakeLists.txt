@@ -242,6 +242,7 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
 
   set(ADFFS_FIXTURES
     "${FIXTURE_DIR}/adffs/synthetic.zip"
+    "${FIXTURE_DIR}/adffs/missing-install-resource.zip"
     "${FIXTURE_DIR}/adffs/script-changed.zip"
     "${FIXTURE_DIR}/adffs/stored.zip"
     "${FIXTURE_DIR}/adffs/descriptor.zip"
@@ -292,7 +293,20 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
     "${FIXTURE_DIR}/adffs/install-1.jfd"
     "${FIXTURE_DIR}/adffs/install-2.jfd"
     "${FIXTURE_DIR}/adffs/install-3.jfd"
-    "${FIXTURE_DIR}/adffs/install.m3u")
+    "${FIXTURE_DIR}/adffs/install.m3u"
+    "${FIXTURE_DIR}/adffs/install-first.m3u"
+    "${FIXTURE_DIR}/adffs/install.zip"
+    "${FIXTURE_DIR}/adffs/Install.jfd/Install.jfd"
+    "${FIXTURE_DIR}/adffs/Install.jfd/Install 2.jfd"
+    "${FIXTURE_DIR}/adffs/Install.jfd/Install 3.jfd"
+    "${FIXTURE_DIR}/adffs/install-fat-3.jfd"
+    "${FIXTURE_DIR}/adffs/install-fat.m3u"
+    "${FIXTURE_DIR}/adffs/install-too-large.m3u"
+    "${FIXTURE_DIR}/adffs/install-raw-limit-2.jfd"
+    "${FIXTURE_DIR}/adffs/install-raw-limit.m3u"
+    "${FIXTURE_DIR}/adffs/install-wrong-2.jfd"
+    "${FIXTURE_DIR}/adffs/install-wrong.m3u"
+    "${FIXTURE_DIR}/adffs/eligible-hd.jfd")
   add_custom_command(
     OUTPUT "${FIXTURE_DIR}/arcdroid-test.rom" "${FIXTURE_DIR}/arcdroid-test.adf"
       "${FIXTURE_DIR}/arcdroid-chooser-test.rom"

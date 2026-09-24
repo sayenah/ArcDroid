@@ -1151,6 +1151,8 @@ def build_adffs_fixtures(output: Path) -> None:
                 ("unrelated/readme", b"ignored", False)]
     package = _zip_bytes(entries)
     (output / "synthetic.zip").write_bytes(package)
+    (output / "missing-install-resource.zip").write_bytes(_zip_bytes([
+        entry for entry in entries if entry[0] != "!ADFFS/trackers/QTMModule"]))
     changed_obey = _zip_bytes([
         (name, payload + b"\r" if name == "F0012301" else payload, meta)
         for name, payload, meta in obey_entries])
@@ -1311,6 +1313,40 @@ def build_adffs_fixtures(output: Path) -> None:
         (output / f"install-{disc}.jfd").write_bytes(image)
     (output / "install.m3u").write_text(
         "install-1.jfd\ninstall-2.jfd\ninstall-3.jfd\n")
+    (output / "install-first.m3u").write_text(
+        "install-1.jfd\ninstall-2.jfd\n")
+    discs = [(output / f"install-{disc}.jfd").read_bytes()
+             for disc in (1, 2, 3)]
+    (output / "install.zip").write_bytes(_zip_bytes([
+        (f"Install (Disk {disc}).jfd", image, True)
+        for disc, image in enumerate(discs, 1)]))
+    folder = output / "Install.jfd"
+    folder.mkdir(exist_ok=True)
+    for disc, image in enumerate(discs, 1):
+        (folder / ("Install.jfd" if disc == 1 else
+                   f"Install {disc}.jfd")).write_bytes(image)
+    compressed = bytearray(gzip_member(discs[2]))
+    compressed[3] |= 0x10  # FCOMMENT: raw wrapper grows; decoded identity stays.
+    compressed[10:10] = b"X" * (810 * 1024) + b"\0"
+    (output / "install-fat-3.jfd").write_bytes(compressed)
+    (output / "install-fat.m3u").write_text(
+        "install-1.jfd\ninstall-2.jfd\ninstall-fat-3.jfd\n")
+    (output / "install-too-large.m3u").write_text(
+        "install-1.jfd\ninstall-fat-3.jfd\n")
+    raw_limit = bytearray(gzip_member(discs[1]))
+    raw_limit[3] |= 0x10
+    raw_limit[10:10] = b"Y" * (2 * 1024 * 1024) + b"\0"
+    (output / "install-raw-limit-2.jfd").write_bytes(raw_limit)
+    (output / "install-raw-limit.m3u").write_text(
+        "install-1.jfd\ninstall-raw-limit-2.jfd\n")
+    wrong = bytearray(discs[1])
+    wrong[-1] ^= 0x40
+    (output / "install-wrong-2.jfd").write_bytes(wrong)
+    (output / "install-wrong.m3u").write_text(
+        "install-1.jfd\ninstall-wrong-2.jfd\n")
+    hd = adffs_jfd(123)
+    struct.pack_into("<I", hd, 324, (4 << 16) | 1)
+    (output / "eligible-hd.jfd").write_bytes(hd)
 
 
 def build_jfd_family(descriptors: list[tuple[int, int, int, int, int, bytes | None]],

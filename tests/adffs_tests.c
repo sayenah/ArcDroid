@@ -751,6 +751,35 @@ int main(int argc, char **argv) {
          !memcmp(generated, install_support +
                  le24(stage2 + 22u) * 256u, generated_size));
   generated[generated_size] = 0;
+  static const char golden_two_disc[] =
+      "IfThere ADFS::0.$.D1 Then Copy ADFS::0.$.D1 RAM::0.$.D1 ~C~VFQ Else Error ArcDroid install: stage failed\r"
+      "IfThere RAM::0.$.D1 Then Set ArcDroid$Guard 1 Else Error ArcDroid install: stage failed\r"
+      "IfThere ADFS::0.$.D2 Then Copy ADFS::0.$.D2 RAM::0.$.D2 ~C~VFQ Else Error ArcDroid install: stage failed\r"
+      "IfThere RAM::0.$.D2 Then Set ArcDroid$Guard 1 Else Error ArcDroid install: stage failed\r"
+      "IfThere ADFS::0.$.Run Then Copy ADFS::0.$.Run RAM::0.$.Run ~C~VFQ Else Error ArcDroid install: stage failed\r"
+      "IfThere RAM::0.$.Run Then Set ArcDroid$Guard 1 Else Error ArcDroid install: stage failed\r"
+      "ADFMount RAM::0.$.D1\rADFS\rNoDir\rNoLib\rNoURD\rDismount :0\r"
+      "IfThere ADFS::0.$.!Fixture Then Copy ADFS::0.$.!Fixture RAM::0.$.!Fixture ~C~VRFQ Else Error ArcDroid install: app failed\r"
+      "IfThere RAM::0.$.!Fixture Then Set ArcDroid$Guard 1 Else Error ArcDroid install: app failed\r"
+      "ADFMount RAM::0.$.D2\rADFS\rNoDir\rNoLib\rNoURD\rDismount :0\r"
+      "IfThere ADFS::0.$.DATA Then Copy ADFS::0.$.DATA RAM::0.$.!Fixture.DATA ~C~VFQ Else Error ArcDroid install: data failed\r"
+      "IfThere RAM::0.$.!Fixture.DATA Then Set ArcDroid$Guard 1 Else Error ArcDroid install: data failed\r"
+      "IfThere ADFS::0.$.TRACKS Then Copy ADFS::0.$.TRACKS RAM::0.$.!Fixture.TRACKS ~C~VRFQ Else Error ArcDroid install: data failed\r"
+      "IfThere RAM::0.$.!Fixture.TRACKS Then Set ArcDroid$Guard 1 Else Error ArcDroid install: data failed\r"
+      "Remove RAM::0.$.D2\r"
+      "IfThere RAM::0.$.D2 Then Error ArcDroid install: cleanup failed\r"
+      "Rename RAM::0.$.D1 RAM::0.$.!Fixture.F0012301\r"
+      "IfThere RAM::0.$.D1 Then Error ArcDroid install: image failed\r"
+      "IfThere RAM::0.$.!Fixture.F0012301 Then Set ArcDroid$Guard 1 Else Error ArcDroid install: image failed\r"
+      "IfThere RAM::0.$.!Fixture.!Run Then Remove RAM::0.$.!Fixture.!Run\r"
+      "IfThere RAM::0.$.!Fixture.!Run Then Error ArcDroid install: run-file failed\r"
+      "Copy RAM::0.$.Run RAM::0.$.!Fixture.!Run ~C~VFQ\r"
+      "IfThere RAM::0.$.!Fixture.!Run Then Set ArcDroid$Guard 1 Else Error ArcDroid install: run-file failed\r"
+      "Remove RAM::0.$.Run\r"
+      "IfThere RAM::0.$.Run Then Error ArcDroid install: cleanup failed\r"
+      "Dir RAM::0.$.!Fixture\rRun RAM::0.$.!Fixture.!Run\r";
+  const char *two_disc_tail = strstr(generated, "IfThere ADFS::0.$.D1");
+  assert(two_disc_tail && !strcmp(two_disc_tail, golden_two_disc));
   const char *copy1 = strstr(generated, "Copy ADFS::0.$.D1");
   const char *copy2 = strstr(generated, "Copy ADFS::0.$.D2");
   const char *mount1 = strstr(generated, "ADFMount RAM::0.$.D1");
@@ -781,6 +810,39 @@ int main(int argc, char **argv) {
   assert(dircheck(install_root) && find_entry(install_root, "D1") &&
          find_entry(install_root, "D3") &&
          !find_entry(install_root, "D2"));
+  ArcInstallProfile single_profile = {0};
+  single_profile.game_id = 124u;
+  single_profile.disc_count = 1u;
+  single_profile.variants[0].app = "!Solo";
+  single_profile.variants[0].disc_count = 1u;
+  single_profile.variants[0].discs[0].number = 1u;
+  single_profile.variants[0].image_in_app = false;
+  single_profile.variants[0].eject = true;
+  ArcInstallPlan single_plan = {0};
+  single_plan.profile = &single_profile;
+  single_plan.variant = &single_profile.variants[0];
+  assert(arc_install_launcher(&single_plan, (uint8_t *)generated,
+                              sizeof(generated), &generated_size));
+  generated[generated_size] = 0;
+  static const char golden_single_disc[] =
+      "IfThere ADFS::0.$.D1 Then Copy ADFS::0.$.D1 RAM::0.$.D1 ~C~VFQ Else Error ArcDroid install: stage failed\r"
+      "IfThere RAM::0.$.D1 Then Set ArcDroid$Guard 1 Else Error ArcDroid install: stage failed\r"
+      "IfThere ADFS::0.$.Run Then Copy ADFS::0.$.Run RAM::0.$.Run ~C~VFQ Else Error ArcDroid install: stage failed\r"
+      "IfThere RAM::0.$.Run Then Set ArcDroid$Guard 1 Else Error ArcDroid install: stage failed\r"
+      "ADFMount RAM::0.$.D1\rADFS\rNoDir\rNoLib\rNoURD\rDismount :0\r"
+      "IfThere ADFS::0.$.!Solo Then Copy ADFS::0.$.!Solo RAM::0.$.!Solo ~C~VRFQ Else Error ArcDroid install: app failed\r"
+      "IfThere RAM::0.$.!Solo Then Set ArcDroid$Guard 1 Else Error ArcDroid install: app failed\r"
+      "Remove RAM::0.$.D1\r"
+      "IfThere RAM::0.$.D1 Then Error ArcDroid install: cleanup failed\r"
+      "IfThere RAM::0.$.!Solo.!Run Then Remove RAM::0.$.!Solo.!Run\r"
+      "IfThere RAM::0.$.!Solo.!Run Then Error ArcDroid install: run-file failed\r"
+      "Copy RAM::0.$.Run RAM::0.$.!Solo.!Run ~C~VFQ\r"
+      "IfThere RAM::0.$.!Solo.!Run Then Set ArcDroid$Guard 1 Else Error ArcDroid install: run-file failed\r"
+      "Remove RAM::0.$.Run\r"
+      "IfThere RAM::0.$.Run Then Error ArcDroid install: cleanup failed\r"
+      "ADFEject\rDir RAM::0.$.!Solo\rRun RAM::0.$.!Solo.!Run\r";
+  const char *single_tail = strstr(generated, "IfThere ADFS::0.$.D1");
+  assert(single_tail && !strcmp(single_tail, golden_single_disc));
   test_stage("install carrier allocation boundary");
   uint8_t *large1 = calloc(1u, 390u * 1024u);
   uint8_t *large2 = calloc(1u, 420u * 1024u);
