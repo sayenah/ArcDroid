@@ -2186,6 +2186,8 @@ static bool arc_prepare_adffs(bool notify) {
    const char *reason = NULL;
    if (!entry || entry->info.kind != ARC_MEDIA_JFD)
       reason = "not-jfd";
+   else if (arc_machine_descriptor(arc_session_machine)->io == ARC_IO_NEW_82C711)
+      reason = "new-io-machine";
    else if (arc_media_count != 1u || arc_folder_set_active)
       reason = "multi-image";
    else if (jfd->disc_number != 1u || jfd->disc_count != 1u)

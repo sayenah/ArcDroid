@@ -6757,6 +6757,25 @@ int main(int argc, char **argv)
       ADFFS_GAME("count-two.jfd", adffs_count_two);
       EXPECT_NATIVE(adffs_count_two, "multi-disc", 0u, NULL);
       ADFFS_GAME("eligible.jfd", adffs_eligible);
+      option_machine = "A3020";
+      option_cpu = "ARM250";
+      variable_update = true;
+      unsigned newio_package_lines = adffs_package_log_lines;
+      unsigned newio_boot_lines = jfd_boot_log_lines;
+      unsigned newio_notices = adffs_notice_calls;
+      phase = PHASE_LOAD; assert(retro_load_game(&adffs_eligible));
+      assert(jfd_boot_log_lines == newio_boot_lines + 1u &&
+             !strcmp(last_jfd_boot_log,
+                     "JFD boot: path=native reason=new-io-machine\n") &&
+             adffs_package_log_lines == newio_package_lines &&
+             adffs_notice_calls == newio_notices &&
+             !arc_libretro_test_adffs_carrier_matches(eligible_bytes,
+                                                     eligible_size) &&
+             disk_control.get_num_images() == 1u);
+      retro_unload_game();
+      option_machine = "Auto";
+      option_cpu = "ARM2";
+      variable_update = true;
       option_jfd_boot = "native";
       EXPECT_NATIVE(adffs_eligible, "option", 0u, NULL);
       option_jfd_boot = "auto";
