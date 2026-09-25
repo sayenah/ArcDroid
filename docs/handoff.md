@@ -1,8 +1,8 @@
 # ArcDroid Handoff
 
-**Stage:** IMPLEMENTATION  
-**Owner:** Sol (GPT-6 Sol); orchestrator: Fable role held by Claude Opus 5.5 by Founder assignment (S26–S29)  
-**Next:** Sol run 3 (QA remediation, in progress at S29 on `slice/10a-jfd-writes` from `62c0c3a`) is committed verbatim; then **Sol run 4 implements C-11 (D-076) plus R3-8 and R3-9 below**; then orchestrator review, CI green on both events, fresh-clone verification, targeted Opus QA at effort high of runs 3–4, AC-12 private legs (sweep + replay of the recorded save workflows on the final head), then ask the Founder to attach the Odin3 for AC-13, merge, relay.
+**Stage:** QA  
+**Owner:** Opus (Claude Opus 5.5 QA, effort high), dispatched by the orchestrator (Fable role held by Claude Opus 5.5 by Founder assignment, S26–S29)  
+**Next:** **Targeted Opus QA of Slice 10a runs 3–4 on PR #166 (`slice/10a-jfd-writes`), `62c0c3a..6f34b84`**: the QA-remediation run 3 (`ef7d4d7`, CI green on both events after one flake rerun) and run 4 (`6f34b84`: C-11 / D-076 omitted-sector writes, R3-8, R3-9), against C-1…C-11 below. Then the orchestrator adjudicates, runs the AC-12 private legs on the final head (flagged-JFD re-sweep; replay of the 7 verified save workflows and the 3 new-space saves C-11 targets; second pass on disc-2 save titles), asks the Founder to attach the Odin3 for AC-13, merges, relays.
 
 **Opus QA at `62c0c3a` (S29, effort 15): FAIL, adjudicated.** M-1 WD1770 Write Multiple Sectors never ends past the track (RNF detection re-armed then cleared, `wd1770.c` 0xB); M-2 regression — 82C711 early TC on an **ADF** write hangs (`c82c711_fdc_getdata` TC rule applied to all media); M-3 82C711 N ≥ 4 accepted and committed. Lows: L-1 no end-to-end A3020 store session; L-2 C-3/C-4/C-8 messages untested at the frontend; L-3 DRQ/IRQ/timer after refusals unasserted; L-4 O(n²) shared-payload eligibility on every load (crafted image); L-5 save dir created for ineligible images, reason masking, notices repeat on reset; L-6 install path hides native saves silently (decision: keep the path, one notice + log); L-7 CRLF churn in engine files. All validated and sent to Sol run 3. QA Note: store adversarial checks (356 truncations, both-slots-corrupt, stale candidate, Off) and identity/provenance all conform.
 
