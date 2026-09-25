@@ -333,6 +333,8 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
       "${FIXTURE_DIR}/arcdroid-jfd-newio-save-test.rom"
       "${FIXTURE_DIR}/arcdroid-jfd-create-test.rom"
       "${FIXTURE_DIR}/arcdroid-jfd-newio-create-test.rom"
+      "${FIXTURE_DIR}/arcdroid-jfd-merge-test.rom"
+      "${FIXTURE_DIR}/arcdroid-jfd-newio-merge-test.rom"
       "${FIXTURE_DIR}/arcdroid-jfd-directory-benign.rom"
       "${FIXTURE_DIR}/arcdroid-jfd-directory-rename.rom"
       "${FIXTURE_DIR}/arcdroid-media-disc1.adf"
@@ -354,6 +356,8 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
       "${FIXTURE_DIR}/jfd-writes/rw-d.jfd"
       "${FIXTURE_DIR}/jfd-writes/rw-create-d.jfd"
       "${FIXTURE_DIR}/jfd-writes/wp-create-d.jfd"
+      "${FIXTURE_DIR}/jfd-writes/rw-merge-d.jfd"
+      "${FIXTURE_DIR}/jfd-writes/wp-merge-d.jfd"
       "${FIXTURE_DIR}/jfd-writes/rw-newio-d.jfd"
       "${FIXTURE_DIR}/jfd-writes/wp-newio-d.jfd"
       "${FIXTURE_DIR}/jfd-writes/launch-unchanged-d.jfd"
@@ -439,6 +443,8 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
     "${FIXTURE_DIR}/jfd-writes/rw-d.jfd"
     "${FIXTURE_DIR}/jfd-writes/rw-create-d.jfd"
     "${FIXTURE_DIR}/jfd-writes/wp-create-d.jfd"
+    "${FIXTURE_DIR}/jfd-writes/rw-merge-d.jfd"
+    "${FIXTURE_DIR}/jfd-writes/wp-merge-d.jfd"
     "${FIXTURE_DIR}/jfd-writes/rw-newio-d.jfd"
     "${FIXTURE_DIR}/jfd-writes/wp-newio-d.jfd"
     "${FIXTURE_DIR}/jfd-writes/launch-unchanged-d.jfd"
@@ -596,6 +602,10 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
       --jfd-writes "${FIXTURE_DIR}/jfd-writes")
     add_test(NAME jfd-creation-process COMMAND "${Python3_EXECUTABLE}"
       "${CMAKE_CURRENT_SOURCE_DIR}/tests/jfd_creation_process_test.py"
+      $<TARGET_FILE:libretro_harness>
+      $<TARGET_FILE:arcdroid_libretro_test> "${FIXTURE_DIR}")
+    add_test(NAME jfd-merge-process COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/jfd_merge_process_test.py"
       $<TARGET_FILE:libretro_harness>
       $<TARGET_FILE:arcdroid_libretro_test> "${FIXTURE_DIR}")
     add_test(NAME newio-libretro-harness COMMAND libretro_harness

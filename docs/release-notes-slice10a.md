@@ -15,15 +15,22 @@ TRACK remain unsupported. `Disk Writes: Off` shows the original disc and hides
 saved changes until writes are enabled on a reset or reload. A saved native JFD
 continues to boot natively if an ADFFS package is added later.
 
-A never-written omitted sector ID reports Record Not Found. RW-flagged
-images matching the bounded P-DD5 profile can now create missing 1024-byte DD
+RW-flagged images matching the bounded P-DD5 profile can create missing 1024-byte DD
 sectors (IDs 0–4, 80 cylinders × 2 sides) when the complete track-side
-placement is schedulable. A write to an omitted ID commits that sector and
+placement is schedulable. On a writable native mount, a never-written omitted
+slot reads as a formatted 1024-byte zero sector with good CRC and appears in
+READ ID and READ ADDRESS scans. The zero fill is fixed across reloads and
+versions unless the format is explicitly migrated. Reading it creates no saved
+record. A write to
+an omitted ID commits that sector and
 its data together; it then appears in reads, address scans and native launch
 discovery, including after a process restart. Captures with omissions that
 cannot safely be created are protected up front with `layout-unsupported`.
 Irregular track-sides remain non-creating; the ADFS free-space map must prove
 that missing standard IDs there are outside allocatable space.
+The zero fill does not apply with Disk Writes Off, write protection, an
+unsupported layout, a damaged saved slot, or an ADFFS/install boot path.
+Out-of-profile and irregular-track targets retain Record Not Found behavior.
 
 A bad ID CRC reports a header CRC error. A bad data CRC, slow sector,
 duplicate ID, shared payload, or 82C711 size mismatch reports a data CRC

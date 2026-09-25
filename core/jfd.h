@@ -51,6 +51,7 @@ typedef struct ArcJfdOverlay {
    unsigned records;
    bool writable;
    bool visible;
+   bool virtual_reads;            /* Latched for this native mount. */
    bool damaged;
    bool failed;
    const char *reason;             /* Static diagnostic reason from preparation. */

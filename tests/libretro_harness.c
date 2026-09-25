@@ -1537,6 +1537,7 @@ int main(int argc, char **argv)
    bool newio_smoke = false;
    bool jfd_writes = false;
    bool jfd_create_step = false;
+   bool jfd_merge_step = false;
    char jfd_content_path[4096] = {0}, jfd_fixture_path[4096] = {0};
    const char *osk_script = NULL;
    if (argc == 11 && !strcmp(argv[5], "--newio-smoke"))
@@ -1545,6 +1546,8 @@ int main(int argc, char **argv)
       jfd_writes = true;
    else if (argc == 9 && !strcmp(argv[5], "--jfd-create-step"))
       jfd_create_step = true;
+   else if (argc == 9 && !strcmp(argv[5], "--jfd-merge-step"))
+      jfd_merge_step = true;
    else if (argc >= 6 && !strcmp(argv[5], "--real-boot"))
    {
       real_boot = true;
@@ -1674,6 +1677,10 @@ int main(int argc, char **argv)
    void (*arc_engine_test_set_vidc_noncompleting)(bool) = NULL;
    bool (*arc_engine_test_drive_media)(unsigned, bool *, char[41]) = NULL;
    bool (*arc_libretro_test_jfd_commit)(unsigned, size_t, uint8_t) = NULL;
+   bool (*arc_libretro_test_jfd_virtual_reads)(unsigned) = NULL;
+   bool (*arc_libretro_test_jfd_created_byte)(unsigned, unsigned,
+                                              unsigned, unsigned,
+                                              uint8_t *) = NULL;
    bool (*arc_engine_test_helper_media_valid)(ArcMediaKind,
                                                ArcMediaGeometry) = NULL;
    bool (*arc_engine_test_cmos_image)(uint8_t[ARC_CMOS_MACHINE_SIZE]) = NULL;
@@ -1724,7 +1731,7 @@ int main(int argc, char **argv)
    size_t (*arc_platform_test_input_events)(ArcKartEvent *, size_t) = NULL;
    if (real_boot || newio_smoke)
       *(void **)(&arc_engine_test_newio) = dlsym(module, "arc_engine_test_newio");
-   if (!real_boot && !newio_smoke && !jfd_writes && !jfd_create_step)
+   if (!real_boot && !newio_smoke && !jfd_writes && !jfd_create_step && !jfd_merge_step)
    {
       *(void **)(&arc_engine_audio_stats) = dlsym(module, "arc_engine_audio_stats");
       *(void **)(&arc_engine_media_insert) = dlsym(module, "arc_engine_media_insert");
@@ -1871,8 +1878,12 @@ int main(int argc, char **argv)
       assert(arc_libretro_test_register_input_profile(&test_profile));
       expect_test_profile = true;
    }
-   else if (jfd_writes || jfd_create_step)
+   else if (jfd_writes || jfd_create_step || jfd_merge_step)
    {
+      *(void **)(&arc_libretro_test_jfd_virtual_reads) =
+         dlsym(module, "arc_libretro_test_jfd_virtual_reads");
+      *(void **)(&arc_libretro_test_jfd_created_byte) =
+         dlsym(module, "arc_libretro_test_jfd_created_byte");
       *(void **)(&arc_libretro_test_jfd_commit) =
          dlsym(module, "arc_libretro_test_jfd_commit");
       *(void **)(&arc_engine_test_drive_media) =
@@ -1895,7 +1906,9 @@ int main(int argc, char **argv)
          dlsym(module, "arc_libretro_test_session_state");
       *(void **)(&arc_libretro_test_chooser_rows) =
          dlsym(module, "arc_libretro_test_chooser_rows");
-      assert(arc_libretro_test_jfd_commit && arc_engine_test_drive_media &&
+      assert(arc_libretro_test_jfd_virtual_reads &&
+             arc_libretro_test_jfd_created_byte &&
+             arc_libretro_test_jfd_commit && arc_engine_test_drive_media &&
              arc_libretro_test_adffs_accept_test_os &&
              arc_libretro_test_fail_adffs_content_read &&
              arc_libretro_test_adffs_content_read_failure_pending &&
@@ -1977,20 +1990,53 @@ int main(int argc, char **argv)
    struct retro_game_info game = {jfd_writes ? jfd_content_path : argv[3], NULL, 0u, NULL};
    uint64_t source_hash = hash_file(game.path);
 
-   if (jfd_create_step)
+   if (jfd_create_step || jfd_merge_step)
    {
       option_machine = argv[6];
       option_cpu = !strcmp(option_machine, "A3020") ? "ARM250" : "ARM2";
       option_launch = "off"; option_jfd_boot = "native";
-      option_writes = "shadow"; variable_update = true;
+      bool off_to_on = jfd_merge_step && !strcmp(argv[8], "off-to-on");
+      option_writes = off_to_on ? "off" : "shadow";
+      variable_update = true;
       uint32_t expected = (uint32_t)strtoul(argv[7], NULL, 16);
-      bool expect_slot = !strcmp(argv[8], "slot");
+      bool expect_slot = !strcmp(argv[8], "slot") || off_to_on;
       bool protected = true;
       phase = PHASE_LOAD; assert(retro_load_game(&game));
       assert(arc_engine_test_drive_media(0u, &protected, NULL) &&
-             protected == !expect_slot);
+             protected == (!expect_slot || off_to_on));
+      if (jfd_merge_step)
+         assert(arc_libretro_test_jfd_virtual_reads(0u) ==
+                (expect_slot && !off_to_on));
       phase = PHASE_RUN;
       unsigned steady = 0u;
+      if (off_to_on)
+      {
+         for (unsigned frame = 0u; frame < 800u && steady < 8u; ++frame)
+         {
+            retro_run();
+            steady = last_video_pixel == 0x00006a00u ? steady + 1u : 0u;
+         }
+         assert(steady == 8u && !arc_libretro_test_jfd_virtual_reads(0u));
+         ArcDigest off_digest = digest_file(game.path);
+         char off_a[4096], off_b[4096];
+         snprintf(off_a, sizeof(off_a), "%s/arcdroid/jfd/%s.a", save_path,
+                  off_digest.sha1);
+         snprintf(off_b, sizeof(off_b), "%s/arcdroid/jfd/%s.b", save_path,
+                  off_digest.sha1);
+         assert(!file_exists(off_a) && !file_exists(off_b));
+         option_writes = "shadow"; variable_update = true;
+         retro_reset();
+         assert(arc_libretro_test_jfd_virtual_reads(0u));
+         assert(arc_engine_test_drive_media(0u, &protected, NULL) &&
+                !protected);
+         for (unsigned offset = 0u; offset < 1024u; ++offset)
+         {
+            uint8_t byte = 0xffu;
+            assert(arc_libretro_test_jfd_created_byte(0u, 0u, 3u,
+                                                       offset, &byte) && !byte);
+         }
+         steady = 0u;
+      }
       for (unsigned frame = 0u; frame < 800u && steady < 8u; ++frame)
       {
          retro_run();
@@ -2000,15 +2046,25 @@ int main(int argc, char **argv)
          fprintf(stderr, "creation %s %s: got %08x expected %08x\n",
                  option_machine, argv[8], last_video_pixel, expected);
       assert(last_video_pixel == expected && steady == 8u);
+      if (jfd_merge_step && expect_slot)
+         for (unsigned offset = 0u; offset < 1024u; ++offset)
+         {
+            uint8_t byte = 0xffu;
+            assert(arc_libretro_test_jfd_created_byte(0u, 0u, 3u,
+                                                       offset, &byte) &&
+                   byte == (offset < 128u ? 0x5au : 0u));
+         }
       ArcDigest digest = digest_file(game.path);
       char a[4096], b[4096];
       snprintf(a, sizeof(a), "%s/arcdroid/jfd/%s.a", save_path, digest.sha1);
       snprintf(b, sizeof(b), "%s/arcdroid/jfd/%s.b", save_path, digest.sha1);
       assert((file_exists(a) || file_exists(b)) == expect_slot);
       if (expect_slot && expected == 0x006a0000u &&
-          !strcmp(option_machine, "A3000"))
+          (jfd_merge_step || !strcmp(option_machine, "A3000")))
       {
          retro_reset();
+         if (jfd_merge_step)
+            assert(arc_libretro_test_jfd_virtual_reads(0u));
          last_video_pixel = 0u;
          steady = 0u;
          for (unsigned frame = 0u; frame < 800u && steady < 8u; ++frame)
@@ -2019,7 +2075,11 @@ int main(int argc, char **argv)
          assert(steady == 8u);
          assert(disk_control.set_eject_state(true) &&
                 disk_control.set_eject_state(false));
+         if (jfd_merge_step)
+            assert(arc_libretro_test_jfd_virtual_reads(0u));
          retro_reset();
+         if (jfd_merge_step)
+            assert(arc_libretro_test_jfd_virtual_reads(0u));
          last_video_pixel = 0u;
          steady = 0u;
          for (unsigned frame = 0u; frame < 800u && steady < 8u; ++frame)
@@ -2031,7 +2091,8 @@ int main(int argc, char **argv)
       }
       if (!expect_slot)
       {
-         const char *why = strstr(game.path, "wp-create") ?
+         const char *why = (strstr(game.path, "wp-create") ||
+                            strstr(game.path, "wp-merge")) ?
                            "wp-flag" : "layout-unsupported";
          char expected_refusal[160];
          snprintf(expected_refusal, sizeof(expected_refusal),
@@ -2245,10 +2306,12 @@ int main(int argc, char **argv)
       phase = PHASE_LOAD; assert(retro_load_game(&adffs_game));
       assert(strstr(last_jfd_boot_log, "JFD boot: path=adffs") &&
              strstr(last_jfd_writes_log, "reason=not-native") &&
-             !fault_opendir_substring);
+             !fault_opendir_substring &&
+             !arc_libretro_test_jfd_virtual_reads(0u));
       retro_unload_game();
       option_jfd_boot = "native"; option_launch = "off"; variable_update = true;
       phase = PHASE_LOAD; assert(retro_load_game(&adffs_game));
+      assert(arc_libretro_test_jfd_virtual_reads(0u));
       phase = PHASE_RUN;
       for (unsigned frame = 0u; frame < 600u; ++frame) retro_run();
       assert(last_video_pixel == jfd_first &&
@@ -2293,6 +2356,7 @@ int main(int argc, char **argv)
       option_launch_chooser = "ask"; variable_update = true;
       phase = PHASE_LOAD; assert(retro_load_game(&install_playlist));
       assert(arc_libretro_test_session_state() == 2u);
+      assert(!arc_libretro_test_jfd_virtual_reads(0u));
       phase = PHASE_RUN; retro_run();
       keyboard.callback(true, RETROK_RETURN, 0u, 0u); retro_run();
       keyboard.callback(false, RETROK_RETURN, 0u, 0u); retro_run();

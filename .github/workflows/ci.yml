@@ -38,7 +38,7 @@ jobs:
         env:
           ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
           UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
-        run: ctest --test-dir build/sanitize --output-on-failure -R '^(zip-content|core-services|adffs-package-media|adffs-shipping-profile|jfd-engine-reader|jfd-store|jfd-controller-golden|newio-controller-golden|jfd-writes-libretro-harness|jfd-creation-process|libretro-harness|newio-libretro-harness|mouse-script-harness)$'
+        run: ctest --test-dir build/sanitize --output-on-failure -R '^(zip-content|core-services|adffs-package-media|adffs-shipping-profile|jfd-engine-reader|jfd-store|jfd-controller-golden|newio-controller-golden|jfd-writes-libretro-harness|jfd-creation-process|jfd-merge-process|jfd-gate-short|jfd-gate-irregular|jfd-gate-timing|libretro-harness|newio-libretro-harness|mouse-script-harness)$'
 
   windows:
     runs-on: windows-latest
@@ -72,6 +72,7 @@ jobs:
             build/windows/tests/fixtures/generated/arcdroid-media-test.rom \
             build/windows/tests/fixtures/generated/arcdroid-jfd-save-test.rom \
             build/windows/tests/fixtures/generated/arcdroid-jfd-create-test.rom \
+            build/windows/tests/fixtures/generated/arcdroid-jfd-merge-test.rom \
             build/windows/tests/fixtures/generated/arcdroid-media.m3u \
             build/windows/tests/fixtures/generated/arcdroid-media-disc1.adf \
             build/windows/tests/fixtures/generated/arcdroid-media-disc2.adf \

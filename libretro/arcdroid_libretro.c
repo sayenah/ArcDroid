@@ -316,6 +316,31 @@ bool arc_libretro_test_jfd_commit(unsigned image_index, size_t descriptor,
    free(bytes);
    return committed;
 }
+bool arc_libretro_test_jfd_virtual_reads(unsigned image_index)
+{
+   return image_index < arc_media_count &&
+      arc_media[image_index].info.kind == ARC_MEDIA_JFD &&
+      arc_media[image_index].jfd.overlay &&
+      arc_media[image_index].jfd.overlay->virtual_reads;
+}
+bool arc_libretro_test_jfd_created_byte(unsigned image_index,
+                                        unsigned track_side, unsigned id,
+                                        unsigned offset, uint8_t *value)
+{
+   if (!value || image_index >= arc_media_count ||
+       arc_media[image_index].info.kind != ARC_MEDIA_JFD ||
+       id >= ARC_JFD_PDD5_IDS || offset >= 1024u ||
+       track_side >= arc_media[image_index].jfd.track_count)
+      return false;
+   ArcJfdImage *image = &arc_media[image_index].jfd;
+   ArcJfdView view;
+   if (!arc_jfd_effective_sector(image, track_side,
+                                 image->tracks[track_side].sector_count + id,
+                                 false, &view) || !view.created || !view.data)
+      return false;
+   *value = view.data[offset];
+   return true;
+}
 const char *arc_libretro_test_staged_path(unsigned index)
 {
    return index < arc_media_count && arc_media[index].populated ?
@@ -2258,11 +2283,15 @@ static bool arc_refresh_jfd(ArcMediaEntry *entry, ArcDiskWriteMode mode,
    return true;
 }
 
-static void arc_log_jfd_writes(const ArcMediaEntry *entry, bool native)
+static void arc_finish_jfd_preparation(ArcMediaEntry *entry, bool native)
 {
-   if (!entry || entry->info.kind != ARC_MEDIA_JFD || !arc_log) return;
+   if (!entry || entry->info.kind != ARC_MEDIA_JFD) return;
    unsigned image_number = (unsigned)(entry - arc_media) + 1u;
-   const ArcJfdOverlay *overlay = entry->jfd.overlay;
+   ArcJfdOverlay *overlay = entry->jfd.overlay;
+   /* C-11b's read view is a native-mount decision, not the mutable ability
+    * to commit. A C-4 failure clears writable but retains this latch. */
+   if (overlay) overlay->virtual_reads = native && overlay->writable;
+   if (!arc_log) return;
    arc_log(RETRO_LOG_INFO,
       "JFD writes: image=%u state=%s reason=%s generation=%llu records=%u\n",
       image_number,
@@ -3485,7 +3514,7 @@ static bool arc_disk_set_eject(bool ejected)
          arc_message(error[0] ? error : "Unable to insert the selected floppy image.", RETRO_LOG_ERROR);
          return false;
       }
-      arc_log_jfd_writes(entry, true);
+      arc_finish_jfd_preparation(entry, true);
    }
    arc_ejected = false;
    return true;
@@ -4761,6 +4790,7 @@ static bool arc_chooser_confirm(void)
       arc_install_requested_binding[0] = '\0';
       if (!built) {
          arc_install_choice_discard();
+         arc_finish_jfd_preparation(&arc_media[arc_image_index], true);
          if (arc_prepare_launch(&arc_media[arc_image_index], false,
                                 arc_core_options.launch, false)) {
             arc_chooser_reset_input();
@@ -5155,7 +5185,7 @@ static bool arc_load_game(const struct retro_game_info *game, bool negotiate)
          arc_release_session();
          return false;
       }
-      arc_log_jfd_writes(&arc_media[arc_image_index], !adffs && !arc_install_choosing);
+      arc_finish_jfd_preparation(&arc_media[arc_image_index], !adffs && !arc_install_choosing);
       bool choosing = arc_install_choosing || (!adffs && arc_prepare_launch(&arc_media[arc_image_index], false,
                                                    arc_core_options.launch, false));
       if (choosing)
@@ -5347,7 +5377,7 @@ RETRO_API void retro_reset(void)
       goto failed;
    }
    if (selected < arc_media_count && !was_ejected)
-      arc_log_jfd_writes(&arc_media[selected], !adffs && !arc_install_choosing);
+      arc_finish_jfd_preparation(&arc_media[selected], !adffs && !arc_install_choosing);
    ArcEngineMedia mounted;
    ArcEngineMedia *mounted_pointer = NULL;
    if (!was_ejected && selected < arc_media_count && arc_media[selected].populated)

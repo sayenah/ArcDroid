@@ -8,6 +8,10 @@
 #define REVOLUTION_US 200000u
 #define PDD5_ALL 0x1fu
 
+/* D-077: a scheduled but uncommitted formatted sector has immutable zeros.
+ * No overlay record is allocated until a successful guest write. */
+static const uint8_t formatted_blank[1024] = {0};
+
 /* A sector occupies its complete DD transfer interval. Test the periodic
  * copies on either side of the candidate so index-wrap overlaps count. */
 static bool overlap(uint64_t a, uint64_t b)
@@ -204,6 +208,7 @@ bool arc_jfd_effective_sector(const ArcJfdImage *image, unsigned track_side,
        !overlay || !(overlay->creation_mask[track_side] & (1u << id)))
       return false;
    const uint8_t *data = overlay->visible ? overlay->created[track_side][id] : NULL;
+   if (!data && overlay->virtual_reads) data = formatted_blank;
    if (!data && !(prospective && overlay->writable)) return false;
    view->sector.time_us = overlay->creation_time[track_side][id];
    view->sector.data_offset = UINT32_MAX;

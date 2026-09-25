@@ -600,6 +600,10 @@ int main(int argc, char **argv)
           outside.overlay->data[0][0] == 0x59u &&
           outside.overlay->created[2][1][0] == 0x59u &&
           !outside.overlay->created[159][0]);
+   outside.overlay->virtual_reads = true;
+   ArcJfdView irregular_view;
+   assert(!arc_jfd_effective_sector(&outside, 159u,
+          outside.tracks[159].sector_count, false, &irregular_view));
    arc_jfd_free(&outside);
    clear_files();
    ArcJfdImage launch_full = creation_fixture(argv[1], "launch-full.jfd");
@@ -633,10 +637,22 @@ int main(int argc, char **argv)
    const char *creation_reason = NULL;
    assert(arc_jfd_store_load(&created, "save", true, false, 1u,
                              &creation_reason));
+   ArcJfdView view;
+   uint64_t blank_generation = created.overlay->generation;
+   assert(!created.overlay->virtual_reads &&
+          !arc_jfd_effective_sector(&created, 1u, 4u, false, &view));
+   created.overlay->virtual_reads = true; /* successful native preparation */
+   assert(!arc_jfd_effective_sector(&created, 1u,
+          created.tracks[1].sector_count + 7u, false, &view));
+   assert(arc_jfd_effective_sector(&created, 1u, 4u, false, &view) &&
+          view.created && view.sector.id == 1u && view.sector.size == 1024u &&
+          view.sector.flags == 0u && view.data);
+   for (unsigned i = 0u; i < 1024u; ++i) assert(view.data[i] == 0u);
+   assert(created.overlay->generation == blank_generation &&
+          created.overlay->records == 0u);
    ArcDigest identity_before = arc_digest(created.decoded, created.decoded_size);
    uint8_t pattern[1024]; memset(pattern, 0x6au, sizeof(pattern));
    assert(created.overlay->commit_created(&created, 1u, 3u, pattern));
-   ArcJfdView view;
    assert(arc_jfd_effective_sector(&created, 1u, 6u, false, &view) &&
           view.created && view.sector.id == 3u && view.data[0] == 0x6au);
    memset(pattern, 0x15u, sizeof(pattern));
@@ -654,6 +670,21 @@ int main(int argc, char **argv)
                              &creation_reason) &&
           created.overlay->created[1][1][0] == 0x15u &&
           created.overlay->created[1][3][0] == 0x6au);
+   assert(!created.overlay->virtual_reads &&
+          !arc_jfd_effective_sector(&created, 1u, 3u, false, &view));
+   created.overlay->virtual_reads = true;
+   assert(arc_jfd_effective_sector(&created, 1u, 4u, false, &view) &&
+          view.data[0] == 0x15u &&
+          arc_jfd_effective_sector(&created, 1u, 6u, false, &view) &&
+          view.data[0] == 0x6au);
+   arc_jfd_free(&created);
+   created = creation_fixture(argv[1], "partial-untimed.jfd");
+   assert(arc_jfd_store_load(&created, "save", false, false, 1u,
+                             &creation_reason) &&
+          !created.overlay->writable && !created.overlay->visible &&
+          !created.overlay->virtual_reads &&
+          !arc_jfd_effective_sector(&created, 1u, 3u, false, &view) &&
+          !arc_jfd_effective_sector(&created, 1u, 4u, false, &view));
    arc_jfd_free(&created);
    clear_files();
    created = creation_fixture(argv[1], "partial-untimed.jfd");
@@ -695,9 +726,13 @@ int main(int argc, char **argv)
    memcpy(files[0].bytes, created_baseline, created_size);
    free(created_baseline);
    fault = RENAME_FAULT;
+   created.overlay->virtual_reads = true;
    assert(!created.overlay->commit_created(&created, 1u, 1u, pattern) &&
           created.overlay->generation == 2u &&
-          created.overlay->created[1][1][0] == 0x15u);
+          created.overlay->created[1][1][0] == 0x15u &&
+          created.overlay->virtual_reads &&
+          arc_jfd_effective_sector(&created, 1u, 4u, false, &view) &&
+          view.data[0] == 0x15u);
    arc_jfd_free(&created);
    created = creation_fixture(argv[1], "partial-untimed.jfd");
    assert(arc_jfd_store_load(&created, "save", true, false, 1u,
@@ -710,7 +745,9 @@ int main(int argc, char **argv)
    files[0].bytes[82u] = 2u; fix_checksum(&files[0]);
    created = creation_fixture(argv[1], "partial-untimed.jfd");
    assert(arc_jfd_store_load(&created, "save", true, false, 1u,
-                             &creation_reason) && created.overlay->damaged);
+                             &creation_reason) && created.overlay->damaged &&
+          !created.overlay->virtual_reads &&
+          !arc_jfd_effective_sector(&created, 1u, 3u, false, &view));
    arc_jfd_free(&created);
    files[0].bytes[82u] = saved_kind; fix_checksum(&files[0]);
    files[0].bytes[4u] = 1u; fix_checksum(&files[0]);
@@ -725,10 +762,13 @@ int main(int argc, char **argv)
    created = creation_fixture(argv[1], "partial-untimed.jfd");
    assert(arc_jfd_store_load(&created, "save", true, false, 1u,
                              &creation_reason));
+   created.overlay->virtual_reads = true;
    fault = RENAME_FAULT;
    assert(!created.overlay->commit_created(&created, 1u, 1u, pattern) &&
           !created.overlay->created[1][1] && !files[0].exists &&
-          !files[1].exists);
+          !files[1].exists && created.overlay->virtual_reads &&
+          arc_jfd_effective_sector(&created, 1u, 4u, false, &view) &&
+          view.data[0] == 0u && created.overlay->generation == 0u);
    arc_jfd_free(&created);
    clear_files();
    created = creation_fixture(argv[1], "partial-untimed.jfd");

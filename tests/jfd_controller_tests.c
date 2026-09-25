@@ -69,7 +69,12 @@ static bool test_jfd_commit_created(ArcJfdImage *image, unsigned track_side,
 {
    assert(image->overlay && track_side < ARC_JFD_PDD5_TRACKS &&
           id < ARC_JFD_PDD5_IDS);
-   if (jfd_fail_commit) return false;
+   if (jfd_fail_commit)
+   {
+      image->overlay->writable = false;
+      image->overlay->failed = true;
+      return false;
+   }
    uint8_t *copy = malloc(1024u); assert(copy);
    memcpy(copy, data, 1024u);
    free(image->overlay->created[track_side][id]);
@@ -1244,6 +1249,214 @@ static void test_newio_creation(const char *root)
    }
 }
 
+/* The formatted view is visible to both address commands before any write.
+ * Capture order and phase are the same deterministic P-DD5 schedule that
+ * prospective writes use; an address scan must not allocate a record. */
+static void assert_virtual_address_sequence(const uint8_t ids[5],
+                                            const uint64_t times[5])
+{
+   static const uint8_t order[5] = {0u, 2u, 4u, 1u, 3u};
+   bool seen[5] = {false};
+   for (unsigned i = 0u; i < 5u; ++i)
+   {
+      assert(ids[i] < 5u && !seen[ids[i]]);
+      seen[ids[i]] = true;
+      if (!i) continue;
+      unsigned previous = 0u;
+      while (order[previous] != ids[i - 1u]) ++previous;
+      assert(ids[i] == order[(previous + 1u) % 5u]);
+      uint64_t elapsed = (times[i] - times[i - 1u]) / TIMER_USEC;
+      uint64_t expected = ids[i] ? ARC_JFD_PDD5_SPACING_US :
+                          200000u - 4u * ARC_JFD_PDD5_SPACING_US;
+      assert(elapsed + 1500u >= expected && elapsed <= expected + 1500u);
+   }
+}
+
+static uint16_t address_crc(const uint8_t address[4])
+{
+   uint16_t crc = UINT16_C(0xcdb4);
+   for (unsigned i = 0u; i < 5u; ++i)
+   {
+      crc ^= (uint16_t)(i ? address[i - 1u] : 0xfeu) << 8u;
+      for (unsigned bit = 0u; bit < 8u; ++bit)
+         crc = (uint16_t)((crc << 1u) ^
+                          (crc & 0x8000u ? 0x1021u : 0u));
+   }
+   return crc;
+}
+
+static void test_wd_virtual(const char *root)
+{
+   ArcJfdImage image = load_creation_image(root, "partial-untimed.jfd");
+   make_jfd_creation_writable(&image);
+   image.overlay->virtual_reads = true;
+   jfd_commits = 0u;
+   controller_reset(&image);
+   wd1770_writelatch_a(0x8eu);
+   uint8_t ids[5]; uint64_t times[5];
+   for (unsigned i = 0u; i < 5u; ++i)
+   {
+      transfer_count = 0u; ioc.fiq = 0u;
+      wd1770_write(0x00u, 0xc0u);
+      uint64_t limit = tsc + (uint64_t)300000u * TIMER_USEC;
+      while (!(ioc.fiq & IOC_FIQ_DISC_IRQ) && tsc < limit) step_controller();
+      assert(ioc.fiq & IOC_FIQ_DISC_IRQ);
+      times[i] = tsc; ids[i] = transfer[2];
+      assert(wd1770_read(0x00u) == 0x80u && transfer_count == 6u &&
+             transfer[0] == 0u && transfer[1] == 1u && transfer[3] == 3u);
+      uint16_t crc = address_crc(transfer);
+      assert(transfer[4] == (uint8_t)(crc >> 8u) &&
+             transfer[5] == (uint8_t)crc);
+   }
+   assert_virtual_address_sequence(ids, times);
+   for (unsigned id = 1u; id <= 3u; id += 2u)
+   {
+      wd1770_write(0x08u, (uint8_t)id);
+      assert(finish_command(0x80u, 1100000u) == 0x80u &&
+             transfer_count == 1024u);
+      for (unsigned byte = 0u; byte < 1024u; ++byte)
+         assert(transfer[byte] == 0u);
+      assert(!image.overlay->created[1][id] && jfd_commits == 0u);
+   }
+   wd1770_writelatch_b(0x02u);
+   wd1770_write(0x08u, 1u);
+   assert(finish_command(0x80u, 1100000u) == 0x10u && !transfer_count);
+   wd1770_writelatch_b(0x00u);
+   image.overlay->virtual_reads = false;
+   assert(finish_command(0x80u, 1100000u) == 0x10u && !transfer_count);
+   image.overlay->virtual_reads = true;
+   wd1770_write(0x08u, 3u);
+   wd_write_mode = true; wd_write_value = 0x5au;
+   transfer_count = 0u; ioc.fiq = 0u;
+   wd1770_write(0x00u, 0xa0u);
+   uint64_t limit = tsc + (uint64_t)1100000u * TIMER_USEC;
+   while (transfer_count < 32u && tsc < limit) step_controller();
+   assert(transfer_count == 32u);
+   wd1770_write(0x00u, 0xd0u);
+   wd_write_mode = false;
+   assert(!image.overlay->created[1][3] && jfd_commits == 0u);
+   assert(finish_command(0x80u, 1100000u) == 0x80u &&
+          transfer_count == 1024u);
+   for (unsigned byte = 0u; byte < 1024u; ++byte)
+      assert(transfer[byte] == 0u);
+   wd_write_mode = jfd_fail_commit = true;
+   assert(finish_command(0xa0u, 1100000u) == 0x40u &&
+          image.overlay->failed && !image.overlay->writable &&
+          image.overlay->virtual_reads && !image.overlay->created[1][3]);
+   wd_write_mode = jfd_fail_commit = false;
+   assert(finish_command(0x80u, 1100000u) == 0x80u &&
+          transfer_count == 1024u);
+   for (unsigned byte = 0u; byte < 1024u; ++byte)
+      assert(transfer[byte] == 0u);
+   disc_close(0); arc_jfd_free(&image);
+   image = load_creation_image(root, "nonmatching.jfd");
+   make_jfd_writable(&image);
+   image.overlay->eligible = calloc(image.sector_count, 1u);
+   assert(image.overlay->eligible &&
+          !arc_jfd_plan_creation(&image, image.overlay));
+   image.overlay->writable = false;
+   controller_reset(&image);
+   fdc_funcs_t observed;
+   observe_indexes(&observed);
+   wd1770_write(0x08u, 3u);
+   transfer_count = 0u; ioc.fiq = 0u;
+   wd1770_write(0x00u, 0x80u);
+   limit = tsc + (uint64_t)1100000u * TIMER_USEC;
+   while (!(ioc.fiq & IOC_FIQ_DISC_IRQ) && tsc < limit) step_controller();
+   assert((ioc.fiq & IOC_FIQ_DISC_IRQ) && wd1770_read(0x00u) == 0x10u &&
+          observed_index_pulses == 5u && !transfer_count);
+   fdc_funcs = original_controller_funcs;
+   disc_close(0); arc_jfd_free(&image);
+}
+
+static void test_newio_virtual(const char *root)
+{
+   ArcJfdImage image = load_creation_image(root, "partial-untimed.jfd");
+   make_jfd_creation_writable(&image);
+   image.overlay->virtual_reads = true;
+   jfd_commits = 0u;
+   newio_reset(&image, false);
+   uint8_t ids[5], result[7]; uint64_t times[5];
+   newio_service_dma = newio_dma_write = false;
+   for (unsigned i = 0u; i < 5u; ++i)
+   {
+      newio_start_id(1u); newio_wait_irq(300000u);
+      times[i] = tsc; newio_result(result);
+      ids[i] = result[5];
+      assert(!(result[0] & 0xc0u) && result[3] == 0u &&
+             result[4] == 1u && result[6] == 3u);
+   }
+   assert_virtual_address_sequence(ids, times);
+   newio_service_dma = true; newio_dma_write = false;
+   newio_transfer_limit = 1024u;
+   for (unsigned id = 1u; id <= 3u; id += 2u)
+   {
+      transfer_count = 0u;
+      newio_creation_command(0x06u, 1u, 0u, 1u, (uint8_t)id, 3u);
+      newio_wait_irq(1100000u); newio_result(result);
+      assert(!(result[0] & 0xc0u) && transfer_count == 1024u);
+      for (unsigned byte = 0u; byte < 1024u; ++byte)
+         assert(transfer[byte] == 0u);
+      assert(!image.overlay->created[1][id] && jfd_commits == 0u);
+   }
+   newio_service_dma = false;
+   c82c711_fdc_write(7u, 0u, NULL);
+   newio_creation_command(0x06u, 1u, 0u, 1u, 1u, 3u);
+   newio_wait_irq(500000u); newio_result(result);
+   assert(result[0] == 0x44u && result[1] == 0x05u);
+   c82c711_fdc_write(7u, 1u, NULL);
+   image.overlay->virtual_reads = false;
+   newio_creation_command(0x06u, 1u, 0u, 1u, 1u, 3u);
+   newio_wait_irq(500000u); newio_result(result);
+   assert(result[0] == 0x44u && result[1] == 0x05u);
+   image.overlay->virtual_reads = true;
+   newio_service_dma = newio_dma_write = true;
+   newio_transfer_limit = 128u; transfer_count = 0u;
+   newio_creation_command(0x05u, 1u, 0u, 1u, 3u, 3u);
+   newio_wait_irq(1100000u); newio_result(result);
+   assert((result[0] & 0x40u) && transfer_count == 128u &&
+          !image.overlay->created[1][3]);
+   c82c711_fdc_shutdown(); c82c711_fdc_init();
+   c82c711_fdc_write(2u, 0x1cu, NULL);
+   c82c711_fdc_write(7u, 1u, NULL);
+   newio_transfer_limit = 1024u; transfer_count = 0u;
+   jfd_fail_commit = true;
+   newio_creation_command(0x05u, 1u, 0u, 1u, 3u, 3u);
+   newio_wait_irq(1100000u); newio_result(result);
+   assert((result[0] & 0x40u) && !image.overlay->created[1][3] &&
+          image.overlay->failed && !image.overlay->writable &&
+          image.overlay->virtual_reads);
+   jfd_fail_commit = false;
+   c82c711_fdc_shutdown(); c82c711_fdc_init();
+   c82c711_fdc_write(2u, 0x1cu, NULL);
+   c82c711_fdc_write(7u, 1u, NULL);
+   newio_service_dma = true; newio_dma_write = false;
+   newio_transfer_limit = 1024u; transfer_count = 0u;
+   newio_creation_command(0x06u, 1u, 0u, 1u, 3u, 3u);
+   newio_wait_irq(1100000u); newio_result(result);
+   assert(!(result[0] & 0xc0u) && transfer_count == 1024u);
+   for (unsigned byte = 0u; byte < 1024u; ++byte)
+      assert(transfer[byte] == 0u);
+   c82c711_fdc_shutdown(); disc_close(0); arc_jfd_free(&image);
+   image = load_creation_image(root, "nonmatching.jfd");
+   make_jfd_writable(&image);
+   image.overlay->eligible = calloc(image.sector_count, 1u);
+   assert(image.overlay->eligible &&
+          !arc_jfd_plan_creation(&image, image.overlay));
+   image.overlay->writable = false;
+   newio_reset(&image, false);
+   fdc_funcs_t observed;
+   observe_indexes(&observed);
+   newio_service_dma = false;
+   transfer_count = 0u;
+   newio_creation_command(0x06u, 0u, 0u, 0u, 3u, 3u);
+   newio_wait_irq(500000u); newio_result(result);
+   assert(result[0] == 0x40u && result[1] == 0x05u &&
+          observed_index_pulses == 2u && !transfer_count);
+   fdc_funcs = original_controller_funcs;
+   c82c711_fdc_shutdown(); disc_close(0); arc_jfd_free(&image);
+}
+
 
 static void newio_wait_irq(unsigned limit_us)
 {
@@ -1829,6 +2042,7 @@ int main(int argc, char **argv)
       test_drive_one_helper(argv[1]);
       test_wd_jfd_write(argv[1]);
       test_wd_creation(argv[1]);
+      test_wd_virtual(argv[1]);
    }
    if (run_82c711)
    {
@@ -1842,6 +2056,7 @@ int main(int argc, char **argv)
       test_raw_index_cadence();
       test_newio_jfd_write(argv[1]);
       test_newio_creation(argv[1]);
+      test_newio_virtual(argv[1]);
       test_newio_adf_early_tc();
    }
    puts("jfd_controller_tests: all checks passed");

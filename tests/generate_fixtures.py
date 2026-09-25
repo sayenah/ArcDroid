@@ -129,8 +129,8 @@ class Arm2:
             rd = (self.words[index] >> 12) & 0xF
             self.words[index] = 0xE59F0000 | (rd << 12) | offset
             self.words.append(value)
-        if len(self.words) * 4 >= 4096:
-            raise ValueError("validation program exceeds its reserved page")
+        if len(self.words) * 4 >= 0x1EE0:
+            raise ValueError("validation program exceeds its reserved ROM area")
         return b"".join(struct.pack("<I", word) for word in self.words)
 
 
@@ -158,10 +158,13 @@ def build_rom(media_exerciser: bool = False,
               jfd_save_probe: bool = False, newio_save_probe: bool = False,
               write_sector: int = 1,
               write_payload: bytes | None = None,
-              creation_probe: bool = False) -> bytearray:
+              creation_probe: bool = False,
+              virtual_merge_probe: bool = False) -> bytearray:
     if not 0 <= write_sector <= 4 or (write_payload is not None and
                                       len(write_payload) != 1024):
         raise ValueError("the synthetic D-format writer needs one full sector")
+    if virtual_merge_probe and not (jfd_save_probe and creation_probe):
+        raise ValueError("the virtual merge needs the JFD creation probe")
     rom = bytearray(b"\xFF" * ROM_SIZE)
     rom[0:4] = struct.pack("<I", 0xE59FF000)  # ldr pc, [pc]
     rom[8:12] = struct.pack("<I", 0x03800020)
@@ -265,6 +268,8 @@ def build_rom(media_exerciser: bool = False,
         a.ldr_const(5, 1024)
         a.ldr_const(8, 250000)
         a.mov(6, 0)
+        if virtual_merge_probe:
+            a.ldr_const(10, 0x00012000)
         a.label("save_new_read_wait")
         a.ldr(7, 2, byte=True)
         a.tst_imm(7, 1); a.branch("save_new_read_byte", "ne")
@@ -278,11 +283,15 @@ def build_rom(media_exerciser: bool = False,
         a.subs_imm(5, 5, 1)
         a.branch("save_new_read_last", "eq")
         a.ldr(7, 3, byte=True)
+        if virtual_merge_probe:
+            a.str_post(7, 10, 1, byte=True)
         a.add_lsl(6, 6, 6, 5); a.eor(6, 6, 7)
         a.branch("save_new_read_wait")
         a.label("save_new_read_last")
         a.ldr_const(3, 0x0302A000)
         a.ldr(7, 3, byte=True)
+        if virtual_merge_probe:
+            a.str_post(7, 10, 1, byte=True)
         a.add_lsl(6, 6, 6, 5); a.eor(6, 6, 7)
         a.ldr_const(2, 0x03200020)
         a.label("save_new_read_irq")
@@ -292,9 +301,11 @@ def build_rom(media_exerciser: bool = False,
         a.ldr(4, 0, byte=True)
         for _ in range(6): a.ldr(7, 0, byte=True)
         a.tst_imm(4, 0xC0); a.branch("save_new_other", "ne")
-        a.ldr_const(7, 0xEEFAB800); a.cmp_reg(6, 7)
+        a.ldr_const(7, 0 if creation_probe else 0xEEFAB800)
+        a.cmp_reg(6, 7)
         a.branch("save_new_pristine", "eq")
-        a.ldr_const(7, 0x26568000); a.cmp_reg(6, 7)
+        a.ldr_const(7, 0x6A4AD000 if virtual_merge_probe else 0x26568000)
+        a.cmp_reg(6, 7)
         a.branch("save_new_written", "eq")
         a.branch("save_new_other")
         a.label("save_new_pristine")
@@ -321,6 +332,14 @@ def build_rom(media_exerciser: bool = False,
             a.label("save_new_creation_wp")
             a.mov(6, 0x40); a.branch("fdc_done")
             a.label("save_new_creation_prefix")
+            if virtual_merge_probe:
+                a.ldr_const(10, 0x00012000)
+                a.mov(11, 128)
+                a.mov(7, 0x5A)
+                a.label("save_new_merge_update")
+                a.str_post(7, 10, 1, byte=True)
+                a.subs_imm(11, 11, 1)
+                a.branch("save_new_merge_update", "ne")
             # RISC OS allocation ordering: map, directory, then omitted data.
             # Prefix sectors already exist; only the final data ID is created.
             for prefix_sector in (0, 2):
@@ -370,7 +389,10 @@ def build_rom(media_exerciser: bool = False,
         a.ldr_const(3, 0x03012000)
         a.ldr_const(5, 1024)
         a.ldr_const(8, 250000)
-        a.mov(7, 0x5A)
+        if virtual_merge_probe:
+            a.ldr_const(10, 0x00012000)
+        else:
+            a.mov(7, 0x5A)
         a.label("save_new_write_wait")
         a.ldr(4, 2, byte=True)
         a.tst_imm(4, 1); a.branch("save_new_write_byte", "ne")
@@ -381,6 +403,8 @@ def build_rom(media_exerciser: bool = False,
         a.branch("save_new_other")
         a.label("save_new_write_byte")
         a.ldr_const(8, 250000)
+        if virtual_merge_probe:
+            a.ldr_post(7, 10, 1, byte=True)
         a.subs_imm(5, 5, 1)
         a.branch("save_new_write_last", "eq")
         a.str(7, 3, byte=True)
@@ -464,6 +488,8 @@ def build_rom(media_exerciser: bool = False,
     a.mov(6, 0)
     if jfd_save_probe:
         a.ldr_const(3, 250000)
+    if virtual_merge_probe:
+        a.ldr_const(10, 0x00012000)
     a.label("fdc_wait")
     a.ldr(7, 0, byte=True)
     a.tst_imm(7, 2)
@@ -484,6 +510,8 @@ def build_rom(media_exerciser: bool = False,
     else:
         a.branch("fdc_wait", "eq")
     a.ldr(7, 0, 12, byte=True)
+    if virtual_merge_probe:
+        a.str_post(7, 10, 1, byte=True)
     if jfd_save_probe:
         a.add_lsl(6, 6, 6, 5)
     a.eor(6, 6, 7)
@@ -506,16 +534,16 @@ def build_rom(media_exerciser: bool = False,
         a.branch("fdc_read_finish", "ne")
     if jfd_save_probe:
         # Classify the full sector *before* writing. The two constants are
-        # the rolling hashes of the generated pristine sector and 1024 bytes
-        # of 0x5A; an unknown read or controller error is never
+        # the rolling hashes of the generated pristine sector (or formatted
+        # zero fill for an omitted slot) and 1024 bytes of 0x5A; an unknown read or controller error is never
         # allowed to masquerade as a successful save.
         # WD1770 leaves bit 7 (ready) set on a successful completed command.
         a.cmp_imm(4, 0x80)
         a.branch("save_unknown", "ne")
-        a.ldr_const(7, 0xEEFAB800)
+        a.ldr_const(7, 0 if creation_probe else 0xEEFAB800)
         a.cmp_reg(6, 7)
         a.branch("save_pristine", "eq")
-        a.ldr_const(7, 0x26568000)
+        a.ldr_const(7, 0x6A4AD000 if virtual_merge_probe else 0x26568000)
         a.cmp_reg(6, 7)
         a.branch("save_written", "eq")
         a.branch("save_unknown")
@@ -538,6 +566,14 @@ def build_rom(media_exerciser: bool = False,
             a.label("save_creation_saved")
             a.mov(6, 0x20); a.branch("fdc_done")
             a.label("save_creation_prefix")
+            if virtual_merge_probe:
+                a.ldr_const(10, 0x00012000)
+                a.mov(11, 128)
+                a.mov(7, 0x5A)
+                a.label("save_merge_update")
+                a.str_post(7, 10, 1, byte=True)
+                a.subs_imm(11, 11, 1)
+                a.branch("save_merge_update", "ne")
             # Map and directory writes precede allocation into missing ID 3.
             for prefix_sector in (0, 2):
                 tag = f"save_create_{prefix_sector}"
@@ -573,7 +609,9 @@ def build_rom(media_exerciser: bool = False,
     a.mov(1, 0xA0)
     a.str(1, 0, byte=True)
     a.ldr_const(5, 1024)
-    if write_payload is None:
+    if virtual_merge_probe:
+        a.ldr_const(10, 0x00012000)
+    elif write_payload is None:
         a.mov(7, 0x5A)
     else:
         a.ldr_const(2, 0x03802000)
@@ -585,7 +623,9 @@ def build_rom(media_exerciser: bool = False,
         a.branch("fdc_write_done", "eq")
         a.tst_imm(4, 2)
         a.branch("fdc_write_tick", "eq")
-        if write_payload is not None:
+        if virtual_merge_probe:
+            a.ldr_post(7, 10, 1, byte=True)
+        elif write_payload is not None:
             a.ldr_post(7, 2, 1, byte=True)
         a.str(7, 0, 12, byte=True)
         a.subs_imm(5, 5, 1)
@@ -603,7 +643,9 @@ def build_rom(media_exerciser: bool = False,
         a.ldr(4, 0, byte=True)
         a.tst_imm(4, 2)
         a.branch("fdc_write_wait", "eq")
-        if write_payload is not None:
+        if virtual_merge_probe:
+            a.ldr_post(7, 10, 1, byte=True)
+        elif write_payload is not None:
             a.ldr_post(7, 2, 1, byte=True)
         a.str(7, 0, 12, byte=True)
         a.subs_imm(5, 5, 1)
@@ -2812,6 +2854,13 @@ def main() -> None:
     (args.output / "arcdroid-jfd-newio-create-test.rom").write_bytes(
         build_rom(media_exerciser=True, jfd_save_probe=True,
                   newio_save_probe=True, creation_probe=True))
+    (args.output / "arcdroid-jfd-merge-test.rom").write_bytes(
+        build_rom(media_exerciser=True, jfd_save_probe=True,
+                  write_sector=3, creation_probe=True, virtual_merge_probe=True))
+    (args.output / "arcdroid-jfd-newio-merge-test.rom").write_bytes(
+        build_rom(media_exerciser=True, jfd_save_probe=True,
+                  newio_save_probe=True, creation_probe=True,
+                  virtual_merge_probe=True))
     (args.output / "arcdroid-media-disc1.adf").write_bytes(disc1)
     (args.output / "arcdroid-media-disc2.adf").write_bytes(disc2)
     (args.output / "arcdroid-media.m3u").write_text(
@@ -2865,6 +2914,13 @@ def main() -> None:
     create_wp = bytearray(create)
     struct.pack_into("<I", create_wp, 304, 3)
     (writes / "wp-create-d.jfd").write_bytes(create_wp)
+    merge = build_pdd5_jfd(bytes(disc1),
+        {0: [0, 2, 4], 1: list(range(5))},
+        title=b"ArcDroid virtual-sector merge probe")
+    (writes / "rw-merge-d.jfd").write_bytes(merge)
+    merge_wp = bytearray(merge)
+    struct.pack_into("<I", merge_wp, 304, 3)
+    (writes / "wp-merge-d.jfd").write_bytes(merge_wp)
     newio_protected = bytearray(newio_writable)
     struct.pack_into("<I", newio_protected, 304, 3)
     (writes / "wp-newio-d.jfd").write_bytes(newio_protected)
