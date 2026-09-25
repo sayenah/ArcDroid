@@ -1031,13 +1031,10 @@ if ((Get-FileHash -Algorithm SHA256 $createRw).Hash -ne $createRwHash -or
     throw "Omitted-sector source JFD changed"
 }
 Write-Host "Slice 10a Windows RetroArch: map/directory/data creation survived fresh process; WP and sources unchanged"
-# D-077: the ROM poisons its merge buffer with A5 before reading. A missing
-# DRQ or RNF reports "other"; any byte outside the two checked patterns does
-# too. The fresh virtual sector must be all zero before the first write. The
-# first result requires 1024 read zero bytes, then writes 5A into the first
-# 128 bytes. The fresh process verifies all 1024 bytes (5A then zero) in the
-# guest before reporting the saved outcome, without writing again.
-Copy-Item -Force (Join-Path $InputDirectory "arcdroid-jfd-merge-test.rom") $firmware
+# D-078: an omitted slot is RNF before a save, then the armed ROM commits the
+# map sector before reading 1024 zeros and merging 128 bytes of 5A. The ROM
+# poisons RAM with A5 first and checks every read byte. Fresh-process ROMs
+# read the saved data and an unwritten omission before any further write.
 $mergeRw = (Resolve-Path (Join-Path $InputDirectory "jfd-writes/rw-merge-d.jfd")).Path
 $mergeWp = (Resolve-Path (Join-Path $InputDirectory "jfd-writes/wp-merge-d.jfd")).Path
 $mergeRwHash = (Get-FileHash -Algorithm SHA256 $mergeRw).Hash
@@ -1046,8 +1043,18 @@ $mergeRwDigest = (Get-FileHash -Algorithm SHA1 $mergeRw).Hash.ToLowerInvariant()
 $mergeWpDigest = (Get-FileHash -Algorithm SHA1 $mergeWp).Hash.ToLowerInvariant()
 if ((Test-Path (Join-Path $jfdSaveDirectory "$mergeRwDigest.a")) -or
     (Test-Path (Join-Path $jfdSaveDirectory "$mergeRwDigest.b"))) {
-    throw "Virtual merge slot existed before the read-before-write test"
+    throw "Virtual merge slot existed before the write-armed test"
 }
+Copy-Item -Force (Join-Path $InputDirectory "arcdroid-jfd-merge-missing-test.rom") $firmware
+$mergeBefore = Start-MediaRun $mergeRw "jfd-merge-before-save"
+try {
+    [void](Wait-JfdOutcome $mergeBefore "jfd-merge-before-save-rnf" "ff00006a")
+} finally { Stop-MediaRun $mergeBefore }
+if ((Test-Path (Join-Path $jfdSaveDirectory "$mergeRwDigest.a")) -or
+    (Test-Path (Join-Path $jfdSaveDirectory "$mergeRwDigest.b"))) {
+    throw "Pre-save read published a virtual merge slot"
+}
+Copy-Item -Force (Join-Path $InputDirectory "arcdroid-jfd-merge-test.rom") $firmware
 $mergeFirst = Start-MediaRun $mergeRw "jfd-merge-first"
 try {
     [void](Wait-JfdOutcome $mergeFirst "jfd-merge-zero-read-then-write" "ff6a0000")
@@ -1056,13 +1063,20 @@ if (-not ((Test-Path (Join-Path $jfdSaveDirectory "$mergeRwDigest.a")) -or
            (Test-Path (Join-Path $jfdSaveDirectory "$mergeRwDigest.b")))) {
     throw "Virtual merge did not publish a committed slot"
 }
+Copy-Item -Force (Join-Path $InputDirectory "arcdroid-jfd-merge-readback-test.rom") $firmware
 $mergeSecond = Start-MediaRun $mergeRw "jfd-merge-relaunch"
 try {
     [void](Wait-JfdOutcome $mergeSecond "jfd-merge-partial-readback" "ff001500")
 } finally { Stop-MediaRun $mergeSecond }
+Copy-Item -Force (Join-Path $InputDirectory "arcdroid-jfd-merge-missing-test.rom") $firmware
+$mergeMissing = Start-MediaRun $mergeRw "jfd-merge-reload-missing"
+try {
+    [void](Wait-JfdOutcome $mergeMissing "jfd-merge-reload-rnf" "ff00006a")
+} finally { Stop-MediaRun $mergeMissing }
+Copy-Item -Force (Join-Path $InputDirectory "arcdroid-jfd-merge-test.rom") $firmware
 $mergeProtected = Start-MediaRun $mergeWp "jfd-merge-wp"
 try {
-    [void](Wait-JfdOutcome $mergeProtected "jfd-merge-wp-no-read" "ff00006a")
+    [void](Wait-JfdOutcome $mergeProtected "jfd-merge-wp-refused" "ff006a00")
 } finally { Stop-MediaRun $mergeProtected }
 if ((Test-Path (Join-Path $jfdSaveDirectory "$mergeWpDigest.a")) -or
     (Test-Path (Join-Path $jfdSaveDirectory "$mergeWpDigest.b"))) {
@@ -1072,7 +1086,7 @@ if ((Get-FileHash -Algorithm SHA256 $mergeRw).Hash -ne $mergeRwHash -or
     (Get-FileHash -Algorithm SHA256 $mergeWp).Hash -ne $mergeWpHash) {
     throw "Virtual merge source JFD changed"
 }
-Write-Host "Slice 10a Windows RetroArch: zero read, partial merge, fresh-process readback, WP and source checks passed"
+Write-Host "Slice 10a Windows RetroArch: pre-save RNF, armed zero read, partial merge, fresh-process readback/RNF, WP and source checks passed"
 Copy-Item -Force (Join-Path $InputDirectory "arcdroid-media-test.rom") $firmware
 Write-Host "Slice 5b Windows RetroArch: folder disc 1 and eject/next/insert matched the playlist disc-2 signature"
 Write-Host "Slice 7a Windows RetroArch: bare single, zip#member, multi-image swap, pass-through logs, and unchanged SHA-256 passed"

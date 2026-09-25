@@ -160,7 +160,8 @@ def build_rom(media_exerciser: bool = False,
               write_payload: bytes | None = None,
               creation_probe: bool = False,
               virtual_merge_probe: bool = False,
-              merge_read_sector: int = 3) -> bytearray:
+              merge_read_sector: int = 3,
+              merge_arm_first: bool = False) -> bytearray:
     if not 0 <= write_sector <= 4 or (write_payload is not None and
                                       len(write_payload) != 1024):
         raise ValueError("the synthetic D-format writer needs one full sector")
@@ -169,6 +170,8 @@ def build_rom(media_exerciser: bool = False,
     if not 0 <= merge_read_sector <= 4 or (not virtual_merge_probe and
                                          merge_read_sector != 3):
         raise ValueError("the virtual merge read needs a P-DD5 sector")
+    if merge_arm_first and not virtual_merge_probe:
+        raise ValueError("write-armed merge requires a virtual merge probe")
     rom = bytearray(b"\xFF" * ROM_SIZE)
     rom[0:4] = struct.pack("<I", 0xE59FF000)  # ldr pc, [pc]
     rom[8:12] = struct.pack("<I", 0x03800020)
@@ -312,6 +315,10 @@ def build_rom(media_exerciser: bool = False,
     if newio_save_probe:
         # Read the entire sector before writing. The last DMA access asserts
         # TC, and the completed seven-byte result is checked on both paths.
+        if merge_arm_first:
+            a.mov(12, 0)
+            a.branch("save_new_creation_prefix")
+            a.label("save_new_after_arm")
         if virtual_merge_probe:
             poison_merge_buffer("save_new_merge")
         for value in (0x06, 0, 0, 0, merge_read_sector if virtual_merge_probe
@@ -394,6 +401,9 @@ def build_rom(media_exerciser: bool = False,
             a.mov(6, 0x40); a.branch("fdc_done")
             a.label("save_new_creation_prefix")
             if virtual_merge_probe:
+                if merge_arm_first:
+                    a.cmp_imm(12, 0)
+                    a.branch("save_new_merge_updated", "eq")
                 a.ldr_const(10, 0x00012000)
                 a.mov(11, 128)
                 a.mov(7, 0x5A)
@@ -401,10 +411,15 @@ def build_rom(media_exerciser: bool = False,
                 a.str_post(7, 10, 1, byte=True)
                 a.subs_imm(11, 11, 1)
                 a.branch("save_new_merge_update", "ne")
+                if merge_arm_first:
+                    a.label("save_new_merge_updated")
             # RISC OS allocation ordering: map, directory, then omitted data.
             # Prefix sectors already exist; only the final data ID is created.
             for prefix_sector in (0, 2):
                 tag = f"save_new_create_{prefix_sector}"
+                if merge_arm_first and prefix_sector == 0:
+                    a.cmp_imm(12, 1)
+                    a.branch(tag + "_skip", "eq")
                 for value in (0x05, 0, 0, 0, prefix_sector, 3,
                               prefix_sector, 0x1B, 0xFF):
                     a.mov(1, value); a.str(1, 0, byte=True)
@@ -442,6 +457,10 @@ def build_rom(media_exerciser: bool = False,
                 a.branch("save_new_creation_wp")
                 a.label(tag + "_ok")
                 a.cmp_imm(5, 0); a.branch("save_new_other", "ne")
+                if merge_arm_first and prefix_sector == 0:
+                    a.mov(12, 1)
+                    a.branch("save_new_after_arm")
+                    a.label(tag + "_skip")
 
         for value in (0x05, 0, 0, 0, 3 if creation_probe else 1,
                       3, 3 if creation_probe else 1, 0x1B, 0xFF):
@@ -537,6 +556,10 @@ def build_rom(media_exerciser: bool = False,
     a.ldr_const(0, 0x03310000)
     a.mov(1, 0)
     a.str(1, 0, 4, byte=True)
+    if merge_arm_first:
+        a.mov(12, 0)
+        a.branch("save_creation_prefix")
+        a.label("save_after_arm")
     if jfd_save_probe:
         a.mov(1, merge_read_sector if virtual_merge_probe else
               3 if creation_probe else 1)
@@ -634,6 +657,9 @@ def build_rom(media_exerciser: bool = False,
             a.mov(6, 0x20); a.branch("fdc_done")
             a.label("save_creation_prefix")
             if virtual_merge_probe:
+                if merge_arm_first:
+                    a.cmp_imm(12, 0)
+                    a.branch("save_merge_updated", "eq")
                 a.ldr_const(10, 0x00012000)
                 a.mov(11, 128)
                 a.mov(7, 0x5A)
@@ -641,9 +667,14 @@ def build_rom(media_exerciser: bool = False,
                 a.str_post(7, 10, 1, byte=True)
                 a.subs_imm(11, 11, 1)
                 a.branch("save_merge_update", "ne")
+                if merge_arm_first:
+                    a.label("save_merge_updated")
             # Map and directory writes precede allocation into missing ID 3.
             for prefix_sector in (0, 2):
                 tag = f"save_create_{prefix_sector}"
+                if merge_arm_first and prefix_sector == 0:
+                    a.cmp_imm(12, 1)
+                    a.branch(tag + "_skip", "eq")
                 a.mov(1, prefix_sector); a.str(1, 0, 8, byte=True)
                 a.mov(1, 0xA0); a.str(1, 0, byte=True)
                 a.ldr_const(5, 1024)
@@ -668,6 +699,10 @@ def build_rom(media_exerciser: bool = False,
                 a.mov(6, 0x40); a.branch("fdc_done")
                 a.label(tag + "_ok")
                 a.cmp_imm(5, 0); a.branch("save_other", "ne")
+                if merge_arm_first and prefix_sector == 0:
+                    a.mov(12, 1)
+                    a.branch("save_after_arm")
+                    a.label(tag + "_skip")
 
     # Write sector one through the same controller. The source ADF is immutable;
     # the harness verifies that only the content-addressed shadow changes.
@@ -2923,8 +2958,17 @@ def main() -> None:
                   newio_save_probe=True, creation_probe=True))
     (args.output / "arcdroid-jfd-merge-test.rom").write_bytes(
         build_rom(media_exerciser=True, jfd_save_probe=True,
-                  write_sector=3, creation_probe=True, virtual_merge_probe=True))
+                  write_sector=3, creation_probe=True, virtual_merge_probe=True,
+                  merge_arm_first=True))
     (args.output / "arcdroid-jfd-newio-merge-test.rom").write_bytes(
+        build_rom(media_exerciser=True, jfd_save_probe=True,
+                  newio_save_probe=True, creation_probe=True,
+                  virtual_merge_probe=True, merge_arm_first=True))
+    # Fresh process proof reads committed data without activating the latch.
+    (args.output / "arcdroid-jfd-merge-readback-test.rom").write_bytes(
+        build_rom(media_exerciser=True, jfd_save_probe=True,
+                  write_sector=3, creation_probe=True, virtual_merge_probe=True))
+    (args.output / "arcdroid-jfd-newio-merge-readback-test.rom").write_bytes(
         build_rom(media_exerciser=True, jfd_save_probe=True,
                   newio_save_probe=True, creation_probe=True,
                   virtual_merge_probe=True))

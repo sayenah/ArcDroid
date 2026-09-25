@@ -374,6 +374,10 @@ static bool store_commit_common(ArcJfdImage *image, bool create, size_t index,
       overlay->generation = checked_generation;
       overlay->records = checked_count;
       store->active = inactive;
+      /* The rename above publishes the first guest sector of this mount.
+       * Activate synthetic blanks only after its committed view is installed.
+       * A later failed commit clears writable, but must not clear this latch. */
+      if (overlay->virtual_armed) overlay->virtual_reads = true;
       arc_jfd_store_log_commit(store->image_number, checked_generation, index);
    }
    else

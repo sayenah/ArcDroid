@@ -73,6 +73,8 @@ jobs:
             build/windows/tests/fixtures/generated/arcdroid-jfd-save-test.rom \
             build/windows/tests/fixtures/generated/arcdroid-jfd-create-test.rom \
             build/windows/tests/fixtures/generated/arcdroid-jfd-merge-test.rom \
+            build/windows/tests/fixtures/generated/arcdroid-jfd-merge-readback-test.rom \
+            build/windows/tests/fixtures/generated/arcdroid-jfd-merge-missing-test.rom \
             build/windows/tests/fixtures/generated/arcdroid-media.m3u \
             build/windows/tests/fixtures/generated/arcdroid-media-disc1.adf \
             build/windows/tests/fixtures/generated/arcdroid-media-disc2.adf \

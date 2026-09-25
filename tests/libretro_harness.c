@@ -1545,6 +1545,7 @@ int main(int argc, char **argv)
    bool jfd_writes = false;
    bool jfd_create_step = false;
    bool jfd_merge_step = false;
+   bool jfd_activation_set = false;
    char jfd_content_path[4096] = {0}, jfd_fixture_path[4096] = {0};
    const char *osk_script = NULL;
    if (argc == 11 && !strcmp(argv[5], "--newio-smoke"))
@@ -1555,6 +1556,8 @@ int main(int argc, char **argv)
       jfd_create_step = true;
    else if (argc == 9 && !strcmp(argv[5], "--jfd-merge-step"))
       jfd_merge_step = true;
+   else if (argc == 7 && !strcmp(argv[5], "--jfd-activation-set"))
+      jfd_activation_set = true;
    else if (argc >= 6 && !strcmp(argv[5], "--real-boot"))
    {
       real_boot = true;
@@ -1738,7 +1741,8 @@ int main(int argc, char **argv)
    size_t (*arc_platform_test_input_events)(ArcKartEvent *, size_t) = NULL;
    if (real_boot || newio_smoke)
       *(void **)(&arc_engine_test_newio) = dlsym(module, "arc_engine_test_newio");
-   if (!real_boot && !newio_smoke && !jfd_writes && !jfd_create_step && !jfd_merge_step)
+   if (!real_boot && !newio_smoke && !jfd_writes && !jfd_create_step &&
+       !jfd_merge_step && !jfd_activation_set)
    {
       *(void **)(&arc_engine_audio_stats) = dlsym(module, "arc_engine_audio_stats");
       *(void **)(&arc_engine_media_insert) = dlsym(module, "arc_engine_media_insert");
@@ -1885,7 +1889,8 @@ int main(int argc, char **argv)
       assert(arc_libretro_test_register_input_profile(&test_profile));
       expect_test_profile = true;
    }
-   else if (jfd_writes || jfd_create_step || jfd_merge_step)
+   else if (jfd_writes || jfd_create_step || jfd_merge_step ||
+            jfd_activation_set)
    {
       *(void **)(&arc_libretro_test_jfd_virtual_reads) =
          dlsym(module, "arc_libretro_test_jfd_virtual_reads");
@@ -1997,6 +2002,55 @@ int main(int argc, char **argv)
    struct retro_game_info game = {jfd_writes ? jfd_content_path : argv[3], NULL, 0u, NULL};
    uint64_t source_hash = hash_file(game.path);
 
+   if (jfd_activation_set)
+   {
+      option_machine = argv[6];
+      option_cpu = !strcmp(option_machine, "A3020") ? "ARM250" : "ARM2";
+      option_launch = "off"; option_jfd_boot = "native";
+      option_writes = "shadow"; variable_update = true;
+      phase = PHASE_LOAD; assert(retro_load_game(&game));
+      assert(disk_control.get_num_images() == 2u &&
+             disk_control.get_image_index() == 0u &&
+             !arc_libretro_test_jfd_virtual_reads(0u) &&
+             !arc_libretro_test_jfd_virtual_reads(1u));
+      assert(arc_libretro_test_jfd_commit(0u, 0u, 0x5au) &&
+             arc_libretro_test_jfd_virtual_reads(0u) &&
+             !arc_libretro_test_jfd_virtual_reads(1u));
+      phase = PHASE_RUN;
+      assert(disk_control.set_eject_state(true) &&
+             disk_control.set_image_index(1u) &&
+             disk_control.set_eject_state(false) &&
+             !arc_libretro_test_jfd_virtual_reads(0u) &&
+             !arc_libretro_test_jfd_virtual_reads(1u));
+      uint8_t absent = 0xffu;
+      assert(!arc_libretro_test_jfd_created_byte(1u, 0u, 3u, 0u, &absent) &&
+             arc_libretro_test_jfd_commit(1u, 0u, 0x31u) &&
+             arc_libretro_test_jfd_virtual_reads(1u) &&
+             !arc_libretro_test_jfd_virtual_reads(0u));
+      assert(disk_control.set_eject_state(true) &&
+             disk_control.set_image_index(0u) &&
+             disk_control.set_eject_state(false) &&
+             !arc_libretro_test_jfd_virtual_reads(0u) &&
+             !arc_libretro_test_jfd_virtual_reads(1u));
+      retro_reset();
+      assert(!arc_libretro_test_jfd_virtual_reads(0u));
+      option_writes = "off"; variable_update = true;
+      retro_reset();
+      bool protected = false;
+      assert(!arc_libretro_test_jfd_virtual_reads(0u) &&
+             arc_engine_test_drive_media(0u, &protected, NULL) && protected);
+      option_writes = "shadow"; variable_update = true;
+      retro_reset();
+      assert(!arc_libretro_test_jfd_virtual_reads(0u) &&
+             arc_engine_test_drive_media(0u, &protected, NULL) && !protected);
+      retro_unload_game(); retro_deinit();
+      assert(hash_file(game.path) == source_hash &&
+             open_files == 0u && open_dirs == 0u && dlclose(module) == 0);
+      printf("jfd_activation_set: machine=%s two images isolated across swap/reset/Off\n",
+             option_machine);
+      return 0;
+   }
+
    if (jfd_create_step || jfd_merge_step)
    {
       option_machine = argv[6];
@@ -2006,18 +2060,27 @@ int main(int argc, char **argv)
       bool damaged = jfd_merge_step && !strcmp(argv[8], "damaged");
       bool failure = jfd_merge_step && !strcmp(argv[8], "failed");
       bool advance = jfd_merge_step && !strcmp(argv[8], "advance");
+      bool pre_read = jfd_merge_step &&
+                      (!strcmp(argv[8], "pre-read") ||
+                       !strcmp(argv[8], "pre-read-saved"));
       option_writes = off_to_on ? "off" : "shadow";
       variable_update = true;
       uint32_t expected = (uint32_t)strtoul(argv[7], NULL, 16);
       bool expect_slot = !strcmp(argv[8], "slot") || off_to_on ||
-                         damaged || failure || advance;
+                         damaged || failure || advance ||
+                         !strcmp(argv[8], "pre-read-saved");
       bool protected = true;
       phase = PHASE_LOAD; assert(retro_load_game(&game));
       assert(arc_engine_test_drive_media(0u, &protected, NULL) &&
-             protected == (!expect_slot || off_to_on || damaged));
+             protected == (!expect_slot && !pre_read || off_to_on || damaged));
       if (jfd_merge_step)
-         assert(arc_libretro_test_jfd_virtual_reads(0u) ==
-                (expect_slot && !off_to_on && !damaged));
+         assert(!arc_libretro_test_jfd_virtual_reads(0u));
+      if (pre_read)
+      {
+         uint8_t absent = 0xffu;
+         assert(!arc_libretro_test_jfd_created_byte(0u, 0u, 1u, 0u,
+                                                    &absent));
+      }
       if (damaged)
       {
          assert(jfd_damaged_notice_calls == 1u);
@@ -2057,7 +2120,7 @@ int main(int argc, char **argv)
          for (unsigned frame = 0u; frame < 800u && steady < 8u; ++frame)
          {
             retro_run();
-            steady = last_video_pixel == 0x0000006au ? steady + 1u : 0u;
+            steady = last_video_pixel == 0x00006a00u ? steady + 1u : 0u;
          }
          assert(steady == 8u && !arc_libretro_test_jfd_virtual_reads(0u));
          ArcDigest off_digest = digest_file(game.path);
@@ -2069,15 +2132,12 @@ int main(int argc, char **argv)
          assert(!file_exists(off_a) && !file_exists(off_b));
          option_writes = "shadow"; variable_update = true;
          retro_reset();
-         assert(arc_libretro_test_jfd_virtual_reads(0u));
+         assert(!arc_libretro_test_jfd_virtual_reads(0u));
          assert(arc_engine_test_drive_media(0u, &protected, NULL) &&
                 !protected);
-         for (unsigned offset = 0u; offset < 1024u; ++offset)
-         {
-            uint8_t byte = 0xffu;
-            assert(arc_libretro_test_jfd_created_byte(0u, 0u, 3u,
-                                                       offset, &byte) && !byte);
-         }
+         uint8_t absent = 0xffu;
+         assert(!arc_libretro_test_jfd_created_byte(0u, 0u, 3u, 0u,
+                                                    &absent));
          steady = 0u;
       }
       for (unsigned frame = 0u; frame < 800u && steady < 8u; ++frame)
@@ -2089,6 +2149,10 @@ int main(int argc, char **argv)
          fprintf(stderr, "creation %s %s: got %08x expected %08x\n",
                  option_machine, argv[8], last_video_pixel, expected);
       assert(last_video_pixel == expected && steady == 8u);
+      if (jfd_merge_step)
+         assert(arc_libretro_test_jfd_virtual_reads(0u) ==
+                (off_to_on || failure || advance ||
+                 (expected == 0x006a0000u && !pre_read)));
       if (failure)
       {
          assert(!fault_rename_substring && !fault_rename_skip_matches &&
@@ -2128,7 +2192,7 @@ int main(int argc, char **argv)
       {
          retro_reset();
          if (jfd_merge_step)
-            assert(arc_libretro_test_jfd_virtual_reads(0u));
+            assert(!arc_libretro_test_jfd_virtual_reads(0u));
          last_video_pixel = 0u;
          steady = 0u;
          for (unsigned frame = 0u; frame < 800u && steady < 8u; ++frame)
@@ -2140,10 +2204,10 @@ int main(int argc, char **argv)
          assert(disk_control.set_eject_state(true) &&
                 disk_control.set_eject_state(false));
          if (jfd_merge_step)
-            assert(arc_libretro_test_jfd_virtual_reads(0u));
+            assert(!arc_libretro_test_jfd_virtual_reads(0u));
          retro_reset();
          if (jfd_merge_step)
-            assert(arc_libretro_test_jfd_virtual_reads(0u));
+            assert(!arc_libretro_test_jfd_virtual_reads(0u));
          last_video_pixel = 0u;
          steady = 0u;
          for (unsigned frame = 0u; frame < 800u && steady < 8u; ++frame)
@@ -2375,11 +2439,12 @@ int main(int argc, char **argv)
       retro_unload_game();
       option_jfd_boot = "native"; option_launch = "off"; variable_update = true;
       phase = PHASE_LOAD; assert(retro_load_game(&adffs_game));
-      assert(arc_libretro_test_jfd_virtual_reads(0u));
+      assert(!arc_libretro_test_jfd_virtual_reads(0u));
       phase = PHASE_RUN;
       for (unsigned frame = 0u; frame < 600u; ++frame) retro_run();
       assert(last_video_pixel == jfd_first &&
-             (file_exists(adffs_slot_a) || file_exists(adffs_slot_b)));
+             (file_exists(adffs_slot_a) || file_exists(adffs_slot_b)) &&
+             arc_libretro_test_jfd_virtual_reads(0u));
       retro_unload_game();
       option_jfd_boot = "auto"; option_launch = "auto"; variable_update = true;
       assert(remove(package_path) == 0);

@@ -641,7 +641,7 @@ int main(int argc, char **argv)
    uint64_t blank_generation = created.overlay->generation;
    assert(!created.overlay->virtual_reads &&
           !arc_jfd_effective_sector(&created, 1u, 4u, false, &view));
-   created.overlay->virtual_reads = true; /* successful native preparation */
+   created.overlay->virtual_reads = true; /* exercise the active view directly */
    assert(!arc_jfd_effective_sector(&created, 1u,
           created.tracks[1].sector_count + 7u, false, &view));
    assert(arc_jfd_effective_sector(&created, 1u, 4u, false, &view) &&
@@ -777,6 +777,80 @@ int main(int argc, char **argv)
           created.overlay->generation == 0u &&
           !created.overlay->created[1][1]);
    arc_jfd_free(&created);
+   clear_files();
+   /* D-078: loading and arming are inert. Only a successful rename in this
+    * mounted lifetime exposes still-omitted formatted slots. */
+   ArcJfdImage armed = creation_fixture(argv[1], "partial-untimed.jfd");
+   assert(arc_jfd_store_load(&armed, "save", true, false, 1u,
+                             &creation_reason) && armed.overlay->writable &&
+          !armed.overlay->virtual_armed && !armed.overlay->virtual_reads);
+   armed.overlay->virtual_armed = true;
+   assert(!arc_jfd_effective_sector(&armed, 1u, 4u, false, &view));
+   size_t map_index = armed.tracks[0].first_sector;
+   assert(armed.sectors[map_index].size == 1024u);
+   uint8_t unchanged[1024];
+   memcpy(unchanged, armed.decoded + armed.sectors[map_index].data_offset,
+          sizeof(unchanged));
+   assert(armed.overlay->commit(&armed, map_index, unchanged) &&
+          armed.overlay->generation == 1u && armed.overlay->virtual_reads &&
+          arc_jfd_effective_sector(&armed, 1u, 4u, false, &view) &&
+          view.data[0] == 0u);
+   ArcJfdImage isolated = creation_fixture(argv[1], "partial-timed.jfd");
+   const char *isolated_reason = NULL;
+   assert(arc_jfd_store_load(&isolated, "save", true, false, 2u,
+                             &isolated_reason));
+   isolated.overlay->virtual_armed = true;
+   assert(!isolated.overlay->virtual_reads &&
+          !arc_jfd_effective_sector(&isolated, 1u, 4u, false, &view) &&
+          armed.overlay->virtual_reads); /* swap away and back */
+   arc_jfd_free(&isolated);
+   fault = RENAME_FAULT;
+   assert(!armed.overlay->commit(&armed, map_index, unchanged) &&
+          armed.overlay->failed && armed.overlay->virtual_reads &&
+          armed.overlay->generation == 1u &&
+          arc_jfd_effective_sector(&armed, 1u, 4u, false, &view) &&
+          view.data[0] == 0u &&
+          !armed.overlay->commit(&armed, map_index, unchanged));
+   arc_jfd_free(&armed);
+   armed = creation_fixture(argv[1], "partial-untimed.jfd");
+   assert(arc_jfd_store_load(&armed, "save", true, false, 1u,
+                             &creation_reason) &&
+          armed.overlay->generation == 1u &&
+          !armed.overlay->virtual_armed && !armed.overlay->virtual_reads &&
+          !arc_jfd_effective_sector(&armed, 1u, 4u, false, &view));
+   arc_jfd_free(&armed);
+   clear_files();
+   armed = creation_fixture(argv[1], "partial-untimed.jfd");
+   assert(arc_jfd_store_load(&armed, "save", true, false, 1u,
+                             &creation_reason));
+   armed.overlay->virtual_armed = true;
+   fault = RENAME_FAULT;
+   assert(!armed.overlay->commit(&armed, map_index, unchanged) &&
+          armed.overlay->failed && !armed.overlay->virtual_reads &&
+          armed.overlay->generation == 0u && !files[0].exists &&
+          !files[1].exists &&
+          !arc_jfd_effective_sector(&armed, 1u, 4u, false, &view));
+   arc_jfd_free(&armed);
+   clear_files();
+   armed = creation_fixture(argv[1], "partial-untimed.jfd");
+   assert(arc_jfd_store_load(&armed, "save", true, false, 1u,
+                             &creation_reason));
+   armed.overlay->virtual_armed = true;
+   memset(pattern, 0x5au, sizeof(pattern));
+   assert(armed.overlay->commit_created(&armed, 1u, 1u, pattern) &&
+          armed.overlay->virtual_reads &&
+          arc_jfd_effective_sector(&armed, 1u, 4u, false, &view) &&
+          view.data[0] == 0x5au &&
+          arc_jfd_effective_sector(&armed, 1u, 6u, false, &view) &&
+          view.data[0] == 0u);
+   arc_jfd_free(&armed);
+   armed = creation_fixture(argv[1], "partial-untimed.jfd");
+   assert(arc_jfd_store_load(&armed, "save", true, false, 1u,
+                             &creation_reason) && !armed.overlay->virtual_reads &&
+          arc_jfd_effective_sector(&armed, 1u, 4u, false, &view) &&
+          view.data[0] == 0x5au &&
+          !arc_jfd_effective_sector(&armed, 1u, 6u, false, &view));
+   arc_jfd_free(&armed);
    clear_files();
    puts("jfd_store_tests: generations, malformed slots, recovery, failures and Off passed");
    return 0;

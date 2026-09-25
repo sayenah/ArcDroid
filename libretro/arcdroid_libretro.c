@@ -2288,9 +2288,13 @@ static void arc_finish_jfd_preparation(ArcMediaEntry *entry, bool native)
    if (!entry || entry->info.kind != ARC_MEDIA_JFD) return;
    unsigned image_number = (unsigned)(entry - arc_media) + 1u;
    ArcJfdOverlay *overlay = entry->jfd.overlay;
-   /* C-11b's read view is a native-mount decision, not the mutable ability
-    * to commit. A C-4 failure clears writable but retains this latch. */
-   if (overlay) overlay->virtual_reads = native && overlay->writable;
+   /* D-078: native preparation arms but never activates formatted blanks.
+    * The store's first successful rename activates them for this mount. */
+   if (overlay)
+   {
+      overlay->virtual_armed = native && overlay->writable;
+      overlay->virtual_reads = false;
+   }
    if (!arc_log) return;
    arc_log(RETRO_LOG_INFO,
       "JFD writes: image=%u state=%s reason=%s generation=%llu records=%u\n",

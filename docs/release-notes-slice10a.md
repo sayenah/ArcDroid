@@ -17,12 +17,15 @@ continues to boot natively if an ADFFS package is added later.
 
 RW-flagged images matching the bounded P-DD5 profile can create missing 1024-byte DD
 sectors (IDs 0–4, 80 cylinders × 2 sides) when the complete track-side
-placement is schedulable. On a writable native mount, a never-written omitted
-slot reads as a formatted 1024-byte zero sector with good CRC and appears in
-READ ID and READ ADDRESS scans. The zero fill is fixed across reloads and
-versions unless the format is explicitly migrated. Reading it creates no saved
-record. A write to
-an omitted ID commits that sector and
+placement is schedulable. A writable native mount starts with omitted slots
+unformatted: reads return Record Not Found and READ ID/ADDRESS do not list
+them. After the first successful sector save in that mounted session, including
+a replacement of unchanged data, never-written eligible slots read as
+formatted 1024-byte zero sectors with good CRC and appear in READ ID/ADDRESS
+scans. Reading them creates no saved record. The zero bytes are fixed across
+reloads and versions unless the format is explicitly migrated, but the
+formatted view turns off at reset, reinsertion or fresh load until that
+session's first successful sector save. A write to an omitted ID commits that sector and
 its data together; it then appears in reads, address scans and native launch
 discovery, including after a process restart. Captures with omissions that
 cannot safely be created are protected up front with `layout-unsupported`.
@@ -31,6 +34,9 @@ that missing standard IDs there are outside allocatable space.
 The zero fill does not apply with Disk Writes Off, write protection, an
 unsupported layout, a damaged saved slot, or an ADFFS/install boot path.
 Out-of-profile and irregular-track targets retain Record Not Found behavior.
+This timing preserves boot-time checks that probe an unformatted track before
+any write. A game that writes before such a check, checks again after saving,
+or needs a blank omitted sector before its first write may still differ.
 
 A bad ID CRC reports a header CRC error. A bad data CRC, slow sector,
 duplicate ID, shared payload, or 82C711 size mismatch reports a data CRC
