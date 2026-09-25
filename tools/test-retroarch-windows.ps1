@@ -724,6 +724,32 @@ function Wait-JfdOutcome($Run, [string]$Name, [string]$Expected) {
     throw "$Name did not publish a steady JFD outcome $Expected within 20 seconds (last $actual)"
 }
 
+function Wait-JfdResultVideoReady($Run, [string]$Name) {
+    # The allocation veto ROM has two five-index searches before it programs
+    # VIDC. Start-MediaRun's two-second delay can end during the final video
+    # mode change; RetroArch can then discard a SCREENSHOT network command.
+    $deadline = [DateTime]::UtcNow.AddSeconds(20)
+    while ([DateTime]::UtcNow -lt $deadline) {
+        if ($Run.Process.HasExited) {
+            Write-MediaRunFailureEvidence $Run "exited before $Name video was ready"
+            $Run["FailureReported"] = $true
+            throw "$Name exited before its result video was ready with code $($Run.Process.ExitCode)"
+        }
+        if (Test-Path -LiteralPath $Run.RetroLog) {
+            $logText = Get-Content -LiteralPath $Run.RetroLog -Raw -ErrorAction SilentlyContinue
+            if ($logText) {
+                $videoInfoAt = $logText.LastIndexOf("SET_SYSTEM_AV_INFO: 640x512")
+                if ($videoInfoAt -ge 0 -and $logText.IndexOf('Found display driver: "gdi"', $videoInfoAt) -ge 0) {
+                    Start-Sleep -Milliseconds 500
+                    return
+                }
+            }
+        }
+        Start-Sleep -Milliseconds 100
+    }
+    throw "$Name did not complete the result video mode within 20 seconds"
+}
+
 # RetroArch's per-core save sorting redirects this core's save directory to
 # <configured savefile_directory>/ArcDroid, and .ldci records live there.
 $indexDirectory = Join-Path $saveDirectory "ArcDroid"
@@ -1097,6 +1123,7 @@ $allocationDigest = (Get-FileHash -Algorithm SHA1 $allocationImage).Hash.ToLower
 Copy-Item -Force (Join-Path $InputDirectory "arcdroid-jfd-allocation-veto-test.rom") $firmware
 $allocationVeto = Start-MediaRun $allocationImage "jfd-allocation-veto"
 try {
+    Wait-JfdResultVideoReady $allocationVeto "jfd-allocation-probe-veto-reprobe"
     [void](Wait-JfdOutcome $allocationVeto "jfd-allocation-probe-veto-reprobe" "ff001500")
 } finally { Stop-MediaRun $allocationVeto }
 if ((Test-Path (Join-Path $jfdSaveDirectory "$allocationDigest.a")) -or
@@ -1106,6 +1133,7 @@ if ((Test-Path (Join-Path $jfdSaveDirectory "$allocationDigest.a")) -or
 Copy-Item -Force (Join-Path $InputDirectory "arcdroid-jfd-allocation-claim-test.rom") $firmware
 $allocationClaim = Start-MediaRun $allocationImage "jfd-allocation-claim"
 try {
+    Wait-JfdResultVideoReady $allocationClaim "jfd-allocation-fresh-claim-zero"
     [void](Wait-JfdOutcome $allocationClaim "jfd-allocation-fresh-claim-zero" "ff6a0000")
 } finally { Stop-MediaRun $allocationClaim }
 if (-not ((Test-Path (Join-Path $jfdSaveDirectory "$allocationDigest.a")) -or
@@ -1115,6 +1143,7 @@ if (-not ((Test-Path (Join-Path $jfdSaveDirectory "$allocationDigest.a")) -or
 Copy-Item -Force (Join-Path $InputDirectory "arcdroid-jfd-allocation-read-test.rom") $firmware
 $allocationRead = Start-MediaRun $allocationImage "jfd-allocation-read"
 try {
+    Wait-JfdResultVideoReady $allocationRead "jfd-allocation-fresh-read-zero"
     [void](Wait-JfdOutcome $allocationRead "jfd-allocation-fresh-read-zero" "ff001500")
 } finally { Stop-MediaRun $allocationRead }
 if ((Get-FileHash -Algorithm SHA256 $allocationImage).Hash -ne $allocationHash) {

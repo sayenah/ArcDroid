@@ -2076,16 +2076,24 @@ int main(int argc, char **argv)
              arc_libretro_test_jfd_created_byte(0u, 0u, 3u, 0u,
                                                 &zero) == read_only);
       unsigned steady = 0u;
+      unsigned first_expected_frame = 900u;
       phase = PHASE_RUN;
       for (unsigned frame = 0u; frame < 900u && steady < 8u; ++frame)
       {
          retro_run();
+         if (last_video_pixel == expected && first_expected_frame == 900u)
+            first_expected_frame = frame;
          steady = last_video_pixel == expected ? steady + 1u : 0u;
       }
       if (steady < 8u)
          fprintf(stderr, "allocation %s %s: got %08x expected %08x\n",
                  option_machine, argv[8], last_video_pixel, expected);
       assert(steady == 8u);
+      /* The WD veto probe needs two terminal five-index searches. Its final
+       * result cannot be captured by the Windows script's fixed two-second
+       * startup delay; wait for the completed video mode there instead. */
+      if (veto && !strcmp(option_machine, "A3000"))
+         assert(first_expected_frame >= 100u);
       ArcDigest digest = digest_file(game.path);
       char a[4096], b[4096];
       snprintf(a, sizeof(a), "%s/arcdroid/jfd/%s.a", save_path, digest.sha1);
