@@ -31,6 +31,7 @@ static bool newio_service_dma;
 static bool newio_dma_write;
 static uint8_t newio_write_value;
 static bool wd_write_mode;
+static bool wd_service_data = true;
 static uint8_t wd_write_value;
 static unsigned jfd_commits;
 static bool jfd_fail_commit;
@@ -270,7 +271,8 @@ static void step_controller(void)
          transfer[transfer_count] = c82c711_fdc_dmaread(terminal, NULL);
       transfer_count++;
    }
-   else if ((ioc.fiq & IOC_FIQ_DISC_DATA) && fdctype != FDC_82C711)
+   else if ((ioc.fiq & IOC_FIQ_DISC_DATA) && fdctype != FDC_82C711 &&
+            wd_service_data)
    {
       assert(transfer_count < sizeof(transfer));
       if (wd_write_mode)
@@ -302,6 +304,13 @@ static uint8_t finish_command(uint8_t command, unsigned limit_us)
    run_us(210000u);
    assert(!(ioc.fiq & IOC_FIQ_DISC_IRQ) && irq_assertions == completions);
    return status;
+}
+
+static void assert_wd_refusal_quiet(unsigned irq_before)
+{
+   assert(irq_assertions == irq_before + 1u &&
+          !(ioc.fiq & (IOC_FIQ_DISC_IRQ | IOC_FIQ_DISC_DATA)) &&
+          !timer_is_enabled(fdc_timer));
 }
 
 static void expect_read(const char *root, const char *name, uint8_t sector,
@@ -352,12 +361,14 @@ static void test_wd_jfd_write(const char *root)
       controller_reset(&refusal);
       wd1770_write(0x08u, i < 3u ? 3u : 4u);
       wd_write_mode = false; jfd_commits = 0u;
+      unsigned irq_before = irq_assertions;
       uint8_t refusal_status = finish_command(0xa0u, 1100000u);
       if (refusal_status != refusals[i].status || transfer_count > 1u || jfd_commits)
          fprintf(stderr, "WD %s status=%02x transfer=%zu commits=%u\n",
                  refusals[i].name, refusal_status, transfer_count, jfd_commits);
       assert(refusal_status == refusals[i].status &&
              jfd_commits == 0u && transfer_count <= 1u);
+      assert_wd_refusal_quiet(irq_before);
       disc_close(0);
       arc_jfd_free(&refusal);
    }
@@ -374,6 +385,10 @@ static void test_wd_jfd_write(const char *root)
    wd1770_write(0x08u, 3u);
    assert(finish_command(0x80u, 1100000u) == 0x80u);
    assert(transfer_count == 1024u && transfer[0] == 0x5au);
+   unsigned deleted_irq_before = irq_assertions;
+   assert(finish_command(0xa1u, 1000u) == 0x40u);
+   assert(jfd_commits == 1u);
+   assert_wd_refusal_quiet(deleted_irq_before);
    disc_close(0);
    arc_jfd_free(&image);
 
@@ -401,13 +416,29 @@ static void test_wd_jfd_write(const char *root)
    wd1770_write(0x08u, 3u);
    wd_write_mode = jfd_fail_commit = true;
    wd_write_value = 0x91u; jfd_commits = 0u;
+   unsigned failed_irq_before = irq_assertions;
    assert(finish_command(0xa0u, 1100000u) == 0x40u);
+   assert_wd_refusal_quiet(failed_irq_before);
    assert(image.overlay->failed && !image.overlay->data[0] &&
           jfd_commits == 0u);
+   failed_irq_before = irq_assertions;
    assert(finish_command(0xa0u, 1100000u) == 0x40u && jfd_commits == 0u);
+   assert_wd_refusal_quiet(failed_irq_before);
    wd_write_mode = jfd_fail_commit = false;
    disc_close(0);
    arc_jfd_free(&image);
+
+   image = load_image(root, "size-3.jfd");
+   make_jfd_writable(&image);
+   controller_reset(&image);
+   wd1770_write(0x08u, 3u);
+   wd_service_data = false;
+   unsigned underrun_irq_before = irq_assertions;
+   assert(finish_command(0xa0u, 1100000u) == 0x84u);
+   assert(jfd_commits == 0u && !image.overlay->data[0]);
+   assert_wd_refusal_quiet(underrun_irq_before);
+   wd_service_data = true;
+   disc_close(0); arc_jfd_free(&image);
 
    image = load_image(root, "write-two.jfd");
    make_jfd_writable(&image);
@@ -415,11 +446,17 @@ static void test_wd_jfd_write(const char *root)
    wd1770_write(0x08u, 3u);
    wd_write_mode = true; wd_write_value = 0x7cu; jfd_commits = 0u;
    transfer_count = 0u; ioc.fiq = 0u;
+   unsigned multi_irq_before = irq_assertions;
    wd1770_write(0x00u, 0xb0u);
    uint64_t deadline = tsc + (uint64_t)1100000u * TIMER_USEC;
    while (jfd_commits < 2u && tsc < deadline) step_controller();
    assert(jfd_commits == 2u && (wd1770_read(0x00u) & 1u));
-   wd1770_write(0x00u, 0xd0u);
+   while (!(ioc.fiq & IOC_FIQ_DISC_IRQ) && tsc < deadline) step_controller();
+   assert(ioc.fiq & IOC_FIQ_DISC_IRQ);
+   assert(wd1770_read(0x00u) == 0x10u);
+   assert(!(ioc.fiq & IOC_FIQ_DISC_DATA) &&
+          !timer_is_enabled(fdc_timer) && jfd_commits == 2u);
+   assert_wd_refusal_quiet(multi_irq_before);
    wd_write_mode = false;
    assert(jfd_commits == 2u && image.overlay->data[0][0] == 0x7cu &&
           image.overlay->data[1][0] == 0x7cu);
@@ -453,11 +490,15 @@ static void expect_write_protected(const char *root, const char *name,
    select_density(single_density);
    wd1770_write(0x08u, 0u);
    unsigned before = drq_assertions;
+   unsigned irq_before = irq_assertions;
    assert(finish_command(0xa0u, 1000u) == 0x40u);
    assert(transfer_count == 0u && drq_assertions == before);
+   assert_wd_refusal_quiet(irq_before);
    before = drq_assertions;
+   irq_before = irq_assertions;
    assert(finish_command(0xf0u, 1000u) == 0x40u);
    assert(transfer_count == 0u && drq_assertions == before);
+   assert_wd_refusal_quiet(irq_before);
    disc_close(0);
    arc_jfd_free(&image);
 }
@@ -942,6 +983,7 @@ static void newio_start_write(unsigned drive, uint8_t sector, uint8_t size)
       c82c711_fdc_write(5u, params[i], NULL);
 }
 
+
 static void newio_wait_irq(unsigned limit_us)
 {
    static unsigned wait_number;
@@ -959,6 +1001,14 @@ static void newio_result(uint8_t result[7])
 {
    for (unsigned i = 0u; i < 7u; ++i)
       result[i] = c82c711_fdc_read(5u, NULL);
+}
+
+static void assert_newio_refusal_quiet(void)
+{
+   assert(!(ioc.irqb & IOC_IRQB_DISC_IRQ) &&
+          !(ioc.fiq & IOC_FIQ_DISC_DATA) &&
+          !timer_is_enabled(fdc_timer) &&
+          c82c711_fdc_read(4u, NULL) == 0x80u);
 }
 
 static void test_newio_jfd_write(const char *root)
@@ -984,13 +1034,18 @@ static void test_newio_jfd_write(const char *root)
              sized.overlay->data[0][0] == newio_write_value);
       c82c711_fdc_shutdown(); disc_close(0); arc_jfd_free(&sized);
    }
-   static const char *const refusals[] = {
-      "write-slow.jfd", "write-duplicate.jfd", "write-shared.jfd",
-      "data-crc.jfd", "id-crc.jfd", "id-only.jfd", "blank-track.jfd"
+   static const struct { const char *name; uint8_t st1, st2; } refusals[] = {
+      {"write-slow.jfd", 0x20u, 0x20u},
+      {"write-duplicate.jfd", 0x20u, 0x20u},
+      {"write-shared.jfd", 0x20u, 0x20u},
+      {"data-crc.jfd", 0x20u, 0x20u},
+      {"id-crc.jfd", 0x20u, 0u},
+      {"id-only.jfd", 0x05u, 0u},
+      {"blank-track.jfd", 0x05u, 0u}
    };
    for (size_t i = 0u; i < sizeof(refusals) / sizeof(refusals[0]); ++i)
    {
-      ArcJfdImage refusal = load_image(root, refusals[i]);
+      ArcJfdImage refusal = load_image(root, refusals[i].name);
       make_jfd_writable(&refusal);
       newio_reset(&refusal, false);
       uint8_t refused[7];
@@ -1003,10 +1058,12 @@ static void test_newio_jfd_write(const char *root)
       newio_result(refused);
       if (!(refused[0] & 0x40u) || transfer_count > 1u || jfd_commits)
          fprintf(stderr, "82 %s st0=%02x st1=%02x st2=%02x transfer=%zu commits=%u\n",
-                 refusals[i], refused[0], refused[1], refused[2],
+                 refusals[i].name, refused[0], refused[1], refused[2],
                  transfer_count, jfd_commits);
-      assert((refused[0] & 0x40u) && transfer_count <= 1u &&
+      assert(refused[0] == 0x40u && refused[1] == refusals[i].st1 &&
+             refused[2] == refusals[i].st2 && transfer_count <= 1u &&
              jfd_commits == 0u);
+      assert_newio_refusal_quiet();
       c82c711_fdc_shutdown(); disc_close(0); arc_jfd_free(&refusal);
    }
    ArcJfdImage image = load_image(root, "size-3.jfd");
@@ -1036,31 +1093,99 @@ static void test_newio_jfd_write(const char *root)
    newio_wait_irq(1100000u);
    newio_result(result);
    assert((result[0] & 0x40u) && transfer_count == 0u && jfd_commits == 1u);
+   assert_newio_refusal_quiet();
+   for (uint8_t invalid_n = 4u; invalid_n <= 7u; invalid_n += 3u)
+   {
+      transfer_count = 0u;
+      newio_start_write(0u, 3u, invalid_n);
+      newio_wait_irq(1100000u);
+      newio_result(result);
+      assert(result[0] == 0x40u && result[1] == 0x20u &&
+             result[2] == 0x20u && transfer_count == 0u &&
+             jfd_commits == 1u && image.overlay->data[0][0] == 0x6bu &&
+             !(ioc.fiq & IOC_FIQ_DISC_DATA) && !timer_is_enabled(fdc_timer));
+      assert_newio_refusal_quiet();
+   }
    /* Early terminal count cannot publish the incomplete sector. */
    newio_transfer_limit = 128u;
    transfer_count = 0u;
    newio_start_write(0u, 3u, 3u);
    newio_wait_irq(1100000u);
    newio_result(result);
-   assert((result[0] & 0x40u) && transfer_count == 128u &&
+   assert(result[0] == 0x40u && result[1] == 0x10u && result[2] == 0u &&
+          transfer_count == 128u &&
           jfd_commits == 1u && image.overlay->data[0][0] == 0x6bu &&
           !(ioc.fiq & IOC_FIQ_DISC_DATA));
+   assert_newio_refusal_quiet();
+   transfer_count = 0u;
+   newio_transfer_limit = 1024u;
+   /* WRITE DELETED DATA is an invalid command on this 82C711 model. */
+   c82c711_fdc_write(5u, 0x09u, NULL);
+   for (unsigned poll = 0u; poll < 1000u &&
+        (c82c711_fdc_read(4u, NULL) & 0xf0u) != 0xd0u; ++poll)
+      step_controller();
+   assert((c82c711_fdc_read(4u, NULL) & 0xf0u) == 0xd0u);
+   assert(c82c711_fdc_read(5u, NULL) == 0x80u &&
+          transfer_count == 0u && jfd_commits == 1u &&
+          !(ioc.irqb & IOC_IRQB_DISC_IRQ) &&
+          !(ioc.fiq & IOC_FIQ_DISC_DATA) &&
+          !timer_is_enabled(fdc_timer) &&
+          c82c711_fdc_read(4u, NULL) == 0x80u);
+   newio_service_dma = false;
+   transfer_count = 0u;
+   newio_start_write(0u, 3u, 3u);
+   newio_wait_irq(1100000u);
+   newio_result(result);
+   assert(result[0] == 0x40u && result[1] == 0x10u &&
+          transfer_count == 0u && jfd_commits == 1u);
+   assert_newio_refusal_quiet();
+   newio_service_dma = true;
    newio_transfer_limit = 1024u;
    jfd_fail_commit = true;
    transfer_count = 0u;
    newio_start_write(0u, 3u, 3u);
    newio_wait_irq(1100000u);
    newio_result(result);
-   assert((result[0] & 0x40u) && jfd_commits == 1u &&
+   assert(result[0] == 0x40u && result[1] == 0x02u &&
+          jfd_commits == 1u &&
           image.overlay->failed && image.overlay->data[0][0] == 0x6bu);
+   assert_newio_refusal_quiet();
    transfer_count = 0u;
    newio_start_write(0u, 3u, 3u);
    newio_wait_irq(1100000u);
    newio_result(result);
-   assert((result[0] & 0x40u) && transfer_count == 0u && jfd_commits == 1u);
+   assert(result[0] == 0x40u && result[1] == 0x02u &&
+          transfer_count == 0u && jfd_commits == 1u);
+   assert_newio_refusal_quiet();
    jfd_fail_commit = false;
    newio_dma_write = false;
    c82c711_fdc_shutdown(); disc_close(0); arc_jfd_free(&image);
+}
+
+static void test_newio_adf_early_tc(void)
+{
+   memset(raw_helper, 0xa5, ARC_LAUNCH_DISC_SIZE);
+   raw_helper_length = ARC_LAUNCH_DISC_SIZE;
+   newio_reset(NULL, false);
+   adf_set_writable(1, 1);
+   assert(disc_load_raw(1, "memory-helper.adl", ARC_GEOMETRY_640K_L));
+   transfer_count = 0u;
+   newio_transfer_limit = 128u;
+   newio_service_dma = newio_dma_write = true;
+   newio_write_value = 0x5au;
+   newio_start_write(1u, 0u, 1u);
+   newio_wait_irq(1100000u);
+   uint8_t result[7];
+   newio_result(result);
+   assert(transfer_count == 128u && result[0] == 0x01u &&
+          result[1] == 0u && result[2] == 0u &&
+          c82c711_fdc_read(4u, NULL) == 0x80u &&
+          !(ioc.fiq & IOC_FIQ_DISC_DATA) && !timer_is_enabled(fdc_timer));
+   for (size_t i = 0u; i < 128u; ++i) assert(raw_helper[i] == 0x5au);
+   for (size_t i = 128u; i < 256u; ++i) assert(raw_helper[i] == 0u);
+   assert(raw_helper[256] == 0xa5u);
+   newio_service_dma = newio_dma_write = false;
+   c82c711_fdc_shutdown(); disc_close(1);
 }
 
 static void test_82c711_golden(const char *root)
@@ -1413,6 +1538,12 @@ int main(int argc, char **argv)
 {
    bool run_wd1770 = true;
    bool run_82c711 = true;
+   if (argc == 3 && !strcmp(argv[2], "--adf-tc"))
+   {
+      test_newio_adf_early_tc();
+      puts("jfd_controller_tests: ADF early TC passed");
+      return 0;
+   }
    if (argc == 3)
    {
       run_wd1770 = !strcmp(argv[2], "--wd1770");
@@ -1448,6 +1579,7 @@ int main(int argc, char **argv)
       test_82c711_mixed_raw_drives(argv[1]);
       test_raw_index_cadence();
       test_newio_jfd_write(argv[1]);
+      test_newio_adf_early_tc();
    }
    puts("jfd_controller_tests: all checks passed");
    return 0;

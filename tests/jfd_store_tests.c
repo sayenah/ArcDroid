@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #if !defined(_WIN32)
 #include <sys/wait.h>
 #include <unistd.h>
@@ -15,7 +16,7 @@ struct retro_vfs_file_handle { unsigned slot, mode; size_t at; };
 struct retro_vfs_dir_handle { unsigned at, current; };
 typedef struct { char path[256]; uint8_t *bytes; size_t size; bool exists; } File;
 static File files[3];
-static unsigned fault, notices, commits;
+static unsigned fault, notices, commits, directory_probes;
 static int slot_unreadable = -1;
 static bool ineligible_second;
 enum { NO_FAULT, WRITE_FAULT, FLUSH_FAULT, CLOSE_FAULT, READ_FAULT,
@@ -82,7 +83,7 @@ static int vrename(const char *from, const char *to)
 static int32_t vstat(const char *p, int32_t *size)
 {
    int i = file_index(p);
-   if (i < 0) { if (size) *size = 0; return RETRO_VFS_STAT_IS_VALID | RETRO_VFS_STAT_IS_DIRECTORY; }
+   if (i < 0) { ++directory_probes; if (size) *size = 0; return RETRO_VFS_STAT_IS_VALID | RETRO_VFS_STAT_IS_DIRECTORY; }
    if (!files[i].exists) return 0;
    if (size) *size = (int32_t)files[i].size;
    return RETRO_VFS_STAT_IS_VALID;
@@ -313,6 +314,66 @@ int main(void)
    assert(image.overlay->damaged && !image.overlay->writable);
    arc_jfd_free(&image);
    clear_files();
+   static const struct { bool extended; uint32_t flags; const char *reason; }
+      excluded[] = {{false, 2u, "legacy-header"},
+                    {true, 3u, "wp-flag"}, {true, 0u, "no-flag"}};
+   for (size_t i = 0u; i < sizeof(excluded) / sizeof(excluded[0]); ++i)
+   {
+      ArcJfdImage excluded_image = image_new();
+      excluded_image.extended = excluded[i].extended;
+      excluded_image.flags = excluded[i].flags;
+      const char *excluded_reason = NULL;
+      unsigned before = directory_probes;
+      assert(arc_jfd_store_load(&excluded_image, NULL, true, true, 1u,
+                                &excluded_reason));
+      assert(!strcmp(excluded_reason, excluded[i].reason) &&
+             directory_probes == before && excluded_image.overlay &&
+             !excluded_image.overlay->writable);
+      arc_jfd_free(&excluded_image);
+   }
+   ArcJfdImage shared = image_new();
+   shared.sectors[1].data_offset = shared.sectors[0].data_offset + 64u;
+   const char *shared_reason = NULL;
+   assert(arc_jfd_store_load(&shared, "save", true, false, 1u, &shared_reason));
+   assert(!shared.overlay->eligible[0] && !shared.overlay->eligible[1]);
+   arc_jfd_free(&shared);
+   ArcJfdImage duplicate = image_new();
+   duplicate.sectors[1].id = duplicate.sectors[0].id;
+   const char *duplicate_reason = NULL;
+   assert(arc_jfd_store_load(&duplicate, "save", true, false, 1u,
+                             &duplicate_reason));
+   assert(!duplicate.overlay->eligible[0] && !duplicate.overlay->eligible[1]);
+   arc_jfd_free(&duplicate);
+   /* Maximum permitted descriptor count must not trigger pairwise payload
+    * scans on every native load. CPU time avoids shared-host scheduling noise. */
+   ArcJfdImage dense = {0};
+   dense.decoded_size = ARC_JFD_MAX_DECODED;
+   dense.decoded = calloc(dense.decoded_size, 1u);
+   dense.sector_count = ARC_JFD_MAX_TRACK_SIDES * ARC_JFD_MAX_SECTORS_PER_TRACK;
+   dense.sectors = calloc(dense.sector_count, sizeof(*dense.sectors));
+   assert(dense.decoded && dense.sectors);
+   dense.track_count = ARC_JFD_MAX_TRACK_SIDES;
+   dense.extended = true; dense.flags = 2u;
+   for (unsigned track = 0u; track < dense.track_count; ++track)
+   {
+      dense.tracks[track].first_sector = track * ARC_JFD_MAX_SECTORS_PER_TRACK;
+      dense.tracks[track].sector_count = ARC_JFD_MAX_SECTORS_PER_TRACK;
+      for (unsigned sector = 0u; sector < ARC_JFD_MAX_SECTORS_PER_TRACK; ++sector)
+      {
+         size_t index = dense.tracks[track].first_sector + sector;
+         dense.sectors[index].data_offset = (uint32_t)(index * 128u);
+         dense.sectors[index].size = 128u;
+         dense.sectors[index].id = (uint8_t)sector;
+         dense.sectors[index].density = 2u;
+      }
+   }
+   const char *dense_reason = NULL;
+   clock_t started = clock();
+   assert(arc_jfd_store_load(&dense, "save", true, false, 1u, &dense_reason));
+   double cpu_seconds = (double)(clock() - started) / CLOCKS_PER_SEC;
+   assert(cpu_seconds < 2.0 && dense.overlay->eligible[0] &&
+          dense.overlay->eligible[dense.sector_count - 1u]);
+   arc_jfd_free(&dense);
    puts("jfd_store_tests: generations, malformed slots, recovery, failures and Off passed");
    return 0;
 }

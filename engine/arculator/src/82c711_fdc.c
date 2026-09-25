@@ -13,6 +13,7 @@
 #include "82c711_fdc.h"
 #include "config.h"
 #include "disc.h"
+#include "disc_jfd.h"
 #include "ioc.h"
 #include "timer.h"
 
@@ -406,7 +407,8 @@ void c82c711_fdc_write(uint16_t addr, uint8_t val, void *p)
 					if (fdc == fdc_p)
 						disc_writesector(curdrive, fdc->sector, fdc->track[curdrive],
 						                 fdc->head, fdc->density,
-						                 fdc->params[4] <= 3u ? 128 << fdc->params[4] : -1,
+						                 fdc->params[4] <= 3u ? 128 << fdc->params[4] :
+						                 (jfd_active(curdrive) ? -2 : -1),
 						                 0);
 					timer_disable(&fdc->timer);
 					fdc->written = 0;
@@ -619,7 +621,8 @@ static void c82c711_fdc_callback(void *p)
 		}
 		disc_writesector(curdrive, fdc->sector, fdc->track[curdrive], fdc->head,
 		                 fdc->density,
-		                 fdc->params[4] <= 3u ? 128 << fdc->params[4] : -1,
+		                 fdc->params[4] <= 3u ? 128 << fdc->params[4] :
+		                 (jfd_active(curdrive) ? -2 : -1),
 		                 0);
 		if (!fdc->paramstogo) c82711_fdc_fiq(1, fdc->p);
 		return;
@@ -960,9 +963,9 @@ static int c82c711_fdc_getdata(int last, void *p)
 	FDC *fdc = (FDC *)p;
 	uint8_t temp;
 //        rpclog("Disc get data\n");
-	if (fdc->tc && !last)
-		return -1;
-	if (!fdc->written)
+	if (jfd_active(curdrive) ?
+	    ((fdc->tc && !last) || !fdc->written) :
+	    (!fdc->written && !fdc->tc))
 		return -1;
 	if (!last && !fdc->tc)
 		c82711_fdc_fiq(1, fdc->p);

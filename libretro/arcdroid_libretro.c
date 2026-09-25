@@ -279,6 +279,9 @@ typedef struct {
    ArcMediaInfo info;
    ArcDigest digest;
    ArcJfdImage jfd;
+   bool jfd_damage_notice_shown;
+   bool jfd_off_notice_shown;
+   bool jfd_install_notice_shown;
    uint32_t jfd_game_id;
    uint16_t jfd_disc_number;
    uint16_t jfd_disc_count;
@@ -293,6 +296,24 @@ static unsigned arc_media_count;
 static bool arc_original_jfd_notice_shown;
 static bool arc_jfd_failure_status_shown;
 #if defined(ARCDROID_TEST_FAULTS)
+bool arc_libretro_test_jfd_commit(unsigned image_index, size_t descriptor,
+                                  uint8_t value)
+{
+   if (image_index >= arc_media_count ||
+       arc_media[image_index].info.kind != ARC_MEDIA_JFD) return false;
+   ArcJfdImage *image = &arc_media[image_index].jfd;
+   if (!image->overlay || !image->overlay->writable ||
+       descriptor >= image->sector_count ||
+       !image->overlay->eligible || !image->overlay->eligible[descriptor])
+      return false;
+   size_t size = image->sectors[descriptor].size;
+   uint8_t *bytes = malloc(size);
+   if (!bytes) return false;
+   memset(bytes, value, size);
+   bool committed = image->overlay->commit(image, descriptor, bytes);
+   free(bytes);
+   return committed;
+}
 const char *arc_libretro_test_staged_path(unsigned index)
 {
    return index < arc_media_count && arc_media[index].populated ?
@@ -2180,7 +2201,7 @@ static bool arc_refresh_jfd(ArcMediaEntry *entry, ArcDiskWriteMode mode,
    const char *reason = NULL;
    unsigned image_number = (unsigned)(entry - arc_media) + 1u;
    if (!arc_jfd_store_load(&entry->jfd, arc_save_path,
-                           mode != ARC_DISK_WRITES_OFF, true,
+                           mode != ARC_DISK_WRITES_OFF, false,
                            image_number, &reason))
    {
       reason = "overlay-unreadable";
@@ -2189,6 +2210,19 @@ static bool arc_refresh_jfd(ArcMediaEntry *entry, ArcDiskWriteMode mode,
          arc_jfd_store_notice("Disc changes can no longer be saved this session.", true);
    }
    if (entry->jfd.overlay) entry->jfd.overlay->reason = reason;
+   if (entry->jfd.overlay && entry->jfd.overlay->damaged &&
+       !entry->jfd_damage_notice_shown)
+   {
+      arc_jfd_store_notice(
+         "Disc writes are disabled because a saved disc-change file is damaged.", true);
+      entry->jfd_damage_notice_shown = true;
+   }
+   else if (entry->jfd.overlay && mode == ARC_DISK_WRITES_OFF &&
+            entry->jfd.overlay->generation && !entry->jfd_off_notice_shown)
+   {
+      arc_jfd_store_notice("Saved disc changes are hidden while Disk Writes is Off.", false);
+      entry->jfd_off_notice_shown = true;
+   }
    if (mode == ARC_DISK_WRITES_ORIGINAL && entry->jfd.extended &&
        (entry->jfd.flags & 2u) && !(entry->jfd.flags & 1u) &&
        !arc_original_jfd_notice_shown)
@@ -2711,6 +2745,18 @@ static bool arc_prepare_adffs(bool notify) {
             "JFD boot: path=adffs-install profile=F%05u rev=%u variant=%s discs=%s ram=%uK\n",
             plan->profile->game_id, plan->profile->revision,
             plan->variant->key, discs, plan->variant->ram_kib);
+      }
+      if (jfd->overlay && jfd->overlay->generation && !jfd->overlay->damaged)
+      {
+         if (arc_log)
+            arc_log(RETRO_LOG_INFO,
+                    "JFD boot: path=install reason=native-saves-not-used\n");
+         if (notify && !entry->jfd_install_notice_shown)
+         {
+            arc_message("Saved disc changes from native boots are not used on this install path.",
+                        RETRO_LOG_INFO);
+            entry->jfd_install_notice_shown = true;
+         }
       }
       arc_message("Installed to a temporary RAM disc; saves are lost after exit or reset.", RETRO_LOG_WARN);
       arc_adffs_active = true;

@@ -92,9 +92,15 @@ reader now buffers a complete WRITE SECTOR, checks descriptor eligibility,
 and calls the ArcDroid overlay publisher before reporting success; read data
 comes from the committed record view. `wd1770.c` handles its multiple-sector
 write variant and bounds missing-byte failure; `82c711_fdc.c` passes N and
-deleted-data intent, refuses early terminal count, and suppresses DMA after a
+deleted-data intent, refuses early terminal count on JFD, and suppresses DMA after a
 synchronous continuation error. FORMAT and WRITE TRACK remain refused. The
 engine never owns a host file handle or writes the supplied JFD.
+The Slice 10a QA follow-up keeps WD1770 multi-sector RNF detection armed
+while the next ID is searched and applies the override guard to continuation;
+the 82C711 applies early terminal-count discard only to JFD, preserving raw
+ADF zero-fill completion, and rejects out-of-range N on JFD. The native JFD
+reader reports whether it is the active drive media for that gate and consumes
+the store's precomputed descriptor eligibility when available.
 
 The pinned upstream `AUTHORS` file is empty. Upstream author and contributor
 credits are preserved in the imported `README.md`.

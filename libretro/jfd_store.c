@@ -24,6 +24,69 @@ typedef struct {
    unsigned active;
 } ArcJfdStore;
 
+typedef struct {
+   uint32_t start;
+   uint32_t end;
+   size_t index;
+} ArcJfdPayload;
+
+static int payload_order(const void *left, const void *right)
+{
+   const ArcJfdPayload *a = left, *b = right;
+   if (a->start != b->start) return a->start < b->start ? -1 : 1;
+   if (a->end != b->end) return a->end < b->end ? -1 : 1;
+   return 0;
+}
+
+static bool prepare_eligibility(const ArcJfdImage *image, uint8_t *eligible)
+{
+   ArcJfdPayload *payloads = malloc((image->sector_count ? image->sector_count : 1u) *
+                                     sizeof(*payloads));
+   if (!payloads) return false;
+   size_t count = 0u;
+   for (size_t i = 0u; i < image->sector_count; ++i)
+   {
+      const ArcJfdSector *sector = &image->sectors[i];
+      if (sector->data_offset == UINT32_MAX) continue;
+      eligible[i] = !(sector->flags & (ARC_JFD_ID_CRC_BAD |
+                                      ARC_JFD_DATA_CRC_BAD | ARC_JFD_SLOW_SECTOR));
+      payloads[count++] = (ArcJfdPayload){sector->data_offset,
+         sector->data_offset + sector->size, i};
+   }
+   /* Each track has at most 256 descriptors by the parser contract. */
+   for (unsigned t = 0u; t < image->track_count; ++t)
+   {
+      const ArcJfdTrack *track = &image->tracks[t];
+      for (unsigned i = 0u; i < track->sector_count; ++i)
+      {
+         size_t first = (size_t)track->first_sector + i;
+         for (unsigned j = i + 1u; j < track->sector_count; ++j)
+         {
+            size_t second = (size_t)track->first_sector + j;
+            if (image->sectors[first].id == image->sectors[second].id &&
+                image->sectors[first].density == image->sectors[second].density)
+               eligible[first] = eligible[second] = 0u;
+         }
+      }
+   }
+   qsort(payloads, count, sizeof(*payloads), payload_order);
+   uint32_t furthest_end = 0u;
+   size_t furthest_index = 0u;
+   for (size_t i = 0u; i < count; ++i)
+   {
+      const ArcJfdPayload *payload = &payloads[i];
+      if (i && payload->start < furthest_end)
+         eligible[payload->index] = eligible[furthest_index] = 0u;
+      if (!i || payload->end > furthest_end)
+      {
+         furthest_end = payload->end;
+         furthest_index = payload->index;
+      }
+   }
+   free(payloads);
+   return true;
+}
+
 static bool store_eligible(const ArcJfdImage *image, size_t index)
 {
    return image->overlay && image->overlay->eligible &&
@@ -245,15 +308,26 @@ bool arc_jfd_store_load(ArcJfdImage *image, const char *save_directory,
                         const char **reason)
 {
    *reason = "no-flag";
-   if (!image || !image->decoded || !save_directory) return false;
+   if (!image || !image->decoded) return false;
+   bool eligible = image->extended && (image->flags & 2u) && !(image->flags & 1u);
+   if (!eligible)
+   {
+      *reason = !image->extended ? "legacy-header" :
+         (image->flags & 1u) ? "wp-flag" : "no-flag";
+      image->overlay = calloc(1u, sizeof(*image->overlay));
+      if (!image->overlay) return false;
+      image->overlay->reason = *reason;
+      return true;
+   }
+   *reason = "overlay-unreadable";
+   if (!save_directory) return false;
    ArcJfdOverlay *overlay = calloc(1u, sizeof(*overlay));
    ArcJfdStore *store = calloc(1u, sizeof(*store));
    if (!overlay || !store) { free(overlay); free(store); return false; }
    image->overlay = overlay; overlay->store = store;
    overlay->eligible = calloc(image->sector_count ? image->sector_count : 1u, 1u);
    if (!overlay->eligible) return false;
-   for (size_t i = 0u; i < image->sector_count; ++i)
-      overlay->eligible[i] = arc_jfd_sector_write_eligible(image, i);
+   if (!prepare_eligibility(image, overlay->eligible)) return false;
    store->image_number = image_number;
    char sha1_hex[41], sha256_hex[65];
    arc_sha1_hex(image->decoded, image->decoded_size, sha1_hex);
@@ -309,7 +383,6 @@ bool arc_jfd_store_load(ArcJfdImage *image, const char *save_directory,
    records_free(records[0], image->sector_count);
    records_free(records[1], image->sector_count);
    overlay->damaged = damaged;
-   bool eligible = image->extended && (image->flags & 2u) && !(image->flags & 1u);
    overlay->writable = eligible && writes_enabled && !damaged;
    overlay->visible = writes_enabled;
    overlay->commit = store_commit;

@@ -1,0 +1,2 @@
+engine/arculator/src/*.c whitespace=cr-at-eol
+engine/arculator/src/*.h whitespace=cr-at-eol

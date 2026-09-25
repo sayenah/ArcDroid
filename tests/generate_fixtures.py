@@ -155,7 +155,8 @@ CHOOSER_VIDC_MODE = (
 
 
 def build_rom(media_exerciser: bool = False,
-              jfd_save_probe: bool = False, write_sector: int = 1,
+              jfd_save_probe: bool = False, newio_save_probe: bool = False,
+              write_sector: int = 1,
               write_payload: bytes | None = None) -> bytearray:
     if not 0 <= write_sector <= 4 or (write_payload is not None and
                                       len(write_payload) != 1024):
@@ -252,6 +253,99 @@ def build_rom(media_exerciser: bool = False,
     a.ldr(1, 2, byte=True); a.tst_imm(1, 0x10); a.branch("new_read_id_irq", "eq")
     a.ldr(1, 3, byte=True)
     for _ in range(7): a.ldr(1, 0, byte=True)
+    if newio_save_probe:
+        # Read the entire sector before writing. The last DMA access asserts
+        # TC, and the completed seven-byte result is checked on both paths.
+        for value in (0x06, 0, 0, 0, 1, 3, 1, 0x1B, 0xFF):
+            a.mov(1, value); a.str(1, 0, byte=True)
+        a.ldr_const(2, 0x03200030)
+        a.ldr_const(3, 0x03012000)
+        a.ldr_const(5, 1024)
+        a.ldr_const(8, 250000)
+        a.mov(6, 0)
+        a.label("save_new_read_wait")
+        a.ldr(7, 2, byte=True)
+        a.tst_imm(7, 1); a.branch("save_new_read_byte", "ne")
+        a.ldr_const(1, 0x03200020)
+        a.ldr(7, 1, byte=True)
+        a.tst_imm(7, 0x10); a.branch("save_new_other", "ne")
+        a.subs_imm(8, 8, 1); a.branch("save_new_read_wait", "ne")
+        a.branch("save_new_other")
+        a.label("save_new_read_byte")
+        a.ldr_const(8, 250000)
+        a.subs_imm(5, 5, 1)
+        a.branch("save_new_read_last", "eq")
+        a.ldr(7, 3, byte=True)
+        a.add_lsl(6, 6, 6, 5); a.eor(6, 6, 7)
+        a.branch("save_new_read_wait")
+        a.label("save_new_read_last")
+        a.ldr_const(3, 0x0302A000)
+        a.ldr(7, 3, byte=True)
+        a.add_lsl(6, 6, 6, 5); a.eor(6, 6, 7)
+        a.ldr_const(2, 0x03200020)
+        a.label("save_new_read_irq")
+        a.ldr(7, 2, byte=True); a.tst_imm(7, 0x10)
+        a.branch("save_new_read_irq", "eq")
+        a.ldr_const(3, 0x03310FD0); a.ldr(7, 3, byte=True)
+        a.ldr(4, 0, byte=True)
+        for _ in range(6): a.ldr(7, 0, byte=True)
+        a.tst_imm(4, 0xC0); a.branch("save_new_other", "ne")
+        a.ldr_const(7, 0xEEFAB800); a.cmp_reg(6, 7)
+        a.branch("save_new_pristine", "eq")
+        a.ldr_const(7, 0x26568000); a.cmp_reg(6, 7)
+        a.branch("save_new_written", "eq")
+        a.branch("save_new_other")
+        a.label("save_new_pristine")
+        a.mov(9, 1); a.branch("save_new_start_write")
+        a.label("save_new_written")
+        a.mov(9, 2)
+        a.label("save_new_start_write")
+        for value in (0x05, 0, 0, 0, 1, 3, 1, 0x1B, 0xFF):
+            a.mov(1, value); a.str(1, 0, byte=True)
+        a.ldr_const(2, 0x03200030)
+        a.ldr_const(3, 0x03012000)
+        a.ldr_const(5, 1024)
+        a.ldr_const(8, 250000)
+        a.mov(7, 0x5A)
+        a.label("save_new_write_wait")
+        a.ldr(4, 2, byte=True)
+        a.tst_imm(4, 1); a.branch("save_new_write_byte", "ne")
+        a.ldr_const(1, 0x03200020)
+        a.ldr(4, 1, byte=True)
+        a.tst_imm(4, 0x10); a.branch("save_new_write_done", "ne")
+        a.subs_imm(8, 8, 1); a.branch("save_new_write_wait", "ne")
+        a.branch("save_new_other")
+        a.label("save_new_write_byte")
+        a.ldr_const(8, 250000)
+        a.subs_imm(5, 5, 1)
+        a.branch("save_new_write_last", "eq")
+        a.str(7, 3, byte=True)
+        a.branch("save_new_write_wait")
+        a.label("save_new_write_last")
+        a.ldr_const(3, 0x0302A000)
+        a.str(7, 3, byte=True)
+        a.branch("save_new_write_wait")
+        a.label("save_new_write_done")
+        a.ldr_const(3, 0x03310FD0); a.ldr(7, 3, byte=True)
+        a.ldr(4, 0, byte=True)
+        a.ldr(7, 0, byte=True)
+        for _ in range(5): a.ldr(1, 0, byte=True)
+        a.cmp_imm(4, 0)
+        a.branch("save_new_write_ok", "eq")
+        a.tst_imm(4, 0x40); a.branch("save_new_other", "eq")
+        a.tst_imm(7, 2); a.branch("save_new_other", "eq")
+        a.cmp_imm(9, 1); a.branch("save_new_other", "ne")
+        a.cmp_imm(5, 1024); a.branch("save_new_other", "ne")
+        a.mov(6, 0x40); a.branch("fdc_done")
+        a.label("save_new_write_ok")
+        a.cmp_imm(5, 0); a.branch("save_new_other", "ne")
+        a.cmp_imm(9, 1); a.branch("save_new_first", "eq")
+        a.cmp_imm(9, 2); a.branch("save_new_other", "ne")
+        a.mov(6, 0x20); a.branch("fdc_done")
+        a.label("save_new_first")
+        a.mov(6, 0x10); a.branch("fdc_done")
+        a.label("save_new_other")
+        a.mov(6, 0x80); a.branch("fdc_done")
     for value in (0x06, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x1B, 0xFF):
         a.mov(1, value); a.str(1, 0, byte=True)
     a.ldr_const(2, 0x03200030)
@@ -1422,6 +1516,8 @@ def build_adffs_fixtures(output: Path) -> None:
     (output / "multi.m3u").write_text("eligible.jfd\nembedded-only.jfd\n")
     for disc in (1, 2, 3):
         image = adffs_jfd(123, disc=disc, count=4)
+        if disc == 1:
+            struct.pack_into("<I", image, 304, 2)
         image[-1] = disc
         (output / f"install-{disc}.jfd").write_bytes(image)
     (output / "install.m3u").write_text(
@@ -2547,10 +2643,13 @@ def main() -> None:
             (args.checkpoint_name_discs / filename).write_bytes(image)
     media_rom = build_rom(media_exerciser=True)
     jfd_save_rom = build_rom(media_exerciser=True, jfd_save_probe=True)
+    newio_jfd_save_rom = build_rom(media_exerciser=True, jfd_save_probe=True,
+                                   newio_save_probe=True)
     disc1 = build_adf(0xA5, b"ARCDROID MEDIA DISC ONE v1\0")
     disc2 = build_adf(0x3C, b"ARCDROID MEDIA DISC TWO v1\0")
     (args.output / "arcdroid-media-test.rom").write_bytes(media_rom)
     (args.output / "arcdroid-jfd-save-test.rom").write_bytes(jfd_save_rom)
+    (args.output / "arcdroid-jfd-newio-save-test.rom").write_bytes(newio_jfd_save_rom)
     (args.output / "arcdroid-media-disc1.adf").write_bytes(disc1)
     (args.output / "arcdroid-media-disc2.adf").write_bytes(disc2)
     (args.output / "arcdroid-media.m3u").write_text(
@@ -2590,6 +2689,14 @@ def main() -> None:
                                    disk_geometry="D")
     struct.pack_into("<I", writable, 304, 2)
     (writes / "rw-d.jfd").write_bytes(writable)
+    newio_writable = build_extended_jfd(bytes(disc1),
+                                        b"ArcDroid JFD NewIO save probe",
+                                        disk_geometry="D")
+    struct.pack_into("<I", newio_writable, 304, 2)
+    (writes / "rw-newio-d.jfd").write_bytes(newio_writable)
+    newio_protected = bytearray(newio_writable)
+    struct.pack_into("<I", newio_protected, 304, 3)
+    (writes / "wp-newio-d.jfd").write_bytes(newio_protected)
     adffs_writable = build_jfd_family([
         (0xFF, 0, 2, 0, 0, bytes(1024)),
         (0xFF, 0, 2, 1, 0, bytes(1024)),

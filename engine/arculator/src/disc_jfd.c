@@ -76,6 +76,11 @@ bool jfd_load(int drive, const ArcJfdImage *image)
    return true;
 }
 
+bool jfd_active(int drive)
+{
+   return drive == 0 && jfd_image && drive_funcs[drive] == &jfd_disc_funcs;
+}
+
 void jfd_motor_start(void) { jfd_phase_us = 0u; }
 
 static void jfd_seek(int drive, int track)
@@ -256,9 +261,12 @@ static void jfd_poll(void)
          jfd_transfer_pos = 0u;
          if (jfd_writing)
          {
-            if ((jfd_requested_size >= 0 &&
-                 (unsigned)jfd_requested_size != sector->size) ||
-                !arc_jfd_sector_write_eligible(jfd_image, selected))
+            if ((jfd_requested_size != -1 &&
+                 (jfd_requested_size < 0 ||
+                  (unsigned)jfd_requested_size != sector->size)) ||
+                !(jfd_image->overlay && jfd_image->overlay->eligible ?
+                  jfd_image->overlay->eligible[selected] :
+                  arc_jfd_sector_write_eligible(jfd_image, selected)))
             {
                jfd_stop();
                fdc_funcs->datacrcerror(fdc_p);

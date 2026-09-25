@@ -154,6 +154,11 @@ static unsigned jfd_boot_log_lines;
 static char last_jfd_boot_log[512];
 static unsigned adffs_notice_calls;
 static unsigned jfd_write_log_lines;
+static char last_jfd_writes_log[512];
+static unsigned jfd_failed_status_calls;
+static unsigned jfd_damaged_notice_calls;
+static unsigned jfd_off_notice_calls;
+static unsigned jfd_install_notice_calls;
 static unsigned jfd_original_notice_calls;
 static unsigned install_disclosure_calls;
 static char last_adffs_notice[512];
@@ -227,6 +232,7 @@ static const char *fault_write_substring;
 static const char *fault_flush_substring;
 static const char *fault_close_substring;
 static const char *fault_rename_substring;
+static const char *fault_mkdir_substring;
 static const char *fault_opendir_substring;
 static const char *fault_closedir_substring;
 static const char *observed_opendir_path;
@@ -329,7 +335,8 @@ static int32_t vfs_stat(const char *p, int32_t *size)
    if (size) *size = st.st_size > INT32_MAX ? INT32_MAX : (int32_t)st.st_size;
    return RETRO_VFS_STAT_IS_VALID | (S_ISDIR(st.st_mode) ? RETRO_VFS_STAT_IS_DIRECTORY : 0);
 }
-static int vfs_mkdir(const char *p) { return mkdir(p, 0755); }
+static int vfs_mkdir(const char *p)
+{ return fault_once(p, &fault_mkdir_substring) ? -1 : mkdir(p, 0755); }
 static struct retro_vfs_dir_handle *vfs_opendir(const char *p, bool hidden)
 {
    (void)hidden;
@@ -438,6 +445,8 @@ static void frontend_log(enum retro_log_level level, const char *format, ...)
       snprintf(last_jfd_boot_log, sizeof(last_jfd_boot_log), "%s", message);
    }
    if (!strncmp(message, "JFD write:", 10u)) ++jfd_write_log_lines;
+   if (!strncmp(message, "JFD writes:", 11u))
+      snprintf(last_jfd_writes_log, sizeof(last_jfd_writes_log), "%s", message);
    if (strstr(message, "JFD content is never written in place"))
       ++jfd_original_notice_calls;
    if (!strncmp(message, "ADFFS package:", 14u))
@@ -739,6 +748,20 @@ static bool environment(unsigned command, void *data)
       case RETRO_ENVIRONMENT_SET_MESSAGE_EXT:
          ++total_osd_calls;
          snprintf(last_message, sizeof(last_message), "%s", ((struct retro_message_ext *)data)->msg);
+         if (strstr(last_message, "can no longer be saved this session"))
+         {
+            const struct retro_message_ext *message = data;
+            assert(message->type == RETRO_MESSAGE_TYPE_STATUS &&
+                   message->duration >= 3600000u &&
+                   message->target == RETRO_MESSAGE_TARGET_OSD);
+            ++jfd_failed_status_calls;
+         }
+         if (strstr(last_message, "saved disc-change file is damaged"))
+            ++jfd_damaged_notice_calls;
+         if (strstr(last_message, "hidden while Disk Writes is Off"))
+            ++jfd_off_notice_calls;
+         if (strstr(last_message, "native boots are not used"))
+            ++jfd_install_notice_calls;
          if (strstr(last_message, "Installed to a temporary RAM disc"))
             ++install_disclosure_calls;
          if (strstr(last_message, "flagged for RiscPC-class machines"))
@@ -1638,6 +1661,7 @@ int main(int argc, char **argv)
    bool (*arc_engine_media_insert)(const ArcEngineMedia *, char *, size_t) = NULL;
    void (*arc_engine_test_set_vidc_noncompleting)(bool) = NULL;
    bool (*arc_engine_test_drive_media)(unsigned, bool *, char[41]) = NULL;
+   bool (*arc_libretro_test_jfd_commit)(unsigned, size_t, uint8_t) = NULL;
    bool (*arc_engine_test_helper_media_valid)(ArcMediaKind,
                                                ArcMediaGeometry) = NULL;
    bool (*arc_engine_test_cmos_image)(uint8_t[ARC_CMOS_MACHINE_SIZE]) = NULL;
@@ -1837,6 +1861,8 @@ int main(int argc, char **argv)
    }
    else if (jfd_writes)
    {
+      *(void **)(&arc_libretro_test_jfd_commit) =
+         dlsym(module, "arc_libretro_test_jfd_commit");
       *(void **)(&arc_engine_test_drive_media) =
          dlsym(module, "arc_engine_test_drive_media");
       *(void **)(&arc_libretro_test_adffs_accept_test_os) =
@@ -1853,7 +1879,8 @@ int main(int argc, char **argv)
          dlsym(module, "arc_libretro_test_session_state");
       *(void **)(&arc_libretro_test_chooser_rows) =
          dlsym(module, "arc_libretro_test_chooser_rows");
-      assert(arc_engine_test_drive_media && arc_libretro_test_adffs_accept_test_os &&
+      assert(arc_libretro_test_jfd_commit && arc_engine_test_drive_media &&
+             arc_libretro_test_adffs_accept_test_os &&
              arc_libretro_test_content_id && arc_libretro_test_staged_path &&
              arc_libretro_test_cmos_path && arc_libretro_test_choice_path &&
              arc_libretro_test_session_state && arc_libretro_test_chooser_rows);
@@ -1949,6 +1976,27 @@ int main(int argc, char **argv)
       snprintf(gzip, sizeof(gzip), "%s/rw-d-gzip.jfd", jfd_fixture_path);
       snprintf(zipped, sizeof(zipped), "%s/rw-d.zip", jfd_fixture_path);
       snprintf(mixed, sizeof(mixed), "%s/mixed.m3u", jfd_fixture_path);
+      char jfd_store_directory[4096];
+      snprintf(jfd_store_directory, sizeof(jfd_store_directory),
+               "%s/arcdroid/jfd", save_path);
+      static const char *const excluded_reasons[] = {
+         "wp-flag", "no-flag", "legacy-header"
+      };
+      const char *const excluded_paths[] = {wp, neither, legacy};
+      option_machine = "A3000";
+      option_launch = "off";
+      option_jfd_boot = "native";
+      option_writes = "shadow";
+      fault_mkdir_substring = "/arcdroid/jfd";
+      for (unsigned i = 0u; i < 3u; ++i)
+      {
+         struct retro_game_info excluded = {excluded_paths[i], NULL, 0u, NULL};
+         phase = PHASE_LOAD; assert(retro_load_game(&excluded));
+         assert(strstr(last_jfd_writes_log, excluded_reasons[i]) &&
+                !file_exists(jfd_store_directory) && fault_mkdir_substring);
+         retro_unload_game();
+      }
+      fault_mkdir_substring = NULL;
       uint64_t wp_source_hash = hash_file(wp);
       uint64_t zip_source_hash = hash_file(zipped);
       uint64_t gzip_source_hash = hash_file(gzip);
@@ -1990,9 +2038,15 @@ int main(int argc, char **argv)
       assert(last_video_pixel == jfd_saved);
       retro_unload_game();
       option_writes = "off"; variable_update = true;
+      unsigned off_notices_before = jfd_off_notice_calls;
       phase = PHASE_LOAD; assert(retro_load_game(&game));
       assert(arc_engine_test_drive_media(0u, &write_protected, NULL) &&
-             write_protected);
+             write_protected && jfd_off_notice_calls == off_notices_before + 1u);
+      retro_reset();
+      assert(jfd_off_notice_calls == off_notices_before + 1u);
+      assert(disk_control.set_eject_state(true) &&
+             disk_control.set_eject_state(false) &&
+             jfd_off_notice_calls == off_notices_before + 1u);
       phase = PHASE_RUN;
       for (unsigned frame = 0u; frame < 600u; ++frame) retro_run();
       assert(last_video_pixel == jfd_protected);
@@ -2072,8 +2126,11 @@ int main(int argc, char **argv)
       struct retro_game_info adffs_game = {adffs_jfd, NULL, 0u, NULL};
       arc_libretro_test_adffs_accept_test_os(true);
       option_jfd_boot = "auto"; option_launch = "auto"; variable_update = true;
+      fault_opendir_substring = "/arcdroid/jfd";
       phase = PHASE_LOAD; assert(retro_load_game(&adffs_game));
-      assert(strstr(last_jfd_boot_log, "JFD boot: path=adffs"));
+      assert(strstr(last_jfd_boot_log, "JFD boot: path=adffs") &&
+             strstr(last_jfd_writes_log, "reason=not-native") &&
+             !fault_opendir_substring);
       retro_unload_game();
       option_jfd_boot = "native"; option_launch = "off"; variable_update = true;
       phase = PHASE_LOAD; assert(retro_load_game(&adffs_game));
@@ -2086,6 +2143,33 @@ int main(int argc, char **argv)
       phase = PHASE_LOAD; assert(retro_load_game(&adffs_game));
       assert(strstr(last_jfd_boot_log, "JFD boot: path=native reason=native-saves") &&
              hash_file(adffs_jfd) == adffs_source_hash);
+      retro_unload_game();
+
+      char install_one[4096], install_set[4096];
+      snprintf(install_one, sizeof(install_one), "%s/../adffs/install-1.jfd",
+               jfd_fixture_path);
+      snprintf(install_set, sizeof(install_set), "%s/../adffs/install.m3u",
+               jfd_fixture_path);
+      struct retro_game_info install_native = {install_one, NULL, 0u, NULL};
+      option_jfd_boot = "native"; option_launch = "off"; variable_update = true;
+      phase = PHASE_LOAD; assert(retro_load_game(&install_native));
+      assert(arc_libretro_test_jfd_commit(0u, 0u, 0x5au));
+      retro_unload_game();
+      struct retro_game_info install_playlist = {install_set, NULL, 0u, NULL};
+      unsigned install_notices_before = jfd_install_notice_calls;
+      option_jfd_boot = "auto"; option_launch = "auto";
+      option_launch_chooser = "ask"; variable_update = true;
+      phase = PHASE_LOAD; assert(retro_load_game(&install_playlist));
+      assert(arc_libretro_test_session_state() == 2u);
+      phase = PHASE_RUN; retro_run();
+      keyboard.callback(true, RETROK_RETURN, 0u, 0u); retro_run();
+      keyboard.callback(false, RETROK_RETURN, 0u, 0u); retro_run();
+      assert(arc_libretro_test_session_state() == 3u &&
+             strstr(last_jfd_boot_log,
+                    "JFD boot: path=install reason=native-saves-not-used") &&
+             jfd_install_notice_calls == install_notices_before + 1u);
+      retro_reset();
+      assert(jfd_install_notice_calls == install_notices_before + 1u);
       retro_unload_game();
       assert(remove(package_path) == 0);
       option_jfd_boot = "native"; option_launch = "off"; variable_update = true;
@@ -2133,6 +2217,32 @@ int main(int argc, char **argv)
          retro_unload_game();
          assert(open_files == 0u && open_dirs == 0u);
       }
+
+      unsigned failed_notices_before = jfd_failed_status_calls;
+      fault_rename_substring = "/arcdroid/jfd/";
+      phase = PHASE_LOAD; assert(retro_load_game(&game));
+      phase = PHASE_RUN;
+      for (unsigned frame = 0u; frame < 600u &&
+           jfd_failed_status_calls == failed_notices_before; ++frame) retro_run();
+      assert(!fault_rename_substring &&
+             jfd_failed_status_calls == failed_notices_before + 1u);
+      retro_unload_game();
+
+      const char *damaged_slot = file_exists(slot_a) ? slot_a : slot_b;
+      FILE *damage_file = fopen(damaged_slot, "r+b");
+      assert(damage_file);
+      int first_byte = fgetc(damage_file);
+      assert(first_byte >= 0 && fseek(damage_file, 0L, SEEK_SET) == 0 &&
+             fputc(first_byte ^ 1, damage_file) >= 0 && fclose(damage_file) == 0);
+      unsigned damaged_notices_before = jfd_damaged_notice_calls;
+      phase = PHASE_LOAD; assert(retro_load_game(&game));
+      assert(jfd_damaged_notice_calls == damaged_notices_before + 1u);
+      retro_reset();
+      assert(jfd_damaged_notice_calls == damaged_notices_before + 1u);
+      assert(disk_control.set_eject_state(true) &&
+             disk_control.set_eject_state(false) &&
+             jfd_damaged_notice_calls == damaged_notices_before + 1u);
+      retro_unload_game();
 
       /* Guest writes must preserve launch-record bytes when the candidates
        * are unchanged, and must use the existing target/choice guards when
@@ -2235,6 +2345,56 @@ int main(int argc, char **argv)
          assert(hash_file(launch_jfd) == launch_source_hash &&
                 open_files == 0u && open_dirs == 0u);
       }
+
+      /* The separately fingerprinted New-IO ROM performs the same complete
+       * read, write and result classification through the A3020 controller. */
+      char newio_rom[4096], newio_rw[4096], newio_wp[4096];
+      char newio_slot_a[4096], newio_slot_b[4096];
+      snprintf(newio_rom, sizeof(newio_rom),
+               "%s/../arcdroid-jfd-newio-save-test.rom", jfd_fixture_path);
+      snprintf(newio_rw, sizeof(newio_rw), "%s/rw-newio-d.jfd", jfd_fixture_path);
+      snprintf(newio_wp, sizeof(newio_wp), "%s/wp-newio-d.jfd", jfd_fixture_path);
+      uint64_t newio_rw_hash = hash_file(newio_rw);
+      uint64_t newio_wp_hash = hash_file(newio_wp);
+      ArcDigest newio_digest = digest_file(newio_rw);
+      snprintf(newio_slot_a, sizeof(newio_slot_a), "%s/arcdroid/jfd/%s.a",
+               save_path, newio_digest.sha1);
+      snprintf(newio_slot_b, sizeof(newio_slot_b), "%s/arcdroid/jfd/%s.b",
+               save_path, newio_digest.sha1);
+      copy_file(newio_rom, renamed);
+      option_machine = "A3020";
+      option_cpu = "ARM250";
+      option_writes = "shadow";
+      option_jfd_boot = "native";
+      option_launch = "off";
+      variable_update = true;
+      struct retro_game_info newio_game = {newio_rw, NULL, 0u, NULL};
+      for (unsigned pass = 0u; pass < 2u; ++pass)
+      {
+         phase = PHASE_LOAD; assert(retro_load_game(&newio_game));
+         assert(arc_engine_test_drive_media(0u, &write_protected, NULL) &&
+                !write_protected);
+         phase = PHASE_RUN;
+         for (unsigned frame = 0u; frame < 600u; ++frame) retro_run();
+         assert(last_video_pixel == (pass ? jfd_saved : jfd_first) &&
+                (file_exists(newio_slot_a) || file_exists(newio_slot_b)));
+         retro_unload_game();
+      }
+      ArcDigest newio_wp_digest = digest_file(newio_wp);
+      char newio_wp_slot_a[4096], newio_wp_slot_b[4096];
+      snprintf(newio_wp_slot_a, sizeof(newio_wp_slot_a), "%s/arcdroid/jfd/%s.a",
+               save_path, newio_wp_digest.sha1);
+      snprintf(newio_wp_slot_b, sizeof(newio_wp_slot_b), "%s/arcdroid/jfd/%s.b",
+               save_path, newio_wp_digest.sha1);
+      struct retro_game_info newio_wp_game = {newio_wp, NULL, 0u, NULL};
+      phase = PHASE_LOAD; assert(retro_load_game(&newio_wp_game));
+      phase = PHASE_RUN;
+      for (unsigned frame = 0u; frame < 600u; ++frame) retro_run();
+      assert(last_video_pixel == jfd_protected &&
+             !file_exists(newio_wp_slot_a) && !file_exists(newio_wp_slot_b) &&
+             hash_file(newio_rw) == newio_rw_hash &&
+             hash_file(newio_wp) == newio_wp_hash);
+      retro_unload_game();
       retro_deinit();
       assert(hash_file(jfd_content_path) == source_hash &&
              hash_file(wp) == wp_source_hash &&

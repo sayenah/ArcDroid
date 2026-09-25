@@ -347,14 +347,15 @@ static void wd1770_callback(void *p)
 		wd1770.written = 0;
 		wd1770.index_count = 0;
 		wd1770.rnf_detection = 1;
-		disc_writesector(curdrive, wd1770.sector, wd1770.track,
-		                 wd1770.curside, wd1770.density, -1,
-		                 (wd1770.command & 1) != 0);
+		if (!fdc_overridden)
+			disc_writesector(curdrive, wd1770.sector, wd1770.track,
+			                 wd1770.curside, wd1770.density, -1,
+			                 (wd1770.command & 1) != 0);
 		if (wd1770.status & 1) {
 			ioc_fiq(IOC_FIQ_DISC_DATA);
 			wd1770.status |= 2;
 		}
-		break;
+		return; /* Keep RNF armed while searching for the next sector. */
 		case 0xC: /*Read address*/
 		wd1770.status = 0x80 | (wd1770.status & 4);
 		ioc_fiq(IOC_FIQ_DISC_IRQ);
