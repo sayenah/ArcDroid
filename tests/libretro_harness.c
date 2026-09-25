@@ -154,11 +154,14 @@ static unsigned jfd_boot_log_lines;
 static char last_jfd_boot_log[512];
 static unsigned adffs_notice_calls;
 static unsigned jfd_write_log_lines;
+static unsigned jfd_refusal_log_lines;
+static char last_jfd_refusal_log[512];
 static char last_jfd_writes_log[512];
 static unsigned jfd_failed_status_calls;
 static unsigned jfd_damaged_notice_calls;
 static unsigned jfd_off_notice_calls;
 static unsigned jfd_install_notice_calls;
+static unsigned jfd_native_notice_calls;
 static unsigned jfd_original_notice_calls;
 static unsigned install_disclosure_calls;
 static char last_adffs_notice[512];
@@ -445,6 +448,10 @@ static void frontend_log(enum retro_log_level level, const char *format, ...)
       snprintf(last_jfd_boot_log, sizeof(last_jfd_boot_log), "%s", message);
    }
    if (!strncmp(message, "JFD write:", 10u)) ++jfd_write_log_lines;
+   if (!strncmp(message, "JFD write refused:", 18u)) {
+      ++jfd_refusal_log_lines;
+      snprintf(last_jfd_refusal_log, sizeof(last_jfd_refusal_log), "%s", message);
+   }
    if (!strncmp(message, "JFD writes:", 11u))
       snprintf(last_jfd_writes_log, sizeof(last_jfd_writes_log), "%s", message);
    if (strstr(message, "JFD content is never written in place"))
@@ -762,6 +769,8 @@ static bool environment(unsigned command, void *data)
             ++jfd_off_notice_calls;
          if (strstr(last_message, "native boots are not used"))
             ++jfd_install_notice_calls;
+         if (strstr(last_message, "booting this JFD natively"))
+            ++jfd_native_notice_calls;
          if (strstr(last_message, "Installed to a temporary RAM disc"))
             ++install_disclosure_calls;
          if (strstr(last_message, "flagged for RiscPC-class machines"))
@@ -1527,12 +1536,15 @@ int main(int argc, char **argv)
    bool real_boot = false;
    bool newio_smoke = false;
    bool jfd_writes = false;
+   bool jfd_create_step = false;
    char jfd_content_path[4096] = {0}, jfd_fixture_path[4096] = {0};
    const char *osk_script = NULL;
    if (argc == 11 && !strcmp(argv[5], "--newio-smoke"))
       newio_smoke = true;
    else if (argc == 7 && !strcmp(argv[5], "--jfd-writes"))
       jfd_writes = true;
+   else if (argc == 9 && !strcmp(argv[5], "--jfd-create-step"))
+      jfd_create_step = true;
    else if (argc >= 6 && !strcmp(argv[5], "--real-boot"))
    {
       real_boot = true;
@@ -1712,7 +1724,7 @@ int main(int argc, char **argv)
    size_t (*arc_platform_test_input_events)(ArcKartEvent *, size_t) = NULL;
    if (real_boot || newio_smoke)
       *(void **)(&arc_engine_test_newio) = dlsym(module, "arc_engine_test_newio");
-   if (!real_boot && !newio_smoke && !jfd_writes)
+   if (!real_boot && !newio_smoke && !jfd_writes && !jfd_create_step)
    {
       *(void **)(&arc_engine_audio_stats) = dlsym(module, "arc_engine_audio_stats");
       *(void **)(&arc_engine_media_insert) = dlsym(module, "arc_engine_media_insert");
@@ -1859,7 +1871,7 @@ int main(int argc, char **argv)
       assert(arc_libretro_test_register_input_profile(&test_profile));
       expect_test_profile = true;
    }
-   else if (jfd_writes)
+   else if (jfd_writes || jfd_create_step)
    {
       *(void **)(&arc_libretro_test_jfd_commit) =
          dlsym(module, "arc_libretro_test_jfd_commit");
@@ -1958,6 +1970,100 @@ int main(int argc, char **argv)
    assert(retro_serialize_size() == 0u);
    struct retro_game_info game = {jfd_writes ? jfd_content_path : argv[3], NULL, 0u, NULL};
    uint64_t source_hash = hash_file(game.path);
+
+   if (jfd_create_step)
+   {
+      option_machine = argv[6];
+      option_cpu = !strcmp(option_machine, "A3020") ? "ARM250" : "ARM2";
+      option_launch = "off"; option_jfd_boot = "native";
+      option_writes = "shadow"; variable_update = true;
+      uint32_t expected = (uint32_t)strtoul(argv[7], NULL, 16);
+      bool expect_slot = !strcmp(argv[8], "slot");
+      bool protected = true;
+      phase = PHASE_LOAD; assert(retro_load_game(&game));
+      assert(arc_engine_test_drive_media(0u, &protected, NULL) &&
+             protected == !expect_slot);
+      phase = PHASE_RUN;
+      unsigned steady = 0u;
+      for (unsigned frame = 0u; frame < 800u && steady < 8u; ++frame)
+      {
+         retro_run();
+         steady = last_video_pixel == expected ? steady + 1u : 0u;
+      }
+      if (last_video_pixel != expected || steady < 8u)
+         fprintf(stderr, "creation %s %s: got %08x expected %08x\n",
+                 option_machine, argv[8], last_video_pixel, expected);
+      assert(last_video_pixel == expected && steady == 8u);
+      ArcDigest digest = digest_file(game.path);
+      char a[4096], b[4096];
+      snprintf(a, sizeof(a), "%s/arcdroid/jfd/%s.a", save_path, digest.sha1);
+      snprintf(b, sizeof(b), "%s/arcdroid/jfd/%s.b", save_path, digest.sha1);
+      assert((file_exists(a) || file_exists(b)) == expect_slot);
+      if (expect_slot && expected == 0x006a0000u &&
+          !strcmp(option_machine, "A3000"))
+      {
+         retro_reset();
+         last_video_pixel = 0u;
+         steady = 0u;
+         for (unsigned frame = 0u; frame < 800u && steady < 8u; ++frame)
+         {
+            retro_run();
+            steady = last_video_pixel == 0x00001500u ? steady + 1u : 0u;
+         }
+         assert(steady == 8u);
+         assert(disk_control.set_eject_state(true) &&
+                disk_control.set_eject_state(false));
+         retro_reset();
+         last_video_pixel = 0u;
+         steady = 0u;
+         for (unsigned frame = 0u; frame < 800u && steady < 8u; ++frame)
+         {
+            retro_run();
+            steady = last_video_pixel == 0x00001500u ? steady + 1u : 0u;
+         }
+         assert(steady == 8u);
+      }
+      if (!expect_slot)
+      {
+         const char *why = strstr(game.path, "wp-create") ?
+                           "wp-flag" : "layout-unsupported";
+         char expected_refusal[160];
+         snprintf(expected_refusal, sizeof(expected_refusal),
+                  "image=1 track=0 side=0 sector=0 reason=%s", why);
+         assert(jfd_refusal_log_lines == 1u &&
+                strstr(last_jfd_refusal_log, expected_refusal));
+         if (!strcmp(option_machine, "A3000") &&
+             strstr(game.path, "nonmatching"))
+         {
+            retro_reset();
+            last_video_pixel = 0u;
+            steady = 0u;
+            for (unsigned frame = 0u; frame < 800u && steady < 8u; ++frame)
+            {
+               retro_run();
+               steady = last_video_pixel == expected ? steady + 1u : 0u;
+            }
+            assert(steady == 8u && jfd_refusal_log_lines == 1u);
+            assert(disk_control.set_eject_state(true) &&
+                   disk_control.set_eject_state(false));
+            retro_reset();
+            last_video_pixel = 0u;
+            steady = 0u;
+            for (unsigned frame = 0u; frame < 800u && steady < 8u; ++frame)
+            {
+               retro_run();
+               steady = last_video_pixel == expected ? steady + 1u : 0u;
+            }
+            assert(steady == 8u && jfd_refusal_log_lines == 1u);
+         }
+      }
+      retro_unload_game(); retro_deinit();
+      assert(hash_file(game.path) == source_hash &&
+             open_files == 0u && open_dirs == 0u && dlclose(module) == 0);
+      printf("jfd_creation_step: machine=%s outcome=%08x slot=%u\n",
+             option_machine, expected, expect_slot);
+      return 0;
+   }
 
    if (jfd_writes)
    {
@@ -2102,9 +2208,12 @@ int main(int argc, char **argv)
       struct retro_game_info missing_game = {missing_jfd, NULL, 0u, NULL};
       phase = PHASE_LOAD; assert(retro_load_game(&missing_game));
       assert(arc_engine_test_drive_media(0u, &write_protected, NULL) &&
-             !write_protected);
+             write_protected &&
+             strstr(last_jfd_writes_log, "reason=layout-unsupported"));
       phase = PHASE_RUN;
       for (unsigned frame = 0u; frame < 600u; ++frame) retro_run();
+      /* This legacy probe first READs the missing sector and never reaches a
+       * write. RNF stays visible and the image gate has published no slot. */
       assert(last_video_pixel == jfd_other &&
              !file_exists(missing_slot_a) && !file_exists(missing_slot_b));
       retro_unload_game();
@@ -2136,13 +2245,23 @@ int main(int argc, char **argv)
       phase = PHASE_LOAD; assert(retro_load_game(&adffs_game));
       phase = PHASE_RUN;
       for (unsigned frame = 0u; frame < 600u; ++frame) retro_run();
-      assert(last_video_pixel == jfd_other &&
+      assert(last_video_pixel == jfd_first &&
              (file_exists(adffs_slot_a) || file_exists(adffs_slot_b)));
       retro_unload_game();
       option_jfd_boot = "auto"; option_launch = "auto"; variable_update = true;
+      assert(remove(package_path) == 0);
+      unsigned native_notices_before = jfd_native_notice_calls;
+      phase = PHASE_LOAD; assert(retro_load_game(&adffs_game));
+      assert(strstr(last_jfd_boot_log, "JFD boot: path=native reason=no-package") &&
+             jfd_native_notice_calls == native_notices_before);
+      retro_unload_game();
+      copy_file(package_source, package_path);
       phase = PHASE_LOAD; assert(retro_load_game(&adffs_game));
       assert(strstr(last_jfd_boot_log, "JFD boot: path=native reason=native-saves") &&
+             jfd_native_notice_calls == native_notices_before + 1u &&
              hash_file(adffs_jfd) == adffs_source_hash);
+      retro_reset();
+      assert(jfd_native_notice_calls == native_notices_before + 1u);
       retro_unload_game();
 
       char install_one[4096], install_set[4096];

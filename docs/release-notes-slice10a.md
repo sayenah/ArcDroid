@@ -15,7 +15,17 @@ TRACK remain unsupported. `Disk Writes: Off` shows the original disc and hides
 saved changes until writes are enabled on a reset or reload. A saved native JFD
 continues to boot natively if an ADFFS package is added later.
 
-An omitted sector ID reports Record Not Found; a bad ID CRC reports a header
-CRC error. A bad data CRC, slow sector, duplicate ID, shared payload, or
-82C711 size mismatch reports a data CRC error without changing the disc.
+A never-written omitted sector ID reports Record Not Found. RW-flagged
+images matching the bounded P-DD5 profile can now create missing 1024-byte DD
+sectors (IDs 0–4, 80 cylinders × 2 sides) when the complete track-side
+placement is schedulable. A write to an omitted ID commits that sector and
+its data together; it then appears in reads, address scans and native launch
+discovery, including after a process restart. Captures with omissions that
+cannot safely be created are protected up front with `layout-unsupported`.
+Irregular track-sides remain non-creating; the ADFS free-space map must prove
+that missing standard IDs there are outside allocatable space.
+
+A bad ID CRC reports a header CRC error. A bad data CRC, slow sector,
+duplicate ID, shared payload, or 82C711 size mismatch reports a data CRC
+error without changing the disc.
 Deleted-data writes and FORMAT/WRITE TRACK report write protection.

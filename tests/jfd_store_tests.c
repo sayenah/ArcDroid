@@ -107,19 +107,49 @@ void arc_jfd_store_notice(const char *message, bool warning)
 { (void)message; (void)warning; ++notices; }
 void arc_jfd_store_log_commit(unsigned image_number, uint64_t generation,
                               size_t sector_index)
-{ assert(image_number == 1u && generation && sector_index < 2u); ++commits; }
+{ assert(image_number == 1u && generation &&
+         sector_index < ARC_JFD_PDD5_SLOTS); ++commits; }
 static ArcJfdImage image_new(void)
 {
    ArcJfdImage image = {0};
-   image.decoded = calloc(2048u, 1u); assert(image.decoded);
-   image.decoded_size = 2048u;
-   image.sectors = calloc(2u, sizeof(*image.sectors)); assert(image.sectors);
-   image.sector_count = 2u; image.track_count = 2u;
-   image.tracks[0].sector_count = 2u;
-   image.sectors[0] = (ArcJfdSector){0u, 256u, 128u, 0u, 2u, 0u};
-   image.sectors[1] = (ArcJfdSector){1000u, 512u, 128u, 1u, 2u, 0u};
+   image.decoded = calloc(32768u, 1u); assert(image.decoded);
+   image.decoded_size = 32768u;
+   image.sectors = calloc(15u, sizeof(*image.sectors)); assert(image.sectors);
+   image.sector_count = 15u; image.track_count = 160u;
+   for (unsigned track = 0u; track < 3u; ++track)
+   {
+      image.tracks[track].first_sector = track * 5u;
+      image.tracks[track].sector_count = 5u;
+      for (unsigned id = 0u; id < 5u; ++id)
+      {
+         unsigned index = track * 5u + id;
+         image.sectors[index] = (ArcJfdSector){id * ARC_JFD_PDD5_SPACING_US,
+            1024u + index * 1024u, 1024u, (uint8_t)id, 2u, 0u};
+      }
+   }
+   for (unsigned track = 3u; track < 160u; ++track)
+      image.tracks[track].first_sector = 15u;
    if (ineligible_second) image.sectors[1].flags = ARC_JFD_SLOW_SECTOR;
    image.extended = true; image.flags = 2u;
+   return image;
+}
+static ArcJfdImage creation_fixture(const char *root, const char *name)
+{
+   char path[4096], error[160];
+   int n = snprintf(path, sizeof(path), "%s/jfd-creation/%s", root, name);
+   assert(n > 0 && (size_t)n < sizeof(path));
+   FILE *file = fopen(path, "rb");
+   assert(file && fseek(file, 0, SEEK_END) == 0);
+   long length = ftell(file);
+   assert(length > 0 && fseek(file, 0, SEEK_SET) == 0);
+   uint8_t *bytes = malloc((size_t)length);
+   assert(bytes && fread(bytes, 1u, (size_t)length, file) == (size_t)length);
+   assert(fclose(file) == 0);
+   ArcJfdImage image;
+   bool parsed = arc_jfd_parse_owned(bytes, (size_t)length, &image,
+                                     error, sizeof(error));
+   if (!parsed) fprintf(stderr, "%s: %s\n", name, error);
+   assert(parsed);
    return image;
 }
 static ArcJfdImage load(bool writable)
@@ -181,10 +211,11 @@ static void malformed_slot(unsigned active, size_t offset, bool recalculate,
    memcpy(file->bytes, original, file->size);
    free(mutated); free(original);
 }
-int main(void)
+int main(int argc, char **argv)
 {
+   assert(argc == 2);
    arc_io_set_vfs(&vfs);
-   uint8_t first[128], second[128], third[128];
+   uint8_t first[1024], second[1024], third[1024];
    memset(first, 0x11, sizeof(first)); memset(second, 0x22, sizeof(second));
    memset(third, 0x33, sizeof(third));
    ArcJfdImage image = load(true);
@@ -243,12 +274,13 @@ int main(void)
    active = files[1].exists && files[1].bytes[68] == (uint8_t)latest ? 1u : 0u;
    /* Each field is checked independently with a valid checksum so malformed
     * bindings cannot be dismissed as checksum-only failures. */
-   for (size_t offset = 0u; offset <= 86u; ++offset)
+   for (size_t offset = 0u; offset <= 88u; ++offset)
    {
       if (offset == 0u || offset == 4u || offset == 8u || offset == 16u ||
           offset == 36u || offset == 68u || offset == 76u ||
-          offset == 80u || offset == 82u || offset == 84u ||
-          offset == 85u || offset == 86u)
+          offset == 80u || offset == 82u || offset == 83u ||
+          offset == 85u || offset == 86u || offset == 87u ||
+          offset == 88u)
          malformed_slot(active, offset, true, latest - 1u);
    }
    malformed_slot(active, files[active].size - 1u, false, latest - 1u);
@@ -256,7 +288,7 @@ int main(void)
    File *newest = &files[active];
    uint8_t *original = malloc(newest->size); assert(original);
    memcpy(original, newest->bytes, newest->size);
-   newest->bytes[216u + 2u] = 0u;
+   newest->bytes[80u + 9u + 1024u + 3u] = 0u;
    fix_checksum(newest);
    image = load(true);
    assert(image.overlay->damaged && image.overlay->generation == latest - 1u);
@@ -374,6 +406,265 @@ int main(void)
    assert(cpu_seconds < 2.0 && dense.overlay->eligible[0] &&
           dense.overlay->eligible[dense.sector_count - 1u]);
    arc_jfd_free(&dense);
+   /* Every irregular neighbour remains non-creating, including otherwise
+    * complete track-sides with a defective or shared extra descriptor. */
+   for (unsigned variant = 0u; variant < 6u; ++variant)
+   {
+      ArcJfdImage neighbour = creation_fixture(argv[1], "irregular-all-ids.jfd");
+      size_t extra = neighbour.tracks[1].first_sector + 5u;
+      assert(neighbour.sectors[extra].id == 9u);
+      switch (variant)
+      {
+         case 0u: neighbour.sectors[extra].data_offset = UINT32_MAX; break;
+         case 1u: neighbour.sectors[extra].flags = ARC_JFD_ID_CRC_BAD; break;
+         case 2u: neighbour.sectors[extra].flags = ARC_JFD_DATA_CRC_BAD; break;
+         case 3u: neighbour.sectors[extra].flags = ARC_JFD_SLOW_SECTOR; break;
+         case 4u: neighbour.sectors[extra].data_offset =
+                     neighbour.sectors[extra - 1u].data_offset; break;
+         default: neighbour.sectors[extra].id = 0u; break;
+      }
+      const char *why = NULL;
+      assert(arc_jfd_store_load(&neighbour, "save", true, false, 1u, &why) &&
+             neighbour.overlay->writable &&
+             neighbour.overlay->pdd5_profile &&
+             neighbour.overlay->creation_mask[1] == 0u &&
+             !neighbour.overlay->eligible[extra]);
+      ArcJfdView extra_view;
+      assert(!arc_jfd_effective_sector(&neighbour, 1u, 6u, true,
+                                        &extra_view));
+      arc_jfd_free(&neighbour);
+      clear_files();
+   }
+   /* C-11's gate and all placements derive from the immutable decoded JFD.
+    * The position of ID 3 is the same before and after writing ID 1. */
+   static const struct {
+      const char *name; bool writable; const char *reason;
+   } layouts[] = {
+      {"partial-untimed.jfd", true, "rw-flag"},
+      {"partial-edge.jfd", true, "rw-flag"},
+      {"partial-timed.jfd", true, "rw-flag"},
+      {"boundary.jfd", true, "rw-flag"},
+      {"unschedulable.jfd", false, "layout-unsupported"},
+      {"nonmatching.jfd", false, "layout-unsupported"},
+      {"half-vote.jfd", false, "layout-unsupported"},
+      {"irregular-free.jfd", false, "layout-unsupported"},
+      {"irregular-free-sequence.jfd", false, "layout-unsupported"},
+      {"irregular-newmap-free.jfd", false, "layout-unsupported"},
+      {"irregular-allocated.jfd", true, "rw-flag"},
+      {"irregular-all-ids.jfd", true, "rw-flag"}
+   };
+   for (size_t i = 0u; i < sizeof(layouts) / sizeof(layouts[0]); ++i)
+   {
+      clear_files();
+      ArcJfdImage sample = creation_fixture(argv[1], layouts[i].name);
+      const char *why = NULL;
+      unsigned probes = directory_probes;
+      assert(arc_jfd_store_load(&sample, "save", true, false, 1u, &why));
+      if (sample.overlay->writable != layouts[i].writable ||
+          strcmp(why, layouts[i].reason))
+         fprintf(stderr, "%s: writable=%d reason=%s\n",
+                 layouts[i].name, sample.overlay->writable, why);
+      assert(sample.overlay->writable == layouts[i].writable &&
+             !strcmp(why, layouts[i].reason));
+      if (!layouts[i].writable) assert(directory_probes == probes);
+      if (!strcmp(layouts[i].name, "irregular-newmap-free.jfd"))
+      {
+         bool free_track[ARC_JFD_PDD5_TRACKS];
+         assert(arc_jfd_base_free_tracks(&sample, free_track) &&
+                free_track[159]);
+      }
+      if (i == 0u)
+      {
+         assert(sample.overlay->creation_time[1][1] == 109056u &&
+                sample.overlay->creation_time[1][3] == 145408u &&
+                sample.overlay->creation_mask[159] == 0x0au &&
+                sample.overlay->creation_mask[2] == 0x1fu &&
+                sample.overlay->creation_time[2][4] == 145408u &&
+                sample.track_count == 166u);
+         ArcJfdView view;
+         assert(!arc_jfd_effective_sector(&sample, 160u, 1u, true, &view) &&
+                !arc_jfd_effective_sector(&sample, 165u, 1u, true, &view));
+      }
+      if (i == 1u)
+         assert(sample.overlay->creation_mask[1] == 0x11u &&
+                sample.overlay->creation_time[1][0] == 109056u &&
+                sample.overlay->creation_time[1][4] == 145408u);
+      if (i == 2u)
+         assert(sample.overlay->creation_time[1][1] == 36352u &&
+                sample.overlay->creation_time[1][3] == 116352u);
+      if (i == 3u)
+         assert(sample.overlay->creation_time[1][1] == 26352u);
+      if (!strcmp(layouts[i].name, "irregular-allocated.jfd"))
+         assert(sample.overlay->creation_mask[159] == 0u);
+      arc_jfd_free(&sample);
+   }
+   /* The immutable layout gate determines its C-10 reason even when no save
+    * directory is available; no slot lookup or directory creation occurs. */
+   clear_files();
+   ArcJfdImage no_save_layout = creation_fixture(argv[1], "nonmatching.jfd");
+   const char *no_save_reason = NULL;
+   unsigned no_save_probes = directory_probes;
+   assert(arc_jfd_store_load(&no_save_layout, NULL, true, false, 1u,
+                             &no_save_reason) &&
+          !strcmp(no_save_reason, "layout-unsupported") &&
+          no_save_layout.overlay && !no_save_layout.overlay->writable &&
+          directory_probes == no_save_probes);
+   arc_jfd_free(&no_save_layout);
+   clear_files();
+   ArcJfdImage outside = creation_fixture(argv[1], "irregular-allocated.jfd");
+   const char *outside_reason = NULL;
+   assert(arc_jfd_store_load(&outside, "save", true, false, 1u,
+                             &outside_reason) && outside.overlay->writable &&
+          outside.overlay->creation_mask[159] == 0u);
+   uint8_t outside_pattern[1024]; memset(outside_pattern, 0x59, 1024u);
+   assert(outside.overlay->commit(&outside, 0u, outside_pattern) &&
+          outside.overlay->commit_created(&outside, 2u, 1u,
+                                          outside_pattern));
+   arc_jfd_free(&outside);
+   outside = creation_fixture(argv[1], "irregular-allocated.jfd");
+   assert(arc_jfd_store_load(&outside, "save", true, false, 1u,
+                             &outside_reason) &&
+          outside.overlay->data[0][0] == 0x59u &&
+          outside.overlay->created[2][1][0] == 0x59u &&
+          !outside.overlay->created[159][0]);
+   arc_jfd_free(&outside);
+   clear_files();
+   ArcJfdImage launch_full = creation_fixture(argv[1], "launch-full.jfd");
+   ArcJfdImage launch_partial = creation_fixture(argv[1], "launch-partial.jfd");
+   const char *launch_reason = NULL;
+   assert(arc_jfd_store_load(&launch_partial, "save", true, false, 1u,
+                             &launch_reason));
+   ArcLaunchDiscovery discovery;
+   assert(arc_launch_discover(NULL, 0u, NULL, &launch_partial, &discovery) &&
+          !discovery.readable);
+   assert(launch_partial.overlay->commit_created(&launch_partial, 0u, 1u,
+          launch_full.decoded + launch_full.sectors[1].data_offset));
+   assert(arc_launch_discover(NULL, 0u, NULL, &launch_partial, &discovery) &&
+          discovery.readable && discovery.application_count == 1u);
+   arc_jfd_free(&launch_partial);
+   launch_partial = creation_fixture(argv[1], "launch-partial.jfd");
+   assert(arc_jfd_store_load(&launch_partial, "save", true, false, 1u,
+                             &launch_reason) &&
+          arc_launch_discover(NULL, 0u, NULL, &launch_partial, &discovery) &&
+          discovery.application_count == 1u);
+   arc_jfd_free(&launch_partial);
+   launch_partial = creation_fixture(argv[1], "launch-partial.jfd");
+   assert(arc_jfd_store_load(&launch_partial, "save", false, false, 1u,
+                             &launch_reason) &&
+          arc_launch_discover(NULL, 0u, NULL, &launch_partial, &discovery) &&
+          !discovery.readable);
+   arc_jfd_free(&launch_partial);
+   arc_jfd_free(&launch_full);
+   clear_files();
+   ArcJfdImage created = creation_fixture(argv[1], "partial-untimed.jfd");
+   const char *creation_reason = NULL;
+   assert(arc_jfd_store_load(&created, "save", true, false, 1u,
+                             &creation_reason));
+   ArcDigest identity_before = arc_digest(created.decoded, created.decoded_size);
+   uint8_t pattern[1024]; memset(pattern, 0x6au, sizeof(pattern));
+   assert(created.overlay->commit_created(&created, 1u, 3u, pattern));
+   ArcJfdView view;
+   assert(arc_jfd_effective_sector(&created, 1u, 6u, false, &view) &&
+          view.created && view.sector.id == 3u && view.data[0] == 0x6au);
+   memset(pattern, 0x15u, sizeof(pattern));
+   assert(created.overlay->commit_created(&created, 1u, 1u, pattern));
+   assert(created.overlay->generation == 2u && created.overlay->records == 2u);
+   ArcDigest identity_after = arc_digest(created.decoded, created.decoded_size);
+   assert(!strcmp(identity_before.sha1, identity_after.sha1) &&
+          identity_before.crc32 == identity_after.crc32);
+   uint8_t *first_order = malloc(files[0].size); assert(first_order);
+   size_t first_order_size = files[0].size;
+   memcpy(first_order, files[0].bytes, first_order_size);
+   arc_jfd_free(&created);
+   created = creation_fixture(argv[1], "partial-untimed.jfd");
+   assert(arc_jfd_store_load(&created, "save", true, false, 1u,
+                             &creation_reason) &&
+          created.overlay->created[1][1][0] == 0x15u &&
+          created.overlay->created[1][3][0] == 0x6au);
+   arc_jfd_free(&created);
+   clear_files();
+   created = creation_fixture(argv[1], "partial-untimed.jfd");
+   assert(arc_jfd_store_load(&created, "save", true, false, 1u,
+                             &creation_reason));
+   assert(created.overlay->commit_created(&created, 1u, 1u, pattern));
+   memset(pattern, 0x6au, sizeof(pattern));
+   assert(created.overlay->commit_created(&created, 1u, 3u, pattern));
+   assert(files[0].size == first_order_size &&
+          !memcmp(files[0].bytes, first_order, first_order_size));
+   free(first_order);
+   /* The created-kind parser is fuzzed with repaired checksums so the
+    * mutation reaches kind, key and payload validation under ASan/UBSan. */
+   size_t created_size = files[0].size;
+   uint8_t *created_baseline = malloc(created_size); assert(created_baseline);
+   memcpy(created_baseline, files[0].bytes, created_size);
+   uint32_t created_seed = UINT32_C(0x43524541);
+   for (unsigned iteration = 0u; iteration < 256u; ++iteration)
+   {
+      created_seed = created_seed * UINT32_C(1664525) +
+                     UINT32_C(1013904223);
+      size_t position = created_seed % (created_size - 4u);
+      files[0].bytes[position] ^= (uint8_t)(1u << ((created_seed >> 16u) & 7u));
+      fix_checksum(&files[0]);
+      ArcJfdImage fuzzed = creation_fixture(argv[1], "partial-untimed.jfd");
+      const char *fuzz_reason = NULL;
+      assert(arc_jfd_store_load(&fuzzed, "save", true, false, 1u,
+                                &fuzz_reason));
+      arc_jfd_free(&fuzzed);
+      memcpy(files[0].bytes, created_baseline, created_size);
+   }
+   files[0].bytes[76u] = 0xffu; fix_checksum(&files[0]);
+   ArcJfdImage overbound = creation_fixture(argv[1], "partial-untimed.jfd");
+   const char *bound_reason = NULL;
+   assert(arc_jfd_store_load(&overbound, "save", true, false, 1u,
+                             &bound_reason) && overbound.overlay->damaged &&
+          !overbound.overlay->writable);
+   arc_jfd_free(&overbound);
+   memcpy(files[0].bytes, created_baseline, created_size);
+   free(created_baseline);
+   fault = RENAME_FAULT;
+   assert(!created.overlay->commit_created(&created, 1u, 1u, pattern) &&
+          created.overlay->generation == 2u &&
+          created.overlay->created[1][1][0] == 0x15u);
+   arc_jfd_free(&created);
+   created = creation_fixture(argv[1], "partial-untimed.jfd");
+   assert(arc_jfd_store_load(&created, "save", true, false, 1u,
+                             &creation_reason) &&
+          created.overlay->created[1][1][0] == 0x15u);
+   arc_jfd_free(&created);
+   /* Created-kind/key corruption and the superseded development version
+    * leave committed slots untouched and protect the session. */
+   uint8_t saved_kind = files[0].bytes[82u];
+   files[0].bytes[82u] = 2u; fix_checksum(&files[0]);
+   created = creation_fixture(argv[1], "partial-untimed.jfd");
+   assert(arc_jfd_store_load(&created, "save", true, false, 1u,
+                             &creation_reason) && created.overlay->damaged);
+   arc_jfd_free(&created);
+   files[0].bytes[82u] = saved_kind; fix_checksum(&files[0]);
+   files[0].bytes[4u] = 1u; fix_checksum(&files[0]);
+   created = creation_fixture(argv[1], "partial-untimed.jfd");
+   assert(arc_jfd_store_load(&created, "save", true, false, 1u,
+                             &creation_reason) && created.overlay->damaged &&
+          !created.overlay->writable);
+   arc_jfd_free(&created);
+   clear_files();
+   /* A first created record cannot become visible if its publish rename
+    * fails. The next load sees no generation at all. */
+   created = creation_fixture(argv[1], "partial-untimed.jfd");
+   assert(arc_jfd_store_load(&created, "save", true, false, 1u,
+                             &creation_reason));
+   fault = RENAME_FAULT;
+   assert(!created.overlay->commit_created(&created, 1u, 1u, pattern) &&
+          !created.overlay->created[1][1] && !files[0].exists &&
+          !files[1].exists);
+   arc_jfd_free(&created);
+   clear_files();
+   created = creation_fixture(argv[1], "partial-untimed.jfd");
+   assert(arc_jfd_store_load(&created, "save", true, false, 1u,
+                             &creation_reason) &&
+          created.overlay->generation == 0u &&
+          !created.overlay->created[1][1]);
+   arc_jfd_free(&created);
+   clear_files();
    puts("jfd_store_tests: generations, malformed slots, recovery, failures and Off passed");
    return 0;
 }

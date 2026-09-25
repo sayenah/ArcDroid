@@ -992,6 +992,45 @@ if ((Get-FileHash -Algorithm SHA256 $rwJfd).Hash -ne $rwHash -or
     throw "JFD or zip source changed during native write tests"
 }
 Write-Host "Slice 10a Windows RetroArch: RW commit survived process relaunch; WP and source files unchanged"
+# C-11: the guest writes map ID 0 and directory ID 2 before creating
+# missing data ID 3. The second RetroArch process only reads ID 3; its
+# steady saved outcome therefore proves the created record survived reload.
+Copy-Item -Force (Join-Path $InputDirectory "arcdroid-jfd-create-test.rom") $firmware
+$createRw = (Resolve-Path (Join-Path $InputDirectory "jfd-writes/rw-create-d.jfd")).Path
+$createWp = (Resolve-Path (Join-Path $InputDirectory "jfd-writes/wp-create-d.jfd")).Path
+$createRwHash = (Get-FileHash -Algorithm SHA256 $createRw).Hash
+$createWpHash = (Get-FileHash -Algorithm SHA256 $createWp).Hash
+$createRwDigest = (Get-FileHash -Algorithm SHA1 $createRw).Hash.ToLowerInvariant()
+$createWpDigest = (Get-FileHash -Algorithm SHA1 $createWp).Hash.ToLowerInvariant()
+if ((Test-Path (Join-Path $jfdSaveDirectory "$createRwDigest.a")) -or
+    (Test-Path (Join-Path $jfdSaveDirectory "$createRwDigest.b"))) {
+    throw "Created JFD slot existed before the guest allocation sequence"
+}
+$createFirst = Start-MediaRun $createRw "jfd-create-first"
+try {
+    [void](Wait-JfdOutcome $createFirst "jfd-create-accepted" "ff6a0000")
+} finally { Stop-MediaRun $createFirst }
+if (-not ((Test-Path (Join-Path $jfdSaveDirectory "$createRwDigest.a")) -or
+           (Test-Path (Join-Path $jfdSaveDirectory "$createRwDigest.b")))) {
+    throw "Omitted-sector guest write did not publish a committed slot"
+}
+$createSecond = Start-MediaRun $createRw "jfd-create-relaunch"
+try {
+    [void](Wait-JfdOutcome $createSecond "jfd-create-saved-readback" "ff001500")
+} finally { Stop-MediaRun $createSecond }
+$createProtected = Start-MediaRun $createWp "jfd-create-wp"
+try {
+    [void](Wait-JfdOutcome $createProtected "jfd-create-wp-refused" "ff006a00")
+} finally { Stop-MediaRun $createProtected }
+if ((Test-Path (Join-Path $jfdSaveDirectory "$createWpDigest.a")) -or
+    (Test-Path (Join-Path $jfdSaveDirectory "$createWpDigest.b"))) {
+    throw "Write-protected omitted-sector fixture published a slot"
+}
+if ((Get-FileHash -Algorithm SHA256 $createRw).Hash -ne $createRwHash -or
+    (Get-FileHash -Algorithm SHA256 $createWp).Hash -ne $createWpHash) {
+    throw "Omitted-sector source JFD changed"
+}
+Write-Host "Slice 10a Windows RetroArch: map/directory/data creation survived fresh process; WP and sources unchanged"
 Copy-Item -Force (Join-Path $InputDirectory "arcdroid-media-test.rom") $firmware
 Write-Host "Slice 5b Windows RetroArch: folder disc 1 and eject/next/insert matched the playlist disc-2 signature"
 Write-Host "Slice 7a Windows RetroArch: bare single, zip#member, multi-image swap, pass-through logs, and unchanged SHA-256 passed"

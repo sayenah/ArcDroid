@@ -29,7 +29,10 @@ static unsigned jfd_side;
 static unsigned jfd_density;
 static unsigned jfd_sector_id;
 static unsigned jfd_transfer_pos;
-static size_t jfd_selected;
+static ArcJfdView jfd_selected_view;
+static unsigned jfd_head_track;
+static unsigned jfd_requested_c;
+static unsigned jfd_selected_side;
 static uint32_t jfd_phase_us;
 static unsigned jfd_search_indexes;
 static bool jfd_writing;
@@ -38,11 +41,19 @@ static uint8_t jfd_write_buffer[1024];
 static unsigned jfd_write_wait;
 static int jfd_requested_size;
 
+static void jfd_refused(const char *reason)
+{
+   const ArcJfdOverlay *overlay = jfd_image ? jfd_image->overlay : NULL;
+   if (overlay && overlay->log_refusal)
+      overlay->log_refusal(overlay->image_number, jfd_track, jfd_side,
+                           jfd_sector_id, reason);
+}
+
 static void jfd_stop(void)
 {
    jfd_state = JFD_IDLE;
    jfd_transfer_pos = 0u;
-   jfd_selected = 0u;
+   memset(&jfd_selected_view, 0, sizeof(jfd_selected_view));
    jfd_search_indexes = 0u;
    jfd_write_wait = 0u;
    jfd_writing = false;
@@ -61,6 +72,7 @@ void jfd_init(void)
    jfd_image = NULL;
    jfd_phase_us = 0u;
    jfd_track = jfd_side = jfd_density = jfd_sector_id = 0u;
+   jfd_head_track = jfd_requested_c = jfd_selected_side = 0u;
    jfd_stop();
 }
 
@@ -86,8 +98,14 @@ void jfd_motor_start(void) { jfd_phase_us = 0u; }
 static void jfd_seek(int drive, int track)
 {
    (void)drive;
-   (void)track;
+   jfd_head_track = track < 0 ? 0u : (unsigned)track;
    jfd_stop();
+}
+
+void jfd_set_requested_ch(unsigned cylinder, unsigned selected_side)
+{
+   jfd_requested_c = cylinder;
+   jfd_selected_side = selected_side & 1u;
 }
 
 static bool jfd_begin(int drive, int track, int side, int density)
@@ -99,6 +117,11 @@ static bool jfd_begin(int drive, int track, int side, int density)
    jfd_density = fdc_funcs && fdc_funcs->sectorid ?
       (density == 2 ? 4u : density == 3 ? 8u : 2u) :
       (density ? 2u : 1u);
+   if (!(fdc_funcs && fdc_funcs->sectorid))
+   {
+      jfd_requested_c = jfd_track;
+      jfd_selected_side = jfd_side;
+   }
    jfd_transfer_pos = 0u;
    return true;
 }
@@ -116,9 +139,15 @@ static void jfd_writesector(int drive, int sector, int track, int side, int dens
 {
    jfd_stop();
    if (!jfd_begin(drive, track, side, density)) return;
-   if (!jfd_image->overlay || !jfd_image->overlay->writable || deleted)
-   { fdc_funcs->writeprotect(fdc_p); return; }
    jfd_sector_id = (unsigned)sector & 0xffu;
+   if (!jfd_image->overlay || !jfd_image->overlay->writable || deleted)
+   {
+      jfd_refused(deleted ? "deleted-data" :
+         jfd_image->overlay && jfd_image->overlay->reason ?
+         jfd_image->overlay->reason : "write-protected");
+      fdc_funcs->writeprotect(fdc_p);
+      return;
+   }
    jfd_requested_size = requested_size;
    jfd_writing = true;
    jfd_state = JFD_FIND;
@@ -169,17 +198,20 @@ static bool jfd_interval_contains(uint32_t old_phase, uint32_t new_phase,
                                   time >= old_phase || time < new_phase;
 }
 
-static bool jfd_find_sector(uint32_t old_phase, uint32_t new_phase, size_t *selected)
+static bool jfd_find_sector(uint32_t old_phase, uint32_t new_phase,
+                            ArcJfdView *selected)
 {
    size_t track_side = (size_t)jfd_track * 2u + jfd_side;
    if (!jfd_image || track_side >= jfd_image->track_count) return false;
    const ArcJfdTrack *track = &jfd_image->tracks[track_side];
    uint32_t best_delta = UINT32_MAX;
    bool found = false;
-   for (unsigned i = 0u; i < track->sector_count; ++i)
+   for (unsigned i = 0u; i < track->sector_count + ARC_JFD_PDD5_IDS; ++i)
    {
-      size_t index = (size_t)track->first_sector + i;
-      const ArcJfdSector *sector = &jfd_image->sectors[index];
+      ArcJfdView view;
+      if (!arc_jfd_effective_sector(jfd_image, (unsigned)track_side, i,
+                                    jfd_writing, &view)) continue;
+      const ArcJfdSector *sector = &view.sector;
       if (sector->density != jfd_density ||
           (jfd_sector_id != UINT_MAX && sector->id != jfd_sector_id) ||
           !jfd_interval_contains(old_phase, new_phase, sector->time_us)) continue;
@@ -189,7 +221,7 @@ static bool jfd_find_sector(uint32_t old_phase, uint32_t new_phase, size_t *sele
       {
          found = true;
          best_delta = delta;
-         *selected = index;
+         *selected = view;
       }
    }
    return found;
@@ -204,9 +236,12 @@ static void jfd_poll(void)
    jfd_phase_us = new_phase;
    if (wrapped)
    {
-      if (jfd_state == JFD_FIND && fdc_funcs->sectorid)
+      if (jfd_state == JFD_FIND)
          ++jfd_search_indexes;
       fdc_funcs->indexpulse(fdc_p);
+      if (jfd_state == JFD_FIND && jfd_writing &&
+          jfd_search_indexes == (fdc_funcs->sectorid ? 2u : 5u))
+         jfd_refused("not-found");
       if (jfd_state == JFD_FIND && fdc_funcs->sectorid &&
           jfd_search_indexes >= 2u)
       {
@@ -224,9 +259,9 @@ static void jfd_poll(void)
    }
    if (jfd_state == JFD_FIND)
    {
-      size_t selected;
+      ArcJfdView selected;
       if (!jfd_find_sector(old_phase, new_phase, &selected)) return;
-      const ArcJfdSector *sector = &jfd_image->sectors[selected];
+      const ArcJfdSector *sector = &selected.sector;
       if (jfd_sector_id == UINT_MAX)
       {
          if (sector->flags & ARC_JFD_ID_CRC_BAD)
@@ -245,29 +280,41 @@ static void jfd_poll(void)
          }
          else
          {
-            jfd_selected = selected;
+            jfd_selected_view = selected;
             jfd_transfer_pos = 0u;
             jfd_state = JFD_READ_ADDRESS;
          }
       }
       else if (sector->flags & ARC_JFD_ID_CRC_BAD)
       {
+         if (jfd_writing) jfd_refused("id-crc");
          jfd_stop();
          fdc_funcs->headercrcerror(fdc_p);
       }
-      else if (sector->data_offset != UINT32_MAX)
+      else if (sector->data_offset != UINT32_MAX || selected.created)
       {
-         jfd_selected = selected;
+         jfd_selected_view = selected;
          jfd_transfer_pos = 0u;
          if (jfd_writing)
          {
-            if ((jfd_requested_size != -1 &&
+            if ((selected.created &&
+                 (jfd_requested_c != jfd_head_track ||
+                  jfd_selected_side != jfd_side)) ||
+                (jfd_requested_size != -1 &&
                  (jfd_requested_size < 0 ||
                   (unsigned)jfd_requested_size != sector->size)) ||
-                !(jfd_image->overlay && jfd_image->overlay->eligible ?
-                  jfd_image->overlay->eligible[selected] :
-                  arc_jfd_sector_write_eligible(jfd_image, selected)))
+                (!selected.created &&
+                 !(jfd_image->overlay && jfd_image->overlay->eligible ?
+                   jfd_image->overlay->eligible[selected.key] :
+                   arc_jfd_sector_write_eligible(jfd_image, selected.key))))
             {
+               jfd_refused(selected.created &&
+                  (jfd_requested_c != jfd_head_track ||
+                   jfd_selected_side != jfd_side) ? "c-h-mismatch" :
+                  jfd_requested_size != -1 &&
+                  (jfd_requested_size < 0 ||
+                   (unsigned)jfd_requested_size != sector->size) ?
+                  "size-mismatch" : "sector-ineligible");
                jfd_stop();
                fdc_funcs->datacrcerror(fdc_p);
                return;
@@ -292,12 +339,8 @@ static void jfd_poll(void)
    }
    if (jfd_state == JFD_READ_DATA)
    {
-      const ArcJfdSector *sector = &jfd_image->sectors[jfd_selected];
-      const uint8_t *source = jfd_image->overlay && jfd_image->overlay->visible &&
-         jfd_image->overlay->data &&
-         jfd_image->overlay->data[jfd_selected] ?
-         jfd_image->overlay->data[jfd_selected] :
-         jfd_image->decoded + sector->data_offset;
+      const ArcJfdSector *sector = &jfd_selected_view.sector;
+      const uint8_t *source = jfd_selected_view.data;
       fdc_funcs->data(source[jfd_transfer_pos], fdc_p);
       if (jfd_state != JFD_READ_DATA) return;
       ++jfd_transfer_pos;
@@ -314,12 +357,13 @@ static void jfd_poll(void)
    }
    if (jfd_state == JFD_WRITE_DATA)
    {
-      const ArcJfdSector *sector = &jfd_image->sectors[jfd_selected];
+      const ArcJfdSector *sector = &jfd_selected_view.sector;
       int value = fdc_funcs->getdata(jfd_transfer_pos + 1u == sector->size, fdc_p);
       if (value < 0)
       {
          if (++jfd_write_wait >= 16u)
          {
+            jfd_refused("underrun");
             jfd_stop();
             if (fdc_funcs->lostdata) fdc_funcs->lostdata(fdc_p);
             else fdc_funcs->writeprotect(fdc_p);
@@ -330,9 +374,16 @@ static void jfd_poll(void)
       jfd_write_buffer[jfd_transfer_pos++] = (uint8_t)value;
       if (jfd_transfer_pos == sector->size)
       {
-         bool committed = jfd_image->overlay->commit &&
-            jfd_image->overlay->commit((ArcJfdImage *)(uintptr_t)jfd_image,
-                                       jfd_selected, jfd_write_buffer);
+         bool committed = jfd_selected_view.created ?
+            (jfd_image->overlay->commit_created &&
+             jfd_image->overlay->commit_created(
+                (ArcJfdImage *)(uintptr_t)jfd_image,
+                jfd_track * 2u + jfd_side,
+                (unsigned)jfd_selected_view.key, jfd_write_buffer)) :
+            (jfd_image->overlay->commit &&
+             jfd_image->overlay->commit((ArcJfdImage *)(uintptr_t)jfd_image,
+                                        jfd_selected_view.key, jfd_write_buffer));
+         if (!committed) jfd_refused("store-failure");
          jfd_stop();
          if (committed) fdc_funcs->finishread(fdc_p);
          else fdc_funcs->writeprotect(fdc_p);

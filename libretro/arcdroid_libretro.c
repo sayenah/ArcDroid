@@ -282,6 +282,8 @@ typedef struct {
    bool jfd_damage_notice_shown;
    bool jfd_off_notice_shown;
    bool jfd_install_notice_shown;
+   bool jfd_native_notice_shown;
+   uint8_t jfd_refusal_seen[ARC_JFD_MAX_TRACK_SIDES][32];
    uint32_t jfd_game_id;
    uint16_t jfd_disc_number;
    uint16_t jfd_disc_count;
@@ -2181,6 +2183,24 @@ static ArcEngineMedia arc_engine_media(const ArcMediaEntry *entry)
    return media;
 }
 
+static void arc_jfd_log_refusal(unsigned image_number, unsigned track,
+                                unsigned side, unsigned sector,
+                                const char *reason)
+{
+   if (!image_number || image_number > arc_media_count || track >= 83u ||
+       side > 1u || sector > 255u) return;
+   ArcMediaEntry *entry = &arc_media[image_number - 1u];
+   unsigned track_side = track * 2u + side;
+   uint8_t mask = (uint8_t)(1u << (sector & 7u));
+   uint8_t *seen = &entry->jfd_refusal_seen[track_side][sector >> 3u];
+   if (*seen & mask) return;
+   *seen |= mask;
+   if (arc_log)
+      arc_log(RETRO_LOG_INFO,
+         "JFD write refused: image=%u track=%u side=%u sector=%u reason=%s\n",
+         image_number, track, side, sector, reason);
+}
+
 static bool arc_refresh_jfd(ArcMediaEntry *entry, ArcDiskWriteMode mode,
                             char *error, size_t error_size)
 {
@@ -2209,7 +2229,11 @@ static bool arc_refresh_jfd(ArcMediaEntry *entry, ArcDiskWriteMode mode,
           (entry->jfd.flags & 2u) && !(entry->jfd.flags & 1u))
          arc_jfd_store_notice("Disc changes can no longer be saved this session.", true);
    }
-   if (entry->jfd.overlay) entry->jfd.overlay->reason = reason;
+   if (entry->jfd.overlay)
+   {
+      entry->jfd.overlay->reason = reason;
+      entry->jfd.overlay->log_refusal = arc_jfd_log_refusal;
+   }
    if (entry->jfd.overlay && entry->jfd.overlay->damaged &&
        !entry->jfd_damage_notice_shown)
    {
@@ -2496,9 +2520,6 @@ static bool arc_prepare_adffs(bool notify) {
       reason = "multi-disc";
    else if (arc_core_options.jfd_boot == ARC_JFD_BOOT_NATIVE)
       reason = "option";
-   else if (!install && jfd->overlay && jfd->overlay->generation &&
-            !jfd->overlay->damaged)
-      reason = "native-saves";
    else if (arc_core_options.launch != ARC_LAUNCH_AUTO)
       reason = "launch-option";
    else if (arc_plan.os != ARC_OS_RISCOS_311
@@ -2510,9 +2531,6 @@ static bool arc_prepare_adffs(bool notify) {
    if (reason) {
       if (install) arc_install_refuse(reason, notify);
       else arc_jfd_boot_log(reason);
-      if (notify && !strcmp(reason, "native-saves"))
-         arc_message("Saved disc changes found; booting this JFD natively to keep them visible.",
-                     RETRO_LOG_INFO);
       return false;
    }
 
@@ -2670,6 +2688,23 @@ static bool arc_prepare_adffs(bool notify) {
       arc_jfd_boot_log(full);
       if (notify)
          arc_jfd_boot_notice(full, jfd);
+      return false;
+   }
+   /* A native save changes the path only after the ordinary ADFFS package,
+    * script and option preconditions have all succeeded. */
+   if (!install && jfd->overlay && jfd->overlay->generation &&
+       !jfd->overlay->damaged)
+   {
+      free(builtin);
+      arc_adffs_package_free(package);
+      free(package);
+      arc_jfd_boot_log("native-saves");
+      if (notify && !entry->jfd_native_notice_shown)
+      {
+         arc_message("Saved disc changes found; booting this JFD natively to keep them visible.",
+                     RETRO_LOG_INFO);
+         entry->jfd_native_notice_shown = true;
+      }
       return false;
    }
    if (install) {

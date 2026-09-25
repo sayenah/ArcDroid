@@ -14,6 +14,8 @@ static const ArcFirmwareFingerprint fingerprints[] = {
    C(ARC_OS_TEST, "ArcDroid media exerciser ROM", 524288u, 0x98eb2fb5, "2cd97482b0b64fd2abdc657a1a0143e6556f50f6"),
    C(ARC_OS_TEST, "ArcDroid JFD save test ROM", 524288u, 0x21e5f59b, "6af9d30474d067f9e5c274cc8ffd3449fdab8a62"),
    C(ARC_OS_TEST, "ArcDroid JFD New-IO save test ROM", 524288u, 0x8a0fb781, "a5ed887b89711c63484931aeb724a69875342f3a"),
+   C(ARC_OS_TEST, "ArcDroid JFD creation test ROM", 524288u, 0x46949656, "d0acb76944fad75542129e6acd8d8bcdb5aad678"),
+   C(ARC_OS_TEST, "ArcDroid JFD New-IO creation test ROM", 524288u, 0x15c26018, "823a41a52bab201f135e3193c260db2313398a11"),
    C(ARC_OS_TEST, "ArcDroid JFD benign directory write ROM", 524288u, 0xb876f99d, "0f957890cb139a5a0b05958ac5200d25280e7c21"),
    C(ARC_OS_TEST, "ArcDroid JFD directory rename ROM", 524288u, 0x6f93b871, "778eea0fd1a26c826723bb0140cac182875e01cf"),
    C(ARC_OS_RISCOS_311, "RISC OS 3.11", 2097152u, 0x54c0c963, "3487729e87bebc9cb51665838c27beff22f7b3bd"),

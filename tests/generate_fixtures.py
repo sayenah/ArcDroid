@@ -157,7 +157,8 @@ CHOOSER_VIDC_MODE = (
 def build_rom(media_exerciser: bool = False,
               jfd_save_probe: bool = False, newio_save_probe: bool = False,
               write_sector: int = 1,
-              write_payload: bytes | None = None) -> bytearray:
+              write_payload: bytes | None = None,
+              creation_probe: bool = False) -> bytearray:
     if not 0 <= write_sector <= 4 or (write_payload is not None and
                                       len(write_payload) != 1024):
         raise ValueError("the synthetic D-format writer needs one full sector")
@@ -256,7 +257,8 @@ def build_rom(media_exerciser: bool = False,
     if newio_save_probe:
         # Read the entire sector before writing. The last DMA access asserts
         # TC, and the completed seven-byte result is checked on both paths.
-        for value in (0x06, 0, 0, 0, 1, 3, 1, 0x1B, 0xFF):
+        for value in (0x06, 0, 0, 0, 3 if creation_probe else 1,
+                      3, 3 if creation_probe else 1, 0x1B, 0xFF):
             a.mov(1, value); a.str(1, 0, byte=True)
         a.ldr_const(2, 0x03200030)
         a.ldr_const(3, 0x03012000)
@@ -268,7 +270,7 @@ def build_rom(media_exerciser: bool = False,
         a.tst_imm(7, 1); a.branch("save_new_read_byte", "ne")
         a.ldr_const(1, 0x03200020)
         a.ldr(7, 1, byte=True)
-        a.tst_imm(7, 0x10); a.branch("save_new_other", "ne")
+        a.tst_imm(7, 0x10); a.branch("save_new_missing", "ne") if creation_probe else a.branch("save_new_other", "ne")
         a.subs_imm(8, 8, 1); a.branch("save_new_read_wait", "ne")
         a.branch("save_new_other")
         a.label("save_new_read_byte")
@@ -300,7 +302,69 @@ def build_rom(media_exerciser: bool = False,
         a.label("save_new_written")
         a.mov(9, 2)
         a.label("save_new_start_write")
-        for value in (0x05, 0, 0, 0, 1, 3, 1, 0x1B, 0xFF):
+        if creation_probe:
+            # A missing data sector is the pristine state. A committed one
+            # ends here, before *any* write, proving a fresh-store read.
+            a.cmp_imm(9, 2); a.branch("save_new_creation_saved", "eq")
+            a.branch("save_new_creation_prefix")
+            a.label("save_new_missing")
+            a.ldr_const(3, 0x03310FD0); a.ldr(7, 3, byte=True)
+            a.ldr(4, 0, byte=True)  # ST0
+            a.ldr(7, 0, byte=True)  # ST1
+            for _ in range(5): a.ldr(1, 0, byte=True)
+            a.tst_imm(4, 0x40); a.branch("save_new_other", "eq")
+            a.tst_imm(7, 0x04); a.branch("save_new_other", "eq")
+            a.mov(9, 1)
+            a.branch("save_new_creation_prefix")
+            a.label("save_new_creation_saved")
+            a.mov(6, 0x20); a.branch("fdc_done")
+            a.label("save_new_creation_wp")
+            a.mov(6, 0x40); a.branch("fdc_done")
+            a.label("save_new_creation_prefix")
+            # RISC OS allocation ordering: map, directory, then omitted data.
+            # Prefix sectors already exist; only the final data ID is created.
+            for prefix_sector in (0, 2):
+                tag = f"save_new_create_{prefix_sector}"
+                for value in (0x05, 0, 0, 0, prefix_sector, 3,
+                              prefix_sector, 0x1B, 0xFF):
+                    a.mov(1, value); a.str(1, 0, byte=True)
+                a.ldr_const(2, 0x03200030)
+                a.ldr_const(3, 0x03012000)
+                a.ldr_const(5, 1024)
+                a.ldr_const(8, 250000)
+                a.mov(7, 0x5A)
+                a.label(tag + "_wait")
+                a.ldr(4, 2, byte=True)
+                a.tst_imm(4, 1); a.branch(tag + "_byte", "ne")
+                a.ldr_const(1, 0x03200020)
+                a.ldr(4, 1, byte=True)
+                a.tst_imm(4, 0x10); a.branch(tag + "_done", "ne")
+                a.subs_imm(8, 8, 1); a.branch(tag + "_wait", "ne")
+                a.branch("save_new_other")
+                a.label(tag + "_byte")
+                a.ldr_const(8, 250000)
+                a.subs_imm(5, 5, 1)
+                a.branch(tag + "_last", "eq")
+                a.str(7, 3, byte=True)
+                a.branch(tag + "_wait")
+                a.label(tag + "_last")
+                a.ldr_const(3, 0x0302A000)
+                a.str(7, 3, byte=True)
+                a.branch(tag + "_wait")
+                a.label(tag + "_done")
+                a.ldr_const(3, 0x03310FD0); a.ldr(7, 3, byte=True)
+                a.ldr(4, 0, byte=True)
+                a.ldr(7, 0, byte=True)
+                for _ in range(5): a.ldr(1, 0, byte=True)
+                a.cmp_imm(4, 0); a.branch(tag + "_ok", "eq")
+                a.tst_imm(4, 0x40); a.branch("save_new_other", "eq")
+                a.tst_imm(7, 0x02); a.branch("save_new_other", "eq")
+                a.branch("save_new_creation_wp")
+                a.label(tag + "_ok")
+                a.cmp_imm(5, 0); a.branch("save_new_other", "ne")
+
+        for value in (0x05, 0, 0, 0, 3 if creation_probe else 1,
+                      3, 3 if creation_probe else 1, 0x1B, 0xFF):
             a.mov(1, value); a.str(1, 0, byte=True)
         a.ldr_const(2, 0x03200030)
         a.ldr_const(3, 0x03012000)
@@ -389,7 +453,7 @@ def build_rom(media_exerciser: bool = False,
     a.mov(1, 0)
     a.str(1, 0, 4, byte=True)
     if jfd_save_probe:
-        a.mov(1, 1)
+        a.mov(1, 3 if creation_probe else 1)
     a.str(1, 0, 8, byte=True)
     a.mov(1, 0x80)
     a.str(1, 0, byte=True)
@@ -406,7 +470,10 @@ def build_rom(media_exerciser: bool = False,
     if jfd_save_probe:
         a.branch("fdc_read_byte", "ne")
         a.tst_imm(7, 1)
-        a.branch("save_other", "eq")
+        if creation_probe:
+            a.branch("save_absent", "eq")
+        else:
+            a.branch("save_other", "eq")
         a.subs_imm(3, 3, 1)
         a.branch("fdc_wait", "ne")
         a.mov(4, 0xD0)
@@ -461,6 +528,43 @@ def build_rom(media_exerciser: bool = False,
         a.label("save_unknown")
         a.mov(9, 3)
         a.label("save_read_done")
+        if creation_probe:
+            a.cmp_imm(9, 2); a.branch("save_creation_saved", "eq")
+            a.branch("save_creation_prefix")
+            a.label("save_absent")
+            a.tst_imm(7, 0x10); a.branch("save_other", "eq")
+            a.mov(9, 1)
+            a.branch("save_creation_prefix")
+            a.label("save_creation_saved")
+            a.mov(6, 0x20); a.branch("fdc_done")
+            a.label("save_creation_prefix")
+            # Map and directory writes precede allocation into missing ID 3.
+            for prefix_sector in (0, 2):
+                tag = f"save_create_{prefix_sector}"
+                a.mov(1, prefix_sector); a.str(1, 0, 8, byte=True)
+                a.mov(1, 0xA0); a.str(1, 0, byte=True)
+                a.ldr_const(5, 1024)
+                a.mov(7, 0x5A)
+                a.ldr_const(3, 250000)
+                a.label(tag + "_wait")
+                a.ldr(4, 0, byte=True)
+                a.tst_imm(4, 1); a.branch(tag + "_done", "eq")
+                a.tst_imm(4, 2); a.branch(tag + "_tick", "eq")
+                a.str(7, 0, 12, byte=True)
+                a.subs_imm(5, 5, 1)
+                a.branch(tag + "_done", "eq")
+                a.label(tag + "_tick")
+                a.subs_imm(3, 3, 1); a.branch(tag + "_wait", "ne")
+                a.mov(4, 0xD0); a.str(4, 0, byte=True)
+                a.branch("save_other")
+                a.label(tag + "_done")
+                a.ldr(4, 0, byte=True)
+                a.tst_imm(4, 1); a.branch(tag + "_done", "ne")
+                a.cmp_imm(4, 0x80); a.branch(tag + "_ok", "eq")
+                a.tst_imm(4, 0x40); a.branch("save_other", "eq")
+                a.mov(6, 0x40); a.branch("fdc_done")
+                a.label(tag + "_ok")
+                a.cmp_imm(5, 0); a.branch("save_other", "ne")
 
     # Write sector one through the same controller. The source ADF is immutable;
     # the harness verifies that only the content-addressed shadow changes.
@@ -1517,7 +1621,9 @@ def build_adffs_fixtures(output: Path) -> None:
     for disc in (1, 2, 3):
         image = adffs_jfd(123, disc=disc, count=4)
         if disc == 1:
-            struct.pack_into("<I", image, 304, 2)
+            image = build_pdd5_jfd(bytes(819200), {0: list(range(5))},
+                                    title=b"ArcDroid synthetic install P-DD5")
+            struct.pack_into("<HHI", image, 12, disc, 4, 123)
         image[-1] = disc
         (output / f"install-{disc}.jfd").write_bytes(image)
     (output / "install.m3u").write_text(
@@ -2141,6 +2247,43 @@ def _build_jfd_disk(payload: bytes, geometry: str,
     return image
 
 
+def build_pdd5_jfd(payload: bytes, tracks: dict[int, list[int]],
+                   times: dict[int, dict[int, int]] | None = None,
+                   track_count: int = 160,
+                   title: bytes = b"ArcDroid P-DD5 creation fixture") -> bytearray:
+    """Project-owned JFD with an explicit captured subset on each track-side."""
+    times = times or {}
+    track_offset = 316
+    sector_offset = track_offset + track_count * 4
+    table = bytearray()
+    data = bytearray()
+    starts = []
+    for track_side in range(track_count):
+        starts.append(len(table))
+        for sector_id in tracks.get(track_side, []):
+            time = times.get(track_side, {}).get(sector_id, 0xFF)
+            header = (time << 24) | (2 << 16) | (sector_id << 8) | 3
+            table += struct.pack("<II", header, len(data))
+            logical = (track_side * 5 + sector_id) * 1024
+            segment = payload[logical:logical + 1024] if sector_id < 5 \
+                else b""
+            data += segment if len(segment) == 1024 else \
+                bytes((sector_id,)) * 1024
+        table += struct.pack("<I", 0xFFFFFFFF)
+    data_offset = sector_offset + len(table)
+    image = bytearray(data_offset + len(data))
+    image[:4] = b"JFDI"
+    struct.pack_into("<I", image, 8, len(image))
+    struct.pack_into("<III", image, 24, track_offset, sector_offset, data_offset)
+    image[48:48 + min(len(title), 256)] = title[:256]
+    struct.pack_into("<I", image, 304, 2)
+    for index, start in enumerate(starts):
+        struct.pack_into("<I", image, track_offset + index * 4, start)
+    image[sector_offset:data_offset] = table
+    image[data_offset:] = data
+    return image
+
+
 def _zone_check(block: bytearray) -> int:
     sums = [0, 0, 0, 0]
     rover = 1020
@@ -2650,6 +2793,12 @@ def main() -> None:
     (args.output / "arcdroid-media-test.rom").write_bytes(media_rom)
     (args.output / "arcdroid-jfd-save-test.rom").write_bytes(jfd_save_rom)
     (args.output / "arcdroid-jfd-newio-save-test.rom").write_bytes(newio_jfd_save_rom)
+    (args.output / "arcdroid-jfd-create-test.rom").write_bytes(
+        build_rom(media_exerciser=True, jfd_save_probe=True,
+                  write_sector=3, creation_probe=True))
+    (args.output / "arcdroid-jfd-newio-create-test.rom").write_bytes(
+        build_rom(media_exerciser=True, jfd_save_probe=True,
+                  newio_save_probe=True, creation_probe=True))
     (args.output / "arcdroid-media-disc1.adf").write_bytes(disc1)
     (args.output / "arcdroid-media-disc2.adf").write_bytes(disc2)
     (args.output / "arcdroid-media.m3u").write_text(
@@ -2694,13 +2843,20 @@ def main() -> None:
                                         disk_geometry="D")
     struct.pack_into("<I", newio_writable, 304, 2)
     (writes / "rw-newio-d.jfd").write_bytes(newio_writable)
+    # The map and directory are captured; ID 3 is omitted on track-side 0.
+    # Track-side 1 is full, providing the P-DD5 profile vote.
+    create = build_pdd5_jfd(bytes(disc1),
+        {0: [0, 2, 4], 1: list(range(5))},
+        title=b"ArcDroid omitted-sector save probe")
+    (writes / "rw-create-d.jfd").write_bytes(create)
+    create_wp = bytearray(create)
+    struct.pack_into("<I", create_wp, 304, 3)
+    (writes / "wp-create-d.jfd").write_bytes(create_wp)
     newio_protected = bytearray(newio_writable)
     struct.pack_into("<I", newio_protected, 304, 3)
     (writes / "wp-newio-d.jfd").write_bytes(newio_protected)
-    adffs_writable = build_jfd_family([
-        (0xFF, 0, 2, 0, 0, bytes(1024)),
-        (0xFF, 0, 2, 1, 0, bytes(1024)),
-    ], b"ArcDroid ADFFS native-save fixture", extended=True)
+    adffs_writable = build_pdd5_jfd(bytes(disc1),
+        {0: list(range(5))}, title=b"ArcDroid ADFFS native-save fixture")
     struct.pack_into("<HHI", adffs_writable, 12, 1, 1, 123)
     (writes / "adffs-rw.jfd").write_bytes(adffs_writable)
     protected = bytearray(writable)
@@ -2724,6 +2880,57 @@ def main() -> None:
     (writes / "missing-one-d.jfd").write_bytes(build_jfd_family(
         [(0xFF, 0, 2, 0, 0, bytes(1024))],
         b"ArcDroid JFD missing read sector", extended=True))
+    creation = args.output / "jfd-creation"
+    creation.mkdir(exist_ok=True)
+    full = list(range(5))
+    launch_created = build_d_discovery([(b"!NewApp", True)], b"CreatedApp")
+    (creation / "launch-full.jfd").write_bytes(build_pdd5_jfd(
+        bytes(launch_created), {0: full, 1: full}))
+    (creation / "launch-partial.jfd").write_bytes(build_pdd5_jfd(
+        bytes(launch_created), {0: [0, 2, 3, 4], 1: full}))
+    (creation / "partial-untimed.jfd").write_bytes(build_pdd5_jfd(
+        bytes(disc1), {0: full, 1: [0, 2, 4], 159: [0, 2, 4],
+                       160: [0], 165: [0]}, track_count=166))
+    (creation / "partial-edge.jfd").write_bytes(build_pdd5_jfd(
+        bytes(disc1), {0: full, 1: [1, 2, 3]}))
+    (creation / "partial-timed.jfd").write_bytes(build_pdd5_jfd(
+        bytes(disc1), {0: full, 1: [0, 2, 4]},
+        {1: {0: 0, 2: 80, 4: 160}}))
+    (creation / "boundary.jfd").write_bytes(build_pdd5_jfd(
+        bytes(disc1), {0: full, 1: [0]}, {1: {0: 190}}))
+    (creation / "unschedulable.jfd").write_bytes(build_pdd5_jfd(
+        bytes(disc1), {0: full, 1: [0, 2, 4]},
+        {1: {0: 0, 2: 70, 4: 140}}))
+    (creation / "nonmatching.jfd").write_bytes(build_pdd5_jfd(
+        bytes(disc1), {0: [0, 2, 4]}))
+    for stem, free_start, free_length in (
+        ("irregular-free", 20, 3180),
+        ("irregular-allocated", 20, 1000)):
+        mapped = build_d_discovery([], b"GateMap")
+        _store_u24(mapped, 0, free_start)
+        _store_u24(mapped, 256, free_length)
+        mapped[510] = 3
+        mapped[255] = _old_map_checksum(mapped[:255])
+        mapped[511] = _old_map_checksum(mapped[256:511])
+        (creation / f"{stem}.jfd").write_bytes(build_pdd5_jfd(
+            bytes(mapped), {0: full, 1: full, 159: [9]}))
+    mapped = build_d_discovery([], b"GateSeq")
+    _store_u24(mapped, 0, 20)
+    _store_u24(mapped, 256, 3180)
+    mapped[510] = 3
+    mapped[255] = _old_map_checksum(mapped[:255])
+    mapped[511] = _old_map_checksum(mapped[256:511])
+    new_mapped = build_e_discovery([], b"GateNew")
+    (creation / "irregular-newmap-free.jfd").write_bytes(build_pdd5_jfd(
+        bytes(new_mapped), {0: full, 1: full, 159: [9]}))
+    (creation / "irregular-free-sequence.jfd").write_bytes(build_pdd5_jfd(
+        bytes(mapped), {0: [0, 2, 4], 1: full, 159: [9]}))
+    (creation / "half-vote.jfd").write_bytes(build_pdd5_jfd(
+        bytes(disc1), {0: full, 1: full + [9]},
+        {1: {0: 0, 1: 32, 2: 64, 3: 96, 4: 128, 9: 160}}))
+    (creation / "irregular-all-ids.jfd").write_bytes(build_pdd5_jfd(
+        bytes(disc1), {0: full, 1: full + [9], 2: full},
+        {1: {0: 0, 1: 32, 2: 64, 3: 96, 4: 128, 9: 160}}))
     # Two independent launch identities exercise record reuse after a guest
     # sector write. The rename ROM carries only our generated root sector;
     # its write changes !Alpha to !Alphb without touching the child !Run.

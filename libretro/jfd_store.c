@@ -11,8 +11,14 @@
 
 #define STORE_CAP (9u * 1024u * 1024u)
 #define HEADER_SIZE 80u
-#define RECORD_SIZE 8u
+#define RECORD_SIZE 9u
 #define CHECKSUM_SIZE 4u
+#define STORE_VERSION 2u /* Kind/key records and P-DD5 schedule v1. Old slots stay untouched. */
+
+typedef struct {
+   uint8_t **data;
+   uint8_t *created[ARC_JFD_PDD5_SLOTS];
+} ArcJfdRecords;
 
 typedef struct {
    char directory[4096];
@@ -93,6 +99,58 @@ static bool store_eligible(const ArcJfdImage *image, size_t index)
           index < image->sector_count && image->overlay->eligible[index];
 }
 
+static size_t created_slot(unsigned track_side, unsigned id)
+{ return (size_t)track_side * ARC_JFD_PDD5_IDS + id; }
+
+static bool creation_eligible(const ArcJfdImage *image,
+                              unsigned track_side, unsigned id)
+{
+   return image->overlay && image->overlay->layout_supported &&
+      image->overlay->pdd5_profile && track_side < ARC_JFD_PDD5_TRACKS &&
+      id < ARC_JFD_PDD5_IDS &&
+      (image->overlay->creation_mask[track_side] & (1u << id));
+}
+
+static ArcJfdRecords *records_new(size_t sectors)
+{
+   ArcJfdRecords *records = calloc(1u, sizeof(*records));
+   if (records)
+      records->data = calloc(sectors ? sectors : 1u, sizeof(*records->data));
+   if (records && !records->data) { free(records); return NULL; }
+   return records;
+}
+
+static void records_free(ArcJfdRecords *records, size_t sectors)
+{
+   if (!records) return;
+   if (records->data)
+      for (size_t i = 0u; i < sectors; ++i) free(records->data[i]);
+   free(records->data);
+   for (size_t i = 0u; i < ARC_JFD_PDD5_SLOTS; ++i)
+      free(records->created[i]);
+   free(records);
+}
+
+static void records_take(ArcJfdImage *image, ArcJfdRecords *records)
+{
+   ArcJfdOverlay *overlay = image->overlay;
+   if (overlay->data)
+   {
+      for (size_t i = 0u; i < image->sector_count; ++i)
+         free(overlay->data[i]);
+      free(overlay->data);
+   }
+   overlay->data = records->data;
+   records->data = NULL;
+   for (unsigned t = 0u; t < ARC_JFD_PDD5_TRACKS; ++t)
+      for (unsigned id = 0u; id < ARC_JFD_PDD5_IDS; ++id)
+      {
+         free(overlay->created[t][id]);
+         overlay->created[t][id] = records->created[created_slot(t, id)];
+         records->created[created_slot(t, id)] = NULL;
+      }
+}
+
 static uint16_t get16(const uint8_t *p)
 { return (uint16_t)(p[0] | ((uint16_t)p[1] << 8u)); }
 static uint32_t get32(const uint8_t *p)
@@ -117,29 +175,16 @@ static bool hex_bytes(const char *hex, uint8_t *output, size_t count)
    }
    return true;
 }
-static bool sector_key(const ArcJfdImage *image, size_t index,
-                       uint16_t *track_side, uint16_t *ordinal)
-{
-   for (unsigned t = 0u; t < image->track_count; ++t)
-   {
-      const ArcJfdTrack *track = &image->tracks[t];
-      if (index >= track->first_sector &&
-          index - track->first_sector < track->sector_count)
-      { *track_side = (uint16_t)t;
-        *ordinal = (uint16_t)(index - track->first_sector); return true; }
-   }
-   return false;
-}
 static bool snapshot_parse(const ArcJfdImage *image, const ArcJfdStore *store,
                            const uint8_t *bytes, size_t length,
-                           uint8_t ***replacement, uint64_t *generation,
+                           ArcJfdRecords **replacement, uint64_t *generation,
                            unsigned *record_count, const char **reason)
 {
    *replacement = NULL;
    if (length < HEADER_SIZE + CHECKSUM_SIZE || length > STORE_CAP ||
        memcmp(bytes, "AJWO", 4u))
    { *reason = "overlay-invalid"; return false; }
-   if (get32(bytes + 4u) != 1u)
+   if (get32(bytes + 4u) != STORE_VERSION)
    { *reason = "overlay-invalid"; return false; }
    if (get64(bytes + 8u) != image->decoded_size ||
        memcmp(bytes + 16u, store->sha1, 20u) ||
@@ -147,11 +192,13 @@ static bool snapshot_parse(const ArcJfdImage *image, const ArcJfdStore *store,
    { *reason = "overlay-mismatch"; return false; }
    uint64_t gen = get64(bytes + 68u);
    uint32_t count = get32(bytes + 76u);
-   if (!gen || count > image->sector_count ||
+   unsigned eligible_count = image->overlay->creation_capacity;
+   for (size_t i = 0u; i < image->sector_count; ++i)
+      if (store_eligible(image, i)) ++eligible_count;
+   if (!gen || count > eligible_count ||
        get32(bytes + length - 4u) != arc_crc32(bytes, length - 4u))
    { *reason = "overlay-invalid"; return false; }
-   uint8_t **records = calloc(image->sector_count ? image->sector_count : 1u,
-                              sizeof(*records));
+   ArcJfdRecords *records = records_new(image->sector_count);
    if (!records)
    { *reason = "overlay-unreadable"; return false; }
    size_t cursor = HEADER_SIZE, data_sum = 0u, eligible_sum = 0u;
@@ -159,29 +206,38 @@ static bool snapshot_parse(const ArcJfdImage *image, const ArcJfdStore *store,
    for (size_t i = 0u; i < image->sector_count; ++i)
       if (store_eligible(image, i))
          eligible_sum += image->sectors[i].size;
+   eligible_sum += (size_t)image->overlay->creation_capacity * 1024u;
    bool valid = true;
    for (uint32_t i = 0u; i < count && valid; ++i)
    {
       if (cursor > length - CHECKSUM_SIZE ||
           length - CHECKSUM_SIZE - cursor < RECORD_SIZE) { valid = false; break; }
       unsigned track_side = get16(bytes + cursor);
-      unsigned ordinal = get16(bytes + cursor + 2u);
-      uint32_t key = (track_side << 16u) | ordinal;
+      unsigned kind = bytes[cursor + 2u];
+      unsigned ordinal = get16(bytes + cursor + 3u);
+      uint32_t key = (track_side << 16u) | (kind << 15u) | ordinal;
       if ((i && key <= last_key) || track_side >= image->track_count ||
-          ordinal >= image->tracks[track_side].sector_count)
+          kind > 1u || (kind == 0u &&
+          ordinal >= image->tracks[track_side].sector_count))
       { valid = false; break; }
-      size_t index = (size_t)image->tracks[track_side].first_sector + ordinal;
-      const ArcJfdSector *sector = &image->sectors[index];
-      unsigned size = get16(bytes + cursor + 6u);
-      if (!store_eligible(image, index) ||
-          bytes[cursor + 4u] != sector->id ||
-          bytes[cursor + 5u] != sector->density || size != sector->size ||
+      size_t index = kind == 0u ?
+         (size_t)image->tracks[track_side].first_sector + ordinal : 0u;
+      const ArcJfdSector *sector = kind == 0u ? &image->sectors[index] : NULL;
+      unsigned size = get16(bytes + cursor + 7u);
+      if ((kind == 0u && (!store_eligible(image, index) ||
+           bytes[cursor + 5u] != sector->id ||
+           bytes[cursor + 6u] != sector->density || size != sector->size)) ||
+          (kind == 1u && (!creation_eligible(image, track_side, ordinal) ||
+           bytes[cursor + 5u] != ordinal || bytes[cursor + 6u] != 2u ||
+           size != 1024u)) ||
           size > length - CHECKSUM_SIZE - cursor - RECORD_SIZE ||
           size > eligible_sum || data_sum > eligible_sum - size)
       { valid = false; break; }
-      records[index] = malloc(size);
-      if (!records[index]) { *reason = "overlay-unreadable"; valid = false; break; }
-      memcpy(records[index], bytes + cursor + RECORD_SIZE, size);
+      uint8_t **target = kind == 0u ? &records->data[index] :
+         &records->created[created_slot(track_side, ordinal)];
+      *target = malloc(size);
+      if (!*target) { *reason = "overlay-unreadable"; valid = false; break; }
+      memcpy(*target, bytes + cursor + RECORD_SIZE, size);
       cursor += RECORD_SIZE + size;
       data_sum += size;
       last_key = key;
@@ -189,8 +245,7 @@ static bool snapshot_parse(const ArcJfdImage *image, const ArcJfdStore *store,
    if (cursor != length - CHECKSUM_SIZE) valid = false;
    if (!valid)
    {
-      for (size_t i = 0u; i < image->sector_count; ++i) free(records[i]);
-      free(records);
+      records_free(records, image->sector_count);
       if (!*reason) *reason = "overlay-invalid";
       return false;
    }
@@ -199,70 +254,101 @@ static bool snapshot_parse(const ArcJfdImage *image, const ArcJfdStore *store,
    *record_count = count;
    return true;
 }
-static void records_free(uint8_t **records, size_t count)
-{ if (records) { for (size_t i = 0u; i < count; ++i) free(records[i]); free(records); } }
 static bool slot_present(const ArcJfdStore *store, unsigned slot, bool *present)
 {
    const char *leaf = strrchr(store->slot[slot], '/');
    return leaf && arc_io_directory_contains(store->directory, leaf + 1u, present);
 }
 static bool snapshot_build(const ArcJfdImage *image, const ArcJfdStore *store,
-                           size_t changed, const uint8_t *data,
+                           bool create, size_t changed, const uint8_t *data,
                            uint8_t **output, size_t *length)
 {
    size_t count = 0u, bytes = HEADER_SIZE + CHECKSUM_SIZE;
    for (size_t i = 0u; i < image->sector_count; ++i)
-      if ((image->overlay->data && image->overlay->data[i]) || i == changed)
+      if ((image->overlay->data && image->overlay->data[i]) ||
+          (!create && i == changed))
       {
          if (!store_eligible(image, i) ||
              bytes > STORE_CAP - RECORD_SIZE - image->sectors[i].size) return false;
          bytes += RECORD_SIZE + image->sectors[i].size; ++count;
       }
+   for (unsigned t = 0u; t < ARC_JFD_PDD5_TRACKS; ++t)
+      for (unsigned id = 0u; id < ARC_JFD_PDD5_IDS; ++id)
+         if (image->overlay->created[t][id] ||
+             (create && changed == created_slot(t, id)))
+         {
+            if (!creation_eligible(image, t, id) ||
+                bytes > STORE_CAP - RECORD_SIZE - 1024u) return false;
+            bytes += RECORD_SIZE + 1024u; ++count;
+         }
    uint8_t *snapshot = calloc(bytes, 1u);
    if (!snapshot) return false;
-   memcpy(snapshot, "AJWO", 4u); put32(snapshot + 4u, 1u);
+   memcpy(snapshot, "AJWO", 4u); put32(snapshot + 4u, STORE_VERSION);
    put64(snapshot + 8u, image->decoded_size);
    memcpy(snapshot + 16u, store->sha1, 20u);
    memcpy(snapshot + 36u, store->sha256, 32u);
    put64(snapshot + 68u, image->overlay->generation + 1u);
    put32(snapshot + 76u, (uint32_t)count);
    size_t cursor = HEADER_SIZE;
-   for (size_t i = 0u; i < image->sector_count; ++i)
+   for (unsigned t = 0u; t < image->track_count; ++t)
    {
-      const uint8_t *value = i == changed ? data :
-         image->overlay->data ? image->overlay->data[i] : NULL;
-      if (!value) continue;
-      uint16_t track_side, ordinal;
-      if (!sector_key(image, i, &track_side, &ordinal)) { free(snapshot); return false; }
-      const ArcJfdSector *sector = &image->sectors[i];
-      put16(snapshot + cursor, track_side);
-      put16(snapshot + cursor + 2u, ordinal);
-      snapshot[cursor + 4u] = sector->id;
-      snapshot[cursor + 5u] = sector->density;
-      put16(snapshot + cursor + 6u, sector->size);
-      memcpy(snapshot + cursor + RECORD_SIZE, value, sector->size);
-      cursor += RECORD_SIZE + sector->size;
+      const ArcJfdTrack *track = &image->tracks[t];
+      for (unsigned ordinal = 0u; ordinal < track->sector_count; ++ordinal)
+      {
+         size_t i = (size_t)track->first_sector + ordinal;
+         const uint8_t *value = !create && i == changed ? data :
+            image->overlay->data ? image->overlay->data[i] : NULL;
+         if (!value) continue;
+         const ArcJfdSector *sector = &image->sectors[i];
+         put16(snapshot + cursor, (uint16_t)t);
+         snapshot[cursor + 2u] = 0u;
+         put16(snapshot + cursor + 3u, (uint16_t)ordinal);
+         snapshot[cursor + 5u] = sector->id;
+         snapshot[cursor + 6u] = sector->density;
+         put16(snapshot + cursor + 7u, sector->size);
+         memcpy(snapshot + cursor + RECORD_SIZE, value, sector->size);
+         cursor += RECORD_SIZE + sector->size;
+      }
+      if (t >= ARC_JFD_PDD5_TRACKS) continue;
+      for (unsigned id = 0u; id < ARC_JFD_PDD5_IDS; ++id)
+      {
+         const uint8_t *value = create && changed == created_slot(t, id) ?
+            data : image->overlay->created[t][id];
+         if (!value) continue;
+         put16(snapshot + cursor, (uint16_t)t);
+         snapshot[cursor + 2u] = 1u;
+         put16(snapshot + cursor + 3u, (uint16_t)id);
+         snapshot[cursor + 5u] = (uint8_t)id;
+         snapshot[cursor + 6u] = 2u;
+         put16(snapshot + cursor + 7u, 1024u);
+         memcpy(snapshot + cursor + RECORD_SIZE, value, 1024u);
+         cursor += RECORD_SIZE + 1024u;
+      }
    }
    put32(snapshot + bytes - CHECKSUM_SIZE, arc_crc32(snapshot, bytes - CHECKSUM_SIZE));
    *output = snapshot; *length = bytes;
    return true;
 }
-static bool store_commit(ArcJfdImage *image, size_t index, const uint8_t *data)
+static bool store_commit_common(ArcJfdImage *image, bool create, size_t index,
+                                const uint8_t *data)
 {
    ArcJfdOverlay *overlay = image->overlay;
    if (!overlay || !overlay->writable || overlay->failed || overlay->damaged)
       return false;
    ArcJfdStore *store = overlay->store;
-   uint8_t *snapshot = NULL, *readback = NULL, **checked = NULL;
+   uint8_t *snapshot = NULL, *readback = NULL;
+   ArcJfdRecords *checked = NULL;
    size_t length = 0u, read_size = 0u;
    uint64_t checked_generation = 0u;
    unsigned checked_count = 0u;
    const char *reason = NULL;
    unsigned inactive = 1u - store->active;
    bool present = false;
-   bool okay = store_eligible(image, index) &&
+   bool okay = (create ? creation_eligible(image,
+      (unsigned)(index / ARC_JFD_PDD5_IDS),
+      (unsigned)(index % ARC_JFD_PDD5_IDS)) : store_eligible(image, index)) &&
       overlay->generation != UINT64_MAX &&
-      snapshot_build(image, store, index, data, &snapshot, &length) &&
+      snapshot_build(image, store, create, index, data, &snapshot, &length) &&
       slot_present(store, inactive, &present);
    if (okay)
    {
@@ -284,13 +370,10 @@ static bool store_commit(ArcJfdImage *image, size_t index, const uint8_t *data)
    if (okay) okay = arc_io_rename(store->candidate, store->slot[inactive]);
    if (okay)
    {
-      uint8_t **old = overlay->data;
-      overlay->data = checked;
+      records_take(image, checked);
       overlay->generation = checked_generation;
       overlay->records = checked_count;
       store->active = inactive;
-      records_free(old, image->sector_count);
-      checked = NULL;
       arc_jfd_store_log_commit(store->image_number, checked_generation, index);
    }
    else
@@ -301,6 +384,16 @@ static bool store_commit(ArcJfdImage *image, size_t index, const uint8_t *data)
    }
    free(snapshot); free(readback); records_free(checked, image->sector_count);
    return okay;
+}
+
+static bool store_commit(ArcJfdImage *image, size_t index, const uint8_t *data)
+{ return store_commit_common(image, false, index, data); }
+
+static bool store_commit_created(ArcJfdImage *image, unsigned track_side,
+                                  unsigned id, const uint8_t *data)
+{
+   return track_side < ARC_JFD_PDD5_TRACKS && id < ARC_JFD_PDD5_IDS &&
+      store_commit_common(image, true, created_slot(track_side, id), data);
 }
 
 bool arc_jfd_store_load(ArcJfdImage *image, const char *save_directory,
@@ -316,18 +409,28 @@ bool arc_jfd_store_load(ArcJfdImage *image, const char *save_directory,
          (image->flags & 1u) ? "wp-flag" : "no-flag";
       image->overlay = calloc(1u, sizeof(*image->overlay));
       if (!image->overlay) return false;
+      image->overlay->image_number = image_number;
       image->overlay->reason = *reason;
       return true;
    }
    *reason = "overlay-unreadable";
-   if (!save_directory) return false;
    ArcJfdOverlay *overlay = calloc(1u, sizeof(*overlay));
    ArcJfdStore *store = calloc(1u, sizeof(*store));
    if (!overlay || !store) { free(overlay); free(store); return false; }
    image->overlay = overlay; overlay->store = store;
+   overlay->image_number = image_number;
    overlay->eligible = calloc(image->sector_count ? image->sector_count : 1u, 1u);
    if (!overlay->eligible) return false;
    if (!prepare_eligibility(image, overlay->eligible)) return false;
+   if (!arc_jfd_plan_creation(image, overlay))
+   {
+      *reason = "layout-unsupported";
+      overlay->reason = *reason;
+      free(store);
+      overlay->store = NULL;
+      return true;
+   }
+   if (!save_directory) return false;
    store->image_number = image_number;
    char sha1_hex[41], sha256_hex[65];
    arc_sha1_hex(image->decoded, image->decoded_size, sha1_hex);
@@ -349,7 +452,7 @@ bool arc_jfd_store_load(ArcJfdImage *image, const char *save_directory,
                 "%s/%s.tmp", store->directory, sha1_hex);
    if (n < 0 || (size_t)n >= sizeof(store->candidate)) return false;
    bool present[2] = {false, false}, valid[2] = {false, false};
-   uint8_t **records[2] = {NULL, NULL};
+   ArcJfdRecords *records[2] = {NULL, NULL};
    uint64_t generation[2] = {0u, 0u};
    unsigned count[2] = {0u, 0u};
    bool damaged = false;
@@ -375,7 +478,7 @@ bool arc_jfd_store_load(ArcJfdImage *image, const char *save_directory,
    unsigned newest = valid[1] && (!valid[0] || generation[1] > generation[0]) ? 1u : 0u;
    if (valid[newest])
    {
-      overlay->data = records[newest]; records[newest] = NULL;
+      records_take(image, records[newest]);
       overlay->generation = generation[newest];
       overlay->records = count[newest];
       store->active = newest;
@@ -386,6 +489,7 @@ bool arc_jfd_store_load(ArcJfdImage *image, const char *save_directory,
    overlay->writable = eligible && writes_enabled && !damaged;
    overlay->visible = writes_enabled;
    overlay->commit = store_commit;
+   overlay->commit_created = store_commit_created;
    if (damaged)
    {
       if (show_notice) arc_jfd_store_notice(

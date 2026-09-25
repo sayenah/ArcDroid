@@ -101,6 +101,13 @@ the 82C711 applies early terminal-count discard only to JFD, preserving raw
 ADF zero-fill completion, and rejects out-of-range N on JFD. The native JFD
 reader reports whether it is the active drive media for that gate and consumes
 the store's precomputed descriptor eligibility when available.
+Slice 10a C-11 extends that ArcDroid reader with a scheduled prospective
+WRITE SECTOR target for omitted P-DD5 IDs. The reader checks physical C/H,
+keeps prospective IDs invisible to reads and address commands until the
+overlay's atomic rename, and uses the same effective-sector view after commit.
+`82c711_fdc.c` supplies the command cylinder and physical selected side for
+that creation check; its original CRLF line endings remain intact. The engine
+still performs no host file I/O and does not allocate in its poll path.
 
 The pinned upstream `AUTHORS` file is empty. Upstream author and contributor
 credits are preserved in the imported `README.md`.

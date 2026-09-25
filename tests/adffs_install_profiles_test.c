@@ -34,11 +34,11 @@ const ArcInstallProfile *arc_test_install_profiles(size_t *count) {
        "03c03d87fa8eab79516540c4b226e7b0d0db06b736bd9855133d48e35d199c15",
        1u,
        {{"first", "Fixture first",
-         {{1u, 592u, "4af0f0b8a7dd585209511c6322db40a729d50f67"},
+         {{1u, 6756u, "015e1ef84221f0242ea7eb65ec489b2ea04b0bdf"},
           {2u, 592u, "a11b6926cbcec2dba059ae94a959e2a02f468929"}},
          2u, "!Fixture", 2u, "DATA", "TRACKS", true, false, 1600u},
         {"second", "Fixture second",
-         {{1u, 592u, "4af0f0b8a7dd585209511c6322db40a729d50f67"},
+         {{1u, 6756u, "015e1ef84221f0242ea7eb65ec489b2ea04b0bdf"},
           {3u, 592u, "9c09986f90fc30374e0c8bfb64158d8e5aa75f04"}},
          2u, "!Fixture", 3u, "DATA", "TRACKS", true, false, 1600u}},
        2u}};

@@ -10,6 +10,10 @@
 #define ARC_JFD_MAX_DECODED (8u * 1024u * 1024u)
 #define ARC_JFD_MAX_TRACK_SIDES 166u
 #define ARC_JFD_MAX_SECTORS_PER_TRACK 256u
+#define ARC_JFD_PDD5_TRACKS 160u
+#define ARC_JFD_PDD5_IDS 5u
+#define ARC_JFD_PDD5_SLOTS (ARC_JFD_PDD5_TRACKS * ARC_JFD_PDD5_IDS)
+#define ARC_JFD_PDD5_SPACING_US 36352u
 
 enum {
    ARC_JFD_ID_CRC_BAD = 1u,
@@ -35,7 +39,14 @@ typedef struct {
 struct ArcJfdImage;
 typedef struct ArcJfdOverlay {
    uint8_t **data;                 /* One owned replacement per descriptor. */
+   uint8_t *created[ARC_JFD_PDD5_TRACKS][ARC_JFD_PDD5_IDS];
+   uint32_t creation_time[ARC_JFD_PDD5_TRACKS][ARC_JFD_PDD5_IDS];
+   uint8_t creation_mask[ARC_JFD_PDD5_TRACKS];
    uint8_t *eligible;
+   unsigned image_number;
+   unsigned creation_capacity;
+   bool pdd5_profile;
+   bool layout_supported;
    uint64_t generation;
    unsigned records;
    bool writable;
@@ -44,6 +55,9 @@ typedef struct ArcJfdOverlay {
    bool failed;
    const char *reason;             /* Static diagnostic reason from preparation. */
    bool (*commit)(struct ArcJfdImage *, size_t, const uint8_t *);
+   bool (*commit_created)(struct ArcJfdImage *, unsigned, unsigned,
+                          const uint8_t *);
+   void (*log_refusal)(unsigned, unsigned, unsigned, unsigned, const char *);
    void *store;
 } ArcJfdOverlay;
 
@@ -66,6 +80,22 @@ typedef struct ArcJfdImage {
    bool ignored_header_fields;
    ArcJfdOverlay *overlay;
 } ArcJfdImage;
+
+typedef struct {
+   ArcJfdSector sector;
+   const uint8_t *data;
+   size_t key; /* Base descriptor index, or P-DD5 sector ID for a creation. */
+   bool created;
+} ArcJfdView;
+
+/* P-DD5 placement version 1, derived from the immutable base. Each
+ * track-side's descriptors retain their ordinals; candidates follow in ID order. */
+bool arc_jfd_plan_creation(const ArcJfdImage *image, ArcJfdOverlay *overlay);
+bool arc_jfd_effective_sector(const ArcJfdImage *image, unsigned track_side,
+                              unsigned candidate, bool prospective,
+                              ArcJfdView *view);
+bool arc_jfd_base_free_tracks(const ArcJfdImage *image,
+                              bool free_track[ARC_JFD_PDD5_TRACKS]);
 
 static inline bool arc_jfd_sector_write_eligible(const ArcJfdImage *image,
                                                   size_t index)

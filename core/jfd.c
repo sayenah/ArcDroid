@@ -141,6 +141,9 @@ void arc_jfd_free(ArcJfdImage *image)
          for (size_t i = 0u; i < image->sector_count; ++i)
             free(image->overlay->data[i]);
       free(image->overlay->data);
+      for (unsigned track = 0u; track < ARC_JFD_PDD5_TRACKS; ++track)
+         for (unsigned id = 0u; id < ARC_JFD_PDD5_IDS; ++id)
+            free(image->overlay->created[track][id]);
       free(image->overlay->eligible);
       free(image->overlay->store);
       free(image->overlay);
