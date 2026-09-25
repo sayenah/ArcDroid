@@ -2284,6 +2284,19 @@ def build_pdd5_jfd(payload: bytes, tracks: dict[int, list[int]],
     return image
 
 
+def pdd5_descriptor_offset(image: bytearray, track_side: int,
+                           sector_id: int) -> int:
+    track_offset, sector_offset = struct.unpack_from("<II", image, 24)
+    relative = struct.unpack_from("<I", image, track_offset + track_side * 4)[0]
+    cursor = sector_offset + relative
+    while struct.unpack_from("<I", image, cursor)[0] != 0xFFFFFFFF:
+        header = struct.unpack_from("<I", image, cursor)[0]
+        if ((header >> 8) & 0xFF) == sector_id:
+            return cursor
+        cursor += 8
+    raise ValueError("P-DD5 descriptor is absent")
+
+
 def _zone_check(block: bytearray) -> int:
     sums = [0, 0, 0, 0]
     rover = 1020
@@ -2901,6 +2914,16 @@ def main() -> None:
     (creation / "unschedulable.jfd").write_bytes(build_pdd5_jfd(
         bytes(disc1), {0: full, 1: [0, 2, 4]},
         {1: {0: 0, 2: 70, 4: 140}}))
+    (creation / "timed-rounded.jfd").write_bytes(build_pdd5_jfd(
+        bytes(disc1), {0: full, 1: [0, 1, 2, 3]},
+        {1: {0: 0, 1: 37, 2: 73, 3: 110}}))
+    short_full = {track: full for track in range(100)}
+    (creation / "short-full.jfd").write_bytes(build_pdd5_jfd(
+        bytes(disc1), short_full, track_count=100))
+    short_partial = dict(short_full)
+    short_partial[1] = [0, 2, 4]
+    (creation / "short-partial.jfd").write_bytes(build_pdd5_jfd(
+        bytes(disc1), short_partial, track_count=100))
     (creation / "nonmatching.jfd").write_bytes(build_pdd5_jfd(
         bytes(disc1), {0: [0, 2, 4]}))
     for stem, free_start, free_length in (
@@ -2914,6 +2937,25 @@ def main() -> None:
         mapped[511] = _old_map_checksum(mapped[256:511])
         (creation / f"{stem}.jfd").write_bytes(build_pdd5_jfd(
             bytes(mapped), {0: full, 1: full, 159: [9]}))
+    # All five IDs are present on side 159, but ID 4 cannot accept a write.
+    # The base ADFS map decides whether that missing writable slot is safe.
+    for defect in ("id-only", "bad-crc"):
+        for extent, free_length in (("free", 3180), ("allocated", 1000)):
+            mapped = build_d_discovery([], b"GateWritableID")
+            _store_u24(mapped, 0, 20)
+            _store_u24(mapped, 256, free_length)
+            mapped[510] = 3
+            mapped[255] = _old_map_checksum(mapped[:255])
+            mapped[511] = _old_map_checksum(mapped[256:511])
+            image = build_pdd5_jfd(bytes(mapped),
+                                   {0: full, 1: full, 159: full})
+            descriptor = pdd5_descriptor_offset(image, 159, 4)
+            if defect == "id-only":
+                struct.pack_into("<I", image, descriptor + 4, 0xFFFFFFFF)
+            else:
+                header = struct.unpack_from("<I", image, descriptor)[0]
+                struct.pack_into("<I", image, descriptor, header | (2 << 4))
+            (creation / f"irregular-{defect}-{extent}.jfd").write_bytes(image)
     mapped = build_d_discovery([], b"GateSeq")
     _store_u24(mapped, 0, 20)
     _store_u24(mapped, 256, 3180)

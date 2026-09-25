@@ -238,10 +238,12 @@ static void jfd_poll(void)
    {
       if (jfd_state == JFD_FIND)
          ++jfd_search_indexes;
-      fdc_funcs->indexpulse(fdc_p);
+      /* WD1770's final pulse can stop this reader, so record the refusal
+       * before handing the pulse to the controller. */
       if (jfd_state == JFD_FIND && jfd_writing &&
           jfd_search_indexes == (fdc_funcs->sectorid ? 2u : 5u))
          jfd_refused("not-found");
+      fdc_funcs->indexpulse(fdc_p);
       if (jfd_state == JFD_FIND && fdc_funcs->sectorid &&
           jfd_search_indexes >= 2u)
       {

@@ -1879,6 +1879,10 @@ int main(int argc, char **argv)
          dlsym(module, "arc_engine_test_drive_media");
       *(void **)(&arc_libretro_test_adffs_accept_test_os) =
          dlsym(module, "arc_libretro_test_adffs_accept_test_os");
+      *(void **)(&arc_libretro_test_fail_adffs_content_read) =
+         dlsym(module, "arc_libretro_test_fail_adffs_content_read");
+      *(void **)(&arc_libretro_test_adffs_content_read_failure_pending) =
+         dlsym(module, "arc_libretro_test_adffs_content_read_failure_pending");
       *(void **)(&arc_libretro_test_content_id) =
          dlsym(module, "arc_libretro_test_content_id");
       *(void **)(&arc_libretro_test_staged_path) =
@@ -1893,6 +1897,8 @@ int main(int argc, char **argv)
          dlsym(module, "arc_libretro_test_chooser_rows");
       assert(arc_libretro_test_jfd_commit && arc_engine_test_drive_media &&
              arc_libretro_test_adffs_accept_test_os &&
+             arc_libretro_test_fail_adffs_content_read &&
+             arc_libretro_test_adffs_content_read_failure_pending &&
              arc_libretro_test_content_id && arc_libretro_test_staged_path &&
              arc_libretro_test_cmos_path && arc_libretro_test_choice_path &&
              arc_libretro_test_session_state && arc_libretro_test_chooser_rows);
@@ -2256,6 +2262,13 @@ int main(int argc, char **argv)
              jfd_native_notice_calls == native_notices_before);
       retro_unload_game();
       copy_file(package_source, package_path);
+      arc_libretro_test_fail_adffs_content_read(true);
+      phase = PHASE_LOAD; assert(retro_load_game(&adffs_game));
+      assert(strstr(last_jfd_boot_log,
+                    "JFD boot: path=native reason=content-unreadable") &&
+             jfd_native_notice_calls == native_notices_before &&
+             !arc_libretro_test_adffs_content_read_failure_pending());
+      retro_unload_game();
       phase = PHASE_LOAD; assert(retro_load_game(&adffs_game));
       assert(strstr(last_jfd_boot_log, "JFD boot: path=native reason=native-saves") &&
              jfd_native_notice_calls == native_notices_before + 1u &&

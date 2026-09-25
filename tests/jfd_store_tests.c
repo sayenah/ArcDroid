@@ -109,11 +109,27 @@ void arc_jfd_store_log_commit(unsigned image_number, uint64_t generation,
                               size_t sector_index)
 { assert(image_number == 1u && generation &&
          sector_index < ARC_JFD_PDD5_SLOTS); ++commits; }
+static uint8_t old_map_checksum(const uint8_t *block)
+{
+   unsigned checksum = 0xffu;
+   for (unsigned index = 255u; index-- > 0u;)
+   {
+      if (checksum > 0xffu) checksum = (checksum + 1u) & 0xffu;
+      checksum += block[index];
+   }
+   return (uint8_t)checksum;
+}
 static ArcJfdImage image_new(void)
 {
    ArcJfdImage image = {0};
    image.decoded = calloc(32768u, 1u); assert(image.decoded);
    image.decoded_size = 32768u;
+   /* A valid fully allocated old map lets the eligibility-drift test reach
+    * slot validation even when one P-DD5 descriptor becomes non-writable. */
+   uint8_t *map = image.decoded + 1024u;
+   map[252] = 0x80u; map[253] = 0x0cu; /* 3200 logical sectors */
+   map[255] = old_map_checksum(map);
+   map[511] = old_map_checksum(map + 256u);
    image.sectors = calloc(15u, sizeof(*image.sectors)); assert(image.sectors);
    image.sector_count = 15u; image.track_count = 160u;
    for (unsigned track = 0u; track < 3u; ++track)
@@ -211,10 +227,60 @@ static void malformed_slot(unsigned active, size_t offset, bool recalculate,
    memcpy(file->bytes, original, file->size);
    free(mutated); free(original);
 }
+static void expect_creation_layout(const char *root, const char *name,
+                                   bool writable, bool rounded)
+{
+   clear_files();
+   ArcJfdImage image = creation_fixture(root, name);
+   const char *reason = NULL;
+   unsigned probes = directory_probes;
+   assert(arc_jfd_store_load(&image, "save", true, false, 1u, &reason));
+   if (image.overlay->writable != writable)
+      fprintf(stderr, "%s: writable=%d reason=%s\n",
+              name, image.overlay->writable, reason);
+   assert(image.overlay->writable == writable &&
+          !strcmp(reason, writable ? "rw-flag" : "layout-unsupported"));
+   if (!writable) assert(directory_probes == probes);
+   if (rounded)
+      assert(image.overlay->creation_mask[1] == 0x10u &&
+             image.overlay->creation_time[1][4] == 146352u);
+   arc_jfd_free(&image);
+   clear_files();
+}
+static void test_layout_low(const char *root, const char *kind)
+{
+   if (!strcmp(kind, "short"))
+   {
+      expect_creation_layout(root, "short-full.jfd", false, false);
+      expect_creation_layout(root, "short-partial.jfd", false, false);
+   }
+   else if (!strcmp(kind, "irregular"))
+   {
+      expect_creation_layout(root, "irregular-id-only-free.jfd", false, false);
+      expect_creation_layout(root, "irregular-bad-crc-free.jfd", false, false);
+      expect_creation_layout(root, "irregular-id-only-allocated.jfd", true, false);
+      expect_creation_layout(root, "irregular-bad-crc-allocated.jfd", true, false);
+      expect_creation_layout(root, "irregular-all-ids.jfd", true, false);
+   }
+   else if (!strcmp(kind, "timing"))
+   {
+      expect_creation_layout(root, "timed-rounded.jfd", true, true);
+      expect_creation_layout(root, "unschedulable.jfd", false, false);
+   }
+   else assert(!"unknown JFD gate test case");
+}
 int main(int argc, char **argv)
 {
-   assert(argc == 2);
+   assert(argc == 2 || argc == 3);
    arc_io_set_vfs(&vfs);
+   if (argc == 3)
+   {
+      test_layout_low(argv[1], argv[2]);
+      return 0;
+   }
+   test_layout_low(argv[1], "short");
+   test_layout_low(argv[1], "irregular");
+   test_layout_low(argv[1], "timing");
    uint8_t first[1024], second[1024], third[1024];
    memset(first, 0x11, sizeof(first)); memset(second, 0x22, sizeof(second));
    memset(third, 0x33, sizeof(third));
@@ -424,11 +490,18 @@ int main(int argc, char **argv)
          default: neighbour.sectors[extra].id = 0u; break;
       }
       const char *why = NULL;
-      assert(arc_jfd_store_load(&neighbour, "save", true, false, 1u, &why) &&
-             neighbour.overlay->writable &&
-             neighbour.overlay->pdd5_profile &&
-             neighbour.overlay->creation_mask[1] == 0u &&
-             !neighbour.overlay->eligible[extra]);
+      assert(arc_jfd_store_load(&neighbour, "save", true, false, 1u, &why));
+      /* Shared payload with ID 4 and duplicate ID 0 leave a P-DD5 ID
+       * non-writable; the captured map here cannot justify that gap. */
+      if (variant >= 4u)
+         assert(!neighbour.overlay->writable &&
+                !strcmp(why, "layout-unsupported") &&
+                !neighbour.overlay->eligible[extra]);
+      else
+         assert(neighbour.overlay->writable &&
+                neighbour.overlay->pdd5_profile &&
+                neighbour.overlay->creation_mask[1] == 0u &&
+                !neighbour.overlay->eligible[extra]);
       ArcJfdView extra_view;
       assert(!arc_jfd_effective_sector(&neighbour, 1u, 6u, true,
                                         &extra_view));

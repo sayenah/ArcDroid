@@ -108,6 +108,10 @@ overlay's atomic rename, and uses the same effective-sector view after commit.
 `82c711_fdc.c` supplies the command cylinder and physical selected side for
 that creation check; its original CRLF line endings remain intact. The engine
 still performs no host file I/O and does not allocate in its poll path.
+The Slice 10a QA low follow-up reports a missing WRITE SECTOR refusal before
+delivering the final index pulse to WD1770, because that callback can stop the
+reader. This changes only refusal diagnostics; both controller limits remain
+unchanged.
 
 The pinned upstream `AUTHORS` file is empty. Upstream author and contributor
 credits are preserved in the imported `README.md`.

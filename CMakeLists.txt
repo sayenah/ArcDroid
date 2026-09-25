@@ -364,14 +364,21 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
       "${FIXTURE_DIR}/jfd-creation/launch-partial.jfd"
       "${FIXTURE_DIR}/jfd-creation/partial-edge.jfd"
       "${FIXTURE_DIR}/jfd-creation/partial-timed.jfd"
+      "${FIXTURE_DIR}/jfd-creation/timed-rounded.jfd"
       "${FIXTURE_DIR}/jfd-creation/boundary.jfd"
       "${FIXTURE_DIR}/jfd-creation/unschedulable.jfd"
+      "${FIXTURE_DIR}/jfd-creation/short-full.jfd"
+      "${FIXTURE_DIR}/jfd-creation/short-partial.jfd"
       "${FIXTURE_DIR}/jfd-creation/nonmatching.jfd"
       "${FIXTURE_DIR}/jfd-creation/irregular-free.jfd"
       "${FIXTURE_DIR}/jfd-creation/irregular-free-sequence.jfd"
       "${FIXTURE_DIR}/jfd-creation/irregular-newmap-free.jfd"
       "${FIXTURE_DIR}/jfd-creation/irregular-allocated.jfd"
       "${FIXTURE_DIR}/jfd-creation/irregular-all-ids.jfd"
+      "${FIXTURE_DIR}/jfd-creation/irregular-id-only-free.jfd"
+      "${FIXTURE_DIR}/jfd-creation/irregular-id-only-allocated.jfd"
+      "${FIXTURE_DIR}/jfd-creation/irregular-bad-crc-free.jfd"
+      "${FIXTURE_DIR}/jfd-creation/irregular-bad-crc-allocated.jfd"
       "${FIXTURE_DIR}/jfd-creation/half-vote.jfd"
       "${FIXTURE_DIR}/jfd-writes/adffs-rw.jfd"
       "${FIXTURE_DIR}/jfd-writes/wp-d.jfd"
@@ -442,14 +449,21 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
     "${FIXTURE_DIR}/jfd-creation/launch-partial.jfd"
     "${FIXTURE_DIR}/jfd-creation/partial-edge.jfd"
     "${FIXTURE_DIR}/jfd-creation/partial-timed.jfd"
+    "${FIXTURE_DIR}/jfd-creation/timed-rounded.jfd"
     "${FIXTURE_DIR}/jfd-creation/boundary.jfd"
     "${FIXTURE_DIR}/jfd-creation/unschedulable.jfd"
+    "${FIXTURE_DIR}/jfd-creation/short-full.jfd"
+    "${FIXTURE_DIR}/jfd-creation/short-partial.jfd"
     "${FIXTURE_DIR}/jfd-creation/nonmatching.jfd"
     "${FIXTURE_DIR}/jfd-creation/irregular-free.jfd"
     "${FIXTURE_DIR}/jfd-creation/irregular-free-sequence.jfd"
     "${FIXTURE_DIR}/jfd-creation/irregular-newmap-free.jfd"
     "${FIXTURE_DIR}/jfd-creation/irregular-allocated.jfd"
     "${FIXTURE_DIR}/jfd-creation/irregular-all-ids.jfd"
+    "${FIXTURE_DIR}/jfd-creation/irregular-id-only-free.jfd"
+    "${FIXTURE_DIR}/jfd-creation/irregular-id-only-allocated.jfd"
+    "${FIXTURE_DIR}/jfd-creation/irregular-bad-crc-free.jfd"
+    "${FIXTURE_DIR}/jfd-creation/irregular-bad-crc-allocated.jfd"
     "${FIXTURE_DIR}/jfd-creation/half-vote.jfd"
     "${FIXTURE_DIR}/jfd-writes/adffs-rw.jfd"
     "${FIXTURE_DIR}/jfd-writes/wp-d.jfd"
@@ -507,6 +521,9 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
   endif()
   add_dependencies(jfd_store_tests test-fixtures)
   add_test(NAME jfd-store COMMAND jfd_store_tests "${FIXTURE_DIR}")
+  add_test(NAME jfd-gate-short COMMAND jfd_store_tests "${FIXTURE_DIR}" short)
+  add_test(NAME jfd-gate-irregular COMMAND jfd_store_tests "${FIXTURE_DIR}" irregular)
+  add_test(NAME jfd-gate-timing COMMAND jfd_store_tests "${FIXTURE_DIR}" timing)
   add_dependencies(jfd_controller_tests test-fixtures)
   add_test(NAME core-services COMMAND core_tests "${FIXTURE_DIR}")
   add_test(NAME jfd-controller-golden COMMAND jfd_controller_tests

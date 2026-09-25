@@ -2690,23 +2690,6 @@ static bool arc_prepare_adffs(bool notify) {
          arc_jfd_boot_notice(full, jfd);
       return false;
    }
-   /* A native save changes the path only after the ordinary ADFFS package,
-    * script and option preconditions have all succeeded. */
-   if (!install && jfd->overlay && jfd->overlay->generation &&
-       !jfd->overlay->damaged)
-   {
-      free(builtin);
-      arc_adffs_package_free(package);
-      free(package);
-      arc_jfd_boot_log("native-saves");
-      if (notify && !entry->jfd_native_notice_shown)
-      {
-         arc_message("Saved disc changes found; booting this JFD natively to keep them visible.",
-                     RETRO_LOG_INFO);
-         entry->jfd_native_notice_shown = true;
-      }
-      return false;
-   }
    if (install) {
       ArcInstallMedia media[ARC_PLAYLIST_MAX_ENTRIES] = {{0}};
       for (unsigned i = 0u; i < arc_media_count; ++i) {
@@ -2894,6 +2877,22 @@ static bool arc_prepare_adffs(bool notify) {
       arc_jfd_boot_log(full);
       if (notify)
          arc_jfd_boot_notice(full, jfd);
+      return false;
+   }
+   /* A native save takes precedence only when the complete ADFFS path is
+    * viable. Discard the unused carrier before returning to native boot. */
+   if (jfd->overlay && jfd->overlay->generation && !jfd->overlay->damaged)
+   {
+      arc_adffs_package_free(package);
+      free(package);
+      arc_adffs_discard();
+      arc_jfd_boot_log("native-saves");
+      if (notify && !entry->jfd_native_notice_shown)
+      {
+         arc_message("Saved disc changes found; booting this JFD natively to keep them visible.",
+                     RETRO_LOG_INFO);
+         entry->jfd_native_notice_shown = true;
+      }
       return false;
    }
    if (arc_log)

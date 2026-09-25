@@ -36,6 +36,17 @@ static bool wd_service_data = true;
 static uint8_t wd_write_value;
 static unsigned jfd_commits;
 static bool jfd_fail_commit;
+static unsigned jfd_refusals;
+static unsigned refused_image, refused_track, refused_side, refused_sector;
+static char refused_reason[32];
+static void test_jfd_refusal(unsigned image, unsigned track, unsigned side,
+                             unsigned sector, const char *reason)
+{
+   ++jfd_refusals;
+   refused_image = image; refused_track = track;
+   refused_side = side; refused_sector = sector;
+   snprintf(refused_reason, sizeof(refused_reason), "%s", reason);
+}
 static bool test_jfd_commit(ArcJfdImage *image, size_t index, const uint8_t *data)
 {
    assert(image->overlay && index < image->sector_count);
@@ -1045,6 +1056,9 @@ static void test_wd_creation(const char *root)
          "boundary.jfd" : timed ? "partial-timed.jfd" :
          "partial-untimed.jfd");
       make_jfd_creation_writable(&image);
+      image.overlay->image_number = 1u;
+      image.overlay->log_refusal = test_jfd_refusal;
+      jfd_refusals = 0u;
       controller_reset(&image);
       wd1770_writelatch_a(0x8eu); /* physical side 1 */
       fdc_funcs_t observed;
@@ -1064,6 +1078,13 @@ static void test_wd_creation(const char *root)
       assert((ioc.fiq & IOC_FIQ_DISC_IRQ) &&
              observed_index_pulses == 5u && wd1770_read(0x00u) == 0x10u);
       fdc_funcs = original_controller_funcs;
+      wd1770_write(0x08u, 7u);
+      wd_write_mode = true;
+      assert(finish_command(0xa0u, 1100000u) == 0x10u &&
+             jfd_refusals == 1u && refused_image == 1u &&
+             refused_track == 0u && refused_side == 1u &&
+             refused_sector == 7u && !strcmp(refused_reason, "not-found"));
+      wd_write_mode = false;
       wd1770_write(0x08u, 1u);
       wd_write_mode = true; wd_write_value = (uint8_t)(0x60u + timed);
       jfd_commits = 0u;
@@ -1108,6 +1129,9 @@ static void test_newio_creation(const char *root)
          "boundary.jfd" : timed ? "partial-timed.jfd" :
          "partial-untimed.jfd");
       make_jfd_creation_writable(&image);
+      image.overlay->image_number = 1u;
+      image.overlay->log_refusal = test_jfd_refusal;
+      jfd_refusals = 0u;
       newio_reset(&image, false);
       uint8_t result[7];
       fdc_funcs_t observed;
@@ -1128,6 +1152,13 @@ static void test_newio_creation(const char *root)
       assert(result[0] == 0x44u && result[1] == 0x05u);
       assert_newio_refusal_quiet();
       fdc_funcs = original_controller_funcs;
+      newio_creation_command(0x05u, 1u, 0u, 1u, 7u, 3u);
+      newio_wait_irq(500000u); newio_result(result);
+      assert(result[0] == 0x44u && result[1] == 0x05u &&
+             jfd_refusals == 1u && refused_image == 1u &&
+             refused_track == 0u && refused_side == 1u &&
+             refused_sector == 7u && !strcmp(refused_reason, "not-found"));
+      assert_newio_refusal_quiet();
       transfer_count = jfd_commits = 0u;
       newio_transfer_limit = 1024u;
       newio_service_dma = newio_dma_write = true;

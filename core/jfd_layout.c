@@ -24,12 +24,9 @@ static bool schedule_timed(const ArcJfdImage *image, ArcJfdOverlay *overlay,
    unsigned count = 0u;
    for (unsigned i = 0u; i < track->sector_count; ++i)
       occupied[count++] = image->sectors[track->first_sector + i].time_us;
-   for (unsigned i = 0u; i < count; ++i)
-      for (unsigned j = i + 1u; j < count; ++j)
-         for (int shift = -1; shift <= 1; ++shift)
-            if (overlap(occupied[i] + REVOLUTION_US,
-                        (uint64_t)occupied[j] + (shift + 1) * REVOLUTION_US))
-               return false;
+   /* JASPP stores captured starts to whole milliseconds. Keep those starts
+    * even when quantisation makes their transfer intervals overlap; only
+    * newly placed sectors must avoid every occupied interval. */
 
    /* Version 1 placement: missing IDs ascend. The nearest lower ID already
     * present in the base or plan is the predecessor. Search from its end,
@@ -96,12 +93,15 @@ static bool schedule_timed(const ArcJfdImage *image, ArcJfdOverlay *overlay,
 bool arc_jfd_plan_creation(const ArcJfdImage *image, ArcJfdOverlay *overlay)
 {
    if (!image || !overlay || !overlay->eligible) return false;
+   /* The file has no descriptor table for missing track-sides, so they cannot
+    * be created even if the captured sides otherwise establish the profile. */
+   if (image->track_count < ARC_JFD_PDD5_TRACKS) return false;
    unsigned compatible = 0u, nonempty = 0u, full = 0u;
    bool irregular_missing = false, omitted_regular = false;
    bool irregular[ARC_JFD_PDD5_TRACKS] = {false};
    uint8_t masks[ARC_JFD_PDD5_TRACKS] = {0};
-   unsigned tracks = image->track_count < ARC_JFD_PDD5_TRACKS ?
-                     image->track_count : ARC_JFD_PDD5_TRACKS;
+   uint8_t writable_masks[ARC_JFD_PDD5_TRACKS] = {0};
+   unsigned tracks = ARC_JFD_PDD5_TRACKS;
    for (unsigned t = 0u; t < tracks; ++t)
    {
       const ArcJfdTrack *track = &image->tracks[t];
@@ -110,15 +110,25 @@ bool arc_jfd_plan_creation(const ArcJfdImage *image, ArcJfdOverlay *overlay)
       {
          size_t index = (size_t)track->first_sector + i;
          const ArcJfdSector *sector = &image->sectors[index];
+         uint8_t bit = sector->id < ARC_JFD_PDD5_IDS ?
+                       (uint8_t)(1u << sector->id) : 0u;
+         bool duplicate = (masks[t] & bit) != 0u;
          if (sector->id >= ARC_JFD_PDD5_IDS || sector->size != 1024u ||
              sector->density != 2u || !overlay->eligible[index] ||
-             (masks[t] & (1u << sector->id))) irregular[t] = true;
-         if (sector->id < ARC_JFD_PDD5_IDS)
-            masks[t] |= (uint8_t)(1u << sector->id);
+             duplicate) irregular[t] = true;
+         if (bit)
+         {
+            masks[t] |= bit;
+            if (duplicate)
+               writable_masks[t] &= (uint8_t)~bit;
+            else if (sector->size == 1024u && sector->density == 2u &&
+                     overlay->eligible[index])
+               writable_masks[t] |= bit;
+         }
       }
       if (irregular[t])
       {
-         if (masks[t] != PDD5_ALL) irregular_missing = true;
+         if (writable_masks[t] != PDD5_ALL) irregular_missing = true;
       }
       else
       {
@@ -135,7 +145,7 @@ bool arc_jfd_plan_creation(const ArcJfdImage *image, ArcJfdOverlay *overlay)
       bool free_track[ARC_JFD_PDD5_TRACKS] = {false};
       if (!arc_jfd_base_free_tracks(image, free_track)) return false;
       for (unsigned t = 0u; t < tracks; ++t)
-         if (irregular[t] && masks[t] != PDD5_ALL && free_track[t])
+         if (irregular[t] && writable_masks[t] != PDD5_ALL && free_track[t])
             return false;
    }
    if (overlay->pdd5_profile)
