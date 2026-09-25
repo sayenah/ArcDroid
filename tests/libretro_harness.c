@@ -51,6 +51,7 @@ static uint64_t nonzero_audio_samples;
 static uint64_t video_signatures[16];
 static unsigned video_signature_count;
 static uint64_t last_video_signature;
+static uint32_t last_video_pixel;
 static unsigned video_signature_last_change_frame;
 static bool last_video_was_duplicate;
 static uint64_t video_trace_signature = UINT64_C(1469598103934665603);
@@ -846,6 +847,8 @@ static void video(const void *data, unsigned w, unsigned h, size_t pitch)
    assert((data || can_dupe) && w > 0u && w <= 4096u && h > 0u && h <= 2048u && pitch >= w * 4u);
    last_video_was_duplicate = data == NULL;
    if (!data) { ++duplicate_video_frames; ++video_frames; return; }
+   memcpy(&last_video_pixel, data, sizeof(last_video_pixel));
+   last_video_pixel &= 0x00ffffffu;
    assert(w == geometry_width && h == geometry_height);
    if (measure_av)
    {
@@ -1846,9 +1849,14 @@ int main(int argc, char **argv)
          dlsym(module, "arc_libretro_test_cmos_path");
       *(void **)(&arc_libretro_test_choice_path) =
          dlsym(module, "arc_libretro_test_choice_path");
+      *(void **)(&arc_libretro_test_session_state) =
+         dlsym(module, "arc_libretro_test_session_state");
+      *(void **)(&arc_libretro_test_chooser_rows) =
+         dlsym(module, "arc_libretro_test_chooser_rows");
       assert(arc_engine_test_drive_media && arc_libretro_test_adffs_accept_test_os &&
              arc_libretro_test_content_id && arc_libretro_test_staged_path &&
-             arc_libretro_test_cmos_path && arc_libretro_test_choice_path);
+             arc_libretro_test_cmos_path && arc_libretro_test_choice_path &&
+             arc_libretro_test_session_state && arc_libretro_test_chooser_rows);
    }
    else if (newio_smoke)
    {
@@ -1926,6 +1934,13 @@ int main(int argc, char **argv)
 
    if (jfd_writes)
    {
+      /* The test ROM publishes one steady result after the controller ends:
+       * pristine+accepted, saved-data-before-write+accepted, pristine+WP,
+       * or other error. These are the same palette colours Windows checks. */
+      const uint32_t jfd_first = 0x006a0000u;
+      const uint32_t jfd_saved = 0x00001500u;
+      const uint32_t jfd_protected = 0x00006a00u;
+      const uint32_t jfd_other = 0x0000006au;
       char wp[4096], neither[4096], legacy[4096], gzip[4096];
       char zipped[4096], mixed[4096], slot_a[4096], slot_b[4096];
       snprintf(wp, sizeof(wp), "%s/wp-d.jfd", jfd_fixture_path);
@@ -1957,7 +1972,9 @@ int main(int argc, char **argv)
              !write_protected);
       phase = PHASE_RUN;
       for (unsigned frame = 0u; frame < 600u; ++frame) retro_run();
-      uint64_t pristine_signature = last_video_signature;
+      if (last_video_pixel != jfd_first)
+         fprintf(stderr, "JFD first outcome: %08x\n", last_video_pixel);
+      assert(last_video_pixel == jfd_first);
       assert(file_exists(slot_a) || file_exists(slot_b));
       retro_unload_game();
       phase = PHASE_LOAD; assert(retro_load_game(&game));
@@ -1967,11 +1984,10 @@ int main(int argc, char **argv)
              hash_file(arc_libretro_test_staged_path(0u)) == staged_hash_before);
       phase = PHASE_RUN;
       for (unsigned frame = 0u; frame < 600u; ++frame) retro_run();
-      uint64_t saved_signature = last_video_signature;
-      assert(saved_signature != pristine_signature);
+      assert(last_video_pixel == jfd_saved);
       retro_reset();
       for (unsigned frame = 0u; frame < 600u; ++frame) retro_run();
-      assert(last_video_signature == saved_signature);
+      assert(last_video_pixel == jfd_saved);
       retro_unload_game();
       option_writes = "off"; variable_update = true;
       phase = PHASE_LOAD; assert(retro_load_game(&game));
@@ -1979,7 +1995,7 @@ int main(int argc, char **argv)
              write_protected);
       phase = PHASE_RUN;
       for (unsigned frame = 0u; frame < 600u; ++frame) retro_run();
-      assert(last_video_signature == pristine_signature);
+      assert(last_video_pixel == jfd_protected);
       retro_unload_game();
       option_writes = "original"; variable_update = true;
       unsigned original_notice_before = jfd_original_notice_calls;
@@ -2005,8 +2021,40 @@ int main(int argc, char **argv)
              !write_protected);
       phase = PHASE_RUN;
       for (unsigned frame = 0u; frame < 600u; ++frame) retro_run();
-      assert(last_video_signature == saved_signature);
+      assert(last_video_pixel == jfd_saved);
       retro_unload_game();
+      ArcDigest wp_digest = digest_file(wp);
+      char wp_slot_a[4096], wp_slot_b[4096];
+      snprintf(wp_slot_a, sizeof(wp_slot_a), "%s/arcdroid/jfd/%s.a",
+               save_path, wp_digest.sha1);
+      snprintf(wp_slot_b, sizeof(wp_slot_b), "%s/arcdroid/jfd/%s.b",
+               save_path, wp_digest.sha1);
+      struct retro_game_info wp_game = {wp, NULL, 0u, NULL};
+      phase = PHASE_LOAD; assert(retro_load_game(&wp_game));
+      phase = PHASE_RUN;
+      for (unsigned frame = 0u; frame < 600u; ++frame) retro_run();
+      assert(last_video_pixel == jfd_protected &&
+             !file_exists(wp_slot_a) && !file_exists(wp_slot_b));
+      retro_unload_game();
+
+      char missing_jfd[4096], missing_slot_a[4096], missing_slot_b[4096];
+      snprintf(missing_jfd, sizeof(missing_jfd), "%s/missing-one-d.jfd",
+               jfd_fixture_path);
+      ArcDigest missing_digest = digest_file(missing_jfd);
+      snprintf(missing_slot_a, sizeof(missing_slot_a),
+               "%s/arcdroid/jfd/%s.a", save_path, missing_digest.sha1);
+      snprintf(missing_slot_b, sizeof(missing_slot_b),
+               "%s/arcdroid/jfd/%s.b", save_path, missing_digest.sha1);
+      struct retro_game_info missing_game = {missing_jfd, NULL, 0u, NULL};
+      phase = PHASE_LOAD; assert(retro_load_game(&missing_game));
+      assert(arc_engine_test_drive_media(0u, &write_protected, NULL) &&
+             !write_protected);
+      phase = PHASE_RUN;
+      for (unsigned frame = 0u; frame < 600u; ++frame) retro_run();
+      assert(last_video_pixel == jfd_other &&
+             !file_exists(missing_slot_a) && !file_exists(missing_slot_b));
+      retro_unload_game();
+
       char adffs_jfd[4096], package_source[4096], package_directory[4096];
       char package_path[4096], adffs_slot_a[4096], adffs_slot_b[4096];
       snprintf(adffs_jfd, sizeof(adffs_jfd), "%s/adffs-rw.jfd", jfd_fixture_path);
@@ -2031,7 +2079,8 @@ int main(int argc, char **argv)
       phase = PHASE_LOAD; assert(retro_load_game(&adffs_game));
       phase = PHASE_RUN;
       for (unsigned frame = 0u; frame < 600u; ++frame) retro_run();
-      assert(file_exists(adffs_slot_a) || file_exists(adffs_slot_b));
+      assert(last_video_pixel == jfd_other &&
+             (file_exists(adffs_slot_a) || file_exists(adffs_slot_b)));
       retro_unload_game();
       option_jfd_boot = "auto"; option_launch = "auto"; variable_update = true;
       phase = PHASE_LOAD; assert(retro_load_game(&adffs_game));
@@ -2084,6 +2133,108 @@ int main(int argc, char **argv)
          retro_unload_game();
          assert(open_files == 0u && open_dirs == 0u);
       }
+
+      /* Guest writes must preserve launch-record bytes when the candidates
+       * are unchanged, and must use the existing target/choice guards when
+       * a root entry changes. Both writes go through WD1770 and the JFD store. */
+      for (unsigned rename_case = 0u; rename_case < 2u; ++rename_case)
+      {
+         char launch_jfd[4096], launch_rom[4096], binding[4096];
+         char launch_slot_a[4096], launch_slot_b[4096];
+         const char *stem = rename_case ? "launch-renamed" : "launch-unchanged";
+         snprintf(launch_jfd, sizeof(launch_jfd), "%s/%s-d.jfd",
+                  jfd_fixture_path, stem);
+         snprintf(launch_rom, sizeof(launch_rom),
+                  "%s/../arcdroid-jfd-directory-%s.rom", jfd_fixture_path,
+                  rename_case ? "rename" : "benign");
+         uint64_t launch_source_hash = hash_file(launch_jfd);
+         ArcDigest launch_digest = digest_file(launch_jfd);
+         snprintf(binding, sizeof(binding), "%s/arcdroid/launch/%s.bind",
+                  save_path, launch_digest.sha1);
+         snprintf(launch_slot_a, sizeof(launch_slot_a),
+                  "%s/arcdroid/jfd/%s.a", save_path, launch_digest.sha1);
+         snprintf(launch_slot_b, sizeof(launch_slot_b),
+                  "%s/arcdroid/jfd/%s.b", save_path, launch_digest.sha1);
+         struct retro_game_info launch_game = {launch_jfd, NULL, 0u, NULL};
+         copy_file(launch_rom, renamed);
+         option_launch = "app1"; option_writes = "shadow";
+         variable_update = true;
+         phase = PHASE_LOAD;
+         if (!retro_load_game(&launch_game))
+         { fprintf(stderr, "JFD launch fixture: %s\n", last_message); abort(); }
+         assert(arc_libretro_test_session_state() == 3u &&
+                arc_engine_test_drive_media(1u, NULL, NULL) &&
+                strstr(last_launch_log, "decision=!Alpha"));
+         uint8_t binding_before[ARC_LAUNCH_BINDING_MAX_SIZE];
+         size_t binding_size = read_bounded(binding, binding_before,
+                                            sizeof(binding_before));
+         retro_unload_game();
+
+         option_launch = "auto"; option_launch_chooser = "remember";
+         variable_update = true;
+         phase = PHASE_LOAD; assert(retro_load_game(&launch_game));
+         assert(arc_libretro_test_session_state() == 2u &&
+                arc_libretro_test_chooser_rows() == 3u);
+         phase = PHASE_RUN;
+         retro_run();
+         keyboard.callback(true, RETROK_RETURN, 0u, 0u); retro_run();
+         keyboard.callback(false, RETROK_RETURN, 0u, 0u); retro_run();
+         assert(arc_libretro_test_session_state() == 3u &&
+                !file_exists(launch_slot_a) && !file_exists(launch_slot_b));
+         char choice[4096];
+         snprintf(choice, sizeof(choice), "%s", arc_libretro_test_choice_path());
+         uint8_t choice_before[ARC_LAUNCH_CHOICE_MAX_SIZE];
+         size_t choice_size = read_bounded(choice, choice_before,
+                                           sizeof(choice_before));
+         unsigned writes_before = jfd_write_log_lines;
+         for (unsigned frame = 0u; frame < 600u; ++frame) retro_run();
+         assert(jfd_write_log_lines > writes_before &&
+                (file_exists(launch_slot_a) || file_exists(launch_slot_b)));
+         retro_unload_game();
+
+         option_launch = "app1"; variable_update = true;
+         phase = PHASE_LOAD; assert(retro_load_game(&launch_game));
+         if (rename_case)
+            assert(!arc_engine_test_drive_media(1u, NULL, NULL) &&
+                   strstr(last_launch_warning, "binding changed target") &&
+                   strstr(last_launch_log, "!Alphb"));
+         else
+            assert(arc_engine_test_drive_media(1u, NULL, NULL) &&
+                   strstr(last_launch_log, "decision=!Alpha"));
+         uint8_t record_check[ARC_LAUNCH_BINDING_MAX_SIZE];
+         assert(read_bounded(binding, record_check, sizeof(record_check)) ==
+                   binding_size &&
+                !memcmp(record_check, binding_before, binding_size));
+         retro_unload_game();
+
+         option_launch = "auto"; variable_update = true;
+         phase = PHASE_LOAD; assert(retro_load_game(&launch_game));
+         if (rename_case)
+            assert(arc_libretro_test_session_state() == 2u &&
+                   arc_libretro_test_chooser_rows() == 3u);
+         else
+            assert(arc_libretro_test_session_state() == 3u &&
+                   strstr(last_launch_log, "decision=!Alpha"));
+         uint8_t choice_check[ARC_LAUNCH_CHOICE_MAX_SIZE];
+         assert(read_bounded(choice, choice_check, sizeof(choice_check)) ==
+                   choice_size &&
+                !memcmp(choice_check, choice_before, choice_size));
+         if (rename_case)
+         {
+            phase = PHASE_RUN;
+            retro_run();
+            keyboard.callback(true, RETROK_RETURN, 0u, 0u); retro_run();
+            keyboard.callback(false, RETROK_RETURN, 0u, 0u); retro_run();
+            assert(arc_libretro_test_session_state() == 3u &&
+                   strstr(last_launch_log, "decision=!Alphb") &&
+                   (read_bounded(choice, choice_check, sizeof(choice_check)) !=
+                      choice_size ||
+                    memcmp(choice_check, choice_before, choice_size)));
+         }
+         retro_unload_game();
+         assert(hash_file(launch_jfd) == launch_source_hash &&
+                open_files == 0u && open_dirs == 0u);
+      }
       retro_deinit();
       assert(hash_file(jfd_content_path) == source_hash &&
              hash_file(wp) == wp_source_hash &&
@@ -2091,7 +2242,7 @@ int main(int argc, char **argv)
              hash_file(gzip) == gzip_source_hash &&
              open_files == 0u && open_dirs == 0u);
       assert(dlclose(module) == 0);
-      puts("jfd_writes_harness: persistence, Off, flags, zip identity and mixed insertion passed");
+      puts("jfd_writes_harness: outcome states, persistence, launch records and lifecycle passed");
       return 0;
    }
 

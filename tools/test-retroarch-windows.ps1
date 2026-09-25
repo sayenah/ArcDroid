@@ -700,6 +700,30 @@ function Capture-ExpectedSignature($Run, [string]$Name, [string]$Expected, [bool
     throw "$Name did not become $relation $Expected within 10 seconds (last $actual)"
 }
 
+function Wait-JfdOutcome($Run, [string]$Name, [string]$Expected) {
+    # The save ROM publishes exactly one of these colours after the WD1770
+    # command completes, then holds it forever. Two captures rule out an
+    # early frame or a screenshot from before the final result was visible.
+    $outcomes = @("ff6a0000", "ff001500", "ff006a00", "ff00006a")
+    $deadline = [DateTime]::UtcNow.AddSeconds(20)
+    $attempt = 0
+    do {
+        $attempt++
+        $actual = Capture-MediaSignature $Run "$Name-$attempt"
+        if ($outcomes -contains $actual) {
+            Start-Sleep -Milliseconds 200
+            $steady = Capture-MediaSignature $Run "$Name-steady-$attempt"
+            if ($steady -eq $actual) {
+                if ($actual -ne $Expected) {
+                    throw "$Name completed with $actual; expected $Expected"
+                }
+                return $actual
+            }
+        }
+    } while ([DateTime]::UtcNow -lt $deadline)
+    throw "$Name did not publish a steady JFD outcome $Expected within 20 seconds (last $actual)"
+}
+
 # RetroArch's per-core save sorting redirects this core's save directory to
 # <configured savefile_directory>/ArcDroid, and .ldci records live there.
 $indexDirectory = Join-Path $saveDirectory "ArcDroid"
@@ -917,9 +941,9 @@ try {
 
 Write-Host "Slice 2a Windows RetroArch: disk commands, image-1 relaunch, inert seeded .ldci, and JFD golden region passed"
 
-# Slice 10a: the project-authored ROM reads sector 1 before writing 0x5A
-# bytes to that sector. Its first frame therefore shows the pristine data;
-# a fresh RetroArch process must show the committed data on the next run.
+# Slice 10a: the project-authored ROM reads the entire sector before writing
+# 0x5A bytes, then publishes a steady result for that prewrite read and the
+# completed write status. A relaunch must report data from the saved overlay.
 Copy-Item -Force (Join-Path $InputDirectory "arcdroid-jfd-save-test.rom") $firmware
 $rwJfd = (Resolve-Path (Join-Path $InputDirectory "jfd-writes/rw-d.jfd")).Path
 $wpJfd = (Resolve-Path (Join-Path $InputDirectory "jfd-writes/wp-d.jfd")).Path
@@ -930,9 +954,15 @@ $zipHash = (Get-FileHash -Algorithm SHA256 $rwZip).Hash
 $rwDigest = (Get-FileHash -Algorithm SHA1 $rwJfd).Hash.ToLowerInvariant()
 $wpDigest = (Get-FileHash -Algorithm SHA1 $wpJfd).Hash.ToLowerInvariant()
 $jfdSaveDirectory = Join-Path $coreSaveDirectory "jfd"
+if ((Test-Path (Join-Path $jfdSaveDirectory "$rwDigest.a")) -or
+    (Test-Path (Join-Path $jfdSaveDirectory "$rwDigest.b")) -or
+    (Test-Path (Join-Path $jfdSaveDirectory "$wpDigest.a")) -or
+    (Test-Path (Join-Path $jfdSaveDirectory "$wpDigest.b"))) {
+    throw "JFD save slots were present before the native write test"
+}
 $rwFirst = Start-MediaRun $rwJfd "jfd-rw-first"
 try {
-    $rwBeforeSignature = Capture-MediaSignature $rwFirst "jfd-rw-pristine"
+    [void](Wait-JfdOutcome $rwFirst "jfd-rw-first-accepted" "ff6a0000")
 } finally { Stop-MediaRun $rwFirst }
 if (-not (Select-String -Path $rwFirst.RetroLog -SimpleMatch "JFD writes: image=1 state=writable reason=rw-flag" -Quiet)) {
     throw "RW JFD did not enter the native writable path"
@@ -943,11 +973,11 @@ if (-not ((Test-Path (Join-Path $jfdSaveDirectory "$rwDigest.a")) -or
 }
 $rwSecond = Start-MediaRun $rwJfd "jfd-rw-relaunch"
 try {
-    [void](Capture-ExpectedSignature $rwSecond "jfd-rw-saved" $rwBeforeSignature $true)
+    [void](Wait-JfdOutcome $rwSecond "jfd-rw-saved-readback" "ff001500")
 } finally { Stop-MediaRun $rwSecond }
 $wpFirst = Start-MediaRun $wpJfd "jfd-wp-first"
 try {
-    [void](Capture-ExpectedSignature $wpFirst "jfd-wp-pristine" $rwBeforeSignature $false)
+    [void](Wait-JfdOutcome $wpFirst "jfd-wp-refused-pristine" "ff006a00")
 } finally { Stop-MediaRun $wpFirst }
 if (-not (Select-String -Path $wpFirst.RetroLog -SimpleMatch "JFD writes: image=1 state=protected reason=wp-flag" -Quiet)) {
     throw "WP JFD did not remain protected"

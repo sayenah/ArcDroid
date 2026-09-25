@@ -81,6 +81,9 @@ class Arm2:
     def cmp_imm(self, rn: int, value: int) -> None:
         self.emit(0xE3500000 | (rn << 16) | self._imm(value))
 
+    def cmp_reg(self, rn: int, rm: int) -> None:
+        self.emit(0xE1500000 | (rn << 16) | rm)
+
     def swp(self, rd: int, rm: int, rn: int, byte: bool = False) -> None:
         self.emit(0xE1000090 | (0x00400000 if byte else 0) |
                   (rn << 16) | (rd << 12) | rm)
@@ -92,6 +95,11 @@ class Arm2:
 
     def ldr(self, rd: int, rn: int, offset: int = 0, byte: bool = False) -> None:
         self.emit(0xE5900000 | (0x00400000 if byte else 0) |
+                  (rn << 16) | (rd << 12) | offset)
+
+    def ldr_post(self, rd: int, rn: int, offset: int = 4,
+                 byte: bool = False) -> None:
+        self.emit(0xE4900000 | (0x00400000 if byte else 0) |
                   (rn << 16) | (rd << 12) | offset)
 
     def str(self, rd: int, rn: int, offset: int = 0, byte: bool = False) -> None:
@@ -147,7 +155,11 @@ CHOOSER_VIDC_MODE = (
 
 
 def build_rom(media_exerciser: bool = False,
-              jfd_save_probe: bool = False) -> bytearray:
+              jfd_save_probe: bool = False, write_sector: int = 1,
+              write_payload: bytes | None = None) -> bytearray:
+    if not 0 <= write_sector <= 4 or (write_payload is not None and
+                                      len(write_payload) != 1024):
+        raise ValueError("the synthetic D-format writer needs one full sector")
     rom = bytearray(b"\xFF" * ROM_SIZE)
     rom[0:4] = struct.pack("<I", 0xE59FF000)  # ldr pc, [pc]
     rom[8:12] = struct.pack("<I", 0x03800020)
@@ -287,31 +299,86 @@ def build_rom(media_exerciser: bool = False,
     a.str(1, 0, 8, byte=True)
     a.mov(1, 0x80)
     a.str(1, 0, byte=True)
-    a.mov(5, 0x100)
+    if jfd_save_probe:
+        a.ldr_const(5, 1024)
+    else:
+        a.mov(5, 0x100)
     a.mov(6, 0)
+    if jfd_save_probe:
+        a.ldr_const(3, 250000)
     a.label("fdc_wait")
     a.ldr(7, 0, byte=True)
     a.tst_imm(7, 2)
-    a.branch("fdc_wait", "eq")
+    if jfd_save_probe:
+        a.branch("fdc_read_byte", "ne")
+        a.tst_imm(7, 1)
+        a.branch("save_other", "eq")
+        a.subs_imm(3, 3, 1)
+        a.branch("fdc_wait", "ne")
+        a.mov(4, 0xD0)
+        a.str(4, 0, byte=True)
+        a.branch("save_other")
+        a.label("fdc_read_byte")
+        a.ldr_const(3, 250000)
+    else:
+        a.branch("fdc_wait", "eq")
     a.ldr(7, 0, 12, byte=True)
     if jfd_save_probe:
         a.add_lsl(6, 6, 6, 5)
     a.eor(6, 6, 7)
     a.subs_imm(5, 5, 1)
     a.branch("fdc_wait", "ne")
+    if jfd_save_probe:
+        a.ldr_const(3, 250000)
     a.label("fdc_read_finish")
     a.ldr(4, 0, byte=True)
     a.tst_imm(4, 1)
-    a.branch("fdc_read_finish", "ne")
+    if jfd_save_probe:
+        a.branch("fdc_read_complete", "eq")
+        a.subs_imm(3, 3, 1)
+        a.branch("fdc_read_finish", "ne")
+        a.mov(4, 0xD0)
+        a.str(4, 0, byte=True)
+        a.branch("save_other")
+        a.label("fdc_read_complete")
+    else:
+        a.branch("fdc_read_finish", "ne")
+    if jfd_save_probe:
+        # Classify the full sector *before* writing. The two constants are
+        # the rolling hashes of the generated pristine sector and 1024 bytes
+        # of 0x5A; an unknown read or controller error is never
+        # allowed to masquerade as a successful save.
+        # WD1770 leaves bit 7 (ready) set on a successful completed command.
+        a.cmp_imm(4, 0x80)
+        a.branch("save_unknown", "ne")
+        a.ldr_const(7, 0xEEFAB800)
+        a.cmp_reg(6, 7)
+        a.branch("save_pristine", "eq")
+        a.ldr_const(7, 0x26568000)
+        a.cmp_reg(6, 7)
+        a.branch("save_written", "eq")
+        a.branch("save_unknown")
+        a.label("save_pristine")
+        a.mov(9, 1)
+        a.branch("save_read_done")
+        a.label("save_written")
+        a.mov(9, 2)
+        a.branch("save_read_done")
+        a.label("save_unknown")
+        a.mov(9, 3)
+        a.label("save_read_done")
 
     # Write sector one through the same controller. The source ADF is immutable;
     # the harness verifies that only the content-addressed shadow changes.
-    a.mov(1, 1)
+    a.mov(1, write_sector)
     a.str(1, 0, 8, byte=True)
     a.mov(1, 0xA0)
     a.str(1, 0, byte=True)
     a.ldr_const(5, 1024)
-    a.mov(7, 0x5A)
+    if write_payload is None:
+        a.mov(7, 0x5A)
+    else:
+        a.ldr_const(2, 0x03802000)
     if media_exerciser:
         a.ldr_const(3, 250000)
         a.label("fdc_write_wait")
@@ -320,12 +387,16 @@ def build_rom(media_exerciser: bool = False,
         a.branch("fdc_write_done", "eq")
         a.tst_imm(4, 2)
         a.branch("fdc_write_tick", "eq")
+        if write_payload is not None:
+            a.ldr_post(7, 2, 1, byte=True)
         a.str(7, 0, 12, byte=True)
         a.subs_imm(5, 5, 1)
         a.branch("fdc_write_done", "eq")
         a.label("fdc_write_tick")
         a.subs_imm(3, 3, 1)
         a.branch("fdc_write_wait", "ne")
+        if jfd_save_probe:
+            a.mov(9, 3)  # cancellation is never reported as a save
         a.mov(4, 0xD0)  # bounded cancellation if a reader never completes
         a.str(4, 0, byte=True)
         a.label("fdc_write_done")
@@ -334,13 +405,44 @@ def build_rom(media_exerciser: bool = False,
         a.ldr(4, 0, byte=True)
         a.tst_imm(4, 2)
         a.branch("fdc_write_wait", "eq")
+        if write_payload is not None:
+            a.ldr_post(7, 2, 1, byte=True)
         a.str(7, 0, 12, byte=True)
         a.subs_imm(5, 5, 1)
         a.branch("fdc_write_wait", "ne")
+    if not media_exerciser or jfd_save_probe:
         a.label("fdc_write_finish")
         a.ldr(4, 0, byte=True)
         a.tst_imm(4, 1)
         a.branch("fdc_write_finish", "ne")
+
+    if jfd_save_probe:
+        # Publish one final, steady 8-bpp palette index only after the write
+        # command ends. 0x10 = pristine read + accepted write; 0x20 = saved
+        # data read before this run's write; 0x40 = pristine read + WP refusal;
+        # 0x80 = any other read, write or controller outcome.
+        a.cmp_imm(4, 0x80)
+        a.branch("save_write_ok", "eq")
+        a.tst_imm(4, 0x40)
+        a.branch("save_other", "eq")
+        a.cmp_imm(9, 1)
+        a.branch("save_other", "ne")
+        a.mov(6, 0x40)
+        a.branch("fdc_done")
+        a.label("save_write_ok")
+        a.cmp_imm(5, 0)
+        a.branch("save_other", "ne")
+        a.cmp_imm(9, 1)
+        a.branch("save_first", "eq")
+        a.cmp_imm(9, 2)
+        a.branch("save_other", "ne")
+        a.mov(6, 0x20)
+        a.branch("fdc_done")
+        a.label("save_first")
+        a.mov(6, 0x10)
+        a.branch("fdc_done")
+        a.label("save_other")
+        a.mov(6, 0x80)
 
     a.label("fdc_done")
     # Expand the guest checksum to all bytes and paint 640x256 at 8 bpp. The
@@ -348,12 +450,14 @@ def build_rom(media_exerciser: bool = False,
     # distinctive in native-frontend screenshots instead of a uniform colour.
     a.orr_lsl(6, 6, 6, 8)
     a.orr_lsl(6, 6, 6, 16)
-    a.ldr_const(7, 0x00FFFFFF)
+    if not jfd_save_probe:
+        a.ldr_const(7, 0x00FFFFFF)
     a.mov(1, 0)
     a.ldr_const(5, 40960)
     a.label("fill_video")
     a.str_post(6, 1)
-    a.eor(6, 6, 7)
+    if not jfd_save_probe:
+        a.eor(6, 6, 7)
     a.subs_imm(5, 5, 1)
     a.branch("fill_video", "ne")
 
@@ -409,6 +513,8 @@ def build_rom(media_exerciser: bool = False,
     a.mov(9, 0)
     a.ldr_const(10, 250000)
     a.label("idle")
+    if jfd_save_probe:
+        a.branch("idle")  # the completed outcome cannot change with time
     a.ldr(0, 11, 0x20, byte=True)
     a.tst_imm(0, 0x80)
     a.branch("input_event", "ne")
@@ -488,6 +594,8 @@ def build_rom(media_exerciser: bool = False,
     marker = (b"ARCDROID ARMV2 MEDIA EXERCISER ROM v1\0" if media_exerciser
               else b"ARCDROID ARMV2 TEST ROM v2\0")
     rom[0x1F00:0x1F00 + len(marker)] = marker
+    if write_payload is not None:
+        rom[0x2000:0x2400] = write_payload
     return rom
 
 
@@ -2506,6 +2614,29 @@ def main() -> None:
         "mixed.adf\nrw-d.jfd\nwp-d.jfd\n",
         encoding="utf-8", newline="\n")
     (writes / "rw-d.zip").write_bytes(_zip_bytes([("RW.jfd", bytes(writable), True)]))
+    (writes / "missing-one-d.jfd").write_bytes(build_jfd_family(
+        [(0xFF, 0, 2, 0, 0, bytes(1024))],
+        b"ArcDroid JFD missing read sector", extended=True))
+    # Two independent launch identities exercise record reuse after a guest
+    # sector write. The rename ROM carries only our generated root sector;
+    # its write changes !Alpha to !Alphb without touching the child !Run.
+    for stem, name in (("launch-unchanged", b"Unchanged"),
+                       ("launch-renamed", b"Renamed")):
+        launch_payload = build_d_discovery(
+            [(b"!Alpha", True), (b"!Beta", True)], name)
+        launch_jfd = build_extended_jfd(
+            bytes(launch_payload), b"ArcDroid JFD launch write probe",
+            disk_geometry="D")
+        struct.pack_into("<I", launch_jfd, 304, 2)
+        (writes / f"{stem}-d.jfd").write_bytes(launch_jfd)
+        if stem == "launch-renamed":
+            changed_root_sector = bytearray(launch_payload[1024:2048])
+            changed_root_sector[5 + 5] = ord("b")
+    (args.output / "arcdroid-jfd-directory-benign.rom").write_bytes(
+        build_rom(media_exerciser=True, write_sector=3))
+    (args.output / "arcdroid-jfd-directory-rename.rom").write_bytes(
+        build_rom(media_exerciser=True,
+                  write_payload=bytes(changed_root_sector)))
     build_zip_content_fixtures(args.output / "zip-content", bytes(disc1),
                                bytes(disc2), bytes(jfd),
                                (args.output / "adffs/eligible.jfd").read_bytes(),
