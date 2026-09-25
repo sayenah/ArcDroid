@@ -159,16 +159,68 @@ def build_rom(media_exerciser: bool = False,
               write_sector: int = 1,
               write_payload: bytes | None = None,
               creation_probe: bool = False,
-              virtual_merge_probe: bool = False) -> bytearray:
+              virtual_merge_probe: bool = False,
+              merge_read_sector: int = 3) -> bytearray:
     if not 0 <= write_sector <= 4 or (write_payload is not None and
                                       len(write_payload) != 1024):
         raise ValueError("the synthetic D-format writer needs one full sector")
     if virtual_merge_probe and not (jfd_save_probe and creation_probe):
         raise ValueError("the virtual merge needs the JFD creation probe")
+    if not 0 <= merge_read_sector <= 4 or (not virtual_merge_probe and
+                                         merge_read_sector != 3):
+        raise ValueError("the virtual merge read needs a P-DD5 sector")
     rom = bytearray(b"\xFF" * ROM_SIZE)
     rom[0:4] = struct.pack("<I", 0xE59FF000)  # ldr pc, [pc]
     rom[8:12] = struct.pack("<I", 0x03800020)
     a = Arm2(0x03800020)
+
+    def poison_merge_buffer(prefix: str) -> None:
+        # A missing read must not inherit a zero-filled machine RAM page.
+        a.ldr_const(10, 0x00012000)
+        a.ldr_const(11, 1024)
+        a.mov(7, 0xA5)
+        a.label(prefix + "_poison")
+        a.str_post(7, 10, 1, byte=True)
+        a.subs_imm(11, 11, 1)
+        a.branch(prefix + "_poison", "ne")
+
+    def validate_merge_read(prefix: str, pristine: str,
+                            written: str, other: str) -> None:
+        # Verify all bytes in the ROM. The host's effective-view inspection
+        # alone cannot prove that the guest received a successful read.
+        a.ldr_const(10, 0x00012000)
+        a.ldr(7, 10, byte=True)
+        a.cmp_imm(7, 0)
+        a.branch(prefix + "_zero", "eq")
+        a.cmp_imm(7, 0x5A)
+        a.branch(prefix + "_partial", "eq")
+        a.branch(other)
+        a.label(prefix + "_zero")
+        a.ldr_const(11, 1024)
+        a.label(prefix + "_zero_loop")
+        a.ldr_post(7, 10, 1, byte=True)
+        a.cmp_imm(7, 0)
+        a.branch(other, "ne")
+        a.subs_imm(11, 11, 1)
+        a.branch(prefix + "_zero_loop", "ne")
+        a.branch(pristine)
+        a.label(prefix + "_partial")
+        a.ldr_const(10, 0x00012000)
+        a.mov(11, 128)
+        a.label(prefix + "_partial_head")
+        a.ldr_post(7, 10, 1, byte=True)
+        a.cmp_imm(7, 0x5A)
+        a.branch(other, "ne")
+        a.subs_imm(11, 11, 1)
+        a.branch(prefix + "_partial_head", "ne")
+        a.ldr_const(11, 896)
+        a.label(prefix + "_partial_tail")
+        a.ldr_post(7, 10, 1, byte=True)
+        a.cmp_imm(7, 0)
+        a.branch(other, "ne")
+        a.subs_imm(11, 11, 1)
+        a.branch(prefix + "_partial_tail", "ne")
+        a.branch(written)
 
     a.ldr_const(0, 0x036E050C)  # 32 KiB pages, video DMA, flyback refresh
     a.mov(1, 0)
@@ -260,7 +312,10 @@ def build_rom(media_exerciser: bool = False,
     if newio_save_probe:
         # Read the entire sector before writing. The last DMA access asserts
         # TC, and the completed seven-byte result is checked on both paths.
-        for value in (0x06, 0, 0, 0, 3 if creation_probe else 1,
+        if virtual_merge_probe:
+            poison_merge_buffer("save_new_merge")
+        for value in (0x06, 0, 0, 0, merge_read_sector if virtual_merge_probe
+                      else 3 if creation_probe else 1,
                       3, 3 if creation_probe else 1, 0x1B, 0xFF):
             a.mov(1, value); a.str(1, 0, byte=True)
         a.ldr_const(2, 0x03200030)
@@ -275,7 +330,9 @@ def build_rom(media_exerciser: bool = False,
         a.tst_imm(7, 1); a.branch("save_new_read_byte", "ne")
         a.ldr_const(1, 0x03200020)
         a.ldr(7, 1, byte=True)
-        a.tst_imm(7, 0x10); a.branch("save_new_missing", "ne") if creation_probe else a.branch("save_new_other", "ne")
+        a.tst_imm(7, 0x10)
+        a.branch("save_new_missing" if creation_probe and not virtual_merge_probe
+                 else "save_new_other", "ne")
         a.subs_imm(8, 8, 1); a.branch("save_new_read_wait", "ne")
         a.branch("save_new_other")
         a.label("save_new_read_byte")
@@ -301,13 +358,17 @@ def build_rom(media_exerciser: bool = False,
         a.ldr(4, 0, byte=True)
         for _ in range(6): a.ldr(7, 0, byte=True)
         a.tst_imm(4, 0xC0); a.branch("save_new_other", "ne")
-        a.ldr_const(7, 0 if creation_probe else 0xEEFAB800)
-        a.cmp_reg(6, 7)
-        a.branch("save_new_pristine", "eq")
-        a.ldr_const(7, 0x6A4AD000 if virtual_merge_probe else 0x26568000)
-        a.cmp_reg(6, 7)
-        a.branch("save_new_written", "eq")
-        a.branch("save_new_other")
+        if virtual_merge_probe:
+            validate_merge_read("save_new_merge", "save_new_pristine",
+                                "save_new_written", "save_new_other")
+        else:
+            a.ldr_const(7, 0 if creation_probe else 0xEEFAB800)
+            a.cmp_reg(6, 7)
+            a.branch("save_new_pristine", "eq")
+            a.ldr_const(7, 0x26568000)
+            a.cmp_reg(6, 7)
+            a.branch("save_new_written", "eq")
+            a.branch("save_new_other")
         a.label("save_new_pristine")
         a.mov(9, 1); a.branch("save_new_start_write")
         a.label("save_new_written")
@@ -477,8 +538,11 @@ def build_rom(media_exerciser: bool = False,
     a.mov(1, 0)
     a.str(1, 0, 4, byte=True)
     if jfd_save_probe:
-        a.mov(1, 3 if creation_probe else 1)
+        a.mov(1, merge_read_sector if virtual_merge_probe else
+              3 if creation_probe else 1)
     a.str(1, 0, 8, byte=True)
+    if virtual_merge_probe:
+        poison_merge_buffer("save_merge")
     a.mov(1, 0x80)
     a.str(1, 0, byte=True)
     if jfd_save_probe:
@@ -497,7 +561,7 @@ def build_rom(media_exerciser: bool = False,
         a.branch("fdc_read_byte", "ne")
         a.tst_imm(7, 1)
         if creation_probe:
-            a.branch("save_absent", "eq")
+            a.branch("save_other" if virtual_merge_probe else "save_absent", "eq")
         else:
             a.branch("save_other", "eq")
         a.subs_imm(3, 3, 1)
@@ -533,20 +597,23 @@ def build_rom(media_exerciser: bool = False,
     else:
         a.branch("fdc_read_finish", "ne")
     if jfd_save_probe:
-        # Classify the full sector *before* writing. The two constants are
-        # the rolling hashes of the generated pristine sector (or formatted
-        # zero fill for an omitted slot) and 1024 bytes of 0x5A; an unknown read or controller error is never
-        # allowed to masquerade as a successful save.
+        # Classify the full sector before writing. Ordinary save probes use
+        # rolling hashes; merge probes check every byte in guest RAM.
+        # An unknown read or controller error cannot report a save.
         # WD1770 leaves bit 7 (ready) set on a successful completed command.
         a.cmp_imm(4, 0x80)
         a.branch("save_unknown", "ne")
-        a.ldr_const(7, 0 if creation_probe else 0xEEFAB800)
-        a.cmp_reg(6, 7)
-        a.branch("save_pristine", "eq")
-        a.ldr_const(7, 0x6A4AD000 if virtual_merge_probe else 0x26568000)
-        a.cmp_reg(6, 7)
-        a.branch("save_written", "eq")
-        a.branch("save_unknown")
+        if virtual_merge_probe:
+            validate_merge_read("save_merge", "save_pristine",
+                                "save_written", "save_unknown")
+        else:
+            a.ldr_const(7, 0 if creation_probe else 0xEEFAB800)
+            a.cmp_reg(6, 7)
+            a.branch("save_pristine", "eq")
+            a.ldr_const(7, 0x26568000)
+            a.cmp_reg(6, 7)
+            a.branch("save_written", "eq")
+            a.branch("save_unknown")
         a.label("save_pristine")
         a.mov(9, 1)
         a.branch("save_read_done")
@@ -2861,6 +2928,16 @@ def main() -> None:
         build_rom(media_exerciser=True, jfd_save_probe=True,
                   newio_save_probe=True, creation_probe=True,
                   virtual_merge_probe=True))
+    # Reads a different omitted slot, so a valid saved ID 3 can coexist with
+    # an RNF guest probe when a damaged slot suppresses the virtual latch.
+    (args.output / "arcdroid-jfd-merge-missing-test.rom").write_bytes(
+        build_rom(media_exerciser=True, jfd_save_probe=True,
+                  write_sector=3, creation_probe=True,
+                  virtual_merge_probe=True, merge_read_sector=1))
+    (args.output / "arcdroid-jfd-newio-merge-missing-test.rom").write_bytes(
+        build_rom(media_exerciser=True, jfd_save_probe=True,
+                  newio_save_probe=True, creation_probe=True,
+                  virtual_merge_probe=True, merge_read_sector=1))
     (args.output / "arcdroid-media-disc1.adf").write_bytes(disc1)
     (args.output / "arcdroid-media-disc2.adf").write_bytes(disc2)
     (args.output / "arcdroid-media.m3u").write_text(

@@ -235,6 +235,7 @@ static const char *fault_write_substring;
 static const char *fault_flush_substring;
 static const char *fault_close_substring;
 static const char *fault_rename_substring;
+static unsigned fault_rename_skip_matches;
 static const char *fault_mkdir_substring;
 static const char *fault_opendir_substring;
 static const char *fault_closedir_substring;
@@ -321,6 +322,12 @@ static int vfs_flush(struct retro_vfs_file_handle *h)
 static int vfs_remove(const char *p) { return remove(p); }
 static int vfs_rename(const char *a, const char *b)
 {
+   if (fault_rename_substring && b &&
+       strstr(b, fault_rename_substring) && fault_rename_skip_matches)
+   {
+      --fault_rename_skip_matches;
+      return rename(a, b);
+   }
    if (fault_once(b, &fault_rename_substring))
    {
       snprintf(fault_rename_destination, sizeof(fault_rename_destination), "%s", b);
@@ -1996,17 +2003,53 @@ int main(int argc, char **argv)
       option_cpu = !strcmp(option_machine, "A3020") ? "ARM250" : "ARM2";
       option_launch = "off"; option_jfd_boot = "native";
       bool off_to_on = jfd_merge_step && !strcmp(argv[8], "off-to-on");
+      bool damaged = jfd_merge_step && !strcmp(argv[8], "damaged");
+      bool failure = jfd_merge_step && !strcmp(argv[8], "failed");
+      bool advance = jfd_merge_step && !strcmp(argv[8], "advance");
       option_writes = off_to_on ? "off" : "shadow";
       variable_update = true;
       uint32_t expected = (uint32_t)strtoul(argv[7], NULL, 16);
-      bool expect_slot = !strcmp(argv[8], "slot") || off_to_on;
+      bool expect_slot = !strcmp(argv[8], "slot") || off_to_on ||
+                         damaged || failure || advance;
       bool protected = true;
       phase = PHASE_LOAD; assert(retro_load_game(&game));
       assert(arc_engine_test_drive_media(0u, &protected, NULL) &&
-             protected == (!expect_slot || off_to_on));
+             protected == (!expect_slot || off_to_on || damaged));
       if (jfd_merge_step)
          assert(arc_libretro_test_jfd_virtual_reads(0u) ==
-                (expect_slot && !off_to_on));
+                (expect_slot && !off_to_on && !damaged));
+      if (damaged)
+      {
+         assert(jfd_damaged_notice_calls == 1u);
+         for (unsigned offset = 0u; offset < 1024u; ++offset)
+         {
+            uint8_t byte = 0xffu;
+            assert(arc_libretro_test_jfd_created_byte(0u, 0u, 3u,
+                                                       offset, &byte) &&
+                   byte == (offset < 128u ? 0x5au : 0u));
+         }
+         uint8_t absent = 0xffu;
+         assert(!arc_libretro_test_jfd_created_byte(0u, 0u, 1u, 0u,
+                                                    &absent));
+      }
+      if (advance)
+      {
+         assert(arc_libretro_test_jfd_commit(0u, 0u, 0x31u));
+         for (unsigned offset = 0u; offset < 1024u; ++offset)
+         {
+            uint8_t byte = 0xffu;
+            assert(arc_libretro_test_jfd_created_byte(0u, 0u, 3u,
+                                                       offset, &byte) &&
+                   byte == (offset < 128u ? 0x5au : 0u));
+         }
+      }
+      unsigned failed_notices_before = jfd_failed_status_calls;
+      if (failure)
+      {
+         /* Fail the data creation after map and directory have committed. */
+         fault_rename_skip_matches = 2u;
+         fault_rename_substring = "/arcdroid/jfd/";
+      }
       phase = PHASE_RUN;
       unsigned steady = 0u;
       if (off_to_on)
@@ -2014,7 +2057,7 @@ int main(int argc, char **argv)
          for (unsigned frame = 0u; frame < 800u && steady < 8u; ++frame)
          {
             retro_run();
-            steady = last_video_pixel == 0x00006a00u ? steady + 1u : 0u;
+            steady = last_video_pixel == 0x0000006au ? steady + 1u : 0u;
          }
          assert(steady == 8u && !arc_libretro_test_jfd_virtual_reads(0u));
          ArcDigest off_digest = digest_file(game.path);
@@ -2046,19 +2089,40 @@ int main(int argc, char **argv)
          fprintf(stderr, "creation %s %s: got %08x expected %08x\n",
                  option_machine, argv[8], last_video_pixel, expected);
       assert(last_video_pixel == expected && steady == 8u);
+      if (failure)
+      {
+         assert(!fault_rename_substring && !fault_rename_skip_matches &&
+                jfd_failed_status_calls == failed_notices_before + 1u &&
+                arc_libretro_test_jfd_virtual_reads(0u));
+         for (unsigned offset = 0u; offset < 1024u; ++offset)
+         {
+            uint8_t byte = 0xffu;
+            assert(arc_libretro_test_jfd_created_byte(0u, 0u, 3u,
+                                                       offset, &byte) && !byte);
+         }
+      }
       if (jfd_merge_step && expect_slot)
          for (unsigned offset = 0u; offset < 1024u; ++offset)
          {
             uint8_t byte = 0xffu;
             assert(arc_libretro_test_jfd_created_byte(0u, 0u, 3u,
                                                        offset, &byte) &&
-                   byte == (offset < 128u ? 0x5au : 0u));
+                   byte == (failure ? 0u : offset < 128u ? 0x5au : 0u));
          }
       ArcDigest digest = digest_file(game.path);
       char a[4096], b[4096];
       snprintf(a, sizeof(a), "%s/arcdroid/jfd/%s.a", save_path, digest.sha1);
       snprintf(b, sizeof(b), "%s/arcdroid/jfd/%s.b", save_path, digest.sha1);
       assert((file_exists(a) || file_exists(b)) == expect_slot);
+      if (failure)
+      {
+         uint64_t slot_a_hash = file_exists(a) ? hash_file(a) : 0u;
+         uint64_t slot_b_hash = file_exists(b) ? hash_file(b) : 0u;
+         assert(!arc_libretro_test_jfd_commit(0u, 0u, 0x7cu) &&
+                arc_libretro_test_jfd_virtual_reads(0u) &&
+                (file_exists(a) ? hash_file(a) : 0u) == slot_a_hash &&
+                (file_exists(b) ? hash_file(b) : 0u) == slot_b_hash);
+      }
       if (expect_slot && expected == 0x006a0000u &&
           (jfd_merge_step || !strcmp(option_machine, "A3000")))
       {
@@ -2089,7 +2153,7 @@ int main(int argc, char **argv)
          }
          assert(steady == 8u);
       }
-      if (!expect_slot)
+      if (!expect_slot && !jfd_merge_step)
       {
          const char *why = (strstr(game.path, "wp-create") ||
                             strstr(game.path, "wp-merge")) ?

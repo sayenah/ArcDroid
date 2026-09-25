@@ -5,10 +5,12 @@ Each step starts a new harness process and libretro core. The synthetic ROM
 uses steady palette outcomes. The first step reads 1024 zero bytes before
 writing only 128 changed bytes with the zero tail; the second step reads the
 created sector and exits before issuing any write. The harness also checks
-each saved byte through the core's test-only effective-view hook.
+each saved byte through the core's test-only effective-view hook, then proves
+damaged-load and mid-session failure latch transitions on both controllers.
 """
 import hashlib
 from pathlib import Path
+import struct
 import subprocess
 import sys
 import tempfile
@@ -38,15 +40,43 @@ def main() -> None:
             for image, outcome, slot in (
                 (rw, "006a0000", "off-to-on"),
                 (rw, "00001500", "slot"),
-                (wp, "00006a00", "no-slot"),
-                (nonmatching, "00006a00", "no-slot"),
-                (irregular_free, "00006a00", "no-slot"),
+                (wp, "0000006a", "no-slot"),
+                (nonmatching, "0000006a", "no-slot"),
+                (irregular_free, "0000006a", "no-slot"),
             ):
                 subprocess.run((str(harness), str(core), str(rom), str(image),
                                 str(root), "--jfd-merge-step", machine,
                                 outcome, slot), check=True)
+            subprocess.run((str(harness), str(core), str(rom), str(rw),
+                            str(root), "--jfd-merge-step", machine,
+                            "00001500", "advance"), check=True)
+            slot_root = root / "save/arcdroid/jfd"
+            stem = hashlib.sha1(rw.read_bytes()).hexdigest()
+            slots = [slot_root / f"{stem}.{suffix}" for suffix in "ab"]
+            assert all(slot.exists() for slot in slots)
+            generations = [struct.unpack_from("<Q", slot.read_bytes(), 68)[0]
+                           for slot in slots]
+            assert generations[0] != generations[1]
+            newest = slots[generations.index(max(generations))]
+            bad = bytearray(newest.read_bytes())
+            bad[0] ^= 1
+            newest.write_bytes(bad)
+            missing_rom = fixtures / rom_name.replace("-merge-test", "-merge-missing-test")
+            subprocess.run((str(harness), str(core), str(missing_rom), str(rw),
+                            str(root), "--jfd-merge-step", machine,
+                            "0000006a", "damaged"), check=True)
+            subprocess.run((str(harness), str(core), str(rom), str(rw),
+                            str(root), "--jfd-merge-step", machine,
+                            "00001500", "damaged"), check=True)
+
+            failure_root = Path(temp) / (machine + "-failure")
+            failure_root.mkdir()
+            subprocess.run((str(harness), str(core), str(rom), str(rw),
+                            str(failure_root), "--jfd-merge-step", machine,
+                            "0000006a" if machine == "A3020" else "00006a00",
+                            "failed"), check=True)
     assert tuple(map(digest, sources)) == before, "source JFD mutated"
-    print("jfd_merge_process_test: both controllers, fresh reload and WP passed")
+    print("jfd_merge_process_test: both controllers, reload, WP, damaged latch, commit failure passed")
 
 
 if __name__ == "__main__":

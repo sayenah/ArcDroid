@@ -335,6 +335,8 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
       "${FIXTURE_DIR}/arcdroid-jfd-newio-create-test.rom"
       "${FIXTURE_DIR}/arcdroid-jfd-merge-test.rom"
       "${FIXTURE_DIR}/arcdroid-jfd-newio-merge-test.rom"
+      "${FIXTURE_DIR}/arcdroid-jfd-merge-missing-test.rom"
+      "${FIXTURE_DIR}/arcdroid-jfd-newio-merge-missing-test.rom"
       "${FIXTURE_DIR}/arcdroid-jfd-directory-benign.rom"
       "${FIXTURE_DIR}/arcdroid-jfd-directory-rename.rom"
       "${FIXTURE_DIR}/arcdroid-media-disc1.adf"

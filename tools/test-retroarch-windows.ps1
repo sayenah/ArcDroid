@@ -1031,8 +1031,12 @@ if ((Get-FileHash -Algorithm SHA256 $createRw).Hash -ne $createRwHash -or
     throw "Omitted-sector source JFD changed"
 }
 Write-Host "Slice 10a Windows RetroArch: map/directory/data creation survived fresh process; WP and sources unchanged"
-# D-077: the first result requires a successful read of the omitted sector
-# before any write; the second process reads the partial merge without writing.
+# D-077: the ROM poisons its merge buffer with A5 before reading. A missing
+# DRQ or RNF reports "other"; any byte outside the two checked patterns does
+# too. The fresh virtual sector must be all zero before the first write. The
+# first result requires 1024 read zero bytes, then writes 5A into the first
+# 128 bytes. The fresh process verifies all 1024 bytes (5A then zero) in the
+# guest before reporting the saved outcome, without writing again.
 Copy-Item -Force (Join-Path $InputDirectory "arcdroid-jfd-merge-test.rom") $firmware
 $mergeRw = (Resolve-Path (Join-Path $InputDirectory "jfd-writes/rw-merge-d.jfd")).Path
 $mergeWp = (Resolve-Path (Join-Path $InputDirectory "jfd-writes/wp-merge-d.jfd")).Path
@@ -1058,7 +1062,7 @@ try {
 } finally { Stop-MediaRun $mergeSecond }
 $mergeProtected = Start-MediaRun $mergeWp "jfd-merge-wp"
 try {
-    [void](Wait-JfdOutcome $mergeProtected "jfd-merge-wp-refused" "ff006a00")
+    [void](Wait-JfdOutcome $mergeProtected "jfd-merge-wp-no-read" "ff00006a")
 } finally { Stop-MediaRun $mergeProtected }
 if ((Test-Path (Join-Path $jfdSaveDirectory "$mergeWpDigest.a")) -or
     (Test-Path (Join-Path $jfdSaveDirectory "$mergeWpDigest.b"))) {
