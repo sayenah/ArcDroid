@@ -75,6 +75,9 @@ jobs:
             build/windows/tests/fixtures/generated/arcdroid-jfd-merge-test.rom \
             build/windows/tests/fixtures/generated/arcdroid-jfd-merge-readback-test.rom \
             build/windows/tests/fixtures/generated/arcdroid-jfd-merge-missing-test.rom \
+            build/windows/tests/fixtures/generated/arcdroid-jfd-allocation-veto-test.rom \
+            build/windows/tests/fixtures/generated/arcdroid-jfd-allocation-claim-test.rom \
+            build/windows/tests/fixtures/generated/arcdroid-jfd-allocation-read-test.rom \
             build/windows/tests/fixtures/generated/arcdroid-media.m3u \
             build/windows/tests/fixtures/generated/arcdroid-media-disc1.adf \
             build/windows/tests/fixtures/generated/arcdroid-media-disc2.adf \
@@ -92,6 +95,8 @@ jobs:
           cp -R build/windows/tests/fixtures/generated/zip-content \
             build/windows/retroarch-package/
           cp -R build/windows/tests/fixtures/generated/jfd-writes \
+            build/windows/retroarch-package/
+          cp -R build/windows/tests/fixtures/generated/jfd-allocation \
             build/windows/retroarch-package/
       - uses: actions/upload-artifact@v4
         with:

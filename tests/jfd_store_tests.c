@@ -383,11 +383,11 @@ static void test_allocation_maps(const char *root)
    uint8_t invalid_copy[1024];
    memcpy(invalid_copy, newer.decoded + newer.sectors[0].data_offset, 1024u);
    claim_new_slot(invalid_copy, 2u);
-   invalid_copy[26] ^= 1u; /* Valid checksum, different disc record. */
+   invalid_copy[4u + 12u] ^= 1u; /* Fixed root address, within bytes 0–19. */
    invalid_copy[0] = 0u; invalid_copy[0] = new_map_checksum(invalid_copy);
    assert(newer.overlay->commit(&newer, 0u, invalid_copy) &&
           newer.overlay->map_valid && !blank_at(&newer, 1u, 0u));
-   invalid_copy[26] ^= 1u;
+   invalid_copy[4u + 12u] ^= 1u;
    invalid_copy[3] = 0u; /* The one-zone cross-check must be FF. */
    invalid_copy[0] = 0u; invalid_copy[0] = new_map_checksum(invalid_copy);
    assert(newer.overlay->commit(&newer, 0u, invalid_copy) &&
@@ -471,6 +471,150 @@ static void test_allocation_maps(const char *root)
    assert(!arc_jfd_map_write_veto(&old, 0u, base_map));
    arc_jfd_free(&old);
    clear_files();
+}
+
+static void change_new_map_metadata(uint8_t map[1024], unsigned variant)
+{
+   if (variant == 0u) map[4u + 20u] ^= 1u; /* FileCore disc ID cycle. */
+   else if (variant == 1u) map[4u + 22u] ^= 1u; /* Disc name. */
+   else map[4u + 7u] = 1u; /* Boot option. */
+   map[0] = 0u;
+   map[0] = new_map_checksum(map);
+}
+
+static void test_new_map_metadata(const char *root)
+{
+   const char *reason = NULL;
+   for (unsigned variant = 0u; variant < 3u; ++variant)
+   {
+      clear_files();
+      ArcJfdImage image = allocation_fixture(root, "new-allocated.jfd");
+      assert(arc_jfd_store_load(&image, "save", true, false, 1u, &reason));
+      image.overlay->map_enabled = true; arc_jfd_map_prepare(&image);
+      assert(image.overlay->map_valid && blank_at(&image, 0u, 3u));
+      for (unsigned copy = 0u; copy < 2u; ++copy)
+      {
+         uint8_t map[1024];
+         memcpy(map, image.decoded + image.sectors[copy].data_offset,
+                sizeof(map));
+         change_new_map_metadata(map, variant);
+         assert(image.overlay->commit(&image, copy, map));
+         if (!image.overlay->map_valid || !blank_at(&image, 0u, 3u))
+            fprintf(stderr, "metadata variant=%u copy=%u map_valid=%d blank=%d\n",
+                    variant, copy, image.overlay->map_valid,
+                    blank_at(&image, 0u, 3u));
+         assert(image.overlay->map_valid && blank_at(&image, 0u, 3u));
+      }
+      assert(image.overlay->generation == 2u);
+      arc_jfd_free(&image);
+      image = allocation_fixture(root, "new-allocated.jfd");
+      assert(arc_jfd_store_load(&image, "save", true, false, 1u, &reason));
+      image.overlay->map_enabled = true; arc_jfd_map_prepare(&image);
+      assert(image.overlay->generation == 2u && image.overlay->map_valid &&
+             blank_at(&image, 0u, 3u));
+      arc_jfd_free(&image);
+#if !defined(_WIN32)
+      pid_t child = fork(); assert(child >= 0);
+      if (child == 0)
+      {
+         ArcJfdImage fresh = allocation_fixture(root, "new-allocated.jfd");
+         const char *fresh_reason = NULL;
+         bool okay = arc_jfd_store_load(&fresh, "save", true, false, 1u,
+                                        &fresh_reason);
+         if (okay)
+         {
+            fresh.overlay->map_enabled = true;
+            arc_jfd_map_prepare(&fresh);
+            okay = fresh.overlay->generation == 2u &&
+                   fresh.overlay->map_valid && blank_at(&fresh, 0u, 3u);
+         }
+         arc_jfd_free(&fresh);
+         _exit(okay ? 0 : 1);
+      }
+      int status = 0;
+      assert(waitpid(child, &status, 0) == child && WIFEXITED(status) &&
+             WEXITSTATUS(status) == 0);
+#endif
+   }
+   clear_files();
+   ArcJfdImage image = allocation_fixture(root, "new-free.jfd");
+   assert(arc_jfd_store_load(&image, "save", true, false, 1u, &reason));
+   image.overlay->map_enabled = true; arc_jfd_map_prepare(&image);
+   image.overlay->probe_mask[1] = 1u;
+   uint8_t claim[1024];
+   memcpy(claim, image.decoded + image.sectors[0].data_offset, 1024u);
+   claim_new_slot(claim, 2u);
+   change_new_map_metadata(claim, 0u);
+   assert(arc_jfd_map_write_veto(&image, 0u, claim) &&
+          arc_jfd_map_write_veto(&image, 1u, claim) &&
+          image.overlay->generation == 0u);
+   arc_jfd_free(&image);
+   clear_files();
+}
+
+static void test_map_inactive_transitions(const char *root)
+{
+   const char *reason = NULL;
+   clear_files();
+   ArcJfdImage image = allocation_fixture(root, "old-free.jfd");
+   assert(arc_jfd_store_load(&image, "save", true, false, 1u, &reason));
+   image.overlay->map_enabled = true; arc_jfd_map_prepare(&image);
+   assert(image.overlay->map_valid);
+   image.overlay->probe_mask[0] = 1u << 3u;
+   uint8_t original[1024], invalid[1024], claim[1024];
+   memcpy(original, image.decoded + image.sectors[0].data_offset, 1024u);
+   memcpy(invalid, original, 1024u);
+   invalid[255] ^= 1u;
+   memcpy(claim, original, 1024u);
+   claim[0] = 16u; claim[256] = 0x70u; claim[257] = 0x0cu;
+   claim[255] = old_map_checksum(claim);
+   claim[511] = old_map_checksum(claim + 256u);
+   assert(image.overlay->commit(&image, 0u, invalid) &&
+          !image.overlay->map_valid && !blank_at(&image, 0u, 3u) &&
+          !arc_jfd_map_write_veto(&image, 0u, claim));
+   assert(image.overlay->commit(&image, 0u, original) &&
+          image.overlay->map_valid && image.overlay->probe_mask[0] == (1u << 3u) &&
+          arc_jfd_map_write_veto(&image, 0u, claim));
+   arc_jfd_free(&image);
+   clear_files();
+}
+
+static void test_map_bounds(const char *root)
+{
+   const char *reason = NULL;
+   clear_files();
+   ArcJfdImage partial = allocation_fixture(root, "old-partial-slot.jfd");
+   assert(arc_jfd_store_load(&partial, "save", true, false, 1u, &reason));
+   partial.overlay->map_enabled = true; arc_jfd_map_prepare(&partial);
+   assert(partial.overlay->map_valid && blank_at(&partial, 0u, 3u));
+   arc_jfd_free(&partial);
+   clear_files();
+
+   ArcJfdImage tail = allocation_fixture(root, "new-tail-defect.jfd");
+   assert(arc_jfd_store_load(&tail, "save", true, false, 1u, &reason));
+   tail.overlay->map_enabled = true; arc_jfd_map_prepare(&tail);
+   assert(tail.overlay->map_valid && !blank_at(&tail, 1u, 0u));
+   uint8_t invalid_backup[1024], overbound[1024];
+   memcpy(invalid_backup, tail.decoded + tail.sectors[1].data_offset, 1024u);
+   invalid_backup[0] ^= 1u;
+   assert(tail.overlay->commit(&tail, 1u, invalid_backup) &&
+          tail.overlay->map_valid);
+   memcpy(overbound, tail.decoded + tail.sectors[0].data_offset, 1024u);
+   set_new_bits(overbound, 6912u, 15u, 2u); /* Object starts at byte 819200. */
+   overbound[0] = 0u; overbound[0] = new_map_checksum(overbound);
+   assert(tail.overlay->commit(&tail, 0u, overbound) &&
+          !tail.overlay->map_valid && !blank_at(&tail, 1u, 0u));
+   arc_jfd_free(&tail);
+   clear_files();
+}
+
+static void test_primary_map_scope(const char *root)
+{
+   ArcJfdImage image = allocation_fixture(root, "new-bad-primary.jfd");
+   ArcLaunchDiscovery discovery;
+   assert(arc_launch_discover(NULL, 0u, NULL, &image, &discovery) &&
+          !discovery.readable && !discovery.backup_map_used);
+   arc_jfd_free(&image);
 }
 static ArcJfdImage load(bool writable)
 {
@@ -850,10 +994,11 @@ int main(int argc, char **argv)
       {
          bool free_track[ARC_JFD_PDD5_TRACKS];
          bool parsed = arc_jfd_base_free_tracks(&sample, free_track);
-         if (!parsed || !free_track[159])
+         bool primary_valid = !strcmp(layouts[i].name, "irregular-newmap-free.jfd");
+         if (parsed != primary_valid || (parsed && !free_track[159]))
             fprintf(stderr, "new-map gate fixture %s parsed=%d free159=%d\n",
-                    layouts[i].name, parsed, free_track[159]);
-         assert(parsed && free_track[159]);
+                    layouts[i].name, parsed, parsed ? free_track[159] : 0);
+         assert(parsed == primary_valid && (!parsed || free_track[159]));
       }
       if (i == 0u)
       {
@@ -1097,6 +1242,10 @@ int main(int argc, char **argv)
    clear_files();
    clear_files();
    test_allocation_maps(argv[1]);
+   test_map_inactive_transitions(argv[1]);
+   test_map_bounds(argv[1]);
+   test_primary_map_scope(argv[1]);
+   test_new_map_metadata(argv[1]);
    puts("jfd_store_tests: generations, malformed slots, recovery, allocation maps, failures and Off passed");
    return 0;
 }

@@ -3208,6 +3208,13 @@ def main() -> None:
         bytes(old_free), {0: [0, 2, 4], 1: full}))
     (allocation / "old-dual-free.jfd").write_bytes(build_pdd5_jfd(
         bytes(old_free), {0: [0, 2], 1: full}))
+    partial_free = bytearray(old_free)
+    _store_u24(partial_free, 0, 13)  # only 768 bytes of omitted ID 3 are free
+    _store_u24(partial_free, 256, 3187)
+    partial_free[255] = _old_map_checksum(partial_free[:255])
+    partial_free[511] = _old_map_checksum(partial_free[256:511])
+    (allocation / "old-partial-slot.jfd").write_bytes(build_pdd5_jfd(
+        bytes(partial_free), {0: [0, 2, 4], 1: full}))
     claim_map = bytearray(old_free[:1024])
     _store_u24(claim_map, 0, 16)
     _store_u24(claim_map, 256, 3184)
@@ -3226,6 +3233,25 @@ def main() -> None:
         bytes(new_base), {0: [0, 1, 2, 4], 1: full}))
     (allocation / "new-free.jfd").write_bytes(build_pdd5_jfd(
         bytes(new_base), {0: full, 1: [1, 2, 3, 4], 2: full}))
+    tail_defect = bytearray(new_base)
+    tail_defect[14:16] = (0x0500).to_bytes(2, "little")
+    _set_bits(tail_defect, 6912, 15, 1)  # 32 map bits beyond 800 KiB: ID 1
+    _set_bits(tail_defect, 6943, 1, 1)
+    sums = [0, 0, 0, 0]
+    tail_defect[0] = 0
+    for rover in range(1020, 0, -4):
+        sums[0] += tail_defect[rover] + (sums[3] >> 8); sums[3] &= 0xFF
+        sums[1] += tail_defect[rover + 1] + (sums[0] >> 8); sums[0] &= 0xFF
+        sums[2] += tail_defect[rover + 2] + (sums[1] >> 8); sums[1] &= 0xFF
+        sums[3] += tail_defect[rover + 3] + (sums[2] >> 8); sums[2] &= 0xFF
+    sums[0] += sums[3] >> 8
+    sums[1] += tail_defect[1] + (sums[0] >> 8)
+    sums[2] += tail_defect[2] + (sums[1] >> 8)
+    sums[3] += tail_defect[3] + (sums[2] >> 8)
+    tail_defect[0] = (sums[0] ^ sums[1] ^ sums[2] ^ sums[3]) & 0xFF
+    tail_defect[1024:2048] = tail_defect[:1024]
+    (allocation / "new-tail-defect.jfd").write_bytes(build_pdd5_jfd(
+        bytes(tail_defect), {0: full, 1: [1, 2, 3, 4], 2: full}))
     bad_primary = bytearray(new_base)
     bad_primary[0] ^= 1
     (allocation / "new-bad-primary.jfd").write_bytes(build_pdd5_jfd(

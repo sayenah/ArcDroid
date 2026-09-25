@@ -213,6 +213,7 @@ static bool jfd_find_sector(uint32_t old_phase, uint32_t new_phase,
                                     jfd_writing, &view)) continue;
       if (jfd_writing && view.created && !view.data &&
           jfd_image->overlay &&
+          jfd_image->overlay->map_valid &&
           (jfd_image->overlay->probe_mask[track_side] &
            (1u << view.sector.id))) continue;
       const ArcJfdSector *sector = &view.sector;
@@ -235,7 +236,7 @@ static void jfd_mark_terminal_probe(void)
 {
    size_t track_side = (size_t)jfd_track * 2u + jfd_side;
    ArcJfdOverlay *overlay = jfd_image ? jfd_image->overlay : NULL;
-   if (!overlay || !overlay->map_enabled || jfd_writing ||
+   if (!overlay || !overlay->map_enabled || !overlay->map_valid || jfd_writing ||
        jfd_density != 2u || jfd_sector_id >= ARC_JFD_PDD5_IDS ||
        track_side >= ARC_JFD_PDD5_TRACKS ||
        jfd_requested_c != jfd_head_track || jfd_selected_side != jfd_side ||

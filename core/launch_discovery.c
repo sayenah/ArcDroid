@@ -279,13 +279,9 @@ static bool arc_filecore_new_at(ArcFileCore *fs, unsigned copy)
 
 static bool arc_filecore_new(ArcFileCore *fs)
 {
-   if (arc_filecore_new_at(fs, 0u)) return true;
-   if (fs->reader.jfd && arc_filecore_new_at(fs, 1u))
-   {
-      fs->backup_map_used = true;
-      return true;
-   }
-   return false;
+   /* Launch discovery retains its primary-copy policy. C-11c's independent
+    * backup parse is confined to the allocation view below. */
+   return arc_filecore_new_at(fs, 0u);
 }
 
 static bool arc_f_record_valid(const uint8_t record[60])
@@ -507,17 +503,8 @@ bool arc_jfd_base_free_tracks(const ArcJfdImage *image,
       }
       return true;
    }
-   bool valid = false;
-   for (unsigned copy = 0u; copy < 2u; ++copy)
-   {
-      bool candidate[ARC_JFD_PDD5_TRACKS] = {false};
-      memset(fs.map, 0, sizeof(fs.map));
-      if (!arc_jfd_new_free_copy(&fs, copy, candidate)) continue;
-      valid = true;
-      for (unsigned t = 0u; t < ARC_JFD_PDD5_TRACKS; ++t)
-         free_track[t] |= candidate[t];
-   }
-   return valid;
+   memset(fs.map, 0, sizeof(fs.map));
+   return arc_jfd_new_free_copy(&fs, 0u, free_track);
 }
 
 /* C-11c uses FileCore's bounded map checks, but only captured sectors and
@@ -582,8 +569,13 @@ static bool arc_jfd_new_allocation(const uint8_t map[1024],
 {
    ArcFileCore fs = {0};
    fs.reader.raw = map; fs.reader.raw_size = 1024u;
+   /* The boot option at byte 7 can change and is range-checked by
+    * arc_filecore_new. All other layout bytes 0–19 must match the base;
+    * disc ID and name after byte 19 can change independently. */
    if (!arc_filecore_new(&fs) ||
-       (base_record && memcmp(map + 4u, base_record, 60u))) return false;
+       (base_record &&
+        (memcmp(map + 4u, base_record, 7u) ||
+         memcmp(map + 12u, base_record + 8u, 12u)))) return false;
    unsigned start = 512u;
    unsigned end = 512u + 8192u - fs.zone_spare - 480u;
    unsigned disc_bits = (unsigned)(fs.disc_size >> fs.log2_bytes_per_map_bit);

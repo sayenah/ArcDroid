@@ -86,6 +86,10 @@ allocation, decompression, or parsing in the engine poll path. MAME's JFD
 reader was consulted only as an independent format reference; no MAME code was
 copied.
 
+The C-11c QA follow-up checks that an effective FileCore map is valid before
+setting a terminal-read probe mark or refusing a later write because of one.
+When the effective map is unavailable, the JFD reader retains C-11 behavior.
+
 Slice 10a extends ArcDroid's shared `disc_funcs_t.writesector` callback with
 the controller's requested size and deleted-data intent. The native JFD
 reader now buffers a complete WRITE SECTOR, checks descriptor eligibility,

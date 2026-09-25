@@ -35,8 +35,11 @@ unsupported layout, an invalid or missing map, a damaged saved slot, or an
 ADFFS/install boot path.
 Out-of-profile and irregular-track targets retain Record Not Found behavior.
 An absent free sector probed by a guest READ SECTOR stays unformatted for the
-rest of that mounted session. A later map write trying to assign that sector
-to an object is refused before it can save, while other writes remain possible.
+rest of that mounted session. If a guest writes data there first, that data
+write is refused; if it writes an allocating map first, the map write is
+refused. Other writes remain possible. These probe and veto rules require a
+valid base map and at least one valid current map copy; without one, the disc
+uses the earlier omitted-sector write behavior.
 The probe marks clear on reset or reinsertion. A guest that allocates a
 protection slot before probing it in the same session can still break that
 protection; no such workflow was observed. A sector probed by a scan cannot
