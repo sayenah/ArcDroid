@@ -283,6 +283,7 @@ typedef struct {
    bool jfd_off_notice_shown;
    bool jfd_install_notice_shown;
    bool jfd_native_notice_shown;
+   bool jfd_map_unavailable_shown;
    uint8_t jfd_refusal_seen[ARC_JFD_MAX_TRACK_SIDES][32];
    uint32_t jfd_game_id;
    uint16_t jfd_disc_number;
@@ -316,12 +317,24 @@ bool arc_libretro_test_jfd_commit(unsigned image_index, size_t descriptor,
    free(bytes);
    return committed;
 }
-bool arc_libretro_test_jfd_virtual_reads(unsigned image_index)
+bool arc_libretro_test_jfd_formatted_reads(unsigned image_index)
 {
-   return image_index < arc_media_count &&
-      arc_media[image_index].info.kind == ARC_MEDIA_JFD &&
-      arc_media[image_index].jfd.overlay &&
-      arc_media[image_index].jfd.overlay->virtual_reads;
+   if (image_index >= arc_media_count ||
+       arc_media[image_index].info.kind != ARC_MEDIA_JFD) return false;
+   const ArcJfdOverlay *overlay = arc_media[image_index].jfd.overlay;
+   if (!overlay || !overlay->map_enabled || !overlay->map_valid) return false;
+   for (unsigned t = 0u; t < ARC_JFD_PDD5_TRACKS; ++t)
+      if (overlay->allocation_mask[t] & overlay->creation_mask[t] &
+          (uint8_t)~overlay->probe_mask[t]) return true;
+   return false;
+}
+uint8_t arc_libretro_test_jfd_probe_mask(unsigned image_index,
+                                        unsigned track_side)
+{
+   if (image_index >= arc_media_count || track_side >= ARC_JFD_PDD5_TRACKS ||
+       arc_media[image_index].info.kind != ARC_MEDIA_JFD ||
+       !arc_media[image_index].jfd.overlay) return 0u;
+   return arc_media[image_index].jfd.overlay->probe_mask[track_side];
 }
 bool arc_libretro_test_jfd_created_byte(unsigned image_index,
                                         unsigned track_side, unsigned id,
@@ -2226,6 +2239,18 @@ static void arc_jfd_log_refusal(unsigned image_number, unsigned track,
          image_number, track, side, sector, reason);
 }
 
+static void arc_jfd_log_map_unavailable(unsigned image_number)
+{
+   if (!image_number || image_number > arc_media_count) return;
+   ArcMediaEntry *entry = &arc_media[image_number - 1u];
+   if (entry->jfd_map_unavailable_shown) return;
+   entry->jfd_map_unavailable_shown = true;
+   if (arc_log)
+      arc_log(RETRO_LOG_INFO,
+              "JFD allocation map unavailable: image=%u; omitted reads retain record-not-found\n",
+              image_number);
+}
+
 static bool arc_refresh_jfd(ArcMediaEntry *entry, ArcDiskWriteMode mode,
                             char *error, size_t error_size)
 {
@@ -2258,6 +2283,7 @@ static bool arc_refresh_jfd(ArcMediaEntry *entry, ArcDiskWriteMode mode,
    {
       entry->jfd.overlay->reason = reason;
       entry->jfd.overlay->log_refusal = arc_jfd_log_refusal;
+      entry->jfd.overlay->log_map_unavailable = arc_jfd_log_map_unavailable;
    }
    if (entry->jfd.overlay && entry->jfd.overlay->damaged &&
        !entry->jfd_damage_notice_shown)
@@ -2288,12 +2314,12 @@ static void arc_finish_jfd_preparation(ArcMediaEntry *entry, bool native)
    if (!entry || entry->info.kind != ARC_MEDIA_JFD) return;
    unsigned image_number = (unsigned)(entry - arc_media) + 1u;
    ArcJfdOverlay *overlay = entry->jfd.overlay;
-   /* D-078: native preparation arms but never activates formatted blanks.
-    * The store's first successful rename activates them for this mount. */
+   /* C-11c derives formatted omissions from the committed FileCore map.
+    * Preparation also starts a new mounted lifetime for probe marks. */
    if (overlay)
    {
-      overlay->virtual_armed = native && overlay->writable;
-      overlay->virtual_reads = false;
+      overlay->map_enabled = native && overlay->writable;
+      arc_jfd_map_prepare(&entry->jfd);
    }
    if (!arc_log) return;
    arc_log(RETRO_LOG_INFO,

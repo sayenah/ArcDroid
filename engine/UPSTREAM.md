@@ -112,6 +112,12 @@ The Slice 10a QA low follow-up reports a missing WRITE SECTOR refusal before
 delivering the final index pulse to WD1770, because that callback can stop the
 reader. This changes only refusal diagnostics; both controller limits remain
 unchanged.
+C-11c marks only terminal READ SECTOR RNF of an eligible, absent DD slot and
+consults the mounted map's probe marks before a prospective write. It checks
+the buffered map-sector write for a probed allocation before invoking the
+overlay publisher; vetoes use the existing controller data error and leave
+store write permission intact. The 82C711 passes requested C/H to the reader
+for READ as it already did for WRITE. Its CRLF line endings are preserved.
 
 The pinned upstream `AUTHORS` file is empty. Upstream author and contributor
 credits are preserved in the imported `README.md`.

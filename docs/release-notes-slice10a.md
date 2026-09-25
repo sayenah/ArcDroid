@@ -17,26 +17,31 @@ continues to boot natively if an ADFFS package is added later.
 
 RW-flagged images matching the bounded P-DD5 profile can create missing 1024-byte DD
 sectors (IDs 0–4, 80 cylinders × 2 sides) when the complete track-side
-placement is schedulable. A writable native mount starts with omitted slots
-unformatted: reads return Record Not Found and READ ID/ADDRESS do not list
-them. After the first successful sector save in that mounted session, including
-a replacement of unchanged data, never-written eligible slots read as
-formatted 1024-byte zero sectors with good CRC and appear in READ ID/ADDRESS
-scans. Reading them creates no saved record. The zero bytes are fixed across
-reloads and versions unless the format is explicitly migrated, but the
-formatted view turns off at reset, reinsertion or fresh load until that
-session's first successful sector save. A write to an omitted ID commits that sector and
-its data together; it then appears in reads, address scans and native launch
+placement is schedulable. On a writable native mount, an omitted eligible
+sector reads as 1024 zero bytes with good CRC, and appears in READ ID/ADDRESS
+scans, only while the disc's valid saved free-space map assigns at least one
+byte of that sector to an object. This applies immediately if the base map
+already allocates it, and after a committed map write if a guest allocates it.
+Free omitted sectors retain Record Not Found. Reset, reinsertion and fresh
+load derive the same view from the saved map; reads create no records.
+A write to an omitted ID commits that sector and its data together; it then
+appears in reads, address scans and native launch
 discovery, including after a process restart. Captures with omissions that
 cannot safely be created are protected up front with `layout-unsupported`.
 Irregular track-sides remain non-creating; the ADFS free-space map must prove
 that missing standard IDs there are outside allocatable space.
 The zero fill does not apply with Disk Writes Off, write protection, an
-unsupported layout, a damaged saved slot, or an ADFFS/install boot path.
+unsupported layout, an invalid or missing map, a damaged saved slot, or an
+ADFFS/install boot path.
 Out-of-profile and irregular-track targets retain Record Not Found behavior.
-This timing preserves boot-time checks that probe an unformatted track before
-any write. A game that writes before such a check, checks again after saving,
-or needs a blank omitted sector before its first write may still differ.
+An absent free sector probed by a guest READ SECTOR stays unformatted for the
+rest of that mounted session. A later map write trying to assign that sector
+to an object is refused before it can save, while other writes remain possible.
+The probe marks clear on reset or reinsertion. A guest that allocates a
+protection slot before probing it in the same session can still break that
+protection; no such workflow was observed. A sector probed by a scan cannot
+be claimed until reset. FileCore's in-memory map after a refused map write
+has not yet been verified against real-title recovery behavior.
 
 A bad ID CRC reports a header CRC error. A bad data CRC, slow sector,
 duplicate ID, shared payload, or 82C711 size mismatch reports a data CRC

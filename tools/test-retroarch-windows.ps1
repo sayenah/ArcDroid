@@ -1031,10 +1031,10 @@ if ((Get-FileHash -Algorithm SHA256 $createRw).Hash -ne $createRwHash -or
     throw "Omitted-sector source JFD changed"
 }
 Write-Host "Slice 10a Windows RetroArch: map/directory/data creation survived fresh process; WP and sources unchanged"
-# D-078: an omitted slot is RNF before a save, then the armed ROM commits the
-# map sector before reading 1024 zeros and merging 128 bytes of 5A. The ROM
-# poisons RAM with A5 first and checks every read byte. Fresh-process ROMs
-# read the saved data and an unwritten omission before any further write.
+# C-11c: the base map allocates omitted ID 3, so the ROM reads 1024 zeros
+# before its first write and merges 128 bytes of 5A. Its RAM starts poisoned
+# with A5 and it checks every read byte. Free omitted ID 1 still returns RNF
+# before and after the save, including in a fresh process.
 $mergeRw = (Resolve-Path (Join-Path $InputDirectory "jfd-writes/rw-merge-d.jfd")).Path
 $mergeWp = (Resolve-Path (Join-Path $InputDirectory "jfd-writes/wp-merge-d.jfd")).Path
 $mergeRwHash = (Get-FileHash -Algorithm SHA256 $mergeRw).Hash
@@ -1043,7 +1043,7 @@ $mergeRwDigest = (Get-FileHash -Algorithm SHA1 $mergeRw).Hash.ToLowerInvariant()
 $mergeWpDigest = (Get-FileHash -Algorithm SHA1 $mergeWp).Hash.ToLowerInvariant()
 if ((Test-Path (Join-Path $jfdSaveDirectory "$mergeRwDigest.a")) -or
     (Test-Path (Join-Path $jfdSaveDirectory "$mergeRwDigest.b"))) {
-    throw "Virtual merge slot existed before the write-armed test"
+    throw "Allocated merge slot existed before the test"
 }
 Copy-Item -Force (Join-Path $InputDirectory "arcdroid-jfd-merge-missing-test.rom") $firmware
 $mergeBefore = Start-MediaRun $mergeRw "jfd-merge-before-save"
@@ -1052,7 +1052,7 @@ try {
 } finally { Stop-MediaRun $mergeBefore }
 if ((Test-Path (Join-Path $jfdSaveDirectory "$mergeRwDigest.a")) -or
     (Test-Path (Join-Path $jfdSaveDirectory "$mergeRwDigest.b"))) {
-    throw "Pre-save read published a virtual merge slot"
+    throw "Free-sector probe published a merge slot"
 }
 Copy-Item -Force (Join-Path $InputDirectory "arcdroid-jfd-merge-test.rom") $firmware
 $mergeFirst = Start-MediaRun $mergeRw "jfd-merge-first"
@@ -1061,7 +1061,7 @@ try {
 } finally { Stop-MediaRun $mergeFirst }
 if (-not ((Test-Path (Join-Path $jfdSaveDirectory "$mergeRwDigest.a")) -or
            (Test-Path (Join-Path $jfdSaveDirectory "$mergeRwDigest.b")))) {
-    throw "Virtual merge did not publish a committed slot"
+    throw "Allocated merge did not publish a committed slot"
 }
 Copy-Item -Force (Join-Path $InputDirectory "arcdroid-jfd-merge-readback-test.rom") $firmware
 $mergeSecond = Start-MediaRun $mergeRw "jfd-merge-relaunch"
@@ -1076,17 +1076,51 @@ try {
 Copy-Item -Force (Join-Path $InputDirectory "arcdroid-jfd-merge-test.rom") $firmware
 $mergeProtected = Start-MediaRun $mergeWp "jfd-merge-wp"
 try {
-    [void](Wait-JfdOutcome $mergeProtected "jfd-merge-wp-refused" "ff006a00")
+    [void](Wait-JfdOutcome $mergeProtected "jfd-merge-wp-refused" "ff00006a")
 } finally { Stop-MediaRun $mergeProtected }
 if ((Test-Path (Join-Path $jfdSaveDirectory "$mergeWpDigest.a")) -or
     (Test-Path (Join-Path $jfdSaveDirectory "$mergeWpDigest.b"))) {
-    throw "Protected virtual merge fixture published a slot"
+    throw "Protected allocated merge fixture published a slot"
 }
 if ((Get-FileHash -Algorithm SHA256 $mergeRw).Hash -ne $mergeRwHash -or
     (Get-FileHash -Algorithm SHA256 $mergeWp).Hash -ne $mergeWpHash) {
-    throw "Virtual merge source JFD changed"
+    throw "Allocated merge source JFD changed"
 }
-Write-Host "Slice 10a Windows RetroArch: pre-save RNF, armed zero read, partial merge, fresh-process readback/RNF, WP and source checks passed"
+Write-Host "Slice 10a Windows RetroArch: base-allocated zero read, free-sector RNF, partial merge, fresh-process readback/RNF, WP and source checks passed"
+# C-11c: the first process probes free omitted ID 3 and gets RNF. Its map
+# claim is vetoed before publication; a fresh process has no probe mark, so
+# the same claim commits and ID 3 reads as zero. A third process reads zero
+# from the saved effective map without writing.
+$allocationImage = (Resolve-Path (Join-Path $InputDirectory "jfd-allocation/old-free.jfd")).Path
+$allocationHash = (Get-FileHash -Algorithm SHA256 $allocationImage).Hash
+$allocationDigest = (Get-FileHash -Algorithm SHA1 $allocationImage).Hash.ToLowerInvariant()
+Copy-Item -Force (Join-Path $InputDirectory "arcdroid-jfd-allocation-veto-test.rom") $firmware
+$allocationVeto = Start-MediaRun $allocationImage "jfd-allocation-veto"
+try {
+    [void](Wait-JfdOutcome $allocationVeto "jfd-allocation-probe-veto-reprobe" "ff001500")
+} finally { Stop-MediaRun $allocationVeto }
+if ((Test-Path (Join-Path $jfdSaveDirectory "$allocationDigest.a")) -or
+    (Test-Path (Join-Path $jfdSaveDirectory "$allocationDigest.b"))) {
+    throw "Probed free-sector map claim published a slot"
+}
+Copy-Item -Force (Join-Path $InputDirectory "arcdroid-jfd-allocation-claim-test.rom") $firmware
+$allocationClaim = Start-MediaRun $allocationImage "jfd-allocation-claim"
+try {
+    [void](Wait-JfdOutcome $allocationClaim "jfd-allocation-fresh-claim-zero" "ff6a0000")
+} finally { Stop-MediaRun $allocationClaim }
+if (-not ((Test-Path (Join-Path $jfdSaveDirectory "$allocationDigest.a")) -or
+           (Test-Path (Join-Path $jfdSaveDirectory "$allocationDigest.b")))) {
+    throw "Fresh-process allocation map claim did not publish a slot"
+}
+Copy-Item -Force (Join-Path $InputDirectory "arcdroid-jfd-allocation-read-test.rom") $firmware
+$allocationRead = Start-MediaRun $allocationImage "jfd-allocation-read"
+try {
+    [void](Wait-JfdOutcome $allocationRead "jfd-allocation-fresh-read-zero" "ff001500")
+} finally { Stop-MediaRun $allocationRead }
+if ((Get-FileHash -Algorithm SHA256 $allocationImage).Hash -ne $allocationHash) {
+    throw "Allocation source JFD changed"
+}
+Write-Host "Slice 10a Windows RetroArch: probe veto, fresh-process claim and zero read passed"
 Copy-Item -Force (Join-Path $InputDirectory "arcdroid-media-test.rom") $firmware
 Write-Host "Slice 5b Windows RetroArch: folder disc 1 and eject/next/insert matched the playlist disc-2 signature"
 Write-Host "Slice 7a Windows RetroArch: bare single, zip#member, multi-image swap, pass-through logs, and unchanged SHA-256 passed"

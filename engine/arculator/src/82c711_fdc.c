@@ -427,6 +427,8 @@ void c82c711_fdc_write(uint16_t addr, uint8_t val, void *p)
 					fdc->head = fdc->params[2];
 					fdc->sector = fdc->params[3];
 					fdc->eot[curdrive] = fdc->params[4];
+					if (jfd_active(curdrive))
+						jfd_set_requested_ch(fdc->params[1], (fdc->params[0] >> 2u) & 1u);
 					if (fdc == fdc_p)
 						disc_readsector(curdrive, fdc->sector, fdc->track[curdrive], fdc->head, fdc->density);
 					timer_disable(&fdc->timer);

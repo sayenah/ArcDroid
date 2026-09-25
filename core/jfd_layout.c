@@ -208,7 +208,10 @@ bool arc_jfd_effective_sector(const ArcJfdImage *image, unsigned track_side,
        !overlay || !(overlay->creation_mask[track_side] & (1u << id)))
       return false;
    const uint8_t *data = overlay->visible ? overlay->created[track_side][id] : NULL;
-   if (!data && overlay->virtual_reads) data = formatted_blank;
+   if (!data && overlay->map_enabled && overlay->map_valid &&
+       (overlay->allocation_mask[track_side] & (1u << id)) &&
+       !(overlay->probe_mask[track_side] & (1u << id)))
+      data = formatted_blank;
    if (!data && !(prospective && overlay->writable)) return false;
    view->sector.time_us = overlay->creation_time[track_side][id];
    view->sector.data_offset = UINT32_MAX;

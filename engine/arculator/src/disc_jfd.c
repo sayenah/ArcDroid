@@ -211,6 +211,10 @@ static bool jfd_find_sector(uint32_t old_phase, uint32_t new_phase,
       ArcJfdView view;
       if (!arc_jfd_effective_sector(jfd_image, (unsigned)track_side, i,
                                     jfd_writing, &view)) continue;
+      if (jfd_writing && view.created && !view.data &&
+          jfd_image->overlay &&
+          (jfd_image->overlay->probe_mask[track_side] &
+           (1u << view.sector.id))) continue;
       const ArcJfdSector *sector = &view.sector;
       if (sector->density != jfd_density ||
           (jfd_sector_id != UINT_MAX && sector->id != jfd_sector_id) ||
@@ -225,6 +229,24 @@ static bool jfd_find_sector(uint32_t old_phase, uint32_t new_phase,
       }
    }
    return found;
+}
+
+static void jfd_mark_terminal_probe(void)
+{
+   size_t track_side = (size_t)jfd_track * 2u + jfd_side;
+   ArcJfdOverlay *overlay = jfd_image ? jfd_image->overlay : NULL;
+   if (!overlay || !overlay->map_enabled || jfd_writing ||
+       jfd_density != 2u || jfd_sector_id >= ARC_JFD_PDD5_IDS ||
+       track_side >= ARC_JFD_PDD5_TRACKS ||
+       jfd_requested_c != jfd_head_track || jfd_selected_side != jfd_side ||
+       !(overlay->creation_mask[track_side] & (1u << jfd_sector_id)) ||
+       overlay->created[track_side][jfd_sector_id]) return;
+   ArcJfdView visible;
+   unsigned candidate = jfd_image->tracks[track_side].sector_count +
+                        jfd_sector_id;
+   if (!arc_jfd_effective_sector(jfd_image, (unsigned)track_side,
+                                 candidate, false, &visible))
+      overlay->probe_mask[track_side] |= (uint8_t)(1u << jfd_sector_id);
 }
 
 static void jfd_poll(void)
@@ -243,6 +265,9 @@ static void jfd_poll(void)
       if (jfd_state == JFD_FIND && jfd_writing &&
           jfd_search_indexes == (fdc_funcs->sectorid ? 2u : 5u))
          jfd_refused("not-found");
+      if (jfd_state == JFD_FIND && !jfd_writing &&
+          jfd_search_indexes == (fdc_funcs->sectorid ? 2u : 5u))
+         jfd_mark_terminal_probe();
       fdc_funcs->indexpulse(fdc_p);
       if (jfd_state == JFD_FIND && fdc_funcs->sectorid &&
           jfd_search_indexes >= 2u)
@@ -376,6 +401,15 @@ static void jfd_poll(void)
       jfd_write_buffer[jfd_transfer_pos++] = (uint8_t)value;
       if (jfd_transfer_pos == sector->size)
       {
+         if (!jfd_selected_view.created &&
+             arc_jfd_map_write_veto(jfd_image, jfd_selected_view.key,
+                                     jfd_write_buffer))
+         {
+            jfd_refused("probed-unformatted");
+            jfd_stop();
+            fdc_funcs->datacrcerror(fdc_p);
+            return;
+         }
          bool committed = jfd_selected_view.created ?
             (jfd_image->overlay->commit_created &&
              jfd_image->overlay->commit_created(

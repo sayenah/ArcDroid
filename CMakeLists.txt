@@ -339,6 +339,12 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
       "${FIXTURE_DIR}/arcdroid-jfd-newio-merge-readback-test.rom"
       "${FIXTURE_DIR}/arcdroid-jfd-merge-missing-test.rom"
       "${FIXTURE_DIR}/arcdroid-jfd-newio-merge-missing-test.rom"
+      "${FIXTURE_DIR}/arcdroid-jfd-allocation-veto-test.rom"
+      "${FIXTURE_DIR}/arcdroid-jfd-allocation-claim-test.rom"
+      "${FIXTURE_DIR}/arcdroid-jfd-allocation-read-test.rom"
+      "${FIXTURE_DIR}/arcdroid-jfd-newio-allocation-veto-test.rom"
+      "${FIXTURE_DIR}/arcdroid-jfd-newio-allocation-claim-test.rom"
+      "${FIXTURE_DIR}/arcdroid-jfd-newio-allocation-read-test.rom"
       "${FIXTURE_DIR}/arcdroid-jfd-directory-benign.rom"
       "${FIXTURE_DIR}/arcdroid-jfd-directory-rename.rom"
       "${FIXTURE_DIR}/arcdroid-media-disc1.adf"
@@ -610,6 +616,10 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
       $<TARGET_FILE:arcdroid_libretro_test> "${FIXTURE_DIR}")
     add_test(NAME jfd-merge-process COMMAND "${Python3_EXECUTABLE}"
       "${CMAKE_CURRENT_SOURCE_DIR}/tests/jfd_merge_process_test.py"
+      $<TARGET_FILE:libretro_harness>
+      $<TARGET_FILE:arcdroid_libretro_test> "${FIXTURE_DIR}")
+    add_test(NAME jfd-allocation-process COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/jfd_allocation_process_test.py"
       $<TARGET_FILE:libretro_harness>
       $<TARGET_FILE:arcdroid_libretro_test> "${FIXTURE_DIR}")
     add_test(NAME newio-libretro-harness COMMAND libretro_harness

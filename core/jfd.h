@@ -51,8 +51,13 @@ typedef struct ArcJfdOverlay {
    unsigned records;
    bool writable;
    bool visible;
-   bool virtual_armed;            /* Eligible native mount; resets at preparation. */
-   bool virtual_reads;            /* Active after this mount's first guest commit. */
+   uint8_t allocation_mask[ARC_JFD_PDD5_TRACKS];
+   uint8_t probe_mask[ARC_JFD_PDD5_TRACKS]; /* Mounted lifetime only. */
+   uint8_t map_record[60];
+   uint8_t map_kind;              /* 0 unavailable, 1 old, 2 one-zone new. */
+   bool map_enabled;              /* Successful writable native preparation. */
+   bool map_valid;                /* At least one valid effective copy. */
+   bool map_unavailable_logged;
    bool damaged;
    bool failed;
    const char *reason;             /* Static diagnostic reason from preparation. */
@@ -60,6 +65,7 @@ typedef struct ArcJfdOverlay {
    bool (*commit_created)(struct ArcJfdImage *, unsigned, unsigned,
                           const uint8_t *);
    void (*log_refusal)(unsigned, unsigned, unsigned, unsigned, const char *);
+   void (*log_map_unavailable)(unsigned);
    void *store;
 } ArcJfdOverlay;
 
@@ -98,6 +104,11 @@ bool arc_jfd_effective_sector(const ArcJfdImage *image, unsigned track_side,
                               ArcJfdView *view);
 bool arc_jfd_base_free_tracks(const ArcJfdImage *image,
                               bool free_track[ARC_JFD_PDD5_TRACKS]);
+void arc_jfd_map_prepare(ArcJfdImage *image);
+void arc_jfd_map_refresh(ArcJfdImage *image);
+bool arc_jfd_map_write_veto(const ArcJfdImage *image, size_t index,
+                            const uint8_t *pending);
+bool arc_jfd_map_target(const ArcJfdImage *image, size_t index);
 
 static inline bool arc_jfd_sector_write_eligible(const ArcJfdImage *image,
                                                   size_t index)
