@@ -1,8 +1,8 @@
 # ArcDroid Handoff
 
-**Stage:** IMPLEMENTATION  
-**Owner:** Sol (GPT-6 Sol); orchestrator: Fable role held by Claude Opus 5.5 by Founder assignment (S26–S29)  
-**Next:** **Sol run 8 implements write-armed C-11b (D-078)** on `slice/10a-jfd-writes` from `4aa2b3b`; then orchestrator review, CI, targeted Opus QA (effort high), the AC-12 legs listed in the D-078 evidence bullet; then — per the Founder (S29) — when only the Odin3 leg remains, close the session with this handoff (Next: AC-13 on the Odin3 with the final-head core, then merge PR #166); the Founder resumes it next session.
+**Stage:** QA  
+**Owner:** Opus (Claude Opus 5.5 QA, effort high), dispatched by the orchestrator (Fable role held by Claude Opus 5.5 by Founder assignment, S26–S29)  
+**Next:** **Targeted Opus QA of Sol runs 7–8 (`edf5e2e..a7faf4f`: C-11b evidence fix and write-armed C-11b, D-078) on PR #166**; the orchestrator runs the D-078 AC-12 legs in parallel; then — per the Founder (S29) — when only the Odin3 leg remains, close the session with this handoff (Next: AC-13 on the Odin3 with the final-head core, then merge PR #166); the Founder resumes it next session.
 
 **S29 runs 6–7.** Run 6 `edf5e2e` implemented C-11b (latched at mount); CI green on both events (Windows: zero read, partial merge, fresh-process read-back). Opus QA pass 4 (effort 15): product conforms; FAIL on evidence M4-1 (merge probe treated RNF as pristine) → run 7 `4aa2b3b` (test-only: A5-prefilled merge buffer, RNF = other, ROM verifies bytes; mutant without fill fails on both controllers; latch-transition harness sessions). AC-12 on `edf5e2e`: the sports title's player save now saves, reloads, re-saves and reloads; all other verified workflows pixel-identical; **three boot-time protection regressions** (titles 40, 85, and 53 on the native path) → D-078. Two harmless changes (one timing shift; one title now boots further). `layout-unsupported` images on the final core: disc 1 of five titles (none currently playable).
 
