@@ -29,6 +29,8 @@
 
 #define ARC_WIDTH 640u
 #define ARC_HEIGHT 480u
+#define ARC_PRESENT_MAX_WIDTH 4096u
+#define ARC_PRESENT_MAX_HEIGHT 2048u
 #define ARC_RATE 50.0
 #define ARC_DEFAULT_POINTER_DEADZONE 15u
 #define ARC_AUDIO_RATE 48000.0
@@ -62,6 +64,10 @@ static retro_input_state_t arc_input_state;
 static struct retro_vfs_interface *arc_vfs;
 static retro_log_printf_t arc_log;
 static uint32_t arc_frame[ARC_WIDTH * ARC_HEIGHT];
+/* Frontends may reread the most recently presented frame during an A/V
+ * reinitialisation. Engine and OSK surfaces can be freed on reset or machine
+ * recreation, so video callbacks always receive this core-lifetime surface. */
+static uint32_t arc_present_frame[ARC_PRESENT_MAX_WIDTH * ARC_PRESENT_MAX_HEIGHT];
 static int16_t arc_audio_frame[2048u * 2u];
 static uint8_t arc_cmos_record[256];
 static uint8_t arc_cmos_last_written[256];
@@ -5781,6 +5787,25 @@ failed:
    arc_input_sampling_reset(false);
 }
 
+static void arc_send_video(const void *pixels, unsigned width, unsigned height,
+                           size_t pitch)
+{
+   if (!arc_video) return;
+   if (pixels)
+   {
+      if (!width || width > ARC_PRESENT_MAX_WIDTH || !height ||
+          height > ARC_PRESENT_MAX_HEIGHT ||
+          pitch < (size_t)width * sizeof(uint32_t) ||
+          pitch > ARC_PRESENT_MAX_WIDTH * sizeof(uint32_t)) return;
+      for (unsigned row = 0u; row < height; ++row)
+         memcpy((uint8_t *)arc_present_frame + (size_t)row * pitch,
+                (const uint8_t *)pixels + (size_t)row * pitch,
+                (size_t)width * sizeof(uint32_t));
+      pixels = arc_present_frame;
+   }
+   arc_video(pixels, width, height, pitch);
+}
+
 static void arc_present(const ArcEngineFrame *frame)
 {
 #if defined(ARCDROID_TEST_FAULTS)
@@ -5791,8 +5816,8 @@ static void arc_present(const ArcEngineFrame *frame)
    {
       bool duplicate = !frame->field_completed && arc_can_dupe &&
                        !arc_osk_present_dirty;
-      arc_video(duplicate ? NULL : frame->pixels, frame->width, frame->height,
-                frame->pitch);
+      arc_send_video(duplicate ? NULL : frame->pixels, frame->width,
+                     frame->height, frame->pitch);
       arc_osk_present_dirty = false;
       return;
    }
@@ -5801,7 +5826,7 @@ static void arc_present(const ArcEngineFrame *frame)
       arc_osk_close(&arc_osk, &arc_inputs);
       arc_osk_restore_gameplay();
       arc_osk_report_too_narrow();
-      arc_video(frame->pixels, frame->width, frame->height, frame->pitch);
+      arc_send_video(frame->pixels, frame->width, frame->height, frame->pitch);
       arc_osk_present_dirty = false;
       return;
    }
@@ -5810,19 +5835,19 @@ static void arc_present(const ArcEngineFrame *frame)
         !arc_osk_layout(&arc_osk, frame->width, frame->height)))
    {
       arc_osk_presentation_failure();
-      arc_video(frame->pixels, frame->width, frame->height, frame->pitch);
+      arc_send_video(frame->pixels, frame->width, frame->height, frame->pitch);
       arc_osk_present_dirty = false;
       return;
    }
    if (!frame->field_completed && arc_can_dupe && !arc_osk_present_dirty)
    {
-      arc_video(NULL, frame->width, frame->height, frame->pitch);
+      arc_send_video(NULL, frame->width, frame->height, frame->pitch);
       return;
    }
    if (!frame->pixels || frame->pitch < (size_t)frame->width * sizeof(uint32_t))
    {
       arc_osk_presentation_failure();
-      arc_video(frame->pixels, frame->width, frame->height, frame->pitch);
+      arc_send_video(frame->pixels, frame->width, frame->height, frame->pitch);
       arc_osk_present_dirty = false;
       return;
    }
@@ -5841,12 +5866,12 @@ static void arc_present(const ArcEngineFrame *frame)
                        (size_t)frame->width * sizeof(uint32_t), profile))
    {
       arc_osk_presentation_failure();
-      arc_video(frame->pixels, frame->width, frame->height, frame->pitch);
+      arc_send_video(frame->pixels, frame->width, frame->height, frame->pitch);
    }
    else
    {
-      arc_video(arc_osk_surface, frame->width, frame->height,
-                (size_t)frame->width * sizeof(uint32_t));
+      arc_send_video(arc_osk_surface, frame->width, frame->height,
+                     (size_t)frame->width * sizeof(uint32_t));
 #if defined(ARCDROID_TEST_FAULTS)
       arc_test_presented_osk_notice = (arc_osk.busy ? 1u : 0u) |
          (arc_osk.interrupted_visible ? 2u : 0u);
@@ -5978,9 +6003,8 @@ RETRO_API void retro_run(void)
                                      arc_frame, ARC_WIDTH, ARC_HEIGHT,
                                      ARC_WIDTH * sizeof(uint32_t)))
          memset(arc_frame, 0, sizeof(arc_frame));
-      if (arc_video)
-         arc_video(arc_frame, ARC_WIDTH, ARC_HEIGHT,
-                   ARC_WIDTH * sizeof(uint32_t));
+      arc_send_video(arc_frame, ARC_WIDTH, ARC_HEIGHT,
+                     ARC_WIDTH * sizeof(uint32_t));
       memset(arc_audio_frame, 0, 960u * 2u * sizeof(arc_audio_frame[0]));
       if (arc_audio_batch) arc_audio_batch(arc_audio_frame, 960u);
       else if (arc_audio)
@@ -5997,7 +6021,8 @@ RETRO_API void retro_run(void)
       arc_message("Input queue overflowed; recovered to current input levels.", RETRO_LOG_WARN);
    if (!arc_loaded || arc_session != ARC_SESSION_RUNNING)
    {
-      if (arc_video) arc_video(arc_frame, ARC_WIDTH, ARC_HEIGHT, ARC_WIDTH * sizeof(uint32_t));
+      arc_send_video(arc_frame, ARC_WIDTH, ARC_HEIGHT,
+                     ARC_WIDTH * sizeof(uint32_t));
       return;
    }
    ++arc_frame_number;

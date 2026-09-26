@@ -54,6 +54,25 @@ static uint64_t last_video_signature;
 static uint32_t last_video_pixel;
 static unsigned video_signature_last_change_frame;
 static bool last_video_was_duplicate;
+static bool probe_cached_video;
+static const uint8_t *cached_video;
+static unsigned cached_video_height;
+static size_t cached_video_pitch;
+static uint8_t cached_video_copy[4096u * 2048u * sizeof(uint32_t)];
+static unsigned cached_video_reads;
+static unsigned cached_video_av_reads, cached_video_geometry_reads;
+static unsigned cached_video_duplicate_reads;
+static unsigned cached_install_recreation_reads;
+static uint8_t cached_video_sample;
+static void read_cached_video(void)
+{
+   if (!probe_cached_video || !cached_video) return;
+   size_t bytes = (size_t)cached_video_height * cached_video_pitch;
+   assert(bytes && bytes <= sizeof(cached_video_copy));
+   memcpy(cached_video_copy, cached_video, bytes);
+   cached_video_sample ^= cached_video_copy[cached_video_reads % bytes];
+   ++cached_video_reads;
+}
 static uint64_t video_trace_signature = UINT64_C(1469598103934665603);
 static double reported_rates[16];
 static unsigned reported_rate_count;
@@ -433,6 +452,11 @@ static void frontend_log(enum retro_log_level level, const char *format, ...)
       ++install_validation_seen;
    if (strstr(message, "Install disc: doorbell-latched"))
       ++install_doorbell_seen;
+   if (strstr(message, "Install disc: run-plan=recreated same-session=1")) {
+      read_cached_video();
+      if (probe_cached_video && cached_video)
+         ++cached_install_recreation_reads;
+   }
    if (strstr(message,"Install disc: store-write-failed=") ||
        strstr(message,"Install disc: write-commit-failed")) {
       assert(level==RETRO_LOG_WARN);
@@ -783,6 +807,8 @@ static bool environment(unsigned command, void *data)
          return true;
       case RETRO_ENVIRONMENT_SET_GEOMETRY:
       {
+         read_cached_video();
+         if (probe_cached_video && cached_video) ++cached_video_geometry_reads;
          const struct retro_game_geometry *geometry = data;
          assert(phase == PHASE_RUN);
          if (geometry->base_width == geometry_width &&
@@ -795,6 +821,8 @@ static bool environment(unsigned command, void *data)
       }
       case RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO:
       {
+         read_cached_video();
+         if (probe_cached_video && cached_video) ++cached_video_av_reads;
          const struct retro_system_av_info *av = data;
          assert(phase == PHASE_RUN && av->timing.fps >= 20.0 && av->timing.fps <= 200.0);
          assert(av->timing.fps < last_notified_rate - 0.01 ||
@@ -940,7 +968,16 @@ static void video(const void *data, unsigned w, unsigned h, size_t pitch)
 {
    assert((data || can_dupe) && w > 0u && w <= 4096u && h > 0u && h <= 2048u && pitch >= w * 4u);
    last_video_was_duplicate = data == NULL;
-   if (!data) { ++duplicate_video_frames; ++video_frames; return; }
+   if (!data) {
+      read_cached_video();
+      if (probe_cached_video && cached_video) ++cached_video_duplicate_reads;
+      ++duplicate_video_frames; ++video_frames; return;
+   }
+   if (probe_cached_video) {
+      cached_video = data;
+      cached_video_height = h;
+      cached_video_pitch = pitch;
+   }
    memcpy(&last_video_pixel, data, sizeof(last_video_pixel));
    last_video_pixel &= 0x00ffffffu;
    assert(w == geometry_width && h == geometry_height);
@@ -1370,6 +1407,7 @@ static void print_usage(FILE *stream, const char *program)
       "  %s --self-test-parser\n"
       "  %s CORE ROM CONTENT DATA MEDIA_ROM PLAYLIST DISC1 DISC2 JFD JFD2 "
       "FIXTURES APP ADFFS_PACKAGE ADFFS_JFD ZIP_FIXTURES\n"
+      "Append --cached-frame-probe to make the frontend reread its cached frame on A/V changes and duplicate frames.\n"
       "\n"
       "OSK script grammar (one command per line; # begins a comment):\n"
       "  wait N                              run N emulated fields\n"
@@ -1793,6 +1831,10 @@ static void parser_self_test(void)
 #define LOAD(name) do { *(void **)(&name) = dlsym(module, #name); assert(name); } while (0)
 int main(int argc, char **argv)
 {
+   if (argc > 2 && !strcmp(argv[argc - 1], "--cached-frame-probe")) {
+      probe_cached_video = true;
+      --argc;
+   }
    if (argc == 2 && !strcmp(argv[1], "--help"))
    {
       print_usage(stdout, argv[0]);
@@ -2470,6 +2512,8 @@ int main(int argc, char **argv)
          FILE *out=fopen(signature_path,"wb"); assert(out);
          assert(fprintf(out,"%016llx\n",
                   (unsigned long long)last_video_signature)>0 && !fclose(out));
+         if (probe_cached_video)
+            assert(cached_install_recreation_reads == 1u);
       } else {
          FILE *in=fopen(signature_path,"rb"); assert(in);
          unsigned long long earlier=0u;
@@ -2517,11 +2561,13 @@ int main(int argc, char **argv)
              !arc_libretro_test_jfd_probe_mask(0u, 0u));
       option_writes = "off"; variable_update = true;
       retro_reset();
+      read_cached_video(); /* Frontend may retain the pre-reset frame. */
       bool protected = false;
       assert(!arc_libretro_test_jfd_probe_mask(0u, 0u) &&
              arc_engine_test_drive_media(0u, &protected, NULL) && protected);
       option_writes = "shadow"; variable_update = true;
       retro_reset();
+      read_cached_video();
       assert(!arc_libretro_test_jfd_probe_mask(0u, 0u) &&
              arc_engine_test_drive_media(0u, &protected, NULL) && !protected);
       retro_unload_game(); retro_deinit();
@@ -3348,6 +3394,7 @@ int main(int argc, char **argv)
       option_cpu = "ARM250";
       option_joystick = "A3010";
       retro_reset();
+      read_cached_video(); /* A3000 -> A3010 keeps the frontend cache. */
       for (unsigned frame = 0u; frame < 180u; ++frame) retro_run();
       unsigned transition_commands = 0u, transition_reads = 0u;
       unsigned transition_success = 0u, transition_ide = 0u;
@@ -5167,7 +5214,8 @@ int main(int argc, char **argv)
          arc_engine_audio_stats(&sampled_underruns, &sampled_overruns);
          assert(sampled_underruns <= 2400u && sampled_overruns == 0u);
       }
-      retro_reset(); retro_unload_game();
+      retro_reset(); read_cached_video();
+      retro_unload_game(); read_cached_video();
       if (cycle == 0u)
       {
          read_exact(cycle_cmos_file, saved_cmos, sizeof(saved_cmos));
@@ -6865,6 +6913,7 @@ int main(int argc, char **argv)
       assert(arc_libretro_test_session_state() == 2u &&
              arc_libretro_test_chooser_focus() == 0u &&
              !file_exists(chooser_helper) && !file_exists(chooser_cmos));
+      read_cached_video();
       retro_run();
 
       /* No frontend SAVE_RAM surface can contaminate the private prepared
@@ -6888,6 +6937,7 @@ int main(int argc, char **argv)
              !memcmp(chooser_machine_cmos, clean_machine_cmos,
                      sizeof(chooser_machine_cmos)) &&
              file_exists(chooser_choice));
+      read_cached_video(); /* Chooser frame before the new machine's frame. */
       ASSERT_NO_SAVE_RAM();
       uint8_t actual_helper[ARC_LAUNCH_DISC_SIZE];
       read_exact(chooser_helper, actual_helper, sizeof(actual_helper));
@@ -8778,6 +8828,9 @@ int main(int argc, char **argv)
    assert(vidc_osd_ext_calls + vidc_osd_legacy_calls == persistent_osd_before + 2u);
    assert(saw_audio_counters);
    assert(set_variable_calls == 0u);
+   if (probe_cached_video)
+      assert(cached_video_av_reads && cached_video_geometry_reads &&
+             cached_video_duplicate_reads);
    assert(dlclose(module) == 0);
    printf("libretro_harness: payload signatures %016llx/%016llx; "
           "100 cycles, %u frames, %llu audio frames, "
@@ -8807,6 +8860,10 @@ int main(int argc, char **argv)
           (unsigned long long)sampled_underruns,
           (unsigned long long)sampled_overruns);
    printf("negotiated duplicate frames: %u\n", duplicate_video_frames);
+   if (probe_cached_video)
+      printf("cached frame rereads: total=%u A/V=%u geometry=%u duplicate=%u\n",
+             cached_video_reads, cached_video_av_reads,
+             cached_video_geometry_reads, cached_video_duplicate_reads);
    printf("VIDC messages: OSD ext/legacy=%u/%u, transient info logs=%u, warning logs=%u\n",
           vidc_osd_ext_calls, vidc_osd_legacy_calls,
           vidc_info_log_lines, vidc_warning_log_lines);
