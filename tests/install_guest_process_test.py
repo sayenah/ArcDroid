@@ -42,7 +42,8 @@ def main() -> None:
         def run(data: Path, phase: str) -> None:
             result = subprocess.run((str(harness), str(core), str(rom),
                                      str(playlist), str(data), "--install-guest",
-                                     str(package), phase), capture_output=True)
+                                     str(package), phase,
+                                     "--cached-frame-probe"), capture_output=True)
             if result.returncode:
                 sys.stderr.buffer.write(result.stdout + result.stderr)
                 raise subprocess.CalledProcessError(result.returncode,

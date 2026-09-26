@@ -696,7 +696,7 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
       "${FIXTURE_DIR}/arcdroid-application-l.adl"
       "${FIXTURE_DIR}/adffs/synthetic.zip"
       "${FIXTURE_DIR}/adffs/eligible.jfd"
-      "${FIXTURE_DIR}/zip-content")
+      "${FIXTURE_DIR}/zip-content" --cached-frame-probe)
     add_test(NAME jfd-writes-libretro-harness COMMAND libretro_harness
       $<TARGET_FILE:arcdroid_libretro_test>
       "${FIXTURE_DIR}/arcdroid-jfd-save-test.rom"
@@ -725,7 +725,7 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
       "${FIXTURE_DIR}/arcdroid-media-disc1.adf"
       "${FIXTURE_DIR}/arcdroid-media-disc2.adf"
       "${FIXTURE_DIR}/arcdroid-application-l.adl"
-      "${FIXTURE_DIR}/hd-family/valid-f.adf")
+      "${FIXTURE_DIR}/hd-family/valid-f.adf" --cached-frame-probe)
     add_test(NAME mouse-script-harness COMMAND libretro_harness
       $<TARGET_FILE:arcdroid_libretro_test>
       "${FIXTURE_DIR}/arcdroid-test.rom"
