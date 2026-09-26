@@ -145,9 +145,13 @@ static unsigned install_cap_notices;
 static unsigned install_failure_warn_logs;
 static unsigned install_compaction_failed_logs;
 static unsigned install_reset_failure_notices;
+static unsigned install_reload_notices, install_reload_warn_logs;
 static char last_install_outcome_message[512];
 static void count_install_notice(void)
 {
+   if (!strcmp(last_message,
+               "Install Saves: Temporary takes effect after reloading the content."))
+      ++install_reload_notices;
    if (strstr(last_message, "set Machine to Auto") ||
        strstr(last_message, "Persistent install saves require Machine: Auto") ||
        strstr(last_message, "Unable to prepare the chosen install session"))
@@ -447,6 +451,11 @@ static void frontend_log(enum retro_log_level level, const char *format, ...)
    if (strstr(message,"Install disc: store-compaction=failed")) {
       assert(level==RETRO_LOG_WARN);
       ++install_compaction_failed_logs;
+   }
+   if (strstr(message,
+              "Install Saves: Temporary takes effect after reloading the content.")) {
+      assert(level==RETRO_LOG_WARN);
+      ++install_reload_warn_logs;
    }
    if (sscanf(message, "Install disc: candidate-write lba=%u",
               &install_candidate_last_lba)==1)
@@ -2336,6 +2345,50 @@ int main(int argc, char **argv)
             printf("install guest %s: store unchanged through load, run, reset\n", mode);
             return 0;
          }
+         if (!strcmp(mode, "route-reset-gated-ready") ||
+             !strcmp(mode, "route-reset-gated-new")) {
+            option_jfd_boot = "native";
+            phase = PHASE_LOAD; assert(retro_load_game(&game));
+            assert(strstr(machine_resolution_log,
+                          "requested=Auto resolved=A3000 reason=default") &&
+                   disk_control.get_num_images() == 2u);
+            assert(disk_control.set_eject_state(true) &&
+                   disk_control.set_image_index(1u) &&
+                   disk_control.set_eject_state(false));
+            unsigned lines = machine_resolution_lines;
+            unsigned boots = jfd_boot_log_lines;
+            option_jfd_boot = "auto"; variable_update = true;
+            retro_reset();
+            assert(arc_libretro_test_session_state() == 3u &&
+                   disk_control.get_image_index() == 1u &&
+                   !disk_control.get_eject_state() &&
+                   machine_resolution_lines == lines &&
+                   jfd_boot_log_lines == boots &&
+                   !arc_engine_test_newio(NULL, NULL, NULL, NULL, NULL));
+            retro_unload_game();
+            if (!strcmp(mode, "route-reset-gated-ready")) {
+               option_jfd_boot = "native";
+               phase = PHASE_LOAD; assert(retro_load_game(&game));
+               assert(strstr(machine_resolution_log,
+                             "requested=Auto resolved=A3000 reason=default") &&
+                      disk_control.set_eject_state(true));
+               lines = machine_resolution_lines;
+               boots = jfd_boot_log_lines;
+               option_jfd_boot = "auto"; variable_update = true;
+               retro_reset();
+               assert(arc_libretro_test_session_state() == 3u &&
+                      disk_control.get_eject_state() &&
+                      disk_control.get_image_index() == 0u &&
+                      machine_resolution_lines == lines &&
+                      jfd_boot_log_lines == boots &&
+                      !arc_engine_test_newio(NULL, NULL, NULL, NULL, NULL));
+               retro_unload_game();
+            }
+            retro_deinit();
+            assert(open_files == 0u && open_dirs == 0u && dlclose(module) == 0);
+            printf("install guest %s: no promotion away from disc 1\n", mode);
+            return 0;
+         }
          if (!strcmp(mode, "route-reset-ready") ||
              !strcmp(mode, "route-reset-new")) {
             uint8_t device_id = 0u;
@@ -2385,9 +2438,50 @@ int main(int argc, char **argv)
                          "requested=Auto resolved=A3000 reason=default",
                          "path=adffs-install");
             RESET_INSTALL("auto", "persistent", "path=adffs-install", 1u);
+            unsigned lines = machine_resolution_lines;
+            unsigned notices = install_reload_notices;
+            unsigned warns = install_reload_warn_logs;
+            option_install_saves = "temporary"; variable_update = true;
+            retro_reset();
+            assert(arc_libretro_test_session_state() == 3u &&
+                   strstr(last_jfd_boot_log, "path=native reason=install-machine") &&
+                   machine_resolution_lines == lines &&
+                   install_reload_notices == notices + 1u &&
+                   install_reload_warn_logs == warns + 1u &&
+                   arc_engine_test_newio(NULL, NULL, NULL, NULL, &device_id) &&
+                   device_id == 0x05u);
 #undef RESET_INSTALL
 #undef LOAD_INSTALL
-            retro_unload_game(); retro_deinit();
+            retro_unload_game();
+            if (!strcmp(mode, "route-reset-ready")) {
+               option_install_saves = "persistent";
+               phase = PHASE_LOAD; assert(retro_load_game(&game));
+               assert(strstr(machine_resolution_log,
+                             "requested=Auto resolved=A3020 reason=install-disc") &&
+                      strstr(last_jfd_boot_log, "path=adffs-install"));
+               lines = machine_resolution_lines;
+               notices = install_reload_notices;
+               warns = install_reload_warn_logs;
+               option_install_saves = "temporary"; variable_update = true;
+               retro_reset();
+               assert(arc_libretro_test_session_state() == 3u &&
+                      strstr(last_jfd_boot_log, "path=native reason=install-machine") &&
+                      machine_resolution_lines == lines &&
+                      install_reload_notices == notices + 1u &&
+                      install_reload_warn_logs == warns + 1u &&
+                      arc_engine_test_newio(NULL, NULL, NULL, NULL, &device_id) &&
+                      device_id == 0x05u);
+               retro_unload_game();
+               option_machine = "A3020"; option_cpu = "ARM250";
+               notices = install_reload_notices;
+               warns = install_reload_warn_logs;
+               phase = PHASE_LOAD; assert(retro_load_game(&game));
+               assert(strstr(last_jfd_boot_log, "path=native reason=install-machine") &&
+                      install_reload_notices == notices &&
+                      install_reload_warn_logs == warns);
+               retro_unload_game();
+            }
+            retro_deinit();
             assert(open_files == 0u && open_dirs == 0u && dlclose(module) == 0);
             printf("install guest %s: reset promotion and retention passed\n", mode);
             return 0;

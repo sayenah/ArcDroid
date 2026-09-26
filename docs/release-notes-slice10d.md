@@ -10,7 +10,7 @@ retain their prior path.
 Auto. An existing native save still takes precedence. See [ADFFS use](adffs.md)
 for recovery steps if a title needs ADFFS instead.
 
-Option changes on install titles take effect on reset; the machine moves to the A3020 when needed and otherwise changes only on reload.
+Option changes on install titles take effect on reset; the machine moves to the A3020 when needed and otherwise changes only on reload. If Temporary needs a different machine, ArcDroid asks you to reload the content.
 
 Routing remains evidence-limited. Titles whose saves could not be reached or
 distinguished, titles that fail natively, and titles without saves remain on

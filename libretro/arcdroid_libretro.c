@@ -141,6 +141,7 @@ static unsigned arc_install_plan_count;
 static int arc_install_requested = -1;
 static char arc_install_requested_binding[41];
 static bool arc_install_hard_failure;
+static bool arc_install_machine_refused;
 static ArcInstallStore *arc_install_store;
 static bool arc_install_failure_noticed;
 static ArcInstallPlan arc_install_active_plan;
@@ -947,6 +948,7 @@ static void arc_release_session(void)
    arc_install_requested = -1;
    arc_install_requested_binding[0] = '\0';
    arc_install_hard_failure = false;
+   arc_install_machine_refused = false;
    free(arc_firmware);
    arc_firmware = NULL;
    arc_firmware_size = 0u;
@@ -2552,6 +2554,7 @@ static void arc_reason_token(const char *input, char output[96]) {
    output[at] = 0;
 }
 static void arc_install_refuse(const char *why, bool notify) {
+   if (!strcmp(why, "machine")) arc_install_machine_refused = true;
    char reason[128];
    snprintf(reason, sizeof(reason), "install-%s", why);
    arc_jfd_boot_log(reason);
@@ -2768,6 +2771,7 @@ bool arc_libretro_test_install_fill_journal(void)
 }
 #endif
 static bool arc_prepare_adffs(bool notify) {
+   arc_install_machine_refused = false;
    arc_install_store_close(arc_install_store);
    arc_install_store = NULL;
    arc_install_hd_mode = 0u;
@@ -5664,6 +5668,7 @@ RETRO_API void retro_reset(void)
    ArcMachine reset_choice = updated.machine_auto ? arc_session_machine :
       updated.requested_machine;
    bool install_machine_upgrade = updated.machine_auto &&
+      !was_ejected && selected == 0u &&
       reset_choice != ARC_MACHINE_A3020 &&
       arc_install_hd_machine_needed(&updated);
    if (install_machine_upgrade) reset_choice = ARC_MACHINE_A3020;
@@ -5746,7 +5751,12 @@ RETRO_API void retro_reset(void)
    arc_seed_cmos();
    arc_install_choosing = false;
    arc_install_plan_count = 0u;
-   bool adffs = !was_ejected && selected == 0u && arc_prepare_adffs(false);
+   bool install_decision = !was_ejected && selected == 0u;
+   bool adffs = install_decision && arc_prepare_adffs(false);
+   if (install_decision && arc_install_machine_refused &&
+       !updated.install_saves_persistent)
+      arc_message("Install Saves: Temporary takes effect after reloading the content.",
+                  RETRO_LOG_WARN);
    if (arc_install_choosing) adffs = arc_install_offer();
    if (arc_install_hard_failure) {
       snprintf(error, sizeof(error), "Unable to prepare the chosen install session.");
