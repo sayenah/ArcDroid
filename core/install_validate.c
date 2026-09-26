@@ -10,10 +10,13 @@
 #include <string.h>
 
 #define ZONES 5u
-#define ZONE_BYTES 1024u
-#define ZONE_BITS 8160u
+#define ZONE_BYTES ARC_INSTALL_HD_SECTOR
+#define ZONE_BITS (ZONE_BYTES * 8u - 32u)
 #define MAP_AT ((2u * ZONE_BITS - 480u) * 1024u)
 #define MAP_SIZE (ZONES * ZONE_BYTES)
+#define MAP_BIT_BYTES 1024u
+#define LAST_REAL_END (32u + ARC_INSTALL_HD_BYTES / MAP_BIT_BYTES - \
+                       ((ZONES - 1u) * ZONE_BITS - 480u))
 #define MAX_OBJECTS 512u
 #define MAX_DEPTH 16u
 #define MAX_FILE (8u * 1024u * 1024u)
@@ -52,11 +55,11 @@ static unsigned bits(const uint8_t *p, unsigned at, unsigned width)
    return value;
 }
 static unsigned zone_end(unsigned zone)
-{ return zone < 2u ? 8192u : zone == 2u ? 320u : 32u; }
+{ (void)zone; return ZONE_BYTES * 8u; }
 static uint8_t zone_check(const uint8_t *block)
 {
    unsigned sum[4] = {0u, 0u, 0u, 0u};
-   for (int at = 1020; at > 0; at -= 4) {
+   for (int at = (int)ZONE_BYTES - 4; at > 0; at -= 4) {
       sum[0] += block[at] + (sum[3] >> 8u); sum[3] &= 255u;
       sum[1] += block[at + 1] + (sum[0] >> 8u); sum[0] &= 255u;
       sum[2] += block[at + 2] + (sum[1] >> 8u); sum[1] &= 255u;
@@ -88,6 +91,10 @@ static bool map_valid(const uint8_t *map, const uint8_t *boot)
          unsigned stop = start + boot[4];
          while (stop < end && !bits(block, stop, 1u)) ++stop;
          if (stop >= end) return false;
+         if (z == ZONES - 1u &&
+             ((start == LAST_REAL_END && (id != 1u || stop != end - 1u)) ||
+              (start < LAST_REAL_END && stop >= LAST_REAL_END) ||
+              start > LAST_REAL_END)) return false;
          if (free_at == start) {
             free_at = id ? start + id : 0u;
             if (free_at && free_at <= stop) return false;
@@ -141,14 +148,16 @@ static bool map_resolve(const Reader *r, uint32_t address,
          if (start == free_at) free_at = id ? start + id : 0u;
          else if (id == fragment) {
             size_t allocation = zone_base + start - (z ? 32u : 512u);
-            if (allocation >= ARC_INSTALL_HD_BYTES / 1024u) return false;
-            if (length > ARC_INSTALL_HD_BYTES / 1024u - allocation)
-               length = ARC_INSTALL_HD_BYTES / 1024u - allocation;
-            if (wanted < length) {
-               *offset = (allocation + wanted) * 1024u;
-               return *offset <= ARC_INSTALL_HD_BYTES - 1024u;
+            if (allocation >= ARC_INSTALL_HD_BYTES / MAP_BIT_BYTES) return false;
+            if (length > ARC_INSTALL_HD_BYTES / MAP_BIT_BYTES - allocation)
+               length = ARC_INSTALL_HD_BYTES / MAP_BIT_BYTES - allocation;
+            size_t sectors = length * (MAP_BIT_BYTES / ARC_INSTALL_HD_SECTOR);
+            if (wanted < sectors) {
+               *offset = allocation * MAP_BIT_BYTES +
+                         wanted * ARC_INSTALL_HD_SECTOR;
+               return *offset <= ARC_INSTALL_HD_BYTES - ARC_INSTALL_HD_SECTOR;
             }
-            wanted -= length;
+            wanted -= sectors;
          }
          start = stop + 1u;
       }
@@ -159,10 +168,11 @@ static bool object_read(const Reader *r, uint32_t address,
                         size_t at, uint8_t *out, size_t length)
 {
    while (length) {
-      size_t sector_offset, in_sector = at % 1024u;
-      size_t amount = 1024u - in_sector;
+      size_t sector_offset, in_sector = at % ARC_INSTALL_HD_SECTOR;
+      size_t amount = ARC_INSTALL_HD_SECTOR - in_sector;
       if (amount > length) amount = length;
-      if (!map_resolve(r, address, at / 1024u, &sector_offset)) return false;
+      if (!map_resolve(r, address, at / ARC_INSTALL_HD_SECTOR,
+                       &sector_offset)) return false;
       memcpy(out, r->image + sector_offset + in_sector, amount);
       out += amount; at += amount; length -= amount;
    }

@@ -1899,7 +1899,7 @@ foreach ($required in @(
     "validation=complete reason=complete tree_count=2 tree_sha256=752fe22239308de0a286ef3c224239150c573878b7f15b9c02a7fdc474177dec",
     "store-publication=committed generation=0",
     "run-plan=recreated same-session=1",
-    "journal-commit lba=31840 count=1")) {
+    "journal-commit lba=15456 count=1")) {
     if (-not @($firstLines | Where-Object { $_.Contains($required) }).Count) {
         throw "Install guest first process lacked '$required'"
     }

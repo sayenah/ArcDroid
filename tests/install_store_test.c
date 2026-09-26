@@ -21,6 +21,8 @@ static unsigned mutations, fail_mutation;
 static bool fail_probe_close;
 static bool fail_base_open;
 static char probe_failure[256], creation_failure[256];
+static void put32(uint8_t *p, uint32_t n)
+{ for (unsigned i=0u;i<4u;++i) p[i]=(uint8_t)(n>>(i*8u)); }
 static void store_log(void *opaque, const char *message)
 {
    (void)opaque;
@@ -319,6 +321,15 @@ static void test_damage(void)
    memcpy(m->bytes, copy, sizeof(copy));
    unsigned before=mutations;
    ArcInstallStore *s=open_store(&p,false,false,ARC_INSTALL_STORE_DAMAGED);
+   arc_install_store_close(s); assert(mutations==before);
+   clear_files(); ready_store(&p);
+   m=file_named("ready.a"); assert(m);
+   /* Version 1 named the pre-fix, non-mountable FileCore formatter. */
+   put32(m->bytes+64u,1u);
+   crc=arc_crc32(m->bytes,272u);
+   put32(m->bytes+272u,crc);
+   before=mutations;
+   s=open_store(&p,true,true,ARC_INSTALL_STORE_DAMAGED);
    arc_install_store_close(s); assert(mutations==before);
    clear_files(); ready_store(&p);
    m=file_named("ready.a"); assert(m);

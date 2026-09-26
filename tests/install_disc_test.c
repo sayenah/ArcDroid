@@ -22,6 +22,13 @@ static void set_bits(uint8_t *p, unsigned at, unsigned n, unsigned value)
           (((value>>i)&1u)?mask:0u));
    }
 }
+static unsigned get_bits(const uint8_t *p, unsigned at, unsigned n)
+{
+   unsigned value=0u;
+   for (unsigned i=0u;i<n;++i)
+      value |= ((p[(at+i)>>3u] >> ((at+i)&7u)) & 1u) << i;
+   return value;
+}
 static uint32_t ror13(uint32_t n) { return (n>>13u)|(n<<19u); }
 static void finish_directory(uint8_t *p, unsigned count)
 {
@@ -65,7 +72,7 @@ static uint32_t le32(const uint8_t *p)
 static uint8_t independent_zone_sum(const uint8_t *p)
 {
    unsigned x = 0u, y = 0u, z = 0u, w = 0u;
-   for (int i = 1020; i >= 4; i -= 4) {
+   for (int i = 508; i >= 4; i -= 4) {
       x += p[i] + (w >> 8u); w &= 255u;
       y += p[i+1] + (x >> 8u); x &= 255u;
       z += p[i+2] + (y >> 8u); y &= 255u;
@@ -91,6 +98,10 @@ int main(int argc, char **argv)
    assert(arc_install_hd_format(second, ARC_INSTALL_HD_BYTES));
    assert(first[ARC_INSTALL_HD_BYTES] == 0xa5u);
    assert(!memcmp(first, second, ARC_INSTALL_HD_BYTES));
+   char blank_hash[65];
+   arc_sha256_hex(first,ARC_INSTALL_HD_BYTES,blank_hash);
+   assert(!strcmp(blank_hash,
+      "9ec06c758da485f6b7c26b70e4c2b268ec959991cc43a9b6d3bffc495b4a57d2"));
    assert(le32(first + 0xc00u) == 0x20000000u);
    const uint8_t *record = first + 0xdc0u;
    assert(record[0] == 9u && record[1] == 63u && record[2] == 16u);
@@ -98,24 +109,43 @@ int main(int argc, char **argv)
    assert(record[9] == 5u && record[10] == 32u && record[11] == 0u);
    assert(le32(record + 12u) == 0x20bu);
    assert(le32(record + 16u) == ARC_INSTALL_HD_BYTES);
+   assert(record[20u] == 0x44u && record[21u] == 0x41u &&
+          !memcmp(record+22u,"ArcDroidHD",10u));
    unsigned sum = 0u;
    for (unsigned i = 0u; i < 511u; ++i) sum += first[0xc00u + i];
    while (sum > 255u) sum = (sum & 255u) + (sum >> 8u);
    assert(first[0xdffu] == (uint8_t)sum);
-   size_t map_at = (2u * 8160u - 480u) * 1024u;
+   const size_t zone_size = (size_t)1u << record[0];
+   const size_t allocation_bits = zone_size * 8u -
+      ((size_t)record[10u] | ((size_t)record[11u] << 8u));
+   const size_t map_at = ((record[9u] / 2u) * allocation_bits - 480u) *
+      ((size_t)1u << record[5u]);
+   const size_t map_bytes = (size_t)record[9u] * zone_size;
+   const size_t root_at = map_at + 2u * map_bytes;
+   assert(zone_size == 512u && allocation_bits == 4064u &&
+          map_at == 0x778000u && map_bytes == 2560u &&
+          root_at == 0x779400u);
+   assert(root_at - map_at == ((le32(record+12u) & 255u)-1u)*zone_size);
    const uint8_t *map = first + map_at;
-   assert(!memcmp(map, map + 5120u, 5120u));
+   assert(!memcmp(map, map + map_bytes, map_bytes));
    uint8_t cross = 0u;
    for (unsigned zone = 0u; zone < 5u; ++zone) {
-      const uint8_t *block = map + zone * 1024u;
+      const uint8_t *block = map + zone * zone_size;
       assert(block[0] == independent_zone_sum(block));
       cross ^= block[3];
    }
    assert(cross == 0xffu);
    assert(!memcmp(map + 4u, record, 60u));
-   const uint8_t *root = first + map_at + 10240u;
+   assert(get_bits(map,512u,15u)==2u && get_bits(map,527u,1u)==1u);
+   assert(get_bits(map+2u*zone_size,32u,15u)==2u &&
+          get_bits(map+2u*zone_size,47u,1u)==1u);
+   assert(get_bits(map+4u*zone_size,384u,15u)==1u &&
+          get_bits(map+4u*zone_size,4095u,1u)==1u);
+   const uint8_t *root = first + root_at;
    assert(root[0] == 1u && !memcmp(root + 1u, "Nick", 4u));
    assert(root[2007u] == 0u && root[2032u] == '$' &&
+          root[2010u] == 0x0bu && root[2011u] == 2u &&
+          !memcmp(root+2013u,"ArcDroid fixture",16u) &&
           root[2042u] == 1u && !memcmp(root + 2043u, "Nick", 4u));
    const ArcInstallProfile *profile = arc_install_profile(10140u, 2u);
    assert(profile);
@@ -133,6 +163,17 @@ int main(int argc, char **argv)
                                    &result));
    assert(!strcmp(result.reason, "marker-missing-or-size"));
    if (argc > 1) {
+      if (argc > 3) {
+         FILE *reference=fopen(argv[3],"rb"); assert(reference);
+         assert(fread(second,1u,ARC_INSTALL_HD_BYTES,reference)==
+                ARC_INSTALL_HD_BYTES && fgetc(reference)==EOF &&
+                !fclose(reference));
+         assert(!memcmp(first,second,ARC_INSTALL_HD_BYTES));
+         assert(!arc_install_hd_validate(&plan,second,ARC_INSTALL_HD_BYTES,
+                                         &result) &&
+                !strcmp(result.reason,"marker-missing-or-size"));
+         memcpy(first,second,ARC_INSTALL_HD_BYTES);
+      }
       size_t jfd_size=0u;
       uint8_t *jfd=read_input(argv[1],&jfd_size);
       ArcInstallProfile synthetic={0};
@@ -146,20 +187,22 @@ int main(int argc, char **argv)
       uint8_t marker[96]; size_t marker_size=0u;
       assert(arc_install_marker(&plan,marker,sizeof(marker),&marker_size));
       const size_t base=map_at;
-      uint8_t *zone=first+base+2u*1024u;
-      memset(zone+4u,0,1020u);
+      uint8_t *zone=first+base+2u*zone_size;
+      memset(zone+4u,0,zone_size-4u);
       /* Fragment 2 owns map/root; 3..7 each own a 16 KiB extent. */
-      for (unsigned fragment=2u;fragment<=7u;++fragment) {
+      set_bits(zone,32u,15u,2u);
+      set_bits(zone,47u,1u,1u);
+      for (unsigned fragment=3u;fragment<=7u;++fragment) {
          unsigned at=32u+(fragment-2u)*16u;
          set_bits(zone,at,15u,fragment);
          set_bits(zone,at+15u,1u,1u);
       }
       set_bits(zone,8u,15u,120u);
       set_bits(zone,23u,1u,1u);
-      set_bits(zone,319u,1u,1u);
+      set_bits(zone,4095u,1u,1u);
       zone[0]=independent_zone_sum(zone);
-      memcpy(first+base+5120u,first+base,5120u);
-      uint8_t *root=first+base+10240u;
+      memcpy(first+base+map_bytes,first+base,map_bytes);
+      uint8_t *root=first+root_at;
       entry(root,0u,"!Fixture",2048u,0x401u,0xfff00000u,0x3bu);
       entry(root,1u,"ArcReady",(uint32_t)marker_size,0x301u,
             0xffffeb00u,0x33u);

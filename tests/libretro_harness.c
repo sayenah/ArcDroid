@@ -2248,15 +2248,20 @@ int main(int argc, char **argv)
       }
       assert(strstr(machine_resolution_log,"resolved=A3020 reason=install-disc"));
       phase = PHASE_RUN;
+      enum {
+         INSTALL_MAP_LBA = ((2u * (512u * 8u - 32u) - 480u) * 1024u) / 512u,
+         INSTALL_MARKER_LBA = INSTALL_MAP_LBA + (16u * 1024u) / 512u,
+         INSTALL_DIRECTORY_LBA = INSTALL_MAP_LBA + (32u * 1024u) / 512u
+      };
       unsigned steady = 0u;
       for (unsigned frame=0u;frame<3000u;++frame) {
          retro_run();
          if (interrupt) {
             if ((!strcmp(argv[7], "interrupt-marker") &&
-                 install_candidate_last_lba >= 31712u) ||
+                 install_candidate_last_lba >= INSTALL_MARKER_LBA) ||
                 ((!strcmp(argv[7], "interrupt-directory") ||
                   !strcmp(argv[7], "reset-directory")) &&
-                 install_candidate_last_lba >= 31744u) ||
+                 install_candidate_last_lba >= INSTALL_DIRECTORY_LBA) ||
                 ((!strcmp(argv[7], "interrupt-doorbell") ||
                   !strcmp(argv[7], "reset-doorbell")) &&
                  install_guest_latched())) {

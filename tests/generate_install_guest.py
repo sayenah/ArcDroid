@@ -8,7 +8,7 @@ from generate_fixtures import Arm2, ROM_SIZE, VIDC_MODE
 SECTOR = 512
 TABLE_OFFSET = 0x4000
 SAVE_OFFSET = 0x3000
-SAVE_LBA = 31840
+SAVE_LBA = ((2 * (SECTOR * 8 - 32) - 480) * 1024 + 80 * 1024) // SECTOR
 IDE_BASE = 0x033107c0
 
 
