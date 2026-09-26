@@ -1888,7 +1888,13 @@ arcdroid_install_saves = "persistent"
 arcdroid_jfd_boot = "auto"
 arcdroid_launch = "auto"
 "@ | Set-Content -Encoding ASCII $coreOptions
-$installStore = Join-Path $saveDirectory "arcdroid\install\fffbd5a69f9b43c4ea8cc69f1fe9234f393e3d45"
+$installStore = Join-Path $coreSaveDirectory "install\fffbd5a69f9b43c4ea8cc69f1fe9234f393e3d45"
+function Get-InstallStoreListing {
+    $entries = @(Get-ChildItem -LiteralPath $coreSaveDirectory -Force -Recurse -ErrorAction SilentlyContinue |
+        ForEach-Object { $_.FullName })
+    if ($entries.Count -eq 0) { return "<empty or missing>" }
+    return ($entries -join " | ")
+}
 $screenshot = Join-Path $evidenceDirectory "install-saved.png"
 $beforeLines = @(Get-Content $log).Count
 Invoke-ArcDroid 1500 $true
@@ -1906,7 +1912,7 @@ foreach ($required in @(
 }
 if (-not (Test-Path (Join-Path $installStore "ready.a")) -or
     -not (Test-Path (Join-Path $installStore "journal.g0"))) {
-    throw "Install guest did not publish its ready manifest and journal"
+    throw "Install guest did not publish its ready manifest and journal; searched=$installStore; directory_listing=[$(Get-InstallStoreListing)]"
 }
 $savedSignature = Get-MediaRowSignature $screenshot "install-saved-outcome-0x31"
 
@@ -1947,7 +1953,7 @@ try {
     Wait-InstallLog $reloadRun "journal-commit lba=4048 count=256" 90
     if (-not (Test-Path (Join-Path $installStore "journal.g0")) -or
         (Get-Item (Join-Path $installStore "journal.g0")).Length -le 1MB) {
-        throw "Install guest did not exceed the compaction threshold"
+        throw "Install guest did not exceed the compaction threshold; searched=$installStore; directory_listing=[$(Get-InstallStoreListing)]"
     }
     Start-Sleep -Seconds 1
     $readbackSignature = Capture-MediaSignature $reloadRun "install-readback-outcome-0x42"
@@ -1978,7 +1984,7 @@ try {
     if (-not @($compactLines | Where-Object {
             $_.Contains("store-compaction=manifest-publish-start generation=1")
         }).Count -or -not (Test-Path (Join-Path $installStore "ready.b"))) {
-        throw "Install guest compaction did not publish generation 1"
+        throw "Install guest compaction did not publish generation 1; searched=$installStore; directory_listing=[$(Get-InstallStoreListing)]"
     }
     Stop-InstallRunAbrupt $compactRun "compaction manifest rename"
 } finally {
