@@ -13,6 +13,8 @@ typedef struct {
    unsigned sector_size;
    unsigned sectors_per_track;
    unsigned density;
+   bool base_only;
+   bool captured_only; /* Map parsing never consumes virtual fill. */
 } ArcDiscReader;
 
 typedef struct {
@@ -151,23 +153,35 @@ static bool arc_reader_sector(const ArcDiscReader *reader,
    }
    if (track_side >= reader->jfd->track_count) return false;
    const ArcJfdTrack *track = &reader->jfd->tracks[track_side];
-   const ArcJfdSector *match = NULL;
-   for (unsigned i = 0u; i < track->sector_count; ++i)
+   ArcJfdView match = {0};
+   bool found = false;
+   unsigned limit = track->sector_count +
+      (reader->base_only || reader->captured_only ? 0u : ARC_JFD_PDD5_IDS);
+   for (unsigned i = 0u; i < limit; ++i)
    {
-      const ArcJfdSector *sector =
-         &reader->jfd->sectors[(size_t)track->first_sector + i];
-      if (sector->id != sector_id || sector->density != reader->density ||
-          sector->size != reader->sector_size) continue;
-      if (match) return false;
-      match = sector;
+      ArcJfdView view;
+      if (!arc_jfd_effective_sector(reader->jfd, (unsigned)track_side, i,
+                                     false, &view) ||
+          view.sector.id != sector_id ||
+          view.sector.density != reader->density ||
+          view.sector.size != reader->sector_size) continue;
+      if (found) return false;
+      match = view;
+      found = true;
    }
-   if (!match || match->data_offset == UINT32_MAX ||
-       (match->flags & (ARC_JFD_ID_CRC_BAD | ARC_JFD_DATA_CRC_BAD)) ||
-       match->data_offset > reader->jfd->decoded_size ||
-       match->size > reader->jfd->decoded_size - match->data_offset)
+   if (!found || !match.data ||
+       (match.sector.flags & (ARC_JFD_ID_CRC_BAD | ARC_JFD_DATA_CRC_BAD)))
       return false;
-   memcpy(output, reader->jfd->decoded + match->data_offset,
-          reader->sector_size);
+   const uint8_t *bytes = match.data;
+   if (reader->base_only)
+   {
+      if (match.created || match.sector.data_offset == UINT32_MAX ||
+          match.sector.data_offset > reader->jfd->decoded_size ||
+          match.sector.size > reader->jfd->decoded_size -
+                              match.sector.data_offset) return false;
+      bytes = reader->jfd->decoded + match.sector.data_offset;
+   }
+   memcpy(output, bytes, reader->sector_size);
    return true;
 }
 
@@ -231,10 +245,11 @@ static bool arc_filecore_old(ArcFileCore *fs, ArcMediaGeometry geometry)
    return true;
 }
 
-static bool arc_filecore_new(ArcFileCore *fs)
+static bool arc_filecore_new_at(ArcFileCore *fs, unsigned copy)
 {
    if (!arc_reader_configure(&fs->reader, ARC_GEOMETRY_800K_E) ||
-       !arc_reader_read(&fs->reader, 0u, fs->map, 1024u)) return false;
+       !arc_reader_read(&fs->reader, (size_t)copy * 1024u,
+                        fs->map, 1024u)) return false;
    const uint8_t *record = fs->map + 4u;
    if (fs->map[0] != arc_zone_checksum(fs->map) || fs->map[3] != 0xffu ||
        record[0] != 10u || record[1] != 5u || record[2] != 2u ||
@@ -260,6 +275,13 @@ static bool arc_filecore_new(ArcFileCore *fs)
    fs->root_address = arc_le32(record + 12u) & 0x00ffffffu;
    arc_guest_name_trim(&fs->disc_name, record + 22u);
    return true;
+}
+
+static bool arc_filecore_new(ArcFileCore *fs)
+{
+   /* Launch discovery retains its primary-copy policy. C-11c's independent
+    * backup parse is confined to the allocation view below. */
+   return arc_filecore_new_at(fs, 0u);
 }
 
 static bool arc_f_record_valid(const uint8_t record[60])
@@ -411,6 +433,299 @@ static uint32_t arc_map_bits(const uint8_t *map, unsigned bit,
    for (unsigned i = 0u; i < count; ++i)
       value |= (uint32_t)((map[(bit + i) >> 3u] >> ((bit + i) & 7u)) & 1u) << i;
    return value;
+}
+
+static void arc_mark_free_tracks(bool free_track[ARC_JFD_PDD5_TRACKS],
+                                 size_t first, size_t length)
+{
+   size_t last = first + length;
+   for (unsigned t = 0u; t < ARC_JFD_PDD5_TRACKS; ++t)
+      if (first < ((size_t)t + 1u) * 5120u &&
+          (size_t)t * 5120u < last) free_track[t] = true;
+}
+
+static bool arc_jfd_new_free_copy(ArcFileCore *fs, unsigned copy,
+                                  bool free_track[ARC_JFD_PDD5_TRACKS])
+{
+   if (!arc_filecore_new_at(fs, copy)) return false;
+   unsigned start = 512u;
+   unsigned end = 512u + (8192u - fs->zone_spare - 480u);
+   unsigned link = arc_map_bits(fs->map, 8u, fs->id_length) & 0x7fffu;
+   unsigned free_at = link ? 8u + link : 0u;
+   if (free_at && (free_at < start || free_at >= end)) return false;
+   while (start < end)
+   {
+      if (start + fs->id_length >= end || (free_at && free_at < start))
+         return false;
+      unsigned id = arc_map_bits(fs->map, start, fs->id_length);
+      unsigned stop = start + fs->id_length;
+      while (stop < end && !((fs->map[stop >> 3u] >> (stop & 7u)) & 1u))
+         ++stop;
+      if (stop >= end) return false;
+      size_t length = (size_t)stop + 1u - start;
+      if (start == free_at)
+      {
+         size_t first = ((size_t)start - 512u) <<
+                         fs->log2_bytes_per_map_bit;
+         size_t bytes = length << fs->log2_bytes_per_map_bit;
+         if (first > fs->disc_size || bytes > fs->disc_size - first)
+            return false;
+         arc_mark_free_tracks(free_track, first, bytes);
+         free_at = id ? free_at + (id & 0x7fffu) : 0u;
+         if (free_at && free_at <= stop) return false;
+      }
+      start = stop + 1u;
+   }
+   return !free_at;
+}
+
+bool arc_jfd_base_free_tracks(const ArcJfdImage *image,
+                              bool free_track[ARC_JFD_PDD5_TRACKS])
+{
+   if (!image || !free_track) return false;
+   memset(free_track, 0, sizeof(bool) * ARC_JFD_PDD5_TRACKS);
+   ArcFileCore fs = {0};
+   fs.reader.jfd = image;
+   fs.reader.base_only = true;
+   if (arc_filecore_old(&fs, ARC_GEOMETRY_800K_D))
+   {
+      unsigned previous_end = 0u;
+      unsigned total = (unsigned)(fs.disc_size / 256u);
+      for (unsigned at = 0u; at < fs.map[510]; at += 3u)
+      {
+         unsigned first = arc_le24(fs.map + at);
+         unsigned length = arc_le24(fs.map + 256u + at);
+         if (!length || first < previous_end || first > total ||
+             length > total - first) return false;
+         arc_mark_free_tracks(free_track, (size_t)first * 256u,
+                              (size_t)length * 256u);
+         previous_end = first + length;
+      }
+      return true;
+   }
+   memset(fs.map, 0, sizeof(fs.map));
+   return arc_jfd_new_free_copy(&fs, 0u, free_track);
+}
+
+/* C-11c uses FileCore's bounded map checks, but only captured sectors and
+ * committed replacements may supply a map. A virtual zero sector is never
+ * input to this parser. The 160 byte result is an in-memory view, not a store
+ * format field. */
+static void arc_map_mark_bytes(uint8_t mask[ARC_JFD_PDD5_TRACKS],
+                               size_t first, size_t length)
+{
+   if (!length) return;
+   size_t last = first + length - 1u;
+   size_t start_slot = first / 1024u, end_slot = last / 1024u;
+   if (end_slot >= ARC_JFD_PDD5_SLOTS) end_slot = ARC_JFD_PDD5_SLOTS - 1u;
+   for (size_t slot = start_slot; slot <= end_slot; ++slot)
+      mask[slot / ARC_JFD_PDD5_IDS] |=
+         (uint8_t)(1u << (slot % ARC_JFD_PDD5_IDS));
+}
+
+static bool arc_jfd_old_allocation(const uint8_t map[1024],
+                                   uint8_t mask[ARC_JFD_PDD5_TRACKS])
+{
+   ArcFileCore fs = {0};
+   fs.reader.raw = map; fs.reader.raw_size = 1024u;
+   if (!arc_filecore_old(&fs, ARC_GEOMETRY_800K_D)) return false;
+   uint16_t free_bytes[ARC_JFD_PDD5_SLOTS] = {0};
+   unsigned previous_end = 0u;
+   unsigned total = (unsigned)(fs.disc_size / 256u);
+   for (unsigned at = 0u; at < fs.map[510]; at += 3u)
+   {
+      unsigned first = arc_le24(fs.map + at);
+      unsigned count = arc_le24(fs.map + 256u + at);
+      if (!count || first < previous_end || first > total ||
+          count > total - first) return false;
+      size_t begin = (size_t)first * 256u;
+      size_t end = begin + (size_t)count * 256u;
+      for (size_t slot = begin / 1024u; slot < (end + 1023u) / 1024u &&
+           slot < ARC_JFD_PDD5_SLOTS; ++slot)
+      {
+         size_t lo = slot * 1024u > begin ? slot * 1024u : begin;
+         size_t hi = (slot + 1u) * 1024u < end ?
+                     (slot + 1u) * 1024u : end;
+         if (hi > lo) free_bytes[slot] += (uint16_t)(hi - lo);
+      }
+      previous_end = first + count;
+   }
+   memset(mask, 0, ARC_JFD_PDD5_TRACKS);
+   for (size_t slot = 0u; slot < ARC_JFD_PDD5_SLOTS; ++slot)
+   {
+      size_t begin = slot * 1024u;
+      size_t in_disc = begin < fs.disc_size ? fs.disc_size - begin : 0u;
+      if (in_disc > 1024u) in_disc = 1024u;
+      if (in_disc > free_bytes[slot])
+         mask[slot / ARC_JFD_PDD5_IDS] |=
+            (uint8_t)(1u << (slot % ARC_JFD_PDD5_IDS));
+   }
+   return true;
+}
+
+static bool arc_jfd_new_allocation(const uint8_t map[1024],
+                                   const uint8_t *base_record,
+                                   uint8_t mask[ARC_JFD_PDD5_TRACKS])
+{
+   ArcFileCore fs = {0};
+   fs.reader.raw = map; fs.reader.raw_size = 1024u;
+   /* The boot option at byte 7 can change and is range-checked by
+    * arc_filecore_new. All other layout bytes 0–19 must match the base;
+    * disc ID and name after byte 19 can change independently. */
+   if (!arc_filecore_new(&fs) ||
+       (base_record &&
+        (memcmp(map + 4u, base_record, 7u) ||
+         memcmp(map + 12u, base_record + 8u, 12u)))) return false;
+   unsigned start = 512u;
+   unsigned end = 512u + 8192u - fs.zone_spare - 480u;
+   unsigned disc_bits = (unsigned)(fs.disc_size >> fs.log2_bytes_per_map_bit);
+   unsigned link = arc_map_bits(map, 8u, fs.id_length) & 0x7fffu;
+   unsigned free_at = link ? 8u + link : 0u;
+   if (free_at && (free_at < start || free_at >= end)) return false;
+   memset(mask, 0, ARC_JFD_PDD5_TRACKS);
+   while (start < end)
+   {
+      if (start + fs.id_length >= end || (free_at && free_at < start))
+         return false;
+      unsigned id = arc_map_bits(map, start, fs.id_length);
+      unsigned stop = start + fs.id_length;
+      while (stop < end && !((map[stop >> 3u] >> (stop & 7u)) & 1u)) ++stop;
+      if (stop >= end) return false;
+      unsigned count = stop + 1u - start;
+      if (start == free_at)
+      {
+         free_at = id ? free_at + (id & 0x7fffu) : 0u;
+         if (free_at && free_at <= stop) return false;
+      }
+      else if (id >= 2u)
+      {
+         unsigned first_bit = start - 512u;
+         if (first_bit >= disc_bits || count > disc_bits - first_bit)
+            return false;
+         arc_map_mark_bytes(mask,
+            (size_t)first_bit << fs.log2_bytes_per_map_bit,
+            (size_t)count << fs.log2_bytes_per_map_bit);
+      }
+      /* ID 1 is a defect or beyond-disc extent, never an object. */
+      start = stop + 1u;
+   }
+   return !free_at;
+}
+
+static int arc_jfd_map_copy_index(const ArcJfdImage *image, size_t index)
+{
+   if (!image || !image->track_count) return -1;
+   const ArcJfdTrack *track = &image->tracks[0];
+   if (index < track->first_sector ||
+       index >= (size_t)track->first_sector + track->sector_count) return -1;
+   const ArcJfdSector *sector = &image->sectors[index];
+   return sector->density == 2u && sector->size == 1024u &&
+          sector->id <= 1u ? sector->id : -1;
+}
+
+bool arc_jfd_map_target(const ArcJfdImage *image, size_t index)
+{
+   int copy = arc_jfd_map_copy_index(image, index);
+   return image && image->overlay && image->overlay->map_kind &&
+      (copy == 0 || (copy == 1 && image->overlay->map_kind == 2u));
+}
+
+static bool arc_jfd_map_read(const ArcJfdImage *image, unsigned copy,
+                             bool base_only, size_t pending_index,
+                             const uint8_t *pending, uint8_t map[1024])
+{
+   ArcDiscReader reader = {0};
+   reader.jfd = image;
+   reader.base_only = base_only;
+   reader.captured_only = true;
+   if (!arc_reader_configure(&reader, ARC_GEOMETRY_800K_E)) return false;
+   if (pending && arc_jfd_map_copy_index(image, pending_index) == (int)copy)
+   { memcpy(map, pending, 1024u); return true; }
+   return arc_reader_sector(&reader, copy, map);
+}
+
+static bool arc_jfd_map_collect(const ArcJfdImage *image, bool base_only,
+                                size_t pending_index, const uint8_t *pending,
+                                uint8_t mask[ARC_JFD_PDD5_TRACKS])
+{
+   const ArcJfdOverlay *overlay = image->overlay;
+   uint8_t map[1024], copy_mask[ARC_JFD_PDD5_TRACKS];
+   bool valid = false;
+   memset(mask, 0, ARC_JFD_PDD5_TRACKS);
+   unsigned copies = overlay->map_kind == 2u ? 2u : 1u;
+   for (unsigned copy = 0u; copy < copies; ++copy)
+   {
+      if (!arc_jfd_map_read(image, copy, base_only, pending_index,
+                            pending, map)) continue;
+      bool okay = overlay->map_kind == 1u ?
+         arc_jfd_old_allocation(map, copy_mask) :
+         arc_jfd_new_allocation(map, overlay->map_record, copy_mask);
+      if (!okay) continue;
+      valid = true;
+      for (unsigned t = 0u; t < ARC_JFD_PDD5_TRACKS; ++t)
+         mask[t] |= copy_mask[t];
+   }
+   return valid;
+}
+
+void arc_jfd_map_refresh(ArcJfdImage *image)
+{
+   if (!image || !image->overlay) return;
+   ArcJfdOverlay *overlay = image->overlay;
+   memset(overlay->allocation_mask, 0, sizeof(overlay->allocation_mask));
+   overlay->map_valid = false;
+   if (overlay->map_enabled && overlay->map_kind)
+      overlay->map_valid = arc_jfd_map_collect(image, false, SIZE_MAX, NULL,
+                                               overlay->allocation_mask);
+   if (overlay->map_enabled && !overlay->map_valid &&
+       !overlay->map_unavailable_logged)
+   {
+      overlay->map_unavailable_logged = true;
+      if (overlay->log_map_unavailable)
+         overlay->log_map_unavailable(overlay->image_number);
+   }
+}
+
+void arc_jfd_map_prepare(ArcJfdImage *image)
+{
+   if (!image || !image->overlay) return;
+   ArcJfdOverlay *overlay = image->overlay;
+   overlay->map_kind = 0u;
+   memset(overlay->map_record, 0, sizeof(overlay->map_record));
+   if (overlay->map_enabled)
+   {
+      uint8_t map[1024], ignored[ARC_JFD_PDD5_TRACKS];
+      if (arc_jfd_map_read(image, 0u, true, SIZE_MAX, NULL, map) &&
+          arc_jfd_old_allocation(map, ignored)) overlay->map_kind = 1u;
+      else for (unsigned copy = 0u; copy < 2u; ++copy)
+         if (arc_jfd_map_read(image, copy, true, SIZE_MAX, NULL, map) &&
+             arc_jfd_new_allocation(map, NULL, ignored))
+         {
+            overlay->map_kind = 2u;
+            memcpy(overlay->map_record, map + 4u, 60u);
+            break;
+         }
+   }
+   arc_jfd_map_refresh(image);
+}
+
+bool arc_jfd_map_write_veto(const ArcJfdImage *image, size_t index,
+                            const uint8_t *pending)
+{
+   if (!image || !image->overlay || !image->overlay->map_enabled ||
+       !image->overlay->map_valid ||
+       !arc_jfd_map_target(image, index) || !pending) return false;
+   const ArcJfdOverlay *overlay = image->overlay;
+   bool marked = false;
+   for (unsigned t = 0u; t < ARC_JFD_PDD5_TRACKS; ++t)
+      marked |= overlay->probe_mask[t] != 0u;
+   if (!marked) return false;
+   uint8_t candidate[ARC_JFD_PDD5_TRACKS];
+   if (!arc_jfd_map_collect(image, false, index, pending, candidate))
+      return false;
+   for (unsigned t = 0u; t < ARC_JFD_PDD5_TRACKS; ++t)
+      if (candidate[t] & overlay->probe_mask[t]) return true;
+   return false;
 }
 
 static bool arc_f_map_resolve(const ArcFileCore *fs, uint32_t address,

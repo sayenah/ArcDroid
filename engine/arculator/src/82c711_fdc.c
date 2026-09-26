@@ -13,6 +13,7 @@
 #include "82c711_fdc.h"
 #include "config.h"
 #include "disc.h"
+#include "disc_jfd.h"
 #include "ioc.h"
 #include "timer.h"
 
@@ -403,8 +404,14 @@ void c82c711_fdc_write(uint16_t addr, uint8_t val, void *p)
 					fdc->head = fdc->params[2];
 					fdc->sector = fdc->params[3];
 					fdc->eot[curdrive] = fdc->params[4];
+					if (jfd_active(curdrive))
+						jfd_set_requested_ch(fdc->params[1], (fdc->params[0] >> 2u) & 1u);
 					if (fdc == fdc_p)
-						disc_writesector(curdrive, fdc->sector, fdc->track[curdrive], fdc->head, fdc->density);
+						disc_writesector(curdrive, fdc->sector, fdc->track[curdrive],
+						                 fdc->head, fdc->density,
+						                 fdc->params[4] <= 3u ? 128 << fdc->params[4] :
+						                 (jfd_active(curdrive) ? -2 : -1),
+						                 0);
 					timer_disable(&fdc->timer);
 					fdc->written = 0;
 					readflash[curdrive] = 1;
@@ -420,6 +427,8 @@ void c82c711_fdc_write(uint16_t addr, uint8_t val, void *p)
 					fdc->head = fdc->params[2];
 					fdc->sector = fdc->params[3];
 					fdc->eot[curdrive] = fdc->params[4];
+					if (jfd_active(curdrive))
+						jfd_set_requested_ch(fdc->params[1], (fdc->params[0] >> 2u) & 1u);
 					if (fdc == fdc_p)
 						disc_readsector(curdrive, fdc->sector, fdc->track[curdrive], fdc->head, fdc->density);
 					timer_disable(&fdc->timer);
@@ -614,8 +623,14 @@ static void c82c711_fdc_callback(void *p)
 			fdc->paramstogo=7;
 			return;
 		}
-		disc_writesector(curdrive, fdc->sector, fdc->track[curdrive], fdc->head, fdc->density);
-		c82711_fdc_fiq(1, fdc->p);
+		if (jfd_active(curdrive))
+			jfd_set_requested_ch(fdc->params[1], (fdc->params[0] >> 2u) & 1u);
+		disc_writesector(curdrive, fdc->sector, fdc->track[curdrive], fdc->head,
+		                 fdc->density,
+		                 fdc->params[4] <= 3u ? 128 << fdc->params[4] :
+		                 (jfd_active(curdrive) ? -2 : -1),
+		                 0);
+		if (!fdc->paramstogo) c82711_fdc_fiq(1, fdc->p);
 		return;
 		case 6: /*Read data*/
 //                rpclog("Read data %i\n", fdc->tc);
@@ -954,7 +969,9 @@ static int c82c711_fdc_getdata(int last, void *p)
 	FDC *fdc = (FDC *)p;
 	uint8_t temp;
 //        rpclog("Disc get data\n");
-	if (!fdc->written && !fdc->tc)
+	if (jfd_active(curdrive) ?
+	    ((fdc->tc && !last) || !fdc->written) :
+	    (!fdc->written && !fdc->tc))
 		return -1;
 	if (!last && !fdc->tc)
 		c82711_fdc_fiq(1, fdc->p);
@@ -1022,6 +1039,7 @@ static fdc_funcs_t c82c711_fdc_funcs =
 	.getdata        = c82c711_fdc_getdata,
 	.sectorid       = c82c711_fdc_sectorid,
 	.indexpulse     = c82c711_fdc_indexpulse
+	,.lostdata      = fdc_overrun
 };
 
 void c82c711_fdc_media_change(unsigned drive)

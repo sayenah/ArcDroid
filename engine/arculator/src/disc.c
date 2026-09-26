@@ -159,10 +159,12 @@ void disc_readsector(int drive, int sector, int track, int side, int density)
 		disc_notfound = 10000;
 }
 
-void disc_writesector(int drive, int sector, int track, int side, int density)
+void disc_writesector(int drive, int sector, int track, int side, int density,
+                      int requested_size, int deleted)
 {
 	if (drive_funcs[drive] && drive_funcs[drive]->writesector)
-		drive_funcs[drive]->writesector(drive, sector, track, side, density);
+		drive_funcs[drive]->writesector(drive, sector, track, side, density,
+		                               requested_size, deleted);
 	else
 	{
 		disc_notfound = 0;

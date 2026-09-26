@@ -1101,6 +1101,23 @@ static void test_launch_discovery_and_builder(const char *fixture_directory)
       assert(discovery.readable && discovery.candidate_count == 1u &&
              discovery.application_count == 1u && discovery.target_index == 0 &&
              test_guest_name_equal(&discovery.candidates[0].name, "!Demo"));
+      if (index == 3u)
+      {
+         /* Discovery reads the committed sector view, while Off hides it. */
+         jfd.overlay = calloc(1u, sizeof(*jfd.overlay));
+         assert(jfd.overlay);
+         jfd.overlay->data = calloc(jfd.sector_count, sizeof(*jfd.overlay->data));
+         assert(jfd.overlay->data);
+         size_t first = jfd.tracks[0].first_sector;
+         jfd.overlay->data[first] = calloc(jfd.sectors[first].size, 1u);
+         assert(jfd.overlay->data[first]);
+         jfd.overlay->visible = true;
+         assert(arc_launch_discover(NULL, 0u, NULL, &jfd, &discovery) &&
+                !discovery.readable);
+         jfd.overlay->visible = false;
+         assert(arc_launch_discover(NULL, 0u, NULL, &jfd, &discovery) &&
+                discovery.readable && discovery.application_count == 1u);
+      }
       if (index == 0u)
       {
          unsigned first = jfd.tracks[0].first_sector;
@@ -1114,6 +1131,20 @@ static void test_launch_discovery_and_builder(const char *fixture_directory)
          jfd.sectors[first].id = 99u;
          assert(arc_launch_discover(NULL, 0u, NULL, &jfd, &discovery) && !discovery.readable);
       }
+      arc_jfd_free(&jfd);
+      free(bytes);
+   }
+   for (unsigned case_index = 0u; case_index < 3u; ++case_index)
+   {
+      const char *name = case_index == 0u ? "write-slow.jfd" :
+         case_index == 1u ? "write-duplicate.jfd" : "write-shared.jfd";
+      char path[128];
+      snprintf(path, sizeof(path), "jfd-family/%s", name);
+      uint8_t *bytes = read_fixture(fixture_directory, path, &size);
+      ArcJfdImage jfd;
+      assert(arc_jfd_parse(bytes, size, &jfd, error, sizeof(error)));
+      for (size_t sector = 0u; sector < jfd.sector_count; ++sector)
+         assert(!arc_jfd_sector_write_eligible(&jfd, sector));
       arc_jfd_free(&jfd);
       free(bytes);
    }

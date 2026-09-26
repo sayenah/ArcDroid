@@ -152,13 +152,25 @@ void wd1770_write(uint16_t addr, uint8_t val)
 			readflash[curdrive] = 1;
 			break;
 			case 0xA: /*Write sector*/
+			case 0xB: /*Write multiple sectors*/
+			if ((val >> 4) == 0xB &&
+			    (!drive_funcs[curdrive] || !drive_funcs[curdrive]->multiwrite ||
+			     writeprot[curdrive]))
+			{
+				timer_disable(&wd1770.timer);
+				ioc_fiq(IOC_FIQ_DISC_IRQ);
+				wd1770.status = 0x90;
+				wd1770_spindown(NULL);
+				break;
+			}
 			wd1770.status = 0x80 | 0x1;
 //Carlo Concari: wait for first data byte before starting sector write
 			wd1770.written = 0;
 			wd1770.index_count = 0;
 			wd1770.rnf_detection = 1;
 			if (!fdc_overridden)
-				disc_writesector(curdrive, wd1770.sector, wd1770.track, wd1770.curside, wd1770.density);
+				disc_writesector(curdrive, wd1770.sector, wd1770.track, wd1770.curside,
+				                 wd1770.density, -1, (val & 1) != 0);
 			if (wd1770.status & 1)
 			{
 				ioc_fiq(IOC_FIQ_DISC_DATA);
@@ -329,6 +341,21 @@ static void wd1770_callback(void *p)
 		wd1770.status = 0x80;
 		ioc_fiq(IOC_FIQ_DISC_IRQ);
 		break;
+		case 0xB: /*Write multiple sectors, one committed sector at a time.*/
+		wd1770.sector++;
+		wd1770.status = 0x81;
+		wd1770.written = 0;
+		wd1770.index_count = 0;
+		wd1770.rnf_detection = 1;
+		if (!fdc_overridden)
+			disc_writesector(curdrive, wd1770.sector, wd1770.track,
+			                 wd1770.curside, wd1770.density, -1,
+			                 (wd1770.command & 1) != 0);
+		if (wd1770.status & 1) {
+			ioc_fiq(IOC_FIQ_DISC_DATA);
+			wd1770.status |= 2;
+		}
+		return; /* Keep RNF armed while searching for the next sector. */
 		case 0xC: /*Read address*/
 		wd1770.status = 0x80 | (wd1770.status & 4);
 		ioc_fiq(IOC_FIQ_DISC_IRQ);
@@ -438,6 +465,17 @@ static void wd1770_writeprotect(void *p)
 	disc_stop(curdrive);
 }
 
+static void wd1770_lostdata(void *p)
+{
+	(void)p;
+	timer_disable(&wd1770.timer);
+	wd1770.rnf_detection = wd1770.index_count = wd1770.written = 0;
+	ioc_fiqc(IOC_FIQ_DISC_DATA | IOC_FIQ_DISC_IRQ);
+	ioc_fiq(IOC_FIQ_DISC_IRQ);
+	wd1770.status = 0x84;
+	disc_stop(curdrive);
+}
+
 void wd1770_media_change(void)
 {
 	timer_disable(&wd1770.timer);
@@ -466,5 +504,6 @@ static fdc_funcs_t wd1770_fdc_funcs =
 	.writeprotect   = wd1770_writeprotect,
 	.getdata        = wd1770_getdata,
 	.sectorid       = NULL,
-	.indexpulse     = wd1770_fdc_indexpulse
+	.indexpulse     = wd1770_fdc_indexpulse,
+	.lostdata      = wd1770_lostdata
 };

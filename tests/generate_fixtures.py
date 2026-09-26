@@ -81,6 +81,9 @@ class Arm2:
     def cmp_imm(self, rn: int, value: int) -> None:
         self.emit(0xE3500000 | (rn << 16) | self._imm(value))
 
+    def cmp_reg(self, rn: int, rm: int) -> None:
+        self.emit(0xE1500000 | (rn << 16) | rm)
+
     def swp(self, rd: int, rm: int, rn: int, byte: bool = False) -> None:
         self.emit(0xE1000090 | (0x00400000 if byte else 0) |
                   (rn << 16) | (rd << 12) | rm)
@@ -92,6 +95,11 @@ class Arm2:
 
     def ldr(self, rd: int, rn: int, offset: int = 0, byte: bool = False) -> None:
         self.emit(0xE5900000 | (0x00400000 if byte else 0) |
+                  (rn << 16) | (rd << 12) | offset)
+
+    def ldr_post(self, rd: int, rn: int, offset: int = 4,
+                 byte: bool = False) -> None:
+        self.emit(0xE4900000 | (0x00400000 if byte else 0) |
                   (rn << 16) | (rd << 12) | offset)
 
     def str(self, rd: int, rn: int, offset: int = 0, byte: bool = False) -> None:
@@ -121,8 +129,8 @@ class Arm2:
             rd = (self.words[index] >> 12) & 0xF
             self.words[index] = 0xE59F0000 | (rd << 12) | offset
             self.words.append(value)
-        if len(self.words) * 4 >= 4096:
-            raise ValueError("validation program exceeds its reserved page")
+        if len(self.words) * 4 >= 0x1EE0:
+            raise ValueError("validation program exceeds its reserved ROM area")
         return b"".join(struct.pack("<I", word) for word in self.words)
 
 
@@ -146,12 +154,224 @@ CHOOSER_VIDC_MODE = (
 )
 
 
-def build_rom(media_exerciser: bool = False) -> bytearray:
+def build_rom(media_exerciser: bool = False,
+              jfd_save_probe: bool = False, newio_save_probe: bool = False,
+              write_sector: int = 1,
+              write_payload: bytes | None = None,
+              creation_probe: bool = False,
+              virtual_merge_probe: bool = False,
+              merge_read_sector: int = 3,
+              allocation_mode: str | None = None) -> bytearray:
+    if not 0 <= write_sector <= 4 or (write_payload is not None and
+                                      len(write_payload) != 1024):
+        raise ValueError("the synthetic D-format writer needs one full sector")
+    if virtual_merge_probe and not (jfd_save_probe and creation_probe):
+        raise ValueError("the virtual merge needs the JFD creation probe")
+    if not 0 <= merge_read_sector <= 4 or (not virtual_merge_probe and
+                                         merge_read_sector != 3):
+        raise ValueError("the virtual merge read needs a P-DD5 sector")
+    if allocation_mode not in (None, "veto", "claim", "read") or (allocation_mode
+            and (not jfd_save_probe or write_payload is None)):
+        raise ValueError("allocation ROM needs a mode, JFD result and map bytes")
     rom = bytearray(b"\xFF" * ROM_SIZE)
     rom[0:4] = struct.pack("<I", 0xE59FF000)  # ldr pc, [pc]
     rom[8:12] = struct.pack("<I", 0x03800020)
     a = Arm2(0x03800020)
 
+    def poison_merge_buffer(prefix: str) -> None:
+        # A missing read must not inherit a zero-filled machine RAM page.
+        a.ldr_const(10, 0x00012000)
+        a.ldr_const(11, 1024)
+        a.mov(7, 0xA5)
+        a.label(prefix + "_poison")
+        a.str_post(7, 10, 1, byte=True)
+        a.subs_imm(11, 11, 1)
+        a.branch(prefix + "_poison", "ne")
+
+    def validate_merge_read(prefix: str, pristine: str,
+                            written: str, other: str) -> None:
+        # Verify all bytes in the ROM. The host's effective-view inspection
+        # alone cannot prove that the guest received a successful read.
+        a.ldr_const(10, 0x00012000)
+        a.ldr(7, 10, byte=True)
+        a.cmp_imm(7, 0)
+        a.branch(prefix + "_zero", "eq")
+        a.cmp_imm(7, 0x5A)
+        a.branch(prefix + "_partial", "eq")
+        a.branch(other)
+        a.label(prefix + "_zero")
+        a.ldr_const(11, 1024)
+        a.label(prefix + "_zero_loop")
+        a.ldr_post(7, 10, 1, byte=True)
+        a.cmp_imm(7, 0)
+        a.branch(other, "ne")
+        a.subs_imm(11, 11, 1)
+        a.branch(prefix + "_zero_loop", "ne")
+        a.branch(pristine)
+        a.label(prefix + "_partial")
+        a.ldr_const(10, 0x00012000)
+        a.mov(11, 128)
+        a.label(prefix + "_partial_head")
+        a.ldr_post(7, 10, 1, byte=True)
+        a.cmp_imm(7, 0x5A)
+        a.branch(other, "ne")
+        a.subs_imm(11, 11, 1)
+        a.branch(prefix + "_partial_head", "ne")
+        a.ldr_const(11, 896)
+        a.label(prefix + "_partial_tail")
+        a.ldr_post(7, 10, 1, byte=True)
+        a.cmp_imm(7, 0)
+        a.branch(other, "ne")
+        a.subs_imm(11, 11, 1)
+        a.branch(prefix + "_partial_tail", "ne")
+        a.branch(written)
+
+    def allocation_new_read(prefix: str, expect_rnf: bool) -> None:
+        a.ldr_const(0, 0x03310FD4)
+        for value in (0x06, 0, 0, 0, 3, 3, 3, 0x1B, 0xFF):
+            a.mov(1, value); a.str(1, 0, byte=True)
+        if not expect_rnf:
+            a.ldr_const(2, 0x03200030)
+            a.ldr_const(3, 0x03012000)
+            a.ldr_const(5, 1024)
+            a.ldr_const(8, 250000)
+            a.label(prefix + "_byte_wait")
+            a.ldr(7, 2, byte=True)
+            a.tst_imm(7, 1); a.branch(prefix + "_byte", "ne")
+            a.subs_imm(8, 8, 1)
+            a.branch(prefix + "_byte_wait", "ne")
+            a.branch("alloc_other")
+            a.label(prefix + "_byte")
+            a.ldr_const(8, 250000)
+            a.subs_imm(5, 5, 1)
+            a.branch(prefix + "_last", "eq")
+            a.ldr(7, 3, byte=True)
+            a.cmp_imm(7, 0); a.branch("alloc_other", "ne")
+            a.branch(prefix + "_byte_wait")
+            a.label(prefix + "_last")
+            a.ldr_const(3, 0x0302A000)
+            a.ldr(7, 3, byte=True)
+            a.cmp_imm(7, 0); a.branch("alloc_other", "ne")
+        a.ldr_const(2, 0x03200020)
+        a.ldr_const(8, 500000)
+        a.label(prefix + "_irq")
+        a.ldr(7, 2, byte=True)
+        a.tst_imm(7, 0x10); a.branch(prefix + "_result", "ne")
+        a.subs_imm(8, 8, 1); a.branch(prefix + "_irq", "ne")
+        a.branch("alloc_other")
+        a.label(prefix + "_result")
+        a.ldr_const(3, 0x03310FD0); a.ldr(7, 3, byte=True)
+        a.ldr(4, 0, byte=True)  # ST0
+        a.ldr(7, 0, byte=True)  # ST1
+        if expect_rnf:
+            a.cmp_imm(4, 0x40); a.branch("alloc_other", "ne")
+            a.cmp_imm(7, 0x05); a.branch("alloc_other", "ne")
+        else:
+            a.cmp_imm(4, 0); a.branch("alloc_other", "ne")
+            a.cmp_imm(7, 0); a.branch("alloc_other", "ne")
+        for _ in range(5): a.ldr(7, 0, byte=True)
+
+    def allocation_new_write(prefix: str, expect_veto: bool) -> None:
+        a.ldr_const(0, 0x03310FD4)
+        for value in (0x05, 0, 0, 0, 0, 3, 0, 0x1B, 0xFF):
+            a.mov(1, value); a.str(1, 0, byte=True)
+        a.ldr_const(2, 0x03200030)
+        a.ldr_const(3, 0x03012000)
+        a.ldr_const(10, 0x03802000)
+        a.ldr_const(5, 1024)
+        a.ldr_const(8, 250000)
+        a.label(prefix + "_byte_wait")
+        a.ldr(7, 2, byte=True)
+        a.tst_imm(7, 1); a.branch(prefix + "_byte", "ne")
+        a.subs_imm(8, 8, 1); a.branch(prefix + "_byte_wait", "ne")
+        a.branch("alloc_other")
+        a.label(prefix + "_byte")
+        a.ldr_const(8, 250000)
+        a.ldr_post(7, 10, 1, byte=True)
+        a.subs_imm(5, 5, 1)
+        a.branch(prefix + "_last", "eq")
+        a.str(7, 3, byte=True)
+        a.branch(prefix + "_byte_wait")
+        a.label(prefix + "_last")
+        a.ldr_const(3, 0x0302A000); a.str(7, 3, byte=True)
+        a.ldr_const(2, 0x03200020)
+        a.ldr_const(8, 500000)
+        a.label(prefix + "_irq")
+        a.ldr(7, 2, byte=True)
+        a.tst_imm(7, 0x10); a.branch(prefix + "_result", "ne")
+        a.subs_imm(8, 8, 1); a.branch(prefix + "_irq", "ne")
+        a.branch("alloc_other")
+        a.label(prefix + "_result")
+        a.ldr_const(3, 0x03310FD0); a.ldr(7, 3, byte=True)
+        a.ldr(4, 0, byte=True)
+        a.ldr(7, 0, byte=True)
+        a.cmp_imm(4, 0x40 if expect_veto else 0)
+        a.branch("alloc_other", "ne")
+        a.cmp_imm(7, 0x20 if expect_veto else 0)
+        a.branch("alloc_other", "ne")
+        for _ in range(5): a.ldr(7, 0, byte=True)
+
+    def allocation_wd_read(prefix: str, expect_rnf: bool) -> None:
+        a.ldr_const(0, 0x03310000)
+        a.mov(1, 3); a.str(1, 0, 8, byte=True)
+        a.mov(1, 0x80); a.str(1, 0, byte=True)
+        a.ldr_const(5, 1024)
+        a.ldr_const(8, 500000)
+        a.label(prefix + "_wait")
+        a.ldr(4, 0, byte=True)
+        if not expect_rnf:
+            a.tst_imm(4, 2); a.branch(prefix + "_byte", "ne")
+        a.tst_imm(4, 1); a.branch(prefix + "_done", "eq")
+        a.subs_imm(8, 8, 1); a.branch(prefix + "_wait", "ne")
+        a.branch("alloc_other")
+        if not expect_rnf:
+            a.label(prefix + "_byte")
+            a.ldr(7, 0, 12, byte=True)
+            a.cmp_imm(7, 0); a.branch("alloc_other", "ne")
+            a.subs_imm(5, 5, 1)
+            a.ldr_const(8, 500000)
+            a.branch(prefix + "_tail", "eq")
+            a.branch(prefix + "_wait")
+            a.label(prefix + "_tail")
+            a.ldr(4, 0, byte=True)
+            a.tst_imm(4, 1); a.branch(prefix + "_done", "eq")
+            a.subs_imm(8, 8, 1); a.branch(prefix + "_tail", "ne")
+            a.branch("alloc_other")
+        a.label(prefix + "_done")
+        a.cmp_imm(4, 0x10 if expect_rnf else 0x80)
+        a.branch("alloc_other", "ne")
+        if not expect_rnf:
+            a.cmp_imm(5, 0); a.branch("alloc_other", "ne")
+
+    def allocation_wd_write(prefix: str, expect_veto: bool) -> None:
+        a.ldr_const(0, 0x03310000)
+        a.mov(1, 0); a.str(1, 0, 8, byte=True)
+        a.mov(1, 0xA0); a.str(1, 0, byte=True)
+        a.ldr_const(10, 0x03802000)
+        a.ldr_const(5, 1024)
+        a.ldr_const(8, 500000)
+        a.label(prefix + "_wait")
+        a.ldr(4, 0, byte=True)
+        a.tst_imm(4, 2); a.branch(prefix + "_byte", "ne")
+        a.tst_imm(4, 1); a.branch(prefix + "_done", "eq")
+        a.subs_imm(8, 8, 1); a.branch(prefix + "_wait", "ne")
+        a.branch("alloc_other")
+        a.label(prefix + "_byte")
+        a.ldr_post(7, 10, 1, byte=True)
+        a.str(7, 0, 12, byte=True)
+        a.subs_imm(5, 5, 1)
+        a.ldr_const(8, 500000)
+        a.branch(prefix + "_tail", "eq")
+        a.branch(prefix + "_wait")
+        a.label(prefix + "_tail")
+        a.ldr(4, 0, byte=True)
+        a.tst_imm(4, 1); a.branch(prefix + "_done", "eq")
+        a.subs_imm(8, 8, 1); a.branch(prefix + "_tail", "ne")
+        a.branch("alloc_other")
+        a.label(prefix + "_done")
+        a.cmp_imm(4, 0x08 if expect_veto else 0x80)
+        a.branch("alloc_other", "ne")
+        a.cmp_imm(5, 0); a.branch("alloc_other", "ne")
     a.ldr_const(0, 0x036E050C)  # 32 KiB pages, video DMA, flyback refresh
     a.mov(1, 0)
     a.str(1, 0)
@@ -239,6 +459,200 @@ def build_rom(media_exerciser: bool = False) -> bytearray:
     a.ldr(1, 2, byte=True); a.tst_imm(1, 0x10); a.branch("new_read_id_irq", "eq")
     a.ldr(1, 3, byte=True)
     for _ in range(7): a.ldr(1, 0, byte=True)
+    if allocation_mode:
+        if allocation_mode == "veto":
+            allocation_new_read("alloc_new_probe", True)
+        if allocation_mode != "read":
+            allocation_new_write("alloc_new_map", allocation_mode == "veto")
+        allocation_new_read("alloc_new_verify", allocation_mode == "veto")
+        a.mov(6, 0x20 if allocation_mode != "claim" else 0x10)
+        a.branch("fdc_done")
+    if newio_save_probe:
+        # Read the entire sector before writing. The last DMA access asserts
+        # TC, and the completed seven-byte result is checked on both paths.
+        if virtual_merge_probe:
+            poison_merge_buffer("save_new_merge")
+        for value in (0x06, 0, 0, 0, merge_read_sector if virtual_merge_probe
+                      else 3 if creation_probe else 1,
+                      3, 3 if creation_probe else 1, 0x1B, 0xFF):
+            a.mov(1, value); a.str(1, 0, byte=True)
+        a.ldr_const(2, 0x03200030)
+        a.ldr_const(3, 0x03012000)
+        a.ldr_const(5, 1024)
+        a.ldr_const(8, 250000)
+        a.mov(6, 0)
+        if virtual_merge_probe:
+            a.ldr_const(10, 0x00012000)
+        a.label("save_new_read_wait")
+        a.ldr(7, 2, byte=True)
+        a.tst_imm(7, 1); a.branch("save_new_read_byte", "ne")
+        a.ldr_const(1, 0x03200020)
+        a.ldr(7, 1, byte=True)
+        a.tst_imm(7, 0x10)
+        a.branch("save_new_missing" if creation_probe and not virtual_merge_probe
+                 else "save_new_other", "ne")
+        a.subs_imm(8, 8, 1); a.branch("save_new_read_wait", "ne")
+        a.branch("save_new_other")
+        a.label("save_new_read_byte")
+        a.ldr_const(8, 250000)
+        a.subs_imm(5, 5, 1)
+        a.branch("save_new_read_last", "eq")
+        a.ldr(7, 3, byte=True)
+        if virtual_merge_probe:
+            a.str_post(7, 10, 1, byte=True)
+        a.add_lsl(6, 6, 6, 5); a.eor(6, 6, 7)
+        a.branch("save_new_read_wait")
+        a.label("save_new_read_last")
+        a.ldr_const(3, 0x0302A000)
+        a.ldr(7, 3, byte=True)
+        if virtual_merge_probe:
+            a.str_post(7, 10, 1, byte=True)
+        a.add_lsl(6, 6, 6, 5); a.eor(6, 6, 7)
+        a.ldr_const(2, 0x03200020)
+        a.label("save_new_read_irq")
+        a.ldr(7, 2, byte=True); a.tst_imm(7, 0x10)
+        a.branch("save_new_read_irq", "eq")
+        a.ldr_const(3, 0x03310FD0); a.ldr(7, 3, byte=True)
+        a.ldr(4, 0, byte=True)
+        for _ in range(6): a.ldr(7, 0, byte=True)
+        a.tst_imm(4, 0xC0); a.branch("save_new_other", "ne")
+        if virtual_merge_probe:
+            validate_merge_read("save_new_merge", "save_new_pristine",
+                                "save_new_written", "save_new_other")
+        else:
+            a.ldr_const(7, 0 if creation_probe else 0xEEFAB800)
+            a.cmp_reg(6, 7)
+            a.branch("save_new_pristine", "eq")
+            a.ldr_const(7, 0x26568000)
+            a.cmp_reg(6, 7)
+            a.branch("save_new_written", "eq")
+            a.branch("save_new_other")
+        a.label("save_new_pristine")
+        a.mov(9, 1); a.branch("save_new_start_write")
+        a.label("save_new_written")
+        a.mov(9, 2)
+        a.label("save_new_start_write")
+        if creation_probe:
+            # A missing data sector is the pristine state. A committed one
+            # ends here, before *any* write, proving a fresh-store read.
+            a.cmp_imm(9, 2); a.branch("save_new_creation_saved", "eq")
+            a.branch("save_new_creation_prefix")
+            a.label("save_new_missing")
+            a.ldr_const(3, 0x03310FD0); a.ldr(7, 3, byte=True)
+            a.ldr(4, 0, byte=True)  # ST0
+            a.ldr(7, 0, byte=True)  # ST1
+            for _ in range(5): a.ldr(1, 0, byte=True)
+            a.tst_imm(4, 0x40); a.branch("save_new_other", "eq")
+            a.tst_imm(7, 0x04); a.branch("save_new_other", "eq")
+            a.mov(9, 1)
+            a.branch("save_new_creation_prefix")
+            a.label("save_new_creation_saved")
+            a.mov(6, 0x20); a.branch("fdc_done")
+            a.label("save_new_creation_wp")
+            a.mov(6, 0x40); a.branch("fdc_done")
+            a.label("save_new_creation_prefix")
+            if virtual_merge_probe:
+                a.ldr_const(10, 0x00012000)
+                a.mov(11, 128)
+                a.mov(7, 0x5A)
+                a.label("save_new_merge_update")
+                a.str_post(7, 10, 1, byte=True)
+                a.subs_imm(11, 11, 1)
+                a.branch("save_new_merge_update", "ne")
+            # RISC OS allocation ordering: map, directory, then omitted data.
+            # Prefix sectors already exist; only the final data ID is created.
+            for prefix_sector in (() if virtual_merge_probe else (0, 2)):
+                tag = f"save_new_create_{prefix_sector}"
+                for value in (0x05, 0, 0, 0, prefix_sector, 3,
+                              prefix_sector, 0x1B, 0xFF):
+                    a.mov(1, value); a.str(1, 0, byte=True)
+                a.ldr_const(2, 0x03200030)
+                a.ldr_const(3, 0x03012000)
+                a.ldr_const(5, 1024)
+                a.ldr_const(8, 250000)
+                a.mov(7, 0x5A)
+                a.label(tag + "_wait")
+                a.ldr(4, 2, byte=True)
+                a.tst_imm(4, 1); a.branch(tag + "_byte", "ne")
+                a.ldr_const(1, 0x03200020)
+                a.ldr(4, 1, byte=True)
+                a.tst_imm(4, 0x10); a.branch(tag + "_done", "ne")
+                a.subs_imm(8, 8, 1); a.branch(tag + "_wait", "ne")
+                a.branch("save_new_other")
+                a.label(tag + "_byte")
+                a.ldr_const(8, 250000)
+                a.subs_imm(5, 5, 1)
+                a.branch(tag + "_last", "eq")
+                a.str(7, 3, byte=True)
+                a.branch(tag + "_wait")
+                a.label(tag + "_last")
+                a.ldr_const(3, 0x0302A000)
+                a.str(7, 3, byte=True)
+                a.branch(tag + "_wait")
+                a.label(tag + "_done")
+                a.ldr_const(3, 0x03310FD0); a.ldr(7, 3, byte=True)
+                a.ldr(4, 0, byte=True)
+                a.ldr(7, 0, byte=True)
+                for _ in range(5): a.ldr(1, 0, byte=True)
+                a.cmp_imm(4, 0); a.branch(tag + "_ok", "eq")
+                a.tst_imm(4, 0x40); a.branch("save_new_other", "eq")
+                a.tst_imm(7, 0x02); a.branch("save_new_other", "eq")
+                a.branch("save_new_creation_wp")
+                a.label(tag + "_ok")
+                a.cmp_imm(5, 0); a.branch("save_new_other", "ne")
+
+        for value in (0x05, 0, 0, 0, 3 if creation_probe else 1,
+                      3, 3 if creation_probe else 1, 0x1B, 0xFF):
+            a.mov(1, value); a.str(1, 0, byte=True)
+        a.ldr_const(2, 0x03200030)
+        a.ldr_const(3, 0x03012000)
+        a.ldr_const(5, 1024)
+        a.ldr_const(8, 250000)
+        if virtual_merge_probe:
+            a.ldr_const(10, 0x00012000)
+        else:
+            a.mov(7, 0x5A)
+        a.label("save_new_write_wait")
+        a.ldr(4, 2, byte=True)
+        a.tst_imm(4, 1); a.branch("save_new_write_byte", "ne")
+        a.ldr_const(1, 0x03200020)
+        a.ldr(4, 1, byte=True)
+        a.tst_imm(4, 0x10); a.branch("save_new_write_done", "ne")
+        a.subs_imm(8, 8, 1); a.branch("save_new_write_wait", "ne")
+        a.branch("save_new_other")
+        a.label("save_new_write_byte")
+        a.ldr_const(8, 250000)
+        if virtual_merge_probe:
+            a.ldr_post(7, 10, 1, byte=True)
+        a.subs_imm(5, 5, 1)
+        a.branch("save_new_write_last", "eq")
+        a.str(7, 3, byte=True)
+        a.branch("save_new_write_wait")
+        a.label("save_new_write_last")
+        a.ldr_const(3, 0x0302A000)
+        a.str(7, 3, byte=True)
+        a.branch("save_new_write_wait")
+        a.label("save_new_write_done")
+        a.ldr_const(3, 0x03310FD0); a.ldr(7, 3, byte=True)
+        a.ldr(4, 0, byte=True)
+        a.ldr(7, 0, byte=True)
+        for _ in range(5): a.ldr(1, 0, byte=True)
+        a.cmp_imm(4, 0)
+        a.branch("save_new_write_ok", "eq")
+        a.tst_imm(4, 0x40); a.branch("save_new_other", "eq")
+        a.tst_imm(7, 2); a.branch("save_new_other", "eq")
+        a.cmp_imm(9, 1); a.branch("save_new_other", "ne")
+        a.cmp_imm(5, 1024); a.branch("save_new_other", "ne")
+        a.mov(6, 0x40); a.branch("fdc_done")
+        a.label("save_new_write_ok")
+        a.cmp_imm(5, 0); a.branch("save_new_other", "ne")
+        a.cmp_imm(9, 1); a.branch("save_new_first", "eq")
+        a.cmp_imm(9, 2); a.branch("save_new_other", "ne")
+        a.mov(6, 0x20); a.branch("fdc_done")
+        a.label("save_new_first")
+        a.mov(6, 0x10); a.branch("fdc_done")
+        a.label("save_new_other")
+        a.mov(6, 0x80); a.branch("fdc_done")
     for value in (0x06, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x1B, 0xFF):
         a.mov(1, value); a.str(1, 0, byte=True)
     a.ldr_const(2, 0x03200030)
@@ -281,32 +695,162 @@ def build_rom(media_exerciser: bool = False) -> bytearray:
     a.ldr_const(0, 0x03310000)
     a.mov(1, 0)
     a.str(1, 0, 4, byte=True)
+    if allocation_mode:
+        if allocation_mode == "veto":
+            allocation_wd_read("alloc_wd_probe", True)
+        if allocation_mode != "read":
+            allocation_wd_write("alloc_wd_map", allocation_mode == "veto")
+        allocation_wd_read("alloc_wd_verify", allocation_mode == "veto")
+        a.mov(6, 0x20 if allocation_mode != "claim" else 0x10)
+        a.branch("fdc_done")
+        a.label("alloc_other")
+        a.mov(6, 0x80)
+        a.branch("fdc_done")
+    if jfd_save_probe:
+        a.mov(1, merge_read_sector if virtual_merge_probe else
+              3 if creation_probe else 1)
     a.str(1, 0, 8, byte=True)
+    if virtual_merge_probe:
+        poison_merge_buffer("save_merge")
     a.mov(1, 0x80)
     a.str(1, 0, byte=True)
-    a.mov(5, 0x100)
+    if jfd_save_probe:
+        a.ldr_const(5, 1024)
+    else:
+        a.mov(5, 0x100)
     a.mov(6, 0)
+    if jfd_save_probe:
+        a.ldr_const(3, 250000)
+    if virtual_merge_probe:
+        a.ldr_const(10, 0x00012000)
     a.label("fdc_wait")
     a.ldr(7, 0, byte=True)
     a.tst_imm(7, 2)
-    a.branch("fdc_wait", "eq")
+    if jfd_save_probe:
+        a.branch("fdc_read_byte", "ne")
+        a.tst_imm(7, 1)
+        if creation_probe:
+            a.branch("save_other" if virtual_merge_probe else "save_absent", "eq")
+        else:
+            a.branch("save_other", "eq")
+        a.subs_imm(3, 3, 1)
+        a.branch("fdc_wait", "ne")
+        a.mov(4, 0xD0)
+        a.str(4, 0, byte=True)
+        a.branch("save_other")
+        a.label("fdc_read_byte")
+        a.ldr_const(3, 250000)
+    else:
+        a.branch("fdc_wait", "eq")
     a.ldr(7, 0, 12, byte=True)
+    if virtual_merge_probe:
+        a.str_post(7, 10, 1, byte=True)
+    if jfd_save_probe:
+        a.add_lsl(6, 6, 6, 5)
     a.eor(6, 6, 7)
     a.subs_imm(5, 5, 1)
     a.branch("fdc_wait", "ne")
+    if jfd_save_probe:
+        a.ldr_const(3, 250000)
     a.label("fdc_read_finish")
     a.ldr(4, 0, byte=True)
     a.tst_imm(4, 1)
-    a.branch("fdc_read_finish", "ne")
+    if jfd_save_probe:
+        a.branch("fdc_read_complete", "eq")
+        a.subs_imm(3, 3, 1)
+        a.branch("fdc_read_finish", "ne")
+        a.mov(4, 0xD0)
+        a.str(4, 0, byte=True)
+        a.branch("save_other")
+        a.label("fdc_read_complete")
+    else:
+        a.branch("fdc_read_finish", "ne")
+    if jfd_save_probe:
+        # Classify the full sector before writing. Ordinary save probes use
+        # rolling hashes; merge probes check every byte in guest RAM.
+        # An unknown read or controller error cannot report a save.
+        # WD1770 leaves bit 7 (ready) set on a successful completed command.
+        a.cmp_imm(4, 0x80)
+        a.branch("save_unknown", "ne")
+        if virtual_merge_probe:
+            validate_merge_read("save_merge", "save_pristine",
+                                "save_written", "save_unknown")
+        else:
+            a.ldr_const(7, 0 if creation_probe else 0xEEFAB800)
+            a.cmp_reg(6, 7)
+            a.branch("save_pristine", "eq")
+            a.ldr_const(7, 0x26568000)
+            a.cmp_reg(6, 7)
+            a.branch("save_written", "eq")
+            a.branch("save_unknown")
+        a.label("save_pristine")
+        a.mov(9, 1)
+        a.branch("save_read_done")
+        a.label("save_written")
+        a.mov(9, 2)
+        a.branch("save_read_done")
+        a.label("save_unknown")
+        a.mov(9, 3)
+        a.label("save_read_done")
+        if creation_probe:
+            a.cmp_imm(9, 2); a.branch("save_creation_saved", "eq")
+            a.branch("save_creation_prefix")
+            a.label("save_absent")
+            a.tst_imm(7, 0x10); a.branch("save_other", "eq")
+            a.mov(9, 1)
+            a.branch("save_creation_prefix")
+            a.label("save_creation_saved")
+            a.mov(6, 0x20); a.branch("fdc_done")
+            a.label("save_creation_prefix")
+            if virtual_merge_probe:
+                a.ldr_const(10, 0x00012000)
+                a.mov(11, 128)
+                a.mov(7, 0x5A)
+                a.label("save_merge_update")
+                a.str_post(7, 10, 1, byte=True)
+                a.subs_imm(11, 11, 1)
+                a.branch("save_merge_update", "ne")
+            # Map and directory writes precede allocation into missing ID 3.
+            for prefix_sector in (() if virtual_merge_probe else (0, 2)):
+                tag = f"save_create_{prefix_sector}"
+                a.mov(1, prefix_sector); a.str(1, 0, 8, byte=True)
+                a.mov(1, 0xA0); a.str(1, 0, byte=True)
+                a.ldr_const(5, 1024)
+                a.mov(7, 0x5A)
+                a.ldr_const(3, 250000)
+                a.label(tag + "_wait")
+                a.ldr(4, 0, byte=True)
+                a.tst_imm(4, 1); a.branch(tag + "_done", "eq")
+                a.tst_imm(4, 2); a.branch(tag + "_tick", "eq")
+                a.str(7, 0, 12, byte=True)
+                a.subs_imm(5, 5, 1)
+                a.branch(tag + "_done", "eq")
+                a.label(tag + "_tick")
+                a.subs_imm(3, 3, 1); a.branch(tag + "_wait", "ne")
+                a.mov(4, 0xD0); a.str(4, 0, byte=True)
+                a.branch("save_other")
+                a.label(tag + "_done")
+                a.ldr(4, 0, byte=True)
+                a.tst_imm(4, 1); a.branch(tag + "_done", "ne")
+                a.cmp_imm(4, 0x80); a.branch(tag + "_ok", "eq")
+                a.tst_imm(4, 0x40); a.branch("save_other", "eq")
+                a.mov(6, 0x40); a.branch("fdc_done")
+                a.label(tag + "_ok")
+                a.cmp_imm(5, 0); a.branch("save_other", "ne")
 
     # Write sector one through the same controller. The source ADF is immutable;
     # the harness verifies that only the content-addressed shadow changes.
-    a.mov(1, 1)
+    a.mov(1, write_sector)
     a.str(1, 0, 8, byte=True)
     a.mov(1, 0xA0)
     a.str(1, 0, byte=True)
     a.ldr_const(5, 1024)
-    a.mov(7, 0x5A)
+    if virtual_merge_probe:
+        a.ldr_const(10, 0x00012000)
+    elif write_payload is None:
+        a.mov(7, 0x5A)
+    else:
+        a.ldr_const(2, 0x03802000)
     if media_exerciser:
         a.ldr_const(3, 250000)
         a.label("fdc_write_wait")
@@ -315,12 +859,18 @@ def build_rom(media_exerciser: bool = False) -> bytearray:
         a.branch("fdc_write_done", "eq")
         a.tst_imm(4, 2)
         a.branch("fdc_write_tick", "eq")
+        if virtual_merge_probe:
+            a.ldr_post(7, 10, 1, byte=True)
+        elif write_payload is not None:
+            a.ldr_post(7, 2, 1, byte=True)
         a.str(7, 0, 12, byte=True)
         a.subs_imm(5, 5, 1)
         a.branch("fdc_write_done", "eq")
         a.label("fdc_write_tick")
         a.subs_imm(3, 3, 1)
         a.branch("fdc_write_wait", "ne")
+        if jfd_save_probe:
+            a.mov(9, 3)  # cancellation is never reported as a save
         a.mov(4, 0xD0)  # bounded cancellation if a reader never completes
         a.str(4, 0, byte=True)
         a.label("fdc_write_done")
@@ -329,13 +879,46 @@ def build_rom(media_exerciser: bool = False) -> bytearray:
         a.ldr(4, 0, byte=True)
         a.tst_imm(4, 2)
         a.branch("fdc_write_wait", "eq")
+        if virtual_merge_probe:
+            a.ldr_post(7, 10, 1, byte=True)
+        elif write_payload is not None:
+            a.ldr_post(7, 2, 1, byte=True)
         a.str(7, 0, 12, byte=True)
         a.subs_imm(5, 5, 1)
         a.branch("fdc_write_wait", "ne")
+    if not media_exerciser or jfd_save_probe:
         a.label("fdc_write_finish")
         a.ldr(4, 0, byte=True)
         a.tst_imm(4, 1)
         a.branch("fdc_write_finish", "ne")
+
+    if jfd_save_probe:
+        # Publish one final, steady 8-bpp palette index only after the write
+        # command ends. 0x10 = pristine read + accepted write; 0x20 = saved
+        # data read before this run's write; 0x40 = pristine read + WP refusal;
+        # 0x80 = any other read, write or controller outcome.
+        a.cmp_imm(4, 0x80)
+        a.branch("save_write_ok", "eq")
+        a.tst_imm(4, 0x40)
+        a.branch("save_other", "eq")
+        a.cmp_imm(9, 1)
+        a.branch("save_other", "ne")
+        a.mov(6, 0x40)
+        a.branch("fdc_done")
+        a.label("save_write_ok")
+        a.cmp_imm(5, 0)
+        a.branch("save_other", "ne")
+        a.cmp_imm(9, 1)
+        a.branch("save_first", "eq")
+        a.cmp_imm(9, 2)
+        a.branch("save_other", "ne")
+        a.mov(6, 0x20)
+        a.branch("fdc_done")
+        a.label("save_first")
+        a.mov(6, 0x10)
+        a.branch("fdc_done")
+        a.label("save_other")
+        a.mov(6, 0x80)
 
     a.label("fdc_done")
     # Expand the guest checksum to all bytes and paint 640x256 at 8 bpp. The
@@ -343,12 +926,14 @@ def build_rom(media_exerciser: bool = False) -> bytearray:
     # distinctive in native-frontend screenshots instead of a uniform colour.
     a.orr_lsl(6, 6, 6, 8)
     a.orr_lsl(6, 6, 6, 16)
-    a.ldr_const(7, 0x00FFFFFF)
+    if not jfd_save_probe:
+        a.ldr_const(7, 0x00FFFFFF)
     a.mov(1, 0)
     a.ldr_const(5, 40960)
     a.label("fill_video")
     a.str_post(6, 1)
-    a.eor(6, 6, 7)
+    if not jfd_save_probe:
+        a.eor(6, 6, 7)
     a.subs_imm(5, 5, 1)
     a.branch("fill_video", "ne")
 
@@ -404,6 +989,8 @@ def build_rom(media_exerciser: bool = False) -> bytearray:
     a.mov(9, 0)
     a.ldr_const(10, 250000)
     a.label("idle")
+    if jfd_save_probe:
+        a.branch("idle")  # the completed outcome cannot change with time
     a.ldr(0, 11, 0x20, byte=True)
     a.tst_imm(0, 0x80)
     a.branch("input_event", "ne")
@@ -483,6 +1070,8 @@ def build_rom(media_exerciser: bool = False) -> bytearray:
     marker = (b"ARCDROID ARMV2 MEDIA EXERCISER ROM v1\0" if media_exerciser
               else b"ARCDROID ARMV2 TEST ROM v2\0")
     rom[0x1F00:0x1F00 + len(marker)] = marker
+    if write_payload is not None:
+        rom[0x2000:0x2400] = write_payload
     return rom
 
 
@@ -1309,6 +1898,10 @@ def build_adffs_fixtures(output: Path) -> None:
     (output / "multi.m3u").write_text("eligible.jfd\nembedded-only.jfd\n")
     for disc in (1, 2, 3):
         image = adffs_jfd(123, disc=disc, count=4)
+        if disc == 1:
+            image = build_pdd5_jfd(bytes(819200), {0: list(range(5))},
+                                    title=b"ArcDroid synthetic install P-DD5")
+            struct.pack_into("<HHI", image, 12, disc, 4, 123)
         image[-1] = disc
         (output / f"install-{disc}.jfd").write_bytes(image)
     (output / "install.m3u").write_text(
@@ -1352,11 +1945,13 @@ def build_adffs_fixtures(output: Path) -> None:
 def build_jfd_family(descriptors: list[tuple[int, int, int, int, int, bytes | None]],
                      title: bytes = b"ArcDroid JFD family",
                      disk_payload: bytes | None = None,
-                     disk_geometry: str | None = None) -> bytearray:
+                     disk_geometry: str | None = None,
+                     extended: bool = False) -> bytearray:
     """Build one track-side from (time, B, density, id, C, payload)."""
     if disk_payload is not None and disk_geometry is not None:
         return _build_jfd_disk(disk_payload, disk_geometry, title, False)
-    track_offset, sector_offset = 304, 312
+    track_offset = 316 if extended else 304
+    sector_offset = track_offset + 8
     data_offset = sector_offset + len(descriptors) * 8 + 4
     payloads = bytearray()
     table = bytearray()
@@ -1376,6 +1971,8 @@ def build_jfd_family(descriptors: list[tuple[int, int, int, int, int, bytes | No
     struct.pack_into("<I", image, 8, len(image))
     struct.pack_into("<III", image, 24, track_offset, sector_offset, data_offset)
     image[48:48 + min(len(title), 256)] = title[:256]
+    if extended:
+        struct.pack_into("<I", image, 304, 2)
     struct.pack_into("<II", image, track_offset, 0, 0xFFFFFFFF)
     image[sector_offset:data_offset] = table
     image[data_offset:] = payloads
@@ -1928,6 +2525,56 @@ def _build_jfd_disk(payload: bytes, geometry: str,
     return image
 
 
+def build_pdd5_jfd(payload: bytes, tracks: dict[int, list[int]],
+                   times: dict[int, dict[int, int]] | None = None,
+                   track_count: int = 160,
+                   title: bytes = b"ArcDroid P-DD5 creation fixture") -> bytearray:
+    """Project-owned JFD with an explicit captured subset on each track-side."""
+    times = times or {}
+    track_offset = 316
+    sector_offset = track_offset + track_count * 4
+    table = bytearray()
+    data = bytearray()
+    starts = []
+    for track_side in range(track_count):
+        starts.append(len(table))
+        for sector_id in tracks.get(track_side, []):
+            time = times.get(track_side, {}).get(sector_id, 0xFF)
+            header = (time << 24) | (2 << 16) | (sector_id << 8) | 3
+            table += struct.pack("<II", header, len(data))
+            logical = (track_side * 5 + sector_id) * 1024
+            segment = payload[logical:logical + 1024] if sector_id < 5 \
+                else b""
+            data += segment if len(segment) == 1024 else \
+                bytes((sector_id,)) * 1024
+        table += struct.pack("<I", 0xFFFFFFFF)
+    data_offset = sector_offset + len(table)
+    image = bytearray(data_offset + len(data))
+    image[:4] = b"JFDI"
+    struct.pack_into("<I", image, 8, len(image))
+    struct.pack_into("<III", image, 24, track_offset, sector_offset, data_offset)
+    image[48:48 + min(len(title), 256)] = title[:256]
+    struct.pack_into("<I", image, 304, 2)
+    for index, start in enumerate(starts):
+        struct.pack_into("<I", image, track_offset + index * 4, start)
+    image[sector_offset:data_offset] = table
+    image[data_offset:] = data
+    return image
+
+
+def pdd5_descriptor_offset(image: bytearray, track_side: int,
+                           sector_id: int) -> int:
+    track_offset, sector_offset = struct.unpack_from("<II", image, 24)
+    relative = struct.unpack_from("<I", image, track_offset + track_side * 4)[0]
+    cursor = sector_offset + relative
+    while struct.unpack_from("<I", image, cursor)[0] != 0xFFFFFFFF:
+        header = struct.unpack_from("<I", image, cursor)[0]
+        if ((header >> 8) & 0xFF) == sector_id:
+            return cursor
+        cursor += 8
+    raise ValueError("P-DD5 descriptor is absent")
+
+
 def _zone_check(block: bytearray) -> int:
     sums = [0, 0, 0, 0]
     rover = 1020
@@ -2429,9 +3076,46 @@ def main() -> None:
         for filename, image in checkpoint_names.items():
             (args.checkpoint_name_discs / filename).write_bytes(image)
     media_rom = build_rom(media_exerciser=True)
+    jfd_save_rom = build_rom(media_exerciser=True, jfd_save_probe=True)
+    newio_jfd_save_rom = build_rom(media_exerciser=True, jfd_save_probe=True,
+                                   newio_save_probe=True)
     disc1 = build_adf(0xA5, b"ARCDROID MEDIA DISC ONE v1\0")
     disc2 = build_adf(0x3C, b"ARCDROID MEDIA DISC TWO v1\0")
     (args.output / "arcdroid-media-test.rom").write_bytes(media_rom)
+    (args.output / "arcdroid-jfd-save-test.rom").write_bytes(jfd_save_rom)
+    (args.output / "arcdroid-jfd-newio-save-test.rom").write_bytes(newio_jfd_save_rom)
+    (args.output / "arcdroid-jfd-create-test.rom").write_bytes(
+        build_rom(media_exerciser=True, jfd_save_probe=True,
+                  write_sector=3, creation_probe=True))
+    (args.output / "arcdroid-jfd-newio-create-test.rom").write_bytes(
+        build_rom(media_exerciser=True, jfd_save_probe=True,
+                  newio_save_probe=True, creation_probe=True))
+    (args.output / "arcdroid-jfd-merge-test.rom").write_bytes(
+        build_rom(media_exerciser=True, jfd_save_probe=True,
+                  write_sector=3, creation_probe=True, virtual_merge_probe=True,
+                  ))
+    (args.output / "arcdroid-jfd-newio-merge-test.rom").write_bytes(
+        build_rom(media_exerciser=True, jfd_save_probe=True,
+                  newio_save_probe=True, creation_probe=True,
+                  virtual_merge_probe=True))
+    # Fresh process proof reads committed data without a prior write.
+    (args.output / "arcdroid-jfd-merge-readback-test.rom").write_bytes(
+        build_rom(media_exerciser=True, jfd_save_probe=True,
+                  write_sector=3, creation_probe=True, virtual_merge_probe=True))
+    (args.output / "arcdroid-jfd-newio-merge-readback-test.rom").write_bytes(
+        build_rom(media_exerciser=True, jfd_save_probe=True,
+                  newio_save_probe=True, creation_probe=True,
+                  virtual_merge_probe=True))
+    # Reads a different omitted slot, so a valid saved ID 3 can coexist with
+    # an RNF guest probe when a damaged slot suppresses the virtual latch.
+    (args.output / "arcdroid-jfd-merge-missing-test.rom").write_bytes(
+        build_rom(media_exerciser=True, jfd_save_probe=True,
+                  write_sector=3, creation_probe=True,
+                  virtual_merge_probe=True, merge_read_sector=1))
+    (args.output / "arcdroid-jfd-newio-merge-missing-test.rom").write_bytes(
+        build_rom(media_exerciser=True, jfd_save_probe=True,
+                  newio_save_probe=True, creation_probe=True,
+                  virtual_merge_probe=True, merge_read_sector=1))
     (args.output / "arcdroid-media-disc1.adf").write_bytes(disc1)
     (args.output / "arcdroid-media-disc2.adf").write_bytes(disc2)
     (args.output / "arcdroid-media.m3u").write_text(
@@ -2465,6 +3149,261 @@ def main() -> None:
         build_d_discovery([(b"!Nulvane", True)], b"Nulvane"))
     jfd = build_jfd(bytes(disc1[:256]))
     (args.output / "arcdroid-test.jfd").write_bytes(jfd)
+    writes = args.output / "jfd-writes"
+    writes.mkdir(exist_ok=True)
+    writable = build_extended_jfd(bytes(disc1), b"ArcDroid JFD save probe",
+                                   disk_geometry="D")
+    struct.pack_into("<I", writable, 304, 2)
+    (writes / "rw-d.jfd").write_bytes(writable)
+    newio_writable = build_extended_jfd(bytes(disc1),
+                                        b"ArcDroid JFD NewIO save probe",
+                                        disk_geometry="D")
+    struct.pack_into("<I", newio_writable, 304, 2)
+    (writes / "rw-newio-d.jfd").write_bytes(newio_writable)
+    # The map and directory are captured; ID 3 is omitted on track-side 0.
+    # Track-side 1 is full, providing the P-DD5 profile vote.
+    # The legacy creation ROM reads its omitted target before writing. Give
+    # it a valid base map that already allocates that target; the free-slot
+    # probe/veto sequence has its own C-11c fixture and ROM below.
+    create_base = build_d_discovery([], b"CreateProbe")
+    create = build_pdd5_jfd(bytes(create_base),
+        {0: [0, 2, 4], 1: list(range(5))},
+        title=b"ArcDroid omitted-sector save probe")
+    (writes / "rw-create-d.jfd").write_bytes(create)
+    create_wp = bytearray(create)
+    struct.pack_into("<I", create_wp, 304, 3)
+    (writes / "wp-create-d.jfd").write_bytes(create_wp)
+    # The omitted merge target (logical sector 3) is already allocated by
+    # this old map; no prior write is needed to make its zero fill readable.
+    allocated_base = build_d_discovery([], b"AllocatedMerge")
+    merge_base = bytearray(allocated_base)
+    _store_u24(merge_base, 0, 4)  # ID 1 is free; omitted ID 3 is allocated
+    _store_u24(merge_base, 256, 4)
+    merge_base[510] = 3
+    merge_base[255] = _old_map_checksum(merge_base[:255])
+    merge_base[511] = _old_map_checksum(merge_base[256:511])
+    merge = build_pdd5_jfd(bytes(merge_base),
+        {0: [0, 2, 4], 1: list(range(5))},
+        title=b"ArcDroid allocated-sector merge probe")
+    (writes / "rw-merge-d.jfd").write_bytes(merge)
+    merge_wp = bytearray(merge)
+    struct.pack_into("<I", merge_wp, 304, 3)
+    (writes / "wp-merge-d.jfd").write_bytes(merge_wp)
+    allocation = args.output / "jfd-allocation"
+    allocation.mkdir(exist_ok=True)
+    full = list(range(5))
+    (allocation / "old-allocated.jfd").write_bytes(build_pdd5_jfd(
+        bytes(allocated_base), {0: [0, 2, 4], 1: full}))
+    old_no_map = bytearray(allocated_base)
+    old_no_map[255] ^= 1
+    (allocation / "old-no-map.jfd").write_bytes(build_pdd5_jfd(
+        bytes(old_no_map), {0: [0, 2, 4], 1: full}))
+    old_free = build_d_discovery([], b"FreeProbe")
+    _store_u24(old_free, 0, 12)  # logical sector 3 starts at byte 3072
+    _store_u24(old_free, 256, 3188)
+    old_free[510] = 3
+    old_free[255] = _old_map_checksum(old_free[:255])
+    old_free[511] = _old_map_checksum(old_free[256:511])
+    (allocation / "old-free.jfd").write_bytes(build_pdd5_jfd(
+        bytes(old_free), {0: [0, 2, 4], 1: full}))
+    (allocation / "old-dual-free.jfd").write_bytes(build_pdd5_jfd(
+        bytes(old_free), {0: [0, 2], 1: full}))
+    partial_free = bytearray(old_free)
+    _store_u24(partial_free, 0, 13)  # only 768 bytes of omitted ID 3 are free
+    _store_u24(partial_free, 256, 3187)
+    partial_free[255] = _old_map_checksum(partial_free[:255])
+    partial_free[511] = _old_map_checksum(partial_free[256:511])
+    (allocation / "old-partial-slot.jfd").write_bytes(build_pdd5_jfd(
+        bytes(partial_free), {0: [0, 2, 4], 1: full}))
+    claim_map = bytearray(old_free[:1024])
+    _store_u24(claim_map, 0, 16)
+    _store_u24(claim_map, 256, 3184)
+    claim_map[255] = _old_map_checksum(claim_map[:255])
+    claim_map[511] = _old_map_checksum(claim_map[256:511])
+    for machine, newio in (("", False), ("newio-", True)):
+        for mode in ("veto", "claim", "read"):
+            name = f"arcdroid-jfd-{machine}allocation-{mode}-test.rom"
+            (args.output / name).write_bytes(build_rom(
+                media_exerciser=True, jfd_save_probe=True,
+                newio_save_probe=newio, write_payload=bytes(claim_map),
+                allocation_mode=mode))
+    new_base = build_e_discovery([], b"NewMapProbe")
+    new_base[1024:2048] = new_base[:1024]
+    (allocation / "new-allocated.jfd").write_bytes(build_pdd5_jfd(
+        bytes(new_base), {0: [0, 1, 2, 4], 1: full}))
+    (allocation / "new-free.jfd").write_bytes(build_pdd5_jfd(
+        bytes(new_base), {0: full, 1: [1, 2, 3, 4], 2: full}))
+    tail_defect = bytearray(new_base)
+    tail_defect[14:16] = (0x0500).to_bytes(2, "little")
+    _set_bits(tail_defect, 6912, 15, 1)  # 32 map bits beyond 800 KiB: ID 1
+    _set_bits(tail_defect, 6943, 1, 1)
+    sums = [0, 0, 0, 0]
+    tail_defect[0] = 0
+    for rover in range(1020, 0, -4):
+        sums[0] += tail_defect[rover] + (sums[3] >> 8); sums[3] &= 0xFF
+        sums[1] += tail_defect[rover + 1] + (sums[0] >> 8); sums[0] &= 0xFF
+        sums[2] += tail_defect[rover + 2] + (sums[1] >> 8); sums[1] &= 0xFF
+        sums[3] += tail_defect[rover + 3] + (sums[2] >> 8); sums[2] &= 0xFF
+    sums[0] += sums[3] >> 8
+    sums[1] += tail_defect[1] + (sums[0] >> 8)
+    sums[2] += tail_defect[2] + (sums[1] >> 8)
+    sums[3] += tail_defect[3] + (sums[2] >> 8)
+    tail_defect[0] = (sums[0] ^ sums[1] ^ sums[2] ^ sums[3]) & 0xFF
+    tail_defect[1024:2048] = tail_defect[:1024]
+    (allocation / "new-tail-defect.jfd").write_bytes(build_pdd5_jfd(
+        bytes(tail_defect), {0: full, 1: [1, 2, 3, 4], 2: full}))
+    bad_primary = bytearray(new_base)
+    bad_primary[0] ^= 1
+    (allocation / "new-bad-primary.jfd").write_bytes(build_pdd5_jfd(
+        bytes(bad_primary), {0: full, 1: [1, 2, 3, 4], 2: full}))
+    claimed_e_map = build_e_discovery([(b"!Object", False)], b"NewMapProbe")[:1024]
+    assert claimed_e_map[4:64] == new_base[4:64]
+    disagree = bytearray(new_base)
+    disagree[1024:2048] = claimed_e_map
+    (allocation / "new-disagree.jfd").write_bytes(build_pdd5_jfd(
+        bytes(disagree), {0: full, 1: [1, 2, 3, 4], 2: full}))
+    bad_primary_allocated = bytearray(bad_primary)
+    bad_primary_allocated[1024:2048] = claimed_e_map
+    (allocation / "new-bad-primary-allocated.jfd").write_bytes(build_pdd5_jfd(
+        bytes(bad_primary_allocated), {0: full, 1: [1, 2, 3, 4], 2: full}))
+    bad_both = bytearray(bad_primary)
+    bad_both[1024] ^= 1
+    (allocation / "new-both-bad.jfd").write_bytes(build_pdd5_jfd(
+        bytes(bad_both), {0: full, 1: [1, 2, 3, 4], 2: full}))
+    newio_protected = bytearray(newio_writable)
+    struct.pack_into("<I", newio_protected, 304, 3)
+    (writes / "wp-newio-d.jfd").write_bytes(newio_protected)
+    adffs_writable = build_pdd5_jfd(bytes(disc1),
+        {0: list(range(5))}, title=b"ArcDroid ADFFS native-save fixture")
+    struct.pack_into("<HHI", adffs_writable, 12, 1, 1, 123)
+    (writes / "adffs-rw.jfd").write_bytes(adffs_writable)
+    protected = bytearray(writable)
+    struct.pack_into("<I", protected, 304, 3)
+    (writes / "wp-d.jfd").write_bytes(protected)
+    folder = writes / "SaveSet.jfd"
+    folder.mkdir(exist_ok=True)
+    (folder / "SaveSet.jfd").write_bytes(writable)
+    (folder / "SaveSet 2.jfd").write_bytes(protected)
+    neither = bytearray(writable)
+    struct.pack_into("<I", neither, 304, 0)
+    (writes / "neither-d.jfd").write_bytes(neither)
+    (writes / "rw-d-gzip.jfd").write_bytes(gzip_member(writable))
+    (writes / "legacy-d.jfd").write_bytes(
+        _build_jfd_disk(bytes(disc1), "D", b"ArcDroid JFD legacy probe"))
+    (writes / "mixed.adf").write_bytes(disc1)
+    (writes / "mixed.m3u").write_text(
+        "mixed.adf\nrw-d.jfd\nwp-d.jfd\n",
+        encoding="utf-8", newline="\n")
+    (writes / "rw-d.zip").write_bytes(_zip_bytes([("RW.jfd", bytes(writable), True)]))
+    (writes / "missing-one-d.jfd").write_bytes(build_jfd_family(
+        [(0xFF, 0, 2, 0, 0, bytes(1024))],
+        b"ArcDroid JFD missing read sector", extended=True))
+    creation = args.output / "jfd-creation"
+    creation.mkdir(exist_ok=True)
+    full = list(range(5))
+    launch_created = build_d_discovery([(b"!NewApp", True)], b"CreatedApp")
+    (creation / "launch-full.jfd").write_bytes(build_pdd5_jfd(
+        bytes(launch_created), {0: full, 1: full}))
+    (creation / "launch-partial.jfd").write_bytes(build_pdd5_jfd(
+        bytes(launch_created), {0: [0, 2, 3, 4], 1: full}))
+    (creation / "partial-untimed.jfd").write_bytes(build_pdd5_jfd(
+        bytes(disc1), {0: full, 1: [0, 2, 4], 159: [0, 2, 4],
+                       160: [0], 165: [0]}, track_count=166))
+    (creation / "partial-edge.jfd").write_bytes(build_pdd5_jfd(
+        bytes(disc1), {0: full, 1: [1, 2, 3]}))
+    (creation / "partial-timed.jfd").write_bytes(build_pdd5_jfd(
+        bytes(disc1), {0: full, 1: [0, 2, 4]},
+        {1: {0: 0, 2: 80, 4: 160}}))
+    (creation / "boundary.jfd").write_bytes(build_pdd5_jfd(
+        bytes(disc1), {0: full, 1: [0]}, {1: {0: 190}}))
+    (creation / "unschedulable.jfd").write_bytes(build_pdd5_jfd(
+        bytes(disc1), {0: full, 1: [0, 2, 4]},
+        {1: {0: 0, 2: 70, 4: 140}}))
+    (creation / "timed-rounded.jfd").write_bytes(build_pdd5_jfd(
+        bytes(disc1), {0: full, 1: [0, 1, 2, 3]},
+        {1: {0: 0, 1: 37, 2: 73, 3: 110}}))
+    short_full = {track: full for track in range(100)}
+    (creation / "short-full.jfd").write_bytes(build_pdd5_jfd(
+        bytes(disc1), short_full, track_count=100))
+    short_partial = dict(short_full)
+    short_partial[1] = [0, 2, 4]
+    (creation / "short-partial.jfd").write_bytes(build_pdd5_jfd(
+        bytes(disc1), short_partial, track_count=100))
+    (creation / "nonmatching.jfd").write_bytes(build_pdd5_jfd(
+        bytes(disc1), {0: [0, 2, 4]}))
+    for stem, free_start, free_length in (
+        ("irregular-free", 20, 3180),
+        ("irregular-allocated", 20, 1000)):
+        mapped = build_d_discovery([], b"GateMap")
+        _store_u24(mapped, 0, free_start)
+        _store_u24(mapped, 256, free_length)
+        mapped[510] = 3
+        mapped[255] = _old_map_checksum(mapped[:255])
+        mapped[511] = _old_map_checksum(mapped[256:511])
+        (creation / f"{stem}.jfd").write_bytes(build_pdd5_jfd(
+            bytes(mapped), {0: full, 1: full, 159: [9]}))
+    # All five IDs are present on side 159, but ID 4 cannot accept a write.
+    # The base ADFS map decides whether that missing writable slot is safe.
+    for defect in ("id-only", "bad-crc"):
+        for extent, free_length in (("free", 3180), ("allocated", 1000)):
+            mapped = build_d_discovery([], b"GateWritableID")
+            _store_u24(mapped, 0, 20)
+            _store_u24(mapped, 256, free_length)
+            mapped[510] = 3
+            mapped[255] = _old_map_checksum(mapped[:255])
+            mapped[511] = _old_map_checksum(mapped[256:511])
+            image = build_pdd5_jfd(bytes(mapped),
+                                   {0: full, 1: full, 159: full})
+            descriptor = pdd5_descriptor_offset(image, 159, 4)
+            if defect == "id-only":
+                struct.pack_into("<I", image, descriptor + 4, 0xFFFFFFFF)
+            else:
+                header = struct.unpack_from("<I", image, descriptor)[0]
+                struct.pack_into("<I", image, descriptor, header | (2 << 4))
+            (creation / f"irregular-{defect}-{extent}.jfd").write_bytes(image)
+    mapped = build_d_discovery([], b"GateSeq")
+    _store_u24(mapped, 0, 20)
+    _store_u24(mapped, 256, 3180)
+    mapped[510] = 3
+    mapped[255] = _old_map_checksum(mapped[:255])
+    mapped[511] = _old_map_checksum(mapped[256:511])
+    new_mapped = build_e_discovery([], b"GateNew")
+    (creation / "irregular-newmap-free.jfd").write_bytes(build_pdd5_jfd(
+        bytes(new_mapped), {0: full, 1: full, 159: [9]}))
+    backup_only = bytearray(new_mapped)
+    backup_only[1024:2048] = backup_only[:1024]
+    backup_only[0] ^= 1
+    (creation / "irregular-newmap-backup-free.jfd").write_bytes(
+        build_pdd5_jfd(bytes(backup_only),
+                        {0: full, 1: full, 159: [9]}))
+    (creation / "irregular-free-sequence.jfd").write_bytes(build_pdd5_jfd(
+        bytes(mapped), {0: [0, 2, 4], 1: full, 159: [9]}))
+    (creation / "half-vote.jfd").write_bytes(build_pdd5_jfd(
+        bytes(disc1), {0: full, 1: full + [9]},
+        {1: {0: 0, 1: 32, 2: 64, 3: 96, 4: 128, 9: 160}}))
+    (creation / "irregular-all-ids.jfd").write_bytes(build_pdd5_jfd(
+        bytes(disc1), {0: full, 1: full + [9], 2: full},
+        {1: {0: 0, 1: 32, 2: 64, 3: 96, 4: 128, 9: 160}}))
+    # Two independent launch identities exercise record reuse after a guest
+    # sector write. The rename ROM carries only our generated root sector;
+    # its write changes !Alpha to !Alphb without touching the child !Run.
+    for stem, name in (("launch-unchanged", b"Unchanged"),
+                       ("launch-renamed", b"Renamed")):
+        launch_payload = build_d_discovery(
+            [(b"!Alpha", True), (b"!Beta", True)], name)
+        launch_jfd = build_extended_jfd(
+            bytes(launch_payload), b"ArcDroid JFD launch write probe",
+            disk_geometry="D")
+        struct.pack_into("<I", launch_jfd, 304, 2)
+        (writes / f"{stem}-d.jfd").write_bytes(launch_jfd)
+        if stem == "launch-renamed":
+            changed_root_sector = bytearray(launch_payload[1024:2048])
+            changed_root_sector[5 + 5] = ord("b")
+    (args.output / "arcdroid-jfd-directory-benign.rom").write_bytes(
+        build_rom(media_exerciser=True, write_sector=3))
+    (args.output / "arcdroid-jfd-directory-rename.rom").write_bytes(
+        build_rom(media_exerciser=True,
+                  write_payload=bytes(changed_root_sector)))
     build_zip_content_fixtures(args.output / "zip-content", bytes(disc1),
                                bytes(disc2), bytes(jfd),
                                (args.output / "adffs/eligible.jfd").read_bytes(),
@@ -2497,6 +3436,19 @@ def main() -> None:
     (family / "untimed.jfd").write_bytes(build_jfd_family([
         (0xFF, 0, 2, 1, 0, bytes([0x66]) * 128),
         (0xFF, 0, 2, 2, 0, bytes([0x77]) * 256)]))
+    (family / "write-two.jfd").write_bytes(build_jfd_family([
+        (0xFF, 0, 2, 3, 0, bytes(128)),
+        (0xFF, 0, 2, 4, 0, bytes(128))]))
+    (family / "write-slow.jfd").write_bytes(build_jfd_family([
+        (10, 0, 2, 3, 8, bytes(128))]))
+    (family / "write-duplicate.jfd").write_bytes(build_jfd_family([
+        (10, 0, 2, 3, 0, bytes([0x11]) * 128),
+        (20, 0, 2, 3, 0, bytes([0x22]) * 128)]))
+    shared = build_jfd_family([
+        (10, 0, 2, 3, 0, bytes([0x11]) * 128),
+        (20, 0, 2, 4, 0, bytes([0x22]) * 128)])
+    struct.pack_into("<I", shared, 324, 0)
+    (family / "write-shared.jfd").write_bytes(shared)
     (family / "quad-data.jfd").write_bytes(build_jfd_family([
         (0xff, 0, 4, 3, 0, bytes([0x5a]) * 1024)]))
     (family / "quad-timed.jfd").write_bytes(build_jfd_family([

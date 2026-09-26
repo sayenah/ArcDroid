@@ -10,6 +10,10 @@
 #define ARC_JFD_MAX_DECODED (8u * 1024u * 1024u)
 #define ARC_JFD_MAX_TRACK_SIDES 166u
 #define ARC_JFD_MAX_SECTORS_PER_TRACK 256u
+#define ARC_JFD_PDD5_TRACKS 160u
+#define ARC_JFD_PDD5_IDS 5u
+#define ARC_JFD_PDD5_SLOTS (ARC_JFD_PDD5_TRACKS * ARC_JFD_PDD5_IDS)
+#define ARC_JFD_PDD5_SPACING_US 36352u
 
 enum {
    ARC_JFD_ID_CRC_BAD = 1u,
@@ -32,7 +36,40 @@ typedef struct {
    bool timed;
 } ArcJfdTrack;
 
-typedef struct {
+struct ArcJfdImage;
+typedef struct ArcJfdOverlay {
+   uint8_t **data;                 /* One owned replacement per descriptor. */
+   uint8_t *created[ARC_JFD_PDD5_TRACKS][ARC_JFD_PDD5_IDS];
+   uint32_t creation_time[ARC_JFD_PDD5_TRACKS][ARC_JFD_PDD5_IDS];
+   uint8_t creation_mask[ARC_JFD_PDD5_TRACKS];
+   uint8_t *eligible;
+   unsigned image_number;
+   unsigned creation_capacity;
+   bool pdd5_profile;
+   bool layout_supported;
+   uint64_t generation;
+   unsigned records;
+   bool writable;
+   bool visible;
+   uint8_t allocation_mask[ARC_JFD_PDD5_TRACKS];
+   uint8_t probe_mask[ARC_JFD_PDD5_TRACKS]; /* Mounted lifetime only. */
+   uint8_t map_record[60];
+   uint8_t map_kind;              /* 0 unavailable, 1 old, 2 one-zone new. */
+   bool map_enabled;              /* Successful writable native preparation. */
+   bool map_valid;                /* At least one valid effective copy. */
+   bool map_unavailable_logged;
+   bool damaged;
+   bool failed;
+   const char *reason;             /* Static diagnostic reason from preparation. */
+   bool (*commit)(struct ArcJfdImage *, size_t, const uint8_t *);
+   bool (*commit_created)(struct ArcJfdImage *, unsigned, unsigned,
+                          const uint8_t *);
+   void (*log_refusal)(unsigned, unsigned, unsigned, unsigned, const char *);
+   void (*log_map_unavailable)(unsigned);
+   void *store;
+} ArcJfdOverlay;
+
+typedef struct ArcJfdImage {
    uint8_t *decoded;
    size_t decoded_size;
    ArcJfdSector *sectors;
@@ -49,7 +86,63 @@ typedef struct {
    uint8_t fps_times_two;
    bool extended;
    bool ignored_header_fields;
+   ArcJfdOverlay *overlay;
 } ArcJfdImage;
+
+typedef struct {
+   ArcJfdSector sector;
+   const uint8_t *data;
+   size_t key; /* Base descriptor index, or P-DD5 sector ID for a creation. */
+   bool created;
+} ArcJfdView;
+
+/* P-DD5 placement version 1, derived from the immutable base. Each
+ * track-side's descriptors retain their ordinals; candidates follow in ID order. */
+bool arc_jfd_plan_creation(const ArcJfdImage *image, ArcJfdOverlay *overlay);
+bool arc_jfd_effective_sector(const ArcJfdImage *image, unsigned track_side,
+                              unsigned candidate, bool prospective,
+                              ArcJfdView *view);
+bool arc_jfd_base_free_tracks(const ArcJfdImage *image,
+                              bool free_track[ARC_JFD_PDD5_TRACKS]);
+void arc_jfd_map_prepare(ArcJfdImage *image);
+void arc_jfd_map_refresh(ArcJfdImage *image);
+bool arc_jfd_map_write_veto(const ArcJfdImage *image, size_t index,
+                            const uint8_t *pending);
+bool arc_jfd_map_target(const ArcJfdImage *image, size_t index);
+
+static inline bool arc_jfd_sector_write_eligible(const ArcJfdImage *image,
+                                                  size_t index)
+{
+   if (!image || index >= image->sector_count) return false;
+   const ArcJfdSector *sector = &image->sectors[index];
+   if (sector->data_offset == UINT32_MAX ||
+       (sector->flags & (ARC_JFD_ID_CRC_BAD | ARC_JFD_DATA_CRC_BAD |
+                         ARC_JFD_SLOW_SECTOR))) return false;
+   size_t track_side = 0u;
+   while (track_side < image->track_count &&
+          index >= (size_t)image->tracks[track_side].first_sector +
+                   image->tracks[track_side].sector_count) ++track_side;
+   if (track_side == image->track_count) return false;
+   const ArcJfdTrack *track = &image->tracks[track_side];
+   for (unsigned i = 0u; i < track->sector_count; ++i)
+   {
+      size_t other_index = (size_t)track->first_sector + i;
+      if (other_index == index) continue;
+      const ArcJfdSector *other = &image->sectors[other_index];
+      if (other->id == sector->id && other->density == sector->density)
+         return false;
+   }
+   for (size_t i = 0u; i < image->sector_count; ++i)
+   {
+      if (i == index) continue;
+      const ArcJfdSector *other = &image->sectors[i];
+      if (other->data_offset != UINT32_MAX &&
+          (uint64_t)sector->data_offset < (uint64_t)other->data_offset + other->size &&
+          (uint64_t)other->data_offset < (uint64_t)sector->data_offset + sector->size)
+         return false;
+   }
+   return true;
+}
 
 bool arc_jfd_has_signature(const uint8_t *input, size_t input_size);
 bool arc_jfd_parse(const uint8_t *input, size_t input_size, ArcJfdImage *image,

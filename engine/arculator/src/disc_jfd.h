@@ -7,6 +7,8 @@
 
 void jfd_init(void);
 bool jfd_load(int drive, const ArcJfdImage *image);
+bool jfd_active(int drive);
+void jfd_set_requested_ch(unsigned cylinder, unsigned selected_side);
 void jfd_motor_start(void);
 
 #endif

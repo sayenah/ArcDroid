@@ -700,6 +700,56 @@ function Capture-ExpectedSignature($Run, [string]$Name, [string]$Expected, [bool
     throw "$Name did not become $relation $Expected within 10 seconds (last $actual)"
 }
 
+function Wait-JfdOutcome($Run, [string]$Name, [string]$Expected) {
+    # The save ROM publishes exactly one of these colours after the WD1770
+    # command completes, then holds it forever. Two captures rule out an
+    # early frame or a screenshot from before the final result was visible.
+    $outcomes = @("ff6a0000", "ff001500", "ff006a00", "ff00006a")
+    $deadline = [DateTime]::UtcNow.AddSeconds(20)
+    $attempt = 0
+    do {
+        $attempt++
+        $actual = Capture-MediaSignature $Run "$Name-$attempt"
+        if ($outcomes -contains $actual) {
+            Start-Sleep -Milliseconds 200
+            $steady = Capture-MediaSignature $Run "$Name-steady-$attempt"
+            if ($steady -eq $actual) {
+                if ($actual -ne $Expected) {
+                    throw "$Name completed with $actual; expected $Expected"
+                }
+                return $actual
+            }
+        }
+    } while ([DateTime]::UtcNow -lt $deadline)
+    throw "$Name did not publish a steady JFD outcome $Expected within 20 seconds (last $actual)"
+}
+
+function Wait-JfdResultVideoReady($Run, [string]$Name) {
+    # The allocation veto ROM has two five-index searches before it programs
+    # VIDC. Start-MediaRun's two-second delay can end during the final video
+    # mode change; RetroArch can then discard a SCREENSHOT network command.
+    $deadline = [DateTime]::UtcNow.AddSeconds(20)
+    while ([DateTime]::UtcNow -lt $deadline) {
+        if ($Run.Process.HasExited) {
+            Write-MediaRunFailureEvidence $Run "exited before $Name video was ready"
+            $Run["FailureReported"] = $true
+            throw "$Name exited before its result video was ready with code $($Run.Process.ExitCode)"
+        }
+        if (Test-Path -LiteralPath $Run.RetroLog) {
+            $logText = Get-Content -LiteralPath $Run.RetroLog -Raw -ErrorAction SilentlyContinue
+            if ($logText) {
+                $videoInfoAt = $logText.LastIndexOf("SET_SYSTEM_AV_INFO: 640x512")
+                if ($videoInfoAt -ge 0 -and $logText.IndexOf('Found display driver: "gdi"', $videoInfoAt) -ge 0) {
+                    Start-Sleep -Milliseconds 500
+                    return
+                }
+            }
+        }
+        Start-Sleep -Milliseconds 100
+    }
+    throw "$Name did not complete the result video mode within 20 seconds"
+}
+
 # RetroArch's per-core save sorting redirects this core's save directory to
 # <configured savefile_directory>/ArcDroid, and .ldci records live there.
 $indexDirectory = Join-Path $saveDirectory "ArcDroid"
@@ -916,6 +966,191 @@ try {
 }
 
 Write-Host "Slice 2a Windows RetroArch: disk commands, image-1 relaunch, inert seeded .ldci, and JFD golden region passed"
+
+# Slice 10a: the project-authored ROM reads the entire sector before writing
+# 0x5A bytes, then publishes a steady result for that prewrite read and the
+# completed write status. A relaunch must report data from the saved overlay.
+Copy-Item -Force (Join-Path $InputDirectory "arcdroid-jfd-save-test.rom") $firmware
+$rwJfd = (Resolve-Path (Join-Path $InputDirectory "jfd-writes/rw-d.jfd")).Path
+$wpJfd = (Resolve-Path (Join-Path $InputDirectory "jfd-writes/wp-d.jfd")).Path
+$rwZip = (Resolve-Path (Join-Path $InputDirectory "jfd-writes/rw-d.zip")).Path
+$rwHash = (Get-FileHash -Algorithm SHA256 $rwJfd).Hash
+$wpHash = (Get-FileHash -Algorithm SHA256 $wpJfd).Hash
+$zipHash = (Get-FileHash -Algorithm SHA256 $rwZip).Hash
+$rwDigest = (Get-FileHash -Algorithm SHA1 $rwJfd).Hash.ToLowerInvariant()
+$wpDigest = (Get-FileHash -Algorithm SHA1 $wpJfd).Hash.ToLowerInvariant()
+$jfdSaveDirectory = Join-Path $coreSaveDirectory "jfd"
+if ((Test-Path (Join-Path $jfdSaveDirectory "$rwDigest.a")) -or
+    (Test-Path (Join-Path $jfdSaveDirectory "$rwDigest.b")) -or
+    (Test-Path (Join-Path $jfdSaveDirectory "$wpDigest.a")) -or
+    (Test-Path (Join-Path $jfdSaveDirectory "$wpDigest.b"))) {
+    throw "JFD save slots were present before the native write test"
+}
+$rwFirst = Start-MediaRun $rwJfd "jfd-rw-first"
+try {
+    [void](Wait-JfdOutcome $rwFirst "jfd-rw-first-accepted" "ff6a0000")
+} finally { Stop-MediaRun $rwFirst }
+if (-not (Select-String -Path $rwFirst.RetroLog -SimpleMatch "JFD writes: image=1 state=writable reason=rw-flag" -Quiet)) {
+    throw "RW JFD did not enter the native writable path"
+}
+if (-not ((Test-Path (Join-Path $jfdSaveDirectory "$rwDigest.a")) -or
+           (Test-Path (Join-Path $jfdSaveDirectory "$rwDigest.b")))) {
+    throw "RW JFD did not publish a committed save slot"
+}
+$rwSecond = Start-MediaRun $rwJfd "jfd-rw-relaunch"
+try {
+    [void](Wait-JfdOutcome $rwSecond "jfd-rw-saved-readback" "ff001500")
+} finally { Stop-MediaRun $rwSecond }
+$wpFirst = Start-MediaRun $wpJfd "jfd-wp-first"
+try {
+    [void](Wait-JfdOutcome $wpFirst "jfd-wp-refused-pristine" "ff006a00")
+} finally { Stop-MediaRun $wpFirst }
+if (-not (Select-String -Path $wpFirst.RetroLog -SimpleMatch "JFD writes: image=1 state=protected reason=wp-flag" -Quiet)) {
+    throw "WP JFD did not remain protected"
+}
+if ((Test-Path (Join-Path $jfdSaveDirectory "$wpDigest.a")) -or
+    (Test-Path (Join-Path $jfdSaveDirectory "$wpDigest.b"))) {
+    throw "WP JFD unexpectedly published a save slot"
+}
+if ((Get-FileHash -Algorithm SHA256 $rwJfd).Hash -ne $rwHash -or
+    (Get-FileHash -Algorithm SHA256 $wpJfd).Hash -ne $wpHash -or
+    (Get-FileHash -Algorithm SHA256 $rwZip).Hash -ne $zipHash) {
+    throw "JFD or zip source changed during native write tests"
+}
+Write-Host "Slice 10a Windows RetroArch: RW commit survived process relaunch; WP and source files unchanged"
+# C-11: the guest writes map ID 0 and directory ID 2 before creating
+# missing data ID 3. The second RetroArch process only reads ID 3; its
+# steady saved outcome therefore proves the created record survived reload.
+Copy-Item -Force (Join-Path $InputDirectory "arcdroid-jfd-create-test.rom") $firmware
+$createRw = (Resolve-Path (Join-Path $InputDirectory "jfd-writes/rw-create-d.jfd")).Path
+$createWp = (Resolve-Path (Join-Path $InputDirectory "jfd-writes/wp-create-d.jfd")).Path
+$createRwHash = (Get-FileHash -Algorithm SHA256 $createRw).Hash
+$createWpHash = (Get-FileHash -Algorithm SHA256 $createWp).Hash
+$createRwDigest = (Get-FileHash -Algorithm SHA1 $createRw).Hash.ToLowerInvariant()
+$createWpDigest = (Get-FileHash -Algorithm SHA1 $createWp).Hash.ToLowerInvariant()
+if ((Test-Path (Join-Path $jfdSaveDirectory "$createRwDigest.a")) -or
+    (Test-Path (Join-Path $jfdSaveDirectory "$createRwDigest.b"))) {
+    throw "Created JFD slot existed before the guest allocation sequence"
+}
+$createFirst = Start-MediaRun $createRw "jfd-create-first"
+try {
+    [void](Wait-JfdOutcome $createFirst "jfd-create-accepted" "ff6a0000")
+} finally { Stop-MediaRun $createFirst }
+if (-not ((Test-Path (Join-Path $jfdSaveDirectory "$createRwDigest.a")) -or
+           (Test-Path (Join-Path $jfdSaveDirectory "$createRwDigest.b")))) {
+    throw "Omitted-sector guest write did not publish a committed slot"
+}
+$createSecond = Start-MediaRun $createRw "jfd-create-relaunch"
+try {
+    [void](Wait-JfdOutcome $createSecond "jfd-create-saved-readback" "ff001500")
+} finally { Stop-MediaRun $createSecond }
+$createProtected = Start-MediaRun $createWp "jfd-create-wp"
+try {
+    [void](Wait-JfdOutcome $createProtected "jfd-create-wp-refused" "ff006a00")
+} finally { Stop-MediaRun $createProtected }
+if ((Test-Path (Join-Path $jfdSaveDirectory "$createWpDigest.a")) -or
+    (Test-Path (Join-Path $jfdSaveDirectory "$createWpDigest.b"))) {
+    throw "Write-protected omitted-sector fixture published a slot"
+}
+if ((Get-FileHash -Algorithm SHA256 $createRw).Hash -ne $createRwHash -or
+    (Get-FileHash -Algorithm SHA256 $createWp).Hash -ne $createWpHash) {
+    throw "Omitted-sector source JFD changed"
+}
+Write-Host "Slice 10a Windows RetroArch: map/directory/data creation survived fresh process; WP and sources unchanged"
+# C-11c: the base map allocates omitted ID 3, so the ROM reads 1024 zeros
+# before its first write and merges 128 bytes of 5A. Its RAM starts poisoned
+# with A5 and it checks every read byte. Free omitted ID 1 still returns RNF
+# before and after the save, including in a fresh process.
+$mergeRw = (Resolve-Path (Join-Path $InputDirectory "jfd-writes/rw-merge-d.jfd")).Path
+$mergeWp = (Resolve-Path (Join-Path $InputDirectory "jfd-writes/wp-merge-d.jfd")).Path
+$mergeRwHash = (Get-FileHash -Algorithm SHA256 $mergeRw).Hash
+$mergeWpHash = (Get-FileHash -Algorithm SHA256 $mergeWp).Hash
+$mergeRwDigest = (Get-FileHash -Algorithm SHA1 $mergeRw).Hash.ToLowerInvariant()
+$mergeWpDigest = (Get-FileHash -Algorithm SHA1 $mergeWp).Hash.ToLowerInvariant()
+if ((Test-Path (Join-Path $jfdSaveDirectory "$mergeRwDigest.a")) -or
+    (Test-Path (Join-Path $jfdSaveDirectory "$mergeRwDigest.b"))) {
+    throw "Allocated merge slot existed before the test"
+}
+Copy-Item -Force (Join-Path $InputDirectory "arcdroid-jfd-merge-missing-test.rom") $firmware
+$mergeBefore = Start-MediaRun $mergeRw "jfd-merge-before-save"
+try {
+    [void](Wait-JfdOutcome $mergeBefore "jfd-merge-before-save-rnf" "ff00006a")
+} finally { Stop-MediaRun $mergeBefore }
+if ((Test-Path (Join-Path $jfdSaveDirectory "$mergeRwDigest.a")) -or
+    (Test-Path (Join-Path $jfdSaveDirectory "$mergeRwDigest.b"))) {
+    throw "Free-sector probe published a merge slot"
+}
+Copy-Item -Force (Join-Path $InputDirectory "arcdroid-jfd-merge-test.rom") $firmware
+$mergeFirst = Start-MediaRun $mergeRw "jfd-merge-first"
+try {
+    [void](Wait-JfdOutcome $mergeFirst "jfd-merge-zero-read-then-write" "ff6a0000")
+} finally { Stop-MediaRun $mergeFirst }
+if (-not ((Test-Path (Join-Path $jfdSaveDirectory "$mergeRwDigest.a")) -or
+           (Test-Path (Join-Path $jfdSaveDirectory "$mergeRwDigest.b")))) {
+    throw "Allocated merge did not publish a committed slot"
+}
+Copy-Item -Force (Join-Path $InputDirectory "arcdroid-jfd-merge-readback-test.rom") $firmware
+$mergeSecond = Start-MediaRun $mergeRw "jfd-merge-relaunch"
+try {
+    [void](Wait-JfdOutcome $mergeSecond "jfd-merge-partial-readback" "ff001500")
+} finally { Stop-MediaRun $mergeSecond }
+Copy-Item -Force (Join-Path $InputDirectory "arcdroid-jfd-merge-missing-test.rom") $firmware
+$mergeMissing = Start-MediaRun $mergeRw "jfd-merge-reload-missing"
+try {
+    [void](Wait-JfdOutcome $mergeMissing "jfd-merge-reload-rnf" "ff00006a")
+} finally { Stop-MediaRun $mergeMissing }
+Copy-Item -Force (Join-Path $InputDirectory "arcdroid-jfd-merge-test.rom") $firmware
+$mergeProtected = Start-MediaRun $mergeWp "jfd-merge-wp"
+try {
+    [void](Wait-JfdOutcome $mergeProtected "jfd-merge-wp-refused" "ff00006a")
+} finally { Stop-MediaRun $mergeProtected }
+if ((Test-Path (Join-Path $jfdSaveDirectory "$mergeWpDigest.a")) -or
+    (Test-Path (Join-Path $jfdSaveDirectory "$mergeWpDigest.b"))) {
+    throw "Protected allocated merge fixture published a slot"
+}
+if ((Get-FileHash -Algorithm SHA256 $mergeRw).Hash -ne $mergeRwHash -or
+    (Get-FileHash -Algorithm SHA256 $mergeWp).Hash -ne $mergeWpHash) {
+    throw "Allocated merge source JFD changed"
+}
+Write-Host "Slice 10a Windows RetroArch: base-allocated zero read, free-sector RNF, partial merge, fresh-process readback/RNF, WP and source checks passed"
+# C-11c: the first process probes free omitted ID 3 and gets RNF. Its map
+# claim is vetoed before publication; a fresh process has no probe mark, so
+# the same claim commits and ID 3 reads as zero. A third process reads zero
+# from the saved effective map without writing.
+$allocationImage = (Resolve-Path (Join-Path $InputDirectory "jfd-allocation/old-free.jfd")).Path
+$allocationHash = (Get-FileHash -Algorithm SHA256 $allocationImage).Hash
+$allocationDigest = (Get-FileHash -Algorithm SHA1 $allocationImage).Hash.ToLowerInvariant()
+Copy-Item -Force (Join-Path $InputDirectory "arcdroid-jfd-allocation-veto-test.rom") $firmware
+$allocationVeto = Start-MediaRun $allocationImage "jfd-allocation-veto"
+try {
+    Wait-JfdResultVideoReady $allocationVeto "jfd-allocation-probe-veto-reprobe"
+    [void](Wait-JfdOutcome $allocationVeto "jfd-allocation-probe-veto-reprobe" "ff001500")
+} finally { Stop-MediaRun $allocationVeto }
+if ((Test-Path (Join-Path $jfdSaveDirectory "$allocationDigest.a")) -or
+    (Test-Path (Join-Path $jfdSaveDirectory "$allocationDigest.b"))) {
+    throw "Probed free-sector map claim published a slot"
+}
+Copy-Item -Force (Join-Path $InputDirectory "arcdroid-jfd-allocation-claim-test.rom") $firmware
+$allocationClaim = Start-MediaRun $allocationImage "jfd-allocation-claim"
+try {
+    Wait-JfdResultVideoReady $allocationClaim "jfd-allocation-fresh-claim-zero"
+    [void](Wait-JfdOutcome $allocationClaim "jfd-allocation-fresh-claim-zero" "ff6a0000")
+} finally { Stop-MediaRun $allocationClaim }
+if (-not ((Test-Path (Join-Path $jfdSaveDirectory "$allocationDigest.a")) -or
+           (Test-Path (Join-Path $jfdSaveDirectory "$allocationDigest.b")))) {
+    throw "Fresh-process allocation map claim did not publish a slot"
+}
+Copy-Item -Force (Join-Path $InputDirectory "arcdroid-jfd-allocation-read-test.rom") $firmware
+$allocationRead = Start-MediaRun $allocationImage "jfd-allocation-read"
+try {
+    Wait-JfdResultVideoReady $allocationRead "jfd-allocation-fresh-read-zero"
+    [void](Wait-JfdOutcome $allocationRead "jfd-allocation-fresh-read-zero" "ff001500")
+} finally { Stop-MediaRun $allocationRead }
+if ((Get-FileHash -Algorithm SHA256 $allocationImage).Hash -ne $allocationHash) {
+    throw "Allocation source JFD changed"
+}
+Write-Host "Slice 10a Windows RetroArch: probe veto, fresh-process claim and zero read passed"
+Copy-Item -Force (Join-Path $InputDirectory "arcdroid-media-test.rom") $firmware
 Write-Host "Slice 5b Windows RetroArch: folder disc 1 and eject/next/insert matched the playlist disc-2 signature"
 Write-Host "Slice 7a Windows RetroArch: bare single, zip#member, multi-image swap, pass-through logs, and unchanged SHA-256 passed"
 if ($env:GITHUB_STEP_SUMMARY) {

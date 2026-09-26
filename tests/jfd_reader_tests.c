@@ -19,6 +19,9 @@ static unsigned data_count, finish_count, notfound_count, data_crc_count;
 static unsigned header_crc_count, write_protect_count, index_count;
 static bool cancel_on_data;
 static uint8_t received[2048];
+static uint8_t offered[1024], committed[1024];
+static size_t offer_size, offer_at, commit_count;
+static bool offer_enabled, commit_allowed;
 
 void rpclog(const char *format, ...)
 {
@@ -38,7 +41,21 @@ static void on_notfound(void *opaque) { (void)opaque; ++notfound_count; }
 static void on_data_crc(void *opaque) { (void)opaque; ++data_crc_count; }
 static void on_header_crc(void *opaque) { (void)opaque; ++header_crc_count; }
 static void on_write_protect(void *opaque) { (void)opaque; ++write_protect_count; }
-static int on_get_data(int last, void *opaque) { (void)last; (void)opaque; return -1; }
+static int on_get_data(int last, void *opaque)
+{
+   (void)last; (void)opaque;
+   if (!offer_enabled || offer_at == offer_size) return -1;
+   return offered[offer_at++];
+}
+static bool on_commit(ArcJfdImage *image, size_t index, const uint8_t *data)
+{
+   if (!commit_allowed) return false;
+   assert(index == 0u);
+   memcpy(committed, data, image->sectors[index].size);
+   image->overlay->data[index] = committed;
+   ++commit_count;
+   return true;
+}
 static void on_sector_id(uint8_t track, uint8_t side, uint8_t sector,
                          uint8_t size, uint8_t crc1, uint8_t crc2, void *opaque)
 {
@@ -129,7 +146,7 @@ static void test_transfer_results(void)
    assert(data_count == 1u && !finish_count && !data_crc_count);
 
    reset_results();
-   drive_funcs[0]->writesector(0, 4, 0, 0, 1);
+   drive_funcs[0]->writesector(0, 4, 0, 0, 1, -1, 0);
    assert(write_protect_count == 1u);
    drive_funcs[0]->format(0, 0, 0, 1);
    assert(write_protect_count == 2u);
@@ -207,6 +224,138 @@ static void test_index_cadence(void)
    test_period_us = 32u;
 }
 
+static void test_writable_reader(void)
+{
+   uint8_t decoded[2048] = {0};
+   ArcJfdSector sector = {0u, 256u, 128u, 4u, 2u, 0u};
+   ArcJfdImage image = make_image(decoded, &sector, 1u);
+   uint8_t *replacements[1] = {NULL};
+   ArcJfdOverlay overlay = {0};
+   overlay.data = replacements;
+   overlay.writable = overlay.visible = true;
+   overlay.commit = on_commit;
+   image.overlay = &overlay;
+   offer_enabled = commit_allowed = true;
+   commit_count = offer_at = 0u;
+   offer_size = 128u;
+   memset(offered, 0xa5, offer_size);
+   assert(jfd_load(0, &image) && !writeprot[0]);
+   reset_results();
+   drive_funcs[0]->writesector(0, 4, 0, 0, 1, -1, 0);
+   poll_count(140u);
+   assert(commit_count == 1u && finish_count == 1u &&
+          !write_protect_count && offer_at == offer_size);
+   jfd_motor_start();
+   reset_results();
+   drive_funcs[0]->readsector(0, 4, 0, 0, 1);
+   poll_count(140u);
+   assert(data_count == 128u && received[0] == 0xa5u);
+
+   offer_at = 0u;
+   memset(offered, 0x3cu, offer_size);
+   jfd_motor_start(); reset_results();
+   drive_funcs[0]->writesector(0, 4, 0, 0, 1, -1, 0);
+   poll_count(20u);
+   assert(offer_at > 0u && offer_at < offer_size && commit_count == 1u);
+   drive_funcs[0]->stop(); /* Force Interrupt / reset cancels partial data. */
+   poll_count(140u);
+   assert(commit_count == 1u);
+   drive_funcs[0]->close(0); /* Eject has the same discard rule. */
+   assert(jfd_load(0, &image));
+   jfd_motor_start(); reset_results();
+   drive_funcs[0]->readsector(0, 4, 0, 0, 1);
+   poll_count(140u);
+   assert(received[0] == 0xa5u && commit_count == 1u);
+   offer_at = 0u;
+   jfd_motor_start(); reset_results();
+   drive_funcs[0]->writesector(0, 4, 0, 0, 1, -1, 0);
+   poll_count(20u);
+   assert(offer_at > 0u && offer_at < offer_size && commit_count == 1u);
+   jfd_init(); /* Controller reset removes the in-flight transfer. */
+   assert(jfd_load(0, &image));
+   poll_count(140u);
+   assert(commit_count == 1u);
+
+   /* A complete buffer cannot escape before the commit callback succeeds. */
+   commit_allowed = false;
+   offer_at = 0u;
+   jfd_motor_start();
+   reset_results();
+   drive_funcs[0]->writesector(0, 4, 0, 0, 1, -1, 0);
+   poll_count(140u);
+   assert(commit_count == 1u && write_protect_count == 1u && !finish_count);
+   commit_allowed = true;
+   sector.flags = ARC_JFD_DATA_CRC_BAD;
+   jfd_motor_start(); reset_results();
+   drive_funcs[0]->writesector(0, 4, 0, 0, 1, -1, 0);
+   poll_count(5u);
+   assert(data_crc_count == 1u && commit_count == 1u);
+   sector.flags = ARC_JFD_ID_CRC_BAD;
+   jfd_motor_start(); reset_results();
+   drive_funcs[0]->writesector(0, 4, 0, 0, 1, -1, 0);
+   poll_count(5u);
+   assert(header_crc_count == 1u && commit_count == 1u);
+   sector.flags = 0u;
+   jfd_motor_start(); reset_results();
+   drive_funcs[0]->writesector(0, 4, 0, 0, 1, 256, 0);
+   poll_count(5u);
+   assert(data_crc_count == 1u && commit_count == 1u);
+   jfd_motor_start(); reset_results();
+   drive_funcs[0]->writesector(0, 4, 0, 0, 1, -1, 1);
+   assert(write_protect_count == 1u && commit_count == 1u);
+   offer_enabled = false;
+   jfd_motor_start(); reset_results();
+   drive_funcs[0]->writesector(0, 4, 0, 0, 1, -1, 0);
+   poll_count(20u);
+   assert(!finish_count && commit_count == 1u && write_protect_count == 1u);
+   reset_results();
+   drive_funcs[0]->format(0, 0, 0, 1);
+   assert(write_protect_count == 1u && commit_count == 1u);
+   drive_funcs[0]->close(0);
+}
+
+static void test_write_sizes_and_density(void)
+{
+   for (unsigned density_case = 0u; density_case < 3u; ++density_case)
+      for (unsigned size_code = 0u; size_code < 4u; ++size_code)
+      {
+         uint8_t decoded[2048] = {0};
+         unsigned size = 128u << size_code;
+         unsigned density = density_case == 0u ? 1u :
+                            density_case == 1u ? 2u : 4u;
+         ArcJfdSector sector = {density_case & 1u ? 1000u : 0u,
+                                256u, (uint16_t)size, 6u,
+                                (uint8_t)density, 0u};
+         ArcJfdImage image = make_image(decoded, &sector, 1u);
+         uint8_t *replacements[1] = {NULL};
+         ArcJfdOverlay overlay = {0};
+         overlay.data = replacements;
+         overlay.writable = overlay.visible = true;
+         overlay.commit = on_commit;
+         image.overlay = &overlay;
+         callbacks.sectorid = density_case == 0u ? NULL : on_sector_id;
+         int fdc_density = density_case == 0u ? 0 : density_case == 1u ? 1 : 2;
+         offer_enabled = commit_allowed = true;
+         offer_at = commit_count = 0u;
+         offer_size = size;
+         memset(offered, (int)(0x40u + size_code + density_case * 4u), size);
+         assert(jfd_load(0, &image) && !writeprot[0]);
+         reset_results();
+         drive_funcs[0]->writesector(0, 6, 0, 0, fdc_density,
+                                     (int)size, 0);
+         poll_count(1200u);
+         assert(commit_count == 1u && finish_count == 1u &&
+                offer_at == size && !memcmp(committed, offered, size));
+         jfd_motor_start(); reset_results();
+         drive_funcs[0]->readsector(0, 6, 0, 0, fdc_density);
+         poll_count(1200u);
+         assert(data_count == size && finish_count == 1u &&
+                !memcmp(received, offered, size));
+         drive_funcs[0]->close(0);
+      }
+   callbacks.sectorid = on_sector_id;
+}
+
 int main(void)
 {
    fdc_funcs = &callbacks;
@@ -214,6 +363,8 @@ int main(void)
    test_transfer_results();
    test_rotation_and_search();
    test_index_cadence();
+   test_writable_reader();
+   test_write_sizes_and_density();
    puts("jfd_reader_tests: all checks passed");
    return 0;
 }

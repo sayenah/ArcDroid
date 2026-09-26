@@ -86,6 +86,43 @@ allocation, decompression, or parsing in the engine poll path. MAME's JFD
 reader was consulted only as an independent format reference; no MAME code was
 copied.
 
+The C-11c QA follow-up checks that an effective FileCore map is valid before
+setting a terminal-read probe mark or refusing a later write because of one.
+When the effective map is unavailable, the JFD reader retains C-11 behavior.
+
+Slice 10a extends ArcDroid's shared `disc_funcs_t.writesector` callback with
+the controller's requested size and deleted-data intent. The native JFD
+reader now buffers a complete WRITE SECTOR, checks descriptor eligibility,
+and calls the ArcDroid overlay publisher before reporting success; read data
+comes from the committed record view. `wd1770.c` handles its multiple-sector
+write variant and bounds missing-byte failure; `82c711_fdc.c` passes N and
+deleted-data intent, refuses early terminal count on JFD, and suppresses DMA after a
+synchronous continuation error. FORMAT and WRITE TRACK remain refused. The
+engine never owns a host file handle or writes the supplied JFD.
+The Slice 10a QA follow-up keeps WD1770 multi-sector RNF detection armed
+while the next ID is searched and applies the override guard to continuation;
+the 82C711 applies early terminal-count discard only to JFD, preserving raw
+ADF zero-fill completion, and rejects out-of-range N on JFD. The native JFD
+reader reports whether it is the active drive media for that gate and consumes
+the store's precomputed descriptor eligibility when available.
+Slice 10a C-11 extends that ArcDroid reader with a scheduled prospective
+WRITE SECTOR target for omitted P-DD5 IDs. The reader checks physical C/H,
+keeps prospective IDs invisible to reads and address commands until the
+overlay's atomic rename, and uses the same effective-sector view after commit.
+`82c711_fdc.c` supplies the command cylinder and physical selected side for
+that creation check; its original CRLF line endings remain intact. The engine
+still performs no host file I/O and does not allocate in its poll path.
+The Slice 10a QA low follow-up reports a missing WRITE SECTOR refusal before
+delivering the final index pulse to WD1770, because that callback can stop the
+reader. This changes only refusal diagnostics; both controller limits remain
+unchanged.
+C-11c marks only terminal READ SECTOR RNF of an eligible, absent DD slot and
+consults the mounted map's probe marks before a prospective write. It checks
+the buffered map-sector write for a probed allocation before invoking the
+overlay publisher; vetoes use the existing controller data error and leave
+store write permission intact. The 82C711 passes requested C/H to the reader
+for READ as it already did for WRITE. Its CRLF line endings are preserved.
+
 The pinned upstream `AUTHORS` file is empty. Upstream author and contributor
 credits are preserved in the imported `README.md`.
 

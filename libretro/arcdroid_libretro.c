@@ -7,6 +7,7 @@
 #include "adffs.h"
 #include "folder_set.h"
 #include "jfd.h"
+#include "jfd_store.h"
 #include "playlist.h"
 #include "zip_content.h"
 
@@ -278,6 +279,12 @@ typedef struct {
    ArcMediaInfo info;
    ArcDigest digest;
    ArcJfdImage jfd;
+   bool jfd_damage_notice_shown;
+   bool jfd_off_notice_shown;
+   bool jfd_install_notice_shown;
+   bool jfd_native_notice_shown;
+   bool jfd_map_unavailable_shown;
+   uint8_t jfd_refusal_seen[ARC_JFD_MAX_TRACK_SIDES][32];
    uint32_t jfd_game_id;
    uint16_t jfd_disc_number;
    uint16_t jfd_disc_count;
@@ -289,7 +296,64 @@ typedef struct {
 
 static ArcMediaEntry arc_media[ARC_PLAYLIST_MAX_ENTRIES];
 static unsigned arc_media_count;
+static bool arc_original_jfd_notice_shown;
+static bool arc_jfd_failure_status_shown;
 #if defined(ARCDROID_TEST_FAULTS)
+bool arc_libretro_test_jfd_commit(unsigned image_index, size_t descriptor,
+                                  uint8_t value)
+{
+   if (image_index >= arc_media_count ||
+       arc_media[image_index].info.kind != ARC_MEDIA_JFD) return false;
+   ArcJfdImage *image = &arc_media[image_index].jfd;
+   if (!image->overlay || !image->overlay->writable ||
+       descriptor >= image->sector_count ||
+       !image->overlay->eligible || !image->overlay->eligible[descriptor])
+      return false;
+   size_t size = image->sectors[descriptor].size;
+   uint8_t *bytes = malloc(size);
+   if (!bytes) return false;
+   memset(bytes, value, size);
+   bool committed = image->overlay->commit(image, descriptor, bytes);
+   free(bytes);
+   return committed;
+}
+bool arc_libretro_test_jfd_formatted_reads(unsigned image_index)
+{
+   if (image_index >= arc_media_count ||
+       arc_media[image_index].info.kind != ARC_MEDIA_JFD) return false;
+   const ArcJfdOverlay *overlay = arc_media[image_index].jfd.overlay;
+   if (!overlay || !overlay->map_enabled || !overlay->map_valid) return false;
+   for (unsigned t = 0u; t < ARC_JFD_PDD5_TRACKS; ++t)
+      if (overlay->allocation_mask[t] & overlay->creation_mask[t] &
+          (uint8_t)~overlay->probe_mask[t]) return true;
+   return false;
+}
+uint8_t arc_libretro_test_jfd_probe_mask(unsigned image_index,
+                                        unsigned track_side)
+{
+   if (image_index >= arc_media_count || track_side >= ARC_JFD_PDD5_TRACKS ||
+       arc_media[image_index].info.kind != ARC_MEDIA_JFD ||
+       !arc_media[image_index].jfd.overlay) return 0u;
+   return arc_media[image_index].jfd.overlay->probe_mask[track_side];
+}
+bool arc_libretro_test_jfd_created_byte(unsigned image_index,
+                                        unsigned track_side, unsigned id,
+                                        unsigned offset, uint8_t *value)
+{
+   if (!value || image_index >= arc_media_count ||
+       arc_media[image_index].info.kind != ARC_MEDIA_JFD ||
+       id >= ARC_JFD_PDD5_IDS || offset >= 1024u ||
+       track_side >= arc_media[image_index].jfd.track_count)
+      return false;
+   ArcJfdImage *image = &arc_media[image_index].jfd;
+   ArcJfdView view;
+   if (!arc_jfd_effective_sector(image, track_side,
+                                 image->tracks[track_side].sector_count + id,
+                                 false, &view) || !view.created || !view.data)
+      return false;
+   *value = view.data[offset];
+   return true;
+}
 const char *arc_libretro_test_staged_path(unsigned index)
 {
    return index < arc_media_count && arc_media[index].populated ?
@@ -798,6 +862,13 @@ static const char *arc_os_slug(ArcOsClass os)
 
 static void arc_release_session(void)
 {
+   if (arc_jfd_failure_status_shown && arc_environment)
+   {
+      struct retro_message_ext clear = {"", 1u, 3u, RETRO_LOG_INFO,
+         RETRO_MESSAGE_TARGET_OSD, RETRO_MESSAGE_TYPE_STATUS, -1};
+      (void)arc_environment(RETRO_ENVIRONMENT_SET_MESSAGE_EXT, &clear);
+      arc_jfd_failure_status_shown = false;
+   }
    arc_chooser_input_armed = false;
    arc_chooser_release_gate = false;
    arc_engine_stop();
@@ -814,6 +885,7 @@ static void arc_release_session(void)
       arc_jfd_free(&arc_media[i].jfd);
    memset(arc_media, 0, sizeof(arc_media));
    arc_media_count = 0u;
+   arc_original_jfd_notice_shown = false;
    arc_folder_set_active = false;
    arc_zip_active = false;
    arc_zip_path[0] = '\0';
@@ -906,6 +978,33 @@ static void arc_message(const char *text, enum retro_log_level level)
       arc_log(level, "%s\n", text);
    if (!arc_environment(RETRO_ENVIRONMENT_SET_MESSAGE_EXT, &ext))
       arc_environment(RETRO_ENVIRONMENT_SET_MESSAGE, &legacy);
+}
+
+void arc_jfd_store_notice(const char *message, bool warning)
+{
+   if (warning && strstr(message, "can no longer be saved this session"))
+   {
+      struct retro_message_ext status = {message, 3600000u, 3u,
+         RETRO_LOG_WARN, RETRO_MESSAGE_TARGET_OSD,
+         RETRO_MESSAGE_TYPE_STATUS, -1};
+      if (arc_log) arc_log(RETRO_LOG_WARN, "%s\n", message);
+      if (arc_environment &&
+          arc_environment(RETRO_ENVIRONMENT_SET_MESSAGE_EXT, &status))
+      { arc_jfd_failure_status_shown = true; return; }
+   }
+   arc_message(message, warning ? RETRO_LOG_WARN : RETRO_LOG_INFO);
+}
+
+void arc_jfd_store_log_commit(unsigned image_number, uint64_t generation,
+                              size_t sector_index)
+{
+#if defined(ARCDROID_TEST_FAULTS)
+   if (arc_log) arc_log(RETRO_LOG_INFO,
+      "JFD write: image=%u generation=%llu descriptor=%zu\n",
+      image_number, (unsigned long long)generation, sector_index);
+#else
+   (void)image_number; (void)generation; (void)sector_index;
+#endif
 }
 
 static void arc_media_notice(const char *text, bool notify_user,
@@ -2114,13 +2213,46 @@ static bool arc_reprepare_zip_media(ArcDiskWriteMode mode,
 static ArcEngineMedia arc_engine_media(const ArcMediaEntry *entry)
 {
    ArcEngineMedia media = {entry->staged,
-      entry->info.kind != ARC_MEDIA_JFD && arc_plan.disk_writes != ARC_DISK_WRITES_OFF,
+      entry->info.kind == ARC_MEDIA_JFD ?
+         (entry->jfd.overlay && entry->jfd.overlay->writable) :
+         arc_plan.disk_writes != ARC_DISK_WRITES_OFF,
       entry->info.kind, entry->info.geometry,
       entry->info.kind == ARC_MEDIA_JFD ? &entry->jfd : NULL, NULL, 0u};
    return media;
 }
 
-static bool arc_refresh_jfd(ArcMediaEntry *entry, char *error, size_t error_size)
+static void arc_jfd_log_refusal(unsigned image_number, unsigned track,
+                                unsigned side, unsigned sector,
+                                const char *reason)
+{
+   if (!image_number || image_number > arc_media_count || track >= 83u ||
+       side > 1u || sector > 255u) return;
+   ArcMediaEntry *entry = &arc_media[image_number - 1u];
+   unsigned track_side = track * 2u + side;
+   uint8_t mask = (uint8_t)(1u << (sector & 7u));
+   uint8_t *seen = &entry->jfd_refusal_seen[track_side][sector >> 3u];
+   if (*seen & mask) return;
+   *seen |= mask;
+   if (arc_log)
+      arc_log(RETRO_LOG_INFO,
+         "JFD write refused: image=%u track=%u side=%u sector=%u reason=%s\n",
+         image_number, track, side, sector, reason);
+}
+
+static void arc_jfd_log_map_unavailable(unsigned image_number)
+{
+   if (!image_number || image_number > arc_media_count) return;
+   ArcMediaEntry *entry = &arc_media[image_number - 1u];
+   if (entry->jfd_map_unavailable_shown) return;
+   entry->jfd_map_unavailable_shown = true;
+   if (arc_log)
+      arc_log(RETRO_LOG_INFO,
+              "JFD allocation map unavailable: image=%u; omitted reads retain record-not-found\n",
+              image_number);
+}
+
+static bool arc_refresh_jfd(ArcMediaEntry *entry, ArcDiskWriteMode mode,
+                            char *error, size_t error_size)
 {
    if (entry->info.kind != ARC_MEDIA_JFD) return true;
    void *data = NULL;
@@ -2136,7 +2268,68 @@ static bool arc_refresh_jfd(ArcMediaEntry *entry, char *error, size_t error_size
    if (!arc_jfd_parse_owned(data, size, &parsed, error, error_size)) return false;
    arc_jfd_free(&entry->jfd);
    entry->jfd = parsed;
+   const char *reason = NULL;
+   unsigned image_number = (unsigned)(entry - arc_media) + 1u;
+   if (!arc_jfd_store_load(&entry->jfd, arc_save_path,
+                           mode != ARC_DISK_WRITES_OFF, false,
+                           image_number, &reason))
+   {
+      reason = "overlay-unreadable";
+      if (mode != ARC_DISK_WRITES_OFF && entry->jfd.extended &&
+          (entry->jfd.flags & 2u) && !(entry->jfd.flags & 1u))
+         arc_jfd_store_notice("Disc changes can no longer be saved this session.", true);
+   }
+   if (entry->jfd.overlay)
+   {
+      entry->jfd.overlay->reason = reason;
+      entry->jfd.overlay->log_refusal = arc_jfd_log_refusal;
+      entry->jfd.overlay->log_map_unavailable = arc_jfd_log_map_unavailable;
+   }
+   if (entry->jfd.overlay && entry->jfd.overlay->damaged &&
+       !entry->jfd_damage_notice_shown)
+   {
+      arc_jfd_store_notice(
+         "Disc writes are disabled because a saved disc-change file is damaged.", true);
+      entry->jfd_damage_notice_shown = true;
+   }
+   else if (entry->jfd.overlay && mode == ARC_DISK_WRITES_OFF &&
+            entry->jfd.overlay->generation && !entry->jfd_off_notice_shown)
+   {
+      arc_jfd_store_notice("Saved disc changes are hidden while Disk Writes is Off.", false);
+      entry->jfd_off_notice_shown = true;
+   }
+   if (mode == ARC_DISK_WRITES_ORIGINAL && entry->jfd.extended &&
+       (entry->jfd.flags & 2u) && !(entry->jfd.flags & 1u) &&
+       !arc_original_jfd_notice_shown)
+   {
+      arc_message("JFD content is never written in place; disc changes use the save directory.",
+                  RETRO_LOG_INFO);
+      arc_original_jfd_notice_shown = true;
+   }
    return true;
+}
+
+static void arc_finish_jfd_preparation(ArcMediaEntry *entry, bool native)
+{
+   if (!entry || entry->info.kind != ARC_MEDIA_JFD) return;
+   unsigned image_number = (unsigned)(entry - arc_media) + 1u;
+   ArcJfdOverlay *overlay = entry->jfd.overlay;
+   /* C-11c derives formatted omissions from the committed FileCore map.
+    * Preparation also starts a new mounted lifetime for probe marks. */
+   if (overlay)
+   {
+      overlay->map_enabled = native && overlay->writable;
+      arc_jfd_map_prepare(&entry->jfd);
+   }
+   if (!arc_log) return;
+   arc_log(RETRO_LOG_INFO,
+      "JFD writes: image=%u state=%s reason=%s generation=%llu records=%u\n",
+      image_number,
+      native && overlay && overlay->writable ? "writable" : "protected",
+      native ? overlay && overlay->reason ? overlay->reason : "overlay-unreadable" :
+               "not-native",
+      (unsigned long long)(overlay ? overlay->generation : 0u),
+      overlay ? overlay->records : 0u);
 }
 
 typedef struct {
@@ -2630,6 +2823,18 @@ static bool arc_prepare_adffs(bool notify) {
             plan->profile->game_id, plan->profile->revision,
             plan->variant->key, discs, plan->variant->ram_kib);
       }
+      if (jfd->overlay && jfd->overlay->generation && !jfd->overlay->damaged)
+      {
+         if (arc_log)
+            arc_log(RETRO_LOG_INFO,
+                    "JFD boot: path=install reason=native-saves-not-used\n");
+         if (notify && !entry->jfd_install_notice_shown)
+         {
+            arc_message("Saved disc changes from native boots are not used on this install path.",
+                        RETRO_LOG_INFO);
+            entry->jfd_install_notice_shown = true;
+         }
+      }
       arc_message("Installed to a temporary RAM disc; saves are lost after exit or reset.", RETRO_LOG_WARN);
       arc_adffs_active = true;
       arc_plan.launch_helper = true;
@@ -2731,6 +2936,22 @@ static bool arc_prepare_adffs(bool notify) {
       arc_jfd_boot_log(full);
       if (notify)
          arc_jfd_boot_notice(full, jfd);
+      return false;
+   }
+   /* A native save takes precedence only when the complete ADFFS path is
+    * viable. Discard the unused carrier before returning to native boot. */
+   if (jfd->overlay && jfd->overlay->generation && !jfd->overlay->damaged)
+   {
+      arc_adffs_package_free(package);
+      free(package);
+      arc_adffs_discard();
+      arc_jfd_boot_log("native-saves");
+      if (notify && !entry->jfd_native_notice_shown)
+      {
+         arc_message("Saved disc changes found; booting this JFD natively to keep them visible.",
+                     RETRO_LOG_INFO);
+         entry->jfd_native_notice_shown = true;
+      }
       return false;
    }
    if (arc_log)
@@ -3311,7 +3532,7 @@ static bool arc_disk_set_eject(bool ejected)
          arc_message(error, RETRO_LOG_ERROR);
          return false;
       }
-      if (!arc_refresh_jfd(entry, error, sizeof(error)))
+      if (!arc_refresh_jfd(entry, arc_plan.disk_writes, error, sizeof(error)))
       {
          arc_message(error, RETRO_LOG_ERROR);
          return false;
@@ -3323,6 +3544,7 @@ static bool arc_disk_set_eject(bool ejected)
          arc_message(error[0] ? error : "Unable to insert the selected floppy image.", RETRO_LOG_ERROR);
          return false;
       }
+      arc_finish_jfd_preparation(entry, true);
    }
    arc_ejected = false;
    return true;
@@ -4598,6 +4820,7 @@ static bool arc_chooser_confirm(void)
       arc_install_requested_binding[0] = '\0';
       if (!built) {
          arc_install_choice_discard();
+         arc_finish_jfd_preparation(&arc_media[arc_image_index], true);
          if (arc_prepare_launch(&arc_media[arc_image_index], false,
                                 arc_core_options.launch, false)) {
             arc_chooser_reset_input();
@@ -4978,7 +5201,8 @@ static bool arc_load_game(const struct retro_game_info *game, bool negotiate)
    arc_seed_cmos();
    arc_session = ARC_SESSION_PREPARED;
    {
-      if (!arc_refresh_jfd(&arc_media[arc_image_index], error, sizeof(error)))
+      if (!arc_refresh_jfd(&arc_media[arc_image_index], arc_plan.disk_writes,
+                           error, sizeof(error)))
       {
          arc_message(error, RETRO_LOG_ERROR);
          arc_release_session();
@@ -4991,6 +5215,7 @@ static bool arc_load_game(const struct retro_game_info *game, bool negotiate)
          arc_release_session();
          return false;
       }
+      arc_finish_jfd_preparation(&arc_media[arc_image_index], !adffs && !arc_install_choosing);
       bool choosing = arc_install_choosing || (!adffs && arc_prepare_launch(&arc_media[arc_image_index], false,
                                                    arc_core_options.launch, false));
       if (choosing)
@@ -5139,7 +5364,8 @@ RETRO_API void retro_reset(void)
       }
    }
    if (!was_ejected && selected < arc_media_count &&
-       !arc_refresh_jfd(&arc_media[selected], error, sizeof(error)))
+       !arc_refresh_jfd(&arc_media[selected], updated.disk_writes,
+                        error, sizeof(error)))
       goto failed;
 
    free(arc_firmware);
@@ -5180,6 +5406,8 @@ RETRO_API void retro_reset(void)
       snprintf(error, sizeof(error), "Unable to prepare the chosen install session.");
       goto failed;
    }
+   if (selected < arc_media_count && !was_ejected)
+      arc_finish_jfd_preparation(&arc_media[selected], !adffs && !arc_install_choosing);
    ArcEngineMedia mounted;
    ArcEngineMedia *mounted_pointer = NULL;
    if (!was_ejected && selected < arc_media_count && arc_media[selected].populated)

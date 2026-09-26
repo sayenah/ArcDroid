@@ -135,6 +135,19 @@ bool arc_jfd_has_signature(const uint8_t *input, size_t input_size)
 void arc_jfd_free(ArcJfdImage *image)
 {
    if (!image) return;
+   if (image->overlay)
+   {
+      if (image->overlay->data)
+         for (size_t i = 0u; i < image->sector_count; ++i)
+            free(image->overlay->data[i]);
+      free(image->overlay->data);
+      for (unsigned track = 0u; track < ARC_JFD_PDD5_TRACKS; ++track)
+         for (unsigned id = 0u; id < ARC_JFD_PDD5_IDS; ++id)
+            free(image->overlay->created[track][id]);
+      free(image->overlay->eligible);
+      free(image->overlay->store);
+      free(image->overlay);
+   }
    free(image->decoded);
    free(image->sectors);
    memset(image, 0, sizeof(*image));

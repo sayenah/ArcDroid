@@ -57,6 +57,7 @@ set(ARCDROID_CORE_SOURCES
   core/osk.c
   core/launch.c
   core/launch_discovery.c
+  core/jfd_layout.c
   core/launch_disc.c
   core/launch_chooser.c
   core/folder_set.c
@@ -102,6 +103,7 @@ set(ARCDROID_LIBRETRO_SOURCES
   engine/arculator/src/vidc.c
   engine/arculator/src/wd1770.c
   libretro/arc_io.c
+  libretro/jfd_store.c
   libretro/arcdroid_libretro.c
   platform/arcdroid_input.c
   platform/arcdroid_joystick.c
@@ -208,6 +210,7 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
     tests/jfd_reader_tests.c engine/arculator/src/disc_jfd.c)
   target_include_directories(jfd_reader_tests PRIVATE
     core engine/compat engine/arculator/src)
+  target_link_libraries(jfd_reader_tests PRIVATE arcdroid_core)
   target_compile_options(jfd_reader_tests PRIVATE
     $<$<C_COMPILER_ID:GNU,Clang,AppleClang>:-UNDEBUG;-Wall;-Wextra;-Wpedantic>)
   if(ARCDROID_SANITIZERS)
@@ -326,6 +329,24 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
       "${FIXTURE_DIR}/launch-family/sibling-pipe-l.adl"
       "${FIXTURE_DIR}/launch-family/duplicate-siblings-l.adl"
       "${FIXTURE_DIR}/arcdroid-media-test.rom"
+      "${FIXTURE_DIR}/arcdroid-jfd-save-test.rom"
+      "${FIXTURE_DIR}/arcdroid-jfd-newio-save-test.rom"
+      "${FIXTURE_DIR}/arcdroid-jfd-create-test.rom"
+      "${FIXTURE_DIR}/arcdroid-jfd-newio-create-test.rom"
+      "${FIXTURE_DIR}/arcdroid-jfd-merge-test.rom"
+      "${FIXTURE_DIR}/arcdroid-jfd-newio-merge-test.rom"
+      "${FIXTURE_DIR}/arcdroid-jfd-merge-readback-test.rom"
+      "${FIXTURE_DIR}/arcdroid-jfd-newio-merge-readback-test.rom"
+      "${FIXTURE_DIR}/arcdroid-jfd-merge-missing-test.rom"
+      "${FIXTURE_DIR}/arcdroid-jfd-newio-merge-missing-test.rom"
+      "${FIXTURE_DIR}/arcdroid-jfd-allocation-veto-test.rom"
+      "${FIXTURE_DIR}/arcdroid-jfd-allocation-claim-test.rom"
+      "${FIXTURE_DIR}/arcdroid-jfd-allocation-read-test.rom"
+      "${FIXTURE_DIR}/arcdroid-jfd-newio-allocation-veto-test.rom"
+      "${FIXTURE_DIR}/arcdroid-jfd-newio-allocation-claim-test.rom"
+      "${FIXTURE_DIR}/arcdroid-jfd-newio-allocation-read-test.rom"
+      "${FIXTURE_DIR}/arcdroid-jfd-directory-benign.rom"
+      "${FIXTURE_DIR}/arcdroid-jfd-directory-rename.rom"
       "${FIXTURE_DIR}/arcdroid-media-disc1.adf"
       "${FIXTURE_DIR}/arcdroid-media-disc2.adf"
       "${FIXTURE_DIR}/arcdroid-media.m3u"
@@ -342,6 +363,45 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
       "${FIXTURE_DIR}/Virelai.adf/Virelai.adf"
       "${FIXTURE_DIR}/Virelai.adf/Virelai 2.adf"
       "${FIXTURE_DIR}/arcdroid-test.jfd"
+      "${FIXTURE_DIR}/jfd-writes/rw-d.jfd"
+      "${FIXTURE_DIR}/jfd-writes/rw-create-d.jfd"
+      "${FIXTURE_DIR}/jfd-writes/wp-create-d.jfd"
+      "${FIXTURE_DIR}/jfd-writes/rw-merge-d.jfd"
+      "${FIXTURE_DIR}/jfd-writes/wp-merge-d.jfd"
+      "${FIXTURE_DIR}/jfd-writes/rw-newio-d.jfd"
+      "${FIXTURE_DIR}/jfd-writes/wp-newio-d.jfd"
+      "${FIXTURE_DIR}/jfd-writes/launch-unchanged-d.jfd"
+      "${FIXTURE_DIR}/jfd-writes/launch-renamed-d.jfd"
+      "${FIXTURE_DIR}/jfd-writes/missing-one-d.jfd"
+      "${FIXTURE_DIR}/jfd-creation/partial-untimed.jfd"
+      "${FIXTURE_DIR}/jfd-creation/launch-full.jfd"
+      "${FIXTURE_DIR}/jfd-creation/launch-partial.jfd"
+      "${FIXTURE_DIR}/jfd-creation/partial-edge.jfd"
+      "${FIXTURE_DIR}/jfd-creation/partial-timed.jfd"
+      "${FIXTURE_DIR}/jfd-creation/timed-rounded.jfd"
+      "${FIXTURE_DIR}/jfd-creation/boundary.jfd"
+      "${FIXTURE_DIR}/jfd-creation/unschedulable.jfd"
+      "${FIXTURE_DIR}/jfd-creation/short-full.jfd"
+      "${FIXTURE_DIR}/jfd-creation/short-partial.jfd"
+      "${FIXTURE_DIR}/jfd-creation/nonmatching.jfd"
+      "${FIXTURE_DIR}/jfd-creation/irregular-free.jfd"
+      "${FIXTURE_DIR}/jfd-creation/irregular-free-sequence.jfd"
+      "${FIXTURE_DIR}/jfd-creation/irregular-newmap-free.jfd"
+      "${FIXTURE_DIR}/jfd-creation/irregular-allocated.jfd"
+      "${FIXTURE_DIR}/jfd-creation/irregular-all-ids.jfd"
+      "${FIXTURE_DIR}/jfd-creation/irregular-id-only-free.jfd"
+      "${FIXTURE_DIR}/jfd-creation/irregular-id-only-allocated.jfd"
+      "${FIXTURE_DIR}/jfd-creation/irregular-bad-crc-free.jfd"
+      "${FIXTURE_DIR}/jfd-creation/irregular-bad-crc-allocated.jfd"
+      "${FIXTURE_DIR}/jfd-creation/half-vote.jfd"
+      "${FIXTURE_DIR}/jfd-writes/adffs-rw.jfd"
+      "${FIXTURE_DIR}/jfd-writes/wp-d.jfd"
+      "${FIXTURE_DIR}/jfd-writes/SaveSet.jfd/SaveSet 2.jfd"
+      "${FIXTURE_DIR}/jfd-writes/neither-d.jfd"
+      "${FIXTURE_DIR}/jfd-writes/legacy-d.jfd"
+      "${FIXTURE_DIR}/jfd-writes/rw-d-gzip.jfd"
+      "${FIXTURE_DIR}/jfd-writes/rw-d.zip"
+      "${FIXTURE_DIR}/jfd-writes/mixed.m3u"
       "${FIXTURE_DIR}/arcdroid-test-gzip.jfd"
       "${FIXTURE_DIR}/arcdroid-test-two-member.jfd"
       "${FIXTURE_DIR}/arcdroid-test-three-member.jfd"
@@ -368,6 +428,12 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
     "${FIXTURE_DIR}/launch-family/sibling-pipe-l.adl"
     "${FIXTURE_DIR}/launch-family/duplicate-siblings-l.adl"
     "${FIXTURE_DIR}/arcdroid-media-test.rom"
+    "${FIXTURE_DIR}/arcdroid-jfd-save-test.rom"
+    "${FIXTURE_DIR}/arcdroid-jfd-newio-save-test.rom"
+    "${FIXTURE_DIR}/arcdroid-jfd-create-test.rom"
+    "${FIXTURE_DIR}/arcdroid-jfd-newio-create-test.rom"
+    "${FIXTURE_DIR}/arcdroid-jfd-directory-benign.rom"
+    "${FIXTURE_DIR}/arcdroid-jfd-directory-rename.rom"
     "${FIXTURE_DIR}/arcdroid-media-disc1.adf"
     "${FIXTURE_DIR}/arcdroid-media-disc2.adf"
     "${FIXTURE_DIR}/arcdroid-media.m3u"
@@ -384,6 +450,45 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
     "${FIXTURE_DIR}/Virelai.adf/Virelai.adf"
     "${FIXTURE_DIR}/Virelai.adf/Virelai 2.adf"
     "${FIXTURE_DIR}/arcdroid-test.jfd"
+    "${FIXTURE_DIR}/jfd-writes/rw-d.jfd"
+    "${FIXTURE_DIR}/jfd-writes/rw-create-d.jfd"
+    "${FIXTURE_DIR}/jfd-writes/wp-create-d.jfd"
+    "${FIXTURE_DIR}/jfd-writes/rw-merge-d.jfd"
+    "${FIXTURE_DIR}/jfd-writes/wp-merge-d.jfd"
+    "${FIXTURE_DIR}/jfd-writes/rw-newio-d.jfd"
+    "${FIXTURE_DIR}/jfd-writes/wp-newio-d.jfd"
+    "${FIXTURE_DIR}/jfd-writes/launch-unchanged-d.jfd"
+    "${FIXTURE_DIR}/jfd-writes/launch-renamed-d.jfd"
+    "${FIXTURE_DIR}/jfd-writes/missing-one-d.jfd"
+    "${FIXTURE_DIR}/jfd-creation/partial-untimed.jfd"
+    "${FIXTURE_DIR}/jfd-creation/launch-full.jfd"
+    "${FIXTURE_DIR}/jfd-creation/launch-partial.jfd"
+    "${FIXTURE_DIR}/jfd-creation/partial-edge.jfd"
+    "${FIXTURE_DIR}/jfd-creation/partial-timed.jfd"
+    "${FIXTURE_DIR}/jfd-creation/timed-rounded.jfd"
+    "${FIXTURE_DIR}/jfd-creation/boundary.jfd"
+    "${FIXTURE_DIR}/jfd-creation/unschedulable.jfd"
+    "${FIXTURE_DIR}/jfd-creation/short-full.jfd"
+    "${FIXTURE_DIR}/jfd-creation/short-partial.jfd"
+    "${FIXTURE_DIR}/jfd-creation/nonmatching.jfd"
+    "${FIXTURE_DIR}/jfd-creation/irregular-free.jfd"
+    "${FIXTURE_DIR}/jfd-creation/irregular-free-sequence.jfd"
+    "${FIXTURE_DIR}/jfd-creation/irregular-newmap-free.jfd"
+    "${FIXTURE_DIR}/jfd-creation/irregular-allocated.jfd"
+    "${FIXTURE_DIR}/jfd-creation/irregular-all-ids.jfd"
+    "${FIXTURE_DIR}/jfd-creation/irregular-id-only-free.jfd"
+    "${FIXTURE_DIR}/jfd-creation/irregular-id-only-allocated.jfd"
+    "${FIXTURE_DIR}/jfd-creation/irregular-bad-crc-free.jfd"
+    "${FIXTURE_DIR}/jfd-creation/irregular-bad-crc-allocated.jfd"
+    "${FIXTURE_DIR}/jfd-creation/half-vote.jfd"
+    "${FIXTURE_DIR}/jfd-writes/adffs-rw.jfd"
+    "${FIXTURE_DIR}/jfd-writes/wp-d.jfd"
+    "${FIXTURE_DIR}/jfd-writes/SaveSet.jfd/SaveSet 2.jfd"
+    "${FIXTURE_DIR}/jfd-writes/neither-d.jfd"
+    "${FIXTURE_DIR}/jfd-writes/legacy-d.jfd"
+    "${FIXTURE_DIR}/jfd-writes/rw-d-gzip.jfd"
+    "${FIXTURE_DIR}/jfd-writes/rw-d.zip"
+    "${FIXTURE_DIR}/jfd-writes/mixed.m3u"
     "${FIXTURE_DIR}/arcdroid-test-gzip.jfd"
     "${FIXTURE_DIR}/arcdroid-test-two-member.jfd"
     "${FIXTURE_DIR}/arcdroid-test-three-member.jfd"
@@ -419,6 +524,22 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
       arcdroid_sanitizer_compile arcdroid_sanitizer_link)
   endif()
   add_test(NAME arc-io-write-guards COMMAND arc_io_tests)
+  add_executable(jfd_store_tests
+    tests/jfd_store_tests.c libretro/arc_io.c libretro/jfd_store.c)
+  target_include_directories(jfd_store_tests PRIVATE
+    core libretro libretro/include)
+  target_link_libraries(jfd_store_tests PRIVATE arcdroid_core)
+  target_compile_options(jfd_store_tests PRIVATE
+    $<$<C_COMPILER_ID:GNU,Clang,AppleClang>:-UNDEBUG;-Wall;-Wextra;-Wpedantic>)
+  if(ARCDROID_SANITIZERS)
+    target_link_libraries(jfd_store_tests PRIVATE
+      arcdroid_sanitizer_compile arcdroid_sanitizer_link)
+  endif()
+  add_dependencies(jfd_store_tests test-fixtures)
+  add_test(NAME jfd-store COMMAND jfd_store_tests "${FIXTURE_DIR}")
+  add_test(NAME jfd-gate-short COMMAND jfd_store_tests "${FIXTURE_DIR}" short)
+  add_test(NAME jfd-gate-irregular COMMAND jfd_store_tests "${FIXTURE_DIR}" irregular)
+  add_test(NAME jfd-gate-timing COMMAND jfd_store_tests "${FIXTURE_DIR}" timing)
   add_dependencies(jfd_controller_tests test-fixtures)
   add_test(NAME core-services COMMAND core_tests "${FIXTURE_DIR}")
   add_test(NAME jfd-controller-golden COMMAND jfd_controller_tests
@@ -483,6 +604,24 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
       "${FIXTURE_DIR}/adffs/synthetic.zip"
       "${FIXTURE_DIR}/adffs/eligible.jfd"
       "${FIXTURE_DIR}/zip-content")
+    add_test(NAME jfd-writes-libretro-harness COMMAND libretro_harness
+      $<TARGET_FILE:arcdroid_libretro_test>
+      "${FIXTURE_DIR}/arcdroid-jfd-save-test.rom"
+      "${FIXTURE_DIR}/jfd-writes/rw-d.jfd"
+      "${CMAKE_CURRENT_BINARY_DIR}/jfd-writes-harness-data"
+      --jfd-writes "${FIXTURE_DIR}/jfd-writes")
+    add_test(NAME jfd-creation-process COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/jfd_creation_process_test.py"
+      $<TARGET_FILE:libretro_harness>
+      $<TARGET_FILE:arcdroid_libretro_test> "${FIXTURE_DIR}")
+    add_test(NAME jfd-merge-process COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/jfd_merge_process_test.py"
+      $<TARGET_FILE:libretro_harness>
+      $<TARGET_FILE:arcdroid_libretro_test> "${FIXTURE_DIR}")
+    add_test(NAME jfd-allocation-process COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/jfd_allocation_process_test.py"
+      $<TARGET_FILE:libretro_harness>
+      $<TARGET_FILE:arcdroid_libretro_test> "${FIXTURE_DIR}")
     add_test(NAME newio-libretro-harness COMMAND libretro_harness
       $<TARGET_FILE:arcdroid_libretro_test>
       "${FIXTURE_DIR}/arcdroid-test.rom"

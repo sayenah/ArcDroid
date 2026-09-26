@@ -75,8 +75,8 @@ bool arc_io_read_all_limit(const char *path, void **data, size_t *size,
       return false;
    }
    got = arc_io_vfs->read(file, buffer, (uint64_t)length);
-   arc_io_vfs->close(file);
-   if (got != length)
+   int closed = arc_io_vfs->close(file);
+   if (got != length || closed != 0)
    {
       free(buffer);
       return false;
@@ -101,8 +101,8 @@ bool arc_io_write_all(const char *path, const void *data, size_t size)
                            RETRO_VFS_FILE_ACCESS_HINT_NONE);
    if (!file) return false;
    wrote = arc_io_vfs->write(file, data, size);
-   if (wrote == (int64_t)size && arc_io_vfs->flush)
-      wrote = arc_io_vfs->flush(file) == 0 ? wrote : -1;
+   if (wrote == (int64_t)size)
+      wrote = arc_io_vfs->flush && arc_io_vfs->flush(file) == 0 ? wrote : -1;
    int closed = arc_io_vfs->close(file);
    return wrote == (int64_t)size && closed == 0;
 }
