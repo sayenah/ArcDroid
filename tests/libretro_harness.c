@@ -1335,7 +1335,9 @@ static void print_usage(FILE *stream, const char *program)
       "  %s CORE SAVE_ROM RW_JFD DATA --jfd-writes FIXTURES\n"
       "  %s CORE ROM CONTENT DATA --real-boot "
       "[--machine A3000|A3010|A3020|A4000] "
-      "[--joystick Keyboard|A3010] [--osk-script FILE]\n"
+      "[--joystick Keyboard|A3010] "
+      "[--install-saves persistent|temporary] [--osk-script FILE]\n"
+      "  %s --self-test-parser\n"
       "  %s CORE ROM CONTENT DATA MEDIA_ROM PLAYLIST DISC1 DISC2 JFD JFD2 "
       "FIXTURES APP ADFFS_PACKAGE ADFFS_JFD ZIP_FIXTURES\n"
       "\n"
@@ -1349,9 +1351,42 @@ static void print_usage(FILE *stream, const char *program)
       "  move DX DY                          send one libretro mouse delta\n"
       "  click MASK HOLD                     hold mouse buttons for HOLD fields\n"
       "                                      MASK: 1 Select, 2 Adjust, 4 Menu\n"
+      "  pad BUTTON FIELDS                   hold port 0 RetroPad id 0-15 for FIELDS fields, then release for one field\n"
+      "  drag MASK DX DY FIELDS             hold mouse mask 0-7 and send DX DY each field, then release for one field\n"
       "Screenshots are written as DATA/evidence/NAME.ppm. NAME may contain\n"
       "letters, digits, dot, underscore, or hyphen (but not . or ..).\n",
-      program, program, program, program, program);
+      program, program, program, program, program, program);
+}
+
+static bool script_unsigned(const char *word, unsigned long maximum,
+                            bool allow_zero, unsigned long *value)
+{
+   if (!word || !*word || !value) return false;
+   for (const unsigned char *p = (const unsigned char *)word; *p; ++p)
+      if (!isdigit(*p)) return false;
+   char *end = NULL;
+   errno = 0;
+   unsigned long parsed = strtoul(word, &end, 10);
+   if (errno || !end || *end || parsed > maximum ||
+       (!allow_zero && !parsed)) return false;
+   *value = parsed;
+   return true;
+}
+
+static bool script_delta(const char *word, long *value)
+{
+   if (!word || !*word || !value) return false;
+   const unsigned char *p = (const unsigned char *)word;
+   if (*p == '-' || *p == '+') ++p;
+   if (!*p) return false;
+   for (; *p; ++p) if (!isdigit(*p)) return false;
+   char *end = NULL;
+   errno = 0;
+   long parsed = strtol(word, &end, 10);
+   if (errno || !end || *end || parsed < INT16_MIN ||
+       parsed > INT16_MAX) return false;
+   *value = parsed;
+   return true;
 }
 
 static bool script_key(const char *name, unsigned *key)
@@ -1464,6 +1499,8 @@ static bool run_osk_script(const char *path, OskScriptApi *api)
       char *first = strtok_r(NULL, " \t\r\n", &save);
       char *second = strtok_r(NULL, " \t\r\n", &save);
       char *extra = strtok_r(NULL, " \t\r\n", &save);
+      char *fourth = strtok_r(NULL, " \t\r\n", &save);
+      char *fifth = strtok_r(NULL, " \t\r\n", &save);
       unsigned key = 0u;
       if (!strcmp(command, "wait") && first && !second)
       {
@@ -1546,6 +1583,43 @@ static bool run_osk_script(const char *path, OskScriptApi *api)
             ok = api->mouse_samples() >= before + hold;
          }
       }
+      else if (!strcmp(command, "pad") && first && second && !extra)
+      {
+         unsigned long button, fields;
+         if (!script_unsigned(first, 15u, true, &button) ||
+             !script_unsigned(second, 1000000u, false, &fields)) ok = false;
+         else
+         {
+            joypad_buttons[0][button] = true;
+            for (unsigned long field = 0u; field < fields; ++field) api->run();
+            joypad_buttons[0][button] = false;
+            api->run();
+         }
+      }
+      else if (!strcmp(command, "drag") && first && second && extra &&
+               fourth && !fifth)
+      {
+         unsigned long mask, fields;
+         long dx, dy;
+         if (!script_unsigned(first, 7u, true, &mask) ||
+             !script_delta(second, &dx) || !script_delta(extra, &dy) ||
+             !script_unsigned(fourth, 1000000u, false, &fields)) ok = false;
+         else
+         {
+            unsigned before = api->mouse_samples();
+            mouse_port_buttons[1] = (unsigned)mask;
+            for (unsigned long field = 0u; field < fields; ++field)
+            {
+               mouse_port_x[1] = (int)dx;
+               mouse_port_y[1] = (int)dy;
+               api->run();
+            }
+            mouse_port_buttons[1] = 0u;
+            mouse_port_x[1] = mouse_port_y[1] = 0;
+            api->run();
+            ok = api->mouse_samples() >= before + fields;
+         }
+      }
       else
          ok = false;
       if (!ok)
@@ -1557,12 +1631,146 @@ static bool run_osk_script(const char *path, OskScriptApi *api)
    return ok;
 }
 
+static bool parse_real_boot_options(int count, char *const args[],
+                                    const char **osk_script)
+{
+   bool machine_seen = false, joystick_seen = false;
+   bool install_saves_seen = false, osk_script_seen = false;
+   for (int argument = 0; argument < count; ++argument)
+   {
+      if (!strcmp(args[argument], "--machine") && !machine_seen &&
+          argument + 1 < count)
+      {
+         const char *machine = args[++argument];
+         if (strcmp(machine, "A3000") && strcmp(machine, "A3010") &&
+             strcmp(machine, "A3020") && strcmp(machine, "A4000")) return false;
+         option_machine = machine;
+         machine_seen = true;
+      }
+      else if (!strcmp(args[argument], "--joystick") && !joystick_seen &&
+               argument + 1 < count)
+      {
+         const char *joystick = args[++argument];
+         if (strcmp(joystick, "Keyboard") && strcmp(joystick, "A3010"))
+            return false;
+         option_joystick = joystick;
+         joystick_seen = true;
+      }
+      else if (!strcmp(args[argument], "--install-saves") &&
+               !install_saves_seen && argument + 1 < count)
+      {
+         const char *value = args[++argument];
+         if (strcmp(value, "persistent") && strcmp(value, "temporary"))
+            return false;
+         option_install_saves = value;
+         install_saves_seen = true;
+      }
+      else if (!strcmp(args[argument], "--osk-script") &&
+               !osk_script_seen && argument + 1 < count)
+      {
+         *osk_script = args[++argument];
+         osk_script_seen = true;
+      }
+      else return false;
+   }
+   return true;
+}
+
+typedef struct {
+   uint16_t pad;
+   unsigned mouse_buttons;
+   int dx, dy;
+} ParserFrame;
+static ParserFrame parser_frames[8];
+static unsigned parser_frame_count;
+static void parser_test_run(void)
+{
+   assert(parser_frame_count < sizeof(parser_frames) / sizeof(parser_frames[0]));
+   ParserFrame *frame = &parser_frames[parser_frame_count++];
+   for (unsigned button = 0u; button < 16u; ++button)
+      if (joypad_buttons[0][button]) frame->pad |= (uint16_t)(1u << button);
+   frame->mouse_buttons = mouse_port_buttons[1];
+   frame->dx = mouse_port_x[1]; frame->dy = mouse_port_y[1];
+   mouse_port_x[1] = mouse_port_y[1] = 0;
+}
+static unsigned parser_test_samples(void) { return parser_frame_count; }
+static void parser_test_line(const char *line, bool expected)
+{
+   char path[] = "/tmp/arcdroid-osk-parser-XXXXXX";
+   int descriptor = mkstemp(path);
+   assert(descriptor >= 0);
+   FILE *file = fdopen(descriptor, "wb");
+   assert(file && fputs(line, file) >= 0 && fputc('\n', file) != EOF &&
+          !fclose(file));
+   memset(parser_frames, 0, sizeof(parser_frames));
+   parser_frame_count = 0u;
+   OskScriptApi api = {0};
+   api.run = parser_test_run;
+   api.mouse_samples = parser_test_samples;
+   assert(run_osk_script(path, &api) == expected);
+   assert(!unlink(path));
+   assert(!joypad_buttons[0][5] && !mouse_port_buttons[1] &&
+          !mouse_port_x[1] && !mouse_port_y[1]);
+   if (!expected) assert(parser_frame_count == 0u);
+}
+static void parser_self_test(void)
+{
+   const char *script = NULL;
+   char *persistent[] = {"--install-saves", "persistent"};
+   char *temporary[] = {"--install-saves", "temporary"};
+   char *invalid[] = {"--install-saves", "other"};
+   char *missing[] = {"--install-saves"};
+   char *duplicate[] = {"--install-saves", "persistent",
+                        "--install-saves", "temporary"};
+   assert(!strcmp(option_install_saves, "temporary"));
+   assert(parse_real_boot_options(0, NULL, &script) &&
+          !strcmp(option_install_saves, "temporary"));
+   assert(parse_real_boot_options(2, persistent, &script) &&
+          !strcmp(option_install_saves, "persistent"));
+   assert(parse_real_boot_options(2, temporary, &script) &&
+          !strcmp(option_install_saves, "temporary"));
+   assert(!parse_real_boot_options(2, invalid, &script) &&
+          !parse_real_boot_options(1, missing, &script) &&
+          !parse_real_boot_options(4, duplicate, &script));
+
+   parser_test_line("pad 5 3", true);
+   assert(parser_frame_count == 4u);
+   for (unsigned i = 0u; i < 3u; ++i)
+      assert(parser_frames[i].pad == (1u << 5));
+   assert(!parser_frames[3].pad);
+   parser_test_line("drag 3 -12 7 2", true);
+   assert(parser_frame_count == 3u);
+   for (unsigned i = 0u; i < 2u; ++i)
+      assert(parser_frames[i].mouse_buttons == 3u &&
+             parser_frames[i].dx == -12 && parser_frames[i].dy == 7);
+   assert(!parser_frames[2].mouse_buttons &&
+          !parser_frames[2].dx && !parser_frames[2].dy);
+   parser_test_line("drag 0 -32768 32767 1", true);
+   assert(parser_frame_count == 2u &&
+          parser_frames[0].dx == INT16_MIN &&
+          parser_frames[0].dy == INT16_MAX);
+   static const char *const invalid_lines[] = {
+      "pad 16 1", "pad -1 1", "pad five 1", "pad 5 0",
+      "pad 5 1x", "pad 5 1 extra", "drag 8 1 1 1",
+      "drag 1 32768 0 1", "drag 1 1x 0 1", "drag 1 1 1 0",
+      "drag 1 1 1 1 extra"
+   };
+   for (unsigned i = 0u; i < sizeof(invalid_lines) / sizeof(invalid_lines[0]); ++i)
+      parser_test_line(invalid_lines[i], false);
+   puts("libretro_harness: parser self-test passed");
+}
+
 #define LOAD(name) do { *(void **)(&name) = dlsym(module, #name); assert(name); } while (0)
 int main(int argc, char **argv)
 {
    if (argc == 2 && !strcmp(argv[1], "--help"))
    {
       print_usage(stdout, argv[0]);
+      return 0;
+   }
+   if (argc == 2 && !strcmp(argv[1], "--self-test-parser"))
+   {
+      parser_self_test();
       return 0;
    }
    bool real_boot = false;
@@ -1592,47 +1800,10 @@ int main(int argc, char **argv)
    else if (argc >= 6 && !strcmp(argv[5], "--real-boot"))
    {
       real_boot = true;
-      bool machine_seen = false;
-      bool joystick_seen = false;
-      bool osk_script_seen = false;
-      for (int argument = 6; argument < argc; ++argument)
+      if (!parse_real_boot_options(argc - 6, argv + 6, &osk_script))
       {
-         if (!strcmp(argv[argument], "--machine") && !machine_seen &&
-             argument + 1 < argc)
-         {
-            const char *machine = argv[++argument];
-            if (strcmp(machine, "A3000") && strcmp(machine, "A3010") &&
-                strcmp(machine, "A3020") && strcmp(machine, "A4000"))
-            {
-               print_usage(stderr, argv[0]);
-               return 2;
-            }
-            option_machine = machine;
-            machine_seen = true;
-         }
-         else if (!strcmp(argv[argument], "--joystick") && !joystick_seen &&
-                  argument + 1 < argc)
-         {
-            const char *joystick = argv[++argument];
-            if (strcmp(joystick, "Keyboard") && strcmp(joystick, "A3010"))
-            {
-               print_usage(stderr, argv[0]);
-               return 2;
-            }
-            option_joystick = joystick;
-            joystick_seen = true;
-         }
-         else if (!strcmp(argv[argument], "--osk-script") &&
-                  !osk_script_seen && argument + 1 < argc)
-         {
-            osk_script = argv[++argument];
-            osk_script_seen = true;
-         }
-         else
-         {
-            print_usage(stderr, argv[0]);
-            return 2;
-         }
+         print_usage(stderr, argv[0]);
+         return 2;
       }
    }
    else if (argc != 5 && argc != 16)
