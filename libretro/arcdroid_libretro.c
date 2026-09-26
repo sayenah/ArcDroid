@@ -10,6 +10,7 @@
 #include "folder_set.h"
 #include "jfd.h"
 #include "jfd_store.h"
+#include "native_route.h"
 #include "playlist.h"
 #include "zip_content.h"
 
@@ -406,7 +407,8 @@ typedef enum {
    ARC_LAUNCH_CHOOSER_ASK
 } ArcLaunchChooserOption;
 
-typedef enum { ARC_JFD_BOOT_AUTO = 0, ARC_JFD_BOOT_NATIVE } ArcJfdBootOption;
+typedef enum { ARC_JFD_BOOT_AUTO = 0, ARC_JFD_BOOT_NATIVE,
+               ARC_JFD_BOOT_ADFFS } ArcJfdBootOption;
 typedef enum { ARC_ADFFS_VERIFIED_ONLY = 0, ARC_ADFFS_ALLOW_UNTESTED } ArcAdffsOption;
 
 typedef enum {
@@ -474,7 +476,7 @@ static bool arc_install_hd_machine_needed(void)
 {
    if (!arc_core_options.machine_auto ||
        !arc_core_options.install_saves_persistent ||
-       arc_core_options.jfd_boot != ARC_JFD_BOOT_AUTO ||
+       arc_core_options.jfd_boot == ARC_JFD_BOOT_NATIVE ||
        arc_core_options.launch != ARC_LAUNCH_AUTO || !arc_media_count ||
        arc_media[0].info.kind != ARC_MEDIA_JFD) return false;
    const ArcInstallProfile *profile = arc_install_profile(
@@ -616,6 +618,7 @@ static bool arc_read_options(ArcCoreOptions *options, char *error, size_t error_
    else goto invalid;
    if (!strcmp(jfd_boot, "auto")) options->jfd_boot = ARC_JFD_BOOT_AUTO;
    else if (!strcmp(jfd_boot, "native")) options->jfd_boot = ARC_JFD_BOOT_NATIVE;
+   else if (!strcmp(jfd_boot, "adffs")) options->jfd_boot = ARC_JFD_BOOT_ADFFS;
    else goto invalid;
    if (!strcmp(adffs_package, "verified")) options->adffs_package = ARC_ADFFS_VERIFIED_ONLY;
    else if (!strcmp(adffs_package, "untested")) options->adffs_package = ARC_ADFFS_ALLOW_UNTESTED;
@@ -2792,6 +2795,17 @@ static bool arc_prepare_adffs(bool notify) {
 #endif
    )
       reason = "os";
+   const ArcNativeRoute *route = NULL;
+   if (!reason && arc_core_options.jfd_boot == ARC_JFD_BOOT_AUTO)
+      route = arc_native_route_match(entry->digest.sha1, entry->digest.size,
+         jfd->game_id, jfd->disc_number, jfd->disc_count);
+   if (route) {
+      if (arc_log)
+         arc_log(RETRO_LOG_INFO,
+            "JFD boot: path=native reason=native-route game_id=%u evidence=%s sha1=%s\n",
+            route->game_id, route->evidence, route->sha1);
+      return false;
+   }
    if (reason) {
       if (install) arc_install_refuse(reason, notify);
       else arc_jfd_boot_log(reason);
@@ -4666,8 +4680,9 @@ static const struct retro_core_option_v2_definition arc_base_options[] = {
     NULL, {{"remember", "Remember"}, {"ask", "Ask every time"},
            {NULL, NULL}}, "remember"},
    {"arcdroid_jfd_boot", "JFD Boot", NULL,
-    "Use a user-supplied ADFFS package for eligible single-disc JFD images.", NULL,
-    NULL, {{"auto", "Auto"}, {"native", "Native"}, {NULL, NULL}}, "auto"},
+    "Auto uses proven native routes to retain saves. ADFFS preferred ignores those routes but otherwise behaves like Auto; existing native saves still take precedence.", NULL,
+    NULL, {{"auto", "Auto"}, {"native", "Native"},
+           {"adffs", "ADFFS preferred"}, {NULL, NULL}}, "auto"},
    {"arcdroid_adffs_package", "ADFFS Package", NULL,
     "Restrict ADFFS to a verified package profile, or allow an untested package.", NULL,
     NULL, {{"verified", "Verified only"}, {"untested", "Allow untested"}, {NULL, NULL}}, "verified"},

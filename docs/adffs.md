@@ -10,10 +10,26 @@ ArcDroid is not affiliated with JASPP and does not include or distribute
 ADFFS. Obtain information from the
 [JASPP forum thread](https://forums.jaspp.org.uk/forum/viewtopic.php?t=722).
 
-`JFD Boot` defaults to `Auto`; choose `Native` to keep the existing JFD boot
-path even when a usable package is installed. `ADFFS Package` defaults to
+`JFD Boot` defaults to `Auto`. Ten exact, tested single-disc JFD identities
+boot natively even when the package is installed, so the game's own disc saves
+use ArcDroid's persistent JFD store. Other eligible images retain the ADFFS
+path. Choose `Native` to force the native path, or `ADFFS preferred` to ignore
+those ten routes and use Auto's usual ADFFS eligibility. An existing native
+save still takes precedence under `ADFFS preferred`, so saved changes never
+silently disappear. `ADFFS Package` defaults to
 `Verified only`; `Allow untested` permits package versions whose runtime files
 do not match ArcDroid's known profile.
+
+If a routed image works better through ADFFS, select `ADFFS preferred` and
+reset or reload the content. If it still boots natively because saved changes
+exist, unload the content, then move that image's
+`<save>/arcdroid/jfd/<sha1>.*` files aside or use an empty frontend save
+directory before loading it again. Keep the moved files as a backup: native
+changes are preserved in them and are never transferred into ADFFS.
+
+On a disc with two launchable applications, ArcDroid's launch chooser makes a
+one-time application pick. Its `Launch Chooser` option can show the choice
+again later.
 
 The ordinary ADFFS path supports one JFD image whose header describes a single
 disc. It works on both WD1772 and New-IO machines. A zip containing one eligible

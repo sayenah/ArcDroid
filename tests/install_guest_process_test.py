@@ -61,6 +61,7 @@ def main() -> None:
                     run(data, "route-unpublished-probe")
         ready = Path(root) / "ordinary"
         for phase in ("route-off-ready", "route-machine-ready",
+                      "route-adffs-ready",
                       "route-unwritable-ready", "route-temporary-ready",
                       "route-failure-io-ready", "route-failure-cap-ready"):
             run(ready, phase)
@@ -69,6 +70,7 @@ def main() -> None:
                    (ready / "save" / "arcdroid" / "install").rglob("journal.g*"))
         run(ready, "compaction-reload")
         for phase in ("route-new-probe", "route-machine-new",
+                      "route-adffs-new",
                       "route-nonnative-new", "route-no-package",
                       "route-untested-package", "route-script-mismatch",
                       "route-no-311"):
