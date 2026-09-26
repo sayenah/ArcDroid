@@ -51,6 +51,15 @@ int main(void)
    rows[1].decoded_size = 636u;
    rows[1].evidence = "";
    assert(!arc_native_routes_validate_table(rows, 2u, error, sizeof(error)));
+   rows[1].evidence = NULL;
+   assert(!arc_native_routes_validate_table(rows, 2u, error, sizeof(error)));
+   rows[1].evidence = "synthetic second route";
+   rows[1].sha1 = NULL;
+   assert(!arc_native_routes_validate_table(rows, 2u, error, sizeof(error)));
+   rows[1].sha1 = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+   assert(!arc_native_routes_validate_table(rows, 2u, error, sizeof(error)));
+   rows[1].sha1 = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+   assert(!arc_native_routes_validate_table(rows, 2u, error, sizeof(error)));
    puts("native route table passed");
    return 0;
 }

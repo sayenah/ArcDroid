@@ -465,19 +465,20 @@ typedef struct {
 static ArcCoreOptions arc_core_options;
 static ArcMachine arc_session_machine;
 static bool arc_riscpc_notice_shown;
-static bool arc_install_hd_prerequisites(const ArcInstallProfile *profile);
+static bool arc_install_hd_prerequisites(const ArcInstallProfile *profile,
+                                        const ArcCoreOptions *options);
 
 static bool arc_media_is_hd(const ArcMediaEntry *entry)
 {
    return entry && entry->populated && entry->high_density;
 }
 
-static bool arc_install_hd_machine_needed(void)
+static bool arc_install_hd_machine_needed(const ArcCoreOptions *options)
 {
-   if (!arc_core_options.machine_auto ||
-       !arc_core_options.install_saves_persistent ||
-       arc_core_options.jfd_boot == ARC_JFD_BOOT_NATIVE ||
-       arc_core_options.launch != ARC_LAUNCH_AUTO || !arc_media_count ||
+   if (!options->machine_auto ||
+       !options->install_saves_persistent ||
+       options->jfd_boot == ARC_JFD_BOOT_NATIVE ||
+       options->launch != ARC_LAUNCH_AUTO || !arc_media_count ||
        arc_media[0].info.kind != ARC_MEDIA_JFD) return false;
    const ArcInstallProfile *profile = arc_install_profile(
       arc_media[0].jfd_game_id, arc_media[0].jfd_disc_count);
@@ -494,7 +495,7 @@ static bool arc_install_hd_machine_needed(void)
    ArcInstallPlan plans[ARC_INSTALL_MAX_VARIANTS];
    unsigned count = arc_install_match(profile, media, arc_media_count,
                                        plans, NULL);
-   if (!count || !arc_install_hd_prerequisites(profile)) return false;
+   if (!count || !arc_install_hd_prerequisites(profile, options)) return false;
    for (unsigned i = 0u; i < count; ++i) {
       ArcInstallStore *store = arc_install_store_open(arc_save_path, &plans[i],
          false, false, NULL, NULL, NULL, 0u);
@@ -503,7 +504,7 @@ static bool arc_install_hd_machine_needed(void)
       arc_install_store_close(store);
       if (ready) return true;
    }
-   return arc_core_options.disk_writes != ARC_DISK_WRITES_OFF &&
+   return options->disk_writes != ARC_DISK_WRITES_OFF &&
           arc_install_store_native_path(arc_save_path);
 }
 
@@ -2434,12 +2435,13 @@ static bool arc_collect_zip(const char *name, bool regular, void *opaque) {
 static int arc_zip_name_compare(const void *a, const void *b) {
    return strcmp(a, b);
 }
-static bool arc_install_hd_prerequisites(const ArcInstallProfile *profile)
+static bool arc_install_hd_prerequisites(const ArcInstallProfile *profile,
+                                        const ArcCoreOptions *options)
 {
-   if (!profile || (arc_core_options.requested_os != ARC_OS_UNKNOWN &&
-                    arc_core_options.requested_os != ARC_OS_RISCOS_311
+   if (!profile || (options->requested_os != ARC_OS_UNKNOWN &&
+                    options->requested_os != ARC_OS_RISCOS_311
 #if defined(ARCDROID_TEST_FAULTS)
-                    && !(arc_core_options.requested_os == ARC_OS_TEST &&
+                    && !(options->requested_os == ARC_OS_TEST &&
                          arc_test_adffs_accept_test_os)
 #endif
                     )) return false;
@@ -2450,7 +2452,7 @@ static bool arc_install_hd_prerequisites(const ArcInstallProfile *profile)
       &firmware, &firmware_size, NULL, NULL, 0u);
 #if defined(ARCDROID_TEST_FAULTS)
    if (!firmware_ready && arc_test_adffs_accept_test_os &&
-       arc_core_options.requested_os == ARC_OS_UNKNOWN)
+       options->requested_os == ARC_OS_UNKNOWN)
       firmware_ready = arc_select_firmware(ARC_OS_TEST, ARC_MACHINE_A3020,
          &firmware, &firmware_size, NULL, NULL, 0u);
 #endif
@@ -4680,7 +4682,7 @@ static const struct retro_core_option_v2_definition arc_base_options[] = {
     NULL, {{"remember", "Remember"}, {"ask", "Ask every time"},
            {NULL, NULL}}, "remember"},
    {"arcdroid_jfd_boot", "JFD Boot", NULL,
-    "Auto uses proven native routes to retain saves. ADFFS preferred ignores those routes but otherwise behaves like Auto; existing native saves still take precedence.", NULL,
+    "Auto uses the ADFFS package for eligible JFDs, except titles proven to keep saves natively. Native never uses ADFFS. ADFFS preferred works like Auto but ignores the native list; saved native changes still take precedence.", NULL,
     NULL, {{"auto", "Auto"}, {"native", "Native"},
            {"adffs", "ADFFS preferred"}, {NULL, NULL}}, "auto"},
    {"arcdroid_adffs_package", "ADFFS Package", NULL,
@@ -5429,7 +5431,7 @@ static bool arc_load_game(const struct retro_game_info *game, bool negotiate)
    bool has_hd_media = false;
    for (unsigned i = 0u; i < arc_media_count; ++i)
       if (arc_media_is_hd(&arc_media[i])) has_hd_media = true;
-   bool install_hd_machine = arc_install_hd_machine_needed();
+   bool install_hd_machine = arc_install_hd_machine_needed(&arc_core_options);
    arc_session_machine = arc_core_options.machine_auto ?
       (has_hd_media || install_hd_machine ? ARC_MACHINE_A3020 : ARC_MACHINE_A3000) :
       arc_core_options.requested_machine;
@@ -5661,6 +5663,10 @@ RETRO_API void retro_reset(void)
    if (!arc_read_options(&updated, error, sizeof(error))) goto failed;
    ArcMachine reset_choice = updated.machine_auto ? arc_session_machine :
       updated.requested_machine;
+   bool install_machine_upgrade = updated.machine_auto &&
+      reset_choice != ARC_MACHINE_A3020 &&
+      arc_install_hd_machine_needed(&updated);
+   if (install_machine_upgrade) reset_choice = ARC_MACHINE_A3020;
    if (!arc_options_resolve(&updated, reset_choice, error, sizeof(error))) goto failed;
    for (unsigned i = 0u; i < arc_media_count; ++i)
       if (!arc_machine_accepts_media(reset_choice, &arc_media[i],
@@ -5786,6 +5792,9 @@ RETRO_API void retro_reset(void)
    arc_vidc_transient_logged = false;
    arc_vidc_incomplete_us = 0u;
    arc_audio_warning_reported = false;
+   if (install_machine_upgrade && arc_log)
+      arc_log(RETRO_LOG_INFO,
+         "Machine: requested=Auto resolved=A3020 reason=install-disc\n");
    return;
 failed:
    free(new_firmware);
