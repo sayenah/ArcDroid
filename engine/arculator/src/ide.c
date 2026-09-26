@@ -2,7 +2,8 @@
  * ArcDroid modification (2026-09-25): replaces FILE I/O with a bounded
  * sector backend; latches complete WRITE SECTOR(S) commands before committing;
  * hardens address, data width, IRQ, reset and timer lifetime; and preserves
- * the absent bus exactly when no disc is attached. */
+ * the absent bus exactly when no disc is attached; reports each unsupported
+ * ABRT command once per machine session. */
 #include "ide.h"
 #include <string.h>
 
@@ -60,6 +61,16 @@ static void fail(ide_t *ide, uint8_t reason)
     ide->status = IDE_READY | IDE_DSC | IDE_ERR;
     ide->error = reason;
     irq(ide, true);
+}
+static void unsupported(ide_t *ide)
+{
+    uint8_t code = ide->command;
+    uint8_t mask = (uint8_t)(1u << (code & 7u));
+    if (!(ide->unsupported_seen[code >> 3u] & mask)) {
+        ide->unsupported_seen[code >> 3u] |= mask;
+        if (ide->backend.unsupported)
+            ide->backend.unsupported(ide->backend.opaque, code);
+    }
 }
 static void delay(ide_t *ide)
 {
@@ -252,7 +263,7 @@ void callbackide(void *opaque)
         irq(ide, true);
         return;
     }
-    default: fail(ide, IDE_ABRT); return;
+    default: unsupported(ide); fail(ide, IDE_ABRT); return;
     }
 }
 
@@ -378,7 +389,7 @@ void writeide(ide_t *ide, uint32_t address, uint8_t value)
             return;
         case 0x10: case 0x70: case 0x40: case 0x41:
         case 0x91: case 0xec: delay(ide); return;
-        default: fail(ide, IDE_ABRT); return;
+        default: unsupported(ide); fail(ide, IDE_ABRT); return;
         }
     }
     default: return;

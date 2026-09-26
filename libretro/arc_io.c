@@ -91,21 +91,31 @@ bool arc_io_read_all(const char *path, void **data, size_t *size)
    return arc_io_read_all_limit(path, data, size, 16u * 1024u * 1024u, NULL);
 }
 
-bool arc_io_write_all(const char *path, const void *data, size_t size)
+bool arc_io_write_all_diagnostic(const char *path, const void *data, size_t size,
+                                 const char **failure)
 {
    struct retro_vfs_file_handle *file;
    int64_t wrote;
+   if (failure) *failure = "create";
    if (!arc_io_vfs || !path || !data || !arc_io_vfs->open ||
        !arc_io_vfs->write || !arc_io_vfs->close) return false;
    file = arc_io_vfs->open(path, RETRO_VFS_FILE_ACCESS_WRITE,
                            RETRO_VFS_FILE_ACCESS_HINT_NONE);
    if (!file) return false;
+   if (failure) *failure = "write";
    wrote = arc_io_vfs->write(file, data, size);
-   if (wrote == (int64_t)size)
+   if (wrote == (int64_t)size) {
+      if (failure) *failure = "flush";
       wrote = arc_io_vfs->flush && arc_io_vfs->flush(file) == 0 ? wrote : -1;
+   }
    int closed = arc_io_vfs->close(file);
+   if (wrote == (int64_t)size && failure) *failure = "close";
+   if (wrote == (int64_t)size && closed == 0 && failure) *failure = NULL;
    return wrote == (int64_t)size && closed == 0;
 }
+
+bool arc_io_write_all(const char *path, const void *data, size_t size)
+{ return arc_io_write_all_diagnostic(path, data, size, NULL); }
 
 bool arc_io_remove(const char *path)
 { return arc_io_vfs && arc_io_vfs->remove && path && arc_io_vfs->remove(path) == 0; }

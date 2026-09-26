@@ -1,6 +1,7 @@
 /* Arculator 2.2 by Sarah Walker. GPL-2.0-only.
  * ArcDroid modification (2026-09-25): bounded block-device interface,
- * transaction buffer and lifecycle state replace the host FILE handles. */
+ * transaction buffer and lifecycle state replace the host FILE handles;
+ * unsupported-command diagnostics are bounded per machine session. */
 #ifndef ARCDROID_IDE_H
 #define ARCDROID_IDE_H
 #include <stdbool.h>
@@ -15,6 +16,7 @@ typedef struct {
     void (*failed)(void *, const char *);
     uint32_t sectors;
     bool writable;
+    void (*unsupported)(void *, uint8_t);
 } ArcIdeBackend;
 typedef struct ide_t {
     uint8_t status, error, features, count, sector, cylinder_lo, cylinder_hi;
@@ -24,6 +26,7 @@ typedef struct ide_t {
     uint16_t spt, heads, cylinders;
     bool active, write_transfer, read_only_latch, reset_pending, timer_registered;
     bool irq_active, irq_enabled;
+    uint8_t unsupported_seen[32];
     uint8_t sector_buffer[ARC_IDE_SECTOR_SIZE];
     uint8_t transaction[ARC_IDE_SECTOR_SIZE * ARC_IDE_MAX_SECTORS];
     ArcIdeBackend backend;

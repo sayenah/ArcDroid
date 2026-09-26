@@ -30,7 +30,7 @@ struct ArcInstallStore {
    unsigned selected_slot;
    unsigned recipe_revision;
    ArcInstallStoreState state;
-   bool writable, failed;
+   bool writable, failed, incomplete_tail;
    ArcInstallStoreLog log;
    void *log_opaque;
 };
@@ -100,6 +100,8 @@ static bool owned_generation(const char *name)
 static bool list_visit(const char *name, bool regular, void *opaque)
 {
    Listing *list = opaque;
+   if (regular && (!strcmp(name, "rwprobe.tmp") ||
+                   !strcmp(name, "rwprobe2.tmp"))) return true;
    list->any = true;
    if (!regular) { list->unknown = true; return true; }
    if (!strcmp(name, "ready.a")) list->ready[0] = true;
@@ -237,7 +239,8 @@ static bool load_base(ArcInstallStore *s, const Manifest *m)
    arc_sha256_hex(s->image, ARC_INSTALL_HD_BYTES, hash);
    return !strcmp(hash, m->base_hash);
 }
-static bool replay(ArcInstallStore *s, const Manifest *m, bool writable)
+static bool replay(ArcInstallStore *s, const Manifest *m, bool writable,
+                   bool report_tail)
 {
    char path[4096];
    uint8_t header[JOURNAL_HEADER];
@@ -289,9 +292,11 @@ static bool replay(ArcInstallStore *s, const Manifest *m, bool writable)
    free(payload);
    if (!arc_io_close_file(file)) good = false;
    if (!good) return false;
+   s->incomplete_tail = complete != (size_t)length;
    if (complete != (size_t)length) {
-      report(s, writable ? "journal-incomplete-truncate" :
-                           "journal-incomplete-read-only");
+      if (report_tail)
+         report(s, writable ? "journal-incomplete-truncate" :
+                              "journal-incomplete-read-only");
       if (writable) {
          ArcIoFile *update = arc_io_open_file(path, true);
          good = update && arc_io_truncate_file(update, (int64_t)complete) &&
@@ -311,6 +316,35 @@ static bool remove_if_present(ArcInstallStore *s, const char *leaf)
    return full_path(s, leaf, path) &&
       arc_io_directory_contains(s->directory, leaf, &present) &&
       (!present || arc_io_remove(path));
+}
+/* These names belong exclusively to the store.  A failed probe leaves only
+ * owned temporaries, which never affect classification on the next load. */
+static bool write_probe(ArcInstallStore *s)
+{
+   char first[4096], second[4096];
+   static const uint8_t bytes[] = {'A', 'I', 'H', 'D'};
+   const char *failure = NULL;
+   if (!full_path(s, "rwprobe.tmp", first) ||
+       !full_path(s, "rwprobe2.tmp", second)) return false;
+   if (!remove_if_present(s, "rwprobe.tmp") ||
+       !remove_if_present(s, "rwprobe2.tmp")) {
+      report(s, "store-write-probe=failed cleanup"); return false;
+   }
+   if (!arc_io_write_all_diagnostic(first, bytes, sizeof(bytes), &failure)) {
+      char message[96];
+      snprintf(message, sizeof(message), "store-write-probe=failed %s",
+               failure ? failure : "create");
+      report(s, message);
+      return false;
+   }
+   if (!arc_io_rename(first, second)) {
+      report(s, "store-write-probe=failed rename"); return false;
+   }
+   if (!arc_io_remove(second)) {
+      report(s, "store-write-probe=failed remove"); return false;
+   }
+   report(s, "store-write-probe=passed");
+   return true;
 }
 typedef struct {
    const Manifest *manifests;
@@ -488,7 +522,14 @@ ArcInstallStore *arc_install_store_open(const char *save_dir,
          report(s, "store-state=new read-only");
          return s;
       }
-      if (!arc_io_make_path(s->directory)) goto damaged;
+      if (!arc_io_make_path(s->directory)) {
+         s->state = ARC_INSTALL_STORE_NEW;
+         s->writable = false;
+         report(s, "store-mode=read-only reason=directory-create-failed");
+         set_error(error, error_size,
+            "Persistent install saves need a native writable save directory; choose Install Saves: Temporary to use RAM.");
+         return s;
+      }
       listed = arc_io_list_directory(s->directory, list_visit, &listing);
       if (!listed) goto damaged;
    }
@@ -503,6 +544,7 @@ ArcInstallStore *arc_install_store_open(const char *save_dir,
          !listing.ready[1] ? 0u :
          m[1].generation > m[0].generation ? 1u : 0u;
       const Manifest *chosen = &m[selected];
+      bool requested_writable = writable;
       if (!arc_install_revision_supported(plan->profile,
                                            chosen->revision)) {
          set_error(error, error_size,
@@ -514,7 +556,18 @@ ArcInstallStore *arc_install_store_open(const char *save_dir,
       strcpy(s->base_leaf, chosen->base_leaf);
       strcpy(s->journal_leaf, chosen->journal_leaf);
       strcpy(s->base_hash, chosen->base_hash);
-      if (!load_base(s, chosen) || !replay(s, chosen, writable)) goto damaged;
+      /* Validate the committed view before any host mutation, including the
+       * probe. A damaged READY store must remain byte-for-byte untouched. */
+      if (!load_base(s, chosen) ||
+          !replay(s, chosen, false, !writable)) goto damaged;
+      if (writable && !write_probe(s)) {
+         s->writable = false;
+         writable = false;
+         report(s, "store-mode=read-only reason=write-probe-failed");
+      }
+      if (writable && !replay(s, chosen, true, true)) goto damaged;
+      if (requested_writable && !writable && s->incomplete_tail)
+         report(s, "journal-incomplete-read-only");
       s->state = ARC_INSTALL_STORE_READY;
       report(s, writable ? "store-state=ready writable" :
                            "store-state=ready read-only");
@@ -533,6 +586,13 @@ ArcInstallStore *arc_install_store_open(const char *save_dir,
           !header_only(s, "journal.g0.tmp", true)) goto damaged;
       s->state = ARC_INSTALL_STORE_UNPUBLISHED;
    } else goto damaged;
+   if (create_candidate && writable && !write_probe(s)) {
+      s->writable = false;
+      writable = false;
+      report(s, "store-mode=read-only reason=write-probe-failed");
+      set_error(error, error_size,
+         "Persistent install saves need a native writable save directory; choose Install Saves: Temporary to use RAM.");
+   }
    if (!create_candidate || !writable) {
       report(s, s->state == ARC_INSTALL_STORE_NEW ? "store-state=new read-only" :
                                                 "store-state=unpublished read-only");
@@ -569,10 +629,7 @@ bool arc_install_store_writable(const ArcInstallStore *s)
 bool arc_install_store_probe_writable(ArcInstallStore *s)
 {
    if (!s || s->state != ARC_INSTALL_STORE_READY) return false;
-   char path[4096];
-   if (!full_path(s, s->journal_leaf, path)) return false;
-   ArcIoFile *file = arc_io_open_file(path, true);
-   return file && arc_io_close_file(file);
+   return write_probe(s);
 }
 bool arc_install_store_read(void *opaque, uint32_t lba, uint32_t count,
                             uint8_t *data)

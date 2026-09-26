@@ -14,6 +14,7 @@ void timer_add(emu_timer_t *t, void (*callback)(void *), void *p, int start)
 
 static uint8_t *disk;
 static unsigned writes, raises, clears, failed;
+static unsigned unsupported_count[256];
 static uint32_t written_lba, written_count;
 static bool reject_write;
 static bool read_block(void *p, uint32_t lba, uint32_t count, uint8_t *out)
@@ -28,6 +29,8 @@ static bool write_block(void *p, uint32_t lba, uint32_t count, const uint8_t *in
 }
 static void write_failed(void *p, const char *reason)
 { (void)p; assert(reason && *reason); ++failed; }
+static void unsupported_command(void *p, uint8_t command)
+{ (void)p; ++unsupported_count[command]; }
 static void raise_irq(ide_t *ide) { (void)ide; ++raises; }
 static void clear_irq(ide_t *ide) { (void)ide; ++clears; }
 static void tick(ide_t *ide)
@@ -55,7 +58,8 @@ int main(void)
   assert(readide(&ide, 0x1f7u) == 0xffu && readidew(&ide) == 0xffffu);
   writeide(&ide, 0x1f7u, 0x30u);
   assert(!ide.timer_registered);
-  ArcIdeBackend b = {NULL, read_block, write_block, write_failed, 32256u, true};
+  ArcIdeBackend b = {NULL, read_block, write_block, write_failed, 32256u, true,
+                     unsupported_command};
   ide_set_backend(&b);
   resetide(&ide, NULL, 0, 0, 0, NULL, 0, 0, 0, raise_irq, clear_irq);
   assert(ide.timer_registered);
@@ -104,9 +108,20 @@ int main(void)
   writeide(&ide, 0x1f7u, 0x50u);
   assert(readide(&ide, 0x1f7u) & 1u);
   assert(readide(&ide, 0x1f1u) == 4u && writes == 2u);
+  writeide(&ide, 0x1f7u, 0x50u);
+  assert(readide(&ide, 0x1f1u) == 4u && unsupported_count[0x50] == 1u);
   at_lba(&ide, 21u, 1u);
   writeide(&ide, 0x1f7u, 0x99u);
   assert(readide(&ide, 0x1f1u) == 4u);
+  assert(unsupported_count[0x99] == 1u);
+  const uint8_t probe_commands[] = {0xa1u, 0xe3u, 0xe5u};
+  for (unsigned i=0u; i<sizeof(probe_commands); ++i) {
+    unsigned code=probe_commands[i];
+    writeide(&ide, 0x1f7u, (uint8_t)code);
+    assert(readide(&ide, 0x1f1u) == 4u);
+    writeide(&ide, 0x1f7u, (uint8_t)code);
+    assert(unsupported_count[code] == 1u);
+  }
   /* The zero count encodes 256 sectors. Abort before commit on reset. */
   start(&ide, 100u, 0u);
   assert(ide.transfer_count == 256u);
@@ -126,6 +141,7 @@ int main(void)
   ide_set_backend(NULL);
   resetide(&ide, NULL, 0, 0, 0, NULL, 0, 0, 0, raise_irq, clear_irq);
   assert(!ide.timer_registered && readide(&ide, 0x1f7u) == 0xffu);
+  assert(unsupported_count[0x50] == 1u);
   closeide(&ide);
   free(disk);
   puts("install IDE: pass");

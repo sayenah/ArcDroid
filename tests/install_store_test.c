@@ -14,6 +14,14 @@ struct retro_vfs_dir_handle { char path[256]; unsigned at, current; };
 typedef struct { char path[256]; uint8_t *bytes; size_t size; bool exists; } File;
 static File files[FILES];
 static unsigned mutations, fail_mutation;
+static bool fail_probe_close;
+static char probe_failure[96];
+static void store_log(void *opaque, const char *message)
+{
+   (void)opaque;
+   if (!strncmp(message,"store-write-probe=failed ",25u))
+      snprintf(probe_failure,sizeof(probe_failure),"%s",message);
+}
 static bool fail_now(void)
 {
    ++mutations;
@@ -49,7 +57,12 @@ static struct retro_vfs_file_handle *vopen(const char *path, unsigned mode,
    h->index = (unsigned)i; h->mode = mode; return h;
 }
 static int vclose(struct retro_vfs_file_handle *h)
-{ free(h); return 0; }
+{
+   bool fail=fail_probe_close &&
+      strstr(files[h->index].path,"/rwprobe.tmp") != NULL;
+   if (fail) fail_probe_close=false;
+   free(h); return fail ? -1 : 0;
+}
 static int64_t vsize(struct retro_vfs_file_handle *h)
 { return (int64_t)files[h->index].size; }
 static int64_t vseek(struct retro_vfs_file_handle *h, int64_t offset, int origin)
@@ -154,6 +167,7 @@ static void clear_files(void)
       free(files[i].bytes); memset(&files[i], 0, sizeof(files[i]));
    }
    mutations = fail_mutation = 0u;
+   fail_probe_close=false; probe_failure[0]='\0';
 }
 static File *file_named(const char *leaf)
 {
@@ -497,6 +511,92 @@ static void test_writable_orphan_cleanup(void)
    arc_install_store_close(s);
    clear_files();
 }
+static void test_probe_temporaries(void)
+{
+   ArcInstallPlan p=plan();
+   const char *dir="save/arcdroid/install/1234567890abcdef1234567890abcdef12345678";
+   const uint8_t stale=0x5au;
+   for (unsigned state=0u; state<4u; ++state) {
+      clear_files();
+      if (state==1u) {
+         ArcInstallStore *candidate=open_store(&p,true,true,ARC_INSTALL_STORE_UNPUBLISHED);
+         arc_install_store_close(candidate);
+      } else if (state==2u) ready_store(&p);
+      else if (state==3u) add_file(dir,"foreign",&stale,1u);
+      add_file(dir,"rwprobe.tmp",&stale,1u);
+      add_file(dir,"rwprobe2.tmp",&stale,1u);
+      unsigned before=mutations;
+      ArcInstallStoreState expected=(ArcInstallStoreState)state;
+      ArcInstallStore *s=open_store(&p,false,false,expected);
+      arc_install_store_close(s);
+      assert(mutations==before && file_named("rwprobe.tmp") &&
+             file_named("rwprobe2.tmp"));
+      if (state!=3u) {
+         s=open_store(&p,state!=2u,true,
+                      state==2u ? ARC_INSTALL_STORE_READY :
+                                  ARC_INSTALL_STORE_UNPUBLISHED);
+         assert(arc_install_store_writable(s));
+         arc_install_store_close(s);
+         assert(!file_named("rwprobe.tmp") && !file_named("rwprobe2.tmp"));
+      }
+   }
+   clear_files();
+}
+static void test_probe_failures(void)
+{
+   ArcInstallPlan p=plan();
+   const char *dir="save/arcdroid/install/1234567890abcdef1234567890abcdef12345678";
+   for (unsigned step=1u; step<=5u; ++step) {
+      clear_files(); ready_store(&p);
+      File *journal=file_named("journal.g0"); assert(journal);
+      uint8_t *grown=realloc(journal->bytes,journal->size+1u); assert(grown);
+      journal->bytes=grown; grown[journal->size++]=0x5au;
+      uint8_t orphan=0x71u;
+      add_file(dir,"ready.tmp",&orphan,1u);
+      size_t old_size=journal->size;
+      fail_mutation=mutations+step;
+      char error[256]={0};
+      probe_failure[0]='\0';
+      ArcInstallStore *s=arc_install_store_open("save",&p,false,true,
+                                               store_log,NULL,error,sizeof(error));
+      assert(s && arc_install_store_state(s)==ARC_INSTALL_STORE_READY &&
+             !arc_install_store_writable(s) && !fail_mutation);
+      static const char *const stages[]={"create","write","flush","rename","remove"};
+      assert(strstr(probe_failure,stages[step-1u]));
+      assert(journal->size==old_size && file_named("ready.tmp"));
+      arc_install_store_close(s);
+      s=open_store(&p,false,false,ARC_INSTALL_STORE_READY);
+      arc_install_store_close(s);
+      for (unsigned initial=0u;initial<2u;++initial) {
+         clear_files();
+         if (initial) {
+            s=open_store(&p,true,true,ARC_INSTALL_STORE_UNPUBLISHED);
+            arc_install_store_close(s);
+         }
+         fail_mutation=mutations+step;
+         error[0]='\0';
+         probe_failure[0]='\0';
+         s=arc_install_store_open("save",&p,true,true,store_log,NULL,
+                                   error,sizeof(error));
+         assert(s && arc_install_store_state(s)==
+                (initial ? ARC_INSTALL_STORE_UNPUBLISHED : ARC_INSTALL_STORE_NEW));
+         assert(!arc_install_store_writable(s) && !fail_mutation);
+         assert(strstr(probe_failure,stages[step-1u]));
+         assert(strstr(error,"choose Install Saves: Temporary"));
+         assert((file_named("disc.g0.hdf") != NULL) == (initial != 0u));
+         arc_install_store_close(s);
+      }
+   }
+   clear_files(); ready_store(&p);
+   fail_probe_close=true;
+   ArcInstallStore *s=arc_install_store_open("save",&p,false,true,
+                                            store_log,NULL,NULL,0u);
+   assert(s && arc_install_store_state(s)==ARC_INSTALL_STORE_READY &&
+          !arc_install_store_writable(s) &&
+          strstr(probe_failure,"close"));
+   arc_install_store_close(s);
+   clear_files();
+}
 int main(void)
 {
    arc_io_set_vfs(&vfs);
@@ -508,6 +608,7 @@ int main(void)
    test_compaction_interruptions();
    test_compaction_retry_with_stale_generation();
    test_writable_orphan_cleanup();
+   test_probe_temporaries(); test_probe_failures();
    clear_files(); arc_io_set_vfs(NULL);
    puts("install-disc store: pass");
    return 0;

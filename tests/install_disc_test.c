@@ -122,6 +122,12 @@ int main(int argc, char **argv)
    ArcInstallPlan plan = {0};
    plan.profile = profile; plan.variant = &profile->variants[0];
    strcpy(plan.storage_id, "0000000000000000000000000000000000000000");
+   char launcher[4096] = {0}; size_t launcher_size = 0u;
+   assert(arc_install_hd_launcher(&plan, false, (uint8_t *)launcher,
+                                  sizeof(launcher) - 1u, &launcher_size));
+   assert(launcher_size < sizeof(launcher) &&
+          strstr(launcher, "Dismount :4\rCopy ADFS::1.$.ArcDoor RAM::0.$.ArcDoor ~C~VFQ\r") &&
+          !strstr(launcher, "Load ADFS::1.$.ArcDoor"));
    ArcInstallValidation result;
    assert(!arc_install_hd_validate(&plan, first, ARC_INSTALL_HD_BYTES,
                                    &result));

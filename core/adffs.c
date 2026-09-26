@@ -581,7 +581,7 @@ bool arc_install_hd_launcher(const ArcInstallPlan *plan, bool run_plan,
         "IfThere ADFS::4.$.%s Then Set ArcDroid$Guard 1 Else Error ArcDroid install: hard-disc copy failed\r"
         "Copy ADFS::1.$.ArcReady ADFS::4.$.ArcReady ~C~VFQ\r"
         "IfThere ADFS::4.$.ArcReady Then Set ArcDroid$Guard 1 Else Error ArcDroid install: marker failed\r"
-        "Dismount :4\rLoad ADFS::1.$.ArcDoor\r",
+        "Dismount :4\rCopy ADFS::1.$.ArcDoor RAM::0.$.ArcDoor ~C~VFQ\r",
         plan->variant->app, plan->variant->app, plan->variant->app,
         plan->variant->app)) return false;
   }

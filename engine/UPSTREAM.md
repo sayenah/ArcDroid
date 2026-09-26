@@ -56,7 +56,9 @@ backend supplied by the core. It latches full WRITE SECTOR(S) commands before
 one store commit, bounds CHS/LBA and count-zero transfers, handles byte and
 word data access, controller IRQ/timers, reset, and teardown, and refuses
 FORMAT and unsupported commands. `ide.h` replaces upstream file handles and
-desktop geometry with the bounded backend and transaction state. The source
+desktop geometry with the bounded backend and transaction state. Slice 10b
+run 2 adds an optional callback to report each unsupported ABRT command code
+once per machine session; it does not change the command result. The source
 is attached only to A3020 install-disc sessions; no other machine gains a
 disc. `src/wd1770.c` and `src/82c711_fdc.c` additionally report controller
 READ SECTOR commands for the one-shot ArcDoor latch. These changes have

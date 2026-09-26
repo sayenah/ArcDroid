@@ -702,6 +702,13 @@ static void arc_engine_log(void *opaque, const char *message)
    (void)opaque;
    if (arc_log && message) arc_log(RETRO_LOG_DEBUG, "%s", message);
 }
+static void arc_install_ide_unsupported(void *opaque, uint8_t command)
+{
+   (void)opaque;
+   if (arc_log)
+      arc_log(RETRO_LOG_WARN, "IDE unsupported command ABRT code=0x%02X",
+              (unsigned)command);
+}
 
 typedef struct {
    uint8_t *data;
@@ -2927,8 +2934,7 @@ static bool arc_prepare_adffs(bool notify) {
             }
             hd_mode = 2u;
             if (arc_core_options.disk_writes != ARC_DISK_WRITES_OFF &&
-                arc_native_save_path(arc_save_path) &&
-                arc_install_store_probe_writable(store)) {
+                arc_native_save_path(arc_save_path)) {
                arc_install_store_close(store);
                store = arc_install_store_open(arc_save_path, plan, false, true,
                   arc_install_store_log, NULL, store_error, sizeof(store_error));
@@ -2941,6 +2947,9 @@ static bool arc_prepare_adffs(bool notify) {
                   free(builtin); arc_adffs_package_free(package); free(package);
                   return false;
                }
+               if (!arc_install_store_writable(store))
+                  arc_message("Install disc is read-only; saves cannot be changed in this session.",
+                              RETRO_LOG_WARN);
             } else arc_message("Install disc is read-only; saves cannot be changed in this session.",
                                RETRO_LOG_WARN);
          } else if (arc_core_options.disk_writes == ARC_DISK_WRITES_OFF) {
@@ -4963,6 +4972,7 @@ static bool arc_construct_machine(const ArcMachineDescriptor *machine,
       ide_backend.failed = arc_install_store_failed;
       ide_backend.sectors = ARC_INSTALL_HD_SECTORS;
       ide_backend.writable = arc_install_store_writable(arc_install_store);
+      ide_backend.unsupported = arc_install_ide_unsupported;
    }
    memcpy(arc_cmos_record, arc_cmos_prepared, sizeof(arc_cmos_record));
    if (!arc_cmos_decode(arc_cmos_prepared, &arc_plan, payload) ||

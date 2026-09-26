@@ -18,6 +18,9 @@ bool arc_io_read_all(const char *path, void **data, size_t *size);
 bool arc_io_read_all_limit(const char *path, void **data, size_t *size,
                            size_t limit, bool *limit_exceeded);
 bool arc_io_write_all(const char *path, const void *data, size_t size);
+/* Returns the failing VFS operation for an owned-file writability probe. */
+bool arc_io_write_all_diagnostic(const char *path, const void *data, size_t size,
+                                 const char **failure);
 bool arc_io_remove(const char *path);
 bool arc_io_rename(const char *old_path, const char *new_path);
 bool arc_io_file_size(const char *path, size_t *size);
