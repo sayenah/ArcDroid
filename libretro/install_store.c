@@ -70,6 +70,28 @@ static void report(ArcInstallStore *s, const char *reason)
 {
    if (s->log) s->log(s->log_opaque, reason);
 }
+static void report_vfs_failure(ArcInstallStore *s, const char *phase,
+                               const char *operation, const char *path)
+{
+   char message[256];
+   const char *suffix = path ? strstr(path, "/arcdroid") : NULL;
+   if (suffix) ++suffix;
+   else suffix = path ? path : "(unknown)";
+   snprintf(message, sizeof(message), "%s=failed op=%s path=%s", phase,
+            operation ? operation : "unknown", suffix);
+   report(s, message);
+}
+bool arc_install_store_native_path(const char *path)
+{
+   if (!path || !path[0]) return false;
+   /* A drive-absolute Windows path is local; a drive-relative path and any
+    * URI/scheme are ambiguous for a persistent store. */
+   if (path[0] == '/' || (path[0] == '\\' && path[1] == '\\')) return true;
+   if (((path[0] >= 'A' && path[0] <= 'Z') ||
+        (path[0] >= 'a' && path[0] <= 'z')) && path[1] == ':' &&
+       (path[2] == '/' || path[2] == '\\')) return true;
+   return strchr(path, ':') == NULL;
+}
 static bool full_path(const ArcInstallStore *s, const char *leaf,
                       char path[4096])
 {
@@ -131,6 +153,31 @@ static bool write_checked(const char *path, const uint8_t *data, size_t length)
                !memcmp(copy, data, length);
    free(copy);
    return good;
+}
+static bool write_checked_diagnostic(const char *path, const uint8_t *data,
+                                     size_t length, const char **failure)
+{
+   if (!arc_io_write_all_diagnostic(path, data, length, failure)) return false;
+   uint8_t *copy = malloc(length ? length : 1u);
+   if (!copy) { if (failure) *failure = "allocate-readback"; return false; }
+   ArcIoFile *file = arc_io_open_file(path, false);
+   if (!file) { free(copy); if (failure) *failure = "vfs-open-read"; return false; }
+   if (failure) *failure = "size";
+   bool okay = arc_io_file_length(file) == (int64_t)length;
+   if (okay) {
+      if (failure) *failure = "read";
+      okay = arc_io_read_file(file, copy, length) == length;
+   }
+   bool closed = arc_io_close_file(file);
+   if (okay && !closed && failure) *failure = "close(read)";
+   okay = okay && closed;
+   if (okay) {
+      if (failure) *failure = "verify-readback";
+      okay = !memcmp(copy, data, length);
+   }
+   free(copy);
+   if (okay && failure) *failure = NULL;
+   return okay;
 }
 static void manifest_encode(const ArcInstallStore *s, uint64_t generation,
                             const char *base, const char *hash,
@@ -317,6 +364,26 @@ static bool remove_if_present(ArcInstallStore *s, const char *leaf)
       arc_io_directory_contains(s->directory, leaf, &present) &&
       (!present || arc_io_remove(path));
 }
+static bool remove_probe_leftover(ArcInstallStore *s, const char *leaf)
+{
+   bool present = false;
+   char path[4096];
+   const char *failure = NULL;
+   if (!full_path(s, leaf, path)) {
+      report_vfs_failure(s, "store-write-probe", "path-build", leaf);
+      return false;
+   }
+   if (!arc_io_directory_contains_diagnostic(s->directory, leaf, &present,
+                                              &failure)) {
+      report_vfs_failure(s, "store-write-probe", failure, leaf);
+      return false;
+   }
+   if (present && !arc_io_remove(path)) {
+      report_vfs_failure(s, "store-write-probe", "remove", leaf);
+      return false;
+   }
+   return true;
+}
 /* These names belong exclusively to the store.  A failed probe leaves only
  * owned temporaries, which never affect classification on the next load. */
 static bool write_probe(ArcInstallStore *s)
@@ -325,23 +392,24 @@ static bool write_probe(ArcInstallStore *s)
    static const uint8_t bytes[] = {'A', 'I', 'H', 'D'};
    const char *failure = NULL;
    if (!full_path(s, "rwprobe.tmp", first) ||
-       !full_path(s, "rwprobe2.tmp", second)) return false;
-   if (!remove_if_present(s, "rwprobe.tmp") ||
-       !remove_if_present(s, "rwprobe2.tmp")) {
-      report(s, "store-write-probe=failed cleanup"); return false;
+       !full_path(s, "rwprobe2.tmp", second)) {
+      report_vfs_failure(s, "store-write-probe", "path-build", "rwprobe.tmp");
+      return false;
    }
+   if (!remove_probe_leftover(s, "rwprobe.tmp") ||
+       !remove_probe_leftover(s, "rwprobe2.tmp")) return false;
    if (!arc_io_write_all_diagnostic(first, bytes, sizeof(bytes), &failure)) {
-      char message[96];
-      snprintf(message, sizeof(message), "store-write-probe=failed %s",
-               failure ? failure : "create");
-      report(s, message);
+      report_vfs_failure(s, "store-write-probe", failure, "rwprobe.tmp");
       return false;
    }
    if (!arc_io_rename(first, second)) {
-      report(s, "store-write-probe=failed rename"); return false;
+      report_vfs_failure(s, "store-write-probe", "rename",
+                         "rwprobe.tmp->rwprobe2.tmp");
+      return false;
    }
    if (!arc_io_remove(second)) {
-      report(s, "store-write-probe=failed remove"); return false;
+      report_vfs_failure(s, "store-write-probe", "remove", "rwprobe2.tmp");
+      return false;
    }
    report(s, "store-write-probe=passed");
    return true;
@@ -395,12 +463,26 @@ static void cleanup_unused(ArcInstallStore *s, const Manifest manifests[2],
 static bool create_base(ArcInstallStore *s)
 {
    char tmp[4096], final[4096], hash[65];
-   if (!arc_install_hd_format(s->image, ARC_INSTALL_HD_BYTES) ||
-       !full_path(s, "disc.g0.hdf.tmp", tmp) ||
-       !full_path(s, "disc.g0.hdf", final) ||
-       !write_checked(tmp, s->image, ARC_INSTALL_HD_BYTES)) return false;
+   const char *failure = NULL;
+   if (!arc_install_hd_format(s->image, ARC_INSTALL_HD_BYTES)) {
+      report_vfs_failure(s, "store-create", "format", "disc.g0.hdf.tmp");
+      return false;
+   }
+   if (!full_path(s, "disc.g0.hdf.tmp", tmp) ||
+       !full_path(s, "disc.g0.hdf", final)) {
+      report_vfs_failure(s, "store-create", "path-build", "disc.g0.hdf.tmp");
+      return false;
+   }
+   if (!write_checked_diagnostic(tmp, s->image, ARC_INSTALL_HD_BYTES, &failure)) {
+      report_vfs_failure(s, "store-create", failure, "disc.g0.hdf.tmp");
+      return false;
+   }
    arc_sha256_hex(s->image, ARC_INSTALL_HD_BYTES, hash);
-   if (!arc_io_rename(tmp, final)) return false;
+   if (!arc_io_rename(tmp, final)) {
+      report_vfs_failure(s, "store-create", "rename",
+                         "disc.g0.hdf.tmp->disc.g0.hdf");
+      return false;
+   }
    strcpy(s->base_leaf, "disc.g0.hdf");
    strcpy(s->base_hash, hash);
    s->generation = 0u;
@@ -522,7 +604,12 @@ ArcInstallStore *arc_install_store_open(const char *save_dir,
          report(s, "store-state=new read-only");
          return s;
       }
-      if (!arc_io_make_path(s->directory)) {
+      char failed_path[4096];
+      const char *failure = NULL;
+      if (!arc_io_make_path_diagnostic(s->directory, failed_path,
+                                       sizeof(failed_path), &failure)) {
+         report_vfs_failure(s, "store-create", failure,
+                            failed_path[0] ? failed_path : s->directory);
          s->state = ARC_INSTALL_STORE_NEW;
          s->writable = false;
          report(s, "store-mode=read-only reason=directory-create-failed");
@@ -530,8 +617,12 @@ ArcInstallStore *arc_install_store_open(const char *save_dir,
             "Persistent install saves need a native writable save directory; choose Install Saves: Temporary to use RAM.");
          return s;
       }
-      listed = arc_io_list_directory(s->directory, list_visit, &listing);
-      if (!listed) goto damaged;
+      listed = arc_io_list_directory_diagnostic(s->directory, list_visit,
+                                                 &listing, &failure);
+      if (!listed) {
+         report_vfs_failure(s, "store-create", failure, s->directory);
+         goto damaged;
+      }
    }
    if (listing.unknown) goto damaged;
    if (listing.ready[0] || listing.ready[1]) {

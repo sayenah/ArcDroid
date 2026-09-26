@@ -9,18 +9,47 @@
 #include <string.h>
 
 #define FILES 64u
+#define DIRECTORIES 16u
 struct retro_vfs_file_handle { unsigned index, mode; size_t at; };
 struct retro_vfs_dir_handle { char path[256]; unsigned at, current; };
 typedef struct { char path[256]; uint8_t *bytes; size_t size; bool exists; } File;
 static File files[FILES];
+static char directories[DIRECTORIES][256];
+static unsigned directory_count;
+static bool strict_directories;
 static unsigned mutations, fail_mutation;
 static bool fail_probe_close;
-static char probe_failure[96];
+static bool fail_base_open;
+static char probe_failure[256], creation_failure[256];
 static void store_log(void *opaque, const char *message)
 {
    (void)opaque;
    if (!strncmp(message,"store-write-probe=failed ",25u))
       snprintf(probe_failure,sizeof(probe_failure),"%s",message);
+   if (!strncmp(message,"store-create=failed ",20u))
+      snprintf(creation_failure,sizeof(creation_failure),"%s",message);
+}
+static bool canonical(const char *path, char output[256])
+{
+   size_t n = strlen(path);
+   if (n >= 256u) return false;
+   for (size_t i=0u;i<=n;++i)
+      output[i] = path[i] == '\\' ? '/' : path[i];
+   return true;
+}
+static bool directory_exists(const char *path)
+{
+   char normalized[256];
+   if (!canonical(path, normalized)) return false;
+   for (unsigned i=0u;i<directory_count;++i)
+      if (!strcmp(directories[i],normalized)) return true;
+   return false;
+}
+static void add_directory(const char *path)
+{
+   assert(directory_count < DIRECTORIES);
+   assert(canonical(path,directories[directory_count]));
+   ++directory_count;
 }
 static bool fail_now(void)
 {
@@ -32,8 +61,10 @@ static bool fail_now(void)
 }
 static int locate(const char *path)
 {
+   char normalized[256];
+   if (!canonical(path,normalized)) return -1;
    for (unsigned i = 0u; i < FILES; ++i)
-      if (files[i].exists && !strcmp(files[i].path, path)) return (int)i;
+      if (files[i].exists && !strcmp(files[i].path, normalized)) return (int)i;
    return -1;
 }
 static int vacant(void)
@@ -42,16 +73,26 @@ static struct retro_vfs_file_handle *vopen(const char *path, unsigned mode,
                                             unsigned hint)
 {
    (void)hint;
+   if (fail_base_open && (mode & RETRO_VFS_FILE_ACCESS_WRITE) &&
+       strstr(path,"disc.g0.hdf.tmp")) return NULL;
    int i = locate(path);
    if (mode & RETRO_VFS_FILE_ACCESS_UPDATE_EXISTING) {
       if (i < 0) return NULL;
    } else if (mode & RETRO_VFS_FILE_ACCESS_WRITE) {
+      if (strict_directories) {
+         char normalized[256];
+         if (!canonical(path,normalized)) return NULL;
+         char *slash=strrchr(normalized,'/');
+         if (!slash) return NULL;
+         *slash='\0';
+         if (!directory_exists(normalized)) return NULL;
+      }
       if (fail_now()) return NULL;
       if (i < 0) i = vacant();
       if (i < 0) return NULL;
       free(files[i].bytes); files[i].bytes = NULL; files[i].size = 0u;
       files[i].exists = true;
-      snprintf(files[i].path, sizeof(files[i].path), "%s", path);
+      assert(canonical(path,files[i].path));
    } else if (i < 0) return NULL;
    struct retro_vfs_file_handle *h = calloc(1u, sizeof(*h)); assert(h);
    h->index = (unsigned)i; h->mode = mode; return h;
@@ -108,7 +149,7 @@ static int vrename(const char *from, const char *to)
 {
    int i = locate(from);
    if (i < 0 || locate(to) >= 0 || fail_now()) return -1;
-   snprintf(files[i].path, sizeof(files[i].path), "%s", to); return 0;
+   assert(canonical(to,files[i].path)); return 0;
 }
 static int64_t vtruncate(struct retro_vfs_file_handle *h, int64_t length)
 {
@@ -129,14 +170,29 @@ static int32_t vstat(const char *path, int32_t *size)
       return RETRO_VFS_STAT_IS_VALID;
    }
    if (size) *size = 0;
+   if (strict_directories && !directory_exists(path)) return 0;
    return RETRO_VFS_STAT_IS_VALID | RETRO_VFS_STAT_IS_DIRECTORY;
 }
-static int vmkdir(const char *path) { (void)path; return 0; }
+static int vmkdir(const char *path)
+{
+   if (!strict_directories) return 0;
+   char normalized[256];
+   if (!canonical(path,normalized) || directory_exists(normalized) ||
+       fail_now()) return -1;
+   char *slash=strrchr(normalized,'/');
+   if (!slash) return -1;
+   *slash='\0';
+   if (!directory_exists(normalized)) return -1;
+   *slash='/';
+   add_directory(normalized);
+   return 0;
+}
 static struct retro_vfs_dir_handle *vopendir(const char *path, bool hidden)
 {
    (void)hidden;
+   if (strict_directories && !directory_exists(path)) return NULL;
    struct retro_vfs_dir_handle *h = calloc(1u, sizeof(*h)); assert(h);
-   snprintf(h->path, sizeof(h->path), "%s", path); return h;
+   assert(canonical(path,h->path)); return h;
 }
 static bool vreaddir(struct retro_vfs_dir_handle *h)
 {
@@ -167,7 +223,9 @@ static void clear_files(void)
       free(files[i].bytes); memset(&files[i], 0, sizeof(files[i]));
    }
    mutations = fail_mutation = 0u;
-   fail_probe_close=false; probe_failure[0]='\0';
+   fail_probe_close=false; fail_base_open=false;
+   probe_failure[0]='\0'; creation_failure[0]='\0';
+   directory_count=0u; strict_directories=false;
 }
 static File *file_named(const char *leaf)
 {
@@ -561,8 +619,10 @@ static void test_probe_failures(void)
                                                store_log,NULL,error,sizeof(error));
       assert(s && arc_install_store_state(s)==ARC_INSTALL_STORE_READY &&
              !arc_install_store_writable(s) && !fail_mutation);
-      static const char *const stages[]={"create","write","flush","rename","remove"};
+      static const char *const stages[]={"op=vfs-open-write","op=write",
+                                          "op=flush","op=rename","op=remove"};
       assert(strstr(probe_failure,stages[step-1u]));
+      assert(strstr(probe_failure,"path=rwprobe"));
       assert(journal->size==old_size && file_named("ready.tmp"));
       arc_install_store_close(s);
       s=open_store(&p,false,false,ARC_INSTALL_STORE_READY);
@@ -582,6 +642,7 @@ static void test_probe_failures(void)
                 (initial ? ARC_INSTALL_STORE_UNPUBLISHED : ARC_INSTALL_STORE_NEW));
          assert(!arc_install_store_writable(s) && !fail_mutation);
          assert(strstr(probe_failure,stages[step-1u]));
+         assert(strstr(probe_failure,"path=rwprobe"));
          assert(strstr(error,"choose Install Saves: Temporary"));
          assert((file_named("disc.g0.hdf") != NULL) == (initial != 0u));
          arc_install_store_close(s);
@@ -593,8 +654,71 @@ static void test_probe_failures(void)
                                             store_log,NULL,NULL,0u);
    assert(s && arc_install_store_state(s)==ARC_INSTALL_STORE_READY &&
           !arc_install_store_writable(s) &&
-          strstr(probe_failure,"close"));
+          strstr(probe_failure,"op=close"));
    arc_install_store_close(s);
+   clear_files();
+}
+static void test_relative_save_paths(void)
+{
+   static const char *const paths[]={
+      "build/retroarch-native/save/ArcDroid",
+      "build\\retroarch-native\\save\\ArcDroid"
+   };
+   ArcInstallPlan p=plan();
+   assert(arc_install_store_native_path(paths[0]));
+   assert(arc_install_store_native_path(paths[1]));
+   assert(!arc_install_store_native_path("content://save/ArcDroid"));
+   assert(!arc_install_store_native_path("C:relative"));
+   for (unsigned variant=0u;variant<2u;++variant) {
+      clear_files();
+      strict_directories=true;
+      add_directory("build");
+      add_directory("build/retroarch-native");
+      add_directory("build/retroarch-native/save");
+      add_directory(paths[variant]);
+      char error[256]={0};
+      ArcInstallStore *s=arc_install_store_open(paths[variant],&p,true,true,
+                                                store_log,NULL,error,sizeof(error));
+      assert(s && arc_install_store_state(s)==ARC_INSTALL_STORE_UNPUBLISHED &&
+             arc_install_store_writable(s) && !error[0]);
+      assert(directory_exists("build/retroarch-native/save/ArcDroid/arcdroid/install/1234567890abcdef1234567890abcdef12345678"));
+      assert(file_named("disc.g0.hdf") && !file_named("rwprobe.tmp") &&
+             !file_named("rwprobe2.tmp"));
+      assert(arc_install_store_publish(s,error,sizeof(error)));
+      arc_install_store_close(s);
+      s=arc_install_store_open(paths[variant],&p,false,true,store_log,NULL,
+                               error,sizeof(error));
+      assert(s && arc_install_store_state(s)==ARC_INSTALL_STORE_READY &&
+             arc_install_store_writable(s));
+      arc_install_store_close(s);
+      clear_files();
+      strict_directories=true;
+      add_directory("build");
+      add_directory("build/retroarch-native");
+      add_directory("build/retroarch-native/save");
+      add_directory(paths[variant]);
+      fail_mutation=mutations+1u;
+      s=arc_install_store_open(paths[variant],&p,true,true,store_log,NULL,
+                               error,sizeof(error));
+      assert(s && arc_install_store_state(s)==ARC_INSTALL_STORE_NEW &&
+             !arc_install_store_writable(s));
+      assert(strstr(creation_failure,"op=mkdir path=arcdroid") &&
+             strstr(error,"choose Install Saves: Temporary"));
+      arc_install_store_close(s);
+      clear_files();
+      strict_directories=true;
+      add_directory("build");
+      add_directory("build/retroarch-native");
+      add_directory("build/retroarch-native/save");
+      add_directory(paths[variant]);
+      fail_base_open=true;
+      creation_failure[0]='\0'; error[0]='\0';
+      s=arc_install_store_open(paths[variant],&p,true,true,store_log,NULL,
+                               error,sizeof(error));
+      assert(s && arc_install_store_state(s)==ARC_INSTALL_STORE_DAMAGED &&
+             strstr(creation_failure,"op=vfs-open-write path=disc.g0.hdf.tmp"));
+      arc_install_store_close(s);
+   }
    clear_files();
 }
 int main(void)
@@ -609,6 +733,7 @@ int main(void)
    test_compaction_retry_with_stale_generation();
    test_writable_orphan_cleanup();
    test_probe_temporaries(); test_probe_failures();
+   test_relative_save_paths();
    clear_files(); arc_io_set_vfs(NULL);
    puts("install-disc store: pass");
    return 0;

@@ -18,18 +18,25 @@ bool arc_io_read_all(const char *path, void **data, size_t *size);
 bool arc_io_read_all_limit(const char *path, void **data, size_t *size,
                            size_t limit, bool *limit_exceeded);
 bool arc_io_write_all(const char *path, const void *data, size_t size);
-/* Returns the failing VFS operation for an owned-file writability probe. */
+/* Returns the first failing VFS operation for an owned-file write. */
 bool arc_io_write_all_diagnostic(const char *path, const void *data, size_t size,
                                  const char **failure);
 bool arc_io_remove(const char *path);
 bool arc_io_rename(const char *old_path, const char *new_path);
 bool arc_io_file_size(const char *path, size_t *size);
 bool arc_io_make_path(const char *path);
+bool arc_io_make_path_diagnostic(const char *path, char *failed_path,
+                                 size_t failed_path_size, const char **failure);
 bool arc_io_existing_directory(const char *path);
 bool arc_io_directory_contains(const char *directory, const char *name,
                                bool *contains);
+bool arc_io_directory_contains_diagnostic(const char *directory, const char *name,
+                                          bool *contains, const char **failure);
 bool arc_io_list_directory(const char *directory, ArcIoDirectoryVisit visit,
                            void *opaque);
+bool arc_io_list_directory_diagnostic(const char *directory,
+                                      ArcIoDirectoryVisit visit, void *opaque,
+                                      const char **failure);
 bool arc_io_walk(const char *directory, unsigned max_depth,
                  ArcIoVisit visit, void *opaque);
 ArcIoFile *arc_io_open_file(const char *path, bool writable);

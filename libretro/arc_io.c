@@ -96,9 +96,10 @@ bool arc_io_write_all_diagnostic(const char *path, const void *data, size_t size
 {
    struct retro_vfs_file_handle *file;
    int64_t wrote;
-   if (failure) *failure = "create";
+   if (failure) *failure = "vfs-unavailable";
    if (!arc_io_vfs || !path || !data || !arc_io_vfs->open ||
        !arc_io_vfs->write || !arc_io_vfs->close) return false;
+   if (failure) *failure = "vfs-open-write";
    file = arc_io_vfs->open(path, RETRO_VFS_FILE_ACCESS_WRITE,
                            RETRO_VFS_FILE_ACCESS_HINT_NONE);
    if (!file) return false;
@@ -146,35 +147,56 @@ static bool arc_io_is_directory(const char *path)
 bool arc_io_existing_directory(const char *path)
 { return path && arc_io_is_directory(path); }
 
-bool arc_io_make_path(const char *path)
+bool arc_io_make_path_diagnostic(const char *path, char *failed_path,
+                                 size_t failed_path_size, const char **failure)
 {
    char buffer[4096];
    size_t length;
-   if (!arc_io_vfs || !arc_io_vfs->mkdir || !path) return false;
+   if (failure) *failure = "path-validation";
+   if (failed_path && failed_path_size) failed_path[0] = '\0';
+   if (!arc_io_vfs || !arc_io_vfs->mkdir) {
+      if (failure) *failure = "vfs-unavailable";
+      return false;
+   }
+   if (!path) return false;
    length = strlen(path);
    if (!length || length >= sizeof(buffer)) return false;
    memcpy(buffer, path, length + 1u);
+   if (failure) *failure = "mkdir";
    for (size_t i = 1u; i < length; ++i)
       if (buffer[i] == '/' || buffer[i] == '\\')
       {
          char separator = buffer[i];
          if (i == 2u && buffer[1] == ':') continue;
          buffer[i] = '\0';
-         if (buffer[0] && !arc_io_is_directory(buffer) && arc_io_vfs->mkdir(buffer) != 0)
+         if (buffer[0] && !arc_io_is_directory(buffer) && arc_io_vfs->mkdir(buffer) != 0) {
+            if (failed_path && failed_path_size)
+               snprintf(failed_path, failed_path_size, "%s", buffer);
             return false;
+         }
          buffer[i] = separator;
       }
-   return arc_io_is_directory(buffer) || arc_io_vfs->mkdir(buffer) == 0;
+   if (arc_io_is_directory(buffer) || arc_io_vfs->mkdir(buffer) == 0) {
+      if (failure) *failure = NULL;
+      return true;
+   }
+   if (failed_path && failed_path_size)
+      snprintf(failed_path, failed_path_size, "%s", buffer);
+   return false;
 }
+bool arc_io_make_path(const char *path)
+{ return arc_io_make_path_diagnostic(path, NULL, 0u, NULL); }
 
-bool arc_io_directory_contains(const char *directory, const char *name,
-                               bool *contains)
+bool arc_io_directory_contains_diagnostic(const char *directory, const char *name,
+                                          bool *contains, const char **failure)
 {
+   if (failure) *failure = "vfs-unavailable";
    if (contains) *contains = false;
    if (!arc_io_vfs || !arc_io_vfs->opendir || !arc_io_vfs->readdir ||
        !arc_io_vfs->dirent_get_name || !arc_io_vfs->closedir ||
        !directory || !name || !name[0] || !contains ||
        strchr(name, '/') || strchr(name, '\\')) return false;
+   if (failure) *failure = "opendir";
    struct retro_vfs_dir_handle *dir = arc_io_vfs->opendir(directory, false);
    if (!dir) return false;
    while (arc_io_vfs->readdir(dir))
@@ -188,18 +210,26 @@ bool arc_io_directory_contains(const char *directory, const char *name,
    }
    if (arc_io_vfs->closedir(dir) != 0)
    {
+      if (failure) *failure = "closedir";
       *contains = false;
       return false;
    }
+   if (failure) *failure = NULL;
    return true;
 }
+bool arc_io_directory_contains(const char *directory, const char *name,
+                               bool *contains)
+{ return arc_io_directory_contains_diagnostic(directory, name, contains, NULL); }
 
-bool arc_io_list_directory(const char *directory, ArcIoDirectoryVisit visit,
-                           void *opaque)
+bool arc_io_list_directory_diagnostic(const char *directory,
+                                      ArcIoDirectoryVisit visit, void *opaque,
+                                      const char **failure)
 {
+   if (failure) *failure = "vfs-unavailable";
    if (!arc_io_vfs || !arc_io_vfs->opendir || !arc_io_vfs->readdir ||
        !arc_io_vfs->dirent_get_name || !arc_io_vfs->dirent_is_dir ||
        !arc_io_vfs->closedir || !directory || !visit) return false;
+   if (failure) *failure = "opendir";
    struct retro_vfs_dir_handle *dir = arc_io_vfs->opendir(directory, false);
    if (!dir) return false;
    bool complete = true;
@@ -210,12 +240,22 @@ bool arc_io_list_directory(const char *directory, ArcIoDirectoryVisit visit,
          continue;
       if (!visit(name, !arc_io_vfs->dirent_is_dir(dir), opaque))
       {
+         if (failure) *failure = "visit";
          complete = false;
          break;
       }
    }
-   return arc_io_vfs->closedir(dir) == 0 && complete;
+   int closed = arc_io_vfs->closedir(dir);
+   if (closed != 0) {
+      if (failure) *failure = "closedir";
+      return false;
+   }
+   if (complete && failure) *failure = NULL;
+   return complete;
 }
+bool arc_io_list_directory(const char *directory, ArcIoDirectoryVisit visit,
+                           void *opaque)
+{ return arc_io_list_directory_diagnostic(directory, visit, opaque, NULL); }
 
 static bool arc_io_walk_inner(const char *directory, unsigned depth,
                               ArcIoVisit visit, void *opaque)

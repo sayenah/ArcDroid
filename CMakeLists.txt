@@ -653,6 +653,7 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
         arcdroid_sanitizer_compile arcdroid_sanitizer_link)
     endif()
     target_compile_options(libretro_harness PRIVATE $<$<C_COMPILER_ID:GNU,Clang,AppleClang>:-UNDEBUG>)
+    add_test(NAME libretro-parser-self-test COMMAND libretro_harness --self-test-parser)
     add_dependencies(libretro_harness test-fixtures install_guest_fixture
       arcdroid_libretro_test)
     add_test(NAME install-guest-process COMMAND "${Python3_EXECUTABLE}"

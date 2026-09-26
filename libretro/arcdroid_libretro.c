@@ -81,15 +81,6 @@ static bool arc_keyboard_polling;
 static unsigned arc_port_device[2] = {ARC_DEVICE_KEYS, ARC_DEVICE_MOUSE};
 static char arc_cmos_path[4096];
 static char arc_save_path[4096];
-static bool arc_native_save_path(const char *path)
-{
-   if (!path || !path[0]) return false;
-   if (path[0] == '/') return true;
-   if ((path[0] >= 'A' && path[0] <= 'Z') ||
-       (path[0] >= 'a' && path[0] <= 'z'))
-      if (path[1] == ':' && (path[2] == '/' || path[2] == '\\')) return true;
-   return path[0] == '\\' && path[1] == '\\';
-}
 static char arc_helper_path[4096];
 static uint64_t arc_frame_number;
 static long double arc_audio_fraction;
@@ -2654,7 +2645,8 @@ static bool arc_install_build(const ArcInstallPlan *plan,
 static void arc_install_store_log(void *opaque, const char *line)
 {
    (void)opaque;
-   if (arc_log) arc_log(RETRO_LOG_INFO, "Install disc: %s\n", line);
+   if (arc_log) arc_log(strstr(line, "=failed") ? RETRO_LOG_WARN : RETRO_LOG_INFO,
+                        "Install disc: %s\n", line);
 }
 static bool arc_prepare_adffs(bool notify) {
    arc_install_store_close(arc_install_store);
@@ -2934,7 +2926,7 @@ static bool arc_prepare_adffs(bool notify) {
             }
             hd_mode = 2u;
             if (arc_core_options.disk_writes != ARC_DISK_WRITES_OFF &&
-                arc_native_save_path(arc_save_path)) {
+                arc_install_store_native_path(arc_save_path)) {
                arc_install_store_close(store);
                store = arc_install_store_open(arc_save_path, plan, false, true,
                   arc_install_store_log, NULL, store_error, sizeof(store_error));
@@ -2959,7 +2951,7 @@ static bool arc_prepare_adffs(bool notify) {
             arc_install_store_close(store);
             store = NULL;
             if (arc_session_machine != ARC_MACHINE_A3020 ||
-                !arc_native_save_path(arc_save_path)) {
+                !arc_install_store_native_path(arc_save_path)) {
                arc_message("Persistent install saves require Machine: Auto and a native writable save directory; choose Install Saves: Temporary to use RAM.",
                            RETRO_LOG_ERROR);
                arc_install_hard_failure = true;

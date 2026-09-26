@@ -29,6 +29,9 @@ bool arc_install_store_write(void *opaque, uint32_t lba, uint32_t count,
                              const uint8_t *data);
 void arc_install_store_failed(void *opaque, const char *reason);
 bool arc_install_store_writable(const ArcInstallStore *store);
+/* Accept local VFS paths, including frontend-supplied relative save paths;
+ * URI schemes are not native filesystem locations. */
+bool arc_install_store_native_path(const char *path);
 bool arc_install_store_probe_writable(ArcInstallStore *store);
 bool arc_install_store_publish(ArcInstallStore *store,
    char *error, size_t error_size);
