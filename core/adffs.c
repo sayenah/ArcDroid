@@ -582,12 +582,14 @@ bool arc_install_hd_launcher(const ArcInstallPlan *plan, bool run_plan,
     /* Preserve every Slice 9 install command before its final run step. */
     at = original_size - (size_t)final_size;
     memcpy(text, original, at);
+    if (!plan->variant->eject &&
+        !append_step(text, sizeof(text), &at, "ADFEject\r")) return false;
     if (!append_step(text, sizeof(text), &at,
         "IfThere RAM::0.$.%s Then Copy RAM::0.$.%s ADFS::4.$.%s ~C~VRFQ Else Error ArcDroid install: hard-disc copy failed\r"
         "IfThere ADFS::4.$.%s Then Set ArcDroid$Guard 1 Else Error ArcDroid install: hard-disc copy failed\r"
-        "Copy ADFS::1.$.ArcReady ADFS::4.$.ArcReady ~C~VFQ\r"
+        "Copy ADFS::0.$.ArcReady ADFS::4.$.ArcReady ~C~VFQ\r"
         "IfThere ADFS::4.$.ArcReady Then Set ArcDroid$Guard 1 Else Error ArcDroid install: marker failed\r"
-        "Dismount :4\rCopy ADFS::1.$.ArcDoor RAM::0.$.ArcDoor ~C~VFQ\r",
+        "Dismount :4\rCopy ADFS::0.$.ArcDoor RAM::0.$.ArcDoor ~C~VFQ\r",
         plan->variant->app, plan->variant->app, plan->variant->app,
         plan->variant->app)) return false;
   }
@@ -785,7 +787,10 @@ static bool make_disc_ex(Node *root, uint8_t *out, ArcInstallDoorbell *doorbell,
           pos = ((pos + 5119u) / 5120u) * 5120u;
         else pos = align1k(pos);
         all[i]->child[j]->offset = pos;
-        if (all[i]->child[j]->size > ARC_ADFFS_DISC_SIZE - pos) {
+        if (pos > ARC_ADFFS_DISC_SIZE ||
+            all[i]->child[j]->size > ARC_ADFFS_DISC_SIZE - pos ||
+            (doorbell && !strcmp(file->name, "ArcDoor") &&
+             5120u > ARC_ADFFS_DISC_SIZE - pos)) {
           fail(e, en, "carried set does not fit support disc");
           return false;
         }
@@ -907,14 +912,15 @@ bool arc_adffs_carrier_build(const uint8_t *jfd, size_t n,
     return false;
   return make_disc(root, out, e, en);
 }
-bool arc_install_carrier_build(const ArcInstallPlan *plan,
-                               const uint8_t *const raw[ARC_INSTALL_MAX_DISCS],
-                               const size_t sizes[ARC_INSTALL_MAX_DISCS],
-                               uint8_t out[ARC_ADFFS_DISC_SIZE], char *e,
-                               size_t en) {
+static bool install_carrier_build(const ArcInstallPlan *plan,
+                                  const uint8_t *const raw[ARC_INSTALL_MAX_DISCS],
+                                  const size_t sizes[ARC_INSTALL_MAX_DISCS],
+                                  ArcInstallDoorbell *doorbell,
+                                  uint8_t out[ARC_ADFFS_DISC_SIZE], char *e,
+                                  size_t en) {
   if (!plan || !plan->profile || !plan->variant || !raw || !sizes || !out)
     return false;
-  Node pool[ARC_INSTALL_MAX_DISCS + 2u] = {{0}};
+  Node pool[ARC_INSTALL_MAX_DISCS + 4u] = {{0}};
   unsigned used = 1u;
   Node *root = &pool[0];
   root->dir = true;
@@ -935,13 +941,41 @@ bool arc_install_carrier_build(const ArcInstallPlan *plan,
   if (length < 0 || (size_t)length >= sizeof(run) ||
       !addpath(root, pool, &used, "Run", (uint8_t *)run, (size_t)length,
                0xffffeb00u, 0u, 0x33u)) return false;
-  return make_disc(root, out, e, en);
+  uint8_t marker[96];
+  size_t marker_size = 0u;
+  static uint8_t door_data[] = "ArcDroid install doorbell\r";
+  if (doorbell &&
+      (!arc_install_marker(plan, marker, sizeof(marker), &marker_size) ||
+       !addpath(root, pool, &used, "ArcReady", marker, marker_size,
+                0xffffeb00u, 0u, 0x33u) ||
+       !addpath(root, pool, &used, "ArcDoor", door_data,
+                sizeof(door_data) - 1u, 0xffffeb00u, 0u, 0x33u))) {
+    fail(e, en, "install completion files are invalid");
+    return false;
+  }
+  return make_disc_ex(root, out, doorbell, e, en);
+}
+bool arc_install_carrier_build(const ArcInstallPlan *plan,
+                               const uint8_t *const raw[ARC_INSTALL_MAX_DISCS],
+                               const size_t sizes[ARC_INSTALL_MAX_DISCS],
+                               uint8_t out[ARC_ADFFS_DISC_SIZE], char *e,
+                               size_t en) {
+  return install_carrier_build(plan, raw, sizes, NULL, out, e, en);
+}
+bool arc_install_hd_carrier_build(const ArcInstallPlan *plan,
+                                  const uint8_t *const raw[ARC_INSTALL_MAX_DISCS],
+                                  const size_t sizes[ARC_INSTALL_MAX_DISCS],
+                                  uint8_t out[ARC_ADFFS_DISC_SIZE],
+                                  ArcInstallDoorbell *doorbell,
+                                  char *e, size_t en) {
+  if (!doorbell) return false;
+  return install_carrier_build(plan, raw, sizes, doorbell, out, e, en);
 }
 
 static bool support_build(const ArcAdffsPackage *p,
                           const ArcAdffsSelection *selection,
                           const ArcInstallPlan *plan,
-                          unsigned hd_mode, ArcInstallDoorbell *doorbell,
+                          unsigned hd_mode,
                           uint8_t out[ARC_ADFFS_DISC_SIZE], char *e,
                           size_t en) {
   if (plan && !plan->variant) return false;
@@ -992,19 +1026,6 @@ static bool support_build(const ArcAdffsPackage *p,
     free(pool);
     return false;
   }
-  uint8_t marker[96];
-  size_t marker_size = 0u;
-  static uint8_t door_data[] = "ArcDroid install doorbell\r";
-  if (hd_mode == 1u &&
-      (!arc_install_marker(plan, marker, sizeof(marker), &marker_size) ||
-       !addpath(root, pool, &used, "ArcReady", marker, marker_size,
-                0xffffeb00u, 0u, 0x33u) ||
-       !addpath(root, pool, &used, "ArcDoor", door_data,
-                sizeof(door_data) - 1u, 0xffffeb00u, 0u, 0x33u))) {
-    fail(e, en, "install completion files are invalid");
-    free(pool);
-    return false;
-  }
   for (unsigned i = 0; i < p->count; ++i)
     if (selection->member[i] &&
         !addpath(root, pool, &used, p->members[i].name, p->members[i].data,
@@ -1014,7 +1035,7 @@ static bool support_build(const ArcAdffsPackage *p,
       free(pool);
       return false;
     }
-  bool ok = make_disc_ex(root, out, hd_mode == 1u ? doorbell : NULL, e, en);
+  bool ok = make_disc(root, out, e, en);
   free(pool);
   return ok;
 }
@@ -1022,7 +1043,7 @@ bool arc_adffs_support_build(const ArcAdffsPackage *p,
                              const ArcAdffsSelection *selection,
                              uint8_t out[ARC_ADFFS_DISC_SIZE], char *e,
                              size_t en) {
-  return support_build(p, selection, NULL, 0u, NULL, out, e, en);
+  return support_build(p, selection, NULL, 0u, out, e, en);
 }
 
 bool arc_install_support_build(const ArcAdffsPackage *p,
@@ -1030,15 +1051,14 @@ bool arc_install_support_build(const ArcAdffsPackage *p,
                                const ArcInstallPlan *plan,
                                uint8_t out[ARC_ADFFS_DISC_SIZE], char *e,
                                size_t en) {
-  return support_build(p, selection, plan, 0u, NULL, out, e, en);
+  return support_build(p, selection, plan, 0u, out, e, en);
 }
 
 bool arc_install_hd_support_build(const ArcAdffsPackage *p,
                                   const ArcAdffsSelection *selection,
                                   const ArcInstallPlan *plan, bool run_plan,
                                   uint8_t out[ARC_ADFFS_DISC_SIZE],
-                                  ArcInstallDoorbell *doorbell,
                                   char *e, size_t en) {
   return support_build(p, selection, plan, run_plan ? 2u : 1u,
-                       doorbell, out, e, en);
+                       out, e, en);
 }

@@ -729,6 +729,16 @@ int main(int argc, char **argv) {
          arc_install_support_build(install_package, &install_selection,
                                     &plans[0], install_support,
                                     error, sizeof(error)));
+  assert(arc_install_hd_support_build(install_package, &install_selection,
+                                     &plans[0], false, install_support,
+                                     error, sizeof(error)));
+  const uint8_t *hd_support_root = install_support + 1024u;
+  assert(!find_entry(hd_support_root, "ArcReady") &&
+         !find_entry(hd_support_root, "ArcDoor") &&
+         find_entry(hd_support_root, "ArcStage2"));
+  assert(arc_install_support_build(install_package, &install_selection,
+                                   &plans[0], install_support,
+                                   error, sizeof(error)));
   const uint8_t *install_root = install_carrier + 1024u;
   const uint8_t *disc1 = find_entry(install_root, "D1");
   const uint8_t *disc2 = find_entry(install_root, "D2");

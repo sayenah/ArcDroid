@@ -133,9 +133,9 @@ static void test_hd_launchers(void)
       int tail_n = snprintf(hd_tail, sizeof(hd_tail),
           "IfThere RAM::0.$.%s Then Copy RAM::0.$.%s ADFS::4.$.%s ~C~VRFQ Else Error ArcDroid install: hard-disc copy failed\r"
           "IfThere ADFS::4.$.%s Then Set ArcDroid$Guard 1 Else Error ArcDroid install: hard-disc copy failed\r"
-          "Copy ADFS::1.$.ArcReady ADFS::4.$.ArcReady ~C~VFQ\r"
+          "Copy ADFS::0.$.ArcReady ADFS::4.$.ArcReady ~C~VFQ\r"
           "IfThere ADFS::4.$.ArcReady Then Set ArcDroid$Guard 1 Else Error ArcDroid install: marker failed\r"
-          "Dismount :4\rCopy ADFS::1.$.ArcDoor RAM::0.$.ArcDoor ~C~VFQ\r",
+          "Dismount :4\rCopy ADFS::0.$.ArcDoor RAM::0.$.ArcDoor ~C~VFQ\r",
           variant->app, variant->app, variant->app, variant->app);
       assert(ram_n > 0 && (size_t)ram_n < sizeof(final_ram_step) &&
              hd_n > 0 && (size_t)hd_n < sizeof(final_hd_step) &&
@@ -144,9 +144,17 @@ static void test_hd_launchers(void)
              !memcmp(original + original_size - (size_t)ram_n,
                      final_ram_step, (size_t)ram_n));
       size_t install_prefix = original_size - (size_t)ram_n;
-      assert(install_size == install_prefix + (size_t)tail_n &&
+      size_t eject_size = variant->eject ? 0u : strlen("ADFEject\r");
+      assert(install_size == install_prefix + eject_size + (size_t)tail_n &&
              !memcmp(install, original, install_prefix) &&
-             !memcmp(install + install_prefix, hd_tail, (size_t)tail_n));
+             (variant->eject ||
+              !memcmp(install + install_prefix, "ADFEject\r", eject_size)) &&
+             !memcmp(install + install_prefix + eject_size,
+                     hd_tail, (size_t)tail_n));
+      assert((variant->eject &&
+              !memcmp(install + install_prefix - strlen("ADFEject\r"),
+                      "ADFEject\r", strlen("ADFEject\r"))) ||
+             (!variant->eject && eject_size == strlen("ADFEject\r")));
       assert(run_size == prefix_size + (size_t)hd_n &&
              !memcmp(run, generic, prefix_size) &&
              !memcmp(run + prefix_size, final_hd_step, (size_t)hd_n));
@@ -239,8 +247,8 @@ int main(int argc, char **argv)
    assert(arc_install_hd_launcher(&plan, false, (uint8_t *)launcher,
                                   sizeof(launcher) - 1u, &launcher_size));
    assert(launcher_size < sizeof(launcher) &&
-          strstr(launcher, "Dismount :4\rCopy ADFS::1.$.ArcDoor RAM::0.$.ArcDoor ~C~VFQ\r") &&
-          !strstr(launcher, "Load ADFS::1.$.ArcDoor"));
+          strstr(launcher, "Dismount :4\rCopy ADFS::0.$.ArcDoor RAM::0.$.ArcDoor ~C~VFQ\r") &&
+          !strstr(launcher, "Load ADFS::0.$.ArcDoor"));
    ArcInstallValidation result;
    assert(!arc_install_hd_validate(&plan, first, ARC_INSTALL_HD_BYTES,
                                    &result));

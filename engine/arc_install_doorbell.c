@@ -12,7 +12,7 @@ void arc_install_doorbell_read(unsigned drive, unsigned track,
                                unsigned side, unsigned sector,
                                unsigned density)
 {
-   if (enabled && !latched && drive == 1u && density == 1u &&
+   if (enabled && !latched && drive == 0u && density == 1u &&
        track == target.track && side == target.side &&
        sector == target.sector) latched = true;
 }

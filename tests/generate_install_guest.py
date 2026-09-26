@@ -104,13 +104,13 @@ def build(candidate: bytes, target: tuple[int, int, int]) -> bytearray:
     a.branch("install_next")
 
     a.label("ring_doorbell")
-    # 82C711: select drive 1, seek, sense completion, issue READ SECTOR.
+    # 82C711: select carrier drive 0, seek, sense completion, issue READ SECTOR.
     a.ldr_const(0, 0x03310FC8)
-    a.mov(1, 0x2d); a.str(1, 0, byte=True)
+    a.mov(1, 0x1c); a.str(1, 0, byte=True)
     a.ldr_const(0, 0x03310FDC)
-    a.mov(1, 1); a.str(1, 0, byte=True)
+    a.mov(1, 1); a.str(1, 0, byte=True)  # 250 kb/s, double density
     a.ldr_const(0, 0x03310FD4)
-    for value in (0x0f, 1, target[0]):
+    for value in (0x0f, target[1] << 2, target[0]):
         a.mov(1, value); a.str(1, 0, byte=True)
     a.ldr_const(2, 0x03200020)
     a.ldr_const(5, 500000)
@@ -123,7 +123,8 @@ def build(candidate: bytes, target: tuple[int, int, int]) -> bytearray:
     a.mov(1, 8); a.str(1, 0, byte=True)
     a.ldr_const(3, 0x03310FD0)
     a.ldr(1, 3, byte=True); a.ldr(1, 0, byte=True)
-    for value in (6, 1, target[0], target[1], target[2], 3, 4, 0x1b, 0xff):
+    for value in (6, target[1] << 2, target[0], target[1], target[2],
+                  3, 4, 0x1b, 0xff):
         a.mov(1, value); a.str(1, 0, byte=True)
     a.label("doorbell_wait")
     a.branch("doorbell_wait")

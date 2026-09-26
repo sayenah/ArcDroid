@@ -250,7 +250,8 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
       "${FIXTURE_DIR}/adffs/install-1.jfd"
       "${FIXTURE_DIR}/arcdroid-install-candidate.hdf"
     COMMAND $<TARGET_FILE:install_support_target>
-      "${FIXTURE_DIR}/adffs/synthetic.zip"
+      "${FIXTURE_DIR}/adffs/install-1.jfd"
+      "${FIXTURE_DIR}/adffs/install-2.jfd"
       "${FIXTURE_DIR}/arcdroid-install-doorbell.txt"
     COMMAND "${Python3_EXECUTABLE}"
       "${CMAKE_CURRENT_SOURCE_DIR}/tests/generate_install_guest.py"
@@ -259,6 +260,7 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
       "${FIXTURE_DIR}/arcdroid-install-guest.rom"
     DEPENDS install_disc_test install_support_target
       "${FIXTURE_DIR}/adffs/install-1.jfd"
+      "${FIXTURE_DIR}/adffs/install-2.jfd"
       "${FIXTURE_DIR}/adffs/synthetic.zip"
       "${CMAKE_CURRENT_SOURCE_DIR}/tests/generate_install_guest.py"
     VERBATIM)

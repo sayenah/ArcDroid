@@ -109,6 +109,12 @@ bool arc_install_carrier_build(const ArcInstallPlan *plan,
                                const size_t sizes[ARC_INSTALL_MAX_DISCS],
                                uint8_t output[ARC_ADFFS_DISC_SIZE],
                                char *error, size_t error_size);
+bool arc_install_hd_carrier_build(const ArcInstallPlan *plan,
+                                  const uint8_t *const raw[ARC_INSTALL_MAX_DISCS],
+                                  const size_t sizes[ARC_INSTALL_MAX_DISCS],
+                                  uint8_t output[ARC_ADFFS_DISC_SIZE],
+                                  ArcInstallDoorbell *doorbell,
+                                  char *error, size_t error_size);
 bool arc_install_support_build(const ArcAdffsPackage *package,
                                const ArcAdffsSelection *selection,
                                const ArcInstallPlan *plan,
@@ -118,7 +124,6 @@ bool arc_install_hd_support_build(const ArcAdffsPackage *package,
                                   const ArcAdffsSelection *selection,
                                   const ArcInstallPlan *plan, bool run_plan,
                                   uint8_t output[ARC_ADFFS_DISC_SIZE],
-                                  ArcInstallDoorbell *doorbell,
                                   char *error, size_t error_size);
 
 const ArcAdffsProfile *arc_adffs_profiles(size_t *count);

@@ -1901,7 +1901,7 @@ Invoke-ArcDroid 1500 $true
 $firstLines = @(Get-Content $log | Select-Object -Skip $beforeLines)
 foreach ($required in @(
     "resolved=A3020 reason=install-disc",
-    "doorbell-latched track=1 side=0 sector=0",
+    "doorbell-latched track=0 side=1 sector=0",
     "validation=complete reason=complete tree_count=2 tree_sha256=752fe22239308de0a286ef3c224239150c573878b7f15b9c02a7fdc474177dec",
     "store-publication=committed generation=0",
     "run-plan=recreated same-session=1",

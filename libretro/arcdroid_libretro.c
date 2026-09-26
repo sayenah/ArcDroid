@@ -2549,6 +2549,7 @@ static bool arc_install_raw(const ArcMediaEntry *entry, uint8_t **raw,
 
 static bool arc_install_carrier_prepare(const ArcInstallPlan *plan,
                                         uint8_t carrier[ARC_ADFFS_DISC_SIZE],
+                                        bool hd_install,
                                         const char **reason) {
    uint8_t *raw[ARC_INSTALL_MAX_DISCS] = {0};
    size_t sizes[ARC_INSTALL_MAX_DISCS] = {0};
@@ -2582,8 +2583,11 @@ static bool arc_install_carrier_prepare(const ArcInstallPlan *plan,
    }
    if (okay) {
       char error[160] = {0};
-      okay = arc_install_carrier_build(plan, (const uint8_t *const *)raw, sizes,
-                                       carrier, error, sizeof(error));
+      okay = hd_install ?
+         arc_install_hd_carrier_build(plan, (const uint8_t *const *)raw, sizes,
+            carrier, &arc_install_doorbell, error, sizeof(error)) :
+         arc_install_carrier_build(plan, (const uint8_t *const *)raw, sizes,
+            carrier, error, sizeof(error));
       *reason = strstr(error, "fit") ? "too-large" : "construction";
    }
    for (unsigned d = 0u; d < ARC_INSTALL_MAX_DISCS; ++d) free(raw[d]);
@@ -2593,7 +2597,7 @@ static bool arc_install_preflight(const ArcInstallPlan *plan,
                                   const char **reason) {
    uint8_t *carrier = malloc(ARC_ADFFS_DISC_SIZE);
    if (!carrier) { *reason = "construction"; return false; }
-   bool okay = arc_install_carrier_prepare(plan, carrier, reason);
+   bool okay = arc_install_carrier_prepare(plan, carrier, false, reason);
    free(carrier);
    return okay;
 }
@@ -2617,11 +2621,12 @@ static bool arc_install_build(const ArcInstallPlan *plan,
       return false;
    }
    bool okay = hd_mode == 2u ||
-      arc_install_carrier_prepare(plan, arc_adffs_carrier, reason);
+      arc_install_carrier_prepare(plan, arc_adffs_carrier,
+                                  hd_mode == 1u, reason);
    if (okay) {
       char error[160] = {0};
       okay = hd_mode ? arc_install_hd_support_build(package, selection, plan,
-         hd_mode == 2u, arc_adffs_support, &arc_install_doorbell,
+         hd_mode == 2u, arc_adffs_support,
          error, sizeof(error)) :
          arc_install_support_build(package, selection, plan,
                                    arc_adffs_support, error, sizeof(error));
@@ -2636,7 +2641,7 @@ static bool arc_install_build(const ArcInstallPlan *plan,
       char error[160] = {0};
       okay = arc_adffs_support_run &&
          arc_install_hd_support_build(package, selection, plan, true,
-            arc_adffs_support_run, NULL, error, sizeof(error));
+            arc_adffs_support_run, error, sizeof(error));
       if (!okay) *reason = "construction";
    }
    if (!okay) arc_adffs_discard();
