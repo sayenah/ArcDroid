@@ -10,6 +10,7 @@
 #include <stdlib.h>
 #include <string.h>
 static uint32_t le32(const uint8_t *p);
+static uint8_t independent_zone_sum(const uint8_t *p);
 static void put24(uint8_t *p, uint32_t n)
 { p[0]=(uint8_t)n; p[1]=(uint8_t)(n>>8u); p[2]=(uint8_t)(n>>16u); }
 static void put32(uint8_t *p, uint32_t n)
@@ -56,6 +57,193 @@ static void child_directory(uint8_t *p)
    memcpy(p+1u,"Nick",4u); memcpy(p+2043u,"Nick",4u);
    p[2010u]=2u; memcpy(p+2032u,"!Fixture",8u);
    memset(p+2040u,13u,2u);
+}
+static void complex_directory(uint8_t *p, const char *name, uint32_t parent)
+{
+   memset(p,0,2048u); p[0]=p[2042u]=1u;
+   memcpy(p+1u,"Nick",4u); memcpy(p+2043u,"Nick",4u);
+   put24(p+2010u,parent);
+   memset(p+2032u,13u,10u); memcpy(p+2032u,name,strlen(name));
+}
+static void complex_zone(uint8_t *p, unsigned zone,
+                         const unsigned *ids, const unsigned *lengths,
+                         unsigned count)
+{
+   assert(zone == 2u || zone == 3u);
+   memset(p,0,512u);
+   unsigned at=32u;
+   for (unsigned i=0u;i<count;++i) {
+      assert(ids[i]>=2u && lengths[i]>=16u && at+lengths[i]<=4096u);
+      set_bits(p,at,15u,ids[i]);
+      set_bits(p,at+lengths[i]-1u,1u,1u);
+      at+=lengths[i];
+   }
+   if (at<4096u) {
+      set_bits(p,8u,15u,at-8u);
+      set_bits(p,4095u,1u,1u);
+   }
+   p[0]=independent_zone_sum(p);
+}
+static void complex_line(char lines[64][256], unsigned *count,
+                         bool dir, const char *path, const uint8_t *data,
+                         size_t size, unsigned type, unsigned attr)
+{
+   assert(*count<64u);
+   int n;
+   if (dir) n=snprintf(lines[*count],256u,"D %s a%02x\n",path,attr);
+   else {
+      char hash[41]; arc_sha1_hex(data,size,hash);
+      n=snprintf(lines[*count],256u,"F %s %zu %s t%03x a%02x\n",
+                 path,size,hash,type,attr);
+   }
+   assert(n>0 && n<256);
+   ++*count;
+}
+static int complex_line_order(const void *a, const void *b)
+{ return strcmp(*(const char *const *)a,*(const char *const *)b); }
+static void test_complex_tree(uint8_t *image)
+{
+   assert(arc_install_hd_format(image,ARC_INSTALL_HD_BYTES));
+   enum { MAP=0x778000u, ZONE=512u, BITS=4064u };
+   uint8_t *map=image+MAP;
+   const unsigned zone2_ids[]={2u,3u,4u,5u,7u,8u,9u,10u,11u,12u,13u,6u};
+   const unsigned zone2_lengths[]={16u,16u,16u,16u,16u,16u,16u,
+                                   3824u,16u,16u,16u,80u};
+   complex_zone(map+2u*ZONE,2u,zone2_ids,zone2_lengths,12u);
+   unsigned zone3_ids[43], zone3_lengths[43];
+   zone3_ids[0]=6u; zone3_lengths[0]=64u;
+   for (unsigned i=0u;i<41u;++i) {
+      zone3_ids[i+1u]=20u+i; zone3_lengths[i+1u]=16u;
+   }
+   zone3_ids[42u]=70u; zone3_lengths[42u]=16u;
+   complex_zone(map+3u*ZONE,3u,zone3_ids,zone3_lengths,43u);
+   memcpy(map+5u*ZONE,map,5u*ZONE);
+   uint8_t *zone2=image+MAP;
+   uint8_t *zone3=image+MAP+BITS*1024u;
+   ArcInstallProfile profile={0};
+   ArcInstallVariant *variant=&profile.variants[0];
+   profile.game_id=123u;
+   variant->app="!Fixture";
+   ArcInstallPlan plan={0};
+   plan.profile=&profile; plan.variant=variant;
+   strcpy(plan.storage_id,"fffbd5a69f9b43c4ea8cc69f1fe9234f393e3d45");
+   uint8_t marker[96]; size_t marker_size=0u;
+   assert(arc_install_marker(&plan,marker,sizeof(marker),&marker_size));
+   uint8_t *root=image+MAP+10u*ZONE;
+   entry(root,0u,"!Fixture",2048u,0x401u,0xfff00000u,0x38u);
+   entry(root,1u,"ArcReady",(uint32_t)marker_size,0x301u,
+         0xffffeb00u,0x33u);
+   finish_directory(root,2u);
+   memcpy(zone2+16u*1024u,marker,marker_size);
+   char lines[64][256]; unsigned line_count=0u;
+   char run[40]; int run_size=snprintf(run,sizeof(run),
+                                      "ADFBootFloppy F0012301\r");
+   assert(run_size>0 && run_size<(int)sizeof(run));
+   uint8_t *app=zone2+32u*1024u;
+   complex_directory(app,"!Fixture",0x20bu);
+   entry(app,0u,"!Run",(uint32_t)run_size,0x501u,0xffffeb00u,0x33u);
+   entry(app,1u,"MANUAL",2048u,0x701u,0xfff00000u,0x38u);
+   static const char *const extra_names[]={"ARCHIVE","NOTES","DATA"};
+   for (unsigned i=0u;i<3u;++i) {
+      uint8_t *extra=zone2+(3936u+i*16u)*1024u;
+      char path[80];
+      int n=snprintf(path,sizeof(path),"$.!Fixture.%s",extra_names[i]);
+      assert(n>0 && n<(int)sizeof(path));
+      entry(app,i+2u,extra_names[i],2048u,(11u+i)*256u+1u,
+            0xfff00000u,0x38u);
+      complex_directory(extra,extra_names[i],0x401u);
+      finish_directory(extra,0u);
+      complex_line(lines,&line_count,true,path,NULL,0u,0u,0x38u);
+   }
+   finish_directory(app,5u);
+   memcpy(zone2+48u*1024u,run,(size_t)run_size);
+   complex_line(lines,&line_count,false,"$.!Fixture.!Run",
+                (const uint8_t *)run,(size_t)run_size,0xfebu,0x33u);
+   complex_line(lines,&line_count,true,"$.!Fixture.MANUAL",NULL,0u,0u,0x38u);
+   uint8_t *manual=zone2+64u*1024u;
+   complex_directory(manual,"MANUAL",0x401u);
+   entry(manual,0u,"PICS",2048u,0x801u,0xfff00000u,0x38u);
+   finish_directory(manual,1u);
+   complex_line(lines,&line_count,true,"$.!Fixture.MANUAL.PICS",NULL,0u,0u,0x38u);
+   uint8_t *pics=zone2+80u*1024u;
+   complex_directory(pics,"PICS",0x701u);
+   entry(pics,0u,"Big",134726u,0x601u,0xfffabc00u,0x13u);
+   entry(pics,1u,"DEEP",2048u,0x901u,0xfff00000u,0x38u);
+   complex_line(lines,&line_count,true,"$.!Fixture.MANUAL.PICS.DEEP",NULL,0u,0u,0x38u);
+   uint8_t *deep=zone2+96u*1024u;
+   complex_directory(deep,"DEEP",0x801u);
+   entry(deep,0u,"Leaf",4u,0x4601u,0xfff12300u,0x03u);
+   finish_directory(deep,1u);
+   const uint8_t leaf[]={0x21u,0x42u,0x63u,0x84u};
+   memcpy(zone3+(64u+41u*16u)*1024u,leaf,sizeof(leaf));
+   complex_line(lines,&line_count,false,
+      "$.!Fixture.MANUAL.PICS.DEEP.Leaf",leaf,sizeof(leaf),0x123u,0x03u);
+   uint8_t *big=malloc(134726u); assert(big);
+   for (unsigned i=0u;i<134726u;++i) big[i]=(uint8_t)(i*37u+11u);
+   memcpy(zone2+3984u*1024u,big,80u*1024u);
+   memcpy(zone3,big+80u*1024u,134726u-80u*1024u);
+   complex_line(lines,&line_count,false,
+      "$.!Fixture.MANUAL.PICS.Big",big,134726u,0xabcu,0x13u);
+   for (unsigned i=0u;i<41u;++i) {
+      char name[11],path[80];
+      int n=snprintf(name,sizeof(name),"F%02u",i);
+      assert(n>0 && n<(int)sizeof(name));
+      if (i==0u) strcpy(name,"F00/GIF");
+      if (i==1u) strcpy(name,"F01/GIF");
+      n=snprintf(path,sizeof(path),"$.!Fixture.MANUAL.PICS.%s",name);
+      assert(n>0 && n<(int)sizeof(path));
+      uint8_t *content=zone3+(64u+i*16u)*1024u;
+      if (i==0u) content+=512u; /* Shared-sector indirect address. */
+      for (unsigned j=0u;j<4u;++j) content[j]=(uint8_t)(i*7u+j);
+      unsigned attr=i==0u?0x03u:0x33u;
+      entry(pics,i+2u,name,4u,(20u+i)*256u+(i==0u?2u:1u),
+            0xfff12300u,(uint8_t)attr);
+      complex_line(lines,&line_count,false,path,content,4u,0x123u,attr);
+   }
+   finish_directory(pics,43u);
+   assert(line_count==50u);
+   char *ordered[64]; size_t total=0u;
+   for (unsigned i=0u;i<line_count;++i) ordered[i]=lines[i];
+   qsort(ordered,line_count,sizeof(ordered[0]),complex_line_order);
+   for (unsigned i=0u;i<line_count;++i) total+=strlen(ordered[i]);
+   char *listing=malloc(total); assert(listing);
+   size_t used=0u;
+   for (unsigned i=0u;i<line_count;++i) {
+      size_t n=strlen(ordered[i]); memcpy(listing+used,ordered[i],n); used+=n;
+   }
+   char digest[65]; arc_sha256_hex(listing,total,digest);
+   variant->expected_tree_count=line_count;
+   variant->expected_tree_sha256=digest;
+   ArcInstallValidation result;
+   assert(arc_install_hd_validate(&plan,image,ARC_INSTALL_HD_BYTES,&result));
+   assert(result.tree_count==line_count && !strcmp(result.tree_sha256,digest));
+   /* Keep structure valid while changing content: the listing digest must
+    * still reject the candidate. */
+   uint8_t *big_tail=zone3+134725u-80u*1024u;
+   *big_tail^=1u;
+   assert(!arc_install_hd_validate(&plan,image,ARC_INSTALL_HD_BYTES,&result) &&
+          !strcmp(result.reason,"application-tree-mismatch"));
+   *big_tail^=1u;
+   /* A missing later fragment cannot be silently treated as a short file. */
+   set_bits(map+3u*ZONE,32u,15u,71u);
+   map[3u*ZONE]=independent_zone_sum(map+3u*ZONE);
+   memcpy(map+5u*ZONE,map,5u*ZONE);
+   assert(!arc_install_hd_validate(&plan,image,ARC_INSTALL_HD_BYTES,&result) &&
+          !strcmp(result.reason,"application-tree-invalid"));
+   set_bits(map+3u*ZONE,32u,15u,6u);
+   map[3u*ZONE]=independent_zone_sum(map+3u*ZONE);
+   memcpy(map+5u*ZONE,map,5u*ZONE);
+   /* Directory metadata and generated run text are separate gates. */
+   pics[2047u]^=1u;
+   assert(!arc_install_hd_validate(&plan,image,ARC_INSTALL_HD_BYTES,&result) &&
+          !strcmp(result.reason,"application-tree-invalid"));
+   pics[2047u]^=1u;
+   zone2[48u*1024u]^=1u;
+   assert(!arc_install_hd_validate(&plan,image,ARC_INSTALL_HD_BYTES,&result) &&
+          !strcmp(result.reason,"application-tree-invalid"));
+   zone2[48u*1024u]^=1u;
+   assert(arc_install_hd_validate(&plan,image,ARC_INSTALL_HD_BYTES,&result));
+   free(listing); free(big);
 }
 static uint8_t *read_input(const char *path, size_t *size)
 {
@@ -358,6 +546,7 @@ int main(int argc, char **argv)
       memset(app+5u+3u*26u,0u,26u); finish_directory(app,3u);
       first[zone_base+64u*1024u]^=1u;
       assert(!arc_install_hd_validate(&plan,first,ARC_INSTALL_HD_BYTES,&result));
+      test_complex_tree(second);
       free(jfd);
    }
    free(first); free(second);

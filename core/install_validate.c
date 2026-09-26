@@ -211,7 +211,8 @@ static bool directory_read(Reader *r, uint32_t address, Entry entries[77],
       for (unsigned k = 0u; k < 10u; ++k) {
          uint8_t ch = raw[k];
          if (ch < 0x20u) break;
-         if (ch == '.' || ch == '/' || ch == '\\') return false;
+         /* FileCore leaf names may contain '/' (for example GIF files).
+          * Preserve every stored printable byte in the canonical path. */
          e->name[n++] = (char)ch;
       }
       if (!n) return false;
