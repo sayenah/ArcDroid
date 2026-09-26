@@ -1,6 +1,8 @@
 /* ArcDroid libretro adapter. Copyright 2026 ArcDroid contributors. GPL-2.0-only. */
 #include "libretro.h"
 #include "arc_io.h"
+#include "install_store.h"
+#include "install_validate.h"
 #include "arcdroid_core.h"
 #include "arcdroid_engine.h"
 #include "arcdroid_platform.h"
@@ -79,6 +81,15 @@ static bool arc_keyboard_polling;
 static unsigned arc_port_device[2] = {ARC_DEVICE_KEYS, ARC_DEVICE_MOUSE};
 static char arc_cmos_path[4096];
 static char arc_save_path[4096];
+static bool arc_native_save_path(const char *path)
+{
+   if (!path || !path[0]) return false;
+   if (path[0] == '/') return true;
+   if ((path[0] >= 'A' && path[0] <= 'Z') ||
+       (path[0] >= 'a' && path[0] <= 'z'))
+      if (path[1] == ':' && (path[2] == '/' || path[2] == '\\')) return true;
+   return path[0] == '\\' && path[1] == '\\';
+}
 static char arc_helper_path[4096];
 static uint64_t arc_frame_number;
 static long double arc_audio_fraction;
@@ -131,18 +142,28 @@ static bool arc_av_transition_pending;
 static bool arc_adffs_active;
 static uint8_t *arc_adffs_carrier;
 static uint8_t *arc_adffs_support;
+static uint8_t *arc_adffs_support_run;
 static bool arc_install_choosing;
 static ArcInstallPlan arc_install_plans[ARC_INSTALL_MAX_VARIANTS];
 static unsigned arc_install_plan_count;
 static int arc_install_requested = -1;
 static char arc_install_requested_binding[41];
 static bool arc_install_hard_failure;
+static ArcInstallStore *arc_install_store;
+static ArcInstallPlan arc_install_active_plan;
+static unsigned arc_install_hd_mode; /* 0 RAM, 1 candidate install, 2 run. */
+static ArcInstallDoorbell arc_install_doorbell;
 #if defined(ARCDROID_TEST_FAULTS)
 static bool arc_test_adffs_accept_test_os = true;
 static bool arc_test_fail_adffs_content_read;
 static unsigned arc_test_mouse_input_samples;
 static bool arc_test_fail_install_build;
 static bool arc_test_fail_install_raw;
+static bool arc_test_defer_install_completion;
+void arc_libretro_test_defer_install_completion(bool defer)
+{ arc_test_defer_install_completion = defer; }
+bool arc_libretro_test_install_doorbell_latched(void)
+{ return arc_engine_install_doorbell_latched(); }
 void arc_libretro_test_fail_install_raw(bool fail)
 {
    arc_test_fail_install_raw = fail;
@@ -437,6 +458,7 @@ typedef struct {
    unsigned pointer_speed;
    unsigned pointer_deadzone;
    ArcDiskWriteMode disk_writes;
+   bool install_saves_persistent;
    ArcLaunchOption launch;
    ArcLaunchChooserOption launch_chooser;
    ArcJfdBootOption jfd_boot;
@@ -453,6 +475,40 @@ static bool arc_riscpc_notice_shown;
 static bool arc_media_is_hd(const ArcMediaEntry *entry)
 {
    return entry && entry->populated && entry->high_density;
+}
+
+static bool arc_install_hd_machine_needed(void)
+{
+   if (!arc_core_options.install_saves_persistent ||
+       arc_core_options.jfd_boot != ARC_JFD_BOOT_AUTO ||
+       arc_core_options.launch != ARC_LAUNCH_AUTO || !arc_media_count ||
+       arc_media[0].info.kind != ARC_MEDIA_JFD) return false;
+   const ArcInstallProfile *profile = arc_install_profile(
+      arc_media[0].jfd_game_id, arc_media[0].jfd_disc_count);
+   if (!profile) return false;
+   ArcInstallMedia media[ARC_PLAYLIST_MAX_ENTRIES] = {{0}};
+   for (unsigned i = 0u; i < arc_media_count; ++i) {
+      media[i].game_id = arc_media[i].jfd_game_id;
+      media[i].disc_number = arc_media[i].jfd_disc_number;
+      media[i].disc_count = arc_media[i].jfd_disc_count;
+      media[i].decoded_size = arc_media[i].digest.size;
+      snprintf(media[i].sha1, sizeof(media[i].sha1), "%s",
+               arc_media[i].digest.sha1);
+   }
+   ArcInstallPlan plans[ARC_INSTALL_MAX_VARIANTS];
+   unsigned count = arc_install_match(profile, media, arc_media_count,
+                                       plans, NULL);
+   if (!count) return false;
+   if (arc_core_options.disk_writes != ARC_DISK_WRITES_OFF) return true;
+   for (unsigned i = 0u; i < count; ++i) {
+      ArcInstallStore *store = arc_install_store_open(arc_save_path, &plans[i],
+         false, false, NULL, NULL, NULL, 0u);
+      bool ready = store &&
+         arc_install_store_state(store) == ARC_INSTALL_STORE_READY;
+      arc_install_store_close(store);
+      if (ready) return true;
+   }
+   return false;
 }
 
 static bool arc_options_resolve(ArcCoreOptions *options, ArcMachine machine,
@@ -529,6 +585,7 @@ static bool arc_read_options(ArcCoreOptions *options, char *error, size_t error_
    const char *pointer_speed = arc_option_value("arcdroid_pointer_speed", "600");
    const char *pointer_deadzone = arc_option_value("arcdroid_pointer_deadzone", "15");
    const char *writes = arc_option_value("arcdroid_disk_writes", "shadow");
+   const char *install_saves = arc_option_value("arcdroid_install_saves", "persistent");
    const char *launch = arc_option_value("arcdroid_launch", "auto");
    const char *launch_chooser =
       arc_option_value("arcdroid_launch_chooser", "remember");
@@ -589,6 +646,8 @@ static bool arc_read_options(ArcCoreOptions *options, char *error, size_t error_
    if (!strcmp(writes, "original")) options->disk_writes = ARC_DISK_WRITES_ORIGINAL;
    else if (!strcmp(writes, "off")) options->disk_writes = ARC_DISK_WRITES_OFF;
    else if (strcmp(writes, "shadow")) goto invalid;
+   if (!strcmp(install_saves, "persistent")) options->install_saves_persistent = true;
+   else if (strcmp(install_saves, "temporary")) goto invalid;
    if (!strcmp(launch, "auto")) options->launch = ARC_LAUNCH_AUTO;
    else if (!strcmp(launch, "off")) options->launch = ARC_LAUNCH_OFF;
    else if (!strncmp(launch, "app", 3u) && launch[3] >= '1' && launch[3] <= '8' && !launch[4])
@@ -872,6 +931,10 @@ static void arc_release_session(void)
    arc_chooser_input_armed = false;
    arc_chooser_release_gate = false;
    arc_engine_stop();
+   arc_install_store_close(arc_install_store);
+   arc_install_store = NULL;
+   memset(&arc_install_active_plan, 0, sizeof(arc_install_active_plan));
+   arc_install_hd_mode = 0u;
    arc_adffs_discard();
    arc_install_choosing = false;
    arc_install_plan_count = 0u;
@@ -2369,8 +2432,10 @@ static int arc_zip_name_compare(const void *a, const void *b) {
 static void arc_adffs_discard(void) {
    free(arc_adffs_carrier);
    free(arc_adffs_support);
+   free(arc_adffs_support_run);
    arc_adffs_carrier = NULL;
    arc_adffs_support = NULL;
+   arc_adffs_support_run = NULL;
    arc_adffs_active = false;
 }
 static void arc_zip_adffs_raw_discard(void) {
@@ -2537,6 +2602,7 @@ static bool arc_install_preflight(const ArcInstallPlan *plan,
 static bool arc_install_build(const ArcInstallPlan *plan,
                               const ArcAdffsPackage *package,
                               const ArcAdffsSelection *selection,
+                              unsigned hd_mode,
                               const char **reason) {
 #if defined(ARCDROID_TEST_FAULTS)
    if (arc_test_fail_install_build) {
@@ -2545,24 +2611,49 @@ static bool arc_install_build(const ArcInstallPlan *plan,
       return false;
    }
 #endif
-   arc_adffs_carrier = malloc(ARC_ADFFS_DISC_SIZE);
+   arc_adffs_carrier = hd_mode == 2u ? NULL : malloc(ARC_ADFFS_DISC_SIZE);
    arc_adffs_support = malloc(ARC_ADFFS_DISC_SIZE);
-   if (!arc_adffs_carrier || !arc_adffs_support) {
+   if ((hd_mode != 2u && !arc_adffs_carrier) || !arc_adffs_support) {
       *reason = "construction";
       arc_adffs_discard();
       return false;
    }
-   bool okay = arc_install_carrier_prepare(plan, arc_adffs_carrier, reason);
+   bool okay = hd_mode == 2u ||
+      arc_install_carrier_prepare(plan, arc_adffs_carrier, reason);
    if (okay) {
       char error[160] = {0};
-      okay = arc_install_support_build(package, selection, plan,
-                                       arc_adffs_support, error, sizeof(error));
+      okay = hd_mode ? arc_install_hd_support_build(package, selection, plan,
+         hd_mode == 2u, arc_adffs_support, &arc_install_doorbell,
+         error, sizeof(error)) :
+         arc_install_support_build(package, selection, plan,
+                                   arc_adffs_support, error, sizeof(error));
+      if (!okay) *reason = "construction";
+   }
+   if (okay && hd_mode == 1u) {
+      if (arc_log) arc_log(RETRO_LOG_INFO,
+         "Install disc: doorbell-target track=%u side=%u sector=%u\n",
+         arc_install_doorbell.track, arc_install_doorbell.side,
+         arc_install_doorbell.sector);
+      arc_adffs_support_run = malloc(ARC_ADFFS_DISC_SIZE);
+      char error[160] = {0};
+      okay = arc_adffs_support_run &&
+         arc_install_hd_support_build(package, selection, plan, true,
+            arc_adffs_support_run, NULL, error, sizeof(error));
       if (!okay) *reason = "construction";
    }
    if (!okay) arc_adffs_discard();
    return okay;
 }
+static void arc_install_store_log(void *opaque, const char *line)
+{
+   (void)opaque;
+   if (arc_log) arc_log(RETRO_LOG_INFO, "Install disc: %s\n", line);
+}
 static bool arc_prepare_adffs(bool notify) {
+   arc_install_store_close(arc_install_store);
+   arc_install_store = NULL;
+   arc_install_hd_mode = 0u;
+   memset(&arc_install_active_plan, 0, sizeof(arc_install_active_plan));
    arc_adffs_discard();
    arc_install_choosing = false;
    arc_install_plan_count = 0u;
@@ -2774,7 +2865,12 @@ static bool arc_prepare_adffs(bool notify) {
       const char *preflight_reason = "machine";
       for (unsigned i = 0u; i < arc_install_plan_count; ++i) {
          ArcInstallPlan plan = arc_install_plans[i];
-         if (!(install->io_mask & io_bit) ||
+         if (!(install->io_mask & io_bit) &&
+             !(arc_core_options.install_saves_persistent &&
+               !arc_core_options.machine_auto)) continue;
+         if (
+             (io_bit == 2u && install->game_id != 10587u &&
+              !arc_core_options.install_saves_persistent) ||
              plan.variant->ram_kib > machine->memory_kib) continue;
          const char *variant_reason = NULL;
          if (!arc_install_preflight(&plan, &variant_reason)) {
@@ -2804,14 +2900,96 @@ static bool arc_prepare_adffs(bool notify) {
          arc_install_refuse("stale-choice", notify);
          return false;
       }
-      bool built = arc_install_build(&arc_install_plans[pick], package,
-                                       &selection, &why);
+      const ArcInstallPlan *plan = &arc_install_plans[pick];
+      unsigned hd_mode = 0u;
+      ArcInstallStore *store = NULL;
+      if (arc_core_options.install_saves_persistent) {
+         char store_error[256] = {0};
+         store = arc_install_store_open(arc_save_path, plan, false, false,
+            arc_install_store_log, NULL, store_error, sizeof(store_error));
+         if (!store || arc_install_store_state(store) == ARC_INSTALL_STORE_DAMAGED) {
+            arc_message(store_error[0] ? store_error :
+               "Saved installation is damaged; preserve its install directory and restore a backup.",
+               RETRO_LOG_ERROR);
+            arc_install_hard_failure = true;
+            arc_install_store_close(store);
+            free(builtin); arc_adffs_package_free(package); free(package);
+            return false;
+         }
+         if (arc_install_store_state(store) == ARC_INSTALL_STORE_READY) {
+            if (arc_session_machine != ARC_MACHINE_A3020) {
+               arc_message("This title's saved installation runs on the A3020; set Machine to Auto.",
+                           RETRO_LOG_ERROR);
+               arc_install_hard_failure = true;
+               arc_install_store_close(store);
+               free(builtin); arc_adffs_package_free(package); free(package);
+               return false;
+            }
+            hd_mode = 2u;
+            if (arc_core_options.disk_writes != ARC_DISK_WRITES_OFF &&
+                arc_native_save_path(arc_save_path) &&
+                arc_install_store_probe_writable(store)) {
+               arc_install_store_close(store);
+               store = arc_install_store_open(arc_save_path, plan, false, true,
+                  arc_install_store_log, NULL, store_error, sizeof(store_error));
+               if (!store || arc_install_store_state(store) != ARC_INSTALL_STORE_READY) {
+                  arc_message(store_error[0] ? store_error :
+                     "Saved installation could not be opened after write check.",
+                     RETRO_LOG_ERROR);
+                  arc_install_hard_failure = true;
+                  arc_install_store_close(store);
+                  free(builtin); arc_adffs_package_free(package); free(package);
+                  return false;
+               }
+            } else arc_message("Install disc is read-only; saves cannot be changed in this session.",
+                               RETRO_LOG_WARN);
+         } else if (arc_core_options.disk_writes == ARC_DISK_WRITES_OFF) {
+            arc_install_store_close(store);
+            store = NULL;
+         } else {
+            arc_install_store_close(store);
+            store = NULL;
+            if (arc_session_machine != ARC_MACHINE_A3020 ||
+                !arc_native_save_path(arc_save_path)) {
+               arc_message("Persistent install saves require Machine: Auto and a native writable save directory; choose Install Saves: Temporary to use RAM.",
+                           RETRO_LOG_ERROR);
+               arc_install_hard_failure = true;
+               free(builtin); arc_adffs_package_free(package); free(package);
+               return false;
+            }
+            store = arc_install_store_open(arc_save_path, plan, true, true,
+               arc_install_store_log, NULL, store_error, sizeof(store_error));
+            if (!store || arc_install_store_state(store) != ARC_INSTALL_STORE_UNPUBLISHED) {
+               arc_message(store_error[0] ? store_error :
+                  "Persistent install saves need a native writable save directory; choose Install Saves: Temporary to use RAM.",
+                  RETRO_LOG_ERROR);
+               arc_install_hard_failure = true;
+               arc_install_store_close(store);
+               free(builtin); arc_adffs_package_free(package); free(package);
+               return false;
+            }
+            hd_mode = 1u;
+         }
+      }
+      if (!hd_mode && !(install->io_mask & io_bit)) {
+         arc_message("This title's temporary RAM install needs Machine: Auto; the selected machine cannot run it.",
+                     RETRO_LOG_ERROR);
+         arc_install_hard_failure = true;
+         arc_install_store_close(store);
+         free(builtin); arc_adffs_package_free(package); free(package);
+         return false;
+      }
+      bool built = arc_install_build(plan, package, &selection, hd_mode, &why);
       free(builtin); arc_adffs_package_free(package); free(package);
       if (!built) {
+         arc_install_store_close(store);
          arc_install_refuse(why, notify);
          return false;
       }
-      const ArcInstallPlan *plan = &arc_install_plans[pick];
+      arc_install_store_close(arc_install_store);
+      arc_install_store = store;
+      arc_install_active_plan = *plan;
+      arc_install_hd_mode = hd_mode;
       if (arc_log) {
          char discs[32] = {0};
          size_t at = 0u;
@@ -2835,7 +3013,8 @@ static bool arc_prepare_adffs(bool notify) {
             entry->jfd_install_notice_shown = true;
          }
       }
-      arc_message("Installed to a temporary RAM disc; saves are lost after exit or reset.", RETRO_LOG_WARN);
+      if (!hd_mode)
+         arc_message("Installed to a temporary RAM disc; saves are lost after exit or reset.", RETRO_LOG_WARN);
       arc_adffs_active = true;
       arc_plan.launch_helper = true;
       arc_plan.launch_target[0] = 0;
@@ -4379,9 +4558,13 @@ static const struct retro_core_option_v2_definition arc_base_options[] = {
     NULL, {{"verified", "Verified only"}, {"untested", "Allow untested"}, {NULL, NULL}}, "verified"},
    {"arcdroid_disk_writes", "Disk Writes", NULL, "Choose where floppy writes are stored.", NULL,
     NULL, {{"shadow", NULL}, {"original", NULL}, {"off", NULL}, {NULL, NULL}}, "shadow"},
+   {"arcdroid_install_saves", "Install Saves", NULL,
+    "Keep installed titles and their saves on an A3020 hard disc.", NULL,
+    NULL, {{"persistent", "Persistent"}, {"temporary", "Temporary"},
+           {NULL, NULL}}, "persistent"},
    {NULL, NULL, NULL, NULL, NULL, NULL, {{0}}, NULL}
 };
-static struct retro_core_option_v2_definition arc_options[37];
+static struct retro_core_option_v2_definition arc_options[38];
 static struct retro_core_option_v2_category arc_option_categories[] = {
    {"pad_mapping", "Pad Mapping", "Map each RetroPad input to a physical Archimedes key."},
    {NULL, NULL, NULL}
@@ -4419,8 +4602,8 @@ static void arc_build_options(void)
    if (arc_options_built) return;
    memset(arc_options, 0, sizeof(arc_options));
    memcpy(arc_options, arc_base_options,
-          14u * sizeof(struct retro_core_option_v2_definition));
-   unsigned at = 14u;
+          15u * sizeof(struct retro_core_option_v2_definition));
+   unsigned at = 15u;
    struct retro_core_option_v2_definition *profile = &arc_options[at++];
    profile->key = "arcdroid_input_profile";
    profile->desc = "Input Profile";
@@ -4768,14 +4951,32 @@ static bool arc_construct_machine(const ArcMachineDescriptor *machine,
    ArcEngineMedia support = {":arcdroid-memory-1:", false, ARC_MEDIA_ADF_800K,
                              ARC_GEOMETRY_800K_D, NULL,
                              arc_adffs_support, ARC_ADFFS_DISC_SIZE};
-   if (arc_adffs_active) { mounted = &carrier; helper = support; }
+   if (arc_adffs_active) {
+      mounted = arc_install_hd_mode == 2u ? NULL : &carrier;
+      helper = support;
+   }
+   ArcIdeBackend ide_backend = {0};
+   if (arc_install_hd_mode && arc_install_store) {
+      ide_backend.opaque = arc_install_store;
+      ide_backend.read = arc_install_store_read;
+      ide_backend.write = arc_install_store_write;
+      ide_backend.failed = arc_install_store_failed;
+      ide_backend.sectors = ARC_INSTALL_HD_SECTORS;
+      ide_backend.writable = arc_install_store_writable(arc_install_store);
+   }
    memcpy(arc_cmos_record, arc_cmos_prepared, sizeof(arc_cmos_record));
    if (!arc_cmos_decode(arc_cmos_prepared, &arc_plan, payload) ||
        !arc_cmos_machine_image(arc_plan.os, machine->io, payload,
-                               arc_plan.launch_helper, machine_cmos) ||
+                               arc_plan.launch_helper, machine_cmos))
+      return false;
+   if (arc_install_hd_mode) arc_cmos_machine_attach_ide(machine_cmos);
+   if (
        !arc_engine_start(arc_firmware, arc_firmware_size, mounted,
                          arc_plan.launch_helper ? &helper : NULL,
-                         machine, machine_cmos, error, error_size))
+                         machine,
+                         arc_install_hd_mode ? &ide_backend : NULL,
+                         arc_install_hd_mode == 1u ? &arc_install_doorbell : NULL,
+                         machine_cmos, error, error_size))
       return false;
    arc_session = ARC_SESSION_RUNNING;
    return true;
@@ -5091,8 +5292,9 @@ static bool arc_load_game(const struct retro_game_info *game, bool negotiate)
    bool has_hd_media = false;
    for (unsigned i = 0u; i < arc_media_count; ++i)
       if (arc_media_is_hd(&arc_media[i])) has_hd_media = true;
+   bool install_hd_machine = arc_install_hd_machine_needed();
    arc_session_machine = arc_core_options.machine_auto ?
-      (has_hd_media ? ARC_MACHINE_A3020 : ARC_MACHINE_A3000) :
+      (has_hd_media || install_hd_machine ? ARC_MACHINE_A3020 : ARC_MACHINE_A3000) :
       arc_core_options.requested_machine;
    if (has_hd_media &&
        arc_machine_descriptor(arc_session_machine)->io != ARC_IO_NEW_82C711)
@@ -5116,7 +5318,8 @@ static bool arc_load_game(const struct retro_game_info *game, bool negotiate)
             arc_machine_descriptor(arc_core_options.requested_machine)->name,
          arc_machine_descriptor(arc_session_machine)->name,
          arc_core_options.machine_auto ?
-            (has_hd_media ? "hd-media" : "default") : "option");
+            (install_hd_machine ? "install-disc" :
+             has_hd_media ? "hd-media" : "default") : "option");
 
    if (!arc_environment(RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY, &system_dir) ||
        !system_dir || !system_dir[0] ||
@@ -5537,6 +5740,56 @@ static void arc_present(const ArcEngineFrame *frame)
    arc_osk_present_dirty = false;
 }
 
+static bool arc_install_complete(void)
+{
+   if (arc_install_hd_mode != 1u || !arc_install_store ||
+       !arc_engine_install_doorbell_latched()) return true;
+   if (arc_log) arc_log(RETRO_LOG_INFO,
+      "Install disc: doorbell-latched track=%u side=%u sector=%u\n",
+      arc_install_doorbell.track, arc_install_doorbell.side,
+      arc_install_doorbell.sector);
+   /* This is called after arc_engine_run_frame returns: no CPU, timer, or
+    * controller frame can still hold a pointer into the candidate machine. */
+   arc_engine_stop();
+   arc_session = ARC_SESSION_FAILED;
+   ArcInstallValidation checked;
+   bool valid = arc_install_hd_validate(&arc_install_active_plan,
+      arc_install_store_image(arc_install_store), ARC_INSTALL_HD_BYTES,
+      &checked);
+   if (arc_log) arc_log(RETRO_LOG_INFO,
+      "Install disc: validation=%s reason=%s tree_count=%u tree_sha256=%s\n",
+      valid ? "complete" : "failed", checked.reason,
+      checked.tree_count, checked.tree_sha256);
+   if (!valid) {
+      arc_message("Installed files did not pass validation; the candidate remains unpublished. Retry the installation.",
+                  RETRO_LOG_ERROR);
+      return false;
+   }
+   char error[512] = {0};
+   if (!arc_install_store_publish(arc_install_store, error, sizeof(error))) {
+      arc_message(error[0] ? error : "Installed disc publication failed.",
+                  RETRO_LOG_ERROR);
+      return false;
+   }
+   free(arc_adffs_carrier);
+   arc_adffs_carrier = NULL;
+   free(arc_adffs_support);
+   arc_adffs_support = arc_adffs_support_run;
+   arc_adffs_support_run = NULL;
+   arc_install_hd_mode = 2u;
+   if (arc_log) arc_log(RETRO_LOG_INFO,
+      "Install disc: publication=complete run-plan=recreate\n");
+   if (!arc_construct_machine(arc_machine_descriptor(ARC_MACHINE_A3020),
+                              NULL, error, sizeof(error))) {
+      arc_message(error[0] ? error : "Installed disc run plan could not start.",
+                  RETRO_LOG_ERROR);
+      return false;
+   }
+   if (arc_log) arc_log(RETRO_LOG_INFO,
+      "Install disc: run-plan=recreated same-session=1\n");
+   return true;
+}
+
 RETRO_API void retro_run(void)
 {
    ArcEngineFrame frame;
@@ -5627,6 +5880,23 @@ RETRO_API void retro_run(void)
 #else
    frame_ran = arc_engine_run_frame(&arc_inputs, &frame);
 #endif
+   if (frame_ran && arc_install_hd_mode == 1u &&
+       arc_engine_install_doorbell_latched()
+#if defined(ARCDROID_TEST_FAULTS)
+       && !arc_test_defer_install_completion
+#endif
+   ) {
+      (void)arc_install_complete();
+      memset(arc_frame, 0, sizeof(arc_frame));
+      memset(&frame, 0, sizeof(frame));
+      frame.pixels = arc_frame;
+      frame.width = ARC_WIDTH;
+      frame.height = ARC_HEIGHT;
+      frame.pitch = ARC_WIDTH * sizeof(uint32_t);
+      frame.elapsed_us = 20000u;
+      frame.refresh_hz = ARC_RATE;
+      frame_ran = false;
+   }
    if (!frame_ran)
    {
       const char *fault = NULL;

@@ -132,6 +132,13 @@ static const char *option_pointer_stick = "right";
 static const char *option_pointer_speed = "600";
 static const char *option_pointer_deadzone = "15";
 static const char *option_writes = "shadow";
+static const char *option_install_saves = "temporary";
+static unsigned install_publication_seen, install_recreate_seen;
+static unsigned install_commit_seen, install_validation_seen;
+static unsigned install_doorbell_seen;
+static uint32_t install_candidate_last_lba;
+static unsigned install_candidate_writes;
+static bool install_guest_logging;
 static const char *option_launch = "auto";
 static const char *option_launch_chooser = "remember";
 static const char *option_jfd_boot = "auto";
@@ -393,6 +400,23 @@ static void frontend_log(enum retro_log_level level, const char *format, ...)
    va_start(arguments, format);
    vsnprintf(message, sizeof(message), format, arguments);
    va_end(arguments);
+   if (install_guest_logging &&
+       (strstr(message,"Install disc:") || strstr(message,"JFD boot:") ||
+        strstr(message,"Machine:") || level >= RETRO_LOG_ERROR))
+      fprintf(stderr,"%s",message);
+   if (strstr(message, "Install disc: store-publication=committed"))
+      ++install_publication_seen;
+   if (strstr(message, "Install disc: run-plan=recreated"))
+      ++install_recreate_seen;
+   if (strstr(message, "Install disc: journal-commit"))
+      ++install_commit_seen;
+   if (strstr(message, "Install disc: validation=complete"))
+      ++install_validation_seen;
+   if (strstr(message, "Install disc: doorbell-latched"))
+      ++install_doorbell_seen;
+   if (sscanf(message, "Install disc: candidate-write lba=%u",
+              &install_candidate_last_lba)==1)
+      ++install_candidate_writes;
    if (!strncmp(message, "Machine: requested=", 19u))
       snprintf(machine_resolution_log, sizeof(machine_resolution_log), "%s", message);
    if (strstr(message, "flagged for RiscPC-class machines"))
@@ -509,7 +533,7 @@ static bool environment(unsigned command, void *data)
          const struct retro_core_options_v2 *options = data;
          unsigned count = 0u;
          while (options->definitions[count].key) ++count;
-         assert(count == 36u && options->categories &&
+         assert(count == 37u && options->categories &&
                 !strcmp(options->categories[0].key, "pad_mapping") &&
                 !strcmp(options->categories[0].desc, "Pad Mapping"));
          bool found_profile = false, found_osk = false, found_chooser = false;
@@ -691,6 +715,7 @@ static bool environment(unsigned command, void *data)
          else if (!strcmp(variable->key, "arcdroid_pointer_speed")) variable->value = option_pointer_speed;
          else if (!strcmp(variable->key, "arcdroid_pointer_deadzone")) variable->value = option_pointer_deadzone;
          else if (!strcmp(variable->key, "arcdroid_disk_writes")) variable->value = option_writes;
+         else if (!strcmp(variable->key, "arcdroid_install_saves")) variable->value = option_install_saves;
          else if (!strcmp(variable->key, "arcdroid_launch")) variable->value = option_launch;
          else if (!strcmp(variable->key, "arcdroid_launch_chooser"))
             variable->value = option_launch_chooser;
@@ -1547,10 +1572,13 @@ int main(int argc, char **argv)
    bool jfd_merge_step = false;
    bool jfd_allocation_step = false;
    bool jfd_allocation_set = false;
+   bool install_guest = false;
    char jfd_content_path[4096] = {0}, jfd_fixture_path[4096] = {0};
    const char *osk_script = NULL;
    if (argc == 11 && !strcmp(argv[5], "--newio-smoke"))
       newio_smoke = true;
+   else if (argc == 8 && !strcmp(argv[5], "--install-guest"))
+      install_guest = true;
    else if (argc == 7 && !strcmp(argv[5], "--jfd-writes"))
       jfd_writes = true;
    else if (argc == 9 && !strcmp(argv[5], "--jfd-create-step"))
@@ -1643,13 +1671,13 @@ int main(int argc, char **argv)
    make_directory(argv[4]); make_directory(system_path); make_directory(firmware_path);
    strncat(firmware_path, "/firmware", sizeof(firmware_path) - strlen(firmware_path) - 1u); make_directory(firmware_path);
    make_directory(save_path);
-   if (media_tests)
+   if (media_tests || install_guest)
    {
       char adffs_dir[4096], package_path[4096];
       snprintf(adffs_dir, sizeof(adffs_dir), "%s/arcdroid/adffs", system_path);
       make_directory(adffs_dir);
       snprintf(package_path, sizeof(package_path), "%s/synthetic.zip", adffs_dir);
-      copy_file(argv[13], package_path);
+      copy_file(install_guest ? argv[6] : argv[13], package_path);
    }
    if (real_boot)
    {
@@ -1741,11 +1769,24 @@ int main(int argc, char **argv)
    void (*arc_libretro_test_install_chooser_media)(bool, unsigned) = NULL;
    bool (*arc_libretro_test_adffs_content_read_failure_pending)(void) = NULL;
    bool (*arc_libretro_test_adffs_carrier_matches)(const void *, size_t) = NULL;
+   void (*install_guest_accept_test_os)(bool) = NULL;
+   void (*install_guest_defer_completion)(bool) = NULL;
+   bool (*install_guest_latched)(void) = NULL;
    void (*arc_platform_test_input_events_reset)(void) = NULL;
    size_t (*arc_platform_test_input_events)(ArcKartEvent *, size_t) = NULL;
-   if (real_boot || newio_smoke)
+   if (real_boot || newio_smoke || install_guest)
       *(void **)(&arc_engine_test_newio) = dlsym(module, "arc_engine_test_newio");
-   if (!real_boot && !newio_smoke && !jfd_writes && !jfd_create_step &&
+   if (install_guest) {
+      *(void **)(&install_guest_accept_test_os) =
+         dlsym(module, "arc_libretro_test_adffs_accept_test_os");
+      *(void **)(&install_guest_defer_completion) =
+         dlsym(module, "arc_libretro_test_defer_install_completion");
+      *(void **)(&install_guest_latched) =
+         dlsym(module, "arc_libretro_test_install_doorbell_latched");
+      assert(install_guest_accept_test_os && install_guest_defer_completion &&
+             install_guest_latched);
+   }
+   if (!install_guest && !real_boot && !newio_smoke && !jfd_writes && !jfd_create_step &&
        !jfd_merge_step && !jfd_allocation_step && !jfd_allocation_set)
    {
       *(void **)(&arc_engine_audio_stats) = dlsym(module, "arc_engine_audio_stats");
@@ -2008,6 +2049,110 @@ int main(int argc, char **argv)
    assert(retro_serialize_size() == 0u);
    struct retro_game_info game = {jfd_writes ? jfd_content_path : argv[3], NULL, 0u, NULL};
    uint64_t source_hash = hash_file(game.path);
+
+   if (install_guest)
+   {
+      install_guest_logging = true;
+      assert(!strcmp(argv[7], "first") || !strcmp(argv[7], "reload") ||
+             !strcmp(argv[7], "interrupt-marker") ||
+             !strcmp(argv[7], "interrupt-directory") ||
+             !strcmp(argv[7], "interrupt-doorbell") ||
+             !strcmp(argv[7], "reset-doorbell") ||
+             !strcmp(argv[7], "reset-directory"));
+      bool first = !strcmp(argv[7], "first");
+      bool interrupt = !strncmp(argv[7], "interrupt-", 10u) ||
+                       !strcmp(argv[7], "reset-directory") ||
+                       !strcmp(argv[7], "reset-doorbell");
+      option_machine = "Auto"; option_cpu = "Auto";
+      option_writes = "shadow"; option_install_saves = "persistent";
+      option_jfd_boot = "auto"; option_launch = "auto";
+      install_guest_accept_test_os(true);
+      if (!strcmp(argv[7], "interrupt-doorbell") ||
+          !strcmp(argv[7], "reset-doorbell"))
+         install_guest_defer_completion(true);
+      phase = PHASE_LOAD;
+      if (!retro_load_game(&game)) {
+         fprintf(stderr, "install guest load failed: %s\n", last_message);
+         return 1;
+      }
+      assert(strstr(machine_resolution_log,"resolved=A3020 reason=install-disc"));
+      phase = PHASE_RUN;
+      unsigned steady = 0u;
+      for (unsigned frame=0u;frame<3000u;++frame) {
+         retro_run();
+         if (interrupt) {
+            if ((!strcmp(argv[7], "interrupt-marker") &&
+                 install_candidate_last_lba >= 31712u) ||
+                ((!strcmp(argv[7], "interrupt-directory") ||
+                  !strcmp(argv[7], "reset-directory")) &&
+                 install_candidate_last_lba >= 31744u) ||
+                ((!strcmp(argv[7], "interrupt-doorbell") ||
+                  !strcmp(argv[7], "reset-doorbell")) &&
+                 install_guest_latched())) {
+               steady = 8u;
+               break;
+            }
+            continue;
+         }
+         bool outcome = first ? install_publication_seen &&
+            install_recreate_seen && install_commit_seen &&
+            install_validation_seen && install_doorbell_seen :
+            !install_publication_seen && install_commit_seen >= 9u;
+         if (outcome && video_frames > 10u &&
+             video_frames - video_signature_last_change_frame > 8u)
+            ++steady;
+         else steady = 0u;
+         if (steady >= 8u) break;
+      }
+      if (steady < 8u) {
+         unsigned commands=0u, reads=0u, success=0u, accesses=0u;
+         uint8_t device=0u;
+         if (arc_engine_test_newio)
+            (void)arc_engine_test_newio(&commands,&reads,&success,
+                                        &accesses,&device);
+         fprintf(stderr,"install guest phase=%s did not settle: publication=%u recreate=%u commit=%u validation=%u doorbell=%u frames=%u pixel=%08x\n",
+                 argv[7],install_publication_seen,install_recreate_seen,
+                 install_commit_seen,install_validation_seen,
+                 install_doorbell_seen,video_frames,last_video_pixel);
+         fprintf(stderr,"install guest IO: fdc_commands=%u fdc_reads=%u success=%u ide_accesses=%u device=%u\n",
+                 commands,reads,success,accesses,device);
+         return 1;
+      }
+      if (interrupt) {
+         char ready[4096];
+         snprintf(ready,sizeof(ready),
+            "%s/arcdroid/install/fffbd5a69f9b43c4ea8cc69f1fe9234f393e3d45/ready.a",
+            save_path);
+         assert(install_candidate_writes && !file_exists(ready) &&
+                !install_publication_seen);
+         if (!strcmp(argv[7], "reset-directory") ||
+             !strcmp(argv[7], "reset-doorbell")) retro_reset();
+         assert(!file_exists(ready));
+         retro_unload_game(); retro_deinit();
+         assert(hash_file(game.path)==source_hash && dlclose(module)==0);
+         printf("install guest %s: candidate_writes=%u last_lba=%u unpublished\n",
+                argv[7],install_candidate_writes,install_candidate_last_lba);
+         return 0;
+      }
+      char signature_path[4096];
+      snprintf(signature_path,sizeof(signature_path),"%s/install-signature.txt",data_root);
+      if (first) {
+         FILE *out=fopen(signature_path,"wb"); assert(out);
+         assert(fprintf(out,"%016llx\n",
+                  (unsigned long long)last_video_signature)>0 && !fclose(out));
+      } else {
+         FILE *in=fopen(signature_path,"rb"); assert(in);
+         unsigned long long earlier=0u;
+         assert(fscanf(in,"%llx",&earlier)==1 && !fclose(in));
+         assert(earlier != last_video_signature);
+      }
+      retro_unload_game(); retro_deinit();
+      assert(hash_file(game.path)==source_hash && dlclose(module)==0);
+      printf("install guest %s: frames=%u signature=%016llx publication=%u recreate=%u commit=%u\n",
+             argv[7],video_frames,(unsigned long long)last_video_signature,
+             install_publication_seen,install_recreate_seen,install_commit_seen);
+      return 0;
+   }
 
    if (jfd_allocation_set)
    {

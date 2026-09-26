@@ -133,6 +133,8 @@ static bool arc_io_is_directory(const char *path)
    result = arc_io_vfs->stat(path, NULL);
    return result >= 0 && (result & RETRO_VFS_STAT_IS_DIRECTORY) != 0;
 }
+bool arc_io_existing_directory(const char *path)
+{ return path && arc_io_is_directory(path); }
 
 bool arc_io_make_path(const char *path)
 {
@@ -340,4 +342,11 @@ bool arc_io_flush_file(ArcIoFile *file)
    if (!file->writable) return true;
    return arc_io_vfs && (!arc_io_vfs->flush ||
                          arc_io_vfs->flush(file->handle) == 0);
+}
+
+bool arc_io_truncate_file(ArcIoFile *file, int64_t length)
+{
+   return file && file->writable && !file->memory && length >= 0 &&
+      arc_io_vfs && arc_io_vfs->truncate &&
+      arc_io_vfs->truncate(file->handle, length) == 0;
 }

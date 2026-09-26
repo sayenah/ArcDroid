@@ -5,6 +5,9 @@
 ArcDroid incorporates an allowlisted snapshot of Arculator by Sarah Walker and
 contributors under GPL-2.0-only. See `engine/UPSTREAM.md`, `engine/arculator/AUTHORS`,
 and the repository-root `COPYING`.
+Slice 10b adds the pinned upstream `src/ide.c` and `src/ide.h` under the same
+license. ArcDroid replaces their desktop file access with an in-memory bounded
+block backend and transaction handling; modification notices are in both files.
 
 ## libretro API header
 

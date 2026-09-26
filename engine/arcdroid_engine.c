@@ -27,7 +27,9 @@
 #include "wd1770.h"
 #include "82c711.h"
 #include "82c711_fdc.h"
+#include "ide.h"
 #include "arc_io.h"
+#include "arc_install_doorbell.h"
 
 #include <setjmp.h>
 #include <stdarg.h>
@@ -79,6 +81,14 @@ static ArcMachine arc_saved_machine = ARC_MACHINE_A3000;
 static double arc_last_refresh = 50.0;
 static ArcEngineLogCallback arc_log_callback;
 static void *arc_log_opaque;
+void arc_engine_install_sector_read(unsigned drive, unsigned track,
+                                    unsigned side, unsigned sector,
+                                    unsigned density)
+{
+   arc_install_doorbell_read(drive, track, side, sector, density);
+}
+bool arc_engine_install_doorbell_latched(void)
+{ return arc_install_doorbell_latched(); }
 static bool arc_helper_media_valid(const ArcEngineMedia *helper)
 {
    return !helper ||
@@ -406,6 +416,7 @@ void saveconfig(void) {}
 static void arc_machine_destroy(void)
 {
    if (!arc_machine_live) return;
+   closeide(&ide_internal);
    if (fdctype == FDC_82C711) c82c711_fdc_shutdown();
    for (int drive = 0; drive < 4; ++drive) disc_close(drive);
    sound_dev_close();
@@ -524,6 +535,8 @@ bool arc_engine_start(const uint8_t *firmware, size_t firmware_size,
                       const ArcEngineMedia *media,
                       const ArcEngineMedia *helper,
                       const ArcMachineDescriptor *descriptor,
+                      const ArcIdeBackend *ide_backend,
+                      const ArcInstallDoorbell *doorbell,
                       const uint8_t cmos[ARC_CMOS_MACHINE_SIZE],
                       char *failure, size_t failure_size)
 {
@@ -571,6 +584,8 @@ bool arc_engine_start(const uint8_t *firmware, size_t firmware_size,
    arc_saved_helper_size = helper ? helper->size : 0u;
    memcpy(arc_saved_cmos, cmos, sizeof(arc_saved_cmos));
    arc_saved_machine = descriptor->id;
+   ide_set_backend(descriptor->id == ARC_MACHINE_A3020 ? ide_backend : NULL);
+   arc_install_doorbell_configure(doorbell);
    if (!arc_machine_create(failure, failure_size))
    {
       arc_engine_stop();
@@ -592,6 +607,8 @@ void arc_engine_stop(void)
    if (arc_machine_live)
       cmos_get_image(arc_saved_cmos, sizeof(arc_saved_cmos));
    arc_machine_destroy();
+   ide_set_backend(NULL);
+   arc_install_doorbell_configure(NULL);
    free(arc_saved_firmware);
    arc_saved_firmware = NULL;
    arc_saved_firmware_size = 0u;

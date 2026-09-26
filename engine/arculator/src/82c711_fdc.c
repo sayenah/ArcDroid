@@ -1,6 +1,6 @@
 /*Arculator 2.2 by Sarah Walker
   82c711 FDC emulation*/
-/* ArcDroid modification (2026-09-16): bounds all guest-selected drives and
+/* ArcDroid modification (2026-09-16, 2026-09-25): bounds all guest-selected drives and
  * FORMAT input, makes invalid commands non-terminating, adds deterministic
  * cold-reset/media-change cancellation, suppresses a stale WRITE DATA request
  * after synchronous terminal media errors, and exposes test-build-only
@@ -13,6 +13,7 @@
 #include "82c711_fdc.h"
 #include "config.h"
 #include "disc.h"
+#include "arc_install_doorbell.h"
 #include "disc_jfd.h"
 #include "ioc.h"
 #include "timer.h"
@@ -429,6 +430,7 @@ void c82c711_fdc_write(uint16_t addr, uint8_t val, void *p)
 					fdc->eot[curdrive] = fdc->params[4];
 					if (jfd_active(curdrive))
 						jfd_set_requested_ch(fdc->params[1], (fdc->params[0] >> 2u) & 1u);
+					arc_install_doorbell_read(curdrive, fdc->track[curdrive], fdc->head, fdc->sector, fdc->density);
 					if (fdc == fdc_p)
 						disc_readsector(curdrive, fdc->sector, fdc->track[curdrive], fdc->head, fdc->density);
 					timer_disable(&fdc->timer);

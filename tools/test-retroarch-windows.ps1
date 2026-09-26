@@ -1867,3 +1867,146 @@ Write-Host "Slice 6b Windows RetroArch: no .srm files were created under the sav
 if ($env:GITHUB_STEP_SUMMARY) {
     Add-Content -Encoding UTF8 $env:GITHUB_STEP_SUMMARY "- Slice 6b persistence: no per-game .srm files were created under the saves directory."
 }
+
+# Slice 10b uses the test core and an authored ARMv2 guest. The guest writes
+# the exact synthetic FileCore tree through IDE, rings the controller doorbell,
+# writes a save after same-session recreation, and paints outcome byte 0x31.
+# A fresh process reads that save and paints outcome byte 0x42. Screenshots
+# are taken after a fixed steady run, never compared across early/late frames.
+Copy-Item -Force (Join-Path $InputDirectory "arcdroid_libretro_test.dll") $core
+Copy-Item -Force (Join-Path $InputDirectory "arcdroid-install-guest.rom") $firmware
+$installPackageDirectory = Join-Path (Split-Path $systemDirectory) "adffs"
+New-Item -ItemType Directory -Force $installPackageDirectory | Out-Null
+Copy-Item -Force (Join-Path $InputDirectory "synthetic.zip") `
+    (Join-Path $installPackageDirectory "synthetic.zip")
+$content = (Resolve-Path (Join-Path $InputDirectory "install-first.m3u")).Path
+@"
+arcdroid_machine = "Auto"
+arcdroid_cpu = "Auto"
+arcdroid_disk_writes = "shadow"
+arcdroid_install_saves = "persistent"
+arcdroid_jfd_boot = "auto"
+arcdroid_launch = "auto"
+"@ | Set-Content -Encoding ASCII $coreOptions
+$installStore = Join-Path $saveDirectory "arcdroid\install\fffbd5a69f9b43c4ea8cc69f1fe9234f393e3d45"
+$screenshot = Join-Path $evidenceDirectory "install-saved.png"
+$beforeLines = @(Get-Content $log).Count
+Invoke-ArcDroid 1500 $true
+$firstLines = @(Get-Content $log | Select-Object -Skip $beforeLines)
+foreach ($required in @(
+    "resolved=A3020 reason=install-disc",
+    "doorbell-latched track=1 side=0 sector=0",
+    "validation=complete reason=complete tree_count=2 tree_sha256=752fe22239308de0a286ef3c224239150c573878b7f15b9c02a7fdc474177dec",
+    "store-publication=committed generation=0",
+    "run-plan=recreated same-session=1",
+    "journal-commit lba=31840 count=1")) {
+    if (-not @($firstLines | Where-Object { $_.Contains($required) }).Count) {
+        throw "Install guest first process lacked '$required'"
+    }
+}
+if (-not (Test-Path (Join-Path $installStore "ready.a")) -or
+    -not (Test-Path (Join-Path $installStore "journal.g0"))) {
+    throw "Install guest did not publish its ready manifest and journal"
+}
+$savedSignature = Get-MediaRowSignature $screenshot "install-saved-outcome-0x31"
+
+function Wait-InstallLog($Run, [string]$Needle, [int]$Seconds) {
+    $deadline = [DateTime]::UtcNow.AddSeconds($Seconds)
+    while ([DateTime]::UtcNow -lt $deadline) {
+        if ($Run.Process.HasExited) {
+            throw "$($Run.Name) exited before '$Needle' appeared"
+        }
+        if ((Test-Path $Run.RetroLog) -and
+            (Select-String -Path $Run.RetroLog -SimpleMatch $Needle -Quiet)) {
+            return
+        }
+        Start-Sleep -Milliseconds 150
+    }
+    throw "$($Run.Name) did not log '$Needle' within $Seconds seconds"
+}
+function Stop-InstallRunAbrupt($Run, [string]$Reason) {
+    if ($Run.Process.HasExited) {
+        throw "$($Run.Name) exited before the planned termination: $Reason"
+    }
+    Stop-Process -Id $Run.Process.Id -Force
+    [void]$Run.Process.WaitForExit(30000)
+    $Run.Udp.Dispose()
+    $output = @()
+    if (Test-Path $Run.Stdout) { $output += Get-Content $Run.Stdout }
+    if (Test-Path $Run.Stderr) { $output += Get-Content $Run.Stderr }
+    $output | Set-Content -Encoding UTF8 (Join-Path $evidenceDirectory "$($Run.Name)-process.log")
+    Remove-Item -Force -ErrorAction SilentlyContinue $Run.Stdout, $Run.Stderr
+    Write-Host "$($Run.Name) terminated after $Reason"
+}
+
+# Kill after the ninth durable journal commit, before the next load can start
+# compaction or rename a manifest. The fresh process has already read the
+# saved byte and painted its distinct terminal outcome.
+$reloadRun = Start-MediaRun $content "install-journal-before-rename"
+try {
+    Wait-InstallLog $reloadRun "journal-commit lba=4048 count=256" 90
+    if (-not (Test-Path (Join-Path $installStore "journal.g0")) -or
+        (Get-Item (Join-Path $installStore "journal.g0")).Length -le 1MB) {
+        throw "Install guest did not exceed the compaction threshold"
+    }
+    Start-Sleep -Seconds 1
+    $readbackSignature = Capture-MediaSignature $reloadRun "install-readback-outcome-0x42"
+    $reloadLines = @(Get-Content $reloadRun.RetroLog)
+    if (-not @($reloadLines | Where-Object { $_.Contains("store-state=ready writable") }).Count -or
+        @($reloadLines | Where-Object { $_.Contains("store-publication=") }).Count -or
+        @($reloadLines | Where-Object { $_.Contains("journal-commit") }).Count -ne 9) {
+        throw "Install guest fresh process did not read the READY store and commit nine whole commands"
+    }
+    Stop-InstallRunAbrupt $reloadRun "nine journal commits, before manifest rename"
+} finally {
+    if (-not $reloadRun.Process.HasExited) {
+        Stop-InstallRunAbrupt $reloadRun "cleanup after failed pre-rename check"
+    }
+}
+if ($savedSignature -eq $readbackSignature) {
+    throw "Install guest saved and fresh-readback outcome signatures matched"
+}
+
+# Load the oversized journal. The core logs immediately before the manifest
+# publish and immediately after the rename. Terminate after the latter, then
+# open the store once more to prove that generation selection survives it.
+$compactRun = Start-MediaRun $content "install-compact-after-rename"
+try {
+    Wait-InstallLog $compactRun "store-compaction=manifest-renamed generation=1" 90
+    Wait-InstallLog $compactRun "store-compaction=committed" 90
+    $compactLines = @(Get-Content $compactRun.RetroLog)
+    if (-not @($compactLines | Where-Object {
+            $_.Contains("store-compaction=manifest-publish-start generation=1")
+        }).Count -or -not (Test-Path (Join-Path $installStore "ready.b"))) {
+        throw "Install guest compaction did not publish generation 1"
+    }
+    Stop-InstallRunAbrupt $compactRun "compaction manifest rename"
+} finally {
+    if (-not $compactRun.Process.HasExited) {
+        Stop-InstallRunAbrupt $compactRun "cleanup after failed post-rename check"
+    }
+}
+$screenshot = Join-Path $evidenceDirectory "install-after-compaction.png"
+$beforeLines = @(Get-Content $log).Count
+Invoke-ArcDroid 900 $true
+$afterCompactionLines = @(Get-Content $log | Select-Object -Skip $beforeLines)
+if (-not @($afterCompactionLines | Where-Object {
+        $_.Contains("store-state=ready writable")
+    }).Count -or @($afterCompactionLines | Where-Object {
+        $_.Contains("store-publication=")
+    }).Count) {
+    throw "Install guest failed to reopen the READY store after compaction termination"
+}
+$afterCompactionSignature = Get-MediaRowSignature $screenshot "install-after-compaction-outcome-0x42"
+if ($afterCompactionSignature -ne $readbackSignature) {
+    throw "Install guest changed the encoded readback outcome after compaction"
+}
+$installErrors = @($firstLines + $reloadLines + $compactLines + $afterCompactionLines |
+    Where-Object { $_ -match '\[ERROR\]' })
+if ($installErrors.Count) {
+    throw "Install guest RetroArch log contained errors: $($installErrors -join ' | ')"
+}
+Write-Host "Slice 10b Windows RetroArch: synthetic install, publication, save, readback and pre/post-compaction termination passed ($savedSignature -> $readbackSignature)"
+if ($env:GITHUB_STEP_SUMMARY) {
+    Add-Content -Encoding UTF8 $env:GITHUB_STEP_SUMMARY "- Slice 10b install disc: authored guest published, saved, and read back in a fresh RetroArch process; terminations before and after compaction manifest rename recovered; steady outcome signatures $savedSignature -> $readbackSignature."
+}

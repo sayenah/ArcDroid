@@ -658,7 +658,18 @@ int main(int argc, char **argv) {
   assert(profile && arc_install_match(profile, media, 3u, plans, &why) == 2u &&
          !why && plans[0].media_index[1] == 1u &&
          plans[1].media_index[1] == 2u &&
-         strcmp(plans[0].binding, plans[1].binding));
+         strcmp(plans[0].binding, plans[1].binding) &&
+         !strcmp(plans[0].storage_id,
+                 "fffbd5a69f9b43c4ea8cc69f1fe9234f393e3d45") &&
+         strcmp(plans[0].storage_id, plans[1].storage_id));
+  ArcInstallProfile changed_revision = *profile;
+  changed_revision.revision = profile->revision + 1u;
+  ArcInstallPlan revised[ARC_INSTALL_MAX_VARIANTS];
+  assert(arc_install_match(&changed_revision, media, 3u, revised, &why)==2u &&
+         !strcmp(revised[0].storage_id, plans[0].storage_id));
+  ArcInstallMedia reordered_media[3] = {media[2],media[0],media[1]};
+  assert(arc_install_match(profile, reordered_media, 3u, revised, &why)==2u &&
+         !strcmp(revised[0].storage_id, plans[0].storage_id));
   assert(arc_install_match(profile, media, 1u, plans, &why) == 0u &&
          !strcmp(why, "incomplete-set"));
   media[3] = media[1];

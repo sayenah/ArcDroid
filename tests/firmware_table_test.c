@@ -24,6 +24,11 @@ static const ArcFirmwareFingerprint unsupported_launch_firmware = {
    UINT32_C(0x46276f78), "76eade94a489bac39296cc5eb1adbe683af1acb9",
    ARC_RECIPE_COMBINED, 0u
 };
+static const ArcFirmwareFingerprint install_guest_firmware = {
+   ARC_OS_TEST, "ArcDroid install guest ROM", 524288u,
+   UINT32_C(0xbbd30527), "5018810f9f934e8a562fa666cb8230a1965c407d",
+   ARC_RECIPE_COMBINED, 0u
+};
 
 const ArcFirmwareFingerprint *arc_firmware_table(size_t *count)
 {
@@ -34,12 +39,13 @@ const ArcFirmwareFingerprint *arc_firmware_table(size_t *count)
    {
       size_t base_count = 0u;
       const ArcFirmwareFingerprint *base = arc_base_firmware_table(&base_count);
-      if (base_count >= MAX_TEST_FIRMWARE - 1u)
-         base_count = MAX_TEST_FIRMWARE - 2u;
+      if (base_count >= MAX_TEST_FIRMWARE - 2u)
+         base_count = MAX_TEST_FIRMWARE - 3u;
       memcpy(table, base, base_count * sizeof(*table));
       table[base_count] = chooser_firmware;
       table[base_count + 1u] = unsupported_launch_firmware;
-      table_count = base_count + 2u;
+      table[base_count + 2u] = install_guest_firmware;
+      table_count = base_count + 3u;
    }
    if (count) *count = table_count;
    return table;
@@ -55,6 +61,10 @@ const ArcFirmwareFingerprint *arc_firmware_match(const ArcDigest *digest)
        digest->crc32 == unsupported_launch_firmware.crc32 &&
        !strcmp(digest->sha1, unsupported_launch_firmware.sha1))
       return &unsupported_launch_firmware;
+   if (digest && digest->size == install_guest_firmware.size &&
+       digest->crc32 == install_guest_firmware.crc32 &&
+       !strcmp(digest->sha1, install_guest_firmware.sha1))
+      return &install_guest_firmware;
    return arc_base_firmware_match(digest);
 }
 

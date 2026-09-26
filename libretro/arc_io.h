@@ -22,6 +22,7 @@ bool arc_io_remove(const char *path);
 bool arc_io_rename(const char *old_path, const char *new_path);
 bool arc_io_file_size(const char *path, size_t *size);
 bool arc_io_make_path(const char *path);
+bool arc_io_existing_directory(const char *path);
 bool arc_io_directory_contains(const char *directory, const char *name,
                                bool *contains);
 bool arc_io_list_directory(const char *directory, ArcIoDirectoryVisit visit,
@@ -35,5 +36,6 @@ int64_t arc_io_seek_file(ArcIoFile *file, int64_t offset, int origin);
 size_t arc_io_read_file(ArcIoFile *file, void *data, size_t size);
 size_t arc_io_write_file(ArcIoFile *file, const void *data, size_t size);
 bool arc_io_flush_file(ArcIoFile *file);
+bool arc_io_truncate_file(ArcIoFile *file, int64_t length);
 
 #endif

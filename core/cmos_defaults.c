@@ -100,3 +100,18 @@ void arc_cmos_normalise_payload(uint8_t payload[ARC_CMOS_PAYLOAD_SIZE], ArcIoCla
    payload[183] = (uint8_t)((payload[183] & ~0x07u) | 1u);
    if (io == ARC_IO_NEW_82C711) payload[183] &= 0x07u;
 }
+
+void arc_cmos_machine_attach_ide(uint8_t image[ARC_CMOS_MACHINE_SIZE])
+{
+   if (!image) return;
+   /* Logical byte 135 lives at raw byte 199. Only the machine image gets
+    * IDE count one; the persisted payload remains normalized to zero. */
+   image[199] = (uint8_t)((image[199] & ~0xc0u) | 0x40u);
+   unsigned checksum = 0u;
+   for (unsigned i = 0u; i < 239u; ++i) {
+      unsigned raw = i + 0x40u;
+      if (raw > 255u) raw -= 240u;
+      checksum += image[raw];
+   }
+   image[63] = (uint8_t)(checksum + 1u);
+}
