@@ -32,6 +32,10 @@ An in-game save is retained across restarts. `Machine: Auto` selects A3020
 for an eligible install. Existing saved installations also require A3020;
 choose `Machine: Auto` when another machine was selected explicitly.
 
+The store is at `<save>/arcdroid/install/<storage-id>/`. Keep or back up this
+directory with the rest of the frontend's saves; its disc, journal and manifest
+files belong together.
+
 `Install Saves: Temporary` uses the RAM installation path. **Saves made there
 disappear on reset or exit.** ArcDroid shows this warning only for RAM install
 boots. `Disk Writes: Off` uses an existing saved installation read-only. If
@@ -43,6 +47,24 @@ native writable save directory; choose a native directory or select
 or unsupported saved installation with an error and preserves its files so a
 backup can be restored. A different revision of any image or built-in script
 stays on the native path.
+
+ArcDroid's messages identify these outcomes:
+
+- **Saved installation is damaged:** Preserve the install directory and restore
+  a backup. ArcDroid does not repair or overwrite it.
+- **Unable to create the install disc:** Check free space and save-directory
+  write access, or choose `Install Saves: Temporary`.
+- **Install disc save limit reached:** This session has reached the 8 MiB
+  journal cap; further saves cannot be written until a later load compacts it.
+- **Install disc storage failed:** A write failed; further saves cannot be
+  written in this session.
+- **Install disc is read-only:** The saved game can run, but saves cannot be
+  changed in this session. This also follows a failed journal-tail truncation.
+- **This title's saved installation runs on the A3020:** Set `Machine: Auto`.
+- **Persistent install saves require Machine: Auto and a native writable save
+  directory:** Choose those settings, or use `Install Saves: Temporary` for a
+  RAM install.
+
 The two guest discs used for an ADFFS session are memory-backed and read-only:
 changes to the mounted image are not written back, regardless of the `Disk
 Writes` option. At boot, ArcDroid's project-authored launcher copies only the

@@ -20,7 +20,10 @@ static bool strict_directories;
 static unsigned mutations, fail_mutation;
 static bool fail_probe_close;
 static bool fail_base_open;
+static bool fail_compaction_base_open, fail_truncate;
 static char probe_failure[256], creation_failure[256];
+static char compaction_failure[256], truncation_failure[256];
+static char write_failure[256];
 static void put32(uint8_t *p, uint32_t n)
 { for (unsigned i=0u;i<4u;++i) p[i]=(uint8_t)(n>>(i*8u)); }
 static void store_log(void *opaque, const char *message)
@@ -30,6 +33,12 @@ static void store_log(void *opaque, const char *message)
       snprintf(probe_failure,sizeof(probe_failure),"%s",message);
    if (!strncmp(message,"store-create=failed ",20u))
       snprintf(creation_failure,sizeof(creation_failure),"%s",message);
+   if (!strncmp(message,"store-compaction=failed",23u))
+      snprintf(compaction_failure,sizeof(compaction_failure),"%s",message);
+   if (!strncmp(message,"journal-truncate=failed",23u))
+      snprintf(truncation_failure,sizeof(truncation_failure),"%s",message);
+   if (!strncmp(message,"store-write-failed=",19u))
+      snprintf(write_failure,sizeof(write_failure),"%s",message);
 }
 static bool canonical(const char *path, char output[256])
 {
@@ -77,6 +86,8 @@ static struct retro_vfs_file_handle *vopen(const char *path, unsigned mode,
    (void)hint;
    if (fail_base_open && (mode & RETRO_VFS_FILE_ACCESS_WRITE) &&
        strstr(path,"disc.g0.hdf.tmp")) return NULL;
+   if (fail_compaction_base_open && (mode & RETRO_VFS_FILE_ACCESS_WRITE) &&
+       strstr(path,"disc.g1.hdf.tmp")) return NULL;
    int i = locate(path);
    if (mode & RETRO_VFS_FILE_ACCESS_UPDATE_EXISTING) {
       if (i < 0) return NULL;
@@ -155,6 +166,7 @@ static int vrename(const char *from, const char *to)
 }
 static int64_t vtruncate(struct retro_vfs_file_handle *h, int64_t length)
 {
+   if (fail_truncate) { fail_truncate=false; return -1; }
    if (length < 0 || (uint64_t)length > SIZE_MAX || fail_now()) return -1;
    File *f = &files[h->index];
    uint8_t *grown = realloc(f->bytes, (size_t)length ? (size_t)length : 1u);
@@ -226,7 +238,10 @@ static void clear_files(void)
    }
    mutations = fail_mutation = 0u;
    fail_probe_close=false; fail_base_open=false;
+   fail_compaction_base_open=false; fail_truncate=false;
    probe_failure[0]='\0'; creation_failure[0]='\0';
+   compaction_failure[0]='\0'; truncation_failure[0]='\0';
+   write_failure[0]='\0';
    directory_count=0u; strict_directories=false;
 }
 static File *file_named(const char *leaf)
@@ -365,6 +380,22 @@ static void test_tail(void)
    s=open_store(&p,false,true,ARC_INSTALL_STORE_READY);
    arc_install_store_close(s);
    assert(journal->size==124u);
+   grown=realloc(journal->bytes,journal->size+3u); assert(grown);
+   journal->bytes=grown; memset(grown+journal->size,0x5au,3u);
+   journal->size+=3u;
+   fail_truncate=true;
+   truncation_failure[0]='\0';
+   s=arc_install_store_open("save",&p,false,true,store_log,NULL,NULL,0u);
+   assert(s && arc_install_store_state(s)==ARC_INSTALL_STORE_READY &&
+          !arc_install_store_writable(s) && !fail_truncate &&
+          strstr(truncation_failure,"mode=read-only") &&
+          journal->size==127u);
+   uint8_t sector[512];
+   assert(arc_install_store_read(s,0u,1u,sector));
+   arc_install_store_close(s);
+   s=open_store(&p,false,true,ARC_INSTALL_STORE_READY);
+   assert(arc_install_store_writable(s) && journal->size==124u);
+   arc_install_store_close(s);
    clear_files();
 }
 static void test_directory_states(void)
@@ -379,6 +410,15 @@ static void test_directory_states(void)
    clear_files();
    add_file(dir,"disc.g1.hdf",&foreign,1u);
    s=open_store(&p,true,true,ARC_INSTALL_STORE_DAMAGED);
+   arc_install_store_close(s);
+   clear_files();
+   add_file(dir,"disc.g0.hdf",&foreign,1u);
+   add_file(dir,"journal.g1",&foreign,1u);
+   add_file(dir,"disc.g1.hdf",&foreign,1u);
+   unsigned before=mutations;
+   s=open_store(&p,true,true,ARC_INSTALL_STORE_DAMAGED);
+   assert(mutations==before && file_named("disc.g0.hdf") &&
+          file_named("journal.g1") && file_named("disc.g1.hdf"));
    arc_install_store_close(s);
    clear_files();
    add_file(dir,"journal.g0",&foreign,1u);
@@ -496,13 +536,16 @@ static void test_cap_and_compaction(void)
 static void test_journal_cap(void)
 {
    ArcInstallPlan p=plan(); ready_store(&p);
-   ArcInstallStore *s=open_store(&p,false,true,ARC_INSTALL_STORE_READY);
+   ArcInstallStore *s=arc_install_store_open("save",&p,false,true,
+                                            store_log,NULL,NULL,0u);
+   assert(s && arc_install_store_state(s)==ARC_INSTALL_STORE_READY);
    uint8_t *payload=calloc(256u,512u); assert(payload);
    unsigned commands=0u;
    while (arc_install_store_write(s,100u,256u,payload)) {
       ++commands; assert(commands<100u);
    }
    assert(commands>50u && !arc_install_store_writable(s));
+   assert(!strcmp(write_failure,"store-write-failed=journal-cap"));
    unsigned before=mutations;
    assert(!arc_install_store_write(s,100u,1u,payload));
    assert(mutations==before);
@@ -523,6 +566,8 @@ static void test_compaction_interruptions(void)
       s=arc_install_store_open("save",&p,false,true,NULL,NULL,NULL,0u);
       assert(s);
       bool consumed=fail_mutation==0u;
+      if (consumed)
+         assert(arc_install_store_state(s)==ARC_INSTALL_STORE_READY);
       arc_install_store_close(s);
       if (!consumed) break;
       ++interrupted;
@@ -556,6 +601,31 @@ static void test_compaction_retry_with_stale_generation(void)
    s=open_store(&p,false,true,ARC_INSTALL_STORE_READY);
    assert(file_named("ready.b") && !file_named("ready.tmp"));
    assert(!file_named("disc.g0.hdf") && !file_named("journal.g0"));
+   arc_install_store_close(s);
+   free(payload); clear_files();
+}
+static void test_compaction_out_of_space(void)
+{
+   ArcInstallPlan p=plan();
+   clear_files(); ready_store(&p);
+   ArcInstallStore *s=open_store(&p,false,true,ARC_INSTALL_STORE_READY);
+   uint8_t *payload=calloc(256u,512u); assert(payload);
+   for (unsigned i=0u;i<9u;++i)
+      assert(arc_install_store_write(s,2000u+i*256u,256u,payload));
+   arc_install_store_close(s);
+   fail_compaction_base_open=true;
+   compaction_failure[0]='\0';
+   s=arc_install_store_open("save",&p,false,true,store_log,NULL,NULL,0u);
+   assert(s && arc_install_store_state(s)==ARC_INSTALL_STORE_READY &&
+          arc_install_store_writable(s) && compaction_failure[0] &&
+          file_named("ready.a") && !file_named("ready.b"));
+   uint8_t sector[512];
+   assert(arc_install_store_read(s,2000u,1u,sector));
+   assert(arc_install_store_write(s,100u,1u,payload));
+   arc_install_store_close(s);
+   fail_compaction_base_open=false;
+   s=open_store(&p,false,true,ARC_INSTALL_STORE_READY);
+   assert(file_named("ready.b"));
    arc_install_store_close(s);
    free(payload); clear_files();
 }
@@ -655,6 +725,9 @@ static void test_probe_failures(void)
          assert(strstr(probe_failure,stages[step-1u]));
          assert(strstr(probe_failure,"path=rwprobe"));
          assert(strstr(error,"choose Install Saves: Temporary"));
+         uint8_t sector[512]; memset(sector,0x5au,sizeof(sector));
+         assert(!arc_install_store_read(s,0u,1u,sector) &&
+                sector[0]==0x5au && !arc_install_store_image(s));
          assert((file_named("disc.g0.hdf") != NULL) == (initial != 0u));
          arc_install_store_close(s);
       }
@@ -726,7 +799,9 @@ static void test_relative_save_paths(void)
       creation_failure[0]='\0'; error[0]='\0';
       s=arc_install_store_open(paths[variant],&p,true,true,store_log,NULL,
                                error,sizeof(error));
-      assert(s && arc_install_store_state(s)==ARC_INSTALL_STORE_DAMAGED &&
+      assert(s && arc_install_store_state(s)==ARC_INSTALL_STORE_NEW &&
+             !arc_install_store_writable(s) &&
+             strstr(error,"Unable to create the install disc") &&
              strstr(creation_failure,"op=vfs-open-write path=disc.g0.hdf.tmp"));
       arc_install_store_close(s);
    }
@@ -741,6 +816,7 @@ int main(void)
    test_cap_and_compaction();
    test_journal_cap();
    test_compaction_interruptions();
+   test_compaction_out_of_space();
    test_compaction_retry_with_stale_generation();
    test_writable_orphan_cleanup();
    test_probe_temporaries(); test_probe_failures();

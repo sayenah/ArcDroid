@@ -64,7 +64,8 @@ typedef struct {
   unsigned disc_count;
   unsigned revision;
   const char *script_sha256;
-  unsigned io_mask; /* bit 0: WD1772, bit 1: New-IO */
+  unsigned io_mask; /* RAM install: bit 0 WD1772, bit 1 New-IO */
+  unsigned hd_io_mask; /* Persisted install/run machine */
   ArcInstallVariant variants[ARC_INSTALL_MAX_VARIANTS];
   unsigned variant_count;
   unsigned runnable_revisions[4];

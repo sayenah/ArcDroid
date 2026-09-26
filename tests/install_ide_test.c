@@ -63,6 +63,12 @@ int main(void)
   ide_set_backend(&b);
   resetide(&ide, NULL, 0, 0, 0, NULL, 0, 0, 0, raise_irq, clear_irq);
   assert(ide.timer_registered);
+  writeide(&ide, 0x1f6u, 0xb0u);
+  writeide(&ide, 0x3f6u, 4u);
+  writeide(&ide, 0x3f6u, 0u);
+  tick(&ide);
+  writeide(&ide, 0x1f6u, 0xa0u);
+  assert(readide(&ide, 0x3f6u) == 0x50u && !ide.timer.enabled);
   writeide(&ide, 0x1f6u, 0xf0u);
   assert(readide(&ide, 0x1f7u) == 0xffu && readidew(&ide) == 0xffffu);
   writeide(&ide, 0x1f7u, 0x30u);

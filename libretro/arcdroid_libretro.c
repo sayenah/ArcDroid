@@ -141,6 +141,7 @@ static int arc_install_requested = -1;
 static char arc_install_requested_binding[41];
 static bool arc_install_hard_failure;
 static ArcInstallStore *arc_install_store;
+static bool arc_install_failure_noticed;
 static ArcInstallPlan arc_install_active_plan;
 static unsigned arc_install_hd_mode; /* 0 RAM, 1 candidate install, 2 run. */
 static ArcInstallDoorbell arc_install_doorbell;
@@ -462,6 +463,7 @@ typedef struct {
 static ArcCoreOptions arc_core_options;
 static ArcMachine arc_session_machine;
 static bool arc_riscpc_notice_shown;
+static bool arc_install_hd_prerequisites(const ArcInstallProfile *profile);
 
 static bool arc_media_is_hd(const ArcMediaEntry *entry)
 {
@@ -470,13 +472,14 @@ static bool arc_media_is_hd(const ArcMediaEntry *entry)
 
 static bool arc_install_hd_machine_needed(void)
 {
-   if (!arc_core_options.install_saves_persistent ||
+   if (!arc_core_options.machine_auto ||
+       !arc_core_options.install_saves_persistent ||
        arc_core_options.jfd_boot != ARC_JFD_BOOT_AUTO ||
        arc_core_options.launch != ARC_LAUNCH_AUTO || !arc_media_count ||
        arc_media[0].info.kind != ARC_MEDIA_JFD) return false;
    const ArcInstallProfile *profile = arc_install_profile(
       arc_media[0].jfd_game_id, arc_media[0].jfd_disc_count);
-   if (!profile) return false;
+   if (!profile || !(profile->hd_io_mask & 2u)) return false;
    ArcInstallMedia media[ARC_PLAYLIST_MAX_ENTRIES] = {{0}};
    for (unsigned i = 0u; i < arc_media_count; ++i) {
       media[i].game_id = arc_media[i].jfd_game_id;
@@ -489,8 +492,7 @@ static bool arc_install_hd_machine_needed(void)
    ArcInstallPlan plans[ARC_INSTALL_MAX_VARIANTS];
    unsigned count = arc_install_match(profile, media, arc_media_count,
                                        plans, NULL);
-   if (!count) return false;
-   if (arc_core_options.disk_writes != ARC_DISK_WRITES_OFF) return true;
+   if (!count || !arc_install_hd_prerequisites(profile)) return false;
    for (unsigned i = 0u; i < count; ++i) {
       ArcInstallStore *store = arc_install_store_open(arc_save_path, &plans[i],
          false, false, NULL, NULL, NULL, 0u);
@@ -499,7 +501,8 @@ static bool arc_install_hd_machine_needed(void)
       arc_install_store_close(store);
       if (ready) return true;
    }
-   return false;
+   return arc_core_options.disk_writes != ARC_DISK_WRITES_OFF &&
+          arc_install_store_native_path(arc_save_path);
 }
 
 static bool arc_options_resolve(ArcCoreOptions *options, ArcMachine machine,
@@ -933,6 +936,7 @@ static void arc_release_session(void)
    arc_install_store = NULL;
    memset(&arc_install_active_plan, 0, sizeof(arc_install_active_plan));
    arc_install_hd_mode = 0u;
+   arc_install_failure_noticed = false;
    arc_adffs_discard();
    arc_install_choosing = false;
    arc_install_plan_count = 0u;
@@ -2427,6 +2431,76 @@ static bool arc_collect_zip(const char *name, bool regular, void *opaque) {
 static int arc_zip_name_compare(const void *a, const void *b) {
    return strcmp(a, b);
 }
+static bool arc_install_hd_prerequisites(const ArcInstallProfile *profile)
+{
+   if (!profile || (arc_core_options.requested_os != ARC_OS_UNKNOWN &&
+                    arc_core_options.requested_os != ARC_OS_RISCOS_311
+#if defined(ARCDROID_TEST_FAULTS)
+                    && !(arc_core_options.requested_os == ARC_OS_TEST &&
+                         arc_test_adffs_accept_test_os)
+#endif
+                    )) return false;
+   uint8_t *firmware = NULL;
+   size_t firmware_size = 0u;
+   bool firmware_ready = arc_select_firmware(ARC_OS_RISCOS_311,
+      ARC_MACHINE_A3020,
+      &firmware, &firmware_size, NULL, NULL, 0u);
+#if defined(ARCDROID_TEST_FAULTS)
+   if (!firmware_ready && arc_test_adffs_accept_test_os &&
+       arc_core_options.requested_os == ARC_OS_UNKNOWN)
+      firmware_ready = arc_select_firmware(ARC_OS_TEST, ARC_MACHINE_A3020,
+         &firmware, &firmware_size, NULL, NULL, 0u);
+#endif
+   free(firmware);
+   if (!firmware_ready) return false;
+
+   const char *system_dir = NULL;
+   char dir[4096];
+   int dir_length = 0;
+   if (!arc_environment ||
+       !arc_environment(RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY, &system_dir) ||
+       !system_dir || !system_dir[0]) return false;
+   dir_length = snprintf(dir, sizeof(dir), "%s/arcdroid/adffs", system_dir);
+   if (dir_length < 0 || (size_t)dir_length >= sizeof(dir)) return false;
+   ArcZipNames names = {0};
+   (void)arc_io_list_directory(dir, arc_collect_zip, &names);
+   if (names.count > 1u)
+      qsort(names.names, names.count, sizeof(names.names[0]),
+            arc_zip_name_compare);
+   ArcAdffsPackage *package = calloc(1u, sizeof(*package));
+   bool parsed = false;
+   for (unsigned i = 0u; package && i < names.count && !parsed &&
+                        !names.failed; ++i) {
+      void *bytes = NULL;
+      size_t size = 0u;
+      char error[160] = {0};
+      size_t path_size = strlen(dir) + 1u + strlen(names.names[i]) + 1u;
+      char *path = malloc(path_size);
+      if (path && snprintf(path, path_size, "%s/%s", dir, names.names[i]) >= 0 &&
+          arc_io_read_all(path, &bytes, &size))
+         parsed = arc_adffs_package_parse(bytes, size, package, error,
+                                          sizeof(error));
+      free(path);
+      free(bytes);
+   }
+   free(names.names);
+   bool eligible = false;
+   if (parsed && package->verified) {
+      uint8_t *script = NULL;
+      size_t script_size = 0u;
+      char error[160] = {0}, missing[128] = {0};
+      ArcAdffsSelection selection;
+      eligible = arc_adffs_builtin_script(package, profile->game_id, 1u,
+                                          &script, &script_size, error,
+                                          sizeof(error)) &&
+                 arc_install_script_matches(profile, script, script_size) &&
+                 arc_adffs_select(package, script, script_size, &selection,
+                                  missing);
+      free(script);
+   }
+   if (package) { arc_adffs_package_free(package); free(package); }
+   return eligible;
+}
 static void arc_adffs_discard(void) {
    free(arc_adffs_carrier);
    free(arc_adffs_support);
@@ -2656,13 +2730,43 @@ static bool arc_install_build(const ArcInstallPlan *plan,
 static void arc_install_store_log(void *opaque, const char *line)
 {
    (void)opaque;
-   if (arc_log) arc_log(strstr(line, "=failed") ? RETRO_LOG_WARN : RETRO_LOG_INFO,
+   bool write_failure = !strncmp(line, "store-write-failed=", 19u) ||
+                        !strcmp(line, "write-commit-failed");
+   if (arc_log) arc_log(write_failure || strstr(line, "=failed") ?
+                        RETRO_LOG_WARN : RETRO_LOG_INFO,
                         "Install disc: %s\n", line);
+   if (write_failure && !arc_install_failure_noticed) {
+      arc_install_failure_noticed = true;
+      arc_message(!strcmp(line, "store-write-failed=journal-cap") ?
+         "Install disc save limit reached for this session; further saves cannot be written." :
+         "Install disc storage failed; further saves cannot be written this session.",
+         RETRO_LOG_WARN);
+   }
 }
+#if defined(ARCDROID_TEST_FAULTS)
+void arc_libretro_test_install_store_failure(const char *reason)
+{
+   if (arc_install_store) arc_install_store_failed(arc_install_store, reason);
+}
+bool arc_libretro_test_install_fill_journal(void)
+{
+   if (!arc_install_store ||
+       arc_install_store_state(arc_install_store) != ARC_INSTALL_STORE_READY ||
+       !arc_install_store_writable(arc_install_store)) return false;
+   uint8_t *sectors = malloc(256u * ARC_INSTALL_HD_SECTOR);
+   bool good = sectors && arc_install_store_read(arc_install_store, 0u, 256u,
+                                                  sectors);
+   for (unsigned i = 0u; good && i < 9u; ++i)
+      good = arc_install_store_write(arc_install_store, 0u, 256u, sectors);
+   free(sectors);
+   return good;
+}
+#endif
 static bool arc_prepare_adffs(bool notify) {
    arc_install_store_close(arc_install_store);
    arc_install_store = NULL;
    arc_install_hd_mode = 0u;
+   arc_install_failure_noticed = false;
    memset(&arc_install_active_plan, 0, sizeof(arc_install_active_plan));
    arc_adffs_discard();
    arc_install_choosing = false;
@@ -2877,11 +2981,9 @@ static bool arc_prepare_adffs(bool notify) {
          ArcInstallPlan plan = arc_install_plans[i];
          if (!(install->io_mask & io_bit) &&
              !(arc_core_options.install_saves_persistent &&
-               !arc_core_options.machine_auto)) continue;
-         if (
-             (io_bit == 2u && install->game_id != 10587u &&
-              !arc_core_options.install_saves_persistent) ||
-             plan.variant->ram_kib > machine->memory_kib) continue;
+               ((install->hd_io_mask & io_bit) ||
+                !arc_core_options.machine_auto))) continue;
+         if (plan.variant->ram_kib > machine->memory_kib) continue;
          const char *variant_reason = NULL;
          if (!arc_install_preflight(&plan, &variant_reason)) {
             preflight_reason = variant_reason;
@@ -2971,7 +3073,8 @@ static bool arc_prepare_adffs(bool notify) {
             }
             store = arc_install_store_open(arc_save_path, plan, true, true,
                arc_install_store_log, NULL, store_error, sizeof(store_error));
-            if (!store || arc_install_store_state(store) != ARC_INSTALL_STORE_UNPUBLISHED) {
+            if (!store || arc_install_store_state(store) != ARC_INSTALL_STORE_UNPUBLISHED ||
+                !arc_install_store_writable(store)) {
                arc_message(store_error[0] ? store_error :
                   "Persistent install saves need a native writable save directory; choose Install Saves: Temporary to use RAM.",
                   RETRO_LOG_ERROR);

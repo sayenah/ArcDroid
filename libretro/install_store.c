@@ -30,7 +30,7 @@ struct ArcInstallStore {
    unsigned selected_slot;
    unsigned recipe_revision;
    ArcInstallStoreState state;
-   bool writable, failed, incomplete_tail;
+   bool writable, failed, incomplete_tail, image_loaded;
    ArcInstallStoreLog log;
    void *log_opaque;
 };
@@ -53,6 +53,7 @@ typedef struct {
    bool candidate_journal;
    bool candidate_journal_tmp;
    bool ready_tmp;
+   bool other_generation;
 } Listing;
 
 static uint32_t get32(const uint8_t *p)
@@ -133,7 +134,8 @@ static bool list_visit(const char *name, bool regular, void *opaque)
    else if (!strcmp(name, "disc.g0.hdf.tmp")) list->candidate_base_tmp = true;
    else if (!strcmp(name, "journal.g0")) list->candidate_journal = true;
    else if (!strcmp(name, "journal.g0.tmp")) list->candidate_journal_tmp = true;
-   else if (!owned_generation(name)) list->unknown = true;
+   else if (owned_generation(name)) list->other_generation = true;
+   else list->unknown = true;
    return true;
 }
 static bool read_exact(const char *path, uint8_t *data, size_t length)
@@ -284,7 +286,8 @@ static bool load_base(ArcInstallStore *s, const Manifest *m)
    if (!full_path(s, m->base_leaf, path) ||
        !read_exact(path, s->image, ARC_INSTALL_HD_BYTES)) return false;
    arc_sha256_hex(s->image, ARC_INSTALL_HD_BYTES, hash);
-   return !strcmp(hash, m->base_hash);
+   s->image_loaded = !strcmp(hash, m->base_hash);
+   return s->image_loaded;
 }
 static bool replay(ArcInstallStore *s, const Manifest *m, bool writable,
                    bool report_tail)
@@ -349,7 +352,10 @@ static bool replay(ArcInstallStore *s, const Manifest *m, bool writable,
          good = update && arc_io_truncate_file(update, (int64_t)complete) &&
                          arc_io_flush_file(update);
          if (update && !arc_io_close_file(update)) good = false;
-         if (!good) return false;
+         if (!good) {
+            s->writable = false;
+            report(s, "journal-truncate=failed mode=read-only");
+         }
       }
    }
    s->journal_length = complete;
@@ -487,6 +493,7 @@ static bool create_base(ArcInstallStore *s)
    strcpy(s->base_hash, hash);
    s->generation = 0u;
    s->state = ARC_INSTALL_STORE_UNPUBLISHED;
+   s->image_loaded = true;
    report(s, "store-state=unpublished candidate=disc.g0.hdf");
    return true;
 }
@@ -657,6 +664,7 @@ ArcInstallStore *arc_install_store_open(const char *save_dir,
          report(s, "store-mode=read-only reason=write-probe-failed");
       }
       if (writable && !replay(s, chosen, true, true)) goto damaged;
+      writable = s->writable;
       if (requested_writable && !writable && s->incomplete_tail)
          report(s, "journal-incomplete-read-only");
       s->state = ARC_INSTALL_STORE_READY;
@@ -664,9 +672,10 @@ ArcInstallStore *arc_install_store_open(const char *save_dir,
                            "store-state=ready read-only");
       if (writable) cleanup_unused(s, m, &listing);
       if (writable && s->journal_length > COMPACT_THRESHOLD && !compact(s))
-         goto damaged;
+         report(s, "store-compaction=failed current-generation-retained");
       return s;
    }
+   if (listing.other_generation) goto damaged;
    if (!listing.any) s->state = ARC_INSTALL_STORE_NEW;
    else if (listing.candidate_base || listing.candidate_base_tmp ||
             listing.candidate_journal || listing.candidate_journal_tmp ||
@@ -694,10 +703,15 @@ ArcInstallStore *arc_install_store_open(const char *save_dir,
          "disc.g0.hdf", "disc.g0.hdf.tmp", "journal.g0",
          "journal.g0.tmp", "ready.tmp"};
       for (unsigned i = 0u; i < 5u; ++i)
-         if (!remove_if_present(s, owned[i])) goto damaged;
+         if (!remove_if_present(s, owned[i])) goto creation_failed;
       report(s, "store-state=unpublished cleaned");
    }
-   if (!create_base(s)) goto damaged;
+   if (!create_base(s)) goto creation_failed;
+   return s;
+creation_failed:
+   s->writable = false;
+   set_error(error, error_size,
+      "Unable to create the install disc in the save directory; check free space and write access, or choose Install Saves: Temporary.");
    return s;
 damaged:
    s->state = ARC_INSTALL_STORE_DAMAGED;
@@ -712,7 +726,9 @@ void arc_install_store_close(ArcInstallStore *s)
 ArcInstallStoreState arc_install_store_state(const ArcInstallStore *s)
 { return s ? s->state : ARC_INSTALL_STORE_DAMAGED; }
 const uint8_t *arc_install_store_image(const ArcInstallStore *s)
-{ return s ? s->image : NULL; }
+{ return s && s->image_loaded &&
+         (s->state == ARC_INSTALL_STORE_READY ||
+          s->state == ARC_INSTALL_STORE_UNPUBLISHED) ? s->image : NULL; }
 const char *arc_install_store_id(const ArcInstallStore *s)
 { return s ? s->id : NULL; }
 bool arc_install_store_writable(const ArcInstallStore *s)
@@ -728,6 +744,7 @@ bool arc_install_store_read(void *opaque, uint32_t lba, uint32_t count,
    ArcInstallStore *s = opaque;
    if (!s || !data || !count || lba >= ARC_INSTALL_HD_SECTORS ||
        count > ARC_INSTALL_HD_SECTORS - lba ||
+       !s->image_loaded ||
        (s->state != ARC_INSTALL_STORE_READY &&
         s->state != ARC_INSTALL_STORE_UNPUBLISHED)) return false;
    memcpy(data, s->image + (size_t)lba * ARC_INSTALL_HD_SECTOR,

@@ -139,6 +139,25 @@ static unsigned install_doorbell_seen;
 static uint32_t install_candidate_last_lba;
 static unsigned install_candidate_writes;
 static bool install_guest_logging;
+static unsigned install_read_only_notices, install_storage_notices;
+static unsigned install_cap_notices;
+static unsigned install_failure_warn_logs;
+static unsigned install_compaction_failed_logs;
+static char last_install_outcome_message[512];
+static void count_install_notice(void)
+{
+   if (strstr(last_message,"choose Install Saves: Temporary") ||
+       strstr(last_message,"set Machine to Auto") ||
+       strstr(last_message,"Unable to create the install disc"))
+      snprintf(last_install_outcome_message,
+               sizeof(last_install_outcome_message),"%s",last_message);
+   if (strstr(last_message,"Install disc is read-only"))
+      ++install_read_only_notices;
+   if (strstr(last_message,"Install disc storage failed"))
+      ++install_storage_notices;
+   if (strstr(last_message,"Install disc save limit reached"))
+      ++install_cap_notices;
+}
 static const char *option_launch = "auto";
 static const char *option_launch_chooser = "remember";
 static const char *option_jfd_boot = "auto";
@@ -414,6 +433,15 @@ static void frontend_log(enum retro_log_level level, const char *format, ...)
       ++install_validation_seen;
    if (strstr(message, "Install disc: doorbell-latched"))
       ++install_doorbell_seen;
+   if (strstr(message,"Install disc: store-write-failed=") ||
+       strstr(message,"Install disc: write-commit-failed")) {
+      assert(level==RETRO_LOG_WARN);
+      ++install_failure_warn_logs;
+   }
+   if (strstr(message,"Install disc: store-compaction=failed")) {
+      assert(level==RETRO_LOG_WARN);
+      ++install_compaction_failed_logs;
+   }
    if (sscanf(message, "Install disc: candidate-write lba=%u",
               &install_candidate_last_lba)==1)
       ++install_candidate_writes;
@@ -787,6 +815,7 @@ static bool environment(unsigned command, void *data)
       case RETRO_ENVIRONMENT_SET_MESSAGE_EXT:
          ++total_osd_calls;
          snprintf(last_message, sizeof(last_message), "%s", ((struct retro_message_ext *)data)->msg);
+         count_install_notice();
          if (strstr(last_message, "can no longer be saved this session"))
          {
             const struct retro_message_ext *message = data;
@@ -845,6 +874,7 @@ static bool environment(unsigned command, void *data)
       case RETRO_ENVIRONMENT_SET_MESSAGE:
          ++total_osd_calls;
          snprintf(last_message, sizeof(last_message), "%s", ((struct retro_message *)data)->msg);
+         count_install_notice();
          if (strstr(last_message, "Installed to a temporary RAM disc"))
             ++install_disclosure_calls;
          if (strstr(last_message, "flagged for RiscPC-class machines"))
@@ -1938,6 +1968,8 @@ int main(int argc, char **argv)
    void (*arc_libretro_test_fail_adffs_content_read)(bool) = NULL;
    void (*arc_libretro_test_fail_install_build)(bool) = NULL;
    void (*arc_libretro_test_fail_install_raw)(bool) = NULL;
+   void (*arc_libretro_test_install_store_failure)(const char *) = NULL;
+   bool (*arc_libretro_test_install_fill_journal)(void) = NULL;
    void (*arc_libretro_test_install_chooser_media)(bool, unsigned) = NULL;
    bool (*arc_libretro_test_adffs_content_read_failure_pending)(void) = NULL;
    bool (*arc_libretro_test_adffs_carrier_matches)(const void *, size_t) = NULL;
@@ -1959,8 +1991,14 @@ int main(int argc, char **argv)
          dlsym(module, "arc_libretro_test_defer_install_completion");
       *(void **)(&install_guest_latched) =
          dlsym(module, "arc_libretro_test_install_doorbell_latched");
+      *(void **)(&arc_libretro_test_install_store_failure) =
+         dlsym(module, "arc_libretro_test_install_store_failure");
+      *(void **)(&arc_libretro_test_install_fill_journal) =
+         dlsym(module, "arc_libretro_test_install_fill_journal");
       assert(install_guest_accept_test_os && install_guest_defer_completion &&
-             install_guest_latched && arc_engine_test_floppy_reads &&
+             install_guest_latched && arc_libretro_test_install_store_failure &&
+             arc_libretro_test_install_fill_journal &&
+             arc_engine_test_floppy_reads &&
              arc_engine_test_drive_media);
    }
    if (!install_guest && !real_boot && !newio_smoke && !jfd_writes && !jfd_create_step &&
@@ -2038,6 +2076,8 @@ int main(int argc, char **argv)
          dlsym(module, "arc_libretro_test_fail_install_build");
       *(void **)(&arc_libretro_test_fail_install_raw) =
          dlsym(module, "arc_libretro_test_fail_install_raw");
+      *(void **)(&arc_libretro_test_install_store_failure) =
+         dlsym(module, "arc_libretro_test_install_store_failure");
       *(void **)(&arc_libretro_test_install_chooser_media) =
          dlsym(module, "arc_libretro_test_install_chooser_media");
       *(void **)(&arc_libretro_test_adffs_content_read_failure_pending) =
@@ -2230,12 +2270,14 @@ int main(int argc, char **argv)
    if (install_guest)
    {
       install_guest_logging = true;
+      bool route = !strncmp(argv[7],"route-",6u);
       assert(!strcmp(argv[7], "first") || !strcmp(argv[7], "reload") ||
              !strcmp(argv[7], "interrupt-marker") ||
              !strcmp(argv[7], "interrupt-directory") ||
              !strcmp(argv[7], "interrupt-doorbell") ||
              !strcmp(argv[7], "reset-doorbell") ||
-             !strcmp(argv[7], "reset-directory"));
+             !strcmp(argv[7], "reset-directory") ||
+             !strcmp(argv[7], "compaction-reload") || route);
       bool first = !strcmp(argv[7], "first");
       bool interrupt = !strncmp(argv[7], "interrupt-", 10u) ||
                        !strcmp(argv[7], "reset-directory") ||
@@ -2244,6 +2286,94 @@ int main(int argc, char **argv)
       option_writes = "shadow"; option_install_saves = "persistent";
       option_jfd_boot = "auto"; option_launch = "auto";
       install_guest_accept_test_os(true);
+      if (!strcmp(argv[7],"compaction-reload"))
+         fault_open_substring=".hdf.tmp";
+      if (route) {
+         const char *mode=argv[7];
+         char package_path[4096], install_path[4096];
+         snprintf(package_path,sizeof(package_path),
+                  "%s/arcdroid/adffs/synthetic.zip",system_path);
+         snprintf(install_path,sizeof(install_path),
+                  "%s/arcdroid/install",save_path);
+         bool ready = strstr(mode,"ready") != NULL;
+         TreeSnapshot before = ready ? snapshot_tree(install_path) :
+                                       (TreeSnapshot){0};
+         if (!strcmp(mode,"route-off-ready")) option_writes="off";
+         if (!strcmp(mode,"route-temporary-ready"))
+            option_install_saves="temporary";
+         if (!strcmp(mode,"route-machine-ready") ||
+             !strcmp(mode,"route-machine-new")) {
+            option_machine="A3000"; option_cpu="ARM2";
+         }
+         if (!strcmp(mode,"route-nonnative-new"))
+            save_dir="content://arc-install-save";
+         if (!strcmp(mode,"route-new-probe") ||
+             !strcmp(mode,"route-unpublished-probe") ||
+             !strcmp(mode,"route-unwritable-ready"))
+            fault_close_substring="rwprobe.tmp";
+         if (!strcmp(mode,"route-no-package"))
+            assert(remove(package_path)==0);
+         if (!strcmp(mode,"route-untested-package") ||
+             !strcmp(mode,"route-script-mismatch")) {
+            char source[4096];
+            snprintf(source,sizeof(source),"%s",argv[6]);
+            char *slash=strrchr(source,'/'); assert(slash);
+            strcpy(slash+1u,!strcmp(mode,"route-untested-package") ?
+                             "untested.zip" : "script-changed.zip");
+            copy_file(source,package_path);
+            if (!strcmp(mode,"route-untested-package"))
+               option_adffs_package="untested";
+         }
+         if (!strcmp(mode,"route-no-311"))
+            install_guest_accept_test_os(false);
+         phase=PHASE_LOAD;
+         bool loaded=retro_load_game(&game);
+         TreeSnapshot after_load = ready && loaded ?
+            snapshot_tree(install_path) : before;
+         bool fail = !strcmp(mode,"route-new-probe") ||
+            !strcmp(mode,"route-unpublished-probe") ||
+            !strcmp(mode,"route-machine-ready") ||
+            !strcmp(mode,"route-machine-new") ||
+            !strcmp(mode,"route-nonnative-new");
+         assert(loaded != fail);
+         if (fail) {
+            assert(strstr(last_install_outcome_message,
+               !strcmp(mode,"route-machine-ready") ? "set Machine to Auto" :
+               "choose Install Saves: Temporary"));
+         } else if (!strcmp(mode,"route-off-ready") ||
+                    !strcmp(mode,"route-unwritable-ready")) {
+            assert(install_read_only_notices==1u);
+         } else if (!strcmp(mode,"route-temporary-ready")) {
+            assert(install_disclosure_calls==1u &&
+                   strstr(machine_resolution_log,"resolved=A3000 reason=default"));
+         } else if (!strcmp(mode,"route-failure-io-ready") ||
+                    !strcmp(mode,"route-failure-cap-ready")) {
+            const char *reason = !strcmp(mode,"route-failure-cap-ready") ?
+               "store-write-failed=journal-cap" : "store-write-failed=io";
+            arc_libretro_test_install_store_failure(reason);
+            arc_libretro_test_install_store_failure("write-commit-failed");
+            assert(install_failure_warn_logs==2u);
+            assert((!strcmp(mode,"route-failure-cap-ready") ?
+               install_cap_notices==1u && !install_storage_notices :
+               install_storage_notices==1u && !install_cap_notices));
+         } else if (!strcmp(mode,"route-grow-journal-ready")) {
+            assert(arc_libretro_test_install_fill_journal());
+         } else {
+            assert(strstr(machine_resolution_log,
+                          "resolved=A3000 reason=default"));
+         }
+         if (loaded) retro_unload_game();
+         if (ready && strcmp(mode,"route-unwritable-ready") &&
+             strcmp(mode,"route-grow-journal-ready"))
+            assert(same_snapshot(strstr(mode,"route-failure-") ?
+                    after_load : before,snapshot_tree(install_path)));
+         if (fault_close_substring)
+            assert(!strcmp(mode,"route-unwritable-ready"));
+         retro_deinit();
+         assert(open_files==0u && open_dirs==0u && dlclose(module)==0);
+         printf("install guest %s: %s\n",mode,loaded ? "loaded" : "refused");
+         return 0;
+      }
       if (!strcmp(argv[7], "interrupt-doorbell") ||
           !strcmp(argv[7], "reset-doorbell"))
          install_guest_defer_completion(true);
@@ -2252,6 +2382,8 @@ int main(int argc, char **argv)
          fprintf(stderr, "install guest load failed: %s\n", last_message);
          return 1;
       }
+      if (!strcmp(argv[7],"compaction-reload"))
+         assert(!fault_open_substring && install_compaction_failed_logs==1u);
       assert(strstr(machine_resolution_log,"resolved=A3020 reason=install-disc"));
       phase = PHASE_RUN;
       enum {

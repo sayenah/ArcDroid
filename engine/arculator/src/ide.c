@@ -165,7 +165,7 @@ void resetide(ide_t *ide, char *primary, int primary_spt, int primary_hpc,
 
 void resetide_drive(ide_t *ide)
 {
-    if (!attached(ide)) return;
+    if (!ide || !ide->backend.sectors || !ide->backend.read) return;
     discard(ide);
     irq(ide, false);
     ide->reset_pending = true;
@@ -187,7 +187,7 @@ static void sector_read_ready(ide_t *ide)
 void callbackide(void *opaque)
 {
     ide_t *ide = opaque;
-    if (!attached(ide)) return;
+    if (!ide || !ide->backend.sectors || !ide->backend.read) return;
     if (ide->reset_pending) {
         ide->reset_pending = false;
         ide->status = IDE_READY | IDE_DSC;
@@ -197,6 +197,7 @@ void callbackide(void *opaque)
         ide->head_drive &= 0xf0u;
         return;
     }
+    if (!attached(ide)) return;
     if (ide->active) {
         if (ide->write_transfer) {
             if (ide->transfer_index == ide->transfer_count) {
