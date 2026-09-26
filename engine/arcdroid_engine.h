@@ -4,6 +4,8 @@
 
 #include "arcdroid_core.h"
 #include "jfd.h"
+#include "arculator/src/ide.h"
+#include "adffs.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -35,6 +37,8 @@ bool arc_engine_start(const uint8_t *firmware, size_t firmware_size,
                       const ArcEngineMedia *media,
                       const ArcEngineMedia *helper,
                       const ArcMachineDescriptor *machine,
+                      const ArcIdeBackend *ide_backend,
+                      const ArcInstallDoorbell *doorbell,
                       const uint8_t cmos[ARC_CMOS_MACHINE_SIZE],
                       char *error, size_t error_size);
 void arc_engine_set_log_callback(ArcEngineLogCallback callback, void *opaque);
@@ -50,5 +54,9 @@ bool arc_engine_get_av_info(unsigned *width, unsigned *height, double *refresh_h
 void arc_engine_cmos(uint8_t output[ARC_CMOS_PAYLOAD_SIZE]);
 bool arc_engine_faulted(const char **message);
 bool arc_engine_active(void);
+void arc_engine_install_sector_read(unsigned drive, unsigned track,
+                                    unsigned side, unsigned sector,
+                                    unsigned density);
+bool arc_engine_install_doorbell_latched(void);
 
 #endif

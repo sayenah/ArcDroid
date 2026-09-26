@@ -56,15 +56,20 @@ typedef struct {
   bool image_in_app;
   bool eject;
   unsigned ram_kib;
+  unsigned expected_tree_count;
+  const char *expected_tree_sha256;
 } ArcInstallVariant;
 typedef struct {
   unsigned game_id;
   unsigned disc_count;
   unsigned revision;
   const char *script_sha256;
-  unsigned io_mask; /* bit 0: WD1772, bit 1: New-IO */
+  unsigned io_mask; /* RAM install: bit 0 WD1772, bit 1 New-IO */
+  unsigned hd_io_mask; /* Persisted install/run machine */
   ArcInstallVariant variants[ARC_INSTALL_MAX_VARIANTS];
   unsigned variant_count;
+  unsigned runnable_revisions[4];
+  unsigned runnable_revision_count;
 } ArcInstallProfile;
 typedef struct {
   unsigned game_id, disc_number, disc_count;
@@ -76,7 +81,11 @@ typedef struct {
   const ArcInstallVariant *variant;
   unsigned media_index[ARC_INSTALL_MAX_DISCS];
   char binding[41];
+  char storage_id[41];
 } ArcInstallPlan;
+typedef struct {
+  unsigned track, side, sector;
+} ArcInstallDoorbell;
 
 const ArcInstallProfile *arc_install_profiles(size_t *count);
 const ArcInstallProfile *arc_install_profile(unsigned game_id,
@@ -88,18 +97,38 @@ unsigned arc_install_match(const ArcInstallProfile *profile,
                            const char **reason);
 bool arc_install_script_matches(const ArcInstallProfile *profile,
                                 const uint8_t *script, size_t size);
+bool arc_install_revision_supported(const ArcInstallProfile *profile,
+                                     unsigned revision);
 bool arc_install_launcher(const ArcInstallPlan *plan, uint8_t *output,
                           size_t capacity, size_t *size);
+bool arc_install_hd_launcher(const ArcInstallPlan *plan, bool run_plan,
+                             uint8_t *output, size_t capacity, size_t *size);
+bool arc_install_marker(const ArcInstallPlan *plan, uint8_t *output,
+                        size_t capacity, size_t *size);
 bool arc_install_carrier_build(const ArcInstallPlan *plan,
                                const uint8_t *const raw[ARC_INSTALL_MAX_DISCS],
                                const size_t sizes[ARC_INSTALL_MAX_DISCS],
                                uint8_t output[ARC_ADFFS_DISC_SIZE],
                                char *error, size_t error_size);
+bool arc_install_hd_carrier_build(const ArcInstallPlan *plan,
+                                  const uint8_t *const raw[ARC_INSTALL_MAX_DISCS],
+                                  const size_t sizes[ARC_INSTALL_MAX_DISCS],
+                                  uint8_t output[ARC_ADFFS_DISC_SIZE],
+                                  ArcInstallDoorbell *doorbell,
+                                  char *error, size_t error_size);
+/* An authored, empty 800 K ADFS floppy for drive 0 of the HD run plan. */
+bool arc_install_run_placeholder_build(uint8_t output[ARC_ADFFS_DISC_SIZE],
+                                       char *error, size_t error_size);
 bool arc_install_support_build(const ArcAdffsPackage *package,
                                const ArcAdffsSelection *selection,
                                const ArcInstallPlan *plan,
                                uint8_t output[ARC_ADFFS_DISC_SIZE],
                                char *error, size_t error_size);
+bool arc_install_hd_support_build(const ArcAdffsPackage *package,
+                                  const ArcAdffsSelection *selection,
+                                  const ArcInstallPlan *plan, bool run_plan,
+                                  uint8_t output[ARC_ADFFS_DISC_SIZE],
+                                  char *error, size_t error_size);
 
 const ArcAdffsProfile *arc_adffs_profiles(size_t *count);
 bool arc_adffs_package_parse(const uint8_t *archive, size_t archive_size,

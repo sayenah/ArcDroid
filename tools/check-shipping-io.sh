@@ -7,6 +7,8 @@ command -v grep >/dev/null 2>&1 || {
 }
 
 sources='core/adffs.c
+core/install_disc.c
+core/install_validate.c
 core/hash.c
 core/machine.c
 core/input.c
@@ -24,6 +26,7 @@ core/jfd.c
 core/persistence.c
 core/cmos_defaults.c
 engine/arcdroid_engine.c
+engine/arc_install_doorbell.c
 engine/arcdroid_stubs.c
 engine/arculator/src/82c711.c
 engine/arculator/src/82c711_fdc.c
@@ -37,6 +40,7 @@ engine/arculator/src/ds2401.c
 engine/arculator/src/fpa.c
 engine/arculator/src/ioc.c
 engine/arculator/src/ioeb.c
+engine/arculator/src/ide.c
 engine/arculator/src/joystick.c
 engine/arculator/src/keyboard.c
 engine/arculator/src/lc.c
@@ -52,6 +56,7 @@ platform/arcdroid_joystick.c
 platform/arcdroid_sound.c
 platform/arcdroid_video.c
 libretro/arc_io.c
+libretro/install_store.c
 libretro/jfd_store.c
 libretro/arcdroid_libretro.c
 core/*.h

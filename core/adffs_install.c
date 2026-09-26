@@ -15,6 +15,14 @@ const ArcInstallProfile *arc_install_profile(unsigned game_id,
   return NULL;
 }
 
+bool arc_install_revision_supported(const ArcInstallProfile *profile,
+                                     unsigned revision) {
+  if (!profile) return false;
+  for (unsigned i = 0u; i < profile->runnable_revision_count; ++i)
+    if (profile->runnable_revisions[i] == revision) return true;
+  return false;
+}
+
 bool arc_install_script_matches(const ArcInstallProfile *profile,
                                 const uint8_t *script, size_t size) {
   char digest[65];
@@ -41,6 +49,10 @@ unsigned arc_install_match(const ArcInstallProfile *profile,
     char identity[512];
     int length = snprintf(identity, sizeof(identity), "%u:%u:%s",
                           profile->game_id, profile->revision, variant->key);
+    char storage_identity[512];
+    int storage_length = snprintf(storage_identity, sizeof(storage_identity),
+                                  "install-v1|F%05u|%s", profile->game_id,
+                                  variant->key);
     for (unsigned d = 0u; good && d < variant->disc_count; ++d) {
       const ArcInstallDisc *required = &variant->discs[d];
       unsigned matches = 0u;
@@ -67,9 +79,17 @@ unsigned arc_install_match(const ArcInstallProfile *profile,
       if (good && length > 0 && (size_t)length < sizeof(identity))
         length += snprintf(identity + length, sizeof(identity) - (size_t)length,
                            ":%u:%s", required->number, required->sha1);
+      if (good && storage_length > 0 &&
+          (size_t)storage_length < sizeof(storage_identity))
+        storage_length += snprintf(storage_identity + storage_length,
+             sizeof(storage_identity) - (size_t)storage_length,
+             "|%u=%s", required->number, required->sha1);
     }
-    if (!good || length < 0 || (size_t)length >= sizeof(identity)) continue;
+    if (!good || length < 0 || (size_t)length >= sizeof(identity) ||
+        storage_length < 0 ||
+        (size_t)storage_length >= sizeof(storage_identity)) continue;
     arc_sha1_hex(identity, (size_t)length, plan.binding);
+    arc_sha1_hex(storage_identity, (size_t)storage_length, plan.storage_id);
     plans[present++] = plan;
   }
   if (reason) *reason = present ? NULL : why;

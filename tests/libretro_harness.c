@@ -54,6 +54,25 @@ static uint64_t last_video_signature;
 static uint32_t last_video_pixel;
 static unsigned video_signature_last_change_frame;
 static bool last_video_was_duplicate;
+static bool probe_cached_video;
+static const uint8_t *cached_video;
+static unsigned cached_video_height;
+static size_t cached_video_pitch;
+static uint8_t cached_video_copy[4096u * 2048u * sizeof(uint32_t)];
+static unsigned cached_video_reads;
+static unsigned cached_video_av_reads, cached_video_geometry_reads;
+static unsigned cached_video_duplicate_reads;
+static unsigned cached_install_recreation_reads;
+static uint8_t cached_video_sample;
+static void read_cached_video(void)
+{
+   if (!probe_cached_video || !cached_video) return;
+   size_t bytes = (size_t)cached_video_height * cached_video_pitch;
+   assert(bytes && bytes <= sizeof(cached_video_copy));
+   memcpy(cached_video_copy, cached_video, bytes);
+   cached_video_sample ^= cached_video_copy[cached_video_reads % bytes];
+   ++cached_video_reads;
+}
 static uint64_t video_trace_signature = UINT64_C(1469598103934665603);
 static double reported_rates[16];
 static unsigned reported_rate_count;
@@ -132,6 +151,32 @@ static const char *option_pointer_stick = "right";
 static const char *option_pointer_speed = "600";
 static const char *option_pointer_deadzone = "15";
 static const char *option_writes = "shadow";
+static const char *option_install_saves = "temporary";
+static unsigned install_publication_seen, install_recreate_seen;
+static unsigned install_commit_seen, install_validation_seen;
+static unsigned install_doorbell_seen;
+static uint32_t install_candidate_last_lba;
+static unsigned install_candidate_writes;
+static bool install_guest_logging;
+static unsigned install_read_only_notices, install_storage_notices;
+static unsigned install_cap_notices;
+static unsigned install_failure_warn_logs;
+static unsigned install_compaction_failed_logs;
+static char last_install_outcome_message[512];
+static void count_install_notice(void)
+{
+   if (strstr(last_message,"choose Install Saves: Temporary") ||
+       strstr(last_message,"set Machine to Auto") ||
+       strstr(last_message,"Unable to create the install disc"))
+      snprintf(last_install_outcome_message,
+               sizeof(last_install_outcome_message),"%s",last_message);
+   if (strstr(last_message,"Install disc is read-only"))
+      ++install_read_only_notices;
+   if (strstr(last_message,"Install disc storage failed"))
+      ++install_storage_notices;
+   if (strstr(last_message,"Install disc save limit reached"))
+      ++install_cap_notices;
+}
 static const char *option_launch = "auto";
 static const char *option_launch_chooser = "remember";
 static const char *option_jfd_boot = "auto";
@@ -393,6 +438,37 @@ static void frontend_log(enum retro_log_level level, const char *format, ...)
    va_start(arguments, format);
    vsnprintf(message, sizeof(message), format, arguments);
    va_end(arguments);
+   if (install_guest_logging &&
+       (strstr(message,"Install disc:") || strstr(message,"JFD boot:") ||
+        strstr(message,"Machine:") || level >= RETRO_LOG_ERROR))
+      fprintf(stderr,"%s",message);
+   if (strstr(message, "Install disc: store-publication=committed"))
+      ++install_publication_seen;
+   if (strstr(message, "Install disc: run-plan=recreated"))
+      ++install_recreate_seen;
+   if (strstr(message, "Install disc: journal-commit"))
+      ++install_commit_seen;
+   if (strstr(message, "Install disc: validation=complete"))
+      ++install_validation_seen;
+   if (strstr(message, "Install disc: doorbell-latched"))
+      ++install_doorbell_seen;
+   if (strstr(message, "Install disc: run-plan=recreated same-session=1")) {
+      read_cached_video();
+      if (probe_cached_video && cached_video)
+         ++cached_install_recreation_reads;
+   }
+   if (strstr(message,"Install disc: store-write-failed=") ||
+       strstr(message,"Install disc: write-commit-failed")) {
+      assert(level==RETRO_LOG_WARN);
+      ++install_failure_warn_logs;
+   }
+   if (strstr(message,"Install disc: store-compaction=failed")) {
+      assert(level==RETRO_LOG_WARN);
+      ++install_compaction_failed_logs;
+   }
+   if (sscanf(message, "Install disc: candidate-write lba=%u",
+              &install_candidate_last_lba)==1)
+      ++install_candidate_writes;
    if (!strncmp(message, "Machine: requested=", 19u))
       snprintf(machine_resolution_log, sizeof(machine_resolution_log), "%s", message);
    if (strstr(message, "flagged for RiscPC-class machines"))
@@ -509,7 +585,7 @@ static bool environment(unsigned command, void *data)
          const struct retro_core_options_v2 *options = data;
          unsigned count = 0u;
          while (options->definitions[count].key) ++count;
-         assert(count == 36u && options->categories &&
+         assert(count == 37u && options->categories &&
                 !strcmp(options->categories[0].key, "pad_mapping") &&
                 !strcmp(options->categories[0].desc, "Pad Mapping"));
          bool found_profile = false, found_osk = false, found_chooser = false;
@@ -691,6 +767,7 @@ static bool environment(unsigned command, void *data)
          else if (!strcmp(variable->key, "arcdroid_pointer_speed")) variable->value = option_pointer_speed;
          else if (!strcmp(variable->key, "arcdroid_pointer_deadzone")) variable->value = option_pointer_deadzone;
          else if (!strcmp(variable->key, "arcdroid_disk_writes")) variable->value = option_writes;
+         else if (!strcmp(variable->key, "arcdroid_install_saves")) variable->value = option_install_saves;
          else if (!strcmp(variable->key, "arcdroid_launch")) variable->value = option_launch;
          else if (!strcmp(variable->key, "arcdroid_launch_chooser"))
             variable->value = option_launch_chooser;
@@ -730,6 +807,8 @@ static bool environment(unsigned command, void *data)
          return true;
       case RETRO_ENVIRONMENT_SET_GEOMETRY:
       {
+         read_cached_video();
+         if (probe_cached_video && cached_video) ++cached_video_geometry_reads;
          const struct retro_game_geometry *geometry = data;
          assert(phase == PHASE_RUN);
          if (geometry->base_width == geometry_width &&
@@ -742,6 +821,8 @@ static bool environment(unsigned command, void *data)
       }
       case RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO:
       {
+         read_cached_video();
+         if (probe_cached_video && cached_video) ++cached_video_av_reads;
          const struct retro_system_av_info *av = data;
          assert(phase == PHASE_RUN && av->timing.fps >= 20.0 && av->timing.fps <= 200.0);
          assert(av->timing.fps < last_notified_rate - 0.01 ||
@@ -762,6 +843,7 @@ static bool environment(unsigned command, void *data)
       case RETRO_ENVIRONMENT_SET_MESSAGE_EXT:
          ++total_osd_calls;
          snprintf(last_message, sizeof(last_message), "%s", ((struct retro_message_ext *)data)->msg);
+         count_install_notice();
          if (strstr(last_message, "can no longer be saved this session"))
          {
             const struct retro_message_ext *message = data;
@@ -820,6 +902,7 @@ static bool environment(unsigned command, void *data)
       case RETRO_ENVIRONMENT_SET_MESSAGE:
          ++total_osd_calls;
          snprintf(last_message, sizeof(last_message), "%s", ((struct retro_message *)data)->msg);
+         count_install_notice();
          if (strstr(last_message, "Installed to a temporary RAM disc"))
             ++install_disclosure_calls;
          if (strstr(last_message, "flagged for RiscPC-class machines"))
@@ -885,7 +968,16 @@ static void video(const void *data, unsigned w, unsigned h, size_t pitch)
 {
    assert((data || can_dupe) && w > 0u && w <= 4096u && h > 0u && h <= 2048u && pitch >= w * 4u);
    last_video_was_duplicate = data == NULL;
-   if (!data) { ++duplicate_video_frames; ++video_frames; return; }
+   if (!data) {
+      read_cached_video();
+      if (probe_cached_video && cached_video) ++cached_video_duplicate_reads;
+      ++duplicate_video_frames; ++video_frames; return;
+   }
+   if (probe_cached_video) {
+      cached_video = data;
+      cached_video_height = h;
+      cached_video_pitch = pitch;
+   }
    memcpy(&last_video_pixel, data, sizeof(last_video_pixel));
    last_video_pixel &= 0x00ffffffu;
    assert(w == geometry_width && h == geometry_height);
@@ -1310,9 +1402,12 @@ static void print_usage(FILE *stream, const char *program)
       "  %s CORE SAVE_ROM RW_JFD DATA --jfd-writes FIXTURES\n"
       "  %s CORE ROM CONTENT DATA --real-boot "
       "[--machine A3000|A3010|A3020|A4000] "
-      "[--joystick Keyboard|A3010] [--osk-script FILE]\n"
+      "[--joystick Keyboard|A3010] "
+      "[--install-saves persistent|temporary] [--osk-script FILE]\n"
+      "  %s --self-test-parser\n"
       "  %s CORE ROM CONTENT DATA MEDIA_ROM PLAYLIST DISC1 DISC2 JFD JFD2 "
       "FIXTURES APP ADFFS_PACKAGE ADFFS_JFD ZIP_FIXTURES\n"
+      "Append --cached-frame-probe to make the frontend reread its cached frame on A/V changes and duplicate frames.\n"
       "\n"
       "OSK script grammar (one command per line; # begins a comment):\n"
       "  wait N                              run N emulated fields\n"
@@ -1324,9 +1419,42 @@ static void print_usage(FILE *stream, const char *program)
       "  move DX DY                          send one libretro mouse delta\n"
       "  click MASK HOLD                     hold mouse buttons for HOLD fields\n"
       "                                      MASK: 1 Select, 2 Adjust, 4 Menu\n"
+      "  pad BUTTON FIELDS                   hold port 0 RetroPad id 0-15 for FIELDS fields, then release for one field\n"
+      "  drag MASK DX DY FIELDS             hold mouse mask 0-7 and send DX DY each field, then release for one field\n"
       "Screenshots are written as DATA/evidence/NAME.ppm. NAME may contain\n"
       "letters, digits, dot, underscore, or hyphen (but not . or ..).\n",
-      program, program, program, program, program);
+      program, program, program, program, program, program);
+}
+
+static bool script_unsigned(const char *word, unsigned long maximum,
+                            bool allow_zero, unsigned long *value)
+{
+   if (!word || !*word || !value) return false;
+   for (const unsigned char *p = (const unsigned char *)word; *p; ++p)
+      if (!isdigit(*p)) return false;
+   char *end = NULL;
+   errno = 0;
+   unsigned long parsed = strtoul(word, &end, 10);
+   if (errno || !end || *end || parsed > maximum ||
+       (!allow_zero && !parsed)) return false;
+   *value = parsed;
+   return true;
+}
+
+static bool script_delta(const char *word, long *value)
+{
+   if (!word || !*word || !value) return false;
+   const unsigned char *p = (const unsigned char *)word;
+   if (*p == '-' || *p == '+') ++p;
+   if (!*p) return false;
+   for (; *p; ++p) if (!isdigit(*p)) return false;
+   char *end = NULL;
+   errno = 0;
+   long parsed = strtol(word, &end, 10);
+   if (errno || !end || *end || parsed < INT16_MIN ||
+       parsed > INT16_MAX) return false;
+   *value = parsed;
+   return true;
 }
 
 static bool script_key(const char *name, unsigned *key)
@@ -1439,6 +1567,8 @@ static bool run_osk_script(const char *path, OskScriptApi *api)
       char *first = strtok_r(NULL, " \t\r\n", &save);
       char *second = strtok_r(NULL, " \t\r\n", &save);
       char *extra = strtok_r(NULL, " \t\r\n", &save);
+      char *fourth = strtok_r(NULL, " \t\r\n", &save);
+      char *fifth = strtok_r(NULL, " \t\r\n", &save);
       unsigned key = 0u;
       if (!strcmp(command, "wait") && first && !second)
       {
@@ -1521,6 +1651,43 @@ static bool run_osk_script(const char *path, OskScriptApi *api)
             ok = api->mouse_samples() >= before + hold;
          }
       }
+      else if (!strcmp(command, "pad") && first && second && !extra)
+      {
+         unsigned long button, fields;
+         if (!script_unsigned(first, 15u, true, &button) ||
+             !script_unsigned(second, 1000000u, false, &fields)) ok = false;
+         else
+         {
+            joypad_buttons[0][button] = true;
+            for (unsigned long field = 0u; field < fields; ++field) api->run();
+            joypad_buttons[0][button] = false;
+            api->run();
+         }
+      }
+      else if (!strcmp(command, "drag") && first && second && extra &&
+               fourth && !fifth)
+      {
+         unsigned long mask, fields;
+         long dx, dy;
+         if (!script_unsigned(first, 7u, true, &mask) ||
+             !script_delta(second, &dx) || !script_delta(extra, &dy) ||
+             !script_unsigned(fourth, 1000000u, false, &fields)) ok = false;
+         else
+         {
+            unsigned before = api->mouse_samples();
+            mouse_port_buttons[1] = (unsigned)mask;
+            for (unsigned long field = 0u; field < fields; ++field)
+            {
+               mouse_port_x[1] = (int)dx;
+               mouse_port_y[1] = (int)dy;
+               api->run();
+            }
+            mouse_port_buttons[1] = 0u;
+            mouse_port_x[1] = mouse_port_y[1] = 0;
+            api->run();
+            ok = api->mouse_samples() >= before + fields;
+         }
+      }
       else
          ok = false;
       if (!ok)
@@ -1532,12 +1699,150 @@ static bool run_osk_script(const char *path, OskScriptApi *api)
    return ok;
 }
 
+static bool parse_real_boot_options(int count, char *const args[],
+                                    const char **osk_script)
+{
+   bool machine_seen = false, joystick_seen = false;
+   bool install_saves_seen = false, osk_script_seen = false;
+   for (int argument = 0; argument < count; ++argument)
+   {
+      if (!strcmp(args[argument], "--machine") && !machine_seen &&
+          argument + 1 < count)
+      {
+         const char *machine = args[++argument];
+         if (strcmp(machine, "A3000") && strcmp(machine, "A3010") &&
+             strcmp(machine, "A3020") && strcmp(machine, "A4000")) return false;
+         option_machine = machine;
+         machine_seen = true;
+      }
+      else if (!strcmp(args[argument], "--joystick") && !joystick_seen &&
+               argument + 1 < count)
+      {
+         const char *joystick = args[++argument];
+         if (strcmp(joystick, "Keyboard") && strcmp(joystick, "A3010"))
+            return false;
+         option_joystick = joystick;
+         joystick_seen = true;
+      }
+      else if (!strcmp(args[argument], "--install-saves") &&
+               !install_saves_seen && argument + 1 < count)
+      {
+         const char *value = args[++argument];
+         if (strcmp(value, "persistent") && strcmp(value, "temporary"))
+            return false;
+         option_install_saves = value;
+         install_saves_seen = true;
+      }
+      else if (!strcmp(args[argument], "--osk-script") &&
+               !osk_script_seen && argument + 1 < count)
+      {
+         *osk_script = args[++argument];
+         osk_script_seen = true;
+      }
+      else return false;
+   }
+   return true;
+}
+
+typedef struct {
+   uint16_t pad;
+   unsigned mouse_buttons;
+   int dx, dy;
+} ParserFrame;
+static ParserFrame parser_frames[8];
+static unsigned parser_frame_count;
+static void parser_test_run(void)
+{
+   assert(parser_frame_count < sizeof(parser_frames) / sizeof(parser_frames[0]));
+   ParserFrame *frame = &parser_frames[parser_frame_count++];
+   for (unsigned button = 0u; button < 16u; ++button)
+      if (joypad_buttons[0][button]) frame->pad |= (uint16_t)(1u << button);
+   frame->mouse_buttons = mouse_port_buttons[1];
+   frame->dx = mouse_port_x[1]; frame->dy = mouse_port_y[1];
+   mouse_port_x[1] = mouse_port_y[1] = 0;
+}
+static unsigned parser_test_samples(void) { return parser_frame_count; }
+static void parser_test_line(const char *line, bool expected)
+{
+   char path[] = "/tmp/arcdroid-osk-parser-XXXXXX";
+   int descriptor = mkstemp(path);
+   assert(descriptor >= 0);
+   FILE *file = fdopen(descriptor, "wb");
+   assert(file && fputs(line, file) >= 0 && fputc('\n', file) != EOF &&
+          !fclose(file));
+   memset(parser_frames, 0, sizeof(parser_frames));
+   parser_frame_count = 0u;
+   OskScriptApi api = {0};
+   api.run = parser_test_run;
+   api.mouse_samples = parser_test_samples;
+   assert(run_osk_script(path, &api) == expected);
+   assert(!unlink(path));
+   assert(!joypad_buttons[0][5] && !mouse_port_buttons[1] &&
+          !mouse_port_x[1] && !mouse_port_y[1]);
+   if (!expected) assert(parser_frame_count == 0u);
+}
+static void parser_self_test(void)
+{
+   const char *script = NULL;
+   char *persistent[] = {"--install-saves", "persistent"};
+   char *temporary[] = {"--install-saves", "temporary"};
+   char *invalid[] = {"--install-saves", "other"};
+   char *missing[] = {"--install-saves"};
+   char *duplicate[] = {"--install-saves", "persistent",
+                        "--install-saves", "temporary"};
+   assert(!strcmp(option_install_saves, "temporary"));
+   assert(parse_real_boot_options(0, NULL, &script) &&
+          !strcmp(option_install_saves, "temporary"));
+   assert(parse_real_boot_options(2, persistent, &script) &&
+          !strcmp(option_install_saves, "persistent"));
+   assert(parse_real_boot_options(2, temporary, &script) &&
+          !strcmp(option_install_saves, "temporary"));
+   assert(!parse_real_boot_options(2, invalid, &script) &&
+          !parse_real_boot_options(1, missing, &script) &&
+          !parse_real_boot_options(4, duplicate, &script));
+
+   parser_test_line("pad 5 3", true);
+   assert(parser_frame_count == 4u);
+   for (unsigned i = 0u; i < 3u; ++i)
+      assert(parser_frames[i].pad == (1u << 5));
+   assert(!parser_frames[3].pad);
+   parser_test_line("drag 3 -12 7 2", true);
+   assert(parser_frame_count == 3u);
+   for (unsigned i = 0u; i < 2u; ++i)
+      assert(parser_frames[i].mouse_buttons == 3u &&
+             parser_frames[i].dx == -12 && parser_frames[i].dy == 7);
+   assert(!parser_frames[2].mouse_buttons &&
+          !parser_frames[2].dx && !parser_frames[2].dy);
+   parser_test_line("drag 0 -32768 32767 1", true);
+   assert(parser_frame_count == 2u &&
+          parser_frames[0].dx == INT16_MIN &&
+          parser_frames[0].dy == INT16_MAX);
+   static const char *const invalid_lines[] = {
+      "pad 16 1", "pad -1 1", "pad five 1", "pad 5 0",
+      "pad 5 1x", "pad 5 1 extra", "drag 8 1 1 1",
+      "drag 1 32768 0 1", "drag 1 1x 0 1", "drag 1 1 1 0",
+      "drag 1 1 1 1 extra"
+   };
+   for (unsigned i = 0u; i < sizeof(invalid_lines) / sizeof(invalid_lines[0]); ++i)
+      parser_test_line(invalid_lines[i], false);
+   puts("libretro_harness: parser self-test passed");
+}
+
 #define LOAD(name) do { *(void **)(&name) = dlsym(module, #name); assert(name); } while (0)
 int main(int argc, char **argv)
 {
+   if (argc > 2 && !strcmp(argv[argc - 1], "--cached-frame-probe")) {
+      probe_cached_video = true;
+      --argc;
+   }
    if (argc == 2 && !strcmp(argv[1], "--help"))
    {
       print_usage(stdout, argv[0]);
+      return 0;
+   }
+   if (argc == 2 && !strcmp(argv[1], "--self-test-parser"))
+   {
+      parser_self_test();
       return 0;
    }
    bool real_boot = false;
@@ -1547,10 +1852,13 @@ int main(int argc, char **argv)
    bool jfd_merge_step = false;
    bool jfd_allocation_step = false;
    bool jfd_allocation_set = false;
+   bool install_guest = false;
    char jfd_content_path[4096] = {0}, jfd_fixture_path[4096] = {0};
    const char *osk_script = NULL;
    if (argc == 11 && !strcmp(argv[5], "--newio-smoke"))
       newio_smoke = true;
+   else if (argc == 8 && !strcmp(argv[5], "--install-guest"))
+      install_guest = true;
    else if (argc == 7 && !strcmp(argv[5], "--jfd-writes"))
       jfd_writes = true;
    else if (argc == 9 && !strcmp(argv[5], "--jfd-create-step"))
@@ -1564,47 +1872,10 @@ int main(int argc, char **argv)
    else if (argc >= 6 && !strcmp(argv[5], "--real-boot"))
    {
       real_boot = true;
-      bool machine_seen = false;
-      bool joystick_seen = false;
-      bool osk_script_seen = false;
-      for (int argument = 6; argument < argc; ++argument)
+      if (!parse_real_boot_options(argc - 6, argv + 6, &osk_script))
       {
-         if (!strcmp(argv[argument], "--machine") && !machine_seen &&
-             argument + 1 < argc)
-         {
-            const char *machine = argv[++argument];
-            if (strcmp(machine, "A3000") && strcmp(machine, "A3010") &&
-                strcmp(machine, "A3020") && strcmp(machine, "A4000"))
-            {
-               print_usage(stderr, argv[0]);
-               return 2;
-            }
-            option_machine = machine;
-            machine_seen = true;
-         }
-         else if (!strcmp(argv[argument], "--joystick") && !joystick_seen &&
-                  argument + 1 < argc)
-         {
-            const char *joystick = argv[++argument];
-            if (strcmp(joystick, "Keyboard") && strcmp(joystick, "A3010"))
-            {
-               print_usage(stderr, argv[0]);
-               return 2;
-            }
-            option_joystick = joystick;
-            joystick_seen = true;
-         }
-         else if (!strcmp(argv[argument], "--osk-script") &&
-                  !osk_script_seen && argument + 1 < argc)
-         {
-            osk_script = argv[++argument];
-            osk_script_seen = true;
-         }
-         else
-         {
-            print_usage(stderr, argv[0]);
-            return 2;
-         }
+         print_usage(stderr, argv[0]);
+         return 2;
       }
    }
    else if (argc != 5 && argc != 16)
@@ -1643,13 +1914,13 @@ int main(int argc, char **argv)
    make_directory(argv[4]); make_directory(system_path); make_directory(firmware_path);
    strncat(firmware_path, "/firmware", sizeof(firmware_path) - strlen(firmware_path) - 1u); make_directory(firmware_path);
    make_directory(save_path);
-   if (media_tests)
+   if (media_tests || install_guest)
    {
       char adffs_dir[4096], package_path[4096];
       snprintf(adffs_dir, sizeof(adffs_dir), "%s/arcdroid/adffs", system_path);
       make_directory(adffs_dir);
       snprintf(package_path, sizeof(package_path), "%s/synthetic.zip", adffs_dir);
-      copy_file(argv[13], package_path);
+      copy_file(install_guest ? argv[6] : argv[13], package_path);
    }
    if (real_boot)
    {
@@ -1700,6 +1971,7 @@ int main(int argc, char **argv)
    bool (*arc_engine_test_cmos_image)(uint8_t[ARC_CMOS_MACHINE_SIZE]) = NULL;
    bool (*arc_engine_test_cmos_write)(unsigned, uint8_t) = NULL;
    bool (*arc_engine_test_newio)(unsigned *, unsigned *, unsigned *, unsigned *, uint8_t *) = NULL;
+   unsigned (*arc_engine_test_floppy_reads)(unsigned) = NULL;
    bool (*arc_engine_test_arm2_swp_undefined)(void) = NULL;
    bool (*arc_engine_test_newio_dir)(bool, uint8_t *) = NULL;
    bool (*arc_engine_test_newio_read_start)(unsigned, uint8_t) = NULL;
@@ -1738,14 +2010,40 @@ int main(int argc, char **argv)
    void (*arc_libretro_test_fail_adffs_content_read)(bool) = NULL;
    void (*arc_libretro_test_fail_install_build)(bool) = NULL;
    void (*arc_libretro_test_fail_install_raw)(bool) = NULL;
+   void (*arc_libretro_test_install_store_failure)(const char *) = NULL;
+   bool (*arc_libretro_test_install_fill_journal)(void) = NULL;
    void (*arc_libretro_test_install_chooser_media)(bool, unsigned) = NULL;
    bool (*arc_libretro_test_adffs_content_read_failure_pending)(void) = NULL;
    bool (*arc_libretro_test_adffs_carrier_matches)(const void *, size_t) = NULL;
+   void (*install_guest_accept_test_os)(bool) = NULL;
+   void (*install_guest_defer_completion)(bool) = NULL;
+   bool (*install_guest_latched)(void) = NULL;
    void (*arc_platform_test_input_events_reset)(void) = NULL;
    size_t (*arc_platform_test_input_events)(ArcKartEvent *, size_t) = NULL;
-   if (real_boot || newio_smoke)
+   if (real_boot || newio_smoke || install_guest)
       *(void **)(&arc_engine_test_newio) = dlsym(module, "arc_engine_test_newio");
-   if (!real_boot && !newio_smoke && !jfd_writes && !jfd_create_step &&
+   if (install_guest) {
+      *(void **)(&arc_engine_test_drive_media) =
+         dlsym(module, "arc_engine_test_drive_media");
+      *(void **)(&arc_engine_test_floppy_reads) =
+         dlsym(module, "arc_engine_test_floppy_reads");
+      *(void **)(&install_guest_accept_test_os) =
+         dlsym(module, "arc_libretro_test_adffs_accept_test_os");
+      *(void **)(&install_guest_defer_completion) =
+         dlsym(module, "arc_libretro_test_defer_install_completion");
+      *(void **)(&install_guest_latched) =
+         dlsym(module, "arc_libretro_test_install_doorbell_latched");
+      *(void **)(&arc_libretro_test_install_store_failure) =
+         dlsym(module, "arc_libretro_test_install_store_failure");
+      *(void **)(&arc_libretro_test_install_fill_journal) =
+         dlsym(module, "arc_libretro_test_install_fill_journal");
+      assert(install_guest_accept_test_os && install_guest_defer_completion &&
+             install_guest_latched && arc_libretro_test_install_store_failure &&
+             arc_libretro_test_install_fill_journal &&
+             arc_engine_test_floppy_reads &&
+             arc_engine_test_drive_media);
+   }
+   if (!install_guest && !real_boot && !newio_smoke && !jfd_writes && !jfd_create_step &&
        !jfd_merge_step && !jfd_allocation_step && !jfd_allocation_set)
    {
       *(void **)(&arc_engine_audio_stats) = dlsym(module, "arc_engine_audio_stats");
@@ -1820,6 +2118,8 @@ int main(int argc, char **argv)
          dlsym(module, "arc_libretro_test_fail_install_build");
       *(void **)(&arc_libretro_test_fail_install_raw) =
          dlsym(module, "arc_libretro_test_fail_install_raw");
+      *(void **)(&arc_libretro_test_install_store_failure) =
+         dlsym(module, "arc_libretro_test_install_store_failure");
       *(void **)(&arc_libretro_test_install_chooser_media) =
          dlsym(module, "arc_libretro_test_install_chooser_media");
       *(void **)(&arc_libretro_test_adffs_content_read_failure_pending) =
@@ -2009,6 +2309,225 @@ int main(int argc, char **argv)
    struct retro_game_info game = {jfd_writes ? jfd_content_path : argv[3], NULL, 0u, NULL};
    uint64_t source_hash = hash_file(game.path);
 
+   if (install_guest)
+   {
+      install_guest_logging = true;
+      bool route = !strncmp(argv[7],"route-",6u);
+      assert(!strcmp(argv[7], "first") || !strcmp(argv[7], "reload") ||
+             !strcmp(argv[7], "interrupt-marker") ||
+             !strcmp(argv[7], "interrupt-directory") ||
+             !strcmp(argv[7], "interrupt-doorbell") ||
+             !strcmp(argv[7], "reset-doorbell") ||
+             !strcmp(argv[7], "reset-directory") ||
+             !strcmp(argv[7], "compaction-reload") || route);
+      bool first = !strcmp(argv[7], "first");
+      bool interrupt = !strncmp(argv[7], "interrupt-", 10u) ||
+                       !strcmp(argv[7], "reset-directory") ||
+                       !strcmp(argv[7], "reset-doorbell");
+      option_machine = "Auto"; option_cpu = "Auto";
+      option_writes = "shadow"; option_install_saves = "persistent";
+      option_jfd_boot = "auto"; option_launch = "auto";
+      install_guest_accept_test_os(true);
+      if (!strcmp(argv[7],"compaction-reload"))
+         fault_open_substring=".hdf.tmp";
+      if (route) {
+         const char *mode=argv[7];
+         char package_path[4096], install_path[4096];
+         snprintf(package_path,sizeof(package_path),
+                  "%s/arcdroid/adffs/synthetic.zip",system_path);
+         snprintf(install_path,sizeof(install_path),
+                  "%s/arcdroid/install",save_path);
+         bool ready = strstr(mode,"ready") != NULL;
+         TreeSnapshot before = ready ? snapshot_tree(install_path) :
+                                       (TreeSnapshot){0};
+         if (!strcmp(mode,"route-off-ready")) option_writes="off";
+         if (!strcmp(mode,"route-temporary-ready"))
+            option_install_saves="temporary";
+         if (!strcmp(mode,"route-machine-ready") ||
+             !strcmp(mode,"route-machine-new")) {
+            option_machine="A3000"; option_cpu="ARM2";
+         }
+         if (!strcmp(mode,"route-nonnative-new"))
+            save_dir="content://arc-install-save";
+         if (!strcmp(mode,"route-new-probe") ||
+             !strcmp(mode,"route-unpublished-probe") ||
+             !strcmp(mode,"route-unwritable-ready"))
+            fault_close_substring="rwprobe.tmp";
+         if (!strcmp(mode,"route-no-package"))
+            assert(remove(package_path)==0);
+         if (!strcmp(mode,"route-untested-package") ||
+             !strcmp(mode,"route-script-mismatch")) {
+            char source[4096];
+            snprintf(source,sizeof(source),"%s",argv[6]);
+            char *slash=strrchr(source,'/'); assert(slash);
+            strcpy(slash+1u,!strcmp(mode,"route-untested-package") ?
+                             "untested.zip" : "script-changed.zip");
+            copy_file(source,package_path);
+            if (!strcmp(mode,"route-untested-package"))
+               option_adffs_package="untested";
+         }
+         if (!strcmp(mode,"route-no-311"))
+            install_guest_accept_test_os(false);
+         phase=PHASE_LOAD;
+         bool loaded=retro_load_game(&game);
+         TreeSnapshot after_load = ready && loaded ?
+            snapshot_tree(install_path) : before;
+         bool fail = !strcmp(mode,"route-new-probe") ||
+            !strcmp(mode,"route-unpublished-probe") ||
+            !strcmp(mode,"route-machine-ready") ||
+            !strcmp(mode,"route-machine-new") ||
+            !strcmp(mode,"route-nonnative-new");
+         assert(loaded != fail);
+         if (fail) {
+            assert(strstr(last_install_outcome_message,
+               !strcmp(mode,"route-machine-ready") ? "set Machine to Auto" :
+               "choose Install Saves: Temporary"));
+         } else if (!strcmp(mode,"route-off-ready") ||
+                    !strcmp(mode,"route-unwritable-ready")) {
+            assert(install_read_only_notices==1u);
+         } else if (!strcmp(mode,"route-temporary-ready")) {
+            assert(install_disclosure_calls==1u &&
+                   strstr(machine_resolution_log,"resolved=A3000 reason=default"));
+         } else if (!strcmp(mode,"route-failure-io-ready") ||
+                    !strcmp(mode,"route-failure-cap-ready")) {
+            const char *reason = !strcmp(mode,"route-failure-cap-ready") ?
+               "store-write-failed=journal-cap" : "store-write-failed=io";
+            arc_libretro_test_install_store_failure(reason);
+            arc_libretro_test_install_store_failure("write-commit-failed");
+            assert(install_failure_warn_logs==2u);
+            assert((!strcmp(mode,"route-failure-cap-ready") ?
+               install_cap_notices==1u && !install_storage_notices :
+               install_storage_notices==1u && !install_cap_notices));
+         } else if (!strcmp(mode,"route-grow-journal-ready")) {
+            assert(arc_libretro_test_install_fill_journal());
+         } else {
+            assert(strstr(machine_resolution_log,
+                          "resolved=A3000 reason=default"));
+         }
+         if (loaded) retro_unload_game();
+         if (ready && strcmp(mode,"route-unwritable-ready") &&
+             strcmp(mode,"route-grow-journal-ready"))
+            assert(same_snapshot(strstr(mode,"route-failure-") ?
+                    after_load : before,snapshot_tree(install_path)));
+         if (fault_close_substring)
+            assert(!strcmp(mode,"route-unwritable-ready"));
+         retro_deinit();
+         assert(open_files==0u && open_dirs==0u && dlclose(module)==0);
+         printf("install guest %s: %s\n",mode,loaded ? "loaded" : "refused");
+         return 0;
+      }
+      if (!strcmp(argv[7], "interrupt-doorbell") ||
+          !strcmp(argv[7], "reset-doorbell"))
+         install_guest_defer_completion(true);
+      phase = PHASE_LOAD;
+      if (!retro_load_game(&game)) {
+         fprintf(stderr, "install guest load failed: %s\n", last_message);
+         return 1;
+      }
+      if (!strcmp(argv[7],"compaction-reload"))
+         assert(!fault_open_substring && install_compaction_failed_logs==1u);
+      assert(strstr(machine_resolution_log,"resolved=A3020 reason=install-disc"));
+      phase = PHASE_RUN;
+      enum {
+         INSTALL_MAP_LBA = ((2u * (512u * 8u - 32u) - 480u) * 1024u) / 512u,
+         INSTALL_MARKER_LBA = INSTALL_MAP_LBA + (16u * 1024u) / 512u,
+         INSTALL_DIRECTORY_LBA = INSTALL_MAP_LBA + (32u * 1024u) / 512u
+      };
+      unsigned steady = 0u;
+      for (unsigned frame=0u;frame<3000u;++frame) {
+         retro_run();
+         if (interrupt) {
+            if ((!strcmp(argv[7], "interrupt-marker") &&
+                 install_candidate_last_lba >= INSTALL_MARKER_LBA) ||
+                ((!strcmp(argv[7], "interrupt-directory") ||
+                  !strcmp(argv[7], "reset-directory")) &&
+                 install_candidate_last_lba >= INSTALL_DIRECTORY_LBA) ||
+                ((!strcmp(argv[7], "interrupt-doorbell") ||
+                  !strcmp(argv[7], "reset-doorbell")) &&
+                 install_guest_latched())) {
+               steady = 8u;
+               break;
+            }
+            continue;
+         }
+         bool outcome = first ? install_publication_seen &&
+            install_recreate_seen && install_commit_seen &&
+            install_validation_seen && install_doorbell_seen :
+            !install_publication_seen && install_commit_seen >= 9u;
+         if (outcome && video_frames > 10u &&
+             video_frames - video_signature_last_change_frame > 8u)
+            ++steady;
+         else steady = 0u;
+         if (steady >= 8u) break;
+      }
+      if (steady < 8u) {
+         unsigned commands=0u, reads=0u, success=0u, accesses=0u;
+         uint8_t device=0u;
+         if (arc_engine_test_newio)
+            (void)arc_engine_test_newio(&commands,&reads,&success,
+                                        &accesses,&device);
+         fprintf(stderr,"install guest phase=%s did not settle: publication=%u recreate=%u commit=%u validation=%u doorbell=%u frames=%u pixel=%08x\n",
+                 argv[7],install_publication_seen,install_recreate_seen,
+                 install_commit_seen,install_validation_seen,
+                 install_doorbell_seen,video_frames,last_video_pixel);
+         fprintf(stderr,"install guest IO: fdc_commands=%u fdc_reads=%u success=%u ide_accesses=%u device=%u\n",
+                 commands,reads,success,accesses,device);
+         return 1;
+      }
+      if (!interrupt) {
+         bool drive0_protected = false, drive1_protected = false;
+         char drive0_digest[41], drive1_digest[41];
+         assert(arc_engine_test_floppy_reads(1u) > 0u);
+         assert(arc_engine_test_drive_media(0u, &drive0_protected, drive0_digest) &&
+                arc_engine_test_drive_media(1u, &drive1_protected, drive1_digest) &&
+                drive0_protected && drive1_protected &&
+                strcmp(drive0_digest, drive1_digest));
+         uint8_t *blank = malloc(ARC_ADFFS_DISC_SIZE);
+         char build_error[128] = {0};
+         assert(blank && arc_install_run_placeholder_build(blank,
+            build_error, sizeof(build_error)));
+         ArcDigest blank_digest = arc_digest(blank, ARC_ADFFS_DISC_SIZE);
+         assert(!strcmp(drive0_digest, blank_digest.sha1));
+         free(blank);
+      }
+      if (interrupt) {
+         char ready[4096];
+         snprintf(ready,sizeof(ready),
+            "%s/arcdroid/install/fffbd5a69f9b43c4ea8cc69f1fe9234f393e3d45/ready.a",
+            save_path);
+         assert(install_candidate_writes && !file_exists(ready) &&
+                !install_publication_seen);
+         if (!strcmp(argv[7], "reset-directory") ||
+             !strcmp(argv[7], "reset-doorbell")) retro_reset();
+         assert(!file_exists(ready));
+         retro_unload_game(); retro_deinit();
+         assert(hash_file(game.path)==source_hash && dlclose(module)==0);
+         printf("install guest %s: candidate_writes=%u last_lba=%u unpublished\n",
+                argv[7],install_candidate_writes,install_candidate_last_lba);
+         return 0;
+      }
+      char signature_path[4096];
+      snprintf(signature_path,sizeof(signature_path),"%s/install-signature.txt",data_root);
+      if (first) {
+         FILE *out=fopen(signature_path,"wb"); assert(out);
+         assert(fprintf(out,"%016llx\n",
+                  (unsigned long long)last_video_signature)>0 && !fclose(out));
+         if (probe_cached_video)
+            assert(cached_install_recreation_reads == 1u);
+      } else {
+         FILE *in=fopen(signature_path,"rb"); assert(in);
+         unsigned long long earlier=0u;
+         assert(fscanf(in,"%llx",&earlier)==1 && !fclose(in));
+         assert(earlier != last_video_signature);
+      }
+      retro_unload_game(); retro_deinit();
+      assert(hash_file(game.path)==source_hash && dlclose(module)==0);
+      printf("install guest %s: frames=%u signature=%016llx publication=%u recreate=%u commit=%u\n",
+             argv[7],video_frames,(unsigned long long)last_video_signature,
+             install_publication_seen,install_recreate_seen,install_commit_seen);
+      return 0;
+   }
+
    if (jfd_allocation_set)
    {
       option_machine = argv[6];
@@ -2042,11 +2561,13 @@ int main(int argc, char **argv)
              !arc_libretro_test_jfd_probe_mask(0u, 0u));
       option_writes = "off"; variable_update = true;
       retro_reset();
+      read_cached_video(); /* Frontend may retain the pre-reset frame. */
       bool protected = false;
       assert(!arc_libretro_test_jfd_probe_mask(0u, 0u) &&
              arc_engine_test_drive_media(0u, &protected, NULL) && protected);
       option_writes = "shadow"; variable_update = true;
       retro_reset();
+      read_cached_video();
       assert(!arc_libretro_test_jfd_probe_mask(0u, 0u) &&
              arc_engine_test_drive_media(0u, &protected, NULL) && !protected);
       retro_unload_game(); retro_deinit();
@@ -2873,6 +3394,7 @@ int main(int argc, char **argv)
       option_cpu = "ARM250";
       option_joystick = "A3010";
       retro_reset();
+      read_cached_video(); /* A3000 -> A3010 keeps the frontend cache. */
       for (unsigned frame = 0u; frame < 180u; ++frame) retro_run();
       unsigned transition_commands = 0u, transition_reads = 0u;
       unsigned transition_success = 0u, transition_ide = 0u;
@@ -4692,7 +5214,8 @@ int main(int argc, char **argv)
          arc_engine_audio_stats(&sampled_underruns, &sampled_overruns);
          assert(sampled_underruns <= 2400u && sampled_overruns == 0u);
       }
-      retro_reset(); retro_unload_game();
+      retro_reset(); read_cached_video();
+      retro_unload_game(); read_cached_video();
       if (cycle == 0u)
       {
          read_exact(cycle_cmos_file, saved_cmos, sizeof(saved_cmos));
@@ -6390,6 +6913,7 @@ int main(int argc, char **argv)
       assert(arc_libretro_test_session_state() == 2u &&
              arc_libretro_test_chooser_focus() == 0u &&
              !file_exists(chooser_helper) && !file_exists(chooser_cmos));
+      read_cached_video();
       retro_run();
 
       /* No frontend SAVE_RAM surface can contaminate the private prepared
@@ -6413,6 +6937,7 @@ int main(int argc, char **argv)
              !memcmp(chooser_machine_cmos, clean_machine_cmos,
                      sizeof(chooser_machine_cmos)) &&
              file_exists(chooser_choice));
+      read_cached_video(); /* Chooser frame before the new machine's frame. */
       ASSERT_NO_SAVE_RAM();
       uint8_t actual_helper[ARC_LAUNCH_DISC_SIZE];
       read_exact(chooser_helper, actual_helper, sizeof(actual_helper));
@@ -8303,6 +8828,9 @@ int main(int argc, char **argv)
    assert(vidc_osd_ext_calls + vidc_osd_legacy_calls == persistent_osd_before + 2u);
    assert(saw_audio_counters);
    assert(set_variable_calls == 0u);
+   if (probe_cached_video)
+      assert(cached_video_av_reads && cached_video_geometry_reads &&
+             cached_video_duplicate_reads);
    assert(dlclose(module) == 0);
    printf("libretro_harness: payload signatures %016llx/%016llx; "
           "100 cycles, %u frames, %llu audio frames, "
@@ -8332,6 +8860,10 @@ int main(int argc, char **argv)
           (unsigned long long)sampled_underruns,
           (unsigned long long)sampled_overruns);
    printf("negotiated duplicate frames: %u\n", duplicate_video_frames);
+   if (probe_cached_video)
+      printf("cached frame rereads: total=%u A/V=%u geometry=%u duplicate=%u\n",
+             cached_video_reads, cached_video_av_reads,
+             cached_video_geometry_reads, cached_video_duplicate_reads);
    printf("VIDC messages: OSD ext/legacy=%u/%u, transient info logs=%u, warning logs=%u\n",
           vidc_osd_ext_calls, vidc_osd_legacy_calls,
           vidc_info_log_lines, vidc_warning_log_lines);

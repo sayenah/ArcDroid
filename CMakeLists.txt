@@ -47,6 +47,8 @@ set_target_properties(arcdroid_zlib PROPERTIES POSITION_INDEPENDENT_CODE ON)
 set(ARCDROID_CORE_SOURCES
   core/adffs.c
   core/adffs_install.c
+  core/install_disc.c
+  core/install_validate.c
   core/zip.c
   core/zip_content.c
   core/machine.c
@@ -79,8 +81,10 @@ set_target_properties(arcdroid_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 set(ARCDROID_LIBRETRO_SOURCES
   engine/arcdroid_engine.c
+  engine/arc_install_doorbell.c
   engine/arcdroid_stubs.c
   engine/arculator/src/82c711.c
+  engine/arculator/src/ide.c
   engine/arculator/src/82c711_fdc.c
   engine/arculator/src/arm.c
   engine/arculator/src/cmos.c
@@ -104,6 +108,7 @@ set(ARCDROID_LIBRETRO_SOURCES
   engine/arculator/src/wd1770.c
   libretro/arc_io.c
   libretro/jfd_store.c
+  libretro/install_store.c
   libretro/arcdroid_libretro.c
   platform/arcdroid_input.c
   platform/arcdroid_joystick.c
@@ -193,12 +198,74 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
     target_link_libraries(adffs_shipping_profile_test PRIVATE arcdroid_sanitizer_link)
   endif()
   target_compile_options(adffs_shipping_profile_test PRIVATE $<$<C_COMPILER_ID:GNU,Clang,AppleClang>:-UNDEBUG>)
+  add_executable(install_disc_test tests/install_disc_test.c)
+  target_link_libraries(install_disc_test PRIVATE arcdroid_core)
+  target_compile_options(install_disc_test PRIVATE
+    $<$<C_COMPILER_ID:GNU,Clang,AppleClang>:-UNDEBUG>)
+  if(ARCDROID_SANITIZERS)
+    target_link_libraries(install_disc_test PRIVATE arcdroid_sanitizer_link)
+  endif()
+  add_test(NAME install-disc-formatter COMMAND install_disc_test
+    "${CMAKE_CURRENT_BINARY_DIR}/tests/fixtures/generated/adffs/install-1.jfd")
+  add_executable(install_ide_test tests/install_ide_test.c
+    engine/arculator/src/ide.c)
+  target_include_directories(install_ide_test PRIVATE engine/arculator/src)
+  target_compile_options(install_ide_test PRIVATE
+    $<$<C_COMPILER_ID:GNU,Clang,AppleClang>:-UNDEBUG;-Wall;-Wextra;-Wpedantic>)
+  if(ARCDROID_SANITIZERS)
+    target_link_libraries(install_ide_test PRIVATE
+      arcdroid_sanitizer_compile arcdroid_sanitizer_link)
+  endif()
+  add_test(NAME install-ide-registers COMMAND install_ide_test)
+  add_executable(install_store_test tests/install_store_test.c
+    libretro/install_store.c libretro/arc_io.c)
+  target_include_directories(install_store_test PRIVATE core libretro libretro/include)
+  target_link_libraries(install_store_test PRIVATE arcdroid_core)
+  target_compile_options(install_store_test PRIVATE
+    $<$<C_COMPILER_ID:GNU,Clang,AppleClang>:-UNDEBUG;-Wall;-Wextra;-Wpedantic>)
+  if(ARCDROID_SANITIZERS)
+    target_link_libraries(install_store_test PRIVATE
+      arcdroid_sanitizer_compile arcdroid_sanitizer_link)
+  endif()
+  add_test(NAME install-disc-store COMMAND install_store_test)
   set(FIXTURE_DIR "${CMAKE_CURRENT_BINARY_DIR}/tests/fixtures/generated")
   add_library(arcdroid_core_test STATIC
     ${ARCDROID_CORE_SOURCES} tests/adffs_profiles_test.c tests/adffs_install_profiles_test.c tests/firmware_table_test.c)
   target_include_directories(arcdroid_core_test PUBLIC
     core libretro/include "${CMAKE_CURRENT_BINARY_DIR}/generated")
   target_link_libraries(arcdroid_core_test PRIVATE arcdroid_zlib)
+  add_executable(install_support_target tests/install_support_target.c
+    engine/arc_install_doorbell.c)
+  target_include_directories(install_support_target PRIVATE engine)
+  target_link_libraries(install_support_target PRIVATE arcdroid_core_test)
+  target_compile_options(install_support_target PRIVATE
+    $<$<C_COMPILER_ID:GNU,Clang,AppleClang>:-UNDEBUG>)
+  if(ARCDROID_SANITIZERS)
+    target_link_libraries(install_support_target PRIVATE
+      arcdroid_sanitizer_compile arcdroid_sanitizer_link)
+  endif()
+  add_custom_command(
+    OUTPUT "${FIXTURE_DIR}/arcdroid-install-guest.rom"
+    COMMAND $<TARGET_FILE:install_disc_test>
+      "${FIXTURE_DIR}/adffs/install-1.jfd"
+      "${FIXTURE_DIR}/arcdroid-install-candidate.hdf"
+    COMMAND $<TARGET_FILE:install_support_target>
+      "${FIXTURE_DIR}/adffs/install-1.jfd"
+      "${FIXTURE_DIR}/adffs/install-2.jfd"
+      "${FIXTURE_DIR}/arcdroid-install-doorbell.txt"
+    COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/generate_install_guest.py"
+      "${FIXTURE_DIR}/arcdroid-install-candidate.hdf"
+      "${FIXTURE_DIR}/arcdroid-install-doorbell.txt"
+      "${FIXTURE_DIR}/arcdroid-install-guest.rom"
+    DEPENDS install_disc_test install_support_target
+      "${FIXTURE_DIR}/adffs/install-1.jfd"
+      "${FIXTURE_DIR}/adffs/install-2.jfd"
+      "${FIXTURE_DIR}/adffs/synthetic.zip"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/generate_install_guest.py"
+    VERBATIM)
+  add_custom_target(install_guest_fixture ALL DEPENDS
+    "${FIXTURE_DIR}/arcdroid-install-guest.rom")
   target_compile_definitions(arcdroid_core_test PUBLIC ARCDROID_TEST_FAULTS=1)
   target_compile_options(arcdroid_core_test PRIVATE
     $<$<C_COMPILER_ID:GNU,Clang,AppleClang>:-Wall;-Wextra;-Wpedantic;-Werror=implicit-function-declaration>)
@@ -220,6 +287,7 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
   add_test(NAME jfd-engine-reader COMMAND jfd_reader_tests)
   add_executable(jfd_controller_tests
     tests/jfd_controller_tests.c
+    engine/arc_install_doorbell.c
     engine/arculator/src/wd1770.c
     engine/arculator/src/82c711_fdc.c
     engine/arculator/src/disc.c
@@ -227,7 +295,7 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
     engine/arculator/src/disc_jfd.c
     engine/arculator/src/timer.c)
   target_include_directories(jfd_controller_tests PRIVATE
-    core engine/compat engine/arculator/src libretro libretro/include)
+    core engine engine/compat engine/arculator/src libretro libretro/include)
   target_link_libraries(jfd_controller_tests PRIVATE arcdroid_core)
   target_compile_options(jfd_controller_tests PRIVATE
     $<$<C_COMPILER_ID:GNU,Clang,AppleClang>:-UNDEBUG;-Wall;-Wextra;-Wpedantic>)
@@ -587,7 +655,17 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
         arcdroid_sanitizer_compile arcdroid_sanitizer_link)
     endif()
     target_compile_options(libretro_harness PRIVATE $<$<C_COMPILER_ID:GNU,Clang,AppleClang>:-UNDEBUG>)
-    add_dependencies(libretro_harness test-fixtures arcdroid_libretro_test)
+    add_test(NAME libretro-parser-self-test COMMAND libretro_harness --self-test-parser)
+    add_dependencies(libretro_harness test-fixtures install_guest_fixture
+      arcdroid_libretro_test)
+    add_test(NAME install-guest-process COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/install_guest_process_test.py"
+      $<TARGET_FILE:libretro_harness>
+      $<TARGET_FILE:arcdroid_libretro_test>
+      "${FIXTURE_DIR}/arcdroid-install-guest.rom"
+      "${FIXTURE_DIR}/adffs/install-first.m3u"
+      "${FIXTURE_DIR}/adffs/synthetic.zip")
+    set_tests_properties(install-guest-process PROPERTIES TIMEOUT 900)
     add_test(NAME libretro-harness COMMAND libretro_harness
       $<TARGET_FILE:arcdroid_libretro_test>
       "${FIXTURE_DIR}/arcdroid-test.rom"
@@ -603,7 +681,7 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
       "${FIXTURE_DIR}/arcdroid-application-l.adl"
       "${FIXTURE_DIR}/adffs/synthetic.zip"
       "${FIXTURE_DIR}/adffs/eligible.jfd"
-      "${FIXTURE_DIR}/zip-content")
+      "${FIXTURE_DIR}/zip-content" --cached-frame-probe)
     add_test(NAME jfd-writes-libretro-harness COMMAND libretro_harness
       $<TARGET_FILE:arcdroid_libretro_test>
       "${FIXTURE_DIR}/arcdroid-jfd-save-test.rom"
@@ -632,7 +710,7 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
       "${FIXTURE_DIR}/arcdroid-media-disc1.adf"
       "${FIXTURE_DIR}/arcdroid-media-disc2.adf"
       "${FIXTURE_DIR}/arcdroid-application-l.adl"
-      "${FIXTURE_DIR}/hd-family/valid-f.adf")
+      "${FIXTURE_DIR}/hd-family/valid-f.adf" --cached-frame-probe)
     add_test(NAME mouse-script-harness COMMAND libretro_harness
       $<TARGET_FILE:arcdroid_libretro_test>
       "${FIXTURE_DIR}/arcdroid-test.rom"

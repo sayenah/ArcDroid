@@ -541,6 +541,68 @@ bool arc_install_launcher(const ArcInstallPlan *plan, uint8_t *output,
   return true;
 }
 
+bool arc_install_marker(const ArcInstallPlan *plan, uint8_t *output,
+                        size_t capacity, size_t *size) {
+  if (!plan || !plan->storage_id[0]) return false;
+  char marker[96];
+  int n = snprintf(marker, sizeof(marker), "ArcDroid install %s\r",
+                   plan->storage_id);
+  if (n < 0 || (size_t)n >= sizeof(marker)) return false;
+  if (size) *size = (size_t)n;
+  if (!output) return true;
+  if (capacity < (size_t)n) return false;
+  memcpy(output, marker, (size_t)n);
+  return true;
+}
+
+bool arc_install_hd_launcher(const ArcInstallPlan *plan, bool run_plan,
+                             uint8_t *output, size_t capacity, size_t *size) {
+  if (!plan || !plan->variant) return false;
+  char text[4096];
+  size_t at = 0u;
+  if (run_plan) {
+    const char *tail = strstr(launcher_text, "ADFMount ADFS::0.$.Game");
+    if (!tail) return false;
+    at = (size_t)(tail - launcher_text);
+    memcpy(text, launcher_text, at);
+  } else {
+    uint8_t original[4096] = {0};
+    size_t original_size = 0u;
+    if (!arc_install_launcher(plan, original, sizeof(original) - 1u,
+                              &original_size))
+      return false;
+    char final_step[128];
+    int final_size = snprintf(final_step, sizeof(final_step),
+        "Dir RAM::0.$.%s\rRun RAM::0.$.%s.!Run\r",
+        plan->variant->app, plan->variant->app);
+    if (final_size < 0 || (size_t)final_size >= sizeof(final_step) ||
+        (size_t)final_size > original_size ||
+        memcmp(original + original_size - (size_t)final_size,
+               final_step, (size_t)final_size)) return false;
+    /* Preserve every Slice 9 install command before its final run step. */
+    at = original_size - (size_t)final_size;
+    memcpy(text, original, at);
+    if (!plan->variant->eject &&
+        !append_step(text, sizeof(text), &at, "ADFEject\r")) return false;
+    if (!append_step(text, sizeof(text), &at,
+        "IfThere RAM::0.$.%s Then Copy RAM::0.$.%s ADFS::4.$.%s ~C~VRFQ Else Error ArcDroid install: hard-disc copy failed\r"
+        "IfThere ADFS::4.$.%s Then Set ArcDroid$Guard 1 Else Error ArcDroid install: hard-disc copy failed\r"
+        "Copy ADFS::0.$.ArcReady ADFS::4.$.ArcReady ~C~VFQ\r"
+        "IfThere ADFS::4.$.ArcReady Then Set ArcDroid$Guard 1 Else Error ArcDroid install: marker failed\r"
+        "Dismount :4\rCopy ADFS::0.$.ArcDoor RAM::0.$.ArcDoor ~C~VFQ\r",
+        plan->variant->app, plan->variant->app, plan->variant->app,
+        plan->variant->app)) return false;
+  }
+  if (run_plan && !append_step(text, sizeof(text), &at,
+        "Dir ADFS::4.$.%s\rRun ADFS::4.$.%s.!Run\r",
+        plan->variant->app, plan->variant->app)) return false;
+  if (size) *size = at;
+  if (!output) return true;
+  if (capacity < at) return false;
+  memcpy(output, text, at);
+  return true;
+}
+
 bool arc_adffs_stage1(uint32_t ram_size, uint8_t *o, size_t cap, size_t *sz) {
   char text[512];
   int length = snprintf(
@@ -699,8 +761,9 @@ static uint8_t oldsum(const uint8_t *p) {
   }
   return (uint8_t)c;
 }
-static bool make_disc(Node *root, uint8_t *out, char *e, size_t en) {
-  Node *all[ARC_ADFFS_MAX_MEMBERS + 16];
+static bool make_disc_ex(Node *root, uint8_t *out, ArcInstallDoorbell *doorbell,
+                         char *e, size_t en) {
+  Node *all[ARC_ADFFS_MAX_MEMBERS + 18];
   unsigned ac = 0;
   all[ac++] = root;
   for (unsigned i = 0; i < ac; ++i)
@@ -719,13 +782,25 @@ static bool make_disc(Node *root, uint8_t *out, char *e, size_t en) {
   for (unsigned i = 0; i < ac; ++i) {
     for (unsigned j = 0; j < all[i]->count; ++j)
       if (!all[i]->child[j]->dir) {
-        pos = align1k(pos);
+        Node *file = all[i]->child[j];
+        if (doorbell && !strcmp(file->name, "ArcDoor"))
+          pos = ((pos + 5119u) / 5120u) * 5120u;
+        else pos = align1k(pos);
         all[i]->child[j]->offset = pos;
-        if (all[i]->child[j]->size > ARC_ADFFS_DISC_SIZE - pos) {
+        if (pos > ARC_ADFFS_DISC_SIZE ||
+            all[i]->child[j]->size > ARC_ADFFS_DISC_SIZE - pos ||
+            (doorbell && !strcmp(file->name, "ArcDoor") &&
+             5120u > ARC_ADFFS_DISC_SIZE - pos)) {
           fail(e, en, "carried set does not fit support disc");
           return false;
         }
-        pos += (uint32_t)all[i]->child[j]->size;
+        if (doorbell && !strcmp(file->name, "ArcDoor")) {
+          unsigned track_side = pos / 5120u;
+          doorbell->track = track_side / 2u;
+          doorbell->side = track_side % 2u;
+          doorbell->sector = 0u;
+          pos += 5120u;
+        } else pos += (uint32_t)file->size;
       }
   }
   uint32_t free_at = align1k(pos);
@@ -765,12 +840,26 @@ static bool make_disc(Node *root, uint8_t *out, char *e, size_t en) {
   }
   return true;
 }
+static bool make_disc(Node *root, uint8_t *out, char *e, size_t en) {
+  return make_disc_ex(root, out, NULL, e, en);
+}
+bool arc_install_run_placeholder_build(uint8_t out[ARC_ADFFS_DISC_SIZE],
+                                       char *e, size_t en) {
+  if (!out) {
+    fail(e, en, "run placeholder output is missing");
+    return false;
+  }
+  Node root = {0};
+  root.dir = true;
+  strcpy(root.name, "$");
+  return make_disc(&root, out, e, en);
+}
 static Node *childdir(Node *p, const char *name, Node *pool, unsigned *used) {
   for (unsigned i = 0; i < p->count; ++i)
     if (!foldcmp(p->child[i]->name, name))
       return p->child[i]->dir ? p->child[i] : NULL;
   if (strlen(name) > 10u || p->count >= 77u ||
-      *used >= ARC_ADFFS_MAX_MEMBERS + 16u)
+      *used >= ARC_ADFFS_MAX_MEMBERS + 18u)
     return NULL;
   Node *n = &pool[(*used)++];
   memset(n, 0, sizeof(*n));
@@ -800,7 +889,7 @@ static bool addpath(Node *root, Node *pool, unsigned *used, const char *path,
     part = slash + 1;
   }
   if (!part[0] || strlen(part) > 10u || p->count >= 77u ||
-      *used >= ARC_ADFFS_MAX_MEMBERS + 16u)
+      *used >= ARC_ADFFS_MAX_MEMBERS + 18u)
     return false;
   for (unsigned i = 0; i < p->count; ++i)
     if (!foldcmp(p->child[i]->name, part))
@@ -834,14 +923,15 @@ bool arc_adffs_carrier_build(const uint8_t *jfd, size_t n,
     return false;
   return make_disc(root, out, e, en);
 }
-bool arc_install_carrier_build(const ArcInstallPlan *plan,
-                               const uint8_t *const raw[ARC_INSTALL_MAX_DISCS],
-                               const size_t sizes[ARC_INSTALL_MAX_DISCS],
-                               uint8_t out[ARC_ADFFS_DISC_SIZE], char *e,
-                               size_t en) {
+static bool install_carrier_build(const ArcInstallPlan *plan,
+                                  const uint8_t *const raw[ARC_INSTALL_MAX_DISCS],
+                                  const size_t sizes[ARC_INSTALL_MAX_DISCS],
+                                  ArcInstallDoorbell *doorbell,
+                                  uint8_t out[ARC_ADFFS_DISC_SIZE], char *e,
+                                  size_t en) {
   if (!plan || !plan->profile || !plan->variant || !raw || !sizes || !out)
     return false;
-  Node pool[ARC_INSTALL_MAX_DISCS + 2u] = {{0}};
+  Node pool[ARC_INSTALL_MAX_DISCS + 4u] = {{0}};
   unsigned used = 1u;
   Node *root = &pool[0];
   root->dir = true;
@@ -862,12 +952,41 @@ bool arc_install_carrier_build(const ArcInstallPlan *plan,
   if (length < 0 || (size_t)length >= sizeof(run) ||
       !addpath(root, pool, &used, "Run", (uint8_t *)run, (size_t)length,
                0xffffeb00u, 0u, 0x33u)) return false;
-  return make_disc(root, out, e, en);
+  uint8_t marker[96];
+  size_t marker_size = 0u;
+  static uint8_t door_data[] = "ArcDroid install doorbell\r";
+  if (doorbell &&
+      (!arc_install_marker(plan, marker, sizeof(marker), &marker_size) ||
+       !addpath(root, pool, &used, "ArcReady", marker, marker_size,
+                0xffffeb00u, 0u, 0x33u) ||
+       !addpath(root, pool, &used, "ArcDoor", door_data,
+                sizeof(door_data) - 1u, 0xffffeb00u, 0u, 0x33u))) {
+    fail(e, en, "install completion files are invalid");
+    return false;
+  }
+  return make_disc_ex(root, out, doorbell, e, en);
+}
+bool arc_install_carrier_build(const ArcInstallPlan *plan,
+                               const uint8_t *const raw[ARC_INSTALL_MAX_DISCS],
+                               const size_t sizes[ARC_INSTALL_MAX_DISCS],
+                               uint8_t out[ARC_ADFFS_DISC_SIZE], char *e,
+                               size_t en) {
+  return install_carrier_build(plan, raw, sizes, NULL, out, e, en);
+}
+bool arc_install_hd_carrier_build(const ArcInstallPlan *plan,
+                                  const uint8_t *const raw[ARC_INSTALL_MAX_DISCS],
+                                  const size_t sizes[ARC_INSTALL_MAX_DISCS],
+                                  uint8_t out[ARC_ADFFS_DISC_SIZE],
+                                  ArcInstallDoorbell *doorbell,
+                                  char *e, size_t en) {
+  if (!doorbell) return false;
+  return install_carrier_build(plan, raw, sizes, doorbell, out, e, en);
 }
 
 static bool support_build(const ArcAdffsPackage *p,
                           const ArcAdffsSelection *selection,
                           const ArcInstallPlan *plan,
+                          unsigned hd_mode,
                           uint8_t out[ARC_ADFFS_DISC_SIZE], char *e,
                           size_t en) {
   if (plan && !plan->variant) return false;
@@ -875,7 +994,7 @@ static bool support_build(const ArcAdffsPackage *p,
     fail(e, en, "support selection is missing");
     return false;
   }
-  Node *pool = calloc(ARC_ADFFS_MAX_MEMBERS + 16u, sizeof(*pool));
+  Node *pool = calloc(ARC_ADFFS_MAX_MEMBERS + 18u, sizeof(*pool));
   if (!pool) {
     fail(e, en, "out of memory");
     return false;
@@ -898,8 +1017,11 @@ static bool support_build(const ArcAdffsPackage *p,
   }
   uint8_t install_launcher[4096];
   size_t lsz;
-  bool launcher_ok = plan ?
-    arc_install_launcher(plan, install_launcher, sizeof(install_launcher), &lsz) :
+  bool launcher_ok = hd_mode ?
+    arc_install_hd_launcher(plan, hd_mode == 2u,
+                            install_launcher, sizeof(install_launcher), &lsz) :
+    plan ? arc_install_launcher(plan, install_launcher,
+                                sizeof(install_launcher), &lsz) :
     arc_adffs_launcher(NULL, 0u, &lsz);
   if (!launcher_ok) { free(pool); return false; }
   if (!addpath(root, pool, &used, "!Boot", boot, sizeof(boot) - 1, 0xffffeb00u,
@@ -932,7 +1054,7 @@ bool arc_adffs_support_build(const ArcAdffsPackage *p,
                              const ArcAdffsSelection *selection,
                              uint8_t out[ARC_ADFFS_DISC_SIZE], char *e,
                              size_t en) {
-  return support_build(p, selection, NULL, out, e, en);
+  return support_build(p, selection, NULL, 0u, out, e, en);
 }
 
 bool arc_install_support_build(const ArcAdffsPackage *p,
@@ -940,5 +1062,14 @@ bool arc_install_support_build(const ArcAdffsPackage *p,
                                const ArcInstallPlan *plan,
                                uint8_t out[ARC_ADFFS_DISC_SIZE], char *e,
                                size_t en) {
-  return support_build(p, selection, plan, out, e, en);
+  return support_build(p, selection, plan, 0u, out, e, en);
+}
+
+bool arc_install_hd_support_build(const ArcAdffsPackage *p,
+                                  const ArcAdffsSelection *selection,
+                                  const ArcInstallPlan *plan, bool run_plan,
+                                  uint8_t out[ARC_ADFFS_DISC_SIZE],
+                                  char *e, size_t en) {
+  return support_build(p, selection, plan, run_plan ? 2u : 1u,
+                       out, e, en);
 }

@@ -20,7 +20,9 @@ static bool same_variant(const ArcInstallVariant *left,
       !same_text(left->data_dir, right->data_dir) ||
       left->image_in_app != right->image_in_app ||
       left->eject != right->eject ||
-      left->ram_kib != right->ram_kib) return false;
+      left->ram_kib != right->ram_kib ||
+      left->expected_tree_count != right->expected_tree_count ||
+      !same_text(left->expected_tree_sha256, right->expected_tree_sha256)) return false;
   for (unsigned d = 0u; d < ARC_INSTALL_MAX_DISCS; ++d)
     if (left->discs[d].number != right->discs[d].number ||
         left->discs[d].size != right->discs[d].size ||
@@ -35,7 +37,11 @@ static bool same_profile(const ArcInstallProfile *left,
       left->revision != right->revision ||
       !same_text(left->script_sha256, right->script_sha256) ||
       left->io_mask != right->io_mask ||
-      left->variant_count != right->variant_count) return false;
+      left->hd_io_mask != right->hd_io_mask ||
+      left->variant_count != right->variant_count ||
+      left->runnable_revision_count != right->runnable_revision_count) return false;
+  for (unsigned r = 0u; r < left->runnable_revision_count; ++r)
+    if (left->runnable_revisions[r] != right->runnable_revisions[r]) return false;
   for (unsigned v = 0u; v < ARC_INSTALL_MAX_VARIANTS; ++v)
     if (!same_variant(&left->variants[v], &right->variants[v])) return false;
   return true;
@@ -75,10 +81,14 @@ int main(void) {
   CHECK(profiles[0].variants[0].ram_kib == 2000u &&
         profiles[1].variants[0].ram_kib == 2000u &&
         profiles[1].variants[1].ram_kib == 2000u);
+  CHECK(profiles[0].io_mask == 1u && profiles[0].hd_io_mask == 2u &&
+        profiles[1].io_mask == 1u && profiles[1].hd_io_mask == 2u &&
+        profiles[2].io_mask == 2u && profiles[2].hd_io_mask == 2u);
   for (size_t i = 0u; i < installs; ++i) {
     const ArcInstallProfile *profile = &profiles[i];
     CHECK(profile->game_id && profile->disc_count && profile->revision &&
           profile->io_mask && !(profile->io_mask & ~3u) &&
+          profile->hd_io_mask == 2u &&
           strlen(profile->script_sha256) == 64u &&
           profile->variant_count >= 1u &&
           profile->variant_count <= ARC_INSTALL_MAX_VARIANTS);

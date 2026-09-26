@@ -377,6 +377,15 @@ int main(int argc, char **argv) {
           *carrier2 = malloc(ARC_ADFFS_DISC_SIZE),
           *support = malloc(ARC_ADFFS_DISC_SIZE);
   assert(carrier && carrier2 && support);
+  test_stage("HD run-plan placeholder floppy");
+  memset(carrier, 0xa5, ARC_ADFFS_DISC_SIZE);
+  assert(arc_install_run_placeholder_build(carrier, error, sizeof(error)));
+  assert(arc_install_run_placeholder_build(carrier2, error, sizeof(error)) &&
+         !memcmp(carrier, carrier2, ARC_ADFFS_DISC_SIZE));
+  walk_disc(carrier);
+  assert(carrier[1029u] == 0u && le24(carrier) == 12u);
+  for (size_t at = 3072u; at < ARC_ADFFS_DISC_SIZE; ++at)
+    assert(carrier[at] == 0u);
   assert(arc_adffs_carrier_build(jfd, jn, carrier, error, sizeof(error)));
   assert(arc_adffs_carrier_build(jfd, jn, carrier2, error, sizeof(error)) &&
          !memcmp(carrier, carrier2, ARC_ADFFS_DISC_SIZE));
@@ -658,7 +667,18 @@ int main(int argc, char **argv) {
   assert(profile && arc_install_match(profile, media, 3u, plans, &why) == 2u &&
          !why && plans[0].media_index[1] == 1u &&
          plans[1].media_index[1] == 2u &&
-         strcmp(plans[0].binding, plans[1].binding));
+         strcmp(plans[0].binding, plans[1].binding) &&
+         !strcmp(plans[0].storage_id,
+                 "fffbd5a69f9b43c4ea8cc69f1fe9234f393e3d45") &&
+         strcmp(plans[0].storage_id, plans[1].storage_id));
+  ArcInstallProfile changed_revision = *profile;
+  changed_revision.revision = profile->revision + 1u;
+  ArcInstallPlan revised[ARC_INSTALL_MAX_VARIANTS];
+  assert(arc_install_match(&changed_revision, media, 3u, revised, &why)==2u &&
+         !strcmp(revised[0].storage_id, plans[0].storage_id));
+  ArcInstallMedia reordered_media[3] = {media[2],media[0],media[1]};
+  assert(arc_install_match(profile, reordered_media, 3u, revised, &why)==2u &&
+         !strcmp(revised[0].storage_id, plans[0].storage_id));
   assert(arc_install_match(profile, media, 1u, plans, &why) == 0u &&
          !strcmp(why, "incomplete-set"));
   media[3] = media[1];
@@ -718,6 +738,16 @@ int main(int argc, char **argv) {
          arc_install_support_build(install_package, &install_selection,
                                     &plans[0], install_support,
                                     error, sizeof(error)));
+  assert(arc_install_hd_support_build(install_package, &install_selection,
+                                     &plans[0], false, install_support,
+                                     error, sizeof(error)));
+  const uint8_t *hd_support_root = install_support + 1024u;
+  assert(!find_entry(hd_support_root, "ArcReady") &&
+         !find_entry(hd_support_root, "ArcDoor") &&
+         find_entry(hd_support_root, "ArcStage2"));
+  assert(arc_install_support_build(install_package, &install_selection,
+                                   &plans[0], install_support,
+                                   error, sizeof(error)));
   const uint8_t *install_root = install_carrier + 1024u;
   const uint8_t *disc1 = find_entry(install_root, "D1");
   const uint8_t *disc2 = find_entry(install_root, "D2");

@@ -26,6 +26,7 @@ src/ds2401.c src/ds2401.h
 src/fpa.c src/fpa.h
 src/ioc.c src/ioc.h
 src/ioeb.c src/ioeb.h
+src/ide.c src/ide.h
 src/joystick.c src/joystick.h
 src/keyboard.c src/keyboard.h src/keytable.h
 src/lc.c src/lc.h
@@ -45,8 +46,23 @@ This is an allowlisted copy, not a subtree. ArcDroid modifications carry an
 explicit notice in each modified upstream file.
 
 `src/82c711.c` resets the SuperIO configuration state for each cold machine
-creation and connects to ArcDroid's absent-bus IDE implementation. That model
-returns all-one reads, ignores writes, raises no IRQ, and imports no `ide.c`.
+creation and connects to ArcDroid's IDE implementation. With no attached disc
+the bus continues to return all-one reads, ignore writes, and raise no IRQ.
+Slice 10b imports upstream `src/ide.c` and `src/ide.h` from the pinned commit.
+The staged `ide.c` blob was verified as
+`585c4697e9d9f02cb380827705c15cfff27aca24`. ArcDroid replaces host
+`FILE` handling, desktop UI, and unbounded transfers with a 512-byte-sector
+backend supplied by the core. It latches full WRITE SECTOR(S) commands before
+one store commit, bounds CHS/LBA and count-zero transfers, handles byte and
+word data access, controller IRQ/timers, reset, and teardown, and refuses
+FORMAT and unsupported commands. `ide.h` replaces upstream file handles and
+desktop geometry with the bounded backend and transaction state. Slice 10b
+run 2 adds an optional callback to report each unsupported ABRT command code
+once per machine session; it does not change the command result. The source
+is attached only to A3020 install-disc sessions; no other machine gains a
+disc. `src/wd1770.c` and `src/82c711_fdc.c` additionally report controller
+READ SECTOR commands for the one-shot ArcDoor latch. These changes have
+per-file modification notices.
 `src/82c711_fdc.c` bounds guest-selected drives and FORMAT data, uses the
 controller invalid-command result in every build, and assigns `curdrive` only
 for commands with a drive selector (not SPECIFY, CONFIGURE or PERPENDICULAR),
@@ -132,7 +148,8 @@ credits are preserved in the imported `README.md`.
   console files: replaced by the libretro and ArcDroid platform layers.
 - All podules and dynamic loaders: outside Slice 1 and unsuitable for arbitrary
   runtime loading on Android.
-- HostFS, ST506, and IDE controllers: excluded; New-IO exposes an absent IDE bus.
+- HostFS and ST506 controllers: excluded. IDE is supplied only for Slice 10b
+  A3020 install-disc sessions.
 - FDI, APD, HFE, SCP, SSD, and DSD readers plus `fdi2raw`: deferred to
   separately hardened media slices.
 - Drive-noise WAV files: outside Slice 1 and not redistributable evidence.
