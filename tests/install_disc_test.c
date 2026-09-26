@@ -84,8 +84,91 @@ static uint8_t independent_zone_sum(const uint8_t *p)
    w += p[3] + (z >> 8u);
    return (uint8_t)(x ^ y ^ z ^ w);
 }
+static void test_hd_launchers(void)
+{
+   static const struct {
+      unsigned game_id, disc_count;
+      const char *variant_key;
+   } cases[] = {
+      {10140u, 2u, "etype"},
+      {10609u, 4u, "etype"},
+      {10609u, 4u, "xtra"},
+      {10587u, 1u, "premier"}
+   };
+   char generic[4096] = {0};
+   size_t generic_size = 0u;
+   assert(arc_adffs_launcher((uint8_t *)generic, sizeof(generic) - 1u,
+                             &generic_size) && generic_size < sizeof(generic));
+   const char *carrier_step = strstr(generic, "ADFMount ADFS::0.$.Game");
+   assert(carrier_step);
+   size_t prefix_size = (size_t)(carrier_step - generic);
+   generic[prefix_size] = 0;
+   for (size_t c = 0u; c < sizeof(cases) / sizeof(cases[0]); ++c) {
+      const ArcInstallProfile *profile = arc_install_profile(
+          cases[c].game_id, cases[c].disc_count);
+      assert(profile);
+      const ArcInstallVariant *variant = NULL;
+      for (unsigned v = 0u; v < profile->variant_count; ++v)
+         if (!strcmp(profile->variants[v].key, cases[c].variant_key))
+            variant = &profile->variants[v];
+      assert(variant);
+      ArcInstallPlan plan = {0};
+      plan.profile = profile;
+      plan.variant = variant;
+      char original[4096] = {0}, install[4096] = {0}, run[4096] = {0};
+      size_t original_size = 0u, install_size = 0u, run_size = 0u;
+      assert(arc_install_launcher(&plan, (uint8_t *)original,
+                                  sizeof(original) - 1u, &original_size) &&
+             arc_install_hd_launcher(&plan, false, (uint8_t *)install,
+                                     sizeof(install) - 1u, &install_size) &&
+             arc_install_hd_launcher(&plan, true, (uint8_t *)run,
+                                     sizeof(run) - 1u, &run_size));
+      char final_ram_step[128], final_hd_step[128], hd_tail[512];
+      int ram_n = snprintf(final_ram_step, sizeof(final_ram_step),
+          "Dir RAM::0.$.%s\rRun RAM::0.$.%s.!Run\r", variant->app,
+          variant->app);
+      int hd_n = snprintf(final_hd_step, sizeof(final_hd_step),
+          "Dir ADFS::4.$.%s\rRun ADFS::4.$.%s.!Run\r", variant->app,
+          variant->app);
+      int tail_n = snprintf(hd_tail, sizeof(hd_tail),
+          "IfThere RAM::0.$.%s Then Copy RAM::0.$.%s ADFS::4.$.%s ~C~VRFQ Else Error ArcDroid install: hard-disc copy failed\r"
+          "IfThere ADFS::4.$.%s Then Set ArcDroid$Guard 1 Else Error ArcDroid install: hard-disc copy failed\r"
+          "Copy ADFS::1.$.ArcReady ADFS::4.$.ArcReady ~C~VFQ\r"
+          "IfThere ADFS::4.$.ArcReady Then Set ArcDroid$Guard 1 Else Error ArcDroid install: marker failed\r"
+          "Dismount :4\rCopy ADFS::1.$.ArcDoor RAM::0.$.ArcDoor ~C~VFQ\r",
+          variant->app, variant->app, variant->app, variant->app);
+      assert(ram_n > 0 && (size_t)ram_n < sizeof(final_ram_step) &&
+             hd_n > 0 && (size_t)hd_n < sizeof(final_hd_step) &&
+             tail_n > 0 && (size_t)tail_n < sizeof(hd_tail) &&
+             original_size >= (size_t)ram_n &&
+             !memcmp(original + original_size - (size_t)ram_n,
+                     final_ram_step, (size_t)ram_n));
+      size_t install_prefix = original_size - (size_t)ram_n;
+      assert(install_size == install_prefix + (size_t)tail_n &&
+             !memcmp(install, original, install_prefix) &&
+             !memcmp(install + install_prefix, hd_tail, (size_t)tail_n));
+      assert(run_size == prefix_size + (size_t)hd_n &&
+             !memcmp(run, generic, prefix_size) &&
+             !memcmp(run + prefix_size, final_hd_step, (size_t)hd_n));
+      const char *line = generic;
+      unsigned found = 0u;
+      while ((line = strstr(line, "RMEnsure ")) != NULL) {
+         const char *end = strchr(line, '\r');
+         char command[256];
+         assert(end && (size_t)(end - line + 1u) < sizeof(command));
+         size_t length = (size_t)(end - line + 1u);
+         memcpy(command, line, length);
+         command[length] = 0;
+         assert(strstr(install, command) && strstr(run, command));
+         ++found;
+         line = end + 1u;
+      }
+      assert(found == 10u);
+   }
+}
 int main(int argc, char **argv)
 {
+   test_hd_launchers();
    assert(ARC_INSTALL_HD_SECTORS == 32256u);
    assert(ARC_INSTALL_HD_BYTES == 16515072u);
    uint8_t *first = malloc(ARC_INSTALL_HD_BYTES + 1u);

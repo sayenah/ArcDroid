@@ -571,10 +571,16 @@ bool arc_install_hd_launcher(const ArcInstallPlan *plan, bool run_plan,
     if (!arc_install_launcher(plan, original, sizeof(original) - 1u,
                               &original_size))
       return false;
-    char *tail = strstr((char *)original, "Dir RAM::0.$.");
-    /* arc_install_launcher emits bytes without a NUL terminator. */
-    if (!tail || (size_t)(tail - (char *)original) >= original_size) return false;
-    at = (size_t)(tail - (char *)original);
+    char final_step[128];
+    int final_size = snprintf(final_step, sizeof(final_step),
+        "Dir RAM::0.$.%s\rRun RAM::0.$.%s.!Run\r",
+        plan->variant->app, plan->variant->app);
+    if (final_size < 0 || (size_t)final_size >= sizeof(final_step) ||
+        (size_t)final_size > original_size ||
+        memcmp(original + original_size - (size_t)final_size,
+               final_step, (size_t)final_size)) return false;
+    /* Preserve every Slice 9 install command before its final run step. */
+    at = original_size - (size_t)final_size;
     memcpy(text, original, at);
     if (!append_step(text, sizeof(text), &at,
         "IfThere RAM::0.$.%s Then Copy RAM::0.$.%s ADFS::4.$.%s ~C~VRFQ Else Error ArcDroid install: hard-disc copy failed\r"
