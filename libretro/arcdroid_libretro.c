@@ -2613,16 +2613,22 @@ static bool arc_install_build(const ArcInstallPlan *plan,
       return false;
    }
 #endif
-   arc_adffs_carrier = hd_mode == 2u ? NULL : malloc(ARC_ADFFS_DISC_SIZE);
+   arc_adffs_carrier = malloc(ARC_ADFFS_DISC_SIZE);
    arc_adffs_support = malloc(ARC_ADFFS_DISC_SIZE);
-   if ((hd_mode != 2u && !arc_adffs_carrier) || !arc_adffs_support) {
+   if (!arc_adffs_carrier || !arc_adffs_support) {
       *reason = "construction";
       arc_adffs_discard();
       return false;
    }
-   bool okay = hd_mode == 2u ||
-      arc_install_carrier_prepare(plan, arc_adffs_carrier,
-                                  hd_mode == 1u, reason);
+   bool okay;
+   if (hd_mode == 2u) {
+      char error[160] = {0};
+      okay = arc_install_run_placeholder_build(arc_adffs_carrier,
+                                                error, sizeof(error));
+      if (!okay) *reason = "construction";
+   } else
+      okay = arc_install_carrier_prepare(plan, arc_adffs_carrier,
+                                         hd_mode == 1u, reason);
    if (okay) {
       char error[160] = {0};
       okay = hd_mode ? arc_install_hd_support_build(package, selection, plan,
@@ -4958,7 +4964,7 @@ static bool arc_construct_machine(const ArcMachineDescriptor *machine,
                              ARC_GEOMETRY_800K_D, NULL,
                              arc_adffs_support, ARC_ADFFS_DISC_SIZE};
    if (arc_adffs_active) {
-      mounted = arc_install_hd_mode == 2u ? NULL : &carrier;
+      mounted = &carrier;
       helper = support;
    }
    ArcIdeBackend ide_backend = {0};
@@ -4985,6 +4991,12 @@ static bool arc_construct_machine(const ArcMachineDescriptor *machine,
                          arc_install_hd_mode == 1u ? &arc_install_doorbell : NULL,
                          machine_cmos, error, error_size))
       return false;
+   if (arc_install_hd_mode == 2u && arc_log)
+      arc_log(RETRO_LOG_INFO,
+         "Install disc: run-plan=start drive0=memory geometry0=800K-D writable0=0 drive1=memory geometry1=800K-D writable1=0 cmos_boot_drive=%u cmos_boot=%u cmos_floppies=%u cmos_ide=%u cmos_raw11=%02X cmos_raw16=%02X cmos_raw135=%02X\n",
+         machine_cmos[75] & 7u, (machine_cmos[80] & 0x10u) ? 1u : 0u,
+         machine_cmos[199] & 7u, (machine_cmos[199] >> 6u) & 3u,
+         machine_cmos[75], machine_cmos[80], machine_cmos[199]);
    arc_session = ARC_SESSION_RUNNING;
    return true;
 }
@@ -5778,8 +5790,13 @@ static bool arc_install_complete(void)
                   RETRO_LOG_ERROR);
       return false;
    }
-   free(arc_adffs_carrier);
-   arc_adffs_carrier = NULL;
+   if (!arc_adffs_carrier ||
+       !arc_install_run_placeholder_build(arc_adffs_carrier,
+                                          error, sizeof(error))) {
+      arc_message(error[0] ? error : "Unable to prepare the run-plan floppy.",
+                  RETRO_LOG_ERROR);
+      return false;
+   }
    free(arc_adffs_support);
    arc_adffs_support = arc_adffs_support_run;
    arc_adffs_support_run = NULL;

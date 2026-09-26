@@ -26,7 +26,7 @@ static const ArcFirmwareFingerprint unsupported_launch_firmware = {
 };
 static const ArcFirmwareFingerprint install_guest_firmware = {
    ARC_OS_TEST, "ArcDroid install guest ROM", 524288u,
-   UINT32_C(0xda24c6b3), "807d1048a0057c9acc922b19df4f8d9a0a17602d",
+   UINT32_C(0xac017aee), "7c5a7d503a6cf262a315b21eaec56834f33dc386",
    ARC_RECIPE_COMBINED, 0u
 };
 

@@ -8,4 +8,7 @@ void arc_install_doorbell_read(unsigned drive, unsigned track,
                                unsigned side, unsigned sector,
                                unsigned density);
 bool arc_install_doorbell_latched(void);
+#if defined(ARCDROID_TEST_FAULTS)
+unsigned arc_install_test_read_commands(unsigned drive);
+#endif
 #endif

@@ -1899,6 +1899,7 @@ int main(int argc, char **argv)
    bool (*arc_engine_test_cmos_image)(uint8_t[ARC_CMOS_MACHINE_SIZE]) = NULL;
    bool (*arc_engine_test_cmos_write)(unsigned, uint8_t) = NULL;
    bool (*arc_engine_test_newio)(unsigned *, unsigned *, unsigned *, unsigned *, uint8_t *) = NULL;
+   unsigned (*arc_engine_test_floppy_reads)(unsigned) = NULL;
    bool (*arc_engine_test_arm2_swp_undefined)(void) = NULL;
    bool (*arc_engine_test_newio_dir)(bool, uint8_t *) = NULL;
    bool (*arc_engine_test_newio_read_start)(unsigned, uint8_t) = NULL;
@@ -1948,6 +1949,10 @@ int main(int argc, char **argv)
    if (real_boot || newio_smoke || install_guest)
       *(void **)(&arc_engine_test_newio) = dlsym(module, "arc_engine_test_newio");
    if (install_guest) {
+      *(void **)(&arc_engine_test_drive_media) =
+         dlsym(module, "arc_engine_test_drive_media");
+      *(void **)(&arc_engine_test_floppy_reads) =
+         dlsym(module, "arc_engine_test_floppy_reads");
       *(void **)(&install_guest_accept_test_os) =
          dlsym(module, "arc_libretro_test_adffs_accept_test_os");
       *(void **)(&install_guest_defer_completion) =
@@ -1955,7 +1960,8 @@ int main(int argc, char **argv)
       *(void **)(&install_guest_latched) =
          dlsym(module, "arc_libretro_test_install_doorbell_latched");
       assert(install_guest_accept_test_os && install_guest_defer_completion &&
-             install_guest_latched);
+             install_guest_latched && arc_engine_test_floppy_reads &&
+             arc_engine_test_drive_media);
    }
    if (!install_guest && !real_boot && !newio_smoke && !jfd_writes && !jfd_create_step &&
        !jfd_merge_step && !jfd_allocation_step && !jfd_allocation_set)
@@ -2293,6 +2299,22 @@ int main(int argc, char **argv)
          fprintf(stderr,"install guest IO: fdc_commands=%u fdc_reads=%u success=%u ide_accesses=%u device=%u\n",
                  commands,reads,success,accesses,device);
          return 1;
+      }
+      if (!interrupt) {
+         bool drive0_protected = false, drive1_protected = false;
+         char drive0_digest[41], drive1_digest[41];
+         assert(arc_engine_test_floppy_reads(1u) > 0u);
+         assert(arc_engine_test_drive_media(0u, &drive0_protected, drive0_digest) &&
+                arc_engine_test_drive_media(1u, &drive1_protected, drive1_digest) &&
+                drive0_protected && drive1_protected &&
+                strcmp(drive0_digest, drive1_digest));
+         uint8_t *blank = malloc(ARC_ADFFS_DISC_SIZE);
+         char build_error[128] = {0};
+         assert(blank && arc_install_run_placeholder_build(blank,
+            build_error, sizeof(build_error)));
+         ArcDigest blank_digest = arc_digest(blank, ARC_ADFFS_DISC_SIZE);
+         assert(!strcmp(drive0_digest, blank_digest.sha1));
+         free(blank);
       }
       if (interrupt) {
          char ready[4096];

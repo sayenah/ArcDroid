@@ -139,6 +139,9 @@ bool arc_engine_test_drive_media(unsigned drive, bool *write_protected,
    return true;
 }
 
+unsigned arc_engine_test_floppy_reads(unsigned drive)
+{ return arc_install_test_read_commands(drive); }
+
 bool arc_engine_test_cmos_image(uint8_t output[ARC_CMOS_MACHINE_SIZE])
 {
    if (!output || !arc_machine_live) return false;

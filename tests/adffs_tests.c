@@ -377,6 +377,15 @@ int main(int argc, char **argv) {
           *carrier2 = malloc(ARC_ADFFS_DISC_SIZE),
           *support = malloc(ARC_ADFFS_DISC_SIZE);
   assert(carrier && carrier2 && support);
+  test_stage("HD run-plan placeholder floppy");
+  memset(carrier, 0xa5, ARC_ADFFS_DISC_SIZE);
+  assert(arc_install_run_placeholder_build(carrier, error, sizeof(error)));
+  assert(arc_install_run_placeholder_build(carrier2, error, sizeof(error)) &&
+         !memcmp(carrier, carrier2, ARC_ADFFS_DISC_SIZE));
+  walk_disc(carrier);
+  assert(carrier[1029u] == 0u && le24(carrier) == 12u);
+  for (size_t at = 3072u; at < ARC_ADFFS_DISC_SIZE; ++at)
+    assert(carrier[at] == 0u);
   assert(arc_adffs_carrier_build(jfd, jn, carrier, error, sizeof(error)));
   assert(arc_adffs_carrier_build(jfd, jn, carrier2, error, sizeof(error)) &&
          !memcmp(carrier, carrier2, ARC_ADFFS_DISC_SIZE));

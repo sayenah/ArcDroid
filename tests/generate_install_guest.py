@@ -63,6 +63,16 @@ def build(candidate: bytes, target: tuple[int, int, int]) -> bytearray:
         a.branch("failure")
         a.label(tag + "_done")
 
+    def request_helper_read() -> None:
+        # 82C711 READ DATA of the stage-1 support disc, drive 1, sector zero.
+        a.ldr_const(0, 0x03310FC8)
+        a.mov(1, 0x1d); a.str(1, 0, byte=True)
+        a.ldr_const(0, 0x03310FDC)
+        a.mov(1, 1); a.str(1, 0, byte=True)
+        a.ldr_const(0, 0x03310FD4)
+        for value in (6, 1, 0, 0, 0, 3, 1, 0x1b, 0xff):
+            a.mov(1, value); a.str(1, 0, byte=True)
+
     a.ldr_const(0, 0x036E050C)
     a.mov(1, 0); a.str(1, 0)
     for page in range(6):
@@ -130,12 +140,14 @@ def build(candidate: bytes, target: tuple[int, int, int]) -> bytearray:
     a.branch("doorbell_wait")
 
     a.label("save_game")
+    request_helper_read()
     a.ldr_const(0, IDE_BASE)
     a.ldr_const(4, SAVE_LBA)
     a.ldr_const(10, 0x03800000 + SAVE_OFFSET)
     write_sector("save")
     a.mov(6, 0x31); a.branch("paint")
     a.label("reloaded")
+    request_helper_read()
     # Nine whole 256-sector commands exceed the 1 MiB load-time compaction
     # threshold while leaving the four-byte save signature untouched.
     a.ldr_const(0, IDE_BASE)

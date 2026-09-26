@@ -115,6 +115,9 @@ bool arc_install_hd_carrier_build(const ArcInstallPlan *plan,
                                   uint8_t output[ARC_ADFFS_DISC_SIZE],
                                   ArcInstallDoorbell *doorbell,
                                   char *error, size_t error_size);
+/* An authored, empty 800 K ADFS floppy for drive 0 of the HD run plan. */
+bool arc_install_run_placeholder_build(uint8_t output[ARC_ADFFS_DISC_SIZE],
+                                       char *error, size_t error_size);
 bool arc_install_support_build(const ArcAdffsPackage *package,
                                const ArcAdffsSelection *selection,
                                const ArcInstallPlan *plan,

@@ -843,6 +843,17 @@ static bool make_disc_ex(Node *root, uint8_t *out, ArcInstallDoorbell *doorbell,
 static bool make_disc(Node *root, uint8_t *out, char *e, size_t en) {
   return make_disc_ex(root, out, NULL, e, en);
 }
+bool arc_install_run_placeholder_build(uint8_t out[ARC_ADFFS_DISC_SIZE],
+                                       char *e, size_t en) {
+  if (!out) {
+    fail(e, en, "run placeholder output is missing");
+    return false;
+  }
+  Node root = {0};
+  root.dir = true;
+  strcpy(root.name, "$");
+  return make_disc(&root, out, e, en);
+}
 static Node *childdir(Node *p, const char *name, Node *pool, unsigned *used) {
   for (unsigned i = 0; i < p->count; ++i)
     if (!foldcmp(p->child[i]->name, name))
