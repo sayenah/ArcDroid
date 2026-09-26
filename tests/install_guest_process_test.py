@@ -51,17 +51,34 @@ def main() -> None:
             assert_no_package_bytes(data, canaries,
                                     result.stdout + result.stderr)
 
+        def store_bytes(data: Path) -> dict[str, bytes]:
+            store = data / "save" / "arcdroid" / "install"
+            return {str(path.relative_to(store)): path.read_bytes()
+                    for path in store.rglob("*") if path.is_file()}
+
+        ordinary = Path(root) / "ordinary"
+        preferred = Path(root) / "preferred"
+        run(ordinary, "first")
+        run(preferred, "first-adffs")
+        auto_store = store_bytes(ordinary)
+        assert auto_store and auto_store == store_bytes(preferred)
+        for phase in ("route-auto-ready", "route-adffs-ready"):
+            before_route = store_bytes(ordinary)
+            run(ordinary, phase)
+            assert store_bytes(ordinary) == before_route
+        run(ordinary, "reload")
+
         for interrupted in ("interrupt-marker", "interrupt-directory",
                             "reset-directory", "interrupt-doorbell",
-                            "reset-doorbell", None):
-            data = Path(root) / (interrupted or "ordinary")
-            for phase in ((interrupted, "first", "reload") if interrupted
-                          else ("first", "reload")):
+                            "reset-doorbell"):
+            data = Path(root) / interrupted
+            for phase in (interrupted, "first", "reload"):
                 run(data, phase)
                 if phase == "interrupt-marker":
                     run(data, "route-unpublished-probe")
-        ready = Path(root) / "ordinary"
+        ready = ordinary
         for phase in ("route-off-ready", "route-machine-ready",
+                      "route-reset-ready", "route-reset-gated-ready",
                       "route-unwritable-ready", "route-temporary-ready",
                       "route-failure-io-ready", "route-failure-cap-ready"):
             run(ready, phase)
@@ -70,6 +87,8 @@ def main() -> None:
                    (ready / "save" / "arcdroid" / "install").rglob("journal.g*"))
         run(ready, "compaction-reload")
         for phase in ("route-new-probe", "route-machine-new",
+                      "route-adffs-new", "route-reset-new",
+                      "route-reset-gated-new",
                       "route-nonnative-new", "route-no-package",
                       "route-untested-package", "route-script-mismatch",
                       "route-no-311"):

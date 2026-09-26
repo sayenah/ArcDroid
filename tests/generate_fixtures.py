@@ -1874,6 +1874,29 @@ def build_adffs_fixtures(output: Path) -> None:
 
     embedded = b"Set ArcFixture Embedded\rADFFS:extras.JoyMod\r"
     (output / "eligible.jfd").write_bytes(adffs_jfd(123, embedded=embedded))
+    route = adffs_jfd(54321, embedded=embedded)
+    (output / "route.jfd").write_bytes(route)
+    (output / "route-gzip.jfd").write_bytes(gzip_member(bytes(route)))
+    (output / "route.zip").write_bytes(_zip_bytes([
+        ("ArcDroid synthetic route.jfd", bytes(route), True)]))
+    (output / "route-multi.m3u").write_text("route.jfd\nembedded-only.jfd\n")
+    route_folder = output / "Route-folder.jfd"
+    route_folder.mkdir(exist_ok=True)
+    (route_folder / "Route-folder.jfd").write_bytes(route)
+    (route_folder / "Other.jfd").write_bytes(adffs_jfd(99999, embedded=embedded))
+    different = bytearray(route)
+    different[-1] ^= 1
+    (output / "route-digest.jfd").write_bytes(different)
+    longer = bytearray(route) + b"x"
+    struct.pack_into("<I", longer, 8, len(longer))
+    (output / "route-size.jfd").write_bytes(longer)
+    for name, disc, count, game in (
+            ("route-game.jfd", 1, 1, 54322),
+            ("route-disc.jfd", 2, 1, 54321),
+            ("route-count.jfd", 1, 2, 54321)):
+        changed = bytearray(route)
+        struct.pack_into("<HHI", changed, 12, disc, count, game)
+        (output / name).write_bytes(changed)
     (output / "embedded-only.jfd").write_bytes(adffs_jfd(99999, embedded=embedded))
     (output / "no-script.jfd").write_bytes(adffs_jfd(0))
     (output / "game-only.jfd").write_bytes(adffs_jfd(99999))

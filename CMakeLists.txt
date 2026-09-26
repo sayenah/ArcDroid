@@ -56,6 +56,7 @@ set(ARCDROID_CORE_SOURCES
   core/input.c
   core/input_mapping.c
   core/input_profiles.c
+  core/native_route.c
   core/osk.c
   core/launch.c
   core/launch_discovery.c
@@ -234,6 +235,20 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
   target_include_directories(arcdroid_core_test PUBLIC
     core libretro/include "${CMAKE_CURRENT_BINARY_DIR}/generated")
   target_link_libraries(arcdroid_core_test PRIVATE arcdroid_zlib)
+  add_executable(native_route_test tests/native_route_test.c)
+  target_link_libraries(native_route_test PRIVATE arcdroid_core_test)
+  target_compile_options(native_route_test PRIVATE $<$<C_COMPILER_ID:GNU,Clang,AppleClang>:-UNDEBUG>)
+  if(ARCDROID_SANITIZERS)
+    target_link_libraries(native_route_test PRIVATE arcdroid_sanitizer_link)
+  endif()
+  add_test(NAME native-route-table COMMAND native_route_test)
+  add_executable(native_route_shipping_test tests/native_route_shipping_test.c)
+  target_link_libraries(native_route_shipping_test PRIVATE arcdroid_core)
+  target_compile_options(native_route_shipping_test PRIVATE $<$<C_COMPILER_ID:GNU,Clang,AppleClang>:-UNDEBUG>)
+  if(ARCDROID_SANITIZERS)
+    target_link_libraries(native_route_shipping_test PRIVATE arcdroid_sanitizer_link)
+  endif()
+  add_test(NAME native-route-shipping COMMAND native_route_shipping_test)
   add_executable(install_support_target tests/install_support_target.c
     engine/arc_install_doorbell.c)
   target_include_directories(install_support_target PRIVATE engine)

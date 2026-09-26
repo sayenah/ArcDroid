@@ -91,6 +91,7 @@ static unsigned measured_oracle_mode;
 static bool measured_oracle_valid;
 static char last_message[512];
 static char machine_resolution_log[128];
+static unsigned machine_resolution_lines;
 static unsigned riscpc_log_count;
 static unsigned riscpc_osd_count;
 static unsigned vidc_osd_ext_calls;
@@ -162,9 +163,18 @@ static unsigned install_read_only_notices, install_storage_notices;
 static unsigned install_cap_notices;
 static unsigned install_failure_warn_logs;
 static unsigned install_compaction_failed_logs;
+static unsigned install_reset_failure_notices;
+static unsigned install_reload_notices, install_reload_warn_logs;
 static char last_install_outcome_message[512];
 static void count_install_notice(void)
 {
+   if (!strcmp(last_message,
+               "Install Saves: Temporary takes effect after reloading the content."))
+      ++install_reload_notices;
+   if (strstr(last_message, "set Machine to Auto") ||
+       strstr(last_message, "Persistent install saves require Machine: Auto") ||
+       strstr(last_message, "Unable to prepare the chosen install session"))
+      ++install_reset_failure_notices;
    if (strstr(last_message,"choose Install Saves: Temporary") ||
        strstr(last_message,"set Machine to Auto") ||
        strstr(last_message,"Unable to create the install disc"))
@@ -466,11 +476,19 @@ static void frontend_log(enum retro_log_level level, const char *format, ...)
       assert(level==RETRO_LOG_WARN);
       ++install_compaction_failed_logs;
    }
+   if (strstr(message,
+              "Install Saves: Temporary takes effect after reloading the content.")) {
+      assert(level==RETRO_LOG_WARN);
+      ++install_reload_warn_logs;
+   }
    if (sscanf(message, "Install disc: candidate-write lba=%u",
               &install_candidate_last_lba)==1)
       ++install_candidate_writes;
    if (!strncmp(message, "Machine: requested=", 19u))
+   {
+      ++machine_resolution_lines;
       snprintf(machine_resolution_log, sizeof(machine_resolution_log), "%s", message);
+   }
    if (strstr(message, "flagged for RiscPC-class machines"))
       ++riscpc_log_count;
    if (strstr(message, "ArcFixture") || strstr(message, "ArcDroid synthetic ADFFS"))
@@ -625,7 +643,9 @@ static bool environment(unsigned command, void *data)
                found_jfd_boot = true;
                assert(!strcmp(definition->default_value, "auto") &&
                       !strcmp(definition->values[0].value, "auto") &&
-                      !strcmp(definition->values[1].value, "native"));
+                      !strcmp(definition->values[1].value, "native") &&
+                      !strcmp(definition->values[2].value, "adffs") &&
+                      !strcmp(definition->values[2].label, "ADFFS preferred"));
             }
             if (!strcmp(definition->key, "arcdroid_adffs_package"))
             {
@@ -2020,7 +2040,7 @@ int main(int argc, char **argv)
    bool (*install_guest_latched)(void) = NULL;
    void (*arc_platform_test_input_events_reset)(void) = NULL;
    size_t (*arc_platform_test_input_events)(ArcKartEvent *, size_t) = NULL;
-   if (real_boot || newio_smoke || install_guest)
+   if (real_boot || newio_smoke || install_guest || media_tests)
       *(void **)(&arc_engine_test_newio) = dlsym(module, "arc_engine_test_newio");
    if (install_guest) {
       *(void **)(&arc_engine_test_drive_media) =
@@ -2037,9 +2057,12 @@ int main(int argc, char **argv)
          dlsym(module, "arc_libretro_test_install_store_failure");
       *(void **)(&arc_libretro_test_install_fill_journal) =
          dlsym(module, "arc_libretro_test_install_fill_journal");
+      *(void **)(&arc_libretro_test_session_state) =
+         dlsym(module, "arc_libretro_test_session_state");
       assert(install_guest_accept_test_os && install_guest_defer_completion &&
              install_guest_latched && arc_libretro_test_install_store_failure &&
              arc_libretro_test_install_fill_journal &&
+             arc_libretro_test_session_state &&
              arc_engine_test_floppy_reads &&
              arc_engine_test_drive_media);
    }
@@ -2313,20 +2336,23 @@ int main(int argc, char **argv)
    {
       install_guest_logging = true;
       bool route = !strncmp(argv[7],"route-",6u);
-      assert(!strcmp(argv[7], "first") || !strcmp(argv[7], "reload") ||
+      assert(!strcmp(argv[7], "first") || !strcmp(argv[7], "first-adffs") ||
+             !strcmp(argv[7], "reload") ||
              !strcmp(argv[7], "interrupt-marker") ||
              !strcmp(argv[7], "interrupt-directory") ||
              !strcmp(argv[7], "interrupt-doorbell") ||
              !strcmp(argv[7], "reset-doorbell") ||
              !strcmp(argv[7], "reset-directory") ||
              !strcmp(argv[7], "compaction-reload") || route);
-      bool first = !strcmp(argv[7], "first");
+      bool first = !strcmp(argv[7], "first") ||
+                   !strcmp(argv[7], "first-adffs");
       bool interrupt = !strncmp(argv[7], "interrupt-", 10u) ||
                        !strcmp(argv[7], "reset-directory") ||
                        !strcmp(argv[7], "reset-doorbell");
       option_machine = "Auto"; option_cpu = "Auto";
       option_writes = "shadow"; option_install_saves = "persistent";
       option_jfd_boot = "auto"; option_launch = "auto";
+      if (!strcmp(argv[7], "first-adffs")) option_jfd_boot = "adffs";
       install_guest_accept_test_os(true);
       if (!strcmp(argv[7],"compaction-reload"))
          fault_open_substring=".hdf.tmp";
@@ -2340,7 +2366,170 @@ int main(int argc, char **argv)
          bool ready = strstr(mode,"ready") != NULL;
          TreeSnapshot before = ready ? snapshot_tree(install_path) :
                                        (TreeSnapshot){0};
+         if (!strcmp(mode, "route-auto-ready") ||
+             !strcmp(mode, "route-adffs-ready")) {
+            if (!strcmp(mode, "route-adffs-ready")) option_jfd_boot = "adffs";
+            phase = PHASE_LOAD; assert(retro_load_game(&game));
+            assert(strstr(machine_resolution_log,
+                          "requested=Auto resolved=A3020 reason=install-disc") &&
+                   strstr(last_jfd_boot_log, "path=adffs-install") &&
+                   same_snapshot(before, snapshot_tree(install_path)));
+            phase = PHASE_RUN; retro_run();
+            assert(same_snapshot(before, snapshot_tree(install_path)));
+            retro_reset();
+            assert(arc_libretro_test_session_state() == 3u &&
+                   strstr(last_jfd_boot_log, "path=adffs-install") &&
+                   same_snapshot(before, snapshot_tree(install_path)));
+            retro_unload_game();
+            assert(same_snapshot(before, snapshot_tree(install_path)));
+            retro_deinit();
+            assert(open_files == 0u && open_dirs == 0u && dlclose(module) == 0);
+            printf("install guest %s: store unchanged through load, run, reset\n", mode);
+            return 0;
+         }
+         if (!strcmp(mode, "route-reset-gated-ready") ||
+             !strcmp(mode, "route-reset-gated-new")) {
+            option_jfd_boot = "native";
+            phase = PHASE_LOAD; assert(retro_load_game(&game));
+            assert(strstr(machine_resolution_log,
+                          "requested=Auto resolved=A3000 reason=default") &&
+                   disk_control.get_num_images() == 2u);
+            assert(disk_control.set_eject_state(true) &&
+                   disk_control.set_image_index(1u) &&
+                   disk_control.set_eject_state(false));
+            unsigned lines = machine_resolution_lines;
+            unsigned boots = jfd_boot_log_lines;
+            option_jfd_boot = "auto"; variable_update = true;
+            retro_reset();
+            assert(arc_libretro_test_session_state() == 3u &&
+                   disk_control.get_image_index() == 1u &&
+                   !disk_control.get_eject_state() &&
+                   machine_resolution_lines == lines &&
+                   jfd_boot_log_lines == boots &&
+                   !arc_engine_test_newio(NULL, NULL, NULL, NULL, NULL));
+            retro_unload_game();
+            if (!strcmp(mode, "route-reset-gated-ready")) {
+               option_jfd_boot = "native";
+               phase = PHASE_LOAD; assert(retro_load_game(&game));
+               assert(strstr(machine_resolution_log,
+                             "requested=Auto resolved=A3000 reason=default") &&
+                      disk_control.set_eject_state(true));
+               lines = machine_resolution_lines;
+               boots = jfd_boot_log_lines;
+               option_jfd_boot = "auto"; variable_update = true;
+               retro_reset();
+               assert(arc_libretro_test_session_state() == 3u &&
+                      disk_control.get_eject_state() &&
+                      disk_control.get_image_index() == 0u &&
+                      machine_resolution_lines == lines &&
+                      jfd_boot_log_lines == boots &&
+                      !arc_engine_test_newio(NULL, NULL, NULL, NULL, NULL));
+               retro_unload_game();
+            }
+            retro_deinit();
+            assert(open_files == 0u && open_dirs == 0u && dlclose(module) == 0);
+            printf("install guest %s: no promotion away from disc 1\n", mode);
+            return 0;
+         }
+         if (!strcmp(mode, "route-reset-ready") ||
+             !strcmp(mode, "route-reset-new")) {
+            uint8_t device_id = 0u;
+#define LOAD_INSTALL(boot, saves, machine, path) do { \
+               option_jfd_boot = (boot); \
+               option_install_saves = (saves); \
+               phase = PHASE_LOAD; assert(retro_load_game(&game)); \
+               assert(arc_libretro_test_session_state() == 3u && \
+                      strstr(machine_resolution_log, (machine)) && \
+                      strstr(last_jfd_boot_log, (path)) && \
+                      !arc_engine_test_newio(NULL, NULL, NULL, NULL, NULL)); \
+            } while (0)
+#define RESET_INSTALL(boot, saves, path, upgrade) do { \
+               unsigned lines = machine_resolution_lines; \
+               unsigned failures = install_reset_failure_notices; \
+               option_jfd_boot = (boot); \
+               option_install_saves = (saves); \
+               variable_update = true; \
+               retro_reset(); \
+               assert(arc_libretro_test_session_state() == 3u && \
+                      strstr(last_jfd_boot_log, (path)) && \
+                      machine_resolution_lines == lines + (upgrade) && \
+                      install_reset_failure_notices == failures && \
+                      arc_engine_test_newio(NULL, NULL, NULL, NULL, &device_id) && \
+                      device_id == 0x05u); \
+               if (upgrade) \
+                  assert(!strcmp(machine_resolution_log, \
+                     "Machine: requested=Auto resolved=A3020 reason=install-disc\n")); \
+            } while (0)
+            LOAD_INSTALL("native", "persistent",
+                         "requested=Auto resolved=A3000 reason=default",
+                         "path=native reason=install-option");
+            RESET_INSTALL("auto", "persistent", "path=adffs-install", 1u);
+            RESET_INSTALL("adffs", "persistent", "path=adffs-install", 0u);
+            RESET_INSTALL("native", "persistent",
+                          "path=native reason=install-option", 0u);
+            RESET_INSTALL("auto", "persistent", "path=adffs-install", 0u);
+            RESET_INSTALL("native", "persistent",
+                          "path=native reason=install-option", 0u);
+            retro_unload_game();
+            LOAD_INSTALL("native", "persistent",
+                         "requested=Auto resolved=A3000 reason=default",
+                         "path=native reason=install-option");
+            RESET_INSTALL("adffs", "persistent", "path=adffs-install", 1u);
+            retro_unload_game();
+            LOAD_INSTALL("auto", "temporary",
+                         "requested=Auto resolved=A3000 reason=default",
+                         "path=adffs-install");
+            RESET_INSTALL("auto", "persistent", "path=adffs-install", 1u);
+            unsigned lines = machine_resolution_lines;
+            unsigned notices = install_reload_notices;
+            unsigned warns = install_reload_warn_logs;
+            option_install_saves = "temporary"; variable_update = true;
+            retro_reset();
+            assert(arc_libretro_test_session_state() == 3u &&
+                   strstr(last_jfd_boot_log, "path=native reason=install-machine") &&
+                   machine_resolution_lines == lines &&
+                   install_reload_notices == notices + 1u &&
+                   install_reload_warn_logs == warns + 1u &&
+                   arc_engine_test_newio(NULL, NULL, NULL, NULL, &device_id) &&
+                   device_id == 0x05u);
+#undef RESET_INSTALL
+#undef LOAD_INSTALL
+            retro_unload_game();
+            if (!strcmp(mode, "route-reset-ready")) {
+               option_install_saves = "persistent";
+               phase = PHASE_LOAD; assert(retro_load_game(&game));
+               assert(strstr(machine_resolution_log,
+                             "requested=Auto resolved=A3020 reason=install-disc") &&
+                      strstr(last_jfd_boot_log, "path=adffs-install"));
+               lines = machine_resolution_lines;
+               notices = install_reload_notices;
+               warns = install_reload_warn_logs;
+               option_install_saves = "temporary"; variable_update = true;
+               retro_reset();
+               assert(arc_libretro_test_session_state() == 3u &&
+                      strstr(last_jfd_boot_log, "path=native reason=install-machine") &&
+                      machine_resolution_lines == lines &&
+                      install_reload_notices == notices + 1u &&
+                      install_reload_warn_logs == warns + 1u &&
+                      arc_engine_test_newio(NULL, NULL, NULL, NULL, &device_id) &&
+                      device_id == 0x05u);
+               retro_unload_game();
+               option_machine = "A3020"; option_cpu = "ARM250";
+               notices = install_reload_notices;
+               warns = install_reload_warn_logs;
+               phase = PHASE_LOAD; assert(retro_load_game(&game));
+               assert(strstr(last_jfd_boot_log, "path=native reason=install-machine") &&
+                      install_reload_notices == notices &&
+                      install_reload_warn_logs == warns);
+               retro_unload_game();
+            }
+            retro_deinit();
+            assert(open_files == 0u && open_dirs == 0u && dlclose(module) == 0);
+            printf("install guest %s: reset promotion and retention passed\n", mode);
+            return 0;
+         }
          if (!strcmp(mode,"route-off-ready")) option_writes="off";
+         if (!strcmp(mode,"route-adffs-new")) option_jfd_boot="adffs";
          if (!strcmp(mode,"route-temporary-ready"))
             option_install_saves="temporary";
          if (!strcmp(mode,"route-machine-ready") ||
@@ -2402,12 +2591,16 @@ int main(int argc, char **argv)
             assert(arc_libretro_test_install_fill_journal());
          } else {
             assert(strstr(machine_resolution_log,
-                          "resolved=A3000 reason=default"));
+               !strcmp(option_jfd_boot, "adffs") ?
+               "resolved=A3020 reason=install-disc" :
+               "resolved=A3000 reason=default"));
+            if (!strcmp(mode,"route-adffs-new"))
+               assert(strstr(last_jfd_boot_log, "path=adffs-install"));
          }
          if (loaded) retro_unload_game();
          if (ready && strcmp(mode,"route-unwritable-ready") &&
              strcmp(mode,"route-grow-journal-ready"))
-            assert(same_snapshot(strstr(mode,"route-failure-") ?
+            assert(same_snapshot((strstr(mode,"route-failure-")) ?
                     after_load : before,snapshot_tree(install_path)));
          if (fault_close_substring)
             assert(!strcmp(mode,"route-unwritable-ready"));
@@ -2489,6 +2682,20 @@ int main(int argc, char **argv)
          ArcDigest blank_digest = arc_digest(blank, ARC_ADFFS_DISC_SIZE);
          assert(!strcmp(drive0_digest, blank_digest.sha1));
          free(blank);
+      }
+      if (!strcmp(argv[7], "first-adffs")) {
+         char install_path[4096];
+         snprintf(install_path, sizeof(install_path), "%s/arcdroid/install", save_path);
+         TreeSnapshot before_reset = snapshot_tree(install_path);
+         assert(install_publication_seen && install_validation_seen &&
+                install_doorbell_seen && install_recreate_seen &&
+                install_commit_seen);
+         retro_reset();
+         assert(arc_libretro_test_session_state() == 3u &&
+                strstr(last_jfd_boot_log, "path=adffs-install") &&
+                strstr(machine_resolution_log,
+                       "resolved=A3020 reason=install-disc") &&
+                same_snapshot(before_reset, snapshot_tree(install_path)));
       }
       if (interrupt) {
          char ready[4096];
@@ -3068,6 +3275,12 @@ int main(int argc, char **argv)
       retro_reset();
       assert(jfd_native_notice_calls == native_notices_before + 1u);
       retro_unload_game();
+      option_jfd_boot = "adffs"; variable_update = true;
+      phase = PHASE_LOAD; assert(retro_load_game(&adffs_game));
+      assert(strstr(last_jfd_boot_log, "JFD boot: path=native reason=native-saves") &&
+             hash_file(adffs_jfd) == adffs_source_hash);
+      retro_unload_game();
+      option_jfd_boot = "auto"; variable_update = true;
 
       char install_one[4096], install_set[4096];
       snprintf(install_one, sizeof(install_one), "%s/../adffs/install-1.jfd",
@@ -8269,6 +8482,145 @@ int main(int argc, char **argv)
       option_jfd_boot = "auto";
       option_adffs_package = "verified";
       COPY_ADFFS_FIXTURE("synthetic.zip");
+      /* Slice 10d: only the test-core identity routes. Package lookup is
+       * observed at the VFS boundary, including failed directory opens. */
+      ADFFS_GAME("route.jfd", routed_plain);
+      ADFFS_GAME("route-gzip.jfd", routed_gzip);
+      ADFFS_GAME("route.zip", routed_zip);
+      ADFFS_GAME("Route-folder.jfd/Route-folder.jfd", routed_folder);
+      ADFFS_GAME("route-multi.m3u", routed_multi);
+      char package_dir[4096];
+      snprintf(package_dir, sizeof(package_dir), "%s/arcdroid/adffs", system_path);
+      observed_opendir_path = package_dir;
+#define EXPECT_ROUTE(media) do { \
+         unsigned package_lookups = observed_opendir_calls; \
+         unsigned notices = adffs_notice_calls; \
+         phase = PHASE_LOAD; assert(retro_load_game(&(media))); \
+         assert(strstr(last_jfd_boot_log, \
+                    "JFD boot: path=native reason=native-route game_id=54321 evidence=synthetic route fixture sha1=c4547664ee2d0706596f9ae8b2bd12a114c54224") && \
+                observed_opendir_calls == package_lookups && \
+                adffs_notice_calls == notices); \
+         retro_unload_game(); \
+      } while (0)
+      uint8_t routed_cmos[ARC_CMOS_MACHINE_SIZE], without_package_cmos[ARC_CMOS_MACHINE_SIZE];
+      char routed_drive[41], without_package_drive[41];
+      char routed_cmos_path[4096], routed_staged_path[4096];
+      char routed_machine_log[128];
+      phase = PHASE_LOAD; assert(retro_load_game(&routed_plain));
+      assert(arc_engine_test_cmos_image(routed_cmos) &&
+             arc_engine_test_drive_media(0u, NULL, routed_drive));
+      snprintf(routed_cmos_path, sizeof(routed_cmos_path), "%s",
+               arc_libretro_test_cmos_path());
+      snprintf(routed_staged_path, sizeof(routed_staged_path), "%s",
+               arc_libretro_test_staged_path(0u));
+      snprintf(routed_machine_log, sizeof(routed_machine_log), "%s",
+               machine_resolution_log);
+      retro_unload_game();
+      assert(remove(package_path) == 0);
+      option_jfd_boot = "adffs";
+      phase = PHASE_LOAD; assert(retro_load_game(&routed_plain));
+      assert(strstr(last_jfd_boot_log, "reason=no-package"));
+      assert(arc_engine_test_cmos_image(without_package_cmos));
+      assert(arc_engine_test_drive_media(0u, NULL, without_package_drive));
+      assert(!memcmp(routed_cmos, without_package_cmos, sizeof(routed_cmos)));
+      assert(!strcmp(routed_drive, without_package_drive));
+      assert(!strcmp(routed_cmos_path, arc_libretro_test_cmos_path()));
+      assert(!strcmp(routed_staged_path, arc_libretro_test_staged_path(0u)));
+      assert(!strcmp(routed_machine_log, machine_resolution_log));
+      retro_unload_game();
+      option_jfd_boot = "auto";
+      COPY_ADFFS_FIXTURE("synthetic.zip");
+      EXPECT_ROUTE(routed_plain);
+      EXPECT_ROUTE(routed_gzip);
+      EXPECT_ROUTE(routed_zip);
+      EXPECT_NATIVE(routed_folder, "multi-image", 0u, NULL);
+      EXPECT_NATIVE(routed_multi, "multi-image", 0u, NULL);
+      ADFFS_GAME("route-digest.jfd", route_digest);
+      ADFFS_GAME("route-size.jfd", route_size);
+      ADFFS_GAME("route-game.jfd", route_game);
+      ADFFS_GAME("route-disc.jfd", route_disc);
+      ADFFS_GAME("route-count.jfd", route_count);
+      EXPECT_ADFFS(route_digest,
+         "JFD boot: path=adffs script=embedded profile=synthetic-test version=\"Synthetic 1.0\"\n");
+      option_machine = "Auto"; option_cpu = "Auto";
+      phase = PHASE_LOAD; assert(retro_load_game(&route_digest));
+      assert(strstr(machine_resolution_log,
+                    "requested=Auto resolved=A3000 reason=default"));
+      unsigned plain_machine_lines = machine_resolution_lines;
+      option_jfd_boot = "adffs"; variable_update = true;
+      retro_reset();
+      assert(arc_libretro_test_session_state() == 3u &&
+             strstr(last_jfd_boot_log, "path=adffs") &&
+             machine_resolution_lines == plain_machine_lines &&
+             !arc_engine_test_newio(NULL, NULL, NULL, NULL, NULL));
+      option_jfd_boot = "native"; variable_update = true;
+      retro_reset();
+      assert(arc_libretro_test_session_state() == 3u &&
+             strstr(last_jfd_boot_log, "path=native reason=option") &&
+             machine_resolution_lines == plain_machine_lines &&
+             !arc_engine_test_newio(NULL, NULL, NULL, NULL, NULL));
+      retro_unload_game();
+      option_jfd_boot = "auto";
+      EXPECT_ADFFS(route_size,
+         "JFD boot: path=adffs script=embedded profile=synthetic-test version=\"Synthetic 1.0\"\n");
+      EXPECT_ADFFS(route_game,
+         "JFD boot: path=adffs script=embedded profile=synthetic-test version=\"Synthetic 1.0\"\n");
+      EXPECT_NATIVE(route_disc, "multi-disc", 0u, NULL);
+      EXPECT_NATIVE(route_count, "multi-disc", 0u, NULL);
+      option_jfd_boot = "native";
+      EXPECT_NATIVE(routed_plain, "option", 0u, NULL);
+      option_jfd_boot = "adffs";
+      EXPECT_ADFFS(routed_plain,
+         "JFD boot: path=adffs script=embedded profile=synthetic-test version=\"Synthetic 1.0\"\n");
+      option_jfd_boot = "auto";
+      option_launch = "off";
+      EXPECT_NATIVE(routed_plain, "launch-option", 0u, NULL);
+      option_launch = "app1";
+      EXPECT_NATIVE(routed_plain, "launch-option", 0u, NULL);
+      option_launch = "auto";
+      arc_libretro_test_adffs_accept_test_os(false);
+      EXPECT_NATIVE(routed_plain, "os", 0u, NULL);
+      arc_libretro_test_adffs_accept_test_os(true);
+      EXPECT_ROUTE(routed_plain);
+      option_jfd_boot = "adffs";
+      unsigned option_boot_lines = jfd_boot_log_lines;
+      phase = PHASE_LOAD; assert(retro_load_game(&routed_plain));
+      assert(strstr(last_jfd_boot_log, "path=adffs"));
+      option_jfd_boot = "auto";
+      variable_update = true;
+      phase = PHASE_RUN; retro_run();
+      assert(jfd_boot_log_lines == option_boot_lines + 1u);
+      unsigned routed_machine_lines = machine_resolution_lines;
+      retro_reset();
+      assert(strstr(last_jfd_boot_log, "reason=native-route") &&
+             machine_resolution_lines == routed_machine_lines &&
+             !arc_engine_test_newio(NULL, NULL, NULL, NULL, NULL));
+      retro_unload_game();
+      option_jfd_boot = "adffs";
+      phase = PHASE_LOAD; assert(retro_load_game(&routed_plain));
+      assert(strstr(last_jfd_boot_log, "path=adffs"));
+      retro_unload_game();
+      option_jfd_boot = "auto";
+      EXPECT_ROUTE(routed_plain);
+      assert(remove(package_path) == 0);
+      EXPECT_ROUTE(routed_plain);
+      option_jfd_boot = "adffs";
+      EXPECT_NATIVE(routed_plain, "no-package", 1u, "carries a JASPP boot script");
+      COPY_ADFFS_FIXTURE("bad-crc.zip");
+      option_jfd_boot = "auto";
+      EXPECT_ROUTE(routed_plain);
+      option_jfd_boot = "adffs";
+      EXPECT_NATIVE(routed_plain, "invalid-package:member-crc32-mismatch", 1u,
+                    "member-crc32-mismatch");
+      COPY_ADFFS_FIXTURE("untested.zip");
+      option_jfd_boot = "auto";
+      EXPECT_ROUTE(routed_plain);
+      option_jfd_boot = "adffs";
+      EXPECT_NATIVE(routed_plain, "untested-package", 1u, "untested-package");
+      option_jfd_boot = "auto";
+      COPY_ADFFS_FIXTURE("synthetic.zip");
+      observed_opendir_path = NULL;
+#undef EXPECT_ROUTE
       EXPECT_NATIVE(game, "not-jfd", 0u, NULL);
 
       ADFFS_GAME("multi.m3u", adffs_multi);
