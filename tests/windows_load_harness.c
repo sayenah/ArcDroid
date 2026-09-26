@@ -160,10 +160,25 @@ static bool environment(unsigned command, void *data)
       {
          const struct retro_core_options_v2 *options = data;
          unsigned count = 0u;
+         const struct retro_core_option_v2_definition *install_saves = NULL;
          assert(phase == PHASE_ENV && options->categories &&
                 !strcmp(options->categories[0].key, "pad_mapping"));
-         while (options->definitions[count].key) ++count;
-         assert(count == 36u);
+         while (options->definitions[count].key)
+         {
+            if (!strcmp(options->definitions[count].key, "arcdroid_install_saves"))
+            {
+               assert(!install_saves);
+               install_saves = &options->definitions[count];
+            }
+            ++count;
+         }
+         assert(count == 37u && install_saves && !install_saves->category_key);
+         assert(install_saves->values[0].value &&
+                !strcmp(install_saves->values[0].value, "persistent"));
+         assert(install_saves->values[1].value &&
+                !strcmp(install_saves->values[1].value, "temporary"));
+         assert(!install_saves->values[2].value && install_saves->default_value &&
+                !strcmp(install_saves->default_value, "persistent"));
          saw_options = true;
          return true;
       }
@@ -207,6 +222,7 @@ static bool environment(unsigned command, void *data)
          else if (!strcmp(variable->key, "arcdroid_pointer_speed")) variable->value = "600";
          else if (!strcmp(variable->key, "arcdroid_pointer_deadzone")) variable->value = "15";
          else if (!strcmp(variable->key, "arcdroid_disk_writes")) variable->value = "shadow";
+         else if (!strcmp(variable->key, "arcdroid_install_saves")) variable->value = "persistent";
          else if (!strcmp(variable->key, "arcdroid_launch")) variable->value = "auto";
          else if (!strcmp(variable->key, "arcdroid_launch_chooser")) variable->value = "remember";
          else if (!strcmp(variable->key, "arcdroid_jfd_boot")) variable->value = "auto";
