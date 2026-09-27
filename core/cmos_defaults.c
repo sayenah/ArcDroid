@@ -17,6 +17,11 @@ unsigned arc_cmos_raw_address(unsigned logical)
    return raw > 255u ? raw - 240u : raw;
 }
 
+unsigned arc_cmos_logical_address(unsigned raw)
+{
+   return raw >= 0x40u ? raw - 0x40u : raw + 176u;
+}
+
 static bool arc_cmos_locks_unplug(ArcOsClass os)
 {
    return os == ARC_OS_TEST || os == ARC_OS_RISCOS_300 ||

@@ -1072,7 +1072,7 @@ static void arc_cmos_ignored_write(void *opaque, unsigned raw,
       ++arc_cmos_ignored_changes;
    if (!arc_cmos_ignored_logged && arc_log)
    {
-      unsigned logical = raw >= 0x40u ? raw - 0x40u : raw + 176u;
+      unsigned logical = arc_cmos_logical_address(raw);
       arc_log(RETRO_LOG_INFO,
               "CMOS: guest write to unplug byte %u (raw %02X) ignored: attempted %02X retained %02X (module unplugging is session-scoped on %s)\n",
               logical, raw, attempted, retained, arc_os_name(arc_plan.os));

@@ -51,6 +51,8 @@ static void test_cmos_unplug_policy(void)
    assert(arc_cmos_raw_address(217u) == 0x29u);
    assert(arc_cmos_raw_address(219u) == 0x2bu);
    assert(arc_cmos_raw_address(239u) == 0x3fu);
+   for (unsigned logical = 0u; logical < 240u; ++logical)
+      assert(arc_cmos_logical_address(arc_cmos_raw_address(logical)) == logical);
    for (ArcOsClass os = ARC_OS_UNKNOWN; os <= ARC_OS_ARTHUR_030; ++os)
    {
       uint8_t mask[32], original[ARC_CMOS_PAYLOAD_SIZE], payload[ARC_CMOS_PAYLOAD_SIZE];
@@ -86,6 +88,29 @@ static void test_cmos_unplug_policy(void)
          assert(image[0x3fu] == (uint8_t)(checksum + 1u));
       }
    }
+
+   /* A persisted record can carry unplug bits alongside a preexisting IDE
+    * count. Exercise the complete seed-to-machine construction order. */
+   uint8_t poisoned[ARC_CMOS_PAYLOAD_SIZE];
+   memset(poisoned, 0, sizeof(poisoned));
+   for (unsigned i = 0u; i < sizeof(locked) / sizeof(locked[0]); ++i)
+      poisoned[arc_cmos_raw_address(locked[i]) - 16u] = 0x96u;
+   poisoned[199u - 16u] = 0x81u;
+   arc_cmos_normalise_payload(poisoned, ARC_OS_RISCOS_311, ARC_IO_OLD_WD1770);
+   uint8_t attached[ARC_CMOS_MACHINE_SIZE];
+   assert(arc_cmos_machine_image(ARC_OS_RISCOS_311, ARC_IO_OLD_WD1770,
+                                 poisoned, false, attached));
+   arc_cmos_machine_attach_ide(attached);
+   for (unsigned i = 0u; i < sizeof(locked) / sizeof(locked[0]); ++i)
+   {
+      unsigned raw = arc_cmos_raw_address(locked[i]);
+      assert(poisoned[raw - 16u] == 0u && attached[raw] == 0u);
+   }
+   assert((attached[199u] & 0xc0u) == 0x40u);
+   unsigned attached_sum = 0u;
+   for (unsigned i = 0u; i < 239u; ++i)
+      attached_sum += attached[arc_cmos_raw_address(i)];
+   assert(attached[0x3fu] == (uint8_t)(attached_sum + 1u));
 }
 
 static void test_firmware_table(void)

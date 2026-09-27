@@ -134,6 +134,7 @@ static unsigned fdc_read_count;
 static unsigned kart_traffic_count;
 static unsigned cmos_read_count;
 static unsigned cmos_write_count;
+static unsigned cmos_locked_debug_write_count;
 static unsigned real_boot_frames = 3000u;
 static struct retro_disk_control_ext_callback disk_control;
 static bool can_dupe;
@@ -522,6 +523,7 @@ static void frontend_log(enum retro_log_level level, const char *format, ...)
    if (strstr(message, "KART ")) ++kart_traffic_count;
    if (strstr(message, "CMOS read ")) ++cmos_read_count;
    if (strstr(message, "CMOS write ")) ++cmos_write_count;
+   if (strstr(message, "CMOS write addr=ED ")) ++cmos_locked_debug_write_count;
    if (strstr(message, "CMOS: cleared ")) { assert(level == RETRO_LOG_INFO); ++cmos_healing_log_count; }
    if (strstr(message, "CMOS: guest write to unplug byte "))
    { assert(level == RETRO_LOG_INFO); ++cmos_ignored_log_count; }
@@ -2428,21 +2430,25 @@ int main(int argc, char **argv)
       assert(image[0xedu] == 0u && image[0x58u] == 0x77u &&
              image[0x59u] == 0xa5u && image[0x3fu] == 0x42u);
       assert(cmos_ignored_log_count == 1u);
+      unsigned locked_writes_before_reset = cmos_locked_debug_write_count;
       char record_path[4096];
       snprintf(record_path, sizeof(record_path), "%s", arc_libretro_test_cmos_path());
       read_exact(record_path, record, sizeof(record));
       assert(record[0xedu] == 0u && record[0x58u] == 0x77u && record[0x59u] == 0xa5u);
       retro_reset();
       for (unsigned frame = 0u; frame < 5u; ++frame) retro_run();
+      assert(cmos_locked_debug_write_count > locked_writes_before_reset);
       assert(cmos_ignored_log_count == 1u);
       retro_unload_game();
       assert(cmos_summary_attempts >= 1u && cmos_summary_changes >= 1u);
+      unsigned locked_writes_before_reload = cmos_locked_debug_write_count;
       phase = PHASE_LOAD; assert(retro_load_game(&game));
       phase = PHASE_RUN;
       for (unsigned frame = 0u; frame < 5u; ++frame) retro_run();
+      assert(cmos_locked_debug_write_count > locked_writes_before_reload);
       assert(arc_engine_test_cmos_image(image) && image[0xedu] == 0u &&
              image[0x58u] == 0x77u && image[0x59u] == 0xa5u);
-      assert(cmos_ignored_log_count == 1u);
+      assert(cmos_ignored_log_count == 2u);
       retro_unload_game();
       char os2_fixture[4096], os2_firmware[4096];
       const char *separator = strrchr(argv[2], '/');

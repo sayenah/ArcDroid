@@ -217,6 +217,7 @@ def build_rom(media_exerciser: bool = False,
             a.branch(failure, "ne")
 
         read_check(0x58, 0x77, "first_pass")
+        write(0xed, 0x96)  # repeat the locked write on every later boot
         read_check(0xed, 0x00, "failed")
         read_check(0x58, 0x77, "failed")
         write(0x59, 0xa5)  # result visible in the persisted record
