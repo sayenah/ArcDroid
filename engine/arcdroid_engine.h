@@ -22,6 +22,8 @@ typedef struct {
 } ArcEngineFrame;
 
 typedef void (*ArcEngineLogCallback)(void *opaque, const char *message);
+typedef void (*ArcEngineCmosIgnoredCallback)(void *opaque, unsigned raw,
+                                               uint8_t attempted, uint8_t retained);
 
 typedef struct {
    const char *path;
@@ -40,6 +42,9 @@ bool arc_engine_start(const uint8_t *firmware, size_t firmware_size,
                       const ArcIdeBackend *ide_backend,
                       const ArcInstallDoorbell *doorbell,
                       const uint8_t cmos[ARC_CMOS_MACHINE_SIZE],
+                      const uint8_t locked_raw_mask[32],
+                      ArcEngineCmosIgnoredCallback ignored_callback,
+                      void *ignored_opaque,
                       char *error, size_t error_size);
 void arc_engine_set_log_callback(ArcEngineLogCallback callback, void *opaque);
 bool arc_engine_reset(char *error, size_t error_size);

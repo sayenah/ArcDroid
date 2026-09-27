@@ -40,6 +40,79 @@ static void test_hashes(void)
    assert(arc_timestamp_elapsed_cycles(start, end) == 9u);
 }
 
+static void test_cmos_unplug_policy(void)
+{
+   static const unsigned locked[] = {6u, 7u, 18u, 19u, 173u, 174u,
+                                     175u, 176u, 217u, 218u, 219u};
+   assert(arc_cmos_raw_address(6u) == 0x46u);
+   assert(arc_cmos_raw_address(18u) == 0x52u);
+   assert(arc_cmos_raw_address(173u) == 0xedu);
+   assert(arc_cmos_raw_address(176u) == 0xf0u);
+   assert(arc_cmos_raw_address(217u) == 0x29u);
+   assert(arc_cmos_raw_address(219u) == 0x2bu);
+   assert(arc_cmos_raw_address(239u) == 0x3fu);
+   for (unsigned logical = 0u; logical < 240u; ++logical)
+      assert(arc_cmos_logical_address(arc_cmos_raw_address(logical)) == logical);
+   for (ArcOsClass os = ARC_OS_UNKNOWN; os <= ARC_OS_ARTHUR_030; ++os)
+   {
+      uint8_t mask[32], original[ARC_CMOS_PAYLOAD_SIZE], payload[ARC_CMOS_PAYLOAD_SIZE];
+      bool protects = os == ARC_OS_TEST || (os >= ARC_OS_RISCOS_311 && os <= ARC_OS_RISCOS_300);
+      arc_cmos_locked_raw_mask(os, mask);
+      for (unsigned raw = 0u; raw < 256u; ++raw)
+      {
+         bool expected = false;
+         for (unsigned i = 0u; i < sizeof(locked) / sizeof(locked[0]); ++i)
+            if (protects && raw == arc_cmos_raw_address(locked[i])) expected = true;
+         assert(((mask[raw >> 3u] >> (raw & 7u)) & 1u) == expected);
+      }
+      for (unsigned i = 0u; i < sizeof(payload); ++i)
+         original[i] = payload[i] = (uint8_t)((i * 13u + 1u) & 0xffu);
+      unsigned expected_cleared = 0u;
+      for (unsigned i = 0u; i < sizeof(locked) / sizeof(locked[0]); ++i)
+         if (protects && original[arc_cmos_raw_address(locked[i]) - 16u]) ++expected_cleared;
+      assert(arc_cmos_clear_unplug_bytes(payload, os) == expected_cleared);
+      for (unsigned i = 0u; i < sizeof(payload); ++i)
+      {
+         unsigned raw = i + 16u;
+         bool locked_raw = (mask[raw >> 3u] & (1u << (raw & 7u))) != 0u;
+         assert(payload[i] == (locked_raw ? 0u : original[i]));
+      }
+      if (os == ARC_OS_TEST || (os >= ARC_OS_RISCOS_311 && os <= ARC_OS_ARTHUR_030))
+      {
+         uint8_t image[ARC_CMOS_MACHINE_SIZE];
+         assert(arc_cmos_machine_image(os, ARC_IO_OLD_WD1770, original, false, image));
+         for (unsigned i = 0u; i < sizeof(locked) / sizeof(locked[0]); ++i)
+            if (protects) assert(image[arc_cmos_raw_address(locked[i])] == 0u);
+         unsigned checksum = 0u;
+         for (unsigned i = 0u; i < 239u; ++i) checksum += image[arc_cmos_raw_address(i)];
+         assert(image[0x3fu] == (uint8_t)(checksum + 1u));
+      }
+   }
+
+   /* A persisted record can carry unplug bits alongside a preexisting IDE
+    * count. Exercise the complete seed-to-machine construction order. */
+   uint8_t poisoned[ARC_CMOS_PAYLOAD_SIZE];
+   memset(poisoned, 0, sizeof(poisoned));
+   for (unsigned i = 0u; i < sizeof(locked) / sizeof(locked[0]); ++i)
+      poisoned[arc_cmos_raw_address(locked[i]) - 16u] = 0x96u;
+   poisoned[199u - 16u] = 0x81u;
+   arc_cmos_normalise_payload(poisoned, ARC_OS_RISCOS_311, ARC_IO_OLD_WD1770);
+   uint8_t attached[ARC_CMOS_MACHINE_SIZE];
+   assert(arc_cmos_machine_image(ARC_OS_RISCOS_311, ARC_IO_OLD_WD1770,
+                                 poisoned, false, attached));
+   arc_cmos_machine_attach_ide(attached);
+   for (unsigned i = 0u; i < sizeof(locked) / sizeof(locked[0]); ++i)
+   {
+      unsigned raw = arc_cmos_raw_address(locked[i]);
+      assert(poisoned[raw - 16u] == 0u && attached[raw] == 0u);
+   }
+   assert((attached[199u] & 0xc0u) == 0x40u);
+   unsigned attached_sum = 0u;
+   for (unsigned i = 0u; i < 239u; ++i)
+      attached_sum += attached[arc_cmos_raw_address(i)];
+   assert(attached[0x3fu] == (uint8_t)(attached_sum + 1u));
+}
+
 static void test_firmware_table(void)
 {
    size_t count = 0u;
@@ -215,14 +288,14 @@ static void test_media_launch_and_cmos(void)
    payload[42] = 0x5au;
    payload[59] = 0xffu;
    payload[183] = 0xfau;
-   arc_cmos_normalise_payload(payload, ARC_IO_OLD_WD1770);
+   arc_cmos_normalise_payload(payload, ARC_OS_RISCOS_311, ARC_IO_OLD_WD1770);
    assert(payload[42] == 0x5au && (payload[59] & 7u) == 0u &&
           (payload[183] & 7u) == 1u);
    static const uint8_t persisted_drive_counts[] = {0x41u, 0x81u, 0xc9u};
    for (unsigned i = 0u; i < sizeof(persisted_drive_counts); ++i)
    {
       payload[183] = persisted_drive_counts[i];
-      arc_cmos_normalise_payload(payload, ARC_IO_NEW_82C711);
+      arc_cmos_normalise_payload(payload, ARC_OS_RISCOS_311, ARC_IO_NEW_82C711);
       assert(payload[183] == 1u);
    }
    assert(arc_cmos_default(ARC_OS_RISCOS_311, ARC_IO_NEW_82C711, payload));
@@ -236,6 +309,12 @@ static void test_media_launch_and_cmos(void)
       if (raw > 255u) raw -= 240u;
       checksum += machine_cmos[raw];
    }
+   assert(machine_cmos[63] == (uint8_t)(checksum + 1u));
+   arc_cmos_machine_attach_ide(machine_cmos);
+   assert((machine_cmos[199] & 0xc0u) == 0x40u);
+   checksum = 0u;
+   for (unsigned i = 0u; i < 239u; ++i)
+      checksum += machine_cmos[arc_cmos_raw_address(i)];
    assert(machine_cmos[63] == (uint8_t)(checksum + 1u));
 
    ArcLaunchPlan other_machine = plan;
@@ -3576,6 +3655,7 @@ int main(int argc, char **argv)
 {
    assert(argc == 2);
    test_hashes();
+   test_cmos_unplug_policy();
    test_firmware_table();
    test_assembly();
    test_media_launch_and_cmos();

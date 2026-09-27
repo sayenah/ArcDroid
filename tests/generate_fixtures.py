@@ -161,7 +161,8 @@ def build_rom(media_exerciser: bool = False,
               creation_probe: bool = False,
               virtual_merge_probe: bool = False,
               merge_read_sector: int = 3,
-              allocation_mode: str | None = None) -> bytearray:
+              allocation_mode: str | None = None,
+              cmos_exerciser: bool = False) -> bytearray:
     if not 0 <= write_sector <= 4 or (write_payload is not None and
                                       len(write_payload) != 1024):
         raise ValueError("the synthetic D-format writer needs one full sector")
@@ -177,6 +178,64 @@ def build_rom(media_exerciser: bool = False,
     rom[0:4] = struct.pack("<I", 0xE59FF000)  # ldr pc, [pc]
     rom[8:12] = struct.pack("<I", 0x03800020)
     a = Arm2(0x03800020)
+    if cmos_exerciser:
+        # Invented guest program; all transfers go through the IOC's I2C pins.
+        a.mov(0, 0x03000000)
+        a.add_imm(0, 0, 0x00200000)
+
+        def pins(value: int) -> None:
+            a.mov(1, value)
+            a.str(1, 0, byte=True)
+
+        def start() -> None:
+            pins(3); pins(2)
+
+        def stop() -> None:
+            pins(0); pins(2); pins(3)
+
+        def send(value: int) -> None:
+            for shift in range(7, -1, -1):
+                bit = (value >> shift) & 1
+                pins(bit); pins(2 | bit)
+            pins(1); pins(3); pins(0)  # ACK clock
+
+        def write(raw: int, value: int) -> None:
+            start(); send(0xa0); send(raw); send(value); stop()
+
+        def read_check(raw: int, expected: int, failure: str) -> None:
+            start(); send(0xa0); send(raw); stop()
+            start(); send(0xa1)
+            a.mov(4, 0)
+            for _ in range(8):
+                pins(1); pins(3)
+                a.ldr(2, 0, byte=True)
+                a.emit(0xE1A04084)  # mov r4, r4, lsl #1
+                a.emit(0xE2022001)  # and r2, r2, #1
+                a.emit(0xE1844002)  # orr r4, r4, r2
+            pins(1); pins(3)  # NACK
+            a.cmp_imm(4, expected)
+            a.branch(failure, "ne")
+
+        read_check(0x58, 0x77, "first_pass")
+        write(0xed, 0x96)  # repeat the locked write on every later boot
+        read_check(0xed, 0x00, "failed")
+        read_check(0x58, 0x77, "failed")
+        write(0x59, 0xa5)  # result visible in the persisted record
+        a.branch("idle")
+        a.label("first_pass")
+        write(0xed, 0x96)  # RISC OS 3 ROM-module unplug byte
+        write(0x58, 0x77)  # unlocked marker
+        write(0x3f, 0x42)  # guest-maintained checksum byte
+        a.mov(15, 0x03800000)  # branch through reset vector
+        a.label("failed")
+        write(0x59, 0xee)
+        a.label("idle")
+        a.branch("idle")
+        code = a.finish()
+        rom[0x20:0x20 + len(code)] = code
+        marker = b"ARCDROID INVENTED CMOS I2C EXERCISER v1\0"
+        rom[0x1f00:0x1f00 + len(marker)] = marker
+        return rom
 
     def poison_merge_buffer(prefix: str) -> None:
         # A missing read must not inherit a zero-filled machine RAM page.
@@ -3149,6 +3208,8 @@ def main() -> None:
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
     (args.output / "arcdroid-test.rom").write_bytes(build_rom())
+    (args.output / "arcdroid-cmos-exerciser.rom").write_bytes(
+        build_rom(cmos_exerciser=True))
     (args.output / "arcdroid-chooser-test.rom").write_bytes(build_chooser_rom())
     (args.output / "arcdroid-chooser-d-test.rom").write_bytes(
         build_chooser_rom(helper_visual_oracle=True))
