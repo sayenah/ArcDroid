@@ -76,13 +76,14 @@ C-6 **Docs.** `docs/release-notes-slice12b.md`: what changes (discs whose first 
 ## Session relay (Founder request, S27b; amended S28, S33)
 The Founder opened several ArcDroid session windows and asked for work to pass between them automatically, **without the Founder being involved in the handoff** (S28).
 - **One baton holder at a time.** Only the session holding the orchestrator baton may change project state.
+- **Fresh ArcDroid windows only (Founder S36).** Relay only to a session whose name starts with `arcdroid-` and which has **never held the baton** — a window that already held it is finished and is never relayed to again. Never any other project's window, never a window without the `arcdroid-` prefix. Exactly **one** recipient per relay; never message several.
 - **Relay automatically — never sit idle (Founder S33, D-086).** When your stretch is done — after a merged slice, or whenever you would otherwise stop and wait with no running work of your own — merge the handoff with an exact Next and **relay at once, without asking**. Do this even if the Founder is present in your window (the Founder can interject). Waiting idle for the Founder after a merge is a process failure. Stop earlier only for a pending Founder question (do not relay past an unanswered Founder question; ask it in your window and keep working on anything unblocked).
 - **Before handing off:** merge this handoff to `main` with an exact Next; leave no process running that you started (or record any run you hand over, with its PID and supervision).
 - **Founder S32:** when the Odin3 is unreachable or a Founder decision is needed while the Founder is away, table the option(s) in the handoff and continue building where there are no blockers; follow the roadmap.
 - **Taking the baton:** a session that receives the relay brief takes the baton on that message alone and starts work — it does **not** ask the Founder to confirm (Founder S28). It numbers itself as the next session (S35, S36, …). A Claude Fable 5.1 session takes the Fable role directly (CLAUDE.md); a Claude Opus 5.5 session takes it under the Founder's S26 assignment.
 - **How to hand off:**
   1. Run `ListAgents`.
-  2. `SendMessage` the relay brief (below) to an **idle** session whose name starts with `arcdroid-` (window names change between days — do not rely on a fixed list; S33 relayed to `arcdroid-d9`). Never message non-ArcDroid sessions.
+  2. `SendMessage` the relay brief (below) to **one** idle, fresh session whose name starts with `arcdroid-` (window names change between days — do not rely on a fixed list; S33 relayed to `arcdroid-d9`). Never message non-ArcDroid sessions.
   3. If no idle `arcdroid-` session exists, say so in your own window and **keep working yourself** on the Next.
   4. Otherwise say in your own window that you handed off, and stop.
 - **Never** message or affect non-ArcDroid sessions, or processes you did not start.
