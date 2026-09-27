@@ -170,7 +170,7 @@ def build_rom(media_exerciser: bool = False,
     if not 0 <= merge_read_sector <= 4 or (not virtual_merge_probe and
                                          merge_read_sector != 3):
         raise ValueError("the virtual merge read needs a P-DD5 sector")
-    if allocation_mode not in (None, "veto", "claim", "read") or (allocation_mode
+    if allocation_mode not in (None, "veto", "claim", "read", "probe-write") or (allocation_mode
             and (not jfd_save_probe or write_payload is None)):
         raise ValueError("allocation ROM needs a mode, JFD result and map bytes")
     rom = bytearray(b"\xFF" * ROM_SIZE)
@@ -271,15 +271,20 @@ def build_rom(media_exerciser: bool = False,
             a.cmp_imm(7, 0); a.branch("alloc_other", "ne")
         for _ in range(5): a.ldr(7, 0, byte=True)
 
-    def allocation_new_write(prefix: str, expect_veto: bool) -> None:
+    def allocation_new_write(prefix: str, expect_veto: bool,
+                             sector: int = 0) -> None:
         a.ldr_const(0, 0x03310FD4)
-        for value in (0x05, 0, 0, 0, 0, 3, 0, 0x1B, 0xFF):
+        for value in (0x05, 0, 0, 0, sector, 3, sector, 0x1B, 0xFF):
             a.mov(1, value); a.str(1, 0, byte=True)
         a.ldr_const(2, 0x03200030)
         a.ldr_const(3, 0x03012000)
         a.ldr_const(10, 0x03802000)
         a.ldr_const(5, 1024)
         a.ldr_const(8, 250000)
+        if sector == 3:
+            a.ldr_const(2, 0x03200020)
+            a.ldr_const(8, 500000)
+            a.branch(prefix + "_irq")
         a.label(prefix + "_byte_wait")
         a.ldr(7, 2, byte=True)
         a.tst_imm(7, 1); a.branch(prefix + "_byte", "ne")
@@ -305,10 +310,11 @@ def build_rom(media_exerciser: bool = False,
         a.ldr_const(3, 0x03310FD0); a.ldr(7, 3, byte=True)
         a.ldr(4, 0, byte=True)
         a.ldr(7, 0, byte=True)
-        a.cmp_imm(4, 0x40 if expect_veto else 0)
-        a.branch("alloc_other", "ne")
-        a.cmp_imm(7, 0x20 if expect_veto else 0)
-        a.branch("alloc_other", "ne")
+        if sector != 3:
+            a.cmp_imm(4, 0x40 if expect_veto else 0)
+            a.branch("alloc_other", "ne")
+            a.cmp_imm(7, 0x20 if expect_veto else 0)
+            a.branch("alloc_other", "ne")
         for _ in range(5): a.ldr(7, 0, byte=True)
 
     def allocation_wd_read(prefix: str, expect_rnf: bool) -> None:
@@ -343,9 +349,10 @@ def build_rom(media_exerciser: bool = False,
         if not expect_rnf:
             a.cmp_imm(5, 0); a.branch("alloc_other", "ne")
 
-    def allocation_wd_write(prefix: str, expect_veto: bool) -> None:
+    def allocation_wd_write(prefix: str, expect_veto: bool,
+                            sector: int = 0) -> None:
         a.ldr_const(0, 0x03310000)
-        a.mov(1, 0); a.str(1, 0, 8, byte=True)
+        a.mov(1, sector); a.str(1, 0, 8, byte=True)
         a.mov(1, 0xA0); a.str(1, 0, byte=True)
         a.ldr_const(10, 0x03802000)
         a.ldr_const(5, 1024)
@@ -369,9 +376,10 @@ def build_rom(media_exerciser: bool = False,
         a.subs_imm(8, 8, 1); a.branch(prefix + "_tail", "ne")
         a.branch("alloc_other")
         a.label(prefix + "_done")
-        a.cmp_imm(4, 0x08 if expect_veto else 0x80)
-        a.branch("alloc_other", "ne")
-        a.cmp_imm(5, 0); a.branch("alloc_other", "ne")
+        if sector != 3:
+            a.cmp_imm(4, 0x08 if expect_veto else 0x80)
+            a.branch("alloc_other", "ne")
+            a.cmp_imm(5, 0); a.branch("alloc_other", "ne")
     a.ldr_const(0, 0x036E050C)  # 32 KiB pages, video DMA, flyback refresh
     a.mov(1, 0)
     a.str(1, 0)
@@ -460,11 +468,13 @@ def build_rom(media_exerciser: bool = False,
     a.ldr(1, 3, byte=True)
     for _ in range(7): a.ldr(1, 0, byte=True)
     if allocation_mode:
-        if allocation_mode == "veto":
+        if allocation_mode in ("veto", "probe-write"):
             allocation_new_read("alloc_new_probe", True)
         if allocation_mode != "read":
-            allocation_new_write("alloc_new_map", allocation_mode == "veto")
-        allocation_new_read("alloc_new_verify", allocation_mode == "veto")
+            allocation_new_write("alloc_new_map", allocation_mode != "claim",
+                                 3 if allocation_mode == "probe-write" else 0)
+        allocation_new_read("alloc_new_verify", allocation_mode in
+                            ("veto", "probe-write"))
         a.mov(6, 0x20 if allocation_mode != "claim" else 0x10)
         a.branch("fdc_done")
     if newio_save_probe:
@@ -696,11 +706,13 @@ def build_rom(media_exerciser: bool = False,
     a.mov(1, 0)
     a.str(1, 0, 4, byte=True)
     if allocation_mode:
-        if allocation_mode == "veto":
+        if allocation_mode in ("veto", "probe-write"):
             allocation_wd_read("alloc_wd_probe", True)
         if allocation_mode != "read":
-            allocation_wd_write("alloc_wd_map", allocation_mode == "veto")
-        allocation_wd_read("alloc_wd_verify", allocation_mode == "veto")
+            allocation_wd_write("alloc_wd_map", allocation_mode != "claim",
+                                3 if allocation_mode == "probe-write" else 0)
+        allocation_wd_read("alloc_wd_verify", allocation_mode in
+                           ("veto", "probe-write"))
         a.mov(6, 0x20 if allocation_mode != "claim" else 0x10)
         a.branch("fdc_done")
         a.label("alloc_other")
@@ -2885,6 +2897,9 @@ def build_f_discovery() -> bytearray:
         end = last_end if zone == 3 else 32 + zone_bits
         if zone == 0:
             block[4:64] = record
+            _set_bits(block, start, 15, 2)
+            _set_bits(block, start + 63, 1, 1)
+            start += 64
         elif zone == 2:
             _set_bits(block, start, 15, 2)
             _set_bits(block, start + 191, 1, 1)
@@ -2900,6 +2915,10 @@ def build_f_discovery() -> bytearray:
         _set_bits(block, 8, 15, start - 8)
         _set_bits(block, 23, 1, 1)
         _set_bits(block, end - 1, 1, 1)
+        if zone == 3:
+            # FileCore closes the beyond-disc region with defect fragment 1.
+            _set_bits(block, end, 15, 1)
+            _set_bits(block, 31 + zone_bits, 1, 1)
         block[3] = 0xff if zone == 0 else 0
         block[0] = _zone_check(block)
     map_address = ((8192 - 1600 - 480) + (8192 - 1600)) * 64
@@ -2925,7 +2944,9 @@ def build_f_discovery() -> bytearray:
 
 def build_sparse_f_jfd(image: bytes, flags: int = 0,
                        skipped: frozenset[int] = frozenset(),
-                       extended: bool = True) -> bytearray:
+                       extended: bool = True,
+                       first_track_times: dict[int, int] | None = None,
+                       force_first_ids: frozenset[int] = frozenset()) -> bytearray:
     tracks = bytearray()
     sectors = bytearray()
     data = bytearray()
@@ -2936,9 +2957,13 @@ def build_sparse_f_jfd(image: bytes, flags: int = 0,
                 continue
             payload = image[(track_side * 10 + sector_id) * 1024:
                             (track_side * 10 + sector_id + 1) * 1024]
-            if not any(payload):
+            if not any(payload) and not (track_side == 0 and
+                                         sector_id in force_first_ids):
                 continue
-            entries += struct.pack("<II", (4 << 16) | (sector_id << 8) | 3,
+            time = first_track_times[sector_id] if track_side == 0 and \
+                first_track_times is not None else 0
+            entries += struct.pack("<II", (time << 24) | (4 << 16) |
+                                   (sector_id << 8) | 3,
                                    len(data))
             data += payload
         if entries:
@@ -3331,6 +3356,237 @@ def main() -> None:
     (hd / "valid-f.adf").write_bytes(f_image)
     (hd / "valid-f.jfd").write_bytes(build_sparse_f_jfd(f_image))
     map_address = ((8192 - 1600 - 480) + (8192 - 1600)) * 64
+    identification = args.output / "jfd-identification"
+    identification.mkdir(exist_ok=True)
+    first_ids = frozenset((0, 3, 4, 5, 6, 7, 8, 9))
+    first_times = {0: 0, 3: 60, 4: 80, 5: 100, 6: 120,
+                   7: 140, 8: 160, 9: 180}
+    (identification / "sparse-f-timed.jfd").write_bytes(build_sparse_f_jfd(
+        f_image, skipped=frozenset((1, 2)), first_track_times=first_times,
+        force_first_ids=first_ids))
+    (identification / "sparse-f-untimed.jfd").write_bytes(build_sparse_f_jfd(
+        f_image, skipped=frozenset((1, 2)),
+        first_track_times={sector_id: 0xFF for sector_id in first_ids},
+        force_first_ids=first_ids))
+    (identification / "sparse-f-mixed-basis.jfd").write_bytes(
+        build_sparse_f_jfd(f_image, skipped=frozenset((1, 2, 4)),
+                           first_track_times=first_times,
+                           force_first_ids=first_ids))
+    last_end = 32 + (len(f_image) // 64 + 480 - 3 * (8192 - 1600))
+    zone_end = 32 + 8192 - 1600
+    for stem, bits, free_link in (
+        ("zero-tail", (), False),
+        ("tail-id-only", (last_end,), False),
+        ("tail-stop-only", (zone_end - 1,), False),
+        ("tail-other-id", (last_end + 1, zone_end - 1), False),
+        ("tail-two-fragments", (last_end, last_end + 31,
+                                last_end + 32, zone_end - 1), False),
+        ("tail-early-stop", (last_end, last_end + 31), False),
+        ("tail-free-link", (last_end, zone_end - 1), True),
+        ("tail-stray-bit", (last_end + 40,), False),
+    ):
+        variant = bytearray(f_image)
+        for copy_at in (map_address, map_address + 4096):
+            zone_at = copy_at + 3 * 1024
+            block = bytearray(variant[zone_at:zone_at + 1024])
+            for bit in range(last_end, zone_end):
+                block[bit // 8] &= ~(1 << (bit & 7))
+            for bit in bits:
+                _set_bits(block, bit, 1, 1)
+            if free_link:
+                for bit in range(8, 23):
+                    block[bit // 8] &= ~(1 << (bit & 7))
+                _set_bits(block, 8, 15, last_end - 8)
+            block[0] = _zone_check(block)
+            variant[zone_at:zone_at + 1024] = block
+        (identification / f"sparse-f-{stem}.jfd").write_bytes(
+            build_sparse_f_jfd(variant, skipped=frozenset((1, 2)),
+                               first_track_times=first_times,
+                               force_first_ids=first_ids))
+    f_one_zone = bytearray(1638400)
+    one_record = bytearray(60)
+    one_record[:6] = bytes((10, 10, 2, 4, 15, 10))
+    one_record[9] = 1
+    one_record[10:12] = (1600).to_bytes(2, "little")
+    one_record[16:20] = len(f_one_zone).to_bytes(4, "little")
+    f_one_zone[0xdc0:0xdc0 + 60] = one_record
+    one_map = bytearray(1024)
+    one_map[4:64] = one_record
+    _set_bits(one_map, 8, 15, 504)
+    _set_bits(one_map, 23, 1, 1)
+    _set_bits(one_map, 2111, 1, 1)
+    one_map[3] = 0xff
+    one_map[0] = _zone_check(one_map)
+    f_one_zone[:1024] = one_map
+    (identification / "sparse-f-one-zone.jfd").write_bytes(build_sparse_f_jfd(
+        f_one_zone, skipped=frozenset((1, 2)), first_track_times=first_times,
+        force_first_ids=first_ids))
+    one_stray = bytearray(f_one_zone)
+    one_stray_map = bytearray(one_map)
+    _set_bits(one_stray_map, 2112 + 40, 1, 1)
+    one_stray_map[0] = _zone_check(one_stray_map)
+    one_stray[:1024] = one_stray_map
+    (identification / "sparse-f-one-zone-stray-tail.jfd").write_bytes(
+        build_sparse_f_jfd(one_stray, skipped=frozenset((1, 2)),
+                           first_track_times=first_times,
+                           force_first_ids=first_ids))
+    one_prefix_map = bytearray(one_map)
+    for bit in range(8, 23):
+        one_prefix_map[bit // 8] &= ~(1 << (bit & 7))
+    _set_bits(one_prefix_map, 8, 15, 568)
+    _set_bits(one_prefix_map, 512, 15, 2)
+    _set_bits(one_prefix_map, 575, 1, 1)
+    one_prefix_map[0] = _zone_check(one_prefix_map)
+    f_one_overlap = bytearray(f_one_zone)
+    f_one_overlap[:1024] = one_prefix_map
+    f_one_overlap[1024:2048] = one_prefix_map
+    (identification / "sparse-f-map-backup.jfd").write_bytes(
+        build_sparse_f_jfd(f_one_overlap, skipped=frozenset((1, 2)),
+                           first_track_times=first_times,
+                           force_first_ids=first_ids))
+    first_without_zero = frozenset((1, 3, 4, 5, 6, 7, 8, 9))
+    (identification / "sparse-f-map-primary.jfd").write_bytes(
+        build_sparse_f_jfd(f_one_overlap, skipped=frozenset((0, 2)),
+                           first_track_times={**first_times, 1: 20},
+                           force_first_ids=first_without_zero))
+    f_backup = bytearray(f_image)
+    f_backup[map_address + 0] ^= 1
+    (identification / "sparse-f-backup.jfd").write_bytes(build_sparse_f_jfd(
+        f_backup, skipped=frozenset((1, 2)), first_track_times=first_times,
+        force_first_ids=first_ids))
+    f_copy_disagree = bytearray(f_image)
+    backup_zone0 = bytearray(f_copy_disagree[map_address + 4096:
+                                             map_address + 5120])
+    _set_bits(backup_zone0, 512, 15, 3)
+    backup_zone0[0] = _zone_check(backup_zone0)
+    f_copy_disagree[map_address + 4096:map_address + 5120] = backup_zone0
+    (identification / "sparse-f-copy-disagree.jfd").write_bytes(
+        build_sparse_f_jfd(f_copy_disagree, skipped=frozenset((1, 2)),
+                           first_track_times=first_times,
+                           force_first_ids=first_ids))
+    f_copy_free = bytearray(f_image)
+    backup_zone0 = bytearray(f_copy_free[map_address + 4096:
+                                          map_address + 5120])
+    for bit in (*range(8, 23), *range(512, 527), 575):
+        backup_zone0[bit // 8] &= ~(1 << (bit & 7))
+    _set_bits(backup_zone0, 8, 15, 504)
+    backup_zone0[0] = _zone_check(backup_zone0)
+    f_copy_free[map_address + 4096:map_address + 5120] = backup_zone0
+    (identification / "sparse-f-copy-free-prefix.jfd").write_bytes(
+        build_sparse_f_jfd(f_copy_free, skipped=frozenset((1, 2)),
+                           first_track_times=first_times,
+                           force_first_ids=first_ids))
+    f_partial_system = bytearray(f_image)
+    for copy_at in (map_address, map_address + 4096):
+        block = bytearray(f_partial_system[copy_at:copy_at + 1024])
+        _set_bits(block, 535, 1, 1)
+        _set_bits(block, 536, 15, 3)
+        block[0] = _zone_check(block)
+        f_partial_system[copy_at:copy_at + 1024] = block
+    (identification / "sparse-f-partial-system.jfd").write_bytes(
+        build_sparse_f_jfd(f_partial_system, skipped=frozenset((1, 2)),
+                           first_track_times=first_times,
+                           force_first_ids=first_ids))
+    f_root_boundary = bytearray(f_image)
+    f_root_boundary[0xdc0 + 12:0xdc0 + 16] = (0x20e).to_bytes(4, "little")
+    for copy_at in (map_address, map_address + 4096):
+        block = bytearray(f_root_boundary[copy_at:copy_at + 1024])
+        block[4 + 12:4 + 16] = (0x20e).to_bytes(4, "little")
+        _set_bits(block, 543, 1, 1)
+        _set_bits(block, 544, 15, 2)
+        block[0] = _zone_check(block)
+        f_root_boundary[copy_at:copy_at + 1024] = block
+    _set_f_boot_checksum(f_root_boundary)
+    (identification / "sparse-f-root-boundary.jfd").write_bytes(
+        build_sparse_f_jfd(f_root_boundary, skipped=frozenset((1, 2)),
+                           first_track_times=first_times,
+                           force_first_ids=first_ids))
+    f_root_second = bytearray(f_image)
+    # The shared offset skips fragment 2's zone-2 run. Root sector one is
+    # zone 0 byte 0; sector two is the omitted prefix at byte 0x400.
+    f_root_second[0xdc0 + 12:0xdc0 + 16] = (0x20d).to_bytes(4, "little")
+    for copy_at in (map_address, map_address + 4096):
+        block = bytearray(f_root_second[copy_at:copy_at + 1024])
+        block[4 + 12:4 + 16] = (0x20d).to_bytes(4, "little")
+        block[0] = _zone_check(block)
+        f_root_second[copy_at:copy_at + 1024] = block
+    _set_f_boot_checksum(f_root_second)
+    (identification / "sparse-f-root-second.jfd").write_bytes(
+        build_sparse_f_jfd(f_root_second, skipped=frozenset((1, 2)),
+                           first_track_times=first_times,
+                           force_first_ids=first_ids))
+    f_root_unresolved = bytearray(f_image)
+    f_root_unresolved[0xdc0 + 12:0xdc0 + 16] = (0x500).to_bytes(4, "little")
+    for copy_at in (map_address, map_address + 4096):
+        block = bytearray(f_root_unresolved[copy_at:copy_at + 1024])
+        block[4 + 12:4 + 16] = (0x500).to_bytes(4, "little")
+        block[0] = _zone_check(block)
+        f_root_unresolved[copy_at:copy_at + 1024] = block
+    _set_f_boot_checksum(f_root_unresolved)
+    (identification / "sparse-f-root-unresolved.jfd").write_bytes(
+        build_sparse_f_jfd(f_root_unresolved, skipped=frozenset((1, 2)),
+                           first_track_times=first_times,
+                           force_first_ids=first_ids))
+    (identification / "sparse-f-boot-omitted.jfd").write_bytes(
+        build_sparse_f_jfd(f_image, skipped=frozenset((1, 2, 3)),
+                           first_track_times=first_times,
+                           force_first_ids=first_ids))
+    f_mixed = bytearray(f_image)
+    f_mixed[map_address] ^= 1
+    f_mixed[map_address + 4096 + 1024] ^= 1
+    (identification / "sparse-f-mixed.jfd").write_bytes(build_sparse_f_jfd(
+        f_mixed, skipped=frozenset((1, 2)), first_track_times=first_times,
+        force_first_ids=first_ids))
+    f_allocated = bytearray(f_image)
+    for copy_at in (map_address, map_address + 4096):
+        block = bytearray(f_allocated[copy_at:copy_at + 1024])
+        _set_bits(block, 512, 15, 3)  # Allocated, but not system fragment.
+        block[0] = _zone_check(block)
+        f_allocated[copy_at:copy_at + 1024] = block
+    (identification / "sparse-f-allocated.jfd").write_bytes(build_sparse_f_jfd(
+        f_allocated, skipped=frozenset((1, 2)), first_track_times=first_times,
+        force_first_ids=first_ids))
+    f_conflict = bytearray(f_image)
+    backup_zone0 = bytearray(f_conflict[map_address + 4096:
+                                     map_address + 5120])
+    backup_zone0[10] = 1  # Record byte 6: addressing flags differ.
+    backup_zone0[0] = _zone_check(backup_zone0)
+    f_conflict[map_address + 4096:map_address + 5120] = backup_zone0
+    (identification / "sparse-f-conflict.jfd").write_bytes(build_sparse_f_jfd(
+        f_conflict, skipped=frozenset((1, 2)), first_track_times=first_times,
+        force_first_ids=first_ids))
+    f_boot_conflict = bytearray(f_image)
+    for copy_at in (map_address, map_address + 4096):
+        block = bytearray(f_boot_conflict[copy_at:copy_at + 1024])
+        block[10] = 1  # Both copies agree; the boot record still says zero.
+        block[0] = _zone_check(block)
+        f_boot_conflict[copy_at:copy_at + 1024] = block
+    (identification / "sparse-f-boot-conflict.jfd").write_bytes(
+        build_sparse_f_jfd(f_boot_conflict, skipped=frozenset((1, 2)),
+                           first_track_times=first_times,
+                           force_first_ids=first_ids))
+    f_bad_cross = bytearray(f_image)
+    for copy_at in (map_address, map_address + 4096):
+        block = bytearray(f_bad_cross[copy_at:copy_at + 1024])
+        block[3] = 0
+        block[0] = _zone_check(block)
+        f_bad_cross[copy_at:copy_at + 1024] = block
+    (identification / "sparse-f-bad-cross.jfd").write_bytes(build_sparse_f_jfd(
+        f_bad_cross, skipped=frozenset((1, 2)), first_track_times=first_times,
+        force_first_ids=first_ids))
+    f_past_end = bytearray(f_image)
+    last_map_end = 32 + (len(f_image) // 64 + 480 -
+                         3 * (8192 - 1600))
+    for copy_at in (map_address, map_address + 4096):
+        zone_at = copy_at + 3 * 1024
+        block = bytearray(f_past_end[zone_at:zone_at + 1024])
+        _set_bits(block, last_map_end + 9, 1, 1)
+        block[0] = _zone_check(block)
+        f_past_end[zone_at:zone_at + 1024] = block
+    (identification / "sparse-f-past-end.jfd").write_bytes(build_sparse_f_jfd(
+        f_past_end, skipped=frozenset((1, 2)), first_track_times=first_times,
+        force_first_ids=first_ids))
+    map_address = ((8192 - 1600 - 480) + (8192 - 1600)) * 64
     last_end = 32 + (len(f_image) // 64 + 480 - 3 * (8192 - 1600))
     blank_boot = bytearray(f_image)
     blank_boot[0xdc0 + 20:0xdc0 + 32] = bytes(12)
@@ -3614,6 +3870,55 @@ def main() -> None:
         bytes(old_free), {0: [0, 2, 4], 1: full}))
     (allocation / "old-dual-free.jfd").write_bytes(build_pdd5_jfd(
         bytes(old_free), {0: [0, 2], 1: full}))
+    (identification / "sparse-d-timed.jfd").write_bytes(build_pdd5_jfd(
+        bytes(old_free), {0: [0, 1, 2], 1: full},
+        {0: {0: 0, 1: 40, 2: 80}}))
+    (writes / "rw-identification-d.jfd").write_bytes(build_pdd5_jfd(
+        bytes(old_free), {0: [0, 1, 2, 4], 1: full},
+        title=b"ArcDroid identification save probe"))
+    partial_first = bytearray(old_free)
+    _store_u24(partial_first, 256, 2)  # First 512 bytes of ID 3 only.
+    partial_first[511] = _old_map_checksum(partial_first[256:511])
+    (identification / "sparse-d-partial-first.jfd").write_bytes(
+        build_pdd5_jfd(bytes(partial_first), {0: [0, 1, 2, 4], 1: full}))
+    (identification / "sparse-d-untimed.jfd").write_bytes(build_pdd5_jfd(
+        bytes(old_free), {0: [0, 1, 2], 1: full}))
+    (identification / "sparse-d-unplaceable.jfd").write_bytes(build_pdd5_jfd(
+        bytes(old_free), {0: [0, 1, 2], 1: full},
+        {0: {0: 0, 1: 70, 2: 140}}))
+    old_tail = bytearray(old_free)
+    _store_u24(old_tail, 252, 16)
+    _store_u24(old_tail, 256, 4)
+    old_tail[255] = _old_map_checksum(old_tail[:255])
+    old_tail[511] = _old_map_checksum(old_tail[256:511])
+    (identification / "sparse-d-outside.jfd").write_bytes(build_pdd5_jfd(
+        bytes(old_tail), {0: [0, 1, 2], 1: full},
+        {0: {0: 0, 1: 40, 2: 80}}))
+    (identification / "sparse-d-coincident.jfd").write_bytes(build_pdd5_jfd(
+        bytes(old_free), {0: [0, 1, 2], 1: full},
+        {0: {0: 0, 1: 200, 2: 80}}))
+    for stem, extents in (
+        ("interior", ((12, 3188),)),
+        ("crossing", ((12, 3189),)),
+        ("exterior", ((12, 3188), (3201, 1))),
+        ("bad-exterior", ((12, 3188), (3201, 2))),
+    ):
+        clamped = bytearray(old_free)
+        _store_u24(clamped, 252, 3202)
+        for index, (first, length) in enumerate(extents):
+            _store_u24(clamped, index * 3, first)
+            _store_u24(clamped, 256 + index * 3, length)
+        clamped[510] = len(extents) * 3
+        clamped[255] = _old_map_checksum(clamped[:255])
+        clamped[511] = _old_map_checksum(clamped[256:511])
+        (identification / f"sparse-d-clamped-{stem}.jfd").write_bytes(
+            build_pdd5_jfd(bytes(clamped), {0: [0, 1, 2], 1: full},
+                            {0: {0: 0, 1: 40, 2: 80}}))
+    (identification / "complete-d.jfd").write_bytes(build_pdd5_jfd(
+        bytes(old_free), {0: full, 1: full}))
+    l_image = build_old_map_media(655360, 2560, 0x42)
+    (identification / "legacy-l.jfd").write_bytes(build_extended_jfd(
+        bytes(l_image), disk_geometry="L"))
     partial_free = bytearray(old_free)
     _store_u24(partial_free, 0, 13)  # only 768 bytes of omitted ID 3 are free
     _store_u24(partial_free, 256, 3187)
@@ -3627,7 +3932,7 @@ def main() -> None:
     claim_map[255] = _old_map_checksum(claim_map[:255])
     claim_map[511] = _old_map_checksum(claim_map[256:511])
     for machine, newio in (("", False), ("newio-", True)):
-        for mode in ("veto", "claim", "read"):
+        for mode in ("veto", "claim", "read", "probe-write"):
             name = f"arcdroid-jfd-{machine}allocation-{mode}-test.rom"
             (args.output / name).write_bytes(build_rom(
                 media_exerciser=True, jfd_save_probe=True,
@@ -3635,6 +3940,54 @@ def main() -> None:
                 allocation_mode=mode))
     new_base = build_e_discovery([], b"NewMapProbe")
     new_base[1024:2048] = new_base[:1024]
+    (identification / "sparse-e-free.jfd").write_bytes(build_pdd5_jfd(
+        bytes(new_base), {0: [0, 1, 2, 3], 1: full},
+        {0: {0: 0, 1: 40, 2: 80, 3: 120}}))
+    e_spare = bytearray(new_base)
+    for copy_at in (0, 1024):
+        block = bytearray(e_spare[copy_at:copy_at + 1024])
+        _set_bits(block, 32 + 8192 - 0x0520, 1, 1)
+        block[0] = _zone_check(block)
+        e_spare[copy_at:copy_at + 1024] = block
+    (identification / "sparse-e-spare-bit.jfd").write_bytes(build_pdd5_jfd(
+        bytes(e_spare), {0: [0, 1, 2, 3], 1: full},
+        {0: {0: 0, 1: 40, 2: 80, 3: 120}}))
+    (identification / "sparse-e-allocated.jfd").write_bytes(build_pdd5_jfd(
+        bytes(new_base), {0: [0, 1, 2, 4], 1: full},
+        {0: {0: 0, 1: 40, 2: 80, 4: 160}}))
+    e_copy_disagree = bytearray(new_base)
+    backup = bytearray(e_copy_disagree[1024:2048])
+    # ID 4 starts at byte 0x1000: the backup allocates its map bits.
+    for bit in range(8, 23):
+        backup[bit // 8] &= ~(1 << (bit & 7))
+    _set_bits(backup, 8, 15, 560 - 8)
+    _set_bits(backup, 544, 15, 3)
+    _set_bits(backup, 559, 1, 1)
+    backup[0] = _zone_check(backup)
+    e_copy_disagree[1024:2048] = backup
+    (identification / "sparse-e-copy-allocated.jfd").write_bytes(
+        build_pdd5_jfd(bytes(e_copy_disagree), {0: [0, 1, 2, 3], 1: full},
+                       {0: {0: 0, 1: 40, 2: 80, 3: 120}}))
+    e_backup = bytearray(new_base)
+    e_backup[0] ^= 1
+    (identification / "sparse-e-backup.jfd").write_bytes(build_pdd5_jfd(
+        bytes(e_backup), {0: [0, 1, 2, 3], 1: full},
+        {0: {0: 0, 1: 40, 2: 80, 3: 120}}))
+    e_conflict = bytearray(new_base)
+    e_conflict[1024 + 10] = 1  # Record byte 6: addressing flags differ.
+    e_conflict[1024] = _zone_check(bytearray(e_conflict[1024:2048]))
+    (identification / "sparse-e-conflict.jfd").write_bytes(build_pdd5_jfd(
+        bytes(e_conflict), {0: [0, 1, 2, 3], 1: full},
+        {0: {0: 0, 1: 40, 2: 80, 3: 120}}))
+    e_bad_link = bytearray(new_base)
+    for copy_at in (0, 1024):
+        block = bytearray(e_bad_link[copy_at:copy_at + 1024])
+        _set_bits(block, 8, 15, 504)
+        block[0] = _zone_check(block)
+        e_bad_link[copy_at:copy_at + 1024] = block
+    (identification / "sparse-e-bad-link.jfd").write_bytes(build_pdd5_jfd(
+        bytes(e_bad_link), {0: [0, 1, 2, 3], 1: full},
+        {0: {0: 0, 1: 40, 2: 80, 3: 120}}))
     (allocation / "new-allocated.jfd").write_bytes(build_pdd5_jfd(
         bytes(new_base), {0: [0, 1, 2, 4], 1: full}))
     (allocation / "new-free.jfd").write_bytes(build_pdd5_jfd(

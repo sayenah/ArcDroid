@@ -356,6 +356,135 @@ static void test_write_sizes_and_density(void)
    callbacks.sectorid = on_sector_id;
 }
 
+static uint8_t ident_checksum(const uint8_t *block)
+{
+   unsigned checksum = 0xffu;
+   for (unsigned index = 255u; index-- > 0u;)
+   {
+      if (checksum > 0xffu) checksum = (checksum + 1u) & 0xffu;
+      checksum += block[index];
+   }
+   return (uint8_t)checksum;
+}
+
+static void ident_u24(uint8_t *p, unsigned value)
+{
+   p[0] = (uint8_t)value;
+   p[1] = (uint8_t)(value >> 8u);
+   p[2] = (uint8_t)(value >> 16u);
+}
+
+static void ident_map(uint8_t *data, unsigned first, unsigned length,
+                      unsigned disc_sectors)
+{
+   memset(data, 0, 512u);
+   ident_u24(data, first);
+   ident_u24(data + 256u, length);
+   ident_u24(data + 252u, disc_sectors);
+   data[510] = 3u;
+   data[255] = ident_checksum(data);
+   data[511] = ident_checksum(data + 256u);
+}
+
+static void test_identification(void)
+{
+   uint8_t decoded[3072] = {0};
+   ArcJfdSector sectors[3] = {
+      {0u, 0u, 1024u, 0u, 2u, 0u},
+      {40000u, 1024u, 1024u, 1u, 2u, 0u},
+      {80000u, 2048u, 1024u, 2u, 2u, 0u}
+   };
+   ArcJfdImage image = make_image(decoded, sectors, 3u);
+   image.decoded_size = sizeof(decoded);
+   ident_map(decoded, 12u, 3188u, 3200u);
+   arc_jfd_prepare_identification(&image, true);
+   assert(!strcmp(image.identification_reason, "presented"));
+   assert(image.identification_mask == 0x18u &&
+          image.identification_schedule == 5u &&
+          image.identification_time[3] == 116352u &&
+          image.identification_time[4] == 152704u);
+   ArcJfdView view;
+   assert(arc_jfd_effective_sector(&image, 0u, 6u, false, &view) &&
+          view.id_visible && !view.data && !view.write_eligible &&
+          view.sector.id == 3u && view.sector.size == 1024u &&
+          view.sector.density == 2u);
+   assert(jfd_load(0, &image));
+   callbacks.sectorid = NULL;
+   jfd_motor_start(); reset_results();
+   drive_funcs[0]->readsector(0, 3, 0, 0, 1);
+   poll_count(31251u);
+   assert(index_count == 5u && data_count == 0u && finish_count == 0u);
+   drive_funcs[0]->stop();
+   callbacks.sectorid = on_sector_id;
+   jfd_motor_start(); reset_results();
+   drive_funcs[0]->readsector(0, 3, 0, 0, 1);
+   poll_count(12501u);
+   assert(index_count == 2u && notfound_count == 1u &&
+          data_count == 0u && finish_count == 0u);
+   drive_funcs[0]->close(0);
+
+   ident_map(decoded, 13u, 3187u, 3200u);
+   arc_jfd_prepare_identification(&image, true);
+   assert(!strcmp(image.identification_reason, "not-free") &&
+          !image.identification_mask);
+   ident_map(decoded, 12u, 3188u, 3200u);
+   ident_u24(decoded + 256u, 2u);
+   ident_u24(decoded + 3u, 14u);
+   ident_u24(decoded + 259u, 3186u);
+   decoded[510] = 6u;
+   decoded[255] = ident_checksum(decoded);
+   decoded[511] = ident_checksum(decoded + 256u);
+   arc_jfd_prepare_identification(&image, true);
+   assert(!strcmp(image.identification_reason, "presented"));
+
+   sectors[1].flags = ARC_JFD_DATA_CRC_BAD;
+   arc_jfd_prepare_identification(&image, true);
+   assert(!strcmp(image.identification_reason, "irregular"));
+   sectors[1].flags = 0u;
+   sectors[1].time_us = sectors[0].time_us;
+   arc_jfd_prepare_identification(&image, true);
+   assert(!strcmp(image.identification_reason, "irregular"));
+   sectors[1].time_us = 40000u;
+   ident_map(decoded, 12u, 3188u, 3201u);
+   arc_jfd_prepare_identification(&image, true);
+   assert(!strcmp(image.identification_reason, "presented") &&
+          image.identification_mask == 0x18u);
+   ident_map(decoded, 12u, 3189u, 3202u); /* Crossing extent is clipped. */
+   arc_jfd_prepare_identification(&image, true);
+   assert(!strcmp(image.identification_reason, "presented"));
+   ident_map(decoded, 12u, 3188u, 3202u);
+   ident_u24(decoded + 3u, 3201u); /* Wholly exterior, but still validated. */
+   ident_u24(decoded + 259u, 1u);
+   decoded[510] = 6u;
+   decoded[255] = ident_checksum(decoded);
+   decoded[511] = ident_checksum(decoded + 256u);
+   arc_jfd_prepare_identification(&image, true);
+   assert(!strcmp(image.identification_reason, "presented"));
+   ident_u24(decoded + 259u, 2u); /* Malformed exterior extent rejects. */
+   decoded[511] = ident_checksum(decoded + 256u);
+   arc_jfd_prepare_identification(&image, true);
+   assert(!strcmp(image.identification_reason, "map-invalid"));
+   ident_map(decoded, 12u, 3188u, 3200u);
+   decoded[255] ^= 1u;
+   arc_jfd_prepare_identification(&image, true);
+   assert(!strcmp(image.identification_reason, "map-invalid"));
+   ident_map(decoded, 12u, 0u, 3200u);
+   arc_jfd_prepare_identification(&image, true);
+   assert(!strcmp(image.identification_reason, "map-invalid"));
+   ident_map(decoded, 12u, 2u, 3200u);
+   ident_u24(decoded + 3u, 13u);
+   ident_u24(decoded + 259u, 3187u);
+   decoded[510] = 6u;
+   decoded[255] = ident_checksum(decoded);
+   decoded[511] = ident_checksum(decoded + 256u);
+   arc_jfd_prepare_identification(&image, true);
+   assert(!strcmp(image.identification_reason, "map-invalid"));
+   ident_map(decoded, 12u, 3188u, 3200u);
+   arc_jfd_prepare_identification(&image, false);
+   assert(!strcmp(image.identification_reason, "not-native") &&
+          !image.identification_mask);
+}
+
 int main(void)
 {
    fdc_funcs = &callbacks;
@@ -365,6 +494,7 @@ int main(void)
    test_index_cadence();
    test_writable_reader();
    test_write_sizes_and_density();
+   test_identification();
    puts("jfd_reader_tests: all checks passed");
    return 0;
 }

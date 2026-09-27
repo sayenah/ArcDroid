@@ -375,6 +375,41 @@ bool arc_libretro_test_jfd_created_byte(unsigned image_index,
    *value = view.data[offset];
    return true;
 }
+bool arc_libretro_test_jfd_presented(unsigned image_index, unsigned id,
+                                     uint32_t *position)
+{
+   if (image_index >= arc_media_count ||
+       arc_media[image_index].info.kind != ARC_MEDIA_JFD ||
+       id >= ARC_JFD_MAX_STANDARD_IDS) return false;
+   const ArcJfdImage *image = &arc_media[image_index].jfd;
+   if (!(image->identification_mask & (1u << id))) return false;
+   if (position) *position = image->identification_time[id];
+   return true;
+}
+uint8_t arc_libretro_test_jfd_slot_state(unsigned image_index,
+                                        unsigned track_side, unsigned id,
+                                        uint32_t *position,
+                                        uint32_t *creation_time)
+{
+   if (image_index >= arc_media_count ||
+       arc_media[image_index].info.kind != ARC_MEDIA_JFD ||
+       id >= ARC_JFD_PDD5_IDS) return 0u;
+   const ArcJfdImage *image = &arc_media[image_index].jfd;
+   if (track_side >= image->track_count) return 0u;
+   ArcJfdView view;
+   if (!arc_jfd_effective_sector(image, track_side,
+                                 image->tracks[track_side].sector_count + id,
+                                 false, &view)) return 0u;
+   if (position) *position = view.sector.time_us;
+   if (creation_time) *creation_time = image->overlay &&
+      track_side < ARC_JFD_PDD5_TRACKS ?
+      image->overlay->creation_time[track_side][id] : 0u;
+   return (uint8_t)((view.id_visible ? 1u : 0u) |
+                    (view.data ? 2u : 0u) |
+                    (view.write_eligible ? 4u : 0u) |
+                    (image->overlay && track_side < ARC_JFD_PDD5_TRACKS &&
+                     image->overlay->created[track_side][id] ? 8u : 0u));
+}
 const char *arc_libretro_test_staged_path(unsigned index)
 {
    return index < arc_media_count && arc_media[index].populated ?
@@ -2398,7 +2433,43 @@ static void arc_finish_jfd_preparation(ArcMediaEntry *entry, bool native)
       overlay->map_enabled = native && overlay->writable;
       arc_jfd_map_prepare(&entry->jfd);
    }
+   arc_jfd_prepare_identification(&entry->jfd, native);
    if (!arc_log) return;
+   char captured[40] = {0}, presented[40] = {0};
+   size_t c_at = 0u, p_at = 0u;
+   if (entry->jfd.track_count)
+   {
+      const ArcJfdTrack *track = &entry->jfd.tracks[0];
+      for (unsigned i = 0u; i < track->sector_count && c_at + 4u < sizeof(captured); ++i)
+      {
+         unsigned id = entry->jfd.sectors[track->first_sector + i].id;
+         int written = snprintf(captured + c_at, sizeof(captured) - c_at,
+                                "%s%u", c_at ? "," : "", id);
+         if (written < 0 || (size_t)written >= sizeof(captured) - c_at) break;
+         c_at += (size_t)written;
+      }
+   }
+   for (unsigned id = 0u; id < entry->jfd.identification_schedule; ++id)
+      if (entry->jfd.identification_mask & (1u << id))
+      {
+         int written = snprintf(presented + p_at, sizeof(presented) - p_at,
+                                "%s%u", p_at ? "," : "", id);
+         if (written < 0 || (size_t)written >= sizeof(presented) - p_at) break;
+         p_at += (size_t)written;
+      }
+   arc_log(RETRO_LOG_INFO,
+      "JFD identification: image=%u native=%s format=%s schedule=%u timing=%s captured=%s presented=%s basis=%s maps=%u reason=%s\n",
+      image_number, native ? "yes" : "no",
+      entry->jfd.identification_format == 'D' ? "D" :
+      entry->jfd.identification_format == 'E' ? "E" :
+      entry->jfd.identification_format == 'F' ? "F" : "none",
+      entry->jfd.identification_schedule,
+      native && entry->jfd.track_count && entry->jfd.tracks[0].sector_count ?
+         entry->jfd.tracks[0].timed ? "timed" : "untimed" : "none",
+      captured[0] ? captured : "none", presented[0] ? presented : "none",
+      entry->jfd.identification_basis,
+      entry->jfd.identification_maps,
+      entry->jfd.identification_reason);
    arc_log(RETRO_LOG_INFO,
       "JFD writes: image=%u state=%s reason=%s generation=%llu records=%u\n",
       image_number,

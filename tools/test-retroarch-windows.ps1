@@ -519,6 +519,7 @@ $disc1 = (Resolve-Path (Join-Path $InputDirectory "arcdroid-media-disc1.adf")).P
 $disc2 = (Resolve-Path (Join-Path $InputDirectory "arcdroid-media-disc2.adf")).Path
 $folderSet = (Resolve-Path (Join-Path $InputDirectory "Qaventra.adf\Qaventra.adf")).Path
 $jfd = (Resolve-Path (Join-Path $InputDirectory "arcdroid-test-two-member.jfd")).Path
+$sparseJfd = (Resolve-Path (Join-Path $InputDirectory "sparse-d-timed.jfd")).Path
 $zipSingle = (Resolve-Path (Join-Path $InputDirectory "zip-content\single.zip")).Path
 $zipMulti = (Resolve-Path (Join-Path $InputDirectory "zip-content\multi.zip")).Path
 $zipNameSelected = (Resolve-Path (Join-Path $InputDirectory "zip-content\Title.zip")).Path
@@ -963,6 +964,18 @@ try {
     [void](Capture-ExpectedSignature $jfdRun "jfd-golden" $disc1Signature $false)
 } finally {
     Stop-MediaRun $jfdRun
+}
+if (-not (Select-String -Path $jfdRun.RetroLog -SimpleMatch "JFD identification: image=1 native=yes format=none schedule=0 timing=timed captured=0 presented=none basis=none maps=0 reason=map-invalid" -Quiet)) {
+    throw "Two-member JFD identification refusal was not logged"
+}
+$sparseJfdRun = Start-MediaRun $sparseJfd "jfd-identification-sparse-d"
+try {
+    Start-Sleep -Seconds 2
+} finally {
+    Stop-MediaRun $sparseJfdRun
+}
+if (-not (Select-String -Path $sparseJfdRun.RetroLog -SimpleMatch "JFD identification: image=1 native=yes format=D schedule=5 timing=timed captured=0,1,2 presented=3,4 basis=free maps=1 reason=presented" -Quiet)) {
+    throw "Sparse D JFD identification was not logged"
 }
 
 Write-Host "Slice 2a Windows RetroArch: disk commands, image-1 relaunch, inert seeded .ldci, and JFD golden region passed"

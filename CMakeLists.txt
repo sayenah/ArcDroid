@@ -432,9 +432,11 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
       "${FIXTURE_DIR}/arcdroid-jfd-allocation-veto-test.rom"
       "${FIXTURE_DIR}/arcdroid-jfd-allocation-claim-test.rom"
       "${FIXTURE_DIR}/arcdroid-jfd-allocation-read-test.rom"
+      "${FIXTURE_DIR}/arcdroid-jfd-allocation-probe-write-test.rom"
       "${FIXTURE_DIR}/arcdroid-jfd-newio-allocation-veto-test.rom"
       "${FIXTURE_DIR}/arcdroid-jfd-newio-allocation-claim-test.rom"
       "${FIXTURE_DIR}/arcdroid-jfd-newio-allocation-read-test.rom"
+      "${FIXTURE_DIR}/arcdroid-jfd-newio-allocation-probe-write-test.rom"
       "${FIXTURE_DIR}/arcdroid-jfd-directory-benign.rom"
       "${FIXTURE_DIR}/arcdroid-jfd-directory-rename.rom"
       "${FIXTURE_DIR}/arcdroid-media-disc1.adf"
@@ -455,6 +457,7 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
       "${FIXTURE_DIR}/arcdroid-test.jfd"
       "${FIXTURE_DIR}/jfd-writes/rw-d.jfd"
       "${FIXTURE_DIR}/jfd-writes/rw-create-d.jfd"
+      "${FIXTURE_DIR}/jfd-writes/rw-identification-d.jfd"
       "${FIXTURE_DIR}/jfd-writes/wp-create-d.jfd"
       "${FIXTURE_DIR}/jfd-writes/rw-merge-d.jfd"
       "${FIXTURE_DIR}/jfd-writes/wp-merge-d.jfd"
@@ -495,6 +498,54 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
       "${FIXTURE_DIR}/arcdroid-test-gzip.jfd"
       "${FIXTURE_DIR}/arcdroid-test-two-member.jfd"
       "${FIXTURE_DIR}/arcdroid-test-three-member.jfd"
+      "${FIXTURE_DIR}/jfd-identification/sparse-d-timed.jfd"
+      "${FIXTURE_DIR}/jfd-identification/sparse-d-partial-first.jfd"
+      "${FIXTURE_DIR}/jfd-identification/sparse-d-untimed.jfd"
+      "${FIXTURE_DIR}/jfd-identification/sparse-d-unplaceable.jfd"
+      "${FIXTURE_DIR}/jfd-identification/sparse-d-outside.jfd"
+      "${FIXTURE_DIR}/jfd-identification/sparse-d-coincident.jfd"
+      "${FIXTURE_DIR}/jfd-identification/sparse-d-clamped-interior.jfd"
+      "${FIXTURE_DIR}/jfd-identification/sparse-d-clamped-crossing.jfd"
+      "${FIXTURE_DIR}/jfd-identification/sparse-d-clamped-exterior.jfd"
+      "${FIXTURE_DIR}/jfd-identification/sparse-d-clamped-bad-exterior.jfd"
+      "${FIXTURE_DIR}/jfd-identification/complete-d.jfd"
+      "${FIXTURE_DIR}/jfd-identification/legacy-l.jfd"
+      "${FIXTURE_DIR}/jfd-identification/sparse-e-free.jfd"
+      "${FIXTURE_DIR}/jfd-identification/sparse-e-spare-bit.jfd"
+      "${FIXTURE_DIR}/jfd-identification/sparse-e-allocated.jfd"
+      "${FIXTURE_DIR}/jfd-identification/sparse-e-copy-allocated.jfd"
+      "${FIXTURE_DIR}/jfd-identification/sparse-e-backup.jfd"
+      "${FIXTURE_DIR}/jfd-identification/sparse-e-conflict.jfd"
+      "${FIXTURE_DIR}/jfd-identification/sparse-e-bad-link.jfd"
+      "${FIXTURE_DIR}/jfd-identification/sparse-f-timed.jfd"
+      "${FIXTURE_DIR}/jfd-identification/sparse-f-untimed.jfd"
+      "${FIXTURE_DIR}/jfd-identification/sparse-f-mixed-basis.jfd"
+      "${FIXTURE_DIR}/jfd-identification/sparse-f-zero-tail.jfd"
+      "${FIXTURE_DIR}/jfd-identification/sparse-f-tail-id-only.jfd"
+      "${FIXTURE_DIR}/jfd-identification/sparse-f-tail-stop-only.jfd"
+      "${FIXTURE_DIR}/jfd-identification/sparse-f-tail-other-id.jfd"
+      "${FIXTURE_DIR}/jfd-identification/sparse-f-tail-two-fragments.jfd"
+      "${FIXTURE_DIR}/jfd-identification/sparse-f-tail-early-stop.jfd"
+      "${FIXTURE_DIR}/jfd-identification/sparse-f-tail-free-link.jfd"
+      "${FIXTURE_DIR}/jfd-identification/sparse-f-tail-stray-bit.jfd"
+      "${FIXTURE_DIR}/jfd-identification/sparse-f-one-zone.jfd"
+      "${FIXTURE_DIR}/jfd-identification/sparse-f-one-zone-stray-tail.jfd"
+      "${FIXTURE_DIR}/jfd-identification/sparse-f-map-backup.jfd"
+      "${FIXTURE_DIR}/jfd-identification/sparse-f-map-primary.jfd"
+      "${FIXTURE_DIR}/jfd-identification/sparse-f-backup.jfd"
+      "${FIXTURE_DIR}/jfd-identification/sparse-f-copy-disagree.jfd"
+      "${FIXTURE_DIR}/jfd-identification/sparse-f-copy-free-prefix.jfd"
+      "${FIXTURE_DIR}/jfd-identification/sparse-f-partial-system.jfd"
+      "${FIXTURE_DIR}/jfd-identification/sparse-f-root-boundary.jfd"
+      "${FIXTURE_DIR}/jfd-identification/sparse-f-root-second.jfd"
+      "${FIXTURE_DIR}/jfd-identification/sparse-f-root-unresolved.jfd"
+      "${FIXTURE_DIR}/jfd-identification/sparse-f-boot-omitted.jfd"
+      "${FIXTURE_DIR}/jfd-identification/sparse-f-mixed.jfd"
+      "${FIXTURE_DIR}/jfd-identification/sparse-f-allocated.jfd"
+      "${FIXTURE_DIR}/jfd-identification/sparse-f-conflict.jfd"
+      "${FIXTURE_DIR}/jfd-identification/sparse-f-boot-conflict.jfd"
+      "${FIXTURE_DIR}/jfd-identification/sparse-f-bad-cross.jfd"
+      "${FIXTURE_DIR}/jfd-identification/sparse-f-past-end.jfd"
       "${FIXTURE_DIR}/zip-content/single.zip"
       ${ADFFS_FIXTURES}
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/generate_fixtures.py" "${FIXTURE_DIR}"
@@ -638,6 +689,17 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
   add_test(NAME jfd-gate-irregular COMMAND jfd_store_tests "${FIXTURE_DIR}" irregular)
   add_test(NAME jfd-gate-timing COMMAND jfd_store_tests "${FIXTURE_DIR}" timing)
   add_dependencies(jfd_controller_tests test-fixtures)
+  add_executable(jfd_identification_tests tests/jfd_identification_tests.c)
+  target_include_directories(jfd_identification_tests PRIVATE core)
+  target_link_libraries(jfd_identification_tests PRIVATE arcdroid_core)
+  target_compile_options(jfd_identification_tests PRIVATE
+    $<$<C_COMPILER_ID:GNU,Clang,AppleClang>:-UNDEBUG;-Wall;-Wextra;-Wpedantic>)
+  if(ARCDROID_SANITIZERS)
+    target_link_libraries(jfd_identification_tests PRIVATE
+      arcdroid_sanitizer_compile arcdroid_sanitizer_link)
+  endif()
+  add_dependencies(jfd_identification_tests test-fixtures)
+  add_test(NAME jfd-identification COMMAND jfd_identification_tests "${FIXTURE_DIR}")
   add_test(NAME core-services COMMAND core_tests "${FIXTURE_DIR}")
   add_test(NAME jfd-controller-golden COMMAND jfd_controller_tests
     "${FIXTURE_DIR}" --wd1770)
@@ -727,6 +789,10 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
       $<TARGET_FILE:arcdroid_libretro_test> "${FIXTURE_DIR}")
     add_test(NAME jfd-allocation-process COMMAND "${Python3_EXECUTABLE}"
       "${CMAKE_CURRENT_SOURCE_DIR}/tests/jfd_allocation_process_test.py"
+      $<TARGET_FILE:libretro_harness>
+      $<TARGET_FILE:arcdroid_libretro_test> "${FIXTURE_DIR}")
+    add_test(NAME jfd-identification-process COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/jfd_identification_process_test.py"
       $<TARGET_FILE:libretro_harness>
       $<TARGET_FILE:arcdroid_libretro_test> "${FIXTURE_DIR}")
     add_test(NAME newio-libretro-harness COMMAND libretro_harness
