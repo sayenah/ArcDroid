@@ -1928,7 +1928,7 @@ arcdroid_launch_chooser = "remember"
         try {
             $extendedApp2 = Capture-StableRawScreenshot $app2Run "launch-12a-extended-app2"
         } finally { Stop-MediaRun $app2Run }
-        if ($extendedApp1.Dimensions -ne "640x480" -or
+        if ($extendedApp1.Dimensions -ne $app1Capture.Dimensions -or
             $extendedApp2.Dimensions -ne $extendedApp1.Dimensions -or
             $extendedApp1.VisualSignature -eq $extendedApp2.VisualSignature) {
             throw "Slice 12a extended-byte helper did not select distinct visual targets"
