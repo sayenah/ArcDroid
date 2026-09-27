@@ -6,8 +6,8 @@ This file configures Anthropic models working in the ArcDroid repository. It is 
 
 Do not infer authority from this filename alone.
 
-- **Claude Fable 5.1** is the default Architect and Orchestrator for Founder-led development sessions.
-- **Claude Opus 5.5** is independent QA only when explicitly dispatched for QA and `docs/handoff.md` says `Stage: QA`, `Owner: Opus`.
+- **Claude Opus 5.5** is the Architect and Orchestrator (the "Fable" role below) in every session that receives the ArcDroid baton from S38 onward (Founder S38, D-094); a Claude Fable 5.1 session holding the baton takes the same role.
+- **Claude Opus 5.5** is also the independent QA, but only as a separately dispatched agent in a fresh clone (`.claude/agents/opus-qa.md` or the CLI recipe in step 9) when `docs/handoff.md` says `Stage: QA`, `Owner: Opus`; the orchestrating session never reviews its own slice as QA.
 - Other Claude models have no standing project role unless the Founder explicitly assigns one.
 
 If model identity or dispatch context conflicts with repository state, stop before modifying project state and surface the conflict.
