@@ -82,6 +82,7 @@ set_target_properties(arcdroid_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 set(ARCDROID_LIBRETRO_SOURCES
   engine/arcdroid_engine.c
+  engine/arc_boot_watch.c
   engine/arc_install_doorbell.c
   engine/arcdroid_stubs.c
   engine/arculator/src/82c711.c
@@ -192,6 +193,15 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
     target_link_libraries(core_tests PRIVATE arcdroid_sanitizer_link)
   endif()
   target_compile_options(core_tests PRIVATE $<$<C_COMPILER_ID:GNU,Clang,AppleClang>:-UNDEBUG>)
+  add_executable(boot_watch_test tests/boot_watch_test.c engine/arc_boot_watch.c)
+  target_include_directories(boot_watch_test PRIVATE engine)
+  target_link_libraries(boot_watch_test PRIVATE arcdroid_core)
+  target_compile_options(boot_watch_test PRIVATE $<$<C_COMPILER_ID:GNU,Clang,AppleClang>:-UNDEBUG>)
+  if(ARCDROID_SANITIZERS)
+    target_link_libraries(boot_watch_test PRIVATE arcdroid_sanitizer_compile arcdroid_sanitizer_link)
+  endif()
+  add_test(NAME boot-watch COMMAND boot_watch_test
+    "${CMAKE_CURRENT_BINARY_DIR}/tests/fixtures/generated")
   add_executable(adffs_shipping_profile_test
     tests/adffs_shipping_profile_test.c tests/adffs_install_profiles_test.c)
   target_link_libraries(adffs_shipping_profile_test PRIVATE arcdroid_core)
@@ -395,6 +405,11 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
     "${FIXTURE_DIR}/adffs/eligible-hd.jfd")
   add_custom_command(
     OUTPUT "${FIXTURE_DIR}/arcdroid-test.rom" "${FIXTURE_DIR}/arcdroid-test.adf"
+      "${FIXTURE_DIR}/arcdroid-boot-prompt.rom"
+      "${FIXTURE_DIR}/arcdroid-boot-prompt-write.rom"
+      "${FIXTURE_DIR}/arcdroid-boot-cli.rom"
+      "${FIXTURE_DIR}/arcdroid-boot-cli-then-prompt.rom"
+      "${FIXTURE_DIR}/arcdroid-boot-desktop.rom"
       "${FIXTURE_DIR}/arcdroid-chooser-test.rom"
       "${FIXTURE_DIR}/arcdroid-chooser-d-test.rom"
       "${FIXTURE_DIR}/arcdroid-unsupported-launch-test.rom"
@@ -552,6 +567,11 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
     DEPENDS tests/generate_fixtures.py VERBATIM)
   add_custom_target(test-fixtures ALL DEPENDS
     "${FIXTURE_DIR}/arcdroid-test.rom" "${FIXTURE_DIR}/arcdroid-test.adf"
+    "${FIXTURE_DIR}/arcdroid-boot-prompt.rom"
+    "${FIXTURE_DIR}/arcdroid-boot-prompt-write.rom"
+    "${FIXTURE_DIR}/arcdroid-boot-cli.rom"
+    "${FIXTURE_DIR}/arcdroid-boot-cli-then-prompt.rom"
+    "${FIXTURE_DIR}/arcdroid-boot-desktop.rom"
     "${FIXTURE_DIR}/arcdroid-chooser-test.rom"
     "${FIXTURE_DIR}/arcdroid-chooser-d-test.rom"
     "${FIXTURE_DIR}/arcdroid-unsupported-launch-test.rom"
@@ -644,6 +664,7 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
     ${ADFFS_FIXTURES})
 
   add_dependencies(core_tests test-fixtures)
+  add_dependencies(boot_watch_test test-fixtures)
   add_executable(adffs_tests tests/adffs_tests.c)
   target_link_libraries(adffs_tests PRIVATE arcdroid_core_test)
   target_compile_options(adffs_tests PRIVATE
@@ -812,6 +833,82 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
       "${FIXTURE_DIR}/arcdroid-test.adf"
       "${CMAKE_CURRENT_BINARY_DIR}/mouse-script-data"
       --real-boot --osk-script "${CMAKE_CURRENT_SOURCE_DIR}/tests/mouse-script.txt")
+    foreach(case_name IN ITEMS prompt cli cli-then-prompt desktop)
+      if(case_name STREQUAL "prompt" OR case_name STREQUAL "cli-then-prompt")
+        set(boot_expected helper)
+      elseif(case_name STREQUAL "cli")
+        set(boot_expected expired)
+      else()
+        set(boot_expected disabled)
+      endif()
+      add_test(NAME boot-watch-${case_name}-harness
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/check_boot_watch.py"
+          $<TARGET_FILE:libretro_harness> $<TARGET_FILE:arcdroid_libretro_test>
+          "${FIXTURE_DIR}/arcdroid-boot-${case_name}.rom"
+          "${FIXTURE_DIR}/launch-family/boot-file-3-l.adl"
+          "${CMAKE_CURRENT_BINARY_DIR}/boot-watch-${case_name}-data" "${boot_expected}")
+    endforeach()
+    add_test(NAME boot-watch-write-harness
+      COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/check_boot_watch.py"
+        $<TARGET_FILE:libretro_harness> $<TARGET_FILE:arcdroid_libretro_test>
+        "${FIXTURE_DIR}/arcdroid-boot-prompt-write.rom"
+        "${FIXTURE_DIR}/launch-family/boot-file-3-l.adl"
+        "${CMAKE_CURRENT_BINARY_DIR}/boot-watch-write-data" write)
+    add_test(NAME boot-watch-chooser-harness
+      COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/check_boot_watch.py"
+        $<TARGET_FILE:libretro_harness> $<TARGET_FILE:arcdroid_libretro_test>
+        "${FIXTURE_DIR}/arcdroid-boot-prompt.rom"
+        "${FIXTURE_DIR}/launch-family/boot-matrix-3-file-multiple.adf"
+        "${CMAKE_CURRENT_BINARY_DIR}/boot-watch-chooser-data" chooser)
+    add_test(NAME boot-watch-none-harness
+      COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/check_boot_watch.py"
+        $<TARGET_FILE:libretro_harness> $<TARGET_FILE:arcdroid_libretro_test>
+        "${FIXTURE_DIR}/arcdroid-boot-prompt.rom"
+        "${FIXTURE_DIR}/launch-family/boot-matrix-3-file-zero.adf"
+        "${CMAKE_CURRENT_BINARY_DIR}/boot-watch-none-data" none)
+    add_test(NAME boot-watch-publish-fail-harness
+      COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/check_boot_watch.py"
+        $<TARGET_FILE:libretro_harness> $<TARGET_FILE:arcdroid_libretro_test>
+        "${FIXTURE_DIR}/arcdroid-boot-prompt.rom"
+        "${FIXTURE_DIR}/launch-family/boot-file-3-l.adl"
+        "${CMAKE_CURRENT_BINARY_DIR}/boot-watch-publish-fail-data" publish-fail)
+    add_test(NAME boot-watch-publish-fail-chooser-harness
+      COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/check_boot_watch.py"
+        $<TARGET_FILE:libretro_harness> $<TARGET_FILE:arcdroid_libretro_test>
+        "${FIXTURE_DIR}/arcdroid-boot-prompt.rom"
+        "${FIXTURE_DIR}/launch-family/boot-matrix-3-file-multiple.adf"
+        "${CMAKE_CURRENT_BINARY_DIR}/boot-watch-publish-fail-chooser-data"
+        publish-fail-chooser)
+    add_test(NAME boot-watch-input-harness
+      COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/check_boot_watch.py"
+        $<TARGET_FILE:libretro_harness> $<TARGET_FILE:arcdroid_libretro_test>
+        "${FIXTURE_DIR}/arcdroid-boot-prompt.rom"
+        "${FIXTURE_DIR}/launch-family/boot-file-3-l.adl"
+        "${CMAKE_CURRENT_BINARY_DIR}/boot-watch-input-data" input-cancel)
+    foreach(launch_setting IN ITEMS off explicit)
+      add_test(NAME boot-watch-${launch_setting}-harness
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/check_boot_watch.py"
+          $<TARGET_FILE:libretro_harness> $<TARGET_FILE:arcdroid_libretro_test>
+          "${FIXTURE_DIR}/arcdroid-boot-prompt.rom"
+          "${FIXTURE_DIR}/launch-family/boot-file-3-l.adl"
+          "${CMAKE_CURRENT_BINARY_DIR}/boot-watch-${launch_setting}-data"
+          ${launch_setting})
+    endforeach()
+    add_test(NAME boot-watch-reset-harness
+      COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/check_boot_watch.py"
+        $<TARGET_FILE:libretro_harness> $<TARGET_FILE:arcdroid_libretro_test>
+        "${FIXTURE_DIR}/arcdroid-boot-prompt.rom"
+        "${FIXTURE_DIR}/launch-family/boot-file-3-l.adl"
+        "${CMAKE_CURRENT_BINARY_DIR}/boot-watch-reset-data" reset)
+    foreach(chooser_action IN ITEMS pick continue)
+      add_test(NAME boot-watch-chooser-${chooser_action}-harness
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/check_boot_watch.py"
+          $<TARGET_FILE:libretro_harness> $<TARGET_FILE:arcdroid_libretro_test>
+          "${FIXTURE_DIR}/arcdroid-boot-prompt.rom"
+          "${FIXTURE_DIR}/launch-family/boot-matrix-3-file-multiple.adf"
+          "${CMAKE_CURRENT_BINARY_DIR}/boot-watch-chooser-${chooser_action}-data"
+          chooser-${chooser_action})
+    endforeach()
     set_tests_properties(libretro-harness PROPERTIES TIMEOUT 300)
     set_tests_properties(newio-libretro-harness PROPERTIES TIMEOUT 300)
   endif()

@@ -58,6 +58,24 @@ char _5th_column_fn[512];
 int support_rom_enabled;
 
 static bool arc_active;
+static ArcBootWatch arc_boot_watch;
+
+void arc_engine_boot_watch_arm(void)
+{ if (arc_active) arc_boot_watch_arm(&arc_boot_watch, (tsc >> 32u) / (uint64_t)speed_mhz); }
+void arc_engine_boot_watch_cancel(void)
+{ arc_boot_watch_cancel(&arc_boot_watch); }
+ArcBootWatchState arc_engine_boot_watch_state(void)
+{ return arc_boot_watch.state; }
+void arc_engine_boot_watch_swi(uint32_t swi, uint32_t r0, uint32_t r1,
+                               uint32_t r2, uint32_t r3, uint32_t address,
+                               uint32_t mode)
+{
+   if (arc_boot_watch.state != ARC_BOOT_WATCH_ARMED) return;
+   bool in_rom = memstat[(address & 0x03ffffffu) >> 12u] == 5u;
+   arc_boot_watch_observe(&arc_boot_watch, swi, r0, r1, r2, r3,
+                          address, mode, in_rom,
+                          (tsc >> 32u) / (uint64_t)speed_mhz);
+}
 static bool arc_fault;
 static bool arc_fault_boundary;
 static bool arc_machine_live;
@@ -599,6 +617,7 @@ bool arc_engine_start(const uint8_t *firmware, size_t firmware_size,
 
 bool arc_engine_reset(char *failure, size_t failure_size)
 {
+   arc_boot_watch_clear(&arc_boot_watch);
    if (!arc_saved_firmware) return false;
    cmos_get_image(arc_saved_cmos, sizeof(arc_saved_cmos));
    arc_machine_destroy();
@@ -607,6 +626,7 @@ bool arc_engine_reset(char *failure, size_t failure_size)
 
 void arc_engine_stop(void)
 {
+   arc_boot_watch_clear(&arc_boot_watch);
    if (arc_machine_live)
       cmos_get_image(arc_saved_cmos, sizeof(arc_saved_cmos));
    arc_machine_destroy();
@@ -669,6 +689,7 @@ bool arc_engine_run_frame(ArcInputState *input, ArcEngineFrame *frame)
             arc_timestamp_elapsed_cycles(start_tsc, tsc) < maximum_cycles);
    if (adf_flush_all()) fatal("Unable to flush the staged floppy image");
    arc_fault_boundary = false;
+   arc_boot_watch_frame(&arc_boot_watch, (tsc >> 32u) / (uint64_t)speed_mhz);
 
    frame->pixels = arc_platform_video_frame(&frame->width, &frame->height,
                                              &frame->pitch, &sequence);

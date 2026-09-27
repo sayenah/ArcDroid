@@ -20,6 +20,7 @@
 #include "sound.h"
 #include "timer.h"
 #include "vidc.h"
+#include "../../arc_boot_watch.h"
 
 uint32_t armregs[16];
 
@@ -2501,6 +2502,10 @@ static void opMRC(uint32_t opcode)
 
 static void opSWI(uint32_t opcode)
 {
+	/* ArcDroid modifications */
+	arc_engine_boot_watch_swi(opcode & 0x00ffffffu,
+		armregs[0], armregs[1], armregs[2], armregs[3],
+		(PC - 8u) & 0x03fffffcu, (uint32_t)mode);
 	if (debugon)
 		debug_trap(DEBUG_TRAP_SWI, opcode);
 

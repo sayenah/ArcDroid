@@ -45,6 +45,10 @@ src/wd1770.c src/wd1770.h
 This is an allowlisted copy, not a subtree. ArcDroid modifications carry an
 explicit notice in each modified upstream file.
 
+Slice 14 adds one marked passive call at the entry of `src/arm.c`'s `opSWI`.
+It passes scalar SWI context to the ArcDroid-owned boot observer; the upstream
+emulator's registers, memory and SWI behavior are unchanged.
+
 `src/82c711.c` resets the SuperIO configuration state for each cold machine
 creation and connects to ArcDroid's IDE implementation. With no attached disc
 the bus continues to return all-one reads, ignore writes, and raise no IRQ.

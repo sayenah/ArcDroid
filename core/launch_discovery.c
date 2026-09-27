@@ -1295,6 +1295,26 @@ bool arc_launch_candidate_is_target(const ArcLaunchCandidate *candidate)
           candidate->state == ARC_LAUNCH_CANDIDATE_APPLICATION;
 }
 
+ArcLaunchRecovery arc_launch_recovery_decide(const ArcLaunchDiscovery *discovery,
+                                             int *target_index)
+{
+   unsigned verified = 0u;
+   int only = -1;
+   if (target_index) *target_index = -1;
+   if (!discovery || !discovery->readable) return ARC_LAUNCH_RECOVERY_NONE;
+   for (unsigned i = 0u; i < discovery->candidate_count; ++i)
+      if (arc_launch_candidate_is_target(&discovery->candidates[i]))
+      { ++verified; only = (int)i; }
+   if (!verified) return ARC_LAUNCH_RECOVERY_NONE;
+   if (!discovery->scan_incomplete && discovery->application_count == 1u &&
+       !discovery->unknown_count && verified == 1u)
+   {
+      if (target_index) *target_index = only;
+      return ARC_LAUNCH_RECOVERY_HELPER;
+   }
+   return ARC_LAUNCH_RECOVERY_CHOOSER;
+}
+
 unsigned arc_launch_candidate_index(const ArcLaunchDiscovery *discovery,
                                     unsigned ordinal)
 {

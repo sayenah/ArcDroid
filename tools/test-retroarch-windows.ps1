@@ -2146,3 +2146,53 @@ Write-Host "Slice 10b Windows RetroArch: synthetic install, publication, save, r
 if ($env:GITHUB_STEP_SUMMARY) {
     Add-Content -Encoding UTF8 $env:GITHUB_STEP_SUMMARY "- Slice 10b install disc: authored guest published, saved, and read back in a fresh RetroArch process; terminations before and after compaction manifest rename recovered; steady outcome signatures $savedSignature -> $readbackSignature."
 }
+
+function Wait-BootRecovery($Run, [string]$Action, [int]$Count) {
+    $deadline = [DateTime]::UtcNow.AddSeconds(25)
+    while ([DateTime]::UtcNow -lt $deadline) {
+        if ($Run.Process.HasExited) { throw "$($Run.Name) exited during boot recovery" }
+        $foundLines = if (Test-Path -LiteralPath $Run.RetroLog) {
+            @(Select-String -Path $Run.RetroLog -SimpleMatch "phase=recovery boot-watch=prompt recovery=$Action")
+        } else { @() }
+        if ($foundLines.Count -ge $Count) { return }
+        Start-Sleep -Milliseconds 100
+    }
+    throw "$($Run.Name) did not reach recovery=$Action count=$Count; log=[$(Get-RunLogTail $Run)]"
+}
+
+Copy-Item -Force (Join-Path $InputDirectory "arcdroid-boot-prompt.rom") $firmware
+@"
+arcdroid_machine = "A3000"
+arcdroid_cpu = "ARM2"
+arcdroid_joystick_if = "Keyboard"
+arcdroid_disk_writes = "off"
+arcdroid_launch = "auto"
+arcdroid_launch_chooser = "ask"
+"@ | Set-Content -Encoding ASCII $coreOptions
+$bootContent = (Resolve-Path (Join-Path $InputDirectory "boot-file-3-l.adl")).Path
+$bootRun = Start-MediaRun $bootContent "slice14-boot-helper"
+try {
+    Wait-BootRecovery $bootRun "helper" 1
+    Send-MediaCommand $bootRun "RESET"
+    Wait-BootRecovery $bootRun "helper" 2
+} finally { Stop-MediaRun $bootRun }
+$bootReload = Start-MediaRun $bootContent "slice14-boot-reload"
+try { Wait-BootRecovery $bootReload "helper" 1 }
+finally { Stop-MediaRun $bootReload }
+
+$bootMultiple = (Resolve-Path (Join-Path $InputDirectory "boot-matrix-3-file-multiple.adf")).Path
+$bootChooser = Start-MediaRun $bootMultiple "slice14-boot-chooser"
+try {
+    Wait-BootRecovery $bootChooser "chooser" 1
+    $bootCapture = $null
+    for ($attempt = 0; $attempt -lt 8; $attempt++) {
+        $bootCapture = Capture-RawScreenshot $bootChooser "slice14-chooser-$attempt"
+        if ((Get-ChooserFocusState $bootCapture) -eq "row1") { break }
+        Start-Sleep -Milliseconds 200
+    }
+    if ((Get-ChooserFocusState $bootCapture) -ne "row1") {
+        throw "Slice 14 post-boot chooser was not visible"
+    }
+    Send-ChooserKeyboardPick $bootChooser $bootCapture
+} finally { Stop-MediaRun $bootChooser }
+Write-Host "Slice 14 Windows RetroArch: synthetic helper recovery, post-boot chooser pick, reset and reload passed"

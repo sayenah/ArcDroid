@@ -123,6 +123,11 @@ static unsigned kart_traffic_count;
 static unsigned cmos_read_count;
 static unsigned cmos_write_count;
 static unsigned real_boot_frames = 3000u;
+static bool real_boot_cancel_input;
+static bool real_boot_reset_once;
+static bool real_boot_chooser_pick;
+static bool real_boot_chooser_continue;
+static bool real_boot_cmos_sentinel;
 static struct retro_disk_control_ext_callback disk_control;
 static bool can_dupe;
 static bool keyboard_poll_capability;
@@ -1764,6 +1769,27 @@ static bool parse_real_boot_options(int count, char *const args[],
          *osk_script = args[++argument];
          osk_script_seen = true;
       }
+      else if (!strcmp(args[argument], "--boot-cancel-input") &&
+               !real_boot_cancel_input)
+         real_boot_cancel_input = true;
+      else if (!strcmp(args[argument], "--boot-reset-once") &&
+               !real_boot_reset_once)
+         real_boot_reset_once = true;
+      else if (!strcmp(args[argument], "--boot-chooser-pick") &&
+               !real_boot_chooser_pick && !real_boot_chooser_continue)
+         real_boot_chooser_pick = true;
+      else if (!strcmp(args[argument], "--boot-chooser-continue") &&
+               !real_boot_chooser_continue && !real_boot_chooser_pick)
+         real_boot_chooser_continue = true;
+      else if (!strcmp(args[argument], "--boot-cmos-sentinel") &&
+               !real_boot_cmos_sentinel)
+         real_boot_cmos_sentinel = true;
+      else if (!strcmp(args[argument], "--boot-chooser-ask"))
+         option_launch_chooser = "ask";
+      else if (!strcmp(args[argument], "--boot-launch-off"))
+         option_launch = "off";
+      else if (!strcmp(args[argument], "--boot-launch-app1"))
+         option_launch = "app1";
       else return false;
    }
    return true;
@@ -2055,6 +2081,13 @@ int main(int argc, char **argv)
    size_t (*arc_platform_test_input_events)(ArcKartEvent *, size_t) = NULL;
    if (real_boot || newio_smoke || install_guest || media_tests)
       *(void **)(&arc_engine_test_newio) = dlsym(module, "arc_engine_test_newio");
+   if (real_boot && real_boot_cmos_sentinel)
+   {
+      *(void **)(&arc_engine_test_cmos_write) =
+         dlsym(module, "arc_engine_test_cmos_write");
+      *(void **)(&arc_engine_test_cmos_image) =
+         dlsym(module, "arc_engine_test_cmos_image");
+   }
    if (install_guest) {
       *(void **)(&arc_engine_test_drive_media) =
          dlsym(module, "arc_engine_test_drive_media");
@@ -4284,6 +4317,7 @@ int main(int argc, char **argv)
       snprintf(firmware_message, sizeof(firmware_message), "%s", last_message);
       phase = PHASE_RUN;
       bool script_ok = true;
+      bool boot_helper_cmos_verified = false;
       if (osk_script)
       {
          OskScriptApi script_api = {
@@ -4297,7 +4331,42 @@ int main(int argc, char **argv)
          script_ok = run_osk_script(osk_script, &script_api);
       }
       else
-         for (unsigned frame = 0; frame < real_boot_frames; ++frame) retro_run();
+         for (unsigned frame = 0; frame < real_boot_frames; ++frame)
+         {
+            if (real_boot_cmos_sentinel && frame == 10u)
+               assert(arc_engine_test_cmos_write &&
+                      arc_engine_test_cmos_write(216u, 0x5au));
+            if (real_boot_cancel_input)
+               joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_A] = frame == 10u;
+            if (real_boot_reset_once && frame == 150u) retro_reset();
+            if (real_boot_chooser_pick || real_boot_chooser_continue)
+            {
+               joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_DOWN] =
+                  real_boot_chooser_continue && (frame == 120u || frame == 122u);
+               joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_A] =
+                  frame == (real_boot_chooser_continue ? 124u : 120u);
+            }
+            retro_run();
+            if (real_boot_cmos_sentinel && arc_engine_test_cmos_image)
+            {
+               uint8_t image[ARC_CMOS_MACHINE_SIZE];
+               if (arc_engine_test_cmos_image(image) &&
+                   (image[75] & 7u) == 1u && (image[199] & 7u) == 2u)
+               {
+                  unsigned checksum = 0u;
+                  for (unsigned byte = 0u; byte < 239u; ++byte)
+                  {
+                     unsigned raw = byte + 0x40u;
+                     if (raw > 255u) raw -= 240u;
+                     checksum += image[raw];
+                  }
+                  assert(image[63] == (uint8_t)(checksum + 1u));
+                  boot_helper_cmos_verified = true;
+               }
+            }
+         }
+      if (boot_helper_cmos_verified)
+         puts("boot helper CMOS fields and checksum verified");
       unsigned newio_commands = 0u;
       unsigned newio_reads = 0u;
       unsigned newio_successes = 0u;

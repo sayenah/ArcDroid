@@ -249,7 +249,8 @@ bool arc_launch_chooser_init(ArcLaunchChooser *chooser,
 {
    if (!chooser || !discovery) return false;
    memset(chooser, 0, sizeof(*chooser));
-   chooser->inspection_incomplete =
+   chooser->inspection_incomplete = discovery->scan_incomplete ||
+      discovery->unknown_count != 0u ||
       discovery->reason == ARC_LAUNCH_REASON_INSPECTION_INCOMPLETE;
    chooser->nested_scope = discovery->nested_scope;
    for (unsigned i = 0u; i < discovery->candidate_count; ++i)
@@ -443,7 +444,8 @@ bool arc_launch_chooser_render(const ArcLaunchChooser *chooser,
                         chooser->install_labels[candidate], foreground);
       else if (candidate == ARC_CHOOSER_DESKTOP)
          (void)arc_text(pixels, width, height, stride, x, y,
-                        "Desktop (no launch)", foreground);
+                        chooser->post_boot ? "Continue without launching" :
+                           "Desktop (no launch)", foreground);
       else
       {
          const ArcLaunchCandidate *entry = &discovery->candidates[candidate];

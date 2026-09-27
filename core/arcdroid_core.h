@@ -195,6 +195,14 @@ typedef struct {
    char candidate_fingerprint[41];
 } ArcLaunchDiscovery;
 
+typedef enum {
+   ARC_LAUNCH_RECOVERY_NONE = 0,
+   ARC_LAUNCH_RECOVERY_HELPER,
+   ARC_LAUNCH_RECOVERY_CHOOSER
+} ArcLaunchRecovery;
+ArcLaunchRecovery arc_launch_recovery_decide(const ArcLaunchDiscovery *discovery,
+                                             int *target_index);
+
 #define ARC_LAUNCH_BINDING_MAX_SIZE 88u
 #define ARC_LAUNCH_CHOICE_MAX_SIZE 128u
 #define ARC_LAUNCH_CHOOSER_MAX_ROWS (ARC_LAUNCH_MAX_CANDIDATES + 1u)
@@ -223,6 +231,7 @@ typedef struct {
    bool inspection_incomplete;
    bool nested_scope;
    bool install_mode;
+   bool post_boot;
    char install_labels[2][32];
 } ArcLaunchChooser;
 

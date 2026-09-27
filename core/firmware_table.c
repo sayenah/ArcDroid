@@ -14,6 +14,11 @@ static const ArcFirmwareFingerprint fingerprints[] = {
    C(ARC_OS_TEST, "ArcDroid chooser application ROM", 524288u, 0x278555b5, "32f7d800e65fbd26325241b874f9279021c465a9"),
    C(ARC_OS_TEST, "ArcDroid D-format helper visual ROM", 524288u, 0xeeea625e, "13fc935664e628a9c751f3b280346fab60285ccf"),
 #if defined(ARCDROID_TEST_FAULTS)
+   C(ARC_OS_TEST, "ArcDroid boot prompt test ROM", 524288u, 0xdcf93506, "9b337404a35146da6bafdddb75d27dbfcc6636f8"),
+   C(ARC_OS_TEST, "ArcDroid boot write prompt test ROM", 524288u, 0xab9038e9, "e8864fac1301fc3bc47af51179be4ba293e85d21"),
+   C(ARC_OS_TEST, "ArcDroid boot CLI test ROM", 524288u, 0x706ad88f, "b31ed6ad314daecb44e6f284172c6c54fc26936b"),
+   C(ARC_OS_TEST, "ArcDroid boot CLI then prompt test ROM", 524288u, 0x4839c460, "8b9653d8768eb63a82c521a7dadfdbb985395c64"),
+   C(ARC_OS_TEST, "ArcDroid boot desktop test ROM", 524288u, 0xd253068b, "fd67b07a8c60b2c493732b66f268534e7701ca5c"),
    /* Synthetic unsupported-OS chooser probe, never accepted by shipping. */
    C(ARC_OS_RISCOS_200, "ArcDroid unsupported launch test ROM", 524288u, 0x92559a84, "6b42001508cbc297b0f792a23f010938c0670326"),
 #endif

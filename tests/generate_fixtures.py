@@ -161,7 +161,11 @@ def build_rom(media_exerciser: bool = False,
               creation_probe: bool = False,
               virtual_merge_probe: bool = False,
               merge_read_sector: int = 3,
-              allocation_mode: str | None = None) -> bytearray:
+              allocation_mode: str | None = None,
+              boot_watch_pattern: str | None = None) -> bytearray:
+    if boot_watch_pattern not in (None, "prompt", "prompt-write", "cli",
+                                  "cli-then-prompt", "desktop"):
+        raise ValueError("unknown synthetic boot observation")
     if not 0 <= write_sector <= 4 or (write_payload is not None and
                                       len(write_payload) != 1024):
         raise ValueError("the synthetic D-format writer needs one full sector")
@@ -177,6 +181,8 @@ def build_rom(media_exerciser: bool = False,
     rom[0:4] = struct.pack("<I", 0xE59FF000)  # ldr pc, [pc]
     rom[8:12] = struct.pack("<I", 0x03800020)
     a = Arm2(0x03800020)
+    if boot_watch_pattern:
+        a.branch("boot_watch_start")
 
     def poison_merge_buffer(prefix: str) -> None:
         # A missing read must not inherit a zero-filled machine RAM page.
@@ -1077,9 +1083,103 @@ def build_rom(media_exerciser: bool = False,
     a.str(0, 1)
     a.branch("idle")
 
+    if boot_watch_pattern:
+        # Run at 50 Hz with a functioning VIDC field, then execute real SWIs.
+        a.label("boot_watch_start")
+        a.ldr_const(1, 0x03400000)
+        for register in CHOOSER_VIDC_MODE:
+            a.ldr_const(0, register)
+            a.str(0, 1)
+        for address in (0x03600000, 0x03620000, 0x0364A000,
+                        0x0368A000, 0x036AA0FC, 0x036CA000):
+            a.ldr_const(0, address)
+            a.str(1, 0)
+        a.ldr_const(0, 0x036E0D0C)
+        a.str(1, 0)
+        if boot_watch_pattern == "prompt-write":
+            # Write an invented payload through the guest WD1770 before the
+            # qualifying read. Recovery must retain the staged shadow.
+            a.ldr_const(0, 0x03350040)
+            a.mov(1, 0x9E)
+            a.str(1, 0, byte=True)
+            a.ldr_const(0, 0x03350018)
+            a.mov(1, 0)
+            a.str(1, 0, byte=True)
+            a.ldr_const(0, 0x03310000)
+            a.mov(1, 0)
+            a.str(1, 0, 4, byte=True)
+            a.mov(1, 4)
+            a.str(1, 0, 8, byte=True)
+            a.mov(1, 0xA0)
+            a.str(1, 0, byte=True)
+            a.ldr_const(5, 256)
+            a.ldr_const(3, 250000)
+            a.mov(7, 0x5A)
+            a.label("boot_write_wait")
+            a.ldr(4, 0, byte=True)
+            a.tst_imm(4, 1)
+            a.branch("boot_write_done", "eq")
+            a.tst_imm(4, 2)
+            a.branch("boot_write_tick", "eq")
+            a.str(7, 0, 12, byte=True)
+            a.subs_imm(5, 5, 1)
+            a.branch("boot_write_done", "eq")
+            a.label("boot_write_tick")
+            a.subs_imm(3, 3, 1)
+            a.branch("boot_write_wait", "ne")
+            a.label("boot_write_done")
+            a.ldr(4, 0, byte=True)
+            a.tst_imm(4, 1)
+            a.branch("boot_write_done", "ne")
+        a.ldr_const(0, 0x89C)
+        if boot_watch_pattern == "desktop":
+            a.emit(0xEF0400C0)  # Wimp_Initialise
+        else:
+            a.emit(0xEF00000E)  # OS_ReadLine
+            if boot_watch_pattern in ("cli", "cli-then-prompt"):
+                a.emit(0xEF000005)  # OS_CLI cancels the pending read
+            if boot_watch_pattern == "cli-then-prompt":
+                a.emit(0xEF02000E)  # XOS_ReadLine starts a new wait
+        # Probe drive 1 after the observation. On a recovered construction it
+        # holds the project-authored helper; on the original boot it is empty.
+        a.ldr_const(0, 0x03350040)
+        a.mov(1, 0x8D)
+        a.str(1, 0, byte=True)
+        a.ldr_const(0, 0x03350018)
+        a.mov(1, 0)
+        a.str(1, 0, byte=True)
+        a.ldr_const(0, 0x03310000)
+        a.mov(1, 0)
+        a.str(1, 0, 4, byte=True)
+        a.str(1, 0, 8, byte=True)
+        a.mov(1, 0x80)
+        a.str(1, 0, byte=True)
+        a.ldr_const(5, 250000)
+        a.label("boot_helper_wait")
+        a.ldr(2, 0, byte=True)
+        a.tst_imm(2, 2)
+        a.branch("boot_helper_byte", "ne")
+        a.tst_imm(2, 1)
+        a.branch("boot_helper_done", "eq")
+        a.subs_imm(5, 5, 1)
+        a.branch("boot_helper_wait", "ne")
+        a.branch("boot_helper_done")
+        a.label("boot_helper_byte")
+        a.ldr(2, 0, 12, byte=True)
+        a.label("boot_helper_done")
+        a.label("boot_watch_wait")
+        a.branch("boot_watch_wait")
+
     code = a.finish()
     rom[0x20:0x20 + len(code)] = code
-    marker = (b"ARCDROID ARMV2 MEDIA EXERCISER ROM v1\0" if media_exerciser
+    if boot_watch_pattern:
+        rom[0:4] = struct.pack("<I", 0xE59FF004)  # reset literal at 0x0c
+        rom[8:12] = struct.pack("<I", 0xEA000000)  # SWI vector -> 0x10
+        rom[12:16] = struct.pack("<I", 0x03800020)
+        rom[16:20] = struct.pack("<I", 0xE1B0F00E)  # movs pc, lr
+    marker = (b"ARCDROID BOOT OBSERVER ROM " + boot_watch_pattern.encode() + b"\0"
+              if boot_watch_pattern else
+              b"ARCDROID ARMV2 MEDIA EXERCISER ROM v1\0" if media_exerciser
               else b"ARCDROID ARMV2 TEST ROM v2\0")
     rom[0x1F00:0x1F00 + len(marker)] = marker
     if write_payload is not None:
@@ -3149,6 +3249,9 @@ def main() -> None:
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
     (args.output / "arcdroid-test.rom").write_bytes(build_rom())
+    for pattern in ("prompt", "prompt-write", "cli", "cli-then-prompt", "desktop"):
+        (args.output / f"arcdroid-boot-{pattern}.rom").write_bytes(
+            build_rom(boot_watch_pattern=pattern))
     (args.output / "arcdroid-chooser-test.rom").write_bytes(build_chooser_rom())
     (args.output / "arcdroid-chooser-d-test.rom").write_bytes(
         build_chooser_rom(helper_visual_oracle=True))
