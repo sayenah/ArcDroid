@@ -207,6 +207,11 @@ int main(int argc, char **argv)
    expect_basis(&d, "free");
    assert(d.identification_format == 'E');
    arc_jfd_free(&d);
+   d = load(argv[1], "sparse-e-spare-bit.jfd");
+   arc_jfd_prepare_identification(&d, true);
+   expect(&d, "presented", 0x10u, 3u, 5u);
+   expect_basis(&d, "free");
+   arc_jfd_free(&d);
    d = load(argv[1], "sparse-e-allocated.jfd");
    arc_jfd_prepare_identification(&d, true);
    expect(&d, "not-free", 0u, 3u, 5u);
@@ -251,10 +256,35 @@ int main(int argc, char **argv)
    expect_basis(&f, "mixed");
    arc_jfd_free(&f);
 
+   f = load(argv[1], "sparse-f-zero-tail.jfd");
+   arc_jfd_prepare_identification(&f, true);
+   expect(&f, "presented", 0x6u, 3u, 10u);
+   expect_basis(&f, "prefix");
+   arc_jfd_free(&f);
+   static const char *bad_tails[] = {
+      "sparse-f-tail-other-id.jfd",
+      "sparse-f-tail-two-fragments.jfd",
+      "sparse-f-tail-early-stop.jfd",
+      "sparse-f-tail-free-link.jfd",
+      "sparse-f-tail-stray-bit.jfd"
+   };
+   for (size_t variant = 0u;
+        variant < sizeof(bad_tails) / sizeof(bad_tails[0]); ++variant)
+   {
+      f = load(argv[1], bad_tails[variant]);
+      arc_jfd_prepare_identification(&f, true);
+      expect(&f, "map-invalid", 0u, 0u, 0u);
+      arc_jfd_free(&f);
+   }
+
    f = load(argv[1], "sparse-f-one-zone.jfd");
    arc_jfd_prepare_identification(&f, true);
    expect(&f, "presented", 0x6u, 1u, 10u);
    expect_basis(&f, "free");
+   arc_jfd_free(&f);
+   f = load(argv[1], "sparse-f-one-zone-stray-tail.jfd");
+   arc_jfd_prepare_identification(&f, true);
+   expect(&f, "map-invalid", 0u, 0u, 0u);
    arc_jfd_free(&f);
 
    f = load(argv[1], "sparse-f-map-backup.jfd");

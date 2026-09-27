@@ -2903,6 +2903,10 @@ def build_f_discovery() -> bytearray:
         _set_bits(block, 8, 15, start - 8)
         _set_bits(block, 23, 1, 1)
         _set_bits(block, end - 1, 1, 1)
+        if zone == 3:
+            # FileCore closes the beyond-disc region with defect fragment 1.
+            _set_bits(block, end, 15, 1)
+            _set_bits(block, 31 + zone_bits, 1, 1)
         block[3] = 0xff if zone == 0 else 0
         block[0] = _zone_check(block)
     map_address = ((8192 - 1600 - 480) + (8192 - 1600)) * 64
@@ -3356,6 +3360,35 @@ def main() -> None:
         build_sparse_f_jfd(f_image, skipped=frozenset((1, 2, 4)),
                            first_track_times=first_times,
                            force_first_ids=first_ids))
+    last_end = 32 + (len(f_image) // 64 + 480 - 3 * (8192 - 1600))
+    zone_end = 32 + 8192 - 1600
+    for stem, bits, free_link in (
+        ("zero-tail", (), False),
+        ("tail-other-id", (last_end + 1, zone_end - 1), False),
+        ("tail-two-fragments", (last_end, last_end + 31,
+                                last_end + 32, zone_end - 1), False),
+        ("tail-early-stop", (last_end, last_end + 31), False),
+        ("tail-free-link", (last_end, zone_end - 1), True),
+        ("tail-stray-bit", (last_end + 40,), False),
+    ):
+        variant = bytearray(f_image)
+        for copy_at in (map_address, map_address + 4096):
+            zone_at = copy_at + 3 * 1024
+            block = bytearray(variant[zone_at:zone_at + 1024])
+            for bit in range(last_end, zone_end):
+                block[bit // 8] &= ~(1 << (bit & 7))
+            for bit in bits:
+                _set_bits(block, bit, 1, 1)
+            if free_link:
+                for bit in range(8, 23):
+                    block[bit // 8] &= ~(1 << (bit & 7))
+                _set_bits(block, 8, 15, last_end - 8)
+            block[0] = _zone_check(block)
+            variant[zone_at:zone_at + 1024] = block
+        (identification / f"sparse-f-{stem}.jfd").write_bytes(
+            build_sparse_f_jfd(variant, skipped=frozenset((1, 2)),
+                               first_track_times=first_times,
+                               force_first_ids=first_ids))
     f_one_zone = bytearray(1638400)
     one_record = bytearray(60)
     one_record[:6] = bytes((10, 10, 2, 4, 15, 10))
@@ -3374,6 +3407,15 @@ def main() -> None:
     (identification / "sparse-f-one-zone.jfd").write_bytes(build_sparse_f_jfd(
         f_one_zone, skipped=frozenset((1, 2)), first_track_times=first_times,
         force_first_ids=first_ids))
+    one_stray = bytearray(f_one_zone)
+    one_stray_map = bytearray(one_map)
+    _set_bits(one_stray_map, 2112 + 40, 1, 1)
+    one_stray_map[0] = _zone_check(one_stray_map)
+    one_stray[:1024] = one_stray_map
+    (identification / "sparse-f-one-zone-stray-tail.jfd").write_bytes(
+        build_sparse_f_jfd(one_stray, skipped=frozenset((1, 2)),
+                           first_track_times=first_times,
+                           force_first_ids=first_ids))
     one_prefix_map = bytearray(one_map)
     for bit in range(8, 23):
         one_prefix_map[bit // 8] &= ~(1 << (bit & 7))
@@ -3854,6 +3896,15 @@ def main() -> None:
     new_base[1024:2048] = new_base[:1024]
     (identification / "sparse-e-free.jfd").write_bytes(build_pdd5_jfd(
         bytes(new_base), {0: [0, 1, 2, 3], 1: full},
+        {0: {0: 0, 1: 40, 2: 80, 3: 120}}))
+    e_spare = bytearray(new_base)
+    for copy_at in (0, 1024):
+        block = bytearray(e_spare[copy_at:copy_at + 1024])
+        _set_bits(block, 32 + 8192 - 0x0520, 1, 1)
+        block[0] = _zone_check(block)
+        e_spare[copy_at:copy_at + 1024] = block
+    (identification / "sparse-e-spare-bit.jfd").write_bytes(build_pdd5_jfd(
+        bytes(e_spare), {0: [0, 1, 2, 3], 1: full},
         {0: {0: 0, 1: 40, 2: 80, 3: 120}}))
     (identification / "sparse-e-allocated.jfd").write_bytes(build_pdd5_jfd(
         bytes(new_base), {0: [0, 1, 2, 4], 1: full},

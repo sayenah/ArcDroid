@@ -572,8 +572,8 @@ static bool arc_ident_new(const ArcFileCore *fs, uint8_t covered[10240],
          if (stop >= end) return false;
          size_t bit = zone_base + start - (zone ? 32u : 512u);
          size_t count = (size_t)stop + 1u - start;
-         /* F's final zone may contain spare bits beyond the declared disc;
-          * a real fragment there cannot be positive free-space evidence. */
+         /* Only in-disc fragments are walked here. The F beyond-disc tail
+          * starts at end and is checked separately below. */
          if (bit > disc_bits || count > disc_bits - bit) return false;
          if (start == free_at)
          {
@@ -590,9 +590,21 @@ static bool arc_ident_new(const ArcFileCore *fs, uint8_t covered[10240],
          start = stop + 1u;
       }
       if (free_at) return false;
-      if (fs->zone_count > 1u && zone + 1u == fs->zone_count)
-         for (unsigned bit = end; bit < 32u + zone_bits; ++bit)
-            if ((map[bit >> 3u] >> (bit & 7u)) & 1u) return false;
+      if (fs->reader.geometry == ARC_GEOMETRY_1600K_F &&
+          zone + 1u == fs->zone_count)
+      {
+         unsigned tail_end = 32u + zone_bits;
+         unsigned set = 0u;
+         for (unsigned bit = end; bit < tail_end; ++bit)
+            if ((map[bit >> 3u] >> (bit & 7u)) & 1u)
+            {
+               /* All clear, or one id-1 fragment ending at zone end. */
+               if (bit != end && bit != tail_end - 1u) return false;
+               ++set;
+            }
+         if (set && (set != 2u || end + fs->id_length >= tail_end))
+            return false;
+      }
    }
    return true;
 }
