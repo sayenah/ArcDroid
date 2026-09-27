@@ -9,6 +9,51 @@ static const uint8_t riscos2[ARC_CMOS_MACHINE_SIZE] = { ARC_CMOS_RISCOS2_BYTES }
 static const uint8_t riscos3_old[ARC_CMOS_MACHINE_SIZE] = { ARC_CMOS_RISCOS3_OLD_BYTES };
 static const uint8_t riscos3_new[ARC_CMOS_MACHINE_SIZE] = { ARC_CMOS_RISCOS3_NEW_BYTES };
 
+static const unsigned unplug_bytes[] = {6u, 7u, 18u, 19u, 173u, 174u, 175u, 176u, 217u, 218u, 219u};
+
+unsigned arc_cmos_raw_address(unsigned logical)
+{
+   unsigned raw = logical + 0x40u;
+   return raw > 255u ? raw - 240u : raw;
+}
+
+unsigned arc_cmos_logical_address(unsigned raw)
+{
+   return raw >= 0x40u ? raw - 0x40u : raw + 176u;
+}
+
+static bool arc_cmos_locks_unplug(ArcOsClass os)
+{
+   return os == ARC_OS_TEST || os == ARC_OS_RISCOS_300 ||
+          os == ARC_OS_RISCOS_310 || os == ARC_OS_RISCOS_311 ||
+          os == ARC_OS_RISCOS_319;
+}
+
+void arc_cmos_locked_raw_mask(ArcOsClass os, uint8_t mask[32])
+{
+   if (!mask) return;
+   memset(mask, 0, 32u);
+   if (!arc_cmos_locks_unplug(os)) return;
+   for (unsigned i = 0u; i < sizeof(unplug_bytes) / sizeof(unplug_bytes[0]); ++i)
+   {
+      unsigned raw = arc_cmos_raw_address(unplug_bytes[i]);
+      mask[raw >> 3u] |= (uint8_t)(1u << (raw & 7u));
+   }
+}
+
+unsigned arc_cmos_clear_unplug_bytes(uint8_t payload[ARC_CMOS_PAYLOAD_SIZE], ArcOsClass os)
+{
+   unsigned cleared = 0u;
+   if (!payload || !arc_cmos_locks_unplug(os)) return 0u;
+   for (unsigned i = 0u; i < sizeof(unplug_bytes) / sizeof(unplug_bytes[0]); ++i)
+   {
+      unsigned offset = arc_cmos_raw_address(unplug_bytes[i]) - 16u;
+      if (payload[offset]) ++cleared;
+      payload[offset] = 0u;
+   }
+   return cleared;
+}
+
 static const uint8_t *arc_cmos_source(ArcOsClass os, ArcIoClass io)
 {
    switch (os)
@@ -41,6 +86,9 @@ bool arc_cmos_default(ArcOsClass os, ArcIoClass io, uint8_t output[ARC_CMOS_PAYL
    source = arc_cmos_source(os, io);
    if (!source) return false;
    memcpy(output, source + 16u, ARC_CMOS_PAYLOAD_SIZE);
+   if (os == ARC_OS_RISCOS_310 || os == ARC_OS_RISCOS_311 ||
+       os == ARC_OS_RISCOS_319)
+      output[arc_cmos_raw_address(195u) - 16u] &= (uint8_t)~0x04u;
    return true;
 }
 
@@ -62,6 +110,7 @@ bool arc_cmos_machine_image(ArcOsClass os, ArcIoClass io,
       memcpy(output, source, ARC_CMOS_MACHINE_SIZE);
    }
    memcpy(output + 16u, payload, ARC_CMOS_PAYLOAD_SIZE);
+   arc_cmos_clear_unplug_bytes(output + 16u, os);
    risc_os_3 = os == ARC_OS_RISCOS_300 || os == ARC_OS_RISCOS_310 ||
                os == ARC_OS_RISCOS_311 || os == ARC_OS_RISCOS_319;
    if (risc_os_3)
@@ -83,17 +132,16 @@ bool arc_cmos_machine_image(ArcOsClass os, ArcIoClass io,
     * sum logical bytes 0..238 and store (sum+1) modulo 256 at byte 239. */
    for (unsigned i = 0; i < 239u; ++i)
    {
-      unsigned raw = i + 0x40u;
-      if (raw > 255u) raw -= 240u;
-      checksum += output[raw];
+      checksum += output[arc_cmos_raw_address(i)];
    }
    output[63] = (uint8_t)(checksum + 1u);       /* logical byte 239 */
    return true;
 }
 
-void arc_cmos_normalise_payload(uint8_t payload[ARC_CMOS_PAYLOAD_SIZE], ArcIoClass io)
+void arc_cmos_normalise_payload(uint8_t payload[ARC_CMOS_PAYLOAD_SIZE], ArcOsClass os, ArcIoClass io)
 {
    if (!payload) return;
+   arc_cmos_clear_unplug_bytes(payload, os);
    /* Logical CMOS bytes 11 and 135 live at raw PCF8583 addresses 75 and
     * 199, hence payload offsets 59 and 183. */
    payload[59] &= (uint8_t)~0x07u;
@@ -109,9 +157,7 @@ void arc_cmos_machine_attach_ide(uint8_t image[ARC_CMOS_MACHINE_SIZE])
    image[199] = (uint8_t)((image[199] & ~0xc0u) | 0x40u);
    unsigned checksum = 0u;
    for (unsigned i = 0u; i < 239u; ++i) {
-      unsigned raw = i + 0x40u;
-      if (raw > 255u) raw -= 240u;
-      checksum += image[raw];
+      checksum += image[arc_cmos_raw_address(i)];
    }
    image[63] = (uint8_t)(checksum + 1u);
 }

@@ -26,6 +26,8 @@ static const ArcFirmwareFingerprint fingerprints[] = {
    C(ARC_OS_TEST, "ArcDroid boot structural one test ROM", 524288u, 0x48fb686e, "164c7e0dcff9c35c776e52e5fdace47c67b6a5e4"),
    C(ARC_OS_TEST, "ArcDroid boot structural rename test ROM", 524288u, 0xbb4ab91d, "7e9921495ad69730e1002ad0e2a50a9680e24925"),
    C(ARC_OS_TEST, "ArcDroid boot structural sibling test ROM", 524288u, 0xf88049e3, "538cb91da158bee3f340df91f372d27dc9a48a23"),
+   C(ARC_OS_TEST, "ArcDroid two-phase boot test ROM", 524288u, 0x756ee00d, "d49f1dfa58fbccefbea2c83aeb122c1dd8c255ad"),
+   C(ARC_OS_TEST, "ArcDroid CMOS bus exerciser ROM", 524288u, 0xf2742641, "1c11163c111151620bc950a17e81dfe15a1bef0c"),
    /* Synthetic unsupported-OS chooser probe, never accepted by shipping. */
    C(ARC_OS_RISCOS_200, "ArcDroid unsupported launch test ROM", 524288u, 0x92559a84, "6b42001508cbc297b0f792a23f010938c0670326"),
 #endif

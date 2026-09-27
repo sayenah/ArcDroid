@@ -67,6 +67,11 @@ is attached only to A3020 install-disc sessions; no other machine gains a
 disc. `src/wd1770.c` and `src/82c711_fdc.c` additionally report controller
 READ SECTOR commands for the one-shot ArcDoor latch. These changes have
 per-file modification notices.
+`src/cmos.c` and `src/cmos.h` accept a session-owned 256-bit raw-address mask.
+The device acknowledges and advances guest writes to masked bytes without
+storing them, and reports attempted and retained values to ArcDroid. Reads and
+the guest checksum write remain unchanged; the core selects the protected
+addresses from the OS class.
 `src/82c711_fdc.c` bounds guest-selected drives and FORMAT data, uses the
 controller invalid-command result in every build, and assigns `curdrive` only
 for commands with a drive selector (not SPECIFY, CONFIGURE or PERPENDICULAR),

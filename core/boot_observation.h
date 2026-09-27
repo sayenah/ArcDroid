@@ -1,3 +1,4 @@
+/* ArcDroid remembered boot observation. GPL-2.0-only. */
 #ifndef ARCDROID_BOOT_OBSERVATION_H
 #define ARCDROID_BOOT_OBSERVATION_H
 

@@ -93,6 +93,18 @@ static char last_message[512];
 static char machine_resolution_log[128];
 static unsigned machine_resolution_lines;
 static unsigned riscpc_log_count;
+static unsigned cmos_healing_log_count;
+static unsigned cmos_ignored_log_count;
+static unsigned cmos_summary_attempts;
+static unsigned cmos_summary_changes;
+
+static bool cmos_test_ide_read(void *opaque, uint32_t lba, uint32_t count,
+                               uint8_t *out)
+{
+   (void)opaque; (void)lba;
+   memset(out, 0, (size_t)count * ARC_IDE_SECTOR_SIZE);
+   return true;
+}
 static unsigned riscpc_osd_count;
 static unsigned vidc_osd_ext_calls;
 static unsigned vidc_osd_legacy_calls;
@@ -122,6 +134,7 @@ static unsigned fdc_read_count;
 static unsigned kart_traffic_count;
 static unsigned cmos_read_count;
 static unsigned cmos_write_count;
+static unsigned cmos_locked_debug_write_count;
 static unsigned real_boot_frames = 3000u;
 static bool real_boot_cancel_input;
 static bool real_boot_reset_once;
@@ -523,6 +536,10 @@ static void frontend_log(enum retro_log_level level, const char *format, ...)
    if (strstr(message, "KART ")) ++kart_traffic_count;
    if (strstr(message, "CMOS read ")) ++cmos_read_count;
    if (strstr(message, "CMOS write ")) ++cmos_write_count;
+   if (strstr(message, "CMOS write addr=ED ")) ++cmos_locked_debug_write_count;
+   if (strstr(message, "CMOS: cleared ")) { assert(level == RETRO_LOG_INFO); ++cmos_healing_log_count; }
+   if (strstr(message, "CMOS: guest write to unplug byte "))
+   { assert(level == RETRO_LOG_INFO); ++cmos_ignored_log_count; }
    if (strstr(message, "not a recognised ADFS image")) saw_adfs_advisory = true;
    if (strstr(message, "Input queue overflowed")) ++input_overflow_log_lines;
    if (!strncmp(message, "Input resolution:", 17u))
@@ -601,6 +618,10 @@ static void frontend_log(enum retro_log_level level, const char *format, ...)
               &underruns, &overruns) == 2)
    {
       saw_audio_counters = true;
+      const char *cmos_summary = strstr(message, "cmos_locked_attempts=");
+      if (cmos_summary)
+         (void)sscanf(cmos_summary, "cmos_locked_attempts=%u cmos_locked_changes=%u",
+                      &cmos_summary_attempts, &cmos_summary_changes);
    }
    if (evidence_log)
    {
@@ -1967,6 +1988,7 @@ int main(int argc, char **argv)
    bool jfd_identification_step = false;
    bool jfd_allocation_set = false;
    bool install_guest = false;
+   bool cmos_exerciser = false;
    char jfd_content_path[4096] = {0}, jfd_fixture_path[4096] = {0};
    const char *osk_script = NULL;
    if (argc == 11 && !strcmp(argv[5], "--newio-smoke"))
@@ -1985,6 +2007,8 @@ int main(int argc, char **argv)
       jfd_identification_step = true;
    else if (argc == 7 && !strcmp(argv[5], "--jfd-allocation-set"))
       jfd_allocation_set = true;
+   else if (argc == 6 && !strcmp(argv[5], "--cmos-exerciser"))
+      cmos_exerciser = true;
    else if (argc >= 6 && !strcmp(argv[5], "--real-boot"))
    {
       real_boot = true;
@@ -2015,7 +2039,7 @@ int main(int argc, char **argv)
       return 2;
    }
    char system_path[4096], firmware_path[4096], save_path[4096], renamed[4096], cwd[4096], cwd_after[4096];
-   char jfd_run_path[4096];
+   char jfd_run_path[4096], cmos_run_path[4096];
    const char *data_root = argv[4];
    if (jfd_writes)
    {
@@ -2023,6 +2047,13 @@ int main(int argc, char **argv)
       assert(snprintf(jfd_run_path, sizeof(jfd_run_path), "%s/jfd-run-XXXXXX", argv[4]) < (int)sizeof(jfd_run_path));
       assert(mkdtemp(jfd_run_path));
       data_root = jfd_run_path;
+   }
+   if (cmos_exerciser)
+   {
+      make_directory(argv[4]);
+      assert(snprintf(cmos_run_path, sizeof(cmos_run_path), "%s/cmos-run-XXXXXX", argv[4]) < (int)sizeof(cmos_run_path));
+      assert(mkdtemp(cmos_run_path));
+      data_root = cmos_run_path;
    }
    snprintf(system_path, sizeof(system_path), "%s/system", data_root);
    snprintf(firmware_path, sizeof(firmware_path), "%s/arcdroid", system_path);
@@ -2093,6 +2124,14 @@ int main(int argc, char **argv)
    bool (*arc_engine_test_cmos_write)(unsigned, uint8_t) = NULL;
    void (*arc_engine_test_boot_watch_snapshot)(ArcBootWatch *) = NULL;
    void (*arc_libretro_test_fail_next_construct)(void) = NULL;
+   bool (*arc_engine_test_cmos_bus_write)(unsigned, uint8_t) = NULL;
+   bool (*arc_engine_reset)(char *, size_t) = NULL;
+   bool (*arc_engine_start)(const uint8_t *, size_t, const ArcEngineMedia *,
+                            const ArcEngineMedia *, const ArcMachineDescriptor *,
+                            const ArcIdeBackend *, const ArcInstallDoorbell *,
+                            const uint8_t *, const uint8_t *,
+                            ArcEngineCmosIgnoredCallback, void *, char *, size_t) = NULL;
+   void (*arc_engine_stop)(void) = NULL;
    bool (*arc_engine_test_newio)(unsigned *, unsigned *, unsigned *, unsigned *, uint8_t *) = NULL;
    unsigned (*arc_engine_test_floppy_reads)(unsigned) = NULL;
    bool (*arc_engine_test_arm2_swp_undefined)(void) = NULL;
@@ -2202,7 +2241,21 @@ int main(int argc, char **argv)
              arc_engine_test_floppy_reads &&
              arc_engine_test_drive_media);
    }
-   if (!install_guest && !real_boot && !newio_smoke && !jfd_writes && !jfd_create_step &&
+   if (cmos_exerciser)
+   {
+      *(void **)(&arc_engine_test_cmos_image) = dlsym(module, "arc_engine_test_cmos_image");
+      *(void **)(&arc_engine_test_cmos_write) = dlsym(module, "arc_engine_test_cmos_write");
+      *(void **)(&arc_engine_test_cmos_bus_write) = dlsym(module, "arc_engine_test_cmos_bus_write");
+      *(void **)(&arc_engine_reset) = dlsym(module, "arc_engine_reset");
+      *(void **)(&arc_engine_start) = dlsym(module, "arc_engine_start");
+      *(void **)(&arc_engine_stop) = dlsym(module, "arc_engine_stop");
+      *(void **)(&arc_libretro_test_cmos_path) = dlsym(module, "arc_libretro_test_cmos_path");
+      assert(arc_engine_test_cmos_image && arc_engine_test_cmos_write &&
+             arc_engine_test_cmos_bus_write &&
+             arc_engine_reset && arc_engine_start && arc_engine_stop &&
+             arc_libretro_test_cmos_path);
+   }
+   if (!cmos_exerciser && !install_guest && !real_boot && !newio_smoke && !jfd_writes && !jfd_create_step &&
        !jfd_identification_step &&
        !jfd_merge_step && !jfd_allocation_step && !jfd_allocation_set)
    {
@@ -2218,6 +2271,9 @@ int main(int argc, char **argv)
          dlsym(module, "arc_engine_test_cmos_image");
       *(void **)(&arc_engine_test_cmos_write) =
          dlsym(module, "arc_engine_test_cmos_write");
+      *(void **)(&arc_engine_test_cmos_bus_write) =
+         dlsym(module, "arc_engine_test_cmos_bus_write");
+      *(void **)(&arc_engine_reset) = dlsym(module, "arc_engine_reset");
       *(void **)(&arc_libretro_test_fail_osk_allocations) =
          dlsym(module, "arc_libretro_test_fail_osk_allocations");
       *(void **)(&arc_libretro_test_drop_osk_surface) =
@@ -2296,7 +2352,8 @@ int main(int argc, char **argv)
              arc_engine_test_set_vidc_noncompleting &&
              arc_engine_test_drive_media && arc_engine_test_helper_media_valid &&
              arc_engine_test_cmos_image &&
-             arc_engine_test_cmos_write && arc_libretro_test_fail_osk_allocations &&
+             arc_engine_test_cmos_write && arc_engine_test_cmos_bus_write &&
+             arc_engine_reset && arc_libretro_test_fail_osk_allocations &&
              arc_libretro_test_drop_osk_surface &&
              arc_libretro_test_osk_source_unchanged &&
              arc_libretro_test_register_input_profile &&
@@ -2485,6 +2542,116 @@ int main(int argc, char **argv)
    assert(retro_serialize_size() == 0u);
    struct retro_game_info game = {jfd_writes ? jfd_content_path : argv[3], NULL, 0u, NULL};
    uint64_t source_hash = hash_file(game.path);
+
+   if (cmos_exerciser)
+   {
+      phase = PHASE_LOAD; assert(retro_load_game(&game));
+      phase = PHASE_RUN;
+      for (unsigned frame = 0u; frame < 30u; ++frame) retro_run();
+      uint8_t image[ARC_CMOS_MACHINE_SIZE], record[ARC_CMOS_RECORD_SIZE];
+      assert(arc_engine_test_cmos_image(image));
+      assert(image[0xedu] == 0u && image[0x58u] == 0x77u &&
+             image[0x59u] == 0xa5u && image[0x3fu] == 0x42u);
+      assert(cmos_ignored_log_count == 1u);
+      unsigned locked_writes_before_reset = cmos_locked_debug_write_count;
+      char record_path[4096];
+      snprintf(record_path, sizeof(record_path), "%s", arc_libretro_test_cmos_path());
+      read_exact(record_path, record, sizeof(record));
+      assert(record[0xedu] == 0u && record[0x58u] == 0x77u && record[0x59u] == 0xa5u);
+      retro_reset();
+      for (unsigned frame = 0u; frame < 5u; ++frame) retro_run();
+      assert(cmos_locked_debug_write_count > locked_writes_before_reset);
+      assert(cmos_ignored_log_count == 1u);
+      retro_unload_game();
+      assert(cmos_summary_attempts >= 1u && cmos_summary_changes >= 1u);
+      unsigned locked_writes_before_reload = cmos_locked_debug_write_count;
+      phase = PHASE_LOAD; assert(retro_load_game(&game));
+      phase = PHASE_RUN;
+      for (unsigned frame = 0u; frame < 5u; ++frame) retro_run();
+      assert(cmos_locked_debug_write_count > locked_writes_before_reload);
+      assert(arc_engine_test_cmos_image(image) && image[0xedu] == 0u &&
+             image[0x58u] == 0x77u && image[0x59u] == 0xa5u);
+      assert(cmos_ignored_log_count == 2u);
+      retro_unload_game();
+      char os2_fixture[4096], os2_firmware[4096];
+      const char *separator = strrchr(argv[2], '/');
+      assert(separator &&
+             snprintf(os2_fixture, sizeof(os2_fixture), "%.*s/arcdroid-unsupported-launch-test.rom",
+                      (int)(separator - argv[2]), argv[2]) < (int)sizeof(os2_fixture) &&
+             snprintf(os2_firmware, sizeof(os2_firmware), "%s/os2-test.rom",
+                      firmware_path) < (int)sizeof(os2_firmware));
+      copy_file(os2_fixture, os2_firmware);
+      option_os = "RISC OS 2.00";
+      option_machine = "A3000";
+      phase = PHASE_LOAD; assert(retro_load_game(&game));
+      assert(arc_engine_test_cmos_write(0xedu, 0x61u));
+      phase = PHASE_RUN; retro_run();
+      char os2_record_path[4096];
+      snprintf(os2_record_path, sizeof(os2_record_path), "%s", arc_libretro_test_cmos_path());
+      read_exact(os2_record_path, record, sizeof(record));
+      assert(record[0xedu] == 0x61u && strcmp(os2_record_path, record_path) != 0);
+      retro_reset();
+      assert(arc_engine_test_cmos_image(image) && image[0xedu] == 0x61u);
+      retro_unload_game();
+      assert(remove(os2_firmware) == 0);
+      option_os = "Auto";
+      option_machine = "Auto";
+      phase = PHASE_LOAD; assert(retro_load_game(&game));
+      assert(arc_engine_test_cmos_image(image) && image[0xedu] == 0u);
+      retro_unload_game();
+      uint8_t *firmware = malloc(524288u);
+      assert(firmware);
+      read_exact(argv[2], firmware, 524288u);
+      uint8_t empty_mask[32] = {0}, protected_mask[32] = {0};
+      arc_cmos_locked_raw_mask(ARC_OS_RISCOS_200, empty_mask);
+      arc_cmos_locked_raw_mask(ARC_OS_TEST, protected_mask);
+      memset(image, 0, sizeof(image));
+      char failure[128] = {0};
+      assert(!arc_engine_start(firmware, 1u, NULL, NULL,
+                               arc_machine_descriptor(ARC_MACHINE_A3000),
+                               NULL, NULL, image, protected_mask, NULL, NULL,
+                               failure, sizeof(failure)));
+      assert(arc_engine_start(firmware, 524288u, NULL, NULL,
+                              arc_machine_descriptor(ARC_MACHINE_A3000),
+                              NULL, NULL, image, empty_mask, NULL, NULL,
+                              failure, sizeof(failure)));
+      assert(arc_engine_test_cmos_bus_write(0xedu, 0x44u));
+      assert(arc_engine_test_cmos_image(image) && image[0xedu] == 0x44u);
+      arc_engine_stop();
+      memset(image, 0, sizeof(image));
+      image[199u] = 0x41u; /* one attached IDE disc, one floppy */
+      ArcIdeBackend ide = {0};
+      ide.read = cmos_test_ide_read;
+      ide.sectors = 4096u;
+      assert(arc_engine_start(firmware, 524288u, NULL, NULL,
+                              arc_machine_descriptor(ARC_MACHINE_A3020),
+                              &ide, NULL, image, protected_mask, NULL, NULL,
+                              failure, sizeof(failure)));
+      assert(arc_engine_test_cmos_bus_write(0xedu, 0x95u));
+      assert(arc_engine_test_cmos_image(image) && image[0xedu] == 0u &&
+             (image[199u] & 0xc0u) == 0x40u);
+      assert(arc_engine_reset(failure, sizeof(failure)));
+      assert(arc_engine_test_cmos_bus_write(0xedu, 0x96u));
+      assert(arc_engine_test_cmos_image(image) && image[0xedu] == 0u &&
+             (image[199u] & 0xc0u) == 0x40u);
+      assert(!arc_engine_start(firmware, 1u, NULL, NULL,
+                               arc_machine_descriptor(ARC_MACHINE_A3020),
+                               &ide, NULL, image, protected_mask, NULL, NULL,
+                               failure, sizeof(failure)));
+      memset(image, 0, sizeof(image));
+      assert(arc_engine_start(firmware, 524288u, NULL, NULL,
+                              arc_machine_descriptor(ARC_MACHINE_A3000),
+                              NULL, NULL, image, empty_mask, NULL, NULL,
+                              failure, sizeof(failure)));
+      assert(arc_engine_test_cmos_bus_write(0xedu, 0x47u));
+      assert(arc_engine_test_cmos_image(image) && image[0xedu] == 0x47u);
+      arc_engine_stop();
+      free(firmware);
+      retro_deinit();
+      assert(dlclose(module) == 0);
+      puts("libretro_harness: CMOS guest exerciser passed");
+      return 0;
+   }
 
    if (install_guest)
    {
@@ -5871,6 +6038,29 @@ int main(int argc, char **argv)
             save_path, source_digest.sha1);
    read_exact(cmos_file, final_cmos, sizeof(final_cmos));
    assert(memcmp(saved_cmos, final_cmos, sizeof(saved_cmos)) == 0);
+   /* A valid old record keeps its identity and unrelated settings while the
+    * locked ROM-module byte heals before the test OS can execute. */
+   final_cmos[0xedu] = 0x5au;
+   write_exact(cmos_file, final_cmos, sizeof(final_cmos));
+   unsigned heal_before = cmos_healing_log_count;
+   phase = PHASE_LOAD; assert(retro_load_game(&game));
+   uint8_t healed_image[ARC_CMOS_MACHINE_SIZE];
+   assert(arc_engine_test_cmos_image(healed_image) && healed_image[0xedu] == 0u);
+   assert(cmos_healing_log_count == heal_before + 1u);
+   assert(arc_engine_test_cmos_write(0xedu, 0xa5u));
+   phase = PHASE_RUN; retro_run();
+   uint8_t healed_record[ARC_CMOS_RECORD_SIZE];
+   read_exact(cmos_file, healed_record, sizeof(healed_record));
+   assert(healed_record[0xedu] == 0u && healed_record[216u] == lifecycle_mutation);
+   assert(!memcmp(healed_record, final_cmos, 16u));
+   retro_reset();
+   assert(arc_engine_test_cmos_image(healed_image) && healed_image[0xedu] == 0u);
+   assert(cmos_healing_log_count == heal_before + 1u);
+   retro_unload_game();
+   phase = PHASE_LOAD; assert(retro_load_game(&game));
+   assert(arc_engine_test_cmos_image(healed_image) && healed_image[0xedu] == 0u);
+   assert(cmos_healing_log_count == heal_before + 1u);
+   retro_unload_game();
    retro_deinit();
 
    /* Negotiate frontend duplication in a second pass. The generated ROM's

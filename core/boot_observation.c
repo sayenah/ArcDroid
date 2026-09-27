@@ -1,3 +1,4 @@
+/* ArcDroid remembered boot observation. GPL-2.0-only. */
 #include "boot_observation.h"
 
 #include <string.h>

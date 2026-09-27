@@ -163,8 +163,9 @@ def build_rom(media_exerciser: bool = False,
               merge_read_sector: int = 3,
               allocation_mode: str | None = None,
               boot_watch_pattern: str | None = None,
-              boot_write_sectors: tuple[int, ...] = (1, 2)) -> bytearray:
-    if boot_watch_pattern not in (None, "prompt", "prompt-write", "prompt-structure", "cli", "cli-confirm", "horizon-edge",
+              boot_write_sectors: tuple[int, ...] = (1, 2),
+              cmos_exerciser: bool = False) -> bytearray:
+    if boot_watch_pattern not in (None, "prompt", "prompt-write", "prompt-structure", "two-phase", "cli", "cli-confirm", "horizon-edge",
                                   "cli-then-prompt", "desktop"):
         raise ValueError("unknown synthetic boot observation")
     expected_payload = (1024 * len(boot_write_sectors)
@@ -190,6 +191,64 @@ def build_rom(media_exerciser: bool = False,
     a = Arm2(0x03800020)
     if boot_watch_pattern:
         a.branch("boot_watch_start")
+    if cmos_exerciser:
+        # Invented guest program; all transfers go through the IOC's I2C pins.
+        a.mov(0, 0x03000000)
+        a.add_imm(0, 0, 0x00200000)
+
+        def pins(value: int) -> None:
+            a.mov(1, value)
+            a.str(1, 0, byte=True)
+
+        def start() -> None:
+            pins(3); pins(2)
+
+        def stop() -> None:
+            pins(0); pins(2); pins(3)
+
+        def send(value: int) -> None:
+            for shift in range(7, -1, -1):
+                bit = (value >> shift) & 1
+                pins(bit); pins(2 | bit)
+            pins(1); pins(3); pins(0)  # ACK clock
+
+        def write(raw: int, value: int) -> None:
+            start(); send(0xa0); send(raw); send(value); stop()
+
+        def read_check(raw: int, expected: int, failure: str) -> None:
+            start(); send(0xa0); send(raw); stop()
+            start(); send(0xa1)
+            a.mov(4, 0)
+            for _ in range(8):
+                pins(1); pins(3)
+                a.ldr(2, 0, byte=True)
+                a.emit(0xE1A04084)  # mov r4, r4, lsl #1
+                a.emit(0xE2022001)  # and r2, r2, #1
+                a.emit(0xE1844002)  # orr r4, r4, r2
+            pins(1); pins(3)  # NACK
+            a.cmp_imm(4, expected)
+            a.branch(failure, "ne")
+
+        read_check(0x58, 0x77, "first_pass")
+        write(0xed, 0x96)  # repeat the locked write on every later boot
+        read_check(0xed, 0x00, "failed")
+        read_check(0x58, 0x77, "failed")
+        write(0x59, 0xa5)  # result visible in the persisted record
+        a.branch("idle")
+        a.label("first_pass")
+        write(0xed, 0x96)  # RISC OS 3 ROM-module unplug byte
+        write(0x58, 0x77)  # unlocked marker
+        write(0x3f, 0x42)  # guest-maintained checksum byte
+        a.mov(15, 0x03800000)  # branch through reset vector
+        a.label("failed")
+        write(0x59, 0xee)
+        a.label("idle")
+        a.branch("idle")
+        code = a.finish()
+        rom[0x20:0x20 + len(code)] = code
+        marker = b"ARCDROID INVENTED CMOS I2C EXERCISER v1\0"
+        rom[0x1f00:0x1f00 + len(marker)] = marker
+        return rom
 
     def poison_merge_buffer(prefix: str) -> None:
         # A missing read must not inherit a zero-filled machine RAM page.
@@ -1103,6 +1162,47 @@ def build_rom(media_exerciser: bool = False,
             a.str(1, 0)
         a.ldr_const(0, 0x036E0D0C)
         a.str(1, 0)
+        if boot_watch_pattern == "two-phase":
+            # The first boot writes a CMOS user byte and reaches the command
+            # prompt. The same disc reaches the desktop when that byte is set.
+            # Both branches execute from ROM; the flag is guest I2C state.
+            a.ldr_const(0, 0x03200000)
+
+            def cmos_pins(value: int) -> None:
+                a.mov(1, value)
+                a.str(1, 0, byte=True)
+
+            def cmos_start() -> None:
+                cmos_pins(3); cmos_pins(2)
+
+            def cmos_stop() -> None:
+                cmos_pins(0); cmos_pins(2); cmos_pins(3)
+
+            def cmos_send(value: int) -> None:
+                for shift in range(7, -1, -1):
+                    bit = (value >> shift) & 1
+                    cmos_pins(bit); cmos_pins(2 | bit)
+                cmos_pins(1); cmos_pins(3); cmos_pins(0)
+
+            cmos_start(); cmos_send(0xA0); cmos_send(0x58); cmos_stop()
+            cmos_start(); cmos_send(0xA1)
+            a.mov(4, 0)
+            for _ in range(8):
+                cmos_pins(1); cmos_pins(3)
+                a.ldr(2, 0, byte=True)
+                a.emit(0xE1A04084)  # mov r4, r4, lsl #1
+                a.emit(0xE2022001)  # and r2, r2, #1
+                a.emit(0xE1844002)  # orr r4, r4, r2
+            cmos_pins(1); cmos_pins(3)
+            a.cmp_imm(4, 0x77)
+            a.branch("two_phase_desktop", "eq")
+            cmos_start(); cmos_send(0xA0); cmos_send(0x58)
+            cmos_send(0x77); cmos_stop()
+            a.branch("two_phase_prompt")
+            a.label("two_phase_desktop")
+            a.emit(0xEF0400C0)  # Wimp_Initialise
+            a.branch("two_phase_probe")
+            a.label("two_phase_prompt")
         if boot_watch_pattern == "prompt-structure":
             # Two guest FDC writes replace both sectors of a D-format root
             # directory before the qualifying ROM SWI. The target directory
@@ -1206,6 +1306,8 @@ def build_rom(media_exerciser: bool = False,
                 a.emit(0xEF000005)
             if boot_watch_pattern == "cli-then-prompt":
                 a.emit(0xEF02000E)  # XOS_ReadLine starts a new wait
+        if boot_watch_pattern == "two-phase":
+            a.label("two_phase_probe")
         # Probe drive 1 after the observation. On a recovered construction it
         # holds the project-authored helper; on the original boot it is empty.
         a.ldr_const(0, 0x03350040)
@@ -3315,9 +3417,11 @@ def main() -> None:
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
     (args.output / "arcdroid-test.rom").write_bytes(build_rom())
-    for pattern in ("prompt", "prompt-write", "cli", "cli-then-prompt", "desktop", "cli-confirm", "horizon-edge"):
+    for pattern in ("prompt", "prompt-write", "cli", "cli-then-prompt", "desktop", "cli-confirm", "horizon-edge", "two-phase"):
         (args.output / f"arcdroid-boot-{pattern}.rom").write_bytes(
             build_rom(boot_watch_pattern=pattern))
+    (args.output / "arcdroid-cmos-exerciser.rom").write_bytes(
+        build_rom(cmos_exerciser=True))
     (args.output / "arcdroid-chooser-test.rom").write_bytes(build_chooser_rom())
     (args.output / "arcdroid-chooser-d-test.rom").write_bytes(
         build_chooser_rom(helper_visual_oracle=True))
