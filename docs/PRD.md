@@ -68,6 +68,8 @@ ArcDroid runs every game through the same general architecture: accurate emulati
 
 When a game does not work, that exposes a gap in the general machinery, and the fix closes that gap for every game in its class. Per-game fixes are not an acceptable shortcut, however small.
 
+This rule governs what ArcDroid ships and how it decides. State that ArcDroid derives at run time on the player's machine by observing a game — saves, the player's own choices, CMOS records, remembered boot outcomes, in the way an emulator builds a shader cache — is not per-game data, provided it is never shipped, never keyed to a title's name, always re-derivable and discarded when it no longer verifies (Founder decision D-093).
+
 ### P-5 — RetroArch-native UX
 
 Where libretro provides appropriate interfaces for content loading, controller input, keyboard/mouse input, disk control, core options, save paths, messages, remaps, and related frontend behavior, ArcDroid should integrate through those interfaces rather than invent a parallel emulator UI.
@@ -436,7 +438,7 @@ Repeated load/unload/restart behavior must not depend on restarting RetroArch or
 
 ### FR-47 — No per-game data
 
-ArcDroid shall not ship, generate or consult per-game data: no compatibility database, title profiles, per-title tables, or behavior keyed to a game's identity, fingerprint or name. All configuration derives from general emulation and the structure of the supplied media (P-4).
+ArcDroid shall not ship or consult shipped per-game data: no compatibility database, title profiles, per-title tables, or behavior keyed to a game's identity, fingerprint or name. All configuration derives from general emulation and the structure of the supplied media (P-4). Run-time derived state per P-4's last paragraph (D-093) is permitted: keyed by content identity, never shipped, never keyed to a name, re-derivable and self-invalidating.
 
 ### FR-48 — Failures are fixed in the general machinery
 
