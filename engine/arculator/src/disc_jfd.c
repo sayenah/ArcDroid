@@ -206,11 +206,14 @@ static bool jfd_find_sector(uint32_t old_phase, uint32_t new_phase,
    const ArcJfdTrack *track = &jfd_image->tracks[track_side];
    uint32_t best_delta = UINT32_MAX;
    bool found = false;
-   for (unsigned i = 0u; i < track->sector_count + ARC_JFD_PDD5_IDS; ++i)
+   for (unsigned i = 0u;
+        i < track->sector_count + ARC_JFD_MAX_STANDARD_IDS; ++i)
    {
       ArcJfdView view;
       if (!arc_jfd_effective_sector(jfd_image, (unsigned)track_side, i,
                                     jfd_writing, &view)) continue;
+      if (jfd_sector_id != UINT_MAX && jfd_writing &&
+          i >= track->sector_count && !view.write_eligible) continue;
       if (jfd_writing && view.created && !view.data &&
           jfd_image->overlay &&
           jfd_image->overlay->map_valid &&
@@ -246,7 +249,7 @@ static void jfd_mark_terminal_probe(void)
    unsigned candidate = jfd_image->tracks[track_side].sector_count +
                         jfd_sector_id;
    if (!arc_jfd_effective_sector(jfd_image, (unsigned)track_side,
-                                 candidate, false, &visible))
+                                 candidate, false, &visible) || !visible.data)
       overlay->probe_mask[track_side] |= (uint8_t)(1u << jfd_sector_id);
 }
 
@@ -319,7 +322,9 @@ static void jfd_poll(void)
          jfd_stop();
          fdc_funcs->headercrcerror(fdc_p);
       }
-      else if (sector->data_offset != UINT32_MAX || selected.created)
+      else if (jfd_writing ?
+               (selected.created ? selected.write_eligible :
+                sector->data_offset != UINT32_MAX) : selected.data != NULL)
       {
          jfd_selected_view = selected;
          jfd_transfer_pos = 0u;

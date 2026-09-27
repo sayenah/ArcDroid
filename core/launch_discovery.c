@@ -507,6 +507,249 @@ bool arc_jfd_base_free_tracks(const ArcJfdImage *image,
    return arc_jfd_new_free_copy(&fs, 0u, free_track);
 }
 
+/* G5 proof is deliberately separate from discovery and C-11c: only original
+ * captured payloads can testify that every byte of an omitted slot is free. */
+static void arc_ident_free(uint8_t covered[10240], size_t first, size_t length)
+{
+   if (first < 10240u)
+   {
+      size_t amount = 10240u - first;
+      if (amount > length) amount = length;
+      memset(covered + first, 1, amount);
+   }
+}
+
+static bool arc_ident_old(const ArcFileCore *fs, uint8_t covered[10240])
+{
+   if (fs->old_map_clamped) return false;
+   unsigned previous = 0u;
+   unsigned total = (unsigned)(fs->disc_size / 256u);
+   for (unsigned at = 0u; at < fs->map[510]; at += 3u)
+   {
+      unsigned first = arc_le24(fs->map + at);
+      unsigned count = arc_le24(fs->map + 256u + at);
+      if (!count || first < previous || first > total || count > total - first)
+         return false;
+      arc_ident_free(covered, (size_t)first * 256u, (size_t)count * 256u);
+      previous = first + count;
+   }
+   return true;
+}
+
+static bool arc_ident_new(const ArcFileCore *fs, uint8_t covered[10240])
+{
+   unsigned zone_bits = 8192u - fs->zone_spare;
+   size_t disc_bits = fs->disc_size >> fs->log2_bytes_per_map_bit;
+   for (unsigned zone = 0u; zone < fs->zone_count; ++zone)
+   {
+      const uint8_t *map = fs->map + (size_t)zone * 1024u;
+      unsigned start = zone ? 32u : 512u;
+      unsigned end = fs->reader.geometry == ARC_GEOMETRY_800K_E ?
+         512u + zone_bits - 480u : arc_f_zone_end(fs, zone);
+      unsigned link = arc_map_bits(map, 8u, fs->id_length);
+      unsigned free_at = link ? 8u + link : 0u;
+      size_t zone_base = zone ?
+         (size_t)zone_bits - 480u + (size_t)(zone - 1u) * zone_bits : 0u;
+      if (free_at && (free_at < start || free_at >= end)) return false;
+      while (start < end)
+      {
+         if (start + fs->id_length >= end || (free_at && free_at < start))
+            return false;
+         unsigned id = arc_map_bits(map, start, fs->id_length);
+         unsigned stop = start + fs->id_length;
+         while (stop < end && !((map[stop >> 3u] >> (stop & 7u)) & 1u))
+            ++stop;
+         if (stop >= end) return false;
+         size_t bit = zone_base + start - (zone ? 32u : 512u);
+         size_t count = (size_t)stop + 1u - start;
+         /* F's final zone may contain spare bits beyond the declared disc;
+          * a real fragment there cannot be positive free-space evidence. */
+         if (bit > disc_bits || count > disc_bits - bit) return false;
+         if (start == free_at)
+         {
+            arc_ident_free(covered, bit << fs->log2_bytes_per_map_bit,
+                           count << fs->log2_bytes_per_map_bit);
+            free_at = id ? start + id : 0u;
+            if (free_at && free_at <= stop) return false;
+         }
+         start = stop + 1u;
+      }
+      if (free_at) return false;
+      if (fs->zone_count > 1u && zone + 1u == fs->zone_count)
+         for (unsigned bit = end; bit < 32u + zone_bits; ++bit)
+            if ((map[bit >> 3u] >> (bit & 7u)) & 1u) return false;
+   }
+   return true;
+}
+
+static bool arc_ident_layout_equal(const uint8_t a[60], const uint8_t b[60])
+{
+   return !memcmp(a, b, 7u) && !memcmp(a + 8u, b + 8u, 4u) &&
+          !memcmp(a + 16u, b + 16u, 4u);
+}
+
+void arc_jfd_prepare_identification(ArcJfdImage *image, bool native)
+{
+   if (!image) return;
+   image->identification_mask = 0u;
+   image->identification_schedule = 0u;
+   image->identification_maps = 0u;
+   image->identification_format = 0;
+   image->identification_timed = false;
+   image->identification_reason = native ? "no-track" : "not-native";
+   if (!native || !image->track_count) return;
+   const ArcJfdTrack *track = &image->tracks[0];
+   image->identification_timed = track->timed;
+   if (!track->sector_count) return;
+   ArcFileCore fs = {0};
+   fs.reader.jfd = image;
+   fs.reader.base_only = true;
+   fs.reader.captured_only = true;
+   if (arc_filecore_old(&fs, ARC_GEOMETRY_640K_L))
+   { image->identification_reason = "unsupported-format"; return; }
+   memset(fs.map, 0, sizeof(fs.map));
+   char format = 0;
+   uint8_t copies[2][10240] = {{0}};
+   uint8_t layout[60] = {0};
+   if (arc_filecore_old(&fs, ARC_GEOMETRY_800K_D))
+   {
+      format = 'D';
+      if (!arc_ident_old(&fs, copies[0]))
+      { image->identification_reason = "map-invalid"; return; }
+      image->identification_maps = 1u;
+   }
+   else
+   {
+      for (unsigned copy = 0u; copy < 2u; ++copy)
+      {
+         memset(fs.map, 0, sizeof(fs.map));
+         if (!arc_filecore_new_at(&fs, copy)) continue;
+         fs.zone_count = 1u;
+         if (!arc_ident_new(&fs, copies[copy])) continue;
+         bool had_copy = image->identification_maps != 0u;
+         image->identification_maps |= (uint8_t)(1u << copy);
+         if (had_copy &&
+             !arc_ident_layout_equal(layout, fs.map + 4u))
+         {
+            image->identification_format = 'E';
+            image->identification_schedule = 5u;
+            image->identification_reason = "map-conflict";
+            return;
+         }
+         memcpy(layout, fs.map + 4u, 60u);
+      }
+      if (image->identification_maps) format = 'E';
+      else
+      {
+         uint8_t boot[60];
+         memset(fs.map, 0, sizeof(fs.map));
+         if (!arc_reader_configure(&fs.reader, ARC_GEOMETRY_1600K_F) ||
+             !arc_reader_read(&fs.reader, 0xdc0u, boot, sizeof(boot)) ||
+             !arc_f_record_valid(boot))
+         { image->identification_reason = "map-invalid"; return; }
+         fs.id_length = boot[4];
+         fs.log2_bytes_per_map_bit = boot[5];
+         fs.zone_count = boot[9];
+         fs.zone_spare = (unsigned)boot[10] | ((unsigned)boot[11] << 8u);
+         fs.disc_size = 1638400u;
+         unsigned middle = fs.zone_count / 2u;
+         size_t address = (middle ?
+            (size_t)middle * (8192u - fs.zone_spare) - 480u : 0u) <<
+            fs.log2_bytes_per_map_bit;
+         size_t bytes = (size_t)fs.zone_count * 1024u;
+         for (unsigned copy = 0u; copy < 2u; ++copy)
+         {
+            uint8_t first_zone[1024];
+            if (!arc_reader_read(&fs.reader, address + copy * bytes,
+                                 first_zone, sizeof(first_zone)) ||
+                !arc_f_record_valid(first_zone + 4u)) continue;
+            ArcFileCore candidate = fs;
+            const uint8_t *record = first_zone + 4u;
+            candidate.id_length = record[4];
+            candidate.log2_bytes_per_map_bit = record[5];
+            candidate.zone_count = record[9];
+            candidate.zone_spare = (unsigned)record[10] |
+                                   ((unsigned)record[11] << 8u);
+            unsigned candidate_middle = candidate.zone_count / 2u;
+            size_t candidate_address = (candidate_middle ?
+               (size_t)candidate_middle * (8192u - candidate.zone_spare) -
+                  480u : 0u) << candidate.log2_bytes_per_map_bit;
+            size_t candidate_bytes = (size_t)candidate.zone_count * 1024u;
+            if (!arc_reader_read(&candidate.reader,
+                                 candidate_address + copy * candidate_bytes,
+                                 candidate.map, candidate_bytes) ||
+                memcmp(candidate.map + 4u, record, 20u) ||
+                !arc_f_map_valid(&candidate, candidate.map + 4u) ||
+                !arc_ident_new(&candidate, copies[copy])) continue;
+            bool had_copy = image->identification_maps != 0u;
+            image->identification_maps |= (uint8_t)(1u << copy);
+            if (!arc_ident_layout_equal(boot, candidate.map + 4u) ||
+                (had_copy &&
+                 !arc_ident_layout_equal(layout, candidate.map + 4u)))
+            {
+               image->identification_format = 'F';
+               image->identification_schedule = 10u;
+               image->identification_reason = "map-conflict";
+               return;
+            }
+            memcpy(layout, candidate.map + 4u, 60u);
+         }
+         if (!image->identification_maps)
+         { image->identification_reason = "map-invalid"; return; }
+         format = 'F';
+      }
+   }
+   image->identification_schedule = format == 'F' ? 10u : 5u;
+   image->identification_format = format;
+   unsigned density = format == 'F' ? 4u : 2u;
+   unsigned spacing = format == 'F' ? ARC_JFD_F_SPACING_US :
+      ARC_JFD_PDD5_SPACING_US;
+   uint16_t captured = 0u;
+   for (unsigned i = 0u; i < track->sector_count; ++i)
+   {
+      size_t index = (size_t)track->first_sector + i;
+      const ArcJfdSector *sector = &image->sectors[index];
+      if (sector->id >= image->identification_schedule ||
+          sector->size != 1024u || sector->density != density ||
+          sector->data_offset == UINT32_MAX || sector->flags ||
+          (captured & (1u << sector->id)) ||
+          !arc_jfd_sector_write_eligible(image, index))
+      { image->identification_reason = "irregular"; return; }
+      for (unsigned j = 0u; j < i; ++j)
+         if (image->sectors[track->first_sector + j].time_us == sector->time_us)
+         { image->identification_reason = "irregular"; return; }
+      captured |= (uint16_t)(1u << sector->id);
+   }
+   uint16_t all = (uint16_t)((1u << image->identification_schedule) - 1u);
+   if (!captured)
+   { image->identification_reason = "irregular"; return; }
+   if (captured == all)
+   { image->identification_reason = "complete"; return; }
+   for (unsigned id = 0u; id < image->identification_schedule; ++id)
+      if (!(captured & (1u << id)))
+      {
+         size_t first = (size_t)id * 1024u;
+         if (first + 1024u > fs.disc_size)
+         { image->identification_reason = "not-free"; return; }
+         for (unsigned copy = 0u; copy < 2u; ++copy)
+            if (image->identification_maps & (1u << copy))
+               for (size_t at = first; at < first + 1024u; ++at)
+                  if (!copies[copy][at])
+                  { image->identification_reason = "not-free"; return; }
+      }
+   uint32_t positions[ARC_JFD_MAX_STANDARD_IDS] = {0};
+   if (!arc_jfd_place_slots(image, 0u, image->identification_schedule,
+                            spacing, captured, positions))
+   { image->identification_reason = "unplaceable"; return; }
+   for (unsigned id = 0u; id < image->identification_schedule; ++id)
+      if (!(captured & (1u << id)))
+      {
+         image->identification_mask |= (uint16_t)(1u << id);
+         image->identification_time[id] = positions[id];
+      }
+   image->identification_reason = "presented";
+}
+
 /* C-11c uses FileCore's bounded map checks, but only captured sectors and
  * committed replacements may supply a map. A virtual zero sector is never
  * input to this parser. The 160 byte result is an in-memory view, not a store

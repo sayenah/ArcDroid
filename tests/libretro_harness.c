@@ -212,6 +212,7 @@ static unsigned jfd_write_log_lines;
 static unsigned jfd_refusal_log_lines;
 static char last_jfd_refusal_log[512];
 static char last_jfd_writes_log[512];
+static char last_jfd_identification_log[512];
 static unsigned jfd_failed_status_calls;
 static unsigned jfd_damaged_notice_calls;
 static unsigned jfd_off_notice_calls;
@@ -556,6 +557,9 @@ static void frontend_log(enum retro_log_level level, const char *format, ...)
    }
    if (!strncmp(message, "JFD writes:", 11u))
       snprintf(last_jfd_writes_log, sizeof(last_jfd_writes_log), "%s", message);
+   if (!strncmp(message, "JFD identification:", 19u))
+      snprintf(last_jfd_identification_log,
+               sizeof(last_jfd_identification_log), "%s", message);
    if (strstr(message, "JFD content is never written in place"))
       ++jfd_original_notice_calls;
    if (!strncmp(message, "ADFFS package:", 14u))
@@ -1987,6 +1991,8 @@ int main(int argc, char **argv)
    bool (*arc_libretro_test_jfd_created_byte)(unsigned, unsigned,
                                               unsigned, unsigned,
                                               uint8_t *) = NULL;
+   bool (*arc_libretro_test_jfd_presented)(unsigned, unsigned,
+                                            uint32_t *) = NULL;
    bool (*arc_engine_test_helper_media_valid)(ArcMediaKind,
                                                ArcMediaGeometry) = NULL;
    bool (*arc_engine_test_cmos_image)(uint8_t[ARC_CMOS_MACHINE_SIZE]) = NULL;
@@ -2237,6 +2243,8 @@ int main(int argc, char **argv)
          dlsym(module, "arc_libretro_test_jfd_probe_mask");
       *(void **)(&arc_libretro_test_jfd_created_byte) =
          dlsym(module, "arc_libretro_test_jfd_created_byte");
+      *(void **)(&arc_libretro_test_jfd_presented) =
+         dlsym(module, "arc_libretro_test_jfd_presented");
       *(void **)(&arc_libretro_test_jfd_commit) =
          dlsym(module, "arc_libretro_test_jfd_commit");
       *(void **)(&arc_engine_test_drive_media) =
@@ -2262,6 +2270,7 @@ int main(int argc, char **argv)
       assert(arc_libretro_test_jfd_formatted_reads &&
              arc_libretro_test_jfd_probe_mask &&
              arc_libretro_test_jfd_created_byte &&
+             arc_libretro_test_jfd_presented &&
              arc_libretro_test_jfd_commit && arc_engine_test_drive_media &&
              arc_libretro_test_adffs_accept_test_os &&
              arc_libretro_test_fail_adffs_content_read &&
@@ -3117,6 +3126,49 @@ int main(int argc, char **argv)
          retro_unload_game();
       }
       fault_mkdir_substring = NULL;
+      char sparse_d[4096], allocated_e[4096], sparse_slot_a[4096];
+      snprintf(sparse_d, sizeof(sparse_d),
+               "%s/../jfd-identification/sparse-d-timed.jfd", jfd_fixture_path);
+      snprintf(allocated_e, sizeof(allocated_e),
+               "%s/../jfd-identification/sparse-e-allocated.jfd", jfd_fixture_path);
+      uint64_t sparse_hash = hash_file(sparse_d);
+      ArcDigest sparse_digest = digest_file(sparse_d);
+      snprintf(sparse_slot_a, sizeof(sparse_slot_a),
+               "%s/arcdroid/jfd/%s.a", save_path, sparse_digest.sha1);
+      struct retro_game_info sparse_game = {sparse_d, NULL, 0u, NULL};
+      phase = PHASE_LOAD; assert(retro_load_game(&sparse_game));
+      uint32_t position = 0u;
+      uint8_t omitted_byte = 0u;
+      assert(strstr(last_jfd_identification_log,
+                    "native=yes format=D schedule=5 timing=timed captured=0,1,2 presented=3,4 maps=1 reason=presented") &&
+             arc_libretro_test_jfd_presented(0u, 3u, &position) &&
+             position == 116352u &&
+             arc_libretro_test_jfd_presented(0u, 4u, NULL) &&
+             !arc_libretro_test_jfd_presented(0u, 2u, NULL) &&
+             !arc_libretro_test_jfd_created_byte(0u, 0u, 3u, 0u,
+                                                   &omitted_byte) &&
+             !file_exists(sparse_slot_a));
+      retro_reset();
+      assert(arc_libretro_test_jfd_presented(0u, 3u, &position) &&
+             position == 116352u);
+      assert(disk_control.set_eject_state(true) &&
+             disk_control.set_eject_state(false));
+      assert(arc_libretro_test_jfd_presented(0u, 3u, &position) &&
+             position == 116352u && !file_exists(sparse_slot_a));
+      retro_unload_game();
+      option_writes = "off"; variable_update = true;
+      phase = PHASE_LOAD; assert(retro_load_game(&sparse_game));
+      assert(arc_libretro_test_jfd_presented(0u, 3u, NULL) &&
+             strstr(last_jfd_identification_log, "reason=presented"));
+      retro_unload_game();
+      option_writes = "shadow"; variable_update = true;
+      struct retro_game_info allocated_game = {allocated_e, NULL, 0u, NULL};
+      phase = PHASE_LOAD; assert(retro_load_game(&allocated_game));
+      assert(strstr(last_jfd_identification_log,
+                    "format=E schedule=5 timing=timed captured=0,1,2,4 presented=none maps=3 reason=not-free") &&
+             !arc_libretro_test_jfd_presented(0u, 3u, NULL));
+      retro_unload_game();
+      assert(hash_file(sparse_d) == sparse_hash && !file_exists(sparse_slot_a));
       uint64_t wp_source_hash = hash_file(wp);
       uint64_t zip_source_hash = hash_file(zipped);
       uint64_t gzip_source_hash = hash_file(gzip);
@@ -3253,6 +3305,10 @@ int main(int argc, char **argv)
       phase = PHASE_LOAD; assert(retro_load_game(&adffs_game));
       assert(strstr(last_jfd_boot_log, "JFD boot: path=adffs") &&
              strstr(last_jfd_writes_log, "reason=not-native") &&
+             strstr(last_jfd_identification_log,
+                    "native=no format=none schedule=0") &&
+             strstr(last_jfd_identification_log, "reason=not-native") &&
+             !arc_libretro_test_jfd_presented(0u, 3u, NULL) &&
              !fault_opendir_substring &&
              !arc_libretro_test_jfd_formatted_reads(0u));
       retro_unload_game();

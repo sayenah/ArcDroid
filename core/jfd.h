@@ -14,6 +14,8 @@
 #define ARC_JFD_PDD5_IDS 5u
 #define ARC_JFD_PDD5_SLOTS (ARC_JFD_PDD5_TRACKS * ARC_JFD_PDD5_IDS)
 #define ARC_JFD_PDD5_SPACING_US 36352u
+#define ARC_JFD_F_SPACING_US 18176u
+#define ARC_JFD_MAX_STANDARD_IDS 10u
 
 enum {
    ARC_JFD_ID_CRC_BAD = 1u,
@@ -87,6 +89,14 @@ typedef struct ArcJfdImage {
    bool extended;
    bool ignored_header_fields;
    ArcJfdOverlay *overlay;
+   /* Derived only from captured identification-track payloads at preparation. */
+   uint16_t identification_mask;
+   uint32_t identification_time[ARC_JFD_MAX_STANDARD_IDS];
+   uint8_t identification_schedule;
+   uint8_t identification_maps;
+   char identification_format;
+   bool identification_timed;
+   const char *identification_reason;
 } ArcJfdImage;
 
 typedef struct {
@@ -94,11 +104,17 @@ typedef struct {
    const uint8_t *data;
    size_t key; /* Base descriptor index, or P-DD5 sector ID for a creation. */
    bool created;
+   bool id_visible;
+   bool write_eligible;
 } ArcJfdView;
 
 /* P-DD5 placement version 1, derived from the immutable base. Each
  * track-side's descriptors retain their ordinals; candidates follow in ID order. */
 bool arc_jfd_plan_creation(const ArcJfdImage *image, ArcJfdOverlay *overlay);
+bool arc_jfd_place_slots(const ArcJfdImage *image, unsigned track_side,
+                         unsigned ids, unsigned spacing, uint16_t captured,
+                         uint32_t positions[ARC_JFD_MAX_STANDARD_IDS]);
+void arc_jfd_prepare_identification(ArcJfdImage *image, bool native);
 bool arc_jfd_effective_sector(const ArcJfdImage *image, unsigned track_side,
                               unsigned candidate, bool prospective,
                               ArcJfdView *view);

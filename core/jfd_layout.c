@@ -14,20 +14,34 @@ static const uint8_t formatted_blank[1024] = {0};
 
 /* A sector occupies its complete DD transfer interval. Test the periodic
  * copies on either side of the candidate so index-wrap overlaps count. */
-static bool overlap(uint64_t a, uint64_t b)
+static bool overlap(uint64_t a, uint64_t b, unsigned spacing)
 {
-   return a < b + ARC_JFD_PDD5_SPACING_US &&
-          b < a + ARC_JFD_PDD5_SPACING_US;
+   return a < b + spacing && b < a + spacing;
 }
 
-static bool schedule_timed(const ArcJfdImage *image, ArcJfdOverlay *overlay,
-                           unsigned track_side, uint8_t captured)
+bool arc_jfd_place_slots(const ArcJfdImage *image, unsigned track_side,
+                         unsigned ids, unsigned spacing, uint16_t captured,
+                         uint32_t positions[ARC_JFD_MAX_STANDARD_IDS])
 {
+   if (!image || !positions || track_side >= image->track_count ||
+       ids > ARC_JFD_MAX_STANDARD_IDS || !spacing) return false;
    const ArcJfdTrack *track = &image->tracks[track_side];
-   uint32_t occupied[ARC_JFD_PDD5_IDS];
+   uint32_t occupied[ARC_JFD_MAX_SECTORS_PER_TRACK + ARC_JFD_MAX_STANDARD_IDS];
    unsigned count = 0u;
    for (unsigned i = 0u; i < track->sector_count; ++i)
       occupied[count++] = image->sectors[track->first_sector + i].time_us;
+   if (!track->timed)
+   {
+      uint32_t next = count ? occupied[count - 1u] + spacing : 0u;
+      for (unsigned id = 0u; id < ids; ++id)
+         if (!(captured & (1u << id)))
+         {
+            if (next > REVOLUTION_US - spacing) return false;
+            positions[id] = next;
+            next += spacing;
+         }
+      return true;
+   }
    /* JASPP stores captured starts to whole milliseconds. Keep those starts
     * even when quantisation makes their transfer intervals overlap; only
     * newly placed sectors must avoid every occupied interval. */
@@ -35,7 +49,7 @@ static bool schedule_timed(const ArcJfdImage *image, ArcJfdOverlay *overlay,
    /* Version 1 placement: missing IDs ascend. The nearest lower ID already
     * present in the base or plan is the predecessor. Search from its end,
     * jumping over occupied intervals, for at most one revolution. */
-   for (unsigned id = 0u; id < ARC_JFD_PDD5_IDS; ++id)
+   for (unsigned id = 0u; id < ids; ++id)
    {
       if (captured & (1u << id)) continue;
       uint64_t start = 0u;
@@ -46,15 +60,11 @@ static bool schedule_timed(const ArcJfdImage *image, ArcJfdOverlay *overlay,
             for (unsigned i = 0u; i < track->sector_count; ++i)
                if (image->sectors[track->first_sector + i].id == prior)
                   start = image->sectors[track->first_sector + i].time_us +
-                          ARC_JFD_PDD5_SPACING_US;
+                          spacing;
             break;
          }
-         if (overlay->creation_mask[track_side] & (1u << prior))
-         {
-            start = overlay->creation_time[track_side][prior] +
-                    ARC_JFD_PDD5_SPACING_US;
-            break;
-         }
+         start = positions[prior] + spacing;
+         break;
       }
       uint64_t limit = start + REVOLUTION_US;
       bool placed = false;
@@ -70,19 +80,18 @@ static bool schedule_timed(const ArcJfdImage *image, ArcJfdOverlay *overlay,
                                (int64_t)cycle * REVOLUTION_US;
                if (other < 0)
                {
-                  if (other + ARC_JFD_PDD5_SPACING_US > (int64_t)start)
-                     advance = (uint64_t)(other + ARC_JFD_PDD5_SPACING_US);
+                  if (other + spacing > (int64_t)start)
+                     advance = (uint64_t)(other + spacing);
                }
-               else if (overlap(start, (uint64_t)other) &&
-                        (uint64_t)other + ARC_JFD_PDD5_SPACING_US > advance)
-                  advance = (uint64_t)other + ARC_JFD_PDD5_SPACING_US;
+               else if (overlap(start, (uint64_t)other, spacing) &&
+                        (uint64_t)other + spacing > advance)
+                  advance = (uint64_t)other + spacing;
             }
          }
          if (advance == start)
          {
             uint32_t phase = (uint32_t)(start % REVOLUTION_US);
-            overlay->creation_time[track_side][id] = phase;
-            overlay->creation_mask[track_side] |= (uint8_t)(1u << id);
+            positions[id] = phase;
             occupied[count++] = phase;
             placed = true;
             break;
@@ -155,30 +164,18 @@ bool arc_jfd_plan_creation(const ArcJfdImage *image, ArcJfdOverlay *overlay)
    if (overlay->pdd5_profile)
       for (unsigned t = 0u; t < tracks; ++t)
       {
-         const ArcJfdTrack *track = &image->tracks[t];
          if (irregular[t] || masks[t] == PDD5_ALL) continue;
-         if (track->timed)
-         {
-            if (!schedule_timed(image, overlay, t, masks[t])) return false;
-         }
-         else
-         {
-            uint32_t next = track->sector_count ?
-               image->sectors[track->first_sector + track->sector_count - 1u].time_us +
-               ARC_JFD_PDD5_SPACING_US : 0u;
-            for (unsigned id = 0u; id < ARC_JFD_PDD5_IDS; ++id)
-               if (!(masks[t] & (1u << id)))
-               {
-                  if (next > REVOLUTION_US - ARC_JFD_PDD5_SPACING_US)
-                     return false;
-                  overlay->creation_time[t][id] = next;
-                  overlay->creation_mask[t] |= (uint8_t)(1u << id);
-                  next += ARC_JFD_PDD5_SPACING_US;
-               }
-         }
+         uint32_t positions[ARC_JFD_MAX_STANDARD_IDS] = {0};
+         if (!arc_jfd_place_slots(image, t, ARC_JFD_PDD5_IDS,
+                                  ARC_JFD_PDD5_SPACING_US, masks[t], positions))
+            return false;
          for (unsigned id = 0u; id < ARC_JFD_PDD5_IDS; ++id)
-            if (overlay->creation_mask[t] & (1u << id))
+            if (!(masks[t] & (1u << id)))
+            {
+               overlay->creation_time[t][id] = positions[id];
+               overlay->creation_mask[t] |= (uint8_t)(1u << id);
                ++overlay->creation_capacity;
+            }
       }
    overlay->layout_supported = true;
    return true;
@@ -197,6 +194,10 @@ bool arc_jfd_effective_sector(const ArcJfdImage *image, unsigned track_side,
       size_t index = (size_t)track->first_sector + candidate;
       view->sector = image->sectors[index];
       view->key = index;
+      view->id_visible = true;
+      view->write_eligible = overlay && overlay->writable &&
+         (overlay->eligible ? overlay->eligible[index] :
+          arc_jfd_sector_write_eligible(image, index));
       if (view->sector.data_offset != UINT32_MAX)
          view->data = overlay && overlay->visible && overlay->data &&
             overlay->data[index] ? overlay->data[index] :
@@ -204,22 +205,32 @@ bool arc_jfd_effective_sector(const ArcJfdImage *image, unsigned track_side,
       return true;
    }
    unsigned id = candidate - track->sector_count;
-   if (track_side >= ARC_JFD_PDD5_TRACKS || id >= ARC_JFD_PDD5_IDS ||
-       !overlay || !(overlay->creation_mask[track_side] & (1u << id)))
+   bool presented = track_side == 0u && id < image->identification_schedule &&
+      (image->identification_mask & (1u << id));
+   bool creatable = overlay && track_side < ARC_JFD_PDD5_TRACKS &&
+      id < ARC_JFD_PDD5_IDS &&
+      (overlay->creation_mask[track_side] & (1u << id));
+   if (id >= ARC_JFD_MAX_STANDARD_IDS || (!presented && !creatable))
       return false;
-   const uint8_t *data = overlay->visible ? overlay->created[track_side][id] : NULL;
-   if (!data && overlay->map_enabled && overlay->map_valid &&
+   const uint8_t *data = creatable && overlay->visible ?
+      overlay->created[track_side][id] : NULL;
+   if (!data && creatable && overlay->map_enabled && overlay->map_valid &&
        (overlay->allocation_mask[track_side] & (1u << id)) &&
        !(overlay->probe_mask[track_side] & (1u << id)))
       data = formatted_blank;
-   if (!data && !(prospective && overlay->writable)) return false;
-   view->sector.time_us = overlay->creation_time[track_side][id];
+   if (!data && !presented && !(prospective && creatable && overlay->writable))
+      return false;
+   view->sector.time_us = presented ? image->identification_time[id] :
+      overlay->creation_time[track_side][id];
    view->sector.data_offset = UINT32_MAX;
    view->sector.size = 1024u;
    view->sector.id = (uint8_t)id;
-   view->sector.density = 2u;
+   view->sector.density = image->identification_schedule == 10u && presented ?
+      4u : 2u;
    view->data = data;
    view->key = id;
-   view->created = true;
+   view->created = creatable;
+   view->id_visible = true;
+   view->write_eligible = creatable && overlay->writable;
    return true;
 }

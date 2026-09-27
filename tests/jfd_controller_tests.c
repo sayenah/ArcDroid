@@ -236,6 +236,23 @@ static ArcJfdImage load_allocation_image(const char *root, const char *name)
    return image;
 }
 
+static ArcJfdImage load_identification_image(const char *root,
+                                              const char *name)
+{
+   char path[4096], error[256];
+   int n = snprintf(path, sizeof(path), "%s/jfd-identification/%s", root, name);
+   assert(n > 0 && (size_t)n < sizeof(path));
+   size_t size;
+   uint8_t *bytes = read_all(path, &size);
+   ArcJfdImage image;
+   bool okay = arc_jfd_parse_owned(bytes, size, &image, error, sizeof(error));
+   if (!okay) fprintf(stderr, "%s: %s\n", name, error);
+   assert(okay);
+   arc_jfd_prepare_identification(&image, true);
+   assert(!strcmp(image.identification_reason, "presented"));
+   return image;
+}
+
 static void make_jfd_creation_writable(ArcJfdImage *image)
 {
    make_jfd_writable(image);
@@ -2437,6 +2454,118 @@ static void test_raw_index_cadence(void)
    raw_helper_length = ARC_LAUNCH_DISC_SIZE;
 }
 
+static void test_wd_identification(const char *root)
+{
+   ArcJfdImage image = load_identification_image(root, "sparse-d-timed.jfd");
+   controller_reset(&image);
+   uint16_t seen = 0u;
+   int previous = -1;
+   for (unsigned i = 0u; i < 5u; ++i)
+   {
+      assert(finish_command(0xc0u, 1100000u) == 0x80u &&
+             transfer_count == 6u && transfer[0] == 0u &&
+             transfer[1] == 0u && transfer[2] < 5u && transfer[3] == 3u);
+      unsigned id = transfer[2];
+      uint16_t crc = address_crc(transfer);
+      assert(transfer[4] == (uint8_t)(crc >> 8u) &&
+             transfer[5] == (uint8_t)crc);
+      assert(!(seen & (1u << id)));
+      if (previous >= 0) assert(id == ((unsigned)previous + 1u) % 5u);
+      seen |= (uint16_t)(1u << id);
+      previous = (int)id;
+   }
+   assert(seen == 0x1fu);
+   fdc_funcs_t observed;
+   observe_indexes(&observed);
+   wd1770_write(0x08u, 3u);
+   transfer_count = 0u; ioc.fiq = 0u;
+   wd1770_write(0x00u, 0x80u);
+   uint64_t limit = tsc + (uint64_t)1100000u * TIMER_USEC;
+   while (!(ioc.fiq & IOC_FIQ_DISC_IRQ) && tsc < limit) step_controller();
+   assert((ioc.fiq & IOC_FIQ_DISC_IRQ) &&
+          wd1770_read(0x00u) == 0x10u &&
+          observed_index_pulses == 5u && transfer_count == 0u);
+   fdc_funcs = original_controller_funcs;
+   select_density(true);
+   assert(finish_command(0xc0u, 1100000u) == 0x10u &&
+          transfer_count == 0u);
+   disc_close(0);
+   arc_jfd_free(&image);
+}
+
+static void test_wd_identification_probe(const char *root)
+{
+   ArcJfdImage image = load_identification_image(root, "sparse-d-timed.jfd");
+   make_jfd_creation_writable(&image);
+   image.overlay->map_enabled = true;
+   arc_jfd_map_prepare(&image);
+   assert(image.overlay->map_valid &&
+          (image.overlay->creation_mask[0] & (1u << 3u)));
+   controller_reset(&image);
+   wd1770_write(0x08u, 3u);
+   assert(finish_command(0xc0u, 1100000u) == 0x80u &&
+          !image.overlay->probe_mask[0]);
+   wd1770_write(0x08u, 3u);
+   assert(finish_command(0x80u, 1100000u) == 0x10u &&
+          transfer_count == 0u &&
+          (image.overlay->probe_mask[0] & (1u << 3u)));
+   ArcJfdView view;
+   assert(arc_jfd_effective_sector(&image, 0u,
+      image.tracks[0].sector_count + 3u, false, &view) &&
+      view.id_visible && !view.data);
+   wd1770_write(0x08u, 3u);
+   wd_write_mode = true;
+   assert(finish_command(0xa0u, 1100000u) == 0x10u &&
+          jfd_commits == 0u);
+   wd_write_mode = false;
+   disc_close(0);
+   arc_jfd_free(&image);
+}
+
+static void test_newio_identification(const char *root)
+{
+   ArcJfdImage image = load_identification_image(root, "sparse-f-timed.jfd");
+   newio_reset(&image, false);
+   c82c711_fdc_write(7u, 0u, NULL); /* quad density */
+   uint16_t seen = 0u;
+   int previous = -1;
+   for (unsigned i = 0u; i < 10u; ++i)
+   {
+      uint8_t result[7];
+      newio_start_id(0u);
+      newio_wait_irq(400000u);
+      newio_result(result);
+      assert(!(result[0] & 0xc0u) && result[3] == 0u &&
+             result[4] == 0u && result[5] < 10u && result[6] == 3u);
+      unsigned id = result[5];
+      assert(!(seen & (1u << id)));
+      if (previous >= 0) assert(id == ((unsigned)previous + 1u) % 10u);
+      seen |= (uint16_t)(1u << id);
+      previous = (int)id;
+   }
+   assert(seen == 0x3ffu);
+   fdc_funcs_t observed;
+   observe_indexes(&observed);
+   transfer_count = 0u;
+   newio_start_read(0u, 1u, 3u);
+   while (observed_index_pulses < 2u) step_controller();
+   assert(ioc.irqb & IOC_IRQB_DISC_IRQ);
+   (void)c82c711_fdc_read(4u, NULL);
+   uint8_t result[7];
+   newio_result(result);
+   assert((result[0] & 0x40u) && result[1] == 5u &&
+          result[2] == 0u && transfer_count == 0u);
+   fdc_funcs = original_controller_funcs;
+   c82c711_fdc_write(7u, 1u, NULL); /* wrong DD density */
+   newio_start_id(0u);
+   newio_wait_irq(400000u);
+   newio_result(result);
+   assert((result[0] & 0x40u) && result[1] == 5u);
+   c82c711_fdc_shutdown();
+   disc_close(0);
+   arc_jfd_free(&image);
+}
+
 int main(int argc, char **argv)
 {
    bool run_wd1770 = true;
@@ -2465,6 +2594,8 @@ int main(int argc, char **argv)
    if (run_wd1770)
    {
       test_family(argv[1]);
+      test_wd_identification(argv[1]);
+      test_wd_identification_probe(argv[1]);
       test_rejections(argv[1]);
       test_empty_drive_cancellation();
       test_busy_jfd_read_is_not_replaced(argv[1]);
@@ -2480,6 +2611,7 @@ int main(int argc, char **argv)
    {
       test_82c711_hardening();
       test_82c711_golden(argv[1]);
+      test_newio_identification(argv[1]);
       test_82c711_quad(argv[1]);
       test_82c711_jfd_search_failures(argv[1]);
       test_82c711_search_cancellation(argv[1]);
