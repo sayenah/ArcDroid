@@ -2,6 +2,7 @@
 #include "arc_boot_watch.h"
 #include "arcdroid_core.h"
 #include <assert.h>
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -125,6 +126,12 @@ int main(int argc, char **argv)
    d.scan_incomplete = false;
    d.unknown_count = 1;
    assert(arc_launch_recovery_decide(&d, &selected) == ARC_LAUNCH_RECOVERY_CHOOSER);
+   ArcLaunchChooser chooser;
+   d.reason = ARC_LAUNCH_REASON_AMBIGUOUS;
+   assert(arc_launch_chooser_init(&chooser, &d, false, INT_MIN));
+   assert(!chooser.inspection_incomplete && !chooser.post_boot);
+   arc_launch_chooser_post_boot(&chooser, &d);
+   assert(chooser.inspection_incomplete && chooser.post_boot);
    d.unknown_count = 0;
    d.application_count = 2;
    d.candidate_count = 3;

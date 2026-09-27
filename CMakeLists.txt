@@ -63,6 +63,7 @@ set(ARCDROID_CORE_SOURCES
   core/jfd_layout.c
   core/launch_disc.c
   core/launch_chooser.c
+  core/boot_observation.c
   core/folder_set.c
   core/playlist.c
   core/jfd.c
@@ -408,8 +409,15 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
       "${FIXTURE_DIR}/arcdroid-boot-prompt.rom"
       "${FIXTURE_DIR}/arcdroid-boot-prompt-write.rom"
       "${FIXTURE_DIR}/arcdroid-boot-cli.rom"
+      "${FIXTURE_DIR}/arcdroid-boot-cli-confirm.rom"
+      "${FIXTURE_DIR}/arcdroid-boot-horizon-edge.rom"
       "${FIXTURE_DIR}/arcdroid-boot-cli-then-prompt.rom"
       "${FIXTURE_DIR}/arcdroid-boot-desktop.rom"
+      "${FIXTURE_DIR}/arcdroid-boot-struct-one-to-several.rom"
+      "${FIXTURE_DIR}/arcdroid-boot-struct-one-to-none.rom"
+      "${FIXTURE_DIR}/arcdroid-boot-struct-none-to-one.rom"
+      "${FIXTURE_DIR}/arcdroid-boot-struct-one-to-renamed.rom"
+      "${FIXTURE_DIR}/arcdroid-boot-struct-sibling.rom"
       "${FIXTURE_DIR}/arcdroid-chooser-test.rom"
       "${FIXTURE_DIR}/arcdroid-chooser-d-test.rom"
       "${FIXTURE_DIR}/arcdroid-unsupported-launch-test.rom"
@@ -433,6 +441,13 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
       "${FIXTURE_DIR}/launch-family/checkpoint-a-greater-than.adf"
       "${FIXTURE_DIR}/launch-family/sibling-pipe-l.adl"
       "${FIXTURE_DIR}/launch-family/duplicate-siblings-l.adl"
+      "${FIXTURE_DIR}/launch-family/boot-struct-one-to-several.adf"
+      "${FIXTURE_DIR}/launch-family/boot-struct-one-to-none.adf"
+      "${FIXTURE_DIR}/launch-family/boot-struct-none-to-one.adf"
+      "${FIXTURE_DIR}/launch-family/boot-struct-one-to-several.jfd"
+      "${FIXTURE_DIR}/launch-family/boot-struct-one-to-renamed.adf"
+      "${FIXTURE_DIR}/launch-family/boot-struct-sibling.adf"
+      "${FIXTURE_DIR}/launch-family/boot-known-one-launchable.adf"
       "${FIXTURE_DIR}/arcdroid-media-test.rom"
       "${FIXTURE_DIR}/arcdroid-jfd-save-test.rom"
       "${FIXTURE_DIR}/arcdroid-jfd-newio-save-test.rom"
@@ -570,8 +585,15 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
     "${FIXTURE_DIR}/arcdroid-boot-prompt.rom"
     "${FIXTURE_DIR}/arcdroid-boot-prompt-write.rom"
     "${FIXTURE_DIR}/arcdroid-boot-cli.rom"
+    "${FIXTURE_DIR}/arcdroid-boot-cli-confirm.rom"
+    "${FIXTURE_DIR}/arcdroid-boot-horizon-edge.rom"
     "${FIXTURE_DIR}/arcdroid-boot-cli-then-prompt.rom"
     "${FIXTURE_DIR}/arcdroid-boot-desktop.rom"
+    "${FIXTURE_DIR}/arcdroid-boot-struct-one-to-several.rom"
+    "${FIXTURE_DIR}/arcdroid-boot-struct-one-to-none.rom"
+    "${FIXTURE_DIR}/arcdroid-boot-struct-none-to-one.rom"
+    "${FIXTURE_DIR}/arcdroid-boot-struct-one-to-renamed.rom"
+    "${FIXTURE_DIR}/arcdroid-boot-struct-sibling.rom"
     "${FIXTURE_DIR}/arcdroid-chooser-test.rom"
     "${FIXTURE_DIR}/arcdroid-chooser-d-test.rom"
     "${FIXTURE_DIR}/arcdroid-unsupported-launch-test.rom"
@@ -595,6 +617,13 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
     "${FIXTURE_DIR}/launch-family/checkpoint-a-greater-than.adf"
     "${FIXTURE_DIR}/launch-family/sibling-pipe-l.adl"
     "${FIXTURE_DIR}/launch-family/duplicate-siblings-l.adl"
+    "${FIXTURE_DIR}/launch-family/boot-struct-one-to-several.adf"
+    "${FIXTURE_DIR}/launch-family/boot-struct-one-to-none.adf"
+    "${FIXTURE_DIR}/launch-family/boot-struct-none-to-one.adf"
+    "${FIXTURE_DIR}/launch-family/boot-struct-one-to-several.jfd"
+    "${FIXTURE_DIR}/launch-family/boot-struct-one-to-renamed.adf"
+    "${FIXTURE_DIR}/launch-family/boot-struct-sibling.adf"
+    "${FIXTURE_DIR}/launch-family/boot-known-one-launchable.adf"
     "${FIXTURE_DIR}/arcdroid-media-test.rom"
     "${FIXTURE_DIR}/arcdroid-jfd-save-test.rom"
     "${FIXTURE_DIR}/arcdroid-jfd-newio-save-test.rom"
@@ -665,6 +694,14 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
 
   add_dependencies(core_tests test-fixtures)
   add_dependencies(boot_watch_test test-fixtures)
+  add_executable(boot_observation_test tests/boot_observation_test.c)
+  target_link_libraries(boot_observation_test PRIVATE arcdroid_core_test)
+  target_compile_options(boot_observation_test PRIVATE
+    $<$<C_COMPILER_ID:GNU,Clang,AppleClang>:-UNDEBUG;-Wall;-Wextra;-Wpedantic>)
+  if(ARCDROID_SANITIZERS)
+    target_link_libraries(boot_observation_test PRIVATE arcdroid_sanitizer_link)
+  endif()
+  add_test(NAME boot-observation COMMAND boot_observation_test)
   add_executable(adffs_tests tests/adffs_tests.c)
   target_link_libraries(adffs_tests PRIVATE arcdroid_core_test)
   target_compile_options(adffs_tests PRIVATE
@@ -899,8 +936,92 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
         $<TARGET_FILE:libretro_harness> $<TARGET_FILE:arcdroid_libretro_test>
         "${FIXTURE_DIR}/arcdroid-boot-prompt.rom"
         "${FIXTURE_DIR}/launch-family/boot-file-3-l.adl"
-        "${CMAKE_CURRENT_BINARY_DIR}/boot-watch-reset-data" reset)
+          "${CMAKE_CURRENT_BINARY_DIR}/boot-watch-reset-data" reset)
+    add_test(NAME boot-observation-harness
+      COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/check_boot_observation.py"
+        "$<TARGET_FILE:libretro_harness>" "$<TARGET_FILE:arcdroid_libretro_test>"
+        "${FIXTURE_DIR}/arcdroid-boot-prompt.rom"
+        "${FIXTURE_DIR}/arcdroid-boot-cli-then-prompt.rom"
+        "${FIXTURE_DIR}/launch-family/boot-file-3-l.adl"
+        "${CMAKE_CURRENT_BINARY_DIR}/boot-observation-data")
+    add_test(NAME boot-observation-chooser-harness
+      COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/check_boot_observation_chooser.py"
+        "$<TARGET_FILE:libretro_harness>" "$<TARGET_FILE:arcdroid_libretro_test>"
+        "${FIXTURE_DIR}/arcdroid-boot-prompt.rom"
+        "${FIXTURE_DIR}/launch-family/boot-matrix-3-file-multiple.adf"
+        "${CMAKE_CURRENT_BINARY_DIR}/boot-observation-chooser-data")
+    add_test(NAME boot-observation-jfd-harness
+      COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/check_boot_observation_jfd.py"
+        "$<TARGET_FILE:libretro_harness>" "$<TARGET_FILE:arcdroid_libretro_test>"
+        "${FIXTURE_DIR}/arcdroid-boot-prompt.rom"
+        "${FIXTURE_DIR}/arcdroid-boot-struct-one-to-several.rom"
+        "${FIXTURE_DIR}/launch-family/boot-struct-one-to-several.jfd"
+        "${CMAKE_CURRENT_BINARY_DIR}/boot-observation-jfd-data")
+    foreach(structural IN ITEMS one-to-several one-to-none none-to-one one-to-renamed sibling)
+      if(structural STREQUAL "one-to-several" OR structural STREQUAL "sibling")
+        set(structural_action chooser)
+      elseif(structural STREQUAL "one-to-none")
+        set(structural_action none)
+      else()
+        set(structural_action helper)
+      endif()
+      add_test(NAME boot-watch-structure-${structural}-harness
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/check_boot_structural.py"
+          "$<TARGET_FILE:libretro_harness>" "$<TARGET_FILE:arcdroid_libretro_test>"
+          "${FIXTURE_DIR}/arcdroid-boot-struct-${structural}.rom"
+          "${FIXTURE_DIR}/launch-family/boot-struct-${structural}.adf"
+          "${CMAKE_CURRENT_BINARY_DIR}/boot-watch-structure-${structural}-data"
+          "${structural_action}")
+    endforeach()
+    add_test(NAME boot-watch-structure-jfd-harness
+      COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/check_boot_structural.py"
+        "$<TARGET_FILE:libretro_harness>" "$<TARGET_FILE:arcdroid_libretro_test>"
+        "${FIXTURE_DIR}/arcdroid-boot-struct-one-to-several.rom"
+        "${FIXTURE_DIR}/launch-family/boot-struct-one-to-several.jfd"
+        "${CMAKE_CURRENT_BINARY_DIR}/boot-watch-structure-jfd-data" chooser)
+    add_test(NAME boot-watch-known-one-launchable-harness
+      COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/check_boot_watch.py"
+        "$<TARGET_FILE:libretro_harness>" "$<TARGET_FILE:arcdroid_libretro_test>"
+        "${FIXTURE_DIR}/arcdroid-boot-prompt.rom"
+        "${FIXTURE_DIR}/launch-family/boot-known-one-launchable.adf"
+        "${CMAKE_CURRENT_BINARY_DIR}/boot-watch-known-one-launchable-data"
+        known-one-launchable)
+    add_test(NAME boot-watch-adffs-route-harness
+      COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/check_boot_routes.py"
+        "$<TARGET_FILE:libretro_harness>" "$<TARGET_FILE:arcdroid_libretro_test>"
+        "${FIXTURE_DIR}/arcdroid-boot-prompt.rom"
+        "${FIXTURE_DIR}/adffs/eligible.jfd"
+        "${FIXTURE_DIR}/adffs/synthetic.zip"
+        "${CMAKE_CURRENT_BINARY_DIR}/boot-watch-adffs-route-data" adffs)
+    add_test(NAME boot-watch-install-route-harness
+      COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/check_boot_routes.py"
+        "$<TARGET_FILE:libretro_harness>" "$<TARGET_FILE:arcdroid_libretro_test>"
+        "${FIXTURE_DIR}/arcdroid-boot-prompt.rom"
+        "${FIXTURE_DIR}/adffs/install-first.m3u"
+        "${FIXTURE_DIR}/adffs/synthetic.zip"
+        "${CMAKE_CURRENT_BINARY_DIR}/boot-watch-install-route-data" install)
+    add_test(NAME boot-watch-confirmation-frame-harness
+      COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/check_boot_timing.py"
+        "$<TARGET_FILE:libretro_harness>" "$<TARGET_FILE:arcdroid_libretro_test>"
+        "${FIXTURE_DIR}/arcdroid-boot-cli-confirm.rom"
+        "${FIXTURE_DIR}/launch-family/boot-file-3-l.adl"
+        "${CMAKE_CURRENT_BINARY_DIR}/boot-watch-confirmation-frame-data" cancel)
+    add_test(NAME boot-watch-horizon-edge-harness
+      COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/check_boot_timing.py"
+        "$<TARGET_FILE:libretro_harness>" "$<TARGET_FILE:arcdroid_libretro_test>"
+        "${FIXTURE_DIR}/arcdroid-boot-horizon-edge.rom"
+        "${FIXTURE_DIR}/launch-family/boot-file-3-l.adl"
+        "${CMAKE_CURRENT_BINARY_DIR}/boot-watch-horizon-edge-data" horizon)
     foreach(chooser_action IN ITEMS pick continue)
+      add_test(NAME boot-watch-chooser-${chooser_action}-harness
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/check_boot_watch.py"
+          $<TARGET_FILE:libretro_harness> $<TARGET_FILE:arcdroid_libretro_test>
+          "${FIXTURE_DIR}/arcdroid-boot-prompt.rom"
+          "${FIXTURE_DIR}/launch-family/boot-matrix-3-file-multiple.adf"
+          "${CMAKE_CURRENT_BINARY_DIR}/boot-watch-chooser-${chooser_action}-data"
+          chooser-${chooser_action})
+    endforeach()
+    foreach(chooser_action IN ITEMS reset unload reset-fail unload-fail)
       add_test(NAME boot-watch-chooser-${chooser_action}-harness
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/check_boot_watch.py"
           $<TARGET_FILE:libretro_harness> $<TARGET_FILE:arcdroid_libretro_test>

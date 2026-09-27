@@ -17,8 +17,15 @@ static const ArcFirmwareFingerprint fingerprints[] = {
    C(ARC_OS_TEST, "ArcDroid boot prompt test ROM", 524288u, 0xdcf93506, "9b337404a35146da6bafdddb75d27dbfcc6636f8"),
    C(ARC_OS_TEST, "ArcDroid boot write prompt test ROM", 524288u, 0xab9038e9, "e8864fac1301fc3bc47af51179be4ba293e85d21"),
    C(ARC_OS_TEST, "ArcDroid boot CLI test ROM", 524288u, 0x706ad88f, "b31ed6ad314daecb44e6f284172c6c54fc26936b"),
+   C(ARC_OS_TEST, "ArcDroid boot confirmation cancel test ROM", 524288u, 0xcdd6d596, "bc0997bb593ca9cf5a6df96e7e39965221644bdd"),
+   C(ARC_OS_TEST, "ArcDroid boot horizon test ROM", 524288u, 0xa44198fd, "53edffdd48d51ae9395a346d399a41a68d896463"),
    C(ARC_OS_TEST, "ArcDroid boot CLI then prompt test ROM", 524288u, 0x4839c460, "8b9653d8768eb63a82c521a7dadfdbb985395c64"),
    C(ARC_OS_TEST, "ArcDroid boot desktop test ROM", 524288u, 0xd253068b, "fd67b07a8c60b2c493732b66f268534e7701ca5c"),
+   C(ARC_OS_TEST, "ArcDroid boot structural several test ROM", 524288u, 0xebb090d7, "55fbf4a29138068372706ee704b44c7ec950c66c"),
+   C(ARC_OS_TEST, "ArcDroid boot structural none test ROM", 524288u, 0x23cda86e, "2fe1d8bee8a5c1ecf53b8ea8c9d80c1653b50cc7"),
+   C(ARC_OS_TEST, "ArcDroid boot structural one test ROM", 524288u, 0x48fb686e, "164c7e0dcff9c35c776e52e5fdace47c67b6a5e4"),
+   C(ARC_OS_TEST, "ArcDroid boot structural rename test ROM", 524288u, 0xbb4ab91d, "7e9921495ad69730e1002ad0e2a50a9680e24925"),
+   C(ARC_OS_TEST, "ArcDroid boot structural sibling test ROM", 524288u, 0xf88049e3, "538cb91da158bee3f340df91f372d27dc9a48a23"),
    /* Synthetic unsupported-OS chooser probe, never accepted by shipping. */
    C(ARC_OS_RISCOS_200, "ArcDroid unsupported launch test ROM", 524288u, 0x92559a84, "6b42001508cbc297b0f792a23f010938c0670326"),
 #endif

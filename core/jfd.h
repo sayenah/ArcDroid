@@ -51,6 +51,7 @@ typedef struct ArcJfdOverlay {
    bool layout_supported;
    uint64_t generation;
    unsigned records;
+   char store_sha1[41]; /* Validated active snapshot; empty without a store. */
    bool writable;
    bool visible;
    uint8_t allocation_mask[ARC_JFD_PDD5_TRACKS];

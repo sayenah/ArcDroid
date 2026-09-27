@@ -249,8 +249,7 @@ bool arc_launch_chooser_init(ArcLaunchChooser *chooser,
 {
    if (!chooser || !discovery) return false;
    memset(chooser, 0, sizeof(*chooser));
-   chooser->inspection_incomplete = discovery->scan_incomplete ||
-      discovery->unknown_count != 0u ||
+   chooser->inspection_incomplete =
       discovery->reason == ARC_LAUNCH_REASON_INSPECTION_INCOMPLETE;
    chooser->nested_scope = discovery->nested_scope;
    for (unsigned i = 0u; i < discovery->candidate_count; ++i)
@@ -267,6 +266,15 @@ bool arc_launch_chooser_init(ArcLaunchChooser *chooser,
             chooser->focus = row;
    arc_chooser_scroll(chooser);
    return true;
+}
+
+void arc_launch_chooser_post_boot(ArcLaunchChooser *chooser,
+                                  const ArcLaunchDiscovery *discovery)
+{
+   if (!chooser || !discovery) return;
+   chooser->post_boot = true;
+   chooser->inspection_incomplete |= discovery->scan_incomplete ||
+      discovery->unknown_count != 0u;
 }
 
 bool arc_launch_chooser_install_init(ArcLaunchChooser *chooser,

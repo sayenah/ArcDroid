@@ -66,6 +66,10 @@ void arc_engine_boot_watch_cancel(void)
 { arc_boot_watch_cancel(&arc_boot_watch); }
 ArcBootWatchState arc_engine_boot_watch_state(void)
 { return arc_boot_watch.state; }
+#if defined(ARCDROID_TEST_FAULTS)
+void arc_engine_test_boot_watch_snapshot(ArcBootWatch *out)
+{ if (out) *out = arc_boot_watch; }
+#endif
 void arc_engine_boot_watch_swi(uint32_t swi, uint32_t r0, uint32_t r1,
                                uint32_t r2, uint32_t r3, uint32_t address,
                                uint32_t mode)

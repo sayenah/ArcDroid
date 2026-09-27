@@ -2160,7 +2160,39 @@ function Wait-BootRecovery($Run, [string]$Action, [int]$Count) {
     throw "$($Run.Name) did not reach recovery=$Action count=$Count; log=[$(Get-RunLogTail $Run)]"
 }
 
+function Wait-BootHit($Run, [int]$Count) {
+    $deadline = [DateTime]::UtcNow.AddSeconds(25)
+    while ([DateTime]::UtcNow -lt $deadline) {
+        if ($Run.Process.HasExited) { throw "$($Run.Name) exited during remembered boot" }
+        $foundLines = if (Test-Path -LiteralPath $Run.RetroLog) {
+            @(Select-String -Path $Run.RetroLog -SimpleMatch "reason=remembered boot observation; disc !Boot skipped")
+        } else { @() }
+        if ($foundLines.Count -ge $Count) { return }
+        Start-Sleep -Milliseconds 100
+    }
+    throw "$($Run.Name) did not use the remembered boot observation; log=[$(Get-RunLogTail $Run)]"
+}
+
 Copy-Item -Force (Join-Path $InputDirectory "arcdroid-boot-prompt.rom") $firmware
+@"
+arcdroid_machine = "A3000"
+arcdroid_cpu = "ARM2"
+arcdroid_joystick_if = "Keyboard"
+arcdroid_disk_writes = "off"
+arcdroid_launch = "auto"
+arcdroid_launch_chooser = "remember"
+"@ | Set-Content -Encoding ASCII $coreOptions
+$bootContent = (Resolve-Path (Join-Path $InputDirectory "boot-file-3-l.adl")).Path
+$bootRun = Start-MediaRun $bootContent "slice14-boot-helper"
+try {
+    Wait-BootRecovery $bootRun "helper" 1
+    Send-MediaCommand $bootRun "RESET"
+    Wait-BootHit $bootRun 1
+} finally { Stop-MediaRun $bootRun }
+$bootReload = Start-MediaRun $bootContent "slice14-boot-reload"
+try { Wait-BootHit $bootReload 1 }
+finally { Stop-MediaRun $bootReload }
+
 @"
 arcdroid_machine = "A3000"
 arcdroid_cpu = "ARM2"
@@ -2169,17 +2201,6 @@ arcdroid_disk_writes = "off"
 arcdroid_launch = "auto"
 arcdroid_launch_chooser = "ask"
 "@ | Set-Content -Encoding ASCII $coreOptions
-$bootContent = (Resolve-Path (Join-Path $InputDirectory "boot-file-3-l.adl")).Path
-$bootRun = Start-MediaRun $bootContent "slice14-boot-helper"
-try {
-    Wait-BootRecovery $bootRun "helper" 1
-    Send-MediaCommand $bootRun "RESET"
-    Wait-BootRecovery $bootRun "helper" 2
-} finally { Stop-MediaRun $bootRun }
-$bootReload = Start-MediaRun $bootContent "slice14-boot-reload"
-try { Wait-BootRecovery $bootReload "helper" 1 }
-finally { Stop-MediaRun $bootReload }
-
 $bootMultiple = (Resolve-Path (Join-Path $InputDirectory "boot-matrix-3-file-multiple.adf")).Path
 $bootChooser = Start-MediaRun $bootMultiple "slice14-boot-chooser"
 try {
@@ -2195,4 +2216,4 @@ try {
     }
     Send-ChooserKeyboardPick $bootChooser $bootCapture
 } finally { Stop-MediaRun $bootChooser }
-Write-Host "Slice 14 Windows RetroArch: synthetic helper recovery, post-boot chooser pick, reset and reload passed"
+Write-Host "Slice 14 Windows RetroArch: synthetic helper recovery, remembered reset and reload, post-boot chooser pick passed"

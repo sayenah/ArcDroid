@@ -370,6 +370,7 @@ static bool store_commit_common(ArcJfdImage *image, bool create, size_t index,
    if (okay) okay = arc_io_rename(store->candidate, store->slot[inactive]);
    if (okay)
    {
+      arc_sha1_hex(readback, read_size, overlay->store_sha1);
       records_take(image, checked);
       overlay->generation = checked_generation;
       overlay->records = checked_count;
@@ -458,6 +459,7 @@ bool arc_jfd_store_load(ArcJfdImage *image, const char *save_directory,
    ArcJfdRecords *records[2] = {NULL, NULL};
    uint64_t generation[2] = {0u, 0u};
    unsigned count[2] = {0u, 0u};
+   char slot_sha1[2][41] = {{0}};
    bool damaged = false;
    for (unsigned i = 0u; i < 2u; ++i)
    {
@@ -472,6 +474,7 @@ bool arc_jfd_store_load(ArcJfdImage *image, const char *save_directory,
          valid[i] = snapshot_parse(image, store, bytes, size, &records[i],
                                    &generation[i], &count[i], &slot_reason);
       else slot_reason = "overlay-unreadable";
+      if (valid[i]) arc_sha1_hex(bytes, size, slot_sha1[i]);
       free(bytes);
       if (!valid[i]) { damaged = true; *reason = slot_reason; }
    }
@@ -481,6 +484,7 @@ bool arc_jfd_store_load(ArcJfdImage *image, const char *save_directory,
    unsigned newest = valid[1] && (!valid[0] || generation[1] > generation[0]) ? 1u : 0u;
    if (valid[newest])
    {
+      memcpy(overlay->store_sha1, slot_sha1[newest], 41u);
       records_take(image, records[newest]);
       overlay->generation = generation[newest];
       overlay->records = count[newest];

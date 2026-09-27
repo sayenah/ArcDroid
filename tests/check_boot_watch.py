@@ -18,6 +18,10 @@ def main() -> None:
         "publish-fail-chooser": ["--boot-chooser-pick"],
         "off": ["--boot-launch-off"],
         "explicit": ["--boot-launch-app1"],
+        "chooser-reset": ["--boot-chooser-reset", "--boot-cmos-sentinel", "--boot-frames", "180"],
+        "chooser-unload": ["--boot-chooser-unload", "--boot-cmos-sentinel", "--boot-frames", "180"],
+        "chooser-reset-fail": ["--boot-chooser-reset", "--boot-cmos-sentinel", "--boot-cmos-write-fail", "--boot-frames", "180"],
+        "chooser-unload-fail": ["--boot-chooser-unload", "--boot-cmos-sentinel", "--boot-cmos-write-fail", "--boot-frames", "180"],
     }.get(expected, [])
     if expected in ("publish-fail", "publish-fail-chooser"):
         launch_parent = Path(data_root) / "save" / "arcdroid"
@@ -54,6 +58,7 @@ def main() -> None:
         assert len(staged) == 1, staged
         assert staged[0].read_bytes()[1024:1280] == b"\x5a" * 256
         assert Path(content).read_bytes()[1024:1280] != b"\x5a" * 256
+        assert not list((Path(data_root) / "save" / "arcdroid" / "launch").glob("*.boot"))
     lines = [line for line in log.splitlines() if line.startswith("Launch:")]
     assert lines and "phase=initial" in lines[0], lines
     if expected not in ("off", "explicit"):
@@ -63,13 +68,17 @@ def main() -> None:
         assert "phase=recovery" in lines[1] and "recovery=helper" in lines[1], lines
         assert "Boot outcome: prompt" in log
         assert "disc_load 1" in log, log
-    elif expected == "chooser":
+    elif expected in ("chooser", "known-one-launchable"):
         assert len(lines) == 2 and "recovery=chooser" in lines[1], lines
         assert "Boot outcome: prompt" in log
+        if expected == "known-one-launchable":
+            assert "candidates=[1:!Demo:app,2:!Bad.Name:app]" in lines[1]
+            assert "helper=none" in lines[1]
     elif expected == "none":
         assert len(lines) == 2 and "recovery=none" in lines[1], lines
         assert log.count("Boot outcome: prompt") == 1
         assert "Disc startup stopped. No application could be selected automatically." in log
+        assert not list((Path(data_root) / "save" / "arcdroid" / "launch").glob("*.boot"))
     elif expected in ("publish-fail", "publish-fail-chooser"):
         assert len(lines) == (3 if expected == "publish-fail-chooser" else 2), lines
         assert "recovery=failed" in lines[-1], lines
@@ -78,6 +87,7 @@ def main() -> None:
     elif expected in ("off", "explicit"):
         assert len(lines) == 1 and "boot-watch=disabled" in lines[0], lines
         assert "Boot outcome: prompt" not in log
+        assert not list((Path(data_root) / "save" / "arcdroid" / "launch").glob("*.boot"))
     elif expected == "reset":
         assert len(lines) == 4, lines
         assert sum("recovery=helper" in line for line in lines) == 2, lines
@@ -92,13 +102,21 @@ def main() -> None:
         replay = (Path(data_root) / "evidence" / "real-boot.log").read_text()
         replay_lines = [line for line in replay.splitlines() if line.startswith("Launch:")]
         assert len(replay_lines) == 2 and terminal in replay_lines[1], replay_lines
-        assert "recovery=chooser" not in replay, replay
+        assert "Boot outcome: prompt" in replay
+        hit = subprocess.run(command, capture_output=True, text=True, check=False)
+        assert hit.returncode == 0, hit.stdout + hit.stderr
+        hit_log = (Path(data_root) / "evidence" / "real-boot.log").read_text()
+        hit_lines = [line for line in hit_log.splitlines() if line.startswith("Launch:")]
+        assert len(hit_lines) == 1 and "remembered boot observation" in hit_lines[0], hit_lines
+        assert "boot-watch=disabled" in hit_lines[0] and "Boot outcome:" not in hit_log
+        assert ("helper=" in hit_lines[0] and ".adl" in hit_lines[0]) == (expected == "chooser-pick")
         if expected == "chooser-pick":
             asked = subprocess.run(command + ["--boot-chooser-ask", "--boot-chooser-pick"],
                                    capture_output=True, text=True, check=False)
             assert asked.returncode == 0, asked.stdout + asked.stderr
             ask_log = (Path(data_root) / "evidence" / "real-boot.log").read_text()
-            assert "recovery=chooser" in ask_log and "recovery=helper" in ask_log
+            assert "remembered boot observation" in ask_log and "chooser chose target" in ask_log
+            assert "Boot outcome:" not in ask_log
             choices = list((Path(data_root) / "save" / "arcdroid" / "launch").glob("*.choice"))
             assert len(choices) == 1, choices
             choice = choices[0].read_bytes()
@@ -108,7 +126,17 @@ def main() -> None:
                 ignored = subprocess.run(command, capture_output=True, text=True, check=False)
                 assert ignored.returncode == 0, ignored.stdout + ignored.stderr
                 ignored_log = (Path(data_root) / "evidence" / "real-boot.log").read_text()
-                assert "recovery=chooser" in ignored_log and "recovery=helper" not in ignored_log
+                assert "remembered boot observation" in ignored_log
+                assert "chooser chose target" not in ignored_log and "Boot outcome:" not in ignored_log
+    elif expected in ("chooser-reset", "chooser-unload", "chooser-reset-fail", "chooser-unload-fail"):
+        assert "recovery=chooser" in log and "Boot outcome: prompt" in log
+        assert "boot chooser CMOS seed preserved on" in result.stdout
+        if expected.endswith("-fail"):
+            assert "after failed write" in result.stdout
+        if "reset" in expected:
+            assert len(lines) == 3 and "phase=initial" in lines[2], lines
+        else:
+            assert len(lines) == 2, lines
     else:
         assert all("phase=initial" in line for line in lines), lines
         assert "Boot outcome: prompt" not in log, lines
