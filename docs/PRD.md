@@ -31,8 +31,8 @@ ArcDroid may internally emulate those details with high fidelity. It must not ma
 The default ArcDroid flow is:
 
 1. The user selects a supported Archimedes game image or game package in a libretro frontend.
-2. ArcDroid inspects the content and any available compatibility metadata.
-3. ArcDroid selects an appropriate machine and firmware profile automatically.
+2. ArcDroid inspects the content itself.
+3. ArcDroid selects an appropriate machine and firmware automatically from what the content requires.
 4. ArcDroid mounts the required media and performs any safe, deterministic boot automation needed to reach the game.
 5. The game becomes playable with RetroArch-native controls and frontend behavior.
 
@@ -60,11 +60,13 @@ ArcDroid must launch supported game media directly. It must not require content 
 
 ### P-3 — Automation before configuration
 
-The core should automatically choose compatible machine, firmware, hardware, input, and boot settings whenever reliable rules or metadata make that possible.
+The core should automatically choose compatible machine, firmware, hardware, input, and boot settings from general rules applied to the content itself.
 
-### P-4 — Compatibility knowledge is advisory, never permission
+### P-4 — One general machine, no per-game fixes
 
-An internal compatibility database may improve launch behavior, but unknown content must still be attempted using sensible fallback behavior. ArcDroid must not recreate a closed software-list model.
+ArcDroid runs every game through the same general architecture: accurate emulation of the machine plus structural rules derived from the media itself (its format, file system, boot configuration and header data). ArcDroid carries no per-game data or behavior of any kind — no compatibility database, title profiles, per-title tables, identity- or fingerprint-keyed behavior, and no game-specific patches, fixes or workarounds. No game is treated differently because of which game it is.
+
+When a game does not work, that exposes a gap in the general machinery, and the fix closes that gap for every game in its class. Per-game fixes are not an acceptable shortcut, however small.
 
 ### P-5 — RetroArch-native UX
 
@@ -126,9 +128,9 @@ This is a game-compatibility target, not a requirement to reproduce every non-ga
 
 ArcDroid must be capable of recognizing and using the Arthur/RISC OS and related firmware variants needed for game compatibility across the supported Archimedes family. The user should supply firmware once; ArcDroid should select among available valid firmware automatically.
 
-### G-5 — Make unknown content launchable
+### G-5 — Every game through the same path
 
-The core should have safe fallback configurations so titles not present in the compatibility database can still be attempted.
+There is no distinction between known and unknown titles. Every supported medium is configured and launched through the same general logic.
 
 ### G-6 — Preserve a path to future compatibility growth
 
@@ -185,13 +187,11 @@ Recognition may use file extension, content inspection, hashes, metadata, or oth
 
 ### FR-6 — No software-list gate
 
-A title must not be rejected solely because it is absent from a known-title database, ROM set, or software list.
+A title must never require membership in any database, ROM set, or software list to be attempted.
 
-### FR-7 — Unknown-content fallback
+### FR-7 — One configuration path
 
-When content is not recognized as a known title, ArcDroid shall attempt a sensible generic configuration if the media format itself is supported.
-
-The fallback may be conservative, but it must be a real attempt rather than a database-denial error.
+ArcDroid shall configure every supported medium from its own structure through the same general path; there is no separate path for recognized titles.
 
 ### FR-8 — Multi-disk games
 
@@ -250,9 +250,9 @@ The product requirement is **access to the required firmware universe**, not for
 
 ### FR-13 — Automatic firmware selection
 
-When the required or preferred firmware is present, ArcDroid should select it automatically according to the content's compatibility profile and machine requirements.
+When the required or preferred firmware is present, ArcDroid should select it automatically according to the machine and operating-system requirements determined from the content itself.
 
-Manual firmware selection shall not be required for normal known-title launches.
+Manual firmware selection shall not be required for normal launches.
 
 ### FR-14 — Firmware identification independent of friendly filenames
 
@@ -286,9 +286,9 @@ ArcDroid releases shall not bundle copyrighted firmware or operating-system ROM 
 
 ## 10. Machine and hardware configuration requirements
 
-### FR-19 — Automatic machine profile
+### FR-19 — Automatic machine selection
 
-For known titles, ArcDroid should automatically select a compatible emulated machine profile, including game-relevant CPU, memory, chipset/controller, and peripheral behavior required for successful launch.
+ArcDroid should automatically select a compatible emulated machine from the content itself (media format, header data, file system), including game-relevant CPU, memory, chipset/controller, and peripheral behavior required for successful launch.
 
 ### FR-20 — Auto is the normal configuration
 
@@ -316,13 +316,13 @@ Hardware unrelated to playing games is not automatically required merely because
 
 ### FR-24 — Minimize visible operating-system interaction
 
-For known titles, ArcDroid should automate deterministic steps between machine boot and game launch whenever technically safe and compatible.
+For every game, ArcDroid should automate deterministic steps between machine boot and game launch whenever technically safe and compatible.
 
 Examples may include media insertion, boot configuration, command execution, application launch, or equivalent machine setup, but the architecture must determine the safest mechanism for each class of content.
 
-### FR-25 — Do not fake compatibility through fragile title hacks
+### FR-25 — No per-game fixes
 
-Boot automation may use title profiles, but the emulator itself must remain generally correct. The project must not substitute hard-coded game-specific patches for missing machine emulation when the title genuinely depends on hardware or OS behavior that should be emulated.
+The emulator and its launch machinery must be generally correct. Boot automation, like everything else, must not use game-specific patches, profiles, tables or workarounds (P-4); a title that depends on hardware or OS behavior is made to work by emulating that behavior.
 
 ### FR-26 — Graceful fallback to manual interaction when necessary
 
@@ -342,9 +342,9 @@ A general-purpose or "Computer Mode" may be considered in the future for trouble
 
 The RetroPad shall be the primary default gaming input abstraction for titles that can reasonably be mapped to a controller.
 
-### FR-29 — Automatic game-oriented mappings
+### FR-29 — General controller defaults
 
-Where a title is known to use a specific Archimedes joystick interface or keyboard controls that map cleanly to a controller, ArcDroid should provide a sensible default mapping.
+ArcDroid provides one general default controller mapping for every game, plus general mechanisms such as controller-driven pointer input and an on-screen keyboard. It ships no per-game mappings; a player's own per-game layout lives in RetroArch remapping (FR-33).
 
 ### FR-30 — Keyboard support
 
@@ -362,9 +362,9 @@ On Android, the architecture should allow RetroArch's supported touch/overlay me
 
 ArcDroid shall coexist with RetroArch input remapping and should avoid unnecessary internal mapping behavior that prevents users from customizing controls.
 
-### FR-34 — Input profile transparency
+### FR-34 — Input transparency
 
-Automatic title-specific input profiles should improve defaults without making remapping impossible. Users must be able to override them.
+The default mapping is the same for every game and must never prevent remapping. Users must always be able to override it.
 
 ---
 
@@ -432,36 +432,27 @@ Repeated load/unload/restart behavior must not depend on restarting RetroArch or
 
 ---
 
-## 16. Compatibility knowledge system
+## 16. General compatibility
 
-### FR-47 — Internal compatibility profiles
+### FR-47 — No per-game data
 
-ArcDroid may maintain structured compatibility profiles containing game-specific information such as:
+ArcDroid shall not ship, generate or consult per-game data: no compatibility database, title profiles, per-title tables, or behavior keyed to a game's identity, fingerprint or name. All configuration derives from general emulation and the structure of the supplied media (P-4).
 
-- recognized media fingerprints;
-- preferred machine profile;
-- required or preferred firmware;
-- controller/joystick interface;
-- boot behavior;
-- disk set/order;
-- known safe fallbacks;
-- known limitations.
+### FR-48 — Failures are fixed in the general machinery
 
-### FR-48 — Profiles are optimization, not allowlist
+When a game fails, the fix must close the underlying gap for its whole class — by making emulation more accurate or by a structural rule about the media — and must be shown by evidence not to regress other games. No fix may be keyed to a particular game.
 
-Compatibility profiles exist to automate and improve behavior. Their absence must not prevent otherwise supported media from being attempted.
+### FR-49 — Deterministic configuration
 
-### FR-49 — Deterministic identification
+Automatic configuration shall be based on deterministic, general evidence — the media's structure, and general rules applied the same way to every game (such as FR-10a's file-name disc order) — never on a game's identity.
 
-Where title identification affects configuration, it should be based on deterministic evidence such as content hashes, disk identity, media structure, or other reliable signals rather than filename guessing alone.
+### FR-50 — User override
 
-### FR-50 — User override of bad detection
-
-If automatic title/profile detection is wrong, the user shall have a path to disable or override the resulting configuration without modifying the game file.
+If automatic configuration is wrong for a game, the user shall have a path to override it without modifying the game file, through normal RetroArch mechanisms.
 
 ### FR-51 — Compatibility evidence
 
-Claims that a title is supported should ultimately be backed by reproducible test evidence or a documented verified result, not merely by database presence.
+Claims that a title is supported should ultimately be backed by reproducible test evidence or a documented verified result.
 
 ---
 
@@ -639,8 +630,8 @@ At minimum, that milestone must prove:
 1. A real libretro core loads in RetroArch on **both Windows and Android**.
 2. A user can launch representative loose Archimedes game media directly.
 3. Required firmware can be supplied through the defined firmware location and recognized reliably.
-4. At least one automatic machine/firmware profile path works without manual machine setup.
-5. At least one unknown but supported disk can be attempted through a generic fallback rather than being rejected for database absence.
+4. At least one automatic machine/firmware selection path works without manual machine setup.
+5. Supported disks are attempted through the same general configuration path, with no per-game data.
 6. RetroPad input reaches a representative game correctly.
 7. Keyboard and mouse paths are available for titles that require them.
 8. Multi-disk control is demonstrated if included in the selected first-release media scope; otherwise the architecture and interface for it must already be defined and not blocked by design.
@@ -660,8 +651,8 @@ After the first usable release, the project should progress toward:
 1. Broad machine/firmware auto-selection across the Archimedes game library.
 2. Increasing media-format coverage, including unusual/protected formats required for compatibility.
 3. Multi-disk and CD/game-media workflows where required.
-4. A growing evidence-backed compatibility profile database.
-5. Better automatic controller mappings.
+4. Growing evidence-backed coverage of the library through general emulation, with no per-game data.
+5. Better general controller defaults.
 6. Arculator-class game compatibility across the representative library.
 7. Stable save states if the chosen architecture can support them correctly.
 8. Performance optimization across wider Windows and Android hardware ranges.
@@ -676,7 +667,7 @@ The project shall ultimately measure success using concrete evidence rather than
 
 ### SM-1 — Launch simplicity
 
-For recognized titles in the compatibility corpus, normal launch should require no manual machine/firmware configuration after one-time firmware setup.
+For games in the compatibility corpus, normal launch should require no manual machine/firmware configuration after one-time firmware setup.
 
 ### SM-2 — Compatibility coverage
 
@@ -684,11 +675,11 @@ Track the percentage and absolute count of the defined representative game corpu
 
 ### SM-3 — Automatic configuration success
 
-Track recognized titles that launch correctly using default `Auto` settings versus titles requiring manual overrides.
+Track games that launch correctly using default `Auto` settings versus games requiring manual overrides.
 
-### SM-4 — Unknown-content behavior
+### SM-4 — Every medium attempted
 
-Supported-format unknown content must be attempted rather than rejected for lack of database membership.
+Supported-format content is always attempted through the same general path.
 
 ### SM-5 — Stability
 
@@ -741,19 +732,13 @@ A successful ArcDroid user should experience the product approximately as follow
 - Place legally obtained required Archimedes firmware in the documented RetroArch system location.
 - Launch games from RetroArch/ES-DE or another conforming libretro frontend.
 
-### Normal known-title use
+### Normal use
 
 - Select title.
 - Game launches.
 - Controller works with sensible defaults.
 - Swap disks through RetroArch if needed.
 - Quit back to frontend normally.
-
-### Unknown title
-
-- Select media.
-- ArcDroid attempts a generic compatible configuration.
-- User can use advanced overrides if required.
 
 ### Missing firmware
 
@@ -778,7 +763,7 @@ The following are settled product decisions unless the Founder later changes the
 3. **The normal UX is game-first: select game and play.**
 4. **Machine and operating-system complexity should be automated and hidden from normal use.**
 5. **Loose supported media must be launchable without a curated ROM-set/software-list gate.**
-6. **Unknown supported media must be attempted, not blocked for lack of a compatibility record.**
+6. **Every game runs through one general architecture: accurate emulation plus structural rules about the media, with no per-game data, profiles, tables or fixes (P-4).**
 7. **The long-term game-compatibility target is parity with the games Arculator can play, not parity with every non-game peripheral Arculator emulates.**
 8. **ArcDroid must support access to the full game-relevant firmware/OS range needed to pursue that compatibility target.**
 9. **Firmware is user-supplied when redistribution rights do not permit bundling and should be recognized/selected automatically after setup.**
@@ -802,8 +787,7 @@ These questions are intentionally left open because the Founder has not fixed th
 6. Is an explicit Computer Mode ever a product feature, or merely a development/troubleshooting mechanism?
 7. What numerical compatibility percentage is required for the first public-quality release?
 8. Which distribution channels are targeted first: private core builds, manual RetroArch installation, libretro buildbot/upstream channels, or another sequence?
-9. How much compatibility-profile data should ship inside the core versus in a separate project data file, provided offline launch remains guaranteed?
-10. Which titles/media are the minimum mandatory test set for asserting meaningful Arculator-parity progress?
+9. Which titles/media are the minimum mandatory test set for asserting meaningful Arculator-parity progress?
 
 These questions do not block architecture discovery. Fable should resolve them with the Founder when evidence or implementation planning makes them material.
 
@@ -831,15 +815,15 @@ The architecture must define how firmware is discovered, fingerprinted/validated
 
 ### AC-PRD-5 — Direct launch
 
-The architecture must define how content passed by RetroArch becomes mounted/configured and, for known titles, reaches gameplay with minimal machine-level interaction.
+The architecture must define how content passed by RetroArch becomes mounted/configured and reaches gameplay with minimal machine-level interaction, for every game through the same general path.
 
-### AC-PRD-6 — Unknown-content fallback
+### AC-PRD-6 — General configuration
 
-The architecture must define a real generic fallback path for supported but unrecognized media.
+The architecture must define one general configuration path for all supported media, with no per-game data.
 
 ### AC-PRD-7 — Input model
 
-The architecture must define how RetroPad, keyboard, mouse/pointer, remapping, and title-specific defaults interact.
+The architecture must define how RetroPad, keyboard, mouse/pointer, remapping, and the general defaults interact.
 
 ### AC-PRD-8 — Media/disk model
 
