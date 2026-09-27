@@ -1075,9 +1075,13 @@ def build_rom(media_exerciser: bool = False,
     return rom
 
 
+def _chooser_vdu(title: bytes, colour: int) -> bytes:
+    return bytes((22, 12, 17, colour, 12, 31, 8, 15)) + title
+
+
 def _chooser_signature_application(title: bytes, colour: int) -> bytes:
     """One-sector RISC OS Absolute app also executable by the chooser ROM."""
-    vdu = bytes((22, 12, 17, colour, 12, 31, 8, 15)) + title
+    vdu = _chooser_vdu(title, colour)
     words = [
         0xE59F1014,             # ldr r1, [pc, #20]
         0xE59F2014,             # ldr r2, [pc, #20]
@@ -1095,7 +1099,7 @@ def _chooser_signature_application(title: bytes, colour: int) -> bytes:
     return program
 
 
-def build_chooser_rom() -> bytearray:
+def build_chooser_rom(helper_visual_oracle: bool = False) -> bytearray:
     """Run the executable named by ArcDroid's drive-1 launch helper.
 
     The helper's ArcLaunch file is fixed at logical sector 1280, which is
@@ -1104,6 +1108,8 @@ def build_chooser_rom() -> bytearray:
     7 and 8. This ROM reads the helper target, loads the matching executable at
     its declared &8000 address, and runs it. A tiny OS_WriteC handler folds the
     application's VDU stream into a full-width framebuffer signature row.
+    The D-format transport variant renders the same signature directly from
+    the helper selection; the real-RISC OS checkpoint tests command execution.
     """
     rom = bytearray(b"\xFF" * ROM_SIZE)
     rom[0:4] = struct.pack("<I", 0xE59FF000)
@@ -1217,38 +1223,61 @@ def build_chooser_rom() -> bytearray:
     a.branch("chooser_bad_row", "ne")
     a.branch("chooser_bad_helper")
     a.label("chooser_app_one")
-    a.mov(6, 7)
+    if helper_visual_oracle:
+        signature = 0
+        for value in _chooser_vdu(b"ARCDROID - NULVANE SELECTED", 3):
+            signature = ((signature * 33) ^ value) & 0xFFFFFFFF
+        a.ldr_const(12, signature)
+    else:
+        a.mov(6, 7)
     a.branch("chooser_load_app")
     a.label("chooser_app_two")
-    a.mov(6, 8)
+    if helper_visual_oracle:
+        signature = 0
+        for value in _chooser_vdu(b"ARCDROID - QAVENTRA SELECTED", 6):
+            signature = ((signature * 33) ^ value) & 0xFFFFFFFF
+        a.ldr_const(12, signature)
+    else:
+        a.mov(6, 8)
 
     a.label("chooser_load_app")
-    a.ldr_const(0, 0x03350040)
-    a.mov(1, 0x9E)
-    a.str(1, 0, byte=True)
-    a.ldr_const(0, 0x03310000)
-    a.mov(1, 0)
-    a.str(1, 0, 4, byte=True)
-    a.str(6, 0, 8, byte=True)
-    a.mov(1, 0x80)
-    a.str(1, 0, byte=True)
-    a.mov(5, 0x100)
-    a.ldr_const(8, 0x00008000)
-    a.label("chooser_app_wait")
-    a.ldr(7, 0, byte=True)
-    a.tst_imm(7, 2)
-    a.branch("chooser_app_wait", "eq")
-    a.ldr(7, 0, 12, byte=True)
-    a.str_post(7, 8, 1, byte=True)
-    a.subs_imm(5, 5, 1)
-    a.branch("chooser_app_wait", "ne")
-    a.label("chooser_app_finish")
-    a.ldr(7, 0, byte=True)
-    a.tst_imm(7, 1)
-    a.branch("chooser_app_finish", "ne")
-    a.mov(12, 0)
-    a.ldr_const(0, 0x00008000)
-    a.mov_reg(15, 0)
+    if helper_visual_oracle:
+        a.mov(4, 0)
+        a.mov(3, 0xA0)
+        a.label("chooser_oracle_row")
+        a.str_post(12, 4)
+        a.subs_imm(3, 3, 1)
+        a.branch("chooser_oracle_row", "ne")
+        a.label("chooser_oracle_hold")
+        a.branch("chooser_oracle_hold")
+    else:
+        a.ldr_const(0, 0x03350040)
+        a.mov(1, 0x9E)
+        a.str(1, 0, byte=True)
+        a.ldr_const(0, 0x03310000)
+        a.mov(1, 0)
+        a.str(1, 0, 4, byte=True)
+        a.str(6, 0, 8, byte=True)
+        a.mov(1, 0x80)
+        a.str(1, 0, byte=True)
+        a.mov(5, 0x100)
+        a.ldr_const(8, 0x00008000)
+        a.label("chooser_app_wait")
+        a.ldr(7, 0, byte=True)
+        a.tst_imm(7, 2)
+        a.branch("chooser_app_wait", "eq")
+        a.ldr(7, 0, 12, byte=True)
+        a.str_post(7, 8, 1, byte=True)
+        a.subs_imm(5, 5, 1)
+        a.branch("chooser_app_wait", "ne")
+        a.label("chooser_app_finish")
+        a.ldr(7, 0, byte=True)
+        a.tst_imm(7, 1)
+        a.branch("chooser_app_finish", "ne")
+    if not helper_visual_oracle:
+        a.mov(12, 0)
+        a.ldr_const(0, 0x00008000)
+        a.mov_reg(15, 0)
 
     code = a.finish()
     rom[0x20:0x20 + len(code)] = code
@@ -2250,6 +2279,49 @@ def build_nested_chooser_l(parent_name: bytes) -> bytearray:
     return image
 
 
+def build_nested_chooser_d(parent_name: bytes) -> bytearray:
+    """D-format counterpart preserving an extended parent-name byte."""
+    image = bytearray(ADF_SIZE)
+    total_sectors = ADF_SIZE // 256
+    _store_u24(image, 252, total_sectors)
+    _set_old_disc_name(image, b"Other")
+    image[509] = 0
+    root = _new_directory()
+    parent_offset = 3072
+    _new_entry(root, 0, parent_name, 2048, parent_offset // 256, True)
+    _finish_new_directory(root, 1, 4)
+    image[1024:3072] = root
+    parent = _new_directory(parent_name)
+    names = (b"!Nulvane", b"!Qaventra")
+    titles = (b"ARCDROID - NULVANE SELECTED",
+              b"ARCDROID - QAVENTRA SELECTED")
+    for index, name in enumerate(names):
+        child_offset = 10240 + index * 2048
+        _new_entry(parent, index, name, 2048, child_offset // 256, True)
+        child = _new_directory(name)
+        run = b"Run <Obey$Dir>.!RunImage\r"
+        run_image = _chooser_signature_application(titles[index], (3, 6)[index])
+        run_offset = 10240 + len(names) * 2048 + index * 1024
+        image_offset = (7 + index) * 1024
+        _new_entry(child, 0, b"!Run", len(run), run_offset // 256,
+                   load=0xFFFFEB00)
+        image[run_offset:run_offset + len(run)] = run
+        _new_entry(child, 1, b"!RunImage", len(run_image), image_offset // 256,
+                   load=0x00008000)
+        image[image_offset:image_offset + len(run_image)] = run_image
+        _finish_new_directory(child, 2, parent_offset // 256)
+        image[child_offset:child_offset + 2048] = child
+    _finish_new_directory(parent, len(names), 4)
+    image[parent_offset:parent_offset + 2048] = parent
+    free_start = 64
+    _store_u24(image, 0, free_start)
+    _store_u24(image, 256, total_sectors - free_start)
+    image[510] = 3
+    image[255] = _old_map_checksum(image[:255])
+    image[511] = _old_map_checksum(image[256:511])
+    return image
+
+
 def build_g1_chooser_l() -> bytearray:
     """Boot-option disc with one executable application and no root !Boot."""
     image = build_chooser_application_l()
@@ -3053,6 +3125,8 @@ def main() -> None:
     args.output.mkdir(parents=True, exist_ok=True)
     (args.output / "arcdroid-test.rom").write_bytes(build_rom())
     (args.output / "arcdroid-chooser-test.rom").write_bytes(build_chooser_rom())
+    (args.output / "arcdroid-chooser-d-test.rom").write_bytes(
+        build_chooser_rom(helper_visual_oracle=True))
     unsupported_launch_rom = build_chooser_rom()
     unsupported_launch_rom[-1] = 0x42
     (args.output / "arcdroid-unsupported-launch-test.rom").write_bytes(
@@ -3065,8 +3139,8 @@ def main() -> None:
     (args.output / "arcdroid-g1-chooser-l.adl").write_bytes(build_g1_chooser_l())
     (args.output / "arcdroid-nested-chooser-l.adl").write_bytes(
         build_nested_chooser_l(b"Folder"))
-    (args.output / "arcdroid-wildcard-chooser-l.adl").write_bytes(
-        build_nested_chooser_l(b"Arc Games"))
+    (args.output / "arcdroid-extended-chooser-d.adf").write_bytes(
+        build_nested_chooser_d(b"Arc\xa0Games"))
     launch = args.output / "launch-family"
     launch.mkdir(exist_ok=True)
     launch_images = {
@@ -3135,8 +3209,8 @@ def main() -> None:
                          (b"!System", False, True),
                          (b"!Qaventra", True, False)]),
             (b"Extras", [(b"!Zorvex", True, True)])], b"Other"), "D"),
-        "nested-wildcard-d.adf": (build_nested_d_discovery([
-            (b"Arc Games", [(b"!Demo", True, True)])], b"Demo"), "D"),
+        "nested-extended-literal-d.adf": (build_nested_d_discovery([
+            (b"Arc\xa0Games", [(b"!Demo", True, True)])], b"Demo"), "D"),
         "nested-single-e.adf": (build_nested_e_discovery(b"Folder"), "E"),
         "nested-mixed-root-d.adf": (build_nested_with_root_d(b"!Root", "application"), "D"),
         "nested-resource-root-d.adf": (build_nested_with_root_d(b"!System", "resource"), "D"),
@@ -3151,20 +3225,22 @@ def main() -> None:
             (b"Arc Games", [(b"!Demo", True, True)]),
             (b"Arcade", [(b"!Other", True, False)])], b"Demo"), "D"),
         "nested-file-collision-d.adf": (build_nested_d_discovery([
-            (b"Arc Games", [(b"!Demo", True, True)])], b"Demo",
-            root_files=(b"Arc",)), "D"),
+            (b"Arc", [(b"!Demo", True, True)])], b"Demo",
+            root_files=(b"arc",)), "D"),
         "nested-empty-prefix-d.adf": (build_nested_d_discovery([
             (b" Bad", [(b"!Demo", True, False)])], b"Demo"), "D"),
         "nested-pipe-d.adf": (build_nested_d_discovery([
             (b"Arc|Games", [(b"!Demo", True, False)])], b"Demo"), "D"),
+        "nested-quote-d.adf": (build_nested_d_discovery([
+            (b'Arc"Games', [(b"!Demo", True, False)])], b"Demo"), "D"),
         "nested-extended-boundary-d.adf": (build_nested_d_discovery([
             (b"Arc\x80 Bad", [(b"!Demo", True, False)])], b"Demo"), "D"),
         "nested-extended-first-d.adf": (build_nested_d_discovery([
-            (b"\x80 Bad", [(b"!Demo", True, False)])], b"Demo"), "D"),
+            (b"\x80Safe", [(b"!Demo", True, False)])], b"Demo"), "D"),
         "nested-one-byte-d.adf": (build_nested_d_discovery([
             (b"A", [(b"!Demo", True, False)])], b"Demo"), "D"),
         "nested-case-file-d.adf": (build_nested_d_discovery([
-            (b"Arc Games", [(b"!Demo", True, False)])], b"Demo",
+            (b"Arc", [(b"!Demo", True, False)])], b"Demo",
             root_files=(b"aRC",)), "D"),
         "nested-literal-duplicate-d.adf": (build_nested_d_discovery([
             (b"Folder", [(b"!Demo", True, True)]),
@@ -3383,7 +3459,7 @@ def main() -> None:
                  "duplicate-root-d.adf", "duplicate-root-file-d.adf",
                  "duplicate-run-d.adf", "duplicate-boot-e.adf",
                  "has-boot-d.adf", "self-boot-unknown-d.adf", "illegal-l.adl",
-                 "nested-literal-d.adf", "nested-wildcard-d.adf"):
+                 "nested-literal-d.adf", "nested-extended-literal-d.adf"):
         payload, geometry = launch_images[base]
         stem = base.rsplit(".", 1)[0]
         (launch / f"{stem}.jfd").write_bytes(
@@ -3394,8 +3470,8 @@ def main() -> None:
     (launch / "checkpoint-a-guest.adf").write_bytes(checkpoint_guest)
     (launch / "checkpoint-nested-literal.adf").write_bytes(
         build_nested_checkpoint_guest_disc(b"Folder"))
-    (launch / "checkpoint-nested-wildcard.adf").write_bytes(
-        build_nested_checkpoint_guest_disc(b"Arc Games"))
+    (launch / "checkpoint-nested-extended.adf").write_bytes(
+        build_nested_checkpoint_guest_disc(b"Arc\xa0Games"))
     for filename, image in checkpoint_names.items():
         (launch / filename).write_bytes(image)
     if args.checkpoint_guest_disc:

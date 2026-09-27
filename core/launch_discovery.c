@@ -1029,34 +1029,38 @@ static bool arc_parent_address(const ArcDirectoryEntry root[77],
                                ArcGuestName *address)
 {
    const ArcGuestName *parent = &root[parent_index].name;
-   bool literal = true;
    for (unsigned j = 0u; j < parent->length; ++j)
-      if (!arc_component_safe(parent->bytes[j])) literal = false;
-   unsigned safe = 0u;
-   if (literal) safe = parent->length;
-   else
-      while (safe < parent->length && arc_component_safe(parent->bytes[safe]) &&
-             parent->bytes[safe] < 0x80u) ++safe;
-   if (!safe) return false;
-   /* Both literal and wildcard addresses must resolve to exactly one root
-    * object. A wildcard also matches the empty suffix and files. */
+      if (!arc_component_safe(parent->bytes[j])) return false;
+   if (!parent->length) return false;
+   /* A literal parent must identify exactly one root object, including files. */
    unsigned matches = 0u;
    for (unsigned i = 0u; i < root_count; ++i)
-   {
-      const ArcGuestName *other = &root[i].name;
-      bool match = literal ? arc_name_ascii_equal(parent, other) :
-                   other->length >= safe;
-      if (!literal && match)
-         for (unsigned j = 0u; j < safe; ++j)
-            if (arc_ascii_fold(parent->bytes[j]) !=
-                arc_ascii_fold(other->bytes[j])) { match = false; break; }
-      if (match) ++matches;
-   }
+      if (arc_name_ascii_equal(parent, &root[i].name)) ++matches;
    if (matches != 1u) return false;
-   memset(address, 0, sizeof(*address));
-   address->length = (uint8_t)(literal ? safe : safe + 1u);
-   memcpy(address->bytes, parent->bytes, safe);
-   if (!literal) address->bytes[safe] = '*';
+   *address = *parent;
+   return true;
+}
+
+bool arc_launch_target_compose(const ArcLaunchCandidate *candidate,
+                               char *output, size_t capacity,
+                               uint8_t *output_length)
+{
+   if (!candidate || !output || !output_length ||
+       !candidate->name.length || candidate->name.length > 10u ||
+       candidate->parent.length > 10u) return false;
+   size_t length = candidate->name.length;
+   if (candidate->parent.length) length += candidate->parent.length + 1u;
+   if (length > 21u || capacity <= length) return false;
+   size_t leaf_offset = 0u;
+   if (candidate->parent.length)
+   {
+      memcpy(output, candidate->parent.bytes, candidate->parent.length);
+      output[candidate->parent.length] = '.';
+      leaf_offset = candidate->parent.length + 1u;
+   }
+   memcpy(output + leaf_offset, candidate->name.bytes, candidate->name.length);
+   output[length] = '\0';
+   *output_length = (uint8_t)length;
    return true;
 }
 

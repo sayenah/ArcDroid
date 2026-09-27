@@ -247,6 +247,7 @@ static unsigned profile_osd_calls;
 static bool expect_test_profile;
 static char application_profile_sha1[41];
 static char playlist_profile_sha1[41];
+static char nested_profile_sha1[41];
 static char last_launch_log[2048];
 static char last_launch_warning[512];
 static char last_flush_fault[512];
@@ -2005,6 +2006,7 @@ int main(int argc, char **argv)
    void (*arc_libretro_test_drop_osk_surface)(void) = NULL;
    bool (*arc_libretro_test_osk_source_unchanged)(void) = NULL;
    bool (*arc_libretro_test_register_input_profile)(const ArcInputProfile *) = NULL;
+   bool (*arc_libretro_test_set_input_profile_target)(const char *) = NULL;
    void (*arc_libretro_test_probe_osk_geometry)(unsigned, unsigned) = NULL;
    bool (*arc_libretro_test_osk_focus_key)(unsigned) = NULL;
    bool (*arc_libretro_test_osk_key_center)(unsigned, unsigned *, unsigned *) = NULL;
@@ -2089,6 +2091,8 @@ int main(int argc, char **argv)
          dlsym(module, "arc_libretro_test_osk_source_unchanged");
       *(void **)(&arc_libretro_test_register_input_profile) =
          dlsym(module, "arc_libretro_test_register_input_profile");
+      *(void **)(&arc_libretro_test_set_input_profile_target) =
+         dlsym(module, "arc_libretro_test_set_input_profile_target");
       *(void **)(&arc_libretro_test_probe_osk_geometry) =
          dlsym(module, "arc_libretro_test_probe_osk_geometry");
       *(void **)(&arc_libretro_test_osk_focus_key) =
@@ -2161,6 +2165,7 @@ int main(int argc, char **argv)
              arc_libretro_test_drop_osk_surface &&
              arc_libretro_test_osk_source_unchanged &&
              arc_libretro_test_register_input_profile &&
+             arc_libretro_test_set_input_profile_target &&
              arc_libretro_test_probe_osk_geometry &&
              arc_libretro_test_osk_focus_key &&
              arc_libretro_test_osk_key_center &&
@@ -2202,11 +2207,18 @@ int main(int argc, char **argv)
              sizeof(application_profile_sha1));
       memcpy(playlist_profile_sha1, playlist_profile_digest.sha1,
              sizeof(playlist_profile_sha1));
+      char nested_profile_path[4096];
+      snprintf(nested_profile_path, sizeof(nested_profile_path),
+               "%s/arcdroid-nested-chooser-l.adl", argv[11]);
+      ArcDigest nested_profile_digest = digest_file(nested_profile_path);
+      memcpy(nested_profile_sha1, nested_profile_digest.sha1,
+             sizeof(nested_profile_sha1));
       ArcInputProfile test_profile = {
          .id = "test-profile",
          .name = "Generated Test Profile",
-         .digests = {application_profile_sha1, playlist_profile_sha1},
-         .digest_count = 2u,
+         .digests = {application_profile_sha1, playlist_profile_sha1,
+                     nested_profile_sha1},
+         .digest_count = 3u,
          .has_port1 = true,
          .evidence = "project-authored harness registration"
       };
@@ -8373,10 +8385,19 @@ int main(int argc, char **argv)
       retro_unload_game();
       for (unsigned nested_kind = 0u; nested_kind < 2u; ++nested_kind)
       {
+         if (nested_kind)
+         {
+            /* The D-format ROM renders the helper target's visual signature;
+             * the checkpoint disc exercises FileSwitch. */
+            char d_chooser_rom[4096];
+            snprintf(d_chooser_rom, sizeof(d_chooser_rom),
+                     "%s/arcdroid-chooser-d-test.rom", argv[11]);
+            copy_file(d_chooser_rom, renamed);
+         }
          char nested_source[4096], nested_helper[4096], nested_choice[4096];
          char nested_binding[4096];
          snprintf(nested_source, sizeof(nested_source), "%s/%s", argv[11],
-                  nested_kind ? "arcdroid-wildcard-chooser-l.adl" :
+                  nested_kind ? "arcdroid-extended-chooser-d.adf" :
                                 "arcdroid-nested-chooser-l.adl");
          struct retro_game_info nested_game = {nested_source, NULL, 0u, NULL};
          ArcDigest nested_digest = digest_file(nested_source);
@@ -8389,15 +8410,22 @@ int main(int argc, char **argv)
          (void)remove(nested_helper); (void)remove(nested_choice);
          (void)remove(nested_binding);
          option_launch = "app1";
+         if (!nested_kind)
+            assert(arc_libretro_test_set_input_profile_target(
+                      "Folder.!Nulvane"));
          phase = PHASE_LOAD; assert(retro_load_game(&nested_game));
          assert(arc_engine_test_drive_media(1u, NULL, NULL) &&
                 strstr(last_launch_log, "scope=nested") &&
                 strstr(last_launch_log, nested_kind ?
-                    "decision=Arc Games.!Nulvane" :
+                    "decision=Arc\\xA0Games.!Nulvane" :
                     "decision=Folder.!Nulvane") &&
                 strstr(last_launch_log, nested_kind ?
-                    "address=Arc*.!Nulvane" :
+                    "address=Arc\\xA0Games.!Nulvane" :
                     "address=Folder.!Nulvane"));
+         if (!nested_kind)
+            assert(strstr(last_input_resolution,
+                          "profile=Generated Test Profile") &&
+                   strstr(last_input_resolution, "[profile]"));
          uint8_t nested_record[ARC_LAUNCH_BINDING_MAX_SIZE];
          size_t nested_size = read_bounded(nested_binding, nested_record,
                                            sizeof(nested_record));
@@ -8426,8 +8454,36 @@ int main(int argc, char **argv)
          free(nested_media); free(nested_expected); free(nested_actual);
          phase = PHASE_RUN;
          for (unsigned frame = 0u; frame < 520u; ++frame) retro_run();
-         assert(last_video_signature == expected_guest_signature[0]);
+         uint64_t extended_signature = last_video_signature;
+         if (!nested_kind)
+            assert(last_video_signature == expected_guest_signature[0]);
          retro_unload_game();
+
+         if (!nested_kind)
+         {
+            assert(arc_libretro_test_set_input_profile_target("!Nulvane"));
+            phase = PHASE_LOAD; assert(retro_load_game(&nested_game));
+            assert(strstr(last_input_resolution, "profile=Generic") &&
+                   strstr(last_input_resolution, "[generic]"));
+            retro_unload_game();
+            assert(arc_libretro_test_set_input_profile_target(NULL));
+         }
+         else
+         {
+            (void)remove(nested_binding);
+            option_launch = "app2";
+            phase = PHASE_LOAD; assert(retro_load_game(&nested_game));
+            assert(strstr(last_launch_log,
+                          "decision=Arc\\xA0Games.!Qaventra") &&
+                   strstr(last_launch_log,
+                          "address=Arc\\xA0Games.!Qaventra"));
+            phase = PHASE_RUN;
+            for (unsigned frame = 0u; frame < 520u; ++frame) retro_run();
+            assert(last_video_signature != extended_signature);
+            retro_unload_game();
+            (void)remove(nested_binding);
+            write_exact(nested_binding, nested_record, nested_size);
+         }
 
          option_launch = "auto";
          phase = PHASE_LOAD; assert(retro_load_game(&nested_game));

@@ -1863,7 +1863,7 @@ if ($env:GITHUB_STEP_SUMMARY) {
 # executable delivery; FileSwitch command semantics are covered privately.
 $g1Content = (Resolve-Path (Join-Path $InputDirectory "arcdroid-g1-chooser-l.adl")).Path
 $nestedLiteral = (Resolve-Path (Join-Path $InputDirectory "arcdroid-nested-chooser-l.adl")).Path
-$nestedWildcard = (Resolve-Path (Join-Path $InputDirectory "arcdroid-wildcard-chooser-l.adl")).Path
+$nestedExtended = (Resolve-Path (Join-Path $InputDirectory "arcdroid-extended-chooser-d.adf")).Path
 @"
 arcdroid_machine = "A3000"
 arcdroid_cpu = "ARM2"
@@ -1883,8 +1883,11 @@ if (-not (Select-String -Path $g1Run.RetroLog -SimpleMatch "root-boot=no" -Quiet
 }
 foreach ($case in @(
     @{ Path = $nestedLiteral; Name = "literal"; Decision = "Folder.!Nulvane"; Address = "Folder.!Nulvane" },
-    @{ Path = $nestedWildcard; Name = "wildcard"; Decision = "Arc Games.!Nulvane"; Address = "Arc*.!Nulvane" }
+    @{ Path = $nestedExtended; Name = "extended-literal"; Decision = 'Arc\xA0Games.!Nulvane'; Address = 'Arc\xA0Games.!Nulvane' }
 )) {
+    if ($case.Name -eq "extended-literal") {
+        Copy-Item -Force (Join-Path $InputDirectory "arcdroid-chooser-d-test.rom") $firmware
+    }
     $contentHash = (Get-FileHash -Algorithm SHA1 $case.Path).Hash.ToLowerInvariant()
     $binding = @(Get-ChildItem -LiteralPath $saveDirectory -Filter "$contentHash.bind" -File -Recurse -ErrorAction SilentlyContinue)
     if ($binding.Count) { Remove-Item -Force $binding.FullName }
@@ -1898,7 +1901,11 @@ arcdroid_launch_chooser = "remember"
 "@ | Set-Content -Encoding ASCII $coreOptions
     $run = Start-MediaRun $case.Path "launch-12a-$($case.Name)-explicit"
     try {
-        [void](Capture-ExpectedVisualSignature $run "launch-12a-$($case.Name)-delivery" $app1Capture)
+        if ($case.Name -eq "extended-literal") {
+            $extendedApp1 = Capture-StableRawScreenshot $run "launch-12a-extended-app1"
+        } else {
+            [void](Capture-ExpectedVisualSignature $run "launch-12a-$($case.Name)-delivery" $app1Capture)
+        }
     } finally { Stop-MediaRun $run }
     $launchText = Get-Content -LiteralPath $run.RetroLog -Raw
     if (-not $launchText.Contains("decision=$($case.Decision)") -or
@@ -1906,7 +1913,34 @@ arcdroid_launch_chooser = "remember"
         -not $launchText.Contains("scope=nested")) {
         throw "Slice 12a $($case.Name) decision/address probe failed"
     }
+    if ($case.Name -eq "extended-literal") {
+        $binding = @(Get-ChildItem -LiteralPath $saveDirectory -Filter "$contentHash.bind" -File -Recurse -ErrorAction SilentlyContinue)
+        if ($binding.Count) { Remove-Item -Force $binding.FullName }
+        @"
+arcdroid_machine = "A3000"
+arcdroid_cpu = "ARM2"
+arcdroid_joystick_if = "Keyboard"
+arcdroid_disk_writes = "off"
+arcdroid_launch = "app2"
+arcdroid_launch_chooser = "remember"
+"@ | Set-Content -Encoding ASCII $coreOptions
+        $app2Run = Start-MediaRun $case.Path "launch-12a-extended-app2-explicit"
+        try {
+            $extendedApp2 = Capture-StableRawScreenshot $app2Run "launch-12a-extended-app2"
+        } finally { Stop-MediaRun $app2Run }
+        if ($extendedApp1.Dimensions -ne "640x480" -or
+            $extendedApp2.Dimensions -ne $extendedApp1.Dimensions -or
+            $extendedApp1.VisualSignature -eq $extendedApp2.VisualSignature) {
+            throw "Slice 12a extended-byte helper did not select distinct visual targets"
+        }
+        $app2Text = Get-Content -LiteralPath $app2Run.RetroLog -Raw
+        if (-not $app2Text.Contains('decision=Arc\xA0Games.!Qaventra') -or
+            -not $app2Text.Contains('address=Arc\xA0Games.!Qaventra')) {
+            throw "Slice 12a extended-byte second target probe failed"
+        }
+    }
 }
+Copy-Item -Force (Join-Path $InputDirectory "arcdroid-chooser-test.rom") $firmware
 
 $literalHash = (Get-FileHash -Algorithm SHA1 $nestedLiteral).Hash.ToLowerInvariant()
 $literalChoice = @(Get-ChildItem -LiteralPath $saveDirectory -Filter "$literalHash.choice" -File -Recurse -ErrorAction SilentlyContinue)
@@ -1940,7 +1974,7 @@ try {
 if (-not (Select-String -Path $nestedReplay.RetroLog -SimpleMatch "chooser remembered target" -Quiet)) {
     throw "Slice 12a nested choice did not replay"
 }
-Write-Host "Slice 12a Windows RetroArch: G1, literal and wildcard nested delivery, interactive nested pick and replay passed"
+Write-Host "Slice 12a Windows RetroArch: G1, literal and extended-byte nested delivery, interactive nested pick and replay passed"
 
 $srmRecords = @(Get-ChildItem -LiteralPath $saveDirectory -Filter "*.srm" -File -Recurse -ErrorAction Stop)
 if ($srmRecords.Count -ne 0) {

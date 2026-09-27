@@ -165,7 +165,7 @@ typedef enum {
 typedef struct {
    ArcGuestName name;
    ArcGuestName parent; /* Empty for root candidates. */
-   ArcGuestName parent_address; /* Checked literal or ASCII prefix + '*'. */
+   ArcGuestName parent_address; /* Checked literal; empty if unaddressable. */
    ArcLaunchCandidateState state;
    bool launchable;
    bool addressable;
@@ -258,6 +258,9 @@ const char *arc_launch_reason_name(ArcLaunchReason reason);
 bool arc_launch_escape_name(const ArcGuestName *name, char *output,
                             size_t capacity);
 bool arc_launch_sibling_bootable(const ArcLaunchCandidate *candidate);
+bool arc_launch_target_compose(const ArcLaunchCandidate *candidate,
+                               char *output, size_t capacity,
+                               uint8_t *output_length);
 bool arc_launch_script_build(const ArcLaunchDiscovery *discovery,
                              unsigned target_index, uint8_t *output,
                              size_t capacity, size_t *output_size,

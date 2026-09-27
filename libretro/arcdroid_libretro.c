@@ -3511,7 +3511,8 @@ static void arc_launch_log(const ArcLaunchDiscovery *discovery,
          (void)arc_launch_escape_name(&c->parent, parent, sizeof(parent));
          (void)arc_launch_escape_name(&c->parent_address, operand, sizeof(operand));
          snprintf(decision, sizeof(decision), "%s.%s", parent, leaf);
-         snprintf(address, sizeof(address), "%s.%s", operand, leaf);
+         if (c->addressable)
+            snprintf(address, sizeof(address), "%s.%s", operand, leaf);
       }
       else snprintf(decision, sizeof(decision), "%s", leaf);
    }
@@ -3736,6 +3737,15 @@ static bool arc_launch_helper_publish(const ArcLaunchDiscovery *discovery,
                                       unsigned selected, char *refusal,
                                       size_t refusal_size)
 {
+   const ArcLaunchCandidate *candidate = &discovery->candidates[selected];
+   char target[sizeof(arc_plan.launch_target)];
+   uint8_t target_length = 0u;
+   if (!arc_launch_target_compose(candidate, target, sizeof(target),
+                                  &target_length))
+   {
+      snprintf(refusal, refusal_size, "launch target path is too long");
+      return false;
+   }
    uint8_t *helper = malloc(ARC_LAUNCH_DISC_SIZE);
    if (!helper || !arc_launch_disc_build(discovery, selected, helper,
                                          refusal, refusal_size))
@@ -3765,19 +3775,8 @@ static bool arc_launch_helper_publish(const ArcLaunchDiscovery *discovery,
    free(helper);
    if (!arc_helper_path[0]) return false;
    arc_plan.launch_helper = true;
-   const ArcLaunchCandidate *candidate = &discovery->candidates[selected];
-   arc_plan.launch_target_length = candidate->name.length;
-   if (candidate->parent.length)
-   {
-      memcpy(arc_plan.launch_target, candidate->parent.bytes,
-             candidate->parent.length);
-      arc_plan.launch_target[candidate->parent.length] = '.';
-      arc_plan.launch_target_length += candidate->parent.length + 1u;
-   }
-   memcpy(arc_plan.launch_target + arc_plan.launch_target_length,
-          candidate->name.bytes, candidate->name.length);
-   arc_plan.launch_target_length += candidate->name.length;
-   arc_plan.launch_target[arc_plan.launch_target_length] = '\0';
+   memcpy(arc_plan.launch_target, target, (size_t)target_length + 1u);
+   arc_plan.launch_target_length = target_length;
    arc_launch_log_skipped_siblings(discovery, selected);
    return true;
 }
@@ -4844,6 +4843,14 @@ bool arc_libretro_test_register_input_profile(const ArcInputProfile *profile)
    }
    arc_test_input_profile = *profile;
    arc_test_input_profile_registered = true;
+   return true;
+}
+
+bool arc_libretro_test_set_input_profile_target(const char *target)
+{
+   if (!arc_test_input_profile_registered ||
+       (target && strlen(target) > 21u)) return false;
+   arc_test_input_profile.launch_target = target;
    return true;
 }
 #endif

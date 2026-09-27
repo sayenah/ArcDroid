@@ -69,6 +69,7 @@ jobs:
             build/windows/tests/fixtures/generated/arcdroid-test.rom \
             build/windows/tests/fixtures/generated/arcdroid-test.adf \
             build/windows/tests/fixtures/generated/arcdroid-chooser-test.rom \
+            build/windows/tests/fixtures/generated/arcdroid-chooser-d-test.rom \
             build/windows/tests/fixtures/generated/arcdroid-media-test.rom \
             build/windows/tests/fixtures/generated/arcdroid-jfd-save-test.rom \
             build/windows/tests/fixtures/generated/arcdroid-jfd-create-test.rom \
@@ -87,7 +88,7 @@ jobs:
             build/windows/tests/fixtures/generated/arcdroid-chooser-l.adl \
             build/windows/tests/fixtures/generated/arcdroid-g1-chooser-l.adl \
             build/windows/tests/fixtures/generated/arcdroid-nested-chooser-l.adl \
-            build/windows/tests/fixtures/generated/arcdroid-wildcard-chooser-l.adl \
+            build/windows/tests/fixtures/generated/arcdroid-extended-chooser-d.adf \
             build/windows/tests/fixtures/generated/launch-family/boot-3-l.adl \
             build/windows/tests/fixtures/generated/adffs/synthetic.zip \
             build/windows/tests/fixtures/generated/arcdroid-install-guest.rom \

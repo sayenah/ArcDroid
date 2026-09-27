@@ -1546,6 +1546,42 @@ static void test_launch_discovery_and_builder(const char *fixture_directory)
 static void test_nested_launch(const char *fixture_directory)
 {
    {
+      ArcLaunchDiscovery spec = test_launch_spec("!123456789", 10u);
+      char target[23]; uint8_t length = 0u;
+      memset(target, 'X', sizeof(target));
+      assert(arc_launch_target_compose(&spec.candidates[0], target, 22u,
+                                       &length) &&
+             length == 10u && !memcmp(target, "!123456789\0", 11u) &&
+             target[22] == 'X');
+      spec.candidates[0].parent = test_guest_name("ABCDEFGHIJ", 10u);
+      memset(target, 'X', sizeof(target));
+      assert(arc_launch_target_compose(&spec.candidates[0], target, 22u,
+                                       &length) &&
+             length == 21u &&
+             !memcmp(target, "ABCDEFGHIJ.!123456789\0", 22u) &&
+             target[22] == 'X');
+      assert(!arc_launch_target_compose(&spec.candidates[0], target, 21u,
+                                        &length));
+   }
+   {
+      size_t size = 0u;
+      uint8_t *bytes = read_fixture(fixture_directory,
+         "arcdroid-extended-chooser-d.adf", &size);
+      ArcMediaInfo media; ArcLaunchDiscovery discovery;
+      char error[192] = {0};
+      assert(arc_media_inspect("arcdroid-extended-chooser-d.adf", bytes, size,
+                               &media, error, sizeof(error)) &&
+             arc_launch_discover(bytes, size, &media, NULL, &discovery) &&
+             discovery.nested_scope && discovery.candidate_count == 2u &&
+             discovery.candidates[0].addressable &&
+             discovery.candidates[0].parent.bytes[3] == 0xa0u);
+      uint8_t *helper = malloc(ARC_LAUNCH_DISC_SIZE);
+      assert(helper && arc_launch_disc_build(&discovery, 0u, helper,
+                                              error, sizeof(error)));
+      free(helper);
+      free(bytes);
+   }
+   {
       size_t size = 0u;
       uint8_t *bytes = read_fixture(fixture_directory,
          "arcdroid-g1-chooser-l.adl", &size);
@@ -1568,7 +1604,7 @@ static void test_nested_launch(const char *fixture_directory)
    } cases[] = {
       {"launch-family/nested-literal-d.adf", 4u, -1,
        ARC_LAUNCH_REASON_AMBIGUOUS, false},
-      {"launch-family/nested-wildcard-d.adf", 1u, 0,
+      {"launch-family/nested-extended-literal-d.adf", 1u, 0,
        ARC_LAUNCH_REASON_SINGLE_APPLICATION, false},
       {"launch-family/nested-single-e.adf", 1u, 0,
        ARC_LAUNCH_REASON_SINGLE_APPLICATION, false},
@@ -1582,12 +1618,14 @@ static void test_nested_launch(const char *fixture_directory)
        ARC_LAUNCH_REASON_AMBIGUOUS, false},
       {"launch-family/nested-empty-prefix-d.adf", 1u, -1,
        ARC_LAUNCH_REASON_AMBIGUOUS, false},
-      {"launch-family/nested-pipe-d.adf", 1u, 0,
-       ARC_LAUNCH_REASON_SINGLE_APPLICATION, false},
-      {"launch-family/nested-extended-boundary-d.adf", 1u, 0,
-       ARC_LAUNCH_REASON_SINGLE_APPLICATION, false},
-      {"launch-family/nested-extended-first-d.adf", 1u, -1,
+      {"launch-family/nested-pipe-d.adf", 1u, -1,
        ARC_LAUNCH_REASON_AMBIGUOUS, false},
+      {"launch-family/nested-quote-d.adf", 1u, -1,
+       ARC_LAUNCH_REASON_AMBIGUOUS, false},
+      {"launch-family/nested-extended-boundary-d.adf", 1u, -1,
+       ARC_LAUNCH_REASON_AMBIGUOUS, false},
+      {"launch-family/nested-extended-first-d.adf", 1u, 0,
+       ARC_LAUNCH_REASON_SINGLE_APPLICATION, false},
       {"launch-family/nested-one-byte-d.adf", 1u, 0,
        ARC_LAUNCH_REASON_SINGLE_APPLICATION, false},
       {"launch-family/nested-case-file-d.adf", 1u, -1,
@@ -1683,13 +1721,34 @@ static void test_nested_launch(const char *fixture_directory)
       }
       if (i == 1u)
       {
-         assert(test_guest_name_equal(&discovery.candidates[0].parent_address,
-                                      "Arc*"));
+         static const uint8_t parent[] = "Arc\xa0Games";
+         assert(discovery.candidates[0].addressable &&
+                discovery.candidates[0].parent_address.length == sizeof(parent) - 1u &&
+                !memcmp(discovery.candidates[0].parent_address.bytes,
+                        parent, sizeof(parent) - 1u));
          uint8_t output[256]; size_t written = 0u;
          assert(arc_launch_script_build(&discovery, 0u, output,
                     sizeof(output) - 1u, &written, error, sizeof(error)));
          output[written] = 0u;
-         assert(strstr((const char *)output, "Arc*.!Demo"));
+         assert(strstr((const char *)output, "Arc\xa0Games.!Demo"));
+      }
+      if (!strcmp(cases[i].file, "launch-family/nested-empty-prefix-d.adf") ||
+          !strcmp(cases[i].file, "launch-family/nested-pipe-d.adf") ||
+          !strcmp(cases[i].file, "launch-family/nested-quote-d.adf") ||
+          !strcmp(cases[i].file, "launch-family/nested-extended-boundary-d.adf") ||
+          !strcmp(cases[i].file, "launch-family/nested-file-collision-d.adf") ||
+          !strcmp(cases[i].file, "launch-family/nested-case-file-d.adf") ||
+          !strcmp(cases[i].file, "launch-family/nested-literal-duplicate-d.adf"))
+      {
+         assert(!discovery.candidates[0].addressable &&
+                !discovery.candidates[0].launchable &&
+                discovery.candidates[0].parent_address.length == 0u);
+         ArcLaunchChooser chooser;
+         uint8_t script[256]; size_t written = 0u;
+         assert(!arc_launch_chooser_init(&chooser, &discovery, false, -1) &&
+                !arc_launch_script_build(&discovery, 0u, script,
+                                         sizeof(script), &written,
+                                         error, sizeof(error)));
       }
       if (!strcmp(cases[i].file, "launch-family/nested-unreadable-d.adf"))
          assert(discovery.unreadable_parents == 1u);
@@ -1796,7 +1855,7 @@ static void test_nested_launch(const char *fixture_directory)
    for (unsigned kind = 0u; kind < 2u; ++kind)
    {
       const char *file = kind ?
-         "launch-family/checkpoint-nested-wildcard.adf" :
+         "launch-family/checkpoint-nested-extended.adf" :
          "launch-family/checkpoint-nested-literal.adf";
       size_t size = 0u;
       uint8_t *bytes = read_fixture(fixture_directory, file, &size);
@@ -1811,10 +1870,10 @@ static void test_nested_launch(const char *fixture_directory)
                  sizeof(script) - 1u, &written, error, sizeof(error)));
       script[written] = 0u;
       assert(strstr((const char *)script,
-                    kind ? "%Filer_Boot ADFS::0.$.Arc*.!System\r" :
+                    kind ? "%Filer_Boot ADFS::0.$.Arc\xa0Games.!System\r" :
                            "%Filer_Boot ADFS::0.$.Folder.!System\r") &&
              strstr((const char *)script,
-                    kind ? "%Filer_Run ADFS::0.$.Arc*.!Target\r" :
+                    kind ? "%Filer_Run ADFS::0.$.Arc\xa0Games.!Target\r" :
                            "%Filer_Run ADFS::0.$.Folder.!Target\r") &&
              !strstr((const char *)script, ".Other.!Other") &&
              strstr((const char *)script,
@@ -1824,7 +1883,7 @@ static void test_nested_launch(const char *fixture_directory)
    for (unsigned kind = 0u; kind < 2u; ++kind)
    {
       const char *file = kind ?
-         "launch-family/nested-wildcard-d.jfd" :
+         "launch-family/nested-extended-literal-d.jfd" :
          "launch-family/nested-literal-d.jfd";
       size_t size = 0u;
       uint8_t *bytes = read_fixture(fixture_directory, file, &size);
