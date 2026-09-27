@@ -32,6 +32,8 @@ static const ArcFirmwareFingerprint fingerprints[] = {
    C(ARC_OS_TEST, "ArcDroid JFD New-IO map veto test ROM", 524288u, 0xcb64b343, "8d56db8967b4083abb86583c164df9478faf5421"),
    C(ARC_OS_TEST, "ArcDroid JFD New-IO map claim test ROM", 524288u, 0x62f16f7c, "daa359b1126fe9008af89fa9e3095775eeee5281"),
    C(ARC_OS_TEST, "ArcDroid JFD New-IO allocation read test ROM", 524288u, 0x168263c2, "0b521b979b4976225d3a59b7ba3cd9474c8b4f1b"),
+   C(ARC_OS_TEST, "ArcDroid JFD probe-write test ROM", 524288u, 0xf119dafe, "66e54bc43feefa96ed88ce7ba9a7bf366a6d3aed"),
+   C(ARC_OS_TEST, "ArcDroid JFD New-IO probe-write test ROM", 524288u, 0x206bedb7, "fc0bd1a410da01b40f71130d7d190a6ba2a80f19"),
    C(ARC_OS_TEST, "ArcDroid JFD benign directory write ROM", 524288u, 0xb876f99d, "0f957890cb139a5a0b05958ac5200d25280e7c21"),
    C(ARC_OS_TEST, "ArcDroid JFD directory rename ROM", 524288u, 0x6f93b871, "778eea0fd1a26c826723bb0140cac182875e01cf"),
    C(ARC_OS_RISCOS_311, "RISC OS 3.11", 2097152u, 0x54c0c963, "3487729e87bebc9cb51665838c27beff22f7b3bd"),

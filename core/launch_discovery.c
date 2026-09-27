@@ -623,7 +623,7 @@ void arc_jfd_prepare_identification(ArcJfdImage *image, bool native)
    image->identification_maps = 0u;
    image->identification_format = 0;
    image->identification_timed = false;
-   image->identification_basis = "free";
+   image->identification_basis = "none";
    image->identification_reason = native ? "no-track" : "not-native";
    if (!native || !image->track_count) return;
    const ArcJfdTrack *track = &image->tracks[0];

@@ -965,7 +965,7 @@ try {
 } finally {
     Stop-MediaRun $jfdRun
 }
-if (-not (Select-String -Path $jfdRun.RetroLog -SimpleMatch "JFD identification: image=1 native=yes format=none schedule=0 timing=timed captured=0 presented=none basis=free maps=0 reason=map-invalid" -Quiet)) {
+if (-not (Select-String -Path $jfdRun.RetroLog -SimpleMatch "JFD identification: image=1 native=yes format=none schedule=0 timing=timed captured=0 presented=none basis=none maps=0 reason=map-invalid" -Quiet)) {
     throw "Two-member JFD identification refusal was not logged"
 }
 $sparseJfdRun = Start-MediaRun $sparseJfd "jfd-identification-sparse-d"

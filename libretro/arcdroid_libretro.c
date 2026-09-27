@@ -386,6 +386,30 @@ bool arc_libretro_test_jfd_presented(unsigned image_index, unsigned id,
    if (position) *position = image->identification_time[id];
    return true;
 }
+uint8_t arc_libretro_test_jfd_slot_state(unsigned image_index,
+                                        unsigned track_side, unsigned id,
+                                        uint32_t *position,
+                                        uint32_t *creation_time)
+{
+   if (image_index >= arc_media_count ||
+       arc_media[image_index].info.kind != ARC_MEDIA_JFD ||
+       id >= ARC_JFD_PDD5_IDS) return 0u;
+   const ArcJfdImage *image = &arc_media[image_index].jfd;
+   if (track_side >= image->track_count) return 0u;
+   ArcJfdView view;
+   if (!arc_jfd_effective_sector(image, track_side,
+                                 image->tracks[track_side].sector_count + id,
+                                 false, &view)) return 0u;
+   if (position) *position = view.sector.time_us;
+   if (creation_time) *creation_time = image->overlay &&
+      track_side < ARC_JFD_PDD5_TRACKS ?
+      image->overlay->creation_time[track_side][id] : 0u;
+   return (uint8_t)((view.id_visible ? 1u : 0u) |
+                    (view.data ? 2u : 0u) |
+                    (view.write_eligible ? 4u : 0u) |
+                    (image->overlay && track_side < ARC_JFD_PDD5_TRACKS &&
+                     image->overlay->created[track_side][id] ? 8u : 0u));
+}
 const char *arc_libretro_test_staged_path(unsigned index)
 {
    return index < arc_media_count && arc_media[index].populated ?

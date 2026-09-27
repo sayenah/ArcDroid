@@ -1876,6 +1876,7 @@ int main(int argc, char **argv)
    bool jfd_create_step = false;
    bool jfd_merge_step = false;
    bool jfd_allocation_step = false;
+   bool jfd_identification_step = false;
    bool jfd_allocation_set = false;
    bool install_guest = false;
    char jfd_content_path[4096] = {0}, jfd_fixture_path[4096] = {0};
@@ -1892,6 +1893,8 @@ int main(int argc, char **argv)
       jfd_merge_step = true;
    else if (argc == 9 && !strcmp(argv[5], "--jfd-allocation-step"))
       jfd_allocation_step = true;
+   else if (argc == 9 && !strcmp(argv[5], "--jfd-identification-step"))
+      jfd_identification_step = true;
    else if (argc == 7 && !strcmp(argv[5], "--jfd-allocation-set"))
       jfd_allocation_set = true;
    else if (argc >= 6 && !strcmp(argv[5], "--real-boot"))
@@ -1993,6 +1996,8 @@ int main(int argc, char **argv)
                                               uint8_t *) = NULL;
    bool (*arc_libretro_test_jfd_presented)(unsigned, unsigned,
                                             uint32_t *) = NULL;
+   uint8_t (*arc_libretro_test_jfd_slot_state)(unsigned, unsigned, unsigned,
+                                               uint32_t *, uint32_t *) = NULL;
    bool (*arc_engine_test_helper_media_valid)(ArcMediaKind,
                                                ArcMediaGeometry) = NULL;
    bool (*arc_engine_test_cmos_image)(uint8_t[ARC_CMOS_MACHINE_SIZE]) = NULL;
@@ -2075,6 +2080,7 @@ int main(int argc, char **argv)
              arc_engine_test_drive_media);
    }
    if (!install_guest && !real_boot && !newio_smoke && !jfd_writes && !jfd_create_step &&
+       !jfd_identification_step &&
        !jfd_merge_step && !jfd_allocation_step && !jfd_allocation_set)
    {
       *(void **)(&arc_engine_audio_stats) = dlsym(module, "arc_engine_audio_stats");
@@ -2235,6 +2241,7 @@ int main(int argc, char **argv)
       expect_test_profile = true;
    }
    else if (jfd_writes || jfd_create_step || jfd_merge_step ||
+            jfd_identification_step ||
             jfd_allocation_step || jfd_allocation_set)
    {
       *(void **)(&arc_libretro_test_jfd_formatted_reads) =
@@ -2245,6 +2252,8 @@ int main(int argc, char **argv)
          dlsym(module, "arc_libretro_test_jfd_created_byte");
       *(void **)(&arc_libretro_test_jfd_presented) =
          dlsym(module, "arc_libretro_test_jfd_presented");
+      *(void **)(&arc_libretro_test_jfd_slot_state) =
+         dlsym(module, "arc_libretro_test_jfd_slot_state");
       *(void **)(&arc_libretro_test_jfd_commit) =
          dlsym(module, "arc_libretro_test_jfd_commit");
       *(void **)(&arc_engine_test_drive_media) =
@@ -2271,6 +2280,7 @@ int main(int argc, char **argv)
              arc_libretro_test_jfd_probe_mask &&
              arc_libretro_test_jfd_created_byte &&
              arc_libretro_test_jfd_presented &&
+             arc_libretro_test_jfd_slot_state &&
              arc_libretro_test_jfd_commit && arc_engine_test_drive_media &&
              arc_libretro_test_adffs_accept_test_os &&
              arc_libretro_test_fail_adffs_content_read &&
@@ -2806,6 +2816,125 @@ int main(int argc, char **argv)
       return 0;
    }
 
+   if (jfd_identification_step)
+   {
+      option_machine = argv[6];
+      option_cpu = !strcmp(option_machine, "A3020") ? "ARM250" : "ARM2";
+      option_launch = "off"; option_jfd_boot = "native";
+      const char *mode = argv[8];
+      bool probe_write = !strcmp(mode, "probe-write");
+      bool veto = !strcmp(mode, "veto");
+      bool claim = !strcmp(mode, "claim");
+      bool write_slot = !strcmp(mode, "write");
+      bool readback = !strcmp(mode, "readback");
+      bool failure = !strcmp(mode, "failed");
+      bool off = !strcmp(mode, "off");
+      bool damaged = !strcmp(mode, "damaged");
+      assert(probe_write || veto || claim || write_slot || readback ||
+             failure || off || damaged);
+      option_writes = off ? "off" : "shadow";
+      variable_update = true;
+      uint32_t expected = (uint32_t)strtoul(argv[7], NULL, 16);
+      phase = PHASE_LOAD; assert(retro_load_game(&game));
+      assert(strstr(last_jfd_identification_log,
+                    "format=D schedule=5 timing=untimed captured=0,1,2,4 presented=3 basis=free maps=1 reason=presented"));
+      uint32_t identification_time = 0u, position = 0u, creation_time = 0u;
+      assert(arc_libretro_test_jfd_presented(0u, 3u,
+                                             &identification_time));
+      uint8_t state = arc_libretro_test_jfd_slot_state(
+         0u, 0u, 3u, &position, &creation_time);
+      if (state != (off ? 9u : damaged ? 1u : write_slot || failure ? 7u :
+                    readback ? 15u : 5u) || position != identification_time)
+         fprintf(stderr, "identification %s %s: state=%u pos=%u id=%u creation=%u\n",
+                 option_machine, mode, state, position, identification_time,
+                 creation_time);
+      assert(position == identification_time &&
+             ((!off && !damaged) ? creation_time == identification_time : true) &&
+             state == (off ? 9u : damaged ? 1u : write_slot || failure ? 7u :
+                       readback ? 15u : 5u));
+      bool protected = true;
+      assert(arc_engine_test_drive_media(0u, &protected, NULL) &&
+             protected == (off || damaged));
+      uint8_t byte = 0xffu;
+      assert(arc_libretro_test_jfd_created_byte(0u, 0u, 3u, 0u,
+                                                 &byte) ==
+             (write_slot || failure || readback));
+      if (write_slot || failure) assert(byte == 0u);
+      if (readback) assert(byte == 0x5au);
+      if (damaged) assert(jfd_damaged_notice_calls == 1u);
+      if (failure) fault_rename_substring = "/arcdroid/jfd/";
+      unsigned failed_before = jfd_failed_status_calls;
+      ArcDigest digest = digest_file(game.path);
+      char a[4096], b[4096];
+      snprintf(a, sizeof(a), "%s/arcdroid/jfd/%s.a", save_path, digest.sha1);
+      snprintf(b, sizeof(b), "%s/arcdroid/jfd/%s.b", save_path, digest.sha1);
+      if (!off && !damaged)
+      {
+         phase = PHASE_RUN;
+         unsigned steady = 0u;
+         for (unsigned frame = 0u; frame < 900u && steady < 8u; ++frame)
+         {
+            retro_run();
+            steady = last_video_pixel == expected ? steady + 1u : 0u;
+         }
+         if (steady < 8u)
+            fprintf(stderr, "identification %s %s: got %08x expected %08x\n",
+                    option_machine, mode, last_video_pixel, expected);
+         assert(steady == 8u);
+         state = arc_libretro_test_jfd_slot_state(
+            0u, 0u, 3u, &position, &creation_time);
+         if (state != (claim ? 7u : failure ? 3u :
+                       write_slot || readback ? 15u : 5u))
+            fprintf(stderr, "identification %s %s after: state=%u pos=%u id=%u creation=%u\n",
+                    option_machine, mode, state, position,
+                    identification_time, creation_time);
+         assert(position == identification_time &&
+                creation_time == identification_time &&
+                state == (claim ? 7u : failure ? 3u :
+                          write_slot || readback ? 15u : 5u));
+         if (probe_write || veto)
+            assert(jfd_refusal_log_lines == 1u &&
+                   strstr(last_jfd_refusal_log, probe_write ?
+                          "reason=not-found" : "reason=probed-unformatted") &&
+                   strstr(last_jfd_refusal_log,
+                          probe_write ? "sector=3" : "sector=0") &&
+                   arc_libretro_test_jfd_probe_mask(0u, 0u) == (1u << 3u) &&
+                   !file_exists(a) && !file_exists(b) &&
+                   jfd_failed_status_calls == failed_before);
+         else
+            assert(file_exists(a) || file_exists(b));
+         if (failure)
+         {
+            assert(!fault_rename_substring &&
+                   jfd_failed_status_calls == failed_before + 1u &&
+                   arc_libretro_test_jfd_created_byte(0u, 0u, 3u, 0u,
+                                                       &byte) && byte == 0u);
+         }
+         if (write_slot)
+         {
+            assert(arc_libretro_test_jfd_created_byte(0u, 0u, 3u, 0u,
+                                                       &byte) && byte == 0x5au);
+            retro_reset();
+            assert(arc_libretro_test_jfd_slot_state(
+                       0u, 0u, 3u, &position, NULL) == 15u &&
+                   position == identification_time);
+            assert(disk_control.set_eject_state(true) &&
+                   disk_control.set_eject_state(false) &&
+                   arc_libretro_test_jfd_slot_state(
+                      0u, 0u, 3u, &position, NULL) == 15u &&
+                   position == identification_time);
+         }
+      }
+      else assert((file_exists(a) || file_exists(b)) &&
+                  jfd_failed_status_calls == failed_before);
+      retro_unload_game(); retro_deinit();
+      assert(hash_file(game.path) == source_hash &&
+             open_files == 0u && open_dirs == 0u && dlclose(module) == 0);
+      printf("jfd_identification_step: machine=%s mode=%s outcome=%08x\n",
+             option_machine, mode, expected);
+      return 0;
+   }
+
    if (jfd_allocation_step)
    {
       option_machine = argv[6];
@@ -3172,7 +3301,7 @@ int main(int argc, char **argv)
       struct retro_game_info allocated_game = {allocated_e, NULL, 0u, NULL};
       phase = PHASE_LOAD; assert(retro_load_game(&allocated_game));
       assert(strstr(last_jfd_identification_log,
-                    "format=E schedule=5 timing=timed captured=0,1,2,4 presented=none basis=free maps=3 reason=not-free") &&
+                    "format=E schedule=5 timing=timed captured=0,1,2,4 presented=none basis=none maps=3 reason=not-free") &&
              !arc_libretro_test_jfd_presented(0u, 3u, NULL));
       retro_unload_game();
       option_machine = "A3020"; variable_update = true;
@@ -3191,7 +3320,7 @@ int main(int argc, char **argv)
       struct retro_game_info unresolved_game = {unresolved_f, NULL, 0u, NULL};
       phase = PHASE_LOAD; assert(retro_load_game(&unresolved_game));
       assert(strstr(last_jfd_identification_log,
-                    "presented=none basis=free maps=3 reason=metadata-unresolved"));
+                    "presented=none basis=none maps=3 reason=metadata-unresolved"));
       retro_unload_game();
       option_machine = "A3000"; variable_update = true;
       assert(hash_file(sparse_d) == sparse_hash && !file_exists(sparse_slot_a));
