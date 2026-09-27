@@ -52,29 +52,59 @@ static bool arc_choice_fingerprint(const uint8_t *data, size_t size,
    return true;
 }
 
+static bool arc_choice_component(const uint8_t *line, size_t length,
+                                  ArcGuestName *name, bool bang)
+{
+   if (!length || length > 2u * ARC_GUEST_NAME_MAX || (length & 1u))
+      return false;
+   name->length = (uint8_t)(length / 2u);
+   for (unsigned i = 0u; i < name->length; ++i)
+   {
+      int high = arc_choice_hex(line[2u * i]);
+      int low = arc_choice_hex(line[2u * i + 1u]);
+      if (high < 0 || low < 0) return false;
+      name->bytes[i] = (uint8_t)((unsigned)high << 4u | (unsigned)low);
+   }
+   return bang ? name->bytes[0] == '!' : name->bytes[0] != '!';
+}
+
 bool arc_launch_choice_parse(const void *data, size_t size,
                              ArcLaunchChoiceRecord *choice)
 {
    if (!data || !choice || !size || size > ARC_LAUNCH_CHOICE_MAX_SIZE)
       return false;
    ArcChoiceCursor cursor = {(const uint8_t *)data, size, 0u};
-   const uint8_t *version, *kind, *target, *fingerprint;
-   size_t version_size, kind_size, target_size, fingerprint_size;
+   const uint8_t *version, *kind, *target, *fingerprint, *leaf = NULL;
+   size_t version_size, kind_size, target_size, fingerprint_size,
+      leaf_size = 0u;
    if (!arc_choice_line(&cursor, &version, &version_size) ||
        !arc_choice_line(&cursor, &kind, &kind_size) ||
        !arc_choice_line(&cursor, &target, &target_size) ||
-       !arc_choice_line(&cursor, &fingerprint, &fingerprint_size) ||
-       cursor.at != cursor.size || version_size != 2u ||
-       memcmp(version, "v1", 2u)) return false;
+       version_size != 2u) return false;
+   bool nested = !memcmp(version, "v3", 2u);
+   if (nested && !arc_choice_line(&cursor, &leaf, &leaf_size)) return false;
+   if (!nested && memcmp(version, "v1", 2u)) return false;
+   if (!arc_choice_line(&cursor, &fingerprint, &fingerprint_size) ||
+       cursor.at != cursor.size) return false;
    ArcLaunchChoiceRecord parsed;
    memset(&parsed, 0, sizeof(parsed));
+   parsed.version = nested ? 3u : 1u;
    if (kind_size == 7u && !memcmp(kind, "desktop", 7u))
    {
-      if (target_size != 1u || target[0] != '-') return false;
+      if (target_size != 1u || target[0] != '-' ||
+          (nested && (leaf_size != 1u || leaf[0] != '-'))) return false;
       parsed.desktop = true;
    }
    else if (kind_size == 3u && !memcmp(kind, "app", 3u))
    {
+      if (nested)
+      {
+         if (!arc_choice_component(target, target_size, &parsed.parent, false) ||
+             !arc_choice_component(leaf, leaf_size, &parsed.target, true))
+            return false;
+      }
+      else
+      {
       if (!target_size || target_size > ARC_GUEST_NAME_MAX * 2u ||
           (target_size & 1u)) return false;
       parsed.target.length = (uint8_t)(target_size / 2u);
@@ -86,12 +116,59 @@ bool arc_launch_choice_parse(const void *data, size_t size,
          parsed.target.bytes[i] = (uint8_t)((unsigned)high << 4u | (unsigned)low);
       }
       if (parsed.target.bytes[0] != '!') return false;
+      }
    }
    else return false;
    if (!arc_choice_fingerprint(fingerprint, fingerprint_size,
                                parsed.candidate_fingerprint)) return false;
    *choice = parsed;
    return true;
+}
+
+bool arc_launch_choice_format_nested(const ArcGuestName *parent,
+                              const ArcGuestName *target, bool desktop,
+                              const char candidate_fingerprint[41],
+                              uint8_t *output, size_t capacity,
+                              size_t *output_size)
+{
+   static const char hex[] = "0123456789abcdef";
+   if (output_size) *output_size = 0u;
+   if ((!desktop && (!parent || !parent->length ||
+                     parent->length > ARC_GUEST_NAME_MAX ||
+                     parent->bytes[0] == '!' || !target || !target->length ||
+                     target->length > ARC_GUEST_NAME_MAX ||
+                     target->bytes[0] != '!')) ||
+       !candidate_fingerprint || candidate_fingerprint[40] != '\0') return false;
+   for (unsigned i = 0u; i < 40u; ++i)
+      if (arc_choice_hex((uint8_t)candidate_fingerprint[i]) < 0) return false;
+   size_t required = desktop ? 3u + 8u + 2u + 2u + 41u :
+      3u + 4u + 2u * parent->length + 1u + 2u * target->length + 1u + 41u;
+   if (output_size) *output_size = required;
+   if (!output) return capacity == 0u;
+   if (capacity < required) return false;
+   size_t at = 0u;
+   memcpy(output + at, "v3\n", 3u); at += 3u;
+   if (desktop)
+   {
+      memcpy(output + at, "desktop\n-\n-\n", 12u); at += 12u;
+   }
+   else
+   {
+      memcpy(output + at, "app\n", 4u); at += 4u;
+      for (unsigned part = 0u; part < 2u; ++part)
+      {
+         const ArcGuestName *name = part ? target : parent;
+         for (unsigned i = 0u; i < name->length; ++i)
+         {
+            output[at++] = (uint8_t)hex[name->bytes[i] >> 4u];
+            output[at++] = (uint8_t)hex[name->bytes[i] & 15u];
+         }
+         output[at++] = '\n';
+      }
+   }
+   memcpy(output + at, candidate_fingerprint, 40u); at += 40u;
+   output[at++] = '\n';
+   return at == required;
 }
 
 bool arc_launch_choice_format(const ArcGuestName *target, bool desktop,
@@ -140,20 +217,26 @@ int arc_launch_choice_match(const ArcLaunchDiscovery *discovery,
    if (choice->desktop) return -1;
    for (unsigned i = 0u; i < discovery->candidate_count; ++i)
       if (arc_launch_candidate_is_target(&discovery->candidates[i]) &&
+          ((choice->version == 3u) ==
+             (discovery->candidates[i].parent.length != 0u)) &&
+          discovery->candidates[i].parent.length == choice->parent.length &&
+          !memcmp(discovery->candidates[i].parent.bytes, choice->parent.bytes,
+                  choice->parent.length) &&
           discovery->candidates[i].name.length == choice->target.length &&
           !memcmp(discovery->candidates[i].name.bytes, choice->target.bytes,
                   choice->target.length)) return (int)i;
    return INT_MIN;
 }
 
-static unsigned arc_chooser_visible_rows(void)
+static unsigned arc_chooser_visible_rows(const ArcLaunchChooser *chooser)
 {
-   return (ARC_CHOOSER_BOTTOM - ARC_CHOOSER_TOP) / ARC_CHOOSER_ROW_HEIGHT;
+   return ((chooser->nested_scope ? 392u : ARC_CHOOSER_BOTTOM) -
+           ARC_CHOOSER_TOP) / ARC_CHOOSER_ROW_HEIGHT;
 }
 
 static void arc_chooser_scroll(ArcLaunchChooser *chooser)
 {
-   unsigned visible = arc_chooser_visible_rows();
+   unsigned visible = arc_chooser_visible_rows(chooser);
    if (chooser->focus < chooser->first_visible)
       chooser->first_visible = chooser->focus;
    else if (chooser->focus >= chooser->first_visible + visible)
@@ -168,6 +251,7 @@ bool arc_launch_chooser_init(ArcLaunchChooser *chooser,
    memset(chooser, 0, sizeof(*chooser));
    chooser->inspection_incomplete =
       discovery->reason == ARC_LAUNCH_REASON_INSPECTION_INCOMPLETE;
+   chooser->nested_scope = discovery->nested_scope;
    for (unsigned i = 0u; i < discovery->candidate_count; ++i)
       if (arc_launch_candidate_is_target(&discovery->candidates[i]))
          chooser->candidate_index[chooser->row_count++] = (uint8_t)i;
@@ -235,7 +319,8 @@ int arc_launch_chooser_hit(const ArcLaunchChooser *chooser,
                            unsigned x, unsigned y)
 {
    if (!chooser || x < ARC_CHOOSER_LEFT || x >= ARC_CHOOSER_RIGHT ||
-       y < ARC_CHOOSER_TOP || y >= ARC_CHOOSER_BOTTOM) return -1;
+       y < ARC_CHOOSER_TOP ||
+       y >= (chooser->nested_scope ? 392u : ARC_CHOOSER_BOTTOM)) return -1;
    unsigned row = chooser->first_visible +
       (y - ARC_CHOOSER_TOP) / ARC_CHOOSER_ROW_HEIGHT;
    return row < chooser->row_count ? (int)row : -1;
@@ -278,7 +363,8 @@ static unsigned arc_name_characters(const ArcGuestName *name)
 {
    unsigned characters = 0u;
    for (unsigned i = 0u; name && i < name->length; ++i)
-      characters += name->bytes[i] < 0x20u || name->bytes[i] > 0x7eu ? 4u : 1u;
+      characters += name->bytes[i] < 0x20u || name->bytes[i] > 0x7eu ? 4u :
+         (name->bytes[i] == '"' || name->bytes[i] == '\\' ? 2u : 1u);
    return characters;
 }
 
@@ -298,6 +384,10 @@ static void arc_name(uint32_t *pixels, unsigned width, unsigned height,
          rendered[0] = '\\'; rendered[1] = 'x';
          rendered[2] = hex[c >> 4u]; rendered[3] = hex[c & 15u];
          rendered_colour = UINT32_C(0x00ffd060);
+      }
+      else if (c == '"' || c == '\\')
+      {
+         rendered[0] = '\\'; rendered[1] = (char)c;
       }
       for (unsigned character = 0u; rendered[character];
            ++character, x += 8u * scale)
@@ -328,7 +418,7 @@ bool arc_launch_chooser_render(const ArcLaunchChooser *chooser,
       (void)arc_text(pixels, width, height, stride, 64u, 56u,
                      "Inspection incomplete - verified applications only",
                      UINT32_C(0x00ffd060));
-   unsigned visible = arc_chooser_visible_rows();
+   unsigned visible = arc_chooser_visible_rows(chooser);
    unsigned end = chooser->first_visible + visible;
    if (end > chooser->row_count) end = chooser->row_count;
    for (unsigned row = chooser->first_visible; row < end; ++row)
@@ -356,9 +446,21 @@ bool arc_launch_chooser_render(const ArcLaunchChooser *chooser,
                         "Desktop (no launch)", foreground);
       else
       {
-         const ArcGuestName *name = &discovery->candidates[candidate].name;
-         unsigned scale = arc_name_characters(name) * 16u <=
+         const ArcLaunchCandidate *entry = &discovery->candidates[candidate];
+         const ArcGuestName *name = &entry->name;
+         unsigned characters = arc_name_characters(name) +
+            (entry->parent.length ? arc_name_characters(&entry->parent) + 1u : 0u);
+         unsigned scale = characters * 16u <=
             ARC_CHOOSER_RIGHT - x ? 2u : 1u;
+         if (entry->parent.length)
+         {
+            arc_name(pixels, width, height, stride, x, y,
+                     &entry->parent, scale, foreground);
+            x += arc_name_characters(&entry->parent) * 8u * scale;
+            (void)arc_text(pixels, width, height, stride, x, y, ".",
+                           foreground);
+            x += 16u;
+         }
          arc_name(pixels, width, height, stride, x, y, name, scale, foreground);
       }
    }
@@ -366,7 +468,31 @@ bool arc_launch_chooser_render(const ArcLaunchChooser *chooser,
       (void)arc_text(pixels, width, height, stride, 584u, 92u, "^",
                      UINT32_C(0x00ffffff));
    if (end < chooser->row_count)
-      (void)arc_text(pixels, width, height, stride, 584u, 432u, "v",
+      (void)arc_text(pixels, width, height, stride, 584u,
+                     chooser->nested_scope ? 372u : 432u, "v",
                      UINT32_C(0x00ffffff));
+   if (chooser->nested_scope && !chooser->install_mode &&
+       chooser->focus < chooser->row_count)
+   {
+      uint8_t selected = chooser->candidate_index[chooser->focus];
+      if (selected != ARC_CHOOSER_DESKTOP)
+      {
+         const ArcLaunchCandidate *entry = &discovery->candidates[selected];
+         (void)arc_text(pixels, width, height, stride, 64u, 404u,
+                        "Selected:", UINT32_C(0x00ffffff));
+         if (entry->parent.length)
+         {
+            arc_name(pixels, width, height, stride, 64u, 424u,
+                     &entry->parent, 1u, UINT32_C(0x00ffd060));
+            (void)arc_text(pixels, width, height, stride,
+                           64u + arc_name_characters(&entry->parent) * 8u,
+                           424u, ".", UINT32_C(0x00ffd060));
+            arc_name(pixels, width, height, stride, 64u, 444u,
+                     &entry->name, 1u, UINT32_C(0x00ffd060));
+         }
+         else arc_name(pixels, width, height, stride, 64u, 424u,
+                       &entry->name, 1u, UINT32_C(0x00ffd060));
+      }
+   }
    return true;
 }

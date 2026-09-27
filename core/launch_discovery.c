@@ -1016,6 +1016,86 @@ static bool arc_candidate_launchable(const ArcGuestName *name)
    return true;
 }
 
+static bool arc_component_safe(uint8_t c)
+{
+   return c > 0x20u && c != 0x7fu && c != '.' && c != ':' &&
+          c != '*' && c != '#' && c != '$' && c != '&' && c != '@' &&
+          c != '^' && c != '%' && c != '\\' && c != '|' && c != '"' &&
+          c != '<';
+}
+
+static bool arc_parent_address(const ArcDirectoryEntry root[77],
+                               unsigned root_count, unsigned parent_index,
+                               ArcGuestName *address)
+{
+   const ArcGuestName *parent = &root[parent_index].name;
+   for (unsigned j = 0u; j < parent->length; ++j)
+      if (!arc_component_safe(parent->bytes[j])) return false;
+   if (!parent->length) return false;
+   /* A literal parent must identify exactly one root object, including files. */
+   unsigned matches = 0u;
+   for (unsigned i = 0u; i < root_count; ++i)
+      if (arc_name_ascii_equal(parent, &root[i].name)) ++matches;
+   if (matches != 1u) return false;
+   *address = *parent;
+   return true;
+}
+
+bool arc_launch_target_compose(const ArcLaunchCandidate *candidate,
+                               char *output, size_t capacity,
+                               uint8_t *output_length)
+{
+   if (!candidate || !output || !output_length ||
+       !candidate->name.length || candidate->name.length > 10u ||
+       candidate->parent.length > 10u) return false;
+   size_t length = candidate->name.length;
+   if (candidate->parent.length) length += candidate->parent.length + 1u;
+   if (length > 21u || capacity <= length) return false;
+   size_t leaf_offset = 0u;
+   if (candidate->parent.length)
+   {
+      memcpy(output, candidate->parent.bytes, candidate->parent.length);
+      output[candidate->parent.length] = '.';
+      leaf_offset = candidate->parent.length + 1u;
+   }
+   memcpy(output + leaf_offset, candidate->name.bytes, candidate->name.length);
+   output[length] = '\0';
+   *output_length = (uint8_t)length;
+   return true;
+}
+
+static void arc_classify_candidate(const ArcFileCore *fs,
+                                    const ArcDirectoryEntry *entry,
+                                    ArcLaunchCandidate *candidate,
+                                    bool *ignored_attribute_bits)
+{
+   candidate->name = entry->name;
+   candidate->resource =
+      arc_name_ascii_literal(&candidate->name, "!System") ||
+      arc_name_ascii_literal(&candidate->name, "!Fonts") ||
+      arc_name_ascii_literal(&candidate->name, "!Scrap");
+   candidate->launchable = arc_candidate_launchable(&candidate->name);
+   candidate->state = ARC_LAUNCH_CANDIDATE_UNKNOWN;
+   size_t expected = fs->new_directory ? 2048u : 1280u;
+   ArcDirectoryEntry child[77];
+   unsigned child_count = 0u;
+   if (entry->length != expected ||
+       !arc_directory_read(fs, entry->address, false, child, &child_count,
+                           ignored_attribute_bits)) return;
+   unsigned run_count = 0u, boot_count = 0u;
+   for (unsigned item = 0u; item < child_count; ++item)
+   {
+      if (child[item].directory) continue;
+      if (arc_name_ascii_literal(&child[item].name, "!Run")) ++run_count;
+      if (arc_name_ascii_literal(&child[item].name, "!Boot")) ++boot_count;
+   }
+   if (run_count > 1u || boot_count > 1u)
+   { candidate->launchable = false; return; }
+   candidate->has_boot = boot_count == 1u;
+   candidate->state = run_count == 1u ? ARC_LAUNCH_CANDIDATE_APPLICATION :
+                                        ARC_LAUNCH_CANDIDATE_NOT_APPLICATION;
+}
+
 static bool arc_normal_name(const ArcGuestName *source, bool strip_bang,
                             char output[11])
 {
@@ -1035,6 +1115,31 @@ static bool arc_normal_name(const ArcGuestName *source, bool strip_bang,
 
 static void arc_fingerprint(ArcLaunchDiscovery *discovery)
 {
+   if (discovery->nested_scope)
+   {
+      uint8_t nested[32u + ARC_LAUNCH_MAX_CANDIDATES * 27u];
+      size_t at = 0u;
+      static const uint8_t domain[] = "ArcDroid nested v3";
+      memcpy(nested, domain, sizeof(domain)); at += sizeof(domain);
+      nested[at++] = (uint8_t)discovery->candidate_count;
+      nested[at++] = discovery->scan_incomplete ? 1u : 0u;
+      for (unsigned i = 0u; i < discovery->candidate_count; ++i)
+      {
+         const ArcLaunchCandidate *c = &discovery->candidates[i];
+         nested[at++] = c->parent.length;
+         memcpy(nested + at, c->parent.bytes, c->parent.length);
+         at += c->parent.length;
+         nested[at++] = c->name.length;
+         memcpy(nested + at, c->name.bytes, c->name.length);
+         at += c->name.length;
+         nested[at++] = (uint8_t)c->state;
+         nested[at++] = c->launchable ? 1u : 0u;
+         nested[at++] = c->addressable ? 1u : 0u;
+         nested[at++] = c->has_boot ? 1u : 0u;
+      }
+      arc_sha1_hex(nested, at, discovery->candidate_fingerprint);
+      return;
+   }
    uint8_t bytes[1u + ARC_LAUNCH_MAX_CANDIDATES * 14u];
    size_t at = 0u;
    bytes[at++] = (uint8_t)discovery->candidate_count;
@@ -1062,7 +1167,8 @@ bool arc_launch_discover(const uint8_t *data, size_t size,
    memset(discovery, 0, sizeof(*discovery));
    discovery->target_index = -1;
    discovery->reason = ARC_LAUNCH_REASON_UNREADABLE;
-   if (!arc_filecore_init(&fs, data, size, media, jfd)) return true;
+   if (!arc_filecore_init(&fs, data, size, media, jfd))
+   { discovery->scan_incomplete = true; return true; }
    discovery->backup_map_used = fs.backup_map_used;
    discovery->old_map_clamped = fs.old_map_clamped;
    discovery->readable = true;
@@ -1071,45 +1177,77 @@ bool arc_launch_discover(const uint8_t *data, size_t size,
    discovery->disc_name = fs.disc_name;
    if (!arc_directory_read(&fs, 0u, true, root, &root_count,
                            &discovery->ignored_attribute_bits))
-   { discovery->readable = false; return true; }
+   { discovery->readable = false; discovery->scan_incomplete = true; return true; }
 
+   bool has_root_candidate = false;
    for (unsigned i = 0u; i < root_count; ++i)
+   {
+      if (arc_name_ascii_literal(&root[i].name, "!Boot"))
+         discovery->root_boot = true;
+      if (root[i].directory && arc_candidate_name(&root[i].name))
+         has_root_candidate = true;
+   }
+   discovery->nested_scope = !has_root_candidate;
+
+   for (unsigned i = 0u; i < root_count && has_root_candidate; ++i)
    {
       if (!root[i].directory || !arc_candidate_name(&root[i].name)) continue;
       ArcLaunchCandidate *candidate =
          &discovery->candidates[discovery->candidate_count++];
-      candidate->name = root[i].name;
-      candidate->resource =
-         arc_name_ascii_literal(&candidate->name, "!System") ||
-         arc_name_ascii_literal(&candidate->name, "!Fonts") ||
-         arc_name_ascii_literal(&candidate->name, "!Scrap");
-      candidate->launchable = arc_candidate_launchable(&candidate->name);
-      candidate->state = ARC_LAUNCH_CANDIDATE_UNKNOWN;
-      size_t expected = fs.new_directory ? 2048u : 1280u;
-      ArcDirectoryEntry child[77];
-      unsigned child_count = 0u;
-      if (root[i].length != expected ||
-          !arc_directory_read(&fs, root[i].address, false, child, &child_count,
-                              &discovery->ignored_attribute_bits))
-         continue;
-      unsigned run_count = 0u, boot_count = 0u;
-      for (unsigned item = 0u; item < child_count; ++item)
-      {
-         if (child[item].directory) continue;
-         if (arc_name_ascii_literal(&child[item].name, "!Run")) ++run_count;
-         if (arc_name_ascii_literal(&child[item].name, "!Boot")) ++boot_count;
-      }
-      if (run_count > 1u || boot_count > 1u)
-      {
-         candidate->launchable = false;
-         continue;
-      }
-      candidate->has_boot = boot_count == 1u;
-      candidate->state = run_count == 1u ? ARC_LAUNCH_CANDIDATE_APPLICATION :
-                                           ARC_LAUNCH_CANDIDATE_NOT_APPLICATION;
+      candidate->addressable = true;
+      arc_classify_candidate(&fs, &root[i], candidate,
+                             &discovery->ignored_attribute_bits);
    }
 
-   for (unsigned i = 0u; i < discovery->candidate_count; ++i)
+   if (!has_root_candidate)
+      for (unsigned i = 0u; i < root_count; ++i)
+      {
+         if (!root[i].directory) continue;
+         ArcDirectoryEntry child[77];
+         unsigned child_count = 0u;
+         size_t expected = fs.new_directory ? 2048u : 1280u;
+         if (root[i].length != expected ||
+             !arc_directory_read(&fs, root[i].address, false, child,
+                                 &child_count,
+                                 &discovery->ignored_attribute_bits))
+         {
+            ++discovery->unreadable_parents;
+            discovery->scan_incomplete = true;
+            continue;
+         }
+         ArcGuestName address = {0};
+         bool addressable = arc_parent_address(root, root_count, i, &address);
+         for (unsigned j = 0u; j < child_count; ++j)
+         {
+            if (!child[j].directory || !arc_candidate_name(&child[j].name))
+               continue;
+            if (discovery->candidate_count == ARC_LAUNCH_MAX_CANDIDATES)
+            {
+               ++discovery->omitted_candidates;
+               discovery->scan_incomplete = true;
+               continue;
+            }
+            ArcLaunchCandidate *candidate =
+               &discovery->candidates[discovery->candidate_count++];
+            candidate->parent = root[i].name;
+            candidate->parent_address = address;
+            candidate->addressable = addressable;
+            arc_classify_candidate(&fs, &child[j], candidate,
+                                   &discovery->ignored_attribute_bits);
+            unsigned matches = 0u;
+            for (unsigned k = 0u; k < child_count; ++k)
+               if (arc_name_ascii_equal(&candidate->name, &child[k].name))
+                  ++matches;
+            if (matches > 1u)
+            {
+               candidate->state = ARC_LAUNCH_CANDIDATE_UNKNOWN;
+               candidate->launchable = false;
+            }
+            if (!addressable) candidate->launchable = false;
+         }
+      }
+
+   for (unsigned i = 0u; i < discovery->candidate_count && has_root_candidate; ++i)
    {
       unsigned matches = 0u;
       for (unsigned j = 0u; j < root_count; ++j)
@@ -1131,8 +1269,10 @@ bool arc_launch_discover(const uint8_t *data, size_t size,
          ++discovery->unknown_count;
    }
    arc_fingerprint(discovery);
-   if (fs.boot_option)
+   if (fs.boot_option && discovery->root_boot)
    { discovery->reason = ARC_LAUNCH_REASON_DISC_BOOTS_ITSELF; return true; }
+   if (discovery->scan_incomplete)
+   { discovery->reason = ARC_LAUNCH_REASON_INSPECTION_INCOMPLETE; return true; }
    if (!discovery->candidate_count)
    { discovery->reason = ARC_LAUNCH_REASON_NO_CANDIDATES; return true; }
    if (!discovery->application_count && !discovery->unknown_count)
