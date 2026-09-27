@@ -105,11 +105,26 @@ static void arc_script_path(ArcScriptWriter *writer, const ArcGuestName *name)
    arc_script_leaf(writer, name);
 }
 
+static void arc_script_candidate_path(ArcScriptWriter *writer,
+                                       const ArcLaunchCandidate *candidate)
+{
+   arc_script_text(writer, "ADFS::0.$.");
+   if (candidate->parent.length)
+   {
+      arc_script_leaf(writer, &candidate->parent_address);
+      arc_script_text(writer, ".");
+   }
+   arc_script_leaf(writer, &candidate->name);
+}
+
 static void arc_script_boot(ArcScriptWriter *writer,
                             const ArcLaunchCandidate *candidate)
 {
    arc_script_text(writer, "%Filer_Boot ");
-   arc_script_path(writer, &candidate->name);
+   if (candidate->parent.length)
+      arc_script_candidate_path(writer, candidate);
+   else
+      arc_script_path(writer, &candidate->name);
    arc_script_text(writer, "\r");
 }
 
@@ -131,6 +146,8 @@ bool arc_launch_script_build(const ArcLaunchDiscovery *discovery,
    if (target->state != ARC_LAUNCH_CANDIDATE_APPLICATION || !target->launchable ||
        !arc_leaf_representable(&target->name))
    { arc_launch_error(error, error_size, "launch target leaf is not representable"); return false; }
+   if (target->parent.length && !target->addressable)
+   { arc_launch_error(error, error_size, "launch target parent is not representable"); return false; }
 
    ArcScriptWriter writer = {output, capacity, 0u, true};
    arc_script_text(&writer, "| ArcDroid desktop boot file\r");
@@ -139,12 +156,18 @@ bool arc_launch_script_build(const ArcLaunchDiscovery *discovery,
       for (unsigned i = 0u; i < discovery->candidate_count; ++i)
          if (i != target_index &&
              arc_launch_sibling_bootable(&discovery->candidates[i]) &&
+             discovery->candidates[i].parent.length == target->parent.length &&
+             !memcmp(discovery->candidates[i].parent.bytes, target->parent.bytes,
+                     target->parent.length) &&
              arc_name_literal(&discovery->candidates[i].name, preferred[p]))
             arc_script_boot(&writer, &discovery->candidates[i]);
    for (unsigned i = 0u; i < discovery->candidate_count; ++i)
    {
       const ArcLaunchCandidate *candidate = &discovery->candidates[i];
       if (i == target_index || !arc_launch_sibling_bootable(candidate) ||
+          candidate->parent.length != target->parent.length ||
+          memcmp(candidate->parent.bytes, target->parent.bytes,
+                 target->parent.length) ||
           arc_name_literal(&candidate->name, "!System") ||
           arc_name_literal(&candidate->name, "!Fonts") ||
           arc_name_literal(&candidate->name, "!Scrap")) continue;
@@ -154,7 +177,10 @@ bool arc_launch_script_build(const ArcLaunchDiscovery *discovery,
    arc_script_text(&writer, "%Dir ADFS::0.$\r");
    arc_script_text(&writer, "%URD ADFS::0.$\r");
    arc_script_text(&writer, "%Filer_Run ");
-   arc_script_path(&writer, &target->name);
+   if (target->parent.length)
+      arc_script_candidate_path(&writer, target);
+   else
+      arc_script_path(&writer, &target->name);
    arc_script_text(&writer, "\r");
    if (!writer.ok)
    { arc_launch_error(error, error_size, "desktop boot file buffer is too small"); return false; }

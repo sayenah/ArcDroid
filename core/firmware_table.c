@@ -11,6 +11,11 @@
 #define H(os_, name_, size_, crc_, sha_, lane_) {os_, name_, size_, UINT32_C(crc_), sha_, ARC_RECIPE_HALFWORD_LANES_2, lane_}
 static const ArcFirmwareFingerprint fingerprints[] = {
    C(ARC_OS_TEST, "ArcDroid test ROM", 524288u, 0x4330ed83, "f4c9ec049431a3282efbe4bf151ae066320ed592"),
+   C(ARC_OS_TEST, "ArcDroid chooser application ROM", 524288u, 0x278555b5, "32f7d800e65fbd26325241b874f9279021c465a9"),
+#if defined(ARCDROID_TEST_FAULTS)
+   /* Synthetic unsupported-OS chooser probe, never accepted by shipping. */
+   C(ARC_OS_RISCOS_200, "ArcDroid unsupported launch test ROM", 524288u, 0x92559a84, "6b42001508cbc297b0f792a23f010938c0670326"),
+#endif
    C(ARC_OS_TEST, "ArcDroid media exerciser ROM", 524288u, 0x98eb2fb5, "2cd97482b0b64fd2abdc657a1a0143e6556f50f6"),
    C(ARC_OS_TEST, "ArcDroid JFD save test ROM", 524288u, 0x21e5f59b, "6af9d30474d067f9e5c274cc8ffd3449fdab8a62"),
    C(ARC_OS_TEST, "ArcDroid JFD New-IO save test ROM", 524288u, 0x8a0fb781, "a5ed887b89711c63484931aeb724a69875342f3a"),

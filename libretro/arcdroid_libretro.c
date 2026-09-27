@@ -3304,6 +3304,7 @@ static void arc_launch_candidates_message(const ArcLaunchDiscovery *discovery,
    char message[512];
    size_t at = (size_t)snprintf(message, sizeof(message), "%s", prefix);
    bool listed = false;
+   bool suggestible = true;
    unsigned ordinal = 0u;
    for (unsigned i = 0u; i < discovery->candidate_count && at < sizeof(message); ++i)
    {
@@ -3312,9 +3313,19 @@ static void arc_launch_candidates_message(const ArcLaunchDiscovery *discovery,
       if (applications_only &&
           discovery->candidates[i].state != ARC_LAUNCH_CANDIDATE_APPLICATION)
          continue;
-      char name[4u * ARC_GUEST_NAME_MAX + 1u];
-      (void)arc_launch_escape_name(&discovery->candidates[i].name,
-                                   name, sizeof(name));
+      if (!arc_launch_candidate_is_target(&discovery->candidates[i]) ||
+          ordinal > 8u) suggestible = false;
+      char name[4u * (2u * ARC_GUEST_NAME_MAX + 1u) + 1u];
+      const ArcLaunchCandidate *candidate = &discovery->candidates[i];
+      if (candidate->parent.length)
+      {
+         char parent[4u * ARC_GUEST_NAME_MAX + 1u];
+         char leaf[4u * ARC_GUEST_NAME_MAX + 1u];
+         (void)arc_launch_escape_name(&candidate->parent, parent, sizeof(parent));
+         (void)arc_launch_escape_name(&candidate->name, leaf, sizeof(leaf));
+         snprintf(name, sizeof(name), "%s.%s", parent, leaf);
+      }
+      else (void)arc_launch_escape_name(&candidate->name, name, sizeof(name));
       int written = snprintf(message + at, sizeof(message) - at, "%s%u %s",
                              listed ? " " : "", ordinal, name);
       if (written < 0 || (size_t)written >= sizeof(message) - at)
@@ -3322,7 +3333,7 @@ static void arc_launch_candidates_message(const ArcLaunchDiscovery *discovery,
       at += (size_t)written;
       listed = true;
    }
-   if (at < sizeof(message) - 28u)
+   if (suggestible && at < sizeof(message) - 28u)
       snprintf(message + at, sizeof(message) - at, " — set Launch to Application N");
    arc_message(message, RETRO_LOG_WARN);
 }
@@ -3430,10 +3441,20 @@ static bool arc_launch_binding(const ArcLaunchDiscovery *discovery,
                   "binding is invalid; existing binding preserved");
          return false;
       }
-      const ArcGuestName *target = &discovery->candidates[selected].name;
+      const ArcLaunchCandidate *candidate = &discovery->candidates[selected];
+      const ArcGuestName *target = &candidate->name;
       if (!reselected)
       {
-         if (binding.target.length != target->length ||
+         unsigned selected_ordinal = 0u;
+         for (unsigned i = 0u; i < selected; ++i)
+            if (!discovery->candidates[i].resource) ++selected_ordinal;
+         if ((candidate->parent.length &&
+              (binding.version != 3u || binding.ordinal != selected_ordinal)) ||
+             (!candidate->parent.length && binding.version == 3u) ||
+             binding.parent.length != candidate->parent.length ||
+             memcmp(binding.parent.bytes, candidate->parent.bytes,
+                    candidate->parent.length) ||
+             binding.target.length != target->length ||
              memcmp(binding.target.bytes, target->bytes, target->length))
          {
             snprintf(reason, reason_size,
@@ -3449,10 +3470,15 @@ static bool arc_launch_binding(const ArcLaunchDiscovery *discovery,
       if (!discovery->candidates[i].resource) ++ordinal;
    uint8_t binding[ARC_LAUNCH_BINDING_MAX_SIZE];
    size_t binding_size = 0u;
-   if (!arc_launch_binding_format(ordinal,
-          &discovery->candidates[selected].name,
-          discovery->candidate_fingerprint,
-          binding, sizeof(binding), &binding_size) ||
+   const ArcLaunchCandidate *candidate = &discovery->candidates[selected];
+   bool formatted = candidate->parent.length ?
+      arc_launch_binding_format_nested(ordinal, &candidate->parent,
+         &candidate->name, discovery->candidate_fingerprint,
+         binding, sizeof(binding), &binding_size) :
+      arc_launch_binding_format(ordinal, &candidate->name,
+         discovery->candidate_fingerprint,
+         binding, sizeof(binding), &binding_size);
+   if (!formatted ||
        !arc_launch_binding_publish(path, exists, binding, binding_size))
    { snprintf(reason, reason_size, "binding could not be published"); return false; }
    return true;
@@ -3465,41 +3491,77 @@ static void arc_launch_log(const ArcLaunchDiscovery *discovery,
    char candidates[1024] = "";
    char applications[512] = "";
    char disc_name[4u * ARC_GUEST_NAME_MAX + 1u];
-   char decision[4u * ARC_GUEST_NAME_MAX + 1u] = "none";
+   char decision[4u * (2u * ARC_GUEST_NAME_MAX + 1u) + 1u] = "none";
+   char address[4u * (2u * ARC_GUEST_NAME_MAX + 1u) + 1u] = "none";
    size_t ca = 0u, aa = 0u;
    unsigned ordinal = 0u;
+   bool candidates_truncated = false, applications_truncated = false;
    (void)arc_launch_escape_name(&discovery->disc_name,
                                 disc_name, sizeof(disc_name));
    if (decision_index >= 0 &&
        (unsigned)decision_index < discovery->candidate_count)
-      (void)arc_launch_escape_name(
-         &discovery->candidates[decision_index].name,
-         decision, sizeof(decision));
+   {
+      const ArcLaunchCandidate *c = &discovery->candidates[decision_index];
+      char leaf[4u * ARC_GUEST_NAME_MAX + 1u];
+      (void)arc_launch_escape_name(&c->name, leaf, sizeof(leaf));
+      if (c->parent.length)
+      {
+         char parent[4u * ARC_GUEST_NAME_MAX + 1u];
+         char operand[4u * ARC_GUEST_NAME_MAX + 1u];
+         (void)arc_launch_escape_name(&c->parent, parent, sizeof(parent));
+         (void)arc_launch_escape_name(&c->parent_address, operand, sizeof(operand));
+         snprintf(decision, sizeof(decision), "%s.%s", parent, leaf);
+         snprintf(address, sizeof(address), "%s.%s", operand, leaf);
+      }
+      else snprintf(decision, sizeof(decision), "%s", leaf);
+   }
    for (unsigned i = 0u; i < discovery->candidate_count; ++i)
    {
-      char name[4u * ARC_GUEST_NAME_MAX + 1u];
-      (void)arc_launch_escape_name(&discovery->candidates[i].name,
-                                   name, sizeof(name));
+      char name[4u * (2u * ARC_GUEST_NAME_MAX + 1u) + 1u];
+      const ArcLaunchCandidate *c = &discovery->candidates[i];
+      char leaf[4u * ARC_GUEST_NAME_MAX + 1u];
+      (void)arc_launch_escape_name(&c->name, leaf, sizeof(leaf));
+      if (c->parent.length)
+      {
+         char parent[4u * ARC_GUEST_NAME_MAX + 1u];
+         (void)arc_launch_escape_name(&c->parent, parent, sizeof(parent));
+         snprintf(name, sizeof(name), "%s.%s", parent, leaf);
+      }
+      else snprintf(name, sizeof(name), "%s", leaf);
       const char *state = discovery->candidates[i].state == ARC_LAUNCH_CANDIDATE_APPLICATION ? "app" :
                           discovery->candidates[i].state == ARC_LAUNCH_CANDIDATE_UNKNOWN ? "unknown" : "other";
       if (discovery->candidates[i].resource) state = "resource";
       int n = snprintf(candidates + ca, sizeof(candidates) - ca, "%s%u:%s:%s",
                        i ? "," : "", i + 1u, name, state);
-      if (n > 0 && (size_t)n < sizeof(candidates) - ca) ca += (size_t)n;
+      if (n > 0 && (size_t)n < sizeof(candidates) - ca - 24u)
+         ca += (size_t)n;
+      else { candidates_truncated = true; break; }
       if (!discovery->candidates[i].resource) ++ordinal;
       if (discovery->candidates[i].state == ARC_LAUNCH_CANDIDATE_APPLICATION &&
-          !discovery->candidates[i].resource)
+          !discovery->candidates[i].resource && !applications_truncated)
       {
          n = snprintf(applications + aa, sizeof(applications) - aa, "%s%u:%s",
                       aa ? "," : "", ordinal, name);
-         if (n > 0 && (size_t)n < sizeof(applications) - aa) aa += (size_t)n;
+         if (n > 0 && (size_t)n < sizeof(applications) - aa - 24u)
+            aa += (size_t)n;
+         else applications_truncated = true;
       }
    }
+   if (candidates_truncated)
+      snprintf(candidates + ca, sizeof(candidates) - ca, "...total=%u",
+               discovery->candidate_count);
+   if (applications_truncated || candidates_truncated)
+      snprintf(applications + aa, sizeof(applications) - aa, "...total=%u",
+               discovery->application_count);
    arc_log(RETRO_LOG_INFO,
-      "Launch: boot=%u disc=\"%s\" candidates=[%s] applications=[%s] decision=%s reason=%s ignored-attribute-bits=%s helper=%s\n",
+      "Launch: boot=%u disc=\"%s\" candidates=[%s] applications=[%s] decision=%s reason=%s ignored-attribute-bits=%s helper=%s root-boot=%s scope=%s scan=%s discovery-reason=%s address=%s\n",
       discovery->boot_option, disc_name, candidates, applications,
       decision, reason, discovery->ignored_attribute_bits ? "yes" : "no",
-      arc_helper_path[0] ? arc_helper_path : "none");
+      arc_helper_path[0] ? arc_helper_path : "none",
+      discovery->root_boot ? "yes" : "no",
+      discovery->nested_scope ? "nested" : "root",
+      discovery->scan_incomplete ? "incomplete" : "complete",
+      arc_launch_reason_name(discovery->reason), address);
 }
 
 static void arc_launch_log_skipped_siblings(
@@ -3510,6 +3572,11 @@ static void arc_launch_log_skipped_siblings(
    {
       const ArcLaunchCandidate *candidate = &discovery->candidates[i];
       if (i == target_index || !candidate->has_boot ||
+          candidate->parent.length !=
+             discovery->candidates[target_index].parent.length ||
+          memcmp(candidate->parent.bytes,
+                 discovery->candidates[target_index].parent.bytes,
+                 candidate->parent.length) ||
           arc_launch_sibling_bootable(candidate)) continue;
       char name[4u * ARC_GUEST_NAME_MAX + 1u];
       (void)arc_launch_escape_name(&candidate->name, name, sizeof(name));
@@ -3572,9 +3639,14 @@ static bool arc_choice_publish(const ArcLaunchDiscovery *discovery,
    size_t size = 0u;
    const ArcGuestName *target = selected >= 0 ?
       &discovery->candidates[selected].name : NULL;
-   if (!arc_launch_choice_format(target, selected < 0,
-                                 discovery->candidate_fingerprint,
-                                 data, sizeof(data), &size)) return false;
+   bool formatted = discovery->nested_scope ?
+      arc_launch_choice_format_nested(selected >= 0 ?
+         &discovery->candidates[selected].parent : NULL,
+         target, selected < 0, discovery->candidate_fingerprint,
+         data, sizeof(data), &size) :
+      arc_launch_choice_format(target, selected < 0,
+         discovery->candidate_fingerprint, data, sizeof(data), &size);
+   if (!formatted) return false;
    size_t ignored = 0u;
    bool replacing = arc_io_file_size(arc_choice_path, &ignored);
    return arc_launch_binding_publish(arc_choice_path, replacing, data, size);
@@ -3693,9 +3765,18 @@ static bool arc_launch_helper_publish(const ArcLaunchDiscovery *discovery,
    free(helper);
    if (!arc_helper_path[0]) return false;
    arc_plan.launch_helper = true;
-   arc_plan.launch_target_length = discovery->candidates[selected].name.length;
-   memcpy(arc_plan.launch_target, discovery->candidates[selected].name.bytes,
-          arc_plan.launch_target_length);
+   const ArcLaunchCandidate *candidate = &discovery->candidates[selected];
+   arc_plan.launch_target_length = candidate->name.length;
+   if (candidate->parent.length)
+   {
+      memcpy(arc_plan.launch_target, candidate->parent.bytes,
+             candidate->parent.length);
+      arc_plan.launch_target[candidate->parent.length] = '.';
+      arc_plan.launch_target_length += candidate->parent.length + 1u;
+   }
+   memcpy(arc_plan.launch_target + arc_plan.launch_target_length,
+          candidate->name.bytes, candidate->name.length);
+   arc_plan.launch_target_length += candidate->name.length;
    arc_plan.launch_target[arc_plan.launch_target_length] = '\0';
    arc_launch_log_skipped_siblings(discovery, selected);
    return true;
@@ -3745,7 +3826,12 @@ static bool arc_prepare_launch(ArcMediaEntry *entry, bool ejected,
       else if (discovery.candidates[candidate].state != ARC_LAUNCH_CANDIDATE_APPLICATION)
          snprintf(refusal, sizeof(refusal), "Application choice refused: candidate %u has no !Run", ordinal + 1u);
       else if (!discovery.candidates[candidate].launchable)
-         snprintf(refusal, sizeof(refusal), "Application choice refused: candidate %u leaf is not launchable", ordinal + 1u);
+         snprintf(refusal, sizeof(refusal),
+                  discovery.candidates[candidate].parent.length &&
+                  !discovery.candidates[candidate].addressable ?
+                  "Application choice refused: candidate %u parent is not representable" :
+                  "Application choice refused: candidate %u leaf is not launchable",
+                  ordinal + 1u);
       else
       {
          selected = (int)candidate;
@@ -3778,6 +3864,15 @@ static bool arc_prepare_launch(ArcMediaEntry *entry, bool ejected,
          (discovery.reason == ARC_LAUNCH_REASON_AMBIGUOUS ||
           discovery.reason == ARC_LAUNCH_REASON_INSPECTION_INCOMPLETE) &&
          verified_targets >= 1u;
+      if (discovery.nested_scope && !verified_targets)
+         for (unsigned i = 0u; i < discovery.candidate_count; ++i)
+            if (discovery.candidates[i].state == ARC_LAUNCH_CANDIDATE_APPLICATION &&
+                !discovery.candidates[i].addressable)
+            {
+               arc_message("Application parent cannot be addressed uniquely.",
+                           RETRO_LOG_WARN);
+               break;
+            }
       if (chooser_eligible)
       {
          bool remembered = false;
@@ -3790,10 +3885,15 @@ static bool arc_prepare_launch(ArcMediaEntry *entry, bool ejected,
                 !arc_launch_helper_publish(&discovery,
                    (unsigned)remembered_target, refusal, sizeof(refusal)))
             {
+               arc_message(refusal[0] ? refusal :
+                  "Remembered launch helper publication failed.", RETRO_LOG_WARN);
                arc_launch_log(&discovery, -1,
                   refusal[0] ? refusal : "remembered helper publication failed");
                return false;
             }
+            if (remembered_target >= 0 && discovery.scan_incomplete)
+               arc_message("Application inspection incomplete; launching the remembered choice.",
+                           RETRO_LOG_WARN);
             arc_launch_log(&discovery, remembered_target,
                remembered_target < 0 ? "chooser remembered desktop" :
                                        "chooser remembered target");
@@ -3813,19 +3913,28 @@ static bool arc_prepare_launch(ArcMediaEntry *entry, bool ejected,
           discovery.application_count >= 2u)
          arc_launch_candidates_message(&discovery, "No unique application: ", true);
       else if (discovery.reason == ARC_LAUNCH_REASON_INSPECTION_INCOMPLETE &&
-               discovery.candidate_count)
+               discovery.candidate_count &&
+               (!discovery.nested_scope || verified_targets))
          arc_launch_candidates_message(&discovery,
             "Application inspection incomplete: ", false);
+      else if (discovery.nested_scope && discovery.scan_incomplete)
+         arc_message("Application inspection incomplete; no verified launch target.",
+                     RETRO_LOG_WARN);
       arc_launch_log(&discovery, -1, reason);
       return false;
    }
    if (!arc_launch_helper_publish(&discovery, (unsigned)selected,
                                   refusal, sizeof(refusal)))
    {
+      arc_message(refusal[0] ? refusal : "Launch helper publication failed.",
+                  RETRO_LOG_WARN);
       arc_launch_log(&discovery, -1,
          refusal[0] ? refusal : "helper publication failed");
       return false;
    }
+   if (option >= ARC_LAUNCH_APP1 && discovery.scan_incomplete)
+      arc_message("Application inspection incomplete; launching the verified choice.",
+                  RETRO_LOG_WARN);
    arc_launch_log(&discovery, selected, reason);
    return false;
 }

@@ -132,7 +132,7 @@ typedef struct {
    ArcMediaKind media;
    char content_id[41];
    bool launch_helper;
-   char launch_target[11];
+   char launch_target[22];
    uint8_t launch_target_length;
 } ArcLaunchPlan;
 
@@ -164,8 +164,11 @@ typedef enum {
 
 typedef struct {
    ArcGuestName name;
+   ArcGuestName parent; /* Empty for root candidates. */
+   ArcGuestName parent_address; /* Checked literal or ASCII prefix + '*'. */
    ArcLaunchCandidateState state;
    bool launchable;
+   bool addressable;
    bool has_boot;
    bool resource;
 } ArcLaunchCandidate;
@@ -179,6 +182,11 @@ typedef struct {
    unsigned candidate_count;
    unsigned application_count;
    unsigned unknown_count;
+   bool root_boot;
+   bool nested_scope;
+   bool scan_incomplete;
+   unsigned unreadable_parents;
+   unsigned omitted_candidates;
    int target_index;
    ArcLaunchReason reason;
    bool ignored_attribute_bits;
@@ -187,19 +195,22 @@ typedef struct {
    char candidate_fingerprint[41];
 } ArcLaunchDiscovery;
 
-#define ARC_LAUNCH_BINDING_MAX_SIZE 96u
+#define ARC_LAUNCH_BINDING_MAX_SIZE 88u
 #define ARC_LAUNCH_CHOICE_MAX_SIZE 128u
 #define ARC_LAUNCH_CHOOSER_MAX_ROWS (ARC_LAUNCH_MAX_CANDIDATES + 1u)
 
 typedef struct {
    unsigned version;
    unsigned ordinal;
+   ArcGuestName parent;
    ArcGuestName target;
    char candidate_fingerprint[41];
 } ArcLaunchBinding;
 
 typedef struct {
+   unsigned version;
    bool desktop;
+   ArcGuestName parent;
    ArcGuestName target;
    char candidate_fingerprint[41];
 } ArcLaunchChoiceRecord;
@@ -210,6 +221,7 @@ typedef struct {
    unsigned focus;
    unsigned first_visible;
    bool inspection_incomplete;
+   bool nested_scope;
    bool install_mode;
    char install_labels[2][32];
 } ArcLaunchChooser;
@@ -260,6 +272,12 @@ bool arc_launch_binding_format(unsigned ordinal, const ArcGuestName *target,
                                const char candidate_fingerprint[41],
                                uint8_t *output, size_t capacity,
                                size_t *output_size);
+bool arc_launch_binding_format_nested(unsigned ordinal,
+                              const ArcGuestName *parent,
+                              const ArcGuestName *target,
+                              const char candidate_fingerprint[41],
+                              uint8_t *output, size_t capacity,
+                              size_t *output_size);
 bool arc_launch_candidate_is_resource(const ArcLaunchCandidate *candidate);
 bool arc_launch_candidate_is_target(const ArcLaunchCandidate *candidate);
 unsigned arc_launch_candidate_index(const ArcLaunchDiscovery *discovery,
@@ -267,6 +285,11 @@ unsigned arc_launch_candidate_index(const ArcLaunchDiscovery *discovery,
 bool arc_launch_choice_parse(const void *data, size_t size,
                              ArcLaunchChoiceRecord *choice);
 bool arc_launch_choice_format(const ArcGuestName *target, bool desktop,
+                              const char candidate_fingerprint[41],
+                              uint8_t *output, size_t capacity,
+                              size_t *output_size);
+bool arc_launch_choice_format_nested(const ArcGuestName *parent,
+                              const ArcGuestName *target, bool desktop,
                               const char candidate_fingerprint[41],
                               uint8_t *output, size_t capacity,
                               size_t *output_size);

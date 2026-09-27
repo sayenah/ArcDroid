@@ -1189,8 +1189,11 @@ def build_chooser_rom() -> bytearray:
     a.tst_imm(7, 2)
     a.branch("chooser_helper_wait", "eq")
     a.ldr(7, 0, 12, byte=True)
-    a.cmp_imm(5, 204)
+    a.cmp_imm(7, ord("N"))
+    a.branch("chooser_helper_target", "eq")
+    a.cmp_imm(7, ord("Q"))
     a.branch("chooser_helper_not_target", "ne")
+    a.label("chooser_helper_target")
     a.mov_reg(6, 7)
     a.label("chooser_helper_not_target")
     a.subs_imm(5, 5, 1)
@@ -2226,6 +2229,38 @@ def build_chooser_application_l() -> bytearray:
     return image
 
 
+def build_nested_chooser_l(parent_name: bytes) -> bytearray:
+    """Move two executable fixture applications one directory below root."""
+    image = build_chooser_application_l()
+    root = _old_directory()
+    parent = _old_directory(parent_name)
+    _old_entry(root, 0, parent_name, OLD_DIRECTORY_SIZE, 10, True)
+    _old_entry(parent, 0, b"!Nulvane", OLD_DIRECTORY_SIZE, 20, True)
+    _old_entry(parent, 1, b"!Qaventra", OLD_DIRECTORY_SIZE, 26, True)
+    _l_write(image, 2, root)
+    _l_write(image, 10, parent)
+    free_extents = ((9, 1), (15, 5), (25, 1), (31, 9),
+                    (41, 1), (43, ADL_SIZE // 256 - 43))
+    for index, (start, length) in enumerate(free_extents):
+        _store_u24(image, index * 3, start)
+        _store_u24(image, 256 + index * 3, length)
+    image[510] = len(free_extents) * 3
+    image[255] = _old_map_checksum(image[:255])
+    image[511] = _old_map_checksum(image[256:511])
+    return image
+
+
+def build_g1_chooser_l() -> bytearray:
+    """Boot-option disc with one executable application and no root !Boot."""
+    image = build_chooser_application_l()
+    root = _old_directory()
+    _old_entry(root, 0, b"!Nulvane", OLD_DIRECTORY_SIZE, 20, True)
+    _l_write(image, 2, root)
+    image[509] = 3
+    image[511] = _old_map_checksum(image[256:511])
+    return image
+
+
 def _set_old_disc_name(image: bytearray, name: bytes) -> None:
     padded = name[:10].ljust(10, b"\r")
     image[247:252] = padded[0::2]
@@ -2238,7 +2273,8 @@ def build_l_discovery(candidates: list[tuple[bytes, bool]],
                       boot_children: set[int] | None = None,
                       duplicate_run: int | None = None,
                       duplicate_boot: int | None = None,
-                      root_attribute_high: int | None = None) -> bytearray:
+                      root_attribute_high: int | None = None,
+                      root_boot: str | None = None) -> bytearray:
     image = bytearray(ADL_SIZE)
     _store_u24(image, 252, ADL_SIZE // 256)
     _set_old_disc_name(image, disc_name)
@@ -2270,6 +2306,15 @@ def build_l_discovery(candidates: list[tuple[bytes, bool]],
                     _old_entry(child, child_entry, b"!bOOT", 1, 500 + index)
                 _l_write(image, 500 + index, b"\r")
             _l_write(image, child_sector, child)
+    if root_boot:
+        name = b"!bOOT" if root_boot == "file" else b"!Boot"
+        _old_entry(root, len(candidates), name,
+                   OLD_DIRECTORY_SIZE if root_boot == "directory" else 1,
+                   700, root_boot == "directory")
+        if root_boot == "directory":
+            _l_write(image, 700, _old_directory(name))
+        else:
+            _l_write(image, 700, b"\r")
     _l_write(image, 2, root)
     return image
 
@@ -2351,7 +2396,8 @@ def build_d_discovery(candidates: list[tuple[bytes, bool]],
                       duplicate_boot: int | None = None,
                       root_attribute_high: int | None = None,
                       irrelevant_malformed: bool = False,
-                      duplicate_root_file: int | None = None) -> bytearray:
+                      duplicate_root_file: int | None = None,
+                      root_boot: str | None = None) -> bytearray:
     image = bytearray(ADF_SIZE)
     _store_u24(image, 252, declared_sectors)
     _set_old_disc_name(image, disc_name)
@@ -2396,7 +2442,96 @@ def build_d_discovery(candidates: list[tuple[bytes, bool]],
     if duplicate_root_file is not None:
         _new_entry(root, len(candidates), candidates[duplicate_root_file][0],
                    1, 0xFFFFFF)
+    if root_boot:
+        at = len(candidates) + (irrelevant_malformed is True) + \
+             (duplicate_root_file is not None)
+        name = b"!bOOT" if root_boot == "file" else b"!Boot"
+        _new_entry(root, at, name,
+                   2048 if root_boot == "directory" else 1,
+                   700416 // 256, root_boot == "directory")
+        if root_boot == "directory":
+            image[700416:702464] = _new_directory(name, signature)
+        else:
+            image[700416] = 13
     image[1024:3072] = root
+    return image
+
+
+def build_nested_d_discovery(
+        parents: list[tuple[bytes, list[tuple[bytes, bool, bool]]]],
+        disc_name: bytes = b"Fixture", root_files: tuple[bytes, ...] = (),
+        unreadable_parent: int | None = None,
+        unreadable_child: int | None = None,
+        duplicate_parent_file: int | None = None,
+        duplicate_child_file: int | None = None) -> bytearray:
+    """Invented one-level FileCore hierarchy; offsets never overlap."""
+    image = build_d_discovery([], disc_name)
+    root = _new_directory()
+    next_app = 0
+    for parent_index, (parent_name, children) in enumerate(parents):
+        parent_offset = 400384 + parent_index * 2048
+        _new_entry(root, parent_index, parent_name, 2048,
+                   parent_offset // 256, True)
+        if unreadable_parent == parent_index:
+            continue
+        directory = _new_directory(parent_name)
+        for child_index, (leaf, application, bootable) in enumerate(children):
+            app_offset = 10240 + next_app * 2048
+            run_offset = 200704 + next_app * 1024
+            boot_offset = 300032 + next_app * 1024
+            _new_entry(directory, child_index, leaf, 2048,
+                       app_offset // 256, True)
+            app = _new_directory(leaf)
+            slot = 0
+            if application:
+                _new_entry(app, slot, b"!Run", 1, run_offset // 256)
+                image[run_offset] = 13
+                slot += 1
+            if bootable:
+                _new_entry(app, slot, b"!Boot", 1, boot_offset // 256)
+                image[boot_offset] = 13
+            if unreadable_child != next_app:
+                image[app_offset:app_offset + 2048] = app
+            next_app += 1
+        if duplicate_child_file == parent_index and children:
+            _new_entry(directory, len(children), children[0][0], 1,
+                       600064 // 256)
+        image[parent_offset:parent_offset + 2048] = directory
+    root_at = len(parents)
+    for filename in root_files:
+        _new_entry(root, root_at, filename, 1, 600064 // 256)
+        root_at += 1
+    if duplicate_parent_file is not None:
+        _new_entry(root, root_at, parents[duplicate_parent_file][0], 1,
+                   600064 // 256)
+    image[1024:3072] = root
+    return image
+
+
+def build_nested_with_root_d(root_name: bytes, state: str) -> bytearray:
+    """A root ! directory suppresses descent into an ordinary folder."""
+    image = build_nested_d_discovery([
+        (b"Folder", [(b"!Nested", True, False)])])
+    root = bytearray(image[1024:3072])
+    _new_entry(root, 1, root_name, 1 if state == "unknown" else 2048,
+               700416 // 256, True)
+    image[1024:3072] = root
+    if state != "unknown":
+        child = _new_directory(root_name)
+        if state == "application":
+            _new_entry(child, 0, b"!Run", 1, 702464 // 256)
+            image[702464] = 13
+        image[700416:702464] = child
+    return image
+
+
+def build_depth_two_only_d() -> bytearray:
+    image = build_nested_d_discovery([
+        (b"Folder", [(b"Sub", False, False)])])
+    sub = _new_directory(b"Sub")
+    _new_entry(sub, 0, b"!Deep", 2048, 600064 // 256, True)
+    image[10240:12288] = sub
+    image[600064:602112] = _new_directory(b"!Deep")
     return image
 
 
@@ -2415,7 +2550,8 @@ def build_e_discovery(candidates: list[tuple[bytes, bool]],
                       duplicate_run: int | None = None,
                       duplicate_boot: int | None = None,
                       root_attribute_high: int | None = None,
-                      irrelevant_malformed: bool = False) -> bytearray:
+                      irrelevant_malformed: bool = False,
+                      root_boot: str | None = None) -> bytearray:
     image = bytearray(ADF_SIZE)
     record = memoryview(image)[4:64]
     record[0:6] = bytes((10, 5, 2, 2, 15, 7))
@@ -2497,6 +2633,11 @@ def build_e_discovery(candidates: list[tuple[bytes, bool]],
         image[child_offset:child_offset + 2048] = child
     if irrelevant_malformed:
         _new_entry(root, len(candidates), b"Oddity", 0xFFFFFFFF, 0xFFFFFF)
+    if root_boot:
+        at = len(candidates) + (irrelevant_malformed is True)
+        _new_entry(root, at, b"!bOOT" if root_boot == "file" else b"!Boot",
+                   2048 if root_boot == "directory" else 1,
+                   0x7f00, root_boot == "directory")
     image[2048:4096] = root
     image[0] = 0
     sums = [0, 0, 0, 0]
@@ -2512,6 +2653,19 @@ def build_e_discovery(candidates: list[tuple[bytes, bool]],
     sums[2] += image[2] + (sums[1] >> 8)
     sums[3] += image[3] + (sums[2] >> 8)
     image[0] = (sums[0] ^ sums[1] ^ sums[2] ^ sums[3]) & 0xFF
+    return image
+
+
+def build_nested_e_discovery(parent_name: bytes) -> bytearray:
+    """New-map nested application reusing allocated fragments 3 and 5."""
+    image = build_e_discovery([(b"Folder", False), (b"!Demo", True)], b"Demo")
+    root = bytearray(image[2048:4096])
+    _new_entry(root, 0, parent_name, 2048, 3 << 8, True)
+    root[31:57] = bytes(26)
+    image[2048:4096] = root
+    parent = _new_directory(parent_name)
+    _new_entry(parent, 0, b"!Demo", 2048, 5 << 8, True)
+    image[4096:6144] = parent
     return image
 
 
@@ -2829,6 +2983,53 @@ def build_checkpoint_guest_disc() -> bytearray:
     return build_d_guest_applications(apps, b"ArcCheckA")
 
 
+def build_nested_checkpoint_guest_disc(parent_name: bytes) -> bytearray:
+    """Real-RISC OS checkpoint: local resource/boot order and parent isolation."""
+    apps = [
+        (b"!System", b"Set ArcDroid$NestedTrace S\r"
+                     b"Set ArcDroid$OtherParent \"\"\r", None),
+        (b"!Prep", b"Set ArcDroid$NestedTrace <ArcDroid$NestedTrace>P\r", None),
+        (b"!Target", b"Set ArcDroid$NestedTrace <ArcDroid$NestedTrace>T\r",
+         b"If \"<ArcDroid$NestedTrace>\" <> \"SPT\" Then Error Nested order wrong\r"
+         b"If \"<ArcDroid$OtherParent>\" <> \"\" Then Error Other parent booted\r"
+         b"Echo ARCDROID NESTED TARGET REACHED <ArcDroid$NestedTrace>\r"
+         b"Dir\rURD\r"),
+        (b"!Other", b"Set ArcDroid$OtherParent Wrong\r", None),
+    ]
+    image = build_d_guest_applications(apps, b"ArcNest")
+    sorted_apps = sorted(apps, key=lambda item: _adfs_name_key(item[0]))
+    free_start = int.from_bytes(image[0:3], "little") * 256
+    first_parent = free_start
+    second_parent = free_start + 2048
+    root = _new_directory()
+    _new_entry(root, 0, parent_name, 2048, first_parent // 256, True)
+    _new_entry(root, 1, b"Other", 2048, second_parent // 256, True)
+    _finish_new_directory(root, 2, 4)
+    image[1024:3072] = root
+    parents = [_new_directory(parent_name), _new_directory(b"Other")]
+    counts = [0, 0]
+    for index, (name, boot, run) in enumerate(sorted_apps):
+        group = 1 if name == b"!Other" else 0
+        child_offset = 3072 + index * 2048
+        _new_entry(parents[group], counts[group], name, 2048,
+                   child_offset // 256, True)
+        counts[group] += 1
+        child = bytearray(image[child_offset:child_offset + 2048])
+        _finish_new_directory(child, int(boot is not None) + int(run is not None),
+                              (second_parent if group else first_parent) // 256)
+        image[child_offset:child_offset + 2048] = child
+    for group in range(2):
+        _finish_new_directory(parents[group], counts[group], 4)
+    image[first_parent:first_parent + 2048] = parents[0]
+    image[second_parent:second_parent + 2048] = parents[1]
+    new_free = second_parent + 2048
+    _store_u24(image, 0, new_free // 256)
+    _store_u24(image, 256, ADF_SIZE // 256 - new_free // 256)
+    image[255] = _old_map_checksum(image[:255])
+    image[511] = _old_map_checksum(image[256:511])
+    return image
+
+
 def build_checkpoint_name_discs() -> dict[str, bytearray]:
     """One valid, lone-application disc for each addressable unusual leaf."""
     cases = (
@@ -2861,6 +3062,11 @@ def main() -> None:
     (args.output / "arcdroid-demo.adl").write_bytes(build_demo_adl())
     (args.output / "arcdroid-application-l.adl").write_bytes(build_application_l())
     (args.output / "arcdroid-chooser-l.adl").write_bytes(build_chooser_application_l())
+    (args.output / "arcdroid-g1-chooser-l.adl").write_bytes(build_g1_chooser_l())
+    (args.output / "arcdroid-nested-chooser-l.adl").write_bytes(
+        build_nested_chooser_l(b"Folder"))
+    (args.output / "arcdroid-wildcard-chooser-l.adl").write_bytes(
+        build_nested_chooser_l(b"Arc Games"))
     launch = args.output / "launch-family"
     launch.mkdir(exist_ok=True)
     launch_images = {
@@ -2920,6 +3126,74 @@ def main() -> None:
             [(b"!Zorvex", True)], b"Zorvex", boot_children={0}), "D"),
         "self-boot-unknown-d.adf": (build_d_discovery(
             [(b"!Broken", False)], b"Broken", boot=2, incomplete=0), "D"),
+        "self-boot-file-d.adf": (build_d_discovery(
+            [(b"!Demo", True)], b"Demo", boot=3, root_boot="file"), "D"),
+        "self-boot-dir-d.adf": (build_d_discovery(
+            [(b"!Demo", True)], b"Demo", boot=3, root_boot="directory"), "D"),
+        "nested-literal-d.adf": (build_nested_d_discovery([
+            (b"Folder", [(b"!Nulvane", True, True),
+                         (b"!System", False, True),
+                         (b"!Qaventra", True, False)]),
+            (b"Extras", [(b"!Zorvex", True, True)])], b"Other"), "D"),
+        "nested-wildcard-d.adf": (build_nested_d_discovery([
+            (b"Arc Games", [(b"!Demo", True, True)])], b"Demo"), "D"),
+        "nested-single-e.adf": (build_nested_e_discovery(b"Folder"), "E"),
+        "nested-mixed-root-d.adf": (build_nested_with_root_d(b"!Root", "application"), "D"),
+        "nested-resource-root-d.adf": (build_nested_with_root_d(b"!System", "resource"), "D"),
+        "nested-unknown-root-d.adf": (build_nested_with_root_d(b"!Broken", "unknown"), "D"),
+        "nested-depth-two-d.adf": (build_depth_two_only_d(), "D"),
+        "nested-disc-tie-d.adf": (build_nested_d_discovery([
+            (b"Folder", [(b"!Demo", True, False)]),
+            (b"Other", [(b"!Demo", True, False)])], b"Demo"), "D"),
+        "nested-unsafe-leaf-d.adf": (build_nested_d_discovery([
+            (b"Folder", [(b"!Bad.Name", True, False)])]), "D"),
+        "nested-collision-d.adf": (build_nested_d_discovery([
+            (b"Arc Games", [(b"!Demo", True, True)]),
+            (b"Arcade", [(b"!Other", True, False)])], b"Demo"), "D"),
+        "nested-file-collision-d.adf": (build_nested_d_discovery([
+            (b"Arc Games", [(b"!Demo", True, True)])], b"Demo",
+            root_files=(b"Arc",)), "D"),
+        "nested-empty-prefix-d.adf": (build_nested_d_discovery([
+            (b" Bad", [(b"!Demo", True, False)])], b"Demo"), "D"),
+        "nested-pipe-d.adf": (build_nested_d_discovery([
+            (b"Arc|Games", [(b"!Demo", True, False)])], b"Demo"), "D"),
+        "nested-extended-boundary-d.adf": (build_nested_d_discovery([
+            (b"Arc\x80 Bad", [(b"!Demo", True, False)])], b"Demo"), "D"),
+        "nested-extended-first-d.adf": (build_nested_d_discovery([
+            (b"\x80 Bad", [(b"!Demo", True, False)])], b"Demo"), "D"),
+        "nested-one-byte-d.adf": (build_nested_d_discovery([
+            (b"A", [(b"!Demo", True, False)])], b"Demo"), "D"),
+        "nested-case-file-d.adf": (build_nested_d_discovery([
+            (b"Arc Games", [(b"!Demo", True, False)])], b"Demo",
+            root_files=(b"aRC",)), "D"),
+        "nested-literal-duplicate-d.adf": (build_nested_d_discovery([
+            (b"Folder", [(b"!Demo", True, True)]),
+            (b"folder", [(b"!Other", True, True)])], b"Demo"), "D"),
+        "nested-parent-file-d.adf": (build_nested_d_discovery([
+            (b"Folder", [(b"!Demo", True, True)])], b"Demo",
+            duplicate_parent_file=0), "D"),
+        "nested-unreadable-d.adf": (build_nested_d_discovery([
+            (b"Folder", [(b"!Demo", True, False)]),
+            (b"Broken", [(b"!Other", True, False)])], b"Demo",
+            unreadable_parent=1), "D"),
+        "nested-no-target-unreadable-d.adf": (build_nested_d_discovery([
+            (b"Broken", [(b"!Other", True, False)])],
+            unreadable_parent=0), "D"),
+        "nested-unreadable-child-d.adf": (build_nested_d_discovery([
+            (b"Folder", [(b"!Demo", True, False)])], b"Demo",
+            unreadable_child=0), "D"),
+        "nested-child-collision-d.adf": (build_nested_d_discovery([
+            (b"Folder", [(b"!Demo", True, True)])], b"Demo",
+            duplicate_child_file=0), "D"),
+        "nested-77-d.adf": (build_nested_d_discovery([
+            (b"Folder", [(f"!A{i:02d}".encode(), True, False)
+                         for i in range(77)])]), "D"),
+        "nested-78-d.adf": (build_nested_d_discovery([
+            (b"Folder", [(f"!A{i:02d}".encode(), True, False)
+                         for i in range(77)]),
+            (b"More", [(b"!Last", True, False)])]), "D"),
+        "nested-77-parents-d.adf": (build_nested_d_discovery([
+            (f"P{i:02d}".encode(), []) for i in range(77)]), "D"),
         "unsafe-disc-name-l.adl": (build_l_discovery(
             [(b"!Foo", True), (b"!Bar", True)], b"Bad\nName"), "L"),
         "more-eight-d.adf": (build_d_discovery(
@@ -2938,6 +3212,34 @@ def main() -> None:
     for boot in range(4):
         launch_images[f"boot-{boot}-l.adl"] = (
             build_l_discovery([(b"!Demo", True)], b"Demo", boot), "L")
+        if boot:
+            launch_images[f"boot-file-{boot}-l.adl"] = (
+                build_l_discovery([(b"!Demo", True)], b"Demo", boot,
+                                  root_boot="file"), "L")
+            launch_images[f"boot-dir-{boot}-l.adl"] = (
+                build_l_discovery([(b"!Demo", True)], b"Demo", boot,
+                                  root_boot="directory"), "L")
+        for shape, candidates, incomplete in (
+                ("zero", [], None),
+                ("one", [(b"!Demo", True)], None),
+                ("multiple", [(b"!Demo", True), (b"!Other", True)], None),
+                ("unknown", [(b"!Broken", True)], 0)):
+            for boot_object in ("absent", "file", "directory"):
+                launch_images[f"boot-matrix-{boot}-{boot_object}-{shape}.adf"] = (
+                    build_d_discovery(candidates, b"Fixture", boot,
+                                      incomplete=incomplete,
+                                      root_boot=None if boot_object == "absent"
+                                                else boot_object), "D")
+    duplicate_boot_root = build_d_discovery([(b"!Demo", True)], b"Demo",
+                                            boot=3, root_boot="file")
+    duplicate_root = bytearray(duplicate_boot_root[1024:3072])
+    _new_entry(duplicate_root, 2, b"!Boot", 1, 700416 // 256)
+    duplicate_boot_root[1024:3072] = duplicate_root
+    launch_images["boot-duplicate-root-d.adf"] = (duplicate_boot_root, "D")
+    unreadable_boot_root = build_d_discovery([(b"!Demo", True)], b"Demo",
+                                             boot=3, root_boot="file")
+    unreadable_boot_root[1025:1029] = b"Bad!"
+    launch_images["boot-unreadable-root-d.adf"] = (unreadable_boot_root, "D")
     illegal = (b"!Bad.Name", b"!Bad:Name", b"!Bad<Name", b"!Bad>Name",
                b"!Bad|Name", b"!Bad$Name", b"!Bad&Name", b"!Bad@Name",
                b"!Bad^Name", b"!Bad%Name", b"!Bad*Name", b"!Bad#Name",
@@ -3080,7 +3382,8 @@ def main() -> None:
                  "label-with-unknown-d.adf", "label-is-unknown-d.adf",
                  "duplicate-root-d.adf", "duplicate-root-file-d.adf",
                  "duplicate-run-d.adf", "duplicate-boot-e.adf",
-                 "has-boot-d.adf", "self-boot-unknown-d.adf", "illegal-l.adl"):
+                 "has-boot-d.adf", "self-boot-unknown-d.adf", "illegal-l.adl",
+                 "nested-literal-d.adf", "nested-wildcard-d.adf"):
         payload, geometry = launch_images[base]
         stem = base.rsplit(".", 1)[0]
         (launch / f"{stem}.jfd").write_bytes(
@@ -3089,6 +3392,10 @@ def main() -> None:
     checkpoint_guest = build_checkpoint_guest_disc()
     checkpoint_names = build_checkpoint_name_discs()
     (launch / "checkpoint-a-guest.adf").write_bytes(checkpoint_guest)
+    (launch / "checkpoint-nested-literal.adf").write_bytes(
+        build_nested_checkpoint_guest_disc(b"Folder"))
+    (launch / "checkpoint-nested-wildcard.adf").write_bytes(
+        build_nested_checkpoint_guest_disc(b"Arc Games"))
     for filename, image in checkpoint_names.items():
         (launch / filename).write_bytes(image)
     if args.checkpoint_guest_disc:

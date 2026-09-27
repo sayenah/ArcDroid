@@ -397,21 +397,51 @@ static bool arc_binding_fingerprint(const uint8_t *line, size_t length,
    return true;
 }
 
+static bool arc_binding_component(const uint8_t *line, size_t length,
+                                   ArcGuestName *name, bool bang)
+{
+   if (!length || length > 2u * ARC_GUEST_NAME_MAX || (length & 1u))
+      return false;
+   name->length = (uint8_t)(length / 2u);
+   for (unsigned i = 0u; i < name->length; ++i)
+   {
+      int high = arc_binding_hex_nibble(line[2u * i]);
+      int low = arc_binding_hex_nibble(line[2u * i + 1u]);
+      if (high < 0 || low < 0) return false;
+      name->bytes[i] = (uint8_t)((unsigned)high << 4u | (unsigned)low);
+   }
+   return bang ? name->bytes[0] == '!' : name->bytes[0] != '!';
+}
+
 bool arc_launch_binding_parse(const void *data, size_t size,
                               ArcLaunchBinding *binding)
 {
    if (!data || !binding || !size || size > ARC_LAUNCH_BINDING_MAX_SIZE)
       return false;
    ArcBindingCursor cursor = {(const uint8_t *)data, size, 0u};
-   const uint8_t *first, *second, *third, *fourth = NULL;
-   size_t first_length, second_length, third_length, fourth_length = 0u;
+   const uint8_t *first, *second, *third, *fourth = NULL, *fifth = NULL;
+   size_t first_length, second_length, third_length, fourth_length = 0u,
+      fifth_length = 0u;
    if (!arc_binding_line(&cursor, &first, &first_length) ||
        !arc_binding_line(&cursor, &second, &second_length) ||
        !arc_binding_line(&cursor, &third, &third_length)) return false;
 
    ArcLaunchBinding parsed;
    memset(&parsed, 0, sizeof(parsed));
-   if (first_length == 2u && !memcmp(first, "v2", 2u))
+   if (first_length == 2u && !memcmp(first, "v3", 2u))
+   {
+      if (!arc_binding_line(&cursor, &fourth, &fourth_length) ||
+          !arc_binding_line(&cursor, &fifth, &fifth_length) ||
+          cursor.at != cursor.size || second_length != 1u ||
+          second[0] < '1' || second[0] > '8' ||
+          !arc_binding_component(third, third_length, &parsed.parent, false) ||
+          !arc_binding_component(fourth, fourth_length, &parsed.target, true) ||
+          !arc_binding_fingerprint(fifth, fifth_length,
+                                   parsed.candidate_fingerprint)) return false;
+      parsed.version = 3u;
+      parsed.ordinal = (unsigned)(second[0] - '1');
+   }
+   else if (first_length == 2u && !memcmp(first, "v2", 2u))
    {
       if (!arc_binding_line(&cursor, &fourth, &fourth_length) ||
           cursor.at != cursor.size || second_length != 1u ||
@@ -448,6 +478,46 @@ bool arc_launch_binding_parse(const void *data, size_t size,
    if (!parsed.target.length || parsed.target.bytes[0] != '!') return false;
    *binding = parsed;
    return true;
+}
+
+bool arc_launch_binding_format_nested(unsigned ordinal,
+                              const ArcGuestName *parent,
+                              const ArcGuestName *target,
+                              const char candidate_fingerprint[41],
+                              uint8_t *output, size_t capacity,
+                              size_t *output_size)
+{
+   static const char hex[] = "0123456789abcdef";
+   if (output_size) *output_size = 0u;
+   if (ordinal >= 8u || !parent || !parent->length ||
+       parent->length > ARC_GUEST_NAME_MAX || parent->bytes[0] == '!' ||
+       !target || !target->length || target->length > ARC_GUEST_NAME_MAX ||
+       target->bytes[0] != '!' || !candidate_fingerprint ||
+       candidate_fingerprint[40] != '\0') return false;
+   for (unsigned i = 0u; i < 40u; ++i)
+      if (arc_binding_hex_nibble((uint8_t)candidate_fingerprint[i]) < 0)
+         return false;
+   size_t required = 3u + 2u + 2u * parent->length + 1u +
+                     2u * target->length + 1u + 41u;
+   if (output_size) *output_size = required;
+   if (!output) return capacity == 0u;
+   if (capacity < required) return false;
+   size_t at = 0u;
+   memcpy(output, "v3\n", 3u); at += 3u;
+   output[at++] = (uint8_t)('1' + ordinal); output[at++] = '\n';
+   for (unsigned part = 0u; part < 2u; ++part)
+   {
+      const ArcGuestName *name = part ? target : parent;
+      for (unsigned i = 0u; i < name->length; ++i)
+      {
+         output[at++] = (uint8_t)hex[name->bytes[i] >> 4u];
+         output[at++] = (uint8_t)hex[name->bytes[i] & 15u];
+      }
+      output[at++] = '\n';
+   }
+   memcpy(output + at, candidate_fingerprint, 40u); at += 40u;
+   output[at++] = '\n';
+   return at == required;
 }
 
 bool arc_launch_binding_format(unsigned ordinal, const ArcGuestName *target,

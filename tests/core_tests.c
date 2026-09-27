@@ -777,15 +777,15 @@ static void test_launch_discovery_and_builder(const char *fixture_directory)
       {"launch-family/duplicate-run-d.adf", ARC_GEOMETRY_800K_D, 1024u, "Hugo", "Zorvex", 0u, 1u, 0u, -1, ARC_LAUNCH_REASON_INSPECTION_INCOMPLETE, true},
       {"launch-family/duplicate-boot-e.adf", ARC_GEOMETRY_800K_E, 2048u, "Hugo", "Zorvex", 0u, 1u, 0u, -1, ARC_LAUNCH_REASON_INSPECTION_INCOMPLETE, true},
       {"launch-family/has-boot-d.adf", ARC_GEOMETRY_800K_D, 1024u, "Hugo", "Zorvex", 0u, 1u, 1u, 0, ARC_LAUNCH_REASON_SINGLE_APPLICATION, true},
-      {"launch-family/self-boot-unknown-d.adf", ARC_GEOMETRY_800K_D, 1024u, "Hugo", "Broken", 2u, 1u, 0u, -1, ARC_LAUNCH_REASON_DISC_BOOTS_ITSELF, true},
+      {"launch-family/self-boot-unknown-d.adf", ARC_GEOMETRY_800K_D, 1024u, "Hugo", "Broken", 2u, 1u, 0u, -1, ARC_LAUNCH_REASON_INSPECTION_INCOMPLETE, true},
       {"launch-family/more-eight-d.adf", ARC_GEOMETRY_800K_D, 1024u, "Hugo", "Fixture", 0u, 10u, 1u, 9, ARC_LAUNCH_REASON_SINGLE_APPLICATION, true},
       {"launch-family/fragmented-e.adf", ARC_GEOMETRY_800K_E, 2048u, "Hugo", "Demo", 0u, 1u, 1u, 0, ARC_LAUNCH_REASON_SINGLE_APPLICATION, true},
       {"launch-family/unresolved-e.adf", ARC_GEOMETRY_800K_E, 2048u, "Hugo", "Demo", 0u, 1u, 0u, -1, ARC_LAUNCH_REASON_INSPECTION_INCOMPLETE, true},
       {"launch-family/illegal-l.adl", ARC_GEOMETRY_640K_L, 512u, "Hugo", "Fixture", 0u, 18u, 18u, -1, ARC_LAUNCH_REASON_AMBIGUOUS, true},
       {"launch-family/boot-0-l.adl", ARC_GEOMETRY_640K_L, 512u, "Hugo", "Demo", 0u, 1u, 1u, 0, ARC_LAUNCH_REASON_SINGLE_APPLICATION, true},
-      {"launch-family/boot-1-l.adl", ARC_GEOMETRY_640K_L, 512u, "Hugo", "Demo", 1u, 1u, 1u, -1, ARC_LAUNCH_REASON_DISC_BOOTS_ITSELF, true},
-      {"launch-family/boot-2-l.adl", ARC_GEOMETRY_640K_L, 512u, "Hugo", "Demo", 2u, 1u, 1u, -1, ARC_LAUNCH_REASON_DISC_BOOTS_ITSELF, true},
-      {"launch-family/boot-3-l.adl", ARC_GEOMETRY_640K_L, 512u, "Hugo", "Demo", 3u, 1u, 1u, -1, ARC_LAUNCH_REASON_DISC_BOOTS_ITSELF, true},
+      {"launch-family/boot-1-l.adl", ARC_GEOMETRY_640K_L, 512u, "Hugo", "Demo", 1u, 1u, 1u, 0, ARC_LAUNCH_REASON_SINGLE_APPLICATION, true},
+      {"launch-family/boot-2-l.adl", ARC_GEOMETRY_640K_L, 512u, "Hugo", "Demo", 2u, 1u, 1u, 0, ARC_LAUNCH_REASON_SINGLE_APPLICATION, true},
+      {"launch-family/boot-3-l.adl", ARC_GEOMETRY_640K_L, 512u, "Hugo", "Demo", 3u, 1u, 1u, 0, ARC_LAUNCH_REASON_SINGLE_APPLICATION, true},
       {"launch-family/sibling-pipe-l.adl", ARC_GEOMETRY_640K_L, 512u, "Hugo", "Qaventra", 0u, 2u, 1u, 1, ARC_LAUNCH_REASON_SINGLE_APPLICATION, true},
       {"launch-family/duplicate-siblings-l.adl", ARC_GEOMETRY_640K_L, 512u, "Hugo", "Qaventra", 0u, 3u, 1u, 2, ARC_LAUNCH_REASON_DISC_NAME_MATCH, true},
    };
@@ -860,6 +860,9 @@ static void test_launch_discovery_and_builder(const char *fixture_directory)
              discovery.candidate_count == item->candidates &&
              discovery.application_count == item->applications &&
              discovery.target_index == item->target && discovery.reason == item->reason);
+      if (!strcmp(item->file, "launch-family/single-l.adl"))
+         assert(!strcmp(discovery.candidate_fingerprint,
+                        "6db9e42a08bcd7aebad8b9e259466e268903b019"));
       if (strstr(item->file, "incomplete") || strstr(item->file, "unresolved") ||
           strstr(item->file, "duplicate-") || strstr(item->file, "label-is-unknown") ||
           strstr(item->file, "self-boot-unknown"))
@@ -1213,7 +1216,7 @@ static void test_launch_discovery_and_builder(const char *fixture_directory)
        ARC_LAUNCH_REASON_SINGLE_APPLICATION, true, true, false},
       {"launch-family/self-boot-unknown-d.jfd", ARC_LAUNCH_CANDIDATE_UNKNOWN,
        (const uint8_t *)"!Broken", 7u, 1u, 0u, 1u, -1,
-       ARC_LAUNCH_REASON_DISC_BOOTS_ITSELF, true, false, false},
+       ARC_LAUNCH_REASON_INSPECTION_INCOMPLETE, true, false, false},
       {"launch-family/illegal-l.jfd", ARC_LAUNCH_CANDIDATE_APPLICATION,
        (const uint8_t *)"!Bad.Name", 9u, 18u, 18u, 0u, -1,
        ARC_LAUNCH_REASON_AMBIGUOUS, false, false, false},
@@ -1538,6 +1541,301 @@ static void test_launch_discovery_and_builder(const char *fixture_directory)
    }
    free(second);
    free(first);
+}
+
+static void test_nested_launch(const char *fixture_directory)
+{
+   {
+      size_t size = 0u;
+      uint8_t *bytes = read_fixture(fixture_directory,
+         "arcdroid-g1-chooser-l.adl", &size);
+      ArcMediaInfo media; ArcLaunchDiscovery discovery;
+      char error[192] = {0};
+      assert(arc_media_inspect("arcdroid-g1-chooser-l.adl", bytes, size,
+                               &media, error, sizeof(error)) &&
+             arc_launch_discover(bytes, size, &media, NULL, &discovery) &&
+             discovery.boot_option == 3u && !discovery.root_boot &&
+             discovery.reason == ARC_LAUNCH_REASON_SINGLE_APPLICATION &&
+             discovery.target_index == 0);
+      free(bytes);
+   }
+   static const struct {
+      const char *file;
+      unsigned count;
+      int target;
+      ArcLaunchReason reason;
+      bool incomplete;
+   } cases[] = {
+      {"launch-family/nested-literal-d.adf", 4u, -1,
+       ARC_LAUNCH_REASON_AMBIGUOUS, false},
+      {"launch-family/nested-wildcard-d.adf", 1u, 0,
+       ARC_LAUNCH_REASON_SINGLE_APPLICATION, false},
+      {"launch-family/nested-single-e.adf", 1u, 0,
+       ARC_LAUNCH_REASON_SINGLE_APPLICATION, false},
+      {"launch-family/nested-disc-tie-d.adf", 2u, -1,
+       ARC_LAUNCH_REASON_AMBIGUOUS, false},
+      {"launch-family/nested-unsafe-leaf-d.adf", 1u, -1,
+       ARC_LAUNCH_REASON_AMBIGUOUS, false},
+      {"launch-family/nested-collision-d.adf", 2u, -1,
+       ARC_LAUNCH_REASON_AMBIGUOUS, false},
+      {"launch-family/nested-file-collision-d.adf", 1u, -1,
+       ARC_LAUNCH_REASON_AMBIGUOUS, false},
+      {"launch-family/nested-empty-prefix-d.adf", 1u, -1,
+       ARC_LAUNCH_REASON_AMBIGUOUS, false},
+      {"launch-family/nested-pipe-d.adf", 1u, 0,
+       ARC_LAUNCH_REASON_SINGLE_APPLICATION, false},
+      {"launch-family/nested-extended-boundary-d.adf", 1u, 0,
+       ARC_LAUNCH_REASON_SINGLE_APPLICATION, false},
+      {"launch-family/nested-extended-first-d.adf", 1u, -1,
+       ARC_LAUNCH_REASON_AMBIGUOUS, false},
+      {"launch-family/nested-one-byte-d.adf", 1u, 0,
+       ARC_LAUNCH_REASON_SINGLE_APPLICATION, false},
+      {"launch-family/nested-case-file-d.adf", 1u, -1,
+       ARC_LAUNCH_REASON_AMBIGUOUS, false},
+      {"launch-family/nested-literal-duplicate-d.adf", 2u, -1,
+       ARC_LAUNCH_REASON_AMBIGUOUS, false},
+      {"launch-family/nested-parent-file-d.adf", 1u, -1,
+       ARC_LAUNCH_REASON_AMBIGUOUS, false},
+      {"launch-family/nested-unreadable-d.adf", 1u, -1,
+       ARC_LAUNCH_REASON_INSPECTION_INCOMPLETE, true},
+      {"launch-family/nested-no-target-unreadable-d.adf", 0u, -1,
+       ARC_LAUNCH_REASON_INSPECTION_INCOMPLETE, true},
+      {"launch-family/nested-unreadable-child-d.adf", 1u, -1,
+       ARC_LAUNCH_REASON_INSPECTION_INCOMPLETE, false},
+      {"launch-family/nested-child-collision-d.adf", 1u, -1,
+       ARC_LAUNCH_REASON_INSPECTION_INCOMPLETE, false},
+      {"launch-family/nested-77-d.adf", 77u, -1,
+       ARC_LAUNCH_REASON_AMBIGUOUS, false},
+      {"launch-family/nested-78-d.adf", 77u, -1,
+       ARC_LAUNCH_REASON_INSPECTION_INCOMPLETE, true},
+      {"launch-family/nested-77-parents-d.adf", 0u, -1,
+       ARC_LAUNCH_REASON_NO_CANDIDATES, false},
+   };
+   char error[192] = {0};
+   for (unsigned i = 0u; i < sizeof(cases) / sizeof(cases[0]); ++i)
+   {
+      size_t size = 0u;
+      uint8_t *bytes = read_fixture(fixture_directory, cases[i].file, &size);
+      ArcMediaInfo media;
+      ArcLaunchDiscovery discovery;
+      assert(arc_media_inspect(cases[i].file, bytes, size,
+                               &media, error, sizeof(error)) &&
+             arc_launch_discover(bytes, size, &media, NULL, &discovery));
+      if (discovery.candidate_count != cases[i].count ||
+          discovery.target_index != cases[i].target ||
+          discovery.reason != cases[i].reason)
+         fprintf(stderr, "nested %s count=%u target=%d reason=%s\n",
+                 cases[i].file, discovery.candidate_count,
+                 discovery.target_index, arc_launch_reason_name(discovery.reason));
+      assert(discovery.readable && discovery.nested_scope &&
+             discovery.candidate_count == cases[i].count &&
+             discovery.target_index == cases[i].target &&
+             discovery.reason == cases[i].reason &&
+             discovery.scan_incomplete == cases[i].incomplete);
+      if (i == 0u)
+      {
+         assert(test_guest_name_equal(&discovery.candidates[0].parent, "Folder") &&
+                test_guest_name_equal(&discovery.candidates[3].parent, "Extras") &&
+                discovery.candidates[1].resource &&
+                arc_launch_candidate_index(&discovery, 1u) == 2u);
+         static const uint8_t script[] =
+            "| ArcDroid desktop boot file\r"
+            "%Filer_Boot ADFS::0.$.Folder.!System\r"
+            "%Filer_Boot ADFS::0.$.Folder.!Nulvane\r"
+            "%Dir ADFS::0.$\r%URD ADFS::0.$\r"
+            "%Filer_Run ADFS::0.$.Folder.!Nulvane\r";
+         uint8_t output[512]; size_t written = 0u;
+         assert(arc_launch_script_build(&discovery, 0u, output,
+                    sizeof(output), &written, error, sizeof(error)) &&
+                written == sizeof(script) - 1u &&
+                !memcmp(output, script, written));
+         ArcGuestName parent = discovery.candidates[0].parent;
+         ArcGuestName leaf = discovery.candidates[0].name;
+         uint8_t record[ARC_LAUNCH_CHOICE_MAX_SIZE]; size_t length;
+         ArcLaunchChoiceRecord choice;
+         assert(arc_launch_choice_format_nested(&parent, &leaf, false,
+                    discovery.candidate_fingerprint, record,
+                    sizeof(record), &length) &&
+                arc_launch_choice_parse(record, length, &choice) &&
+                choice.version == 3u &&
+                arc_launch_choice_match(&discovery, &choice) == 0);
+         choice.parent.bytes[0] ^= 1u;
+         assert(arc_launch_choice_match(&discovery, &choice) == INT_MIN);
+         choice.parent.bytes[0] ^= 1u;
+         choice.version = 1u;
+         assert(arc_launch_choice_match(&discovery, &choice) == INT_MIN);
+         record[length++] = 'x';
+         assert(!arc_launch_choice_parse(record, length, &choice));
+         assert(arc_launch_choice_format_nested(NULL, NULL, true,
+                    discovery.candidate_fingerprint, record,
+                    sizeof(record), &length) &&
+                arc_launch_choice_parse(record, length, &choice) &&
+                choice.version == 3u && choice.desktop &&
+                arc_launch_choice_match(&discovery, &choice) == -1);
+         uint8_t binding_text[ARC_LAUNCH_BINDING_MAX_SIZE];
+         ArcLaunchBinding binding;
+         assert(arc_launch_binding_format_nested(0u, &parent, &leaf,
+                    discovery.candidate_fingerprint, binding_text,
+                    sizeof(binding_text), &length) &&
+                arc_launch_binding_parse(binding_text, length, &binding) &&
+                binding.version == 3u && binding.ordinal == 0u &&
+                binding.parent.length == parent.length);
+      }
+      if (i == 1u)
+      {
+         assert(test_guest_name_equal(&discovery.candidates[0].parent_address,
+                                      "Arc*"));
+         uint8_t output[256]; size_t written = 0u;
+         assert(arc_launch_script_build(&discovery, 0u, output,
+                    sizeof(output) - 1u, &written, error, sizeof(error)));
+         output[written] = 0u;
+         assert(strstr((const char *)output, "Arc*.!Demo"));
+      }
+      if (!strcmp(cases[i].file, "launch-family/nested-unreadable-d.adf"))
+         assert(discovery.unreadable_parents == 1u);
+      if (!strcmp(cases[i].file, "launch-family/nested-78-d.adf"))
+         assert(discovery.omitted_candidates == 1u);
+      free(bytes);
+   }
+   for (unsigned boot = 1u; boot <= 3u; ++boot)
+      for (unsigned kind = 0u; kind < 2u; ++kind)
+      {
+         char file[80];
+         snprintf(file, sizeof(file), "launch-family/boot-%s-%u-l.adl",
+                  kind ? "dir" : "file", boot);
+         size_t size = 0u;
+         uint8_t *bytes = read_fixture(fixture_directory, file, &size);
+         ArcMediaInfo media; ArcLaunchDiscovery discovery;
+         assert(arc_media_inspect(file, bytes, size, &media,
+                                  error, sizeof(error)) &&
+                arc_launch_discover(bytes, size, &media, NULL, &discovery) &&
+                discovery.root_boot &&
+                discovery.reason == ARC_LAUNCH_REASON_DISC_BOOTS_ITSELF);
+         free(bytes);
+      }
+   static const struct {
+      const char *file;
+      unsigned count;
+      ArcLaunchReason reason;
+   } root_scope[] = {
+      {"launch-family/nested-mixed-root-d.adf", 1u,
+       ARC_LAUNCH_REASON_SINGLE_APPLICATION},
+      {"launch-family/nested-resource-root-d.adf", 1u,
+       ARC_LAUNCH_REASON_NO_APPLICATIONS},
+      {"launch-family/nested-unknown-root-d.adf", 1u,
+       ARC_LAUNCH_REASON_INSPECTION_INCOMPLETE},
+   };
+   for (unsigned i = 0u; i < sizeof(root_scope) / sizeof(root_scope[0]); ++i)
+   {
+      size_t size = 0u;
+      uint8_t *bytes = read_fixture(fixture_directory, root_scope[i].file, &size);
+      ArcMediaInfo media; ArcLaunchDiscovery discovery;
+      assert(arc_media_inspect(root_scope[i].file, bytes, size,
+                               &media, error, sizeof(error)) &&
+             arc_launch_discover(bytes, size, &media, NULL, &discovery) &&
+             !discovery.nested_scope &&
+             discovery.candidate_count == root_scope[i].count &&
+             discovery.reason == root_scope[i].reason);
+      free(bytes);
+   }
+   {
+      const char *file = "launch-family/nested-depth-two-d.adf";
+      size_t size = 0u;
+      uint8_t *bytes = read_fixture(fixture_directory, file, &size);
+      ArcMediaInfo media; ArcLaunchDiscovery discovery;
+      assert(arc_media_inspect(file, bytes, size, &media,
+                               error, sizeof(error)) &&
+             arc_launch_discover(bytes, size, &media, NULL, &discovery) &&
+             discovery.nested_scope && !discovery.candidate_count &&
+             discovery.reason == ARC_LAUNCH_REASON_NO_CANDIDATES);
+      free(bytes);
+   }
+   static const char *const boot_objects[] = {
+      "absent", "file", "directory"
+   };
+   static const char *const boot_shapes[] = {
+      "zero", "one", "multiple", "unknown"
+   };
+   for (unsigned boot = 0u; boot <= 3u; ++boot)
+      for (unsigned object = 0u; object < 3u; ++object)
+         for (unsigned shape = 0u; shape < 4u; ++shape)
+         {
+            char file[96];
+            snprintf(file, sizeof(file),
+                     "launch-family/boot-matrix-%u-%s-%s.adf",
+                     boot, boot_objects[object], boot_shapes[shape]);
+            size_t size = 0u;
+            uint8_t *bytes = read_fixture(fixture_directory, file, &size);
+            ArcMediaInfo media; ArcLaunchDiscovery discovery;
+            assert(arc_media_inspect(file, bytes, size, &media,
+                                     error, sizeof(error)) &&
+                   arc_launch_discover(bytes, size, &media, NULL, &discovery) &&
+                   discovery.readable && discovery.boot_option == boot &&
+                   discovery.root_boot == (object != 0u) &&
+                   (discovery.reason == ARC_LAUNCH_REASON_DISC_BOOTS_ITSELF) ==
+                      (boot != 0u && object != 0u));
+            free(bytes);
+         }
+   for (unsigned broken = 0u; broken < 2u; ++broken)
+   {
+      const char *file = broken ?
+         "launch-family/boot-unreadable-root-d.adf" :
+         "launch-family/boot-duplicate-root-d.adf";
+      size_t size = 0u;
+      uint8_t *bytes = read_fixture(fixture_directory, file, &size);
+      ArcMediaInfo media; ArcLaunchDiscovery discovery;
+      assert(arc_media_inspect(file, bytes, size, &media,
+                               error, sizeof(error)) &&
+             arc_launch_discover(bytes, size, &media, NULL, &discovery));
+      assert(broken ? !discovery.readable &&
+                      discovery.reason == ARC_LAUNCH_REASON_UNREADABLE :
+                      discovery.root_boot &&
+                      discovery.reason == ARC_LAUNCH_REASON_DISC_BOOTS_ITSELF);
+      free(bytes);
+   }
+   for (unsigned kind = 0u; kind < 2u; ++kind)
+   {
+      const char *file = kind ?
+         "launch-family/checkpoint-nested-wildcard.adf" :
+         "launch-family/checkpoint-nested-literal.adf";
+      size_t size = 0u;
+      uint8_t *bytes = read_fixture(fixture_directory, file, &size);
+      ArcMediaInfo media; ArcLaunchDiscovery discovery;
+      assert(arc_media_inspect(file, bytes, size, &media,
+                               error, sizeof(error)) &&
+             arc_launch_discover(bytes, size, &media, NULL, &discovery) &&
+             discovery.candidate_count == 4u && discovery.target_index == 2 &&
+             discovery.reason == ARC_LAUNCH_REASON_SINGLE_APPLICATION);
+      uint8_t script[512]; size_t written = 0u;
+      assert(arc_launch_script_build(&discovery, 2u, script,
+                 sizeof(script) - 1u, &written, error, sizeof(error)));
+      script[written] = 0u;
+      assert(strstr((const char *)script,
+                    kind ? "%Filer_Boot ADFS::0.$.Arc*.!System\r" :
+                           "%Filer_Boot ADFS::0.$.Folder.!System\r") &&
+             strstr((const char *)script,
+                    kind ? "%Filer_Run ADFS::0.$.Arc*.!Target\r" :
+                           "%Filer_Run ADFS::0.$.Folder.!Target\r") &&
+             !strstr((const char *)script, ".Other.!Other") &&
+             strstr((const char *)script,
+                    "%Dir ADFS::0.$\r%URD ADFS::0.$\r"));
+      free(bytes);
+   }
+   for (unsigned kind = 0u; kind < 2u; ++kind)
+   {
+      const char *file = kind ?
+         "launch-family/nested-wildcard-d.jfd" :
+         "launch-family/nested-literal-d.jfd";
+      size_t size = 0u;
+      uint8_t *bytes = read_fixture(fixture_directory, file, &size);
+      ArcJfdImage jfd; ArcLaunchDiscovery discovery;
+      assert(arc_jfd_parse(bytes, size, &jfd, error, sizeof(error)) &&
+             arc_launch_discover(NULL, 0u, NULL, &jfd, &discovery) &&
+             discovery.readable && discovery.nested_scope &&
+             discovery.candidate_count == (kind ? 1u : 4u));
+      arc_jfd_free(&jfd);
+      free(bytes);
+   }
 }
 
 static void test_make_old_map(uint8_t *image, size_t size, uint32_t old_size)
@@ -2359,6 +2657,19 @@ static void test_input_mapping(void)
           resolution.source[0][ARC_PAD_A] == ARC_MAPPING_SOURCE_PROFILE &&
           resolution.binding[0][ARC_PAD_UP].key == RETROK_s &&
           resolution.binding[1][ARC_PAD_UP].key == RETROK_F2);
+   assert(arc_input_resolve_table(&test_profile, 1u,
+            "0123456789abcdef0123456789abcdef01234567",
+            "Folder.!TEST", 12u, "Auto", overrides, &resolution) &&
+          !strcmp(resolution.profile_id, "generic"));
+   test_profile.launch_target = "Folder.!TEST";
+   assert(arc_input_resolve_table(&test_profile, 1u,
+            "0123456789abcdef0123456789abcdef01234567",
+            "!TEST", 5u, "Auto", overrides, &resolution) &&
+          !strcmp(resolution.profile_id, "generic"));
+   assert(arc_input_resolve_table(&test_profile, 1u,
+            "0123456789abcdef0123456789abcdef01234567",
+            "Folder.!TEST", 12u, "Auto", overrides, &resolution) &&
+          !strcmp(resolution.profile_id, "test-profile"));
    assert(arc_input_resolve_table(&test_profile, 1u,
             "0000000000000000000000000000000000000000", "!OTHER",
             6u, "test-profile", overrides, &resolution));
@@ -3212,6 +3523,7 @@ int main(int argc, char **argv)
    test_launch_bindings();
    test_launch_choices_and_chooser();
    test_launch_discovery_and_builder(argv[1]);
+   test_nested_launch(argv[1]);
    test_f_media(argv[1]);
    test_adfs_recognition();
    test_short_media_policy();

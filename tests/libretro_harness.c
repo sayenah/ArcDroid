@@ -7708,7 +7708,7 @@ int main(int argc, char **argv)
 
       char booted_choice_source[4096];
       snprintf(booted_choice_source, sizeof(booted_choice_source),
-               "%s/launch-family/boot-3-l.adl", argv[11]);
+               "%s/launch-family/boot-file-3-l.adl", argv[11]);
       struct retro_game_info booted_choice_game = {
          booted_choice_source, NULL, 0u, NULL
       };
@@ -8325,7 +8325,7 @@ int main(int argc, char **argv)
 
       char booted_path[4096];
       snprintf(booted_path, sizeof(booted_path),
-               "%s/launch-family/boot-3-l.adl", argv[11]);
+               "%s/launch-family/boot-file-3-l.adl", argv[11]);
       struct retro_game_info booted_game = {booted_path, NULL, 0u, NULL};
       option_writes = "off";
       option_launch = "app1";
@@ -8352,6 +8352,245 @@ int main(int argc, char **argv)
       assert(!arc_engine_test_drive_media(1u, NULL, NULL) &&
              launch_warning_osd_calls == warnings &&
              strstr(last_launch_log, "reason=disc boots itself"));
+      retro_unload_game();
+
+      /* The synthetic ROM reads the published helper and delivers the
+       * selected executable. It does not interpret FileSwitch commands. */
+      copy_file(chooser_rom, renamed);
+      char g1_source[4096];
+      snprintf(g1_source, sizeof(g1_source),
+               "%s/arcdroid-g1-chooser-l.adl", argv[11]);
+      struct retro_game_info g1_game = {g1_source, NULL, 0u, NULL};
+      option_launch = "auto";
+      phase = PHASE_LOAD; assert(retro_load_game(&g1_game));
+      assert(arc_engine_test_drive_media(1u, NULL, NULL) &&
+             strstr(last_launch_log, "boot=3") &&
+             strstr(last_launch_log, "root-boot=no") &&
+             strstr(last_launch_log, "decision=!Nulvane"));
+      phase = PHASE_RUN;
+      for (unsigned frame = 0u; frame < 520u; ++frame) retro_run();
+      assert(last_video_signature == expected_guest_signature[0]);
+      retro_unload_game();
+      for (unsigned nested_kind = 0u; nested_kind < 2u; ++nested_kind)
+      {
+         char nested_source[4096], nested_helper[4096], nested_choice[4096];
+         char nested_binding[4096];
+         snprintf(nested_source, sizeof(nested_source), "%s/%s", argv[11],
+                  nested_kind ? "arcdroid-wildcard-chooser-l.adl" :
+                                "arcdroid-nested-chooser-l.adl");
+         struct retro_game_info nested_game = {nested_source, NULL, 0u, NULL};
+         ArcDigest nested_digest = digest_file(nested_source);
+         snprintf(nested_helper, sizeof(nested_helper),
+                  "%s/arcdroid/launch/%s.adl", save_path, nested_digest.sha1);
+         snprintf(nested_choice, sizeof(nested_choice),
+                  "%s/arcdroid/launch/%s.choice", save_path, nested_digest.sha1);
+         snprintf(nested_binding, sizeof(nested_binding),
+                  "%s/arcdroid/launch/%s.bind", save_path, nested_digest.sha1);
+         (void)remove(nested_helper); (void)remove(nested_choice);
+         (void)remove(nested_binding);
+         option_launch = "app1";
+         phase = PHASE_LOAD; assert(retro_load_game(&nested_game));
+         assert(arc_engine_test_drive_media(1u, NULL, NULL) &&
+                strstr(last_launch_log, "scope=nested") &&
+                strstr(last_launch_log, nested_kind ?
+                    "decision=Arc Games.!Nulvane" :
+                    "decision=Folder.!Nulvane") &&
+                strstr(last_launch_log, nested_kind ?
+                    "address=Arc*.!Nulvane" :
+                    "address=Folder.!Nulvane"));
+         uint8_t nested_record[ARC_LAUNCH_BINDING_MAX_SIZE];
+         size_t nested_size = read_bounded(nested_binding, nested_record,
+                                           sizeof(nested_record));
+         ArcLaunchBinding nested_parsed;
+         assert(arc_launch_binding_parse(nested_record, nested_size,
+                                         &nested_parsed) &&
+                nested_parsed.version == 3u && nested_parsed.ordinal == 0u);
+         size_t nested_media_size = 0u;
+         uint8_t *nested_media = read_alloc(nested_source, &nested_media_size);
+         ArcMediaInfo nested_info;
+         ArcLaunchDiscovery nested_discovery;
+         uint8_t *nested_expected = malloc(ARC_LAUNCH_DISC_SIZE);
+         uint8_t *nested_actual = malloc(ARC_LAUNCH_DISC_SIZE);
+         char nested_error[160] = {0};
+         assert(nested_media && nested_expected && nested_actual &&
+                arc_media_inspect(nested_source, nested_media,
+                    nested_media_size, &nested_info, nested_error,
+                    sizeof(nested_error)) &&
+                arc_launch_discover(nested_media, nested_media_size,
+                    &nested_info, NULL, &nested_discovery) &&
+                arc_launch_disc_build(&nested_discovery, 0u, nested_expected,
+                                      nested_error, sizeof(nested_error)));
+         read_exact(nested_helper, nested_actual, ARC_LAUNCH_DISC_SIZE);
+         assert(!memcmp(nested_expected, nested_actual,
+                        ARC_LAUNCH_DISC_SIZE));
+         free(nested_media); free(nested_expected); free(nested_actual);
+         phase = PHASE_RUN;
+         for (unsigned frame = 0u; frame < 520u; ++frame) retro_run();
+         assert(last_video_signature == expected_guest_signature[0]);
+         retro_unload_game();
+
+         option_launch = "auto";
+         phase = PHASE_LOAD; assert(retro_load_game(&nested_game));
+         assert(arc_libretro_test_session_state() == 2u &&
+                arc_libretro_test_chooser_rows() == 3u &&
+                strstr(last_launch_log, "chooser shown"));
+         phase = PHASE_RUN; retro_run();
+         joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_A] = true;
+         retro_run();
+         joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_A] = false;
+         assert(arc_libretro_test_session_state() == 3u &&
+                arc_engine_test_drive_media(1u, NULL, NULL));
+         ArcLaunchChoiceRecord nested_choice_record;
+         uint8_t nested_choice_data[ARC_LAUNCH_CHOICE_MAX_SIZE];
+         nested_size = read_bounded(nested_choice, nested_choice_data,
+                                    sizeof(nested_choice_data));
+         assert(arc_launch_choice_parse(nested_choice_data, nested_size,
+                                        &nested_choice_record) &&
+                nested_choice_record.version == 3u &&
+                nested_choice_record.parent.length != 0u);
+         retro_unload_game();
+         phase = PHASE_LOAD; assert(retro_load_game(&nested_game));
+         assert(arc_libretro_test_session_state() == 3u &&
+                strstr(last_launch_log, "chooser remembered target"));
+         retro_unload_game();
+
+         option_launch_chooser = "ask";
+         phase = PHASE_LOAD; assert(retro_load_game(&nested_game));
+         assert(arc_libretro_test_session_state() == 2u &&
+                arc_libretro_test_chooser_focus() == 0u);
+         retro_unload_game();
+         option_launch_chooser = "remember";
+
+         /* A valid v3 record whose raw parent changed cannot replay. */
+         nested_choice_data[7] = nested_choice_data[7] == '4' ? '5' : '4';
+         write_exact(nested_choice, nested_choice_data, nested_size);
+         phase = PHASE_LOAD; assert(retro_load_game(&nested_game));
+         assert(arc_libretro_test_session_state() == 2u);
+         retro_unload_game();
+         nested_choice_data[7] = nested_choice_data[7] == '4' ? '5' : '4';
+         write_exact(nested_choice, nested_choice_data, nested_size);
+
+         /* A v3 binding records both the selected ordinal and identity. */
+         option_launch = "app1";
+         phase = PHASE_LOAD; assert(retro_load_game(&nested_game));
+         assert(arc_engine_test_drive_media(1u, NULL, NULL));
+         retro_unload_game();
+         nested_size = read_bounded(nested_binding, nested_record,
+                                    sizeof(nested_record));
+         assert(nested_size > 4u && nested_record[3] == '1');
+         nested_record[3] = '2';
+         write_exact(nested_binding, nested_record, nested_size);
+         phase = PHASE_LOAD; assert(retro_load_game(&nested_game));
+         assert(!arc_engine_test_drive_media(1u, NULL, NULL) &&
+                strstr(last_launch_log, "binding changed target"));
+         retro_unload_game();
+         nested_record[3] = '1';
+         write_exact(nested_binding, nested_record, nested_size);
+         option_launch = "auto";
+
+         (void)remove(nested_choice);
+         phase = PHASE_LOAD; assert(retro_load_game(&nested_game));
+         assert(arc_libretro_test_session_state() == 2u);
+         phase = PHASE_RUN; retro_run();
+         for (unsigned row = 0u; row < 2u; ++row)
+         {
+            keyboard.callback(true, RETROK_DOWN, 0u, 0u); retro_run();
+            keyboard.callback(false, RETROK_DOWN, 0u, 0u); retro_run();
+         }
+         assert(arc_libretro_test_chooser_focus() == 2u);
+         keyboard.callback(true, RETROK_RETURN, 0u, 0u); retro_run();
+         keyboard.callback(false, RETROK_RETURN, 0u, 0u); retro_run();
+         assert(arc_libretro_test_session_state() == 3u &&
+                !arc_engine_test_drive_media(1u, NULL, NULL));
+         nested_size = read_bounded(nested_choice, nested_choice_data,
+                                    sizeof(nested_choice_data));
+         assert(arc_launch_choice_parse(nested_choice_data, nested_size,
+                                        &nested_choice_record) &&
+                nested_choice_record.version == 3u &&
+                nested_choice_record.desktop);
+         retro_unload_game();
+         phase = PHASE_LOAD; assert(retro_load_game(&nested_game));
+         assert(arc_libretro_test_session_state() == 3u &&
+                !arc_engine_test_drive_media(1u, NULL, NULL) &&
+                strstr(last_launch_log, "chooser remembered desktop"));
+         retro_unload_game();
+         option_launch = "off";
+         phase = PHASE_LOAD; assert(retro_load_game(&nested_game));
+         assert(!arc_engine_test_drive_media(1u, NULL, NULL) &&
+                strstr(last_launch_log, "reason=disabled"));
+         retro_unload_game();
+      }
+      option_launch = "auto";
+      copy_file(argv[5], renamed);
+
+      char incomplete_nested_source[4096], incomplete_nested_choice[4096];
+      char incomplete_nested_binding[4096];
+      snprintf(incomplete_nested_source, sizeof(incomplete_nested_source),
+               "%s/launch-family/nested-unreadable-d.adf", argv[11]);
+      struct retro_game_info incomplete_nested_game = {
+         incomplete_nested_source, NULL, 0u, NULL
+      };
+      ArcDigest incomplete_nested_digest = digest_file(incomplete_nested_source);
+      snprintf(incomplete_nested_choice, sizeof(incomplete_nested_choice),
+               "%s/arcdroid/launch/%s.choice", save_path,
+               incomplete_nested_digest.sha1);
+      snprintf(incomplete_nested_binding, sizeof(incomplete_nested_binding),
+               "%s/arcdroid/launch/%s.bind", save_path,
+               incomplete_nested_digest.sha1);
+      (void)remove(incomplete_nested_choice);
+      (void)remove(incomplete_nested_binding);
+      option_launch = "app1";
+      warnings = launch_warning_osd_calls;
+      phase = PHASE_LOAD; assert(retro_load_game(&incomplete_nested_game));
+      assert(arc_engine_test_drive_media(1u, NULL, NULL) &&
+             launch_warning_osd_calls == warnings + 1u &&
+             strstr(last_launch_warning, "inspection incomplete") &&
+             strstr(last_launch_log, "scan=incomplete"));
+      retro_unload_game();
+      option_launch = "auto";
+      phase = PHASE_LOAD; assert(retro_load_game(&incomplete_nested_game));
+      assert(arc_libretro_test_session_state() == 2u &&
+             arc_libretro_test_chooser_rows() == 2u);
+      phase = PHASE_RUN; retro_run();
+      joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_A] = true;
+      retro_run();
+      joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_A] = false;
+      assert(arc_libretro_test_session_state() == 3u &&
+             file_exists(incomplete_nested_choice));
+      retro_unload_game();
+      warnings = launch_warning_osd_calls;
+      phase = PHASE_LOAD; assert(retro_load_game(&incomplete_nested_game));
+      assert(arc_engine_test_drive_media(1u, NULL, NULL) &&
+             launch_warning_osd_calls == warnings + 1u &&
+             strstr(last_launch_warning, "inspection incomplete") &&
+             strstr(last_launch_log, "chooser remembered target"));
+      retro_unload_game();
+
+      char no_target_nested_source[4096];
+      snprintf(no_target_nested_source, sizeof(no_target_nested_source),
+               "%s/launch-family/nested-no-target-unreadable-d.adf", argv[11]);
+      struct retro_game_info no_target_nested_game = {
+         no_target_nested_source, NULL, 0u, NULL
+      };
+      warnings = launch_warning_osd_calls;
+      phase = PHASE_LOAD; assert(retro_load_game(&no_target_nested_game));
+      assert(!arc_engine_test_drive_media(1u, NULL, NULL) &&
+             launch_warning_osd_calls == warnings + 1u &&
+             strstr(last_launch_warning, "no verified launch target") &&
+             strstr(last_launch_log, "scan=incomplete"));
+      retro_unload_game();
+
+      char nested_bound_source[4096];
+      snprintf(nested_bound_source, sizeof(nested_bound_source),
+               "%s/launch-family/nested-77-d.adf", argv[11]);
+      struct retro_game_info nested_bound_game = {
+         nested_bound_source, NULL, 0u, NULL
+      };
+      phase = PHASE_LOAD; assert(retro_load_game(&nested_bound_game));
+      assert(arc_libretro_test_session_state() == 2u &&
+             strstr(last_launch_log, "candidates=[") &&
+             strstr(last_launch_log, "...total=77") &&
+             strstr(last_launch_log, "applications=["));
       retro_unload_game();
 
       char no_run_path[4096];
