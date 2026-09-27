@@ -71,6 +71,19 @@ static struct
 	int year;
 } systemtime;
 
+/* ArcDroid modifications: the session owner supplies a raw-address write guard. */
+static const uint8_t *cmos_write_guard;
+static cmos_ignored_write_callback cmos_guard_callback;
+static void *cmos_guard_opaque;
+
+void cmos_set_write_guard(const uint8_t mask[32],
+                          cmos_ignored_write_callback callback, void *opaque)
+{
+	cmos_write_guard = mask;
+	cmos_guard_callback = callback;
+	cmos_guard_opaque = opaque;
+}
+
 static const int rtc_days_in_month[12] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
 
 static void cmos_get_time();
@@ -319,7 +332,15 @@ void cmos_write(uint8_t byte)
 				rpclog("CMOS write addr=%02X value=%02X\n", cmos.addr & 0xff, byte);
 			if (!cmos_changed)
 				cmos_changed = CMOS_CHANGE_DELAY;
-			cmos.ram[(cmos.addr++) & 0xFF] = byte;
+			/* ArcDroid modifications: acknowledge and advance locked writes. */
+			unsigned raw = (unsigned)cmos.addr & 0xffu;
+			if (cmos_write_guard && (cmos_write_guard[raw >> 3u] & (1u << (raw & 7u))))
+			{
+				if (cmos_guard_callback)
+					cmos_guard_callback(cmos_guard_opaque, raw, byte, cmos.ram[raw]);
+				++cmos.addr;
+			}
+			else cmos.ram[(cmos.addr++) & 0xFF] = byte;
 		}
 		else if (cmos.device_addr == 0xa2 && machine_type == MACHINE_TYPE_A4)
 		{

@@ -102,6 +102,9 @@ static bool arc_audio_warning_reported;
 static bool arc_loaded;
 static bool arc_can_dupe;
 static bool arc_cmos_last_written_valid;
+static bool arc_cmos_ignored_logged;
+static unsigned arc_cmos_ignored_attempts;
+static unsigned arc_cmos_ignored_changes;
 static bool arc_ejected;
 static unsigned arc_image_index;
 static uint64_t arc_guest_time_us;
@@ -1007,6 +1010,9 @@ static void arc_release_session(void)
    arc_helper_path[0] = '\0';
    arc_choice_path[0] = '\0';
    arc_cmos_last_written_valid = false;
+   arc_cmos_ignored_logged = false;
+   arc_cmos_ignored_attempts = 0u;
+   arc_cmos_ignored_changes = 0u;
    arc_session = ARC_SESSION_EMPTY;
    memset(&arc_chooser_discovery, 0, sizeof(arc_chooser_discovery));
    memset(&arc_chooser, 0, sizeof(arc_chooser));
@@ -1024,7 +1030,7 @@ static void arc_sync_cmos(void)
    }
    else
       arc_engine_cmos(payload);
-   arc_cmos_normalise_payload(payload, machine->io);
+   arc_cmos_normalise_payload(payload, arc_plan.os, machine->io);
    arc_cmos_encode(arc_cmos_record, &arc_plan, payload);
 }
 
@@ -1048,10 +1054,30 @@ static void arc_seed_cmos(void)
       arc_cmos_encode(arc_cmos_record, &arc_plan, payload);
       arc_cmos_last_written_valid = false;
    }
-   arc_cmos_normalise_payload(payload, machine->io);
+   unsigned healed = arc_cmos_clear_unplug_bytes(payload, arc_plan.os);
+   if (healed && arc_cmos_last_written_valid && arc_log)
+      arc_log(RETRO_LOG_INFO, "CMOS: cleared %u unplug byte(s) from the persisted record\n", healed);
+   arc_cmos_normalise_payload(payload, arc_plan.os, machine->io);
    arc_cmos_encode(arc_cmos_record, &arc_plan, payload);
    memcpy(arc_cmos_prepared, arc_cmos_record, sizeof(arc_cmos_prepared));
    free(existing);
+}
+
+static void arc_cmos_ignored_write(void *opaque, unsigned raw,
+                                   uint8_t attempted, uint8_t retained)
+{
+   (void)opaque;
+   if (arc_cmos_ignored_attempts != UINT_MAX) ++arc_cmos_ignored_attempts;
+   if (attempted != retained && arc_cmos_ignored_changes != UINT_MAX)
+      ++arc_cmos_ignored_changes;
+   if (!arc_cmos_ignored_logged && arc_log)
+   {
+      unsigned logical = raw >= 0x40u ? raw - 0x40u : raw + 176u;
+      arc_log(RETRO_LOG_INFO,
+              "CMOS: guest write to unplug byte %u (raw %02X) ignored: attempted %02X retained %02X (module unplugging is session-scoped on %s)\n",
+              logical, raw, attempted, retained, arc_os_name(arc_plan.os));
+      arc_cmos_ignored_logged = true;
+   }
 }
 
 static void arc_persist_cmos(void)
@@ -5272,6 +5298,7 @@ static bool arc_construct_machine(const ArcMachineDescriptor *machine,
 {
    uint8_t payload[ARC_CMOS_PAYLOAD_SIZE];
    uint8_t machine_cmos[ARC_CMOS_MACHINE_SIZE];
+   uint8_t locked_cmos_mask[32];
    ArcEngineMedia helper = {arc_helper_path, false, ARC_MEDIA_ADL_640K,
                             ARC_GEOMETRY_640K_L, NULL, NULL, 0u};
    ArcEngineMedia carrier = {":arcdroid-memory-0:", false, ARC_MEDIA_ADF_800K,
@@ -5300,13 +5327,15 @@ static bool arc_construct_machine(const ArcMachineDescriptor *machine,
                                arc_plan.launch_helper, machine_cmos))
       return false;
    if (arc_install_hd_mode) arc_cmos_machine_attach_ide(machine_cmos);
+   arc_cmos_locked_raw_mask(arc_plan.os, locked_cmos_mask);
    if (
        !arc_engine_start(arc_firmware, arc_firmware_size, mounted,
                          arc_plan.launch_helper ? &helper : NULL,
                          machine,
                          arc_install_hd_mode ? &ide_backend : NULL,
                          arc_install_hd_mode == 1u ? &arc_install_doorbell : NULL,
-                         machine_cmos, error, error_size))
+                         machine_cmos, locked_cmos_mask,
+                         arc_cmos_ignored_write, NULL, error, error_size))
       return false;
    if (arc_install_hd_mode == 2u && arc_log)
       arc_log(RETRO_LOG_INFO,
@@ -5825,8 +5854,9 @@ RETRO_API void retro_unload_game(void)
    {
       uint64_t underruns = 0u, overruns = 0u;
       arc_engine_audio_stats(&underruns, &overruns);
-      arc_log(RETRO_LOG_INFO, "Audio counters: underrun_frames=%llu overrun_frames=%llu\n",
-              (unsigned long long)underruns, (unsigned long long)overruns);
+      arc_log(RETRO_LOG_INFO, "Audio counters: underrun_frames=%llu overrun_frames=%llu cmos_locked_attempts=%u cmos_locked_changes=%u\n",
+              (unsigned long long)underruns, (unsigned long long)overruns,
+              arc_cmos_ignored_attempts, arc_cmos_ignored_changes);
    }
    arc_loaded = false;
    arc_release_session();

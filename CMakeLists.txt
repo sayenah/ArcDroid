@@ -300,6 +300,16 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
       arcdroid_sanitizer_compile arcdroid_sanitizer_link)
   endif()
   add_test(NAME jfd-engine-reader COMMAND jfd_reader_tests)
+  add_executable(cmos_device_tests tests/cmos_device_tests.c engine/arculator/src/cmos.c)
+  target_include_directories(cmos_device_tests PRIVATE
+    engine engine/compat engine/arculator/src)
+  target_compile_options(cmos_device_tests PRIVATE
+    $<$<C_COMPILER_ID:GNU,Clang,AppleClang>:-UNDEBUG;-Wall;-Wextra;-Wpedantic>)
+  if(ARCDROID_SANITIZERS)
+    target_link_libraries(cmos_device_tests PRIVATE
+      arcdroid_sanitizer_compile arcdroid_sanitizer_link)
+  endif()
+  add_test(NAME cmos-device-bus COMMAND cmos_device_tests)
   add_executable(jfd_controller_tests
     tests/jfd_controller_tests.c
     engine/arc_install_doorbell.c
@@ -773,6 +783,11 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
       "${FIXTURE_DIR}/adffs/synthetic.zip"
       "${FIXTURE_DIR}/adffs/eligible.jfd"
       "${FIXTURE_DIR}/zip-content" --cached-frame-probe)
+    add_test(NAME cmos-guest-exerciser COMMAND libretro_harness
+      $<TARGET_FILE:arcdroid_libretro_test>
+      "${FIXTURE_DIR}/arcdroid-cmos-exerciser.rom"
+      "${FIXTURE_DIR}/arcdroid-test.adf"
+      "${CMAKE_CURRENT_BINARY_DIR}/cmos-guest-data" --cmos-exerciser)
     add_test(NAME jfd-writes-libretro-harness COMMAND libretro_harness
       $<TARGET_FILE:arcdroid_libretro_test>
       "${FIXTURE_DIR}/arcdroid-jfd-save-test.rom"

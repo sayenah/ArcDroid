@@ -77,6 +77,7 @@ static ArcMediaGeometry arc_saved_helper_geometry;
 static const uint8_t *arc_saved_helper_data;
 static size_t arc_saved_helper_size;
 static uint8_t arc_saved_cmos[ARC_CMOS_MACHINE_SIZE];
+static uint8_t arc_locked_cmos_mask[32];
 static ArcMachine arc_saved_machine = ARC_MACHINE_A3000;
 static double arc_last_refresh = 50.0;
 static ArcEngineLogCallback arc_log_callback;
@@ -156,6 +157,33 @@ bool arc_engine_test_cmos_write(unsigned offset, uint8_t value)
    cmos_get_image(image, sizeof(image));
    image[offset] = value;
    cmos_set_image(image, sizeof(image));
+   return true;
+}
+
+static void arc_test_cmos_bus_byte(uint8_t value)
+{
+   for (unsigned bit = 0u; bit < 8u; ++bit)
+   {
+      int level = (value & (0x80u >> bit)) != 0u;
+      i2c_change(0, level);
+      i2c_change(1, level);
+   }
+   i2c_change(0, 1);
+   i2c_change(1, 1);
+   i2c_change(0, 0);
+}
+
+bool arc_engine_test_cmos_bus_write(unsigned raw, uint8_t value)
+{
+   if (!arc_machine_live || raw > 255u) return false;
+   i2c_change(1, 1);
+   i2c_change(1, 0);
+   arc_test_cmos_bus_byte(0xa0u);
+   arc_test_cmos_bus_byte((uint8_t)raw);
+   arc_test_cmos_bus_byte(value);
+   i2c_change(0, 0);
+   i2c_change(1, 0);
+   i2c_change(1, 1);
    return true;
 }
 
@@ -541,11 +569,14 @@ bool arc_engine_start(const uint8_t *firmware, size_t firmware_size,
                       const ArcIdeBackend *ide_backend,
                       const ArcInstallDoorbell *doorbell,
                       const uint8_t cmos[ARC_CMOS_MACHINE_SIZE],
+                      const uint8_t locked_raw_mask[32],
+                      ArcEngineCmosIgnoredCallback ignored_callback,
+                      void *ignored_opaque,
                       char *failure, size_t failure_size)
 {
    arc_engine_stop();
    if (!firmware || (firmware_size != 524288u && firmware_size != 2097152u) ||
-       !cmos || !descriptor || !arc_helper_media_valid(helper))
+       !cmos || !locked_raw_mask || !descriptor || !arc_helper_media_valid(helper))
    {
       if (failure && failure_size) snprintf(failure, failure_size, "Invalid engine launch plan");
       return false;
@@ -586,6 +617,8 @@ bool arc_engine_start(const uint8_t *firmware, size_t firmware_size,
    arc_saved_helper_data = helper ? helper->data : NULL;
    arc_saved_helper_size = helper ? helper->size : 0u;
    memcpy(arc_saved_cmos, cmos, sizeof(arc_saved_cmos));
+   memcpy(arc_locked_cmos_mask, locked_raw_mask, sizeof(arc_locked_cmos_mask));
+   cmos_set_write_guard(arc_locked_cmos_mask, ignored_callback, ignored_opaque);
    arc_saved_machine = descriptor->id;
    ide_set_backend(descriptor->id == ARC_MACHINE_A3020 ? ide_backend : NULL);
    arc_install_doorbell_configure(doorbell);
@@ -610,6 +643,8 @@ void arc_engine_stop(void)
    if (arc_machine_live)
       cmos_get_image(arc_saved_cmos, sizeof(arc_saved_cmos));
    arc_machine_destroy();
+   cmos_set_write_guard(NULL, NULL, NULL);
+   memset(arc_locked_cmos_mask, 0, sizeof(arc_locked_cmos_mask));
    ide_set_backend(NULL);
    arc_install_doorbell_configure(NULL);
    free(arc_saved_firmware);

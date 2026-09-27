@@ -341,7 +341,10 @@ bool arc_cmos_machine_image(ArcOsClass os, ArcIoClass io,
                             bool launch_helper,
                             uint8_t output[ARC_CMOS_MACHINE_SIZE]);
 void arc_cmos_machine_attach_ide(uint8_t image[ARC_CMOS_MACHINE_SIZE]);
-void arc_cmos_normalise_payload(uint8_t payload[ARC_CMOS_PAYLOAD_SIZE], ArcIoClass io);
+unsigned arc_cmos_raw_address(unsigned logical);
+void arc_cmos_locked_raw_mask(ArcOsClass os, uint8_t mask[32]);
+unsigned arc_cmos_clear_unplug_bytes(uint8_t payload[ARC_CMOS_PAYLOAD_SIZE], ArcOsClass os);
+void arc_cmos_normalise_payload(uint8_t payload[ARC_CMOS_PAYLOAD_SIZE], ArcOsClass os, ArcIoClass io);
 
 #define ARC_INPUT_KEY_COUNT 512u
 #define ARC_INPUT_FIFO_CAPACITY 256u
