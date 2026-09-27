@@ -3126,11 +3126,18 @@ int main(int argc, char **argv)
          retro_unload_game();
       }
       fault_mkdir_substring = NULL;
-      char sparse_d[4096], allocated_e[4096], sparse_slot_a[4096];
+      char sparse_d[4096], allocated_e[4096], sparse_f[4096],
+           mixed_f[4096], unresolved_f[4096], sparse_slot_a[4096];
       snprintf(sparse_d, sizeof(sparse_d),
                "%s/../jfd-identification/sparse-d-timed.jfd", jfd_fixture_path);
       snprintf(allocated_e, sizeof(allocated_e),
                "%s/../jfd-identification/sparse-e-allocated.jfd", jfd_fixture_path);
+      snprintf(sparse_f, sizeof(sparse_f),
+               "%s/../jfd-identification/sparse-f-timed.jfd", jfd_fixture_path);
+      snprintf(mixed_f, sizeof(mixed_f),
+               "%s/../jfd-identification/sparse-f-mixed-basis.jfd", jfd_fixture_path);
+      snprintf(unresolved_f, sizeof(unresolved_f),
+               "%s/../jfd-identification/sparse-f-root-unresolved.jfd", jfd_fixture_path);
       uint64_t sparse_hash = hash_file(sparse_d);
       ArcDigest sparse_digest = digest_file(sparse_d);
       snprintf(sparse_slot_a, sizeof(sparse_slot_a),
@@ -3140,7 +3147,7 @@ int main(int argc, char **argv)
       uint32_t position = 0u;
       uint8_t omitted_byte = 0u;
       assert(strstr(last_jfd_identification_log,
-                    "native=yes format=D schedule=5 timing=timed captured=0,1,2 presented=3,4 maps=1 reason=presented") &&
+                    "native=yes format=D schedule=5 timing=timed captured=0,1,2 presented=3,4 basis=free maps=1 reason=presented") &&
              arc_libretro_test_jfd_presented(0u, 3u, &position) &&
              position == 116352u &&
              arc_libretro_test_jfd_presented(0u, 4u, NULL) &&
@@ -3165,9 +3172,28 @@ int main(int argc, char **argv)
       struct retro_game_info allocated_game = {allocated_e, NULL, 0u, NULL};
       phase = PHASE_LOAD; assert(retro_load_game(&allocated_game));
       assert(strstr(last_jfd_identification_log,
-                    "format=E schedule=5 timing=timed captured=0,1,2,4 presented=none maps=3 reason=not-free") &&
+                    "format=E schedule=5 timing=timed captured=0,1,2,4 presented=none basis=free maps=3 reason=not-free") &&
              !arc_libretro_test_jfd_presented(0u, 3u, NULL));
       retro_unload_game();
+      option_machine = "A3020"; variable_update = true;
+      struct retro_game_info prefix_game = {sparse_f, NULL, 0u, NULL};
+      phase = PHASE_LOAD; assert(retro_load_game(&prefix_game));
+      assert(strstr(last_jfd_identification_log,
+                    "format=F schedule=10 timing=timed captured=0,3,4,5,6,7,8,9 presented=1,2 basis=prefix maps=3 reason=presented") &&
+             arc_libretro_test_jfd_presented(0u, 1u, NULL) &&
+             arc_libretro_test_jfd_presented(0u, 2u, NULL));
+      retro_unload_game();
+      struct retro_game_info mixed_basis_game = {mixed_f, NULL, 0u, NULL};
+      phase = PHASE_LOAD; assert(retro_load_game(&mixed_basis_game));
+      assert(strstr(last_jfd_identification_log,
+                    "presented=1,2,4 basis=mixed maps=3 reason=presented"));
+      retro_unload_game();
+      struct retro_game_info unresolved_game = {unresolved_f, NULL, 0u, NULL};
+      phase = PHASE_LOAD; assert(retro_load_game(&unresolved_game));
+      assert(strstr(last_jfd_identification_log,
+                    "presented=none basis=free maps=3 reason=metadata-unresolved"));
+      retro_unload_game();
+      option_machine = "A3000"; variable_update = true;
       assert(hash_file(sparse_d) == sparse_hash && !file_exists(sparse_slot_a));
       uint64_t wp_source_hash = hash_file(wp);
       uint64_t zip_source_hash = hash_file(zipped);

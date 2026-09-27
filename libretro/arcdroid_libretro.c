@@ -2434,7 +2434,7 @@ static void arc_finish_jfd_preparation(ArcMediaEntry *entry, bool native)
          p_at += (size_t)written;
       }
    arc_log(RETRO_LOG_INFO,
-      "JFD identification: image=%u native=%s format=%s schedule=%u timing=%s captured=%s presented=%s maps=%u reason=%s\n",
+      "JFD identification: image=%u native=%s format=%s schedule=%u timing=%s captured=%s presented=%s basis=%s maps=%u reason=%s\n",
       image_number, native ? "yes" : "no",
       entry->jfd.identification_format == 'D' ? "D" :
       entry->jfd.identification_format == 'E' ? "E" :
@@ -2443,6 +2443,7 @@ static void arc_finish_jfd_preparation(ArcMediaEntry *entry, bool native)
       native && entry->jfd.track_count && entry->jfd.tracks[0].sector_count ?
          entry->jfd.tracks[0].timed ? "timed" : "untimed" : "none",
       captured[0] ? captured : "none", presented[0] ? presented : "none",
+      entry->jfd.identification_basis,
       entry->jfd.identification_maps,
       entry->jfd.identification_reason);
    arc_log(RETRO_LOG_INFO,

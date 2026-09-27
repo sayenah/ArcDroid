@@ -96,6 +96,7 @@ typedef struct ArcJfdImage {
    uint8_t identification_maps;
    char identification_format;
    bool identification_timed;
+   const char *identification_basis;
    const char *identification_reason;
 } ArcJfdImage;
 

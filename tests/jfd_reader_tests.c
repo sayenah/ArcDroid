@@ -447,6 +447,22 @@ static void test_identification(void)
    sectors[1].time_us = 40000u;
    ident_map(decoded, 12u, 3188u, 3201u);
    arc_jfd_prepare_identification(&image, true);
+   assert(!strcmp(image.identification_reason, "presented") &&
+          image.identification_mask == 0x18u);
+   ident_map(decoded, 12u, 3189u, 3202u); /* Crossing extent is clipped. */
+   arc_jfd_prepare_identification(&image, true);
+   assert(!strcmp(image.identification_reason, "presented"));
+   ident_map(decoded, 12u, 3188u, 3202u);
+   ident_u24(decoded + 3u, 3201u); /* Wholly exterior, but still validated. */
+   ident_u24(decoded + 259u, 1u);
+   decoded[510] = 6u;
+   decoded[255] = ident_checksum(decoded);
+   decoded[511] = ident_checksum(decoded + 256u);
+   arc_jfd_prepare_identification(&image, true);
+   assert(!strcmp(image.identification_reason, "presented"));
+   ident_u24(decoded + 259u, 2u); /* Malformed exterior extent rejects. */
+   decoded[511] = ident_checksum(decoded + 256u);
+   arc_jfd_prepare_identification(&image, true);
    assert(!strcmp(image.identification_reason, "map-invalid"));
    ident_map(decoded, 12u, 3188u, 3200u);
    decoded[255] ^= 1u;

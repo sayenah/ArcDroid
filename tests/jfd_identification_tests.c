@@ -50,12 +50,21 @@ static void expect(const ArcJfdImage *image, const char *reason,
    assert(image->identification_schedule == schedule);
 }
 
+static void expect_basis(const ArcJfdImage *image, const char *basis)
+{
+   if (strcmp(image->identification_basis, basis))
+      fprintf(stderr, "expected basis %s, got %s\n", basis,
+              image->identification_basis);
+   assert(!strcmp(image->identification_basis, basis));
+}
+
 int main(int argc, char **argv)
 {
    assert(argc == 2);
    ArcJfdImage d = load(argv[1], "sparse-d-timed.jfd");
    arc_jfd_prepare_identification(&d, true);
    expect(&d, "presented", 0x18u, 1u, 5u);
+   expect_basis(&d, "free");
    assert(d.identification_time[3] == 116352u &&
           d.identification_time[4] == 152704u);
    for (unsigned flags = 0u; flags < 4u; ++flags)
@@ -160,6 +169,23 @@ int main(int argc, char **argv)
    arc_jfd_prepare_identification(&d, true);
    expect(&d, "irregular", 0u, 1u, 5u);
    arc_jfd_free(&d);
+   for (unsigned variant = 0u; variant < 4u; ++variant)
+   {
+      static const char *names[] = {
+         "sparse-d-clamped-interior.jfd",
+         "sparse-d-clamped-crossing.jfd",
+         "sparse-d-clamped-exterior.jfd",
+         "sparse-d-clamped-bad-exterior.jfd"
+      };
+      d = load(argv[1], names[variant]);
+      arc_jfd_prepare_identification(&d, true);
+      expect(&d, variant == 3u ? "map-invalid" : "presented",
+             variant == 3u ? 0u : 0x18u,
+             variant == 3u ? 0u : 1u,
+             variant == 3u ? 0u : 5u);
+      if (variant != 3u) expect_basis(&d, "free");
+      arc_jfd_free(&d);
+   }
    ArcJfdImage empty = {0};
    arc_jfd_prepare_identification(&empty, true);
    expect(&empty, "no-track", 0u, 0u, 0u);
@@ -178,6 +204,7 @@ int main(int argc, char **argv)
    d = load(argv[1], "sparse-e-free.jfd");
    arc_jfd_prepare_identification(&d, true);
    expect(&d, "presented", 0x10u, 3u, 5u);
+   expect_basis(&d, "free");
    assert(d.identification_format == 'E');
    arc_jfd_free(&d);
    d = load(argv[1], "sparse-e-allocated.jfd");
@@ -200,6 +227,7 @@ int main(int argc, char **argv)
    ArcJfdImage f = load(argv[1], "sparse-f-timed.jfd");
    arc_jfd_prepare_identification(&f, true);
    expect(&f, "presented", 0x6u, 3u, 10u);
+   expect_basis(&f, "prefix");
    assert(f.identification_time[1] == ARC_JFD_F_SPACING_US &&
           f.identification_time[2] == ARC_JFD_F_SPACING_US * 2u);
    assert(arc_jfd_effective_sector(&f, 0u,
@@ -213,17 +241,59 @@ int main(int argc, char **argv)
    f = load(argv[1], "sparse-f-untimed.jfd");
    arc_jfd_prepare_identification(&f, true);
    expect(&f, "presented", 0x6u, 3u, 10u);
+   expect_basis(&f, "prefix");
    assert(!f.identification_timed);
+   arc_jfd_free(&f);
+
+   f = load(argv[1], "sparse-f-mixed-basis.jfd");
+   arc_jfd_prepare_identification(&f, true);
+   expect(&f, "presented", 0x16u, 3u, 10u);
+   expect_basis(&f, "mixed");
    arc_jfd_free(&f);
 
    f = load(argv[1], "sparse-f-one-zone.jfd");
    arc_jfd_prepare_identification(&f, true);
    expect(&f, "presented", 0x6u, 1u, 10u);
+   expect_basis(&f, "free");
+   arc_jfd_free(&f);
+
+   f = load(argv[1], "sparse-f-map-backup.jfd");
+   arc_jfd_prepare_identification(&f, true);
+   expect(&f, "not-free", 0u, 1u, 10u);
+   arc_jfd_free(&f);
+   f = load(argv[1], "sparse-f-map-primary.jfd");
+   arc_jfd_prepare_identification(&f, true);
+   expect(&f, "not-free", 0u, 2u, 10u);
    arc_jfd_free(&f);
 
    f = load(argv[1], "sparse-f-backup.jfd");
    arc_jfd_prepare_identification(&f, true);
    expect(&f, "presented", 0x6u, 2u, 10u);
+   expect_basis(&f, "prefix");
+   arc_jfd_free(&f);
+   f = load(argv[1], "sparse-f-copy-disagree.jfd");
+   arc_jfd_prepare_identification(&f, true);
+   expect(&f, "not-free", 0u, 3u, 10u);
+   arc_jfd_free(&f);
+   f = load(argv[1], "sparse-f-copy-free-prefix.jfd");
+   arc_jfd_prepare_identification(&f, true);
+   expect(&f, "not-free", 0u, 3u, 10u);
+   arc_jfd_free(&f);
+   f = load(argv[1], "sparse-f-partial-system.jfd");
+   arc_jfd_prepare_identification(&f, true);
+   expect(&f, "not-free", 0u, 3u, 10u);
+   arc_jfd_free(&f);
+   f = load(argv[1], "sparse-f-root-boundary.jfd");
+   arc_jfd_prepare_identification(&f, true);
+   expect(&f, "not-free", 0u, 3u, 10u);
+   arc_jfd_free(&f);
+   f = load(argv[1], "sparse-f-root-unresolved.jfd");
+   arc_jfd_prepare_identification(&f, true);
+   expect(&f, "metadata-unresolved", 0u, 3u, 10u);
+   arc_jfd_free(&f);
+   f = load(argv[1], "sparse-f-boot-omitted.jfd");
+   arc_jfd_prepare_identification(&f, true);
+   expect(&f, "map-invalid", 0u, 0u, 0u);
    arc_jfd_free(&f);
    f = load(argv[1], "sparse-f-mixed.jfd");
    arc_jfd_prepare_identification(&f, true);
