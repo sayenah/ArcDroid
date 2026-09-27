@@ -149,6 +149,22 @@ void arc_cmos_normalise_payload(uint8_t payload[ARC_CMOS_PAYLOAD_SIZE], ArcOsCla
    if (io == ARC_IO_NEW_82C711) payload[183] &= 0x07u;
 }
 
+bool arc_cmos_boot_stamp_payload(ArcOsClass os, ArcIoClass io,
+                                 const uint8_t prepared[ARC_CMOS_PAYLOAD_SIZE],
+                                 bool launch_helper,
+                                 uint8_t output[ARC_CMOS_PAYLOAD_SIZE])
+{
+   uint8_t image[ARC_CMOS_MACHINE_SIZE];
+   if (!output || !arc_cmos_machine_image(os, io, prepared, launch_helper, image))
+      return false;
+   memcpy(output, image + 16u, ARC_CMOS_PAYLOAD_SIZE);
+   arc_cmos_normalise_payload(output, os, io);
+   /* The launch-owned checksum varies with the helper drive. IDE attachment
+    * is also excluded: it is applied only to the live install machine. */
+   output[arc_cmos_raw_address(239u) - 16u] = 0u;
+   return true;
+}
+
 void arc_cmos_machine_attach_ide(uint8_t image[ARC_CMOS_MACHINE_SIZE])
 {
    if (!image) return;

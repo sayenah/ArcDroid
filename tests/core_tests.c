@@ -163,6 +163,46 @@ static void test_fresh_cmos_default(void)
    }
 }
 
+static void test_boot_stamp_starting_cmos(void)
+{
+   static const ArcOsClass risc_os_3[] = {
+      ARC_OS_RISCOS_300, ARC_OS_RISCOS_310,
+      ARC_OS_RISCOS_311, ARC_OS_RISCOS_319
+   };
+   for (unsigned i = 0u; i < sizeof(risc_os_3) / sizeof(risc_os_3[0]); ++i)
+   {
+      ArcOsClass os = risc_os_3[i];
+      for (ArcIoClass io = ARC_IO_OLD_WD1770; io <= ARC_IO_NEW_82C711; ++io)
+      {
+         uint8_t fresh[ARC_CMOS_PAYLOAD_SIZE];
+         uint8_t persisted[ARC_CMOS_PAYLOAD_SIZE];
+         uint8_t starting[ARC_CMOS_PAYLOAD_SIZE];
+         uint8_t repeated[ARC_CMOS_PAYLOAD_SIZE];
+         uint8_t image[ARC_CMOS_MACHINE_SIZE];
+         char first_stamp[41], second_stamp[41], changed_stamp[41];
+         assert(arc_cmos_default(os, io, fresh));
+         assert(arc_cmos_machine_image(os, io, fresh, false, image));
+         memcpy(persisted, image + 16u, sizeof(persisted));
+         assert(!(fresh[80u - 16u] & 0x10u));
+         assert(persisted[80u - 16u] & 0x10u);
+         assert(arc_cmos_boot_stamp_payload(os, io, fresh, false, starting));
+         assert(arc_cmos_boot_stamp_payload(os, io, persisted, false, repeated));
+         arc_sha1_hex(starting, sizeof(starting), first_stamp);
+         arc_sha1_hex(repeated, sizeof(repeated), second_stamp);
+         assert(strcmp(first_stamp, second_stamp) == 0);
+         assert(starting[80u - 16u] & 0x10u);
+         assert(starting[arc_cmos_raw_address(239u) - 16u] == 0u);
+         assert(arc_cmos_boot_stamp_payload(os, io, fresh, true, repeated));
+         assert(memcmp(starting, repeated, sizeof(starting)) == 0);
+
+         persisted[arc_cmos_raw_address(100u) - 16u] ^= 0x01u;
+         assert(arc_cmos_boot_stamp_payload(os, io, persisted, false, repeated));
+         arc_sha1_hex(repeated, sizeof(repeated), changed_stamp);
+         assert(strcmp(first_stamp, changed_stamp) != 0);
+      }
+   }
+}
+
 static void test_firmware_table(void)
 {
    size_t count = 0u;
@@ -3707,6 +3747,7 @@ int main(int argc, char **argv)
    test_hashes();
    test_cmos_unplug_policy();
    test_fresh_cmos_default();
+   test_boot_stamp_starting_cmos();
    test_firmware_table();
    test_assembly();
    test_media_launch_and_cmos();

@@ -351,6 +351,10 @@ bool arc_cmos_machine_image(ArcOsClass os, ArcIoClass io,
                             const uint8_t payload[ARC_CMOS_PAYLOAD_SIZE],
                             bool launch_helper,
                             uint8_t output[ARC_CMOS_MACHINE_SIZE]);
+bool arc_cmos_boot_stamp_payload(ArcOsClass os, ArcIoClass io,
+                                 const uint8_t prepared[ARC_CMOS_PAYLOAD_SIZE],
+                                 bool launch_helper,
+                                 uint8_t output[ARC_CMOS_PAYLOAD_SIZE]);
 void arc_cmos_machine_attach_ide(uint8_t image[ARC_CMOS_MACHINE_SIZE]);
 unsigned arc_cmos_raw_address(unsigned logical);
 unsigned arc_cmos_logical_address(unsigned raw);

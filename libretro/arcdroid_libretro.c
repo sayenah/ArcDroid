@@ -3881,17 +3881,16 @@ static bool arc_boot_media_digest(char output[41])
 
 static bool arc_boot_stamp(ArcBootObservation *stamp)
 {
-   uint8_t payload[ARC_CMOS_PAYLOAD_SIZE];
+   uint8_t prepared[ARC_CMOS_PAYLOAD_SIZE];
+   uint8_t starting[ARC_CMOS_PAYLOAD_SIZE];
+   const ArcMachineDescriptor *machine = arc_machine_descriptor(arc_plan.machine);
    if (!arc_firmware || !arc_firmware_size ||
-       !arc_cmos_decode(arc_cmos_prepared, &arc_plan, payload) ||
+       !machine || !arc_cmos_decode(arc_cmos_prepared, &arc_plan, prepared) ||
+       !arc_cmos_boot_stamp_payload(arc_plan.os, machine->io, prepared,
+                                    arc_plan.launch_helper, starting) ||
        !arc_boot_media_digest(stamp->media)) return false;
-   arc_cmos_normalise_payload(payload, arc_plan.os,
-      arc_machine_descriptor(arc_plan.machine)->io);
-   /* Raw byte 63 is the machine checksum, recomputed on construction. It
-    * changes with the helper drive even when the stored settings do not. */
-   payload[47] = 0u;
    arc_sha1_hex(arc_firmware, arc_firmware_size, stamp->firmware);
-   arc_sha1_hex(payload, sizeof(payload), stamp->cmos);
+   arc_sha1_hex(starting, sizeof(starting), stamp->cmos);
    stamp->machine = (uint32_t)arc_plan.machine;
    stamp->cpu = (uint32_t)arc_plan.cpu;
    stamp->memory = arc_plan.memory_kib;
