@@ -315,7 +315,7 @@ Prefer automation for repetitive checks, builds, test matrices, and evidence gat
 
 Every background model run — Astra, Sol/Codex, Opus, or subagent — must have deterministic supervision armed at dispatch and re-armed on resume.
 
-- Prefer native lifecycle events; otherwise poll read-only at least every **5 minutes**. Runs supervised only by native events have completion and death detection, not stall detection; the dispatch record must say so.
+- **Default watchdog:** the project-independent script in Appendix A, installed once per machine at `~/dev/agent-tools/wait-run.sh` (outside every repository, so no branch can change an allow-listed command) and always invoked by its absolute path, which the user allow-lists in their user-level agent settings. Start it as a background command immediately after dispatch or resume: `wait-run.sh PID LOG [DONE_FILE]`, with the recorded PID, the run's growing output and, when the run has one, its final output file. It implements this section's checks — liveness, output growth every 5 minutes, the stall threshold — sends no signals, stays silent while healthy and prints exactly one terminal line (`COMPLETED`, `DIED` or `STALLED`) with a bounded log tail. Do not supervise with ad-hoc polling loops. If the installed copy is missing or differs from Appendix A, install it from the appendix before dispatching (`chmod +x`). Native lifecycle events (e.g. a subagent's completion notice) may supplement it. Where the script cannot run, poll read-only at least every **5 minutes**; runs supervised only by native events have completion and death detection, not stall detection, and the dispatch record must say so.
 - Record the run/session ID, strongest available ownership handle, start time, log location, and checkout/worktree.
 - Monitor applicable run state, output growth, child activity, and working-tree change.
 - Healthy checks must not invoke the orchestrator or another frontier model. Renewing the supervision channel when the harness lease expires is not a check and is an accepted cost.
@@ -355,3 +355,44 @@ A work item is done only when:
 - `docs/handoff.md` accurately points to the next state.
 
 `Looks right` is not evidence.
+
+## Appendix A. Background-run watchdog (`wait-run.sh`)
+
+Canonical source of the §15 default watchdog. Install it byte-for-byte at `~/dev/agent-tools/wait-run.sh` and make it executable. It is project-independent: when this protocol is reused in another repository, the same installed copy serves it.
+
+```bash
+#!/bin/bash
+# wait-run.sh — project-independent background-run watchdog (build protocol §15, Appendix A).
+# Usage: wait-run.sh PID LOG [DONE_FILE]
+#   PID        the process recorded at dispatch
+#   LOG        the run's growing output (stream or log file)
+#   DONE_FILE  the run's final output file (optional)
+# Read-only: never sends a signal (kill -0 only tests existence). Checks liveness every 30 s and LOG
+# growth every 300 s; healthy checks print nothing. Prints exactly one terminal line and exits:
+#   COMPLETED  PID exited and DONE_FILE is non-empty
+#   DIED       PID exited and DONE_FILE is absent or empty (or was not given)
+#   STALLED    PID alive but LOG unchanged for 3 consecutive 300 s checks
+# followed by a bounded tail of LOG. The orchestrator inspects the run after every terminal line.
+pid=$1; log=$2; done_file=${3:-}
+poll=${WAIT_RUN_POLL:-30}; period=${WAIT_RUN_PERIOD:-300}   # test overrides only
+case "$pid" in ''|*[!0-9]*) echo "usage: wait-run.sh PID LOG [DONE_FILE]"; exit 2;; esac
+[ -n "$log" ] || { echo "usage: wait-run.sh PID LOG [DONE_FILE]"; exit 2; }
+size() { if [ -e "$log" ]; then wc -c < "$log" | tr -d ' '; else echo -1; fi; }
+report() {
+  echo "$1 pid=$pid elapsed=$(( $(date +%s) - start ))s log=$log size=$(size) at $(date +%H:%M:%S)"
+  [ -e "$log" ] && tail -c 800 "$log" | tr -cd '\11\12\15\40-\176' | tail -n 5
+  exit 0
+}
+start=$(date +%s); last=$(size); stale=0; tick=0
+while :; do
+  if ! kill -0 "$pid" 2>/dev/null; then
+    if [ -n "$done_file" ] && [ -s "$done_file" ]; then report COMPLETED; else report DIED; fi
+  fi
+  sleep "$poll"; tick=$(( tick + poll ))
+  if [ $(( tick % period )) -eq 0 ]; then
+    now=$(size)
+    if [ "$now" = "$last" ]; then stale=$(( stale + 1 )); else stale=0; last=$now; fi
+    [ "$stale" -ge 3 ] && report STALLED
+  fi
+done
+```
