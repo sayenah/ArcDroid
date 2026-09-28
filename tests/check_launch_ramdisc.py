@@ -7,13 +7,14 @@ import tempfile
 
 
 def main() -> None:
-    harness, core, rom, selfboot, chooser, initial_chooser, output = sys.argv[1:]
+    harness, core, rom, selfboot, chooser, initial_chooser, single, output = sys.argv[1:]
     Path(output).mkdir(parents=True, exist_ok=True)
     root = Path(tempfile.mkdtemp(prefix="ramdisc-", dir=output))
     request = b"%BASIC -quit ADFS::1.$.ArcRAM\r"
     source = Path(selfboot).read_bytes()
 
-    def run(content: str, args=(), fresh=False, data_dir=None):
+    def run(content: str, args=(), fresh=False, data_dir=None,
+            publications=1):
         data = (data_dir if data_dir is not None else
                 Path(tempfile.mkdtemp(prefix="ramdisc-", dir=output))
                 if fresh else root)
@@ -24,6 +25,7 @@ def main() -> None:
         if "--boot-cmos-ramdisc" in args:
             assert "reconstructed guest RAM-disc CMOS byte preserved" in result.stdout
         log = (data / "evidence" / "real-boot.log").read_text()
+        assert sum(line.startswith("RAM disc:") for line in log.splitlines()) == publications, log
         helpers = list((data / "save" / "arcdroid" / "launch").glob("*.adl"))
         assert len(helpers) == 1, helpers
         return data, log, helpers[0], helpers[0].read_bytes()
@@ -55,16 +57,17 @@ def main() -> None:
     assert renewed == auto and "remembered boot observation" in log
     assert boot_records[0].read_bytes() == revision_one
 
-    _, log, _, toggled = run(selfboot, ("--boot-ramdisc-toggle-reset",))
+    _, log, _, toggled = run(selfboot, ("--boot-ramdisc-toggle-reset",),
+                             publications=2)
     assert toggled == disabled and "RAM disc: disabled" in log
     _, log, _, toggled = run(selfboot, ("--boot-ramdisc", "Disabled",
-                                      "--boot-ramdisc-toggle-reset"))
+                                      "--boot-ramdisc-toggle-reset"),
+                             publications=2)
     assert toggled == auto and "RAM disc: request=32K if absent" in log
 
     _, log, _, explicit = run(selfboot, ("--boot-launch-app1",), fresh=True)
     assert explicit.count(request) == 1 and "RAM disc: request=32K if absent" in log
 
-    single = str(Path(initial_chooser).with_name("boot-matrix-0-file-one.adf"))
     _, log, _, automatic = run(single, fresh=True)
     assert automatic.count(request) == 1 and "reason=single application" in log
 
@@ -104,6 +107,7 @@ def main() -> None:
     assert result.returncode == 0, result.stdout + result.stderr
     failure_log = (blocked / "evidence" / "real-boot.log").read_text()
     assert "recovery=failed" in failure_log and "RAM disc: request" not in failure_log
+    assert not any(line.startswith("RAM disc:") for line in failure_log.splitlines())
     assert Path(selfboot).read_bytes() == source
     print("launch-ramdisc-harness: passed")
 

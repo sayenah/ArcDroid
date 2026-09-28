@@ -5310,7 +5310,15 @@ static const struct retro_core_option_v2_definition arc_base_options[] = {
            {NULL, NULL}}, "persistent"},
    {NULL, NULL, NULL, NULL, NULL, NULL, {{0}}, NULL}
 };
-static struct retro_core_option_v2_definition arc_options[40];
+enum {
+   ARC_BASE_OPTION_COUNT = sizeof(arc_base_options) / sizeof(arc_base_options[0]) - 1u,
+   ARC_OPTION_COUNT = ARC_BASE_OPTION_COUNT + 1u +
+                      ARC_PAD_PORTS * ARC_PAD_INPUT_COUNT + 1u
+};
+static struct retro_core_option_v2_definition arc_options[ARC_OPTION_COUNT + 1u];
+_Static_assert(ARC_BASE_OPTION_COUNT == 17u, "base option count changed");
+_Static_assert(sizeof(arc_options) / sizeof(arc_options[0]) == 40u,
+               "option destination size changed");
 static struct retro_core_option_v2_category arc_option_categories[] = {
    {"pad_mapping", "Pad Mapping", "Map each RetroPad input to a physical Archimedes key."},
    {NULL, NULL, NULL}
@@ -5356,8 +5364,8 @@ static void arc_build_options(void)
    if (arc_options_built) return;
    memset(arc_options, 0, sizeof(arc_options));
    memcpy(arc_options, arc_base_options,
-          17u * sizeof(struct retro_core_option_v2_definition));
-   unsigned at = 17u;
+          ARC_BASE_OPTION_COUNT * sizeof(arc_base_options[0]));
+   unsigned at = ARC_BASE_OPTION_COUNT;
    struct retro_core_option_v2_definition *profile = &arc_options[at++];
    profile->key = "arcdroid_input_profile";
    profile->desc = "Input Profile";

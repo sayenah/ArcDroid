@@ -4024,6 +4024,13 @@ static uint8_t ramdisc_checksum(const uint8_t *p)
 
 static void test_launch_ramdisc(void)
 {
+   /* Complete helper-disc digests built from origin/main's launch_disc.c. */
+   static const char *const disabled_goldens[2][2] = {
+      {"2de5bfc02757e367c72907042b471547369dd533",
+       "55ac70b2643d745f9ca20840a2bd43b84cf3c57d"},
+      {"2bfc4851d6b1bd7aa499b44849c3636a76bb3eaf",
+       "c7d71dbea303ff4ea89dbed1919add4fd4c9dc08"}
+   };
    static const char program[] =
       "10 SYS \"OS_ReadDynamicArea\",5 TO ,size%\r"
       "20 IF size%=0 THEN SYS \"XOS_ChangeDynamicArea\",5,32768\r";
@@ -4057,6 +4064,9 @@ static void test_launch_ramdisc(void)
                                           error, sizeof(error)) &&
              arc_launch_disc_build(&discovery, 0u, legacy, error, sizeof(error)));
       assert(!memcmp(disabled, legacy, ARC_LAUNCH_DISC_SIZE));
+      char disabled_sha1[41];
+      arc_sha1_hex(disabled, ARC_LAUNCH_DISC_SIZE, disabled_sha1);
+      assert(!strcmp(disabled_sha1, disabled_goldens[nested][siblings]));
       assert(enabled[255] == ramdisc_checksum(enabled) &&
              enabled[511] == ramdisc_checksum(enabled + 256u));
       const uint8_t *root = enabled + test_l_offset(2u);
@@ -4078,6 +4088,9 @@ static void test_launch_ramdisc(void)
             uint32_t free_start = ramdisc_u24(enabled + f * 3u);
             uint32_t free_end = free_start + ramdisc_u24(enabled + 256u + f * 3u);
             assert(free_start < free_end && free_end <= 2560u);
+            /* The map occupies sectors 0–1 and the root directory 2–6. */
+            assert(free_start >= 2u);
+            assert(free_end <= 2u || free_start >= 7u);
             assert(free_end <= starts[i] || free_start >= ends[i]);
          }
       }

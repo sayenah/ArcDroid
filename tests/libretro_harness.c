@@ -8221,9 +8221,11 @@ int main(int argc, char **argv)
       option_writes = "shadow";
       option_launch = "app1";
       option_launch_chooser = "remember";
+      unsigned publications_before_load = ramdisc_publication_logs;
       phase = PHASE_LOAD; assert(retro_load_game(&gate_game));
       phase = PHASE_RUN;
       unsigned publications_before_swap = ramdisc_publication_logs;
+      assert(publications_before_swap > publications_before_load);
       assert(disk_control.set_eject_state(true) &&
              disk_control.set_image_index(1u) &&
              disk_control.set_eject_state(false));

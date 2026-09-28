@@ -1042,6 +1042,7 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
         "${FIXTURE_DIR}/launch-family/boot-file-3-l.adl"
         "${FIXTURE_DIR}/launch-family/boot-matrix-3-file-multiple.adf"
         "${FIXTURE_DIR}/launch-family/boot-matrix-0-directory-multiple.adf"
+        "${FIXTURE_DIR}/launch-family/boot-matrix-0-file-one.adf"
         "${CMAKE_CURRENT_BINARY_DIR}/launch-ramdisc-data")
     add_test(NAME boot-observation-two-phase-harness
       COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/check_boot_two_phase.py"
