@@ -176,7 +176,7 @@ static const char *option_pointer_stick = "right";
 static const char *option_pointer_speed = "600";
 static const char *option_pointer_deadzone = "15";
 static const char *option_writes = "shadow";
-static const char *option_short_tail = "Missing";
+static const char *option_short_tail = "missing";
 static const char *option_install_saves = "temporary";
 static unsigned install_publication_seen, install_recreate_seen;
 static unsigned install_commit_seen, install_validation_seen;
@@ -687,9 +687,11 @@ static bool environment(unsigned command, void *data)
             if (!strcmp(definition->key, "arcdroid_short_tail"))
             {
                found_short_tail = true;
-               assert(!strcmp(definition->default_value, "Missing") &&
-                      !strcmp(definition->values[0].value, "Missing") &&
-                      !strcmp(definition->values[1].value, "Zero-filled"));
+               assert(!strcmp(definition->default_value, "missing") &&
+                      !strcmp(definition->values[0].value, "missing") &&
+                      !strcmp(definition->values[0].label, "Missing") &&
+                      !strcmp(definition->values[1].value, "zero-filled") &&
+                      !strcmp(definition->values[1].label, "Zero-filled"));
             }
             if (!strcmp(definition->key, "arcdroid_launch_chooser"))
             {
@@ -2590,7 +2592,7 @@ int main(int argc, char **argv)
       option_machine = "A3000";
       option_launch = "auto";
       option_writes = "shadow";
-      option_short_tail = "Missing";
+      option_short_tail = "missing";
       char staged[4096];
       staged_media_path(staged, save_path, game.path, "disc.adf");
       (void)remove(staged);
@@ -2611,7 +2613,7 @@ int main(int argc, char **argv)
       char missing_stamp[41], zero_stamp[41], restored_stamp[41];
       assert(arc_libretro_test_boot_media_digest(missing_stamp));
       retro_unload_game();
-      option_short_tail = "Zero-filled";
+      option_short_tail = "zero-filled";
       phase = PHASE_LOAD; assert(retro_load_game(&game));
       assert(arc_libretro_test_boot_media_digest(zero_stamp) &&
              strcmp(missing_stamp, zero_stamp));
@@ -2625,16 +2627,16 @@ int main(int argc, char **argv)
              disk_control.get_eject_state() &&
              arc_libretro_test_boot_media_digest(restored_stamp) &&
              !strcmp(zero_stamp, restored_stamp));
-      option_short_tail = "Missing";
+      option_short_tail = "missing";
       assert(disk_control.set_eject_state(false) &&
              arc_libretro_test_boot_media_digest(restored_stamp) &&
              !strcmp(missing_stamp, restored_stamp));
       assert(disk_control.set_eject_state(true));
-      option_short_tail = "Zero-filled";
+      option_short_tail = "zero-filled";
       assert(disk_control.set_eject_state(false) &&
              arc_libretro_test_boot_media_digest(restored_stamp) &&
              !strcmp(zero_stamp, restored_stamp));
-      option_short_tail = "Missing"; variable_update = true;
+      option_short_tail = "missing"; variable_update = true;
       retro_reset();
       assert(arc_libretro_test_boot_media_digest(restored_stamp) &&
              !strcmp(missing_stamp, restored_stamp));
@@ -2658,7 +2660,7 @@ int main(int argc, char **argv)
       option_machine = short_tail_newio_guest ? "A3020" : "A3000";
       option_launch = "off";
       option_writes = "shadow";
-      option_short_tail = "Missing";
+      option_short_tail = "missing";
       char staged[4096];
       staged_media_path(staged, save_path, game.path, "disc.adf");
       (void)remove(staged); /* this dedicated test starts with a new shadow */
@@ -2697,13 +2699,13 @@ int main(int argc, char **argv)
       for (unsigned frame = 0u; frame < 900u && last_video_pixel != 0x006a0000u; ++frame)
          retro_run();
       assert(last_video_pixel == 0x006a0000u);
-      option_short_tail = "Zero-filled"; variable_update = true;
+      option_short_tail = "zero-filled"; variable_update = true;
       retro_reset();
       last_video_pixel = 0u;
       for (unsigned frame = 0u; frame < 900u && last_video_pixel != 0x0000006au; ++frame)
          retro_run();
       assert(last_video_pixel == 0x0000006au);
-      option_short_tail = "Missing"; variable_update = true;
+      option_short_tail = "missing"; variable_update = true;
       retro_reset();
       last_video_pixel = 0u;
       for (unsigned frame = 0u; frame < 900u && last_video_pixel != 0x006a0000u; ++frame)

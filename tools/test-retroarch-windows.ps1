@@ -2270,7 +2270,7 @@ arcdroid_machine = "A3000"
 arcdroid_cpu = "ARM2"
 arcdroid_joystick_if = "Keyboard"
 arcdroid_disk_writes = "shadow"
-arcdroid_short_tail = "Missing"
+arcdroid_short_tail = "missing"
 arcdroid_launch = "off"
 "@ | Set-Content -Encoding ASCII $coreOptions
 $shortContent = (Resolve-Path (Join-Path $InputDirectory "800k-d-one-sector.adf")).Path

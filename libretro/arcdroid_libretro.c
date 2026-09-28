@@ -651,7 +651,7 @@ static bool arc_read_options(ArcCoreOptions *options, char *error, size_t error_
    const char *pointer_speed = arc_option_value("arcdroid_pointer_speed", "600");
    const char *pointer_deadzone = arc_option_value("arcdroid_pointer_deadzone", "15");
    const char *writes = arc_option_value("arcdroid_disk_writes", "shadow");
-   const char *short_tail = arc_option_value("arcdroid_short_tail", "Missing");
+   const char *short_tail = arc_option_value("arcdroid_short_tail", "missing");
    const char *install_saves = arc_option_value("arcdroid_install_saves", "persistent");
    const char *launch = arc_option_value("arcdroid_launch", "auto");
    const char *launch_chooser =
@@ -714,8 +714,8 @@ static bool arc_read_options(ArcCoreOptions *options, char *error, size_t error_
    if (!strcmp(writes, "original")) options->disk_writes = ARC_DISK_WRITES_ORIGINAL;
    else if (!strcmp(writes, "off")) options->disk_writes = ARC_DISK_WRITES_OFF;
    else if (strcmp(writes, "shadow")) goto invalid;
-   if (!strcmp(short_tail, "Zero-filled")) options->short_tail_zero = true;
-   else if (strcmp(short_tail, "Missing")) goto invalid;
+   if (!strcmp(short_tail, "zero-filled")) options->short_tail_zero = true;
+   else if (strcmp(short_tail, "missing")) goto invalid;
    if (!strcmp(install_saves, "persistent")) options->install_saves_persistent = true;
    else if (strcmp(install_saves, "temporary")) goto invalid;
    if (!strcmp(launch, "auto")) options->launch = ARC_LAUNCH_AUTO;
@@ -4383,10 +4383,10 @@ static bool arc_disk_set_eject(bool ejected)
          arc_message(error, RETRO_LOG_ERROR);
          return false;
       }
-      const char *tail_option = arc_option_value("arcdroid_short_tail", "Missing");
-      if (strcmp(tail_option, "Missing") && strcmp(tail_option, "Zero-filled"))
+      const char *tail_option = arc_option_value("arcdroid_short_tail", "missing");
+      if (strcmp(tail_option, "missing") && strcmp(tail_option, "zero-filled"))
       { arc_message("Invalid Short image tail option.", RETRO_LOG_ERROR); return false; }
-      bool zero_tail = !strcmp(tail_option, "Zero-filled");
+      bool zero_tail = !strcmp(tail_option, "zero-filled");
       ArcEngineMedia media = arc_engine_media(entry);
       media.effective_extent = entry->info.short_image && !zero_tail ?
          entry->info.available_size : ARC_MEDIA_EXTENT_UNRESTRICTED;
@@ -5280,7 +5280,7 @@ static const struct retro_core_option_v2_definition arc_base_options[] = {
     NULL, {{"shadow", NULL}, {"original", NULL}, {"off", NULL}, {NULL, NULL}}, "shadow"},
    {"arcdroid_short_tail", "Short image tail", NULL,
     "Present sectors beyond a short source as missing, or expose the stored shadow bytes (including saved writes) as zero-filled media.", NULL,
-    NULL, {{"Missing", NULL}, {"Zero-filled", NULL}, {NULL, NULL}}, "Missing"},
+    NULL, {{"missing", "Missing"}, {"zero-filled", "Zero-filled"}, {NULL, NULL}}, "missing"},
    {"arcdroid_install_saves", "Install Saves", NULL,
     "Keep installed titles and their saves on an A3020 hard disc.", NULL,
     NULL, {{"persistent", "Persistent"}, {"temporary", "Temporary"},
