@@ -110,10 +110,16 @@ typedef struct {
    size_t padding_required;
    ArcMediaRecognition recognition;
    bool short_image;
+   bool free_map_accept;
    unsigned boot_option;
    char disc_name[11];
    uint8_t disc_name_length;
 } ArcMediaInfo;
+
+/* Prove a beyond-tolerance D/E prefix from source bytes alone. */
+bool arc_short_free_map_proof(const uint8_t *data, size_t size,
+                              ArcMediaGeometry geometry,
+                              const char **failure);
 
 typedef enum {
    ARC_DISK_WRITES_SHADOW = 0,

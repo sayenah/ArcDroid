@@ -2258,3 +2258,48 @@ try {
     }
 } finally { Stop-MediaRun $bootChooserReload }
 Write-Host "Slice 14 Windows RetroArch: synthetic helper recovery, remembered reset and reload, post-boot chooser pick and remembered reload passed"
+
+# Slice 15: the final sector is absent to the guest while the declared-size
+# shadow retains its bytes. The authored ROM reads sector 3 at the boundary,
+# expects record-not-found on sector 4, writes sector 3, and paints red only
+# when all three commands return the expected result.
+Copy-Item -Force (Join-Path $InputDirectory "arcdroid_libretro_test.dll") $core
+Copy-Item -Force (Join-Path $InputDirectory "arcdroid-short-tail-wd.rom") $firmware
+@"
+arcdroid_machine = "A3000"
+arcdroid_cpu = "ARM2"
+arcdroid_joystick_if = "Keyboard"
+arcdroid_disk_writes = "shadow"
+arcdroid_short_tail = "missing"
+arcdroid_launch = "off"
+"@ | Set-Content -Encoding ASCII $coreOptions
+$shortContent = (Resolve-Path (Join-Path $InputDirectory "800k-d-one-sector.adf")).Path
+$shortSourceHash = (Get-FileHash -Algorithm SHA1 $shortContent).Hash.ToLowerInvariant()
+$shortShadow = Join-Path $coreSaveDirectory "media/$shortSourceHash/disc.adf"
+Remove-Item -Force -ErrorAction SilentlyContinue $shortShadow
+$shortRun = Start-MediaRun $shortContent "slice15-short-first"
+try {
+    [void](Wait-JfdOutcome $shortRun "slice15-boundary-read-absent-read-write" "ff6a0000")
+    $shortLog = Get-Content -LiteralPath $shortRun.RetroLog -Raw
+    if (-not $shortLog.Contains("Image is missing its last 1024 bytes; they are presented as absent (unreadable) sectors.")) {
+        throw "Slice 15 Missing notice was absent"
+    }
+} finally { Stop-MediaRun $shortRun }
+if (-not (Test-Path -LiteralPath $shortShadow -PathType Leaf) -or
+    (Get-Item -LiteralPath $shortShadow).Length -ne 819200) {
+    throw "Slice 15 declared-size shadow was not published: $shortShadow"
+}
+$shortBytes = [IO.File]::ReadAllBytes($shortShadow)
+for ($i = 0; $i -lt 1024; $i++) {
+    if ($shortBytes[817152 + $i] -ne 0x5a -or $shortBytes[818176 + $i] -ne 0) {
+        throw "Slice 15 write or hidden-tail invariant failed at byte $i"
+    }
+}
+$shortReload = Start-MediaRun $shortContent "slice15-short-reload"
+try {
+    [void](Wait-JfdOutcome $shortReload "slice15-persisted-present-write" "ff6a0000")
+} finally { Stop-MediaRun $shortReload }
+if ((Get-FileHash -Algorithm SHA1 $shortContent).Hash.ToLowerInvariant() -ne $shortSourceHash) {
+    throw "Slice 15 source changed during shadow writes"
+}
+Write-Host "Slice 15 Windows RetroArch: boundary read, absent-sector error, persisted present-sector write, notice and hidden-tail isolation passed"

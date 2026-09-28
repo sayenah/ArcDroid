@@ -94,6 +94,27 @@ static ArcMediaGeometry arc_saved_media_geometry;
 static const ArcJfdImage *arc_saved_jfd;
 static const uint8_t *arc_saved_media_data;
 static size_t arc_saved_media_size;
+static size_t arc_saved_media_extent;
+
+static bool arc_engine_extent_valid(const ArcEngineMedia *media)
+{
+   if (!media || media->effective_extent == ARC_MEDIA_EXTENT_UNRESTRICTED)
+      return true;
+   if (media->kind == ARC_MEDIA_JFD) return false;
+   size_t sector = media->geometry == ARC_GEOMETRY_320K ||
+                   media->geometry == ARC_GEOMETRY_640K_L ? 256u : 1024u;
+   size_t geometry = media->geometry == ARC_GEOMETRY_320K ? 327680u :
+      media->geometry == ARC_GEOMETRY_640K_L ? 655360u :
+      media->geometry == ARC_GEOMETRY_800K_D ||
+      media->geometry == ARC_GEOMETRY_800K_E ? 819200u :
+      media->geometry == ARC_GEOMETRY_1600K_F ? 1638400u : 0u;
+   size_t backing = 0u;
+   if (media->data) backing = media->size;
+   else if (!media->path || !arc_io_file_size(media->path, &backing)) return false;
+   return geometry && media->effective_extent % sector == 0u &&
+          media->effective_extent <= geometry &&
+          media->effective_extent <= backing && backing >= geometry;
+}
 static char arc_saved_helper[4096];
 static ArcMediaGeometry arc_saved_helper_geometry;
 static const uint8_t *arc_saved_helper_data;
@@ -563,14 +584,16 @@ static bool arc_machine_create(char *failure, size_t failure_size)
    {
       bool mounted = arc_saved_media_kind == ARC_MEDIA_JFD ?
          disc_load_jfd(0, arc_saved_jfd) :
-         disc_load_raw(0, arc_saved_media, arc_saved_media_geometry);
+         disc_load_raw_extent(0, arc_saved_media, arc_saved_media_geometry,
+                       arc_saved_media_extent);
       if (!mounted)
          fatal("The selected floppy image could not be mounted");
    }
    if (arc_saved_helper[0])
    {
       adf_set_writable(1, 0);
-      if (!disc_load_raw(1, arc_saved_helper, arc_saved_helper_geometry))
+      if (!disc_load_raw_extent(1, arc_saved_helper, arc_saved_helper_geometry,
+                         ARC_MEDIA_EXTENT_UNRESTRICTED))
          fatal("The launch helper image could not be mounted");
    }
    ioc_discchange(0);
@@ -598,7 +621,8 @@ bool arc_engine_start(const uint8_t *firmware, size_t firmware_size,
 {
    arc_engine_stop();
    if (!firmware || (firmware_size != 524288u && firmware_size != 2097152u) ||
-       !cmos || !locked_raw_mask || !descriptor || !arc_helper_media_valid(helper))
+       !cmos || !locked_raw_mask || !descriptor || !arc_helper_media_valid(helper) ||
+       !arc_engine_extent_valid(media))
    {
       if (failure && failure_size) snprintf(failure, failure_size, "Invalid engine launch plan");
       return false;
@@ -626,6 +650,7 @@ bool arc_engine_start(const uint8_t *firmware, size_t firmware_size,
    arc_saved_jfd = media ? media->jfd : NULL;
    arc_saved_media_data = media ? media->data : NULL;
    arc_saved_media_size = media ? media->size : 0u;
+   arc_saved_media_extent = media ? media->effective_extent : ARC_MEDIA_EXTENT_UNRESTRICTED;
    const char *helper_path = helper && helper->data ? ":arcdroid-memory-1:" :
                              helper && helper->path ? helper->path : "";
    if (strlen(helper_path) >= sizeof(arc_saved_helper))
@@ -681,6 +706,7 @@ void arc_engine_stop(void)
    arc_saved_jfd = NULL;
    arc_saved_media_data = NULL;
    arc_saved_media_size = 0u;
+   arc_saved_media_extent = ARC_MEDIA_EXTENT_UNRESTRICTED;
    arc_saved_helper[0] = '\0';
    arc_saved_helper_geometry = ARC_GEOMETRY_NONE;
    arc_saved_helper_data = NULL;
@@ -762,6 +788,7 @@ bool arc_engine_media_eject(void)
    arc_saved_media[0] = '\0';
    arc_saved_media_kind = ARC_MEDIA_INVALID;
    arc_saved_media_geometry = ARC_GEOMETRY_NONE;
+   arc_saved_media_extent = ARC_MEDIA_EXTENT_UNRESTRICTED;
    arc_saved_jfd = NULL;
    ioc_discchange(0);
    return true;
@@ -774,7 +801,8 @@ bool arc_engine_media_insert(const ArcEngineMedia *media,
                       media && media->path ? media->path : "";
    if (!arc_machine_live || !media || !path[0] ||
        strlen(path) >= sizeof(arc_saved_media) ||
-       (media->kind == ARC_MEDIA_JFD && !media->jfd)) return false;
+       (media->kind == ARC_MEDIA_JFD && !media->jfd) ||
+       !arc_engine_extent_valid(media)) return false;
    /* Defence in depth for callers that replace a mounted image directly. */
    wd1770_media_change();
    c82c711_fdc_media_change(0u);
@@ -783,7 +811,7 @@ bool arc_engine_media_insert(const ArcEngineMedia *media,
    adf_set_writable(0, media->writable);
    bool mounted = media->kind == ARC_MEDIA_JFD ?
       disc_load_jfd(0, media->jfd) :
-      disc_load_raw(0, (char *)path, media->geometry);
+      disc_load_raw_extent(0, (char *)path, media->geometry, media->effective_extent);
    if (!mounted)
    {
       arc_saved_media[0] = '\0';
@@ -801,6 +829,7 @@ bool arc_engine_media_insert(const ArcEngineMedia *media,
    arc_saved_jfd = media->jfd;
    arc_saved_media_data = media->data;
    arc_saved_media_size = media->size;
+   arc_saved_media_extent = media->effective_extent;
    ioc_discchange(0);
    return true;
 }

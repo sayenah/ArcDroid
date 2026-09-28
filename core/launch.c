@@ -231,12 +231,29 @@ bool arc_media_inspect(const char *path, const uint8_t *data, size_t size,
       size_t missing = declared - size;
       size_t sector_size = geometry == ARC_GEOMETRY_800K_D ||
                            geometry == ARC_GEOMETRY_800K_E ? 1024u : 256u;
-      if (missing && (missing > max_missing || missing % sector_size))
+      if (missing && missing % sector_size)
       {
          if (error && error_size) snprintf(error, error_size,
             "%s image is short by %zu bytes (tail must be sector-aligned and no more than %zu bytes)",
             arc_geometry_name(declared), missing, max_missing);
          return false;
+      }
+      if (missing > max_missing)
+      {
+         const char *failure = NULL;
+         bool standard_d = geometry == ARC_GEOMETRY_800K_D &&
+            ((uint32_t)data[252] | ((uint32_t)data[253] << 8u) |
+             ((uint32_t)data[254] << 16u)) == 3200u;
+         bool eligible = standard_d || geometry == ARC_GEOMETRY_800K_E;
+         if (!eligible || !arc_short_free_map_proof(data, size, geometry, &failure))
+         {
+            if (error && error_size) snprintf(error, error_size,
+               "%s image is short by %zu bytes: %s",
+               arc_geometry_name(declared), missing,
+               eligible ? failure : "geometry is ambiguous or exceeds tolerance");
+            return false;
+         }
+         found.free_map_accept = true;
       }
       found.geometry = geometry;
       found.declared_size = declared;

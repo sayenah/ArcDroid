@@ -319,6 +319,8 @@ typedef struct {
    char staged[ARC_MEDIA_PATH_CAPACITY];
    char label[ARC_MEDIA_LABEL_CAPACITY];
    ArcMediaInfo info;
+   size_t effective_extent;
+   bool zero_tail_presentation;
    ArcDigest digest;
    ArcJfdImage jfd;
    bool jfd_damage_notice_shown;
@@ -517,6 +519,7 @@ typedef struct {
    unsigned pointer_speed;
    unsigned pointer_deadzone;
    ArcDiskWriteMode disk_writes;
+   bool short_tail_zero;
    bool install_saves_persistent;
    ArcLaunchOption launch;
    ArcLaunchChooserOption launch_chooser;
@@ -528,6 +531,7 @@ typedef struct {
 } ArcCoreOptions;
 
 static ArcCoreOptions arc_core_options;
+static bool arc_preparing_zero_tail;
 static ArcMachine arc_session_machine;
 static bool arc_riscpc_notice_shown;
 static bool arc_install_hd_prerequisites(const ArcInstallProfile *profile,
@@ -647,6 +651,7 @@ static bool arc_read_options(ArcCoreOptions *options, char *error, size_t error_
    const char *pointer_speed = arc_option_value("arcdroid_pointer_speed", "600");
    const char *pointer_deadzone = arc_option_value("arcdroid_pointer_deadzone", "15");
    const char *writes = arc_option_value("arcdroid_disk_writes", "shadow");
+   const char *short_tail = arc_option_value("arcdroid_short_tail", "missing");
    const char *install_saves = arc_option_value("arcdroid_install_saves", "persistent");
    const char *launch = arc_option_value("arcdroid_launch", "auto");
    const char *launch_chooser =
@@ -709,6 +714,8 @@ static bool arc_read_options(ArcCoreOptions *options, char *error, size_t error_
    if (!strcmp(writes, "original")) options->disk_writes = ARC_DISK_WRITES_ORIGINAL;
    else if (!strcmp(writes, "off")) options->disk_writes = ARC_DISK_WRITES_OFF;
    else if (strcmp(writes, "shadow")) goto invalid;
+   if (!strcmp(short_tail, "zero-filled")) options->short_tail_zero = true;
+   else if (strcmp(short_tail, "missing")) goto invalid;
    if (!strcmp(install_saves, "persistent")) options->install_saves_persistent = true;
    else if (strcmp(install_saves, "temporary")) goto invalid;
    if (!strcmp(launch, "auto")) options->launch = ARC_LAUNCH_AUTO;
@@ -1306,6 +1313,9 @@ static bool arc_prepare_bytes(const char *source, const char *playlist_label,
          free((void *)(uintptr_t)source_data);
       return false;
    }
+   entry->zero_tail_presentation = entry->info.short_image && arc_preparing_zero_tail;
+   entry->effective_extent = entry->info.short_image && !arc_preparing_zero_tail ?
+      entry->info.available_size : ARC_MEDIA_EXTENT_UNRESTRICTED;
    strcpy(entry->source, source);
    if (playlist_label && playlist_label[0])
       strcpy(entry->label, playlist_label);
@@ -1441,10 +1451,30 @@ static bool arc_prepare_bytes(const char *source, const char *playlist_label,
    entry->populated = true;
    if (entry->info.short_image)
    {
-      char warning[192];
-      snprintf(warning, sizeof(warning), "Short image padded with %zu missing bytes; source remains unchanged.",
-               entry->info.padding_required);
+      char warning[256];
+      if (entry->zero_tail_presentation)
+         snprintf(warning, sizeof(warning),
+            "Image is missing its last %zu bytes; they are presented zero-filled (option 'Short image tail'). Source unchanged.",
+            entry->info.padding_required);
+      else
+         snprintf(warning, sizeof(warning),
+            "Image is missing its last %zu bytes; they are presented as absent (unreadable) sectors. Source unchanged. Option 'Short image tail' can present them zero-filled.",
+            entry->info.padding_required);
       arc_media_notice(warning, notify_user, notice_reported);
+      if (arc_log)
+         arc_log(RETRO_LOG_INFO,
+            "Short image: geometry=%s source=%zu backing=%zu effective=%zu absent-sectors=%zu presentation=%s accept=%s shadow=%s\n",
+            entry->info.geometry == ARC_GEOMETRY_320K ? "320K" :
+            entry->info.geometry == ARC_GEOMETRY_640K_L ? "L" :
+            entry->info.geometry == ARC_GEOMETRY_800K_D ? "D" : "E",
+            entry->info.available_size, entry->info.declared_size,
+            entry->effective_extent ? entry->effective_extent : entry->info.declared_size,
+            entry->effective_extent ? entry->info.padding_required /
+               (entry->info.geometry == ARC_GEOMETRY_320K ||
+                entry->info.geometry == ARC_GEOMETRY_640K_L ? 256u : 1024u) : 0u,
+            entry->zero_tail_presentation ? "zero-filled" : "missing",
+            entry->info.free_map_accept ? "free-map" : "tolerance",
+            entry->created_this_preparation ? "new" : "existing");
    }
    /* JFD staging is immutable. Retain its metadata, digest and label here,
     * then re-read and parse only the selected image immediately before an
@@ -2400,8 +2430,16 @@ static ArcEngineMedia arc_engine_media(const ArcMediaEntry *entry)
          (entry->jfd.overlay && entry->jfd.overlay->writable) :
          arc_plan.disk_writes != ARC_DISK_WRITES_OFF,
       entry->info.kind, entry->info.geometry,
-      entry->info.kind == ARC_MEDIA_JFD ? &entry->jfd : NULL, NULL, 0u};
+      entry->info.kind == ARC_MEDIA_JFD ? &entry->jfd : NULL, NULL, 0u,
+      entry->effective_extent};
    return media;
+}
+
+static void arc_entry_tail_presentation(ArcMediaEntry *entry, bool zero_tail)
+{
+   entry->zero_tail_presentation = entry->info.short_image && zero_tail;
+   entry->effective_extent = entry->info.short_image && !zero_tail ?
+      entry->info.available_size : ARC_MEDIA_EXTENT_UNRESTRICTED;
 }
 
 static void arc_jfd_log_refusal(unsigned image_number, unsigned track,
@@ -3818,7 +3856,7 @@ static bool arc_boot_record_path(char path[ARC_MEDIA_PATH_CAPACITY],
  * snapshots accepted by the existing store validator. */
 static bool arc_boot_media_digest(char output[41])
 {
-   uint8_t bytes[1u + ARC_PLAYLIST_MAX_ENTRIES * 83u];
+   uint8_t bytes[1u + ARC_PLAYLIST_MAX_ENTRIES * 92u];
    size_t at = 0u;
    bytes[at++] = (uint8_t)arc_media_count;
    for (unsigned i = 0u; i < arc_media_count; ++i)
@@ -3827,6 +3865,10 @@ static bool arc_boot_media_digest(char output[41])
       bytes[at++] = entry->populated ? 1u : 0u;
       bytes[at++] = (uint8_t)entry->info.kind;
       bytes[at++] = (uint8_t)i;
+      bytes[at++] = entry->zero_tail_presentation ? 1u : 0u;
+      uint64_t extent = entry->effective_extent;
+      for (unsigned shift = 0u; shift < 8u; ++shift)
+         bytes[at++] = (uint8_t)(extent >> (shift * 8u));
       if (!entry->populated)
       {
          memset(bytes + at, '0', 80u); at += 80u;
@@ -3878,6 +3920,12 @@ static bool arc_boot_media_digest(char output[41])
    arc_sha1_hex(bytes, at, output);
    return true;
 }
+#ifdef ARCDROID_TEST_FAULTS
+bool arc_libretro_test_boot_media_digest(char output[41])
+{
+   return arc_boot_media_digest(output);
+}
+#endif
 
 static bool arc_boot_stamp(ArcBootObservation *stamp)
 {
@@ -4150,6 +4198,8 @@ static bool arc_prepare_launch(ArcMediaEntry *entry, bool ejected,
    const ArcJfdImage *jfd = entry->info.kind == ARC_MEDIA_JFD ? &entry->jfd : NULL;
    if (!jfd && !arc_io_read_all(entry->staged, &raw, &raw_size))
    { arc_launch_log(&discovery, -1, "media read failed"); return false; }
+   if (!jfd && entry->effective_extent && raw_size > entry->effective_extent)
+      raw_size = entry->effective_extent;
    (void)arc_launch_discover(raw, raw_size, &entry->info, jfd, &discovery);
    free(raw);
    arc_boot_discovery = discovery;
@@ -4333,13 +4383,22 @@ static bool arc_disk_set_eject(bool ejected)
          arc_message(error, RETRO_LOG_ERROR);
          return false;
       }
+      const char *tail_option = arc_option_value("arcdroid_short_tail", "missing");
+      if (strcmp(tail_option, "missing") && strcmp(tail_option, "zero-filled"))
+      { arc_message("Invalid Short image tail option.", RETRO_LOG_ERROR); return false; }
+      bool zero_tail = !strcmp(tail_option, "zero-filled");
       ArcEngineMedia media = arc_engine_media(entry);
+      media.effective_extent = entry->info.short_image && !zero_tail ?
+         entry->info.available_size : ARC_MEDIA_EXTENT_UNRESTRICTED;
       if (!arc_engine_media_insert(&media, error, sizeof(error)))
       {
          arc_jfd_free(&entry->jfd);
          arc_message(error[0] ? error : "Unable to insert the selected floppy image.", RETRO_LOG_ERROR);
          return false;
       }
+      arc_entry_tail_presentation(entry, zero_tail);
+      arc_core_options.short_tail_zero = zero_tail;
+      arc_preparing_zero_tail = zero_tail;
       arc_finish_jfd_preparation(entry, true);
    }
    arc_ejected = false;
@@ -5219,13 +5278,16 @@ static const struct retro_core_option_v2_definition arc_base_options[] = {
     NULL, {{"verified", "Verified only"}, {"untested", "Allow untested"}, {NULL, NULL}}, "verified"},
    {"arcdroid_disk_writes", "Disk Writes", NULL, "Choose where floppy writes are stored.", NULL,
     NULL, {{"shadow", NULL}, {"original", NULL}, {"off", NULL}, {NULL, NULL}}, "shadow"},
+   {"arcdroid_short_tail", "Short image tail", NULL,
+    "Present sectors beyond a short source as missing, or expose the stored shadow bytes (including saved writes) as zero-filled media.", NULL,
+    NULL, {{"missing", "Missing"}, {"zero-filled", "Zero-filled"}, {NULL, NULL}}, "missing"},
    {"arcdroid_install_saves", "Install Saves", NULL,
     "Keep installed titles and their saves on an A3020 hard disc.", NULL,
     NULL, {{"persistent", "Persistent"}, {"temporary", "Temporary"},
            {NULL, NULL}}, "persistent"},
    {NULL, NULL, NULL, NULL, NULL, NULL, {{0}}, NULL}
 };
-static struct retro_core_option_v2_definition arc_options[38];
+static struct retro_core_option_v2_definition arc_options[39];
 static struct retro_core_option_v2_category arc_option_categories[] = {
    {"pad_mapping", "Pad Mapping", "Map each RetroPad input to a physical Archimedes key."},
    {NULL, NULL, NULL}
@@ -5271,8 +5333,8 @@ static void arc_build_options(void)
    if (arc_options_built) return;
    memset(arc_options, 0, sizeof(arc_options));
    memcpy(arc_options, arc_base_options,
-          15u * sizeof(struct retro_core_option_v2_definition));
-   unsigned at = 15u;
+          16u * sizeof(struct retro_core_option_v2_definition));
+   unsigned at = 16u;
    struct retro_core_option_v2_definition *profile = &arc_options[at++];
    profile->key = "arcdroid_input_profile";
    profile->desc = "Input Profile";
@@ -5614,13 +5676,16 @@ static bool arc_construct_machine(const ArcMachineDescriptor *machine,
    uint8_t machine_cmos[ARC_CMOS_MACHINE_SIZE];
    uint8_t locked_cmos_mask[32];
    ArcEngineMedia helper = {arc_helper_path, false, ARC_MEDIA_ADL_640K,
-                            ARC_GEOMETRY_640K_L, NULL, NULL, 0u};
+                            ARC_GEOMETRY_640K_L, NULL, NULL, 0u,
+                            ARC_MEDIA_EXTENT_UNRESTRICTED};
    ArcEngineMedia carrier = {":arcdroid-memory-0:", false, ARC_MEDIA_ADF_800K,
                              ARC_GEOMETRY_800K_D, NULL,
-                             arc_adffs_carrier, ARC_ADFFS_DISC_SIZE};
+                             arc_adffs_carrier, ARC_ADFFS_DISC_SIZE,
+                             ARC_MEDIA_EXTENT_UNRESTRICTED};
    ArcEngineMedia support = {":arcdroid-memory-1:", false, ARC_MEDIA_ADF_800K,
                              ARC_GEOMETRY_800K_D, NULL,
-                             arc_adffs_support, ARC_ADFFS_DISC_SIZE};
+                             arc_adffs_support, ARC_ADFFS_DISC_SIZE,
+                             ARC_MEDIA_EXTENT_UNRESTRICTED};
    if (arc_adffs_active) {
       mounted = &carrier;
       helper = support;
@@ -5694,6 +5759,8 @@ static bool arc_boot_discover_current(ArcLaunchDiscovery *discovery)
    size_t size = 0u;
    const ArcJfdImage *jfd = entry->info.kind == ARC_MEDIA_JFD ? &entry->jfd : NULL;
    if (!jfd && !arc_io_read_all(entry->staged, &raw, &size)) return false;
+   if (!jfd && entry->effective_extent && size > entry->effective_extent)
+      size = entry->effective_extent;
    bool ok = arc_launch_discover(raw, size, &entry->info, jfd, discovery);
    free(raw);
    return ok;
@@ -6144,6 +6211,7 @@ static bool arc_load_game(const struct retro_game_info *game, bool negotiate)
       arc_message(error, RETRO_LOG_ERROR);
       return false;
    }
+   arc_preparing_zero_tail = arc_core_options.short_tail_zero;
    if (!arc_environment(RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY, &save_dir) ||
        !save_dir || !save_dir[0] || strlen(save_dir) >= sizeof(arc_save_path) ||
        !strncmp(save_dir, "saf://", 6u))
@@ -6428,6 +6496,7 @@ RETRO_API void retro_reset(void)
    arc_engine_stop();
    arc_session = ARC_SESSION_PREPARED;
    torn_down = true;
+   arc_preparing_zero_tail = updated.short_tail_zero;
    if (updated.disk_writes != arc_core_options.disk_writes)
    {
       if (arc_zip_active)
@@ -6461,6 +6530,9 @@ RETRO_API void retro_reset(void)
        !arc_refresh_jfd(&arc_media[selected], updated.disk_writes,
                         error, sizeof(error)))
       goto failed;
+   for (unsigned i = 0u; i < arc_media_count; ++i)
+      if (arc_media[i].populated)
+         arc_entry_tail_presentation(&arc_media[i], updated.short_tail_zero);
 
    free(arc_firmware);
    arc_firmware = new_firmware;

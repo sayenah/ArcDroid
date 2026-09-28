@@ -443,6 +443,63 @@ static uint8_t test_old_map_checksum(const uint8_t *block)
    return (uint8_t)checksum;
 }
 
+static void test_short_d_free(uint8_t *image, const uint8_t base[512],
+                              unsigned first, unsigned count,
+                              unsigned second, unsigned second_count)
+{
+   memcpy(image, base, 512u);
+   image[510] = second_count ? 6u : 3u;
+   image[0] = (uint8_t)first; image[1] = (uint8_t)(first >> 8u);
+   image[2] = (uint8_t)(first >> 16u);
+   image[256] = (uint8_t)count; image[257] = (uint8_t)(count >> 8u);
+   image[258] = (uint8_t)(count >> 16u);
+   if (second_count)
+   {
+      image[3] = (uint8_t)second; image[4] = (uint8_t)(second >> 8u);
+      image[5] = (uint8_t)(second >> 16u);
+      image[259] = (uint8_t)second_count;
+      image[260] = (uint8_t)(second_count >> 8u);
+      image[261] = (uint8_t)(second_count >> 16u);
+   }
+   image[255] = test_old_map_checksum(image);
+   image[511] = test_old_map_checksum(image + 256u);
+}
+
+static void test_short_e_bit(uint8_t *block, unsigned bit, unsigned value)
+{
+   uint8_t mask = (uint8_t)(1u << (bit & 7u));
+   if (value) block[bit >> 3u] |= mask;
+   else block[bit >> 3u] &= (uint8_t)~mask;
+}
+
+static void test_short_e_bits(uint8_t *block, unsigned start,
+                              unsigned count, unsigned value)
+{
+   for (unsigned bit = 0u; bit < count; ++bit)
+      test_short_e_bit(block, start + bit, (value >> bit) & 1u);
+}
+
+static void test_short_e_free(uint8_t *image, const uint8_t base[1024],
+                              unsigned first, unsigned split)
+{
+   uint8_t block[1024];
+   memcpy(block, base, sizeof(block));
+   for (unsigned bit = 512u; bit <= 6911u; ++bit)
+      test_short_e_bit(block, bit, 0u);
+   test_short_e_bits(block, 8u, 15u, first - 8u);
+   test_short_e_bits(block, 512u, 15u, 2u);
+   test_short_e_bit(block, first - 1u, 1u);
+   if (split)
+   {
+      test_short_e_bits(block, first, 15u, split - first);
+      test_short_e_bit(block, split - 1u, 1u);
+   }
+   test_short_e_bit(block, 6911u, 1u);
+   block[0] = arc_test_e_format_zone_check(block);
+   memcpy(image, block, sizeof(block));
+   memcpy(image + 1024u, block, sizeof(block));
+}
+
 static uint32_t test_ror32(uint32_t value, unsigned shift)
 {
    return (value >> shift) | (value << (32u - shift));
@@ -2230,6 +2287,165 @@ static void test_short_media_policy(void)
    free(image);
 }
 
+static void test_short_free_map(const char *directory)
+{
+   char error[256] = {0};
+   ArcMediaInfo media;
+   size_t size = 0u;
+   uint8_t *image = read_fixture(directory,
+      "short-family/800k-d-cap-plus-sector.adf", &size);
+   assert(size == 819200u - 21504u);
+   assert(arc_media_inspect("d.adf", image, size, &media, error, sizeof(error)) &&
+          media.geometry == ARC_GEOMETRY_800K_D && media.free_map_accept);
+   uint8_t original_map[512];
+   memcpy(original_map, image, sizeof(original_map));
+   /* The first missing 256-byte unit is 3116; the last is 3199. */
+   test_short_d_free(image, original_map, 3116u, 84u, 0u, 0u);
+   assert(arc_media_inspect("d.adf", image, size, &media, error, sizeof(error)) &&
+          media.free_map_accept); /* exact edge */
+   test_short_d_free(image, original_map, 3117u, 83u, 0u, 0u);
+   assert(!arc_media_inspect("d.adf", image, size, &media, error, sizeof(error)) &&
+          strstr(error, "missing area free")); /* one allocated unit */
+   test_short_d_free(image, original_map, 3116u, 83u, 0u, 0u);
+   assert(!arc_media_inspect("d.adf", image, size, &media, error, sizeof(error)) &&
+          strstr(error, "missing area free")); /* free list ends one unit early */
+   test_short_d_free(image, original_map, 3116u, 44u, 3160u, 40u);
+   assert(arc_media_inspect("d.adf", image, size, &media, error, sizeof(error)) &&
+          media.free_map_accept); /* abutting extents */
+   test_short_d_free(image, original_map, 3116u, 44u, 3161u, 39u);
+   assert(!arc_media_inspect("d.adf", image, size, &media, error, sizeof(error)) &&
+          strstr(error, "missing area free")); /* one allocated unit inside */
+   test_short_d_free(image, original_map, 0u, 3200u, 0u, 0u);
+   assert(!arc_media_inspect("d.adf", image, size, &media, error, sizeof(error)) &&
+          strstr(error, "overlaps map, boot block, or root"));
+   test_short_d_free(image, original_map, 7u, 3193u, 0u, 0u);
+   assert(!arc_media_inspect("d.adf", image, size, &media, error, sizeof(error)) &&
+          strstr(error, "overlaps map, boot block, or root"));
+   memcpy(image, original_map, sizeof(original_map));
+   /* The same valid checksums cannot prove an allocated tail. */
+   image[256] = 7u;
+   image[257] = 0u;
+   image[258] = 0u;
+   image[511] = test_old_map_checksum(image + 256u);
+   assert(!arc_media_inspect("d.adf", image, size, &media, error, sizeof(error)) &&
+          strstr(error, "missing area free"));
+   image[256] = image[257] = image[258] = 0u;
+   image[511] = test_old_map_checksum(image + 256u);
+   image[510] = 6u; /* A zero-length second free extent is malformed. */
+   image[511] = test_old_map_checksum(image + 256u);
+   assert(!arc_media_inspect("d.adf", image, size, &media, error, sizeof(error)) &&
+          strstr(error, "free list is malformed"));
+   memcpy(image, original_map, sizeof(original_map));
+   image[256] = 100u; image[257] = 0u; /* gap before the missing tail */
+   image[511] = test_old_map_checksum(image + 256u);
+   assert(!arc_media_inspect("d.adf", image, size, &media, error, sizeof(error)) &&
+          strstr(error, "missing area free"));
+   memcpy(image, original_map, sizeof(original_map));
+   image[510] = 6u;
+   image[256] = 100u; image[257] = 0u;
+   image[3] = 50u; image[4] = image[5] = 0u;
+   image[259] = 0x4cu; image[260] = 0x0cu; image[261] = 0u;
+   image[255] = test_old_map_checksum(image);
+   image[511] = test_old_map_checksum(image + 256u);
+   assert(!arc_media_inspect("d.adf", image, size, &media, error, sizeof(error)) &&
+          strstr(error, "free list is malformed")); /* overlapping */
+   memcpy(image, original_map, sizeof(original_map));
+   image[0] = 0x76u; image[1] = 0x0cu; image[2] = 0u; /* first=3190 */
+   image[256] = 20u; image[257] = 0u; /* end past 3200 */
+   image[255] = test_old_map_checksum(image);
+   image[511] = test_old_map_checksum(image + 256u);
+   assert(!arc_media_inspect("d.adf", image, size, &media, error, sizeof(error)) &&
+          strstr(error, "free list is malformed"));
+   const char *failure = NULL;
+   assert(!arc_short_free_map_proof(original_map, 4096u,
+           ARC_GEOMETRY_800K_D, &failure) &&
+          strstr(failure, "identification track-side"));
+   free(image);
+   image = read_fixture(directory, "short-family/800k-e-free-map.adf", &size);
+   assert(arc_media_inspect("e.adf", image, size, &media, error, sizeof(error)) &&
+          media.geometry == ARC_GEOMETRY_800K_E && media.free_map_accept);
+   uint8_t original_e_map[1024];
+   memcpy(original_e_map, image, sizeof(original_e_map));
+   test_short_e_free(image, original_e_map, 6744u, 0u);
+   assert(arc_media_inspect("e.adf", image, size, &media, error, sizeof(error)) &&
+          media.free_map_accept); /* exact map-bit edge */
+   test_short_e_free(image, original_e_map, 6745u, 0u);
+   assert(!arc_media_inspect("e.adf", image, size, &media, error, sizeof(error)) &&
+          strstr(error, "missing area free")); /* one allocated map bit */
+   test_short_e_free(image, original_e_map, 544u, 6744u);
+   assert(arc_media_inspect("e.adf", image, size, &media, error, sizeof(error)) &&
+          media.free_map_accept); /* abutting free fragments */
+   test_short_e_free(image, original_e_map, 544u, 0u);
+   for (size_t copy = 0u; copy <= 1024u; copy += 1024u)
+   {
+      test_short_e_bits(image + copy, 8u, 15u, 504u); /* free starts at map bit 512 */
+      image[copy] = arc_test_e_format_zone_check(image + copy);
+   }
+   assert(!arc_media_inspect("e.adf", image, size, &media, error, sizeof(error)) &&
+          strstr(error, "overlaps map or boot block"));
+   test_short_e_free(image, original_e_map, 528u, 0u);
+   assert(!arc_media_inspect("e.adf", image, size, &media, error, sizeof(error)) &&
+          strstr(error, "root directory is missing")); /* free claims root */
+   test_short_e_free(image, original_e_map, 544u, 0u);
+   for (size_t copy = 0u; copy <= 1024u; copy += 1024u)
+   {
+      test_short_e_bit(image + copy, 6910u, 1u);
+      test_short_e_bit(image + copy, 6911u, 0u);
+      image[copy] = arc_test_e_format_zone_check(image + copy);
+   }
+   assert(!arc_media_inspect("e.adf", image, size, &media, error, sizeof(error)) &&
+          error[0]); /* ends one bit early */
+   memcpy(image, original_e_map, sizeof(original_e_map));
+   memcpy(image + 1024u, original_e_map, sizeof(original_e_map));
+   image[1024] ^= 1u; /* A valid primary does not excuse an invalid second map. */
+   assert(!arc_media_inspect("e.adf", image, size, &media, error, sizeof(error)) &&
+          strstr(error, "map copy is invalid"));
+   image[1024] ^= 1u;
+   for (size_t copy = 0u; copy <= 1024u; copy += 1024u)
+   {
+      image[copy + 16u] = 0x00u; /* Root fragment 127 is absent from both maps. */
+      image[copy + 17u] = 0x7fu;
+      image[copy] = arc_test_e_format_zone_check(image + copy);
+   }
+   assert(!arc_media_inspect("e.adf", image, size, &media, error, sizeof(error)) &&
+          strstr(error, "root directory is missing"));
+   free(image);
+   image = read_fixture(directory, "short-family/800k-e-allocated-tail.adf", &size);
+   assert(!arc_media_inspect("e.adf", image, size, &media, error, sizeof(error)) &&
+          strstr(error, "missing area free"));
+   free(image);
+   image = read_fixture(directory, "short-family/800k-e-cyclic-free.adf", &size);
+   assert(!arc_media_inspect("e.adf", image, size, &media, error, sizeof(error)) &&
+          strstr(error, "free chain is cyclic"));
+   free(image);
+   image = read_fixture(directory, "short-family/800k-e-unterminated.adf", &size);
+   assert(!arc_media_inspect("e.adf", image, size, &media, error, sizeof(error)) &&
+          strstr(error, "fragment does not terminate"));
+   free(image);
+   image = read_fixture(directory, "short-family/800k-e-conflicting-maps.adf", &size);
+   assert(!arc_media_inspect("e.adf", image, size, &media, error, sizeof(error)) &&
+          strstr(error, "copies conflict"));
+   free(image);
+   image = read_fixture(directory, "short-family/800k-e-conflicting-allocation.adf", &size);
+   assert(!arc_media_inspect("e.adf", image, size, &media, error, sizeof(error)) &&
+          strstr(error, "copies conflict"));
+   free(image);
+   image = read_fixture(directory, "short-family/discovery-directory-full.adf", &size);
+   assert(arc_media_inspect("d.adf", image, size, &media, error, sizeof(error)));
+   ArcLaunchDiscovery discovery;
+   assert(arc_launch_discover(image, size, &media, NULL, &discovery) &&
+          discovery.application_count == 1u && !discovery.scan_incomplete);
+   assert(arc_launch_discover(image, size - 1024u, &media, NULL, &discovery) &&
+          discovery.reason == ARC_LAUNCH_REASON_INSPECTION_INCOMPLETE &&
+          discovery.application_count == 0u);
+   free(image);
+   image = read_fixture(directory, "short-family/discovery-payload-tail.adf", &size);
+   assert(arc_media_inspect("d.adf", image, size, &media, error, sizeof(error)) &&
+          arc_launch_discover(image, size, &media, NULL, &discovery) &&
+          discovery.application_count == 1u && !discovery.scan_incomplete);
+   free(image);
+}
+
 static void test_adfs_recognition(void)
 {
    uint8_t old_map[512] = {0};
@@ -3791,7 +4007,9 @@ static void test_f_media(const char *directory)
 
 int main(int argc, char **argv)
 {
-   assert(argc == 2);
+   assert(argc == 2 || (argc == 3 && !strcmp(argv[2], "--short-tail")));
+   if (argc == 3)
+   { test_short_free_map(argv[1]); puts("short-tail-unit: passed"); return 0; }
    test_hashes();
    test_cmos_unplug_policy();
    test_fresh_cmos_default();

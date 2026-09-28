@@ -41,6 +41,8 @@ extern void *fdc_p;
 extern int curdrive;
 
 bool disc_load_raw(int drive, char *fn, ArcMediaGeometry geometry);
+bool disc_load_raw_extent(int drive, char *fn, ArcMediaGeometry geometry,
+                          size_t effective_extent);
 bool disc_load_jfd(int drive, const ArcJfdImage *image);
 void disc_new(int drive, char *fn);
 void disc_close(int drive);

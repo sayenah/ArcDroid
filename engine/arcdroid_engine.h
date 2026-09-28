@@ -34,7 +34,10 @@ typedef struct {
    const ArcJfdImage *jfd;
    const uint8_t *data;
    size_t size;
+   size_t effective_extent; /* ARC_MEDIA_EXTENT_UNRESTRICTED or raw prefix bytes. */
 } ArcEngineMedia;
+
+#define ARC_MEDIA_EXTENT_UNRESTRICTED 0u
 
 bool arc_engine_start(const uint8_t *firmware, size_t firmware_size,
                       const ArcEngineMedia *media,

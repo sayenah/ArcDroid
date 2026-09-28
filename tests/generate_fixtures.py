@@ -164,7 +164,8 @@ def build_rom(media_exerciser: bool = False,
               allocation_mode: str | None = None,
               boot_watch_pattern: str | None = None,
               boot_write_sectors: tuple[int, ...] = (1, 2),
-              cmos_exerciser: bool = False) -> bytearray:
+              cmos_exerciser: bool = False,
+              short_tail_probe: bool = False) -> bytearray:
     if boot_watch_pattern not in (None, "prompt", "prompt-write", "prompt-structure", "two-phase", "cli", "cli-confirm", "horizon-edge",
                                   "cli-then-prompt", "desktop"):
         raise ValueError("unknown synthetic boot observation")
@@ -539,6 +540,99 @@ def build_rom(media_exerciser: bool = False,
     a.ldr(1, 2, byte=True); a.tst_imm(1, 0x10); a.branch("new_read_id_irq", "eq")
     a.ldr(1, 3, byte=True)
     for _ in range(7): a.ldr(1, 0, byte=True)
+    if short_tail_probe:
+        # A3020/82C711 guest counterpart to the WD boundary probe. Seek to
+        # the final cylinder and select its second side in the command byte.
+        for value in (0x0F, 0, 79):
+            a.mov(1, value); a.str(1, 0, byte=True)
+        a.ldr_const(2, 0x03200020)
+        a.ldr_const(8, 2500000)
+        a.label("short_new_seek_irq")
+        a.ldr(1, 2, byte=True); a.tst_imm(1, 0x10)
+        a.branch("short_new_seek_done", "ne")
+        a.subs_imm(8, 8, 1); a.branch("short_new_seek_irq", "ne")
+        a.branch("short_new_fail")
+        a.label("short_new_seek_done")
+        a.ldr_const(0, 0x03310FD4)
+        a.mov(1, 0x08); a.str(1, 0, byte=True)
+        a.ldr(1, 0, byte=True); a.ldr(1, 0, byte=True)
+        for value in (0x06, 4, 79, 1, 3, 3, 4, 0x1B, 0xFF):
+            a.mov(1, value); a.str(1, 0, byte=True)
+        a.ldr_const(2, 0x03200030)
+        a.ldr_const(3, 0x03012000)
+        a.ldr_const(5, 1024)
+        a.ldr_const(8, 2500000)
+        a.mov(6, 0)
+        a.label("short_new_read_wait")
+        a.ldr(7, 2, byte=True); a.tst_imm(7, 1)
+        a.branch("short_new_read_byte", "ne")
+        a.subs_imm(8, 8, 1); a.branch("short_new_read_wait", "ne")
+        a.branch("short_new_fail")
+        a.label("short_new_read_byte")
+        a.ldr_const(8, 2500000)
+        a.subs_imm(5, 5, 1); a.branch("short_new_read_last", "eq")
+        a.ldr(7, 3, byte=True)
+        a.add_lsl(6, 6, 6, 5); a.eor(6, 6, 7)
+        a.branch("short_new_read_wait")
+        a.label("short_new_read_last")
+        a.ldr_const(3, 0x0302A000); a.ldr(7, 3, byte=True)
+        a.add_lsl(6, 6, 6, 5); a.eor(6, 6, 7)
+        a.ldr_const(2, 0x03200020)
+        a.label("short_new_read_irq")
+        a.ldr(7, 2, byte=True); a.tst_imm(7, 0x10)
+        a.branch("short_new_read_irq", "eq")
+        a.ldr_const(3, 0x03310FD0); a.ldr(7, 3, byte=True)
+        a.ldr(4, 0, byte=True)
+        for _ in range(6): a.ldr(7, 0, byte=True)
+        a.tst_imm(4, 0xC0); a.branch("short_new_fail", "ne")
+        a.ldr_const(7, 0x53E21000); a.cmp_reg(6, 7)
+        a.branch("short_new_read_ok", "eq")
+        a.ldr_const(7, 0x26568000); a.cmp_reg(6, 7)
+        a.branch("short_new_fail", "ne")
+        a.label("short_new_read_ok")
+        for value in (0x06, 4, 79, 1, 4, 3, 4, 0x1B, 0xFF):
+            a.mov(1, value); a.str(1, 0, byte=True)
+        a.ldr_const(2, 0x03200030)
+        a.ldr_const(8, 2500000)
+        a.label("short_new_absent_wait")
+        a.ldr_const(3, 0x03200020); a.ldr(7, 3, byte=True)
+        a.tst_imm(7, 0x10); a.branch("short_new_absent_done", "ne")
+        a.subs_imm(8, 8, 1); a.branch("short_new_absent_wait", "ne")
+        a.branch("short_new_fail")
+        a.label("short_new_absent_done")
+        a.ldr_const(3, 0x03310FD0); a.ldr(7, 3, byte=True)
+        a.ldr(4, 0, byte=True); a.ldr(7, 0, byte=True)
+        for _ in range(5): a.ldr(1, 0, byte=True)
+        a.tst_imm(4, 0x40); a.branch("short_new_fail", "eq")
+        a.tst_imm(7, 0x04); a.branch("short_new_fail", "eq")
+        for value in (0x05, 4, 79, 1, 3, 3, 4, 0x1B, 0xFF):
+            a.mov(1, value); a.str(1, 0, byte=True)
+        a.ldr_const(2, 0x03200030)
+        a.ldr_const(3, 0x03012000)
+        a.mov(7, 0x5A); a.ldr_const(5, 1024)
+        a.ldr_const(8, 2500000)
+        a.label("short_new_write_wait")
+        a.ldr(4, 2, byte=True); a.tst_imm(4, 1)
+        a.branch("short_new_write_byte", "ne")
+        a.subs_imm(8, 8, 1); a.branch("short_new_write_wait", "ne")
+        a.branch("short_new_fail")
+        a.label("short_new_write_byte")
+        a.ldr_const(8, 2500000)
+        a.subs_imm(5, 5, 1); a.branch("short_new_write_last", "eq")
+        a.str(7, 3, byte=True); a.branch("short_new_write_wait")
+        a.label("short_new_write_last")
+        a.ldr_const(3, 0x0302A000); a.str(7, 3, byte=True)
+        a.ldr_const(2, 0x03200020)
+        a.label("short_new_write_irq")
+        a.ldr(4, 2, byte=True); a.tst_imm(4, 0x10)
+        a.branch("short_new_write_irq", "eq")
+        a.ldr_const(3, 0x03310FD0); a.ldr(7, 3, byte=True)
+        a.ldr(4, 0, byte=True)
+        for _ in range(6): a.ldr(1, 0, byte=True)
+        a.tst_imm(4, 0xC0); a.branch("short_new_fail", "ne")
+        a.mov(6, 0x10); a.branch("fdc_done")
+        a.label("short_new_fail")
+        a.mov(6, 0x80); a.branch("fdc_done")
     if allocation_mode:
         if allocation_mode in ("veto", "probe-write"):
             allocation_new_read("alloc_new_probe", True)
@@ -777,6 +871,67 @@ def build_rom(media_exerciser: bool = False,
     a.ldr_const(0, 0x03310000)
     a.mov(1, 0)
     a.str(1, 0, 4, byte=True)
+    if short_tail_probe:
+        # WD1772, cylinder 79/head 1: sector 3 is the last present sector
+        # of the one-sector-short D fixture; sector 4 is absent.
+        a.mov(1, 79); a.str(1, 0, 12, byte=True)
+        a.mov(1, 0x10); a.str(1, 0, byte=True)
+        a.ldr_const(3, 300000)
+        a.label("short_seek_wait")
+        a.ldr(4, 0, byte=True); a.tst_imm(4, 1)
+        a.branch("short_seek_done", "eq")
+        a.subs_imm(3, 3, 1); a.branch("short_seek_wait", "ne")
+        a.branch("short_fail")
+        a.label("short_seek_done")
+        a.ldr_const(2, 0x03350040)
+        a.mov(1, 0x8E); a.str(1, 2, byte=True)
+        a.mov(1, 3); a.str(1, 0, 8, byte=True)
+        a.mov(1, 0x80); a.str(1, 0, byte=True)
+        a.ldr_const(5, 1024); a.ldr_const(3, 2500000)
+        a.label("short_present_wait")
+        a.ldr(4, 0, byte=True); a.tst_imm(4, 2)
+        a.branch("short_present_byte", "ne")
+        a.tst_imm(4, 1); a.branch("short_fail", "eq")
+        a.subs_imm(3, 3, 1); a.branch("short_present_wait", "ne")
+        a.branch("short_fail")
+        a.label("short_present_byte")
+        a.ldr(7, 0, 12, byte=True)
+        a.ldr_const(3, 2500000)
+        a.subs_imm(5, 5, 1); a.branch("short_present_wait", "ne")
+        a.label("short_present_finish")
+        a.ldr(4, 0, byte=True); a.tst_imm(4, 1)
+        a.branch("short_present_finish", "ne")
+        a.cmp_imm(4, 0x80); a.branch("short_fail", "ne")
+        a.mov(1, 4); a.str(1, 0, 8, byte=True)
+        a.mov(1, 0x80); a.str(1, 0, byte=True)
+        a.ldr_const(3, 2500000)
+        a.label("short_absent_wait")
+        a.ldr(4, 0, byte=True); a.tst_imm(4, 2)
+        a.branch("short_fail", "ne")
+        a.tst_imm(4, 1); a.branch("short_absent_done", "eq")
+        a.subs_imm(3, 3, 1); a.branch("short_absent_wait", "ne")
+        a.branch("short_fail")
+        a.label("short_absent_done")
+        a.tst_imm(4, 0x10); a.branch("short_fail", "eq")
+        a.mov(1, 3); a.str(1, 0, 8, byte=True)
+        a.mov(1, 0xA0); a.str(1, 0, byte=True)
+        a.ldr_const(5, 1024); a.ldr_const(3, 2500000)
+        a.mov(7, 0x5A)
+        a.label("short_write_wait")
+        a.ldr(4, 0, byte=True); a.tst_imm(4, 1)
+        a.branch("short_write_done", "eq")
+        a.tst_imm(4, 2); a.branch("short_write_tick", "eq")
+        a.str(7, 0, 12, byte=True)
+        a.subs_imm(5, 5, 1); a.branch("short_write_tick", "eq")
+        a.label("short_write_tick")
+        a.subs_imm(3, 3, 1); a.branch("short_write_wait", "ne")
+        a.branch("short_fail")
+        a.label("short_write_done")
+        a.cmp_imm(5, 0); a.branch("short_fail", "ne")
+        a.cmp_imm(4, 0x80); a.branch("short_fail", "ne")
+        a.mov(6, 0x10); a.branch("fdc_done")
+        a.label("short_fail")
+        a.mov(6, 0x80); a.branch("fdc_done")
     if allocation_mode:
         if allocation_mode in ("veto", "probe-write"):
             allocation_wd_read("alloc_wd_probe", True)
@@ -4048,6 +4203,9 @@ def main() -> None:
         for filename, image in checkpoint_names.items():
             (args.checkpoint_name_discs / filename).write_bytes(image)
     media_rom = build_rom(media_exerciser=True)
+    (args.output / "arcdroid-short-tail-wd.rom").write_bytes(
+        build_rom(media_exerciser=True, jfd_save_probe=True,
+                  short_tail_probe=True))
     jfd_save_rom = build_rom(media_exerciser=True, jfd_save_probe=True)
     newio_jfd_save_rom = build_rom(media_exerciser=True, jfd_save_probe=True,
                                    newio_save_probe=True)
@@ -4585,10 +4743,15 @@ def main() -> None:
         (args.output / f"short-e-missing-{missing}.adf").write_bytes(short_e[:-missing])
     short_family = args.output / "short-family"
     short_family.mkdir(exist_ok=True)
+    short_d = build_old_map_media(800 * 1024, 3200, 0xD0)
+    _store_u24(short_d, 0, 12)  # Map, boot block and root are allocated.
+    _store_u24(short_d, 256, 3188)
+    short_d[255] = _old_map_checksum(short_d[:255])
+    short_d[511] = _old_map_checksum(short_d[256:511])
     geometries = (
         ("320k", build_old_map_media(320 * 1024, 1280, 0x31), 4096, 256, "adf"),
         ("640k-l", build_old_map_media(640 * 1024, 2560, 0x64), 8192, 256, "adl"),
-        ("800k-d", build_old_map_media(800 * 1024, 3200, 0xD0), 20480, 1024, "adf"),
+        ("800k-d", short_d, 20480, 1024, "adf"),
         ("800k-e", short_e, 20480, 1024, "adf"),
     )
     for name, full, cap, sector_size, extension in geometries:
@@ -4626,6 +4789,70 @@ def main() -> None:
         bad_checksum = bytearray(full[:-sector_size])
         bad_checksum[255] ^= 1
         (short_family / f"{name}-bad-checksum.{extension}").write_bytes(bad_checksum)
+
+    # Two independently valid E map copies, with a free tail beyond D-064.
+    free_e = build_e_discovery([], b"FreePrefix")
+    free_e[1024:2048] = free_e[:1024]
+    (short_family / "800k-e-free-map.adf").write_bytes(free_e[:-21504])
+    cyclic_e = bytearray(free_e)
+    for copy in (0, 1024):
+        block = bytearray(cyclic_e[copy:copy + 1024])
+        _set_bits(block, 544, 15, 1)  # next free link falls inside this fragment
+        block[0] = _zone_check(block)
+        cyclic_e[copy:copy + 1024] = block
+    (short_family / "800k-e-cyclic-free.adf").write_bytes(cyclic_e[:-21504])
+    unterminated_e = bytearray(free_e)
+    for copy in (0, 1024):
+        block = bytearray(unterminated_e[copy:copy + 1024])
+        block[6911 // 8] &= ~(1 << (6911 & 7))
+        block[0] = _zone_check(block)
+        unterminated_e[copy:copy + 1024] = block
+    (short_family / "800k-e-unterminated.adf").write_bytes(unterminated_e[:-21504])
+    allocated_e = bytearray(free_e)
+    for copy in (0, 1024):
+        block = bytearray(allocated_e[copy:copy + 1024])
+        for bit in range(8, 23):
+            block[bit // 8] &= ~(1 << (bit & 7))
+        block[0] = _zone_check(block)
+        allocated_e[copy:copy + 1024] = block
+    (short_family / "800k-e-allocated-tail.adf").write_bytes(allocated_e[:-21504])
+    conflict_e = bytearray(free_e)
+    block = bytearray(conflict_e[1024:2048])
+    block[26] ^= 1  # Disc-record name: two valid, conflicting copies.
+    block[0] = _zone_check(block)
+    conflict_e[1024:2048] = block
+    (short_family / "800k-e-conflicting-maps.adf").write_bytes(conflict_e[:-21504])
+    allocation_conflict_e = build_e_discovery([(b"Folder", False)], b"FreePrefix")
+    allocation_conflict_e[1024:2048] = allocation_conflict_e[:1024]
+    block = bytearray(allocation_conflict_e[1024:2048])
+    _set_bits(block, 546, 1, 1)  # Allocated child fragment 3 becomes 7; root and free tail agree.
+    block[0] = _zone_check(block)
+    allocation_conflict_e[1024:2048] = block
+    (short_family / "800k-e-conflicting-allocation.adf").write_bytes(
+        allocation_conflict_e[:-21504])
+    directory_tail = build_d_guest_applications(
+        [(b"!Demo", None, b"Synthetic run payload\r")], b"DiscPrefix")
+    tail_first = ADF_SIZE - 2048
+    directory_tail[tail_first:] = directory_tail[3072:5120]
+    _store_u24(directory_tail, 1024 + 5 + 22, tail_first // 256)
+    directory_tail[3072:5120] = bytes(2048)
+    free_first = int.from_bytes(directory_tail[:3], "little")
+    _store_u24(directory_tail, 256, tail_first // 256 - free_first)
+    directory_tail[255] = _old_map_checksum(directory_tail[:255])
+    directory_tail[511] = _old_map_checksum(directory_tail[256:511])
+    (short_family / "discovery-directory-full.adf").write_bytes(directory_tail)
+    (short_family / "discovery-directory-tail.adf").write_bytes(directory_tail[:-1024])
+    payload_tail = build_d_guest_applications(
+        [(b"!Demo", None, b"Synthetic run payload\r")], b"PayloadTail")
+    run = b"Synthetic run payload\r"
+    tail_start = ADF_SIZE - 1024
+    payload_tail[tail_start:tail_start + len(run)] = run
+    _store_u24(payload_tail, 3072 + 5 + 22, tail_start // 256)
+    free_first = int.from_bytes(payload_tail[:3], "little")
+    _store_u24(payload_tail, 256, tail_start // 256 - free_first)
+    payload_tail[255] = _old_map_checksum(payload_tail[:255])
+    payload_tail[511] = _old_map_checksum(payload_tail[256:511])
+    (short_family / "discovery-payload-tail.adf").write_bytes(payload_tail[:-1024])
 
 
 if __name__ == "__main__":
