@@ -4743,10 +4743,15 @@ def main() -> None:
         (args.output / f"short-e-missing-{missing}.adf").write_bytes(short_e[:-missing])
     short_family = args.output / "short-family"
     short_family.mkdir(exist_ok=True)
+    short_d = build_old_map_media(800 * 1024, 3200, 0xD0)
+    _store_u24(short_d, 0, 12)  # Map, boot block and root are allocated.
+    _store_u24(short_d, 256, 3188)
+    short_d[255] = _old_map_checksum(short_d[:255])
+    short_d[511] = _old_map_checksum(short_d[256:511])
     geometries = (
         ("320k", build_old_map_media(320 * 1024, 1280, 0x31), 4096, 256, "adf"),
         ("640k-l", build_old_map_media(640 * 1024, 2560, 0x64), 8192, 256, "adl"),
-        ("800k-d", build_old_map_media(800 * 1024, 3200, 0xD0), 20480, 1024, "adf"),
+        ("800k-d", short_d, 20480, 1024, "adf"),
         ("800k-e", short_e, 20480, 1024, "adf"),
     )
     for name, full, cap, sector_size, extension in geometries:

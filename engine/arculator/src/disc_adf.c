@@ -154,6 +154,20 @@ static int adf_sector_present(int drive, int track, int side, int sector)
            adf[drive].size <= adf[drive].effective_size - offset;
 }
 
+/* ArcDroid modifications: only a sector hidden by a restricted prefix uses
+ * index-pulse search. */
+static int adf_sector_hidden(int drive, int track, int side, int sector)
+{
+    int64_t side_bytes = (int64_t)adf[drive].sectors * adf[drive].size;
+    int64_t offset = ((int64_t)track * (adf[drive].dblside ? 2 : 1) + side)
+                   * side_bytes + (int64_t)sector * adf[drive].size;
+    return adf_extent[drive] && track >= 0 && side >= 0 &&
+           side <= adf[drive].dblside && sector >= 0 &&
+           sector < adf[drive].sectors && offset >= adf[drive].effective_size &&
+           offset >= 0 && offset <= adf[drive].image_size &&
+           adf[drive].size <= adf[drive].image_size - offset;
+}
+
 static void adf_missing(void)
 {
     adf_notfound = -1;
@@ -221,9 +235,9 @@ static void adf_readsector(int drive, int sector, int track, int side, int densi
 		(adf_sector < 0) || (adf_sector >= adf[drive].sectors))
 	{
 //                printf("Not found! %08X (%i %i) %i (%i %i)\n",adff[drive],side,adl[drive],density,track,adftrackc[drive]);
-		if (adf_sector >= 0 && adf_sector < adf[drive].sectors &&
-		    side >= 0 && side <= adf[drive].dblside &&
-		    !adf_sector_present(drive, track, side, adf_sector))
+		if (adf[drive].f && density == adf[drive].density &&
+		    track == adf[drive].track &&
+		    adf_sector_hidden(drive, track, side, adf_sector))
 			adf_missing();
 		else adf_notfound = 500;
 		return;
@@ -252,9 +266,9 @@ static void adf_writesector(int drive, int sector, int track, int side, int dens
 		!adf_sector_present(drive, track, side, adf_sector) ||
 		(adf_sector < 0) || (adf_sector >= adf[drive].sectors))
 	{
-		if (adf_sector >= 0 && adf_sector < adf[drive].sectors &&
-		    side >= 0 && side <= adf[drive].dblside &&
-		    !adf_sector_present(drive, track, side, adf_sector))
+		if (adf[drive].f && density == adf[drive].density &&
+		    track == adf[drive].track &&
+		    adf_sector_hidden(drive, track, side, adf_sector))
 			adf_missing();
 		else adf_notfound = 500;
 		return;
@@ -287,7 +301,12 @@ static void adf_readaddress(int drive, int track, int side, int density)
 		if (adf_sector_present(drive, track, side, candidate))
 		{ found = candidate; break; }
 	}
-	if (found < 0) { adf_missing(); return; }
+	if (found < 0)
+	{
+		if (adf_sector_hidden(drive, track, side, 0)) adf_missing();
+		else adf_notfound = 500;
+		return;
+	}
 	adf[drive].read_id_sector = found;
 	adf_inreadaddr = 1;
 	adf_readpos    = 0;
@@ -312,7 +331,11 @@ static void adf_format(int drive, int track, int side, int density)
 	/* ArcDroid modifications: refuse the whole side before changing a byte. */
 	for (int n = 0; n < adf[drive].sectors; ++n)
 		if (!adf_sector_present(drive, track, side, n))
-		{ adf_missing(); return; }
+		{
+			if (adf_sector_hidden(drive, track, side, n)) adf_missing();
+			else adf_notfound = 500;
+			return;
+		}
 	adf_sector  = 0;
 	adf_readpos = 0;
 	adf_informat  = 1;

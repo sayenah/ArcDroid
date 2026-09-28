@@ -1191,6 +1191,8 @@ static bool arc_short_old_free(const ArcFileCore *fs, size_t size,
       previous = first + count;
       size_t begin = (size_t)first * 256u;
       size_t end = (size_t)previous * 256u;
+      if (begin < fs->root_address + 2048u)
+      { *failure = "old-map free extent overlaps map, boot block, or root directory"; return false; }
       if (begin < size) begin = size;
       for (size_t byte = begin; byte < end; byte += 128u)
          covered[(byte - size) / 128u] = 1u;
@@ -1198,8 +1200,8 @@ static bool arc_short_old_free(const ArcFileCore *fs, size_t size,
    return true;
 }
 
-static bool arc_short_new_free(const ArcFileCore *fs, size_t size,
-                               uint8_t covered[6400], const char **failure)
+static bool arc_short_new_free(const ArcFileCore *fs, uint8_t covered[6400],
+                               const char **failure)
 {
    unsigned start = 512u;
    unsigned end = 512u + 8192u - fs->zone_spare - 480u;
@@ -1223,9 +1225,10 @@ static bool arc_short_new_free(const ArcFileCore *fs, size_t size,
       { *failure = "E map fragment is out of range"; return false; }
       if (start == free_at)
       {
-         size_t begin = first < size ? size : first;
-         for (size_t byte = begin; byte < first + bytes; byte += 128u)
-            covered[(byte - size) / 128u] = 1u;
+         if (first < 2048u)
+         { *failure = "E free fragment overlaps map or boot block"; return false; }
+         for (size_t byte = first; byte < first + bytes; byte += 128u)
+            covered[byte / 128u] = 1u;
          free_at = id ? start + id : 0u;
          if (free_at && (free_at <= stop || free_at >= end))
          { *failure = "E free chain is cyclic or out of range"; return false; }
@@ -1266,7 +1269,7 @@ bool arc_short_free_map_proof(const uint8_t *data, size_t size,
       {
          if (!arc_short_old_free(&fs, size, covered, failure)) return false;
       }
-      else if (!arc_short_new_free(&fs, size, covered, failure)) return false;
+      else if (!arc_short_new_free(&fs, covered, failure)) return false;
       *failure = "root directory is missing or unresolved";
       if (geometry == ARC_GEOMETRY_800K_D)
       {
@@ -1276,16 +1279,22 @@ bool arc_short_free_map_proof(const uint8_t *data, size_t size,
       {
          size_t root_sector;
          for (unsigned part = 0u; part < 2u; ++part)
+         {
             if (!arc_new_map_resolve(&fs, fs.root_address, part, &root_sector) ||
                 root_sector > size || 1024u > size - root_sector)
                return false;
+            for (size_t byte = root_sector; byte < root_sector + 1024u; byte += 128u)
+               if (covered[byte / 128u])
+               { *failure = "E free fragment overlaps root directory"; return false; }
+         }
       }
       if (copy && memcmp(first_copy, covered, sizeof(covered)))
       { *failure = "valid map copies conflict"; return false; }
       if (!copy) memcpy(first_copy, covered, sizeof(covered));
       *failure = "map does not show the missing area free";
       for (size_t at = 0u; at < (declared - size) / 128u; ++at)
-         if (!covered[at]) return false;
+         if (!covered[geometry == ARC_GEOMETRY_800K_E ? size / 128u + at : at])
+            return false;
    }
    *failure = NULL;
    return true;

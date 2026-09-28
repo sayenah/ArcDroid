@@ -18,3 +18,9 @@ beyond the existing tolerance are accepted only for standard 800 K D and
 single-zone E formats whose source map proves the entire missing area free.
 The missing bytes are unknown; ArcDroid makes no claim that the original disc
 tail was blank or unformatted.
+
+Discovery can classify an application when its directory is present but its
+`!Run` payload lies in the missing extent. A guest read of that payload then
+fails with a disc error. The new media stamp invalidates remembered Slice 14
+boot observations once; affected self-booting titles re-learn after one
+detection.

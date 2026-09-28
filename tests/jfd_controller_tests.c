@@ -862,6 +862,19 @@ static void newio_start_read(unsigned drive, uint8_t sector, uint8_t size)
       c82c711_fdc_write(5u, params[i], NULL);
 }
 
+static void newio_start_read_track(unsigned drive, uint8_t track,
+                                   uint8_t sector, uint8_t size)
+{
+   const uint8_t params[8] = {
+      (uint8_t)drive, track, 0u, sector, size, sector, 0x1bu, 0xffu
+   };
+   c82c711_fdc_write(2u, 0x0cu, NULL);
+   c82c711_fdc_write(2u, (uint8_t)(0x0cu | (0x10u << drive) | drive), NULL);
+   c82c711_fdc_write(5u, 0x06u, NULL);
+   for (unsigned i = 0u; i < sizeof(params); ++i)
+      c82c711_fdc_write(5u, params[i], NULL);
+}
+
 static void newio_start_id(unsigned side)
 {
    c82c711_fdc_write(5u, 0x0au, NULL);
@@ -2329,8 +2342,17 @@ static void test_short_raw_wd(void)
           transfer_count == 1024u && transfer[0] == 2u);
    wd1770_write(0x08u, 3u);
    uint64_t before = tsc;
-   assert(finish_command(0x80u, 1300000u) == 0x10u && transfer_count == 0u);
-   assert((tsc - before) / TIMER_USEC >= 1000000u);
+   fdc_funcs_t observed;
+   observe_indexes(&observed);
+   transfer_count = 0u; ioc.fiq = 0u;
+   wd1770_write(0x00u, 0x80u);
+   uint64_t limit = tsc + (uint64_t)1300000u * TIMER_USEC;
+   while (!(ioc.fiq & IOC_FIQ_DISC_IRQ) && tsc < limit) step_controller();
+   assert((ioc.fiq & IOC_FIQ_DISC_IRQ) && transfer_count == 0u &&
+          observed_index_pulses == 5u && wd1770_read(0x00u) == 0x10u);
+   assert((tsc - before) / TIMER_USEC >= 800000u &&
+          (tsc - before) / TIMER_USEC < 1050000u);
+   fdc_funcs = original_controller_funcs;
    wd_write_mode = true; wd_write_value = 0x6au;
    uint8_t absent_write = finish_command(0xa0u, 1300000u);
    /* WD1770 requests its initial byte before its reader's search completes. */
@@ -2352,6 +2374,25 @@ static void test_short_raw_wd(void)
    wd1770_writelatch_a(0x9eu);
    assert(finish_command(0xf0u, 1300000u) == 0x10u &&
           !memcmp(raw_helper + 3072u, original + 3072u, raw_helper_length - 3072u));
+   disc_close(0);
+   /* Upstream out-of-backing-image RNF remains the 500-poll path. */
+   controller_reset(NULL);
+   assert(disc_load_raw(0, "memory-helper.adl", ARC_GEOMETRY_800K_D));
+   for (unsigned track = 80u; track <= 81u; ++track)
+   {
+      wd1770_write(0x0cu, (uint8_t)track);
+      assert(finish_command(0x10u, 1100000u) == 0x80u);
+      wd1770_write(0x08u, 0u);
+      before = tsc;
+      transfer_count = 0u; ioc.fiq = 0u;
+      wd1770_write(0x00u, 0x80u);
+      uint64_t quick_limit = tsc + (uint64_t)100000u * TIMER_USEC;
+      while (!(ioc.fiq & IOC_FIQ_DISC_IRQ) && tsc < quick_limit)
+         step_controller();
+      assert((ioc.fiq & IOC_FIQ_DISC_IRQ) && transfer_count == 0u &&
+             (tsc - before) / TIMER_USEC < 100000u &&
+             wd1770_read(0x00u) == 0x10u);
+   }
    disc_close(0);
    controller_reset(NULL);
    assert(disc_load_raw_extent(0, "memory-helper.adl", ARC_GEOMETRY_800K_D,
@@ -2465,6 +2506,28 @@ static void test_short_raw_newio(void)
    newio_start_id(1u);
    newio_wait_irq(500000u); newio_result(result);
    assert(result[0] & 0x40u);
+   c82c711_fdc_shutdown();
+   disc_close(0);
+   newio_reset(NULL, false);
+   assert(disc_load_raw(0, "memory-helper.adl", ARC_GEOMETRY_800K_E));
+   for (unsigned track = 80u; track <= 81u; ++track)
+   {
+      c82c711_fdc_write(5u, 0x0fu, NULL);
+      c82c711_fdc_write(5u, 0u, NULL);
+      c82c711_fdc_write(5u, (uint8_t)track, NULL);
+      newio_wait_irq(500000u);
+      c82c711_fdc_write(5u, 0x08u, NULL);
+      uint8_t seek_status = c82c711_fdc_read(5u, NULL);
+      uint8_t seek_track = c82c711_fdc_read(5u, NULL);
+      assert(!(seek_status & 0xc0u) && seek_track == track);
+      transfer_count = 0u;
+      uint64_t before = tsc;
+      newio_start_read_track(0u, (uint8_t)track, 0u, 3u);
+      newio_wait_irq(100000u); newio_result(result);
+      assert((tsc - before) / TIMER_USEC < 100000u &&
+             (result[0] & 0x40u) && result[1] == 5u &&
+             transfer_count == 0u);
+   }
    c82c711_fdc_shutdown();
    disc_close(0);
    newio_reset(NULL, false);
