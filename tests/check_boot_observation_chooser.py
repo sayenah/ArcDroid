@@ -1,5 +1,6 @@
 """Remembered prompt precedence on a synthetic multi-application disc."""
 from pathlib import Path
+import os
 import subprocess
 import sys
 import tempfile
@@ -18,11 +19,20 @@ def main() -> None:
         assert result.returncode == 0, result.stdout + result.stderr
         log = (root / "evidence" / "real-boot.log").read_text()
         lines = [line for line in log.splitlines() if line.startswith("Launch:")]
+        if os.environ.get("ARCDROID_TEST_POWER_ON_SHIFT") == "1":
+            # A chooser decision can be logged before any machine exists.
+            constructions = log.count("Power-on: boot-flag=clear shift=held")
+            assert 1 <= constructions <= len(lines), log
+            assert log.count("Power-on: shift released at=") <= constructions, log
         return log, lines
 
     log, lines = run("--boot-chooser-pick")
     assert len(lines) == 3 and "recovery=chooser" in lines[1], lines
     assert "recovery=helper" in lines[2]
+    if os.environ.get("ARCDROID_TEST_POWER_ON_SHIFT") == "1":
+        assert log.count("Power-on: boot-flag=clear shift=held") == 2, log
+        assert log.index("recovery=chooser") < log.rindex(
+            "Power-on: boot-flag=clear shift=held"), log
     records = list((root / "save" / "arcdroid" / "launch").glob("*.boot"))
     choices = list((root / "save" / "arcdroid" / "launch").glob("*.choice"))
     assert len(records) == len(choices) == 1
@@ -31,6 +41,8 @@ def main() -> None:
     log, lines = run("--boot-chooser-pick")
     assert len(lines) == 2 and "remembered boot observation" in lines[0], lines
     assert "chooser chose target" in lines[1] and "Boot outcome:" not in log
+    if os.environ.get("ARCDROID_TEST_POWER_ON_SHIFT") == "1":
+        assert log.count("Power-on: boot-flag=clear shift=held") == 1, log
 
     log, lines = run()
     assert len(lines) == 1 and "remembered boot observation" in lines[0], lines

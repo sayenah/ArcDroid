@@ -94,6 +94,7 @@ static char machine_resolution_log[128];
 static unsigned machine_resolution_lines;
 static unsigned riscpc_log_count;
 static unsigned cmos_healing_log_count;
+static unsigned power_on_construction_lines;
 static unsigned cmos_ignored_log_count;
 static unsigned cmos_summary_attempts;
 static unsigned cmos_summary_changes;
@@ -137,6 +138,9 @@ static unsigned cmos_write_count;
 static unsigned cmos_locked_debug_write_count;
 static unsigned real_boot_frames = 3000u;
 static bool real_boot_cancel_input;
+static bool real_boot_cancel_shift;
+static const char *real_boot_user_shift;
+static bool real_boot_incomplete_fields;
 static bool real_boot_reset_once;
 static bool real_boot_chooser_pick;
 static bool real_boot_chooser_continue;
@@ -491,7 +495,9 @@ static void frontend_log(enum retro_log_level level, const char *format, ...)
    { assert(level == RETRO_LOG_INFO); ++ramdisc_publication_logs; }
    if (install_guest_logging &&
        (strstr(message,"Install disc:") || strstr(message,"JFD boot:") ||
-        strstr(message,"Machine:") || level >= RETRO_LOG_ERROR))
+        strstr(message,"Machine:") ||
+        (getenv("ARCDROID_TEST_POWER_ON_SHIFT") &&
+         strstr(message,"Power-on:")) || level >= RETRO_LOG_ERROR))
       fprintf(stderr,"%s",message);
    if (strstr(message, "Install disc: store-publication=committed"))
       ++install_publication_seen;
@@ -558,6 +564,8 @@ static void frontend_log(enum retro_log_level level, const char *format, ...)
    if (strstr(message, "CMOS write ")) ++cmos_write_count;
    if (strstr(message, "CMOS write addr=ED ")) ++cmos_locked_debug_write_count;
    if (strstr(message, "CMOS: cleared ")) { assert(level == RETRO_LOG_INFO); ++cmos_healing_log_count; }
+   if (strstr(message, "Power-on: boot-flag="))
+   { assert(level == RETRO_LOG_INFO); ++power_on_construction_lines; }
    if (strstr(message, "CMOS: guest write to unplug byte "))
    { assert(level == RETRO_LOG_INFO); ++cmos_ignored_log_count; }
    if (strstr(message, "not a recognised ADFS image")) saw_adfs_advisory = true;
@@ -1852,6 +1860,19 @@ static bool parse_real_boot_options(int count, char *const args[],
       else if (!strcmp(args[argument], "--boot-cancel-input") &&
                !real_boot_cancel_input)
          real_boot_cancel_input = true;
+      else if (!strcmp(args[argument], "--boot-cancel-shift") &&
+               !real_boot_cancel_shift)
+         real_boot_cancel_shift = true;
+      else if (!strcmp(args[argument], "--boot-user-shift") &&
+               !real_boot_user_shift && argument + 1 < count)
+      {
+         real_boot_user_shift = args[++argument];
+         if (strcmp(real_boot_user_shift, "early") &&
+             strcmp(real_boot_user_shift, "late")) return false;
+      }
+      else if (!strcmp(args[argument], "--boot-incomplete-fields") &&
+               !real_boot_incomplete_fields)
+         real_boot_incomplete_fields = true;
       else if (!strcmp(args[argument], "--boot-reset-once") &&
                !real_boot_reset_once)
          real_boot_reset_once = true;
@@ -2060,7 +2081,13 @@ int main(int argc, char **argv)
    bool jfd_quarantine_adffs = false;
    char jfd_content_path[4096] = {0}, jfd_fixture_path[4096] = {0};
    const char *osk_script = NULL;
-   if (argc == 11 && !strcmp(argv[5], "--newio-smoke"))
+   bool power_on_cmos_guest = argc == 6 && !strcmp(argv[5], "--power-on-cmos-guest");
+   if (power_on_cmos_guest)
+   {
+      assert(getenv("ARCDROID_TEST_POWER_ON_SHIFT") &&
+             !strcmp(getenv("ARCDROID_TEST_POWER_ON_SHIFT"), "1"));
+   }
+   else if (argc == 11 && !strcmp(argv[5], "--newio-smoke"))
       newio_smoke = true;
    else if (argc == 8 && !strcmp(argv[5], "--install-guest"))
       install_guest = true;
@@ -2133,7 +2160,7 @@ int main(int argc, char **argv)
       assert(mkdtemp(jfd_run_path));
       data_root = jfd_run_path;
    }
-   if (cmos_exerciser)
+   if (cmos_exerciser || power_on_cmos_guest)
    {
       make_directory(argv[4]);
       assert(snprintf(cmos_run_path, sizeof(cmos_run_path), "%s/cmos-run-XXXXXX", argv[4]) < (int)sizeof(cmos_run_path));
@@ -2274,6 +2301,12 @@ int main(int argc, char **argv)
       *(void **)(&arc_engine_test_newio) = dlsym(module, "arc_engine_test_newio");
    if (real_boot)
    {
+      if (real_boot_incomplete_fields)
+      {
+         *(void **)(&arc_engine_test_set_vidc_noncompleting) =
+            dlsym(module, "arc_engine_test_set_vidc_noncompleting");
+         assert(arc_engine_test_set_vidc_noncompleting);
+      }
       *(void **)(&arc_engine_test_boot_watch_snapshot) =
          dlsym(module, "arc_engine_test_boot_watch_snapshot");
       assert(arc_engine_test_boot_watch_snapshot);
@@ -2327,7 +2360,7 @@ int main(int argc, char **argv)
              arc_engine_test_floppy_reads &&
              arc_engine_test_drive_media);
    }
-   if (cmos_exerciser)
+   if (cmos_exerciser || power_on_cmos_guest)
    {
       *(void **)(&arc_engine_test_cmos_image) = dlsym(module, "arc_engine_test_cmos_image");
       *(void **)(&arc_engine_test_cmos_write) = dlsym(module, "arc_engine_test_cmos_write");
@@ -2365,7 +2398,7 @@ int main(int argc, char **argv)
          dlsym(module, "arc_libretro_test_boot_media_digest");
       assert(arc_libretro_test_boot_media_digest);
    }
-   if (!cmos_exerciser && !install_guest && !real_boot && !newio_smoke && !jfd_writes && !jfd_create_step &&
+   if (!cmos_exerciser && !power_on_cmos_guest && !install_guest && !real_boot && !newio_smoke && !jfd_writes && !jfd_create_step &&
        !jfd_identification_step &&
        !jfd_merge_step && !jfd_allocation_step && !jfd_allocation_set &&
        !short_tail_guest && !short_tail_discovery &&
@@ -2905,6 +2938,35 @@ int main(int argc, char **argv)
       return 0;
    }
 
+   if (power_on_cmos_guest)
+   {
+      phase = PHASE_LOAD; assert(retro_load_game(&game));
+      phase = PHASE_RUN;
+      for (unsigned frame = 0u; frame < 35u; ++frame) retro_run();
+      uint8_t image[ARC_CMOS_MACHINE_SIZE], record[ARC_CMOS_RECORD_SIZE];
+      assert(arc_engine_test_cmos_image(image));
+      assert((image[0x50u] & 0x10u) && image[0x58u] == 0x77u &&
+             image[0x59u] == 0xa5u);
+      assert(power_on_construction_lines == 1u); /* guest reset did not arm */
+      char record_path[4096];
+      snprintf(record_path, sizeof(record_path), "%s", arc_libretro_test_cmos_path());
+      read_exact(record_path, record, sizeof(record));
+      assert(!(record[0x50u] & 0x10u) && record[0x58u] == 0x77u);
+      retro_unload_game();
+      record[0x50u] |= 0x10u; /* pre-slice forced flag in a valid record */
+      write_exact(record_path, record, sizeof(record));
+      phase = PHASE_LOAD; assert(retro_load_game(&game));
+      phase = PHASE_RUN;
+      for (unsigned frame = 0u; frame < 5u; ++frame) retro_run();
+      read_exact(record_path, record, sizeof(record));
+      assert(!(record[0x50u] & 0x10u) && cmos_healing_log_count >= 1u);
+      assert(power_on_construction_lines == 2u);
+      retro_unload_game();
+      retro_deinit();
+      assert(open_files == 0u && open_dirs == 0u && dlclose(module) == 0);
+      puts("power-on-cmos-guest: passed");
+      return 0;
+   }
    if (cmos_exerciser)
    {
       phase = PHASE_LOAD; assert(retro_load_game(&game));
@@ -4934,6 +4996,8 @@ int main(int argc, char **argv)
          fprintf(stderr, "real_boot_harness: load failed: %s\n", last_message);
          return 2;
       }
+      if (real_boot_incomplete_fields)
+         arc_engine_test_set_vidc_noncompleting(true);
       char firmware_message[sizeof(last_message)];
       snprintf(firmware_message, sizeof(firmware_message), "%s", last_message);
       phase = PHASE_RUN;
@@ -4965,6 +5029,11 @@ int main(int argc, char **argv)
                make_directory(arc_libretro_test_cmos_path());
             if (real_boot_cancel_input)
                joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_A] = frame == 10u;
+            if (real_boot_cancel_shift && (frame == 10u || frame == 11u))
+               keyboard.callback(frame == 10u, RETROK_LSHIFT, 0u, 0u);
+            if (real_boot_user_shift &&
+                (frame == 5u || frame == (!strcmp(real_boot_user_shift, "early") ? 30u : 90u)))
+               keyboard.callback(frame == 5u, RETROK_LSHIFT, 0u, 0u);
             if (real_boot_reset_once && frame == 150u) retro_reset();
             if (real_boot_ramdisc_toggle_reset && frame == 150u)
             {
@@ -5070,7 +5139,8 @@ int main(int argc, char **argv)
       }
       assert((osk_script ? video_frames > 0u : video_frames == real_boot_frames) &&
              audio_frames > 0u && video_signature_count > 0u);
-      assert(vidc_osd_ext_calls == 0u && vidc_osd_legacy_calls == 0u);
+      if (!real_boot_incomplete_fields && !real_boot_package)
+         assert(vidc_osd_ext_calls == 0u && vidc_osd_legacy_calls == 0u);
       assert(dlclose(module) == 0);
       printf("real_boot_harness: %s; %u frames, %u signatures, trace %016llx, "
              "final %016llx, "

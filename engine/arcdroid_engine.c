@@ -59,6 +59,45 @@ int support_rom_enabled;
 
 static bool arc_active;
 static ArcBootWatch arc_boot_watch;
+/* ArcDroid power-on Shift observes the boot SWI independently of Slice 14. */
+static bool arc_power_on_armed;
+static bool arc_power_on_release_pending;
+static bool arc_power_on_boot_reason;
+static ArcInputState *arc_power_on_input;
+static uint64_t arc_power_on_start_tsc;
+static uint64_t arc_power_on_release_us;
+
+static uint64_t arc_engine_power_on_elapsed_us(void)
+{
+   return arc_active && speed_mhz > 0 ?
+      arc_timestamp_elapsed_cycles(arc_power_on_start_tsc, tsc) /
+         (uint64_t)speed_mhz : 0u;
+}
+static void arc_engine_power_on_release(bool boot_action)
+{
+   if (!arc_power_on_armed) return;
+   arc_power_on_armed = false;
+   arc_power_on_release_pending = true;
+   arc_power_on_boot_reason = boot_action;
+   arc_power_on_release_us = arc_engine_power_on_elapsed_us();
+   arc_input_source_key(arc_power_on_input, ARC_INPUT_SOURCE_POWER_ON,
+                        RETROK_LSHIFT, false, true);
+}
+void arc_engine_power_on_arm(ArcInputState *input, bool armed)
+{
+   arc_power_on_input = input;
+   arc_power_on_armed = armed && arc_active;
+   arc_power_on_release_pending = false;
+   arc_power_on_start_tsc = tsc;
+}
+bool arc_engine_power_on_take_release(uint64_t *at_us, bool *boot_action)
+{
+   if (!arc_power_on_release_pending) return false;
+   arc_power_on_release_pending = false;
+   if (at_us) *at_us = arc_power_on_release_us;
+   if (boot_action) *boot_action = arc_power_on_boot_reason;
+   return true;
+}
 
 void arc_engine_boot_watch_arm(void)
 { if (arc_active) arc_boot_watch_arm(&arc_boot_watch, (tsc >> 32u) / (uint64_t)speed_mhz); }
@@ -74,6 +113,9 @@ void arc_engine_boot_watch_swi(uint32_t swi, uint32_t r0, uint32_t r1,
                                uint32_t r2, uint32_t r3, uint32_t address,
                                uint32_t mode)
 {
+   /* ArcDroid patch: the power-on release must work with the observer off. */
+   if ((swi == 0x29u || swi == 0x20029u) && r0 == 15u)
+      arc_engine_power_on_release(true);
    if (arc_boot_watch.state != ARC_BOOT_WATCH_ARMED) return;
    bool in_rom = memstat[(address & 0x03ffffffu) >> 12u] == 5u;
    arc_boot_watch_observe(&arc_boot_watch, swi, r0, r1, r2, r3,
@@ -688,6 +730,9 @@ bool arc_engine_reset(char *failure, size_t failure_size)
 
 void arc_engine_stop(void)
 {
+   arc_power_on_armed = false;
+   arc_power_on_release_pending = false;
+   arc_power_on_input = NULL;
    arc_boot_watch_clear(&arc_boot_watch);
    if (arc_machine_live)
       cmos_get_image(arc_saved_cmos, sizeof(arc_saved_cmos));
@@ -744,6 +789,9 @@ bool arc_engine_run_frame(ArcInputState *input, ArcEngineFrame *frame)
    do
    {
       execarm(2048);
+      /* ArcDroid patch: count CPU time, including incomplete video fields. */
+      if (arc_power_on_armed && arc_engine_power_on_elapsed_us() >= UINT64_C(1000000))
+         arc_engine_power_on_release(false);
       (void)arc_platform_video_frame(NULL, NULL, NULL, &sequence);
    } while (
 #if defined(ARCDROID_TEST_FAULTS)

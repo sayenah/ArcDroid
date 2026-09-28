@@ -184,13 +184,13 @@ static void test_boot_stamp_starting_cmos(void)
          assert(arc_cmos_machine_image(os, io, fresh, false, image));
          memcpy(persisted, image + 16u, sizeof(persisted));
          assert(!(fresh[80u - 16u] & 0x10u));
-         assert(persisted[80u - 16u] & 0x10u);
+         assert(!(persisted[80u - 16u] & 0x10u));
          assert(arc_cmos_boot_stamp_payload(os, io, fresh, false, starting));
          assert(arc_cmos_boot_stamp_payload(os, io, persisted, false, repeated));
          arc_sha1_hex(starting, sizeof(starting), first_stamp);
          arc_sha1_hex(repeated, sizeof(repeated), second_stamp);
          assert(strcmp(first_stamp, second_stamp) == 0);
-         assert(starting[80u - 16u] & 0x10u);
+         assert(!(starting[80u - 16u] & 0x10u));
          assert(starting[arc_cmos_raw_address(239u) - 16u] == 0u);
          assert(arc_cmos_boot_stamp_payload(os, io, fresh, true, repeated));
          assert(memcmp(starting, repeated, sizeof(starting)) == 0);
@@ -372,7 +372,7 @@ static void test_media_launch_and_cmos(void)
    assert(arc_cmos_default(ARC_OS_RISCOS_311, ARC_IO_OLD_WD1770, payload));
    assert(arc_cmos_machine_image(ARC_OS_RISCOS_311, ARC_IO_OLD_WD1770, payload, false, machine_cmos));
    assert(machine_cmos[69] == 8u && !(machine_cmos[75] & 7u));
-   assert((machine_cmos[80] & 0x10u) && (machine_cmos[199] & 7u) == 1u);
+   assert(!(machine_cmos[80] & 0x10u) && (machine_cmos[199] & 7u) == 1u);
    assert(arc_cmos_machine_image(ARC_OS_RISCOS_311, ARC_IO_OLD_WD1770, payload, true, machine_cmos));
    assert((machine_cmos[75] & 7u) == 1u && (machine_cmos[199] & 7u) == 2u);
    payload[42] = 0x5au;

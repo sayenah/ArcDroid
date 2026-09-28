@@ -7,7 +7,7 @@
 #include <stdint.h>
 
 /* Change this when boot observation or launch preparation semantics change. */
-#define ARC_BOOT_OBSERVATION_REVISION 1u
+#define ARC_BOOT_OBSERVATION_REVISION 2u
 #define ARC_BOOT_OBSERVATION_SIZE 160u
 
 typedef struct {

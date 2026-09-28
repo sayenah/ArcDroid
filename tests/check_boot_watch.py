@@ -12,6 +12,7 @@ def main() -> None:
     data_root = tempfile.mkdtemp(prefix="run-", dir=output)
     switches = {
         "input-cancel": ["--boot-cancel-input"],
+        "shift-cancel": ["--boot-cancel-shift"],
         "reset": ["--boot-reset-once"],
         "chooser-pick": ["--boot-chooser-pick"],
         "chooser-continue": ["--boot-chooser-continue"],
@@ -140,7 +141,7 @@ def main() -> None:
     else:
         assert all("phase=initial" in line for line in lines), lines
         assert "Boot outcome: prompt" not in log, lines
-        terminal = "cancelled" if expected == "input-cancel" else expected
+        terminal = "cancelled" if expected in ("input-cancel", "shift-cancel") else expected
         assert any(f"boot-watch={terminal}" in line for line in lines[1:]), lines
     print(f"boot-watch-harness: {expected} passed")
 

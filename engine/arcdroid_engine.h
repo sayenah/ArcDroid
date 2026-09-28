@@ -54,6 +54,8 @@ void arc_engine_set_log_callback(ArcEngineLogCallback callback, void *opaque);
 bool arc_engine_reset(char *error, size_t error_size);
 void arc_engine_stop(void);
 bool arc_engine_run_frame(ArcInputState *input, ArcEngineFrame *frame);
+void arc_engine_power_on_arm(ArcInputState *input, bool armed);
+bool arc_engine_power_on_take_release(uint64_t *at_us, bool *boot_action);
 void arc_engine_boot_watch_arm(void);
 void arc_engine_boot_watch_cancel(void);
 ArcBootWatchState arc_engine_boot_watch_state(void);

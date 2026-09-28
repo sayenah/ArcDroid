@@ -1,5 +1,6 @@
 """End-to-end remembered prompt checks using executed synthetic SWIs."""
 from pathlib import Path
+import os
 import subprocess
 import sys
 import tempfile
@@ -20,8 +21,14 @@ def main() -> None:
                                 text=True, check=False)
         assert result.returncode == 0, result.stdout + result.stderr
         log = (root / "evidence" / "real-boot.log").read_text()
-        return log, [line for line in log.splitlines()
-                     if line.startswith("Launch:")]
+        lines = [line for line in log.splitlines()
+                 if line.startswith("Launch:")]
+        if os.environ.get("ARCDROID_TEST_POWER_ON_SHIFT") == "1":
+            assert log.count("Power-on: boot-flag=clear shift=held") == len(lines), log
+            # Recovery can construct just before the harness ends; its timer
+            # release belongs to later emulated time.
+            assert log.count("Power-on: shift released at=") <= len(lines), log
+        return log, lines
 
     log, lines = run()
     assert len(lines) == 2 and "boot-watch=armed" in lines[0], lines
@@ -32,12 +39,20 @@ def main() -> None:
     original = record.read_bytes()
     assert len(original) == 160 and original[:8] == b"ARCBOOT1"
     assert int.from_bytes(original[8:12], "little") == 1
-    assert int.from_bytes(original[12:16], "little") == 1
+    assert int.from_bytes(original[12:16], "little") == 2
 
     log, lines = run()
     assert len(lines) == 1 and "remembered boot observation; disc !Boot skipped" in lines[0], lines
     assert "boot-watch=disabled" in lines[0] and "Boot outcome:" not in log
     assert "helper=" in lines[0] and ".adl" in lines[0]
+
+    revision_one = bytearray(original)
+    revision_one[12:16] = (1).to_bytes(4, "little")
+    record.write_bytes(revision_one)
+    log, lines = run()
+    assert len(lines) == 2 and "boot-watch=armed" in lines[0], lines
+    assert "Boot outcome: prompt" in log
+    assert int.from_bytes(record.read_bytes()[12:16], "little") == 2
 
     log, lines = run(("--boot-reset-once",))
     assert len(lines) == 2 and all("remembered boot observation" in line for line in lines), lines

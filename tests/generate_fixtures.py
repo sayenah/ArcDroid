@@ -166,7 +166,10 @@ def build_rom(media_exerciser: bool = False,
               boot_write_sectors: tuple[int, ...] = (1, 2),
               cmos_exerciser: bool = False,
               short_tail_probe: bool = False,
-              quarantine_probe: bool = False) -> bytearray:
+              quarantine_probe: bool = False,
+              power_on_probe: str | None = None) -> bytearray:
+    if power_on_probe not in (None, "early-swi", "early-xswi", "late-kart", "cmos-boot"):
+        raise ValueError("unknown power-on probe")
     if boot_watch_pattern not in (None, "prompt", "prompt-write", "prompt-structure", "two-phase", "cli", "cli-confirm", "horizon-edge",
                                   "cli-then-prompt", "desktop"):
         raise ValueError("unknown synthetic boot observation")
@@ -191,6 +194,10 @@ def build_rom(media_exerciser: bool = False,
     rom[0:4] = struct.pack("<I", 0xE59FF000)  # ldr pc, [pc]
     rom[8:12] = struct.pack("<I", 0x03800020)
     a = Arm2(0x03800020)
+    if power_on_probe in ("early-swi", "early-xswi"):
+        a.mov(0, 15)
+        a.emit(0xEF020029 if power_on_probe == "early-xswi" else 0xEF000029)
+        # OS_FSControl 15, including X form; the authored vector returns.
     if boot_watch_pattern:
         a.branch("boot_watch_start")
     if cmos_exerciser:
@@ -232,6 +239,23 @@ def build_rom(media_exerciser: bool = False,
             a.branch(failure, "ne")
 
         read_check(0x58, 0x77, "first_pass")
+        if power_on_probe == "cmos-boot":
+            read_check(0x50, 0x10, "failed")
+            write(0x59, 0xa5)
+            a.branch("idle")
+            a.label("first_pass")
+            write(0x50, 0x10)  # guest *Configure Boot bit
+            write(0x58, 0x77)
+            a.mov(15, 0x03800000)  # guest branches through reset vector
+            a.label("failed")
+            write(0x59, 0xee)
+            a.label("idle")
+            a.branch("idle")
+            code = a.finish()
+            rom[0x20:0x20 + len(code)] = code
+            marker = b"ARCDROID INVENTED POWER-ON CMOS GUEST v1\0"
+            rom[0x1f00:0x1f00 + len(marker)] = marker
+            return rom
         write(0xed, 0x96)  # repeat the locked write on every later boot
         read_check(0xed, 0x00, "failed")
         read_check(0x58, 0x77, "failed")
@@ -1208,6 +1232,12 @@ def build_rom(media_exerciser: bool = False,
     a.ldr_const(0, 0x036E0D0C)  # sound + video DMA on
     a.str(1, 0)
 
+    if power_on_probe == "late-kart":
+        # Leave both Shift transitions queued before enabling the controller.
+        a.ldr_const(5, 1000000)
+        a.label("power_on_late_kart")
+        a.subs_imm(5, 5, 1)
+        a.branch("power_on_late_kart", "ne")
     # Complete the standard KART reset handshake and enable keyboard + mouse.
     # Event bytes handled below are folded into the first displayed guest word.
     a.ldr_const(11, 0x03300000)
@@ -1236,6 +1266,8 @@ def build_rom(media_exerciser: bool = False,
 
     # Two modes are programmed by the guest, with enough dwell for coalescing.
     a.mov(9, 0)
+    if power_on_probe == "early-swi":
+        a.mov(12, 0)  # count complete KART pairs since this guest reset
     a.ldr_const(10, 250000)
     a.label("idle")
     if jfd_save_probe:
@@ -1307,7 +1339,19 @@ def build_rom(media_exerciser: bool = False,
     a.mov(4, 0x33)
     a.str(4, 11, 4, byte=True)
     a.str(6, 8)
+    if power_on_probe == "early-swi":
+        # The boot program immediately resets after consuming Shift key-up.
+        # No core construction occurs, so the hold must not be re-armed.
+        a.add_imm(12, 12, 1)
+        a.cmp_imm(12, 2)
+        a.branch("power_on_reset_after_up", "eq")
     a.branch("idle")
+    if power_on_probe == "early-swi":
+        a.label("power_on_reset_after_up")
+        a.ldr_const(2, 0x03310000)
+        a.mov(4, 0xD0)
+        a.str(4, 2, byte=True)
+        a.ldr_const(15, 0x03800000)
     a.label("mode_fast")
     a.ldr_const(0, 0xA04DC000)  # 312 total lines
     a.mov(9, 0)
@@ -1505,7 +1549,7 @@ def build_rom(media_exerciser: bool = False,
 
     code = a.finish()
     rom[0x20:0x20 + len(code)] = code
-    if boot_watch_pattern:
+    if boot_watch_pattern or power_on_probe in ("early-swi", "early-xswi"):
         rom[0:4] = struct.pack("<I", 0xE59FF004)  # reset literal at 0x0c
         rom[8:12] = struct.pack("<I", 0xEA000000)  # SWI vector -> 0x10
         rom[12:16] = struct.pack("<I", 0x03800020)
@@ -3597,6 +3641,14 @@ def main() -> None:
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
     (args.output / "arcdroid-test.rom").write_bytes(build_rom())
+    (args.output / "arcdroid-power-on-early-swi.rom").write_bytes(
+        build_rom(power_on_probe="early-swi"))
+    (args.output / "arcdroid-power-on-early-xswi.rom").write_bytes(
+        build_rom(power_on_probe="early-xswi"))
+    (args.output / "arcdroid-power-on-late-kart.rom").write_bytes(
+        build_rom(power_on_probe="late-kart"))
+    (args.output / "arcdroid-power-on-cmos-guest.rom").write_bytes(
+        build_rom(cmos_exerciser=True, power_on_probe="cmos-boot"))
     for pattern in ("prompt", "prompt-write", "cli", "cli-then-prompt", "desktop", "cli-confirm", "horizon-edge", "two-phase"):
         (args.output / f"arcdroid-boot-{pattern}.rom").write_bytes(
             build_rom(boot_watch_pattern=pattern))
