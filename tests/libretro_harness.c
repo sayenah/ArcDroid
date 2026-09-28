@@ -2635,7 +2635,9 @@ int main(int argc, char **argv)
       option_writes = "off";
       phase = PHASE_LOAD; assert(retro_load_game(&game));
       assert(strstr(machine_resolution_log, "resolved=A3000") &&
-             jfd_quarantine_log_lines == 1u);
+             jfd_quarantine_log_lines == 1u &&
+             strstr(last_jfd_identification_log, "timing=none captured=none") &&
+             strstr(last_jfd_identification_log, "reason=quarantined"));
       struct retro_game_info second = {argv[6], NULL, 0u, NULL};
       assert(disk_control.set_eject_state(true));
       assert(!disk_control.replace_image_index(0u, &second) &&
@@ -2696,6 +2698,16 @@ int main(int argc, char **argv)
              zip_omission_log_lines == omitted &&
              jfd_quarantine_notice_calls == 0u &&
              strstr(last_jfd_quarantine_log, "sides=1 first=158:octal-density"));
+      if (strstr(game.path, ".zip"))
+      {
+         char image_path[4096];
+         assert(disk_control.get_num_images() == 2u &&
+                disk_control.get_image_path(0u, image_path, sizeof(image_path)) &&
+                strstr(image_path, "quarantine-guest.zip#Disc1.jfd") &&
+                disk_control.get_image_path(1u, image_path, sizeof(image_path)) &&
+                strstr(image_path, "quarantine-guest.zip#Disc2.jfd") &&
+                strstr(last_zip_order, "1=\"Disc1.jfd\" 2=\"Disc2.jfd\""));
+      }
       bool protected_before = false;
       char mounted_digest[41], reset_digest[41];
       assert(arc_engine_test_drive_media(0u, &protected_before,
@@ -2710,7 +2722,9 @@ int main(int argc, char **argv)
       retro_reset(); last_video_pixel = 0u;
       bool protected_after = false;
       assert(jfd_quarantine_log_lines == warnings + 2u &&
-             disk_control.get_num_images() == 1u &&
+             zip_omission_log_lines == omitted &&
+             disk_control.get_num_images() ==
+                (strstr(game.path, ".zip") ? 2u : 1u) &&
              arc_engine_test_drive_media(0u, &protected_after, reset_digest) &&
              protected_before == protected_after &&
              !strcmp(mounted_digest, reset_digest));

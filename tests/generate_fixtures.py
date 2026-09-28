@@ -4558,6 +4558,16 @@ def main() -> None:
         bytes(launch_created), {0: full, 1: full}))
     (creation / "launch-partial.jfd").write_bytes(build_pdd5_jfd(
         bytes(launch_created), {0: [0, 2, 3, 4], 1: full}))
+    launch_hidden = build_d_discovery(
+        [(b"!Visible", True), (b"FolderA", False),
+         (b"FolderB", False), (b"!Hidden", True)], b"HiddenSide")
+    hidden_image = build_pdd5_jfd(bytes(launch_hidden),
+                                  {0: full, 1: full, 2: full + [9]})
+    at = pdd5_descriptor_offset(hidden_image, 2, 9)
+    header = struct.unpack_from("<I", hidden_image, at)[0]
+    struct.pack_into("<I", hidden_image, at,
+                     (header & ~(0xF << 16)) | (8 << 16))
+    (creation / "launch-nonmap-quarantine.jfd").write_bytes(hidden_image)
     (creation / "partial-untimed.jfd").write_bytes(build_pdd5_jfd(
         bytes(disc1), {0: full, 1: [0, 2, 4], 159: [0, 2, 4],
                        160: [0], 165: [0]}, track_count=166))
@@ -4633,6 +4643,20 @@ def main() -> None:
     (creation / "half-vote.jfd").write_bytes(build_pdd5_jfd(
         bytes(disc1), {0: full, 1: full + [9]},
         {1: {0: 0, 1: 32, 2: 64, 3: 96, 4: 128, 9: 160}}))
+    # A valid old map allocates every quarantined side. All 160 sides have
+    # captured data, so 80 compatible sides are exactly half the vote.
+    tie_map = build_d_discovery([], b"GateTie")
+    _store_u24(tie_map, 0, 20)
+    _store_u24(tie_map, 256, 1000)
+    tie_map[510] = 3
+    tie_map[255] = _old_map_checksum(tie_map[:255])
+    tie_map[511] = _old_map_checksum(tie_map[256:511])
+    tie = build_pdd5_jfd(bytes(tie_map), {side: full for side in range(160)})
+    for side in range(80, 160):
+        at = pdd5_descriptor_offset(tie, side, 4)
+        header = struct.unpack_from("<I", tie, at)[0]
+        struct.pack_into("<I", tie, at, (header & ~(0xF << 16)) | (8 << 16))
+    (creation / "quarantine-majority-tie.jfd").write_bytes(tie)
     (creation / "irregular-all-ids.jfd").write_bytes(build_pdd5_jfd(
         bytes(disc1), {0: full, 1: full + [9], 2: full},
         {1: {0: 0, 1: 32, 2: 64, 3: 96, 4: 128, 9: 160}}))
@@ -4756,8 +4780,8 @@ def main() -> None:
         [(0, 0, 4, 1, 0, bytes(2048))],
         second_descriptors=((0, 0, 4, 2, 0, bytes(1024)),)))
     guest = build_pdd5_jfd(bytes([0x5A]) * 819200,
-                           {158: [3], 159: [3]})
-    guest_header_at = pdd5_descriptor_offset(guest, 158, 3)
+                           {158: [3, 4], 159: [3]})
+    guest_header_at = pdd5_descriptor_offset(guest, 158, 4)
     guest_header = struct.unpack_from("<I", guest, guest_header_at)[0]
     struct.pack_into("<I", guest, guest_header_at,
                      (guest_header & ~(0xF << 16)) | (8 << 16))
@@ -4765,6 +4789,8 @@ def main() -> None:
     with zipfile.ZipFile(family / "quarantine-guest.zip", "w",
                          zipfile.ZIP_STORED) as archive:
         archive.writestr("Disc1.jfd", guest)
+        archive.writestr("Disc2.jfd", build_pdd5_jfd(
+            bytes([0x5A]) * 819200, {159: [3]}))
     (args.output / "arcdroid-jfd-quarantine.rom").write_bytes(
         build_rom(quarantine_probe=True))
     large = build_jfd_family([(0, 0, 2, 1, 0, bytes(128 << 15))],
@@ -4773,7 +4799,8 @@ def main() -> None:
     struct.pack_into("<I", large, large_second + 4, 4096)
     (family / "quarantine-large-alias.jfd").write_bytes(large)
     for name, change in (("invalid-density", 3 << 16),
-                         ("invalid-time", 201 << 24)):
+                         ("invalid-time", 201 << 24),
+                         ("invalid-time-254", 254 << 24)):
         damaged = bytearray(late)
         at = 312 + 2 * 8 + 4
         header = struct.unpack_from("<I", damaged, at)[0]

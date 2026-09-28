@@ -100,6 +100,8 @@ int main(int argc, char **argv)
    assert(plain.tracks[0].sector_count == 2u && plain.tracks[1].sector_count == 1u &&
           plain.sectors[0].id == 1u && plain.sectors[1].size == 2048u &&
           plain.sectors[2].id == 3u && plain.sectors[2].data_offset != UINT32_MAX);
+   assert(!arc_jfd_sector_write_eligible(&plain, 0u) &&
+          !arc_jfd_sector_write_eligible(&plain, 1u));
    ArcJfdView view;
    assert(!arc_jfd_effective_sector(&plain, 0u, 0u, false, &view) &&
           arc_jfd_effective_sector(&plain, 1u, 0u, false, &view) &&
@@ -111,6 +113,21 @@ int main(int argc, char **argv)
           info.kind == ARC_MEDIA_JFD);
    arc_jfd_free(&plain);
    arc_jfd_free(&gzip);
+
+   ArcJfdImage guest = load(argv[1], "quarantine-guest.jfd", true);
+   assert(guest.tracks[158].sector_count == 2u &&
+          !strcmp(guest.tracks[158].quarantine_reason, "octal-density"));
+   size_t readable = guest.tracks[158].first_sector;
+   assert(guest.sectors[readable].id == 3u &&
+          guest.sectors[readable].density == 2u &&
+          guest.sectors[readable].size == 1024u);
+   assert(!arc_jfd_effective_sector(&guest, 158u, 0u, false, &view));
+   assert(!arc_jfd_sector_write_eligible(&guest, readable));
+   guest.tracks[158].quarantine_reason = NULL;
+   assert(arc_jfd_effective_sector(&guest, 158u, 0u, false, &view) &&
+          view.sector.id == 3u && view.data && view.data[0] == 0x5au);
+   assert(arc_jfd_sector_write_eligible(&guest, readable));
+   arc_jfd_free(&guest);
 
    ArcJfdImage below = load(argv[1], "schedule-below.jfd", true);
    assert(!below.tracks[0].quarantine_reason && below.sector_count == 4u);
@@ -143,6 +160,7 @@ int main(int argc, char **argv)
    reject(argv[1], "reject-delta.jfd", "delta");
    reject(argv[1], "quarantine-then-invalid-density.jfd", "density");
    reject(argv[1], "quarantine-then-invalid-time.jfd", "time");
+   reject(argv[1], "quarantine-then-invalid-time-254.jfd", "time");
    reject(argv[1], "quarantine-then-bad-payload.jfd", "payload");
    reject(argv[1], "quarantine-same-side-invalid.jfd", "density");
    reject(argv[1], "quarantine-large-out-of-bounds.jfd", "payload");

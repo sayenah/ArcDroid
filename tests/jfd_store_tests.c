@@ -622,6 +622,17 @@ static void test_primary_map_scope(const char *root)
    assert(arc_launch_discover(NULL, 0u, NULL, &image, &discovery) &&
           !discovery.readable && discovery.application_count == 0u);
    arc_jfd_free(&image);
+   image = creation_fixture(root, "launch-nonmap-quarantine.jfd");
+   assert(image.tracks[2].quarantine_reason &&
+          !image.tracks[0].quarantine_reason &&
+          arc_launch_discover(NULL, 0u, NULL, &image, &discovery) &&
+          discovery.readable && discovery.application_count == 1u);
+   /* The second application directory spans only side 2. The first
+    * application and the map/root metadata remain visible. */
+   image.tracks[2].quarantine_reason = NULL;
+   assert(arc_launch_discover(NULL, 0u, NULL, &image, &discovery) &&
+          discovery.readable && discovery.application_count == 2u);
+   arc_jfd_free(&image);
 }
 static ArcJfdImage load(bool writable)
 {
@@ -726,6 +737,33 @@ static void test_layout_low(const char *root, const char *kind)
 }
 static void test_quarantine_gate(const char *root)
 {
+   clear_files();
+   ArcJfdImage tie = creation_fixture(root, "quarantine-majority-tie.jfd");
+   unsigned compatible = 0u, hidden = 0u;
+   for (unsigned side = 0u; side < 160u; ++side)
+   {
+      assert(tie.tracks[side].sector_count == 5u);
+      if (tie.tracks[side].quarantine_reason)
+      {
+         assert(!strcmp(tie.tracks[side].quarantine_reason, "octal-density"));
+         ++hidden;
+      }
+      else ++compatible;
+   }
+   assert(compatible == 80u && hidden == 80u);
+   const char *tie_reason = NULL;
+   assert(arc_jfd_store_load(&tie, "save", true, false, 1u, &tie_reason) &&
+          tie.overlay->writable && !tie.overlay->pdd5_profile &&
+          tie.overlay->layout_supported && tie.overlay->creation_capacity == 0u &&
+          !strcmp(tie_reason, "rw-flag"));
+   tie.overlay->map_enabled = true;
+   arc_jfd_map_prepare(&tie);
+   assert(tie.overlay->map_valid && tie.overlay->map_kind == 1u);
+   for (unsigned side = 80u; side < 160u; ++side)
+      assert(tie.overlay->creation_mask[side] == 0u &&
+             tie.overlay->probe_mask[side] == 0u);
+   arc_jfd_free(&tie);
+   clear_files();
    static const struct { const char *name; bool writable; } cases[] = {
       {"irregular-allocated.jfd", true},
       {"irregular-free.jfd", false},

@@ -2556,7 +2556,7 @@ static void arc_finish_jfd_preparation(ArcMediaEntry *entry, bool native)
          entry->jfd.tracks[first].quarantine_reason, quarantined - 1u);
    char captured[40] = {0}, presented[40] = {0};
    size_t c_at = 0u, p_at = 0u;
-   if (entry->jfd.track_count)
+   if (entry->jfd.track_count && !entry->jfd.tracks[0].quarantine_reason)
    {
       const ArcJfdTrack *track = &entry->jfd.tracks[0];
       for (unsigned i = 0u; i < track->sector_count && c_at + 4u < sizeof(captured); ++i)
@@ -2583,7 +2583,8 @@ static void arc_finish_jfd_preparation(ArcMediaEntry *entry, bool native)
       entry->jfd.identification_format == 'E' ? "E" :
       entry->jfd.identification_format == 'F' ? "F" : "none",
       entry->jfd.identification_schedule,
-      native && entry->jfd.track_count && entry->jfd.tracks[0].sector_count ?
+      native && entry->jfd.track_count && entry->jfd.tracks[0].sector_count &&
+         !entry->jfd.tracks[0].quarantine_reason ?
          entry->jfd.tracks[0].timed ? "timed" : "untimed" : "none",
       captured[0] ? captured : "none", presented[0] ? presented : "none",
       entry->jfd.identification_basis,

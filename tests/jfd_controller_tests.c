@@ -715,6 +715,9 @@ static void test_quarantine_wd(const char *root)
    }
    fdc_funcs = original_controller_funcs;
    assert(finish_command(0xa0u, 1000u) == 0x40u && transfer_count == 0u);
+   jfd_commits = 0u;
+   assert(finish_command(0xf0u, 1000u) == 0x40u &&
+          transfer_count == 0u && jfd_commits == 0u);
    wd1770_writelatch_a(0x8eu);
    wd1770_write(0x08u, 3u);
    assert(finish_command(0x80u, 1100000u) == 0x80u &&
@@ -730,6 +733,9 @@ static void test_quarantine_wd(const char *root)
    uint8_t write_status = finish_command(0xa0u, 1100000u);
    assert(write_status == 0x10u &&
           transfer_count <= 1u && jfd_commits == 0u);
+   transfer_count = 0u;
+   assert(finish_command(0xf0u, 1000u) == 0x40u &&
+          transfer_count == 0u && jfd_commits == 0u);
    wd1770_writelatch_a(0x8eu);
    wd1770_write(0x08u, 3u);
    assert(finish_command(0x80u, 1100000u) == 0x80u &&
@@ -1200,6 +1206,17 @@ static void test_quarantine_newio(const char *root)
    newio_result(result);
    assert(result[0] == 0x40u && result[1] == 0x02u &&
           transfer_count == 0u && jfd_commits == 0u);
+   /* The 82C711 rejects this FORMAT command on the quarantined side
+    * before requesting any CHRN bytes. */
+   transfer_count = 0u;
+   c82c711_fdc_write(5u, 0x0du, NULL);
+   const uint8_t quarantine_format[5] = {0u, 0u, 0u, 0x1bu, 0u};
+   for (unsigned i = 0u; i < 5u; ++i)
+      c82c711_fdc_write(5u, quarantine_format[i], NULL);
+   newio_wait_irq(1000u);
+   newio_result(result);
+   assert((result[0] & 0x40u) && result[1] == 0x10u &&
+          transfer_count == 0u && jfd_commits == 0u);
    newio_dma_write = false;
    newio_start_id(1u);
    newio_wait_irq(400000u);
@@ -1224,6 +1241,14 @@ static void test_quarantine_newio(const char *root)
    newio_result(result);
    assert((result[0] & 0x40u) && result[1] == 5u &&
           transfer_count <= 1u && jfd_commits == 0u);
+   transfer_count = 0u;
+   c82c711_fdc_write(5u, 0x0du, NULL);
+   for (unsigned i = 0u; i < 5u; ++i)
+      c82c711_fdc_write(5u, quarantine_format[i], NULL);
+   newio_wait_irq(1000u);
+   newio_result(result);
+   assert((result[0] & 0x40u) && result[1] == 0x10u &&
+          transfer_count == 0u && jfd_commits == 0u);
    c82c711_fdc_shutdown(); disc_close(0); arc_jfd_free(&image);
 }
 
