@@ -1,20 +1,38 @@
 name: CI
 on:
   push:
-    branches: [main, "slice/**"]
+    branches: [main]
+    paths-ignore:
+      - 'docs/**'
+      - '**/*.md'
   pull_request:
+    paths-ignore:
+      - 'docs/**'
+      - '**/*.md'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   host:
     runs-on: ubuntu-latest
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
     steps:
       - uses: actions/checkout@v4
       - name: Install build tools
-        run: sudo apt-get update && sudo apt-get install -y cmake ninja-build python3
+        run: sudo apt-get update && sudo apt-get install -y cmake ninja-build python3 ccache
+      - uses: actions/cache@v4
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ${{ runner.os }}-host-gcc-${{ hashFiles('CMakeLists.txt') }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            ${{ runner.os }}-host-gcc-${{ hashFiles('CMakeLists.txt') }}-
       - name: Asset guard
         run: tools/check-assets.sh
       - name: Configure
-        run: cmake -S . -B build/host -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo
+        run: cmake -S . -B build/host -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
       - name: Build
         run: cmake --build build/host --verbose
       - name: Shipping source I/O guard self-test
@@ -23,15 +41,26 @@ jobs:
         run: ctest --test-dir build/host --output-on-failure
       - name: Export guard
         run: tools/check-exports.sh build/host/arcdroid_libretro.so
+      - name: ccache statistics
+        if: always()
+        run: ccache -s
 
   host-sanitizers:
     runs-on: ubuntu-latest
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
     steps:
       - uses: actions/checkout@v4
       - name: Install build tools
-        run: sudo apt-get update && sudo apt-get install -y cmake ninja-build python3
+        run: sudo apt-get update && sudo apt-get install -y cmake ninja-build python3 ccache
+      - uses: actions/cache@v4
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ${{ runner.os }}-host-sanitizers-gcc-${{ hashFiles('CMakeLists.txt') }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            ${{ runner.os }}-host-sanitizers-gcc-${{ hashFiles('CMakeLists.txt') }}-
       - name: Configure ASan and UBSan
-        run: cmake -S . -B build/sanitize -G Ninja -DCMAKE_BUILD_TYPE=Debug -DARCDROID_SANITIZERS=ON
+        run: cmake -S . -B build/sanitize -G Ninja -DCMAKE_BUILD_TYPE=Debug -DARCDROID_SANITIZERS=ON -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
       - name: Build ASan and UBSan
         run: cmake --build build/sanitize --verbose
       - name: Host tests under ASan and UBSan
@@ -39,9 +68,14 @@ jobs:
           ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
           UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
         run: ctest --test-dir build/sanitize --output-on-failure -R '^(boot-watch|boot-watch-.*-harness|boot-observation|boot-observation-.*-harness|cmos-device-bus|cmos-guest-exerciser|install-disc-formatter|install-ide-registers|install-disc-store|install-guest-process|zip-content|core-services|short-tail-unit|short-raw-wd|short-raw-newio|short-tail-guest|short-tail-newio-guest|jfd-quarantine-zip-guest|jfd-quarantine-density|jfd-quarantine-adffs|short-tail-payload-guest|short-tail-discovery|adffs-package-media|adffs-shipping-profile|jfd-engine-reader|jfd-identification|jfd-quarantine|jfd-quarantine-wd-guest|jfd-quarantine-newio-guest|jfd-store|jfd-controller-golden|newio-controller-golden|jfd-writes-libretro-harness|jfd-creation-process|jfd-merge-process|jfd-allocation-process|jfd-identification-process|jfd-gate-short|jfd-gate-irregular|jfd-gate-timing|libretro-harness|newio-libretro-harness|mouse-script-harness)$'
+      - name: ccache statistics
+        if: always()
+        run: ccache -s
 
   windows:
     runs-on: windows-latest
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
     defaults:
       run:
         shell: msys2 {0}
@@ -51,9 +85,15 @@ jobs:
         with:
           msystem: UCRT64
           update: true
-          install: git mingw-w64-ucrt-x86_64-binutils mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-cmake mingw-w64-ucrt-x86_64-ninja
+          install: git mingw-w64-ucrt-x86_64-binutils mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-cmake mingw-w64-ucrt-x86_64-ninja mingw-w64-ucrt-x86_64-ccache
+      - uses: actions/cache@v4
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ${{ runner.os }}-windows-ucrt64-gcc-${{ hashFiles('CMakeLists.txt') }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            ${{ runner.os }}-windows-ucrt64-gcc-${{ hashFiles('CMakeLists.txt') }}-
       - name: Configure
-        run: cmake -S . -B build/windows -G Ninja -DCMAKE_BUILD_TYPE=Release
+        run: cmake -S . -B build/windows -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
       - name: Build
         run: cmake --build build/windows --verbose
       - name: Shipping source I/O guard self-test
@@ -147,6 +187,9 @@ jobs:
           name: arcdroid-windows-retroarch-input
           path: build/windows/retroarch-package/
           if-no-files-found: error
+      - name: ccache statistics
+        if: always()
+        run: ccache -s
 
   windows-retroarch:
     needs: windows
