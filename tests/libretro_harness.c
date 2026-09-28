@@ -95,6 +95,9 @@ static unsigned machine_resolution_lines;
 static unsigned riscpc_log_count;
 static unsigned cmos_healing_log_count;
 static unsigned power_on_construction_lines;
+static unsigned power_on_clear_lines;
+static unsigned kart_shift_down_lines;
+static unsigned kart_shift_up_lines;
 static unsigned cmos_ignored_log_count;
 static unsigned cmos_summary_attempts;
 static unsigned cmos_summary_changes;
@@ -127,6 +130,7 @@ static bool pointer_contact_pressed[3];
 static bool pointer_offscreen[3];
 static int pointer_contact_x[3], pointer_contact_y[3];
 static bool real_boot_mode;
+static unsigned real_boot_current_frame;
 static char evidence_path[4096];
 static char pending_screenshot[256];
 static FILE *evidence_log;
@@ -142,8 +146,10 @@ static bool real_boot_cancel_shift;
 static const char *real_boot_user_shift;
 static bool real_boot_incomplete_fields;
 static bool real_boot_reset_once;
+static unsigned real_boot_reset_frame = 150u;
 static bool real_boot_chooser_pick;
 static bool real_boot_chooser_continue;
+static bool real_boot_chooser_hold_confirm;
 static bool real_boot_chooser_reset;
 static bool real_boot_chooser_unload;
 static bool real_boot_cmos_write_fail;
@@ -560,12 +566,16 @@ static void frontend_log(enum retro_log_level level, const char *format, ...)
    if (strstr(message, "ADFS Read sector")) ++adf_sector_reads;
    if (strstr(message, "disc_load 0 ")) ++disc_load_count;
    if (strstr(message, "KART ")) ++kart_traffic_count;
+   if (strstr(message, "KART device->guest values=C4,CC")) ++kart_shift_down_lines;
+   if (strstr(message, "KART device->guest values=D4,DC")) ++kart_shift_up_lines;
    if (strstr(message, "CMOS read ")) ++cmos_read_count;
    if (strstr(message, "CMOS write ")) ++cmos_write_count;
    if (strstr(message, "CMOS write addr=ED ")) ++cmos_locked_debug_write_count;
    if (strstr(message, "CMOS: cleared ")) { assert(level == RETRO_LOG_INFO); ++cmos_healing_log_count; }
    if (strstr(message, "Power-on: boot-flag="))
    { assert(level == RETRO_LOG_INFO); ++power_on_construction_lines; }
+   if (strstr(message, "Power-on: boot-flag=clear shift=held"))
+   { assert(level == RETRO_LOG_INFO); ++power_on_clear_lines; }
    if (strstr(message, "CMOS: guest write to unplug byte "))
    { assert(level == RETRO_LOG_INFO); ++cmos_ignored_log_count; }
    if (strstr(message, "not a recognised ADFS image")) saw_adfs_advisory = true;
@@ -663,6 +673,12 @@ static void frontend_log(enum retro_log_level level, const char *format, ...)
    if (evidence_log)
    {
       fputs(message, evidence_log);
+      if (real_boot_mode && strstr(message, "KART device->guest values=D4,DC"))
+         fprintf(evidence_log, "Power-on probe frame=%u event=up\n",
+                 real_boot_current_frame);
+      if (real_boot_mode && strstr(message, "Power-on: shift released at="))
+         fprintf(evidence_log, "Power-on probe frame=%u event=release\n",
+                 real_boot_current_frame);
       fflush(evidence_log);
    }
 }
@@ -1876,6 +1892,14 @@ static bool parse_real_boot_options(int count, char *const args[],
       else if (!strcmp(args[argument], "--boot-reset-once") &&
                !real_boot_reset_once)
          real_boot_reset_once = true;
+      else if (!strcmp(args[argument], "--boot-reset-at") &&
+               argument + 1 < count)
+      {
+         char *end = NULL;
+         unsigned long value = strtoul(args[++argument], &end, 10);
+         if (!end || *end || value < 1u || value > 149u) return false;
+         real_boot_reset_frame = (unsigned)value;
+      }
       else if (!strcmp(args[argument], "--boot-ramdisc") && argument + 1 < count)
       {
          const char *value = args[++argument];
@@ -1891,6 +1915,9 @@ static bool parse_real_boot_options(int count, char *const args[],
       else if (!strcmp(args[argument], "--boot-chooser-continue") &&
                !real_boot_chooser_continue && !real_boot_chooser_pick)
          real_boot_chooser_continue = true;
+      else if (!strcmp(args[argument], "--boot-chooser-hold-confirm") &&
+               !real_boot_chooser_hold_confirm)
+         real_boot_chooser_hold_confirm = true;
       else if (!strcmp(args[argument], "--boot-chooser-reset") &&
                !real_boot_chooser_reset && !real_boot_chooser_unload)
          real_boot_chooser_reset = true;
@@ -2081,7 +2108,7 @@ int main(int argc, char **argv)
    bool jfd_quarantine_adffs = false;
    char jfd_content_path[4096] = {0}, jfd_fixture_path[4096] = {0};
    const char *osk_script = NULL;
-   bool power_on_cmos_guest = argc == 6 && !strcmp(argv[5], "--power-on-cmos-guest");
+   bool power_on_cmos_guest = argc == 7 && !strcmp(argv[5], "--power-on-cmos-guest");
    if (power_on_cmos_guest)
    {
       assert(getenv("ARCDROID_TEST_POWER_ON_SHIFT") &&
@@ -2955,12 +2982,19 @@ int main(int argc, char **argv)
       retro_unload_game();
       record[0x50u] |= 0x10u; /* pre-slice forced flag in a valid record */
       write_exact(record_path, record, sizeof(record));
+      copy_file(argv[6], renamed); /* KART-capable authored ROM for healed boot */
+      unsigned clear_before = power_on_clear_lines;
+      unsigned down_before = kart_shift_down_lines;
+      unsigned up_before = kart_shift_up_lines;
       phase = PHASE_LOAD; assert(retro_load_game(&game));
       phase = PHASE_RUN;
-      for (unsigned frame = 0u; frame < 5u; ++frame) retro_run();
+      for (unsigned frame = 0u; frame < 130u; ++frame) retro_run();
       read_exact(record_path, record, sizeof(record));
       assert(!(record[0x50u] & 0x10u) && cmos_healing_log_count >= 1u);
       assert(power_on_construction_lines == 2u);
+      assert(power_on_clear_lines == clear_before + 1u);
+      assert(kart_shift_down_lines == down_before + 1u &&
+             kart_shift_up_lines == up_before + 1u);
       retro_unload_game();
       retro_deinit();
       assert(open_files == 0u && open_dirs == 0u && dlclose(module) == 0);
@@ -5004,6 +5038,7 @@ int main(int argc, char **argv)
       bool script_ok = true;
       bool boot_helper_cmos_verified = false;
       bool boot_chooser_seed_verified = false;
+      bool chooser_held_confirm_seen = false;
       if (osk_script)
       {
          OskScriptApi script_api = {
@@ -5019,6 +5054,7 @@ int main(int argc, char **argv)
       else
          for (unsigned frame = 0; frame < real_boot_frames; ++frame)
          {
+            real_boot_current_frame = frame;
             if (real_boot_cmos_sentinel && frame == 10u)
                assert(arc_engine_test_cmos_write &&
                       arc_engine_test_cmos_write(216u, 0x5au));
@@ -5034,7 +5070,7 @@ int main(int argc, char **argv)
             if (real_boot_user_shift &&
                 (frame == 5u || frame == (!strcmp(real_boot_user_shift, "early") ? 30u : 90u)))
                keyboard.callback(frame == 5u, RETROK_LSHIFT, 0u, 0u);
-            if (real_boot_reset_once && frame == 150u) retro_reset();
+            if (real_boot_reset_once && frame == real_boot_reset_frame) retro_reset();
             if (real_boot_ramdisc_toggle_reset && frame == 150u)
             {
                option_launch_ramdisc = !strcmp(option_launch_ramdisc, "Auto") ?
@@ -5057,12 +5093,22 @@ int main(int argc, char **argv)
             }
             if (real_boot_chooser_pick || real_boot_chooser_continue)
             {
+               unsigned confirm_frame = real_boot_chooser_hold_confirm ? 220u : 120u;
                joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_DOWN] =
-                  real_boot_chooser_continue && (frame == 120u || frame == 122u);
+                  real_boot_chooser_continue &&
+                  (frame == confirm_frame || frame == confirm_frame + 2u);
                joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_A] =
-                  frame == (real_boot_chooser_continue ? 124u : 120u);
+                  real_boot_chooser_hold_confirm ?
+                  (frame >= confirm_frame + (real_boot_chooser_continue ? 4u : 0u) &&
+                   frame < confirm_frame + 24u) :
+                  frame == confirm_frame + (real_boot_chooser_continue ? 4u : 0u);
             }
+            unsigned constructions_before_run = power_on_construction_lines;
             retro_run();
+            if (real_boot_chooser_hold_confirm && real_boot_chooser_pick &&
+                power_on_construction_lines > constructions_before_run &&
+                joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_A])
+               chooser_held_confirm_seen = true;
             if (real_boot_expect_disabled)
             {
                ArcBootWatch watch;
@@ -5089,6 +5135,8 @@ int main(int argc, char **argv)
          }
       if (boot_helper_cmos_verified)
          puts("boot helper CMOS fields and checksum verified");
+      if (real_boot_chooser_hold_confirm && real_boot_chooser_pick)
+         assert(chooser_held_confirm_seen);
       if (real_boot_cmos_ramdisc)
       {
          uint8_t image[ARC_CMOS_MACHINE_SIZE];

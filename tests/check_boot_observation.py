@@ -4,14 +4,16 @@ import os
 import subprocess
 import sys
 import tempfile
+from power_on_guest_assert import assert_guest_shift_each_construction
 
 
 def main() -> None:
     harness, core, rom, alternate_rom, content, output = sys.argv[1:]
     Path(output).mkdir(parents=True, exist_ok=True)
     root = Path(tempfile.mkdtemp(prefix="run-", dir=output))
+    power_on = os.environ.get("ARCDROID_TEST_POWER_ON_SHIFT") == "1"
     command = [harness, core, rom, content, str(root), "--real-boot",
-               "--boot-frames", "180"]
+               "--boot-frames", "360" if power_on else "180"]
 
     def run(extra=(), firmware=None):
         selected = command.copy()
@@ -23,11 +25,8 @@ def main() -> None:
         log = (root / "evidence" / "real-boot.log").read_text()
         lines = [line for line in log.splitlines()
                  if line.startswith("Launch:")]
-        if os.environ.get("ARCDROID_TEST_POWER_ON_SHIFT") == "1":
-            assert log.count("Power-on: boot-flag=clear shift=held") == len(lines), log
-            # Recovery can construct just before the harness ends; its timer
-            # release belongs to later emulated time.
-            assert log.count("Power-on: shift released at=") <= len(lines), log
+        if power_on:
+            assert_guest_shift_each_construction(log, len(lines))
         return log, lines
 
     log, lines = run()
@@ -146,6 +145,8 @@ def main() -> None:
         ask_log = (ask_root / "evidence" / "real-boot.log").read_text()
         ask_lines = [line for line in ask_log.splitlines()
                      if line.startswith("Launch:")]
+        if power_on:
+            assert_guest_shift_each_construction(ask_log, 2 if attempt == 1 else 1)
         if attempt == 1:
             assert len(ask_lines) == 2 and "recovery=helper" in ask_lines[1], ask_lines
         else:

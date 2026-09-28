@@ -167,12 +167,15 @@ def build_rom(media_exerciser: bool = False,
               cmos_exerciser: bool = False,
               short_tail_probe: bool = False,
               quarantine_probe: bool = False,
-              power_on_probe: str | None = None) -> bytearray:
+              power_on_probe: str | None = None,
+              boot_watch_kart: bool = False) -> bytearray:
     if power_on_probe not in (None, "early-swi", "early-xswi", "late-kart", "cmos-boot"):
         raise ValueError("unknown power-on probe")
     if boot_watch_pattern not in (None, "prompt", "prompt-write", "prompt-structure", "two-phase", "cli", "cli-confirm", "horizon-edge",
                                   "cli-then-prompt", "desktop"):
         raise ValueError("unknown synthetic boot observation")
+    if boot_watch_kart and boot_watch_pattern not in ("prompt", "cli-then-prompt"):
+        raise ValueError("KART boot probe needs a supported observation pattern")
     expected_payload = (1024 * len(boot_write_sectors)
                         if boot_watch_pattern == "prompt-structure" else 1024)
     if boot_watch_pattern == "prompt-structure" and (
@@ -1371,6 +1374,28 @@ def build_rom(media_exerciser: bool = False,
             a.str(1, 0)
         a.ldr_const(0, 0x036E0D0C)
         a.str(1, 0)
+        if boot_watch_kart:
+            # Guest handshake lets the ordinary FIFO -> KART route deliver
+            # the construction's Shift transitions during recovery/chooser.
+            a.ldr_const(11, 0x03300000)
+            a.mov(0, 0xFD); a.str(0, 11, 4, byte=True)
+            a.ldr_const(5, 5000)
+            a.label("boot_kart_reset_wait")
+            a.subs_imm(5, 5, 1); a.branch("boot_kart_reset_wait", "ne")
+            a.ldr(0, 11, 4, byte=True)
+            a.mov(0, 0x33); a.str(0, 11, 4, byte=True)
+            a.mov(9, 2)  # complete Shift down and up before the boot SWI
+            a.label("boot_watch_kart_wait")
+            a.ldr(0, 11, 0x20, byte=True)
+            a.tst_imm(0, 0x80); a.branch("boot_watch_kart_wait", "eq")
+            a.ldr(0, 11, 4, byte=True)
+            a.mov(4, 0x3F); a.str(4, 11, 4, byte=True)
+            a.label("boot_watch_kart_second")
+            a.ldr(0, 11, 0x20, byte=True)
+            a.tst_imm(0, 0x80); a.branch("boot_watch_kart_second", "eq")
+            a.ldr(0, 11, 4, byte=True)
+            a.mov(4, 0x33); a.str(4, 11, 4, byte=True)
+            a.subs_imm(9, 9, 1); a.branch("boot_watch_kart_wait", "ne")
         if boot_watch_pattern == "two-phase":
             # The first boot writes a CMOS user byte and reaches the command
             # prompt. The same disc reaches the desktop when that byte is set.
@@ -3649,6 +3674,9 @@ def main() -> None:
         build_rom(power_on_probe="late-kart"))
     (args.output / "arcdroid-power-on-cmos-guest.rom").write_bytes(
         build_rom(cmos_exerciser=True, power_on_probe="cmos-boot"))
+    for pattern in ("prompt", "cli-then-prompt"):
+        (args.output / f"arcdroid-power-on-boot-{pattern}.rom").write_bytes(
+            build_rom(boot_watch_pattern=pattern, boot_watch_kart=True))
     for pattern in ("prompt", "prompt-write", "cli", "cli-then-prompt", "desktop", "cli-confirm", "horizon-edge", "two-phase"):
         (args.output / f"arcdroid-boot-{pattern}.rom").write_bytes(
             build_rom(boot_watch_pattern=pattern))

@@ -18,6 +18,8 @@ static const ArcFirmwareFingerprint fingerprints[] = {
    C(ARC_OS_TEST, "ArcDroid power-on early XSWI ROM", 524288u, 0xa4554186, "56dbdd3e2db2a47f8d06f2eebaea138ba3003b70"),
    C(ARC_OS_TEST, "ArcDroid power-on delayed KART ROM", 524288u, 0x66184771, "52b235b0e961ef6c84781240de94d73b75729ff6"),
    C(ARC_OS_TEST, "ArcDroid power-on CMOS guest ROM", 524288u, 0xe1953280, "605756fca36497577a172fc9fb519048670d7af8"),
+   C(ARC_OS_TEST, "ArcDroid power-on boot prompt KART ROM", 524288u, 0xfc78e0c2, "2f2bf098df6f2cee4fff5cafae8ca88a300ce97d"),
+   C(ARC_OS_TEST, "ArcDroid power-on boot CLI KART ROM", 524288u, 0xe6d5515c, "b6514296d9a99a600059a7c6488530c2ce6a390f"),
    C(ARC_OS_TEST, "ArcDroid JFD quarantine guest ROM", 524288u, 0xb0f139fc, "f1ce38f21ed99c0e5be6b0993705c10f5c5be839"),
    C(ARC_OS_TEST, "ArcDroid short-tail guest probe ROM", 524288u, 0x53d27395, "510db3a818a8003894db60c7174597816a2c2922"),
    C(ARC_OS_TEST, "ArcDroid boot prompt test ROM", 524288u, 0xdcf93506, "9b337404a35146da6bafdddb75d27dbfcc6636f8"),

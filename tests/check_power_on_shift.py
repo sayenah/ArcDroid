@@ -26,9 +26,10 @@ def run(harness: str, core: str, fixtures: Path, root: Path,
     log = (data / "evidence" / "real-boot.log").read_text(errors="replace")
     constructions = log.count("Power-on: boot-flag=clear shift=held")
     expected = 2 if reset else 1
+    mid_hold_reset = "--boot-reset-at" in extra
     assert constructions == expected, (rom, constructions)
     releases = re.findall(r"Power-on: shift released at=(\d+) reason=([^\s]+)", log)
-    assert len(releases) == expected, (rom, releases)
+    assert len(releases) == expected - (1 if mid_hold_reset else 0), (rom, releases)
     for at, why in releases:
         assert why == reason, (rom, releases)
         assert (int(at) < 1_000_000) if reason == "boot-action" else (
@@ -36,9 +37,26 @@ def run(harness: str, core: str, fixtures: Path, root: Path,
     down = "KART device->guest values=C4,CC"
     up = "KART device->guest values=D4,DC"
     if kart:
-        assert log.count(down) == log.count(up) == expected, (rom, log)
-        if rom.endswith("late-kart.rom"):
-            assert log.index("Power-on: shift released") < log.index(down) < log.index(up)
+        segments = log.split("Power-on: boot-flag=clear shift=held")[1:]
+        assert len(segments) == expected
+        for index, segment in enumerate(segments):
+            if mid_hold_reset and index == 0:
+                assert segment.count(down) == 1 and up not in segment
+                assert "Power-on: shift released at=" not in segment
+                continue
+            assert segment.count(down) == segment.count(up) == 1, (rom, index, segment)
+            up_frame = re.search(r"Power-on probe frame=(\d+) event=up", segment)
+            release_frame = re.search(r"Power-on probe frame=(\d+) event=release", segment)
+            assert up_frame and release_frame, (rom, index, segment)
+            assert int(up_frame[1]) >= int(release_frame[1]), (rom, index, segment)
+            # The adapter prints the release INFO line after a frame returns;
+            # KART can consume the release earlier in that same frame.
+            if segment.index(up) < segment.index("Power-on: shift released at="):
+                assert up_frame[1] == release_frame[1], (rom, index, segment)
+            if rom.endswith("late-kart.rom"):
+                assert segment.index("Power-on: shift released at=") < segment.index(down)
+            else:
+                assert segment.index(down) < segment.index(up)
     assert log.count("FDC command=80 type=8") >= expected, rom
     if rom.endswith("early-swi.rom"):
         # The authored guest resets through its vector immediately after
@@ -55,6 +73,8 @@ def main() -> None:
     harness, core, fixtures, root, *adffs = sys.argv[1:]
     fixtures, root = Path(fixtures), Path(root)
     run(harness, core, fixtures, root, "arcdroid-test.rom", 230, True, "timer")
+    run(harness, core, fixtures, root, "arcdroid-test.rom", 230, True,
+        "timer", ("--boot-reset-at", "20"))
     run(harness, core, fixtures, root, "arcdroid-power-on-early-swi.rom",
         130, False, "boot-action")
     run(harness, core, fixtures, root, "arcdroid-power-on-early-xswi.rom",
