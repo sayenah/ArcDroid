@@ -2230,6 +2230,109 @@ static void test_short_media_policy(void)
    free(image);
 }
 
+static void test_short_free_map(const char *directory)
+{
+   char error[256] = {0};
+   ArcMediaInfo media;
+   size_t size = 0u;
+   uint8_t *image = read_fixture(directory,
+      "short-family/800k-d-cap-plus-sector.adf", &size);
+   assert(size == 819200u - 21504u);
+   assert(arc_media_inspect("d.adf", image, size, &media, error, sizeof(error)) &&
+          media.geometry == ARC_GEOMETRY_800K_D && media.free_map_accept);
+   uint8_t original_map[512];
+   memcpy(original_map, image, sizeof(original_map));
+   /* The same valid checksums cannot prove an allocated tail. */
+   image[256] = 7u;
+   image[257] = 0u;
+   image[258] = 0u;
+   image[511] = test_old_map_checksum(image + 256u);
+   assert(!arc_media_inspect("d.adf", image, size, &media, error, sizeof(error)) &&
+          strstr(error, "missing area free"));
+   image[256] = image[257] = image[258] = 0u;
+   image[511] = test_old_map_checksum(image + 256u);
+   image[510] = 6u; /* A zero-length second free extent is malformed. */
+   image[511] = test_old_map_checksum(image + 256u);
+   assert(!arc_media_inspect("d.adf", image, size, &media, error, sizeof(error)) &&
+          strstr(error, "free list is malformed"));
+   memcpy(image, original_map, sizeof(original_map));
+   image[256] = 100u; image[257] = 0u; /* gap before the missing tail */
+   image[511] = test_old_map_checksum(image + 256u);
+   assert(!arc_media_inspect("d.adf", image, size, &media, error, sizeof(error)) &&
+          strstr(error, "missing area free"));
+   memcpy(image, original_map, sizeof(original_map));
+   image[510] = 6u;
+   image[256] = 100u; image[257] = 0u;
+   image[3] = 50u; image[4] = image[5] = 0u;
+   image[259] = 0x4cu; image[260] = 0x0cu; image[261] = 0u;
+   image[255] = test_old_map_checksum(image);
+   image[511] = test_old_map_checksum(image + 256u);
+   assert(!arc_media_inspect("d.adf", image, size, &media, error, sizeof(error)) &&
+          strstr(error, "free list is malformed")); /* overlapping */
+   memcpy(image, original_map, sizeof(original_map));
+   image[0] = 0x76u; image[1] = 0x0cu; image[2] = 0u; /* first=3190 */
+   image[256] = 20u; image[257] = 0u; /* end past 3200 */
+   image[255] = test_old_map_checksum(image);
+   image[511] = test_old_map_checksum(image + 256u);
+   assert(!arc_media_inspect("d.adf", image, size, &media, error, sizeof(error)) &&
+          strstr(error, "free list is malformed"));
+   const char *failure = NULL;
+   assert(!arc_short_free_map_proof(original_map, 4096u,
+           ARC_GEOMETRY_800K_D, &failure) &&
+          strstr(failure, "identification track-side"));
+   free(image);
+   image = read_fixture(directory, "short-family/800k-e-free-map.adf", &size);
+   assert(arc_media_inspect("e.adf", image, size, &media, error, sizeof(error)) &&
+          media.geometry == ARC_GEOMETRY_800K_E && media.free_map_accept);
+   image[1024] ^= 1u; /* A valid primary does not excuse an invalid second map. */
+   assert(!arc_media_inspect("e.adf", image, size, &media, error, sizeof(error)) &&
+          strstr(error, "map copy is invalid"));
+   image[1024] ^= 1u;
+   for (size_t copy = 0u; copy <= 1024u; copy += 1024u)
+   {
+      image[copy + 16u] = 0x00u; /* Root fragment 127 is absent from both maps. */
+      image[copy + 17u] = 0x7fu;
+      image[copy] = arc_test_e_format_zone_check(image + copy);
+   }
+   assert(!arc_media_inspect("e.adf", image, size, &media, error, sizeof(error)) &&
+          strstr(error, "root directory is missing"));
+   free(image);
+   image = read_fixture(directory, "short-family/800k-e-allocated-tail.adf", &size);
+   assert(!arc_media_inspect("e.adf", image, size, &media, error, sizeof(error)) &&
+          strstr(error, "missing area free"));
+   free(image);
+   image = read_fixture(directory, "short-family/800k-e-cyclic-free.adf", &size);
+   assert(!arc_media_inspect("e.adf", image, size, &media, error, sizeof(error)) &&
+          strstr(error, "free chain is cyclic"));
+   free(image);
+   image = read_fixture(directory, "short-family/800k-e-unterminated.adf", &size);
+   assert(!arc_media_inspect("e.adf", image, size, &media, error, sizeof(error)) &&
+          strstr(error, "fragment does not terminate"));
+   free(image);
+   image = read_fixture(directory, "short-family/800k-e-conflicting-maps.adf", &size);
+   assert(!arc_media_inspect("e.adf", image, size, &media, error, sizeof(error)) &&
+          strstr(error, "copies conflict"));
+   free(image);
+   image = read_fixture(directory, "short-family/800k-e-conflicting-allocation.adf", &size);
+   assert(!arc_media_inspect("e.adf", image, size, &media, error, sizeof(error)) &&
+          strstr(error, "copies conflict"));
+   free(image);
+   image = read_fixture(directory, "short-family/discovery-directory-full.adf", &size);
+   assert(arc_media_inspect("d.adf", image, size, &media, error, sizeof(error)));
+   ArcLaunchDiscovery discovery;
+   assert(arc_launch_discover(image, size, &media, NULL, &discovery) &&
+          discovery.application_count == 1u && !discovery.scan_incomplete);
+   assert(arc_launch_discover(image, size - 1024u, &media, NULL, &discovery) &&
+          discovery.reason == ARC_LAUNCH_REASON_INSPECTION_INCOMPLETE &&
+          discovery.application_count == 0u);
+   free(image);
+   image = read_fixture(directory, "short-family/discovery-payload-tail.adf", &size);
+   assert(arc_media_inspect("d.adf", image, size, &media, error, sizeof(error)) &&
+          arc_launch_discover(image, size, &media, NULL, &discovery) &&
+          discovery.application_count == 1u && !discovery.scan_incomplete);
+   free(image);
+}
+
 static void test_adfs_recognition(void)
 {
    uint8_t old_map[512] = {0};
@@ -3791,7 +3894,9 @@ static void test_f_media(const char *directory)
 
 int main(int argc, char **argv)
 {
-   assert(argc == 2);
+   assert(argc == 2 || (argc == 3 && !strcmp(argv[2], "--short-tail")));
+   if (argc == 3)
+   { test_short_free_map(argv[1]); puts("short-tail-unit: passed"); return 0; }
    test_hashes();
    test_cmos_unplug_policy();
    test_fresh_cmos_default();

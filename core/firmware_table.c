@@ -14,6 +14,7 @@ static const ArcFirmwareFingerprint fingerprints[] = {
    C(ARC_OS_TEST, "ArcDroid chooser application ROM", 524288u, 0x278555b5, "32f7d800e65fbd26325241b874f9279021c465a9"),
    C(ARC_OS_TEST, "ArcDroid D-format helper visual ROM", 524288u, 0xeeea625e, "13fc935664e628a9c751f3b280346fab60285ccf"),
 #if defined(ARCDROID_TEST_FAULTS)
+   C(ARC_OS_TEST, "ArcDroid short-tail guest probe ROM", 524288u, 0x53d27395, "510db3a818a8003894db60c7174597816a2c2922"),
    C(ARC_OS_TEST, "ArcDroid boot prompt test ROM", 524288u, 0xdcf93506, "9b337404a35146da6bafdddb75d27dbfcc6636f8"),
    C(ARC_OS_TEST, "ArcDroid boot write prompt test ROM", 524288u, 0xab9038e9, "e8864fac1301fc3bc47af51179be4ba293e85d21"),
    C(ARC_OS_TEST, "ArcDroid boot CLI test ROM", 524288u, 0x706ad88f, "b31ed6ad314daecb44e6f284172c6c54fc26936b"),

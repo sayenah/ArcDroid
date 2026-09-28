@@ -3,7 +3,8 @@
 /* ArcDroid modifications (2026-09-14, 2026-09-23): unavailable data never
  * terminates the frontend; command/rotation state resets across sessions;
  * index pulses count elapsed guest time at each controller poll period;
- * READ ID sector positions stay with their respective drives. */
+ * READ ID sector positions stay with their respective drives.
+ * ArcDroid modifications (Slice 15): bounded prefix-sector presence and writeback. */
 #include <string.h>
 #include "arc.h"
 #include "arc_io.h"
@@ -27,17 +28,25 @@ static struct
 	int maxsector;
 	int sector_offset;
 	int64_t image_size;
+	int64_t effective_size;
 	int read_id_sector;
 } adf[4];
 
 static int adf_sector,   adf_track,   adf_side,    adf_drive;
 static int adf_inread,   adf_readpos, adf_inwrite, adf_inreadaddr;
 static int adf_notfound;
+static unsigned adf_search_indexes;
+static size_t adf_extent[4];
 static int adf_informat=0;
 
 static int adf_pause = 0;
 static unsigned adf_phase_us;
 static int adf_writable[4] = {1, 1, 1, 1};
+
+void adf_set_extent(int drive, size_t effective_extent)
+{
+	if (drive >= 0 && drive < 4) adf_extent[drive] = effective_extent;
+}
 
 void adf_set_writable(int drive, int writable)
 {
@@ -58,6 +67,8 @@ void adf_init()
 	adf_sector = adf_track = adf_side = adf_drive = 0;
 	adf_inread = adf_readpos = adf_inwrite = adf_inreadaddr = 0;
 	adf_notfound = adf_informat = adf_pause = 0;
+	adf_search_indexes = 0;
+	memset(adf_extent, 0, sizeof(adf_extent));
 	adf_phase_us = 0u;
 	for (int drive = 0; drive < 4; ++drive) adf_writable[drive] = 1;
 }
@@ -79,13 +90,14 @@ void adf_loadex(int drive, char *fn, int sectors, int size, int sides, int dblst
 		adf[drive].f = NULL;
 		return;
 	}
+	adf[drive].effective_size = adf_extent[drive] ? (int64_t)adf_extent[drive] : adf[drive].image_size;
 	drive_funcs[drive] = &adf_disc_funcs;
 	adf[drive].sectors = sectors;
 	adf[drive].size = size;
 	adf[drive].dblside = sides;
 	adf[drive].dblstep = dblstep;
 	adf[drive].density = density;
-	adf[drive].maxsector = (int)(adf[drive].image_size / size);
+	adf[drive].maxsector = (int)(adf[drive].effective_size / size);
 	adf[drive].sector_offset = sector_offset;
 	adf[drive].read_id_sector = 0;
 
@@ -130,65 +142,67 @@ static void adf_close(int drive)
 	adf[drive].f = NULL;
 }
 
+/* ArcDroid modifications: a prefix may end inside a cylinder. */
+static int adf_sector_present(int drive, int track, int side, int sector)
+{
+    int64_t side_bytes = (int64_t)adf[drive].sectors * adf[drive].size;
+    int64_t offset = ((int64_t)track * (adf[drive].dblside ? 2 : 1) + side)
+                   * side_bytes + (int64_t)sector * adf[drive].size;
+    return track >= 0 && side >= 0 && side <= adf[drive].dblside &&
+           sector >= 0 && sector < adf[drive].sectors &&
+           offset >= 0 && offset <= adf[drive].effective_size &&
+           adf[drive].size <= adf[drive].effective_size - offset;
+}
+
+static void adf_missing(void)
+{
+    adf_notfound = -1;
+    adf_search_indexes = 0;
+}
+
 static void adf_seek(int drive, int track)
 {
-	if (!adf[drive].f)
-		return;
-//        rpclog("Seek %i %i %i %i %i %i\n",drive,track,adfsectors[drive],adfsize[drive],adl[drive],adfsectors[drive]*adfsize[drive]);
-	if (adf[drive].dblstep)
-		track /= 2;
-	int64_t track_bytes = (int64_t)adf[drive].sectors * adf[drive].size *
-	                      (adf[drive].dblside ? 2 : 1);
-	int64_t offset = (int64_t)track * track_bytes;
-	memset(adf[drive].track_data, 0, sizeof(adf[drive].track_data));
-	if (track < 0 || track_bytes <= 0 || offset < 0 ||
-	    offset > adf[drive].image_size ||
-	    track_bytes > adf[drive].image_size - offset ||
-	    arc_io_seek_file(adf[drive].f, offset, RETRO_VFS_SEEK_POSITION_START) < 0)
-	{
-		adf[drive].track = -1;
-		return;
-	}
-	adf[drive].track = track;
-	if (adf[drive].dblside)
-	{
-		size_t side_bytes = (size_t)adf[drive].sectors * adf[drive].size;
-		if (arc_io_read_file(adf[drive].f, adf[drive].track_data[0], side_bytes) != side_bytes ||
-		    arc_io_read_file(adf[drive].f, adf[drive].track_data[1], side_bytes) != side_bytes)
-			adf[drive].track = -1;
-	}
-	else
-	{
-		size_t bytes = (size_t)adf[drive].sectors * adf[drive].size;
-		if (arc_io_read_file(adf[drive].f, adf[drive].track_data[0], bytes) != bytes)
-			adf[drive].track = -1;
-	}
+    if (!adf[drive].f) return;
+    if (adf[drive].dblstep) track /= 2;
+    int64_t side_bytes = (int64_t)adf[drive].sectors * adf[drive].size;
+    int64_t track_bytes = side_bytes * (adf[drive].dblside ? 2 : 1);
+    int64_t offset = (int64_t)track * track_bytes;
+    memset(adf[drive].track_data, 0, sizeof(adf[drive].track_data));
+    adf[drive].track = -1;
+    if (adf_extent[drive] && track >= 0 && offset >= adf[drive].effective_size &&
+        offset < adf[drive].image_size)
+    { adf[drive].track = track; return; }
+    if (track < 0 || track_bytes <= 0 || offset < 0 ||
+        offset >= adf[drive].effective_size ||
+        arc_io_seek_file(adf[drive].f, offset, RETRO_VFS_SEEK_POSITION_START) < 0)
+        return;
+    int64_t remaining = adf[drive].effective_size - offset;
+    int64_t bytes = remaining < track_bytes ? remaining : track_bytes;
+    for (int side = 0; side <= adf[drive].dblside; ++side)
+    {
+        size_t amount = bytes > side_bytes ? (size_t)side_bytes : (size_t)bytes;
+        if (amount && arc_io_read_file(adf[drive].f, adf[drive].track_data[side], amount) != amount)
+            return;
+        bytes -= (int64_t)amount;
+    }
+    adf[drive].track = track;
 }
-static void adf_writeback(int drive, int track)
+
+static void adf_writeback(int drive, int track, int side, int first, int count)
 {
-	if (!adf[drive].f)
-		return;
-
-	if (adf[drive].dblstep)
-		track /= 2;
-
-	if (adf[drive].dblside)
-	{
-		size_t bytes = (size_t)adf[drive].sectors * adf[drive].size;
-		int64_t offset = (int64_t)track * bytes * 2;
-		if (arc_io_seek_file(adf[drive].f, offset, RETRO_VFS_SEEK_POSITION_START) < 0 ||
-		    arc_io_write_file(adf[drive].f, adf[drive].track_data[0], bytes) != bytes ||
-		    arc_io_write_file(adf[drive].f, adf[drive].track_data[1], bytes) != bytes)
-			fatal("Unable to write complete floppy track");
-	}
-	else
-	{
-		size_t bytes = (size_t)adf[drive].sectors * adf[drive].size;
-		int64_t offset = (int64_t)track * bytes;
-		if (arc_io_seek_file(adf[drive].f, offset, RETRO_VFS_SEEK_POSITION_START) < 0 ||
-		    arc_io_write_file(adf[drive].f, adf[drive].track_data[0], bytes) != bytes)
-			fatal("Unable to write complete floppy track");
-	}
+    if (!adf[drive].f) return;
+    if (adf[drive].dblstep) track /= 2;
+    int64_t side_bytes = (int64_t)adf[drive].sectors * adf[drive].size;
+    int64_t offset = ((int64_t)track * (adf[drive].dblside ? 2 : 1) + side)
+                   * side_bytes + (int64_t)first * adf[drive].size;
+    size_t bytes = (size_t)count * adf[drive].size;
+    if (offset < 0 || offset > adf[drive].effective_size ||
+        bytes > (size_t)(adf[drive].effective_size - offset) ||
+        arc_io_seek_file(adf[drive].f, offset, RETRO_VFS_SEEK_POSITION_START) < 0 ||
+        arc_io_write_file(adf[drive].f,
+            adf[drive].track_data[side] + (size_t)first * adf[drive].size,
+            bytes) != bytes)
+        fatal("Unable to write complete floppy track");
 }
 
 static void adf_readsector(int drive, int sector, int track, int side, int density)
@@ -203,10 +217,15 @@ static void adf_readsector(int drive, int sector, int track, int side, int densi
 
 	if (!adf[drive].f || (side && !adf[drive].dblside) || (density != adf[drive].density) ||
 		(track != adf[drive].track) || (sector_nr >= adf[drive].maxsector) ||
+		!adf_sector_present(drive, track, side, adf_sector) ||
 		(adf_sector < 0) || (adf_sector >= adf[drive].sectors))
 	{
 //                printf("Not found! %08X (%i %i) %i (%i %i)\n",adff[drive],side,adl[drive],density,track,adftrackc[drive]);
-		adf_notfound=500;
+		if (adf_sector >= 0 && adf_sector < adf[drive].sectors &&
+		    side >= 0 && side <= adf[drive].dblside &&
+		    !adf_sector_present(drive, track, side, adf_sector))
+			adf_missing();
+		else adf_notfound = 500;
 		return;
 	}
 //        printf("Found\n");
@@ -230,9 +249,14 @@ static void adf_writesector(int drive, int sector, int track, int side, int dens
 
 	if (!adf[drive].f || (side && !adf[drive].dblside) || (density != adf[drive].density) ||
 		(track != adf[drive].track) || (sector_nr >= adf[drive].maxsector) ||
+		!adf_sector_present(drive, track, side, adf_sector) ||
 		(adf_sector < 0) || (adf_sector >= adf[drive].sectors))
 	{
-		adf_notfound = 500;
+		if (adf_sector >= 0 && adf_sector < adf[drive].sectors &&
+		    side >= 0 && side <= adf[drive].dblside &&
+		    !adf_sector_present(drive, track, side, adf_sector))
+			adf_missing();
+		else adf_notfound = 500;
 		return;
 	}
 	adf_inwrite = 1;
@@ -255,6 +279,16 @@ static void adf_readaddress(int drive, int track, int side, int density)
 		adf_notfound=500;
 		return;
 	}
+	/* ArcDroid modifications: retain the drive-local cursor, skip absent IDs. */
+	int found = -1;
+	for (int n = 0; n < adf[drive].sectors; ++n)
+	{
+		int candidate = (adf[drive].read_id_sector + n) % adf[drive].sectors;
+		if (adf_sector_present(drive, track, side, candidate))
+		{ found = candidate; break; }
+	}
+	if (found < 0) { adf_missing(); return; }
+	adf[drive].read_id_sector = found;
 	adf_inreadaddr = 1;
 	adf_readpos    = 0;
 	adf_pause = 100;//500;
@@ -275,6 +309,10 @@ static void adf_format(int drive, int track, int side, int density)
 		adf_notfound = 500;
 		return;
 	}
+	/* ArcDroid modifications: refuse the whole side before changing a byte. */
+	for (int n = 0; n < adf[drive].sectors; ++n)
+		if (!adf_sector_present(drive, track, side, n))
+		{ adf_missing(); return; }
 	adf_sector  = 0;
 	adf_readpos = 0;
 	adf_informat  = 1;
@@ -283,6 +321,7 @@ static void adf_format(int drive, int track, int side, int density)
 static void adf_stop()
 {
 	adf_pause = adf_notfound = adf_inread = adf_inwrite = adf_inreadaddr = adf_informat = 0;
+	adf_search_indexes = 0;
 }
 
 static void adf_poll()
@@ -293,7 +332,14 @@ static void adf_poll()
 	if (adf_phase_us >= 200000u)
 	{
 		adf_phase_us -= 200000u;
+		if (adf_notfound < 0) ++adf_search_indexes;
 		fdc_funcs->indexpulse(fdc_p);
+		if (adf_notfound < 0 && adf_search_indexes >=
+		    (fdc_funcs->sectorid ? 2u : 5u))
+		{
+			adf_notfound = 0;
+			if (fdc_funcs->sectorid) fdc_funcs->notfound(fdc_p);
+		}
 	}
 
 	if (adf_pause)
@@ -303,7 +349,7 @@ static void adf_poll()
 		   return;
 	}
 
-	if (adf_notfound)
+	if (adf_notfound > 0)
 	{
 		adf_notfound--;
 		if (!adf_notfound)
@@ -351,7 +397,7 @@ static void adf_poll()
 //                        rpclog("write over\n");
 			adf_inwrite = 0;
 			fdc_funcs->finishread(fdc_p);
-			adf_writeback(adf_drive, adf_track);
+			adf_writeback(adf_drive, adf_track, adf_side, adf_sector, 1);
 		}
 	}
 	if (adf_inreadaddr && adf[adf_drive].f)
@@ -411,7 +457,7 @@ static void adf_poll()
 			{
 				adf_informat = 0;
 				fdc_funcs->finishread(fdc_p);
-				adf_writeback(adf_drive, adf_track);
+				adf_writeback(adf_drive, adf_track, adf_side, 0, adf[adf_drive].sectors);
 			}
 		}
 	}

@@ -176,6 +176,7 @@ static const char *option_pointer_stick = "right";
 static const char *option_pointer_speed = "600";
 static const char *option_pointer_deadzone = "15";
 static const char *option_writes = "shadow";
+static const char *option_short_tail = "Missing";
 static const char *option_install_saves = "temporary";
 static unsigned install_publication_seen, install_recreate_seen;
 static unsigned install_commit_seen, install_validation_seen;
@@ -228,6 +229,9 @@ static uint64_t sampled_overruns;
 static unsigned input_overflow_log_lines;
 static unsigned short_warning_log_lines;
 static unsigned short_warning_osd_calls;
+static unsigned short_info_lines;
+static char short_notice_text[256];
+static char short_info_text[256];
 static unsigned launch_log_lines;
 static unsigned jfd_boot_log_lines;
 static char last_jfd_boot_log[512];
@@ -544,7 +548,16 @@ static void frontend_log(enum retro_log_level level, const char *format, ...)
    if (strstr(message, "Input queue overflowed")) ++input_overflow_log_lines;
    if (!strncmp(message, "Input resolution:", 17u))
       snprintf(last_input_resolution, sizeof(last_input_resolution), "%s", message);
-   if (strstr(message, "Short image padded with")) ++short_warning_log_lines;
+   if (strstr(message, "Image is missing its last "))
+   {
+      ++short_warning_log_lines;
+      snprintf(short_notice_text, sizeof(short_notice_text), "%s", message);
+   }
+   if (strstr(message, "Short image: geometry="))
+   {
+      ++short_info_lines;
+      snprintf(short_info_text, sizeof(short_info_text), "%s", message);
+   }
    if (strstr(message, "Unable to flush the staged floppy image"))
    {
       ++flush_fault_log_lines;
@@ -642,10 +655,11 @@ static bool environment(unsigned command, void *data)
          const struct retro_core_options_v2 *options = data;
          unsigned count = 0u;
          while (options->definitions[count].key) ++count;
-         assert(count == 37u && options->categories &&
+         assert(count == 38u && options->categories &&
                 !strcmp(options->categories[0].key, "pad_mapping") &&
                 !strcmp(options->categories[0].desc, "Pad Mapping"));
          bool found_profile = false, found_osk = false, found_chooser = false;
+         bool found_short_tail = false;
          bool found_jfd_boot = false, found_adffs_package = false;
          unsigned pads = 0u;
          const char *categorized_pad_labels[ARC_PAD_PORTS * ARC_PAD_INPUT_COUNT] = {0};
@@ -670,6 +684,13 @@ static bool environment(unsigned command, void *data)
                                  "Generated Test Profile"));
             }
             if (!strcmp(definition->key, "arcdroid_osk_toggle")) found_osk = true;
+            if (!strcmp(definition->key, "arcdroid_short_tail"))
+            {
+               found_short_tail = true;
+               assert(!strcmp(definition->default_value, "Missing") &&
+                      !strcmp(definition->values[0].value, "Missing") &&
+                      !strcmp(definition->values[1].value, "Zero-filled"));
+            }
             if (!strcmp(definition->key, "arcdroid_launch_chooser"))
             {
                found_chooser = true;
@@ -707,7 +728,7 @@ static bool environment(unsigned command, void *data)
                categorized_pad_labels[pads++] = definition->desc_categorized;
             }
          }
-         assert(found_profile && found_osk && found_chooser && found_jfd_boot &&
+         assert(found_profile && found_osk && found_chooser && found_short_tail && found_jfd_boot &&
                 found_adffs_package && pads == 20u);
          return true;
       }
@@ -826,6 +847,7 @@ static bool environment(unsigned command, void *data)
          else if (!strcmp(variable->key, "arcdroid_pointer_speed")) variable->value = option_pointer_speed;
          else if (!strcmp(variable->key, "arcdroid_pointer_deadzone")) variable->value = option_pointer_deadzone;
          else if (!strcmp(variable->key, "arcdroid_disk_writes")) variable->value = option_writes;
+         else if (!strcmp(variable->key, "arcdroid_short_tail")) variable->value = option_short_tail;
          else if (!strcmp(variable->key, "arcdroid_install_saves")) variable->value = option_install_saves;
          else if (!strcmp(variable->key, "arcdroid_launch")) variable->value = option_launch;
          else if (!strcmp(variable->key, "arcdroid_launch_chooser"))
@@ -941,7 +963,7 @@ static bool environment(unsigned command, void *data)
                      last_message);
          }
          if (strstr(last_message, "VIDC")) ++vidc_osd_ext_calls;
-         if (strstr(last_message, "Short image padded with")) ++short_warning_osd_calls;
+         if (strstr(last_message, "Image is missing its last ")) ++short_warning_osd_calls;
          if (strstr(last_message, "Unable to flush the staged floppy image"))
          {
             ++flush_fault_osd_calls;
@@ -984,7 +1006,7 @@ static bool environment(unsigned command, void *data)
                      last_message);
          }
          if (strstr(last_message, "VIDC")) ++vidc_osd_legacy_calls;
-         if (strstr(last_message, "Short image padded with")) ++short_warning_osd_calls;
+         if (strstr(last_message, "Image is missing its last ")) ++short_warning_osd_calls;
          if (strstr(last_message, "Unable to flush the staged floppy image"))
          {
             ++flush_fault_osd_calls;
@@ -1989,6 +2011,9 @@ int main(int argc, char **argv)
    bool jfd_allocation_set = false;
    bool install_guest = false;
    bool cmos_exerciser = false;
+   bool short_tail_guest = false;
+   bool short_tail_newio_guest = false;
+   bool short_tail_discovery = false;
    char jfd_content_path[4096] = {0}, jfd_fixture_path[4096] = {0};
    const char *osk_script = NULL;
    if (argc == 11 && !strcmp(argv[5], "--newio-smoke"))
@@ -2009,6 +2034,12 @@ int main(int argc, char **argv)
       jfd_allocation_set = true;
    else if (argc == 6 && !strcmp(argv[5], "--cmos-exerciser"))
       cmos_exerciser = true;
+   else if (argc == 6 && !strcmp(argv[5], "--short-tail-guest"))
+      short_tail_guest = true;
+   else if (argc == 6 && !strcmp(argv[5], "--short-tail-newio-guest"))
+      short_tail_guest = short_tail_newio_guest = true;
+   else if (argc == 7 && !strcmp(argv[5], "--short-tail-discovery"))
+      short_tail_discovery = true;
    else if (argc >= 6 && !strcmp(argv[5], "--real-boot"))
    {
       real_boot = true;
@@ -2162,6 +2193,7 @@ int main(int argc, char **argv)
    unsigned (*arc_libretro_test_presented_osk_notice)(void) = NULL;
    const char *(*arc_libretro_test_content_id)(void) = NULL;
    const char *(*arc_libretro_test_staged_path)(unsigned) = NULL;
+   bool (*arc_libretro_test_boot_media_digest)(char[41]) = NULL;
    const char *(*arc_libretro_test_cmos_path)(void) = NULL;
    uint8_t (*arc_libretro_test_prepared_cmos_byte)(unsigned) = NULL;
    const char *(*arc_libretro_test_choice_path)(void) = NULL;
@@ -2255,9 +2287,19 @@ int main(int argc, char **argv)
              arc_engine_reset && arc_engine_start && arc_engine_stop &&
              arc_libretro_test_cmos_path);
    }
+   if (short_tail_guest || short_tail_discovery)
+   {
+      *(void **)(&arc_libretro_test_staged_path) =
+         dlsym(module, "arc_libretro_test_staged_path");
+      assert(arc_libretro_test_staged_path);
+      *(void **)(&arc_libretro_test_boot_media_digest) =
+         dlsym(module, "arc_libretro_test_boot_media_digest");
+      assert(arc_libretro_test_boot_media_digest);
+   }
    if (!cmos_exerciser && !install_guest && !real_boot && !newio_smoke && !jfd_writes && !jfd_create_step &&
        !jfd_identification_step &&
-       !jfd_merge_step && !jfd_allocation_step && !jfd_allocation_set)
+       !jfd_merge_step && !jfd_allocation_step && !jfd_allocation_set &&
+       !short_tail_guest && !short_tail_discovery)
    {
       *(void **)(&arc_engine_audio_stats) = dlsym(module, "arc_engine_audio_stats");
       *(void **)(&arc_engine_media_insert) = dlsym(module, "arc_engine_media_insert");
@@ -2542,6 +2584,142 @@ int main(int argc, char **argv)
    assert(retro_serialize_size() == 0u);
    struct retro_game_info game = {jfd_writes ? jfd_content_path : argv[3], NULL, 0u, NULL};
    uint64_t source_hash = hash_file(game.path);
+
+   if (short_tail_discovery)
+   {
+      option_machine = "A3000";
+      option_launch = "auto";
+      option_writes = "shadow";
+      option_short_tail = "Missing";
+      char staged[4096];
+      staged_media_path(staged, save_path, game.path, "disc.adf");
+      (void)remove(staged);
+      phase = PHASE_LOAD; assert(retro_load_game(&game));
+      assert(!strcmp(staged, arc_libretro_test_staged_path(0u)) &&
+             strstr(last_launch_log, "reason=inspection incomplete") &&
+             strstr(last_launch_log, "!Demo:unknown"));
+      retro_unload_game();
+      uint8_t *full = malloc(819200u);
+      assert(full);
+      read_exact(argv[6], full, 819200u);
+      FILE *shadow = fopen(staged, "r+b");
+      assert(shadow && fseek(shadow, 818176L, SEEK_SET) == 0 &&
+             fwrite(full + 818176u, 1u, 1024u, shadow) == 1024u &&
+             fflush(shadow) == 0 && fclose(shadow) == 0);
+      phase = PHASE_LOAD; assert(retro_load_game(&game));
+      assert(strstr(last_launch_log, "reason=inspection incomplete"));
+      char missing_stamp[41], zero_stamp[41], restored_stamp[41];
+      assert(arc_libretro_test_boot_media_digest(missing_stamp));
+      retro_unload_game();
+      option_short_tail = "Zero-filled";
+      phase = PHASE_LOAD; assert(retro_load_game(&game));
+      assert(arc_libretro_test_boot_media_digest(zero_stamp) &&
+             strcmp(missing_stamp, zero_stamp));
+      assert(strstr(last_launch_log, "decision=!Demo") &&
+             strstr(last_launch_log, "scan=complete") &&
+             strstr(short_notice_text, "presented zero-filled") &&
+             strstr(short_info_text, "presentation=zero-filled"));
+      assert(disk_control.set_eject_state(true));
+      option_short_tail = "invalid";
+      assert(!disk_control.set_eject_state(false) &&
+             disk_control.get_eject_state() &&
+             arc_libretro_test_boot_media_digest(restored_stamp) &&
+             !strcmp(zero_stamp, restored_stamp));
+      option_short_tail = "Missing";
+      assert(disk_control.set_eject_state(false) &&
+             arc_libretro_test_boot_media_digest(restored_stamp) &&
+             !strcmp(missing_stamp, restored_stamp));
+      assert(disk_control.set_eject_state(true));
+      option_short_tail = "Zero-filled";
+      assert(disk_control.set_eject_state(false) &&
+             arc_libretro_test_boot_media_digest(restored_stamp) &&
+             !strcmp(zero_stamp, restored_stamp));
+      option_short_tail = "Missing"; variable_update = true;
+      retro_reset();
+      assert(arc_libretro_test_boot_media_digest(restored_stamp) &&
+             !strcmp(missing_stamp, restored_stamp));
+      assert(strstr(last_launch_log, "reason=inspection incomplete"));
+      uint8_t *backing = malloc(819200u);
+      assert(backing);
+      read_exact(staged, backing, 819200u);
+      assert(!memcmp(backing + 818176u, full + 818176u, 1024u) &&
+             hash_file(game.path) == source_hash);
+      free(backing); free(full);
+      retro_unload_game(); retro_deinit();
+      assert(open_files == 0u && open_dirs == 0u && dlclose(module) == 0);
+      puts("short-tail-discovery: passed");
+      return 0;
+   }
+
+   if (short_tail_guest)
+   {
+      const size_t present_offset = 159u * 5120u + 3u * 1024u;
+      const size_t declared = 819200u;
+      option_machine = short_tail_newio_guest ? "A3020" : "A3000";
+      option_launch = "off";
+      option_writes = "shadow";
+      option_short_tail = "Missing";
+      char staged[4096];
+      staged_media_path(staged, save_path, game.path, "disc.adf");
+      (void)remove(staged); /* this dedicated test starts with a new shadow */
+      unsigned warnings = short_warning_log_lines;
+      unsigned infos = short_info_lines;
+      phase = PHASE_LOAD; assert(retro_load_game(&game));
+      assert(short_warning_log_lines == warnings + 1u &&
+             short_info_lines == infos + 1u &&
+             strstr(short_notice_text, "presented as absent") &&
+             strstr(short_info_text, "effective=818176") &&
+             strstr(short_info_text, "absent-sectors=1"));
+      assert(!strcmp(staged, arc_libretro_test_staged_path(0u)));
+      phase = PHASE_RUN;
+      for (unsigned frame = 0u; frame < 900u && last_video_pixel != 0x006a0000u; ++frame)
+         retro_run();
+      assert(last_video_pixel == 0x006a0000u);
+      uint8_t *backing = malloc(declared);
+      assert(backing);
+      read_exact(staged, backing, declared);
+      for (size_t i = 0u; i < 1024u; ++i)
+         assert(backing[present_offset + i] == 0x5au && backing[declared - 1024u + i] == 0u);
+      retro_reset();
+      last_video_pixel = 0u;
+      for (unsigned frame = 0u; frame < 900u && last_video_pixel != 0x006a0000u; ++frame)
+         retro_run();
+      assert(last_video_pixel == 0x006a0000u);
+      retro_unload_game();
+      /* A preexisting declared-size shadow retains its tail across switches. */
+      FILE *shadow = fopen(staged, "r+b");
+      assert(shadow && fseek(shadow, (long)(declared - 1024u), SEEK_SET) == 0);
+      memset(backing, 0x7bu, 1024u);
+      assert(fwrite(backing, 1u, 1024u, shadow) == 1024u &&
+             fflush(shadow) == 0 && fclose(shadow) == 0);
+      phase = PHASE_LOAD; assert(retro_load_game(&game));
+      phase = PHASE_RUN; last_video_pixel = 0u;
+      for (unsigned frame = 0u; frame < 900u && last_video_pixel != 0x006a0000u; ++frame)
+         retro_run();
+      assert(last_video_pixel == 0x006a0000u);
+      option_short_tail = "Zero-filled"; variable_update = true;
+      retro_reset();
+      last_video_pixel = 0u;
+      for (unsigned frame = 0u; frame < 900u && last_video_pixel != 0x0000006au; ++frame)
+         retro_run();
+      assert(last_video_pixel == 0x0000006au);
+      option_short_tail = "Missing"; variable_update = true;
+      retro_reset();
+      last_video_pixel = 0u;
+      for (unsigned frame = 0u; frame < 900u && last_video_pixel != 0x006a0000u; ++frame)
+         retro_run();
+      assert(last_video_pixel == 0x006a0000u);
+      read_exact(staged, backing, declared);
+      for (size_t i = 0u; i < 1024u; ++i)
+         assert(backing[declared - 1024u + i] == 0x7bu);
+      assert(hash_file(game.path) == source_hash);
+      free(backing);
+      retro_unload_game();
+      retro_deinit();
+      assert(open_files == 0u && open_dirs == 0u && dlclose(module) == 0);
+      puts("short-tail-guest: passed");
+      return 0;
+   }
 
    if (cmos_exerciser)
    {
@@ -4839,8 +5017,14 @@ int main(int argc, char **argv)
    unsigned loads_before_direct_insert = disc_load_count;
    char insert_error[256] = {0};
    ArcEngineMedia direct_media = {
-      argv[3], false, ARC_MEDIA_ADF_800K, ARC_GEOMETRY_800K_E, NULL
+      argv[3], false, ARC_MEDIA_ADF_800K, ARC_GEOMETRY_800K_E, NULL,
+      NULL, 0u, ARC_MEDIA_EXTENT_UNRESTRICTED
    };
+   ArcEngineMedia invalid_extent = direct_media;
+   invalid_extent.effective_extent = 513u;
+   assert(!arc_engine_media_insert(&invalid_extent, insert_error, sizeof(insert_error)));
+   invalid_extent.effective_extent = 819200u + 1024u;
+   assert(!arc_engine_media_insert(&invalid_extent, insert_error, sizeof(insert_error)));
    assert(arc_engine_media_insert(&direct_media, insert_error, sizeof(insert_error)));
    assert(open_files == handles_before_direct_insert);
    assert(disc_load_count == loads_before_direct_insert + 1u);
@@ -7499,10 +7683,8 @@ int main(int argc, char **argv)
       for (unsigned frame = 0u; frame < 250u; ++frame) retro_run();
       retro_unload_game();
 
-      /* Every accepted short-image geometry is staged as a source-identical
-       * prefix followed by zero padding. The warning is one log line and one
-       * OSD notification per load, and the content identity remains that of
-       * the unpadded source. */
+      /* The stored layout stays declared-size with a source-identical prefix.
+       * Missing presentation is recorded separately from these backing bytes. */
       static const struct {
          const char *name;
          size_t declared;
@@ -7514,11 +7696,13 @@ int main(int argc, char **argv)
          {"short-family/640k-l-cap.adl", 655360u, "disc-readonly.adl"},
          {"short-family/800k-d-one-sector.adf", 819200u, "disc-readonly.adf"},
          {"short-family/800k-d-cap.adf", 819200u, "disc-readonly.adf"},
+         {"short-family/800k-d-cap-plus-sector.adf", 819200u, "disc-readonly.adf"},
          {"short-family/800k-e-one-sector.adf", 819200u, "disc-readonly.adf"},
          {"short-family/800k-e-cap.adf", 819200u, "disc-readonly.adf"},
          {"short-e-missing-1024.adf", 819200u, "disc-readonly.adf"},
          {"short-e-missing-10240.adf", 819200u, "disc-readonly.adf"},
          {"short-e-missing-20480.adf", 819200u, "disc-readonly.adf"},
+         {"short-family/800k-e-free-map.adf", 819200u, "disc-readonly.adf"},
       };
       option_writes = "off";
       for (size_t i = 0u; i < sizeof(short_valid) / sizeof(short_valid[0]); ++i)
@@ -7530,10 +7714,14 @@ int main(int argc, char **argv)
          uint64_t original = hash_file(source);
          unsigned logs = short_warning_log_lines;
          unsigned osd = short_warning_osd_calls;
+         unsigned infos = short_info_lines;
          struct retro_game_info short_game = {source, NULL, 0u, NULL};
          phase = PHASE_LOAD; assert(retro_load_game(&short_game));
          assert(short_warning_log_lines == logs + 1u &&
-                short_warning_osd_calls == osd + 1u);
+                short_warning_osd_calls == osd + 1u &&
+                short_info_lines == infos + 1u &&
+                strstr(short_notice_text, "presented as absent") &&
+                strstr(short_info_text, "presentation=missing"));
          staged_media_path(staged, save_path, source, short_valid[i].leaf);
          assert_zero_padded_copy(source, staged, short_valid[i].declared);
          retro_unload_game();
@@ -7586,7 +7774,8 @@ int main(int argc, char **argv)
          "short-family/640k-l-bad-descriptor.adl",
          "short-family/640k-l-bad-checksum.adl",
          "short-family/800k-d-cap-plus-one.adf",
-         "short-family/800k-d-cap-plus-sector.adf",
+         "short-family/800k-e-allocated-tail.adf",
+         "short-family/800k-e-conflicting-maps.adf",
          "short-family/800k-d-non-aligned.adf",
          "short-family/800k-d-bad-descriptor.adf",
          "short-family/800k-d-bad-checksum.adf",

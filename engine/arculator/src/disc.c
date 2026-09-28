@@ -52,9 +52,10 @@ emu_timer_t *fdc_timer;
 int fdc_overridden;
 int fdc_ready;
 
-bool disc_load_raw(int drive, char *fn, ArcMediaGeometry geometry)
+bool disc_load_raw_extent(int drive, char *fn, ArcMediaGeometry geometry, size_t effective_extent)
 {
 	if (!fn || drive < 0 || drive >= 4) return false;
+	adf_set_extent(drive, effective_extent);
 	rpclog("disc_load %i %s geometry=%i\n", drive, fn, (int)geometry);
 	switch (geometry)
 	{
@@ -67,6 +68,9 @@ bool disc_load_raw(int drive, char *fn, ArcMediaGeometry geometry)
 	}
 	return !disc_empty(drive);
 }
+
+bool disc_load_raw(int drive, char *fn, ArcMediaGeometry geometry)
+{ return disc_load_raw_extent(drive, fn, geometry, 0u); }
 
 bool disc_load_jfd(int drive, const ArcJfdImage *image)
 {

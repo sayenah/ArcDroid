@@ -1174,6 +1174,123 @@ static bool arc_object_read(const ArcFileCore *fs, uint32_t address,
    return true;
 }
 
+/* A short raw image is accepted beyond the ordinary tolerance only when the
+ * source itself proves every absent allocation unit free. Keep this walker
+ * beside FileCore's bounded map and root resolvers. */
+static bool arc_short_old_free(const ArcFileCore *fs, size_t size,
+                               uint8_t covered[6400], const char **failure)
+{
+   unsigned previous = 0u;
+   for (unsigned at = 0u; at < fs->map[510]; at += 3u)
+   {
+      unsigned first = arc_le24(fs->map + at);
+      unsigned count = arc_le24(fs->map + 256u + at);
+      if (!count || first < previous || first > 3200u ||
+          count > 3200u - first)
+      { *failure = "old-map free list is malformed"; return false; }
+      previous = first + count;
+      size_t begin = (size_t)first * 256u;
+      size_t end = (size_t)previous * 256u;
+      if (begin < size) begin = size;
+      for (size_t byte = begin; byte < end; byte += 128u)
+         covered[(byte - size) / 128u] = 1u;
+   }
+   return true;
+}
+
+static bool arc_short_new_free(const ArcFileCore *fs, size_t size,
+                               uint8_t covered[6400], const char **failure)
+{
+   unsigned start = 512u;
+   unsigned end = 512u + 8192u - fs->zone_spare - 480u;
+   unsigned link = arc_map_bits(fs->map, 8u, fs->id_length);
+   unsigned free_at = link ? 8u + link : 0u;
+   if (free_at && (free_at < start || free_at >= end))
+   { *failure = "E free chain is out of range"; return false; }
+   while (start < end)
+   {
+      if (start + fs->id_length >= end || (free_at && free_at < start))
+      { *failure = "E free chain is cyclic or malformed"; return false; }
+      unsigned id = arc_map_bits(fs->map, start, fs->id_length);
+      unsigned stop = start + fs->id_length;
+      while (stop < end && !((fs->map[stop >> 3u] >> (stop & 7u)) & 1u))
+         ++stop;
+      if (stop >= end)
+      { *failure = "E map fragment does not terminate"; return false; }
+      size_t first = ((size_t)start - 512u) << fs->log2_bytes_per_map_bit;
+      size_t bytes = ((size_t)stop + 1u - start) << fs->log2_bytes_per_map_bit;
+      if (first > fs->disc_size || bytes > fs->disc_size - first)
+      { *failure = "E map fragment is out of range"; return false; }
+      if (start == free_at)
+      {
+         size_t begin = first < size ? size : first;
+         for (size_t byte = begin; byte < first + bytes; byte += 128u)
+            covered[(byte - size) / 128u] = 1u;
+         free_at = id ? start + id : 0u;
+         if (free_at && (free_at <= stop || free_at >= end))
+         { *failure = "E free chain is cyclic or out of range"; return false; }
+      }
+      start = stop + 1u;
+   }
+   if (free_at)
+   { *failure = "E free chain does not terminate"; return false; }
+   return true;
+}
+
+bool arc_short_free_map_proof(const uint8_t *data, size_t size,
+                              ArcMediaGeometry geometry, const char **failure)
+{
+   const size_t declared = 819200u;
+   if (!failure) return false;
+   *failure = "identification track-side is missing";
+   if (!data || size < 5120u || size >= declared || size % 1024u ||
+       (geometry != ARC_GEOMETRY_800K_D && geometry != ARC_GEOMETRY_800K_E))
+      return false;
+   ArcFileCore fs = {0};
+   fs.reader.raw = data;
+   fs.reader.raw_size = size;
+   uint8_t first_copy[6400] = {0};
+   uint8_t first_map[1024] = {0};
+   for (unsigned copy = 0u; copy < (geometry == ARC_GEOMETRY_800K_E ? 2u : 1u); ++copy)
+   {
+      uint8_t covered[6400] = {0};
+      *failure = "map copy is invalid or missing";
+      bool valid = geometry == ARC_GEOMETRY_800K_D ?
+         arc_filecore_old(&fs, geometry) : arc_filecore_new_at(&fs, copy);
+      if (!valid || fs.disc_size != declared || fs.old_map_clamped) return false;
+      if (copy && memcmp(first_map, fs.map, sizeof(first_map)))
+      { *failure = "valid map copies conflict"; return false; }
+      if (!copy && geometry == ARC_GEOMETRY_800K_E)
+         memcpy(first_map, fs.map, sizeof(first_map));
+      if (geometry == ARC_GEOMETRY_800K_D)
+      {
+         if (!arc_short_old_free(&fs, size, covered, failure)) return false;
+      }
+      else if (!arc_short_new_free(&fs, size, covered, failure)) return false;
+      *failure = "root directory is missing or unresolved";
+      if (geometry == ARC_GEOMETRY_800K_D)
+      {
+         if (fs.root_address > size || 2048u > size - fs.root_address) return false;
+      }
+      else
+      {
+         size_t root_sector;
+         for (unsigned part = 0u; part < 2u; ++part)
+            if (!arc_new_map_resolve(&fs, fs.root_address, part, &root_sector) ||
+                root_sector > size || 1024u > size - root_sector)
+               return false;
+      }
+      if (copy && memcmp(first_copy, covered, sizeof(covered)))
+      { *failure = "valid map copies conflict"; return false; }
+      if (!copy) memcpy(first_copy, covered, sizeof(covered));
+      *failure = "map does not show the missing area free";
+      for (size_t at = 0u; at < (declared - size) / 128u; ++at)
+         if (!covered[at]) return false;
+   }
+   *failure = NULL;
+   return true;
+}
+
 static bool arc_entry_name(const uint8_t *source, bool old_directory,
                            ArcGuestName *output, unsigned *attributes)
 {

@@ -460,6 +460,7 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
       "${FIXTURE_DIR}/launch-family/boot-struct-sibling.adf"
       "${FIXTURE_DIR}/launch-family/boot-known-one-launchable.adf"
       "${FIXTURE_DIR}/arcdroid-media-test.rom"
+      "${FIXTURE_DIR}/arcdroid-short-tail-wd.rom"
       "${FIXTURE_DIR}/arcdroid-jfd-save-test.rom"
       "${FIXTURE_DIR}/arcdroid-jfd-newio-save-test.rom"
       "${FIXTURE_DIR}/arcdroid-jfd-create-test.rom"
@@ -637,6 +638,7 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
     "${FIXTURE_DIR}/launch-family/boot-struct-sibling.adf"
     "${FIXTURE_DIR}/launch-family/boot-known-one-launchable.adf"
     "${FIXTURE_DIR}/arcdroid-media-test.rom"
+    "${FIXTURE_DIR}/arcdroid-short-tail-wd.rom"
     "${FIXTURE_DIR}/arcdroid-jfd-save-test.rom"
     "${FIXTURE_DIR}/arcdroid-jfd-newio-save-test.rom"
     "${FIXTURE_DIR}/arcdroid-jfd-create-test.rom"
@@ -771,6 +773,34 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
   add_dependencies(jfd_identification_tests test-fixtures)
   add_test(NAME jfd-identification COMMAND jfd_identification_tests "${FIXTURE_DIR}")
   add_test(NAME core-services COMMAND core_tests "${FIXTURE_DIR}")
+  add_test(NAME short-tail-unit COMMAND core_tests "${FIXTURE_DIR}" --short-tail)
+  add_test(NAME short-raw-wd COMMAND jfd_controller_tests "${FIXTURE_DIR}" --short-raw-wd)
+  add_test(NAME short-raw-newio COMMAND jfd_controller_tests "${FIXTURE_DIR}" --short-raw-newio)
+  add_test(NAME short-tail-guest COMMAND libretro_harness
+    $<TARGET_FILE:arcdroid_libretro_test>
+    "${FIXTURE_DIR}/arcdroid-short-tail-wd.rom"
+    "${FIXTURE_DIR}/short-family/800k-d-one-sector.adf"
+    "${CMAKE_CURRENT_BINARY_DIR}/short-tail-guest-data"
+    --short-tail-guest)
+  add_test(NAME short-tail-newio-guest COMMAND libretro_harness
+    $<TARGET_FILE:arcdroid_libretro_test>
+    "${FIXTURE_DIR}/arcdroid-short-tail-wd.rom"
+    "${FIXTURE_DIR}/short-family/800k-d-one-sector.adf"
+    "${CMAKE_CURRENT_BINARY_DIR}/short-tail-newio-guest-data"
+    --short-tail-newio-guest)
+  add_test(NAME short-tail-payload-guest COMMAND libretro_harness
+    $<TARGET_FILE:arcdroid_libretro_test>
+    "${FIXTURE_DIR}/arcdroid-short-tail-wd.rom"
+    "${FIXTURE_DIR}/short-family/discovery-payload-tail.adf"
+    "${CMAKE_CURRENT_BINARY_DIR}/short-tail-payload-guest-data"
+    --short-tail-guest)
+  add_test(NAME short-tail-discovery COMMAND libretro_harness
+    $<TARGET_FILE:arcdroid_libretro_test>
+    "${FIXTURE_DIR}/arcdroid-test.rom"
+    "${FIXTURE_DIR}/short-family/discovery-directory-tail.adf"
+    "${CMAKE_CURRENT_BINARY_DIR}/short-tail-discovery-data"
+    --short-tail-discovery
+    "${FIXTURE_DIR}/short-family/discovery-directory-full.adf")
   add_test(NAME jfd-controller-golden COMMAND jfd_controller_tests
     "${FIXTURE_DIR}" --wd1770)
   add_test(NAME newio-controller-golden COMMAND jfd_controller_tests

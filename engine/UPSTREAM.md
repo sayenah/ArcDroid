@@ -92,6 +92,14 @@ The three upstream commented-out `dumpregs()` calls are omitted because the
 shipping-I/O guard deliberately rejects that desktop debug-file entry point;
 their removal changes no compiled behaviour.
 
+Slice 15 keeps raw images staged at declared geometry while passing an optional
+sector-aligned effective extent to `src/disc.c` and `src/disc_adf.c`. The raw
+reader loads partially present cylinders, limits sector and ID visibility to
+the prefix, times absent-sector failure by controller index pulses, refuses
+FORMAT on incomplete sides, and writes back only changed present sectors.
+Full-size callers pass the explicit unrestricted extent. This does not import
+the JFD write store or alter the JFD reader.
+
 `src/keyboard.c` contains ArcDroid's single consumption-acknowledgement hook:
 after the existing KART-idle and keyboard-enabled guards, one platform call
 applies the next queued input event. Skipped polls never advance the queue and

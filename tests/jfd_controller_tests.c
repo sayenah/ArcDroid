@@ -2313,6 +2313,181 @@ static void test_82c711_raw_geometries(void)
    raw_helper_length = ARC_LAUNCH_DISC_SIZE;
 }
 
+static void test_short_raw_wd(void)
+{
+   raw_helper_length = 819200u;
+   for (size_t i = 0u; i < raw_helper_length; ++i)
+      raw_helper[i] = (uint8_t)(i / 1024u);
+   uint8_t *original = malloc(raw_helper_length);
+   assert(original);
+   memcpy(original, raw_helper, raw_helper_length);
+   controller_reset(NULL);
+   assert(disc_load_raw_extent(0, "memory-helper.adl", ARC_GEOMETRY_800K_D,
+                               3u * 1024u));
+   wd1770_write(0x08u, 2u);
+   assert(finish_command(0x80u, 1300000u) == 0x80u &&
+          transfer_count == 1024u && transfer[0] == 2u);
+   wd1770_write(0x08u, 3u);
+   uint64_t before = tsc;
+   assert(finish_command(0x80u, 1300000u) == 0x10u && transfer_count == 0u);
+   assert((tsc - before) / TIMER_USEC >= 1000000u);
+   wd_write_mode = true; wd_write_value = 0x6au;
+   uint8_t absent_write = finish_command(0xa0u, 1300000u);
+   /* WD1770 requests its initial byte before its reader's search completes. */
+   assert(absent_write == 0x10u && transfer_count <= 1u &&
+          !memcmp(raw_helper, original, raw_helper_length));
+   wd1770_write(0x08u, 2u);
+   assert(finish_command(0xa0u, 1300000u) == 0x80u && transfer_count == 1024u);
+   assert(!memcmp(raw_helper, original, 2048u) &&
+          raw_helper[2048u] == 0x6au && raw_helper[3072u] == original[3072u] &&
+          !memcmp(raw_helper + 3072u, original + 3072u, raw_helper_length - 3072u));
+   wd_write_mode = false;
+   for (unsigned i = 0u; i < 6u; ++i)
+   {
+      assert(finish_command(0xc0u, 1300000u) == 0x80u && transfer_count == 6u);
+      assert(transfer[2] == i % 3u);
+   }
+   wd1770_writelatch_a(0x8eu); /* head 1 is wholly absent */
+   assert(finish_command(0xc0u, 1300000u) == 0x10u && transfer_count == 0u);
+   wd1770_writelatch_a(0x9eu);
+   assert(finish_command(0xf0u, 1300000u) == 0x10u &&
+          !memcmp(raw_helper + 3072u, original + 3072u, raw_helper_length - 3072u));
+   disc_close(0);
+   controller_reset(NULL);
+   assert(disc_load_raw_extent(0, "memory-helper.adl", ARC_GEOMETRY_800K_D,
+                               1024u));
+   raw_hd_length = 819200u;
+   memset(raw_hd, 0x7au, raw_hd_length);
+   assert(disc_load_raw_extent(1, "memory-hd.adf", ARC_GEOMETRY_800K_D,
+                               3072u));
+   for (unsigned i = 0u; i < 6u; ++i)
+   {
+      wd1770_writelatch_a(0x9eu);
+      assert(finish_command(0xc0u, 1300000u) == 0x80u &&
+             transfer_count == 6u && transfer[2] == 0u);
+      wd1770_writelatch_a(0x9du);
+      assert(finish_command(0xc0u, 1300000u) == 0x80u &&
+             transfer_count == 6u && transfer[2] == i % 3u);
+   }
+   disc_close(1); disc_close(0);
+   raw_hd_length = sizeof(raw_hd);
+   memcpy(raw_helper, original, raw_helper_length);
+   controller_reset(NULL);
+   assert(disc_load_raw_extent(0, "memory-helper.adl", ARC_GEOMETRY_800K_D,
+                               6144u));
+   assert(finish_command(0xf0u, 1300000u) == 0x80u);
+   for (size_t i = 0u; i < 5120u; ++i) assert(raw_helper[i] == 0u);
+   assert(!memcmp(raw_helper + 5120u, original + 5120u,
+                  raw_helper_length - 5120u));
+   wd1770_writelatch_a(0x8eu);
+   assert(finish_command(0xf0u, 1300000u) == 0x10u &&
+          !memcmp(raw_helper + 5120u, original + 5120u,
+                  raw_helper_length - 5120u));
+   disc_close(0);
+   free(original);
+   raw_helper_length = ARC_LAUNCH_DISC_SIZE;
+}
+
+static void mixed_select(unsigned drive, uint8_t rate);
+static void mixed_read_id(unsigned drive, uint8_t result[7]);
+
+static void test_short_raw_newio(void)
+{
+   raw_helper_length = 819200u;
+   memset(raw_helper, 0x39, raw_helper_length);
+   uint8_t *original = malloc(raw_helper_length);
+   assert(original);
+   memcpy(original, raw_helper, raw_helper_length);
+   newio_reset(NULL, false);
+   assert(disc_load_raw_extent(0, "memory-helper.adl", ARC_GEOMETRY_800K_E,
+                               3072u));
+   uint8_t result[7];
+   transfer_count = 0u;
+   newio_transfer_limit = 1024u;
+   newio_service_dma = true; newio_dma_write = false;
+   newio_start_read(0u, 2u, 3u);
+   newio_wait_irq(500000u); newio_result(result);
+   assert(!(result[0] & 0xc0u) && transfer_count == 1024u && transfer[0] == 0x39u);
+   c82c711_fdc_shutdown();
+   c82c711_fdc_init();
+   c82c711_fdc_write(2u, 0x1cu, NULL);
+   c82c711_fdc_write(7u, 1u, NULL);
+   fdc_funcs_t observed;
+   observe_indexes(&observed);
+   transfer_count = 0u;
+   newio_start_read(0u, 3u, 3u);
+   newio_wait_irq(500000u); newio_result(result);
+   assert(observed_index_pulses == 2u && (result[0] & 0x40u) &&
+          result[1] == 5u && transfer_count == 0u);
+   newio_service_dma = newio_dma_write = true;
+   newio_write_value = 0x6au;
+   transfer_count = 0u; observed_index_pulses = 0u;
+   newio_start_write(0u, 3u, 3u);
+   newio_wait_irq(500000u); newio_result(result);
+   assert(observed_index_pulses == 2u && (result[0] & 0x40u) &&
+          transfer_count <= 1u && !memcmp(raw_helper, original, raw_helper_length));
+   fdc_funcs = original_controller_funcs;
+   transfer_count = 0u;
+   newio_start_write(0u, 2u, 3u);
+   newio_wait_irq(500000u); newio_result(result);
+   assert(!(result[0] & 0xc0u) && transfer_count == 1024u &&
+          !memcmp(raw_helper, original, 2048u) &&
+          raw_helper[2048u] == 0x6au &&
+          !memcmp(raw_helper + 3072u, original + 3072u,
+                  raw_helper_length - 3072u));
+   c82c711_fdc_shutdown();
+   c82c711_fdc_init();
+   c82c711_fdc_write(2u, 0x1cu, NULL);
+   c82c711_fdc_write(7u, 1u, NULL);
+   newio_service_dma = true; newio_dma_write = false;
+   newio_transfer_limit = 0u; transfer_count = 0u;
+   const uint8_t crossing[8] = {0u, 0u, 0u, 2u, 3u, 3u, 0x1bu, 0xffu};
+   c82c711_fdc_write(5u, 0x06u, NULL);
+   for (unsigned i = 0u; i < sizeof(crossing); ++i)
+      c82c711_fdc_write(5u, crossing[i], NULL);
+   newio_wait_irq(1100000u); newio_result(result);
+   assert((result[0] & 0x40u) && result[1] == 0x05u &&
+          transfer_count == 1024u && transfer[0] == 0x6au);
+   c82c711_fdc_shutdown();
+   c82c711_fdc_init();
+   c82c711_fdc_write(2u, 0x1cu, NULL);
+   c82c711_fdc_write(7u, 1u, NULL);
+   newio_service_dma = true; newio_dma_write = false;
+   unsigned first_id = 0u;
+   for (unsigned i = 0u; i < 6u; ++i)
+   {
+      newio_start_id(0u);
+      newio_wait_irq(500000u); newio_result(result);
+      if (!i) first_id = result[5];
+      assert(!(result[0] & 0xc0u) && first_id < 3u &&
+             result[5] == (first_id + i) % 3u);
+   }
+   newio_start_id(1u);
+   newio_wait_irq(500000u); newio_result(result);
+   assert(result[0] & 0x40u);
+   c82c711_fdc_shutdown();
+   disc_close(0);
+   newio_reset(NULL, false);
+   assert(disc_load_raw_extent(0, "memory-helper.adl", ARC_GEOMETRY_800K_E,
+                               1024u));
+   raw_hd_length = 819200u;
+   memset(raw_hd, 0x7au, raw_hd_length);
+   assert(disc_load_raw_extent(1, "memory-hd.adf", ARC_GEOMETRY_800K_E,
+                               3072u));
+   for (unsigned i = 0u; i < 6u; ++i)
+   {
+      mixed_select(0u, 1u); mixed_read_id(0u, result);
+      assert(!(result[0] & 0xc0u) && result[5] == 0u);
+      mixed_select(1u, 1u); mixed_read_id(1u, result);
+      assert(!(result[0] & 0xc0u) && result[5] == i % 3u);
+   }
+   c82c711_fdc_shutdown();
+   disc_close(1); disc_close(0);
+   raw_hd_length = sizeof(raw_hd);
+   free(original);
+   raw_helper_length = ARC_LAUNCH_DISC_SIZE;
+}
+
 static void mixed_select(unsigned drive, uint8_t rate)
 {
    c82c711_fdc_write(2u, (uint8_t)(0x3cu | drive), NULL);
@@ -2576,6 +2751,10 @@ int main(int argc, char **argv)
       puts("jfd_controller_tests: ADF early TC passed");
       return 0;
    }
+   if (argc == 3 && !strcmp(argv[2], "--short-raw-wd"))
+   { test_short_raw_wd(); puts("short-raw-wd: passed"); return 0; }
+   if (argc == 3 && !strcmp(argv[2], "--short-raw-newio"))
+   { test_short_raw_newio(); puts("short-raw-newio: passed"); return 0; }
    if (argc == 3)
    {
       run_wd1770 = !strcmp(argv[2], "--wd1770");

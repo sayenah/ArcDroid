@@ -2,6 +2,7 @@
 void adf_init();
 int adf_flush_all(void);
 void adf_set_writable(int drive, int writable);
+void adf_set_extent(int drive, size_t effective_extent);
 
 void adf_load(int drive, char *fn);
 void adl_load(int drive, char *fn);
