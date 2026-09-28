@@ -120,6 +120,24 @@ def main() -> None:
     log, lines = run(("--boot-fail-record-write",))
     assert len(lines) == 2 and "recovery=helper" in lines[1], lines
     assert not record.exists() and "Boot outcome: prompt" in log
+
+    ask_root = Path(tempfile.mkdtemp(prefix="ask-single-", dir=output))
+    ask_command = command.copy()
+    ask_command[4] = str(ask_root)
+    for attempt in (1, 2):
+        result = subprocess.run(ask_command + ["--boot-chooser-ask"],
+                                capture_output=True, text=True, check=False)
+        assert result.returncode == 0, result.stdout + result.stderr
+        ask_log = (ask_root / "evidence" / "real-boot.log").read_text()
+        ask_lines = [line for line in ask_log.splitlines()
+                     if line.startswith("Launch:")]
+        if attempt == 1:
+            assert len(ask_lines) == 2 and "recovery=helper" in ask_lines[1], ask_lines
+        else:
+            assert len(ask_lines) == 1 and "remembered boot observation" in ask_lines[0], ask_lines
+            assert "helper=" in ask_lines[0] and ".adl" in ask_lines[0]
+            assert "Boot outcome:" not in ask_log
+        assert "recovery=chooser" not in ask_log, ask_log
     print("boot-observation-harness: passed")
 
 

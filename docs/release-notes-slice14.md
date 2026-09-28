@@ -7,7 +7,9 @@ the failed boot. The original error screen may remain visible for a few seconds.
 Using the controls before the prompt is confirmed cancels the automatic launch.
 After ArcDroid has seen the prompt and offered the chooser or launched a helper,
 a validated local boot observation lets later loads and resets skip the failed
-boot. The original error screen normally appears only once per configuration.
+boot until the disc contents, firmware, machine, CMOS settings or boot options
+change. A game that saves to its own disc will usually show the failed boot
+again after saving.
 
 The core observes the operating system's command-line wait through ARM SWI
 execution. It does not inspect the disc's boot program or interpret screen text.

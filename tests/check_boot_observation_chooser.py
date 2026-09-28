@@ -42,7 +42,7 @@ def main() -> None:
     assert "chooser chose target" in lines[1] and "Boot outcome:" not in log
 
     log, lines = run("--boot-chooser-ask", "--boot-chooser-continue")
-    assert len(lines) == 2 and "chooser chose desktop" in lines[1], lines
+    assert len(lines) == 2 and "reason=chooser chose disc startup; recovery disabled" in lines[1], lines
     log, lines = run()
     assert len(lines) == 1 and "remembered boot observation" in lines[0], lines
     assert "decision=none" in lines[0] and "helper=none" in lines[0]

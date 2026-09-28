@@ -2215,5 +2215,46 @@ try {
         throw "Slice 14 post-boot chooser was not visible"
     }
     Send-ChooserKeyboardPick $bootChooser $bootCapture
+    Wait-BootRecovery $bootChooser "helper" 1
+    $pickLines = @(Get-Content $bootChooser.RetroLog | Where-Object {
+        $_.Contains("phase=recovery boot-watch=prompt recovery=helper")
+    })
+    $pickLine = $pickLines[-1]
+    $pickedDecisionMatch = [regex]::Match($pickLine, 'decision=(.*?) reason=')
+    $pickedHelperMatch = [regex]::Match($pickLine, 'helper=(.*?) root-boot=')
+    if (-not $pickedDecisionMatch.Success -or -not $pickedHelperMatch.Success -or
+        -not $pickedHelperMatch.Groups[1].Value.EndsWith(".adl")) {
+        throw "Slice 14 chooser pick did not log a mounted helper; log=[$pickLine]"
+    }
+    $pickedApplication = $pickedDecisionMatch.Groups[1].Value
+    $pickedHelper = $pickedHelperMatch.Groups[1].Value
+    if (-not (Test-Path -LiteralPath $pickedHelper -PathType Leaf)) {
+        throw "Slice 14 chooser helper was not published at $pickedHelper"
+    }
+    Send-MediaCommand $bootChooser "RESET"
+    Wait-BootHit $bootChooser 1
 } finally { Stop-MediaRun $bootChooser }
-Write-Host "Slice 14 Windows RetroArch: synthetic helper recovery, remembered reset and reload, post-boot chooser pick passed"
+@"
+arcdroid_machine = "A3000"
+arcdroid_cpu = "ARM2"
+arcdroid_joystick_if = "Keyboard"
+arcdroid_disk_writes = "off"
+arcdroid_launch = "auto"
+arcdroid_launch_chooser = "remember"
+"@ | Set-Content -Encoding ASCII $coreOptions
+$bootChooserReload = Start-MediaRun $bootMultiple "slice14-boot-chooser-reload"
+try {
+    Wait-BootHit $bootChooserReload 1
+    $reloadLines = @(Get-Content $bootChooserReload.RetroLog | Where-Object {
+        $_.Contains("reason=remembered boot observation; disc !Boot skipped")
+    })
+    $reloadLine = $reloadLines[-1]
+    $reloadDecisionMatch = [regex]::Match($reloadLine, 'decision=(.*?) reason=')
+    $reloadHelperMatch = [regex]::Match($reloadLine, 'helper=(.*?) root-boot=')
+    if (-not $reloadDecisionMatch.Success -or -not $reloadHelperMatch.Success -or
+        $reloadDecisionMatch.Groups[1].Value -ne $pickedApplication -or
+        $reloadHelperMatch.Groups[1].Value -ne $pickedHelper) {
+        throw "Slice 14 chooser reload did not use the picked application and helper; log=[$reloadLine]"
+    }
+} finally { Stop-MediaRun $bootChooserReload }
+Write-Host "Slice 14 Windows RetroArch: synthetic helper recovery, remembered reset and reload, post-boot chooser pick and remembered reload passed"

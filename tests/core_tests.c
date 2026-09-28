@@ -699,6 +699,54 @@ static uint64_t test_pixels_hash(const uint32_t *pixels, size_t count)
    return hash;
 }
 
+static void test_chooser_row_text(const uint32_t *pixels, unsigned x,
+                                  unsigned y, const char *label)
+{
+   for (unsigned character = 0u; label[character]; ++character)
+      for (unsigned row = 0u; row < 8u; ++row)
+         for (unsigned bit = 0u; bit < 8u; ++bit)
+         {
+            bool lit = (arc_osk_font[(uint8_t)label[character]][row] >>
+                        (7u - bit)) & 1u;
+            uint32_t expected = lit ? UINT32_C(0x00e8edf5) :
+                                      UINT32_C(0x00101a2a);
+            assert(pixels[(size_t)(y + row * 2u) * 640u +
+                          x + character * 16u + bit * 2u] == expected);
+         }
+}
+
+static void test_boot_hit_chooser(void)
+{
+   ArcLaunchDiscovery discovery = {0};
+   discovery.reason = ARC_LAUNCH_REASON_AMBIGUOUS;
+   discovery.candidate_count = discovery.application_count = 1u;
+   discovery.unknown_count = 1u;
+   discovery.candidates[0].name = test_guest_name("!A", 2u);
+   discovery.candidates[0].state = ARC_LAUNCH_CANDIDATE_APPLICATION;
+   discovery.candidates[0].launchable = true;
+   ArcLaunchChooser chooser;
+   uint32_t *pixels = calloc(640u * 480u, sizeof(*pixels));
+   assert(pixels);
+   assert(arc_launch_chooser_init(&chooser, &discovery, false, INT_MIN));
+   assert(!chooser.inspection_incomplete && !chooser.boot_hit);
+   assert(arc_launch_chooser_render(&chooser, &discovery, pixels,
+                                   640u, 480u, 640u * sizeof(*pixels)));
+   test_chooser_row_text(pixels, 104u, 112u, "Desktop (no launch)");
+
+   arc_launch_chooser_boot_hit(&chooser, &discovery);
+   assert(chooser.boot_hit && chooser.inspection_incomplete);
+   assert(arc_launch_chooser_render(&chooser, &discovery, pixels,
+                                   640u, 480u, 640u * sizeof(*pixels)));
+   test_chooser_row_text(pixels, 104u, 112u, "Run disc's own startup");
+   discovery.unknown_count = 0u;
+   discovery.scan_incomplete = true;
+   assert(arc_launch_chooser_init(&chooser, &discovery, false, INT_MIN));
+   assert(!chooser.inspection_incomplete);
+   arc_launch_chooser_boot_hit(&chooser, &discovery);
+   assert(chooser.inspection_incomplete);
+   free(pixels);
+}
+
 static void test_launch_choices_and_chooser(void)
 {
    static const char fingerprint[] =
@@ -3753,6 +3801,7 @@ int main(int argc, char **argv)
    test_media_launch_and_cmos();
    test_launch_bindings();
    test_launch_choices_and_chooser();
+   test_boot_hit_chooser();
    test_launch_discovery_and_builder(argv[1]);
    test_nested_launch(argv[1]);
    test_f_media(argv[1]);

@@ -3960,8 +3960,7 @@ static bool arc_boot_prepare_hit(const ArcLaunchDiscovery *discovery)
    (void)arc_choice_load(discovery, &remembered, &remembered_target);
    int selected = -1;
    ArcLaunchRecovery action = arc_launch_recovery_decide(discovery, &selected);
-   bool ask = arc_core_options.launch_chooser == ARC_LAUNCH_CHOOSER_ASK;
-   if (remembered && !ask)
+   if (remembered && arc_core_options.launch_chooser != ARC_LAUNCH_CHOOSER_ASK)
    {
       if (remembered_target < 0)
       {
@@ -3972,13 +3971,12 @@ static bool arc_boot_prepare_hit(const ArcLaunchDiscovery *discovery)
       selected = remembered_target;
       action = ARC_LAUNCH_RECOVERY_HELPER;
    }
-   else if (ask && action != ARC_LAUNCH_RECOVERY_NONE)
-      action = ARC_LAUNCH_RECOVERY_CHOOSER;
    if (action == ARC_LAUNCH_RECOVERY_CHOOSER)
    {
       if (arc_launch_chooser_init(&arc_chooser, discovery,
                                   remembered, remembered_target))
       {
+         arc_launch_chooser_boot_hit(&arc_chooser, discovery);
          arc_chooser_discovery = *discovery;
          arc_boot_eligible = false;
          arc_launch_log(discovery, -1, reason);
@@ -5909,7 +5907,9 @@ static bool arc_chooser_confirm(void)
                                   error, sizeof(error)))
       goto failed;
    if (native_choice) arc_launch_log(&arc_chooser_discovery, selected,
-                  selected < 0 ? "chooser chose desktop" :
+                  selected < 0 ? (arc_chooser.boot_hit ?
+                     "chooser chose disc startup; recovery disabled" :
+                     "chooser chose desktop") :
                                  "chooser chose target");
    if (!arc_resolve_inputs(&arc_core_options, true, false))
    {
