@@ -234,6 +234,9 @@ static char short_notice_text[256];
 static char short_info_text[256];
 static unsigned launch_log_lines;
 static unsigned jfd_boot_log_lines;
+static unsigned jfd_quarantine_log_lines;
+static unsigned jfd_quarantine_notice_calls;
+static char last_jfd_quarantine_log[160];
 static char last_jfd_boot_log[512];
 static unsigned adffs_notice_calls;
 static unsigned jfd_write_log_lines;
@@ -520,6 +523,13 @@ static void frontend_log(enum retro_log_level level, const char *format, ...)
    {
       ++machine_resolution_lines;
       snprintf(machine_resolution_log, sizeof(machine_resolution_log), "%s", message);
+   }
+   if (!strncmp(message, "JFD native quarantine:", 22u))
+   {
+      assert(level == RETRO_LOG_WARN);
+      ++jfd_quarantine_log_lines;
+      snprintf(last_jfd_quarantine_log, sizeof(last_jfd_quarantine_log),
+               "%s", message);
    }
    if (strstr(message, "flagged for RiscPC-class machines"))
       ++riscpc_log_count;
@@ -926,6 +936,7 @@ static bool environment(unsigned command, void *data)
       case RETRO_ENVIRONMENT_SET_MESSAGE_EXT:
          ++total_osd_calls;
          snprintf(last_message, sizeof(last_message), "%s", ((struct retro_message_ext *)data)->msg);
+         if (strstr(last_message, "quarantine")) ++jfd_quarantine_notice_calls;
          count_install_notice();
          if (strstr(last_message, "can no longer be saved this session"))
          {
@@ -2016,6 +2027,9 @@ int main(int argc, char **argv)
    bool short_tail_guest = false;
    bool short_tail_newio_guest = false;
    bool short_tail_discovery = false;
+   bool jfd_quarantine_guest = false, jfd_quarantine_newio = false;
+   bool jfd_quarantine_density = false;
+   bool jfd_quarantine_adffs = false;
    char jfd_content_path[4096] = {0}, jfd_fixture_path[4096] = {0};
    const char *osk_script = NULL;
    if (argc == 11 && !strcmp(argv[5], "--newio-smoke"))
@@ -2042,6 +2056,16 @@ int main(int argc, char **argv)
       short_tail_guest = short_tail_newio_guest = true;
    else if (argc == 7 && !strcmp(argv[5], "--short-tail-discovery"))
       short_tail_discovery = true;
+   else if (argc == 6 && (!strcmp(argv[5], "--jfd-quarantine-wd") ||
+                           !strcmp(argv[5], "--jfd-quarantine-newio")))
+   {
+      jfd_quarantine_guest = true;
+      jfd_quarantine_newio = !strcmp(argv[5], "--jfd-quarantine-newio");
+   }
+   else if (argc == 7 && !strcmp(argv[5], "--jfd-quarantine-density"))
+      jfd_quarantine_density = true;
+   else if (argc == 7 && !strcmp(argv[5], "--jfd-quarantine-adffs"))
+      jfd_quarantine_adffs = true;
    else if (argc >= 6 && !strcmp(argv[5], "--real-boot"))
    {
       real_boot = true;
@@ -2094,13 +2118,13 @@ int main(int argc, char **argv)
    make_directory(argv[4]); make_directory(system_path); make_directory(firmware_path);
    strncat(firmware_path, "/firmware", sizeof(firmware_path) - strlen(firmware_path) - 1u); make_directory(firmware_path);
    make_directory(save_path);
-   if (media_tests || install_guest || real_boot_package)
+   if (media_tests || install_guest || real_boot_package || jfd_quarantine_adffs)
    {
       char adffs_dir[4096], package_path[4096];
       snprintf(adffs_dir, sizeof(adffs_dir), "%s/arcdroid/adffs", system_path);
       make_directory(adffs_dir);
       snprintf(package_path, sizeof(package_path), "%s/synthetic.zip", adffs_dir);
-      copy_file(install_guest ? argv[6] :
+      copy_file(install_guest || jfd_quarantine_adffs ? argv[6] :
                 real_boot_package ? real_boot_package : argv[13], package_path);
    }
    if (real_boot)
@@ -2289,6 +2313,21 @@ int main(int argc, char **argv)
              arc_engine_reset && arc_engine_start && arc_engine_stop &&
              arc_libretro_test_cmos_path);
    }
+   if (jfd_quarantine_guest)
+   {
+      *(void **)(&arc_engine_test_drive_media) =
+         dlsym(module, "arc_engine_test_drive_media");
+      assert(arc_engine_test_drive_media);
+   }
+   if (jfd_quarantine_adffs)
+   {
+      *(void **)(&arc_libretro_test_adffs_accept_test_os) =
+         dlsym(module, "arc_libretro_test_adffs_accept_test_os");
+      *(void **)(&arc_libretro_test_adffs_carrier_matches) =
+         dlsym(module, "arc_libretro_test_adffs_carrier_matches");
+      assert(arc_libretro_test_adffs_accept_test_os &&
+             arc_libretro_test_adffs_carrier_matches);
+   }
    if (short_tail_guest || short_tail_discovery)
    {
       *(void **)(&arc_libretro_test_staged_path) =
@@ -2301,7 +2340,9 @@ int main(int argc, char **argv)
    if (!cmos_exerciser && !install_guest && !real_boot && !newio_smoke && !jfd_writes && !jfd_create_step &&
        !jfd_identification_step &&
        !jfd_merge_step && !jfd_allocation_step && !jfd_allocation_set &&
-       !short_tail_guest && !short_tail_discovery)
+       !short_tail_guest && !short_tail_discovery &&
+       !jfd_quarantine_guest && !jfd_quarantine_density &&
+       !jfd_quarantine_adffs)
    {
       *(void **)(&arc_engine_audio_stats) = dlsym(module, "arc_engine_audio_stats");
       *(void **)(&arc_engine_media_insert) = dlsym(module, "arc_engine_media_insert");
@@ -2586,6 +2627,119 @@ int main(int argc, char **argv)
    assert(retro_serialize_size() == 0u);
    struct retro_game_info game = {jfd_writes ? jfd_content_path : argv[3], NULL, 0u, NULL};
    uint64_t source_hash = hash_file(game.path);
+
+   if (jfd_quarantine_density)
+   {
+      option_machine = "Auto";
+      option_launch = "off";
+      option_writes = "off";
+      phase = PHASE_LOAD; assert(retro_load_game(&game));
+      assert(strstr(machine_resolution_log, "resolved=A3000") &&
+             jfd_quarantine_log_lines == 1u &&
+             strstr(last_jfd_identification_log, "timing=none captured=none") &&
+             strstr(last_jfd_identification_log, "reason=quarantined"));
+      struct retro_game_info second = {argv[6], NULL, 0u, NULL};
+      assert(disk_control.set_eject_state(true));
+      assert(!disk_control.replace_image_index(0u, &second) &&
+             strstr(last_message, "hd-media-needs-new-io"));
+      assert(disk_control.set_eject_state(false));
+      retro_reset();
+      assert(strstr(machine_resolution_log, "resolved=A3000") &&
+             disk_control.get_num_images() == 1u);
+      retro_unload_game();
+      phase = PHASE_LOAD; assert(retro_load_game(&second));
+      assert(strstr(machine_resolution_log, "resolved=A3020") &&
+             jfd_quarantine_log_lines >= 2u);
+      retro_unload_game();
+      option_machine = "A3000"; variable_update = true;
+      phase = PHASE_LOAD; assert(retro_load_game(&game));
+      retro_unload_game();
+      phase = PHASE_LOAD;
+      assert(!retro_load_game(&second));
+      retro_deinit();
+      assert(open_files == 0u && open_dirs == 0u && dlclose(module) == 0);
+      puts("jfd-quarantine-density: passed");
+      return 0;
+   }
+
+   if (jfd_quarantine_adffs)
+   {
+      size_t source_size = 0u;
+      uint8_t *source = read_alloc(game.path, &source_size);
+      option_machine = "A3000";
+      option_launch = "auto";
+      option_jfd_boot = "adffs";
+      arc_libretro_test_adffs_accept_test_os(true);
+      unsigned warnings = jfd_quarantine_log_lines;
+      phase = PHASE_LOAD; assert(retro_load_game(&game));
+      bool routed = strstr(last_jfd_boot_log, "path=adffs") != NULL;
+      bool bytes_match = arc_libretro_test_adffs_carrier_matches(source,
+                                                                 source_size);
+      if (!routed || !bytes_match || jfd_quarantine_log_lines != warnings + 1u)
+         fprintf(stderr, "quarantine ADFFS route=%s warning=%u carrier=%d size=%zu\n",
+                 last_jfd_boot_log, jfd_quarantine_log_lines - warnings,
+                 bytes_match, source_size);
+      assert(routed && bytes_match && jfd_quarantine_log_lines == warnings + 1u);
+      retro_unload_game(); retro_deinit(); free(source);
+      assert(open_files == 0u && open_dirs == 0u && dlclose(module) == 0);
+      puts("jfd-quarantine-adffs: passed");
+      return 0;
+   }
+
+   if (jfd_quarantine_guest)
+   {
+      option_machine = jfd_quarantine_newio ? "A3020" : "A3000";
+      option_launch = "off";
+      option_writes = "off";
+      unsigned warnings = jfd_quarantine_log_lines;
+      unsigned omitted = zip_omission_log_lines;
+      phase = PHASE_LOAD; assert(retro_load_game(&game));
+      assert(jfd_quarantine_log_lines == warnings + 1u &&
+             zip_omission_log_lines == omitted &&
+             jfd_quarantine_notice_calls == 0u &&
+             strstr(last_jfd_quarantine_log, "sides=1 first=158:octal-density"));
+      if (strstr(game.path, ".zip"))
+      {
+         char image_path[4096];
+         assert(disk_control.get_num_images() == 2u &&
+                disk_control.get_image_path(0u, image_path, sizeof(image_path)) &&
+                strstr(image_path, "quarantine-guest.zip#Disc1.jfd") &&
+                disk_control.get_image_path(1u, image_path, sizeof(image_path)) &&
+                strstr(image_path, "quarantine-guest.zip#Disc2.jfd") &&
+                strstr(last_zip_order, "1=\"Disc1.jfd\" 2=\"Disc2.jfd\""));
+      }
+      bool protected_before = false;
+      char mounted_digest[41], reset_digest[41];
+      assert(arc_engine_test_drive_media(0u, &protected_before,
+                                         mounted_digest));
+      phase = PHASE_RUN;
+      for (unsigned frame = 0u; frame < 900u &&
+             last_video_pixel != 0x006a0000u; ++frame) retro_run();
+      if (last_video_pixel != 0x006a0000u)
+         fprintf(stderr, "quarantine guest pixel=%08x machine=%s boot=%s\n",
+                 last_video_pixel, machine_resolution_log, last_jfd_boot_log);
+      assert(last_video_pixel == 0x006a0000u);
+      retro_reset(); last_video_pixel = 0u;
+      bool protected_after = false;
+      assert(jfd_quarantine_log_lines == warnings + 2u &&
+             zip_omission_log_lines == omitted &&
+             disk_control.get_num_images() ==
+                (strstr(game.path, ".zip") ? 2u : 1u) &&
+             arc_engine_test_drive_media(0u, &protected_after, reset_digest) &&
+             protected_before == protected_after &&
+             !strcmp(mounted_digest, reset_digest));
+      if (!jfd_quarantine_newio)
+      {
+         for (unsigned frame = 0u; frame < 900u &&
+                last_video_pixel != 0x006a0000u; ++frame) retro_run();
+         assert(last_video_pixel == 0x006a0000u);
+      }
+      assert(hash_file(game.path) == source_hash);
+      retro_unload_game(); retro_deinit();
+      assert(open_files == 0u && open_dirs == 0u && dlclose(module) == 0);
+      puts("jfd-quarantine-guest: passed");
+      return 0;
+   }
 
    if (short_tail_discovery)
    {

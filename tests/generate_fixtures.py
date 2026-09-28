@@ -165,7 +165,8 @@ def build_rom(media_exerciser: bool = False,
               boot_watch_pattern: str | None = None,
               boot_write_sectors: tuple[int, ...] = (1, 2),
               cmos_exerciser: bool = False,
-              short_tail_probe: bool = False) -> bytearray:
+              short_tail_probe: bool = False,
+              quarantine_probe: bool = False) -> bytearray:
     if boot_watch_pattern not in (None, "prompt", "prompt-write", "prompt-structure", "two-phase", "cli", "cli-confirm", "horizon-edge",
                                   "cli-then-prompt", "desktop"):
         raise ValueError("unknown synthetic boot observation")
@@ -540,7 +541,7 @@ def build_rom(media_exerciser: bool = False,
     a.ldr(1, 2, byte=True); a.tst_imm(1, 0x10); a.branch("new_read_id_irq", "eq")
     a.ldr(1, 3, byte=True)
     for _ in range(7): a.ldr(1, 0, byte=True)
-    if short_tail_probe:
+    if short_tail_probe or quarantine_probe:
         # A3020/82C711 guest counterpart to the WD boundary probe. Seek to
         # the final cylinder and select its second side in the command byte.
         for value in (0x0F, 0, 79):
@@ -590,7 +591,9 @@ def build_rom(media_exerciser: bool = False,
         a.ldr_const(7, 0x26568000); a.cmp_reg(6, 7)
         a.branch("short_new_fail", "ne")
         a.label("short_new_read_ok")
-        for value in (0x06, 4, 79, 1, 4, 3, 4, 0x1B, 0xFF):
+        for value in ((0x06, 0, 79, 0, 3, 3, 3, 0x1B, 0xFF)
+                      if quarantine_probe else
+                      (0x06, 4, 79, 1, 4, 3, 4, 0x1B, 0xFF)):
             a.mov(1, value); a.str(1, 0, byte=True)
         a.ldr_const(2, 0x03200030)
         a.ldr_const(8, 2500000)
@@ -605,6 +608,8 @@ def build_rom(media_exerciser: bool = False,
         for _ in range(5): a.ldr(1, 0, byte=True)
         a.tst_imm(4, 0x40); a.branch("short_new_fail", "eq")
         a.tst_imm(7, 0x04); a.branch("short_new_fail", "eq")
+        if quarantine_probe:
+            a.mov(6, 0x10); a.branch("fdc_done")
         for value in (0x05, 4, 79, 1, 3, 3, 4, 0x1B, 0xFF):
             a.mov(1, value); a.str(1, 0, byte=True)
         a.ldr_const(2, 0x03200030)
@@ -871,7 +876,7 @@ def build_rom(media_exerciser: bool = False,
     a.ldr_const(0, 0x03310000)
     a.mov(1, 0)
     a.str(1, 0, 4, byte=True)
-    if short_tail_probe:
+    if short_tail_probe or quarantine_probe:
         # WD1772, cylinder 79/head 1: sector 3 is the last present sector
         # of the one-sector-short D fixture; sector 4 is absent.
         a.mov(1, 79); a.str(1, 0, 12, byte=True)
@@ -902,7 +907,10 @@ def build_rom(media_exerciser: bool = False,
         a.ldr(4, 0, byte=True); a.tst_imm(4, 1)
         a.branch("short_present_finish", "ne")
         a.cmp_imm(4, 0x80); a.branch("short_fail", "ne")
-        a.mov(1, 4); a.str(1, 0, 8, byte=True)
+        if quarantine_probe:
+            a.ldr_const(2, 0x03350040)
+            a.mov(1, 0x9E); a.str(1, 2, byte=True)
+        a.mov(1, 3 if quarantine_probe else 4); a.str(1, 0, 8, byte=True)
         a.mov(1, 0x80); a.str(1, 0, byte=True)
         a.ldr_const(3, 2500000)
         a.label("short_absent_wait")
@@ -913,6 +921,8 @@ def build_rom(media_exerciser: bool = False,
         a.branch("short_fail")
         a.label("short_absent_done")
         a.tst_imm(4, 0x10); a.branch("short_fail", "eq")
+        if quarantine_probe:
+            a.mov(6, 0x10); a.branch("fdc_done")
         a.mov(1, 3); a.str(1, 0, 8, byte=True)
         a.mov(1, 0xA0); a.str(1, 0, byte=True)
         a.ldr_const(5, 1024); a.ldr_const(3, 2500000)
@@ -2343,6 +2353,15 @@ def build_adffs_fixtures(output: Path) -> None:
     (output / "eligible.jfd").write_bytes(adffs_jfd(123, embedded=embedded))
     route = adffs_jfd(54321, embedded=embedded)
     (output / "route.jfd").write_bytes(route)
+    quarantine_route = bytearray(route)
+    track_table = struct.unpack_from("<I", quarantine_route, 24)[0]
+    sector_table = struct.unpack_from("<I", quarantine_route, 28)[0]
+    first_descriptor = sector_table + struct.unpack_from(
+        "<I", quarantine_route, track_table)[0]
+    header = struct.unpack_from("<I", quarantine_route, first_descriptor)[0]
+    struct.pack_into("<I", quarantine_route, first_descriptor,
+                     (header & ~(0xF << 16)) | (8 << 16))
+    (output / "route-quarantine.jfd").write_bytes(quarantine_route)
     (output / "route-gzip.jfd").write_bytes(gzip_member(bytes(route)))
     (output / "route.zip").write_bytes(_zip_bytes([
         ("ArcDroid synthetic route.jfd", bytes(route), True)]))
@@ -2436,18 +2455,23 @@ def build_jfd_family(descriptors: list[tuple[int, int, int, int, int, bytes | No
                      title: bytes = b"ArcDroid JFD family",
                      disk_payload: bytes | None = None,
                      disk_geometry: str | None = None,
-                     extended: bool = False) -> bytearray:
+                     extended: bool = False,
+                     second_descriptors: tuple = ()) -> bytearray:
     """Build one track-side from (time, B, density, id, C, payload)."""
     if disk_payload is not None and disk_geometry is not None:
         return _build_jfd_disk(disk_payload, disk_geometry, title, False)
     track_offset = 316 if extended else 304
     sector_offset = track_offset + 8
-    data_offset = sector_offset + len(descriptors) * 8 + 4
+    data_offset = sector_offset + (len(descriptors) + len(second_descriptors)) * 8 + (8 if second_descriptors else 4)
     payloads = bytearray()
     table = bytearray()
-    for time, block, density, sector_id, crc, payload in descriptors:
+    for index, (time, block, density, sector_id, crc, payload) in enumerate(
+            list(descriptors) + list(second_descriptors)):
+        if index == len(descriptors):
+            table += struct.pack("<I", 0xFFFFFFFF)
         size = len(payload) if payload is not None else 128
-        size_code = {128: 0, 256: 1, 512: 2, 1024: 3}[size]
+        assert size >= 128 and size <= 128 << 15 and size & (size - 1) == 0
+        size_code = size.bit_length() - 8
         header = ((time & 0xFF) << 24) | ((block & 0xF) << 20) | \
                  ((density & 0xF) << 16) | ((sector_id & 0xFF) << 8) | \
                  ((crc & 0xF) << 4) | size_code
@@ -2463,7 +2487,8 @@ def build_jfd_family(descriptors: list[tuple[int, int, int, int, int, bytes | No
     image[48:48 + min(len(title), 256)] = title[:256]
     if extended:
         struct.pack_into("<I", image, 304, 2)
-    struct.pack_into("<II", image, track_offset, 0, 0xFFFFFFFF)
+    struct.pack_into("<II", image, track_offset, 0,
+                     len(descriptors) * 8 + 4 if second_descriptors else 0xFFFFFFFF)
     image[sector_offset:data_offset] = table
     image[data_offset:] = payloads
     return image
@@ -4258,8 +4283,8 @@ def main() -> None:
     folder_adl = build_old_map_media(640 * 1024, 2560, 0x53)
     (folder_set / "Qaventra 3.adl").write_bytes(folder_adl)
     (folder_set / "Qaventra 4.jfd").write_bytes(
-        build_jfd_family([(0, 0, 8, 1, 0, bytes(128))],
-                         b"ArcDroid rejected folder JFD"))
+        build_jfd_family([(0, 0, 3, 1, 0, bytes(128))],
+                         b"ArcDroid structurally invalid folder JFD"))
     (folder_set / "Qaventra 5.adl").write_bytes(folder_adl[:-256])
     (folder_set / "Qaventra 9.adf").write_bytes(disc1)
     (folder_set / "Qaventra 10.JFD").write_bytes(
@@ -4533,6 +4558,16 @@ def main() -> None:
         bytes(launch_created), {0: full, 1: full}))
     (creation / "launch-partial.jfd").write_bytes(build_pdd5_jfd(
         bytes(launch_created), {0: [0, 2, 3, 4], 1: full}))
+    launch_hidden = build_d_discovery(
+        [(b"!Visible", True), (b"FolderA", False),
+         (b"FolderB", False), (b"!Hidden", True)], b"HiddenSide")
+    hidden_image = build_pdd5_jfd(bytes(launch_hidden),
+                                  {0: full, 1: full, 2: full + [9]})
+    at = pdd5_descriptor_offset(hidden_image, 2, 9)
+    header = struct.unpack_from("<I", hidden_image, at)[0]
+    struct.pack_into("<I", hidden_image, at,
+                     (header & ~(0xF << 16)) | (8 << 16))
+    (creation / "launch-nonmap-quarantine.jfd").write_bytes(hidden_image)
     (creation / "partial-untimed.jfd").write_bytes(build_pdd5_jfd(
         bytes(disc1), {0: full, 1: [0, 2, 4], 159: [0, 2, 4],
                        160: [0], 165: [0]}, track_count=166))
@@ -4608,6 +4643,20 @@ def main() -> None:
     (creation / "half-vote.jfd").write_bytes(build_pdd5_jfd(
         bytes(disc1), {0: full, 1: full + [9]},
         {1: {0: 0, 1: 32, 2: 64, 3: 96, 4: 128, 9: 160}}))
+    # A valid old map allocates every quarantined side. All 160 sides have
+    # captured data, so 80 compatible sides are exactly half the vote.
+    tie_map = build_d_discovery([], b"GateTie")
+    _store_u24(tie_map, 0, 20)
+    _store_u24(tie_map, 256, 1000)
+    tie_map[510] = 3
+    tie_map[255] = _old_map_checksum(tie_map[:255])
+    tie_map[511] = _old_map_checksum(tie_map[256:511])
+    tie = build_pdd5_jfd(bytes(tie_map), {side: full for side in range(160)})
+    for side in range(80, 160):
+        at = pdd5_descriptor_offset(tie, side, 4)
+        header = struct.unpack_from("<I", tie, at)[0]
+        struct.pack_into("<I", tie, at, (header & ~(0xF << 16)) | (8 << 16))
+    (creation / "quarantine-majority-tie.jfd").write_bytes(tie)
     (creation / "irregular-all-ids.jfd").write_bytes(build_pdd5_jfd(
         bytes(disc1), {0: full, 1: full + [9], 2: full},
         {1: {0: 0, 1: 32, 2: 64, 3: 96, 4: 128, 9: 160}}))
@@ -4709,6 +4758,72 @@ def main() -> None:
     }
     for name, descriptors in rejects.items():
         (family / name).write_bytes(build_jfd_family(descriptors))
+    # Project-authored two-sided captures: a late native-model fault hides
+    # the entire first side while the second remains readable.
+    late = build_jfd_family([
+        (0, 0, 2, 1, 0, bytes([0x41]) * 128),
+        (0, 0, 2, 2, 0, bytes([0x42]) * 2048)],
+        second_descriptors=((0, 0, 2, 3, 0, bytes([0x43]) * 128),))
+    (family / "quarantine-late.jfd").write_bytes(late)
+    (family / "quarantine-late.gz").write_bytes(gzip_member(late))
+    (family / "quarantine-first.jfd").write_bytes(build_jfd_family([
+        (0, 0, 8, 1, 0, bytes(128)),
+        (0, 1, 2, 2, 0, bytes(2048))],
+        second_descriptors=((0, 0, 2, 3, 0, bytes(128)),)))
+    (family / "quarantine-same-side-invalid.jfd").write_bytes(build_jfd_family([
+        (0, 0, 2, 1, 0, bytes(2048)),
+        (0, 0, 3, 2, 0, bytes(128))]))
+    (family / "quarantine-quad.jfd").write_bytes(build_jfd_family(
+        [(0, 0, 4, 1, 0, bytes(2048))],
+        second_descriptors=((0, 0, 2, 2, 0, bytes(128)),)))
+    (family / "quarantine-quad-usable.jfd").write_bytes(build_jfd_family(
+        [(0, 0, 4, 1, 0, bytes(2048))],
+        second_descriptors=((0, 0, 4, 2, 0, bytes(1024)),)))
+    guest = build_pdd5_jfd(bytes([0x5A]) * 819200,
+                           {158: [3, 4], 159: [3]})
+    guest_header_at = pdd5_descriptor_offset(guest, 158, 4)
+    guest_header = struct.unpack_from("<I", guest, guest_header_at)[0]
+    struct.pack_into("<I", guest, guest_header_at,
+                     (guest_header & ~(0xF << 16)) | (8 << 16))
+    (family / "quarantine-guest.jfd").write_bytes(guest)
+    with zipfile.ZipFile(family / "quarantine-guest.zip", "w",
+                         zipfile.ZIP_STORED) as archive:
+        archive.writestr("Disc1.jfd", guest)
+        archive.writestr("Disc2.jfd", build_pdd5_jfd(
+            bytes([0x5A]) * 819200, {159: [3]}))
+    (args.output / "arcdroid-jfd-quarantine.rom").write_bytes(
+        build_rom(quarantine_probe=True))
+    large = build_jfd_family([(0, 0, 2, 1, 0, bytes(128 << 15))],
+        second_descriptors=((0, 0, 2, 2, 0, bytes(1024)),))
+    large_second = 312 + 8 + 4
+    struct.pack_into("<I", large, large_second + 4, 4096)
+    (family / "quarantine-large-alias.jfd").write_bytes(large)
+    for name, change in (("invalid-density", 3 << 16),
+                         ("invalid-time", 201 << 24),
+                         ("invalid-time-254", 254 << 24)):
+        damaged = bytearray(late)
+        at = 312 + 2 * 8 + 4
+        header = struct.unpack_from("<I", damaged, at)[0]
+        mask = 0xF << 16 if name == "invalid-density" else 0xFF << 24
+        struct.pack_into("<I", damaged, at, (header & ~mask) | change)
+        (family / f"quarantine-then-{name}.jfd").write_bytes(damaged)
+    damaged = bytearray(late)
+    struct.pack_into("<I", damaged, 312 + 2 * 8 + 4 + 4, len(damaged))
+    (family / "quarantine-then-bad-payload.jfd").write_bytes(damaged)
+    damaged = bytearray(large)
+    struct.pack_into("<I", damaged, 312 + 4, 1025)
+    (family / "quarantine-large-out-of-bounds.jfd").write_bytes(damaged)
+    near = [(0xff, 0, 1, 1, 0, bytes(1024)),
+            (0xff, 0, 1, 2, 0, bytes(1024)),
+            (0xff, 0, 2, 3, 0, bytes(1024)),
+            (0xff, 0, 4, 4, 0, bytes(1024))]
+    (family / "schedule-below.jfd").write_bytes(build_jfd_family(near))
+    over = [(0xff, 0, 2, 1, 0, bytes(128)),
+            (0xff, 0, 1, 2, 0, bytes(256)),
+            (0xff, 0, 1, 3, 0, bytes(256)),
+            (0xff, 0, 1, 4, 0, bytes(1024)),
+            (0xff, 0, 1, 5, 0, bytes(1024))]
+    (family / "schedule-over.jfd").write_bytes(build_jfd_family(over))
     delta = build_jfd_family([(0, 0, 2, 1, 0, bytes(128))])
     struct.pack_into("<I", delta, 36, 4)
     (family / "reject-delta.jfd").write_bytes(delta)

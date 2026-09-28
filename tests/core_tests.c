@@ -2791,9 +2791,15 @@ static void test_jfd_parser(const char *fixture_directory)
    memcpy(rejected, plain, sizeof(rejected)); store_u32(rejected + 36u, 4u);
    assert(!arc_jfd_parse(rejected, sizeof(rejected), &parsed, error, sizeof(error)) && strstr(error, "delta"));
    memcpy(rejected, plain, sizeof(rejected)); store_u32(rejected + 312u, 8u << 16u);
-   assert(!arc_jfd_parse(rejected, sizeof(rejected), &parsed, error, sizeof(error)) && strstr(error, "octal density"));
+   assert(arc_jfd_parse(rejected, sizeof(rejected), &parsed, error, sizeof(error)) &&
+          parsed.tracks[0].quarantine_reason &&
+          !strcmp(parsed.tracks[0].quarantine_reason, "octal-density"));
+   arc_jfd_free(&parsed);
    memcpy(rejected, plain, sizeof(rejected)); store_u32(rejected + 312u, (1u << 20u) | (1u << 16u));
-   assert(!arc_jfd_parse(rejected, sizeof(rejected), &parsed, error, sizeof(error)) && strstr(error, "DiscOp 3"));
+   assert(arc_jfd_parse(rejected, sizeof(rejected), &parsed, error, sizeof(error)) &&
+          parsed.tracks[0].quarantine_reason &&
+          !strcmp(parsed.tracks[0].quarantine_reason, "whole-track"));
+   arc_jfd_free(&parsed);
    memcpy(rejected, plain, sizeof(rejected)); store_u32(rejected + 320u, 0u);
    assert(!arc_jfd_parse(rejected, sizeof(rejected), &parsed, error, sizeof(error)) &&
           (strstr(error, "truncated") || strstr(error, "unterminated")));

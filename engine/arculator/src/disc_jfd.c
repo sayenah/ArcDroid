@@ -204,6 +204,8 @@ static bool jfd_find_sector(uint32_t old_phase, uint32_t new_phase,
    size_t track_side = (size_t)jfd_track * 2u + jfd_side;
    if (!jfd_image || track_side >= jfd_image->track_count) return false;
    const ArcJfdTrack *track = &jfd_image->tracks[track_side];
+   /* ArcDroid Slice 16: the native model hides the whole quarantined side. */
+   if (track->quarantine_reason) return false;
    uint32_t best_delta = UINT32_MAX;
    bool found = false;
    for (unsigned i = 0u;
@@ -242,6 +244,7 @@ static void jfd_mark_terminal_probe(void)
    if (!overlay || !overlay->map_enabled || !overlay->map_valid || jfd_writing ||
        jfd_density != 2u || jfd_sector_id >= ARC_JFD_PDD5_IDS ||
        track_side >= ARC_JFD_PDD5_TRACKS ||
+       jfd_image->tracks[track_side].quarantine_reason ||
        jfd_requested_c != jfd_head_track || jfd_selected_side != jfd_side ||
        !(overlay->creation_mask[track_side] & (1u << jfd_sector_id)) ||
        overlay->created[track_side][jfd_sector_id]) return;

@@ -615,6 +615,24 @@ static void test_primary_map_scope(const char *root)
    assert(arc_launch_discover(NULL, 0u, NULL, &image, &discovery) &&
           !discovery.readable && !discovery.backup_map_used);
    arc_jfd_free(&image);
+   image = creation_fixture(root, "launch-full.jfd");
+   assert(arc_launch_discover(NULL, 0u, NULL, &image, &discovery) &&
+          discovery.readable && discovery.application_count == 1u);
+   image.tracks[0].quarantine_reason = "size-code";
+   assert(arc_launch_discover(NULL, 0u, NULL, &image, &discovery) &&
+          !discovery.readable && discovery.application_count == 0u);
+   arc_jfd_free(&image);
+   image = creation_fixture(root, "launch-nonmap-quarantine.jfd");
+   assert(image.tracks[2].quarantine_reason &&
+          !image.tracks[0].quarantine_reason &&
+          arc_launch_discover(NULL, 0u, NULL, &image, &discovery) &&
+          discovery.readable && discovery.application_count == 1u);
+   /* The second application directory spans only side 2. The first
+    * application and the map/root metadata remain visible. */
+   image.tracks[2].quarantine_reason = NULL;
+   assert(arc_launch_discover(NULL, 0u, NULL, &image, &discovery) &&
+          discovery.readable && discovery.application_count == 2u);
+   arc_jfd_free(&image);
 }
 static ArcJfdImage load(bool writable)
 {
@@ -717,6 +735,180 @@ static void test_layout_low(const char *root, const char *kind)
    }
    else assert(!"unknown JFD gate test case");
 }
+static void test_quarantine_gate(const char *root)
+{
+   clear_files();
+   ArcJfdImage tie = creation_fixture(root, "quarantine-majority-tie.jfd");
+   unsigned compatible = 0u, hidden = 0u;
+   for (unsigned side = 0u; side < 160u; ++side)
+   {
+      assert(tie.tracks[side].sector_count == 5u);
+      if (tie.tracks[side].quarantine_reason)
+      {
+         assert(!strcmp(tie.tracks[side].quarantine_reason, "octal-density"));
+         ++hidden;
+      }
+      else ++compatible;
+   }
+   assert(compatible == 80u && hidden == 80u);
+   const char *tie_reason = NULL;
+   assert(arc_jfd_store_load(&tie, "save", true, false, 1u, &tie_reason) &&
+          tie.overlay->writable && !tie.overlay->pdd5_profile &&
+          tie.overlay->layout_supported && tie.overlay->creation_capacity == 0u &&
+          !strcmp(tie_reason, "rw-flag"));
+   tie.overlay->map_enabled = true;
+   arc_jfd_map_prepare(&tie);
+   assert(tie.overlay->map_valid && tie.overlay->map_kind == 1u);
+   for (unsigned side = 80u; side < 160u; ++side)
+      assert(tie.overlay->creation_mask[side] == 0u &&
+             tie.overlay->probe_mask[side] == 0u);
+   arc_jfd_free(&tie);
+   clear_files();
+   static const struct { const char *name; bool writable; } cases[] = {
+      {"irregular-allocated.jfd", true},
+      {"irregular-free.jfd", false},
+      {"half-vote.jfd", false}
+   };
+   for (size_t i = 0u; i < sizeof(cases) / sizeof(cases[0]); ++i)
+   {
+      clear_files();
+      ArcJfdImage image = creation_fixture(root, cases[i].name);
+      unsigned side = i == 2u ? 1u : 159u;
+      image.tracks[side].quarantine_reason = "size-code";
+      const char *reason = NULL;
+      assert(arc_jfd_store_load(&image, "save", true, false, 1u, &reason));
+      assert(image.overlay->writable == cases[i].writable &&
+             !strcmp(reason, cases[i].writable ? "rw-flag" :
+                                                    "layout-unsupported"));
+      ArcJfdView view;
+      assert(!arc_jfd_effective_sector(&image, side, 0u, true, &view) &&
+             image.overlay->creation_mask[side] == 0u);
+      image.overlay->map_enabled = true;
+      arc_jfd_map_prepare(&image);
+      assert(image.overlay->probe_mask[side] == 0u);
+      for (unsigned id = 0u; id < ARC_JFD_PDD5_IDS; ++id)
+         assert(!blank_at(&image, side, id));
+      if (!cases[i].writable)
+         assert(!image.overlay->commit ||
+                !image.overlay->commit(&image, 0u, image.decoded));
+      if (cases[i].writable)
+      {
+         uint8_t value[1024]; memset(value, 0x57, sizeof(value));
+         assert(image.overlay->commit(&image, 0u, value));
+      }
+      arc_jfd_free(&image);
+      if (cases[i].writable)
+      {
+#if !defined(_WIN32)
+         pid_t child = fork(); assert(child >= 0);
+         if (child == 0)
+         {
+#endif
+         ArcJfdImage reloaded = creation_fixture(root, cases[i].name);
+         reloaded.tracks[side].quarantine_reason = "size-code";
+         bool persisted = arc_jfd_store_load(&reloaded, "save", true, false,
+                                              1u, &reason) &&
+                          reloaded.overlay->writable && reloaded.overlay->data[0] &&
+                          reloaded.overlay->data[0][0] == 0x57u;
+         arc_jfd_free(&reloaded);
+#if !defined(_WIN32)
+         _exit(persisted ? 0 : 1);
+         }
+         int status = 0;
+         assert(waitpid(child, &status, 0) == child && WIFEXITED(status) &&
+                WEXITSTATUS(status) == 0);
+#else
+         assert(persisted);
+#endif
+      }
+   }
+   clear_files();
+   ArcJfdImage unavailable = creation_fixture(root, "irregular-allocated.jfd");
+   unavailable.tracks[159].quarantine_reason = "size-code";
+   unavailable.decoded[unavailable.sectors[0].data_offset + 255u] ^= 1u;
+   const char *proof_reason = NULL;
+   assert(arc_jfd_store_load(&unavailable, "save", true, false, 1u,
+                             &proof_reason) &&
+          !unavailable.overlay->writable &&
+          !strcmp(proof_reason, "layout-unsupported"));
+   arc_jfd_free(&unavailable);
+   clear_files();
+   ArcJfdImage outside = creation_fixture(root, "partial-untimed.jfd");
+   outside.tracks[160].quarantine_reason = "size-code";
+   const char *reason = NULL;
+   assert(arc_jfd_store_load(&outside, "save", true, false, 1u, &reason) &&
+          outside.overlay->writable && outside.overlay->pdd5_profile);
+   ArcJfdView view;
+   assert(!arc_jfd_effective_sector(&outside, 160u, 0u, true, &view));
+   arc_jfd_free(&outside);
+   clear_files();
+
+   ArcJfdImage alias = image_new();
+   uint8_t *expanded = realloc(alias.decoded, (128u << 15) + 32768u);
+   assert(expanded);
+   alias.decoded = expanded;
+   alias.decoded_size = (128u << 15) + 32768u;
+   alias.tracks[2].quarantine_reason = "size-code";
+   alias.sectors[14].size = 128u << 15;
+   alias.sectors[14].data_offset = alias.sectors[5].data_offset - 1u;
+   assert(!arc_jfd_sector_write_eligible(&alias, 5u) &&
+          arc_jfd_sector_write_eligible(&alias, 0u));
+   assert(arc_jfd_store_load(&alias, "save", true, false, 1u, &reason));
+   assert(!alias.overlay->eligible[14] && !alias.overlay->eligible[5] &&
+          alias.overlay->eligible[0]);
+   arc_jfd_free(&alias);
+   clear_files();
+
+   /* Side 160 is outside P-DD5 placement, but its hidden payload still
+    * participates in the image-wide alias calculation. */
+   alias = image_new();
+   expanded = realloc(alias.decoded, (128u << 15) + 32768u);
+   assert(expanded);
+   alias.decoded = expanded;
+   alias.decoded_size = (128u << 15) + 32768u;
+   ArcJfdSector *sectors = realloc(alias.sectors, 16u * sizeof(*sectors));
+   assert(sectors);
+   alias.sectors = sectors;
+   alias.sectors[15] = alias.sectors[14];
+   alias.sectors[15].size = 128u << 15;
+   alias.sectors[15].data_offset = alias.sectors[5].data_offset - 1u;
+   alias.sector_count = 16u;
+   alias.track_count = 161u;
+   alias.tracks[160].first_sector = 15u;
+   alias.tracks[160].sector_count = 1u;
+   alias.tracks[160].quarantine_reason = "size-code";
+   assert(!arc_jfd_sector_write_eligible(&alias, 5u));
+   assert(arc_jfd_store_load(&alias, "save", true, false, 1u, &reason) &&
+          !alias.overlay->eligible[5] &&
+          !alias.overlay->eligible[15] && alias.overlay->eligible[0]);
+   arc_jfd_free(&alias);
+   clear_files();
+
+   ArcJfdImage snapshot = image_new();
+   const char *snapshot_reason = NULL;
+   assert(arc_jfd_store_load(&snapshot, "save", true, false, 1u,
+                             &snapshot_reason) && snapshot.overlay->writable);
+   uint8_t payload[1024]; memset(payload, 0x6du, sizeof(payload));
+   assert(snapshot.overlay->commit(&snapshot, 14u, payload));
+   unsigned slot = files[0].exists ? 0u : 1u;
+   assert(files[slot].exists);
+   size_t saved_size = files[slot].size;
+   uint8_t *saved = malloc(saved_size); assert(saved);
+   memcpy(saved, files[slot].bytes, saved_size);
+   arc_jfd_free(&snapshot);
+   snapshot = image_new();
+   snapshot.tracks[2].quarantine_reason = "size-code";
+   assert(arc_jfd_store_load(&snapshot, "save", true, false, 1u,
+                             &snapshot_reason) &&
+          snapshot.overlay->damaged && !snapshot.overlay->writable &&
+          !snapshot.overlay->eligible[14] &&
+          files[slot].size == saved_size &&
+          !memcmp(files[slot].bytes, saved, saved_size));
+   free(saved);
+   arc_jfd_free(&snapshot);
+   clear_files();
+   commits = 0u;
+}
 int main(int argc, char **argv)
 {
    assert(argc == 2 || argc == 3);
@@ -724,11 +916,13 @@ int main(int argc, char **argv)
    if (argc == 3)
    {
       test_layout_low(argv[1], argv[2]);
+      if (!strcmp(argv[2], "irregular")) test_quarantine_gate(argv[1]);
       return 0;
    }
    test_layout_low(argv[1], "short");
    test_layout_low(argv[1], "irregular");
    test_layout_low(argv[1], "timing");
+   test_quarantine_gate(argv[1]);
    uint8_t first[1024], second[1024], third[1024];
    memset(first, 0x11, sizeof(first)); memset(second, 0x22, sizeof(second));
    memset(third, 0x33, sizeof(third));

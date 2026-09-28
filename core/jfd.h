@@ -17,6 +17,14 @@
 #define ARC_JFD_F_SPACING_US 18176u
 #define ARC_JFD_MAX_STANDARD_IDS 10u
 
+static inline bool arc_jfd_pdd5_free_intersects(unsigned track_side,
+                                                size_t first, size_t length)
+{
+   return track_side < ARC_JFD_PDD5_TRACKS && length <= SIZE_MAX - first &&
+      first < ((size_t)track_side + 1u) * 5120u &&
+      (size_t)track_side * 5120u < first + length;
+}
+
 enum {
    ARC_JFD_ID_CRC_BAD = 1u,
    ARC_JFD_DATA_CRC_BAD = 2u,
@@ -26,7 +34,7 @@ enum {
 typedef struct {
    uint32_t time_us;
    uint32_t data_offset;
-   uint16_t size;
+   uint32_t size; /* Full 128 << size_code payload extent, even if hidden. */
    uint8_t id;
    uint8_t density;
    uint8_t flags;
@@ -36,6 +44,7 @@ typedef struct {
    uint32_t first_sector;
    uint16_t sector_count;
    bool timed;
+   const char *quarantine_reason; /* First native-model limitation on this side. */
 } ArcJfdTrack;
 
 struct ArcJfdImage;
@@ -110,6 +119,17 @@ typedef struct {
    bool write_eligible;
 } ArcJfdView;
 
+static inline bool arc_jfd_high_density(const ArcJfdImage *image)
+{
+   if (!image) return false;
+   for (unsigned t = 0u; t < image->track_count; ++t)
+      if (!image->tracks[t].quarantine_reason)
+         for (unsigned i = 0u; i < image->tracks[t].sector_count; ++i)
+            if (image->sectors[image->tracks[t].first_sector + i].density == 4u)
+               return true;
+   return false;
+}
+
 /* P-DD5 placement version 1, derived from the immutable base. Each
  * track-side's descriptors retain their ordinals; candidates follow in ID order. */
 bool arc_jfd_plan_creation(const ArcJfdImage *image, ArcJfdOverlay *overlay);
@@ -133,7 +153,7 @@ static inline bool arc_jfd_sector_write_eligible(const ArcJfdImage *image,
 {
    if (!image || index >= image->sector_count) return false;
    const ArcJfdSector *sector = &image->sectors[index];
-   if (sector->data_offset == UINT32_MAX ||
+   if (sector->data_offset == UINT32_MAX || sector->size > 1024u ||
        (sector->flags & (ARC_JFD_ID_CRC_BAD | ARC_JFD_DATA_CRC_BAD |
                          ARC_JFD_SLOW_SECTOR))) return false;
    size_t track_side = 0u;
@@ -142,6 +162,7 @@ static inline bool arc_jfd_sector_write_eligible(const ArcJfdImage *image,
                    image->tracks[track_side].sector_count) ++track_side;
    if (track_side == image->track_count) return false;
    const ArcJfdTrack *track = &image->tracks[track_side];
+   if (track->quarantine_reason) return false;
    for (unsigned i = 0u; i < track->sector_count; ++i)
    {
       size_t other_index = (size_t)track->first_sector + i;

@@ -54,7 +54,7 @@ static bool prepare_eligibility(const ArcJfdImage *image, uint8_t *eligible)
    {
       const ArcJfdSector *sector = &image->sectors[i];
       if (sector->data_offset == UINT32_MAX) continue;
-      eligible[i] = !(sector->flags & (ARC_JFD_ID_CRC_BAD |
+      eligible[i] = sector->size <= 1024u && !(sector->flags & (ARC_JFD_ID_CRC_BAD |
                                       ARC_JFD_DATA_CRC_BAD | ARC_JFD_SLOW_SECTOR));
       payloads[count++] = (ArcJfdPayload){sector->data_offset,
          sector->data_offset + sector->size, i};
@@ -63,6 +63,9 @@ static bool prepare_eligibility(const ArcJfdImage *image, uint8_t *eligible)
    for (unsigned t = 0u; t < image->track_count; ++t)
    {
       const ArcJfdTrack *track = &image->tracks[t];
+      if (track->quarantine_reason)
+         for (unsigned i = 0u; i < track->sector_count; ++i)
+            eligible[track->first_sector + i] = 0u;
       for (unsigned i = 0u; i < track->sector_count; ++i)
       {
          size_t first = (size_t)track->first_sector + i;
