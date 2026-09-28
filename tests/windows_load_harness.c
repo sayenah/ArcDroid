@@ -162,6 +162,7 @@ static bool environment(unsigned command, void *data)
          unsigned count = 0u;
          const struct retro_core_option_v2_definition *install_saves = NULL;
          const struct retro_core_option_v2_definition *short_tail = NULL;
+         const struct retro_core_option_v2_definition *ramdisc = NULL;
          assert(phase == PHASE_ENV && options->categories &&
                 !strcmp(options->categories[0].key, "pad_mapping"));
          while (options->definitions[count].key)
@@ -176,9 +177,19 @@ static bool environment(unsigned command, void *data)
                assert(!short_tail);
                short_tail = &options->definitions[count];
             }
+            if (!strcmp(options->definitions[count].key, "arcdroid_launch_ramdisc"))
+            {
+               assert(!ramdisc);
+               ramdisc = &options->definitions[count];
+            }
             ++count;
          }
-         assert(count == 38u && install_saves && !install_saves->category_key);
+         assert(count == 39u && install_saves && !install_saves->category_key);
+         assert(ramdisc && !ramdisc->category_key &&
+                !strcmp(ramdisc->default_value, "Auto") &&
+                !strcmp(ramdisc->values[0].value, "Auto") &&
+                !strcmp(ramdisc->values[1].value, "Disabled") &&
+                !ramdisc->values[2].value);
          assert(install_saves->values[0].value &&
                 !strcmp(install_saves->values[0].value, "persistent"));
          assert(install_saves->values[1].value &&

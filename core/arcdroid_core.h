@@ -281,8 +281,16 @@ bool arc_launch_script_build(const ArcLaunchDiscovery *discovery,
                              unsigned target_index, uint8_t *output,
                              size_t capacity, size_t *output_size,
                              char *error, size_t error_size);
+bool arc_launch_script_build_ramdisc(const ArcLaunchDiscovery *discovery,
+                             unsigned target_index, bool ramdisc, uint8_t *output,
+                             size_t capacity, size_t *output_size,
+                             char *error, size_t error_size);
 bool arc_launch_disc_build(const ArcLaunchDiscovery *discovery,
                            unsigned target_index,
+                           uint8_t output[ARC_LAUNCH_DISC_SIZE],
+                           char *error, size_t error_size);
+bool arc_launch_disc_build_ramdisc(const ArcLaunchDiscovery *discovery,
+                           unsigned target_index, bool ramdisc,
                            uint8_t output[ARC_LAUNCH_DISC_SIZE],
                            char *error, size_t error_size);
 bool arc_launch_binding_parse(const void *data, size_t size,

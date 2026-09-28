@@ -51,7 +51,7 @@ def main() -> None:
         assert len(helpers) == 1, helpers
         helper = helpers[0].read_bytes()
         assert len(helper) == 655360 and hashlib.sha256(helper).hexdigest() == (
-            "c3c34b4be32a5aa8528b1387a3ef1d70287d2aaede52290cc6ddcb4d0596a2c1"
+            "79d97918e7dd77d991eb420f12095164873760e31d07b6fb486ea5bef27756b8"
         )
     if expected == "write":
         staged = list((Path(data_root) / "save" / "arcdroid" / "media").glob("*/disc.adl"))

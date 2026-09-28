@@ -10,8 +10,14 @@ enum {
    ARC_L_TOTAL_SECTORS = ARC_LAUNCH_DISC_SIZE / ARC_L_SECTOR_SIZE,
    ARC_L_ROOT_SECTOR = 2u,
    ARC_L_BOOT_SECTOR = 1279u,
-   ARC_L_LAUNCH_SECTOR = 1280u
+   ARC_L_LAUNCH_SECTOR = 1280u,
+   ARC_L_RAM_SECTOR = 7u
 };
+
+/* A numbered text program loads without BASIC's "Program renumbered" prompt. */
+static const char arc_ram_program[] =
+   "10 SYS \"OS_ReadDynamicArea\",5 TO ,size%\r"
+   "20 IF size%=0 THEN SYS \"XOS_ChangeDynamicArea\",5,32768\r";
 
 static void arc_store_u24(uint8_t *p, unsigned value)
 {
@@ -134,8 +140,8 @@ static void arc_launch_error(char *error, size_t error_size,
    if (error && error_size) snprintf(error, error_size, "%s", message);
 }
 
-bool arc_launch_script_build(const ArcLaunchDiscovery *discovery,
-                             unsigned target_index, uint8_t *output,
+bool arc_launch_script_build_ramdisc(const ArcLaunchDiscovery *discovery,
+                             unsigned target_index, bool ramdisc, uint8_t *output,
                              size_t capacity, size_t *output_size,
                              char *error, size_t error_size)
 {
@@ -151,6 +157,8 @@ bool arc_launch_script_build(const ArcLaunchDiscovery *discovery,
 
    ArcScriptWriter writer = {output, capacity, 0u, true};
    arc_script_text(&writer, "| ArcDroid desktop boot file\r");
+   if (ramdisc)
+      arc_script_text(&writer, "%BASIC -quit ADFS::1.$.ArcRAM\r");
    static const char *const preferred[] = {"!System", "!Fonts", "!Scrap"};
    for (unsigned p = 0u; p < sizeof(preferred) / sizeof(preferred[0]); ++p)
       for (unsigned i = 0u; i < discovery->candidate_count; ++i)
@@ -186,6 +194,15 @@ bool arc_launch_script_build(const ArcLaunchDiscovery *discovery,
    { arc_launch_error(error, error_size, "desktop boot file buffer is too small"); return false; }
    if (output_size) *output_size = writer.size;
    return true;
+}
+
+bool arc_launch_script_build(const ArcLaunchDiscovery *discovery,
+                             unsigned target_index, uint8_t *output,
+                             size_t capacity, size_t *output_size,
+                             char *error, size_t error_size)
+{
+   return arc_launch_script_build_ramdisc(discovery, target_index, false,
+      output, capacity, output_size, error, error_size);
 }
 
 static size_t arc_l_physical_offset(unsigned logical_sector)
@@ -238,8 +255,8 @@ static void arc_old_entry(uint8_t *entry, const char *name, uint32_t load,
    entry[25] = 0u;
 }
 
-bool arc_launch_disc_build(const ArcLaunchDiscovery *discovery,
-                           unsigned target_index,
+bool arc_launch_disc_build_ramdisc(const ArcLaunchDiscovery *discovery,
+                           unsigned target_index, bool ramdisc,
                            uint8_t output[ARC_LAUNCH_DISC_SIZE],
                            char *error, size_t error_size)
 {
@@ -247,7 +264,7 @@ bool arc_launch_disc_build(const ArcLaunchDiscovery *discovery,
       "| ArcDroid launch disc\r"
       "%Desktop -File \"ADFS::1.$.ArcLaunch\"\r";
    size_t launch_size = 0u;
-   if (!output || !arc_launch_script_build(discovery, target_index, NULL, 0u,
+   if (!output || !arc_launch_script_build_ramdisc(discovery, target_index, ramdisc, NULL, 0u,
                                             &launch_size, error, error_size))
       return false;
    size_t launch_sectors = (launch_size + ARC_L_SECTOR_SIZE - 1u) /
@@ -258,18 +275,19 @@ bool arc_launch_disc_build(const ArcLaunchDiscovery *discovery,
    if (!launch)
    { arc_launch_error(error, error_size, "desktop boot file allocation failed"); return false; }
    size_t written = 0u;
-   if (!arc_launch_script_build(discovery, target_index, launch, launch_size,
+   if (!arc_launch_script_build_ramdisc(discovery, target_index, ramdisc, launch, launch_size,
                                 &written, error, error_size) ||
        written != launch_size)
    { free(launch); return false; }
 
    memset(output, 0, ARC_LAUNCH_DISC_SIZE);
    /* Free extents surround the boot sector and the exact launch-file extent. */
-   arc_store_u24(output, 7u);
+   arc_store_u24(output, ramdisc ? ARC_L_RAM_SECTOR + 1u : ARC_L_RAM_SECTOR);
    arc_store_u24(output + 3u, ARC_L_LAUNCH_SECTOR + (unsigned)launch_sectors);
    memcpy(output + 247u, "Acri\r", 5u); /* ArcDroid, interleaved halves. */
    arc_store_u24(output + 252u, ARC_L_TOTAL_SECTORS);
-   arc_store_u24(output + 256u, ARC_L_BOOT_SECTOR - 7u);
+   arc_store_u24(output + 256u, ARC_L_BOOT_SECTOR -
+                 (ramdisc ? ARC_L_RAM_SECTOR + 1u : ARC_L_RAM_SECTOR));
    arc_store_u24(output + 259u,
                  ARC_L_TOTAL_SECTORS - ARC_L_LAUNCH_SECTOR -
                  (unsigned)launch_sectors);
@@ -288,6 +306,9 @@ bool arc_launch_disc_build(const ArcLaunchDiscovery *discovery,
                  sizeof(boot) - 1u, ARC_L_BOOT_SECTOR);
    arc_old_entry(root + 31u, "ArcLaunch", UINT32_C(0xffffea00),
                  launch_size, ARC_L_LAUNCH_SECTOR);
+   if (ramdisc)
+      arc_old_entry(root + 57u, "ArcRAM", UINT32_C(0xffffff00),
+                    sizeof(arc_ram_program) - 1u, ARC_L_RAM_SECTOR);
    uint8_t *tail = root + 1227u;
    tail[0] = 0u;
    memset(tail + 1u, '\r', 10u);
@@ -300,8 +321,20 @@ bool arc_launch_disc_build(const ArcLaunchDiscovery *discovery,
 
    bool ok = arc_l_write(output, ARC_L_BOOT_SECTOR,
                          (const uint8_t *)boot, sizeof(boot) - 1u) &&
-             arc_l_write(output, ARC_L_LAUNCH_SECTOR, launch, launch_size);
+             arc_l_write(output, ARC_L_LAUNCH_SECTOR, launch, launch_size) &&
+             (!ramdisc || arc_l_write(output, ARC_L_RAM_SECTOR,
+                            (const uint8_t *)arc_ram_program,
+                            sizeof(arc_ram_program) - 1u));
    free(launch);
    if (!ok) arc_launch_error(error, error_size, "helper disc write failed");
    return ok;
+}
+
+bool arc_launch_disc_build(const ArcLaunchDiscovery *discovery,
+                           unsigned target_index,
+                           uint8_t output[ARC_LAUNCH_DISC_SIZE],
+                           char *error, size_t error_size)
+{
+   return arc_launch_disc_build_ramdisc(discovery, target_index, false,
+      output, error, error_size);
 }
