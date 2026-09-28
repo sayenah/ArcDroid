@@ -136,6 +136,17 @@ static unsigned cmos_read_count;
 static unsigned cmos_write_count;
 static unsigned cmos_locked_debug_write_count;
 static unsigned real_boot_frames = 3000u;
+static bool real_boot_cancel_input;
+static bool real_boot_reset_once;
+static bool real_boot_chooser_pick;
+static bool real_boot_chooser_continue;
+static bool real_boot_chooser_reset;
+static bool real_boot_chooser_unload;
+static bool real_boot_cmos_write_fail;
+static const char *real_boot_package;
+static bool real_boot_expect_disabled;
+static bool real_boot_fail_construct;
+static bool real_boot_cmos_sentinel;
 static struct retro_disk_control_ext_callback disk_control;
 static bool can_dupe;
 static bool keyboard_poll_capability;
@@ -302,6 +313,7 @@ struct retro_vfs_dir_handle { DIR *dir; struct dirent *entry; char path[4096]; }
 static const char *fault_open_substring;
 static const char *fault_read_substring;
 static const char *fault_write_substring;
+static const char *fault_remove_substring;
 static const char *fault_flush_substring;
 static const char *fault_close_substring;
 static const char *fault_rename_substring;
@@ -389,7 +401,8 @@ static int vfs_flush(struct retro_vfs_file_handle *h)
    if (!(h->mode & RETRO_VFS_FILE_ACCESS_WRITE)) return -1;
    return fflush(h->file);
 }
-static int vfs_remove(const char *p) { return remove(p); }
+static int vfs_remove(const char *p)
+{ return fault_once(p, &fault_remove_substring) ? -1 : remove(p); }
 static int vfs_rename(const char *a, const char *b)
 {
    if (fault_rename_substring && b &&
@@ -1785,6 +1798,81 @@ static bool parse_real_boot_options(int count, char *const args[],
          *osk_script = args[++argument];
          osk_script_seen = true;
       }
+      else if (!strcmp(args[argument], "--boot-cancel-input") &&
+               !real_boot_cancel_input)
+         real_boot_cancel_input = true;
+      else if (!strcmp(args[argument], "--boot-reset-once") &&
+               !real_boot_reset_once)
+         real_boot_reset_once = true;
+      else if (!strcmp(args[argument], "--boot-chooser-pick") &&
+               !real_boot_chooser_pick && !real_boot_chooser_continue)
+         real_boot_chooser_pick = true;
+      else if (!strcmp(args[argument], "--boot-chooser-continue") &&
+               !real_boot_chooser_continue && !real_boot_chooser_pick)
+         real_boot_chooser_continue = true;
+      else if (!strcmp(args[argument], "--boot-chooser-reset") &&
+               !real_boot_chooser_reset && !real_boot_chooser_unload)
+         real_boot_chooser_reset = true;
+      else if (!strcmp(args[argument], "--boot-chooser-unload") &&
+               !real_boot_chooser_unload && !real_boot_chooser_reset)
+         real_boot_chooser_unload = true;
+      else if (!strcmp(args[argument], "--boot-cmos-write-fail") &&
+               !real_boot_cmos_write_fail)
+         real_boot_cmos_write_fail = true;
+      else if (!strcmp(args[argument], "--boot-package") &&
+               !real_boot_package && argument + 1 < count)
+         real_boot_package = args[++argument];
+      else if (!strcmp(args[argument], "--boot-expect-disabled") &&
+               !real_boot_expect_disabled)
+         real_boot_expect_disabled = true;
+      else if (!strcmp(args[argument], "--boot-fail-construct") &&
+               !real_boot_fail_construct)
+         real_boot_fail_construct = true;
+      else if (!strcmp(args[argument], "--boot-fail-record-write") &&
+               !fault_write_substring)
+         fault_write_substring = ".boot.tmp";
+      else if (!strcmp(args[argument], "--boot-fail-record-remove") &&
+               !fault_remove_substring)
+         fault_remove_substring = ".boot";
+      else if (!strcmp(args[argument], "--boot-cmos-sentinel") &&
+               !real_boot_cmos_sentinel)
+         real_boot_cmos_sentinel = true;
+      else if (!strcmp(args[argument], "--boot-chooser-ask"))
+         option_launch_chooser = "ask";
+      else if (!strcmp(args[argument], "--boot-frames") &&
+               argument + 1 < count)
+      {
+         char *end = NULL;
+         unsigned long value = strtoul(args[++argument], &end, 10);
+         if (!end || *end || value < 1u || value > 3000u) return false;
+         real_boot_frames = (unsigned)value;
+      }
+      else if (!strcmp(args[argument], "--boot-disk-writes") &&
+               argument + 1 < count)
+      {
+         const char *value = args[++argument];
+         if (strcmp(value, "shadow") && strcmp(value, "off") &&
+             strcmp(value, "original")) return false;
+         option_writes = value;
+      }
+      else if (!strcmp(args[argument], "--boot-jfd-boot") &&
+               argument + 1 < count)
+      {
+         const char *value = args[++argument];
+         if (strcmp(value, "auto") && strcmp(value, "native") &&
+             strcmp(value, "adffs")) return false;
+         option_jfd_boot = value;
+      }
+      else if (!strcmp(args[argument], "--boot-cpu") && argument + 1 < count)
+      {
+         const char *value = args[++argument];
+         if (strcmp(value, "ARM2") && strcmp(value, "ARM250")) return false;
+         option_cpu = value;
+      }
+      else if (!strcmp(args[argument], "--boot-launch-off"))
+         option_launch = "off";
+      else if (!strcmp(args[argument], "--boot-launch-app1"))
+         option_launch = "app1";
       else return false;
    }
    return true;
@@ -1973,13 +2061,14 @@ int main(int argc, char **argv)
    make_directory(argv[4]); make_directory(system_path); make_directory(firmware_path);
    strncat(firmware_path, "/firmware", sizeof(firmware_path) - strlen(firmware_path) - 1u); make_directory(firmware_path);
    make_directory(save_path);
-   if (media_tests || install_guest)
+   if (media_tests || install_guest || real_boot_package)
    {
       char adffs_dir[4096], package_path[4096];
       snprintf(adffs_dir, sizeof(adffs_dir), "%s/arcdroid/adffs", system_path);
       make_directory(adffs_dir);
       snprintf(package_path, sizeof(package_path), "%s/synthetic.zip", adffs_dir);
-      copy_file(install_guest ? argv[6] : argv[13], package_path);
+      copy_file(install_guest ? argv[6] :
+                real_boot_package ? real_boot_package : argv[13], package_path);
    }
    if (real_boot)
    {
@@ -2033,6 +2122,8 @@ int main(int argc, char **argv)
                                                ArcMediaGeometry) = NULL;
    bool (*arc_engine_test_cmos_image)(uint8_t[ARC_CMOS_MACHINE_SIZE]) = NULL;
    bool (*arc_engine_test_cmos_write)(unsigned, uint8_t) = NULL;
+   void (*arc_engine_test_boot_watch_snapshot)(ArcBootWatch *) = NULL;
+   void (*arc_libretro_test_fail_next_construct)(void) = NULL;
    bool (*arc_engine_test_cmos_bus_write)(unsigned, uint8_t) = NULL;
    bool (*arc_engine_reset)(char *, size_t) = NULL;
    bool (*arc_engine_start)(const uint8_t *, size_t, const ArcEngineMedia *,
@@ -2072,6 +2163,7 @@ int main(int argc, char **argv)
    const char *(*arc_libretro_test_content_id)(void) = NULL;
    const char *(*arc_libretro_test_staged_path)(unsigned) = NULL;
    const char *(*arc_libretro_test_cmos_path)(void) = NULL;
+   uint8_t (*arc_libretro_test_prepared_cmos_byte)(unsigned) = NULL;
    const char *(*arc_libretro_test_choice_path)(void) = NULL;
    void (*arc_zip_test_fail_member_allocations)(unsigned) = NULL;
    unsigned (*arc_libretro_test_session_state)(void) = NULL;
@@ -2094,6 +2186,37 @@ int main(int argc, char **argv)
    size_t (*arc_platform_test_input_events)(ArcKartEvent *, size_t) = NULL;
    if (real_boot || newio_smoke || install_guest || media_tests)
       *(void **)(&arc_engine_test_newio) = dlsym(module, "arc_engine_test_newio");
+   if (real_boot)
+   {
+      *(void **)(&arc_engine_test_boot_watch_snapshot) =
+         dlsym(module, "arc_engine_test_boot_watch_snapshot");
+      assert(arc_engine_test_boot_watch_snapshot);
+      if (real_boot_fail_construct)
+      {
+         *(void **)(&arc_libretro_test_fail_next_construct) =
+            dlsym(module, "arc_libretro_test_fail_next_construct");
+         assert(arc_libretro_test_fail_next_construct);
+      }
+      if (real_boot_chooser_reset || real_boot_chooser_unload ||
+          real_boot_cmos_write_fail)
+      {
+         *(void **)(&arc_libretro_test_prepared_cmos_byte) =
+            dlsym(module, "arc_libretro_test_prepared_cmos_byte");
+         *(void **)(&arc_libretro_test_cmos_path) =
+            dlsym(module, "arc_libretro_test_cmos_path");
+         *(void **)(&arc_libretro_test_session_state) =
+            dlsym(module, "arc_libretro_test_session_state");
+         assert(arc_libretro_test_prepared_cmos_byte &&
+                arc_libretro_test_cmos_path && arc_libretro_test_session_state);
+      }
+   }
+   if (real_boot && real_boot_cmos_sentinel)
+   {
+      *(void **)(&arc_engine_test_cmos_write) =
+         dlsym(module, "arc_engine_test_cmos_write");
+      *(void **)(&arc_engine_test_cmos_image) =
+         dlsym(module, "arc_engine_test_cmos_image");
+   }
    if (install_guest) {
       *(void **)(&arc_engine_test_drive_media) =
          dlsym(module, "arc_engine_test_drive_media");
@@ -4441,6 +4564,8 @@ int main(int argc, char **argv)
 
    if (real_boot)
    {
+      if (real_boot_fail_construct)
+         arc_libretro_test_fail_next_construct();
       phase = PHASE_LOAD;
       if (!retro_load_game(&game))
       {
@@ -4451,6 +4576,8 @@ int main(int argc, char **argv)
       snprintf(firmware_message, sizeof(firmware_message), "%s", last_message);
       phase = PHASE_RUN;
       bool script_ok = true;
+      bool boot_helper_cmos_verified = false;
+      bool boot_chooser_seed_verified = false;
       if (osk_script)
       {
          OskScriptApi script_api = {
@@ -4464,7 +4591,79 @@ int main(int argc, char **argv)
          script_ok = run_osk_script(osk_script, &script_api);
       }
       else
-         for (unsigned frame = 0; frame < real_boot_frames; ++frame) retro_run();
+         for (unsigned frame = 0; frame < real_boot_frames; ++frame)
+         {
+            if (real_boot_cmos_sentinel && frame == 10u)
+               assert(arc_engine_test_cmos_write &&
+                      arc_engine_test_cmos_write(216u, 0x5au));
+            if (real_boot_cmos_write_fail && frame == 20u)
+               make_directory(arc_libretro_test_cmos_path());
+            if (real_boot_cancel_input)
+               joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_A] = frame == 10u;
+            if (real_boot_reset_once && frame == 150u) retro_reset();
+            if ((real_boot_chooser_reset || real_boot_chooser_unload) &&
+                frame == 150u)
+            {
+               assert(arc_libretro_test_session_state() == 2u);
+               assert(arc_libretro_test_prepared_cmos_byte(216u) == 0x5au);
+               boot_chooser_seed_verified = true;
+               if (real_boot_chooser_reset)
+               {
+                  retro_reset();
+                  assert(arc_libretro_test_prepared_cmos_byte(216u) == 0x5au);
+               }
+               else retro_unload_game();
+            }
+            if (real_boot_chooser_pick || real_boot_chooser_continue)
+            {
+               joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_DOWN] =
+                  real_boot_chooser_continue && (frame == 120u || frame == 122u);
+               joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_A] =
+                  frame == (real_boot_chooser_continue ? 124u : 120u);
+            }
+            retro_run();
+            if (real_boot_expect_disabled)
+            {
+               ArcBootWatch watch;
+               arc_engine_test_boot_watch_snapshot(&watch);
+               assert(watch.state == ARC_BOOT_WATCH_DISABLED);
+            }
+            if (real_boot_cmos_sentinel && arc_engine_test_cmos_image)
+            {
+               uint8_t image[ARC_CMOS_MACHINE_SIZE];
+               if (arc_engine_test_cmos_image(image) &&
+                   (image[75] & 7u) == 1u && (image[199] & 7u) == 2u)
+               {
+                  unsigned checksum = 0u;
+                  for (unsigned byte = 0u; byte < 239u; ++byte)
+                  {
+                     unsigned raw = byte + 0x40u;
+                     if (raw > 255u) raw -= 240u;
+                     checksum += image[raw];
+                  }
+                  assert(image[63] == (uint8_t)(checksum + 1u));
+                  boot_helper_cmos_verified = true;
+               }
+            }
+         }
+      if (boot_helper_cmos_verified)
+         puts("boot helper CMOS fields and checksum verified");
+      if (boot_chooser_seed_verified)
+         printf("boot chooser CMOS seed preserved on %s%s\n",
+                real_boot_chooser_reset ? "reset" : "unload",
+                real_boot_cmos_write_fail ? " after failed write" : "");
+      if (real_boot_expect_disabled)
+         puts("boot observer disabled for all frames");
+      if (arc_engine_test_boot_watch_snapshot)
+      {
+         ArcBootWatch watch;
+         arc_engine_test_boot_watch_snapshot(&watch);
+         printf("boot observer: state=%u armed_us=%llu read_us=%llu event_us=%llu pending=%u\n",
+                (unsigned)watch.state, (unsigned long long)watch.armed_us,
+                (unsigned long long)watch.read_us,
+                (unsigned long long)watch.last_event_us,
+                watch.pending ? 1u : 0u);
+      }
       unsigned newio_commands = 0u;
       unsigned newio_reads = 0u;
       unsigned newio_successes = 0u;

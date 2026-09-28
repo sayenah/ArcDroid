@@ -268,6 +268,24 @@ bool arc_launch_chooser_init(ArcLaunchChooser *chooser,
    return true;
 }
 
+void arc_launch_chooser_post_boot(ArcLaunchChooser *chooser,
+                                  const ArcLaunchDiscovery *discovery)
+{
+   if (!chooser || !discovery) return;
+   chooser->post_boot = true;
+   chooser->inspection_incomplete |= discovery->scan_incomplete ||
+      discovery->unknown_count != 0u;
+}
+
+void arc_launch_chooser_boot_hit(ArcLaunchChooser *chooser,
+                                 const ArcLaunchDiscovery *discovery)
+{
+   if (!chooser || !discovery) return;
+   chooser->boot_hit = true;
+   chooser->inspection_incomplete |= discovery->scan_incomplete ||
+      discovery->unknown_count != 0u;
+}
+
 bool arc_launch_chooser_install_init(ArcLaunchChooser *chooser,
                                     const char *const *labels, unsigned count,
                                     int remembered_candidate)
@@ -443,7 +461,9 @@ bool arc_launch_chooser_render(const ArcLaunchChooser *chooser,
                         chooser->install_labels[candidate], foreground);
       else if (candidate == ARC_CHOOSER_DESKTOP)
          (void)arc_text(pixels, width, height, stride, x, y,
-                        "Desktop (no launch)", foreground);
+                        chooser->post_boot ? "Continue without launching" :
+                        chooser->boot_hit ? "Run disc's own startup" :
+                           "Desktop (no launch)", foreground);
       else
       {
          const ArcLaunchCandidate *entry = &discovery->candidates[candidate];

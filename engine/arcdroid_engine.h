@@ -6,6 +6,7 @@
 #include "jfd.h"
 #include "arculator/src/ide.h"
 #include "adffs.h"
+#include "arc_boot_watch.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -50,6 +51,12 @@ void arc_engine_set_log_callback(ArcEngineLogCallback callback, void *opaque);
 bool arc_engine_reset(char *error, size_t error_size);
 void arc_engine_stop(void);
 bool arc_engine_run_frame(ArcInputState *input, ArcEngineFrame *frame);
+void arc_engine_boot_watch_arm(void);
+void arc_engine_boot_watch_cancel(void);
+ArcBootWatchState arc_engine_boot_watch_state(void);
+#if defined(ARCDROID_TEST_FAULTS)
+void arc_engine_test_boot_watch_snapshot(ArcBootWatch *out);
+#endif
 size_t arc_engine_audio(int16_t *output, size_t capacity_frames);
 void arc_engine_audio_stats(uint64_t *underrun_frames, uint64_t *overrun_frames);
 bool arc_engine_media_eject(void);

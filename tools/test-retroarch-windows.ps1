@@ -2146,3 +2146,115 @@ Write-Host "Slice 10b Windows RetroArch: synthetic install, publication, save, r
 if ($env:GITHUB_STEP_SUMMARY) {
     Add-Content -Encoding UTF8 $env:GITHUB_STEP_SUMMARY "- Slice 10b install disc: authored guest published, saved, and read back in a fresh RetroArch process; terminations before and after compaction manifest rename recovered; steady outcome signatures $savedSignature -> $readbackSignature."
 }
+
+function Wait-BootRecovery($Run, [string]$Action, [int]$Count) {
+    $deadline = [DateTime]::UtcNow.AddSeconds(25)
+    while ([DateTime]::UtcNow -lt $deadline) {
+        if ($Run.Process.HasExited) { throw "$($Run.Name) exited during boot recovery" }
+        $foundLines = if (Test-Path -LiteralPath $Run.RetroLog) {
+            @(Select-String -Path $Run.RetroLog -SimpleMatch "phase=recovery boot-watch=prompt recovery=$Action")
+        } else { @() }
+        if ($foundLines.Count -ge $Count) { return }
+        Start-Sleep -Milliseconds 100
+    }
+    throw "$($Run.Name) did not reach recovery=$Action count=$Count; log=[$(Get-RunLogTail $Run)]"
+}
+
+function Wait-BootHit($Run, [int]$Count) {
+    $deadline = [DateTime]::UtcNow.AddSeconds(25)
+    while ([DateTime]::UtcNow -lt $deadline) {
+        if ($Run.Process.HasExited) { throw "$($Run.Name) exited during remembered boot" }
+        $foundLines = if (Test-Path -LiteralPath $Run.RetroLog) {
+            @(Select-String -Path $Run.RetroLog -SimpleMatch "reason=remembered boot observation; disc !Boot skipped")
+        } else { @() }
+        if ($foundLines.Count -ge $Count) { return }
+        Start-Sleep -Milliseconds 100
+    }
+    throw "$($Run.Name) did not use the remembered boot observation; log=[$(Get-RunLogTail $Run)]"
+}
+
+Copy-Item -Force (Join-Path $InputDirectory "arcdroid-boot-prompt.rom") $firmware
+@"
+arcdroid_machine = "A3000"
+arcdroid_cpu = "ARM2"
+arcdroid_joystick_if = "Keyboard"
+arcdroid_disk_writes = "off"
+arcdroid_launch = "auto"
+arcdroid_launch_chooser = "remember"
+"@ | Set-Content -Encoding ASCII $coreOptions
+$bootContent = (Resolve-Path (Join-Path $InputDirectory "boot-file-3-l.adl")).Path
+$bootRun = Start-MediaRun $bootContent "slice14-boot-helper"
+try {
+    Wait-BootRecovery $bootRun "helper" 1
+    Send-MediaCommand $bootRun "RESET"
+    Wait-BootHit $bootRun 1
+} finally { Stop-MediaRun $bootRun }
+$bootReload = Start-MediaRun $bootContent "slice14-boot-reload"
+try { Wait-BootHit $bootReload 1 }
+finally { Stop-MediaRun $bootReload }
+
+@"
+arcdroid_machine = "A3000"
+arcdroid_cpu = "ARM2"
+arcdroid_joystick_if = "Keyboard"
+arcdroid_disk_writes = "off"
+arcdroid_launch = "auto"
+arcdroid_launch_chooser = "ask"
+"@ | Set-Content -Encoding ASCII $coreOptions
+$bootMultiple = (Resolve-Path (Join-Path $InputDirectory "boot-matrix-3-file-multiple.adf")).Path
+$bootChooser = Start-MediaRun $bootMultiple "slice14-boot-chooser"
+try {
+    Wait-BootRecovery $bootChooser "chooser" 1
+    $bootCapture = $null
+    for ($attempt = 0; $attempt -lt 8; $attempt++) {
+        $bootCapture = Capture-RawScreenshot $bootChooser "slice14-chooser-$attempt"
+        if ((Get-ChooserFocusState $bootCapture) -eq "row1") { break }
+        Start-Sleep -Milliseconds 200
+    }
+    if ((Get-ChooserFocusState $bootCapture) -ne "row1") {
+        throw "Slice 14 post-boot chooser was not visible"
+    }
+    Send-ChooserKeyboardPick $bootChooser $bootCapture
+    Wait-BootRecovery $bootChooser "helper" 1
+    $pickLines = @(Get-Content $bootChooser.RetroLog | Where-Object {
+        $_.Contains("phase=recovery boot-watch=prompt recovery=helper")
+    })
+    $pickLine = $pickLines[-1]
+    $pickedDecisionMatch = [regex]::Match($pickLine, 'decision=(.*?) reason=')
+    $pickedHelperMatch = [regex]::Match($pickLine, 'helper=(.*?) root-boot=')
+    if (-not $pickedDecisionMatch.Success -or -not $pickedHelperMatch.Success -or
+        -not $pickedHelperMatch.Groups[1].Value.EndsWith(".adl")) {
+        throw "Slice 14 chooser pick did not log a mounted helper; log=[$pickLine]"
+    }
+    $pickedApplication = $pickedDecisionMatch.Groups[1].Value
+    $pickedHelper = $pickedHelperMatch.Groups[1].Value
+    if (-not (Test-Path -LiteralPath $pickedHelper -PathType Leaf)) {
+        throw "Slice 14 chooser helper was not published at $pickedHelper"
+    }
+    Send-MediaCommand $bootChooser "RESET"
+    Wait-BootHit $bootChooser 1
+} finally { Stop-MediaRun $bootChooser }
+@"
+arcdroid_machine = "A3000"
+arcdroid_cpu = "ARM2"
+arcdroid_joystick_if = "Keyboard"
+arcdroid_disk_writes = "off"
+arcdroid_launch = "auto"
+arcdroid_launch_chooser = "remember"
+"@ | Set-Content -Encoding ASCII $coreOptions
+$bootChooserReload = Start-MediaRun $bootMultiple "slice14-boot-chooser-reload"
+try {
+    Wait-BootHit $bootChooserReload 1
+    $reloadLines = @(Get-Content $bootChooserReload.RetroLog | Where-Object {
+        $_.Contains("reason=remembered boot observation; disc !Boot skipped")
+    })
+    $reloadLine = $reloadLines[-1]
+    $reloadDecisionMatch = [regex]::Match($reloadLine, 'decision=(.*?) reason=')
+    $reloadHelperMatch = [regex]::Match($reloadLine, 'helper=(.*?) root-boot=')
+    if (-not $reloadDecisionMatch.Success -or -not $reloadHelperMatch.Success -or
+        $reloadDecisionMatch.Groups[1].Value -ne $pickedApplication -or
+        $reloadHelperMatch.Groups[1].Value -ne $pickedHelper) {
+        throw "Slice 14 chooser reload did not use the picked application and helper; log=[$reloadLine]"
+    }
+} finally { Stop-MediaRun $bootChooserReload }
+Write-Host "Slice 14 Windows RetroArch: synthetic helper recovery, remembered reset and reload, post-boot chooser pick and remembered reload passed"

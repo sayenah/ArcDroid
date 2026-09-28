@@ -195,6 +195,14 @@ typedef struct {
    char candidate_fingerprint[41];
 } ArcLaunchDiscovery;
 
+typedef enum {
+   ARC_LAUNCH_RECOVERY_NONE = 0,
+   ARC_LAUNCH_RECOVERY_HELPER,
+   ARC_LAUNCH_RECOVERY_CHOOSER
+} ArcLaunchRecovery;
+ArcLaunchRecovery arc_launch_recovery_decide(const ArcLaunchDiscovery *discovery,
+                                             int *target_index);
+
 #define ARC_LAUNCH_BINDING_MAX_SIZE 88u
 #define ARC_LAUNCH_CHOICE_MAX_SIZE 128u
 #define ARC_LAUNCH_CHOOSER_MAX_ROWS (ARC_LAUNCH_MAX_CANDIDATES + 1u)
@@ -223,6 +231,8 @@ typedef struct {
    bool inspection_incomplete;
    bool nested_scope;
    bool install_mode;
+   bool post_boot;
+   bool boot_hit;
    char install_labels[2][32];
 } ArcLaunchChooser;
 
@@ -301,6 +311,10 @@ int arc_launch_choice_match(const ArcLaunchDiscovery *discovery,
 bool arc_launch_chooser_init(ArcLaunchChooser *chooser,
                              const ArcLaunchDiscovery *discovery,
                              bool remembered, int remembered_candidate);
+void arc_launch_chooser_post_boot(ArcLaunchChooser *chooser,
+                                  const ArcLaunchDiscovery *discovery);
+void arc_launch_chooser_boot_hit(ArcLaunchChooser *chooser,
+                                 const ArcLaunchDiscovery *discovery);
 bool arc_launch_chooser_install_init(ArcLaunchChooser *chooser,
                                     const char *const *labels, unsigned count,
                                     int remembered_candidate);
@@ -340,6 +354,10 @@ bool arc_cmos_machine_image(ArcOsClass os, ArcIoClass io,
                             const uint8_t payload[ARC_CMOS_PAYLOAD_SIZE],
                             bool launch_helper,
                             uint8_t output[ARC_CMOS_MACHINE_SIZE]);
+bool arc_cmos_boot_stamp_payload(ArcOsClass os, ArcIoClass io,
+                                 const uint8_t prepared[ARC_CMOS_PAYLOAD_SIZE],
+                                 bool launch_helper,
+                                 uint8_t output[ARC_CMOS_PAYLOAD_SIZE]);
 void arc_cmos_machine_attach_ide(uint8_t image[ARC_CMOS_MACHINE_SIZE]);
 unsigned arc_cmos_raw_address(unsigned logical);
 unsigned arc_cmos_logical_address(unsigned raw);

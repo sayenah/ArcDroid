@@ -1,5 +1,6 @@
 /* ArcDroid deterministic core tests. GPL-2.0-only. */
 #include "arcdroid_core.h"
+#include "cmos_defaults_data.h"
 #include "e_format_fixture.h"
 #include "folder_set.h"
 #include "jfd.h"
@@ -111,6 +112,95 @@ static void test_cmos_unplug_policy(void)
    for (unsigned i = 0u; i < 239u; ++i)
       attached_sum += attached[arc_cmos_raw_address(i)];
    assert(attached[0x3fu] == (uint8_t)(attached_sum + 1u));
+}
+
+static void test_fresh_cmos_default(void)
+{
+   static const uint8_t arthur[ARC_CMOS_MACHINE_SIZE] = {ARC_CMOS_ARTHUR_BYTES};
+   static const uint8_t riscos2[ARC_CMOS_MACHINE_SIZE] = {ARC_CMOS_RISCOS2_BYTES};
+   static const uint8_t riscos3_old[ARC_CMOS_MACHINE_SIZE] = {ARC_CMOS_RISCOS3_OLD_BYTES};
+   static const uint8_t riscos3_new[ARC_CMOS_MACHINE_SIZE] = {ARC_CMOS_RISCOS3_NEW_BYTES};
+   static const ArcOsClass unchanged[] = {
+      ARC_OS_RISCOS_300, ARC_OS_RISCOS_200, ARC_OS_RISCOS_201,
+      ARC_OS_ARTHUR_120, ARC_OS_ARTHUR_030
+   };
+   static const ArcOsClass corrected[] = {
+      ARC_OS_RISCOS_310, ARC_OS_RISCOS_311, ARC_OS_RISCOS_319
+   };
+   const unsigned offset = arc_cmos_raw_address(195u) - 16u;
+   assert(offset == 3u);
+   for (ArcIoClass io = ARC_IO_OLD_WD1770; io <= ARC_IO_NEW_82C711; ++io)
+   {
+      const uint8_t *riscos3 = io == ARC_IO_NEW_82C711 ? riscos3_new : riscos3_old;
+      uint8_t payload[ARC_CMOS_PAYLOAD_SIZE], expected[ARC_CMOS_PAYLOAD_SIZE];
+      for (unsigned i = 0u; i < sizeof(unchanged) / sizeof(unchanged[0]); ++i)
+      {
+         ArcOsClass os = unchanged[i];
+         const uint8_t *source = os == ARC_OS_RISCOS_300 ? riscos3 :
+            os == ARC_OS_RISCOS_200 || os == ARC_OS_RISCOS_201 ? riscos2 : arthur;
+         assert(arc_cmos_default(os, io, payload));
+         assert(memcmp(payload, source + 16u, sizeof(payload)) == 0);
+      }
+      for (unsigned i = 0u; i < sizeof(corrected) / sizeof(corrected[0]); ++i)
+      {
+         assert(arc_cmos_default(corrected[i], io, payload));
+         memcpy(expected, riscos3 + 16u, sizeof(expected));
+         assert(expected[offset] & 0x04u);
+         expected[offset] &= (uint8_t)~0x04u;
+         assert(memcmp(payload, expected, sizeof(payload)) == 0);
+      }
+      payload[offset] |= 0x04u;
+      ArcLaunchPlan plan;
+      char error[160] = {0};
+      const char id[] = "0123456789012345678901234567890123456789";
+      assert(arc_launch_plan_default(&plan, ARC_MEDIA_ADF_800K,
+             ARC_OS_RISCOS_311, id, false, error, sizeof(error)));
+      uint8_t record[ARC_CMOS_RECORD_SIZE], decoded[ARC_CMOS_PAYLOAD_SIZE];
+      assert(arc_cmos_encode(record, &plan, payload));
+      assert(arc_cmos_decode(record, &plan, decoded));
+      arc_cmos_normalise_payload(decoded, ARC_OS_RISCOS_311, io);
+      assert(decoded[offset] & 0x04u);
+   }
+}
+
+static void test_boot_stamp_starting_cmos(void)
+{
+   static const ArcOsClass risc_os_3[] = {
+      ARC_OS_RISCOS_300, ARC_OS_RISCOS_310,
+      ARC_OS_RISCOS_311, ARC_OS_RISCOS_319
+   };
+   for (unsigned i = 0u; i < sizeof(risc_os_3) / sizeof(risc_os_3[0]); ++i)
+   {
+      ArcOsClass os = risc_os_3[i];
+      for (ArcIoClass io = ARC_IO_OLD_WD1770; io <= ARC_IO_NEW_82C711; ++io)
+      {
+         uint8_t fresh[ARC_CMOS_PAYLOAD_SIZE];
+         uint8_t persisted[ARC_CMOS_PAYLOAD_SIZE];
+         uint8_t starting[ARC_CMOS_PAYLOAD_SIZE];
+         uint8_t repeated[ARC_CMOS_PAYLOAD_SIZE];
+         uint8_t image[ARC_CMOS_MACHINE_SIZE];
+         char first_stamp[41], second_stamp[41], changed_stamp[41];
+         assert(arc_cmos_default(os, io, fresh));
+         assert(arc_cmos_machine_image(os, io, fresh, false, image));
+         memcpy(persisted, image + 16u, sizeof(persisted));
+         assert(!(fresh[80u - 16u] & 0x10u));
+         assert(persisted[80u - 16u] & 0x10u);
+         assert(arc_cmos_boot_stamp_payload(os, io, fresh, false, starting));
+         assert(arc_cmos_boot_stamp_payload(os, io, persisted, false, repeated));
+         arc_sha1_hex(starting, sizeof(starting), first_stamp);
+         arc_sha1_hex(repeated, sizeof(repeated), second_stamp);
+         assert(strcmp(first_stamp, second_stamp) == 0);
+         assert(starting[80u - 16u] & 0x10u);
+         assert(starting[arc_cmos_raw_address(239u) - 16u] == 0u);
+         assert(arc_cmos_boot_stamp_payload(os, io, fresh, true, repeated));
+         assert(memcmp(starting, repeated, sizeof(starting)) == 0);
+
+         persisted[arc_cmos_raw_address(100u) - 16u] ^= 0x01u;
+         assert(arc_cmos_boot_stamp_payload(os, io, persisted, false, repeated));
+         arc_sha1_hex(repeated, sizeof(repeated), changed_stamp);
+         assert(strcmp(first_stamp, changed_stamp) != 0);
+      }
+   }
 }
 
 static void test_firmware_table(void)
@@ -607,6 +697,54 @@ static uint64_t test_pixels_hash(const uint32_t *pixels, size_t count)
       hash *= UINT64_C(1099511628211);
    }
    return hash;
+}
+
+static void test_chooser_row_text(const uint32_t *pixels, unsigned x,
+                                  unsigned y, const char *label)
+{
+   for (unsigned character = 0u; label[character]; ++character)
+      for (unsigned row = 0u; row < 8u; ++row)
+         for (unsigned bit = 0u; bit < 8u; ++bit)
+         {
+            bool lit = (arc_osk_font[(uint8_t)label[character]][row] >>
+                        (7u - bit)) & 1u;
+            uint32_t expected = lit ? UINT32_C(0x00e8edf5) :
+                                      UINT32_C(0x00101a2a);
+            assert(pixels[(size_t)(y + row * 2u) * 640u +
+                          x + character * 16u + bit * 2u] == expected);
+         }
+}
+
+static void test_boot_hit_chooser(void)
+{
+   ArcLaunchDiscovery discovery = {0};
+   discovery.reason = ARC_LAUNCH_REASON_AMBIGUOUS;
+   discovery.candidate_count = discovery.application_count = 1u;
+   discovery.unknown_count = 1u;
+   discovery.candidates[0].name = test_guest_name("!A", 2u);
+   discovery.candidates[0].state = ARC_LAUNCH_CANDIDATE_APPLICATION;
+   discovery.candidates[0].launchable = true;
+   ArcLaunchChooser chooser;
+   uint32_t *pixels = calloc(640u * 480u, sizeof(*pixels));
+   assert(pixels);
+   assert(arc_launch_chooser_init(&chooser, &discovery, false, INT_MIN));
+   assert(!chooser.inspection_incomplete && !chooser.boot_hit);
+   assert(arc_launch_chooser_render(&chooser, &discovery, pixels,
+                                   640u, 480u, 640u * sizeof(*pixels)));
+   test_chooser_row_text(pixels, 104u, 112u, "Desktop (no launch)");
+
+   arc_launch_chooser_boot_hit(&chooser, &discovery);
+   assert(chooser.boot_hit && chooser.inspection_incomplete);
+   assert(arc_launch_chooser_render(&chooser, &discovery, pixels,
+                                   640u, 480u, 640u * sizeof(*pixels)));
+   test_chooser_row_text(pixels, 104u, 112u, "Run disc's own startup");
+   discovery.unknown_count = 0u;
+   discovery.scan_incomplete = true;
+   assert(arc_launch_chooser_init(&chooser, &discovery, false, INT_MIN));
+   assert(!chooser.inspection_incomplete);
+   arc_launch_chooser_boot_hit(&chooser, &discovery);
+   assert(chooser.inspection_incomplete);
+   free(pixels);
 }
 
 static void test_launch_choices_and_chooser(void)
@@ -3656,11 +3794,14 @@ int main(int argc, char **argv)
    assert(argc == 2);
    test_hashes();
    test_cmos_unplug_policy();
+   test_fresh_cmos_default();
+   test_boot_stamp_starting_cmos();
    test_firmware_table();
    test_assembly();
    test_media_launch_and_cmos();
    test_launch_bindings();
    test_launch_choices_and_chooser();
+   test_boot_hit_chooser();
    test_launch_discovery_and_builder(argv[1]);
    test_nested_launch(argv[1]);
    test_f_media(argv[1]);
