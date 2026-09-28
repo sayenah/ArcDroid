@@ -2306,14 +2306,16 @@ Write-Host "Slice 15 Windows RetroArch: boundary read, absent-sector error, pers
 
 # Slice 18: only the test DLL can opt ARC_OS_TEST into the RISC OS 3 CMOS
 # policy. The authored ROM acknowledges both KART transitions and reads the
-# mounted floppy. A frontend RESET must reconstruct and replay the sequence.
+# mounted floppy. The authored ROM also writes sector 1 before programming
+# video and KART, so its source image needs a private writable shadow.
+# A frontend RESET must reconstruct and replay the sequence.
 Copy-Item -Force (Join-Path $InputDirectory "arcdroid_libretro_test.dll") $core
 Copy-Item -Force (Join-Path $InputDirectory "arcdroid-test.rom") $firmware
 @"
 arcdroid_machine = "A3000"
 arcdroid_cpu = "ARM2"
 arcdroid_joystick_if = "Keyboard"
-arcdroid_disk_writes = "off"
+arcdroid_disk_writes = "shadow"
 arcdroid_launch = "off"
 "@ | Set-Content -Encoding ASCII $coreOptions
 $env:ARCDROID_TEST_POWER_ON_SHIFT = "1"
@@ -2327,11 +2329,16 @@ try {
         do {
             $powerLines = @(Get-Content $powerOnRun.RetroLog -ErrorAction SilentlyContinue)
             $released = @($powerLines | Where-Object { $_ -match 'Power-on: shift released at=\d+ reason=timer' })
-            if ($released.Count -ge $count) { break }
+            $acknowledged = @($powerLines | Where-Object {
+                $_.Contains('KART guest->device value=33 state=3')
+            })
+            if ($released.Count -ge $count -and $acknowledged.Count -ge (2 * $count)) {
+                break
+            }
             Start-Sleep -Milliseconds 100
         } while ([DateTime]::UtcNow -lt $deadline)
-        if ($released.Count -lt $count) {
-            throw "Slice 18 power-on release $count absent; log=[$(Get-RunLogTail $powerOnRun)]"
+        if ($released.Count -lt $count -or $acknowledged.Count -lt (2 * $count)) {
+            throw "Slice 18 boot $count did not release Shift and acknowledge both KART pairs; log=[$(Get-RunLogTail $powerOnRun)]"
         }
     }
     $powerCapture = Capture-RawScreenshot $powerOnRun "slice18-power-on-boot"
