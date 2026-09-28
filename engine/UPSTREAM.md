@@ -149,6 +149,9 @@ The Slice 10a QA low follow-up reports a missing WRITE SECTOR refusal before
 delivering the final index pulse to WD1770, because that callback can stop the
 reader. This changes only refusal diagnostics; both controller limits remain
 unchanged.
+Slice 16 makes the ArcDroid JFD reader skip every descriptor on a quarantined
+track-side. The shared effective-sector view also hides those descriptors from
+the reader and native consumers; index-pulse not-found handling is unchanged.
 C-11c marks only terminal READ SECTOR RNF of an eligible, absent DD slot and
 consults the mounted map's probe marks before a prospective write. It checks
 the buffered map-sector write for a probed allocation before invoking the

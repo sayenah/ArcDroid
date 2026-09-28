@@ -70,6 +70,16 @@ int main(int argc, char **argv)
    ArcJfdImage d = load(argv[1], "sparse-d-timed.jfd");
    arc_jfd_prepare_identification(&d, true);
    expect(&d, "presented", 0x18u, 1u, 5u);
+   d.tracks[0].quarantine_reason = "size-code";
+   arc_jfd_prepare_identification(&d, true);
+   expect(&d, "quarantined", 0u, 0u, 0u);
+   ArcJfdView quarantined_view;
+   assert(!arc_jfd_effective_sector(&d, 0u, 0u, true, &quarantined_view) &&
+          !arc_jfd_effective_sector(&d, 0u, d.tracks[0].sector_count + 3u,
+                                    true, &quarantined_view));
+   d.tracks[0].quarantine_reason = NULL;
+   arc_jfd_prepare_identification(&d, true);
+   expect(&d, "presented", 0x18u, 1u, 5u);
    expect_basis(&d, "free");
    assert(d.identification_time[3] == 116352u &&
           d.identification_time[4] == 152704u);

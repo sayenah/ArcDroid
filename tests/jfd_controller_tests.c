@@ -33,6 +33,9 @@ static bool newio_dma_write;
 static uint8_t newio_write_value;
 static bool wd_write_mode;
 static bool wd_service_data = true;
+static unsigned observed_index_pulses;
+static fdc_funcs_t *original_controller_funcs;
+static void observe_indexes(fdc_funcs_t *copy);
 static uint8_t wd_write_value;
 static const uint8_t *wd_write_buffer;
 static const uint8_t *newio_write_buffer;
@@ -660,12 +663,11 @@ static void test_family(const char *root)
 static void test_rejections(const char *root)
 {
    static const struct { const char *name; const char *reason; } cases[] = {
-      {"reject-discop3.jfd", "DiscOp 3"},
-      {"reject-density8.jfd", "octal density"},
-      {"reject-mixed-time.jfd", "mixes timed"},
-      {"reject-untimed-duplicate.jfd", "duplicate"},
-      {"reject-long-schedule.jfd", "one revolution"},
-      {"reject-delta.jfd", "delta"},
+      {"reject-discop3.jfd", "whole-track"},
+      {"reject-density8.jfd", "octal-density"},
+      {"reject-mixed-time.jfd", "mixed-timing"},
+      {"reject-untimed-duplicate.jfd", "duplicate-id"},
+      {"reject-long-schedule.jfd", "long-schedule"},
    };
    for (size_t i = 0u; i < sizeof(cases) / sizeof(cases[0]); ++i)
    {
@@ -674,9 +676,66 @@ static void test_rejections(const char *root)
       fixture_path(path, root, cases[i].name);
       uint8_t *data = read_all(path, &size);
       ArcJfdImage image;
-      assert(!arc_jfd_parse_owned(data, size, &image, reason, sizeof(reason)));
-      assert(strstr(reason, cases[i].reason));
+      assert(arc_jfd_parse_owned(data, size, &image, reason, sizeof(reason)));
+      assert(image.tracks[0].quarantine_reason &&
+             !strcmp(image.tracks[0].quarantine_reason, cases[i].reason));
+      ArcJfdView view;
+      assert(!arc_jfd_effective_sector(&image, 0u, 0u, false, &view));
+      arc_jfd_free(&image);
    }
+   char path[4096], reason[256];
+   size_t size;
+   fixture_path(path, root, "reject-delta.jfd");
+   uint8_t *data = read_all(path, &size);
+   ArcJfdImage image;
+   assert(!arc_jfd_parse_owned(data, size, &image, reason, sizeof(reason)));
+   assert(strstr(reason, "delta"));
+}
+
+static void test_quarantine_wd(const char *root)
+{
+   ArcJfdImage image = load_image(root, "quarantine-late.jfd");
+   assert(image.tracks[0].quarantine_reason &&
+          image.tracks[0].sector_count == 2u &&
+          !image.tracks[1].quarantine_reason);
+   controller_reset(&image);
+   fdc_funcs_t observed;
+   observe_indexes(&observed);
+   wd1770_write(0x08u, 1u);
+   for (unsigned command = 0u; command < 2u; ++command)
+   {
+      observed_index_pulses = 0u;
+      transfer_count = 0u; ioc.fiq = 0u;
+      wd1770_write(0x00u, command ? 0xc0u : 0x80u);
+      uint64_t limit = tsc + (uint64_t)1100000u * TIMER_USEC;
+      while (!(ioc.fiq & IOC_FIQ_DISC_IRQ) && tsc < limit) step_controller();
+      assert((ioc.fiq & IOC_FIQ_DISC_IRQ) &&
+             observed_index_pulses == 5u && transfer_count == 0u &&
+             wd1770_read(0x00u) == 0x10u);
+   }
+   fdc_funcs = original_controller_funcs;
+   assert(finish_command(0xa0u, 1000u) == 0x40u && transfer_count == 0u);
+   wd1770_writelatch_a(0x8eu);
+   wd1770_write(0x08u, 3u);
+   assert(finish_command(0x80u, 1100000u) == 0x80u &&
+          transfer_count == 128u && transfer[0] == 0x43u);
+   disc_close(0);
+   arc_jfd_free(&image);
+
+   image = load_image(root, "quarantine-late.jfd");
+   make_jfd_writable(&image);
+   controller_reset(&image);
+   wd1770_write(0x08u, 1u);
+   jfd_commits = 0u;
+   uint8_t write_status = finish_command(0xa0u, 1100000u);
+   assert(write_status == 0x10u &&
+          transfer_count <= 1u && jfd_commits == 0u);
+   wd1770_writelatch_a(0x8eu);
+   wd1770_write(0x08u, 3u);
+   assert(finish_command(0x80u, 1100000u) == 0x80u &&
+          transfer_count == 128u && transfer[0] == 0x43u);
+   disc_close(0);
+   arc_jfd_free(&image);
 }
 
 static void test_empty_drive_cancellation(void)
@@ -1101,6 +1160,71 @@ static void newio_creation_command(uint8_t command, uint8_t selected_side,
    c82c711_fdc_write(5u, command, NULL);
    for (unsigned i = 0u; i < sizeof(params); ++i)
       c82c711_fdc_write(5u, params[i], NULL);
+}
+
+static void test_quarantine_newio(const char *root)
+{
+   ArcJfdImage image = load_image(root, "quarantine-late.jfd");
+   newio_reset(&image, false);
+   transfer_count = 0u;
+   fdc_funcs_t observed;
+   observe_indexes(&observed);
+   newio_start_id(0u);
+   while (observed_index_pulses < 2u) step_controller();
+   assert(ioc.irqb & IOC_IRQB_DISC_IRQ);
+   (void)c82c711_fdc_read(4u, NULL);
+   uint8_t result[7];
+   newio_result(result);
+   if (!(result[0] & 0x40u) || result[1] != 5u || transfer_count)
+      fprintf(stderr, "quarantine newio ID st0=%02x st1=%02x bytes=%zu\n",
+              result[0], result[1], transfer_count);
+   assert((result[0] & 0x40u) && result[1] == 5u &&
+          transfer_count == 0u);
+   observed_index_pulses = 0u;
+   newio_service_dma = true;
+   newio_dma_write = false;
+   newio_transfer_limit = 128u;
+   newio_start_read(0u, 1u, 0u);
+   while (observed_index_pulses < 2u) step_controller();
+   assert(ioc.irqb & IOC_IRQB_DISC_IRQ);
+   (void)c82c711_fdc_read(4u, NULL);
+   newio_result(result);
+   assert((result[0] & 0x40u) && result[1] == 5u &&
+          transfer_count == 0u);
+   fdc_funcs = original_controller_funcs;
+   transfer_count = jfd_commits = 0u;
+   newio_service_dma = newio_dma_write = true;
+   newio_transfer_limit = 128u;
+   newio_start_write(0u, 1u, 0u);
+   newio_wait_irq(500000u);
+   newio_result(result);
+   assert(result[0] == 0x40u && result[1] == 0x02u &&
+          transfer_count == 0u && jfd_commits == 0u);
+   newio_dma_write = false;
+   newio_start_id(1u);
+   newio_wait_irq(400000u);
+   newio_result(result);
+   assert(!(result[0] & 0xc0u) && result[5] == 3u);
+   transfer_count = 0u;
+   newio_creation_command(0x06u, 1u, 0u, 1u, 3u, 0u);
+   newio_wait_irq(400000u);
+   newio_result(result);
+   assert(!(result[0] & 0xc0u) && transfer_count == 128u &&
+          transfer[0] == 0x43u);
+   c82c711_fdc_shutdown(); disc_close(0); arc_jfd_free(&image);
+
+   image = load_image(root, "quarantine-late.jfd");
+   make_jfd_writable(&image);
+   newio_reset(&image, false);
+   transfer_count = jfd_commits = 0u;
+   newio_service_dma = newio_dma_write = true;
+   newio_transfer_limit = 128u;
+   newio_start_write(0u, 1u, 0u);
+   newio_wait_irq(500000u);
+   newio_result(result);
+   assert((result[0] & 0x40u) && result[1] == 5u &&
+          transfer_count <= 1u && jfd_commits == 0u);
+   c82c711_fdc_shutdown(); disc_close(0); arc_jfd_free(&image);
 }
 
 static void test_wd_creation(const char *root)
@@ -2839,6 +2963,7 @@ int main(int argc, char **argv)
       test_wd_identification(argv[1]);
       test_wd_identification_probe(argv[1]);
       test_rejections(argv[1]);
+      test_quarantine_wd(argv[1]);
       test_empty_drive_cancellation();
       test_busy_jfd_read_is_not_replaced(argv[1]);
       test_drive_one_helper(argv[1]);
@@ -2856,6 +2981,7 @@ int main(int argc, char **argv)
       test_newio_identification(argv[1]);
       test_82c711_quad(argv[1]);
       test_82c711_jfd_search_failures(argv[1]);
+      test_quarantine_newio(argv[1]);
       test_82c711_search_cancellation(argv[1]);
       test_82c711_raw_geometries();
       test_82c711_mixed_raw_drives(argv[1]);

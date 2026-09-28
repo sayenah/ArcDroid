@@ -266,7 +266,7 @@ static bool arc_jfd_parse_internal(const uint8_t *input, size_t input_size,
       { arc_jfd_error(error, error_size, "track entry points outside the sector table"); goto reject; }
       size_t cursor = (size_t)offset_sector + relative;
       int timing_mode = -1;
-      uint32_t synthetic_time = 0u;
+      uint64_t synthetic_time = 0u;
       bool terminated = false;
       for (unsigned count = 0u; count < ARC_JFD_MAX_SECTORS_PER_TRACK; ++count)
       {
@@ -283,30 +283,37 @@ static bool arc_jfd_parse_internal(const uint8_t *input, size_t input_size,
          unsigned crc_flags = (header >> 4u) & 0x0fu;
          unsigned size_code = header & 0x0fu;
          bool timed = time != 0xffu;
-         if (size_code > 3u)
-         { arc_jfd_error(error, error_size, "unsupported sector size code"); goto reject; }
-         if (density == 8u)
-         { arc_jfd_error(error, error_size, "octal density unsupported"); goto reject; }
-         if (density != 1u && density != 2u && density != 4u)
+         if (density != 1u && density != 2u && density != 4u && density != 8u)
          { arc_jfd_error(error, error_size, "invalid sector density"); goto reject; }
-         if (block_flags & 1u)
-         { arc_jfd_error(error, error_size, "DiscOp 3 whole-track data unsupported"); goto reject; }
          if (time > 200u && timed)
          { arc_jfd_error(error, error_size, "sector time exceeds one revolution"); goto reject; }
+         if (!out_track->quarantine_reason && size_code > 3u)
+            out_track->quarantine_reason = "size-code";
+         if (!out_track->quarantine_reason && density == 8u)
+            out_track->quarantine_reason = "octal-density";
+         if (!out_track->quarantine_reason && (block_flags & 1u))
+            out_track->quarantine_reason = "whole-track";
          if (timing_mode < 0) timing_mode = timed ? 1 : 0;
          else if (timing_mode != (timed ? 1 : 0))
-         { arc_jfd_error(error, error_size, "track-side mixes timed and untimed sectors"); goto reject; }
+         {
+            if (!out_track->quarantine_reason)
+               out_track->quarantine_reason = "mixed-timing";
+         }
          if (!timed)
             for (size_t previous = out_track->first_sector;
                  previous < image->sector_count; ++previous)
                if (image->sectors[previous].id == id &&
                    image->sectors[previous].density == density)
-               { arc_jfd_error(error, error_size, "untimed duplicate sector ID"); goto reject; }
+               {
+                  if (!out_track->quarantine_reason)
+                     out_track->quarantine_reason = "duplicate-id";
+               }
          ArcJfdSector sector;
          memset(&sector, 0, sizeof(sector));
-         sector.time_us = timed ? (time == 200u ? 0u : time * 1000u) : synthetic_time;
+         sector.time_us = timed ? (time == 200u ? 0u : time * 1000u) :
+            (uint32_t)(synthetic_time % 200000u);
          sector.data_offset = arc_le32(decoded + cursor + 4u);
-         sector.size = (uint16_t)(128u << size_code);
+         sector.size = 128u << size_code;
          sector.id = (uint8_t)id;
          sector.density = (uint8_t)density;
          sector.flags = (crc_flags & 1u ? ARC_JFD_ID_CRC_BAD : 0u) |
@@ -320,9 +327,10 @@ static bool arc_jfd_parse_internal(const uint8_t *input, size_t input_size,
          if (!timed)
          {
             uint32_t cadence = density == 4u ? 16u : density == 2u ? 32u : 64u;
-            uint32_t duration = (112u + sector.size) * cadence;
-            if (synthetic_time > 200000u - duration)
-            { arc_jfd_error(error, error_size, "synthesised track schedule exceeds one revolution"); goto reject; }
+            uint64_t duration = (uint64_t)(112u + sector.size) * cadence;
+            if (synthetic_time + duration > 200000u &&
+                !out_track->quarantine_reason)
+               out_track->quarantine_reason = "long-schedule";
             synthetic_time += duration;
          }
          if (!arc_jfd_append_sector(image, &sector))

@@ -1336,9 +1336,7 @@ static bool arc_prepare_bytes(const char *source, const char *playlist_label,
                        error_size);
       if (!parsed)
          return false;
-      for (size_t i = 0u; i < entry->jfd.sector_count; ++i)
-         if (entry->jfd.sectors[i].density == 4u)
-            entry->high_density = true;
+      entry->high_density = arc_jfd_high_density(&entry->jfd);
       if (arc_log)
       {
          arc_log(RETRO_LOG_INFO,
@@ -2544,6 +2542,18 @@ static void arc_finish_jfd_preparation(ArcMediaEntry *entry, bool native)
    }
    arc_jfd_prepare_identification(&entry->jfd, native);
    if (!arc_log) return;
+   unsigned quarantined = 0u, first = 0u;
+   for (unsigned t = 0u; t < entry->jfd.track_count; ++t)
+      if (entry->jfd.tracks[t].quarantine_reason)
+      {
+         if (!quarantined) first = t;
+         ++quarantined;
+      }
+   if (quarantined)
+      arc_log(RETRO_LOG_WARN,
+         "JFD native quarantine: image=%u sides=%u first=%u:%s more=%u\n",
+         image_number, quarantined, first,
+         entry->jfd.tracks[first].quarantine_reason, quarantined - 1u);
    char captured[40] = {0}, presented[40] = {0};
    size_t c_at = 0u, p_at = 0u;
    if (entry->jfd.track_count)

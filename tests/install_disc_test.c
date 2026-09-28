@@ -2,6 +2,7 @@
  * Project-authored GPL-2.0-only. */
 #include "install_disc.h"
 #include "install_validate.h"
+#include "jfd.h"
 #include "adffs.h"
 #include "arcdroid_core.h"
 #include <assert.h>
@@ -516,6 +517,27 @@ int main(int argc, char **argv)
       variant->expected_tree_sha256=tree_hash;
       assert(arc_install_hd_validate(&plan,first,ARC_INSTALL_HD_BYTES,&result));
       assert(result.tree_count==2u && !strcmp(result.tree_sha256,tree_hash));
+      /* Quarantine changes native presentation, not the install validator's
+       * exact decoded-size and SHA-1 check on the original JFD bytes. */
+      size_t descriptor_at=(size_t)le32(jfd+28u)+le32(jfd+le32(jfd+24u));
+      assert(descriptor_at+4u<=jfd_size);
+      uint8_t *installed_jfd=first+zone_base+64u*1024u;
+      uint8_t original_density=installed_jfd[descriptor_at+2u];
+      installed_jfd[descriptor_at+2u]=
+         (uint8_t)((original_density&0xf0u)|8u);
+      ArcJfdImage quarantined={0}; char parser_error[128];
+      assert(arc_jfd_parse(installed_jfd,jfd_size,&quarantined,
+                           parser_error,sizeof(parser_error)) &&
+             quarantined.tracks[0].quarantine_reason);
+      arc_jfd_free(&quarantined);
+      char quarantined_sha[41];
+      arc_sha1_hex(installed_jfd,jfd_size,quarantined_sha);
+      variant->discs[0].sha1=quarantined_sha;
+      assert(arc_install_hd_validate(&plan,first,ARC_INSTALL_HD_BYTES,&result));
+      variant->discs[0].sha1="015e1ef84221f0242ea7eb65ec489b2ea04b0bdf";
+      assert(!arc_install_hd_validate(&plan,first,ARC_INSTALL_HD_BYTES,&result));
+      installed_jfd[descriptor_at+2u]=original_density;
+      assert(arc_install_hd_validate(&plan,first,ARC_INSTALL_HD_BYTES,&result));
       if (argc > 2) {
          FILE *dump=fopen(argv[2],"wb"); assert(dump);
          assert(fwrite(first,1u,ARC_INSTALL_HD_BYTES,dump)==ARC_INSTALL_HD_BYTES);

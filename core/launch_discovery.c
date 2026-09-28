@@ -438,10 +438,9 @@ static uint32_t arc_map_bits(const uint8_t *map, unsigned bit,
 static void arc_mark_free_tracks(bool free_track[ARC_JFD_PDD5_TRACKS],
                                  size_t first, size_t length)
 {
-   size_t last = first + length;
    for (unsigned t = 0u; t < ARC_JFD_PDD5_TRACKS; ++t)
-      if (first < ((size_t)t + 1u) * 5120u &&
-          (size_t)t * 5120u < last) free_track[t] = true;
+      if (arc_jfd_pdd5_free_intersects(t, first, length))
+         free_track[t] = true;
 }
 
 static bool arc_jfd_new_free_copy(ArcFileCore *fs, unsigned copy,
@@ -626,6 +625,8 @@ void arc_jfd_prepare_identification(ArcJfdImage *image, bool native)
    image->identification_basis = "none";
    image->identification_reason = native ? "no-track" : "not-native";
    if (!native || !image->track_count) return;
+   if (image->tracks[0].quarantine_reason)
+   { image->identification_reason = "quarantined"; return; }
    const ArcJfdTrack *track = &image->tracks[0];
    image->identification_timed = track->timed;
    if (!track->sector_count) return;

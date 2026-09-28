@@ -772,6 +772,17 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
   endif()
   add_dependencies(jfd_identification_tests test-fixtures)
   add_test(NAME jfd-identification COMMAND jfd_identification_tests "${FIXTURE_DIR}")
+  add_executable(jfd_quarantine_tests tests/jfd_quarantine_tests.c)
+  target_include_directories(jfd_quarantine_tests PRIVATE core)
+  target_link_libraries(jfd_quarantine_tests PRIVATE arcdroid_core)
+  target_compile_options(jfd_quarantine_tests PRIVATE
+    $<$<C_COMPILER_ID:GNU,Clang,AppleClang>:-UNDEBUG;-Wall;-Wextra;-Wpedantic>)
+  if(ARCDROID_SANITIZERS)
+    target_link_libraries(jfd_quarantine_tests PRIVATE
+      arcdroid_sanitizer_compile arcdroid_sanitizer_link)
+  endif()
+  add_dependencies(jfd_quarantine_tests test-fixtures)
+  add_test(NAME jfd-quarantine COMMAND jfd_quarantine_tests "${FIXTURE_DIR}")
   add_test(NAME core-services COMMAND core_tests "${FIXTURE_DIR}")
   add_test(NAME short-tail-unit COMMAND core_tests "${FIXTURE_DIR}" --short-tail)
   add_test(NAME short-raw-wd COMMAND jfd_controller_tests "${FIXTURE_DIR}" --short-raw-wd)
@@ -884,6 +895,38 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
       "${FIXTURE_DIR}/jfd-writes/rw-d.jfd"
       "${CMAKE_CURRENT_BINARY_DIR}/jfd-writes-harness-data"
       --jfd-writes "${FIXTURE_DIR}/jfd-writes")
+    add_test(NAME jfd-quarantine-wd-guest COMMAND libretro_harness
+      $<TARGET_FILE:arcdroid_libretro_test>
+      "${FIXTURE_DIR}/arcdroid-jfd-quarantine.rom"
+      "${FIXTURE_DIR}/jfd-family/quarantine-guest.jfd"
+      "${CMAKE_CURRENT_BINARY_DIR}/jfd-quarantine-wd-data"
+      --jfd-quarantine-wd)
+    add_test(NAME jfd-quarantine-newio-guest COMMAND libretro_harness
+      $<TARGET_FILE:arcdroid_libretro_test>
+      "${FIXTURE_DIR}/arcdroid-jfd-quarantine.rom"
+      "${FIXTURE_DIR}/jfd-family/quarantine-guest.jfd"
+      "${CMAKE_CURRENT_BINARY_DIR}/jfd-quarantine-newio-data"
+      --jfd-quarantine-newio)
+    add_test(NAME jfd-quarantine-zip-guest COMMAND libretro_harness
+      $<TARGET_FILE:arcdroid_libretro_test>
+      "${FIXTURE_DIR}/arcdroid-jfd-quarantine.rom"
+      "${FIXTURE_DIR}/jfd-family/quarantine-guest.zip"
+      "${CMAKE_CURRENT_BINARY_DIR}/jfd-quarantine-zip-data"
+      --jfd-quarantine-wd)
+    add_test(NAME jfd-quarantine-density COMMAND libretro_harness
+      $<TARGET_FILE:arcdroid_libretro_test>
+      "${FIXTURE_DIR}/arcdroid-test.rom"
+      "${FIXTURE_DIR}/jfd-family/quarantine-quad.jfd"
+      "${CMAKE_CURRENT_BINARY_DIR}/jfd-quarantine-density-data"
+      --jfd-quarantine-density
+      "${FIXTURE_DIR}/jfd-family/quarantine-quad-usable.jfd")
+    add_test(NAME jfd-quarantine-adffs COMMAND libretro_harness
+      $<TARGET_FILE:arcdroid_libretro_test>
+      "${FIXTURE_DIR}/arcdroid-test.rom"
+      "${FIXTURE_DIR}/adffs/route-quarantine.jfd"
+      "${CMAKE_CURRENT_BINARY_DIR}/jfd-quarantine-adffs-data"
+      --jfd-quarantine-adffs
+      "${FIXTURE_DIR}/adffs/synthetic.zip")
     add_test(NAME jfd-creation-process COMMAND "${Python3_EXECUTABLE}"
       "${CMAKE_CURRENT_SOURCE_DIR}/tests/jfd_creation_process_test.py"
       $<TARGET_FILE:libretro_harness>

@@ -26,6 +26,7 @@ bool arc_jfd_place_slots(const ArcJfdImage *image, unsigned track_side,
    if (!image || !positions || track_side >= image->track_count ||
        ids > ARC_JFD_MAX_STANDARD_IDS || !spacing) return false;
    const ArcJfdTrack *track = &image->tracks[track_side];
+   if (track->quarantine_reason) return false;
    uint32_t occupied[ARC_JFD_MAX_SECTORS_PER_TRACK + ARC_JFD_MAX_STANDARD_IDS];
    unsigned count = 0u;
    for (unsigned i = 0u; i < track->sector_count; ++i)
@@ -119,6 +120,12 @@ bool arc_jfd_plan_creation(const ArcJfdImage *image, ArcJfdOverlay *overlay)
    {
       const ArcJfdTrack *track = &image->tracks[t];
       if (track->sector_count) ++nonempty;
+      if (track->quarantine_reason)
+      {
+         irregular[t] = true;
+         irregular_missing = true;
+         continue;
+      }
       for (unsigned i = 0u; i < track->sector_count; ++i)
       {
          size_t index = (size_t)track->first_sector + i;
@@ -189,6 +196,7 @@ bool arc_jfd_effective_sector(const ArcJfdImage *image, unsigned track_side,
    const ArcJfdTrack *track = &image->tracks[track_side];
    const ArcJfdOverlay *overlay = image->overlay;
    memset(view, 0, sizeof(*view));
+   if (track->quarantine_reason) return false;
    if (candidate < track->sector_count)
    {
       size_t index = (size_t)track->first_sector + candidate;
