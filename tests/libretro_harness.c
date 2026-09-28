@@ -147,6 +147,7 @@ static const char *real_boot_package;
 static bool real_boot_expect_disabled;
 static bool real_boot_fail_construct;
 static bool real_boot_cmos_sentinel;
+static bool real_boot_cmos_ramdisc;
 static struct retro_disk_control_ext_callback disk_control;
 static bool can_dupe;
 static bool keyboard_poll_capability;
@@ -177,6 +178,8 @@ static const char *option_pointer_speed = "600";
 static const char *option_pointer_deadzone = "15";
 static const char *option_writes = "shadow";
 static const char *option_short_tail = "missing";
+static const char *option_launch_ramdisc = "Auto";
+static bool real_boot_ramdisc_toggle_reset;
 static const char *option_install_saves = "temporary";
 static unsigned install_publication_seen, install_recreate_seen;
 static unsigned install_commit_seen, install_validation_seen;
@@ -281,6 +284,7 @@ static char application_profile_sha1[41];
 static char playlist_profile_sha1[41];
 static char nested_profile_sha1[41];
 static char last_launch_log[2048];
+static unsigned ramdisc_publication_logs;
 static char last_launch_warning[512];
 static char last_flush_fault[512];
 static char last_input_resolution[3072];
@@ -483,6 +487,8 @@ static void frontend_log(enum retro_log_level level, const char *format, ...)
    va_start(arguments, format);
    vsnprintf(message, sizeof(message), format, arguments);
    va_end(arguments);
+   if (!strncmp(message, "RAM disc: ", 10u))
+   { assert(level == RETRO_LOG_INFO); ++ramdisc_publication_logs; }
    if (install_guest_logging &&
        (strstr(message,"Install disc:") || strstr(message,"JFD boot:") ||
         strstr(message,"Machine:") || level >= RETRO_LOG_ERROR))
@@ -665,11 +671,11 @@ static bool environment(unsigned command, void *data)
          const struct retro_core_options_v2 *options = data;
          unsigned count = 0u;
          while (options->definitions[count].key) ++count;
-         assert(count == 38u && options->categories &&
+         assert(count == 39u && options->categories &&
                 !strcmp(options->categories[0].key, "pad_mapping") &&
                 !strcmp(options->categories[0].desc, "Pad Mapping"));
          bool found_profile = false, found_osk = false, found_chooser = false;
-         bool found_short_tail = false;
+         bool found_short_tail = false, found_ramdisc = false;
          bool found_jfd_boot = false, found_adffs_package = false;
          unsigned pads = 0u;
          const char *categorized_pad_labels[ARC_PAD_PORTS * ARC_PAD_INPUT_COUNT] = {0};
@@ -702,6 +708,14 @@ static bool environment(unsigned command, void *data)
                       !strcmp(definition->values[0].label, "Missing") &&
                       !strcmp(definition->values[1].value, "zero-filled") &&
                       !strcmp(definition->values[1].label, "Zero-filled"));
+            }
+            if (!strcmp(definition->key, "arcdroid_launch_ramdisc"))
+            {
+               found_ramdisc = true;
+               assert(!strcmp(definition->default_value, "Auto") &&
+                      !strcmp(definition->values[0].value, "Auto") &&
+                      !strcmp(definition->values[1].value, "Disabled") &&
+                      !definition->values[2].value);
             }
             if (!strcmp(definition->key, "arcdroid_launch_chooser"))
             {
@@ -740,7 +754,7 @@ static bool environment(unsigned command, void *data)
                categorized_pad_labels[pads++] = definition->desc_categorized;
             }
          }
-         assert(found_profile && found_osk && found_chooser && found_short_tail && found_jfd_boot &&
+         assert(found_profile && found_osk && found_chooser && found_short_tail && found_ramdisc && found_jfd_boot &&
                 found_adffs_package && pads == 20u);
          return true;
       }
@@ -860,6 +874,8 @@ static bool environment(unsigned command, void *data)
          else if (!strcmp(variable->key, "arcdroid_pointer_deadzone")) variable->value = option_pointer_deadzone;
          else if (!strcmp(variable->key, "arcdroid_disk_writes")) variable->value = option_writes;
          else if (!strcmp(variable->key, "arcdroid_short_tail")) variable->value = option_short_tail;
+         else if (!strcmp(variable->key, "arcdroid_launch_ramdisc"))
+            variable->value = option_launch_ramdisc;
          else if (!strcmp(variable->key, "arcdroid_install_saves")) variable->value = option_install_saves;
          else if (!strcmp(variable->key, "arcdroid_launch")) variable->value = option_launch;
          else if (!strcmp(variable->key, "arcdroid_launch_chooser"))
@@ -1839,6 +1855,15 @@ static bool parse_real_boot_options(int count, char *const args[],
       else if (!strcmp(args[argument], "--boot-reset-once") &&
                !real_boot_reset_once)
          real_boot_reset_once = true;
+      else if (!strcmp(args[argument], "--boot-ramdisc") && argument + 1 < count)
+      {
+         const char *value = args[++argument];
+         if (strcmp(value, "Auto") && strcmp(value, "Disabled")) return false;
+         option_launch_ramdisc = value;
+      }
+      else if (!strcmp(args[argument], "--boot-ramdisc-toggle-reset") &&
+               !real_boot_ramdisc_toggle_reset)
+         real_boot_ramdisc_toggle_reset = true;
       else if (!strcmp(args[argument], "--boot-chooser-pick") &&
                !real_boot_chooser_pick && !real_boot_chooser_continue)
          real_boot_chooser_pick = true;
@@ -1872,6 +1897,9 @@ static bool parse_real_boot_options(int count, char *const args[],
       else if (!strcmp(args[argument], "--boot-cmos-sentinel") &&
                !real_boot_cmos_sentinel)
          real_boot_cmos_sentinel = true;
+      else if (!strcmp(args[argument], "--boot-cmos-ramdisc") &&
+               !real_boot_cmos_ramdisc)
+         real_boot_cmos_ramdisc = true;
       else if (!strcmp(args[argument], "--boot-chooser-ask"))
          option_launch_chooser = "ask";
       else if (!strcmp(args[argument], "--boot-frames") &&
@@ -2268,7 +2296,7 @@ int main(int argc, char **argv)
                 arc_libretro_test_cmos_path && arc_libretro_test_session_state);
       }
    }
-   if (real_boot && real_boot_cmos_sentinel)
+   if (real_boot && (real_boot_cmos_sentinel || real_boot_cmos_ramdisc))
    {
       *(void **)(&arc_engine_test_cmos_write) =
          dlsym(module, "arc_engine_test_cmos_write");
@@ -4930,11 +4958,21 @@ int main(int argc, char **argv)
             if (real_boot_cmos_sentinel && frame == 10u)
                assert(arc_engine_test_cmos_write &&
                       arc_engine_test_cmos_write(216u, 0x5au));
+            if (real_boot_cmos_ramdisc && frame == 10u)
+               assert(arc_engine_test_cmos_write &&
+                      arc_engine_test_cmos_write(208u, 0x20u));
             if (real_boot_cmos_write_fail && frame == 20u)
                make_directory(arc_libretro_test_cmos_path());
             if (real_boot_cancel_input)
                joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_A] = frame == 10u;
             if (real_boot_reset_once && frame == 150u) retro_reset();
+            if (real_boot_ramdisc_toggle_reset && frame == 150u)
+            {
+               option_launch_ramdisc = !strcmp(option_launch_ramdisc, "Auto") ?
+                  "Disabled" : "Auto";
+               variable_update = true;
+               retro_reset();
+            }
             if ((real_boot_chooser_reset || real_boot_chooser_unload) &&
                 frame == 150u)
             {
@@ -4982,6 +5020,13 @@ int main(int argc, char **argv)
          }
       if (boot_helper_cmos_verified)
          puts("boot helper CMOS fields and checksum verified");
+      if (real_boot_cmos_ramdisc)
+      {
+         uint8_t image[ARC_CMOS_MACHINE_SIZE];
+         assert(arc_engine_test_cmos_image &&
+                arc_engine_test_cmos_image(image) && image[208u] == 0x20u);
+         puts("reconstructed guest RAM-disc CMOS byte preserved");
+      }
       if (boot_chooser_seed_verified)
          printf("boot chooser CMOS seed preserved on %s%s\n",
                 real_boot_chooser_reset ? "reset" : "unload",
@@ -8178,9 +8223,11 @@ int main(int argc, char **argv)
       option_launch_chooser = "remember";
       phase = PHASE_LOAD; assert(retro_load_game(&gate_game));
       phase = PHASE_RUN;
+      unsigned publications_before_swap = ramdisc_publication_logs;
       assert(disk_control.set_eject_state(true) &&
              disk_control.set_image_index(1u) &&
              disk_control.set_eject_state(false));
+      assert(ramdisc_publication_logs == publications_before_swap);
       for (unsigned frame = 0u; frame < 520u; ++frame) retro_run();
       arc_platform_test_input_events_reset();
       mouse_buttons = 1u;
@@ -8195,6 +8242,7 @@ int main(int argc, char **argv)
       assert(disk_control.set_eject_state(true) &&
              disk_control.set_image_index(0u) &&
              disk_control.set_eject_state(false));
+      assert(ramdisc_publication_logs == publications_before_swap);
 
       /* A running guest at another refresh rate announces exactly one rate
        * change when reset enters the 50 Hz chooser. A/Return held across that
@@ -9391,7 +9439,7 @@ int main(int argc, char **argv)
                     sizeof(nested_error)) &&
                 arc_launch_discover(nested_media, nested_media_size,
                     &nested_info, NULL, &nested_discovery) &&
-                arc_launch_disc_build(&nested_discovery, 0u, nested_expected,
+                arc_launch_disc_build_ramdisc(&nested_discovery, 0u, true, nested_expected,
                                       nested_error, sizeof(nested_error)));
          read_exact(nested_helper, nested_actual, ARC_LAUNCH_DISC_SIZE);
          assert(!memcmp(nested_expected, nested_actual,

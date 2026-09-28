@@ -784,6 +784,7 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
   add_dependencies(jfd_quarantine_tests test-fixtures)
   add_test(NAME jfd-quarantine COMMAND jfd_quarantine_tests "${FIXTURE_DIR}")
   add_test(NAME core-services COMMAND core_tests "${FIXTURE_DIR}")
+  add_test(NAME launch-ramdisc-unit COMMAND core_tests "${FIXTURE_DIR}" --launch-ramdisc)
   add_test(NAME short-tail-unit COMMAND core_tests "${FIXTURE_DIR}" --short-tail)
   add_test(NAME short-raw-wd COMMAND jfd_controller_tests "${FIXTURE_DIR}" --short-raw-wd)
   add_test(NAME short-raw-newio COMMAND jfd_controller_tests "${FIXTURE_DIR}" --short-raw-newio)
@@ -1034,6 +1035,14 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
         "${FIXTURE_DIR}/arcdroid-boot-cli-then-prompt.rom"
         "${FIXTURE_DIR}/launch-family/boot-file-3-l.adl"
         "${CMAKE_CURRENT_BINARY_DIR}/boot-observation-data")
+    add_test(NAME launch-ramdisc-harness
+      COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/check_launch_ramdisc.py"
+        "$<TARGET_FILE:libretro_harness>" "$<TARGET_FILE:arcdroid_libretro_test>"
+        "${FIXTURE_DIR}/arcdroid-boot-prompt.rom"
+        "${FIXTURE_DIR}/launch-family/boot-file-3-l.adl"
+        "${FIXTURE_DIR}/launch-family/boot-matrix-3-file-multiple.adf"
+        "${FIXTURE_DIR}/launch-family/boot-matrix-0-directory-multiple.adf"
+        "${CMAKE_CURRENT_BINARY_DIR}/launch-ramdisc-data")
     add_test(NAME boot-observation-two-phase-harness
       COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/check_boot_two_phase.py"
         "$<TARGET_FILE:libretro_harness>" "$<TARGET_FILE:arcdroid_libretro_test>"

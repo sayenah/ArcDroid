@@ -523,6 +523,7 @@ typedef struct {
    bool install_saves_persistent;
    ArcLaunchOption launch;
    ArcLaunchChooserOption launch_chooser;
+   bool launch_ramdisc;
    ArcJfdBootOption jfd_boot;
    ArcAdffsOption adffs_package;
    char input_profile[64];
@@ -656,6 +657,8 @@ static bool arc_read_options(ArcCoreOptions *options, char *error, size_t error_
    const char *launch = arc_option_value("arcdroid_launch", "auto");
    const char *launch_chooser =
       arc_option_value("arcdroid_launch_chooser", "remember");
+   const char *launch_ramdisc =
+      arc_option_value("arcdroid_launch_ramdisc", "Auto");
    const char *jfd_boot = arc_option_value("arcdroid_jfd_boot", "auto");
    const char *adffs_package = arc_option_value("arcdroid_adffs_package", "verified");
    const char *profile = arc_option_value("arcdroid_input_profile", "Auto");
@@ -699,6 +702,8 @@ static bool arc_read_options(ArcCoreOptions *options, char *error, size_t error_
    else if (!strcmp(launch_chooser, "ask"))
       options->launch_chooser = ARC_LAUNCH_CHOOSER_ASK;
    else goto invalid;
+   if (!strcmp(launch_ramdisc, "Auto")) options->launch_ramdisc = true;
+   else if (strcmp(launch_ramdisc, "Disabled")) goto invalid;
    if (!strcmp(pointer_speed, "300")) options->pointer_speed = 300u;
    else if (!strcmp(pointer_speed, "450")) options->pointer_speed = 450u;
    else if (!strcmp(pointer_speed, "600")) options->pointer_speed = 600u;
@@ -4155,7 +4160,9 @@ static bool arc_launch_helper_publish(const ArcLaunchDiscovery *discovery,
       return false;
    }
    uint8_t *helper = malloc(ARC_LAUNCH_DISC_SIZE);
-   if (!helper || !arc_launch_disc_build(discovery, selected, helper,
+   bool ramdisc = arc_core_options.launch_ramdisc &&
+      arc_launch_os_supported(arc_plan.os);
+   if (!helper || !arc_launch_disc_build_ramdisc(discovery, selected, ramdisc, helper,
                                          refusal, refusal_size))
    {
       free(helper);
@@ -4186,6 +4193,8 @@ static bool arc_launch_helper_publish(const ArcLaunchDiscovery *discovery,
    memcpy(arc_plan.launch_target, target, (size_t)target_length + 1u);
    arc_plan.launch_target_length = target_length;
    arc_launch_log_skipped_siblings(discovery, selected);
+   if (arc_log) arc_log(RETRO_LOG_INFO, "RAM disc: %s\n",
+                        ramdisc ? "request=32K if absent" : "disabled");
    return true;
 }
 
@@ -5280,6 +5289,9 @@ static const struct retro_core_option_v2_definition arc_base_options[] = {
     "Remember the selected application, or ask on every eligible launch.", NULL,
     NULL, {{"remember", "Remember"}, {"ask", "Ask every time"},
            {NULL, NULL}}, "remember"},
+   {"arcdroid_launch_ramdisc", "Native launch RAM disc", NULL,
+    "Request a 32 KiB RAM disc if absent before a native desktop helper launches an application. The RAM disc is volatile.", NULL,
+    NULL, {{"Auto", NULL}, {"Disabled", NULL}, {NULL, NULL}}, "Auto"},
    {"arcdroid_jfd_boot", "JFD Boot", NULL,
     "Auto uses the ADFFS package for eligible JFDs, except titles proven to keep saves natively. Native never uses ADFFS. ADFFS preferred works like Auto but ignores the native list; saved native changes still take precedence.", NULL,
     NULL, {{"auto", "Auto"}, {"native", "Native"},
@@ -5298,7 +5310,7 @@ static const struct retro_core_option_v2_definition arc_base_options[] = {
            {NULL, NULL}}, "persistent"},
    {NULL, NULL, NULL, NULL, NULL, NULL, {{0}}, NULL}
 };
-static struct retro_core_option_v2_definition arc_options[39];
+static struct retro_core_option_v2_definition arc_options[40];
 static struct retro_core_option_v2_category arc_option_categories[] = {
    {"pad_mapping", "Pad Mapping", "Map each RetroPad input to a physical Archimedes key."},
    {NULL, NULL, NULL}
@@ -5344,8 +5356,8 @@ static void arc_build_options(void)
    if (arc_options_built) return;
    memset(arc_options, 0, sizeof(arc_options));
    memcpy(arc_options, arc_base_options,
-          16u * sizeof(struct retro_core_option_v2_definition));
-   unsigned at = 16u;
+          17u * sizeof(struct retro_core_option_v2_definition));
+   unsigned at = 17u;
    struct retro_core_option_v2_definition *profile = &arc_options[at++];
    profile->key = "arcdroid_input_profile";
    profile->desc = "Input Profile";

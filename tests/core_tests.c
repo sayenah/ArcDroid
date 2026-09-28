@@ -4011,11 +4011,124 @@ static void test_f_media(const char *directory)
    arc_jfd_free(&jfd);
 }
 
+static uint32_t ramdisc_u24(const uint8_t *p)
+{ return (uint32_t)p[0] | ((uint32_t)p[1] << 8u) | ((uint32_t)p[2] << 16u); }
+
+static uint8_t ramdisc_checksum(const uint8_t *p)
+{
+   unsigned sum = 255u;
+   for (unsigned i = 255u; i-- > 0u;)
+   { if (sum > 255u) sum = (sum + 1u) & 255u; sum += p[i]; }
+   return (uint8_t)sum;
+}
+
+static void test_launch_ramdisc(void)
+{
+   static const char program[] =
+      "10 SYS \"OS_ReadDynamicArea\",5 TO ,size%\r"
+      "20 IF size%=0 THEN SYS \"XOS_ChangeDynamicArea\",5,32768\r";
+   static const char request[] = "%BASIC -quit ADFS::1.$.ArcRAM\r";
+   uint8_t *enabled = malloc(ARC_LAUNCH_DISC_SIZE);
+   uint8_t *disabled = malloc(ARC_LAUNCH_DISC_SIZE);
+   uint8_t *legacy = malloc(ARC_LAUNCH_DISC_SIZE);
+   assert(enabled && disabled && legacy);
+   for (unsigned nested = 0u; nested < 2u; ++nested)
+   for (unsigned siblings = 0u; siblings < 2u; ++siblings)
+   {
+      ArcLaunchDiscovery discovery = test_launch_spec("!Demo", 5u);
+      if (nested)
+      {
+         discovery.candidates[0].parent = test_guest_name("Games", 5u);
+         discovery.candidates[0].parent_address = discovery.candidates[0].parent;
+         discovery.candidates[0].addressable = true;
+      }
+      if (siblings)
+      {
+         discovery.candidates[1] = discovery.candidates[0];
+         discovery.candidates[1].name = test_guest_name("!System", 7u);
+         discovery.candidates[1].state = ARC_LAUNCH_CANDIDATE_NOT_APPLICATION;
+         discovery.candidates[1].has_boot = true;
+         discovery.candidate_count = 2u;
+      }
+      char error[128];
+      assert(arc_launch_disc_build_ramdisc(&discovery, 0u, true, enabled,
+                                          error, sizeof(error)) &&
+             arc_launch_disc_build_ramdisc(&discovery, 0u, false, disabled,
+                                          error, sizeof(error)) &&
+             arc_launch_disc_build(&discovery, 0u, legacy, error, sizeof(error)));
+      assert(!memcmp(disabled, legacy, ARC_LAUNCH_DISC_SIZE));
+      assert(enabled[255] == ramdisc_checksum(enabled) &&
+             enabled[511] == ramdisc_checksum(enabled + 256u));
+      const uint8_t *root = enabled + test_l_offset(2u);
+      const char *names[] = {"!Boot", "ArcLaunch", "ArcRAM"};
+      uint32_t starts[3], ends[3];
+      for (unsigned i = 0u; i < 3u; ++i)
+      {
+         const uint8_t *entry = root + 5u + 26u * i;
+         for (size_t ch = 0u; ch < strlen(names[i]); ++ch)
+            assert((entry[ch] & (ch < 2u ? 0x7fu : 0xffu)) ==
+                   (uint8_t)names[i][ch]);
+         starts[i] = ramdisc_u24(entry + 22u);
+         ends[i] = starts[i] + ((test_le32(entry + 18u) + 255u) / 256u);
+         assert(ends[i] <= 2560u && starts[i] < ends[i]);
+         for (unsigned j = 0u; j < i; ++j)
+            assert(ends[i] <= starts[j] || starts[i] >= ends[j]);
+         for (unsigned f = 0u; f < 2u; ++f)
+         {
+            uint32_t free_start = ramdisc_u24(enabled + f * 3u);
+            uint32_t free_end = free_start + ramdisc_u24(enabled + 256u + f * 3u);
+            assert(free_start < free_end && free_end <= 2560u);
+            assert(free_end <= starts[i] || free_start >= ends[i]);
+         }
+      }
+      assert(root[5u + 26u * 3u] == 0u);
+      assert(starts[2] == 7u && test_le32(root + 57u + 18u) == sizeof(program) - 1u);
+      uint8_t recovered[sizeof(program) - 1u];
+      for (size_t n = 0u; n < sizeof(recovered); ++n)
+         recovered[n] = enabled[test_l_offset(starts[2] + (unsigned)(n / 256u)) + n % 256u];
+      assert(!memcmp(recovered, program, sizeof(recovered)) &&
+             recovered[sizeof(recovered) - 1u] == '\r');
+      const uint8_t *script = enabled + test_l_offset(starts[1]);
+      assert(!memcmp(script, "| ArcDroid desktop boot file\r", 29u));
+      assert(!memcmp(script + 29u, request, sizeof(request) - 1u));
+      size_t script_length = test_le32(root + 31u + 18u);
+      assert(script_length > 29u + sizeof(request) - 1u);
+      assert(!memcmp(script + 29u + sizeof(request) - 1u,
+                     disabled + test_l_offset(1280u) + 29u,
+                     script_length - 29u - (sizeof(request) - 1u)));
+      const char *first_boot = strstr((const char *)script, "%Filer_Boot");
+      assert(first_boot && (const uint8_t *)first_boot >= script + 29u + sizeof(request) - 1u);
+   }
+   ArcLaunchDiscovery maximum = {0};
+   maximum.candidate_count = ARC_LAUNCH_MAX_CANDIDATES;
+   maximum.application_count = 1u;
+   for (unsigned i = 0u; i < maximum.candidate_count; ++i)
+   {
+      char name[11];
+      assert(snprintf(name, sizeof(name), "!Boot%05u", i) == 10);
+      maximum.candidates[i].name = test_guest_name(name, 10u);
+      maximum.candidates[i].launchable = true;
+      maximum.candidates[i].has_boot = i + 1u != maximum.candidate_count;
+      maximum.candidates[i].state = i + 1u == maximum.candidate_count ?
+         ARC_LAUNCH_CANDIDATE_APPLICATION : ARC_LAUNCH_CANDIDATE_NOT_APPLICATION;
+   }
+   char error[128];
+   assert(arc_launch_disc_build_ramdisc(&maximum, maximum.candidate_count - 1u,
+                                       true, enabled, error, sizeof(error)));
+   free(enabled); free(disabled); free(legacy);
+   puts("launch-ramdisc-unit: passed");
+}
+
 int main(int argc, char **argv)
 {
-   assert(argc == 2 || (argc == 3 && !strcmp(argv[2], "--short-tail")));
+   assert(argc == 2 || (argc == 3 && (!strcmp(argv[2], "--short-tail") ||
+                                          !strcmp(argv[2], "--launch-ramdisc"))));
    if (argc == 3)
-   { test_short_free_map(argv[1]); puts("short-tail-unit: passed"); return 0; }
+   {
+      if (!strcmp(argv[2], "--launch-ramdisc")) test_launch_ramdisc();
+      else { test_short_free_map(argv[1]); puts("short-tail-unit: passed"); }
+      return 0;
+   }
    test_hashes();
    test_cmos_unplug_policy();
    test_fresh_cmos_default();
