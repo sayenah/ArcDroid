@@ -163,6 +163,7 @@ static bool environment(unsigned command, void *data)
          const struct retro_core_option_v2_definition *install_saves = NULL;
          const struct retro_core_option_v2_definition *short_tail = NULL;
          const struct retro_core_option_v2_definition *ramdisc = NULL;
+         const struct retro_core_option_v2_definition *jfd_omitted = NULL;
          assert(phase == PHASE_ENV && options->categories &&
                 !strcmp(options->categories[0].key, "pad_mapping"));
          while (options->definitions[count].key)
@@ -182,9 +183,20 @@ static bool environment(unsigned command, void *data)
                assert(!ramdisc);
                ramdisc = &options->definitions[count];
             }
+            if (!strcmp(options->definitions[count].key, "arcdroid_jfd_omitted"))
+            {
+               assert(!jfd_omitted);
+               jfd_omitted = &options->definitions[count];
+            }
             ++count;
          }
-         assert(count == 39u && install_saves && !install_saves->category_key);
+         assert(count == 40u && install_saves && !install_saves->category_key);
+         assert(jfd_omitted && !jfd_omitted->category_key &&
+                jfd_omitted->default_value &&
+                !strcmp(jfd_omitted->default_value, "file-data") &&
+                !strcmp(jfd_omitted->values[0].value, "file-data") &&
+                !strcmp(jfd_omitted->values[1].value, "strict") &&
+                !jfd_omitted->values[2].value);
          assert(ramdisc && !ramdisc->category_key &&
                 !strcmp(ramdisc->default_value, "Auto") &&
                 !strcmp(ramdisc->values[0].value, "Auto") &&
@@ -252,6 +264,7 @@ static bool environment(unsigned command, void *data)
          else if (!strcmp(variable->key, "arcdroid_pointer_deadzone")) variable->value = "15";
          else if (!strcmp(variable->key, "arcdroid_disk_writes")) variable->value = "shadow";
          else if (!strcmp(variable->key, "arcdroid_short_tail")) variable->value = "missing";
+         else if (!strcmp(variable->key, "arcdroid_jfd_omitted")) variable->value = "file-data";
          else if (!strcmp(variable->key, "arcdroid_install_saves")) variable->value = "persistent";
          else if (!strcmp(variable->key, "arcdroid_launch")) variable->value = "auto";
          else if (!strcmp(variable->key, "arcdroid_launch_chooser")) variable->value = "remember";

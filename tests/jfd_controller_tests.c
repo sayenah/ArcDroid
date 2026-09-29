@@ -25,7 +25,7 @@ int romset = ROM_RISCOS_311;
 int ins;
 static unsigned irq_assertions;
 static unsigned drq_assertions;
-static uint8_t transfer[2048];
+static uint8_t transfer[4096];
 static size_t transfer_count;
 static size_t newio_transfer_limit;
 static bool newio_service_dma;
@@ -99,9 +99,11 @@ static void make_jfd_writable(ArcJfdImage *image)
    image->overlay->commit = test_jfd_commit;
 }
 static uint8_t finish_command(uint8_t command, unsigned limit_us);
+static void controller_reset(const ArcJfdImage *image);
 static void newio_wait_irq(unsigned limit_us);
 static void newio_result(uint8_t result[7]);
 static void assert_newio_refusal_quiet(void);
+static uint16_t address_crc(const uint8_t address[4]);
 
 void rpclog(const char *format, ...) { (void)format; }
 void error(const char *format, ...) { (void)format; abort(); }
@@ -254,6 +256,100 @@ static ArcJfdImage load_identification_image(const char *root,
    arc_jfd_prepare_identification(&image, true);
    assert(!strcmp(image.identification_reason, "presented"));
    return image;
+}
+
+static ArcJfdImage load_file_data_image(const char *root,const char *name)
+{
+   char path[4096],error[256];
+   int n=snprintf(path,sizeof(path),"%s/jfd-file-data/%s",root,name);
+   assert(n>0 && (size_t)n<sizeof(path));
+   size_t size; uint8_t *bytes=read_all(path,&size);
+   ArcJfdImage image;
+   assert(arc_jfd_parse_owned(bytes,size,&image,error,sizeof(error)));
+   arc_jfd_file_data_prepare(&image,true,false,"wp-flag");
+   assert(!strcmp(image.file_data.reason,"presented"));
+   return image;
+}
+
+static void test_file_data_wd(const char *root)
+{
+   ArcJfdImage image=load_file_data_image(root,"d-terminal.jfd");
+   controller_reset(&image);
+   wd1770_writelatch_a(0x8eu); /* cylinder 0, side 1 */
+   uint16_t seen=0u;
+   unsigned first_id=UINT32_MAX;
+   for (unsigned i=0u;i<6u;++i)
+   {
+      assert(finish_command(0xc0u,1100000u)==0x80u && transfer_count==6u);
+      assert(transfer[2]<5u && transfer[3]==3u);
+      uint16_t crc=address_crc(transfer);
+      assert(transfer[4]==(uint8_t)(crc>>8u) && transfer[5]==(uint8_t)crc);
+      if (i==0u) first_id=transfer[2];
+      if (i==5u) assert(transfer[2]==first_id);
+      else { assert(!(seen&(1u<<transfer[2]))); seen|=(uint16_t)(1u<<transfer[2]); }
+   }
+   assert(seen==0x1fu);
+   wd1770_writelatch_b(0x02u); /* Wrong density cannot see a planned DD ID. */
+   assert(finish_command(0xc0u,1100000u)==0x10u && !transfer_count);
+   wd1770_writelatch_b(0x00u);
+   wd1770_write(0x08u,1u);
+   assert(finish_command(0x80u,1100000u)==0x80u && transfer_count==1024u);
+   for (unsigned i=0u;i<1024u;++i) assert(transfer[i]==0u);
+   wd1770_write(0x08u,0u);
+   assert(finish_command(0x80u,1100000u)==0x80u && transfer_count==1024u);
+   wd1770_write(0x08u,1u);
+   assert(finish_command(0xa0u,1100000u)==0x40u);
+   disc_close(0); arc_jfd_free(&image);
+
+   image=load_file_data_image(root,"d-slack.jfd");
+   controller_reset(&image);
+   wd1770_writelatch_a(0x8eu);
+   wd1770_write(0x08u,0u);
+   assert(finish_command(0x80u,1100000u)==0x80u && transfer_count==1024u);
+   wd1770_write(0x08u,1u);
+   assert(finish_command(0x80u,1100000u)==0x80u && transfer_count==1024u);
+   for (unsigned i=0u;i<1024u;++i) assert(transfer[i]==0u);
+   wd1770_write(0x08u,3u);
+   disc_close(0);
+   controller_reset(&image);
+   wd1770_writelatch_a(0x8eu);
+   wd1770_write(0x08u,3u);
+   fdc_funcs_t observed;
+   observe_indexes(&observed);
+   uint64_t before=tsc;
+   assert(finish_command(0x80u,1100000u)==0x10u && transfer_count==0u);
+   unsigned pulses=observed_index_pulses;
+   uint64_t duration=tsc-before;
+   fdc_funcs=original_controller_funcs;
+   disc_close(0); arc_jfd_free(&image);
+
+   image=load_file_data_image(root,"d-slack.jfd");
+   arc_jfd_file_data_prepare(&image,true,true,"wp-flag");
+   controller_reset(&image);
+   wd1770_writelatch_a(0x8eu);
+   observe_indexes(&observed);
+   wd1770_write(0x08u,3u);
+   before=tsc;
+   assert(finish_command(0x80u,1100000u)==0x10u && !transfer_count);
+   assert(observed_index_pulses==pulses && tsc-before==duration);
+   fdc_funcs=original_controller_funcs;
+   disc_close(0); arc_jfd_free(&image);
+
+   for (unsigned kind=0u;kind<2u;++kind)
+   {
+      image=load_file_data_image(root,kind?"d-captured-missing-data.jfd":
+                                          "d-captured-data-crc.jfd");
+      for (unsigned strict=0u;strict<2u;++strict)
+      {
+         arc_jfd_file_data_prepare(&image,true,strict!=0u,"wp-flag");
+         controller_reset(&image);
+         wd1770_write(0x08u,4u);
+         assert(finish_command(0x80u,1100000u)==(kind?0x10u:0x08u) &&
+                transfer_count==(kind?0u:1024u));
+         disc_close(0);
+      }
+      arc_jfd_free(&image);
+   }
 }
 
 static void make_jfd_creation_writable(ArcJfdImage *image)
@@ -1166,6 +1262,98 @@ static void newio_creation_command(uint8_t command, uint8_t selected_side,
    c82c711_fdc_write(5u, command, NULL);
    for (unsigned i = 0u; i < sizeof(params); ++i)
       c82c711_fdc_write(5u, params[i], NULL);
+}
+
+static void test_file_data_newio(const char *root)
+{
+   ArcJfdImage image=load_file_data_image(root,"e-terminal.jfd");
+   newio_reset(&image,false);
+   uint8_t result[7];
+   newio_service_dma=true; newio_dma_write=false;
+   newio_transfer_limit=1024u;
+   uint16_t seen=0u;
+   unsigned first_id=UINT32_MAX;
+   for (unsigned i=0u;i<6u;++i)
+   {
+      newio_start_id(1u); newio_wait_irq(500000u); newio_result(result);
+      assert(!(result[0]&0xc0u) && result[5]<5u && result[6]==3u);
+      if (i==0u) first_id=result[5];
+      if (i==5u) assert(result[5]==first_id);
+      else { assert(!(seen&(1u<<result[5]))); seen|=(uint16_t)(1u<<result[5]); }
+   }
+   assert(seen==0x1fu);
+   c82c711_fdc_write(7u,0u,NULL); /* Quad/HD rate must not find DD IDs. */
+   newio_start_id(1u); newio_wait_irq(500000u); newio_result(result);
+   assert((result[0]&0x40u) && result[1]==5u);
+   c82c711_fdc_write(7u,1u,NULL);
+   transfer_count=0u;
+   newio_creation_command(0x06u,1u,0u,1u,2u,3u);
+   newio_wait_irq(500000u); newio_result(result);
+   assert(!(result[0]&0xc0u) && transfer_count==1024u);
+   for (unsigned i=0u;i<1024u;++i) assert(transfer[i]==0u);
+   transfer_count=0u;
+   newio_creation_command(0x06u,1u,0u,1u,0u,3u);
+   newio_wait_irq(500000u); newio_result(result);
+   assert(!(result[0]&0xc0u) && transfer_count==1024u);
+   c82c711_fdc_shutdown(); disc_close(0); arc_jfd_free(&image);
+
+   image=load_file_data_image(root,"e-mixed.jfd");
+   newio_reset(&image,false);
+   memset(transfer,0xa5,sizeof(transfer));
+   transfer_count=0u; newio_transfer_limit=0u;
+   const uint8_t params[8]={4u,0u,1u,1u,3u,3u,0x1bu,0xffu};
+   c82c711_fdc_write(2u,0x0cu,NULL);
+   c82c711_fdc_write(2u,0x1cu,NULL);
+   c82c711_fdc_write(5u,0x06u,NULL);
+   for (unsigned i=0u;i<8u;++i) c82c711_fdc_write(5u,params[i],NULL);
+   newio_wait_irq(1100000u); newio_result(result);
+   assert((result[0]&0x40u) && result[1]==5u && transfer_count==2048u);
+   for (unsigned i=1024u;i<2048u;++i) assert(transfer[i]==0u);
+   assert(transfer[2048u]==0xa5u);
+   c82c711_fdc_shutdown(); disc_close(0); arc_jfd_free(&image);
+
+   unsigned baseline_pulses=0u;
+   uint64_t baseline_duration=0u;
+   for (unsigned strict=0u;strict<2u;++strict)
+   {
+      image=load_file_data_image(root,"d-slack.jfd");
+      arc_jfd_file_data_prepare(&image,true,strict!=0u,"wp-flag");
+      newio_reset(&image,false);
+      newio_service_dma=true; newio_dma_write=false;
+      newio_transfer_limit=0u; transfer_count=0u;
+      fdc_funcs_t observed;
+      observe_indexes(&observed);
+      uint64_t before=tsc;
+      newio_creation_command(0x06u,1u,0u,1u,3u,3u);
+      newio_wait_irq(500000u); newio_result(result);
+      assert((result[0]&0x40u) && result[1]==5u && !transfer_count);
+      if (!strict)
+      { baseline_pulses=observed_index_pulses; baseline_duration=tsc-before; }
+      else
+         assert(observed_index_pulses==baseline_pulses &&
+                tsc-before==baseline_duration);
+      fdc_funcs=original_controller_funcs;
+      c82c711_fdc_shutdown(); disc_close(0); arc_jfd_free(&image);
+   }
+   for (unsigned kind=0u;kind<2u;++kind)
+   {
+      image=load_file_data_image(root,kind?"d-captured-missing-data.jfd":
+                                          "d-captured-data-crc.jfd");
+      for (unsigned strict=0u;strict<2u;++strict)
+      {
+         arc_jfd_file_data_prepare(&image,true,strict!=0u,"wp-flag");
+         newio_reset(&image,false);
+         newio_service_dma=true; newio_dma_write=false;
+         newio_transfer_limit=0u; transfer_count=0u;
+         newio_start_read(0u,4u,3u);
+         newio_wait_irq(500000u); newio_result(result);
+         assert((result[0]&0x40u) &&
+                result[1]==(kind?5u:0x20u) &&
+                transfer_count==(kind?0u:1024u));
+         c82c711_fdc_shutdown(); disc_close(0);
+      }
+      arc_jfd_free(&image);
+   }
 }
 
 static void test_quarantine_newio(const char *root)
@@ -2967,6 +3155,8 @@ int main(int argc, char **argv)
    { test_short_raw_wd(); puts("short-raw-wd: passed"); return 0; }
    if (argc == 3 && !strcmp(argv[2], "--short-raw-newio"))
    { test_short_raw_newio(); puts("short-raw-newio: passed"); return 0; }
+   if (argc == 3 && !strcmp(argv[2], "--file-data-newio"))
+   { test_file_data_newio(argv[1]); puts("file-data-newio: passed"); return 0; }
    if (argc == 3)
    {
       run_wd1770 = !strcmp(argv[2], "--wd1770");
@@ -2984,6 +3174,7 @@ int main(int argc, char **argv)
    }
    if (run_wd1770)
    {
+      test_file_data_wd(argv[1]);
       test_family(argv[1]);
       test_wd_identification(argv[1]);
       test_wd_identification_probe(argv[1]);

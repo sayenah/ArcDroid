@@ -218,7 +218,10 @@ bool arc_jfd_effective_sector(const ArcJfdImage *image, unsigned track_side,
    bool creatable = overlay && track_side < ARC_JFD_PDD5_TRACKS &&
       id < ARC_JFD_PDD5_IDS &&
       (overlay->creation_mask[track_side] & (1u << id));
-   if (id >= ARC_JFD_MAX_STANDARD_IDS || (!presented && !creatable))
+   bool file_data = track_side < ARC_JFD_PDD5_TRACKS &&
+      id < ARC_JFD_PDD5_IDS &&
+      (image->file_data.mask[track_side] & (1u << id));
+   if (id >= ARC_JFD_MAX_STANDARD_IDS || (!presented && !creatable && !file_data))
       return false;
    const uint8_t *data = creatable && overlay->visible ?
       overlay->created[track_side][id] : NULL;
@@ -226,10 +229,13 @@ bool arc_jfd_effective_sector(const ArcJfdImage *image, unsigned track_side,
        (overlay->allocation_mask[track_side] & (1u << id)) &&
        !(overlay->probe_mask[track_side] & (1u << id)))
       data = formatted_blank;
-   if (!data && !presented && !(prospective && creatable && overlay->writable))
+   if (!data && file_data) data = formatted_blank;
+   if (!data && !presented && !file_data &&
+       !(prospective && creatable && overlay->writable))
       return false;
    view->sector.time_us = presented ? image->identification_time[id] :
-      overlay->creation_time[track_side][id];
+      creatable ? overlay->creation_time[track_side][id] :
+      image->file_data.time[track_side][id];
    view->sector.data_offset = UINT32_MAX;
    view->sector.size = 1024u;
    view->sector.id = (uint8_t)id;

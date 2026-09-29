@@ -3373,6 +3373,491 @@ def build_pdd5_jfd(payload: bytes, tracks: dict[int, list[int]],
     return image
 
 
+def build_file_data_fixtures(output: Path) -> None:
+    """Invented FileCore images for the captured-only R1' proof."""
+    output.mkdir(parents=True, exist_ok=True)
+    full = list(range(5))
+    d = build_d_discovery([], b"Invented")
+    root = _new_directory()
+    _new_entry(root, 0, b"Payload", 1100, (5120 + 256) // 256)
+    _finish_new_directory(root, 1, 0)
+    d[1024:3072] = root
+    _store_u24(d, 0, 40)
+    _store_u24(d, 256, 3160)
+    d[510] = 3
+    d[255] = _old_map_checksum(d[:255])
+    d[511] = _old_map_checksum(d[256:511])
+    tracks = {0: full, 1: [0, 2, 3, 4]}
+    def protected(payload: bytes, captured: dict[int, list[int]]) -> bytes:
+        jfd = build_pdd5_jfd(payload, captured)
+        struct.pack_into("<I", jfd, 304, 1)  # Header's write-protect flag.
+        return bytes(jfd)
+
+    terminal_jfd = protected(bytes(d), tracks)
+    (output / "d-terminal.jfd").write_bytes(terminal_jfd)
+    recovery = bytearray(d)
+    recovery_root = bytearray(recovery[1024:3072])
+    _new_entry(recovery_root, 1, b"!Demo", 2048, 8192 // 256, True)
+    _new_entry(recovery_root, 2, b"!Boot", 1, 3072 // 256)
+    _finish_new_directory(recovery_root, 3, 0)
+    recovery[1024:3072] = recovery_root
+    recovery_child = _new_directory(b"!Demo")
+    _new_entry(recovery_child, 0, b"!Run", 1, 4096 // 256)
+    _finish_new_directory(recovery_child, 1, 2 << 8)
+    recovery[8192:10240] = recovery_child
+    recovery[4096] = 13
+    recovery[3072] = 13
+    recovery[509] = 3
+    recovery[511] = _old_map_checksum(recovery[256:511])
+    (output / "d-recovery.jfd").write_bytes(protected(
+        bytes(recovery), tracks))
+    (output / "other-format.jfd").write_bytes(protected(
+        bytes(819200), tracks))
+    writable_terminal = bytearray(terminal_jfd)
+    struct.pack_into("<I", writable_terminal, 304, 2)
+    (output / "d-terminal-rw.jfd").write_bytes(writable_terminal)
+    wp_rw = bytearray(writable_terminal)
+    struct.pack_into("<I", wp_rw, 304, 3)
+    (output / "d-terminal-wp-rw.jfd").write_bytes(wp_rw)
+    layout_unsupported = build_pdd5_jfd(bytes(d), tracks, track_count=159)
+    struct.pack_into("<I", layout_unsupported, 304, 2)
+    (output / "d-layout-unsupported-rw.jfd").write_bytes(layout_unsupported)
+    (output / "mixed.m3u").write_text("d-terminal.jfd\nd-terminal-rw.jfd\n")
+    crc_sector = bytearray(terminal_jfd)
+    crc_at = pdd5_descriptor_offset(crc_sector, 0, 4)
+    crc_header = struct.unpack_from("<I", crc_sector, crc_at)[0]
+    struct.pack_into("<I", crc_sector, crc_at, crc_header | (2 << 4))
+    (output / "d-captured-data-crc.jfd").write_bytes(crc_sector)
+    missing_sector = bytearray(terminal_jfd)
+    struct.pack_into("<I", missing_sector,
+                     pdd5_descriptor_offset(missing_sector, 0, 4) + 4,
+                     0xffffffff)
+    (output / "d-captured-missing-data.jfd").write_bytes(missing_sector)
+    terminal_166 = build_pdd5_jfd(bytes(d), tracks, track_count=166)
+    struct.pack_into("<I", terminal_166, 304, 1)
+    (output / "d-terminal-166.jfd").write_bytes(terminal_166)
+    (output / "d-terminal-gzip.jfd").write_bytes(gzip.compress(terminal_jfd, mtime=0))
+    with zipfile.ZipFile(output / "d-terminal.zip", "w") as archive:
+        archive.writestr("Invented.jfd", terminal_jfd,
+                         compress_type=zipfile.ZIP_STORED)
+    (output / "d-slack.jfd").write_bytes(protected(
+        bytes(d), {0: full, 1: [0, 2, 4]}))
+    bad_root = bytearray(d)
+    bad_root[1024 + 2047] ^= 1
+    (output / "d-root-invalid.jfd").write_bytes(protected(bytes(bad_root), tracks))
+    bad_sequence = bytearray(d)
+    sequence_root = bytearray(bad_sequence[1024:3072])
+    sequence_root[2042] ^= 1
+    _finish_new_directory(sequence_root, 1, 0)
+    bad_sequence[1024:3072] = sequence_root
+    (output / "d-sequence-invalid.jfd").write_bytes(protected(
+        bytes(bad_sequence), tracks))
+    bad_marker = bytearray(d)
+    marker_root = bytearray(bad_marker[1024:3072])
+    marker_root[1:5] = b"Bork"
+    marker_root[2043:2047] = b"Bork"
+    _finish_new_directory(marker_root, 1, 0)
+    bad_marker[1024:3072] = marker_root
+    (output / "d-marker-invalid.jfd").write_bytes(protected(
+        bytes(bad_marker), tracks))
+    nick = bytearray(d)
+    nick_root = _new_directory(signature=b"Nick")
+    _new_entry(nick_root, 0, b"Payload", 1100, (5120 + 256) // 256)
+    _finish_new_directory(nick_root, 1, 0)
+    nick[1024:3072] = nick_root
+    (output / "d-nick-valid.jfd").write_bytes(protected(bytes(nick), tracks))
+    nick_root[1:5] = b"Nock"
+    nick_root[2043:2047] = b"Nock"
+    _finish_new_directory(nick_root, 1, 0)
+    nick[1024:3072] = nick_root
+    (output / "d-nick-invalid.jfd").write_bytes(protected(bytes(nick), tracks))
+    bad_map = bytearray(d)
+    bad_map[255] ^= 1
+    (output / "d-map-first-check.jfd").write_bytes(protected(bytes(bad_map), tracks))
+    (output / "d-no-valid-map.jfd").write_bytes(protected(bytes(bad_map), tracks))
+    bad_map_second = bytearray(d)
+    bad_map_second[511] ^= 1
+    (output / "d-map-second-check.jfd").write_bytes(protected(
+        bytes(bad_map_second), tracks))
+    zero = bytearray(d)
+    _new_entry(root, 0, b"Payload", 0, (5120 + 256) // 256)
+    _finish_new_directory(root, 1, 0)
+    zero[1024:3072] = root
+    (output / "d-zero-length.jfd").write_bytes(protected(bytes(zero), tracks))
+    two_zero = bytearray(zero)
+    _new_entry(root, 1, b"Empty", 0, (5120 + 256) // 256)
+    _finish_new_directory(root, 2, 0)
+    two_zero[1024:3072] = root
+    (output / "d-two-empty.jfd").write_bytes(protected(bytes(two_zero), tracks))
+    boundary = bytearray(d)
+    root = _new_directory()
+    _new_entry(root, 0, b"Payload", 1024, 5120 // 256)
+    _finish_new_directory(root, 1, 0)
+    boundary[1024:3072] = root
+    (output / "d-boundary.jfd").write_bytes(protected(bytes(boundary), tracks))
+    tiny = bytearray(d)
+    root = _new_directory()
+    _new_entry(root, 0, b"Payload", 1, 3072 // 256)
+    _finish_new_directory(root, 1, 0)
+    tiny[1024:3072] = root
+    (output / "d-one-byte.jfd").write_bytes(protected(
+        bytes(tiny), {0: [0, 1, 2, 4]}))
+    invalid = bytearray(d)
+    root = _new_directory()
+    _new_entry(root, 0, b"Payload", 1, ADF_SIZE // 256)
+    _finish_new_directory(root, 1, 0)
+    invalid[1024:3072] = root
+    (output / "d-invalid-object.jfd").write_bytes(protected(bytes(invalid), tracks))
+    outside_declared = bytearray(d)
+    _store_u24(outside_declared, 252, 100)
+    _store_u24(outside_declared, 256, 60)
+    outside_root = _new_directory()
+    _new_entry(outside_root, 0, b"Payload", 1, 101)
+    _finish_new_directory(outside_root, 1, 0)
+    outside_declared[1024:3072] = outside_root
+    outside_declared[255] = _old_map_checksum(outside_declared[:255])
+    outside_declared[511] = _old_map_checksum(outside_declared[256:511])
+    (output / "d-outside-declared.jfd").write_bytes(protected(
+        bytes(outside_declared), tracks))
+    free_overlap = bytearray(d)
+    _store_u24(free_overlap, 0, 21)
+    _store_u24(free_overlap, 3, 40)
+    _store_u24(free_overlap, 256, 1)
+    _store_u24(free_overlap, 259, 3160)
+    free_overlap[510] = 6
+    free_overlap[255] = _old_map_checksum(free_overlap[:255])
+    free_overlap[511] = _old_map_checksum(free_overlap[256:511])
+    (output / "d-free-overlap.jfd").write_bytes(protected(
+        bytes(free_overlap), tracks))
+    cycle = bytearray(d)
+    root = _new_directory()
+    _new_entry(root, 0, b"Again", 2048, 4, True)
+    _finish_new_directory(root, 1, 0)
+    cycle[1024:3072] = root
+    (output / "d-cycle.jfd").write_bytes(protected(bytes(cycle), tracks))
+    for name, second_address in (("alias", (5120 + 256) // 256),
+                                 ("overlap", (5120 + 512) // 256)):
+        duplicate = bytearray(d)
+        root = _new_directory()
+        _new_entry(root, 0, b"First", 512, (5120 + 256) // 256)
+        _new_entry(root, 1, b"Second", 512, second_address)
+        _finish_new_directory(root, 2, 0)
+        duplicate[1024:3072] = root
+        (output / f"d-{name}.jfd").write_bytes(protected(
+            bytes(duplicate), tracks))
+    child = bytearray(d)
+    root = _new_directory()
+    _new_entry(root, 0, b"Child", 2048, 5120 // 256, True)
+    _finish_new_directory(root, 1, 0)
+    child[1024:3072] = root
+    (output / "d-child-incomplete.jfd").write_bytes(protected(bytes(child), tracks))
+    bad_child = bytearray(child)
+    live_child = _new_directory(b"Child")
+    _new_entry(live_child, 0, b"Descendant", 1, 8192 // 256)
+    _finish_new_directory(live_child, 1, 4)
+    live_child[2047] ^= 1
+    bad_child[5120:7168] = live_child
+    (output / "d-child-bad-check.jfd").write_bytes(protected(
+        bytes(bad_child), {0: full, 1: [0, 1, 2, 3, 4], 2: [0, 1, 2, 3, 4]}))
+    (output / "d-child-bad-check-omitted.jfd").write_bytes(protected(
+        bytes(bad_child), {0: full, 1: [0, 2, 3, 4], 2: [0, 1, 2, 3, 4]}))
+    small = bytearray(d)
+    _store_u24(small, 252, 100)
+    _store_u24(small, 256, 60)
+    small[255] = _old_map_checksum(small[:255])
+    small[511] = _old_map_checksum(small[256:511])
+    (output / "d-small-declaration.jfd").write_bytes(protected(bytes(small), tracks))
+    large = bytearray(d)
+    _store_u24(large, 252, 3300)
+    _store_u24(large, 256, 3260)
+    large[255] = _old_map_checksum(large[:255])
+    large[511] = _old_map_checksum(large[256:511])
+    (output / "d-clamped-declaration.jfd").write_bytes(protected(bytes(large), tracks))
+    (output / "d-irregular.jfd").write_bytes(protected(
+        bytes(d), {0: full, 1: [0, 2, 3, 4, 5]}))
+    for depth in (16, 17):
+        chain = bytearray(d)
+        _store_u24(chain, 0, 200)
+        _store_u24(chain, 256, 3000)
+        chain[255] = _old_map_checksum(chain[:255])
+        chain[511] = _old_map_checksum(chain[256:511])
+        for level in range(depth):
+            directory = _new_directory()
+            next_byte = 1024 + (level + 1) * 2048
+            if level + 1 < depth:
+                _new_entry(directory, 0, b"Child", 2048,
+                           next_byte // 256, True)
+            else:
+                _new_entry(directory, 0, b"Payload", 1,
+                           next_byte // 256)
+            _finish_new_directory(directory, 1, 0)
+            at = 1024 + level * 2048
+            chain[at:at + 2048] = directory
+        final_sector = next_byte // 1024
+        captured = {side: full.copy() for side in range(final_sector // 5 + 1)}
+        captured[final_sector // 5].remove(final_sector % 5)
+        (output / f"d-depth-{depth}.jfd").write_bytes(protected(
+            bytes(chain), captured))
+    e = build_e_discovery([(b"Folder", True)], b"Invented")
+    child = bytearray(e[4096:6144])
+    _new_entry(child, 0, b"!Run", 1300, 4 << 8)
+    _finish_new_directory(child, 1, 2 << 8)
+    e[4096:6144] = child
+    root = bytearray(e[2048:4096])
+    _finish_new_directory(root, 1, 2 << 8)
+    e[2048:4096] = root
+    e[1024:2048] = e[:1024]
+    tracks = {0: full, 1: [0, 1, 3, 4]}
+    (output / "e-terminal.jfd").write_bytes(protected(bytes(e), tracks))
+    (output / "e-mixed.jfd").write_bytes(protected(
+        bytes(e), {0: full, 1: [0, 1, 4]}))
+    fragmented = build_e_discovery([(b"Folder", True)], b"Invented",
+                                   fragmented=0)
+    child = bytearray(fragmented[4096:6144])
+    _finish_new_directory(child, 1, 2 << 8)
+    fragmented[4096:6144] = child
+    root = bytearray(fragmented[2048:4096])
+    _finish_new_directory(root, 1, 2 << 8)
+    fragmented[2048:4096] = root
+    fragmented[1024:2048] = fragmented[:1024]
+    (output / "e-fragmented.jfd").write_bytes(protected(
+        bytes(fragmented), {0: full, 1: [0, 1, 3, 4], 2: [1, 2, 3, 4]}))
+    shared = bytearray(e)
+    child = bytearray(shared[4096:6144])
+    _new_entry(child, 0, b"!Run", 1, (4 << 8) | 2)
+    _finish_new_directory(child, 1, 2 << 8)
+    shared[4096:6144] = child
+    (output / "e-shared.jfd").write_bytes(protected(bytes(shared), tracks))
+    system_shared = bytearray(e)
+    block = bytearray(system_shared[:1024])
+    for bit in range(8, 23):
+        block[bit // 8] &= ~(1 << (bit & 7))
+    for bit in range(512, 6912):
+        block[bit // 8] &= ~(1 << (bit & 7))
+    _set_bits(block, 512, 15, 2); _set_bits(block, 559, 1, 1)
+    _set_bits(block, 560, 15, 3); _set_bits(block, 575, 1, 1)
+    _set_bits(block, 576, 15, 4); _set_bits(block, 591, 1, 1)
+    _set_bits(block, 8, 15, 592 - 8)
+    _set_bits(block, 6911, 1, 1)
+    block[0] = _zone_check(block)
+    system_shared[:1024] = block
+    system_shared[1024:2048] = block
+    child = _new_directory(b"Folder")
+    _new_entry(child, 0, b"!Run", 1, (2 << 8) | 5)
+    _finish_new_directory(child, 1, 2 << 8)
+    system_shared[6144:8192] = child
+    (output / "e-system-shared.jfd").write_bytes(protected(
+        bytes(system_shared), {0: [0, 1, 2, 3], 1: [1, 2]}))
+    conflict = bytearray(e)
+    # A structurally valid second map copy with a different root identity.
+    backup = bytearray(conflict[1024:2048])
+    backup[4 + 12] ^= 1
+    backup[0] = _zone_check(backup)
+    conflict[1024:2048] = backup
+    (output / "e-conflict.jfd").write_bytes(protected(bytes(conflict), tracks))
+    object_conflict = bytearray(e)
+    backup = bytearray(object_conflict[1024:2048])
+    for bit in range(560, 575):
+        backup[bit // 8] &= ~(1 << (bit & 7))
+    _set_bits(backup, 560, 15, 5)
+    # Keep both copies structurally valid and both walks successful. The
+    # second copy resolves the same live file ID one fragment later.
+    for bit in range(8, 23):
+        backup[bit // 8] &= ~(1 << (bit & 7))
+    _set_bits(backup, 8, 15, 592 - 8)
+    _set_bits(backup, 576, 15, 4)
+    _set_bits(backup, 591, 1, 1)
+    backup[0] = _zone_check(backup)
+    object_conflict[1024:2048] = backup
+    (output / "e-object-conflict.jfd").write_bytes(protected(
+        bytes(object_conflict), tracks))
+    invalid_backup = bytearray(e)
+    invalid_backup[1024] ^= 1
+    (output / "e-one-copy.jfd").write_bytes(protected(
+        bytes(invalid_backup), tracks))
+    (output / "e-zone-check-backup.jfd").write_bytes(protected(
+        bytes(invalid_backup), tracks))
+    backup_only = bytearray(e)
+    backup_only[0] ^= 1
+    (output / "e-backup-only.jfd").write_bytes(protected(
+        bytes(backup_only), tracks))
+    (output / "e-zone-check-primary.jfd").write_bytes(protected(
+        bytes(backup_only), tracks))
+    # QA remediation: two map copies can resolve the same object step starts
+    # with different physical lengths. The complete ordered extents disagree.
+    def extent_map(first_bits: int, gap_bits: int, last_bits: int) -> bytearray:
+        block = bytearray(1024)
+        rec = memoryview(block)[4:64]
+        rec[:6] = bytes((10, 5, 2, 2, 13, 7))
+        rec[9] = 1
+        rec[10:12] = (1312).to_bytes(2, "little")
+        rec[12:16] = (0x203).to_bytes(4, "little")
+        rec[16:20] = ADF_SIZE.to_bytes(4, "little")
+        block[3] = 0xff
+        pieces = ((0, 32, 2), (32, 124, 5), (156, first_bits, 3),
+                  (156 + first_bits, gap_bits, 6), (239, last_bits, 3))
+        for relative, width, fragment_id in pieces:
+            start = 512 + relative
+            _set_bits(block, start, 13, fragment_id)
+            _set_bits(block, start + width - 1, 1, 1)
+        free_at = 239 + last_bits
+        _set_bits(block, 512 + free_at, 13, 0)
+        _set_bits(block, 6911, 1, 1)
+        _set_bits(block, 8, 13, 512 + free_at - 8)
+        block[0] = _zone_check(block)
+        return block
+
+    agree = bytearray(ADF_SIZE)
+    map_a = extent_map(46, 37, 19)
+    map_b = extent_map(44, 39, 21)
+    agree[:1024] = map_a
+    agree[1024:2048] = map_b
+    agree_root = _new_directory()
+    _new_entry(agree_root, 0, b"F", 6035, 3 << 8)
+    _finish_new_directory(agree_root, 1, 0x203)
+    agree[2048:4096] = agree_root
+    complete = {side: full.copy() for side in range(160)}
+    complete[5].remove(0)
+    (output / "e-agree-length-conflict.jfd").write_bytes(protected(bytes(agree), complete))
+    agree[1024:2048] = map_a
+    (output / "e-agree-length-control.jfd").write_bytes(protected(bytes(agree), complete))
+
+    # Both copies parse, but one cannot walk the child directory. Exercise
+    # each copy as the primary to cover both failure orders.
+    bad_walk = bytearray(e)
+    bad_block = bytearray(bad_walk[1024:2048])
+    for bit in range(544, 559):
+        bad_block[bit // 8] &= ~(1 << (bit & 7))
+    _set_bits(bad_block, 544, 15, 6)
+    bad_block[0] = _zone_check(bad_block)
+    bad_walk[1024:2048] = bad_block
+    (output / "e-second-walk-fails.jfd").write_bytes(protected(bytes(bad_walk), tracks))
+    bad_walk[:1024], bad_walk[1024:2048] = bad_walk[1024:2048], bad_walk[:1024]
+    (output / "e-first-walk-fails.jfd").write_bytes(protected(bytes(bad_walk), tracks))
+
+    # An ordinary 190-file E disc, each file 4 KiB, exercises bounded
+    # resolution work near the physical capacity of an 800 KiB disc.
+    many = bytearray(ADF_SIZE)
+    rec = memoryview(many)[4:64]
+    rec[:6] = bytes((10, 5, 2, 2, 15, 7))
+    rec[9] = 1
+    rec[10:12] = (0x520).to_bytes(2, "little")
+    rec[12:16] = (0x203).to_bytes(4, "little")
+    rec[16:20] = ADF_SIZE.to_bytes(4, "little")
+    many[3] = 0xff
+    bit = 512
+    def many_frag(fragment_id: int, width: int) -> int:
+        nonlocal bit
+        _set_bits(many, bit, 15, fragment_id)
+        _set_bits(many, bit + width - 1, 1, 1)
+        physical = (bit - 512) * 128
+        bit += width
+        return physical
+    many_frag(2, 32)
+    dirs = [many_frag(3 + k, 16) for k in range(3)]
+    files = [many_frag(6 + k, 32) for k in range(190)]
+    _set_bits(many, bit, 15, 0)
+    _set_bits(many, 6911, 1, 1)
+    _set_bits(many, 8, 15, bit - 8)
+    many_root = _new_directory()
+    for k, physical in enumerate(dirs):
+        _new_entry(many_root, k, f"Dir{k}".encode(), 2048, (3 + k) << 8, True)
+        sub = _new_directory(f"Dir{k}".encode())
+        indexes = list(range(k * 64, min(190, (k + 1) * 64)))
+        for j, index in enumerate(indexes):
+            _new_entry(sub, j, f"F{index:03d}".encode(), 4096,
+                       (6 + index) << 8)
+        _finish_new_directory(sub, len(indexes), 0x203)
+        many[physical:physical + 2048] = sub
+    _finish_new_directory(many_root, 3, 0x203)
+    many[2048:4096] = many_root
+    many[0] = _zone_check(many[:1024])
+    many[1024:2048] = many[:1024]
+    last_sector = (files[-1] + 4095) // 1024
+    many_tracks = {side: full.copy() for side in range(160)}
+    many_tracks[last_sector // 5].remove(last_sector % 5)
+    (output / "e-many-190.jfd").write_bytes(protected(bytes(many), many_tracks))
+
+    # A dense directory tree makes the object limit reachable even on 800 KiB.
+    def object_limit_fixture(total: int) -> bytes:
+        disc = build_d_discovery([], b"ObjLimit")
+        _store_u24(disc, 0, 3000)
+        _store_u24(disc, 256, 200)
+        disc[510] = 3
+        disc[255] = _old_map_checksum(disc[:255])
+        disc[511] = _old_map_checksum(disc[256:511])
+        remaining = total - 2  # Root and one omitted payload object.
+        next_address = 8192
+        root_dir = _new_directory()
+        _new_entry(root_dir, 0, b"Payload", 1100, (5120 + 256) // 256)
+        root_count = 1
+        while remaining:
+            mid_address = next_address; next_address += 2048; remaining -= 1
+            mid = _new_directory(f"M{root_count:02d}".encode())
+            mid_count = 0
+            while remaining and mid_count < 77:
+                leaf_address = next_address; next_address += 2048; remaining -= 1
+                leaf = _new_directory(f"L{mid_count:02d}".encode())
+                leaf_count = min(77, remaining)
+                remaining -= leaf_count
+                for index in range(leaf_count):
+                    _new_entry(leaf, index, f"Z{index:02d}".encode(), 0, 0)
+                _finish_new_directory(leaf, leaf_count, mid_address // 256)
+                disc[leaf_address:leaf_address + 2048] = leaf
+                _new_entry(mid, mid_count, f"L{mid_count:02d}".encode(),
+                           2048, leaf_address // 256, True)
+                mid_count += 1
+            _finish_new_directory(mid, mid_count, 4)
+            disc[mid_address:mid_address + 2048] = mid
+            _new_entry(root_dir, root_count, f"M{root_count:02d}".encode(),
+                       2048, mid_address // 256, True)
+            root_count += 1
+        _finish_new_directory(root_dir, root_count, 0)
+        disc[1024:3072] = root_dir
+        assert next_address < 3000 * 256
+        return protected(bytes(disc), {1: [0, 2, 3, 4],
+                                       **{side: full.copy() for side in range(160) if side != 1}})
+    for count in (8192, 8193):
+        (output / f"d-objects-{count}.jfd").write_bytes(object_limit_fixture(count))
+
+    # Captured child plus omitted descendant, old-map sector zero claim, and
+    # track-zero file/free omissions are separate proof boundaries.
+    child = bytearray(d)
+    child_root = _new_directory()
+    _new_entry(child_root, 0, b"Child", 2048, 5120 // 256, True)
+    _finish_new_directory(child_root, 1, 0)
+    child[1024:3072] = child_root
+    child_dir = _new_directory(b"Child")
+    _new_entry(child_dir, 0, b"Desc", 1000, 8192 // 256)
+    _finish_new_directory(child_dir, 1, 4)
+    child[5120:7168] = child_dir
+    child_tracks = {side: full.copy() for side in range(160)}
+    child_tracks[1].remove(3)
+    (output / "d-valid-child-desc-omitted.jfd").write_bytes(protected(bytes(child), child_tracks))
+    child[5120 + 2047] ^= 1
+    (output / "d-bad-child-desc-omitted.jfd").write_bytes(protected(bytes(child), child_tracks))
+    in_map = bytearray(d)
+    in_map_root = _new_directory()
+    _new_entry(in_map_root, 0, b"MapTail", 256, 512 // 256)
+    _new_entry(in_map_root, 1, b"Payload", 1100, (5120 + 256) // 256)
+    _finish_new_directory(in_map_root, 2, 0)
+    in_map[1024:3072] = in_map_root
+    (output / "d-object-in-map-sector.jfd").write_bytes(protected(bytes(in_map), tracks))
+    track_zero = bytearray(d)
+    _store_u24(track_zero, 0, 16)
+    _store_u24(track_zero, 256, 3184)
+    track_zero[255] = _old_map_checksum(track_zero[:255])
+    track_zero[511] = _old_map_checksum(track_zero[256:511])
+    track_root = _new_directory()
+    _new_entry(track_root, 0, b"Tiny", 1, 3072 // 256)
+    _finish_new_directory(track_root, 1, 0)
+    track_zero[1024:3072] = track_root
+    (output / "d-track0-file-free.jfd").write_bytes(protected(
+        bytes(track_zero), {0: [0, 1, 2]}))
+    (output / "all-proof-fixtures.txt").write_text("".join(
+        path.name + "\n" for path in sorted(output.glob("*.jfd"))))
+
+
 def pdd5_descriptor_offset(image: bytearray, track_side: int,
                            sector_id: int) -> int:
     track_offset, sector_offset = struct.unpack_from("<II", image, 24)
@@ -3960,6 +4445,7 @@ def main() -> None:
     (hd / "valid-f.jfd").write_bytes(build_sparse_f_jfd(f_image))
     map_address = ((8192 - 1600 - 480) + (8192 - 1600)) * 64
     identification = args.output / "jfd-identification"
+    build_file_data_fixtures(args.output / "jfd-file-data")
     identification.mkdir(exist_ok=True)
     first_ids = frozenset((0, 3, 4, 5, 6, 7, 8, 9))
     first_times = {0: 0, 3: 60, 4: 80, 5: 100, 6: 120,

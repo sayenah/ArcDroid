@@ -171,6 +171,24 @@ static ArcJfdImage creation_fixture(const char *root, const char *name)
    assert(parsed);
    return image;
 }
+static ArcJfdImage file_data_fixture(const char *root, const char *name)
+{
+   char path[4096], error[160];
+   int n = snprintf(path, sizeof(path), "%s/jfd-file-data/%s", root, name);
+   assert(n > 0 && (size_t)n < sizeof(path));
+   FILE *file = fopen(path, "rb");
+   assert(file && fseek(file, 0, SEEK_END) == 0);
+   long length = ftell(file);
+   assert(length > 0 && fseek(file, 0, SEEK_SET) == 0);
+   uint8_t *bytes = malloc((size_t)length);
+   assert(bytes && fread(bytes, 1u, (size_t)length, file) == (size_t)length);
+   assert(fclose(file) == 0);
+   ArcJfdImage image;
+   if (!arc_jfd_parse_owned(bytes, (size_t)length, &image,
+                            error, sizeof(error)))
+   { fprintf(stderr, "%s: %s\n", name, error); abort(); }
+   return image;
+}
 static ArcJfdImage allocation_fixture(const char *root, const char *name)
 {
    char path[4096], error[160];
@@ -710,6 +728,156 @@ static void fix_checksum(File *file)
    for (unsigned i = 0u; i < 4u; ++i)
       file->bytes[file->size - 4u + i] = (uint8_t)(crc >> (8u * i));
 }
+static void test_file_data_store_classes(const char *root)
+{
+   clear_files();
+   ArcJfdImage image = file_data_fixture(root, "d-terminal-rw.jfd");
+   const char *reason = NULL;
+   assert(arc_jfd_store_load(&image, "save", true, false, 1u, &reason) &&
+          image.overlay->writable);
+   arc_jfd_file_data_prepare(&image, true, false, "writable");
+   assert(!image.file_data.presented &&
+          !strcmp(image.file_data.reason, "writable-c11c"));
+   uint8_t data[1024]; memset(data, 0x44, sizeof(data));
+   assert(image.overlay->commit(&image, 4u, data));
+   assert(image.overlay->commit(&image, 4u, data));
+   assert(files[0].exists && files[1].exists);
+   File *newest = files[0].bytes[68u] == 2u ? &files[0] : &files[1];
+   assert(newest->bytes[68u] == 2u);
+   newest->bytes[0] ^= 1u; /* Valid generation 1 survives damaged newest. */
+   arc_jfd_free(&image);
+   image = file_data_fixture(root, "d-terminal-rw.jfd");
+   assert(arc_jfd_store_load(&image, "save", true, false, 1u, &reason) &&
+          image.overlay->damaged && !image.overlay->writable &&
+          image.overlay->visible && image.overlay->generation == 1u &&
+          image.overlay->records == 1u &&
+          image.overlay->data[4u] && image.overlay->data[4u][0] == 0x44u);
+   arc_jfd_file_data_prepare(&image, true, false, "damaged-store");
+   assert(!image.file_data.presented &&
+          !strcmp(image.file_data.reason, "damaged-store"));
+   arc_jfd_free(&image);
+   image = file_data_fixture(root, "d-terminal-rw.jfd");
+   assert(arc_jfd_store_load(&image, "save", false, false, 1u, &reason) &&
+          image.overlay->damaged && !image.overlay->visible &&
+          image.overlay->generation == 1u && image.overlay->records == 1u);
+   arc_jfd_file_data_prepare(&image, true, false, "damaged-store");
+   assert(!image.file_data.presented);
+   arc_jfd_free(&image);
+
+   clear_files();
+   image = file_data_fixture(root, "d-terminal-rw.jfd");
+   assert(arc_jfd_store_load(&image, "save", true, false, 1u, &reason) &&
+          image.overlay->commit(&image, 4u, data));
+   File *slot_one = files[0].exists ? &files[0] : &files[1];
+   assert(slot_one->exists);
+   slot_one->bytes[0] ^= 1u;
+   arc_jfd_free(&image);
+   image = file_data_fixture(root, "d-terminal-rw.jfd");
+   assert(arc_jfd_store_load(&image, "save", true, false, 1u, &reason) &&
+          image.overlay->damaged && !image.overlay->generation &&
+          !image.overlay->records && !image.overlay->writable);
+   arc_jfd_file_data_prepare(&image, true, false, "damaged-store");
+   assert(!image.file_data.presented);
+   arc_jfd_free(&image);
+
+   clear_files();
+   image = file_data_fixture(root, "d-terminal-rw.jfd");
+   assert(arc_jfd_store_load(&image, "save", true, false, 1u, &reason) &&
+          image.overlay->commit(&image, 4u, data));
+   File *slot = files[0].exists ? &files[0] : &files[1];
+   assert(slot->exists && slot->size >= 84u);
+   uint8_t *empty = malloc(84u); assert(empty);
+   memcpy(empty, slot->bytes, 80u);
+   memset(empty + 76u, 0, 4u); /* Keep generation 1; clear record count. */
+   free(slot->bytes); slot->bytes = empty; slot->size = 84u;
+   fix_checksum(slot);
+   arc_jfd_free(&image);
+   image = file_data_fixture(root, "d-terminal-rw.jfd");
+   assert(arc_jfd_store_load(&image, "save", true, false, 1u, &reason) &&
+          !image.overlay->damaged && image.overlay->writable &&
+          image.overlay->generation == 1u && !image.overlay->records);
+   arc_jfd_free(&image);
+   image = file_data_fixture(root, "d-terminal-rw.jfd");
+   assert(arc_jfd_store_load(&image, "save", false, false, 1u, &reason) &&
+          !image.overlay->damaged && !image.overlay->writable &&
+          image.overlay->generation == 1u && !image.overlay->records);
+   arc_jfd_file_data_prepare(&image, true, false, "disk-writes-off");
+   assert(image.file_data.mask[1u] == 2u);
+   arc_jfd_free(&image);
+
+   clear_files();
+   image = file_data_fixture(root, "d-terminal-rw.jfd");
+   assert(arc_jfd_store_load(&image, "save", true, false, 1u, &reason) &&
+          image.overlay->writable);
+   arc_jfd_file_data_prepare(&image, true, false, "writable");
+   assert(!image.file_data.presented);
+   fault = WRITE_FAULT;
+   assert(!image.overlay->commit(&image, 4u, data) &&
+          image.overlay->failed && !image.overlay->writable &&
+          !image.file_data.presented && !image.file_data.mask[1u]);
+   ArcJfdView view;
+   assert(!arc_jfd_effective_sector(&image, 1u,
+          image.tracks[1u].sector_count + 1u, false, &view));
+   arc_jfd_free(&image);
+   clear_files(); fault = NO_FAULT;
+
+   image = allocation_fixture(root, "old-free.jfd");
+   assert(arc_jfd_store_load(&image, "save", true, false, 1u, &reason));
+   image.overlay->map_enabled = true;
+   arc_jfd_map_prepare(&image);
+   arc_jfd_file_data_prepare(&image, true, false, "writable");
+   assert(blank_at(&image, 0u, 1u));
+   arc_jfd_file_data_prepare(&image, true, true, "writable");
+   assert(blank_at(&image, 0u, 1u));
+   arc_jfd_free(&image);
+   clear_files();
+
+   image = file_data_fixture(root, "d-terminal.jfd");
+   size_t sector_bytes = image.sector_count * sizeof(*image.sectors);
+   ArcJfdSector *ordinals = malloc(sector_bytes); assert(ordinals);
+   memcpy(ordinals, image.sectors, sector_bytes);
+   uint8_t *decoded = malloc(image.decoded_size); assert(decoded);
+   memcpy(decoded, image.decoded, image.decoded_size);
+   ArcDigest before = arc_digest(image.decoded, image.decoded_size);
+   ArcJfdImage writable_key = file_data_fixture(root, "d-terminal-rw.jfd");
+   assert(arc_jfd_store_load(&writable_key, "save", true, false, 1u, &reason));
+   ArcDigest key_digest = arc_digest(writable_key.decoded,
+                                     writable_key.decoded_size);
+   uint8_t *key_decoded = malloc(writable_key.decoded_size);
+   size_t key_ordinals_size = writable_key.sector_count * sizeof(*writable_key.sectors);
+   ArcJfdSector *key_ordinals = malloc(key_ordinals_size);
+   assert(key_decoded && key_ordinals);
+   memcpy(key_decoded, writable_key.decoded, writable_key.decoded_size);
+   memcpy(key_ordinals, writable_key.sectors, key_ordinals_size);
+   /* No slot exists yet; the first committed key must use decoded SHA-1. */
+   uint8_t key_data[1024] = {0};
+   assert(writable_key.overlay->commit(&writable_key, 4u, key_data));
+   File *key_slot = files[0].exists ? &files[0] : &files[1];
+   assert(strstr(key_slot->path, key_digest.sha1));
+   char unchanged_key[256];
+   snprintf(unchanged_key, sizeof(unchanged_key), "%s", key_slot->path);
+   arc_jfd_file_data_prepare(&writable_key, true, false, "writable");
+   arc_jfd_file_data_prepare(&writable_key, true, true, "writable");
+   ArcDigest key_after = arc_digest(writable_key.decoded,
+                                    writable_key.decoded_size);
+   assert(!memcmp(key_decoded, writable_key.decoded, writable_key.decoded_size) &&
+          !memcmp(key_ordinals, writable_key.sectors, key_ordinals_size) &&
+          !strcmp(key_digest.sha1, key_after.sha1) &&
+          key_digest.crc32 == key_after.crc32 &&
+          !strcmp(key_slot->path, unchanged_key));
+   free(key_decoded); free(key_ordinals);
+   arc_jfd_free(&writable_key);
+   arc_jfd_file_data_prepare(&image, true, false, "wp-flag");
+   assert(image.file_data.mask[1u] == 2u);
+   arc_jfd_file_data_prepare(&image, true, true, "wp-flag");
+   ArcDigest after = arc_digest(image.decoded, image.decoded_size);
+   assert(!image.file_data.presented &&
+          !memcmp(decoded, image.decoded, image.decoded_size) &&
+          !memcmp(ordinals, image.sectors, sector_bytes) &&
+          !strcmp(before.sha1, after.sha1) && before.crc32 == after.crc32);
+   free(decoded); free(ordinals); arc_jfd_free(&image);
+   clear_files();
+}
 static void malformed_slot(unsigned active, size_t offset, bool recalculate,
                            uint64_t older_generation)
 {
@@ -953,6 +1121,11 @@ int main(int argc, char **argv)
    arc_io_set_vfs(&vfs);
    if (argc == 3)
    {
+      if (!strcmp(argv[2], "file-data"))
+      {
+         test_file_data_store_classes(argv[1]);
+         return 0;
+      }
       if (!strcmp(argv[2], "native-writable"))
       {
          test_native_writable_layout(argv[1]);

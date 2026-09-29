@@ -60,6 +60,7 @@ set(ARCDROID_CORE_SOURCES
   core/launch.c
   core/launch_discovery.c
   core/jfd_layout.c
+  core/jfd_file_data.c
   core/launch_disc.c
   core/launch_chooser.c
   core/boot_observation.c
@@ -767,6 +768,7 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
   endif()
   add_dependencies(jfd_store_tests test-fixtures)
   add_test(NAME jfd-store COMMAND jfd_store_tests "${FIXTURE_DIR}")
+  add_test(NAME jfd-file-data-store COMMAND jfd_store_tests "${FIXTURE_DIR}" file-data)
   add_test(NAME native-writable-layout COMMAND jfd_store_tests
     "${FIXTURE_DIR}" native-writable)
   add_test(NAME jfd-gate-short COMMAND jfd_store_tests "${FIXTURE_DIR}" short)
@@ -784,6 +786,19 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
   endif()
   add_dependencies(jfd_identification_tests test-fixtures)
   add_test(NAME jfd-identification COMMAND jfd_identification_tests "${FIXTURE_DIR}")
+  add_executable(jfd_file_data_tests tests/jfd_file_data_tests.c)
+  target_include_directories(jfd_file_data_tests PRIVATE core)
+  target_link_libraries(jfd_file_data_tests PRIVATE arcdroid_core)
+  target_compile_options(jfd_file_data_tests PRIVATE
+    $<$<C_COMPILER_ID:GNU,Clang,AppleClang>:-UNDEBUG;-Wall;-Wextra;-Wpedantic>)
+  if(ARCDROID_SANITIZERS)
+    target_link_libraries(jfd_file_data_tests PRIVATE
+      arcdroid_sanitizer_compile arcdroid_sanitizer_link)
+  endif()
+  add_dependencies(jfd_file_data_tests test-fixtures)
+  add_test(NAME jfd-file-data COMMAND jfd_file_data_tests "${FIXTURE_DIR}")
+  add_test(NAME jfd-file-data-newio COMMAND jfd_controller_tests
+    "${FIXTURE_DIR}" --file-data-newio)
   add_executable(jfd_quarantine_tests tests/jfd_quarantine_tests.c)
   target_include_directories(jfd_quarantine_tests PRIVATE core)
   target_link_libraries(jfd_quarantine_tests PRIVATE arcdroid_core)
@@ -930,6 +945,48 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
       "${FIXTURE_DIR}/jfd-writes/rw-d.jfd"
       "${CMAKE_CURRENT_BINARY_DIR}/jfd-writes-harness-data"
       --jfd-writes "${FIXTURE_DIR}/jfd-writes")
+    add_test(NAME jfd-file-data-process COMMAND libretro_harness
+      $<TARGET_FILE:arcdroid_libretro_test>
+      "${FIXTURE_DIR}/arcdroid-test.rom"
+      "${FIXTURE_DIR}/jfd-file-data/d-terminal.jfd"
+      "${CMAKE_CURRENT_BINARY_DIR}/jfd-file-data-process-data"
+      --jfd-file-data-step)
+    add_test(NAME jfd-file-data-set-process COMMAND libretro_harness
+      $<TARGET_FILE:arcdroid_libretro_test>
+      "${FIXTURE_DIR}/arcdroid-test.rom"
+      "${FIXTURE_DIR}/jfd-file-data/mixed.m3u"
+      "${CMAKE_CURRENT_BINARY_DIR}/jfd-file-data-set-data"
+      --jfd-file-data-set)
+    add_test(NAME jfd-file-data-unavailable-process COMMAND libretro_harness
+      $<TARGET_FILE:arcdroid_libretro_test>
+      "${FIXTURE_DIR}/arcdroid-test.rom"
+      "${FIXTURE_DIR}/jfd-file-data/d-terminal-rw.jfd"
+      "${CMAKE_CURRENT_BINARY_DIR}/jfd-file-data-unavailable-data"
+      --jfd-file-data-unavailable)
+    add_test(NAME jfd-file-data-reasons-process COMMAND libretro_harness
+      $<TARGET_FILE:arcdroid_libretro_test>
+      "${FIXTURE_DIR}/arcdroid-test.rom"
+      "${FIXTURE_DIR}/jfd-file-data/d-terminal.jfd"
+      "${CMAKE_CURRENT_BINARY_DIR}/jfd-file-data-reasons-data"
+      --jfd-file-data-reasons "${FIXTURE_DIR}/jfd-file-data")
+    add_test(NAME jfd-file-data-recovery-process COMMAND libretro_harness
+      $<TARGET_FILE:arcdroid_libretro_test>
+      "${FIXTURE_DIR}/arcdroid-boot-prompt.rom"
+      "${FIXTURE_DIR}/jfd-file-data/d-recovery.jfd"
+      "${CMAKE_CURRENT_BINARY_DIR}/jfd-file-data-recovery-data"
+      --jfd-file-data-recovery)
+    add_test(NAME jfd-file-data-gzip-process COMMAND libretro_harness
+      $<TARGET_FILE:arcdroid_libretro_test>
+      "${FIXTURE_DIR}/arcdroid-test.rom"
+      "${FIXTURE_DIR}/jfd-file-data/d-terminal-gzip.jfd"
+      "${CMAKE_CURRENT_BINARY_DIR}/jfd-file-data-gzip-data"
+      --jfd-file-data-step)
+    add_test(NAME jfd-file-data-zip-process COMMAND libretro_harness
+      $<TARGET_FILE:arcdroid_libretro_test>
+      "${FIXTURE_DIR}/arcdroid-test.rom"
+      "${FIXTURE_DIR}/jfd-file-data/d-terminal.zip"
+      "${CMAKE_CURRENT_BINARY_DIR}/jfd-file-data-zip-data"
+      --jfd-file-data-step)
     add_test(NAME jfd-quarantine-wd-guest COMMAND libretro_harness
       $<TARGET_FILE:arcdroid_libretro_test>
       "${FIXTURE_DIR}/arcdroid-jfd-quarantine.rom"

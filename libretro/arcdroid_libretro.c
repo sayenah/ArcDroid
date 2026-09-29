@@ -198,6 +198,9 @@ static bool arc_test_fail_install_build;
 static bool arc_test_fail_install_raw;
 static bool arc_test_defer_install_completion;
 static bool arc_test_fail_next_construct;
+static bool arc_test_jfd_wp_layout_supported;
+void arc_libretro_test_jfd_wp_layout_supported(bool enabled)
+{ arc_test_jfd_wp_layout_supported = enabled; }
 void arc_libretro_test_fail_next_construct(void)
 { arc_test_fail_next_construct = true; }
 void arc_libretro_test_defer_install_completion(bool defer)
@@ -539,6 +542,7 @@ typedef struct {
    unsigned pointer_deadzone;
    ArcDiskWriteMode disk_writes;
    bool short_tail_zero;
+   bool jfd_omitted_strict;
    bool install_saves_persistent;
    ArcLaunchOption launch;
    ArcLaunchChooserOption launch_chooser;
@@ -672,6 +676,7 @@ static bool arc_read_options(ArcCoreOptions *options, char *error, size_t error_
    const char *pointer_deadzone = arc_option_value("arcdroid_pointer_deadzone", "15");
    const char *writes = arc_option_value("arcdroid_disk_writes", "shadow");
    const char *short_tail = arc_option_value("arcdroid_short_tail", "missing");
+   const char *jfd_omitted = arc_option_value("arcdroid_jfd_omitted", "file-data");
    const char *install_saves = arc_option_value("arcdroid_install_saves", "persistent");
    const char *launch = arc_option_value("arcdroid_launch", "auto");
    const char *launch_chooser =
@@ -740,6 +745,8 @@ static bool arc_read_options(ArcCoreOptions *options, char *error, size_t error_
    else if (strcmp(writes, "shadow")) goto invalid;
    if (!strcmp(short_tail, "zero-filled")) options->short_tail_zero = true;
    else if (strcmp(short_tail, "missing")) goto invalid;
+   if (!strcmp(jfd_omitted, "strict")) options->jfd_omitted_strict = true;
+   else if (strcmp(jfd_omitted, "file-data")) goto invalid;
    if (!strcmp(install_saves, "persistent")) options->install_saves_persistent = true;
    else if (strcmp(install_saves, "temporary")) goto invalid;
    if (!strcmp(launch, "auto")) options->launch = ARC_LAUNCH_AUTO;
@@ -2557,6 +2564,24 @@ static bool arc_refresh_jfd(ArcMediaEntry *entry, ArcDiskWriteMode mode,
    return true;
 }
 
+static const char *arc_jfd_file_data_class(const ArcJfdImage *image,
+                                            ArcDiskWriteMode mode)
+{
+   const ArcJfdOverlay *overlay = image->overlay;
+   /* Only stores inspected by the loader can contribute visible records or
+    * be marked damaged; ineligible images keep a coherent base-only view. */
+   if (overlay && overlay->damaged) return "damaged-store";
+   if (overlay && overlay->writable) return "writable";
+   if (mode != ARC_DISK_WRITES_OFF && image->extended &&
+       (image->flags & 2u) && !(image->flags & 1u) &&
+       overlay && overlay->layout_supported) return "store-unavailable";
+   if (mode == ARC_DISK_WRITES_OFF) return "disk-writes-off";
+   if (image->extended && (image->flags & 1u)) return "wp-flag";
+   if (image->extended && !(image->flags & 2u)) return "no-flag";
+   if (!image->extended) return "legacy-header";
+   return "layout-unsupported";
+}
+
 static void arc_finish_jfd_preparation(ArcMediaEntry *entry, bool native)
 {
    if (!entry || entry->info.kind != ARC_MEDIA_JFD) return;
@@ -2570,6 +2595,27 @@ static void arc_finish_jfd_preparation(ArcMediaEntry *entry, bool native)
       arc_jfd_map_prepare(&entry->jfd);
    }
    arc_jfd_prepare_identification(&entry->jfd, native);
+#if defined(ARCDROID_TEST_FAULTS)
+   /* Exercise the class boundary that the normal WP loader short-circuits. */
+   if (arc_test_jfd_wp_layout_supported && overlay && entry->jfd.extended &&
+       (entry->jfd.flags & 3u) == 3u)
+      overlay->layout_supported = true;
+#endif
+   const char *image_class = arc_jfd_file_data_class(&entry->jfd,
+                                                     arc_plan.disk_writes);
+   arc_jfd_file_data_prepare(&entry->jfd, native,
+      arc_core_options.jfd_omitted_strict, image_class);
+   if (native && arc_log)
+   {
+      const ArcJfdFileData *p = &entry->jfd.file_data;
+      const char *format = p->format == 'D' ? "D" :
+         p->format == 'E' ? "E" : "other";
+      arc_log(RETRO_LOG_INFO,
+         "JFD file-data: image=%u policy=1 class=%s format=%s copies=%u/%u presented=%u skipped-sides=%u incomplete-dirs=%u reason=%s\n",
+         image_number, image_class, format,
+         p->valid_copies, p->agreeing_copies, p->presented,
+         p->skipped_sides, p->incomplete_dirs, p->reason);
+   }
    if (!arc_log) return;
    unsigned quarantined = 0u, first = 0u;
    for (unsigned t = 0u; t < entry->jfd.track_count; ++t)
@@ -3895,7 +3941,7 @@ static bool arc_boot_record_path(char path[ARC_MEDIA_PATH_CAPACITY],
  * snapshots accepted by the existing store validator. */
 static bool arc_boot_media_digest(char output[41])
 {
-   uint8_t bytes[1u + ARC_PLAYLIST_MAX_ENTRIES * 92u];
+   uint8_t bytes[1u + ARC_PLAYLIST_MAX_ENTRIES * (92u + ARC_JFD_PDD5_TRACKS + 2u)];
    size_t at = 0u;
    bytes[at++] = (uint8_t)arc_media_count;
    for (unsigned i = 0u; i < arc_media_count; ++i)
@@ -3939,6 +3985,15 @@ static bool arc_boot_media_digest(char output[41])
          }
          if (!view->overlay || view->overlay->damaged || view->overlay->failed)
          { arc_jfd_free(&temporary); return false; }
+         /* The temporary has no D-089 mask; D/E identification covers only wholly free slots, outside R1'. */
+         if (view == &temporary)
+            arc_jfd_file_data_prepare(view, true,
+               arc_core_options.jfd_omitted_strict,
+               arc_jfd_file_data_class(view, arc_plan.disk_writes));
+         bytes[at++] = 1u; /* Native JFD presentation revision. */
+         bytes[at++] = arc_core_options.jfd_omitted_strict ? 0u : 1u;
+         memcpy(bytes + at, view->file_data.mask, ARC_JFD_PDD5_TRACKS);
+         at += ARC_JFD_PDD5_TRACKS;
          const char *store = view->overlay->visible &&
             view->overlay->store_sha1[0] ? view->overlay->store_sha1 : NULL;
          if (store) memcpy(bytes + at, store, 40u);
@@ -5334,6 +5389,9 @@ static const struct retro_core_option_v2_definition arc_base_options[] = {
    {"arcdroid_short_tail", "Short image tail", NULL,
     "Present sectors beyond a short source as missing, or expose the stored shadow bytes (including saved writes) as zero-filled media.", NULL,
     NULL, {{"missing", "Missing"}, {"zero-filled", "Zero-filled"}, {NULL, NULL}}, "missing"},
+   {"arcdroid_jfd_omitted", "JFD Omitted Sectors", NULL,
+    "Present proven omitted native JFD file-data sectors as zeros. Strict keeps the earlier JFD presentation. Sampled at content load or reset.", NULL,
+    NULL, {{"file-data", "File data"}, {"strict", "Strict"}, {NULL, NULL}}, "file-data"},
    {"arcdroid_install_saves", "Install Saves", NULL,
     "Keep installed titles and their saves on an A3020 hard disc.", NULL,
     NULL, {{"persistent", "Persistent"}, {"temporary", "Temporary"},
@@ -5346,8 +5404,8 @@ enum {
                       ARC_PAD_PORTS * ARC_PAD_INPUT_COUNT + 1u
 };
 static struct retro_core_option_v2_definition arc_options[ARC_OPTION_COUNT + 1u];
-_Static_assert(ARC_BASE_OPTION_COUNT == 17u, "base option count changed");
-_Static_assert(sizeof(arc_options) / sizeof(arc_options[0]) == 40u,
+_Static_assert(ARC_BASE_OPTION_COUNT == 18u, "base option count changed");
+_Static_assert(sizeof(arc_options) / sizeof(arc_options[0]) == 41u,
                "option destination size changed");
 static struct retro_core_option_v2_category arc_option_categories[] = {
    {"pad_mapping", "Pad Mapping", "Map each RetroPad input to a physical Archimedes key."},
