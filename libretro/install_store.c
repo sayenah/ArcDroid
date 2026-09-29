@@ -36,6 +36,12 @@ struct ArcInstallStore {
    void *log_opaque;
 };
 
+#if defined(ARCDROID_TEST_FAULTS)
+static bool arc_test_corrupt_native_format;
+void arc_install_store_test_corrupt_native_format(bool enabled)
+{ arc_test_corrupt_native_format = enabled; }
+#endif
+
 typedef struct {
    char id[41];
    char base_hash[65];
@@ -475,6 +481,12 @@ static bool create_base(ArcInstallStore *s)
       report_vfs_failure(s, "store-create", "format", "disc.g0.hdf.tmp");
       return false;
    }
+#if defined(ARCDROID_TEST_FAULTS)
+   if (s->native_hd && arc_test_corrupt_native_format) {
+      arc_test_corrupt_native_format = false;
+      s->image[0] ^= 1u;
+   }
+#endif
    if (s->native_hd) {
       char digest[65];
       arc_sha256_hex(s->image, ARC_INSTALL_HD_BYTES, digest);

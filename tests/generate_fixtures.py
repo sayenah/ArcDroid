@@ -2254,6 +2254,7 @@ def build_adffs_fixtures(output: Path) -> None:
     built_in = b"Set ArcFixture Builtin\rADFFS:trackers.QTMModule.extra\r"
     obey_entries = [
         ("F0012301", built_in, False),
+        ("F6543201", built_in, False),
         ("F0012301A", b"Set ArcFixture Auxiliary\r", False),
         ("ChainA", b"ADFFS:extras.JoyMod\rADFFS:obey.ChainB\r", False),
         ("ChainB", b"adffs:TRACKERS.CaseTrack.ext\r", False),
@@ -2551,6 +2552,12 @@ def build_adffs_fixtures(output: Path) -> None:
     hd = adffs_jfd(123)
     struct.pack_into("<I", hd, 324, (4 << 16) | 1)
     (output / "eligible-hd.jfd").write_bytes(hd)
+    hd_rw = bytearray(hd)
+    struct.pack_into("<I", hd_rw, 304, 2)
+    (output / "eligible-hd-rw.jfd").write_bytes(hd_rw)
+    install_hd = adffs_jfd(65432)
+    struct.pack_into("<I", install_hd, 324, (4 << 16) | 1)
+    (output / "install-single-hd.jfd").write_bytes(install_hd)
 
 
 def build_jfd_family(descriptors: list[tuple[int, int, int, int, int, bytes | None]],

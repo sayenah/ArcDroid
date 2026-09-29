@@ -826,7 +826,8 @@ if (-not (Select-String -Path $log -SimpleMatch 'Hard disc: journal-commit lba=1
 $screenshot = Join-Path $evidenceDirectory 'native-hd-reloaded.png'
 Invoke-ArcDroid 1200 $true
 $nativeReloaded = Get-MediaRowSignature $screenshot 'native-hd-reloaded'
-if ($nativeWritten -eq $nativeReloaded -or
+# The guest's painted 0x42 outcome appears as ff009400 through VIDC.
+if ($nativeWritten -eq $nativeReloaded -or $nativeReloaded -ne 'ff009400' -or
     -not (Select-String -Path $log -SimpleMatch 'Hard disc: store-state=ready writable' -Quiet)) {
     throw 'Native IDE guest did not show its saved sector on a fresh process'
 }

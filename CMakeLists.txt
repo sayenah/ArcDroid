@@ -424,6 +424,9 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
     "${FIXTURE_DIR}/adffs/install-wrong-2.jfd"
     "${FIXTURE_DIR}/adffs/install-wrong.m3u"
     "${FIXTURE_DIR}/adffs/eligible-hd.jfd")
+  list(APPEND ADFFS_FIXTURES
+    "${FIXTURE_DIR}/adffs/eligible-hd-rw.jfd"
+    "${FIXTURE_DIR}/adffs/install-single-hd.jfd")
   add_custom_command(
     OUTPUT "${FIXTURE_DIR}/arcdroid-test.rom" "${FIXTURE_DIR}/arcdroid-test.adf"
       "${FIXTURE_DIR}/arcdroid-power-on-early-swi.rom"
@@ -863,7 +866,7 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
     target_compile_definitions(arcdroid_libretro_test PRIVATE ARCDROID_TEST_FAULTS=1)
     set_target_properties(arcdroid_libretro_test PROPERTIES OUTPUT_NAME arcdroid_libretro_test)
     add_executable(libretro_harness tests/libretro_harness.c)
-    target_include_directories(libretro_harness PRIVATE libretro/include)
+    target_include_directories(libretro_harness PRIVATE libretro libretro/include)
     target_include_directories(libretro_harness PRIVATE core engine "${CMAKE_CURRENT_BINARY_DIR}/generated")
     target_link_libraries(libretro_harness PRIVATE arcdroid_core ${CMAKE_DL_LIBS})
     if(ARCDROID_SANITIZERS)

@@ -10,19 +10,27 @@ def main() -> None:
     harness, core, rom, media, dd_media = map(Path, sys.argv[1:6])
     with tempfile.TemporaryDirectory(prefix="arc-native-hd-") as root_name:
         root = Path(root_name)
-        def run(content: Path, phase: str, data: Path) -> str:
+        def check(content: Path, phase: str, data: Path) -> str:
             result = subprocess.run((str(harness), str(core), str(rom),
                                      str(content), str(data),
                                      "--native-hd-guest", phase),
                                     capture_output=True, text=True)
             assert result.returncode == 0, result.stdout + result.stderr
             assert f"native hard disc guest {phase}" in result.stdout
+            return result.stdout + result.stderr
+
+        def run(content: Path, phase: str, data: Path,
+                expected_pixel: str | None = None) -> str:
+            output = check(content, phase, data)
             if phase == "first":
-                log = result.stdout + result.stderr
-                assert log.index("store-publication=committed") < log.index(
-                    "journal-commit lba=15456 count=1"), log
-            match = re.search(r"signature=([0-9a-f]{16})", result.stdout)
-            assert match, result.stdout
+                assert output.index("store-publication=committed") < output.index(
+                    "journal-commit lba=15456 count=1"), output
+            match = re.search(r"signature=([0-9a-f]{16})", output)
+            assert match, output
+            pixel = re.search(r"pixel=([0-9a-f]{8})", output)
+            assert pixel, output
+            if phase in ("reload", "read-only"):
+                assert pixel.group(1) == (expected_pixel or "00009400"), output
             return match.group(1)
 
         data = root / "session"
@@ -56,9 +64,20 @@ def main() -> None:
         off_signature = run(media, "off", off)
         assert not (off / "save" / "arcdroid" / "hd").exists()
         failed = root / "create-fail"
-        run(media, "create-fail", failed)
+        assert "unavailable:directory-create-failed" in check(
+            media, "create-fail", failed)
         assert not (failed / "save" / "arcdroid" / "hd" / store.name /
                     "ready.a").exists()
+        probe = root / "probe-fail"
+        assert "unavailable:write-probe-failed" in check(
+            media, "probe-fail", probe)
+        assert not list((probe / "save" / "arcdroid" / "hd").glob("*/ready.*"))
+        formatter = root / "formatter-fail"
+        assert "store-create=formatter-hash-mismatch" in check(
+            media, "formatter-fail", formatter)
+        assert not list((formatter / "save" / "arcdroid" / "hd").glob("*/ready.*"))
+        check(media, "notice-rearm", root / "notice-rearm")
+        check(media, "compact-neutral", root / "compact-neutral")
         create_recover = root / "create-recover"
         create_recover_signature = run(media, "create-recover", create_recover)
         assert run(media, "reload", create_recover) != create_recover_signature
@@ -78,7 +97,7 @@ def main() -> None:
         failed_store = append_failure / "save" / "arcdroid" / "hd" / store.name
         failed_bytes = {p.name: p.read_bytes() for p in failed_store.iterdir()
                         if p.is_file()}
-        run(media, "read-only", append_failure)
+        run(media, "read-only", append_failure, "003fe9e9")
         assert failed_bytes == {p.name: p.read_bytes() for p in failed_store.iterdir()
                                 if p.is_file()}
         recovered_signature = run(media, "recover", append_failure)

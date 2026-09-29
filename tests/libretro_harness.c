@@ -4,6 +4,7 @@
 #include "arcdroid_engine.h"
 #include "boot_observation.h"
 #include "e_format_fixture.h"
+#include "install_store.h"
 
 #include <assert.h>
 #include <ctype.h>
@@ -97,6 +98,7 @@ static unsigned hard_disc_unavailable_notices;
 static unsigned hard_disc_damaged_notices;
 static unsigned hard_disc_readonly_notices;
 static unsigned hard_disc_write_failure_notices;
+static unsigned hard_disc_formatter_mismatch_logs;
 static unsigned machine_resolution_lines;
 static unsigned riscpc_log_count;
 static unsigned cmos_healing_log_count;
@@ -522,6 +524,8 @@ static void frontend_log(enum retro_log_level level, const char *format, ...)
       fprintf(stderr,"%s",message);
    if (!strncmp(message, "Hard disc: policy=", 18u))
       snprintf(hard_disc_policy_log, sizeof(hard_disc_policy_log), "%s", message);
+   if (strstr(message, "Hard disc: store-create=formatter-hash-mismatch"))
+      ++hard_disc_formatter_mismatch_logs;
    if (strstr(message, "Install disc: store-publication=committed"))
       ++install_publication_seen;
    if (strstr(message, "Install disc: run-plan=recreated"))
@@ -2391,6 +2395,7 @@ int main(int argc, char **argv)
    bool (*arc_libretro_test_boot_stamp)(ArcBootObservation *) = NULL;
    bool (*arc_libretro_test_hd_exhaust_journal)(void) = NULL;
    bool (*arc_libretro_test_hd_observation_write)(unsigned) = NULL;
+   void (*arc_install_store_test_corrupt_native_format)(bool) = NULL;
    void (*arc_libretro_test_install_access_counts)(unsigned *, unsigned *) = NULL;
    const char *(*arc_libretro_test_cmos_path)(void) = NULL;
    uint8_t (*arc_libretro_test_prepared_cmos_byte)(unsigned) = NULL;
@@ -2421,8 +2426,14 @@ int main(int argc, char **argv)
          dlsym(module, "arc_libretro_test_boot_stamp");
       *(void **)(&arc_libretro_test_hd_exhaust_journal) =
          dlsym(module, "arc_libretro_test_hd_exhaust_journal");
+      *(void **)(&arc_libretro_test_hd_observation_write) =
+         dlsym(module, "arc_libretro_test_hd_observation_write");
+      *(void **)(&arc_install_store_test_corrupt_native_format) =
+         dlsym(module, "arc_install_store_test_corrupt_native_format");
       assert(arc_libretro_test_boot_stamp &&
-             arc_libretro_test_hd_exhaust_journal);
+             arc_libretro_test_hd_exhaust_journal &&
+             arc_libretro_test_hd_observation_write &&
+             arc_install_store_test_corrupt_native_format);
    }
    if (media_tests) {
       *(void **)(&arc_libretro_test_install_access_counts) =
@@ -3252,10 +3263,16 @@ int main(int argc, char **argv)
              !strcmp(argv[6], "disk-index-reset") ||
              !strcmp(argv[6], "damaged") ||
              !strcmp(argv[6], "append-fail") ||
-             !strcmp(argv[6], "journal-cap"));
+             !strcmp(argv[6], "journal-cap") ||
+             !strcmp(argv[6], "probe-fail") ||
+             !strcmp(argv[6], "formatter-fail") ||
+             !strcmp(argv[6], "notice-rearm") ||
+             !strcmp(argv[6], "compact-neutral"));
       bool absent = !strcmp(argv[6], "off") || !strcmp(argv[6], "a3010") ||
                     !strcmp(argv[6], "a4000") ||
                     !strcmp(argv[6], "create-fail") ||
+                    !strcmp(argv[6], "probe-fail") ||
+                    !strcmp(argv[6], "formatter-fail") ||
                     !strcmp(argv[6], "off-to-auto") ||
                     !strcmp(argv[6], "damaged");
       option_machine = !strcmp(argv[6], "a3010") ? "A3010" :
@@ -3270,14 +3287,80 @@ int main(int argc, char **argv)
       if (!strcmp(argv[6], "create-fail") ||
           !strcmp(argv[6], "create-recover"))
          fault_mkdir_substring = "/arcdroid/hd";
+      if (!strcmp(argv[6], "probe-fail"))
+         fault_close_substring = "rwprobe.tmp";
+      if (!strcmp(argv[6], "formatter-fail"))
+         arc_install_store_test_corrupt_native_format(true);
       phase = PHASE_LOAD;
       bool loaded = retro_load_game(&game);
       if (!loaded) fprintf(stderr, "native hard disc load: %s\n", last_message);
       assert(loaded);
       if (!strcmp(argv[6], "create-fail") ||
-          !strcmp(argv[6], "create-recover"))
+          !strcmp(argv[6], "create-recover") ||
+          !strcmp(argv[6], "probe-fail") ||
+          !strcmp(argv[6], "formatter-fail"))
          assert(hard_disc_unavailable_notices == 1u &&
-                strstr(hard_disc_policy_log, "attach=no mode=none reason=unavailable:"));
+                strstr(hard_disc_policy_log,
+                   !strcmp(argv[6], "probe-fail") ?
+                     "attach=no mode=none reason=unavailable:write-probe-failed" :
+                   !strcmp(argv[6], "formatter-fail") ?
+                     "attach=no mode=none reason=unavailable:create-or-publication-failed" :
+                     "attach=no mode=none reason=unavailable:directory-create-failed"));
+      if (!strcmp(argv[6], "formatter-fail")) {
+         char manifest[4096];
+         uint8_t formatter_cmos[ARC_CMOS_MACHINE_SIZE];
+         snprintf(manifest, sizeof(manifest), "%s/arcdroid/hd/%s/ready.a",
+                  save_path, arc_libretro_test_content_id());
+         assert(hard_disc_formatter_mismatch_logs == 1u &&
+                !file_exists(manifest) &&
+                arc_engine_test_cmos_image(formatter_cmos) &&
+                ((formatter_cmos[arc_cmos_raw_address(135u)] >> 6u) & 3u) == 0u &&
+                formatter_cmos[arc_cmos_raw_address(189u)] == 0u);
+         retro_unload_game(); retro_deinit();
+         assert(open_files == 0u && open_dirs == 0u && dlclose(module) == 0);
+         puts("native hard disc guest formatter-fail: no publication or attachment");
+         return 0;
+      }
+      if (!strcmp(argv[6], "notice-rearm")) {
+         assert(arc_libretro_test_hd_observation_write(3u));
+         assert(hard_disc_write_failure_notices == 1u);
+         assert(!arc_libretro_test_hd_observation_write(3u) &&
+                hard_disc_write_failure_notices == 1u);
+         retro_reset();
+         assert(strstr(hard_disc_policy_log, "attach=yes mode=writable") &&
+                arc_libretro_test_hd_observation_write(3u) &&
+                hard_disc_write_failure_notices == 2u);
+         retro_unload_game(); retro_deinit();
+         assert(open_files == 0u && open_dirs == 0u && dlclose(module) == 0);
+         puts("native hard disc guest notice-rearm: one notice per failure episode");
+         return 0;
+      }
+      if (!strcmp(argv[6], "compact-neutral")) {
+         ArcBootObservation written = {0}, compacted = {0};
+         char journal0[4096], journal1[4096], ready1[4096];
+         struct stat old_journal, new_journal;
+         snprintf(journal0, sizeof(journal0), "%s/arcdroid/hd/%s/journal.g0",
+                  save_path, arc_libretro_test_content_id());
+         snprintf(journal1, sizeof(journal1), "%s/arcdroid/hd/%s/journal.g1",
+                  save_path, arc_libretro_test_content_id());
+         snprintf(ready1, sizeof(ready1), "%s/arcdroid/hd/%s/ready.b",
+                  save_path, arc_libretro_test_content_id());
+         assert(arc_libretro_test_hd_observation_write(1u) &&
+                arc_libretro_test_boot_stamp(&written) &&
+                arc_libretro_test_hd_observation_write(4u) &&
+                !stat(journal0, &old_journal) &&
+                old_journal.st_size > 1024 * 1024);
+         retro_reset();
+         assert(arc_libretro_test_boot_stamp(&compacted) &&
+                !strcmp(written.hard_disc, compacted.hard_disc) &&
+                file_exists(ready1) && !stat(journal1, &new_journal) &&
+                new_journal.st_size == 124 &&
+                old_journal.st_size != new_journal.st_size);
+         retro_unload_game(); retro_deinit();
+         assert(open_files == 0u && open_dirs == 0u && dlclose(module) == 0);
+         puts("native hard disc guest compact-neutral: equal digest across generation and journal change");
+         return 0;
+      }
       if (!strcmp(argv[6], "create-recover") ||
           !strcmp(argv[6], "off-to-auto") ||
           !strcmp(argv[6], "auto-to-off")) {
@@ -10684,6 +10767,111 @@ int main(int argc, char **argv)
       option_machine = "Auto";
       option_cpu = "Auto";
       variable_update = true;
+      ADFFS_GAME("install-single-hd.jfd", single_hd_install);
+      const ArcInstallProfile *(*test_install_profile)(unsigned, unsigned) = NULL;
+      ArcInstallStore *(*test_install_open)(const char *, const ArcInstallPlan *,
+         bool, bool, ArcInstallStoreLog, void *, char *, size_t) = NULL;
+      bool (*test_install_publish)(ArcInstallStore *, char *, size_t) = NULL;
+      ArcInstallStoreState (*test_install_state)(const ArcInstallStore *) = NULL;
+      void (*test_install_close)(ArcInstallStore *) = NULL;
+      *(void **)(&test_install_profile) = dlsym(module, "arc_install_profile");
+      *(void **)(&test_install_open) = dlsym(module, "arc_install_store_open");
+      *(void **)(&test_install_publish) = dlsym(module, "arc_install_store_publish");
+      *(void **)(&test_install_state) = dlsym(module, "arc_install_store_state");
+      *(void **)(&test_install_close) = dlsym(module, "arc_install_store_close");
+      assert(test_install_profile && test_install_open && test_install_publish &&
+             test_install_state && test_install_close);
+      const ArcInstallProfile *single_profile = test_install_profile(65432u, 1u);
+      ArcDigest single_digest = digest_file(single_hd_install_path);
+      ArcInstallMedia single_media = {0};
+      single_media.game_id = 65432u;
+      single_media.disc_number = single_media.disc_count = 1u;
+      single_media.decoded_size = single_digest.size;
+      snprintf(single_media.sha1, sizeof(single_media.sha1), "%s", single_digest.sha1);
+      ArcInstallPlan single_plans[ARC_INSTALL_MAX_VARIANTS];
+      assert(single_profile && arc_install_match(single_profile, &single_media,
+             1u, single_plans, NULL) == 1u);
+      ArcInstallStore *single_store = test_install_open(save_path, single_plans,
+         true, true, NULL, NULL, NULL, 0u);
+      assert(single_store && test_install_state(single_store) ==
+             ARC_INSTALL_STORE_UNPUBLISHED &&
+             test_install_publish(single_store, NULL, 0u) &&
+             test_install_state(single_store) == ARC_INSTALL_STORE_READY);
+      test_install_close(single_store);
+      char single_install_dir[4096];
+      snprintf(single_install_dir, sizeof(single_install_dir),
+         "%s/arcdroid/install/%s", save_path, single_plans[0].storage_id);
+      TreeSnapshot single_install_bytes = snapshot_tree(single_install_dir);
+      assert(single_install_bytes.files >= 3u);
+      option_hard_disc = "auto";
+      option_install_saves = "persistent";
+      option_writes = "shadow";
+      option_jfd_boot = "auto";
+      observed_opendir_path = package_dir;
+      observed_vfs_path = package_path;
+      unsigned single_profiles_before, single_stores_before;
+      arc_libretro_test_install_access_counts(&single_profiles_before,
+                                              &single_stores_before);
+      unsigned single_dirs_before = observed_opendir_calls;
+      unsigned single_reads_before = observed_vfs_read_opens;
+      phase = PHASE_LOAD; assert(retro_load_game(&single_hd_install));
+      if (!strstr(machine_resolution_log, "resolved=A3020 reason=hd-media") ||
+          strcmp(last_jfd_boot_log,
+                 "JFD boot: path=native reason=hard-disc\n") ||
+          !strstr(hard_disc_policy_log, "reason=attached") ||
+          !same_snapshot(single_install_bytes,
+                         snapshot_tree(single_install_dir)))
+         fprintf(stderr, "single HD route: machine=%s boot=%s policy=%s install-files=%u/%u\n",
+                 machine_resolution_log, last_jfd_boot_log,
+                 hard_disc_policy_log, single_install_bytes.files,
+                 snapshot_tree(single_install_dir).files);
+      assert(strstr(machine_resolution_log, "resolved=A3020 reason=hd-media") &&
+             !strcmp(last_jfd_boot_log,
+                     "JFD boot: path=native reason=hard-disc\n") &&
+             strstr(hard_disc_policy_log, "reason=attached") &&
+             same_snapshot(single_install_bytes,
+                           snapshot_tree(single_install_dir)));
+      unsigned single_profiles_after, single_stores_after;
+      arc_libretro_test_install_access_counts(&single_profiles_after,
+                                              &single_stores_after);
+      assert(single_profiles_after == single_profiles_before &&
+             single_stores_after == single_stores_before &&
+             observed_opendir_calls == single_dirs_before &&
+             observed_vfs_read_opens == single_reads_before);
+      retro_reset();
+      arc_libretro_test_install_access_counts(&single_profiles_after,
+                                              &single_stores_after);
+      assert(!strcmp(last_jfd_boot_log,
+                     "JFD boot: path=native reason=hard-disc\n") &&
+             strstr(machine_resolution_log, "resolved=A3020 reason=hd-media") &&
+             single_profiles_after == single_profiles_before &&
+             single_stores_after == single_stores_before &&
+             observed_opendir_calls == single_dirs_before &&
+             observed_vfs_read_opens == single_reads_before &&
+             same_snapshot(single_install_bytes,
+                           snapshot_tree(single_install_dir)));
+      /* Frontend option change crosses into the READY install session. */
+      option_jfd_boot = "adffs"; variable_update = true;
+      retro_reset();
+      uint8_t single_device_id = 0u;
+      assert(strstr(last_jfd_boot_log, "path=adffs-install") &&
+             strstr(hard_disc_policy_log, "reason=install-session") &&
+             arc_engine_test_newio(NULL, NULL, NULL, NULL, &single_device_id) &&
+             single_device_id == 0x05u &&
+             observed_opendir_calls > single_dirs_before &&
+             observed_vfs_read_opens > single_reads_before &&
+             same_snapshot(single_install_bytes,
+                           snapshot_tree(single_install_dir)));
+      option_jfd_boot = "auto"; variable_update = true;
+      retro_reset();
+      assert(!strcmp(last_jfd_boot_log,
+                     "JFD boot: path=native reason=hard-disc\n") &&
+             strstr(hard_disc_policy_log, "reason=attached") &&
+             same_snapshot(single_install_bytes,
+                           snapshot_tree(single_install_dir)));
+      retro_unload_game();
+      observed_vfs_path = NULL;
+      option_install_saves = "temporary";
       ADFFS_GAME("eligible-hd.jfd", adffs_hd);
       observed_opendir_path = package_dir;
       option_hard_disc = "auto";
@@ -10717,6 +10905,10 @@ int main(int argc, char **argv)
       option_jfd_boot = "adffs";
       EXPECT_ADFFS(adffs_hd,
          "JFD boot: path=adffs script=builtin profile=synthetic-test version=\"Synthetic 1.0\"\n");
+      phase = PHASE_LOAD; assert(retro_load_game(&adffs_hd));
+      assert(strstr(hard_disc_policy_log,
+                    "attach=no mode=none reason=adffs-session"));
+      retro_unload_game();
       arc_libretro_test_install_access_counts(&hd_profiles_after,
                                               &hd_stores_after);
       assert(hd_profiles_after > hd_profiles_before &&
@@ -10729,6 +10921,45 @@ int main(int argc, char **argv)
       COPY_ADFFS_FIXTURE("untested.zip");
       EXPECT_NATIVE(adffs_hd, "hard-disc", 0u, NULL);
       COPY_ADFFS_FIXTURE("synthetic.zip");
+      ADFFS_GAME("eligible-hd-rw.jfd", adffs_hd_rw);
+      option_machine = "A3020"; option_cpu = "ARM250";
+      for (unsigned hd_variant = 0u; hd_variant < 2u; ++hd_variant) {
+         struct retro_game_info *hd_game = hd_variant ? &adffs_hd_rw : &adffs_hd;
+         phase = PHASE_LOAD; assert(retro_load_game(hd_game));
+         assert(strstr(machine_resolution_log,
+                       "requested=A3020 resolved=A3020 reason=option") &&
+                !strcmp(last_jfd_boot_log,
+                        "JFD boot: path=native reason=hard-disc\n") &&
+                strstr(hard_disc_policy_log,
+                       "attach=yes mode=writable reason=attached"));
+         retro_unload_game();
+      }
+      option_machine = "Auto"; option_cpu = "Auto";
+      phase = PHASE_LOAD; assert(retro_load_game(&adffs_hd));
+      char damaged_hd_manifest[4096], damaged_hd_dir[4096];
+      snprintf(damaged_hd_dir, sizeof(damaged_hd_dir),
+               "%s/arcdroid/hd/%s", save_path,
+               arc_libretro_test_content_id());
+      snprintf(damaged_hd_manifest, sizeof(damaged_hd_manifest),
+               "%s/ready.a", damaged_hd_dir);
+      retro_unload_game();
+      FILE *damaged_hd_file = fopen(damaged_hd_manifest, "r+b");
+      assert(damaged_hd_file);
+      int damaged_hd_byte = fgetc(damaged_hd_file);
+      assert(damaged_hd_byte >= 0 &&
+             fseek(damaged_hd_file, 20L, SEEK_SET) == 0 &&
+             fputc(damaged_hd_byte ^ 1, damaged_hd_file) >= 0 &&
+             fclose(damaged_hd_file) == 0);
+      TreeSnapshot damaged_hd_bytes = snapshot_tree(damaged_hd_dir);
+      option_writes = "off"; variable_update = true;
+      phase = PHASE_LOAD; assert(retro_load_game(&adffs_hd));
+      assert(!strcmp(last_jfd_boot_log,
+                     "JFD boot: path=native reason=hard-disc\n") &&
+             strstr(hard_disc_policy_log,
+                    "attach=no mode=none reason=damaged") &&
+             same_snapshot(damaged_hd_bytes, snapshot_tree(damaged_hd_dir)));
+      retro_unload_game();
+      option_writes = "off"; variable_update = true;
       observed_opendir_path = NULL;
       option_cpu = "ARM2";
       variable_update = true;

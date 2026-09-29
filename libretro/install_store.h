@@ -44,4 +44,7 @@ bool arc_install_store_native_path(const char *path);
 bool arc_install_store_probe_writable(ArcInstallStore *store);
 bool arc_install_store_publish(ArcInstallStore *store,
    char *error, size_t error_size);
+#if defined(ARCDROID_TEST_FAULTS)
+void arc_install_store_test_corrupt_native_format(bool enabled);
+#endif
 #endif

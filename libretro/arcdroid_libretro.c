@@ -606,12 +606,14 @@ static bool arc_hd_native_route(const ArcCoreOptions *options,
                                 ArcMachine machine)
 {
    const ArcMachineDescriptor *descriptor = arc_machine_descriptor(machine);
+   /* Preparation frees the parsed JFD before machine preflight; these
+    * retained fields also remain valid after the selected JFD is refreshed. */
    return options->jfd_boot == ARC_JFD_BOOT_AUTO && descriptor &&
       descriptor->ide_capable && arc_media_count == 1u &&
       !arc_folder_set_active && arc_media[0].info.kind == ARC_MEDIA_JFD &&
       arc_media_is_hd(&arc_media[0]) &&
-      arc_media[0].jfd.disc_number == 1u &&
-      arc_media[0].jfd.disc_count == 1u;
+      arc_media[0].jfd_disc_number == 1u &&
+      arc_media[0].jfd_disc_count == 1u;
 }
 
 static bool arc_install_hd_machine_needed(const ArcCoreOptions *options)
@@ -3112,6 +3114,7 @@ static void arc_hd_reconcile(void)
    arc_hd_write_failure_noticed = false;
    const ArcMachineDescriptor *machine = arc_machine_descriptor(arc_session_machine);
    const char *reason = "not-attachable";
+   char unavailable_reason[sizeof(arc_hd_reason)];
    if (arc_adffs_active) reason = "adffs-session";
    else if (arc_install_hd_mode || arc_install_choosing) reason = "install-session";
    else if (!machine || !machine->ide_capable) reason = "not-attachable";
@@ -3142,7 +3145,9 @@ static void arc_hd_reconcile(void)
          arc_message(message, RETRO_LOG_ERROR);
       } else if (!writable) reason = "disk-writes-off";
       else {
-         reason = "unavailable:create";
+         snprintf(unavailable_reason, sizeof(unavailable_reason),
+                  "unavailable:%s", error[0] ? error : "storage-failure");
+         reason = unavailable_reason;
          if (!arc_hd_failure_noticed) {
             arc_hd_failure_noticed = true;
             char message[320];
@@ -6326,7 +6331,6 @@ static bool arc_chooser_confirm(void)
             return true;
          }
          install_mode = false;
-         native_choice = true;
       } else {
          remembered = arc_install_choice_publish((unsigned)selected);
          if (!remembered)
