@@ -15,12 +15,17 @@ natively when its extended header permits writing, its native write layout is
 supported, and its header OS mask is unspecified or includes RISC OS 3.1.
 This keeps disc changes in ArcDroid's persistent JFD store even when an ADFFS
 package is installed. An OS mask that excludes RISC OS 3.1, a protected image,
-or an unsupported write layout retains the ADFFS path when eligible. Choose
-`Native` to force the native path, or `ADFFS preferred` to bypass the automatic
-native-writable rule. An existing native save still takes precedence under
-`ADFFS preferred`, so saved changes never silently disappear. `ADFFS Package`
-defaults to `Verified only`; `Allow untested` permits package versions whose
-runtime files do not match ArcDroid's known profile.
+or an unsupported write layout retains the ADFFS path when eligible.
+The rule applies regardless of `Disk Writes`; with `Disk Writes: Off`, a
+qualifying image boots natively write-protected and a loader that must write at
+boot may fail, so choose `ADFFS preferred` and follow the recovery procedure
+below.
+
+Choose `Native` to force the native path, or `ADFFS preferred` to bypass the
+automatic native-writable rule. An existing native save still takes precedence
+under `ADFFS preferred`, so saved changes never silently disappear.
+`ADFFS Package` defaults to `Verified only`; `Allow untested` permits package
+versions whose runtime files do not match ArcDroid's known profile.
 
 To return an automatically native-writable image to ADFFS, select `ADFFS
 preferred` and reset or reload the content. Existing native changes still take

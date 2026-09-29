@@ -2456,6 +2456,7 @@ def build_adffs_fixtures(output: Path) -> None:
     (output / "writable-size.jfd").write_bytes(longer)
     for name, disc, count, game in (
             ("writable-game.jfd", 1, 1, 54322),
+            ("writable-install.jfd", 1, 1, 10587),
             ("writable-disc.jfd", 2, 1, 54321),
             ("writable-count.jfd", 1, 2, 54321)):
         changed = bytearray(writable)
@@ -2464,7 +2465,11 @@ def build_adffs_fixtures(output: Path) -> None:
     for name, flags in (("writable-wp.jfd", 3),
                         ("writable-no-flag.jfd", 0),
                         ("writable-os31.jfd", 2 | (1 << 17)),
-                        ("writable-os2.jfd", 2 | (1 << 16))):
+                        ("writable-os16-17.jfd", 2 | (1 << 16) | (1 << 17)),
+                        ("writable-os17-22.jfd", 2 | (0x7e << 16)),
+                        ("writable-os2.jfd", 2 | (1 << 16)),
+                        ("writable-os18.jfd", 2 | (1 << 18)),
+                        ("writable-os22.jfd", 2 | (1 << 22))):
         changed = bytearray(writable)
         struct.pack_into("<I", changed, 304, flags)
         (output / name).write_bytes(changed)

@@ -388,7 +388,12 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
     "${FIXTURE_DIR}/adffs/too-large.jfd"
     "${FIXTURE_DIR}/adffs/decoded-limit.jfd"
     "${FIXTURE_DIR}/adffs/decoded-too-large.jfd"
-    "${FIXTURE_DIR}/adffs/multi.m3u")
+    "${FIXTURE_DIR}/adffs/multi.m3u"
+    "${FIXTURE_DIR}/adffs/writable-install.jfd"
+    "${FIXTURE_DIR}/adffs/writable-os16-17.jfd"
+    "${FIXTURE_DIR}/adffs/writable-os17-22.jfd"
+    "${FIXTURE_DIR}/adffs/writable-os18.jfd"
+    "${FIXTURE_DIR}/adffs/writable-os22.jfd")
   list(APPEND ADFFS_FIXTURES
     "${FIXTURE_DIR}/adffs/install-1.jfd"
     "${FIXTURE_DIR}/adffs/install-2.jfd"

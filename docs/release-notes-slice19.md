@@ -9,6 +9,11 @@ images is removed. Images whose OS mask excludes RISC OS 3.1, whose header
 prohibits writing, or whose native write layout is unsupported retain the ADFFS
 path when eligible. Install sessions remain on their existing path.
 
+The rule applies regardless of `Disk Writes`; with `Disk Writes: Off`, a
+qualifying image boots natively write-protected and a loader that must write at
+boot may fail, so choose `ADFFS preferred` and follow the recovery procedure
+below.
+
 A native launch can show the game's own original-disc acknowledgement with
 `Cancel` selected by default. Choose `OK` with the pointer; Return or pad B can
 cancel and leave the desktop. ArcDroid does not confirm the game's dialog for

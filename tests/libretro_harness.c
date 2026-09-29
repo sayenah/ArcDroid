@@ -751,7 +751,9 @@ static bool environment(unsigned command, void *data)
             if (!strcmp(definition->key, "arcdroid_jfd_boot"))
             {
                found_jfd_boot = true;
-               assert(!strcmp(definition->default_value, "auto") &&
+               assert(!strcmp(definition->info,
+                      "Auto uses the ADFFS package for eligible JFDs, except single-disc JFDs that ArcDroid can write natively, which boot natively to keep saves. Native never uses ADFFS. ADFFS preferred bypasses this rule; saved native changes still take precedence.") &&
+                      !strcmp(definition->default_value, "auto") &&
                       !strcmp(definition->values[0].value, "auto") &&
                       !strcmp(definition->values[1].value, "native") &&
                       !strcmp(definition->values[2].value, "adffs") &&
@@ -9916,10 +9918,12 @@ int main(int argc, char **argv)
       snprintf(package_dir, sizeof(package_dir), "%s/arcdroid/adffs", system_path);
       observed_opendir_path = package_dir;
 #define EXPECT_WRITABLE(media) do { \
+         unsigned before_lines = jfd_boot_log_lines; \
          unsigned package_lookups = observed_opendir_calls; \
          unsigned notices = adffs_notice_calls; \
          phase = PHASE_LOAD; assert(retro_load_game(&(media))); \
-         assert(!strcmp(last_jfd_boot_log, \
+         assert(jfd_boot_log_lines == before_lines + 1u && \
+                !strcmp(last_jfd_boot_log, \
                         "JFD boot: path=native reason=native-writable\n") && \
                 observed_opendir_calls == package_lookups && \
                 adffs_notice_calls == notices); \
@@ -9966,16 +9970,29 @@ int main(int argc, char **argv)
       ADFFS_GAME("writable-wp.jfd", writable_wp);
       ADFFS_GAME("writable-no-flag.jfd", writable_no_flag);
       ADFFS_GAME("writable-os31.jfd", writable_os31);
+      ADFFS_GAME("writable-os16-17.jfd", writable_os16_17);
+      ADFFS_GAME("writable-os17-22.jfd", writable_os17_22);
       ADFFS_GAME("writable-os2.jfd", writable_os2);
+      ADFFS_GAME("writable-os18.jfd", writable_os18);
+      ADFFS_GAME("writable-os22.jfd", writable_os22);
+      ADFFS_GAME("writable-install.jfd", writable_install);
       ADFFS_GAME("writable-layout-fail.jfd", writable_layout_fail);
       ADFFS_GAME("writable-legacy.jfd", writable_legacy);
       EXPECT_WRITABLE(writable_digest);
       EXPECT_WRITABLE(writable_os31);
+      EXPECT_NATIVE(writable_install, "install-script-mismatch", 1u,
+                    "matching built-in install script");
+      EXPECT_WRITABLE(writable_os16_17);
+      EXPECT_WRITABLE(writable_os17_22);
       EXPECT_ADFFS(writable_wp,
          "JFD boot: path=adffs script=embedded profile=synthetic-test version=\"Synthetic 1.0\"\n");
       EXPECT_ADFFS(writable_no_flag,
          "JFD boot: path=adffs script=embedded profile=synthetic-test version=\"Synthetic 1.0\"\n");
       EXPECT_ADFFS(writable_os2,
+         "JFD boot: path=adffs script=embedded profile=synthetic-test version=\"Synthetic 1.0\"\n");
+      EXPECT_ADFFS(writable_os18,
+         "JFD boot: path=adffs script=embedded profile=synthetic-test version=\"Synthetic 1.0\"\n");
+      EXPECT_ADFFS(writable_os22,
          "JFD boot: path=adffs script=embedded profile=synthetic-test version=\"Synthetic 1.0\"\n");
       EXPECT_ADFFS(writable_layout_fail,
          "JFD boot: path=adffs script=embedded profile=synthetic-test version=\"Synthetic 1.0\"\n");
