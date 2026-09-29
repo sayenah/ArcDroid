@@ -10,7 +10,6 @@
 #include "folder_set.h"
 #include "jfd.h"
 #include "jfd_store.h"
-#include "native_route.h"
 #include "playlist.h"
 #include "zip_content.h"
 #include "boot_observation.h"
@@ -3028,15 +3027,14 @@ static bool arc_prepare_adffs(bool notify) {
 #endif
    )
       reason = "os";
-   const ArcNativeRoute *route = NULL;
-   if (!reason && arc_core_options.jfd_boot == ARC_JFD_BOOT_AUTO)
-      route = arc_native_route_match(entry->digest.sha1, entry->digest.size,
-         jfd->game_id, jfd->disc_number, jfd->disc_count);
-   if (route) {
-      if (arc_log)
-         arc_log(RETRO_LOG_INFO,
-            "JFD boot: path=native reason=native-route game_id=%u evidence=%s sha1=%s\n",
-            route->game_id, route->evidence, route->sha1);
+   if (!reason && !install && !arc_folder_set_active &&
+       arc_media_count == 1u && jfd->disc_number == 1u &&
+       jfd->disc_count == 1u &&
+       arc_core_options.jfd_boot == ARC_JFD_BOOT_AUTO &&
+       jfd->extended && (jfd->flags & 2u) && !(jfd->flags & 1u) &&
+       jfd->overlay && jfd->overlay->layout_supported &&
+       (!(jfd->flags & 0x7f0000u) || (jfd->flags & (1u << 17)))) {
+      arc_jfd_boot_log("native-writable");
       return false;
    }
    if (reason) {
@@ -5325,7 +5323,7 @@ static const struct retro_core_option_v2_definition arc_base_options[] = {
     "Request a 32 KiB RAM disc if absent before a native desktop helper launches an application. The RAM disc is volatile.", NULL,
     NULL, {{"Auto", NULL}, {"Disabled", NULL}, {NULL, NULL}}, "Auto"},
    {"arcdroid_jfd_boot", "JFD Boot", NULL,
-    "Auto uses the ADFFS package for eligible JFDs, except titles proven to keep saves natively. Native never uses ADFFS. ADFFS preferred works like Auto but ignores the native list; saved native changes still take precedence.", NULL,
+    "Auto uses the ADFFS package for eligible JFDs, except single-disc JFDs that ArcDroid can write natively, which boot natively to keep saves. Native never uses ADFFS. ADFFS preferred bypasses this rule; saved native changes still take precedence.", NULL,
     NULL, {{"auto", "Auto"}, {"native", "Native"},
            {"adffs", "ADFFS preferred"}, {NULL, NULL}}, "auto"},
    {"arcdroid_adffs_package", "ADFFS Package", NULL,

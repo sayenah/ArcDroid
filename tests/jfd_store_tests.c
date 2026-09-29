@@ -190,6 +190,45 @@ static ArcJfdImage allocation_fixture(const char *root, const char *name)
    assert(parsed);
    return image;
 }
+static void clear_files(void);
+static void test_native_writable_layout(const char *root)
+{
+   static const struct {
+      const char *name;
+      bool supported;
+      const char *reason;
+   } cases[] = {
+      {"adffs/writable.jfd", true, "rw-flag"},
+      {"adffs/writable-layout-fail.jfd", false, "layout-unsupported"},
+      {"adffs/writable-wp.jfd", false, "wp-flag"},
+      {"adffs/writable-no-flag.jfd", false, "no-flag"},
+      {"adffs/writable-legacy.jfd", false, "legacy-header"},
+      {"adffs/install-1.jfd", true, "rw-flag"}
+   };
+   for (size_t i = 0u; i < sizeof(cases) / sizeof(cases[0]); ++i)
+   {
+      char path[4096], error[160];
+      int n = snprintf(path, sizeof(path), "%s/%s", root, cases[i].name);
+      assert(n > 0 && (size_t)n < sizeof(path));
+      FILE *file = fopen(path, "rb");
+      assert(file && fseek(file, 0, SEEK_END) == 0);
+      long length = ftell(file);
+      assert(length > 0 && fseek(file, 0, SEEK_SET) == 0);
+      uint8_t *bytes = malloc((size_t)length);
+      assert(bytes && fread(bytes, 1u, (size_t)length, file) == (size_t)length);
+      assert(fclose(file) == 0);
+      ArcJfdImage image;
+      assert(arc_jfd_parse_owned(bytes, (size_t)length, &image,
+                                 error, sizeof(error)));
+      const char *reason = NULL;
+      assert(arc_jfd_store_load(&image, "save", true, false, 1u, &reason));
+      assert(image.overlay &&
+             image.overlay->layout_supported == cases[i].supported &&
+             !strcmp(reason, cases[i].reason));
+      arc_jfd_free(&image);
+      clear_files();
+   }
+}
 static bool blank_at(const ArcJfdImage *image, unsigned track, unsigned id)
 {
    ArcJfdView view;
@@ -236,7 +275,6 @@ static void claim_new_slot(uint8_t map[1024], unsigned id)
    map[0] = 0u;
    map[0] = new_map_checksum(map);
 }
-static void clear_files(void);
 static void test_allocation_maps(const char *root)
 {
    const char *reason = NULL;
@@ -915,6 +953,11 @@ int main(int argc, char **argv)
    arc_io_set_vfs(&vfs);
    if (argc == 3)
    {
+      if (!strcmp(argv[2], "native-writable"))
+      {
+         test_native_writable_layout(argv[1]);
+         return 0;
+      }
       test_layout_low(argv[1], argv[2]);
       if (!strcmp(argv[2], "irregular")) test_quarantine_gate(argv[1]);
       return 0;

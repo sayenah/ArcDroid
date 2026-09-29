@@ -4203,7 +4203,7 @@ int main(int argc, char **argv)
       snprintf(adffs_slot_b, sizeof(adffs_slot_b), "%s/arcdroid/jfd/%s.b", save_path, adffs_digest.sha1);
       struct retro_game_info adffs_game = {adffs_jfd, NULL, 0u, NULL};
       arc_libretro_test_adffs_accept_test_os(true);
-      option_jfd_boot = "auto"; option_launch = "auto"; variable_update = true;
+      option_jfd_boot = "adffs"; option_launch = "auto"; variable_update = true;
       fault_opendir_substring = "/arcdroid/jfd";
       phase = PHASE_LOAD; assert(retro_load_game(&adffs_game));
       assert(strstr(last_jfd_boot_log, "JFD boot: path=adffs") &&
@@ -4224,7 +4224,7 @@ int main(int argc, char **argv)
              (file_exists(adffs_slot_a) || file_exists(adffs_slot_b)) &&
              !arc_libretro_test_jfd_formatted_reads(0u));
       retro_unload_game();
-      option_jfd_boot = "auto"; option_launch = "auto"; variable_update = true;
+      option_jfd_boot = "adffs"; option_launch = "auto"; variable_update = true;
       assert(remove(package_path) == 0);
       unsigned native_notices_before = jfd_native_notice_calls;
       phase = PHASE_LOAD; assert(retro_load_game(&adffs_game));
@@ -9869,6 +9869,11 @@ int main(int argc, char **argv)
          snprintf(expected_line, sizeof(expected_line), \
                   "JFD boot: path=native reason=%s\n", (why)); \
          phase = PHASE_LOAD; assert(retro_load_game(&(variable))); \
+         if (strcmp(last_jfd_boot_log, expected_line) || \
+             adffs_notice_calls != before_notices + (notices)) \
+            fprintf(stderr, "native decision expected=%s actual=%s notices=%u/%u\n", \
+                    expected_line, last_jfd_boot_log, \
+                    adffs_notice_calls - before_notices, (notices)); \
          assert(jfd_boot_log_lines == before_lines + 1u && \
                 !strcmp(last_jfd_boot_log, expected_line) && \
                 adffs_notice_calls == before_notices + (notices)); \
@@ -9890,22 +9895,32 @@ int main(int argc, char **argv)
       option_jfd_boot = "auto";
       option_adffs_package = "verified";
       COPY_ADFFS_FIXTURE("synthetic.zip");
-      /* Slice 10d: only the test-core identity routes. Package lookup is
-       * observed at the VFS boundary, including failed directory opens. */
-      ADFFS_GAME("route.jfd", routed_plain);
-      ADFFS_GAME("route-gzip.jfd", routed_gzip);
-      ADFFS_GAME("route.zip", routed_zip);
-      ADFFS_GAME("Route-folder.jfd/Route-folder.jfd", routed_folder);
-      ADFFS_GAME("route-multi.m3u", routed_multi);
+      /* The authored JFD has a successful D-076 layout plan and a usable
+       * embedded script. Routing depends on its structure, never identity. */
+      ADFFS_GAME("writable.jfd", routed_plain);
+      ADFFS_GAME("writable-gzip.jfd", routed_gzip);
+      ADFFS_GAME("writable.zip", routed_zip);
+      ADFFS_GAME("Writable-folder.jfd/Writable-folder.jfd", routed_folder);
+      ADFFS_GAME("writable-multi.m3u", routed_multi);
+      ArcDigest writable_digest_id = digest_file(routed_plain_path);
+      char writable_slot_a[4096], writable_slot_b[4096];
+      snprintf(writable_slot_a, sizeof(writable_slot_a),
+               "%s/arcdroid/jfd/%s.a", save_path, writable_digest_id.sha1);
+      snprintf(writable_slot_b, sizeof(writable_slot_b),
+               "%s/arcdroid/jfd/%s.b", save_path, writable_digest_id.sha1);
+      /* This harness owns these two generated slots. A prior interrupted
+       * run must not turn the fresh-overlay assertions into a reload case. */
+      if (file_exists(writable_slot_a)) assert(remove(writable_slot_a) == 0);
+      if (file_exists(writable_slot_b)) assert(remove(writable_slot_b) == 0);
       char package_dir[4096];
       snprintf(package_dir, sizeof(package_dir), "%s/arcdroid/adffs", system_path);
       observed_opendir_path = package_dir;
-#define EXPECT_ROUTE(media) do { \
+#define EXPECT_WRITABLE(media) do { \
          unsigned package_lookups = observed_opendir_calls; \
          unsigned notices = adffs_notice_calls; \
          phase = PHASE_LOAD; assert(retro_load_game(&(media))); \
-         assert(strstr(last_jfd_boot_log, \
-                    "JFD boot: path=native reason=native-route game_id=54321 evidence=synthetic route fixture sha1=c4547664ee2d0706596f9ae8b2bd12a114c54224") && \
+         assert(!strcmp(last_jfd_boot_log, \
+                        "JFD boot: path=native reason=native-writable\n") && \
                 observed_opendir_calls == package_lookups && \
                 adffs_notice_calls == notices); \
          retro_unload_game(); \
@@ -9938,20 +9953,35 @@ int main(int argc, char **argv)
       retro_unload_game();
       option_jfd_boot = "auto";
       COPY_ADFFS_FIXTURE("synthetic.zip");
-      EXPECT_ROUTE(routed_plain);
-      EXPECT_ROUTE(routed_gzip);
-      EXPECT_ROUTE(routed_zip);
+      EXPECT_WRITABLE(routed_plain);
+      EXPECT_WRITABLE(routed_gzip);
+      EXPECT_WRITABLE(routed_zip);
       EXPECT_NATIVE(routed_folder, "multi-image", 0u, NULL);
       EXPECT_NATIVE(routed_multi, "multi-image", 0u, NULL);
-      ADFFS_GAME("route-digest.jfd", route_digest);
-      ADFFS_GAME("route-size.jfd", route_size);
-      ADFFS_GAME("route-game.jfd", route_game);
-      ADFFS_GAME("route-disc.jfd", route_disc);
-      ADFFS_GAME("route-count.jfd", route_count);
-      EXPECT_ADFFS(route_digest,
+      ADFFS_GAME("writable-digest.jfd", writable_digest);
+      ADFFS_GAME("writable-size.jfd", writable_size);
+      ADFFS_GAME("writable-game.jfd", writable_game);
+      ADFFS_GAME("writable-disc.jfd", writable_disc);
+      ADFFS_GAME("writable-count.jfd", writable_count);
+      ADFFS_GAME("writable-wp.jfd", writable_wp);
+      ADFFS_GAME("writable-no-flag.jfd", writable_no_flag);
+      ADFFS_GAME("writable-os31.jfd", writable_os31);
+      ADFFS_GAME("writable-os2.jfd", writable_os2);
+      ADFFS_GAME("writable-layout-fail.jfd", writable_layout_fail);
+      ADFFS_GAME("writable-legacy.jfd", writable_legacy);
+      EXPECT_WRITABLE(writable_digest);
+      EXPECT_WRITABLE(writable_os31);
+      EXPECT_ADFFS(writable_wp,
          "JFD boot: path=adffs script=embedded profile=synthetic-test version=\"Synthetic 1.0\"\n");
+      EXPECT_ADFFS(writable_no_flag,
+         "JFD boot: path=adffs script=embedded profile=synthetic-test version=\"Synthetic 1.0\"\n");
+      EXPECT_ADFFS(writable_os2,
+         "JFD boot: path=adffs script=embedded profile=synthetic-test version=\"Synthetic 1.0\"\n");
+      EXPECT_ADFFS(writable_layout_fail,
+         "JFD boot: path=adffs script=embedded profile=synthetic-test version=\"Synthetic 1.0\"\n");
+      EXPECT_NATIVE(writable_legacy, "no-script", 0u, NULL);
       option_machine = "Auto"; option_cpu = "Auto";
-      phase = PHASE_LOAD; assert(retro_load_game(&route_digest));
+      phase = PHASE_LOAD; assert(retro_load_game(&writable_digest));
       assert(strstr(machine_resolution_log,
                     "requested=Auto resolved=A3000 reason=default"));
       unsigned plain_machine_lines = machine_resolution_lines;
@@ -9969,12 +9999,27 @@ int main(int argc, char **argv)
              !arc_engine_test_newio(NULL, NULL, NULL, NULL, NULL));
       retro_unload_game();
       option_jfd_boot = "auto";
-      EXPECT_ADFFS(route_size,
-         "JFD boot: path=adffs script=embedded profile=synthetic-test version=\"Synthetic 1.0\"\n");
-      EXPECT_ADFFS(route_game,
-         "JFD boot: path=adffs script=embedded profile=synthetic-test version=\"Synthetic 1.0\"\n");
-      EXPECT_NATIVE(route_disc, "multi-disc", 0u, NULL);
-      EXPECT_NATIVE(route_count, "multi-disc", 0u, NULL);
+      EXPECT_WRITABLE(writable_size);
+      EXPECT_WRITABLE(writable_game);
+      option_writes = "shadow"; variable_update = true;
+      EXPECT_WRITABLE(writable_game);
+      char writable_fault_save[4096];
+      snprintf(writable_fault_save, sizeof(writable_fault_save),
+               "%s/native-writable-preparation-fault", save_path);
+      make_directory(writable_fault_save);
+      save_dir = writable_fault_save;
+      fault_mkdir_substring = "/arcdroid/jfd";
+      phase = PHASE_LOAD; assert(retro_load_game(&writable_digest));
+      assert(!strcmp(last_jfd_boot_log,
+                     "JFD boot: path=native reason=native-writable\n") &&
+             !fault_mkdir_substring &&
+             strstr(last_jfd_writes_log, "state=protected") &&
+             strstr(last_jfd_writes_log, "reason=overlay-unreadable"));
+      retro_unload_game();
+      save_dir = save_path;
+      option_writes = "off"; variable_update = true;
+      EXPECT_NATIVE(writable_disc, "multi-disc", 0u, NULL);
+      EXPECT_NATIVE(writable_count, "multi-disc", 0u, NULL);
       option_jfd_boot = "native";
       EXPECT_NATIVE(routed_plain, "option", 0u, NULL);
       option_jfd_boot = "adffs";
@@ -9989,7 +10034,7 @@ int main(int argc, char **argv)
       arc_libretro_test_adffs_accept_test_os(false);
       EXPECT_NATIVE(routed_plain, "os", 0u, NULL);
       arc_libretro_test_adffs_accept_test_os(true);
-      EXPECT_ROUTE(routed_plain);
+      EXPECT_WRITABLE(routed_plain);
       option_jfd_boot = "adffs";
       unsigned option_boot_lines = jfd_boot_log_lines;
       phase = PHASE_LOAD; assert(retro_load_game(&routed_plain));
@@ -9997,10 +10042,11 @@ int main(int argc, char **argv)
       option_jfd_boot = "auto";
       variable_update = true;
       phase = PHASE_RUN; retro_run();
-      assert(jfd_boot_log_lines == option_boot_lines + 1u);
+      assert(jfd_boot_log_lines == option_boot_lines + 1u &&
+             strstr(last_jfd_boot_log, "path=adffs"));
       unsigned routed_machine_lines = machine_resolution_lines;
       retro_reset();
-      assert(strstr(last_jfd_boot_log, "reason=native-route") &&
+      assert(strstr(last_jfd_boot_log, "reason=native-writable") &&
              machine_resolution_lines == routed_machine_lines &&
              !arc_engine_test_newio(NULL, NULL, NULL, NULL, NULL));
       retro_unload_game();
@@ -10009,26 +10055,57 @@ int main(int argc, char **argv)
       assert(strstr(last_jfd_boot_log, "path=adffs"));
       retro_unload_game();
       option_jfd_boot = "auto";
-      EXPECT_ROUTE(routed_plain);
+      EXPECT_WRITABLE(routed_plain);
       assert(remove(package_path) == 0);
-      EXPECT_ROUTE(routed_plain);
+      EXPECT_WRITABLE(routed_plain);
       option_jfd_boot = "adffs";
       EXPECT_NATIVE(routed_plain, "no-package", 1u, "carries a JASPP boot script");
       COPY_ADFFS_FIXTURE("bad-crc.zip");
       option_jfd_boot = "auto";
-      EXPECT_ROUTE(routed_plain);
+      EXPECT_WRITABLE(routed_plain);
       option_jfd_boot = "adffs";
       EXPECT_NATIVE(routed_plain, "invalid-package:member-crc32-mismatch", 1u,
                     "member-crc32-mismatch");
       COPY_ADFFS_FIXTURE("untested.zip");
       option_jfd_boot = "auto";
-      EXPECT_ROUTE(routed_plain);
+      EXPECT_WRITABLE(routed_plain);
       option_jfd_boot = "adffs";
       EXPECT_NATIVE(routed_plain, "untested-package", 1u, "untested-package");
       option_jfd_boot = "auto";
       COPY_ADFFS_FIXTURE("synthetic.zip");
+      /* Store state never changes the structural choice. Preferred ADFFS
+       * still honours a native save, including with writes disabled. */
+      *(void **)(&arc_libretro_test_jfd_commit) =
+         dlsym(module, "arc_libretro_test_jfd_commit");
+      assert(arc_libretro_test_jfd_commit);
+      option_writes = "shadow"; variable_update = true;
+      phase = PHASE_LOAD; assert(retro_load_game(&routed_plain));
+      assert(!strcmp(last_jfd_boot_log,
+                     "JFD boot: path=native reason=native-writable\n") &&
+             arc_libretro_test_jfd_commit(0u, 0u, 0x5au));
+      retro_unload_game();
+      option_jfd_boot = "adffs"; option_writes = "off";
+      variable_update = true;
+      EXPECT_NATIVE(routed_plain, "native-saves", 0u, NULL);
+      option_jfd_boot = "auto"; variable_update = true;
+      EXPECT_WRITABLE(routed_plain);
+      const char *writable_slot = file_exists(writable_slot_a) ?
+                                  writable_slot_a : writable_slot_b;
+      FILE *writable_damage = fopen(writable_slot, "r+b");
+      assert(writable_damage);
+      int slot_byte = fgetc(writable_damage);
+      assert(slot_byte >= 0 && fseek(writable_damage, 0L, SEEK_SET) == 0 &&
+             fputc(slot_byte ^ 1, writable_damage) >= 0 &&
+             fclose(writable_damage) == 0);
+      phase = PHASE_LOAD; assert(retro_load_game(&routed_plain));
+      assert(!strcmp(last_jfd_boot_log,
+                     "JFD boot: path=native reason=native-writable\n") &&
+             strstr(last_jfd_writes_log, "state=protected") &&
+             strstr(last_jfd_writes_log, "reason=overlay-invalid"));
+      retro_unload_game();
+      option_writes = "off";
       observed_opendir_path = NULL;
-#undef EXPECT_ROUTE
+#undef EXPECT_WRITABLE
       EXPECT_NATIVE(game, "not-jfd", 0u, NULL);
 
       ADFFS_GAME("multi.m3u", adffs_multi);
