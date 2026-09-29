@@ -56,7 +56,6 @@ set(ARCDROID_CORE_SOURCES
   core/input.c
   core/input_mapping.c
   core/input_profiles.c
-  core/native_route.c
   core/osk.c
   core/launch.c
   core/launch_discovery.c
@@ -254,20 +253,6 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
   target_include_directories(arcdroid_core_test PUBLIC
     core libretro/include "${CMAKE_CURRENT_BINARY_DIR}/generated")
   target_link_libraries(arcdroid_core_test PRIVATE arcdroid_zlib)
-  add_executable(native_route_test tests/native_route_test.c)
-  target_link_libraries(native_route_test PRIVATE arcdroid_core_test)
-  target_compile_options(native_route_test PRIVATE $<$<C_COMPILER_ID:GNU,Clang,AppleClang>:-UNDEBUG>)
-  if(ARCDROID_SANITIZERS)
-    target_link_libraries(native_route_test PRIVATE arcdroid_sanitizer_link)
-  endif()
-  add_test(NAME native-route-table COMMAND native_route_test)
-  add_executable(native_route_shipping_test tests/native_route_shipping_test.c)
-  target_link_libraries(native_route_shipping_test PRIVATE arcdroid_core)
-  target_compile_options(native_route_shipping_test PRIVATE $<$<C_COMPILER_ID:GNU,Clang,AppleClang>:-UNDEBUG>)
-  if(ARCDROID_SANITIZERS)
-    target_link_libraries(native_route_shipping_test PRIVATE arcdroid_sanitizer_link)
-  endif()
-  add_test(NAME native-route-shipping COMMAND native_route_shipping_test)
   add_executable(install_support_target tests/install_support_target.c
     engine/arc_install_doorbell.c)
   target_include_directories(install_support_target PRIVATE engine)
@@ -403,7 +388,12 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
     "${FIXTURE_DIR}/adffs/too-large.jfd"
     "${FIXTURE_DIR}/adffs/decoded-limit.jfd"
     "${FIXTURE_DIR}/adffs/decoded-too-large.jfd"
-    "${FIXTURE_DIR}/adffs/multi.m3u")
+    "${FIXTURE_DIR}/adffs/multi.m3u"
+    "${FIXTURE_DIR}/adffs/writable-install.jfd"
+    "${FIXTURE_DIR}/adffs/writable-os16-17.jfd"
+    "${FIXTURE_DIR}/adffs/writable-os17-22.jfd"
+    "${FIXTURE_DIR}/adffs/writable-os18.jfd"
+    "${FIXTURE_DIR}/adffs/writable-os22.jfd")
   list(APPEND ADFFS_FIXTURES
     "${FIXTURE_DIR}/adffs/install-1.jfd"
     "${FIXTURE_DIR}/adffs/install-2.jfd"
@@ -777,6 +767,8 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
   endif()
   add_dependencies(jfd_store_tests test-fixtures)
   add_test(NAME jfd-store COMMAND jfd_store_tests "${FIXTURE_DIR}")
+  add_test(NAME native-writable-layout COMMAND jfd_store_tests
+    "${FIXTURE_DIR}" native-writable)
   add_test(NAME jfd-gate-short COMMAND jfd_store_tests "${FIXTURE_DIR}" short)
   add_test(NAME jfd-gate-irregular COMMAND jfd_store_tests "${FIXTURE_DIR}" irregular)
   add_test(NAME jfd-gate-timing COMMAND jfd_store_tests "${FIXTURE_DIR}" timing)
@@ -966,7 +958,7 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
     add_test(NAME jfd-quarantine-adffs COMMAND libretro_harness
       $<TARGET_FILE:arcdroid_libretro_test>
       "${FIXTURE_DIR}/arcdroid-test.rom"
-      "${FIXTURE_DIR}/adffs/route-quarantine.jfd"
+      "${FIXTURE_DIR}/adffs/quarantine-adffs.jfd"
       "${CMAKE_CURRENT_BINARY_DIR}/jfd-quarantine-adffs-data"
       --jfd-quarantine-adffs
       "${FIXTURE_DIR}/adffs/synthetic.zip")

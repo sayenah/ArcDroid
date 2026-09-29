@@ -2420,38 +2420,71 @@ def build_adffs_fixtures(output: Path) -> None:
 
     embedded = b"Set ArcFixture Embedded\rADFFS:extras.JoyMod\r"
     (output / "eligible.jfd").write_bytes(adffs_jfd(123, embedded=embedded))
-    route = adffs_jfd(54321, embedded=embedded)
-    (output / "route.jfd").write_bytes(route)
-    quarantine_route = bytearray(route)
-    track_table = struct.unpack_from("<I", quarantine_route, 24)[0]
-    sector_table = struct.unpack_from("<I", quarantine_route, 28)[0]
+    # Two complete D-format track-sides satisfy the D-076 layout planner;
+    # the remaining sides are empty and the captured image stays small enough
+    # for the ADFFS carrier. All identities and content here are invented.
+    writable = build_pdd5_jfd(bytes(819200),
+                              {0: list(range(5)), 1: list(range(5))},
+                              title=b"ArcDroid writable media")
+    writable += embedded
+    struct.pack_into("<I", writable, 8, len(writable))
+    struct.pack_into("<HHI", writable, 12, 1, 1, 54321)
+    struct.pack_into("<I", writable, 312, len(embedded))
+    (output / "writable.jfd").write_bytes(writable)
+    quarantine_image = adffs_jfd(54321, embedded=embedded)
+    track_table = struct.unpack_from("<I", quarantine_image, 24)[0]
+    sector_table = struct.unpack_from("<I", quarantine_image, 28)[0]
     first_descriptor = sector_table + struct.unpack_from(
-        "<I", quarantine_route, track_table)[0]
-    header = struct.unpack_from("<I", quarantine_route, first_descriptor)[0]
-    struct.pack_into("<I", quarantine_route, first_descriptor,
+        "<I", quarantine_image, track_table)[0]
+    header = struct.unpack_from("<I", quarantine_image, first_descriptor)[0]
+    struct.pack_into("<I", quarantine_image, first_descriptor,
                      (header & ~(0xF << 16)) | (8 << 16))
-    (output / "route-quarantine.jfd").write_bytes(quarantine_route)
-    (output / "route-gzip.jfd").write_bytes(gzip_member(bytes(route)))
-    (output / "route.zip").write_bytes(_zip_bytes([
-        ("ArcDroid synthetic route.jfd", bytes(route), True)]))
-    (output / "route-multi.m3u").write_text("route.jfd\nembedded-only.jfd\n")
-    route_folder = output / "Route-folder.jfd"
-    route_folder.mkdir(exist_ok=True)
-    (route_folder / "Route-folder.jfd").write_bytes(route)
-    (route_folder / "Other.jfd").write_bytes(adffs_jfd(99999, embedded=embedded))
-    different = bytearray(route)
+    (output / "quarantine-adffs.jfd").write_bytes(quarantine_image)
+    (output / "writable-gzip.jfd").write_bytes(gzip_member(bytes(writable)))
+    (output / "writable.zip").write_bytes(_zip_bytes([
+        ("ArcDroid writable.jfd", bytes(writable), True)]))
+    (output / "writable-multi.m3u").write_text("writable.jfd\nembedded-only.jfd\n")
+    writable_folder = output / "Writable-folder.jfd"
+    writable_folder.mkdir(exist_ok=True)
+    (writable_folder / "Writable-folder.jfd").write_bytes(writable)
+    (writable_folder / "Other.jfd").write_bytes(adffs_jfd(99999, embedded=embedded))
+    different = bytearray(writable)
     different[-1] ^= 1
-    (output / "route-digest.jfd").write_bytes(different)
-    longer = bytearray(route) + b"x"
+    (output / "writable-digest.jfd").write_bytes(different)
+    longer = bytearray(writable) + b"x"
     struct.pack_into("<I", longer, 8, len(longer))
-    (output / "route-size.jfd").write_bytes(longer)
+    (output / "writable-size.jfd").write_bytes(longer)
     for name, disc, count, game in (
-            ("route-game.jfd", 1, 1, 54322),
-            ("route-disc.jfd", 2, 1, 54321),
-            ("route-count.jfd", 1, 2, 54321)):
-        changed = bytearray(route)
+            ("writable-game.jfd", 1, 1, 54322),
+            ("writable-install.jfd", 1, 1, 10587),
+            ("writable-disc.jfd", 2, 1, 54321),
+            ("writable-count.jfd", 1, 2, 54321)):
+        changed = bytearray(writable)
         struct.pack_into("<HHI", changed, 12, disc, count, game)
         (output / name).write_bytes(changed)
+    for name, flags in (("writable-wp.jfd", 3),
+                        ("writable-no-flag.jfd", 0),
+                        ("writable-os31.jfd", 2 | (1 << 17)),
+                        ("writable-os16-17.jfd", 2 | (1 << 16) | (1 << 17)),
+                        ("writable-os17-22.jfd", 2 | (0x7e << 16)),
+                        ("writable-os2.jfd", 2 | (1 << 16)),
+                        ("writable-os18.jfd", 2 | (1 << 18)),
+                        ("writable-os22.jfd", 2 | (1 << 22))):
+        changed = bytearray(writable)
+        struct.pack_into("<I", changed, 304, flags)
+        (output / name).write_bytes(changed)
+    # A legacy header is provided by the ordinary single-sector generator.
+    legacy = build_jfd(bytes(256))
+    struct.pack_into("<HHI", legacy, 12, 1, 1, 54321)
+    (output / "writable-legacy.jfd").write_bytes(legacy)
+    unsupported = build_pdd5_jfd(bytes(819200),
+                                 {0: list(range(5)), 1: list(range(5))},
+                                 track_count=159)
+    unsupported += embedded
+    struct.pack_into("<I", unsupported, 8, len(unsupported))
+    struct.pack_into("<HHI", unsupported, 12, 1, 1, 54321)
+    struct.pack_into("<I", unsupported, 312, len(embedded))
+    (output / "writable-layout-fail.jfd").write_bytes(unsupported)
     (output / "embedded-only.jfd").write_bytes(adffs_jfd(99999, embedded=embedded))
     (output / "no-script.jfd").write_bytes(adffs_jfd(0))
     (output / "game-only.jfd").write_bytes(adffs_jfd(99999))
