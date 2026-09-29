@@ -188,6 +188,7 @@ static const char *option_pointer_speed = "600";
 static const char *option_pointer_deadzone = "15";
 static const char *option_writes = "shadow";
 static const char *option_short_tail = "missing";
+static const char *option_jfd_omitted = "file-data";
 static const char *option_launch_ramdisc = "Auto";
 static bool real_boot_ramdisc_toggle_reset;
 static const char *option_install_saves = "temporary";
@@ -257,6 +258,8 @@ static unsigned jfd_refusal_log_lines;
 static char last_jfd_refusal_log[512];
 static char last_jfd_writes_log[512];
 static char last_jfd_identification_log[512];
+static char last_jfd_file_data_log[512];
+static unsigned jfd_file_data_log_lines;
 static unsigned jfd_failed_status_calls;
 static unsigned jfd_damaged_notice_calls;
 static unsigned jfd_off_notice_calls;
@@ -637,6 +640,11 @@ static void frontend_log(enum retro_log_level level, const char *format, ...)
    if (!strncmp(message, "JFD identification:", 19u))
       snprintf(last_jfd_identification_log,
                sizeof(last_jfd_identification_log), "%s", message);
+   if (!strncmp(message, "JFD file-data:", 14u))
+   {
+      ++jfd_file_data_log_lines;
+      snprintf(last_jfd_file_data_log,sizeof(last_jfd_file_data_log),"%s",message);
+   }
    if (strstr(message, "JFD content is never written in place"))
       ++jfd_original_notice_calls;
    if (!strncmp(message, "ADFFS package:", 14u))
@@ -695,11 +703,12 @@ static bool environment(unsigned command, void *data)
          const struct retro_core_options_v2 *options = data;
          unsigned count = 0u;
          while (options->definitions[count].key) ++count;
-         assert(count == 39u && options->categories &&
+         assert(count == 40u && options->categories &&
                 !strcmp(options->categories[0].key, "pad_mapping") &&
                 !strcmp(options->categories[0].desc, "Pad Mapping"));
          bool found_profile = false, found_osk = false, found_chooser = false;
          bool found_short_tail = false, found_ramdisc = false;
+         bool found_jfd_omitted = false;
          bool found_jfd_boot = false, found_adffs_package = false;
          unsigned pads = 0u;
          const char *categorized_pad_labels[ARC_PAD_PORTS * ARC_PAD_INPUT_COUNT] = {0};
@@ -732,6 +741,16 @@ static bool environment(unsigned command, void *data)
                       !strcmp(definition->values[0].label, "Missing") &&
                       !strcmp(definition->values[1].value, "zero-filled") &&
                       !strcmp(definition->values[1].label, "Zero-filled"));
+            }
+            if (!strcmp(definition->key, "arcdroid_jfd_omitted"))
+            {
+               found_jfd_omitted = true;
+               assert(!strcmp(definition->desc,"JFD Omitted Sectors") &&
+                      !strcmp(definition->default_value,"file-data") &&
+                      !strcmp(definition->values[0].value,"file-data") &&
+                      !strcmp(definition->values[1].value,"strict") &&
+                      !definition->values[2].value &&
+                      strstr(definition->info,"load or reset"));
             }
             if (!strcmp(definition->key, "arcdroid_launch_ramdisc"))
             {
@@ -780,7 +799,7 @@ static bool environment(unsigned command, void *data)
                categorized_pad_labels[pads++] = definition->desc_categorized;
             }
          }
-         assert(found_profile && found_osk && found_chooser && found_short_tail && found_ramdisc && found_jfd_boot &&
+         assert(found_profile && found_osk && found_chooser && found_short_tail && found_jfd_omitted && found_ramdisc && found_jfd_boot &&
                 found_adffs_package && pads == 20u);
          return true;
       }
@@ -900,6 +919,7 @@ static bool environment(unsigned command, void *data)
          else if (!strcmp(variable->key, "arcdroid_pointer_deadzone")) variable->value = option_pointer_deadzone;
          else if (!strcmp(variable->key, "arcdroid_disk_writes")) variable->value = option_writes;
          else if (!strcmp(variable->key, "arcdroid_short_tail")) variable->value = option_short_tail;
+         else if (!strcmp(variable->key, "arcdroid_jfd_omitted")) variable->value = option_jfd_omitted;
          else if (!strcmp(variable->key, "arcdroid_launch_ramdisc"))
             variable->value = option_launch_ramdisc;
          else if (!strcmp(variable->key, "arcdroid_install_saves")) variable->value = option_install_saves;
@@ -2099,6 +2119,7 @@ int main(int argc, char **argv)
    bool jfd_merge_step = false;
    bool jfd_allocation_step = false;
    bool jfd_identification_step = false;
+   bool jfd_file_data_step = false;
    bool jfd_allocation_set = false;
    bool install_guest = false;
    bool cmos_exerciser = false;
@@ -2130,6 +2151,8 @@ int main(int argc, char **argv)
       jfd_allocation_step = true;
    else if (argc == 9 && !strcmp(argv[5], "--jfd-identification-step"))
       jfd_identification_step = true;
+   else if (argc == 6 && !strcmp(argv[5], "--jfd-file-data-step"))
+      jfd_file_data_step = true;
    else if (argc == 7 && !strcmp(argv[5], "--jfd-allocation-set"))
       jfd_allocation_set = true;
    else if (argc == 6 && !strcmp(argv[5], "--cmos-exerciser"))
@@ -2418,7 +2441,7 @@ int main(int argc, char **argv)
       assert(arc_libretro_test_adffs_accept_test_os &&
              arc_libretro_test_adffs_carrier_matches);
    }
-   if (short_tail_guest || short_tail_discovery)
+   if (short_tail_guest || short_tail_discovery || jfd_file_data_step)
    {
       *(void **)(&arc_libretro_test_staged_path) =
          dlsym(module, "arc_libretro_test_staged_path");
@@ -2428,7 +2451,7 @@ int main(int argc, char **argv)
       assert(arc_libretro_test_boot_media_digest);
    }
    if (!cmos_exerciser && !power_on_cmos_guest && !install_guest && !real_boot && !newio_smoke && !jfd_writes && !jfd_create_step &&
-       !jfd_identification_step &&
+       !jfd_identification_step && !jfd_file_data_step &&
        !jfd_merge_step && !jfd_allocation_step && !jfd_allocation_set &&
        !short_tail_guest && !short_tail_discovery &&
        !jfd_quarantine_guest && !jfd_quarantine_density &&
@@ -2595,7 +2618,7 @@ int main(int argc, char **argv)
       assert(arc_libretro_test_register_input_profile(&test_profile));
       expect_test_profile = true;
    }
-   else if (jfd_writes || jfd_create_step || jfd_merge_step ||
+   else if (jfd_file_data_step || jfd_writes || jfd_create_step || jfd_merge_step ||
             jfd_identification_step ||
             jfd_allocation_step || jfd_allocation_set)
    {
@@ -3563,6 +3586,50 @@ int main(int argc, char **argv)
              open_files == 0u && open_dirs == 0u && dlclose(module) == 0);
       printf("jfd_allocation_set: machine=%s two images, swap, reset, Off/on passed\n",
              option_machine);
+      return 0;
+   }
+
+   if (jfd_file_data_step)
+   {
+      option_machine="A3000"; option_cpu="ARM2";
+      option_launch="off"; option_jfd_boot="native";
+      option_writes="shadow"; option_jfd_omitted="file-data";
+      phase=PHASE_LOAD; assert(retro_load_game(&game));
+      assert(jfd_file_data_log_lines==1u &&
+             strstr(last_jfd_file_data_log,"policy=1 class=wp-flag format=D copies=1/1 presented=1") &&
+             arc_libretro_test_jfd_slot_state(0u,1u,1u,NULL,NULL)==3u);
+      char file_stamp[41],strict_stamp[41],again_stamp[41];
+      assert(arc_libretro_test_boot_media_digest(file_stamp));
+      option_jfd_omitted="strict"; variable_update=true;
+      phase=PHASE_RUN; retro_run();
+      assert(arc_libretro_test_jfd_slot_state(0u,1u,1u,NULL,NULL)==3u &&
+             arc_libretro_test_boot_media_digest(again_stamp) &&
+             !strcmp(file_stamp,again_stamp));
+      assert(disk_control.set_eject_state(true) &&
+             disk_control.set_eject_state(false));
+      assert(jfd_file_data_log_lines==2u &&
+             arc_libretro_test_jfd_slot_state(0u,1u,1u,NULL,NULL)==3u);
+      retro_reset();
+      assert(jfd_file_data_log_lines==3u &&
+             strstr(last_jfd_file_data_log,"reason=option-strict") &&
+             arc_libretro_test_jfd_slot_state(0u,1u,1u,NULL,NULL)==0u);
+      assert(arc_libretro_test_boot_media_digest(strict_stamp) &&
+             strcmp(file_stamp,strict_stamp));
+      option_jfd_omitted="file-data"; variable_update=true;
+      retro_reset();
+      assert(jfd_file_data_log_lines==4u &&
+             arc_libretro_test_jfd_slot_state(0u,1u,1u,NULL,NULL)==3u);
+      assert(arc_libretro_test_boot_media_digest(again_stamp) &&
+             !strcmp(file_stamp,again_stamp));
+      option_writes="off"; variable_update=true;
+      retro_reset();
+      assert(jfd_file_data_log_lines==5u &&
+             strstr(last_jfd_file_data_log,"class=disk-writes-off") &&
+             strstr(last_jfd_file_data_log,"reason=presented") &&
+             arc_libretro_test_jfd_slot_state(0u,1u,1u,NULL,NULL)==3u);
+      retro_unload_game(); retro_deinit();
+      assert(open_files==0u && open_dirs==0u && dlclose(module)==0);
+      puts("jfd-file-data-step: passed");
       return 0;
    }
 

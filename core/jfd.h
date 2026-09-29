@@ -47,6 +47,16 @@ typedef struct {
    const char *quarantine_reason; /* First native-model limitation on this side. */
 } ArcJfdTrack;
 
+/* R1' is a mounted, base-derived read presentation. It has no store records. */
+typedef struct {
+   uint8_t mask[ARC_JFD_PDD5_TRACKS];
+   uint32_t time[ARC_JFD_PDD5_TRACKS][ARC_JFD_PDD5_IDS];
+   unsigned presented, skipped_sides, incomplete_dirs;
+   unsigned valid_copies, agreeing_copies;
+   char format;
+   const char *reason;
+} ArcJfdFileData;
+
 struct ArcJfdImage;
 typedef struct ArcJfdOverlay {
    uint8_t **data;                 /* One owned replacement per descriptor. */
@@ -99,6 +109,7 @@ typedef struct ArcJfdImage {
    bool extended;
    bool ignored_header_fields;
    ArcJfdOverlay *overlay;
+   ArcJfdFileData file_data;
    /* Derived only from captured identification-track payloads at preparation. */
    uint16_t identification_mask;
    uint32_t identification_time[ARC_JFD_MAX_STANDARD_IDS];
@@ -136,6 +147,8 @@ bool arc_jfd_plan_creation(const ArcJfdImage *image, ArcJfdOverlay *overlay);
 bool arc_jfd_place_slots(const ArcJfdImage *image, unsigned track_side,
                          unsigned ids, unsigned spacing, uint16_t captured,
                          uint32_t positions[ARC_JFD_MAX_STANDARD_IDS]);
+void arc_jfd_file_data_prepare(ArcJfdImage *image, bool native,
+                               bool strict, const char *image_class);
 void arc_jfd_prepare_identification(ArcJfdImage *image, bool native);
 bool arc_jfd_effective_sector(const ArcJfdImage *image, unsigned track_side,
                               unsigned candidate, bool prospective,

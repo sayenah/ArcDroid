@@ -1,0 +1,7 @@
+# Slice 20 — native JFD omitted file data
+
+On the native JFD path, ArcDroid now presents an omitted standard D- or E-format sector as 1024 zero bytes when the image's own valid FileCore map and reachable directory tree prove that the sector intersects a file or directory's logical data. The proof reads only original captured bytes. Saved replacements, created sectors, free space, whole slack sectors, map data, irregular tracks, and unproved areas retain their existing behavior. Writable JFD images retain C-11c; ADFFS and install sessions are unchanged. This narrows the native Record-Not-Found rule in D-066 and D-067 for these proved file-data sectors.
+
+The new **JFD Omitted Sectors** option defaults to **File data**. **Strict** restores the earlier native omitted-sector behavior while preserving existing D-089 ID-only presentation and writable C-11c sectors. ArcDroid samples this option when content loads or explicitly resets; changing it alone does not alter a mounted disc or a later disk-control insertion in that session. **Disk Writes: Off** also permits the file-data zero presentation from the original captured image and continues to hide saved writes.
+
+The accepted compatibility risk is that a loader expecting Record-Not-Found on an omitted file-data sector may behave differently. Choose **Strict** to recover the earlier behavior. A multi-disc game's request to insert its next disc is the game's own prompt: swap discs through RetroArch disk control, then answer the prompt with the pointer.
