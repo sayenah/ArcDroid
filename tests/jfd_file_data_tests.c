@@ -335,14 +335,16 @@ int main(int argc,char **argv)
    d=load(argv[1],"e-agree-length-conflict.jfd");
    arc_jfd_file_data_prepare(&d,true,false,"wp-flag");
    assert(!strcmp(d.file_data.reason,"map-conflict") &&
-          d.file_data.valid_copies==2u && !d.file_data.presented);
+          d.file_data.valid_copies==2u &&
+          d.file_data.agreeing_copies==0u && !d.file_data.presented);
    arc_jfd_free(&d);
    for (unsigned i=0u;i<2u;++i)
    {
       d=load(argv[1],i?"e-first-walk-fails.jfd":"e-second-walk-fails.jfd");
       arc_jfd_file_data_prepare(&d,true,false,"wp-flag");
       assert(!strcmp(d.file_data.reason,"map-conflict") &&
-             d.file_data.valid_copies==2u && !d.file_data.presented);
+             d.file_data.valid_copies==2u &&
+             d.file_data.agreeing_copies==0u && !d.file_data.presented);
       arc_jfd_free(&d);
    }
    d=load(argv[1],"e-many-190.jfd");
@@ -361,7 +363,8 @@ int main(int argc,char **argv)
    d=load(argv[1],"e-object-conflict.jfd");
    arc_jfd_file_data_prepare(&d,true,false,"wp-flag");
    assert(!strcmp(d.file_data.reason,"map-conflict") &&
-          d.file_data.valid_copies==2u && !d.file_data.presented);
+          d.file_data.valid_copies==2u &&
+          d.file_data.agreeing_copies==0u && !d.file_data.presented);
    arc_jfd_free(&d);
    for (unsigned i=0u;i<4u;++i)
    {

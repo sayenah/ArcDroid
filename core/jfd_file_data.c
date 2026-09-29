@@ -480,6 +480,10 @@ void arc_jfd_file_data_prepare(ArcJfdImage *image,bool native,bool strict,
    }
    if (plan->presented) plan->reason="presented";
 done:
+   /* A conflicting pair has no agreed interpretation, even if one copy
+    * passed the walk before the conflict was found. */
+   if (plan->reason && !strcmp(plan->reason,"map-conflict"))
+      plan->agreeing_copies=0u;
    if (first) { free(first->coverage); free(first); }
    if (second) { free(second->coverage); free(second); }
    if (!plan->presented) memset(plan->mask,0,sizeof(plan->mask));

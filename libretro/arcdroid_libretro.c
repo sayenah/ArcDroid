@@ -198,6 +198,9 @@ static bool arc_test_fail_install_build;
 static bool arc_test_fail_install_raw;
 static bool arc_test_defer_install_completion;
 static bool arc_test_fail_next_construct;
+static bool arc_test_jfd_wp_layout_supported;
+void arc_libretro_test_jfd_wp_layout_supported(bool enabled)
+{ arc_test_jfd_wp_layout_supported = enabled; }
 void arc_libretro_test_fail_next_construct(void)
 { arc_test_fail_next_construct = true; }
 void arc_libretro_test_defer_install_completion(bool defer)
@@ -2592,6 +2595,12 @@ static void arc_finish_jfd_preparation(ArcMediaEntry *entry, bool native)
       arc_jfd_map_prepare(&entry->jfd);
    }
    arc_jfd_prepare_identification(&entry->jfd, native);
+#if defined(ARCDROID_TEST_FAULTS)
+   /* Exercise the class boundary that the normal WP loader short-circuits. */
+   if (arc_test_jfd_wp_layout_supported && overlay && entry->jfd.extended &&
+       (entry->jfd.flags & 3u) == 3u)
+      overlay->layout_supported = true;
+#endif
    const char *image_class = arc_jfd_file_data_class(&entry->jfd,
                                                      arc_plan.disk_writes);
    arc_jfd_file_data_prepare(&entry->jfd, native,
@@ -3976,6 +3985,7 @@ static bool arc_boot_media_digest(char output[41])
          }
          if (!view->overlay || view->overlay->damaged || view->overlay->failed)
          { arc_jfd_free(&temporary); return false; }
+         /* The temporary has no D-089 mask; D/E identification covers only wholly free slots, outside R1'. */
          if (view == &temporary)
             arc_jfd_file_data_prepare(view, true,
                arc_core_options.jfd_omitted_strict,

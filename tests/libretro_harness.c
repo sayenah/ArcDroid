@@ -2286,6 +2286,7 @@ int main(int argc, char **argv)
    bool (*arc_engine_test_drive_media)(unsigned, bool *, char[41]) = NULL;
    bool (*arc_libretro_test_jfd_commit)(unsigned, size_t, uint8_t) = NULL;
    bool (*arc_libretro_test_jfd_formatted_reads)(unsigned) = NULL;
+   void (*arc_libretro_test_jfd_wp_layout_supported)(bool) = NULL;
    uint8_t (*arc_libretro_test_jfd_probe_mask)(unsigned, unsigned) = NULL;
    bool (*arc_libretro_test_jfd_created_byte)(unsigned, unsigned,
                                               unsigned, unsigned,
@@ -3643,6 +3644,7 @@ int main(int argc, char **argv)
          {"d-depth-17.jfd", "JFD file-data: image=1 policy=1 class=wp-flag format=D copies=1/0 presented=0 skipped-sides=0 incomplete-dirs=0 reason=limit\n"},
          {"d-zero-length.jfd", "JFD file-data: image=1 policy=1 class=wp-flag format=D copies=1/1 presented=0 skipped-sides=0 incomplete-dirs=0 reason=none-eligible\n"},
          {"e-conflict.jfd", "JFD file-data: image=1 policy=1 class=wp-flag format=E copies=2/0 presented=0 skipped-sides=0 incomplete-dirs=0 reason=map-conflict\n"},
+         {"e-object-conflict.jfd", "JFD file-data: image=1 policy=1 class=wp-flag format=E copies=2/0 presented=0 skipped-sides=0 incomplete-dirs=0 reason=map-conflict\n"},
          {"other-format.jfd", "JFD file-data: image=1 policy=1 class=wp-flag format=other copies=0/0 presented=0 skipped-sides=0 incomplete-dirs=0 reason=format\n"}
       };
       option_machine="A3000"; option_cpu="ARM2";
@@ -3670,6 +3672,9 @@ int main(int argc, char **argv)
 
    if (jfd_file_data_unavailable)
    {
+      *(void **)(&arc_libretro_test_jfd_wp_layout_supported) =
+         dlsym(module,"arc_libretro_test_jfd_wp_layout_supported");
+      assert(arc_libretro_test_jfd_wp_layout_supported);
       option_machine="A3000"; option_cpu="ARM2";
       option_launch="off"; option_jfd_boot="native";
       option_writes="shadow"; option_jfd_omitted="file-data";
@@ -3691,6 +3696,36 @@ int main(int argc, char **argv)
       assert(arc_libretro_test_boot_media_digest(unavailable_stamp) &&
              strcmp(writable_stamp,unavailable_stamp));
       retro_unload_game();
+      option_writes="off";
+      phase=PHASE_LOAD; assert(retro_load_game(&game));
+      assert(!strcmp(last_jfd_file_data_log,
+         "JFD file-data: image=1 policy=1 class=disk-writes-off format=D copies=1/1 presented=1 skipped-sides=0 incomplete-dirs=0 reason=presented\n"));
+      retro_unload_game();
+      option_writes="shadow";
+      const char *rw_path=game.path;
+      char sibling[4096];
+      char *basename;
+      int sibling_length=snprintf(sibling,sizeof(sibling),"%s",rw_path);
+      assert(sibling_length>0 && (size_t)sibling_length<sizeof(sibling));
+      basename=strrchr(sibling,'/'); assert(basename);
+      ++basename;
+      assert((size_t)(basename-sibling)+sizeof("d-layout-unsupported-rw.jfd") <=
+             sizeof(sibling));
+      strcpy(basename,"d-layout-unsupported-rw.jfd");
+      game.path=sibling;
+      phase=PHASE_LOAD; assert(retro_load_game(&game));
+      assert(!strcmp(last_jfd_file_data_log,
+         "JFD file-data: image=1 policy=1 class=layout-unsupported format=D copies=1/1 presented=1 skipped-sides=0 incomplete-dirs=0 reason=presented\n"));
+      retro_unload_game();
+      strcpy(basename,"d-terminal-wp-rw.jfd");
+      game.path=sibling;
+      arc_libretro_test_jfd_wp_layout_supported(true);
+      phase=PHASE_LOAD; assert(retro_load_game(&game));
+      assert(!strcmp(last_jfd_file_data_log,
+         "JFD file-data: image=1 policy=1 class=wp-flag format=D copies=1/1 presented=1 skipped-sides=0 incomplete-dirs=0 reason=presented\n"));
+      retro_unload_game();
+      arc_libretro_test_jfd_wp_layout_supported(false);
+      game.path=rw_path;
       assert(!remove(jfd_path));
       phase=PHASE_LOAD; assert(retro_load_game(&game));
       assert(!strcmp(last_jfd_file_data_log,

@@ -6,5 +6,6 @@ The new **JFD Omitted Sectors** option defaults to **File data**. **Strict** res
 
 For this policy, a damaged store is one the JFD store loader inspects and marks damaged; images whose stores the loader never inspects have no visible saved records and use their original captured bytes.
 The preparation diagnostic reports the image class in precedence order: `damaged-store`, `writable`, `store-unavailable`, `disk-writes-off`, `wp-flag`, `no-flag`, `legacy-header`, or `layout-unsupported`. `store-unavailable` means an otherwise writable disc passed the layout plan but its save store could not be opened; its base-only file-data plan remains active.
+When `reason=map-conflict`, `copies=<valid>/<agreeing>` reports zero agreeing copies, including conflicts found after one copy's directory walk succeeds.
 
 The accepted compatibility risk is that a loader expecting Record-Not-Found on an omitted file-data sector may behave differently. Choose **Strict** to recover the earlier behavior. A multi-disc game's request to insert its next disc is the game's own prompt: swap discs through RetroArch disk control, then answer the prompt with the pointer.
