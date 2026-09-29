@@ -29,8 +29,9 @@ struct ArcInstallStore {
    size_t journal_length;
    unsigned selected_slot;
    unsigned recipe_revision;
+   bool native_hd;
    ArcInstallStoreState state;
-   bool writable, failed, incomplete_tail, image_loaded;
+   bool writable, failed, incomplete_tail, image_loaded, created, wrote;
    ArcInstallStoreLog log;
    void *log_opaque;
 };
@@ -474,6 +475,15 @@ static bool create_base(ArcInstallStore *s)
       report_vfs_failure(s, "store-create", "format", "disc.g0.hdf.tmp");
       return false;
    }
+   if (s->native_hd) {
+      char digest[65];
+      arc_sha256_hex(s->image, ARC_INSTALL_HD_BYTES, digest);
+      if (strcmp(digest,
+          "9ec06c758da485f6b7c26b70e4c2b268ec959991cc43a9b6d3bffc495b4a57d2")) {
+         report(s, "store-create=formatter-hash-mismatch");
+         return false;
+      }
+   }
    if (!full_path(s, "disc.g0.hdf.tmp", tmp) ||
        !full_path(s, "disc.g0.hdf", final)) {
       report_vfs_failure(s, "store-create", "path-build", "disc.g0.hdf.tmp");
@@ -584,22 +594,29 @@ static bool compact(ArcInstallStore *s)
       report(s, "store-compaction=old-generation-cleanup-failed");
    return true;
 }
-ArcInstallStore *arc_install_store_open(const char *save_dir,
-   const ArcInstallPlan *plan, bool create_candidate, bool writable,
+static ArcInstallStore *store_open(const char *save_dir,
+   const ArcInstallPlan *plan, const char *content_id, bool native_hd,
+   bool create_candidate, bool writable,
    ArcInstallStoreLog log, void *log_opaque, char *error, size_t error_size)
 {
-   if (!save_dir || !plan || !plan->profile || !plan->variant ||
-       !plan->storage_id[0]) return NULL;
+   if (!save_dir || (native_hd ? (!content_id || strlen(content_id) != 40u) :
+       (!plan || !plan->profile || !plan->variant || !plan->storage_id[0])))
+      return NULL;
+   if (native_hd) for (unsigned i = 0u; i < 40u; ++i)
+      if (!((content_id[i] >= '0' && content_id[i] <= '9') ||
+            (content_id[i] >= 'a' && content_id[i] <= 'f'))) return NULL;
    ArcInstallStore *s = calloc(1u, sizeof(*s));
    if (!s) return NULL;
    s->image = malloc(ARC_INSTALL_HD_BYTES);
    if (!s->image) { free(s); return NULL; }
    s->log = log; s->log_opaque = log_opaque;
-   s->recipe_revision = plan->profile->revision;
-   strcpy(s->id, plan->storage_id);
+   s->native_hd = native_hd;
+   s->recipe_revision = native_hd ? ARC_HD_STORE_REVISION : plan->profile->revision;
+   strcpy(s->id, native_hd ? content_id : plan->storage_id);
    s->writable = writable;
    int n = snprintf(s->directory, sizeof(s->directory),
-                    "%s/arcdroid/install/%s", save_dir, s->id);
+                    "%s/arcdroid/%s/%s", save_dir,
+                    native_hd ? "hd" : "install", s->id);
    if (n < 0 || (size_t)n >= sizeof(s->directory)) goto damaged;
    Listing listing = {0};
    bool listed = arc_io_list_directory(s->directory, list_visit, &listing);
@@ -621,6 +638,7 @@ ArcInstallStore *arc_install_store_open(const char *save_dir,
          s->writable = false;
          report(s, "store-mode=read-only reason=directory-create-failed");
          set_error(error, error_size,
+            native_hd ? "directory-create-failed" :
             "Persistent install saves need a native writable save directory; choose Install Saves: Temporary to use RAM.");
          return s;
       }
@@ -643,9 +661,10 @@ ArcInstallStore *arc_install_store_open(const char *save_dir,
          m[1].generation > m[0].generation ? 1u : 0u;
       const Manifest *chosen = &m[selected];
       bool requested_writable = writable;
-      if (!arc_install_revision_supported(plan->profile,
-                                           chosen->revision)) {
+      if (native_hd ? chosen->revision != ARC_HD_STORE_REVISION :
+          !arc_install_revision_supported(plan->profile, chosen->revision)) {
          set_error(error, error_size,
+                   native_hd ? "saved-disc-revision-unsupported" :
                    "Saved installation recipe revision is unsupported; preserve the install store.");
          goto damaged;
       }
@@ -691,6 +710,7 @@ ArcInstallStore *arc_install_store_open(const char *save_dir,
       writable = false;
       report(s, "store-mode=read-only reason=write-probe-failed");
       set_error(error, error_size,
+         native_hd ? "write-probe-failed" :
          "Persistent install saves need a native writable save directory; choose Install Saves: Temporary to use RAM.");
    }
    if (!create_candidate || !writable) {
@@ -707,10 +727,14 @@ ArcInstallStore *arc_install_store_open(const char *save_dir,
       report(s, "store-state=unpublished cleaned");
    }
    if (!create_base(s)) goto creation_failed;
+   if (native_hd && !arc_install_store_publish(s, error, error_size))
+      goto creation_failed;
+   if (native_hd) s->created = true;
    return s;
 creation_failed:
    s->writable = false;
-   set_error(error, error_size,
+   if (!native_hd || !error || !error[0]) set_error(error, error_size,
+      native_hd ? "create-or-publication-failed" :
       "Unable to create the install disc in the save directory; check free space and write access, or choose Install Saves: Temporary.");
    return s;
 damaged:
@@ -718,9 +742,32 @@ damaged:
    s->writable = false;
    report(s, "store-state=damaged");
    if (!error || !error[0]) set_error(error, error_size,
+      native_hd ? "saved-disc-damaged" :
       "Saved installation is damaged; preserve the install directory and restore a backup.");
    return s;
 }
+ArcInstallStore *arc_install_store_open(const char *save_dir,
+   const ArcInstallPlan *plan, bool create_candidate, bool writable,
+   ArcInstallStoreLog log, void *log_opaque, char *error, size_t error_size)
+{
+   return store_open(save_dir, plan, NULL, false, create_candidate, writable,
+                     log, log_opaque, error, error_size);
+}
+ArcInstallStore *arc_hd_store_open(const char *save_dir, const char *content_id,
+   bool writable, ArcInstallStoreLog log, void *log_opaque,
+   char *error, size_t error_size)
+{
+   return store_open(save_dir, NULL, content_id, true, writable, writable,
+                     log, log_opaque, error, error_size);
+}
+uint64_t arc_install_store_generation(const ArcInstallStore *s)
+{ return s ? s->generation : 0u; }
+bool arc_install_store_created(const ArcInstallStore *s)
+{ return s && s->created; }
+bool arc_install_store_wrote(const ArcInstallStore *s)
+{ return s && s->wrote; }
+void arc_install_store_clear_wrote(ArcInstallStore *s)
+{ if (s) s->wrote = false; }
 void arc_install_store_close(ArcInstallStore *s)
 { if (s) { free(s->image); free(s); } }
 ArcInstallStoreState arc_install_store_state(const ArcInstallStore *s)
@@ -818,6 +865,7 @@ bool arc_install_store_write(void *opaque, uint32_t lba, uint32_t count,
    } else return false;
    memcpy(s->image + (size_t)lba * ARC_INSTALL_HD_SECTOR,
           data, payload_length);
+   s->wrote = true;
    if (s->state == ARC_INSTALL_STORE_UNPUBLISHED) {
       char message[96];
       snprintf(message, sizeof(message), "candidate-write lba=%" PRIu32
@@ -843,7 +891,8 @@ bool arc_install_store_publish(ArcInstallStore *s,
    free(readback);
    if (!good || !journal_create(s, 0u, hash) ||
        !manifest_publish(s, 0u, "disc.g0.hdf", hash, "journal.g0", 0u)) {
-      set_error(error, error_size, "Saved installation publication failed; retry installation.");
+      set_error(error, error_size, s->native_hd ? "publication-failed" :
+         "Saved installation publication failed; retry installation.");
       report(s, "store-publication=failed");
       return false;
    }

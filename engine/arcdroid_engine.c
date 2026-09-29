@@ -709,7 +709,7 @@ bool arc_engine_start(const uint8_t *firmware, size_t firmware_size,
    memcpy(arc_locked_cmos_mask, locked_raw_mask, sizeof(arc_locked_cmos_mask));
    cmos_set_write_guard(arc_locked_cmos_mask, ignored_callback, ignored_opaque);
    arc_saved_machine = descriptor->id;
-   ide_set_backend(descriptor->id == ARC_MACHINE_A3020 ? ide_backend : NULL);
+   ide_set_backend(descriptor->ide_capable ? ide_backend : NULL);
    arc_install_doorbell_configure(doorbell);
    if (!arc_machine_create(failure, failure_size))
    {

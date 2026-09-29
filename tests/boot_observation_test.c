@@ -10,8 +10,11 @@ int main(void)
    memset(stamp.firmware, 'a', 40); stamp.firmware[40] = 0;
    memset(stamp.media, 'b', 40); stamp.media[40] = 0;
    memset(stamp.cmos, 'c', 40); stamp.cmos[40] = 0;
+   memset(stamp.hard_disc, 'd', 64); stamp.hard_disc[64] = 0;
    stamp.machine = 2; stamp.cpu = 1; stamp.memory = 4096;
    stamp.jfd_boot = 1; stamp.disk_writes = 2; stamp.install_saves = 1;
+   stamp.hard_disc_policy = 1; stamp.hard_disc_attached = 1;
+   stamp.hard_disc_writable = 1;
    uint8_t bytes[ARC_BOOT_OBSERVATION_SIZE + 1u];
    memset(bytes, 0, sizeof(bytes));
    assert(!arc_boot_observation_format(&stamp, bytes,
@@ -20,10 +23,10 @@ int main(void)
                                      ARC_BOOT_OBSERVATION_SIZE));
    assert(arc_boot_observation_parse(bytes, ARC_BOOT_OBSERVATION_SIZE, &parsed));
    assert(arc_boot_observation_equal(&stamp, &parsed));
-   assert(bytes[12] == 2u && bytes[13] == 0u);
-   bytes[12] = 1u;
-   assert(!arc_boot_observation_parse(bytes, ARC_BOOT_OBSERVATION_SIZE, &parsed));
+   assert(bytes[12] == 3u && bytes[13] == 0u);
    bytes[12] = 2u;
+   assert(!arc_boot_observation_parse(bytes, ARC_BOOT_OBSERVATION_SIZE, &parsed));
+   bytes[12] = 3u;
    assert(arc_boot_observation_parse(bytes, ARC_BOOT_OBSERVATION_SIZE, &parsed));
    assert(!arc_boot_observation_parse(bytes, ARC_BOOT_OBSERVATION_SIZE - 1u, &parsed));
    assert(!arc_boot_observation_parse(bytes, sizeof(bytes), &parsed));
@@ -31,7 +34,7 @@ int main(void)
    {
       uint8_t original = bytes[offset];
       bytes[offset] ^= 0x80u;
-      if (offset < 136u)
+      if (offset < 136u || (offset >= 160u && offset < 224u))
          assert(!arc_boot_observation_parse(bytes, ARC_BOOT_OBSERVATION_SIZE, &parsed));
       bytes[offset] = original;
    }
@@ -66,6 +69,14 @@ int main(void)
    other = stamp; other.media[0] = 'd';
    assert(!arc_boot_observation_equal(&stamp, &other));
    other = stamp; other.cmos[0] = 'd';
+   assert(!arc_boot_observation_equal(&stamp, &other));
+   other = stamp; other.hard_disc[0] = 'e';
+   assert(!arc_boot_observation_equal(&stamp, &other));
+   other = stamp; other.hard_disc_policy = 0;
+   assert(!arc_boot_observation_equal(&stamp, &other));
+   other = stamp; other.hard_disc_attached = 0;
+   assert(!arc_boot_observation_equal(&stamp, &other));
+   other = stamp; other.hard_disc_writable = 0;
    assert(!arc_boot_observation_equal(&stamp, &other));
    puts("boot-observation: passed");
    return 0;

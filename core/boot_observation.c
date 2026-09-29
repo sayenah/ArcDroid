@@ -4,7 +4,8 @@
 #include <string.h>
 
 /* Fixed binary grammar: marker, version, compatibility revision, three
- * lowercase SHA-1 hex stamps, then six little-endian resolved scalars. */
+ * lowercase SHA-1 hex stamps, six resolved scalars, a SHA-256 hard-disc
+ * digest and one packed policy/attachment/writability word. */
 static void put32(uint8_t *p, uint32_t n)
 {
    for (unsigned i = 0; i < 4; ++i) p[i] = (uint8_t)(n >> (8u * i));
@@ -23,12 +24,20 @@ static bool digest_valid(const char *s)
             (s[i] >= 'a' && s[i] <= 'f'))) return false;
    return true;
 }
+static bool disc_digest_valid(const char *s)
+{
+   if (s[64] != '\0') return false;
+   for (unsigned i = 0; i < 64; ++i)
+      if (!((s[i] >= '0' && s[i] <= '9') ||
+            (s[i] >= 'a' && s[i] <= 'f'))) return false;
+   return true;
+}
 bool arc_boot_observation_format(const ArcBootObservation *s,
                                  uint8_t *out, size_t capacity)
 {
    if (!s || !out || capacity < ARC_BOOT_OBSERVATION_SIZE ||
        !digest_valid(s->firmware) || !digest_valid(s->media) ||
-       !digest_valid(s->cmos)) return false;
+       !digest_valid(s->cmos) || !disc_digest_valid(s->hard_disc)) return false;
    memcpy(out, "ARCBOOT1", 8);
    put32(out + 8, 1u);
    put32(out + 12, ARC_BOOT_OBSERVATION_REVISION);
@@ -41,6 +50,9 @@ bool arc_boot_observation_format(const ArcBootObservation *s,
    put32(out + 148, s->jfd_boot);
    put32(out + 152, s->disk_writes);
    put32(out + 156, s->install_saves);
+   memcpy(out + 160, s->hard_disc, 64);
+   put32(out + 224, s->hard_disc_policy |
+      (s->hard_disc_attached << 1u) | (s->hard_disc_writable << 2u));
    return true;
 }
 bool arc_boot_observation_parse(const uint8_t *data, size_t size,
@@ -59,8 +71,16 @@ bool arc_boot_observation_parse(const uint8_t *data, size_t size,
    s->jfd_boot = get32(data + 148);
    s->disk_writes = get32(data + 152);
    s->install_saves = get32(data + 156);
+   memcpy(s->hard_disc, data + 160, 64);
+   uint32_t disc_flags = get32(data + 224);
+   s->hard_disc_policy = disc_flags & 1u;
+   s->hard_disc_attached = (disc_flags >> 1u) & 1u;
+   s->hard_disc_writable = (disc_flags >> 2u) & 1u;
    return digest_valid(s->firmware) && digest_valid(s->media) &&
-      digest_valid(s->cmos) && s->machine < 4u && s->cpu < 2u &&
+      digest_valid(s->cmos) && disc_digest_valid(s->hard_disc) &&
+      !(disc_flags & ~7u) &&
+      (!s->hard_disc_writable || s->hard_disc_attached) &&
+      s->machine < 4u && s->cpu < 2u &&
       s->memory >= 1024u && s->memory <= 65536u &&
       s->memory % 1024u == 0u && s->jfd_boot <= 2u &&
       s->disk_writes <= 2u && s->install_saves <= 1u;
@@ -72,5 +92,9 @@ bool arc_boot_observation_equal(const ArcBootObservation *a,
       !strcmp(a->media, b->media) && !strcmp(a->cmos, b->cmos) &&
       a->machine == b->machine && a->cpu == b->cpu &&
       a->memory == b->memory && a->jfd_boot == b->jfd_boot &&
-      a->disk_writes == b->disk_writes && a->install_saves == b->install_saves;
+      a->disk_writes == b->disk_writes && a->install_saves == b->install_saves &&
+      !strcmp(a->hard_disc, b->hard_disc) &&
+      a->hard_disc_policy == b->hard_disc_policy &&
+      a->hard_disc_attached == b->hard_disc_attached &&
+      a->hard_disc_writable == b->hard_disc_writable;
 }

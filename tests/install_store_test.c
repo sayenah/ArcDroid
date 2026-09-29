@@ -807,9 +807,91 @@ static void test_relative_save_paths(void)
    }
    clear_files();
 }
-int main(void)
+static void test_native_hard_disc(void)
+{
+   const char *first = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+   const char *second = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+   uint8_t data[ARC_INSTALL_HD_SECTOR] = {0}, readback[ARC_INSTALL_HD_SECTOR];
+   char error[256] = {0};
+   clear_files();
+   ArcInstallStore *s = arc_hd_store_open("save", first, true,
+                                         store_log, NULL, error, sizeof(error));
+   assert(s && arc_install_store_state(s) == ARC_INSTALL_STORE_READY &&
+          arc_install_store_created(s) && arc_install_store_writable(s));
+   assert(locate("save/arcdroid/hd/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/ready.a") >= 0);
+   assert(locate("save/arcdroid/hd/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/journal.g0") >= 0);
+   assert(locate("save/arcdroid/hd/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/disc.g0.hdf") >= 0);
+   assert(arc_install_store_read(s, 100u, 1u, readback) &&
+          !memcmp(readback, data, sizeof(data)));
+   data[0] = 0x5au;
+   assert(arc_install_store_write(s, 100u, 1u, data) &&
+          arc_install_store_wrote(s));
+   arc_install_store_clear_wrote(s);
+   assert(!arc_install_store_wrote(s));
+   arc_install_store_close(s);
+   s = arc_hd_store_open("save", first, false, store_log, NULL, error, sizeof(error));
+   assert(s && arc_install_store_state(s) == ARC_INSTALL_STORE_READY &&
+          !arc_install_store_created(s) && !arc_install_store_writable(s) &&
+          arc_install_store_read(s, 100u, 1u, readback) && readback[0] == 0x5au);
+   arc_install_store_close(s);
+   s = arc_hd_store_open("save", second, true, store_log, NULL, error, sizeof(error));
+   assert(s && arc_install_store_created(s) &&
+          arc_install_store_read(s, 100u, 1u, readback) && readback[0] == 0u);
+   arc_install_store_close(s);
+   assert(locate("save/arcdroid/install/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/ready.a") < 0);
+   int first_manifest = locate("save/arcdroid/hd/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/ready.a");
+   assert(first_manifest >= 0);
+   File *manifest = &files[first_manifest];
+   put32(manifest->bytes + 68u, ARC_HD_STORE_REVISION + 1u);
+   put32(manifest->bytes + 272u, arc_crc32(manifest->bytes, 272u));
+   uint8_t preserved[276];
+   memcpy(preserved, manifest->bytes, sizeof(preserved));
+   s = arc_hd_store_open("save", first, true, store_log, NULL, error, sizeof(error));
+   assert(s && arc_install_store_state(s) == ARC_INSTALL_STORE_DAMAGED &&
+          !memcmp(preserved, manifest->bytes, sizeof(preserved)));
+   arc_install_store_close(s);
+   clear_files();
+   /* A publication failure leaves an unattachable candidate. Reopening
+    * cleans the candidate and commits a validated blank. */
+   fail_mutation = 1u;
+   s = arc_hd_store_open("save", first, true, store_log, NULL, error, sizeof(error));
+   assert(s && arc_install_store_state(s) != ARC_INSTALL_STORE_READY);
+   arc_install_store_close(s);
+   s = arc_hd_store_open("save", first, true, store_log, NULL, error, sizeof(error));
+   assert(s && arc_install_store_state(s) == ARC_INSTALL_STORE_READY);
+   arc_install_store_close(s);
+   clear_files();
+   s = arc_hd_store_open("save", first, true, store_log, NULL, error, sizeof(error));
+   assert(s && arc_install_store_state(s) == ARC_INSTALL_STORE_READY);
+   unsigned publication_steps = mutations;
+   arc_install_store_close(s);
+   assert(publication_steps > 5u);
+   for (unsigned step = 1u; step <= publication_steps; ++step) {
+      clear_files();
+      fail_mutation = step;
+      s = arc_hd_store_open("save", first, true, store_log, NULL, error,
+                            sizeof(error));
+      assert(s);
+      bool published = arc_install_store_state(s) == ARC_INSTALL_STORE_READY;
+      assert((locate("save/arcdroid/hd/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/ready.a") >= 0) ==
+             published);
+      arc_install_store_close(s);
+      s = arc_hd_store_open("save", first, true, store_log, NULL, error,
+                            sizeof(error));
+      assert(s && arc_install_store_state(s) == ARC_INSTALL_STORE_READY);
+      arc_install_store_close(s);
+   }
+   clear_files();
+}
+int main(int argc, char **argv)
 {
    arc_io_set_vfs(&vfs);
+   if (argc == 2 && !strcmp(argv[1], "--native-only")) {
+      test_native_hard_disc();
+      puts("native-hard-disc-store: passed");
+      return 0;
+   }
+   assert(argc == 1);
    test_roundtrip(); test_damage(); test_tail(); test_identity();
    test_directory_states(); test_record_damage();
    test_interrupted_operations();
@@ -818,6 +900,7 @@ int main(void)
    test_compaction_interruptions();
    test_compaction_out_of_space();
    test_compaction_retry_with_stale_generation();
+   test_native_hard_disc();
    test_writable_orphan_cleanup();
    test_probe_temporaries(); test_probe_failures();
    test_relative_save_paths();

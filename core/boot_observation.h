@@ -7,19 +7,23 @@
 #include <stdint.h>
 
 /* Change this when boot observation or launch preparation semantics change. */
-#define ARC_BOOT_OBSERVATION_REVISION 2u
-#define ARC_BOOT_OBSERVATION_SIZE 160u
+#define ARC_BOOT_OBSERVATION_REVISION 3u
+#define ARC_BOOT_OBSERVATION_SIZE 228u
 
 typedef struct {
    char firmware[41];
    char media[41];
    char cmos[41];
+   char hard_disc[65];
    uint32_t machine;
    uint32_t cpu;
    uint32_t memory;
    uint32_t jfd_boot;
    uint32_t disk_writes;
    uint32_t install_saves;
+   uint32_t hard_disc_policy;
+   uint32_t hard_disc_attached;
+   uint32_t hard_disc_writable;
 } ArcBootObservation;
 
 bool arc_boot_observation_format(const ArcBootObservation *stamp,

@@ -248,6 +248,7 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
       arcdroid_sanitizer_compile arcdroid_sanitizer_link)
   endif()
   add_test(NAME install-disc-store COMMAND install_store_test)
+  add_test(NAME native-hard-disc-store COMMAND install_store_test --native-only)
   set(FIXTURE_DIR "${CMAKE_CURRENT_BINARY_DIR}/tests/fixtures/generated")
   add_library(arcdroid_core_test STATIC
     ${ARCDROID_CORE_SOURCES} tests/adffs_profiles_test.c tests/adffs_install_profiles_test.c tests/firmware_table_test.c)
@@ -286,6 +287,16 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
     VERBATIM)
   add_custom_target(install_guest_fixture ALL DEPENDS
     "${FIXTURE_DIR}/arcdroid-install-guest.rom")
+  add_custom_command(
+    OUTPUT "${FIXTURE_DIR}/arcdroid-native-hd-guest.rom"
+    COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/generate_native_hd_guest.py"
+      "${FIXTURE_DIR}/arcdroid-native-hd-guest.rom"
+    DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/tests/generate_native_hd_guest.py"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/generate_fixtures.py"
+    VERBATIM)
+  add_custom_target(native_hd_guest_fixture ALL DEPENDS
+    "${FIXTURE_DIR}/arcdroid-native-hd-guest.rom")
   target_compile_definitions(arcdroid_core_test PUBLIC ARCDROID_TEST_FAULTS=1)
   target_compile_options(arcdroid_core_test PRIVATE
     $<$<C_COMPILER_ID:GNU,Clang,AppleClang>:-Wall;-Wextra;-Wpedantic;-Werror=implicit-function-declaration>)
@@ -896,6 +907,14 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
       "${FIXTURE_DIR}/adffs/install-first.m3u"
       "${FIXTURE_DIR}/adffs/synthetic.zip")
     set_tests_properties(install-guest-process PROPERTIES TIMEOUT 900)
+    add_test(NAME native-hd-guest-process COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/native_hd_guest_process_test.py"
+      $<TARGET_FILE:libretro_harness>
+      $<TARGET_FILE:arcdroid_libretro_test>
+      "${FIXTURE_DIR}/arcdroid-native-hd-guest.rom"
+      "${FIXTURE_DIR}/hd-family/valid-f.adf"
+      "${FIXTURE_DIR}/arcdroid-test.adf")
+    set_tests_properties(native-hd-guest-process PROPERTIES TIMEOUT 900)
     add_test(NAME power-on-install-process COMMAND "${CMAKE_COMMAND}" -E env
       ARCDROID_TEST_POWER_ON_SHIFT=1
       "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/install_guest_process_test.py"
@@ -1133,6 +1152,11 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
         "${FIXTURE_DIR}/arcdroid-boot-cli-then-prompt.rom"
         "${FIXTURE_DIR}/launch-family/boot-file-3-l.adl"
         "${CMAKE_CURRENT_BINARY_DIR}/boot-observation-data")
+    add_test(NAME boot-observation-hd
+      COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/check_boot_observation_hd.py"
+        "$<TARGET_FILE:libretro_harness>" "$<TARGET_FILE:arcdroid_libretro_test>"
+        "${FIXTURE_DIR}/arcdroid-boot-prompt.rom"
+        "${FIXTURE_DIR}/launch-family/boot-file-3-l.adl")
     add_test(NAME power-on-recovery-harness
       COMMAND "${CMAKE_COMMAND}" -E env ARCDROID_TEST_POWER_ON_SHIFT=1
         "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/check_boot_observation.py"

@@ -37,11 +37,13 @@ int main(void)
          checksum(validated);
          assert(!memcmp(validated, image, sizeof(image)));
          fresh[64u] = 0xbfu;
+         fresh[arc_cmos_raw_address(189u) - 16u] = 0x0au;
          assert(arc_cmos_machine_image(oses[n], io, fresh, false, image));
          assert(image[80u] == 0xbfu); /* live guest value retained */
          assert(!arc_cmos_power_on_shift(oses[n], image));
          arc_cmos_normalise_payload(fresh, oses[n], io);
          assert(fresh[64u] == 0xafu); /* only Boot launch-owned */
+         assert(fresh[arc_cmos_raw_address(189u) - 16u] == 0u);
       }
    const ArcOsClass others[] = {ARC_OS_RISCOS_200, ARC_OS_RISCOS_201,
       ARC_OS_ARTHUR_030, ARC_OS_ARTHUR_120, ARC_OS_TEST};

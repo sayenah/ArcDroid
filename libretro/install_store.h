@@ -13,12 +13,21 @@ typedef enum {
    ARC_INSTALL_STORE_DAMAGED
 } ArcInstallStoreState;
 typedef struct ArcInstallStore ArcInstallStore;
+#define ARC_HD_STORE_REVISION 1u
 typedef void (*ArcInstallStoreLog)(void *, const char *);
 /* Caller owns the returned handle. A missing store remains unwritten if
  * create_candidate is false. Damage never mutates the directory. */
 ArcInstallStore *arc_install_store_open(const char *save_dir,
    const ArcInstallPlan *plan, bool create_candidate, bool writable,
    ArcInstallStoreLog log, void *log_opaque, char *error, size_t error_size);
+/* Opens a per-content native disc. A created disc is READY before return. */
+ArcInstallStore *arc_hd_store_open(const char *save_dir, const char *content_id,
+   bool writable, ArcInstallStoreLog log, void *log_opaque,
+   char *error, size_t error_size);
+uint64_t arc_install_store_generation(const ArcInstallStore *store);
+bool arc_install_store_created(const ArcInstallStore *store);
+bool arc_install_store_wrote(const ArcInstallStore *store);
+void arc_install_store_clear_wrote(ArcInstallStore *store);
 void arc_install_store_close(ArcInstallStore *store);
 ArcInstallStoreState arc_install_store_state(const ArcInstallStore *store);
 const uint8_t *arc_install_store_image(const ArcInstallStore *store);
