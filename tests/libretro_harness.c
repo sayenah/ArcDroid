@@ -2120,6 +2120,9 @@ int main(int argc, char **argv)
    bool jfd_allocation_step = false;
    bool jfd_identification_step = false;
    bool jfd_file_data_step = false;
+   bool jfd_file_data_set = false;
+   bool jfd_file_data_reasons = false;
+   bool jfd_file_data_recovery = false;
    bool jfd_allocation_set = false;
    bool install_guest = false;
    bool cmos_exerciser = false;
@@ -2153,6 +2156,12 @@ int main(int argc, char **argv)
       jfd_identification_step = true;
    else if (argc == 6 && !strcmp(argv[5], "--jfd-file-data-step"))
       jfd_file_data_step = true;
+   else if (argc == 6 && !strcmp(argv[5], "--jfd-file-data-set"))
+      jfd_file_data_set = true;
+   else if (argc == 7 && !strcmp(argv[5], "--jfd-file-data-reasons"))
+      jfd_file_data_reasons = true;
+   else if (argc == 6 && !strcmp(argv[5], "--jfd-file-data-recovery"))
+      jfd_file_data_recovery = true;
    else if (argc == 7 && !strcmp(argv[5], "--jfd-allocation-set"))
       jfd_allocation_set = true;
    else if (argc == 6 && !strcmp(argv[5], "--cmos-exerciser"))
@@ -2205,7 +2214,7 @@ int main(int argc, char **argv)
    char system_path[4096], firmware_path[4096], save_path[4096], renamed[4096], cwd[4096], cwd_after[4096];
    char jfd_run_path[4096], cmos_run_path[4096];
    const char *data_root = argv[4];
-   if (jfd_writes)
+   if (jfd_writes || jfd_file_data_recovery)
    {
       make_directory(argv[4]);
       assert(snprintf(jfd_run_path, sizeof(jfd_run_path), "%s/jfd-run-XXXXXX", argv[4]) < (int)sizeof(jfd_run_path));
@@ -2451,7 +2460,9 @@ int main(int argc, char **argv)
       assert(arc_libretro_test_boot_media_digest);
    }
    if (!cmos_exerciser && !power_on_cmos_guest && !install_guest && !real_boot && !newio_smoke && !jfd_writes && !jfd_create_step &&
-       !jfd_identification_step && !jfd_file_data_step &&
+       !jfd_identification_step && !jfd_file_data_step && !jfd_file_data_set &&
+       !jfd_file_data_reasons &&
+       !jfd_file_data_recovery &&
        !jfd_merge_step && !jfd_allocation_step && !jfd_allocation_set &&
        !short_tail_guest && !short_tail_discovery &&
        !jfd_quarantine_guest && !jfd_quarantine_density &&
@@ -2618,7 +2629,7 @@ int main(int argc, char **argv)
       assert(arc_libretro_test_register_input_profile(&test_profile));
       expect_test_profile = true;
    }
-   else if (jfd_file_data_step || jfd_writes || jfd_create_step || jfd_merge_step ||
+   else if (jfd_file_data_step || jfd_file_data_set || jfd_writes || jfd_create_step || jfd_merge_step ||
             jfd_identification_step ||
             jfd_allocation_step || jfd_allocation_set)
    {
@@ -3589,6 +3600,117 @@ int main(int argc, char **argv)
       return 0;
    }
 
+   if (jfd_file_data_recovery)
+   {
+      option_machine="A3000"; option_cpu="ARM2";
+      option_launch="auto"; option_jfd_boot="native";
+      option_writes="shadow"; option_jfd_omitted="file-data";
+      phase=PHASE_LOAD; assert(retro_load_game(&game));
+      assert(jfd_file_data_log_lines==1u &&
+             strstr(last_jfd_file_data_log,"reason=presented"));
+      option_jfd_omitted="strict"; variable_update=true;
+      phase=PHASE_RUN;
+      for (unsigned frame=0u;frame<1800u && jfd_file_data_log_lines<2u;++frame)
+         retro_run();
+      if (jfd_file_data_log_lines!=2u)
+         fprintf(stderr,"recovery log count=%u last=%s launch=%s boot=%s\n",
+                 jfd_file_data_log_lines,last_jfd_file_data_log,
+                 last_launch_log,last_jfd_boot_log);
+      assert(jfd_file_data_log_lines==2u &&
+             strstr(last_launch_log,"recovery=helper") &&
+             !strcmp(last_jfd_file_data_log,
+               "JFD file-data: image=1 policy=1 class=wp-flag format=D copies=1/1 presented=1 skipped-sides=0 incomplete-dirs=0 reason=presented\n"));
+      retro_unload_game(); retro_deinit();
+      assert(open_files==0u && open_dirs==0u && dlclose(module)==0);
+      puts("jfd-file-data-recovery: passed");
+      return 0;
+   }
+
+   if (jfd_file_data_reasons)
+   {
+      static const struct { const char *name,*expected; } cases[] = {
+         {"d-no-valid-map.jfd", "JFD file-data: image=1 policy=1 class=wp-flag format=D copies=0/0 presented=0 skipped-sides=0 incomplete-dirs=0 reason=no-valid-map\n"},
+         {"d-root-invalid.jfd", "JFD file-data: image=1 policy=1 class=wp-flag format=D copies=1/0 presented=0 skipped-sides=0 incomplete-dirs=0 reason=root-invalid\n"},
+         {"d-invalid-object.jfd", "JFD file-data: image=1 policy=1 class=wp-flag format=D copies=1/0 presented=0 skipped-sides=0 incomplete-dirs=0 reason=object-invalid\n"},
+         {"d-depth-17.jfd", "JFD file-data: image=1 policy=1 class=wp-flag format=D copies=1/0 presented=0 skipped-sides=0 incomplete-dirs=0 reason=limit\n"},
+         {"d-zero-length.jfd", "JFD file-data: image=1 policy=1 class=wp-flag format=D copies=1/1 presented=0 skipped-sides=0 incomplete-dirs=0 reason=none-eligible\n"},
+         {"e-conflict.jfd", "JFD file-data: image=1 policy=1 class=wp-flag format=E copies=2/0 presented=0 skipped-sides=0 incomplete-dirs=0 reason=map-conflict\n"},
+         {"other-format.jfd", "JFD file-data: image=1 policy=1 class=wp-flag format=other copies=0/0 presented=0 skipped-sides=0 incomplete-dirs=0 reason=format\n"}
+      };
+      option_machine="A3000"; option_cpu="ARM2";
+      option_launch="off"; option_jfd_boot="native";
+      option_writes="shadow"; option_jfd_omitted="file-data";
+      for (unsigned i=0u;i<sizeof(cases)/sizeof(cases[0]);++i)
+      {
+         char path[4096];
+         int n=snprintf(path,sizeof(path),"%s/%s",argv[6],cases[i].name);
+         assert(n>0 && (size_t)n<sizeof(path));
+         game.path=path;
+         unsigned before=jfd_file_data_log_lines;
+         phase=PHASE_LOAD; assert(retro_load_game(&game));
+         if (strcmp(last_jfd_file_data_log,cases[i].expected))
+            fprintf(stderr,"%s: %s",cases[i].name,last_jfd_file_data_log);
+         assert(jfd_file_data_log_lines==before+1u &&
+                !strcmp(last_jfd_file_data_log,cases[i].expected));
+         retro_unload_game();
+      }
+      retro_deinit();
+      assert(open_files==0u && open_dirs==0u && dlclose(module)==0);
+      puts("jfd-file-data-reasons: passed");
+      return 0;
+   }
+
+   if (jfd_file_data_set)
+   {
+      option_machine="A3000"; option_cpu="ARM2";
+      option_launch="off"; option_jfd_boot="native";
+      option_writes="shadow"; option_jfd_omitted="file-data";
+      phase=PHASE_LOAD; assert(retro_load_game(&game));
+      assert(disk_control.get_num_images()==2u &&
+             arc_libretro_test_jfd_slot_state(0u,1u,1u,NULL,NULL)==3u &&
+             arc_libretro_test_jfd_slot_state(1u,1u,1u,NULL,NULL)==0u &&
+             jfd_file_data_log_lines==1u &&
+             !strcmp(last_jfd_file_data_log,
+               "JFD file-data: image=1 policy=1 class=wp-flag format=D copies=1/1 presented=1 skipped-sides=0 incomplete-dirs=0 reason=presented\n"));
+      assert(disk_control.set_eject_state(true) &&
+             disk_control.set_image_index(1u) &&
+             disk_control.set_eject_state(false));
+      assert(arc_libretro_test_jfd_slot_state(0u,1u,1u,NULL,NULL)==0u &&
+             arc_libretro_test_jfd_slot_state(1u,1u,1u,NULL,NULL)==7u &&
+             jfd_file_data_log_lines==2u &&
+             !strcmp(last_jfd_file_data_log,
+               "JFD file-data: image=2 policy=1 class=writable format=D copies=0/0 presented=0 skipped-sides=0 incomplete-dirs=0 reason=writable-c11c\n"));
+      assert(arc_libretro_test_jfd_commit(1u,4u,0x44u));
+      char rw_source[4096];
+      snprintf(rw_source,sizeof(rw_source),"%s",game.path);
+      char *slash=strrchr(rw_source,'/'); assert(slash);
+      snprintf(slash+1u,sizeof(rw_source)-(size_t)(slash+1u-rw_source),
+               "d-terminal-rw.jfd");
+      ArcDigest rw_digest=digest_file(rw_source);
+      char slot_a[4096],slot_b[4096];
+      snprintf(slot_a,sizeof(slot_a),"%s/arcdroid/jfd/%s.a",save_path,rw_digest.sha1);
+      snprintf(slot_b,sizeof(slot_b),"%s/arcdroid/jfd/%s.b",save_path,rw_digest.sha1);
+      retro_unload_game();
+      const char *damaged_slot=file_exists(slot_a)?slot_a:slot_b;
+      FILE *damage=fopen(damaged_slot,"r+b"); assert(damage);
+      int first=fgetc(damage);
+      assert(first>=0 && !fseek(damage,0L,SEEK_SET) &&
+             fputc(first^1,damage)>=0 && !fclose(damage));
+      phase=PHASE_LOAD; assert(retro_load_game(&game));
+      assert(disk_control.set_eject_state(true) &&
+             disk_control.set_image_index(1u) &&
+             disk_control.set_eject_state(false));
+      assert(jfd_file_data_log_lines==4u &&
+             !strcmp(last_jfd_file_data_log,
+               "JFD file-data: image=2 policy=1 class=damaged-store format=D copies=0/0 presented=0 skipped-sides=0 incomplete-dirs=0 reason=damaged-store\n"));
+      retro_unload_game();
+      assert(!remove(damaged_slot));
+      retro_deinit();
+      assert(open_files==0u && open_dirs==0u && dlclose(module)==0);
+      puts("jfd-file-data-set: passed");
+      return 0;
+   }
+
    if (jfd_file_data_step)
    {
       option_machine="A3000"; option_cpu="ARM2";
@@ -3596,7 +3718,8 @@ int main(int argc, char **argv)
       option_writes="shadow"; option_jfd_omitted="file-data";
       phase=PHASE_LOAD; assert(retro_load_game(&game));
       assert(jfd_file_data_log_lines==1u &&
-             strstr(last_jfd_file_data_log,"policy=1 class=wp-flag format=D copies=1/1 presented=1") &&
+             !strcmp(last_jfd_file_data_log,
+               "JFD file-data: image=1 policy=1 class=wp-flag format=D copies=1/1 presented=1 skipped-sides=0 incomplete-dirs=0 reason=presented\n") &&
              arc_libretro_test_jfd_slot_state(0u,1u,1u,NULL,NULL)==3u);
       char file_stamp[41],strict_stamp[41],again_stamp[41];
       assert(arc_libretro_test_boot_media_digest(file_stamp));
@@ -3609,9 +3732,13 @@ int main(int argc, char **argv)
              disk_control.set_eject_state(false));
       assert(jfd_file_data_log_lines==2u &&
              arc_libretro_test_jfd_slot_state(0u,1u,1u,NULL,NULL)==3u);
+      assert(disk_control.set_eject_state(true));
       retro_reset();
+      assert(jfd_file_data_log_lines==2u);
+      assert(disk_control.set_eject_state(false));
       assert(jfd_file_data_log_lines==3u &&
-             strstr(last_jfd_file_data_log,"reason=option-strict") &&
+             !strcmp(last_jfd_file_data_log,
+               "JFD file-data: image=1 policy=1 class=wp-flag format=D copies=0/0 presented=0 skipped-sides=0 incomplete-dirs=0 reason=option-strict\n") &&
              arc_libretro_test_jfd_slot_state(0u,1u,1u,NULL,NULL)==0u);
       assert(arc_libretro_test_boot_media_digest(strict_stamp) &&
              strcmp(file_stamp,strict_stamp));
@@ -3624,8 +3751,8 @@ int main(int argc, char **argv)
       option_writes="off"; variable_update=true;
       retro_reset();
       assert(jfd_file_data_log_lines==5u &&
-             strstr(last_jfd_file_data_log,"class=disk-writes-off") &&
-             strstr(last_jfd_file_data_log,"reason=presented") &&
+             !strcmp(last_jfd_file_data_log,
+               "JFD file-data: image=1 policy=1 class=disk-writes-off format=D copies=1/1 presented=1 skipped-sides=0 incomplete-dirs=0 reason=presented\n") &&
              arc_libretro_test_jfd_slot_state(0u,1u,1u,NULL,NULL)==3u);
       retro_unload_game(); retro_deinit();
       assert(open_files==0u && open_dirs==0u && dlclose(module)==0);

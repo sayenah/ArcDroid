@@ -69,7 +69,10 @@ int main(int argc,char **argv)
    }
    d.tracks[1].timed=false;
    arc_jfd_file_data_prepare(&d,true,false,"wp-flag");
-   assert(!strcmp(d.file_data.reason,"unplaceable") && !d.file_data.presented);
+   assert(!strcmp(d.file_data.reason,"unplaceable") &&
+          d.file_data.format=='D' && d.file_data.valid_copies==1u &&
+          d.file_data.agreeing_copies==1u && !d.file_data.presented &&
+          d.file_data.skipped_sides==1u && !d.file_data.incomplete_dirs);
    for (unsigned i=0u;i<4u;++i)
       d.sectors[d.tracks[1].first_sector+i].time_us=saved_times[i];
    arc_jfd_file_data_prepare(&d,true,true,"wp-flag");
@@ -77,7 +80,11 @@ int main(int argc,char **argv)
    arc_jfd_file_data_prepare(&d,true,false,"writable");
    assert(!strcmp(d.file_data.reason,"writable-c11c")); expect(&d,1u,1u,false);
    arc_jfd_file_data_prepare(&d,true,false,"damaged-store");
-   assert(!strcmp(d.file_data.reason,"damaged-store")); expect(&d,1u,1u,false);
+   assert(!strcmp(d.file_data.reason,"damaged-store") &&
+          d.file_data.format=='D' && !d.file_data.valid_copies &&
+          !d.file_data.agreeing_copies && !d.file_data.presented &&
+          !d.file_data.skipped_sides && !d.file_data.incomplete_dirs);
+   expect(&d,1u,1u,false);
    arc_jfd_file_data_prepare(&d,true,false,"disk-writes-off");
    assert(!strcmp(d.file_data.reason,"presented")); expect(&d,1u,1u,true);
    d.overlay=calloc(1u,sizeof(*d.overlay)); assert(d.overlay);
@@ -97,6 +104,18 @@ int main(int argc,char **argv)
       d.tracks[1u].sector_count+1u,false,&created_view));
    assert(created_view.data==d.overlay->created[1u][1u] &&
           created_view.data[0]==0x5au); /* Existing created data wins. */
+   uint32_t created_time=created_view.sector.time_us;
+   arc_jfd_file_data_prepare(&d,true,true,"wp-flag");
+   assert(arc_jfd_effective_sector(&d,1u,
+          d.tracks[1u].sector_count+1u,false,&created_view) &&
+          created_view.data==d.overlay->created[1u][1u] &&
+          created_view.data[0]==0x5au &&
+          created_view.sector.time_us==created_time);
+   arc_jfd_free(&d);
+   d=load(argv[1],"d-recovery.jfd");
+   arc_jfd_file_data_prepare(&d,true,false,"wp-flag");
+   assert(d.file_data.mask[1u]==2u &&
+          !strcmp(d.file_data.reason,"presented"));
    arc_jfd_free(&d);
    d=load(argv[1],"d-terminal-gzip.jfd");
    arc_jfd_file_data_prepare(&d,true,false,"wp-flag");
@@ -107,6 +126,18 @@ int main(int argc,char **argv)
    arc_jfd_file_data_prepare(&d,true,false,"wp-flag");
    assert(d.file_data.mask[1]==2u && !strcmp(d.file_data.reason,"presented"));
    arc_jfd_free(&d);
+   for (unsigned i=0u;i<2u;++i)
+   {
+      d=load(argv[1],i?"d-captured-missing-data.jfd":
+                       "d-captured-data-crc.jfd");
+      arc_jfd_file_data_prepare(&d,true,false,"wp-flag");
+      assert(d.file_data.mask[1u]==2u &&
+             d.sectors[d.tracks[0u].first_sector+4u].id==4u);
+      assert(i ? d.sectors[d.tracks[0u].first_sector+4u].data_offset==UINT32_MAX :
+                 (d.sectors[d.tracks[0u].first_sector+4u].flags &
+                  ARC_JFD_DATA_CRC_BAD)!=0u);
+      arc_jfd_free(&d);
+   }
    d=load(argv[1],"d-slack.jfd");
    arc_jfd_file_data_prepare(&d,true,false,"wp-flag");
    assert(d.file_data.mask[1]==2u);
@@ -116,12 +147,32 @@ int main(int argc,char **argv)
    arc_jfd_file_data_prepare(&d,true,false,"wp-flag");
    assert(!strcmp(d.file_data.reason,"no-valid-map") && !d.file_data.presented);
    arc_jfd_free(&d);
+   for (unsigned i=0u;i<2u;++i)
+   {
+      d=load(argv[1],i?"d-map-second-check.jfd":"d-map-first-check.jfd");
+      arc_jfd_file_data_prepare(&d,true,false,"wp-flag");
+      assert(!strcmp(d.file_data.reason,"no-valid-map") &&
+             d.file_data.valid_copies==0u && !d.file_data.presented);
+      arc_jfd_free(&d);
+   }
 
    d=load(argv[1],"d-root-invalid.jfd");
    arc_jfd_file_data_prepare(&d,true,false,"wp-flag");
    assert(!strcmp(d.file_data.reason,"root-invalid") && !d.file_data.presented);
    arc_jfd_free(&d);
    d=load(argv[1],"d-sequence-invalid.jfd");
+   arc_jfd_file_data_prepare(&d,true,false,"wp-flag");
+   assert(!strcmp(d.file_data.reason,"root-invalid") && !d.file_data.presented);
+   arc_jfd_free(&d);
+   d=load(argv[1],"d-marker-invalid.jfd");
+   arc_jfd_file_data_prepare(&d,true,false,"wp-flag");
+   assert(!strcmp(d.file_data.reason,"root-invalid") && !d.file_data.presented);
+   arc_jfd_free(&d);
+   d=load(argv[1],"d-nick-valid.jfd");
+   arc_jfd_file_data_prepare(&d,true,false,"wp-flag");
+   assert(!strcmp(d.file_data.reason,"presented") && d.file_data.mask[1u]==2u);
+   arc_jfd_free(&d);
+   d=load(argv[1],"d-nick-invalid.jfd");
    arc_jfd_file_data_prepare(&d,true,false,"wp-flag");
    assert(!strcmp(d.file_data.reason,"root-invalid") && !d.file_data.presented);
    arc_jfd_free(&d);
@@ -140,11 +191,21 @@ int main(int argc,char **argv)
    d=load(argv[1],"d-one-byte.jfd");
    arc_jfd_file_data_prepare(&d,true,false,"wp-flag");
    assert(d.file_data.mask[0]==8u); expect(&d,0u,3u,true);
+   /* Inject coincident derived IDs to check the effective-view priority. */
+   d.identification_schedule=5u;
+   d.identification_mask=(uint16_t)(1u<<3u);
+   d.identification_time[3u]=12345u;
+   ArcJfdView priority;
+   assert(arc_jfd_effective_sector(&d,0u,
+          d.tracks[0u].sector_count+3u,false,&priority) &&
+          priority.sector.time_us==12345u && priority.data &&
+          priority.data[0]==0u);
    arc_jfd_free(&d);
-   for (unsigned i=0u;i<4u;++i)
+   for (unsigned i=0u;i<6u;++i)
    {
       static const char *invalid[] = {"d-invalid-object.jfd", "d-cycle.jfd",
-         "d-alias.jfd", "d-overlap.jfd"};
+         "d-alias.jfd", "d-overlap.jfd", "d-outside-declared.jfd",
+         "d-free-overlap.jfd"};
       d=load(argv[1],invalid[i]);
       arc_jfd_file_data_prepare(&d,true,false,"wp-flag");
       assert(!strcmp(d.file_data.reason,"object-invalid") &&
@@ -154,6 +215,19 @@ int main(int argc,char **argv)
    d=load(argv[1],"d-child-incomplete.jfd");
    arc_jfd_file_data_prepare(&d,true,false,"wp-flag");
    assert(d.file_data.mask[1]==2u && d.file_data.incomplete_dirs==1u);
+   arc_jfd_free(&d);
+   d=load(argv[1],"d-child-bad-check.jfd");
+   arc_jfd_file_data_prepare(&d,true,false,"wp-flag");
+   assert(!strcmp(d.file_data.reason,"none-eligible") &&
+          d.file_data.incomplete_dirs==1u && !d.file_data.mask[1u] &&
+          !d.file_data.mask[2u]);
+   arc_jfd_free(&d);
+   d=load(argv[1],"d-child-bad-check-omitted.jfd");
+   arc_jfd_file_data_prepare(&d,true,false,"wp-flag");
+   assert(!strcmp(d.file_data.reason,"presented") &&
+          d.file_data.incomplete_dirs==1u && d.file_data.mask[1u]==2u &&
+          !d.file_data.mask[2u]);
+   expect(&d,1u,1u,true);
    arc_jfd_free(&d);
    for (unsigned i=0u;i<2u;++i)
    {
@@ -205,11 +279,15 @@ int main(int argc,char **argv)
    assert(!strcmp(d.file_data.reason,"map-conflict") &&
           d.file_data.valid_copies==2u && !d.file_data.presented);
    arc_jfd_free(&d);
-   for (unsigned i=0u;i<2u;++i)
+   for (unsigned i=0u;i<4u;++i)
    {
-      d=load(argv[1],i?"e-backup-only.jfd":"e-one-copy.jfd");
+      static const char *one_copy[] = {"e-one-copy.jfd",
+         "e-backup-only.jfd", "e-zone-check-backup.jfd",
+         "e-zone-check-primary.jfd"};
+      d=load(argv[1],one_copy[i]);
       arc_jfd_file_data_prepare(&d,true,false,"wp-flag");
-      assert(d.file_data.mask[1]==4u && d.file_data.valid_copies==1u);
+      assert(d.file_data.mask[1]==4u && d.file_data.valid_copies==1u &&
+             d.file_data.agreeing_copies==1u);
       arc_jfd_free(&d);
    }
    for (unsigned i=0u;i<2u;++i)
@@ -220,6 +298,39 @@ int main(int argc,char **argv)
       assert(!strcmp(d.file_data.reason,"format") && !d.file_data.presented);
       arc_jfd_free(&d);
    }
+   d=load(argv[1],"../jfd-identification/sparse-d-timed.jfd");
+   arc_jfd_prepare_identification(&d,true);
+   assert(d.identification_mask & (1u<<3u));
+   arc_jfd_file_data_prepare(&d,true,false,"wp-flag");
+   ArcJfdView id_view;
+   assert(arc_jfd_effective_sector(&d,0u,
+          d.tracks[0u].sector_count+3u,false,&id_view) &&
+          id_view.id_visible && !id_view.data);
+   uint32_t id_time=id_view.sector.time_us;
+   arc_jfd_file_data_prepare(&d,true,true,"wp-flag");
+   assert(arc_jfd_effective_sector(&d,0u,
+          d.tracks[0u].sector_count+3u,false,&id_view) &&
+          id_view.id_visible && !id_view.data &&
+          id_view.sector.time_us==id_time);
+   arc_jfd_free(&d);
+   char manifest_path[4096],name[256];
+   int n=snprintf(manifest_path,sizeof(manifest_path),
+                  "%s/jfd-file-data/all-proof-fixtures.txt",argv[1]);
+   assert(n>0 && (size_t)n<sizeof(manifest_path));
+   FILE *manifest=fopen(manifest_path,"r"); assert(manifest);
+   unsigned strict_count=0u;
+   while (fscanf(manifest,"%255s",name)==1)
+   {
+      d=load(argv[1],name);
+      arc_jfd_file_data_prepare(&d,true,true,"wp-flag");
+      assert(!strcmp(d.file_data.reason,"option-strict") &&
+             !d.file_data.presented && !d.file_data.valid_copies);
+      for (unsigned side=0u;side<ARC_JFD_PDD5_TRACKS;++side)
+         assert(!d.file_data.mask[side]);
+      arc_jfd_free(&d);
+      ++strict_count;
+   }
+   assert(strict_count>=35u && !ferror(manifest) && !fclose(manifest));
    puts("jfd file-data: pass");
    return 0;
 }

@@ -2565,6 +2565,8 @@ static const char *arc_jfd_file_data_class(const ArcJfdImage *image,
                                             ArcDiskWriteMode mode)
 {
    const ArcJfdOverlay *overlay = image->overlay;
+   /* Only stores inspected by the loader can contribute visible records or
+    * be marked damaged; ineligible images keep a coherent base-only view. */
    if (overlay && overlay->damaged) return "damaged-store";
    if (overlay && overlay->writable) return "writable";
    if (mode == ARC_DISK_WRITES_OFF) return "disk-writes-off";

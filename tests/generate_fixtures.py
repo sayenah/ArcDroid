@@ -3395,6 +3395,38 @@ def build_file_data_fixtures(output: Path) -> None:
 
     terminal_jfd = protected(bytes(d), tracks)
     (output / "d-terminal.jfd").write_bytes(terminal_jfd)
+    recovery = bytearray(d)
+    recovery_root = bytearray(recovery[1024:3072])
+    _new_entry(recovery_root, 1, b"!Demo", 2048, 8192 // 256, True)
+    _new_entry(recovery_root, 2, b"!Boot", 1, 3072 // 256)
+    _finish_new_directory(recovery_root, 3, 0)
+    recovery[1024:3072] = recovery_root
+    recovery_child = _new_directory(b"!Demo")
+    _new_entry(recovery_child, 0, b"!Run", 1, 4096 // 256)
+    _finish_new_directory(recovery_child, 1, 2 << 8)
+    recovery[8192:10240] = recovery_child
+    recovery[4096] = 13
+    recovery[3072] = 13
+    recovery[509] = 3
+    recovery[511] = _old_map_checksum(recovery[256:511])
+    (output / "d-recovery.jfd").write_bytes(protected(
+        bytes(recovery), tracks))
+    (output / "other-format.jfd").write_bytes(protected(
+        bytes(819200), tracks))
+    writable_terminal = bytearray(terminal_jfd)
+    struct.pack_into("<I", writable_terminal, 304, 2)
+    (output / "d-terminal-rw.jfd").write_bytes(writable_terminal)
+    (output / "mixed.m3u").write_text("d-terminal.jfd\nd-terminal-rw.jfd\n")
+    crc_sector = bytearray(terminal_jfd)
+    crc_at = pdd5_descriptor_offset(crc_sector, 0, 4)
+    crc_header = struct.unpack_from("<I", crc_sector, crc_at)[0]
+    struct.pack_into("<I", crc_sector, crc_at, crc_header | (2 << 4))
+    (output / "d-captured-data-crc.jfd").write_bytes(crc_sector)
+    missing_sector = bytearray(terminal_jfd)
+    struct.pack_into("<I", missing_sector,
+                     pdd5_descriptor_offset(missing_sector, 0, 4) + 4,
+                     0xffffffff)
+    (output / "d-captured-missing-data.jfd").write_bytes(missing_sector)
     terminal_166 = build_pdd5_jfd(bytes(d), tracks, track_count=166)
     struct.pack_into("<I", terminal_166, 304, 1)
     (output / "d-terminal-166.jfd").write_bytes(terminal_166)
@@ -3408,12 +3440,39 @@ def build_file_data_fixtures(output: Path) -> None:
     bad_root[1024 + 2047] ^= 1
     (output / "d-root-invalid.jfd").write_bytes(protected(bytes(bad_root), tracks))
     bad_sequence = bytearray(d)
-    bad_sequence[1024 + 2042] ^= 1
+    sequence_root = bytearray(bad_sequence[1024:3072])
+    sequence_root[2042] ^= 1
+    _finish_new_directory(sequence_root, 1, 0)
+    bad_sequence[1024:3072] = sequence_root
     (output / "d-sequence-invalid.jfd").write_bytes(protected(
         bytes(bad_sequence), tracks))
+    bad_marker = bytearray(d)
+    marker_root = bytearray(bad_marker[1024:3072])
+    marker_root[1:5] = b"Bork"
+    marker_root[2043:2047] = b"Bork"
+    _finish_new_directory(marker_root, 1, 0)
+    bad_marker[1024:3072] = marker_root
+    (output / "d-marker-invalid.jfd").write_bytes(protected(
+        bytes(bad_marker), tracks))
+    nick = bytearray(d)
+    nick_root = _new_directory(signature=b"Nick")
+    _new_entry(nick_root, 0, b"Payload", 1100, (5120 + 256) // 256)
+    _finish_new_directory(nick_root, 1, 0)
+    nick[1024:3072] = nick_root
+    (output / "d-nick-valid.jfd").write_bytes(protected(bytes(nick), tracks))
+    nick_root[1:5] = b"Nock"
+    nick_root[2043:2047] = b"Nock"
+    _finish_new_directory(nick_root, 1, 0)
+    nick[1024:3072] = nick_root
+    (output / "d-nick-invalid.jfd").write_bytes(protected(bytes(nick), tracks))
     bad_map = bytearray(d)
     bad_map[255] ^= 1
+    (output / "d-map-first-check.jfd").write_bytes(protected(bytes(bad_map), tracks))
     (output / "d-no-valid-map.jfd").write_bytes(protected(bytes(bad_map), tracks))
+    bad_map_second = bytearray(d)
+    bad_map_second[511] ^= 1
+    (output / "d-map-second-check.jfd").write_bytes(protected(
+        bytes(bad_map_second), tracks))
     zero = bytearray(d)
     _new_entry(root, 0, b"Payload", 0, (5120 + 256) // 256)
     _finish_new_directory(root, 1, 0)
@@ -3443,6 +3502,27 @@ def build_file_data_fixtures(output: Path) -> None:
     _finish_new_directory(root, 1, 0)
     invalid[1024:3072] = root
     (output / "d-invalid-object.jfd").write_bytes(protected(bytes(invalid), tracks))
+    outside_declared = bytearray(d)
+    _store_u24(outside_declared, 252, 100)
+    _store_u24(outside_declared, 256, 60)
+    outside_root = _new_directory()
+    _new_entry(outside_root, 0, b"Payload", 1, 101)
+    _finish_new_directory(outside_root, 1, 0)
+    outside_declared[1024:3072] = outside_root
+    outside_declared[255] = _old_map_checksum(outside_declared[:255])
+    outside_declared[511] = _old_map_checksum(outside_declared[256:511])
+    (output / "d-outside-declared.jfd").write_bytes(protected(
+        bytes(outside_declared), tracks))
+    free_overlap = bytearray(d)
+    _store_u24(free_overlap, 0, 21)
+    _store_u24(free_overlap, 3, 40)
+    _store_u24(free_overlap, 256, 1)
+    _store_u24(free_overlap, 259, 3160)
+    free_overlap[510] = 6
+    free_overlap[255] = _old_map_checksum(free_overlap[:255])
+    free_overlap[511] = _old_map_checksum(free_overlap[256:511])
+    (output / "d-free-overlap.jfd").write_bytes(protected(
+        bytes(free_overlap), tracks))
     cycle = bytearray(d)
     root = _new_directory()
     _new_entry(root, 0, b"Again", 2048, 4, True)
@@ -3465,6 +3545,16 @@ def build_file_data_fixtures(output: Path) -> None:
     _finish_new_directory(root, 1, 0)
     child[1024:3072] = root
     (output / "d-child-incomplete.jfd").write_bytes(protected(bytes(child), tracks))
+    bad_child = bytearray(child)
+    live_child = _new_directory(b"Child")
+    _new_entry(live_child, 0, b"Descendant", 1, 8192 // 256)
+    _finish_new_directory(live_child, 1, 4)
+    live_child[2047] ^= 1
+    bad_child[5120:7168] = live_child
+    (output / "d-child-bad-check.jfd").write_bytes(protected(
+        bytes(bad_child), {0: full, 1: [0, 1, 2, 3, 4], 2: [0, 1, 2, 3, 4]}))
+    (output / "d-child-bad-check-omitted.jfd").write_bytes(protected(
+        bytes(bad_child), {0: full, 1: [0, 2, 3, 4], 2: [0, 1, 2, 3, 4]}))
     small = bytearray(d)
     _store_u24(small, 252, 100)
     _store_u24(small, 256, 60)
@@ -3579,10 +3669,16 @@ def build_file_data_fixtures(output: Path) -> None:
     invalid_backup[1024] ^= 1
     (output / "e-one-copy.jfd").write_bytes(protected(
         bytes(invalid_backup), tracks))
+    (output / "e-zone-check-backup.jfd").write_bytes(protected(
+        bytes(invalid_backup), tracks))
     backup_only = bytearray(e)
     backup_only[0] ^= 1
     (output / "e-backup-only.jfd").write_bytes(protected(
         bytes(backup_only), tracks))
+    (output / "e-zone-check-primary.jfd").write_bytes(protected(
+        bytes(backup_only), tracks))
+    (output / "all-proof-fixtures.txt").write_text("".join(
+        path.name + "\n" for path in sorted(output.glob("*.jfd"))))
 
 
 def pdd5_descriptor_offset(image: bytearray, track_side: int,

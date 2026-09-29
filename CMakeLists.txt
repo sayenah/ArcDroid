@@ -768,6 +768,7 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
   endif()
   add_dependencies(jfd_store_tests test-fixtures)
   add_test(NAME jfd-store COMMAND jfd_store_tests "${FIXTURE_DIR}")
+  add_test(NAME jfd-file-data-store COMMAND jfd_store_tests "${FIXTURE_DIR}" file-data)
   add_test(NAME native-writable-layout COMMAND jfd_store_tests
     "${FIXTURE_DIR}" native-writable)
   add_test(NAME jfd-gate-short COMMAND jfd_store_tests "${FIXTURE_DIR}" short)
@@ -950,6 +951,24 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
       "${FIXTURE_DIR}/jfd-file-data/d-terminal.jfd"
       "${CMAKE_CURRENT_BINARY_DIR}/jfd-file-data-process-data"
       --jfd-file-data-step)
+    add_test(NAME jfd-file-data-set-process COMMAND libretro_harness
+      $<TARGET_FILE:arcdroid_libretro_test>
+      "${FIXTURE_DIR}/arcdroid-test.rom"
+      "${FIXTURE_DIR}/jfd-file-data/mixed.m3u"
+      "${CMAKE_CURRENT_BINARY_DIR}/jfd-file-data-set-data"
+      --jfd-file-data-set)
+    add_test(NAME jfd-file-data-reasons-process COMMAND libretro_harness
+      $<TARGET_FILE:arcdroid_libretro_test>
+      "${FIXTURE_DIR}/arcdroid-test.rom"
+      "${FIXTURE_DIR}/jfd-file-data/d-terminal.jfd"
+      "${CMAKE_CURRENT_BINARY_DIR}/jfd-file-data-reasons-data"
+      --jfd-file-data-reasons "${FIXTURE_DIR}/jfd-file-data")
+    add_test(NAME jfd-file-data-recovery-process COMMAND libretro_harness
+      $<TARGET_FILE:arcdroid_libretro_test>
+      "${FIXTURE_DIR}/arcdroid-boot-prompt.rom"
+      "${FIXTURE_DIR}/jfd-file-data/d-recovery.jfd"
+      "${CMAKE_CURRENT_BINARY_DIR}/jfd-file-data-recovery-data"
+      --jfd-file-data-recovery)
     add_test(NAME jfd-file-data-gzip-process COMMAND libretro_harness
       $<TARGET_FILE:arcdroid_libretro_test>
       "${FIXTURE_DIR}/arcdroid-test.rom"

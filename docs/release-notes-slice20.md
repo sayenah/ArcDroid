@@ -4,4 +4,6 @@ On the native JFD path, ArcDroid now presents an omitted standard D- or E-format
 
 The new **JFD Omitted Sectors** option defaults to **File data**. **Strict** restores the earlier native omitted-sector behavior while preserving existing D-089 ID-only presentation and writable C-11c sectors. ArcDroid samples this option when content loads or explicitly resets; changing it alone does not alter a mounted disc or a later disk-control insertion in that session. **Disk Writes: Off** also permits the file-data zero presentation from the original captured image and continues to hide saved writes.
 
+For this policy, a damaged store is one the JFD store loader inspects and marks damaged; images whose stores the loader never inspects have no visible saved records and use their original captured bytes.
+
 The accepted compatibility risk is that a loader expecting Record-Not-Found on an omitted file-data sector may behave differently. Choose **Strict** to recover the earlier behavior. A multi-disc game's request to insert its next disc is the game's own prompt: swap discs through RetroArch disk control, then answer the prompt with the pointer.
