@@ -76,6 +76,14 @@ void arc_input_reset(ArcInputState *state)
    if (state) memset(state, 0, sizeof(*state));
 }
 
+void arc_input_reset_frontend(ArcInputState *state)
+{
+   if (!state) return;
+   for (unsigned source = 0u; source < ARC_INPUT_SOURCE_COUNT; ++source)
+      if (source != ARC_INPUT_SOURCE_POWER_ON)
+         arc_input_clear_source(state, (ArcInputSource)source);
+}
+
 void arc_input_release_all(ArcInputState *state)
 {
    if (!state) return;

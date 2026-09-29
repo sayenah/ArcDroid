@@ -2303,3 +2303,59 @@ if ((Get-FileHash -Algorithm SHA1 $shortContent).Hash.ToLowerInvariant() -ne $sh
     throw "Slice 15 source changed during shadow writes"
 }
 Write-Host "Slice 15 Windows RetroArch: boundary read, absent-sector error, persisted present-sector write, notice and hidden-tail isolation passed"
+
+# Slice 18: only the test DLL can opt ARC_OS_TEST into the RISC OS 3 CMOS
+# policy. The authored ROM acknowledges both KART transitions and reads the
+# mounted floppy. The authored ROM also writes sector 1 before programming
+# video and KART, so its source image needs a private writable shadow.
+# A frontend RESET must reconstruct and replay the sequence.
+Copy-Item -Force (Join-Path $InputDirectory "arcdroid_libretro_test.dll") $core
+Copy-Item -Force (Join-Path $InputDirectory "arcdroid-test.rom") $firmware
+@"
+arcdroid_machine = "A3000"
+arcdroid_cpu = "ARM2"
+arcdroid_joystick_if = "Keyboard"
+arcdroid_disk_writes = "shadow"
+arcdroid_launch = "off"
+"@ | Set-Content -Encoding ASCII $coreOptions
+$env:ARCDROID_TEST_POWER_ON_SHIFT = "1"
+$powerOnRun = $null
+try {
+    $powerContent = (Resolve-Path (Join-Path $InputDirectory "arcdroid-test.adf")).Path
+    $powerOnRun = Start-MediaRun $powerContent "slice18-power-on"
+    foreach ($count in 1, 2) {
+        if ($count -eq 2) { Send-MediaCommand $powerOnRun "RESET" }
+        $deadline = [DateTime]::UtcNow.AddSeconds(15)
+        do {
+            $powerLines = @(Get-Content $powerOnRun.RetroLog -ErrorAction SilentlyContinue)
+            $released = @($powerLines | Where-Object { $_ -match 'Power-on: shift released at=\d+ reason=timer' })
+            $acknowledged = @($powerLines | Where-Object {
+                $_.Contains('KART guest->device value=33 state=3')
+            })
+            if ($released.Count -ge $count -and $acknowledged.Count -ge (2 * $count)) {
+                break
+            }
+            Start-Sleep -Milliseconds 100
+        } while ([DateTime]::UtcNow -lt $deadline)
+        if ($released.Count -lt $count -or $acknowledged.Count -lt (2 * $count)) {
+            throw "Slice 18 boot $count did not release Shift and acknowledge both KART pairs; log=[$(Get-RunLogTail $powerOnRun)]"
+        }
+    }
+    $powerCapture = Capture-RawScreenshot $powerOnRun "slice18-power-on-boot"
+    if ($powerCapture.Colours -lt 2) { throw "Slice 18 authored guest did not draw its boot result" }
+} finally {
+    if ($powerOnRun) { Stop-MediaRun $powerOnRun }
+    Remove-Item Env:ARCDROID_TEST_POWER_ON_SHIFT -ErrorAction SilentlyContinue
+}
+$powerLines = @(Get-Content $powerOnRun.RetroLog)
+foreach ($pattern in @(
+    'Power-on: boot-flag=clear shift=held',
+    'Power-on: shift released at=',
+    'KART device->guest values=C4,CC',
+    'KART device->guest values=D4,DC',
+    'FDC command=80 type=8')) {
+    if (@($powerLines | Where-Object { $_.Contains($pattern) }).Count -lt 2) {
+        throw "Slice 18 expected two guest-visible $pattern events across RESET"
+    }
+}
+Write-Host "Slice 18 Windows RetroArch: synthetic power-on Shift down/up, floppy boot read and frontend RESET reconstruction passed"

@@ -116,11 +116,9 @@ bool arc_cmos_machine_image(ArcOsClass os, ArcIoClass io,
    if (risc_os_3)
    {
       /* The PCF8583 maps RISC OS byte n at raw address n+0x40, wrapping
-       * past 255 to 16. PRMs: FS=ADFS(8), drive=0, Boot, at least one
-       * floppy. Preserve each accepted upstream value unless it does not
-       * satisfy that boot recipe. */
+       * past 255 to 16. Keep the guest's Boot flag; power-on Shift supplies
+       * the boot inversion when it is clear. */
       if (output[69] != 8u) output[69] = 8u;              /* byte 5 */
-      if (!(output[80] & 0x10u)) output[80] |= 0x10u;     /* byte 16 */
    }
    output[75] = (uint8_t)((output[75] & ~0x07u) |
                           (launch_helper ? 1u : 0u));       /* byte 11 */
@@ -138,10 +136,21 @@ bool arc_cmos_machine_image(ArcOsClass os, ArcIoClass io,
    return true;
 }
 
+bool arc_cmos_power_on_shift(ArcOsClass os,
+                             const uint8_t image[ARC_CMOS_MACHINE_SIZE])
+{
+   return image && (os == ARC_OS_RISCOS_300 || os == ARC_OS_RISCOS_310 ||
+                    os == ARC_OS_RISCOS_311 || os == ARC_OS_RISCOS_319) &&
+                    !(image[arc_cmos_raw_address(16u)] & 0x10u);
+}
+
 void arc_cmos_normalise_payload(uint8_t payload[ARC_CMOS_PAYLOAD_SIZE], ArcOsClass os, ArcIoClass io)
 {
    if (!payload) return;
    arc_cmos_clear_unplug_bytes(payload, os);
+   if (os == ARC_OS_RISCOS_300 || os == ARC_OS_RISCOS_310 ||
+       os == ARC_OS_RISCOS_311 || os == ARC_OS_RISCOS_319)
+      payload[arc_cmos_raw_address(16u) - 16u] &= (uint8_t)~0x10u;
    /* Logical CMOS bytes 11 and 135 live at raw PCF8583 addresses 75 and
     * 199, hence payload offsets 59 and 183. */
    payload[59] &= (uint8_t)~0x07u;

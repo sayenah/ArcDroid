@@ -194,6 +194,14 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
     target_link_libraries(core_tests PRIVATE arcdroid_sanitizer_link)
   endif()
   target_compile_options(core_tests PRIVATE $<$<C_COMPILER_ID:GNU,Clang,AppleClang>:-UNDEBUG>)
+  add_executable(power_on_cmos_test tests/power_on_cmos_test.c)
+  target_link_libraries(power_on_cmos_test PRIVATE arcdroid_core)
+  target_compile_options(power_on_cmos_test PRIVATE
+    $<$<C_COMPILER_ID:GNU,Clang,AppleClang>:-UNDEBUG;-Wall;-Wextra;-Wpedantic>)
+  if(ARCDROID_SANITIZERS)
+    target_link_libraries(power_on_cmos_test PRIVATE arcdroid_sanitizer_link)
+  endif()
+  add_test(NAME power-on-cmos COMMAND power_on_cmos_test)
   add_executable(boot_watch_test tests/boot_watch_test.c engine/arc_boot_watch.c)
   target_include_directories(boot_watch_test PRIVATE engine)
   target_link_libraries(boot_watch_test PRIVATE arcdroid_core)
@@ -416,6 +424,12 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
     "${FIXTURE_DIR}/adffs/eligible-hd.jfd")
   add_custom_command(
     OUTPUT "${FIXTURE_DIR}/arcdroid-test.rom" "${FIXTURE_DIR}/arcdroid-test.adf"
+      "${FIXTURE_DIR}/arcdroid-power-on-early-swi.rom"
+      "${FIXTURE_DIR}/arcdroid-power-on-early-xswi.rom"
+      "${FIXTURE_DIR}/arcdroid-power-on-late-kart.rom"
+      "${FIXTURE_DIR}/arcdroid-power-on-cmos-guest.rom"
+      "${FIXTURE_DIR}/arcdroid-power-on-boot-prompt.rom"
+      "${FIXTURE_DIR}/arcdroid-power-on-boot-cli-then-prompt.rom"
       "${FIXTURE_DIR}/arcdroid-boot-prompt.rom"
       "${FIXTURE_DIR}/arcdroid-boot-prompt-write.rom"
       "${FIXTURE_DIR}/arcdroid-boot-cli.rom"
@@ -594,6 +608,12 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
     DEPENDS tests/generate_fixtures.py VERBATIM)
   add_custom_target(test-fixtures ALL DEPENDS
     "${FIXTURE_DIR}/arcdroid-test.rom" "${FIXTURE_DIR}/arcdroid-test.adf"
+    "${FIXTURE_DIR}/arcdroid-power-on-early-swi.rom"
+    "${FIXTURE_DIR}/arcdroid-power-on-early-xswi.rom"
+    "${FIXTURE_DIR}/arcdroid-power-on-late-kart.rom"
+    "${FIXTURE_DIR}/arcdroid-power-on-cmos-guest.rom"
+    "${FIXTURE_DIR}/arcdroid-power-on-boot-prompt.rom"
+    "${FIXTURE_DIR}/arcdroid-power-on-boot-cli-then-prompt.rom"
     "${FIXTURE_DIR}/arcdroid-boot-prompt.rom"
     "${FIXTURE_DIR}/arcdroid-boot-prompt-write.rom"
     "${FIXTURE_DIR}/arcdroid-boot-cli.rom"
@@ -869,6 +889,15 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
       "${FIXTURE_DIR}/adffs/install-first.m3u"
       "${FIXTURE_DIR}/adffs/synthetic.zip")
     set_tests_properties(install-guest-process PROPERTIES TIMEOUT 900)
+    add_test(NAME power-on-install-process COMMAND "${CMAKE_COMMAND}" -E env
+      ARCDROID_TEST_POWER_ON_SHIFT=1
+      "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/install_guest_process_test.py"
+      $<TARGET_FILE:libretro_harness>
+      $<TARGET_FILE:arcdroid_libretro_test>
+      "${FIXTURE_DIR}/arcdroid-install-guest.rom"
+      "${FIXTURE_DIR}/adffs/install-first.m3u"
+      "${FIXTURE_DIR}/adffs/synthetic.zip" --power-on-first)
+    set_tests_properties(power-on-install-process PROPERTIES TIMEOUT 900)
     add_test(NAME libretro-harness COMMAND libretro_harness
       $<TARGET_FILE:arcdroid_libretro_test>
       "${FIXTURE_DIR}/arcdroid-test.rom"
@@ -885,11 +914,24 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
       "${FIXTURE_DIR}/adffs/synthetic.zip"
       "${FIXTURE_DIR}/adffs/eligible.jfd"
       "${FIXTURE_DIR}/zip-content" --cached-frame-probe)
+    add_test(NAME power-on-shift-harness COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/check_power_on_shift.py"
+      $<TARGET_FILE:libretro_harness> $<TARGET_FILE:arcdroid_libretro_test>
+      "${FIXTURE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/power-on-shift-data"
+      "${FIXTURE_DIR}/adffs/eligible.jfd" "${FIXTURE_DIR}/adffs/synthetic.zip")
+    set_tests_properties(power-on-shift-harness PROPERTIES TIMEOUT 900)
     add_test(NAME cmos-guest-exerciser COMMAND libretro_harness
       $<TARGET_FILE:arcdroid_libretro_test>
       "${FIXTURE_DIR}/arcdroid-cmos-exerciser.rom"
       "${FIXTURE_DIR}/arcdroid-test.adf"
       "${CMAKE_CURRENT_BINARY_DIR}/cmos-guest-data" --cmos-exerciser)
+    add_test(NAME power-on-cmos-guest COMMAND "${CMAKE_COMMAND}" -E env
+      ARCDROID_TEST_POWER_ON_SHIFT=1 $<TARGET_FILE:libretro_harness>
+      $<TARGET_FILE:arcdroid_libretro_test>
+      "${FIXTURE_DIR}/arcdroid-power-on-cmos-guest.rom"
+      "${FIXTURE_DIR}/arcdroid-test.adf"
+      "${CMAKE_CURRENT_BINARY_DIR}/power-on-cmos-guest-data"
+      --power-on-cmos-guest "${FIXTURE_DIR}/arcdroid-test.rom")
     add_test(NAME jfd-writes-libretro-harness COMMAND libretro_harness
       $<TARGET_FILE:arcdroid_libretro_test>
       "${FIXTURE_DIR}/arcdroid-jfd-save-test.rom"
@@ -1013,6 +1055,13 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
         "${FIXTURE_DIR}/arcdroid-boot-prompt.rom"
         "${FIXTURE_DIR}/launch-family/boot-file-3-l.adl"
         "${CMAKE_CURRENT_BINARY_DIR}/boot-watch-input-data" input-cancel)
+    add_test(NAME power-on-input-cancel-harness
+      COMMAND "${CMAKE_COMMAND}" -E env ARCDROID_TEST_POWER_ON_SHIFT=1
+        "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/check_boot_watch.py"
+        $<TARGET_FILE:libretro_harness> $<TARGET_FILE:arcdroid_libretro_test>
+        "${FIXTURE_DIR}/arcdroid-boot-prompt.rom"
+        "${FIXTURE_DIR}/launch-family/boot-file-3-l.adl"
+        "${CMAKE_CURRENT_BINARY_DIR}/power-on-input-cancel-data" shift-cancel)
     foreach(launch_setting IN ITEMS off explicit)
       add_test(NAME boot-watch-${launch_setting}-harness
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/check_boot_watch.py"
@@ -1035,6 +1084,14 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
         "${FIXTURE_DIR}/arcdroid-boot-cli-then-prompt.rom"
         "${FIXTURE_DIR}/launch-family/boot-file-3-l.adl"
         "${CMAKE_CURRENT_BINARY_DIR}/boot-observation-data")
+    add_test(NAME power-on-recovery-harness
+      COMMAND "${CMAKE_COMMAND}" -E env ARCDROID_TEST_POWER_ON_SHIFT=1
+        "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/check_boot_observation.py"
+        "$<TARGET_FILE:libretro_harness>" "$<TARGET_FILE:arcdroid_libretro_test>"
+        "${FIXTURE_DIR}/arcdroid-power-on-boot-prompt.rom"
+        "${FIXTURE_DIR}/arcdroid-power-on-boot-cli-then-prompt.rom"
+        "${FIXTURE_DIR}/launch-family/boot-file-3-l.adl"
+        "${CMAKE_CURRENT_BINARY_DIR}/power-on-recovery-data")
     add_test(NAME launch-ramdisc-harness
       COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/check_launch_ramdisc.py"
         "$<TARGET_FILE:libretro_harness>" "$<TARGET_FILE:arcdroid_libretro_test>"
@@ -1057,6 +1114,13 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
         "${FIXTURE_DIR}/arcdroid-boot-prompt.rom"
         "${FIXTURE_DIR}/launch-family/boot-matrix-3-file-multiple.adf"
         "${CMAKE_CURRENT_BINARY_DIR}/boot-observation-chooser-data")
+    add_test(NAME power-on-chooser-harness
+      COMMAND "${CMAKE_COMMAND}" -E env ARCDROID_TEST_POWER_ON_SHIFT=1
+        "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/check_boot_observation_chooser.py"
+        "$<TARGET_FILE:libretro_harness>" "$<TARGET_FILE:arcdroid_libretro_test>"
+        "${FIXTURE_DIR}/arcdroid-power-on-boot-prompt.rom"
+        "${FIXTURE_DIR}/launch-family/boot-matrix-3-file-multiple.adf"
+        "${CMAKE_CURRENT_BINARY_DIR}/power-on-chooser-data")
     add_test(NAME boot-observation-jfd-harness
       COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/check_boot_observation_jfd.py"
         "$<TARGET_FILE:libretro_harness>" "$<TARGET_FILE:arcdroid_libretro_test>"

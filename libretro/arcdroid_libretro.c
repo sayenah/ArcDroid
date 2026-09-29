@@ -79,6 +79,25 @@ static uint8_t *arc_firmware;
 static size_t arc_firmware_size;
 static ArcDigest arc_content_digest;
 static ArcLaunchPlan arc_plan;
+#if defined(ARCDROID_TEST_FAULTS)
+/* The authored test ROM can opt into the RISC OS 3 CMOS and Shift path.
+ * No corresponding branch exists in the shipping library. */
+static ArcOsClass arc_cmos_policy_os(void)
+{
+   const char *opt_in = getenv("ARCDROID_TEST_POWER_ON_SHIFT");
+   return arc_plan.os == ARC_OS_TEST && opt_in && !strcmp(opt_in, "1") ?
+      ARC_OS_RISCOS_311 : arc_plan.os;
+}
+#else
+static ArcOsClass arc_cmos_policy_os(void) { return arc_plan.os; }
+#endif
+
+static bool arc_cmos_policy_riscos3(void)
+{
+   ArcOsClass os = arc_cmos_policy_os();
+   return os == ARC_OS_RISCOS_300 || os == ARC_OS_RISCOS_310 ||
+      os == ARC_OS_RISCOS_311 || os == ARC_OS_RISCOS_319;
+}
 static ArcInputState arc_inputs;
 static bool arc_pad_keys[2][10];
 static bool arc_pad_neutral_gate[2];
@@ -110,6 +129,7 @@ static unsigned arc_cmos_ignored_changes;
 static bool arc_ejected;
 static unsigned arc_image_index;
 static uint64_t arc_guest_time_us;
+static bool arc_power_on_shift;
 static int16_t arc_stick_x;
 static int16_t arc_stick_y;
 static bool arc_stick_precision;
@@ -1023,6 +1043,8 @@ static void arc_release_session(void)
    arc_chooser_input_armed = false;
    arc_chooser_release_gate = false;
    arc_engine_stop();
+   arc_power_on_shift = false;
+   arc_input_reset(&arc_inputs);
    arc_install_store_close(arc_install_store);
    arc_install_store = NULL;
    memset(&arc_install_active_plan, 0, sizeof(arc_install_active_plan));
@@ -1072,7 +1094,7 @@ static void arc_sync_cmos(void)
    }
    else
       arc_engine_cmos(payload);
-   arc_cmos_normalise_payload(payload, arc_plan.os, machine->io);
+   arc_cmos_normalise_payload(payload, arc_cmos_policy_os(), machine->io);
    arc_cmos_encode(arc_cmos_record, &arc_plan, payload);
 }
 
@@ -1099,7 +1121,10 @@ static void arc_seed_cmos(void)
    unsigned healed = arc_cmos_clear_unplug_bytes(payload, arc_plan.os);
    if (healed && arc_cmos_last_written_valid && arc_log)
       arc_log(RETRO_LOG_INFO, "CMOS: cleared %u unplug byte(s) from the persisted record\n", healed);
-   arc_cmos_normalise_payload(payload, arc_plan.os, machine->io);
+   if (arc_cmos_last_written_valid && arc_cmos_policy_riscos3() &&
+       (payload[64u] & 0x10u) && arc_log)
+      arc_log(RETRO_LOG_INFO, "CMOS: cleared launch-owned boot flag\n");
+   arc_cmos_normalise_payload(payload, arc_cmos_policy_os(), machine->io);
    arc_cmos_encode(arc_cmos_record, &arc_plan, payload);
    memcpy(arc_cmos_prepared, arc_cmos_record, sizeof(arc_cmos_prepared));
    free(existing);
@@ -3950,7 +3975,7 @@ static bool arc_boot_stamp(ArcBootObservation *stamp)
    const ArcMachineDescriptor *machine = arc_machine_descriptor(arc_plan.machine);
    if (!arc_firmware || !arc_firmware_size ||
        !machine || !arc_cmos_decode(arc_cmos_prepared, &arc_plan, prepared) ||
-       !arc_cmos_boot_stamp_payload(arc_plan.os, machine->io, prepared,
+       !arc_cmos_boot_stamp_payload(arc_cmos_policy_os(), machine->io, prepared,
                                     arc_plan.launch_helper, starting) ||
        !arc_boot_media_digest(stamp->media)) return false;
    arc_sha1_hex(arc_firmware, arc_firmware_size, stamp->firmware);
@@ -4566,7 +4591,7 @@ static void arc_touch_reset(void)
 static void arc_input_sampling_reset(bool release_engine_levels)
 {
    if (release_engine_levels) arc_input_release_all(&arc_inputs);
-   else arc_input_reset(&arc_inputs);
+   else arc_input_reset_frontend(&arc_inputs);
    memset(arc_pad_keys, 0, sizeof(arc_pad_keys));
    memset(arc_pad_neutral_gate, 0, sizeof(arc_pad_neutral_gate));
    arc_pad_pointer_buttons = 0u;
@@ -5108,7 +5133,7 @@ static void arc_poll_inputs(void)
              (arc_keyboard_polling &&
               arc_input_state(0u, RETRO_DEVICE_KEYBOARD, 0u, key)))
             neutral = false;
-      arc_input_reset(&arc_inputs);
+      arc_input_reset_frontend(&arc_inputs);
       arc_platform_joystick_snapshot(false, NULL);
       arc_stick_x = arc_stick_y = 0;
       if (neutral)
@@ -5231,7 +5256,14 @@ static void arc_poll_inputs(void)
             if (x * x + y * y > dz * dz) arc_boot_input = true;
          }
    for (unsigned key = 0u; key < ARC_INPUT_KEY_COUNT; ++key)
-      if (arc_keyboard_raw[key] || arc_inputs.effective_keys[key])
+      if (arc_keyboard_raw[key] ||
+          arc_input_source_level(&arc_inputs, ARC_INPUT_SOURCE_KEYBOARD, key) ||
+          arc_input_source_level(&arc_inputs, ARC_INPUT_SOURCE_PAD0, key) ||
+          arc_input_source_level(&arc_inputs, ARC_INPUT_SOURCE_PAD1, key) ||
+          arc_input_source_level(&arc_inputs, ARC_INPUT_SOURCE_TOUCH, key) ||
+          arc_input_source_level(&arc_inputs, ARC_INPUT_SOURCE_MOUSE0, key) ||
+          arc_input_source_level(&arc_inputs, ARC_INPUT_SOURCE_MOUSE1, key) ||
+          arc_input_source_level(&arc_inputs, ARC_INPUT_SOURCE_OSK, key))
       { arc_boot_input = true; break; }
    if (arc_inputs.effective_buttons || arc_osk_toggle_level)
       arc_boot_input = true;
@@ -5733,7 +5765,7 @@ static bool arc_construct_machine(const ArcMachineDescriptor *machine,
    }
    memcpy(arc_cmos_record, arc_cmos_prepared, sizeof(arc_cmos_record));
    if (!arc_cmos_decode(arc_cmos_prepared, &arc_plan, payload) ||
-       !arc_cmos_machine_image(arc_plan.os, machine->io, payload,
+       !arc_cmos_machine_image(arc_cmos_policy_os(), machine->io, payload,
                                arc_plan.launch_helper, machine_cmos))
       return false;
    if (arc_install_hd_mode) arc_cmos_machine_attach_ide(machine_cmos);
@@ -5747,6 +5779,10 @@ static bool arc_construct_machine(const ArcMachineDescriptor *machine,
    }
 #endif
    arc_cmos_locked_raw_mask(arc_plan.os, locked_cmos_mask);
+   /* A construction replaces every old KART transition, including a pending
+    * power-on release. Frontend input is sampled again on the next run. */
+   arc_input_reset(&arc_inputs);
+   arc_power_on_shift = false;
    if (
        !arc_engine_start(arc_firmware, arc_firmware_size, mounted,
                          arc_plan.launch_helper ? &helper : NULL,
@@ -5756,6 +5792,16 @@ static bool arc_construct_machine(const ArcMachineDescriptor *machine,
                          machine_cmos, locked_cmos_mask,
                          arc_cmos_ignored_write, NULL, error, error_size))
       return false;
+   bool riscos3 = arc_cmos_policy_riscos3();
+   arc_power_on_shift = arc_cmos_power_on_shift(arc_cmos_policy_os(), machine_cmos);
+   arc_engine_power_on_arm(&arc_inputs, arc_power_on_shift);
+   if (arc_power_on_shift)
+      arc_input_source_key(&arc_inputs, ARC_INPUT_SOURCE_POWER_ON,
+                           RETROK_LSHIFT, true, true);
+   if (riscos3 && arc_log)
+      arc_log(RETRO_LOG_INFO, "Power-on: boot-flag=%s shift=%s\n",
+              arc_power_on_shift ? "clear" : "set",
+              arc_power_on_shift ? "held" : "none");
    if (arc_install_hd_mode == 2u && arc_log)
       arc_log(RETRO_LOG_INFO,
          "Install disc: run-plan=start drive0=memory geometry0=800K-D writable0=0 drive1=memory geometry1=800K-D writable1=0 cmos_boot_drive=%u cmos_boot=%u cmos_floppies=%u cmos_ide=%u cmos_raw11=%02X cmos_raw16=%02X cmos_raw135=%02X\n",
@@ -5779,7 +5825,7 @@ static void arc_chooser_reset_input(void)
    arc_chooser_pointer_down = false;
    arc_chooser_pointer_row = -1;
    arc_chooser_input_armed = false;
-   arc_input_reset(&arc_inputs);
+   arc_input_reset_frontend(&arc_inputs);
    arc_platform_joystick_snapshot(false, NULL);
 }
 
@@ -6910,6 +6956,18 @@ RETRO_API void retro_run(void)
 #else
    frame_ran = arc_engine_run_frame(&arc_inputs, &frame);
 #endif
+   uint64_t power_on_release_us = 0u;
+   bool power_on_boot_action = false;
+   if (arc_engine_power_on_take_release(&power_on_release_us,
+                                        &power_on_boot_action))
+   {
+      arc_power_on_shift = false;
+      if (arc_log)
+         arc_log(RETRO_LOG_INFO,
+                 "Power-on: shift released at=%llu reason=%s\n",
+                 (unsigned long long)power_on_release_us,
+                 power_on_boot_action ? "boot-action" : "timer");
+   }
    if (frame_ran && arc_boot_attempt && arc_boot_eligible &&
        arc_engine_boot_watch_state() == ARC_BOOT_WATCH_PROMPT)
    {

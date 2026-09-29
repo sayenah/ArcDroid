@@ -27,6 +27,7 @@ def assert_no_package_bytes(data: Path, canaries: tuple[bytes, ...],
 
 def main() -> None:
     harness, core, rom, playlist, package = map(Path, sys.argv[1:6])
+    power_on_first = len(sys.argv) == 7 and sys.argv[6] == "--power-on-first"
     package_canaries = (
         b"Synthetic 1.0\0",
         b"ArcDroid synthetic ADFFS SetVars fixture\n",
@@ -50,6 +51,11 @@ def main() -> None:
                                                     result.args)
             assert_no_package_bytes(data, canaries,
                                     result.stdout + result.stderr)
+            if power_on_first:
+                log = (result.stdout + result.stderr).decode(errors="replace")
+                assert "JFD boot: path=adffs-install" in log, log
+                assert "Power-on: boot-flag=clear shift=held" in log, log
+                assert "Power-on: shift released at=" in log, log
 
         def store_bytes(data: Path) -> dict[str, bytes]:
             store = data / "save" / "arcdroid" / "install"
@@ -59,6 +65,9 @@ def main() -> None:
         ordinary = Path(root) / "ordinary"
         preferred = Path(root) / "preferred"
         run(ordinary, "first")
+        if power_on_first:
+            print("power-on-install-process: install construction and release passed")
+            return
         run(preferred, "first-adffs")
         auto_store = store_bytes(ordinary)
         assert auto_store and auto_store == store_bytes(preferred)

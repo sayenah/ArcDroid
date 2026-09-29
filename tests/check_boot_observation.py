@@ -1,16 +1,19 @@
 """End-to-end remembered prompt checks using executed synthetic SWIs."""
 from pathlib import Path
+import os
 import subprocess
 import sys
 import tempfile
+from power_on_guest_assert import assert_guest_shift_each_construction
 
 
 def main() -> None:
     harness, core, rom, alternate_rom, content, output = sys.argv[1:]
     Path(output).mkdir(parents=True, exist_ok=True)
     root = Path(tempfile.mkdtemp(prefix="run-", dir=output))
+    power_on = os.environ.get("ARCDROID_TEST_POWER_ON_SHIFT") == "1"
     command = [harness, core, rom, content, str(root), "--real-boot",
-               "--boot-frames", "180"]
+               "--boot-frames", "360" if power_on else "180"]
 
     def run(extra=(), firmware=None):
         selected = command.copy()
@@ -20,8 +23,11 @@ def main() -> None:
                                 text=True, check=False)
         assert result.returncode == 0, result.stdout + result.stderr
         log = (root / "evidence" / "real-boot.log").read_text()
-        return log, [line for line in log.splitlines()
-                     if line.startswith("Launch:")]
+        lines = [line for line in log.splitlines()
+                 if line.startswith("Launch:")]
+        if power_on:
+            assert_guest_shift_each_construction(log, len(lines))
+        return log, lines
 
     log, lines = run()
     assert len(lines) == 2 and "boot-watch=armed" in lines[0], lines
@@ -32,12 +38,20 @@ def main() -> None:
     original = record.read_bytes()
     assert len(original) == 160 and original[:8] == b"ARCBOOT1"
     assert int.from_bytes(original[8:12], "little") == 1
-    assert int.from_bytes(original[12:16], "little") == 1
+    assert int.from_bytes(original[12:16], "little") == 2
 
     log, lines = run()
     assert len(lines) == 1 and "remembered boot observation; disc !Boot skipped" in lines[0], lines
     assert "boot-watch=disabled" in lines[0] and "Boot outcome:" not in log
     assert "helper=" in lines[0] and ".adl" in lines[0]
+
+    revision_one = bytearray(original)
+    revision_one[12:16] = (1).to_bytes(4, "little")
+    record.write_bytes(revision_one)
+    log, lines = run()
+    assert len(lines) == 2 and "boot-watch=armed" in lines[0], lines
+    assert "Boot outcome: prompt" in log
+    assert int.from_bytes(record.read_bytes()[12:16], "little") == 2
 
     log, lines = run(("--boot-reset-once",))
     assert len(lines) == 2 and all("remembered boot observation" in line for line in lines), lines
@@ -131,6 +145,8 @@ def main() -> None:
         ask_log = (ask_root / "evidence" / "real-boot.log").read_text()
         ask_lines = [line for line in ask_log.splitlines()
                      if line.startswith("Launch:")]
+        if power_on:
+            assert_guest_shift_each_construction(ask_log, 2 if attempt == 1 else 1)
         if attempt == 1:
             assert len(ask_lines) == 2 and "recovery=helper" in ask_lines[1], ask_lines
         else:

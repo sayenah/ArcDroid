@@ -368,6 +368,8 @@ bool arc_cmos_machine_image(ArcOsClass os, ArcIoClass io,
                             const uint8_t payload[ARC_CMOS_PAYLOAD_SIZE],
                             bool launch_helper,
                             uint8_t output[ARC_CMOS_MACHINE_SIZE]);
+bool arc_cmos_power_on_shift(ArcOsClass os,
+                             const uint8_t image[ARC_CMOS_MACHINE_SIZE]);
 bool arc_cmos_boot_stamp_payload(ArcOsClass os, ArcIoClass io,
                                  const uint8_t prepared[ARC_CMOS_PAYLOAD_SIZE],
                                  bool launch_helper,
@@ -393,6 +395,7 @@ typedef enum {
    ARC_INPUT_SOURCE_MOUSE0,
    ARC_INPUT_SOURCE_MOUSE1,
    ARC_INPUT_SOURCE_OSK,
+   ARC_INPUT_SOURCE_POWER_ON,
    ARC_INPUT_SOURCE_COUNT
 } ArcInputSource;
 
@@ -522,6 +525,7 @@ bool arc_input_profiles_validate_table(const ArcInputProfile *profiles,
                                        size_t error_size);
 
 void arc_input_reset(ArcInputState *state);
+void arc_input_reset_frontend(ArcInputState *state);
 void arc_input_release_all(ArcInputState *state);
 void arc_input_clear_source(ArcInputState *state, ArcInputSource source);
 void arc_input_source_key(ArcInputState *state, ArcInputSource source,

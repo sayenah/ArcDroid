@@ -20,6 +20,11 @@ int main(void)
                                      ARC_BOOT_OBSERVATION_SIZE));
    assert(arc_boot_observation_parse(bytes, ARC_BOOT_OBSERVATION_SIZE, &parsed));
    assert(arc_boot_observation_equal(&stamp, &parsed));
+   assert(bytes[12] == 2u && bytes[13] == 0u);
+   bytes[12] = 1u;
+   assert(!arc_boot_observation_parse(bytes, ARC_BOOT_OBSERVATION_SIZE, &parsed));
+   bytes[12] = 2u;
+   assert(arc_boot_observation_parse(bytes, ARC_BOOT_OBSERVATION_SIZE, &parsed));
    assert(!arc_boot_observation_parse(bytes, ARC_BOOT_OBSERVATION_SIZE - 1u, &parsed));
    assert(!arc_boot_observation_parse(bytes, sizeof(bytes), &parsed));
    for (unsigned offset = 0; offset < ARC_BOOT_OBSERVATION_SIZE; ++offset)
