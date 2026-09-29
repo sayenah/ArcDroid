@@ -74,10 +74,13 @@ int main(void) {
   CHECK(profiles && installs == 3u);
   size_t test_count = 0u;
   const ArcInstallProfile *test_profiles = arc_test_install_profiles(&test_count);
-  CHECK(test_profiles && test_count == installs + 1u &&
-        test_profiles[installs].game_id == 123u);
+  CHECK(test_profiles && test_count == installs + 2u &&
+        test_profiles[installs].game_id == 123u &&
+        test_profiles[installs + 1u].game_id == 65432u);
   for (size_t i = 0u; i < installs; ++i)
     CHECK(same_profile(&profiles[i], &test_profiles[i]));
+  for (size_t i = 0u; i < installs; ++i)
+    CHECK(profiles[i].game_id != 123u && profiles[i].game_id != 65432u);
   CHECK(profiles[0].variants[0].ram_kib == 2000u &&
         profiles[1].variants[0].ram_kib == 2000u &&
         profiles[1].variants[1].ram_kib == 2000u);
