@@ -264,6 +264,7 @@ static bool environment(unsigned command, void *data)
          else if (!strcmp(variable->key, "arcdroid_pointer_deadzone")) variable->value = "15";
          else if (!strcmp(variable->key, "arcdroid_disk_writes")) variable->value = "shadow";
          else if (!strcmp(variable->key, "arcdroid_short_tail")) variable->value = "missing";
+         else if (!strcmp(variable->key, "arcdroid_jfd_omitted")) variable->value = "file-data";
          else if (!strcmp(variable->key, "arcdroid_install_saves")) variable->value = "persistent";
          else if (!strcmp(variable->key, "arcdroid_launch")) variable->value = "auto";
          else if (!strcmp(variable->key, "arcdroid_launch_chooser")) variable->value = "remember";
