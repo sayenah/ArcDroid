@@ -9,6 +9,7 @@
 
 #define DISC_BYTES 819200u
 typedef struct { uint32_t first, length, id; bool free; } Fragment;
+typedef struct { uint32_t first, length; } Step;
 typedef struct { uint32_t address, length, first_step, steps; uint8_t type, shared; } Object;
 typedef struct {
    const ArcJfdImage *image;
@@ -22,7 +23,7 @@ typedef struct {
    unsigned free_count;
    Object objects[ARC_JFD_FILE_DATA_MAX_OBJECTS];
    unsigned object_count, dir_count, step_count, resolution_work, incomplete;
-   uint32_t steps[ARC_JFD_FILE_DATA_MAX_STEPS];
+   Step steps[ARC_JFD_FILE_DATA_MAX_STEPS];
    uint8_t *coverage;
    const char *failure;
 } Proof;
@@ -180,6 +181,8 @@ static bool parse_new(Proof *p, unsigned copy)
 static bool resolve(Proof *p, uint32_t address, uint32_t logical,
                     uint32_t *physical, uint32_t *available)
 {
+   if (!arc_jfd_file_data_limits_ok(0u,0u,0u,++p->resolution_work))
+      return fail(p,"limit");
    if (!p->new_map)
    {
       uint64_t at = (uint64_t)address*256u + logical;
@@ -195,8 +198,6 @@ static bool resolve(Proof *p, uint32_t address, uint32_t logical,
    uint64_t wanted = (uint64_t)(shared ? shared-1u : 0u)*1024u + logical;
    for (unsigned i=0u;i<p->fragment_count;++i)
    {
-      if (!arc_jfd_file_data_limits_ok(0u,0u,0u,++p->resolution_work))
-         return fail(p,"limit");
       const Fragment *f=&p->fragments[i];
       if (f->free || f->id != id) continue;
       if (wanted < f->length)
@@ -235,7 +236,7 @@ static bool claim(Proof *p, uint32_t address, uint32_t length, bool directory,
       if (amount>available) amount=available;
       if (!amount) return fail(p,"object-invalid");
       if (physical>DISC_BYTES || amount>DISC_BYTES-physical ||
-          physical < (p->new_map?2048u:512u)) return fail(p,"object-invalid");
+          physical < (p->new_map?2048u:1024u)) return fail(p,"object-invalid");
       for (unsigned i=0u;i<p->free_count;++i)
          if (physical<p->free_end[i] && p->free_first[i]<physical+amount)
             return fail(p,"object-invalid");
@@ -248,7 +249,7 @@ static bool claim(Proof *p, uint32_t address, uint32_t length, bool directory,
       }
       if (!arc_jfd_file_data_limits_ok(0u,0u,0u,p->step_count+1u))
          return fail(p,"limit");
-      p->steps[p->step_count++]=physical;
+      p->steps[p->step_count++]=(Step){physical,amount};
       ++o->steps;
       offset+=amount;
    }
@@ -362,7 +363,7 @@ static bool same_interpretation(const Proof *a,const Proof *b)
       if (!y || x->length!=y->length || x->type!=y->type ||
           x->shared!=y->shared || x->steps!=y->steps ||
           memcmp(a->steps+x->first_step,b->steps+y->first_step,
-                 x->steps*sizeof(uint32_t))) return false;
+                 x->steps*sizeof(Step))) return false;
    }
    return true;
 }
@@ -462,7 +463,8 @@ void arc_jfd_file_data_prepare(ArcJfdImage *image,bool native,bool strict,
          unsigned sector=t*5u+id;
          uint32_t at=sector*1024u;
          if ((captured&(1u<<id)) || at+1024u>first->declared*256u ||
-             at+1024u>DISC_BYTES || at<(old?512u:2048u)) continue;
+             at+1024u>DISC_BYTES || at<(old?1024u:2048u) ||
+             (t==0u && (image->identification_mask&(1u<<id)))) continue;
          for (unsigned byte=at;byte<at+1024u;++byte)
             if (first->coverage[byte]) { eligible|=(uint8_t)(1u<<id); break; }
       }

@@ -8,6 +8,7 @@ enum {
    ARC_JFD_FILE_DATA_MAX_DEPTH = 16u,
    ARC_JFD_FILE_DATA_MAX_DIRS = 512u,
    ARC_JFD_FILE_DATA_MAX_OBJECTS = 8192u,
+   /* Each resolve call costs one unit; each call scans at most 512 fragments. */
    ARC_JFD_FILE_DATA_MAX_STEPS = 65536u
 };
 

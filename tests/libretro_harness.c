@@ -2123,6 +2123,7 @@ int main(int argc, char **argv)
    bool jfd_file_data_set = false;
    bool jfd_file_data_reasons = false;
    bool jfd_file_data_recovery = false;
+   bool jfd_file_data_unavailable = false;
    bool jfd_allocation_set = false;
    bool install_guest = false;
    bool cmos_exerciser = false;
@@ -2162,6 +2163,8 @@ int main(int argc, char **argv)
       jfd_file_data_reasons = true;
    else if (argc == 6 && !strcmp(argv[5], "--jfd-file-data-recovery"))
       jfd_file_data_recovery = true;
+   else if (argc == 6 && !strcmp(argv[5], "--jfd-file-data-unavailable"))
+      jfd_file_data_unavailable = true;
    else if (argc == 7 && !strcmp(argv[5], "--jfd-allocation-set"))
       jfd_allocation_set = true;
    else if (argc == 6 && !strcmp(argv[5], "--cmos-exerciser"))
@@ -2214,7 +2217,7 @@ int main(int argc, char **argv)
    char system_path[4096], firmware_path[4096], save_path[4096], renamed[4096], cwd[4096], cwd_after[4096];
    char jfd_run_path[4096], cmos_run_path[4096];
    const char *data_root = argv[4];
-   if (jfd_writes || jfd_file_data_recovery)
+   if (jfd_writes || jfd_file_data_recovery || jfd_file_data_unavailable)
    {
       make_directory(argv[4]);
       assert(snprintf(jfd_run_path, sizeof(jfd_run_path), "%s/jfd-run-XXXXXX", argv[4]) < (int)sizeof(jfd_run_path));
@@ -2450,7 +2453,8 @@ int main(int argc, char **argv)
       assert(arc_libretro_test_adffs_accept_test_os &&
              arc_libretro_test_adffs_carrier_matches);
    }
-   if (short_tail_guest || short_tail_discovery || jfd_file_data_step)
+   if (short_tail_guest || short_tail_discovery || jfd_file_data_step ||
+       jfd_file_data_unavailable)
    {
       *(void **)(&arc_libretro_test_staged_path) =
          dlsym(module, "arc_libretro_test_staged_path");
@@ -2462,7 +2466,7 @@ int main(int argc, char **argv)
    if (!cmos_exerciser && !power_on_cmos_guest && !install_guest && !real_boot && !newio_smoke && !jfd_writes && !jfd_create_step &&
        !jfd_identification_step && !jfd_file_data_step && !jfd_file_data_set &&
        !jfd_file_data_reasons &&
-       !jfd_file_data_recovery &&
+       !jfd_file_data_recovery && !jfd_file_data_unavailable &&
        !jfd_merge_step && !jfd_allocation_step && !jfd_allocation_set &&
        !short_tail_guest && !short_tail_discovery &&
        !jfd_quarantine_guest && !jfd_quarantine_density &&
@@ -2629,7 +2633,8 @@ int main(int argc, char **argv)
       assert(arc_libretro_test_register_input_profile(&test_profile));
       expect_test_profile = true;
    }
-   else if (jfd_file_data_step || jfd_file_data_set || jfd_writes || jfd_create_step || jfd_merge_step ||
+   else if (jfd_file_data_step || jfd_file_data_set || jfd_file_data_unavailable ||
+            jfd_writes || jfd_create_step || jfd_merge_step ||
             jfd_identification_step ||
             jfd_allocation_step || jfd_allocation_set)
    {
@@ -2796,6 +2801,7 @@ int main(int argc, char **argv)
       arc_libretro_test_adffs_accept_test_os(true);
       unsigned warnings = jfd_quarantine_log_lines;
       phase = PHASE_LOAD; assert(retro_load_game(&game));
+      assert(jfd_file_data_log_lines==0u); /* ADFFS has no native R1' preparation. */
       bool routed = strstr(last_jfd_boot_log, "path=adffs") != NULL;
       bool bytes_match = arc_libretro_test_adffs_carrier_matches(source,
                                                                  source_size);
@@ -3184,7 +3190,9 @@ int main(int argc, char **argv)
          if (!strcmp(mode, "route-auto-ready") ||
              !strcmp(mode, "route-adffs-ready")) {
             if (!strcmp(mode, "route-adffs-ready")) option_jfd_boot = "adffs";
+            unsigned file_data_lines_before = jfd_file_data_log_lines;
             phase = PHASE_LOAD; assert(retro_load_game(&game));
+            assert(jfd_file_data_log_lines == file_data_lines_before);
             assert(strstr(machine_resolution_log,
                           "requested=Auto resolved=A3020 reason=install-disc") &&
                    strstr(last_jfd_boot_log, "path=adffs-install") &&
@@ -3660,11 +3668,58 @@ int main(int argc, char **argv)
       return 0;
    }
 
+   if (jfd_file_data_unavailable)
+   {
+      option_machine="A3000"; option_cpu="ARM2";
+      option_launch="off"; option_jfd_boot="native";
+      option_writes="shadow"; option_jfd_omitted="file-data";
+      phase=PHASE_LOAD; assert(retro_load_game(&game));
+      assert(!strcmp(last_jfd_file_data_log,
+         "JFD file-data: image=1 policy=1 class=writable format=D copies=0/0 presented=0 skipped-sides=0 incomplete-dirs=0 reason=writable-c11c\n"));
+      char writable_stamp[41], unavailable_stamp[41], restored_stamp[41];
+      assert(arc_libretro_test_boot_media_digest(writable_stamp));
+      retro_unload_game();
+      char jfd_path[4096];
+      int path_length=snprintf(jfd_path,sizeof(jfd_path),"%s/arcdroid/jfd",save_path);
+      assert(path_length>0 && (size_t)path_length<sizeof(jfd_path));
+      assert(!rmdir(jfd_path));
+      FILE *blocker=fopen(jfd_path,"wb"); assert(blocker && !fclose(blocker));
+      phase=PHASE_LOAD; assert(retro_load_game(&game));
+      assert(!strcmp(last_jfd_file_data_log,
+         "JFD file-data: image=1 policy=1 class=store-unavailable format=D copies=1/1 presented=1 skipped-sides=0 incomplete-dirs=0 reason=presented\n") &&
+         arc_libretro_test_jfd_slot_state(0u,1u,1u,NULL,NULL)==3u);
+      assert(arc_libretro_test_boot_media_digest(unavailable_stamp) &&
+             strcmp(writable_stamp,unavailable_stamp));
+      retro_unload_game();
+      assert(!remove(jfd_path));
+      phase=PHASE_LOAD; assert(retro_load_game(&game));
+      assert(!strcmp(last_jfd_file_data_log,
+         "JFD file-data: image=1 policy=1 class=writable format=D copies=0/0 presented=0 skipped-sides=0 incomplete-dirs=0 reason=writable-c11c\n"));
+      assert(arc_libretro_test_boot_media_digest(restored_stamp) &&
+             !strcmp(writable_stamp,restored_stamp));
+      retro_unload_game(); retro_deinit();
+      assert(open_files==0u && open_dirs==0u && dlclose(module)==0);
+      puts("jfd-file-data-unavailable: passed");
+      return 0;
+   }
+
    if (jfd_file_data_set)
    {
       option_machine="A3000"; option_cpu="ARM2";
       option_launch="off"; option_jfd_boot="native";
       option_writes="shadow"; option_jfd_omitted="file-data";
+      char rw_source[4096];
+      snprintf(rw_source,sizeof(rw_source),"%s",game.path);
+      char *slash=strrchr(rw_source,'/'); assert(slash);
+      snprintf(slash+1u,sizeof(rw_source)-(size_t)(slash+1u-rw_source),
+               "d-terminal-rw.jfd");
+      ArcDigest rw_digest=digest_file(rw_source);
+      char slot_a[4096],slot_b[4096],slot_tmp[4096];
+      snprintf(slot_a,sizeof(slot_a),"%s/arcdroid/jfd/%s.a",save_path,rw_digest.sha1);
+      snprintf(slot_b,sizeof(slot_b),"%s/arcdroid/jfd/%s.b",save_path,rw_digest.sha1);
+      snprintf(slot_tmp,sizeof(slot_tmp),"%s/arcdroid/jfd/%s.tmp",save_path,rw_digest.sha1);
+      /* A prior aborted run must not supply records or damage this run. */
+      (void)remove(slot_a); (void)remove(slot_b); (void)remove(slot_tmp);
       phase=PHASE_LOAD; assert(retro_load_game(&game));
       assert(disk_control.get_num_images()==2u &&
              arc_libretro_test_jfd_slot_state(0u,1u,1u,NULL,NULL)==3u &&
@@ -3681,15 +3736,6 @@ int main(int argc, char **argv)
              !strcmp(last_jfd_file_data_log,
                "JFD file-data: image=2 policy=1 class=writable format=D copies=0/0 presented=0 skipped-sides=0 incomplete-dirs=0 reason=writable-c11c\n"));
       assert(arc_libretro_test_jfd_commit(1u,4u,0x44u));
-      char rw_source[4096];
-      snprintf(rw_source,sizeof(rw_source),"%s",game.path);
-      char *slash=strrchr(rw_source,'/'); assert(slash);
-      snprintf(slash+1u,sizeof(rw_source)-(size_t)(slash+1u-rw_source),
-               "d-terminal-rw.jfd");
-      ArcDigest rw_digest=digest_file(rw_source);
-      char slot_a[4096],slot_b[4096];
-      snprintf(slot_a,sizeof(slot_a),"%s/arcdroid/jfd/%s.a",save_path,rw_digest.sha1);
-      snprintf(slot_b,sizeof(slot_b),"%s/arcdroid/jfd/%s.b",save_path,rw_digest.sha1);
       retro_unload_game();
       const char *damaged_slot=file_exists(slot_a)?slot_a:slot_b;
       FILE *damage=fopen(damaged_slot,"r+b"); assert(damage);

@@ -957,6 +957,12 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
       "${FIXTURE_DIR}/jfd-file-data/mixed.m3u"
       "${CMAKE_CURRENT_BINARY_DIR}/jfd-file-data-set-data"
       --jfd-file-data-set)
+    add_test(NAME jfd-file-data-unavailable-process COMMAND libretro_harness
+      $<TARGET_FILE:arcdroid_libretro_test>
+      "${FIXTURE_DIR}/arcdroid-test.rom"
+      "${FIXTURE_DIR}/jfd-file-data/d-terminal-rw.jfd"
+      "${CMAKE_CURRENT_BINARY_DIR}/jfd-file-data-unavailable-data"
+      --jfd-file-data-unavailable)
     add_test(NAME jfd-file-data-reasons-process COMMAND libretro_harness
       $<TARGET_FILE:arcdroid_libretro_test>
       "${FIXTURE_DIR}/arcdroid-test.rom"

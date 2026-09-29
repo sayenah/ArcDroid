@@ -2569,6 +2569,9 @@ static const char *arc_jfd_file_data_class(const ArcJfdImage *image,
     * be marked damaged; ineligible images keep a coherent base-only view. */
    if (overlay && overlay->damaged) return "damaged-store";
    if (overlay && overlay->writable) return "writable";
+   if (mode != ARC_DISK_WRITES_OFF && image->extended &&
+       (image->flags & 2u) && !(image->flags & 1u) &&
+       overlay && overlay->layout_supported) return "store-unavailable";
    if (mode == ARC_DISK_WRITES_OFF) return "disk-writes-off";
    if (image->extended && (image->flags & 1u)) return "wp-flag";
    if (image->extended && !(image->flags & 2u)) return "no-flag";
