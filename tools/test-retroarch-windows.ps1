@@ -792,6 +792,49 @@ if (-not (Select-String -Path $fRun.RetroLog -Pattern 'presenting bounded fallba
 if (Select-String -Path $fRun.RetroLog -Pattern '\[(?:libretro )?ERROR\]' -Quiet) {
     throw "F-format RetroArch run logged an error; log=$($fRun.RetroLog)"
 }
+$fHardDiscLine = @(Select-String -Path $fRun.RetroLog -Pattern 'Hard disc: policy=auto attach=yes mode=writable reason=attached store=created generation=0 id=[0-9a-f]{40}' | Select-Object -Last 1)
+if ($fHardDiscLine.Count -ne 1) {
+    throw "F-format RetroArch run did not publish and attach a writable native hard disc; log=$($fRun.RetroLog)"
+}
+$fHardDiscId = [regex]::Match($fHardDiscLine[0].Line, 'id=([0-9a-f]{40})').Groups[1].Value
+$fHardDiscStore = Join-Path $saveDirectory "ArcDroid/arcdroid/hd/$fHardDiscId"
+if (-not (Test-Path (Join-Path $fHardDiscStore 'ready.a')) -or
+    -not (Test-Path (Join-Path $fHardDiscStore 'journal.g0'))) {
+    throw 'F-format RetroArch run did not leave a committed native hard disc'
+}
+
+# Authored native IDE guest: a blank disc paints outcome 0x31 after a sector
+# write; the next RetroArch process reads that sector and paints outcome 0x42.
+Copy-Item -Force (Join-Path $InputDirectory 'arcdroid_libretro_test.dll') $core
+Copy-Item -Force (Join-Path $InputDirectory 'arcdroid-native-hd-guest.rom') $firmware
+@"
+arcdroid_machine = "Auto"
+arcdroid_cpu = "Auto"
+arcdroid_launch = "off"
+arcdroid_disk_writes = "shadow"
+arcdroid_hard_disc = "auto"
+"@ | Set-Content -Encoding ASCII $coreOptions
+$previousScreenshot = $screenshot
+$previousContent = $content
+$content = $fContent
+$screenshot = Join-Path $evidenceDirectory 'native-hd-written.png'
+Invoke-ArcDroid 1200 $true
+$nativeWritten = Get-MediaRowSignature $screenshot 'native-hd-written'
+if (-not (Select-String -Path $log -SimpleMatch 'Hard disc: journal-commit lba=15456 count=1' -Quiet)) {
+    throw 'Native IDE guest did not commit its first save'
+}
+$screenshot = Join-Path $evidenceDirectory 'native-hd-reloaded.png'
+Invoke-ArcDroid 1200 $true
+$nativeReloaded = Get-MediaRowSignature $screenshot 'native-hd-reloaded'
+# The guest's painted 0x42 outcome appears as ff009400 through VIDC.
+if ($nativeWritten -eq $nativeReloaded -or $nativeReloaded -ne 'ff009400' -or
+    -not (Select-String -Path $log -SimpleMatch 'Hard disc: store-state=ready writable' -Quiet)) {
+    throw 'Native IDE guest did not show its saved sector on a fresh process'
+}
+$screenshot = $previousScreenshot
+$content = $previousContent
+Copy-Item -Force (Join-Path $InputDirectory 'arcdroid_libretro.dll') $core
+Copy-Item -Force (Join-Path $InputDirectory 'arcdroid-media-test.rom') $firmware
 @"
 arcdroid_machine = "A3000"
 arcdroid_cpu = "ARM2"

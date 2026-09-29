@@ -97,17 +97,23 @@ static void test_cmos_unplug_policy(void)
    for (unsigned i = 0u; i < sizeof(locked) / sizeof(locked[0]); ++i)
       poisoned[arc_cmos_raw_address(locked[i]) - 16u] = 0x96u;
    poisoned[199u - 16u] = 0x81u;
+   poisoned[arc_cmos_raw_address(189u) - 16u] = 0x0au;
    arc_cmos_normalise_payload(poisoned, ARC_OS_RISCOS_311, ARC_IO_OLD_WD1770);
+   assert(poisoned[arc_cmos_raw_address(189u) - 16u] == 0u);
    uint8_t attached[ARC_CMOS_MACHINE_SIZE];
    assert(arc_cmos_machine_image(ARC_OS_RISCOS_311, ARC_IO_OLD_WD1770,
                                  poisoned, false, attached));
    arc_cmos_machine_attach_ide(attached);
+   assert(attached[arc_cmos_raw_address(189u)] == 0x0au);
    for (unsigned i = 0u; i < sizeof(locked) / sizeof(locked[0]); ++i)
    {
       unsigned raw = arc_cmos_raw_address(locked[i]);
       assert(poisoned[raw - 16u] == 0u && attached[raw] == 0u);
    }
    assert((attached[199u] & 0xc0u) == 0x40u);
+   assert(!arc_machine_descriptor(ARC_MACHINE_A3010)->ide_capable &&
+          arc_machine_descriptor(ARC_MACHINE_A3020)->ide_capable &&
+          !arc_machine_descriptor(ARC_MACHINE_A4000)->ide_capable);
    unsigned attached_sum = 0u;
    for (unsigned i = 0u; i < 239u; ++i)
       attached_sum += attached[arc_cmos_raw_address(i)];

@@ -1,7 +1,7 @@
 /*Arculator 2.2 by Sarah Walker
   82c711 SuperIO emulation*/
 /* ArcDroid modification (2026-09-16, 2026-09-25): cold reset owns
- * configuration state; the IDE bus is attached only for install-disc sessions. */
+ * configuration state; the IDE bus is attached only with a core backend. */
 #include "arc.h"
 #include "82c711.h"
 #include "82c711_fdc.h"

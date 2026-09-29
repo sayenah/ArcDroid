@@ -47,7 +47,15 @@ const ArcInstallProfile *arc_test_install_profiles(size_t *count) {
           {3u, 592u, "9c09986f90fc30374e0c8bfb64158d8e5aa75f04"}},
          2u, "!Fixture", 3u, "DATA", "TRACKS", true, false, 1600u,
          0u, NULL}},
-       2u, {1u}, 1u}};
+       2u, {1u}, 1u},
+      {65432u, 1u, 1u,
+       "03c03d87fa8eab79516540c4b226e7b0d0db06b736bd9855133d48e35d199c15",
+       2u, 2u,
+       {{"single-hd", "Fixture single HD",
+         {{1u, 592u, "d3dabff26d245ecae689c9838f97f5a73506fa17"}},
+         1u, "!Fixture", 0u, NULL, NULL, false, false, 1600u,
+         0u, "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"}},
+       1u, {1u}, 1u}};
   if (count) *count = sizeof(profiles) / sizeof(profiles[0]);
   return profiles;
 }

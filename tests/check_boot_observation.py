@@ -36,22 +36,22 @@ def main() -> None:
     assert len(records) == 1, records
     record = records[0]
     original = record.read_bytes()
-    assert len(original) == 160 and original[:8] == b"ARCBOOT1"
+    assert len(original) == 228 and original[:8] == b"ARCBOOT1"
     assert int.from_bytes(original[8:12], "little") == 1
-    assert int.from_bytes(original[12:16], "little") == 2
+    assert int.from_bytes(original[12:16], "little") == 3
 
     log, lines = run()
     assert len(lines) == 1 and "remembered boot observation; disc !Boot skipped" in lines[0], lines
     assert "boot-watch=disabled" in lines[0] and "Boot outcome:" not in log
     assert "helper=" in lines[0] and ".adl" in lines[0]
 
-    revision_one = bytearray(original)
-    revision_one[12:16] = (1).to_bytes(4, "little")
-    record.write_bytes(revision_one)
+    revision_two = bytearray(original)
+    revision_two[12:16] = (2).to_bytes(4, "little")
+    record.write_bytes(revision_two[:160])
     log, lines = run()
     assert len(lines) == 2 and "boot-watch=armed" in lines[0], lines
     assert "Boot outcome: prompt" in log
-    assert int.from_bytes(record.read_bytes()[12:16], "little") == 2
+    assert int.from_bytes(record.read_bytes()[12:16], "little") == 3
 
     log, lines = run(("--boot-reset-once",))
     assert len(lines) == 2 and all("remembered boot observation" in line for line in lines), lines
@@ -106,7 +106,8 @@ def main() -> None:
         assert "Boot outcome: prompt" in log
 
     # Every stamp and the compatibility revision must cause a new observation.
-    for offset in (12, 16, 56, 96, 136, 140, 144, 148, 152, 156):
+    for offset in (12, 16, 56, 96, 136, 140, 144, 148, 152, 156,
+                   160, 224):
         changed = bytearray(original)
         changed[offset] ^= 1
         record.write_bytes(changed)

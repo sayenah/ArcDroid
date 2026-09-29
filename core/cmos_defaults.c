@@ -124,6 +124,9 @@ bool arc_cmos_machine_image(ArcOsClass os, ArcIoClass io,
                           (launch_helper ? 1u : 0u));       /* byte 11 */
    output[199] = (uint8_t)((output[199] & ~0x07u) |
                            (launch_helper ? 2u : 1u));      /* byte 135 */
+   if (os == ARC_OS_TEST || os == ARC_OS_RISCOS_300 || os == ARC_OS_RISCOS_310 ||
+       os == ARC_OS_RISCOS_311 || os == ARC_OS_RISCOS_319)
+      output[arc_cmos_raw_address(189u)] = 0u;
    if (io == ARC_IO_NEW_82C711)
       output[199] &= 0x07u; /* no ST506 or IDE drives */
    /* RPCEmu's PCF8583 implementation documents the RISC OS checksum:
@@ -150,7 +153,10 @@ void arc_cmos_normalise_payload(uint8_t payload[ARC_CMOS_PAYLOAD_SIZE], ArcOsCla
    arc_cmos_clear_unplug_bytes(payload, os);
    if (os == ARC_OS_RISCOS_300 || os == ARC_OS_RISCOS_310 ||
        os == ARC_OS_RISCOS_311 || os == ARC_OS_RISCOS_319)
+   {
       payload[arc_cmos_raw_address(16u) - 16u] &= (uint8_t)~0x10u;
+      payload[arc_cmos_raw_address(189u) - 16u] = 0u;
+   }
    /* Logical CMOS bytes 11 and 135 live at raw PCF8583 addresses 75 and
     * 199, hence payload offsets 59 and 183. */
    payload[59] &= (uint8_t)~0x07u;
@@ -179,7 +185,9 @@ void arc_cmos_machine_attach_ide(uint8_t image[ARC_CMOS_MACHINE_SIZE])
    if (!image) return;
    /* Logical byte 135 lives at raw byte 199. Only the machine image gets
     * IDE count one; the persisted payload remains normalized to zero. */
-   image[199] = (uint8_t)((image[199] & ~0xc0u) | 0x40u);
+   unsigned ide = arc_cmos_raw_address(135u);
+   image[ide] = (uint8_t)((image[ide] & ~0xc0u) | 0x40u);
+   image[arc_cmos_raw_address(189u)] = 0x0au;
    unsigned checksum = 0u;
    for (unsigned i = 0u; i < 239u; ++i) {
       checksum += image[arc_cmos_raw_address(i)];

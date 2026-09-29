@@ -186,6 +186,13 @@ static char arc_install_requested_binding[41];
 static bool arc_install_hard_failure;
 static bool arc_install_machine_refused;
 static ArcInstallStore *arc_install_store;
+static ArcInstallStore *arc_hd_store;
+static bool arc_hd_option_auto;
+static bool arc_hd_failure_noticed;
+static bool arc_hd_readonly_noticed;
+static bool arc_hd_write_failure_noticed;
+static char arc_hd_reason[96] = "not-attachable";
+static bool arc_hd_damaged;
 static bool arc_install_failure_noticed;
 static ArcInstallPlan arc_install_active_plan;
 static unsigned arc_install_hd_mode; /* 0 RAM, 1 candidate install, 2 run. */
@@ -544,6 +551,7 @@ typedef struct {
    bool short_tail_zero;
    bool jfd_omitted_strict;
    bool install_saves_persistent;
+   bool hard_disc_auto;
    ArcLaunchOption launch;
    ArcLaunchChooserOption launch_chooser;
    bool launch_ramdisc;
@@ -566,14 +574,60 @@ static bool arc_media_is_hd(const ArcMediaEntry *entry)
    return entry && entry->populated && entry->high_density;
 }
 
+#if defined(ARCDROID_TEST_FAULTS)
+static unsigned arc_test_install_profile_lookups;
+static unsigned arc_test_install_store_opens;
+void arc_libretro_test_install_access_counts(unsigned *profiles, unsigned *stores)
+{
+   if (profiles) *profiles = arc_test_install_profile_lookups;
+   if (stores) *stores = arc_test_install_store_opens;
+}
+#endif
+static const ArcInstallProfile *arc_install_profile_counted(unsigned game_id,
+                                                            unsigned disc_count)
+{
+#if defined(ARCDROID_TEST_FAULTS)
+   ++arc_test_install_profile_lookups;
+#endif
+   return arc_install_profile(game_id, disc_count);
+}
+static ArcInstallStore *arc_install_store_open_counted(const char *save_dir,
+   const ArcInstallPlan *plan, bool create_candidate, bool writable,
+   ArcInstallStoreLog log, void *opaque, char *error, size_t error_size)
+{
+#if defined(ARCDROID_TEST_FAULTS)
+   ++arc_test_install_store_opens;
+#endif
+   return arc_install_store_open(save_dir, plan, create_candidate, writable,
+                                 log, opaque, error, error_size);
+}
+
+static bool arc_hd_native_route(const ArcCoreOptions *options,
+                                ArcMachine machine)
+{
+   const ArcMachineDescriptor *descriptor = arc_machine_descriptor(machine);
+   /* Preparation frees the parsed JFD before machine preflight; these
+    * retained fields also remain valid after the selected JFD is refreshed. */
+   return options->jfd_boot == ARC_JFD_BOOT_AUTO && descriptor &&
+      descriptor->ide_capable && arc_media_count == 1u &&
+      !arc_folder_set_active && arc_media[0].info.kind == ARC_MEDIA_JFD &&
+      arc_media_is_hd(&arc_media[0]) &&
+      arc_media[0].jfd_disc_number == 1u &&
+      arc_media[0].jfd_disc_count == 1u;
+}
+
 static bool arc_install_hd_machine_needed(const ArcCoreOptions *options)
 {
+   ArcMachine prospective = options->machine_auto && arc_media_count &&
+      arc_media_is_hd(&arc_media[0]) ? ARC_MACHINE_A3020 :
+      options->requested_machine;
+   if (arc_hd_native_route(options, prospective)) return false;
    if (!options->machine_auto ||
        !options->install_saves_persistent ||
        options->jfd_boot == ARC_JFD_BOOT_NATIVE ||
        options->launch != ARC_LAUNCH_AUTO || !arc_media_count ||
        arc_media[0].info.kind != ARC_MEDIA_JFD) return false;
-   const ArcInstallProfile *profile = arc_install_profile(
+   const ArcInstallProfile *profile = arc_install_profile_counted(
       arc_media[0].jfd_game_id, arc_media[0].jfd_disc_count);
    if (!profile || !(profile->hd_io_mask & 2u)) return false;
    ArcInstallMedia media[ARC_PLAYLIST_MAX_ENTRIES] = {{0}};
@@ -590,7 +644,7 @@ static bool arc_install_hd_machine_needed(const ArcCoreOptions *options)
                                        plans, NULL);
    if (!count || !arc_install_hd_prerequisites(profile, options)) return false;
    for (unsigned i = 0u; i < count; ++i) {
-      ArcInstallStore *store = arc_install_store_open(arc_save_path, &plans[i],
+      ArcInstallStore *store = arc_install_store_open_counted(arc_save_path, &plans[i],
          false, false, NULL, NULL, NULL, 0u);
       bool ready = store &&
          arc_install_store_state(store) == ARC_INSTALL_STORE_READY;
@@ -678,6 +732,7 @@ static bool arc_read_options(ArcCoreOptions *options, char *error, size_t error_
    const char *short_tail = arc_option_value("arcdroid_short_tail", "missing");
    const char *jfd_omitted = arc_option_value("arcdroid_jfd_omitted", "file-data");
    const char *install_saves = arc_option_value("arcdroid_install_saves", "persistent");
+   const char *hard_disc = arc_option_value("arcdroid_hard_disc", "auto");
    const char *launch = arc_option_value("arcdroid_launch", "auto");
    const char *launch_chooser =
       arc_option_value("arcdroid_launch_chooser", "remember");
@@ -749,6 +804,8 @@ static bool arc_read_options(ArcCoreOptions *options, char *error, size_t error_
    else if (strcmp(jfd_omitted, "file-data")) goto invalid;
    if (!strcmp(install_saves, "persistent")) options->install_saves_persistent = true;
    else if (strcmp(install_saves, "temporary")) goto invalid;
+   if (!strcmp(hard_disc, "auto")) options->hard_disc_auto = true;
+   else if (strcmp(hard_disc, "off")) goto invalid;
    if (!strcmp(launch, "auto")) options->launch = ARC_LAUNCH_AUTO;
    else if (!strcmp(launch, "off")) options->launch = ARC_LAUNCH_OFF;
    else if (!strncmp(launch, "app", 3u) && launch[3] >= '1' && launch[3] <= '8' && !launch[4])
@@ -1049,6 +1106,13 @@ static void arc_release_session(void)
    arc_chooser_input_armed = false;
    arc_chooser_release_gate = false;
    arc_engine_stop();
+   arc_install_store_close(arc_hd_store);
+   arc_hd_store = NULL;
+   arc_hd_failure_noticed = false;
+   arc_hd_readonly_noticed = false;
+   arc_hd_write_failure_noticed = false;
+   arc_hd_damaged = false;
+   snprintf(arc_hd_reason, sizeof(arc_hd_reason), "not-attachable");
    arc_power_on_shift = false;
    arc_input_reset(&arc_inputs);
    arc_install_store_close(arc_install_store);
@@ -2847,7 +2911,7 @@ static void arc_install_refuse(const char *why, bool notify) {
          arc_message("JFD ADFFS boot unavailable: the install could not be prepared; native boot will continue.", RETRO_LOG_WARN);
       else if (!strcmp(why, "machine") && !arc_core_options.machine_auto) {
          const ArcInstallProfile *profile = arc_media_count ?
-            arc_install_profile(arc_media[0].jfd_game_id,
+            arc_install_profile_counted(arc_media[0].jfd_game_id,
                                 arc_media[0].jfd_disc_count) : NULL;
          arc_message(profile && profile->io_mask == 2u ?
             "JFD ADFFS boot unavailable: This title installs on A3010/A3020/A4000 machines; set Machine to Auto." :
@@ -3023,6 +3087,83 @@ static void arc_install_store_log(void *opaque, const char *line)
          RETRO_LOG_WARN);
    }
 }
+static void arc_hd_store_log(void *opaque, const char *line)
+{
+   (void)opaque;
+   bool failed = !strncmp(line, "store-write-failed=", 19u) ||
+                 !strcmp(line, "write-commit-failed");
+   if (arc_log) arc_log(failed || strstr(line, "=failed") ?
+      RETRO_LOG_WARN : RETRO_LOG_INFO, "Hard disc: %s\n", line);
+   if (failed && !arc_hd_write_failure_noticed) {
+      arc_hd_write_failure_noticed = true;
+      snprintf(arc_hd_reason, sizeof(arc_hd_reason), "read-only:%s",
+         !strcmp(line, "store-write-failed=journal-cap") ? "journal-cap" : "storage-failure");
+      arc_message(!strcmp(line, "store-write-failed=journal-cap") ?
+         "Hard disc saves are no longer possible this session: journal full" :
+         "Hard disc saves are no longer possible this session: storage failure",
+         RETRO_LOG_WARN);
+   }
+}
+
+static void arc_hd_reconcile(void)
+{
+   arc_install_store_close(arc_hd_store);
+   arc_hd_store = NULL;
+   arc_hd_option_auto = arc_core_options.hard_disc_auto;
+   arc_hd_damaged = false;
+   arc_hd_write_failure_noticed = false;
+   const ArcMachineDescriptor *machine = arc_machine_descriptor(arc_session_machine);
+   const char *reason = "not-attachable";
+   char unavailable_reason[sizeof(arc_hd_reason)];
+   if (arc_adffs_active) reason = "adffs-session";
+   else if (arc_install_hd_mode || arc_install_choosing) reason = "install-session";
+   else if (!machine || !machine->ide_capable) reason = "not-attachable";
+   else if (!arc_hd_option_auto) reason = "option-off";
+   else {
+      bool writable = arc_plan.disk_writes != ARC_DISK_WRITES_OFF;
+      char error[256] = {0};
+      arc_hd_store = arc_hd_store_open(arc_save_path, arc_plan.content_id,
+         writable, arc_hd_store_log, NULL, error, sizeof(error));
+      if (arc_hd_store &&
+          arc_install_store_state(arc_hd_store) == ARC_INSTALL_STORE_READY) {
+         reason = arc_install_store_writable(arc_hd_store) ? "attached" :
+                  (writable ? "read-only:write-probe" : "disk-writes-off");
+         if (!arc_install_store_writable(arc_hd_store) &&
+             !arc_hd_readonly_noticed) {
+            arc_hd_readonly_noticed = true;
+            arc_message("Hard disc is read-only; saves cannot be changed in this session.",
+                        RETRO_LOG_WARN);
+         }
+      } else if (arc_hd_store &&
+                 arc_install_store_state(arc_hd_store) == ARC_INSTALL_STORE_DAMAGED) {
+         reason = "damaged";
+         arc_hd_damaged = true;
+         char message[4096];
+         snprintf(message, sizeof(message),
+            "Saved hard disc is damaged; preserve %s/arcdroid/hd/%s and restore a backup.",
+            arc_save_path, arc_plan.content_id);
+         arc_message(message, RETRO_LOG_ERROR);
+      } else if (!writable) reason = "disk-writes-off";
+      else {
+         snprintf(unavailable_reason, sizeof(unavailable_reason),
+                  "unavailable:%s", error[0] ? error : "storage-failure");
+         reason = unavailable_reason;
+         if (!arc_hd_failure_noticed) {
+            arc_hd_failure_noticed = true;
+            char message[320];
+            snprintf(message, sizeof(message), "Hard disc unavailable: %s",
+                     error[0] ? error : "storage failure");
+            arc_message(message, RETRO_LOG_WARN);
+         }
+      }
+      if (!arc_hd_store ||
+          arc_install_store_state(arc_hd_store) != ARC_INSTALL_STORE_READY) {
+         arc_install_store_close(arc_hd_store);
+         arc_hd_store = NULL;
+      }
+   }
+   snprintf(arc_hd_reason, sizeof(arc_hd_reason), "%s", reason);
+}
 #if defined(ARCDROID_TEST_FAULTS)
 void arc_libretro_test_install_store_failure(const char *reason)
 {
@@ -3041,6 +3182,57 @@ bool arc_libretro_test_install_fill_journal(void)
    free(sectors);
    return good;
 }
+bool arc_libretro_test_hd_exhaust_journal(void)
+{
+   if (!arc_hd_store ||
+       arc_install_store_state(arc_hd_store) != ARC_INSTALL_STORE_READY ||
+       !arc_install_store_writable(arc_hd_store)) return false;
+   uint8_t *sectors = malloc(256u * ARC_INSTALL_HD_SECTOR);
+   bool good = sectors && arc_install_store_read(arc_hd_store, 0u, 256u,
+                                                  sectors);
+   for (unsigned i = 0u; good && i < 80u &&
+        arc_install_store_writable(arc_hd_store); ++i)
+      (void)arc_install_store_write(arc_hd_store, 0u, 256u, sectors);
+   free(sectors);
+   return good && !arc_install_store_writable(arc_hd_store) &&
+      arc_hd_write_failure_noticed;
+}
+bool arc_libretro_test_hd_observation_write(unsigned mode)
+{
+   if (!arc_hd_store ||
+       arc_install_store_state(arc_hd_store) != ARC_INSTALL_STORE_READY ||
+       !arc_install_store_writable(arc_hd_store)) return false;
+   uint8_t sector[ARC_INSTALL_HD_SECTOR], changed[ARC_INSTALL_HD_SECTOR];
+   if (!arc_install_store_read(arc_hd_store, 15456u, 1u, sector)) return false;
+   if (mode == 0u)
+      return arc_install_store_write(arc_hd_store, 15456u, 1u, sector);
+   if (mode == 1u) {
+      memcpy(changed, sector, sizeof(changed));
+      changed[0] ^= 0x40u;
+      return arc_install_store_write(arc_hd_store, 15456u, 1u, changed) &&
+         arc_install_store_write(arc_hd_store, 15456u, 1u, sector);
+   }
+   if (mode == 2u)
+      return !arc_install_store_write(arc_hd_store, ARC_INSTALL_HD_SECTORS,
+                                      1u, sector);
+   if (mode == 3u) {
+      arc_install_store_failed(arc_hd_store, "store-write-failed=io");
+      return !arc_install_store_writable(arc_hd_store);
+   }
+   if (mode == 4u) {
+      uint8_t *sectors = malloc(256u * ARC_INSTALL_HD_SECTOR);
+      if (!sectors || !arc_install_store_read(arc_hd_store, 0u, 256u, sectors)) {
+         free(sectors);
+         return false;
+      }
+      bool good = true;
+      for (unsigned i = 0u; i < 9u && good; ++i)
+         good = arc_install_store_write(arc_hd_store, 0u, 256u, sectors);
+      free(sectors);
+      return good;
+   }
+   return false;
+}
 #endif
 static bool arc_prepare_adffs(bool notify) {
    arc_install_machine_refused = false;
@@ -3054,8 +3246,12 @@ static bool arc_prepare_adffs(bool notify) {
    arc_install_plan_count = 0u;
    ArcMediaEntry *entry = arc_media_count ? &arc_media[0] : NULL;
    const ArcJfdImage *jfd = entry ? &entry->jfd : NULL;
+   if (arc_hd_native_route(&arc_core_options, arc_session_machine)) {
+      arc_jfd_boot_log("hard-disc");
+      return false;
+   }
    const ArcInstallProfile *install = jfd ?
-      arc_install_profile(jfd->game_id, jfd->disc_count) : NULL;
+      arc_install_profile_counted(jfd->game_id, jfd->disc_count) : NULL;
    const char *reason = NULL;
    if (!entry || entry->info.kind != ARC_MEDIA_JFD)
       reason = "not-jfd";
@@ -3308,7 +3504,7 @@ static bool arc_prepare_adffs(bool notify) {
       ArcInstallStore *store = NULL;
       if (arc_core_options.install_saves_persistent) {
          char store_error[256] = {0};
-         store = arc_install_store_open(arc_save_path, plan, false, false,
+         store = arc_install_store_open_counted(arc_save_path, plan, false, false,
             arc_install_store_log, NULL, store_error, sizeof(store_error));
          if (!store || arc_install_store_state(store) == ARC_INSTALL_STORE_DAMAGED) {
             arc_message(store_error[0] ? store_error :
@@ -3332,7 +3528,7 @@ static bool arc_prepare_adffs(bool notify) {
             if (arc_core_options.disk_writes != ARC_DISK_WRITES_OFF &&
                 arc_install_store_native_path(arc_save_path)) {
                arc_install_store_close(store);
-               store = arc_install_store_open(arc_save_path, plan, false, true,
+               store = arc_install_store_open_counted(arc_save_path, plan, false, true,
                   arc_install_store_log, NULL, store_error, sizeof(store_error));
                if (!store || arc_install_store_state(store) != ARC_INSTALL_STORE_READY) {
                   arc_message(store_error[0] ? store_error :
@@ -3362,7 +3558,7 @@ static bool arc_prepare_adffs(bool notify) {
                free(builtin); arc_adffs_package_free(package); free(package);
                return false;
             }
-            store = arc_install_store_open(arc_save_path, plan, true, true,
+            store = arc_install_store_open_counted(arc_save_path, plan, true, true,
                arc_install_store_log, NULL, store_error, sizeof(store_error));
             if (!store || arc_install_store_state(store) != ARC_INSTALL_STORE_UNPUBLISHED ||
                 !arc_install_store_writable(store)) {
@@ -4039,8 +4235,23 @@ static bool arc_boot_stamp(ArcBootObservation *stamp)
    stamp->jfd_boot = (uint32_t)arc_core_options.jfd_boot;
    stamp->disk_writes = (uint32_t)arc_plan.disk_writes;
    stamp->install_saves = arc_core_options.install_saves_persistent ? 1u : 0u;
+   stamp->hard_disc_policy = arc_hd_option_auto ? 1u : 0u;
+   stamp->hard_disc_attached = arc_hd_store &&
+      arc_install_store_state(arc_hd_store) == ARC_INSTALL_STORE_READY;
+   stamp->hard_disc_writable = stamp->hard_disc_attached &&
+      arc_install_store_writable(arc_hd_store);
+   if (stamp->hard_disc_attached)
+      arc_sha256_hex(arc_install_store_image(arc_hd_store),
+                     ARC_INSTALL_HD_BYTES, stamp->hard_disc);
+   else { memset(stamp->hard_disc, '0', 64u); stamp->hard_disc[64] = 0; }
    return true;
 }
+#ifdef ARCDROID_TEST_FAULTS
+bool arc_libretro_test_boot_stamp(ArcBootObservation *stamp)
+{
+   return stamp && arc_boot_stamp(stamp);
+}
+#endif
 
 static void arc_boot_record_invalidate(void)
 {
@@ -4077,10 +4288,15 @@ static bool arc_boot_record_load(const ArcBootObservation *current)
 
 static void arc_boot_record_publish(void)
 {
-   if (!arc_boot_stamp_ready || arc_boot_record_suppressed) return;
+   if (!arc_boot_stamp_ready || arc_boot_record_suppressed ||
+       arc_install_store_wrote(arc_hd_store)) return;
    ArcBootObservation current;
    if (!arc_boot_stamp(&current) ||
-       strcmp(current.media, arc_boot_start_stamp.media)) return;
+       strcmp(current.media, arc_boot_start_stamp.media) ||
+       current.hard_disc_policy != arc_boot_start_stamp.hard_disc_policy ||
+       current.hard_disc_attached != arc_boot_start_stamp.hard_disc_attached ||
+       current.hard_disc_writable != arc_boot_start_stamp.hard_disc_writable ||
+       strcmp(current.hard_disc, arc_boot_start_stamp.hard_disc)) return;
    char path[ARC_MEDIA_PATH_CAPACITY];
    uint8_t data[ARC_BOOT_OBSERVATION_SIZE];
    size_t existing = 0u;
@@ -4307,6 +4523,7 @@ static bool arc_prepare_launch(ArcMediaEntry *entry, bool ejected,
       !arc_install_hd_mode;
    arc_boot_stamp_ready = false;
    arc_boot_record_hit = false;
+   arc_install_store_clear_wrote(arc_hd_store);
    if (arc_log && discovery.backup_map_used)
       arc_log(RETRO_LOG_WARN, "FileCore: primary map invalid or unreadable; using backup map.\n");
    if (arc_log && discovery.old_map_clamped)
@@ -5386,6 +5603,9 @@ static const struct retro_core_option_v2_definition arc_base_options[] = {
     NULL, {{"verified", "Verified only"}, {"untested", "Allow untested"}, {NULL, NULL}}, "verified"},
    {"arcdroid_disk_writes", "Disk Writes", NULL, "Choose where floppy writes are stored.", NULL,
     NULL, {{"shadow", NULL}, {"original", NULL}, {"off", NULL}, {NULL, NULL}}, "shadow"},
+   {"arcdroid_hard_disc", "Hard Disc", NULL,
+    "Attach a persistent hard disc to native A3020 sessions.", NULL,
+    NULL, {{"auto", "Auto"}, {"off", "Off"}, {NULL, NULL}}, "auto"},
    {"arcdroid_short_tail", "Short image tail", NULL,
     "Present sectors beyond a short source as missing, or expose the stored shadow bytes (including saved writes) as zero-filled media.", NULL,
     NULL, {{"missing", "Missing"}, {"zero-filled", "Zero-filled"}, {NULL, NULL}}, "missing"},
@@ -5404,8 +5624,8 @@ enum {
                       ARC_PAD_PORTS * ARC_PAD_INPUT_COUNT + 1u
 };
 static struct retro_core_option_v2_definition arc_options[ARC_OPTION_COUNT + 1u];
-_Static_assert(ARC_BASE_OPTION_COUNT == 18u, "base option count changed");
-_Static_assert(sizeof(arc_options) / sizeof(arc_options[0]) == 41u,
+_Static_assert(ARC_BASE_OPTION_COUNT == 19u, "base option count changed");
+_Static_assert(sizeof(arc_options) / sizeof(arc_options[0]) == 42u,
                "option destination size changed");
 static struct retro_core_option_v2_category arc_option_categories[] = {
    {"pad_mapping", "Pad Mapping", "Map each RetroPad input to a physical Archimedes key."},
@@ -5810,13 +6030,18 @@ static bool arc_construct_machine(const ArcMachineDescriptor *machine,
       helper = support;
    }
    ArcIdeBackend ide_backend = {0};
-   if (arc_install_hd_mode && arc_install_store) {
-      ide_backend.opaque = arc_install_store;
+   ArcInstallStore *active_hd = arc_install_hd_mode ? arc_install_store : arc_hd_store;
+   bool attach_hd = machine->ide_capable && active_hd &&
+      arc_install_store_state(active_hd) == ARC_INSTALL_STORE_READY;
+   if (arc_install_hd_mode == 1u && arc_install_store)
+      attach_hd = machine->ide_capable; /* Install candidate is unpublished until doorbell. */
+   if (attach_hd) {
+      ide_backend.opaque = active_hd;
       ide_backend.read = arc_install_store_read;
       ide_backend.write = arc_install_store_write;
       ide_backend.failed = arc_install_store_failed;
       ide_backend.sectors = ARC_INSTALL_HD_SECTORS;
-      ide_backend.writable = arc_install_store_writable(arc_install_store);
+      ide_backend.writable = arc_install_store_writable(active_hd);
       ide_backend.unsupported = arc_install_ide_unsupported;
    }
    memcpy(arc_cmos_record, arc_cmos_prepared, sizeof(arc_cmos_record));
@@ -5824,7 +6049,17 @@ static bool arc_construct_machine(const ArcMachineDescriptor *machine,
        !arc_cmos_machine_image(arc_cmos_policy_os(), machine->io, payload,
                                arc_plan.launch_helper, machine_cmos))
       return false;
-   if (arc_install_hd_mode) arc_cmos_machine_attach_ide(machine_cmos);
+   if (attach_hd) arc_cmos_machine_attach_ide(machine_cmos);
+   if (arc_log) arc_log(RETRO_LOG_INFO,
+      "Hard disc: policy=%s attach=%s mode=%s reason=%s store=%s generation=%llu id=%s\n",
+      arc_hd_option_auto ? "auto" : "off", attach_hd && !arc_install_hd_mode ? "yes" : "no",
+      attach_hd && !arc_install_hd_mode ?
+         (arc_install_store_writable(active_hd) ? "writable" : "read-only") : "none",
+      arc_install_hd_mode ? "install-session" : arc_hd_reason,
+      arc_hd_damaged ? "damaged" : arc_hd_store ?
+         (arc_install_store_created(arc_hd_store) ? "created" : "ready") : "none",
+      (unsigned long long)arc_install_store_generation(arc_hd_store),
+      arc_plan.content_id);
 #if defined(ARCDROID_TEST_FAULTS)
    if (arc_test_fail_next_construct)
    {
@@ -5843,7 +6078,7 @@ static bool arc_construct_machine(const ArcMachineDescriptor *machine,
        !arc_engine_start(arc_firmware, arc_firmware_size, mounted,
                          arc_plan.launch_helper ? &helper : NULL,
                          machine,
-                         arc_install_hd_mode ? &ide_backend : NULL,
+                         attach_hd ? &ide_backend : NULL,
                          arc_install_hd_mode == 1u ? &arc_install_doorbell : NULL,
                          machine_cmos, locked_cmos_mask,
                          arc_cmos_ignored_write, NULL, error, error_size))
@@ -6088,6 +6323,7 @@ static bool arc_chooser_confirm(void)
       arc_install_requested_binding[0] = '\0';
       if (!built) {
          arc_install_choice_discard();
+         arc_hd_reconcile();
          arc_finish_jfd_preparation(&arc_media[arc_image_index], true);
          if (arc_prepare_launch(&arc_media[arc_image_index], false,
                                 arc_core_options.launch, false)) {
@@ -6490,6 +6726,7 @@ static bool arc_load_game(const struct retro_game_info *game, bool negotiate)
          arc_release_session();
          return false;
       }
+      arc_hd_reconcile();
       arc_finish_jfd_preparation(&arc_media[arc_image_index], !adffs && !arc_install_choosing);
       bool choosing = arc_install_choosing || (!adffs && arc_prepare_launch(&arc_media[arc_image_index], false,
                                                    arc_core_options.launch, false));
@@ -6712,6 +6949,7 @@ RETRO_API void retro_reset(void)
       snprintf(error, sizeof(error), "Unable to prepare the chosen install session.");
       goto failed;
    }
+   arc_hd_reconcile();
    if (selected < arc_media_count && !was_ejected)
       arc_finish_jfd_preparation(&arc_media[selected], !adffs && !arc_install_choosing);
    ArcEngineMedia mounted;

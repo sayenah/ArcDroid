@@ -161,6 +161,7 @@ static bool environment(unsigned command, void *data)
          const struct retro_core_options_v2 *options = data;
          unsigned count = 0u;
          const struct retro_core_option_v2_definition *install_saves = NULL;
+         const struct retro_core_option_v2_definition *hard_disc = NULL;
          const struct retro_core_option_v2_definition *short_tail = NULL;
          const struct retro_core_option_v2_definition *ramdisc = NULL;
          const struct retro_core_option_v2_definition *jfd_omitted = NULL;
@@ -172,6 +173,11 @@ static bool environment(unsigned command, void *data)
             {
                assert(!install_saves);
                install_saves = &options->definitions[count];
+            }
+            if (!strcmp(options->definitions[count].key, "arcdroid_hard_disc"))
+            {
+               assert(!hard_disc);
+               hard_disc = &options->definitions[count];
             }
             if (!strcmp(options->definitions[count].key, "arcdroid_short_tail"))
             {
@@ -190,7 +196,15 @@ static bool environment(unsigned command, void *data)
             }
             ++count;
          }
-         assert(count == 40u && install_saves && !install_saves->category_key);
+         assert(count == 41u && install_saves && !install_saves->category_key);
+         assert(hard_disc && !hard_disc->category_key &&
+                hard_disc->default_value &&
+                !strcmp(hard_disc->default_value, "auto") &&
+                hard_disc->values[0].value &&
+                !strcmp(hard_disc->values[0].value, "auto") &&
+                hard_disc->values[1].value &&
+                !strcmp(hard_disc->values[1].value, "off") &&
+                !hard_disc->values[2].value);
          assert(jfd_omitted && !jfd_omitted->category_key &&
                 jfd_omitted->default_value &&
                 !strcmp(jfd_omitted->default_value, "file-data") &&
@@ -263,6 +277,7 @@ static bool environment(unsigned command, void *data)
          else if (!strcmp(variable->key, "arcdroid_pointer_speed")) variable->value = "600";
          else if (!strcmp(variable->key, "arcdroid_pointer_deadzone")) variable->value = "15";
          else if (!strcmp(variable->key, "arcdroid_disk_writes")) variable->value = "shadow";
+         else if (!strcmp(variable->key, "arcdroid_hard_disc")) variable->value = "auto";
          else if (!strcmp(variable->key, "arcdroid_short_tail")) variable->value = "missing";
          else if (!strcmp(variable->key, "arcdroid_jfd_omitted")) variable->value = "file-data";
          else if (!strcmp(variable->key, "arcdroid_install_saves")) variable->value = "persistent";
