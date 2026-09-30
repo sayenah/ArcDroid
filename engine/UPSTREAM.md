@@ -193,3 +193,11 @@ The support ROM is retained for future HostFS work but is not wired into Slice 1
 Slice 22 removed the ArcDroid install-completion doorbell include and call from
 `82c711_fdc.c` and `wd1770.c`; the remaining controller modifications and
 the pinned upstream IDE provenance are unchanged.
+
+Slice 23 adds one ArcDroid callback setter to the vendored `disc_adf.c` and
+`disc_adf.h`. It reports the existing sector-write and format write-protect
+refusals at the point where the controller receives them; the ADF result is
+unchanged. The existing
+ArcDroid SWI-entry call in `arm.c` keeps its scalar signature and remains the
+only CPU observer. The engine-side hook performs a bounded, read-only RAM
+lookup of a `Wimp_StartTask` command string for the native launch observer.

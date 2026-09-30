@@ -3964,6 +3964,67 @@ def build_f_discovery() -> bytearray:
     return image
 
 
+def build_launch_outcome_rom(pattern: str) -> bytearray:
+    """Invented ROM issuing the observer's real SWIs from ROM entry code."""
+    if pattern not in ("exact", "other", "no-poll", "close-init", "refused"):
+        raise ValueError("unknown launch-outcome ROM pattern")
+    rom = bytearray(b"\xff" * ROM_SIZE)
+    rom[0:4] = struct.pack("<I", 0xE59FF004)
+    rom[8:12] = struct.pack("<I", 0xEA000000)
+    rom[12:16] = struct.pack("<I", 0x03800020)
+    rom[16:20] = struct.pack("<I", 0xE1B0F00E)
+    if pattern == "refused":
+        rom[24:28] = struct.pack("<I", 0xE25EF004)  # test FDC IRQ return
+    a = Arm2(0x03800020)
+    a.ldr_const(1, 0x03400000)
+    for register in CHOOSER_VIDC_MODE:
+        a.ldr_const(0, register)
+        a.str(0, 1)
+    for address in (0x03600000, 0x03620000, 0x0364A000,
+                    0x0368A000, 0x036AA0FC, 0x036CA000):
+        a.ldr_const(0, address)
+        a.str(1, 0)
+    a.ldr_const(0, 0x036E0D0C)
+    a.str(1, 0)
+    command = (b"Run ADFS::0.$.!Demo.!Run" if pattern != "other" else
+               b"Filer_Run ADFS::0.$.!Demo") + b"\0"
+    a.ldr_const(8, 0x02001000)
+    for index, value in enumerate(command):
+        a.mov(0, value)
+        a.str(0, 8, index, byte=True)
+    a.mov_reg(0, 8)
+    a.emit(0xEF0400DE)  # Wimp_StartTask
+    if pattern == "refused":
+        a.ldr_const(0, 0x03310FC8)
+        a.mov(1, 0x1C)
+        a.str(1, 0, byte=True)
+        a.ldr_const(0, 0x03310FDC)
+        a.mov(1, 1)
+        a.str(1, 0, byte=True)
+        a.ldr_const(0, 0x03310FD4)
+        for value in (0x05, 0, 0, 0, 0, 3, 0, 0x1B, 0xFF):
+            a.mov(1, value)
+            a.str(1, 0, byte=True)
+        a.ldr_const(3, 200000)
+        a.label("refusal_wait")
+        a.subs_imm(3, 3, 1)
+        a.branch("refusal_wait", "ne")
+    a.mov(0, 0); a.mov(1, 0); a.mov(2, 0)
+    a.emit(0xEF000011)  # OS_Exit
+    a.emit(0xEF0400DD)  # Wimp_CloseDown, R0=0
+    if pattern == "close-init":
+        a.emit(0xEF0400C0)  # Wimp_Initialise cancels before a poll
+    elif pattern != "no-poll":
+        a.emit(0xEF0400C7)  # Wimp_Poll
+    a.label("outcome_spin")
+    a.branch("outcome_spin")
+    code = a.finish()
+    rom[0x20:0x20 + len(code)] = code
+    marker = b"ARCDROID OUTCOME ROM " + pattern.encode() + b"\0"
+    rom[-len(marker):] = marker
+    return rom
+
+
 def build_sparse_f_jfd(image: bytes, flags: int = 0,
                        skipped: frozenset[int] = frozenset(),
                        extended: bool = True,
@@ -4185,6 +4246,9 @@ def main() -> None:
     for pattern in ("prompt", "prompt-write", "cli", "cli-then-prompt", "desktop", "cli-confirm", "horizon-edge", "two-phase"):
         (args.output / f"arcdroid-boot-{pattern}.rom").write_bytes(
             build_rom(boot_watch_pattern=pattern))
+    for pattern in ("exact", "other", "no-poll", "close-init", "refused"):
+        (args.output / f"arcdroid-outcome-{pattern}.rom").write_bytes(
+            build_launch_outcome_rom(pattern))
     (args.output / "arcdroid-cmos-exerciser.rom").write_bytes(
         build_rom(cmos_exerciser=True))
     (args.output / "arcdroid-chooser-test.rom").write_bytes(build_chooser_rom())

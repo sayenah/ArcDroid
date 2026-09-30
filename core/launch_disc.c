@@ -205,6 +205,66 @@ bool arc_launch_script_build(const ArcLaunchDiscovery *discovery,
       output, capacity, output_size, error, error_size);
 }
 
+static bool arc_launch_special_script(const ArcLaunchDiscovery *discovery,
+                                      unsigned target_index,
+                                      ArcHdHelperMode mode,
+                                      const ArcHdProgramSpec *spec,
+                                      uint8_t *output, size_t capacity,
+                                      size_t *output_size,
+                                      char *error, size_t error_size)
+{
+   if (!spec || !spec->target ||
+       (mode != ARC_HD_HELPER_INSTALL && !spec->product) ||
+       !discovery || target_index >= discovery->candidate_count)
+   { arc_launch_error(error,error_size,"hard-disc helper target is missing"); return false; }
+   ArcScriptWriter writer={output,capacity,0u,true};
+   arc_script_text(&writer,"| ArcDroid desktop boot file\r");
+   if (mode == ARC_HD_HELPER_INSTALL)
+   {
+      const ArcLaunchCandidate *target=&discovery->candidates[target_index];
+      static const char *const preferred[]={"!System","!Fonts","!Scrap"};
+      for (unsigned p=0u; p<3u; ++p)
+         for (unsigned i=0u; i<discovery->candidate_count; ++i)
+            if (i != target_index &&
+                arc_launch_sibling_bootable(&discovery->candidates[i]) &&
+                discovery->candidates[i].parent.length == target->parent.length &&
+                !memcmp(discovery->candidates[i].parent.bytes,target->parent.bytes,
+                        target->parent.length) &&
+                arc_name_literal(&discovery->candidates[i].name,preferred[p]))
+               arc_script_boot(&writer,&discovery->candidates[i]);
+      for (unsigned i=0u; i<discovery->candidate_count; ++i)
+      {
+         const ArcLaunchCandidate *candidate=&discovery->candidates[i];
+         if (i == target_index || !arc_launch_sibling_bootable(candidate) ||
+             candidate->parent.length != target->parent.length ||
+             memcmp(candidate->parent.bytes,target->parent.bytes,
+                    target->parent.length) ||
+             arc_name_literal(&candidate->name,"!System") ||
+             arc_name_literal(&candidate->name,"!Fonts") ||
+             arc_name_literal(&candidate->name,"!Scrap")) continue;
+         arc_script_boot(&writer,candidate);
+      }
+      arc_script_text(&writer,"%BASIC -quit ADFS::1.$.ArcInstall\r");
+   }
+   else if (mode == ARC_HD_HELPER_MARK)
+      arc_script_text(&writer,"%BASIC -quit ADFS::1.$.ArcMark\r");
+   else if (mode == ARC_HD_HELPER_PRODUCT)
+   {
+      arc_script_text(&writer,"%Filer_Boot ADFS::4.$.ArcDroid.");
+      arc_script_text(&writer,spec->product);
+      arc_script_text(&writer,"\r%Dir ADFS::4.$.ArcDroid\r");
+      arc_script_text(&writer,"%URD ADFS::4.$.ArcDroid\r");
+      arc_script_text(&writer,"%Filer_Run ADFS::4.$.ArcDroid.");
+      arc_script_text(&writer,spec->product);
+      arc_script_text(&writer,"\r");
+   }
+   else { arc_launch_error(error,error_size,"unsupported hard-disc helper"); return false; }
+   if (!writer.ok)
+   { arc_launch_error(error,error_size,"desktop boot file buffer is too small"); return false; }
+   if (output_size) *output_size=writer.size;
+   return true;
+}
+
 static size_t arc_l_physical_offset(unsigned logical_sector)
 {
    unsigned track = logical_sector / 16u;
@@ -255,8 +315,9 @@ static void arc_old_entry(uint8_t *entry, const char *name, uint32_t load,
    entry[25] = 0u;
 }
 
-bool arc_launch_disc_build_ramdisc(const ArcLaunchDiscovery *discovery,
+static bool arc_launch_disc_build_internal(const ArcLaunchDiscovery *discovery,
                            unsigned target_index, bool ramdisc,
+                           ArcHdHelperMode mode, const ArcHdProgramSpec *spec,
                            uint8_t output[ARC_LAUNCH_DISC_SIZE],
                            char *error, size_t error_size)
 {
@@ -264,9 +325,20 @@ bool arc_launch_disc_build_ramdisc(const ArcLaunchDiscovery *discovery,
       "| ArcDroid launch disc\r"
       "%Desktop -File \"ADFS::1.$.ArcLaunch\"\r";
    size_t launch_size = 0u;
-   if (!output || !arc_launch_script_build_ramdisc(discovery, target_index, ramdisc, NULL, 0u,
-                                            &launch_size, error, error_size))
+   bool special = mode != ARC_HD_HELPER_FLOPPY;
+   if (!output || !(special ?
+       arc_launch_special_script(discovery,target_index,mode,spec,NULL,0u,
+                                 &launch_size,error,error_size) :
+       arc_launch_script_build_ramdisc(discovery,target_index,ramdisc,NULL,0u,
+                                      &launch_size,error,error_size)))
       return false;
+   size_t program_size = 0u;
+   if ((mode == ARC_HD_HELPER_INSTALL || mode == ARC_HD_HELPER_MARK) &&
+       !arc_hd_program_build(mode,spec,NULL,0u,&program_size))
+   { arc_launch_error(error,error_size,"hard-disc BASIC program is invalid"); return false; }
+   unsigned program_sectors = (unsigned)((program_size+ARC_L_SECTOR_SIZE-1u)/ARC_L_SECTOR_SIZE);
+   if (program_sectors > ARC_L_BOOT_SECTOR - ARC_L_RAM_SECTOR)
+   { arc_launch_error(error,error_size,"hard-disc BASIC program is too large"); return false; }
    size_t launch_sectors = (launch_size + ARC_L_SECTOR_SIZE - 1u) /
                            ARC_L_SECTOR_SIZE;
    if (!launch_sectors || launch_sectors > ARC_L_TOTAL_SECTORS - ARC_L_LAUNCH_SECTOR)
@@ -275,19 +347,34 @@ bool arc_launch_disc_build_ramdisc(const ArcLaunchDiscovery *discovery,
    if (!launch)
    { arc_launch_error(error, error_size, "desktop boot file allocation failed"); return false; }
    size_t written = 0u;
-   if (!arc_launch_script_build_ramdisc(discovery, target_index, ramdisc, launch, launch_size,
-                                &written, error, error_size) ||
+   if (!(special ?
+         arc_launch_special_script(discovery,target_index,mode,spec,launch,
+                                   launch_size,&written,error,error_size) :
+         arc_launch_script_build_ramdisc(discovery,target_index,ramdisc,launch,
+                                         launch_size,&written,error,error_size)) ||
        written != launch_size)
    { free(launch); return false; }
+   uint8_t *program=NULL;
+   if (program_size)
+   {
+      program=malloc(program_size);
+      size_t generated=0u;
+      if (!program ||
+          !arc_hd_program_build(mode,spec,program,program_size,&generated) ||
+          generated != program_size)
+      { free(program); free(launch); return false; }
+   }
 
    memset(output, 0, ARC_LAUNCH_DISC_SIZE);
    /* Free extents surround the boot sector and the exact launch-file extent. */
-   arc_store_u24(output, ramdisc ? ARC_L_RAM_SECTOR + 1u : ARC_L_RAM_SECTOR);
+   arc_store_u24(output, ARC_L_RAM_SECTOR +
+                 (ramdisc ? 1u : program_sectors));
    arc_store_u24(output + 3u, ARC_L_LAUNCH_SECTOR + (unsigned)launch_sectors);
    memcpy(output + 247u, "Acri\r", 5u); /* ArcDroid, interleaved halves. */
    arc_store_u24(output + 252u, ARC_L_TOTAL_SECTORS);
    arc_store_u24(output + 256u, ARC_L_BOOT_SECTOR -
-                 (ramdisc ? ARC_L_RAM_SECTOR + 1u : ARC_L_RAM_SECTOR));
+                 (ramdisc ? ARC_L_RAM_SECTOR + 1u :
+                            ARC_L_RAM_SECTOR + program_sectors));
    arc_store_u24(output + 259u,
                  ARC_L_TOTAL_SECTORS - ARC_L_LAUNCH_SECTOR -
                  (unsigned)launch_sectors);
@@ -309,6 +396,10 @@ bool arc_launch_disc_build_ramdisc(const ArcLaunchDiscovery *discovery,
    if (ramdisc)
       arc_old_entry(root + 57u, "ArcRAM", UINT32_C(0xffffff00),
                     sizeof(arc_ram_program) - 1u, ARC_L_RAM_SECTOR);
+   else if (program_size)
+      arc_old_entry(root + 57u,
+                    mode == ARC_HD_HELPER_INSTALL ? "ArcInstall" : "ArcMark",
+                    UINT32_C(0xffffff00), program_size, ARC_L_RAM_SECTOR);
    uint8_t *tail = root + 1227u;
    tail[0] = 0u;
    memset(tail + 1u, '\r', 10u);
@@ -324,10 +415,32 @@ bool arc_launch_disc_build_ramdisc(const ArcLaunchDiscovery *discovery,
              arc_l_write(output, ARC_L_LAUNCH_SECTOR, launch, launch_size) &&
              (!ramdisc || arc_l_write(output, ARC_L_RAM_SECTOR,
                             (const uint8_t *)arc_ram_program,
-                            sizeof(arc_ram_program) - 1u));
+                            sizeof(arc_ram_program) - 1u)) &&
+             (!program || arc_l_write(output,ARC_L_RAM_SECTOR,program,
+                                      program_size));
+   free(program);
    free(launch);
    if (!ok) arc_launch_error(error, error_size, "helper disc write failed");
    return ok;
+}
+
+bool arc_launch_disc_build_ramdisc(const ArcLaunchDiscovery *discovery,
+                           unsigned target_index, bool ramdisc,
+                           uint8_t output[ARC_LAUNCH_DISC_SIZE],
+                           char *error, size_t error_size)
+{
+   return arc_launch_disc_build_internal(discovery,target_index,ramdisc,
+      ARC_HD_HELPER_FLOPPY,NULL,output,error,error_size);
+}
+
+bool arc_launch_disc_build_mode(const ArcLaunchDiscovery *discovery,
+                           unsigned target_index, ArcHdHelperMode mode,
+                           const ArcHdProgramSpec *spec,
+                           uint8_t output[ARC_LAUNCH_DISC_SIZE],
+                           char *error, size_t error_size)
+{
+   return arc_launch_disc_build_internal(discovery,target_index,false,mode,
+                                         spec,output,error,error_size);
 }
 
 bool arc_launch_disc_build(const ArcLaunchDiscovery *discovery,

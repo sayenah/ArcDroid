@@ -162,6 +162,11 @@ static bool real_boot_cmos_write_fail;
 static const char *real_boot_package;
 static bool real_boot_expect_disabled;
 static bool real_boot_fail_construct;
+static bool real_boot_fail_hd_recover;
+static void (*inject_hd_construct_failure)(void);
+static bool real_boot_hd_collision;
+static bool (*inject_hd_preflight_collision)(void);
+static bool real_boot_seed_product;
 static bool real_boot_cmos_sentinel;
 static bool real_boot_cmos_ramdisc;
 static int real_boot_hd_write_mode = -1;
@@ -489,6 +494,18 @@ static void frontend_log(enum retro_log_level level, const char *format, ...)
    va_start(arguments, format);
    vsnprintf(message, sizeof(message), format, arguments);
    va_end(arguments);
+   if (real_boot_fail_hd_recover && inject_hd_construct_failure &&
+       !strncmp(message,"Launch outcome: ended ",22u))
+   {
+      real_boot_fail_hd_recover=false;
+      inject_hd_construct_failure();
+   }
+   if (real_boot_hd_collision && inject_hd_preflight_collision &&
+       !strncmp(message,"Launch outcome: ended ",22u))
+   {
+      real_boot_hd_collision=false;
+      assert(inject_hd_preflight_collision());
+   }
    if (!strncmp(message, "RAM disc: ", 10u))
    { assert(level == RETRO_LOG_INFO); ++ramdisc_publication_logs; }
    if (hd_guest_logging &&
@@ -1926,6 +1943,12 @@ static bool parse_real_boot_options(int count, char *const args[],
       else if (!strcmp(args[argument], "--boot-fail-construct") &&
                !real_boot_fail_construct)
          real_boot_fail_construct = true;
+      else if (!strcmp(args[argument], "--boot-fail-hd-recover") &&
+               !real_boot_fail_hd_recover)
+         real_boot_fail_hd_recover = true;
+      else if (!strcmp(args[argument], "--boot-hd-preflight-collision") &&
+               !real_boot_hd_collision)
+         real_boot_hd_collision = true;
       else if (!strcmp(args[argument], "--boot-fail-record-write") &&
                !fault_write_substring)
          fault_write_substring = ".boot.tmp";
@@ -1972,6 +1995,8 @@ static bool parse_real_boot_options(int count, char *const args[],
       }
       else if (!strcmp(args[argument], "--boot-hard-disc-auto"))
          option_hard_disc = "auto";
+      else if (!strcmp(args[argument], "--boot-seed-product"))
+         real_boot_seed_product = true;
       else if (!strcmp(args[argument], "--boot-hd-write") &&
                real_boot_hd_write_mode < 0 && argument + 1 < count)
       {
@@ -2306,6 +2331,7 @@ int main(int argc, char **argv)
    bool (*arc_libretro_test_boot_stamp)(ArcBootObservation *) = NULL;
    bool (*arc_libretro_test_hd_exhaust_journal)(void) = NULL;
    bool (*arc_libretro_test_hd_observation_write)(unsigned) = NULL;
+   bool (*arc_libretro_test_seed_hd_product)(char[41]) = NULL;
    void (*arc_install_store_test_corrupt_native_format)(bool) = NULL;
    const char *(*arc_libretro_test_cmos_path)(void) = NULL;
    uint8_t (*arc_libretro_test_prepared_cmos_byte)(unsigned) = NULL;
@@ -2343,6 +2369,16 @@ int main(int argc, char **argv)
          dlsym(module, "arc_libretro_test_hd_observation_write");
       assert(arc_libretro_test_hd_observation_write);
    }
+   if (real_boot_seed_product) {
+      *(void **)(&arc_libretro_test_seed_hd_product) =
+         dlsym(module,"arc_libretro_test_seed_hd_product");
+      assert(arc_libretro_test_seed_hd_product);
+   }
+   if (real_boot_hd_collision) {
+      *(void **)(&inject_hd_preflight_collision) =
+         dlsym(module,"arc_libretro_test_hd_preflight_collision");
+      assert(inject_hd_preflight_collision);
+   }
    if (native_hd_guest) {
       *(void **)(&arc_engine_test_cmos_image) =
          dlsym(module, "arc_engine_test_cmos_image");
@@ -2361,11 +2397,13 @@ int main(int argc, char **argv)
       *(void **)(&arc_engine_test_boot_watch_snapshot) =
          dlsym(module, "arc_engine_test_boot_watch_snapshot");
       assert(arc_engine_test_boot_watch_snapshot);
-      if (real_boot_fail_construct)
+      if (real_boot_fail_construct || real_boot_fail_hd_recover)
       {
          *(void **)(&arc_libretro_test_fail_next_construct) =
             dlsym(module, "arc_libretro_test_fail_next_construct");
          assert(arc_libretro_test_fail_next_construct);
+         if (real_boot_fail_hd_recover)
+            inject_hd_construct_failure=arc_libretro_test_fail_next_construct;
       }
       if (real_boot_chooser_reset || real_boot_chooser_unload ||
           real_boot_cmos_write_fail)
@@ -5082,6 +5120,11 @@ int main(int argc, char **argv)
       {
          fprintf(stderr, "real_boot_harness: load failed: %s\n", last_message);
          return 2;
+      }
+      if (real_boot_seed_product)
+      {
+         char seeded_id[41];
+         assert(arc_libretro_test_seed_hd_product(seeded_id));
       }
       if (real_boot_hd_write_mode >= 0)
          assert(arc_libretro_test_hd_observation_write(

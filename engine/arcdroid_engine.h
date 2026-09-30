@@ -7,6 +7,7 @@
 #include "arculator/src/ide.h"
 #include "adffs.h"
 #include "arc_boot_watch.h"
+#include "arc_launch_outcome.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -58,6 +59,14 @@ bool arc_engine_power_on_take_release(uint64_t *at_us, bool *boot_action);
 void arc_engine_boot_watch_arm(void);
 void arc_engine_boot_watch_cancel(void);
 ArcBootWatchState arc_engine_boot_watch_state(void);
+bool arc_engine_launch_outcome_arm(const char *command);
+void arc_engine_launch_outcome_cancel(const char *reason);
+void arc_engine_launch_outcome_refused(unsigned drive);
+void arc_engine_launch_outcome_snapshot(ArcLaunchOutcome *outcome);
+void arc_engine_adf_refused(unsigned drive, unsigned track,
+                           unsigned side, unsigned sector);
+void arc_engine_adf_refusal_callback_set(
+   void (*callback)(unsigned, unsigned, unsigned, unsigned));
 #if defined(ARCDROID_TEST_FAULTS)
 void arc_engine_test_boot_watch_snapshot(ArcBootWatch *out);
 #endif

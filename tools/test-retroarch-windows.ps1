@@ -2163,7 +2163,8 @@ try {
         (Get-Item (Join-Path $fHardDiscStore 'journal.g0')).Length -le 1MB) {
         throw 'Native guest did not commit nine whole commands past 1 MiB'
     }
-    $stressSignature = Capture-MediaSignature $stressRun 'native-stress-written'
+    $stressSignature = Capture-ExpectedSignature $stressRun 'native-stress-written' `
+        $readbackSignature $false
     if ($stressSignature -ne $readbackSignature) {
         throw 'Native stress guest lost its saved-data witness'
     }
@@ -2421,3 +2422,62 @@ foreach ($pattern in @(
     }
 }
 Write-Host "Slice 18 Windows RetroArch: synthetic power-on Shift down/up, floppy boot read and frontend RESET reconstruction passed"
+
+# A test-core harness writes an invented completed product through the normal
+# hard-disc store. Each RetroArch run below is a fresh process with no RESET.
+$seedRoot = Join-Path $WorkDirectory ("slice23-product-seed-" + [Guid]::NewGuid().ToString('N'))
+$seedTool = Join-Path $InputDirectory 'windows_load_harness.exe'
+$testCore = Join-Path $InputDirectory 'arcdroid_libretro_test.dll'
+$testRom = Join-Path $InputDirectory 'arcdroid-test.rom'
+$seedOutput = @(& $seedTool $testCore $testRom $fContent $seedRoot '--seed-product' 2>&1)
+if ($LASTEXITCODE -ne 0) {
+    throw "Slice 23 product fixture seeding failed: $($seedOutput -join ' | ')"
+}
+$seedLines = @($seedOutput | Where-Object { $_ -match '^Seeded product: id=([0-9a-f]{40})$' })
+if ($seedLines.Count -ne 1) { throw 'Slice 23 product seeder did not report one content id' }
+$seedId = [regex]::Match([string]$seedLines[0], 'id=([0-9a-f]{40})').Groups[1].Value
+if ($seedId -ne $fHardDiscId) { throw 'Slice 23 fixture content id changed between frontends' }
+$seedStore = Join-Path $seedRoot "save/arcdroid/hd/$seedId"
+if (-not (Test-Path (Join-Path $seedStore 'ready.a'))) {
+    throw 'Slice 23 fixture store was not committed'
+}
+Remove-Item -LiteralPath $fHardDiscStore -Recurse -Force
+Copy-Item -LiteralPath $seedStore -Destination $fHardDiscStore -Recurse -Force
+if (-not (Test-Path (Join-Path $fHardDiscStore 'ready.a'))) {
+    throw 'Slice 23 prepared store was not copied to the RetroArch save directory'
+}
+Copy-Item -Force $testCore $core
+Copy-Item -Force $testRom $firmware
+@"
+arcdroid_machine = "Auto"
+arcdroid_cpu = "Auto"
+arcdroid_launch = "auto"
+arcdroid_launch_chooser = "remember"
+arcdroid_disk_writes = "shadow"
+arcdroid_hard_disc = "auto"
+"@ | Set-Content -Encoding ASCII $coreOptions
+$productHelper = Join-Path $saveDirectory "ArcDroid/arcdroid/launch/$seedId.adl"
+for ($attempt = 1; $attempt -le 2; $attempt++) {
+    $productRun = Start-MediaRun $fContent "slice23-hd-product-$attempt"
+    try {
+        $deadline = [DateTime]::UtcNow.AddSeconds(15)
+        do {
+            $productLines = @(Get-Content $productRun.RetroLog -ErrorAction SilentlyContinue)
+            if (@($productLines | Where-Object { $_.Contains('Hard disc scope: state=completed') }).Count -and
+                @($productLines | Where-Object { $_.Contains('reason=hd-product') }).Count) { break }
+            Start-Sleep -Milliseconds 100
+        } while ([DateTime]::UtcNow -lt $deadline)
+        if (-not @($productLines | Where-Object { $_.Contains('Hard disc scope: state=completed') }).Count -or
+            -not @($productLines | Where-Object { $_.Contains('reason=hd-product') }).Count) {
+            throw "Slice 23 process $attempt did not select the installed product: [$($productLines -join ' | ')]"
+        }
+        $capture = Capture-RawScreenshot $productRun "slice23-hd-product-$attempt"
+        if ($capture.Colours -lt 2) { throw "Slice 23 process $attempt did not present a guest frame" }
+        if (-not (Test-Path $productHelper)) { throw 'Slice 23 installed-product helper is missing' }
+        $helperText = [Text.Encoding]::ASCII.GetString([IO.File]::ReadAllBytes($productHelper))
+        if (-not $helperText.Contains('%Filer_Run ADFS::4.$.ArcDroid.!Result')) {
+            throw 'Slice 23 helper did not dispatch the fixture product from the hard disc'
+        }
+    } finally { Stop-MediaRun $productRun }
+}
+Write-Host 'Slice 23 Windows RetroArch: fixture hd-product helper and fresh-process reload passed'

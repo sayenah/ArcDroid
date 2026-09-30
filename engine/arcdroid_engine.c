@@ -58,6 +58,7 @@ int support_rom_enabled;
 
 static bool arc_active;
 static ArcBootWatch arc_boot_watch;
+static ArcLaunchOutcome arc_launch_outcome;
 /* ArcDroid power-on Shift observes the boot SWI independently of Slice 14. */
 static bool arc_power_on_armed;
 static bool arc_power_on_release_pending;
@@ -104,6 +105,45 @@ void arc_engine_boot_watch_cancel(void)
 { arc_boot_watch_cancel(&arc_boot_watch); }
 ArcBootWatchState arc_engine_boot_watch_state(void)
 { return arc_boot_watch.state; }
+bool arc_engine_launch_outcome_arm(const char *command)
+{
+   return arc_active && speed_mhz > 0 &&
+      arc_outcome_arm(&arc_launch_outcome, command,
+                      (tsc >> 32u) / (uint64_t)speed_mhz);
+}
+void arc_engine_launch_outcome_cancel(const char *reason)
+{ arc_outcome_cancel(&arc_launch_outcome, reason); }
+void arc_engine_launch_outcome_refused(unsigned drive)
+{ arc_outcome_refused(&arc_launch_outcome, drive); }
+void arc_engine_launch_outcome_snapshot(ArcLaunchOutcome *outcome)
+{ if (outcome) *outcome = arc_launch_outcome; }
+static void (*arc_adf_refusal_callback)(unsigned, unsigned, unsigned, unsigned);
+void arc_engine_adf_refused(unsigned drive, unsigned track,
+                           unsigned side, unsigned sector)
+{
+   if (arc_adf_refusal_callback)
+      arc_adf_refusal_callback(drive, track, side, sector);
+}
+void arc_engine_adf_refusal_callback_set(
+   void (*callback)(unsigned, unsigned, unsigned, unsigned))
+{ arc_adf_refusal_callback = callback; }
+
+static bool arc_engine_command_read(uint32_t address, char output[257])
+{
+   if (address >= 0x04000000u) return false;
+   for (unsigned i = 0u; i <= 256u; ++i)
+   {
+      uint32_t at = address + i;
+      uint8_t status = at < 0x04000000u ? memstat[at >> 12u] : 0u;
+      if (status < 1u || status > 3u ||
+          !mempoint[at >> 12u]) return false;
+      unsigned c = mempoint[at >> 12u][at];
+      if (!c) { output[i] = 0; return i != 0u; }
+      if (c < 0x20u || c > 0x7eu || i == 256u) return false;
+      output[i] = (char)c;
+   }
+   return false;
+}
 #if defined(ARCDROID_TEST_FAULTS)
 void arc_engine_test_boot_watch_snapshot(ArcBootWatch *out)
 { if (out) *out = arc_boot_watch; }
@@ -115,6 +155,17 @@ void arc_engine_boot_watch_swi(uint32_t swi, uint32_t r0, uint32_t r1,
    /* ArcDroid patch: the power-on release must work with the observer off. */
    if ((swi == 0x29u || swi == 0x20029u) && r0 == 15u)
       arc_engine_power_on_release(true);
+   if (arc_launch_outcome.state != ARC_OUTCOME_OFF)
+   {
+      bool in_rom = memstat[(address & 0x03ffffffu) >> 12u] == 5u;
+      char command[257];
+      const char *start_command = NULL;
+      if (((swi & 0x00ffffffu) & ~0x00020000u) == 0x400deu &&
+          arc_engine_command_read(r0, command)) start_command = command;
+      arc_outcome_swi(&arc_launch_outcome, swi, r0, r1, r2, in_rom,
+                      start_command,
+                      (tsc >> 32u) / (uint64_t)speed_mhz);
+   }
    if (arc_boot_watch.state != ARC_BOOT_WATCH_ARMED) return;
    bool in_rom = memstat[(address & 0x03ffffffu) >> 12u] == 5u;
    arc_boot_watch_observe(&arc_boot_watch, swi, r0, r1, r2, r3,
@@ -633,6 +684,7 @@ static bool arc_machine_create(char *failure, size_t failure_size)
    arc_platform_audio_reset();
    arc_fault_boundary = false;
    arc_last_refresh = 50.0;
+   adf_set_refusal_callback(arc_engine_adf_refused);
    arc_active = true;
    return true;
 }
@@ -708,6 +760,7 @@ bool arc_engine_start(const uint8_t *firmware, size_t firmware_size,
 bool arc_engine_reset(char *failure, size_t failure_size)
 {
    arc_boot_watch_clear(&arc_boot_watch);
+   arc_outcome_clear(&arc_launch_outcome);
    if (!arc_saved_firmware) return false;
    cmos_get_image(arc_saved_cmos, sizeof(arc_saved_cmos));
    arc_machine_destroy();
@@ -720,6 +773,7 @@ void arc_engine_stop(void)
    arc_power_on_release_pending = false;
    arc_power_on_input = NULL;
    arc_boot_watch_clear(&arc_boot_watch);
+   arc_outcome_clear(&arc_launch_outcome);
    if (arc_machine_live)
       cmos_get_image(arc_saved_cmos, sizeof(arc_saved_cmos));
    arc_machine_destroy();
@@ -743,6 +797,7 @@ void arc_engine_stop(void)
    arc_saved_helper_size = 0u;
    arc_io_clear_memory_sources();
    arc_active = false;
+   adf_set_refusal_callback(NULL);
    arc_fault_boundary = false;
 #if defined(ARCDROID_TEST_FAULTS)
    arc_test_vidc_noncompleting = false;
@@ -788,6 +843,7 @@ bool arc_engine_run_frame(ArcInputState *input, ArcEngineFrame *frame)
    if (adf_flush_all()) fatal("Unable to flush the staged floppy image");
    arc_fault_boundary = false;
    arc_boot_watch_frame(&arc_boot_watch, (tsc >> 32u) / (uint64_t)speed_mhz);
+   arc_outcome_frame(&arc_launch_outcome, (tsc >> 32u) / (uint64_t)speed_mhz);
 
    frame->pixels = arc_platform_video_frame(&frame->width, &frame->height,
                                              &frame->pitch, &sequence);

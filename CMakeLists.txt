@@ -47,6 +47,8 @@ set_target_properties(arcdroid_zlib PROPERTIES POSITION_INDEPENDENT_CODE ON)
 set(ARCDROID_CORE_SOURCES
   core/adffs.c
   core/install_disc.c
+  core/hard_disc_scope.c
+  core/hd_program.c
   core/zip.c
   core/zip_content.c
   core/machine.c
@@ -82,6 +84,7 @@ set_target_properties(arcdroid_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
 set(ARCDROID_LIBRETRO_SOURCES
   engine/arcdroid_engine.c
   engine/arc_boot_watch.c
+  engine/arc_launch_outcome.c
   engine/arcdroid_stubs.c
   engine/arculator/src/82c711.c
   engine/arculator/src/ide.c
@@ -208,6 +211,16 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
   endif()
   add_test(NAME boot-watch COMMAND boot_watch_test
     "${CMAKE_CURRENT_BINARY_DIR}/tests/fixtures/generated")
+  add_executable(launch_outcome_test tests/launch_outcome_test.c
+    engine/arc_launch_outcome.c)
+  target_include_directories(launch_outcome_test PRIVATE engine)
+  target_compile_options(launch_outcome_test PRIVATE
+    $<$<C_COMPILER_ID:GNU,Clang,AppleClang>:-UNDEBUG;-Wall;-Wextra;-Wpedantic>)
+  if(ARCDROID_SANITIZERS)
+    target_link_libraries(launch_outcome_test PRIVATE
+      arcdroid_sanitizer_compile arcdroid_sanitizer_link)
+  endif()
+  add_test(NAME launch-outcome COMMAND launch_outcome_test)
   add_executable(adffs_shipping_profile_test
     tests/adffs_shipping_profile_test.c)
   target_link_libraries(adffs_shipping_profile_test PRIVATE arcdroid_core)
@@ -223,6 +236,22 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
     target_link_libraries(install_disc_test PRIVATE arcdroid_sanitizer_link)
   endif()
   add_test(NAME hard-disc-formatter COMMAND install_disc_test)
+  add_executable(hard_disc_scope_test tests/hard_disc_scope_test.c)
+  target_link_libraries(hard_disc_scope_test PRIVATE arcdroid_core)
+  target_compile_options(hard_disc_scope_test PRIVATE
+    $<$<C_COMPILER_ID:GNU,Clang,AppleClang>:-UNDEBUG;-Wall;-Wextra;-Wpedantic>)
+  if(ARCDROID_SANITIZERS)
+    target_link_libraries(hard_disc_scope_test PRIVATE arcdroid_sanitizer_link)
+  endif()
+  add_test(NAME hard-disc-scope COMMAND hard_disc_scope_test)
+  add_executable(hd_program_test tests/hd_program_test.c)
+  target_link_libraries(hd_program_test PRIVATE arcdroid_core)
+  target_compile_options(hd_program_test PRIVATE
+    $<$<C_COMPILER_ID:GNU,Clang,AppleClang>:-UNDEBUG;-Wall;-Wextra;-Wpedantic>)
+  if(ARCDROID_SANITIZERS)
+    target_link_libraries(hd_program_test PRIVATE arcdroid_sanitizer_link)
+  endif()
+  add_test(NAME hard-disc-program COMMAND hd_program_test)
   add_executable(install_ide_test tests/install_ide_test.c
     engine/arculator/src/ide.c)
   target_include_directories(install_ide_test PRIVATE engine/arculator/src)
@@ -245,6 +274,23 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
   endif()
   add_test(NAME native-hard-disc-store COMMAND install_store_test)
   set(FIXTURE_DIR "${CMAKE_CURRENT_BINARY_DIR}/tests/fixtures/generated")
+  if(NOT WIN32)
+    add_test(NAME launch-outcome-rom
+      COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/check_launch_outcome.py"
+        $<TARGET_FILE:libretro_harness> $<TARGET_FILE:arcdroid_libretro_test>
+        "${FIXTURE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/launch-outcome-rom-data")
+    add_test(NAME hd-product-process
+      COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/check_hd_product.py"
+        $<TARGET_FILE:libretro_harness> $<TARGET_FILE:arcdroid_libretro_test>
+        "${FIXTURE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/hd-product-process-data")
+    add_test(NAME adf-refusal-rom
+      COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/check_adf_refusal.py"
+        $<TARGET_FILE:libretro_harness> $<TARGET_FILE:arcdroid_libretro_test>
+        "${FIXTURE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/adf-refusal-rom-data")
+  endif()
   add_library(arcdroid_core_test STATIC
     ${ARCDROID_CORE_SOURCES} tests/adffs_profiles_test.c tests/firmware_table_test.c)
   target_include_directories(arcdroid_core_test PUBLIC
@@ -806,6 +852,7 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
     # test-only OS gating and probes remain outside the shipping DLL.
     arcdroid_add_libretro(arcdroid_libretro_test FALSE arcdroid_core_test)
     target_compile_definitions(arcdroid_libretro_test PRIVATE ARCDROID_TEST_FAULTS=1)
+    target_sources(arcdroid_libretro_test PRIVATE tests/hd_product_seed.c)
     set_target_properties(arcdroid_libretro_test PROPERTIES OUTPUT_NAME arcdroid_libretro_test)
     add_executable(windows_load_harness tests/windows_load_harness.c)
     target_include_directories(windows_load_harness PRIVATE libretro/include)
@@ -828,6 +875,7 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
     # host test core; release/RetroArch artifacts use arcdroid_libretro above.
     arcdroid_add_libretro(arcdroid_libretro_test FALSE arcdroid_core_test)
     target_compile_definitions(arcdroid_libretro_test PRIVATE ARCDROID_TEST_FAULTS=1)
+    target_sources(arcdroid_libretro_test PRIVATE tests/hd_product_seed.c)
     set_target_properties(arcdroid_libretro_test PROPERTIES OUTPUT_NAME arcdroid_libretro_test)
     add_executable(libretro_harness tests/libretro_harness.c)
     target_include_directories(libretro_harness PRIVATE libretro libretro/include)

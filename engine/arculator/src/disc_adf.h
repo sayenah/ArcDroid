@@ -12,3 +12,5 @@ void adf_loadex(int drive, char *fn, int sectors, int size, int dblside, int dbl
 
 void ssd_load(int drive, char *fn);
 void dsd_load(int drive, char *fn);
+void adf_set_refusal_callback(
+   void (*callback)(unsigned, unsigned, unsigned, unsigned));
