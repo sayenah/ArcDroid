@@ -8,6 +8,7 @@
 
 enum {
    ARC_CHOOSER_DESKTOP = 0xffu,
+   ARC_CHOOSER_INSTALLED = 0xfeu,
    ARC_CHOOSER_TOP = 92u,
    ARC_CHOOSER_ROW_HEIGHT = 20u,
    ARC_CHOOSER_LEFT = 64u,
@@ -81,6 +82,31 @@ bool arc_launch_choice_parse(const void *data, size_t size,
        !arc_choice_line(&cursor, &kind, &kind_size) ||
        !arc_choice_line(&cursor, &target, &target_size) ||
        version_size != 2u) return false;
+   if (!memcmp(version,"v4",2u))
+   {
+      const uint8_t *attempt_line;
+      size_t attempt_size;
+      ArcLaunchChoiceRecord parsed={0};
+      if (kind_size != 9u || memcmp(kind,"installed",9u) ||
+          !arc_choice_component(target,target_size,&parsed.target,true) ||
+          !arc_choice_line(&cursor,&fingerprint,&fingerprint_size) ||
+          !arc_choice_line(&cursor,&attempt_line,&attempt_size) ||
+          !attempt_size || attempt_size > 10u || cursor.at != cursor.size ||
+          !arc_choice_fingerprint(fingerprint,fingerprint_size,
+                                  parsed.candidate_fingerprint)) return false;
+      unsigned attempt=0u;
+      for (size_t i=0u;i<attempt_size;++i)
+      {
+         if (attempt_line[i]<'0' || attempt_line[i]>'9' ||
+             attempt > (UINT_MAX-(unsigned)(attempt_line[i]-'0'))/10u)
+            return false;
+         attempt=attempt*10u+(unsigned)(attempt_line[i]-'0');
+      }
+      if (!attempt) return false;
+      parsed.version=4u; parsed.installed=true; parsed.attempt=attempt;
+      *choice=parsed;
+      return true;
+   }
    bool nested = !memcmp(version, "v3", 2u);
    if (nested && !arc_choice_line(&cursor, &leaf, &leaf_size)) return false;
    if (!nested && memcmp(version, "v1", 2u)) return false;
@@ -210,10 +236,48 @@ bool arc_launch_choice_format(const ArcGuestName *target, bool desktop,
    return at == required;
 }
 
+bool arc_launch_choice_format_installed(const ArcGuestName *product,
+                              const char candidate_fingerprint[41],
+                              unsigned attempt, uint8_t *output,
+                              size_t capacity, size_t *output_size)
+{
+   static const char hex[]="0123456789abcdef";
+   if (output_size) *output_size=0u;
+   if (!product || !product->length || product->length>ARC_GUEST_NAME_MAX ||
+       product->bytes[0]!='!' || !candidate_fingerprint ||
+       candidate_fingerprint[40] || !attempt) return false;
+   for (unsigned i=0u;i<40u;++i)
+      if (arc_choice_hex((uint8_t)candidate_fingerprint[i])<0) return false;
+   char number[16];
+   int digits=snprintf(number,sizeof(number),"%u",attempt);
+   if (digits<1 || (size_t)digits>=sizeof(number)) return false;
+   size_t needed=3u+10u+2u*product->length+1u+41u+
+                 (size_t)digits+1u;
+   if (output_size) *output_size=needed;
+   if (!output) return capacity==0u;
+   if (capacity<needed) return false;
+   size_t at=0u;
+   memcpy(output+at,"v4\ninstalled\n",13u); at+=13u;
+   for (unsigned i=0u;i<product->length;++i)
+   {
+      output[at++]=(uint8_t)hex[product->bytes[i]>>4u];
+      output[at++]=(uint8_t)hex[product->bytes[i]&15u];
+   }
+   output[at++]='\n';
+   memcpy(output+at,candidate_fingerprint,40u); at+=40u;
+   output[at++]='\n';
+   memcpy(output+at,number,(size_t)digits); at+=(size_t)digits;
+   output[at++]='\n';
+   return at==needed;
+}
+
 int arc_launch_choice_match(const ArcLaunchDiscovery *discovery,
                             const ArcLaunchChoiceRecord *choice)
 {
    if (!discovery || !choice) return INT_MIN;
+   if (choice->installed) return choice->version == 4u &&
+      !strcmp(choice->candidate_fingerprint,
+              discovery->candidate_fingerprint) ? -2 : INT_MIN;
    if (choice->desktop) return -1;
    for (unsigned i = 0u; i < discovery->candidate_count; ++i)
       if (arc_launch_candidate_is_target(&discovery->candidates[i]) &&
@@ -259,11 +323,30 @@ bool arc_launch_chooser_init(ArcLaunchChooser *chooser,
    chooser->candidate_index[chooser->row_count++] = ARC_CHOOSER_DESKTOP;
    if (remembered)
       for (unsigned row = 0u; row < chooser->row_count; ++row)
-         if ((remembered_candidate < 0 &&
+         if ((remembered_candidate == -1 &&
               chooser->candidate_index[row] == ARC_CHOOSER_DESKTOP) ||
              (remembered_candidate >= 0 &&
               chooser->candidate_index[row] == (unsigned)remembered_candidate))
             chooser->focus = row;
+   arc_chooser_scroll(chooser);
+   return true;
+}
+
+bool arc_launch_chooser_add_installed(ArcLaunchChooser *chooser,
+                                     const ArcGuestName *product,
+                                     unsigned attempt, bool remembered)
+{
+   if (!chooser || !product || !product->length || !attempt ||
+       chooser->has_installed ||
+       chooser->row_count >= ARC_LAUNCH_CHOOSER_MAX_ROWS) return false;
+   unsigned desktop=chooser->row_count-1u;
+   chooser->candidate_index[chooser->row_count]=ARC_CHOOSER_DESKTOP;
+   chooser->candidate_index[desktop]=ARC_CHOOSER_INSTALLED;
+   ++chooser->row_count;
+   chooser->has_installed=true;
+   chooser->installed_name=*product;
+   chooser->installed_attempt=attempt;
+   if (remembered) chooser->focus=desktop;
    arc_chooser_scroll(chooser);
    return true;
 }
@@ -302,7 +385,8 @@ int arc_launch_chooser_selection(const ArcLaunchChooser *chooser)
 {
    if (!chooser || chooser->focus >= chooser->row_count) return INT_MIN;
    uint8_t selected = chooser->candidate_index[chooser->focus];
-   return selected == ARC_CHOOSER_DESKTOP ? -1 : (int)selected;
+   return selected == ARC_CHOOSER_DESKTOP ? -1 :
+          selected == ARC_CHOOSER_INSTALLED ? -2 : (int)selected;
 }
 
 bool arc_launch_chooser_focus(ArcLaunchChooser *chooser, unsigned row)
@@ -441,6 +525,12 @@ bool arc_launch_chooser_render(const ArcLaunchChooser *chooser,
                         chooser->post_boot ? "Continue without launching" :
                         chooser->boot_hit ? "Run disc's own startup" :
                            "Desktop (no launch)", foreground);
+      else if (candidate == ARC_CHOOSER_INSTALLED)
+      {
+         x=arc_text(pixels,width,height,stride,x,y,"Installed: ",foreground);
+         arc_name(pixels,width,height,stride,x,y,
+                  &chooser->installed_name,1u,foreground);
+      }
       else
       {
          const ArcLaunchCandidate *entry = &discovery->candidates[candidate];
@@ -472,7 +562,8 @@ bool arc_launch_chooser_render(const ArcLaunchChooser *chooser,
        chooser->focus < chooser->row_count)
    {
       uint8_t selected = chooser->candidate_index[chooser->focus];
-      if (selected != ARC_CHOOSER_DESKTOP)
+      if (selected != ARC_CHOOSER_DESKTOP &&
+          selected != ARC_CHOOSER_INSTALLED)
       {
          const ArcLaunchCandidate *entry = &discovery->candidates[selected];
          (void)arc_text(pixels, width, height, stride, 64u, 404u,

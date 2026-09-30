@@ -312,7 +312,9 @@ typedef bool (*LoadGameFn)(const struct retro_game_info *);
 
 int main(int argc, char **argv)
 {
-   assert(argc == 5 || argc == 7);
+   assert(argc == 5 || argc == 7 ||
+          (argc == 6 && !strcmp(argv[5], "--seed-product")));
+   bool seed_product=argc == 6;
    char system_path[4096], arcdroid_path[4096], firmware_path[4096];
    char save_path[4096], firmware_file[4096], adffs_path[4096], package_file[4096];
    make_directory(argv[4]);
@@ -356,6 +358,14 @@ int main(int argc, char **argv)
    phase = PHASE_INIT; retro_init();
    struct retro_game_info game = {argv[3], NULL, 0u, NULL};
    phase = PHASE_LOAD; assert(retro_load_game(&game));
+   if (seed_product)
+   {
+      bool (*seed)(char[41]) = (bool (*)(char[41]))GetProcAddress(module,
+         "arc_libretro_test_seed_hd_product");
+      char seeded_id[41];
+      assert(seed && seed(seeded_id));
+      printf("Seeded product: id=%s\n",seeded_id);
+   }
    phase = PHASE_RUN;
    for (unsigned frame = 0u; frame < 100u; ++frame) retro_run();
    retro_unload_game();

@@ -154,6 +154,7 @@ static bool real_boot_incomplete_fields;
 static bool real_boot_reset_once;
 static unsigned real_boot_reset_frame = 150u;
 static bool real_boot_chooser_pick;
+static unsigned real_boot_chooser_pick_row;
 static bool real_boot_chooser_continue;
 static bool real_boot_chooser_hold_confirm;
 static bool real_boot_chooser_reset;
@@ -162,6 +163,18 @@ static bool real_boot_cmos_write_fail;
 static const char *real_boot_package;
 static bool real_boot_expect_disabled;
 static bool real_boot_fail_construct;
+static bool real_boot_fail_hd_recover;
+static void (*inject_hd_construct_failure)(void);
+static bool real_boot_hd_collision;
+static bool (*inject_hd_preflight_collision)(void);
+static bool real_boot_seed_product;
+static bool real_boot_seed_record;
+static bool real_boot_expect_record_hit;
+static unsigned real_boot_seed_started;
+static bool real_boot_arm_hd_copy;
+static int real_boot_hd_fail_at = -1;
+static bool real_boot_hd_fail_after_install;
+static bool real_boot_rearm_after_install;
 static bool real_boot_cmos_sentinel;
 static bool real_boot_cmos_ramdisc;
 static int real_boot_hd_write_mode = -1;
@@ -489,6 +502,18 @@ static void frontend_log(enum retro_log_level level, const char *format, ...)
    va_start(arguments, format);
    vsnprintf(message, sizeof(message), format, arguments);
    va_end(arguments);
+   if (real_boot_fail_hd_recover && inject_hd_construct_failure &&
+       !strncmp(message,"Launch outcome: ended ",22u))
+   {
+      real_boot_fail_hd_recover=false;
+      inject_hd_construct_failure();
+   }
+   if (real_boot_hd_collision && inject_hd_preflight_collision &&
+       !strncmp(message,"Launch outcome: ended ",22u))
+   {
+      real_boot_hd_collision=false;
+      assert(inject_hd_preflight_collision());
+   }
    if (!strncmp(message, "RAM disc: ", 10u))
    { assert(level == RETRO_LOG_INFO); ++ramdisc_publication_logs; }
    if (hd_guest_logging &&
@@ -1902,6 +1927,16 @@ static bool parse_real_boot_options(int count, char *const args[],
       else if (!strcmp(args[argument], "--boot-chooser-pick") &&
                !real_boot_chooser_pick && !real_boot_chooser_continue)
          real_boot_chooser_pick = true;
+      else if (!strcmp(args[argument], "--boot-chooser-pick-row") &&
+               !real_boot_chooser_pick && !real_boot_chooser_continue &&
+               argument + 1 < count)
+      {
+         const char *row=args[++argument];
+         if (strcmp(row,"0") && strcmp(row,"1") && strcmp(row,"2"))
+            return false;
+         real_boot_chooser_pick=true;
+         real_boot_chooser_pick_row=(unsigned)(row[0]-'0');
+      }
       else if (!strcmp(args[argument], "--boot-chooser-continue") &&
                !real_boot_chooser_continue && !real_boot_chooser_pick)
          real_boot_chooser_continue = true;
@@ -1926,6 +1961,12 @@ static bool parse_real_boot_options(int count, char *const args[],
       else if (!strcmp(args[argument], "--boot-fail-construct") &&
                !real_boot_fail_construct)
          real_boot_fail_construct = true;
+      else if (!strcmp(args[argument], "--boot-fail-hd-recover") &&
+               !real_boot_fail_hd_recover)
+         real_boot_fail_hd_recover = true;
+      else if (!strcmp(args[argument], "--boot-hd-preflight-collision") &&
+               !real_boot_hd_collision)
+         real_boot_hd_collision = true;
       else if (!strcmp(args[argument], "--boot-fail-record-write") &&
                !fault_write_substring)
          fault_write_substring = ".boot.tmp";
@@ -1972,6 +2013,38 @@ static bool parse_real_boot_options(int count, char *const args[],
       }
       else if (!strcmp(args[argument], "--boot-hard-disc-auto"))
          option_hard_disc = "auto";
+      else if (!strcmp(args[argument], "--boot-seed-product"))
+         real_boot_seed_product = true;
+      else if (!strcmp(args[argument], "--boot-seed-record"))
+         real_boot_seed_record = true;
+      else if (!strcmp(args[argument], "--boot-expect-record-hit"))
+         real_boot_expect_record_hit = true;
+      else if (!strcmp(args[argument], "--boot-seed-started") &&
+               !real_boot_seed_started && argument + 1 < count)
+      {
+         const char *value=args[++argument];
+         real_boot_seed_started=!strcmp(value,"product") ? 1u :
+            !strcmp(value,"copy") ? 2u :
+            !strcmp(value,"extra") ? 3u : 0u;
+         if (!real_boot_seed_started) return false;
+      }
+      else if (!strcmp(args[argument], "--boot-arm-hd-copy") &&
+               !real_boot_arm_hd_copy)
+         real_boot_arm_hd_copy=true;
+      else if (!strcmp(args[argument], "--boot-hd-fail-at") &&
+               real_boot_hd_fail_at < 0 && argument + 1 < count)
+      {
+         char *end=NULL;
+         unsigned long value=strtoul(args[++argument],&end,10);
+         if (!end || *end || value > 2999u) return false;
+         real_boot_hd_fail_at=(int)value;
+      }
+      else if (!strcmp(args[argument], "--boot-hd-fail-after-install") &&
+               !real_boot_hd_fail_after_install)
+         real_boot_hd_fail_after_install=true;
+      else if (!strcmp(args[argument], "--boot-rearm-after-install") &&
+               !real_boot_rearm_after_install)
+         real_boot_rearm_after_install=true;
       else if (!strcmp(args[argument], "--boot-hd-write") &&
                real_boot_hd_write_mode < 0 && argument + 1 < count)
       {
@@ -2163,7 +2236,7 @@ int main(int argc, char **argv)
       print_usage(stderr, argv[0]);
       return 2;
    }
-   bool media_tests = argc == 16;
+   bool media_tests = !real_boot && argc == 16;
    if (jfd_writes)
    {
       assert(strlen(argv[3]) < sizeof(jfd_content_path) &&
@@ -2304,8 +2377,13 @@ int main(int argc, char **argv)
    const char *(*arc_libretro_test_staged_path)(unsigned) = NULL;
    bool (*arc_libretro_test_boot_media_digest)(char[41]) = NULL;
    bool (*arc_libretro_test_boot_stamp)(ArcBootObservation *) = NULL;
+   bool (*arc_libretro_test_boot_start_stamp)(ArcBootObservation *) = NULL;
+   bool (*arc_libretro_test_boot_record_hit)(void) = NULL;
    bool (*arc_libretro_test_hd_exhaust_journal)(void) = NULL;
    bool (*arc_libretro_test_hd_observation_write)(unsigned) = NULL;
+   bool (*arc_libretro_test_seed_hd_product)(char[41]) = NULL;
+   bool (*arc_libretro_test_seed_hd_started)(unsigned,bool,char[41]) = NULL;
+   bool (*arc_libretro_test_repeat_hd_outcome)(void) = NULL;
    void (*arc_install_store_test_corrupt_native_format)(bool) = NULL;
    const char *(*arc_libretro_test_cmos_path)(void) = NULL;
    uint8_t (*arc_libretro_test_prepared_cmos_byte)(unsigned) = NULL;
@@ -2338,10 +2416,43 @@ int main(int argc, char **argv)
              arc_libretro_test_hd_observation_write &&
              arc_install_store_test_corrupt_native_format);
    }
-   if (real_boot_hd_write_mode >= 0) {
+   if (real_boot_hd_write_mode >= 0 || real_boot_hd_fail_at >= 0 ||
+       real_boot_hd_fail_after_install) {
       *(void **)(&arc_libretro_test_hd_observation_write) =
          dlsym(module, "arc_libretro_test_hd_observation_write");
       assert(arc_libretro_test_hd_observation_write);
+   }
+   if (real_boot_seed_product) {
+      *(void **)(&arc_libretro_test_seed_hd_product) =
+         dlsym(module,"arc_libretro_test_seed_hd_product");
+      assert(arc_libretro_test_seed_hd_product);
+   }
+   if (real_boot_seed_record) {
+      *(void **)(&arc_libretro_test_boot_start_stamp) =
+         dlsym(module,"arc_libretro_test_boot_start_stamp");
+      *(void **)(&arc_libretro_test_content_id) =
+         dlsym(module,"arc_libretro_test_content_id");
+      assert(arc_libretro_test_boot_start_stamp && arc_libretro_test_content_id);
+   }
+   if (real_boot_expect_record_hit) {
+      *(void **)(&arc_libretro_test_boot_record_hit) =
+         dlsym(module,"arc_libretro_test_boot_record_hit");
+      assert(arc_libretro_test_boot_record_hit);
+   }
+   if (real_boot_seed_started) {
+      *(void **)(&arc_libretro_test_seed_hd_started) =
+         dlsym(module,"arc_libretro_test_seed_hd_started");
+      assert(arc_libretro_test_seed_hd_started);
+   }
+   if (real_boot_rearm_after_install) {
+      *(void **)(&arc_libretro_test_repeat_hd_outcome) =
+         dlsym(module,"arc_libretro_test_repeat_hd_outcome");
+      assert(arc_libretro_test_repeat_hd_outcome);
+   }
+   if (real_boot_hd_collision) {
+      *(void **)(&inject_hd_preflight_collision) =
+         dlsym(module,"arc_libretro_test_hd_preflight_collision");
+      assert(inject_hd_preflight_collision);
    }
    if (native_hd_guest) {
       *(void **)(&arc_engine_test_cmos_image) =
@@ -2361,11 +2472,13 @@ int main(int argc, char **argv)
       *(void **)(&arc_engine_test_boot_watch_snapshot) =
          dlsym(module, "arc_engine_test_boot_watch_snapshot");
       assert(arc_engine_test_boot_watch_snapshot);
-      if (real_boot_fail_construct)
+      if (real_boot_fail_construct || real_boot_fail_hd_recover)
       {
          *(void **)(&arc_libretro_test_fail_next_construct) =
             dlsym(module, "arc_libretro_test_fail_next_construct");
          assert(arc_libretro_test_fail_next_construct);
+         if (real_boot_fail_hd_recover)
+            inject_hd_construct_failure=arc_libretro_test_fail_next_construct;
       }
       if (real_boot_chooser_reset || real_boot_chooser_unload ||
           real_boot_cmos_write_fail)
@@ -5083,6 +5196,42 @@ int main(int argc, char **argv)
          fprintf(stderr, "real_boot_harness: load failed: %s\n", last_message);
          return 2;
       }
+      if (real_boot_expect_record_hit)
+      {
+         assert(arc_libretro_test_boot_record_hit());
+         puts("boot record hit verified");
+      }
+      if (real_boot_seed_product)
+      {
+         char seeded_id[41];
+         assert(arc_libretro_test_seed_hd_product(seeded_id));
+      }
+      if (real_boot_seed_record)
+      {
+         ArcBootObservation stamp={0};
+         uint8_t record[ARC_BOOT_OBSERVATION_SIZE];
+         char path[4096], directory[4096];
+         int parent=snprintf(directory,sizeof(directory),"%s/arcdroid",
+                             save_path);
+         assert(parent>0 && (size_t)parent<sizeof(directory));
+         make_directory(directory);
+         parent=snprintf(directory,sizeof(directory),"%s/arcdroid/launch",
+                         save_path);
+         assert(parent>0 && (size_t)parent<sizeof(directory));
+         make_directory(directory);
+         int length=snprintf(path,sizeof(path),"%s/arcdroid/launch/%s.boot",
+                             save_path,arc_libretro_test_content_id());
+         assert(length>0 && (size_t)length<sizeof(path) &&
+                arc_libretro_test_boot_start_stamp(&stamp) &&
+                arc_boot_observation_format(&stamp,record,sizeof(record)));
+         write_exact(path,record,sizeof(record));
+      }
+      if (real_boot_seed_started)
+      {
+         char seeded_id[41];
+         assert(arc_libretro_test_seed_hd_started(real_boot_seed_started,
+                                                  real_boot_arm_hd_copy,seeded_id));
+      }
       if (real_boot_hd_write_mode >= 0)
          assert(arc_libretro_test_hd_observation_write(
                    (unsigned)real_boot_hd_write_mode));
@@ -5121,6 +5270,19 @@ int main(int argc, char **argv)
                make_directory(arc_libretro_test_cmos_path());
             if (real_boot_cancel_input)
                joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_A] = frame == 10u;
+            if (real_boot_hd_fail_at == (int)frame ||
+                (real_boot_hd_fail_after_install &&
+                 strstr(last_launch_log,"recovery=install")))
+            {
+               assert(arc_libretro_test_hd_observation_write(3u));
+               real_boot_hd_fail_at=-1;
+               real_boot_hd_fail_after_install=false;
+            }
+            if (real_boot_rearm_after_install &&
+                strstr(last_launch_log,"recovery=install")) {
+               assert(arc_libretro_test_repeat_hd_outcome());
+               real_boot_rearm_after_install=false;
+            }
             if (real_boot_cancel_shift && (frame == 10u || frame == 11u))
                keyboard.callback(frame == 10u, RETROK_LSHIFT, 0u, 0u);
             if (real_boot_user_shift &&
@@ -5150,14 +5312,16 @@ int main(int argc, char **argv)
             if (real_boot_chooser_pick || real_boot_chooser_continue)
             {
                unsigned confirm_frame = real_boot_chooser_hold_confirm ? 220u : 120u;
+               unsigned moves=real_boot_chooser_continue ? 2u :
+                              real_boot_chooser_pick_row;
                joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_DOWN] =
-                  real_boot_chooser_continue &&
-                  (frame == confirm_frame || frame == confirm_frame + 2u);
+                  frame >= confirm_frame && frame < confirm_frame+2u*moves &&
+                  ((frame-confirm_frame)&1u)==0u;
                joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_A] =
                   real_boot_chooser_hold_confirm ?
-                  (frame >= confirm_frame + (real_boot_chooser_continue ? 4u : 0u) &&
+                  (frame >= confirm_frame + 2u*moves &&
                    frame < confirm_frame + 24u) :
-                  frame == confirm_frame + (real_boot_chooser_continue ? 4u : 0u);
+                  frame == confirm_frame + 2u*moves;
             }
             unsigned constructions_before_run = power_on_construction_lines;
             retro_run();

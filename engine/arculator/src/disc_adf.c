@@ -10,6 +10,11 @@
 #include "arc_io.h"
 #include "disc.h"
 #include "disc_adf.h"
+/* ArcDroid refusal callback observes the controller's write-protect result. */
+static void (*adf_refusal_callback)(unsigned, unsigned, unsigned, unsigned);
+void adf_set_refusal_callback(
+   void (*callback)(unsigned, unsigned, unsigned, unsigned))
+{ adf_refusal_callback = callback; }
 
 static disc_funcs_t adf_disc_funcs;
 
@@ -399,6 +404,9 @@ static void adf_poll()
 	{
 		if (writeprot[adf_drive])
 		{
+			if (adf_refusal_callback)
+				adf_refusal_callback((unsigned)adf_drive, (unsigned)adf_track,
+				                     (unsigned)adf_side, (unsigned)adf_sector);
 //                        rpclog("writeprotect\n");
 			fdc_funcs->writeprotect(fdc_p);
 			adf_inwrite = 0;
@@ -466,6 +474,9 @@ static void adf_poll()
 	{
 		if (writeprot[adf_drive])
 		{
+			if (adf_refusal_callback)
+				adf_refusal_callback((unsigned)adf_drive, (unsigned)adf_track,
+				                     (unsigned)adf_side, (unsigned)adf_sector);
 			fdc_funcs->writeprotect(fdc_p);
 			adf_informat = 0;
 			return;

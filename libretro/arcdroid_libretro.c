@@ -12,6 +12,7 @@
 #include "playlist.h"
 #include "zip_content.h"
 #include "boot_observation.h"
+#include "hard_disc_scope.h"
 
 #include <limits.h>
 #include <ctype.h>
@@ -183,6 +184,24 @@ static bool arc_hd_readonly_noticed;
 static bool arc_hd_write_failure_noticed;
 static char arc_hd_reason[96] = "not-attachable";
 static bool arc_hd_damaged;
+static ArcHdScope arc_hd_scope;
+static ArcHdHelperMode arc_hd_mode;
+static ArcHdHelperMode arc_hd_requested_mode;
+static bool arc_hd_observe_target;
+static bool arc_hd_observe_copy;
+static bool arc_hd_install_used;
+static bool arc_hd_product_used;
+static bool arc_hd_notice_shown;
+static bool arc_hd_reset_cancel_pending;
+static ArcOutcomeState arc_hd_last_outcome_state;
+static char arc_hd_source[160];
+static char arc_hd_target[11];
+static char arc_hd_product[11];
+static char arc_hd_media[41];
+static char arc_hd_fingerprint[41];
+static unsigned arc_hd_selected;
+static bool arc_hd_scope_cached;
+static bool arc_hd_scope_reported;
 #if defined(ARCDROID_TEST_FAULTS)
 static bool arc_test_adffs_accept_test_os = true;
 static bool arc_test_fail_adffs_content_read;
@@ -1008,6 +1027,14 @@ static void arc_release_session(void)
    arc_hd_readonly_noticed = false;
    arc_hd_write_failure_noticed = false;
    arc_hd_damaged = false;
+   memset(&arc_hd_scope, 0, sizeof(arc_hd_scope));
+   arc_hd_mode = arc_hd_requested_mode = ARC_HD_HELPER_FLOPPY;
+   arc_hd_observe_target = arc_hd_observe_copy = false;
+   arc_hd_install_used = arc_hd_product_used = false;
+   arc_hd_notice_shown = false;
+   arc_hd_reset_cancel_pending = false;
+   arc_hd_last_outcome_state = ARC_OUTCOME_OFF;
+   arc_hd_scope_cached = false;
    snprintf(arc_hd_reason, sizeof(arc_hd_reason), "not-attachable");
    arc_power_on_shift = false;
    arc_input_reset(&arc_inputs);
@@ -2435,12 +2462,33 @@ static void arc_jfd_log_refusal(unsigned image_number, unsigned track,
    unsigned track_side = track * 2u + side;
    uint8_t mask = (uint8_t)(1u << (sector & 7u));
    uint8_t *seen = &entry->jfd_refusal_seen[track_side][sector >> 3u];
+   if (image_number == 1u) arc_engine_launch_outcome_refused(0u);
    if (*seen & mask) return;
    *seen |= mask;
    if (arc_log)
       arc_log(RETRO_LOG_INFO,
          "JFD write refused: image=%u track=%u side=%u sector=%u reason=%s\n",
          image_number, track, side, sector, reason);
+}
+
+static void arc_adf_log_refusal(unsigned drive, unsigned track,
+                                unsigned side, unsigned sector)
+{
+   if (drive != 0u || arc_image_index >= arc_media_count ||
+       track >= 83u || side > 1u ||
+       sector > 255u) return;
+   ArcMediaEntry *entry = &arc_media[arc_image_index];
+   if (entry->info.kind == ARC_MEDIA_JFD ||
+       entry->info.kind == ARC_MEDIA_INVALID) return;
+   uint8_t *seen = &entry->jfd_refusal_seen[track * 2u + side][sector >> 3u];
+   uint8_t mask = (uint8_t)(1u << (sector & 7u));
+   arc_engine_launch_outcome_refused(0u);
+   if (*seen & mask) return;
+   *seen |= mask;
+   if (arc_log)
+      arc_log(RETRO_LOG_INFO,
+              "ADF write refused: image=%u track=%u side=%u sector=%u\n",
+              arc_image_index + 1u, track, side, sector);
 }
 
 static void arc_jfd_log_map_unavailable(unsigned image_number)
@@ -2708,6 +2756,7 @@ static void arc_hd_store_log(void *opaque, const char *line)
                  !strcmp(line, "write-commit-failed");
    if (arc_log) arc_log(failed || strstr(line, "=failed") ?
       RETRO_LOG_WARN : RETRO_LOG_INFO, "Hard disc: %s\n", line);
+   if (failed) arc_engine_launch_outcome_refused(4u);
    if (failed && !arc_hd_write_failure_noticed) {
       arc_hd_write_failure_noticed = true;
       snprintf(arc_hd_reason, sizeof(arc_hd_reason), "read-only:%s",
@@ -3468,6 +3517,13 @@ static bool arc_choice_load(const ArcLaunchDiscovery *discovery,
    if (!arc_launch_choice_parse(data, declared, &choice)) return true;
    int match = arc_launch_choice_match(discovery, &choice);
    if (match == INT_MIN) return true;
+   if (match == -2 &&
+       (arc_hd_scope.state != ARC_HD_COMPLETED ||
+        !arc_hd_scope.product_present ||
+        choice.attempt != arc_hd_scope.attempt ||
+        choice.target.length != arc_hd_scope.product.length ||
+        memcmp(choice.target.bytes,arc_hd_scope.product.bytes,
+               choice.target.length))) return true;
    *valid = true;
    *selected = match;
    return true;
@@ -3481,7 +3537,10 @@ static bool arc_choice_publish(const ArcLaunchDiscovery *discovery,
    size_t size = 0u;
    const ArcGuestName *target = selected >= 0 ?
       &discovery->candidates[selected].name : NULL;
-   bool formatted = discovery->nested_scope ?
+   bool formatted = selected == -2 ?
+      arc_launch_choice_format_installed(&arc_hd_scope.product,
+         discovery->candidate_fingerprint,arc_hd_scope.attempt,
+         data,sizeof(data),&size) : discovery->nested_scope ?
       arc_launch_choice_format_nested(selected >= 0 ?
          &discovery->candidates[selected].parent : NULL,
          target, selected < 0, discovery->candidate_fingerprint,
@@ -3625,6 +3684,14 @@ bool arc_libretro_test_boot_stamp(ArcBootObservation *stamp)
 {
    return stamp && arc_boot_stamp(stamp);
 }
+bool arc_libretro_test_boot_start_stamp(ArcBootObservation *stamp)
+{
+   if (!stamp || !arc_boot_stamp_ready) return false;
+   *stamp=arc_boot_start_stamp;
+   return true;
+}
+bool arc_libretro_test_boot_record_hit(void)
+{ return arc_boot_record_hit; }
 #endif
 
 static void arc_boot_record_invalidate(void)
@@ -3684,6 +3751,151 @@ static bool arc_launch_helper_publish(const ArcLaunchDiscovery *discovery,
                                       unsigned selected, char *error,
                                       size_t error_size);
 
+static void arc_hd_scope_report(bool notify, int target_index)
+{
+   if (arc_log && !arc_hd_scope_reported && (notify || target_index >= 0))
+   {
+      arc_log(RETRO_LOG_INFO,
+         "Hard disc scope: state=%s copy=%s product=%s applications=%u other=%u attempt=%u\n",
+         arc_hd_scope_name(arc_hd_scope.state),
+         arc_hd_scope.copy_present?"yes":"no",
+         arc_hd_scope.product_present?"yes":"no",
+         arc_hd_scope.application_count,arc_hd_scope.other_count,
+         arc_hd_scope.attempt);
+      arc_hd_scope_reported=true;
+   }
+   if (notify && arc_hd_scope.state != ARC_HD_ABSENT &&
+       !(arc_hd_scope.state == ARC_HD_COMPLETED &&
+         arc_hd_scope.product_present) && !arc_hd_notice_shown)
+   {
+      char notice[256];
+      if (arc_hd_scope.state == ARC_HD_UNOWNED)
+         snprintf(notice,sizeof(notice),
+            "An unrelated ArcDroid directory exists on the hard disc; move it aside to allow installation.");
+      else if (arc_hd_scope.state == ARC_HD_COMPLETED &&
+               !arc_hd_scope.product_present)
+         snprintf(notice,sizeof(notice),
+            "The installed product is missing from ADFS::4.$.ArcDroid; move the directory aside (it may hold saves) to install again.");
+      else snprintf(notice,sizeof(notice),
+         "ArcDroid's installation on the hard disc is %s; move ADFS::4.$.ArcDroid aside (it may hold saves) to install again.",
+         arc_hd_scope_name(arc_hd_scope.state));
+      arc_message(notice,RETRO_LOG_WARN);
+      arc_hd_notice_shown=true;
+   }
+}
+
+static bool arc_hd_scope_prepare(const ArcLaunchDiscovery *discovery,
+                                 unsigned selected, bool notify)
+{
+   if (notify && arc_hd_scope_cached && selected == arc_hd_selected)
+   { arc_hd_scope_report(notify,discovery->target_index); return true; }
+   const ArcMachineDescriptor *machine=arc_machine_descriptor(arc_session_machine);
+   if (!machine || !machine->ide_capable || !arc_hd_store ||
+       arc_install_store_state(arc_hd_store) != ARC_INSTALL_STORE_READY ||
+       arc_adffs_active || arc_core_options.launch != ARC_LAUNCH_AUTO ||
+       arc_media_count != 1u || arc_folder_set_active ||
+       arc_image_index != 0u || selected >= discovery->candidate_count)
+      return false;
+   const ArcLaunchCandidate *candidate=&discovery->candidates[selected];
+   char relative[22]; uint8_t length=0u;
+   if (!arc_launch_candidate_is_target(candidate) ||
+       !arc_launch_target_compose(candidate,relative,sizeof(relative),&length) ||
+       snprintf(arc_hd_source,sizeof(arc_hd_source),"ADFS::0.$.%s",relative) >=
+          (int)sizeof(arc_hd_source) ||
+       !arc_boot_media_digest(arc_hd_media)) return false;
+   memcpy(arc_hd_target,candidate->name.bytes,candidate->name.length);
+   arc_hd_target[candidate->name.length]=0;
+   memcpy(arc_hd_fingerprint,discovery->candidate_fingerprint,41u);
+   ArcHdExpected expected={arc_hd_source,arc_hd_media,arc_hd_fingerprint,
+      arc_plan.content_id,arc_os_slug(arc_plan.os),&candidate->name};
+   arc_hd_scope=arc_hd_scope_read(arc_install_store_read,arc_hd_store,&expected);
+   arc_hd_scope_cached=true;
+   arc_hd_selected=selected;
+   if (arc_hd_scope.product.length) {
+      memcpy(arc_hd_product,arc_hd_scope.product.bytes,arc_hd_scope.product.length);
+      arc_hd_product[arc_hd_scope.product.length]=0;
+   } else arc_hd_product[0]=0;
+   arc_hd_scope_report(notify,discovery->target_index);
+   return true;
+}
+
+#if defined(ARCDROID_TEST_FAULTS)
+extern bool arc_hd_test_seed_product(ArcInstallStore *store,
+                                    const ArcHdExpected *expected);
+extern bool arc_hd_test_seed_started(ArcInstallStore *store,
+                                    const ArcHdExpected *expected,
+                                    unsigned variant);
+extern bool arc_hd_test_preflight_collision(ArcInstallStore *store);
+RETRO_API bool arc_libretro_test_seed_hd_product(char id[41])
+{
+   if (!id || !arc_hd_scope_cached || arc_hd_scope.state != ARC_HD_ABSENT ||
+       !arc_hd_store || !arc_install_store_writable(arc_hd_store) ||
+       arc_hd_selected >= arc_boot_discovery.candidate_count) return false;
+   const ArcLaunchCandidate *candidate=&arc_boot_discovery.candidates[arc_hd_selected];
+   ArcHdExpected expected={arc_hd_source,arc_hd_media,arc_hd_fingerprint,
+      arc_plan.content_id,arc_os_slug(arc_plan.os),&candidate->name};
+   if (!arc_hd_test_seed_product(arc_hd_store,&expected)) return false;
+   memcpy(id,arc_plan.content_id,41u);
+   return true;
+}
+RETRO_API bool arc_libretro_test_hd_preflight_collision(void)
+{
+   return arc_hd_scope_cached && arc_hd_scope.state == ARC_HD_ABSENT &&
+      arc_hd_store && arc_hd_test_preflight_collision(arc_hd_store);
+}
+RETRO_API bool arc_libretro_test_seed_hd_started(unsigned variant,
+                                                 bool arm_copy,
+                                                 char id[41])
+{
+   if (!id || !arc_hd_scope_cached || arc_hd_scope.state != ARC_HD_ABSENT ||
+       !arc_hd_store || !arc_install_store_writable(arc_hd_store) ||
+       arc_hd_selected >= arc_boot_discovery.candidate_count ||
+       (arm_copy && variant != 1u)) return false;
+   const ArcLaunchCandidate *candidate=&arc_boot_discovery.candidates[arc_hd_selected];
+   ArcHdExpected expected={arc_hd_source,arc_hd_media,arc_hd_fingerprint,
+      arc_plan.content_id,arc_os_slug(arc_plan.os),&candidate->name};
+   if (!arc_hd_test_seed_started(arc_hd_store,&expected,variant)) return false;
+   memcpy(id,arc_plan.content_id,41u);
+   if (arm_copy) {
+      char command[257];
+      int length=snprintf(command,sizeof(command),
+         "Run ADFS::4.$.ArcDroid.%s.!Run",arc_hd_target);
+      if (length <= 0 || (size_t)length >= sizeof(command) ||
+          !arc_engine_launch_outcome_arm(command)) return false;
+      arc_hd_mode=ARC_HD_HELPER_INSTALL;
+      arc_hd_observe_target=false;
+      arc_hd_observe_copy=true;
+      arc_hd_install_used=true;
+      arc_hd_last_outcome_state=ARC_OUTCOME_WAIT;
+   }
+   return true;
+}
+RETRO_API bool arc_libretro_test_repeat_hd_outcome(void)
+{
+   if (!arc_hd_install_used || !arc_hd_target[0]) return false;
+   char command[257];
+   int length=snprintf(command,sizeof(command),
+      "Run ADFS::0.$.%s.!Run",arc_hd_target);
+   if (length <= 0 || (size_t)length >= sizeof(command) ||
+       !arc_engine_launch_outcome_arm(command)) return false;
+   arc_hd_observe_target=true;
+   arc_hd_observe_copy=false;
+   arc_hd_last_outcome_state=ARC_OUTCOME_WAIT;
+   /* Replay a second qualifying sequence against the ROM's guest command. */
+   extern void arc_engine_boot_watch_swi(uint32_t,uint32_t,uint32_t,uint32_t,
+                                         uint32_t,uint32_t,uint32_t);
+   const uint32_t rom=UINT32_C(0x03800020);
+   arc_engine_boot_watch_swi(0x400deu,0x02001000u,0u,0u,0u,rom,0u);
+   arc_engine_launch_outcome_refused(0u);
+   arc_engine_boot_watch_swi(0x11u,0u,0u,0u,0u,rom,0u);
+   arc_engine_boot_watch_swi(0x400ddu,0u,0u,0u,0u,rom,0u);
+   arc_engine_boot_watch_swi(0x400c7u,0u,0u,0u,0u,rom,0u);
+   ArcLaunchOutcome outcome;
+   arc_engine_launch_outcome_snapshot(&outcome);
+   return outcome.state == ARC_OUTCOME_POLL && outcome.refused_floppy == 1u;
+}
+#endif
+
 static bool arc_boot_prepare_hit(const ArcLaunchDiscovery *discovery)
 {
    const char *reason = "remembered boot observation; disc !Boot skipped";
@@ -3694,14 +3906,31 @@ static bool arc_boot_prepare_hit(const ArcLaunchDiscovery *discovery)
    ArcLaunchRecovery action = arc_launch_recovery_decide(discovery, &selected);
    if (remembered && arc_core_options.launch_chooser != ARC_LAUNCH_CHOOSER_ASK)
    {
-      if (remembered_target < 0)
+      if (remembered_target == -1)
       {
          arc_boot_eligible = false;
          arc_launch_log(discovery, -1, reason);
          return false;
       }
-      selected = remembered_target;
+      selected = remembered_target == -2 ? (int)arc_hd_selected : remembered_target;
+      if (remembered_target == -2)
+         arc_hd_requested_mode=ARC_HD_HELPER_PRODUCT;
       action = ARC_LAUNCH_RECOVERY_HELPER;
+   }
+   if (arc_core_options.launch_chooser == ARC_LAUNCH_CHOOSER_ASK &&
+       selected >= 0 && arc_hd_scope.state == ARC_HD_COMPLETED &&
+       arc_hd_scope.product_present &&
+       arc_launch_chooser_init(&arc_chooser,discovery,remembered,
+                               remembered_target))
+   {
+      (void)arc_launch_chooser_add_installed(&arc_chooser,
+         &arc_hd_scope.product,arc_hd_scope.attempt,
+         remembered_target == -2);
+      arc_launch_chooser_boot_hit(&arc_chooser,discovery);
+      arc_chooser_discovery=*discovery;
+      arc_boot_eligible=false;
+      arc_launch_log(discovery,-1,reason);
+      return true;
    }
    if (action == ARC_LAUNCH_RECOVERY_CHOOSER)
    {
@@ -3718,14 +3947,23 @@ static bool arc_boot_prepare_hit(const ArcLaunchDiscovery *discovery)
    else if (action == ARC_LAUNCH_RECOVERY_HELPER)
    {
       char error[160] = {0};
-      if (arc_launch_helper_publish(discovery, (unsigned)selected,
-                                    error, sizeof(error)))
+      if (!remembered && selected >= 0 && arc_hd_scope_cached &&
+          arc_hd_selected == (unsigned)selected &&
+          arc_hd_scope.state == ARC_HD_COMPLETED &&
+          arc_hd_scope.product_present)
+         arc_hd_requested_mode=ARC_HD_HELPER_PRODUCT;
+      bool published=arc_launch_helper_publish(discovery,(unsigned)selected,
+                                                error,sizeof(error));
+      arc_hd_requested_mode=ARC_HD_HELPER_FLOPPY;
+      if (published)
       {
          arc_boot_eligible = false;
-         arc_launch_log(discovery, selected, reason);
+         arc_launch_log(discovery, selected,
+            arc_hd_mode == ARC_HD_HELPER_PRODUCT ? "hd-product" : reason);
          return false;
       }
       arc_boot_record_invalidate();
+      arc_hd_requested_mode=ARC_HD_HELPER_FLOPPY;
       arc_message(error[0] ? error : "Remembered launch helper publication failed.",
                   RETRO_LOG_ERROR);
    }
@@ -3747,11 +3985,22 @@ static bool arc_launch_helper_publish(const ArcLaunchDiscovery *discovery,
       snprintf(refusal, refusal_size, "launch target path is too long");
       return false;
    }
+   ArcHdHelperMode mode=arc_hd_requested_mode;
+   bool inspected=false;
+   if (mode == ARC_HD_HELPER_FLOPPY)
+      inspected=arc_hd_scope_prepare(discovery,selected,true);
+   ArcHdProgramSpec spec={arc_hd_source,arc_hd_target,arc_hd_product,
+      arc_hd_media,arc_hd_fingerprint,arc_plan.content_id,
+      arc_os_slug(arc_plan.os),arc_hd_scope.attempt};
    uint8_t *helper = malloc(ARC_LAUNCH_DISC_SIZE);
-   bool ramdisc = arc_core_options.launch_ramdisc &&
+   bool ramdisc = mode == ARC_HD_HELPER_FLOPPY &&
+      arc_core_options.launch_ramdisc &&
       arc_launch_os_supported(arc_plan.os);
-   if (!helper || !arc_launch_disc_build_ramdisc(discovery, selected, ramdisc, helper,
-                                         refusal, refusal_size))
+   if (!helper || !(mode == ARC_HD_HELPER_FLOPPY ?
+       arc_launch_disc_build_ramdisc(discovery,selected,ramdisc,helper,
+                                     refusal,refusal_size) :
+       arc_launch_disc_build_mode(discovery,selected,mode,&spec,helper,
+                                  refusal,refusal_size)))
    {
       free(helper);
       return false;
@@ -3759,8 +4008,10 @@ static bool arc_launch_helper_publish(const ArcLaunchDiscovery *discovery,
    char directory[ARC_MEDIA_PATH_CAPACITY];
    int d = snprintf(directory, sizeof(directory), "%s/arcdroid/launch", arc_save_path);
    int p = d >= 0 && (size_t)d < sizeof(directory) ?
-      snprintf(arc_helper_path, sizeof(arc_helper_path), "%s/%s.adl",
-               directory, arc_plan.content_id) : -1;
+      snprintf(arc_helper_path, sizeof(arc_helper_path), "%s/%s%s.adl",
+               directory, arc_plan.content_id,
+               mode == ARC_HD_HELPER_INSTALL ? ".install" :
+               mode == ARC_HD_HELPER_MARK ? ".product" : "") : -1;
    if (d < 0 || (size_t)d >= sizeof(directory) || p < 0 ||
        (size_t)p >= sizeof(arc_helper_path) || !arc_io_make_path(directory))
       arc_helper_path[0] = '\0';
@@ -3778,6 +4029,12 @@ static bool arc_launch_helper_publish(const ArcLaunchDiscovery *discovery,
    free(helper);
    if (!arc_helper_path[0]) return false;
    arc_plan.launch_helper = true;
+   arc_hd_selected=selected;
+   arc_hd_mode=mode;
+   arc_hd_observe_target=mode == ARC_HD_HELPER_FLOPPY && inspected &&
+      arc_hd_scope.state == ARC_HD_ABSENT &&
+      arc_install_store_writable(arc_hd_store);
+   arc_hd_observe_copy=mode == ARC_HD_HELPER_INSTALL;
    memcpy(arc_plan.launch_target, target, (size_t)target_length + 1u);
    arc_plan.launch_target_length = target_length;
    arc_launch_log_skipped_siblings(discovery, selected);
@@ -3798,6 +4055,11 @@ static bool arc_prepare_launch(ArcMediaEntry *entry, bool ejected,
    arc_plan.launch_helper = false;
    arc_plan.launch_target[0] = '\0';
    arc_plan.launch_target_length = 0u;
+   arc_hd_observe_target = arc_hd_observe_copy = false;
+   arc_hd_scope_cached=false;
+   arc_hd_scope_reported=false;
+   memset(&arc_hd_scope,0,sizeof(arc_hd_scope));
+   arc_hd_product[0]=0;
    if (ejected || !entry || !entry->populated)
    { arc_launch_log(&discovery, -1, "drive 0 empty"); return false; }
 
@@ -3826,6 +4088,19 @@ static bool arc_prepare_launch(ArcMediaEntry *entry, bool ejected,
    if (!arc_launch_os_supported(arc_plan.os))
    { arc_launch_log(&discovery, -1, "OS class unsupported"); return false; }
 
+   if (option == ARC_LAUNCH_AUTO && discovery.target_index >= 0)
+      (void)arc_hd_scope_prepare(&discovery,(unsigned)discovery.target_index,true);
+   else if (option == ARC_LAUNCH_AUTO)
+      for (unsigned i=0u; i<discovery.candidate_count; ++i)
+         if (arc_launch_candidate_is_target(&discovery.candidates[i]) &&
+             arc_hd_scope_prepare(&discovery,i,false) &&
+             arc_hd_scope.state == ARC_HD_COMPLETED &&
+             arc_hd_scope.product_present)
+         {
+            arc_hd_scope_report(true,discovery.target_index);
+            break;
+         }
+
    if (arc_boot_eligible && arc_boot_stamp(&arc_boot_start_stamp))
    {
       arc_boot_stamp_ready = true;
@@ -3839,6 +4114,41 @@ static bool arc_prepare_launch(ArcMediaEntry *entry, bool ejected,
    int selected = discovery.target_index;
    char refusal[160] = {0};
    const char *reason = arc_launch_reason_name(discovery.reason);
+   bool remembered_floppy=false;
+   bool ask_remembered=false;
+   int ask_target=INT_MIN;
+   if (arc_core_options.launch_chooser == ARC_LAUNCH_CHOOSER_ASK)
+      (void)arc_choice_load(&discovery,&ask_remembered,&ask_target);
+   if (option == ARC_LAUNCH_AUTO &&
+       arc_core_options.launch_chooser == ARC_LAUNCH_CHOOSER_ASK &&
+       selected >= 0 && arc_hd_scope.state == ARC_HD_COMPLETED &&
+       arc_hd_scope.product_present &&
+       arc_launch_chooser_init(&arc_chooser,&discovery,
+                               ask_remembered,ask_target))
+   {
+      (void)arc_launch_chooser_add_installed(&arc_chooser,
+         &arc_hd_scope.product,arc_hd_scope.attempt,ask_target == -2);
+      arc_chooser_discovery=discovery;
+      arc_launch_log(&discovery,-1,"chooser asked");
+      return true;
+   }
+   if (option == ARC_LAUNCH_AUTO && selected >= 0 &&
+       arc_core_options.launch_chooser == ARC_LAUNCH_CHOOSER_REMEMBER &&
+       arc_hd_scope.state == ARC_HD_COMPLETED &&
+       arc_hd_scope.product_present)
+   {
+      bool remembered=false;
+      int remembered_target=INT_MIN;
+      (void)arc_choice_load(&discovery,&remembered,&remembered_target);
+      if (remembered && remembered_target == -1)
+      { arc_launch_log(&discovery,-1,"chooser remembered desktop"); return false; }
+      if (remembered && remembered_target >= 0)
+      {
+         selected=remembered_target;
+         reason="chooser remembered target";
+         remembered_floppy=true;
+      }
+   }
    if (option >= ARC_LAUNCH_APP1)
    {
       unsigned ordinal = (unsigned)(option - ARC_LAUNCH_APP1);
@@ -3905,6 +4215,23 @@ static bool arc_prepare_launch(ArcMediaEntry *entry, bool ejected,
          if (remembered &&
              arc_core_options.launch_chooser == ARC_LAUNCH_CHOOSER_REMEMBER)
          {
+            if (remembered_target == -2)
+            {
+               arc_hd_requested_mode=ARC_HD_HELPER_PRODUCT;
+               bool published=arc_launch_helper_publish(&discovery,
+                  arc_hd_selected,refusal,sizeof(refusal));
+               arc_hd_requested_mode=ARC_HD_HELPER_FLOPPY;
+               if (!published)
+               {
+                  arc_message(refusal[0]?refusal:
+                     "Installed application helper publication failed.",
+                     RETRO_LOG_WARN);
+                  arc_launch_log(&discovery,-1,"installed helper publication failed");
+                  return false;
+               }
+               arc_launch_log(&discovery,(int)arc_hd_selected,"hd-product");
+               return false;
+            }
             if (remembered_target >= 0 &&
                 !arc_launch_helper_publish(&discovery,
                    (unsigned)remembered_target, refusal, sizeof(refusal)))
@@ -3926,6 +4253,11 @@ static bool arc_prepare_launch(ArcMediaEntry *entry, bool ejected,
          if (arc_launch_chooser_init(&arc_chooser, &discovery, remembered,
                                      remembered_target))
          {
+            if (arc_hd_scope.state == ARC_HD_COMPLETED &&
+                arc_hd_scope.product_present)
+               (void)arc_launch_chooser_add_installed(&arc_chooser,
+                  &arc_hd_scope.product,arc_hd_scope.attempt,
+                  remembered_target == -2);
             arc_chooser_discovery = discovery;
             arc_launch_log(&discovery, -1,
                arc_core_options.launch_chooser == ARC_LAUNCH_CHOOSER_ASK ?
@@ -3947,8 +4279,16 @@ static bool arc_prepare_launch(ArcMediaEntry *entry, bool ejected,
       arc_launch_log(&discovery, -1, reason);
       return false;
    }
-   if (!arc_launch_helper_publish(&discovery, (unsigned)selected,
-                                  refusal, sizeof(refusal)))
+   if (option == ARC_LAUNCH_AUTO && !remembered_floppy &&
+       arc_hd_scope_cached &&
+       arc_hd_selected == (unsigned)selected &&
+       arc_hd_scope.state == ARC_HD_COMPLETED &&
+       arc_hd_scope.product_present)
+      arc_hd_requested_mode=ARC_HD_HELPER_PRODUCT;
+   bool published=arc_launch_helper_publish(&discovery,(unsigned)selected,
+                                             refusal,sizeof(refusal));
+   arc_hd_requested_mode=ARC_HD_HELPER_FLOPPY;
+   if (!published)
    {
       arc_message(refusal[0] ? refusal : "Launch helper publication failed.",
                   RETRO_LOG_WARN);
@@ -3959,13 +4299,15 @@ static bool arc_prepare_launch(ArcMediaEntry *entry, bool ejected,
    if (option >= ARC_LAUNCH_APP1 && discovery.scan_incomplete)
       arc_message("Application inspection incomplete; launching the verified choice.",
                   RETRO_LOG_WARN);
-   arc_launch_log(&discovery, selected, reason);
+   arc_launch_log(&discovery, selected,
+      arc_hd_mode == ARC_HD_HELPER_PRODUCT ? "hd-product" : reason);
    return false;
 }
 
 static bool arc_disk_set_eject(bool ejected)
 {
    char error[512] = {0};
+   arc_engine_launch_outcome_cancel("media");
    if (!arc_loaded || arc_session != ARC_SESSION_RUNNING || arc_adffs_active) return false;
    if (ejected == arc_ejected) return true;
    arc_engine_boot_watch_cancel();
@@ -4016,6 +4358,7 @@ static bool arc_disk_get_eject(void) { return arc_adffs_active ? false : arc_eje
 static unsigned arc_disk_get_index(void) { return arc_adffs_active ? 0u : arc_image_index; }
 static bool arc_disk_set_index(unsigned index)
 {
+   arc_engine_launch_outcome_cancel("media");
    if (!arc_loaded || arc_session != ARC_SESSION_RUNNING || arc_adffs_active || !arc_ejected) return false;
    if (index < arc_media_count && !arc_media[index].populated) return false;
    arc_engine_boot_watch_cancel();
@@ -4025,6 +4368,7 @@ static bool arc_disk_set_index(unsigned index)
 static unsigned arc_disk_get_count(void) { return arc_adffs_active ? 1u : arc_media_count; }
 static bool arc_disk_replace(unsigned index, const struct retro_game_info *info)
 {
+   arc_engine_launch_outcome_cancel("media");
    if (!arc_loaded || arc_session != ARC_SESSION_RUNNING || arc_adffs_active || !arc_ejected ||
        index >= arc_media_count) return false;
    arc_engine_boot_watch_cancel();
@@ -4075,6 +4419,7 @@ static bool arc_disk_replace(unsigned index, const struct retro_game_info *info)
 }
 static bool arc_disk_add(void)
 {
+   arc_engine_launch_outcome_cancel("media");
    if (!arc_loaded || arc_session != ARC_SESSION_RUNNING || arc_adffs_active ||
        arc_media_count >= ARC_PLAYLIST_MAX_ENTRIES) return false;
    arc_engine_boot_watch_cancel();
@@ -4103,6 +4448,7 @@ static bool arc_disk_get_label(unsigned index, char *label, size_t length)
 static void arc_keyboard(bool down, unsigned keycode, uint32_t character,
                          uint16_t modifiers)
 {
+   arc_engine_launch_outcome_cancel("input");
    if (down && arc_boot_attempt) arc_engine_boot_watch_cancel();
    (void)character;
    (void)modifiers;
@@ -4721,7 +5067,8 @@ static void arc_poll_inputs(void)
          }
    for (unsigned port = 0u; port < 2u; ++port)
    {
-      if (arc_boot_attempt && arc_boot_eligible)
+      if ((arc_boot_attempt && arc_boot_eligible) ||
+          arc_hd_observe_target || arc_hd_observe_copy)
          for (unsigned id = 10u; id < 16u; ++id)
             if (arc_input_state(port, RETRO_DEVICE_JOYPAD, 0u, id))
                arc_boot_input = true;
@@ -4808,7 +5155,8 @@ static void arc_poll_inputs(void)
    if (deadzone < ARC_DEFAULT_POINTER_DEADZONE)
       deadzone = ARC_DEFAULT_POINTER_DEADZONE;
    long double dz = (long double)deadzone * 32767.0L / 100.0L;
-   if (arc_boot_attempt && arc_boot_eligible)
+   if ((arc_boot_attempt && arc_boot_eligible) ||
+       arc_hd_observe_target || arc_hd_observe_copy)
       for (unsigned port = 0u; port < 2u; ++port)
          for (unsigned stick = 0u; stick < 2u; ++stick)
          {
@@ -4831,6 +5179,7 @@ static void arc_poll_inputs(void)
    if (arc_inputs.effective_buttons || arc_osk_toggle_level)
       arc_boot_input = true;
    if (arc_boot_input && arc_boot_attempt) arc_engine_boot_watch_cancel();
+   if (arc_boot_input) arc_engine_launch_outcome_cancel("input");
 }
 
 static void arc_integrate_stick(uint64_t elapsed_us)
@@ -5275,6 +5624,7 @@ RETRO_API void retro_init(void)
          arc_log = log.log;
    }
    arc_engine_set_log_callback(arc_engine_log, NULL);
+   arc_engine_adf_refusal_callback_set(arc_adf_log_refusal);
 }
 
 RETRO_API void retro_deinit(void)
@@ -5284,6 +5634,7 @@ RETRO_API void retro_deinit(void)
    arc_osk_reset(&arc_osk, &arc_inputs);
    arc_osk_free_surface();
    arc_engine_set_log_callback(NULL, NULL);
+   arc_engine_adf_refusal_callback_set(NULL);
    arc_log = NULL;
    arc_loaded = false;
    arc_vfs = NULL;
@@ -5386,6 +5737,20 @@ static bool arc_construct_machine(const ArcMachineDescriptor *machine,
       arc_engine_boot_watch_arm();
       arc_boot_last_state = ARC_BOOT_WATCH_ARMED;
    }
+   if ((arc_hd_observe_target || arc_hd_observe_copy) &&
+       !(arc_hd_observe_target && arc_hd_install_used) &&
+       !(arc_hd_observe_copy && arc_hd_product_used) && attach_hd &&
+       arc_install_store_writable(active_hd))
+   {
+      char command[257];
+      int length=arc_hd_observe_copy ?
+         snprintf(command,sizeof(command),
+            "Run ADFS::4.$.ArcDroid.%s.!Run",arc_hd_target) :
+         snprintf(command,sizeof(command),"Run %s.!Run",arc_hd_source);
+      if (length > 0 && (size_t)length < sizeof(command) &&
+          arc_engine_launch_outcome_arm(command))
+         arc_hd_last_outcome_state=ARC_OUTCOME_WAIT;
+   }
    return true;
 }
 
@@ -5422,6 +5787,162 @@ static bool arc_boot_same_target(const ArcLaunchCandidate *a,
       !memcmp(a->name.bytes, b->name.bytes, a->name.length) &&
       a->parent.length == b->parent.length &&
       !memcmp(a->parent.bytes, b->parent.bytes, a->parent.length);
+}
+
+static bool arc_hd_recover(ArcHdHelperMode mode)
+{
+   arc_hd_scope_reported=false;
+   if (!arc_loaded || arc_session != ARC_SESSION_RUNNING ||
+       !arc_hd_store || !arc_install_store_writable(arc_hd_store) ||
+       arc_hd_selected >= arc_boot_discovery.candidate_count ||
+       !arc_hd_scope_prepare(&arc_boot_discovery,arc_hd_selected,false))
+      return false;
+   bool allowed=mode == ARC_HD_HELPER_INSTALL ?
+      arc_hd_scope.state == ARC_HD_ABSENT :
+      arc_hd_scope.state == ARC_HD_STARTED && arc_hd_scope.copy_present &&
+      arc_hd_scope.product_present && arc_hd_scope.application_count == 2u;
+   if (!allowed) return false;
+   char previous_helper[sizeof(arc_helper_path)];
+   memcpy(previous_helper,arc_helper_path,sizeof(previous_helper));
+   ArcLaunchPlan previous_plan=arc_plan;
+   ArcHdHelperMode previous_mode=arc_hd_mode;
+   bool previous_target=arc_hd_observe_target;
+   bool previous_copy=arc_hd_observe_copy;
+   char error[512]={0};
+   arc_hd_requested_mode=mode;
+   bool published=arc_launch_helper_publish(&arc_boot_discovery,
+      arc_hd_selected,error,sizeof(error));
+   arc_hd_requested_mode=ARC_HD_HELPER_FLOPPY;
+   if (!published)
+   {
+      memcpy(arc_helper_path,previous_helper,sizeof(previous_helper));
+      arc_plan=previous_plan;
+      arc_hd_mode=previous_mode;
+      arc_hd_observe_target=previous_target;
+      arc_hd_observe_copy=previous_copy;
+      arc_message(error[0]?error:"Unable to publish the hard-disc helper.",
+                  RETRO_LOG_WARN);
+      return false;
+   }
+   arc_persist_cmos();
+   memcpy(arc_cmos_prepared,arc_cmos_record,sizeof(arc_cmos_prepared));
+   arc_engine_stop();
+   arc_session=ARC_SESSION_PREPARED;
+   arc_boot_recovery_phase=true;
+   arc_boot_recovery_action=mode == ARC_HD_HELPER_INSTALL ? "install" : "product";
+   arc_boot_eligible=false;
+   arc_boot_attempt=false;
+   ArcMediaEntry *entry=&arc_media[arc_image_index];
+   if (!arc_refresh_jfd(entry,arc_plan.disk_writes,error,sizeof(error)))
+      goto fallback;
+   arc_finish_jfd_preparation(entry,true);
+   ArcLaunchDiscovery refreshed;
+   if (!arc_boot_discover_current(&refreshed))
+   { snprintf(error,sizeof(error),"Unable to inspect the disc after preparation."); goto fallback; }
+   bool found=false;
+   for (unsigned i=0u; i<refreshed.candidate_count; ++i)
+      if (arc_boot_same_target(&arc_boot_discovery.candidates[arc_hd_selected],
+                               &refreshed.candidates[i]))
+      { found=true; break; }
+   if (!found)
+   { snprintf(error,sizeof(error),"The application changed during recovery."); goto fallback; }
+   ArcEngineMedia mounted=arc_engine_media(entry);
+   if (!arc_construct_machine(arc_machine_descriptor(arc_plan.machine),
+                              &mounted,error,sizeof(error))) goto fallback;
+   arc_av_transition_pending=true;
+   arc_chooser_release_gate=true;
+   arc_chooser_reset_input();
+   arc_frame_number=0u;
+   arc_audio_fraction=0u;
+   arc_guest_time_us=0u;
+   arc_fault_reported=false;
+   memset(arc_frame,0,sizeof(arc_frame));
+   arc_launch_log(&arc_boot_discovery,(int)arc_hd_selected,
+      mode == ARC_HD_HELPER_INSTALL ? "install" : "product");
+   arc_message(mode == ARC_HD_HELPER_INSTALL ?
+      "Installing to the hard disc - please wait" :
+      "Starting the installed application", RETRO_LOG_INFO);
+   return true;
+fallback:
+   if (arc_log) arc_log(RETRO_LOG_WARN,
+      "Launch: recovery=%s reconstruction-failed=%s\n",
+      mode == ARC_HD_HELPER_INSTALL ? "install" : "product",error);
+   memcpy(arc_helper_path,previous_helper,sizeof(previous_helper));
+   arc_plan=previous_plan;
+   arc_hd_mode=previous_mode;
+   arc_hd_observe_target=false;
+   arc_hd_observe_copy=false;
+   ArcEngineMedia original=arc_engine_media(entry);
+   if (arc_construct_machine(arc_machine_descriptor(arc_plan.machine),
+                              &original,error,sizeof(error)))
+   {
+      arc_message("Hard-disc recovery could not restart; the original launch remains available.",
+                  RETRO_LOG_WARN);
+      arc_av_transition_pending=true;
+      return false;
+   }
+   /* A failed helper must never be left selected for a later launch. */
+   arc_plan.launch_helper=false;
+   arc_helper_path[0]=0;
+   if (arc_construct_machine(arc_machine_descriptor(arc_plan.machine),
+                              &original,error,sizeof(error)))
+   {
+      arc_message("Hard-disc recovery failed; the normal floppy boot remains available.",
+                  RETRO_LOG_WARN);
+      arc_av_transition_pending=true;
+      return false;
+   }
+   arc_message(error[0]?error:"Unable to reconstruct the machine.",RETRO_LOG_ERROR);
+   arc_loaded=false;
+   arc_release_session();
+   arc_session=ARC_SESSION_FAILED;
+   return false;
+}
+
+static bool arc_hd_outcome_boundary(void)
+{
+   if (arc_hd_reset_cancel_pending) {
+      if (arc_log) arc_log(RETRO_LOG_INFO,"Launch outcome: cancelled=reset\n");
+      arc_hd_reset_cancel_pending=false;
+   }
+   if (!arc_hd_observe_target && !arc_hd_observe_copy) return false;
+   ArcLaunchOutcome outcome;
+   arc_engine_launch_outcome_snapshot(&outcome);
+   if (outcome.state == arc_hd_last_outcome_state) return false;
+   if (arc_hd_last_outcome_state == ARC_OUTCOME_WAIT && outcome.matched &&
+       arc_log)
+      arc_log(RETRO_LOG_INFO,"Launch outcome: armed target=%s\n",
+         outcome.command+4u);
+   arc_hd_last_outcome_state=outcome.state;
+   if (outcome.state == ARC_OUTCOME_CANCEL)
+   {
+      if (arc_log) arc_log(RETRO_LOG_INFO,"Launch outcome: cancelled=%s\n",
+                            outcome.cancel_reason ? outcome.cancel_reason : "unknown");
+      arc_hd_observe_target=arc_hd_observe_copy=false;
+      return false;
+   }
+   if (outcome.state != ARC_OUTCOME_POLL) return false;
+   if (arc_log)
+   {
+      if (outcome.has_rc)
+         arc_log(RETRO_LOG_INFO,
+            "Launch outcome: ended rc=%u refused=%u hd-refused=%u close-r1=%u\n",
+            outcome.last_rc,outcome.refused_floppy,outcome.refused_hd,
+            outcome.close_r1);
+      else arc_log(RETRO_LOG_INFO,
+            "Launch outcome: ended rc=none refused=%u hd-refused=%u close-r1=%u\n",
+            outcome.refused_floppy,outcome.refused_hd,outcome.close_r1);
+   }
+   bool install=arc_hd_observe_target && outcome.refused_floppy != 0u &&
+                !arc_hd_install_used;
+   bool product=arc_hd_observe_copy && outcome.failed_exits == 0u &&
+                outcome.refused_hd == 0u && !arc_hd_product_used;
+   arc_hd_observe_target=arc_hd_observe_copy=false;
+   if (install)
+   { arc_hd_install_used=true; return arc_hd_recover(ARC_HD_HELPER_INSTALL); }
+   if (product)
+   { arc_hd_product_used=true; return arc_hd_recover(ARC_HD_HELPER_MARK); }
+   return false;
 }
 
 static bool arc_boot_recover_target(const ArcLaunchDiscovery *discovery,
@@ -5576,7 +6097,14 @@ static bool arc_chooser_confirm(void)
       if (!remembered)
          arc_message("Launch choice not remembered; starting this time only.",
                      RETRO_LOG_WARN);
-      if (selected < 0) { arc_boot_continue(); return true; }
+      if (selected == -1) { arc_boot_continue(); return true; }
+      if (selected == -2)
+      {
+         arc_hd_requested_mode=ARC_HD_HELPER_PRODUCT;
+         bool ok=arc_boot_recover_target(&arc_chooser_discovery,arc_hd_selected);
+         arc_hd_requested_mode=ARC_HD_HELPER_FLOPPY;
+         return ok;
+      }
       return arc_boot_recover_target(&arc_chooser_discovery, (unsigned)selected);
    }
    bool remembered = arc_choice_publish(&arc_chooser_discovery, selected);
@@ -5588,12 +6116,17 @@ static bool arc_chooser_confirm(void)
    arc_plan.launch_helper = false;
    arc_plan.launch_target[0] = '\0';
    arc_plan.launch_target_length = 0u;
-   if (selected >= 0 &&
-       !arc_launch_helper_publish(&arc_chooser_discovery, (unsigned)selected,
-                                  error, sizeof(error)))
-      goto failed;
-   arc_launch_log(&arc_chooser_discovery, selected,
-                  selected < 0 ? (arc_chooser.boot_hit ?
+   if (selected == -2)
+      arc_hd_requested_mode=ARC_HD_HELPER_PRODUCT;
+   bool published=selected == -1 ||
+      arc_launch_helper_publish(&arc_chooser_discovery,
+         selected == -2 ? arc_hd_selected : (unsigned)selected,
+         error,sizeof(error));
+   arc_hd_requested_mode=ARC_HD_HELPER_FLOPPY;
+   if (!published) goto failed;
+   arc_launch_log(&arc_chooser_discovery,
+                  selected == -2 ? (int)arc_hd_selected : selected,
+                  selected == -2 ? "hd-product" : selected < 0 ? (arc_chooser.boot_hit ?
                      "chooser chose disc startup; recovery disabled" :
                      "chooser chose desktop") :
                                  "chooser chose target");
@@ -6056,6 +6589,12 @@ RETRO_API void retro_unload_game(void)
 }
 RETRO_API void retro_reset(void)
 {
+   arc_engine_launch_outcome_cancel("reset");
+   if (arc_hd_observe_target || arc_hd_observe_copy) {
+      arc_hd_reset_cancel_pending=true;
+      arc_hd_observe_target=arc_hd_observe_copy=false;
+      arc_hd_last_outcome_state=ARC_OUTCOME_CANCEL;
+   }
    arc_boot_record_hit = false;
    arc_boot_stamp_ready = false;
    bool was_boot_chooser = arc_boot_post_chooser;
@@ -6404,6 +6943,13 @@ RETRO_API void retro_run(void)
    arc_poll_inputs();
    if (arc_input_take_overflow_report(&arc_inputs))
       arc_message("Input queue overflowed; recovered to current input levels.", RETRO_LOG_WARN);
+   if (!arc_loaded || arc_session != ARC_SESSION_RUNNING)
+   {
+      arc_send_video(arc_frame, ARC_WIDTH, ARC_HEIGHT,
+                     ARC_WIDTH * sizeof(uint32_t));
+      return;
+   }
+   (void)arc_hd_outcome_boundary();
    if (!arc_loaded || arc_session != ARC_SESSION_RUNNING)
    {
       arc_send_video(arc_frame, ARC_WIDTH, ARC_HEIGHT,

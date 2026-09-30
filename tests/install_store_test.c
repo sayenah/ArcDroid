@@ -3,6 +3,7 @@
 #include "install_store.h"
 #include "arc_io.h"
 #include "arcdroid_core.h"
+#include "hard_disc_scope.h"
 #include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -289,6 +290,29 @@ static void ready_store(const char *id)
    clear_files();
    ArcInstallStore *s = open_store(id, true, true, ARC_INSTALL_STORE_READY);
    arc_install_store_close(s);
+}
+static void test_scope_reader_store(void)
+{
+   clear_files();
+   const char *id="abcdefabcdefabcdefabcdefabcdefabcdefabcd";
+   ArcInstallStore *s=open_store(id,true,true,ARC_INSTALL_STORE_READY);
+   ArcGuestName copy={{'!','M','o','c','k'},5u};
+   ArcHdExpected expected={"ADFS::0.$.!Mock",id,id,id,"riscos311",&copy};
+   ArcHdScope scope=arc_hd_scope_read(arc_install_store_read,s,&expected);
+   assert(scope.state==ARC_HD_ABSENT);
+   uint8_t sector[512],changed[512];
+   const uint32_t map_lba=(uint32_t)(((2u*4064u-480u)*1024u)/512u);
+   assert(arc_install_store_read(s,map_lba,1u,sector));
+   memcpy(changed,sector,sizeof(changed));
+   changed[0]^=1u;
+   assert(arc_install_store_write(s,map_lba,1u,changed));
+   scope=arc_hd_scope_read(arc_install_store_read,s,&expected);
+   assert(scope.state==ARC_HD_INDETERMINATE);
+   assert(arc_install_store_write(s,map_lba,1u,sector));
+   scope=arc_hd_scope_read(arc_install_store_read,s,&expected);
+   assert(scope.state==ARC_HD_ABSENT);
+   arc_install_store_close(s);
+   clear_files();
 }
 static void test_roundtrip(void)
 {
@@ -917,6 +941,7 @@ int main(int argc, char **argv)
    assert(argc == 1);
    arc_io_set_vfs(&vfs);
    test_roundtrip();
+   test_scope_reader_store();
    test_damage();
    test_tail();
    test_identity();

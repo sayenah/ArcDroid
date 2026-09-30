@@ -7,6 +7,7 @@
 #include <stdint.h>
 
 #include "jfd.h"
+#include "hd_program.h"
 
 typedef enum {
    ARC_OS_UNKNOWN = 0,
@@ -211,7 +212,7 @@ ArcLaunchRecovery arc_launch_recovery_decide(const ArcLaunchDiscovery *discovery
 
 #define ARC_LAUNCH_BINDING_MAX_SIZE 88u
 #define ARC_LAUNCH_CHOICE_MAX_SIZE 128u
-#define ARC_LAUNCH_CHOOSER_MAX_ROWS (ARC_LAUNCH_MAX_CANDIDATES + 1u)
+#define ARC_LAUNCH_CHOOSER_MAX_ROWS (ARC_LAUNCH_MAX_CANDIDATES + 2u)
 
 typedef struct {
    unsigned version;
@@ -224,6 +225,8 @@ typedef struct {
 typedef struct {
    unsigned version;
    bool desktop;
+   bool installed;
+   unsigned attempt;
    ArcGuestName parent;
    ArcGuestName target;
    char candidate_fingerprint[41];
@@ -238,6 +241,9 @@ typedef struct {
    bool nested_scope;
    bool post_boot;
    bool boot_hit;
+   bool has_installed;
+   ArcGuestName installed_name;
+   unsigned installed_attempt;
 } ArcLaunchChooser;
 
 #define ARC_CMOS_RECORD_SIZE 256u
@@ -291,6 +297,11 @@ bool arc_launch_disc_build_ramdisc(const ArcLaunchDiscovery *discovery,
                            unsigned target_index, bool ramdisc,
                            uint8_t output[ARC_LAUNCH_DISC_SIZE],
                            char *error, size_t error_size);
+bool arc_launch_disc_build_mode(const ArcLaunchDiscovery *discovery,
+                           unsigned target_index, ArcHdHelperMode mode,
+                           const ArcHdProgramSpec *spec,
+                           uint8_t output[ARC_LAUNCH_DISC_SIZE],
+                           char *error, size_t error_size);
 bool arc_launch_binding_parse(const void *data, size_t size,
                               ArcLaunchBinding *binding);
 bool arc_launch_binding_format(unsigned ordinal, const ArcGuestName *target,
@@ -305,6 +316,9 @@ bool arc_launch_binding_format_nested(unsigned ordinal,
                               size_t *output_size);
 bool arc_launch_candidate_is_resource(const ArcLaunchCandidate *candidate);
 bool arc_launch_candidate_is_target(const ArcLaunchCandidate *candidate);
+void arc_launch_candidate_classify_counts(ArcLaunchCandidate *candidate,
+                                           unsigned run_count,
+                                           unsigned boot_count);
 unsigned arc_launch_candidate_index(const ArcLaunchDiscovery *discovery,
                                     unsigned ordinal);
 bool arc_launch_choice_parse(const void *data, size_t size,
@@ -318,11 +332,18 @@ bool arc_launch_choice_format_nested(const ArcGuestName *parent,
                               const char candidate_fingerprint[41],
                               uint8_t *output, size_t capacity,
                               size_t *output_size);
+bool arc_launch_choice_format_installed(const ArcGuestName *product,
+                              const char candidate_fingerprint[41],
+                              unsigned attempt, uint8_t *output,
+                              size_t capacity, size_t *output_size);
 int arc_launch_choice_match(const ArcLaunchDiscovery *discovery,
                             const ArcLaunchChoiceRecord *choice);
 bool arc_launch_chooser_init(ArcLaunchChooser *chooser,
                              const ArcLaunchDiscovery *discovery,
                              bool remembered, int remembered_candidate);
+bool arc_launch_chooser_add_installed(ArcLaunchChooser *chooser,
+                                     const ArcGuestName *product,
+                                     unsigned attempt, bool remembered);
 void arc_launch_chooser_post_boot(ArcLaunchChooser *chooser,
                                   const ArcLaunchDiscovery *discovery);
 void arc_launch_chooser_boot_hit(ArcLaunchChooser *chooser,

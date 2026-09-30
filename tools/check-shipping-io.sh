@@ -19,6 +19,8 @@ core/launch.c
 core/launch_discovery.c
 core/launch_disc.c
 core/launch_chooser.c
+core/hard_disc_scope.c
+core/hd_program.c
 core/folder_set.c
 core/playlist.c
 core/jfd.c
@@ -26,6 +28,7 @@ core/persistence.c
 core/cmos_defaults.c
 engine/arcdroid_engine.c
 engine/arc_boot_watch.c
+engine/arc_launch_outcome.c
 engine/arcdroid_stubs.c
 engine/arculator/src/82c711.c
 engine/arculator/src/82c711_fdc.c

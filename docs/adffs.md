@@ -45,6 +45,8 @@ disc. It works on both WD1772 and New-IO machines. A zip containing one eligible
 JFD image is eligible for the same path. Multi-image sets use the native path.
 A single-image high-density JFD on an IDE-capable A3020 takes the native hard-disc
 route under `JFD Boot: Auto`; `ADFFS preferred` bypasses that route.
+For applications that need to install beside themselves on that disc, see
+[Native hard-disc applications](hard-disc.md).
 
 The two guest discs used for an ADFFS session are memory-backed and read-only:
 changes to the mounted image are not written back, regardless of the `Disk
