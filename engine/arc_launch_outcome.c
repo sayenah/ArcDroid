@@ -48,6 +48,12 @@ void arc_outcome_swi(ArcLaunchOutcome *outcome, uint32_t swi,
    if (now_us - outcome->start_us >= ARC_OUTCOME_HORIZON_US)
    { arc_outcome_cancel(outcome, "timeout"); return; }
    swi = (swi & 0x00ffffffu) & ~0x00020000u;
+   if (swi == 0x11u && r1 == UINT32_C(0x58454241) && r2 != 0u)
+   {
+      if (outcome->failed_exits < UINT32_MAX) ++outcome->failed_exits;
+      outcome->last_rc = r2;
+      outcome->has_rc = true;
+   }
    if (outcome->state == ARC_OUTCOME_WAIT)
    {
       if (swi == 0x400deu && start_command &&
@@ -62,12 +68,6 @@ void arc_outcome_swi(ArcLaunchOutcome *outcome, uint32_t swi,
    }
    if (swi == 0x400c0u || swi == 0x400dfu)
    { arc_outcome_cancel(outcome, swi == 0x400c0u ? "initialise" : "report-error"); return; }
-   if (swi == 0x11u && in_rom && r1 == UINT32_C(0x58454241) && r2 != 0u)
-   {
-      if (outcome->failed_exits < UINT32_MAX) ++outcome->failed_exits;
-      outcome->last_rc = r2;
-      outcome->has_rc = true;
-   }
    if (outcome->state == ARC_OUTCOME_EXIT)
    {
       if (swi == 0x11u && in_rom)

@@ -154,6 +154,7 @@ static bool real_boot_incomplete_fields;
 static bool real_boot_reset_once;
 static unsigned real_boot_reset_frame = 150u;
 static bool real_boot_chooser_pick;
+static unsigned real_boot_chooser_pick_row;
 static bool real_boot_chooser_continue;
 static bool real_boot_chooser_hold_confirm;
 static bool real_boot_chooser_reset;
@@ -167,6 +168,8 @@ static void (*inject_hd_construct_failure)(void);
 static bool real_boot_hd_collision;
 static bool (*inject_hd_preflight_collision)(void);
 static bool real_boot_seed_product;
+static bool real_boot_seed_record;
+static bool real_boot_expect_record_hit;
 static unsigned real_boot_seed_started;
 static bool real_boot_arm_hd_copy;
 static int real_boot_hd_fail_at = -1;
@@ -1924,6 +1927,16 @@ static bool parse_real_boot_options(int count, char *const args[],
       else if (!strcmp(args[argument], "--boot-chooser-pick") &&
                !real_boot_chooser_pick && !real_boot_chooser_continue)
          real_boot_chooser_pick = true;
+      else if (!strcmp(args[argument], "--boot-chooser-pick-row") &&
+               !real_boot_chooser_pick && !real_boot_chooser_continue &&
+               argument + 1 < count)
+      {
+         const char *row=args[++argument];
+         if (strcmp(row,"0") && strcmp(row,"1") && strcmp(row,"2"))
+            return false;
+         real_boot_chooser_pick=true;
+         real_boot_chooser_pick_row=(unsigned)(row[0]-'0');
+      }
       else if (!strcmp(args[argument], "--boot-chooser-continue") &&
                !real_boot_chooser_continue && !real_boot_chooser_pick)
          real_boot_chooser_continue = true;
@@ -2002,6 +2015,10 @@ static bool parse_real_boot_options(int count, char *const args[],
          option_hard_disc = "auto";
       else if (!strcmp(args[argument], "--boot-seed-product"))
          real_boot_seed_product = true;
+      else if (!strcmp(args[argument], "--boot-seed-record"))
+         real_boot_seed_record = true;
+      else if (!strcmp(args[argument], "--boot-expect-record-hit"))
+         real_boot_expect_record_hit = true;
       else if (!strcmp(args[argument], "--boot-seed-started") &&
                !real_boot_seed_started && argument + 1 < count)
       {
@@ -2360,6 +2377,8 @@ int main(int argc, char **argv)
    const char *(*arc_libretro_test_staged_path)(unsigned) = NULL;
    bool (*arc_libretro_test_boot_media_digest)(char[41]) = NULL;
    bool (*arc_libretro_test_boot_stamp)(ArcBootObservation *) = NULL;
+   bool (*arc_libretro_test_boot_start_stamp)(ArcBootObservation *) = NULL;
+   bool (*arc_libretro_test_boot_record_hit)(void) = NULL;
    bool (*arc_libretro_test_hd_exhaust_journal)(void) = NULL;
    bool (*arc_libretro_test_hd_observation_write)(unsigned) = NULL;
    bool (*arc_libretro_test_seed_hd_product)(char[41]) = NULL;
@@ -2407,6 +2426,18 @@ int main(int argc, char **argv)
       *(void **)(&arc_libretro_test_seed_hd_product) =
          dlsym(module,"arc_libretro_test_seed_hd_product");
       assert(arc_libretro_test_seed_hd_product);
+   }
+   if (real_boot_seed_record) {
+      *(void **)(&arc_libretro_test_boot_start_stamp) =
+         dlsym(module,"arc_libretro_test_boot_start_stamp");
+      *(void **)(&arc_libretro_test_content_id) =
+         dlsym(module,"arc_libretro_test_content_id");
+      assert(arc_libretro_test_boot_start_stamp && arc_libretro_test_content_id);
+   }
+   if (real_boot_expect_record_hit) {
+      *(void **)(&arc_libretro_test_boot_record_hit) =
+         dlsym(module,"arc_libretro_test_boot_record_hit");
+      assert(arc_libretro_test_boot_record_hit);
    }
    if (real_boot_seed_started) {
       *(void **)(&arc_libretro_test_seed_hd_started) =
@@ -5165,10 +5196,35 @@ int main(int argc, char **argv)
          fprintf(stderr, "real_boot_harness: load failed: %s\n", last_message);
          return 2;
       }
+      if (real_boot_expect_record_hit)
+      {
+         assert(arc_libretro_test_boot_record_hit());
+         puts("boot record hit verified");
+      }
       if (real_boot_seed_product)
       {
          char seeded_id[41];
          assert(arc_libretro_test_seed_hd_product(seeded_id));
+      }
+      if (real_boot_seed_record)
+      {
+         ArcBootObservation stamp={0};
+         uint8_t record[ARC_BOOT_OBSERVATION_SIZE];
+         char path[4096], directory[4096];
+         int parent=snprintf(directory,sizeof(directory),"%s/arcdroid",
+                             save_path);
+         assert(parent>0 && (size_t)parent<sizeof(directory));
+         make_directory(directory);
+         parent=snprintf(directory,sizeof(directory),"%s/arcdroid/launch",
+                         save_path);
+         assert(parent>0 && (size_t)parent<sizeof(directory));
+         make_directory(directory);
+         int length=snprintf(path,sizeof(path),"%s/arcdroid/launch/%s.boot",
+                             save_path,arc_libretro_test_content_id());
+         assert(length>0 && (size_t)length<sizeof(path) &&
+                arc_libretro_test_boot_start_stamp(&stamp) &&
+                arc_boot_observation_format(&stamp,record,sizeof(record)));
+         write_exact(path,record,sizeof(record));
       }
       if (real_boot_seed_started)
       {
@@ -5256,14 +5312,16 @@ int main(int argc, char **argv)
             if (real_boot_chooser_pick || real_boot_chooser_continue)
             {
                unsigned confirm_frame = real_boot_chooser_hold_confirm ? 220u : 120u;
+               unsigned moves=real_boot_chooser_continue ? 2u :
+                              real_boot_chooser_pick_row;
                joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_DOWN] =
-                  real_boot_chooser_continue &&
-                  (frame == confirm_frame || frame == confirm_frame + 2u);
+                  frame >= confirm_frame && frame < confirm_frame+2u*moves &&
+                  ((frame-confirm_frame)&1u)==0u;
                joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_A] =
                   real_boot_chooser_hold_confirm ?
-                  (frame >= confirm_frame + (real_boot_chooser_continue ? 4u : 0u) &&
+                  (frame >= confirm_frame + 2u*moves &&
                    frame < confirm_frame + 24u) :
-                  frame == confirm_frame + (real_boot_chooser_continue ? 4u : 0u);
+                  frame == confirm_frame + 2u*moves;
             }
             unsigned constructions_before_run = power_on_construction_lines;
             retro_run();

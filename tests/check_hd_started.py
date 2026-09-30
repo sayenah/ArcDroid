@@ -36,6 +36,7 @@ def main() -> None:
     assert "Hard disc scope: state=started copy=yes product=yes" in positive
     assert "recovery=product" in positive
     assert "reason=product" in positive
+    assert "Starting the installed application" in positive
     helper = re.search(r"helper=(\S+\.product\.adl)", positive)
     assert helper, positive[-3000:]
     data = Path(helper.group(1)).read_bytes()
@@ -52,6 +53,11 @@ def main() -> None:
                 "--boot-arm-hd-copy")
     assert "Launch outcome: ended rc=5" in abex
     assert "recovery=product" not in abex
+
+    ram_abex = boot("ram-abex", "copy-ram-abex", "--boot-seed-started",
+                    "product", "--boot-arm-hd-copy")
+    assert "Launch outcome: ended rc=5" in ram_abex
+    assert "recovery=product" not in ram_abex
 
     refused = boot("hd-refused", "copy-delayed", "--boot-seed-started",
                    "product", "--boot-arm-hd-copy", "--boot-hd-fail-at",

@@ -3967,7 +3967,7 @@ def build_f_discovery() -> bytearray:
 def build_launch_outcome_rom(pattern: str) -> bytearray:
     """Invented ROM issuing the observer's real SWIs from ROM entry code."""
     if pattern not in ("exact", "other", "no-poll", "close-init", "refused",
-                       "copy-clean", "copy-abex", "copy-delayed",
+                       "copy-clean", "copy-abex", "copy-ram-abex", "copy-delayed",
                        "delayed-input", "delayed-reset"):
         raise ValueError("unknown launch-outcome ROM pattern")
     rom = bytearray(b"\xff" * ROM_SIZE)
@@ -4035,6 +4035,16 @@ def build_launch_outcome_rom(pattern: str) -> bytearray:
         a.ldr_const(1, 0x58454241)
         a.mov(2, 5)
         a.emit(0xEF000011)  # A nonzero ABEX exit after CloseDown
+    if pattern == "copy-ram-abex":
+        a.ldr_const(1, 0x58454241)
+        a.mov(2, 5)
+        a.ldr_const(9, 0x02002008)
+        a.ldr_const(10, 0xEF000011)  # OS_Exit in guest RAM
+        a.str(10, 9)
+        a.ldr_const(10, 0xE1A0F00B)
+        a.str(10, 9, 4)
+        a.emit(0xE28FB000)  # Return after the RAM SWI
+        a.mov_reg(15, 9)
     if pattern.startswith("copy-"):
         a.mov(0, 42)
         a.emit(0xEF0400DD)  # Helper CloseDown with nonzero task handle
@@ -4273,7 +4283,7 @@ def main() -> None:
         (args.output / f"arcdroid-boot-{pattern}.rom").write_bytes(
             build_rom(boot_watch_pattern=pattern))
     for pattern in ("exact", "other", "no-poll", "close-init", "refused",
-                    "copy-clean", "copy-abex", "copy-delayed",
+                    "copy-clean", "copy-abex", "copy-ram-abex", "copy-delayed",
                     "delayed-input", "delayed-reset"):
         (args.output / f"arcdroid-outcome-{pattern}.rom").write_bytes(
             build_launch_outcome_rom(pattern))
@@ -4522,6 +4532,14 @@ def main() -> None:
     f_image = build_f_discovery()
     (hd / "valid-f.adf").write_bytes(f_image)
     (hd / "valid-f.jfd").write_bytes(build_sparse_f_jfd(f_image))
+    (hd / "nested-d.adf").write_bytes(build_nested_d_discovery(
+        [(b"Folder", [(b"!Demo", True, False)])]))
+    (hd / "ambiguous-d.adf").write_bytes(build_d_discovery(
+        [(b"!Demo", True), (b"!Other", True)]))
+    (hd / "name-match-d.adf").write_bytes(build_d_discovery(
+        [(b"!Demo", True), (b"!Other", True)], b"Demo"))
+    (hd / "boot-d.adf").write_bytes(build_d_discovery(
+        [(b"!Demo", True)], b"Fixture", 3, root_boot="file"))
     map_address = ((8192 - 1600 - 480) + (8192 - 1600)) * 64
     identification = args.output / "jfd-identification"
     build_file_data_fixtures(args.output / "jfd-file-data")

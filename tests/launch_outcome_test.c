@@ -28,6 +28,9 @@ int main(void)
       assert(o.state == ARC_OUTCOME_WAIT);
    }
    assert(arc_outcome_arm(&o,command,0u));
+   swi(&o,0x11u,0u,0x58454241u,3u,false);
+   assert(o.state == ARC_OUTCOME_WAIT && o.failed_exits == 1u &&
+          o.last_rc == 3u);
    swi(&o,0x400c0u,0u,0u,0u,false);
    assert(o.state == ARC_OUTCOME_WAIT);
    start(&o,command,false);
@@ -110,6 +113,14 @@ int main(void)
    assert(o.failed_exits == 1u && o.last_rc == 11u);
    swi(&o,0x400c7u,0u,0u,0u,true);
    assert(o.state == ARC_OUTCOME_POLL);
+   assert(arc_outcome_arm(&o,command,0u));
+   start(&o,command,false);
+   swi(&o,0x11u,0u,0x58454241u,13u,false);
+   assert(o.state == ARC_OUTCOME_EXIT && o.failed_exits == 1u &&
+          o.last_rc == 13u);
+   end(&o);
+   swi(&o,0x400c7u,0u,0u,0u,true);
+   assert(o.state == ARC_OUTCOME_POLL && o.failed_exits == 1u);
    assert(arc_outcome_arm(&o,command,0u));
    start(&o,command,true);
    swi(&o,0x11u,0u,0u,0u,true);

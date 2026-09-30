@@ -70,7 +70,7 @@ bool arc_hd_program_build(ArcHdHelperMode mode,
         (!literal_safe(spec->product,10u) || !spec->attempt))) return false;
    Writer w={out,capacity,0u,true};
    line(&w,10,"ON ERROR GOTO 9000");
-   line(&w,20,"file%%=0:owned%%=0:task%%=0:root$=\"ADFS::4.$.ArcDroid\":SYS \"Wimp_Initialise\",200,&4B534154,\"ArcDroid %s\" TO ,task%%",
+   line(&w,20,"file%%=0:owned%%=0:task%%=0:copyhad%%=0:root$=\"ADFS::4.$.ArcDroid\":SYS \"Wimp_Initialise\",200,&4B534154,\"ArcDroid %s\" TO ,task%%",
       mode==ARC_HD_HELPER_INSTALL?"install":"mark");
    line(&w,30,"attempt%%=%u",mode==ARC_HD_HELPER_INSTALL?1u:spec->attempt);
    if (mode==ARC_HD_HELPER_INSTALL) {
@@ -80,8 +80,17 @@ bool arc_hd_program_build(ArcHdHelperMode mode,
       line(&w,90,"GOSUB 5000");
       record(&w,100,spec,"pending",false,false);
       line(&w,290,"GOSUB 5300");
-      line(&w,310,"OSCLI \"UnSet Copy$Options\"");
+      line(&w,300,"DIM copybuf%% 129:flags%%=0:copytype%%=4:copylen%%=0");
+      line(&w,301,"SYS \"XOS_ReadVarVal\",\"Copy$Options\",0,-1,0,0 TO ,,copyneed%%");
+      line(&w,302,"IF copyneed%%<-129 THEN ERROR 100,\"Copy options too long\"");
+      line(&w,303,"IF copyneed%%<>0 THEN SYS \"XOS_ReadVarVal\",\"Copy$Options\",copybuf%%,128,0,0 TO ,,copylen%%,,copytype%%;flags%%");
+      line(&w,304,"IF flags%% AND &10000000 THEN ERROR 100,\"Cannot read copy options\"");
+      line(&w,305,"IF copytype%%<>0 AND copytype%%<>2 AND copytype%%<>4 THEN ERROR 100,\"Copy options type unsupported\"");
+      line(&w,306,"IF copyneed%%<>0 THEN ?(copybuf%%+copylen%%)=0");
+      line(&w,307,"IF copytype%%=0 THEN copytype%%=4");
+      line(&w,310,"copyhad%%=(copyneed%%<>0):OSCLI \"UnSet Copy$Options\"");
       line(&w,320,"OSCLI \"Copy %s \"+root$+\".Copying R F ~C ~V\"",spec->source);
+      line(&w,325,"GOSUB 5500");
       line(&w,330,"OSCLI \"Rename \"+root$+\".Copying \"+root$+\".%s\"",spec->target);
       line(&w,390,"GOSUB 5000");
       record(&w,400,spec,"started",false,false);
@@ -130,10 +139,14 @@ bool arc_hd_program_build(ArcHdHelperMode mode,
    line(&w,5450,"IF byte%%<>13 THEN field$+=CHR$(byte%%)");
    line(&w,5460,"ENDWHILE");
    line(&w,5470,"RETURN");
+   line(&w,5500,"IF copyhad%%=0 THEN RETURN");
+   line(&w,5510,"SYS \"OS_SetVarVal\",\"Copy$Options\",copybuf%%,copylen%%,0,copytype%%");
+   line(&w,5520,"copyhad%%=0:RETURN");
    line(&w,9000,"ON ERROR OFF");
    line(&w,9010,"IF file%%<>0 THEN CLOSE#file%%:file%%=0");
+   line(&w,9015,"error$=LEFT$(REPORT$,80)");
+   line(&w,9017,"IF copyhad%%<>0 THEN SYS \"XOS_SetVarVal\",\"Copy$Options\",copybuf%%,copylen%%,0,copytype%%");
    line(&w,9020,"IF owned%%=0 THEN GOTO 9390");
-   line(&w,9030,"error$=LEFT$(REPORT$,80)");
    line(&w,9040,"ON ERROR GOTO 9390");
    line(&w,9050,"GOSUB 5000");
    record(&w,9100,spec,"failed",false,true);

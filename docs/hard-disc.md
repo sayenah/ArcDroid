@@ -14,6 +14,8 @@ Later loads use the recorded application directly from the hard disc.
 When the launch chooser is set to Ask, its **Installed** row names the
 validated product; a remembered installed choice uses `.choice` v4 with the
 product and attempt bound to the current discovery.
+Choosing a floppy row, or remembering a floppy `.choice`, runs that floppy
+application. Automatic decisions may use the installed product instead.
 
 The guest installer writes only inside `ADFS::4.$.ArcDroid`. The host reads
 FileCore structures to validate the installation; it never writes FileCore
@@ -38,7 +40,11 @@ not considered an eligible installation.
 
 `pending` means the copy was not confirmed. `started` means the one automatic
 run of the copy was consumed, even if extraction later failed or no runnable
-product appeared. `completed` launches only when the named product still
+product appeared. Any player input during the unattended first run cancels
+the automatic steps. An interrupted or cancelled install remains `started`
+and is terminal until the directory is moved aside. A frontend reset may arm
+a new launch attempt, but install and product recovery still run at most once
+per session. `completed` launches only when the named product still
 exists and the record matches the current source, media, candidate fingerprint,
 content and OS. `failed`, `foreign`, `unowned` and `indeterminate` never
 substitute a hard-disc application. ArcDroid continues the normal floppy
@@ -47,6 +53,11 @@ launch and shows a notice once per session. To try installation again, move
 contains saves. ArcDroid does not automatically erase or retry it. A
 read-only store can launch a validated completed product but cannot begin an
 installation.
+
+At the shipping `Disk Writes: Shadow` setting, a staged ADF opens writable,
+so its write-protect refusal callback has no event to report. With `Disk
+Writes: Off`, the ADF callback can report a refusal, but the hard-disc store
+is read-only and automatic installation cannot arm.
 
 `Launch: Off`, explicit `Application N`, ADFFS sessions, multi-image sets,
 machines without the attached IDE disc, `Hard Disc: Off`, and unsupported OS

@@ -34,6 +34,19 @@ static void check_basic(const uint8_t *program, size_t size)
    const char *quit=strstr(text,"QUIT");
    assert(quit && !strstr(quit+4,"QUIT") &&
           quit>strstr(text,"Wimp_CloseDown"));
+   const char *options=strstr(text,"XOS_ReadVarVal");
+   if (options) {
+      const char *clear=strstr(text,"UnSet Copy$Options");
+      const char *copy=strstr(text,"OSCLI \"Copy ");
+      const char *restore=strstr(text,"GOSUB 5500");
+      const char *on_error=strstr(text,"XOS_SetVarVal");
+      assert(clear && copy && restore && on_error &&
+             options<clear && clear<copy && copy<restore &&
+             strstr(text,"copyneed%<-129") &&
+             strstr(text,"copyhad%=(copyneed%<>0)") &&
+             strstr(text,"SYS \"OS_SetVarVal\",\"Copy$Options\"") &&
+             strstr(text,"IF copyhad%<>0 THEN SYS \"XOS_SetVarVal\""));
+   }
    const char *at=text;
    while (*at) {
       const char *end=strchr(at,'\r');
@@ -65,7 +78,7 @@ int main(void)
                                sizeof(program),&size));
    check_basic(program,size);
    golden("install-basic",program,size,
-      "014d1e64f7d28352d916c296f9964346ebc83de077c6c9207184eae6ab4248c6");
+      "d8fee347996c108a4aaebd2da0dfd1d50c6aaabd7a88bc0e3b015f2fdadfdadc");
    char text[8193];
    memcpy(text,program,size); text[size]=0;
    const char *check=strstr(text,"SYS \"OS_File\",5,root$ TO kind%");
@@ -83,7 +96,7 @@ int main(void)
    assert(arc_hd_program_build(ARC_HD_HELPER_MARK,&spec,program,
                                sizeof(program),&size));
    golden("mark-basic",program,size,
-      "61bf85c71a7226ea70883f1f27307c23d8c7d7a6b93cb9306d607b4efcb16c52");
+      "31234118f43486bbcc43bcc402ab8c45cc7ad6c58f73660c0fb1f3ebdfbf5dfa");
    memcpy(text,program,size); text[size]=0;
    check_basic(program,size);
    assert(strstr(text,"\"ArcDroid mark\" TO ,task%"));
@@ -98,12 +111,12 @@ int main(void)
                                sizeof(program),&size));
    check_basic(program,size);
    golden("extended-install-basic",program,size,
-      "41518571037c22a0a531eaf152ed90804b8f797a12a5cc05b290550e5f8b7e6e");
+      "7705823a8ef2822f375bf5bc35b2c7d531e6faa32e9c30f949212e858891c702");
    assert(arc_hd_program_build(ARC_HD_HELPER_MARK,&extended,program,
                                sizeof(program),&size));
    check_basic(program,size);
    golden("extended-mark-basic",program,size,
-      "9548b39c6639b77f48aa06a75296717967efe324d936975a6fd7102494779e22");
+      "d3b598367856160af072db66c053b4d6e2a6525ac312c8edfd6cf54ed126e466");
    char source[129], target[11], product_name[11], forty[41], os[21];
    memset(source,'S',128u); source[128]=0;
    memcpy(target,"!ABCDEFGHI",11u);
@@ -135,11 +148,11 @@ int main(void)
    assert(arc_launch_disc_build_mode(&discovery,0u,ARC_HD_HELPER_INSTALL,
                                      &spec,disc,error,sizeof(error)));
    golden("install-disc",disc,ARC_LAUNCH_DISC_SIZE,
-      "12cf250b4350f7bd068f2963d96400e0e14c57a0ac9d729064f773d0e2d0b9d5");
+      "e6551871066279e5e995b805526b7530888f4832784cbcb288366da0f84b293d");
    assert(arc_launch_disc_build_mode(&discovery,0u,ARC_HD_HELPER_MARK,
                                      &spec,disc,error,sizeof(error)));
    golden("mark-disc",disc,ARC_LAUNCH_DISC_SIZE,
-      "3fb8e15a560fb280ac88ed6ac7a41cfbc49fa39594b3dd98ad0fcda13f8c099b");
+      "5b523fddc1a07c074f3cb5dc392e467525ba40b58f9d71f5fd2525310ff6804b");
    assert(arc_launch_disc_build_mode(&discovery,0u,ARC_HD_HELPER_PRODUCT,
                                      &spec,disc,error,sizeof(error)));
    golden("product-disc",disc,ARC_LAUNCH_DISC_SIZE,

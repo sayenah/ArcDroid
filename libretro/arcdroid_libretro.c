@@ -201,6 +201,7 @@ static char arc_hd_media[41];
 static char arc_hd_fingerprint[41];
 static unsigned arc_hd_selected;
 static bool arc_hd_scope_cached;
+static bool arc_hd_scope_reported;
 #if defined(ARCDROID_TEST_FAULTS)
 static bool arc_test_adffs_accept_test_os = true;
 static bool arc_test_fail_adffs_content_read;
@@ -2461,9 +2462,9 @@ static void arc_jfd_log_refusal(unsigned image_number, unsigned track,
    unsigned track_side = track * 2u + side;
    uint8_t mask = (uint8_t)(1u << (sector & 7u));
    uint8_t *seen = &entry->jfd_refusal_seen[track_side][sector >> 3u];
+   if (image_number == 1u) arc_engine_launch_outcome_refused(0u);
    if (*seen & mask) return;
    *seen |= mask;
-   if (image_number == 1u) arc_engine_launch_outcome_refused(0u);
    if (arc_log)
       arc_log(RETRO_LOG_INFO,
          "JFD write refused: image=%u track=%u side=%u sector=%u reason=%s\n",
@@ -2481,9 +2482,9 @@ static void arc_adf_log_refusal(unsigned drive, unsigned track,
        entry->info.kind == ARC_MEDIA_INVALID) return;
    uint8_t *seen = &entry->jfd_refusal_seen[track * 2u + side][sector >> 3u];
    uint8_t mask = (uint8_t)(1u << (sector & 7u));
+   arc_engine_launch_outcome_refused(0u);
    if (*seen & mask) return;
    *seen |= mask;
-   arc_engine_launch_outcome_refused(0u);
    if (arc_log)
       arc_log(RETRO_LOG_INFO,
               "ADF write refused: image=%u track=%u side=%u sector=%u\n",
@@ -3683,6 +3684,14 @@ bool arc_libretro_test_boot_stamp(ArcBootObservation *stamp)
 {
    return stamp && arc_boot_stamp(stamp);
 }
+bool arc_libretro_test_boot_start_stamp(ArcBootObservation *stamp)
+{
+   if (!stamp || !arc_boot_stamp_ready) return false;
+   *stamp=arc_boot_start_stamp;
+   return true;
+}
+bool arc_libretro_test_boot_record_hit(void)
+{ return arc_boot_record_hit; }
 #endif
 
 static void arc_boot_record_invalidate(void)
@@ -3742,11 +3751,44 @@ static bool arc_launch_helper_publish(const ArcLaunchDiscovery *discovery,
                                       unsigned selected, char *error,
                                       size_t error_size);
 
+static void arc_hd_scope_report(bool notify, int target_index)
+{
+   if (arc_log && !arc_hd_scope_reported && (notify || target_index >= 0))
+   {
+      arc_log(RETRO_LOG_INFO,
+         "Hard disc scope: state=%s copy=%s product=%s applications=%u other=%u attempt=%u\n",
+         arc_hd_scope_name(arc_hd_scope.state),
+         arc_hd_scope.copy_present?"yes":"no",
+         arc_hd_scope.product_present?"yes":"no",
+         arc_hd_scope.application_count,arc_hd_scope.other_count,
+         arc_hd_scope.attempt);
+      arc_hd_scope_reported=true;
+   }
+   if (notify && arc_hd_scope.state != ARC_HD_ABSENT &&
+       !(arc_hd_scope.state == ARC_HD_COMPLETED &&
+         arc_hd_scope.product_present) && !arc_hd_notice_shown)
+   {
+      char notice[256];
+      if (arc_hd_scope.state == ARC_HD_UNOWNED)
+         snprintf(notice,sizeof(notice),
+            "An unrelated ArcDroid directory exists on the hard disc; move it aside to allow installation.");
+      else if (arc_hd_scope.state == ARC_HD_COMPLETED &&
+               !arc_hd_scope.product_present)
+         snprintf(notice,sizeof(notice),
+            "The installed product is missing from ADFS::4.$.ArcDroid; move the directory aside (it may hold saves) to install again.");
+      else snprintf(notice,sizeof(notice),
+         "ArcDroid's installation on the hard disc is %s; move ADFS::4.$.ArcDroid aside (it may hold saves) to install again.",
+         arc_hd_scope_name(arc_hd_scope.state));
+      arc_message(notice,RETRO_LOG_WARN);
+      arc_hd_notice_shown=true;
+   }
+}
+
 static bool arc_hd_scope_prepare(const ArcLaunchDiscovery *discovery,
                                  unsigned selected, bool notify)
 {
    if (notify && arc_hd_scope_cached && selected == arc_hd_selected)
-      return true;
+   { arc_hd_scope_report(notify,discovery->target_index); return true; }
    const ArcMachineDescriptor *machine=arc_machine_descriptor(arc_session_machine);
    if (!machine || !machine->ide_capable || !arc_hd_store ||
        arc_install_store_state(arc_hd_store) != ARC_INSTALL_STORE_READY ||
@@ -3769,32 +3811,11 @@ static bool arc_hd_scope_prepare(const ArcLaunchDiscovery *discovery,
    arc_hd_scope=arc_hd_scope_read(arc_install_store_read,arc_hd_store,&expected);
    arc_hd_scope_cached=true;
    arc_hd_selected=selected;
-   if (arc_log && (notify || discovery->target_index >= 0))
-      arc_log(RETRO_LOG_INFO,
-         "Hard disc scope: state=%s copy=%s product=%s applications=%u other=%u attempt=%u\n",
-         arc_hd_scope_name(arc_hd_scope.state),
-         arc_hd_scope.copy_present?"yes":"no",
-         arc_hd_scope.product_present?"yes":"no",
-         arc_hd_scope.application_count,arc_hd_scope.other_count,
-         arc_hd_scope.attempt);
    if (arc_hd_scope.product.length) {
       memcpy(arc_hd_product,arc_hd_scope.product.bytes,arc_hd_scope.product.length);
       arc_hd_product[arc_hd_scope.product.length]=0;
    } else arc_hd_product[0]=0;
-   if (notify && arc_hd_scope.state != ARC_HD_ABSENT &&
-       !(arc_hd_scope.state == ARC_HD_COMPLETED &&
-         arc_hd_scope.product_present) && !arc_hd_notice_shown)
-   {
-      char notice[256];
-      if (arc_hd_scope.state == ARC_HD_UNOWNED)
-         snprintf(notice,sizeof(notice),
-            "An unrelated ArcDroid directory exists on the hard disc; move it aside to allow installation.");
-      else snprintf(notice,sizeof(notice),
-         "ArcDroid's installation on the hard disc is %s; move ADFS::4.$.ArcDroid aside (it may hold saves) to install again.",
-         arc_hd_scope_name(arc_hd_scope.state));
-      arc_message(notice,RETRO_LOG_WARN);
-      arc_hd_notice_shown=true;
-   }
+   arc_hd_scope_report(notify,discovery->target_index);
    return true;
 }
 
@@ -3926,10 +3947,16 @@ static bool arc_boot_prepare_hit(const ArcLaunchDiscovery *discovery)
    else if (action == ARC_LAUNCH_RECOVERY_HELPER)
    {
       char error[160] = {0};
-      if (arc_launch_helper_publish(discovery, (unsigned)selected,
-                                    error, sizeof(error)))
+      if (!remembered && selected >= 0 && arc_hd_scope_cached &&
+          arc_hd_selected == (unsigned)selected &&
+          arc_hd_scope.state == ARC_HD_COMPLETED &&
+          arc_hd_scope.product_present)
+         arc_hd_requested_mode=ARC_HD_HELPER_PRODUCT;
+      bool published=arc_launch_helper_publish(discovery,(unsigned)selected,
+                                                error,sizeof(error));
+      arc_hd_requested_mode=ARC_HD_HELPER_FLOPPY;
+      if (published)
       {
-         arc_hd_requested_mode=ARC_HD_HELPER_FLOPPY;
          arc_boot_eligible = false;
          arc_launch_log(discovery, selected,
             arc_hd_mode == ARC_HD_HELPER_PRODUCT ? "hd-product" : reason);
@@ -3961,12 +3988,7 @@ static bool arc_launch_helper_publish(const ArcLaunchDiscovery *discovery,
    ArcHdHelperMode mode=arc_hd_requested_mode;
    bool inspected=false;
    if (mode == ARC_HD_HELPER_FLOPPY)
-   {
       inspected=arc_hd_scope_prepare(discovery,selected,true);
-      if (inspected && arc_hd_scope.state == ARC_HD_COMPLETED &&
-          arc_hd_scope.product_present)
-         mode=ARC_HD_HELPER_PRODUCT;
-   }
    ArcHdProgramSpec spec={arc_hd_source,arc_hd_target,arc_hd_product,
       arc_hd_media,arc_hd_fingerprint,arc_plan.content_id,
       arc_os_slug(arc_plan.os),arc_hd_scope.attempt};
@@ -4035,6 +4057,7 @@ static bool arc_prepare_launch(ArcMediaEntry *entry, bool ejected,
    arc_plan.launch_target_length = 0u;
    arc_hd_observe_target = arc_hd_observe_copy = false;
    arc_hd_scope_cached=false;
+   arc_hd_scope_reported=false;
    memset(&arc_hd_scope,0,sizeof(arc_hd_scope));
    arc_hd_product[0]=0;
    if (ejected || !entry || !entry->populated)
@@ -4074,11 +4097,7 @@ static bool arc_prepare_launch(ArcMediaEntry *entry, bool ejected,
              arc_hd_scope.state == ARC_HD_COMPLETED &&
              arc_hd_scope.product_present)
          {
-            if (arc_log) arc_log(RETRO_LOG_INFO,
-               "Hard disc scope: state=completed copy=%s product=yes applications=%u other=%u attempt=%u\n",
-               arc_hd_scope.copy_present?"yes":"no",
-               arc_hd_scope.application_count,arc_hd_scope.other_count,
-               arc_hd_scope.attempt);
+            arc_hd_scope_report(true,discovery.target_index);
             break;
          }
 
@@ -4095,6 +4114,7 @@ static bool arc_prepare_launch(ArcMediaEntry *entry, bool ejected,
    int selected = discovery.target_index;
    char refusal[160] = {0};
    const char *reason = arc_launch_reason_name(discovery.reason);
+   bool remembered_floppy=false;
    bool ask_remembered=false;
    int ask_target=INT_MIN;
    if (arc_core_options.launch_chooser == ARC_LAUNCH_CHOOSER_ASK)
@@ -4111,6 +4131,23 @@ static bool arc_prepare_launch(ArcMediaEntry *entry, bool ejected,
       arc_chooser_discovery=discovery;
       arc_launch_log(&discovery,-1,"chooser asked");
       return true;
+   }
+   if (option == ARC_LAUNCH_AUTO && selected >= 0 &&
+       arc_core_options.launch_chooser == ARC_LAUNCH_CHOOSER_REMEMBER &&
+       arc_hd_scope.state == ARC_HD_COMPLETED &&
+       arc_hd_scope.product_present)
+   {
+      bool remembered=false;
+      int remembered_target=INT_MIN;
+      (void)arc_choice_load(&discovery,&remembered,&remembered_target);
+      if (remembered && remembered_target == -1)
+      { arc_launch_log(&discovery,-1,"chooser remembered desktop"); return false; }
+      if (remembered && remembered_target >= 0)
+      {
+         selected=remembered_target;
+         reason="chooser remembered target";
+         remembered_floppy=true;
+      }
    }
    if (option >= ARC_LAUNCH_APP1)
    {
@@ -4242,8 +4279,16 @@ static bool arc_prepare_launch(ArcMediaEntry *entry, bool ejected,
       arc_launch_log(&discovery, -1, reason);
       return false;
    }
-   if (!arc_launch_helper_publish(&discovery, (unsigned)selected,
-                                  refusal, sizeof(refusal)))
+   if (option == ARC_LAUNCH_AUTO && !remembered_floppy &&
+       arc_hd_scope_cached &&
+       arc_hd_selected == (unsigned)selected &&
+       arc_hd_scope.state == ARC_HD_COMPLETED &&
+       arc_hd_scope.product_present)
+      arc_hd_requested_mode=ARC_HD_HELPER_PRODUCT;
+   bool published=arc_launch_helper_publish(&discovery,(unsigned)selected,
+                                             refusal,sizeof(refusal));
+   arc_hd_requested_mode=ARC_HD_HELPER_FLOPPY;
+   if (!published)
    {
       arc_message(refusal[0] ? refusal : "Launch helper publication failed.",
                   RETRO_LOG_WARN);
@@ -5746,6 +5791,7 @@ static bool arc_boot_same_target(const ArcLaunchCandidate *a,
 
 static bool arc_hd_recover(ArcHdHelperMode mode)
 {
+   arc_hd_scope_reported=false;
    if (!arc_loaded || arc_session != ARC_SESSION_RUNNING ||
        !arc_hd_store || !arc_install_store_writable(arc_hd_store) ||
        arc_hd_selected >= arc_boot_discovery.candidate_count ||
@@ -5813,6 +5859,9 @@ static bool arc_hd_recover(ArcHdHelperMode mode)
    memset(arc_frame,0,sizeof(arc_frame));
    arc_launch_log(&arc_boot_discovery,(int)arc_hd_selected,
       mode == ARC_HD_HELPER_INSTALL ? "install" : "product");
+   arc_message(mode == ARC_HD_HELPER_INSTALL ?
+      "Installing to the hard disc - please wait" :
+      "Starting the installed application", RETRO_LOG_INFO);
    return true;
 fallback:
    if (arc_log) arc_log(RETRO_LOG_WARN,

@@ -28,6 +28,9 @@ def main() -> None:
                               "Hard disc scope: state=unowned"),
         "refused-second": ("Launch outcome: ended rc=none refused=1",
                             "recovery=install"),
+        "refused-reset": ("Launch outcome: cancelled=reset",
+                           "Launch outcome: ended rc=none refused=1",
+                           "recovery=install"),
         "copy-ram": ("Launch outcome: armed target=ADFS::4.$.ArcDroid.!Demo.!Run",
                      "Launch outcome: ended rc=none refused=0 hd-refused=0",
                      "recovery=product"),
@@ -51,6 +54,8 @@ def main() -> None:
             command += ["--boot-hd-preflight-collision"]
         if pattern == "refused-second":
             command += ["--boot-rearm-after-install"]
+        if pattern == "refused-reset":
+            command += ["--boot-reset-once", "--boot-reset-at", "10"]
         if pattern == "copy-ram":
             command += ["--boot-seed-started", "product", "--boot-arm-hd-copy"]
         if pattern == "delayed-input":
@@ -75,6 +80,7 @@ def main() -> None:
             assert "Launch outcome: ended" not in log, pattern
         if pattern == "refused":
             assert ".install.adl" in log, pattern
+            assert "Installing to the hard disc - please wait" in log
         if pattern == "refused-fail":
             assert "recovery=install reconstruction-failed" in log
             assert "phase=recovery" not in log
@@ -86,6 +92,10 @@ def main() -> None:
             assert log.count("Launch outcome: ended rc=none refused=1") == 2
             assert log.count("recovery=install") == 1
             assert log.count("disc_load 1 ") == 2
+        if pattern == "refused-reset":
+            assert log.count("Launch outcome: armed target=") == 2
+            assert log.count("JFD write refused:") == 1
+            assert log.count("recovery=install") == 1
         if pattern in ("delayed-input", "delayed-reset"):
             assert "Launch outcome: ended" not in log
 
