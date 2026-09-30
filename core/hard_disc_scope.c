@@ -82,7 +82,10 @@ static bool map_valid(const uint8_t map[HD_MAP_BYTES],
       unsigned end = zone_end(z);
       if (p[0] != check_zone(p)) return false;
       cross ^= p[3];
-      if (z == 0u && memcmp(p+4, record, 60u)) return false;
+      /* FileCore advances the map copy's disc ID on writes; the boot-block
+       * record keeps the formatter's original ID. All other fields agree. */
+      if (z == 0u && (memcmp(p+4, record, 20u) ||
+                      memcmp(p+4u+22u, record+22u, 38u))) return false;
       unsigned link = bits(p, 8u, 15u);
       unsigned free_at = link ? 8u + link : 0u;
       if (free_at && (free_at < at || free_at >= end)) return false;

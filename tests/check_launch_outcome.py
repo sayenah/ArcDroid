@@ -28,6 +28,9 @@ def main() -> None:
                               "Hard disc scope: state=unowned"),
         "refused-second": ("Launch outcome: ended rc=none refused=1",
                             "recovery=install"),
+        "copy-ram": ("Launch outcome: armed target=ADFS::4.$.ArcDroid.!Demo.!Run",
+                     "Launch outcome: ended rc=none refused=0 hd-refused=0",
+                     "recovery=product"),
         "delayed-input": ("Launch outcome: cancelled=input",),
         "delayed-reset": ("Launch outcome: cancelled=reset",),
     }
@@ -36,7 +39,7 @@ def main() -> None:
         refused = pattern.startswith("refused")
         selected_content = (fixtures / "hd-family" / "write-protected-f.jfd"
                             if refused else content)
-        rom_pattern = "refused" if refused else pattern
+        rom_pattern = "refused" if refused else "copy-clean" if pattern == "copy-ram" else pattern
         command = [str(harness), str(core),
                    str(fixtures / f"arcdroid-outcome-{rom_pattern}.rom"),
                    str(selected_content), str(run_dir), "--real-boot", "--machine",
@@ -48,6 +51,8 @@ def main() -> None:
             command += ["--boot-hd-preflight-collision"]
         if pattern == "refused-second":
             command += ["--boot-rearm-after-install"]
+        if pattern == "copy-ram":
+            command += ["--boot-seed-started", "product", "--boot-arm-hd-copy"]
         if pattern == "delayed-input":
             command += ["--boot-cancel-input"]
         if pattern == "delayed-reset":
@@ -75,6 +80,8 @@ def main() -> None:
             assert "phase=recovery" not in log
         if pattern == "refused-collision":
             assert "recovery=install" not in log
+        if pattern == "copy-ram":
+            assert log.count("recovery=product") == 1
         if pattern == "refused-second":
             assert log.count("Launch outcome: ended rc=none refused=1") == 2
             assert log.count("recovery=install") == 1

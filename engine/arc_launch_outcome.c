@@ -50,7 +50,7 @@ void arc_outcome_swi(ArcLaunchOutcome *outcome, uint32_t swi,
    swi = (swi & 0x00ffffffu) & ~0x00020000u;
    if (outcome->state == ARC_OUTCOME_WAIT)
    {
-      if (swi == 0x400deu && in_rom && start_command &&
+      if (swi == 0x400deu && start_command &&
           !strcmp(start_command,outcome->command))
       { outcome->matched=true; outcome->state=ARC_OUTCOME_EXIT; }
       return;

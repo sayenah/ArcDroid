@@ -127,6 +127,20 @@ int main(void)
    make_dir(image+OWNED_AT,0x20bu);
    scope=arc_hd_scope_read(memory_read,image,&expected);
    assert(scope.state == ARC_HD_UNOWNED);
+   /* Invented FileCore write: only the map record's mutable disc ID moves. */
+   uint8_t *map_record=image+MAP_AT+4u;
+   ++map_record[20u];
+   image[MAP_AT]=zone_check(image+MAP_AT);
+   memcpy(image+MAP_AT+MAP_SIZE,image+MAP_AT,MAP_SIZE);
+   scope=arc_hd_scope_read(memory_read,image,&expected);
+   assert(scope.state == ARC_HD_UNOWNED);
+   map_record[19u]^=0x10u;
+   image[MAP_AT]=zone_check(image+MAP_AT);
+   memcpy(image+MAP_AT+MAP_SIZE,image+MAP_AT,MAP_SIZE);
+   assert(arc_hd_scope_read(memory_read,image,&expected).state == ARC_HD_INDETERMINATE);
+   map_record[19u]^=0x10u;
+   image[MAP_AT]=zone_check(image+MAP_AT);
+   memcpy(image+MAP_AT+MAP_SIZE,image+MAP_AT,MAP_SIZE);
    entry(image+OWNED_AT,0u,"Installed~",9u,0x400u,false);
    finish(image+OWNED_AT,1u);
    scope=arc_hd_scope_read(memory_read,image,&expected);

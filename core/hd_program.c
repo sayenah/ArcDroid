@@ -70,7 +70,8 @@ bool arc_hd_program_build(ArcHdHelperMode mode,
         (!literal_safe(spec->product,10u) || !spec->attempt))) return false;
    Writer w={out,capacity,0u,true};
    line(&w,10,"ON ERROR GOTO 9000");
-   line(&w,20,"file%%=0:owned%%=0:root$=\"ADFS::4.$.ArcDroid\"");
+   line(&w,20,"file%%=0:owned%%=0:task%%=0:root$=\"ADFS::4.$.ArcDroid\":SYS \"Wimp_Initialise\",200,&4B534154,\"ArcDroid %s\" TO ,task%%",
+      mode==ARC_HD_HELPER_INSTALL?"install":"mark");
    line(&w,30,"attempt%%=%u",mode==ARC_HD_HELPER_INSTALL?1u:spec->attempt);
    if (mode==ARC_HD_HELPER_INSTALL) {
       line(&w,40,"SYS \"OS_File\",5,root$ TO kind%%");
@@ -88,8 +89,8 @@ bool arc_hd_program_build(ArcHdHelperMode mode,
       line(&w,610,"OSCLI \"Filer_Boot \"+root$+\".%s\"",spec->target);
       line(&w,620,"OSCLI \"Dir \"+root$");
       line(&w,630,"OSCLI \"URD \"+root$");
-      line(&w,640,"OSCLI \"Filer_Run \"+root$+\".%s\"",spec->target);
-      line(&w,650,"QUIT");
+      line(&w,640,"SYS \"Wimp_StartTask\",\"Run \"+root$+\".%s.!Run\" TO child%%",spec->target);
+      line(&w,650,"GOTO 9390");
    } else {
       line(&w,40,"file%%=OPENIN(root$+\".Installed\")");
       line(&w,50,"IF file%%=0 THEN ERROR 100,\"Record missing\"");
@@ -111,8 +112,8 @@ bool arc_hd_program_build(ArcHdHelperMode mode,
       line(&w,410,"OSCLI \"Filer_Boot \"+root$+\".\"+product$");
       line(&w,420,"OSCLI \"Dir \"+root$");
       line(&w,430,"OSCLI \"URD \"+root$");
-      line(&w,440,"OSCLI \"Filer_Run \"+root$+\".\"+product$");
-      line(&w,450,"QUIT");
+      line(&w,440,"SYS \"Wimp_StartTask\",\"Run \"+root$+\".\"+product$+\".!Run\" TO child%%");
+      line(&w,450,"GOTO 9390");
    }
    line(&w,5000,"file%%=OPENOUT(root$+\".Installed~\"):RETURN");
    line(&w,5200,"BPUT#file%%,field$;:BPUT#file%%,13:RETURN");
@@ -131,13 +132,14 @@ bool arc_hd_program_build(ArcHdHelperMode mode,
    line(&w,5470,"RETURN");
    line(&w,9000,"ON ERROR OFF");
    line(&w,9010,"IF file%%<>0 THEN CLOSE#file%%:file%%=0");
-   line(&w,9020,"IF owned%%=0 THEN QUIT");
+   line(&w,9020,"IF owned%%=0 THEN GOTO 9390");
    line(&w,9030,"error$=LEFT$(REPORT$,80)");
    line(&w,9040,"ON ERROR GOTO 9390");
    line(&w,9050,"GOSUB 5000");
    record(&w,9100,spec,"failed",false,true);
    line(&w,9300,"GOSUB 5300");
-   line(&w,9390,"QUIT");
+   line(&w,9390,"ON ERROR OFF:IF task%%<>0 THEN SYS \"Wimp_CloseDown\",task%%,&4B534154");
+   line(&w,9400,"QUIT");
    if (size) *size=w.size;
    return w.ok;
 }

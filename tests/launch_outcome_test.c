@@ -28,8 +28,19 @@ int main(void)
       assert(o.state == ARC_OUTCOME_WAIT);
    }
    assert(arc_outcome_arm(&o,command,0u));
-   start(&o,command,false);
+   swi(&o,0x400c0u,0u,0u,0u,false);
    assert(o.state == ARC_OUTCOME_WAIT);
+   start(&o,command,false);
+   assert(o.state == ARC_OUTCOME_EXIT && o.matched);
+   swi(&o,0x400ddu,42u,0u,0u,false);
+   assert(o.state == ARC_OUTCOME_EXIT);
+   swi(&o,0x11u,0u,0u,0u,true);
+   swi(&o,0x400ddu,0u,0u,0u,true);
+   assert(o.state == ARC_OUTCOME_END);
+   swi(&o,0x400ddu,42u,0u,0u,false);
+   assert(o.state == ARC_OUTCOME_END);
+   swi(&o,0x400c7u,0u,0u,0u,true);
+   assert(o.state == ARC_OUTCOME_POLL);
    assert(arc_outcome_arm(&o,command,0u));
    arc_outcome_refused(&o,0u);
    arc_outcome_refused(&o,4u);

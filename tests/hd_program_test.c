@@ -23,7 +23,17 @@ static void check_basic(const uint8_t *program, size_t size)
           !strstr(text,"STR$(attempt)") &&
           !strstr(text,"%%") &&
           !strstr(text,"data$") && !strstr(text,"raw$") &&
-          strstr(text,"BPUT#file%,field$;:BPUT#file%,13"));
+          strstr(text,"BPUT#file%,field$;:BPUT#file%,13") &&
+          strstr(text,"SYS \"Wimp_Initialise\",200,&4B534154") &&
+          strstr(text,"file%=0:owned%=0:task%=0") &&
+          strstr(text,"SYS \"Wimp_StartTask\",\"Run \"+root$") &&
+          strstr(text,"IF task%<>0 THEN SYS \"Wimp_CloseDown\",task%,&4B534154") &&
+          strstr(text,"IF owned%=0 THEN GOTO 9390") &&
+          strstr(text,"ON ERROR GOTO 9390") &&
+          strstr(text,"GOTO 9390") && !strstr(text,"Filer_Run"));
+   const char *quit=strstr(text,"QUIT");
+   assert(quit && !strstr(quit+4,"QUIT") &&
+          quit>strstr(text,"Wimp_CloseDown"));
    const char *at=text;
    while (*at) {
       const char *end=strchr(at,'\r');
@@ -55,7 +65,7 @@ int main(void)
                                sizeof(program),&size));
    check_basic(program,size);
    golden("install-basic",program,size,
-      "7f746175b86d3f7b9048eadbaaf6a4fbf91cdfd9ab9f9afbe92ec46e97bb790d");
+      "014d1e64f7d28352d916c296f9964346ebc83de077c6c9207184eae6ab4248c6");
    char text[8193];
    memcpy(text,program,size); text[size]=0;
    const char *check=strstr(text,"SYS \"OS_File\",5,root$ TO kind%");
@@ -64,7 +74,7 @@ int main(void)
    const char *pending=strstr(text,"state=pending");
    const char *copy=strstr(text,"Copy ADFS::0.$.Place-2.!Mock_2");
    const char *started=strstr(text,"state=started");
-   const char *run=strstr(text,"Filer_Run \"+root$");
+   const char *run=strstr(text,"SYS \"Wimp_StartTask\",\"Run \"+root$+\".!Mock_2.!Run\"");
    const char *remove=strstr(text,"Remove \"+root$+\".Installed");
    const char *rename=strstr(text,"Rename \"+root$+\".Installed~ ");
    assert(check && guard && make && pending && copy && started && run &&
@@ -73,9 +83,10 @@ int main(void)
    assert(arc_hd_program_build(ARC_HD_HELPER_MARK,&spec,program,
                                sizeof(program),&size));
    golden("mark-basic",program,size,
-      "eb3af7aea78dd8c7c53356882076a4148a43b4abfd84352ddfe501c8bee47040");
+      "61bf85c71a7226ea70883f1f27307c23d8c7d7a6b93cb9306d607b4efcb16c52");
    memcpy(text,program,size); text[size]=0;
    check_basic(program,size);
+   assert(strstr(text,"\"ArcDroid mark\" TO ,task%"));
    assert(strstr(text,"state=started") && strstr(text,"attempt=\"+STR$(attempt%)") &&
           strstr(text,"state=completed") && strstr(text,"product=\"+product$") &&
           strstr(text,"Remove \"+root$+\".Installed") &&
@@ -87,12 +98,12 @@ int main(void)
                                sizeof(program),&size));
    check_basic(program,size);
    golden("extended-install-basic",program,size,
-      "722da016d23b1dcbd49c340601816c054844818a54f2dd0e84e1b727bb743494");
+      "41518571037c22a0a531eaf152ed90804b8f797a12a5cc05b290550e5f8b7e6e");
    assert(arc_hd_program_build(ARC_HD_HELPER_MARK,&extended,program,
                                sizeof(program),&size));
    check_basic(program,size);
    golden("extended-mark-basic",program,size,
-      "94a9c8e3415221295aa2efea23d347857babe3d788e662ecdc0c1599d509c837");
+      "9548b39c6639b77f48aa06a75296717967efe324d936975a6fd7102494779e22");
    char source[129], target[11], product_name[11], forty[41], os[21];
    memset(source,'S',128u); source[128]=0;
    memcpy(target,"!ABCDEFGHI",11u);
@@ -107,6 +118,8 @@ int main(void)
           strlen(".Copying R F ~C ~V")<=255u);
    assert(strlen("Rename ")+2u*root_length+
           strlen(".Copying ")+1u+strlen(target)<=255u);
+   assert(strlen("Run ")+root_length+1u+strlen(target)+
+          strlen(".!Run")<=255u);
    assert(strlen("error=")+80u<=255u);
    assert(arc_hd_program_build(ARC_HD_HELPER_INSTALL,&maximum,program,
                                sizeof(program),&size));
@@ -122,11 +135,11 @@ int main(void)
    assert(arc_launch_disc_build_mode(&discovery,0u,ARC_HD_HELPER_INSTALL,
                                      &spec,disc,error,sizeof(error)));
    golden("install-disc",disc,ARC_LAUNCH_DISC_SIZE,
-      "143929b50817f0262773ba4d228969fe8f0a36c05703de7dfb6e721ad0e7d88c");
+      "12cf250b4350f7bd068f2963d96400e0e14c57a0ac9d729064f773d0e2d0b9d5");
    assert(arc_launch_disc_build_mode(&discovery,0u,ARC_HD_HELPER_MARK,
                                      &spec,disc,error,sizeof(error)));
    golden("mark-disc",disc,ARC_LAUNCH_DISC_SIZE,
-      "5e83af7f85ed592f7d8f6477a30c55f9927bc77ef178b666ca7dd00b4c9ae630");
+      "3fb8e15a560fb280ac88ed6ac7a41cfbc49fa39594b3dd98ad0fcda13f8c099b");
    assert(arc_launch_disc_build_mode(&discovery,0u,ARC_HD_HELPER_PRODUCT,
                                      &spec,disc,error,sizeof(error)));
    golden("product-disc",disc,ARC_LAUNCH_DISC_SIZE,

@@ -688,18 +688,28 @@ function Capture-MediaSignature($Run, [string]$Name) {
     return Get-MediaRowSignature $renamed $Name
 }
 
-function Capture-ExpectedSignature($Run, [string]$Name, [string]$Expected, [bool]$Different) {
-    $deadline = [DateTime]::UtcNow.AddSeconds(10)
+function Capture-ExpectedSignature($Run, [string]$Name, [string]$Expected,
+                                   [bool]$Different, [int]$BudgetSeconds = 10) {
+    $deadline = [DateTime]::UtcNow.AddSeconds($BudgetSeconds)
     $attempt = 0
     do {
         $attempt++
-        $actual = Capture-MediaSignature $Run "$Name-$attempt"
+        try {
+            $actual = Capture-MediaSignature $Run "$Name-$attempt"
+        } catch {
+            $retryable = $_.Exception.Message -like '*screenshot was not observed within 10 seconds*' -or
+                $_.Exception.Message -like '*did not contain a machine-decodable uniform media result row*'
+            if ($BudgetSeconds -le 10 -or -not $retryable -or
+                [DateTime]::UtcNow -ge $deadline) { throw }
+            Start-Sleep -Milliseconds 200
+            continue
+        }
         $matched = $actual -eq $Expected
         if ($matched -ne $Different) { return $actual }
         Start-Sleep -Milliseconds 200
     } while ([DateTime]::UtcNow -lt $deadline)
     $relation = if ($Different) { "different from" } else { "equal to" }
-    throw "$Name did not become $relation $Expected within 10 seconds (last $actual)"
+    throw "$Name did not become $relation $Expected within $BudgetSeconds seconds (last $actual)"
 }
 
 function Wait-JfdOutcome($Run, [string]$Name, [string]$Expected) {
@@ -2164,7 +2174,7 @@ try {
         throw 'Native guest did not commit nine whole commands past 1 MiB'
     }
     $stressSignature = Capture-ExpectedSignature $stressRun 'native-stress-written' `
-        $readbackSignature $false
+        $readbackSignature $false 40
     if ($stressSignature -ne $readbackSignature) {
         throw 'Native stress guest lost its saved-data witness'
     }

@@ -5,6 +5,9 @@ can use the content's persisted hard disc at `ADFS::4`. When an application's
 launch from a write-protected floppy ends after a refused write, ArcDroid
 restarts with a project-authored guest installer. The installer creates
 `ADFS::4.$.ArcDroid`, copies the application there and launches that copy.
+`ArcInstall` and `ArcMark` register as Wimp tasks, then launch their hard-disc
+targets with `Wimp_StartTask` using the exact `Run <path>.!Run` command. They
+close down their Wimp tasks after the child ends or becomes a desktop task.
 If that launch cleanly produces exactly one other runnable application in the
 owned directory, ArcDroid records the produced application and launches it.
 Later loads use the recorded application directly from the hard disc.
@@ -15,6 +18,8 @@ product and attempt bound to the current discovery.
 The guest installer writes only inside `ADFS::4.$.ArcDroid`. The host reads
 FileCore structures to validate the installation; it never writes FileCore
 structures. The helper disc is still drive 1, and the hard disc is drive 4.
+The reader accepts FileCore's updated disc ID in the map record after a guest
+write while checking the remaining disc-record fields and both map copies.
 The install and product recovery helpers are published as `.install.adl` and
 `.product.adl` alongside the ordinary launch helper. Neither recovery helper
 carries a RAM disc.

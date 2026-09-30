@@ -3997,7 +3997,17 @@ def build_launch_outcome_rom(pattern: str) -> bytearray:
         a.mov(0, value)
         a.str(0, 8, index, byte=True)
     a.mov_reg(0, 8)
-    a.emit(0xEF0400DE)  # Wimp_StartTask
+    if pattern.startswith("copy-"):
+        a.emit(0xEF0400C0)  # Helper Wimp_Initialise before the exact match
+        a.ldr_const(9, 0x02002000)
+        a.ldr_const(10, 0xEF0400DE)  # Wimp_StartTask in guest RAM
+        a.str(10, 9)
+        a.ldr_const(10, 0xE1A0F00B)  # MOV PC,R11; SWI owns supervisor LR
+        a.str(10, 9, 4)
+        a.emit(0xE28FB000)  # ADD R11,PC,#0: return after MOV PC,R9
+        a.mov_reg(15, 9)
+    else:
+        a.emit(0xEF0400DE)  # Wimp_StartTask from the authored ROM
     if pattern == "refused":
         a.ldr_const(0, 0x03310FC8)
         a.mov(1, 0x1C)
@@ -4025,6 +4035,9 @@ def build_launch_outcome_rom(pattern: str) -> bytearray:
         a.ldr_const(1, 0x58454241)
         a.mov(2, 5)
         a.emit(0xEF000011)  # A nonzero ABEX exit after CloseDown
+    if pattern.startswith("copy-"):
+        a.mov(0, 42)
+        a.emit(0xEF0400DD)  # Helper CloseDown with nonzero task handle
     if pattern == "close-init":
         a.emit(0xEF0400C0)  # Wimp_Initialise cancels before a poll
     elif pattern != "no-poll":
