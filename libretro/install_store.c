@@ -1,4 +1,4 @@
-/* ArcDroid-authored install hard-disc store. GPL-2.0-only.
+/* ArcDroid-authored hard-disc store. GPL-2.0-only.
  * Committed manifests select immutable bases and append-only command journals.
  * The exact format is versioned and every persisted binding is checked. */
 #include "install_store.h"
@@ -28,8 +28,6 @@ struct ArcInstallStore {
    uint64_t generation, sequence;
    size_t journal_length;
    unsigned selected_slot;
-   unsigned recipe_revision;
-   bool native_hd;
    ArcInstallStoreState state;
    bool writable, failed, incomplete_tail, image_loaded, created, wrote;
    ArcInstallStoreLog log;
@@ -201,7 +199,7 @@ static void manifest_encode(const ArcInstallStore *s, uint64_t generation,
    put32(bytes + 56u, ARC_INSTALL_HD_HEADS);
    put32(bytes + 60u, ARC_INSTALL_HD_CYLINDERS);
    put32(bytes + 64u, ARC_INSTALL_HD_FORMAT_VERSION);
-   put32(bytes + 68u, s->recipe_revision);
+   put32(bytes + 68u, ARC_HD_STORE_REVISION);
    put64(bytes + 72u, generation);
    memcpy(bytes + 80u, base, strlen(base));
    memcpy(bytes + 144u, hash, 64u);
@@ -482,12 +480,12 @@ static bool create_base(ArcInstallStore *s)
       return false;
    }
 #if defined(ARCDROID_TEST_FAULTS)
-   if (s->native_hd && arc_test_corrupt_native_format) {
+   if (arc_test_corrupt_native_format) {
       arc_test_corrupt_native_format = false;
       s->image[0] ^= 1u;
    }
 #endif
-   if (s->native_hd) {
+   {
       char digest[65];
       arc_sha256_hex(s->image, ARC_INSTALL_HD_BYTES, digest);
       if (strcmp(digest,
@@ -606,15 +604,14 @@ static bool compact(ArcInstallStore *s)
       report(s, "store-compaction=old-generation-cleanup-failed");
    return true;
 }
+static bool store_publish(ArcInstallStore *s, char *error, size_t error_size);
 static ArcInstallStore *store_open(const char *save_dir,
-   const ArcInstallPlan *plan, const char *content_id, bool native_hd,
-   bool create_candidate, bool writable,
+   const char *content_id, bool writable,
    ArcInstallStoreLog log, void *log_opaque, char *error, size_t error_size)
 {
-   if (!save_dir || (native_hd ? (!content_id || strlen(content_id) != 40u) :
-       (!plan || !plan->profile || !plan->variant || !plan->storage_id[0])))
+   if (!save_dir || !content_id || strlen(content_id) != 40u)
       return NULL;
-   if (native_hd) for (unsigned i = 0u; i < 40u; ++i)
+   for (unsigned i = 0u; i < 40u; ++i)
       if (!((content_id[i] >= '0' && content_id[i] <= '9') ||
             (content_id[i] >= 'a' && content_id[i] <= 'f'))) return NULL;
    ArcInstallStore *s = calloc(1u, sizeof(*s));
@@ -622,20 +619,17 @@ static ArcInstallStore *store_open(const char *save_dir,
    s->image = malloc(ARC_INSTALL_HD_BYTES);
    if (!s->image) { free(s); return NULL; }
    s->log = log; s->log_opaque = log_opaque;
-   s->native_hd = native_hd;
-   s->recipe_revision = native_hd ? ARC_HD_STORE_REVISION : plan->profile->revision;
-   strcpy(s->id, native_hd ? content_id : plan->storage_id);
+   strcpy(s->id, content_id);
    s->writable = writable;
    int n = snprintf(s->directory, sizeof(s->directory),
-                    "%s/arcdroid/%s/%s", save_dir,
-                    native_hd ? "hd" : "install", s->id);
+                    "%s/arcdroid/hd/%s", save_dir, s->id);
    if (n < 0 || (size_t)n >= sizeof(s->directory)) goto damaged;
    Listing listing = {0};
    bool listed = arc_io_list_directory(s->directory, list_visit, &listing);
    if (!listed) {
       /* A present but unreadable directory is damage, not a new store. */
       if (arc_io_existing_directory(s->directory)) goto damaged;
-      if (!create_candidate || !writable) {
+      if (!writable) {
          s->state = ARC_INSTALL_STORE_NEW;
          report(s, "store-state=new read-only");
          return s;
@@ -649,9 +643,7 @@ static ArcInstallStore *store_open(const char *save_dir,
          s->state = ARC_INSTALL_STORE_NEW;
          s->writable = false;
          report(s, "store-mode=read-only reason=directory-create-failed");
-         set_error(error, error_size,
-            native_hd ? "directory-create-failed" :
-            "Persistent install saves need a native writable save directory; choose Install Saves: Temporary to use RAM.");
+         set_error(error, error_size, "directory-create-failed");
          return s;
       }
       listed = arc_io_list_directory_diagnostic(s->directory, list_visit,
@@ -673,11 +665,8 @@ static ArcInstallStore *store_open(const char *save_dir,
          m[1].generation > m[0].generation ? 1u : 0u;
       const Manifest *chosen = &m[selected];
       bool requested_writable = writable;
-      if (native_hd ? chosen->revision != ARC_HD_STORE_REVISION :
-          !arc_install_revision_supported(plan->profile, chosen->revision)) {
-         set_error(error, error_size,
-                   native_hd ? "saved-disc-revision-unsupported" :
-                   "Saved installation recipe revision is unsupported; preserve the install store.");
+      if (chosen->revision != ARC_HD_STORE_REVISION) {
+         set_error(error, error_size, "saved-disc-revision-unsupported");
          goto damaged;
       }
       s->selected_slot = selected;
@@ -717,15 +706,13 @@ static ArcInstallStore *store_open(const char *save_dir,
           !header_only(s, "journal.g0.tmp", true)) goto damaged;
       s->state = ARC_INSTALL_STORE_UNPUBLISHED;
    } else goto damaged;
-   if (create_candidate && writable && !write_probe(s)) {
+   if (writable && !write_probe(s)) {
       s->writable = false;
       writable = false;
       report(s, "store-mode=read-only reason=write-probe-failed");
-      set_error(error, error_size,
-         native_hd ? "write-probe-failed" :
-         "Persistent install saves need a native writable save directory; choose Install Saves: Temporary to use RAM.");
+      set_error(error, error_size, "write-probe-failed");
    }
-   if (!create_candidate || !writable) {
+   if (!writable) {
       report(s, s->state == ARC_INSTALL_STORE_NEW ? "store-state=new read-only" :
                                                 "store-state=unpublished read-only");
       return s;
@@ -739,37 +726,27 @@ static ArcInstallStore *store_open(const char *save_dir,
       report(s, "store-state=unpublished cleaned");
    }
    if (!create_base(s)) goto creation_failed;
-   if (native_hd && !arc_install_store_publish(s, error, error_size))
+   if (!store_publish(s, error, error_size))
       goto creation_failed;
-   if (native_hd) s->created = true;
+   s->created = true;
    return s;
 creation_failed:
    s->writable = false;
-   if (!native_hd || !error || !error[0]) set_error(error, error_size,
-      native_hd ? "create-or-publication-failed" :
-      "Unable to create the install disc in the save directory; check free space and write access, or choose Install Saves: Temporary.");
+   if (!error || !error[0]) set_error(error, error_size,
+      "create-or-publication-failed");
    return s;
 damaged:
    s->state = ARC_INSTALL_STORE_DAMAGED;
    s->writable = false;
    report(s, "store-state=damaged");
-   if (!error || !error[0]) set_error(error, error_size,
-      native_hd ? "saved-disc-damaged" :
-      "Saved installation is damaged; preserve the install directory and restore a backup.");
+   if (!error || !error[0]) set_error(error, error_size, "saved-disc-damaged");
    return s;
-}
-ArcInstallStore *arc_install_store_open(const char *save_dir,
-   const ArcInstallPlan *plan, bool create_candidate, bool writable,
-   ArcInstallStoreLog log, void *log_opaque, char *error, size_t error_size)
-{
-   return store_open(save_dir, plan, NULL, false, create_candidate, writable,
-                     log, log_opaque, error, error_size);
 }
 ArcInstallStore *arc_hd_store_open(const char *save_dir, const char *content_id,
    bool writable, ArcInstallStoreLog log, void *log_opaque,
    char *error, size_t error_size)
 {
-   return store_open(save_dir, NULL, content_id, true, writable, writable,
+   return store_open(save_dir, content_id, writable,
                      log, log_opaque, error, error_size);
 }
 uint64_t arc_install_store_generation(const ArcInstallStore *s)
@@ -786,8 +763,7 @@ ArcInstallStoreState arc_install_store_state(const ArcInstallStore *s)
 { return s ? s->state : ARC_INSTALL_STORE_DAMAGED; }
 const uint8_t *arc_install_store_image(const ArcInstallStore *s)
 { return s && s->image_loaded &&
-         (s->state == ARC_INSTALL_STORE_READY ||
-          s->state == ARC_INSTALL_STORE_UNPUBLISHED) ? s->image : NULL; }
+         (s->state == ARC_INSTALL_STORE_READY) ? s->image : NULL; }
 const char *arc_install_store_id(const ArcInstallStore *s)
 { return s ? s->id : NULL; }
 bool arc_install_store_writable(const ArcInstallStore *s)
@@ -804,8 +780,7 @@ bool arc_install_store_read(void *opaque, uint32_t lba, uint32_t count,
    if (!s || !data || !count || lba >= ARC_INSTALL_HD_SECTORS ||
        count > ARC_INSTALL_HD_SECTORS - lba ||
        !s->image_loaded ||
-       (s->state != ARC_INSTALL_STORE_READY &&
-        s->state != ARC_INSTALL_STORE_UNPUBLISHED)) return false;
+       s->state != ARC_INSTALL_STORE_READY) return false;
    memcpy(data, s->image + (size_t)lba * ARC_INSTALL_HD_SECTOR,
           (size_t)count * ARC_INSTALL_HD_SECTOR);
    return true;
@@ -829,16 +804,7 @@ bool arc_install_store_write(void *opaque, uint32_t lba, uint32_t count,
    size_t payload_length = (size_t)count * ARC_INSTALL_HD_SECTOR;
    char path[4096];
    bool good = false;
-   if (s->state == ARC_INSTALL_STORE_UNPUBLISHED) {
-      if (!full_path(s, s->base_leaf, path)) goto failed;
-      ArcIoFile *file = arc_io_open_file(path, true);
-      good = file && arc_io_seek_file(file,
-         (int64_t)lba * ARC_INSTALL_HD_SECTOR, RETRO_VFS_SEEK_POSITION_START) >= 0 &&
-         arc_io_write_file(file, data, payload_length) == payload_length &&
-         arc_io_flush_file(file);
-      if (file && !arc_io_close_file(file)) good = false;
-      if (!good) goto failed;
-   } else if (s->state == ARC_INSTALL_STORE_READY) {
+   if (s->state == ARC_INSTALL_STORE_READY) {
       if (s->sequence == UINT64_MAX ||
           s->journal_length > JOURNAL_CAP ||
           RECORD_HEADER + payload_length + RECORD_TRAILER >
@@ -878,18 +844,12 @@ bool arc_install_store_write(void *opaque, uint32_t lba, uint32_t count,
    memcpy(s->image + (size_t)lba * ARC_INSTALL_HD_SECTOR,
           data, payload_length);
    s->wrote = true;
-   if (s->state == ARC_INSTALL_STORE_UNPUBLISHED) {
-      char message[96];
-      snprintf(message, sizeof(message), "candidate-write lba=%" PRIu32
-               " count=%" PRIu32, lba, count);
-      report(s, message);
-   }
    return true;
 failed:
    arc_install_store_failed(s, "store-write-failed=io");
    return false;
 }
-bool arc_install_store_publish(ArcInstallStore *s,
+static bool store_publish(ArcInstallStore *s,
    char *error, size_t error_size)
 {
    if (!s || s->state != ARC_INSTALL_STORE_UNPUBLISHED ||
@@ -903,8 +863,7 @@ bool arc_install_store_publish(ArcInstallStore *s,
    free(readback);
    if (!good || !journal_create(s, 0u, hash) ||
        !manifest_publish(s, 0u, "disc.g0.hdf", hash, "journal.g0", 0u)) {
-      set_error(error, error_size, s->native_hd ? "publication-failed" :
-         "Saved installation publication failed; retry installation.");
+      set_error(error, error_size, "publication-failed");
       report(s, "store-publication=failed");
       return false;
    }

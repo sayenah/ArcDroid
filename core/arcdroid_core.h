@@ -236,10 +236,8 @@ typedef struct {
    unsigned first_visible;
    bool inspection_incomplete;
    bool nested_scope;
-   bool install_mode;
    bool post_boot;
    bool boot_hit;
-   char install_labels[2][32];
 } ArcLaunchChooser;
 
 #define ARC_CMOS_RECORD_SIZE 256u
@@ -329,9 +327,6 @@ void arc_launch_chooser_post_boot(ArcLaunchChooser *chooser,
                                   const ArcLaunchDiscovery *discovery);
 void arc_launch_chooser_boot_hit(ArcLaunchChooser *chooser,
                                  const ArcLaunchDiscovery *discovery);
-bool arc_launch_chooser_install_init(ArcLaunchChooser *chooser,
-                                    const char *const *labels, unsigned count,
-                                    int remembered_candidate);
 void arc_launch_chooser_move(ArcLaunchChooser *chooser, int direction);
 int arc_launch_chooser_selection(const ArcLaunchChooser *chooser);
 int arc_launch_chooser_hit(const ArcLaunchChooser *chooser,

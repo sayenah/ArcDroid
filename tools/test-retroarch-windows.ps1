@@ -297,6 +297,7 @@ network_cmd_enable = "true"
 network_cmd_port = "55355"
 quit_press_twice = "false"
 initial_disk_change_enable = "true"
+game_specific_options = "true"
 "@ | Set-Content -Encoding ASCII $config
 
 $log = Join-Path $evidenceDirectory "retroarch.log"
@@ -2041,72 +2042,108 @@ if ($env:GITHUB_STEP_SUMMARY) {
     Add-Content -Encoding UTF8 $env:GITHUB_STEP_SUMMARY "- Slice 6b persistence: no per-game .srm files were created under the saves directory."
 }
 
-# Slice 10b uses the test core and an authored ARMv2 guest. The guest writes
-# the exact synthetic FileCore tree through IDE, rings the controller doorbell,
-# writes a save after same-session recreation, and paints outcome byte 0x31.
-# A fresh process reads that save and paints outcome byte 0x42. Screenshots
-# are taken after a fixed steady run, never compared across early/late frames.
-Copy-Item -Force (Join-Path $InputDirectory "arcdroid_libretro_test.dll") $core
-Copy-Item -Force (Join-Path $InputDirectory "arcdroid-install-guest.rom") $firmware
-$installPackageDirectory = Join-Path (Split-Path $systemDirectory) "adffs"
-New-Item -ItemType Directory -Force $installPackageDirectory | Out-Null
-Copy-Item -Force (Join-Path $InputDirectory "synthetic.zip") `
-    (Join-Path $installPackageDirectory "synthetic.zip")
-$content = (Resolve-Path (Join-Path $InputDirectory "install-first.m3u")).Path
+# Native IDE stress guest extends the ordinary guest's saved-sector witness.
+# Global and per-game options deliberately retain obsolete valid/malformed
+# install values; the remaining hard-disc and write overrides must still work.
+Copy-Item -Force (Join-Path $InputDirectory 'arcdroid_libretro_test.dll') $core
+$previousContent = $content
+$previousScreenshot = $screenshot
+$content = $fContent
 @"
 arcdroid_machine = "Auto"
 arcdroid_cpu = "Auto"
 arcdroid_disk_writes = "shadow"
+arcdroid_hard_disc = "auto"
+arcdroid_launch = "off"
 arcdroid_install_saves = "persistent"
-arcdroid_jfd_boot = "auto"
-arcdroid_launch = "auto"
 "@ | Set-Content -Encoding ASCII $coreOptions
-$installStore = Join-Path $coreSaveDirectory "install\fffbd5a69f9b43c4ea8cc69f1fe9234f393e3d45"
-function Get-InstallStoreListing {
-    $entries = @(Get-ChildItem -LiteralPath $coreSaveDirectory -Force -Recurse -ErrorAction SilentlyContinue |
-        ForEach-Object { $_.FullName })
-    if ($entries.Count -eq 0) { return "<empty or missing>" }
-    return ($entries -join " | ")
-}
-$screenshot = Join-Path $evidenceDirectory "install-saved.png"
+$stalePerGameOptions = Join-Path $coreOptionsDirectory 'valid-f.opt'
+Remove-Item -Force -ErrorAction SilentlyContinue $stalePerGameOptions
+Copy-Item -Force (Join-Path $InputDirectory 'arcdroid-native-hd-guest.rom') $firmware
+$screenshot = Join-Path $evidenceDirectory 'native-stress-global-valid.png'
 $beforeLines = @(Get-Content $log).Count
-Invoke-ArcDroid 1500 $true
-$firstLines = @(Get-Content $log | Select-Object -Skip $beforeLines)
-foreach ($required in @(
-    "resolved=A3020 reason=install-disc",
-    "doorbell-latched track=0 side=1 sector=0",
-    "validation=complete reason=complete tree_count=2 tree_sha256=752fe22239308de0a286ef3c224239150c573878b7f15b9c02a7fdc474177dec",
-    "store-publication=committed generation=0",
-    "run-plan=recreated same-session=1",
-    "journal-commit lba=15456 count=1")) {
-    if (-not @($firstLines | Where-Object { $_.Contains($required) }).Count) {
-        throw "Install guest first process lacked '$required'"
+Invoke-ArcDroid 900 $true
+$globalLines = @(Get-Content $log | Select-Object -Skip $beforeLines)
+$readbackSignature = Get-MediaRowSignature $screenshot 'native-stress-global-valid'
+if ($readbackSignature -ne 'ff009400' -or
+    -not @($globalLines | Where-Object { $_.Contains('Hard disc: store-state=ready writable') }).Count -or
+    -not @($globalLines | Where-Object { $_.Contains('Machine: requested=Auto resolved=A3020 reason=hd-media') }).Count) {
+    throw 'Native stress setup did not read the saved witness with stale global option'
+}
+@"
+arcdroid_machine = "A3020"
+arcdroid_cpu = "Auto"
+arcdroid_disk_writes = "shadow"
+arcdroid_hard_disc = "auto"
+arcdroid_launch = "off"
+arcdroid_install_saves = "malformed!"
+"@ | Set-Content -Encoding ASCII $stalePerGameOptions
+$resetRun = Start-MediaRun $content 'native-stress-stale-per-game-reset'
+try {
+    $attachNeedle = 'Hard disc: policy=auto attach=yes mode=writable reason=attached'
+    $attachBefore = @(Select-String -Path $resetRun.RetroLog -SimpleMatch $attachNeedle).Count
+    if ($attachBefore -lt 1) { throw 'Native stress hard disc was not attached before RESET' }
+    Send-MediaCommand $resetRun 'RESET'
+    $resetDeadline = [DateTime]::UtcNow.AddSeconds(30)
+    do {
+        if ($resetRun.Process.HasExited) { throw 'Native stress guest exited during RESET' }
+        $resetLines = @(Get-Content $resetRun.RetroLog -ErrorAction SilentlyContinue)
+        $attachAfter = @($resetLines | Where-Object { $_.Contains($attachNeedle) }).Count
+        if ($attachAfter -gt $attachBefore) { break }
+        Start-Sleep -Milliseconds 150
+    } while ([DateTime]::UtcNow -lt $resetDeadline)
+    if ($attachAfter -le $attachBefore) {
+        throw 'Native stress hard disc did not reattach after RESET'
     }
+    # The guest's saved-data witness is the rendered row, so allow video to
+    # resume after the logged hard-disc reattach before judging that row.
+    $captureDeadline = [DateTime]::UtcNow.AddSeconds(40)
+    $captureAttempt = 0
+    $resetSignature = $null
+    do {
+        $captureAttempt++
+        try {
+            $resetSignature = Capture-ExpectedSignature $resetRun `
+                "native-stress-after-reset-$captureAttempt" $readbackSignature $false
+            break
+        } catch {
+            $message = $_.Exception.Message
+            $retryable = $message -like '*screenshot was not observed within 10 seconds*' -or
+                $message -like '*did not become equal to*' -or
+                $message -like '*did not contain a machine-decodable uniform media result row*'
+            if (-not $retryable -or [DateTime]::UtcNow -ge $captureDeadline) { throw }
+            Start-Sleep -Milliseconds 250
+        }
+    } while ([DateTime]::UtcNow -lt $captureDeadline)
+    if ($resetSignature -ne $readbackSignature) {
+        throw 'Stale per-game option changed the native readback after RESET'
+    }
+    $resetLines = @(Get-Content $resetRun.RetroLog)
+    if (-not @($resetLines | Where-Object {
+            $_.Contains('Machine: requested=A3020 resolved=A3020 reason=option')
+        }).Count -or
+        -not @($resetLines | Where-Object {
+            $_.Contains('Hard disc: policy=auto attach=yes mode=writable reason=attached')
+        }).Count) {
+        throw 'Per-game stale option displaced the hard-disc or write override'
+    }
+    Stop-MediaRun $resetRun
+} finally {
+    if (-not $resetRun.Process.HasExited) { Stop-MediaRun $resetRun }
 }
-if (-not (Test-Path (Join-Path $installStore "ready.a")) -or
-    -not (Test-Path (Join-Path $installStore "journal.g0"))) {
-    throw "Install guest did not publish its ready manifest and journal; searched=$installStore; directory_listing=[$(Get-InstallStoreListing)]"
-}
-$savedSignature = Get-MediaRowSignature $screenshot "install-saved-outcome-0x31"
 
-function Wait-InstallLog($Run, [string]$Needle, [int]$Seconds) {
+function Wait-NativeStressLog($Run, [string]$Needle, [int]$Seconds) {
     $deadline = [DateTime]::UtcNow.AddSeconds($Seconds)
     while ([DateTime]::UtcNow -lt $deadline) {
-        if ($Run.Process.HasExited) {
-            throw "$($Run.Name) exited before '$Needle' appeared"
-        }
+        if ($Run.Process.HasExited) { throw "$($Run.Name) exited before '$Needle'" }
         if ((Test-Path $Run.RetroLog) -and
-            (Select-String -Path $Run.RetroLog -SimpleMatch $Needle -Quiet)) {
-            return
-        }
+            (Select-String -Path $Run.RetroLog -SimpleMatch $Needle -Quiet)) { return }
         Start-Sleep -Milliseconds 150
     }
     throw "$($Run.Name) did not log '$Needle' within $Seconds seconds"
 }
-function Stop-InstallRunAbrupt($Run, [string]$Reason) {
-    if ($Run.Process.HasExited) {
-        throw "$($Run.Name) exited before the planned termination: $Reason"
-    }
+function Stop-NativeStressRunAbrupt($Run, [string]$Reason) {
+    if ($Run.Process.HasExited) { throw "$($Run.Name) exited before $Reason" }
     Stop-Process -Id $Run.Process.Id -Force
     [void]$Run.Process.WaitForExit(30000)
     $Run.Udp.Dispose()
@@ -2115,79 +2152,61 @@ function Stop-InstallRunAbrupt($Run, [string]$Reason) {
     if (Test-Path $Run.Stderr) { $output += Get-Content $Run.Stderr }
     $output | Set-Content -Encoding UTF8 (Join-Path $evidenceDirectory "$($Run.Name)-process.log")
     Remove-Item -Force -ErrorAction SilentlyContinue $Run.Stdout, $Run.Stderr
-    Write-Host "$($Run.Name) terminated after $Reason"
 }
 
-# Kill after the ninth durable journal commit, before the next load can start
-# compaction or rename a manifest. The fresh process has already read the
-# saved byte and painted its distinct terminal outcome.
-$reloadRun = Start-MediaRun $content "install-journal-before-rename"
+Copy-Item -Force (Join-Path $InputDirectory 'arcdroid-native-hd-stress.rom') $firmware
+$stressRun = Start-MediaRun $content 'native-stress-before-compaction'
 try {
-    Wait-InstallLog $reloadRun "journal-commit lba=4048 count=256" 90
-    if (-not (Test-Path (Join-Path $installStore "journal.g0")) -or
-        (Get-Item (Join-Path $installStore "journal.g0")).Length -le 1MB) {
-        throw "Install guest did not exceed the compaction threshold; searched=$installStore; directory_listing=[$(Get-InstallStoreListing)]"
+    Wait-NativeStressLog $stressRun 'journal-commit lba=6096 count=256' 120
+    $stressLines = @(Get-Content $stressRun.RetroLog)
+    if (@($stressLines | Where-Object { $_.Contains('journal-commit') }).Count -ne 9 -or
+        (Get-Item (Join-Path $fHardDiscStore 'journal.g0')).Length -le 1MB) {
+        throw 'Native guest did not commit nine whole commands past 1 MiB'
     }
-    Start-Sleep -Seconds 1
-    $readbackSignature = Capture-MediaSignature $reloadRun "install-readback-outcome-0x42"
-    $reloadLines = @(Get-Content $reloadRun.RetroLog)
-    if (-not @($reloadLines | Where-Object { $_.Contains("store-state=ready writable") }).Count -or
-        @($reloadLines | Where-Object { $_.Contains("store-publication=") }).Count -or
-        @($reloadLines | Where-Object { $_.Contains("journal-commit") }).Count -ne 9) {
-        throw "Install guest fresh process did not read the READY store and commit nine whole commands"
+    $stressSignature = Capture-MediaSignature $stressRun 'native-stress-written'
+    if ($stressSignature -ne $readbackSignature) {
+        throw 'Native stress guest lost its saved-data witness'
     }
-    Stop-InstallRunAbrupt $reloadRun "nine journal commits, before manifest rename"
+    Stop-NativeStressRunAbrupt $stressRun 'nine journal commits before the next load'
 } finally {
-    if (-not $reloadRun.Process.HasExited) {
-        Stop-InstallRunAbrupt $reloadRun "cleanup after failed pre-rename check"
+    if (-not $stressRun.Process.HasExited) {
+        Stop-NativeStressRunAbrupt $stressRun 'cleanup after failed pre-compaction check'
     }
-}
-if ($savedSignature -eq $readbackSignature) {
-    throw "Install guest saved and fresh-readback outcome signatures matched"
 }
 
-# Load the oversized journal. The core logs immediately before the manifest
-# publish and immediately after the rename. Terminate after the latter, then
-# open the store once more to prove that generation selection survives it.
-$compactRun = Start-MediaRun $content "install-compact-after-rename"
+Copy-Item -Force (Join-Path $InputDirectory 'arcdroid-native-hd-guest.rom') $firmware
+$compactRun = Start-MediaRun $content 'native-stress-after-rename'
 try {
-    Wait-InstallLog $compactRun "store-compaction=manifest-renamed generation=1" 90
-    Wait-InstallLog $compactRun "store-compaction=committed" 90
+    Wait-NativeStressLog $compactRun 'store-compaction=manifest-renamed generation=1' 120
+    Wait-NativeStressLog $compactRun 'store-compaction=committed' 120
     $compactLines = @(Get-Content $compactRun.RetroLog)
-    if (-not @($compactLines | Where-Object {
-            $_.Contains("store-compaction=manifest-publish-start generation=1")
-        }).Count -or -not (Test-Path (Join-Path $installStore "ready.b"))) {
-        throw "Install guest compaction did not publish generation 1; searched=$installStore; directory_listing=[$(Get-InstallStoreListing)]"
+    if (-not (Test-Path (Join-Path $fHardDiscStore 'ready.b'))) {
+        throw 'Native store did not publish generation 1'
     }
-    Stop-InstallRunAbrupt $compactRun "compaction manifest rename"
+    Stop-NativeStressRunAbrupt $compactRun 'compaction manifest rename'
 } finally {
     if (-not $compactRun.Process.HasExited) {
-        Stop-InstallRunAbrupt $compactRun "cleanup after failed post-rename check"
+        Stop-NativeStressRunAbrupt $compactRun 'cleanup after failed rename check'
     }
 }
-$screenshot = Join-Path $evidenceDirectory "install-after-compaction.png"
+$screenshot = Join-Path $evidenceDirectory 'native-stress-reopened.png'
 $beforeLines = @(Get-Content $log).Count
 Invoke-ArcDroid 900 $true
-$afterCompactionLines = @(Get-Content $log | Select-Object -Skip $beforeLines)
-if (-not @($afterCompactionLines | Where-Object {
-        $_.Contains("store-state=ready writable")
-    }).Count -or @($afterCompactionLines | Where-Object {
-        $_.Contains("store-publication=")
-    }).Count) {
-    throw "Install guest failed to reopen the READY store after compaction termination"
+$reopenLines = @(Get-Content $log | Select-Object -Skip $beforeLines)
+$reopenSignature = Get-MediaRowSignature $screenshot 'native-stress-reopened'
+if ($reopenSignature -ne $readbackSignature -or
+    -not @($reopenLines | Where-Object { $_.Contains('Hard disc: store-state=ready writable') }).Count) {
+    throw 'Native READY store did not reopen with the same guest-visible data'
 }
-$afterCompactionSignature = Get-MediaRowSignature $screenshot "install-after-compaction-outcome-0x42"
-if ($afterCompactionSignature -ne $readbackSignature) {
-    throw "Install guest changed the encoded readback outcome after compaction"
-}
-$installErrors = @($firstLines + $reloadLines + $compactLines + $afterCompactionLines |
+$stressErrors = @($globalLines + $resetLines + $stressLines + $compactLines + $reopenLines |
     Where-Object { $_ -match '\[ERROR\]' })
-if ($installErrors.Count) {
-    throw "Install guest RetroArch log contained errors: $($installErrors -join ' | ')"
-}
-Write-Host "Slice 10b Windows RetroArch: synthetic install, publication, save, readback and pre/post-compaction termination passed ($savedSignature -> $readbackSignature)"
+if ($stressErrors.Count) { throw "Native stress logs contained errors: $($stressErrors -join ' | ')" }
+Remove-Item -Force -ErrorAction SilentlyContinue $stalePerGameOptions
+$content = $previousContent
+$screenshot = $previousScreenshot
+Write-Host 'Slice 22 Windows RetroArch: native IDE stress, stale options, readback and compaction recovery passed'
 if ($env:GITHUB_STEP_SUMMARY) {
-    Add-Content -Encoding UTF8 $env:GITHUB_STEP_SUMMARY "- Slice 10b install disc: authored guest published, saved, and read back in a fresh RetroArch process; terminations before and after compaction manifest rename recovered; steady outcome signatures $savedSignature -> $readbackSignature."
+    Add-Content -Encoding UTF8 $env:GITHUB_STEP_SUMMARY '- Slice 22 native IDE stress: nine bounded commands crossed 1 MiB; both planned terminations recovered with the same guest readback; stale global and per-game options were ignored.'
 }
 
 function Wait-BootRecovery($Run, [string]$Action, [int]$Count) {

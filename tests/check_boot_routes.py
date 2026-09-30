@@ -1,4 +1,4 @@
-"""ADFFS and install routes never arm the boot observer."""
+"""Plain ADFFS never arms the boot observer."""
 from pathlib import Path
 import subprocess
 import sys
@@ -7,20 +7,19 @@ import tempfile
 
 def main() -> None:
     harness, core, rom, content, package, output, route = sys.argv[1:]
+    assert route == "adffs"
     Path(output).mkdir(parents=True, exist_ok=True)
     root = Path(tempfile.mkdtemp(prefix="run-", dir=output))
     command = [harness, core, rom, content, str(root), "--real-boot",
                "--boot-frames", "180", "--boot-package", package,
                "--boot-expect-disabled"]
-    command += (["--boot-jfd-boot", "adffs"] if route == "adffs" else
-                ["--install-saves", "persistent"])
+    command += ["--boot-jfd-boot", "adffs"]
     def run():
         result = subprocess.run(command, capture_output=True, text=True, check=False)
         assert result.returncode == 0, result.stdout + result.stderr
         assert "boot observer disabled for all frames" in result.stdout
         log = (root / "evidence" / "real-boot.log").read_text()
-        assert ("JFD boot: path=adffs script=" if route == "adffs" else
-                "JFD boot: path=adffs-install") in log
+        assert "JFD boot: path=adffs script=" in log
         assert "Boot outcome:" not in log
         assert all("boot-watch=disabled" in line for line in log.splitlines()
                    if line.startswith("Launch:"))

@@ -39,6 +39,7 @@ def main() -> None:
     assert len(original) == 228 and original[:8] == b"ARCBOOT1"
     assert int.from_bytes(original[8:12], "little") == 1
     assert int.from_bytes(original[12:16], "little") == 3
+    assert int.from_bytes(original[156:160], "little") == 1
 
     log, lines = run()
     assert len(lines) == 1 and "remembered boot observation; disc !Boot skipped" in lines[0], lines
@@ -98,15 +99,26 @@ def main() -> None:
         (("--machine", "A3010"), None),
         (("--boot-disk-writes", "off"), None),
         (("--boot-jfd-boot", "native"), None),
-        (("--install-saves", "persistent"), None),
+        (("--boot-hard-disc-auto",), None),
     ):
         record.write_bytes(original)
         log, lines = run(extra, firmware)
         assert len(lines) == 2 and "boot-watch=armed" in lines[0], (extra, firmware, lines)
         assert "Boot outcome: prompt" in log
 
-    # Every stamp and the compatibility revision must cause a new observation.
-    for offset in (12, 16, 56, 96, 136, 140, 144, 148, 152, 156,
+    # Both old values of the reserved slot retain a native observation.
+    for legacy_slot in (0, 1):
+        compatible = bytearray(original)
+        compatible[156:160] = legacy_slot.to_bytes(4, "little")
+        record.write_bytes(compatible)
+        log, lines = run()
+        assert len(lines) == 1 and "remembered boot observation" in lines[0], (
+            legacy_slot, lines)
+        assert "boot-watch=disabled" in lines[0] and "Boot outcome:" not in log
+        assert record.read_bytes() == compatible
+
+    # Other stamps and the compatibility revision cause a new observation.
+    for offset in (12, 16, 56, 96, 136, 140, 144, 148, 152,
                    160, 224):
         changed = bytearray(original)
         changed[offset] ^= 1

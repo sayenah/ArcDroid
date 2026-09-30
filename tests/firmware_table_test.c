@@ -24,14 +24,14 @@ static const ArcFirmwareFingerprint unsupported_launch_firmware = {
    UINT32_C(0x46276f78), "76eade94a489bac39296cc5eb1adbe683af1acb9",
    ARC_RECIPE_COMBINED, 0u
 };
-static const ArcFirmwareFingerprint install_guest_firmware = {
-   ARC_OS_TEST, "ArcDroid install guest ROM", 524288u,
-   UINT32_C(0xac017aee), "7c5a7d503a6cf262a315b21eaec56834f33dc386",
-   ARC_RECIPE_COMBINED, 0u
-};
 static const ArcFirmwareFingerprint native_hd_guest_firmware = {
    ARC_OS_TEST, "ArcDroid native hard disc guest ROM", 524288u,
    UINT32_C(0xaf7b20fe), "705391add28dbbda52ae7196ebdac5f193a7beff",
+   ARC_RECIPE_COMBINED, 0u
+};
+static const ArcFirmwareFingerprint native_hd_stress_firmware = {
+   ARC_OS_TEST, "ArcDroid native hard disc stress ROM", 524288u,
+   UINT32_C(0xb274b6d4), "feeb34420c9b8c79013a50b81c21947a94d57b62",
    ARC_RECIPE_COMBINED, 0u
 };
 
@@ -49,8 +49,8 @@ const ArcFirmwareFingerprint *arc_firmware_table(size_t *count)
       memcpy(table, base, base_count * sizeof(*table));
       table[base_count] = chooser_firmware;
       table[base_count + 1u] = unsupported_launch_firmware;
-      table[base_count + 2u] = install_guest_firmware;
-      table[base_count + 3u] = native_hd_guest_firmware;
+      table[base_count + 2u] = native_hd_guest_firmware;
+      table[base_count + 3u] = native_hd_stress_firmware;
       table_count = base_count + 4u;
    }
    if (count) *count = table_count;
@@ -67,14 +67,14 @@ const ArcFirmwareFingerprint *arc_firmware_match(const ArcDigest *digest)
        digest->crc32 == unsupported_launch_firmware.crc32 &&
        !strcmp(digest->sha1, unsupported_launch_firmware.sha1))
       return &unsupported_launch_firmware;
-   if (digest && digest->size == install_guest_firmware.size &&
-       digest->crc32 == install_guest_firmware.crc32 &&
-       !strcmp(digest->sha1, install_guest_firmware.sha1))
-      return &install_guest_firmware;
    if (digest && digest->size == native_hd_guest_firmware.size &&
        digest->crc32 == native_hd_guest_firmware.crc32 &&
        !strcmp(digest->sha1, native_hd_guest_firmware.sha1))
       return &native_hd_guest_firmware;
+   if (digest && digest->size == native_hd_stress_firmware.size &&
+       digest->crc32 == native_hd_stress_firmware.crc32 &&
+       !strcmp(digest->sha1, native_hd_stress_firmware.sha1))
+      return &native_hd_stress_firmware;
    return arc_base_firmware_match(digest);
 }
 

@@ -844,6 +844,7 @@ static void test_launch_choices_and_chooser(void)
           choice.desktop && !choice.target.length);
    static const char *const malformed[] = {
       "", "v2\ndesktop\n-\n0123456789abcdef0123456789abcdef01234567\n",
+      "v2\ninstall\nF00123\nrev=1\nvariant=second\nset=0123456789abcdef0123456789abcdef01234567\n",
       "v1\napp\n21A0\n0123456789abcdef0123456789abcdef01234567\n",
       "v1\napp\n214\n0123456789abcdef0123456789abcdef01234567\n",
       "v1\ndesktop\n21\n0123456789abcdef0123456789abcdef01234567\n",

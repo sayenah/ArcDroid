@@ -2,6 +2,7 @@
 """Project-authored ARMv2 IDE save/readback ROM; no install doorbell."""
 from pathlib import Path
 import struct
+import sys
 
 from generate_fixtures import Arm2, ROM_SIZE, VIDC_MODE
 
@@ -113,6 +114,43 @@ a.tst_imm(1, 1); a.branch("failure", "ne")
 a.label("unexpected_reset")
 a.mov(6, 0x99); a.branch("paint")
 a.label("reloaded")
+if len(sys.argv) == 3 and sys.argv[2] == "--stress":
+    # Nine complete 256-sector commands add 1,179,648 journal data bytes.
+    # The saved witness at LBA 15456 is outside this bounded write range.
+    a.ldr_const(4, 4048)
+    a.mov(9, 9)
+    a.label("bulk_next")
+    address()
+    a.mov(1, 0); a.str(1, 0, 8, byte=True)  # count 0 means 256
+    a.mov(1, 0x30); a.str(1, 0, 28, byte=True)
+    a.mov(8, 256)
+    a.mov(7, 0x5a)
+    a.label("bulk_sector")
+    a.ldr_const(5, 512)
+    a.label("bulk_data")
+    a.str(7, 0, byte=True)
+    a.subs_imm(5, 5, 1); a.branch("bulk_data", "ne")
+    a.subs_imm(8, 8, 1); a.branch("bulk_final", "eq")
+    a.ldr_const(5, 500000)
+    a.label("bulk_drq_wait")
+    a.ldr(1, 0, 28, byte=True)
+    a.tst_imm(1, 8); a.branch("bulk_sector", "ne")
+    a.tst_imm(1, 1); a.branch("failure", "ne")
+    a.subs_imm(5, 5, 1); a.branch("bulk_drq_wait", "ne")
+    a.branch("failure")
+    a.label("bulk_final")
+    a.ldr_const(5, 500000)
+    a.label("bulk_wait")
+    a.ldr(1, 0, 28, byte=True)
+    a.tst_imm(1, 0x80); a.branch("bulk_tick", "ne")
+    a.tst_imm(1, 1); a.branch("failure", "ne")
+    a.branch("bulk_done")
+    a.label("bulk_tick")
+    a.subs_imm(5, 5, 1); a.branch("bulk_wait", "ne")
+    a.branch("failure")
+    a.label("bulk_done")
+    a.add_imm(4, 4, 256)
+    a.subs_imm(9, 9, 1); a.branch("bulk_next", "ne")
 a.mov(6, 0x42); a.branch("paint")
 a.label("failure")
 a.mov(6, 0xee)

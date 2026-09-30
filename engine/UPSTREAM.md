@@ -63,10 +63,8 @@ FORMAT and unsupported commands. `ide.h` replaces upstream file handles and
 desktop geometry with the bounded backend and transaction state. Slice 10b
 run 2 adds an optional callback to report each unsupported ABRT command code
 once per machine session; it does not change the command result. The source
-is attached only to A3020 install-disc sessions; no other machine gains a
-disc. `src/wd1770.c` and `src/82c711_fdc.c` additionally report controller
-READ SECTOR commands for the one-shot ArcDoor latch. These changes have
-per-file modification notices.
+is attached to native A3020 sessions; no other machine gains a disc. The
+controller files retain their other ArcDroid modifications and per-file notices.
 `src/cmos.c` and `src/cmos.h` accept a session-owned 256-bit raw-address mask.
 The device acknowledges and advances guest writes to masked bytes without
 storing them, and reports attempted and retained values to ArcDroid. Reads and
@@ -168,8 +166,7 @@ credits are preserved in the imported `README.md`.
   console files: replaced by the libretro and ArcDroid platform layers.
 - All podules and dynamic loaders: outside Slice 1 and unsuitable for arbitrary
   runtime loading on Android.
-- HostFS and ST506 controllers: excluded. IDE is supplied only for Slice 10b
-  A3020 install-disc sessions.
+- HostFS and ST506 controllers: excluded. IDE is supplied for native A3020 hard-disc sessions.
 - FDI, APD, HFE, SCP, SSD, and DSD readers plus `fdi2raw`: deferred to
   separately hardened media slices.
 - Drive-noise WAV files: outside Slice 1 and not redistributable evidence.
@@ -192,3 +189,7 @@ are SHA-256 over the exact files at the pinned commit.
 | `arculator/cmos/riscos3_old/cmos.bin` | 256 | `d809253f16f4e865a4e966133032dc430ee0a4b0df2a71caf7c0ce7a075e81c8` |
 
 The support ROM is retained for future HostFS work but is not wired into Slice 1.
+
+Slice 22 removed the ArcDroid install-completion doorbell include and call from
+`82c711_fdc.c` and `wd1770.c`; the remaining controller modifications and
+the pinned upstream IDE provenance are unchanged.

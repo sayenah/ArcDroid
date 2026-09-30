@@ -27,3 +27,5 @@ natively even when an ADFFS package is present. `ADFFS preferred` retains the
 older route. Saved games made by title 159 on the old install path are not
 visible on the default native path in this slice. Its install store remains
 on disk; `ADFFS preferred` can still reach it until Slice 22.
+
+The install path mentioned above was retired in [Slice 22](release-notes-slice22.md).
