@@ -14,6 +14,23 @@ static void golden(const char *label, const uint8_t *data, size_t size,
       fprintf(stderr,"%s: got %s\n",label,digest);
    assert(!strcmp(digest,expected));
 }
+static void check_basic(const uint8_t *program, size_t size)
+{
+   char text[8193];
+   assert(size < sizeof(text));
+   memcpy(text,program,size); text[size]=0;
+   assert(strstr(text,"STR$(attempt%)") &&
+          !strstr(text,"STR$(attempt)") &&
+          !strstr(text,"%%") &&
+          !strstr(text,"data$") && !strstr(text,"raw$") &&
+          strstr(text,"BPUT#file%,field$;:BPUT#file%,13"));
+   const char *at=text;
+   while (*at) {
+      const char *end=strchr(at,'\r');
+      assert(end && (size_t)(end-at)<255u);
+      at=end+1u;
+   }
+}
 int main(void)
 {
    ArcLaunchDiscovery discovery={0};
@@ -36,8 +53,9 @@ int main(void)
    uint8_t program[8192]; size_t size=0u;
    assert(arc_hd_program_build(ARC_HD_HELPER_INSTALL,&spec,program,
                                sizeof(program),&size));
+   check_basic(program,size);
    golden("install-basic",program,size,
-      "1cb52fd7a272c64817457468992907a60b3c1f7aa824753466c5f0b20ec2f2e8");
+      "7f746175b86d3f7b9048eadbaaf6a4fbf91cdfd9ab9f9afbe92ec46e97bb790d");
    char text[8193];
    memcpy(text,program,size); text[size]=0;
    const char *check=strstr(text,"SYS \"OS_File\",5,root$ TO kind%");
@@ -55,9 +73,10 @@ int main(void)
    assert(arc_hd_program_build(ARC_HD_HELPER_MARK,&spec,program,
                                sizeof(program),&size));
    golden("mark-basic",program,size,
-      "8254ba9f6109cc6eb4a0b8b4b73abef73d0d528a2b5bb249e59a8624a67ac2dc");
+      "eb3af7aea78dd8c7c53356882076a4148a43b4abfd84352ddfe501c8bee47040");
    memcpy(text,program,size); text[size]=0;
-   assert(strstr(text,"state=started") && strstr(text,"attempt=1") &&
+   check_basic(program,size);
+   assert(strstr(text,"state=started") && strstr(text,"attempt=\"+STR$(attempt%)") &&
           strstr(text,"state=completed") && strstr(text,"product=\"+product$") &&
           strstr(text,"Remove \"+root$+\".Installed") &&
           strstr(text,"Rename \"+root$+\".Installed~ "));
@@ -66,23 +85,48 @@ int main(void)
       spec.content,spec.os,3u};
    assert(arc_hd_program_build(ARC_HD_HELPER_INSTALL,&extended,program,
                                sizeof(program),&size));
+   check_basic(program,size);
    golden("extended-install-basic",program,size,
-      "09a8906ccb05e18aadaf8a7ff354d39c365af074ae2179484c3bb4ae095a0411");
+      "722da016d23b1dcbd49c340601816c054844818a54f2dd0e84e1b727bb743494");
    assert(arc_hd_program_build(ARC_HD_HELPER_MARK,&extended,program,
                                sizeof(program),&size));
+   check_basic(program,size);
    golden("extended-mark-basic",program,size,
-      "a3b3c6eafd809a2a34e3d2c52d0c79cb9999c5ef45c6573ad86c108f2244c10f");
+      "94a9c8e3415221295aa2efea23d347857babe3d788e662ecdc0c1599d509c837");
+   char source[129], target[11], product_name[11], forty[41], os[21];
+   memset(source,'S',128u); source[128]=0;
+   memcpy(target,"!ABCDEFGHI",11u);
+   memcpy(product_name,"!JKLMNOPQR",11u);
+   memset(forty,'a',40u); forty[40]=0;
+   memset(os,'o',20u); os[20]=0;
+   ArcHdProgramSpec maximum={source,target,product_name,forty,forty,
+      forty,os,4294967295u};
+   const size_t root_length=strlen("ADFS::4.$.ArcDroid");
+   assert(strlen("source=")+strlen(source)<=160u);
+   assert(strlen("Copy ")+strlen(source)+1u+root_length+
+          strlen(".Copying R F ~C ~V")<=255u);
+   assert(strlen("Rename ")+2u*root_length+
+          strlen(".Copying ")+1u+strlen(target)<=255u);
+   assert(strlen("error=")+80u<=255u);
+   assert(arc_hd_program_build(ARC_HD_HELPER_INSTALL,&maximum,program,
+                               sizeof(program),&size));
+   check_basic(program,size);
+   assert(arc_hd_program_build(ARC_HD_HELPER_MARK,&maximum,program,
+                               sizeof(program),&size));
+   check_basic(program,size);
+   memcpy(text,program,size); text[size]=0;
+   assert(strstr(text,"LEN(field$)>=160"));
    uint8_t *disc=malloc(ARC_LAUNCH_DISC_SIZE);
    assert(disc);
    char error[160]={0};
    assert(arc_launch_disc_build_mode(&discovery,0u,ARC_HD_HELPER_INSTALL,
                                      &spec,disc,error,sizeof(error)));
    golden("install-disc",disc,ARC_LAUNCH_DISC_SIZE,
-      "38df9fb3882bf28b3805c4a0cb70aca2a0cbf9765110d8f505724c84e520c257");
+      "143929b50817f0262773ba4d228969fe8f0a36c05703de7dfb6e721ad0e7d88c");
    assert(arc_launch_disc_build_mode(&discovery,0u,ARC_HD_HELPER_MARK,
                                      &spec,disc,error,sizeof(error)));
    golden("mark-disc",disc,ARC_LAUNCH_DISC_SIZE,
-      "f71a807db52f1d71f2d4b6a6fc38beadf78124404c4dc83550f8cb238e7960a8");
+      "5e83af7f85ed592f7d8f6477a30c55f9927bc77ef178b666ca7dd00b4c9ae630");
    assert(arc_launch_disc_build_mode(&discovery,0u,ARC_HD_HELPER_PRODUCT,
                                      &spec,disc,error,sizeof(error)));
    golden("product-disc",disc,ARC_LAUNCH_DISC_SIZE,

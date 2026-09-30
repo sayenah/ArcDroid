@@ -31,6 +31,9 @@ int main(void)
    start(&o,command,false);
    assert(o.state == ARC_OUTCOME_WAIT);
    assert(arc_outcome_arm(&o,command,0u));
+   arc_outcome_refused(&o,0u);
+   arc_outcome_refused(&o,4u);
+   assert(o.refused_floppy == 0u && o.refused_hd == 0u);
    start(&o,command,true);
    assert(o.state == ARC_OUTCOME_EXIT);
    start(&o,command,true);
@@ -46,6 +49,8 @@ int main(void)
    assert(o.state == ARC_OUTCOME_END);
    swi(&o,0x400c7u,0u,0u,0u,true);
    assert(o.state == ARC_OUTCOME_POLL && o.refused_floppy == 1u);
+   arc_outcome_refused(&o,0u);
+   assert(o.refused_floppy == 2u);
    arc_outcome_cancel(&o,"input");
    assert(o.state == ARC_OUTCOME_CANCEL);
    const uint32_t cancels[]={0x400c0u,0x400dfu};
@@ -84,6 +89,16 @@ int main(void)
    swi(&o,0x400e1u,0u,0u,0u,true);
    assert(o.state == ARC_OUTCOME_POLL && o.failed_exits == 1u &&
           o.has_rc && o.last_rc == 7u);
+   swi(&o,0x11u,0u,0x58454241u,9u,true);
+   assert(o.failed_exits == 2u && o.last_rc == 9u);
+   assert(arc_outcome_arm(&o,command,0u));
+   start(&o,command,true);
+   end(&o);
+   assert(o.state == ARC_OUTCOME_END);
+   swi(&o,0x11u,0u,0x58454241u,11u,true);
+   assert(o.failed_exits == 1u && o.last_rc == 11u);
+   swi(&o,0x400c7u,0u,0u,0u,true);
+   assert(o.state == ARC_OUTCOME_POLL);
    assert(arc_outcome_arm(&o,command,0u));
    start(&o,command,true);
    swi(&o,0x11u,0u,0u,0u,true);

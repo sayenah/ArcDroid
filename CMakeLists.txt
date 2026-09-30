@@ -285,6 +285,11 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/check_hd_product.py"
         $<TARGET_FILE:libretro_harness> $<TARGET_FILE:arcdroid_libretro_test>
         "${FIXTURE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/hd-product-process-data")
+    add_test(NAME hd-started-process
+      COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/check_hd_started.py"
+        $<TARGET_FILE:libretro_harness> $<TARGET_FILE:arcdroid_libretro_test>
+        "${FIXTURE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/hd-started-process-data")
     add_test(NAME adf-refusal-rom
       COMMAND "${Python3_EXECUTABLE}"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/check_adf_refusal.py"

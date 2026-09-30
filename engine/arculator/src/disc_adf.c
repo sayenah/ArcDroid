@@ -404,9 +404,9 @@ static void adf_poll()
 	{
 		if (writeprot[adf_drive])
 		{
-            if (adf_refusal_callback)
-               adf_refusal_callback((unsigned)adf_drive, (unsigned)adf_track,
-                                    (unsigned)adf_side, (unsigned)adf_sector);
+			if (adf_refusal_callback)
+				adf_refusal_callback((unsigned)adf_drive, (unsigned)adf_track,
+				                     (unsigned)adf_side, (unsigned)adf_sector);
 //                        rpclog("writeprotect\n");
 			fdc_funcs->writeprotect(fdc_p);
 			adf_inwrite = 0;

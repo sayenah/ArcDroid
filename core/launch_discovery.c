@@ -1470,6 +1470,25 @@ static bool arc_candidate_launchable(const ArcGuestName *name)
    return true;
 }
 
+void arc_launch_candidate_classify_counts(ArcLaunchCandidate *candidate,
+                                           unsigned run_count,
+                                           unsigned boot_count)
+{
+   if (!candidate) return;
+   candidate->resource =
+      arc_name_ascii_literal(&candidate->name, "!System") ||
+      arc_name_ascii_literal(&candidate->name, "!Fonts") ||
+      arc_name_ascii_literal(&candidate->name, "!Scrap");
+   candidate->launchable = arc_candidate_launchable(&candidate->name);
+   candidate->state = ARC_LAUNCH_CANDIDATE_UNKNOWN;
+   candidate->has_boot = false;
+   if (run_count > 1u || boot_count > 1u)
+   { candidate->launchable = false; return; }
+   candidate->has_boot = boot_count == 1u;
+   candidate->state = run_count == 1u ? ARC_LAUNCH_CANDIDATE_APPLICATION :
+                                        ARC_LAUNCH_CANDIDATE_NOT_APPLICATION;
+}
+
 static bool arc_component_safe(uint8_t c)
 {
    return c > 0x20u && c != 0x7fu && c != '.' && c != ':' &&
@@ -1543,11 +1562,7 @@ static void arc_classify_candidate(const ArcFileCore *fs,
       if (arc_name_ascii_literal(&child[item].name, "!Run")) ++run_count;
       if (arc_name_ascii_literal(&child[item].name, "!Boot")) ++boot_count;
    }
-   if (run_count > 1u || boot_count > 1u)
-   { candidate->launchable = false; return; }
-   candidate->has_boot = boot_count == 1u;
-   candidate->state = run_count == 1u ? ARC_LAUNCH_CANDIDATE_APPLICATION :
-                                        ARC_LAUNCH_CANDIDATE_NOT_APPLICATION;
+   arc_launch_candidate_classify_counts(candidate,run_count,boot_count);
 }
 
 static bool arc_normal_name(const ArcGuestName *source, bool strip_bang,

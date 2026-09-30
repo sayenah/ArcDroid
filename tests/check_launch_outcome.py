@@ -26,6 +26,10 @@ def main() -> None:
                          "Hard-disc recovery could not restart"),
         "refused-collision": ("Launch outcome: ended rc=none refused=1",
                               "Hard disc scope: state=unowned"),
+        "refused-second": ("Launch outcome: ended rc=none refused=1",
+                            "recovery=install"),
+        "delayed-input": ("Launch outcome: cancelled=input",),
+        "delayed-reset": ("Launch outcome: cancelled=reset",),
     }
     for pattern, witnesses in cases.items():
         run_dir = batch / pattern
@@ -42,6 +46,12 @@ def main() -> None:
             command += ["--boot-fail-hd-recover"]
         if pattern == "refused-collision":
             command += ["--boot-hd-preflight-collision"]
+        if pattern == "refused-second":
+            command += ["--boot-rearm-after-install"]
+        if pattern == "delayed-input":
+            command += ["--boot-cancel-input"]
+        if pattern == "delayed-reset":
+            command += ["--boot-reset-once", "--boot-reset-at", "10"]
         run = subprocess.run(command, stdout=subprocess.PIPE,
                              stderr=subprocess.STDOUT, text=True)
         assert run.returncode == 0, (pattern, run.stdout[-3000:])
@@ -65,6 +75,12 @@ def main() -> None:
             assert "phase=recovery" not in log
         if pattern == "refused-collision":
             assert "recovery=install" not in log
+        if pattern == "refused-second":
+            assert log.count("Launch outcome: ended rc=none refused=1") == 2
+            assert log.count("recovery=install") == 1
+            assert log.count("disc_load 1 ") == 2
+        if pattern in ("delayed-input", "delayed-reset"):
+            assert "Launch outcome: ended" not in log
 
 
 if __name__ == "__main__":

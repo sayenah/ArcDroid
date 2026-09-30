@@ -49,6 +49,21 @@ static const ArcFirmwareFingerprint launch_outcome_firmware[] = {
     ARC_RECIPE_COMBINED,0u},
    {ARC_OS_TEST,"ArcDroid invented launch outcome refused ROM",524288u,
     UINT32_C(0xe4db2e24),"719809766875a39f4828a3e94c253147049a30ef",
+    ARC_RECIPE_COMBINED,0u},
+   {ARC_OS_TEST,"ArcDroid invented launch outcome copy-clean ROM",524288u,
+    UINT32_C(0x0281c4fb),"2b4d34b7083f8f9c2adab502b355eb83e2b19184",
+    ARC_RECIPE_COMBINED,0u},
+   {ARC_OS_TEST,"ArcDroid invented launch outcome copy-abex ROM",524288u,
+    UINT32_C(0x6051a8fc),"0e7324ee6040e8b480a2091c8438659b587849ac",
+    ARC_RECIPE_COMBINED,0u},
+   {ARC_OS_TEST,"ArcDroid invented launch outcome copy-delayed ROM",524288u,
+    UINT32_C(0x9605556b),"8436198833c91416c37cd3d6bbcbbc64e3042217",
+    ARC_RECIPE_COMBINED,0u},
+   {ARC_OS_TEST,"ArcDroid invented launch outcome delayed-input ROM",524288u,
+    UINT32_C(0x55554b5a),"086534616e366aba89b4b0f4670ddad96d8a0ae8",
+    ARC_RECIPE_COMBINED,0u},
+   {ARC_OS_TEST,"ArcDroid invented launch outcome delayed-reset ROM",524288u,
+    UINT32_C(0x4507848d),"16d45b2ae5639bbbf13424153e4c4fc31cdff4d2",
     ARC_RECIPE_COMBINED,0u}
 };
 
@@ -61,8 +76,10 @@ const ArcFirmwareFingerprint *arc_firmware_table(size_t *count)
    {
       size_t base_count = 0u;
       const ArcFirmwareFingerprint *base = arc_base_firmware_table(&base_count);
-      if (base_count >= MAX_TEST_FIRMWARE - 8u)
-         base_count = MAX_TEST_FIRMWARE - 9u;
+      size_t extra_count = 4u + sizeof(launch_outcome_firmware) /
+                                 sizeof(launch_outcome_firmware[0]);
+      if (base_count > MAX_TEST_FIRMWARE - extra_count)
+         base_count = MAX_TEST_FIRMWARE - extra_count;
       memcpy(table, base, base_count * sizeof(*table));
       table[base_count] = chooser_firmware;
       table[base_count + 1u] = unsupported_launch_firmware;
@@ -70,7 +87,7 @@ const ArcFirmwareFingerprint *arc_firmware_table(size_t *count)
       table[base_count + 3u] = native_hd_stress_firmware;
       memcpy(table+base_count+4u,launch_outcome_firmware,
              sizeof(launch_outcome_firmware));
-      table_count = base_count + 9u;
+      table_count = base_count + extra_count;
    }
    if (count) *count = table_count;
    return table;

@@ -316,6 +316,9 @@ bool arc_launch_binding_format_nested(unsigned ordinal,
                               size_t *output_size);
 bool arc_launch_candidate_is_resource(const ArcLaunchCandidate *candidate);
 bool arc_launch_candidate_is_target(const ArcLaunchCandidate *candidate);
+void arc_launch_candidate_classify_counts(ArcLaunchCandidate *candidate,
+                                           unsigned run_count,
+                                           unsigned boot_count);
 unsigned arc_launch_candidate_index(const ArcLaunchDiscovery *discovery,
                                     unsigned ordinal);
 bool arc_launch_choice_parse(const void *data, size_t size,

@@ -8,10 +8,16 @@ restarts with a project-authored guest installer. The installer creates
 If that launch cleanly produces exactly one other runnable application in the
 owned directory, ArcDroid records the produced application and launches it.
 Later loads use the recorded application directly from the hard disc.
+When the launch chooser is set to Ask, its **Installed** row names the
+validated product; a remembered installed choice uses `.choice` v4 with the
+product and attempt bound to the current discovery.
 
 The guest installer writes only inside `ADFS::4.$.ArcDroid`. The host reads
 FileCore structures to validate the installation; it never writes FileCore
 structures. The helper disc is still drive 1, and the hard disc is drive 4.
+The install and product recovery helpers are published as `.install.adl` and
+`.product.adl` alongside the ordinary launch helper. Neither recovery helper
+carries a RAM disc.
 There is no shipped application profile or title-specific install recipe.
 
 The owned directory contains a copy of the source application, any application

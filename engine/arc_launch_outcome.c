@@ -28,9 +28,10 @@ void arc_outcome_cancel(ArcLaunchOutcome *outcome, const char *reason)
 
 void arc_outcome_refused(ArcLaunchOutcome *outcome, unsigned drive)
 {
-   if (outcome->state == ARC_OUTCOME_WAIT ||
-       outcome->state == ARC_OUTCOME_EXIT ||
-       outcome->state == ARC_OUTCOME_CLOSE)
+   if (outcome->state == ARC_OUTCOME_EXIT ||
+       outcome->state == ARC_OUTCOME_CLOSE ||
+       outcome->state == ARC_OUTCOME_END ||
+       outcome->state == ARC_OUTCOME_POLL)
    {
       unsigned *count = drive == 0u ? &outcome->refused_floppy :
                         drive == 4u ? &outcome->refused_hd : NULL;
@@ -61,23 +62,20 @@ void arc_outcome_swi(ArcLaunchOutcome *outcome, uint32_t swi,
    }
    if (swi == 0x400c0u || swi == 0x400dfu)
    { arc_outcome_cancel(outcome, swi == 0x400c0u ? "initialise" : "report-error"); return; }
+   if (swi == 0x11u && in_rom && r1 == UINT32_C(0x58454241) && r2 != 0u)
+   {
+      if (outcome->failed_exits < UINT32_MAX) ++outcome->failed_exits;
+      outcome->last_rc = r2;
+      outcome->has_rc = true;
+   }
    if (outcome->state == ARC_OUTCOME_EXIT)
    {
       if (swi == 0x11u && in_rom)
-      {
-         if (r1 == UINT32_C(0x58454241) && r2 != 0u)
-         { ++outcome->failed_exits; outcome->last_rc = r2; outcome->has_rc = true; }
          outcome->state = ARC_OUTCOME_CLOSE;
-      }
    }
    else if (outcome->state == ARC_OUTCOME_CLOSE)
    {
-      if (swi == 0x11u && in_rom)
-      {
-         if (r1 == UINT32_C(0x58454241) && r2 != 0u)
-         { ++outcome->failed_exits; outcome->last_rc = r2; outcome->has_rc = true; }
-      }
-      else if (swi == 0x400ddu && in_rom && r0 == 0u)
+      if (swi == 0x400ddu && in_rom && r0 == 0u)
       { outcome->close_r1=r1; outcome->state = ARC_OUTCOME_END; }
    }
    else if (outcome->state == ARC_OUTCOME_END &&

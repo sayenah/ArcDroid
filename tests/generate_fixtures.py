@@ -3966,7 +3966,9 @@ def build_f_discovery() -> bytearray:
 
 def build_launch_outcome_rom(pattern: str) -> bytearray:
     """Invented ROM issuing the observer's real SWIs from ROM entry code."""
-    if pattern not in ("exact", "other", "no-poll", "close-init", "refused"):
+    if pattern not in ("exact", "other", "no-poll", "close-init", "refused",
+                       "copy-clean", "copy-abex", "copy-delayed",
+                       "delayed-input", "delayed-reset"):
         raise ValueError("unknown launch-outcome ROM pattern")
     rom = bytearray(b"\xff" * ROM_SIZE)
     rom[0:4] = struct.pack("<I", 0xE59FF004)
@@ -3986,8 +3988,10 @@ def build_launch_outcome_rom(pattern: str) -> bytearray:
         a.str(1, 0)
     a.ldr_const(0, 0x036E0D0C)
     a.str(1, 0)
-    command = (b"Run ADFS::0.$.!Demo.!Run" if pattern != "other" else
-               b"Filer_Run ADFS::0.$.!Demo") + b"\0"
+    command = (b"Run ADFS::4.$.ArcDroid.!Demo.!Run"
+               if pattern.startswith("copy-") else
+               b"Filer_Run ADFS::0.$.!Demo" if pattern == "other" else
+               b"Run ADFS::0.$.!Demo.!Run") + b"\0"
     a.ldr_const(8, 0x02001000)
     for index, value in enumerate(command):
         a.mov(0, value)
@@ -4009,9 +4013,18 @@ def build_launch_outcome_rom(pattern: str) -> bytearray:
         a.label("refusal_wait")
         a.subs_imm(3, 3, 1)
         a.branch("refusal_wait", "ne")
+    if pattern in ("copy-delayed", "delayed-input", "delayed-reset"):
+        a.ldr_const(3, 3000000)
+        a.label("outcome_delay")
+        a.subs_imm(3, 3, 1)
+        a.branch("outcome_delay", "ne")
     a.mov(0, 0); a.mov(1, 0); a.mov(2, 0)
     a.emit(0xEF000011)  # OS_Exit
     a.emit(0xEF0400DD)  # Wimp_CloseDown, R0=0
+    if pattern == "copy-abex":
+        a.ldr_const(1, 0x58454241)
+        a.mov(2, 5)
+        a.emit(0xEF000011)  # A nonzero ABEX exit after CloseDown
     if pattern == "close-init":
         a.emit(0xEF0400C0)  # Wimp_Initialise cancels before a poll
     elif pattern != "no-poll":
@@ -4246,7 +4259,9 @@ def main() -> None:
     for pattern in ("prompt", "prompt-write", "cli", "cli-then-prompt", "desktop", "cli-confirm", "horizon-edge", "two-phase"):
         (args.output / f"arcdroid-boot-{pattern}.rom").write_bytes(
             build_rom(boot_watch_pattern=pattern))
-    for pattern in ("exact", "other", "no-poll", "close-init", "refused"):
+    for pattern in ("exact", "other", "no-poll", "close-init", "refused",
+                    "copy-clean", "copy-abex", "copy-delayed",
+                    "delayed-input", "delayed-reset"):
         (args.output / f"arcdroid-outcome-{pattern}.rom").write_bytes(
             build_launch_outcome_rom(pattern))
     (args.output / "arcdroid-cmos-exerciser.rom").write_bytes(

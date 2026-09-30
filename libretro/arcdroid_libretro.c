@@ -192,6 +192,7 @@ static bool arc_hd_observe_copy;
 static bool arc_hd_install_used;
 static bool arc_hd_product_used;
 static bool arc_hd_notice_shown;
+static bool arc_hd_reset_cancel_pending;
 static ArcOutcomeState arc_hd_last_outcome_state;
 static char arc_hd_source[160];
 static char arc_hd_target[11];
@@ -1030,6 +1031,7 @@ static void arc_release_session(void)
    arc_hd_observe_target = arc_hd_observe_copy = false;
    arc_hd_install_used = arc_hd_product_used = false;
    arc_hd_notice_shown = false;
+   arc_hd_reset_cancel_pending = false;
    arc_hd_last_outcome_state = ARC_OUTCOME_OFF;
    arc_hd_scope_cached = false;
    snprintf(arc_hd_reason, sizeof(arc_hd_reason), "not-attachable");
@@ -3799,6 +3801,9 @@ static bool arc_hd_scope_prepare(const ArcLaunchDiscovery *discovery,
 #if defined(ARCDROID_TEST_FAULTS)
 extern bool arc_hd_test_seed_product(ArcInstallStore *store,
                                     const ArcHdExpected *expected);
+extern bool arc_hd_test_seed_started(ArcInstallStore *store,
+                                    const ArcHdExpected *expected,
+                                    unsigned variant);
 extern bool arc_hd_test_preflight_collision(ArcInstallStore *store);
 RETRO_API bool arc_libretro_test_seed_hd_product(char id[41])
 {
@@ -3816,6 +3821,57 @@ RETRO_API bool arc_libretro_test_hd_preflight_collision(void)
 {
    return arc_hd_scope_cached && arc_hd_scope.state == ARC_HD_ABSENT &&
       arc_hd_store && arc_hd_test_preflight_collision(arc_hd_store);
+}
+RETRO_API bool arc_libretro_test_seed_hd_started(unsigned variant,
+                                                 bool arm_copy,
+                                                 char id[41])
+{
+   if (!id || !arc_hd_scope_cached || arc_hd_scope.state != ARC_HD_ABSENT ||
+       !arc_hd_store || !arc_install_store_writable(arc_hd_store) ||
+       arc_hd_selected >= arc_boot_discovery.candidate_count ||
+       (arm_copy && variant != 1u)) return false;
+   const ArcLaunchCandidate *candidate=&arc_boot_discovery.candidates[arc_hd_selected];
+   ArcHdExpected expected={arc_hd_source,arc_hd_media,arc_hd_fingerprint,
+      arc_plan.content_id,arc_os_slug(arc_plan.os),&candidate->name};
+   if (!arc_hd_test_seed_started(arc_hd_store,&expected,variant)) return false;
+   memcpy(id,arc_plan.content_id,41u);
+   if (arm_copy) {
+      char command[257];
+      int length=snprintf(command,sizeof(command),
+         "Run ADFS::4.$.ArcDroid.%s.!Run",arc_hd_target);
+      if (length <= 0 || (size_t)length >= sizeof(command) ||
+          !arc_engine_launch_outcome_arm(command)) return false;
+      arc_hd_mode=ARC_HD_HELPER_INSTALL;
+      arc_hd_observe_target=false;
+      arc_hd_observe_copy=true;
+      arc_hd_install_used=true;
+      arc_hd_last_outcome_state=ARC_OUTCOME_WAIT;
+   }
+   return true;
+}
+RETRO_API bool arc_libretro_test_repeat_hd_outcome(void)
+{
+   if (!arc_hd_install_used || !arc_hd_target[0]) return false;
+   char command[257];
+   int length=snprintf(command,sizeof(command),
+      "Run ADFS::0.$.%s.!Run",arc_hd_target);
+   if (length <= 0 || (size_t)length >= sizeof(command) ||
+       !arc_engine_launch_outcome_arm(command)) return false;
+   arc_hd_observe_target=true;
+   arc_hd_observe_copy=false;
+   arc_hd_last_outcome_state=ARC_OUTCOME_WAIT;
+   /* Replay a second qualifying sequence against the ROM's guest command. */
+   extern void arc_engine_boot_watch_swi(uint32_t,uint32_t,uint32_t,uint32_t,
+                                         uint32_t,uint32_t,uint32_t);
+   const uint32_t rom=UINT32_C(0x03800020);
+   arc_engine_boot_watch_swi(0x400deu,0x02001000u,0u,0u,0u,rom,0u);
+   arc_engine_launch_outcome_refused(0u);
+   arc_engine_boot_watch_swi(0x11u,0u,0u,0u,0u,rom,0u);
+   arc_engine_boot_watch_swi(0x400ddu,0u,0u,0u,0u,rom,0u);
+   arc_engine_boot_watch_swi(0x400c7u,0u,0u,0u,0u,rom,0u);
+   ArcLaunchOutcome outcome;
+   arc_engine_launch_outcome_snapshot(&outcome);
+   return outcome.state == ARC_OUTCOME_POLL && outcome.refused_floppy == 1u;
 }
 #endif
 
@@ -3846,11 +3902,9 @@ static bool arc_boot_prepare_hit(const ArcLaunchDiscovery *discovery)
        arc_launch_chooser_init(&arc_chooser,discovery,remembered,
                                remembered_target))
    {
-      if (arc_hd_scope.state == ARC_HD_COMPLETED &&
-          arc_hd_scope.product_present)
-         (void)arc_launch_chooser_add_installed(&arc_chooser,
-            &arc_hd_scope.product,arc_hd_scope.attempt,
-            remembered_target == -2);
+      (void)arc_launch_chooser_add_installed(&arc_chooser,
+         &arc_hd_scope.product,arc_hd_scope.attempt,
+         remembered_target == -2);
       arc_launch_chooser_boot_hit(&arc_chooser,discovery);
       arc_chooser_discovery=*discovery;
       arc_boot_eligible=false;
@@ -4052,10 +4106,8 @@ static bool arc_prepare_launch(ArcMediaEntry *entry, bool ejected,
        arc_launch_chooser_init(&arc_chooser,&discovery,
                                ask_remembered,ask_target))
    {
-      if (arc_hd_scope.state == ARC_HD_COMPLETED &&
-          arc_hd_scope.product_present)
-         (void)arc_launch_chooser_add_installed(&arc_chooser,
-            &arc_hd_scope.product,arc_hd_scope.attempt,ask_target == -2);
+      (void)arc_launch_chooser_add_installed(&arc_chooser,
+         &arc_hd_scope.product,arc_hd_scope.attempt,ask_target == -2);
       arc_chooser_discovery=discovery;
       arc_launch_log(&discovery,-1,"chooser asked");
       return true;
@@ -5646,11 +5698,10 @@ static bool arc_construct_machine(const ArcMachineDescriptor *machine,
        arc_install_store_writable(active_hd))
    {
       char command[257];
-      int length=snprintf(command,sizeof(command),"Run %s.!Run",
-         arc_hd_observe_copy ? "ADFS::4.$.ArcDroid" : arc_hd_source);
-      if (arc_hd_observe_copy)
-         length=snprintf(command,sizeof(command),
-            "Run ADFS::4.$.ArcDroid.%s.!Run",arc_hd_target);
+      int length=arc_hd_observe_copy ?
+         snprintf(command,sizeof(command),
+            "Run ADFS::4.$.ArcDroid.%s.!Run",arc_hd_target) :
+         snprintf(command,sizeof(command),"Run %s.!Run",arc_hd_source);
       if (length > 0 && (size_t)length < sizeof(command) &&
           arc_engine_launch_outcome_arm(command))
          arc_hd_last_outcome_state=ARC_OUTCOME_WAIT;
@@ -5801,6 +5852,10 @@ fallback:
 
 static bool arc_hd_outcome_boundary(void)
 {
+   if (arc_hd_reset_cancel_pending) {
+      if (arc_log) arc_log(RETRO_LOG_INFO,"Launch outcome: cancelled=reset\n");
+      arc_hd_reset_cancel_pending=false;
+   }
    if (!arc_hd_observe_target && !arc_hd_observe_copy) return false;
    ArcLaunchOutcome outcome;
    arc_engine_launch_outcome_snapshot(&outcome);
@@ -5808,7 +5863,7 @@ static bool arc_hd_outcome_boundary(void)
    if (arc_hd_last_outcome_state == ARC_OUTCOME_WAIT && outcome.matched &&
        arc_log)
       arc_log(RETRO_LOG_INFO,"Launch outcome: armed target=%s\n",
-         arc_hd_observe_copy ? "ADFS::4.$.ArcDroid" : arc_hd_source);
+         outcome.command+4u);
    arc_hd_last_outcome_state=outcome.state;
    if (outcome.state == ARC_OUTCOME_CANCEL)
    {
@@ -6486,6 +6541,11 @@ RETRO_API void retro_unload_game(void)
 RETRO_API void retro_reset(void)
 {
    arc_engine_launch_outcome_cancel("reset");
+   if (arc_hd_observe_target || arc_hd_observe_copy) {
+      arc_hd_reset_cancel_pending=true;
+      arc_hd_observe_target=arc_hd_observe_copy=false;
+      arc_hd_last_outcome_state=ARC_OUTCOME_CANCEL;
+   }
    arc_boot_record_hit = false;
    arc_boot_stamp_ready = false;
    bool was_boot_chooser = arc_boot_post_chooser;

@@ -8,7 +8,8 @@
 
 enum { MAP_AT=(2*4064-480)*1024, MAP_SIZE=5*512,
        OWNED_AT=MAP_AT+16*1024, RECORD_AT=MAP_AT+32*1024,
-       PRODUCT_AT=MAP_AT+64*1024, RUN_AT=MAP_AT+80*1024 };
+       COPY_AT=MAP_AT+48*1024, PRODUCT_AT=MAP_AT+64*1024,
+       RUN_AT=MAP_AT+80*1024, COPY_RUN_AT=MAP_AT+96*1024 };
 static void put24(uint8_t *p, unsigned v)
 { p[0]=(uint8_t)v; p[1]=(uint8_t)(v>>8u); p[2]=(uint8_t)(v>>16u); }
 static void put32(uint8_t *p, unsigned v)
@@ -65,20 +66,21 @@ static void entry(uint8_t *d, unsigned index, const char *name,
    put32(e+18u,length); put24(e+22u,address);
    e[25]=directory?0x3bu:0x33u;
 }
-bool arc_hd_test_seed_product(ArcInstallStore *store,
-                              const ArcHdExpected *expected)
+static bool seed_scope(ArcInstallStore *store,
+                       const ArcHdExpected *expected, unsigned variant)
 {
-   if (!store || !expected || !arc_install_store_writable(store)) return false;
+   if (!store || !expected || !expected->copy || variant > 3u ||
+       !arc_install_store_writable(store)) return false;
    uint8_t *image=malloc(ARC_INSTALL_HD_BYTES);
    if (!image) return false;
    memcpy(image,arc_install_store_image(store),ARC_INSTALL_HD_BYTES);
    uint8_t *map=image+MAP_AT, *zone=map+2u*512u;
-   for (unsigned i=0u;i<5u;++i) {
+   for (unsigned i=0u;i<6u;++i) {
       unsigned start=48u+i*16u;
       set_bits(zone,start,15u,3u+i);
       set_bits(zone,start+15u,1u,1u);
    }
-   set_bits(zone,8u,15u,48u+5u*16u-8u);
+   set_bits(zone,8u,15u,48u+6u*16u-8u);
    zone[0]=zone_check(zone);
    memcpy(map+MAP_SIZE,map,MAP_SIZE);
    uint8_t *root=image+MAP_AT+2u*MAP_SIZE;
@@ -86,18 +88,35 @@ bool arc_hd_test_seed_product(ArcInstallStore *store,
    make_dir(image+OWNED_AT,0x20bu);
    static const char run[]="*Echo Invented fixture product\r";
    memcpy(image+RUN_AT,run,sizeof(run)-1u);
+   memcpy(image+COPY_RUN_AT,run,sizeof(run)-1u);
+   make_dir(image+COPY_AT,0x300u);
+   entry(image+COPY_AT,0u,"!Run",sizeof(run)-1u,0x800u,false);
+   finish(image+COPY_AT,1u);
    make_dir(image+PRODUCT_AT,0x300u);
    entry(image+PRODUCT_AT,0u,"!Run",sizeof(run)-1u,0x700u,false);
    finish(image+PRODUCT_AT,1u);
    int record_size=snprintf((char *)image+RECORD_AT,1024u,
-      "ARCINST1\rrevision=1\rstate=completed\rattempt=1\rsource=%s\rmedia=%s\r"
-      "fingerprint=%s\rcontent=%s\ros=%s\rproduct=!Result\r",
+      "ARCINST1\rrevision=1\rstate=%s\rattempt=1\rsource=%s\rmedia=%s\r"
+      "fingerprint=%s\rcontent=%s\ros=%s\r%s",
+      variant == 0u ? "completed" : "started",
       expected->source,expected->media,expected->fingerprint,
-      expected->content,expected->os);
+      expected->content,expected->os,
+      variant == 0u ? "product=!Result\r" : "");
    if (record_size <= 0 || record_size >= 1024) { free(image); return false; }
    entry(image+OWNED_AT,0u,"Installed",(unsigned)record_size,0x400u,false);
-   entry(image+OWNED_AT,1u,"!Result",2048u,0x600u,true);
-   finish(image+OWNED_AT,2u);
+   unsigned count=1u;
+   if (variant != 0u) {
+      char name[11];
+      if (expected->copy->length >= sizeof(name)) { free(image); return false; }
+      memcpy(name,expected->copy->bytes,expected->copy->length);
+      name[expected->copy->length]=0;
+      entry(image+OWNED_AT,count++,name,2048u,0x500u,true);
+   }
+   if (variant == 0u || variant == 1u || variant == 3u)
+      entry(image+OWNED_AT,count++,"!Result",2048u,0x600u,true);
+   if (variant == 3u)
+      entry(image+OWNED_AT,count++,"Notes",1u,0x700u,false);
+   finish(image+OWNED_AT,count);
    bool okay=true;
    for (uint32_t lba=0u;lba<ARC_INSTALL_HD_SECTORS && okay;++lba)
       if (memcmp(image+(size_t)lba*512u,
@@ -105,11 +124,25 @@ bool arc_hd_test_seed_product(ArcInstallStore *store,
          okay=arc_install_store_write(store,lba,1u,image+(size_t)lba*512u);
    if (okay) {
       ArcHdScope scope=arc_hd_scope_read(arc_install_store_read,store,expected);
-      okay=scope.state==ARC_HD_COMPLETED && scope.product_present;
+      okay=variant == 0u ?
+         scope.state==ARC_HD_COMPLETED && scope.product_present :
+         scope.state==ARC_HD_STARTED && scope.copy_present &&
+         scope.application_count == (variant == 2u ? 1u : 2u) &&
+         (variant != 3u || scope.other_count == 1u);
    }
    free(image);
    return okay;
 }
+
+bool arc_hd_test_seed_product(ArcInstallStore *store,
+                              const ArcHdExpected *expected)
+{ return seed_scope(store,expected,0u); }
+
+bool arc_hd_test_seed_started(ArcInstallStore *store,
+                              const ArcHdExpected *expected,
+                              unsigned variant)
+{ return variant >= 1u && variant <= 3u &&
+         seed_scope(store,expected,variant); }
 
 bool arc_hd_test_preflight_collision(ArcInstallStore *store)
 {

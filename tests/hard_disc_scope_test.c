@@ -170,6 +170,26 @@ int main(void)
    finish(image+OWNED_AT,3u);
    scope=arc_hd_scope_read(memory_read,image,&expected);
    assert(scope.state == ARC_HD_COMPLETED && scope.product_present);
+   entry(image+PRODUCT_AT,1u,"!Run",1u,0x600u,false);
+   finish(image+PRODUCT_AT,2u);
+   scope=arc_hd_scope_read(memory_read,image,&expected);
+   assert(scope.state == ARC_HD_COMPLETED && !scope.product_present &&
+          scope.application_count == 1u);
+   entry(image+PRODUCT_AT,1u,"!Boot",1u,0x600u,false);
+   entry(image+PRODUCT_AT,2u,"!Boot",1u,0x600u,false);
+   finish(image+PRODUCT_AT,3u);
+   scope=arc_hd_scope_read(memory_read,image,&expected);
+   assert(scope.state == ARC_HD_COMPLETED && !scope.product_present &&
+          scope.application_count == 1u);
+   make_dir(image+PRODUCT_AT,0x300u);
+   entry(image+PRODUCT_AT,0u,"!Run",1u,0x600u,false);
+   entry(image+PRODUCT_AT,1u,"!Boot",1u,0x600u,false);
+   finish(image+PRODUCT_AT,2u);
+   scope=arc_hd_scope_read(memory_read,image,&expected);
+   assert(scope.state == ARC_HD_COMPLETED && scope.product_present);
+   make_dir(image+PRODUCT_AT,0x300u);
+   entry(image+PRODUCT_AT,0u,"!Run",1u,0x600u,false);
+   finish(image+PRODUCT_AT,1u);
    record(image,&expected,"completed","!Missing");
    entry(image+OWNED_AT,1u,"!Mock",2048u,0x500u,true);
    entry(image+OWNED_AT,2u,"!Result",2048u,0x600u,true);
@@ -179,7 +199,22 @@ int main(void)
           scope.application_count == 2u);
    ((char *)image+RECORD_AT)[0]='X';
    scope=arc_hd_scope_read(memory_read,image,&expected);
-   assert(scope.state == ARC_HD_FOREIGN);
+   assert(scope.state == ARC_HD_UNOWNED);
+   uint8_t *installed=image+OWNED_AT+5u;
+   put32(installed+18u,1025u);
+   finish(image+OWNED_AT,3u);
+   assert(arc_hd_scope_read(memory_read,image,&expected).state==ARC_HD_UNOWNED);
+   record(image,&expected,"started",NULL);
+   put32(installed+18u,1025u);
+   finish(image+OWNED_AT,1u);
+   assert(arc_hd_scope_read(memory_read,image,&expected).state==ARC_HD_FOREIGN);
+   record(image,&expected,"started",NULL);
+   put32(installed+18u,8u);
+   finish(image+OWNED_AT,1u);
+   assert(arc_hd_scope_read(memory_read,image,&expected).state==ARC_HD_FOREIGN);
+   put32(installed+18u,0u);
+   finish(image+OWNED_AT,1u);
+   assert(arc_hd_scope_read(memory_read,image,&expected).state==ARC_HD_UNOWNED);
    record(image,&expected,"started",NULL);
    ((char *)image+RECORD_AT)[40]='X';
    scope=arc_hd_scope_read(memory_read,image,&expected);
@@ -200,7 +235,6 @@ int main(void)
    assert(revision); revision[9]='2';
    assert(arc_hd_scope_read(memory_read,image,&expected).state==ARC_HD_FOREIGN);
    record(image,&expected,"started",NULL);
-   uint8_t *installed=image+OWNED_AT+5u;
    unsigned record_length=(unsigned)installed[18]|
       (unsigned)installed[19]<<8u;
    put32(installed+18u,record_length-4u);

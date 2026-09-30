@@ -196,7 +196,6 @@ static bool directory(HdReader *r, uint32_t address, HdEntry entries[77],
        memcmp(d+1, d+2043, 4u)) return false;
    unsigned n = 0u;
    while (n < 77u && d[5u+n*26u]) ++n;
-   if (n == 77u && d[5u+77u*26u]) return false;
    size_t used = 5u + n*26u;
    size_t word_end = used & ~(size_t)3u;
    uint32_t check = 0u;
@@ -241,38 +240,25 @@ static bool literal(const ArcGuestName *a, const char *s)
       if (fold(a->bytes[i]) != fold((uint8_t)s[i])) return false;
    return true;
 }
-static bool name_safe(const ArcGuestName *name)
-{
-   if (name->length < 2u || name->bytes[0] != '!') return false;
-   for (unsigned i=1u; i<name->length; ++i) {
-      uint8_t c = name->bytes[i];
-      if (c <= 0x20u || c == 0x7fu || c == '.' || c == ':' ||
-          c == '*' || c == '#' || c == '$' || c == '&' || c == '@' ||
-          c == '^' || c == '%' || c == '\\' || c == '|' || c == '"' ||
-          c == '<') return false;
-   }
-   return true;
-}
 static bool application(HdReader *r, const HdEntry *e, bool *valid)
 {
    *valid = false;
-   if (!e->directory || !name_safe(&e->name)) return true;
-   if (e->length != 2048u) return false;
-   HdEntry children[77]; unsigned count;
-   if (!directory(r, e->address, children, &count)) return false;
-   unsigned runs = 0u;
-   for (unsigned i=0u; i<count; ++i)
-      if (!children[i].directory && literal(&children[i].name, "!Run")) ++runs;
    ArcLaunchCandidate candidate = {0};
    candidate.name = e->name;
-   candidate.launchable = name_safe(&e->name) && runs == 1u;
-   candidate.state = runs == 1u ? ARC_LAUNCH_CANDIDATE_APPLICATION :
-                                  ARC_LAUNCH_CANDIDATE_NOT_APPLICATION;
-   candidate.resource = literal(&e->name, "!System") ||
-                        literal(&e->name, "!Fonts") ||
-                        literal(&e->name, "!Scrap");
+   arc_launch_candidate_classify_counts(&candidate,0u,0u);
+   if (!e->directory || !candidate.launchable || candidate.resource ||
+       e->length != 2048u) return true;
+   HdEntry children[77]; unsigned count;
+   if (!directory(r, e->address, children, &count)) return false;
+   unsigned runs = 0u, boots = 0u;
+   for (unsigned i=0u; i<count; ++i) {
+      if (children[i].directory) continue;
+      if (literal(&children[i].name, "!Run")) ++runs;
+      if (literal(&children[i].name, "!Boot")) ++boots;
+   }
+   arc_launch_candidate_classify_counts(&candidate,runs,boots);
    *valid = arc_launch_candidate_is_target(&candidate);
-   return runs <= 1u;
+   return true;
 }
 static bool record_field(const uint8_t *data, size_t length, size_t *at,
                          const char *key, char *out, size_t capacity)
@@ -304,8 +290,10 @@ static ArcHdScopeState parse_record(const uint8_t *data, size_t size,
                                     const ArcHdExpected *expected,
                                     ArcHdScope *scope)
 {
-   if (!size || size > 1024u || size < 9u ||
-       memcmp(data, "ARCINST1\r", 9u) || data[size-1u] != '\r')
+   if (size < 8u || memcmp(data, "ARCINST1", 8u))
+      return ARC_HD_UNOWNED;
+   if (size < 9u || data[8] != '\r' || size > 1024u ||
+       data[size-1u] != '\r')
       return ARC_HD_FOREIGN;
    char state[32], attempt[20], product[16];
    size_t at=9u;
@@ -343,7 +331,10 @@ static ArcHdScopeState parse_record(const uint8_t *data, size_t size,
       return ARC_HD_FOREIGN;
    scope->product.length = (uint8_t)strlen(product);
    memcpy(scope->product.bytes, product, scope->product.length);
-   return name_safe(&scope->product) &&
+   ArcLaunchCandidate candidate={0};
+   candidate.name=scope->product;
+   arc_launch_candidate_classify_counts(&candidate,1u,0u);
+   return arc_launch_candidate_is_target(&candidate) &&
           !equal(&scope->product,expected->copy) ?
           ARC_HD_COMPLETED : ARC_HD_FOREIGN;
 }
@@ -388,8 +379,18 @@ ArcHdScope arc_hd_scope_read(ArcHdRead read, void *opaque,
                  !literal(&entries[i].name,"Installed~")) ++scope.other_count;
    }
    if (!record) { scope.state=ARC_HD_UNOWNED; return scope; }
-   if (record->directory || record->length > 1024u || !record->length) {
+   if (record->directory) {
       scope.state=ARC_HD_FOREIGN; return scope;
+   }
+   if (record->length > 1024u) {
+      uint8_t magic[8];
+      if (!object_read(&r,record->address,magic,sizeof(magic))) return scope;
+      scope.state=memcmp(magic,"ARCINST1",sizeof(magic)) ?
+         ARC_HD_UNOWNED : ARC_HD_FOREIGN;
+      return scope;
+   }
+   if (!record->length) {
+      scope.state=ARC_HD_UNOWNED; return scope;
    }
    uint8_t text[1024];
    if (!object_read(&r,record->address,text,record->length)) return scope;
