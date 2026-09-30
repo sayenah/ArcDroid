@@ -1866,6 +1866,7 @@ def _zip_bytes(entries: list[tuple[str, bytes, bool]],
     with zipfile.ZipFile(output, "w", compression=compression) as archive:
         for name, payload, metadata in entries:
             info = zipfile.ZipInfo(name, (2026, 1, 1, 0, 0, 0))
+            info.create_system = 3  # Stable Unix ZIP header on every host.
             info.compress_type = compression
             if metadata:
                 info.extra = struct.pack("<HH4sIII", 0x4341, 16,
@@ -3424,9 +3425,8 @@ def build_file_data_fixtures(output: Path) -> None:
     struct.pack_into("<I", terminal_166, 304, 1)
     (output / "d-terminal-166.jfd").write_bytes(terminal_166)
     (output / "d-terminal-gzip.jfd").write_bytes(gzip.compress(terminal_jfd, mtime=0))
-    with zipfile.ZipFile(output / "d-terminal.zip", "w") as archive:
-        archive.writestr("Invented.jfd", terminal_jfd,
-                         compress_type=zipfile.ZIP_STORED)
+    (output / "d-terminal.zip").write_bytes(_zip_bytes(
+        [("Invented.jfd", terminal_jfd, False)], zipfile.ZIP_STORED))
     (output / "d-slack.jfd").write_bytes(protected(
         bytes(d), {0: full, 1: [0, 2, 4]}))
     bad_root = bytearray(d)
@@ -4756,12 +4756,12 @@ def main() -> None:
     (hd / "dd-sibling.adf").write_bytes(dd_image)
     (hd / "f-boot.m3u").write_text("valid-f.adf\ndd-sibling.adf\n")
     (hd / "f-sibling.m3u").write_text("dd-sibling.adf\nvalid-f.adf\n")
-    with zipfile.ZipFile(hd / "f-boot.zip", "w", zipfile.ZIP_STORED) as archive:
-        archive.writestr("Disc1.adf", f_image)
-        archive.writestr("Disc2.adf", dd_image)
-    with zipfile.ZipFile(hd / "f-sibling.zip", "w", zipfile.ZIP_STORED) as archive:
-        archive.writestr("Disc1.adf", dd_image)
-        archive.writestr("Disc2.adf", f_image)
+    (hd / "f-boot.zip").write_bytes(_zip_bytes([
+        ("Disc1.adf", f_image, False),
+        ("Disc2.adf", dd_image, False)], zipfile.ZIP_STORED))
+    (hd / "f-sibling.zip").write_bytes(_zip_bytes([
+        ("Disc1.adf", dd_image, False),
+        ("Disc2.adf", f_image, False)], zipfile.ZIP_STORED))
     f_folder = hd / "Fset.adf"
     f_folder.mkdir(exist_ok=True)
     (f_folder / "Fset.adf").write_bytes(f_image)
@@ -5372,11 +5372,11 @@ def main() -> None:
     struct.pack_into("<I", guest, guest_header_at,
                      (guest_header & ~(0xF << 16)) | (8 << 16))
     (family / "quarantine-guest.jfd").write_bytes(guest)
-    with zipfile.ZipFile(family / "quarantine-guest.zip", "w",
-                         zipfile.ZIP_STORED) as archive:
-        archive.writestr("Disc1.jfd", guest)
-        archive.writestr("Disc2.jfd", build_pdd5_jfd(
-            bytes([0x5A]) * 819200, {159: [3]}))
+    (family / "quarantine-guest.zip").write_bytes(_zip_bytes([
+        ("Disc1.jfd", guest, False),
+        ("Disc2.jfd", build_pdd5_jfd(
+            bytes([0x5A]) * 819200, {159: [3]}), False)],
+        zipfile.ZIP_STORED))
     (args.output / "arcdroid-jfd-quarantine.rom").write_bytes(
         build_rom(quarantine_probe=True))
     large = build_jfd_family([(0, 0, 2, 1, 0, bytes(128 << 15))],
