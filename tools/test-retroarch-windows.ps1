@@ -2080,8 +2080,41 @@ arcdroid_install_saves = "malformed!"
 "@ | Set-Content -Encoding ASCII $stalePerGameOptions
 $resetRun = Start-MediaRun $content 'native-stress-stale-per-game-reset'
 try {
+    $attachNeedle = 'Hard disc: policy=auto attach=yes mode=writable reason=attached'
+    $attachBefore = @(Select-String -Path $resetRun.RetroLog -SimpleMatch $attachNeedle).Count
+    if ($attachBefore -lt 1) { throw 'Native stress hard disc was not attached before RESET' }
     Send-MediaCommand $resetRun 'RESET'
-    $resetSignature = Capture-MediaSignature $resetRun 'native-stress-after-reset'
+    $resetDeadline = [DateTime]::UtcNow.AddSeconds(30)
+    do {
+        if ($resetRun.Process.HasExited) { throw 'Native stress guest exited during RESET' }
+        $resetLines = @(Get-Content $resetRun.RetroLog -ErrorAction SilentlyContinue)
+        $attachAfter = @($resetLines | Where-Object { $_.Contains($attachNeedle) }).Count
+        if ($attachAfter -gt $attachBefore) { break }
+        Start-Sleep -Milliseconds 150
+    } while ([DateTime]::UtcNow -lt $resetDeadline)
+    if ($attachAfter -le $attachBefore) {
+        throw 'Native stress hard disc did not reattach after RESET'
+    }
+    # The guest's saved-data witness is the rendered row, so allow video to
+    # resume after the logged hard-disc reattach before judging that row.
+    $captureDeadline = [DateTime]::UtcNow.AddSeconds(40)
+    $captureAttempt = 0
+    $resetSignature = $null
+    do {
+        $captureAttempt++
+        try {
+            $resetSignature = Capture-ExpectedSignature $resetRun `
+                "native-stress-after-reset-$captureAttempt" $readbackSignature $false
+            break
+        } catch {
+            $message = $_.Exception.Message
+            $retryable = $message -like '*screenshot was not observed within 10 seconds*' -or
+                $message -like '*did not become equal to*' -or
+                $message -like '*did not contain a machine-decodable uniform media result row*'
+            if (-not $retryable -or [DateTime]::UtcNow -ge $captureDeadline) { throw }
+            Start-Sleep -Milliseconds 250
+        }
+    } while ([DateTime]::UtcNow -lt $captureDeadline)
     if ($resetSignature -ne $readbackSignature) {
         throw 'Stale per-game option changed the native readback after RESET'
     }
