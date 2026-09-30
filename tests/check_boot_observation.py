@@ -39,6 +39,7 @@ def main() -> None:
     assert len(original) == 228 and original[:8] == b"ARCBOOT1"
     assert int.from_bytes(original[8:12], "little") == 1
     assert int.from_bytes(original[12:16], "little") == 3
+    assert int.from_bytes(original[156:160], "little") == 1
 
     log, lines = run()
     assert len(lines) == 1 and "remembered boot observation; disc !Boot skipped" in lines[0], lines

@@ -5,7 +5,6 @@
 #include "zip.h"
 
 #include <ctype.h>
-#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -448,18 +447,6 @@ bool arc_adffs_launcher(uint8_t *o, size_t cap, size_t *sz) {
   if (cap < n)
     return false;
   memcpy(o, launcher_text, n);
-  return true;
-}
-
-static bool append_step(char *text, size_t capacity, size_t *at,
-                        const char *format, ...) {
-  if (*at >= capacity) return false;
-  va_list args;
-  va_start(args, format);
-  int written = vsnprintf(text + *at, capacity - *at, format, args);
-  va_end(args);
-  if (written < 0 || (size_t)written >= capacity - *at) return false;
-  *at += (size_t)written;
   return true;
 }
 

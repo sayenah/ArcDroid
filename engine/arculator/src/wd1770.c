@@ -2,7 +2,7 @@
   1770 FDC emulation*/
 /* ArcDroid modification (2026-09-14, 2026-09-25): controller faults never
  * terminate the frontend; terminal callbacks disarm RNF/timers and expose
- * final IRQ/DRQ; controller READ SECTOR commands can latch ArcDoor. */
+ * final IRQ/DRQ. */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

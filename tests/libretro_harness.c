@@ -2318,6 +2318,7 @@ int main(int argc, char **argv)
    void (*arc_libretro_test_adffs_accept_test_os)(bool) = NULL;
    void (*arc_libretro_test_fail_adffs_content_read)(bool) = NULL;
    bool (*arc_libretro_test_adffs_content_read_failure_pending)(void) = NULL;
+   bool (*arc_libretro_test_adffs_released)(void) = NULL;
    bool (*arc_libretro_test_adffs_carrier_matches)(const void *, size_t) = NULL;
    void (*arc_platform_test_input_events_reset)(void) = NULL;
    size_t (*arc_platform_test_input_events)(ArcKartEvent *, size_t) = NULL;
@@ -2410,9 +2411,12 @@ int main(int argc, char **argv)
    {
       *(void **)(&arc_libretro_test_adffs_accept_test_os) =
          dlsym(module, "arc_libretro_test_adffs_accept_test_os");
+      *(void **)(&arc_libretro_test_adffs_released) =
+         dlsym(module, "arc_libretro_test_adffs_released");
       *(void **)(&arc_libretro_test_adffs_carrier_matches) =
          dlsym(module, "arc_libretro_test_adffs_carrier_matches");
       assert(arc_libretro_test_adffs_accept_test_os &&
+             arc_libretro_test_adffs_released &&
              arc_libretro_test_adffs_carrier_matches);
    }
    if (short_tail_guest || short_tail_discovery || jfd_file_data_step ||
@@ -2511,6 +2515,8 @@ int main(int argc, char **argv)
          dlsym(module, "arc_libretro_test_adffs_content_read_failure_pending");
       *(void **)(&arc_libretro_test_adffs_carrier_matches) =
          dlsym(module, "arc_libretro_test_adffs_carrier_matches");
+      *(void **)(&arc_libretro_test_adffs_released) =
+         dlsym(module, "arc_libretro_test_adffs_released");
       *(void **)(&arc_platform_test_input_events_reset) =
          dlsym(module, "arc_platform_test_input_events_reset");
       *(void **)(&arc_platform_test_input_events) =
@@ -2547,6 +2553,7 @@ int main(int argc, char **argv)
              arc_libretro_test_adffs_accept_test_os &&
              arc_libretro_test_fail_adffs_content_read &&
              arc_libretro_test_adffs_content_read_failure_pending &&
+             arc_libretro_test_adffs_released &&
              arc_libretro_test_adffs_carrier_matches &&
              arc_platform_test_input_events_reset && arc_platform_test_input_events);
       assert(arc_engine_test_helper_media_valid(ARC_MEDIA_ADL_640K,
@@ -2761,7 +2768,12 @@ int main(int argc, char **argv)
                  last_jfd_boot_log, jfd_quarantine_log_lines - warnings,
                  bytes_match, source_size);
       assert(routed && bytes_match && jfd_quarantine_log_lines == warnings + 1u);
-      retro_unload_game(); retro_deinit(); free(source);
+      assert(!arc_libretro_test_adffs_released() &&
+             disk_control.get_num_images() == 1u);
+      retro_unload_game();
+      assert(arc_libretro_test_adffs_released() &&
+             disk_control.get_num_images() == 0u);
+      retro_deinit(); free(source);
       assert(open_files == 0u && open_dirs == 0u && dlclose(module) == 0);
       puts("jfd-quarantine-adffs: passed");
       return 0;
@@ -9950,7 +9962,11 @@ int main(int argc, char **argv)
          assert(jfd_boot_log_lines == before_lines + 1u && \
                 !strcmp(last_jfd_boot_log, (line)) && \
                 adffs_notice_calls == before_notices); \
+         assert(!arc_libretro_test_adffs_released() && \
+                disk_control.get_num_images() == 1u); \
          retro_unload_game(); \
+         assert(arc_libretro_test_adffs_released() && \
+                disk_control.get_num_images() == 0u); \
       } while (0)
 
       option_writes = "off";
@@ -10022,6 +10038,23 @@ int main(int argc, char **argv)
       EXPECT_WRITABLE(routed_gzip);
       EXPECT_WRITABLE(routed_zip);
       EXPECT_NATIVE(routed_folder, "multi-image", 0u, NULL);
+      /* Folder enumeration failed after recognizing a folder set. The
+       * selected image still loads alone, but retains multi-image routing. */
+      char routed_folder_parent[4096];
+      snprintf(routed_folder_parent, sizeof(routed_folder_parent), "%s",
+               routed_folder_path);
+      char *routed_folder_slash = strrchr(routed_folder_parent, '/');
+      assert(routed_folder_slash);
+      *routed_folder_slash = '\0';
+      fault_opendir_substring = routed_folder_parent;
+      unsigned folder_route_lines = jfd_boot_log_lines;
+      phase = PHASE_LOAD; assert(retro_load_game(&routed_folder));
+      assert(!fault_opendir_substring &&
+             disk_control.get_num_images() == 1u &&
+             jfd_boot_log_lines == folder_route_lines + 1u &&
+             !strcmp(last_jfd_boot_log,
+                     "JFD boot: path=native reason=multi-image\n"));
+      retro_unload_game();
       EXPECT_NATIVE(routed_multi, "multi-image", 0u, NULL);
       ADFFS_GAME("writable-digest.jfd", writable_digest);
       ADFFS_GAME("writable-size.jfd", writable_size);

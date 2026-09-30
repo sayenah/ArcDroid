@@ -209,6 +209,10 @@ bool arc_libretro_test_adffs_content_read_failure_pending(void)
 {
    return arc_test_fail_adffs_content_read;
 }
+bool arc_libretro_test_adffs_released(void)
+{
+   return !arc_adffs_carrier && !arc_adffs_support && !arc_adffs_active;
+}
 bool arc_libretro_test_adffs_carrier_matches(const void *data, size_t size)
 {
    uint8_t *expected = malloc(ARC_ADFFS_DISC_SIZE);
@@ -1007,6 +1011,7 @@ static void arc_release_session(void)
    snprintf(arc_hd_reason, sizeof(arc_hd_reason), "not-attachable");
    arc_power_on_shift = false;
    arc_input_reset(&arc_inputs);
+   arc_adffs_discard();
    free(arc_firmware);
    arc_firmware = NULL;
    arc_firmware_size = 0u;

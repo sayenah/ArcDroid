@@ -20,6 +20,7 @@ static bool strict_directories;
 static unsigned mutations, fail_mutation;
 static bool fail_probe_close;
 static bool fail_base_open;
+static bool corrupt_publication_readback;
 static bool fail_compaction_base_open, fail_truncate;
 static char probe_failure[256], creation_failure[256];
 static char compaction_failure[256], truncation_failure[256];
@@ -133,6 +134,12 @@ static int64_t vread(struct retro_vfs_file_handle *h, void *data, uint64_t n)
    if (h->at > f->size) return 0;
    if (n > f->size - h->at) n = f->size - h->at;
    if (n) memcpy(data, f->bytes + h->at, (size_t)n);
+   if (n && corrupt_publication_readback &&
+       strstr(f->path, "/disc.g0.hdf") &&
+       !strstr(f->path, ".tmp")) {
+      ((uint8_t *)data)[0] ^= 1u;
+      corrupt_publication_readback = false;
+   }
    h->at += (size_t)n; return (int64_t)n;
 }
 static int64_t vwrite(struct retro_vfs_file_handle *h, const void *data,
@@ -238,6 +245,7 @@ static void clear_files(void)
    }
    mutations = fail_mutation = 0u;
    fail_probe_close=false; fail_base_open=false;
+   corrupt_publication_readback=false;
    fail_compaction_base_open=false; fail_truncate=false;
    probe_failure[0]='\0'; creation_failure[0]='\0';
    compaction_failure[0]='\0'; truncation_failure[0]='\0';
@@ -454,6 +462,42 @@ static void test_record_damage(void)
       arc_install_store_close(s);
       assert(mutations==before);
    }
+   clear_files();
+}
+static void test_payload_crc_damage(void)
+{
+   const char *p="1234567890abcdef1234567890abcdef12345678";
+   uint8_t data[ARC_INSTALL_HD_SECTOR]={0};
+   ready_store(p);
+   ArcInstallStore *s=open_store(p,false,true,ARC_INSTALL_STORE_READY);
+   assert(arc_install_store_write(s,20u,1u,data));
+   arc_install_store_close(s);
+   File *journal=file_named("journal.g0");
+   assert(journal && journal->size >= 124u+80u+sizeof(data)+16u);
+   journal->bytes[124u+80u+17u]^=1u; /* complete record, intact trailer */
+   unsigned before=mutations;
+   s=open_store(p,false,false,ARC_INSTALL_STORE_DAMAGED);
+   arc_install_store_close(s);
+   s=open_store(p,false,true,ARC_INSTALL_STORE_DAMAGED);
+   arc_install_store_close(s);
+   assert(mutations==before);
+   clear_files();
+}
+static void test_publication_readback_mismatch(void)
+{
+   const char *p="1234567890abcdef1234567890abcdef12345678";
+   clear_files();
+   corrupt_publication_readback=true;
+   char error[256]={0};
+   ArcInstallStore *s=arc_hd_store_open("save",p,true,NULL,NULL,error,
+                                      sizeof(error));
+   assert(s && !corrupt_publication_readback &&
+          arc_install_store_state(s)!=ARC_INSTALL_STORE_READY &&
+          !arc_install_store_image(s) &&
+          !file_named("ready.a") && !file_named("ready.b"));
+   arc_install_store_close(s);
+   s=open_store(p,true,true,ARC_INSTALL_STORE_READY);
+   arc_install_store_close(s);
    clear_files();
 }
 static void test_interrupted_operations(void)
@@ -878,6 +922,8 @@ int main(int argc, char **argv)
    test_identity();
    test_directory_states();
    test_record_damage();
+   test_payload_crc_damage();
+   test_publication_readback_mismatch();
    test_interrupted_operations();
    test_cap_and_compaction();
    test_journal_cap();

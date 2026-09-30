@@ -401,7 +401,7 @@ int main(int argc, char **argv) {
   assert(arc_adffs_support_build(p, &selection, support, error, sizeof(error)));
   arc_sha256_hex(support, ARC_ADFFS_DISC_SIZE, baseline_hash);
   assert(!strcmp(baseline_hash,
-      "92df58def55ff8f45a4e2c98fc956916529bd843c7650d40b8ee30b394b8f216"));
+      "d33ee31f0281ab2001f3b3c6a975c1bd49bd1c67290a3225768e6592f4ce52b1"));
   walk_disc(support);
   root = support + 1024u;
   const uint8_t *adffs = find_entry(root, "!ADFFS");

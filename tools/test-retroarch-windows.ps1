@@ -2066,11 +2066,12 @@ Invoke-ArcDroid 900 $true
 $globalLines = @(Get-Content $log | Select-Object -Skip $beforeLines)
 $readbackSignature = Get-MediaRowSignature $screenshot 'native-stress-global-valid'
 if ($readbackSignature -ne 'ff009400' -or
-    -not @($globalLines | Where-Object { $_.Contains('Hard disc: store-state=ready writable') }).Count) {
+    -not @($globalLines | Where-Object { $_.Contains('Hard disc: store-state=ready writable') }).Count -or
+    -not @($globalLines | Where-Object { $_.Contains('Machine: requested=Auto resolved=A3020 reason=hd-media') }).Count) {
     throw 'Native stress setup did not read the saved witness with stale global option'
 }
 @"
-arcdroid_machine = "Auto"
+arcdroid_machine = "A3020"
 arcdroid_cpu = "Auto"
 arcdroid_disk_writes = "shadow"
 arcdroid_hard_disc = "auto"
@@ -2086,6 +2087,9 @@ try {
     }
     $resetLines = @(Get-Content $resetRun.RetroLog)
     if (-not @($resetLines | Where-Object {
+            $_.Contains('Machine: requested=A3020 resolved=A3020 reason=option')
+        }).Count -or
+        -not @($resetLines | Where-Object {
             $_.Contains('Hard disc: policy=auto attach=yes mode=writable reason=attached')
         }).Count) {
         throw 'Per-game stale option displaced the hard-disc or write override'

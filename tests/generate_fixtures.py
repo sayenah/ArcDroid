@@ -2266,7 +2266,7 @@ def build_adffs_fixtures(output: Path) -> None:
         ("Depth4", b"ADFFS:obey.Depth5\r", False),
         ("Depth5", b"Set ArcFixture TooDeep\r", False),
     ]
-    obey = _zip_bytes(obey_entries)
+    obey = _zip_bytes(obey_entries, zipfile.ZIP_STORED)
     runtime_names = ("ADFFS", "SetVars", "CLib", "CallASWI", "ZLib", "BootCmds")
     runtime_paths = ("!ADFFS/ADFFS", "!ADFFS/SetVars",
                      "!ADFFS/3rdParty/CLib", "!ADFFS/3rdParty/CallASWI",
@@ -2289,7 +2289,7 @@ def build_adffs_fixtures(output: Path) -> None:
     (output / "synthetic.zip").write_bytes(package)
     changed_obey = _zip_bytes([
         (name, payload + b"\r" if name == "F0012301" else payload, meta)
-        for name, payload, meta in obey_entries])
+        for name, payload, meta in obey_entries], zipfile.ZIP_STORED)
     (output / "script-changed.zip").write_bytes(_zip_bytes([
         (name, changed_obey if name == "!ADFFS/obey" else payload, metadata)
         for name, payload, metadata in entries]))
@@ -2400,7 +2400,8 @@ def build_adffs_fixtures(output: Path) -> None:
                               ("missing-fixobey.zip", "!ADFFS/!fixObey")):
         (output / filename).write_bytes(_zip_bytes(
             [entry for entry in entries if entry[0] != omitted]))
-    invalid_obey = _zip_bytes(obey_entries + [("Bad-Name", b"x", False)])
+    invalid_obey = _zip_bytes(obey_entries + [("Bad-Name", b"x", False)],
+                              zipfile.ZIP_STORED)
     (output / "invalid-obey-name.zip").write_bytes(_zip_bytes([
         (name, invalid_obey if name == "!ADFFS/obey" else payload, metadata)
         for name, payload, metadata in entries]))
