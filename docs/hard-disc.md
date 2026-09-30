@@ -16,6 +16,8 @@ validated product; a remembered installed choice uses `.choice` v4 with the
 product and attempt bound to the current discovery.
 Choosing a floppy row, or remembering a floppy `.choice`, runs that floppy
 application. Automatic decisions may use the installed product instead.
+In `Launch Chooser: remember` mode, a remembered Desktop choice suppresses
+automatic launch of the installed product (`chooser remembered desktop`; no launch).
 
 The guest installer writes only inside `ADFS::4.$.ArcDroid`. The host reads
 FileCore structures to validate the installation; it never writes FileCore
