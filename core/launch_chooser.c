@@ -286,26 +286,6 @@ void arc_launch_chooser_boot_hit(ArcLaunchChooser *chooser,
       discovery->unknown_count != 0u;
 }
 
-bool arc_launch_chooser_install_init(ArcLaunchChooser *chooser,
-                                    const char *const *labels, unsigned count,
-                                    int remembered_candidate)
-{
-   if (!chooser || !labels || !count || count > 2u) return false;
-   memset(chooser, 0, sizeof(*chooser));
-   chooser->install_mode = true;
-   chooser->row_count = count;
-   for (unsigned i = 0u; i < count; ++i)
-   {
-      if (!labels[i] || strlen(labels[i]) >= sizeof(chooser->install_labels[i]))
-         return false;
-      chooser->candidate_index[i] = (uint8_t)i;
-      strcpy(chooser->install_labels[i], labels[i]);
-   }
-   if (remembered_candidate >= 0 && (unsigned)remembered_candidate < count)
-      chooser->focus = (unsigned)remembered_candidate;
-   return true;
-}
-
 void arc_launch_chooser_move(ArcLaunchChooser *chooser, int direction)
 {
    if (!chooser || !chooser->row_count || !direction) return;
@@ -430,7 +410,7 @@ bool arc_launch_chooser_render(const ArcLaunchChooser *chooser,
    arc_fill(pixels, width, height, stride, 0u, 0u, width, height,
             UINT32_C(0x00101a2a));
    (void)arc_text(pixels, width, height, stride, 64u, 28u,
-                  chooser->install_mode ? "Choose game" : "Choose application",
+                  "Choose application",
                   UINT32_C(0x00ffffff));
    if (chooser->inspection_incomplete)
       (void)arc_text(pixels, width, height, stride, 64u, 56u,
@@ -456,10 +436,7 @@ bool arc_launch_chooser_render(const ArcLaunchChooser *chooser,
                             ARC_CHOOSER_LEFT, y, number, foreground);
       x += 8u;
       uint8_t candidate = chooser->candidate_index[row];
-      if (chooser->install_mode)
-         (void)arc_text(pixels, width, height, stride, x, y,
-                        chooser->install_labels[candidate], foreground);
-      else if (candidate == ARC_CHOOSER_DESKTOP)
+      if (candidate == ARC_CHOOSER_DESKTOP)
          (void)arc_text(pixels, width, height, stride, x, y,
                         chooser->post_boot ? "Continue without launching" :
                         chooser->boot_hit ? "Run disc's own startup" :
@@ -491,7 +468,7 @@ bool arc_launch_chooser_render(const ArcLaunchChooser *chooser,
       (void)arc_text(pixels, width, height, stride, 584u,
                      chooser->nested_scope ? 372u : 432u, "v",
                      UINT32_C(0x00ffffff));
-   if (chooser->nested_scope && !chooser->install_mode &&
+   if (chooser->nested_scope &&
        chooser->focus < chooser->row_count)
    {
       uint8_t selected = chooser->candidate_index[chooser->focus];

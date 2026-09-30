@@ -13,7 +13,6 @@
 #include "82c711_fdc.h"
 #include "config.h"
 #include "disc.h"
-#include "arc_install_doorbell.h"
 #include "disc_jfd.h"
 #include "ioc.h"
 #include "timer.h"
@@ -430,7 +429,6 @@ void c82c711_fdc_write(uint16_t addr, uint8_t val, void *p)
 					fdc->eot[curdrive] = fdc->params[4];
 					if (jfd_active(curdrive))
 						jfd_set_requested_ch(fdc->params[1], (fdc->params[0] >> 2u) & 1u);
-					arc_install_doorbell_read(curdrive, fdc->track[curdrive], fdc->head, fdc->sector, fdc->density);
 					if (fdc == fdc_p)
 						disc_readsector(curdrive, fdc->sector, fdc->track[curdrive], fdc->head, fdc->density);
 					timer_disable(&fdc->timer);

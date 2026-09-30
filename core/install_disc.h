@@ -1,4 +1,4 @@
-/* ArcDroid-authored install-disc geometry and formatter. GPL-2.0-only. */
+/* ArcDroid-authored hard-disc geometry and formatter. GPL-2.0-only. */
 #ifndef ARCDROID_INSTALL_DISC_H
 #define ARCDROID_INSTALL_DISC_H
 #include <stdbool.h>

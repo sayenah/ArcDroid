@@ -1,4 +1,4 @@
-/* Project-authored FileCore new-map install-disc formatter. GPL-2.0-only.
+/* Project-authored FileCore new-map hard-disc formatter. GPL-2.0-only.
  * The map and directory rules follow the synthetic F-format fixture, scaled
  * to the fixed A3020 IDE geometry; no supplied-media bytes enter the image. */
 #include "install_disc.h"

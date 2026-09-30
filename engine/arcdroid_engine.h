@@ -44,7 +44,6 @@ bool arc_engine_start(const uint8_t *firmware, size_t firmware_size,
                       const ArcEngineMedia *helper,
                       const ArcMachineDescriptor *machine,
                       const ArcIdeBackend *ide_backend,
-                      const ArcInstallDoorbell *doorbell,
                       const uint8_t cmos[ARC_CMOS_MACHINE_SIZE],
                       const uint8_t locked_raw_mask[32],
                       ArcEngineCmosIgnoredCallback ignored_callback,
@@ -71,9 +70,5 @@ bool arc_engine_get_av_info(unsigned *width, unsigned *height, double *refresh_h
 void arc_engine_cmos(uint8_t output[ARC_CMOS_PAYLOAD_SIZE]);
 bool arc_engine_faulted(const char **message);
 bool arc_engine_active(void);
-void arc_engine_install_sector_read(unsigned drive, unsigned track,
-                                    unsigned side, unsigned sector,
-                                    unsigned density);
-bool arc_engine_install_doorbell_latched(void);
 
 #endif

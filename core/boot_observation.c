@@ -49,7 +49,7 @@ bool arc_boot_observation_format(const ArcBootObservation *s,
    put32(out + 144, s->memory);
    put32(out + 148, s->jfd_boot);
    put32(out + 152, s->disk_writes);
-   put32(out + 156, s->install_saves);
+   put32(out + 156, s->legacy_slot);
    memcpy(out + 160, s->hard_disc, 64);
    put32(out + 224, s->hard_disc_policy |
       (s->hard_disc_attached << 1u) | (s->hard_disc_writable << 2u));
@@ -70,7 +70,7 @@ bool arc_boot_observation_parse(const uint8_t *data, size_t size,
    s->memory = get32(data + 144);
    s->jfd_boot = get32(data + 148);
    s->disk_writes = get32(data + 152);
-   s->install_saves = get32(data + 156);
+   s->legacy_slot = get32(data + 156);
    memcpy(s->hard_disc, data + 160, 64);
    uint32_t disc_flags = get32(data + 224);
    s->hard_disc_policy = disc_flags & 1u;
@@ -83,7 +83,7 @@ bool arc_boot_observation_parse(const uint8_t *data, size_t size,
       s->machine < 4u && s->cpu < 2u &&
       s->memory >= 1024u && s->memory <= 65536u &&
       s->memory % 1024u == 0u && s->jfd_boot <= 2u &&
-      s->disk_writes <= 2u && s->install_saves <= 1u;
+      s->disk_writes <= 2u && s->legacy_slot <= 1u;
 }
 bool arc_boot_observation_equal(const ArcBootObservation *a,
                                 const ArcBootObservation *b)
@@ -92,7 +92,7 @@ bool arc_boot_observation_equal(const ArcBootObservation *a,
       !strcmp(a->media, b->media) && !strcmp(a->cmos, b->cmos) &&
       a->machine == b->machine && a->cpu == b->cpu &&
       a->memory == b->memory && a->jfd_boot == b->jfd_boot &&
-      a->disk_writes == b->disk_writes && a->install_saves == b->install_saves &&
+      a->disk_writes == b->disk_writes &&
       !strcmp(a->hard_disc, b->hard_disc) &&
       a->hard_disc_policy == b->hard_disc_policy &&
       a->hard_disc_attached == b->hard_disc_attached &&

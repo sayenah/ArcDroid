@@ -8,7 +8,6 @@ command -v grep >/dev/null 2>&1 || {
 
 sources='core/adffs.c
 core/install_disc.c
-core/install_validate.c
 core/hash.c
 core/machine.c
 core/input.c
@@ -27,7 +26,6 @@ core/persistence.c
 core/cmos_defaults.c
 engine/arcdroid_engine.c
 engine/arc_boot_watch.c
-engine/arc_install_doorbell.c
 engine/arcdroid_stubs.c
 engine/arculator/src/82c711.c
 engine/arculator/src/82c711_fdc.c

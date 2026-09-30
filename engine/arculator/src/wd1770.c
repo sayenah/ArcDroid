@@ -10,7 +10,6 @@
 #include "arc.h"
 #include "config.h"
 #include "disc.h"
-#include "arc_install_doorbell.h"
 #include "ioc.h"
 #include "timer.h"
 #include "wd1770.h"
@@ -148,7 +147,6 @@ void wd1770_write(uint16_t addr, uint8_t val)
 			wd1770.status = 0x80 | 0x1;
 			wd1770.index_count = 0;
 			wd1770.rnf_detection = 1;
-			arc_install_doorbell_read(curdrive, wd1770.track, wd1770.curside, wd1770.sector, wd1770.density);
 			if (!fdc_overridden)
 				disc_readsector(curdrive, wd1770.sector, wd1770.track, wd1770.curside, wd1770.density);
 			//printf("Read sector %i %i %i %i %i\n",curdrive,wd1770.sector,wd1770.track,wd1770.curside,wd1770.density);

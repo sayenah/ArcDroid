@@ -29,7 +29,6 @@
 #include "82c711_fdc.h"
 #include "ide.h"
 #include "arc_io.h"
-#include "arc_install_doorbell.h"
 
 #include <setjmp.h>
 #include <stdarg.h>
@@ -167,14 +166,6 @@ static ArcMachine arc_saved_machine = ARC_MACHINE_A3000;
 static double arc_last_refresh = 50.0;
 static ArcEngineLogCallback arc_log_callback;
 static void *arc_log_opaque;
-void arc_engine_install_sector_read(unsigned drive, unsigned track,
-                                    unsigned side, unsigned sector,
-                                    unsigned density)
-{
-   arc_install_doorbell_read(drive, track, side, sector, density);
-}
-bool arc_engine_install_doorbell_latched(void)
-{ return arc_install_doorbell_latched(); }
 static bool arc_helper_media_valid(const ArcEngineMedia *helper)
 {
    return !helper ||
@@ -224,9 +215,6 @@ bool arc_engine_test_drive_media(unsigned drive, bool *write_protected,
    }
    return true;
 }
-
-unsigned arc_engine_test_floppy_reads(unsigned drive)
-{ return arc_install_test_read_commands(drive); }
 
 bool arc_engine_test_cmos_image(uint8_t output[ARC_CMOS_MACHINE_SIZE])
 {
@@ -654,7 +642,6 @@ bool arc_engine_start(const uint8_t *firmware, size_t firmware_size,
                       const ArcEngineMedia *helper,
                       const ArcMachineDescriptor *descriptor,
                       const ArcIdeBackend *ide_backend,
-                      const ArcInstallDoorbell *doorbell,
                       const uint8_t cmos[ARC_CMOS_MACHINE_SIZE],
                       const uint8_t locked_raw_mask[32],
                       ArcEngineCmosIgnoredCallback ignored_callback,
@@ -710,7 +697,6 @@ bool arc_engine_start(const uint8_t *firmware, size_t firmware_size,
    cmos_set_write_guard(arc_locked_cmos_mask, ignored_callback, ignored_opaque);
    arc_saved_machine = descriptor->id;
    ide_set_backend(descriptor->ide_capable ? ide_backend : NULL);
-   arc_install_doorbell_configure(doorbell);
    if (!arc_machine_create(failure, failure_size))
    {
       arc_engine_stop();
@@ -740,7 +726,6 @@ void arc_engine_stop(void)
    cmos_set_write_guard(NULL, NULL, NULL);
    memset(arc_locked_cmos_mask, 0, sizeof(arc_locked_cmos_mask));
    ide_set_backend(NULL);
-   arc_install_doorbell_configure(NULL);
    free(arc_saved_firmware);
    arc_saved_firmware = NULL;
    arc_saved_firmware_size = 0u;

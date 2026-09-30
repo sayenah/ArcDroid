@@ -12,7 +12,7 @@ int main(void)
    memset(stamp.cmos, 'c', 40); stamp.cmos[40] = 0;
    memset(stamp.hard_disc, 'd', 64); stamp.hard_disc[64] = 0;
    stamp.machine = 2; stamp.cpu = 1; stamp.memory = 4096;
-   stamp.jfd_boot = 1; stamp.disk_writes = 2; stamp.install_saves = 1;
+   stamp.jfd_boot = 1; stamp.disk_writes = 2; stamp.legacy_slot = 1;
    stamp.hard_disc_policy = 1; stamp.hard_disc_attached = 1;
    stamp.hard_disc_writable = 1;
    uint8_t bytes[ARC_BOOT_OBSERVATION_SIZE + 1u];
@@ -38,11 +38,17 @@ int main(void)
          assert(!arc_boot_observation_parse(bytes, ARC_BOOT_OBSERVATION_SIZE, &parsed));
       bytes[offset] = original;
    }
-   for (unsigned field = 0; field < 6u; ++field)
+   bytes[156] = 0u;
+   assert(arc_boot_observation_parse(bytes, ARC_BOOT_OBSERVATION_SIZE, &parsed));
+   assert(parsed.legacy_slot == 0u && arc_boot_observation_equal(&stamp, &parsed));
+   bytes[156] = 1u;
+   assert(arc_boot_observation_parse(bytes, ARC_BOOT_OBSERVATION_SIZE, &parsed));
+   assert(parsed.legacy_slot == 1u && arc_boot_observation_equal(&stamp, &parsed));
+   for (unsigned field = 0; field < 5u; ++field)
    {
       ArcBootObservation other = stamp;
       uint32_t *values[] = {&other.machine, &other.cpu, &other.memory,
-         &other.jfd_boot, &other.disk_writes, &other.install_saves};
+         &other.jfd_boot, &other.disk_writes};
       ++*values[field];
       assert(!arc_boot_observation_equal(&stamp, &other));
    }

@@ -42,53 +42,9 @@ again later.
 
 The ordinary ADFFS path supports one JFD image whose header describes a single
 disc. It works on both WD1772 and New-IO machines. A zip containing one eligible
-JFD image is eligible for the same path. Other multi-image sets use the native
-path unless they match a verified install recipe.
-
-Exact disc sets for E-Type and E-Type Compendium, and the single-disc Premier
-Manager [SA] image, can be installed automatically under the verified package
-and RISC OS 3.11. Put all required discs in one zip, playlist, or folder set.
-The Compendium chooser offers each game whose required disc is present. The
-install first uses a guest RAM disc. With `Install Saves: Persistent` (the
-default), ArcDroid copies the completed installation to a blank A3020 hard
-disc in the frontend's native save directory. After checking the installation,
-ArcDroid restarts the guest into the installed game during the same session.
-An in-game save is retained across restarts. `Machine: Auto` selects A3020
-for an eligible install. Existing saved installations also require A3020;
-choose `Machine: Auto` when another machine was selected explicitly.
-
-The store is at `<save>/arcdroid/install/<storage-id>/`. Keep or back up this
-directory with the rest of the frontend's saves; its disc, journal and manifest
-files belong together.
-
-`Install Saves: Temporary` uses the RAM installation path. **Saves made there
-disappear on reset or exit.** ArcDroid shows this warning only for RAM install
-boots. `Disk Writes: Off` uses an existing saved installation read-only. If
-there is no saved installation, it uses the RAM path and shows the warning.
-When a saved installation exists but the save directory is unwritable, it runs
-read-only and shows a notice. Creating a persistent installation needs a
-native writable save directory; choose a native directory or select
-`Install Saves: Temporary` if it is unavailable. ArcDroid refuses a damaged
-or unsupported saved installation with an error and preserves its files so a
-backup can be restored. A different revision of any image or built-in script
-stays on the native path.
-
-ArcDroid's messages identify these outcomes:
-
-- **Saved installation is damaged:** Preserve the install directory and restore
-  a backup. ArcDroid does not repair or overwrite it.
-- **Unable to create the install disc:** Check free space and save-directory
-  write access, or choose `Install Saves: Temporary`.
-- **Install disc save limit reached:** This session has reached the 8 MiB
-  journal cap; further saves cannot be written until a later load compacts it.
-- **Install disc storage failed:** A write failed; further saves cannot be
-  written in this session.
-- **Install disc is read-only:** The saved game can run, but saves cannot be
-  changed in this session. This also follows a failed journal-tail truncation.
-- **This title's saved installation runs on the A3020:** Set `Machine: Auto`.
-- **Persistent install saves require Machine: Auto and a native writable save
-  directory:** Choose those settings, or use `Install Saves: Temporary` for a
-  RAM install.
+JFD image is eligible for the same path. Multi-image sets use the native path.
+A single-image high-density JFD on an IDE-capable A3020 takes the native hard-disc
+route under `JFD Boot: Auto`; `ADFFS preferred` bypasses that route.
 
 The two guest discs used for an ADFFS session are memory-backed and read-only:
 changes to the mounted image are not written back, regardless of the `Disk

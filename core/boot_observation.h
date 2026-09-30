@@ -20,7 +20,7 @@ typedef struct {
    uint32_t memory;
    uint32_t jfd_boot;
    uint32_t disk_writes;
-   uint32_t install_saves;
+   uint32_t legacy_slot;
    uint32_t hard_disc_policy;
    uint32_t hard_disc_attached;
    uint32_t hard_disc_writable;
