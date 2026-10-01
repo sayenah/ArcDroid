@@ -49,6 +49,16 @@ Slice 14 adds one marked passive call at the entry of `src/arm.c`'s `opSWI`.
 It passes scalar SWI context to the ArcDroid-owned boot observer; the upstream
 emulator's registers, memory and SWI behavior are unchanged.
 
+Slice 25 reuses the existing SWI-entry call for the ArcDroid-owned error-box
+observer. It adds exactly two intervention
+sites in the vendored CPU: one hook at the top of `updatemode()` to end an
+invocation on its first return to user mode, and one completion block in
+`opSWI` for the exact normalised `OS_Byte` SWIs 6 and 0x20006. The block acts
+only on a ready invocation's recorded SVC ROM polling site, completing its
+`OS_Byte 129,0,0` with R1=13 or 27, R2=0 and C/V clear. The interpreter's
+ordinary instruction advance supplies the sole PC increment. No keyboard
+buffer, KART path, mouse path, interpreter loop, or timing code changes.
+
 `src/82c711.c` resets the SuperIO configuration state for each cold machine
 creation and connects to ArcDroid's IDE implementation. With no attached disc
 the bus continues to return all-one reads, ignore writes, and raise no IRQ.

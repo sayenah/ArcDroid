@@ -8,6 +8,7 @@
 #include "adffs.h"
 #include "arc_boot_watch.h"
 #include "arc_launch_outcome.h"
+#include "arc_error_box.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -44,6 +45,7 @@ bool arc_engine_start(const uint8_t *firmware, size_t firmware_size,
                       const ArcEngineMedia *media,
                       const ArcEngineMedia *helper,
                       const ArcMachineDescriptor *machine,
+                      ArcOsClass os,
                       const ArcIdeBackend *ide_backend,
                       const uint8_t cmos[ARC_CMOS_MACHINE_SIZE],
                       const uint8_t locked_raw_mask[32],
@@ -63,12 +65,19 @@ bool arc_engine_launch_outcome_arm(const char *command);
 void arc_engine_launch_outcome_cancel(const char *reason);
 void arc_engine_launch_outcome_refused(unsigned drive);
 void arc_engine_launch_outcome_snapshot(ArcLaunchOutcome *outcome);
+void arc_engine_error_snapshot(ArcErrorBox *box);
+bool arc_engine_error_request(ArcErrorAnswer answer);
+void arc_engine_error_discard(void);
+void arc_engine_error_mode(uint32_t old_mode, uint32_t new_mode);
+bool arc_engine_error_poll(uint32_t address, uint32_t mode,
+                           uint32_t sp, uint32_t lr, uint8_t *key);
 void arc_engine_adf_refused(unsigned drive, unsigned track,
                            unsigned side, unsigned sector);
 void arc_engine_adf_refusal_callback_set(
    void (*callback)(unsigned, unsigned, unsigned, unsigned));
 #if defined(ARCDROID_TEST_FAULTS)
 void arc_engine_test_boot_watch_snapshot(ArcBootWatch *out);
+bool arc_engine_test_guest_word(uint32_t address, uint32_t *out);
 #endif
 size_t arc_engine_audio(int16_t *output, size_t capacity_frames);
 void arc_engine_audio_stats(uint64_t *underrun_frames, uint64_t *overrun_frames);

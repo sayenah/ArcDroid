@@ -2,6 +2,7 @@
   ARM2 & ARM3 emulation*/
 /* ArcDroid modification (2026-09-14): machine failures unwind through the session fault latch. */
 /* ArcDroid modification (2026-09-27): boot-observer SWI hook. */
+/* ArcDroid modification (2026-10-01): error-box mode hook and exact OS_Byte completion. */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -22,6 +23,7 @@
 #include "timer.h"
 #include "vidc.h"
 #include "../../arc_boot_watch.h"
+#include "../../arcdroid_engine.h"
 
 uint32_t armregs[16];
 
@@ -586,6 +588,8 @@ const int modepritablew[3][8]=
 void updatemode(int m)
 {
 	int c;
+	/* ArcDroid: the first return to user mode ends the active box. */
+	arc_engine_error_mode((uint32_t)mode, (uint32_t)m);
 	usrregs[15]=&armregs[15];
 	switch (mode) /*Store back registers*/
 	{
@@ -2539,6 +2543,25 @@ static void opSWI(uint32_t opcode)
 		memmode = MEMMODE_SUPER;
 		hostfs(&state);
 		memmode = templ;
+	}
+	else if (((opcode & 0x00ffffffu) == 6u ||
+	           (opcode & 0x00ffffffu) == 0x20006u) &&
+	         armregs[0] == 129u && armregs[1] == 0u && armregs[2] == 0u)
+	{
+		uint8_t key;
+		if (arc_engine_error_poll((PC - 8u) & 0x03fffffcu,
+		                          (uint32_t)mode, armregs[13], armregs[14], &key))
+		{
+			/* Completion bypasses ROM's key-buffer read, leaving any physical
+			 * character buffered for the guest's later use. */
+			/* The interpreter advances PC once after opSWI. Do not refill the
+			 * pipeline or enter ROM. Preserve N/Z/I/F/mode, banked registers,
+			 * and all GPRs except the successful key result in R1/R2. */
+			armregs[1] = key;
+			armregs[2] = 0u;
+			armregs[15] &= ~(CFLAG | VFLAG);
+		}
+		else EXCEPTION_SWI();
 	}
 	else if ((opcode&0xFFFF)==0x1C && mousehack)
 	{

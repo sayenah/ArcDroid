@@ -142,6 +142,11 @@ static bool arc_osk_toggle_level;
 static bool arc_osk_pad_levels[16];
 static bool arc_osk_too_narrow_reported;
 static bool arc_osk_failure_reported;
+static bool arc_error_pad_gate;
+static bool arc_error_was_ready;
+static uint64_t arc_error_seen_generation;
+static bool arc_error_pad_levels[2];
+static uint64_t arc_error_hint_generation;
 typedef enum {
    ARC_SESSION_EMPTY = 0,
    ARC_SESSION_PREPARED,
@@ -285,6 +290,11 @@ unsigned arc_libretro_test_input_pending(void)
    return arc_input_pending(&arc_inputs);
 }
 bool arc_libretro_test_osk_visible(void) { return arc_osk.visible; }
+bool arc_libretro_test_pad_source_level(unsigned port, unsigned key)
+{
+   return arc_input_source_level(&arc_inputs,
+      port ? ARC_INPUT_SOURCE_PAD1 : ARC_INPUT_SOURCE_PAD0, key);
+}
 bool arc_libretro_test_osk_busy(void) { return arc_osk.busy; }
 bool arc_libretro_test_osk_activation_active(void)
 {
@@ -1002,6 +1012,11 @@ static void arc_release_session(void)
    arc_chooser_input_armed = false;
    arc_chooser_release_gate = false;
    arc_engine_stop();
+   arc_error_pad_gate = false;
+   arc_error_was_ready = false;
+   arc_error_seen_generation = 0u;
+   arc_error_pad_levels[0] = arc_error_pad_levels[1] = false;
+   arc_error_hint_generation = 0u;
    arc_install_store_close(arc_hd_store);
    arc_hd_store = NULL;
    arc_hd_failure_noticed = false;
@@ -1160,6 +1175,19 @@ static void arc_message(const char *text, enum retro_log_level level)
    if (arc_log)
       arc_log(level, "%s\n", text);
    if (!arc_environment(RETRO_ENVIRONMENT_SET_MESSAGE_EXT, &ext))
+      arc_environment(RETRO_ENVIRONMENT_SET_MESSAGE, &legacy);
+}
+static void arc_error_hint(const ArcErrorBox *box)
+{
+   const char *message = box->ok && box->cancel ?
+      "Error box: A = OK · B = Cancel" :
+      box->ok ? "Error box: A = OK" : "Error box: B = Cancel";
+   struct retro_message_ext ext = {message, 2000u, 3u, RETRO_LOG_INFO,
+      RETRO_MESSAGE_TARGET_ALL, RETRO_MESSAGE_TYPE_NOTIFICATION, -1};
+   struct retro_message legacy = {message, 120u};
+   if (arc_log) arc_log(RETRO_LOG_INFO, "%s\n", message);
+   if (arc_environment &&
+       !arc_environment(RETRO_ENVIRONMENT_SET_MESSAGE_EXT, &ext))
       arc_environment(RETRO_ENVIRONMENT_SET_MESSAGE, &legacy);
 }
 
@@ -4511,6 +4539,7 @@ static void arc_osk_restore_gameplay(void)
 static void arc_osk_presentation_failure(void)
 {
    arc_osk_close(&arc_osk, &arc_inputs);
+   arc_error_pad_gate = true;
    arc_osk.disabled = true;
    arc_osk_present_dirty = true;
    arc_osk_restore_gameplay();
@@ -4601,6 +4630,7 @@ static void arc_osk_set_visible(bool visible)
    {
       arc_osk_close(&arc_osk, &arc_inputs);
       arc_osk_restore_gameplay();
+      arc_error_pad_gate = true;
    }
    arc_osk_present_dirty = true;
 }
@@ -4987,8 +5017,19 @@ static void arc_poll_inputs(void)
    };
    if (!arc_input_state) return;
    arc_boot_input = false;
+   ArcErrorBox error_box;
+   arc_engine_error_snapshot(&error_box);
+   bool error_ready = error_box.stage == ARC_ERROR_READY;
+   if (error_ready != arc_error_was_ready ||
+       (error_ready && error_box.generation != arc_error_seen_generation))
+   {
+      arc_error_pad_gate = true;
+      arc_error_was_ready = error_ready;
+   }
+   if (error_ready) arc_error_seen_generation = error_box.generation;
    if (arc_chooser_release_gate)
    {
+      arc_error_pad_gate = true;
       bool neutral = true;
       unsigned deadzone_percent = arc_core_options.pointer_deadzone;
       if (deadzone_percent < ARC_DEFAULT_POINTER_DEADZONE)
@@ -5033,7 +5074,22 @@ static void arc_poll_inputs(void)
       }
       return;
    }
+   bool osk_was_visible = arc_osk.visible;
    arc_poll_osk_controls();
+   if (osk_was_visible && !arc_osk.visible) arc_error_pad_gate = true;
+   bool error_pad = arc_port_device[0] == ARC_DEVICE_KEYS ||
+                    arc_port_device[0] == RETRO_DEVICE_JOYPAD;
+   bool error_a = error_pad && arc_input_state(0u, RETRO_DEVICE_JOYPAD, 0u,
+                                  RETRO_DEVICE_ID_JOYPAD_A) != 0;
+   bool error_b = error_pad && arc_input_state(0u, RETRO_DEVICE_JOYPAD, 0u,
+                                  RETRO_DEVICE_ID_JOYPAD_B) != 0;
+   if (!error_a && !error_b) arc_error_pad_gate = false;
+   if (error_ready && !arc_osk.visible && arc_session == ARC_SESSION_RUNNING &&
+       arc_error_hint_generation != error_box.generation)
+   {
+      arc_error_hint(&error_box);
+      arc_error_hint_generation = error_box.generation;
+   }
    bool sampled[2][10] = {{false}};
    bool desired[ARC_PAD_PORTS][ARC_INPUT_KEY_COUNT] = {{false}};
    for (unsigned port = 0u; port < 2u; ++port)
@@ -5063,6 +5119,8 @@ static void arc_poll_inputs(void)
       }
       for (unsigned input = 0u; input < ARC_PAD_INPUT_COUNT; ++input)
       {
+         if (port == 0u && (input == ARC_PAD_A || input == ARC_PAD_B) &&
+             (error_ready || arc_error_pad_gate)) continue;
          const ArcInputBinding *binding = &arc_input_resolution.binding[port][input];
          bool joystick_owned = arc_loaded && arc_plan.a3010_joystick && input <= ARC_PAD_A &&
                                arc_core_options.pad[port][input].automatic;
@@ -5072,11 +5130,31 @@ static void arc_poll_inputs(void)
       }
       memcpy(arc_pad_keys[port], sampled[port], sizeof(sampled[port]));
    }
+   if (error_ready && !arc_osk.visible && !arc_pad_neutral_gate[0] &&
+       !arc_error_pad_gate && error_a != error_b)
+   {
+      if (error_a && !arc_error_pad_levels[0])
+         (void)arc_engine_error_request(ARC_ERROR_OK);
+      else if (error_b && !arc_error_pad_levels[1])
+         (void)arc_engine_error_request(ARC_ERROR_CANCEL);
+   }
+#if defined(ARCDROID_TEST_FAULTS)
+   if (!error_ready && arc_error_seen_generation && !arc_error_pad_gate &&
+       error_a && !arc_error_pad_levels[0] &&
+       arc_input_resolution.binding[0][ARC_PAD_A].bound &&
+       desired[0][arc_input_resolution.binding[0][ARC_PAD_A].key] && arc_log)
+      arc_log(RETRO_LOG_INFO, "Error box test: mapping restored key=%u\n",
+              arc_input_resolution.binding[0][ARC_PAD_A].key);
+#endif
+   arc_error_pad_levels[0] = error_a;
+   arc_error_pad_levels[1] = error_b;
    arc_input_pad_key_sets(&arc_inputs, desired[0], desired[1]);
    bool joystick_levels[ARC_PAD_PORTS][5] = {{false}};
    for (unsigned port = 0; port < ARC_PAD_PORTS; ++port)
       for (unsigned input = 0; input < 5u; ++input)
          joystick_levels[port][input] = sampled[port][input] &&
+            !(port == 0u && input == ARC_PAD_A &&
+              (error_ready || arc_error_pad_gate)) &&
             arc_core_options.pad[port][input].automatic;
    arc_platform_joystick_snapshot(arc_loaded && arc_plan.a3010_joystick,
                                   joystick_levels);
@@ -5585,7 +5663,7 @@ static bool arc_construct_machine(const ArcMachineDescriptor *machine,
    if (
        !arc_engine_start(arc_firmware, arc_firmware_size, mounted,
                          arc_plan.launch_helper ? &helper : NULL,
-                         machine,
+                         machine, arc_plan.os,
                          attach_hd ? &ide_backend : NULL,
                          machine_cmos, locked_cmos_mask,
                          arc_cmos_ignored_write, NULL, error, error_size))
@@ -6673,6 +6751,7 @@ static void arc_present(const ArcEngineFrame *frame)
    if (frame->width < 320u)
    {
       arc_osk_close(&arc_osk, &arc_inputs);
+      arc_error_pad_gate = true;
       arc_osk_restore_gameplay();
       arc_osk_report_too_narrow();
       arc_send_video(frame->pixels, frame->width, frame->height, frame->pitch);
@@ -6928,6 +7007,7 @@ RETRO_API void retro_run(void)
          if (frame.width < 320u)
          {
             arc_osk_close(&arc_osk, &arc_inputs);
+            arc_error_pad_gate = true;
             arc_osk_restore_gameplay();
             arc_osk_report_too_narrow();
             arc_osk_present_dirty = true;

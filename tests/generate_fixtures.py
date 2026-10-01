@@ -4061,6 +4061,381 @@ def build_launch_outcome_rom(pattern: str) -> bytearray:
     return rom
 
 
+def build_error_box_rom(x_form: bool = False) -> bytearray:
+    """Authored user SWI and ROM SVC modal loop; no RISC OS bytes."""
+    rom = bytearray(b"\xff" * ROM_SIZE)
+    rom[0:4] = struct.pack("<I", 0xE59FF000)  # reset LDR PC,[PC]
+    rom[8:12] = struct.pack("<I", 0xE59FF000)  # SWI LDR PC,[PC]
+    rom[12:16] = struct.pack("<I", 0x03800020)
+    rom[16:20] = struct.pack("<I", 0x03801000)
+    a = Arm2(0x03800020)
+    a.ldr_const(1, 0x03400000)
+    for register in CHOOSER_VIDC_MODE:
+        a.ldr_const(0, register)
+        a.str(0, 1)
+    for address in (0x03600000, 0x03620000, 0x0364A000,
+                    0x0368A000, 0x036AA0FC, 0x036CA000):
+        a.ldr_const(0, address)
+        a.str(1, 0)
+    a.ldr_const(0, 0x036E0D0C)
+    a.str(1, 0)
+    a.ldr_const(12, 0x02004000)
+    a.mov(0, 0)
+    a.str(0, 12)
+    a.ldr_const(11, 0x02002000)
+    a.mov(0, 1)
+    a.str(0, 11, byte=True)  # OS_Word 21 block first byte
+    a.ldr_const(9, 0x00000800)
+    a.ldr_const(10, 0xEF0600DF if x_form else 0xEF0400DF)
+    a.str(10, 9)
+    a.ldr_const(10, 0xEAFFFFFE)
+    a.str(10, 9, 4)
+    a.ldr_const(13, 0x02008000)
+    a.mov(1, 0x17)
+    a.emit(0xE1B0F009)  # MOVS PC,R9 enters user mode
+    code = a.finish()
+    assert len(code) < 0x0fe0
+    rom[0x20:0x20 + len(code)] = code
+
+    a = Arm2(0x03801000)
+    a.ldr_const(12, 0x02004000)
+    a.ldr(8, 12)
+    a.cmp_imm(8, 0)
+    a.branch("nested", "ne")
+    a.mov(8, 1)
+    a.str(8, 12)
+    a.str(14, 12, 4)  # save the user SWI return link
+    a.ldr_const(13, 0x02008000)
+    a.mov(0, 21)
+    a.mov_reg(1, 11)
+    a.emit(0xEF000007)  # OS_Word 21,1
+    a.mov(0, 15)
+    a.mov(1, 1)
+    a.emit(0xEF000006)  # OS_Byte 15,1
+    a.mov(0, 21)
+    a.mov(1, 9)
+    a.emit(0xEF000006)  # OS_Byte 21,9
+    a.ldr_const(7, 0x02004100)
+    a.label("poll")
+    a.emit(0xEF00001C)  # OS_Mouse alternates with the modal key read
+    a.ldr_const(9, 0x80000000)
+    a.cmp_imm(9, 1)  # C and V set before the eligible SWI
+    a.mov_reg(6, 15)
+    a.str(6, 7, 0xC0)  # pre-SWI ARM26 flags
+    a.mov(3, 3)
+    a.mov(4, 4)
+    a.mov(5, 5)
+    a.mov(6, 6)
+    a.mov(0, 129)
+    a.mov(1, 0)
+    a.mov(2, 0)
+    saved_regs = (0, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14)
+    for index, register in enumerate(saved_regs):
+        a.str(register, 7, 0x40 + 4 * index)
+    a.emit(0xEF020006 if x_form else 0xEF000006)  # one fixed polling site
+    for index, register in enumerate(saved_regs):
+        a.str(register, 7, 0x80 + 4 * index)
+    a.mov_reg(5, 15)  # capture flags before any comparison
+    a.str(5, 7, 8)
+    a.cmp_imm(1, 0)
+    a.branch("done", "ne")
+    a.mov(0, 129)
+    a.mov(1, 0)
+    a.mov(2, 0)
+    a.emit(0xEF000006)  # identical arguments from another ROM PC
+    a.str(1, 7, 24)  # must stay zero even when an answer is pending
+    a.emit(0xEF010006)  # unrelated SWI sharing OS_Byte's low bits
+    a.str(1, 7, 28)
+    a.cmp_imm(0, 0)
+    a.emit(0x0F000006)  # condition-failed OS_Byte
+    a.str(1, 7, 32)
+    a.branch("poll")
+    a.label("done")
+    a.str(1, 7)
+    a.str(2, 7, 4)
+    a.str(13, 7, 12)
+    a.str(14, 7, 16)
+    a.mov(5, 1)
+    a.str(5, 7, 20)
+    a.ldr(14, 12, 4)
+    a.emit(0xE1B0F00E)  # MOVS PC,LR to user; ends invocation
+    a.label("nested")
+    a.emit(0xE1B0F00E)  # Return from OS_Word/OS_Byte stubs
+    code = a.finish()
+    rom[0x1000:0x1000 + len(code)] = code
+    marker = b"ARCDROID ERROR BOX ROM " + (b"X" if x_form else b"N") + b"\0"
+    rom[-len(marker):] = marker
+    return rom
+
+
+def build_error_box_arbitration_rom(after_poll: bool = False,
+                                    mouse_wait: bool = False) -> bytearray:
+    """Authored modal loop with a guest-owned one-character KART buffer."""
+    rom = bytearray(b"\xff" * ROM_SIZE)
+    rom[0:4] = struct.pack("<I", 0xE59FF000)
+    rom[8:12] = struct.pack("<I", 0xE59FF000)
+    rom[12:16] = struct.pack("<I", 0x03800020)
+    rom[16:20] = struct.pack("<I", 0x03801000)
+    state = 0x00000b00
+    kart = 0x03300000
+
+    def read_kart_pair(a: Arm2, prefix: str, destination: int) -> None:
+        """Read a device pair and retain non-boot packets for inspection."""
+        a.ldr(3, 10, 0x20, byte=True)
+        a.tst_imm(3, 0x80)
+        a.branch(prefix + "_none", "eq")
+        a.ldr(4, 10, 4, byte=True)
+        a.mov(6, 0x3f)
+        a.str(6, 10, 4, byte=True)
+        a.label(prefix + "_second")
+        a.ldr(3, 10, 0x20, byte=True)
+        a.tst_imm(3, 0x80)
+        a.branch(prefix + "_second", "eq")
+        a.ldr(5, 10, 4, byte=True)
+        a.mov(6, 0x33)
+        a.str(6, 10, 4, byte=True)
+        a.orr_lsl(6, 5, 4, 8)
+        a.str(6, 7, destination)
+        # The test core's power-on Shift is released by OS_Byte 15. Its
+        # down/up pairs are boot housekeeping, not a physical answer key.
+        a.cmp_imm(4, 0xc4)
+        a.branch(prefix + "_shift_up", "ne")
+        a.cmp_imm(5, 0xcc)
+        a.branch(prefix + "_none", "eq")
+        a.label(prefix + "_shift_up")
+        a.cmp_imm(4, 0xd4)
+        a.branch(prefix + "_decode", "ne")
+        a.cmp_imm(5, 0xdc)
+        a.branch(prefix + "_none", "eq")
+        a.label(prefix + "_decode")
+        a.mov(6, 255)  # any unrecognised pair remains visible to the test
+        a.cmp_imm(4, 0xc4)
+        a.branch(prefix + "_escape", "ne")
+        a.cmp_imm(5, 0xce)  # physical Z key-down, row 4 column 14
+        a.branch(prefix + "_z", "eq")
+        a.cmp_imm(5, 0xc7)  # Return, which must never be synthesised
+        a.branch(prefix + "_return", "eq")
+        a.branch(prefix + "_decoded")
+        a.label(prefix + "_escape")
+        a.cmp_imm(4, 0xc0)
+        a.branch(prefix + "_decoded", "ne")
+        a.cmp_imm(5, 0xc0)  # Escape, which must never be synthesised
+        a.branch(prefix + "_esc", "eq")
+        a.branch(prefix + "_decoded")
+        a.label(prefix + "_z")
+        a.mov(6, 122)
+        a.branch(prefix + "_decoded")
+        a.label(prefix + "_return")
+        a.mov(6, 13)
+        a.branch(prefix + "_decoded")
+        a.label(prefix + "_esc")
+        a.mov(6, 27)
+        a.label(prefix + "_decoded")
+
+    a = Arm2(0x03800020)
+    # Poll IOC/KART explicitly; the authored user program needs no IRQ service.
+    a.ldr_const(1, 0x03400000)
+    for register in CHOOSER_VIDC_MODE:
+        a.ldr_const(0, register)
+        a.str(0, 1)
+    for address in (0x03600000, 0x03620000, 0x0364A000,
+                    0x0368A000, 0x036AA0FC, 0x036CA000):
+        a.ldr_const(0, address)
+        a.str(1, 0)
+    a.ldr_const(0, 0x036E0D0C)
+    a.str(1, 0)
+    a.ldr_const(12, state)
+    a.mov(0, 0)
+    for offset in range(0, 0x34, 4):
+        a.str(0, 12, offset)
+    if mouse_wait:
+        a.str(0, 12, 0x3c)
+    a.ldr_const(11, 0x02002000)
+    a.mov(0, 1)
+    a.str(0, 11, byte=True)
+    a.mov(0, 4)
+    a.str(0, 11, 4, byte=True)  # readable non-bounding OS_Word 21 block
+    a.ldr_const(10, kart)
+    a.mov(0, 0xfd)
+    a.str(0, 10, 4, byte=True)
+    a.ldr_const(5, 5000)
+    a.label("reset_wait")
+    a.subs_imm(5, 5, 1)
+    a.branch("reset_wait", "ne")
+    a.ldr(0, 10, 4, byte=True)
+    a.mov(0, 0x33)
+    a.str(0, 10, 4, byte=True)
+    a.ldr_const(9, 0x00000800)
+    a.ldr_const(0, 0xEF0400DF)
+    a.str(0, 9)
+    a.ldr_const(4, 0x03802000)
+    a.ldr_const(5, 0x00000804)
+    a.mov(6, 128)  # copy the authored user program and its literal pool
+    a.label("copy_user")
+    a.ldr(0, 4)
+    a.str(0, 5)
+    a.add_imm(4, 4, 4)
+    a.add_imm(5, 5, 4)
+    a.subs_imm(6, 6, 1)
+    a.branch("copy_user", "ne")
+    a.ldr_const(13, 0x02008000)
+    a.mov(1, 0x17)
+    a.ldr_const(9, 0x08000800)  # user mode with IRQ masked; SVC polls KART
+    a.emit(0xE1B0F009)
+    code = a.finish()
+    assert len(code) < 0x0fe0
+    rom[0x20:0x20 + len(code)] = code
+
+    a = Arm2(0x03801000)
+    a.ldr_const(12, state)
+    a.ldr(8, 12, 0x30)  # first SWI enters the modal handler
+    a.cmp_imm(8, 0)
+    a.branch("nested", "ne")
+    a.mov(8, 1)
+    a.str(8, 12, 0x30)
+    a.str(14, 12, 0x34)
+    a.ldr_const(13, 0x02008000)
+    a.ldr_const(7, state)
+    a.ldr_const(10, kart)
+    a.mov(0, 21)
+    a.add_imm(1, 11, 4)
+    a.emit(0xEF000007)  # OS_Word 21,4 before mouse bounding
+    a.mov(0, 21)
+    a.mov_reg(1, 11)
+    a.emit(0xEF000007)
+    a.mov(0, 15)
+    a.mov(1, 1)
+    a.emit(0xEF000006)
+    a.mov(0, 21)
+    a.add_imm(1, 11, 4)
+    a.emit(0xEF000007)  # OS_Word 21,4 between input flushes
+    a.mov(0, 21)
+    a.mov(1, 9)
+    a.emit(0xEF000006)
+    a.label("poll")
+    a.mov(0, 28)
+    a.emit(0xEF00001C)  # OS_Mouse is the physical dismissal boundary
+    a.tst_imm(2, 4)
+    a.branch("physical", "ne")
+    a.mov(0, 1)
+    a.emit(0xEF000006)  # authored OS_Byte 1 pumps KART into the guest buffer
+    a.ldr(3, 7, 8)
+    a.str(3, 7, 0x2c)  # buffer occupancy immediately before the eligible read
+    a.mov(0, 129)
+    a.mov(1, 0)
+    a.mov(2, 0)
+    a.emit(0xEF000006)  # the single recorded OS_Byte 129 polling site
+    if mouse_wait:
+        a.mov(3, 1)
+        a.str(3, 7, 0x3c)  # arm the mouse wait after readiness can be observed
+    a.cmp_imm(1, 0)
+    a.branch("poll", "eq")
+    a.str(1, 7, 4)
+    a.branch("finish")
+    a.label("physical")
+    a.mov(3, 0x55)
+    a.str(3, 7, 4)
+    a.label("finish")
+    a.ldr(14, 12, 0x34)
+    a.emit(0xE1B0F00E)  # first user-mode switch discards pending pad intent
+    a.label("nested")
+    a.cmp_imm(0, 28)
+    a.branch("mouse", "eq")
+    a.cmp_imm(0, 1)
+    a.branch("byte_pump", "eq")
+    a.cmp_imm(0, 2)
+    a.branch("pop", "eq")
+    a.emit(0xE1B0F00E)
+    a.label("mouse")
+    a.mov(8, 1)
+    a.mov(2, 0)
+    a.branch("pump")
+    a.label("byte_pump")
+    a.mov(8, 0)
+    a.label("pump")
+    read_kart_pair(a, "svc", 0x24)
+    a.cmp_imm(6, 255)  # mouse packet is not a character
+    a.branch("svc_overflow", "eq")
+    a.ldr(3, 7, 8)
+    a.cmp_imm(3, 0)
+    a.branch("svc_overflow", "ne")
+    a.str(6, 7, 0x0c)
+    a.mov(3, 1)
+    a.str(3, 7, 8)
+    a.label("svc_overflow")
+    a.ldr(3, 7, 0x20)
+    a.add_imm(3, 3, 1)
+    a.str(3, 7, 0x20)
+    a.cmp_imm(8, 1)
+    a.branch("svc_none", "ne")
+    a.cmp_imm(4, 0xc7)  # physical left button KART row 7
+    a.branch("svc_none", "ne")
+    a.cmp_imm(5, 0xc0)  # column 0, key-down
+    a.branch("svc_none", "ne")
+    a.mov(2, 4)  # OS_Mouse button bit for Select
+    a.label("svc_none")
+    if mouse_wait:
+        a.cmp_imm(8, 1)
+        a.branch("svc_return", "ne")
+        a.ldr(3, 7, 0x3c)
+        a.cmp_imm(3, 0)
+        a.branch("svc_return", "eq")
+        a.cmp_imm(2, 0)
+        # Keep the second OS_Mouse in progress until the frontend's physical
+        # packet arrives. The pending pad request cannot reach the next poll.
+        a.branch("mouse", "eq")
+    a.label("svc_return")
+    a.emit(0xE1B0F00E)
+    a.label("pop")
+    a.ldr(3, 7, 8)
+    a.mov(1, 0)
+    a.cmp_imm(3, 0)
+    a.branch("pop_done", "eq")
+    a.ldr(1, 7, 0x0c)
+    a.mov(3, 0)
+    a.str(3, 7, 8)
+    a.label("pop_done")
+    a.emit(0xE1B0F00E)
+    code = a.finish()
+    rom[0x1000:0x1000 + len(code)] = code
+
+    a = Arm2(0x00000804)  # copied into the RAM caller immediately after SWI
+    a.ldr_const(7, state)
+    a.ldr_const(10, kart)
+    a.mov(0, 2)
+    a.mov(1, 0)
+    a.emit(0xEF000006)  # guest reads its own buffer after the box returns
+    a.str(1, 7, 0x10)
+    a.mov(0, 2)
+    a.mov(1, 0)
+    a.emit(0xEF000006)  # a second read must be empty
+    a.str(1, 7, 0x14)
+    a.mov(3, 1)
+    a.str(3, 7, 0)
+    if after_poll:
+        a.label("user_wait_physical")
+        a.mov(0, 1)
+        a.emit(0xEF000006)  # physical key is collected by the guest SVC
+        a.ldr(3, 7, 8)
+        a.cmp_imm(3, 0)
+        a.branch("user_wait_physical", "eq")
+        a.mov(0, 2)
+        a.emit(0xEF000006)
+        a.str(1, 7, 0x1c)
+        a.mov(3, 1)
+        a.str(3, 7, 0x18)
+    a.label("user_loop")  # no SWIs from here onward
+    a.branch("user_loop")
+    code = a.finish()
+    assert len(code) <= 512
+    rom[0x2000:0x2000 + len(code)] = code
+    marker = (b"ARCDROID ERROR BOX ARBITRATION AFTER ROM\0" if after_poll
+              else b"ARCDROID ERROR BOX ARBITRATION MOUSE ROM\0" if mouse_wait
+              else b"ARCDROID ERROR BOX ARBITRATION ROM\0")
+    rom[-len(marker):] = marker
+    return rom
+
+
 def build_sparse_f_jfd(image: bytes, flags: int = 0,
                        skipped: frozenset[int] = frozenset(),
                        extended: bool = True,
@@ -4287,6 +4662,14 @@ def main() -> None:
                     "delayed-input", "delayed-reset"):
         (args.output / f"arcdroid-outcome-{pattern}.rom").write_bytes(
             build_launch_outcome_rom(pattern))
+    (args.output / "arcdroid-error-box.rom").write_bytes(build_error_box_rom())
+    (args.output / "arcdroid-error-box-x.rom").write_bytes(build_error_box_rom(True))
+    (args.output / "arcdroid-error-box-arbitration.rom").write_bytes(
+        build_error_box_arbitration_rom())
+    (args.output / "arcdroid-error-box-arbitration-after.rom").write_bytes(
+        build_error_box_arbitration_rom(after_poll=True))
+    (args.output / "arcdroid-error-box-arbitration-mouse.rom").write_bytes(
+        build_error_box_arbitration_rom(mouse_wait=True))
     (args.output / "arcdroid-cmos-exerciser.rom").write_bytes(
         build_rom(cmos_exerciser=True))
     (args.output / "arcdroid-chooser-test.rom").write_bytes(build_chooser_rom())

@@ -34,6 +34,21 @@ static const ArcFirmwareFingerprint native_hd_stress_firmware = {
    UINT32_C(0xb274b6d4), "feeb34420c9b8c79013a50b81c21947a94d57b62",
    ARC_RECIPE_COMBINED, 0u
 };
+static const ArcFirmwareFingerprint error_box_arbitration_firmware = {
+   ARC_OS_RISCOS_311, "ArcDroid error box arbitration ROM", 524288u,
+   UINT32_C(0x3b4eacb6), "d7c75c609c2321be519b36dfed6c0669f60e1ebb",
+   ARC_RECIPE_COMBINED, 0u
+};
+static const ArcFirmwareFingerprint error_box_arbitration_mouse_firmware = {
+   ARC_OS_RISCOS_311, "ArcDroid error box arbitration mouse ROM", 524288u,
+   UINT32_C(0xb9031505), "7521070dc8add9bb59732d18ecbc125356be078c",
+   ARC_RECIPE_COMBINED, 0u
+};
+static const ArcFirmwareFingerprint error_box_arbitration_after_firmware = {
+   ARC_OS_RISCOS_311, "ArcDroid error box arbitration after ROM", 524288u,
+   UINT32_C(0xa7ec3295), "6c4ba091dca0549727bf4238c1cd1400351f9863",
+   ARC_RECIPE_COMBINED, 0u
+};
 static const ArcFirmwareFingerprint launch_outcome_firmware[] = {
    {ARC_OS_TEST,"ArcDroid invented launch outcome exact ROM",524288u,
     UINT32_C(0xc7fcf1d0),"8baf63e08cb2d0af38a1e5623d060415aed14097",
@@ -72,14 +87,14 @@ static const ArcFirmwareFingerprint launch_outcome_firmware[] = {
 
 const ArcFirmwareFingerprint *arc_firmware_table(size_t *count)
 {
-   enum { MAX_TEST_FIRMWARE = 64 };
+   enum { MAX_TEST_FIRMWARE = 128 };
    static ArcFirmwareFingerprint table[MAX_TEST_FIRMWARE];
    static size_t table_count;
    if (!table_count)
    {
       size_t base_count = 0u;
       const ArcFirmwareFingerprint *base = arc_base_firmware_table(&base_count);
-      size_t extra_count = 4u + sizeof(launch_outcome_firmware) /
+      size_t extra_count = 7u + sizeof(launch_outcome_firmware) /
                                  sizeof(launch_outcome_firmware[0]);
       if (base_count > MAX_TEST_FIRMWARE - extra_count)
          base_count = MAX_TEST_FIRMWARE - extra_count;
@@ -88,7 +103,10 @@ const ArcFirmwareFingerprint *arc_firmware_table(size_t *count)
       table[base_count + 1u] = unsupported_launch_firmware;
       table[base_count + 2u] = native_hd_guest_firmware;
       table[base_count + 3u] = native_hd_stress_firmware;
-      memcpy(table+base_count+4u,launch_outcome_firmware,
+      table[base_count + 4u] = error_box_arbitration_firmware;
+      table[base_count + 5u] = error_box_arbitration_mouse_firmware;
+      table[base_count + 6u] = error_box_arbitration_after_firmware;
+      memcpy(table+base_count+7u,launch_outcome_firmware,
              sizeof(launch_outcome_firmware));
       table_count = base_count + extra_count;
    }
@@ -114,6 +132,18 @@ const ArcFirmwareFingerprint *arc_firmware_match(const ArcDigest *digest)
        digest->crc32 == native_hd_stress_firmware.crc32 &&
        !strcmp(digest->sha1, native_hd_stress_firmware.sha1))
       return &native_hd_stress_firmware;
+   if (digest && digest->size == error_box_arbitration_firmware.size &&
+       digest->crc32 == error_box_arbitration_firmware.crc32 &&
+       !strcmp(digest->sha1, error_box_arbitration_firmware.sha1))
+      return &error_box_arbitration_firmware;
+   if (digest && digest->size == error_box_arbitration_mouse_firmware.size &&
+       digest->crc32 == error_box_arbitration_mouse_firmware.crc32 &&
+       !strcmp(digest->sha1, error_box_arbitration_mouse_firmware.sha1))
+      return &error_box_arbitration_mouse_firmware;
+   if (digest && digest->size == error_box_arbitration_after_firmware.size &&
+       digest->crc32 == error_box_arbitration_after_firmware.crc32 &&
+       !strcmp(digest->sha1, error_box_arbitration_after_firmware.sha1))
+      return &error_box_arbitration_after_firmware;
    for (unsigned i=0u;i<sizeof(launch_outcome_firmware)/
                          sizeof(launch_outcome_firmware[0]);++i)
       if (digest && digest->size == launch_outcome_firmware[i].size &&
