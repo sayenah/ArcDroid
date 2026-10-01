@@ -170,6 +170,8 @@ static bool environment(unsigned command, void *data)
          {
             assert(strcmp(options->definitions[count].key,
                           "arcdroid_install_saves") != 0);
+            assert(strcmp(options->definitions[count].key,
+                          "arcdroid_input_profile") != 0);
             if (!strcmp(options->definitions[count].key, "arcdroid_hard_disc"))
             {
                assert(!hard_disc);
@@ -192,7 +194,7 @@ static bool environment(unsigned command, void *data)
             }
             ++count;
          }
-         assert(count == 40u);
+         assert(count == 39u);
          assert(hard_disc && !hard_disc->category_key &&
                 hard_disc->default_value &&
                 !strcmp(hard_disc->default_value, "auto") &&
@@ -262,6 +264,7 @@ static bool environment(unsigned command, void *data)
       case RETRO_ENVIRONMENT_GET_VARIABLE:
       {
          struct retro_variable *variable = data;
+         assert(strcmp(variable->key, "arcdroid_input_profile") != 0);
          if (!strcmp(variable->key, "arcdroid_pointer_mode")) variable->value = "relative";
          else if (!strcmp(variable->key, "arcdroid_pointer_stick")) variable->value = "right";
          else if (!strcmp(variable->key, "arcdroid_pointer_speed")) variable->value = "600";
