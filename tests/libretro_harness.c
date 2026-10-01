@@ -2271,6 +2271,7 @@ int main(int argc, char **argv)
    bool real_boot = false;
    bool input_layout_probe = false;
    bool error_box_probe = false;
+   const char *error_arbitration_case = NULL;
    bool helper_stress = false;
    bool newio_smoke = false;
    bool jfd_writes = false;
@@ -2304,6 +2305,14 @@ int main(int argc, char **argv)
       input_layout_probe = true;
    else if (argc == 6 && !strcmp(argv[5], "--error-box-probe"))
       error_box_probe = true;
+   else if (argc == 6 && !strncmp(argv[5], "--error-box-arbitration-", 24u))
+   {
+      error_arbitration_case = argv[5] + 24u;
+      assert(!strcmp(error_arbitration_case, "buffer") ||
+             !strcmp(error_arbitration_case, "mouse") ||
+             !strcmp(error_arbitration_case, "after"));
+      error_box_probe = true;
+   }
    else if (argc == 17 && !strcmp(argv[16], "--helper-stress"))
       helper_stress = true;
    else if (argc == 11 && !strcmp(argv[5], "--newio-smoke"))
@@ -2974,6 +2983,117 @@ int main(int argc, char **argv)
       retro_deinit();
       assert(open_files == 0u && open_dirs == 0u && dlclose(module) == 0);
       puts("helper-stress: passed");
+      return 0;
+   }
+
+   if (error_arbitration_case)
+   {
+      option_machine = "A3000";
+      option_launch = "off";
+      phase = PHASE_LOAD; assert(retro_load_game(&game));
+      phase = PHASE_RUN;
+      ArcErrorBox box;
+      uint32_t guest = 0u;
+      for (unsigned frame = 0u; frame < 40u; ++frame)
+      {
+         retro_run();
+         arc_engine_error_snapshot(&box);
+         if (box.stage == ARC_ERROR_READY) break;
+      }
+      assert(box.stage == ARC_ERROR_READY && box.pending == ARC_ERROR_NONE);
+      assert(arc_engine_test_guest_word(0x00000b08u, &guest) && guest == 0u);
+      retro_run(); /* clear the readiness release gate with both buttons up */
+      if (!strcmp(error_arbitration_case, "buffer"))
+      {
+         assert(keyboard.callback);
+         keyboard.callback(true, RETROK_z, 0u, 0u);
+         for (unsigned frame = 0u; frame < 40u; ++frame)
+         {
+            retro_run();
+            assert(arc_engine_test_guest_word(0x00000b08u, &guest));
+            if (guest == 1u) break;
+         }
+         assert(guest == 1u); /* physical key already in the guest buffer */
+         arc_engine_error_snapshot(&box);
+         assert(box.stage == ARC_ERROR_READY && box.pending == ARC_ERROR_NONE);
+         joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_A] = true;
+      }
+      else if (!strcmp(error_arbitration_case, "mouse"))
+      {
+         mouse_buttons = 1u;
+         joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_A] = true;
+      }
+      else joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_B] = true;
+      for (unsigned frame = 0u; frame < 40u; ++frame)
+      {
+         retro_run();
+         assert(arc_engine_test_guest_word(0x00000b00u, &guest));
+         if (guest == 1u) break; /* user read the buffer, then entered SWI-free loop */
+      }
+      assert(guest == 1u);
+      assert(arc_engine_test_guest_word(0x00000b04u, &guest));
+      if (!strcmp(error_arbitration_case, "buffer"))
+      {
+         assert(guest == 27u);
+         assert(arc_engine_test_guest_word(0x00000b2cu, &guest) && guest == 1u);
+         assert(arc_engine_test_guest_word(0x00000b20u, &guest) && guest == 1u);
+         assert(arc_engine_test_guest_word(0x00000b24u, &guest) &&
+                guest == 0xc4ceu); /* physical Z key-down, not Return/Escape */
+         assert(arc_engine_test_guest_word(0x00000b10u, &guest) && guest == 122u);
+         assert(arc_engine_test_guest_word(0x00000b14u, &guest) && guest == 0u);
+         assert(error_pending_logs == 1u && error_consumed_logs == 1u &&
+                error_discarded_logs == 0u);
+      }
+      else if (!strcmp(error_arbitration_case, "mouse"))
+      {
+         assert(guest == 0x55u); /* OS_Mouse won before the next key read */
+         assert(arc_engine_test_guest_word(0x00000b20u, &guest) && guest == 1u);
+         assert(arc_engine_test_guest_word(0x00000b24u, &guest) &&
+                guest == 0xc7c0u); /* physical Select-down KART packet */
+         assert(arc_engine_test_guest_word(0x00000b10u, &guest) && guest == 0u);
+         assert(arc_engine_test_guest_word(0x00000b14u, &guest) && guest == 0u);
+         assert(error_pending_logs == 1u && error_consumed_logs == 0u &&
+                error_discarded_logs == 1u);
+      }
+      else
+      {
+         assert(guest == 13u);
+         assert(arc_engine_test_guest_word(0x00000b10u, &guest) && guest == 0u);
+         assert(arc_engine_test_guest_word(0x00000b14u, &guest) && guest == 0u);
+         assert(error_pending_logs == 1u && error_consumed_logs == 1u &&
+                error_discarded_logs == 0u);
+      }
+      assert(arc_engine_test_guest_word(0x00000b08u, &guest) && guest == 0u);
+      assert(error_ended_logs == 1u);
+      mouse_buttons = 0u;
+      for (unsigned frame = 0u; frame < 10u; ++frame) retro_run();
+      if (!strcmp(error_arbitration_case, "after"))
+      {
+         assert(arc_engine_test_guest_word(0x00000b18u, &guest) && guest == 0u);
+         assert(keyboard.callback);
+         keyboard.callback(true, RETROK_z, 0u, 0u);
+         for (unsigned frame = 0u; frame < 10u; ++frame) retro_run();
+         assert(arc_engine_test_guest_word(0x00000b18u, &guest) && guest == 1u);
+         assert(arc_engine_test_guest_word(0x00000b1cu, &guest) && guest == 122u);
+         assert(arc_engine_test_guest_word(0x00000b24u, &guest) &&
+                guest == 0xc4ceu);
+      }
+      else if (!strcmp(error_arbitration_case, "buffer"))
+         assert(arc_engine_test_guest_word(0x00000b18u, &guest) && guest == 0u);
+      /* No later completion, Return, Escape, or guest-buffered character. */
+      assert(error_consumed_logs ==
+             (strcmp(error_arbitration_case, "mouse") ? 1u : 0u));
+      assert(arc_engine_test_guest_word(0x00000b08u, &guest) && guest == 0u);
+      assert(arc_engine_test_guest_word(0x00000b0cu, &guest) && guest != 13u &&
+             guest != 27u);
+      joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_A] = false;
+      joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_B] = false;
+      if (strcmp(error_arbitration_case, "mouse"))
+         keyboard.callback(false, RETROK_z, 0u, 0u);
+      retro_unload_game();
+      retro_deinit();
+      assert(open_files == 0u && open_dirs == 0u && dlclose(module) == 0);
+      puts("error-box-arbitration: passed");
       return 0;
    }
 

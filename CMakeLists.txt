@@ -985,6 +985,18 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
       "${FIXTURE_DIR}/arcdroid-test.adf"
       "${CMAKE_CURRENT_BINARY_DIR}/error-box-x-rom-data"
       --error-box-probe)
+    foreach(arbitration_case IN ITEMS buffer mouse after)
+      set(arbitration_rom_suffix "")
+      if(NOT arbitration_case STREQUAL "buffer")
+        set(arbitration_rom_suffix "-${arbitration_case}")
+      endif()
+      add_test(NAME error-box-arbitration-${arbitration_case} COMMAND libretro_harness
+        $<TARGET_FILE:arcdroid_libretro_test>
+        "${FIXTURE_DIR}/arcdroid-error-box-arbitration${arbitration_rom_suffix}.rom"
+        "${FIXTURE_DIR}/arcdroid-test.adf"
+        "${CMAKE_CURRENT_BINARY_DIR}/error-box-arbitration-${arbitration_case}-data"
+        --error-box-arbitration-${arbitration_case})
+    endforeach()
     add_test(NAME libretro-harness COMMAND libretro_harness
       $<TARGET_FILE:arcdroid_libretro_test>
       "${FIXTURE_DIR}/arcdroid-test.rom"
