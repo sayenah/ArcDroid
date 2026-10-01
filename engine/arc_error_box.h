@@ -22,8 +22,11 @@ typedef struct {
 
 /* The caller reports a bounded first byte for OS_Word 21. No guest pointer is
  * dereferenced here. Other ROM SVC SWIs and IRQ/FIQ activity may intervene
- * between ordered steps. An invalid ordered step, non-ROM SVC SWI, nested
- * report, first return to user mode, reset, teardown, or fault ends this
+ * between ordered steps. Readable non-bounding OS_Word 21 calls from ROM SVC
+ * are neutral at every pre-ready stage; byte 1 advances only from WORD, and
+ * an unreadable block or later byte 1 ends the generation. An invalid ordered
+ * step, non-ROM SVC SWI, nested report, first return to user mode, reset,
+ * teardown, or fault ends this
  * generation. The first eligible read only records the site; a later read
  * from the same site and SVC stack may consume one pending request. */
 const char *arc_error_swi(ArcErrorBox *box, uint32_t swi, uint32_t r0,

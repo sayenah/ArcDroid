@@ -4253,6 +4253,8 @@ def build_error_box_arbitration_rom(after_poll: bool = False,
     a.ldr_const(11, 0x02002000)
     a.mov(0, 1)
     a.str(0, 11, byte=True)
+    a.mov(0, 4)
+    a.str(0, 11, 4, byte=True)  # readable non-bounding OS_Word 21 block
     a.ldr_const(10, kart)
     a.mov(0, 0xfd)
     a.str(0, 10, 4, byte=True)
@@ -4296,11 +4298,17 @@ def build_error_box_arbitration_rom(after_poll: bool = False,
     a.ldr_const(7, state)
     a.ldr_const(10, kart)
     a.mov(0, 21)
+    a.add_imm(1, 11, 4)
+    a.emit(0xEF000007)  # OS_Word 21,4 before mouse bounding
+    a.mov(0, 21)
     a.mov_reg(1, 11)
     a.emit(0xEF000007)
     a.mov(0, 15)
     a.mov(1, 1)
     a.emit(0xEF000006)
+    a.mov(0, 21)
+    a.add_imm(1, 11, 4)
+    a.emit(0xEF000007)  # OS_Word 21,4 between input flushes
     a.mov(0, 21)
     a.mov(1, 9)
     a.emit(0xEF000006)

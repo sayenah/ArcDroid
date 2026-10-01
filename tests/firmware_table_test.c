@@ -36,17 +36,17 @@ static const ArcFirmwareFingerprint native_hd_stress_firmware = {
 };
 static const ArcFirmwareFingerprint error_box_arbitration_firmware = {
    ARC_OS_RISCOS_311, "ArcDroid error box arbitration ROM", 524288u,
-   UINT32_C(0xfa7cd97c), "1c037bd98964367ec9cd4e9710a1ad8b8a098d47",
+   UINT32_C(0x3b4eacb6), "d7c75c609c2321be519b36dfed6c0669f60e1ebb",
    ARC_RECIPE_COMBINED, 0u
 };
 static const ArcFirmwareFingerprint error_box_arbitration_mouse_firmware = {
    ARC_OS_RISCOS_311, "ArcDroid error box arbitration mouse ROM", 524288u,
-   UINT32_C(0x846aa495), "b0abc1446fcd00de6ee8f989159d7d4f6c949f9c",
+   UINT32_C(0xb9031505), "7521070dc8add9bb59732d18ecbc125356be078c",
    ARC_RECIPE_COMBINED, 0u
 };
 static const ArcFirmwareFingerprint error_box_arbitration_after_firmware = {
    ARC_OS_RISCOS_311, "ArcDroid error box arbitration after ROM", 524288u,
-   UINT32_C(0x66de475f), "cc6286ea08445f09392429c1e4746cf14cc52956",
+   UINT32_C(0xa7ec3295), "6c4ba091dca0549727bf4238c1cd1400351f9863",
    ARC_RECIPE_COMBINED, 0u
 };
 static const ArcFirmwareFingerprint launch_outcome_firmware[] = {

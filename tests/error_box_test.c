@@ -14,6 +14,16 @@ static void call(ArcErrorBox *box, uint32_t swi, uint32_t r0,
 }
 static void enter(ArcErrorBox *box, uint32_t swi, unsigned flags)
 { call(box, swi, 0u, flags, 0u, 0u, false, false, 0u); }
+static void advance_to(ArcErrorBox *box, ArcErrorStage target)
+{
+   if (target >= ARC_ERROR_BYTE15)
+      call(box, 7u, 21u, 0x02002000u, 0u, 3u, true, true, 1u);
+   if (target >= ARC_ERROR_BYTE21)
+      call(box, 6u, 15u, 1u, 0u, 3u, true, false, 0u);
+   if (target >= ARC_ERROR_POLL)
+      call(box, 6u, 21u, 9u, 0u, 3u, true, false, 0u);
+   assert(box->stage == target);
+}
 static void sequence(ArcErrorBox *box)
 {
    call(box, 7u, 21u, 0x02002000u, 0u, 3u, true, true, 1u);
@@ -71,7 +81,46 @@ int main(void)
                                 false,false,0u),"flags"));
    enter(&box, 0x600dfu, 3u);
    call(&box, 7u, 21u, 0u, 0u, 3u, true, true, 2u);
-   assert(box.stage == ARC_ERROR_OFF);
+   assert(box.stage == ARC_ERROR_WORD);
+   for (unsigned stage = ARC_ERROR_WORD; stage <= ARC_ERROR_POLL; ++stage)
+   {
+      enter(&box, 0x400dfu, 3u);
+      advance_to(&box, (ArcErrorStage)stage);
+      uint64_t generation = box.generation;
+      for (unsigned first = 3u; first <= 6u; ++first)
+      {
+         call(&box, first & 1u ? 0x20007u : 7u, 21u, 0x02002000u,
+              0u, 3u, true, true, first);
+         assert(box.stage == (ArcErrorStage)stage &&
+                box.generation == generation && box.site == 0u);
+      }
+      if (stage == ARC_ERROR_WORD) sequence(&box);
+      else
+      {
+         if (stage == ARC_ERROR_BYTE15)
+            call(&box, 6u, 15u, 1u, 0u, 3u, true, false, 0u);
+         if (stage <= ARC_ERROR_BYTE21)
+            call(&box, 6u, 21u, 9u, 0u, 3u, true, false, 0u);
+         call(&box, 6u, 129u, 0u, 0u, 3u, true, false, 0u);
+         assert(box.stage == ARC_ERROR_READY && box.site == site);
+      }
+      assert(arc_error_request(&box, ARC_ERROR_OK));
+      assert(arc_error_consume(&box, site, 3u, box.sp, box.lr, &key));
+   }
+   for (unsigned stage = ARC_ERROR_BYTE15; stage <= ARC_ERROR_POLL; ++stage)
+   {
+      enter(&box, 0x400dfu, 3u);
+      advance_to(&box, (ArcErrorStage)stage);
+      call(&box, 7u, 21u, 0x02002000u, 0u, 3u, true, true, 1u);
+      assert(box.stage == ARC_ERROR_OFF); /* unexpected re-bounding */
+   }
+   for (unsigned stage = ARC_ERROR_WORD; stage <= ARC_ERROR_POLL; ++stage)
+   {
+      enter(&box, 0x400dfu, 3u);
+      advance_to(&box, (ArcErrorStage)stage);
+      call(&box, 7u, 21u, 0x02002000u, 0u, 3u, true, false, 4u);
+      assert(box.stage == ARC_ERROR_OFF); /* unreadable block */
+   }
    enter(&box, 0x400dfu, 3u);
    call(&box, 6u, 15u, 1u, 0u, 3u, true, false, 0u);
    assert(box.stage == ARC_ERROR_OFF);

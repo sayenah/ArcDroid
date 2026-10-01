@@ -41,9 +41,16 @@ const char *arc_error_swi(ArcErrorBox *box, uint32_t swi, uint32_t r0,
    {
       if (r0 == 21u)
       {
-         if (box->stage != ARC_ERROR_WORD || !block_valid || block_first != 1u)
-            arc_error_end(box);
-         else box->stage = ARC_ERROR_BYTE15;
+         /* A readable non-bounding mouse operation (for example, the
+          * unbuffered position read) may precede the bounding call or occur
+          * between later steps. It never advances the ordered sequence.
+          * Re-bounding after WORD and an unreadable block still fail closed. */
+         if (!block_valid) arc_error_end(box);
+         else if (block_first == 1u)
+         {
+            if (box->stage == ARC_ERROR_WORD) box->stage = ARC_ERROR_BYTE15;
+            else arc_error_end(box);
+         }
       }
    }
    else if (swi == 6u || swi == 0x20006u)
