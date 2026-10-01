@@ -52,17 +52,17 @@ int main(void)
          bool default_cancel = cancel && (!ok || (flags & 4u));
          assert(box.ok == ok && box.cancel == cancel &&
                 box.default_cancel == default_cancel);
-         assert(!arc_error_consume(&box, site + 4u, 3u, box.sp, box.lr, &key));
-         assert(!arc_error_consume(&box, site, 1u, box.sp, box.lr, &key));
-         assert(!arc_error_consume(&box, site, 2u, box.sp, box.lr, &key));
-         assert(!arc_error_consume(&box, site, 3u, box.sp + 4u, box.lr, &key));
-         assert(!arc_error_consume(&box, site, 3u, box.sp, box.lr, &key));
          (void)arc_error_swi(&box,6u,129u,0u,0u,site + 4u,3u,
                              box.sp,box.lr,true,false,0u);
          assert(box.site == site);
          ArcErrorAnswer answer = ok ? ARC_ERROR_OK : ARC_ERROR_CANCEL;
          assert(arc_error_request(&box, answer));
          assert(!arc_error_request(&box, cancel ? ARC_ERROR_CANCEL : ARC_ERROR_OK));
+         for (unsigned mode = 0u; mode <= 2u; ++mode)
+            assert(!arc_error_consume(&box, site, mode, box.sp, box.lr, &key));
+         assert(!arc_error_consume(&box, site, 3u, box.sp - 8u, box.lr, &key));
+         assert(!arc_error_consume(&box, site + 4u, 3u, box.sp, box.lr, &key));
+         assert(box.pending == answer && box.consumed == ARC_ERROR_NONE);
          assert(arc_error_consume(&box, site, 3u, box.sp, box.lr, &key));
          assert(key == (((answer == ARC_ERROR_CANCEL) == default_cancel) ? 13u : 27u));
          assert(box.pending == ARC_ERROR_NONE && box.consumed == answer);
@@ -120,6 +120,20 @@ int main(void)
       advance_to(&box, (ArcErrorStage)stage);
       call(&box, 7u, 21u, 0x02002000u, 0u, 3u, true, false, 4u);
       assert(box.stage == ARC_ERROR_OFF); /* unreadable block */
+   }
+   for (unsigned stage = ARC_ERROR_WORD; stage <= ARC_ERROR_POLL; ++stage)
+   {
+      enter(&box, 0x400dfu, 3u);
+      advance_to(&box, (ArcErrorStage)stage);
+      if (stage == ARC_ERROR_WORD)
+         call(&box, 7u, 21u, 0x02002000u, 0u, 3u, false, true, 1u);
+      else if (stage == ARC_ERROR_BYTE15)
+         call(&box, 6u, 15u, 1u, 0u, 3u, false, false, 0u);
+      else if (stage == ARC_ERROR_BYTE21)
+         call(&box, 6u, 21u, 9u, 0u, 3u, false, false, 0u);
+      else
+         call(&box, 6u, 129u, 0u, 0u, 3u, false, false, 0u);
+      assert(box.stage == ARC_ERROR_OFF); /* every ordered step requires ROM */
    }
    enter(&box, 0x400dfu, 3u);
    call(&box, 6u, 15u, 1u, 0u, 3u, true, false, 0u);

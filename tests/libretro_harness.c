@@ -3103,12 +3103,22 @@ int main(int argc, char **argv)
       bool (*joystick_read)(unsigned, uint8_t *) = NULL;
       bool (*osk_visible)(void) = NULL;
       bool (*error_request)(ArcErrorAnswer) = NULL;
+      bool (*error_poll)(uint32_t, uint32_t, uint32_t, uint32_t, uint8_t *) = NULL;
+      bool (*engine_reset)(char *, size_t) = NULL;
+      void (*guest_write)(uint32_t, uint32_t) = NULL;
+      uint32_t (*guest_read)(uint32_t) = NULL;
+      uint8_t *memstat = dlsym(module, "memstat");
       *(void **)(&pad_source) =
          dlsym(module, "arc_libretro_test_pad_source_level");
       *(void **)(&joystick_read) = dlsym(module, "arc_engine_test_joystick");
       *(void **)(&osk_visible) = dlsym(module, "arc_libretro_test_osk_visible");
       *(void **)(&error_request) = dlsym(module, "arc_engine_error_request");
-      assert(pad_source && joystick_read && osk_visible && error_request);
+      *(void **)(&error_poll) = dlsym(module, "arc_engine_error_poll");
+      *(void **)(&engine_reset) = dlsym(module, "arc_engine_reset");
+      *(void **)(&guest_write) = dlsym(module, "writememfl_debug");
+      *(void **)(&guest_read) = dlsym(module, "readmemf_debug");
+      assert(pad_source && joystick_read && osk_visible && error_request &&
+             error_poll && engine_reset && guest_write && guest_read && memstat);
       option_machine = "A3000";
       option_launch = "off";
       retro_set_controller_port_device(1u, RETRO_DEVICE_JOYPAD);
@@ -3131,6 +3141,14 @@ int main(int argc, char **argv)
       assert(error_request(ARC_ERROR_OK));
       arc_engine_error_snapshot(&box);
       assert(box.pending == ARC_ERROR_OK);
+      uint8_t probe_key = 0u;
+      uint8_t saved_memstat = memstat[box.site >> 12u];
+      assert(saved_memstat == 5u);
+      memstat[box.site >> 12u] = 3u;
+      assert(!error_poll(box.site, 3u, box.sp, box.lr, &probe_key));
+      memstat[box.site >> 12u] = saved_memstat;
+      arc_engine_error_snapshot(&box);
+      assert(box.pending == ARC_ERROR_OK && box.consumed == ARC_ERROR_NONE);
       assert(disk_control.set_eject_state(true));
       arc_engine_error_snapshot(&box);
       assert(box.stage == ARC_ERROR_READY && box.pending == ARC_ERROR_NONE &&
@@ -3226,6 +3244,153 @@ int main(int argc, char **argv)
       joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_A] = false;
       retro_unload_game();
       option_pad[0][ARC_PAD_A] = NULL;
+      /* The OSK owns its buttons and defers the hint until it closes. */
+      phase = PHASE_LOAD; assert(retro_load_game(&game));
+      phase = PHASE_RUN;
+      joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_L3] = true;
+      retro_run();
+      joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_L3] = false;
+      for (unsigned frame = 0u; frame < 40u; ++frame)
+      {
+         retro_run();
+         arc_engine_error_snapshot(&box);
+         if (box.stage == ARC_ERROR_READY) break;
+      }
+      assert(osk_visible() && box.stage == ARC_ERROR_READY);
+      unsigned deferred_hint = error_hint_notices;
+      assert(deferred_hint == 2u);
+      retro_run(); /* neutral A/B release gate while the OSK is visible */
+      assert(error_hint_notices == deferred_hint);
+      joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_A] = true;
+      retro_run();
+      arc_engine_error_snapshot(&box);
+      assert(osk_visible() && box.stage == ARC_ERROR_READY &&
+             box.pending == ARC_ERROR_NONE && error_hint_notices == deferred_hint);
+      joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_A] = false;
+      retro_run();
+      joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_B] = true;
+      retro_run();
+      arc_engine_error_snapshot(&box);
+      assert(box.pending == ARC_ERROR_NONE);
+      joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_B] = false;
+      retro_run();
+      if (osk_visible())
+      {
+         joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_L3] = true;
+         retro_run();
+         joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_L3] = false;
+         retro_run();
+      }
+      assert(!osk_visible() && error_hint_notices == deferred_hint + 1u);
+      retro_run();
+      assert(error_hint_notices == deferred_hint + 1u);
+      retro_unload_game();
+
+      /* Reset ends a ready invocation, including any pending answer. */
+      for (unsigned pending = 0u; pending < 2u; ++pending)
+      {
+         phase = PHASE_LOAD; assert(retro_load_game(&game));
+         phase = PHASE_RUN;
+         for (unsigned frame = 0u; frame < 40u; ++frame)
+         {
+            retro_run();
+            arc_engine_error_snapshot(&box);
+            if (box.stage == ARC_ERROR_READY) break;
+         }
+         assert(box.stage == ARC_ERROR_READY);
+         if (pending) assert(error_request(ARC_ERROR_OK));
+         arc_engine_error_snapshot(&box);
+         uint32_t old_site = box.site, old_sp = box.sp, old_lr = box.lr;
+         unsigned consumed_before = error_consumed_logs;
+         unsigned discarded_before = error_discarded_logs;
+         joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_A] = true;
+         char reset_failure[512] = {0};
+         assert(engine_reset(reset_failure, sizeof(reset_failure)));
+         arc_engine_error_snapshot(&box);
+         assert(box.stage == ARC_ERROR_OFF && box.pending == ARC_ERROR_NONE);
+         assert(error_discarded_logs == discarded_before + pending);
+         assert(!error_poll(old_site, 3u, old_sp, old_lr, &probe_key));
+         for (unsigned frame = 0u; frame < 40u; ++frame)
+         {
+            retro_run();
+            arc_engine_error_snapshot(&box);
+            if (box.stage == ARC_ERROR_READY) break;
+         }
+         assert(box.stage == ARC_ERROR_READY && box.pending == ARC_ERROR_NONE &&
+                error_consumed_logs == consumed_before);
+         for (unsigned frame = 0u; frame < 3u; ++frame)
+         {
+            retro_run();
+            arc_engine_error_snapshot(&box);
+            assert(box.stage == ARC_ERROR_READY && box.pending == ARC_ERROR_NONE);
+         }
+         joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_A] = false;
+         retro_run();
+         joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_A] = true;
+         for (unsigned frame = 0u; frame < 20u; ++frame)
+         {
+            retro_run();
+            arc_engine_error_snapshot(&box);
+            if (box.stage == ARC_ERROR_OFF) break;
+         }
+         assert(box.stage == ARC_ERROR_OFF &&
+                error_consumed_logs == consumed_before + 1u);
+         joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_A] = false;
+         retro_unload_game();
+      }
+
+      /* Patch the two instructions before the same authored ROM polling SWI
+       * after fingerprint selection. The malformed call must run normally
+       * and leave the pending answer for a later valid call. */
+      for (unsigned argument = 1u; argument <= 2u; ++argument)
+      {
+         phase = PHASE_LOAD; assert(retro_load_game(&game));
+         phase = PHASE_RUN;
+         for (unsigned frame = 0u; frame < 40u; ++frame)
+         {
+            retro_run();
+            arc_engine_error_snapshot(&box);
+            if (box.stage == ARC_ERROR_READY) break;
+         }
+         assert(box.stage == ARC_ERROR_READY);
+         assert(guest_read(box.site - 8u) == 0xE587D06Cu &&
+                guest_read(box.site - 4u) == 0xE587E070u);
+         uint32_t original_branch = guest_read(box.site + 68u);
+         assert((original_branch & 0xFF000000u) == 0x1A000000u);
+         guest_write(box.site - 8u, 0xE3A03042u); /* MOV R3,#0x42 witness */
+         guest_write(box.site - 4u,
+                     argument == 1u ? 0xE3A01001u : 0xE3A02001u);
+         if (argument == 1u)
+            guest_write(box.site + 68u, 0xE1A00000u); /* keep modal loop open */
+         uint32_t witness = 0u;
+         for (unsigned frame = 0u; frame < 20u; ++frame)
+         {
+            retro_run();
+            assert(arc_engine_test_guest_word(0x02004184u, &witness));
+            if (witness == 0x42u) break;
+         }
+         assert(witness == 0x42u); /* the malformed call ran in the guest */
+         assert(error_request(ARC_ERROR_OK));
+         unsigned consumed_before = error_consumed_logs;
+         for (unsigned frame = 0u; frame < 3u; ++frame) retro_run();
+         arc_engine_error_snapshot(&box);
+         assert(box.stage == ARC_ERROR_READY && box.pending == ARC_ERROR_OK &&
+                box.consumed == ARC_ERROR_NONE &&
+                error_consumed_logs == consumed_before);
+         guest_write(box.site - 8u, 0xE587D06Cu);
+         guest_write(box.site - 4u, 0xE587E070u);
+         if (argument == 1u) guest_write(box.site + 68u, original_branch);
+         for (unsigned frame = 0u; frame < 20u; ++frame)
+         {
+            retro_run();
+            arc_engine_error_snapshot(&box);
+            if (box.stage == ARC_ERROR_OFF) break;
+         }
+         assert(box.stage == ARC_ERROR_OFF &&
+                error_consumed_logs == consumed_before + 1u);
+         retro_unload_game();
+      }
+
       option_machine = "A3010";
       option_joystick = "A3010";
       phase = PHASE_LOAD; assert(retro_load_game(&game));
@@ -3250,6 +3415,71 @@ int main(int argc, char **argv)
       assert(joystick_read(0u, &joystick) && joystick == 0x6fu);
       joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_A] = false;
       retro_unload_game();
+      if (strstr(argv[2], "error-box-x.rom"))
+      {
+         option_machine = "A3000";
+         option_joystick = "Auto";
+         phase = PHASE_LOAD; assert(retro_load_game(&game));
+         phase = PHASE_RUN;
+         unsigned consumed_before_two = error_consumed_logs;
+         for (unsigned frame = 0u; frame < 40u; ++frame)
+         {
+            retro_run();
+            arc_engine_error_snapshot(&box);
+            if (box.stage == ARC_ERROR_READY) break;
+         }
+         assert(box.stage == ARC_ERROR_READY);
+         uint64_t first_generation = box.generation;
+         /* Test-only patch after fingerprint selection: the authored ROM's
+          * result-store pair resets its SVC-entry guard, and the user code
+          * issues a second ReportError immediately on return. */
+         uint32_t reset_site = 0u;
+         for (uint32_t at = 0x03801000u; at < 0x03801400u; at += 4u)
+            if (guest_read(at) == 0xE3A05001u &&
+                guest_read(at + 4u) == 0xE5875014u)
+            { reset_site = at; break; }
+         assert(reset_site && guest_read(0x00000804u) == 0xEAFFFFFEu);
+         guest_write(reset_site, 0xE3A08000u);     /* MOV R8,#0 */
+         guest_write(reset_site + 4u, 0xE58C8000u); /* STR R8,[R12] */
+         guest_write(0x00000804u, 0xEF0600DFu);
+         guest_write(0x00000808u, 0xEAFFFFFEu);
+         retro_run(); /* clear the first readiness gate */
+         joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_A] = true;
+         for (unsigned frame = 0u; frame < 40u; ++frame)
+         {
+            retro_run();
+            arc_engine_error_snapshot(&box);
+            if (box.stage == ARC_ERROR_READY && box.generation == first_generation + 1u) break;
+         }
+         assert(box.stage == ARC_ERROR_READY && box.generation == first_generation + 1u &&
+                box.pending == ARC_ERROR_NONE && error_consumed_logs == consumed_before_two + 1u);
+         for (unsigned frame = 0u; frame < 3u; ++frame)
+         {
+            retro_run();
+            arc_engine_error_snapshot(&box);
+            assert(box.stage == ARC_ERROR_READY && box.pending == ARC_ERROR_NONE);
+         }
+         joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_A] = false;
+         joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_B] = true;
+         for (unsigned frame = 0u; frame < 3u; ++frame)
+         {
+            retro_run();
+            arc_engine_error_snapshot(&box);
+            assert(box.stage == ARC_ERROR_READY && box.pending == ARC_ERROR_NONE);
+         }
+         joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_B] = false;
+         retro_run(); /* both buttons neutral releases the generation gate */
+         joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_B] = true;
+         for (unsigned frame = 0u; frame < 20u; ++frame)
+         {
+            retro_run();
+            arc_engine_error_snapshot(&box);
+            if (box.stage == ARC_ERROR_OFF) break;
+         }
+         assert(box.stage == ARC_ERROR_OFF && error_consumed_logs == consumed_before_two + 2u);
+         joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_B] = false;
+         retro_unload_game();
+      }
       retro_deinit();
       assert(open_files == 0u && open_dirs == 0u && dlclose(module) == 0);
       puts("error-box-probe: passed");
