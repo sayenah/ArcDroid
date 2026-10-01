@@ -57,8 +57,61 @@ char _5th_column_fn[512];
 int support_rom_enabled;
 
 static bool arc_active;
+static bool arc_fault;
 static ArcBootWatch arc_boot_watch;
 static ArcLaunchOutcome arc_launch_outcome;
+static ArcErrorBox arc_error_box;
+static const char *arc_error_result(ArcErrorAnswer answer)
+{ return answer == ARC_ERROR_OK ? "ok" : "cancel"; }
+static void arc_engine_error_end(void)
+{
+   if (arc_error_box.stage != ARC_ERROR_OFF)
+   {
+      if (arc_error_box.pending != ARC_ERROR_NONE)
+         rpclog("Error box: answer g=%llu result=%s key=%u state=discarded\n",
+                (unsigned long long)arc_error_box.generation,
+                arc_error_result(arc_error_box.pending), arc_error_box.key);
+      rpclog("Error box: ended g=%llu\n",
+             (unsigned long long)arc_error_box.generation);
+   }
+   arc_error_end(&arc_error_box);
+}
+void arc_engine_error_snapshot(ArcErrorBox *box)
+{ if (box) *box = arc_error_box; }
+bool arc_engine_error_request(ArcErrorAnswer answer)
+{
+   if (!arc_error_request(&arc_error_box, answer)) return false;
+   rpclog("Error box: answer g=%llu result=%s key=%u state=pending\n",
+          (unsigned long long)arc_error_box.generation,
+          arc_error_result(answer), arc_error_box.key);
+   return true;
+}
+void arc_engine_error_discard(void)
+{
+   if (arc_error_box.pending != ARC_ERROR_NONE)
+      rpclog("Error box: answer g=%llu result=%s key=%u state=discarded\n",
+             (unsigned long long)arc_error_box.generation,
+             arc_error_result(arc_error_box.pending), arc_error_box.key);
+   arc_error_discard(&arc_error_box);
+}
+void arc_engine_error_mode(uint32_t old_mode, uint32_t new_mode)
+{
+   /* A physical dismissal returns to the user caller before our eligible
+    * read. Ending here discards pending pad intent without touching input. */
+   if (new_mode == 0u && old_mode != 0u) arc_engine_error_end();
+}
+bool arc_engine_error_poll(uint32_t address, uint32_t mode,
+                           uint32_t sp, uint32_t lr, uint8_t *key)
+{
+   if (!key || !arc_active || arc_fault || address >= 0x04000000u ||
+       memstat[address >> 12u] != 5u ||
+       !arc_error_consume(&arc_error_box, address, mode, sp, lr, key))
+      return false;
+   rpclog("Error box: answer g=%llu result=%s key=%u state=consumed\n",
+          (unsigned long long)arc_error_box.generation,
+          arc_error_result(arc_error_box.consumed), *key);
+   return true;
+}
 /* ArcDroid power-on Shift observes the boot SWI independently of Slice 14. */
 static bool arc_power_on_armed;
 static bool arc_power_on_release_pending;
@@ -144,20 +197,74 @@ static bool arc_engine_command_read(uint32_t address, char output[257])
    }
    return false;
 }
+static bool arc_engine_block_first(uint32_t address, uint8_t *first)
+{
+   if (address >= 0x04000000u) return false;
+   uint8_t status = memstat[address >> 12u];
+   if (status < 1u || status > 3u || !mempoint[address >> 12u]) return false;
+   *first = mempoint[address >> 12u][address];
+   return true;
+}
 #if defined(ARCDROID_TEST_FAULTS)
 void arc_engine_test_boot_watch_snapshot(ArcBootWatch *out)
 { if (out) *out = arc_boot_watch; }
+bool arc_engine_test_guest_word(uint32_t address, uint32_t *out)
+{
+   if (!out || address > 0x03fffffcu || (address & 3u)) return false;
+   uint32_t value = 0u;
+   for (unsigned i = 0u; i < 4u; ++i)
+   {
+      uint32_t at = address + i;
+      uint8_t status = memstat[at >> 12u];
+      if (status < 1u || status > 3u || !mempoint[at >> 12u]) return false;
+      value |= (uint32_t)mempoint[at >> 12u][at] << (8u * i);
+   }
+   *out = value;
+   return true;
+}
 #endif
 void arc_engine_boot_watch_swi(uint32_t swi, uint32_t r0, uint32_t r1,
                                uint32_t r2, uint32_t r3, uint32_t address,
                                uint32_t mode)
 {
+   bool in_rom = address < 0x04000000u &&
+      memstat[address >> 12u] == 5u;
+   uint8_t block_first = 0u;
+   bool block_valid = (swi == 7u || swi == 0x20007u) && r0 == 21u &&
+      arc_engine_block_first(r1, &block_first);
+   ArcErrorStage before = arc_error_box.stage;
+   uint64_t before_generation = arc_error_box.generation;
+   ArcErrorAnswer old_pending = arc_error_box.pending;
+   uint8_t old_key = arc_error_box.key;
+   const char *ineligible = arc_error_swi(&arc_error_box, swi, r0, r1, r2,
+      address, mode, armregs[13], armregs[14], in_rom,
+      block_valid, block_first);
+   if (before != ARC_ERROR_OFF &&
+       (arc_error_box.stage == ARC_ERROR_OFF ||
+        arc_error_box.generation != before_generation ||
+        swi == 0x400dfu || swi == 0x600dfu))
+   {
+      if (old_pending != ARC_ERROR_NONE)
+         rpclog("Error box: answer g=%llu result=%s key=%u state=discarded\n",
+                (unsigned long long)before_generation,
+                arc_error_result(old_pending), old_key);
+      rpclog("Error box: ended g=%llu\n", (unsigned long long)before_generation);
+   }
+   if (ineligible)
+      rpclog("Error box: ineligible reason=%s\n", ineligible);
+   if (before != ARC_ERROR_READY && arc_error_box.stage == ARC_ERROR_READY)
+      rpclog("Error box: ready g=%llu buttons=%s default=%s os=%s\n",
+             (unsigned long long)arc_error_box.generation,
+             arc_error_box.ok && arc_error_box.cancel ? "ok,cancel" :
+             arc_error_box.ok ? "ok" : "cancel",
+             arc_error_box.default_cancel ? "cancel" : "ok",
+             arc_error_box.os == ARC_OS_RISCOS_310 ? "3.10" :
+             arc_error_box.os == ARC_OS_RISCOS_311 ? "3.11" : "3.19");
    /* ArcDroid patch: the power-on release must work with the observer off. */
    if ((swi == 0x29u || swi == 0x20029u) && r0 == 15u)
       arc_engine_power_on_release(true);
    if (arc_launch_outcome.state != ARC_OUTCOME_OFF)
    {
-      bool in_rom = memstat[(address & 0x03ffffffu) >> 12u] == 5u;
       char command[257];
       const char *start_command = NULL;
       if (((swi & 0x00ffffffu) & ~0x00020000u) == 0x400deu &&
@@ -167,12 +274,10 @@ void arc_engine_boot_watch_swi(uint32_t swi, uint32_t r0, uint32_t r1,
                       (tsc >> 32u) / (uint64_t)speed_mhz);
    }
    if (arc_boot_watch.state != ARC_BOOT_WATCH_ARMED) return;
-   bool in_rom = memstat[(address & 0x03ffffffu) >> 12u] == 5u;
    arc_boot_watch_observe(&arc_boot_watch, swi, r0, r1, r2, r3,
                           address, mode, in_rom,
                           (tsc >> 32u) / (uint64_t)speed_mhz);
 }
-static bool arc_fault;
 static bool arc_fault_boundary;
 static bool arc_machine_live;
 static jmp_buf arc_fault_jump;
@@ -458,6 +563,7 @@ unsigned arc_engine_test_vidc_clock(void) { return (unsigned)vidc_getclock(); }
 
 static void arc_latch_fault(const char *format, va_list arguments)
 {
+   arc_engine_error_end();
    if (!arc_fault)
    {
       vsnprintf(arc_fault_text, sizeof(arc_fault_text), format, arguments);
@@ -693,6 +799,7 @@ bool arc_engine_start(const uint8_t *firmware, size_t firmware_size,
                       const ArcEngineMedia *media,
                       const ArcEngineMedia *helper,
                       const ArcMachineDescriptor *descriptor,
+                      ArcOsClass os,
                       const ArcIdeBackend *ide_backend,
                       const uint8_t cmos[ARC_CMOS_MACHINE_SIZE],
                       const uint8_t locked_raw_mask[32],
@@ -701,6 +808,7 @@ bool arc_engine_start(const uint8_t *firmware, size_t firmware_size,
                       char *failure, size_t failure_size)
 {
    arc_engine_stop();
+   arc_error_box.os = os;
    if (!firmware || (firmware_size != 524288u && firmware_size != 2097152u) ||
        !cmos || !locked_raw_mask || !descriptor || !arc_helper_media_valid(helper) ||
        !arc_engine_extent_valid(media))
@@ -759,6 +867,7 @@ bool arc_engine_start(const uint8_t *firmware, size_t firmware_size,
 
 bool arc_engine_reset(char *failure, size_t failure_size)
 {
+   arc_engine_error_end();
    arc_boot_watch_clear(&arc_boot_watch);
    arc_outcome_clear(&arc_launch_outcome);
    if (!arc_saved_firmware) return false;
@@ -769,6 +878,7 @@ bool arc_engine_reset(char *failure, size_t failure_size)
 
 void arc_engine_stop(void)
 {
+   arc_engine_error_end();
    arc_power_on_armed = false;
    arc_power_on_release_pending = false;
    arc_power_on_input = NULL;
@@ -797,6 +907,7 @@ void arc_engine_stop(void)
    arc_saved_helper_size = 0u;
    arc_io_clear_memory_sources();
    arc_active = false;
+   arc_error_box.os = ARC_OS_UNKNOWN;
    adf_set_refusal_callback(NULL);
    arc_fault_boundary = false;
 #if defined(ARCDROID_TEST_FAULTS)
@@ -871,6 +982,7 @@ void arc_engine_audio_stats(uint64_t *underrun_frames, uint64_t *overrun_frames)
 bool arc_engine_media_eject(void)
 {
    if (!arc_machine_live) return false;
+   arc_engine_error_discard();
    wd1770_media_change();
    c82c711_fdc_media_change(0u);
    disc_close(0);
@@ -886,6 +998,7 @@ bool arc_engine_media_eject(void)
 bool arc_engine_media_insert(const ArcEngineMedia *media,
                              char *failure, size_t failure_size)
 {
+   arc_engine_error_discard();
    const char *path = media && media->data ? ":arcdroid-memory-0:" :
                       media && media->path ? media->path : "";
    if (!arc_machine_live || !media || !path[0] ||

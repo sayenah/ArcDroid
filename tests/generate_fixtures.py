@@ -4061,6 +4061,113 @@ def build_launch_outcome_rom(pattern: str) -> bytearray:
     return rom
 
 
+def build_error_box_rom(x_form: bool = False) -> bytearray:
+    """Authored user SWI and ROM SVC modal loop; no RISC OS bytes."""
+    rom = bytearray(b"\xff" * ROM_SIZE)
+    rom[0:4] = struct.pack("<I", 0xE59FF000)  # reset LDR PC,[PC]
+    rom[8:12] = struct.pack("<I", 0xE59FF000)  # SWI LDR PC,[PC]
+    rom[12:16] = struct.pack("<I", 0x03800020)
+    rom[16:20] = struct.pack("<I", 0x03801000)
+    a = Arm2(0x03800020)
+    a.ldr_const(1, 0x03400000)
+    for register in CHOOSER_VIDC_MODE:
+        a.ldr_const(0, register)
+        a.str(0, 1)
+    for address in (0x03600000, 0x03620000, 0x0364A000,
+                    0x0368A000, 0x036AA0FC, 0x036CA000):
+        a.ldr_const(0, address)
+        a.str(1, 0)
+    a.ldr_const(0, 0x036E0D0C)
+    a.str(1, 0)
+    a.ldr_const(12, 0x02004000)
+    a.mov(0, 0)
+    a.str(0, 12)
+    a.ldr_const(11, 0x02002000)
+    a.mov(0, 1)
+    a.str(0, 11, byte=True)  # OS_Word 21 block first byte
+    a.ldr_const(9, 0x00000800)
+    a.ldr_const(10, 0xEF0600DF if x_form else 0xEF0400DF)
+    a.str(10, 9)
+    a.ldr_const(10, 0xEAFFFFFE)
+    a.str(10, 9, 4)
+    a.ldr_const(13, 0x02008000)
+    a.mov(1, 0x17)
+    a.emit(0xE1B0F009)  # MOVS PC,R9 enters user mode
+    code = a.finish()
+    assert len(code) < 0x0fe0
+    rom[0x20:0x20 + len(code)] = code
+
+    a = Arm2(0x03801000)
+    a.ldr_const(12, 0x02004000)
+    a.ldr(8, 12)
+    a.cmp_imm(8, 0)
+    a.branch("nested", "ne")
+    a.mov(8, 1)
+    a.str(8, 12)
+    a.str(14, 12, 4)  # save the user SWI return link
+    a.ldr_const(13, 0x02008000)
+    a.mov(0, 21)
+    a.mov_reg(1, 11)
+    a.emit(0xEF000007)  # OS_Word 21,1
+    a.mov(0, 15)
+    a.mov(1, 1)
+    a.emit(0xEF000006)  # OS_Byte 15,1
+    a.mov(0, 21)
+    a.mov(1, 9)
+    a.emit(0xEF000006)  # OS_Byte 21,9
+    a.ldr_const(7, 0x02004100)
+    a.label("poll")
+    a.emit(0xEF00001C)  # OS_Mouse alternates with the modal key read
+    a.ldr_const(9, 0x80000000)
+    a.cmp_imm(9, 1)  # C and V set before the eligible SWI
+    a.mov_reg(6, 15)
+    a.str(6, 7, 0xC0)  # pre-SWI ARM26 flags
+    a.mov(3, 3)
+    a.mov(4, 4)
+    a.mov(5, 5)
+    a.mov(6, 6)
+    a.mov(0, 129)
+    a.mov(1, 0)
+    a.mov(2, 0)
+    saved_regs = (0, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14)
+    for index, register in enumerate(saved_regs):
+        a.str(register, 7, 0x40 + 4 * index)
+    a.emit(0xEF020006 if x_form else 0xEF000006)  # one fixed polling site
+    for index, register in enumerate(saved_regs):
+        a.str(register, 7, 0x80 + 4 * index)
+    a.mov_reg(5, 15)  # capture flags before any comparison
+    a.str(5, 7, 8)
+    a.cmp_imm(1, 0)
+    a.branch("done", "ne")
+    a.mov(0, 129)
+    a.mov(1, 0)
+    a.mov(2, 0)
+    a.emit(0xEF000006)  # identical arguments from another ROM PC
+    a.str(1, 7, 24)  # must stay zero even when an answer is pending
+    a.emit(0xEF010006)  # unrelated SWI sharing OS_Byte's low bits
+    a.str(1, 7, 28)
+    a.cmp_imm(0, 0)
+    a.emit(0x0F000006)  # condition-failed OS_Byte
+    a.str(1, 7, 32)
+    a.branch("poll")
+    a.label("done")
+    a.str(1, 7)
+    a.str(2, 7, 4)
+    a.str(13, 7, 12)
+    a.str(14, 7, 16)
+    a.mov(5, 1)
+    a.str(5, 7, 20)
+    a.ldr(14, 12, 4)
+    a.emit(0xE1B0F00E)  # MOVS PC,LR to user; ends invocation
+    a.label("nested")
+    a.emit(0xE1B0F00E)  # Return from OS_Word/OS_Byte stubs
+    code = a.finish()
+    rom[0x1000:0x1000 + len(code)] = code
+    marker = b"ARCDROID ERROR BOX ROM " + (b"X" if x_form else b"N") + b"\0"
+    rom[-len(marker):] = marker
+    return rom
+
+
 def build_sparse_f_jfd(image: bytes, flags: int = 0,
                        skipped: frozenset[int] = frozenset(),
                        extended: bool = True,
@@ -4287,6 +4394,8 @@ def main() -> None:
                     "delayed-input", "delayed-reset"):
         (args.output / f"arcdroid-outcome-{pattern}.rom").write_bytes(
             build_launch_outcome_rom(pattern))
+    (args.output / "arcdroid-error-box.rom").write_bytes(build_error_box_rom())
+    (args.output / "arcdroid-error-box-x.rom").write_bytes(build_error_box_rom(True))
     (args.output / "arcdroid-cmos-exerciser.rom").write_bytes(
         build_rom(cmos_exerciser=True))
     (args.output / "arcdroid-chooser-test.rom").write_bytes(build_chooser_rom())

@@ -84,6 +84,7 @@ set(ARCDROID_LIBRETRO_SOURCES
   engine/arcdroid_engine.c
   engine/arc_boot_watch.c
   engine/arc_launch_outcome.c
+  engine/arc_error_box.c
   engine/arcdroid_stubs.c
   engine/arculator/src/82c711.c
   engine/arculator/src/ide.c
@@ -220,6 +221,15 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
       arcdroid_sanitizer_compile arcdroid_sanitizer_link)
   endif()
   add_test(NAME launch-outcome COMMAND launch_outcome_test)
+  add_executable(error_box_test tests/error_box_test.c engine/arc_error_box.c)
+  target_include_directories(error_box_test PRIVATE engine core)
+  target_compile_options(error_box_test PRIVATE
+    $<$<C_COMPILER_ID:GNU,Clang,AppleClang>:-UNDEBUG;-Wall;-Wextra;-Wpedantic>)
+  if(ARCDROID_SANITIZERS)
+    target_link_libraries(error_box_test PRIVATE
+      arcdroid_sanitizer_compile arcdroid_sanitizer_link)
+  endif()
+  add_test(NAME error-box-unit COMMAND error_box_test)
   add_executable(adffs_shipping_profile_test
     tests/adffs_shipping_profile_test.c)
   target_link_libraries(adffs_shipping_profile_test PRIVATE arcdroid_core)
@@ -963,6 +973,18 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
       "${FIXTURE_DIR}/arcdroid-test.adf"
       "${CMAKE_CURRENT_BINARY_DIR}/input-layout-data"
       --input-layout-probe)
+    add_test(NAME error-box-rom COMMAND libretro_harness
+      $<TARGET_FILE:arcdroid_libretro_test>
+      "${FIXTURE_DIR}/arcdroid-error-box.rom"
+      "${FIXTURE_DIR}/arcdroid-test.adf"
+      "${CMAKE_CURRENT_BINARY_DIR}/error-box-rom-data"
+      --error-box-probe)
+    add_test(NAME error-box-x-rom COMMAND libretro_harness
+      $<TARGET_FILE:arcdroid_libretro_test>
+      "${FIXTURE_DIR}/arcdroid-error-box-x.rom"
+      "${FIXTURE_DIR}/arcdroid-test.adf"
+      "${CMAKE_CURRENT_BINARY_DIR}/error-box-x-rom-data"
+      --error-box-probe)
     add_test(NAME libretro-harness COMMAND libretro_harness
       $<TARGET_FILE:arcdroid_libretro_test>
       "${FIXTURE_DIR}/arcdroid-test.rom"

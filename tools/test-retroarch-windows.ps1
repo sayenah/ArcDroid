@@ -2547,3 +2547,70 @@ for ($attempt = 1; $attempt -le 2; $attempt++) {
     } finally { Stop-MediaRun $productRun }
 }
 Write-Host 'Slice 23 Windows RetroArch: fixture hd-product helper and fresh-process reload passed'
+
+# Authored ROM: a user SWI enters a ROM SVC error-box loop. RetroArch's
+# keyboard-to-RetroPad binding gives the native frontend a deterministic A.
+$errorContent = Join-Path $WorkDirectory 'error-box-content.adf'
+Copy-Item -Force (Join-Path $InputDirectory 'arcdroid-test.adf') $errorContent
+Copy-Item -Force (Join-Path $InputDirectory 'arcdroid-error-box.rom') $firmware
+Copy-Item -Force (Join-Path $InputDirectory 'arcdroid_libretro_test.dll') $core
+Add-Content -Encoding ASCII $config 'input_player1_a = "x"'
+for ($layout = 0; $layout -lt 2; $layout++) {
+    $mapping = if ($layout -eq 0) { 'Auto' } else { 'return' }
+@"
+arcdroid_machine = "A3000"
+arcdroid_launch = "off"
+arcdroid_pad1_a = "$mapping"
+"@ | Set-Content -Encoding ASCII $coreOptions
+    $errorRun = Start-MediaRun $errorContent "slice25-error-box-$layout"
+    try {
+        $deadline = [DateTime]::UtcNow.AddSeconds(15)
+        do {
+            $errorLines = @(Get-Content $errorRun.RetroLog -ErrorAction SilentlyContinue)
+            if (@($errorLines | Where-Object { $_.Contains('Error box: ready g=') }).Count -and
+                @($errorLines | Where-Object { $_.Contains('Error box: A = OK') }).Count) { break }
+            Start-Sleep -Milliseconds 100
+        } while ([DateTime]::UtcNow -lt $deadline)
+        if (-not @($errorLines | Where-Object { $_.Contains('Error box: ready g=') }).Count -or
+            -not @($errorLines | Where-Object { $_.Contains('Error box: A = OK') }).Count) {
+            throw "Slice 25 layout $layout did not reach the authored error box: [$($errorLines -join ' | ')]"
+        }
+        if ($layout -eq 1 -and -not @($errorLines | Where-Object {
+                $_.Contains('p1.A=Return[option]') }).Count) {
+            throw 'Slice 25 custom Pad Mapping was not active'
+        }
+        [void](Set-ChooserWindowForeground $errorRun)
+        Send-HardwareScanCode 0x2d $false "error-box-A-$layout" 150
+        $deadline = [DateTime]::UtcNow.AddSeconds(15)
+        do {
+            $errorLines = @(Get-Content $errorRun.RetroLog -ErrorAction SilentlyContinue)
+            if (@($errorLines | Where-Object { $_.Contains('Error box: answer g=1 result=ok key=27 state=consumed') }).Count -and
+                @($errorLines | Where-Object { $_.Contains('Error box: ended g=1') }).Count) { break }
+            Start-Sleep -Milliseconds 100
+        } while ([DateTime]::UtcNow -lt $deadline)
+        if (-not @($errorLines | Where-Object { $_.Contains('Error box: answer g=1 result=ok key=27 state=consumed') }).Count -or
+            -not @($errorLines | Where-Object { $_.Contains('Error box: ended g=1') }).Count) {
+            throw "Slice 25 layout $layout did not consume A at the authored poll: [$($errorLines -join ' | ')]"
+        }
+        if ($errorRun.Process.HasExited) { throw "Slice 25 layout $layout exited after dismissal" }
+        $errorCapture = Capture-RawScreenshot $errorRun "slice25-error-box-$layout"
+        if ($errorCapture.Dimensions -ne '640x480') {
+            throw "Slice 25 layout $layout presented the wrong guest dimensions after dismissal: $($errorCapture.Dimensions)"
+        }
+        Start-Sleep -Milliseconds 200
+        Send-HardwareScanCode 0x2d $false "error-box-restored-A-$layout" 150
+        $expectedKey = if ($layout -eq 0) { 32 } else { 13 }
+        $deadline = [DateTime]::UtcNow.AddSeconds(10)
+        do {
+            $errorLines = @(Get-Content $errorRun.RetroLog -ErrorAction SilentlyContinue)
+            if (@($errorLines | Where-Object {
+                    $_.Contains("Error box test: mapping restored key=$expectedKey") }).Count) { break }
+            Start-Sleep -Milliseconds 100
+        } while ([DateTime]::UtcNow -lt $deadline)
+        if (-not @($errorLines | Where-Object {
+                $_.Contains("Error box test: mapping restored key=$expectedKey") }).Count) {
+            throw "Slice 25 layout $layout did not restore its Pad Mapping after release"
+        }
+    } finally { Stop-MediaRun $errorRun }
+}
+Write-Host 'Slice 25 Windows RetroArch: authored error box, hint, default and custom Pad Mapping passed'

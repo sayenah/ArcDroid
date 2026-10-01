@@ -28,6 +28,7 @@ core/cmos_defaults.c
 engine/arcdroid_engine.c
 engine/arc_boot_watch.c
 engine/arc_launch_outcome.c
+engine/arc_error_box.c
 engine/arcdroid_stubs.c
 engine/arculator/src/82c711.c
 engine/arculator/src/82c711_fdc.c
