@@ -481,6 +481,60 @@ arcdroid_machine = "A3000"
 arcdroid_cpu = "ARM2"
 arcdroid_joystick_if = "Keyboard"
 "@ | Set-Content -Encoding ASCII $coreOptions
+# Slice 24: RetroArch's saved game options replace the core-wide option file.
+# Both fixtures retain a retired key while only the current Pad Mapping keys
+# influence the native core's input resolution.
+$slice24GameOptions = Join-Path $coreOptionsDirectory 'arcdroid-test.opt'
+$slice24SavedCoreOptions = Get-Content -Raw -LiteralPath $coreOptions
+if (Test-Path -LiteralPath $slice24GameOptions) {
+    throw 'Slice 24 option fixture would overwrite existing game options'
+}
+try {
+    @"
+arcdroid_machine = "A3000"
+arcdroid_cpu = "ARM2"
+arcdroid_input_profile = "$('el' + 'ite')"
+arcdroid_pad1_up = "s"
+arcdroid_pad1_down = "x"
+"@ | Set-Content -Encoding ASCII $coreOptions
+    $beforeLines = @(Get-Content $log).Count
+    Invoke-ArcDroid 90 $false
+    $globalInputLines = @(Get-Content $log | Select-Object -Skip $beforeLines)
+    $globalResolution = @($globalInputLines | Where-Object { $_.Contains('Input resolution:') })
+    if ($globalResolution.Count -ne 1 -or
+        $globalResolution[0] -notmatch 'Input resolution: mapping=custom p1.Up=S\[option\] p1.Down=X\[option\] p1.Left=Cursor Left\[default\]' -or
+        $globalResolution[0].Contains('profile=')) {
+        throw "Slice 24 global option resolution failed: $($globalResolution -join ' | ')"
+    }
+    @"
+arcdroid_input_profile = "Generic"
+arcdroid_pad1_right = "period"
+"@ | Set-Content -Encoding ASCII $slice24GameOptions
+    $beforeLines = @(Get-Content $log).Count
+    Invoke-ArcDroid 90 $false
+    $gameInputLines = @(Get-Content $log | Select-Object -Skip $beforeLines)
+    $gameResolution = @($gameInputLines | Where-Object { $_.Contains('Input resolution:') })
+    if ($gameResolution.Count -ne 1 -or
+        $gameResolution[0] -notmatch 'Input resolution: mapping=custom p1.Up=Cursor Up\[default\] p1.Down=Cursor Down\[default\] p1.Left=Cursor Left\[default\] p1.Right=\.\[option\]' -or
+        $gameResolution[0].Contains('profile=')) {
+        throw "Slice 24 game option precedence failed: $($gameResolution -join ' | ')"
+    }
+    $invalidRetired = @($globalInputLines + $gameInputLines | Where-Object {
+        $_ -match 'arcdroid_input_profile' -and
+        $_ -match '(?i)invalid|unknown|unrecognized|not found|unsupported'
+    })
+    if ($invalidRetired.Count) {
+        throw "Slice 24 retired option produced a frontend diagnostic: $($invalidRetired -join ' | ')"
+    }
+    Write-Host 'Slice 24 Windows RetroArch: global and game option precedence passed'
+    if ($env:GITHUB_STEP_SUMMARY) {
+        Add-Content -Encoding UTF8 $env:GITHUB_STEP_SUMMARY '- Slice 24 Pad Mapping: stale core-wide and per-game option keys were ignored; game options replaced the global Pad 1 overrides.'
+    }
+} finally {
+    $slice24SavedCoreOptions | Set-Content -Encoding ASCII $coreOptions
+    Remove-Item -Force -ErrorAction SilentlyContinue $slice24GameOptions
+}
+
 Write-Host "RetroArch ${retroArchVersion}: initial 600-frame run and 10 content reloads passed"
 Write-Host "Screenshot SHA-256: $((Get-FileHash -Algorithm SHA256 $screenshot).Hash.ToLowerInvariant())"
 $reloadEvidence = if ($inSessionReloads) {

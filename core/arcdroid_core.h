@@ -434,9 +434,7 @@ typedef struct {
 } ArcInputBinding;
 
 typedef enum {
-   ARC_MAPPING_SOURCE_GENERIC = 0,
-   ARC_MAPPING_SOURCE_PROFILE,
-   ARC_MAPPING_SOURCE_PRESET,
+   ARC_MAPPING_SOURCE_DEFAULT = 0,
    ARC_MAPPING_SOURCE_OPTION
 } ArcMappingSource;
 
@@ -448,22 +446,8 @@ typedef struct {
 typedef struct {
    ArcInputBinding binding[ARC_PAD_PORTS][ARC_PAD_INPUT_COUNT];
    ArcMappingSource source[ARC_PAD_PORTS][ARC_PAD_INPUT_COUNT];
-   const char *profile_id;
-   const char *profile_name;
    bool custom;
 } ArcInputResolution;
-
-#define ARC_INPUT_PROFILE_MAX_DIGESTS 4u
-typedef struct {
-   const char *id;
-   const char *name;
-   const char *digests[ARC_INPUT_PROFILE_MAX_DIGESTS];
-   unsigned digest_count;
-   const char *launch_target;
-   ArcInputBinding mapping[ARC_PAD_PORTS][ARC_PAD_INPUT_COUNT];
-   bool has_port1;
-   const char *evidence;
-} ArcInputProfile;
 
 typedef struct {
    unsigned key;
@@ -521,24 +505,9 @@ const ArcInputKey *arc_input_key(unsigned key);
 const ArcInputKey *arc_input_key_value(const char *value);
 bool arc_input_is_modifier(unsigned key);
 const char *arc_pad_input_name(unsigned input);
-bool arc_input_resolve(const char content_id[41], const void *launch_target,
-                       size_t launch_target_length,
-                       const char *profile_selection,
-                       const ArcInputOverride overrides[ARC_PAD_PORTS][ARC_PAD_INPUT_COUNT],
-                       ArcInputResolution *resolution);
-bool arc_input_resolve_table(const ArcInputProfile *profiles,
-                             size_t profile_count,
-                             const char content_id[41],
-                             const void *launch_target,
-                             size_t launch_target_length,
-                             const char *profile_selection,
-                             const ArcInputOverride overrides[ARC_PAD_PORTS][ARC_PAD_INPUT_COUNT],
-                             ArcInputResolution *resolution);
-const ArcInputProfile *arc_input_profiles(size_t *count);
-bool arc_input_profiles_validate(char *error, size_t error_size);
-bool arc_input_profiles_validate_table(const ArcInputProfile *profiles,
-                                       size_t count, char *error,
-                                       size_t error_size);
+bool arc_input_resolve(
+   const ArcInputOverride overrides[ARC_PAD_PORTS][ARC_PAD_INPUT_COUNT],
+   ArcInputResolution *resolution);
 
 void arc_input_reset(ArcInputState *state);
 void arc_input_reset_frontend(ArcInputState *state);
@@ -649,6 +618,6 @@ bool arc_osk_touch(ArcOsk *osk, int x, int y, bool down,
                    ArcInputState *input);
 bool arc_osk_take_interrupted(ArcOsk *osk);
 bool arc_osk_render(const ArcOsk *osk, uint32_t *pixels, unsigned width,
-                    unsigned height, size_t pitch, const char *profile);
+                    unsigned height, size_t pitch, const char *controls);
 
 #endif

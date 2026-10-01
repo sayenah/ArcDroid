@@ -55,7 +55,6 @@ set(ARCDROID_CORE_SOURCES
   core/hash.c
   core/input.c
   core/input_mapping.c
-  core/input_profiles.c
   core/osk.c
   core/launch.c
   core/launch_discovery.c
@@ -896,6 +895,9 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
         arcdroid_sanitizer_compile arcdroid_sanitizer_link)
     endif()
     target_compile_options(libretro_harness PRIVATE $<$<C_COMPILER_ID:GNU,Clang,AppleClang>:-UNDEBUG>)
+    add_test(NAME input-source-retirement COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/check_input_source_retirement.py"
+      "${CMAKE_CURRENT_SOURCE_DIR}")
     add_test(NAME libretro-parser-self-test COMMAND libretro_harness --self-test-parser)
     add_dependencies(libretro_harness test-fixtures arcdroid_libretro_test)
     add_test(NAME short-tail-guest COMMAND libretro_harness
@@ -939,6 +941,28 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
       "${FIXTURE_DIR}/arcdroid-native-hd-stress.rom"
       "${FIXTURE_DIR}/hd-family/valid-f.adf")
     set_tests_properties(native-hd-stress-process PROPERTIES TIMEOUT 900)
+    add_test(NAME helper-stress-harness COMMAND libretro_harness
+      $<TARGET_FILE:arcdroid_libretro_test>
+      "${FIXTURE_DIR}/arcdroid-test.rom"
+      "${FIXTURE_DIR}/arcdroid-test.adf"
+      "${CMAKE_CURRENT_BINARY_DIR}/helper-stress-data"
+      "${FIXTURE_DIR}/arcdroid-media-test.rom"
+      "${FIXTURE_DIR}/arcdroid-media.m3u"
+      "${FIXTURE_DIR}/arcdroid-media-disc1.adf"
+      "${FIXTURE_DIR}/arcdroid-media-disc2.adf"
+      "${FIXTURE_DIR}/arcdroid-test.jfd"
+      "${FIXTURE_DIR}/arcdroid-test-two-member.jfd"
+      "${FIXTURE_DIR}"
+      "${FIXTURE_DIR}/arcdroid-application-l.adl"
+      "${FIXTURE_DIR}/adffs/synthetic.zip"
+      "${FIXTURE_DIR}/adffs/eligible.jfd"
+      "${FIXTURE_DIR}/zip-content" --helper-stress)
+    add_test(NAME input-layout-harness COMMAND libretro_harness
+      $<TARGET_FILE:arcdroid_libretro_test>
+      "${FIXTURE_DIR}/arcdroid-test.rom"
+      "${FIXTURE_DIR}/arcdroid-test.adf"
+      "${CMAKE_CURRENT_BINARY_DIR}/input-layout-data"
+      --input-layout-probe)
     add_test(NAME libretro-harness COMMAND libretro_harness
       $<TARGET_FILE:arcdroid_libretro_test>
       "${FIXTURE_DIR}/arcdroid-test.rom"

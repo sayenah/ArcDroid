@@ -3055,130 +3055,36 @@ static void test_input_mapping(void)
    unsigned omitted_row = UINT_MAX, omitted_column = UINT_MAX;
    assert(!arc_test_keytable_position(RETROK_PRINT, &omitted_row,
                                       &omitted_column));
-   assert(arc_input_profiles_validate(NULL, 0u));
-   size_t profile_count = 0u;
-   const ArcInputProfile *profiles = arc_input_profiles(&profile_count);
-   static const unsigned elite_mapping[ARC_PAD_INPUT_COUNT] = {
-      RETROK_s, RETROK_x, RETROK_COMMA, RETROK_PERIOD, RETROK_SPACE,
-      RETROK_SLASH, RETROK_a, RETROK_m, RETROK_F1, RETROK_t
-   };
-   assert(profiles && profile_count == 1u);
-   assert(!strcmp(profiles[0].id, "elite") &&
-          !strcmp(profiles[0].name, "Elite (Hybrid Technology)") &&
-          profiles[0].digest_count == 1u &&
-          !strcmp(profiles[0].digests[0],
-                  "fde0f540e0d5732646c1eebb54629a162f40db91") &&
-          !profiles[0].launch_target && !profiles[0].has_port1 &&
-          !strcmp(profiles[0].evidence,
-                  "Elite Flight Training Manual pp. 12–15, 20; Odin3 launch and key response observed by Fable 2026-09-15"));
-   for (unsigned input = 0u; input < ARC_PAD_INPUT_COUNT; ++input)
-   {
-      assert(profiles[0].mapping[0][input].bound &&
-             profiles[0].mapping[0][input].key == elite_mapping[input]);
-      assert(!profiles[0].mapping[1][input].bound &&
-             profiles[0].mapping[1][input].key == 0u);
-   }
-
-   ArcInputProfile test_profile = {
-      .id = "test-profile",
-      .name = "Generated Test Profile",
-      .digests = {"0123456789abcdef0123456789abcdef01234567"},
-      .digest_count = 1u,
-      .launch_target = "!TEST",
-      .has_port1 = true,
-      .evidence = "project-authored core test entry"
-   };
-   for (unsigned port = 0u; port < ARC_PAD_PORTS; ++port)
-      memcpy(test_profile.mapping[port], arc_input_generic_mapping(),
-             sizeof(test_profile.mapping[port]));
-   test_profile.mapping[0][ARC_PAD_UP] = (ArcInputBinding){true, RETROK_s};
-   test_profile.mapping[1][ARC_PAD_UP] = (ArcInputBinding){true, RETROK_F2};
-   assert(arc_input_profiles_validate_table(&test_profile, 1u, NULL, 0u));
-   ArcInputProfile invalid_profile = test_profile;
-   invalid_profile.digests[0] = "0123456789ABCDEF0123456789ABCDEF01234567";
-   assert(!arc_input_profiles_validate_table(&invalid_profile, 1u, NULL, 0u));
-   ArcInputProfile duplicate_profiles[2] = {test_profile, test_profile};
-   duplicate_profiles[1].id = "other-profile";
-   assert(!arc_input_profiles_validate_table(duplicate_profiles, 2u, NULL, 0u));
-
-   ArcInputOverride overrides[ARC_PAD_PORTS][ARC_PAD_INPUT_COUNT];
-   memset(overrides, 0, sizeof(overrides));
+   ArcInputOverride overrides[ARC_PAD_PORTS][ARC_PAD_INPUT_COUNT] = {{{0}}};
    for (unsigned port = 0u; port < ARC_PAD_PORTS; ++port)
       for (unsigned input = 0u; input < ARC_PAD_INPUT_COUNT; ++input)
          overrides[port][input].automatic = true;
    ArcInputResolution resolution;
-   assert(arc_input_resolve("0000000000000000000000000000000000000000", "!TEST",
-                            5u, "Auto", overrides, &resolution));
-   assert(!strcmp(resolution.profile_name, "Generic") &&
-          resolution.binding[0][ARC_PAD_A].key == RETROK_SPACE &&
-          resolution.source[0][ARC_PAD_A] == ARC_MAPPING_SOURCE_GENERIC);
-   assert(arc_input_resolve("0000000000000000000000000000000000000000", "!TEST",
-                            5u, "Generic", overrides, &resolution));
-   overrides[1][ARC_PAD_A].automatic = false;
-   overrides[1][ARC_PAD_A].binding = (ArcInputBinding){true, RETROK_LSHIFT};
+   assert(arc_input_resolve(overrides, &resolution));
+   assert(!resolution.custom);
+   for (unsigned port = 0u; port < ARC_PAD_PORTS; ++port)
+      for (unsigned input = 0u; input < ARC_PAD_INPUT_COUNT; ++input)
+      {
+         assert(resolution.source[port][input] == ARC_MAPPING_SOURCE_DEFAULT);
+         assert(resolution.binding[port][input].bound ==
+                arc_input_generic_mapping()[input].bound);
+         assert(resolution.binding[port][input].key ==
+                arc_input_generic_mapping()[input].key);
+      }
    overrides[0][ARC_PAD_B].automatic = false;
    overrides[0][ARC_PAD_B].binding = (ArcInputBinding){false, 0u};
-   assert(arc_input_resolve("0000000000000000000000000000000000000000", "!TEST",
-                            5u, "Auto", overrides, &resolution));
-   assert(resolution.custom && !resolution.binding[0][ARC_PAD_B].bound &&
-          resolution.binding[1][ARC_PAD_A].key == RETROK_LSHIFT &&
+   overrides[1][ARC_PAD_A].automatic = false;
+   overrides[1][ARC_PAD_A].binding = (ArcInputBinding){true, RETROK_LSHIFT};
+   assert(arc_input_resolve(overrides, &resolution) && resolution.custom);
+   assert(!resolution.binding[0][ARC_PAD_B].bound &&
+          resolution.source[0][ARC_PAD_B] == ARC_MAPPING_SOURCE_OPTION);
+   assert(resolution.binding[1][ARC_PAD_A].key == RETROK_LSHIFT &&
           resolution.source[1][ARC_PAD_A] == ARC_MAPPING_SOURCE_OPTION);
-   overrides[0][ARC_PAD_B].automatic = true;
-   overrides[1][ARC_PAD_A].automatic = true;
-   assert(arc_input_resolve(
-            "fde0f540e0d5732646c1eebb54629a162f40db91", NULL,
-            0u, "Auto", overrides, &resolution));
-   assert(!strcmp(resolution.profile_id, "elite") &&
-          resolution.source[0][ARC_PAD_UP] == ARC_MAPPING_SOURCE_PROFILE &&
-          resolution.binding[0][ARC_PAD_UP].key == RETROK_s &&
-          resolution.binding[0][ARC_PAD_SELECT].key == RETROK_t &&
-          resolution.source[1][ARC_PAD_UP] == ARC_MAPPING_SOURCE_PROFILE);
-   for (unsigned input = 0u; input < ARC_PAD_INPUT_COUNT; ++input)
-      assert(resolution.binding[1][input].bound ==
-             resolution.binding[0][input].bound &&
-             resolution.binding[1][input].key ==
-             resolution.binding[0][input].key);
-   assert(arc_input_resolve(
-            "0000000000000000000000000000000000000000", NULL,
-            0u, "elite", overrides, &resolution));
-   assert(!strcmp(resolution.profile_id, "elite") &&
-          resolution.source[0][ARC_PAD_START] == ARC_MAPPING_SOURCE_PRESET &&
-          resolution.binding[0][ARC_PAD_START].key == RETROK_F1 &&
-          resolution.source[1][ARC_PAD_START] == ARC_MAPPING_SOURCE_PRESET &&
-          resolution.binding[1][ARC_PAD_START].key == RETROK_F1);
-   overrides[1][ARC_PAD_START].automatic = false;
-   overrides[1][ARC_PAD_START].binding = (ArcInputBinding){true, RETROK_F3};
-   assert(arc_input_resolve(
-            "fde0f540e0d5732646c1eebb54629a162f40db91", NULL,
-            0u, "Auto", overrides, &resolution));
-   assert(resolution.source[1][ARC_PAD_START] == ARC_MAPPING_SOURCE_OPTION &&
-          resolution.binding[1][ARC_PAD_START].key == RETROK_F3 &&
-          resolution.binding[0][ARC_PAD_START].key == RETROK_F1);
-   overrides[1][ARC_PAD_START].automatic = true;
-   assert(arc_input_resolve_table(&test_profile, 1u,
-            "0123456789abcdef0123456789abcdef01234567", "!TEST", 5u, "Auto",
-            overrides, &resolution));
-   assert(!strcmp(resolution.profile_id, "test-profile") &&
-          resolution.source[0][ARC_PAD_A] == ARC_MAPPING_SOURCE_PROFILE &&
-          resolution.binding[0][ARC_PAD_UP].key == RETROK_s &&
-          resolution.binding[1][ARC_PAD_UP].key == RETROK_F2);
-   assert(arc_input_resolve_table(&test_profile, 1u,
-            "0123456789abcdef0123456789abcdef01234567",
-            "Folder.!TEST", 12u, "Auto", overrides, &resolution) &&
-          !strcmp(resolution.profile_id, "generic"));
-   test_profile.launch_target = "Folder.!TEST";
-   assert(arc_input_resolve_table(&test_profile, 1u,
-            "0123456789abcdef0123456789abcdef01234567",
-            "!TEST", 5u, "Auto", overrides, &resolution) &&
-          !strcmp(resolution.profile_id, "generic"));
-   assert(arc_input_resolve_table(&test_profile, 1u,
-            "0123456789abcdef0123456789abcdef01234567",
-            "Folder.!TEST", 12u, "Auto", overrides, &resolution) &&
-          !strcmp(resolution.profile_id, "test-profile"));
-   assert(arc_input_resolve_table(&test_profile, 1u,
-            "0000000000000000000000000000000000000000", "!OTHER",
-            6u, "test-profile", overrides, &resolution));
-   assert(resolution.source[0][ARC_PAD_A] == ARC_MAPPING_SOURCE_PRESET);
+   assert(resolution.binding[0][ARC_PAD_A].key == RETROK_SPACE &&
+          resolution.source[0][ARC_PAD_A] == ARC_MAPPING_SOURCE_DEFAULT);
+   assert(resolution.binding[1][ARC_PAD_B].key == RETROK_RETURN &&
+          resolution.source[1][ARC_PAD_B] == ARC_MAPPING_SOURCE_DEFAULT);
+   assert(!arc_input_resolve(overrides, NULL));
 
    ArcInputState state;
    ArcInputEvent event;
@@ -3844,18 +3750,24 @@ static void test_osk(void)
    assert(arc_osk_take_interrupted(&osk) && osk.interrupted_visible);
    uint32_t *notice = calloc(320u * 256u, sizeof(*notice));
    assert(notice && arc_osk_render(&osk, notice, 320u, 256u,
-                                   320u * sizeof(uint32_t), "Golden custom"));
+                                   320u * sizeof(uint32_t), "Custom controls"));
    char notice_digest[41];
    arc_sha1_hex(notice, 320u * 256u * sizeof(*notice), notice_digest);
-   if (strcmp(notice_digest, "e2634469f489ea06082bac3ac0decbe5abe27edd"))
+   if (strcmp(notice_digest, "9e78d83aea422e7377d401db810c232c5dd704ac"))
       fprintf(stderr, "OSK compact INT golden = %s\n", notice_digest);
-   assert(!strcmp(notice_digest, "e2634469f489ea06082bac3ac0decbe5abe27edd"));
+   assert(!strcmp(notice_digest, "9e78d83aea422e7377d401db810c232c5dd704ac"));
    assert(osk.interrupted_visible);
+   memset(notice, 0, 320u * 256u * sizeof(*notice));
+   assert(arc_osk_render(&osk, notice, 320u, 256u,
+                         320u * sizeof(uint32_t), "Default controls"));
+   char default_digest[41];
+   arc_sha1_hex(notice, 320u * 256u * sizeof(*notice), default_digest);
+   assert(strcmp(default_digest, notice_digest));
    memset(notice, 0, 320u * 256u * sizeof(*notice));
    assert(arc_osk_render(&osk, notice, 320u, 256u,
                          320u * sizeof(uint32_t),
                          "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"));
-   /* The header begins at x=4 and fits 39 glyphs. Its long profile name is
+   /* The header begins at x=4 and fits 39 glyphs. Its long controls label is
     * truncated so the final T in the short "INT" state remains rendered. */
    unsigned notice_panel_y = 256u - 256u * 45u / 100u;
    assert(notice[(notice_panel_y + 4u) * 320u + 309u] ==
