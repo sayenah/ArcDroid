@@ -2594,7 +2594,7 @@ arcdroid_pad1_a = "$mapping"
         }
         if ($errorRun.Process.HasExited) { throw "Slice 25 layout $layout exited after dismissal" }
         $errorCapture = Capture-RawScreenshot $errorRun "slice25-error-box-$layout"
-        if ($errorCapture.Dimensions -ne '640x480') {
+        if ($errorCapture.Dimensions -ne '640x512') {
             throw "Slice 25 layout $layout presented the wrong guest dimensions after dismissal: $($errorCapture.Dimensions)"
         }
         Start-Sleep -Milliseconds 200
