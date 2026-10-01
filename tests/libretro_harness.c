@@ -185,7 +185,6 @@ static bool keyboard_levels[ARC_INPUT_KEY_COUNT];
 static bool legacy_only_options;
 static unsigned set_variable_calls;
 static bool saw_input_descriptors;
-static bool saw_elite_port1_descriptors;
 static unsigned option_query_count;
 static const char *stale_install_option_value;
 static unsigned stale_install_option_queries;
@@ -230,7 +229,8 @@ static const char *option_launch = "auto";
 static const char *option_launch_chooser = "remember";
 static const char *option_jfd_boot = "auto";
 static const char *option_adffs_package = "verified";
-static const char *option_input_profile = "Auto";
+static const char *stale_input_option_value = "Auto";
+static unsigned stale_input_option_queries;
 static const char *option_osk_toggle = "L3";
 static const char *option_pad[2][10];
 static bool variable_update;
@@ -289,16 +289,78 @@ static char last_zip_fallback[1152];
 static unsigned total_osd_calls;
 static unsigned osk_failure_osd_calls;
 static unsigned osk_narrow_osd_calls;
-static unsigned profile_osd_calls;
-static bool expect_test_profile;
-static char application_profile_sha1[41];
-static char playlist_profile_sha1[41];
-static char nested_profile_sha1[41];
+static unsigned controls_osd_calls;
+static char application_identity_sha1[41];
+static char playlist_identity_sha1[41];
 static char last_launch_log[2048];
 static unsigned ramdisc_publication_logs;
 static char last_launch_warning[512];
 static char last_flush_fault[512];
 static char last_input_resolution[3072];
+static unsigned input_resolution_log_calls;
+static char effective_descriptor_labels[ARC_PAD_PORTS][ARC_PAD_INPUT_COUNT][64];
+static const char *expected_osk_header;
+static unsigned observed_osk_header_frames;
+
+static const unsigned mapping_input_ids[ARC_PAD_INPUT_COUNT] = {
+   RETRO_DEVICE_ID_JOYPAD_UP, RETRO_DEVICE_ID_JOYPAD_DOWN,
+   RETRO_DEVICE_ID_JOYPAD_LEFT, RETRO_DEVICE_ID_JOYPAD_RIGHT,
+   RETRO_DEVICE_ID_JOYPAD_A, RETRO_DEVICE_ID_JOYPAD_B,
+   RETRO_DEVICE_ID_JOYPAD_X, RETRO_DEVICE_ID_JOYPAD_Y,
+   RETRO_DEVICE_ID_JOYPAD_START, RETRO_DEVICE_ID_JOYPAD_SELECT
+};
+
+static const char *mapping_label(unsigned input, unsigned port)
+{
+   const char *value = option_pad[port][input];
+   if (!value || !strcmp(value, "Auto"))
+   {
+      const ArcInputBinding *generic = arc_input_generic_mapping();
+      const ArcInputKey *key = arc_input_key(generic[input].key);
+      assert(generic[input].bound && key);
+      return key->label;
+   }
+   if (!strcmp(value, "Unbound")) return "Unbound";
+   const ArcInputKey *key = arc_input_key_value(value);
+   assert(key);
+   return key->label;
+}
+
+static void assert_effective_descriptors(void)
+{
+   for (unsigned port = 0u; port < ARC_PAD_PORTS; ++port)
+      for (unsigned input = 0u; input < ARC_PAD_INPUT_COUNT; ++input)
+         assert(!strcmp(effective_descriptor_labels[port][input],
+                        mapping_label(input, port)));
+}
+
+static void assert_input_resolution(void)
+{
+   char expected[3072];
+   bool custom = false;
+   for (unsigned port = 0u; port < ARC_PAD_PORTS; ++port)
+      for (unsigned input = 0u; input < ARC_PAD_INPUT_COUNT; ++input)
+         if (option_pad[port][input] && strcmp(option_pad[port][input], "Auto"))
+            custom = true;
+   size_t at = (size_t)snprintf(expected, sizeof(expected),
+      "Input resolution: mapping=%s", custom ? "custom" : "default");
+   for (unsigned port = 0u; port < ARC_PAD_PORTS; ++port)
+      for (unsigned input = 0u; input < ARC_PAD_INPUT_COUNT; ++input)
+      {
+         const char *value = option_pad[port][input];
+         bool overridden = value && strcmp(value, "Auto");
+         int written = snprintf(expected + at, sizeof(expected) - at,
+            " p%u.%s=%s[%s]", port + 1u, arc_pad_input_name(input),
+            mapping_label(input, port), overridden ? "option" : "default");
+         assert(written > 0 && (size_t)written < sizeof(expected) - at);
+         at += (size_t)written;
+      }
+   assert(at + 1u < sizeof(expected));
+   expected[at++] = '\n';
+   expected[at] = '\0';
+   assert(!strcmp(last_input_resolution, expected));
+}
+
 
 static bool signature_is_in(const uint64_t *signatures, unsigned count, uint64_t signature)
 {
@@ -571,7 +633,12 @@ static void frontend_log(enum retro_log_level level, const char *format, ...)
    if (strstr(message, "not a recognised ADFS image")) saw_adfs_advisory = true;
    if (strstr(message, "Input queue overflowed")) ++input_overflow_log_lines;
    if (!strncmp(message, "Input resolution:", 17u))
+   {
+      assert(!strstr(message, "profile=") && !strstr(message, "[profile]") &&
+             !strstr(message, "[preset]"));
+      ++input_resolution_log_calls;
       snprintf(last_input_resolution, sizeof(last_input_resolution), "%s", message);
+   }
    if (strstr(message, "Image is missing its last "))
    {
       ++short_warning_log_lines;
@@ -690,10 +757,10 @@ static bool environment(unsigned command, void *data)
          const struct retro_core_options_v2 *options = data;
          unsigned count = 0u;
          while (options->definitions[count].key) ++count;
-         assert(count == 40u && options->categories &&
+         assert(count == 39u && options->categories &&
                 !strcmp(options->categories[0].key, "pad_mapping") &&
                 !strcmp(options->categories[0].desc, "Pad Mapping"));
-         bool found_profile = false, found_osk = false, found_chooser = false;
+         bool found_osk = false, found_chooser = false;
          bool found_short_tail = false, found_ramdisc = false;
          bool found_jfd_omitted = false, found_hard_disc = false;
          bool found_jfd_boot = false, found_adffs_package = false;
@@ -704,22 +771,7 @@ static bool environment(unsigned command, void *data)
             const struct retro_core_option_v2_definition *definition =
                &options->definitions[n];
             assert(strcmp(definition->key, "arcdroid_install_saves") != 0);
-            if (!strcmp(definition->key, "arcdroid_input_profile"))
-            {
-               found_profile = true;
-               unsigned value_count = 0u;
-               while (definition->values[value_count].value) ++value_count;
-               assert(value_count == (expect_test_profile ? 4u : 3u) &&
-                      !strcmp(definition->values[0].value, "Auto") &&
-                      !strcmp(definition->values[1].value, "Generic") &&
-                      !strcmp(definition->values[2].value, "elite") &&
-                      !strcmp(definition->values[2].label,
-                              "Elite (Hybrid Technology)"));
-               if (expect_test_profile)
-                  assert(!strcmp(definition->values[3].value, "test-profile") &&
-                         !strcmp(definition->values[3].label,
-                                 "Generated Test Profile"));
-            }
+            assert(strcmp(definition->key, "arcdroid_input_profile"));
             if (!strcmp(definition->key, "arcdroid_osk_toggle")) found_osk = true;
             if (!strcmp(definition->key, "arcdroid_short_tail"))
             {
@@ -783,7 +835,9 @@ static bool environment(unsigned command, void *data)
             }
             if (!strncmp(definition->key, "arcdroid_pad", 12u))
             {
-               assert(!strcmp(definition->category_key, "pad_mapping") &&
+               assert(!strcmp(definition->info,
+                      "Auto uses the default mapping; Unbound disables this input.") &&
+                      !strcmp(definition->category_key, "pad_mapping") &&
                       !strcmp(definition->values[0].value, "Auto") &&
                       !strcmp(definition->values[1].value, "Unbound") &&
                       definition->desc_categorized &&
@@ -792,10 +846,25 @@ static bool environment(unsigned command, void *data)
                for (unsigned previous = 0u; previous < pads; ++previous)
                   assert(strcmp(categorized_pad_labels[previous],
                                 definition->desc_categorized));
+               static const char *input_names[ARC_PAD_INPUT_COUNT] = {
+                  "up", "down", "left", "right", "a", "b", "x", "y", "start", "select"
+               };
+               char expected_key[32];
+               snprintf(expected_key, sizeof(expected_key), "arcdroid_pad%u_%s",
+                        pads / ARC_PAD_INPUT_COUNT + 1u,
+                        input_names[pads % ARC_PAD_INPUT_COUNT]);
+               assert(!strcmp(definition->key, expected_key));
+               size_t key_count = 0u;
+               const ArcInputKey *keys = arc_input_supported_keys(&key_count);
+               for (size_t key = 0u; key < key_count; ++key)
+                  assert(definition->values[key + 2u].value &&
+                         !strcmp(definition->values[key + 2u].value, keys[key].value) &&
+                         !strcmp(definition->values[key + 2u].label, keys[key].label));
+               assert(!definition->values[key_count + 2u].value);
                categorized_pad_labels[pads++] = definition->desc_categorized;
             }
          }
-         assert(found_profile && found_osk && found_chooser && found_short_tail && found_jfd_omitted && found_hard_disc && found_ramdisc && found_jfd_boot &&
+         assert(found_osk && found_chooser && found_short_tail && found_jfd_omitted && found_hard_disc && found_ramdisc && found_jfd_boot &&
                 found_adffs_package && pads == 20u);
          return true;
       }
@@ -833,31 +902,24 @@ static bool environment(unsigned command, void *data)
       {
          assert(phase == PHASE_LOAD || phase == PHASE_RUN);
          const struct retro_input_descriptor *descriptors = data;
-         static const unsigned profile_ids[ARC_PAD_INPUT_COUNT] = {
-            RETRO_DEVICE_ID_JOYPAD_UP, RETRO_DEVICE_ID_JOYPAD_DOWN,
-            RETRO_DEVICE_ID_JOYPAD_LEFT, RETRO_DEVICE_ID_JOYPAD_RIGHT,
-            RETRO_DEVICE_ID_JOYPAD_A, RETRO_DEVICE_ID_JOYPAD_B,
-            RETRO_DEVICE_ID_JOYPAD_X, RETRO_DEVICE_ID_JOYPAD_Y,
-            RETRO_DEVICE_ID_JOYPAD_START, RETRO_DEVICE_ID_JOYPAD_SELECT
-         };
-         static const char *profile_labels[ARC_PAD_INPUT_COUNT] = {
-            "S", "X", ",", ".", "Space", "/", "A", "M", "F1", "T"
-         };
-         bool elite_port1[ARC_PAD_INPUT_COUNT] = {false};
+         bool mapped[ARC_PAD_PORTS][ARC_PAD_INPUT_COUNT] = {{false}};
          bool port0 = false, port1 = false, select = false, adjust = false;
          bool menu = false, precision = false, right_x = false, right_y = false;
          bool left_x = false, left_y = false;
          for (; descriptors->description; ++descriptors)
          {
+            if (descriptors->port < ARC_PAD_PORTS &&
+                descriptors->device == RETRO_DEVICE_JOYPAD)
+               for (unsigned input = 0u; input < ARC_PAD_INPUT_COUNT; ++input)
+                  if (descriptors->id == mapping_input_ids[input])
+                  {
+                     snprintf(effective_descriptor_labels[descriptors->port][input],
+                              sizeof(effective_descriptor_labels[0][0]), "%s",
+                              descriptors->description);
+                     mapped[descriptors->port][input] = true;
+                  }
             if (descriptors->port == 0u) port0 = true;
             if (descriptors->port == 1u) port1 = true;
-            if (descriptors->port == 1u &&
-                descriptors->device == RETRO_DEVICE_JOYPAD &&
-                !strcmp(option_input_profile, "elite"))
-               for (unsigned input = 0u; input < ARC_PAD_INPUT_COUNT; ++input)
-                  if (descriptors->id == profile_ids[input] &&
-                      !strcmp(descriptors->description, profile_labels[input]))
-                     elite_port1[input] = true;
             if (descriptors->port == 0u && descriptors->device == RETRO_DEVICE_JOYPAD)
             {
                if (descriptors->id == RETRO_DEVICE_ID_JOYPAD_R) select = true;
@@ -880,15 +942,11 @@ static bool environment(unsigned command, void *data)
                if (descriptors->id == RETRO_DEVICE_ID_ANALOG_Y) left_y = labelled;
             }
          }
+         for (unsigned port = 0u; port < ARC_PAD_PORTS; ++port)
+            for (unsigned input = 0u; input < ARC_PAD_INPUT_COUNT; ++input)
+               assert(mapped[port][input]);
          saw_input_descriptors = port0 && port1 && select && adjust && menu &&
                                  precision && right_x && right_y && left_x && left_y;
-         if (!strcmp(option_input_profile, "elite"))
-         {
-            saw_elite_port1_descriptors = true;
-            for (unsigned input = 0u; input < ARC_PAD_INPUT_COUNT; ++input)
-               saw_elite_port1_descriptors = saw_elite_port1_descriptors &&
-                  elite_port1[input];
-         }
          return true;
       }
       case RETRO_ENVIRONMENT_SET_KEYBOARD_CALLBACK:
@@ -904,9 +962,14 @@ static bool environment(unsigned command, void *data)
             variable->value = stale_install_option_value;
             return true;
          }
+         if (!strcmp(variable->key, "arcdroid_input_profile"))
+         {
+            ++stale_input_option_queries;
+            variable->value = stale_input_option_value;
+            return true;
+         }
          if (legacy_only_options &&
-             (!strcmp(variable->key, "arcdroid_input_profile") ||
-              !strcmp(variable->key, "arcdroid_osk_toggle") ||
+             (!strcmp(variable->key, "arcdroid_osk_toggle") ||
               !strncmp(variable->key, "arcdroid_pad", 12u)))
             return false;
          if (!strcmp(variable->key, "arcdroid_machine")) variable->value = option_machine;
@@ -931,7 +994,6 @@ static bool environment(unsigned command, void *data)
             variable->value = option_jfd_boot;
          else if (!strcmp(variable->key, "arcdroid_adffs_package"))
             variable->value = option_adffs_package;
-         else if (!strcmp(variable->key, "arcdroid_input_profile")) variable->value = option_input_profile;
          else if (!strcmp(variable->key, "arcdroid_osk_toggle")) variable->value = option_osk_toggle;
          else
          {
@@ -1051,7 +1113,7 @@ static bool environment(unsigned command, void *data)
          }
          if (strstr(last_message, "On-screen keyboard disabled:")) ++osk_failure_osd_calls;
          if (strstr(last_message, "unavailable below 320")) ++osk_narrow_osd_calls;
-         if (!strncmp(last_message, "Controls: ", 10u)) ++profile_osd_calls;
+         if (!strncmp(last_message, "Controls: ", 10u)) ++controls_osd_calls;
          if (strstr(last_message, "Application choice refused") ||
              strstr(last_message, "No unique application") ||
              strstr(last_message, "Application inspection incomplete"))
@@ -1089,7 +1151,7 @@ static bool environment(unsigned command, void *data)
             ++flush_fault_osd_calls;
             snprintf(last_flush_fault, sizeof(last_flush_fault), "%s", last_message);
          }
-         if (!strncmp(last_message, "Controls: ", 10u)) ++profile_osd_calls;
+         if (!strncmp(last_message, "Controls: ", 10u)) ++controls_osd_calls;
          if (strstr(last_message, "Application choice refused") ||
              strstr(last_message, "No unique application") ||
              strstr(last_message, "Application inspection incomplete"))
@@ -1130,6 +1192,27 @@ static void video(const void *data, unsigned w, unsigned h, size_t pitch)
       read_cached_video();
       if (probe_cached_video && cached_video) ++cached_video_duplicate_reads;
       ++duplicate_video_frames; ++video_frames; return;
+   }
+   if (expected_osk_header)
+   {
+      ArcOsk reference = {.visible = true, .width = w, .height = h};
+      uint32_t *reference_pixels = calloc((size_t)w * h, sizeof(*reference_pixels));
+      assert(reference_pixels && arc_osk_render(&reference, reference_pixels,
+             w, h, (size_t)w * sizeof(*reference_pixels), expected_osk_header));
+      unsigned panel_h = h * 45u / 100u;
+      if (panel_h < 48u) panel_h = 48u;
+      if (panel_h > h) panel_h = h;
+      unsigned text_y = h - panel_h + 4u;
+      for (unsigned y = text_y; y < text_y + 8u && y < h; ++y)
+         for (unsigned x = 0u; x < w; ++x)
+         {
+            const uint32_t *actual = (const uint32_t *)((const uint8_t *)data +
+                                             (size_t)y * pitch);
+            assert(((actual[x] & UINT32_C(0x00ffffff)) == UINT32_C(0x00ffffff)) ==
+                   (reference_pixels[(size_t)y * w + x] == UINT32_C(0x00ffffff)));
+         }
+      free(reference_pixels);
+      ++observed_osk_header_frames;
    }
    if (probe_cached_video) {
       cached_video = data;
@@ -1192,6 +1275,27 @@ static void video(const void *data, unsigned w, unsigned h, size_t pitch)
       snprintf(path, sizeof(path), "%s/field-%04u.ppm", evidence_path, video_frames);
       write_ppm(path, data, w, h, pitch);
    }
+}
+static void assert_presented_osk_header(void (*run)(void),
+                                        void (*force_present)(void),
+                                        bool (*osk_visible)(void),
+                                        const char *header)
+{
+   if (!osk_visible())
+   {
+      joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_L3] = true; run();
+      joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_L3] = false; run();
+   }
+   assert(osk_visible());
+   expected_osk_header = header;
+   observed_osk_header_frames = 0u;
+   force_present();
+   run();
+   expected_osk_header = NULL;
+   assert(observed_osk_header_frames == 1u);
+   joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_L3] = true; run();
+   joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_L3] = false; run();
+   assert(!osk_visible());
 }
 static size_t audio(const int16_t *data, size_t frames)
 {
@@ -2150,6 +2254,8 @@ int main(int argc, char **argv)
       return 0;
    }
    bool real_boot = false;
+   bool input_layout_probe = false;
+   bool helper_stress = false;
    bool newio_smoke = false;
    bool jfd_writes = false;
    bool jfd_create_step = false;
@@ -2178,6 +2284,10 @@ int main(int argc, char **argv)
       assert(getenv("ARCDROID_TEST_POWER_ON_SHIFT") &&
              !strcmp(getenv("ARCDROID_TEST_POWER_ON_SHIFT"), "1"));
    }
+   else if (argc == 6 && !strcmp(argv[5], "--input-layout-probe"))
+      input_layout_probe = true;
+   else if (argc == 17 && !strcmp(argv[16], "--helper-stress"))
+      helper_stress = true;
    else if (argc == 11 && !strcmp(argv[5], "--newio-smoke"))
       newio_smoke = true;
    else if (argc == 7 && !strcmp(argv[5], "--native-hd-guest"))
@@ -2236,7 +2346,7 @@ int main(int argc, char **argv)
       print_usage(stderr, argv[0]);
       return 2;
    }
-   bool media_tests = !real_boot && argc == 16;
+   bool media_tests = !real_boot && (argc == 16 || helper_stress);
    if (jfd_writes)
    {
       assert(strlen(argv[3]) < sizeof(jfd_content_path) &&
@@ -2359,8 +2469,6 @@ int main(int argc, char **argv)
    void (*arc_libretro_test_fail_osk_allocations)(unsigned) = NULL;
    void (*arc_libretro_test_drop_osk_surface)(void) = NULL;
    bool (*arc_libretro_test_osk_source_unchanged)(void) = NULL;
-   bool (*arc_libretro_test_register_input_profile)(const ArcInputProfile *) = NULL;
-   bool (*arc_libretro_test_set_input_profile_target)(const char *) = NULL;
    void (*arc_libretro_test_probe_osk_geometry)(unsigned, unsigned) = NULL;
    bool (*arc_libretro_test_osk_focus_key)(unsigned) = NULL;
    bool (*arc_libretro_test_osk_key_center)(unsigned, unsigned *, unsigned *) = NULL;
@@ -2542,7 +2650,15 @@ int main(int argc, char **argv)
          dlsym(module, "arc_libretro_test_boot_media_digest");
       assert(arc_libretro_test_boot_media_digest);
    }
-   if (!cmos_exerciser && !power_on_cmos_guest && !native_hd_guest && !real_boot && !newio_smoke && !jfd_writes && !jfd_create_step &&
+   if (input_layout_probe)
+   {
+      *(void **)(&arc_platform_test_input_events_reset) =
+         dlsym(module, "arc_platform_test_input_events_reset");
+      *(void **)(&arc_platform_test_input_events) =
+         dlsym(module, "arc_platform_test_input_events");
+      assert(arc_platform_test_input_events_reset && arc_platform_test_input_events);
+   }
+   else if (!cmos_exerciser && !power_on_cmos_guest && !native_hd_guest && !real_boot && !newio_smoke && !jfd_writes && !jfd_create_step &&
        !jfd_identification_step && !jfd_file_data_step && !jfd_file_data_set &&
        !jfd_file_data_reasons &&
        !jfd_file_data_recovery && !jfd_file_data_unavailable &&
@@ -2572,10 +2688,6 @@ int main(int argc, char **argv)
          dlsym(module, "arc_libretro_test_drop_osk_surface");
       *(void **)(&arc_libretro_test_osk_source_unchanged) =
          dlsym(module, "arc_libretro_test_osk_source_unchanged");
-      *(void **)(&arc_libretro_test_register_input_profile) =
-         dlsym(module, "arc_libretro_test_register_input_profile");
-      *(void **)(&arc_libretro_test_set_input_profile_target) =
-         dlsym(module, "arc_libretro_test_set_input_profile_target");
       *(void **)(&arc_libretro_test_probe_osk_geometry) =
          dlsym(module, "arc_libretro_test_probe_osk_geometry");
       *(void **)(&arc_libretro_test_osk_focus_key) =
@@ -2642,8 +2754,6 @@ int main(int argc, char **argv)
              arc_engine_reset && arc_libretro_test_fail_osk_allocations &&
              arc_libretro_test_drop_osk_surface &&
              arc_libretro_test_osk_source_unchanged &&
-             arc_libretro_test_register_input_profile &&
-             arc_libretro_test_set_input_profile_target &&
              arc_libretro_test_probe_osk_geometry &&
              arc_libretro_test_osk_focus_key &&
              arc_libretro_test_osk_key_center &&
@@ -2677,32 +2787,12 @@ int main(int argc, char **argv)
                                                   ARC_GEOMETRY_800K_D) &&
              !arc_engine_test_helper_media_valid(ARC_MEDIA_ADF_800K,
                                                   ARC_GEOMETRY_640K_L));
-      ArcDigest application_profile_digest = digest_file(argv[12]);
-      ArcDigest playlist_profile_digest = digest_playlist_pair(argv[7], argv[8]);
-      memcpy(application_profile_sha1, application_profile_digest.sha1,
-             sizeof(application_profile_sha1));
-      memcpy(playlist_profile_sha1, playlist_profile_digest.sha1,
-             sizeof(playlist_profile_sha1));
-      char nested_profile_path[4096];
-      snprintf(nested_profile_path, sizeof(nested_profile_path),
-               "%s/arcdroid-nested-chooser-l.adl", argv[11]);
-      ArcDigest nested_profile_digest = digest_file(nested_profile_path);
-      memcpy(nested_profile_sha1, nested_profile_digest.sha1,
-             sizeof(nested_profile_sha1));
-      ArcInputProfile test_profile = {
-         .id = "test-profile",
-         .name = "Generated Test Profile",
-         .digests = {application_profile_sha1, playlist_profile_sha1,
-                     nested_profile_sha1},
-         .digest_count = 3u,
-         .has_port1 = true,
-         .evidence = "project-authored harness registration"
-      };
-      for (unsigned port = 0u; port < ARC_PAD_PORTS; ++port)
-         memcpy(test_profile.mapping[port], arc_input_generic_mapping(),
-                sizeof(test_profile.mapping[port]));
-      assert(arc_libretro_test_register_input_profile(&test_profile));
-      expect_test_profile = true;
+      ArcDigest application_identity_digest = digest_file(argv[12]);
+      ArcDigest playlist_identity_digest = digest_playlist_pair(argv[7], argv[8]);
+      memcpy(application_identity_sha1, application_identity_digest.sha1,
+             sizeof(application_identity_sha1));
+      memcpy(playlist_identity_sha1, playlist_identity_digest.sha1,
+             sizeof(playlist_identity_sha1));
    }
    else if (jfd_file_data_step || jfd_file_data_set || jfd_file_data_unavailable ||
             jfd_writes || jfd_create_step || jfd_merge_step ||
@@ -2827,6 +2917,186 @@ int main(int argc, char **argv)
    assert(retro_serialize_size() == 0u);
    struct retro_game_info game = {jfd_writes ? jfd_content_path : argv[3], NULL, 0u, NULL};
    uint64_t source_hash = hash_file(game.path);
+   if (helper_stress)
+   {
+      struct retro_game_info application_game = {argv[12], NULL, 0u, NULL};
+      ArcDigest application_digest = digest_file(argv[12]);
+      char helper_file[4096];
+      snprintf(helper_file, sizeof(helper_file), "%s/arcdroid/launch/%s.adl",
+               save_path, application_digest.sha1);
+      option_launch = "auto";
+      option_writes = "off";
+      phase = PHASE_LOAD; assert(retro_load_game(&application_game));
+      bool write_protected = false;
+      assert(arc_engine_test_drive_media(1u, &write_protected, NULL) &&
+             write_protected && file_exists(helper_file));
+      retro_unload_game();
+      uint64_t stable_helper = hash_file(helper_file);
+      unsigned decisions = launch_log_lines;
+      for (unsigned cycle = 0u; cycle < 100u; ++cycle)
+      {
+         phase = PHASE_LOAD; assert(retro_load_game(&application_game));
+         assert(arc_engine_test_drive_media(1u, &write_protected, NULL) &&
+                write_protected);
+         retro_unload_game();
+         assert(open_files == 0u && open_dirs == 0u &&
+                hash_file(helper_file) == stable_helper);
+      }
+      assert(launch_log_lines == decisions + 100u);
+      retro_deinit();
+      assert(open_files == 0u && open_dirs == 0u && dlclose(module) == 0);
+      puts("helper-stress: passed");
+      return 0;
+   }
+
+   if (input_layout_probe)
+   {
+      void (*force_osk_present)(void) = NULL;
+      bool (*osk_visible)(void) = NULL;
+      *(void **)(&force_osk_present) = dlsym(module, "arc_libretro_test_force_present");
+      *(void **)(&osk_visible) = dlsym(module, "arc_libretro_test_osk_visible");
+      assert(force_osk_present && osk_visible);
+      phase = PHASE_LOAD; assert(retro_load_game(&game));
+      phase = PHASE_RUN;
+      assert_input_resolution();
+      assert_effective_descriptors();
+      ArcKartEvent input_events[512];
+      for (unsigned frame = 0u; frame < 120u; ++frame) retro_run();
+      assert_presented_osk_header(retro_run, force_osk_present, osk_visible,
+                                  "Default controls");
+      retro_set_controller_port_device(1u,
+         RETRO_DEVICE_SUBCLASS(RETRO_DEVICE_JOYPAD, 1));
+      retro_run();
+      for (unsigned selected_port = 0u; selected_port < ARC_PAD_PORTS;
+           ++selected_port)
+      {
+         option_pad[selected_port][ARC_PAD_UP] = selected_port ? "x" : "s";
+         unsigned notices_before = total_osd_calls;
+         variable_update = true;
+         retro_run();
+         assert_input_resolution();
+         assert_effective_descriptors();
+         assert(total_osd_calls == notices_before);
+         assert_presented_osk_header(retro_run, force_osk_present, osk_visible,
+                                     "Custom controls");
+         retro_run(); /* Both ports report neutral after rebinding. */
+         for (unsigned port = 0u; port < ARC_PAD_PORTS; ++port)
+         {
+            unsigned expected_key = port == selected_port ?
+               (selected_port ? RETROK_x : RETROK_s) : RETROK_UP;
+            arc_platform_test_input_events_reset();
+            joypad_buttons[port][RETRO_DEVICE_ID_JOYPAD_UP] = true;
+            retro_run();
+            joypad_buttons[port][RETRO_DEVICE_ID_JOYPAD_UP] = false;
+            for (unsigned frame = 0u;
+                 frame < 160u && arc_platform_test_input_events(input_events, 512u) < 2u;
+                 ++frame) retro_run();
+            assert(arc_platform_test_input_events(input_events, 512u) == 2u &&
+                   input_events[0].type == ARC_INPUT_EVENT_KEY &&
+                   input_events[0].code == expected_key && input_events[0].down &&
+                   input_events[1].type == ARC_INPUT_EVENT_KEY &&
+                   input_events[1].code == expected_key && !input_events[1].down);
+         }
+         option_pad[selected_port][ARC_PAD_UP] = NULL;
+      }
+      unsigned notices_before_default = total_osd_calls;
+      variable_update = true;
+      retro_run();
+      assert_input_resolution();
+      assert_effective_descriptors();
+      assert(total_osd_calls == notices_before_default);
+      assert_presented_osk_header(retro_run, force_osk_present, osk_visible,
+                                  "Default controls");
+      unsigned notices_before_reset = total_osd_calls;
+      retro_reset();
+      assert_input_resolution();
+      assert_effective_descriptors();
+      assert(total_osd_calls == notices_before_reset);
+      assert_presented_osk_header(retro_run, force_osk_present, osk_visible,
+                                  "Default controls");
+      /* A player can reproduce the same ten bindings on either independent port. */
+      static const char *layout_values[ARC_PAD_INPUT_COUNT] = {
+         "s", "x", "comma", "period", "space", "slash", "a", "m", "f1", "t"
+      };
+      static const unsigned layout_keys[ARC_PAD_INPUT_COUNT] = {
+         RETROK_s, RETROK_x, RETROK_COMMA, RETROK_PERIOD, RETROK_SPACE,
+         RETROK_SLASH, RETROK_a, RETROK_m, RETROK_F1, RETROK_t
+      };
+      for (unsigned port = 0u; port < ARC_PAD_PORTS; ++port)
+         for (unsigned input = 0u; input < ARC_PAD_INPUT_COUNT; ++input)
+            option_pad[port][input] = layout_values[input];
+      unsigned notices_before_layout = total_osd_calls;
+      variable_update = true;
+      retro_run();
+      assert_input_resolution();
+      assert_effective_descriptors();
+      assert(total_osd_calls == notices_before_layout);
+      assert_presented_osk_header(retro_run, force_osk_present, osk_visible,
+                                  "Custom controls");
+      retro_run(); /* Both ports have reported neutral after the mapping change. */
+      for (unsigned port = 0u; port < ARC_PAD_PORTS; ++port)
+      {
+         arc_platform_test_input_events_reset();
+         for (unsigned input = 0u; input < ARC_PAD_INPUT_COUNT; ++input)
+            joypad_buttons[port][mapping_input_ids[input]] = true;
+         retro_run();
+         for (unsigned input = 0u; input < ARC_PAD_INPUT_COUNT; ++input)
+            joypad_buttons[port][mapping_input_ids[input]] = false;
+         for (unsigned frame = 0u;
+              frame < 160u && arc_platform_test_input_events(input_events, 512u) <
+                 2u * ARC_PAD_INPUT_COUNT;
+              ++frame) retro_run();
+         size_t count = arc_platform_test_input_events(input_events, 512u);
+         assert(count == 2u * ARC_PAD_INPUT_COUNT);
+         for (unsigned input = 0u; input < ARC_PAD_INPUT_COUNT; ++input)
+         {
+            unsigned downs = 0u, ups = 0u;
+            for (size_t event = 0u; event < count; ++event)
+               if (input_events[event].type == ARC_INPUT_EVENT_KEY &&
+                   input_events[event].code == layout_keys[input])
+                  input_events[event].down ? ++downs : ++ups;
+            assert(downs == 1u && ups == 1u);
+         }
+      }
+      unsigned notices_before_custom_reset = total_osd_calls;
+      retro_reset();
+      assert_input_resolution();
+      assert_effective_descriptors();
+      assert(total_osd_calls == notices_before_custom_reset);
+      assert_presented_osk_header(retro_run, force_osk_present, osk_visible,
+                                  "Custom controls");
+      retro_unload_game();
+      phase = PHASE_LOAD; assert(retro_load_game(&game));
+      phase = PHASE_RUN;
+      assert_input_resolution();
+      assert_effective_descriptors();
+      assert_presented_osk_header(retro_run, force_osk_present, osk_visible,
+                                  "Custom controls");
+      for (unsigned port = 0u; port < ARC_PAD_PORTS; ++port)
+         for (unsigned input = 0u; input < ARC_PAD_INPUT_COUNT; ++input)
+            option_pad[port][input] = NULL;
+      notices_before_default = total_osd_calls;
+      variable_update = true;
+      retro_run();
+      assert_input_resolution();
+      assert_effective_descriptors();
+      assert(total_osd_calls == notices_before_default);
+      notices_before_reset = total_osd_calls;
+      retro_reset();
+      assert_input_resolution();
+      assert_effective_descriptors();
+      assert(total_osd_calls == notices_before_reset);
+      assert_presented_osk_header(retro_run, force_osk_present, osk_visible,
+                                  "Default controls");
+      retro_unload_game();
+      retro_deinit();
+      assert(stale_input_option_queries == 0u &&
+             hash_file(game.path) == source_hash &&
+             open_files == 0u && open_dirs == 0u && dlclose(module) == 0);
+      puts("input-layout-probe: passed");
+      return 0;
+   }
+
 
    if (jfd_quarantine_density)
    {
@@ -5459,9 +5729,7 @@ int main(int argc, char **argv)
    legacy_only_options = true;
    last_input_resolution[0] = '\0';
    phase = PHASE_LOAD; assert(retro_load_game(&game));
-   assert(strstr(last_input_resolution, "profile=Generic") &&
-          strstr(last_input_resolution, "p1.Up=Cursor Up[generic]") &&
-          strstr(last_input_resolution, "p2.Select=Tab[generic]"));
+   assert_input_resolution();
    retro_unload_game();
    legacy_only_options = false;
 
@@ -5534,15 +5802,27 @@ int main(int argc, char **argv)
    assert(fputc(changed_byte ^ 0x5a, changed_file) != EOF && !fclose(changed_file));
    uint64_t changed_source_hash = hash_file(changed);
    struct retro_game_info changed_game = {changed, NULL, 0u, NULL};
-   unsigned profile_messages_before = profile_osd_calls;
-   option_input_profile = "test-profile";
    phase = PHASE_LOAD; assert(retro_load_game(&game));
-   assert(profile_osd_calls == profile_messages_before + 1u &&
-          strstr(last_input_resolution, "profile=Generated Test Profile") &&
-          strstr(last_input_resolution, "[preset]"));
-   option_input_profile = "Auto";
-   variable_update = true;
+   phase = PHASE_RUN;
    assert(saw_input_descriptors && option_query_count >= 10u);
+   assert_input_resolution();
+   assert_effective_descriptors();
+   const char *stale_answers[] = {"eli" "te", "Generic", "Auto", "garbage"};
+   unsigned input_lines_before_stale = input_resolution_log_calls;
+   unsigned notices_before_stale = controls_osd_calls;
+   unsigned all_notices_before_stale = total_osd_calls;
+   for (unsigned answer = 0u; answer < 4u; ++answer)
+   {
+      stale_input_option_value = stale_answers[answer];
+      variable_update = true;
+      retro_run();
+      assert(input_resolution_log_calls == input_lines_before_stale &&
+             controls_osd_calls == notices_before_stale &&
+             total_osd_calls == all_notices_before_stale &&
+             stale_input_option_queries == 0u);
+      assert_input_resolution();
+      assert_effective_descriptors();
+   }
    struct retro_system_av_info loaded_av;
    retro_get_system_av_info(&loaded_av);
    assert(loaded_av.geometry.base_width > 0u && loaded_av.geometry.base_height > 0u &&
@@ -5589,42 +5869,6 @@ int main(int argc, char **argv)
 
    phase = PHASE_RUN; for (unsigned frame = 0; frame < 60u; ++frame) retro_run();
    ArcKartEvent input_events[512];
-
-   /* Profiles without an explicit port-1 map mirror port 0. This covers
-    * handhelds whose built-in controls are split across frontend ports. */
-   retro_set_controller_port_device(1u,
-      RETRO_DEVICE_SUBCLASS(RETRO_DEVICE_JOYPAD, 1));
-   retro_run();
-   option_input_profile = "elite";
-   variable_update = true;
-   retro_run();
-   assert(saw_elite_port1_descriptors &&
-          strstr(last_input_resolution, "profile=Elite (Hybrid Technology)") &&
-          strstr(last_input_resolution, "p2.Start=F1[preset]"));
-   arc_platform_test_input_events_reset();
-   joypad_buttons[1][RETRO_DEVICE_ID_JOYPAD_START] = true;
-   for (unsigned frame = 0u; frame < 20u; ++frame) retro_run();
-   joypad_buttons[1][RETRO_DEVICE_ID_JOYPAD_START] = false;
-   for (unsigned frame = 0u; frame < 20u; ++frame) retro_run();
-   size_t mirrored_input_event_count =
-      arc_platform_test_input_events(input_events, 512u);
-   unsigned mirrored_f1_edges = 0u, generic_escape_edges = 0u;
-   for (size_t i = 0u; i < mirrored_input_event_count; ++i)
-      if (input_events[i].type == ARC_INPUT_EVENT_KEY)
-      {
-         if (input_events[i].code == RETROK_F1)
-         {
-            assert(input_events[i].down == (mirrored_f1_edges == 0u));
-            ++mirrored_f1_edges;
-         }
-         if (input_events[i].code == RETROK_ESCAPE) ++generic_escape_edges;
-      }
-   assert(mirrored_f1_edges == 2u && generic_escape_edges == 0u);
-   option_input_profile = "Auto";
-   variable_update = true;
-   retro_run();
-   retro_set_controller_port_device(1u,
-      RETRO_DEVICE_SUBCLASS(RETRO_DEVICE_MOUSE, 1));
 
    /* The generated ROM's multiply/XOR receive fold is order-sensitive. Equal
     * event sets in modifier-first and key-first order paint distinct frames. */
@@ -7195,17 +7439,16 @@ int main(int argc, char **argv)
       save_dir = save_path;
 
       /* A member image does not inherit the digest of its playlist set. */
-      option_input_profile = "Auto";
       option_writes = "shadow";
       option_launch = "off";
       struct retro_game_info playlist_member_game = {argv[7], NULL, 0u, NULL};
       last_input_resolution[0] = '\0';
       phase = PHASE_LOAD; assert(retro_load_game(&playlist_member_game));
       ASSERT_NO_SAVE_RAM();
-      assert(strstr(last_input_resolution, "profile=Generic") &&
-             strstr(last_input_resolution, "[generic]"));
+      assert_input_resolution();
       ArcDigest standalone_identity = digest_file(argv[7]);
-      assert(!strcmp(arc_libretro_test_content_id(), standalone_identity.sha1));
+      assert(!strcmp(arc_libretro_test_content_id(), standalone_identity.sha1) &&
+             strcmp(standalone_identity.sha1, playlist_identity_sha1));
       char standalone_staged[4096], standalone_cmos[4096], standalone_choice[4096];
       snprintf(standalone_staged, sizeof(standalone_staged), "%s",
                arc_libretro_test_staged_path(0u));
@@ -8105,8 +8348,8 @@ int main(int argc, char **argv)
 
       last_input_resolution[0] = '\0';
       phase = PHASE_LOAD; assert(retro_load_game(&playlist_game));
-      assert(strstr(last_input_resolution, "profile=Generated Test Profile") &&
-             strstr(last_input_resolution, "[profile]"));
+      assert(!strcmp(arc_libretro_test_content_id(), playlist_identity_sha1));
+      assert_input_resolution();
       assert(disk_control.get_num_images() == 2u &&
              disk_control.get_image_index() == 0u &&
              !disk_control.get_eject_state());
@@ -8115,6 +8358,7 @@ int main(int argc, char **argv)
              disk_control.set_eject_state(false) &&
              disk_control.get_image_index() == 1u &&
              !disk_control.get_eject_state());
+      assert(!strcmp(arc_libretro_test_content_id(), playlist_identity_sha1));
       retro_unload_game();
 
       /* Unload/reload in one process cannot carry a valid later index into
@@ -8142,8 +8386,9 @@ int main(int argc, char **argv)
       retro_reset();
       assert(disk_control.get_eject_state() &&
              disk_control.get_image_index() == 1u &&
-             strstr(last_input_resolution, "profile=Generated Test Profile") &&
-             strstr(last_input_resolution, "[profile]"));
+             !strcmp(arc_libretro_test_content_id(), playlist_identity_sha1));
+      assert_input_resolution();
+      assert_effective_descriptors();
       assert(disk_control.set_eject_state(false));
       for (unsigned frame = 0u; frame < 180u; ++frame) retro_run();
       assert(last_video_signature != disc1_signature);
@@ -8386,7 +8631,6 @@ int main(int argc, char **argv)
       uint8_t clean_persisted_cmos[ARC_CMOS_RECORD_SIZE];
       option_writes = "off";
       option_launch_chooser = "remember";
-      option_input_profile = "Auto";
       for (unsigned choice = 0u; choice < 2u; ++choice)
       {
          (void)remove(chooser_helper); (void)remove(chooser_binding);
@@ -9178,9 +9422,8 @@ int main(int argc, char **argv)
       assert(remove(later_playlist) == 0);
       option_launch = "auto";
 
-      /* Auto profiles are keyed by prepared content identity, never by path
-       * or disc title. The altered copy leaves its ADFS title bytes untouched
-       * while changing one unrelated byte near the end of the image. */
+      /* A renamed copy has the same prepared identity; changing one byte
+       * changes that identity without relying on any input behavior. */
       char application_copy[4096], application_changed[4096];
       snprintf(application_copy, sizeof(application_copy),
                "%s/application-renamed.adl", argv[4]);
@@ -9202,23 +9445,26 @@ int main(int argc, char **argv)
       struct retro_game_info application_changed_game = {
          application_changed, NULL, 0u, NULL
       };
-      option_input_profile = "Auto";
       option_writes = "off";
       option_launch = "off";
-      last_input_resolution[0] = '\0';
+      ArcDigest copy_identity = digest_file(application_copy);
+      ArcDigest changed_identity = digest_file(application_changed);
+      assert(!strcmp(copy_identity.sha1, application_identity_sha1) &&
+             strcmp(changed_identity.sha1, application_identity_sha1));
       phase = PHASE_LOAD; assert(retro_load_game(&application_game));
-      assert(strstr(last_input_resolution, "profile=Generated Test Profile") &&
-             strstr(last_input_resolution, "[profile]"));
+      assert(!strcmp(arc_libretro_test_content_id(), application_identity_sha1));
+      assert_input_resolution();
+      char content_independent_resolution[3072];
+      snprintf(content_independent_resolution, sizeof(content_independent_resolution),
+               "%s", last_input_resolution);
       retro_unload_game();
-      last_input_resolution[0] = '\0';
       phase = PHASE_LOAD; assert(retro_load_game(&application_copy_game));
-      assert(strstr(last_input_resolution, "profile=Generated Test Profile") &&
-             strstr(last_input_resolution, "[profile]"));
+      assert(!strcmp(arc_libretro_test_content_id(), copy_identity.sha1) &&
+             !strcmp(last_input_resolution, content_independent_resolution));
       retro_unload_game();
-      last_input_resolution[0] = '\0';
       phase = PHASE_LOAD; assert(retro_load_game(&application_changed_game));
-      assert(strstr(last_input_resolution, "profile=Generic") &&
-             strstr(last_input_resolution, "[generic]"));
+      assert(!strcmp(arc_libretro_test_content_id(), changed_identity.sha1) &&
+             !strcmp(last_input_resolution, content_independent_resolution));
       retro_unload_game();
       assert(remove(application_copy) == 0 && remove(application_changed) == 0);
 
@@ -9762,9 +10008,6 @@ int main(int argc, char **argv)
          (void)remove(nested_helper); (void)remove(nested_choice);
          (void)remove(nested_binding);
          option_launch = "app1";
-         if (!nested_kind)
-            assert(arc_libretro_test_set_input_profile_target(
-                      "Folder.!Nulvane"));
          phase = PHASE_LOAD; assert(retro_load_game(&nested_game));
          assert(arc_engine_test_drive_media(1u, NULL, NULL) &&
                 strstr(last_launch_log, "scope=nested") &&
@@ -9774,10 +10017,11 @@ int main(int argc, char **argv)
                 strstr(last_launch_log, nested_kind ?
                     "address=Arc\\xA0Games.!Nulvane" :
                     "address=Folder.!Nulvane"));
-         if (!nested_kind)
-            assert(strstr(last_input_resolution,
-                          "profile=Generated Test Profile") &&
-                   strstr(last_input_resolution, "[profile]"));
+         assert(!strcmp(arc_libretro_test_content_id(), nested_digest.sha1));
+         assert_input_resolution();
+         char target_independent_resolution[3072];
+         snprintf(target_independent_resolution, sizeof(target_independent_resolution),
+                  "%s", last_input_resolution);
          uint8_t nested_record[ARC_LAUNCH_BINDING_MAX_SIZE];
          size_t nested_size = read_bounded(nested_binding, nested_record,
                                            sizeof(nested_record));
@@ -9811,16 +10055,7 @@ int main(int argc, char **argv)
             assert(last_video_signature == expected_guest_signature[0]);
          retro_unload_game();
 
-         if (!nested_kind)
-         {
-            assert(arc_libretro_test_set_input_profile_target("!Nulvane"));
-            phase = PHASE_LOAD; assert(retro_load_game(&nested_game));
-            assert(strstr(last_input_resolution, "profile=Generic") &&
-                   strstr(last_input_resolution, "[generic]"));
-            retro_unload_game();
-            assert(arc_libretro_test_set_input_profile_target(NULL));
-         }
-         else
+         if (nested_kind)
          {
             (void)remove(nested_binding);
             option_launch = "app2";
@@ -9828,7 +10063,9 @@ int main(int argc, char **argv)
             assert(strstr(last_launch_log,
                           "decision=Arc\\xA0Games.!Qaventra") &&
                    strstr(last_launch_log,
-                          "address=Arc\\xA0Games.!Qaventra"));
+                          "address=Arc\\xA0Games.!Qaventra") &&
+                   !strcmp(last_input_resolution, target_independent_resolution) &&
+                   !strcmp(arc_libretro_test_content_id(), nested_digest.sha1));
             phase = PHASE_RUN;
             for (unsigned frame = 0u; frame < 520u; ++frame) retro_run();
             assert(last_video_signature != extended_signature);
@@ -10073,20 +10310,6 @@ int main(int argc, char **argv)
              arc_engine_test_drive_media(1u, &write_protected, mounted_digest) &&
              write_protected);
       retro_unload_game();
-
-      /* Repeated helper preparation reuses the deterministic published image
-       * and closes every VFS handle on teardown. */
-      option_writes = "off";
-      uint64_t stable_helper = hash_file(helper_file);
-      decisions = launch_log_lines;
-      for (unsigned cycle = 0u; cycle < 100u; ++cycle)
-      {
-         phase = PHASE_LOAD; assert(retro_load_game(&application_game));
-         assert(arc_engine_test_drive_media(1u, &write_protected, mounted_digest));
-         retro_unload_game();
-         assert(open_files == 0u && open_dirs == 0u && hash_file(helper_file) == stable_helper);
-      }
-      assert(launch_log_lines == decisions + 100u);
 
       /* Every Slice 6a eligibility exit has a stable diagnostic contract.
        * These generated JFDs and zip files contain only invented bytes. */
@@ -10891,7 +11114,7 @@ int main(int argc, char **argv)
    assert(input_observed);
    assert(vidc_osd_ext_calls + vidc_osd_legacy_calls == persistent_osd_before + 2u);
    assert(saw_audio_counters);
-   assert(set_variable_calls == 0u);
+   assert(set_variable_calls == 0u && stale_input_option_queries == 0u);
    if (probe_cached_video)
       assert(cached_video_av_reads && cached_video_geometry_reads &&
              cached_video_duplicate_reads);

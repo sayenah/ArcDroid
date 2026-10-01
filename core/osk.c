@@ -685,7 +685,7 @@ static void arc_osk_text(uint32_t *pixels, unsigned width, unsigned height,
 }
 
 bool arc_osk_render(const ArcOsk *osk, uint32_t *pixels, unsigned width,
-                    unsigned height, size_t pitch, const char *profile)
+                    unsigned height, size_t pitch, const char *controls)
 {
    if (!osk || !osk->visible || !pixels || width != osk->width ||
        height != osk->height || pitch < (size_t)width * sizeof(uint32_t) ||
@@ -699,7 +699,7 @@ bool arc_osk_render(const ArcOsk *osk, uint32_t *pixels, unsigned width,
    arc_osk_rect(pixels, width, height, stride, 0u, panel_y, width, panel_h,
                 UINT32_C(0x00101824), alpha);
    char header[192];
-   const char *name = profile ? profile : "Generic";
+   const char *name = controls ? controls : "Default controls";
    const char *state = osk->busy && osk->interrupted_visible ?
       (osk->compact ? "BUSY/INT" : "BUSY/INTERRUPTED") :
       osk->busy ? "BUSY" : osk->interrupted_visible ?

@@ -144,70 +144,17 @@ const char *arc_pad_input_name(unsigned input)
    return input < ARC_PAD_INPUT_COUNT ? names[input] : "Unknown";
 }
 
-static const ArcInputProfile *arc_find_profile(const char *id,
-                                                const char content_id[41],
-                                                const void *launch_target,
-                                                size_t launch_target_length,
-                                                bool by_id,
-                                                const ArcInputProfile *profiles,
-                                                size_t count)
+bool arc_input_resolve(
+   const ArcInputOverride overrides[ARC_PAD_PORTS][ARC_PAD_INPUT_COUNT],
+   ArcInputResolution *resolution)
 {
-   for (size_t i = 0u; i < count; ++i)
-   {
-      const ArcInputProfile *profile = &profiles[i];
-      if (by_id)
-      {
-         if (id && !strcmp(id, profile->id)) return profile;
-         continue;
-      }
-      if (profile->launch_target && profile->launch_target[0] &&
-          (!launch_target || strlen(profile->launch_target) != launch_target_length ||
-           memcmp(profile->launch_target, launch_target, launch_target_length)))
-         continue;
-      for (unsigned digest = 0u; digest < profile->digest_count; ++digest)
-         if (content_id && !strcmp(content_id, profile->digests[digest]))
-            return profile;
-   }
-   return NULL;
-}
-
-bool arc_input_resolve_table(const ArcInputProfile *profiles,
-                             size_t profile_count,
-                             const char content_id[41],
-                             const void *launch_target,
-                             size_t launch_target_length,
-                             const char *profile_selection,
-                             const ArcInputOverride overrides[ARC_PAD_PORTS][ARC_PAD_INPUT_COUNT],
-                             ArcInputResolution *resolution)
-{
-   if (!resolution || !profile_selection || (profile_count && !profiles)) return false;
-   const ArcInputProfile *profile = NULL;
-   bool preset = false;
-   if (!strcmp(profile_selection, "Auto"))
-      profile = arc_find_profile(NULL, content_id, launch_target,
-                                 launch_target_length, false,
-                                 profiles, profile_count);
-   else if (strcmp(profile_selection, "Generic"))
-   {
-      preset = true;
-      profile = arc_find_profile(profile_selection, NULL, NULL, 0u, true,
-                                 profiles, profile_count);
-      if (!profile) return false;
-   }
+   if (!resolution) return false;
    memset(resolution, 0, sizeof(*resolution));
-   resolution->profile_id = profile ? profile->id : "generic";
-   resolution->profile_name = profile ? profile->name : "Generic";
    for (unsigned port = 0u; port < ARC_PAD_PORTS; ++port)
       for (unsigned input = 0u; input < ARC_PAD_INPUT_COUNT; ++input)
       {
          ArcInputBinding binding = arc_generic[input];
-         ArcMappingSource source = ARC_MAPPING_SOURCE_GENERIC;
-         if (profile)
-         {
-            unsigned profile_port = port && !profile->has_port1 ? 0u : port;
-            binding = profile->mapping[profile_port][input];
-            source = preset ? ARC_MAPPING_SOURCE_PRESET : ARC_MAPPING_SOURCE_PROFILE;
-         }
+         ArcMappingSource source = ARC_MAPPING_SOURCE_DEFAULT;
          if (overrides && !overrides[port][input].automatic)
          {
             binding = overrides[port][input].binding;
@@ -218,17 +165,4 @@ bool arc_input_resolve_table(const ArcInputProfile *profiles,
          resolution->source[port][input] = source;
       }
    return true;
-}
-
-bool arc_input_resolve(const char content_id[41], const void *launch_target,
-                       size_t launch_target_length,
-                       const char *profile_selection,
-                       const ArcInputOverride overrides[ARC_PAD_PORTS][ARC_PAD_INPUT_COUNT],
-                       ArcInputResolution *resolution)
-{
-   size_t count = 0u;
-   const ArcInputProfile *profiles = arc_input_profiles(&count);
-   return arc_input_resolve_table(profiles, count, content_id, launch_target,
-                                  launch_target_length, profile_selection,
-                                  overrides, resolution);
 }
