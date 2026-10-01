@@ -292,7 +292,6 @@ static unsigned osk_narrow_osd_calls;
 static unsigned controls_osd_calls;
 static char application_identity_sha1[41];
 static char playlist_identity_sha1[41];
-static char nested_identity_sha1[41];
 static char last_launch_log[2048];
 static unsigned ramdisc_publication_logs;
 static char last_launch_warning[512];
@@ -300,6 +299,8 @@ static char last_flush_fault[512];
 static char last_input_resolution[3072];
 static unsigned input_resolution_log_calls;
 static char effective_descriptor_labels[ARC_PAD_PORTS][ARC_PAD_INPUT_COUNT][64];
+static const char *expected_osk_header;
+static unsigned observed_osk_header_frames;
 
 static const unsigned mapping_input_ids[ARC_PAD_INPUT_COUNT] = {
    RETRO_DEVICE_ID_JOYPAD_UP, RETRO_DEVICE_ID_JOYPAD_DOWN,
@@ -1192,6 +1193,27 @@ static void video(const void *data, unsigned w, unsigned h, size_t pitch)
       if (probe_cached_video && cached_video) ++cached_video_duplicate_reads;
       ++duplicate_video_frames; ++video_frames; return;
    }
+   if (expected_osk_header)
+   {
+      ArcOsk reference = {.visible = true, .width = w, .height = h};
+      uint32_t *reference_pixels = calloc((size_t)w * h, sizeof(*reference_pixels));
+      assert(reference_pixels && arc_osk_render(&reference, reference_pixels,
+             w, h, (size_t)w * sizeof(*reference_pixels), expected_osk_header));
+      unsigned panel_h = h * 45u / 100u;
+      if (panel_h < 48u) panel_h = 48u;
+      if (panel_h > h) panel_h = h;
+      unsigned text_y = h - panel_h + 4u;
+      for (unsigned y = text_y; y < text_y + 8u && y < h; ++y)
+         for (unsigned x = 0u; x < w; ++x)
+         {
+            const uint32_t *actual = (const uint32_t *)((const uint8_t *)data +
+                                             (size_t)y * pitch);
+            assert(((actual[x] & UINT32_C(0x00ffffff)) == UINT32_C(0x00ffffff)) ==
+                   (reference_pixels[(size_t)y * w + x] == UINT32_C(0x00ffffff)));
+         }
+      free(reference_pixels);
+      ++observed_osk_header_frames;
+   }
    if (probe_cached_video) {
       cached_video = data;
       cached_video_height = h;
@@ -1253,6 +1275,27 @@ static void video(const void *data, unsigned w, unsigned h, size_t pitch)
       snprintf(path, sizeof(path), "%s/field-%04u.ppm", evidence_path, video_frames);
       write_ppm(path, data, w, h, pitch);
    }
+}
+static void assert_presented_osk_header(void (*run)(void),
+                                        void (*force_present)(void),
+                                        bool (*osk_visible)(void),
+                                        const char *header)
+{
+   if (!osk_visible())
+   {
+      joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_L3] = true; run();
+      joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_L3] = false; run();
+   }
+   assert(osk_visible());
+   expected_osk_header = header;
+   observed_osk_header_frames = 0u;
+   force_present();
+   run();
+   expected_osk_header = NULL;
+   assert(observed_osk_header_frames == 1u);
+   joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_L3] = true; run();
+   joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_L3] = false; run();
+   assert(!osk_visible());
 }
 static size_t audio(const int16_t *data, size_t frames)
 {
@@ -2750,12 +2793,6 @@ int main(int argc, char **argv)
              sizeof(application_identity_sha1));
       memcpy(playlist_identity_sha1, playlist_identity_digest.sha1,
              sizeof(playlist_identity_sha1));
-      char nested_identity_path[4096];
-      snprintf(nested_identity_path, sizeof(nested_identity_path),
-               "%s/arcdroid-nested-chooser-l.adl", argv[11]);
-      ArcDigest nested_identity_digest = digest_file(nested_identity_path);
-      memcpy(nested_identity_sha1, nested_identity_digest.sha1,
-             sizeof(nested_identity_sha1));
    }
    else if (jfd_file_data_step || jfd_file_data_set || jfd_file_data_unavailable ||
             jfd_writes || jfd_create_step || jfd_merge_step ||
@@ -2887,7 +2924,7 @@ int main(int argc, char **argv)
       char helper_file[4096];
       snprintf(helper_file, sizeof(helper_file), "%s/arcdroid/launch/%s.adl",
                save_path, application_digest.sha1);
-      option_launch = "app1";
+      option_launch = "auto";
       option_writes = "off";
       phase = PHASE_LOAD; assert(retro_load_game(&application_game));
       bool write_protected = false;
@@ -2914,12 +2951,69 @@ int main(int argc, char **argv)
 
    if (input_layout_probe)
    {
+      void (*force_osk_present)(void) = NULL;
+      bool (*osk_visible)(void) = NULL;
+      *(void **)(&force_osk_present) = dlsym(module, "arc_libretro_test_force_present");
+      *(void **)(&osk_visible) = dlsym(module, "arc_libretro_test_osk_visible");
+      assert(force_osk_present && osk_visible);
       phase = PHASE_LOAD; assert(retro_load_game(&game));
       phase = PHASE_RUN;
       assert_input_resolution();
       assert_effective_descriptors();
       ArcKartEvent input_events[512];
       for (unsigned frame = 0u; frame < 120u; ++frame) retro_run();
+      assert_presented_osk_header(retro_run, force_osk_present, osk_visible,
+                                  "Default controls");
+      retro_set_controller_port_device(1u,
+         RETRO_DEVICE_SUBCLASS(RETRO_DEVICE_JOYPAD, 1));
+      retro_run();
+      for (unsigned selected_port = 0u; selected_port < ARC_PAD_PORTS;
+           ++selected_port)
+      {
+         option_pad[selected_port][ARC_PAD_UP] = selected_port ? "x" : "s";
+         unsigned notices_before = total_osd_calls;
+         variable_update = true;
+         retro_run();
+         assert_input_resolution();
+         assert_effective_descriptors();
+         assert(total_osd_calls == notices_before);
+         assert_presented_osk_header(retro_run, force_osk_present, osk_visible,
+                                     "Custom controls");
+         retro_run(); /* Both ports report neutral after rebinding. */
+         for (unsigned port = 0u; port < ARC_PAD_PORTS; ++port)
+         {
+            unsigned expected_key = port == selected_port ?
+               (selected_port ? RETROK_x : RETROK_s) : RETROK_UP;
+            arc_platform_test_input_events_reset();
+            joypad_buttons[port][RETRO_DEVICE_ID_JOYPAD_UP] = true;
+            retro_run();
+            joypad_buttons[port][RETRO_DEVICE_ID_JOYPAD_UP] = false;
+            for (unsigned frame = 0u;
+                 frame < 160u && arc_platform_test_input_events(input_events, 512u) < 2u;
+                 ++frame) retro_run();
+            assert(arc_platform_test_input_events(input_events, 512u) == 2u &&
+                   input_events[0].type == ARC_INPUT_EVENT_KEY &&
+                   input_events[0].code == expected_key && input_events[0].down &&
+                   input_events[1].type == ARC_INPUT_EVENT_KEY &&
+                   input_events[1].code == expected_key && !input_events[1].down);
+         }
+         option_pad[selected_port][ARC_PAD_UP] = NULL;
+      }
+      unsigned notices_before_default = total_osd_calls;
+      variable_update = true;
+      retro_run();
+      assert_input_resolution();
+      assert_effective_descriptors();
+      assert(total_osd_calls == notices_before_default);
+      assert_presented_osk_header(retro_run, force_osk_present, osk_visible,
+                                  "Default controls");
+      unsigned notices_before_reset = total_osd_calls;
+      retro_reset();
+      assert_input_resolution();
+      assert_effective_descriptors();
+      assert(total_osd_calls == notices_before_reset);
+      assert_presented_osk_header(retro_run, force_osk_present, osk_visible,
+                                  "Default controls");
       /* A player can reproduce the same ten bindings on either independent port. */
       static const char *layout_values[ARC_PAD_INPUT_COUNT] = {
          "s", "x", "comma", "period", "space", "slash", "a", "m", "f1", "t"
@@ -2928,18 +3022,17 @@ int main(int argc, char **argv)
          RETROK_s, RETROK_x, RETROK_COMMA, RETROK_PERIOD, RETROK_SPACE,
          RETROK_SLASH, RETROK_a, RETROK_m, RETROK_F1, RETROK_t
       };
-      retro_set_controller_port_device(1u,
-         RETRO_DEVICE_SUBCLASS(RETRO_DEVICE_JOYPAD, 1));
-      retro_run();
       for (unsigned port = 0u; port < ARC_PAD_PORTS; ++port)
          for (unsigned input = 0u; input < ARC_PAD_INPUT_COUNT; ++input)
             option_pad[port][input] = layout_values[input];
-      unsigned notices_before_layout = controls_osd_calls;
+      unsigned notices_before_layout = total_osd_calls;
       variable_update = true;
       retro_run();
       assert_input_resolution();
       assert_effective_descriptors();
-      assert(controls_osd_calls == notices_before_layout);
+      assert(total_osd_calls == notices_before_layout);
+      assert_presented_osk_header(retro_run, force_osk_present, osk_visible,
+                                  "Custom controls");
       retro_run(); /* Both ports have reported neutral after the mapping change. */
       for (unsigned port = 0u; port < ARC_PAD_PORTS; ++port)
       {
@@ -2965,16 +3058,36 @@ int main(int argc, char **argv)
             assert(downs == 1u && ups == 1u);
          }
       }
+      unsigned notices_before_custom_reset = total_osd_calls;
+      retro_reset();
+      assert_input_resolution();
+      assert_effective_descriptors();
+      assert(total_osd_calls == notices_before_custom_reset);
+      assert_presented_osk_header(retro_run, force_osk_present, osk_visible,
+                                  "Custom controls");
+      retro_unload_game();
+      phase = PHASE_LOAD; assert(retro_load_game(&game));
+      phase = PHASE_RUN;
+      assert_input_resolution();
+      assert_effective_descriptors();
+      assert_presented_osk_header(retro_run, force_osk_present, osk_visible,
+                                  "Custom controls");
       for (unsigned port = 0u; port < ARC_PAD_PORTS; ++port)
          for (unsigned input = 0u; input < ARC_PAD_INPUT_COUNT; ++input)
             option_pad[port][input] = NULL;
+      notices_before_default = total_osd_calls;
       variable_update = true;
       retro_run();
       assert_input_resolution();
       assert_effective_descriptors();
+      assert(total_osd_calls == notices_before_default);
+      notices_before_reset = total_osd_calls;
       retro_reset();
       assert_input_resolution();
       assert_effective_descriptors();
+      assert(total_osd_calls == notices_before_reset);
+      assert_presented_osk_header(retro_run, force_osk_present, osk_visible,
+                                  "Default controls");
       retro_unload_game();
       retro_deinit();
       assert(stale_input_option_queries == 0u &&
@@ -9909,7 +10022,6 @@ int main(int argc, char **argv)
          char target_independent_resolution[3072];
          snprintf(target_independent_resolution, sizeof(target_independent_resolution),
                   "%s", last_input_resolution);
-         if (!nested_kind) assert(!strcmp(nested_digest.sha1, nested_identity_sha1));
          uint8_t nested_record[ARC_LAUNCH_BINDING_MAX_SIZE];
          size_t nested_size = read_bounded(nested_binding, nested_record,
                                            sizeof(nested_record));

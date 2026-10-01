@@ -501,8 +501,9 @@ arcdroid_pad1_down = "x"
     Invoke-ArcDroid 90 $false
     $globalInputLines = @(Get-Content $log | Select-Object -Skip $beforeLines)
     $globalResolution = @($globalInputLines | Where-Object { $_.Contains('Input resolution:') })
+    $expectedGlobalResolution = 'Input resolution: mapping=custom p1.Up=S[option] p1.Down=X[option] p1.Left=Cursor Left[default] p1.Right=Cursor Right[default] p1.A=Space[default] p1.B=Return[default] p1.X=Left Shift[default] p1.Y=Left Ctrl[default] p1.Start=Escape[default] p1.Select=Tab[default] p2.Up=Cursor Up[default] p2.Down=Cursor Down[default] p2.Left=Cursor Left[default] p2.Right=Cursor Right[default] p2.A=Space[default] p2.B=Return[default] p2.X=Left Shift[default] p2.Y=Left Ctrl[default] p2.Start=Escape[default] p2.Select=Tab[default]'
     if ($globalResolution.Count -ne 1 -or
-        $globalResolution[0] -notmatch 'Input resolution: mapping=custom p1.Up=S\[option\] p1.Down=X\[option\] p1.Left=Cursor Left\[default\]' -or
+        $globalResolution[0].Substring($globalResolution[0].IndexOf('Input resolution:')) -cne $expectedGlobalResolution -or
         $globalResolution[0].Contains('profile=')) {
         throw "Slice 24 global option resolution failed: $($globalResolution -join ' | ')"
     }
@@ -514,8 +515,9 @@ arcdroid_pad1_right = "period"
     Invoke-ArcDroid 90 $false
     $gameInputLines = @(Get-Content $log | Select-Object -Skip $beforeLines)
     $gameResolution = @($gameInputLines | Where-Object { $_.Contains('Input resolution:') })
+    $expectedGameResolution = 'Input resolution: mapping=custom p1.Up=Cursor Up[default] p1.Down=Cursor Down[default] p1.Left=Cursor Left[default] p1.Right=.[option] p1.A=Space[default] p1.B=Return[default] p1.X=Left Shift[default] p1.Y=Left Ctrl[default] p1.Start=Escape[default] p1.Select=Tab[default] p2.Up=Cursor Up[default] p2.Down=Cursor Down[default] p2.Left=Cursor Left[default] p2.Right=Cursor Right[default] p2.A=Space[default] p2.B=Return[default] p2.X=Left Shift[default] p2.Y=Left Ctrl[default] p2.Start=Escape[default] p2.Select=Tab[default]'
     if ($gameResolution.Count -ne 1 -or
-        $gameResolution[0] -notmatch 'Input resolution: mapping=custom p1.Up=Cursor Up\[default\] p1.Down=Cursor Down\[default\] p1.Left=Cursor Left\[default\] p1.Right=\.\[option\]' -or
+        $gameResolution[0].Substring($gameResolution[0].IndexOf('Input resolution:')) -cne $expectedGameResolution -or
         $gameResolution[0].Contains('profile=')) {
         throw "Slice 24 game option precedence failed: $($gameResolution -join ' | ')"
     }
