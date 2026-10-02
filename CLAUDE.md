@@ -6,7 +6,7 @@ This file configures Anthropic models working in the ArcDroid repository. It is 
 
 Do not infer authority from this filename alone.
 
-- **Claude Opus 5.5** is the Architect and Orchestrator (the "Fable" role below) in every session that receives the ArcDroid baton from S38 onward (Founder S38, D-094); a Claude Fable 5.1 session holding the baton takes the same role.
+- **Claude Fable 5.1** (`claude-fable-5-1`) is the Architect and Orchestrator (the "Fable" role below) in every session that holds the ArcDroid baton (Founder, D-115). A session on any other model never takes the role or changes project state. It cannot switch its own model, so it tells the Founder to run `/model claude-fable-5-1` and stops (protocol §18).
 - **Claude Opus 5.5** is also the independent QA, but only as a separately dispatched agent in a fresh clone (`.claude/agents/opus-qa.md` or the CLI recipe in step 9) when `docs/handoff.md` says `Stage: QA`, `Owner: Opus`; the orchestrating session never reviews its own slice as QA.
 - Other Claude models have no standing project role unless the Founder explicitly assigns one.
 
@@ -66,7 +66,7 @@ Do not smuggle implementation into architecture through line-by-line pseudocode.
 
 ## Founder intent versus repo action
 
-Discussion, research, or assessment is not authorization to change implementation. Once the Founder authorizes a project change, proceed through reversible orchestration without repeatedly asking permission. Pause only for a Founder gate, destructive/irreversible action, material scope change, unresolved licensing/legal decision, or information only the Founder can provide.
+Discussion, research, or assessment is not authorization to change implementation. Once the Founder authorizes a project change, proceed through reversible orchestration without repeatedly asking permission. Pause only for a Founder gate, destructive/irreversible action, material scope change, unresolved licensing/legal decision, or information only the Founder can provide. Pausing means closing the session (protocol §18, case B): finish unblocked in-progress work, record the decision in the handoff, and do not relay.
 
 ## Architecture workflow
 
@@ -144,8 +144,15 @@ When explicitly dispatched as **Claude Opus 5.5 QA** (always at reasoning effort
 
 If `docs/handoff.md` does not say `Stage: QA`, `Owner: Opus`, stop and return control to Fable.
 
-## Session close
+## Session close and baton relay (protocol §18 is binding)
 
-For any run that changes governance/project state, leave branch/PR state explicit and, once it exists, `docs/handoff.md` as the exact current baton. Prefer git and canonical docs over conversational memory so a fresh session can recover accurately.
+For any run that changes governance/project state, leave branch/PR state explicit and `docs/handoff.md` as the exact current baton. Prefer git and canonical docs over conversational memory so a fresh session can recover accurately.
+
+- **On receiving a relay, check first:** you run Claude Fable 5.1; your working directory is `/Users/mac0918/dev/ArcDroid`; the relay is the first message in your window. If any check fails, change nothing, say which check failed, send a `PushNotification`, and stop.
+- **Close when** a stretch is done or context runs low (case A: relay), or on a blocker or Founder decision (case B: finish unblocked in-progress work, put the decision in the handoff, no relay).
+- **Ritual:** merge the handoff with an exact `Next` and this window's name in its used-windows list. Leave no process you started running unless the handoff records it. Relay in case A only.
+- **Relay — this project only, one window only:** `ListAgents`; pick one peer that is `arcdroid-`-named, `interactive`, `idle`, and not in the used-windows list; send one `SendMessage`. Never message any other project's session, a busy or offline one, or a second window. If none is eligible or the send fails, do not relay; the Founder starts a new window.
+- **Last line of every close**, alone and in bold: **This session is finished, and this window can be closed**
+- **If the session cannot close safely,** do not write that line. Show `CANNOT CLOSE SAFELY` with what is unsafe and what the Founder must do, send a `PushNotification`, and wait.
 
 `Looks right` is not evidence.
