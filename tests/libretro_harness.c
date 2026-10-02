@@ -229,6 +229,7 @@ static const char *option_disc_requests = "auto";
 static unsigned disc_request_a_logs, disc_request_b_logs;
 static unsigned disc_request_b_second_logs;
 static unsigned disc_request_b_suppressed_logs;
+static unsigned disc_request_b_first_logs, disc_request_b_first_suppressed_logs;
 static unsigned disc_insert_notices, disc_hint_notices, disc_failure_notices;
 static unsigned disc3_insert_notices;
 static unsigned disc32_insert_notices;
@@ -581,6 +582,12 @@ static void frontend_log(enum retro_log_level level, const char *format, ...)
    if (!strncmp(message, "Disc request: signal=B ", 23u))
    {
       ++disc_request_b_logs;
+      if (strstr(message, " observation=1 "))
+      {
+         ++disc_request_b_first_logs;
+         if (strstr(message, " suppressed="))
+            ++disc_request_b_first_suppressed_logs;
+      }
       if (strstr(message, " observation=2 ")) ++disc_request_b_second_logs;
       if (strstr(message, " observation=2 ") &&
           strstr(message, " suppressed=")) ++disc_request_b_suppressed_logs;
@@ -2321,6 +2328,8 @@ int main(int argc, char **argv)
    bool disc_request_many_images = false;
    bool disc_request_effective = false;
    bool disc_request_effective_jfd = false, disc_request_bound_jfd = false;
+   bool disc_request_path_cache = false, disc_request_first_log_limit = false;
+   bool disc_request_found_between_fail = false;
    bool disc_request_perf = false;
    bool disc_request_manual_reset = false, disc_request_manual_cancel = false;
    bool disc_request_preflight_fail = false, disc_request_insert_fail = false;
@@ -2385,10 +2394,17 @@ int main(int argc, char **argv)
          !strcmp(argv[5], "--disc-request-effective-jfd");
       disc_request_bound_jfd =
          !strcmp(argv[5], "--disc-request-bound-jfd");
+      disc_request_path_cache =
+         !strcmp(argv[5], "--disc-request-path-cache-32");
+      disc_request_first_log_limit =
+         !strcmp(argv[5], "--disc-request-b-first-log-limit");
+      disc_request_found_between_fail =
+         !strcmp(argv[5], "--disc-request-b-found-between-fail");
       disc_request_perf = !strcmp(argv[5], "--disc-request-perf");
       disc_request_manual_reset = !strcmp(argv[5], "--disc-request-a-manual-reset");
       disc_request_manual_cancel = !strcmp(argv[5], "--disc-request-a-manual-cancel");
-      disc_request_preflight_fail = !strcmp(argv[5], "--disc-request-b-preflight-fail");
+      disc_request_preflight_fail = !strcmp(argv[5], "--disc-request-b-preflight-fail") ||
+         disc_request_found_between_fail;
       disc_request_insert_fail = !strcmp(argv[5], "--disc-request-b-insert-fail");
       disc_request_block = !strcmp(argv[5], "--disc-request-b-block");
       disc_request_busy_retry = !strcmp(argv[5], "--disc-request-b-busy-retry");
@@ -3234,6 +3250,32 @@ int main(int argc, char **argv)
          puts("disc-request-effective: passed");
          return 0;
       }
+      if (disc_request_path_cache)
+      {
+         int (*candidate)(const char *, unsigned) =
+            dlsym(module, "arc_libretro_test_disc_candidate");
+         unsigned (*decodes)(void) =
+            dlsym(module, "arc_libretro_test_disc_temporary_jfd_decodes");
+         unsigned (*peak)(void) =
+            dlsym(module, "arc_libretro_test_disc_temporary_jfd_peak");
+         unsigned (*live)(void) =
+            dlsym(module, "arc_libretro_test_disc_temporary_jfd_live");
+         const char *paths[] = {"$.Absent0", "$.Absent1", "$.Absent2"};
+         assert(candidate && decodes && peak && live &&
+                disk_control.get_num_images() == 32u);
+         for (unsigned i = 0u; i < 3u; ++i)
+            assert(candidate(paths[i], ARC_DISC_CATALOGUE) == -1);
+         unsigned warm_decodes = decodes();
+         assert(warm_decodes == 9u);
+         for (unsigned repeat = 0u; repeat < 4u; ++repeat)
+            for (unsigned i = 0u; i < 3u; ++i)
+               assert(candidate(paths[i], ARC_DISC_CATALOGUE) == -1);
+         assert(decodes() == warm_decodes && peak() <= 1u && live() == 0u);
+         retro_unload_game(); retro_deinit();
+         assert(open_files == 0u && open_dirs == 0u && dlclose(module) == 0);
+         puts("disc-request-path-cache-32: passed");
+         return 0;
+      }
       if (disc_request_effective_jfd || disc_request_bound_jfd)
       {
          int (*candidate)(const char *, unsigned) =
@@ -3329,7 +3371,7 @@ int main(int argc, char **argv)
          set_adffs(true);
       }
       void (*hold_busy)(bool) = NULL;
-      if (disc_request_busy_retry)
+      if (disc_request_busy_retry || disc_request_first_log_limit)
       {
          hold_busy = dlsym(module, "arc_engine_test_disc_hold_busy");
          assert(hold_busy);
@@ -3337,6 +3379,20 @@ int main(int argc, char **argv)
       }
       retro_run();
       assert(disk_control.get_image_index() == 0u);
+      if (disc_request_first_log_limit)
+      {
+         for (unsigned frame = 0u; frame < 40u; ++frame) retro_run();
+         assert(disc_request_b_first_logs == 1u);
+         for (unsigned frame = 0u; frame < 600u; ++frame) retro_run();
+         assert(disc_request_b_first_logs == 2u &&
+                disc_request_b_first_suppressed_logs == 1u &&
+                disk_control.get_image_index() == 0u);
+         hold_busy(false);
+         retro_unload_game(); retro_deinit();
+         assert(open_files == 0u && open_dirs == 0u && dlclose(module) == 0);
+         puts("disc-request-b-first-log-limit: passed");
+         return 0;
+      }
       if (disc_request_busy_retry)
       {
          for (unsigned frame=0u; frame<40u; ++frame) retro_run();
@@ -3403,6 +3459,15 @@ int main(int argc, char **argv)
                              disc_request_negative || disc_request_preflight_fail ||
                              disc_request_insert_fail);
       assert((inserted_frame >= 2u) == should_insert);
+      if (!strcmp(argv[5], "--disc-request-b-found-between") ||
+          disc_request_found_between_fail)
+      {
+         bool (*guest_word)(uint32_t, uint32_t *) =
+            dlsym(module, "arc_engine_test_guest_word");
+         uint32_t failed_lookups = 0u;
+         assert(guest_word && guest_word(0x00000b00u, &failed_lookups) &&
+                failed_lookups >= 2u);
+      }
       if (disc_request_manual_action)
       {
          bool (*owned)(void) = dlsym(module, "arc_libretro_test_disc_owned");
@@ -3485,6 +3550,12 @@ int main(int argc, char **argv)
          assert(disc_failure_notices == 1u && !disc_insert_notices &&
                 !disk_control.get_eject_state() &&
                 disk_control.get_image_index() == 0u);
+         if (disc_request_found_between_fail)
+         {
+            for (unsigned frame=0u; frame<120u; ++frame) retro_run();
+            assert(disc_failure_notices == 1u && !disc_insert_notices &&
+                   disk_control.get_image_index() == 0u);
+         }
       }
       else assert(!disc_failure_notices);
       if (disc_request_hint)

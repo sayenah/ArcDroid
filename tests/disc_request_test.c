@@ -260,11 +260,55 @@ int main(void)
    arc_disc_request_swi(&request,&different,"DiskOne");
    result=arc_disc_request_continue(&request,0x8004u,0u,0x10000u,
       1u,false,true,0u,202u);
-   assert(!result.observed && identity_count(&request)==0u);
+   assert(!result.observed && identity_count(&request)==1u);
    arc_disc_request_swi(&request,&catalogue_swi,"DiskOne");
    result=arc_disc_request_continue(&request,0x8004u,0u,0x10000u,
       0u,false,true,0u,203u);
+   assert(result.observation==2u && result.trigger);
+
+   /* A found X clears all X call sites and the X FAILED latch, but not Y. */
+   arc_disc_request_clear(&request);
+   catalogue_swi=lookup("adfs::0.$.Maps.Level",1u);
+   different=lookup("adfs::0.$.Other",1u);
+   different.address=0x8100u;
+   arc_disc_request_swi(&request,&catalogue_swi,"DiskOne");
+   result=arc_disc_request_continue(&request,0x8004u,0u,0x10000u,
+      0u,false,true,0u,210u);
+   assert(result.observation==1u);
+   arc_disc_request_swi(&request,&catalogue_swi,"DiskOne");
+   result=arc_disc_request_continue(&request,0x8004u,0u,0x10000u,
+      0u,false,true,0u,211u);
+   assert(result.trigger && request.b_triggered);
+   ArcDiscSwi second_site = catalogue_swi;
+   second_site.address = 0x8200u;
+   arc_disc_request_swi(&request,&second_site,"DiskOne");
+   result=arc_disc_request_continue(&request,0x8204u,0u,0x10000u,
+      0u,false,true,0u,211u);
+   assert(result.observation==1u && request.b_triggered);
+   arc_disc_request_swi(&request,&different,"DiskOne");
+   result=arc_disc_request_continue(&request,0x8104u,0u,0x10000u,
+      0u,false,true,0u,212u);
+   assert(result.observation==1u && request.b_triggered);
+   arc_disc_request_swi(&request,&different,"DiskOne");
+   result=arc_disc_request_continue(&request,0x8104u,0u,0x10000u,
+      1u,false,true,0u,213u);
+   assert(!result.observed && request.b_triggered && identity_count(&request)==2u);
+   arc_disc_request_swi(&request,&catalogue_swi,"DiskOne");
+   result=arc_disc_request_continue(&request,0x8004u,0u,0x10000u,
+      0u,false,true,0u,214u);
+   assert(result.observation==2u && !result.trigger); /* FAILED remains latched. */
+   arc_disc_request_swi(&request,&catalogue_swi,"DiskOne");
+   result=arc_disc_request_continue(&request,0x8004u,0u,0x10000u,
+      1u,false,true,0u,215u);
+   assert(!result.observed && !request.b_triggered && !identity_count(&request));
+   arc_disc_request_swi(&request,&catalogue_swi,"DiskOne");
+   result=arc_disc_request_continue(&request,0x8004u,0u,0x10000u,
+      0u,false,true,0u,216u);
    assert(result.observation==1u && !result.trigger);
+   arc_disc_request_swi(&request,&catalogue_swi,"DiskOne");
+   result=arc_disc_request_continue(&request,0x8004u,0u,0x10000u,
+      0u,false,true,0u,217u);
+   assert(result.trigger); /* Matching found outcome reopened X. */
 
    /* Bounded table evicts the oldest observation, retaining recent ones. */
    arc_disc_request_clear(&request);
@@ -288,6 +332,38 @@ int main(void)
    result=arc_disc_request_continue(&request,catalogue_swi.address+4u,0u,
       0x10000u,0u,false,true,0u,401u);
    assert(result.observation==2u && result.trigger);
+
+   /* The FAILED latch survives eviction of its observation-table slot. */
+   arc_disc_request_clear(&request);
+   catalogue_swi=lookup("adfs::0.$.Maps.Level",1u);
+   for (unsigned i=0u; i<2u; ++i)
+   {
+      arc_disc_request_swi(&request,&catalogue_swi,"DiskOne");
+      result=arc_disc_request_continue(&request,0x8004u,0u,0x10000u,
+         0u,false,true,0u,410u+i);
+   }
+   assert(result.trigger);
+   for (unsigned i=0u; i<ARC_DISC_IDENTITY_CAPACITY; ++i)
+   {
+      other=lookup("adfs::0.$.Other",1u);
+      other.address=0x8100u+16u*i;
+      arc_disc_request_swi(&request,&other,"DiskOne");
+      result=arc_disc_request_continue(&request,other.address+4u,0u,
+         0x10000u,0u,false,true,0u,420u+i);
+      assert(result.observation==1u && !result.trigger);
+   }
+   assert(request.b_triggered && identity_count(&request)==ARC_DISC_IDENTITY_CAPACITY);
+   for (unsigned i=0u; i<2u; ++i)
+   {
+      arc_disc_request_swi(&request,&catalogue_swi,"DiskOne");
+      result=arc_disc_request_continue(&request,0x8004u,0u,0x10000u,
+         0u,false,true,0u,440u+i);
+   }
+   assert(result.observation==2u && !result.trigger && request.b_triggered);
+   arc_disc_request_swi(&request,&catalogue_swi,"DiskOne");
+   result=arc_disc_request_continue(&request,0x8004u,0u,0x10000u,
+      1u,false,true,0u,442u);
+   assert(!result.observed && !request.b_triggered);
 
    /* A BUSY transaction reopens this identity; FAILED remains latched. */
    arc_disc_request_clear(&request);
@@ -328,7 +404,7 @@ int main(void)
    arc_disc_request_swi(&request,&catalogue_swi,"DiskOne");
    result=arc_disc_request_continue(&request,0x8004u,0u,0x10000u,
       1u,false,true,0u,UINT64_C(120000507));
-   assert(!result.observed && !identity_count(&request) && !request.b_triggered);
+   assert(!result.observed && identity_count(&request)==1u && !request.b_triggered);
 
    /* Entry user R13 participates in identity, even at one call site. */
    arc_disc_request_clear(&request);

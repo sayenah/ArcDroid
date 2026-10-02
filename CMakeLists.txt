@@ -481,6 +481,7 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
       "${FIXTURE_DIR}/arcdroid-disc-request-a.rom"
       "${FIXTURE_DIR}/arcdroid-disc-request-b.rom"
       "${FIXTURE_DIR}/arcdroid-disc-request-b-found.rom"
+      "${FIXTURE_DIR}/arcdroid-disc-request-b-found-between.rom"
       "${FIXTURE_DIR}/arcdroid-disc-request-b-back.rom"
       "${FIXTURE_DIR}/arcdroid-disc-request-b-alternate.rom"
       "${FIXTURE_DIR}/disc-request/Set.m3u"
@@ -685,6 +686,7 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
     "${FIXTURE_DIR}/arcdroid-disc-request-a.rom"
     "${FIXTURE_DIR}/arcdroid-disc-request-b.rom"
     "${FIXTURE_DIR}/arcdroid-disc-request-b-found.rom"
+    "${FIXTURE_DIR}/arcdroid-disc-request-b-found-between.rom"
     "${FIXTURE_DIR}/arcdroid-disc-request-b-back.rom"
     "${FIXTURE_DIR}/arcdroid-disc-request-b-alternate.rom"
     "${FIXTURE_DIR}/disc-request/Set.m3u"
@@ -1058,7 +1060,7 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
           --disc-request-${signal}-${mode})
       endforeach()
     endforeach()
-    foreach(scenario IN ITEMS a1 a-chain a-back b-back b-found b-alternate b-single b-distinct b-wimp b-two-contexts b-block b-otherdisc
+    foreach(scenario IN ITEMS a1 a-chain a-back b-back b-found b-found-between b-alternate b-single b-distinct b-wimp b-two-contexts b-block b-otherdisc
                               b-dir-load b-cat-dir b-d6 b-108d3 b-error-branch b-nonx-error b-conflict b-open-file-dir)
       set(request_playlist "${FIXTURE_DIR}/disc-request/Set.m3u")
       if(scenario STREQUAL "a-chain")
@@ -1139,6 +1141,24 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
       "${FIXTURE_DIR}/disc-request/Set.m3u"
       "${CMAKE_CURRENT_BINARY_DIR}/disc-request-b-log-limit-data"
       --disc-request-b-log-limit)
+    add_test(NAME disc-request-b-found-between-fail-rom COMMAND libretro_harness
+      $<TARGET_FILE:arcdroid_libretro_test>
+      "${FIXTURE_DIR}/arcdroid-disc-request-b-found-between.rom"
+      "${FIXTURE_DIR}/disc-request/Set.m3u"
+      "${CMAKE_CURRENT_BINARY_DIR}/disc-request-b-found-between-fail-data"
+      --disc-request-b-found-between-fail)
+    add_test(NAME disc-request-path-cache-32-process COMMAND libretro_harness
+      $<TARGET_FILE:arcdroid_libretro_test>
+      "${FIXTURE_DIR}/arcdroid-disc-request-b.rom"
+      "${FIXTURE_DIR}/disc-request/Set32Jfd.m3u"
+      "${CMAKE_CURRENT_BINARY_DIR}/disc-request-path-cache-32-data"
+      --disc-request-path-cache-32)
+    add_test(NAME disc-request-b-first-log-limit-rom COMMAND libretro_harness
+      $<TARGET_FILE:arcdroid_libretro_test>
+      "${FIXTURE_DIR}/arcdroid-disc-request-b.rom"
+      "${FIXTURE_DIR}/disc-request/Set.m3u"
+      "${CMAKE_CURRENT_BINARY_DIR}/disc-request-b-first-log-limit-data"
+      --disc-request-b-first-log-limit)
     add_test(NAME disc-request-b-busy-retry-rom COMMAND libretro_harness
       $<TARGET_FILE:arcdroid_libretro_test>
       "${FIXTURE_DIR}/arcdroid-disc-request-b.rom"

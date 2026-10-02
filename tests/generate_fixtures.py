@@ -4170,7 +4170,7 @@ def build_error_box_rom(x_form: bool = False) -> bytearray:
 
 def build_disc_request_rom(signal: str) -> bytearray:
     """Invented FileSwitch outcome or FileCore UpCall; no firmware bytes."""
-    assert signal in ("a", "a1", "a-chain", "a-back", "b", "b-back", "b-found", "b-alternate", "b-single", "b-wimp",
+    assert signal in ("a", "a1", "a-chain", "a-back", "b", "b-back", "b-found", "b-found-between", "b-alternate", "b-single", "b-wimp",
                       "b-otherdisc", "b-dir-load", "b-cat-dir", "b-d6",
                       "b-108d3", "b-block", "b-distinct", "b-two-contexts",
                       "b-error-branch", "b-nonx-error", "b-conflict",
@@ -4227,6 +4227,10 @@ def build_disc_request_rom(signal: str) -> bytearray:
             user.mov(8, 0)
             user.label("keep_index")
         user.str(8, 12)
+        if signal == "b-found-between":
+            user.mov(0, 5)
+            user.ldr_const(1, 0x03803040)
+            user.emit(0xEF020008)  # found Y on the currently inserted disc
         if signal == "b-alternate":
             user.mov(0, 255)
             user.ldr_const(1, 0x03803000)
@@ -4336,6 +4340,15 @@ def build_disc_request_rom(signal: str) -> bytearray:
         a.mov(0, 0)  # catalogue: not found, V clear
     elif signal == "b-found":
         a.mov(0, 1)  # successful catalogue read; resolver must stay idle
+    elif signal == "b-found-between":
+        a.ldr_const(2, 0x03803040)
+        a.cmp_reg(1, 2)
+        a.branch("found_y", "eq")
+        a.mov(0, 0)  # X is absent
+        a.branch("return")
+        a.label("found_y")
+        a.mov(0, 1)  # Y is found
+        a.label("return")
     elif load_error:
         a.ldr_const(0, 0x00000d00)
         a.ldr_const(1, 0x108d3 if signal == "b-108d3" else 0xd6)
@@ -4371,6 +4384,8 @@ def build_disc_request_rom(signal: str) -> bytearray:
         rom[0x3040:0x3040 + len(b"adfs::0.$.!Qarvox.!Run\0")] = b"adfs::0.$.!Qarvox.!Run\0"
         rom[0x3080:0x3080 + len(b"adfs::0.$.!Nervex.!Run\0")] = b"adfs::0.$.!Nervex.!Run\0"
     if signal == "b-back":
+        rom[0x3040:0x3040 + len(b"adfs::0.$.!Other.!Run\0")] = b"adfs::0.$.!Other.!Run\0"
+    if signal == "b-found-between":
         rom[0x3040:0x3040 + len(b"adfs::0.$.!Other.!Run\0")] = b"adfs::0.$.!Other.!Run\0"
     if signal == "b-conflict":
         rom[0x3080:0x3080 + len(b"adfs::0.$.Other\0")] = b"adfs::0.$.Other\0"
@@ -4925,7 +4940,7 @@ def main() -> None:
     (request / "Set32Jfd.m3u").write_text(
         "\n".join(["One.adf", *jfd_names, "TwoJfd.jfd"]) + "\n",
         encoding="ascii")
-    for signal in ("a", "a1", "a-chain", "a-back", "b", "b-back", "b-found", "b-alternate", "b-single", "b-wimp",
+    for signal in ("a", "a1", "a-chain", "a-back", "b", "b-back", "b-found", "b-found-between", "b-alternate", "b-single", "b-wimp",
                    "b-otherdisc", "b-dir-load", "b-cat-dir", "b-d6",
                    "b-108d3", "b-block", "b-distinct", "b-two-contexts",
                    "b-error-branch", "b-nonx-error", "b-conflict",

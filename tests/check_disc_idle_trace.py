@@ -1,4 +1,4 @@
-"""Compare the no-request guest frame trace with committed Slice 26 head d3071a0."""
+"""Compare the no-request guest frame trace with main 933c28f."""
 import subprocess
 import sys
 

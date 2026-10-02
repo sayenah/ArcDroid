@@ -19,6 +19,22 @@ static void clear_observations(ArcDiscRequest *request)
    request->next_order = 0u;
    request->observations = 0u;
    request->b_triggered = false;
+   request->triggered_object[0] = 0;
+}
+static void clear_found_object(ArcDiscRequest *request)
+{
+   bool cleared = false;
+   for (unsigned i = 0u; i < ARC_DISC_IDENTITY_CAPACITY; ++i)
+   {
+      ArcDiscIdentity *identity = &request->identities[i];
+      if (!identity->occupied || strcmp(identity->object, request->object)) continue;
+      identity->occupied = false;
+      cleared = true;
+   }
+   if (request->b_triggered &&
+       !strcmp(request->triggered_object, request->object))
+      request->b_triggered = false;
+   if (cleared) request->observations = 0u;
 }
 
 bool arc_disc_request_name(const char *name, const char *inserted_name,
@@ -153,9 +169,9 @@ ArcDiscResult arc_disc_request_outcome(ArcDiscRequest *request,
        error_number == 0xd6u);
    if (!absent)
    {
-      /* A found object ends the episode. Other errors do not count. */
+      /* Only observations of this found object end. Other errors do not count. */
       if (!overflow && (request->operation == ARC_DISC_LOAD || r0 != 0u))
-         clear_observations(request);
+         clear_found_object(request);
       result.reason = "outcome";
       return result;
    }
@@ -172,10 +188,13 @@ ArcDiscResult arc_disc_request_resolved(ArcDiscRequest *request,
    result.candidate = candidate;
    if (request->b_triggered)
    {
-      ArcDiscIdentity *triggered = &request->identities[request->triggered_slot];
-      if (!triggered->occupied || now_us < triggered->observed_us ||
-          now_us - triggered->observed_us > UINT64_C(120000000))
+      if (now_us < request->triggered_us ||
+          now_us - request->triggered_us > UINT64_C(120000000))
          request->b_triggered = false;
+      else if (request->continuation == request->triggered_continuation &&
+               request->sp == request->triggered_sp &&
+               !strcmp(request->object, request->triggered_object))
+         request->triggered_us = now_us;
    }
    ArcDiscIdentity *identity = NULL, *free_slot = NULL, *oldest = NULL;
    for (unsigned i = 0u; i < ARC_DISC_IDENTITY_CAPACITY; ++i)
@@ -189,15 +208,9 @@ ArcDiscResult arc_disc_request_resolved(ArcDiscRequest *request,
    }
    bool same = identity && now_us >= identity->observed_us &&
       now_us - identity->observed_us <= UINT64_C(120000000);
-   if (identity && !same && request->b_triggered &&
-       request->triggered_slot == (unsigned)(identity - request->identities))
-      request->b_triggered = false;
    if (!identity)
    {
       identity = free_slot ? free_slot : oldest;
-      if (request->b_triggered &&
-          request->triggered_slot == (unsigned)(identity - request->identities))
-         request->b_triggered = false;
       identity->occupied = true;
       strcpy(identity->object, request->object);
       identity->continuation = request->continuation;
@@ -211,6 +224,10 @@ ArcDiscResult arc_disc_request_resolved(ArcDiscRequest *request,
    {
       request->b_triggered = true;
       request->triggered_slot = (unsigned)(identity - request->identities);
+      strcpy(request->triggered_object, request->object);
+      request->triggered_continuation = request->continuation;
+      request->triggered_sp = request->sp;
+      request->triggered_us = now_us;
       result.trigger = true;
    }
    return result;

@@ -367,10 +367,10 @@ static ArcMediaEntry arc_media[ARC_PLAYLIST_MAX_ENTRIES];
 static unsigned arc_media_count;
 typedef struct {
    bool valid;
-   unsigned image;
    uint64_t last_used;
    char path[256];
-   ArcDiscObject object;
+   bool image_valid[ARC_PLAYLIST_MAX_ENTRIES];
+   ArcDiscObject objects[ARC_PLAYLIST_MAX_ENTRIES];
 } ArcDiscCacheEntry;
 #define ARC_DISC_CACHE_CAPACITY 64u
 static ArcDiscCacheEntry arc_disc_paths[ARC_DISC_CACHE_CAPACITY];
@@ -386,6 +386,15 @@ static unsigned arc_disc_temporary_jfd_decodes;
 static bool arc_disc_b_log_active;
 static uint64_t arc_disc_b_logged_us;
 static unsigned arc_disc_b_suppressed;
+typedef struct {
+   bool valid;
+   char object[256];
+   uint32_t continuation, sp;
+   uint64_t logged_us, last_used;
+   unsigned suppressed;
+} ArcDiscFirstLog;
+static ArcDiscFirstLog arc_disc_first_logs[ARC_DISC_IDENTITY_CAPACITY];
+static uint64_t arc_disc_first_log_clock;
 typedef enum { ARC_DISC_MODE_AUTO, ARC_DISC_MODE_HINT, ARC_DISC_MODE_OFF } ArcDiscMode;
 static ArcDiscMode arc_disc_mode = ARC_DISC_MODE_AUTO;
 static bool arc_disc_owned;
@@ -401,13 +410,15 @@ static void arc_disc_invalidate(void)
    arc_disc_cache_clock = 0u;
    arc_disc_b_log_active = false;
    arc_disc_b_suppressed = 0u;
+   memset(arc_disc_first_logs, 0, sizeof(arc_disc_first_logs));
+   arc_disc_first_log_clock = 0u;
 }
 static void arc_disc_invalidate_image(unsigned image)
 {
    if (image >= ARC_PLAYLIST_MAX_ENTRIES) return;
    ++arc_disc_generation;
    for (unsigned i = 0u; i < ARC_DISC_CACHE_CAPACITY; ++i)
-      if (arc_disc_paths[i].image == image) arc_disc_paths[i].valid = false;
+      arc_disc_paths[i].image_valid[image] = false;
    arc_disc_names_valid[image] = false;
 }
 static void arc_disc_write_observer(const char *path)
@@ -417,21 +428,7 @@ static void arc_disc_write_observer(const char *path)
    {
       ArcMediaEntry *entry = &arc_media[i];
       if (!entry->populated) continue;
-      bool changed = !strcmp(path, entry->staged);
-      if (!changed && entry->info.kind == ARC_MEDIA_JFD && arc_save_path[0])
-      {
-         char prefix[ARC_MEDIA_PATH_CAPACITY];
-         int n = snprintf(prefix, sizeof(prefix), "%s/arcdroid/jfd/%s.",
-                          arc_save_path, entry->digest.sha1);
-         if (n > 0 && (size_t)n < sizeof(prefix) &&
-             !strncmp(path, prefix, (size_t)n))
-         {
-            const char *suffix = path + n;
-            changed = !strcmp(suffix, "a") || !strcmp(suffix, "b") ||
-                      !strcmp(suffix, "tmp");
-         }
-      }
-      if (changed) arc_disc_invalidate_image(i);
+      if (!strcmp(path, entry->staged)) arc_disc_invalidate_image(i);
    }
 }
 static bool arc_original_jfd_notice_shown;
@@ -2876,32 +2873,36 @@ static unsigned arc_disc_resolve_candidate(void *opaque, const char *path,
    (void)opaque;
    if (!path || arc_media_count < 2u) return UINT_MAX;
    unsigned candidate = UINT_MAX;
+   ArcDiscCacheEntry *entry = NULL, *oldest = NULL;
+   for (unsigned j = 0u; j < ARC_DISC_CACHE_CAPACITY; ++j)
+   {
+      ArcDiscCacheEntry *slot = &arc_disc_paths[j];
+      if (slot->valid && !strcmp(slot->path, path))
+      { entry = slot; break; }
+      if (!oldest || !slot->valid ||
+          (oldest->valid && slot->last_used < oldest->last_used))
+         oldest = slot;
+   }
+   if (!entry)
+   {
+      entry = oldest;
+      memset(entry, 0, sizeof(*entry));
+      strcpy(entry->path, path);
+      entry->valid = true;
+   }
+   entry->last_used = ++arc_disc_cache_clock;
    for (unsigned i = 0u; i < arc_media_count; ++i)
    {
       if (i == arc_image_index || !arc_media[i].populated) continue;
-      ArcDiscCacheEntry *entry = NULL, *oldest = NULL;
-      for (unsigned j = 0u; j < ARC_DISC_CACHE_CAPACITY; ++j)
+      if (!entry->image_valid[i])
       {
-         ArcDiscCacheEntry *slot = &arc_disc_paths[j];
-         if (slot->valid && slot->image == i && !strcmp(slot->path, path))
-         { entry = slot; break; }
-         if (!oldest || !slot->valid ||
-             (oldest->valid && slot->last_used < oldest->last_used))
-            oldest = slot;
-      }
-      if (!entry)
-      {
-         entry = oldest;
          ArcGuestName name = {0};
-         entry->object = arc_disc_image_object(i, path, &name);
-         entry->image = i;
-         strcpy(entry->path, path);
-         entry->valid = true;
-         if (entry->object != ARC_DISC_UNKNOWN && !arc_disc_names_valid[i])
+         entry->objects[i] = arc_disc_image_object(i, path, &name);
+         entry->image_valid[i] = true;
+         if (entry->objects[i] != ARC_DISC_UNKNOWN && !arc_disc_names_valid[i])
          { arc_disc_names[i] = name; arc_disc_names_valid[i] = true; }
       }
-      entry->last_used = ++arc_disc_cache_clock;
-      ArcDiscObject object = entry->object;
+      ArcDiscObject object = entry->objects[i];
       if (object == ARC_DISC_UNKNOWN) return UINT_MAX;
       bool compatible = object == ARC_DISC_FILE ||
          (object == ARC_DISC_DIR && (operation == ARC_DISC_CATALOGUE ||
@@ -4799,7 +4800,44 @@ static bool arc_disc_observation(void *opaque, const char *path,
    }
    bool log_line = true;
    unsigned suppressed = 0u;
-   if (observation == 2u)
+   if (observation == 1u)
+   {
+      ArcDiscRequest request;
+      arc_engine_disc_snapshot(&request);
+      ArcDiscFirstLog *entry = NULL, *oldest = NULL;
+      for (unsigned i = 0u; i < ARC_DISC_IDENTITY_CAPACITY; ++i)
+      {
+         ArcDiscFirstLog *slot = &arc_disc_first_logs[i];
+         if (slot->valid && slot->continuation == request.continuation &&
+             slot->sp == request.sp && !strcmp(slot->object, object))
+         { entry = slot; break; }
+         if (!oldest || !slot->valid ||
+             (oldest->valid && slot->last_used < oldest->last_used))
+            oldest = slot;
+      }
+      uint64_t now = arc_engine_disc_time_us();
+      if (!entry)
+      {
+         entry = oldest;
+         memset(entry, 0, sizeof(*entry));
+         entry->valid = true;
+         strcpy(entry->object, object);
+         entry->continuation = request.continuation;
+         entry->sp = request.sp;
+         entry->logged_us = now;
+      }
+      else if (now >= entry->logged_us &&
+               now - entry->logged_us < UINT64_C(10000000))
+      { ++entry->suppressed; log_line = false; }
+      else
+      {
+         suppressed = entry->suppressed;
+         entry->suppressed = 0u;
+         entry->logged_us = now;
+      }
+      entry->last_used = ++arc_disc_first_log_clock;
+   }
+   else if (observation == 2u)
    {
       uint64_t now = arc_engine_disc_time_us();
       if (arc_disc_b_log_active && now >= arc_disc_b_logged_us &&

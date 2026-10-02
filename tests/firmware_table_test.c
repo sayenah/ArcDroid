@@ -50,6 +50,9 @@ static const ArcFirmwareFingerprint error_box_arbitration_after_firmware = {
    ARC_RECIPE_COMBINED, 0u
 };
 static const ArcFirmwareFingerprint disc_request_firmware[] = {
+   {ARC_OS_TEST, "ArcDroid invented disc request B found-between ROM", 524288u,
+    UINT32_C(0x25330389), "aa8a1ed3afb331dc8525e7feff36d78cd08fb996",
+    ARC_RECIPE_COMBINED, 0u},
    {ARC_OS_TEST, "ArcDroid invented disc request A ROM", 524288u,
     UINT32_C(0x04dec093), "0e45f047ac0e814b46953dd1a030a35db3bbb592",
     ARC_RECIPE_COMBINED, 0u},

@@ -21,7 +21,9 @@ typedef struct {
    unsigned candidate, observations, triggered_slot;
    ArcDiscOperation operation;
    ArcDiscIdentity identities[ARC_DISC_IDENTITY_CAPACITY];
-   uint64_t next_order;
+   char triggered_object[256];
+   uint32_t triggered_continuation, triggered_sp;
+   uint64_t next_order, triggered_us;
 } ArcDiscRequest;
 
 typedef struct {
