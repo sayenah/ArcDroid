@@ -6,7 +6,7 @@ This file configures Anthropic models working in the ArcDroid repository. It is 
 
 Do not infer authority from this filename alone.
 
-- **Claude Fable 5.1** (`claude-fable-5-1`) is the Architect and Orchestrator (the "Fable" role below) in every session that holds the ArcDroid baton (Founder, D-115). A session on any other model never takes the role or changes project state. It cannot switch its own model, so it tells the Founder to run `/model claude-fable-5-1` and stops (protocol §18).
+- **Claude Opus 5.5 at reasoning effort `high`** (`claude-opus-5-5`; the model sees `high` as 15) is the Architect and Orchestrator (the "Fable" role below; the name is the role's, not the model's) in every session that holds the ArcDroid baton (Founder, D-116). A session on any other model or below effort 15 never takes the role or changes project state. It cannot change its own model or effort, so it tells the Founder to run `/model claude-opus-5-5` and `/effort high`, then stops (protocol §18).
 - **Claude Opus 5.5** is also the independent QA, but only as a separately dispatched agent in a fresh clone (`.claude/agents/opus-qa.md` or the CLI recipe in step 9) when `docs/handoff.md` says `Stage: QA`, `Owner: Opus`; the orchestrating session never reviews its own slice as QA.
 - Other Claude models have no standing project role unless the Founder explicitly assigns one.
 
@@ -148,7 +148,7 @@ If `docs/handoff.md` does not say `Stage: QA`, `Owner: Opus`, stop and return co
 
 For any run that changes governance/project state, leave branch/PR state explicit and `docs/handoff.md` as the exact current baton. Prefer git and canonical docs over conversational memory so a fresh session can recover accurately.
 
-- **On receiving a relay, check first:** you run Claude Fable 5.1; your working directory is `/Users/mac0918/dev/ArcDroid`; the relay is the first message in your window. If any check fails, change nothing, say which check failed, send a `PushNotification`, and stop.
+- **On receiving a relay, check first:** you run Claude Opus 5.5 at effort 15 (`high`) or above; your working directory is `/Users/mac0918/dev/ArcDroid`; the relay is the first message in your window. If any check fails, change nothing, say which check failed, send a `PushNotification`, and stop.
 - **Close when** a stretch is done or context runs low (case A: relay), or on a blocker or Founder decision (case B: finish unblocked in-progress work, put the decision in the handoff, no relay).
 - **Ritual:** merge the handoff with an exact `Next` and this window's name in its used-windows list. Leave no process you started running unless the handoff records it. Relay in case A only.
 - **Relay — this project only, one window only:** `ListAgents`; pick one peer that is `arcdroid-`-named, `interactive`, `idle`, and not in the used-windows list; send one `SendMessage`. Never message any other project's session, a busy or offline one, or a second window. If none is eligible or the send fails, do not relay; the Founder starts a new window.
