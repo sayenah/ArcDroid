@@ -4500,6 +4500,39 @@ int main(int argc, char **argv)
          retro_set_controller_port_device(1u, RETRO_DEVICE_JOYPAD);
          stick_frames(&api, 5u); assert(!pad_source(1u, RETROK_LEFT));
          stick_neutral(&api, 1u);
+         /* Await-neutral uses the hold threshold on both axes and signs.
+          * Values between hold and press must not arm a subsequent press. */
+         for (unsigned axis = 0u; axis < 2u; ++axis)
+            for (unsigned sign = 0u; sign < 2u; ++sign)
+            {
+               unsigned key = axis ? (sign ? RETROK_DOWN : RETROK_UP) :
+                                     (sign ? RETROK_RIGHT : RETROK_LEFT);
+               analog_state[0][0][axis] = sign ? 20000 : -20000;
+               option_left_stick[0] = "off"; variable_update = true; retro_run();
+               option_left_stick[0] = "dpad"; variable_update = true; retro_run();
+               analog_state[0][0][axis] = sign ? 15000 : -15000;
+               stick_frames(&api, 3u);
+               assert(!pad_source(0u, key));
+               analog_state[0][0][axis] = sign ? 20000 : -20000; retro_run();
+               assert(!pad_source(0u, key));
+               stick_neutral(&api, 0u);
+               analog_state[0][0][axis] = sign ? 20000 : -20000; retro_run();
+               assert(pad_source(0u, key));
+               stick_neutral(&api, 0u);
+            }
+         /* Neutral polls must be consecutive: a held poll resets the count. */
+         analog_state[0][0][0] = 20000;
+         option_left_stick[0] = "off"; variable_update = true; retro_run();
+         option_left_stick[0] = "dpad"; variable_update = true; retro_run();
+         analog_state[0][0][0] = 0; retro_run();
+         analog_state[0][0][0] = 20000; retro_run();
+         analog_state[0][0][0] = 0; retro_run();
+         analog_state[0][0][0] = 20000; retro_run();
+         assert(!pad_source(0u, RETROK_RIGHT));
+         stick_neutral(&api, 0u);
+         analog_state[0][0][0] = 20000; retro_run();
+         assert(pad_source(0u, RETROK_RIGHT));
+         stick_neutral(&api, 0u);
          const int16_t xy[8][2] = {{0,-20000},{0,20000},{-20000,0},{20000,0},
             {-20000,-20000},{20000,-20000},{-20000,20000},{20000,20000}};
          const unsigned codes[8][2] = {{RETROK_UP,0},{RETROK_DOWN,0},
@@ -4537,6 +4570,11 @@ int main(int argc, char **argv)
          assert(pad_source(0u, RETROK_x));
          option_pad[0][ARC_PAD_RIGHT] = "z"; variable_update = true; retro_run();
          assert(!pad_source(0u, RETROK_x) && !pad_source(0u, RETROK_z));
+         /* One neutral poll clears the physical binding gate, but cannot
+          * release the stick's await gate after a bound-to-bound key change. */
+         analog_state[0][0][0] = 0; retro_run();
+         analog_state[0][0][0] = 20000; retro_run();
+         assert(!pad_source(0u, RETROK_z));
          stick_neutral(&api, 0u); analog_state[0][0][0] = 20000; retro_run();
          assert(pad_source(0u, RETROK_z));
          /* Option and pointer eligibility transitions, with both sticks held. */
@@ -4575,10 +4613,16 @@ int main(int argc, char **argv)
          joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_L3] = false; retro_run();
          assert(arc_libretro_test_osk_visible() && !pad_source(0u, RETROK_z));
          unsigned focus = osk_focus(); stick_frames(&api, 5u); assert(osk_focus() == focus);
-         stick_neutral(&api, 0u); analog_state[0][0][0] = 20000; retro_run();
+         stick_neutral(&api, 0u); stick_frames(&api, 40u); api.clear();
+         /* Navigation alone cancels an armed observer, without a guest key. */
+         assert(arm_outcome("Run ADFS::0.$.!Demo.!Run"));
+         analog_state[0][0][0] = 20000; retro_run();
          unsigned edge_focus = osk_focus(); assert(edge_focus != focus);
+         outcome_snapshot(&outcome);
+         assert(outcome.state == ARC_OUTCOME_CANCEL && !strcmp(outcome.cancel_reason, "input"));
          stick_frames(&api, 3u); assert(osk_focus() == edge_focus);
-         stick_frames(&api, 30u); assert(osk_focus() != edge_focus);
+         stick_frames(&api, 40u); assert(osk_focus() != edge_focus);
+         assert(api.events(NULL, 0u) == 0u && !pad_source(0u, RETROK_z));
          option_pointer_stick = "left"; variable_update = true; retro_run();
          focus = osk_focus(); stick_frames(&api, 30u); assert(osk_focus() == focus);
          option_pointer_stick = "right"; variable_update = true; retro_run();
@@ -4618,6 +4662,11 @@ int main(int argc, char **argv)
          retro_unload_game(); assert(!pad_source(0u, RETROK_z));
          struct retro_game_info invalid = {"", NULL, 0u, NULL};
          phase = PHASE_LOAD; assert(!retro_load_game(&invalid));
+         option_left_stick[0] = "invalid";
+         last_message[0] = '\0';
+         assert(!retro_load_game(&game));
+         assert(!strcmp(last_message, "Invalid ArcDroid core option value"));
+         option_left_stick[0] = "dpad";
          assert(retro_load_game(&game)); phase = PHASE_RUN;
          stick_frames(&api, 120u); assert(!pad_source(0u, RETROK_z));
          stick_neutral(&api, 0u); analog_state[0][0][0] = 20000; retro_run();

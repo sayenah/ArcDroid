@@ -6124,7 +6124,7 @@ static void arc_build_options(void)
       stick->key = arc_left_stick_option_names[port];
       stick->desc = port ? "Pad 2 Left Stick" : "Pad 1 Left Stick";
       stick->desc_categorized = stick->desc;
-      stick->info = "Use the left stick as the D-pad; Off disables gameplay conversion and OSK navigation only, leaving chooser, pointer, observer and release checks unchanged.";
+      stick->info = "The left stick works like the D-pad; Off stops gameplay and on-screen keyboard control, while the launch menu and Pointer Stick keep using it as before.";
       stick->category_key = "pad_mapping";
       stick->values[0] = (struct retro_core_option_value){"dpad", "D-pad"};
       stick->values[1] = (struct retro_core_option_value){"off", "Off"};

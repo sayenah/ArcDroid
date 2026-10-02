@@ -7,10 +7,10 @@ half throw and releases below 40% throw; centre the stick after loading,
 resetting or changing its routing. The right stick continues to move the pointer.
 
 **Pad 1 Left Stick** and **Pad 2 Left Stick** appear under **Pad Mapping**:
-**D-pad** is the default; **Off** disables that port’s new gameplay conversion
-and left-stick navigation of the on-screen keyboard. Off leaves the launch
-chooser, pointer control and existing input-observation and release checks
-unchanged. Save Game Options in RetroArch saves these choices per game.
+**D-pad** is the default; **Off** stops that port’s left stick from controlling
+gameplay or navigating the on-screen keyboard. The launch menu and Pointer
+Stick keep using it as before, as do existing checks for player input and for
+released controls. Save Game Options in RetroArch saves these choices per game.
 With Pointer Stick set to Left, Pad 1’s left stick belongs to the pointer.
 Otherwise an eligible Pad 1 left stick also navigates the on-screen keyboard,
 with the D-pad’s press and repeat behaviour.

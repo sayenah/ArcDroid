@@ -264,7 +264,7 @@ static bool environment(unsigned command, void *data)
          unsigned count = 0u;
          assert(phase == PHASE_LOAD);
          while (descriptors[count].description) ++count;
-         assert(count == 28u);
+         assert(count == 30u);
          saw_input_descriptors = true;
          return true;
       }
@@ -291,6 +291,8 @@ static bool environment(unsigned command, void *data)
          else if (!strcmp(variable->key, "arcdroid_jfd_boot")) variable->value = "auto";
          else if (!strcmp(variable->key, "arcdroid_adffs_package")) variable->value = "verified";
          else if (!strcmp(variable->key, "arcdroid_osk_toggle")) variable->value = "L3";
+         else if (!strcmp(variable->key, "arcdroid_pad1_left_stick") ||
+                  !strcmp(variable->key, "arcdroid_pad2_left_stick")) variable->value = "dpad";
          else variable->value = "Auto";
          return true;
       }
