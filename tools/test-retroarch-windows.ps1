@@ -872,7 +872,7 @@ if (-not (Test-Path (Join-Path $fHardDiscStore 'ready.a')) -or
 
 # Authored native IDE guest: a blank disc paints outcome 0x31 after a sector
 # write; the next RetroArch process reads that sector and paints outcome 0x42.
-Copy-Item -Force (Join-Path $InputDirectory 'arcdroid_libretro.dll') $core
+Copy-Item -Force (Join-Path $InputDirectory 'arcdroid_libretro_test.dll') $core
 Copy-Item -Force (Join-Path $InputDirectory 'arcdroid-native-hd-guest.rom') $firmware
 @"
 arcdroid_machine = "Auto"
@@ -900,7 +900,7 @@ if ($nativeWritten -eq $nativeReloaded -or $nativeReloaded -ne 'ff009400' -or
 }
 $screenshot = $previousScreenshot
 $content = $previousContent
-Copy-Item -Force (Join-Path $InputDirectory 'arcdroid_libretro_test.dll') $core
+Copy-Item -Force (Join-Path $InputDirectory 'arcdroid_libretro.dll') $core
 Copy-Item -Force (Join-Path $InputDirectory 'arcdroid-media-test.rom') $firmware
 @"
 arcdroid_machine = "A3000"
