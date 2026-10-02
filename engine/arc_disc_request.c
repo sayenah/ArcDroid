@@ -18,6 +18,7 @@ static void clear_observations(ArcDiscRequest *request)
    memset(request->identities, 0, sizeof(request->identities));
    request->next_order = 0u;
    request->observations = 0u;
+   request->b_triggered = false;
 }
 
 bool arc_disc_request_name(const char *name, const char *inserted_name,
@@ -25,9 +26,13 @@ bool arc_disc_request_name(const char *name, const char *inserted_name,
 {
    if (!name || !canonical || !inserted_name) return false;
    size_t length = 0u;
-   while (length < 255u && name[length]) ++length;
+   while (length < 255u && (unsigned char)name[length] >= 0x20u) ++length;
    if (length < 9u || length == 255u || !equal(name, "adfs::", 6u))
       return false;
+   char terminated[256];
+   memcpy(terminated, name, length);
+   terminated[length] = 0;
+   name = terminated;
    const char *disc = name + 6u;
    const char *dot = strchr(disc, '.');
    if (!dot || dot == disc || dot - disc > 10 || dot[1] != '$') return false;
@@ -103,7 +108,8 @@ void arc_disc_request_swi(ArcDiscRequest *request, const ArcDiscSwi *event,
       while (length < 11u && event->name[length] &&
              (unsigned char)event->name[length] >= 0x20u &&
              (unsigned char)event->name[length] <= 0x7eu) ++length;
-      if (length && length <= 10u && !event->name[length])
+      if (length && length <= 10u &&
+          (unsigned char)event->name[length] < 0x20u)
       {
          request->armed = false;
          clear_observations(request);
@@ -121,8 +127,7 @@ void arc_disc_request_swi(ArcDiscRequest *request, const ArcDiscSwi *event,
       /* A new observed-class SWI never revives the previous watch. */
       request->armed = false;
       if (request->a_active || event->mode != 0u ||
-          !event->name_readable || !event->name ||
-          event->candidate == UINT_MAX) return;
+          !event->name_readable || !event->name) return;
       char canonical[256];
       if (!arc_disc_request_name(event->name, inserted_name, canonical)) return;
       strcpy(request->object, canonical);
@@ -134,10 +139,9 @@ void arc_disc_request_swi(ArcDiscRequest *request, const ArcDiscSwi *event,
    }
 }
 
-ArcDiscResult arc_disc_request_continue(ArcDiscRequest *request,
+ArcDiscResult arc_disc_request_outcome(ArcDiscRequest *request,
    uint32_t address, uint32_t mode, uint32_t sp, uint32_t r0,
-   bool overflow, bool error_readable, uint32_t error_number,
-   uint64_t now_us)
+   bool overflow, bool error_readable, uint32_t error_number)
 {
    ArcDiscResult result = {0};
    if (!request || !request->armed || mode != 0u) return result;
@@ -155,8 +159,24 @@ ArcDiscResult arc_disc_request_continue(ArcDiscRequest *request,
       result.reason = "outcome";
       return result;
    }
+   result.needs_resolution = true;
+   return result;
+}
+
+ArcDiscResult arc_disc_request_resolved(ArcDiscRequest *request,
+   unsigned candidate, uint64_t now_us)
+{
+   ArcDiscResult result = {0};
+   if (!request || candidate == UINT_MAX) return result;
    result.observed = true;
-   result.candidate = request->candidate;
+   result.candidate = candidate;
+   if (request->b_triggered)
+   {
+      ArcDiscIdentity *triggered = &request->identities[request->triggered_slot];
+      if (!triggered->occupied || now_us < triggered->observed_us ||
+          now_us - triggered->observed_us > UINT64_C(120000000))
+         request->b_triggered = false;
+   }
    ArcDiscIdentity *identity = NULL, *free_slot = NULL, *oldest = NULL;
    for (unsigned i = 0u; i < ARC_DISC_IDENTITY_CAPACITY; ++i)
    {
@@ -169,9 +189,15 @@ ArcDiscResult arc_disc_request_continue(ArcDiscRequest *request,
    }
    bool same = identity && now_us >= identity->observed_us &&
       now_us - identity->observed_us <= UINT64_C(120000000);
+   if (identity && !same && request->b_triggered &&
+       request->triggered_slot == (unsigned)(identity - request->identities))
+      request->b_triggered = false;
    if (!identity)
    {
       identity = free_slot ? free_slot : oldest;
+      if (request->b_triggered &&
+          request->triggered_slot == (unsigned)(identity - request->identities))
+         request->b_triggered = false;
       identity->occupied = true;
       strcpy(identity->object, request->object);
       identity->continuation = request->continuation;
@@ -182,6 +208,27 @@ ArcDiscResult arc_disc_request_continue(ArcDiscRequest *request,
    request->observations = same ? 2u : 1u;
    result.observation = request->observations;
    if (request->observations == 2u && !request->b_triggered)
-   { request->b_triggered = true; result.trigger = true; }
+   {
+      request->b_triggered = true;
+      request->triggered_slot = (unsigned)(identity - request->identities);
+      result.trigger = true;
+   }
    return result;
+}
+ArcDiscResult arc_disc_request_continue(ArcDiscRequest *request,
+   uint32_t address, uint32_t mode, uint32_t sp, uint32_t r0,
+   bool overflow, bool error_readable, uint32_t error_number,
+   uint64_t now_us)
+{
+   ArcDiscResult result = arc_disc_request_outcome(request, address, mode, sp,
+      r0, overflow, error_readable, error_number);
+   return result.needs_resolution ?
+      arc_disc_request_resolved(request, request->candidate, now_us) : result;
+}
+void arc_disc_request_retry(ArcDiscRequest *request)
+{
+   if (!request || !request->b_triggered) return;
+   request->identities[request->triggered_slot].occupied = false;
+   request->b_triggered = false;
+   request->observations = 0u;
 }

@@ -2615,9 +2615,8 @@ arcdroid_pad1_a = "$mapping"
 }
 Write-Host 'Slice 25 Windows RetroArch: authored error box, hint, default and custom Pad Mapping passed'
 
-# A ROM-owned FileCore request selects disc 2. A subsequent frontend Previous
-# must move from the core-reported index 1 to index 0, causing a second
-# authenticated request and insertion. A fresh process starts on disc 1.
+# A ROM-owned FileCore request selects disc 2. Frontend Previous then moves
+# from the core-reported index 1 to index 0. A fresh process starts on disc 1.
 Copy-Item -Force (Join-Path $InputDirectory 'arcdroid-disc-request-a.rom') $firmware
 Copy-Item -Force (Join-Path $InputDirectory 'arcdroid_libretro_test.dll') $core
 $requestSet = Join-Path $InputDirectory 'disc-request/Set.m3u'

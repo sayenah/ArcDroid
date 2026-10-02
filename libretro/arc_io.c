@@ -7,13 +7,14 @@
 #include <string.h>
 
 static struct retro_vfs_interface *arc_io_vfs;
-static void (*arc_io_write_observer)(void);
-void arc_io_set_write_observer(void (*observer)(void))
+static void (*arc_io_write_observer)(const char *path);
+void arc_io_set_write_observer(void (*observer)(const char *path))
 { arc_io_write_observer = observer; }
 
 struct ArcIoFile {
    struct retro_vfs_file_handle *handle;
    bool writable;
+   char *path;
    const uint8_t *memory;
    size_t memory_size;
    size_t memory_at;
@@ -108,7 +109,7 @@ bool arc_io_write_all_diagnostic(const char *path, const void *data, size_t size
    if (!file) return false;
    if (failure) *failure = "write";
    wrote = arc_io_vfs->write(file, data, size);
-   if (wrote > 0 && arc_io_write_observer) arc_io_write_observer();
+   if (wrote > 0 && arc_io_write_observer) arc_io_write_observer(path);
    if (wrote == (int64_t)size) {
       if (failure) *failure = "flush";
       wrote = arc_io_vfs->flush && arc_io_vfs->flush(file) == 0 ? wrote : -1;
@@ -123,11 +124,21 @@ bool arc_io_write_all(const char *path, const void *data, size_t size)
 { return arc_io_write_all_diagnostic(path, data, size, NULL); }
 
 bool arc_io_remove(const char *path)
-{ return arc_io_vfs && arc_io_vfs->remove && path && arc_io_vfs->remove(path) == 0; }
+{
+   bool removed = arc_io_vfs && arc_io_vfs->remove && path &&
+      arc_io_vfs->remove(path) == 0;
+   if (removed && arc_io_write_observer) arc_io_write_observer(path);
+   return removed;
+}
 
 bool arc_io_rename(const char *old_path, const char *new_path)
-{ return arc_io_vfs && arc_io_vfs->rename && old_path && new_path &&
-         arc_io_vfs->rename(old_path, new_path) == 0; }
+{
+   bool renamed = arc_io_vfs && arc_io_vfs->rename && old_path && new_path &&
+      arc_io_vfs->rename(old_path, new_path) == 0;
+   if (renamed && arc_io_write_observer)
+   { arc_io_write_observer(old_path); arc_io_write_observer(new_path); }
+   return renamed;
+}
 
 bool arc_io_file_size(const char *path, size_t *size)
 {
@@ -334,6 +345,13 @@ ArcIoFile *arc_io_open_file(const char *path, bool writable)
    memset(file, 0, sizeof(*file));
    file->handle = handle;
    file->writable = writable;
+   if (writable)
+   {
+      file->path = malloc(strlen(path) + 1u);
+      if (!file->path)
+      { arc_io_vfs->close(handle); free(file); return NULL; }
+      strcpy(file->path, path);
+   }
    return file;
 }
 
@@ -344,6 +362,7 @@ bool arc_io_close_file(ArcIoFile *file)
    int result = -1;
    if (arc_io_vfs && arc_io_vfs->close && file->handle)
       result = arc_io_vfs->close(file->handle);
+   free(file->path);
    free(file);
    return result == 0;
 }
@@ -386,7 +405,7 @@ size_t arc_io_write_file(ArcIoFile *file, const void *data, size_t size)
    if (!file || !data || file->memory || !file->writable ||
        !arc_io_vfs || !arc_io_vfs->write) return 0u;
    int64_t count = arc_io_vfs->write(file->handle, data, size);
-   if (count > 0 && arc_io_write_observer) arc_io_write_observer();
+   if (count > 0 && arc_io_write_observer) arc_io_write_observer(file->path);
    return count < 0 ? 0u : (size_t)count;
 }
 
@@ -401,7 +420,9 @@ bool arc_io_flush_file(ArcIoFile *file)
 
 bool arc_io_truncate_file(ArcIoFile *file, int64_t length)
 {
-   return file && file->writable && !file->memory && length >= 0 &&
+   bool truncated = file && file->writable && !file->memory && length >= 0 &&
       arc_io_vfs && arc_io_vfs->truncate &&
       arc_io_vfs->truncate(file->handle, length) == 0;
+   if (truncated && arc_io_write_observer) arc_io_write_observer(file->path);
+   return truncated;
 }

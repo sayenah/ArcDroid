@@ -62,6 +62,15 @@ static ArcBootWatch arc_boot_watch;
 static ArcLaunchOutcome arc_launch_outcome;
 static ArcErrorBox arc_error_box;
 static ArcDiscRequest arc_disc_request;
+#if defined(ARCDROID_TEST_FAULTS)
+static unsigned arc_test_disc_resolve_calls;
+static unsigned arc_test_disc_eject_count;
+static bool arc_test_disc_hold_busy;
+unsigned arc_engine_test_disc_resolve_calls(void)
+{ return arc_test_disc_resolve_calls; }
+unsigned arc_engine_test_disc_eject_count(void)
+{ return arc_test_disc_eject_count; }
+#endif
 bool arc_engine_disc_watch_armed;
 static bool arc_disc_enabled;
 static char arc_disc_inserted_name[11];
@@ -90,7 +99,8 @@ static bool arc_engine_guest_string(uint32_t address, char *out, size_t capacity
       if (address > UINT32_MAX - i ||
           !arc_engine_guest_byte(address + (uint32_t)i, &byte)) return false;
       out[i] = (char)byte;
-      if (!byte) return i != 0u;
+      if (byte < 0x20u)
+      { out[i] = 0; return i != 0u; }
    }
    return false;
 }
@@ -132,14 +142,25 @@ void arc_engine_disc_poll(uint32_t address, uint32_t mode, uint32_t sp,
          error_number |= (uint32_t)byte << (8u * i);
       }
    }
-   ArcDiscResult result = arc_disc_request_continue(&arc_disc_request,
+   ArcDiscResult result = arc_disc_request_outcome(&arc_disc_request,
       address, mode, sp, r0, (flags & 0x10000000u) != 0u,
-      readable, error_number, arc_engine_disc_now());
+      readable, error_number);
    arc_engine_disc_watch_armed = arc_disc_request.armed;
    if (result.discarded) rpclog("Disc request: discarded watch reason=%s\n", result.reason);
+   if (result.needs_resolution && arc_disc_resolve_callback)
+   {
+#if defined(ARCDROID_TEST_FAULTS)
+      ++arc_test_disc_resolve_calls;
+#endif
+      unsigned candidate = arc_disc_resolve_callback(arc_disc_opaque,
+         arc_disc_request.object, arc_disc_request.operation);
+      result = arc_disc_request_resolved(&arc_disc_request, candidate,
+                                        arc_engine_disc_now());
+   }
    if (result.observed && arc_disc_observe_callback)
-      arc_disc_observe_callback(arc_disc_opaque, arc_disc_request.object,
-         result.candidate, result.observation, result.trigger);
+      if (arc_disc_observe_callback(arc_disc_opaque, arc_disc_request.object,
+            result.candidate, result.observation, result.trigger))
+         arc_disc_request_retry(&arc_disc_request);
 }
 static const char *arc_error_result(ArcErrorAnswer answer)
 { return answer == ARC_ERROR_OK ? "ok" : "cancel"; }
@@ -331,17 +352,9 @@ void arc_engine_boot_watch_swi(uint32_t swi, uint32_t r0, uint32_t r1,
       bool readable = (lookup || upcall) &&
          arc_engine_guest_string(upcall ? r2 : r1, name,
                                  upcall ? 12u : sizeof(name));
-      unsigned candidate = UINT_MAX;
-      if (lookup && readable && arc_disc_resolve_callback && mode == 0u)
-      {
-         char canonical[256];
-         if (arc_disc_request_name(name, arc_disc_inserted_name, canonical))
-            candidate = arc_disc_resolve_callback(arc_disc_opaque,
-                                                  canonical, operation);
-      }
       ArcDiscSwi event = {swi, r0, r1, r3, address, mode, armregs[13],
                           disc_in_rom, readable, readable ? name : NULL,
-                          candidate, arc_engine_disc_now()};
+                          UINT_MAX, arc_engine_disc_now()};
       arc_disc_request_swi(&arc_disc_request, &event, arc_disc_inserted_name);
       arc_engine_disc_watch_armed = arc_disc_request.armed;
    }
@@ -1100,6 +1113,9 @@ void arc_engine_audio_stats(uint64_t *underrun_frames, uint64_t *overrun_frames)
 bool arc_engine_media_eject(void)
 {
    if (!arc_machine_live) return false;
+#if defined(ARCDROID_TEST_FAULTS)
+   ++arc_test_disc_eject_count;
+#endif
    arc_engine_error_discard();
    wd1770_media_change();
    c82c711_fdc_media_change(0u);
@@ -1115,12 +1131,24 @@ bool arc_engine_media_eject(void)
 
 bool arc_engine_disc_controller_idle(void)
 {
+#if defined(ARCDROID_TEST_FAULTS)
+   if (arc_test_disc_hold_busy) return false;
+#endif
    if (!arc_active || arc_fault || !arc_machine_live || !fdc_timer ||
        timer_is_enabled(fdc_timer) || fdc_overridden) return false;
    return fdctype == FDC_82C711 ? c82c711_fdc_idle() : wd1770_idle();
 }
 
 #if defined(ARCDROID_TEST_FAULTS)
+void arc_engine_test_disc_hold_busy(bool busy)
+{ arc_test_disc_hold_busy = busy; }
+bool arc_engine_test_disc_timer_busy(bool busy)
+{
+   if (!fdc_timer) return false;
+   if (busy) timer_enable(fdc_timer);
+   else timer_disable(fdc_timer);
+   return timer_is_enabled(fdc_timer) == busy;
+}
 static bool arc_test_fail_next_media_insert;
 void arc_engine_test_fail_next_media_insert(void)
 { arc_test_fail_next_media_insert = true; }

@@ -18,7 +18,7 @@ typedef struct {
    bool armed, a_active, b_triggered, a_notified;
    char a_name[11], object[256];
    uint32_t continuation, sp;
-   unsigned candidate, observations;
+   unsigned candidate, observations, triggered_slot;
    ArcDiscOperation operation;
    ArcDiscIdentity identities[ARC_DISC_IDENTITY_CAPACITY];
    uint64_t next_order;
@@ -28,12 +28,12 @@ typedef struct {
    uint32_t swi, r0, r1, r3, address, mode, user_sp;
    bool in_rom, name_readable;
    const char *name;
-   unsigned candidate; /* Unique compatible candidate, or UINT_MAX. */
+   unsigned candidate; /* Unit-test wrapper input; production resolves at continuation. */
    uint64_t now_us;
 } ArcDiscSwi;
 
 typedef struct {
-   bool trigger, observed, discarded;
+   bool trigger, observed, discarded, needs_resolution;
    unsigned candidate, observation;
    const char *reason;
 } ArcDiscResult;
@@ -45,6 +45,12 @@ ArcDiscResult arc_disc_request_continue(ArcDiscRequest *request,
    uint32_t address, uint32_t mode, uint32_t sp, uint32_t r0,
    bool overflow, bool error_readable, uint32_t error_number,
    uint64_t now_us);
+ArcDiscResult arc_disc_request_outcome(ArcDiscRequest *request,
+   uint32_t address, uint32_t mode, uint32_t sp, uint32_t r0,
+   bool overflow, bool error_readable, uint32_t error_number);
+ArcDiscResult arc_disc_request_resolved(ArcDiscRequest *request,
+   unsigned candidate, uint64_t now_us);
+void arc_disc_request_retry(ArcDiscRequest *request);
 bool arc_disc_request_name(const char *name, const char *inserted_name,
                            char canonical[256]);
 bool arc_disc_request_operation(uint32_t swi, uint32_t r0,

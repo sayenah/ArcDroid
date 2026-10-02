@@ -4170,7 +4170,7 @@ def build_error_box_rom(x_form: bool = False) -> bytearray:
 
 def build_disc_request_rom(signal: str) -> bytearray:
     """Invented FileSwitch outcome or FileCore UpCall; no firmware bytes."""
-    assert signal in ("a", "a1", "a-chain", "a-back", "b", "b-alternate", "b-single", "b-wimp",
+    assert signal in ("a", "a1", "a-chain", "a-back", "b", "b-back", "b-found", "b-alternate", "b-single", "b-wimp",
                       "b-otherdisc", "b-dir-load", "b-cat-dir", "b-d6",
                       "b-108d3", "b-block", "b-distinct", "b-two-contexts",
                       "b-error-branch", "b-nonx-error", "b-conflict",
@@ -4204,6 +4204,16 @@ def build_disc_request_rom(signal: str) -> bytearray:
             user.branch("name_ready")
             user.label("name_one")
             user.ldr_const(1, 0x03803040)
+            user.label("name_ready")
+        elif signal == "b-back":
+            user.cmp_imm(8, 0)
+            user.branch("back_first", "eq")
+            user.cmp_imm(8, 1)
+            user.branch("back_first", "eq")
+            user.ldr_const(1, 0x03803040)
+            user.branch("name_ready")
+            user.label("back_first")
+            user.ldr_const(1, 0x03803000)
             user.label("name_ready")
         else:
             user.ldr_const(1, 0x03803000)
@@ -4324,6 +4334,8 @@ def build_disc_request_rom(signal: str) -> bytearray:
         a.emit(0xE1B0F00E)
         a.label("catalogue_return")
         a.mov(0, 0)  # catalogue: not found, V clear
+    elif signal == "b-found":
+        a.mov(0, 1)  # successful catalogue read; resolver must stay idle
     elif load_error:
         a.ldr_const(0, 0x00000d00)
         a.ldr_const(1, 0x108d3 if signal == "b-108d3" else 0xd6)
@@ -4358,6 +4370,8 @@ def build_disc_request_rom(signal: str) -> bytearray:
     if signal == "b-distinct":
         rom[0x3040:0x3040 + len(b"adfs::0.$.!Qarvox.!Run\0")] = b"adfs::0.$.!Qarvox.!Run\0"
         rom[0x3080:0x3080 + len(b"adfs::0.$.!Nervex.!Run\0")] = b"adfs::0.$.!Nervex.!Run\0"
+    if signal == "b-back":
+        rom[0x3040:0x3040 + len(b"adfs::0.$.!Other.!Run\0")] = b"adfs::0.$.!Other.!Run\0"
     if signal == "b-conflict":
         rom[0x3080:0x3080 + len(b"adfs::0.$.Other\0")] = b"adfs::0.$.Other\0"
     if signal in ("a-chain", "a-back"):
@@ -4868,6 +4882,10 @@ def main() -> None:
     (request / "One.adf").write_bytes(build_d_discovery([(b"!Other", True)], b"One"))
     two = build_d_discovery([(b"!Demo", True)], b"Two")
     (request / "Two.adf").write_bytes(two)
+    two_jfd = build_extended_jfd(bytes(two), b"Two JFD", "D")
+    struct.pack_into("<I", two_jfd, 304, 2)  # synthetic writable store
+    (request / "TwoJfd.jfd").write_bytes(two_jfd)
+    (request / "HighF.adf").write_bytes(build_f_discovery())
     (request / "TwoShort.adf").write_bytes(two[:-1024])
     (request / "Three.adf").write_bytes(build_d_discovery([(b"!Demo", True)], b"Three"))
     (request / "Multi.adf").write_bytes(build_d_discovery(
@@ -4875,11 +4893,20 @@ def main() -> None:
     unknown = build_d_discovery([(b"!Other", True)], b"Unknown")
     unknown[1025:1029] = b"????"  # prepared media, unreadable FileCore root
     (request / "Unknown.adf").write_bytes(unknown)
+    unknown_name = bytearray(unknown)
+    unknown_name[:512] = b"\xff" * 512  # no trustworthy FileCore disc name
+    (request / "UnknownName.adf").write_bytes(unknown_name)
     (request / "Set.m3u").write_text("One.adf\nTwo.adf\n", encoding="ascii")
+    (request / "SetJfd.m3u").write_text("One.adf\nTwoJfd.jfd\n", encoding="ascii")
+    (request / "SetPerf.m3u").write_text(
+        "One.adf\nNeutral00.jfd\nTwoJfd.jfd\n", encoding="ascii")
+    (request / "SetHigh.m3u").write_text("One.adf\nHighF.adf\n", encoding="ascii")
     (request / "SetShort.m3u").write_text("One.adf\nTwoShort.adf\n", encoding="ascii")
     (request / "Distinct.m3u").write_text("One.adf\nMulti.adf\n", encoding="ascii")
     (request / "Chain.m3u").write_text("One.adf\nTwo.adf\nThree.adf\n", encoding="ascii")
     (request / "Unknown.m3u").write_text("One.adf\nTwo.adf\nUnknown.adf\n", encoding="ascii")
+    (request / "AUnknown.m3u").write_text(
+        "One.adf\nTwo.adf\nUnknownName.adf\n", encoding="ascii")
     neutral_names = []
     for number in range(30):
         filename = f"Neutral{number:02d}.adf"
@@ -4889,7 +4916,16 @@ def main() -> None:
     (request / "Set32.m3u").write_text(
         "\n".join(["One.adf", *neutral_names, "Two.adf"]) + "\n",
         encoding="ascii")
-    for signal in ("a", "a1", "a-chain", "a-back", "b", "b-alternate", "b-single", "b-wimp",
+    for number in (0, 1):
+        raw = (request / f"Neutral{number:02d}.adf").read_bytes()
+        (request / f"Neutral{number:02d}.jfd").write_bytes(
+            _build_jfd_disk(raw, "D", f"Neutral{number:02d}".encode("ascii")))
+    jfd_names = [f"Neutral{number:02d}.jfd" if number < 2 else name
+                 for number, name in enumerate(neutral_names)]
+    (request / "Set32Jfd.m3u").write_text(
+        "\n".join(["One.adf", *jfd_names, "TwoJfd.jfd"]) + "\n",
+        encoding="ascii")
+    for signal in ("a", "a1", "a-chain", "a-back", "b", "b-back", "b-found", "b-alternate", "b-single", "b-wimp",
                    "b-otherdisc", "b-dir-load", "b-cat-dir", "b-d6",
                    "b-108d3", "b-block", "b-distinct", "b-two-contexts",
                    "b-error-branch", "b-nonx-error", "b-conflict",
