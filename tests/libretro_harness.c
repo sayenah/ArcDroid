@@ -2489,6 +2489,7 @@ int main(int argc, char **argv)
    bool jfd_create_step = false;
    bool jfd_merge_step = false;
    bool jfd_allocation_step = false;
+   bool jfd_guard_step = false;
    bool jfd_identification_step = false;
    bool jfd_file_data_step = false;
    bool jfd_file_data_set = false;
@@ -2616,6 +2617,8 @@ int main(int argc, char **argv)
       jfd_create_step = true;
    else if (argc == 9 && !strcmp(argv[5], "--jfd-merge-step"))
       jfd_merge_step = true;
+   else if (argc == 9 && !strcmp(argv[5], "--jfd-guard-step"))
+      jfd_guard_step = true;
    else if (argc == 9 && !strcmp(argv[5], "--jfd-allocation-step"))
       jfd_allocation_step = true;
    else if (argc == 9 && !strcmp(argv[5], "--jfd-identification-step"))
@@ -2997,7 +3000,7 @@ int main(int argc, char **argv)
        !jfd_identification_step && !jfd_file_data_step && !jfd_file_data_set &&
        !jfd_file_data_reasons &&
        !jfd_file_data_recovery && !jfd_file_data_unavailable &&
-       !jfd_merge_step && !jfd_allocation_step && !jfd_allocation_set &&
+       !jfd_merge_step && !jfd_guard_step && !jfd_allocation_step && !jfd_allocation_set &&
        !short_tail_guest && !short_tail_discovery &&
        !jfd_quarantine_guest && !jfd_quarantine_density &&
        !jfd_quarantine_adffs)
@@ -3132,7 +3135,7 @@ int main(int argc, char **argv)
    else if (jfd_file_data_step || jfd_file_data_set || jfd_file_data_unavailable ||
             jfd_writes || jfd_create_step || jfd_merge_step ||
             jfd_identification_step ||
-            jfd_allocation_step || jfd_allocation_set)
+            jfd_guard_step || jfd_allocation_step || jfd_allocation_set)
    {
       *(void **)(&arc_libretro_test_jfd_formatted_reads) =
          dlsym(module, "arc_libretro_test_jfd_formatted_reads");
@@ -5884,6 +5887,61 @@ int main(int argc, char **argv)
              open_files == 0u && open_dirs == 0u && dlclose(module) == 0);
       printf("jfd_identification_step: machine=%s mode=%s outcome=%08x\n",
              option_machine, mode, expected);
+      return 0;
+   }
+
+   if (jfd_guard_step)
+   {
+      option_machine=argv[6];
+      option_cpu=!strcmp(option_machine,"A3020")?"ARM250":"ARM2";
+      option_launch="off"; option_jfd_boot="native";
+      bool violated=!strcmp(argv[8],"violated");
+      bool routing=!strncmp(argv[8],"route-",6u);
+      bool route_damaged=!strcmp(argv[8],"route-damaged");
+      bool off=!strcmp(argv[8],"off") || !strcmp(argv[8],"route-off");
+      if (routing)
+      {
+         option_launch="auto"; option_jfd_boot="auto";
+         arc_libretro_test_adffs_accept_test_os(true);
+         static char package_dir[4096];
+         snprintf(package_dir,sizeof(package_dir),"%s/arcdroid/adffs",system_path);
+         observed_opendir_path=package_dir;
+      }
+      option_writes=off?"off":"shadow"; variable_update=true;
+      uint32_t expected=(uint32_t)strtoul(argv[7],NULL,16);
+      phase=PHASE_LOAD; assert(retro_load_game(&game));
+      bool protected=false;
+      assert(arc_engine_test_drive_media(0u,&protected,NULL) && protected==(violated||off||route_damaged));
+      if (routing)
+      {
+         assert(strstr(last_jfd_boot_log,"path=native reason=native-writable") &&
+                !observed_opendir_calls);
+         retro_unload_game(); retro_deinit();
+         assert(hash_file(game.path)==source_hash && !open_files && !open_dirs && dlclose(module)==0);
+         printf("jfd_guard_step: structural routing %s passed\n",argv[8]);
+         return 0;
+      }
+      if (violated)
+      {
+         assert(strstr(last_jfd_writes_log,"reason=guard-violated") &&
+                strstr(last_jfd_file_data_log,"class=guard-violated") &&
+                !arc_libretro_test_jfd_formatted_reads(0u) &&
+                !arc_libretro_test_jfd_commit(0u,1u,0x5au));
+      }
+      unsigned steady=0u; phase=PHASE_RUN;
+      for (unsigned frame=0u;frame<900u && steady<8u;++frame)
+      { retro_run(); steady=last_video_pixel==expected?steady+1u:0u; }
+      if (steady!=8u) fprintf(stderr,"guard %s %s: got %08x expected %08x\n",argv[6],argv[8],last_video_pixel,expected);
+      assert(steady==8u);
+      if (!violated && !off && strcmp(argv[8],"save") && strcmp(argv[8],"saved"))
+      {
+         assert(jfd_refusal_log_lines==1u && strstr(last_jfd_refusal_log,argv[8]));
+         /* The guest's second write reached the store in the same session. */
+         assert(jfd_write_log_lines==1u);
+      }
+      retro_unload_game(); retro_deinit();
+      assert(hash_file(game.path)==source_hash && !open_files && !open_dirs && dlclose(module)==0);
+      printf("jfd_guard_step: machine=%s mode=%s outcome=%08x\n",argv[6],argv[8],expected);
       return 0;
    }
 

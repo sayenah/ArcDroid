@@ -338,6 +338,24 @@ static bool store_commit_common(ArcJfdImage *image, bool create, size_t index,
    ArcJfdOverlay *overlay = image->overlay;
    if (!overlay || !overlay->writable || overlay->failed || overlay->damaged)
       return false;
+   /* Direct store callers also obey the pre-commit guard. A policy refusal
+    * is not a store failure and never touches a candidate or generation. */
+   const char *veto = !create && overlay->guarded ?
+      arc_jfd_write_veto_reason(image, index, data) : NULL;
+   if (veto)
+   {
+      if (overlay->log_refusal)
+         for (unsigned t = 0u; t < image->track_count; ++t)
+            if (index >= image->tracks[t].first_sector &&
+                index < (size_t)image->tracks[t].first_sector +
+                         image->tracks[t].sector_count)
+            {
+               overlay->log_refusal(overlay->image_number, t / 2u, t % 2u,
+                                    image->sectors[index].id, veto);
+               break;
+            }
+      return false;
+   }
    ArcJfdStore *store = overlay->store;
    uint8_t *snapshot = NULL, *readback = NULL;
    ArcJfdRecords *checked = NULL;
@@ -512,5 +530,17 @@ bool arc_jfd_store_load(ArcJfdImage *image, const char *save_directory,
          (image->flags & 1u) ? "wp-flag" :
          !(image->flags & 2u) ? "no-flag" :
          !writes_enabled ? "disk-writes-off" : "rw-flag";
+   overlay->reason = *reason;
+   if (overlay->guarded && writes_enabled)
+   {
+      overlay->map_enabled = true;
+      arc_jfd_map_prepare(image);
+      if (overlay->guard_violated) *reason = overlay->reason;
+      else if (!overlay->writable)
+      {
+         overlay->map_enabled = false;
+         arc_jfd_map_refresh(image);
+      }
+   }
    return true;
 }

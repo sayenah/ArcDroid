@@ -24,8 +24,8 @@ def main() -> None:
     rw = writes / "rw-merge-d.jfd"
     wp = writes / "wp-merge-d.jfd"
     nonmatching = fixtures / "jfd-creation/nonmatching.jfd"
-    irregular_free = fixtures / "jfd-creation/irregular-free-sequence.jfd"
-    sources = (rw, wp, nonmatching, irregular_free)
+    unsupported = fixtures / "jfd-creation/irregular-newmap-free-sequence.jfd"
+    sources = (rw, wp, nonmatching, unsupported)
     before = tuple(map(digest, sources))
     with tempfile.TemporaryDirectory(prefix="arc-jfd-merge-") as temp:
         for machine, rom_name in (
@@ -46,7 +46,7 @@ def main() -> None:
                 (rw, "006a0000", "off-to-on"),
                 (wp, "0000006a", "no-slot"),
                 (nonmatching, "0000006a", "no-slot"),
-                (irregular_free, "0000006a", "no-slot"),
+                (unsupported, "0000006a", "no-slot"),
             ):
                 subprocess.run((str(harness), str(core), str(rom), str(image),
                                 str(root), "--jfd-merge-step", machine,

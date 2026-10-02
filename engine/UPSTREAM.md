@@ -229,3 +229,11 @@ endings were retained; the new hook uses CRLF.
 `wd1770.c/.h` and `82c711_fdc.c/.h` add read-only idle accessors for the
 insertion precondition. They do not change controller transitions. Their
 existing line endings were retained, including CRLF in the 82C711 files.
+
+## Slice 28 JFD reader changes
+
+The ArcDroid-authored replacement `disc_jfd.c` passes the D-120 guard's refusal
+reason through its existing pre-commit veto and data-CRC completion. An absent
+unavailable target keeps the existing index-pulse Record-Not-Found completion,
+with a distinct guard diagnostic. No upstream controller implementation was
+changed.

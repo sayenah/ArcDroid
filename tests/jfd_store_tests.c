@@ -928,8 +928,8 @@ static void test_layout_low(const char *root, const char *kind)
    }
    else if (!strcmp(kind, "irregular"))
    {
-      expect_creation_layout(root, "irregular-id-only-free.jfd", false, false);
-      expect_creation_layout(root, "irregular-bad-crc-free.jfd", false, false);
+      expect_creation_layout(root, "irregular-id-only-free.jfd", true, false);
+      expect_creation_layout(root, "irregular-bad-crc-free.jfd", true, false);
       expect_creation_layout(root, "irregular-id-only-allocated.jfd", true, false);
       expect_creation_layout(root, "irregular-bad-crc-allocated.jfd", true, false);
       expect_creation_layout(root, "irregular-all-ids.jfd", true, false);
@@ -1115,12 +1115,15 @@ static void test_quarantine_gate(const char *root)
    clear_files();
    commits = 0u;
 }
+#include "jfd_guard_store_tests.inc"
+
 int main(int argc, char **argv)
 {
    assert(argc == 2 || argc == 3);
    arc_io_set_vfs(&vfs);
    if (argc == 3)
    {
+      if (!strcmp(argv[2], "guard")) { test_guard_store(argv[1]); return 0; }
       if (!strcmp(argv[2], "file-data"))
       {
          test_file_data_store_classes(argv[1]);
@@ -1378,8 +1381,8 @@ int main(int argc, char **argv)
       {"unschedulable.jfd", false, "layout-unsupported"},
       {"nonmatching.jfd", false, "layout-unsupported"},
       {"half-vote.jfd", false, "layout-unsupported"},
-      {"irregular-free.jfd", false, "layout-unsupported"},
-      {"irregular-free-sequence.jfd", false, "layout-unsupported"},
+      {"irregular-free.jfd", true, "rw-flag"},
+      {"irregular-free-sequence.jfd", true, "rw-flag"},
       {"irregular-newmap-free.jfd", false, "layout-unsupported"},
       {"irregular-newmap-backup-free.jfd", false, "layout-unsupported"},
       {"irregular-allocated.jfd", true, "rw-flag"},

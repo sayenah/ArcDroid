@@ -2701,6 +2701,8 @@ static const char *arc_jfd_file_data_class(const ArcJfdImage *image,
    const ArcJfdOverlay *overlay = image->overlay;
    /* Only stores inspected by the loader can contribute visible records or
     * be marked damaged; ineligible images keep a coherent base-only view. */
+   if (overlay && overlay->guard_violated && overlay->visible)
+      return "guard-violated";
    if (overlay && overlay->damaged) return "damaged-store";
    if (overlay && overlay->writable) return "writable";
    if (mode != ARC_DISK_WRITES_OFF && image->extended &&
@@ -2796,7 +2798,12 @@ static void arc_finish_jfd_preparation(ArcMediaEntry *entry, bool native)
       entry->jfd.identification_basis,
       entry->jfd.identification_maps,
       entry->jfd.identification_reason);
-   arc_log(RETRO_LOG_INFO,
+   if (native && overlay && overlay->guarded && overlay->writable)
+      arc_log(RETRO_LOG_INFO,
+         "JFD writes: image=%u state=writable reason=rw-flag guard=old-map unavailable=%u tail=%u generation=%llu records=%u\n",
+         image_number, overlay->unavailable_slots, overlay->guard_tail_units,
+         (unsigned long long)overlay->generation, overlay->records);
+   else arc_log(RETRO_LOG_INFO,
       "JFD writes: image=%u state=%s reason=%s generation=%llu records=%u\n",
       image_number,
       native && overlay && overlay->writable ? "writable" : "protected",

@@ -871,6 +871,101 @@ static bool arc_jfd_old_allocation(const uint8_t map[1024],
    return true;
 }
 
+/* D-120: validate in declared coordinates, then intersect free extents with
+ * physical D capacity. Tail allocation is reported independently of U. The
+ * legacy parser above intentionally retains its physical-bounds policy. */
+bool arc_jfd_old_declared(const uint8_t map[1024],
+                          uint8_t mask[ARC_JFD_PDD5_TRACKS],
+                          uint32_t *declared, bool *tail_allocated)
+{
+   ArcFileCore fs = {0};
+   fs.reader.raw = map; fs.reader.raw_size = 1024u;
+   if (!arc_filecore_old(&fs, ARC_GEOMETRY_800K_D)) return false;
+   unsigned total = arc_le24(fs.map + 252u);
+   unsigned physical = total < 3200u ? total : 3200u;
+   unsigned previous = 0u, tail_free = 0u;
+   uint16_t free_units[ARC_JFD_PDD5_SLOTS] = {0};
+   for (unsigned at = 0u; at < fs.map[510]; at += 3u)
+   {
+      unsigned first = arc_le24(fs.map + at);
+      unsigned count = arc_le24(fs.map + 256u + at);
+      if (!count || first < previous || first > total ||
+          count > total - first) return false;
+      unsigned end = first + count;
+      previous = end;
+      unsigned tail_begin = first > 3200u ? first : 3200u;
+      if (end > tail_begin) tail_free += end - tail_begin;
+      unsigned stop = end < physical ? end : physical;
+      for (unsigned unit = first; unit < stop; ++unit)
+         ++free_units[unit / 4u];
+   }
+   memset(mask, 0, ARC_JFD_PDD5_TRACKS);
+   for (unsigned slot = 0u; slot < ARC_JFD_PDD5_SLOTS; ++slot)
+   {
+      unsigned start = slot * 4u;
+      unsigned amount = start < physical ? physical - start : 0u;
+      if (amount > 4u) amount = 4u;
+      if (free_units[slot] < amount)
+         mask[slot / ARC_JFD_PDD5_IDS] |=
+            (uint8_t)(1u << (slot % ARC_JFD_PDD5_IDS));
+   }
+   *declared = total;
+   *tail_allocated = total > 3200u && tail_free != total - 3200u;
+   return true;
+}
+
+bool arc_jfd_guard_base(const ArcJfdImage *image, ArcJfdOverlay *overlay,
+                        const uint8_t unavailable[ARC_JFD_PDD5_TRACKS])
+{
+   ArcFileCore fs = {0};
+   fs.reader.jfd = image; fs.reader.base_only = true;
+   uint8_t mask[ARC_JFD_PDD5_TRACKS];
+   uint32_t declared;
+   bool tail_allocated;
+   if (!arc_filecore_old(&fs, ARC_GEOMETRY_800K_D) ||
+       !arc_jfd_old_declared(fs.map, mask, &declared, &tail_allocated) ||
+       tail_allocated) return false;
+   for (unsigned t = 0u; t < ARC_JFD_PDD5_TRACKS; ++t)
+   {
+      /* D-097 remains a whole-side free-space rejection, including free
+       * bytes outside U or beyond the declared physical extent. */
+      if (image->tracks[t].quarantine_reason)
+         for (unsigned at = 0u; at < fs.map[510]; at += 3u)
+            if (arc_jfd_pdd5_free_intersects(t,
+                  (size_t)arc_le24(fs.map + at) * 256u,
+                  (size_t)arc_le24(fs.map + 256u + at) * 256u)) return false;
+      if (mask[t] & unavailable[t]) return false;
+      /* U must be positively free, not merely outside a short disc. */
+      for (unsigned id = 0u; id < ARC_JFD_PDD5_IDS; ++id)
+         if ((unavailable[t] & (1u << id)) &&
+             (t * ARC_JFD_PDD5_IDS + id + 1u) * 4u > declared)
+            return false;
+   }
+   memcpy(overlay->unavailable_mask, unavailable, ARC_JFD_PDD5_TRACKS);
+   overlay->guard_declared_units = declared;
+   overlay->guard_tail_units = declared > 3200u ? declared - 3200u : 0u;
+   for (unsigned t = 0u; t < ARC_JFD_PDD5_TRACKS; ++t)
+      for (unsigned id = 0u; id < ARC_JFD_PDD5_IDS; ++id)
+         if (unavailable[t] & (1u << id)) ++overlay->unavailable_slots;
+   overlay->guarded = true;
+   return true;
+}
+
+static const char *arc_jfd_guard_map(const ArcJfdOverlay *overlay,
+                                     const uint8_t map[1024],
+                                     uint8_t mask[ARC_JFD_PDD5_TRACKS])
+{
+   uint32_t declared;
+   bool tail_allocated;
+   if (!arc_jfd_old_declared(map, mask, &declared, &tail_allocated))
+      return "guard-invalid-map";
+   if (declared != overlay->guard_declared_units) return "guard-size";
+   if (tail_allocated) return "guard-tail";
+   for (unsigned t = 0u; t < ARC_JFD_PDD5_TRACKS; ++t)
+      if (mask[t] & overlay->unavailable_mask[t]) return "guard-unavailable";
+   return NULL;
+}
+
 static bool arc_jfd_new_allocation(const uint8_t map[1024],
                                    const uint8_t *base_record,
                                    uint8_t mask[ARC_JFD_PDD5_TRACKS])
@@ -966,7 +1061,8 @@ static bool arc_jfd_map_collect(const ArcJfdImage *image, bool base_only,
       if (!arc_jfd_map_read(image, copy, base_only, pending_index,
                             pending, map)) continue;
       bool okay = overlay->map_kind == 1u ?
-         arc_jfd_old_allocation(map, copy_mask) :
+         (overlay->guarded ? !arc_jfd_guard_map(overlay, map, copy_mask) :
+          arc_jfd_old_allocation(map, copy_mask)) :
          arc_jfd_new_allocation(map, overlay->map_record, copy_mask);
       if (!okay) continue;
       valid = true;
@@ -1000,7 +1096,8 @@ void arc_jfd_map_prepare(ArcJfdImage *image)
    ArcJfdOverlay *overlay = image->overlay;
    overlay->map_kind = 0u;
    memset(overlay->map_record, 0, sizeof(overlay->map_record));
-   if (overlay->map_enabled)
+   if (overlay->guarded) overlay->map_kind = 1u;
+   else if (overlay->map_enabled)
    {
       uint8_t map[1024], ignored[ARC_JFD_PDD5_TRACKS];
       if (arc_jfd_map_read(image, 0u, true, SIZE_MAX, NULL, map) &&
@@ -1015,10 +1112,55 @@ void arc_jfd_map_prepare(ArcJfdImage *image)
          }
    }
    arc_jfd_map_refresh(image);
+   if (overlay->guarded && overlay->map_enabled && !overlay->map_valid)
+   {
+      overlay->guard_violated = true;
+      overlay->writable = false;
+      overlay->map_enabled = false;
+      overlay->reason = "guard-violated";
+      memset(overlay->allocation_mask, 0, sizeof(overlay->allocation_mask));
+   }
 }
 
-bool arc_jfd_map_write_veto(const ArcJfdImage *image, size_t index,
-                            const uint8_t *pending)
+static bool arc_jfd_probe_write_veto(const ArcJfdImage *image, size_t index,
+                                     const uint8_t *pending);
+
+const char *arc_jfd_write_veto_reason(const ArcJfdImage *image, size_t index,
+                                      const uint8_t *pending)
+{
+   if (!image || !image->overlay || !pending) return NULL;
+   const ArcJfdOverlay *overlay = image->overlay;
+   if (overlay->guarded)
+   {
+      for (unsigned t = 0u; t < image->track_count; ++t)
+         if (index >= image->tracks[t].first_sector &&
+             index < (size_t)image->tracks[t].first_sector +
+                      image->tracks[t].sector_count)
+         {
+            unsigned id = image->sectors[index].id;
+            if (arc_jfd_guard_tail_target(overlay, t, id)) return "guard-tail";
+            if (t < ARC_JFD_PDD5_TRACKS && id < ARC_JFD_PDD5_IDS &&
+                (overlay->unavailable_mask[t] & (1u << id)))
+               return "guard-unavailable";
+            break;
+         }
+      if (arc_jfd_map_target(image, index))
+      {
+         uint8_t mask[ARC_JFD_PDD5_TRACKS], current[1024];
+         if (!overlay->map_valid ||
+             !arc_jfd_map_read(image, 0u, false, SIZE_MAX, NULL, current) ||
+             arc_jfd_guard_map(overlay, current, mask))
+            return "guard-invalid-map";
+         const char *reason = arc_jfd_guard_map(overlay, pending, mask);
+         if (reason) return reason;
+      }
+   }
+   return arc_jfd_probe_write_veto(image, index, pending) ?
+      "probed-unformatted" : NULL;
+}
+
+static bool arc_jfd_probe_write_veto(const ArcJfdImage *image, size_t index,
+                                     const uint8_t *pending)
 {
    if (!image || !image->overlay || !image->overlay->map_enabled ||
        !image->overlay->map_valid ||
@@ -1035,6 +1177,10 @@ bool arc_jfd_map_write_veto(const ArcJfdImage *image, size_t index,
       if (candidate[t] & overlay->probe_mask[t]) return true;
    return false;
 }
+
+bool arc_jfd_map_write_veto(const ArcJfdImage *image, size_t index,
+                            const uint8_t *pending)
+{ return arc_jfd_write_veto_reason(image, index, pending) != NULL; }
 
 static bool arc_f_map_resolve(const ArcFileCore *fs, uint32_t address,
                               size_t object_sector, size_t *disc_offset)

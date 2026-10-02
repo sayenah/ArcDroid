@@ -271,7 +271,16 @@ static void jfd_poll(void)
        * before handing the pulse to the controller. */
       if (jfd_state == JFD_FIND && jfd_writing &&
           jfd_search_indexes == (fdc_funcs->sectorid ? 2u : 5u))
-         jfd_refused("not-found");
+      {
+         const ArcJfdOverlay *overlay = jfd_image->overlay;
+         unsigned t = jfd_track * 2u + jfd_side;
+         jfd_refused(arc_jfd_guard_tail_target(overlay, t, jfd_sector_id) ?
+            "guard-tail" :
+            overlay && overlay->guarded && t < ARC_JFD_PDD5_TRACKS &&
+            jfd_sector_id < ARC_JFD_PDD5_IDS &&
+            (overlay->unavailable_mask[t] & (1u << jfd_sector_id)) ?
+            "guard-unavailable" : "not-found");
+      }
       if (jfd_state == JFD_FIND && !jfd_writing &&
           jfd_search_indexes == (fdc_funcs->sectorid ? 2u : 5u))
          jfd_mark_terminal_probe();
@@ -410,11 +419,12 @@ static void jfd_poll(void)
       jfd_write_buffer[jfd_transfer_pos++] = (uint8_t)value;
       if (jfd_transfer_pos == sector->size)
       {
-         if (!jfd_selected_view.created &&
-             arc_jfd_map_write_veto(jfd_image, jfd_selected_view.key,
-                                     jfd_write_buffer))
+         const char *veto = !jfd_selected_view.created ?
+            arc_jfd_write_veto_reason(jfd_image, jfd_selected_view.key,
+                                      jfd_write_buffer) : NULL;
+         if (veto)
          {
-            jfd_refused("probed-unformatted");
+            jfd_refused(veto);
             jfd_stop();
             fdc_funcs->datacrcerror(fdc_p);
             return;

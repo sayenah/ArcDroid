@@ -410,6 +410,9 @@ void arc_jfd_file_data_prepare(ArcJfdImage *image,bool native,bool strict,
    { plan->reason="writable-c11c"; return; }
    if (image_class && !strcmp(image_class,"damaged-store"))
    { plan->reason="damaged-store"; return; }
+   if (image->overlay && image->overlay->guard_violated &&
+       image->overlay->visible)
+   { plan->reason="guard-violated"; return; }
    Proof *first=calloc(1u,sizeof(*first)), *second=calloc(1u,sizeof(*second));
    if (!first || !second) { plan->reason="limit"; goto done; }
    first->image=second->image=image;

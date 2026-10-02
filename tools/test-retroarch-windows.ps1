@@ -1,7 +1,8 @@
 # ArcDroid native RetroArch validation. GPL-2.0-only.
 param(
     [Parameter(Mandatory = $true)][string]$InputDirectory,
-    [Parameter(Mandatory = $true)][string]$WorkDirectory
+    [Parameter(Mandatory = $true)][string]$WorkDirectory,
+    [switch]$GuardedJfdOnly
 )
 
 $ErrorActionPreference = "Stop"
@@ -340,7 +341,7 @@ function Invoke-ArcDroid([int]$Frames, [bool]$TakeScreenshot) {
     Remove-Item -Force -ErrorAction SilentlyContinue $stdout, $stderr
 }
 
-Invoke-ArcDroid 600 $true
+if (-not $GuardedJfdOnly) { Invoke-ArcDroid 600 $true }
 
 # RetroArch's network command API defines LOAD_CONTENT as
 # "<core path>|<content path>". Try ten reloads inside one process and retain
@@ -410,6 +411,8 @@ function Try-InSessionReloads {
     }
 }
 
+Add-Type -AssemblyName System.Drawing
+if (-not $GuardedJfdOnly) {
 $inSessionReloads = Try-InSessionReloads
 if (-not $inSessionReloads) {
     for ($reload = 1; $reload -le 10; $reload++) {
@@ -426,7 +429,6 @@ if (-not (Test-Path $screenshot) -or (Get-Item $screenshot).Length -lt 128) {
 # byte and its complement (0x34), and the programmed VIDC palette renders them
 # as cyan (#00aaff) and red (#bf1500). Require both payload-derived colours
 # and non-uniform output; a generic fixed blank/test image cannot satisfy this.
-Add-Type -AssemblyName System.Drawing
 $bitmap = [System.Drawing.Bitmap]::new($screenshot)
 $cyanPixels = 0
 $redPixels = 0
@@ -564,6 +566,8 @@ if ($env:GITHUB_STEP_SUMMARY) {
     Add-Content -Encoding UTF8 $env:GITHUB_STEP_SUMMARY "- Reloads: $reloadEvidence."
     Add-Content -Encoding UTF8 $env:GITHUB_STEP_SUMMARY "- Audio: $audioEvidence."
     Add-Content -Encoding UTF8 $env:GITHUB_STEP_SUMMARY "- Slice 4 New-IO: A3010/ARM250 launch logged and the executed-branch screenshot differed from A3000."
+}
+
 }
 
 # Slice 2a exercises disk control with the generated media ROM. Each network
@@ -829,6 +833,56 @@ function Assert-No-LdciRecords([string]$Context) {
     if ($records.Count -ne 0) {
         throw "$Context unexpectedly created .ldci records: $($records.FullName -join ', ')"
     }
+}
+
+# Slice 28 is a separate windows-retroarch job step using the same native
+# frontend, screenshot oracle and process-ownership helpers.
+if ($GuardedJfdOnly) {
+    Copy-Item -Force (Join-Path $InputDirectory "arcdroid_libretro_test.dll") $core
+    @"
+arcdroid_machine = "A3000"
+arcdroid_cpu = "ARM2"
+arcdroid_joystick_if = "Keyboard"
+arcdroid_launch = "off"
+arcdroid_jfd_boot = "native"
+arcdroid_disk_writes = "shadow"
+"@ | Set-Content -Encoding ASCII $coreOptions
+    $guardImage = (Resolve-Path (Join-Path $InputDirectory "jfd-allocation/guard-crossing.jfd")).Path
+    $guardHash = (Get-FileHash -Algorithm SHA256 $guardImage).Hash
+    $guardDigest = (Get-FileHash -Algorithm SHA1 $guardImage).Hash.ToLowerInvariant()
+    Copy-Item -Force (Join-Path $InputDirectory "arcdroid-jfd-save-test.rom") $firmware
+    $guardFirst = Start-MediaRun $guardImage "guard-first"
+    try { [void](Wait-JfdOutcome $guardFirst "guard-in-place" "ff6a0000") }
+    finally { Stop-MediaRun $guardFirst }
+    if (-not (Select-String -Path $guardFirst.RetroLog -SimpleMatch "guard=old-map unavailable=1 tail=63" -Quiet)) {
+        throw "Guarded old-map write state was not logged"
+    }
+    $guardSecond = Start-MediaRun $guardImage "guard-relaunch"
+    try { [void](Wait-JfdOutcome $guardSecond "guard-persistent" "ff001500") }
+    finally { Stop-MediaRun $guardSecond }
+    $guardSlots = @(Get-ChildItem -LiteralPath $saveDirectory -File -Recurse |
+        Where-Object { $_.Name -eq "$guardDigest.a" -or $_.Name -eq "$guardDigest.b" })
+    if (-not $guardSlots.Count) { throw "Guarded in-place write published no store" }
+    Copy-Item -Force (Join-Path $InputDirectory "arcdroid-jfd-guard-data.rom") $firmware
+    $guardRefuse = Start-MediaRun $guardImage "guard-unavailable"
+    try {
+        Wait-JfdResultVideoReady $guardRefuse "guard-unavailable"
+        [void](Wait-JfdOutcome $guardRefuse "guard-unavailable-continued-use" "ff001500")
+    } finally { Stop-MediaRun $guardRefuse }
+    if (-not (Select-String -Path $guardRefuse.RetroLog -SimpleMatch "sector=3 reason=guard-unavailable" -Quiet)) {
+        throw "Unavailable target refusal was not logged"
+    }
+    if (-not (Select-String -Path $guardRefuse.RetroLog -SimpleMatch "descriptor=2" -Quiet)) {
+        throw "The guest did not complete its unrelated write after refusal"
+    }
+    if ((Get-FileHash -Algorithm SHA256 $guardImage).Hash -ne $guardHash) {
+        throw "Guarded source JFD changed"
+    }
+    Write-Host "Slice 28 Windows RetroArch: guarded boot, persistent in-place write and unavailable-target refusal passed"
+    if ($env:GITHUB_STEP_SUMMARY) {
+        Add-Content -Encoding UTF8 $env:GITHUB_STEP_SUMMARY "- Slice 28: guarded old-map boot, in-place persistence across relaunch, unavailable-target error and continued use passed."
+    }
+    return
 }
 
 @"

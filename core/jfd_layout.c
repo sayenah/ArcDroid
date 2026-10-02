@@ -163,10 +163,20 @@ bool arc_jfd_plan_creation(const ArcJfdImage *image, ArcJfdOverlay *overlay)
    if (irregular_missing)
    {
       bool free_track[ARC_JFD_PDD5_TRACKS] = {false};
-      if (!arc_jfd_base_free_tracks(image, free_track)) return false;
+      bool legacy_okay = arc_jfd_base_free_tracks(image, free_track);
       for (unsigned t = 0u; t < tracks; ++t)
          if (irregular[t] && writable_masks[t] != PDD5_ALL && free_track[t])
-            return false;
+            legacy_okay = false;
+      if (!legacy_okay)
+      {
+         uint8_t unavailable[ARC_JFD_PDD5_TRACKS] = {0};
+         for (unsigned t = 0u; t < tracks; ++t)
+            if (irregular[t] && writable_masks[t] != PDD5_ALL)
+               unavailable[t] = (uint8_t)(PDD5_ALL & ~writable_masks[t]);
+         if (!image->extended || (image->flags & 3u) != 2u ||
+             !overlay->pdd5_profile ||
+             !arc_jfd_guard_base(image, overlay, unavailable)) return false;
+      }
    }
    if (overlay->pdd5_profile)
       for (unsigned t = 0u; t < tracks; ++t)
@@ -175,7 +185,10 @@ bool arc_jfd_plan_creation(const ArcJfdImage *image, ArcJfdOverlay *overlay)
          uint32_t positions[ARC_JFD_MAX_STANDARD_IDS] = {0};
          if (!arc_jfd_place_slots(image, t, ARC_JFD_PDD5_IDS,
                                   ARC_JFD_PDD5_SPACING_US, masks[t], positions))
+         {
+            overlay->guarded = false;
             return false;
+         }
          for (unsigned id = 0u; id < ARC_JFD_PDD5_IDS; ++id)
             if (!(masks[t] & (1u << id)))
             {
