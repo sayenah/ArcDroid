@@ -13,6 +13,12 @@ static bool equal(const char *a, const char *b, size_t n)
 }
 void arc_disc_request_clear(ArcDiscRequest *request)
 { if (request) memset(request, 0, sizeof(*request)); }
+static void clear_observations(ArcDiscRequest *request)
+{
+   memset(request->identities, 0, sizeof(request->identities));
+   request->next_order = 0u;
+   request->observations = 0u;
+}
 
 bool arc_disc_request_name(const char *name, const char *inserted_name,
                            char canonical[256])
@@ -100,7 +106,7 @@ void arc_disc_request_swi(ArcDiscRequest *request, const ArcDiscSwi *event,
       if (length && length <= 10u && !event->name[length])
       {
          request->armed = false;
-         request->observations = 0u;
+         clear_observations(request);
          request->b_triggered = false;
          request->a_active = true;
          if (strlen(request->a_name) != length ||
@@ -145,25 +151,35 @@ ArcDiscResult arc_disc_request_continue(ArcDiscRequest *request,
    {
       /* A found object ends the episode. Other errors do not count. */
       if (!overflow && (request->operation == ARC_DISC_LOAD || r0 != 0u))
-         request->observations = 0u;
+         clear_observations(request);
       result.reason = "outcome";
       return result;
    }
    result.observed = true;
    result.candidate = request->candidate;
-   bool same = request->observations &&
-      request->previous_candidate == request->candidate &&
-      request->previous_continuation == request->continuation &&
-      request->previous_sp == request->sp &&
-      !strcmp(request->previous_object, request->object) &&
-      now_us >= request->previous_us &&
-      now_us - request->previous_us <= UINT64_C(120000000);
+   ArcDiscIdentity *identity = NULL, *free_slot = NULL, *oldest = NULL;
+   for (unsigned i = 0u; i < ARC_DISC_IDENTITY_CAPACITY; ++i)
+   {
+      ArcDiscIdentity *slot = &request->identities[i];
+      if (!slot->occupied) { if (!free_slot) free_slot = slot; continue; }
+      if (slot->continuation == request->continuation &&
+          slot->sp == request->sp && !strcmp(slot->object, request->object))
+      { identity = slot; break; }
+      if (!oldest || slot->order < oldest->order) oldest = slot;
+   }
+   bool same = identity && now_us >= identity->observed_us &&
+      now_us - identity->observed_us <= UINT64_C(120000000);
+   if (!identity)
+   {
+      identity = free_slot ? free_slot : oldest;
+      identity->occupied = true;
+      strcpy(identity->object, request->object);
+      identity->continuation = request->continuation;
+      identity->sp = request->sp;
+   }
+   identity->observed_us = now_us;
+   identity->order = ++request->next_order;
    request->observations = same ? 2u : 1u;
-   strcpy(request->previous_object, request->object);
-   request->previous_candidate = request->candidate;
-   request->previous_continuation = request->continuation;
-   request->previous_sp = request->sp;
-   request->previous_us = now_us;
    result.observation = request->observations;
    if (request->observations == 2u && !request->b_triggered)
    { request->b_triggered = true; result.trigger = true; }

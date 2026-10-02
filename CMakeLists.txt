@@ -480,6 +480,7 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
     OUTPUT "${FIXTURE_DIR}/arcdroid-test.rom" "${FIXTURE_DIR}/arcdroid-test.adf"
       "${FIXTURE_DIR}/arcdroid-disc-request-a.rom"
       "${FIXTURE_DIR}/arcdroid-disc-request-b.rom"
+      "${FIXTURE_DIR}/arcdroid-disc-request-b-alternate.rom"
       "${FIXTURE_DIR}/disc-request/Set.m3u"
       "${FIXTURE_DIR}/disc-request/SetShort.m3u"
       "${FIXTURE_DIR}/disc-request/One.adf"
@@ -671,6 +672,7 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
     "${FIXTURE_DIR}/arcdroid-test.rom" "${FIXTURE_DIR}/arcdroid-test.adf"
     "${FIXTURE_DIR}/arcdroid-disc-request-a.rom"
     "${FIXTURE_DIR}/arcdroid-disc-request-b.rom"
+    "${FIXTURE_DIR}/arcdroid-disc-request-b-alternate.rom"
     "${FIXTURE_DIR}/disc-request/Set.m3u"
     "${FIXTURE_DIR}/disc-request/SetShort.m3u"
     "${FIXTURE_DIR}/arcdroid-power-on-early-swi.rom"
@@ -1032,7 +1034,7 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
           --disc-request-${signal}-${mode})
       endforeach()
     endforeach()
-    foreach(scenario IN ITEMS a1 a-chain a-back b-single b-distinct b-wimp b-two-contexts b-block b-otherdisc
+    foreach(scenario IN ITEMS a1 a-chain a-back b-alternate b-single b-distinct b-wimp b-two-contexts b-block b-otherdisc
                               b-dir-load b-cat-dir b-d6 b-108d3 b-error-branch b-nonx-error b-conflict b-open-file-dir)
       set(request_playlist "${FIXTURE_DIR}/disc-request/Set.m3u")
       if(scenario STREQUAL "a-chain")

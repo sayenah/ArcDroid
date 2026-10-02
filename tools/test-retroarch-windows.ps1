@@ -2636,17 +2636,29 @@ function Wait-DiscInsertion($Run, [int]$Count) {
     } while ([DateTime]::UtcNow -lt $deadline)
     throw "$($Run.Name) expected $Count automatic disc-2 insertions; log=[$(Get-RunLogTail $Run)]"
 }
+function Wait-DiscLogLine($Run, [string]$Text) {
+    $deadline = [DateTime]::UtcNow.AddSeconds(15)
+    do {
+        if (@(Get-Content $Run.RetroLog -ErrorAction SilentlyContinue |
+            Where-Object { $_.Contains($Text) }).Count) { return }
+        Start-Sleep -Milliseconds 100
+    } while ([DateTime]::UtcNow -lt $deadline)
+    throw "$($Run.Name) expected '$Text'; log=[$(Get-RunLogTail $Run)]"
+}
 $requestRun = Start-MediaRun $requestSet 'slice26-disc-request'
 try {
     Wait-DiscInsertion $requestRun 1
     Send-MediaCommand $requestRun 'DISK_EJECT_TOGGLE'
-    Start-Sleep -Milliseconds 300
+    Wait-DiscLogLine $requestRun 'Ejected virtual disc tray.'
     Send-MediaCommand $requestRun 'DISK_PREV'
-    Start-Sleep -Milliseconds 300
+    Wait-DiscLogLine $requestRun 'Setting disc in tray: 1/2 - One'
     Send-MediaCommand $requestRun 'DISK_EJECT_TOGGLE'
-    Wait-DiscInsertion $requestRun 2
+    Wait-DiscLogLine $requestRun 'Closed virtual disc tray.'
 } finally { Stop-MediaRun $requestRun }
 $requestReload = Start-MediaRun $requestSet 'slice26-disc-request-reload'
-try { Wait-DiscInsertion $requestReload 1 }
+try {
+    Wait-DiscLogLine $requestReload 'Launch: boot=0 disc="One"'
+    Wait-DiscInsertion $requestReload 1
+}
 finally { Stop-MediaRun $requestReload }
 Write-Host 'Slice 26 Windows RetroArch: automatic insertion, Disk Control previous-index selection and fresh-process launch image passed'

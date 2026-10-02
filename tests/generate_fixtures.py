@@ -4170,7 +4170,7 @@ def build_error_box_rom(x_form: bool = False) -> bytearray:
 
 def build_disc_request_rom(signal: str) -> bytearray:
     """Invented FileSwitch outcome or FileCore UpCall; no firmware bytes."""
-    assert signal in ("a", "a1", "a-chain", "a-back", "b", "b-single", "b-wimp",
+    assert signal in ("a", "a1", "a-chain", "a-back", "b", "b-alternate", "b-single", "b-wimp",
                       "b-otherdisc", "b-dir-load", "b-cat-dir", "b-d6",
                       "b-108d3", "b-block", "b-distinct", "b-two-contexts",
                       "b-error-branch", "b-nonx-error", "b-conflict",
@@ -4217,6 +4217,12 @@ def build_disc_request_rom(signal: str) -> bytearray:
             user.mov(8, 0)
             user.label("keep_index")
         user.str(8, 12)
+        if signal == "b-alternate":
+            user.mov(0, 255)
+            user.ldr_const(1, 0x03803000)
+            user.emit(0xEF020008)  # same object, second call site: XOS_File load
+            user.add_imm(8, 8, 1)
+            user.str(8, 12)
         if signal == "b-block":
             user.cmp_imm(8, 2)
             user.branch("blocking_input", "eq")
@@ -4308,7 +4314,17 @@ def build_disc_request_rom(signal: str) -> bytearray:
     if signal == "b-block":
         a.cmp_imm(0, 129)
         a.branch("wait_input", "eq")
-    if load_error:
+    if signal == "b-alternate":
+        a.cmp_imm(0, 255)
+        a.branch("catalogue_return", "ne")
+        a.ldr_const(0, 0x00000d00)
+        a.ldr_const(1, 0xd6)
+        a.str(1, 0)
+        a.emit(0xE38EE000 | Arm2._imm(0x10000000))  # X load: not found
+        a.emit(0xE1B0F00E)
+        a.label("catalogue_return")
+        a.mov(0, 0)  # catalogue: not found, V clear
+    elif load_error:
         a.ldr_const(0, 0x00000d00)
         a.ldr_const(1, 0x108d3 if signal == "b-108d3" else 0xd6)
         a.str(1, 0)
@@ -4873,7 +4889,7 @@ def main() -> None:
     (request / "Set32.m3u").write_text(
         "\n".join(["One.adf", *neutral_names, "Two.adf"]) + "\n",
         encoding="ascii")
-    for signal in ("a", "a1", "a-chain", "a-back", "b", "b-single", "b-wimp",
+    for signal in ("a", "a1", "a-chain", "a-back", "b", "b-alternate", "b-single", "b-wimp",
                    "b-otherdisc", "b-dir-load", "b-cat-dir", "b-d6",
                    "b-108d3", "b-block", "b-distinct", "b-two-contexts",
                    "b-error-branch", "b-nonx-error", "b-conflict",

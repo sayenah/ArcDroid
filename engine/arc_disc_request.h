@@ -7,13 +7,21 @@
 typedef enum { ARC_DISC_SIGNAL_NONE, ARC_DISC_SIGNAL_A, ARC_DISC_SIGNAL_B } ArcDiscSignal;
 typedef enum { ARC_DISC_CATALOGUE, ARC_DISC_LOAD, ARC_DISC_OPEN_FILE,
                ARC_DISC_OPEN_DIR } ArcDiscOperation;
+#define ARC_DISC_IDENTITY_CAPACITY 8u
+typedef struct {
+   bool occupied;
+   char object[256];
+   uint32_t continuation, sp;
+   uint64_t observed_us, order;
+} ArcDiscIdentity;
 typedef struct {
    bool armed, a_active, b_triggered, a_notified;
-   char a_name[11], object[256], previous_object[256];
-   uint32_t continuation, sp, previous_continuation, previous_sp;
-   unsigned candidate, previous_candidate, observations;
+   char a_name[11], object[256];
+   uint32_t continuation, sp;
+   unsigned candidate, observations;
    ArcDiscOperation operation;
-   uint64_t previous_us;
+   ArcDiscIdentity identities[ARC_DISC_IDENTITY_CAPACITY];
+   uint64_t next_order;
 } ArcDiscRequest;
 
 typedef struct {

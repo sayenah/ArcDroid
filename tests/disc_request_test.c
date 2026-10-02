@@ -17,6 +17,13 @@ static ArcDiscSwi lookup(const char *name, unsigned candidate)
    swi.candidate = candidate;
    return swi;
 }
+static unsigned identity_count(const ArcDiscRequest *request)
+{
+   unsigned count = 0u;
+   for (unsigned i = 0u; i < ARC_DISC_IDENTITY_CAPACITY; ++i)
+      count += request->identities[i].occupied ? 1u : 0u;
+   return count;
+}
 int main(void)
 {
    char name[256];
@@ -100,7 +107,8 @@ int main(void)
    upcall.mode=3u; upcall.in_rom=true; upcall.name_readable=true;
    upcall.name="DiskTwo";
    arc_disc_request_swi(&request,&upcall,"DiskOne");
-   assert(request.a_active && !request.armed && !request.observations);
+   assert(request.a_active && !request.armed && !request.observations &&
+          !identity_count(&request));
    upcall.r0=4u;
    arc_disc_request_swi(&request,&upcall,"DiskOne");
    assert(!request.a_active);
@@ -180,7 +188,8 @@ int main(void)
       assert(result.observation==1u);
       swi.swi=episode_end[i];
       arc_disc_request_swi(&request,&swi,"DiskOne");
-      assert(!request.armed && !request.observations);
+      assert(!request.armed && !request.observations &&
+             !identity_count(&request));
    }
    arc_disc_request_clear(&request);
    swi=lookup("adfs::0.$.Maps.Level",1u);
@@ -207,5 +216,68 @@ int main(void)
    result=arc_disc_request_continue(&request,0x8104u,0u,0x10000u,
       0u,false,true,0u,102u);
    assert(result.observation==1u && !result.trigger);
+
+   /* Interleaved catalogue and X load failures retain separate identities. */
+   arc_disc_request_clear(&request);
+   ArcDiscSwi catalogue_swi = lookup("adfs::0.$.Maps.Level", 1u);
+   ArcDiscSwi xload = catalogue_swi;
+   xload.r0 = 255u;
+   xload.address = 0x8100u;
+   arc_disc_request_swi(&request,&catalogue_swi,"DiskOne");
+   result=arc_disc_request_continue(&request,0x8004u,0u,0x10000u,
+      0u,false,true,0u,100u);
+   assert(result.observation==1u && !result.trigger);
+   arc_disc_request_swi(&request,&xload,"DiskOne");
+   result=arc_disc_request_continue(&request,0x8104u,0u,0x10000u,
+      0x2000u,true,true,0xd6u,101u);
+   assert(result.observation==1u && !result.trigger && identity_count(&request)==2u);
+   arc_disc_request_swi(&request,&catalogue_swi,"DiskOne");
+   result=arc_disc_request_continue(&request,0x8004u,0u,0x10000u,
+      0u,false,true,0u,102u);
+   assert(result.observation==2u && result.trigger);
+
+   /* Two different objects, even from the same call site, do not combine. */
+   arc_disc_request_clear(&request);
+   catalogue_swi = lookup("adfs::0.$.Maps.Level", 1u);
+   ArcDiscSwi different = lookup("adfs::0.$.Other", 1u);
+   arc_disc_request_swi(&request,&catalogue_swi,"DiskOne");
+   result=arc_disc_request_continue(&request,0x8004u,0u,0x10000u,
+      0u,false,true,0u,200u);
+   assert(result.observation==1u && !result.trigger);
+   arc_disc_request_swi(&request,&different,"DiskOne");
+   result=arc_disc_request_continue(&request,0x8004u,0u,0x10000u,
+      0u,false,true,0u,201u);
+   assert(result.observation==1u && !result.trigger && identity_count(&request)==2u);
+   arc_disc_request_swi(&request,&different,"DiskOne");
+   result=arc_disc_request_continue(&request,0x8004u,0u,0x10000u,
+      1u,false,true,0u,202u);
+   assert(!result.observed && identity_count(&request)==0u);
+   arc_disc_request_swi(&request,&catalogue_swi,"DiskOne");
+   result=arc_disc_request_continue(&request,0x8004u,0u,0x10000u,
+      0u,false,true,0u,203u);
+   assert(result.observation==1u && !result.trigger);
+
+   /* Bounded table evicts the oldest observation, retaining recent ones. */
+   arc_disc_request_clear(&request);
+   for (unsigned i=0u; i<=ARC_DISC_IDENTITY_CAPACITY; ++i)
+   {
+      catalogue_swi=lookup("adfs::0.$.Maps.Level",1u);
+      catalogue_swi.address=0x8000u+16u*i;
+      arc_disc_request_swi(&request,&catalogue_swi,"DiskOne");
+      result=arc_disc_request_continue(&request,catalogue_swi.address+4u,0u,
+         0x10000u,0u,false,true,0u,300u+i);
+      assert(result.observation==1u && !result.trigger);
+   }
+   assert(identity_count(&request)==ARC_DISC_IDENTITY_CAPACITY);
+   catalogue_swi.address=0x8000u;
+   arc_disc_request_swi(&request,&catalogue_swi,"DiskOne");
+   result=arc_disc_request_continue(&request,0x8004u,0u,0x10000u,
+      0u,false,true,0u,400u);
+   assert(result.observation==1u && !result.trigger); /* oldest was evicted */
+   catalogue_swi.address=0x8000u+16u*ARC_DISC_IDENTITY_CAPACITY;
+   arc_disc_request_swi(&request,&catalogue_swi,"DiskOne");
+   result=arc_disc_request_continue(&request,catalogue_swi.address+4u,0u,
+      0x10000u,0u,false,true,0u,401u);
+   assert(result.observation==2u && result.trigger);
    return 0;
 }
