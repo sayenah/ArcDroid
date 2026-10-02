@@ -16,8 +16,112 @@ static void guard_pending(uint8_t map[1024], unsigned kind)
    { guard_u24(map+252u,3264u); guard_u24(map+256u,3252u); }
    if (kind!=2u) guard_checksums(map);
 }
+/* QA L-1/L-2/L-3: captured IDs, profile admission and declared endpoints. */
+static void test_guard_qa_boundaries(const char *root)
+{
+   const char *why=NULL;
+   clear_files();
+   ArcJfdImage image=creation_fixture(root,"irregular-bad-crc-free.jfd");
+   assert(arc_jfd_store_load(&image,"save",true,false,1u,&why));
+   ArcJfdOverlay *o=image.overlay;
+   assert(o->guarded && o->map_valid && o->unavailable_slots==1u);
+   for (unsigned t=0u;t<ARC_JFD_PDD5_TRACKS;++t)
+      assert(o->unavailable_mask[t]==(t==159u?0x10u:0u));
+   size_t bad=image.tracks[159].first_sector+4u;
+   for (unsigned id=0u;id<4u;++id) assert(o->eligible[bad-4u+id]);
+   assert(image.sectors[bad].id==4u && !o->eligible[bad]);
+   uint8_t base[1024],pending[1024];
+   memcpy(base,image.decoded+image.sectors[0].data_offset,1024u);
+   memcpy(pending,base,1024u); guard_u24(pending+256u,3176u);
+   guard_checksums(pending); /* Allocate the CRC-bad captured ID 4. */
+   assert(!strcmp(arc_jfd_write_veto_reason(&image,0u,pending),"guard-unavailable") &&
+          !o->commit(&image,0u,pending) && !o->generation && !o->records &&
+          !o->failed && !files[0].exists && !files[1].exists && !files[2].exists);
+   arc_jfd_free(&image); clear_files();
+
+   image=allocation_fixture(root,"guard-occupied-bad-crc.jfd");
+   assert(arc_jfd_store_load(&image,"save",true,false,1u,&why)); o=image.overlay;
+   assert(o->guarded && o->unavailable_slots==10u);
+   for (unsigned t=0u;t<ARC_JFD_PDD5_TRACKS;++t)
+      assert(o->unavailable_mask[t]==((t==157u || t==159u)?0x1fu:0u));
+   for (unsigned id=0u;id<3u;++id)
+   {
+      size_t index=image.tracks[159].first_sector+id;
+      assert(image.sectors[index].id==id && !o->eligible[index] &&
+             (image.sectors[index].flags&ARC_JFD_DATA_CRC_BAD));
+   }
+   memcpy(base,image.decoded+image.sectors[0].data_offset,1024u);
+   memcpy(pending,base,1024u); guard_u24(pending+256u,3172u);
+   guard_checksums(pending);
+   assert(o->commit(&image,0u,pending)); /* Free captured ID 0's units. */
+   assert(!strcmp(arc_jfd_write_veto_reason(&image,0u,base),"guard-unavailable") &&
+          !o->commit(&image,0u,base) && o->generation==1u && o->records==1u &&
+          !memcmp(o->data[0],pending,1024u));
+   arc_jfd_free(&image); clear_files();
+
+   image=allocation_fixture(root,"guard-captured-density.jfd");
+   assert(arc_jfd_store_load(&image,"save",true,false,1u,&why)); o=image.overlay;
+   assert(o->guarded && o->unavailable_slots==2u);
+   memset(pending,0x5a,1024u);
+   for (unsigned t=0u;t<ARC_JFD_PDD5_TRACKS;++t)
+      assert(o->unavailable_mask[t]==((t==158u || t==159u)?0x10u:0u));
+   for (unsigned side=158u;side<=159u;++side)
+   {
+      size_t index=image.tracks[side].first_sector+4u;
+      assert(image.sectors[index].id==4u && image.sectors[index].size==1024u &&
+             image.sectors[index].density==(side==159u?1u:4u) && o->eligible[index]);
+      const char *veto=arc_jfd_write_veto_reason(&image,index,pending);
+      assert(veto && !strcmp(veto,"guard-unavailable") &&
+             !o->commit(&image,index,pending) && !o->generation && !o->failed &&
+             !files[0].exists && !files[1].exists && !files[2].exists);
+   }
+   arc_jfd_free(&image); clear_files();
+   /* Captured non-P-DD5 IDs on a U side keep D-075 independently. */
+   image=allocation_fixture(root,"guard-occupied.jfd");
+   assert(arc_jfd_store_load(&image,"save",true,false,1u,&why)); o=image.overlay;
+   assert(o->guarded && o->unavailable_slots==10u &&
+          o->unavailable_mask[157]==31u && o->unavailable_mask[159]==31u);
+   for (unsigned id=0u;id<3u;++id)
+   {
+      size_t index=image.tracks[159].first_sector+id;
+      assert(image.sectors[index].id==7u+id && o->eligible[index] &&
+             !arc_jfd_write_veto_reason(&image,index,pending) &&
+             o->commit(&image,index,pending) && o->generation==id+1u);
+   }
+   arc_jfd_free(&image); clear_files();
+
+   image=allocation_fixture(root,"guard-profile-admission-fail.jfd");
+   assert(arc_jfd_store_load(&image,"save",true,false,1u,&why)); o=image.overlay;
+   assert(!o->pdd5_profile && !o->layout_supported && !o->guarded &&
+          !o->writable && !strcmp(why,"layout-unsupported"));
+   for (unsigned t=0u;t<image.track_count;++t)
+      assert(image.tracks[t].sector_count==(t<2u?5u:1u) &&
+             !image.tracks[t].quarantine_reason);
+   arc_jfd_free(&image); clear_files();
+
+   static const struct { const char *name; unsigned declared,side; } tails[]={
+      {"guard-extra-odd.jfd",3201u,160u}, {"guard-extra-even.jfd",3264u,163u}
+   };
+   for (unsigned c=0u;c<2u;++c)
+   {
+      image=allocation_fixture(root,tails[c].name);
+      assert(arc_jfd_store_load(&image,"save",true,false,1u,&why)); o=image.overlay;
+      assert(o->guarded && o->guard_declared_units==tails[c].declared &&
+             o->guard_tail_units==tails[c].declared-3200u &&
+             arc_jfd_guard_tail_target(o,tails[c].side,0u) &&
+             !arc_jfd_guard_tail_target(o,tails[c].side,1u));
+      size_t last=image.tracks[tails[c].side].first_sector;
+      assert(!strcmp(arc_jfd_write_veto_reason(&image,last,pending),"guard-tail") &&
+             !o->commit(&image,last,pending) && !o->generation &&
+             !files[0].exists && !files[1].exists && !files[2].exists);
+      assert(!arc_jfd_write_veto_reason(&image,last+1u,pending) &&
+             o->eligible[last+1u] && o->commit(&image,last+1u,pending));
+      arc_jfd_free(&image); clear_files();
+   }
+}
 static void test_guard_store(const char *root)
 {
+   test_guard_qa_boundaries(root);
    static const struct { const char *name; bool supported, guarded; } cases[]={
       {"guard-crossing.jfd",true,true}, {"guard-physical.jfd",true,true},
       {"guard-one-tail.jfd",true,true}, {"guard-split-tail.jfd",true,true},
@@ -127,7 +231,7 @@ static void test_guard_store(const char *root)
    uint32_t declared=0u; bool tail=false;
    assert(arc_jfd_old_declared(base,mask,&declared,&tail) && declared==3263u && !tail);
    /* Zero lengths, overlapping/descending entries and declared bounds. */
-   for (unsigned kind=0u;kind<4u;++kind)
+   for (unsigned kind=0u;kind<5u;++kind)
    {
       memcpy(pending,base,1024u);
       if (kind==0u) guard_u24(pending+256u,0u);
@@ -137,6 +241,8 @@ static void test_guard_store(const char *root)
          guard_u24(pending+259u,1u);
       }
       if (kind==3u) guard_u24(pending+256u,3252u);
+      if (kind==4u)
+      { guard_u24(pending,3264u); guard_u24(pending+256u,1u); }
       guard_checksums(pending);
       assert(!arc_jfd_old_declared(pending,mask,&declared,&tail));
    }

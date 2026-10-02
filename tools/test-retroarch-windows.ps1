@@ -854,7 +854,7 @@ arcdroid_disk_writes = "shadow"
     $guardFirst = Start-MediaRun $guardImage "guard-first"
     try { [void](Wait-JfdOutcome $guardFirst "guard-in-place" "ff6a0000") }
     finally { Stop-MediaRun $guardFirst }
-    if (-not (Select-String -Path $guardFirst.RetroLog -SimpleMatch "guard=old-map unavailable=1 tail=63" -Quiet)) {
+    if (-not (Select-String -Path $guardFirst.RetroLog -Pattern "\bguard=old-map\s+unavailable=1\s+tail=63(?=\s|$)" -Quiet)) {
         throw "Guarded old-map write state was not logged"
     }
     $guardSecond = Start-MediaRun $guardImage "guard-relaunch"
@@ -869,10 +869,10 @@ arcdroid_disk_writes = "shadow"
         Wait-JfdResultVideoReady $guardRefuse "guard-unavailable"
         [void](Wait-JfdOutcome $guardRefuse "guard-unavailable-continued-use" "ff001500")
     } finally { Stop-MediaRun $guardRefuse }
-    if (-not (Select-String -Path $guardRefuse.RetroLog -SimpleMatch "sector=3 reason=guard-unavailable" -Quiet)) {
+    if (-not (Select-String -Path $guardRefuse.RetroLog -Pattern "\bsector=3\s+reason=guard-unavailable(?=\s|$)" -Quiet)) {
         throw "Unavailable target refusal was not logged"
     }
-    if (-not (Select-String -Path $guardRefuse.RetroLog -SimpleMatch "descriptor=2" -Quiet)) {
+    if (-not (Select-String -Path $guardRefuse.RetroLog -Pattern "\bdescriptor=2(?=\s|$)" -Quiet)) {
         throw "The guest did not complete its unrelated write after refusal"
     }
     if ((Get-FileHash -Algorithm SHA256 $guardImage).Hash -ne $guardHash) {

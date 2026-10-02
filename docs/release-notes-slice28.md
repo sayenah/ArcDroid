@@ -15,8 +15,8 @@ with a disc error. Map updates that add unavailable allocation are refused befor
 they are saved. Other writes remain available after a refusal.
 
 On reload, `guard-violated` means the saved allocation map is invalid, changes
-the declared disc size, claims beyond-disc space, or allocates more
-unavailable units than the original map. ArcDroid disables writes
+the declared disc size, claims beyond-disc space, or allocates unavailable
+units the original map did not. ArcDroid disables writes
 and inferred blank sectors, preserves every save-store file, and continues to
 show saved captured replacements and created sectors. `Disk Writes: Off`
 hides saved changes and restores the original disc presentation.

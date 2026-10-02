@@ -5825,6 +5825,16 @@ def main() -> None:
         ("crossing", 3263, ((12, 3251),), guard_tracks, 160, None),
         ("physical", 3200, ((12, 3188),), guard_tracks, 160, None),
         ("one-tail", 3201, ((12, 3189),), guard_tracks, 160, None),
+        ("extra-odd", 3201, ((12, 3189),),
+         guard_tracks | {160: full, 163: full}, 166, None),
+        ("extra-even", 3264, ((12, 3252),),
+         guard_tracks | {160: full, 163: full}, 166, None),
+        ("captured-density", 3263, ((12, 3251),),
+         {0: full, 1: full, 2: full, 158: full, 159: full}, 160,
+         {side: {id: id * 33 for id in full} for side in (158, 159)}),
+        # Every regular side is full, so the earlier omitted-side gate passes.
+        ("profile-admission-fail", 3263, ((12, 3251),),
+         {side: full if side < 2 else [9] for side in range(160)}, 160, None),
         ("split-tail", 3263, ((12, 3188), (3200, 63)), guard_tracks, 160, None),
         ("u-allocated", 3263, ((16, 3247),), guard_tracks, 160, None),
         # One free irregular side and one wholly allocated irregular side.
@@ -5854,9 +5864,24 @@ def main() -> None:
         mapped[510] = len(extents) * 3
         mapped[255] = _old_map_checksum(mapped[:255])
         mapped[511] = _old_map_checksum(mapped[256:511])
-        (allocation / f"guard-{stem}.jfd").write_bytes(build_pdd5_jfd(
-            bytes(mapped), tracks, times, track_count=count,
-            title=b"ArcDroid Guard Garden"))
+        image = build_pdd5_jfd(bytes(mapped), tracks, times, track_count=count,
+                                title=b"ArcDroid Guard Garden")
+        if stem == "captured-density":
+            for side, density in ((158, 4), (159, 1)):
+                descriptor = pdd5_descriptor_offset(image, side, 4)
+                header = struct.unpack_from("<I", image, descriptor)[0]
+                struct.pack_into("<I", image, descriptor,
+                                 (header & ~(0xF << 16)) | (density << 16))
+        (allocation / f"guard-{stem}.jfd").write_bytes(image)
+        if stem == "occupied":
+            # The same base map and shape, with captured P-DD5 IDs made
+            # ineligible by CRC flags; keep the non-P-DD5 original too.
+            for old_id, new_id in ((7, 0), (8, 1), (9, 2)):
+                descriptor = pdd5_descriptor_offset(image, 159, old_id)
+                header = struct.unpack_from("<I", image, descriptor)[0]
+                struct.pack_into("<I", image, descriptor,
+                                 (header & ~(0xFF << 8)) | (new_id << 8) | (2 << 4))
+            (allocation / "guard-occupied-bad-crc.jfd").write_bytes(image)
         if stem == "crossing":
             for mode in ("u", "tail", "invalid", "size"):
                 pending = bytearray(mapped[:1024])
