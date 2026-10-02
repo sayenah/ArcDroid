@@ -194,7 +194,7 @@ static bool environment(unsigned command, void *data)
             }
             ++count;
          }
-         assert(count == 39u);
+         assert(count == 40u);
          assert(hard_disc && !hard_disc->category_key &&
                 hard_disc->default_value &&
                 !strcmp(hard_disc->default_value, "auto") &&

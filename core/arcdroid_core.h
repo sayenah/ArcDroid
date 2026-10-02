@@ -274,6 +274,16 @@ bool arc_media_is_recognised_adfs(const uint8_t *data, size_t size);
 bool arc_launch_discover(const uint8_t *data, size_t size,
                          const ArcMediaInfo *media, const ArcJfdImage *jfd,
                          ArcLaunchDiscovery *discovery);
+typedef enum {
+   ARC_DISC_UNKNOWN, ARC_DISC_ABSENT, ARC_DISC_FILE, ARC_DISC_DIR
+} ArcDiscObject;
+/* A failed read or unsupported structure is UNKNOWN, never ABSENT. */
+ArcDiscObject arc_disc_resolve(const uint8_t *data, size_t size,
+                               const ArcMediaInfo *media, const ArcJfdImage *jfd,
+                               const char *path, ArcGuestName *disc_name);
+bool arc_disc_read_name(const uint8_t *data, size_t size,
+                        const ArcMediaInfo *media, const ArcJfdImage *jfd,
+                        ArcGuestName *disc_name);
 const char *arc_launch_reason_name(ArcLaunchReason reason);
 bool arc_launch_escape_name(const ArcGuestName *name, char *output,
                             size_t capacity);

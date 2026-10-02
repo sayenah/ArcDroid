@@ -4168,6 +4168,235 @@ def build_error_box_rom(x_form: bool = False) -> bytearray:
     return rom
 
 
+def build_disc_request_rom(signal: str) -> bytearray:
+    """Invented FileSwitch outcome or FileCore UpCall; no firmware bytes."""
+    assert signal in ("a", "a1", "a-chain", "a-back", "b", "b-back", "b-found", "b-found-between", "b-alternate", "b-single", "b-wimp",
+                      "b-otherdisc", "b-dir-load", "b-cat-dir", "b-d6",
+                      "b-108d3", "b-block", "b-distinct", "b-two-contexts",
+                      "b-error-branch", "b-nonx-error", "b-conflict",
+                      "b-open-file-dir")
+    request_a = signal.startswith("a")
+    error_branch = signal in ("b-error-branch", "b-nonx-error", "b-conflict")
+    load_error = signal in ("b-dir-load", "b-d6", "b-108d3",
+                            "b-error-branch", "b-nonx-error")
+    rom = bytearray(b"\xff" * ROM_SIZE)
+    rom[0:4] = struct.pack("<I", 0xE59FF000)
+    rom[8:12] = struct.pack("<I", 0xE59FF000)
+    rom[12:16] = struct.pack("<I", 0x03800020)
+    rom[16:20] = struct.pack("<I", 0x03801000)
+    user = Arm2(0x00000800)
+    user.ldr_const(12, 0x00000b00)
+    user.mov(8, 0)
+    user.str(8, 12)
+    user.label("lookup")
+    if not request_a:
+        user.mov(0, 0xc4 if signal == "b-open-file-dir" else
+                 255 if load_error else 5)
+        if signal == "b-distinct":
+            user.cmp_imm(8, 0)
+            user.branch("name_zero", "eq")
+            user.cmp_imm(8, 1)
+            user.branch("name_one", "eq")
+            user.ldr_const(1, 0x03803080)
+            user.branch("name_ready")
+            user.label("name_zero")
+            user.ldr_const(1, 0x03803000)
+            user.branch("name_ready")
+            user.label("name_one")
+            user.ldr_const(1, 0x03803040)
+            user.label("name_ready")
+        elif signal == "b-back":
+            user.cmp_imm(8, 0)
+            user.branch("back_first", "eq")
+            user.cmp_imm(8, 1)
+            user.branch("back_first", "eq")
+            user.ldr_const(1, 0x03803040)
+            user.branch("name_ready")
+            user.label("back_first")
+            user.ldr_const(1, 0x03803000)
+            user.label("name_ready")
+        else:
+            user.ldr_const(1, 0x03803000)
+        swi_continuation = user.base + (len(user.words) + 1) * 4
+        user.emit(0xEF02000D if signal == "b-open-file-dir" else
+                  0xEF000008 if signal == "b-nonx-error" else 0xEF020008)
+        user.add_imm(8, 8, 1)
+        if signal == "b-distinct":
+            user.cmp_imm(8, 3)
+            user.branch("keep_index", "ne")
+            user.mov(8, 0)
+            user.label("keep_index")
+        user.str(8, 12)
+        if signal == "b-found-between":
+            user.mov(0, 5)
+            user.ldr_const(1, 0x03803040)
+            user.emit(0xEF020008)  # found Y on the currently inserted disc
+        if signal == "b-alternate":
+            user.mov(0, 255)
+            user.ldr_const(1, 0x03803000)
+            user.emit(0xEF020008)  # same object, second call site: XOS_File load
+            user.add_imm(8, 8, 1)
+            user.str(8, 12)
+        if signal == "b-block":
+            user.cmp_imm(8, 2)
+            user.branch("blocking_input", "eq")
+        if signal == "b-wimp":
+            user.emit(0xEF0400C7)  # Wimp_Poll ends the observation episode
+        if signal == "b-two-contexts":
+            user.emit(0xEF0400C7)
+            user.mov(0, 5)
+            user.ldr_const(1, 0x03803000)
+            user.emit(0xEF020008)  # same object, distinct SWI address
+            user.add_imm(8, 8, 1)
+            user.str(8, 12)
+            user.emit(0xEF0400C7)
+        if signal == "b-single":
+            user.label("idle")
+            user.branch("idle")
+        user.ldr_const(10, 500000)
+        user.label("delay")
+        user.subs_imm(10, 10, 1)
+        user.branch("delay", "ne")
+        if signal == "b-block":
+            user.branch("lookup")
+            user.label("blocking_input")
+            user.mov(0, 129)
+            user.mov(1, 0)
+            user.mov(2, 0)
+            user.emit(0xEF000006)  # OS_Byte input request; SVC waits
+            user.branch("blocking_input")
+    else:
+        user.branch("lookup")
+    if not request_a and signal != "b-block":
+        user.branch("lookup")
+    user_code = user.finish()
+    if error_branch:
+        assert len(user_code) < 0x100
+        handler = Arm2(0x00000900)
+        if signal == "b-conflict":
+            handler.mov(0, 13)
+            handler.ldr_const(1, 0x03803080)
+            handler.emit(0xEF020008)  # a conflicting observed-class file SWI
+        handler.ldr_const(15, swi_continuation)
+        handler.emit(0xE1A00000)  # MOV R0,R0; keep literal after PC+8
+        user_code += b"\xff" * (0x100 - len(user_code)) + handler.finish()
+    rom[0x2000:0x2000 + len(user_code)] = user_code
+    a = Arm2(0x03800020)
+    a.ldr_const(1, 0x03400000)
+    for register in CHOOSER_VIDC_MODE:
+        a.ldr_const(0, register)
+        a.str(0, 1)
+    for address in (0x03600000, 0x03620000, 0x0364A000,
+                    0x0368A000, 0x036AA0FC, 0x036CA000):
+        a.ldr_const(0, address)
+        a.str(1, 0)
+    a.ldr_const(0, 0x036E0D0C)
+    a.str(1, 0)
+    if request_a:
+        a.mov(0, 1 if signal == "a1" else 2)
+        a.mov(1, 8)
+        a.ldr_const(2, 0x03803000)
+        a.ldr_const(3, 0xffffffff)
+        a.emit(0xEF000033)  # OS_UpCall, from ROM in SVC
+        if signal in ("a-chain", "a-back"):
+            a.ldr_const(10, 500000)
+            a.label("wait_disc_two")
+            a.subs_imm(10, 10, 1)
+            a.branch("wait_disc_two", "ne")
+            a.mov(0, 2)
+            a.mov(1, 8)
+            a.ldr_const(2, 0x03803020)
+            a.ldr_const(3, 0xffffffff)
+            a.emit(0xEF000033)
+    a.ldr_const(9, 0x00000800)
+    a.ldr_const(10, 0x03802000)
+    a.ldr_const(11, len(user_code) // 4)
+    a.label("copy_user")
+    a.ldr_post(0, 10)
+    a.str_post(0, 9)
+    a.subs_imm(11, 11, 1)
+    a.branch("copy_user", "ne")
+    a.ldr_const(9, 0x00000800)
+    a.emit(0xE1B0F009)  # enter user mode
+    code = a.finish()
+    assert len(code) < 0x0fe0
+    rom[0x20:0x20 + len(code)] = code
+    a = Arm2(0x03801000)
+    if signal == "b-conflict":
+        a.cmp_imm(0, 13)
+        a.branch("nested_return", "eq")
+    if signal == "b-block":
+        a.cmp_imm(0, 129)
+        a.branch("wait_input", "eq")
+    if signal == "b-alternate":
+        a.cmp_imm(0, 255)
+        a.branch("catalogue_return", "ne")
+        a.ldr_const(0, 0x00000d00)
+        a.ldr_const(1, 0xd6)
+        a.str(1, 0)
+        a.emit(0xE38EE000 | Arm2._imm(0x10000000))  # X load: not found
+        a.emit(0xE1B0F00E)
+        a.label("catalogue_return")
+        a.mov(0, 0)  # catalogue: not found, V clear
+    elif signal == "b-found":
+        a.mov(0, 1)  # successful catalogue read; resolver must stay idle
+    elif signal == "b-found-between":
+        a.ldr_const(2, 0x03803040)
+        a.cmp_reg(1, 2)
+        a.branch("found_y", "eq")
+        a.mov(0, 0)  # X is absent
+        a.branch("return")
+        a.label("found_y")
+        a.mov(0, 1)  # Y is found
+        a.label("return")
+    elif load_error:
+        a.ldr_const(0, 0x00000d00)
+        a.ldr_const(1, 0x108d3 if signal == "b-108d3" else 0xd6)
+        a.str(1, 0)
+        if error_branch:
+            a.ldr_const(14, 0x10000900)  # return through user error handler
+        else:
+            a.emit(0xE38EE000 | Arm2._imm(0x10000000))  # V set in return PSR
+    else:
+        a.mov(0, 0)  # FileSwitch catalogue outcome: not found, V clear
+        if signal == "b-conflict":
+            a.cmp_imm(8, 0)
+            a.branch("first_return", "eq")
+            a.ldr_const(14, 0x10000900)
+            a.label("first_return")
+    a.emit(0xE1B0F00E)
+    if signal == "b-conflict":
+        a.label("nested_return")
+        a.mov(0, 0)
+        a.emit(0xE1B0F00E)
+    if signal == "b-block":
+        a.label("wait_input")
+        a.branch("wait_input")
+    code = a.finish()
+    rom[0x1000:0x1000 + len(code)] = code
+    name = (b"Two\0" if request_a else
+            b"adfs::Two.$.!Demo.!Run\0" if signal == "b-otherdisc" else
+            b"adfs::0.$.!Demo\0" if signal in ("b-dir-load", "b-cat-dir",
+                                             "b-open-file-dir") else
+            b"adfs::0.$.!Demo.!Run\0")
+    rom[0x3000:0x3000 + len(name)] = name
+    if signal == "b-distinct":
+        rom[0x3040:0x3040 + len(b"adfs::0.$.!Qarvox.!Run\0")] = b"adfs::0.$.!Qarvox.!Run\0"
+        rom[0x3080:0x3080 + len(b"adfs::0.$.!Nervex.!Run\0")] = b"adfs::0.$.!Nervex.!Run\0"
+    if signal == "b-back":
+        rom[0x3040:0x3040 + len(b"adfs::0.$.!Other.!Run\0")] = b"adfs::0.$.!Other.!Run\0"
+    if signal == "b-found-between":
+        rom[0x3040:0x3040 + len(b"adfs::0.$.!Other.!Run\0")] = b"adfs::0.$.!Other.!Run\0"
+    if signal == "b-conflict":
+        rom[0x3080:0x3080 + len(b"adfs::0.$.Other\0")] = b"adfs::0.$.Other\0"
+    if signal in ("a-chain", "a-back"):
+        second = b"Three\0" if signal == "a-chain" else b"One\0"
+        rom[0x3020:0x3020 + len(second)] = second
+    marker = b"ARCDROID DISC REQUEST " + signal.encode() + b"\0"
+    rom[-len(marker):] = marker
+    return rom
+
+
 def build_error_box_arbitration_rom(after_poll: bool = False,
                                     mouse_wait: bool = False) -> bytearray:
     """Authored modal loop with a guest-owned one-character KART buffer."""
@@ -4663,6 +4892,61 @@ def main() -> None:
         (args.output / f"arcdroid-outcome-{pattern}.rom").write_bytes(
             build_launch_outcome_rom(pattern))
     (args.output / "arcdroid-error-box.rom").write_bytes(build_error_box_rom())
+    request = args.output / "disc-request"
+    request.mkdir(exist_ok=True)
+    (request / "One.adf").write_bytes(build_d_discovery([(b"!Other", True)], b"One"))
+    two = build_d_discovery([(b"!Demo", True)], b"Two")
+    (request / "Two.adf").write_bytes(two)
+    two_jfd = build_extended_jfd(bytes(two), b"Two JFD", "D")
+    struct.pack_into("<I", two_jfd, 304, 2)  # synthetic writable store
+    (request / "TwoJfd.jfd").write_bytes(two_jfd)
+    (request / "HighF.adf").write_bytes(build_f_discovery())
+    (request / "TwoShort.adf").write_bytes(two[:-1024])
+    (request / "Three.adf").write_bytes(build_d_discovery([(b"!Demo", True)], b"Three"))
+    (request / "Multi.adf").write_bytes(build_d_discovery(
+        [(b"!Demo", True), (b"!Qarvox", True), (b"!Nervex", True)], b"Two"))
+    unknown = build_d_discovery([(b"!Other", True)], b"Unknown")
+    unknown[1025:1029] = b"????"  # prepared media, unreadable FileCore root
+    (request / "Unknown.adf").write_bytes(unknown)
+    unknown_name = bytearray(unknown)
+    unknown_name[:512] = b"\xff" * 512  # no trustworthy FileCore disc name
+    (request / "UnknownName.adf").write_bytes(unknown_name)
+    (request / "Set.m3u").write_text("One.adf\nTwo.adf\n", encoding="ascii")
+    (request / "SetJfd.m3u").write_text("One.adf\nTwoJfd.jfd\n", encoding="ascii")
+    (request / "SetPerf.m3u").write_text(
+        "One.adf\nNeutral00.jfd\nTwoJfd.jfd\n", encoding="ascii")
+    (request / "SetHigh.m3u").write_text("One.adf\nHighF.adf\n", encoding="ascii")
+    (request / "SetShort.m3u").write_text("One.adf\nTwoShort.adf\n", encoding="ascii")
+    (request / "Distinct.m3u").write_text("One.adf\nMulti.adf\n", encoding="ascii")
+    (request / "Chain.m3u").write_text("One.adf\nTwo.adf\nThree.adf\n", encoding="ascii")
+    (request / "Unknown.m3u").write_text("One.adf\nTwo.adf\nUnknown.adf\n", encoding="ascii")
+    (request / "AUnknown.m3u").write_text(
+        "One.adf\nTwo.adf\nUnknownName.adf\n", encoding="ascii")
+    neutral_names = []
+    for number in range(30):
+        filename = f"Neutral{number:02d}.adf"
+        (request / filename).write_bytes(build_d_discovery(
+            [], f"Neutral{number:02d}".encode("ascii")))
+        neutral_names.append(filename)
+    (request / "Set32.m3u").write_text(
+        "\n".join(["One.adf", *neutral_names, "Two.adf"]) + "\n",
+        encoding="ascii")
+    for number in (0, 1):
+        raw = (request / f"Neutral{number:02d}.adf").read_bytes()
+        (request / f"Neutral{number:02d}.jfd").write_bytes(
+            _build_jfd_disk(raw, "D", f"Neutral{number:02d}".encode("ascii")))
+    jfd_names = [f"Neutral{number:02d}.jfd" if number < 2 else name
+                 for number, name in enumerate(neutral_names)]
+    (request / "Set32Jfd.m3u").write_text(
+        "\n".join(["One.adf", *jfd_names, "TwoJfd.jfd"]) + "\n",
+        encoding="ascii")
+    for signal in ("a", "a1", "a-chain", "a-back", "b", "b-back", "b-found", "b-found-between", "b-alternate", "b-single", "b-wimp",
+                   "b-otherdisc", "b-dir-load", "b-cat-dir", "b-d6",
+                   "b-108d3", "b-block", "b-distinct", "b-two-contexts",
+                   "b-error-branch", "b-nonx-error", "b-conflict",
+                   "b-open-file-dir"):
+        (args.output / f"arcdroid-disc-request-{signal}.rom").write_bytes(
+            build_disc_request_rom(signal))
     (args.output / "arcdroid-error-box-x.rom").write_bytes(build_error_box_rom(True))
     (args.output / "arcdroid-error-box-arbitration.rom").write_bytes(
         build_error_box_arbitration_rom())

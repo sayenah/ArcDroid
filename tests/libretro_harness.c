@@ -3,6 +3,7 @@
 #include "arcdroid_core.h"
 #include "arcdroid_engine.h"
 #include "boot_observation.h"
+#include "arc_io.h"
 #include "e_format_fixture.h"
 
 #include <assert.h>
@@ -23,6 +24,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <time.h>
 #include <unistd.h>
 
 #if defined(__has_feature)
@@ -74,6 +76,7 @@ static void read_cached_video(void)
    ++cached_video_reads;
 }
 static uint64_t video_trace_signature = UINT64_C(1469598103934665603);
+static bool idle_perf_mode;
 static double reported_rates[16];
 static unsigned reported_rate_count;
 static unsigned geometry_changes;
@@ -222,6 +225,15 @@ static const char *option_writes = "shadow";
 static const char *option_hard_disc = "off";
 static const char *option_short_tail = "missing";
 static const char *option_jfd_omitted = "file-data";
+static const char *option_disc_requests = "auto";
+static unsigned disc_request_a_logs, disc_request_b_logs;
+static unsigned disc_request_b_second_logs;
+static unsigned disc_request_b_suppressed_logs;
+static unsigned disc_request_b_first_logs, disc_request_b_first_suppressed_logs;
+static unsigned disc_insert_notices, disc_hint_notices, disc_failure_notices;
+static unsigned disc3_insert_notices;
+static unsigned disc32_insert_notices;
+static unsigned disc1_hint_notices;
 static const char *option_launch_ramdisc = "Auto";
 static bool real_boot_ramdisc_toggle_reset;
 static bool hd_guest_logging;
@@ -566,6 +578,26 @@ static void frontend_log(enum retro_log_level level, const char *format, ...)
    va_start(arguments, format);
    vsnprintf(message, sizeof(message), format, arguments);
    va_end(arguments);
+   if (!strncmp(message, "Disc request: signal=A ", 23u)) ++disc_request_a_logs;
+   if (!strncmp(message, "Disc request: signal=B ", 23u))
+   {
+      ++disc_request_b_logs;
+      if (strstr(message, " observation=1 "))
+      {
+         ++disc_request_b_first_logs;
+         if (strstr(message, " suppressed="))
+            ++disc_request_b_first_suppressed_logs;
+      }
+      if (strstr(message, " observation=2 ")) ++disc_request_b_second_logs;
+      if (strstr(message, " observation=2 ") &&
+          strstr(message, " suppressed=")) ++disc_request_b_suppressed_logs;
+   }
+   if (!strncmp(message, "Disc 2 inserted", 15u)) ++disc_insert_notices;
+   if (!strncmp(message, "Disc 3 inserted", 15u)) ++disc3_insert_notices;
+   if (!strncmp(message, "Disc 32 inserted", 16u)) ++disc32_insert_notices;
+   if (!strncmp(message, "Insert disc 2 with Disk Control", 31u)) ++disc_hint_notices;
+   if (!strncmp(message, "Insert disc 1 with Disk Control", 31u)) ++disc1_hint_notices;
+   if (!strncmp(message, "Disc 2 could not be inserted", 28u)) ++disc_failure_notices;
    if (!strncmp(message, "Error box: ready g=", 19u)) ++error_ready_logs;
    if (strstr(message, "Error box: answer g=") &&
        strstr(message, "state=pending")) ++error_pending_logs;
@@ -767,12 +799,13 @@ static bool environment(unsigned command, void *data)
          const struct retro_core_options_v2 *options = data;
          unsigned count = 0u;
          while (options->definitions[count].key) ++count;
-         assert(count == 39u && options->categories &&
+         assert(count == 40u && options->categories &&
                 !strcmp(options->categories[0].key, "pad_mapping") &&
                 !strcmp(options->categories[0].desc, "Pad Mapping"));
          bool found_osk = false, found_chooser = false;
          bool found_short_tail = false, found_ramdisc = false;
          bool found_jfd_omitted = false, found_hard_disc = false;
+         bool found_disc_requests = false;
          bool found_jfd_boot = false, found_adffs_package = false;
          unsigned pads = 0u;
          const char *categorized_pad_labels[ARC_PAD_PORTS * ARC_PAD_INPUT_COUNT] = {0};
@@ -783,6 +816,15 @@ static bool environment(unsigned command, void *data)
             assert(strcmp(definition->key, "arcdroid_install_saves") != 0);
             assert(strcmp(definition->key, "arcdroid_input_profile"));
             if (!strcmp(definition->key, "arcdroid_osk_toggle")) found_osk = true;
+            if (!strcmp(definition->key, "arcdroid_disc_requests"))
+            {
+               found_disc_requests = true;
+               assert(!strcmp(definition->default_value, "auto") &&
+                      !strcmp(definition->values[0].value, "auto") &&
+                      !strcmp(definition->values[1].value, "hint") &&
+                      !strcmp(definition->values[2].value, "off") &&
+                      !definition->values[3].value);
+            }
             if (!strcmp(definition->key, "arcdroid_short_tail"))
             {
                found_short_tail = true;
@@ -874,7 +916,7 @@ static bool environment(unsigned command, void *data)
                categorized_pad_labels[pads++] = definition->desc_categorized;
             }
          }
-         assert(found_osk && found_chooser && found_short_tail && found_jfd_omitted && found_hard_disc && found_ramdisc && found_jfd_boot &&
+         assert(found_osk && found_chooser && found_short_tail && found_jfd_omitted && found_hard_disc && found_disc_requests && found_ramdisc && found_jfd_boot &&
                 found_adffs_package && pads == 20u);
          return true;
       }
@@ -995,6 +1037,7 @@ static bool environment(unsigned command, void *data)
          else if (!strcmp(variable->key, "arcdroid_hard_disc")) variable->value = option_hard_disc;
          else if (!strcmp(variable->key, "arcdroid_short_tail")) variable->value = option_short_tail;
          else if (!strcmp(variable->key, "arcdroid_jfd_omitted")) variable->value = option_jfd_omitted;
+         else if (!strcmp(variable->key, "arcdroid_disc_requests")) variable->value = option_disc_requests;
          else if (!strcmp(variable->key, "arcdroid_launch_ramdisc"))
             variable->value = option_launch_ramdisc;
          else if (!strcmp(variable->key, "arcdroid_launch")) variable->value = option_launch;
@@ -1237,6 +1280,7 @@ static void video(const void *data, unsigned w, unsigned h, size_t pitch)
    memcpy(&last_video_pixel, data, sizeof(last_video_pixel));
    last_video_pixel &= 0x00ffffffu;
    assert(w == geometry_width && h == geometry_height);
+   if (idle_perf_mode) { ++video_frames; return; }
    if (measure_av)
    {
       /* Independent test-ROM timing oracle. generate_fixtures.py programs a
@@ -2271,6 +2315,31 @@ int main(int argc, char **argv)
    bool real_boot = false;
    bool input_layout_probe = false;
    bool error_box_probe = false;
+   bool disc_request_probe = false;
+   bool disc_request_a = false;
+   bool disc_request_hint = false, disc_request_off = false;
+   bool disc_request_chain = false, disc_request_negative = false;
+   bool disc_request_adffs = false, disc_request_box_ready = false;
+   bool disc_request_newio = false;
+   bool disc_request_short = false, disc_request_short_zero = false;
+   bool disc_request_outcome_cancel = false;
+   bool disc_request_back = false;
+   bool disc_request_three_images = false;
+   bool disc_request_many_images = false;
+   bool disc_request_effective = false;
+   bool disc_request_effective_jfd = false, disc_request_bound_jfd = false;
+   bool disc_request_path_cache = false, disc_request_first_log_limit = false;
+   bool disc_request_found_between_fail = false;
+   bool disc_request_perf = false;
+   bool disc_request_manual_reset = false, disc_request_manual_cancel = false;
+   bool disc_request_preflight_fail = false, disc_request_insert_fail = false;
+   bool disc_request_block = false;
+   bool disc_request_busy_retry = false;
+   const char *disc_request_manual_action = NULL;
+   bool disc_request_commit_checks = false;
+   bool disc_request_preflight_real = false;
+   bool idle_perf = false;
+   bool idle_trace = false;
    const char *error_arbitration_case = NULL;
    bool helper_stress = false;
    bool newio_smoke = false;
@@ -2303,8 +2372,79 @@ int main(int argc, char **argv)
    }
    else if (argc == 6 && !strcmp(argv[5], "--input-layout-probe"))
       input_layout_probe = true;
+   else if (argc == 6 && !strcmp(argv[5], "--idle-perf"))
+      idle_perf = true;
+   else if (argc == 6 && !strcmp(argv[5], "--idle-trace"))
+      idle_trace = true;
    else if (argc == 6 && !strcmp(argv[5], "--error-box-probe"))
       error_box_probe = true;
+   else if (argc == 6 && !strncmp(argv[5], "--disc-request-", 15u))
+   {
+      disc_request_probe = true;
+      disc_request_a = argv[5][15] == 'a';
+      disc_request_hint = strstr(argv[5], "-hint") != NULL;
+      if (!strcmp(argv[5], "--disc-request-b-log-limit")) disc_request_hint = true;
+      disc_request_off = strstr(argv[5], "-off") != NULL;
+      disc_request_chain = !strcmp(argv[5], "--disc-request-a-chain");
+      disc_request_back = !strcmp(argv[5], "--disc-request-a-back") ||
+         !strcmp(argv[5], "--disc-request-b-back");
+      disc_request_many_images = !strcmp(argv[5], "--disc-request-b-32");
+      disc_request_effective = !strcmp(argv[5], "--disc-request-effective");
+      disc_request_effective_jfd =
+         !strcmp(argv[5], "--disc-request-effective-jfd");
+      disc_request_bound_jfd =
+         !strcmp(argv[5], "--disc-request-bound-jfd");
+      disc_request_path_cache =
+         !strcmp(argv[5], "--disc-request-path-cache-32");
+      disc_request_first_log_limit =
+         !strcmp(argv[5], "--disc-request-b-first-log-limit");
+      disc_request_found_between_fail =
+         !strcmp(argv[5], "--disc-request-b-found-between-fail");
+      disc_request_perf = !strcmp(argv[5], "--disc-request-perf");
+      disc_request_manual_reset = !strcmp(argv[5], "--disc-request-a-manual-reset");
+      disc_request_manual_cancel = !strcmp(argv[5], "--disc-request-a-manual-cancel");
+      disc_request_preflight_fail = !strcmp(argv[5], "--disc-request-b-preflight-fail") ||
+         disc_request_found_between_fail;
+      disc_request_insert_fail = !strcmp(argv[5], "--disc-request-b-insert-fail");
+      disc_request_block = !strcmp(argv[5], "--disc-request-b-block");
+      disc_request_busy_retry = !strcmp(argv[5], "--disc-request-b-busy-retry");
+      if (strstr(argv[5], "--disc-request-b-action-") == argv[5])
+         disc_request_manual_action = argv[5] + strlen("--disc-request-b-action-");
+      disc_request_commit_checks =
+         !strcmp(argv[5], "--disc-request-commit-checks");
+      disc_request_preflight_real =
+         strstr(argv[5], "--disc-request-preflight-real-") == argv[5];
+      disc_request_adffs = !strcmp(argv[5], "--disc-request-b-adffs");
+      disc_request_box_ready = !strcmp(argv[5], "--disc-request-a-box-ready");
+      disc_request_newio = !strcmp(argv[5], "--disc-request-b-newio");
+      disc_request_short = !strncmp(argv[5], "--disc-request-a-short-", 23u);
+      disc_request_short_zero = !strcmp(argv[5], "--disc-request-a-short-zero");
+      disc_request_outcome_cancel =
+         !strcmp(argv[5], "--disc-request-a-outcome-cancel");
+      disc_request_three_images = disc_request_chain ||
+         !strcmp(argv[5], "--disc-request-b-duplicate") ||
+         !strcmp(argv[5], "--disc-request-b-unknown") ||
+         !strcmp(argv[5], "--disc-request-a-unknown") ||
+         !strcmp(argv[5], "--disc-request-b-found-perf");
+      disc_request_negative = !strcmp(argv[5], "--disc-request-b-single") ||
+         !strcmp(argv[5], "--disc-request-b-found") ||
+         !strcmp(argv[5], "--disc-request-b-found-perf") ||
+         !strcmp(argv[5], "--disc-request-b-distinct") ||
+         !strcmp(argv[5], "--disc-request-b-two-contexts") ||
+         !strcmp(argv[5], "--disc-request-b-wimp") ||
+         !strcmp(argv[5], "--disc-request-b-otherdisc") ||
+         !strcmp(argv[5], "--disc-request-b-dir-load") ||
+         !strcmp(argv[5], "--disc-request-b-108d3") ||
+         !strcmp(argv[5], "--disc-request-b-error-branch") ||
+         !strcmp(argv[5], "--disc-request-b-nonx-error") ||
+         !strcmp(argv[5], "--disc-request-b-conflict") ||
+         !strcmp(argv[5], "--disc-request-b-open-file-dir") ||
+         disc_request_adffs ||
+         !strcmp(argv[5], "--disc-request-b-duplicate") ||
+         !strcmp(argv[5], "--disc-request-b-unknown");
+      disc_request_negative = disc_request_negative ||
+         !strcmp(argv[5], "--disc-request-a-unknown");
+   }
    else if (argc == 6 && !strncmp(argv[5], "--error-box-arbitration-", 24u))
    {
       error_arbitration_case = argv[5] + 24u;
@@ -2695,7 +2835,7 @@ int main(int argc, char **argv)
          dlsym(module, "arc_platform_test_input_events");
       assert(arc_platform_test_input_events_reset && arc_platform_test_input_events);
    }
-   else if (!cmos_exerciser && !power_on_cmos_guest && !native_hd_guest && !real_boot && !newio_smoke && !jfd_writes && !jfd_create_step &&
+   else if (!idle_perf && !idle_trace && !disc_request_probe && !cmos_exerciser && !power_on_cmos_guest && !native_hd_guest && !real_boot && !newio_smoke && !jfd_writes && !jfd_create_step &&
        !jfd_identification_step && !jfd_file_data_step && !jfd_file_data_set &&
        !jfd_file_data_reasons &&
        !jfd_file_data_recovery && !jfd_file_data_unavailable &&
@@ -2954,6 +3094,551 @@ int main(int argc, char **argv)
    assert(retro_serialize_size() == 0u);
    struct retro_game_info game = {jfd_writes ? jfd_content_path : argv[3], NULL, 0u, NULL};
    uint64_t source_hash = hash_file(game.path);
+   if (disc_request_probe)
+   {
+      option_machine = (disc_request_newio ||
+         (disc_request_preflight_real &&
+          !strcmp(argv[5], "--disc-request-preflight-real-machine"))) ?
+         "A3020" : "A3000";
+      option_launch = "off";
+      option_jfd_boot = "native";
+      option_disc_requests = disc_request_off ? "off" :
+         disc_request_hint ? "hint" : "auto";
+      if (disc_request_short)
+         option_short_tail = disc_request_short_zero ? "missing" : "zero-filled";
+      phase = PHASE_LOAD; assert(retro_load_game(&game));
+      phase = PHASE_RUN;
+      if (disc_request_commit_checks || disc_request_preflight_real)
+      {
+         int (*commit)(unsigned, bool, bool, bool) =
+            dlsym(module, "arc_libretro_test_disc_commit");
+         unsigned (*eject_count)(void) =
+            dlsym(module, "arc_engine_test_disc_eject_count");
+         bool (*drive_media)(unsigned, bool *, char[41]) =
+            dlsym(module, "arc_engine_test_drive_media");
+         assert(commit && eject_count && drive_media &&
+                disk_control.get_num_images() == 2u);
+         unsigned before = eject_count();
+         if (disc_request_commit_checks)
+         {
+            bool (*timer_busy)(bool) =
+               dlsym(module, "arc_engine_test_disc_timer_busy");
+            assert(timer_busy && commit(1u, true, false, false) == 1 &&
+                   commit(1u, false, true, false) == 1 && timer_busy(true));
+            assert(commit(1u, false, false, false) == 1 && timer_busy(false));
+         }
+         else if (!strcmp(argv[5], "--disc-request-preflight-real-unreadable"))
+         {
+            const char *(*staged)(unsigned) =
+               dlsym(module, "arc_libretro_test_staged_path");
+            assert(staged && staged(1u));
+            FILE *original = fopen(staged(1u), "rb");
+            assert(original && !fseek(original, 0, SEEK_END));
+            long length = ftell(original);
+            assert(length > 0 && !fseek(original, 0, SEEK_SET));
+            void *bytes = malloc((size_t)length);
+            assert(bytes && fread(bytes, 1u, (size_t)length, original) ==
+                   (size_t)length && !fclose(original));
+            FILE *file = fopen(staged(1u), "wb");
+            assert(file && !fclose(file));
+            assert(commit(1u, false, false, false) == 2);
+            file = fopen(staged(1u), "wb");
+            assert(file && fwrite(bytes, 1u, (size_t)length, file) ==
+                   (size_t)length && !fclose(file));
+            free(bytes);
+         }
+         else if (!strcmp(argv[5], "--disc-request-preflight-real-store"))
+         {
+            const char *(*digest)(unsigned) =
+               dlsym(module, "arc_libretro_test_disc_jfd_digest");
+            bool (*make_path)(const char *) = dlsym(module, "arc_io_make_path");
+            unsigned (*decoded_count)(void) =
+               dlsym(module, "arc_libretro_test_decoded_jfd_count");
+            char directory[4096], slot[4096];
+            assert(digest && digest(1u) && make_path && decoded_count &&
+                   snprintf(directory, sizeof(directory), "%s/arcdroid/jfd", save_path) <
+                      (int)sizeof(directory) && make_path(directory));
+            assert(snprintf(slot, sizeof(slot), "%s/%s.a", directory, digest(1u)) <
+                   (int)sizeof(slot));
+            FILE *file = fopen(slot, "wb");
+            assert(file && fwrite("damaged", 1u, 7u, file) == 7u && !fclose(file));
+            assert(commit(1u, false, false, false) == 2 && decoded_count() == 0u);
+            assert(!remove(slot));
+         }
+         else
+            assert(!strcmp(argv[5], "--disc-request-preflight-real-machine") &&
+                   commit(1u, false, false, true) == 2);
+         assert(eject_count() == before && drive_media(0u, NULL, NULL) &&
+                disk_control.get_image_index() == 0u &&
+                !disk_control.get_eject_state());
+         retro_unload_game(); retro_deinit();
+         assert(open_files == 0u && open_dirs == 0u && dlclose(module) == 0);
+         puts("disc-request-commit-preconditions: passed");
+         return 0;
+      }
+      if (disc_request_short)
+      {
+         bool (*media_stamp)(char[41]) =
+            dlsym(module, "arc_libretro_test_boot_media_digest");
+         size_t (*media_extent)(void) =
+            dlsym(module, "arc_engine_test_media_extent");
+         char automatic[41], manual[41];
+         assert(media_stamp && media_extent && disk_control.get_num_images() == 2u);
+         option_short_tail = disc_request_short_zero ? "zero-filled" : "missing";
+         variable_update = true;
+         retro_run();
+         assert(disk_control.get_image_index() == 0u);
+         bool inserted = false;
+         for (unsigned frame = 0u; frame < 60u; ++frame)
+         {
+            retro_run();
+            if (disk_control.get_image_index() == 1u)
+            { inserted = true; break; }
+         }
+         assert(inserted && !disk_control.get_eject_state());
+         retro_run();
+         assert(media_stamp(automatic));
+         size_t automatic_extent = media_extent();
+         assert(automatic_extent == (disc_request_short_zero ? 0u : 818176u));
+         assert(disk_control.set_eject_state(true) &&
+                disk_control.set_eject_state(false));
+         assert(disk_control.get_image_index() == 1u &&
+                media_stamp(manual) && !strcmp(automatic, manual) &&
+                media_extent() == automatic_extent);
+         retro_unload_game(); retro_deinit();
+         assert(open_files == 0u && open_dirs == 0u && dlclose(module) == 0);
+         puts("disc-request-short-presentation: passed");
+         return 0;
+      }
+      if (disc_request_effective)
+      {
+         int (*candidate)(const char *, unsigned) =
+            dlsym(module, "arc_libretro_test_disc_candidate");
+         const char *(*staged_path)(unsigned) =
+            dlsym(module, "arc_libretro_test_staged_path");
+         ArcIoFile *(*open_file)(const char *, bool) =
+            dlsym(module, "arc_io_open_file");
+         int64_t (*seek_file)(ArcIoFile *, int64_t, int) =
+            dlsym(module, "arc_io_seek_file");
+         size_t (*write_file)(ArcIoFile *, const void *, size_t) =
+            dlsym(module, "arc_io_write_file");
+         bool (*flush_file)(ArcIoFile *) = dlsym(module, "arc_io_flush_file");
+         bool (*close_file)(ArcIoFile *) = dlsym(module, "arc_io_close_file");
+         assert(candidate && staged_path && open_file && seek_file &&
+                write_file && flush_file && close_file);
+         const char *path = "$.!Demo.!Run";
+         assert(candidate(path, ARC_DISC_CATALOGUE) == 1);
+         assert(candidate("$.!Demo", ARC_DISC_CATALOGUE) == 1 &&
+                candidate("$.!Demo", ARC_DISC_OPEN_FILE) == -1 &&
+                candidate("$.!Demo", ARC_DISC_OPEN_DIR) == 1);
+         const char *staged = staged_path(1u);
+         assert(staged && *staged);
+         ArcIoFile *file = open_file(staged, true);
+         assert(file && seek_file(file, 1029, RETRO_VFS_SEEK_POSITION_START) == 1029);
+         const char absent = 0;
+         assert(write_file(file, &absent, 1u) == 1u);
+         assert(flush_file(file));
+         assert(candidate(path, ARC_DISC_CATALOGUE) == -1);
+         assert(seek_file(file, 1029, RETRO_VFS_SEEK_POSITION_START) == 1029);
+         const char present = '!';
+         assert(write_file(file, &present, 1u) == 1u);
+         assert(flush_file(file));
+         assert(close_file(file));
+         assert(candidate(path, ARC_DISC_CATALOGUE) == 1);
+         retro_unload_game(); retro_deinit();
+         assert(open_files == 0u && open_dirs == 0u && dlclose(module) == 0);
+         puts("disc-request-effective: passed");
+         return 0;
+      }
+      if (disc_request_path_cache)
+      {
+         int (*candidate)(const char *, unsigned) =
+            dlsym(module, "arc_libretro_test_disc_candidate");
+         unsigned (*decodes)(void) =
+            dlsym(module, "arc_libretro_test_disc_temporary_jfd_decodes");
+         unsigned (*peak)(void) =
+            dlsym(module, "arc_libretro_test_disc_temporary_jfd_peak");
+         unsigned (*live)(void) =
+            dlsym(module, "arc_libretro_test_disc_temporary_jfd_live");
+         const char *paths[] = {"$.Absent0", "$.Absent1", "$.Absent2"};
+         assert(candidate && decodes && peak && live &&
+                disk_control.get_num_images() == 32u);
+         for (unsigned i = 0u; i < 3u; ++i)
+            assert(candidate(paths[i], ARC_DISC_CATALOGUE) == -1);
+         unsigned warm_decodes = decodes();
+         assert(warm_decodes == 9u);
+         for (unsigned repeat = 0u; repeat < 4u; ++repeat)
+            for (unsigned i = 0u; i < 3u; ++i)
+               assert(candidate(paths[i], ARC_DISC_CATALOGUE) == -1);
+         assert(decodes() == warm_decodes && peak() <= 1u && live() == 0u);
+         retro_unload_game(); retro_deinit();
+         assert(open_files == 0u && open_dirs == 0u && dlclose(module) == 0);
+         puts("disc-request-path-cache-32: passed");
+         return 0;
+      }
+      if (disc_request_effective_jfd || disc_request_bound_jfd)
+      {
+         int (*candidate)(const char *, unsigned) =
+            dlsym(module, "arc_libretro_test_disc_candidate");
+         unsigned (*peak)(void) =
+            dlsym(module, "arc_libretro_test_disc_temporary_jfd_peak");
+         unsigned (*live)(void) =
+            dlsym(module, "arc_libretro_test_disc_temporary_jfd_live");
+         unsigned (*decodes)(void) =
+            dlsym(module, "arc_libretro_test_disc_temporary_jfd_decodes");
+         assert(candidate && peak && live && decodes);
+         if (disc_request_effective_jfd)
+         {
+            bool (*root_name)(unsigned, uint8_t) =
+               dlsym(module, "arc_libretro_test_disc_jfd_root_name");
+            bool (*write_all)(const char *, const void *, size_t) =
+               dlsym(module, "arc_io_write_all");
+            bool (*remove_file)(const char *) = dlsym(module, "arc_io_remove");
+            char unrelated[4096];
+            assert(root_name && disk_control.get_num_images() == 2u &&
+                   candidate("$.!Demo.!Run", ARC_DISC_CATALOGUE) == 1 &&
+                   write_all && remove_file &&
+                   snprintf(unrelated, sizeof(unrelated), "%s/unrelated.tmp", save_path) <
+                      (int)sizeof(unrelated));
+            unsigned cached_decodes = decodes();
+            assert(candidate("$.!Demo.!Run", ARC_DISC_CATALOGUE) == 1 &&
+                   write_all(unrelated, "x", 1u) &&
+                   candidate("$.!Demo.!Run", ARC_DISC_CATALOGUE) == 1 &&
+                   decodes() == cached_decodes && remove_file(unrelated));
+            assert(root_name(1u, 0u));
+            assert(candidate("$.!Demo.!Run", ARC_DISC_CATALOGUE) == -1 &&
+                   decodes() > cached_decodes);
+            cached_decodes = decodes();
+            assert(root_name(1u, '!') &&
+                   candidate("$.!Demo.!Run", ARC_DISC_CATALOGUE) == 1 &&
+                   decodes() > cached_decodes);
+         }
+         else
+         {
+            assert(disk_control.get_num_images() == 32u);
+            assert(candidate("$.!Demo.!Run", ARC_DISC_CATALOGUE) == 31);
+         }
+         assert(peak() <= 1u && live() == 0u);
+         retro_unload_game(); retro_deinit();
+         assert(open_files == 0u && open_dirs == 0u && dlclose(module) == 0);
+         puts("disc-request-jfd-effective-bound: passed");
+         return 0;
+      }
+      if (disc_request_perf)
+      {
+         int (*candidate)(const char *, unsigned) =
+            dlsym(module, "arc_libretro_test_disc_candidate");
+         unsigned (*decodes)(void) =
+            dlsym(module, "arc_libretro_test_disc_temporary_jfd_decodes");
+         assert(candidate && decodes && disk_control.get_num_images() == 3u);
+         clock_t before = clock();
+         assert(candidate("$.!Demo.!Run", ARC_DISC_CATALOGUE) == 2);
+         clock_t cold = clock() - before;
+         assert(decodes() == 2u);
+         before = clock();
+         for (unsigned i=0u; i<1000u; ++i)
+            assert(candidate("$.!Demo.!Run", ARC_DISC_CATALOGUE) == 2);
+         clock_t warm = clock() - before;
+         assert(decodes() == 2u);
+         printf("disc-request resolver ADF+2x827KB JFD cold=%.3f ms warm=%.3f us/lookup\n",
+                1000.0 * cold / CLOCKS_PER_SEC,
+                1000000.0 * warm / (CLOCKS_PER_SEC * 1000.0));
+         retro_unload_game(); retro_deinit();
+         assert(open_files == 0u && open_dirs == 0u && dlclose(module) == 0);
+         return 0;
+      }
+      if (disc_request_preflight_fail)
+      {
+         void (*fail_preflight)(void) =
+            dlsym(module, "arc_libretro_test_fail_disc_preflight");
+         assert(fail_preflight);
+         fail_preflight();
+      }
+      if (disc_request_insert_fail)
+      {
+         void (*fail_next_insert)(void) =
+            dlsym(module, "arc_engine_test_fail_next_media_insert");
+         assert(fail_next_insert);
+         fail_next_insert();
+      }
+      assert(disk_control.get_num_images() ==
+             (disc_request_many_images ? 32u : disc_request_three_images ? 3u : 2u) &&
+             disk_control.get_image_index() == 0u);
+      if (disc_request_adffs)
+      {
+         void (*set_adffs)(bool) = dlsym(module, "arc_libretro_test_disc_adffs_active");
+         assert(set_adffs);
+         set_adffs(true);
+      }
+      void (*hold_busy)(bool) = NULL;
+      if (disc_request_busy_retry || disc_request_first_log_limit)
+      {
+         hold_busy = dlsym(module, "arc_engine_test_disc_hold_busy");
+         assert(hold_busy);
+         hold_busy(true);
+      }
+      retro_run();
+      assert(disk_control.get_image_index() == 0u);
+      if (disc_request_first_log_limit)
+      {
+         for (unsigned frame = 0u; frame < 40u; ++frame) retro_run();
+         assert(disc_request_b_first_logs == 1u);
+         for (unsigned frame = 0u; frame < 600u; ++frame) retro_run();
+         assert(disc_request_b_first_logs == 2u &&
+                disc_request_b_first_suppressed_logs == 1u &&
+                disk_control.get_image_index() == 0u);
+         hold_busy(false);
+         retro_unload_game(); retro_deinit();
+         assert(open_files == 0u && open_dirs == 0u && dlclose(module) == 0);
+         puts("disc-request-b-first-log-limit: passed");
+         return 0;
+      }
+      if (disc_request_busy_retry)
+      {
+         for (unsigned frame=0u; frame<40u; ++frame) retro_run();
+         assert(disk_control.get_image_index() == 0u &&
+                !disc_insert_notices && !disc_failure_notices);
+         hold_busy(false);
+         bool inserted = false;
+         for (unsigned frame=0u; frame<80u; ++frame)
+         {
+            retro_run();
+            if (disk_control.get_image_index() == 1u)
+            { inserted = true; break; }
+         }
+         retro_run();
+         assert(inserted && disc_insert_notices == 1u &&
+                !disc_failure_notices);
+         retro_unload_game(); retro_deinit();
+         assert(open_files == 0u && open_dirs == 0u && dlclose(module) == 0);
+         puts("disc-request-b-busy-retry: passed");
+         return 0;
+      }
+      if (disc_request_outcome_cancel)
+      {
+         bool (*arm_outcome)(const char *) =
+            dlsym(module, "arc_engine_launch_outcome_arm");
+         void (*snapshot)(ArcLaunchOutcome *) =
+            dlsym(module, "arc_engine_launch_outcome_snapshot");
+         ArcLaunchOutcome outcome = {0};
+         assert(arm_outcome && snapshot &&
+                arm_outcome("Run ADFS::0.$.!Demo.!Run"));
+         snapshot(&outcome);
+         assert(outcome.state == ARC_OUTCOME_WAIT);
+      }
+      if (disc_request_box_ready)
+      {
+         void (*set_ready)(bool) = dlsym(module, "arc_engine_test_disc_error_ready");
+         assert(set_ready);
+         set_ready(true);
+         retro_run();
+         assert(disk_control.get_image_index() == 0u && !disc_insert_notices);
+         set_ready(false);
+      }
+      if (disc_request_manual_cancel)
+      {
+         assert(disk_control.set_eject_state(true));
+         for (unsigned frame = 0u; frame < 10u; ++frame) retro_run();
+         assert(disk_control.get_eject_state() && !disc_insert_notices &&
+                !disc_failure_notices);
+         retro_unload_game(); retro_deinit();
+         assert(open_files == 0u && open_dirs == 0u && dlclose(module) == 0);
+         puts("disc-request-manual-cancel: passed");
+         return 0;
+      }
+      unsigned inserted_frame = 0u;
+      unsigned target_index = disc_request_many_images ? 31u :
+         disc_request_chain ? 2u : 1u;
+      for (unsigned frame = 2u; frame <= (disc_request_chain ? 120u : 60u); ++frame)
+      {
+         retro_run();
+         if (disk_control.get_image_index() == target_index)
+         { inserted_frame = frame; break; }
+      }
+      bool should_insert = !(disc_request_hint || disc_request_off ||
+                             disc_request_negative || disc_request_preflight_fail ||
+                             disc_request_insert_fail);
+      assert((inserted_frame >= 2u) == should_insert);
+      if (!strcmp(argv[5], "--disc-request-b-found-between") ||
+          disc_request_found_between_fail)
+      {
+         bool (*guest_word)(uint32_t, uint32_t *) =
+            dlsym(module, "arc_engine_test_guest_word");
+         uint32_t failed_lookups = 0u;
+         assert(guest_word && guest_word(0x00000b00u, &failed_lookups) &&
+                failed_lookups >= 2u);
+      }
+      if (disc_request_manual_action)
+      {
+         bool (*owned)(void) = dlsym(module, "arc_libretro_test_disc_owned");
+         void (*swi)(uint32_t,uint32_t,uint32_t,uint32_t,uint32_t,uint32_t,uint32_t) =
+            dlsym(module, "arc_engine_boot_watch_swi");
+         void (*snapshot)(ArcDiscRequest *) =
+            dlsym(module, "arc_engine_disc_snapshot");
+         ArcDiscRequest request = {0};
+         assert(owned && swi && snapshot && owned() && inserted_frame);
+         swi(0x20008u,5u,0x03803000u,0u,0u,0x00000800u,0u);
+         snapshot(&request);
+         assert(request.armed);
+         if (!strcmp(disc_request_manual_action,"eject"))
+            assert(disk_control.set_eject_state(true));
+         else if (!strcmp(disc_request_manual_action,"index"))
+            assert(!disk_control.set_image_index(0u));
+         else
+            assert(!strcmp(disc_request_manual_action,"insert") &&
+                   disk_control.set_eject_state(false));
+         snapshot(&request);
+         assert(!owned() && !request.armed && !request.a_active &&
+                !request.b_triggered && !request.observations);
+         retro_unload_game(); retro_deinit();
+         assert(open_files == 0u && open_dirs == 0u && dlclose(module) == 0);
+         puts("disc-request-manual-action: passed");
+         return 0;
+      }
+      if (disc_request_outcome_cancel)
+      {
+         void (*snapshot)(ArcLaunchOutcome *) =
+            dlsym(module, "arc_engine_launch_outcome_snapshot");
+         ArcLaunchOutcome outcome = {0};
+         assert(snapshot && inserted_frame >= 2u);
+         snapshot(&outcome);
+         assert(outcome.state == ARC_OUTCOME_CANCEL &&
+                outcome.cancel_reason && !strcmp(outcome.cancel_reason, "media"));
+      }
+      retro_run();
+      if (!strcmp(argv[5], "--disc-request-b-found") ||
+          !strcmp(argv[5], "--disc-request-b-found-perf"))
+      {
+         unsigned (*resolve_calls)(void) =
+            dlsym(module, "arc_engine_test_disc_resolve_calls");
+         assert(resolve_calls && resolve_calls() == 0u);
+      }
+      if (disc_request_block)
+      {
+         bool (*guest_word)(uint32_t, uint32_t *) =
+            dlsym(module, "arc_engine_test_guest_word");
+         uint32_t lookups = 0u;
+         uint32_t *registers = dlsym(module, "armregs");
+         assert(guest_word && guest_word(0x00000b00u, &lookups) &&
+                lookups == 2u && registers && (registers[15] & 3u) == 3u);
+      }
+      if (!strcmp(argv[5], "--disc-request-b-error-branch") ||
+          !strcmp(argv[5], "--disc-request-b-nonx-error") ||
+          !strcmp(argv[5], "--disc-request-b-conflict"))
+      {
+         bool (*guest_word)(uint32_t, uint32_t *) =
+            dlsym(module, "arc_engine_test_guest_word");
+         uint32_t lookups = 0u;
+         assert(guest_word && guest_word(0x00000b00u, &lookups) &&
+                lookups >= 2u);
+      }
+      if (disc_request_a && !disc_request_chain && !disc_request_back &&
+          !disc_request_hint && !disc_request_off)
+      {
+         uint32_t *registers = dlsym(module, "armregs");
+         assert(registers && (registers[15] & 3u) == 0u);
+      }
+      if (disc_request_back)
+      {
+         for (unsigned frame = 0u; frame < 120u && !disc1_hint_notices; ++frame)
+            retro_run();
+         assert(disc1_hint_notices == 1u && disc_insert_notices == 1u &&
+                disk_control.get_image_index() == 1u);
+      }
+      if (disc_request_preflight_fail || disc_request_insert_fail)
+      {
+         assert(disc_failure_notices == 1u && !disc_insert_notices &&
+                !disk_control.get_eject_state() &&
+                disk_control.get_image_index() == 0u);
+         if (disc_request_found_between_fail)
+         {
+            for (unsigned frame=0u; frame<120u; ++frame) retro_run();
+            assert(disc_failure_notices == 1u && !disc_insert_notices &&
+                   disk_control.get_image_index() == 0u);
+         }
+      }
+      else assert(!disc_failure_notices);
+      if (disc_request_hint)
+         assert(!disc_insert_notices && disc_hint_notices == 1u &&
+                disk_control.get_image_index() == 0u);
+      else if (disc_request_off)
+         assert(!disc_insert_notices && !disc_hint_notices &&
+                !disc_request_a_logs && !disc_request_b_logs &&
+                disk_control.get_image_index() == 0u);
+      else if (disc_request_negative || disc_request_preflight_fail ||
+               disc_request_insert_fail)
+         assert(!disc_insert_notices && !disc_hint_notices &&
+                disk_control.get_image_index() == 0u);
+      else
+         assert(disc_insert_notices == (disc_request_many_images ? 0u : 1u) &&
+                disc3_insert_notices == (disc_request_chain ? 1u : 0u) &&
+                disc32_insert_notices == (disc_request_many_images ? 1u : 0u) &&
+                !disc_hint_notices &&
+                disk_control.get_image_index() == target_index);
+      if (!disc_request_off && !disc_request_negative)
+         assert(disc_request_a ? disc_request_a_logs >= 1u :
+                disc_request_b_logs >= 2u);
+      if (!strcmp(argv[5], "--disc-request-b-hint") ||
+          disc_request_preflight_fail || disc_request_insert_fail)
+         assert(disc_request_b_second_logs == 1u);
+      if (!strcmp(argv[5], "--disc-request-b-log-limit"))
+      {
+         for (unsigned frame=0u; frame<600u; ++frame) retro_run();
+         assert(disc_request_b_second_logs == 2u &&
+                disc_request_b_suppressed_logs == 1u &&
+                disc_hint_notices == 1u);
+      }
+      if (disc_request_adffs)
+      {
+         void (*set_adffs)(bool) = dlsym(module, "arc_libretro_test_disc_adffs_active");
+         set_adffs(false);
+      }
+      if (disc_request_manual_reset)
+      {
+         assert(disk_control.set_eject_state(true));
+         assert(disk_control.set_image_index(1u));
+         assert(disk_control.set_eject_state(false));
+         retro_reset();
+         assert(disk_control.get_image_index() == 1u &&
+                !disk_control.get_eject_state());
+      }
+      else
+      retro_reset();
+      if (!disc_request_manual_reset)
+         assert(disk_control.get_image_index() == 0u &&
+                !disk_control.get_eject_state());
+      retro_unload_game();
+      retro_deinit();
+      assert(open_files == 0u && open_dirs == 0u && dlclose(module) == 0);
+      puts("disc-request-rom: passed");
+      return 0;
+   }
+   if (idle_perf || idle_trace)
+   {
+      idle_perf_mode = idle_perf;
+      option_machine = "A3000";
+      option_launch = "off";
+      phase = PHASE_LOAD; assert(retro_load_game(&game));
+      phase = PHASE_RUN;
+      for (unsigned frame = 0u; frame < 30u; ++frame) retro_run();
+      if (idle_perf)
+      {
+         clock_t before = clock();
+         for (unsigned frame = 0u; frame < 3000u; ++frame) retro_run();
+         clock_t elapsed = clock() - before;
+         assert(elapsed > 0);
+         printf("idle frames/s %.3f\n", 3000.0 * CLOCKS_PER_SEC / elapsed);
+      }
+      else
+      {
+         for (unsigned frame = 0u; frame < 300u; ++frame) retro_run();
+         printf("idle trace %016llx frames=%u\n",
+                (unsigned long long)video_trace_signature, video_frames);
+      }
+      retro_unload_game(); retro_deinit();
+      assert(open_files == 0u && open_dirs == 0u && dlclose(module) == 0);
+      return 0;
+   }
    if (helper_stress)
    {
       struct retro_game_info application_game = {argv[12], NULL, 0u, NULL};

@@ -1071,3 +1071,13 @@ void c82c711_fdc_test_counts(unsigned *commands, unsigned *read_data,
 	if (read_success) *read_success = arc_test_read_success_count;
 }
 #endif
+
+/* ArcDroid: read-only media transaction guard. */
+int c82c711_fdc_idle(void)
+{
+	const FDC *fdc = &_fdc;
+	return c82c711_fdc_initialized && fdc->stat == 0x80u &&
+	       fdc->pnum == fdc->ptot && !fdc->paramstogo &&
+	       !fdc->data_ready && !fdc->written && !fdc->inread &&
+	       !fdc->format_state && !fdc->timer.enabled;
+}

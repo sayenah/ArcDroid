@@ -2654,6 +2654,11 @@ void execarm(int cycles_to_execute)
 
 		if (!prefabort)
 		{
+			/* ArcDroid: one guarded check before the resumed instruction. */
+			if (__builtin_expect(arc_engine_disc_watch_armed, 0))
+				arc_engine_disc_poll((PC - 8u) & 0x03fffffcu,
+				                     (uint32_t)mode, armregs[13],
+				                     armregs[0], armregs[15]);
 			if (debugon)
 				debugger_do();
 

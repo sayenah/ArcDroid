@@ -45,6 +45,7 @@ int64_t arc_io_file_length(ArcIoFile *file);
 int64_t arc_io_seek_file(ArcIoFile *file, int64_t offset, int origin);
 size_t arc_io_read_file(ArcIoFile *file, void *data, size_t size);
 size_t arc_io_write_file(ArcIoFile *file, const void *data, size_t size);
+void arc_io_set_write_observer(void (*observer)(const char *path));
 bool arc_io_flush_file(ArcIoFile *file);
 bool arc_io_truncate_file(ArcIoFile *file, int64_t length);
 

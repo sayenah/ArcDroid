@@ -2614,3 +2614,50 @@ arcdroid_pad1_a = "$mapping"
     } finally { Stop-MediaRun $errorRun }
 }
 Write-Host 'Slice 25 Windows RetroArch: authored error box, hint, default and custom Pad Mapping passed'
+
+# A ROM-owned FileCore request selects disc 2. Frontend Previous then moves
+# from the core-reported index 1 to index 0. A fresh process starts on disc 1.
+Copy-Item -Force (Join-Path $InputDirectory 'arcdroid-disc-request-a.rom') $firmware
+Copy-Item -Force (Join-Path $InputDirectory 'arcdroid_libretro_test.dll') $core
+$requestSet = Join-Path $InputDirectory 'disc-request/Set.m3u'
+@"
+arcdroid_machine = "A3000"
+arcdroid_launch = "off"
+arcdroid_disc_requests = "auto"
+"@ | Set-Content -Encoding ASCII $coreOptions
+function Wait-DiscInsertion($Run, [int]$Count) {
+    $deadline = [DateTime]::UtcNow.AddSeconds(15)
+    do {
+        $lines = @(Get-Content $Run.RetroLog -ErrorAction SilentlyContinue |
+            Where-Object { $_.Contains('Disc request: signal=A name=Two candidate=2 action=inserted') })
+        if ($lines.Count -ge $Count) { return }
+        Start-Sleep -Milliseconds 100
+    } while ([DateTime]::UtcNow -lt $deadline)
+    throw "$($Run.Name) expected $Count automatic disc-2 insertions; log=[$(Get-RunLogTail $Run)]"
+}
+function Wait-DiscLogLine($Run, [string]$Text) {
+    $deadline = [DateTime]::UtcNow.AddSeconds(15)
+    do {
+        if (@(Get-Content $Run.RetroLog -ErrorAction SilentlyContinue |
+            Where-Object { $_.Contains($Text) }).Count) { return }
+        Start-Sleep -Milliseconds 100
+    } while ([DateTime]::UtcNow -lt $deadline)
+    throw "$($Run.Name) expected '$Text'; log=[$(Get-RunLogTail $Run)]"
+}
+$requestRun = Start-MediaRun $requestSet 'slice26-disc-request'
+try {
+    Wait-DiscInsertion $requestRun 1
+    Send-MediaCommand $requestRun 'DISK_EJECT_TOGGLE'
+    Wait-DiscLogLine $requestRun 'Ejected virtual disc tray.'
+    Send-MediaCommand $requestRun 'DISK_PREV'
+    Wait-DiscLogLine $requestRun 'Setting disc in tray: 1/2 - One'
+    Send-MediaCommand $requestRun 'DISK_EJECT_TOGGLE'
+    Wait-DiscLogLine $requestRun 'Closed virtual disc tray.'
+} finally { Stop-MediaRun $requestRun }
+$requestReload = Start-MediaRun $requestSet 'slice26-disc-request-reload'
+try {
+    Wait-DiscLogLine $requestReload 'Launch: boot=0 disc="One"'
+    Wait-DiscInsertion $requestReload 1
+}
+finally { Stop-MediaRun $requestReload }
+Write-Host 'Slice 26 Windows RetroArch: automatic insertion, Disk Control previous-index selection and fresh-process launch image passed'

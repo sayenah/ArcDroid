@@ -508,3 +508,9 @@ static fdc_funcs_t wd1770_fdc_funcs =
 	.indexpulse     = wd1770_fdc_indexpulse,
 	.lostdata      = wd1770_lostdata
 };
+
+/* ArcDroid: read-only media transaction guard. */
+int wd1770_idle(void)
+{
+	return !(wd1770.status & 1u) && !timer_is_enabled(&wd1770.timer);
+}
