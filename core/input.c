@@ -323,3 +323,23 @@ void arc_input_pad_key_sets(ArcInputState *state,
                                                     false, false, 0, 0}))
             return;
 }
+
+/* Widen before comparison, including INT16_MIN. Each axis retains only its
+ * own direction; a reversal must reach the opposite press threshold. */
+static unsigned arc_stick_axis(int32_t value, unsigned previous,
+                               unsigned negative, unsigned positive)
+{
+   if (value <= -16384 || ((previous & negative) && value <= -13107))
+      return negative;
+   if (value >= 16384 || ((previous & positive) && value >= 13107))
+      return positive;
+   return 0u;
+}
+
+unsigned arc_input_stick_directions(int16_t x, int16_t y, unsigned previous)
+{
+   return arc_stick_axis((int32_t)x, previous, 1u << ARC_PAD_LEFT,
+                         1u << ARC_PAD_RIGHT) |
+          arc_stick_axis((int32_t)y, previous, 1u << ARC_PAD_UP,
+                         1u << ARC_PAD_DOWN);
+}

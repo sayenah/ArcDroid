@@ -438,6 +438,9 @@ typedef enum {
    ARC_PAD_SELECT
 } ArcPadInput;
 
+/* Pure left-stick classifier. Bits use ARC_PAD_UP..ARC_PAD_RIGHT. */
+unsigned arc_input_stick_directions(int16_t x, int16_t y, unsigned previous);
+
 typedef struct {
    bool bound;
    unsigned key;

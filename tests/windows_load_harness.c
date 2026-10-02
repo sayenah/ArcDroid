@@ -159,7 +159,7 @@ static bool environment(unsigned command, void *data)
       case RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2:
       {
          const struct retro_core_options_v2 *options = data;
-         unsigned count = 0u;
+         unsigned count = 0u, sticks = 0u;
          const struct retro_core_option_v2_definition *hard_disc = NULL;
          const struct retro_core_option_v2_definition *short_tail = NULL;
          const struct retro_core_option_v2_definition *ramdisc = NULL;
@@ -172,6 +172,19 @@ static bool environment(unsigned command, void *data)
                           "arcdroid_install_saves") != 0);
             assert(strcmp(options->definitions[count].key,
                           "arcdroid_input_profile") != 0);
+            if (!strcmp(options->definitions[count].key, "arcdroid_pad1_left_stick") ||
+                !strcmp(options->definitions[count].key, "arcdroid_pad2_left_stick"))
+            {
+               const struct retro_core_option_v2_definition *stick = &options->definitions[count];
+               assert(!strcmp(stick->category_key, "pad_mapping") &&
+                      !strcmp(stick->default_value, "dpad") &&
+                      !strcmp(stick->values[0].value, "dpad") &&
+                      !strcmp(stick->values[0].label, "D-pad") &&
+                      !strcmp(stick->values[1].value, "off") &&
+                      !strcmp(stick->values[1].label, "Off") &&
+                      !stick->values[2].value);
+               ++sticks;
+            }
             if (!strcmp(options->definitions[count].key, "arcdroid_hard_disc"))
             {
                assert(!hard_disc);
@@ -194,7 +207,7 @@ static bool environment(unsigned command, void *data)
             }
             ++count;
          }
-         assert(count == 40u);
+         assert(count == 42u && sticks == 2u);
          assert(hard_disc && !hard_disc->category_key &&
                 hard_disc->default_value &&
                 !strcmp(hard_disc->default_value, "auto") &&

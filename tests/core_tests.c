@@ -4051,13 +4051,54 @@ static void test_launch_ramdisc(void)
    puts("launch-ramdisc-unit: passed");
 }
 
+static void test_left_stick(void)
+{
+   const unsigned left = 1u << ARC_PAD_LEFT, right = 1u << ARC_PAD_RIGHT;
+   const unsigned up = 1u << ARC_PAD_UP, down = 1u << ARC_PAD_DOWN;
+   const int16_t boundaries[] = {13106, 13107, 16383, 16384};
+   for (unsigned axis = 0u; axis < 2u; ++axis)
+      for (int sign = -1; sign <= 1; sign += 2)
+      {
+         unsigned bit = axis ? (sign < 0 ? up : down) : (sign < 0 ? left : right);
+         for (unsigned i = 0u; i < 4u; ++i)
+         {
+            int16_t value = (int16_t)(sign * boundaries[i]);
+            int16_t x = axis ? 0 : value, y = axis ? value : 0;
+            assert(arc_input_stick_directions(x, y, 0u) == (i == 3u ? bit : 0u));
+            assert(arc_input_stick_directions(x, y, bit) == (i ? bit : 0u));
+         }
+         unsigned previous = 0u;
+         const int16_t noise[] = {16383,16384,16383,13107,13106,13107,16383,16384};
+         const bool expected[] = {false,true,true,true,false,false,false,true};
+         for (unsigned i = 0u; i < 8u; ++i)
+         {
+            int16_t value = (int16_t)(sign * noise[i]);
+            previous = arc_input_stick_directions(axis ? 0 : value, axis ? value : 0, previous);
+            assert(previous == (expected[i] ? bit : 0u));
+         }
+      }
+   assert(arc_input_stick_directions(-32768, -32768, 0u) == (left | up));
+   assert(arc_input_stick_directions(32767, 32767, left | up) == (right | down));
+   assert(arc_input_stick_directions(-1, 1, right | up) == 0u);
+   assert(arc_input_stick_directions(-16383, 16383, right | up) == 0u);
+   assert(arc_input_stick_directions(-16384, 16384, right | up) == (left | down));
+   assert(arc_input_stick_directions(13106, -13107, right | up) == up);
+   assert(arc_input_stick_directions(0, -13106, up) == 0u);
+   /* Every representable sample continuously inside the release region is inert. */
+   for (int value = -13106; value <= 13106; ++value)
+      assert(arc_input_stick_directions((int16_t)value, (int16_t)-value, 0u) == 0u);
+   puts("left-stick-unit: passed");
+}
+
 int main(int argc, char **argv)
 {
    assert(argc == 2 || (argc == 3 && (!strcmp(argv[2], "--short-tail") ||
-                                          !strcmp(argv[2], "--launch-ramdisc"))));
+                                          !strcmp(argv[2], "--launch-ramdisc") ||
+                                          !strcmp(argv[2], "--left-stick"))));
    if (argc == 3)
    {
-      if (!strcmp(argv[2], "--launch-ramdisc")) test_launch_ramdisc();
+      if (!strcmp(argv[2], "--left-stick")) test_left_stick();
+      else if (!strcmp(argv[2], "--launch-ramdisc")) test_launch_ramdisc();
       else { test_short_free_map(argv[1]); puts("short-tail-unit: passed"); }
       return 0;
    }
@@ -4079,6 +4120,7 @@ int main(int argc, char **argv)
    test_playlists();
    test_folder_sets();
    test_jfd_parser(argv[1]);
+   test_left_stick();
    test_input();
    test_input_mapping();
    test_osk();

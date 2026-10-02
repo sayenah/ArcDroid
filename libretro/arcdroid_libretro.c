@@ -620,9 +620,35 @@ typedef struct {
    ArcAdffsOption adffs_package;
    ArcInputOverride pad[ARC_PAD_PORTS][ARC_PAD_INPUT_COUNT];
    ArcOskToggle osk_toggle;
+   bool left_stick_dpad[ARC_PAD_PORTS];
 } ArcCoreOptions;
 
 static ArcCoreOptions arc_core_options;
+static const char *arc_left_stick_option_names[ARC_PAD_PORTS] = {
+   "arcdroid_pad1_left_stick", "arcdroid_pad2_left_stick"
+};
+typedef struct {
+   bool routing_valid;
+   bool eligible;
+   bool osk_visible;
+   bool joystick;
+   bool automatic[4];
+   ArcInputBinding binding[4];
+   bool awaiting;
+   unsigned neutral_polls;
+   unsigned directions;
+   bool polled;
+} ArcLeftStick;
+static ArcLeftStick arc_left_sticks[ARC_PAD_PORTS];
+
+static void arc_left_stick_await(unsigned port)
+{
+   ArcLeftStick *stick = &arc_left_sticks[port];
+   stick->awaiting = true;
+   stick->neutral_polls = 0u;
+   stick->directions = 0u;
+}
+
 static bool arc_preparing_zero_tail;
 static ArcMachine arc_session_machine;
 static bool arc_riscpc_notice_shown;
@@ -817,6 +843,12 @@ static bool arc_read_options(ArcCoreOptions *options, char *error, size_t error_
             override->binding = (ArcInputBinding){true, key->key};
          }
       }
+   for (unsigned port = 0u; port < ARC_PAD_PORTS; ++port)
+   {
+      const char *value = arc_option_value(arc_left_stick_option_names[port], "dpad");
+      if (!strcmp(value, "dpad")) options->left_stick_dpad[port] = true;
+      else if (strcmp(value, "off")) goto invalid;
+   }
    if (!strcmp(osk_toggle, "L3")) options->osk_toggle = ARC_OSK_TOGGLE_L3;
    else if (!strcmp(osk_toggle, "R3")) options->osk_toggle = ARC_OSK_TOGGLE_R3;
    else if (!strcmp(osk_toggle, "Off")) options->osk_toggle = ARC_OSK_TOGGLE_OFF;
@@ -5154,6 +5186,9 @@ static void arc_input_sampling_reset(bool release_engine_levels)
 {
    if (release_engine_levels) arc_input_release_all(&arc_inputs);
    else arc_input_reset_frontend(&arc_inputs);
+   memset(arc_left_sticks, 0, sizeof(arc_left_sticks));
+   for (unsigned port = 0u; port < ARC_PAD_PORTS; ++port)
+      arc_left_stick_await(port);
    memset(arc_pad_keys, 0, sizeof(arc_pad_keys));
    memset(arc_pad_neutral_gate, 0, sizeof(arc_pad_neutral_gate));
    arc_pad_pointer_buttons = 0u;
@@ -5168,6 +5203,7 @@ static void arc_input_sampling_reset(bool release_engine_levels)
 
 static void arc_osk_restore_gameplay(void)
 {
+   arc_left_stick_await(0u);
    arc_pad_neutral_gate[0] = true;
    memset(arc_pad_keys[0], 0, sizeof(arc_pad_keys[0]));
    arc_pad_pointer_buttons = 0u;
@@ -5291,6 +5327,8 @@ void arc_libretro_test_probe_osk_geometry(unsigned width, unsigned height)
    arc_video_height = saved_height;
 }
 
+unsigned arc_libretro_test_osk_focus(void) { return arc_osk.focus; }
+
 bool arc_libretro_test_osk_focus_key(unsigned key)
 {
    if (!arc_osk.visible) return false;
@@ -5327,6 +5365,53 @@ static int arc_pointer_to_pixel(int value, unsigned extent)
    return result;
 }
 
+/* Shared sampling for gameplay and modal OSK navigation, at most once per
+ * input poll. Routing changes reset only the stick's contribution. */
+static unsigned arc_sample_left_stick(unsigned port)
+{
+   ArcLeftStick *stick = &arc_left_sticks[port];
+   bool eligible = arc_core_options.left_stick_dpad[port] &&
+      (arc_port_device[port] == ARC_DEVICE_KEYS ||
+       arc_port_device[port] == RETRO_DEVICE_JOYPAD) &&
+      (port || arc_core_options.pointer_stick != ARC_POINTER_STICK_LEFT);
+   bool visible = !port && arc_osk.visible;
+   bool joystick = arc_loaded && arc_plan.a3010_joystick;
+   bool changed = !stick->routing_valid || eligible != stick->eligible ||
+      visible != stick->osk_visible || joystick != stick->joystick;
+   for (unsigned input = 0u; input < 4u; ++input)
+   {
+      const ArcInputBinding *binding = &arc_input_resolution.binding[port][input];
+      bool automatic = arc_core_options.pad[port][input].automatic;
+      if (binding->bound != stick->binding[input].bound ||
+          binding->key != stick->binding[input].key ||
+          automatic != stick->automatic[input]) changed = true;
+      stick->binding[input] = *binding;
+      stick->automatic[input] = automatic;
+   }
+   stick->routing_valid = true;
+   stick->eligible = eligible;
+   stick->osk_visible = visible;
+   stick->joystick = joystick;
+   if (changed) arc_left_stick_await(port);
+   if (!eligible) return 0u;
+   if (stick->polled) return stick->directions;
+   stick->polled = true;
+   int32_t x = arc_input_state(port, RETRO_DEVICE_ANALOG,
+      RETRO_DEVICE_INDEX_ANALOG_LEFT, RETRO_DEVICE_ID_ANALOG_X);
+   int32_t y = arc_input_state(port, RETRO_DEVICE_ANALOG,
+      RETRO_DEVICE_INDEX_ANALOG_LEFT, RETRO_DEVICE_ID_ANALOG_Y);
+   if (stick->awaiting)
+   {
+      bool neutral = x > -13107 && x < 13107 && y > -13107 && y < 13107;
+      stick->neutral_polls = neutral ? stick->neutral_polls + 1u : 0u;
+      if (stick->neutral_polls >= 2u) stick->awaiting = false;
+      return 0u;
+   }
+   stick->directions = arc_input_stick_directions((int16_t)x, (int16_t)y,
+                                                  stick->directions);
+   return stick->directions;
+}
+
 static void arc_poll_osk_controls(void)
 {
    if (!arc_input_state) return;
@@ -5355,6 +5440,10 @@ static void arc_poll_osk_controls(void)
       level[i] = arc_input_state(0u, RETRO_DEVICE_JOYPAD, 0u, ids[i]) != 0;
       if (level[i]) arc_boot_input = true;
    }
+   unsigned directions = arc_sample_left_stick(0u);
+   for (unsigned input = 0u; input < 4u; ++input)
+      level[input] |= (directions & (1u << input)) != 0u;
+   if (directions) arc_boot_input = true;
    int dx = level[ARC_PAD_LEFT] ? -1 : level[ARC_PAD_RIGHT] ? 1 : 0;
    int dy = level[ARC_PAD_UP] ? -1 : level[ARC_PAD_DOWN] ? 1 : 0;
    bool direction_edge =
@@ -5661,6 +5750,8 @@ static void arc_poll_inputs(void)
    };
    if (!arc_input_state) return;
    arc_boot_input = false;
+   for (unsigned port = 0u; port < ARC_PAD_PORTS; ++port)
+      arc_left_sticks[port].polled = false;
    ArcErrorBox error_box;
    arc_engine_error_snapshot(&error_box);
    bool error_ready = error_box.stage == ARC_ERROR_READY;
@@ -5673,6 +5764,8 @@ static void arc_poll_inputs(void)
    if (error_ready) arc_error_seen_generation = error_box.generation;
    if (arc_chooser_release_gate)
    {
+      for (unsigned port = 0u; port < ARC_PAD_PORTS; ++port)
+         arc_left_stick_await(port);
       arc_error_pad_gate = true;
       bool neutral = true;
       unsigned deadzone_percent = arc_core_options.pointer_deadzone;
@@ -5746,6 +5839,14 @@ static void arc_poll_inputs(void)
             sampled[port][i] = arc_input_state(port, RETRO_DEVICE_JOYPAD, 0u, ids[i]) != 0;
             if (sampled[port][i]) arc_boot_input = true;
          }
+   for (unsigned port = 0u; port < ARC_PAD_PORTS; ++port)
+   {
+      unsigned directions = arc_sample_left_stick(port);
+      if (!port && arc_osk.visible) continue;
+      for (unsigned input = 0u; input < 4u; ++input)
+         sampled[port][input] |= (directions & (1u << input)) != 0u;
+      if (directions) arc_boot_input = true;
+   }
    for (unsigned port = 0u; port < 2u; ++port)
    {
       if ((arc_boot_attempt && arc_boot_eligible) ||
@@ -5966,11 +6067,11 @@ static const struct retro_core_option_v2_definition arc_base_options[] = {
 enum {
    ARC_BASE_OPTION_COUNT = sizeof(arc_base_options) / sizeof(arc_base_options[0]) - 1u,
    ARC_OPTION_COUNT = ARC_BASE_OPTION_COUNT +
-                      ARC_PAD_PORTS * ARC_PAD_INPUT_COUNT + 1u
+                      ARC_PAD_PORTS * ARC_PAD_INPUT_COUNT + 3u
 };
 static struct retro_core_option_v2_definition arc_options[ARC_OPTION_COUNT + 1u];
 _Static_assert(ARC_BASE_OPTION_COUNT == 19u, "base option count changed");
-_Static_assert(sizeof(arc_options) / sizeof(arc_options[0]) == 41u,
+_Static_assert(sizeof(arc_options) / sizeof(arc_options[0]) == 43u,
                "option destination size changed");
 static struct retro_core_option_v2_category arc_option_categories[] = {
    {"pad_mapping", "Pad Mapping", "Map each RetroPad input to a physical Archimedes key."},
@@ -6017,6 +6118,18 @@ static void arc_build_options(void)
    osk->values[1] = (struct retro_core_option_value){"R3", NULL};
    osk->values[2] = (struct retro_core_option_value){"Off", NULL};
    osk->default_value = "L3";
+   for (unsigned port = 0u; port < ARC_PAD_PORTS; ++port)
+   {
+      struct retro_core_option_v2_definition *stick = &arc_options[at++];
+      stick->key = arc_left_stick_option_names[port];
+      stick->desc = port ? "Pad 2 Left Stick" : "Pad 1 Left Stick";
+      stick->desc_categorized = stick->desc;
+      stick->info = "Use the left stick as the D-pad; Off disables gameplay conversion and OSK navigation only, leaving chooser, pointer, observer and release checks unchanged.";
+      stick->category_key = "pad_mapping";
+      stick->values[0] = (struct retro_core_option_value){"dpad", "D-pad"};
+      stick->values[1] = (struct retro_core_option_value){"off", "Off"};
+      stick->default_value = "dpad";
+   }
    arc_options_built = true;
 }
 
@@ -6037,8 +6150,8 @@ static struct retro_input_descriptor arc_input_descriptors[] = {
    {0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R2, "Pointer precision (quarter speed)"},
    {0, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_RIGHT, RETRO_DEVICE_ID_ANALOG_X, "Pointer horizontal velocity"},
    {0, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_RIGHT, RETRO_DEVICE_ID_ANALOG_Y, "Pointer vertical velocity"},
-   {0, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_LEFT, RETRO_DEVICE_ID_ANALOG_X, "Pointer horizontal velocity (Pointer Stick = left)"},
-   {0, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_LEFT, RETRO_DEVICE_ID_ANALOG_Y, "Pointer vertical velocity (Pointer Stick = left)"},
+   {0, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_LEFT, RETRO_DEVICE_ID_ANALOG_X, "D-pad Left/Right; pointer velocity (Pointer Stick = left)"},
+   {0, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_LEFT, RETRO_DEVICE_ID_ANALOG_Y, "D-pad Up/Down; pointer velocity (Pointer Stick = left)"},
    {1, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_UP, "Archimedes Up"},
    {1, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_DOWN, "Archimedes Down"},
    {1, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_LEFT, "Archimedes Left"},
@@ -6049,6 +6162,8 @@ static struct retro_input_descriptor arc_input_descriptors[] = {
    {1, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_Y, "Left Control"},
    {1, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_START, "Escape"},
    {1, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_SELECT, "Tab"},
+   {1, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_LEFT, RETRO_DEVICE_ID_ANALOG_X, "D-pad Left/Right"},
+   {1, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_LEFT, RETRO_DEVICE_ID_ANALOG_Y, "D-pad Up/Down"},
    {0, 0, 0, 0, NULL}
 };
 static char arc_descriptor_labels[ARC_PAD_PORTS][ARC_PAD_INPUT_COUNT][64];
@@ -7504,6 +7619,9 @@ RETRO_API void retro_run(void)
          arc_stick_x = arc_stick_y = 0;
          arc_stick_fraction_x = arc_stick_fraction_y = 0.0L;
       }
+      if (valid_update)
+         memcpy(arc_core_options.left_stick_dpad, updated.left_stick_dpad,
+                sizeof(updated.left_stick_dpad));
       if (valid_update && (memcmp(updated.pad, arc_core_options.pad, sizeof(updated.pad)) ||
           updated.osk_toggle != arc_core_options.osk_toggle))
       {

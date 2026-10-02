@@ -126,7 +126,12 @@ static unsigned vidc_warning_log_lines;
 static struct retro_keyboard_callback keyboard;
 static bool joypad_a;
 static bool joypad_buttons[2][16];
-static int16_t analog_state[2][2];
+static int16_t analog_state[2][2][2];
+static bool analog_first_x_zero[2];
+static unsigned analog_reads[2][2][2];
+static bool input_trace_mode;
+static bool input_trace_noise;
+static const char *option_left_stick[2] = {"dpad", "dpad"};
 static int mouse_x, mouse_y;
 static unsigned mouse_buttons;
 static int mouse_port_x[2], mouse_port_y[2];
@@ -799,7 +804,9 @@ static bool environment(unsigned command, void *data)
          const struct retro_core_options_v2 *options = data;
          unsigned count = 0u;
          while (options->definitions[count].key) ++count;
-         assert(count == 40u && options->categories &&
+         assert(count == (input_trace_mode ? 40u : 42u) ||
+                (input_trace_mode && count == 42u));
+         assert(options->categories &&
                 !strcmp(options->categories[0].key, "pad_mapping") &&
                 !strcmp(options->categories[0].desc, "Pad Mapping"));
          bool found_osk = false, found_chooser = false;
@@ -807,7 +814,7 @@ static bool environment(unsigned command, void *data)
          bool found_jfd_omitted = false, found_hard_disc = false;
          bool found_disc_requests = false;
          bool found_jfd_boot = false, found_adffs_package = false;
-         unsigned pads = 0u;
+         unsigned pads = 0u, sticks = 0u;
          const char *categorized_pad_labels[ARC_PAD_PORTS * ARC_PAD_INPUT_COUNT] = {0};
          for (unsigned n = 0u; n < count; ++n)
          {
@@ -885,7 +892,21 @@ static bool environment(unsigned command, void *data)
                       !strcmp(definition->values[0].value, "verified") &&
                       !strcmp(definition->values[1].value, "untested"));
             }
-            if (!strncmp(definition->key, "arcdroid_pad", 12u))
+            if (!strcmp(definition->key, "arcdroid_pad1_left_stick") ||
+                !strcmp(definition->key, "arcdroid_pad2_left_stick"))
+            {
+               assert(!strcmp(definition->default_value, "dpad") &&
+                      !strcmp(definition->category_key, "pad_mapping") &&
+                      !strcmp(definition->values[0].value, "dpad") &&
+                      !strcmp(definition->values[0].label, "D-pad") &&
+                      !strcmp(definition->values[1].value, "off") &&
+                      !strcmp(definition->values[1].label, "Off") &&
+                      !definition->values[2].value &&
+                      !strcmp(definition->desc, sticks ? "Pad 2 Left Stick" : "Pad 1 Left Stick") &&
+                      !strcmp(definition->desc, definition->desc_categorized));
+               ++sticks;
+            }
+            else if (!strncmp(definition->key, "arcdroid_pad", 12u))
             {
                assert(!strcmp(definition->info,
                       "Auto uses the default mapping; Unbound disables this input.") &&
@@ -917,7 +938,8 @@ static bool environment(unsigned command, void *data)
             }
          }
          assert(found_osk && found_chooser && found_short_tail && found_jfd_omitted && found_hard_disc && found_disc_requests && found_ramdisc && found_jfd_boot &&
-                found_adffs_package && pads == 20u);
+                found_adffs_package && pads == 20u &&
+                sticks == (count == 42u ? 2u : 0u));
          return true;
       }
       case RETRO_ENVIRONMENT_SET_DISK_CONTROL_EXT_INTERFACE:
@@ -958,8 +980,13 @@ static bool environment(unsigned command, void *data)
          bool port0 = false, port1 = false, select = false, adjust = false;
          bool menu = false, precision = false, right_x = false, right_y = false;
          bool left_x = false, left_y = false;
+         bool dpad_stick[2][2] = {{false}};
          for (; descriptors->description; ++descriptors)
          {
+            if (descriptors->port < 2u && descriptors->device == RETRO_DEVICE_ANALOG &&
+                descriptors->index == RETRO_DEVICE_INDEX_ANALOG_LEFT && descriptors->id < 2u)
+               dpad_stick[descriptors->port][descriptors->id] =
+                  strstr(descriptors->description, "D-pad") != NULL;
             if (descriptors->port < ARC_PAD_PORTS &&
                 descriptors->device == RETRO_DEVICE_JOYPAD)
                for (unsigned input = 0u; input < ARC_PAD_INPUT_COUNT; ++input)
@@ -997,6 +1024,8 @@ static bool environment(unsigned command, void *data)
          for (unsigned port = 0u; port < ARC_PAD_PORTS; ++port)
             for (unsigned input = 0u; input < ARC_PAD_INPUT_COUNT; ++input)
                assert(mapped[port][input]);
+         if (!input_trace_mode)
+            assert(dpad_stick[0][0] && dpad_stick[0][1] && dpad_stick[1][0] && dpad_stick[1][1]);
          saw_input_descriptors = port0 && port1 && select && adjust && menu &&
                                  precision && right_x && right_y && left_x && left_y;
          return true;
@@ -1029,6 +1058,8 @@ static bool environment(unsigned command, void *data)
          else if (!strcmp(variable->key, "arcdroid_memory")) variable->value = option_memory;
          else if (!strcmp(variable->key, "arcdroid_os")) variable->value = option_os;
          else if (!strcmp(variable->key, "arcdroid_joystick_if")) variable->value = option_joystick;
+         else if (!strcmp(variable->key, "arcdroid_pad1_left_stick")) variable->value = option_left_stick[0];
+         else if (!strcmp(variable->key, "arcdroid_pad2_left_stick")) variable->value = option_left_stick[1];
          else if (!strcmp(variable->key, "arcdroid_pointer_mode")) variable->value = option_pointer;
          else if (!strcmp(variable->key, "arcdroid_pointer_stick")) variable->value = option_pointer_stick;
          else if (!strcmp(variable->key, "arcdroid_pointer_speed")) variable->value = option_pointer_speed;
@@ -1374,7 +1405,16 @@ static int16_t input(unsigned p, unsigned d, unsigned i, unsigned id)
       return joypad_buttons[p][id] ||
          (p == joypad_port && id == RETRO_DEVICE_ID_JOYPAD_A && joypad_a);
    if (d == RETRO_DEVICE_ANALOG && p < 2u && i < 2u && id < 2u)
-      return analog_state[i][id];
+   {
+      ++analog_reads[p][i][id];
+      if (i == RETRO_DEVICE_INDEX_ANALOG_LEFT && id == RETRO_DEVICE_ID_ANALOG_X &&
+          analog_first_x_zero[p])
+      {
+         analog_first_x_zero[p] = false;
+         return 0;
+      }
+      return analog_state[p][i][id];
+   }
    if (d == RETRO_DEVICE_MOUSE)
    {
       if (id == RETRO_DEVICE_ID_MOUSE_X) { int value = p < 2u ? mouse_port_x[p] : 0; if (p < 2u) mouse_port_x[p] = 0; if (!value) { value = mouse_x; mouse_x = 0; } return (int16_t)value; }
@@ -1719,6 +1759,9 @@ static void print_usage(FILE *stream, const char *program)
    fprintf(stream,
       "Usage:\n"
       "  %s CORE ROM CONTENT DATA\n"
+      "  %s CORE ROM CONTENT DATA --input-trace FILE\n"
+      "  %s CORE ROM CONTENT DATA --input-noise-trace FILE\n"
+      "  %s CORE ROM CONTENT DATA --left-stick-probe\n"
       "  %s CORE ROM CONTENT DATA --newio-smoke PLAYLIST DISC1 DISC2 APP\n"
       "  %s CORE SAVE_ROM RW_JFD DATA --jfd-writes FIXTURES\n"
       "  %s CORE ROM CONTENT DATA --real-boot "
@@ -1744,7 +1787,7 @@ static void print_usage(FILE *stream, const char *program)
       "  drag MASK DX DY FIELDS             hold mouse mask 0-7 and send DX DY each field, then release for one field\n"
       "Screenshots are written as DATA/evidence/NAME.ppm. NAME may contain\n"
       "letters, digits, dot, underscore, or hyphen (but not . or ..).\n",
-      program, program, program, program, program, program);
+      program, program, program, program, program, program, program, program, program);
 }
 
 static bool script_unsigned(const char *word, unsigned long maximum,
@@ -2296,6 +2339,103 @@ static void parser_self_test(void)
 }
 
 #define LOAD(name) do { *(void **)(&name) = dlsym(module, #name); assert(name); } while (0)
+/* Slice 27 scripts observe the guest boundary, rather than duplicating the
+ * adapter's analog conversion. Trace scripts deliberately use the baseline
+ * test API so the same harness can drive the pre-slice core. */
+typedef struct {
+   void (*run)(void);
+   void (*clear)(void);
+   size_t (*events)(ArcKartEvent *, size_t);
+} ArcStickHarness;
+
+static void stick_frames(const ArcStickHarness *api, unsigned frames)
+{
+   for (unsigned frame = 0u; frame < frames; ++frame) api->run();
+}
+
+static void stick_neutral(const ArcStickHarness *api, unsigned port)
+{
+   analog_state[port][RETRO_DEVICE_INDEX_ANALOG_LEFT][0] = 0;
+   analog_state[port][RETRO_DEVICE_INDEX_ANALOG_LEFT][1] = 0;
+   api->run(); api->run();
+}
+
+static void stick_keys(const ArcStickHarness *api, const unsigned *keys,
+                        unsigned count)
+{
+   ArcKartEvent events[512];
+   size_t total = api->events(events, 512u);
+   assert(total == count * 2u);
+   for (unsigned edge = 0u; edge < 2u; ++edge)
+      for (unsigned key = 0u; key < count; ++key)
+      {
+         const ArcKartEvent *event = &events[edge * count + key];
+         assert(event->type == ARC_INPUT_EVENT_KEY &&
+                event->code == keys[key] && event->down == !edge);
+      }
+}
+
+static void stick_press_release(const ArcStickHarness *api, unsigned port,
+                                 int16_t x, int16_t y,
+                                 const unsigned *keys, unsigned count)
+{
+   stick_neutral(api, port);
+   api->clear();
+   analog_state[port][0][0] = x; analog_state[port][0][1] = y;
+   stick_frames(api, 40u);
+   stick_neutral(api, port);
+   stick_frames(api, 40u);
+   stick_keys(api, keys, count);
+}
+
+static void stick_fixed_script(const ArcStickHarness *api)
+{
+   joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_UP] = true;
+   joypad_buttons[1][RETRO_DEVICE_ID_JOYPAD_RIGHT] = true;
+   stick_frames(api, 12u);
+   memset(joypad_buttons, 0, sizeof(joypad_buttons));
+   stick_frames(api, 12u);
+   analog_state[0][1][0] = 22000; analog_state[0][1][1] = -18000;
+   stick_frames(api, 12u);
+   analog_state[0][1][0] = analog_state[0][1][1] = 0;
+   stick_frames(api, 24u);
+   keyboard.callback(true, RETROK_c, 0u, 0u);
+   joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_R] = true;
+   stick_frames(api, 12u);
+   keyboard.callback(false, RETROK_c, 0u, 0u);
+   joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_R] = false;
+   pointer_pressed = true; pointer_x = -10000; pointer_y = -5000;
+   stick_frames(api, 3u);
+   pointer_x = 10000; pointer_y = 5000;
+   stick_frames(api, 3u);
+   pointer_pressed = false;
+   stick_frames(api, 24u);
+   joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_L3] = true; api->run();
+   joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_L3] = false; api->run();
+   joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_RIGHT] = true;
+   stick_frames(api, 3u);
+   joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_RIGHT] = false;
+   joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_Y] = true; api->run();
+   joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_Y] = false;
+   stick_frames(api, 40u);
+   joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_L3] = true; api->run();
+   joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_L3] = false;
+   stick_frames(api, 40u);
+}
+
+static void stick_write_trace(FILE *file, const char *leg,
+                              const ArcStickHarness *api)
+{
+   ArcKartEvent events[512];
+   size_t count = api->events(events, 512u);
+   assert(count <= 512u);
+   fprintf(file, "%s events %zu\n", leg, count);
+   for (size_t i = 0u; i < count; ++i)
+      fprintf(file, "%u %u %u %d %d %llu\n", (unsigned)events[i].type,
+         events[i].code, events[i].down ? 1u : 0u, events[i].dx, events[i].dy,
+         (unsigned long long)events[i].guest_us);
+}
+
 int main(int argc, char **argv)
 {
    if (argc > 2 && !strcmp(argv[argc - 1], "--cached-frame-probe")) {
@@ -2314,6 +2454,8 @@ int main(int argc, char **argv)
    }
    bool real_boot = false;
    bool input_layout_probe = false;
+   bool left_stick_probe = false;
+   const char *input_trace_path = NULL;
    bool error_box_probe = false;
    bool disc_request_probe = false;
    bool disc_request_a = false;
@@ -2369,6 +2511,15 @@ int main(int argc, char **argv)
    {
       assert(getenv("ARCDROID_TEST_POWER_ON_SHIFT") &&
              !strcmp(getenv("ARCDROID_TEST_POWER_ON_SHIFT"), "1"));
+   }
+   else if (argc == 6 && !strncmp(argv[5], "--left-stick-", 13u))
+      left_stick_probe = true;
+   else if (argc == 7 && (!strcmp(argv[5], "--input-trace") ||
+                           !strcmp(argv[5], "--input-noise-trace")))
+   {
+      input_trace_mode = true;
+      input_trace_noise = !strcmp(argv[5], "--input-noise-trace");
+      input_trace_path = argv[6];
    }
    else if (argc == 6 && !strcmp(argv[5], "--input-layout-probe"))
       input_layout_probe = true;
@@ -2827,13 +2978,20 @@ int main(int argc, char **argv)
          dlsym(module, "arc_engine_error_snapshot");
       assert(arc_engine_test_guest_word && arc_engine_error_snapshot);
    }
-   else if (input_layout_probe)
+   else if (input_layout_probe || left_stick_probe || input_trace_mode)
    {
       *(void **)(&arc_platform_test_input_events_reset) =
          dlsym(module, "arc_platform_test_input_events_reset");
       *(void **)(&arc_platform_test_input_events) =
          dlsym(module, "arc_platform_test_input_events");
       assert(arc_platform_test_input_events_reset && arc_platform_test_input_events);
+      if (left_stick_probe || input_trace_mode)
+      {
+         *(void **)(&arc_libretro_test_osk_visible) = dlsym(module, "arc_libretro_test_osk_visible");
+         *(void **)(&arc_libretro_test_session_state) = dlsym(module, "arc_libretro_test_session_state");
+         *(void **)(&arc_libretro_test_chooser_focus) = dlsym(module, "arc_libretro_test_chooser_focus");
+         assert(arc_libretro_test_osk_visible && arc_libretro_test_session_state && arc_libretro_test_chooser_focus);
+      }
    }
    else if (!idle_perf && !idle_trace && !disc_request_probe && !cmos_exerciser && !power_on_cmos_guest && !native_hd_guest && !real_boot && !newio_smoke && !jfd_writes && !jfd_create_step &&
        !jfd_identification_step && !jfd_file_data_step && !jfd_file_data_set &&
@@ -4168,6 +4326,320 @@ int main(int argc, char **argv)
       retro_deinit();
       assert(open_files == 0u && open_dirs == 0u && dlclose(module) == 0);
       puts("error-box-probe: passed");
+      return 0;
+   }
+
+   if (left_stick_probe || input_trace_mode)
+   {
+      bool (*pad_source)(unsigned, unsigned) = dlsym(module, "arc_libretro_test_pad_source_level");
+      bool (*joystick_read)(unsigned, uint8_t *) = dlsym(module, "arc_engine_test_joystick");
+      bool (*arm_outcome)(const char *) = dlsym(module, "arc_engine_launch_outcome_arm");
+      void (*outcome_snapshot)(ArcLaunchOutcome *) = dlsym(module, "arc_engine_launch_outcome_snapshot");
+      void (*box_snapshot)(ArcErrorBox *) = dlsym(module, "arc_engine_error_snapshot");
+      unsigned (*osk_focus)(void) = NULL;
+      if (!input_trace_mode)
+         *(void **)(&osk_focus) = dlsym(module, "arc_libretro_test_osk_focus");
+      assert(pad_source && joystick_read && arm_outcome && outcome_snapshot && box_snapshot);
+      ArcStickHarness api = {retro_run, arc_platform_test_input_events_reset,
+                              arc_platform_test_input_events};
+      assert(api.clear && api.events);
+      retro_set_controller_port_device(0u, RETRO_DEVICE_JOYPAD);
+      retro_set_controller_port_device(1u, RETRO_DEVICE_JOYPAD);
+      bool a3010 = left_stick_probe && !strcmp(argv[5], "--left-stick-a3010");
+      bool error = left_stick_probe && !strcmp(argv[5], "--left-stick-error");
+      bool chooser = left_stick_probe && !strcmp(argv[5], "--left-stick-chooser");
+      if (a3010) { option_machine = "A3010"; option_joystick = "A3010"; }
+      if (chooser) option_launch_chooser = "ask";
+      /* A held axis can look neutral during first frontend registration. */
+      if (!a3010 && !error && !chooser && !input_trace_mode)
+      {
+         analog_state[0][0][0] = 20000;
+         analog_first_x_zero[0] = true;
+      }
+      phase = PHASE_LOAD; assert(retro_load_game(&game));
+      phase = PHASE_RUN;
+      if (input_trace_noise)
+         for (unsigned port = 0u; port < 2u; ++port)
+         { analog_state[port][0][0] = 3000; analog_state[port][0][1] = -3000; }
+      if (chooser)
+      {
+         assert(arc_libretro_test_session_state() == 2u);
+         retro_run(); /* arm chooser */
+         unsigned focus = arc_libretro_test_chooser_focus();
+         option_left_stick[0] = "off"; variable_update = true; retro_run();
+         analog_state[0][0][1] = 20000; retro_run();
+         assert(arc_libretro_test_chooser_focus() != focus); /* Off preserves chooser */
+         option_left_stick[0] = "dpad"; variable_update = true;
+         joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_A] = true; retro_run();
+         joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_A] = false;
+         assert(arc_libretro_test_session_state() == 3u);
+         stick_frames(&api, 120u);
+         assert(!pad_source(0u, RETROK_DOWN));
+         analog_state[0][0][1] = 0; retro_run(); /* release gate clears */
+         analog_state[0][0][1] = 20000; retro_run();
+         assert(!pad_source(0u, RETROK_DOWN));
+         stick_neutral(&api, 0u);
+         analog_state[0][0][1] = 20000; retro_run();
+         assert(pad_source(0u, RETROK_DOWN));
+         stick_neutral(&api, 0u); assert(!pad_source(0u, RETROK_DOWN));
+      }
+      else if (error)
+      {
+         stick_frames(&api, 40u);
+         ArcErrorBox box;
+         box_snapshot(&box); assert(box.stage == ARC_ERROR_READY);
+         option_pad[0][ARC_PAD_RIGHT] = "return";
+         option_pad[1][ARC_PAD_UP] = "escape";
+         variable_update = true; retro_run();
+         stick_neutral(&api, 0u); stick_neutral(&api, 1u);
+         analog_state[0][0][0] = 20000;
+         analog_state[1][0][1] = -20000;
+         stick_frames(&api, 10u);
+         box_snapshot(&box);
+         assert(box.stage == ARC_ERROR_READY && box.pending == ARC_ERROR_NONE &&
+                pad_source(0u, RETROK_RETURN) && pad_source(1u, RETROK_ESCAPE));
+         joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_A] = true;
+         stick_frames(&api, 20u);
+         box_snapshot(&box); assert(box.stage == ARC_ERROR_OFF);
+         joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_A] = false;
+         memset(analog_state, 0, sizeof(analog_state));
+         retro_reset();
+         stick_frames(&api, 40u);
+         box_snapshot(&box); assert(box.stage == ARC_ERROR_READY);
+         joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_B] = true;
+         stick_frames(&api, 20u);
+         box_snapshot(&box); assert(box.stage == ARC_ERROR_OFF);
+         joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_B] = false;
+      }
+      else if (a3010)
+      {
+         stick_frames(&api, 120u);
+         api.clear();
+         analog_state[0][0][1] = -20000; analog_state[1][0][0] = 20000;
+         retro_run();
+         uint8_t value;
+         assert(joystick_read(0u, &value) && value == 0x7eu);
+         assert(joystick_read(1u, &value) && value == 0x77u);
+         stick_frames(&api, 30u);
+         assert(api.events(NULL, 0u) == 0u);
+         /* Opposite levels preserve the existing neutral-axis joystick rule. */
+         joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_DOWN] = true; retro_run();
+         assert(joystick_read(0u, &value) && value == 0x7fu);
+         joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_DOWN] = false;
+         option_pad[0][ARC_PAD_UP] = "up"; variable_update = true; retro_run();
+         assert(!pad_source(0u, RETROK_UP) && joystick_read(0u, &value) && value == 0x7fu);
+         stick_frames(&api, 5u); assert(!pad_source(0u, RETROK_UP));
+         stick_neutral(&api, 0u);
+         const unsigned key[] = {RETROK_UP};
+         stick_press_release(&api, 0u, 0, -20000, key, 1u);
+         assert(joystick_read(1u, &value) && value == 0x77u);
+         option_pad[0][ARC_PAD_UP] = NULL; variable_update = true; retro_run();
+         stick_neutral(&api, 0u); analog_state[0][0][1] = -20000; retro_run();
+         assert(joystick_read(0u, &value) && value == 0x7eu && !pad_source(0u, RETROK_UP));
+      }
+      else if (input_trace_mode)
+      {
+         FILE *trace = fopen(input_trace_path, "wb"); assert(trace);
+         stick_frames(&api, 120u); api.clear();
+         assert(arm_outcome("Run ADFS::0.$.!Demo.!Run"));
+         stick_fixed_script(&api);
+         ArcLaunchOutcome outcome; outcome_snapshot(&outcome);
+         assert(outcome.state == ARC_OUTCOME_CANCEL);
+         stick_write_trace(trace, "digital-pointer-keyboard-touch-osk-observer", &api);
+         fprintf(trace, "observer %u %s\n", (unsigned)outcome.state, outcome.cancel_reason);
+         retro_unload_game();
+         /* Load the sibling authored error-box ROM, then restore the input
+          * ROM for the A3010 leg. Both are normal generated fixtures. */
+         char sibling[4096];
+         assert(strlen(argv[2]) < sizeof(sibling)); strcpy(sibling, argv[2]);
+         char *leaf = strrchr(sibling, '/');
+         char *backslash = strrchr(sibling, '\\');
+         if (backslash && (!leaf || backslash > leaf)) leaf = backslash;
+         assert(leaf);
+         assert(snprintf(leaf + 1, sizeof(sibling) - (size_t)(leaf + 1 - sibling),
+                         "%s", "arcdroid-error-box.rom") <
+                (int)(sizeof(sibling) - (size_t)(leaf + 1 - sibling)));
+         copy_file(sibling, renamed);
+         phase = PHASE_LOAD; assert(retro_load_game(&game)); phase = PHASE_RUN;
+         stick_frames(&api, 40u); api.clear();
+         ArcErrorBox box; box_snapshot(&box); assert(box.stage == ARC_ERROR_READY);
+         joypad_buttons[1][RETRO_DEVICE_ID_JOYPAD_A] = true; stick_frames(&api, 3u);
+         joypad_buttons[1][RETRO_DEVICE_ID_JOYPAD_A] = false;
+         joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_A] = true; stick_frames(&api, 20u);
+         joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_A] = false;
+         box_snapshot(&box); assert(box.stage == ARC_ERROR_OFF);
+         stick_write_trace(trace, "error-box", &api);
+         fprintf(trace, "error %u consumed %u\n", (unsigned)box.stage, error_consumed_logs);
+         retro_unload_game();
+         copy_file(argv[2], renamed);
+         option_machine = "A3010"; option_joystick = "A3010";
+         phase = PHASE_LOAD; assert(retro_load_game(&game)); phase = PHASE_RUN;
+         stick_frames(&api, 120u); api.clear();
+         const unsigned digital[] = {RETRO_DEVICE_ID_JOYPAD_UP,
+            RETRO_DEVICE_ID_JOYPAD_DOWN, RETRO_DEVICE_ID_JOYPAD_LEFT,
+            RETRO_DEVICE_ID_JOYPAD_RIGHT, RETRO_DEVICE_ID_JOYPAD_A};
+         for (unsigned sample = 0u; sample < 6u; ++sample)
+         {
+            if (sample < 5u) joypad_buttons[sample & 1u][digital[sample]] = true;
+            retro_run();
+            uint8_t p0, p1; assert(joystick_read(0u, &p0) && joystick_read(1u, &p1));
+            fprintf(trace, "joystick %u %02x %02x\n", sample, p0, p1);
+            memset(joypad_buttons, 0, sizeof(joypad_buttons)); retro_run();
+         }
+         stick_write_trace(trace, "a3010", &api);
+         assert(!fclose(trace));
+      }
+      else
+      {
+         stick_frames(&api, 120u);
+         assert(!pad_source(0u, RETROK_RIGHT));
+         stick_neutral(&api, 0u);
+         /* First registration occurs independently on each port. */
+         retro_set_controller_port_device(1u, RETRO_DEVICE_NONE); retro_run();
+         analog_state[1][0][0] = -20000; analog_first_x_zero[1] = true;
+         retro_set_controller_port_device(1u, RETRO_DEVICE_JOYPAD);
+         stick_frames(&api, 5u); assert(!pad_source(1u, RETROK_LEFT));
+         stick_neutral(&api, 1u);
+         const int16_t xy[8][2] = {{0,-20000},{0,20000},{-20000,0},{20000,0},
+            {-20000,-20000},{20000,-20000},{-20000,20000},{20000,20000}};
+         const unsigned codes[8][2] = {{RETROK_UP,0},{RETROK_DOWN,0},
+            {RETROK_LEFT,0},{RETROK_RIGHT,0},{RETROK_UP,RETROK_LEFT},
+            {RETROK_UP,RETROK_RIGHT},{RETROK_DOWN,RETROK_LEFT},{RETROK_DOWN,RETROK_RIGHT}};
+         for (unsigned port = 0u; port < 2u; ++port)
+            for (unsigned direction = 0u; direction < 8u; ++direction)
+               stick_press_release(&api, port, xy[direction][0], xy[direction][1],
+                  codes[direction], direction < 4u ? 1u : 2u);
+         /* Same key from two ports and from two sources has one level. */
+         api.clear(); analog_state[0][0][0] = 20000; stick_frames(&api, 20u);
+         joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_RIGHT] = true;
+         analog_state[1][0][0] = 20000; stick_frames(&api, 20u);
+         stick_neutral(&api, 0u); stick_frames(&api, 20u);
+         joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_RIGHT] = false;
+         stick_frames(&api, 20u); assert(api.events(NULL, 0u) == 1u);
+         stick_neutral(&api, 1u); stick_frames(&api, 20u);
+         const unsigned right[] = {RETROK_RIGHT}; stick_keys(&api, right, 1u);
+         option_pad[0][ARC_PAD_RIGHT] = "x"; option_pad[1][ARC_PAD_UP] = "y";
+         variable_update = true; retro_run(); stick_neutral(&api, 0u); stick_neutral(&api, 1u);
+         const unsigned x[] = {RETROK_x}, y[] = {RETROK_y};
+         stick_press_release(&api, 0u, 20000, 0, x, 1u);
+         stick_press_release(&api, 1u, 0, -20000, y, 1u);
+         option_pad[0][ARC_PAD_RIGHT] = "Unbound"; variable_update = true; retro_run();
+         stick_neutral(&api, 0u); api.clear();
+         assert(arm_outcome("Run ADFS::0.$.!Demo.!Run"));
+         analog_state[0][0][0] = 20000; retro_run();
+         ArcLaunchOutcome outcome; outcome_snapshot(&outcome);
+         assert(outcome.state == ARC_OUTCOME_CANCEL && !strcmp(outcome.cancel_reason, "input"));
+         stick_frames(&api, 20u); assert(api.events(NULL, 0u) == 0u);
+         /* Routing changes suppress a held contribution, including Unbound. */
+         option_pad[0][ARC_PAD_RIGHT] = "x"; variable_update = true; retro_run();
+         stick_frames(&api, 5u); assert(!pad_source(0u, RETROK_x));
+         stick_neutral(&api, 0u); analog_state[0][0][0] = 20000; retro_run();
+         assert(pad_source(0u, RETROK_x));
+         option_pad[0][ARC_PAD_RIGHT] = "z"; variable_update = true; retro_run();
+         assert(!pad_source(0u, RETROK_x) && !pad_source(0u, RETROK_z));
+         stick_neutral(&api, 0u); analog_state[0][0][0] = 20000; retro_run();
+         assert(pad_source(0u, RETROK_z));
+         /* Option and pointer eligibility transitions, with both sticks held. */
+         option_left_stick[0] = "off"; variable_update = true; retro_run();
+         assert(!pad_source(0u, RETROK_z));
+         option_left_stick[0] = "dpad"; variable_update = true; retro_run();
+         assert(!pad_source(0u, RETROK_z));
+         stick_neutral(&api, 0u); analog_state[0][0][0] = 20000; retro_run();
+         assert(pad_source(0u, RETROK_z));
+         option_pointer_stick = "left"; variable_update = true; api.clear();
+         analog_state[1][0][1] = -20000; stick_frames(&api, 20u);
+         assert(!pad_source(0u, RETROK_z) && pad_source(1u, RETROK_y));
+         ArcKartEvent pointer_events[512]; size_t total = api.events(pointer_events, 512u);
+         bool motion = false;
+         for (size_t i = 0u; i < total; ++i)
+            if (pointer_events[i].type == ARC_INPUT_EVENT_MOTION && pointer_events[i].dx > 0) motion = true;
+         assert(motion);
+         option_left_stick[1] = "off"; variable_update = true; retro_run();
+         assert(!pad_source(1u, RETROK_y));
+         option_left_stick[1] = "dpad"; variable_update = true; retro_run();
+         assert(!pad_source(1u, RETROK_y));
+         stick_neutral(&api, 1u); analog_state[1][0][1] = -20000; retro_run();
+         assert(pad_source(1u, RETROK_y));
+         option_pointer_stick = "right"; variable_update = true; retro_run();
+         assert(!pad_source(0u, RETROK_z));
+         stick_neutral(&api, 0u); stick_neutral(&api, 1u);
+         analog_state[0][0][0] = 20000; analog_state[0][1][0] = -24000;
+         api.clear(); stick_frames(&api, 20u); assert(pad_source(0u, RETROK_z));
+         total = api.events(pointer_events, 512u); motion = false;
+         for (size_t i = 0u; i < total; ++i)
+            if (pointer_events[i].type == ARC_INPUT_EVENT_MOTION && pointer_events[i].dx < 0) motion = true;
+         assert(motion); analog_state[0][1][0] = 0;
+         /* OSK opening releases gameplay. Held sticks cannot navigate until centred. */
+         assert(osk_focus);
+         joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_L3] = true; retro_run();
+         joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_L3] = false; retro_run();
+         assert(arc_libretro_test_osk_visible() && !pad_source(0u, RETROK_z));
+         unsigned focus = osk_focus(); stick_frames(&api, 5u); assert(osk_focus() == focus);
+         stick_neutral(&api, 0u); analog_state[0][0][0] = 20000; retro_run();
+         unsigned edge_focus = osk_focus(); assert(edge_focus != focus);
+         stick_frames(&api, 3u); assert(osk_focus() == edge_focus);
+         stick_frames(&api, 30u); assert(osk_focus() != edge_focus);
+         option_pointer_stick = "left"; variable_update = true; retro_run();
+         focus = osk_focus(); stick_frames(&api, 30u); assert(osk_focus() == focus);
+         option_pointer_stick = "right"; variable_update = true; retro_run();
+         stick_frames(&api, 5u); assert(osk_focus() == focus);
+         stick_neutral(&api, 0u); analog_state[0][0][0] = 20000; retro_run();
+         assert(osk_focus() != focus);
+         option_left_stick[0] = "off"; variable_update = true; retro_run();
+         focus = osk_focus(); stick_frames(&api, 30u); assert(osk_focus() == focus);
+         option_left_stick[0] = "dpad"; variable_update = true; retro_run();
+         stick_frames(&api, 5u); assert(osk_focus() == focus);
+         joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_L3] = true; retro_run();
+         joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_L3] = false; retro_run();
+         assert(!arc_libretro_test_osk_visible() && !pad_source(0u, RETROK_z));
+         analog_state[0][0][0] = 0; retro_run();
+         analog_state[0][0][0] = 20000; retro_run(); assert(!pad_source(0u, RETROK_z));
+         stick_neutral(&api, 0u); analog_state[0][0][0] = 20000; retro_run();
+         assert(pad_source(0u, RETROK_z));
+         /* B can close the OSK after its sample; gameplay must not count a
+          * second analog read as another neutral poll in that same frame. */
+         joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_L3] = true; retro_run();
+         joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_L3] = false; retro_run();
+         stick_neutral(&api, 0u);
+         analog_state[0][0][0] = 20000; retro_run();
+         unsigned reads_before_close = analog_reads[0][0][0];
+         joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_B] = true; retro_run();
+         assert(!arc_libretro_test_osk_visible() && !pad_source(0u, RETROK_z) &&
+                analog_reads[0][0][0] == reads_before_close + 1u);
+         joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_B] = false; retro_run();
+         analog_state[0][0][0] = 0; retro_run();
+         analog_state[0][0][0] = 20000; retro_run(); assert(!pad_source(0u, RETROK_z));
+         stick_neutral(&api, 0u); analog_state[0][0][0] = 20000; retro_run();
+         assert(pad_source(0u, RETROK_z));
+         /* Lifecycle transitions with a held stick. */
+         retro_reset(); stick_frames(&api, 120u); assert(!pad_source(0u, RETROK_z));
+         stick_neutral(&api, 0u); analog_state[0][0][0] = 20000; retro_run();
+         assert(pad_source(0u, RETROK_z));
+         retro_unload_game(); assert(!pad_source(0u, RETROK_z));
+         struct retro_game_info invalid = {"", NULL, 0u, NULL};
+         phase = PHASE_LOAD; assert(!retro_load_game(&invalid));
+         assert(retro_load_game(&game)); phase = PHASE_RUN;
+         stick_frames(&api, 120u); assert(!pad_source(0u, RETROK_z));
+         stick_neutral(&api, 0u); analog_state[0][0][0] = 20000; retro_run();
+         assert(pad_source(0u, RETROK_z));
+         /* Off adds no reads to the gameplay path, including port 1. */
+         option_left_stick[0] = option_left_stick[1] = "off";
+         variable_update = true; retro_run();
+         unsigned before[2][2][2]; memcpy(before, analog_reads, sizeof(before));
+         stick_frames(&api, 3u);
+         for (unsigned port = 0u; port < 2u; ++port)
+            for (unsigned axis = 0u; axis < 2u; ++axis)
+               assert(analog_reads[port][0][axis] == before[port][0][axis]);
+         memset(analog_state, 0, sizeof(analog_state));
+         memset(option_pad, 0, sizeof(option_pad));
+         option_left_stick[0] = option_left_stick[1] = "dpad";
+         /* The fresh-process zero/noise equivalence script also covers
+          * error boxes and observers; see left-stick-equivalence-process. */
+      }
+      memset(analog_state, 0, sizeof(analog_state));
+      retro_unload_game(); retro_deinit();
+      assert(open_files == 0u && open_dirs == 0u && dlclose(module) == 0);
+      puts(input_trace_mode ? "input-trace: passed" : "left-stick-harness: passed");
       return 0;
    }
 
@@ -7319,7 +7791,7 @@ int main(int argc, char **argv)
     * stops at release with no more than its one queued velocity packet. */
    arc_platform_test_input_events_reset();
    joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_R] = true;
-   analog_state[RETRO_DEVICE_INDEX_ANALOG_RIGHT][RETRO_DEVICE_ID_ANALOG_X] = 32767;
+   analog_state[0][RETRO_DEVICE_INDEX_ANALOG_RIGHT][RETRO_DEVICE_ID_ANALOG_X] = 32767;
    for (unsigned frame = 0u; frame < 20u; ++frame) retro_run();
    size_t events_before_stick_release = arc_platform_test_input_events(input_events, 512u);
    unsigned motion_before_stick_release = 0u;
@@ -7327,7 +7799,7 @@ int main(int argc, char **argv)
       if (input_events[i].type == ARC_INPUT_EVENT_MOTION)
          ++motion_before_stick_release;
    joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_R] = false;
-   analog_state[RETRO_DEVICE_INDEX_ANALOG_RIGHT][RETRO_DEVICE_ID_ANALOG_X] = 0;
+   analog_state[0][RETRO_DEVICE_INDEX_ANALOG_RIGHT][RETRO_DEVICE_ID_ANALOG_X] = 0;
    for (unsigned frame = 0u; frame < 180u; ++frame) retro_run();
    input_event_count = arc_platform_test_input_events(input_events, 512u);
    unsigned select_down = 0u, select_up = 0u, motion_packets = 0u;
@@ -7354,9 +7826,9 @@ int main(int argc, char **argv)
     * one mickey of fractional end-point rounding). */
    arc_platform_test_input_events_reset();
    joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_R2] = true;
-   analog_state[RETRO_DEVICE_INDEX_ANALOG_RIGHT][RETRO_DEVICE_ID_ANALOG_X] = 32767;
+   analog_state[0][RETRO_DEVICE_INDEX_ANALOG_RIGHT][RETRO_DEVICE_ID_ANALOG_X] = 32767;
    for (unsigned frame = 0u; frame < 20u; ++frame) retro_run();
-   analog_state[RETRO_DEVICE_INDEX_ANALOG_RIGHT][RETRO_DEVICE_ID_ANALOG_X] = 0;
+   analog_state[0][RETRO_DEVICE_INDEX_ANALOG_RIGHT][RETRO_DEVICE_ID_ANALOG_X] = 0;
    joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_R2] = false;
    for (unsigned frame = 0u; frame < 60u; ++frame) retro_run();
    input_event_count = arc_platform_test_input_events(input_events, 512u);
@@ -7379,9 +7851,9 @@ int main(int argc, char **argv)
    /* The dead zone is radial, slow post-dead-zone motion retains fractions,
     * response is monotonic, and a saturated diagonal remains normalised. */
    arc_platform_test_input_events_reset();
-   analog_state[RETRO_DEVICE_INDEX_ANALOG_RIGHT][RETRO_DEVICE_ID_ANALOG_X] = 4000;
+   analog_state[0][RETRO_DEVICE_INDEX_ANALOG_RIGHT][RETRO_DEVICE_ID_ANALOG_X] = 4000;
    for (unsigned frame = 0u; frame < 20u; ++frame) retro_run();
-   analog_state[RETRO_DEVICE_INDEX_ANALOG_RIGHT][RETRO_DEVICE_ID_ANALOG_X] = 0;
+   analog_state[0][RETRO_DEVICE_INDEX_ANALOG_RIGHT][RETRO_DEVICE_ID_ANALOG_X] = 0;
    for (unsigned frame = 0u; frame < 20u; ++frame) retro_run();
    assert(arc_platform_test_input_events(input_events, 512u) == 0u);
 
@@ -7393,10 +7865,10 @@ int main(int argc, char **argv)
    for (unsigned sample = 0u; sample < 3u; ++sample)
    {
       arc_platform_test_input_events_reset();
-      analog_state[RETRO_DEVICE_INDEX_ANALOG_RIGHT][RETRO_DEVICE_ID_ANALOG_X] =
+      analog_state[0][RETRO_DEVICE_INDEX_ANALOG_RIGHT][RETRO_DEVICE_ID_ANALOG_X] =
          response_samples[sample];
       for (unsigned frame = 0u; frame < 20u; ++frame) retro_run();
-      analog_state[RETRO_DEVICE_INDEX_ANALOG_RIGHT][RETRO_DEVICE_ID_ANALOG_X] = 0;
+      analog_state[0][RETRO_DEVICE_INDEX_ANALOG_RIGHT][RETRO_DEVICE_ID_ANALOG_X] = 0;
       for (unsigned frame = 0u; frame < 30u; ++frame) retro_run();
       input_event_count = arc_platform_test_input_events(input_events, 512u);
       for (size_t i = 0u; i < input_event_count; ++i)
@@ -7419,11 +7891,11 @@ int main(int argc, char **argv)
           response_totals[1] < response_totals[2]);
 
    arc_platform_test_input_events_reset();
-   analog_state[RETRO_DEVICE_INDEX_ANALOG_RIGHT][RETRO_DEVICE_ID_ANALOG_X] = 32767;
-   analog_state[RETRO_DEVICE_INDEX_ANALOG_RIGHT][RETRO_DEVICE_ID_ANALOG_Y] = 32767;
+   analog_state[0][RETRO_DEVICE_INDEX_ANALOG_RIGHT][RETRO_DEVICE_ID_ANALOG_X] = 32767;
+   analog_state[0][RETRO_DEVICE_INDEX_ANALOG_RIGHT][RETRO_DEVICE_ID_ANALOG_Y] = 32767;
    for (unsigned frame = 0u; frame < 20u; ++frame) retro_run();
-   analog_state[RETRO_DEVICE_INDEX_ANALOG_RIGHT][RETRO_DEVICE_ID_ANALOG_X] = 0;
-   analog_state[RETRO_DEVICE_INDEX_ANALOG_RIGHT][RETRO_DEVICE_ID_ANALOG_Y] = 0;
+   analog_state[0][RETRO_DEVICE_INDEX_ANALOG_RIGHT][RETRO_DEVICE_ID_ANALOG_X] = 0;
+   analog_state[0][RETRO_DEVICE_INDEX_ANALOG_RIGHT][RETRO_DEVICE_ID_ANALOG_Y] = 0;
    for (unsigned frame = 0u; frame < 40u; ++frame) retro_run();
    input_event_count = arc_platform_test_input_events(input_events, 512u);
    int64_t diagonal_x = 0, diagonal_y = 0;
@@ -7453,11 +7925,11 @@ int main(int argc, char **argv)
    assert(saw_short_field && saw_long_field);
 
    arc_platform_test_input_events_reset();
-   analog_state[RETRO_DEVICE_INDEX_ANALOG_RIGHT][RETRO_DEVICE_ID_ANALOG_X] = -32768;
-   analog_state[RETRO_DEVICE_INDEX_ANALOG_RIGHT][RETRO_DEVICE_ID_ANALOG_Y] = 32767;
+   analog_state[0][RETRO_DEVICE_INDEX_ANALOG_RIGHT][RETRO_DEVICE_ID_ANALOG_X] = -32768;
+   analog_state[0][RETRO_DEVICE_INDEX_ANALOG_RIGHT][RETRO_DEVICE_ID_ANALOG_Y] = 32767;
    for (unsigned frame = 0u; frame < 8u; ++frame) retro_run();
-   analog_state[RETRO_DEVICE_INDEX_ANALOG_RIGHT][RETRO_DEVICE_ID_ANALOG_X] = 0;
-   analog_state[RETRO_DEVICE_INDEX_ANALOG_RIGHT][RETRO_DEVICE_ID_ANALOG_Y] = 0;
+   analog_state[0][RETRO_DEVICE_INDEX_ANALOG_RIGHT][RETRO_DEVICE_ID_ANALOG_X] = 0;
+   analog_state[0][RETRO_DEVICE_INDEX_ANALOG_RIGHT][RETRO_DEVICE_ID_ANALOG_Y] = 0;
    for (unsigned frame = 0u; frame < 30u; ++frame) retro_run();
    input_event_count = arc_platform_test_input_events(input_events, 512u);
    int64_t opposite_x = 0, opposite_y = 0;
@@ -7472,9 +7944,9 @@ int main(int argc, char **argv)
    arc_platform_test_input_events_reset();
    option_pointer_stick = "left";
    variable_update = true;
-   analog_state[RETRO_DEVICE_INDEX_ANALOG_LEFT][RETRO_DEVICE_ID_ANALOG_Y] = -32768;
+   analog_state[0][RETRO_DEVICE_INDEX_ANALOG_LEFT][RETRO_DEVICE_ID_ANALOG_Y] = -32768;
    for (unsigned frame = 0u; frame < 12u; ++frame) retro_run();
-   analog_state[RETRO_DEVICE_INDEX_ANALOG_LEFT][RETRO_DEVICE_ID_ANALOG_Y] = 0;
+   analog_state[0][RETRO_DEVICE_INDEX_ANALOG_LEFT][RETRO_DEVICE_ID_ANALOG_Y] = 0;
    for (unsigned frame = 0u; frame < 30u; ++frame) retro_run();
    input_event_count = arc_platform_test_input_events(input_events, 512u);
    int64_t left_total_y = 0;
@@ -9943,7 +10415,7 @@ int main(int argc, char **argv)
       joypad_buttons[1][RETRO_DEVICE_ID_JOYPAD_RIGHT] = true;
       keyboard.callback(true, RETROK_a, 0u, 0u);
       mouse_buttons = 1u;
-      analog_state[RETRO_DEVICE_INDEX_ANALOG_RIGHT][RETRO_DEVICE_ID_ANALOG_X] = 300;
+      analog_state[0][RETRO_DEVICE_INDEX_ANALOG_RIGHT][RETRO_DEVICE_ID_ANALOG_X] = 300;
       mouse_x = 200; mouse_y = -100;
       pointer_x = (int)((100u * 65535u) / 640u) - 32768;
       pointer_y = (int)((100u * 65535u) / 480u) - 32768;
@@ -9987,7 +10459,7 @@ int main(int argc, char **argv)
              last_video_signature == expected_guest_signature[0] &&
              arc_platform_test_input_events(NULL, 0u) == 0u);
 
-      analog_state[RETRO_DEVICE_INDEX_ANALOG_RIGHT][RETRO_DEVICE_ID_ANALOG_X] = 0;
+      analog_state[0][RETRO_DEVICE_INDEX_ANALOG_RIGHT][RETRO_DEVICE_ID_ANALOG_X] = 0;
       uint8_t remembered_app1[ARC_LAUNCH_CHOICE_MAX_SIZE];
       size_t remembered_app1_size = read_bounded(
          chooser_choice, remembered_app1, sizeof(remembered_app1));
@@ -10073,7 +10545,7 @@ int main(int argc, char **argv)
       retro_run();
       keyboard.callback(true, RETROK_RETURN, 0u, 0u);
       mouse_buttons = 1u;
-      analog_state[RETRO_DEVICE_INDEX_ANALOG_RIGHT][RETRO_DEVICE_ID_ANALOG_X] = 300;
+      analog_state[0][RETRO_DEVICE_INDEX_ANALOG_RIGHT][RETRO_DEVICE_ID_ANALOG_X] = 300;
       retro_run();
       assert(arc_libretro_test_session_state() == 3u);
       keyboard.callback(false, RETROK_RETURN, 0u, 0u);
@@ -10095,7 +10567,7 @@ int main(int argc, char **argv)
       phase = PHASE_RUN;
       retro_run();
       assert(arc_libretro_test_session_state() == 2u);
-      analog_state[RETRO_DEVICE_INDEX_ANALOG_RIGHT][RETRO_DEVICE_ID_ANALOG_X] = 12000;
+      analog_state[0][RETRO_DEVICE_INDEX_ANALOG_RIGHT][RETRO_DEVICE_ID_ANALOG_X] = 12000;
       mouse_buttons = 1u;
       joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_A] = true;
       retro_run();
@@ -10119,7 +10591,7 @@ int main(int argc, char **argv)
       mouse_buttons = 0u;
       for (unsigned frame = 0u; frame < 10u; ++frame) retro_run();
       assert(arc_platform_test_input_events(input_events, 512u) >= 2u);
-      analog_state[RETRO_DEVICE_INDEX_ANALOG_RIGHT][RETRO_DEVICE_ID_ANALOG_X] = 0;
+      analog_state[0][RETRO_DEVICE_INDEX_ANALOG_RIGHT][RETRO_DEVICE_ID_ANALOG_X] = 0;
       option_launch = "auto";
       option_launch_chooser = "remember";
       option_writes = "off";
