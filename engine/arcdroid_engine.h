@@ -9,6 +9,7 @@
 #include "arc_boot_watch.h"
 #include "arc_launch_outcome.h"
 #include "arc_error_box.h"
+#include "arc_disc_request.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -71,6 +72,21 @@ void arc_engine_error_discard(void);
 void arc_engine_error_mode(uint32_t old_mode, uint32_t new_mode);
 bool arc_engine_error_poll(uint32_t address, uint32_t mode,
                            uint32_t sp, uint32_t lr, uint8_t *key);
+typedef unsigned (*ArcDiscResolveCallback)(void *opaque, const char *path,
+                                            ArcDiscOperation operation);
+typedef void (*ArcDiscObservationCallback)(void *opaque, const char *path,
+   unsigned candidate, unsigned observation, bool trigger);
+void arc_engine_disc_configure(bool enabled, const char *inserted_name,
+   ArcDiscResolveCallback resolve, ArcDiscObservationCallback observe,
+   void *opaque);
+void arc_engine_disc_clear(void);
+void arc_engine_disc_snapshot(ArcDiscRequest *out);
+void arc_engine_disc_a_notified(void);
+uint64_t arc_engine_disc_time_us(void);
+bool arc_engine_disc_controller_idle(void);
+void arc_engine_disc_poll(uint32_t address, uint32_t mode, uint32_t sp,
+                           uint32_t r0, uint32_t flags);
+extern bool arc_engine_disc_watch_armed;
 void arc_engine_adf_refused(unsigned drive, unsigned track,
                            unsigned side, unsigned sector);
 void arc_engine_adf_refusal_callback_set(

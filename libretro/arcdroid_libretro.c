@@ -365,6 +365,31 @@ typedef struct {
 
 static ArcMediaEntry arc_media[ARC_PLAYLIST_MAX_ENTRIES];
 static unsigned arc_media_count;
+typedef struct {
+   bool valid;
+   uint64_t generation;
+   char path[256];
+   ArcDiscObject objects[ARC_PLAYLIST_MAX_ENTRIES];
+} ArcDiscPathCache;
+static ArcDiscPathCache arc_disc_paths[8];
+static ArcGuestName arc_disc_names[ARC_PLAYLIST_MAX_ENTRIES];
+static bool arc_disc_names_valid[ARC_PLAYLIST_MAX_ENTRIES];
+static uint64_t arc_disc_generation = 1u;
+static unsigned arc_disc_cache_cursor;
+static uint64_t arc_disc_watch_generation;
+typedef enum { ARC_DISC_MODE_AUTO, ARC_DISC_MODE_HINT, ARC_DISC_MODE_OFF } ArcDiscMode;
+static ArcDiscMode arc_disc_mode = ARC_DISC_MODE_AUTO;
+static bool arc_disc_owned;
+static unsigned arc_disc_launch_index, arc_disc_previous_index;
+static uint64_t arc_disc_swapped_us;
+static char arc_disc_notices[8][64];
+static unsigned arc_disc_notice_read, arc_disc_notice_write;
+static void arc_disc_invalidate(void)
+{
+   ++arc_disc_generation;
+   memset(arc_disc_paths, 0, sizeof(arc_disc_paths));
+   memset(arc_disc_names_valid, 0, sizeof(arc_disc_names_valid));
+}
 static bool arc_original_jfd_notice_shown;
 static bool arc_jfd_failure_status_shown;
 #if defined(ARCDROID_TEST_FAULTS)
@@ -992,6 +1017,11 @@ static const char *arc_os_slug(ArcOsClass os)
 
 static void arc_release_session(void)
 {
+   arc_engine_disc_configure(false, NULL, NULL, NULL, NULL);
+   arc_io_set_write_observer(NULL);
+   arc_disc_owned = false;
+   arc_disc_notice_read = arc_disc_notice_write = 0u;
+   arc_disc_invalidate();
    arc_boot_eligible = false;
    arc_boot_attempt = false;
    arc_boot_post_chooser = false;
@@ -1177,6 +1207,27 @@ static void arc_message(const char *text, enum retro_log_level level)
    if (!arc_environment(RETRO_ENVIRONMENT_SET_MESSAGE_EXT, &ext))
       arc_environment(RETRO_ENVIRONMENT_SET_MESSAGE, &legacy);
 }
+static void arc_disc_queue_notice(const char *text)
+{
+   unsigned next = (arc_disc_notice_write + 1u) % 8u;
+   if (next == arc_disc_notice_read) return;
+   snprintf(arc_disc_notices[arc_disc_notice_write],
+            sizeof(arc_disc_notices[0]), "%s", text);
+   arc_disc_notice_write = next;
+}
+static void arc_disc_present_notice(void)
+{
+   if (arc_disc_notice_read == arc_disc_notice_write) return;
+   const char *message = arc_disc_notices[arc_disc_notice_read];
+   struct retro_message_ext ext = {message, 2000u, 3u, RETRO_LOG_INFO,
+      RETRO_MESSAGE_TARGET_ALL, RETRO_MESSAGE_TYPE_NOTIFICATION, -1};
+   struct retro_message legacy = {message, 120u};
+   if (arc_log) arc_log(RETRO_LOG_INFO, "%s\n", message);
+   if (arc_environment &&
+       !arc_environment(RETRO_ENVIRONMENT_SET_MESSAGE_EXT, &ext))
+      arc_environment(RETRO_ENVIRONMENT_SET_MESSAGE, &legacy);
+   arc_disc_notice_read = (arc_disc_notice_read + 1u) % 8u;
+}
 static void arc_error_hint(const ArcErrorBox *box)
 {
    const char *message = box->ok && box->cancel ?
@@ -1209,6 +1260,7 @@ void arc_jfd_store_notice(const char *message, bool warning)
 void arc_jfd_store_log_commit(unsigned image_number, uint64_t generation,
                               size_t sector_index)
 {
+   arc_disc_invalidate();
 #if defined(ARCDROID_TEST_FAULTS)
    if (arc_log) arc_log(RETRO_LOG_INFO,
       "JFD write: image=%u generation=%llu descriptor=%zu\n",
@@ -2680,6 +2732,145 @@ static void arc_finish_jfd_preparation(ArcMediaEntry *entry, bool native)
       (unsigned long long)(overlay ? overlay->generation : 0u),
       overlay ? overlay->records : 0u);
 }
+
+/* Resolve against the current writable raw image or a single temporary JFD
+ * view. A second non-inserted JFD is never retained between iterations. */
+static ArcDiscObject arc_disc_image_object(unsigned index, const char *path,
+                                            ArcGuestName *name)
+{
+   if (index >= arc_media_count || !arc_media[index].populated)
+      return ARC_DISC_UNKNOWN;
+   ArcMediaEntry *entry = &arc_media[index];
+   void *bytes = NULL;
+   size_t size = 0u;
+   if (!arc_io_read_all(entry->staged, &bytes, &size)) return ARC_DISC_UNKNOWN;
+   ArcDiscObject object = ARC_DISC_UNKNOWN;
+   if (entry->info.kind == ARC_MEDIA_JFD)
+   {
+      ArcJfdImage temporary = {0};
+      ArcJfdImage *view = &entry->jfd;
+      if (index != arc_image_index)
+      {
+         char error[128] = {0};
+         const char *reason = NULL;
+         if (strcmp(arc_digest(bytes, size).sha1, entry->digest.sha1) ||
+             !arc_jfd_parse(bytes, size, &temporary, error, sizeof(error)))
+            goto done;
+         view = &temporary;
+         if (!arc_jfd_store_load(view, arc_save_path,
+                 arc_plan.disk_writes != ARC_DISK_WRITES_OFF,
+                 false, index + 1u, &reason))
+            goto jfd_done;
+         if (view->overlay)
+         {
+            view->overlay->map_enabled = view->overlay->writable;
+            arc_jfd_map_prepare(view);
+         }
+         arc_jfd_prepare_identification(view, true);
+         arc_jfd_file_data_prepare(view, true,
+             arc_core_options.jfd_omitted_strict,
+             arc_jfd_file_data_class(view, arc_plan.disk_writes));
+      }
+      if (view->overlay && !view->overlay->damaged && !view->overlay->failed)
+         object = path ? arc_disc_resolve(NULL, 0u, NULL, view, path, name) :
+            arc_disc_read_name(NULL, 0u, NULL, view, name) ? ARC_DISC_DIR : ARC_DISC_UNKNOWN;
+jfd_done:
+      arc_jfd_free(&temporary);
+   }
+   else
+   {
+      size_t visible = size;
+      if (entry->effective_extent && visible > entry->effective_extent)
+         visible = entry->effective_extent;
+      object = path ? arc_disc_resolve(bytes, visible, &entry->info, NULL, path, name) :
+         arc_disc_read_name(bytes, visible, &entry->info, NULL, name) ? ARC_DISC_DIR : ARC_DISC_UNKNOWN;
+   }
+done:
+   free(bytes);
+   return object;
+}
+
+static bool arc_disc_ascii_equal(const char *requested,
+                                  const ArcGuestName *available)
+{
+   size_t length = strlen(requested);
+   if (length != available->length) return false;
+   for (size_t i = 0u; i < length; ++i)
+   {
+      unsigned a = (unsigned char)requested[i], b = available->bytes[i];
+      if (a >= 'A' && a <= 'Z') a += 'a' - 'A';
+      if (b >= 'A' && b <= 'Z') b += 'a' - 'A';
+      if (a != b) return false;
+   }
+   return true;
+}
+static bool arc_disc_name(unsigned index, ArcGuestName *name)
+{
+   if (index >= arc_media_count || !arc_media[index].populated) return false;
+   if (!arc_disc_names_valid[index])
+   {
+      if (arc_disc_image_object(index, NULL, &arc_disc_names[index]) ==
+          ARC_DISC_UNKNOWN) return false;
+      arc_disc_names_valid[index] = true;
+   }
+   *name = arc_disc_names[index];
+   return true;
+}
+static unsigned arc_disc_resolve_candidate(void *opaque, const char *path,
+                                            ArcDiscOperation operation)
+{
+   (void)opaque;
+   if (!path || arc_media_count < 2u) return UINT_MAX;
+   ArcDiscPathCache *cache = NULL;
+   for (unsigned i = 0u; i < sizeof(arc_disc_paths)/sizeof(arc_disc_paths[0]); ++i)
+      if (arc_disc_paths[i].valid &&
+          arc_disc_paths[i].generation == arc_disc_generation &&
+          !strcmp(arc_disc_paths[i].path, path))
+      { cache = &arc_disc_paths[i]; break; }
+   if (!cache)
+   {
+      cache = &arc_disc_paths[arc_disc_cache_cursor++ %
+         (sizeof(arc_disc_paths)/sizeof(arc_disc_paths[0]))];
+      memset(cache, 0, sizeof(*cache));
+      strcpy(cache->path, path);
+      cache->generation = arc_disc_generation;
+      for (unsigned i = 0u; i < arc_media_count; ++i)
+      {
+         if (i == arc_image_index || !arc_media[i].populated) continue;
+         ArcGuestName name = {0};
+         cache->objects[i] = arc_disc_image_object(i, path, &name);
+         if (cache->objects[i] != ARC_DISC_UNKNOWN && !arc_disc_names_valid[i])
+         { arc_disc_names[i] = name; arc_disc_names_valid[i] = true; }
+      }
+      cache->valid = true;
+   }
+   unsigned candidate = UINT_MAX;
+   for (unsigned i = 0u; i < arc_media_count; ++i)
+   {
+      if (i == arc_image_index || !arc_media[i].populated) continue;
+      ArcDiscObject object = cache->objects[i];
+      if (object == ARC_DISC_UNKNOWN) return UINT_MAX;
+      bool compatible = object == ARC_DISC_FILE ||
+         (object == ARC_DISC_DIR && (operation == ARC_DISC_CATALOGUE ||
+                                     operation == ARC_DISC_OPEN_DIR));
+      if (compatible)
+      {
+         if (candidate != UINT_MAX) return UINT_MAX;
+         candidate = i;
+      }
+   }
+   arc_disc_watch_generation = arc_disc_generation;
+   return candidate;
+}
+#if defined(ARCDROID_TEST_FAULTS)
+int arc_libretro_test_disc_candidate(const char *path, unsigned operation)
+{
+   if (operation > ARC_DISC_OPEN_DIR) return -1;
+   unsigned index = arc_disc_resolve_candidate(NULL, path,
+                                               (ArcDiscOperation)operation);
+   return index == UINT_MAX ? -1 : (int)index;
+}
+#endif
 
 typedef struct {
    char (*names)[256];
@@ -4313,8 +4504,233 @@ static bool arc_prepare_launch(ArcMediaEntry *entry, bool ejected,
    return false;
 }
 
+static void arc_disc_setup(void);
+#if defined(ARCDROID_TEST_FAULTS)
+void arc_libretro_test_disc_adffs_active(bool active)
+{
+   arc_adffs_active = active;
+   arc_disc_setup();
+}
+static bool arc_test_disc_preflight_fail;
+void arc_libretro_test_fail_disc_preflight(void)
+{ arc_test_disc_preflight_fail = true; }
+#endif
+typedef enum {
+   ARC_DISC_COMMIT_INSERTED, ARC_DISC_COMMIT_BUSY, ARC_DISC_COMMIT_FAILED
+} ArcDiscCommit;
+static ArcDiscCommit arc_disc_commit(unsigned candidate, uint64_t generation)
+{
+   if (arc_disc_mode != ARC_DISC_MODE_AUTO || !arc_loaded ||
+       arc_session != ARC_SESSION_RUNNING || arc_adffs_active || arc_ejected ||
+       arc_hd_mode != ARC_HD_HELPER_FLOPPY ||
+       candidate >= arc_media_count || candidate == arc_image_index ||
+       !arc_media[candidate].populated || generation != arc_disc_generation ||
+       !arc_engine_disc_controller_idle()) return ARC_DISC_COMMIT_BUSY;
+   ArcErrorBox box;
+   arc_engine_error_snapshot(&box);
+   if (box.stage == ARC_ERROR_READY) return ARC_DISC_COMMIT_BUSY;
+   ArcMediaEntry *entry = &arc_media[candidate];
+   char error[512] = {0};
+#if defined(ARCDROID_TEST_FAULTS)
+   if (arc_test_disc_preflight_fail)
+   { arc_test_disc_preflight_fail = false; goto failed; }
+#endif
+   if (!arc_machine_accepts_media(arc_session_machine, entry,
+                                  error, sizeof(error))) goto failed;
+   if (entry->info.kind == ARC_MEDIA_JFD)
+   {
+      if (!arc_refresh_jfd(entry, arc_plan.disk_writes, error, sizeof(error)) ||
+          !entry->jfd.overlay || entry->jfd.overlay->damaged ||
+          entry->jfd.overlay->failed ||
+          (entry->jfd.overlay->reason &&
+           !strcmp(entry->jfd.overlay->reason, "overlay-unreadable")))
+         goto failed;
+      arc_finish_jfd_preparation(entry, true);
+   }
+   else
+   {
+      void *bytes = NULL;
+      size_t size = 0u;
+      bool readable = arc_io_read_all(entry->staged, &bytes, &size);
+      free(bytes);
+      if (!readable || size < entry->info.available_size) goto failed;
+   }
+   unsigned old_index = arc_image_index;
+   ArcEngineMedia old_media = arc_engine_media(&arc_media[old_index]);
+   ArcEngineMedia new_media = arc_engine_media(entry);
+   if (!arc_engine_media_eject()) goto failed;
+   arc_ejected = true;
+   arc_image_index = candidate;
+   if (!arc_engine_media_insert(&new_media, error, sizeof(error)))
+   {
+      arc_image_index = old_index;
+      if (arc_engine_media_insert(&old_media, NULL, 0u)) arc_ejected = false;
+      else arc_ejected = true;
+      arc_jfd_free(&entry->jfd);
+      goto failed;
+   }
+   arc_ejected = false;
+   arc_jfd_free(&arc_media[old_index].jfd);
+   if (!arc_disc_owned) arc_disc_launch_index = old_index;
+   arc_disc_owned = true;
+   arc_disc_previous_index = old_index;
+   arc_disc_swapped_us = arc_engine_disc_time_us();
+   arc_disc_invalidate();
+   arc_engine_boot_watch_cancel();
+   arc_disc_setup();
+   char notice[64];
+   snprintf(notice, sizeof(notice), "Disc %u inserted", candidate + 1u);
+   arc_disc_queue_notice(notice);
+   return ARC_DISC_COMMIT_INSERTED;
+failed:
+   {
+      char notice[64];
+      snprintf(notice, sizeof(notice), "Disc %u could not be inserted",
+               candidate + 1u);
+      arc_disc_queue_notice(notice);
+   }
+   return ARC_DISC_COMMIT_FAILED;
+}
+
+static void arc_disc_observation(void *opaque, const char *path,
+   unsigned candidate, unsigned observation, bool trigger)
+{
+   (void)opaque;
+   char object[256];
+   snprintf(object, sizeof(object), "%s", path);
+   const char *action = "ignored", *reason = "first-observation";
+   if (trigger)
+   {
+      uint64_t now = arc_engine_disc_time_us();
+      bool backwards = arc_disc_owned && candidate == arc_disc_previous_index &&
+         now >= arc_disc_swapped_us &&
+         now - arc_disc_swapped_us < UINT64_C(10000000);
+      if (arc_disc_mode == ARC_DISC_MODE_HINT || backwards)
+      {
+         char notice[64];
+         snprintf(notice, sizeof(notice), "Insert disc %u with Disk Control",
+                  candidate + 1u);
+         arc_disc_queue_notice(notice);
+         action = "hint";
+         reason = backwards ? "back-request" : "option";
+      }
+      else if (arc_disc_mode == ARC_DISC_MODE_AUTO)
+      {
+         ArcDiscCommit commit = arc_disc_commit(candidate,
+                                                arc_disc_watch_generation);
+         action = commit == ARC_DISC_COMMIT_INSERTED ? "inserted" : "ignored";
+         reason = commit == ARC_DISC_COMMIT_INSERTED ? "unique" :
+                  commit == ARC_DISC_COMMIT_FAILED ? "commit-failed" : "precondition";
+      }
+      else reason = "off";
+   }
+   if (arc_log) arc_log(RETRO_LOG_INFO,
+      "Disc request: signal=B object=%s candidate=%u observation=%u action=%s reason=%s\n",
+      object, candidate + 1u, observation, action, reason);
+}
+
+static void arc_disc_setup(void)
+{
+   char inserted[11] = {0};
+   bool enabled = arc_disc_mode != ARC_DISC_MODE_OFF &&
+      arc_media_count >= 2u && !arc_adffs_active && !arc_ejected &&
+      arc_image_index < arc_media_count &&
+      arc_session == ARC_SESSION_RUNNING &&
+      arc_hd_mode == ARC_HD_HELPER_FLOPPY;
+   ArcGuestName disc = {0};
+   if (enabled && arc_disc_name(arc_image_index, &disc) && disc.length <= 10u)
+   {
+      bool printable = true;
+      for (unsigned i = 0u; i < disc.length; ++i)
+         if (disc.bytes[i] < 0x20u || disc.bytes[i] > 0x7eu)
+            printable = false;
+      if (printable)
+      {
+         memcpy(inserted, disc.bytes, disc.length);
+         inserted[disc.length] = 0;
+      }
+   }
+   arc_engine_disc_configure(enabled, inserted,
+      arc_disc_resolve_candidate, arc_disc_observation, NULL);
+}
+
+static void arc_disc_option_refresh(void)
+{
+   const char *value = arc_option_value("arcdroid_disc_requests", "auto");
+   ArcDiscMode mode = !strcmp(value, "hint") ? ARC_DISC_MODE_HINT :
+      !strcmp(value, "off") ? ARC_DISC_MODE_OFF : ARC_DISC_MODE_AUTO;
+   if (mode == arc_disc_mode) return;
+   arc_disc_mode = mode;
+   arc_disc_notice_read = arc_disc_notice_write = 0u;
+   arc_disc_invalidate();
+   arc_disc_setup();
+}
+
+static void arc_disc_boundary(void)
+{
+   arc_disc_option_refresh();
+   arc_disc_present_notice();
+   if (arc_disc_mode == ARC_DISC_MODE_OFF || arc_adffs_active ||
+       arc_session != ARC_SESSION_RUNNING || arc_ejected ||
+       arc_media_count < 2u) return;
+   ArcDiscRequest request;
+   arc_engine_disc_snapshot(&request);
+   if (!request.a_active || request.a_notified) return;
+   unsigned candidate = UINT_MAX, count = 0u;
+   bool unknown = false;
+   for (unsigned i = 0u; i < arc_media_count; ++i)
+   {
+      if (i == arc_image_index || !arc_media[i].populated) continue;
+      ArcGuestName name = {0};
+      if (!arc_disc_name(i, &name)) { unknown = true; continue; }
+      if (arc_disc_ascii_equal(request.a_name, &name))
+      { candidate = i; ++count; }
+   }
+   const char *candidate_text = count > 1u ? "ambiguous" : "none";
+   char candidate_number[12];
+   if (count == 1u && !unknown)
+   {
+      snprintf(candidate_number, sizeof(candidate_number), "%u", candidate + 1u);
+      candidate_text = candidate_number;
+   }
+   const char *action = "ignored", *reason = "no-candidate";
+   if (unknown) reason = "unknown-image";
+   else if (count > 1u) reason = "ambiguous";
+   else if (count == 1u)
+   {
+      uint64_t now = arc_engine_disc_time_us();
+      bool backwards = arc_disc_owned && candidate == arc_disc_previous_index &&
+         now >= arc_disc_swapped_us &&
+         now - arc_disc_swapped_us < UINT64_C(10000000);
+      if (arc_disc_mode == ARC_DISC_MODE_HINT || backwards)
+      {
+         char notice[64];
+         snprintf(notice, sizeof(notice), "Insert disc %u with Disk Control",
+                  candidate + 1u);
+         arc_disc_queue_notice(notice);
+         action = "hint";
+         reason = backwards ? "back-request" : "option";
+      }
+      else
+      {
+         ArcDiscCommit commit = arc_disc_commit(candidate, arc_disc_generation);
+         if (commit == ARC_DISC_COMMIT_BUSY) return; /* Retry next boundary. */
+         action = commit == ARC_DISC_COMMIT_INSERTED ? "inserted" : "ignored";
+         reason = commit == ARC_DISC_COMMIT_INSERTED ? "unique" : "commit-failed";
+      }
+   }
+   if (arc_log) arc_log(RETRO_LOG_INFO,
+      "Disc request: signal=A name=%s candidate=%s action=%s reason=%s\n",
+      request.a_name, candidate_text, action, reason);
+   arc_engine_disc_a_notified();
+}
+
 static bool arc_disk_set_eject(bool ejected)
 {
+   arc_disc_owned = false;
+   arc_disc_notice_read = arc_disc_notice_write = 0u;
+   arc_engine_disc_clear();
+   arc_disc_invalidate();
    char error[512] = {0};
    arc_engine_launch_outcome_cancel("media");
    if (!arc_loaded || arc_session != ARC_SESSION_RUNNING || arc_adffs_active) return false;
@@ -4326,6 +4742,7 @@ static bool arc_disk_set_eject(bool ejected)
       if (arc_image_index < arc_media_count)
          arc_jfd_free(&arc_media[arc_image_index].jfd);
       arc_ejected = true;
+      arc_disc_setup();
       return true;
    }
    if (arc_image_index < arc_media_count && arc_media[arc_image_index].populated)
@@ -4361,12 +4778,17 @@ static bool arc_disk_set_eject(bool ejected)
       arc_finish_jfd_preparation(entry, true);
    }
    arc_ejected = false;
+   arc_disc_setup();
    return true;
 }
 static bool arc_disk_get_eject(void) { return arc_adffs_active ? false : arc_ejected; }
 static unsigned arc_disk_get_index(void) { return arc_adffs_active ? 0u : arc_image_index; }
 static bool arc_disk_set_index(unsigned index)
 {
+   arc_disc_owned = false;
+   arc_disc_notice_read = arc_disc_notice_write = 0u;
+   arc_engine_disc_clear();
+   arc_disc_invalidate();
    arc_engine_launch_outcome_cancel("media");
    if (!arc_loaded || arc_session != ARC_SESSION_RUNNING || arc_adffs_active || !arc_ejected) return false;
    if (index < arc_media_count && !arc_media[index].populated) return false;
@@ -4377,6 +4799,10 @@ static bool arc_disk_set_index(unsigned index)
 static unsigned arc_disk_get_count(void) { return arc_adffs_active ? 1u : arc_media_count; }
 static bool arc_disk_replace(unsigned index, const struct retro_game_info *info)
 {
+   arc_disc_owned = false;
+   arc_disc_notice_read = arc_disc_notice_write = 0u;
+   arc_engine_disc_clear();
+   arc_disc_invalidate();
    arc_engine_launch_outcome_cancel("media");
    if (!arc_loaded || arc_session != ARC_SESSION_RUNNING || arc_adffs_active || !arc_ejected ||
        index >= arc_media_count) return false;
@@ -4428,6 +4854,10 @@ static bool arc_disk_replace(unsigned index, const struct retro_game_info *info)
 }
 static bool arc_disk_add(void)
 {
+   arc_disc_owned = false;
+   arc_disc_notice_read = arc_disc_notice_write = 0u;
+   arc_engine_disc_clear();
+   arc_disc_invalidate();
    arc_engine_launch_outcome_cancel("media");
    if (!arc_loaded || arc_session != ARC_SESSION_RUNNING || arc_adffs_active ||
        arc_media_count >= ARC_PLAYLIST_MAX_ENTRIES) return false;
@@ -5313,6 +5743,10 @@ static const struct retro_core_option_v2_definition arc_base_options[] = {
    {"arcdroid_jfd_omitted", "JFD Omitted Sectors", NULL,
     "Present proven omitted native JFD file-data sectors as zeros. Strict keeps the earlier JFD presentation. Sampled at content load or reset.", NULL,
     NULL, {{"file-data", "File data"}, {"strict", "Strict"}, {NULL, NULL}}, "file-data"},
+   {"arcdroid_disc_requests", "Disc Requests", NULL,
+    "Automatically insert a uniquely requested disc from a loaded multi-image set.", NULL,
+    NULL, {{"auto", "Insert automatically"}, {"hint", "Hint only"},
+           {"off", "Off"}, {NULL, NULL}}, "auto"},
    {NULL, NULL, NULL, NULL, NULL, NULL, {{0}}, NULL}
 };
 enum {
@@ -5321,8 +5755,8 @@ enum {
                       ARC_PAD_PORTS * ARC_PAD_INPUT_COUNT + 1u
 };
 static struct retro_core_option_v2_definition arc_options[ARC_OPTION_COUNT + 1u];
-_Static_assert(ARC_BASE_OPTION_COUNT == 18u, "base option count changed");
-_Static_assert(sizeof(arc_options) / sizeof(arc_options[0]) == 40u,
+_Static_assert(ARC_BASE_OPTION_COUNT == 19u, "base option count changed");
+_Static_assert(sizeof(arc_options) / sizeof(arc_options[0]) == 41u,
                "option destination size changed");
 static struct retro_core_option_v2_category arc_option_categories[] = {
    {"pad_mapping", "Pad Mapping", "Map each RetroPad input to a physical Archimedes key."},
@@ -5679,6 +6113,9 @@ static bool arc_construct_machine(const ArcMachineDescriptor *machine,
               arc_power_on_shift ? "clear" : "set",
               arc_power_on_shift ? "held" : "none");
    arc_session = ARC_SESSION_RUNNING;
+   arc_io_set_write_observer(arc_disc_invalidate);
+   arc_disc_option_refresh();
+   arc_disc_setup();
    if (arc_boot_attempt && arc_boot_eligible && !arc_adffs_active &&
        !arc_plan.launch_helper && arc_image_index == 0u)
    {
@@ -6538,6 +6975,9 @@ RETRO_API void retro_unload_game(void)
 RETRO_API void retro_reset(void)
 {
    arc_engine_launch_outcome_cancel("reset");
+   arc_engine_disc_clear();
+   arc_disc_invalidate();
+   arc_disc_notice_read = arc_disc_notice_write = 0u;
    if (arc_hd_observe_target || arc_hd_observe_copy) {
       arc_hd_reset_cancel_pending=true;
       arc_hd_observe_target=arc_hd_observe_copy=false;
@@ -6555,7 +6995,7 @@ RETRO_API void retro_reset(void)
    arc_boot_attempt = true;
    arc_boot_post_chooser = false;
    arc_boot_recovery_phase = false;
-   if (!arc_loaded) return;
+   if (!arc_loaded) { arc_disc_owned = false; return; }
    arc_chooser_release_gate = false;
    bool osk_session_disabled = arc_osk.disabled;
    arc_osk_reset(&arc_osk, &arc_inputs);
@@ -6568,7 +7008,9 @@ RETRO_API void retro_reset(void)
    const ArcFirmwareFingerprint *firmware_match = NULL;
    ArcDigest frozen_identity = arc_content_digest;
    bool was_ejected = arc_ejected;
-   unsigned selected = arc_image_index;
+   bool was_disc_owned = arc_disc_owned;
+   unsigned selected = was_disc_owned ? arc_disc_launch_index : arc_image_index;
+   arc_disc_owned = false;
    bool launch_reselected;
    bool torn_down = false;
    ArcSessionState previous_session = arc_session;
@@ -6707,7 +7149,7 @@ failed:
    free(new_firmware);
    if (arc_boot_record_hit) arc_boot_record_invalidate();
    arc_message(error[0] ? error : "Unable to reset the ArcDroid session.", RETRO_LOG_ERROR);
-   if (!torn_down) return;
+   if (!torn_down) { arc_disc_owned = was_disc_owned; return; }
    arc_loaded = false;
    arc_release_session();
    arc_input_sampling_reset(false);
@@ -6902,6 +7344,7 @@ RETRO_API void retro_run(void)
                      ARC_WIDTH * sizeof(uint32_t));
       return;
    }
+   arc_disc_boundary();
    ++arc_frame_number;
 #if defined(ARCDROID_TEST_FAULTS)
    frame_ran = arc_engine_run_frame(arc_test_stall_kart ? NULL : &arc_inputs,

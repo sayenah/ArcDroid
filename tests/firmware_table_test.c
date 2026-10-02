@@ -49,6 +49,65 @@ static const ArcFirmwareFingerprint error_box_arbitration_after_firmware = {
    UINT32_C(0xa7ec3295), "6c4ba091dca0549727bf4238c1cd1400351f9863",
    ARC_RECIPE_COMBINED, 0u
 };
+static const ArcFirmwareFingerprint disc_request_firmware[] = {
+   {ARC_OS_TEST, "ArcDroid invented disc request A ROM", 524288u,
+    UINT32_C(0x04dec093), "0e45f047ac0e814b46953dd1a030a35db3bbb592",
+    ARC_RECIPE_COMBINED, 0u},
+   {ARC_OS_TEST, "ArcDroid invented disc request B ROM", 524288u,
+    UINT32_C(0xe4a4ec3c), "60c1dc94407cfc552b2afbbf5d128a76964e4057",
+    ARC_RECIPE_COMBINED, 0u},
+   {ARC_OS_TEST, "ArcDroid invented disc request A1 ROM", 524288u,
+    UINT32_C(0xacb49dcf), "5398f293e5c110434cb15a0fdf4a1eddc09cd520",
+    ARC_RECIPE_COMBINED, 0u},
+   {ARC_OS_TEST, "ArcDroid invented disc request A chain ROM", 524288u,
+    UINT32_C(0x4995f6a8), "65f9c9179dcee7b6fa74db22943815eae95c982e",
+    ARC_RECIPE_COMBINED, 0u},
+   {ARC_OS_TEST, "ArcDroid invented disc request A back ROM", 524288u,
+    UINT32_C(0x53376a98), "b3e5258b27fda4a5257c94575f30199d4eb31403",
+    ARC_RECIPE_COMBINED, 0u},
+   {ARC_OS_TEST, "ArcDroid invented disc request B single ROM", 524288u,
+    UINT32_C(0xfc012fc1), "d5121df9c4274fbf03c6349282badf8cc70b8731",
+    ARC_RECIPE_COMBINED, 0u},
+   {ARC_OS_TEST, "ArcDroid invented disc request B Wimp ROM", 524288u,
+    UINT32_C(0x40c91d52), "34b194cbdc491522ffd0d186007d60dfdd5082ac",
+    ARC_RECIPE_COMBINED, 0u},
+   {ARC_OS_TEST, "ArcDroid invented disc request B other disc ROM", 524288u,
+    UINT32_C(0xfcda148e), "e18d362326bd84600fca44ad315919f650ee305e",
+    ARC_RECIPE_COMBINED, 0u},
+   {ARC_OS_TEST, "ArcDroid invented disc request B directory load ROM", 524288u,
+    UINT32_C(0xa1822bc9), "6d9e26d1e4547de17b7ef8b146f8462fe6e07484",
+    ARC_RECIPE_COMBINED, 0u},
+   {ARC_OS_TEST, "ArcDroid invented disc request B directory catalogue ROM", 524288u,
+    UINT32_C(0xf64d364b), "46ce07a8010e317bfa6bec8deef3855125eb1e72",
+    ARC_RECIPE_COMBINED, 0u},
+   {ARC_OS_TEST, "ArcDroid invented disc request B D6 ROM", 524288u,
+    UINT32_C(0xe29ecad2), "d2de80a92cd54fa54330f52f997585a75f83ce98",
+    ARC_RECIPE_COMBINED, 0u},
+   {ARC_OS_TEST, "ArcDroid invented disc request B drive-empty ROM", 524288u,
+    UINT32_C(0x9bce85be), "bce05acb1c69877daa73558dada18bff28cf31c1",
+    ARC_RECIPE_COMBINED, 0u},
+   {ARC_OS_TEST, "ArcDroid invented disc request B blocking-input ROM", 524288u,
+    UINT32_C(0xdf15fc8a), "320d24918a47d9c9ac4f2adde8eb06feb770516e",
+    ARC_RECIPE_COMBINED, 0u},
+   {ARC_OS_TEST, "ArcDroid invented disc request B distinct ROM", 524288u,
+    UINT32_C(0xf0f3c26c), "0bec8d9618e916265117a076f965f1c3374557ec",
+    ARC_RECIPE_COMBINED, 0u},
+   {ARC_OS_TEST, "ArcDroid invented disc request B two-context ROM", 524288u,
+    UINT32_C(0xd0df2787), "755ab2556e7b05abd5e27f206b498d9e1fdc4a7b",
+    ARC_RECIPE_COMBINED, 0u},
+   {ARC_OS_TEST, "ArcDroid invented disc request B error-branch ROM", 524288u,
+    UINT32_C(0xdcfb6565), "e92ddc84a872448f7ba93f4124b1b8029faad3df",
+    ARC_RECIPE_COMBINED, 0u},
+   {ARC_OS_TEST, "ArcDroid invented disc request B non-X error ROM", 524288u,
+    UINT32_C(0xf02b7713), "a3d135d40a3864e468024e8414b24f33a2ecf5b9",
+    ARC_RECIPE_COMBINED, 0u},
+   {ARC_OS_TEST, "ArcDroid invented disc request B conflict ROM", 524288u,
+    UINT32_C(0x702a884c), "3adf4fd0d00cc034241c182632248064c59c055f",
+    ARC_RECIPE_COMBINED, 0u},
+   {ARC_OS_TEST, "ArcDroid invented disc request B directory-rejecting open ROM", 524288u,
+    UINT32_C(0x574bd150), "724ce9f1fc8a7a94f221444cba61efb114713c10",
+    ARC_RECIPE_COMBINED, 0u}
+};
 static const ArcFirmwareFingerprint launch_outcome_firmware[] = {
    {ARC_OS_TEST,"ArcDroid invented launch outcome exact ROM",524288u,
     UINT32_C(0xc7fcf1d0),"8baf63e08cb2d0af38a1e5623d060415aed14097",
@@ -95,7 +154,8 @@ const ArcFirmwareFingerprint *arc_firmware_table(size_t *count)
       size_t base_count = 0u;
       const ArcFirmwareFingerprint *base = arc_base_firmware_table(&base_count);
       size_t extra_count = 7u + sizeof(launch_outcome_firmware) /
-                                 sizeof(launch_outcome_firmware[0]);
+                                 sizeof(launch_outcome_firmware[0]) +
+         sizeof(disc_request_firmware) / sizeof(disc_request_firmware[0]);
       if (base_count > MAX_TEST_FIRMWARE - extra_count)
          base_count = MAX_TEST_FIRMWARE - extra_count;
       memcpy(table, base, base_count * sizeof(*table));
@@ -108,6 +168,9 @@ const ArcFirmwareFingerprint *arc_firmware_table(size_t *count)
       table[base_count + 6u] = error_box_arbitration_after_firmware;
       memcpy(table+base_count+7u,launch_outcome_firmware,
              sizeof(launch_outcome_firmware));
+      memcpy(table+base_count+7u+sizeof(launch_outcome_firmware)/
+             sizeof(launch_outcome_firmware[0]), disc_request_firmware,
+             sizeof(disc_request_firmware));
       table_count = base_count + extra_count;
    }
    if (count) *count = table_count;
@@ -150,6 +213,12 @@ const ArcFirmwareFingerprint *arc_firmware_match(const ArcDigest *digest)
           digest->crc32 == launch_outcome_firmware[i].crc32 &&
           !strcmp(digest->sha1,launch_outcome_firmware[i].sha1))
          return &launch_outcome_firmware[i];
+   for (unsigned i = 0u; i < sizeof(disc_request_firmware)/
+                              sizeof(disc_request_firmware[0]); ++i)
+      if (digest && digest->size == disc_request_firmware[i].size &&
+          digest->crc32 == disc_request_firmware[i].crc32 &&
+          !strcmp(digest->sha1, disc_request_firmware[i].sha1))
+         return &disc_request_firmware[i];
    return arc_base_firmware_match(digest);
 }
 

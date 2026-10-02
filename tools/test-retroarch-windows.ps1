@@ -872,7 +872,7 @@ if (-not (Test-Path (Join-Path $fHardDiscStore 'ready.a')) -or
 
 # Authored native IDE guest: a blank disc paints outcome 0x31 after a sector
 # write; the next RetroArch process reads that sector and paints outcome 0x42.
-Copy-Item -Force (Join-Path $InputDirectory 'arcdroid_libretro_test.dll') $core
+Copy-Item -Force (Join-Path $InputDirectory 'arcdroid_libretro.dll') $core
 Copy-Item -Force (Join-Path $InputDirectory 'arcdroid-native-hd-guest.rom') $firmware
 @"
 arcdroid_machine = "Auto"
@@ -900,7 +900,7 @@ if ($nativeWritten -eq $nativeReloaded -or $nativeReloaded -ne 'ff009400' -or
 }
 $screenshot = $previousScreenshot
 $content = $previousContent
-Copy-Item -Force (Join-Path $InputDirectory 'arcdroid_libretro.dll') $core
+Copy-Item -Force (Join-Path $InputDirectory 'arcdroid_libretro_test.dll') $core
 Copy-Item -Force (Join-Path $InputDirectory 'arcdroid-media-test.rom') $firmware
 @"
 arcdroid_machine = "A3000"
@@ -2614,3 +2614,39 @@ arcdroid_pad1_a = "$mapping"
     } finally { Stop-MediaRun $errorRun }
 }
 Write-Host 'Slice 25 Windows RetroArch: authored error box, hint, default and custom Pad Mapping passed'
+
+# A ROM-owned FileCore request selects disc 2. A subsequent frontend Previous
+# must move from the core-reported index 1 to index 0, causing a second
+# authenticated request and insertion. A fresh process starts on disc 1.
+Copy-Item -Force (Join-Path $InputDirectory 'arcdroid-disc-request-a.rom') $firmware
+Copy-Item -Force (Join-Path $InputDirectory 'arcdroid_libretro_test.dll') $core
+$requestSet = Join-Path $InputDirectory 'disc-request/Set.m3u'
+@"
+arcdroid_machine = "A3000"
+arcdroid_launch = "off"
+arcdroid_disc_requests = "auto"
+"@ | Set-Content -Encoding ASCII $coreOptions
+function Wait-DiscInsertion($Run, [int]$Count) {
+    $deadline = [DateTime]::UtcNow.AddSeconds(15)
+    do {
+        $lines = @(Get-Content $Run.RetroLog -ErrorAction SilentlyContinue |
+            Where-Object { $_.Contains('Disc request: signal=A name=Two candidate=2 action=inserted') })
+        if ($lines.Count -ge $Count) { return }
+        Start-Sleep -Milliseconds 100
+    } while ([DateTime]::UtcNow -lt $deadline)
+    throw "$($Run.Name) expected $Count automatic disc-2 insertions; log=[$(Get-RunLogTail $Run)]"
+}
+$requestRun = Start-MediaRun $requestSet 'slice26-disc-request'
+try {
+    Wait-DiscInsertion $requestRun 1
+    Send-MediaCommand $requestRun 'DISK_EJECT_TOGGLE'
+    Start-Sleep -Milliseconds 300
+    Send-MediaCommand $requestRun 'DISK_PREV'
+    Start-Sleep -Milliseconds 300
+    Send-MediaCommand $requestRun 'DISK_EJECT_TOGGLE'
+    Wait-DiscInsertion $requestRun 2
+} finally { Stop-MediaRun $requestRun }
+$requestReload = Start-MediaRun $requestSet 'slice26-disc-request-reload'
+try { Wait-DiscInsertion $requestReload 1 }
+finally { Stop-MediaRun $requestReload }
+Write-Host 'Slice 26 Windows RetroArch: automatic insertion, Disk Control previous-index selection and fresh-process launch image passed'

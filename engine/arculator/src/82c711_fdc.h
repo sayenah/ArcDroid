@@ -18,3 +18,5 @@ void *c82c711_fdc_init_override(void (*fdc_irq)(int state, void *p),
 void c82c711_fdc_test_counts(unsigned *commands, unsigned *read_data,
                              unsigned *read_success);
 #endif
+
+int c82c711_fdc_idle(void);

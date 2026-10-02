@@ -85,6 +85,7 @@ set(ARCDROID_LIBRETRO_SOURCES
   engine/arc_boot_watch.c
   engine/arc_launch_outcome.c
   engine/arc_error_box.c
+  engine/arc_disc_request.c
   engine/arcdroid_stubs.c
   engine/arculator/src/82c711.c
   engine/arculator/src/ide.c
@@ -230,6 +231,25 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
       arcdroid_sanitizer_compile arcdroid_sanitizer_link)
   endif()
   add_test(NAME error-box-unit COMMAND error_box_test)
+  add_executable(disc_request_test tests/disc_request_test.c
+    engine/arc_disc_request.c)
+  target_include_directories(disc_request_test PRIVATE engine)
+  target_compile_options(disc_request_test PRIVATE
+    $<$<C_COMPILER_ID:GNU,Clang,AppleClang>:-UNDEBUG;-Wall;-Wextra;-Wpedantic>)
+  if(ARCDROID_SANITIZERS)
+    target_link_libraries(disc_request_test PRIVATE
+      arcdroid_sanitizer_compile arcdroid_sanitizer_link)
+  endif()
+  add_test(NAME disc-request-unit COMMAND disc_request_test)
+  add_executable(disc_resolver_test tests/disc_resolver_test.c)
+  target_link_libraries(disc_resolver_test PRIVATE arcdroid_core)
+  target_compile_options(disc_resolver_test PRIVATE
+    $<$<C_COMPILER_ID:GNU,Clang,AppleClang>:-UNDEBUG;-Wall;-Wextra;-Wpedantic>)
+  if(ARCDROID_SANITIZERS)
+    target_link_libraries(disc_resolver_test PRIVATE arcdroid_sanitizer_link)
+  endif()
+  add_test(NAME disc-resolver-unit COMMAND disc_resolver_test
+    "${CMAKE_CURRENT_BINARY_DIR}/tests/fixtures/generated")
   add_executable(adffs_shipping_profile_test
     tests/adffs_shipping_profile_test.c)
   target_link_libraries(adffs_shipping_profile_test PRIVATE arcdroid_core)
@@ -458,6 +478,11 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
     "${FIXTURE_DIR}/adffs/install-single-hd.jfd")
   add_custom_command(
     OUTPUT "${FIXTURE_DIR}/arcdroid-test.rom" "${FIXTURE_DIR}/arcdroid-test.adf"
+      "${FIXTURE_DIR}/arcdroid-disc-request-a.rom"
+      "${FIXTURE_DIR}/arcdroid-disc-request-b.rom"
+      "${FIXTURE_DIR}/disc-request/Set.m3u"
+      "${FIXTURE_DIR}/disc-request/One.adf"
+      "${FIXTURE_DIR}/disc-request/Two.adf"
       "${FIXTURE_DIR}/arcdroid-power-on-early-swi.rom"
       "${FIXTURE_DIR}/arcdroid-power-on-early-xswi.rom"
       "${FIXTURE_DIR}/arcdroid-power-on-late-kart.rom"
@@ -642,6 +667,9 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
     DEPENDS tests/generate_fixtures.py VERBATIM)
   add_custom_target(test-fixtures ALL DEPENDS
     "${FIXTURE_DIR}/arcdroid-test.rom" "${FIXTURE_DIR}/arcdroid-test.adf"
+    "${FIXTURE_DIR}/arcdroid-disc-request-a.rom"
+    "${FIXTURE_DIR}/arcdroid-disc-request-b.rom"
+    "${FIXTURE_DIR}/disc-request/Set.m3u"
     "${FIXTURE_DIR}/arcdroid-power-on-early-swi.rom"
     "${FIXTURE_DIR}/arcdroid-power-on-early-xswi.rom"
     "${FIXTURE_DIR}/arcdroid-power-on-late-kart.rom"
@@ -985,6 +1013,74 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
       "${FIXTURE_DIR}/arcdroid-test.adf"
       "${CMAKE_CURRENT_BINARY_DIR}/error-box-x-rom-data"
       --error-box-probe)
+    foreach(signal IN ITEMS a b)
+      add_test(NAME disc-request-${signal}-rom COMMAND libretro_harness
+        $<TARGET_FILE:arcdroid_libretro_test>
+        "${FIXTURE_DIR}/arcdroid-disc-request-${signal}.rom"
+        "${FIXTURE_DIR}/disc-request/Set.m3u"
+        "${CMAKE_CURRENT_BINARY_DIR}/disc-request-${signal}-data"
+        --disc-request-${signal})
+      foreach(mode IN ITEMS hint off)
+        add_test(NAME disc-request-${signal}-${mode}-rom COMMAND libretro_harness
+          $<TARGET_FILE:arcdroid_libretro_test>
+          "${FIXTURE_DIR}/arcdroid-disc-request-${signal}.rom"
+          "${FIXTURE_DIR}/disc-request/Set.m3u"
+          "${CMAKE_CURRENT_BINARY_DIR}/disc-request-${signal}-${mode}-data"
+          --disc-request-${signal}-${mode})
+      endforeach()
+    endforeach()
+    foreach(scenario IN ITEMS a1 a-chain a-back b-single b-distinct b-wimp b-two-contexts b-block b-otherdisc
+                              b-dir-load b-cat-dir b-d6 b-108d3 b-error-branch b-nonx-error b-conflict b-open-file-dir)
+      set(request_playlist "${FIXTURE_DIR}/disc-request/Set.m3u")
+      if(scenario STREQUAL "a-chain")
+        set(request_playlist "${FIXTURE_DIR}/disc-request/Chain.m3u")
+      elseif(scenario STREQUAL "b-distinct")
+        set(request_playlist "${FIXTURE_DIR}/disc-request/Distinct.m3u")
+      endif()
+      add_test(NAME disc-request-${scenario}-rom COMMAND libretro_harness
+        $<TARGET_FILE:arcdroid_libretro_test>
+        "${FIXTURE_DIR}/arcdroid-disc-request-${scenario}.rom"
+        "${request_playlist}"
+        "${CMAKE_CURRENT_BINARY_DIR}/disc-request-${scenario}-data"
+        --disc-request-${scenario})
+    endforeach()
+    add_test(NAME disc-request-b-duplicate-rom COMMAND libretro_harness
+      $<TARGET_FILE:arcdroid_libretro_test>
+      "${FIXTURE_DIR}/arcdroid-disc-request-b.rom"
+      "${FIXTURE_DIR}/disc-request/Chain.m3u"
+      "${CMAKE_CURRENT_BINARY_DIR}/disc-request-b-duplicate-data"
+      --disc-request-b-duplicate)
+    add_test(NAME disc-request-b-unknown-rom COMMAND libretro_harness
+      $<TARGET_FILE:arcdroid_libretro_test>
+      "${FIXTURE_DIR}/arcdroid-disc-request-b.rom"
+      "${FIXTURE_DIR}/disc-request/Unknown.m3u"
+      "${CMAKE_CURRENT_BINARY_DIR}/disc-request-b-unknown-data"
+      --disc-request-b-unknown)
+    add_test(NAME disc-request-b-32-rom COMMAND libretro_harness
+      $<TARGET_FILE:arcdroid_libretro_test>
+      "${FIXTURE_DIR}/arcdroid-disc-request-b.rom"
+      "${FIXTURE_DIR}/disc-request/Set32.m3u"
+      "${CMAKE_CURRENT_BINARY_DIR}/disc-request-b-32-data"
+      --disc-request-b-32)
+    add_test(NAME disc-request-effective-process COMMAND libretro_harness
+      $<TARGET_FILE:arcdroid_libretro_test>
+      "${FIXTURE_DIR}/arcdroid-disc-request-b.rom"
+      "${FIXTURE_DIR}/disc-request/Set.m3u"
+      "${CMAKE_CURRENT_BINARY_DIR}/disc-request-effective-data"
+      --disc-request-effective)
+    foreach(scenario IN ITEMS a-manual-reset a-manual-cancel a-box-ready
+                              b-preflight-fail b-insert-fail b-adffs b-newio)
+      set(request_rom "a")
+      if(scenario MATCHES "^b-")
+        set(request_rom "b")
+      endif()
+      add_test(NAME disc-request-${scenario}-rom COMMAND libretro_harness
+        $<TARGET_FILE:arcdroid_libretro_test>
+        "${FIXTURE_DIR}/arcdroid-disc-request-${request_rom}.rom"
+        "${FIXTURE_DIR}/disc-request/Set.m3u"
+        "${CMAKE_CURRENT_BINARY_DIR}/disc-request-${scenario}-data"
+        --disc-request-${scenario})
+    endforeach()
     foreach(arbitration_case IN ITEMS buffer mouse after)
       set(arbitration_rom_suffix "")
       if(NOT arbitration_case STREQUAL "buffer")

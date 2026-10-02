@@ -1331,7 +1331,7 @@ static bool arc_entry_name(const uint8_t *source, bool old_directory,
 static bool arc_directory_read(const ArcFileCore *fs, uint32_t address,
                                bool root, ArcDirectoryEntry *entries,
                                unsigned *entry_count,
-                               bool *ignored_attribute_bits)
+                               bool *ignored_attribute_bits, bool strict)
 {
    bool old = !fs->new_directory;
    size_t directory_size = old ? 1280u : 2048u;
@@ -1366,7 +1366,8 @@ static bool arc_directory_read(const ArcFileCore *fs, uint32_t address,
       ArcDirectoryEntry *entry = &entries[count];
       unsigned attributes = 0u;
       memset(entry, 0, sizeof(*entry));
-      if (!arc_entry_name(raw, old, &entry->name, &attributes)) continue;
+      if (!arc_entry_name(raw, old, &entry->name, &attributes))
+      { if (strict) return false; continue; }
       entry->length = arc_le32(raw + 18u);
       entry->address = arc_le24(raw + 22u);
       entry->directory = old ? (attributes & 8u) != 0u :
@@ -1393,6 +1394,76 @@ static bool arc_name_ascii_equal(const ArcGuestName *a, const ArcGuestName *b)
       if (arc_ascii_fold(a->bytes[i]) != arc_ascii_fold(b->bytes[i]))
          return false;
    return true;
+}
+
+static bool arc_disc_directory_valid(const ArcDirectoryEntry *entries,
+                                     unsigned count, bool ignored)
+{
+   if (ignored) return false;
+   for (unsigned i = 0u; i < count; ++i)
+      for (unsigned j = i + 1u; j < count; ++j)
+         if (arc_name_ascii_equal(&entries[i].name, &entries[j].name))
+            return false;
+   return true;
+}
+
+ArcDiscObject arc_disc_resolve(const uint8_t *data, size_t size,
+                               const ArcMediaInfo *media, const ArcJfdImage *jfd,
+                               const char *path, ArcGuestName *disc_name)
+{
+   ArcFileCore fs;
+   ArcDirectoryEntry entries[77];
+   unsigned count = 0u;
+   bool ignored = false;
+   if (disc_name) memset(disc_name, 0, sizeof(*disc_name));
+   if (!path || path[0] != '$' || (path[1] && path[1] != '.') ||
+       strlen(path) > 255u || !arc_filecore_init(&fs, data, size, media, jfd))
+      return ARC_DISC_UNKNOWN;
+   if (disc_name) *disc_name = fs.disc_name;
+   if (!arc_directory_read(&fs, 0u, true, entries, &count, &ignored, true) ||
+       !arc_disc_directory_valid(entries, count, ignored))
+      return ARC_DISC_UNKNOWN;
+   if (!path[1]) return ARC_DISC_DIR;
+   const char *at = path + 2u;
+   for (unsigned depth = 0u; depth < 32u; ++depth)
+   {
+      ArcGuestName wanted = {0};
+      while (*at && *at != '.' && wanted.length < 10u)
+         wanted.bytes[wanted.length++] = (uint8_t)*at++;
+      if (!wanted.length || (*at && *at != '.') ||
+          (*at == '.' && !at[1])) return ARC_DISC_UNKNOWN;
+      unsigned match = count;
+      for (unsigned i = 0u; i < count; ++i)
+         if (arc_name_ascii_equal(&wanted, &entries[i].name))
+         {
+            if (match != count) return ARC_DISC_UNKNOWN;
+            match = i;
+         }
+      if (match == count) return ARC_DISC_ABSENT;
+      ArcDirectoryEntry entry = entries[match];
+      if (!*at) return entry.directory ? ARC_DISC_DIR : ARC_DISC_FILE;
+      if (!entry.directory) return ARC_DISC_ABSENT;
+      if (entry.length != (fs.new_directory ? 2048u : 1280u))
+         return ARC_DISC_UNKNOWN;
+      ++at;
+      ignored = false;
+      if (!arc_directory_read(&fs, entry.address, false, entries, &count,
+                              &ignored, true) ||
+          !arc_disc_directory_valid(entries, count, ignored))
+         return ARC_DISC_UNKNOWN;
+   }
+   return ARC_DISC_UNKNOWN;
+}
+
+bool arc_disc_read_name(const uint8_t *data, size_t size,
+                        const ArcMediaInfo *media, const ArcJfdImage *jfd,
+                        ArcGuestName *disc_name)
+{
+   ArcFileCore fs;
+   if (!disc_name || !arc_filecore_init(&fs, data, size, media, jfd))
+      return false;
+   *disc_name = fs.disc_name;
+   return disc_name->length != 0u;
 }
 
 static bool arc_name_ascii_literal(const ArcGuestName *name,
@@ -1554,7 +1625,7 @@ static void arc_classify_candidate(const ArcFileCore *fs,
    unsigned child_count = 0u;
    if (entry->length != expected ||
        !arc_directory_read(fs, entry->address, false, child, &child_count,
-                           ignored_attribute_bits)) return;
+                           ignored_attribute_bits, false)) return;
    unsigned run_count = 0u, boot_count = 0u;
    for (unsigned item = 0u; item < child_count; ++item)
    {
@@ -1645,7 +1716,7 @@ bool arc_launch_discover(const uint8_t *data, size_t size,
    discovery->geometry = fs.reader.geometry;
    discovery->disc_name = fs.disc_name;
    if (!arc_directory_read(&fs, 0u, true, root, &root_count,
-                           &discovery->ignored_attribute_bits))
+                           &discovery->ignored_attribute_bits, false))
    { discovery->readable = false; discovery->scan_incomplete = true; return true; }
 
    bool has_root_candidate = false;
@@ -1678,7 +1749,7 @@ bool arc_launch_discover(const uint8_t *data, size_t size,
          if (root[i].length != expected ||
              !arc_directory_read(&fs, root[i].address, false, child,
                                  &child_count,
-                                 &discovery->ignored_attribute_bits))
+                                 &discovery->ignored_attribute_bits, false))
          {
             ++discovery->unreadable_parents;
             discovery->scan_incomplete = true;

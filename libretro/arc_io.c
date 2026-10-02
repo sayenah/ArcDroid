@@ -7,6 +7,9 @@
 #include <string.h>
 
 static struct retro_vfs_interface *arc_io_vfs;
+static void (*arc_io_write_observer)(void);
+void arc_io_set_write_observer(void (*observer)(void))
+{ arc_io_write_observer = observer; }
 
 struct ArcIoFile {
    struct retro_vfs_file_handle *handle;
@@ -105,6 +108,7 @@ bool arc_io_write_all_diagnostic(const char *path, const void *data, size_t size
    if (!file) return false;
    if (failure) *failure = "write";
    wrote = arc_io_vfs->write(file, data, size);
+   if (wrote > 0 && arc_io_write_observer) arc_io_write_observer();
    if (wrote == (int64_t)size) {
       if (failure) *failure = "flush";
       wrote = arc_io_vfs->flush && arc_io_vfs->flush(file) == 0 ? wrote : -1;
@@ -382,6 +386,7 @@ size_t arc_io_write_file(ArcIoFile *file, const void *data, size_t size)
    if (!file || !data || file->memory || !file->writable ||
        !arc_io_vfs || !arc_io_vfs->write) return 0u;
    int64_t count = arc_io_vfs->write(file->handle, data, size);
+   if (count > 0 && arc_io_write_observer) arc_io_write_observer();
    return count < 0 ? 0u : (size_t)count;
 }
 

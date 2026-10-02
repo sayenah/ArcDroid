@@ -61,6 +61,86 @@ static bool arc_fault;
 static ArcBootWatch arc_boot_watch;
 static ArcLaunchOutcome arc_launch_outcome;
 static ArcErrorBox arc_error_box;
+static ArcDiscRequest arc_disc_request;
+bool arc_engine_disc_watch_armed;
+static bool arc_disc_enabled;
+static char arc_disc_inserted_name[11];
+static ArcDiscResolveCallback arc_disc_resolve_callback;
+static ArcDiscObservationCallback arc_disc_observe_callback;
+static void *arc_disc_opaque;
+static uint64_t arc_engine_disc_now(void)
+{ return arc_active && speed_mhz > 0 ?
+   (tsc >> 32u) / (uint64_t)speed_mhz : 0u; }
+uint64_t arc_engine_disc_time_us(void) { return arc_engine_disc_now(); }
+static bool arc_engine_guest_byte(uint32_t address, uint8_t *byte)
+{
+   if (address >= 0x04000000u) return false;
+   uint8_t status = memstat[address >> 12u];
+   if (!((status >= 1u && status <= 3u) || status == 5u) ||
+       !mempoint[address >> 12u]) return false;
+   *byte = mempoint[address >> 12u][address];
+   return true;
+}
+static bool arc_engine_guest_string(uint32_t address, char *out, size_t capacity)
+{
+   if (!out || capacity < 2u) return false;
+   for (size_t i = 0u; i < capacity; ++i)
+   {
+      uint8_t byte;
+      if (address > UINT32_MAX - i ||
+          !arc_engine_guest_byte(address + (uint32_t)i, &byte)) return false;
+      out[i] = (char)byte;
+      if (!byte) return i != 0u;
+   }
+   return false;
+}
+void arc_engine_disc_configure(bool enabled, const char *inserted_name,
+   ArcDiscResolveCallback resolve, ArcDiscObservationCallback observe,
+   void *opaque)
+{
+   arc_disc_enabled = enabled;
+   arc_disc_resolve_callback = resolve;
+   arc_disc_observe_callback = observe;
+   arc_disc_opaque = opaque;
+   arc_disc_inserted_name[0] = 0;
+   if (inserted_name && strlen(inserted_name) <= 10u)
+      strcpy(arc_disc_inserted_name, inserted_name);
+   arc_engine_disc_clear();
+}
+void arc_engine_disc_clear(void)
+{
+   arc_disc_request_clear(&arc_disc_request);
+   arc_engine_disc_watch_armed = false;
+}
+void arc_engine_disc_snapshot(ArcDiscRequest *out)
+{ if (out) *out = arc_disc_request; }
+void arc_engine_disc_a_notified(void)
+{ arc_disc_request.a_notified = true; }
+void arc_engine_disc_poll(uint32_t address, uint32_t mode, uint32_t sp,
+                           uint32_t r0, uint32_t flags)
+{
+   uint32_t error_number = 0u;
+   bool readable = true;
+   if (mode == 0u && address == arc_disc_request.continuation &&
+       (flags & 0x10000000u) && arc_disc_request.operation != ARC_DISC_CATALOGUE)
+   {
+      for (unsigned i = 0u; i < 4u; ++i)
+      {
+         uint8_t byte;
+         if (r0 > UINT32_MAX - i ||
+             !arc_engine_guest_byte(r0 + i, &byte)) { readable = false; break; }
+         error_number |= (uint32_t)byte << (8u * i);
+      }
+   }
+   ArcDiscResult result = arc_disc_request_continue(&arc_disc_request,
+      address, mode, sp, r0, (flags & 0x10000000u) != 0u,
+      readable, error_number, arc_engine_disc_now());
+   arc_engine_disc_watch_armed = arc_disc_request.armed;
+   if (result.discarded) rpclog("Disc request: discarded watch reason=%s\n", result.reason);
+   if (result.observed && arc_disc_observe_callback)
+      arc_disc_observe_callback(arc_disc_opaque, arc_disc_request.object,
+         result.candidate, result.observation, result.trigger);
+}
 static const char *arc_error_result(ArcErrorAnswer answer)
 { return answer == ARC_ERROR_OK ? "ok" : "cancel"; }
 static void arc_engine_error_end(void)
@@ -78,6 +158,13 @@ static void arc_engine_error_end(void)
 }
 void arc_engine_error_snapshot(ArcErrorBox *box)
 { if (box) *box = arc_error_box; }
+#if defined(ARCDROID_TEST_FAULTS)
+void arc_engine_test_disc_error_ready(bool ready)
+{
+   arc_error_box.stage = ready ? ARC_ERROR_READY : ARC_ERROR_OFF;
+   arc_error_box.pending = ARC_ERROR_NONE;
+}
+#endif
 bool arc_engine_error_request(ArcErrorAnswer answer)
 {
    if (!arc_error_request(&arc_error_box, answer)) return false;
@@ -228,7 +315,33 @@ void arc_engine_boot_watch_swi(uint32_t swi, uint32_t r0, uint32_t r1,
                                uint32_t mode)
 {
    bool in_rom = address < 0x04000000u &&
-      memstat[address >> 12u] == 5u;
+      (memstat[address >> 12u] == 5u ||
+       (address < 0x1000u && memstat[0] == 1u &&
+        mempoint[0] == (uint8_t *)rom));
+   if (arc_disc_enabled && arc_active && !arc_fault)
+   {
+      char name[256];
+      uint32_t normalized = swi & ~0x20000u;
+      ArcDiscOperation operation;
+      bool lookup = arc_disc_request_operation(normalized, r0, &operation);
+      bool upcall = normalized == 0x33u && (r0 == 1u || r0 == 2u);
+      bool readable = (lookup || upcall) &&
+         arc_engine_guest_string(upcall ? r2 : r1, name,
+                                 upcall ? 12u : sizeof(name));
+      unsigned candidate = UINT_MAX;
+      if (lookup && readable && arc_disc_resolve_callback && mode == 0u)
+      {
+         char canonical[256];
+         if (arc_disc_request_name(name, arc_disc_inserted_name, canonical))
+            candidate = arc_disc_resolve_callback(arc_disc_opaque,
+                                                  canonical, operation);
+      }
+      ArcDiscSwi event = {swi, r0, r1, r3, address, mode, armregs[13],
+                          in_rom, readable, readable ? name : NULL,
+                          candidate, arc_engine_disc_now()};
+      arc_disc_request_swi(&arc_disc_request, &event, arc_disc_inserted_name);
+      arc_engine_disc_watch_armed = arc_disc_request.armed;
+   }
    uint8_t block_first = 0u;
    bool block_valid = (swi == 7u || swi == 0x20007u) && r0 == 21u &&
       arc_engine_block_first(r1, &block_first);
@@ -995,6 +1108,19 @@ bool arc_engine_media_eject(void)
    return true;
 }
 
+bool arc_engine_disc_controller_idle(void)
+{
+   if (!arc_active || arc_fault || !arc_machine_live || !fdc_timer ||
+       timer_is_enabled(fdc_timer) || fdc_overridden) return false;
+   return fdctype == FDC_82C711 ? c82c711_fdc_idle() : wd1770_idle();
+}
+
+#if defined(ARCDROID_TEST_FAULTS)
+static bool arc_test_fail_next_media_insert;
+void arc_engine_test_fail_next_media_insert(void)
+{ arc_test_fail_next_media_insert = true; }
+#endif
+
 bool arc_engine_media_insert(const ArcEngineMedia *media,
                              char *failure, size_t failure_size)
 {
@@ -1005,6 +1131,10 @@ bool arc_engine_media_insert(const ArcEngineMedia *media,
        strlen(path) >= sizeof(arc_saved_media) ||
        (media->kind == ARC_MEDIA_JFD && !media->jfd) ||
        !arc_engine_extent_valid(media)) return false;
+#if defined(ARCDROID_TEST_FAULTS)
+   if (arc_test_fail_next_media_insert)
+   { arc_test_fail_next_media_insert = false; return false; }
+#endif
    /* Defence in depth for callers that replace a mounted image directly. */
    wd1770_media_change();
    c82c711_fdc_media_change(0u);
