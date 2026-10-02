@@ -1026,6 +1026,30 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
       "${FIXTURE_DIR}/adffs/synthetic.zip"
       "${FIXTURE_DIR}/adffs/eligible.jfd"
       "${FIXTURE_DIR}/zip-content" --helper-stress)
+    add_test(NAME left-stick-unit COMMAND core_tests "${FIXTURE_DIR}" --left-stick)
+    foreach(stick_case IN ITEMS probe a3010 error chooser)
+      set(stick_rom "${FIXTURE_DIR}/arcdroid-test.rom")
+      set(stick_content "${FIXTURE_DIR}/arcdroid-test.adf")
+      if(stick_case STREQUAL "error")
+        set(stick_rom "${FIXTURE_DIR}/arcdroid-error-box.rom")
+      elseif(stick_case STREQUAL "chooser")
+        set(stick_rom "${FIXTURE_DIR}/arcdroid-chooser-test.rom")
+        set(stick_content "${FIXTURE_DIR}/arcdroid-chooser-l.adl")
+      endif()
+      add_test(NAME left-stick-${stick_case}-harness COMMAND libretro_harness
+        $<TARGET_FILE:arcdroid_libretro_test> "${stick_rom}" "${stick_content}"
+        "${CMAKE_CURRENT_BINARY_DIR}/left-stick-${stick_case}-data"
+        --left-stick-${stick_case})
+    endforeach()
+    add_test(NAME left-stick-equivalence-process COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/input_trace_test.py"
+      $<TARGET_FILE:libretro_harness> $<TARGET_FILE:arcdroid_libretro_test>
+      "${FIXTURE_DIR}")
+    add_test(NAME left-stick-input-trace COMMAND libretro_harness
+      $<TARGET_FILE:arcdroid_libretro_test>
+      "${FIXTURE_DIR}/arcdroid-test.rom" "${FIXTURE_DIR}/arcdroid-test.adf"
+      "${CMAKE_CURRENT_BINARY_DIR}/left-stick-trace-data"
+      --input-trace "${CMAKE_CURRENT_BINARY_DIR}/left-stick-input.trace")
     add_test(NAME input-layout-harness COMMAND libretro_harness
       $<TARGET_FILE:arcdroid_libretro_test>
       "${FIXTURE_DIR}/arcdroid-test.rom"
