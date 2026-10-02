@@ -13,6 +13,7 @@
 #define ARC_JFD_PDD5_TRACKS 160u
 #define ARC_JFD_PDD5_IDS 5u
 #define ARC_JFD_PDD5_SLOTS (ARC_JFD_PDD5_TRACKS * ARC_JFD_PDD5_IDS)
+#define ARC_JFD_PDD5_ALLOCATION_BYTES (ARC_JFD_PDD5_SLOTS * 4u / 8u)
 #define ARC_JFD_PDD5_SPACING_US 36352u
 #define ARC_JFD_F_SPACING_US 18176u
 #define ARC_JFD_MAX_STANDARD_IDS 10u
@@ -68,9 +69,10 @@ typedef struct ArcJfdOverlay {
    unsigned creation_capacity;
    bool pdd5_profile;
    bool layout_supported;
-   bool guarded;                  /* D-120, immutable base-derived U and T. */
+   bool guarded;                  /* D-120/D-121, immutable base-derived U and T. */
    bool guard_violated;
    uint8_t unavailable_mask[ARC_JFD_PDD5_TRACKS];
+   uint8_t guard_base_allocation[ARC_JFD_PDD5_ALLOCATION_BYTES]; /* Immutable units. */
    unsigned unavailable_slots;
    uint32_t guard_declared_units;
    uint32_t guard_tail_units;

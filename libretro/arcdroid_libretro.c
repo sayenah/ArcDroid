@@ -452,6 +452,33 @@ bool arc_libretro_test_jfd_commit(unsigned image_index, size_t descriptor,
    free(bytes);
    return committed;
 }
+/* Exact map I/O for authored lifecycle and snapshot-interruption tests. */
+bool arc_libretro_test_jfd_map(unsigned image_index, uint8_t bytes[1024],
+                               bool write, uint64_t *generation)
+{
+   if (image_index >= arc_media_count ||
+       arc_media[image_index].info.kind != ARC_MEDIA_JFD) return false;
+   ArcJfdImage *image = &arc_media[image_index].jfd;
+   if (!image->overlay || !image->track_count) return false;
+   const ArcJfdTrack *track = &image->tracks[0];
+   for (unsigned i = 0u; i < track->sector_count; ++i)
+   {
+      size_t index = track->first_sector + i;
+      if (image->sectors[index].id != 0u ||
+          image->sectors[index].size != 1024u) continue;
+      bool okay;
+      if (write) okay = image->overlay->commit(image, index, bytes);
+      else
+      {
+         ArcJfdView view;
+         okay = arc_jfd_effective_sector(image, 0u, i, false, &view) && view.data;
+         if (okay) memcpy(bytes, view.data, 1024u);
+      }
+      *generation = image->overlay->generation;
+      return okay;
+   }
+   return false;
+}
 bool arc_libretro_test_jfd_formatted_reads(unsigned image_index)
 {
    if (image_index >= arc_media_count ||
@@ -2800,7 +2827,7 @@ static void arc_finish_jfd_preparation(ArcMediaEntry *entry, bool native)
       entry->jfd.identification_reason);
    if (native && overlay && overlay->guarded && overlay->writable)
       arc_log(RETRO_LOG_INFO,
-         "JFD writes: image=%u state=writable reason=rw-flag guard=old-map unavailable=%u tail=%u generation=%llu records=%u\n",
+         "JFD writes: image=%u state=writable reason=rw-flag guard=old-map unavailable=%u tail=%u generation=%llu records=%u; accepted map writes never increase unavailable allocation\n",
          image_number, overlay->unavailable_slots, overlay->guard_tail_units,
          (unsigned long long)overlay->generation, overlay->records);
    else arc_log(RETRO_LOG_INFO,

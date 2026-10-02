@@ -21,10 +21,11 @@ static void test_guard_store(const char *root)
    static const struct { const char *name; bool supported, guarded; } cases[]={
       {"guard-crossing.jfd",true,true}, {"guard-physical.jfd",true,true},
       {"guard-one-tail.jfd",true,true}, {"guard-split-tail.jfd",true,true},
-      {"guard-extra.jfd",true,true}, {"guard-u-allocated.jfd",false,false},
-      {"guard-tail-allocated.jfd",false,false}, {"guard-partial-u.jfd",false,false},
+      {"guard-extra.jfd",true,true}, {"guard-u-allocated.jfd",true,true},
+      {"guard-tail-allocated.jfd",false,false}, {"guard-partial-u.jfd",true,true},
       {"guard-sparse-crossing.jfd",true,false},
       {"guard-profile-fail.jfd",false,false},
+      {"guard-allocated-profile-fail.jfd",false,false},
       {"guard-placement-fail.jfd",false,false}
    };
    const char *why=NULL;
@@ -280,5 +281,53 @@ static void test_guard_store(const char *root)
    for (unsigned f=0u;f<3u;++f)
    { char after[41]; arc_sha1_hex(files[f].bytes,files[f].size,after); assert(!strcmp(after,saved_hash[f])); }
    clear_files();
+   /* D-121: exact units, not allocation counts or sector masks. */
+   image=allocation_fixture(root,"guard-occupied.jfd");
+   assert(arc_jfd_store_load(&image,"save",true,false,1u,&why) &&
+          image.overlay->guarded && image.overlay->writable &&
+          image.overlay->unavailable_slots==10u &&
+          image.overlay->allocation_mask[159]==31u);
+   memcpy(base,image.decoded+image.sectors[0].data_offset,1024u);
+   memcpy(pending,base,1024u); guard_u24(pending+256u,3170u);
+   guard_checksums(pending);
+   assert(image.overlay->commit(&image,0u,pending));
+   uint8_t current[1024]; memcpy(current,pending,1024u);
+   for (unsigned kind=0u;kind<3u;++kind)
+   {
+      memcpy(pending,current,1024u);
+      if (kind<2u) guard_u24(pending+256u,kind?3168u:3169u);
+      else
+      {
+         guard_u24(pending+256u,3169u); guard_u24(pending+3u,3182u);
+         guard_u24(pending+259u,1u); guard_u24(pending+6u,3200u);
+         guard_u24(pending+262u,63u); pending[510]=9u;
+      }
+      guard_checksums(pending);
+      assert(arc_jfd_old_declared(pending,mask,&declared,&tail) &&
+             !memcmp(mask,image.overlay->allocation_mask,sizeof(mask)));
+      for (unsigned f=0u;f<3u;++f) arc_sha1_hex(files[f].bytes,files[f].size,saved_hash[f]);
+      assert(!image.overlay->commit(&image,0u,pending) &&
+             image.overlay->generation==1u && image.overlay->records==1u &&
+             !image.overlay->failed && image.overlay->map_valid &&
+             !memcmp(image.overlay->data[0],current,1024u));
+      for (unsigned f=0u;f<3u;++f)
+      { char after[41]; arc_sha1_hex(files[f].bytes,files[f].size,after); assert(!strcmp(after,saved_hash[f])); }
+   }
+   arc_jfd_free(&image);
+   image=allocation_fixture(root,"guard-occupied.jfd");
+   assert(arc_jfd_store_load(&image,"save",true,false,1u,&why) &&
+          image.overlay->writable && image.overlay->generation==1u &&
+          !image.overlay->commit(&image,0u,base));
+   arc_jfd_free(&image); clear_files();
+   /* Another allocation unit within a partially allocated U slot. */
+   image=allocation_fixture(root,"guard-partial-u.jfd");
+   assert(arc_jfd_store_load(&image,"save",true,false,1u,&why));
+   memcpy(base,image.decoded+image.sectors[0].data_offset,1024u);
+   memcpy(pending,base,1024u); guard_u24(pending,14u);
+   guard_u24(pending+256u,3249u); guard_checksums(pending);
+   assert(arc_jfd_old_declared(pending,mask,&declared,&tail) &&
+          !memcmp(mask,image.overlay->allocation_mask,sizeof(mask)) &&
+          !image.overlay->commit(&image,0u,pending) && !image.overlay->generation);
+   arc_jfd_free(&image); clear_files();
    puts("jfd-guard-store: admission, declared parser, non-guarded regressions, veto, persistence, violating stores and Off passed");
 }

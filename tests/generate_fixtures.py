@@ -5827,6 +5827,11 @@ def main() -> None:
         ("one-tail", 3201, ((12, 3189),), guard_tracks, 160, None),
         ("split-tail", 3263, ((12, 3188), (3200, 63)), guard_tracks, 160, None),
         ("u-allocated", 3263, ((16, 3247),), guard_tracks, 160, None),
+        # One free irregular side and one wholly allocated irregular side.
+        ("occupied", 3263, ((12, 3168), (3200, 63)),
+         {0: full, 1: full, 2: full, 157: [9], 159: [7, 8, 9]}, 160, None),
+        ("allocated-profile-fail", 3263, ((16, 3247),),
+         {0: [0, 1, 2, 4, 9]}, 160, None),
         ("tail-allocated", 3263, ((12, 3250),), guard_tracks, 160, None),
         ("partial-u", 3263, ((13, 3250),), guard_tracks, 160, None),
         ("sparse-crossing", 3263, ((12, 3251),),

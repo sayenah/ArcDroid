@@ -874,15 +874,22 @@ static bool arc_jfd_old_allocation(const uint8_t map[1024],
 /* D-120: validate in declared coordinates, then intersect free extents with
  * physical D capacity. Tail allocation is reported independently of U. The
  * legacy parser above intentionally retains its physical-bounds policy. */
-bool arc_jfd_old_declared(const uint8_t map[1024],
+static bool arc_jfd_old_declared_units(const uint8_t map[1024],
                           uint8_t mask[ARC_JFD_PDD5_TRACKS],
-                          uint32_t *declared, bool *tail_allocated)
+                          uint32_t *declared, bool *tail_allocated,
+                          uint8_t *allocation)
 {
    ArcFileCore fs = {0};
    fs.reader.raw = map; fs.reader.raw_size = 1024u;
    if (!arc_filecore_old(&fs, ARC_GEOMETRY_800K_D)) return false;
    unsigned total = arc_le24(fs.map + 252u);
    unsigned physical = total < 3200u ? total : 3200u;
+   if (allocation)
+   {
+      memset(allocation, 0, ARC_JFD_PDD5_ALLOCATION_BYTES);
+      for (unsigned unit = 0u; unit < physical; ++unit)
+         allocation[unit / 8u] |= (uint8_t)(1u << (unit % 8u));
+   }
    unsigned previous = 0u, tail_free = 0u;
    uint16_t free_units[ARC_JFD_PDD5_SLOTS] = {0};
    for (unsigned at = 0u; at < fs.map[510]; at += 3u)
@@ -897,7 +904,11 @@ bool arc_jfd_old_declared(const uint8_t map[1024],
       if (end > tail_begin) tail_free += end - tail_begin;
       unsigned stop = end < physical ? end : physical;
       for (unsigned unit = first; unit < stop; ++unit)
+      {
          ++free_units[unit / 4u];
+         if (allocation)
+            allocation[unit / 8u] &= (uint8_t)~(1u << (unit % 8u));
+      }
    }
    memset(mask, 0, ARC_JFD_PDD5_TRACKS);
    for (unsigned slot = 0u; slot < ARC_JFD_PDD5_SLOTS; ++slot)
@@ -914,6 +925,11 @@ bool arc_jfd_old_declared(const uint8_t map[1024],
    return true;
 }
 
+bool arc_jfd_old_declared(const uint8_t map[1024],
+                          uint8_t mask[ARC_JFD_PDD5_TRACKS],
+                          uint32_t *declared, bool *tail_allocated)
+{ return arc_jfd_old_declared_units(map, mask, declared, tail_allocated, NULL); }
+
 bool arc_jfd_guard_base(const ArcJfdImage *image, ArcJfdOverlay *overlay,
                         const uint8_t unavailable[ARC_JFD_PDD5_TRACKS])
 {
@@ -923,7 +939,8 @@ bool arc_jfd_guard_base(const ArcJfdImage *image, ArcJfdOverlay *overlay,
    uint32_t declared;
    bool tail_allocated;
    if (!arc_filecore_old(&fs, ARC_GEOMETRY_800K_D) ||
-       !arc_jfd_old_declared(fs.map, mask, &declared, &tail_allocated) ||
+       !arc_jfd_old_declared_units(fs.map, mask, &declared, &tail_allocated,
+                                   overlay->guard_base_allocation) ||
        tail_allocated) return false;
    for (unsigned t = 0u; t < ARC_JFD_PDD5_TRACKS; ++t)
    {
@@ -934,12 +951,6 @@ bool arc_jfd_guard_base(const ArcJfdImage *image, ArcJfdOverlay *overlay,
             if (arc_jfd_pdd5_free_intersects(t,
                   (size_t)arc_le24(fs.map + at) * 256u,
                   (size_t)arc_le24(fs.map + 256u + at) * 256u)) return false;
-      if (mask[t] & unavailable[t]) return false;
-      /* U must be positively free, not merely outside a short disc. */
-      for (unsigned id = 0u; id < ARC_JFD_PDD5_IDS; ++id)
-         if ((unavailable[t] & (1u << id)) &&
-             (t * ARC_JFD_PDD5_IDS + id + 1u) * 4u > declared)
-            return false;
    }
    memcpy(overlay->unavailable_mask, unavailable, ARC_JFD_PDD5_TRACKS);
    overlay->guard_declared_units = declared;
@@ -953,16 +964,25 @@ bool arc_jfd_guard_base(const ArcJfdImage *image, ArcJfdOverlay *overlay,
 
 static const char *arc_jfd_guard_map(const ArcJfdOverlay *overlay,
                                      const uint8_t map[1024],
-                                     uint8_t mask[ARC_JFD_PDD5_TRACKS])
+                                     uint8_t mask[ARC_JFD_PDD5_TRACKS],
+                                     const uint8_t *comparator,
+                                     uint8_t allocation[ARC_JFD_PDD5_ALLOCATION_BYTES])
 {
    uint32_t declared;
    bool tail_allocated;
-   if (!arc_jfd_old_declared(map, mask, &declared, &tail_allocated))
+   if (!arc_jfd_old_declared_units(map, mask, &declared, &tail_allocated,
+                                   allocation))
       return "guard-invalid-map";
    if (declared != overlay->guard_declared_units) return "guard-size";
    if (tail_allocated) return "guard-tail";
-   for (unsigned t = 0u; t < ARC_JFD_PDD5_TRACKS; ++t)
-      if (mask[t] & overlay->unavailable_mask[t]) return "guard-unavailable";
+   /* D-121 compares units, separately from C-11c's coarser sector mask. */
+   for (unsigned slot = 0u; slot < ARC_JFD_PDD5_SLOTS; ++slot)
+      if (overlay->unavailable_mask[slot / ARC_JFD_PDD5_IDS] &
+          (1u << (slot % ARC_JFD_PDD5_IDS)))
+         for (unsigned unit = slot * 4u; unit < (slot + 1u) * 4u; ++unit)
+            if ((allocation[unit / 8u] & (1u << (unit % 8u))) &&
+                !(comparator[unit / 8u] & (1u << (unit % 8u))))
+               return "guard-unavailable";
    return NULL;
 }
 
@@ -1060,8 +1080,10 @@ static bool arc_jfd_map_collect(const ArcJfdImage *image, bool base_only,
    {
       if (!arc_jfd_map_read(image, copy, base_only, pending_index,
                             pending, map)) continue;
+      uint8_t allocation[ARC_JFD_PDD5_ALLOCATION_BYTES];
       bool okay = overlay->map_kind == 1u ?
-         (overlay->guarded ? !arc_jfd_guard_map(overlay, map, copy_mask) :
+         (overlay->guarded ? !arc_jfd_guard_map(overlay, map, copy_mask,
+                  overlay->guard_base_allocation, allocation) :
           arc_jfd_old_allocation(map, copy_mask)) :
          arc_jfd_new_allocation(map, overlay->map_record, copy_mask);
       if (!okay) continue;
@@ -1147,11 +1169,18 @@ const char *arc_jfd_write_veto_reason(const ArcJfdImage *image, size_t index,
       if (arc_jfd_map_target(image, index))
       {
          uint8_t mask[ARC_JFD_PDD5_TRACKS], current[1024];
+         uint8_t current_units[ARC_JFD_PDD5_ALLOCATION_BYTES];
+         uint8_t pending_units[ARC_JFD_PDD5_ALLOCATION_BYTES];
+         /* Effective records change only after a successful snapshot commit.
+          * On preparation the selected snapshot, rather than the base, is
+          * therefore the comparator, including after reset or restart. */
          if (!overlay->map_valid ||
              !arc_jfd_map_read(image, 0u, false, SIZE_MAX, NULL, current) ||
-             arc_jfd_guard_map(overlay, current, mask))
+             arc_jfd_guard_map(overlay, current, mask,
+                               overlay->guard_base_allocation, current_units))
             return "guard-invalid-map";
-         const char *reason = arc_jfd_guard_map(overlay, pending, mask);
+         const char *reason = arc_jfd_guard_map(overlay, pending, mask,
+                                                  current_units, pending_units);
          if (reason) return reason;
       }
    }

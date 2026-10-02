@@ -9,11 +9,14 @@ keep their existing write protection.
 ArcDroid preserves captured protection sectors and never creates sectors in
 an unavailable protection area or beyond the filesystem's physical capacity.
 If a save needs that space, the game receives a disc error (typically
-“Disc error 10”). A map update claiming that space is refused before it is
-saved. Other writes remain available after a refusal.
+“Disc error 10”). Accepted map writes never increase unavailable allocation.
+An object already on a protection track stays as it is; modifying it may fail
+with a disc error. Map updates that add unavailable allocation are refused before
+they are saved. Other writes remain available after a refusal.
 
 On reload, `guard-violated` means the saved allocation map is invalid, changes
-the declared disc size, or claims unavailable space. ArcDroid disables writes
+the declared disc size, claims beyond-disc space, or allocates more
+unavailable units than the original map. ArcDroid disables writes
 and inferred blank sectors, preserves every save-store file, and continues to
 show saved captured replacements and created sectors. `Disk Writes: Off`
 hides saved changes and restores the original disc presentation.

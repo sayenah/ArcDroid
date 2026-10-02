@@ -85,6 +85,63 @@ static void test_guard_controller(const char *root,bool newio)
    assert(guard_extra_write(&image,newio,164u,0u) && jfd_commits==2u &&
           image.overlay->data[image.tracks[164].first_sector][0]==0x5au);
    disc_close(0); arc_jfd_free(&image);
+   /* D-121: allocated U in the base is admitted; comparisons must retain
+    * exact units even when every candidate has the same C-11c slot mask. */
+   image=load_allocation_image(root,"guard-occupied.jfd");
+   prepare_allocation_image(&image);
+   assert(image.overlay->guarded && image.overlay->unavailable_slots==10u &&
+          image.overlay->unavailable_mask[157]==31u &&
+          image.overlay->unavailable_mask[159]==31u);
+   memcpy(base,image.decoded+image.sectors[0].data_offset,1024u);
+   memcpy(pending,base,1024u);
+   guard_controller_u24(pending+256u,3170u); /* Free units 3180 and 3181. */
+   pending[255]=allocation_old_checksum(pending);
+   pending[511]=allocation_old_checksum(pending+256u);
+   assert(allocation_write_sector(&image,newio,0u,pending));
+   uint8_t current[1024]; memcpy(current,pending,1024u);
+   for (unsigned kind=0u;kind<3u;++kind)
+   {
+      memcpy(pending,current,1024u);
+      if (kind<2u) guard_controller_u24(pending+256u,kind?3168u:3169u);
+      else
+      {
+         /* Exchange allocated 3182 for free 3181, without changing count. */
+         guard_controller_u24(pending+256u,3169u);
+         guard_controller_u24(pending+3u,3182u);
+         guard_controller_u24(pending+259u,1u);
+         guard_controller_u24(pending+6u,3200u);
+         guard_controller_u24(pending+262u,63u); pending[510]=9u;
+      }
+      pending[255]=allocation_old_checksum(pending);
+      pending[511]=allocation_old_checksum(pending+256u);
+      uint8_t mask[ARC_JFD_PDD5_TRACKS]; uint32_t declared; bool tail;
+      assert(arc_jfd_old_declared(pending,mask,&declared,&tail) &&
+             !memcmp(mask,image.overlay->allocation_mask,sizeof(mask)));
+      unsigned before=jfd_commits;
+      assert(!allocation_write_sector(&image,newio,0u,pending) &&
+             jfd_commits==before && !strcmp(refused_reason,"guard-unavailable") &&
+             !memcmp(image.overlay->data[0],current,1024u));
+      assert(allocation_write_sector(&image,newio,2u,base) && jfd_commits==before+1u);
+   }
+   if (newio) c82c711_fdc_shutdown();
+   disc_close(0); arc_jfd_free(&image);
+   image=load_allocation_image(root,"guard-partial-u.jfd");
+   prepare_allocation_image(&image);
+   memcpy(base,image.decoded+image.sectors[0].data_offset,1024u);
+   memcpy(pending,base,1024u); guard_controller_u24(pending,14u);
+   guard_controller_u24(pending+256u,3249u);
+   pending[255]=allocation_old_checksum(pending);
+   pending[511]=allocation_old_checksum(pending+256u);
+   uint8_t mask[ARC_JFD_PDD5_TRACKS]; uint32_t declared; bool tail;
+   assert(arc_jfd_old_declared(pending,mask,&declared,&tail) &&
+          !memcmp(mask,image.overlay->allocation_mask,sizeof(mask)));
+   unsigned before=jfd_commits;
+   assert(!allocation_write_sector(&image,newio,0u,pending) &&
+          jfd_commits==before && !strcmp(refused_reason,"guard-unavailable") &&
+          !image.overlay->data[0]);
+   assert(allocation_write_sector(&image,newio,2u,base) && jfd_commits==before+1u);
+   if (newio) c82c711_fdc_shutdown();
+   disc_close(0); arc_jfd_free(&image);
    puts(newio?"jfd-guard-newio: RNF, all veto errors, preserved map and continued writes passed":
               "jfd-guard-wd: RNF, all veto errors, preserved map and continued writes passed");
 }

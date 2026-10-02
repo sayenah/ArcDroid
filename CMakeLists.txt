@@ -579,6 +579,8 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
       "${FIXTURE_DIR}/jfd-allocation/guard-split-tail.jfd"
       "${FIXTURE_DIR}/jfd-allocation/guard-extra.jfd"
       "${FIXTURE_DIR}/jfd-allocation/guard-u-allocated.jfd"
+      "${FIXTURE_DIR}/jfd-allocation/guard-occupied.jfd"
+      "${FIXTURE_DIR}/jfd-allocation/guard-allocated-profile-fail.jfd"
       "${FIXTURE_DIR}/jfd-allocation/guard-tail-allocated.jfd"
       "${FIXTURE_DIR}/jfd-allocation/guard-partial-u.jfd"
       "${FIXTURE_DIR}/jfd-allocation/guard-sparse-crossing.jfd"

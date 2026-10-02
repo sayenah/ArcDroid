@@ -419,6 +419,7 @@ static const char *fault_write_substring;
 static const char *fault_remove_substring;
 static const char *fault_flush_substring;
 static const char *fault_close_substring;
+static unsigned jfd_rename_interruption; /* 1 before, 2 after publication. */
 static const char *fault_rename_substring;
 static unsigned fault_rename_skip_matches;
 static const char *fault_mkdir_substring;
@@ -522,6 +523,13 @@ static int vfs_rename(const char *a, const char *b)
       FILE *race = fopen(b, "wb");
       if (race) fclose(race);
       return -1;
+   }
+   if (jfd_rename_interruption && b && strstr(b,"/arcdroid/jfd/"))
+   {
+      if (jfd_rename_interruption==1u) _Exit(86);
+      int result=rename(a,b);
+      assert(result==0);
+      _Exit(87); /* Published, before the store updates its in-memory view. */
    }
    return rename(a, b);
 }
@@ -2753,6 +2761,7 @@ int main(int argc, char **argv)
    void (*arc_engine_test_set_vidc_noncompleting)(bool) = NULL;
    bool (*arc_engine_test_drive_media)(unsigned, bool *, char[41]) = NULL;
    bool (*arc_libretro_test_jfd_commit)(unsigned, size_t, uint8_t) = NULL;
+   bool (*arc_libretro_test_jfd_map)(unsigned, uint8_t *, bool, uint64_t *) = NULL;
    bool (*arc_libretro_test_jfd_formatted_reads)(unsigned) = NULL;
    void (*arc_libretro_test_jfd_wp_layout_supported)(bool) = NULL;
    uint8_t (*arc_libretro_test_jfd_probe_mask)(unsigned, unsigned) = NULL;
@@ -3147,6 +3156,8 @@ int main(int argc, char **argv)
          dlsym(module, "arc_libretro_test_jfd_presented");
       *(void **)(&arc_libretro_test_jfd_slot_state) =
          dlsym(module, "arc_libretro_test_jfd_slot_state");
+      *(void **)(&arc_libretro_test_jfd_map) =
+         dlsym(module, "arc_libretro_test_jfd_map");
       *(void **)(&arc_libretro_test_jfd_commit) =
          dlsym(module, "arc_libretro_test_jfd_commit");
       *(void **)(&arc_engine_test_drive_media) =
@@ -3174,7 +3185,7 @@ int main(int argc, char **argv)
              arc_libretro_test_jfd_created_byte &&
              arc_libretro_test_jfd_presented &&
              arc_libretro_test_jfd_slot_state &&
-             arc_libretro_test_jfd_commit && arc_engine_test_drive_media &&
+             arc_libretro_test_jfd_map && arc_libretro_test_jfd_commit && arc_engine_test_drive_media &&
              arc_libretro_test_adffs_accept_test_os &&
              arc_libretro_test_fail_adffs_content_read &&
              arc_libretro_test_adffs_content_read_failure_pending &&
@@ -5895,7 +5906,7 @@ int main(int argc, char **argv)
       option_machine=argv[6];
       option_cpu=!strcmp(option_machine,"A3020")?"ARM250":"ARM2";
       option_launch="off"; option_jfd_boot="native";
-      bool violated=!strcmp(argv[8],"violated");
+      bool violated=!strcmp(argv[8],"violated") || !strcmp(argv[8],"units-violated");
       bool routing=!strncmp(argv[8],"route-",6u);
       bool route_damaged=!strcmp(argv[8],"route-damaged");
       bool off=!strcmp(argv[8],"off") || !strcmp(argv[8],"route-off");
@@ -5919,6 +5930,66 @@ int main(int argc, char **argv)
          retro_unload_game(); retro_deinit();
          assert(hash_file(game.path)==source_hash && !open_files && !open_dirs && dlclose(module)==0);
          printf("jfd_guard_step: structural routing %s passed\n",argv[8]);
+         return 0;
+      }
+      if (!strcmp(argv[8],"units-violated"))
+      {
+         uint8_t map[1024]; uint64_t generation=0u;
+         assert(strstr(last_jfd_writes_log,"reason=guard-violated") &&
+                strstr(last_jfd_file_data_log,"class=guard-violated") &&
+                !arc_libretro_test_jfd_formatted_reads(0u) &&
+                arc_libretro_test_jfd_map(0u,map,false,&generation) && generation==expected &&
+                !arc_libretro_test_jfd_map(0u,map,true,&generation));
+         retro_unload_game(); retro_deinit();
+         assert(hash_file(game.path)==source_hash && !open_files && !open_dirs && dlclose(module)==0);
+         puts("jfd_guard_step: allocated-base U growth classified guard-violated");
+         return 0;
+      }
+      if (!strncmp(argv[8],"units-",6u))
+      {
+         uint8_t current[1024],pending[1024]; uint64_t generation=0u;
+         assert(strstr(last_jfd_writes_log,"guard=old-map unavailable=10 tail=63") &&
+                strstr(last_jfd_writes_log,"accepted map writes never increase unavailable allocation"));
+         assert(arc_libretro_test_jfd_map(0u,current,false,&generation) && generation==expected);
+         bool initial=!strcmp(argv[8],"units-free");
+         bool recover=!strcmp(argv[8],"units-recover");
+         memcpy(pending,current,1024u);
+         if (!recover)
+         {
+            unsigned length=initial?3170u:3188u;
+            pending[256]=(uint8_t)length; pending[257]=(uint8_t)(length>>8u);
+            pending[258]=(uint8_t)(length>>16u);
+            unsigned value=255u;
+            for (int at=510;at>=256;--at)
+            { if (value>255u) value=(value+1u)&255u; value+=pending[at]; }
+            pending[511]=(uint8_t)value;
+            if (!strcmp(argv[8],"units-kill-before")) jfd_rename_interruption=1u;
+            if (!strcmp(argv[8],"units-kill-after")) jfd_rename_interruption=2u;
+            assert(arc_libretro_test_jfd_map(0u,pending,true,&generation) && generation==expected+1u);
+            memcpy(current,pending,1024u);
+         }
+         uint64_t saved_generation=generation;
+         for (unsigned step=0u;step<3u;++step)
+         {
+            if (step==1u) retro_reset();
+            if (step==2u)
+               assert(disk_control.set_eject_state(true) && disk_control.set_eject_state(false));
+            assert(arc_libretro_test_jfd_map(0u,pending,false,&generation) &&
+                   generation==saved_generation && !memcmp(pending,current,1024u));
+            /* Restore base allocation: valid versus base, forbidden versus
+             * the selected committed comparator, even after preparation. */
+            pending[256]=0x60u; pending[257]=0x0cu; pending[258]=0u; /* 3168 */
+            unsigned value=255u;
+            for (int at=510;at>=256;--at)
+            { if (value>255u) value=(value+1u)&255u; value+=pending[at]; }
+            pending[511]=(uint8_t)value;
+            assert(!arc_libretro_test_jfd_map(0u,pending,true,&generation) &&
+                   generation==saved_generation && strstr(last_jfd_refusal_log,"reason=guard-unavailable"));
+         }
+         retro_unload_game(); retro_deinit();
+         assert(hash_file(game.path)==source_hash && !open_files && !open_dirs && dlclose(module)==0);
+         printf("jfd_guard_step: %s reset/reinsertion comparator generation=%llu passed\n",
+                argv[8],(unsigned long long)generation);
          return 0;
       }
       if (violated)

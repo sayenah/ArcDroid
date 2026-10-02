@@ -35,13 +35,15 @@ def main() -> None:
     harness, core, fixtures = map(Path, sys.argv[1:4])
     image = fixtures / "jfd-allocation/guard-crossing.jfd"
     merge = fixtures / "jfd-allocation/guard-merge.jfd"
-    sources = {p: hashlib.sha256(p.read_bytes()).digest() for p in (image, merge)}
+    occupied = fixtures / "jfd-allocation/guard-occupied.jfd"
+    sources = {p: hashlib.sha256(p.read_bytes()).digest() for p in (image, merge, occupied)}
     with tempfile.TemporaryDirectory(prefix="arc-jfd-guard-") as temp:
         for machine, prefix in (("A3000", ""), ("A3020", "newio-")):
-            def run(rom: Path, content: Path, data: Path, flag: str, outcome: str, mode: str) -> None:
+            def run(rom: Path, content: Path, data: Path, flag: str, outcome: str, mode: str, exit_code: int = 0) -> None:
                 data.mkdir(exist_ok=True)
-                subprocess.run((str(harness), str(core), str(rom), str(content),
-                                str(data), flag, machine, outcome, mode), check=True)
+                result = subprocess.run((str(harness), str(core), str(rom), str(content),
+                                str(data), flag, machine, outcome, mode), check=False)
+                assert result.returncode == exit_code, (mode, result.returncode, exit_code)
 
             for mode, reason in (("u", "guard-unavailable"), ("tail", "guard-tail"),
                                  ("invalid", "guard-invalid-map"), ("size", "guard-size"),
@@ -56,6 +58,48 @@ def main() -> None:
                 # only the subsequent unrelated captured ID 2 was committed.
                 assert struct.unpack_from("<Q", saved, 68)[0] == 1
                 assert [(t, k, o) for t, k, o, _ in records(saved)] == [(0, 0, 2)]
+
+            # A1: actual preparation on reset, reinsertion and fresh processes.
+            # Each kill occurs at the real VFS snapshot publication boundary.
+            units_rom = fixtures / f"arcdroid-jfd-{prefix}save-test.rom"
+            for interruption in (None, "before", "after"):
+                data = Path(temp) / f"{machine}-units-{interruption}"
+                run(units_rom, occupied, data, "--jfd-guard-step", "0", "units-free")
+                if interruption:
+                    run(units_rom, occupied, data, "--jfd-guard-step", "1",
+                        "units-kill-" + interruption, 86 if interruption == "before" else 87)
+                    generation = 1 if interruption == "before" else 2
+                else:
+                    run(units_rom, occupied, data, "--jfd-guard-step", "1", "units-free-all")
+                    generation = 2
+                store_dir = data / "save/arcdroid/jfd"
+                before = {p: p.read_bytes() for p in store_dir.iterdir()}
+                selected = max((value for p, value in before.items() if p.suffix in (".a", ".b")),
+                               key=lambda value: struct.unpack_from("<Q", value, 68)[0])
+                assert struct.unpack_from("<Q", selected, 68)[0] == generation
+                selected_map = records(selected)[0][3]
+                assert int.from_bytes(selected_map[256:259], "little") == (3170 if generation == 1 else 3188)
+                assert any(p.suffix == ".tmp" for p in before) == (interruption == "before")
+                run(units_rom, occupied, data, "--jfd-guard-step", str(generation), "units-recover")
+                assert {p: p.read_bytes() for p in store_dir.iterdir()} == before
+                if interruption is None:
+                    # A valid v2 snapshot that grows U compared with the base,
+                    # which already allocates the other irregular track-side.
+                    newest = next(p for p, value in before.items() if value == selected)
+                    bad = bytearray(selected)
+                    mapped = bytearray(selected_map)
+                    mapped[:9] = b"".join(n.to_bytes(3, "little") for n in (12, 3160, 3200))
+                    mapped[256:265] = b"".join(n.to_bytes(3, "little") for n in (3128, 40, 63))
+                    mapped[510] = 9
+                    mapped[255] = checksum(mapped[:256])
+                    mapped[511] = checksum(mapped[256:512])
+                    bad[89:1113] = mapped
+                    struct.pack_into("<I", bad, len(bad) - 4, zlib.crc32(bad[:-4]))
+                    newest.write_bytes(bad)
+                    newest.with_suffix(".tmp").write_bytes(b"invented interrupted candidate")
+                    violating = {p: p.read_bytes() for p in store_dir.iterdir()}
+                    run(units_rom, occupied, data, "--jfd-guard-step", "2", "units-violated")
+                    assert {p: p.read_bytes() for p in store_dir.iterdir()} == violating
 
             route = fixtures / "jfd-allocation/guard-route.jfd"
             for mode in ("route-enabled", "route-off", "route-damaged"):
