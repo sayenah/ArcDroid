@@ -4850,7 +4850,9 @@ def main() -> None:
     request = args.output / "disc-request"
     request.mkdir(exist_ok=True)
     (request / "One.adf").write_bytes(build_d_discovery([(b"!Other", True)], b"One"))
-    (request / "Two.adf").write_bytes(build_d_discovery([(b"!Demo", True)], b"Two"))
+    two = build_d_discovery([(b"!Demo", True)], b"Two")
+    (request / "Two.adf").write_bytes(two)
+    (request / "TwoShort.adf").write_bytes(two[:-1024])
     (request / "Three.adf").write_bytes(build_d_discovery([(b"!Demo", True)], b"Three"))
     (request / "Multi.adf").write_bytes(build_d_discovery(
         [(b"!Demo", True), (b"!Qarvox", True), (b"!Nervex", True)], b"Two"))
@@ -4858,6 +4860,7 @@ def main() -> None:
     unknown[1025:1029] = b"????"  # prepared media, unreadable FileCore root
     (request / "Unknown.adf").write_bytes(unknown)
     (request / "Set.m3u").write_text("One.adf\nTwo.adf\n", encoding="ascii")
+    (request / "SetShort.m3u").write_text("One.adf\nTwoShort.adf\n", encoding="ascii")
     (request / "Distinct.m3u").write_text("One.adf\nMulti.adf\n", encoding="ascii")
     (request / "Chain.m3u").write_text("One.adf\nTwo.adf\nThree.adf\n", encoding="ascii")
     (request / "Unknown.m3u").write_text("One.adf\nTwo.adf\nUnknown.adf\n", encoding="ascii")

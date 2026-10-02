@@ -2306,6 +2306,8 @@ int main(int argc, char **argv)
    bool disc_request_chain = false, disc_request_negative = false;
    bool disc_request_adffs = false, disc_request_box_ready = false;
    bool disc_request_newio = false;
+   bool disc_request_short = false, disc_request_short_zero = false;
+   bool disc_request_outcome_cancel = false;
    bool disc_request_back = false;
    bool disc_request_three_images = false;
    bool disc_request_many_images = false;
@@ -2371,6 +2373,10 @@ int main(int argc, char **argv)
       disc_request_adffs = !strcmp(argv[5], "--disc-request-b-adffs");
       disc_request_box_ready = !strcmp(argv[5], "--disc-request-a-box-ready");
       disc_request_newio = !strcmp(argv[5], "--disc-request-b-newio");
+      disc_request_short = !strncmp(argv[5], "--disc-request-a-short-", 23u);
+      disc_request_short_zero = !strcmp(argv[5], "--disc-request-a-short-zero");
+      disc_request_outcome_cancel =
+         !strcmp(argv[5], "--disc-request-a-outcome-cancel");
       disc_request_three_images = disc_request_chain ||
          !strcmp(argv[5], "--disc-request-b-duplicate") ||
          !strcmp(argv[5], "--disc-request-b-unknown");
@@ -3045,8 +3051,44 @@ int main(int argc, char **argv)
       option_jfd_boot = "native";
       option_disc_requests = disc_request_off ? "off" :
          disc_request_hint ? "hint" : "auto";
+      if (disc_request_short)
+         option_short_tail = disc_request_short_zero ? "missing" : "zero-filled";
       phase = PHASE_LOAD; assert(retro_load_game(&game));
       phase = PHASE_RUN;
+      if (disc_request_short)
+      {
+         bool (*media_stamp)(char[41]) =
+            dlsym(module, "arc_libretro_test_boot_media_digest");
+         size_t (*media_extent)(void) =
+            dlsym(module, "arc_engine_test_media_extent");
+         char automatic[41], manual[41];
+         assert(media_stamp && media_extent && disk_control.get_num_images() == 2u);
+         option_short_tail = disc_request_short_zero ? "zero-filled" : "missing";
+         variable_update = true;
+         retro_run();
+         assert(disk_control.get_image_index() == 0u);
+         bool inserted = false;
+         for (unsigned frame = 0u; frame < 60u; ++frame)
+         {
+            retro_run();
+            if (disk_control.get_image_index() == 1u)
+            { inserted = true; break; }
+         }
+         assert(inserted && !disk_control.get_eject_state());
+         retro_run();
+         assert(media_stamp(automatic));
+         size_t automatic_extent = media_extent();
+         assert(automatic_extent == (disc_request_short_zero ? 0u : 818176u));
+         assert(disk_control.set_eject_state(true) &&
+                disk_control.set_eject_state(false));
+         assert(disk_control.get_image_index() == 1u &&
+                media_stamp(manual) && !strcmp(automatic, manual) &&
+                media_extent() == automatic_extent);
+         retro_unload_game(); retro_deinit();
+         assert(open_files == 0u && open_dirs == 0u && dlclose(module) == 0);
+         puts("disc-request-short-presentation: passed");
+         return 0;
+      }
       if (disc_request_effective)
       {
          int (*candidate)(const char *, unsigned) =
@@ -3112,6 +3154,18 @@ int main(int argc, char **argv)
       }
       retro_run();
       assert(disk_control.get_image_index() == 0u);
+      if (disc_request_outcome_cancel)
+      {
+         bool (*arm_outcome)(const char *) =
+            dlsym(module, "arc_engine_launch_outcome_arm");
+         void (*snapshot)(ArcLaunchOutcome *) =
+            dlsym(module, "arc_engine_launch_outcome_snapshot");
+         ArcLaunchOutcome outcome = {0};
+         assert(arm_outcome && snapshot &&
+                arm_outcome("Run ADFS::0.$.!Demo.!Run"));
+         snapshot(&outcome);
+         assert(outcome.state == ARC_OUTCOME_WAIT);
+      }
       if (disc_request_box_ready)
       {
          void (*set_ready)(bool) = dlsym(module, "arc_engine_test_disc_error_ready");
@@ -3145,6 +3199,16 @@ int main(int argc, char **argv)
                              disc_request_negative || disc_request_preflight_fail ||
                              disc_request_insert_fail);
       assert((inserted_frame >= 2u) == should_insert);
+      if (disc_request_outcome_cancel)
+      {
+         void (*snapshot)(ArcLaunchOutcome *) =
+            dlsym(module, "arc_engine_launch_outcome_snapshot");
+         ArcLaunchOutcome outcome = {0};
+         assert(snapshot && inserted_frame >= 2u);
+         snapshot(&outcome);
+         assert(outcome.state == ARC_OUTCOME_CANCEL &&
+                outcome.cancel_reason && !strcmp(outcome.cancel_reason, "media"));
+      }
       retro_run();
       if (disc_request_block)
       {

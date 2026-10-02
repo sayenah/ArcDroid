@@ -481,8 +481,10 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
       "${FIXTURE_DIR}/arcdroid-disc-request-a.rom"
       "${FIXTURE_DIR}/arcdroid-disc-request-b.rom"
       "${FIXTURE_DIR}/disc-request/Set.m3u"
+      "${FIXTURE_DIR}/disc-request/SetShort.m3u"
       "${FIXTURE_DIR}/disc-request/One.adf"
       "${FIXTURE_DIR}/disc-request/Two.adf"
+      "${FIXTURE_DIR}/disc-request/TwoShort.adf"
       "${FIXTURE_DIR}/arcdroid-power-on-early-swi.rom"
       "${FIXTURE_DIR}/arcdroid-power-on-early-xswi.rom"
       "${FIXTURE_DIR}/arcdroid-power-on-late-kart.rom"
@@ -670,6 +672,7 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
     "${FIXTURE_DIR}/arcdroid-disc-request-a.rom"
     "${FIXTURE_DIR}/arcdroid-disc-request-b.rom"
     "${FIXTURE_DIR}/disc-request/Set.m3u"
+    "${FIXTURE_DIR}/disc-request/SetShort.m3u"
     "${FIXTURE_DIR}/arcdroid-power-on-early-swi.rom"
     "${FIXTURE_DIR}/arcdroid-power-on-early-xswi.rom"
     "${FIXTURE_DIR}/arcdroid-power-on-late-kart.rom"
@@ -1069,7 +1072,7 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
       "${CMAKE_CURRENT_BINARY_DIR}/disc-request-effective-data"
       --disc-request-effective)
     foreach(scenario IN ITEMS a-manual-reset a-manual-cancel a-box-ready
-                              b-preflight-fail b-insert-fail b-adffs b-newio)
+                              a-outcome-cancel b-preflight-fail b-insert-fail b-adffs b-newio)
       set(request_rom "a")
       if(scenario MATCHES "^b-")
         set(request_rom "b")
@@ -1080,6 +1083,14 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
         "${FIXTURE_DIR}/disc-request/Set.m3u"
         "${CMAKE_CURRENT_BINARY_DIR}/disc-request-${scenario}-data"
         --disc-request-${scenario})
+    endforeach()
+    foreach(mode IN ITEMS missing zero)
+      add_test(NAME disc-request-a-short-${mode}-rom COMMAND libretro_harness
+        $<TARGET_FILE:arcdroid_libretro_test>
+        "${FIXTURE_DIR}/arcdroid-disc-request-a.rom"
+        "${FIXTURE_DIR}/disc-request/SetShort.m3u"
+        "${CMAKE_CURRENT_BINARY_DIR}/disc-request-a-short-${mode}-data"
+        --disc-request-a-short-${mode})
     endforeach()
     foreach(arbitration_case IN ITEMS buffer mouse after)
       set(arbitration_rom_suffix "")

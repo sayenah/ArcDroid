@@ -4505,6 +4505,68 @@ static bool arc_prepare_launch(ArcMediaEntry *entry, bool ejected,
 }
 
 static void arc_disc_setup(void);
+typedef enum {
+   ARC_INSERT_PREFLIGHT,
+   ARC_INSERT_MANUAL,
+   ARC_INSERT_COMMIT
+} ArcInsertPhase;
+
+/* Manual insertion does both phases; automatic insertion prepares before its
+ * zero-time eject/select/insert transaction and commits the prepared view. */
+static bool arc_disk_insert_entry(ArcMediaEntry *entry, ArcInsertPhase phase,
+                                  char *error, size_t error_size)
+{
+   if (phase != ARC_INSERT_COMMIT)
+   {
+      if (!arc_machine_accepts_media(arc_session_machine, entry,
+                                     error, error_size) ||
+          !arc_refresh_jfd(entry, arc_plan.disk_writes, error, error_size))
+         return false;
+   }
+   const char *tail_option = arc_option_value("arcdroid_short_tail", "missing");
+   if (strcmp(tail_option, "missing") && strcmp(tail_option, "zero-filled"))
+   {
+      if (error && error_size)
+         snprintf(error, error_size, "Invalid Short image tail option.");
+      return false;
+   }
+   bool zero_tail = !strcmp(tail_option, "zero-filled");
+   if (phase == ARC_INSERT_PREFLIGHT)
+   {
+      if (entry->info.kind == ARC_MEDIA_JFD)
+      {
+         if (!entry->jfd.overlay || entry->jfd.overlay->damaged ||
+             entry->jfd.overlay->failed ||
+             (entry->jfd.overlay->reason &&
+              !strcmp(entry->jfd.overlay->reason, "overlay-unreadable")))
+            return false;
+      }
+      else
+      {
+         void *bytes = NULL;
+         size_t size = 0u;
+         bool readable = arc_io_read_all(entry->staged, &bytes, &size);
+         free(bytes);
+         if (!readable || size < entry->info.available_size) return false;
+      }
+      return true;
+   }
+   ArcEngineMedia media = arc_engine_media(entry);
+   media.effective_extent = entry->info.short_image && !zero_tail ?
+      entry->info.available_size : ARC_MEDIA_EXTENT_UNRESTRICTED;
+   if (!arc_engine_media_insert(&media, error, error_size))
+   {
+      arc_jfd_free(&entry->jfd);
+      if (error && error_size && !error[0])
+         snprintf(error, error_size, "Unable to insert the selected floppy image.");
+      return false;
+   }
+   arc_entry_tail_presentation(entry, zero_tail);
+   arc_core_options.short_tail_zero = zero_tail;
+   arc_preparing_zero_tail = zero_tail;
+   arc_finish_jfd_preparation(entry, true);
+   return true;
+}
 #if defined(ARCDROID_TEST_FAULTS)
 void arc_libretro_test_disc_adffs_active(bool active)
 {
@@ -4535,38 +4597,19 @@ static ArcDiscCommit arc_disc_commit(unsigned candidate, uint64_t generation)
    if (arc_test_disc_preflight_fail)
    { arc_test_disc_preflight_fail = false; goto failed; }
 #endif
-   if (!arc_machine_accepts_media(arc_session_machine, entry,
-                                  error, sizeof(error))) goto failed;
-   if (entry->info.kind == ARC_MEDIA_JFD)
-   {
-      if (!arc_refresh_jfd(entry, arc_plan.disk_writes, error, sizeof(error)) ||
-          !entry->jfd.overlay || entry->jfd.overlay->damaged ||
-          entry->jfd.overlay->failed ||
-          (entry->jfd.overlay->reason &&
-           !strcmp(entry->jfd.overlay->reason, "overlay-unreadable")))
-         goto failed;
-      arc_finish_jfd_preparation(entry, true);
-   }
-   else
-   {
-      void *bytes = NULL;
-      size_t size = 0u;
-      bool readable = arc_io_read_all(entry->staged, &bytes, &size);
-      free(bytes);
-      if (!readable || size < entry->info.available_size) goto failed;
-   }
+   if (!arc_disk_insert_entry(entry, ARC_INSERT_PREFLIGHT,
+                              error, sizeof(error))) goto failed;
    unsigned old_index = arc_image_index;
    ArcEngineMedia old_media = arc_engine_media(&arc_media[old_index]);
-   ArcEngineMedia new_media = arc_engine_media(entry);
    if (!arc_engine_media_eject()) goto failed;
    arc_ejected = true;
    arc_image_index = candidate;
-   if (!arc_engine_media_insert(&new_media, error, sizeof(error)))
+   if (!arc_disk_insert_entry(entry, ARC_INSERT_COMMIT,
+                              error, sizeof(error)))
    {
       arc_image_index = old_index;
       if (arc_engine_media_insert(&old_media, NULL, 0u)) arc_ejected = false;
       else arc_ejected = true;
-      arc_jfd_free(&entry->jfd);
       goto failed;
    }
    arc_ejected = false;
@@ -4576,6 +4619,7 @@ static ArcDiscCommit arc_disc_commit(unsigned candidate, uint64_t generation)
    arc_disc_previous_index = old_index;
    arc_disc_swapped_us = arc_engine_disc_time_us();
    arc_disc_invalidate();
+   arc_engine_launch_outcome_cancel("media");
    arc_engine_boot_watch_cancel();
    arc_disc_setup();
    char notice[64];
@@ -4748,34 +4792,12 @@ static bool arc_disk_set_eject(bool ejected)
    if (arc_image_index < arc_media_count && arc_media[arc_image_index].populated)
    {
       ArcMediaEntry *entry = &arc_media[arc_image_index];
-      if (!arc_machine_accepts_media(arc_session_machine, entry,
-                                     error, sizeof(error)))
+      if (!arc_disk_insert_entry(entry, ARC_INSERT_MANUAL,
+                                 error, sizeof(error)))
       {
          arc_message(error, RETRO_LOG_ERROR);
          return false;
       }
-      if (!arc_refresh_jfd(entry, arc_plan.disk_writes, error, sizeof(error)))
-      {
-         arc_message(error, RETRO_LOG_ERROR);
-         return false;
-      }
-      const char *tail_option = arc_option_value("arcdroid_short_tail", "missing");
-      if (strcmp(tail_option, "missing") && strcmp(tail_option, "zero-filled"))
-      { arc_message("Invalid Short image tail option.", RETRO_LOG_ERROR); return false; }
-      bool zero_tail = !strcmp(tail_option, "zero-filled");
-      ArcEngineMedia media = arc_engine_media(entry);
-      media.effective_extent = entry->info.short_image && !zero_tail ?
-         entry->info.available_size : ARC_MEDIA_EXTENT_UNRESTRICTED;
-      if (!arc_engine_media_insert(&media, error, sizeof(error)))
-      {
-         arc_jfd_free(&entry->jfd);
-         arc_message(error[0] ? error : "Unable to insert the selected floppy image.", RETRO_LOG_ERROR);
-         return false;
-      }
-      arc_entry_tail_presentation(entry, zero_tail);
-      arc_core_options.short_tail_zero = zero_tail;
-      arc_preparing_zero_tail = zero_tail;
-      arc_finish_jfd_preparation(entry, true);
    }
    arc_ejected = false;
    arc_disc_setup();

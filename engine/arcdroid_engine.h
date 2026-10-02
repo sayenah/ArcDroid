@@ -94,6 +94,7 @@ void arc_engine_adf_refusal_callback_set(
 #if defined(ARCDROID_TEST_FAULTS)
 void arc_engine_test_boot_watch_snapshot(ArcBootWatch *out);
 bool arc_engine_test_guest_word(uint32_t address, uint32_t *out);
+size_t arc_engine_test_media_extent(void);
 #endif
 size_t arc_engine_audio(int16_t *output, size_t capacity_frames);
 void arc_engine_audio_stats(uint64_t *underrun_frames, uint64_t *overrun_frames);

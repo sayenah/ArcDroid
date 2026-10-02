@@ -315,11 +315,14 @@ void arc_engine_boot_watch_swi(uint32_t swi, uint32_t r0, uint32_t r1,
                                uint32_t mode)
 {
    bool in_rom = address < 0x04000000u &&
-      (memstat[address >> 12u] == 5u ||
-       (address < 0x1000u && memstat[0] == 1u &&
-        mempoint[0] == (uint8_t *)rom));
+      memstat[address >> 12u] == 5u;
    if (arc_disc_enabled && arc_active && !arc_fault)
    {
+      /* The authored reset ROM can still execute through the first-page ROM
+       * alias. This additional origin is private to the disc observer. */
+      bool disc_in_rom = in_rom ||
+         (address < 0x1000u && memstat[0] == 1u &&
+          mempoint[0] == (uint8_t *)rom);
       char name[256];
       uint32_t normalized = swi & ~0x20000u;
       ArcDiscOperation operation;
@@ -337,7 +340,7 @@ void arc_engine_boot_watch_swi(uint32_t swi, uint32_t r0, uint32_t r1,
                                                   canonical, operation);
       }
       ArcDiscSwi event = {swi, r0, r1, r3, address, mode, armregs[13],
-                          in_rom, readable, readable ? name : NULL,
+                          disc_in_rom, readable, readable ? name : NULL,
                           candidate, arc_engine_disc_now()};
       arc_disc_request_swi(&arc_disc_request, &event, arc_disc_inserted_name);
       arc_engine_disc_watch_armed = arc_disc_request.armed;
@@ -484,6 +487,8 @@ bool arc_engine_test_drive_media(unsigned drive, bool *write_protected,
    }
    return true;
 }
+size_t arc_engine_test_media_extent(void)
+{ return arc_saved_media_extent; }
 
 bool arc_engine_test_cmos_image(uint8_t output[ARC_CMOS_MACHINE_SIZE])
 {

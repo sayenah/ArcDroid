@@ -218,9 +218,13 @@ lookup of a `Wimp_StartTask` command string for the native launch observer.
 placement and before instruction execution. An armed disc-request watch passes
 the instruction address, mode, R13, R0 and flags to the ArcDroid observer.
 With no armed watch, only the flag branch executes. The existing SWI-entry
-hook supplies the request signal. The engine recognizes the first-page ROM
-alias through its backing pointer while MEMC maps that page at zero. The
-file's existing mixed line endings were retained; the new hook uses CRLF.
+hook supplies the request signal. Only the disc-request observer recognizes
+the first-page ROM alias through its backing pointer while MEMC maps that
+page at zero, for the authored reset-ROM fixture. The pre-existing shared
+`in_rom` classification remains the upstream/main rule (`memstat == 5`), so
+the boot, launch-outcome and error-box observers retain their origin contract.
+Real FileCore upcalls originate in ROM proper. The file's existing mixed line
+endings were retained; the new hook uses CRLF.
 
 `wd1770.c/.h` and `82c711_fdc.c/.h` add read-only idle accessors for the
 insertion precondition. They do not change controller transitions. Their
