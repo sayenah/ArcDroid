@@ -16,7 +16,7 @@ This protocol governs how the project is built. The Founder-approved `docs/PRD.m
 
 Primary roles:
 
-- **Architect/Orchestrator — Claude Fable 5.1:** accountable architecture owner; owns requirements decomposition, architecture, boundaries, acceptance criteria, implementation handoff, orchestration, adjudication, and Founder-gate identification. **Fable does not write implementation code or tests.** Every session that holds the baton runs Claude Fable 5.1 (`claude-fable-5-1`); a session on any other model never takes the role (§18).
+- **Architect/Orchestrator ("Fable", the role name used throughout) — Claude Opus 5.5 at reasoning effort high:** accountable architecture owner; owns requirements decomposition, architecture, boundaries, acceptance criteria, implementation handoff, orchestration, adjudication, and Founder-gate identification. **Fable does not write implementation code or tests.** Every session that holds the baton runs Claude Opus 5.5 (`claude-opus-5-5`) at effort `high` or above; a session on any other model or a lower effort never takes the role (§18). The orchestrating session never acts as QA for its own slice.
 - **Co-Architect / Architecture Challenger — GPT-6 Astra:** independently challenges non-trivial or high-risk architecture for missing constraints, failure modes, weak assumptions, unnecessary complexity, licensing/provenance problems, and stronger alternatives. Astra is advisory and read-only. **Astra does not write implementation code or tests.**
 - **Implementer — GPT-6.1 Sol (`gpt-6.1-sol`):** writes approved production code, tests, build/CI implementation, integrations, and fixes; validates its work; and opens/updates the implementation PR.
 - **Independent QA — Claude Opus 5.5:** independently reviews and tests the implementation against product law, architecture, acceptance criteria, regressions, licensing/provenance, platform behavior, and failure paths. Opus reports findings and does not implement fixes.
@@ -361,10 +361,10 @@ Every ArcDroid session ends through this section. The Founder's machine runs oth
 ### Baton and model
 
 - Exactly one session holds the baton at a time; only the baton holder changes project state.
-- The baton holder is the Architect/Orchestrator and runs **Claude Fable 5.1** (`claude-fable-5-1`). A session cannot change its own model, and `ListAgents` does not show another session's model.
-- **Receipt checks.** A session that receives a relay brief, before any other action, verifies: (1) its own model is Claude Fable 5.1; (2) its working directory is `/Users/mac0918/dev/ArcDroid`; (3) the relay brief is the first message in its conversation (the window was empty). A session the Founder starts by hand ("pick up from handoff") verifies (1) and (2).
+- The baton holder is the Architect/Orchestrator and runs **Claude Opus 5.5** (`claude-opus-5-5`) at reasoning effort **`high` or above** (the model sees its effort as a number: `low` = 5, medium = 10, `high` = 15, `max` = `max`). A session cannot change its own model or effort, and `ListAgents` does not show another session's model.
+- **Receipt checks.** A session that receives a relay brief, before any other action, verifies: (1) its own model is Claude Opus 5.5 and its effort is 15 (`high`) or above; (2) its working directory is `/Users/mac0918/dev/ArcDroid`; (3) the relay brief is the first message in its conversation (the window was empty). A session the Founder starts by hand ("pick up from handoff") verifies (1) and (2).
 - If every check passes, it takes the baton without asking the Founder to confirm and numbers itself as the next session.
-- If any check fails, it does not take the baton and changes no project state. It states in its own window which check failed. For a wrong model, it tells the Founder to run `/model claude-fable-5-1` and then say "pick up from handoff". It sends a `PushNotification` and stops.
+- If any check fails, it does not take the baton and changes no project state. It states in its own window which check failed. For a wrong model or effort, it tells the Founder to run `/model claude-opus-5-5` and `/effort high` and then say "pick up from handoff". It sends a `PushNotification` and stops.
 
 ### When to close
 
@@ -391,7 +391,7 @@ Instead, show a prominent `CANNOT CLOSE SAFELY` message in the session's own win
 
 - **This project only.** Run `ListAgents`. An eligible recipient is a peer session that is **all** of: named with the `arcdroid-` prefix, kind `interactive`, state `idle`, and absent from the handoff's used-windows list. `ListAgents` shows no project folder, so the name is the only project signal. Never message a session without the prefix, a busy or offline session, a Remote Control entry, or any other project's session, for any reason.
 - **One recipient.** Send the relay brief from the handoff with a single `SendMessage` to one eligible session. Never message a second session. If the send fails, treat it as "no eligible window".
-- **No eligible window.** Do not relay. The merged handoff lets the Founder open a new Fable 5.1 window and say "pick up from handoff". Say so in the window, then write the closing line.
+- **No eligible window.** Do not relay. The merged handoff lets the Founder open a new Opus 5.5 (effort high) window and say "pick up from handoff". Say so in the window, then write the closing line.
 - **After relaying,** name the recipient in the window, then write the closing line.
 
 `Looks right` is not evidence.
