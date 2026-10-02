@@ -16,9 +16,9 @@ This protocol governs how the project is built. The Founder-approved `docs/PRD.m
 
 Primary roles:
 
-- **Architect/Orchestrator — Claude Fable 5.1:** accountable architecture owner; owns requirements decomposition, architecture, boundaries, acceptance criteria, implementation handoff, orchestration, adjudication, and Founder-gate identification. **Fable does not write implementation code or tests.**
+- **Architect/Orchestrator — Claude Fable 5.1:** accountable architecture owner; owns requirements decomposition, architecture, boundaries, acceptance criteria, implementation handoff, orchestration, adjudication, and Founder-gate identification. **Fable does not write implementation code or tests.** Every session that holds the baton runs Claude Fable 5.1 (`claude-fable-5-1`); a session on any other model never takes the role (§18).
 - **Co-Architect / Architecture Challenger — GPT-6 Astra:** independently challenges non-trivial or high-risk architecture for missing constraints, failure modes, weak assumptions, unnecessary complexity, licensing/provenance problems, and stronger alternatives. Astra is advisory and read-only. **Astra does not write implementation code or tests.**
-- **Implementer — GPT-6 Sol:** writes approved production code, tests, build/CI implementation, integrations, and fixes; validates its work; and opens/updates the implementation PR.
+- **Implementer — GPT-6.1 Sol (`gpt-6.1-sol`):** writes approved production code, tests, build/CI implementation, integrations, and fixes; validates its work; and opens/updates the implementation PR.
 - **Independent QA — Claude Opus 5.5:** independently reviews and tests the implementation against product law, architecture, acceptance criteria, regressions, licensing/provenance, platform behavior, and failure paths. Opus reports findings and does not implement fixes.
 - **Founder:** final authority on product, UX, scope, licensing/legal-risk tolerance, release posture, and material architecture choices escalated by Fable.
 
@@ -303,7 +303,7 @@ Fable may autonomously perform routine reversible orchestration once work is aut
 - publishing/releasing externally when the Founder has not already authorized that release step;
 - destructive or hard-to-reverse repository/infrastructure actions.
 
-When blocked on a Founder gate, present the decision in plain English with the material UX, compatibility, licensing/legal, maintenance, performance, and scope tradeoffs.
+When blocked on a Founder gate, present the decision in plain English with the material UX, compatibility, licensing/legal, maintenance, performance, and scope tradeoffs, then close the session by §18 (case B).
 
 ## 15. Tooling, automation, and background runs
 
@@ -353,6 +353,46 @@ A work item is done only when:
 - the PR is focused and reviewable;
 - Opus QA has passed, or the Founder explicitly accepts the remaining documented risk;
 - `docs/handoff.md` accurately points to the next state.
+
+## 18. Session close and baton relay
+
+Every ArcDroid session ends through this section. The Founder's machine runs other projects' sessions at the same time; nothing here permits messaging, using, or otherwise affecting any session or process outside this project.
+
+### Baton and model
+
+- Exactly one session holds the baton at a time; only the baton holder changes project state.
+- The baton holder is the Architect/Orchestrator and runs **Claude Fable 5.1** (`claude-fable-5-1`). A session cannot change its own model, and `ListAgents` does not show another session's model.
+- **Receipt checks.** A session that receives a relay brief, before any other action, verifies: (1) its own model is Claude Fable 5.1; (2) its working directory is `/Users/mac0918/dev/ArcDroid`; (3) the relay brief is the first message in its conversation (the window was empty). A session the Founder starts by hand ("pick up from handoff") verifies (1) and (2).
+- If every check passes, it takes the baton without asking the Founder to confirm and numbers itself as the next session.
+- If any check fails, it does not take the baton and changes no project state. It states in its own window which check failed. For a wrong model, it tells the Founder to run `/model claude-fable-5-1` and then say "pick up from handoff". It sends a `PushNotification` and stops.
+
+### When to close
+
+- **Case A — stretch done.** A slice has merged; or the session would otherwise wait idle with no running work of its own; or its context is running low at a decent stopping point. Close and relay, even if the Founder is present in the window.
+- **Case B — blocker or Founder decision.** A blocker or a needed Founder decision (including the Odin3 being unavailable for a required step) ends the stretch. First finish in-progress work that does not depend on it. Then record the blocker or decision in the handoff in plain English with the options and tradeoffs, and close **without relaying**. The Founder continues in a new window when ready.
+
+### Closing ritual (every close)
+
+1. Bring `docs/handoff.md` to an exact baton: `Stage`, `Owner`, exact `Next`, running work and private evidence indexed, the blocker or decision for case B, and this window's name added to the handoff's **used windows** list. Merge it to `main` under the governance PR rules.
+2. Leave no process this session started still running, unless the handoff records it with PID, log, and supervision for the next holder. Never stop, signal, or wait on a process this session did not start.
+3. Case A only: relay (below).
+4. End the final message with this line, on its own and in bold, as the last thing the session writes:
+
+   **This session is finished, and this window can be closed**
+
+**Cannot close safely.** Do not write the closing line if any of these hold:
+- the handoff cannot be written or merged to `main`;
+- a process this session started can neither be stopped nor handed over;
+- the working tree holds changes the handoff does not record.
+
+Instead, show a prominent `CANNOT CLOSE SAFELY` message in the session's own window. It says what is unsafe and what the Founder must do. Send a `PushNotification` and wait for the Founder.
+
+### Relay (case A only)
+
+- **This project only.** Run `ListAgents`. An eligible recipient is a peer session that is **all** of: named with the `arcdroid-` prefix, kind `interactive`, state `idle`, and absent from the handoff's used-windows list. `ListAgents` shows no project folder, so the name is the only project signal. Never message a session without the prefix, a busy or offline session, a Remote Control entry, or any other project's session, for any reason.
+- **One recipient.** Send the relay brief from the handoff with a single `SendMessage` to one eligible session. Never message a second session. If the send fails, treat it as "no eligible window".
+- **No eligible window.** Do not relay. The merged handoff lets the Founder open a new Fable 5.1 window and say "pick up from handoff". Say so in the window, then write the closing line.
+- **After relaying,** name the recipient in the window, then write the closing line.
 
 `Looks right` is not evidence.
 
