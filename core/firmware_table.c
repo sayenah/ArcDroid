@@ -14,6 +14,11 @@ static const ArcFirmwareFingerprint fingerprints[] = {
    C(ARC_OS_TEST, "ArcDroid chooser application ROM", 524288u, 0x278555b5, "32f7d800e65fbd26325241b874f9279021c465a9"),
    C(ARC_OS_TEST, "ArcDroid D-format helper visual ROM", 524288u, 0xeeea625e, "13fc935664e628a9c751f3b280346fab60285ccf"),
 #if defined(ARCDROID_TEST_FAULTS)
+   C(ARC_OS_TEST, "ArcDroid jfd-guard-data ROM", 524288u, 0xa8c7865b, "6d94360cbe5a548dc7080b6222e0e53119235fec"),
+   C(ARC_OS_TEST, "ArcDroid jfd-guard-invalid ROM", 524288u, 0x40ffc2d9, "777e5667ecf0ce06c3ab2ba0a5f6aa5f500d64e0"),
+   C(ARC_OS_TEST, "ArcDroid jfd-guard-size ROM", 524288u, 0xebdcbef7, "25b76d16d72db94b93e13b5a3382b0ce35149454"),
+   C(ARC_OS_TEST, "ArcDroid jfd-guard-tail ROM", 524288u, 0x54a5b86a, "df35942966500b245a4ea7644e741d34652b9c15"),
+   C(ARC_OS_TEST, "ArcDroid jfd-guard-u ROM", 524288u, 0x4915d119, "9d89554149178d25fb1d6fadbe4317a4ecfe2d3c"),
    C(ARC_OS_RISCOS_311, "ArcDroid error box ROM", 524288u, 0x154acd67, "33f53ef540a7d25e7183750a559e8ec4c7fac8c1"),
    C(ARC_OS_RISCOS_311, "ArcDroid error box X ROM", 524288u, 0xd3eaf55c, "474657e41b9d37765814c9268382070b10041f09"),
    C(ARC_OS_TEST, "ArcDroid power-on early SWI ROM", 524288u, 0x2a5def58, "088a5199a420320d316f645f40f9a9cbf1754df7"),

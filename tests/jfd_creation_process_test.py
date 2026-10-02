@@ -22,8 +22,8 @@ def main() -> None:
     rw = writes / "rw-create-d.jfd"
     wp = writes / "wp-create-d.jfd"
     nonmatching = fixtures / "jfd-creation/nonmatching.jfd"
-    irregular_free = fixtures / "jfd-creation/irregular-free-sequence.jfd"
-    sources = (rw, wp, nonmatching, irregular_free)
+    unsupported = fixtures / "jfd-creation/irregular-newmap-free-sequence.jfd"
+    sources = (rw, wp, nonmatching, unsupported)
     before = tuple(map(digest, sources))
     with tempfile.TemporaryDirectory(prefix="arc-jfd-create-") as temp:
         for machine, rom_name in (
@@ -38,7 +38,7 @@ def main() -> None:
                 (rw, "00001500", "slot"),
                 (wp, "00006a00", "no-slot"),
                 (nonmatching, "00006a00", "no-slot"),
-                (irregular_free, "00006a00", "no-slot"),
+                (unsupported, "00006a00", "no-slot"),
             ):
                 subprocess.run((str(harness), str(core), str(rom), str(image),
                                 str(root), "--jfd-create-step", machine,

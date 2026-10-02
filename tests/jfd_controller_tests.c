@@ -3141,8 +3141,12 @@ static void test_newio_identification(const char *root)
    arc_jfd_free(&image);
 }
 
+#include "jfd_guard_controller_tests.inc"
+
 int main(int argc, char **argv)
 {
+   if (argc==3 && (!strcmp(argv[2],"--guard-wd") || !strcmp(argv[2],"--guard-newio")))
+   { test_guard_controller(argv[1],!strcmp(argv[2],"--guard-newio")); return 0; }
    bool run_wd1770 = true;
    bool run_82c711 = true;
    if (argc == 3 && !strcmp(argv[2], "--adf-tc"))

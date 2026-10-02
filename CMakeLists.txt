@@ -560,6 +560,38 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
       "${FIXTURE_DIR}/arcdroid-jfd-newio-merge-readback-test.rom"
       "${FIXTURE_DIR}/arcdroid-jfd-merge-missing-test.rom"
       "${FIXTURE_DIR}/arcdroid-jfd-newio-merge-missing-test.rom"
+      "${FIXTURE_DIR}/arcdroid-jfd-guard-u.rom"
+      "${FIXTURE_DIR}/arcdroid-jfd-guard-tail.rom"
+      "${FIXTURE_DIR}/arcdroid-jfd-guard-invalid.rom"
+      "${FIXTURE_DIR}/arcdroid-jfd-guard-size.rom"
+      "${FIXTURE_DIR}/arcdroid-jfd-guard-data.rom"
+      "${FIXTURE_DIR}/arcdroid-jfd-newio-guard-u.rom"
+      "${FIXTURE_DIR}/arcdroid-jfd-newio-guard-tail.rom"
+      "${FIXTURE_DIR}/arcdroid-jfd-newio-guard-invalid.rom"
+      "${FIXTURE_DIR}/arcdroid-jfd-newio-guard-size.rom"
+      "${FIXTURE_DIR}/arcdroid-jfd-newio-guard-data.rom"
+      "${FIXTURE_DIR}/jfd-creation/irregular-newmap-free-sequence.jfd"
+      "${FIXTURE_DIR}/jfd-file-data/guard-terminal.jfd"
+      "${FIXTURE_DIR}/jfd-allocation/guard-route.jfd"
+      "${FIXTURE_DIR}/jfd-allocation/guard-crossing.jfd"
+      "${FIXTURE_DIR}/jfd-allocation/guard-physical.jfd"
+      "${FIXTURE_DIR}/jfd-allocation/guard-one-tail.jfd"
+      "${FIXTURE_DIR}/jfd-allocation/guard-split-tail.jfd"
+      "${FIXTURE_DIR}/jfd-allocation/guard-extra.jfd"
+      "${FIXTURE_DIR}/jfd-allocation/guard-u-allocated.jfd"
+      "${FIXTURE_DIR}/jfd-allocation/guard-occupied.jfd"
+      "${FIXTURE_DIR}/jfd-allocation/guard-occupied-bad-crc.jfd"
+      "${FIXTURE_DIR}/jfd-allocation/guard-captured-density.jfd"
+      "${FIXTURE_DIR}/jfd-allocation/guard-profile-admission-fail.jfd"
+      "${FIXTURE_DIR}/jfd-allocation/guard-extra-odd.jfd"
+      "${FIXTURE_DIR}/jfd-allocation/guard-extra-even.jfd"
+      "${FIXTURE_DIR}/jfd-allocation/guard-allocated-profile-fail.jfd"
+      "${FIXTURE_DIR}/jfd-allocation/guard-tail-allocated.jfd"
+      "${FIXTURE_DIR}/jfd-allocation/guard-partial-u.jfd"
+      "${FIXTURE_DIR}/jfd-allocation/guard-sparse-crossing.jfd"
+      "${FIXTURE_DIR}/jfd-allocation/guard-profile-fail.jfd"
+      "${FIXTURE_DIR}/jfd-allocation/guard-placement-fail.jfd"
+      "${FIXTURE_DIR}/jfd-allocation/guard-merge.jfd"
       "${FIXTURE_DIR}/arcdroid-jfd-allocation-veto-test.rom"
       "${FIXTURE_DIR}/arcdroid-jfd-allocation-claim-test.rom"
       "${FIXTURE_DIR}/arcdroid-jfd-allocation-read-test.rom"
@@ -869,6 +901,9 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
       arcdroid_sanitizer_compile arcdroid_sanitizer_link)
   endif()
   add_dependencies(jfd_store_tests test-fixtures)
+  add_test(NAME jfd-guard-wd COMMAND jfd_controller_tests "${FIXTURE_DIR}" --guard-wd)
+  add_test(NAME jfd-guard-newio COMMAND jfd_controller_tests "${FIXTURE_DIR}" --guard-newio)
+  add_test(NAME jfd-guard-store COMMAND jfd_store_tests "${FIXTURE_DIR}" guard)
   add_test(NAME jfd-store COMMAND jfd_store_tests "${FIXTURE_DIR}")
   add_test(NAME jfd-file-data-store COMMAND jfd_store_tests "${FIXTURE_DIR}" file-data)
   add_test(NAME native-writable-layout COMMAND jfd_store_tests
@@ -1372,6 +1407,9 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
       "${CMAKE_CURRENT_SOURCE_DIR}/tests/jfd_merge_process_test.py"
       $<TARGET_FILE:libretro_harness>
       $<TARGET_FILE:arcdroid_libretro_test> "${FIXTURE_DIR}")
+    add_test(NAME jfd-guard-process COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/jfd_guard_process_test.py"
+      $<TARGET_FILE:libretro_harness> $<TARGET_FILE:arcdroid_libretro_test> "${FIXTURE_DIR}")
     add_test(NAME jfd-allocation-process COMMAND "${Python3_EXECUTABLE}"
       "${CMAKE_CURRENT_SOURCE_DIR}/tests/jfd_allocation_process_test.py"
       $<TARGET_FILE:libretro_harness>

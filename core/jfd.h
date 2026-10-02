@@ -13,6 +13,7 @@
 #define ARC_JFD_PDD5_TRACKS 160u
 #define ARC_JFD_PDD5_IDS 5u
 #define ARC_JFD_PDD5_SLOTS (ARC_JFD_PDD5_TRACKS * ARC_JFD_PDD5_IDS)
+#define ARC_JFD_PDD5_ALLOCATION_BYTES (ARC_JFD_PDD5_SLOTS * 4u / 8u)
 #define ARC_JFD_PDD5_SPACING_US 36352u
 #define ARC_JFD_F_SPACING_US 18176u
 #define ARC_JFD_MAX_STANDARD_IDS 10u
@@ -68,6 +69,13 @@ typedef struct ArcJfdOverlay {
    unsigned creation_capacity;
    bool pdd5_profile;
    bool layout_supported;
+   bool guarded;                  /* D-120/D-121, immutable base-derived U and T. */
+   bool guard_violated;
+   uint8_t unavailable_mask[ARC_JFD_PDD5_TRACKS];
+   uint8_t guard_base_allocation[ARC_JFD_PDD5_ALLOCATION_BYTES]; /* Immutable units. */
+   unsigned unavailable_slots;
+   uint32_t guard_declared_units;
+   uint32_t guard_tail_units;
    uint64_t generation;
    unsigned records;
    char store_sha1[41]; /* Validated active snapshot; empty without a store. */
@@ -155,6 +163,22 @@ bool arc_jfd_effective_sector(const ArcJfdImage *image, unsigned track_side,
                               ArcJfdView *view);
 bool arc_jfd_base_free_tracks(const ArcJfdImage *image,
                               bool free_track[ARC_JFD_PDD5_TRACKS]);
+/* Declared-coordinate parser is policy-free; only D-120 uses its result. */
+bool arc_jfd_old_declared(const uint8_t map[1024],
+                          uint8_t mask[ARC_JFD_PDD5_TRACKS],
+                          uint32_t *declared, bool *tail_allocated);
+bool arc_jfd_guard_base(const ArcJfdImage *image, ArcJfdOverlay *overlay,
+                        const uint8_t unavailable[ARC_JFD_PDD5_TRACKS]);
+const char *arc_jfd_write_veto_reason(const ArcJfdImage *image, size_t index,
+                                      const uint8_t *pending);
+static inline bool arc_jfd_guard_tail_target(const ArcJfdOverlay *overlay,
+                                              unsigned track_side, unsigned id)
+{
+   return overlay && overlay->guarded && overlay->guard_tail_units &&
+      track_side >= ARC_JFD_PDD5_TRACKS && id < ARC_JFD_PDD5_IDS &&
+      (track_side * ARC_JFD_PDD5_IDS + id) * 4u <
+         overlay->guard_declared_units;
+}
 void arc_jfd_map_prepare(ArcJfdImage *image);
 void arc_jfd_map_refresh(ArcJfdImage *image);
 bool arc_jfd_map_write_veto(const ArcJfdImage *image, size_t index,

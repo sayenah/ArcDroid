@@ -190,7 +190,7 @@ def build_rom(media_exerciser: bool = False,
     if not 0 <= merge_read_sector <= 4 or (not virtual_merge_probe and
                                          merge_read_sector != 3):
         raise ValueError("the virtual merge read needs a P-DD5 sector")
-    if allocation_mode not in (None, "veto", "claim", "read", "probe-write") or (allocation_mode
+    if allocation_mode not in (None, "veto", "claim", "read", "probe-write", "guard", "guard-data") or (allocation_mode
             and (not jfd_save_probe or write_payload is None)):
         raise ValueError("allocation ROM needs a mode, JFD result and map bytes")
     rom = bytearray(b"\xFF" * ROM_SIZE)
@@ -411,6 +411,9 @@ def build_rom(media_exerciser: bool = False,
         a.ldr_const(3, 0x03310FD0); a.ldr(7, 3, byte=True)
         a.ldr(4, 0, byte=True)
         a.ldr(7, 0, byte=True)
+        if sector == 3 and allocation_mode == "guard-data":
+            a.cmp_imm(4, 0x40); a.branch("alloc_other", "ne")
+            a.cmp_imm(7, 0x05); a.branch("alloc_other", "ne")
         if sector != 3:
             a.cmp_imm(4, 0x40 if expect_veto else 0)
             a.branch("alloc_other", "ne")
@@ -477,6 +480,8 @@ def build_rom(media_exerciser: bool = False,
         a.subs_imm(8, 8, 1); a.branch(prefix + "_tail", "ne")
         a.branch("alloc_other")
         a.label(prefix + "_done")
+        if sector == 3 and allocation_mode == "guard-data":
+            a.cmp_imm(4, 0x10); a.branch("alloc_other", "ne")
         if sector != 3:
             a.cmp_imm(4, 0x08 if expect_veto else 0x80)
             a.branch("alloc_other", "ne")
@@ -665,7 +670,12 @@ def build_rom(media_exerciser: bool = False,
         a.mov(6, 0x10); a.branch("fdc_done")
         a.label("short_new_fail")
         a.mov(6, 0x80); a.branch("fdc_done")
-    if allocation_mode:
+    if allocation_mode in ("guard", "guard-data"):
+        allocation_new_write("guard_new_refuse", True,
+                            3 if allocation_mode == "guard-data" else 0)
+        allocation_new_write("guard_new_continue", False, 2)
+        a.mov(6, 0x20); a.branch("fdc_done")
+    if allocation_mode and not allocation_mode.startswith("guard"):
         if allocation_mode in ("veto", "probe-write"):
             allocation_new_read("alloc_new_probe", True)
         if allocation_mode != "read":
@@ -675,7 +685,7 @@ def build_rom(media_exerciser: bool = False,
                             ("veto", "probe-write"))
         a.mov(6, 0x20 if allocation_mode != "claim" else 0x10)
         a.branch("fdc_done")
-    if newio_save_probe:
+    if newio_save_probe and not (allocation_mode or "").startswith("guard"):
         # Read the entire sector before writing. The last DMA access asserts
         # TC, and the completed seven-byte result is checked on both paths.
         if virtual_merge_probe:
@@ -969,7 +979,14 @@ def build_rom(media_exerciser: bool = False,
         a.mov(6, 0x10); a.branch("fdc_done")
         a.label("short_fail")
         a.mov(6, 0x80); a.branch("fdc_done")
-    if allocation_mode:
+    if allocation_mode in ("guard", "guard-data"):
+        allocation_wd_write("guard_wd_refuse", True,
+                            3 if allocation_mode == "guard-data" else 0)
+        allocation_wd_write("guard_wd_continue", False, 2)
+        a.mov(6, 0x20); a.branch("fdc_done")
+        a.label("alloc_other")
+        a.mov(6, 0x80); a.branch("fdc_done")
+    if allocation_mode and not allocation_mode.startswith("guard"):
         if allocation_mode in ("veto", "probe-write"):
             allocation_wd_read("alloc_wd_probe", True)
         if allocation_mode != "read":
@@ -3383,6 +3400,13 @@ def build_file_data_fixtures(output: Path) -> None:
 
     terminal_jfd = protected(bytes(d), tracks)
     (output / "d-terminal.jfd").write_bytes(terminal_jfd)
+    guarded_terminal = bytearray(d)
+    _store_u24(guarded_terminal, 252, 3263)
+    _store_u24(guarded_terminal, 256, 3223)
+    guarded_terminal[255] = _old_map_checksum(guarded_terminal[:255])
+    guarded_terminal[511] = _old_map_checksum(guarded_terminal[256:511])
+    (output / "guard-terminal.jfd").write_bytes(build_pdd5_jfd(
+        bytes(guarded_terminal), tracks | {2: full, 159: [9]}))
     recovery = bytearray(d)
     recovery_root = bytearray(recovery[1024:3072])
     _new_entry(recovery_root, 1, b"!Demo", 2048, 8192 // 256, True)
@@ -5794,6 +5818,103 @@ def main() -> None:
                 media_exerciser=True, jfd_save_probe=True,
                 newio_save_probe=newio, write_payload=bytes(claim_map),
                 allocation_mode=mode))
+    # D-120 fixtures: an invented old-map disc with an unavailable ID on
+    # side zero. No title, track number or identity is used by the policy.
+    guard_tracks = {0: [0, 1, 2, 4, 9], 1: full, 2: full}
+    for stem, declared, extents, tracks, count, times in (
+        ("crossing", 3263, ((12, 3251),), guard_tracks, 160, None),
+        ("physical", 3200, ((12, 3188),), guard_tracks, 160, None),
+        ("one-tail", 3201, ((12, 3189),), guard_tracks, 160, None),
+        ("extra-odd", 3201, ((12, 3189),),
+         guard_tracks | {160: full, 163: full}, 166, None),
+        ("extra-even", 3264, ((12, 3252),),
+         guard_tracks | {160: full, 163: full}, 166, None),
+        ("captured-density", 3263, ((12, 3251),),
+         {0: full, 1: full, 2: full, 158: full, 159: full}, 160,
+         {side: {id: id * 33 for id in full} for side in (158, 159)}),
+        # Every regular side is full, so the earlier omitted-side gate passes.
+        ("profile-admission-fail", 3263, ((12, 3251),),
+         {side: full if side < 2 else [9] for side in range(160)}, 160, None),
+        ("split-tail", 3263, ((12, 3188), (3200, 63)), guard_tracks, 160, None),
+        ("u-allocated", 3263, ((16, 3247),), guard_tracks, 160, None),
+        # One free irregular side and one wholly allocated irregular side.
+        ("occupied", 3263, ((12, 3168), (3200, 63)),
+         {0: full, 1: full, 2: full, 157: [9], 159: [7, 8, 9]}, 160, None),
+        ("allocated-profile-fail", 3263, ((16, 3247),),
+         {0: [0, 1, 2, 4, 9]}, 160, None),
+        ("tail-allocated", 3263, ((12, 3250),), guard_tracks, 160, None),
+        ("partial-u", 3263, ((13, 3250),), guard_tracks, 160, None),
+        ("sparse-crossing", 3263, ((12, 3251),),
+         {0: [0, 1, 2, 4], 1: full, 2: full}, 160, None),
+        ("extra", 3263, ((12, 3251),),
+         guard_tracks | {160: full, 163: full, 164: full}, 166, None),
+        ("profile-fail", 3263, ((12, 3251),), {0: [0, 1, 2, 4, 9]}, 160, None),
+        ("placement-fail", 3263, ((12, 3251),),
+         guard_tracks | {3: [0, 2, 4]}, 160, {3: {0: 0, 2: 70, 4: 140}}),
+    ):
+        mapped = build_d_discovery([], b"GuardGarden")
+        # Captured ID 1 has the save ROM's synthetic pattern, proving an
+        # in-place commit and persistence without filesystem firmware.
+        mapped[1024:2048] = disc1[1024:2048]
+        mapped[:246] = bytes(246); mapped[256:502] = bytes(246)
+        _store_u24(mapped, 252, declared)
+        for index, (first, length) in enumerate(extents):
+            _store_u24(mapped, index * 3, first)
+            _store_u24(mapped, 256 + index * 3, length)
+        mapped[510] = len(extents) * 3
+        mapped[255] = _old_map_checksum(mapped[:255])
+        mapped[511] = _old_map_checksum(mapped[256:511])
+        image = build_pdd5_jfd(bytes(mapped), tracks, times, track_count=count,
+                                title=b"ArcDroid Guard Garden")
+        if stem == "captured-density":
+            for side, density in ((158, 4), (159, 1)):
+                descriptor = pdd5_descriptor_offset(image, side, 4)
+                header = struct.unpack_from("<I", image, descriptor)[0]
+                struct.pack_into("<I", image, descriptor,
+                                 (header & ~(0xF << 16)) | (density << 16))
+        (allocation / f"guard-{stem}.jfd").write_bytes(image)
+        if stem == "occupied":
+            # The same base map and shape, with captured P-DD5 IDs made
+            # ineligible by CRC flags; keep the non-P-DD5 original too.
+            for old_id, new_id in ((7, 0), (8, 1), (9, 2)):
+                descriptor = pdd5_descriptor_offset(image, 159, old_id)
+                header = struct.unpack_from("<I", image, descriptor)[0]
+                struct.pack_into("<I", image, descriptor,
+                                 (header & ~(0xFF << 8)) | (new_id << 8) | (2 << 4))
+            (allocation / "guard-occupied-bad-crc.jfd").write_bytes(image)
+        if stem == "crossing":
+            for mode in ("u", "tail", "invalid", "size"):
+                pending = bytearray(mapped[:1024])
+                if mode == "u":
+                    _store_u24(pending, 0, 16); _store_u24(pending, 256, 3247)
+                elif mode == "tail":
+                    _store_u24(pending, 256, 3250)
+                elif mode == "size":
+                    _store_u24(pending, 252, 3264)
+                    _store_u24(pending, 256, 3252)
+                pending[255] = _old_map_checksum(pending[:255])
+                pending[511] = _old_map_checksum(pending[256:511])
+                if mode == "invalid": pending[255] ^= 1
+                for machine, newio in (("", False), ("newio-", True)):
+                    (args.output / f"arcdroid-jfd-{machine}guard-{mode}.rom").write_bytes(
+                        build_rom(media_exerciser=True, jfd_save_probe=True,
+                                  newio_save_probe=newio, write_payload=bytes(pending),
+                                  allocation_mode="guard"))
+            for machine, newio in (("", False), ("newio-", True)):
+                (args.output / f"arcdroid-jfd-{machine}guard-data.rom").write_bytes(
+                    build_rom(media_exerciser=True, jfd_save_probe=True,
+                              newio_save_probe=newio, write_payload=bytes(mapped[:1024]),
+                              allocation_mode="guard-data"))
+    guard_route = bytearray((allocation / "guard-crossing.jfd").read_bytes())
+    struct.pack_into("<HHI", guard_route, 12, 1, 1, 54322)
+    (allocation / "guard-route.jfd").write_bytes(guard_route)
+    merge_guard = bytearray(allocated_base)
+    _store_u24(merge_guard, 0, 20); _store_u24(merge_guard, 256, 3243)
+    _store_u24(merge_guard, 252, 3263); merge_guard[510] = 3
+    merge_guard[255] = _old_map_checksum(merge_guard[:255])
+    merge_guard[511] = _old_map_checksum(merge_guard[256:511])
+    (allocation / "guard-merge.jfd").write_bytes(build_pdd5_jfd(
+        bytes(merge_guard), {0: [0, 2, 4], 1: full, 2: full, 159: [9]}))
     new_base = build_e_discovery([], b"NewMapProbe")
     new_base[1024:2048] = new_base[:1024]
     (identification / "sparse-e-free.jfd").write_bytes(build_pdd5_jfd(
@@ -5995,6 +6116,8 @@ def main() -> None:
     new_mapped = build_e_discovery([], b"GateNew")
     (creation / "irregular-newmap-free.jfd").write_bytes(build_pdd5_jfd(
         bytes(new_mapped), {0: full, 1: full, 159: [9]}))
+    (creation / "irregular-newmap-free-sequence.jfd").write_bytes(build_pdd5_jfd(
+        bytes(new_mapped), {0: [0, 2, 4], 1: full, 159: [9]}))
     backup_only = bytearray(new_mapped)
     backup_only[1024:2048] = backup_only[:1024]
     backup_only[0] ^= 1
