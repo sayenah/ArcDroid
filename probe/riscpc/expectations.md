@@ -111,3 +111,39 @@ Truncating the owned test backing to 512 bytes must cause a detected short-read
 session failure, never zero-filled successful completion. No private bytes
 are used by this test. The standard boot image must separately be catalogued
 and booted through firmware; ATA readback alone does not prove FileCore validity.
+
+## Run-8 drive ownership and disk-change expectations (declared before fix)
+
+All commands below are authored ARM code through Super I/O/IOMD/FIFO/DMA;
+media changes use the same disk-control entry points as the frontend. Two
+authored DD5 images differ in every payload byte by 0x40. No private input.
+
+* Drive 1 READ ID, issued after reset/sense and still pending at 1 ms,
+  encounters helper R=1 at 12.5 ms. Swapping drive 0 at 1 ms must leave
+  drive 1 command state, DOR motor bits, IRQ/DMA and deadline unchanged:
+  result 01/00/00/00/00/01/01, identical guest state at 20 ms to no swap.
+  Eight repeated content swaps before that ID must have the same result.
+  An empty helper search must still fail normally after 400 ms, not when
+  the other drive swaps.
+* Drive 0 sector-0 read at 201 ms has transferred a strict prefix. Swapping
+  it cancels that command with abnormal termination (ST0=40, ST1=05),
+  leaves a nonzero remaining byte count, and drops pending DMA/callback.
+  Later polling cannot transfer additional bytes from either medium into
+  that command. An early swap before a new command instead reads the
+  replacement image: exactly 1024 bytes (i+0x40)&255, normal completion.
+* DIR bit 7 reports only the DOR-selected drive's active-low nDSKCHG
+  input inverted. DOR drive select and motor enables are independent.
+  Reading DIR, selecting a drive, controller reset and a SEEK to its
+  current cylinder do not clear the latch. A SEEK that issues a step
+  clears only that selected drive's latch, only with media inserted.
+  A step with no disc cannot clear change. Insertion retains change
+  until a later step; repeated swaps set drive 0 only.
+
+Sources: SMSC FDC37C665GT/666GT specification, pp. 8 (nDSKCHG/nSTEP),
+27-30 (DOR drive/motor decode), 36 (DIR inversion), 69 (SEEK issues steps
+only if PCN differs from NCN):
+https://bitsavers.org/components/standardMicrosystems/_SMSC/_dataSheets/FDC37C665GT_SuperIO.pdf .
+TEAC FD-235HG-C805/C817/C897 specification §8.3.12: change persists until a disc is
+installed and a STEP command is received with DRIVE SELECT true:
+https://ftpmirror.infania.net/sites/bitsavers/pdf/teac/floppy/FD235/FD-235HG-C805_C817_C897_Specification.pdf .
+These drive-interface rules do not imply a guest cache flush or forced retry.

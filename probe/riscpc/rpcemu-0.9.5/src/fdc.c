@@ -202,10 +202,7 @@ fdc_write(uint32_t addr, uint32_t val)
 		if (!(val & 4)) fdc_reset();
 		fdc.dor=(uint8_t)val;
 		motoron = val & 0x30;
-		if (val & 0x10)
-			disc_set_drivesel(0);
-		else if (val & 0x20)
-			disc_set_drivesel(1);
+		disc_set_drivesel(val & 3); /* ARCDROID-PROBE: DOR unit selection is independent of motor enables. */
 		break;
 
 	case 0x3f4: /* Data Rate Select Register (DSR) */
@@ -440,7 +437,8 @@ fdc_read(uint32_t addr)
 		return data;
 	}
 
-	case 0x3f7: return probe_disc_changed[(fdc.dor&1)]?0x80:0;
+	case 0x3f7: /* ARCDROID-PROBE: DIR inverts the selected drive's nDSKCHG; absent units assert change. */
+		return (fdc.dor&3)>=2||probe_disc_changed[fdc.dor&3]?0x80:0;
 	// case 0x3f7: /* Digital Input Register (DIR) */
 		// TODO Disc changed flag
 		// return 0x80;
@@ -782,9 +780,13 @@ void fdc_probe_id_latch(uint8_t c,uint8_t h,uint8_t r,uint8_t n) {
  if(fdc.command==FD_CMD_READ_ID_MFM||fdc.command==FD_CMD_READ_ID_FM)fdc.parameters[4]=n;
 }
 void fdc_probe_lostdata(void) {fdc_overrun();}
-void fdc_probe_media_cancel(void) {
- disc_stop(0);disc_stop(1);
- if(fdc.incommand)fdc_notfound();
- fdccallback=0;fdc_dma_lower();fdc.data_ready=fdc.written=fdc.in_read=0;
+/* ARCDROID-PROBE: media removal only terminates execution addressed to that
+ * unit. A different drive's READ ID/search/DMA and shared callback survive.
+ * DSKCHG itself is a drive input, not an FDC reset or unsolicited interrupt.
+ * Keep command collection and completed result phases intact. */
+void fdc_probe_media_cancel(int drive) {
+ unsigned op=fdc.command&31u;
+ if(!fdc.incommand||fdc.curparam!=fdc.params||fdc.drive!=drive)return;
+ if(op==5||op==6||op==10||op==13||op==22)fdc_notfound();
 }
 /* ARCDROID-PROBE END */

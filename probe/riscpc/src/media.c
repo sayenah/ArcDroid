@@ -33,7 +33,7 @@ static void bridge_hc(void *p) {(void)p;fdc_headercrcerror();}
 static void bridge_wp(void *p) {(void)p;probe_media_refusals++;fdc_writeprotect();}
 static int bridge_get(int last,void *p) {(void)p;return fdc_getdata(last);}
 static void bridge_id(uint8_t c,uint8_t h,uint8_t r,uint8_t n,uint8_t a,uint8_t b,void *p) {(void)a;(void)b;(void)p;fdc_sectorid(c,h,r,n);}
-static void bridge_index(void *p) {(void)p;if(selected==0&&motoron)fdc_indexpulse();}
+static void bridge_index(void *p) {(void)p;if(selected==0&&(motoron&0x10))fdc_indexpulse();}
 static void bridge_lost(void *p) {(void)p;fdc_probe_lostdata();}
 static PresentFdcOps fdc_ops={.data=bridge_data,.finishread=bridge_finish,.notfound=bridge_nf,.datacrcerror=bridge_dc,.headercrcerror=bridge_hc,.writeprotect=bridge_wp,.getdata=bridge_get,.sectorid=bridge_id,.indexpulse=bridge_index,.lostdata=bridge_lost};
 PresentFdcOps *probe_present_fdc=&fdc_ops;
@@ -117,7 +117,11 @@ void probe_media_open_content(const char *path,FILE *custody) {
  else fatal("Unsupported content extension");
  image_index=0;ejected=0;probe_media_reset();
 }
-void disc_stop(int d) {if(d==0&&probe_present_drives[0])probe_present_drives[0]->stop();if(d==1)probe_helper_stop();empty_seeking=0;}
+void disc_stop(int d) {
+ if(d==0&&probe_present_drives[0])probe_present_drives[0]->stop();
+ if(d==1)probe_helper_stop();
+ if(empty_seeking&&active_drive==d)empty_seeking=0;
+}
 void probe_media_reset(void) {
  disc_stop(0);disc_stop(1);memset(tracks,0,sizeof(tracks));selected=0;empty_polls=0;
  memset(&request,0,sizeof(request));probe_requested_fm=0;probe_disc_period_us=32;
@@ -136,7 +140,8 @@ unsigned probe_media_count(void) {return image_count;}
 unsigned probe_media_index(void) {return image_index;}
 bool probe_media_ejected(void) {return ejected!=0;}
 bool probe_media_eject(bool value) {
- ejected=value;disc_stop(0);disc_stop(1);fdc_probe_media_cancel();
+ if(ejected==(int)value)return true;
+ ejected=value;disc_stop(0);fdc_probe_media_cancel(0);
  jfd_init();probe_present_drives[0]=NULL;
  if(!value&&mounted()) {if(!jfd_load(0,mounted()))return false;probe_present_drives[0]->seek(0,tracks[0]);}
  probe_disc_changed[0]=1;return true;
@@ -144,10 +149,16 @@ bool probe_media_eject(bool value) {
 bool probe_media_select(unsigned i) {if(!ejected||i>=image_count)return false;image_index=i;return true;}
 void probe_media_swap(unsigned i) {if(i>=image_count)fatal("Script disc index bound");probe_media_eject(true);if(!probe_media_select(i)||!probe_media_eject(false))fatal("Script swap failed");}
 void probe_media_test_attach(ArcJfdImage *im) {probe_media_close();test_image=im;if(!im->overlay)prepare(im,0);ejected=0;probe_media_reset();}
-void disc_set_drivesel(int d) {if(d>=0&&d<2)selected=(unsigned)d;}
+void disc_set_drivesel(int d) {if(d>=0&&d<4)selected=(unsigned)d;}
 int disc_get_current_track(int d) {return d>=0&&d<2?tracks[d]:0;}
 void disc_seek(int d,int t) {
- if(d<0||d>=2)return;tracks[d]=t;disc_stop(d);probe_disc_changed[d]=0;
+ if(d<0||d>=2)return;
+ /* Drive nDSKCHG is a hardware latch: only an actual selected STEP with
+  * media installed clears it. PCN==NCN emits no step. An empty drive's
+  * signal remains asserted even when its carriage moves. */
+ bool inserted=d==0?!ejected&&mounted()!=NULL:probe_helper_enabled!=0;
+ if(t!=tracks[d]&&selected==(unsigned)d&&inserted)probe_disc_changed[d]=0;
+ tracks[d]=t;disc_stop(d);
  if(probe_present_drives[d])probe_present_drives[d]->seek(d,t);
 }
 static bool ready(int d) {return d==0&&!ejected&&probe_present_drives[0];}
@@ -182,7 +193,7 @@ void disc_format(int d,int c,int h,int den) {if(ready(d))probe_present_drives[0]
 void disc_poll(void) {
  (void)selected;
  if(!ejected&&probe_present_drives[0])probe_present_drives[0]->poll();
- if(probe_helper_enabled)probe_helper_poll(selected==1&&motoron);
+ if(probe_helper_enabled)probe_helper_poll(selected==1&&(motoron&0x20));
  if(empty_seeking&&(uint64_t)++empty_polls*probe_disc_period_us>=400000) {empty_seeking=0;fdc_notfound();}
 }
 

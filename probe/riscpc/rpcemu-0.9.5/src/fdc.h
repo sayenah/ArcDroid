@@ -47,5 +47,5 @@ extern void fdc_indexpulse(void);
 /* ARCDROID-PROBE: concrete bridge error/cancellation entry points. */
 void fdc_probe_lostdata(void);
 void fdc_probe_id_latch(uint8_t,uint8_t,uint8_t,uint8_t);
-void fdc_probe_media_cancel(void);
+void fdc_probe_media_cancel(int drive); /* ARCDROID-PROBE: drive-owned execution cancellation. */
 #endif /* FDC_H */

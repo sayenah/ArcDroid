@@ -299,3 +299,22 @@ boot is insufficient to prevent modern scripts from running. The original
 root scripts are retained as inactive evidence, with custody hashes and
 unchanged metadata/notices. The source resource tree and all other files stay
 unchanged. Do not qualify an image built without `--resources-only` for R7-1.
+
+### Drive-scoped media replacement (run-8 R8-1)
+
+Content eject/insert cancels only drive-0 media execution; the independent
+helper's READ ID, data transfer and empty-drive search retain their deadlines.
+Controller reset still cancels both. Disk-control calls with an unchanged
+insertion state are idempotent. Media replacement leaves the guest's DOR
+motor enables intact; DOR bits 1:0 select the drive independently of motors.
+DIR bit 7 is the inverted nDSKCHG of that selected drive. The drive latch
+survives DIR reads, controller reset, insertion and same-cylinder seeks;
+a physical step clears only the selected drive with media present.
+
+`expectations.md` cites the SMSC controller and TEAC drive specifications.
+`probe_controller` generates two authored JFDs and a playlist in its test
+working directory, performs real disk-control swaps with pending guest
+commands, and removes its synthetic files on normal completion. It tests
+unaffected helper READ ID and empty searches, eight repeated swaps,
+interrupted reads/writes, an early-swap replacement read, per-drive DIR
+selection and physical-step clearing. No private firmware/content is used.
