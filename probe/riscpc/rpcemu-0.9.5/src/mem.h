@@ -17,6 +17,8 @@
   along with this program; if not, write to the Free Software
   Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
+/* ARCDROID-PROBE BEGIN: disposable unit P modifications; see probe/riscpc/README.md. */
+
 
 #ifndef MEM_H
 #define MEM_H
@@ -24,6 +26,7 @@
 #include <stdint.h>
 
 #include "rpcemu.h"
+#include "arm.h"
 
 extern uint32_t mem_phys_read32(uint32_t addr);
 
@@ -51,7 +54,8 @@ extern uint32_t *ram00, *ram01, *ram1, *rom, *vram;
 extern uint8_t *romb;
 
 extern uint32_t tlbcache[0x100000];
-#define translateaddress(addr,rw,prefetch) ((/*!((addr)&0xFC000000) && */!(tlbcache[((addr)>>12)/*&0x3FFF*/]&0xFFF))?(tlbcache[(addr)>>12]|((addr)&0xFFF)):translateaddress2(addr,rw,prefetch))
+extern uint32_t probe_translate(uint32_t addr, int rw, int prefetch);
+#define translateaddress(addr,rw,prefetch) probe_translate(addr,rw,prefetch)
 
 extern int mmu,memmode;
 
@@ -71,6 +75,7 @@ extern uint32_t mem_vrammask;
 static inline uint32_t
 mem_read32(uint32_t addr)
 {
+	if (mmu && (probe_translate(addr, 0, 0), (arm.event & 0x40))) return 0;
 	if (vraddrl[addr >> 12] & 1) {
 		return readmemfl(addr);
 	} else {
@@ -89,6 +94,7 @@ mem_read32(uint32_t addr)
 static inline uint32_t
 mem_read8(uint32_t addr)
 {
+	if (mmu && (probe_translate(addr, 0, 0), (arm.event & 0x40))) return 0;
 	if (vraddrl[addr >> 12] & 1) {
 		return readmemfb(addr);
 	} else {
@@ -111,6 +117,7 @@ mem_read8(uint32_t addr)
 static inline void
 mem_write32(uint32_t addr, uint32_t val)
 {
+	if (mmu && (probe_translate(addr, 1, 0), (arm.event & 0x40))) return;
 	if (vwaddrl[addr >> 12] & 3) {
 		writememfl(addr, val);
 	} else {
@@ -129,6 +136,7 @@ mem_write32(uint32_t addr, uint32_t val)
 static inline void
 mem_write8(uint32_t addr, uint8_t val)
 {
+	if (mmu && (probe_translate(addr, 1, 0), (arm.event & 0x40))) return;
 	if (vwaddrl[addr >> 12] & 3) {
 		writememfb(addr, val);
 	} else {
@@ -211,3 +219,5 @@ mem_user_write8(uint32_t addr, uint8_t val)
 }
 
 #endif /* MEM_H */
+
+/* ARCDROID-PROBE END */

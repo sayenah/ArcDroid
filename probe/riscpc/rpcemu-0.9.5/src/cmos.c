@@ -17,6 +17,8 @@
   along with this program; if not, write to the Free Software
   Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
+/* ARCDROID-PROBE BEGIN: disposable unit P modifications; see probe/riscpc/README.md. */
+
 
 /* I2C + CMOS RAM emulation
 
@@ -33,6 +35,7 @@
 
 #include "rpcemu.h"
 #include "cmos.h"
+#include "ide_probe.h"
 
 #if 0
 #define dbgprintf(x...) { fprintf(stderr, x); }
@@ -101,9 +104,14 @@ typedef struct {
 static void
 cmos_update_settings(void)
 {
-	time_t now = time(NULL);
+	/* Generated ADFS logical byte 135: one floppy, optional one IDE drive.
+	 * Logical 189 timings mirror ArcDroid's accepted live IDE configuration. */
+	cmosram[199]=(cmosram[199]&~0xc7u)|1u|(probe_ide_enabled?0x40u:0u);
+	if(probe_ide_enabled)cmosram[253]=0x0a;
+
+	time_t now = 946684800;
 	const struct tm *t = gmtime(&now);
-	const struct tm *tloc = localtime(&now);
+	const struct tm *tloc = t;
 
 	/* The year should be stored too, otherwise RISC OS refuses to
 	 * read any time from the CMOS/RTC chip!
@@ -168,32 +176,7 @@ cmos_update_checksum(void)
 /**
  * Load CMOS data from cmos.ram file on file system
  */
-void
-cmos_init(void)
-{
-        char fn[512];
-        FILE *cmosf;
-
-        /* Append "cmos.ram" to the given executable path */
-	snprintf(fn, sizeof(fn), "%scmos.ram", rpcemu_get_datadir());
-        cmosf = fopen(fn, "rb");
-
-        if (cmosf) {
-                /* File open suceeded, load CMOS data */
-                if (fread(cmosram, 1, 256, cmosf) != 256) {
-                        fatal("Unable to read from CMOS file '%s', %s", fn,
-                              strerror(errno));
-                }
-                fclose(cmosf);
-        } else {
-                /* Report failure and initialise the array */
-                fprintf(stderr, "Could not open CMOS file '%s': %s\n", fn, 
-                        strerror(errno));
-                memset(cmosram, 0, 256);
-        }
-
-
-}
+void cmos_init(void) { memset(cmosram, 0, sizeof(cmosram)); }
 
 /**
  * called on emulated machine reset, apply changes that vary with machine changes
@@ -215,27 +198,7 @@ cmos_reset(void)
 /**
  * Save CMOS data to file system.
  */
-void
-savecmos(void)
-{
-        char fn[512];
-        FILE *cmosf;
-
-	snprintf(fn, sizeof(fn), "%scmos.ram", rpcemu_get_datadir());
-        cmosf = fopen(fn, "wb");
-
-        if (cmosf) {
-                if(fwrite(cmosram, 256, 1, cmosf) != 1) {
-                        fatal("Unable to write CMOS file '%s': %s", fn,
-                              strerror(errno));
-                        // TODO does it have to be fatal?
-                }
-                fclose(cmosf);
-        } else {
-                fprintf(stderr, "Could not open CMOS file '%s' for writing: %s\n", fn,
-                        strerror(errno));
-        }
-}
+void savecmos(void) { /* In-memory only for the trial. */ }
 
 /**
  * Update PCF8583 time registers based on the current host system time
@@ -243,7 +206,7 @@ savecmos(void)
 static void
 cmosgettime(void)
 {
-	time_t now = time(NULL);
+	time_t now = 946684800;
 	const struct tm *t = gmtime(&now);
 
 	cmosram[1] = 0;
@@ -639,7 +602,7 @@ cmosi2cchange(int scl, int sda)
 			if (slave == NULL) {
 				fprintf(stderr, "I2C-SerDes Bug: no slave in I2C-read\n");
 				rpclog("I2C-SerDes Bug: no slave in I2C-read\n");
-				exit(5324);
+				fatal("I2C read without selected slave");
 			}
 			if (sda) {
 				/* Last was not acknowledged, so read nothing */
@@ -736,7 +699,7 @@ cmosi2cchange(int scl, int sda)
 				if (slave == NULL) {
 					fprintf(stderr, "I2C-SerDes Emulator Bug: no slave in write\n");
 					rpclog("I2C-SerDes Emulator Bug: no slave in write\n");
-					exit(3245);
+					fatal("I2C write without selected slave");
 				}
 				result = slave->devops->write(slave->dev, serdes->inbuf);
 				serdes->slave_was_accessed = 1;
@@ -794,3 +757,5 @@ reseti2c(uint32_t chosen_i2c_devices)
 	/* Initialise the I2C state machine */
 	reset_serdes(serdes);
 }
+
+/* ARCDROID-PROBE END */

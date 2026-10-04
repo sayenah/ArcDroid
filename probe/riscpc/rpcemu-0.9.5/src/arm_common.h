@@ -69,7 +69,8 @@ static const uint32_t msrlookup[16] = {
 static inline uint32_t
 rotate_right32(uint32_t x, uint32_t n)
 {
-	return (x >> n) | (x << (32 - n));
+	/* ARCDROID-PROBE: the ARM immediate rotate of zero is defined. */
+	return n ? (x >> n) | (x << (32 - n)) : x;
 }
 
 /**

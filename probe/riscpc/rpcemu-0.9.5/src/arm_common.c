@@ -17,6 +17,8 @@
   along with this program; if not, write to the Free Software
   Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
+/* ARCDROID-PROBE BEGIN: disposable unit P modifications; see probe/riscpc/README.md. */
+
 
 /* arm_common.c - sections of code that are shared between the interpreted and dynarec builds */
 
@@ -597,7 +599,7 @@ opSWI(uint32_t opcode)
 	   as it allows 'fullscreen' or 'mouse capture mode' risc os mode changes
 	   to have their boxes cached, allowing mousehack to work when you change
 	   back to it */
-	if (swinum == SWI_OS_Word && arm.reg[0] == 21 && mem_read8(arm.reg[1]) == 1) {
+	if (mousehack && swinum == SWI_OS_Word && arm.reg[0] == 21 && mem_read8(arm.reg[1]) == 1) {
 			/* OS_Word 21, 1 Define Mouse Coordinate bounding box */
 			mouse_hack_osword_21_1(arm.reg[1]);
 			return 0;
@@ -621,7 +623,7 @@ opSWI(uint32_t opcode)
 		mouse_hack_osmouse();
 		arm.reg[cpsr] &= ~VFLAG;
 
-	} else if (swinum == ARCEM_SWI_HOSTFS) {
+	} else if (0 && swinum == ARCEM_SWI_HOSTFS) {
 		ARMul_State state;
 
 		state.Reg = arm.reg;
@@ -654,3 +656,5 @@ realswi:
 	return 0;
 }
 #endif /* ifndef TEST */
+
+/* ARCDROID-PROBE END */

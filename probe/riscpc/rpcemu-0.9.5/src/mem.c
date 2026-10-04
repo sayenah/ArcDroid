@@ -17,6 +17,8 @@
   along with this program; if not, write to the Free Software
   Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
+/* ARCDROID-PROBE BEGIN: disposable unit P modifications; see probe/riscpc/README.md. */
+
 
 /* Memory handling */
 #include <assert.h>
@@ -76,6 +78,7 @@ void mem_init(void)
 {
 	rom  = malloc(ROMSIZE);
 	vram = malloc(8 * 1024 * 1024); /*8 meg VRAM!*/
+	if (!rom || !vram) fatal("ROM/VRAM allocation failure");
 	romb  = (uint8_t *) rom;
 	vramb = (uint8_t *) vram;
 }
@@ -100,7 +103,9 @@ mem_reset(uint32_t ramsize, uint32_t vram_size)
 		ramsize = 128 * 1024 * 1024; /* 128MB for first SIMM */
 
 		/* Allocate additional 128MB */
-		ram1 = realloc(ram1, 128 * 1024 * 1024);
+		void *extra = realloc(ram1, 128 * 1024 * 1024);
+		if (!extra) fatal("Extra RAM allocation failure");
+		ram1 = extra;
 		ramb1 = (uint8_t *) ram1;
 		memset(ram1, 0, 128 * 1024 * 1024);
 	} else {
@@ -119,8 +124,12 @@ mem_reset(uint32_t ramsize, uint32_t vram_size)
 		mem_vrammask = 0;
 	}
 
-	ram00 = realloc(ram00, ramsize / 2);
-	ram01 = realloc(ram01, ramsize / 2);
+	void *bank = realloc(ram00, ramsize / 2);
+	if (!bank) fatal("RAM bank 0 allocation failure");
+	ram00 = bank;
+	bank = realloc(ram01, ramsize / 2);
+	if (!bank) fatal("RAM bank 1 allocation failure");
+	ram01 = bank;
 	ramb00 = (uint8_t *) ram00;
 	ramb01 = (uint8_t *) ram01;
 	memset(ram00, 0, ramsize / 2);
@@ -461,6 +470,7 @@ mem_phys_write32(uint32_t addr, uint32_t val)
 	case 0x16000000:
 	case 0x17000000:
 		ram01[(addr & mem_rammask) >> 2] = val;
+		if (!mem_vrammask) dirtybuffer[(addr & mem_rammask) >> 12] = 1;
 		return;
 
 	case 0x18000000: /* SIMM 1 bank 0 */
@@ -577,6 +587,7 @@ mem_phys_write8(uint32_t addr, uint8_t val)
 		addr ^= 3;
 #endif
 		ramb01[addr & mem_rammask] = val;
+		if (!mem_vrammask) dirtybuffer[(addr & mem_rammask) >> 12] = 1;
 		return;
 
 	case 0x18000000: /* SIMM 1 bank 0 */
@@ -603,7 +614,7 @@ readmemfl(uint32_t addr)
 	uint32_t phys_addr = addr;
 
 	if (mmu) {
-		if ((addr >> 12) == readmemcache) {
+		if (0 && (addr >> 12) == readmemcache) {
 			phys_addr = readmemcache2 + (addr & 0xfff);
 		} else {
 			readmemcache = addr >> 12;
@@ -616,12 +627,12 @@ readmemfl(uint32_t addr)
 		}
 		switch (readmemcache2 & (phys_space_mask & 0xff000000)) {
 		case 0x00000000: /* ROM */
-			vradd(addr, &rom[((readmemcache2 & 0x7ff000) - (uintptr_t) (addr & ~0xfffu)) >> 2], 2, readmemcache2);
+			vradd(addr, (const void *)((uintptr_t)rom + (readmemcache2 & 0x7ff000) - (uintptr_t)(addr & ~0xfffu)), 2, readmemcache2);
 			return *(const uint32_t *) ((vraddrl[addr >> 12] & ~3) + (addr & ~3u));
 
 		case 0x02000000: /* VRAM */
 			if (mem_vrammask != 0) {
-				vradd(addr, &vram[((readmemcache2 & mem_vrammask) - (uintptr_t) (addr & ~0xfffu)) >> 2], 0, readmemcache2);
+				vradd(addr, (const void *)((uintptr_t)vram + (readmemcache2 & mem_vrammask) - (uintptr_t)(addr & ~0xfffu)), 0, readmemcache2);
 				return *(const uint32_t *) (vraddrl[addr >> 12] + (addr & ~3u));
 			}
 			break;
@@ -630,14 +641,14 @@ readmemfl(uint32_t addr)
 		case 0x11000000:
 		case 0x12000000:
 		case 0x13000000:
-			vradd(addr, &ram00[((readmemcache2 & mem_rammask) - (uintptr_t) (addr & ~0xfffu)) >> 2], 0, readmemcache2);
+			vradd(addr, (const void *)((uintptr_t)ram00 + (readmemcache2 & mem_rammask) - (uintptr_t)(addr & ~0xfffu)), 0, readmemcache2);
 			return *(const uint32_t *) (vraddrl[addr >> 12] + (addr & ~3u));
 
 		case 0x14000000: /* SIMM 0 bank 1 */
 		case 0x15000000:
 		case 0x16000000:
 		case 0x17000000:
-			vradd(addr, &ram01[((readmemcache2 & mem_rammask) - (uintptr_t) (addr & ~0xfffu)) >> 2], 0, readmemcache2);
+			vradd(addr, (const void *)((uintptr_t)ram01 + (readmemcache2 & mem_rammask) - (uintptr_t)(addr & ~0xfffu)), 0, readmemcache2);
 			return *(const uint32_t *) (vraddrl[addr >> 12] + (addr & ~3u));
 
 		case 0x18000000: /* SIMM 1 bank 0 */
@@ -649,7 +660,7 @@ readmemfl(uint32_t addr)
 		case 0x1e000000:
 		case 0x1f000000:
 			if (ram1 != NULL) {
-				vradd(addr, &ram1[((readmemcache2 & 0x7ffffff) - (uintptr_t) (addr & ~0xfffu)) >> 2], 0, readmemcache2);
+				vradd(addr, (const void *)((uintptr_t)ram1 + (readmemcache2 & 0x7ffffff) - (uintptr_t)(addr & ~0xfffu)), 0, readmemcache2);
 				return *(const uint32_t *) (vraddrl[addr >> 12] + (addr & ~3u));
 			}
 			break;
@@ -657,24 +668,24 @@ readmemfl(uint32_t addr)
 	} else {
 		switch (addr & (phys_space_mask & 0xff000000)) {
 		case 0x00000000: /* ROM */
-			//vradd(addr, &rom[((addr & 0x7ff000) - (uintptr_t) (addr & ~0xfffu)) >> 2], 2, addr);
+			//vradd(addr, (const void *)((uintptr_t)rom + (addr & 0x7ff000) - (uintptr_t)(addr & ~0xfffu)), 2, addr);
 			break;
 		case 0x02000000: /* VRAM */
 			if (mem_vrammask != 0) {
-				vradd(addr, &vram[((addr & mem_vrammask & ~0xfffu) - (uintptr_t) (addr & ~0xfffu)) >> 2], 0, addr);
+				vradd(addr, (const void *)((uintptr_t)vram + (addr & mem_vrammask & ~0xfffu) - (uintptr_t)(addr & ~0xfffu)), 0, addr);
 			}
 			break;
 		case 0x10000000: /* SIMM 0 bank 0 */
 		case 0x11000000:
 		case 0x12000000:
 		case 0x13000000:
-			vradd(addr, &ram00[((addr & mem_rammask & ~0xfffu) - (uintptr_t) (addr & ~0xfffu)) >> 2], 0, addr);
+			vradd(addr, (const void *)((uintptr_t)ram00 + (addr & mem_rammask & ~0xfffu) - (uintptr_t)(addr & ~0xfffu)), 0, addr);
 			break;
 		case 0x14000000: /* SIMM 0 bank 1 */
 		case 0x15000000:
 		case 0x16000000:
 		case 0x17000000:
-			vradd(addr, &ram01[((addr & mem_rammask & ~0xfffu) - (uintptr_t) (addr & ~0xfffu)) >> 2], 0, addr);
+			vradd(addr, (const void *)((uintptr_t)ram01 + (addr & mem_rammask & ~0xfffu) - (uintptr_t)(addr & ~0xfffu)), 0, addr);
 			break;
 		case 0x18000000: /* SIMM 1 bank 0 */
 		case 0x19000000:
@@ -685,7 +696,7 @@ readmemfl(uint32_t addr)
 		case 0x1e000000:
 		case 0x1f000000:
 			if (ram1 != NULL) {
-				vradd(addr, &ram1[((addr & 0x7ffffff & ~0xfffu) - (uintptr_t) (addr & ~0xfffu)) >> 2], 0, addr);
+				vradd(addr, (const void *)((uintptr_t)ram1 + (addr & 0x7ffffff & ~0xfffu) - (uintptr_t)(addr & ~0xfffu)), 0, addr);
 			}
 			break;
 		}
@@ -700,7 +711,7 @@ readmemfb(uint32_t addr)
 	uint32_t phys_addr = addr;
 
 	if (mmu) {
-		if ((addr >> 12) == readmemcache) {
+		if (0 && (addr >> 12) == readmemcache) {
 			phys_addr = readmemcache2 + (addr & 0xfff);
 		} else {
 			readmemcache = addr >> 12;
@@ -713,7 +724,7 @@ readmemfb(uint32_t addr)
 		}
 		switch (readmemcache2 & (phys_space_mask & 0xff000000)) {
 		case 0x00000000: /* ROM */
-			vradd(addr, &rom[((readmemcache2 & 0x7ff000) - (uintptr_t) (addr & ~0xfffu)) >> 2], 2, readmemcache2);
+			vradd(addr, (const void *)((uintptr_t)rom + (readmemcache2 & 0x7ff000) - (uintptr_t)(addr & ~0xfffu)), 2, readmemcache2);
 #ifdef _RPCEMU_BIG_ENDIAN
 			addr ^= 3;
 #endif
@@ -721,7 +732,7 @@ readmemfb(uint32_t addr)
 
 		case 0x02000000: /* VRAM */
 			if (mem_vrammask != 0) {
-				vradd(addr, &vram[((readmemcache2 & mem_vrammask) - (uintptr_t) (addr & ~0xfffu)) >> 2], 0, readmemcache2);
+				vradd(addr, (const void *)((uintptr_t)vram + (readmemcache2 & mem_vrammask) - (uintptr_t)(addr & ~0xfffu)), 0, readmemcache2);
 #ifdef _RPCEMU_BIG_ENDIAN
 				addr ^= 3;
 #endif
@@ -733,7 +744,7 @@ readmemfb(uint32_t addr)
 		case 0x11000000:
 		case 0x12000000:
 		case 0x13000000:
-			vradd(addr, &ram00[((readmemcache2 & mem_rammask) - (uintptr_t) (addr & ~0xfffu)) >> 2], 0, readmemcache2);
+			vradd(addr, (const void *)((uintptr_t)ram00 + (readmemcache2 & mem_rammask) - (uintptr_t)(addr & ~0xfffu)), 0, readmemcache2);
 #ifdef _RPCEMU_BIG_ENDIAN
 			addr ^= 3;
 #endif
@@ -743,7 +754,7 @@ readmemfb(uint32_t addr)
 		case 0x15000000:
 		case 0x16000000:
 		case 0x17000000:
-			vradd(addr, &ram01[((readmemcache2 & mem_rammask) - (uintptr_t) (addr & ~0xfffu)) >> 2], 0, readmemcache2);
+			vradd(addr, (const void *)((uintptr_t)ram01 + (readmemcache2 & mem_rammask) - (uintptr_t)(addr & ~0xfffu)), 0, readmemcache2);
 #ifdef _RPCEMU_BIG_ENDIAN
 			addr ^= 3;
 #endif
@@ -758,7 +769,7 @@ readmemfb(uint32_t addr)
 		case 0x1e000000:
 		case 0x1f000000:
 			if (ram1 != NULL) {
-				vradd(addr, &ram1[((readmemcache2 & 0x7ffffff) - (uintptr_t) (addr & ~0xfffu)) >> 2], 0, readmemcache2);
+				vradd(addr, (const void *)((uintptr_t)ram1 + (readmemcache2 & 0x7ffffff) - (uintptr_t)(addr & ~0xfffu)), 0, readmemcache2);
 #ifdef _RPCEMU_BIG_ENDIAN
 				addr ^= 3;
 #endif
@@ -776,7 +787,7 @@ writememfl(uint32_t addr, uint32_t val)
 	uint32_t phys_addr = addr;
 
 	if (mmu) {
-		if ((addr >> 12) == writememcache) {
+		if (0 && (addr >> 12) == writememcache) {
 			phys_addr = writememcache2 + (addr & 0xfff);
 		} else {
 			writememcache = addr >> 12;
@@ -790,7 +801,7 @@ writememfl(uint32_t addr, uint32_t val)
 		switch (writememcache2 & (phys_space_mask & 0xff000000)) {
 		case 0x02000000: /* VRAM */
 			if (mem_vrammask != 0) {
-				vwadd(addr, &vram[((writememcache2 & mem_vrammask) - (uintptr_t) (addr & ~0xfffu)) >> 2], 0, writememcache2);
+				vwadd(addr, (const void *)((uintptr_t)vram + (writememcache2 & mem_vrammask) - (uintptr_t)(addr & ~0xfffu)), 0, writememcache2);
 			}
 			break;
 
@@ -798,14 +809,14 @@ writememfl(uint32_t addr, uint32_t val)
 		case 0x11000000:
 		case 0x12000000:
 		case 0x13000000:
-			vwadd(addr, &ram00[((writememcache2 & mem_rammask) - (uintptr_t) (addr & ~0xfffu)) >> 2], 0, writememcache2);
+			vwadd(addr, (const void *)((uintptr_t)ram00 + (writememcache2 & mem_rammask) - (uintptr_t)(addr & ~0xfffu)), 0, writememcache2);
 			break;
 
 		case 0x14000000: /* SIMM 0 bank 1 */
 		case 0x15000000:
 		case 0x16000000:
 		case 0x17000000:
-			vwadd(addr, &ram01[((writememcache2 & mem_rammask) - (uintptr_t) (addr & ~0xfffu)) >> 2], 0, writememcache2);
+			vwadd(addr, (const void *)((uintptr_t)ram01 + (writememcache2 & mem_rammask) - (uintptr_t)(addr & ~0xfffu)), 0, writememcache2);
 			break;
 
 		case 0x18000000: /* SIMM 1 bank 0 */
@@ -817,7 +828,7 @@ writememfl(uint32_t addr, uint32_t val)
 		case 0x1e000000:
 		case 0x1f000000:
 			if (ram1 != NULL) {
-				vwadd(addr, &ram1[((writememcache2 & 0x7ffffff) - (uintptr_t) (addr & ~0xfffu)) >> 2], 0, writememcache2);
+				vwadd(addr, (const void *)((uintptr_t)ram1 + (writememcache2 & 0x7ffffff) - (uintptr_t)(addr & ~0xfffu)), 0, writememcache2);
 			}
 			break;
 		}
@@ -831,7 +842,7 @@ writememfb(uint32_t addr, uint8_t val)
 	uint32_t phys_addr = addr;
 
 	if (mmu) {
-		if ((addr >> 12) == writemembcache) {
+		if (0 && (addr >> 12) == writemembcache) {
 			phys_addr = writemembcache2 + (addr & 0xfff);
 		} else {
 			writemembcache = addr >> 12;
@@ -845,7 +856,7 @@ writememfb(uint32_t addr, uint8_t val)
 		switch (writemembcache2 & (phys_space_mask & 0xff000000)) {
 		case 0x02000000: /* VRAM */
 			if (mem_vrammask != 0) {
-				vwadd(addr, &vram[((writemembcache2 & mem_vrammask) - (uintptr_t) (addr & ~0xfffu)) >> 2], 0, writemembcache2);
+				vwadd(addr, (const void *)((uintptr_t)vram + (writemembcache2 & mem_vrammask) - (uintptr_t)(addr & ~0xfffu)), 0, writemembcache2);
 			}
 			break;
 
@@ -853,14 +864,14 @@ writememfb(uint32_t addr, uint8_t val)
 		case 0x11000000:
 		case 0x12000000:
 		case 0x13000000:
-			vwadd(addr, &ram00[((writemembcache2 & mem_rammask) - (uintptr_t) (addr & ~0xfffu)) >> 2], 0, writemembcache2);
+			vwadd(addr, (const void *)((uintptr_t)ram00 + (writemembcache2 & mem_rammask) - (uintptr_t)(addr & ~0xfffu)), 0, writemembcache2);
 			break;
 
 		case 0x14000000: /* SIMM 0 bank 1 */
 		case 0x15000000:
 		case 0x16000000:
 		case 0x17000000:
-			vwadd(addr, &ram01[((writemembcache2 & mem_rammask) - (uintptr_t) (addr & ~0xfffu)) >> 2], 0, writemembcache2);
+			vwadd(addr, (const void *)((uintptr_t)ram01 + (writemembcache2 & mem_rammask) - (uintptr_t)(addr & ~0xfffu)), 0, writemembcache2);
 			break;
 
 		case 0x18000000: /* SIMM 1 bank 0 */
@@ -872,10 +883,12 @@ writememfb(uint32_t addr, uint8_t val)
 		case 0x1e000000:
 		case 0x1f000000:
 			if (ram1 != NULL) {
-				vwadd(addr, &ram1[((writemembcache2 & 0x7ffffff) - (uintptr_t) (addr & ~0xfffu)) >> 2], 0, writemembcache2);
+				vwadd(addr, (const void *)((uintptr_t)ram1 + (writemembcache2 & 0x7ffffff) - (uintptr_t)(addr & ~0xfffu)), 0, writemembcache2);
 			}
 			break;
 		}
 	}
 	mem_phys_write8(phys_addr, val);
 }
+
+/* ARCDROID-PROBE END */

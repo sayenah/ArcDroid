@@ -17,6 +17,8 @@
   along with this program; if not, write to the Free Software
   Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
+/* ARCDROID-PROBE BEGIN: disposable unit P modifications; see probe/riscpc/README.md. */
+
 
 /* IOMD emulation */
 #include <assert.h>
@@ -267,19 +269,7 @@ gentimerirq(uint64_t nsec_timer)
 {
 	updatetimers(nsec_timer);
 
-        if (soundinited && sndon)
-        {
-                soundcount -= 4000;
-                if (soundcount<0)
-                {
-                        sound_irq_update();
-                        soundcount+=soundlatch;
-//                        rpclog("soundcount now %i %i\n",soundcount,soundlatch);
-                }
-        }
 
-        /* Update Podule interrupts */
-        runpoduletimers(2); /* 2ms * 500 = 1 sec */
 }
 
 /**
@@ -882,6 +872,7 @@ iomd_mouse_buttons_read(void)
 void
 iomd_reset(IOMDType type)
 {
+        memset(&iomd, 0, sizeof(iomd));
 	assert(type == IOMDType_IOMD || type == IOMDType_ARM7500 || type == IOMDType_ARM7500FE || type == IOMDType_IOMD2);
 	iomd_type = type;
 
@@ -913,6 +904,7 @@ iomd_reset(IOMDType type)
 	iomd.vidend   = 0;
 	iomd.vidinit  = 0;
 
+        old_timer_ticks = 0;
         soundcount=100000;
         iomd.t0.counter = 0xffff;
         iomd.t1.counter = 0xffff;
@@ -963,3 +955,7 @@ iomd_flyback(int flyback_new)
 		updateirqs();
 	}
 }
+
+int probe_sound_enabled(void) { return soundinited && sndon; }
+
+/* ARCDROID-PROBE END */

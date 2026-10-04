@@ -17,6 +17,8 @@
   along with this program; if not, write to the Free Software
   Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
+/* ARCDROID-PROBE BEGIN: disposable unit P modifications; see probe/riscpc/README.md. */
+
 
 /*Preliminary FPA emulation. This works to an extent - !Draw works with it, !SICK
   seems to (FPA Whetstone scores are around 100x without), but !AMPlayer doesn't
@@ -37,6 +39,8 @@ ARMState arm;
 
 int blockend;
 uint32_t inscount;
+int probe_batch_instructions = 200;
+uint64_t probe_instructions;
 int cpsr;
 static uint32_t *pcpsr;
 
@@ -191,6 +195,7 @@ void updatemode(uint32_t m)
 
 	/* Update memory access mode based on privilege level of ARM mode */
 	memmode = ARM_MODE_PRIV(arm.mode) ? 1 : 0;
+	pccache = 0xffffffff;
 }
 
 static int stmlookup[256];
@@ -547,13 +552,13 @@ arm_exec(void)
 {
 	int linecyc;
 
-	for (linecyc = 0; linecyc < 200; linecyc++) {
+	for (linecyc = 0; linecyc < probe_batch_instructions; linecyc++) {
 		uint32_t opcode;
 		uint32_t lhs, rhs, dest;
 		uint32_t addr, data, offset, writeback;
 
-		if ((PC >> 12) != pccache) {
-			pccache = PC >> 12;
+		if ((PC >> 10) != pccache) {
+			pccache = PC >> 10;
 			pccache2 = getpccache(PC);
 			if (pccache2 == NULL) {
 				// Prefetch Abort
@@ -563,7 +568,7 @@ arm_exec(void)
 				continue;
 			}
 		}
-		opcode = pccache2[PC >> 2];
+		opcode = pccache2[(PC & 0xfff) >> 2];
 
 		if (flaglookup[opcode >> 28][(*pcpsr) >> 28]) {
 			if (arm.arch_v4) {
@@ -1884,7 +1889,10 @@ skip:
 
 		arm.reg[15] += 4;
 	}
-	inscount += 200;
+	inscount += linecyc;
+	probe_instructions += linecyc;
 
-	return 200;
+	return linecyc;
 }
+
+/* ARCDROID-PROBE END */

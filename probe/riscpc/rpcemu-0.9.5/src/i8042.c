@@ -18,6 +18,8 @@
   Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
+/* ARCDROID-PROBE BEGIN: contain unsupported controller commands. */
+
 /*
 
  Emulation of the Intel 8042 keyboard controller embedded in the
@@ -172,7 +174,7 @@ i8042_data_write(uint8_t val)
 		mouse_data_write(val);
 		break;
 	default:
-		exit(1);
+		fatal("Unsupported i8042 command");
 	}
 	i8042.command = 0;
 }
@@ -214,7 +216,7 @@ i8042_command_write(uint8_t val)
 		i8042.command = val;
 		break;
 	default:
-		exit(1);
+		fatal("Unsupported i8042 command");
 	}
 }
 
@@ -232,3 +234,5 @@ i8042_reset(void)
 	i8042.irq_kbd = 0;
 	i8042.irq_mouse = 0;
 }
+
+/* ARCDROID-PROBE END */

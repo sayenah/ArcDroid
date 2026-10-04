@@ -17,6 +17,8 @@
   along with this program; if not, write to the Free Software
   Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
+/* ARCDROID-PROBE BEGIN: synchronous rendering and VIDC register timing. */
+
 
 /* VIDC20 emulation
 
@@ -42,12 +44,14 @@
 #include "iomd.h"
 
 static int current_sizex = -1; /**< Width of the video mode, -1 on invalid */
+static unsigned bitmap_pitch;
 static int current_sizey = -1; /**< Height of the video mode, -1 on invalid */
 
 // Don't resize the window to smaller than this.
-static const int MIN_X_SIZE = 320;
-static const int MIN_Y_SIZE = 256;
+static const int MIN_X_SIZE = 1;
+static const int MIN_Y_SIZE = 1;
 
+static uint32_t probe_hcr, probe_vcr, probe_fsyn, probe_con;
 static int doublesize = VIDC_DOUBLE_NONE; /**< Current state of doubling X/Y values */
 
 /* This state is written by the machine thread. The video thread should not read it. */
@@ -96,8 +100,8 @@ static struct cached_state {
 
 /* Two dirty buffers, so one can be written to by the main thread
    while the display thread is reading the other */
-static uint8_t dirtybuffer1[512 * 4];
-static uint8_t dirtybuffer2[512 * 4];
+static uint8_t dirtybuffer1[32768];
+static uint8_t dirtybuffer2[32768];
 
 /* Dirty buffer currently in use by main thread */
 uint8_t *dirtybuffer = dirtybuffer1;
@@ -112,7 +116,7 @@ uint8_t *dirtybuffer = dirtybuffer1;
 static uint32_t *
 video_image_scanline(int row)
 {
-	return thr.bitmap + (row * current_sizex);
+	return thr.bitmap + ((size_t)row * bitmap_pitch);
 }
 
 /**
@@ -135,6 +139,8 @@ initvideo(void)
 {
 	current_sizex = -1;
 	current_sizey = -1;
+	memset(&vidc, 0, sizeof(vidc));
+	probe_hcr=792; probe_vcr=499; probe_fsyn=0; probe_con=0;
 	memset(&thr, 0, sizeof(thr));
 	memset(dirtybuffer1, 0xff, sizeof(dirtybuffer1));
 	memset(dirtybuffer2, 0xff, sizeof(dirtybuffer2));
@@ -198,7 +204,12 @@ resizedisplay(int x, int y)
 	current_sizex = x;
 	current_sizey = y;
 
-	thr.bitmap = realloc(thr.bitmap, x * y * sizeof(uint32_t));
+	if (x > 2048 || y > 2048) fatal("Probe geometry exceeds bounds");
+	bitmap_pitch=((unsigned)x+31u)&~31u;
+	void *pixels = realloc(thr.bitmap, (size_t)bitmap_pitch * y * sizeof(uint32_t));
+	if (!pixels) fatal("Probe video allocation failure");
+	thr.bitmap=pixels;
+	memset(thr.bitmap, 0, (size_t)bitmap_pitch * y * sizeof(uint32_t));
 
 	resetbuffer();
 }
@@ -207,6 +218,7 @@ void
 closevideo(void)
 {
 	vidcendthread();
+	free(thr.bitmap); thr.bitmap = NULL;
 }
 
 /**
@@ -220,7 +232,7 @@ closevideo(void)
 static uint32_t
 makecol(uint32_t r, uint32_t g, uint32_t b)
 {
-	return (0xff << 24) | (r << 16) | (g << 8) | b;
+	return (UINT32_C(0xff) << 24) | (r << 16) | (g << 8) | b;
 }
 
 static void
@@ -331,7 +343,7 @@ drawscr(void)
 
 			// Fill the bitmap with the border colour
 			p = thr.bitmap;
-			for (i = 0; i < current_sizex * current_sizey; i++) {
+			for (i = 0; i < (int)(bitmap_pitch * current_sizey); i++) {
 				p[i] = thr.border_colour;
 			}
 
@@ -384,7 +396,7 @@ drawscr(void)
 
 	thr.threadpending = 1;
 
-	iomd_flyback(0);
+	/* ARCDROID-PROBE: caller schedules flyback falling edge in guest time. */
 
 	vidcwakeupthread();
 
@@ -404,7 +416,8 @@ unlock_mutex_return:
 void
 vidcthread(void)
 {
-	const uint32_t vidstart = thr.iomd_vidstart & 0x7ffff0;
+	uint32_t video_mask = (thr.iomd_vidinit & 0x10000000) ? mem_rammask : mem_vrammask;
+	const uint32_t vidstart = thr.iomd_vidstart & video_mask & ~15u;
 	uint32_t vidend;
 	int drawit = 0;
 	int x, y;
@@ -424,18 +437,18 @@ vidcthread(void)
 	if (thr.iomd_vidinit & 0x10000000) {
 		/* Using DRAM for video */
 		/* TODO video could be in DRAM other than simm 0 bank 0 */
-		ramp = (const uint8_t *) ram00;
-		vidend = (thr.iomd_vidend + 16) & 0x7ffff0;
+		ramp = (const uint8_t *) ((thr.iomd_vidinit & 0x04000000) ? ram01 : ram00);
+		vidend = (thr.iomd_vidend + 16) & video_mask & ~15u;
 	} else {
 		/* Using VRAM for video */
 		ramp = (const uint8_t *) vram;
-		vidend = (thr.iomd_vidend + 2048) & 0xfffff0;
+		vidend = (thr.iomd_vidend + 2048) & video_mask & ~15u;
 		if (vidend > 0x800000) {
 			vidend &= 0x7ffff0;
 		}
 	}
 
-	addr = thr.iomd_vidinit & 0x7fffff;
+	addr = thr.iomd_vidinit & video_mask;
 
 	drawit = thr.dirtybuffer[addr >> 12];
 	if (drawit) {
@@ -475,10 +488,10 @@ vidcthread(void)
 #ifdef _RPCEMU_BIG_ENDIAN
 						addr ^= 3;
 #endif
-						addr++;
+						addr = (addr + 1) & video_mask;
 					}
 				} else {
-					addr += 1;
+					addr = (addr + 1) & video_mask;
 				}
 				if (addr == vidend) {
 					addr = vidstart;
@@ -526,10 +539,10 @@ vidcthread(void)
 #ifdef _RPCEMU_BIG_ENDIAN
 						addr ^= 3;
 #endif
-						addr++;
+						addr = (addr + 1) & video_mask;
 					}
 				} else {
-					addr += 1;
+					addr = (addr + 1) & video_mask;
 				}
 				if (addr == vidend) {
 					addr = vidstart;
@@ -586,10 +599,10 @@ vidcthread(void)
 						vidp[x + xx + 6] = thr.palette[ramp[addr + 3] & 0xf];
 						vidp[x + xx + 7] = thr.palette[(ramp[addr + 3] >> 4) & 0xf];
 #endif
-						addr += 4;
+						addr = (addr + 4) & video_mask;
 					}
 				} else {
-					addr += 16;
+					addr = (addr + 16) & video_mask;
 				}
 				if (addr == vidend) {
 					addr = vidstart;
@@ -638,10 +651,10 @@ vidcthread(void)
 						vidp[x + xx + 2] = thr.palette[ramp[addr + 2]];
 						vidp[x + xx + 3] = thr.palette[ramp[addr + 3]];
 #endif
-						addr += 4;
+						addr = (addr + 4) & video_mask;
 					}
 				} else {
-					addr += 16;
+					addr = (addr + 16) & video_mask;
 				}
 				if (addr == vidend) {
 					addr = vidstart;
@@ -694,10 +707,10 @@ vidcthread(void)
 						temp16 = ramp[addr + 2] | (ramp[addr + 3] << 8);
 #endif
 						vidp[x + xx + 1] = thr.pal[temp16 & 0xff].r | thr.pal[(temp16 >> 4) & 0xff].g | thr.pal[(temp16 >> 8) & 0xff].b;
-						addr += 4;
+						addr = (addr + 4) & video_mask;
 					}
 				} else {
-					addr += 16;
+					addr = (addr + 16) & video_mask;
 				}
 				if (addr == vidend) {
 					addr = vidstart;
@@ -740,10 +753,10 @@ vidcthread(void)
 #else
 						vidp[x + xx] = thr.pal[ramp[addr]].r | thr.pal[ramp[addr + 1]].g | thr.pal[ramp[addr + 2]].b;
 #endif
-						addr += 4;
+						addr = (addr + 4) & video_mask;
 					}
 				} else {
-					addr += 16;
+					addr = (addr + 16) & video_mask;
 				}
 				if (addr == vidend) {
 					addr = vidstart;
@@ -769,17 +782,7 @@ vidcthread(void)
 
 	/* Cursor layer is plotted over regular display */
 	if (thr.cursorheight > 1) {
-		/* Calculate host address of cursor data from physical address.
-		   This assumes that cursor data is always in DRAM, not VRAM,
-		   which is currently true for RISC OS */
-		if (thr.iomd_cinit & 0x8000000) {
-			ramp = (const uint8_t *) ram1;
-		} else if (thr.iomd_cinit & 0x4000000) {
-			ramp = (const uint8_t *) ram01;
-		} else {
-			ramp = (const uint8_t *) ram00;
-		}
-		addr = thr.iomd_cinit & mem_rammask;
+		addr = thr.iomd_cinit;
 		// printf("Mouse now at %i,%i\n", thr.cursorx, thr.cursory);
 		for (y = 0; y < thr.cursorheight; y++) {
 			if ((y + thr.cursory) >= thr.vidc_ysize) {
@@ -789,20 +792,21 @@ vidcthread(void)
 				uint32_t *vidp = video_image_scanline(y + thr.cursory);
 
 				for (x = 0; x < 32; x += 4) {
+					uint8_t cursor_byte=(uint8_t)(mem_phys_read32(addr & ~3u) >> ((addr & 3u)*8));
 #ifdef _RPCEMU_BIG_ENDIAN
 					addr ^= 3;
 #endif
-					if ((x + thr.cursorx)     >= 0 && (x + thr.cursorx)     < thr.vidc_xsize && ramp[addr]        & 3) {
-						vidp[x + thr.cursorx]     = thr.cursor_palette[(ramp[addr] & 3) - 1];
+					if ((x + thr.cursorx)     >= 0 && (x + thr.cursorx)     < thr.vidc_xsize && cursor_byte        & 3) {
+						vidp[x + thr.cursorx]     = thr.cursor_palette[(cursor_byte & 3) - 1];
 					}
-					if ((x + thr.cursorx + 1) >= 0 && (x + thr.cursorx + 1) < thr.vidc_xsize && (ramp[addr] >> 2) & 3) {
-						vidp[x + thr.cursorx + 1] = thr.cursor_palette[((ramp[addr] >> 2) & 3) - 1];
+					if ((x + thr.cursorx + 1) >= 0 && (x + thr.cursorx + 1) < thr.vidc_xsize && (cursor_byte >> 2) & 3) {
+						vidp[x + thr.cursorx + 1] = thr.cursor_palette[((cursor_byte >> 2) & 3) - 1];
 					}
-					if ((x + thr.cursorx + 2) >= 0 && (x + thr.cursorx + 2) < thr.vidc_xsize && (ramp[addr] >> 4) & 3) {
-						vidp[x + thr.cursorx + 2] = thr.cursor_palette[((ramp[addr] >> 4) & 3) - 1];
+					if ((x + thr.cursorx + 2) >= 0 && (x + thr.cursorx + 2) < thr.vidc_xsize && (cursor_byte >> 4) & 3) {
+						vidp[x + thr.cursorx + 2] = thr.cursor_palette[((cursor_byte >> 4) & 3) - 1];
 					}
-					if ((x + thr.cursorx + 3) >= 0 && (x + thr.cursorx + 3) < thr.vidc_xsize && (ramp[addr] >> 6) & 3) {
-						vidp[x + thr.cursorx + 3] = thr.cursor_palette[((ramp[addr] >> 6) & 3) - 1];
+					if ((x + thr.cursorx + 3) >= 0 && (x + thr.cursorx + 3) < thr.vidc_xsize && (cursor_byte >> 6) & 3) {
+						vidp[x + thr.cursorx + 3] = thr.cursor_palette[((cursor_byte >> 6) & 3) - 1];
 					}
 #ifdef _RPCEMU_BIG_ENDIAN
 					addr ^= 3;
@@ -829,7 +833,7 @@ vidcthread(void)
 	oldcursory = thr.cursory;
 
 	/* Clean the dirtybuffer now we have updated eveything in it */
-	memset(thr.dirtybuffer, 0, 512 * 4);
+	memset(thr.dirtybuffer, 0, sizeof(dirtybuffer1));
 
 	if (yl == -1 || yh == -1) {
 		return;
@@ -892,6 +896,7 @@ writevidc20(uint32_t val)
 	case 9: /* Vertical Registers */
 		switch (val >> 24) {
 		case 0x80: /* Horizontal Cycle Register */
+            probe_hcr = val & 0x3ffc; break;
 		case 0x81: /* Horizontal Sync Width Register */
 		case 0x82: /* Horizontal Border Start Register */
 			/* No need to emulate */
@@ -922,6 +927,7 @@ writevidc20(uint32_t val)
 			break;
 
 		case 0x90: /* Vertical Cycle Register */
+            probe_vcr = val & 0x1fff; break;
 		case 0x91: /* Vertical Sync Width Register */
 		case 0x92: /* Vertical Border Start Register */
 			/* No need to emulate */
@@ -1001,11 +1007,13 @@ writevidc20(uint32_t val)
 		break;
 
 	case 0xd: /* Frequency Synthesizer Register */
+        probe_fsyn = val;
 		/* Used to set the frequency of the pixel clock.
 		   No need to emulate */
 		break;
 
 	case 0xe: /* Control Register */
+        probe_con = val;
 		/* These bits should not be set */
 		if ((val & 0x0ff00000) != 0) {
 			return;
@@ -1036,5 +1044,35 @@ writevidc20(uint32_t val)
 void
 resetbuffer(void)
 {
-	memset(dirtybuffer, 0xff, 512 * 4);
+	memset(dirtybuffer, 0xff, sizeof(dirtybuffer1));
 }
+
+/* Integer timing from VIDC20/ARM7500 HCR, VCR and pixel prescaler.
+ * Clock wiring: 24MHz reference on RiscPC, ARM7500 32MHz I/O reference;
+ * synthesised VCLK, reference RCLK (ARM DDI 0050C section 11.1).
+ * HCLK is unsupported rather than assigning it an invented frequency. */
+uint64_t probe_video_period(void) {
+ if ((probe_con & 3) == 1 || (probe_con & 3) == 3) fatal("Unsupported video clock source");
+ uint64_t num = machine.model == Model_A7000 ? 32000000 : 24000000, den = 1;
+ if ((probe_con & 3) == 0) {
+  num *= ((probe_fsyn >> 8) & 63) + 1;
+  den = (probe_fsyn & 63) + 1;
+ }
+ den *= ((probe_con >> 2) & 7) + 1;
+ uint64_t period = ((uint64_t)(probe_hcr + 8) * (probe_vcr + 1) * 1000000000 * den) / num;
+ if (period < 1000000 || period > 100000000) fatal("Unsupported video period");
+ return period;
+}
+const uint32_t *probe_video_pixels(unsigned *w, unsigned *h) {
+ *w = current_sizex > 0 ? (unsigned)current_sizex : 0;
+ *h = current_sizey > 0 ? (unsigned)current_sizey : 0;
+ return thr.bitmap;
+}
+uint64_t probe_video_blank_ns(void) {
+ unsigned total=probe_vcr+1;
+ int active=vidc.vder-vidc.vdsr;
+ unsigned blank=active>0&&(unsigned)active<=total?total-(unsigned)active:total;
+ return probe_video_period()*blank/total;
+}
+size_t probe_video_pitch(void) { return (size_t)bitmap_pitch*4; }
+/* ARCDROID-PROBE END */

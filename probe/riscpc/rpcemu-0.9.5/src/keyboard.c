@@ -17,6 +17,8 @@
   along with this program; if not, write to the Free Software
   Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
+/* ARCDROID-PROBE BEGIN: disposable unit P modifications; see probe/riscpc/README.md. */
+
 
 /* PS/2 keyboard and mouse emulation */
 
@@ -114,6 +116,8 @@ static struct {
 
 
 static int msenable, msreset;
+static uint8_t probe_oldmouseb;
+static int probe_oldz;
 static uint8_t msstat;		/**< PS/2 control register for the mouse */
 static uint8_t msdata;		/**< PS/2 data register for the mouse */
 static int mousepoll;		/**< Are we in mouse Stream Mode */
@@ -238,6 +242,7 @@ calculateparity(uint8_t v)
 void
 keyboard_reset(void)
 {
+	probe_oldmouseb = 0; probe_oldz = 0; memset(&mouse, 0, sizeof(mouse));
 	kcallback = 0;
 	memset(&kbd, 0, sizeof(kbd));
 
@@ -674,8 +679,7 @@ mouse_ps2_callback(void)
 static void
 mouse_process(void)
 {
-	static uint8_t oldmouseb = 0;
-	static int oldz = 0;
+
 	int x, y;
 	int z, tmpz;
 	uint8_t mouseb = mouse.buttons & 7;
@@ -686,6 +690,7 @@ mouse_process(void)
 	/* Get the relative X/Y movements since the last call */
 	x = mouse.dx;
 	y = mouse.dy;
+	mouse.dx = mouse.dy = 0;
 
 	/* Get the absolute value of the scroll wheel position */
 //	z = mouse_z; /* Allegro */
@@ -707,13 +712,13 @@ mouse_process(void)
 	}
 
 	/* Has anything changed from previous poll? */
-	if (x == 0 && y == 0 && (mouseb == oldmouseb) &&
-	    (mouse_type == 0 || (mouse_type != 0 && z == oldz)))
+	if (x == 0 && y == 0 && (mouseb == probe_oldmouseb) &&
+	    (mouse_type == 0 || (mouse_type != 0 && z == probe_oldz)))
 	{
 		return;
 	}
 
-        oldmouseb=mouseb;
+        probe_oldmouseb=mouseb;
 
 	/* Maximum range you can fit in one PS/2 movement packet is -256 to 255 */
 	/* TODO why not send multiple move packets? */
@@ -726,8 +731,8 @@ mouse_process(void)
         y++;
 
 	/* Calculate relative scrollwheel position from last call */
-	tmpz = oldz - z;
-	oldz = z;
+	tmpz = probe_oldz - z;
+	probe_oldz = z;
 	z = tmpz;
 
 	/* Send PS/2 button/movement packet */
@@ -1262,3 +1267,5 @@ mouse_hack_osword_21_3(uint32_t a)
 
 	rpcemu_move_host_mouse(x, y);
 }
+
+/* ARCDROID-PROBE END */

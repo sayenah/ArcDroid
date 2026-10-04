@@ -44,4 +44,8 @@ extern int fdc_getdata(int last);
 extern void fdc_sectorid(uint8_t track, uint8_t side, uint8_t sector, uint8_t size);
 extern void fdc_indexpulse(void);
 
+/* ARCDROID-PROBE: concrete bridge error/cancellation entry points. */
+void fdc_probe_lostdata(void);
+void fdc_probe_id_latch(uint8_t,uint8_t,uint8_t,uint8_t);
+void fdc_probe_media_cancel(void);
 #endif /* FDC_H */

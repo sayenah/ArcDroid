@@ -17,6 +17,8 @@
   along with this program; if not, write to the Free Software
   Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
+/* ARCDROID-PROBE BEGIN: disposable unit P modifications; see probe/riscpc/README.md. */
+
 
 /* System coprocessor + MMU emulation*/
 #include <stdint.h>
@@ -35,6 +37,7 @@ int dcache = 0; /* Data cache on StrongARM, unified cache pre-StrongARM */
 
 uint32_t tlbcache[0x100000] = {0};
 static uint32_t tlbcache2[TLBCACHESIZE];
+static uint32_t probe_fld[0x100000], probe_sld[0x100000];
 uintptr_t vraddrl[0x100000];
 uint32_t vraddrls[1024] = {0}, vraddrphys[1024] = {0};
 uintptr_t vwaddrl[0x100000];
@@ -119,7 +122,7 @@ cp15_tlb_invalidate_physical(uint32_t addr)
 	int c;
 
 	for (c = 0; c < 1024; c++) {
-		if ((vwaddrphys[c] & 0x1f000000) == addr) {
+		if (vwaddrls[c] != 0xffffffff && (vwaddrphys[c] & 0x1f000000) == addr) {
 			vwaddrl[vwaddrls[c]] = 0xffffffff;
 			vwaddrls[c] = 0xffffffff;
 			vwaddrphys[c] = 0xffffffff;
@@ -136,6 +139,7 @@ cp15_tlb_invalidate_physical(uint32_t addr)
 void
 cp15_reset(CPUModel cpu_model)
 {
+	memset(&cp15, 0, sizeof(cp15));
 	cp15.cpu_model = cpu_model;
 	switch (cpu_model) {
 	case CPUModel_ARM610:
@@ -186,13 +190,14 @@ cp15_tlb_flush_all(void)
 }
 
 static void
-cp15_tlb_add_entry(uint32_t vaddr, uint32_t paddr)
+cp15_tlb_add_entry(uint32_t vaddr, uint32_t paddr, uint32_t fld, uint32_t sld)
 {
 	if (tlbcache2[tlbcachepos] != 0xffffffff) {
 		tlbcache[tlbcache2[tlbcachepos]] = 0xffffffff;
 	}
 	tlbcache2[tlbcachepos] = vaddr >> 12;
 	tlbcache[vaddr >> 12] = paddr & 0xfffff000;
+	probe_fld[vaddr >> 12] = fld; probe_sld[vaddr >> 12] = sld;
 
 	tlbcachepos = (tlbcachepos + 1) & (TLBCACHESIZE - 1);
 }
@@ -315,7 +320,7 @@ cp15_write(uint32_t opcode, uint32_t val)
 		default:
 			fprintf(stderr, "cp15_write(): unknown CPU model %d\n",
 				cp15.cpu_model);
-			exit(EXIT_FAILURE);
+			fatal("Invalid CPU model");
 		}
 		break;
 
@@ -466,7 +471,7 @@ translateaddress2(uint32_t addr, int rw, int prefetch)
 
 	/* Fetch first-level descriptor */
 	fld_addr = cp15.translation_table | ((addr >> 18) & ~3u);
-	fld = tlbram[(fld_addr >> 2) & tlbrammask];
+	fld = mem_phys_read32(fld_addr);
 	domain = (fld >> 5) & 0xf;
 
 	switch (fld & 3) {
@@ -508,7 +513,7 @@ translateaddress2(uint32_t addr, int rw, int prefetch)
 				goto do_fault;
 			}
 		}
-		cp15_tlb_add_entry(addr, phys_addr);
+		cp15_tlb_add_entry(addr, phys_addr, fld, sld);
 		return phys_addr;
 
 	case 2: /* Section (1 MB) */
@@ -527,13 +532,13 @@ translateaddress2(uint32_t addr, int rw, int prefetch)
 			}
 		}
 		phys_addr = (fld & 0xfff00000) | (addr & 0xfffff);
-		cp15_tlb_add_entry(addr, phys_addr);
+		cp15_tlb_add_entry(addr, phys_addr, fld, 0);
 		return phys_addr;
 
 	default:
 		fatal("Bad descriptor type %u %08x Address %08x\n", fld & 3, fld, addr);
 	}
-	exit(-1);
+	return 0; /* fatal above returns to the probe boundary. */
 
 do_fault:
 	arm.event |= 0x40;
@@ -542,6 +547,30 @@ do_fault:
 		cp15.fault_status = (domain << 4) | fault_code;
 	}
 	return 0;
+}
+
+uint32_t probe_translate(uint32_t addr, int rw, int prefetch)
+{
+ uint32_t page = addr >> 12;
+ if (tlbcache[page] & 0xfff) return translateaddress2(addr, rw, prefetch);
+ uint32_t fld = probe_fld[page], sld = probe_sld[page];
+ uint32_t domain = (fld >> 5) & 15, da = cp15_domain_access(domain);
+ int section = (fld & 3) == 2;
+ uint32_t code = section ? CP15_FAULT_DOMAIN_SECTION : CP15_FAULT_DOMAIN_PAGE;
+ if (da == 0 || da == 2) goto fault;
+ if (da == 1) {
+  uint32_t shift = section ? 10 : (sld & 3) == 1 ? 4 + ((addr & 0xc000) >> 13) : 4 + ((addr & 0xc00) >> 9);
+  uint32_t ap = ((section ? fld : sld) >> shift) & 3;
+  if (cp15_check_permissions(ap, rw)) {
+   code = section ? CP15_FAULT_PERMISSION_SECTION : CP15_FAULT_PERMISSION_PAGE;
+   goto fault;
+  }
+ }
+ return tlbcache[page] | (addr & 0xfff);
+fault:
+ arm.event |= 0x40;
+ if (!prefetch) { cp15.fault_address = addr; cp15.fault_status = (domain << 4) | code; }
+ return 0;
 }
 
 /*uint32_t translateaddress(uint32_t addr, int rw)
@@ -560,7 +589,6 @@ getpccache(uint32_t addr)
 {
 	uint32_t phys_addr;
 
-	addr &= ~0xfffu;
 	if (mmu) {
 		phys_addr = translateaddress(addr, 0, 1);
 		if (arm.event & 0x40) {
@@ -571,24 +599,25 @@ getpccache(uint32_t addr)
 		phys_addr = addr;
 	}
 
+	addr &= ~0xfffu; phys_addr &= ~0xfffu;
 	/* Invalidate write pointer for this page - so we can handle code modification */
 	vwaddrl[addr >> 12] = 0xffffffff;
 
 	switch (phys_addr & 0x1f000000) {
 	case 0x00000000: /* ROM */
-		return &rom[((uintptr_t) (phys_addr & 0x7ff000) - (uintptr_t) addr) >> 2];
+		return &rom[(phys_addr & 0x7ff000) >> 2];
 	case 0x02000000: /* VRAM */
-		return &vram[((uintptr_t) (phys_addr & mem_vrammask) - (uintptr_t) addr) >> 2];
+		return &vram[(phys_addr & mem_vrammask) >> 2];
 	case 0x10000000: /* SIMM 0 bank 0 */
 	case 0x11000000:
 	case 0x12000000:
 	case 0x13000000:
-		return &ram00[((uintptr_t) (phys_addr & mem_rammask) - (uintptr_t) addr) >> 2];
+		return &ram00[(phys_addr & mem_rammask) >> 2];
 	case 0x14000000: /* SIMM 0 bank 1 */
 	case 0x15000000:
 	case 0x16000000:
 	case 0x17000000:
-		return &ram01[((uintptr_t) (phys_addr & mem_rammask) - (uintptr_t) addr) >> 2];
+		return &ram01[(phys_addr & mem_rammask) >> 2];
 	case 0x18000000: /* SIMM 1 bank 0 */
 	case 0x19000000:
 	case 0x1a000000:
@@ -598,8 +627,10 @@ getpccache(uint32_t addr)
 	case 0x1e000000:
 	case 0x1f000000:
 		if (ram1 != NULL) {
-			return &ram1[((uintptr_t) (phys_addr & 0x7ffffff) - (uintptr_t) addr) >> 2];
+			return &ram1[(phys_addr & 0x7ffffff) >> 2];
 		}
 	}
 	fatal("Bad PC %08x %08x\n", addr, phys_addr);
 }
+
+/* ARCDROID-PROBE END */

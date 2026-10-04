@@ -1,0 +1,46 @@
+# Initial mechanism gate — independent expected behavior
+
+Project-authored tests; no firmware or game data. These expectations follow ARM MMU descriptors and IOMD/VIDC programming, rather than extracting a golden result from the emulator. Cross-platform equality remains required after the host mechanism gate. The cases below are independently specified before their tests.
+
+* Domain 3/client/AP2: user read succeeds, user write faults with FSR `0x3d`, FAR equal to the requested address; supervisor write succeeds. The same outcome must hold after a cached successful translation, through an installed direct pointer and through user transfers in supervisor mode.
+* Domain manager ignores AP; no access and reserved domain fault. Sections use status 9; pages use 11, OR domain shifted by four. AP1 is supervisor only. AP0 with S/R 00 denies all, 01 supervisor reads only, 10 reads for both privileges, 11 is not accepted.
+* A small page has independently protected 1 KiB subpages. AP3/2/1/0 yield unrestricted, user read only, supervisor only, and no access respectively. Large-page AP boundaries are 16 KiB. Privilege changes must also invalidate instruction access permission assumptions.
+* Invalid first/second-level descriptors fault with status 5/7 respectively. A page-table write alone need not evict TLB contents. Explicit TLB invalidation, TTBR, DACR and relevant control changes must discard stale translations. Prefetch aborts do not change data FAR/FSR; data aborts do.
+* Authored ROM: MOV base `0x10000000`; MOV counter 0; repeated ADD/STR/B. After 100 instructions, counter and RAM are both 33. RAM instruction MOV R2,7 must execute in 32-bit supervisor mode. Replacing it through normal memory with MOV R2,9 must execute 9 upon return.
+* Timer latch 10, GO at zero: counter starts at 9, no interrupt at 4500 ns, IRQ at 5000 ns; at 100 M instructions/s 500 instructions execute by 5000 ns. With timer IRQ cleared and its mask set, idle consumes no instructions until the next expiry at 10000 ns, then wakes.
+* VIDC reference clock 24 MHz on RiscPC; ARM7500 reference 32 MHz with synthesizer ratio 3/4 (v=3,r=4, register 0x203) produces the same 24 MHz pixel clock. RiscPC ratio 1, prescaler 1; 800 total pixels × 600/500 rasters gives exactly 50 Hz / floor(1e9/60) ns. Geometry 320×256, 640×480, 800×600 must match the active display registers, indexed pixels 0/1/2/3 must map to their palette, a subsequent normal VRAM write must appear in the next frame. Independent mode timing source: [ARM DDI 0050C](https://documentation-service.arm.com/static/5ed11babca06a95ce53f8fee), §§9.7, 9.16, 9.26, 9.27 and §11.1.
+* Sound RAM word `0x1234fedc`: left -292, right 4660. Enabling serial DMA from the two valid 4 KiB blocks must set the sound DMA IRQ, alternate buffers, and produce stereo output at fixed 48 kHz. Inclusive output timestamp zero gives 481 samples through 10 ms and 480 in (10,20] ms. Changing input to 24 kHz must preserve output count and values. No thread or frontend acceptance affects DMA ordering.
+* Quadrature move (10,7) changes IOMD X by 10 and Y by -7. Clicking after the move must not repeat the delta. Keyboard make 0x29, then break 0xf0 0x29, are delivered through normal PS/2 RX; reset clears held buttons and queue state.
+
+
+Expanded authored expectations (before firmware acceptance): all four models run the MMU/CPU/device cases. Large-page AP checks occur at `0x400123`, `0x404123`, `0x408123`, `0x40c123`. TTBR replacement changes the physical result to `0x10200123`. A real guest STR through a previously cached AP2 user read must enter ABT32 at vector `0x10`, with LR `0x10010008`, SPSR `0xd0`, FAR `0x200120`, FSR `0x3d`, and unchanged destination. A user instruction fetch into AP1 in the second 1 KiB subpage must enter vector `0x0c` without executing its MOV and without modifying data FAR/FSR. For A7000, normal F4 enable returns FA, move (10,7) delivers packet 28/0A/F9; a later Select press delivers 09/00/00 (no repeated motion), and reset clears the device queue.
+
+The authored DMA workload has 1,114 setup instructions then a six-instruction loop (counter, framebuffer STR, sound-buffer STR, offset increment, mask, branch). At 100 M instructions/s after 25 ms, exactly 2,500,000 instructions have executed: counter 416,481; framebuffer and sound-buffer word zero 415,745; offset `(416481*4)&4092`. The initial sound DMA snapshot precedes the CPU writes, so audio must be tested after a complete 1024/44100-second input block, rather than expecting nonzero samples in the first 10 ms. Through 25 ms the fixed output includes timestamp zero: 1,201 stereo samples, with the final left sample nonzero. Indexed pixel zero must be the low byte of 415,745 mapped through the grayscale palette. A7000 displays DRAM; the RiscPC models display VRAM.
+
+For the distinct stereo stream, RAM word i contains left -1000+i, right 1000+i. At 48 kHz through 10 ms output samples 0..480 equal those input values. A change to 24 kHz at 10 ms preserves the already scheduled next sample; the following 480 output pairs begin at (-519,1481) and end at (-280,1720). CPU is idle throughout so guest writes cannot replace this fixture. This tests a rate transition with different adjacent samples, rather than just counting a constant signal.
+
+Horizontal display endpoints have a reserved low bit; the valid width 322 × 257, unaligned to a 32-pixel conversion chunk, uses an internal pitch of 352 pixels while reporting exact geometry. The first four indexed pixels are 0/1/2/3. A7000 uses SIMM bank 1 at offset 12 MiB (physical 0x14c00000); writing 0x04040404 there must change pixel zero to palette entry 4 without an out-of-bounds dirty-buffer access. These deliberately avoid the low VRAM addresses and aligned widths of the ordinary mode fixtures.
+
+Controller cases (authored guest ARM code, no firmware): a synthetic 160-side
+DD5 JFD contains 800 unique 1024-byte records. Byte i of sector k is
+`(i + 16*k)&255`, CHR comes from physical track/side and descriptor ID, N=3.
+The guest programs DOR, waits past its 50 us reset, senses reset, then issues
+commands through Super I/O, polls IOMD FIQ status, and consumes/provides DMA
+bytes; it reads the seven result bytes through the ordinary FIFO.
+
+* READ ID encounters the first future ID after the reset/sense delay (ID 1 at 36,352 us, since ID 0 at phase zero has passed), and returns 00/00/00/00/00/01/03 and no DMA payload.
+* Reading sector 0 returns 1024 exact bytes; reading sectors 0..1 returns 2048
+  exact bytes, including the different start byte of sector 1. Final DMA uses
+  terminal count. ST0/1/2 all zero; no stale DMA after completion.
+* An absent ID or mismatched N on a track with visible IDs returns ST1=04;
+  a wrong density on this DD track returns ST1=05; wrong cylinder returns
+  ST1=04, ST2=10. Search ends at the second index, bounded by 400 ms.
+* Header CRC failure transfers no bytes, ST1=20, ST2=00. Data CRC failure
+  transfers the payload, then ST1=20, ST2=20. N remains 3 in either result.
+* RW sector write commits exactly one RAM replacement with bytes 55,56,...;
+  WP or deleted-data write refuses synchronously with ST1=02, no DMA, no
+  replacement. A short write using TC before byte 1024 gives overrun ST1=10
+  and commits nothing. Floppy input bytes never change.
+* Eject in the middle of a read completes not-found; reset cancels without
+  retaining DMA/IRQ/data or command callbacks. Advancing further cannot
+  deliver the cancelled record or commit a partial write.

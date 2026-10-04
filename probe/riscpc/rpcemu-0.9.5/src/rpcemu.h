@@ -17,6 +17,8 @@
   along with this program; if not, write to the Free Software
   Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
+/* ARCDROID-PROBE BEGIN: disposable unit P modifications; see probe/riscpc/README.md. */
+
 
 /* Main header file */
 
@@ -73,7 +75,9 @@ extern "C" {
    version but not with the Allegro GUI. */
 #if defined __linux || defined __linux__ || defined WIN32 || defined _WIN32 || \
     defined RPCEMU_COCOA_GUI
+#if !defined(ARCDROID_PROBE)
 #define RPCEMU_NETWORKING
+#endif
 #endif
 
 /*This makes the RISC OS mouse pointer follow the host pointer exactly. Useful
@@ -295,3 +299,5 @@ extern void config_save(Config *config);
 } /* extern "C" */
 #endif /* __cplusplus */
 #endif /* _rpc_h */
+
+/* ARCDROID-PROBE END */

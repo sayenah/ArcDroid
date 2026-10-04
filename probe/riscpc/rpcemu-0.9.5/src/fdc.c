@@ -17,6 +17,8 @@
   along with this program; if not, write to the Free Software
   Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
+/* ARCDROID-PROBE BEGIN: exclude file loaders, correct empty-drive reset and refusal. */
+
 
 /* NEC 765/Intel 82077 Floppy drive emulation, on RPC/A7000 a part of the
    SMC 37C665GT PC style Super IO chip */
@@ -33,6 +35,7 @@
 #include "ide.h"
 #include "arm.h"
 #include "disc.h"
+#include "media.h"
 #include "disc_adf.h"
 #include "disc_hfe.h"
 
@@ -84,6 +87,7 @@ static struct
 	int data_ready;
 	int written;
 	int in_read;
+ int mfm,deleted;
 } fdc;
 
 /* This enumeration must be kept in sync with the formats[] array */
@@ -151,6 +155,9 @@ fdc_dma_lower(void)
 void
 fdc_reset(void)
 {
+	disc_stop(0); disc_stop(1);
+	memset(&fdc, 0, sizeof(fdc)); fdc.status=0x80;fdc.density=1;fdc.rate=2;
+	fdc_irq_lower();fdc_dma_lower();
 	fdccallback = 0;
 	motoron = 0;
 	fdc.result_rp = 0;
@@ -169,76 +176,8 @@ fdc_init(void)
  * @param fn    Filename of disc image to load (including .adf .adl extension)
  * @param drive Which drive to load image into 0 or 1
  */
-void
-fdc_image_load(const char *fn, int drive)
-{
-	FILE *f;
-	const char *extension;
-	long len;
-	const Format *format;
-	int is_hfe = 0;
-
-	assert(drive == 0 || drive == 1); // Only support two drives
-	assert(fn != NULL); // Must have filename
-
-	// must be at least a.ext
-	if (strlen(fn) < 5 || fn[strlen(fn) - 4] != '.') {
-		error("Disc image filename must include a file extension (.adf,.adl)");
-		return;
-	}
-
-	f = fopen(fn, "rb");
-	if (f == NULL) {
-//		error("Unable to open disc image '%s'", fn);
-		return;
-	}
-
-	fseek(f, 0, SEEK_END);
-	len = ftell(f);
-	if (len < 0) {
-		error("Failed to read size of disc image file");
-		fclose(f);
-		return;
-	}
-
-	extension = fn + strlen(fn) - 4;
-
-	if (strcasecmp(extension, ".adf") == 0) {
-		if (len > 1000000) {
-			format = &formats[DISC_FORMAT_ADFS_F_1600K];
-		} else {
-			format = &formats[DISC_FORMAT_ADFS_DE_800K];
-		}
-	} else if (strcasecmp(extension, ".adl") == 0) {
-		format = &formats[DISC_FORMAT_ADFS_L_640K];
-	} else if (strcasecmp(extension, ".img") == 0) {
-		if (len > 1250000) {
-			format = &formats[DISC_FORMAT_DOS_1440K];
-		} else if (len > 400000) {
-			format = &formats[DISC_FORMAT_DOS_720K];
-		} else {
-			format = &formats[DISC_FORMAT_DOS_360K];
-		}
-	}  else if (strcasecmp(extension, ".hfe") == 0) {
-		is_hfe = 1;
-	} else {
-		error("Unknown disc image file extension '%s', must be .adf, .adl, .img or .hfe", extension);
-		fclose(f);
-		return;
-	}
-	fclose(f);
-
-	if (drive_funcs[drive]) {
-		drive_funcs[drive]->close(drive);
-		drive_funcs[drive] = NULL;
-	}
-
-	rpclog("fdc_image_load: %s (%ld) loaded as '%s'\n", fn, len, is_hfe ? "HFE" : format->name);
-	if (is_hfe)
-		hfe_load(drive, fn);
-	else
-		adf_load(drive, fn, format->sectors, format->sectorsize, format->sides, format->tracks == 40,
-			format->density ? 1 : 2, format->sectorskew);
+void fdc_image_load(const char *fn,int drive) {
+ (void)fn;(void)drive;fatal("File-backed upstream floppy loaders excluded");
 }
 
 void
@@ -260,9 +199,8 @@ fdc_write(uint32_t addr, uint32_t val)
 			fdc.reset   = 1;
 			fdccallback = 500;
 		}
-		if (!(val & 4)) {
-			fdc.status = 0x80;
-		}
+		if (!(val & 4)) fdc_reset();
+		fdc.dor=(uint8_t)val;
 		motoron = val & 0x30;
 		if (val & 0x10)
 			disc_set_drivesel(0);
@@ -294,13 +232,13 @@ fdc_write(uint32_t addr, uint32_t val)
 				case FD_CMD_RECALIBRATE:
 					fdccallback = 500;
 					fdc.status |= 1;
-					disc_seek(fdc.parameters[0] & 1, 0);
+					disc_seek(fdc.parameters[0] & 3, 0);
 					break;
 
 				case FD_CMD_SEEK:
 					fdccallback = 500;
 					fdc.status |= 1;
-					disc_seek(fdc.parameters[0] & 1, fdc.parameters[1]);
+					disc_seek(fdc.parameters[0] & 3, fdc.parameters[1]);
 					break;
 
 				case FD_CMD_CONFIGURE:
@@ -312,11 +250,12 @@ fdc_write(uint32_t addr, uint32_t val)
 					fdc.st1        = 0;
 					fdc.st2        = 0;
 					fdc.track      = fdc.parameters[1];
-					fdc.side       = fdc.parameters[2];
+					fdc.side       = (fdc.parameters[0] >> 2) & 1;
 					fdc.sector     = fdc.parameters[3];
-					fdc.drive      = fdc.st0 & 1;
-					disc_writesector(fdc.st0 & 1, fdc.sector, fdc.track, fdc.side, fdc.density);
-					fdc_dma_raise();
+					fdc.drive      = fdc.st0 & 3;
+					probe_disc_request((ProbeDiscRequest){fdc.parameters[1],fdc.parameters[2],fdc.parameters[4],fdc.deleted,!fdc.mfm});
+					disc_writesector(fdc.st0 & 3, fdc.sector, disc_get_current_track(fdc.drive), fdc.side, fdc.density);
+					if(fdc.incommand) fdc_dma_raise();
 					break;
 
 				case FD_CMD_READ_DATA_MFM:
@@ -326,18 +265,21 @@ fdc_write(uint32_t addr, uint32_t val)
 					fdc.st1        = 0;
 					fdc.st2        = 0;
 					fdc.track      = fdc.parameters[1];
-					fdc.side       = fdc.parameters[2];
+					fdc.side       = (fdc.parameters[0] >> 2) & 1;
 					fdc.sector     = fdc.parameters[3];
-					fdc.drive      = fdc.st0 & 1;
-					disc_readsector(fdc.st0 & 1, fdc.sector, fdc.track, fdc.side, fdc.density);
+					fdc.drive      = fdc.st0 & 3;
+					probe_disc_request((ProbeDiscRequest){fdc.parameters[1],fdc.parameters[2],fdc.parameters[4],fdc.deleted,!fdc.mfm});
+					disc_readsector(fdc.st0 & 3, fdc.sector, disc_get_current_track(fdc.drive), fdc.side, fdc.density);
 					break;
 
 				case FD_CMD_READ_ID_MFM:
 					fdc.st0        = fdc.parameters[0] & 7;
 					fdc.st1        = 0;
 					fdc.st2        = 0;
-					fdc.drive      = fdc.st0 & 1;
-					disc_readaddress(fdc.st0 & 1, fdc.track, fdc.side, fdc.density);
+					fdc.drive      = fdc.st0 & 3;
+					fdc.track=disc_get_current_track(fdc.drive);fdc.side=(fdc.parameters[0]>>2)&1;
+					probe_disc_request((ProbeDiscRequest){(unsigned)fdc.track,(unsigned)fdc.side,0,false,!fdc.mfm});
+					disc_readaddress(fdc.st0 & 3, fdc.track, fdc.side, fdc.density);
 					break;
 
 				case FD_CMD_READ_ID_FM:
@@ -345,16 +287,16 @@ fdc_write(uint32_t addr, uint32_t val)
 					fdc.st0        = fdc.parameters[0] & 7;
 					fdc.st1        = 0;
 					fdc.st2        = 0;
-					fdc.drive      = fdc.st0 & 1;
+					fdc.drive      = fdc.st0 & 3;
 					break;
 
 				case FD_CMD_FORMAT_TRACK_MFM:
 					fdc.st0        = fdc.parameters[0] & 7;
 					fdc.st1        = 0;
 					fdc.st2        = 0;
-					fdc.drive      = fdc.st0 & 1;
+					fdc.drive      = fdc.st0 & 3;
 					fdc.side       = (fdc.st0 >> 2) & 1;
-					disc_format(fdc.st0 & 1, fdc.track, fdc.side, fdc.density);
+					disc_format(fdc.st0 & 3, fdc.track, fdc.side, fdc.density);
 					break;
 
 				default:
@@ -371,6 +313,13 @@ fdc_write(uint32_t addr, uint32_t val)
 		}
 		fdc.incommand  = 1;
 		fdc.command    = val;
+  unsigned op=val&31u;
+  if(op==5||op==6||op==9||op==10||op==13||op==22) {
+   if((val&0x80)&&op!=22)fatal("FDC multitrack command not qualified");
+   fdc.mfm=(val&0x40)!=0;fdc.deleted=op==9;
+   fdc.command=(op==9?5:op)|0x40;
+   probe_disc_period_us=(fdc.density==2?16:fdc.density==3?8:32)*(fdc.mfm?1u:2u);
+  }
 
 		switch (fdc.command) {
 		case FD_CMD_SPECIFY:
@@ -458,6 +407,7 @@ fdc_write(uint32_t addr, uint32_t val)
 			fdc.density = 3;
 			break;
 		}
+		probe_disc_period_us=fdc.density==2?16:fdc.density==3?8:32;
 		break;
 
 	default:
@@ -490,6 +440,7 @@ fdc_read(uint32_t addr)
 		return data;
 	}
 
+	case 0x3f7: return probe_disc_changed[(fdc.dor&1)]?0x80:0;
 	// case 0x3f7: /* Digital Input Register (DIR) */
 		// TODO Disc changed flag
 		// return 0x80;
@@ -511,6 +462,7 @@ fdcsend(uint8_t val)
 static void
 fdc_end_command(void)
 {
+	disc_stop(fdc.drive); fdc_dma_lower(); fdc.data_ready=fdc.written=fdc.in_read=0;
 	fdc.status = 0xD0;
 	fdc.incommand = 0;
 	fdc.params = 0;
@@ -619,8 +571,8 @@ fdc_callback(void)
 			fdc.curparam  = 0;
 			fdccallback   = 0;
 		} else {
-			disc_writesector(fdc.drive, fdc.sector, fdc.track, fdc.side, fdc.density);
-			fdc_dma_raise();
+			disc_writesector(fdc.drive, fdc.sector, disc_get_current_track(fdc.drive), fdc.side, fdc.density);
+			if(fdc.incommand)fdc_dma_raise();
 		}
 		break;
 
@@ -643,7 +595,7 @@ fdc_callback(void)
 			fdc.curparam  = 0;
 			fdccallback   = 0;
 		} else {
-			disc_readsector(fdc.drive, fdc.sector, fdc.track, fdc.side, fdc.density);
+			disc_readsector(fdc.drive, fdc.sector, disc_get_current_track(fdc.drive), fdc.side, fdc.density);
 		}
 		break;
 
@@ -725,19 +677,17 @@ void fdc_data(uint8_t dat)
 
 void fdc_finishread(void)
 {
-	fdccallback = 25;
+	fdccallback = (int)(2*probe_disc_period_us*10); /* trailing CRC bytes */
 }
 
 void fdc_notfound(void)
 {
-	fdcsend(0x40 | (fdc.side ? 4 : 0) | fdc.drive);
-	fdcsend(5);
-	fdcsend(0);
-	fdcsend(0);
-	fdcsend(0);
-	fdcsend(0);
-	fdcsend(0);
-	fdc_end_command();
+ unsigned status=probe_disc_notfound_status();
+ fdcsend(0x40|(fdc.side?4:0)|fdc.drive);
+ fdcsend(status&255);fdcsend(status>>8);
+ fdcsend((status&0x1000)?disc_get_current_track(fdc.drive):fdc.track);
+ fdcsend(fdc.side);fdcsend(fdc.sector);fdcsend(fdc.parameters[4]);
+ fdc_end_command();
 }
 
 void fdc_datacrcerror(void)
@@ -766,22 +716,18 @@ void fdc_headercrcerror(void)
 
 void fdc_writeprotect(void)
 {
-	fdcsend(0x40 | (fdc.side ? 4 : 0) | fdc.drive);
-	fdcsend(0x02); /*Not writeable*/
-	fdcsend(0);
-	fdcsend(0);
-	fdcsend(0);
-	fdcsend(0);
-	fdcsend(0);
-	fdc_end_command();
+ fdcsend(0x40|(fdc.side?4:0)|fdc.drive);fdcsend(2);fdcsend(0);
+ fdcsend(fdc.track);fdcsend(fdc.side);fdcsend(fdc.sector);
+ fdcsend(fdc.command==FD_CMD_FORMAT_TRACK_MFM?fdc.parameters[1]:fdc.parameters[4]);
+ fdc_end_command();
 }
 
 int fdc_getdata(int last)
 {
 	uint8_t temp;
 
-	if (!fdc.written && !fdc.tc)
-		return -1;
+	if(fdc.tc&&!last) {fdc_overrun();return -1;} /* No partial sector commit. */
+	if (!fdc.written) return -1;
 	if (!last && !fdc.tc)
 		fdc_dma_raise();
 	fdc.written = 0;
@@ -830,3 +776,15 @@ fdc_dma_write(uint32_t addr, uint8_t val)
 	fdc.written = 1;
 	fdc.dmadat = val;
 }
+
+void fdc_probe_id_latch(uint8_t c,uint8_t h,uint8_t r,uint8_t n) {
+ fdc.track=c;fdc.side=h;fdc.sector=r;
+ if(fdc.command==FD_CMD_READ_ID_MFM||fdc.command==FD_CMD_READ_ID_FM)fdc.parameters[4]=n;
+}
+void fdc_probe_lostdata(void) {fdc_overrun();}
+void fdc_probe_media_cancel(void) {
+ disc_stop(0);disc_stop(1);
+ if(fdc.incommand)fdc_notfound();
+ fdccallback=0;fdc_dma_lower();fdc.data_ready=fdc.written=fdc.in_read=0;
+}
+/* ARCDROID-PROBE END */
