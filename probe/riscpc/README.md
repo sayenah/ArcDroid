@@ -206,10 +206,96 @@ to resolve that failure.
 
 Use ordinary Load Content on `.jfd` or `.m3u` (relative playlist entries resolve beside the playlist). Combined verified firmware lives at `<system>/arcdroid/firmware/ROM350`, `ROM360`, `ROM370` or `ROM371`; select it with `rpcprobe_firmware`. Explicit external path options remain available to the headless runner.
 
-Select `rpcprobe_workload` (`trial-a` through `trial-d`, or `authored`). Its directory is `<system>/arcdroid/rpcprobe/<workload>/` with `script.txt`, `cmos.bin`, `cmos.sha1`, and, when IDE is enabled, `baseline.hdf` plus `baseline.sha1`. Digest files contain one hexadecimal SHA-1 line. The baseline can be the standard boot disc or a qualified installed-game disc. These are private runtime inputs, never bundled. Set model/rate and enable IDE explicitly. Automatic boot selects the standard disc for workload sessions. Physical inputs are disabled while the script is active.
+Select `rpcprobe_workload` (`trial-a` through `trial-d`, or `authored`). Its directory is `<system>/arcdroid/rpcprobe/<workload>/` with `script.txt`, `cmos.bin`, `cmos.sha1`, and, when IDE is enabled, `baseline.hdf` plus `baseline.sha1`. Digest files contain one hexadecimal SHA-1 line. The baseline can be the standard boot disc or a qualified installed-game disc. These are private runtime inputs, never bundled. Set model/rate and enable IDE explicitly. Automatic boot uses the authored helper for workload sessions (R7-1). Physical inputs are disabled while the script is active.
 
 Each load exclusively creates a fresh `run-NNNNNN` subdirectory for scratch IDE, CSV and diagnostics; the baseline is opened read-only and hash checked. Do not reuse a run directory as an input baseline without separately qualifying/freezing it. The core refuses missing system paths, malformed digest sidecars, unsafe workload names and invalid/missing media. No private path or decoded title is logged. The runner supports `--system=DIR` and `--content=FILE`. Authored portable integration checks:
 
 ```sh
 python3 probe/riscpc/tools/frontend_check.py --runner <runner> --core <core> --output <fresh-evidence-dir>
 ```
+
+### Active resource-only environment (run-7 R7-1)
+
+The run-5 full modern boot and run-6 guarded scripts above are historical
+construction/diagnostic modes. Qualification now uses **pristine archive
+resources without executing their modern !Boot sequence**. Build with `--resources-only` and without
+`--period-rom`, run the documented supplied `SysUpdate.!SysMerge` in the
+guest, leave the root boot option at 0 (`Opt 4,0`) and use guest
+`Configure NoBoot` in the construction session. Qualification starts with
+each firmware/model's independently captured factory CMOS; root option 0
+prevents reset dispatch even if that factory configuration says Boot. Freeze
+and hash the merged image, then clone it per session. Set
+`rpcprobe_boot=helper` (also the automatic workload default).
+
+The same authored helper and fixed keyboard prefix are used for every
+firmware/model/content session. Its ordinary guest commands:
+
+1. Load the authored R4-1 `Multisync` MDF.
+2. Run authored `BootEnv` to create writable Choices, PreDesk and Tasks
+   directories and set the standard Boot/Choices/resource variables.
+3. Run the supplied !System `SysPaths` utility with the ROM BASIC. It
+   discovers UtilityModule's OS version and builds `Sys$Path` and
+   `System$Path` from the installed numeric version directories in descending
+   order, followed by the !System directory. This utility loads no modules.
+4. Obey that !System's own !Boot. Since `System$Dir` is already set, it
+   skips the module-replacing !Run and registers sprites only.
+5. Run authored `BootTasks` through normal Filer_Run for installed startup
+   objects, retaining the R4-1 bounded enumeration. No supplied PreDesktop,
+   ROxxx hook or modern !Boot.!Run is invoked.
+
+`Boot$Dir`/`Boot$Path` point at `ADFS::4.$.!Boot`; `BootResources$Dir` and
+`BootResources$Path` point at its Resources tree. Choices stay in the
+session-owned `ADFS::4.$.Choices`, with trailing dots on search paths.
+`Boot$ToBeLoaded` and `Boot$ToBeTasks` refer to Choices.Boot.PreDesk/Tasks;
+`Boot$State=desktop`, `Boot$Unique=Local`. Run$Path includes !Boot.Library.
+PreDesk is available to installers; no module is preloaded there by this
+construction. A title's own RMEnsure commands may load required modules
+through the normal System path on demand. A title which needs resources
+only created by the omitted modern scripts is a blocker to report.
+
+Sources for Boot, Choices and startup directory semantics are the
+[boot application PRM](https://www.riscos.com/support/developers/prm/bootapp.html)
+and [RISC OS 3.7 User Guide, startup](https://www.riscos.com/support/users/userguide3/bookb/book_5.html).
+BootResources uses the supplied HardDisc4 RO350/360/370Hook.Boot.PreDesktop
+fallback convention (`Boot:Resources.`); these scripts are read as evidence
+and never run. System registration/version search is evidenced by the
+hash-approved archive !System.!Boot and tokenised BASIC SysPaths, retained
+unchanged on the private disc. Runtime variable/module audits, guest CMOS
+changes, merge comparison and image hashes belong in private custody.
+
+`tools/boot_audit.py --image /private/session/scratch.hdf --firmware
+/external/combined-image --out /private/session/boot-audit.json` checks
+EnvAudit and ModAudit created in the guest with ordinary redirected
+`Show *` / `Modules` commands. It checks exact standard paths, the discovered
+System version search order and each observed module code address against
+its header in the hash-approved ROM (including resource modules and named
+incarnations). It cannot establish desktop/input success; that is recorded
+separately from screenshots. No host guest-memory changes are involved.
+
+At the ordinary desktop command line, collect both files with:
+
+```text
+Show * { > ADFS::4.$.EnvAudit }
+Modules { > ADFS::4.$.ModAudit }
+```
+
+The audit also requires Run$Path to start with the boot Library directory;
+the existing ROM search suffix is preserved.
+
+With `rpcprobe_diagnostics=enabled`, `boot-devices.csv` also records numeric
+content-drive `media-read` and `media-id` requests: virtual time, image index,
+drive, requested ID/cylinder/head, density and size code. No payload or label
+is logged. The added observer fails explicitly after two million requests
+in a session. Use actual request progress to distinguish an unchanged old-ROM
+error box during copying from a failed media change. Screenshots alone do not
+establish whether a retry began; disabling diagnostics removes this logging.
+
+The resource-only builder additionally preserves the supplied root
+!Boot.!Boot and !Run exactly under !Boot.Inactive. The active !Boot is an
+authored icon-registration Obey; the active !Run invokes the authored helper.
+This is necessary because Filer scans application !Boot entries while opening
+the IDE root, independently of the reset boot option. Merely disabling reset
+boot is insufficient to prevent modern scripts from running. The original
+root scripts are retained as inactive evidence, with custody hashes and
+unchanged metadata/notices. The source resource tree and all other files stay
+unchanged. Do not qualify an image built without `--resources-only` for R7-1.

@@ -29,10 +29,11 @@ static void entry(uint8_t *p,const char *name,unsigned l,size_t n,unsigned type)
 }
 void probe_helper_init(void) {
  if(!probe_helper_enabled)return;
- if(sizeof(probe_boot_obey)>4097||sizeof(probe_mdf)>60000||sizeof(probe_boot_env)>6000)fatal("Authored helper asset extent bound");
+ if(sizeof(probe_boot_obey)>4097||sizeof(probe_mdf)>60000||sizeof(probe_boot_env)>6000||sizeof(probe_boot_tasks)>6000)fatal("Authored helper asset extent bound");
  unsigned mdf_sector=7+(sizeof(probe_boot_obey)+254)/256;
  unsigned env_sector=mdf_sector+(sizeof(probe_mdf)+254)/256;
- memset(bytes,0,sizeof(bytes));unsigned used=env_sector+(sizeof(probe_boot_env)+254)/256;
+ unsigned tasks_sector=env_sector+(sizeof(probe_boot_env)+254)/256;
+ memset(bytes,0,sizeof(bytes));unsigned used=tasks_sector+(sizeof(probe_boot_tasks)+254)/256;
  u24(bytes,used);u24(bytes+252,2560);u24(bytes+256,2560-used);
  memcpy(bytes+247,"Acri\r",5);memcpy(bytes+502,"rDod\r",5);
  bytes[507]=0x44;bytes[508]=0x41;bytes[509]=2;bytes[510]=3;
@@ -41,11 +42,13 @@ void probe_helper_init(void) {
  entry(r+5,"!Boot",7,sizeof(probe_boot_obey)-1,0xfeb);
  entry(r+31,"Multisync",mdf_sector,sizeof(probe_mdf)-1,0xfed);
  entry(r+57,"BootEnv",env_sector,sizeof(probe_boot_env)-1,0xfff);
+ entry(r+83,"BootTasks",tasks_sector,sizeof(probe_boot_tasks)-1,0xfff);
  uint8_t *t=r+1227;t[1]='$';memset(t+2,'\r',9);u24(t+11,2);
  memcpy(t+14,"ArcDroid boot",13);t[47]=1;memcpy(t+48,"Hugo",4);
  write_file(7,probe_boot_obey,sizeof(probe_boot_obey)-1);
  write_file(mdf_sector,probe_mdf,sizeof(probe_mdf)-1);
- write_file(env_sector,probe_boot_env,sizeof(probe_boot_env)-1);probe_helper_stop();phase=0;
+ write_file(env_sector,probe_boot_env,sizeof(probe_boot_env)-1);
+ write_file(tasks_sector,probe_boot_tasks,sizeof(probe_boot_tasks)-1);probe_helper_stop();phase=0;
 }
 void probe_helper_stop(void) {state=0;pos=waits=0;}
 void probe_helper_request(int id,unsigned c,unsigned h,unsigned physical,int density,ProbeDiscRequest r) {

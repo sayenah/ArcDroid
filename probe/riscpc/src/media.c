@@ -20,6 +20,7 @@ static ArcJfdImage *test_image;
 unsigned probe_disc_period_us=32;
 int probe_disc_changed[2],probe_requested_fm;
 uint64_t probe_media_reads,probe_media_writes,probe_media_refusals;
+static unsigned diagnostic_requests;
 PresentDriveOps *probe_present_drives[2];
 void *probe_present_context;
 int probe_present_writeprot[2];
@@ -129,6 +130,7 @@ void probe_media_close(void) {
  disc_stop(0);disc_stop(1);jfd_init();probe_present_drives[0]=probe_present_drives[1]=NULL;
  for(unsigned i=0;i<image_count;i++)arc_jfd_free(&images[i]);
  image_count=image_index=0;ejected=1;test_image=NULL;
+ diagnostic_requests=0;
 }
 unsigned probe_media_count(void) {return image_count;}
 unsigned probe_media_index(void) {return image_index;}
@@ -150,8 +152,19 @@ void disc_seek(int d,int t) {
 }
 static bool ready(int d) {return d==0&&!ejected&&probe_present_drives[0];}
 static void empty_search(void) {empty_seeking=1;empty_polls=0;}
+/* Passive numeric requests distinguish an old-ROM dialog awaiting input from
+ * an unchanged screen during copying. No payload, label or guest state read. */
+static void log_request(const char *kind,int d,int r,int c,int h,int den) {
+ if(!probe_boot_log||d!=0)return;
+ if(diagnostic_requests++==2000000)fatal("Media diagnostic bound exceeded");
+ if(fprintf(probe_boot_log,
+    "%"PRIu64",%s,index=%u drive=%d id=%d cylinder=%d head=%d density=%d size_code=%u\n",
+    probe_now,kind,image_index,d,r,c,h,den,(unsigned)request.size_code)<0)
+  fatal("Media diagnostic write failed");
+}
 void disc_readsector(int d,int r,int c,int h,int den) {
  probe_media_reads++;active_drive=d;active_density=den;active_head=h;
+ log_request("media-read",d,r,c,h,den);
  if(d==1&&probe_helper_enabled)probe_helper_request(r,c,h,tracks[1],den,request);
  else if(ready(d))probe_present_drives[0]->readsector(d,r,c,h,den);else empty_search();
 }
@@ -159,7 +172,12 @@ void disc_writesector(int d,int r,int c,int h,int den) {
  active_drive=d;active_density=den;active_head=h;
  if(ready(d))probe_present_drives[0]->writesector(d,r,c,h,den,request.size_code<8?(int)(128u<<request.size_code):-2,request.deleted);else bridge_wp(NULL);
 }
-void disc_readaddress(int d,int c,int h,int den) {active_drive=d;active_density=den;active_head=h;if(d==1&&probe_helper_enabled)probe_helper_request(-1,c,h,tracks[1],den,request);else if(ready(d))probe_present_drives[0]->readaddress(d,c,h,den);else empty_search();}
+void disc_readaddress(int d,int c,int h,int den) {
+ active_drive=d;active_density=den;active_head=h;
+ log_request("media-id",d,-1,c,h,den);
+ if(d==1&&probe_helper_enabled)probe_helper_request(-1,c,h,tracks[1],den,request);
+ else if(ready(d))probe_present_drives[0]->readaddress(d,c,h,den);else empty_search();
+}
 void disc_format(int d,int c,int h,int den) {if(ready(d))probe_present_drives[0]->format(d,c,h,den);else bridge_wp(NULL);}
 void disc_poll(void) {
  (void)selected;

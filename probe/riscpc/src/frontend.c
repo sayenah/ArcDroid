@@ -67,7 +67,7 @@ void probe_frontend_paths(retro_environment_t env) {
 }
 const char *probe_frontend_option(const char *key,const char *value) {
  if(!strcmp(key,"rpcprobe_firmware")&&firmware[0])return firmware;
- if(!strcmp(key,"rpcprobe_boot")&&(!strcmp(value,"automatic")||!strcmp(value,"none")))return directory[0]?"standard":"helper";
+ if(!strcmp(key,"rpcprobe_boot")&&(!strcmp(value,"automatic")||!strcmp(value,"none")))return "helper"; /* R7-1: authored resources setup, modern IDE !Boot never starts. */
  if(strcmp(value,"none"))return value;
  if(!strcmp(key,"rpcprobe_output")&&output[0])return output;
  for(unsigned i=0;i<sizeof(files)/sizeof(files[0]);i++)if(!strcmp(key,files[i].key)&&files[i].path[0])return files[i].path;

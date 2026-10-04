@@ -77,8 +77,11 @@ def metadata(i):
     raise ValueError('missing Acorn metadata: ' + i.filename)
 
 
-def build(hard, system, output, period_roms=()):
+def build(hard, system, output, period_roms=(), resources_only=False):
     from period_boot import read_firmware, retain_rom_modules
+    if resources_only and period_roms:
+        raise ValueError('resource-only and historical period-guard policies cannot be combined')
+    inactive = []
     inventory = read_firmware(period_roms) if period_roms else None
     period_edits = []
     tree = {'dir': True, 'children': {}, 'meta': (0, 0, 3), 'name': '$'}
@@ -128,6 +131,18 @@ def build(hard, system, output, period_roms=()):
                 if inventory is not None and not i.is_dir():
                     data, edits = retain_rom_modules(data, inventory, source.name + ':' + i.filename)
                     period_edits.extend(edits)
+                if resources_only and parts in (['!Boot', '!Boot'], ['!Boot', '!Run']):
+                    # ARCDROID-PROBE R7-1: Filer sees !Boot and would execute
+                    # its modern !Boot automatically even with Opt 4,0.
+                    # Retain the exact supplied entry in an inactive directory.
+                    inactive.append(dict(original='.'.join(parts), sha256=hashlib.sha256(data).hexdigest()))
+                    add(['!Boot', 'Inactive', parts[-1]], data, metadata(i), False)
+                    data = (b'| ArcDroid-authored R7-1 entry; GPL-2.0-only.\r'
+                            b'| Modern startup remains inactive; the common helper establishes resources.\r')
+                    if parts[-1] == '!Boot':
+                        data += b'IconSprites <Obey$Dir>.Themes.!Sprites\r'
+                    else:
+                        data += b'Obey ADFS::1.$.!Boot 1\r'
                 add(parts, data, metadata(i), i.is_dir())
 
     image = bytearray(SIZE)
@@ -232,6 +247,9 @@ def build(hard, system, output, period_roms=()):
                    selection='full HardDisc4 tree plus !System update',
                    sha1=hashlib.sha1(image).hexdigest(), sha256=hashlib.sha256(image).hexdigest(),
                    merge='NOT YET RUN', boot_option=0)
+    if resources_only:
+        custody.update(resource_policy='R7-1: authored root entry points, supplied boot scripts inactive',
+                       inactive_root_entries=inactive)
     if inventory is not None:
         custody.update(period_policy='R6-1 presence guards; explicit dependency errors unchanged',
                        firmware_modules=inventory, period_edits=period_edits)
@@ -246,5 +264,7 @@ if __name__ == '__main__':
     parser.add_argument('--out', type=Path, required=True)
     parser.add_argument('--period-rom', type=Path, action='append', default=[],
                         help='R6-1: repeat for all four approved combined ROMs')
+    parser.add_argument('--resources-only', action='store_true',
+                        help='R7-1: authored root entries prevent modern Filer auto-boot')
     args = parser.parse_args()
-    build(args.harddisc4, args.system, args.out, args.period_rom)
+    build(args.harddisc4, args.system, args.out, args.period_rom, args.resources_only)

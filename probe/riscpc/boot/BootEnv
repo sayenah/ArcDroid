@@ -1,19 +1,23 @@
-10 REM ArcDroid-authored general boot environment, GPL-2.0-only.
-20 REM PRM bootapp.html Tasks: normal installed files run through Filer_Run.
+10 REM ArcDroid-authored R7-1 resource environment, GPL-2.0-only.
+20 REM Sources: PRM bootapp.html environment/Choices and 3.7 UG bookb/book_5.html.
 30 OSCLI "CDir ADFS::4.$.Choices"
 40 OSCLI "CDir ADFS::4.$.Choices.Boot"
-50 OSCLI "CDir ADFS::4.$.Choices.Boot.Tasks"
-60 OSCLI "Set Choices$Dir ADFS::4.$.Choices"
-70 OSCLI "Set Choices$Path ADFS::4.$.Choices."
-80 OSCLI "Set Choices$Write ADFS::4.$.Choices"
-90 OSCLI "Set Boot$Dir ADFS::1.$"
-100 OSCLI "Set Boot$Path ADFS::1.$."
-110 OSCLI "Set Boot$ToBeTasks ADFS::4.$.Choices.Boot.Tasks"
-120 DIM b% 256:p$="ADFS::4.$.Choices.Boot.Tasks":off%=0:count%=0
-130 REPEAT
-140 SYS "OS_GBPB",9,p$,b%,1,off%,256,0 TO ,,,n%,off%
-150 IF n%<>0 THEN i%=0:WHILE b%?i%<>0 AND i%<255:i%+=1:ENDWHILE:IF i%=255 THEN ERROR 0,"Boot task name bound"
-160 IF n%<>0 THEN b%?i%=13:OSCLI "Filer_Run "+p$+"."+$b%
-170 count%+=1:IF count%>256 THEN ERROR 0,"Boot task count bound"
-180 UNTIL off%=-1
-190 END
+50 OSCLI "CDir ADFS::4.$.Choices.Boot.PreDesk"
+60 OSCLI "CDir ADFS::4.$.Choices.Boot.Tasks"
+70 OSCLI "Set Choices$Dir ADFS::4.$.Choices"
+80 OSCLI "Set Choices$Path ADFS::4.$.Choices."
+90 OSCLI "Set Choices$Write ADFS::4.$.Choices"
+100 OSCLI "Set Boot$Dir ADFS::4.$.!Boot"
+110 OSCLI "Set Boot$Path ADFS::4.$.!Boot."
+120 OSCLI "Set Boot$State desktop"
+130 OSCLI "Set Boot$Unique Local"
+140 OSCLI "Set Boot$ToBeLoaded ADFS::4.$.Choices.Boot.PreDesk"
+150 OSCLI "Set Boot$ToBeTasks ADFS::4.$.Choices.Boot.Tasks"
+160 REM HardDisc4 BootResources convention: resources tree, no ROxxx hooks.
+170 OSCLI "Set BootResources$Dir ADFS::4.$.!Boot.Resources"
+180 OSCLI "Set BootResources$Path ADFS::4.$.!Boot.Resources."
+190 OSCLI "Set System$Dir ADFS::4.$.!Boot.Resources.!System"
+200 REM Own !Boot Obey next runs SysPaths then !System.!Boot; never !System.!Run.
+210 REM SysPaths sets Boot$OSVersion from UtilityModule and System$Path/Sys$Path.
+220 OSCLI "Set Run$Path ADFS::4.$.!Boot.Library.,<Run$Path>"
+230 END
