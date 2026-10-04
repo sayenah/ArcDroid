@@ -3,6 +3,7 @@
  * All data presentation and admission policy remains in ArcDroid's reader. */
 #include "probe.h"
 #include "media.h"
+#include <ctype.h>
 #include "presentation.h"
 #include "disc.h"
 #include "fdc.h"
@@ -67,26 +68,52 @@ static void prepare(ArcJfdImage *im,unsigned index) {
  arc_jfd_prepare_identification(im,true);
  arc_jfd_file_data_prepare(im,true,false,o->reason);
 }
-void probe_media_open(const char *list,FILE *custody) {
- probe_media_close();if(!strcmp(list,"none"))return;
+static void media_failure(FILE *list,const char *reason) {
+ if(list)fclose(list);fatal(reason);
+}
+static void add_media(const char *name,FILE *custody,FILE *list) {
+ if(image_count==MAX_DISCS)media_failure(list,"Media count bound");
+ FILE *in=fopen(name,"rb");if(!in)media_failure(list,"Media open failed");
+ uint8_t *b=malloc(ARC_JFD_MAX_COMPRESSED);
+ if(!b) {fclose(in);media_failure(list,"Media read allocation");}
+ size_t len=fread(b,1,ARC_JFD_MAX_COMPRESSED,in);int tail=fgetc(in),bad=ferror(in),closed=fclose(in);
+ if(bad||closed||tail!=EOF) {free(b);media_failure(list,"Media read bound/failure");}
+ char sha[41],error[128];arc_sha1_hex(b,len,sha);
+ ArcJfdImage *im=&images[image_count++];
+ int parsed=arc_jfd_parse(b,len,im,error,sizeof(error));free(b);
+ if(!parsed)media_failure(list,"Invalid JFD descriptors");
+ /* Decoded private names remain internal and are never logged. */
+ prepare(im,image_count-1);
+ if(custody&&fprintf(custody,"media,%u,%s,%u,%zu,%04x,%u,%s\n",image_count-1,sha,im->track_count,im->sector_count,im->identification_mask,im->file_data.presented,im->overlay->reason)<0)media_failure(list,"Media custody write");
+}
+static void open_list(const char *list,FILE *custody) {
  FILE *f=fopen(list,"rb");if(!f)fatal("Media list open failed");char name[1200];
+ const char *last=strrchr(list,'/'),*back=strrchr(list,'\\');if(back&&(!last||back>last))last=back;
  while(fgets(name,sizeof(name),f)) {
-  size_t n=strlen(name);if(n&&name[n-1]!='\n'&&!feof(f)) {fclose(f);fatal("Media path bound");}
+  size_t n=strlen(name);if(n&&name[n-1]!='\n'&&!feof(f))media_failure(f,"Media path bound");
   while(n&&(name[n-1]=='\n'||name[n-1]=='\r'))name[--n]=0;
   if(!n||name[0]=='#')continue;
-  if(image_count==MAX_DISCS) {fclose(f);fatal("Media count bound");}
-  FILE *in=fopen(name,"rb");if(!in){fclose(f);fatal("Media open failed");}
-  uint8_t *b=malloc(ARC_JFD_MAX_COMPRESSED);if(!b) {fclose(in);fclose(f);fatal("Media read allocation");}
-  size_t len=fread(b,1,ARC_JFD_MAX_COMPRESSED,in);int tail=fgetc(in),bad=ferror(in);int close_failed=fclose(in);
-  if(bad||close_failed||tail!=EOF) {free(b);fclose(f);fatal("Media read bound/failure");}
-  char sha[41],error[128];arc_sha1_hex(b,len,sha);
-  ArcJfdImage *im=&images[image_count++];
-  if(!arc_jfd_parse(b,len,im,error,sizeof(error))) {free(b);fclose(f);fatal("Invalid JFD descriptors");}free(b);
-  /* A decoded private title remains internal and is never logged. */
-  prepare(im,image_count-1);
-  if(custody&&fprintf(custody,"media,%u,%s,%u,%zu,%04x,%u,%s\n",image_count-1,sha,im->track_count,im->sector_count,im->identification_mask,im->file_data.presented,im->overlay->reason)<0) {fclose(f);fatal("Media custody write");}
+  char path[2400];
+  if(name[0]=='/'||name[0]=='\\'||(n>2&&name[1]==':')) {
+   memcpy(path,name,n+1);
+  } else if(last) {
+   if(snprintf(path,sizeof(path),"%.*s/%s",(int)(last-list),list,name)>=(int)sizeof(path))media_failure(f,"Media path bound");
+  } else memcpy(path,name,n+1);
+  add_media(path,custody,f);
  }
  int bad=ferror(f),closed=fclose(f);if(bad||closed||!image_count)fatal("Media list read/empty failure");
+}
+void probe_media_open(const char *list,FILE *custody) {
+ probe_media_close();if(!strcmp(list,"none"))return;
+ open_list(list,custody);image_index=0;ejected=0;probe_media_reset();
+}
+void probe_media_open_content(const char *path,FILE *custody) {
+ probe_media_close();const char *suffix=strrchr(path,'.');char ext[5]={0};
+ if(!suffix||strlen(suffix)!=4)fatal("Unsupported content extension");
+ for(unsigned i=0;i<4;i++)ext[i]=(char)tolower((unsigned char)suffix[i]);
+ if(!strcmp(ext,".jfd"))add_media(path,custody,NULL);
+ else if(!strcmp(ext,".m3u"))open_list(path,custody);
+ else fatal("Unsupported content extension");
  image_index=0;ejected=0;probe_media_reset();
 }
 void disc_stop(int d) {if(d==0&&probe_present_drives[0])probe_present_drives[0]->stop();if(d==1)probe_helper_stop();empty_seeking=0;}

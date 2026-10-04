@@ -41,7 +41,7 @@ int main(int argc,char **argv){
  if(argc!=2)return 2;probe_ide_enabled=1;probe_machine_init(Model_RPCSA110,100);
  probe_ide_open(argv[1],"none","none",NULL);
  run(0xec,0,1,0);CHECK("identify completes",ram00[0x5fff0/4]==1);uint32_t *b=ram00+0x40000/4;
- CHECK("identify geometry",b[1]==32&&b[3]==16&&b[6]==63);CHECK("identify bounded capacity",b[60]==ARC_INSTALL_HD_SECTORS&&b[61]==0);
+ CHECK("identify geometry",b[1]==256&&b[3]==16&&b[6]==63);CHECK("identify bounded capacity",b[60]==(ARC_INSTALL_HD_SECTORS&65535u)&&b[61]==(ARC_INSTALL_HD_SECTORS>>16));
  run(0x30,100,2,1);CHECK("guest write completes",ram00[0x5fff0/4]==1&&ram00[0x5fff4/4]==0x40&&probe_ide_writes==2);
  CHECK("close commits",probe_ide_close());
  /* Cold machine restart opens exactly the previously-created session image as

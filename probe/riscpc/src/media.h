@@ -10,6 +10,7 @@ extern unsigned probe_disc_period_us;
 extern int probe_disc_changed[2];
 extern uint64_t probe_media_reads,probe_media_writes,probe_media_refusals;
 void probe_media_open(const char *list,FILE *custody);
+void probe_media_open_content(const char *path,FILE *custody);
 void probe_media_close(void);
 void probe_media_reset(void);
 unsigned probe_media_count(void);unsigned probe_media_index(void);

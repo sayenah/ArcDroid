@@ -46,6 +46,7 @@ static struct {
  uint8_t buffer[512];
 } ata;
 static FILE *image;
+static unsigned diagnostic_reads;
 int idecallback,probe_ide_enabled;
 unsigned long long probe_ide_reads,probe_ide_writes,probe_ide_io_failures;
 static void irq(int yes) {
@@ -83,7 +84,7 @@ void probe_ide_open(const char *directory,const char *baseline,const char *expec
  int fd=CREATE(name);if(fd<0) {free(bytes);fatal("IDE exclusive session creation failed");}
  image=FDOPEN(fd,"w+b");if(!image) {CLOSE(fd);free(bytes);fatal("IDE session stream creation failed");}
  if(fwrite(bytes,1,ARC_INSTALL_HD_BYTES,image)!=ARC_INSTALL_HD_BYTES||fflush(image)) {free(bytes);io_failure();}
- free(bytes);probe_ide_reads=probe_ide_writes=probe_ide_io_failures=0;
+ free(bytes);diagnostic_reads=0;probe_ide_reads=probe_ide_writes=probe_ide_io_failures=0;
  if(custody&&fprintf(custody,"ide,0,%s,%u,authored-format-%u\n",sha,ARC_INSTALL_HD_BYTES,ARC_INSTALL_HD_FORMAT_VERSION)<0)fatal("IDE custody write failed");
  resetide();
 }
@@ -121,6 +122,7 @@ void callbackide(void) {
  case 0x20:
   if(!sector_offset(&offset)){abort_command(0x10);return;}
   if(fseek(image,(long)offset,SEEK_SET)||fread(ata.buffer,1,512,image)!=512)io_failure();
+  if(probe_boot_log&&diagnostic_reads++<4096)fprintf(probe_boot_log,"%llu,ide_read,%llu,%u,%u,%u,%u\n",(unsigned long long)probe_now,(unsigned long long)offset,ata.cylinder,ata.head,ata.sector,ata.remaining);
   probe_ide_reads++;ata.pos=0;ata.status=READY|DRQ;irq(1);return;
  case 0x30:
   if(!sector_offset(&offset)){abort_command(0x10);return;}

@@ -7,6 +7,7 @@
 #include "iomd.h"
 #include "media.h"
 #include "ide_probe.h"
+#include "frontend.h"
 #include <inttypes.h>
 #include <ctype.h>
 static retro_environment_t env;
@@ -29,21 +30,25 @@ static unsigned boot_count,boot_at;
 static const struct retro_variable options[]={
  {"rpcprobe_model","Model; SA110|ARM710|ARM610|A7000"},
  {"rpcprobe_rate","Million instructions per emulated second; 100|20|35|150|200|250|300"},
- {"rpcprobe_firmware","Combined firmware file (external, verified); none"},
+ {"rpcprobe_firmware","Combined firmware (verified, system/arcdroid/firmware); ROM371|ROM370|ROM360|ROM350|none"},
+ {"rpcprobe_workload","Replay directory in system/arcdroid/rpcprobe; none|trial-a|trial-b|trial-c|trial-d|authored"},
  {"rpcprobe_script","Input script file; none"},
  {"rpcprobe_output","Private session output directory; none"},
  {"rpcprobe_authored","Authored ROM workload; disabled|enabled"},
  {"rpcprobe_media_list","External JFD paths, one per line in disc order; none"},
  {"rpcprobe_ide","Session scratch hard disc; disabled|enabled"},
+ {"rpcprobe_boot","Boot medium; automatic|standard|helper"},
  {"rpcprobe_ide_baseline","Read-only post-install baseline; none"},
  {"rpcprobe_ide_baseline_sha1","Required baseline SHA-1; none"},
  {"rpcprobe_cmos_factory","Capture firmware factory reset; disabled|enabled"},
  {"rpcprobe_cmos_baseline","Firmware-generated cold CMOS; none"},
  {"rpcprobe_cmos_sha1","Required cold CMOS SHA-1; none"},
  {"rpcprobe_diagnostics","Passive device/mode diagnostics; disabled|enabled"},
+ {"rpcprobe_register_trace","Passive bounded raster/sound register trace; disabled|enabled"},
  {NULL,NULL}};
 static const char *option(const char *key) {
- struct retro_variable v={key,NULL};return env&&env(RETRO_ENVIRONMENT_GET_VARIABLE,&v)&&v.value?v.value:"none";
+ struct retro_variable v={key,NULL};const char *value=env&&env(RETRO_ENVIRONMENT_GET_VARIABLE,&v)&&v.value?v.value:"none";
+ return probe_frontend_option(key,value);
 }
 static FILE *output_file(const char *leaf) {
  char p[1200];if(!out_dir[0])return NULL;
@@ -169,17 +174,18 @@ RETRO_API void retro_set_input_state(retro_input_state_t cb) {input_state=cb;}
 RETRO_API unsigned retro_api_version(void) {return RETRO_API_VERSION;}
 RETRO_API void retro_init(void) {}
 RETRO_API void retro_deinit(void) {retro_unload_game();}
-RETRO_API void retro_get_system_info(struct retro_system_info *i) {*i=(struct retro_system_info){"ArcDroid RPC Probe","P-incomplete","",false,false};}
+RETRO_API void retro_get_system_info(struct retro_system_info *i) {*i=(struct retro_system_info){"ArcDroid RPC Probe","P-incomplete","jfd|m3u",true,false};}
 RETRO_API void retro_get_system_av_info(struct retro_system_av_info *i) {
  unsigned w,h;probe_video_pixels(&w,&h);if(!w)w=320;if(!h)h=256;
  *i=(struct retro_system_av_info){{w,h,2048,2048,(float)w/h},{frame_period?1e9/frame_period:60,48000}};
 }
 RETRO_API void retro_set_controller_port_device(unsigned p,unsigned d) {(void)p;(void)d;}
 RETRO_API bool retro_load_game(const struct retro_game_info *g) {
- (void)g;probe_can_escape=1;
+ probe_can_escape=1;
  if(setjmp(probe_escape)) {fprintf(stderr,"Probe load failed: %s\n",probe_error);probe_can_escape=0;retro_unload_game();return false;}
  enum retro_pixel_format format=RETRO_PIXEL_FORMAT_XRGB8888;
  if(!env(RETRO_ENVIRONMENT_SET_PIXEL_FORMAT,&format))fatal("Frontend refuses XRGB8888");
+ probe_frontend_paths(env);
  const char *model=option("rpcprobe_model");Model m=Model_RPCSA110;
  if(!strcmp(model,"ARM710"))m=Model_RPCARM710;else if(!strcmp(model,"ARM610"))m=Model_RPCARM610;else if(!strcmp(model,"A7000"))m=Model_A7000;
  unsigned rate=(unsigned)strtoul(option("rpcprobe_rate"),NULL,10);
@@ -187,7 +193,7 @@ RETRO_API bool retro_load_game(const struct retro_game_info *g) {
  probe_ide_enabled=!strcmp(option("rpcprobe_ide"),"enabled");
  int authored=!strcmp(option("rpcprobe_authored"),"enabled");
  int factory=!strcmp(option("rpcprobe_cmos_factory"),"enabled");
- probe_helper_enabled=!authored&&!factory;
+ probe_helper_enabled=!authored&&!factory&&strcmp(option("rpcprobe_boot"),"standard");
  if(!authored&&!factory&&!strcmp(option("rpcprobe_cmos_baseline"),"none"))fatal("Firmware session requires factory-reset CMOS baseline");
  probe_cmos_configure(option("rpcprobe_cmos_baseline"),option("rpcprobe_cmos_sha1"),factory);
  machine_live=1;probe_machine_init(m,rate);
@@ -207,11 +213,17 @@ RETRO_API bool retro_load_game(const struct retro_game_info *g) {
  const char *out=option("rpcprobe_output");out_dir[0]=0;
  if(strcmp(out,"none")) {if(strlen(out)>=sizeof(out_dir))fatal("Output directory bound");strcpy(out_dir,out);}
  csv=output_file("frames.csv");events=output_file("events.csv");
+ probe_register_trace_reset();
+ if(!strcmp(option("rpcprobe_register_trace"),"enabled")) {
+  probe_register_log=output_file("registers.csv");
+  if(probe_register_log)fprintf(probe_register_log,"emu_ns,device,register,value,pc\n");
+ }
  if(factory||!strcmp(option("rpcprobe_diagnostics"),"enabled")) {
   probe_boot_log=output_file("boot-devices.csv");probe_mode_log=output_file("mode-requests.csv");
  }
  FILE *custody=output_file("media-custody.csv");
- probe_media_open(option("rpcprobe_media_list"),custody);
+ if(g&&g->path)probe_media_open_content(g->path,custody);
+ else probe_media_open(option("rpcprobe_media_list"),custody);
  probe_ide_open(out_dir,option("rpcprobe_ide_baseline"),option("rpcprobe_ide_baseline_sha1"),custody);
  if(custody&&fclose(custody))fatal("Media custody close failed");
  env(RETRO_ENVIRONMENT_SET_DISK_CONTROL_INTERFACE,&disks);
@@ -256,6 +268,7 @@ RETRO_API void retro_run(void) {
   frame_period=period;struct retro_system_av_info av;retro_get_system_av_info(&av);env(RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO,&av);
  }
  next_frame+=period;
+ probe_register_trace(3,0,(uint32_t)period);
  unsigned w,h;const uint32_t *pixels=probe_video_pixels(&w,&h);
  if(!pixels) {pixels=blank;w=320;h=256;}
  if(video)video(pixels,w,h,pixels==blank?(size_t)w*4:probe_video_pitch());
@@ -286,7 +299,7 @@ RETRO_API void retro_unload_game(void) {
   probe_failed=1;if(csv)fprintf(csv,"%"PRIu64",%"PRIu64",0,0,0,0,0,0,0,0,0,0,FAIL\n",frame,probe_now);
   struct retro_message message={"Scratch IDE close failed",600};env(RETRO_ENVIRONMENT_SET_MESSAGE,&message);bool stop=true;env(RETRO_ENVIRONMENT_SHUTDOWN,&stop);
  }
- FILE **outputs[]={&csv,&events,&probe_boot_log,&probe_mode_log};int output_bad=0;
+ FILE **outputs[]={&csv,&events,&probe_boot_log,&probe_mode_log,&probe_register_log};int output_bad=0;
  for(unsigned i=0;i<sizeof(outputs)/sizeof(outputs[0]);i++)if(*outputs[i]) {
   if(ferror(*outputs[i]))output_bad=1;
   if(fclose(*outputs[i]))output_bad=1;*outputs[i]=NULL;

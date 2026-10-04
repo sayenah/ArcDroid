@@ -5,6 +5,17 @@
 #include "cp15.h"
 #include <inttypes.h>
 static unsigned pending_vdu22, requests;
+FILE *probe_register_log;
+static unsigned register_records;
+void probe_register_trace_reset(void) {register_records=0;}
+/* Passive numeric evidence for raster/sound qualification. It neither reads
+ * guest memory nor changes the scheduling deadline. Device 0 palette (index),
+ * 1 VIDC (top byte), 2 IOMD (offset), 3 frame boundary (new period). */
+void probe_register_trace(unsigned device,unsigned reg,uint32_t value) {
+ if(!probe_register_log)return;
+ if(register_records++==2000000)fatal("Register diagnostic bound exceeded");
+ if(fprintf(probe_register_log,"%"PRIu64",%u,%08x,%08x,%08x\n",probe_now,device,reg,value,PC)<0)fatal("Register diagnostic write failed");
+}
 void probe_mode_reset(void) { pending_vdu22=requests=0; }
 static int physical(uint32_t a,uint32_t *value) {
  if(a&3)return 0;a&=0x1fffffff;

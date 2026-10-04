@@ -290,6 +290,7 @@ iomd_write(uint32_t addr, uint32_t val)
 	} else {
 		reg = addr & 0x1fc; /* IOMD1 variants have 128 registers */
 	}
+	if ((reg >= 0x180 && reg <= 0x190) || (reg >= 0x1d0 && reg <= 0x1e0)) probe_register_trace(2, reg, val); /* ARCDROID-PROBE: passive video/sound DMA evidence. */
 
         switch (reg)
         {

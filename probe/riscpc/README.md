@@ -117,3 +117,77 @@ numbers are zero-based; numbered PNG captures use the completed-frame count
 (PNG 2500 corresponds to CSV frame 2499). This adds frontend I/O
 cost and is a diagnostic run, not performance acceptance evidence. Nonzero
 PCM alone does not establish correct audible game sound or frontend delivery.
+
+`tools/audio_check.py SESSION --output RESULT.json [--segment START:END]`
+independently checks the WAV container, total sample count, each callback's
+PCM hash against `frames.csv`, and callback peak/nonzero/clipping statistics.
+It reports audible fidelity and physical output as MISSING; these require
+separate listening/output evidence.
+
+For a bounded diagnostic capture, `rpcprobe_register_trace=enabled` records
+numeric VIDC palette/register and IOMD video/sound DMA writes plus frame
+boundaries in `registers.csv`. Device IDs are 0 (palette index), 1 (VIDC top
+byte), 2 (IOMD offset), and 3 (frame boundary/new period). This passive observer
+does not read guest memory or change guest deadlines. It fails explicitly at
+two million records. It is disabled by default and its extra I/O must be
+excluded from performance qualification unless separately measured.
+
+## Private standard boot disc (run-5 R5-1)
+
+`rpcprobe_boot=standard` disables the authored helper floppy and its keyboard
+prefix. The guest boots its session IDE using its own boot configuration.
+The bounded trial IDE is now 126 MiB (63 sectors, 16 heads, 256 cylinders);
+older 16/63 MiB trial baselines are rejected. The probe-local formatter copies
+retain their ArcDroid provenance; production formatting is unchanged.
+Cold reset preserves the guest's IDE CMOS setting instead of forcing it.
+
+`tools/boot_disc.py` reads only the two approved external release archives,
+verifies their exact SHA-256s and writes an exclusively created FileCore
+image plus custody JSON. Acorn ARC0 ZIP load/execute words and attributes
+are preserved, including filetypes; component dots map to RISC OS slash.
+Three RO5-only files have names exceeding the classic ten-byte directory
+limit and are explicitly recorded as omitted. All pre-5 boot resources are
+retained; archive licenses/readmes remain on disc. No supplied bytes are
+embedded in this source tree.
+
+```sh
+python3 probe/riscpc/tools/boot_disc.py \
+  --harddisc4 /external/HardDisc4.zip --system /external/PlingSystem.zip \
+  --out probe/riscpc/run/unmerged.hdf
+python3 probe/riscpc/tools/disc_inventory.py \
+  probe/riscpc/run/unmerged.hdf probe/riscpc/run/unmerged-inventory.json
+```
+
+The initial image has boot option off and a separate `SysUpdate` directory.
+The full release tree is retained. The smaller 63 MiB construction left only
+about 2 MiB free because of legacy allocation units; the larger bounded geometry
+provides room for the normal guest installs.
+Run the supplied `SysUpdate.!SysMerge` **in the guest**, pointing System$Dir
+at the on-disc `!Boot.Resources.!System`; establish Boot$Dir and Boot$Path
+at the standard !Boot directory. Its ReadMe requires this updater instead
+of the Configure System Merge dialogue. Verify copied module payloads and
+metadata against the source inventory; unchanged newer destination files
+may be retained by the supplied updater. Configure the guest with normal
+`Opt 4,2`, `Configure Boot`, `Configure FileSystem ADFS`, `Configure Drive 4`.
+Capture its CMOS, inspect a cold boot, then freeze the disc and record hashes.
+Each session clones the frozen image into an exclusive scratch backing.
+Do not treat a runner COMPLETE footer as boot or installation qualification.
+
+HardDisc4's normal pre-5 boot hooks currently select its Acorn AKF60 monitor
+definition and 800×600 desktop. The authored MDF is not injected in standard
+sessions. The current private report records the seven-pair qualification,
+guest-written CMOS changes and remaining gameplay/provider qualification.
+The source archives, baselines, inventories and screenshots are private trial
+inputs/evidence, not approved shipping assets.
+
+### RetroArch trial layout
+
+Use ordinary Load Content on `.jfd` or `.m3u` (relative playlist entries resolve beside the playlist). Combined verified firmware lives at `<system>/arcdroid/firmware/ROM350`, `ROM360`, `ROM370` or `ROM371`; select it with `rpcprobe_firmware`. Explicit external path options remain available to the headless runner.
+
+Select `rpcprobe_workload` (`trial-a` through `trial-d`, or `authored`). Its directory is `<system>/arcdroid/rpcprobe/<workload>/` with `script.txt`, `cmos.bin`, `cmos.sha1`, and, when IDE is enabled, `baseline.hdf` plus `baseline.sha1`. Digest files contain one hexadecimal SHA-1 line. The baseline can be the standard boot disc or a qualified installed-game disc. These are private runtime inputs, never bundled. Set model/rate and enable IDE explicitly. Automatic boot selects the standard disc for workload sessions. Physical inputs are disabled while the script is active.
+
+Each load exclusively creates a fresh `run-NNNNNN` subdirectory for scratch IDE, CSV and diagnostics; the baseline is opened read-only and hash checked. Do not reuse a run directory as an input baseline without separately qualifying/freezing it. The core refuses missing system paths, malformed digest sidecars, unsafe workload names and invalid/missing media. No private path or decoded title is logged. The runner supports `--system=DIR` and `--content=FILE`. Authored portable integration checks:
+
+```sh
+python3 probe/riscpc/tools/frontend_check.py --runner <runner> --core <core> --output <fresh-evidence-dir>
+```

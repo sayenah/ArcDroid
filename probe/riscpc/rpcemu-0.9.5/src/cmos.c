@@ -108,9 +108,9 @@ static void
 cmos_update_settings(void)
 {
 	/* Generated ADFS logical byte 135: one floppy, optional one IDE drive.
-	 * Logical 189 timings mirror ArcDroid's accepted live IDE configuration. */
+	 * IDE timings remain those written by the firmware/standard boot. ARCDROID-PROBE. */
 	cmosram[199]=(cmosram[199]&~0xc7u)|(probe_helper_enabled?2u:1u)|(probe_ide_enabled?0x40u:0u); /* ARCDROID-PROBE: attached boot helper drive description only. */
-	if(probe_ide_enabled)cmosram[253]=0x0a;
+	/* ARCDROID-PROBE: preserve guest-configured IDE timings from cold CMOS. */
 
 	time_t now = 946684800;
 	const struct tm *t = gmtime(&now);

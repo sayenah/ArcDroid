@@ -98,3 +98,16 @@ firmware/content is used for these assertions. Successful terminal-count
 results retain ST0 unit=1 and head=0. READ DATA R=16 is outside the authored
 0..15 sector set: not-found ST0=0x41, nonzero ST1, no DMA bytes; it must never
 be confused with READ ID's internal sentinel.
+
+## Run-5 standard-disc IDE bounds
+
+The enlarged trial disc is independently declared as 63 sectors per track,
+16 heads and 256 cylinders: 258,048 sectors, exactly 132,120,576 bytes.
+ATA IDENTIFY must report those CHS values and capacity words 60/61 = 61,440/3.
+An authored guest writes two sectors starting at LBA 100 with 512 incrementing
+words beginning at 0x3157; a separate cold clone must read all words unchanged.
+LBA 258,048 is outside the image and must return READY|ERR without host growth.
+Truncating the owned test backing to 512 bytes must cause a detected short-read
+session failure, never zero-filled successful completion. No private bytes
+are used by this test. The standard boot image must separately be catalogued
+and booted through firmware; ATA readback alone does not prove FileCore validity.

@@ -23,6 +23,7 @@ static uint32_t *shot;
 static uint64_t limit_ns,emu_ns;
 static FILE *wave,*audio_stats;
 static uint64_t wave_pairs;
+static const char *system_directory;
 static void le(uint8_t *p,uint32_t n) {p[0]=n;p[1]=n>>8;p[2]=n>>16;p[3]=n>>24;}
 static void wave_header(void) {
  uint8_t header[44]={0};memcpy(header,"RIFF",4);le(header+4,(uint32_t)wave_pairs*4+36);
@@ -40,6 +41,7 @@ static uint64_t clock_ns(void) {
 }
 static bool environment(unsigned cmd,void *data) {
  switch(cmd) {
+ case RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY:*(const char **)data=system_directory;return system_directory!=NULL;
  case RETRO_ENVIRONMENT_SET_PIXEL_FORMAT:return *(enum retro_pixel_format *)data==RETRO_PIXEL_FORMAT_XRGB8888;
  case RETRO_ENVIRONMENT_GET_VARIABLE: {
   struct retro_variable *v=data;for(unsigned i=0;i<var_count;i++) {size_t n=strlen(v->key);if(!strncmp(vars[i],v->key,n)&&vars[i][n]=='=') {v->value=vars[i]+n+1;return true;}}
@@ -88,11 +90,11 @@ static void png(const char *name) {
 }
 #define LOAD(ret,name,args) ret (*name)args=(ret (*)args)SYM(lib,#name);if(!name){fprintf(stderr,"Missing libretro symbol: %s\n",#name);return 2;}
 int main(int argc,char **argv) {
- if(argc<4) {fprintf(stderr,"usage: probe_runner CORE EMULATED_SECONDS unthrottled|realtime [key=value ...] [--png=FILE] [--shot-every=N] [--wav=FILE]\n");return 2;}
+ if(argc<4) {fprintf(stderr,"usage: probe_runner CORE EMULATED_SECONDS unthrottled|realtime|staggered [key=value ...] [--system=DIR] [--content=FILE.jfd|FILE.m3u] [--png=FILE] [--shot-every=N] [--wav=FILE]\n");return 2;}
  char *end;double sec=strtod(argv[2],&end);if(*end||sec<=0||sec>3600) return 2;limit_ns=(uint64_t)(sec*1e9);
  int realtime=!strcmp(argv[3],"realtime"),staggered=!strcmp(argv[3],"staggered");if(!realtime&&!staggered&&strcmp(argv[3],"unthrottled"))return 2;
- const char *png_name=NULL,*wave_name=NULL;unsigned shot_every=0;
- for(int i=4;i<argc;i++) {if(!strncmp(argv[i],"--png=",6))png_name=argv[i]+6;else if(!strncmp(argv[i],"--wav=",6))wave_name=argv[i]+6;else if(!strncmp(argv[i],"--shot-every=",13))shot_every=(unsigned)atoi(argv[i]+13);else if(var_count<64)vars[var_count++]=argv[i];else return 2;}
+ const char *png_name=NULL,*wave_name=NULL,*content=NULL;unsigned shot_every=0;
+ for(int i=4;i<argc;i++) {if(!strncmp(argv[i],"--png=",6))png_name=argv[i]+6;else if(!strncmp(argv[i],"--wav=",6))wave_name=argv[i]+6;else if(!strncmp(argv[i],"--system=",9))system_directory=argv[i]+9;else if(!strncmp(argv[i],"--content=",10))content=argv[i]+10;else if(!strncmp(argv[i],"--shot-every=",13))shot_every=(unsigned)atoi(argv[i]+13);else if(var_count<64)vars[var_count++]=argv[i];else return 2;}
  if(wave_name) {
   char stats_name[1200];if(snprintf(stats_name,sizeof(stats_name),"%s.csv",wave_name)>=(int)sizeof(stats_name))return 2;
   wave=fopen(wave_name,"wb");audio_stats=fopen(stats_name,"wb");
@@ -102,7 +104,8 @@ int main(int argc,char **argv) {
  LIB lib=OPEN(argv[1]);if(!lib) {fprintf(stderr,"Core load failed\n");return 2;}
  LOAD(void,retro_set_environment,(retro_environment_t));LOAD(void,retro_set_video_refresh,(retro_video_refresh_t));LOAD(void,retro_set_audio_sample_batch,(retro_audio_sample_batch_t));LOAD(void,retro_set_input_poll,(retro_input_poll_t));LOAD(void,retro_set_input_state,(retro_input_state_t));LOAD(void,retro_init,(void));LOAD(bool,retro_load_game,(const struct retro_game_info *));LOAD(void,retro_run,(void));LOAD(void,retro_unload_game,(void));LOAD(void,retro_deinit,(void));LOAD(void,retro_get_system_av_info,(struct retro_system_av_info *));
  retro_set_environment(environment);retro_set_video_refresh(video);retro_set_audio_sample_batch(audio);retro_set_input_poll(poll);retro_set_input_state(input);retro_init();
- if(!retro_load_game(NULL)) {fprintf(stderr,"Session load failed\n");return 1;}
+ struct retro_game_info game={.path=content};
+ if(!retro_load_game(content?&game:NULL)) {fprintf(stderr,"Session load failed\n");return 1;}
  struct retro_system_av_info av;retro_get_system_av_info(&av);fps=av.timing.fps;
  uint64_t origin=clock_ns();
  while(emu_ns<limit_ns&&!failed) {

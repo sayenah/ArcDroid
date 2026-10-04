@@ -42,6 +42,7 @@
 #include "sound.h"
 #include "mem.h"
 #include "iomd.h"
+#include "probe.h" /* ARCDROID-PROBE: passive numeric register observer. */
 
 static int current_sizex = -1; /**< Width of the video mode, -1 on invalid */
 static unsigned bitmap_pitch;
@@ -856,6 +857,7 @@ writevidc20(uint32_t val)
 {
 	int index;
 	float freq;
+	probe_register_trace(val >> 28 ? 1 : 0, val >> 28 ? val >> 24 : (unsigned)vidc.palindex, val); /* ARCDROID-PROBE: passive register evidence. */
 
 	switch (val >> 28) {
 	case 0: /* Video Palette */
