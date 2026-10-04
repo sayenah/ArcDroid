@@ -77,7 +77,10 @@ def metadata(i):
     raise ValueError('missing Acorn metadata: ' + i.filename)
 
 
-def build(hard, system, output):
+def build(hard, system, output, period_roms=()):
+    from period_boot import read_firmware, retain_rom_modules
+    inventory = read_firmware(period_roms) if period_roms else None
+    period_edits = []
     tree = {'dir': True, 'children': {}, 'meta': (0, 0, 3), 'name': '$'}
     omitted = []
 
@@ -121,7 +124,11 @@ def build(hard, system, output):
                     raise ValueError('invalid FileCore component: ' + i.filename)
                 # Unix ZIP dots within a component represent RISC OS slash characters.
                 parts = [n.replace('.', '/') for n in parts]
-                add(parts, b'' if i.is_dir() else z.read(i), metadata(i), i.is_dir())
+                data = b'' if i.is_dir() else z.read(i)
+                if inventory is not None and not i.is_dir():
+                    data, edits = retain_rom_modules(data, inventory, source.name + ':' + i.filename)
+                    period_edits.extend(edits)
+                add(parts, data, metadata(i), i.is_dir())
 
     image = bytearray(SIZE)
     record = bytearray(60)
@@ -225,6 +232,9 @@ def build(hard, system, output):
                    selection='full HardDisc4 tree plus !System update',
                    sha1=hashlib.sha1(image).hexdigest(), sha256=hashlib.sha256(image).hexdigest(),
                    merge='NOT YET RUN', boot_option=0)
+    if inventory is not None:
+        custody.update(period_policy='R6-1 presence guards; explicit dependency errors unchanged',
+                       firmware_modules=inventory, period_edits=period_edits)
     output.with_suffix('.json').write_text(json.dumps(custody, indent=2) + '\n')
     print(json.dumps({k: custody[k] for k in ('size', 'objects', 'sha1', 'merge')}))
 
@@ -234,5 +244,7 @@ if __name__ == '__main__':
     parser.add_argument('--harddisc4', type=Path, required=True)
     parser.add_argument('--system', type=Path, required=True)
     parser.add_argument('--out', type=Path, required=True)
+    parser.add_argument('--period-rom', type=Path, action='append', default=[],
+                        help='R6-1: repeat for all four approved combined ROMs')
     args = parser.parse_args()
-    build(args.harddisc4, args.system, args.out)
+    build(args.harddisc4, args.system, args.out, args.period_rom)

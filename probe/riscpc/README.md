@@ -180,6 +180,28 @@ guest-written CMOS changes and remaining gameplay/provider qualification.
 The source archives, baselines, inventories and screenshots are private trial
 inputs/evidence, not approved shipping assets.
 
+### Period ROM modules (run-6 R6-1)
+
+For the period environment, repeat `--period-rom /external/combined-image`
+four times on `boot_disc.py`, once for each approved firmware image. The
+builder verifies their SHA-1s, inventories module header title/help offsets,
+and applies one common union of ROM module names to both archives. A
+presence-only `RMEnsure <module> 0.00` guards each original versioned
+`RMEnsure ... Run/RMLoad/RMRun` load for those names. Thus existing ROM
+modules stay resident and genuinely additional modules retain their original
+loads. Every modified script line has an ARCDROID-PROBE R6-1 comment; custody
+records before/after lines, module versions and firmware membership.
+Dependency errors, non-load commands, binary payloads and metadata remain
+unchanged. Archive notices stay on disc. The guest System merge follows the
+same documented procedure above. No firmware bytes enter the generated source.
+
+Run `python3 probe/riscpc/tools/test_period_boot.py` for authored policy
+checks. The original boot's minimum-version requirements can conflict with
+retaining period ROM modules. A constructed image or completed merge is not
+a qualified boot baseline; stop and record the guest error if such a
+dependency fails. No replacement module or lowered requirement is authorized
+to resolve that failure.
+
 ### RetroArch trial layout
 
 Use ordinary Load Content on `.jfd` or `.m3u` (relative playlist entries resolve beside the playlist). Combined verified firmware lives at `<system>/arcdroid/firmware/ROM350`, `ROM360`, `ROM370` or `ROM371`; select it with `rpcprobe_firmware`. Explicit external path options remain available to the headless runner.
