@@ -35,6 +35,10 @@ static const struct retro_variable options[]={
  {"rpcprobe_ide","Session scratch hard disc; disabled|enabled"},
  {"rpcprobe_ide_baseline","Read-only post-install baseline; none"},
  {"rpcprobe_ide_baseline_sha1","Required baseline SHA-1; none"},
+ {"rpcprobe_cmos_factory","Capture firmware factory reset; disabled|enabled"},
+ {"rpcprobe_cmos_baseline","Firmware-generated cold CMOS; none"},
+ {"rpcprobe_cmos_sha1","Required cold CMOS SHA-1; none"},
+ {"rpcprobe_diagnostics","Passive device/mode diagnostics; disabled|enabled"},
  {NULL,NULL}};
 static const char *option(const char *key) {
  struct retro_variable v={key,NULL};return env&&env(RETRO_ENVIRONMENT_GET_VARIABLE,&v)&&v.value?v.value:"none";
@@ -147,6 +151,10 @@ RETRO_API bool retro_load_game(const struct retro_game_info *g) {
  unsigned rate=(unsigned)strtoul(option("rpcprobe_rate"),NULL,10);
  if(rate!=20&&rate!=35&&rate!=100&&rate!=150&&rate!=200&&rate!=250&&rate!=300)fatal("Invalid instruction rate");
  probe_ide_enabled=!strcmp(option("rpcprobe_ide"),"enabled");
+ int authored=!strcmp(option("rpcprobe_authored"),"enabled");
+ int factory=!strcmp(option("rpcprobe_cmos_factory"),"enabled");
+ if(!authored&&!factory&&!strcmp(option("rpcprobe_cmos_baseline"),"none"))fatal("Firmware session requires factory-reset CMOS baseline");
+ probe_cmos_configure(option("rpcprobe_cmos_baseline"),option("rpcprobe_cmos_sha1"),factory);
  machine_live=1;probe_machine_init(m,rate);
  if(!strcmp(option("rpcprobe_authored"),"enabled"))probe_workload_rom();
  else {
@@ -163,6 +171,9 @@ RETRO_API bool retro_load_game(const struct retro_game_info *g) {
  const char *out=option("rpcprobe_output");out_dir[0]=0;
  if(strcmp(out,"none")) {if(strlen(out)>=sizeof(out_dir))fatal("Output directory bound");strcpy(out_dir,out);}
  csv=output_file("frames.csv");events=output_file("events.csv");
+ if(factory||!strcmp(option("rpcprobe_diagnostics"),"enabled")) {
+  probe_boot_log=output_file("boot-devices.csv");probe_mode_log=output_file("mode-requests.csv");
+ }
  FILE *custody=output_file("media-custody.csv");
  probe_media_open(option("rpcprobe_media_list"),custody);
  probe_ide_open(out_dir,option("rpcprobe_ide_baseline"),option("rpcprobe_ide_baseline_sha1"),custody);
@@ -226,13 +237,24 @@ RETRO_API void retro_reset(void) {
  probe_can_escape=0;
 }
 RETRO_API void retro_unload_game(void) {
+ if(loaded&&out_dir[0]) {
+  uint8_t data[256];probe_cmos_snapshot(data);char name[1200];
+  int bad=snprintf(name,sizeof(name),"%s/cmos-final.bin",out_dir)>=(int)sizeof(name);FILE *f=bad?NULL:fopen(name,"wb");
+  if(!f)bad=1;else {bad=fwrite(data,1,sizeof(data),f)!=sizeof(data);if(fclose(f))bad=1;}
+  if(bad) {probe_failed=1;bool stop=true;env(RETRO_ENVIRONMENT_SHUTDOWN,&stop);}
+ }
  if(loaded)clear_held();
  if(machine_live) {probe_machine_close();machine_live=0;}probe_media_close();loaded=0;
  if(!probe_ide_close()) {
   probe_failed=1;if(csv)fprintf(csv,"%"PRIu64",%"PRIu64",0,0,0,0,0,0,0,0,0,0,FAIL\n",frame,probe_now);
   struct retro_message message={"Scratch IDE close failed",600};env(RETRO_ENVIRONMENT_SET_MESSAGE,&message);bool stop=true;env(RETRO_ENVIRONMENT_SHUTDOWN,&stop);
  }
- if(csv) {fclose(csv);csv=NULL;}if(events) {fclose(events);events=NULL;}
+ FILE **outputs[]={&csv,&events,&probe_boot_log,&probe_mode_log};int output_bad=0;
+ for(unsigned i=0;i<sizeof(outputs)/sizeof(outputs[0]);i++)if(*outputs[i]) {
+  if(ferror(*outputs[i]))output_bad=1;
+  if(fclose(*outputs[i]))output_bad=1;*outputs[i]=NULL;
+ }
+ if(output_bad) {probe_failed=1;bool stop=true;env(RETRO_ENVIRONMENT_SHUTDOWN,&stop);}
 }
 RETRO_API bool retro_load_game_special(unsigned n,const struct retro_game_info *g,size_t count) {(void)n;(void)g;(void)count;return false;}
 RETRO_API size_t retro_serialize_size(void) {return 0;}

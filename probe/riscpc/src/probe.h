@@ -34,4 +34,14 @@ uint64_t probe_video_hash(void);
 const uint32_t *probe_video_pixels(unsigned *w, unsigned *h);
 void probe_authored_rom(void);
 void probe_workload_rom(void);
+/* Cold state comes only from a guest factory reset, never a bundled dump. */
+extern int probe_cmos_factory;
+void probe_cmos_configure(const char *path, const char *sha1, int factory);
+void probe_cmos_snapshot(uint8_t out[256]);
+extern FILE *probe_boot_log;
+extern FILE *probe_mode_log;
+void probe_observe_swi(uint32_t number);
+void probe_mode_reset(void);
+extern uint64_t probe_keyboard_due;
+void probe_keyboard_step(void);
 #endif

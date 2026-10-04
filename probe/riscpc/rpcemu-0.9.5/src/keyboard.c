@@ -45,6 +45,8 @@
 #include "iomd.h"
 #include "arm.h"
 #include "i8042.h"
+#include "keyboard.h" /* ARCDROID-PROBE: normal key entry declarations. */
+#include "probe.h" /* ARCDROID-PROBE: passive, bounded boot-device trace. */
 
 /* Keyboard Commands */
 #define KBD_CMD_ENABLE		0xf4
@@ -104,6 +106,29 @@ static struct {
 	int		f12transtobreak;
 #endif
 } kbd;
+
+/* ARCDROID-PROBE: physical key state survives a guest keyboard reset.
+ * A keyboard scans held switches after its power-on self-test. Deliver make
+ * codes through the ordinary PS/2 queue once the guest consumes the POR/ACK;
+ * no host repeat, guest-memory modification or special Delete handling. */
+static uint8_t probe_switches[512];
+/* ARCDROID-PROBE: keyboard-owned virtual typematic, independent of frontend.
+ * Set-2 F3: delay=(1+D)*250ms; period=(8+A)*2^B / 240 seconds. */
+uint64_t probe_keyboard_due = UINT64_MAX;
+static int probe_repeat_key = -1, probe_scanning = 1;
+static uint8_t probe_parameter, probe_typematic = 0x2b;
+static uint64_t probe_repeat_delay(void) { return (uint64_t)(1+((probe_typematic>>5)&3))*250000000; }
+static uint64_t probe_repeat_period(void) { return ((uint64_t)(8+(probe_typematic&7)) << ((probe_typematic>>3)&3))*1000000000/240; }
+static void probe_repeat_arm(void) { probe_keyboard_due = probe_repeat_key<0||!probe_scanning ? UINT64_MAX : probe_now+probe_repeat_delay(); }
+static void probe_rescan_switches(void)
+{
+    kbd.queue.rptr = kbd.queue.wptr = kbd.queue.count = 0;
+    for (unsigned code = 0; code < 512; code++) if (probe_switches[code]) {
+        uint8_t scan[2] = {code >= 256 ? 0xe0 : (uint8_t)code, (uint8_t)code};
+        keyboard_key_press(scan);
+    }
+    kcallback = 0; /* Wait for guest consumption of the current response. */
+}
 
 
 static struct {
@@ -223,6 +248,19 @@ ps2_queue(PS2Queue *q, uint8_t b)
 	q->count++;
 }
 
+/* ARCDROID-PROBE: emits normal make bytes, never a guest register poke. */
+void probe_keyboard_step(void)
+{
+    if(probe_keyboard_due>probe_now)return;
+    if(probe_repeat_key<0||!probe_switches[probe_repeat_key]||!probe_scanning) {probe_keyboard_due=UINT64_MAX;return;}
+    if(!kbd.reset&&!probe_parameter&&!(kbd.stat&PS2_CONTROL_RX_FULL)&&(kbd.command==0||kbd.command==0xfe)) {
+        if(probe_repeat_key>=256)ps2_queue(&kbd.queue,0xe0);
+        ps2_queue(&kbd.queue,(uint8_t)probe_repeat_key);
+        kbd.command=0xfe;kcallback=20;
+    }
+    probe_keyboard_due+=probe_repeat_period();
+}
+
 static int
 calculateparity(uint8_t v)
 {
@@ -242,6 +280,9 @@ calculateparity(uint8_t v)
 void
 keyboard_reset(void)
 {
+    memset(probe_switches, 0, sizeof(probe_switches)); /* ARCDROID-PROBE */
+    /* ARCDROID-PROBE */
+    probe_repeat_key=-1;probe_scanning=1;probe_parameter=0;probe_typematic=0x2b;probe_keyboard_due=UINT64_MAX;
 	probe_oldmouseb = 0; probe_oldz = 0; memset(&mouse, 0, sizeof(mouse));
 	kcallback = 0;
 	memset(&kbd, 0, sizeof(kbd));
@@ -293,6 +334,16 @@ ps2_read_data(PS2Queue *q)
 void
 keyboard_data_write(uint8_t v)
 {
+    /* ARCDROID-PROBE */
+    if(probe_boot_log&&probe_now<60000000000ULL)fprintf(probe_boot_log,"%llu,kbd_command,%02x\n",(unsigned long long)probe_now,v);
+    /* ARCDROID-PROBE: parameters are data, even when equal to a command. */
+    if(probe_parameter) {
+        if(probe_parameter==0xf3){probe_typematic=v&0x7f;probe_repeat_arm();}
+        probe_parameter=0;kbd.command=1;kbd.reset=0;kcallback=4;return;
+    }
+    if(v==0xf3||v==0xed)probe_parameter=v;
+    if(v==0xf5){probe_scanning=0;probe_repeat_arm();}
+    if(v==0xf4||v==0xf6||v==0xff){probe_scanning=1;if(v!=0xf4)probe_typematic=0x2b;probe_repeat_arm();}
 	switch (v) {
 	case KBD_CMD_RESET:
 		kbd.reset = 2;
@@ -321,6 +372,8 @@ keyboard_data_write(uint8_t v)
 void
 keyboard_control_write(uint8_t v)
 {
+    /* ARCDROID-PROBE: IOMD link enable is a transition, not every write. */
+    if(probe_boot_log&&probe_now<60000000000ULL)fprintf(probe_boot_log,"%llu,kbd_control,%02x\n",(unsigned long long)probe_now,v);
 	if (v && !kbd.enable) {
 		kbd.reset = 1;
 		kcallback = 5 * 4;
@@ -330,11 +383,14 @@ keyboard_control_write(uint8_t v)
 	} else {
 		kbd.stat &= ~PS2_CONTROL_ENABLE;
 	}
+    kbd.enable = !!v; /* ARCDROID-PROBE */
 }
 
 static void
 keyboardsend(uint8_t v)
 {
+    /* ARCDROID-PROBE */
+    if(probe_boot_log&&probe_now<60000000000ULL)fprintf(probe_boot_log,"%llu,kbd_send,%02x\n",(unsigned long long)probe_now,v);
 	kbd.data = v;
 	kbd.stat |= PS2_CONTROL_RX_FULL;
 	if (calculateparity(v)) {
@@ -355,24 +411,31 @@ keyboard_callback_rpcemu(void)
 		kbd.reset = 0;
 		kbd.stat |= PS2_CONTROL_TX_EMPTY;
 		keyboard_irq_tx_raise();
+        /* ARCDROID-PROBE: begin scanning when the host opens the PS/2 link. */
+        probe_rescan_switches();
+        if (kbd.queue.count) kcallback = 20;
 
 	} else if (kbd.reset == 2) {
 		kbd.reset = 3;
-		// keyboardsend(KBD_REPLY_ACK);
+        keyboardsend(KBD_REPLY_ACK); /* ARCDROID-PROBE: PS/2 reset ACK precedes POR. */
 		kcallback = 500 * 4;
 
 	} else if (kbd.reset == 3) {
 		kcallback = 0;
 		kbd.reset = 0;
 		keyboardsend(KBD_REPLY_POR);
+        probe_rescan_switches(); /* ARCDROID-PROBE: switches held at power-on. */
 
 	} else switch (kbd.command) {
 	case 1:
 	case KBD_CMD_ENABLE:
+        { uint8_t command = kbd.command; /* ARCDROID-PROBE */
 		keyboardsend(KBD_REPLY_ACK);
 		kcallback = 0;
 		kbd.command = 0;
+        if (command == KBD_CMD_ENABLE) probe_rescan_switches();
 		break;
+        } /* ARCDROID-PROBE */
 
 	case 0xfe:
 		keyboardsend(ps2_read_data(q));
@@ -403,9 +466,11 @@ keyboard_status_read(void)
 uint8_t
 keyboard_data_read(void)
 {
+    /* ARCDROID-PROBE */
+    if(probe_boot_log&&probe_now<60000000000ULL)fprintf(probe_boot_log,"%llu,kbd_read,%02x,%08x\n",(unsigned long long)probe_now,kbd.data,PC);
 	keyboard_irq_rx_lower();
 	kbd.stat &= ~PS2_CONTROL_RX_FULL;
-	if (kbd.command == 0xfe) {
+	if (kbd.command == 0xfe && !kbd.reset) { /* ARCDROID-PROBE: don't preempt POR. */
 		kcallback = 5 * 4;
 	}
 	return kbd.data;
@@ -872,6 +937,11 @@ keyboard_key_press(const uint8_t *scan_codes)
 	if (scan_codes == NULL) {
 		return;
 	}
+    /* ARCDROID-PROBE: remember ordinary switches, including extended keys. */
+    if (scan_codes[0] != 0xe1) {
+        probe_switches[scan_codes[0] == 0xe0 ? 256u + scan_codes[1] : scan_codes[0]] = 1;
+        probe_repeat_key=scan_codes[0]==0xe0?256+scan_codes[1]:scan_codes[0];probe_repeat_arm();
+    } /* ARCDROID-PROBE */
 
 	ps2_queue(&kbd.queue, scan_codes[0]);
 	if (scan_codes[0] == 0xe0) {
@@ -902,6 +972,10 @@ keyboard_key_release(const uint8_t *scan_codes)
 	}
 
 	assert(scan_codes[0] != 0xe1); /* Break key has no release code */
+    /* ARCDROID-PROBE */
+    probe_switches[scan_codes[0] == 0xe0 ? 256u + scan_codes[1] : scan_codes[0]] = 0;
+    /* ARCDROID-PROBE */
+    if(probe_repeat_key==(scan_codes[0]==0xe0?256+scan_codes[1]:scan_codes[0])){probe_repeat_key=-1;probe_repeat_arm();}
 
 	if (scan_codes[1] == 0) {
 		/* 1-byte scan code */

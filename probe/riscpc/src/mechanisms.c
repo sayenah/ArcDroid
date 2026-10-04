@@ -189,6 +189,63 @@ static void contention_test(void) {
  CHECK("guest-DMA-pixel",w==320&&h==256&&pixels[0]==(0xff000000|((415745&255)*0x010101)));
  printf("contention counter=%u screen=%08x audio=%016"PRIx64"\n",arm.reg[3],screen[0],probe_hash(UINT64_C(1469598103934665603),probe_audio,(size_t)probe_audio_count*4));
 }
+static void cold_input_advance(uint64_t target) {
+ while(probe_now<target){uint64_t stop=probe_now+10000000;if(stop>target)stop=target;probe_audio_count=0;probe_advance(stop);}
+}
+static void cold_input_tests(void) {
+ probe_cmos_configure("none","none",1);probe_machine_reset();probe_authored_rom();
+ uint8_t cmos[256];probe_cmos_snapshot(cmos);unsigned sum=0;for(unsigned i=0;i<256;i++)sum+=cmos[i];
+ CHECK("factory-truly-empty",sum==0);
+ if(machine.model!=Model_A7000) {
+  CHECK("board-reset-gate-cold",mem_read8(0x03310000)==0x70);
+  mem_write8(0x03310000,0xff);CHECK("board-reset-gate-byte",mem_read8(0x03310000)==0xf0);
+  mem_write32(0x03310000,0);CHECK("board-reset-gate-word",mem_read32(0x03310000)==0x70);
+  mouse_mouse_press(1);mem_write8(0x03310000,0x80);CHECK("board-reset-gate-inputs",mem_read8(0x03310000)==0xb0);
+  probe_machine_reset();probe_authored_rom();CHECK("board-reset-gate-reset",mem_read8(0x03310000)==0x70);
+ }
+ /* Any ordinary held switch, not a Delete-specific test or intervention. */
+ uint8_t sc[2]={0x29,0};keyboard_key_press(sc);keyboard_data_write(0xff);
+ probe_advance(40000);CHECK("keyboard-reset-ack",keyboard_data_read()==0xfa);
+ probe_advance(5040000);CHECK("keyboard-reset-por",keyboard_data_read()==0xaa);
+ probe_advance(5090000);CHECK("keyboard-reset-held-make",keyboard_data_read()==0x29);
+ keyboard_data_write(0xf3);probe_advance(5100000);CHECK("typematic-command-ack",keyboard_data_read()==0xfa);
+ keyboard_data_write(0x7f);probe_advance(5110000);CHECK("typematic-parameter-ack",keyboard_data_read()==0xfa);
+ CHECK("typematic-delay",probe_keyboard_due==1005100000);
+ cold_input_advance(1005100000);CHECK("typematic-no-early-make",!(keyboard_status_read()&0x20));
+ probe_advance(1005150000);CHECK("typematic-virtual-make",keyboard_data_read()==0x29);
+ CHECK("typematic-period",probe_keyboard_due==1505100000);
+ keyboard_key_release(sc);CHECK("typematic-release",probe_keyboard_due==UINT64_MAX);
+ probe_machine_reset();CHECK("typematic-machine-reset",probe_keyboard_due==UINT64_MAX);
+ probe_cmos_snapshot(cmos);sum=0;for(unsigned i=0;i<256;i++)sum+=cmos[i];CHECK("factory-reset-empty",sum==0);
+ printf("cold CMOS empty; keyboard ACK/POR/held make; F3 7f delay=1000ms period=500ms release/reset\n");
+ probe_cmos_configure("none","none",0);
+}
+static void mode_observer_test(void) {
+ probe_machine_reset();reg(2,0x10000000);reg(3,1);reg(1,0x31);
+ ram00[2]=0x10100c02;
+ const uint32_t selector[]={1,640,480,3,60,UINT32_MAX};
+ memcpy(ram00+0x100000/4,selector,sizeof(selector));
+ arm.reg[0]=0;arm.reg[1]=0x200000;arm.reg[2]=123;arm.event=0x40;
+ uint32_t regs[16];memcpy(regs,arm.reg,sizeof(regs));
+ uint32_t saved_far=far(),saved_fsr=fsr();int saved_tlbs=tlbs;
+ probe_mode_log=tmpfile();CHECK("mode-observer-output",probe_mode_log!=NULL);
+ if(!probe_mode_log)return;
+ probe_mode_reset();probe_observe_swi(0x20065);
+ arm.reg[1]=0x300000;probe_observe_swi(0x65);arm.reg[1]=regs[1];
+ CHECK("mode-observer-passive",!memcmp(regs,arm.reg,sizeof(regs))&&arm.event==0x40&&tlbs==saved_tlbs&&far()==saved_far&&fsr()==saved_fsr);
+ rewind(probe_mode_log);char line[256];
+ CHECK("mode-observer-selector",fgets(line,sizeof(line),probe_mode_log)&&strstr(line,",6,00000001,00000280,000001e0,00000003,0000003c,ffffffff"));
+ CHECK("mode-observer-invalid",fgets(line,sizeof(line),probe_mode_log)&&strstr(line,",0\n"));
+ if(mem_vrammask) {
+  /* A guest may keep its translation table in fitted VRAM. */
+  CHECK("mode-observer-seek",fseek(probe_mode_log,0,SEEK_END)==0);
+  reg(2,0x02004000);vram[0x4000/4+2]=0x10100c02;
+  probe_observe_swi(0x65);rewind(probe_mode_log);
+  CHECK("mode-observer-vram-table",fgets(line,sizeof(line),probe_mode_log)&&fgets(line,sizeof(line),probe_mode_log)&&fgets(line,sizeof(line),probe_mode_log)&&strstr(line,",6,00000001,00000280,000001e0,00000003,0000003c,ffffffff"));
+ }
+ fclose(probe_mode_log);probe_mode_log=NULL;
+ printf("mode observer valid/invalid selector, no guest/TLB/fault side effects\n");
+}
 static void ps2_mouse_test(void) {
  probe_machine_close();probe_machine_init(Model_A7000,35);probe_authored_rom();
  mouse_data_write(0xf4);probe_advance(20000);CHECK("mouse-enable-ack",mouse_data_read()==0xfa);
@@ -206,7 +263,7 @@ int main(void) {
  for(unsigned i=0;i<4;i++) {
   printf("model=%u\n",i);probe_machine_init(models[i],100);
   mmu_tests();more_mmu_tests();cpu_tests();scheduler_tests();video_tests();video_boundary_tests();audio_tests();patterned_audio_test();input_tests();contention_test();
-  if(i==3)ps2_mouse_test();probe_machine_close();
+  mode_observer_test();cold_input_tests();if(i==3)ps2_mouse_test();probe_machine_close();
  }
  printf("checks=%u failures=%u\n",checks,failures);return failures?1:0;
 }

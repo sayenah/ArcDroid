@@ -22,7 +22,7 @@ add_library(probe_engine STATIC
   ${UP}/arm.c ${UP}/arm_common.c ${UP}/cp15.c ${UP}/mem.c
   ${UP}/iomd.c ${UP}/vidc20.c ${UP}/keyboard.c ${UP}/cmos.c
   ${UP}/superio.c ${UP}/i8042.c ${UP}/fdc.c src/media.c src/jfd_presentation.c src/filecore_limits.c
-  src/machine.c src/sound.c src/absent_devices.c src/ide_probe.c ${ROOT}/core/hash.c
+  src/machine.c src/mode_observer.c src/sound.c src/absent_devices.c src/ide_probe.c ${ROOT}/core/hash.c
   ${ROOT}/core/jfd.c ${ROOT}/core/jfd_layout.c ${ROOT}/core/jfd_file_data.c
   ${ROOT}/core/launch_discovery.c ${ROOT}/core/install_disc.c)
 target_include_directories(probe_engine PUBLIC src ${UP} ${ROOT}/core ${ROOT}/libretro/include)

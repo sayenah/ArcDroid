@@ -18,6 +18,8 @@
 #include <sys/time.h>
 #endif
 Machine machine;
+FILE *probe_boot_log;
+FILE *probe_mode_log;
 Config config;
 int drawscre, quited;
 int probe_can_escape, probe_failed, probe_idle;
@@ -64,6 +66,7 @@ static void timer_sync(int current,int *old,uint64_t *due,uint64_t unit) {
 }
 void probe_machine_reset(void) {
  probe_now=probe_instructions=cpu_fraction=0;probe_idle=probe_failed=0;probe_error[0]=0;
+ probe_mode_reset();
  mem_reset(config.mem_size,config.vram_size);memset(vram,0,8*1024*1024);
  cp15_reset(machine.cpu_model);memset(&arm,0,sizeof(arm));arm_reset(machine.cpu_model);
  keyboard_reset();iomd_reset(machine.iomd_type);reseti2c(machine.i2c_devices);cmos_init();cmos_reset();
@@ -91,6 +94,7 @@ void probe_machine_close(void) {
 void probe_advance(uint64_t target) {
  probe_sound_step();
  while(probe_now<target) {
+  probe_keyboard_step();
   if(poll_period!=probe_disc_period_us) {poll_period=probe_disc_period_us;next_poll=probe_now+(uint64_t)poll_period*1000;}
   timer_sync(kcallback,&old_k,&next_keyboard,2500);
   timer_sync(mcallback,&old_m,&next_mouse,1000);
@@ -100,7 +104,7 @@ void probe_advance(uint64_t target) {
   uint64_t phase=probe_now%500;
   if(iomd.t0.in_latch) {uint64_t d=probe_now+(uint64_t)(iomd.t0.counter+1)*500-phase;if(d<stop)stop=d;}
   if(iomd.t1.in_latch) {uint64_t d=probe_now+(uint64_t)(iomd.t1.counter+1)*500-phase;if(d<stop)stop=d;}
-  uint64_t ds[]={target,next_keyboard,next_mouse,next_fdc,next_ide,next_poll,probe_sound_due};
+  uint64_t ds[]={target,next_keyboard,next_mouse,next_fdc,next_ide,next_poll,probe_sound_due,probe_keyboard_due};
   for(unsigned i=0;i<sizeof(ds)/sizeof(ds[0]);i++) if(ds[i]<stop)stop=ds[i];
   if(stop<probe_now)fatal("Past scheduler deadline");
   uint64_t credit=(stop-probe_now)*probe_mips+cpu_fraction;

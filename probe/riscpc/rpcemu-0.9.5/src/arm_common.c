@@ -18,6 +18,7 @@
   Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 /* ARCDROID-PROBE BEGIN: disposable unit P modifications; see probe/riscpc/README.md. */
+#include "probe.h" /* ARCDROID-PROBE: passive numeric boot tracing. */
 
 
 /* arm_common.c - sections of code that are shared between the interpreted and dynarec builds */
@@ -579,6 +580,7 @@ opSWI(uint32_t opcode)
 	} else if (swinum == SWI_OS_CallASWIR12) {
 		swinum = arm.reg[12] & 0xdffff;
 	}
+    probe_observe_swi(swinum); /* ARCDROID-PROBE: passive numeric mode requests. */
 
 	/* Intercept RISC OS Portable SWIs to enable RPCEmu to sleep when
 	   RISC OS is idle */

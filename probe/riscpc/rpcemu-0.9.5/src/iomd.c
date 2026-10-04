@@ -18,6 +18,7 @@
   Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 /* ARCDROID-PROBE BEGIN: disposable unit P modifications; see probe/riscpc/README.md. */
+#include "probe.h" /* ARCDROID-PROBE: passive boot-device trace. */
 
 
 /* IOMD emulation */
@@ -207,6 +208,7 @@ static IOMDType iomd_type; /**< The current type of IOMD we're emulating */
 
 static int sndon = 0;
 static int flyback=0;
+static uint32_t probe_cmos_gate; /* ARCDROID-PROBE: board output latch. */
 
 static uint32_t old_timer_ticks;
 
@@ -822,6 +824,10 @@ iomd_read(uint32_t addr)
  * bit 7 is cmos reset bit (active high) TODO not sure of interpretation
  * bit 8 is 16 bit sound (active low) else 8 bit (high)
  */
+/* ARCDROID-PROBE: LK5 unprotected; only the reset gate is writable here.
+ * Firmware verifies this bit before performing a Delete/R power-on reset.
+ * Button inputs, VGA monitor ID and 16-bit sound presence remain inputs. */
+void iomd_mouse_buttons_write(uint32_t value) { probe_cmos_gate=value&0x80; }
 uint32_t
 iomd_mouse_buttons_read(void)
 {
@@ -858,7 +864,7 @@ iomd_mouse_buttons_read(void)
 	   return 0 to indicate bit */
 
 	/* Invert the button values */
-	return temp ^ 0x70; // bit 4 5 and 6
+	return (temp ^ 0x70) | probe_cmos_gate; /* ARCDROID-PROBE */
 }
 
 /**
@@ -873,6 +879,7 @@ void
 iomd_reset(IOMDType type)
 {
         memset(&iomd, 0, sizeof(iomd));
+        probe_cmos_gate=0; /* ARCDROID-PROBE: power-on output latch. */
 	assert(type == IOMDType_IOMD || type == IOMDType_ARM7500 || type == IOMDType_ARM7500FE || type == IOMDType_IOMD2);
 	iomd_type = type;
 

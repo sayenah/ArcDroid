@@ -144,6 +144,8 @@ extern void iomd_end(void);
 extern uint32_t iomd_read(uint32_t addr);
 extern void iomd_write(uint32_t addr, uint32_t val);
 extern uint32_t iomd_mouse_buttons_read(void);
+/* ARCDROID-PROBE: unprotected board's writable CMOS reset gate, bit 7. */
+void iomd_mouse_buttons_write(uint32_t value);
 extern void iomd_flyback(int flyback_new);
 
 extern void gentimerirq(uint64_t nsec_timer);

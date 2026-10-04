@@ -36,6 +36,8 @@
 #include "rpcemu.h"
 #include "cmos.h"
 #include "ide_probe.h"
+#include "arcdroid_core.h" /* ARCDROID-PROBE: baseline digest. */
+#include "probe.h" /* ARCDROID-PROBE: passive boot writes. */
 
 #if 0
 #define dbgprintf(x...) { fprintf(stderr, x); }
@@ -176,7 +178,26 @@ cmos_update_checksum(void)
 /**
  * Load CMOS data from cmos.ram file on file system
  */
-void cmos_init(void) { memset(cmosram, 0, sizeof(cmosram)); }
+/* ARCDROID-PROBE: firmware-generated, caller-verified cold baseline. */
+int probe_cmos_factory;
+static uint8_t probe_cmos_baseline[256];
+void probe_cmos_configure(const char *path, const char *sha1, int factory)
+{
+    probe_cmos_factory = factory;
+    memset(probe_cmos_baseline, 0, sizeof(probe_cmos_baseline));
+    if (!strcmp(path, "none")) return; /* Authored tests or factory capture. */
+    if (factory) fatal("Factory reset must begin with empty CMOS");
+    FILE *f = fopen(path, "rb");
+    if (!f) fatal("CMOS baseline open failed");
+    size_t n = fread(probe_cmos_baseline, 1, 256, f);
+    int tail = fgetc(f), bad = ferror(f);
+    int closed = fclose(f);
+    if (n != 256 || tail != EOF || bad || closed) fatal("CMOS baseline read/size failed");
+    char hash[41]; arc_sha1_hex(probe_cmos_baseline, 256, hash);
+    if (strcmp(hash, sha1)) fatal("CMOS baseline fingerprint refused");
+}
+void probe_cmos_snapshot(uint8_t out[256]) { memcpy(out, cmosram, 256); }
+void cmos_init(void) { memcpy(cmosram, probe_cmos_baseline, sizeof(cmosram)); }
 
 /**
  * called on emulated machine reset, apply changes that vary with machine changes
@@ -184,6 +205,8 @@ void cmos_init(void) { memset(cmosram, 0, sizeof(cmosram)); }
 void
 cmos_reset(void)
 {
+    /* ARCDROID-PROBE: firmware owns all configuration during factory reset. */
+    if (probe_cmos_factory) return;
 	/* Dynamically update CMOS settings */
 	cmos_update_settings();
 
@@ -238,6 +261,8 @@ pcf8583_write(void *dev, uint8_t data)
 		          data, pcf->reg_address);
 
 		cmosram[pcf->reg_address] = data;
+        /* ARCDROID-PROBE */
+        if(probe_boot_log&&probe_now<60000000000ULL)fprintf(probe_boot_log,"%llu,cmos_write,%02x,%02x\n",(unsigned long long)probe_now,pcf->reg_address,data);
 
 		// RISC OS updates the checksum byte after any change, so if
 		// the write is to the RISC OS checksum byte, save the data

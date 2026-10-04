@@ -388,6 +388,8 @@ mem_phys_read8(uint32_t addr)
 static void
 mem_phys_write32(uint32_t addr, uint32_t val)
 {
+    /* ARCDROID-PROBE: board CMOS reset-protection output, not a CMOS value. */
+    if(addr==0x03310000&&machine.iomd_type==IOMDType_IOMD){iomd_mouse_buttons_write(val);return;}
 	addr &= phys_space_mask;
 
 	switch (addr & (phys_space_mask & 0xff000000)) { /* Select in 16MB chunks */
@@ -497,6 +499,8 @@ mem_phys_write32(uint32_t addr, uint32_t val)
 static void
 mem_phys_write8(uint32_t addr, uint8_t val)
 {
+    /* ARCDROID-PROBE: byte access to the same board latch. */
+    if(addr==0x03310000&&machine.iomd_type==IOMDType_IOMD){iomd_mouse_buttons_write(val);return;}
 	addr &= phys_space_mask;
 
 	switch (addr & (phys_space_mask & 0xff000000)) { /* Select in 16MB chunks */

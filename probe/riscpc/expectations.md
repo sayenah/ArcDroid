@@ -1,5 +1,19 @@
 # Initial mechanism gate — independent expected behavior
 
+Run-3 cold-state expectations: factory capture starts with all 256 CMOS bytes
+zero and a machine reset restores exactly those zeros. An ordinary Space
+switch held through a PS/2 FF reset must produce FA at 40 us, AA at 5.04 ms,
+then make 29 at 5.09 ms after the guest consumes POR. F3 followed by parameter
+7F acknowledges each byte, sets a 1000 ms first-repeat delay and 500 ms repeat
+period. A repeat is emitted through the PS/2 queue at its virtual deadline,
+with the ordinary 50 us serial-delivery delay. Release and machine reset
+cancel repetition. These expectations are stated independently of a firmware
+reset result; no Delete-specific device behavior is permitted.
+The unprotected RiscPC board latch at physical 03310000 powers on at 70 with
+unpressed buttons, VGA ID low and 16-bit sound presence low. Byte write FF
+reads F0 (only bit 7 is writable); word write zero reads 70. Select plus a
+bit-7 write reads B0, preserving active-low buttons. Reset restores 70.
+
 Project-authored tests; no firmware or game data. These expectations follow ARM MMU descriptors and IOMD/VIDC programming, rather than extracting a golden result from the emulator. Cross-platform equality remains required after the host mechanism gate. The cases below are independently specified before their tests.
 
 * Domain 3/client/AP2: user read succeeds, user write faults with FSR `0x3d`, FAR equal to the requested address; supervisor write succeeds. The same outcome must hold after a cached successful translation, through an installed direct pointer and through user transfers in supervisor mode.
@@ -44,3 +58,16 @@ bytes; it reads the seven result bytes through the ordinary FIFO.
 * Eject in the middle of a read completes not-found; reset cancels without
   retaining DMA/IRQ/data or command callbacks. Advancing further cannot
   deliver the cancelled record or commit a partial write.
+# Passive mode observer
+
+An authored section maps VA 00200000 to six independently specified words
+at PA 10100000 (1, 640, 480, 3, 60, FFFFFFFF). An X OS_ScreenMode request must log all six words; an
+unmapped selector must log zero words. Neither request may alter guest
+registers, event/abort state, FAR/FSR or the translation-cache miss count.
+The same selector is logged with the translation table in fitted VRAM.
+This is a diagnostic observer, not a guest memory access.
+
+Public lifecycle tests refuse a 255-byte CMOS, a mismatched digest, and a
+factory-reset request supplying a nonempty baseline. An independently
+hashed 256-byte authored zero image is accepted. Firmware loads without a
+factory-generated baseline are refused; authored tests are exempt.
