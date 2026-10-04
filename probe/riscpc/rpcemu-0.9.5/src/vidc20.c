@@ -140,7 +140,7 @@ initvideo(void)
 	current_sizex = -1;
 	current_sizey = -1;
 	memset(&vidc, 0, sizeof(vidc));
-	probe_hcr=792; probe_vcr=499; probe_fsyn=0; probe_con=0;
+	probe_hcr=792; probe_vcr=498; probe_fsyn=0; probe_con=0; /* ARCDROID-PROBE: 500-line reset timing, VCR=N-2. */
 	memset(&thr, 0, sizeof(thr));
 	memset(dirtybuffer1, 0xff, sizeof(dirtybuffer1));
 	memset(dirtybuffer2, 0xff, sizeof(dirtybuffer2));
@@ -1059,7 +1059,9 @@ uint64_t probe_video_period(void) {
   den = (probe_fsyn & 63) + 1;
  }
  den *= ((probe_con >> 2) & 7) + 1;
- uint64_t period = ((uint64_t)(probe_hcr + 8) * (probe_vcr + 1) * 1000000000 * den) / num;
+ /* ARCDROID-PROBE: ARM VIDC20 4.1.15 / ARM7500 DDI0050C 9.16:
+  * progressive N rasters are encoded N-2, not N-1. */
+ uint64_t period = ((uint64_t)(probe_hcr + 8) * (probe_vcr + 2) * 1000000000 * den) / num;
  if (period < 1000000 || period > 100000000) fatal("Unsupported video period");
  return period;
 }
@@ -1069,7 +1071,7 @@ const uint32_t *probe_video_pixels(unsigned *w, unsigned *h) {
  return thr.bitmap;
 }
 uint64_t probe_video_blank_ns(void) {
- unsigned total=probe_vcr+1;
+ unsigned total=probe_vcr+2; /* ARCDROID-PROBE: same N-2 encoding. */
  int active=vidc.vder-vidc.vdsr;
  unsigned blank=active>0&&(unsigned)active<=total?total-(unsigned)active:total;
  return probe_video_period()*blank/total;

@@ -38,6 +38,7 @@
 #include "ide_probe.h"
 #include "arcdroid_core.h" /* ARCDROID-PROBE: baseline digest. */
 #include "probe.h" /* ARCDROID-PROBE: passive boot writes. */
+#include "media.h" /* ARCDROID-PROBE: attached helper drive description. */
 
 #if 0
 #define dbgprintf(x...) { fprintf(stderr, x); }
@@ -108,7 +109,7 @@ cmos_update_settings(void)
 {
 	/* Generated ADFS logical byte 135: one floppy, optional one IDE drive.
 	 * Logical 189 timings mirror ArcDroid's accepted live IDE configuration. */
-	cmosram[199]=(cmosram[199]&~0xc7u)|1u|(probe_ide_enabled?0x40u:0u);
+	cmosram[199]=(cmosram[199]&~0xc7u)|(probe_helper_enabled?2u:1u)|(probe_ide_enabled?0x40u:0u); /* ARCDROID-PROBE: attached boot helper drive description only. */
 	if(probe_ide_enabled)cmosram[253]=0x0a;
 
 	time_t now = 946684800;

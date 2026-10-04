@@ -1,0 +1,4 @@
+/* ArcDroid project-authored boot assets; generated from boot/ by CMake. */
+static const char probe_mdf[] = "@PROBE_MDF@";
+static const char probe_boot_obey[] = "@PROBE_BOOT_OBEY@";
+static const char probe_boot_env[] = "@PROBE_BOOT_ENV@";

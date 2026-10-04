@@ -24,6 +24,8 @@ static char out_dir[1024];
 typedef struct {uint64_t ns;char verb[24];int a,b;char tag[64];} Event;
 static Event script[65536];
 static unsigned script_count,script_at;
+static Event boot_script[256];
+static unsigned boot_count,boot_at;
 static const struct retro_variable options[]={
  {"rpcprobe_model","Model; SA110|ARM710|ARM610|A7000"},
  {"rpcprobe_rate","Million instructions per emulated second; 100|20|35|150|200|250|300"},
@@ -77,7 +79,39 @@ static void script_load(const char *name) {
  }
  if(ferror(f)||fclose(f))fatal("Script read failure");
 }
+/* A general helper invocation, owned by launch machinery, never a replay
+ * command. Fixed reset-origin virtual timestamps, normal PS/2 keyboard path.
+ * All private title input begins after 26 seconds; factory/authored excluded.
+ */
+static void boot_key(uint64_t ns,unsigned scan) {
+ if(boot_count+2>256)fatal("Boot input bound");
+ boot_script[boot_count++]=(Event){.ns=ns,.verb="key_down",.a=(int)scan};
+ boot_script[boot_count++]=(Event){.ns=ns+40000000,.verb="key_up",.a=(int)scan};
+}
+static void boot_load(void) {
+ boot_count=boot_at=0;if(!probe_helper_enabled)return;
+ boot_key(UINT64_C(14000000000),7); /* F12, normal desktop command prompt */
+ const char *text=probe_ide_enabled?"obey adfs::1.$.!boot 1":"obey adfs::1.$.!boot 0";
+ const char *letters="abcdefghijklmnopqrstuvwxyz";
+ const unsigned scans[]={0x1c,0x32,0x21,0x23,0x24,0x2b,0x34,0x33,0x43,0x3b,0x42,0x4b,0x3a,0x31,0x44,0x4d,0x15,0x2d,0x1b,0x2c,0x3c,0x2a,0x1d,0x22,0x35,0x1a};
+ uint64_t ns=UINT64_C(15000000000);
+ for(const char *p=text;*p;p++) {
+  const char *l=strchr(letters,*p);unsigned scan=l?scans[l-letters]:*p==' '?0x29:*p=='1'||*p=='!'?0x16:*p=='0'?0x45:*p=='.'?0x49:*p==':'?0x4c:*p=='$'?0x25:0;
+  if(!scan)fatal("Boot text scan unavailable");
+  int shift=*p==':'||*p=='$'||*p=='!';
+  if(shift)boot_script[boot_count++]=(Event){.ns=ns,.verb="key_down",.a=0x12};
+  boot_key(ns+10000000,scan);
+  if(shift)boot_script[boot_count++]=(Event){.ns=ns+60000000,.verb="key_up",.a=0x12};
+  ns+=100000000;
+ }
+ boot_key(ns+200000000,0x5a);boot_key(UINT64_C(25000000000),0x5a);
+ for(unsigned i=0;i<script_count;i++)if(script[i].ns<UINT64_C(26000000000)&&strcmp(script[i].verb,"checkpoint"))fatal("Replay overlaps general helper boot input");
+}
 static void deliver(void) {
+ while(boot_at<boot_count&&boot_script[boot_at].ns<=probe_now) {
+  Event *e=&boot_script[boot_at++];key((unsigned)e->a,!strcmp(e->verb,"key_down"));
+  if(events&&fprintf(events,"boot-%u,%"PRIu64",%"PRIu64",%s,%d,0,0,%08x\n",boot_at,e->ns,probe_now,e->verb,e->a,PC)<0)fatal("Boot log write failure");
+ }
  while(script_at<script_count&&script[script_at].ns<=probe_now) {
   Event *e=&script[script_at++];
   if(!strcmp(e->verb,"key_down"))key((unsigned)e->a,1);
@@ -99,7 +133,7 @@ static void deliver(void) {
 }
 /* Host keys and pad mappings arbitrate into one normal set-2 device. */
 static void keyboard_callback(bool down,unsigned code,uint32_t c,uint16_t mods) {
- (void)c;(void)mods;if(replay||!loaded)return;
+ (void)c;(void)mods;if(replay||!loaded||(probe_helper_enabled&&probe_now<UINT64_C(26000000000)))return;
  static const struct {unsigned host,scan;} mapping[]={
  {RETROK_a,0x1c},{RETROK_b,0x32},{RETROK_c,0x21},{RETROK_d,0x23},{RETROK_e,0x24},{RETROK_f,0x2b},
  {RETROK_g,0x34},{RETROK_h,0x33},{RETROK_i,0x43},{RETROK_j,0x3b},{RETROK_k,0x42},{RETROK_l,0x4b},
@@ -153,6 +187,7 @@ RETRO_API bool retro_load_game(const struct retro_game_info *g) {
  probe_ide_enabled=!strcmp(option("rpcprobe_ide"),"enabled");
  int authored=!strcmp(option("rpcprobe_authored"),"enabled");
  int factory=!strcmp(option("rpcprobe_cmos_factory"),"enabled");
+ probe_helper_enabled=!authored&&!factory;
  if(!authored&&!factory&&!strcmp(option("rpcprobe_cmos_baseline"),"none"))fatal("Firmware session requires factory-reset CMOS baseline");
  probe_cmos_configure(option("rpcprobe_cmos_baseline"),option("rpcprobe_cmos_sha1"),factory);
  machine_live=1;probe_machine_init(m,rate);
@@ -168,6 +203,7 @@ RETRO_API bool retro_load_game(const struct retro_game_info *g) {
   for(size_t at=n;at<ROMSIZE;at+=n)memcpy((uint8_t *)rom+at,rom,n);
  }
  script_load(option("rpcprobe_script"));
+ boot_load();
  const char *out=option("rpcprobe_output");out_dir[0]=0;
  if(strcmp(out,"none")) {if(strlen(out)>=sizeof(out_dir))fatal("Output directory bound");strcpy(out_dir,out);}
  csv=output_file("frames.csv");events=output_file("events.csv");
@@ -197,7 +233,7 @@ RETRO_API void retro_run(void) {
  uint64_t start=probe_wall_ns(),ins=probe_instructions;
  probe_audio_count=0;
  if(input_poll)input_poll();
- if(!replay&&input_state) {
+ if(!replay&&input_state&&(!probe_helper_enabled||probe_now>=UINT64_C(26000000000))) {
   const unsigned buttons[]={RETRO_DEVICE_ID_JOYPAD_UP,RETRO_DEVICE_ID_JOYPAD_DOWN,RETRO_DEVICE_ID_JOYPAD_LEFT,RETRO_DEVICE_ID_JOYPAD_RIGHT,RETRO_DEVICE_ID_JOYPAD_A,RETRO_DEVICE_ID_JOYPAD_B,RETRO_DEVICE_ID_JOYPAD_X};
   const unsigned codes[]={0x175,0x172,0x16b,0x174,0x29,0x5a,0x76};
   for(unsigned i=0;i<7;i++) {pad_held[codes[i]]=input_state(0,RETRO_DEVICE_JOYPAD,0,buttons[i])!=0;key(codes[i],pad_held[codes[i]]||keyboard_held[codes[i]]);}
@@ -210,6 +246,7 @@ RETRO_API void retro_run(void) {
   if(flyback_fall<=probe_now){iomd_flyback(0);flyback_fall=UINT64_MAX;}
   deliver();uint64_t target=next_frame;
   if(script_at<script_count&&script[script_at].ns<target)target=script[script_at].ns;
+  if(boot_at<boot_count&&boot_script[boot_at].ns<target)target=boot_script[boot_at].ns;
   if(flyback_fall<target)target=flyback_fall;
   probe_advance(target);
  }
@@ -233,7 +270,7 @@ RETRO_API void retro_run(void) {
 }
 RETRO_API void retro_reset(void) {
  if(!loaded)return;clear_held();probe_can_escape=1;
- if(!setjmp(probe_escape)) {probe_machine_reset();script_at=0;frame_period=probe_video_period();next_frame=frame_period;flyback_fall=UINT64_MAX;}
+ if(!setjmp(probe_escape)) {probe_machine_reset();script_at=boot_at=0;frame_period=probe_video_period();next_frame=frame_period;flyback_fall=UINT64_MAX;}
  probe_can_escape=0;
 }
 RETRO_API void retro_unload_game(void) {

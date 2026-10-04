@@ -560,9 +560,9 @@ fdc_callback(void)
 			fdcsend(fdc.st0);
 			fdcsend(fdc.st1);
 			fdcsend(fdc.st2);
-			fdcsend(fdc.track);
+			fdcsend(fdc.track + (fdc.sector > fdc.parameters[5])); /* ARCDROID-PROBE: 8272 TC/EOT result CHRN, MT=0. */
 			fdcsend((fdc.parameters[0] & 4) ? 1 : 0);
-			fdcsend(fdc.sector);
+			fdcsend(fdc.sector > fdc.parameters[5] ? 1 : fdc.sector); /* ARCDROID-PROBE: next cylinder starts at logical R=1. */
 			fdcsend(fdc.parameters[4]);
 			fdc.status = 0xD0;
 			fdc_irq_raise();
@@ -584,9 +584,9 @@ fdc_callback(void)
 			fdcsend(fdc.st0);
 			fdcsend(fdc.st1);
 			fdcsend(fdc.st2);
-			fdcsend(fdc.track);
+			fdcsend(fdc.track + (fdc.sector > fdc.parameters[5])); /* ARCDROID-PROBE: 8272 TC/EOT result CHRN, MT=0. */
 			fdcsend((fdc.parameters[0] & 4) ? 1 : 0);
-			fdcsend(fdc.sector);
+			fdcsend(fdc.sector > fdc.parameters[5] ? 1 : fdc.sector); /* ARCDROID-PROBE: next cylinder starts at logical R=1. */
 			fdcsend(fdc.parameters[4]);
 			fdc.status = 0xD0;
 			fdc_irq_raise();
@@ -760,7 +760,7 @@ fdc_dma_read(uint32_t addr)
 	fdc.data_ready = 0;
 	if (addr == 0x302a000) {
 		fdc.tc = 1;
-		fdc.st0        = 0;
+		fdc.st0 = fdc.drive | ((fdc.side & 1) << 2); /* ARCDROID-PROBE: terminal count retains unit/head. */
 	}
 	return fdc.dmadat;
 }
@@ -771,7 +771,7 @@ fdc_dma_write(uint32_t addr, uint8_t val)
 	fdc_dma_lower();
 	if (addr == 0x302a000) {
 		fdc.tc = 1;
-		fdc.st0        = 0;
+		fdc.st0 = fdc.drive | ((fdc.side & 1) << 2); /* ARCDROID-PROBE: terminal count retains unit/head. */
 	}
 	fdc.written = 1;
 	fdc.dmadat = val;

@@ -14,7 +14,7 @@
 #define BUFFER UINT32_C(0x10040000)
 #define RESULT UINT32_C(0x10050000)
 #define DONE UINT32_C(0x1005fff0)
-static unsigned at,checks,failures;
+static unsigned at,checks,failures,guest_drive;
 #define CHECK(label,condition) do {checks++;if(!(condition)){fprintf(stderr,"FAIL %s line=%u\n",label,__LINE__);failures++;}}while(0)
 static void word(uint32_t x) {rom[at++]=x;}
 static void load(unsigned r,uint32_t x) {word(0xe59f0000|(r<<12));word(0xea000000);word(x);}
@@ -24,12 +24,12 @@ static void wait_result(void) {
  load(0,MSR);unsigned loop=at;word(0xe5901000);word(0xe3110040);branch(0,loop);
 }
 static void program(unsigned cmd,unsigned c,unsigned h,unsigned r,unsigned n,unsigned eot,unsigned rate,unsigned bytes,int writing) {
- memset(rom,0,ROMSIZE);at=0;store(DOR,0x1c);store(CCR,rate);
+ memset(rom,0,ROMSIZE);at=0;store(DOR,guest_drive?0x2d:0x1c);store(CCR,rate);
  load(4,5000);unsigned delay=at;word(0xe2544001);branch(1,delay); /* >=100us at 100M */
  store(FIFO,8);wait_result();load(0,FIFO);word(0xe5d01000);word(0xe5d01000);
  store(FIFO,cmd);
- if((cmd&31)==10)store(FIFO,h<<2);
- else {unsigned p[]={h<<2,c,h,r,n,eot,0x1b,0x80};for(unsigned i=0;i<8;i++)store(FIFO,p[i]);}
+ if((cmd&31)==10)store(FIFO,(h<<2)|guest_drive);
+ else {unsigned p[]={(h<<2)|guest_drive,c,h,r,n,eot,0x1b,0x80};for(unsigned i=0;i<8;i++)store(FIFO,p[i]);}
  load(4,bytes);unsigned jump_result=0;
  if(bytes) {
   load(0,FIQ_PORT);load(2,BUFFER);load(5,DMA);load(6,TC);load(7,MSR);load(1,0x55);
@@ -93,6 +93,28 @@ static void cancellation_tests(void) {
  CHECK("reset-cancels-write",!im.overlay->data[0]&&!(iomd.fiq.status&1)&&fdccallback==0);trace("reset");
  probe_media_close();arc_jfd_free(&im);
 }
+static void helper_tests(void) {
+ guest_drive=1;probe_helper_enabled=1;
+ probe_machine_reset();memset(rom,0,ROMSIZE);at=0;store(DOR,0x2d);unsigned loop=at;branch(14,loop);advance(201000000);
+ CHECK("helper-index-without-command",(iomd.irqa.status&IOMD_IRQA_FLOPPY_INDEX)!=0);
+ probe_machine_reset();program(0x4a,0,0,0,1,0,2,0,0);advance(210000000);
+ CHECK("helper-read-id-CHRN",done()&&result()[0]==1&&result()[1]==0&&result()[2]==0&&result()[3]==0&&result()[4]==0&&result()[5]==1&&result()[6]==1);trace("helper-id");
+ probe_machine_reset();program(0x46,0,0,2,1,2,2,256,0);advance(250000000);
+ CHECK("helper-root-complete",done()&&remaining()==0&&result()[0]==1&&result()[1]==0&&result()[3]==1&&result()[4]==0&&result()[5]==1&&result()[6]==1);
+ CHECK("helper-authored-old-root",buffer()[0]==1&&!memcmp(buffer()+1,"Hugo",4)&&(buffer()[5]&127)=='!'&&(buffer()[6]&127)=='B'&&!memcmp(buffer()+7,"oot",3)&&(buffer()[31]&127)=='M'&&(buffer()[32]&127)=='u'&&!memcmp(buffer()+33,"ltisync",7));trace("helper-root");
+ probe_machine_reset();program(0x46,0,0,7,1,8,2,512,0);advance(250000000);
+ CHECK("helper-normal-boot-data",done()&&remaining()==0&&result()[0]==1&&result()[1]==0&&strstr((char *)buffer(),"LoadModeFile ADFS::1.$.Multisync")!=NULL);
+ CHECK("helper-multi-sector-boot-environment",result()[3]==1&&result()[4]==0&&result()[5]==1&&result()[6]==1&&strstr((char *)buffer(),"BASIC -quit ADFS::1.$.BootEnv"));trace("helper-boot");
+ probe_machine_reset();program(0x46,0,0,7,1,15,2,512,0);advance(250000000);
+ CHECK("helper-TC-before-EOT",done()&&remaining()==0&&result()[0]==1&&result()[1]==0&&result()[2]==0&&result()[3]==0&&result()[4]==0&&result()[5]==9&&result()[6]==1);trace("helper-TC-before-EOT");
+ probe_machine_reset();program(0x46,0,0,16,1,16,2,256,0);advance(450000000);
+ CHECK("helper-out-of-range-sector-not-ID",done()&&remaining()==256&&result()[1]!=0&&result()[0]==0x41);trace("helper-sector-16");
+ probe_machine_reset();program(0x45,0,0,7,1,7,2,256,1);advance(250000000);
+ CHECK("helper-write-refused",done()&&result()[1]==2&&remaining()==256&&!(iomd.fiq.status&1));trace("helper-WP");
+ probe_machine_reset();program(0x46,0,0,7,1,7,2,256,0);advance(88000000);CHECK("helper-read-in-flight",!done());fdc_reset();advance(450000000);
+ CHECK("helper-reset-cancels",!done()&&fdccallback==0&&!(iomd.fiq.status&1));
+ probe_helper_enabled=0;guest_drive=0;
+}
 int main(void) {
  probe_machine_init(Model_RPCSA110,100);normal_tests();
  failure_test("wrong-size",0x46,0,2,2,2,0,1024,0,4,0,0);
@@ -103,5 +125,5 @@ int main(void) {
  failure_test("WP",0x45,0,3,2,3,0,1024,1,2,0,0);
  failure_test("deleted-write",0x49,0,3,2,2,0,1024,1,2,0,0);
  failure_test("short-write",0x45,0,3,2,2,0,32,1,0x10,0,32);
- cancellation_tests();probe_machine_close();printf("controller checks=%u failures=%u\n",checks,failures);return failures?1:0;
+ cancellation_tests();helper_tests();probe_machine_close();printf("controller checks=%u failures=%u\n",checks,failures);return failures?1:0;
 }

@@ -17,4 +17,7 @@ bool probe_media_ejected(void);bool probe_media_eject(bool);
 bool probe_media_select(unsigned);
 void probe_media_swap(unsigned);
 void probe_media_test_attach(ArcJfdImage *image);
+extern int probe_helper_enabled;
+void probe_helper_init(void);void probe_helper_stop(void);void probe_helper_poll(int);
+void probe_helper_request(int,unsigned,unsigned,unsigned,int,ProbeDiscRequest);
 #endif

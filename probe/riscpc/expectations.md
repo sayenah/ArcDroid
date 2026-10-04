@@ -71,3 +71,30 @@ Public lifecycle tests refuse a 255-byte CMOS, a mismatched digest, and a
 factory-reset request supplying a nonempty baseline. An independently
 hashed 256-byte authored zero image is accepted. Firmware loads without a
 factory-generated baseline are refused; authored tests are exempt.
+
+Run-4 authored helper expectations (ordinary guest FDC commands on drive 1):
+Video timing correction expectations come from ARM VIDC20 data sheet 4.1.15
+and ARM7500 DDI0050C 9.16: progressive N lines are programmed as VCR=N-2.
+At 8 MHz, HCR=504 and VCR=310 produce 512*312/8000000 = 19,968,000 ns;
+with 256 displayed lines, 56 blank lines take 3,584,000 ns. These expectations
+apply to all four model mechanisms, independently of any private MDF/game.
+
+A spinning drive-1 helper produces an index pulse at 200 ms even with no
+FDC read command (ADFS waits for index before identification). READ ID returns C=H=0, R=1 at the first 12.5 ms slot after command issue,
+N=1 (256 bytes), MFM DD. Reading sector 2 returns the project-authored old
+FileCore root (`Hugo`, !Boot, Multisync entries). Sector 7 contains an Obey
+file invoking `LoadModeFile ADFS::1.$.Multisync`; a two-sector READ DATA of
+sectors 7..8 transfers all 512 bytes and includes the ordinary BASIC invocation
+of the project-authored BootEnv startup. Its Choices/Tasks declarations are
+separately exercised by the title-neutral firmware query. Intel 8272 READ DATA result table (MT=0): TC
+at EOT=8 returns C=1,H=0,R=1,N=1; TC after sector 8 before EOT=15 returns
+C=0,H=0,R=9,N=1. Source: Intel 8272 specification reproduced at
+https://cpctech.cpcwiki.de/docs/i8272/8272sp.htm . This distinguishes media
+CHRN during transfer (7,8) from the controller's post-transfer result ID.
+A WRITE DATA command ends
+with ST1 write-protect, transfers no byte and leaves DMA clear. Hardware
+FDC reset cancels the transfer with no later DMA or completion. No private
+firmware/content is used for these assertions. Successful terminal-count
+results retain ST0 unit=1 and head=0. READ DATA R=16 is outside the authored
+0..15 sector set: not-found ST0=0x41, nonzero ST1, no DMA bytes; it must never
+be confused with READ ID's internal sentinel.

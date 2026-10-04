@@ -31,7 +31,7 @@ static void bridge_hc(void *p) {(void)p;fdc_headercrcerror();}
 static void bridge_wp(void *p) {(void)p;probe_media_refusals++;fdc_writeprotect();}
 static int bridge_get(int last,void *p) {(void)p;return fdc_getdata(last);}
 static void bridge_id(uint8_t c,uint8_t h,uint8_t r,uint8_t n,uint8_t a,uint8_t b,void *p) {(void)a;(void)b;(void)p;fdc_sectorid(c,h,r,n);}
-static void bridge_index(void *p) {(void)p;fdc_indexpulse();}
+static void bridge_index(void *p) {(void)p;if(selected==0&&motoron)fdc_indexpulse();}
 static void bridge_lost(void *p) {(void)p;fdc_probe_lostdata();}
 static PresentFdcOps fdc_ops={.data=bridge_data,.finishread=bridge_finish,.notfound=bridge_nf,.datacrcerror=bridge_dc,.headercrcerror=bridge_hc,.writeprotect=bridge_wp,.getdata=bridge_get,.sectorid=bridge_id,.indexpulse=bridge_index,.lostdata=bridge_lost};
 PresentFdcOps *probe_present_fdc=&fdc_ops;
@@ -89,13 +89,14 @@ void probe_media_open(const char *list,FILE *custody) {
  int bad=ferror(f),closed=fclose(f);if(bad||closed||!image_count)fatal("Media list read/empty failure");
  image_index=0;ejected=0;probe_media_reset();
 }
-void disc_stop(int d) {if(d==0&&probe_present_drives[0])probe_present_drives[0]->stop();empty_seeking=0;}
+void disc_stop(int d) {if(d==0&&probe_present_drives[0])probe_present_drives[0]->stop();if(d==1)probe_helper_stop();empty_seeking=0;}
 void probe_media_reset(void) {
  disc_stop(0);disc_stop(1);memset(tracks,0,sizeof(tracks));selected=0;empty_polls=0;
  memset(&request,0,sizeof(request));probe_requested_fm=0;probe_disc_period_us=32;
  jfd_init();probe_present_drives[0]=probe_present_drives[1]=NULL;
  if(!ejected&&mounted()&&!jfd_load(0,mounted()))fatal("JFD mount failed");
  probe_disc_changed[0]=probe_disc_changed[1]=1;
+ probe_helper_init();
 }
 void probe_media_close(void) {
  disc_stop(0);disc_stop(1);jfd_init();probe_present_drives[0]=probe_present_drives[1]=NULL;
@@ -124,17 +125,19 @@ static bool ready(int d) {return d==0&&!ejected&&probe_present_drives[0];}
 static void empty_search(void) {empty_seeking=1;empty_polls=0;}
 void disc_readsector(int d,int r,int c,int h,int den) {
  probe_media_reads++;active_drive=d;active_density=den;active_head=h;
- if(ready(d))probe_present_drives[0]->readsector(d,r,c,h,den);else empty_search();
+ if(d==1&&probe_helper_enabled)probe_helper_request(r,c,h,tracks[1],den,request);
+ else if(ready(d))probe_present_drives[0]->readsector(d,r,c,h,den);else empty_search();
 }
 void disc_writesector(int d,int r,int c,int h,int den) {
  active_drive=d;active_density=den;active_head=h;
  if(ready(d))probe_present_drives[0]->writesector(d,r,c,h,den,request.size_code<8?(int)(128u<<request.size_code):-2,request.deleted);else bridge_wp(NULL);
 }
-void disc_readaddress(int d,int c,int h,int den) {active_drive=d;active_density=den;active_head=h;if(ready(d))probe_present_drives[0]->readaddress(d,c,h,den);else empty_search();}
+void disc_readaddress(int d,int c,int h,int den) {active_drive=d;active_density=den;active_head=h;if(d==1&&probe_helper_enabled)probe_helper_request(-1,c,h,tracks[1],den,request);else if(ready(d))probe_present_drives[0]->readaddress(d,c,h,den);else empty_search();}
 void disc_format(int d,int c,int h,int den) {if(ready(d))probe_present_drives[0]->format(d,c,h,den);else bridge_wp(NULL);}
 void disc_poll(void) {
  (void)selected;
  if(!ejected&&probe_present_drives[0])probe_present_drives[0]->poll();
+ if(probe_helper_enabled)probe_helper_poll(selected==1&&motoron);
  if(empty_seeking&&(uint64_t)++empty_polls*probe_disc_period_us>=400000) {empty_seeking=0;fdc_notfound();}
 }
 

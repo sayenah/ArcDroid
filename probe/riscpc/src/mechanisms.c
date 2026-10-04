@@ -116,7 +116,7 @@ static void video_tests(void) {
  const unsigned widths[]={320,640,800},heights[]={256,480,600};
  for(unsigned mode=0;mode<3;mode++)for(unsigned rate=50;rate<=60;rate+=10) {
   probe_machine_reset();probe_authored_rom();unsigned total=rate==50?600:500;
-  writevidc20(0xe0000060);writevidc20(0xd0000000|(machine.model==Model_A7000?0x203:0));writevidc20(0x80000000|792);writevidc20(0x90000000|(total-1));
+  writevidc20(0xe0000060);writevidc20(0xd0000000|(machine.model==Model_A7000?0x203:0));writevidc20(0x80000000|792);writevidc20(0x90000000|(total-2));
   writevidc20(0x83000000);writevidc20(0x84000000|widths[mode]);writevidc20(0x93000000);writevidc20(0x94000000|heights[mode]);
   writevidc20(0x10000000);for(unsigned i=0;i<256;i++)writevidc20(i*0x010101);
   uint32_t base=machine.model==Model_A7000?0x10000000:0x02000000;
@@ -127,6 +127,13 @@ static void video_tests(void) {
   mem_write32(base,0x04040404);drawscr();pixels=probe_video_pixels(&w,&h);CHECK("DMA-dirty",pixels[0]==0xff040404);
   printf("video %ux%u %uHz period=%"PRIu64" hash=%016"PRIx64"\n",w,h,rate,probe_video_period(),probe_hash(UINT64_C(1469598103934665603),pixels,(size_t)w*h*4));
  }
+ /* Published TV envelope: 512 pixels * 312 lines / 8 MHz = 19.968 ms.
+  * ARM7500's 32 MHz reference uses FSYN 3/4 to obtain the same 24 MHz. */
+ writevidc20(0xe0000068);writevidc20(0xd0000000|(machine.model==Model_A7000?0x203:0));
+ writevidc20(0x800001f8);writevidc20(0x90000136);
+ writevidc20(0x93000000);writevidc20(0x94000100);
+ CHECK("TV-published-line-total",probe_video_period()==19968000);
+ CHECK("TV-published-blank-lines",probe_video_blank_ns()==3584000);
 }
 /* Video memory/pitch boundaries are independent of ordinary mode fixtures. */
 static void video_boundary_tests(void) {

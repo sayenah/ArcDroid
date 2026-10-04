@@ -5,6 +5,25 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 option(PROBE_SANITIZERS "ASan and UBSan on host" OFF)
 set(ROOT ${CMAKE_CURRENT_SOURCE_DIR}/../..)
 set(UP ${CMAKE_CURRENT_SOURCE_DIR}/rpcemu-0.9.5/src)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+ "${CMAKE_CURRENT_SOURCE_DIR}/boot/Multisync" "${CMAKE_CURRENT_SOURCE_DIR}/boot/!Boot" "${CMAKE_CURRENT_SOURCE_DIR}/boot/BootEnv")
+foreach(asset MDF BOOT_OBEY BOOT_ENV)
+ if(asset STREQUAL "MDF")
+  file(READ "${CMAKE_CURRENT_SOURCE_DIR}/boot/Multisync" PROBE_${asset})
+ elseif(asset STREQUAL "BOOT_OBEY")
+  file(READ "${CMAKE_CURRENT_SOURCE_DIR}/boot/!Boot" PROBE_${asset})
+ else()
+  file(READ "${CMAKE_CURRENT_SOURCE_DIR}/boot/BootEnv" PROBE_${asset})
+ endif()
+ string(REPLACE "\\" "\\\\" PROBE_${asset} "${PROBE_${asset}}")
+ string(REPLACE "\"" "\\\"" PROBE_${asset} "${PROBE_${asset}}")
+ if(asset STREQUAL "MDF")
+  string(REPLACE "\n" "\\n\"\n\"" PROBE_${asset} "${PROBE_${asset}}")
+ else()
+  string(REPLACE "\n" "\\r\"\n\"" PROBE_${asset} "${PROBE_${asset}}")
+ endif()
+endforeach()
+configure_file(src/boot_assets.h.in boot_assets.h @ONLY)
 add_compile_options(-ffunction-sections -fdata-sections)
 if(APPLE)
  add_link_options(-Wl,-dead_strip)
@@ -22,10 +41,10 @@ add_library(probe_engine STATIC
   ${UP}/arm.c ${UP}/arm_common.c ${UP}/cp15.c ${UP}/mem.c
   ${UP}/iomd.c ${UP}/vidc20.c ${UP}/keyboard.c ${UP}/cmos.c
   ${UP}/superio.c ${UP}/i8042.c ${UP}/fdc.c src/media.c src/jfd_presentation.c src/filecore_limits.c
-  src/machine.c src/mode_observer.c src/sound.c src/absent_devices.c src/ide_probe.c ${ROOT}/core/hash.c
+  src/machine.c src/mode_observer.c src/boot_helper.c src/sound.c src/absent_devices.c src/ide_probe.c ${ROOT}/core/hash.c
   ${ROOT}/core/jfd.c ${ROOT}/core/jfd_layout.c ${ROOT}/core/jfd_file_data.c
   ${ROOT}/core/launch_discovery.c ${ROOT}/core/install_disc.c)
-target_include_directories(probe_engine PUBLIC src ${UP} ${ROOT}/core ${ROOT}/libretro/include)
+target_include_directories(probe_engine PUBLIC src ${UP} ${ROOT}/core ${ROOT}/libretro/include ${CMAKE_CURRENT_BINARY_DIR})
 target_link_libraries(probe_engine PUBLIC probe_zlib)
 target_compile_definitions(probe_engine PUBLIC ARCDROID_PROBE=1 RELEASE_BUILD=1)
 target_compile_options(probe_engine PUBLIC -Wall -Wextra -fno-strict-aliasing -fvisibility=hidden)

@@ -74,3 +74,46 @@ the ignored `run/` directory. The current path-valued legacy options are
 for the headless runner. RetroArch's fixed system-directory configuration,
 Windows/Android qualification and complete AC-8/AC-9 tooling remain pending
 ordered AC-6 completion; do not use this README as their runbook.
+
+## General monitor boot (run-4 R4-1)
+
+Cold firmware sessions attach an immutable project-authored FileCore L helper
+on drive 1. `boot/!Boot` runs `LoadModeFile` on `boot/Multisync` using normal
+ADFS/FDC reads. CMake embeds these source assets; the MDF keeps LF lines and
+the Obey uses CR lines. The MDF header records published timing provenance.
+It describes a multisync display with TV-rate low geometries and standard
+VGA/SVGA desktops; ScreenModes derives each hardware-legal pixel depth.
+No third-party MDF, firmware patch or manually selected CMOS mode is used.
+
+The same Obey runs the authored numbered-text BASIC `BootEnv` through the
+guest's ordinary FileSwitch/IDE path. It creates `ADFS::4.$.Choices` and
+`Choices.Boot.Tasks`, sets the documented Choices variables and Boot directory,
+path and Tasks variables, and enumerates installed startup objects with
+OS_GBPB 9 before invoking each through normal `Filer_Run`. Enumeration is
+bounded to 256 objects; no workload names occur in the helper. This supplies
+session-owned general preferences and normal installer startup storage,
+with no supplied boot/resource bytes. Sources are the RISC OS
+[boot application](https://www.riscos.com/support/developers/prm/bootapp.html)
+and [FileSwitch](https://riscos.com/support/developers/prm/fileswitch.html) PRMs.
+The Obey parameter is 1 for an attached IDE, 0 otherwise; no IDE means MDF only.
+
+The core's general launch prefix uses the ordinary PS/2 keyboard: F12 at
+14 virtual seconds, `Obey ADFS::1.$.!Boot 1` at 15 s for IDE sessions, Return
+to desktop at 25 s.
+Its events are logged separately as `boot-N` rows. Private scripts must have
+no input before 26 s (origin/checkpoint-only events are allowed). All times
+remain relative to reset; the prefix runs again on reset. Physical input is
+ignored during this prefix and throughout scripted replay. This prefix and
+these assets are identical for all cold firmware/model/content sessions.
+Factory CMOS capture and synthetic authored ROMs omit the helper and prefix.
+The drive-description CMOS field reflects the attached second floppy; monitor
+configuration stays firmware-owned. A guest error or missing mode acceptance
+is a failed qualification, even if the runner footer says COMPLETE.
+
+For private sound inspection, the headless runner accepts `--wav=FILE`. It
+writes checked 48 kHz stereo signed-16 PCM and `FILE.csv` with callback sample
+counts, nonzero pairs, peaks and clipping counts. Callback and core CSV frame
+numbers are zero-based; numbered PNG captures use the completed-frame count
+(PNG 2500 corresponds to CSV frame 2499). This adds frontend I/O
+cost and is a diagnostic run, not performance acceptance evidence. Nonzero
+PCM alone does not establish correct audible game sound or frontend delivery.

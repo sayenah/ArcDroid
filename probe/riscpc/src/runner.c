@@ -21,6 +21,16 @@ static int failed;
 static double fps=60;static unsigned frame,w,h;
 static uint32_t *shot;
 static uint64_t limit_ns,emu_ns;
+static FILE *wave,*audio_stats;
+static uint64_t wave_pairs;
+static void le(uint8_t *p,uint32_t n) {p[0]=n;p[1]=n>>8;p[2]=n>>16;p[3]=n>>24;}
+static void wave_header(void) {
+ uint8_t header[44]={0};memcpy(header,"RIFF",4);le(header+4,(uint32_t)wave_pairs*4+36);
+ memcpy(header+8,"WAVEfmt ",8);le(header+16,16);header[20]=1;header[22]=2;
+ le(header+24,48000);le(header+28,48000*4);header[32]=4;header[34]=16;
+ memcpy(header+36,"data",4);le(header+40,(uint32_t)wave_pairs*4);
+ if(fwrite(header,1,sizeof(header),wave)!=sizeof(header))failed=1;
+}
 static uint64_t clock_ns(void) {
 #ifdef _WIN32
  LARGE_INTEGER c,f;QueryPerformanceCounter(&c);QueryPerformanceFrequency(&f);return (uint64_t)(c.QuadPart/f.QuadPart)*1000000000+(uint64_t)(c.QuadPart%f.QuadPart)*1000000000/f.QuadPart;
@@ -48,7 +58,18 @@ static void video(const void *p,unsigned x,unsigned y,size_t pitch) {
  shot=realloc(shot,(size_t)x*y*4);if(!shot)exit(2);w=x;h=y;
  for(unsigned r=0;r<y;r++)memcpy(shot+(size_t)r*x,(const uint8_t *)p+(size_t)r*pitch,(size_t)x*4);
 }
-static size_t audio(const int16_t *p,size_t n) {(void)p;return n;}
+static size_t audio(const int16_t *p,size_t n) {
+ if(!wave)return n;
+ if(n>16384||wave_pairs+n>(UINT32_MAX-36)/4) {failed=1;return 0;}
+ uint8_t bytes[16384*4];unsigned nonzero=0,clipped=0,peak=0;
+ for(size_t i=0;i<n;i++) {
+  if(p[i*2]||p[i*2+1])nonzero++;
+  if(p[i*2]==INT16_MIN||p[i*2]==INT16_MAX||p[i*2+1]==INT16_MIN||p[i*2+1]==INT16_MAX)clipped++;
+  for(unsigned ch=0;ch<2;ch++) {int s=p[i*2+ch];unsigned a=s<0?(unsigned)-s:(unsigned)s;if(a>peak)peak=a;uint16_t v=(uint16_t)s;bytes[i*4+ch*2]=v;bytes[i*4+ch*2+1]=v>>8;}
+ }
+ if(fwrite(bytes,4,n,wave)!=n||fprintf(audio_stats,"%u,%zu,%u,%u,%u\n",frame,n,nonzero,peak,clipped)<0) {failed=1;return 0;}
+ wave_pairs+=n;return n;
+}
 static void poll(void) {}
 static int16_t input(unsigned a,unsigned b,unsigned c,unsigned d) {(void)a;(void)b;(void)c;(void)d;return 0;}
 /* PNG: project-authored stored-DEFLATE encoder, RGB, no external dependency. */
@@ -67,11 +88,17 @@ static void png(const char *name) {
 }
 #define LOAD(ret,name,args) ret (*name)args=(ret (*)args)SYM(lib,#name);if(!name){fprintf(stderr,"Missing libretro symbol: %s\n",#name);return 2;}
 int main(int argc,char **argv) {
- if(argc<4) {fprintf(stderr,"usage: probe_runner CORE EMULATED_SECONDS unthrottled|realtime [key=value ...] [--png=FILE] [--shot-every=N]\n");return 2;}
+ if(argc<4) {fprintf(stderr,"usage: probe_runner CORE EMULATED_SECONDS unthrottled|realtime [key=value ...] [--png=FILE] [--shot-every=N] [--wav=FILE]\n");return 2;}
  char *end;double sec=strtod(argv[2],&end);if(*end||sec<=0||sec>3600) return 2;limit_ns=(uint64_t)(sec*1e9);
  int realtime=!strcmp(argv[3],"realtime"),staggered=!strcmp(argv[3],"staggered");if(!realtime&&!staggered&&strcmp(argv[3],"unthrottled"))return 2;
- const char *png_name=NULL;unsigned shot_every=0;
- for(int i=4;i<argc;i++) {if(!strncmp(argv[i],"--png=",6))png_name=argv[i]+6;else if(!strncmp(argv[i],"--shot-every=",13))shot_every=(unsigned)atoi(argv[i]+13);else if(var_count<64)vars[var_count++]=argv[i];else return 2;}
+ const char *png_name=NULL,*wave_name=NULL;unsigned shot_every=0;
+ for(int i=4;i<argc;i++) {if(!strncmp(argv[i],"--png=",6))png_name=argv[i]+6;else if(!strncmp(argv[i],"--wav=",6))wave_name=argv[i]+6;else if(!strncmp(argv[i],"--shot-every=",13))shot_every=(unsigned)atoi(argv[i]+13);else if(var_count<64)vars[var_count++]=argv[i];else return 2;}
+ if(wave_name) {
+  char stats_name[1200];if(snprintf(stats_name,sizeof(stats_name),"%s.csv",wave_name)>=(int)sizeof(stats_name))return 2;
+  wave=fopen(wave_name,"wb");audio_stats=fopen(stats_name,"wb");
+  if(!wave||!audio_stats) {if(wave)fclose(wave);if(audio_stats)fclose(audio_stats);return 2;}
+  wave_header();if(fprintf(audio_stats,"frame,audio_frames,nonzero_pairs,peak,clipped_pairs\n")<0||failed)return 2;
+ }
  LIB lib=OPEN(argv[1]);if(!lib) {fprintf(stderr,"Core load failed\n");return 2;}
  LOAD(void,retro_set_environment,(retro_environment_t));LOAD(void,retro_set_video_refresh,(retro_video_refresh_t));LOAD(void,retro_set_audio_sample_batch,(retro_audio_sample_batch_t));LOAD(void,retro_set_input_poll,(retro_input_poll_t));LOAD(void,retro_set_input_state,(retro_input_state_t));LOAD(void,retro_init,(void));LOAD(bool,retro_load_game,(const struct retro_game_info *));LOAD(void,retro_run,(void));LOAD(void,retro_unload_game,(void));LOAD(void,retro_deinit,(void));LOAD(void,retro_get_system_av_info,(struct retro_system_av_info *));
  retro_set_environment(environment);retro_set_video_refresh(video);retro_set_audio_sample_batch(audio);retro_set_input_poll(poll);retro_set_input_state(input);retro_init();
@@ -102,6 +129,11 @@ int main(int argc,char **argv) {
  }
  if(png_name)png(png_name);
  retro_unload_game();retro_deinit();free(shot);
+ if(wave) {
+  if(fseek(wave,0,SEEK_SET))failed=1;else wave_header();
+  if(ferror(wave)||ferror(audio_stats))failed=1;
+  if(fclose(wave))failed=1;if(fclose(audio_stats))failed=1;
+ }
  fprintf(stderr,"runner status=%s frames=%u requested_ns=%llu advanced_ns=%llu wall_ns=%llu\n",failed?"FAIL":"COMPLETE",frame,(unsigned long long)limit_ns,(unsigned long long)emu_ns,(unsigned long long)(clock_ns()-origin));
  return failed?1:0;
 }

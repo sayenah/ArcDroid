@@ -1,0 +1,4 @@
+| ArcDroid-authored general boot; GPL-2.0-only. No supplied boot bytes.
+| Choices convention: https://www.riscos.com/support/developers/prm/bootapp.html
+LoadModeFile ADFS::1.$.Multisync
+If "%0" = "1" Then BASIC -quit ADFS::1.$.BootEnv
