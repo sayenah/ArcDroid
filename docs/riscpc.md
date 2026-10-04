@@ -1,6 +1,6 @@
 # RiscPC workstream — engine evaluation and architecture (D-063, D-122, D-123)
 
-Status: **evaluation complete; awaiting the Founder gate.** No RiscPC implementation is authorised. Indices refer to the Founder's private 218-zip library (0-based sorted position); they are test-coverage identifiers only and never implementation keys (D-090).
+Status: **Founder gate answered (D-126): the disposable feasibility trial is authorised;** no product implementation before its go/no-go. Indices refer to the Founder's private 218-zip library (0-based sorted position); they are test-coverage identifiers only and never implementation keys (D-090).
 
 ## 1. Why
 
@@ -59,7 +59,7 @@ Disposable (never merged as product code) but representative: implements the §4
 
 - **Rates swept** (labelled experimental): ARM610 20, ARM710/7500 35, SA-110 100/150/200 million instructions per emulated second. A production rate is approved only against independent hardware/reference measurements (ALU, branches, memory, timer-paced code); model-dependent execution costs if one rate cannot reproduce behaviour.
 - **Workloads:** the existing loop; MMU hits/misses, permission faults and privilege switches with the correction on; RAM execution and self-modifying code; framebuffer/DMA contention; continuous stereo audio with rate changes; floppy/helper activity; 50/60 Hz modes at low resolution, 640×480 and 800×600; private scripted gameplay of 31, 74, 84 and one StrongARM-only title (50, 110 or 116). Desktop boot is only a smoke test.
-- **Platforms:** Odin3, the Founder-named Retroid Pocket model, and native Windows; production-equivalent optimisation, normal device performance/fan settings, through RetroArch.
+- **Platforms:** Odin3 (the only Android device, D-126) and native Windows; production-equivalent optimisation, normal device performance/fan settings, through RetroArch.
 - **Duration:** three independent runs per workload, 10-minute warm-up + 20 minutes measured; temperatures, frequencies and settings recorded; every run must pass.
 - **CPU budget** (core execution excluding frontend sleep, frame period T): p95 ≤ 0.80 T, p99 ≤ 0.90 T, p99.9 ≤ T; no three consecutive deadline misses; frontend missed presentations < 0.1 %.
 - **Sustained:** last-five-minute throughput within 10 % of the first measured five minutes; guest time tracks wall time within 0.1 %.
@@ -75,11 +75,11 @@ Disposable (never merged as product code) but representative: implements the §4
 | R1 | Contained headless import: allowlist/provenance, isolation, containment, virtual time, MMU correction, basic AV/input | authored CPU/MMU/IOMD/VIDC20 ROM traces on ARM610/710/7500/SA-110; repeatability on Windows and arm64; failure/reload/switching tests |
 | R2 | Media bridge (JFD/raw/helper), IDE if required, CMOS/persistence | guest-driven controller tests; CRC/quarantine/guard refusals; interrupted writes; restart recovery; disc swaps |
 | R3 | Firmware inventory, Auto selection, launch machinery and observers | selection/conflict/missing-ROM matrix; authored observer arbitration; private 3.5–3.71 launch and save evidence |
-| R4 | Platform and regression qualification | deterministic trace comparisons; lifecycle/resource stress; sustained Odin3/Retroid/Windows gameplay; full-library A/B in both package states; release notes |
+| R4 | Platform and regression qualification | deterministic trace comparisons; lifecycle/resource stress; sustained Odin3/Windows gameplay; full-library A/B in both package states; release notes |
 
 Completion means gameplay with the title's relevant save and input behaviour, with any exception explicit — not a title screen.
 
-## 7. Founder gate (open)
+## 7. Founder gate (answered 2026-10-04, D-126: trial approved; firmware 3.50–3.71 held; sequence trial → R1 → R4 now; Odin3 only; trial proves the games work; no wholesale fork adoption)
 
 1. **Probe authorisation:** approve the disposable feasibility probe with RPCEmu 0.9.5 as the provisional engine and the §5 thresholds; no import if it fails.
 2. **Firmware:** does the Founder lawfully hold RISC OS 3.71 (and any of 3.50/3.60/3.70)? The licensed seller (3QD "Classic RISC OS ROMS") had sales on hold in late 2025; owners of RiscPC/A7000 ROM chips can dump their own. Support is claimed only for firmware validated privately. RISC OS 5 stays out of the launch contract.
