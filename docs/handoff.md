@@ -2,10 +2,10 @@
 
 **Stage:** IMPLEMENTATION — RiscPC feasibility trial (unit P; roadmap item 6; D-123, D-126)  
 **Owner:** Sol  
-**Next:** Sol implements unit P below on branch `probe/riscpc-trial` (cut from `main`; **never merged**), from the clone Fable prepares, and writes `SOL-REPORT-P.md`; Fable then reviews, runs AC-8/AC-9 on the Odin3 and the Founder's Windows box, and brings GO / NO-GO / INCONCLUSIVE to the Founder. Item 7 follows item 6 (D-126). Carried: release notes owed at the release baseline; follow-up Lows (below); Slice 23 residuals; physical-stick feel on the Odin3 (Founder check).
+**Next:** (running) Sol implements unit P below on branch `probe/riscpc-trial` (cut from `main`; **never merged**), from the clone Fable prepares, and writes `SOL-REPORT-P.md`; Fable then reviews, runs AC-8/AC-9 on the Odin3 and the Founder's Windows box, and brings GO / NO-GO / INCONCLUSIVE to the Founder. Item 7 follows item 6 (D-126). Carried: release notes owed at the release baseline; follow-up Lows (below); Slice 23 residuals; physical-stick feel on the Odin3 (Founder check).
 
 ## Waiting on the Founder (protocol §18, D-124)
-- None. **Coming need (not yet blocking):** the Odin3 (connected) and the Windows box (`sinmu@192.168.1.66` timed out on 2026-10-04) for AC-7/AC-8 — Fable asks when the Mac criteria pass.
+- **Odin3 unavailable until the morning of 2026-10-05 (Founder, 2026-10-04).** Blocks only unit P's Android legs: the arm64 AC-3 trace comparison and the AC-8 Odin3 screening/acceptance runs. Everything else in unit P (Sol's Mac work, the Windows legs on `sinmu@192.168.1.66`, which the Founder is bringing online) continues. When the Founder reconnects it (`adb devices` shows `cf0be0f3`): sideload the probe core per Sol's runbook and run AC-8 on the Odin3. Independent work meanwhile: roadmap item 7 grounding (D-126 orders it after item 6; it shares nothing with unit P).
 
 ## Work order — unit P: RiscPC feasibility trial (disposable)
 **Objective.** Evidence for the Founder's go/no-go on RiscPC support: can RPCEmu 0.9.5's interpreter, run deterministically inside a RetroArch core, bring the RiscPC-only games to real gameplay and run them at full speed on the Odin3 and Windows? Governing: `docs/riscpc.md` §§4–5 (binding), D-063, D-122, D-123, D-126 (Odin3 is the only Android device; the trial must prove the games work). Astra challenged this order (S52 stage 3, PROCEED WITH CHANGES, all incorporated).
