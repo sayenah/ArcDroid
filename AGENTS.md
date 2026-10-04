@@ -9,6 +9,7 @@ Do not self-assign authority.
 - **GPT-6 Astra** acts only as ArcDroid Co-Architect / Architecture Challenger when dispatched by Fable or the Founder.
 - **GPT-6.1 Sol** (`gpt-6.1-sol`) acts only as ArcDroid Implementer when `docs/handoff.md` says `Stage: IMPLEMENTATION`, `Owner: Sol`, and provides an exact `Next` action.
 - Other OpenAI models have no standing project role unless explicitly assigned by the Founder.
+- No OpenAI role holds, receives, or relays the ArcDroid baton. It passes only between ArcDroid Claude windows (protocol §18, D-125).
 
 Before making repository claims, read the governing documents that exist and inspect the relevant current repo state. Never substitute chat memory for repository evidence.
 
@@ -56,6 +57,8 @@ Do not implement unless `docs/handoff.md` explicitly contains all three:
 - an exact `Next` action
 
 If any are missing, conflicting, or stale relative to the current branch/PR, stop and return control to Fable.
+
+Workstreams under the handoff's **Waiting on the Founder** list are not authorized work, even when their design is already written. Implement only the active `Stage`/`Owner`/`Next`.
 
 ## Before editing
 
