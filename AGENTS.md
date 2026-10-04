@@ -57,6 +57,8 @@ Do not implement unless `docs/handoff.md` explicitly contains all three:
 
 If any are missing, conflicting, or stale relative to the current branch/PR, stop and return control to Fable.
 
+Workstreams under the handoff's **Waiting on the Founder** list are not authorized work, even when their design is already written. Implement only the active `Stage`/`Owner`/`Next`.
+
 ## Before editing
 
 1. Read the complete handoff, PRD, protocol, and applicable decision log.
