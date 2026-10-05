@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 from evidence import completion, core_rows, digest, EvidenceError
 from evaluate_ac8 import evaluate
 from label_phases import label
@@ -97,6 +98,41 @@ class EvidenceTests(unittest.TestCase):
         run=dict(csv=self.csv.name,manifest=self.manifest.name,kind='sustained',platform='windows',workload='trial-a',model='SA110',rate=100)
         path.write_text(json.dumps(dict(runs=[dict(run,repetition=i) for i in (1,2,3)],frozen_model_rates={'SA110':100},calibration_qualified=True)))
         self.assertEqual(suite(path)['criteria']['independent_runs'],'FAIL')
+
+    def screening_suite(self, statuses, *, duplicate_order=False, mixed_model=False):
+        rates=[20,35,100,150,200,250,300]
+        runs=[]
+        for order,rate in enumerate(rates+list(reversed(rates))):
+            csv_path=self.p/f'screen-{order}.csv'
+            csv_path.write_text(f'independent raw leg {order}\n')
+            runs.append(dict(csv=csv_path.name,manifest=self.manifest.name,
+                             kind='screening',platform='odin3',workload='trial-a',
+                             model='ARM710' if mixed_model and order==0 else 'SA110',
+                             rate=rate,repetition=order+1,order=0 if duplicate_order else order,
+                             warm_state_sha256='abc'))
+        path=self.p/'screening-suite.json'
+        path.write_text(json.dumps(dict(screening_rates={'SA110':rates},runs=runs)))
+        # These fixtures exercise suite aggregation only. Per-leg raw validation
+        # has separate integration tests above and is never skipped in the CLI.
+        outcomes=[dict(criteria={'raw':status}) for status in statuses]
+        with patch('evaluate_suite.evaluate',side_effect=outcomes):
+            return suite(path)['criteria']
+
+    def test_lower_rate_screening_before_sustained(self):
+        result=self.screening_suite(['PASS']*14)
+        self.assertEqual(result['screening_odin3_trial-a'],'PASS')
+        self.assertEqual(result['sustained_odin3_trial-a'],'MISSING')
+        self.assertEqual(result['frozen_calibration'],'MISSING')
+
+    def test_screening_failed_and_missing_raw_legs(self):
+        for status in ('FAIL','MISSING'):
+            with self.subTest(status=status):
+                result=self.screening_suite([status]+['PASS']*13)
+                self.assertEqual(result['screening_odin3_trial-a'],status)
+
+    def test_screening_duplicate_order_and_mixed_models(self):
+        for options in (dict(duplicate_order=True),dict(mixed_model=True)):
+            self.assertEqual(self.screening_suite(['PASS']*14,**options)['screening_odin3_trial-a'],'MISSING')
     def test_replay_missing_and_invalid_duration(self):
         import subprocess, sys
         tool=Path(__file__).with_name('compare_replay.py')

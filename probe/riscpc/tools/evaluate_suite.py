@@ -43,14 +43,20 @@ def suite(path):
         statuses=[l['status'] for r,l in sustained]
         status='FAIL' if 'FAIL' in statuses else 'PASS' if sufficient and all(s=='PASS' for s in statuses) else 'MISSING'
         record('sustained_'+platform+'_'+workload,status,'three independent 600s warm +1200s measured legs at one qualified model rate')
-        screening=[r for r in m.get('runs',[]) if r['platform']==platform and r['workload']==workload and r['kind']=='screening']
-        screening.sort(key=lambda x:x.get('order',-1))
-        rates=m.get('screening_rates',{}).get(next(iter(models)) if len(models)==1 else '',[])
+        screening=[(r,l) for r,l in zip(m.get('runs',[]),legs) if r['platform']==platform and r['workload']==workload and r['kind']=='screening']
+        screening.sort(key=lambda x:x[0].get('order',-1))
+        # Screening precedes sustained qualification. Derive its model from
+        # its own records so incomplete calibration cannot hide screening data.
+        screen_models={r['model'] for r,l in screening}
+        rates=m.get('screening_rates',{}).get(next(iter(screen_models)) if len(screen_models)==1 else '',[])
         # Two series of every model-relevant rate, forward and reverse; require
         # a recorded identical warm state/phase declaration for their starts.
-        sequence=[r['rate'] for r in screening]
-        okay=len(rates)>=2 and sequence==rates+list(reversed(rates)) and len({r.get('warm_state_sha256') for r in screening})==1 and all(r.get('warm_state_sha256') for r in screening)
-        record('screening_'+platform+'_'+workload,'PASS' if okay else 'MISSING','300s screening at same recorded warm phase; alternating forward/reverse rate order')
+        sequence=[r['rate'] for r,l in screening]
+        orders=[r.get('order') for r,l in screening]
+        okay=len(rates)>=2 and len(set(rates))==len(rates) and sequence==rates+list(reversed(rates)) and len(set(orders))==len(orders) and all(type(x) is int and x>=0 for x in orders) and len({r.get('warm_state_sha256') for r,l in screening})==1 and all(r.get('warm_state_sha256') for r,l in screening) and (not models or models==screen_models)
+        statuses=[l['status'] for r,l in screening]
+        status='FAIL' if 'FAIL' in statuses else 'PASS' if okay and all(s=='PASS' for s in statuses) else 'MISSING'
+        record('screening_'+platform+'_'+workload,status,'300s screening at same recorded warm phase; alternating forward/reverse rate order; every raw leg must qualify')
     record('individual_leg_results','FAIL' if any(l['status']=='FAIL' for l in legs) else 'MISSING' if not legs or any(l['status']=='MISSING' for l in legs) else 'PASS','every leg independently recomputed')
     return dict(criteria=criteria,detail=detail,legs=legs,qualification='AC8/9 evidence coverage only; no QA/GO/release approval')
 

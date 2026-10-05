@@ -1,4 +1,4 @@
-# Unit P platform evidence runbook (run 13)
+# Unit P platform evidence runbook (run 14)
 
 This disposable branch is never merged. Keep every runtime input/output private.
 The final core uses deterministic line scanout (`video_renderer: line-v4` in its
@@ -7,9 +7,12 @@ qualify this binary. Final Mac evidence and provisional calibration results are
 in the private `SOL-REPORT-P.md`; platform execution remains the orchestrator's
 responsibility. No rate may be lowered to make performance pass.
 
-If calibration remains INCONCLUSIVE, screen SA110 at 100/150/200/250/300 and
+Run 14 leaves AC-7 INCONCLUSIVE for both tested models, with no frozen rate.
+Screen SA110 at 20/35/100/150/200/250/300 and
 ARM710 at 20/35/100/150. These are candidates and higher references, not approved
-model-wide rates. Inspect matched timer/progress and distinct-frame/HUD cadence
+model-wide rates. The lower SA110 candidates were added under R14-2 before
+collection; 35 requires agreeing 100/150 references, and 20 may use 35/100
+only after 35 qualifies. Inspect matched timer/progress and distinct-frame/HUD cadence
 against both higher references before choosing a speed verdict. Missing progress
 observations or a menu/death tail cannot qualify a rate. Keep each candidate's
 performance result separate; do not select the fastest passing host result.
@@ -59,6 +62,8 @@ Windows PowerShell, binaries copied from the same frozen build:
 $LASTEXITCODE | Set-Content windows.exit
 & .\probe_raster.exe 1> raster.trace 2> raster.stderr
 $LASTEXITCODE | Set-Content raster.exit
+& .\probe_video_frontend.exe 1> video-frontend.trace 2> video-frontend.stderr
+$LASTEXITCODE | Set-Content video-frontend.exit
 & .\probe_controller.exe 1> controller.trace 2> controller.stderr
 $LASTEXITCODE | Set-Content controller.exit
 & .\probe_lifecycle.exe 1> lifecycle.trace 2> lifecycle.stderr
@@ -74,23 +79,27 @@ Odin3, commands for the orchestrator (replace the build directory only):
 
 ```sh
 ADB=/opt/homebrew/share/android-commandlinetools/platform-tools/adb
-"$ADB" shell mkdir -p /data/local/tmp/rpcprobe-p13
-"$ADB" push probe/riscpc/run/android/probe_mechanisms /data/local/tmp/rpcprobe-p13/
-"$ADB" push probe/riscpc/run/android/probe_video_frontend /data/local/tmp/rpcprobe-p13/
-"$ADB" push probe/riscpc/run/android/probe_raster /data/local/tmp/rpcprobe-p13/
-"$ADB" push probe/riscpc/run/android/probe_runner /data/local/tmp/rpcprobe-p13/
-"$ADB" push probe/riscpc/run/android/arcdroid_rpcprobe_libretro.so /data/local/tmp/rpcprobe-p13/
-"$ADB" shell 'chmod 700 /data/local/tmp/rpcprobe-p13/probe_video_frontend /data/local/tmp/rpcprobe-p13/probe_mechanisms /data/local/tmp/rpcprobe-p13/probe_raster /data/local/tmp/rpcprobe-p13/probe_runner'
-"$ADB" shell 'cd /data/local/tmp/rpcprobe-p13 && ./probe_mechanisms >arm64.trace 2>arm64.stderr; rc=$?; echo "$rc" >arm64.exit; exit "$rc"'
-"$ADB" shell 'cd /data/local/tmp/rpcprobe-p13 && ./probe_raster >arm64-raster.trace 2>arm64-raster.stderr; rc=$?; echo "$rc" >arm64-raster.exit; exit "$rc"'
-"$ADB" pull /data/local/tmp/rpcprobe-p13/arm64-raster.trace probe/riscpc/run/arm64-raster.trace
-"$ADB" pull /data/local/tmp/rpcprobe-p13/arm64-raster.stderr probe/riscpc/run/arm64-raster.stderr
-"$ADB" pull /data/local/tmp/rpcprobe-p13/arm64-raster.exit probe/riscpc/run/arm64-raster.exit
-python3 probe/riscpc/tools/compare_traces.py probe/riscpc/run/macos-raster.trace probe/riscpc/run/arm64-raster.trace --reference-stderr probe/riscpc/run/macos-raster.stderr --actual-stderr probe/riscpc/run/arm64-raster.stderr --output probe/riscpc/run/arm64-raster-comparison.json
-"$ADB" pull /data/local/tmp/rpcprobe-p13/arm64.trace probe/riscpc/run/arm64.trace
-"$ADB" pull /data/local/tmp/rpcprobe-p13/arm64.stderr probe/riscpc/run/arm64.stderr
-"$ADB" pull /data/local/tmp/rpcprobe-p13/arm64.exit probe/riscpc/run/arm64.exit
-python3 probe/riscpc/tools/compare_traces.py probe/riscpc/run/macos.trace probe/riscpc/run/arm64.trace --output probe/riscpc/run/arm64-comparison.json
+"$ADB" shell mkdir -p /data/local/tmp/rpcprobe-p14
+"$ADB" push probe/riscpc/run/platform-artifacts-r14/android/probe_mechanisms /data/local/tmp/rpcprobe-p14/
+"$ADB" push probe/riscpc/run/platform-artifacts-r14/android/probe_video_frontend /data/local/tmp/rpcprobe-p14/
+"$ADB" push probe/riscpc/run/platform-artifacts-r14/android/probe_raster /data/local/tmp/rpcprobe-p14/
+"$ADB" push probe/riscpc/run/platform-artifacts-r14/android/probe_runner /data/local/tmp/rpcprobe-p14/
+"$ADB" push probe/riscpc/run/platform-artifacts-r14/android/arcdroid_rpcprobe_libretro.so /data/local/tmp/rpcprobe-p14/
+"$ADB" shell 'chmod 700 /data/local/tmp/rpcprobe-p14/probe_video_frontend /data/local/tmp/rpcprobe-p14/probe_mechanisms /data/local/tmp/rpcprobe-p14/probe_raster /data/local/tmp/rpcprobe-p14/probe_runner'
+"$ADB" shell 'cd /data/local/tmp/rpcprobe-p14 && ./probe_mechanisms >arm64.trace 2>arm64.stderr; rc=$?; echo "$rc" >arm64.exit; exit "$rc"'
+"$ADB" shell 'cd /data/local/tmp/rpcprobe-p14 && ./probe_raster >arm64-raster.trace 2>arm64-raster.stderr; rc=$?; echo "$rc" >arm64-raster.exit; exit "$rc"'
+"$ADB" shell 'cd /data/local/tmp/rpcprobe-p14 && ./probe_video_frontend >arm64-video-frontend.trace 2>arm64-video-frontend.stderr; rc=$?; echo "$rc" >arm64-video-frontend.exit; exit "$rc"'
+"$ADB" pull /data/local/tmp/rpcprobe-p14/arm64-video-frontend.trace probe/riscpc/run/arm64-video-frontend.trace
+"$ADB" pull /data/local/tmp/rpcprobe-p14/arm64-video-frontend.stderr probe/riscpc/run/arm64-video-frontend.stderr
+"$ADB" pull /data/local/tmp/rpcprobe-p14/arm64-video-frontend.exit probe/riscpc/run/arm64-video-frontend.exit
+"$ADB" pull /data/local/tmp/rpcprobe-p14/arm64-raster.trace probe/riscpc/run/arm64-raster.trace
+"$ADB" pull /data/local/tmp/rpcprobe-p14/arm64-raster.stderr probe/riscpc/run/arm64-raster.stderr
+"$ADB" pull /data/local/tmp/rpcprobe-p14/arm64-raster.exit probe/riscpc/run/arm64-raster.exit
+python3 probe/riscpc/tools/compare_traces.py probe/riscpc/run/raster-final-r13e.trace probe/riscpc/run/arm64-raster.trace --reference-stderr probe/riscpc/run/raster-final-r13e.log --actual-stderr probe/riscpc/run/arm64-raster.stderr --output probe/riscpc/run/arm64-raster-comparison.json
+"$ADB" pull /data/local/tmp/rpcprobe-p14/arm64.trace probe/riscpc/run/arm64.trace
+"$ADB" pull /data/local/tmp/rpcprobe-p14/arm64.stderr probe/riscpc/run/arm64.stderr
+"$ADB" pull /data/local/tmp/rpcprobe-p14/arm64.exit probe/riscpc/run/arm64.exit
+python3 probe/riscpc/tools/compare_traces.py probe/riscpc/run/mechanisms-final-r13e.trace probe/riscpc/run/arm64.trace --reference-stderr probe/riscpc/run/mechanisms-final-r13e.log --actual-stderr probe/riscpc/run/arm64.stderr --output probe/riscpc/run/arm64-comparison.json
 ```
 
 Require exit 0 and the complete final `checks=... failures=0` line, all four
@@ -367,13 +376,17 @@ The runner queries AV timing after every core call, so sparse notifications neve
 shorten guest timing/pacing. Earlier line-v1/v2/v3 binaries are diagnostics.
 
 
-## Run-13 final artifact identity
+## Run-14 final artifact identity
 
-The private `run/platform-artifacts-r13e/` contains nine frozen artifacts for
+The private `run/platform-artifacts-r14/` contains nine frozen artifacts for
 macOS, Windows x64 and Android arm64, including the new raster and video frontend
-harnesses. `run/platform-artifacts-r13e.json` binds all 27 SHA-256 hashes;
-`run/runtime-source-final-r13e.json` binds 110 runtime/source references.
-Use those exact artifacts for platform execution. Rebuild only with a new custody
+harnesses. `run/platform-artifacts-r14.json` binds all 27 SHA-256 hashes;
+`run/runtime-source-final-r14.json` binds the current runtime/source references;
+prior evidence-tool source versions remain archived privately.
+All 27 refreshed binaries are byte-identical to the accepted run-13 final
+binaries. Run 14 rebuilt the existing three target build trees and reran
+the Android guard and Mac tests. Use those exact artifacts for platform execution.
+Rebuild only with a new custody
 identity and requalify that binary. The final core footer is `line-v4`.
 Earlier line-v1/v2/v3 private runs are excluded diagnostics.
 
@@ -401,3 +414,44 @@ python3 probe/riscpc/tools/compare_traces.py probe/riscpc/run/raster-final-r13e.
 
 Preserve native exit-status records separately and require zero; the comparator
 checks complete traces but cannot infer a process exit code from redirected text.
+
+## Run-14 handover order
+
+1. Verify the private `platform-artifacts-r14.json` inventory, then copy the
+   Windows x64 artifacts from `run/platform-artifacts-r14/windows/` and the
+   Android arm64 artifacts from `run/platform-artifacts-r14/android/`. Preserve
+   the original SHA-256 records; do not use a diagnostic build. Run mechanisms,
+   raster and video-frontend harnesses with stdout/stderr/native exit codes.
+   Compare mechanisms and raster against the final Mac references above. On
+   Windows also run controller and lifecycle with the DLL beside the executable.
+2. Load the frozen core through native RetroArch on Windows and Odin3, using
+   the normal external firmware/content paths and a fresh scratch IDE clone
+   of each private workload's baseline. Record the loaded identity and frontend
+   version/drivers. Qualify actual audio output and inspect the private gameplay
+   checkpoints, including both payloads of `trial-c`. The headless runner is
+   a trace/replay diagnostic; platform speed evidence uses RetroArch.
+3. If AC-7 remains INCONCLUSIVE, run 300-second matched active screening series
+   at SA110 20/35/100/150/200/250/300 and ARM710 20/35/100/150, then repeat each
+   series in reverse order from identical recorded cold inputs/warm scene.
+   Bind every private script/baseline/CMOS/input hash, record temperature,
+   frequency, fan/performance/power settings and actual presentation/audio
+   telemetry. These measurements describe candidate performance only; no
+   model-wide rate or GO verdict follows until calibration qualifies. Stop
+   on a decisive failure and retain the partial run and its reason.
+4. At a qualified model-wide rate, author and predeclare substantial active
+   sustained segments, then run 600-second warm-up plus 1200 seconds measured
+   per gameplay payload and authored workload. Passing first legs receive two
+   independent repeats. The existing short calibration scripts cannot be
+   extended with idle/death/menu tails and called active sustained gameplay.
+5. Generate immutable declarations, complete core footers/CSVs/cost tails,
+   event/checkpoint/phase logs, on/off overhead pairs for that exact platform
+   and workload, native output observations, source/binary/input inventories
+   and raw frontend telemetry. Run `evaluate_ac8.py` for each leg and
+   `evaluate_suite.py` for the complete suite, then independently inspect and
+   recompute AC-9 custody. Missing telemetry remains MISSING.
+
+Run-14 suite evaluation reports screening independently of sustained coverage,
+accepts the declared lower candidate sets, and requires every screening raw leg
+to qualify. A failed or missing raw leg cannot become screening PASS merely
+because rates/order/warm-state labels are present. Duplicate order or mixed
+models remain MISSING. No acceptance threshold changed.
