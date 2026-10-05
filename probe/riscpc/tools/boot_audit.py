@@ -27,7 +27,35 @@ def root_file(disc, name):
     raise ValueError('guest audit file missing: ' + name)
 
 
-def audit(image, firmware):
+def directory_exists(disc, parts):
+    address = disc.root
+    for part in parts:
+        directory = disc.read(address, 2048)
+        for i in range(77):
+            entry = directory[5 + 26*i:31 + 26*i]
+            if not entry[0]:
+                return False
+            name = entry[:10].split(b'\r')[0].split(b'\0')[0].decode('latin1')
+            if name.lower() == part.lower():
+                if not entry[25] & 8:
+                    return False
+                address = int.from_bytes(entry[22:25], 'little')
+                break
+        else:
+            return False
+    return True
+
+
+def scrap_leaf_valid(leaf, inet):
+    if inet is not None:
+        return leaf == 'ID' + inet
+    if leaf == 'ScrapDir':
+        return True
+    match = re.fullmatch(r'ID([0-9]{3})!([0-9]{3})', leaf)
+    return bool(match) and all(int(n) <= 255 for n in match.groups())
+
+
+def audit(image, firmware, resources=False):
     rom = firmware.read_bytes()
     sha1 = hashlib.sha1(rom).hexdigest()
     if sha1 not in SHA1S:
@@ -35,11 +63,17 @@ def audit(image, firmware):
     inventory = module_inventory(rom)
     disc = Disc(image.read_bytes())
     env_data, mod_data = root_file(disc, 'EnvAudit'), root_file(disc, 'ModAudit')
-    variables = {}
+    variables, macro_variables = {}, {}
     for line in env_data.decode('latin1').splitlines():
         if ' : ' in line:
             k, v = line.split(' : ', 1)
-            variables[k.strip()] = v.strip()
+            key, value = k.strip(), v.strip()
+            variables[key] = value
+            # Show identifies macro variables with a type suffix. Preserve
+            # that observation and expose the actual variable name as well.
+            if key.endswith('(Macro)'):
+                macro_variables[key[:-7]] = value
+                variables[key[:-7]] = value
     boot = 'ADFS::4.$.!Boot'
     choices = 'ADFS::4.$.Choices'
     expected = {
@@ -91,12 +125,55 @@ def audit(image, firmware):
     path += expected['System$Dir'] + '.'
     if variables.get('System$Path') != path:
         problems.append('System$Path missing/different')
+    resource_audit = None
+    if resources:
+        # Independently stated R11-1 expectation for the approved release tree.
+        # !ThemeDefs is an application directory with no own !Boot.
+        expected_order = ['START', '!Fonts BOOT', '!Internet BOOT', '!PrintDefs BOOT',
+                          '!Scrap BOOT', '!System BOOT', '!ThemeDefs NO_BOOT',
+                          '!Unicode BOOT', 'END']
+        resource_data = root_file(disc, 'ResAudit')
+        observed_order = []
+        if len(resource_data) > 8192:
+            problems.append('Resources audit exceeds expected bound')
+        else:
+            try:
+                # Echo/redirection adds trailing spaces and blank CR/LF lines.
+                # These are separators, not additional dispatch records.
+                observed_order = [line.strip() for line in resource_data.decode('ascii').splitlines()
+                                  if line.strip()]
+            except UnicodeError:
+                problems.append('Resources audit is not ASCII')
+        if observed_order != expected_order:
+            problems.append('Resources dispatch order incomplete/different')
+        scrap = variables.get('Wimp$ScrapDir', '')
+        # Supplied !Scrap.!RunImage FN Evaluate selects ScrapDir when no
+        # network identity exists, ID<INet$LocalAddr> when that variable exists,
+        # otherwise IDnnn!sss after a successful Econet station/net query.
+        # 3.60's ROM Econet returns the ordinary zero station/network identity.
+        prefix, separator, leaf = scrap.rpartition('.!Boot.Resources.!Scrap.ScrapDirs.')
+        inet = variables.get('INet$LocalAddr')
+        valid_leaf = scrap_leaf_valid(leaf, inet)
+        scrap_entry = '!Boot/Resources/!Scrap/ScrapDirs/' + leaf
+        if (not separator or not prefix.startswith('ADFS::') or not valid_leaf
+                or not directory_exists(disc, scrap_entry.split('/'))):
+            problems.append('Wimp$ScrapDir missing/different or directory absent')
+        if variables.get('Wimp$Scrap') != scrap + '.ScrapFile':
+            problems.append('Wimp$Scrap missing/different')
+        if '.!Boot.Resources.!Fonts.' not in variables.get('Font$Path', ''):
+            problems.append('Font$Path missing resource Fonts directory')
+        resource_audit = dict(expected_order=expected_order, observed_order=observed_order,
+                              bytes=len(resource_data),
+                              scrap_directory=scrap, scrap_file=variables.get('Wimp$Scrap'),
+                              font_path=variables.get('Font$Path'))
     return dict(status='FAIL' if problems else 'PASS', problems=problems,
+                audit_tool_sha256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
                 firmware_sha1=sha1, image_sha256=hashlib.sha256(disc.data).hexdigest(),
                 environment_sha256=hashlib.sha256(env_data).hexdigest(),
                 modules_sha256=hashlib.sha256(mod_data).hexdigest(),
                 expected_variables=expected, runtime_variables=variables,
-                system_search_expected=path, modules=modules,
+                runtime_macro_variables=macro_variables,
+                system_search_expected=path, modules=modules, resource_audit=resource_audit,
                 desktop_input='MISSING: separate visual qualification required')
 
 
@@ -105,8 +182,9 @@ if __name__ == '__main__':
     p.add_argument('--image', type=Path, required=True)
     p.add_argument('--firmware', type=Path, required=True)
     p.add_argument('--out', type=Path, required=True)
+    p.add_argument('--resources', action='store_true', help='require R11-1 dispatch and Scrap/Fonts registration')
     a = p.parse_args()
-    result = audit(a.image, a.firmware)
+    result = audit(a.image, a.firmware, a.resources)
     a.out.write_text(json.dumps(result, indent=2) + '\n')
     print(result['status'], 'modules', len(result['modules']), 'problems', len(result['problems']))
     raise SystemExit(bool(result['problems']))

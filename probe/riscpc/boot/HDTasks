@@ -1,3 +1,5 @@
 | ArcDroid-authored desktop startup; GPL-2.0-only.
 | Desktop -file executes after the ROM desktop modules have started.
+BASIC -quit ADFS::4.$.BootRes
+Obey ADFS::4.$.ResBoot
 BASIC -quit ADFS::4.$.BootTasks

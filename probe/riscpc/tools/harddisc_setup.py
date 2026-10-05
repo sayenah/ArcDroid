@@ -2,8 +2,8 @@
 """Generate normal guest keyboard setup for the common R10-1 IDE boot disc.
 
 GPL-2.0-only. No supplied bytes, filesystem patching or CMOS editing.
-For a carried, merged R7-1 disc with the three authored root assets, --entries
-also writes !Boot.!Run and !Boot.ProbeTasks via the guest's Build command.
+For a carried, merged R7-1/R10 disc, --entries writes BootRes, !Boot.!Run
+and !Boot.ProbeTasks via the guest's Build command.
 New --resources-only images already contain those files; merge !System first.
 """
 import argparse
@@ -16,8 +16,11 @@ SCANS = dict(zip('abcdefghijklmnopqrstuvwxyz',
                  (28, 50, 33, 35, 36, 43, 52, 51, 67, 59, 66, 75, 58,
                   49, 68, 77, 21, 45, 27, 44, 60, 42, 29, 34, 53, 26)))
 SCANS.update(dict(zip('1234567890', (22, 30, 38, 37, 46, 54, 61, 62, 70, 69))))
-SCANS.update({' ': 41, '.': 73, ',': 65, '-': 78, '/': 74, '\n': 90})
-SHIFT = {':': 76, '$': 37, '!': 22}
+SCANS.update({' ': 41, '.': 73, ',': 65, '-': 78, '/': 74, '\n': 90,
+              '=': 85, ';': 76, '#': 93})
+SHIFT = {':': 76, '$': 37, '!': 22, '"': 30, '%': 46, '(': 70, ')': 69,
+         '+': 85, '<': 65, '>': 73, '*': 62, '_': 78, '?': 74,
+         '{': 84, '}': 91}
 
 
 def setup(entries=False):
@@ -45,18 +48,21 @@ def setup(entries=False):
 
     assets = Path(__file__).resolve().parents[1] / 'boot'
     if entries:
-        for target, source, filetype in (('!Run', 'HDRun', 'Obey'),
-                                         ('ProbeTasks', 'HDTasks', 'Desktop')):
+        for target, source, filetype in (('ADFS::4.$.BootRes', 'BootRes', 'Text'),
+                                         ('ADFS::4.$.!Boot.!Run', 'HDRun', 'Obey'),
+                                         ('ADFS::4.$.!Boot.ProbeTasks', 'HDTasks', 'Desktop')):
             lines = [line for line in (assets / source).read_text().splitlines()
                      if line and not line.startswith('|')]
             # Build expands variables; these invariant paths have the same meaning.
             lines = [line.replace('<System$Dir>', 'ADFS::4.$.!Boot.Resources.!System')
                      for line in lines]
+            if any('<' in line for line in lines):
+                raise ValueError('Build source can undergo guest variable expansion')
             effective[target] = '\r'.join(lines) + '\r'
-            text(f'Build ADFS::4.$.!Boot.{target}\n' + '\n'.join(lines) + '\n')
+            text(f'Build {target}\n' + '\n'.join(lines) + '\n')
             key(118, 'build_end')
             timestamp += 2_000_000
-            text(f'SetType ADFS::4.$.!Boot.{target} {filetype}\n')
+            text(f'SetType {target} {filetype}\n')
 
     commands = ('ADFS\nDir ADFS::4.$\nOpt 4,2\nConfigure Floppies 1\n'
                 'Configure IDEDiscs 1\nConfigure Boot\nConfigure FileSystem ADFS\n'
@@ -68,7 +74,7 @@ def setup(entries=False):
         commands=commands, effective_entries=effective,
         duration_seconds=(timestamp + 5_000_000) / 1_000_000,
         authored_sha256={name: hashlib.sha256((assets / name).read_bytes()).hexdigest()
-                         for name in ('Multisync', 'BootEnv', 'BootTasks', 'HDRun', 'HDTasks')},
+                         for name in ('Multisync', 'BootEnv', 'BootRes', 'BootTasks', 'HDRun', 'HDTasks')},
         sources=['https://www.riscos.com/support/developers/prm/adfs.html',
                  'https://www.riscos.com/support/developers/prm/wimp.html'],
         qualification='PENDING: verify guest-written files/CMOS, then cold boot all pairs')

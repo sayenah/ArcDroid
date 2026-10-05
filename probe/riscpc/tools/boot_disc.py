@@ -152,6 +152,7 @@ def build(hard, system, output, period_roms=(), resources_only=False):
         for source, parts, filetype in (
                 ('Multisync', ['Multisync'], 0xfed),
                 ('BootEnv', ['BootEnv'], 0xfff),
+                ('BootRes', ['BootRes'], 0xfff),
                 ('BootTasks', ['BootTasks'], 0xfff),
                 ('HDTasks', ['!Boot', 'ProbeTasks'], 0xfea)):
             data = (assets / source).read_bytes()
@@ -160,7 +161,7 @@ def build(hard, system, output, period_roms=(), resources_only=False):
             add(parts, data, (0xfff00000 | (filetype << 8), 0, 3), False)
         custody['authored_assets'] = {
             n: hashlib.sha256((assets / n).read_bytes()).hexdigest()
-            for n in ('Multisync', 'BootEnv', 'BootTasks', 'HDRun', 'HDTasks')}
+            for n in ('Multisync', 'BootEnv', 'BootRes', 'BootTasks', 'HDRun', 'HDTasks')}
 
     image = bytearray(SIZE)
     record = bytearray(60)

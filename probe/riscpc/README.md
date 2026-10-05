@@ -362,7 +362,7 @@ This is the documented [Desktop command](https://www.riscos.com/support/develope
 No RISC OS Open modern !Run/PreDesktop/ROxxx hook executes, and no ROM module
 is replaced at startup. The original archive entries remain in Inactive.
 
-New `boot_disc.py --resources-only` images contain the five authored startup
+New `boot_disc.py --resources-only` images contain the authored startup
 assets on IDE; perform the supplied guest !System merge as above. For an
 already merged R7-1 disc whose root has Multisync/BootEnv/BootTasks, generate
 normal guest Build/SetType/Configure input with:
@@ -378,12 +378,51 @@ resulting guest files/status and cold boot, then freeze/hash the baseline.
 Neither construction nor COMPLETE constitutes boot or gameplay acceptance.
 Record all seven firmware/model results, including 3.50's behavior, privately.
 
-Run-10 qualification stopped at workload 084's cold launch: its ordinary
-application checks `Wimp$Scrap`, which the current common startup does not
+Historical run-10 qualification stopped at workload 084's cold launch: its ordinary
+application checks `Wimp$Scrap`, which that historical common startup did not
 establish. The supplied Scrap resource is present, but its registration is
-not dispatched. This is an unresolved common-environment startup failure,
+not dispatched. That was a common-environment startup failure,
 not evidence that the resource requires the modern boot sequence. The seven
 smoke pairs and workloads 031/074 reached their required desktop/gameplay
 states; no full AC-6, calibration, determinism or platform pass is implied.
 The private report records the failed launch and proposed general resolution
 for adjudication. Do not use these partial results as a qualified AC-8 suite.
+
+### Resources application registration (run-11 R11-1)
+
+The authored IDE desktop file now runs `BootRes` before installed `BootTasks`.
+BootRes enumerates top-level `!*` application directories in the concrete
+BootResources directory, bounds names/count to 255 bytes/256 applications,
+and writes an ordinary Obey plan `ResBoot` in FileCore enumeration order.
+It closes the file and exits BASIC before the desktop file obeys the plan;
+resource BASIC applications therefore run without a parent BASIC scanner.
+The plan invokes the guest's `Filer_Boot` for each application's own `!Boot`.
+Applications with no own `!Boot` have no dispatch. After each successful
+dispatch, ordinary Echo appends the exact name and BOOT/NO_BOOT state to the
+session IDE's `ResAudit`, with START/END markers; errors propagate.
+Variables and System registration remain established before Desktop startup.
+
+Convention evidence is the hash-approved HardDisc4 archive's
+`!Boot/RO350Hook/Boot/Desktop`, also RO360/370: its Auto tasks section boots
+Resources applications using `Repeat Filer_Boot <BootResources$Dir>
+-Applications -Tasks` before installed Tasks. `Documents/UserGuide/StarComms`
+documents the Filer_Boot command. These supplied scripts are read as evidence;
+the modern root boot sequence and hooks remain inactive.
+
+The approved common release tree's independently expected FileCore order is !Fonts, !Internet,
+!PrintDefs, !Scrap, !System, !ThemeDefs, !Unicode. !ThemeDefs has no own !Boot.
+System$Dir is already set, so System's own !Boot skips !Run; nothing is
+preloaded over ROM modules. The six effective boot paths and Scrap's BASIC
+boot routine must be inspected before use. A replacement-ROM-module load
+stops qualification; no module-loading guard or error suppression is added.
+
+New resources-only discs include BootRes as text. `harddisc_setup.py --entries`
+also writes it normally in the guest to carried merged/installed discs. Freeze
+and re-hash each changed baseline before its cold qualification.
+`boot_audit.py --resources` independently requires the seven application records with START/END markers,
+Scrap/Fonts variables, existence of the selected Scrap directory, and the
+existing ROM module address checks. Scrap's own FN Evaluate chooses ScrapDir
+without a network identity, ID<INet$LocalAddr> when present, or IDnnn!sss
+after a successful Econet query; the audit follows that supplied convention. Constructed
+files and runner COMPLETE alone never establish desktop or gameplay success.
+Current qualification results and any blocker belong in the private report.
