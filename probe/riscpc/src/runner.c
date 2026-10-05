@@ -4,6 +4,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
+#include <math.h>
+#include <inttypes.h>
 #include <time.h>
 #ifdef _WIN32
 #include <windows.h>
@@ -22,8 +24,28 @@ static double fps=60;static unsigned frame,w,h;
 static uint32_t *shot;
 static uint64_t limit_ns,emu_ns;
 static FILE *wave,*audio_stats;
+static FILE *timing,*ledger;
+static int16_t ledger_pcm[16384*2];static size_t ledger_pairs;
+static uint64_t ledger_audio_hash=UINT64_C(1469598103934665603);
+static uint64_t fnv(uint64_t hash,const void *bytes,size_t size) {
+ const uint8_t *p=bytes;while(size--){hash^=*p++;hash*=UINT64_C(1099511628211);}return hash;
+}
 static uint64_t wave_pairs;
 static const char *system_directory;
+static uint64_t shot_times[8192];static unsigned shot_count,shot_at;
+static int read_shot_times(const char *name) {
+ if(shot_count)return 0;
+ FILE *f=fopen(name,"rb");if(!f)return 0;char line[128];uint64_t previous=0;
+ while(fgets(line,sizeof(line),f)) {
+  char *end;double seconds=strtod(line,&end);
+  while(*end==' '||*end=='\t'||*end=='\r'||*end=='\n')end++;
+  if(*end||!(seconds>=0&&seconds<=3600)||shot_count==8192){fclose(f);return 0;}
+  uint64_t ns=(uint64_t)(seconds*1e9);
+  if((shot_count&&ns<=previous)||ns>limit_ns){fclose(f);return 0;}
+  shot_times[shot_count++]=previous=ns;
+ }
+ int bad=ferror(f);if(fclose(f))bad=1;return !bad&&shot_count;
+}
 static void le(uint8_t *p,uint32_t n) {p[0]=n;p[1]=n>>8;p[2]=n>>16;p[3]=n>>24;}
 static void wave_header(void) {
  uint8_t header[44]={0};memcpy(header,"RIFF",4);le(header+4,(uint32_t)wave_pairs*4+36);
@@ -61,6 +83,10 @@ static void video(const void *p,unsigned x,unsigned y,size_t pitch) {
  for(unsigned r=0;r<y;r++)memcpy(shot+(size_t)r*x,(const uint8_t *)p+(size_t)r*pitch,(size_t)x*4);
 }
 static size_t audio(const int16_t *p,size_t n) {
+ if(ledger) {
+  if(n>16384||ledger_pairs){failed=1;return 0;}
+  memcpy(ledger_pcm,p,n*4);ledger_pairs=n;
+ }
  if(!wave)return n;
  if(n>16384||wave_pairs+n>(UINT32_MAX-36)/4) {failed=1;return 0;}
  uint8_t bytes[16384*4];unsigned nonzero=0,clipped=0,peak=0;
@@ -90,11 +116,17 @@ static void png(const char *name) {
 }
 #define LOAD(ret,name,args) ret (*name)args=(ret (*)args)SYM(lib,#name);if(!name){fprintf(stderr,"Missing libretro symbol: %s\n",#name);return 2;}
 int main(int argc,char **argv) {
- if(argc<4) {fprintf(stderr,"usage: probe_runner CORE EMULATED_SECONDS unthrottled|realtime|staggered [key=value ...] [--system=DIR] [--content=FILE.jfd|FILE.m3u] [--png=FILE] [--shot-every=N] [--wav=FILE]\n");return 2;}
- char *end;double sec=strtod(argv[2],&end);if(*end||sec<=0||sec>3600) return 2;limit_ns=(uint64_t)(sec*1e9);
+ if(argc<4) {fprintf(stderr,"usage: probe_runner CORE EMULATED_SECONDS unthrottled|realtime|staggered [key=value ...] [--system=DIR] [--content=FILE.jfd|FILE.m3u] [--png=FILE] [--shot-every=N] [--shot-times=FILE] [--wav=FILE] [--timing=CSV] [--ledger=CSV]\n");return 2;}
+ char *end;double sec=strtod(argv[2],&end);if(end==argv[2]||*end||!isfinite(sec)||sec<=0||sec>3600) return 2;limit_ns=(uint64_t)(sec*1e9);
  int realtime=!strcmp(argv[3],"realtime"),staggered=!strcmp(argv[3],"staggered");if(!realtime&&!staggered&&strcmp(argv[3],"unthrottled"))return 2;
  const char *png_name=NULL,*wave_name=NULL,*content=NULL;unsigned shot_every=0;
- for(int i=4;i<argc;i++) {if(!strncmp(argv[i],"--png=",6))png_name=argv[i]+6;else if(!strncmp(argv[i],"--wav=",6))wave_name=argv[i]+6;else if(!strncmp(argv[i],"--system=",9))system_directory=argv[i]+9;else if(!strncmp(argv[i],"--content=",10))content=argv[i]+10;else if(!strncmp(argv[i],"--shot-every=",13))shot_every=(unsigned)atoi(argv[i]+13);else if(var_count<64)vars[var_count++]=argv[i];else return 2;}
+ for(int i=4;i<argc;i++) {if(!strncmp(argv[i],"--png=",6))png_name=argv[i]+6;else if(!strncmp(argv[i],"--wav=",6))wave_name=argv[i]+6;else if(!strncmp(argv[i],"--system=",9))system_directory=argv[i]+9;else if(!strncmp(argv[i],"--content=",10))content=argv[i]+10;else if(!strncmp(argv[i],"--shot-every=",13))shot_every=(unsigned)atoi(argv[i]+13);else if(!strncmp(argv[i],"--shot-times=",13)){if(!read_shot_times(argv[i]+13))return 2;}else if(!strncmp(argv[i],"--timing=",9)){timing=fopen(argv[i]+9,"wb");if(!timing)return 2;fprintf(timing,"frame,emu_ns,period_ns,exec_ns\n");}else if(!strncmp(argv[i],"--ledger=",9)){ledger=fopen(argv[i]+9,"wb");if(!ledger)return 2;fprintf(ledger,"frame,emu_ns,video_hash,audio_hash,audio_frames\n");}else if(var_count<64)vars[var_count++]=argv[i];else return 2;}
+ if(shot_count&&!png_name)return 2;
+ /* The same binary emits a core completion footer for headless/RetroArch
+  * runs. The declaration never changes guest event order or termination. */
+ char declared[96];snprintf(declared,sizeof(declared),"rpcprobe_expected_seconds=%.9f",sec);
+ int has_duration=0;for(unsigned i=0;i<var_count;i++)if(!strncmp(vars[i],"rpcprobe_expected_seconds=",26))has_duration=1;
+ if(!has_duration){if(var_count==64)return 2;vars[var_count++]=declared;}
  if(wave_name) {
   char stats_name[1200];if(snprintf(stats_name,sizeof(stats_name),"%s.csv",wave_name)>=(int)sizeof(stats_name))return 2;
   wave=fopen(wave_name,"wb");audio_stats=fopen(stats_name,"wb");
@@ -109,8 +141,21 @@ int main(int argc,char **argv) {
  struct retro_system_av_info av;retro_get_system_av_info(&av);fps=av.timing.fps;
  uint64_t origin=clock_ns();
  while(emu_ns<limit_ns&&!failed) {
-  double before=fps;retro_run();if(failed)break;
-  emu_ns+=(uint64_t)(1e9/before);frame++;
+  double before=fps;uint64_t started=clock_ns();retro_run();uint64_t cost=clock_ns()-started;if(failed)break;
+  emu_ns+=(uint64_t)(1e9/before);
+  /* Timing wraps the whole retro_run, including CSV/event writes/clock reads.
+   * Independent output hashing is outside this measured call in both legs. */
+  if(timing&&fprintf(timing,"%u,%"PRIu64",%"PRIu64",%"PRIu64"\n",frame,emu_ns,(uint64_t)(1e9/before),cost)<0)failed=1;
+  if(ledger) {
+   uint64_t vh=fnv(UINT64_C(1469598103934665603),shot,(size_t)w*h*4);
+   ledger_audio_hash=fnv(ledger_audio_hash,ledger_pcm,ledger_pairs*4);
+   if(fprintf(ledger,"%u,%"PRIu64",%016"PRIx64",%016"PRIx64",%zu\n",frame,emu_ns,vh,ledger_audio_hash,ledger_pairs)<0)failed=1;
+   ledger_pairs=0;
+  }
+  frame++;
+  while(shot_at<shot_count&&emu_ns>=shot_times[shot_at]) {
+   char p[1200];if(snprintf(p,sizeof(p),"%s.time-%012llu.png",png_name,(unsigned long long)shot_times[shot_at])>=(int)sizeof(p)){failed=1;break;}png(p);shot_at++;
+  }
   if(png_name&&shot_every&&frame%shot_every==0) {char p[1200];snprintf(p,sizeof(p),"%s.%06u.png",png_name,frame);png(p);}
   if(staggered && frame%5==0) {
 #ifdef _WIN32
@@ -137,6 +182,7 @@ int main(int argc,char **argv) {
   if(ferror(wave)||ferror(audio_stats))failed=1;
   if(fclose(wave))failed=1;if(fclose(audio_stats))failed=1;
  }
+ FILE *raw[]={timing,ledger};for(unsigned i=0;i<2;i++)if(raw[i]){if(ferror(raw[i]))failed=1;if(fclose(raw[i]))failed=1;}
  fprintf(stderr,"runner status=%s frames=%u requested_ns=%llu advanced_ns=%llu wall_ns=%llu\n",failed?"FAIL":"COMPLETE",frame,(unsigned long long)limit_ns,(unsigned long long)emu_ns,(unsigned long long)(clock_ns()-origin));
  return failed?1:0;
 }

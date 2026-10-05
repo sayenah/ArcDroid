@@ -30,6 +30,13 @@ with wave.open(str(args.session / "audio.wav"), "rb") as wav:
         assert c["status"] == "OK" and c["frame"] == f["frame"]
         count = int(c["audio_frames"])
         assert count == int(f["audio_frames"])
+        # Output clock begins at virtual t=0, includes that sample and never
+        # follows a frontend queue. Independently verify every timestamp's
+        # cumulative 48 kHz count, rather than only two copied ledgers.
+        # The scheduler represents sample k at floor(k*1e9/48000) ns.
+        # floor(k*1e9/48000) <= t iff k*1e9 < (t+1)*48000.
+        expected_pairs = ((int(c["emu_ns"]) + 1) * 48000 + 999999999) // 1000000000
+        assert pairs + count == expected_pairs, "Output clock gap/extra samples"
         raw = wav.readframes(count)
         assert len(raw) == count * 4, "Short PCM capture"
         sha.update(raw)
@@ -54,6 +61,7 @@ with wave.open(str(args.session / "audio.wav"), "rb") as wav:
                 s["nonzero_pairs"] += nz
     assert pairs == expected and not wav.readframes(1), "PCM duration mismatch"
 result = {"container_count_and_pcm_hash": "PASS", "frames": len(core),
+          "virtual_output_clock": "PASS",
           "stereo_pairs": pairs, "nonzero_pairs": nonzero, "clipped_pairs": clipped,
           "peak": peak, "pcm_sha256": sha.hexdigest(), "active_segments": active,
           "core_underrun_max": max(int(c["underruns"]) for c in core),

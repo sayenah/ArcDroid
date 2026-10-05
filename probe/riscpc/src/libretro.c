@@ -16,9 +16,13 @@ static retro_audio_sample_t audio_one;
 static retro_audio_sample_batch_t audio_batch;
 static retro_input_poll_t input_poll;
 static retro_input_state_t input_state;
-static int loaded, replay, machine_live;
-static FILE *csv,*events;
+static int loaded, replay, machine_live,measurement;
+static FILE *csv,*events,*activity,*csv_cost;
 static uint64_t frame,next_frame,frame_period,wall_origin,flyback_fall;
+static uint64_t requested_ns;
+static uint64_t pending_cost_frame,pending_cost_ns;
+static int pending_cost;
+static int reset_during_run;
 static unsigned keys[512],keyboard_held[512],pad_held[512],mouse_buttons;
 static uint32_t blank[320*256];
 static char out_dir[1024];
@@ -43,6 +47,9 @@ static const struct retro_variable options[]={
  {"rpcprobe_cmos_sha1","Required cold CMOS SHA-1; none"},
  {"rpcprobe_diagnostics","Passive device/mode diagnostics; disabled|enabled"},
  {"rpcprobe_register_trace","Passive bounded raster/sound register trace; disabled|enabled"},
+ {"rpcprobe_activity","Passive guest activity cadence (calibration only); disabled|enabled"},
+ {"rpcprobe_expected_seconds","Declared total guest duration (footer only); 0|300|600|1800|2100|2400|3000|3600"},
+ {"rpcprobe_measurement","Frame instrumentation (disable only for overhead pairs); enabled|disabled"},
  {NULL,NULL}};
 static const char *option(const char *key) {
  struct retro_variable v={key,NULL};const char *value=env&&env(RETRO_ENVIRONMENT_GET_VARIABLE,&v)&&v.value?v.value:"none";
@@ -152,6 +159,13 @@ RETRO_API bool retro_load_game(const struct retro_game_info *g) {
  enum retro_pixel_format format=RETRO_PIXEL_FORMAT_XRGB8888;
  if(!env(RETRO_ENVIRONMENT_SET_PIXEL_FORMAT,&format))fatal("Frontend refuses XRGB8888");
  probe_frontend_paths(env);
+ const char *duration=option("rpcprobe_expected_seconds");requested_ns=0;
+ if(strcmp(duration,"none")) {
+  char *end;double seconds=strtod(duration,&end);
+  if(*end||!(seconds>=0&&seconds<=3600))fatal("Invalid declared duration");
+  requested_ns=(uint64_t)(seconds*1e9);
+ }
+ reset_during_run=0;
  const char *model=option("rpcprobe_model");Model m=Model_RPCSA110;
  if(!strcmp(model,"ARM710"))m=Model_RPCARM710;else if(!strcmp(model,"ARM610"))m=Model_RPCARM610;else if(!strcmp(model,"A7000"))m=Model_A7000;
  unsigned rate=(unsigned)strtoul(option("rpcprobe_rate"),NULL,10);
@@ -180,7 +194,15 @@ RETRO_API bool retro_load_game(const struct retro_game_info *g) {
  script_load(option("rpcprobe_script"));
  const char *out=option("rpcprobe_output");out_dir[0]=0;
  if(strcmp(out,"none")) {if(strlen(out)>=sizeof(out_dir))fatal("Output directory bound");strcpy(out_dir,out);}
- csv=output_file("frames.csv");events=output_file("events.csv");
+ measurement=strcmp(option("rpcprobe_measurement"),"disabled")!=0;
+ pending_cost=0;
+ csv=measurement?output_file("frames.csv"):NULL;events=measurement?output_file("events.csv"):NULL;
+ csv_cost=measurement?output_file("csv-cost.csv"):NULL;
+ if(csv_cost)fprintf(csv_cost,"frame,csv_append_ns\n");
+ if(!strcmp(option("rpcprobe_activity"),"enabled")) {
+  activity=output_file("activity.csv");
+  if(activity)fprintf(activity,"frame,emu_ns,dirty_pages,timer0_latch,timer1_latch,sound_rate\n");
+ }
  probe_register_trace_reset();
  if(!strcmp(option("rpcprobe_register_trace"),"enabled")) {
   probe_register_log=output_file("registers.csv");
@@ -210,7 +232,13 @@ RETRO_API void retro_run(void) {
   struct retro_message msg={"RPC probe session failed; see status row",600};env(RETRO_ENVIRONMENT_SET_MESSAGE,&msg);
   bool shutdown=true;env(RETRO_ENVIRONMENT_SHUTDOWN,&shutdown);probe_can_escape=0;return;
  }
- uint64_t start=probe_wall_ns(),ins=probe_instructions;
+ uint64_t start=measurement?probe_wall_ns():0,ins=probe_instructions;
+ /* Defer the previous frame's tail record. Its write is charged to this
+  * frame, so the observer never silently falls outside execution accounting. */
+ if(csv_cost&&pending_cost) {
+  if(fprintf(csv_cost,"%"PRIu64",%"PRIu64"\n",pending_cost_frame,pending_cost_ns)<0)fatal("CSV cost write failed");
+  pending_cost=0;
+ }
  probe_audio_count=0;
  if(input_poll)input_poll();
  if(!replay&&input_state) {
@@ -230,7 +258,14 @@ RETRO_API void retro_run(void) {
   probe_advance(target);
  }
  if(flyback_fall<=probe_now)iomd_flyback(0);
- deliver();iomd_flyback(1);drawscr();flyback_fall=probe_now+probe_video_blank_ns();
+ deliver();iomd_flyback(1);
+ /* Read-only guest write evidence before the existing renderer consumes it.
+  * Dirty pages are an activity proxy, never a proof of game logic cadence. */
+ if(activity) {
+  unsigned dirty=0;for(unsigned i=0;i<32768;i++)dirty+=dirtybuffer[i]!=0;
+  if(fprintf(activity,"%"PRIu64",%"PRIu64",%u,%"PRIu32",%"PRIu32",%u\n",frame,probe_now,dirty,iomd.t0.in_latch,iomd.t1.in_latch,probe_sound_rate)<0)fatal("Activity write failed");
+ }
+ drawscr();flyback_fall=probe_now+probe_video_blank_ns();
  uint64_t period=probe_video_period();if(period!=frame_period) {
   frame_period=period;struct retro_system_av_info av;retro_get_system_av_info(&av);env(RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO,&av);
  }
@@ -241,19 +276,25 @@ RETRO_API void retro_run(void) {
  if(video)video(pixels,w,h,pixels==blank?(size_t)w*4:probe_video_pitch());
  if(audio_batch) {size_t n=audio_batch(probe_audio,probe_audio_count);if(n!=probe_audio_count)fatal("Frontend audio short acceptance");}
  else if(audio_one)for(unsigned i=0;i<probe_audio_count;i++)audio_one(probe_audio[i*2],probe_audio[i*2+1]);
- uint64_t instrument_start=probe_wall_ns();
- uint64_t vh=pixels==blank?probe_hash(UINT64_C(1469598103934665603),pixels,(size_t)w*h*4):probe_video_hash();
- probe_audio_hash=probe_hash(probe_audio_hash,probe_audio,(size_t)probe_audio_count*4);
- uint64_t end=probe_wall_ns(),overhead=end-instrument_start;
- if(csv&&fprintf(csv,"%"PRIu64",%"PRIu64",%"PRIu64",%"PRIu64",%"PRIu64",%u,%"PRIu64",%"PRIu64",%016"PRIx64",%016"PRIx64",%"PRIu64",%"PRIu64",OK\n",frame,probe_now,period,end-start,probe_instructions-ins,probe_audio_count,probe_underruns,probe_overruns,vh,probe_audio_hash,end-wall_origin,overhead)<0)fatal("CSV write failed");
+ if(measurement) {
+  uint64_t instrument_start=probe_wall_ns();
+  uint64_t vh=pixels==blank?probe_hash(UINT64_C(1469598103934665603),pixels,(size_t)w*h*4):probe_video_hash();
+  probe_audio_hash=probe_hash(probe_audio_hash,probe_audio,(size_t)probe_audio_count*4);
+  uint64_t end=probe_wall_ns(),overhead=end-instrument_start;
+  if(csv&&fprintf(csv,"%"PRIu64",%"PRIu64",%"PRIu64",%"PRIu64",%"PRIu64",%u,%"PRIu64",%"PRIu64",%016"PRIx64",%016"PRIx64",%"PRIu64",%"PRIu64",OK\n",frame,probe_now,period,end-start,probe_instructions-ins,probe_audio_count,probe_underruns,probe_overruns,vh,probe_audio_hash,end-wall_origin,overhead)<0)fatal("CSV write failed");
+  /* The primary row cannot contain its own completed write duration. Defer
+   * that measured tail to the next call; evaluators add it to exec_ns. */
+  if(csv_cost){pending_cost_frame=frame;pending_cost_ns=probe_wall_ns()-end;pending_cost=1;}
+ }
  frame++;probe_can_escape=0;
 }
 RETRO_API void retro_reset(void) {
- if(!loaded)return;clear_held();probe_can_escape=1;
+ if(!loaded)return;reset_during_run=1;clear_held();probe_can_escape=1;
  if(!setjmp(probe_escape)) {probe_machine_reset();script_at=0;frame_period=probe_video_period();next_frame=frame_period;flyback_fall=UINT64_MAX;}
  probe_can_escape=0;
 }
 RETRO_API void retro_unload_game(void) {
+ int write_footer=loaded&&out_dir[0];
  if(loaded&&out_dir[0]) {
   uint8_t data[256];probe_cmos_snapshot(data);char name[1200];
   int bad=snprintf(name,sizeof(name),"%s/cmos-final.bin",out_dir)>=(int)sizeof(name);FILE *f=bad?NULL:fopen(name,"wb");
@@ -261,17 +302,36 @@ RETRO_API void retro_unload_game(void) {
   if(bad) {probe_failed=1;bool stop=true;env(RETRO_ENVIRONMENT_SHUTDOWN,&stop);}
  }
  if(loaded)clear_held();
+ if(csv_cost&&pending_cost) {
+  if(fprintf(csv_cost,"%"PRIu64",%"PRIu64"\n",pending_cost_frame,pending_cost_ns)<0)probe_failed=1;
+  pending_cost=0;
+ }
  if(machine_live) {probe_machine_close();machine_live=0;}probe_media_close();loaded=0;
  if(!probe_ide_close()) {
   probe_failed=1;if(csv)fprintf(csv,"%"PRIu64",%"PRIu64",0,0,0,0,0,0,0,0,0,0,FAIL\n",frame,probe_now);
   struct retro_message message={"Scratch IDE close failed",600};env(RETRO_ENVIRONMENT_SET_MESSAGE,&message);bool stop=true;env(RETRO_ENVIRONMENT_SHUTDOWN,&stop);
  }
- FILE **outputs[]={&csv,&events,&probe_boot_log,&probe_mode_log,&probe_register_log};int output_bad=0;
+ FILE **outputs[]={&csv,&events,&activity,&csv_cost,&probe_boot_log,&probe_mode_log,&probe_register_log};int output_bad=0;
  for(unsigned i=0;i<sizeof(outputs)/sizeof(outputs[0]);i++)if(*outputs[i]) {
   if(ferror(*outputs[i]))output_bad=1;
-  if(fclose(*outputs[i]))output_bad=1;*outputs[i]=NULL;
+  if(fclose(*outputs[i]))output_bad=1;
+  *outputs[i]=NULL;
  }
  if(output_bad) {probe_failed=1;bool stop=true;env(RETRO_ENVIRONMENT_SHUTDOWN,&stop);}
+ /* Written only after all raw streams and scratch backing close successfully.
+  * A process crash/kill has no completion marker; reset invalidates a single
+  * monotonic run. Duration is a declaration, never a guest scheduling input. */
+ if(write_footer) {
+  char name[1200];FILE *f=NULL;
+  if(snprintf(name,sizeof(name),"%s/run-footer.json",out_dir)<(int)sizeof(name))f=fopen(name,"wb");
+  int bad=!f;
+  if(f) {
+   const char *status=probe_failed||reset_during_run?"FAIL":requested_ns&&probe_now>=requested_ns?"COMPLETE":"INCOMPLETE";
+   if(fprintf(f,"{\"status\":\"%s\",\"frames\":%"PRIu64",\"requested_ns\":%"PRIu64",\"advanced_ns\":%"PRIu64",\"reset\":%d,\"measurement\":%d,\"cost_accounting\":\"deferred-csv-tail-v1\"}\n",status,frame,requested_ns,probe_now,reset_during_run,measurement)<0)bad=1;
+   if(fclose(f))bad=1;
+  }
+  if(bad){probe_failed=1;bool stop=true;env(RETRO_ENVIRONMENT_SHUTDOWN,&stop);}
+ }
 }
 RETRO_API bool retro_load_game_special(unsigned n,const struct retro_game_info *g,size_t count) {(void)n;(void)g;(void)count;return false;}
 RETRO_API size_t retro_serialize_size(void) {return 0;}

@@ -1,5 +1,18 @@
 # Disposable RiscPC trial
 
+Run-12 platform/evidence instructions: [RUNBOOK.md](RUNBOOK.md). The current
+core emits a final completion footer and primary-CSV write costs; all performance
+evaluators require complete raw evidence. Raster qualification and final AC4/AC8
+acceptance remain pending Founder adjudication. Older partial-tool descriptions
+below are historical. New options: `rpcprobe_expected_seconds` (footer duration
+only), `rpcprobe_measurement` (on/off overhead pairs), `rpcprobe_activity`
+(passive calibration diagnostics). The runner accepts `--shot-times=FILE`
+(ordered absolute guest seconds, observed on the first completed frame at or
+after each timestamp), `--timing=FILE`, and `--ledger=FILE`. Timing wraps the whole
+core call; independent AV ledger hashing follows it and cannot affect guest
+ordering. No renderer path is modified.
+
+
 This directory is the unit P feasibility probe on `probe/riscpc-trial`.
 It is never merged into ArcDroid. The work order and thresholds are in
 `docs/handoff.md` and `docs/riscpc.md`. No feasibility pass is implied by a

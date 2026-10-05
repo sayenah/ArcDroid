@@ -70,7 +70,7 @@ static void prepare(ArcJfdImage *im,unsigned index) {
  arc_jfd_file_data_prepare(im,true,false,o->reason);
 }
 static void media_failure(FILE *list,const char *reason) {
- if(list)fclose(list);fatal(reason);
+ if(list)fclose(list);fatal("%s",reason);
 }
 static void add_media(const char *name,FILE *custody,FILE *list) {
  if(image_count==MAX_DISCS)media_failure(list,"Media count bound");

@@ -1,0 +1,49 @@
+#!/usr/bin/env python3
+"""Public runner integration: footer, exact captures, on/off output equivalence."""
+import argparse
+import csv
+import json
+from pathlib import Path
+import subprocess
+from evidence import completion, core_rows, EvidenceError, read_rows, include_csv_cost
+
+p=argparse.ArgumentParser();p.add_argument('--runner',type=Path,required=True);p.add_argument('--core',type=Path,required=True);p.add_argument('--output',type=Path,required=True);a=p.parse_args()
+a.output.mkdir(exist_ok=False,parents=True)
+shots=a.output/'times.txt';shots.write_text('0.03\n0.06\n0.09\n')
+base=[str(a.runner.resolve()),str(a.core.resolve()),'.12','unthrottled','rpcprobe_authored=enabled','rpcprobe_model=SA110','rpcprobe_rate=20']
+ledgers=[]
+for mode in ('enabled','disabled'):
+    out=a.output/mode;out.mkdir()
+    cmd=base+['rpcprobe_output='+str(out.resolve()),'rpcprobe_measurement='+mode,'--ledger='+str((out/'ledger.csv').resolve()),'--timing='+str((out/'timing.csv').resolve()),'--png='+str((out/'capture').resolve()),'--shot-times='+str(shots.resolve())]
+    with (out/'runner.log').open('w') as f:
+        result=subprocess.run(cmd,stdout=f,stderr=f)
+    assert result.returncode==0,'runner failed'
+    rows=read_rows(out/'timing.csv',('frame','emu_ns','period_ns','exec_ns'))
+    footer=completion(out/'timing.csv',rows,expected_ns=120000000)
+    assert footer['measurement']==(mode=='enabled')
+    if mode=='enabled':
+        measured=include_csv_cost(out/'csv-cost.csv',core_rows(out/'frames.csv'))
+        for core,whole in zip(measured,rows):
+            assert core['frame']==whole['frame'] and core['emu_ns']==whole['emu_ns']
+            assert core['exec_ns']<=whole['exec_ns']+1000,'execution cost exceeds full call'
+    else:assert not (out/'frames.csv').exists(),'off must omit full instrumentation'
+    with (out/'ledger.csv').open(newline='') as f:ledgers.append(list(csv.DictReader(f)))
+    assert len(list(out.glob('capture.time-*.png')))==3
+assert ledgers[0]==ledgers[1],'on/off guest output differs'
+# Intentionally mismatched requested declaration: runner completes its own
+# limit, but a clean CSV cannot satisfy the core's longer declared run.
+out=a.output/'shortened';out.mkdir()
+with (out/'runner.log').open('w') as f:
+    result=subprocess.run(base+['rpcprobe_output='+str(out.resolve()),'rpcprobe_expected_seconds=.2'],stdout=f,stderr=f)
+assert result.returncode==0
+try:completion(out/'frames.csv',core_rows(out/'frames.csv'))
+except EvidenceError:pass
+else:raise AssertionError('incomplete core footer accepted')
+for text in ('nan\n','0.06\n0.03\n','0.13\n'):
+    bad=a.output/'invalid.txt';bad.write_text(text)
+    result=subprocess.run(base+['--png='+str(a.output/'invalid'),'--shot-times='+str(bad.resolve())],capture_output=True)
+    assert result.returncode==2,'invalid absolute capture times accepted'
+for duration in ('nan','inf',''):
+    cmd=base[:];cmd[2]=duration
+    assert subprocess.run(cmd,capture_output=True).returncode==2,'invalid guest duration accepted'
+print('PASS runner integration: full/off identical AV, footer limits, timed captures and malformed time refusal')
