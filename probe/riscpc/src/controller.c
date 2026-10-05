@@ -147,6 +147,41 @@ static void guest_seek(unsigned d,unsigned c) {
  load(4,5000);unsigned delay=at;word(0xe2544001);branch(1,delay);
  store(FIFO,8);wait_result();load(0,FIFO);word(0xe5d01000);word(0xe5d01000);
 }
+/* R9: independently expected unit identities, read by authored guest code. */
+static void captured_move(unsigned d,unsigned c,int recalibrate,unsigned slot) {
+ store(DOR,d?0x3d:0x3c);
+ store(FIFO,recalibrate?7:15);store(FIFO,recalibrate?d:4|d);
+ if(!recalibrate)store(FIFO,c);
+ load(4,5000);unsigned delay=at;word(0xe2544001);branch(1,delay);
+ store(FIFO,8);wait_result();load(0,FIFO);load(2,RESULT+slot);
+ for(unsigned i=0;i<2;i++) {word(0xe5d01000);word(0xe4c21001);}
+}
+static void captured_drive_status(unsigned d,unsigned slot) {
+ store(DOR,d?0x3d:0x3c);store(FIFO,4);store(FIFO,d);wait_result();
+ load(0,FIFO);word(0xe5d01000);load(2,RESULT+slot);word(0xe5c21000);
+}
+static void seek_identity_tests(void) {
+ ArcJfdImage im;probe_helper_enabled=1;fixture(&im,2,0);probe_machine_reset();
+ memset(rom,0,ROMSIZE);at=0;store(DOR,0x3c);
+ load(4,5000);unsigned delay=at;word(0xe2544001);branch(1,delay);
+ store(FIFO,8);wait_result();load(0,FIFO);word(0xe5d01000);word(0xe5d01000);
+ captured_move(1,5,0,0);captured_drive_status(0,8);captured_drive_status(1,9);
+ captured_move(0,9,0,2);captured_move(1,0,1,4);
+ captured_drive_status(0,10);captured_drive_status(1,11);captured_move(0,0,1,6);
+ store(DONE,1);unsigned end=at;branch(14,end);advance(1000000);
+ CHECK("unit-1-SEEK-identity-PCN",done()&&result()[0]==0x21&&result()[1]==5);
+ CHECK("unit-0-SEEK-regression-PCN",done()&&result()[2]==0x20&&result()[3]==9);
+ CHECK("unit-1-RECALIBRATE-identity-PCN",done()&&result()[4]==0x21&&result()[5]==0);
+ CHECK("unit-0-RECALIBRATE-regression-PCN",done()&&result()[6]==0x20&&result()[7]==0);
+ CHECK("seek-completion-H-is-zero",!(result()[0]&4)&&!(result()[2]&4)&&!(result()[4]&4)&&!(result()[6]&4));
+ CHECK("unit-0-T0-survives-other-SEEK",done()&&(result()[8]&0x13)==0x10);
+ CHECK("unit-1-T0-clears-at-cylinder-5",done()&&(result()[9]&0x13)==1);
+ CHECK("unit-0-T0-stays-clear-after-other-RECALIBRATE",done()&&(result()[10]&0x13)==0);
+ CHECK("unit-1-T0-after-RECALIBRATE",done()&&(result()[11]&0x13)==0x11);
+ printf("fdc seek-identities time=%"PRIu64" done=%d results=",probe_now,done());
+ for(unsigned i=0;i<12;i++)printf("%02x",result()[i]);printf("\n");
+ probe_media_close();arc_jfd_free(&im);probe_helper_enabled=0;
+}
 static void read_dir(unsigned slot) {
  load(0,CCR);word(0xe5d01000);load(2,RESULT+slot);word(0xe5c21000);
 }
@@ -230,5 +265,5 @@ int main(void) {
  failure_test("WP",0x45,0,3,2,3,0,1024,1,2,0,0);
  failure_test("deleted-write",0x49,0,3,2,2,0,1024,1,2,0,0);
  failure_test("short-write",0x45,0,3,2,2,0,32,1,0x10,0,32);
- cancellation_tests();helper_tests();ownership_tests();probe_machine_close();printf("controller checks=%u failures=%u\n",checks,failures);return failures?1:0;
+ cancellation_tests();helper_tests();ownership_tests();seek_identity_tests();probe_machine_close();printf("controller checks=%u failures=%u\n",checks,failures);return failures?1:0;
 }

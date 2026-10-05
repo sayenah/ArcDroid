@@ -37,7 +37,7 @@ static const struct retro_variable options[]={
  {"rpcprobe_authored","Authored ROM workload; disabled|enabled"},
  {"rpcprobe_media_list","External JFD paths, one per line in disc order; none"},
  {"rpcprobe_ide","Session scratch hard disc; disabled|enabled"},
- {"rpcprobe_boot","Boot medium; automatic|standard|helper"},
+ {"rpcprobe_boot","Boot medium; automatic|standard|helper|manual-helper"},
  {"rpcprobe_ide_baseline","Read-only post-install baseline; none"},
  {"rpcprobe_ide_baseline_sha1","Required baseline SHA-1; none"},
  {"rpcprobe_cmos_factory","Capture firmware factory reset; disabled|enabled"},
@@ -94,7 +94,11 @@ static void boot_key(uint64_t ns,unsigned scan) {
  boot_script[boot_count++]=(Event){.ns=ns+40000000,.verb="key_up",.a=(int)scan};
 }
 static void boot_load(void) {
- boot_count=boot_at=0;if(!probe_helper_enabled)return;
+ boot_count=boot_at=0;
+ /* R9 diagnostic control: keep drive 1 inserted, but let the ordinary guest
+  * input script establish its environment, identically to standard mode.
+  * No device, firmware, media payload or default boot behavior changes. */
+ if(!probe_helper_enabled||!strcmp(option("rpcprobe_boot"),"manual-helper"))return;
  boot_key(UINT64_C(14000000000),7); /* F12, normal desktop command prompt */
  const char *text=probe_ide_enabled?"obey adfs::1.$.!boot 1":"obey adfs::1.$.!boot 0";
  const char *letters="abcdefghijklmnopqrstuvwxyz";

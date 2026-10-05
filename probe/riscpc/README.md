@@ -318,3 +318,16 @@ commands, and removes its synthetic files on normal completion. It tests
 unaffected helper READ ID and empty searches, eight repeated swaps,
 interrupted reads/writes, an early-swap replacement read, per-drive DIR
 selection and physical-step clearing. No private firmware/content is used.
+
+### Independent helper-presence control (run-9 R9-1)
+
+`rpcprobe_boot=manual-helper` inserts the unchanged authored drive-1 medium
+without scheduling automatic boot keystrokes. A replay can establish the
+environment through normal guest commands at its own fixed timestamps,
+as with `standard` (which omits the helper). This diagnostic option separates
+helper presence from variables, System registration and task dispatch;
+`automatic` and `helper` retain their existing startup behavior. Record the
+boot script, baseline, CMOS and frozen binary hashes for each comparison.
+The extra drive icon changes the initial opening-click position: normalize
+the pointer during setup, before the shared installer-event sequence.
+Keep media replacement and confirmation timestamps identical.

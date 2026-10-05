@@ -147,3 +147,19 @@ TEAC FD-235HG-C805/C817/C897 specification §8.3.12: change persists until a dis
 installed and a STEP command is received with DRIVE SELECT true:
 https://ftpmirror.infania.net/sites/bitsavers/pdf/teac/floppy/FD235/FD-235HG-C805_C817_C897_Specification.pdf .
 These drive-interface rules do not imply a guest cache flush or forced retry.
+
+Run-9 seek identity expectations, stated before changing the controller:
+guest SEEK on unit 1 to cylinder 5, with H=1 in its parameter, followed by
+SENSE INTERRUPT STATUS returns ST0=21 and PCN=05. Unit 0 SEEK to 9 returns
+20/09; unit 1 RECALIBRATE returns 21/00; unit 0 RECALIBRATE returns 20/00.
+Every completion has H=0. These alternate two units through ordinary
+DOR/FIFO accesses; no firmware or content is involved. SMSC
+FDC37C665GT/666GT, Table 17 (p.39) assigns ST0 bits 1:0 to the drive;
+Seek/Sense Interrupt Status (pp.69-70) specifies SE and the zero H bit.
+Source: https://bitsavers.org/components/standardMicrosystems/_SMSC/_dataSheets/FDC37C665GT_SuperIO.pdf .
+
+The same two-unit program queries SENSE DRIVE STATUS after unit 1 seeks to
+5: unit 0 is still at 0 (T0=1), unit 1 is at 5 (T0=0). After unit 0 seeks
+to 9 and unit 1 recalibrates, T0 is respectively 0/1. Check DS and T0 with
+mask 0x13; expect 0x10/0x01/0x00/0x11. Table 20 (p.42) defines T0 from that drive's
+TRK0 input; another drive's operation cannot change it.

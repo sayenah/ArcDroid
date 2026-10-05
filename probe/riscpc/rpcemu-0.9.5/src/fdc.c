@@ -494,7 +494,7 @@ fdc_callback(void)
 
 	case FD_CMD_SENSE_DRIVE_STATUS:
 		fdc.st3 = (fdc.parameters[0] & 7) | 0x28; // Drive number, 'two side' and 'ready'
-		if (fdc.track == 0) {
+		if (disc_get_current_track(fdc.parameters[0] & 3) == 0) { /* ARCDROID-PROBE: TRK0 belongs to the queried unit. */
 			fdc.st3 |= 0x10; // Track is zero
 		}
 		// TODO Mix in Head number?
@@ -515,7 +515,7 @@ fdc_callback(void)
 		fdc.params    = 0;
 		fdc.curparam  = 0;
 		// TODO set drive back to track 0
-		fdc.st0       = 0x20; // Seek End
+		fdc.st0       = 0x20 | (fdc.parameters[0] & 3); /* ARCDROID-PROBE: seek end identifies its unit; H is zero. */
 		fdc_irq_raise();
 		break;
 
@@ -539,7 +539,7 @@ fdc_callback(void)
 		fdc.status    = 0x80;
 		fdc.params    = 0;
 		fdc.curparam  = 0;
-		fdc.st0       = 0x20;
+		fdc.st0       = 0x20 | (fdc.parameters[0] & 3); /* ARCDROID-PROBE: seek end identifies its unit; H is zero. */
 		fdc_irq_raise();
 		break;
 
