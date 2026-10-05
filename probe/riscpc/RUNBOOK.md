@@ -1,10 +1,18 @@
-# Unit P platform evidence runbook (run 12)
+# Unit P platform evidence runbook (run 13)
 
 This disposable branch is never merged. Keep every runtime input/output private.
-Run 12 does **not** qualify the final >=600 s AC-4 replay or AC-8 performance.
-110's raster failure awaits the Founder; do not run acceptance legs until the
-rendering decision is reconciled, the final core is frozen and AC-7 supplies
-qualified model-wide rates. No rate may be lowered to make performance pass.
+The final core uses deterministic line scanout (`video_renderer: line-v4` in its
+completion footer). Retain that footer; legacy frame-snapshot results do not
+qualify this binary. Final Mac evidence and provisional calibration results are
+in the private `SOL-REPORT-P.md`; platform execution remains the orchestrator's
+responsibility. No rate may be lowered to make performance pass.
+
+If calibration remains INCONCLUSIVE, screen SA110 at 100/150/200/250/300 and
+ARM710 at 20/35/100/150. These are candidates and higher references, not approved
+model-wide rates. Inspect matched timer/progress and distinct-frame/HUD cadence
+against both higher references before choosing a speed verdict. Missing progress
+observations or a menu/death tail cannot qualify a rate. Keep each candidate's
+performance result separate; do not select the fastest passing host result.
 
 ## 1. Freeze and inspect the build
 
@@ -41,6 +49,7 @@ macOS (use absolute binary path if the current directory differs):
 
 ```sh
 ./probe_mechanisms > macos.trace 2> macos.stderr
+./probe_raster > macos-raster.trace 2> macos-raster.stderr
 ```
 
 Windows PowerShell, binaries copied from the same frozen build:
@@ -48,6 +57,8 @@ Windows PowerShell, binaries copied from the same frozen build:
 ```powershell
 & .\probe_mechanisms.exe 1> windows.trace 2> windows.stderr
 $LASTEXITCODE | Set-Content windows.exit
+& .\probe_raster.exe 1> raster.trace 2> raster.stderr
+$LASTEXITCODE | Set-Content raster.exit
 & .\probe_controller.exe 1> controller.trace 2> controller.stderr
 $LASTEXITCODE | Set-Content controller.exit
 & .\probe_lifecycle.exe 1> lifecycle.trace 2> lifecycle.stderr
@@ -63,20 +74,34 @@ Odin3, commands for the orchestrator (replace the build directory only):
 
 ```sh
 ADB=/opt/homebrew/share/android-commandlinetools/platform-tools/adb
-"$ADB" shell mkdir -p /data/local/tmp/rpcprobe-p12
-"$ADB" push probe/riscpc/run/android/probe_mechanisms /data/local/tmp/rpcprobe-p12/
-"$ADB" push probe/riscpc/run/android/probe_runner /data/local/tmp/rpcprobe-p12/
-"$ADB" push probe/riscpc/run/android/arcdroid_rpcprobe_libretro.so /data/local/tmp/rpcprobe-p12/
-"$ADB" shell 'chmod 700 /data/local/tmp/rpcprobe-p12/probe_mechanisms /data/local/tmp/rpcprobe-p12/probe_runner'
-"$ADB" shell 'cd /data/local/tmp/rpcprobe-p12 && ./probe_mechanisms >arm64.trace 2>arm64.stderr; rc=$?; echo "$rc" >arm64.exit; exit "$rc"'
-"$ADB" pull /data/local/tmp/rpcprobe-p12/arm64.trace probe/riscpc/run/arm64.trace
-"$ADB" pull /data/local/tmp/rpcprobe-p12/arm64.stderr probe/riscpc/run/arm64.stderr
-"$ADB" pull /data/local/tmp/rpcprobe-p12/arm64.exit probe/riscpc/run/arm64.exit
+"$ADB" shell mkdir -p /data/local/tmp/rpcprobe-p13
+"$ADB" push probe/riscpc/run/android/probe_mechanisms /data/local/tmp/rpcprobe-p13/
+"$ADB" push probe/riscpc/run/android/probe_video_frontend /data/local/tmp/rpcprobe-p13/
+"$ADB" push probe/riscpc/run/android/probe_raster /data/local/tmp/rpcprobe-p13/
+"$ADB" push probe/riscpc/run/android/probe_runner /data/local/tmp/rpcprobe-p13/
+"$ADB" push probe/riscpc/run/android/arcdroid_rpcprobe_libretro.so /data/local/tmp/rpcprobe-p13/
+"$ADB" shell 'chmod 700 /data/local/tmp/rpcprobe-p13/probe_video_frontend /data/local/tmp/rpcprobe-p13/probe_mechanisms /data/local/tmp/rpcprobe-p13/probe_raster /data/local/tmp/rpcprobe-p13/probe_runner'
+"$ADB" shell 'cd /data/local/tmp/rpcprobe-p13 && ./probe_mechanisms >arm64.trace 2>arm64.stderr; rc=$?; echo "$rc" >arm64.exit; exit "$rc"'
+"$ADB" shell 'cd /data/local/tmp/rpcprobe-p13 && ./probe_raster >arm64-raster.trace 2>arm64-raster.stderr; rc=$?; echo "$rc" >arm64-raster.exit; exit "$rc"'
+"$ADB" pull /data/local/tmp/rpcprobe-p13/arm64-raster.trace probe/riscpc/run/arm64-raster.trace
+"$ADB" pull /data/local/tmp/rpcprobe-p13/arm64-raster.stderr probe/riscpc/run/arm64-raster.stderr
+"$ADB" pull /data/local/tmp/rpcprobe-p13/arm64-raster.exit probe/riscpc/run/arm64-raster.exit
+python3 probe/riscpc/tools/compare_traces.py probe/riscpc/run/macos-raster.trace probe/riscpc/run/arm64-raster.trace --reference-stderr probe/riscpc/run/macos-raster.stderr --actual-stderr probe/riscpc/run/arm64-raster.stderr --output probe/riscpc/run/arm64-raster-comparison.json
+"$ADB" pull /data/local/tmp/rpcprobe-p13/arm64.trace probe/riscpc/run/arm64.trace
+"$ADB" pull /data/local/tmp/rpcprobe-p13/arm64.stderr probe/riscpc/run/arm64.stderr
+"$ADB" pull /data/local/tmp/rpcprobe-p13/arm64.exit probe/riscpc/run/arm64.exit
 python3 probe/riscpc/tools/compare_traces.py probe/riscpc/run/macos.trace probe/riscpc/run/arm64.trace --output probe/riscpc/run/arm64-comparison.json
 ```
 
 Require exit 0 and the complete final `checks=... failures=0` line, all four
 models and identical state traces. Use the same comparator for Windows.
+The raster harness writes its completion count to stderr; compare both streams
+with `--reference-stderr`/`--actual-stderr`, and require 408 checks/0 failures.
+The new `probe_video_frontend` authored guest harness must also exit 0 on each
+platform: eighty steady 60 Hz frames produce no full AV/geometry notifications;
+refresh change settles at 50 Hz; width-only change produces one geometry callback
+and zero full AV resets. Capture both streams and exit status. Run it from the
+same frozen build (`./probe_video_frontend`, Windows `.exe`, or the adb directory).
 Missing platform execution is MISSING; a build is not cross-platform trace proof.
 For a no-ROM load diagnostic on Odin3, create a fresh writable output directory
 and run `probe_runner CORE 2 unthrottled rpcprobe_authored=enabled
@@ -116,8 +141,9 @@ Core options, set through RetroArch's core-options UI:
 
 - `rpcprobe_firmware`: verified `ROM371` (other pairs only for smoke checks).
 - `rpcprobe_model`: the qualified model from the private report.
-- `rpcprobe_rate`: the **frozen model-wide empirical rate**. Run 12 does not
-  supply a qualified rate when progress/timer/cadence evidence is missing.
+- `rpcprobe_rate`: the **frozen model-wide empirical rate**, if the private
+  report supplies one; otherwise screen the candidate/reference sets above and
+  record calibration as INCONCLUSIVE. Missing observations do not qualify a rate.
 - `rpcprobe_workload`: the corresponding `trial-*` directory.
 - `rpcprobe_ide=enabled`; `rpcprobe_boot=standard` (single floppy drive 0).
 - `rpcprobe_measurement=enabled` for every acceptance leg.
@@ -261,7 +287,8 @@ For device evidence pulled to another host, put an `input-locations.json` beside
 private path. Only locations change: every original digest is rechecked. Never
 copy original firmware/content into the repository or synthesize missing inputs.
 
-`evaluate_suite.py` requires four private trial labels on Windows/Odin3 and all
+`evaluate_suite.py` requires five independent gameplay labels on Windows/Odin3
+(`trial-a`, `trial-b`, `trial-c-1`, `trial-c-2`, `trial-d`) and all
 12 authored workload coverage labels shown in its source, three sustained legs
 each plus alternating rate screening. A missing executable workload/phase recipe
 remains a coverage gap. The current libretro authored ROM is the framebuffer/
@@ -280,3 +307,97 @@ binaries, configuration, predeclarations, scripts, cold/warm hashes, every raw
 measurement, failed attempts, exact durations and verification logs. Fable
 recomputes and inspects representative gameplay independently. The tool does
 not confer QA, release, merge or Founder approval.
+
+## 8. Per-frame calibration and rendering cost (run13)
+
+The headless runner accepts `--regions=regions.txt --frame-hashes=frame-hashes.csv`.
+Each ASCII region line is `name,x,y,width,height` (unique alphanumeric/underscore
+name, bounded positive rectangle); use separate small timer/lap/level/score
+regions plus a play-area region. Every video callback records a full-frame hash
+and region hashes outside the measured core call. Out-of-geometry regions say
+`MISSING`. Use `--shot-every=0 --shot-times=checkpoints.txt` for PNGs only at
+predeclared guest-second checkpoints. Bind both files and the script to custody
+before launch; retain the original calibration declaration and its amendment.
+
+```sh
+python3 probe/riscpc/tools/frame_cadence.py PRIVATE_RUN --window 112 142 --output PRIVATE_RUN/cadence.json
+```
+
+The tool validates observer timestamps/full hashes against the raw core frames
+and completion footer, and counts adjacent-frame transitions per guest second.
+It reports transition times at one-frame resolution. It does not identify
+numeric counters or establish world-position equivalence; inspect declared
+checkpoint captures and timer transitions independently. Keep2% timers/progress,
+5% cadence and both higher references. A failure or unobservable milestone
+remains FAIL/MISSING; never infer progress from cadence alone.
+
+For renderer cost, retain the pre-raster binary and execute identical immutable
+cold inputs/scripts/model/rate/lead-in/window with both binaries. Compare the
+whole measured core call in raw `frames.csv`, including CSV append costs, within
+the same declared active window. Report means/quantiles, frame counts and guest
+output differences. Shared-host wall variance is a limitation; these numbers do
+not replace Windows/Odin3 AC8 evidence. Measure instrumentation separately with
+`tools/measure_overhead.py` (three alternating on/off pairs); unresolved variance
+is MISSING. Keep the final raster binary for all platform sustained runs.
+
+The suite manifest distinguishes `trial-c-1` and `trial-c-2` as independent
+workload labels for both payloads. Each needs its own three sustained legs and
+screening series; a generic `trial-c` entry supplies neither. The core option
+can remain `trial-c`: stage the appropriate private script/cold configuration
+for each payload and preserve that configuration/hash in the run custody. Do
+not mix the payloads within one three-run set.
+
+## Final headless HUD observations
+
+For the per-frame calibration observer, add `--regions=rectangles.txt
+--frame-hashes=frame-hashes.csv --region-pixels=region-pixels.csv
+--pixel-regions=timer,lap` using the exact selected names from the private
+declaration. Retained tiles are limited to 4096 pixels per rectangle; play/full
+frames are hashed every frame and are not retained as tiles. Keep rectangle
+definitions, selection, CSV and their hashes in custody. Validate with
+`python3 probe/riscpc/tools/region_pixels.py DIRECTORY --names=timer,lap`.
+Counter labels must be independently inspected; a changed hash does not state
+a numeric timer value. This runner observer is outside the core cost interval.
+
+Stable raster clocks can alternate completed periods by one nanosecond. The
+core retains these exact intervals in query/CSV; frontend notifications suppress
+that quantization and use SET_GEOMETRY for sizes within existing maxima. A real
+mid-frame timing change can emit a mixed-frame interval then its settled rate.
+The runner queries AV timing after every core call, so sparse notifications never
+shorten guest timing/pacing. Earlier line-v1/v2/v3 binaries are diagnostics.
+
+
+## Run-13 final artifact identity
+
+The private `run/platform-artifacts-r13e/` contains nine frozen artifacts for
+macOS, Windows x64 and Android arm64, including the new raster and video frontend
+harnesses. `run/platform-artifacts-r13e.json` binds all 27 SHA-256 hashes;
+`run/runtime-source-final-r13e.json` binds 110 runtime/source references.
+Use those exact artifacts for platform execution. Rebuild only with a new custody
+identity and requalify that binary. The final core footer is `line-v4`.
+Earlier line-v1/v2/v3 private runs are excluded diagnostics.
+
+Final Mac boot and cold gameplay qualification pass. Captured PCM checks pass;
+physical audio, RetroArch loading and Windows/Odin3 execution remain missing.
+Calibration and the private 600-second gameplay replay must be taken from the
+final private report, never inferred from this public runbook. The loaded Mac's
+whole-core before/after costs have substantial scheduling variance. The final
+three-pair authored instrumentation measurement does not resolve the 0.05T
+bound, and supplies no platform/workload transfer. Repeat its on/off method on
+the exact qualified workload/platform before an AC-8 verdict.
+
+The already qualified final Mac mechanism reference is
+`run/mechanisms-final-r13e.trace` (481 checks), with its empty stderr retained as
+`run/mechanisms-final-r13e.log`. The final raster reference is
+`run/raster-final-r13e.trace` with completion stderr
+`run/raster-final-r13e.log` (408 checks). Use these together with the frozen
+platform artifacts; earlier `macos-*` reference files belong to diagnostic
+binaries. For example, after pulling the Android files:
+
+```sh
+python3 probe/riscpc/tools/compare_traces.py probe/riscpc/run/mechanisms-final-r13e.trace probe/riscpc/run/arm64.trace --reference-stderr probe/riscpc/run/mechanisms-final-r13e.log --actual-stderr probe/riscpc/run/arm64.stderr --output probe/riscpc/run/arm64-final-mechanisms-comparison.json
+python3 probe/riscpc/tools/compare_traces.py probe/riscpc/run/raster-final-r13e.trace probe/riscpc/run/arm64-raster.trace --reference-stderr probe/riscpc/run/raster-final-r13e.log --actual-stderr probe/riscpc/run/arm64-raster.stderr --output probe/riscpc/run/arm64-final-raster-comparison.json
+```
+
+Preserve native exit-status records separately and require zero; the comparator
+checks complete traces but cannot infer a process exit code from redirected text.

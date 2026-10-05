@@ -171,3 +171,69 @@ reset even when no IDE backing is enabled in the mechanism harness. This
 tests that reset no longer substitutes host attachment state for guest
 configuration. Capturing firmware factory reset still starts with exactly
 zeroed CMOS; RTC epoch and the per-model mouse device contract are unchanged.
+
+## R13 scanout expectations (declared before executing the new tests)
+
+Authored ARM LDR/LDR/STR writes use the ordinary bus. Four models use
+768 pixels per raster at 24 MHz: 32,000 ns. VCR=38 means 40 rasters,
+1,280,000 ns. VDSR=2/VDER=10 give 8 active lines, first at 1,024,000 ns
+in a cycle starting at display end. A guest write after line 3 at 1,120,000 ns
+precedes line 4 at 1,152,000 ns. Palette 1 changes red to blue: lines 0–3
+must stay FF FF0000 and lines 4–7 become FF 0000FF. A disabled-DMA border
+changes red to green at the same time. A VIDCUR change to a buffer of
+index 2 must affect only lines 4–7; an active-display VIDINIT change must
+wait for flyback and affect frame 2. Cursor palette/position changes must
+leave the earlier red cursor at x=0, with a green cursor at x=4 on later
+lines. Changing 8-bit to 4-bit depth makes pixel 1 change from index 1 to 0
+on later lines. All unchanged indexed/16/32-bit frames compare every
+active pixel against the retained snapshot renderer, including packed
+1/2/4-bit formats. No expectation is copied from the new renderer.
+DMA init/current semantics: ARM DDI0050C §14.3.2; comparator N-1 encoding:
+§§9.19–9.20. Physical register state and current pointer apply at a raster
+boundary; host wall time never orders these tests.
+
+Additional R13 boundary expectations: changing the ring limit after row 3
+makes the next two 16-byte quads the last old-buffer row (row 4), then rows
+5–7 use the newly programmed start buffer. An HCR change from 760 to1528
+at1120000ns preserves the already scheduled1152000ns edge; following
+edges are64000ns apart and this frame completes at1408000ns. DMA disabled
+after row3 draws the red border on later rows; shifting HDSR to4 places
+black border at x0 and unchanged indexed data at x4 on later rows.
+Increasing VDER from10 to12 extends active height from8 to10 and completes
+at1344000ns. These expectations require the same scheduler as production
+scanout and normal guest device writes, including while the CPU is idle.
+
+R13 vertical-start boundary: after the old line3, write green border and move
+VDSR from2 to7. Physical old-crop row4 is now blank and must be green; row5
+resumes display with the first DMA data. With VDSR8, beam7/8 are blank: IOCR
+flyback bit7 is high, and clearing IRQ bit0x08 during the first blank raster
+must not reassert it during the second. Beam9 resumes display, bit7 low. These
+expectations follow the programmed comparator/display state, independent of
+the implementation. The preceding version fails the green-border check on all
+four models (376 checks,4 failures); corrected final renderer is `line-v2`.
+
+R13 idle IRQ boundary: an authored SVC26 counter ROM has IRQ/FIQ masked at
+CPU level, with flyback enabled in IOMD. A pending IRQ at advance entry must
+allow stores during the first1us batch. After clearing the initial flyback IRQ,
+CPU is idle and the counter must remain zero until the frame edge at1.280ms.
+The edge must clear idle immediately, and stores must occur during the next1us,
+without waiting for a subsequent32us floppy poll. The same wake predicate is
+already used by the existing timer path. The old scheduler fails12/408checks
+on four models; expectations do not depend on its implementation. Final source
+checks pending IRQ after keyboard service and after all device callbacks;
+`line-v3` identifies this corrected scheduler/scanout combination.
+
+The100-instruction batch has two initialMOVs, thenADD/STR/B cycles:98remaininginstructions include32completecycles plusADD/STR, so the RAMcounter must be exactly33. Both wake checks use that independently derived value.
+
+R13 frontend notification expectations (authored guest stores, no private ROM):
+a 320x25660Hz mode uses24MHz/800pixel-times/500rasters. After three startup
+frames, eighty steady frames must cause zero full AV reinitializations despite
+integer intervals alternating16666666/16666667ns. A guest transition to600
+rasters/640pixels causes at most two timing notifications (mixed then steady
+interval), settles at50Hz; later width800 with unchanged timing uses exactly
+one geometry callback and zero full AV callbacks. Bounds remain2048x2048.
+One-nanosecond integer quantization is suppressed only for frontend notification;
+actual guest intervals remain exact in query/CSV/runner pacing. The bundled
+libretro header explicitly reserves SET_SYSTEM_AV_INFO for drastic changes
+and SET_GEOMETRY for resolution within existing maxima. Prior core produces
+53 full AV callbacks in80 steady60Hz frames and fails this authored test.

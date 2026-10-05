@@ -439,3 +439,64 @@ without a network identity, ID<INet$LocalAddr> when present, or IDnnn!sss
 after a successful Econet query; the audit follows that supplied convention. Constructed
 files and runner COMPLETE alone never establish desktop or gameplay success.
 Current qualification results and any blocker belong in the private report.
+
+### Line scanout (R13 / D-127)
+
+The probe core uses scheduler raster events; `drawscr`/`vidcthread` remain
+only as a snapshot-renderer oracle in the authored mechanism executable.
+Each active raster reads current palette/border, cursor position/palette,
+pixel depth and video DMA state. CPU writes in the preceding at-most-1us
+batch precede that raster. Horizontal timing/clock writes affect the next
+raster period; vertical comparator changes affect the current scan cycle.
+Frame completion occurs at display-end/flyback, and flyback falls at the
+active-display start. Fractional line time is carried with integer arithmetic.
+A missing frame completion is contained after100ms of virtual time.
+
+DMA current and ring limits are live. DMA init reloads current during
+flyback; an active-display init write waits for that boundary. Sub-quadword
+packed pixels carry across lines. Output uses a bounded active-display crop
+anchored at frame start; changed display positions/depth affect subsequent
+lines in that crop, and growth extends it while preserving earlier lines.
+Geometry and refresh updates reach the libretro AV-info callback. Every
+raster is converted; no dirty-block assumption can conceal palette changes.
+Two bounded2048x2048 scanout buffers add32MiB to the trial's footprint.
+
+Timing and DMA boundary reference: [ARM7500 DDI0050C](https://documentation-service.arm.com/static/5ed11babca06a95ce53f8fee),
+§§9.7,9.16,9.19–9.20,9.27 and14.3.2; RiscPC VRAM ring semantics retain
+RPCEmu's2048-byte end convention. This remains a line-accurate trial,
+not a model of sub-line FIFO/bus contention or individual pixel-clock writes.
+
+`probe_raster` executes authored ARM bus writes and compares unchanged
+frames with the old renderer. Its expectations are in expectations.md.
+Final acceptance CSVs require `video_renderer=line-v4` in the completion
+footer; the AC8 evaluator exposes older evidence as MISSING.
+
+### Per-frame calibration observations
+
+Runner options `--regions=FILE --frame-hashes=CSV` emit hashes of every
+full output frame and up to16 small regions, with exact emulated timestamps.
+The region file contains one `name,x,y,width,height` per line (optional
+`#` comments). Names are unique ASCII letters/digits/underscore; rectangles
+must fit the2048x2048 bound. A region outside the current output geometry
+is `MISSING`, never a hash of zeros. Hashing occurs after the measured
+`retro_run` call and cannot order guest events. These observers are for
+calibration, not frontend performance qualification.
+
+Use `tools/frame_cadence.py DIR --window START END --output JSON` to
+verify the hashes against the core CSV/footer and recompute distinct-frame
+and HUD-change rates from adjacent per-frame observations. Transition
+records retain both surrounding frame times and hashes. Unavailable regions
+remain MISSING. Full-frame/hash cadence does not by itself establish timer,
+progress or control equivalence; inspect the declared checkpoints and
+milestones against both higher references before freezing a model rate.
+
+The headless runner can optionally retain changed HUD tiles with
+`--region-pixels=CSV --pixel-regions=timer,lap` alongside `--regions` and
+`--frame-hashes`. Selection must name unique declared regions of at most4096
+pixels each. The first observation and every subsequent hash/geometry-validity
+transition emit bounded row-major XRGB8888 RLE; out-of-frame tiles are MISSING.
+This observer runs after the measured core call and never supplies guest input.
+`tools/region_pixels.py DIRECTORY --names=timer,lap` verifies complete coverage,
+RLE bounds, decoded hashes and guest timestamps against the final core footer.
+It does not infer numeric counter values. Full PNGs can remain confined to
+`--shot-times` checkpoints while retained HUD tiles support independent labeling.

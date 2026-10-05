@@ -44,6 +44,18 @@
 #include "iomd.h"
 #include "probe.h" /* ARCDROID-PROBE: passive numeric register observer. */
 
+/* ARCDROID-PROBE BEGIN: scanout state; disabled for legacy oracle calls. */
+uint64_t probe_video_due=UINT64_MAX, probe_video_frames, probe_video_last_period;
+static uint32_t *scan_front, *scan_back;
+static unsigned scan_w, scan_h, scan_front_w, scan_front_h, scan_beam;
+static int scan_xorigin, scan_yorigin;
+static uint64_t scan_origin, scan_fraction;
+static uint32_t scan_row_border[2048];
+static int scan_started;
+static int scan_flyback; /* ARCDROID-PROBE: edge-triggered flyback delivery. */
+static unsigned scan_bit_offset;
+/* ARCDROID-PROBE END */
+
 static int current_sizex = -1; /**< Width of the video mode, -1 on invalid */
 static unsigned bitmap_pitch;
 static int current_sizey = -1; /**< Height of the video mode, -1 on invalid */
@@ -140,6 +152,8 @@ initvideo(void)
 {
 	current_sizex = -1;
 	current_sizey = -1;
+ probe_video_due=UINT64_MAX;probe_video_frames=0;scan_started=0;scan_flyback=0; /* ARCDROID-PROBE */
+	probe_video_last_period=0;scan_fraction=0;scan_front_w=scan_front_h=0; /* ARCDROID-PROBE */
 	memset(&vidc, 0, sizeof(vidc));
 	probe_hcr=792; probe_vcr=498; probe_fsyn=0; probe_con=0; /* ARCDROID-PROBE: 500-line reset timing, VCR=N-2. */
 	memset(&thr, 0, sizeof(thr));
@@ -220,6 +234,8 @@ closevideo(void)
 {
 	vidcendthread();
 	free(thr.bitmap); thr.bitmap = NULL;
+	free(scan_front);free(scan_back);scan_front=scan_back=NULL; /* ARCDROID-PROBE */
+	probe_video_due=UINT64_MAX;scan_started=0; /* ARCDROID-PROBE */
 }
 
 /**
@@ -1068,6 +1084,7 @@ uint64_t probe_video_period(void) {
  return period;
 }
 const uint32_t *probe_video_pixels(unsigned *w, unsigned *h) {
+ if(scan_started) {*w=scan_front_w;*h=scan_front_h;return scan_front;}
  *w = current_sizex > 0 ? (unsigned)current_sizex : 0;
  *h = current_sizey > 0 ? (unsigned)current_sizey : 0;
  return thr.bitmap;
@@ -1078,5 +1095,163 @@ uint64_t probe_video_blank_ns(void) {
  unsigned blank=active>0&&(unsigned)active<=total?total-(unsigned)active:total;
  return probe_video_period()*blank/total;
 }
-size_t probe_video_pitch(void) { return (size_t)bitmap_pitch*4; }
+size_t probe_video_pitch(void) { return scan_started?2048*4:(size_t)bitmap_pitch*4; }
+/* ARCDROID-PROBE END */
+
+/* ARCDROID-PROBE BEGIN: deterministic line scanout, R13-1.
+ * Legacy drawscr/vidcthread above are a mechanism-test oracle only.
+ * A raster samples state at its leading edge. CPU writes in the preceding
+ * <=1us scheduler batch precede that edge; no host state enters this path.
+ * VDSR/VDER encode the comparator one raster before the actual edge (N-1).
+ * DMA init is reloaded during flyback, current/start/end during scanout.
+ * The frontend viewport is the active-display crop at frame start; changes
+ * within a frame draw at their physical position in that viewport. Growth
+ * extends the crop, without overwriting already scanned pixels.
+ * All lines are converted: page dirtiness cannot prove equivalence when
+ * register state or an earlier scanout differs. No dirty-page shortcut.
+ */
+static uint64_t scan_line_duration(void)
+{
+ uint64_t num=machine.model==Model_A7000?32000000:24000000, den=1;
+ if((probe_con&3)==1||(probe_con&3)==3)fatal("Unsupported video clock source");
+ if((probe_con&3)==0) {num*=((probe_fsyn>>8)&63)+1;den=(probe_fsyn&63)+1;}
+ den*=((probe_con>>2)&7)+1;
+ uint64_t value=(uint64_t)(probe_hcr+8)*1000000000*den;
+ /* Carry sub-nanosecond time for stable clocks. A changed clock starts a
+  * fresh fraction; it cannot retroactively alter the in-flight raster. */
+ static uint64_t fraction_clock;
+ if(fraction_clock!=num) {scan_fraction=0;fraction_clock=num;}
+ value+=scan_fraction;scan_fraction=value%num;
+ uint64_t ns=value/num;
+ if(!ns||ns>100000000)fatal("Unsupported raster period");
+ return ns;
+}
+static void scan_begin_frame(void)
+{
+ scan_xorigin=(int)vidc.hdsr;scan_yorigin=(int)vidc.vdsr+1;
+ int width=(int)vidc.hder-(int)vidc.hdsr,height=(int)vidc.vder-(int)vidc.vdsr;
+ scan_w=width>=2?(unsigned)width:2;scan_h=height>=1?(unsigned)height:480;
+ if(scan_w>2048||scan_h>2048)fatal("Probe geometry exceeds bounds");
+ scan_origin=probe_now;
+ uint32_t border=makecol(vidc.border_colour&255,(vidc.border_colour>>8)&255,(vidc.border_colour>>16)&255);
+ for(unsigned y=0;y<2048;y++)scan_row_border[y]=border;
+ for(unsigned y=0;y<scan_h;y++)for(unsigned x=0;x<scan_w;x++)scan_back[(size_t)y*2048+x]=border;
+ memset(dirtybuffer,0,sizeof(dirtybuffer1));
+}
+static int scan_active(void)
+{
+ return scan_beam>=vidc.vdsr+1&&scan_beam<vidc.vder+1;
+}
+void probe_video_dma_write(unsigned reg)
+{
+ /* ARM7500 DDI0050C 14.3.2: init -> current during FLYBACK. A write
+  * during display is deferred to flyback, not mistaken for VIDCUR. */
+ if(!scan_started)return;
+ if(reg==0x1d0)scan_bit_offset=0;
+ if(reg==0x1dc&&!scan_active()) {iomd.vidcur=iomd.vidinit&0x1ffffff0;scan_bit_offset=0;}
+}
+static uint8_t scan_byte(uint32_t address)
+{
+ uint32_t mask;const uint8_t *memory;
+ if(address&0x10000000) {
+  memory=(const uint8_t *)((address&0x08000000)?ram1:(address&0x04000000)?ram01:ram00);
+  mask=(address&0x08000000)?0x7ffffff:mem_rammask;
+  if(!memory)return (uint8_t)(mem_phys_read32(address&~3u)>>((address&3)*8));
+ } else {memory=(const uint8_t *)vram;mask=mem_vrammask;}
+#ifdef _RPCEMU_BIG_ENDIAN
+ return memory[(address&mask)^3];
+#else
+ return memory[address&mask];
+#endif
+}
+static uint32_t scan_next_quad(uint32_t address)
+{
+ uint32_t mask=address&0x10000000?mem_rammask:mem_vrammask;
+ uint32_t end=(iomd.vidend+(address&0x10000000?16:2048))&mask;
+ uint32_t next=((address&mask)+16)&mask;
+ if(next==end)return iomd.vidstart&0x1ffffff0;
+ return (address&~mask)|next;
+}
+static void scan_draw_line(void)
+{
+ int row=(int)scan_beam-scan_yorigin;
+ if(row<0||row>=2048)return;
+ int end=(int)vidc.hder-scan_xorigin;
+ if(end>2048)fatal("Probe geometry exceeds bounds");
+ if(end>(int)scan_w) {
+  unsigned old=scan_w;scan_w=(unsigned)end;
+  for(int y=0;y<row;y++)for(unsigned x=old;x<scan_w;x++)scan_back[(size_t)y*2048+x]=scan_row_border[y];
+ }
+ uint32_t border=makecol(vidc.border_colour&255,(vidc.border_colour>>8)&255,(vidc.border_colour>>16)&255);
+ scan_row_border[row]=border;
+ uint32_t *out=scan_back+(size_t)row*2048;
+ for(unsigned x=0;x<scan_w;x++)out[x]=border;
+ if(scan_active()&&(unsigned)(row+1)>scan_h)scan_h=(unsigned)row+1;
+ if(!scan_active()||!(iomd.vidcr&0x20)||(probe_con&(1u<<14)))return;
+ if(vidc.palchange) {vidc_palette_update();vidc.palchange=0;}
+ static const unsigned bits[]={1,2,4,8,16,0,32,0};
+ unsigned bpp=bits[vidc.bit8];
+ if(!bpp)fatal("Unsupported scanout pixel depth");
+ int width=(int)vidc.hder-(int)vidc.hdsr;
+ if(width<0||width>2048)fatal("Probe scanout width bound");
+ uint32_t quad=iomd.vidcur&0x1ffffff0;
+ unsigned byte=0,used=(unsigned)width*bpp+scan_bit_offset;
+ for(int pixel=0;pixel<width;pixel++) {
+  unsigned offset=(unsigned)pixel*bpp+scan_bit_offset,needed=(offset>>3)/16;
+  while(byte<needed) {quad=scan_next_quad(quad);byte++;}
+  uint32_t value=scan_byte(quad+((offset>>3)&15));
+  if(bpp==16||bpp==32) {
+   value|=(uint32_t)scan_byte(quad+(((offset>>3)&15)+1))<<8;
+   if(bpp==32)value|=(uint32_t)scan_byte(quad+(((offset>>3)&15)+2))<<16;
+  } else value=(value>>(offset&7))&((1u<<bpp)-1);
+  uint32_t colour=bpp<=8?thr.palette[value]:bpp==16?
+   thr.pal[value&255].r|thr.pal[(value>>4)&255].g|thr.pal[(value>>8)&255].b:
+   thr.pal[value&255].r|thr.pal[(value>>8)&255].g|thr.pal[(value>>16)&255].b;
+  int x=(int)vidc.hdsr-scan_xorigin+pixel;
+  if(x>=0&&x<(int)scan_w)out[x]=colour;
+ }
+ unsigned quads=used/128;scan_bit_offset=used%128;
+ while(byte<quads) {quad=scan_next_quad(quad);byte++;}
+ iomd.vidcur=quad;
+ /* Cursor position and palette are current for this raster too. */
+ int cursor_row=(int)scan_beam-((int)vidc.vcsr+1);
+ if(cursor_row>=0&&scan_beam<vidc.vcer+1) {
+  uint32_t address=cinit+(unsigned)cursor_row*8;
+  for(unsigned x=0;x<32;x++) {
+   unsigned index=(mem_phys_read32((address+x/4)&~3u)>>(((address+x/4)&3)*8+(x&3)*2))&3;
+   int pos=(int)vidc.hcsr-scan_xorigin+(int)x;
+   if(index&&pos>=0&&pos<(int)scan_w)out[pos]=thr.cursor_palette[index-1];
+  }
+ }
+}
+void probe_video_start(void)
+{
+ scan_front=calloc((size_t)2048*2048,sizeof(uint32_t));
+ scan_back=calloc((size_t)2048*2048,sizeof(uint32_t));
+ if(!scan_front||!scan_back)fatal("Probe scanout allocation failed");
+ scan_started=1;scan_beam=vidc.vder+1;scan_begin_frame();
+ iomd.vidcur=iomd.vidinit&0x1ffffff0;scan_bit_offset=0;scan_flyback=1;iomd_flyback(1);
+ probe_video_due=probe_now+scan_line_duration();
+}
+void probe_video_step(void)
+{
+ /* The just-ended raster was sampled at its leading edge. Step into
+  * the next one, exposing flyback and rendering before further CPU work. */
+ unsigned total=probe_vcr+2;
+ scan_beam=(scan_beam+1)%total;
+ if(scan_beam==(vidc.vder+1)%total) {
+  uint32_t *swap=scan_front;scan_front=scan_back;scan_back=swap;
+  scan_front_w=scan_w;scan_front_h=scan_h;
+  probe_video_last_period=probe_now-scan_origin;probe_video_frames++;
+  scan_flyback=1;iomd_flyback(1);scan_begin_frame();
+ }
+ if(!scan_active()) {
+  if(!scan_flyback) {scan_flyback=1;iomd_flyback(1);}
+  iomd.vidcur=iomd.vidinit&0x1ffffff0;scan_bit_offset=0;
+ } else if(scan_flyback) {scan_flyback=0;iomd_flyback(0);}
+ /* A changed VDSR can blank a line inside the frame-start crop. Sample
+  * its current border too; blank rasters outside the crop remain hidden. */
+ scan_draw_line();
+ probe_video_due=probe_now+scan_line_duration();
+}
 /* ARCDROID-PROBE END */

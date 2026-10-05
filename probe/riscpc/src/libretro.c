@@ -18,7 +18,8 @@ static retro_input_poll_t input_poll;
 static retro_input_state_t input_state;
 static int loaded, replay, machine_live,measurement;
 static FILE *csv,*events,*activity,*csv_cost;
-static uint64_t frame,next_frame,frame_period,wall_origin,flyback_fall;
+static uint64_t frame,frame_period,wall_origin,notified_period;
+static unsigned notified_w,notified_h;
 static uint64_t requested_ns;
 static uint64_t pending_cost_frame,pending_cost_ns;
 static int pending_cost;
@@ -220,7 +221,7 @@ RETRO_API bool retro_load_game(const struct retro_game_info *g) {
  if(csv)fprintf(csv,"frame,emu_ns,period_ns,exec_ns,instructions,audio_frames,underruns,overruns,video_hash,audio_hash,wall_ns,instrument_ns,status\n");
  if(events)fprintf(events,"ordinal,scheduled_ns,delivered_ns,event,a,b,video_hash,pc\n");
  struct retro_keyboard_callback kb={keyboard_callback};env(RETRO_ENVIRONMENT_SET_KEYBOARD_CALLBACK,&kb);
- frame=0;frame_period=probe_video_period();next_frame=frame_period;flyback_fall=UINT64_MAX;wall_origin=probe_wall_ns();
+ frame=0;notified_period=0;notified_w=notified_h=0;frame_period=probe_video_period();probe_video_start();wall_origin=probe_wall_ns();
  memset(keys,0,sizeof(keys));memset(keyboard_held,0,sizeof(keyboard_held));memset(pad_held,0,sizeof(pad_held));mouse_buttons=0;loaded=1;probe_can_escape=0;return true;
 }
 RETRO_API void retro_run(void) {
@@ -250,26 +251,35 @@ RETRO_API void retro_run(void) {
   unsigned mask=(input_state(0,RETRO_DEVICE_MOUSE,0,RETRO_DEVICE_ID_MOUSE_LEFT)?1u:0u)|(input_state(0,RETRO_DEVICE_MOUSE,0,RETRO_DEVICE_ID_MOUSE_RIGHT)?2u:0u)|(input_state(0,RETRO_DEVICE_MOUSE,0,RETRO_DEVICE_ID_MOUSE_MIDDLE)?4u:0u);
   mouse_mouse_release(mouse_buttons&~mask);mouse_mouse_press(mask&~mouse_buttons);mouse_buttons=mask;
  }
- while(probe_now<next_frame) {
-  if(flyback_fall<=probe_now){iomd_flyback(0);flyback_fall=UINT64_MAX;}
-  deliver();uint64_t target=next_frame;
+ uint64_t previous_frame=probe_video_frames,scan_limit=probe_now+100000000;
+ while(probe_video_frames==previous_frame) {
+  deliver();uint64_t target=probe_video_due;
+  if(target>scan_limit)target=scan_limit;
   if(script_at<script_count&&script[script_at].ns<target)target=script[script_at].ns;
-  if(flyback_fall<target)target=flyback_fall;
   probe_advance(target);
+  if(probe_video_frames==previous_frame&&probe_now>=scan_limit)fatal("Video frame exceeded virtual-time bound");
  }
- if(flyback_fall<=probe_now)iomd_flyback(0);
- deliver();iomd_flyback(1);
- /* Read-only guest write evidence before the existing renderer consumes it.
-  * Dirty pages are an activity proxy, never a proof of game logic cadence. */
+ deliver();
+ /* Dirty flags are diagnostic only; scanout has consumed this frame.
+  * Independent per-frame output hashes, not dirty flags, measure cadence. */
  if(activity) {
   unsigned dirty=0;for(unsigned i=0;i<32768;i++)dirty+=dirtybuffer[i]!=0;
   if(fprintf(activity,"%"PRIu64",%"PRIu64",%u,%"PRIu32",%"PRIu32",%u\n",frame,probe_now,dirty,iomd.t0.in_latch,iomd.t1.in_latch,probe_sound_rate)<0)fatal("Activity write failed");
  }
- drawscr();flyback_fall=probe_now+probe_video_blank_ns();
- uint64_t period=probe_video_period();if(period!=frame_period) {
-  frame_period=period;struct retro_system_av_info av;retro_get_system_av_info(&av);env(RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO,&av);
+ unsigned previous_w,previous_h;probe_video_pixels(&previous_w,&previous_h);
+ uint64_t period=probe_video_last_period;frame_period=period;
+ /* Integer raster accumulation alternates floor/ceil by one nanosecond.
+  * Keep the exact completed interval for measurement/query, but never reset
+  * frontend drivers for that quantization. Real transition-frame intervals
+  * still notify; subsequent steady intervals settle to their programmed rate.
+  * Geometry within the fixed2048 maxima uses the libretro geometry callback. */
+ uint64_t delta=period>notified_period?period-notified_period:notified_period-period;
+ if(delta>1||previous_w!=notified_w||previous_h!=notified_h) {
+  struct retro_system_av_info av;retro_get_system_av_info(&av);
+  if(delta>1) {env(RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO,&av);notified_period=period;}
+  else env(RETRO_ENVIRONMENT_SET_GEOMETRY,&av.geometry);
+  notified_w=previous_w;notified_h=previous_h;
  }
- next_frame+=period;
  probe_register_trace(3,0,(uint32_t)period);
  unsigned w,h;const uint32_t *pixels=probe_video_pixels(&w,&h);
  if(!pixels) {pixels=blank;w=320;h=256;}
@@ -290,7 +300,7 @@ RETRO_API void retro_run(void) {
 }
 RETRO_API void retro_reset(void) {
  if(!loaded)return;reset_during_run=1;clear_held();probe_can_escape=1;
- if(!setjmp(probe_escape)) {probe_machine_reset();script_at=0;frame_period=probe_video_period();next_frame=frame_period;flyback_fall=UINT64_MAX;}
+ if(!setjmp(probe_escape)) {probe_machine_reset();script_at=0;notified_period=0;notified_w=notified_h=0;frame_period=probe_video_period();probe_video_start();}
  probe_can_escape=0;
 }
 RETRO_API void retro_unload_game(void) {
@@ -327,7 +337,7 @@ RETRO_API void retro_unload_game(void) {
   int bad=!f;
   if(f) {
    const char *status=probe_failed||reset_during_run?"FAIL":requested_ns&&probe_now>=requested_ns?"COMPLETE":"INCOMPLETE";
-   if(fprintf(f,"{\"status\":\"%s\",\"frames\":%"PRIu64",\"requested_ns\":%"PRIu64",\"advanced_ns\":%"PRIu64",\"reset\":%d,\"measurement\":%d,\"cost_accounting\":\"deferred-csv-tail-v1\"}\n",status,frame,requested_ns,probe_now,reset_during_run,measurement)<0)bad=1;
+   if(fprintf(f,"{\"status\":\"%s\",\"frames\":%"PRIu64",\"requested_ns\":%"PRIu64",\"advanced_ns\":%"PRIu64",\"reset\":%d,\"measurement\":%d,\"cost_accounting\":\"deferred-csv-tail-v1\",\"video_renderer\":\"line-v4\"}\n",status,frame,requested_ns,probe_now,reset_during_run,measurement)<0)bad=1;
    if(fclose(f))bad=1;
   }
   if(bad){probe_failed=1;bool stop=true;env(RETRO_ENVIRONMENT_SHUTDOWN,&stop);}

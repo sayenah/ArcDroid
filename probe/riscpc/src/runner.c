@@ -24,7 +24,57 @@ static double fps=60;static unsigned frame,w,h;
 static uint32_t *shot;
 static uint64_t limit_ns,emu_ns;
 static FILE *wave,*audio_stats;
-static FILE *timing,*ledger;
+static FILE *timing,*ledger,*frame_hashes;
+static struct region {char name[32];unsigned x,y,w,h;} regions[16];
+static unsigned region_count;
+static FILE *region_pixels;
+static unsigned selected[16],seen[16],valid_before[16];
+static uint64_t previous_hash[16];
+static int select_pixels(const char *names) {
+ char copy[512];if(!names||!*names||names[0]==','||names[strlen(names)-1]==','||strstr(names,",,")||strlen(names)>=sizeof(copy))return 0;
+ strcpy(copy,names);unsigned count=0;char *name=strtok(copy,",");
+ while(name) {
+  unsigned i=0;while(i<region_count&&strcmp(name,regions[i].name))i++;
+  if(i==region_count||selected[i]||regions[i].w*regions[i].h>4096)return 0;
+  selected[i]=1;count++;name=strtok(NULL,",");
+ }
+ return count!=0;
+}
+/* Bounded, changed-only HUD observations, outside the measured core call.
+ * Pixels are XRGB8888 words, flattened row-major and run-length encoded.
+ * This passive observer has no guest input or scheduler access. */
+static void pixel_record(unsigned i,int valid,uint64_t hash) {
+ if(!region_pixels||!selected[i])return;
+ if(seen[i]&&valid==valid_before[i]&&(!valid||hash==previous_hash[i]))return;
+ seen[i]=1;valid_before[i]=valid;previous_hash[i]=hash;
+ struct region *r=&regions[i];
+ if(fprintf(region_pixels,"%u,%"PRIu64",%s,",frame,emu_ns,r->name)<0)failed=1;
+ if(!valid){if(fprintf(region_pixels,"MISSING,%u,%u,MISSING\n",r->w,r->h)<0)failed=1;return;}
+ if(fprintf(region_pixels,"%016"PRIx64",%u,%u,",hash,r->w,r->h)<0)failed=1;
+ uint32_t last=0;unsigned length=0;
+ for(unsigned y=0;y<r->h;y++)for(unsigned x=0;x<r->w;x++) {
+  uint32_t value=shot[(size_t)(r->y+y)*w+r->x+x];
+  if(length&&value!=last){if(fprintf(region_pixels,"%u:%08"PRIx32";",length,last)<0)failed=1;length=0;}
+  last=value;length++;
+ }
+ if(fprintf(region_pixels,"%u:%08"PRIx32";\n",length,last)<0)failed=1;
+}
+static int read_regions(const char *name) {
+ if(region_count)return 0;
+ FILE *f=fopen(name,"rb");if(!f)return 0;char line[256];
+ while(fgets(line,sizeof(line),f)) {
+  if(line[0]=='#')continue;
+  if(region_count==16) {fclose(f);return 0;}
+  struct region *r=&regions[region_count];char tail;
+  if(sscanf(line,"%31[a-zA-Z0-9_],%u,%u,%u,%u %c",r->name,&r->x,&r->y,&r->w,&r->h,&tail)!=5||
+     !r->w||!r->h||r->w>2048||r->h>2048||r->x>2048-r->w||r->y>2048-r->h||
+     !strcmp(r->name,"full_hash")||!strcmp(r->name,"emu_ns")||!strcmp(r->name,"frame")||
+     !strcmp(r->name,"width")||!strcmp(r->name,"height")) {fclose(f);return 0;}
+  for(unsigned i=0;i<region_count;i++)if(!strcmp(r->name,regions[i].name)) {fclose(f);return 0;}
+  region_count++;
+ }
+ int bad=ferror(f);if(fclose(f))bad=1;return !bad&&region_count;
+}
 static int16_t ledger_pcm[16384*2];static size_t ledger_pairs;
 static uint64_t ledger_audio_hash=UINT64_C(1469598103934665603);
 static uint64_t fnv(uint64_t hash,const void *bytes,size_t size) {
@@ -70,6 +120,7 @@ static bool environment(unsigned cmd,void *data) {
   return false;
  }
  case RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE:*(bool *)data=false;return true;
+ case RETRO_ENVIRONMENT_SET_GEOMETRY:return true;
  case RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO:fps=((struct retro_system_av_info *)data)->timing.fps;return true;
  case RETRO_ENVIRONMENT_SET_MESSAGE:fprintf(stderr,"Probe reported failure\n");failed=1;return true;
  case RETRO_ENVIRONMENT_SHUTDOWN:failed=1;return true;
@@ -116,12 +167,25 @@ static void png(const char *name) {
 }
 #define LOAD(ret,name,args) ret (*name)args=(ret (*)args)SYM(lib,#name);if(!name){fprintf(stderr,"Missing libretro symbol: %s\n",#name);return 2;}
 int main(int argc,char **argv) {
- if(argc<4) {fprintf(stderr,"usage: probe_runner CORE EMULATED_SECONDS unthrottled|realtime|staggered [key=value ...] [--system=DIR] [--content=FILE.jfd|FILE.m3u] [--png=FILE] [--shot-every=N] [--shot-times=FILE] [--wav=FILE] [--timing=CSV] [--ledger=CSV]\n");return 2;}
+ if(argc<4) {fprintf(stderr,"usage: probe_runner CORE EMULATED_SECONDS unthrottled|realtime|staggered [key=value ...] [--system=DIR] [--content=FILE.jfd|FILE.m3u] [--png=FILE] [--shot-every=N] [--shot-times=FILE] [--wav=FILE] [--timing=CSV] [--ledger=CSV] [--regions=FILE --frame-hashes=CSV] [--region-pixels=CSV --pixel-regions=NAME,...]\n");return 2;}
  char *end;double sec=strtod(argv[2],&end);if(end==argv[2]||*end||!isfinite(sec)||sec<=0||sec>3600) return 2;limit_ns=(uint64_t)(sec*1e9);
  int realtime=!strcmp(argv[3],"realtime"),staggered=!strcmp(argv[3],"staggered");if(!realtime&&!staggered&&strcmp(argv[3],"unthrottled"))return 2;
- const char *png_name=NULL,*wave_name=NULL,*content=NULL;unsigned shot_every=0;
- for(int i=4;i<argc;i++) {if(!strncmp(argv[i],"--png=",6))png_name=argv[i]+6;else if(!strncmp(argv[i],"--wav=",6))wave_name=argv[i]+6;else if(!strncmp(argv[i],"--system=",9))system_directory=argv[i]+9;else if(!strncmp(argv[i],"--content=",10))content=argv[i]+10;else if(!strncmp(argv[i],"--shot-every=",13))shot_every=(unsigned)atoi(argv[i]+13);else if(!strncmp(argv[i],"--shot-times=",13)){if(!read_shot_times(argv[i]+13))return 2;}else if(!strncmp(argv[i],"--timing=",9)){timing=fopen(argv[i]+9,"wb");if(!timing)return 2;fprintf(timing,"frame,emu_ns,period_ns,exec_ns\n");}else if(!strncmp(argv[i],"--ledger=",9)){ledger=fopen(argv[i]+9,"wb");if(!ledger)return 2;fprintf(ledger,"frame,emu_ns,video_hash,audio_hash,audio_frames\n");}else if(var_count<64)vars[var_count++]=argv[i];else return 2;}
+ const char *png_name=NULL,*wave_name=NULL,*content=NULL,*hash_name=NULL,*pixels_name=NULL,*pixel_names=NULL;unsigned shot_every=0;
+ for(int i=4;i<argc;i++) {if(!strncmp(argv[i],"--png=",6))png_name=argv[i]+6;else if(!strncmp(argv[i],"--wav=",6))wave_name=argv[i]+6;else if(!strncmp(argv[i],"--system=",9))system_directory=argv[i]+9;else if(!strncmp(argv[i],"--content=",10))content=argv[i]+10;else if(!strncmp(argv[i],"--shot-every=",13))shot_every=(unsigned)atoi(argv[i]+13);else if(!strncmp(argv[i],"--shot-times=",13)){if(!read_shot_times(argv[i]+13))return 2;}else if(!strncmp(argv[i],"--timing=",9)){timing=fopen(argv[i]+9,"wb");if(!timing)return 2;fprintf(timing,"frame,emu_ns,period_ns,exec_ns\n");}else if(!strncmp(argv[i],"--frame-hashes=",15)){hash_name=argv[i]+15;}else if(!strncmp(argv[i],"--region-pixels=",16)){pixels_name=argv[i]+16;}else if(!strncmp(argv[i],"--pixel-regions=",16)){pixel_names=argv[i]+16;}else if(!strncmp(argv[i],"--regions=",10)){if(!read_regions(argv[i]+10))return 2;}else if(!strncmp(argv[i],"--ledger=",9)){ledger=fopen(argv[i]+9,"wb");if(!ledger)return 2;fprintf(ledger,"frame,emu_ns,video_hash,audio_hash,audio_frames\n");}else if(var_count<64)vars[var_count++]=argv[i];else return 2;}
  if(shot_count&&!png_name)return 2;
+ if((region_count!=0)!=(hash_name!=NULL))return 2;
+ if((pixels_name!=NULL)!=(pixel_names!=NULL))return 2;
+ if(pixels_name) {
+  if(!hash_name||!select_pixels(pixel_names))return 2;
+  region_pixels=fopen(pixels_name,"wb");if(!region_pixels)return 2;
+  fprintf(region_pixels,"frame,emu_ns,region,hash,width,height,rle\n");
+ }
+ if(hash_name) {
+  frame_hashes=fopen(hash_name,"wb");if(!frame_hashes)return 2;
+  fprintf(frame_hashes,"frame,emu_ns,width,height,full_hash");
+  for(unsigned i=0;i<region_count;i++)fprintf(frame_hashes,",%s",regions[i].name);
+  fprintf(frame_hashes,"\n");
+ }
  /* The same binary emits a core completion footer for headless/RetroArch
   * runs. The declaration never changes guest event order or termination. */
  char declared[96];snprintf(declared,sizeof(declared),"rpcprobe_expected_seconds=%.9f",sec);
@@ -141,13 +205,28 @@ int main(int argc,char **argv) {
  struct retro_system_av_info av;retro_get_system_av_info(&av);fps=av.timing.fps;
  uint64_t origin=clock_ns();
  while(emu_ns<limit_ns&&!failed) {
-  double before=fps;uint64_t started=clock_ns();retro_run();uint64_t cost=clock_ns()-started;if(failed)break;
-  emu_ns+=(uint64_t)(1e9/before);
+  uint64_t started=clock_ns();retro_run();uint64_t cost=clock_ns()-started;if(failed)break;
+  /* Query the completed-frame interval after each call. Frontend AV
+   * notifications deliberately suppress one-nanosecond clock quantization;
+   * output timing/pacing still follows every exact guest frame. */
+  retro_get_system_av_info(&av);fps=av.timing.fps;
+  uint64_t elapsed=(uint64_t)(1e9/fps+0.5);emu_ns+=elapsed;
   /* Timing wraps the whole retro_run, including CSV/event writes/clock reads.
    * Independent output hashing is outside this measured call in both legs. */
-  if(timing&&fprintf(timing,"%u,%"PRIu64",%"PRIu64",%"PRIu64"\n",frame,emu_ns,(uint64_t)(1e9/before),cost)<0)failed=1;
+  if(timing&&fprintf(timing,"%u,%"PRIu64",%"PRIu64",%"PRIu64"\n",frame,emu_ns,elapsed,cost)<0)failed=1;
+  uint64_t vh=(ledger||frame_hashes)?fnv(UINT64_C(1469598103934665603),shot,(size_t)w*h*4):0;
+  if(frame_hashes) {
+   if(fprintf(frame_hashes,"%u,%"PRIu64",%u,%u,%016"PRIx64,frame,emu_ns,w,h,vh)<0)failed=1;
+   for(unsigned i=0;i<region_count;i++) {
+    struct region *r=&regions[i];
+    if(r->x+r->w>w||r->y+r->h>h) {pixel_record(i,0,0);if(fprintf(frame_hashes,",MISSING")<0)failed=1;continue;}
+    uint64_t region_hash=UINT64_C(1469598103934665603);
+    for(unsigned row=0;row<r->h;row++)region_hash=fnv(region_hash,shot+(size_t)(r->y+row)*w+r->x,r->w*4);
+    if(fprintf(frame_hashes,",%016"PRIx64,region_hash)<0)failed=1;pixel_record(i,1,region_hash);
+   }
+   if(fprintf(frame_hashes,"\n")<0)failed=1;
+  }
   if(ledger) {
-   uint64_t vh=fnv(UINT64_C(1469598103934665603),shot,(size_t)w*h*4);
    ledger_audio_hash=fnv(ledger_audio_hash,ledger_pcm,ledger_pairs*4);
    if(fprintf(ledger,"%u,%"PRIu64",%016"PRIx64",%016"PRIx64",%zu\n",frame,emu_ns,vh,ledger_audio_hash,ledger_pairs)<0)failed=1;
    ledger_pairs=0;
@@ -182,7 +261,7 @@ int main(int argc,char **argv) {
   if(ferror(wave)||ferror(audio_stats))failed=1;
   if(fclose(wave))failed=1;if(fclose(audio_stats))failed=1;
  }
- FILE *raw[]={timing,ledger};for(unsigned i=0;i<2;i++)if(raw[i]){if(ferror(raw[i]))failed=1;if(fclose(raw[i]))failed=1;}
+ FILE *raw[]={timing,ledger,frame_hashes,region_pixels};for(unsigned i=0;i<4;i++)if(raw[i]){if(ferror(raw[i]))failed=1;if(fclose(raw[i]))failed=1;}
  fprintf(stderr,"runner status=%s frames=%u requested_ns=%llu advanced_ns=%llu wall_ns=%llu\n",failed?"FAIL":"COMPLETE",frame,(unsigned long long)limit_ns,(unsigned long long)emu_ns,(unsigned long long)(clock_ns()-origin));
  return failed?1:0;
 }

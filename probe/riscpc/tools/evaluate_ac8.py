@@ -57,7 +57,9 @@ def evaluate(path, manifest_path=None, screening=False):
             raise EvidenceError('instrumentation disabled')
         if footer.get('cost_accounting') != 'deferred-csv-tail-v1':
             raise EvidenceError('missing/current execution-cost accounting version')
-        record('run_integrity', 'PASS', f'{len(rows)} rows; final footer verified')
+        if footer.get('video_renderer') != 'line-v4':
+            raise EvidenceError('final line-v4 renderer footer required; old renderer is not final evidence')
+        record('run_integrity', 'PASS', f'{len(rows)} rows; final line-v4 footer verified')
     except (EvidenceError, OSError, ValueError, KeyError) as e:
         record('run_integrity', getattr(e, 'status', 'MISSING'), str(e))
         rows = []

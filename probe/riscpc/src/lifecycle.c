@@ -47,7 +47,8 @@ int main(void) {
  if(remove(test_path))return 1;cmos_path=cmos_hash="none";
  if(!retro_load_game(NULL))return 1;run();
  uint64_t vh=video_hash,ah=audio_hash,n=audio_frames;if(failed||videos!=20||n==0)return 1;
- retro_reset();run();if(failed||videos!=20||video_hash!=vh||audio_hash!=ah||audio_frames!=n)return 1;
+ retro_reset();run();if(failed||videos!=20||video_hash!=vh||audio_hash!=ah||audio_frames!=n) {
+ fprintf(stderr,"reset differs: failure=%d videos=%u video=%016llx/%016llx audio=%016llx/%016llx samples=%llu/%llu\n",failed,videos,(unsigned long long)video_hash,(unsigned long long)vh,(unsigned long long)audio_hash,(unsigned long long)ah,(unsigned long long)audio_frames,(unsigned long long)n);return 1;}
  retro_unload_game();
  for(unsigned cycle=0;cycle<4;cycle++) {
   if(!retro_load_game(NULL))return 1;run();

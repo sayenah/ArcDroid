@@ -90,11 +90,13 @@ void probe_machine_close(void) {
 }
 /* CPU/device delivery boundary: at most 1us of instructions, no host state.
  * Fractional instruction credit survives event splits; stable coincident order:
- * timers, keyboard, mouse, FDC, IDE, media, sound, then caller VSync. */
+ * timers, keyboard, mouse, FDC, IDE, media, sound, then video raster.
+ * Pending IRQs wake at entry; IRQs raised by any device wake at that edge. */
 void probe_advance(uint64_t target) {
  probe_sound_step();
  while(probe_now<target) {
   probe_keyboard_step();
+  if(arm.event)probe_idle=0;
   if(poll_period!=probe_disc_period_us) {poll_period=probe_disc_period_us;next_poll=probe_now+(uint64_t)poll_period*1000;}
   timer_sync(kcallback,&old_k,&next_keyboard,2500);
   timer_sync(mcallback,&old_m,&next_mouse,1000);
@@ -104,7 +106,7 @@ void probe_advance(uint64_t target) {
   uint64_t phase=probe_now%500;
   if(iomd.t0.in_latch) {uint64_t d=probe_now+(uint64_t)(iomd.t0.counter+1)*500-phase;if(d<stop)stop=d;}
   if(iomd.t1.in_latch) {uint64_t d=probe_now+(uint64_t)(iomd.t1.counter+1)*500-phase;if(d<stop)stop=d;}
-  uint64_t ds[]={target,next_keyboard,next_mouse,next_fdc,next_ide,next_poll,probe_sound_due,probe_keyboard_due};
+  uint64_t ds[]={target,next_keyboard,next_mouse,next_fdc,next_ide,next_poll,probe_sound_due,probe_keyboard_due,probe_video_due};
   for(unsigned i=0;i<sizeof(ds)/sizeof(ds[0]);i++) if(ds[i]<stop)stop=ds[i];
   if(stop<probe_now)fatal("Past scheduler deadline");
   uint64_t credit=(stop-probe_now)*probe_mips+cpu_fraction;
@@ -118,6 +120,8 @@ void probe_advance(uint64_t target) {
   if(probe_now==next_ide) {idecallback=old_i=0;next_ide=UINT64_MAX;callbackide();}
   if(probe_now==next_poll) {disc_poll();next_poll+=(uint64_t)poll_period*1000;}
   probe_sound_step();
+  if(probe_now==probe_video_due)probe_video_step();
+  if(arm.event)probe_idle=0;
  }
  probe_sound_flush(target);
 }

@@ -7,7 +7,7 @@ from evaluate_ac8 import evaluate
 from evidence import digest
 
 PLATFORMS=('windows','odin3')
-GAMEPLAY=('trial-a','trial-b','trial-c','trial-d')
+GAMEPLAY=('trial-a','trial-b','trial-c-1','trial-c-2','trial-d')
 AUTHORED=('loop','mmu-permissions','ram-smc','framebuffer-dma','stereo-rate-change','floppy-ide','video-low-50','video-low-60','video-640-50','video-640-60','video-800-50','video-800-60')
 
 

@@ -515,6 +515,7 @@ iomd_write(uint32_t addr, uint32_t val)
 
 	case IOMD_0x1D0_VIDCUR: /* Video DMA Current */
 		iomd.vidcur = val & 0x1ffffff0; /* Mask out bits ignored by IOMD */
+		probe_video_dma_write(0x1d0); /* ARCDROID-PROBE: current/FIFO boundary. */
 		return;
 	case IOMD_0x1D4_VIDEND: /* Video DMA End */
 		iomd.vidend = val & 0x1ffffff0; /* Mask out bits ignored by IOMD */
@@ -531,6 +532,7 @@ iomd_write(uint32_t addr, uint32_t val)
 		return;
 	case IOMD_0x1DC_VIDINIT: /* Video DMA Init */
 		iomd.vidinit = val & 0xfffffff0; /* Ignore bottom 4 bits (quad word aligned) */
+		probe_video_dma_write(0x1dc); /* ARCDROID-PROBE: flyback reload. */
 		resetbuffer();
 		return;
 	case IOMD_0x1E0_VIDCR: /* Video DMA Control */
