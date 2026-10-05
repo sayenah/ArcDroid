@@ -5,6 +5,10 @@ It is never merged into ArcDroid. The work order and thresholds are in
 `docs/handoff.md` and `docs/riscpc.md`. No feasibility pass is implied by a
 successful build or a completed headless run.
 
+Current qualification uses the R10-1 single-drive IDE startup described at the
+end of this file. Earlier helper/modern-boot sections retain historical
+construction evidence and do not authorize those modes in the public core.
+
 The verified RPCEmu 0.9.5 tarball and pristine unpacked tree precede the
 probe patches. Modified upstream files retain licence notices and marked
 `ARCDROID-PROBE` comment blocks. Probe sources are GPL-2.0-only. JFD and
@@ -206,7 +210,7 @@ to resolve that failure.
 
 Use ordinary Load Content on `.jfd` or `.m3u` (relative playlist entries resolve beside the playlist). Combined verified firmware lives at `<system>/arcdroid/firmware/ROM350`, `ROM360`, `ROM370` or `ROM371`; select it with `rpcprobe_firmware`. Explicit external path options remain available to the headless runner.
 
-Select `rpcprobe_workload` (`trial-a` through `trial-d`, or `authored`). Its directory is `<system>/arcdroid/rpcprobe/<workload>/` with `script.txt`, `cmos.bin`, `cmos.sha1`, and, when IDE is enabled, `baseline.hdf` plus `baseline.sha1`. Digest files contain one hexadecimal SHA-1 line. The baseline can be the standard boot disc or a qualified installed-game disc. These are private runtime inputs, never bundled. Set model/rate and enable IDE explicitly. Automatic boot uses the authored helper for workload sessions (R7-1). Physical inputs are disabled while the script is active.
+Select `rpcprobe_workload` (`trial-a` through `trial-d`, or `authored`). Its directory is `<system>/arcdroid/rpcprobe/<workload>/` with `script.txt`, `cmos.bin`, `cmos.sha1`, and, when IDE is enabled, `baseline.hdf` plus `baseline.sha1`. Digest files contain one hexadecimal SHA-1 line. The baseline can be the standard boot disc or a qualified installed-game disc. These are private runtime inputs, never bundled. Set model/rate and enable IDE explicitly. Automatic boot selects the session IDE disc (R10-1). Physical inputs are disabled while the script is active.
 
 Each load exclusively creates a fresh `run-NNNNNN` subdirectory for scratch IDE, CSV and diagnostics; the baseline is opened read-only and hash checked. Do not reuse a run directory as an input baseline without separately qualifying/freezing it. The core refuses missing system paths, malformed digest sidecars, unsafe workload names and invalid/missing media. No private path or decoded title is logged. The runner supports `--system=DIR` and `--content=FILE`. Authored portable integration checks:
 
@@ -214,7 +218,7 @@ Each load exclusively creates a fresh `run-NNNNNN` subdirectory for scratch IDE,
 python3 probe/riscpc/tools/frontend_check.py --runner <runner> --core <core> --output <fresh-evidence-dir>
 ```
 
-### Active resource-only environment (run-7 R7-1)
+### Resource-only environment (run-7 R7-1; historical startup)
 
 The run-5 full modern boot and run-6 guarded scripts above are historical
 construction/diagnostic modes. Qualification now uses **pristine archive
@@ -331,3 +335,55 @@ boot script, baseline, CMOS and frozen binary hashes for each comparison.
 The extra drive icon changes the initial opening-click position: normalize
 the pointer during setup, before the shared installer-event sequence.
 Keep media replacement and confirmation timestamps identical.
+
+### Active single-drive hard-disc boot (run-10 R10-1)
+
+This supersedes the helper-based qualification modes described above. The
+public libretro core always attaches just content floppy drive 0; drive 1
+has no helper medium. `rpcprobe_boot=automatic` resolves to `standard`; old
+helper option values are refused. The authored two-drive controller fixtures
+remain available only to mechanism tests, as coverage for the retained bridge.
+The unexplained two-floppy FileCore interaction after cataloguing drive 1 is
+an accepted residual risk; no workload in scope requires that configuration.
+
+Reset preserves the drive-count/IDE CMOS fields written by firmware or by
+ordinary Configure commands. Never patch those bytes on the host. Documented
+setup is `Configure Floppies 1`, `Configure IDEDiscs 1`, `Configure Boot`,
+`Configure FileSystem ADFS`, `Configure Drive 4`; on the IDE root use
+`Opt 4,2`. Sources: [ADFS PRM](https://www.riscos.com/support/developers/prm/adfs.html).
+Start each pair from its independently captured factory CMOS, configure in
+the guest, record the exact resulting bytes and hash, then cold-qualify.
+
+`boot/HDRun` replaces only the active `!Boot.!Run` with authored startup:
+R4-1 MDF, R7-1 BootEnv and supplied System registration/version paths. It
+then invokes `Desktop -file` on `!Boot.ProbeTasks`, whose sole command runs
+the general BootTasks enumerator after the ROM desktop modules have started.
+This is the documented [Desktop command](https://www.riscos.com/support/developers/prm/wimp.html).
+No RISC OS Open modern !Run/PreDesktop/ROxxx hook executes, and no ROM module
+is replaced at startup. The original archive entries remain in Inactive.
+
+New `boot_disc.py --resources-only` images contain the five authored startup
+assets on IDE; perform the supplied guest !System merge as above. For an
+already merged R7-1 disc whose root has Multisync/BootEnv/BootTasks, generate
+normal guest Build/SetType/Configure input with:
+
+```sh
+python3 probe/riscpc/tools/harddisc_setup.py --entries --out probe/riscpc/run/setup.txt
+```
+
+Without `--entries`, it generates configuration only. The JSON sidecar
+records the effective guest commands, source asset hashes and required
+emulated duration. Run the script through the headless runner, inspect the
+resulting guest files/status and cold boot, then freeze/hash the baseline.
+Neither construction nor COMPLETE constitutes boot or gameplay acceptance.
+Record all seven firmware/model results, including 3.50's behavior, privately.
+
+Run-10 qualification stopped at workload 084's cold launch: its ordinary
+application checks `Wimp$Scrap`, which the current common startup does not
+establish. The supplied Scrap resource is present, but its registration is
+not dispatched. This is an unresolved common-environment startup failure,
+not evidence that the resource requires the modern boot sequence. The seven
+smoke pairs and workloads 031/074 reached their required desktop/gameplay
+states; no full AC-6, calibration, determinism or platform pass is implied.
+The private report records the failed launch and proposed general resolution
+for adjudication. Do not use these partial results as a qualified AC-8 suite.

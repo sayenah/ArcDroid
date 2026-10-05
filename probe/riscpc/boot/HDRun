@@ -1,0 +1,7 @@
+| ArcDroid-authored R10-1 hard-disc startup; GPL-2.0-only.
+| ROM modules retained; no modern RISC OS Open boot sequence is executed.
+LoadModeFile ADFS::4.$.Multisync
+BASIC -quit ADFS::4.$.BootEnv
+BASIC -quit <System$Dir>.SysPaths
+Obey <System$Dir>.!Boot
+Desktop -file ADFS::4.$.!Boot.ProbeTasks

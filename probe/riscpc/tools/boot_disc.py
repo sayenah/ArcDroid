@@ -138,12 +138,29 @@ def build(hard, system, output, period_roms=(), resources_only=False):
                     inactive.append(dict(original='.'.join(parts), sha256=hashlib.sha256(data).hexdigest()))
                     add(['!Boot', 'Inactive', parts[-1]], data, metadata(i), False)
                     data = (b'| ArcDroid-authored R7-1 entry; GPL-2.0-only.\r'
-                            b'| Modern startup remains inactive; the common helper establishes resources.\r')
+                            b'| Modern startup remains inactive; the hard-disc startup establishes resources.\r')
                     if parts[-1] == '!Boot':
                         data += b'IconSprites <Obey$Dir>.Themes.!Sprites\r'
                     else:
-                        data += b'Obey ADFS::1.$.!Boot 1\r'
+                        data = (Path(__file__).resolve().parents[1] / 'boot/HDRun').read_bytes().replace(b'\n', b'\r')
                 add(parts, data, metadata(i), i.is_dir())
+
+    if resources_only:
+        # R10-1: authored assets are ordinary typed files on the IDE disc.
+        # The release !System merge remains guest-owned; no modern boot executes.
+        assets = Path(__file__).resolve().parents[1] / 'boot'
+        for source, parts, filetype in (
+                ('Multisync', ['Multisync'], 0xfed),
+                ('BootEnv', ['BootEnv'], 0xfff),
+                ('BootTasks', ['BootTasks'], 0xfff),
+                ('HDTasks', ['!Boot', 'ProbeTasks'], 0xfea)):
+            data = (assets / source).read_bytes()
+            if source != 'Multisync':
+                data = data.replace(b'\n', b'\r')
+            add(parts, data, (0xfff00000 | (filetype << 8), 0, 3), False)
+        custody['authored_assets'] = {
+            n: hashlib.sha256((assets / n).read_bytes()).hexdigest()
+            for n in ('Multisync', 'BootEnv', 'BootTasks', 'HDRun', 'HDTasks')}
 
     image = bytearray(SIZE)
     record = bytearray(60)
@@ -248,7 +265,7 @@ def build(hard, system, output, period_roms=(), resources_only=False):
                    sha1=hashlib.sha1(image).hexdigest(), sha256=hashlib.sha256(image).hexdigest(),
                    merge='NOT YET RUN', boot_option=0)
     if resources_only:
-        custody.update(resource_policy='R7-1: authored root entry points, supplied boot scripts inactive',
+        custody.update(resource_policy='R10-1: authored IDE startup and R7-1 resources; supplied boot scripts inactive',
                        inactive_root_entries=inactive)
     if inventory is not None:
         custody.update(period_policy='R6-1 presence guards; explicit dependency errors unchanged',

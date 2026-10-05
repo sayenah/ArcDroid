@@ -6,6 +6,8 @@
 #include "sound.h"
 #include "vidc20.h"
 #include "keyboard.h"
+#include "arcdroid_core.h"
+#include "ide_probe.h"
 #include <inttypes.h>
 static unsigned checks,failures;
 #define CHECK(name,expr) do {checks++;if(!(expr)){fprintf(stderr,"FAIL %s line=%d\n",name,__LINE__);failures++;}}while(0)
@@ -226,6 +228,18 @@ static void cold_input_tests(void) {
  probe_cmos_snapshot(cmos);sum=0;for(unsigned i=0;i<256;i++)sum+=cmos[i];CHECK("factory-reset-empty",sum==0);
  printf("cold CMOS empty; keyboard ACK/POR/held make; F3 7f delay=1000ms period=500ms release/reset\n");
  probe_cmos_configure("none","none",0);
+ /* R10: hashed authored baseline; reset must preserve guest drive counts. */
+ memset(cmos,0,sizeof(cmos));cmos[199]=0x41;
+ const char *path="mechanism-cmos-owned.bin";char digest[41];
+ arc_sha1_hex(cmos,sizeof(cmos),digest);
+ FILE *f=fopen(path,"wb");if(!f||fwrite(cmos,1,sizeof(cmos),f)!=sizeof(cmos)||fclose(f))fatal("Authored CMOS fixture write");
+ int saved_ide=probe_ide_enabled;probe_ide_enabled=0;
+ probe_cmos_configure(path,digest,0);probe_machine_reset();probe_cmos_snapshot(cmos);
+ CHECK("cold-reset-preserves-guest-drive-counts",cmos[199]==0x41);
+ probe_machine_reset();probe_cmos_snapshot(cmos);
+ CHECK("repeated-reset-preserves-guest-drive-counts",cmos[199]==0x41);
+ if(remove(path))fatal("Authored CMOS fixture cleanup");
+ probe_ide_enabled=saved_ide;probe_cmos_configure("none","none",0);
 }
 static void mode_observer_test(void) {
  probe_machine_reset();reg(2,0x10000000);reg(3,1);reg(1,0x31);

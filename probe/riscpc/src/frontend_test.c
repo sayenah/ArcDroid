@@ -37,12 +37,12 @@ int main(void) {
  expect(!strcmp(probe_frontend_option("rpcprobe_script","none"),"frontend-test-root/arcdroid/rpcprobe/trial-a/script.txt"));
  expect(!strcmp(probe_frontend_option("rpcprobe_cmos_sha1","none"),"b376885ac8452b6cbf9ced81b1080bfd570d9b91"));
  expect(!strcmp(probe_frontend_option("rpcprobe_script","override"),"override"));
- expect(!strcmp(probe_frontend_option("rpcprobe_boot","automatic"),"helper"));
+ expect(!strcmp(probe_frontend_option("rpcprobe_boot","automatic"),"standard"));
  char previous[1200];strcpy(previous,probe_frontend_option("rpcprobe_output","none"));expect(resolve());
  expect(strcmp(previous,probe_frontend_option("rpcprobe_output","none"))!=0);
  work="none";firmware_value="external-file";expect(resolve());
  expect(!strcmp(probe_frontend_option("rpcprobe_firmware",firmware_value),firmware_value));
  expect(!strcmp(probe_frontend_option("rpcprobe_script","none"),"none"));
- expect(!strcmp(probe_frontend_option("rpcprobe_boot","automatic"),"helper"));
+ expect(!strcmp(probe_frontend_option("rpcprobe_boot","automatic"),"standard"));
  probe_can_escape=0;printf("frontend PASS: %u checks; system_root firmware, workload sidecars, exclusive sessions, explicit overrides, traversal and malformed digest refusal\n",checks);return 0;
 }

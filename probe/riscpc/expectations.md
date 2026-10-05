@@ -163,3 +163,11 @@ The same two-unit program queries SENSE DRIVE STATUS after unit 1 seeks to
 to 9 and unit 1 recalibrates, T0 is respectively 0/1. Check DS and T0 with
 mask 0x13; expect 0x10/0x01/0x00/0x11. Table 20 (p.42) defines T0 from that drive's
 TRK0 input; another drive's operation cannot change it.
+
+Run-10 CMOS ownership expectations, stated before the new assertions: an
+authored, hashed 256-byte baseline with ADFS configuration byte 0x41
+(one floppy and one IDE disc) must retain that byte across cold machine
+reset even when no IDE backing is enabled in the mechanism harness. This
+tests that reset no longer substitutes host attachment state for guest
+configuration. Capturing firmware factory reset still starts with exactly
+zeroed CMOS; RTC epoch and the per-model mouse device contract are unchanged.
