@@ -30,6 +30,10 @@
 #include "ide.h"
 #include "arc_io.h"
 
+#if defined(ARCDROID_TEST_FAULTS)
+#include "libretro.h"
+#endif
+
 #include <setjmp.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -482,7 +486,7 @@ bool arc_engine_test_helper_media_valid(ArcMediaKind kind,
    return arc_helper_media_valid(&helper);
 }
 
-bool arc_engine_test_drive_media(unsigned drive, bool *write_protected,
+RETRO_API bool arc_engine_test_drive_media(unsigned drive, bool *write_protected,
                                  char digest[41])
 {
    const char *path = drive == 0u ? arc_saved_media :

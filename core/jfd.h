@@ -18,6 +18,11 @@
 #define ARC_JFD_F_SPACING_US 18176u
 #define ARC_JFD_MAX_STANDARD_IDS 10u
 
+typedef enum {
+   ARC_JFD_WRITE_AS_IMAGED,
+   ARC_JFD_WRITE_TAB_OFF
+} ArcJfdWritePolicy;
+
 static inline bool arc_jfd_pdd5_free_intersects(unsigned track_side,
                                                 size_t first, size_t length)
 {
@@ -81,6 +86,7 @@ typedef struct ArcJfdOverlay {
    char store_sha1[41]; /* Validated active snapshot; empty without a store. */
    bool writable;
    bool visible;
+   bool hidden_store;
    uint8_t allocation_mask[ARC_JFD_PDD5_TRACKS];
    uint8_t probe_mask[ARC_JFD_PDD5_TRACKS]; /* Mounted lifetime only. */
    uint8_t map_record[60];
@@ -129,6 +135,22 @@ typedef struct ArcJfdImage {
    const char *identification_reason;
 } ArcJfdImage;
 
+static inline bool arc_jfd_write_authorized(const ArcJfdImage *image,
+                                            ArcJfdWritePolicy policy)
+{
+   return image && (policy == ARC_JFD_WRITE_TAB_OFF ||
+      (image->extended && (image->flags & 3u) == 2u));
+}
+
+static inline const char *arc_jfd_header_write_reason(const ArcJfdImage *image,
+                                                       ArcJfdWritePolicy policy)
+{
+   if (arc_jfd_write_authorized(image, ARC_JFD_WRITE_AS_IMAGED)) return "rw-flag";
+   if (arc_jfd_write_authorized(image, policy)) return "tab-off";
+   return !image->extended ? "legacy-header" :
+      (image->flags & 1u) ? "wp-flag" : "no-flag";
+}
+
 typedef struct {
    ArcJfdSector sector;
    const uint8_t *data;
@@ -151,7 +173,8 @@ static inline bool arc_jfd_high_density(const ArcJfdImage *image)
 
 /* P-DD5 placement version 1, derived from the immutable base. Each
  * track-side's descriptors retain their ordinals; candidates follow in ID order. */
-bool arc_jfd_plan_creation(const ArcJfdImage *image, ArcJfdOverlay *overlay);
+bool arc_jfd_plan_creation(const ArcJfdImage *image, ArcJfdOverlay *overlay,
+                           ArcJfdWritePolicy policy);
 bool arc_jfd_place_slots(const ArcJfdImage *image, unsigned track_side,
                          unsigned ids, unsigned spacing, uint16_t captured,
                          uint32_t positions[ARC_JFD_MAX_STANDARD_IDS]);

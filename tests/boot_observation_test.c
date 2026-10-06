@@ -23,10 +23,10 @@ int main(void)
                                      ARC_BOOT_OBSERVATION_SIZE));
    assert(arc_boot_observation_parse(bytes, ARC_BOOT_OBSERVATION_SIZE, &parsed));
    assert(arc_boot_observation_equal(&stamp, &parsed));
-   assert(bytes[12] == 3u && bytes[13] == 0u);
-   bytes[12] = 2u;
-   assert(!arc_boot_observation_parse(bytes, ARC_BOOT_OBSERVATION_SIZE, &parsed));
+   assert(bytes[12] == 4u && bytes[13] == 0u);
    bytes[12] = 3u;
+   assert(!arc_boot_observation_parse(bytes, ARC_BOOT_OBSERVATION_SIZE, &parsed));
+   bytes[12] = 4u;
    assert(arc_boot_observation_parse(bytes, ARC_BOOT_OBSERVATION_SIZE, &parsed));
    assert(!arc_boot_observation_parse(bytes, ARC_BOOT_OBSERVATION_SIZE - 1u, &parsed));
    assert(!arc_boot_observation_parse(bytes, sizeof(bytes), &parsed));
@@ -44,17 +44,17 @@ int main(void)
    bytes[156] = 1u;
    assert(arc_boot_observation_parse(bytes, ARC_BOOT_OBSERVATION_SIZE, &parsed));
    assert(parsed.legacy_slot == 1u && arc_boot_observation_equal(&stamp, &parsed));
-   for (unsigned field = 0; field < 5u; ++field)
+   for (unsigned field = 0; field < 6u; ++field)
    {
       ArcBootObservation other = stamp;
       uint32_t *values[] = {&other.machine, &other.cpu, &other.memory,
-         &other.jfd_boot, &other.disk_writes};
+         &other.jfd_boot, &other.disk_writes, &other.jfd_write_policy};
       ++*values[field];
       assert(!arc_boot_observation_equal(&stamp, &other));
    }
-   const uint32_t invalid[] = {4u, 2u, 1023u, 3u, 3u, 2u};
-   const unsigned offsets[] = {136u, 140u, 144u, 148u, 152u, 156u};
-   for (unsigned field = 0; field < 6u; ++field)
+   const uint32_t invalid[] = {4u, 2u, 1023u, 3u, 3u, 2u, 2u};
+   const unsigned offsets[] = {136u, 140u, 144u, 148u, 152u, 156u, 228u};
+   for (unsigned field = 0; field < 7u; ++field)
    {
       uint8_t saved[4];
       memcpy(saved, bytes + offsets[field], sizeof(saved));

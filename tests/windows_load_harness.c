@@ -20,6 +20,11 @@ static const char *system_dir, *save_dir;
 static unsigned open_files, open_dirs, video_frames;
 static uint64_t audio_frames;
 static bool saw_adffs_log;
+static const char *option_jfd_tab = "as-imaged";
+static bool tab_case, variable_update;
+static bool frontend_reset;
+static unsigned tab_hidden_notices, tab_pending_notices;
+static uint32_t last_pixel;
 
 static void check_failed(const char *file, int line, const char *expression)
 {
@@ -164,6 +169,7 @@ static bool environment(unsigned command, void *data)
          const struct retro_core_option_v2_definition *short_tail = NULL;
          const struct retro_core_option_v2_definition *ramdisc = NULL;
          const struct retro_core_option_v2_definition *jfd_omitted = NULL;
+         const struct retro_core_option_v2_definition *jfd_tab = NULL;
          assert(phase == PHASE_ENV && options->categories &&
                 !strcmp(options->categories[0].key, "pad_mapping"));
          while (options->definitions[count].key)
@@ -205,9 +211,17 @@ static bool environment(unsigned command, void *data)
                assert(!jfd_omitted);
                jfd_omitted = &options->definitions[count];
             }
+            if (!strcmp(options->definitions[count].key, "arcdroid_jfd_write_protect"))
+            { assert(!jfd_tab); jfd_tab = &options->definitions[count]; }
             ++count;
          }
-         assert(count == 42u && sticks == 2u);
+         assert(jfd_tab && !strcmp(jfd_tab->desc, "Write-protect Tab") &&
+                !strcmp(jfd_tab->default_value, "as-imaged") &&
+                !strcmp(jfd_tab->values[0].value, "as-imaged") &&
+                !strcmp(jfd_tab->values[0].label, "As imaged") &&
+                !strcmp(jfd_tab->values[1].value, "off") &&
+                !strcmp(jfd_tab->values[1].label, "Off") && !jfd_tab->values[2].value);
+         assert(count == 43u && sticks == 2u);
          assert(hard_disc && !hard_disc->category_key &&
                 hard_disc->default_value &&
                 !strcmp(hard_disc->default_value, "auto") &&
@@ -262,7 +276,7 @@ static bool environment(unsigned command, void *data)
       {
          const struct retro_input_descriptor *descriptors = data;
          unsigned count = 0u;
-         assert(phase == PHASE_LOAD);
+         assert(phase == PHASE_LOAD || (phase == PHASE_RUN && frontend_reset));
          while (descriptors[count].description) ++count;
          assert(count == 30u);
          saw_input_descriptors = true;
@@ -285,10 +299,11 @@ static bool environment(unsigned command, void *data)
          else if (!strcmp(variable->key, "arcdroid_disk_writes")) variable->value = "shadow";
          else if (!strcmp(variable->key, "arcdroid_hard_disc")) variable->value = "auto";
          else if (!strcmp(variable->key, "arcdroid_short_tail")) variable->value = "missing";
+         else if (!strcmp(variable->key, "arcdroid_jfd_write_protect")) variable->value = option_jfd_tab;
          else if (!strcmp(variable->key, "arcdroid_jfd_omitted")) variable->value = "file-data";
-         else if (!strcmp(variable->key, "arcdroid_launch")) variable->value = "auto";
+         else if (!strcmp(variable->key, "arcdroid_launch")) variable->value = tab_case ? "off" : "auto";
          else if (!strcmp(variable->key, "arcdroid_launch_chooser")) variable->value = "remember";
-         else if (!strcmp(variable->key, "arcdroid_jfd_boot")) variable->value = "auto";
+         else if (!strcmp(variable->key, "arcdroid_jfd_boot")) variable->value = tab_case ? "native" : "auto";
          else if (!strcmp(variable->key, "arcdroid_adffs_package")) variable->value = "verified";
          else if (!strcmp(variable->key, "arcdroid_osk_toggle")) variable->value = "L3";
          else if (!strcmp(variable->key, "arcdroid_pad1_left_stick") ||
@@ -296,18 +311,27 @@ static bool environment(unsigned command, void *data)
          else variable->value = "Auto";
          return true;
       }
+      case RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE:
+         *(bool *)data = variable_update; variable_update = false; return true;
       case RETRO_ENVIRONMENT_SET_GEOMETRY:
       case RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO:
          assert(phase == PHASE_RUN); return true;
       case RETRO_ENVIRONMENT_SET_MESSAGE_EXT:
       case RETRO_ENVIRONMENT_SET_MESSAGE:
+      {
+         const char *message = command == RETRO_ENVIRONMENT_SET_MESSAGE_EXT ?
+            ((struct retro_message_ext *)data)->msg : ((struct retro_message *)data)->msg;
+         if (strstr(message, "hidden while Write-protect Tab is As imaged")) ++tab_hidden_notices;
+         if (strstr(message, "Write-protect Tab change will apply")) ++tab_pending_notices;
          return true;
+      }
       default: return false;
    }
 }
 
 static void video(const void *data, unsigned width, unsigned height, size_t pitch)
-{ assert(phase == PHASE_RUN && data && width && height && pitch >= width * 4u); ++video_frames; }
+{ assert(phase == PHASE_RUN && data && width && height && pitch >= width * 4u);
+  memcpy(&last_pixel, data, sizeof(last_pixel)); last_pixel &= 0x00ffffffu; ++video_frames; }
 static size_t audio_batch(const int16_t *data, size_t frames)
 { assert(data); audio_frames += frames; return frames; }
 static void input_poll(void) {}
@@ -328,11 +352,33 @@ typedef void (*SetInputStateFn)(retro_input_state_t);
 typedef void (*VoidFn)(void);
 typedef bool (*LoadGameFn)(const struct retro_game_info *);
 
+static void reset_frontend(VoidFn reset)
+{
+   assert(phase == PHASE_RUN && !frontend_reset);
+   frontend_reset = true;
+   reset();
+   frontend_reset = false;
+}
+
+static uint64_t file_hash(const char *path)
+{
+   FILE *file = fopen(path, "rb"); assert(file);
+   uint64_t hash = UINT64_C(1469598103934665603);
+   int byte;
+   while ((byte = fgetc(file)) != EOF)
+   { hash ^= (unsigned)byte; hash *= UINT64_C(1099511628211); }
+   assert(!ferror(file) && !fclose(file));
+   return hash;
+}
+
 int main(int argc, char **argv)
 {
+   tab_case = argc == 6 && !strncmp(argv[5], "--jfd-tab-", 10u);
    assert(argc == 5 || argc == 7 ||
-          (argc == 6 && !strcmp(argv[5], "--seed-product")));
-   bool seed_product=argc == 6;
+          (argc == 6 && (!strcmp(argv[5], "--seed-product") || tab_case)));
+   bool seed_product = argc == 6 && !tab_case;
+   bool tab_sampling = tab_case && !strcmp(argv[5], "--jfd-tab-load-reset");
+   if (tab_case) option_jfd_tab = tab_sampling ? "as-imaged" : "off";
    char system_path[4096], arcdroid_path[4096], firmware_path[4096];
    char save_path[4096], firmware_file[4096], adffs_path[4096], package_file[4096];
    make_directory(argv[4]);
@@ -354,6 +400,7 @@ int main(int argc, char **argv)
    }
    system_dir = system_path; save_dir = save_path;
 
+   uint64_t source_hash = file_hash(argv[3]);
    HMODULE module = LoadLibraryA(argv[1]);
    assert(module);
    LOAD(SetEnvironmentFn, retro_set_environment);
@@ -365,6 +412,7 @@ int main(int argc, char **argv)
    LOAD(VoidFn, retro_deinit);
    LOAD(VoidFn, retro_run);
    LOAD(VoidFn, retro_unload_game);
+   LOAD(VoidFn, retro_reset);
    LOAD(LoadGameFn, retro_load_game);
 
    phase = PHASE_ENV;
@@ -385,7 +433,59 @@ int main(int argc, char **argv)
       printf("Seeded product: id=%s\n",seeded_id);
    }
    phase = PHASE_RUN;
-   for (unsigned frame = 0u; frame < 100u; ++frame) retro_run();
+   if (tab_case)
+   {
+      bool (*drive)(unsigned, bool *, char[41]) =
+         (bool (*)(unsigned, bool *, char[41]))GetProcAddress(module, "arc_engine_test_drive_media");
+      bool (*map)(unsigned, uint8_t *, bool, uint64_t *) =
+         (bool (*)(unsigned, uint8_t *, bool, uint64_t *))GetProcAddress(module, "arc_libretro_test_jfd_map");
+      assert(drive && map);
+      bool protected = true;
+      assert(drive(0u, &protected, NULL) && protected == tab_sampling);
+      if (tab_sampling)
+      {
+         option_jfd_tab = "off"; variable_update = true;
+         retro_run();
+         assert(tab_pending_notices == 1u && drive(0u, &protected, NULL) && protected);
+         variable_update = true; retro_run(); assert(tab_pending_notices == 1u);
+         reset_frontend(retro_reset); assert(drive(0u, &protected, NULL) && !protected);
+      }
+      unsigned steady = 0u;
+      for (unsigned frame = 0u; frame < 900u && steady < 8u; ++frame)
+      { retro_run(); steady = last_pixel == 0x006a0000u ? steady + 1u : 0u; }
+      assert(steady == 8u);
+      uint64_t generation = 0u;
+      uint8_t allocation[1024];
+      assert(map(0u, allocation, false, &generation) && generation > 0u);
+      if (!strcmp(argv[5], "--jfd-tab-persistence") ||
+          !strcmp(argv[5], "--jfd-tab-hide-restore"))
+      {
+         retro_unload_game();
+         phase = PHASE_LOAD; assert(retro_load_game(&game)); phase = PHASE_RUN;
+         uint64_t reloaded = 0u;
+         assert(map(0u, allocation, false, &reloaded) && reloaded == generation);
+         steady = 0u;
+         for (unsigned frame = 0u; frame < 900u && steady < 8u; ++frame)
+         { retro_run(); steady = last_pixel == 0x00001500u ? steady + 1u : 0u; }
+         assert(steady == 8u);
+      }
+      if (!strcmp(argv[5], "--jfd-tab-hide-restore"))
+      {
+         option_jfd_tab = "as-imaged"; reset_frontend(retro_reset);
+         assert(drive(0u, &protected, NULL) && protected && tab_hidden_notices == 1u);
+         reset_frontend(retro_reset); assert(tab_hidden_notices == 1u);
+         option_jfd_tab = "off"; reset_frontend(retro_reset);
+         uint64_t restored = 0u;
+         assert(drive(0u, &protected, NULL) && !protected &&
+                map(0u, allocation, false, &restored) && restored >= generation);
+         steady = 0u;
+         for (unsigned frame = 0u; frame < 900u && steady < 8u; ++frame)
+         { retro_run(); steady = last_pixel == 0x00001500u ? steady + 1u : 0u; }
+         assert(steady == 8u);
+      }
+      printf("windows %s: policy, guest outcome and generation checks passed\n", argv[5]);
+   }
+   else for (unsigned frame = 0u; frame < 100u; ++frame) retro_run();
    retro_unload_game();
    if (argc == 7)
    {
@@ -395,9 +495,10 @@ int main(int argc, char **argv)
       retro_unload_game();
    }
    retro_deinit();
+   assert(file_hash(argv[3]) == source_hash);
    assert(saw_options && saw_no_game && saw_disk && saw_pixel && saw_controllers &&
           saw_keyboard && saw_vfs && saw_input_descriptors);
-   assert(video_frames == 100u && audio_frames > 0u);
+   assert((tab_case ? video_frames > 0u : video_frames == 100u) && audio_frames > 0u);
    assert(open_files == 0u && open_dirs == 0u);
    assert(FreeLibrary(module));
    printf("windows_load_harness: DLL/VFS loaded content; %u frames, %llu audio frames, 0 leaked handles\n",

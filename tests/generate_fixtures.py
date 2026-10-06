@@ -6034,6 +6034,40 @@ def main() -> None:
     (writes / "missing-one-d.jfd").write_bytes(build_jfd_family(
         [(0xFF, 0, 2, 0, 0, bytes(1024))],
         b"ArcDroid JFD missing read sector", extended=True))
+    tab = args.output / "jfd-tab"
+    tab.mkdir(exist_ok=True)
+    def tab_variants(kind, base):
+        for flags in range(4):
+            variant = bytearray(base)
+            struct.pack_into("<I", variant, 304,
+                             (struct.unpack_from("<I", base, 304)[0] & ~3) | flags)
+            (tab / f"{kind}-{flags}.jfd").write_bytes(variant)
+        legacy = bytearray(base[:304] + base[316:])
+        struct.pack_into("<I", legacy, 8, len(legacy))
+        for offset in (24, 28, 32):
+            struct.pack_into("<I", legacy, offset,
+                             struct.unpack_from("<I", base, offset)[0] - 12)
+        (tab / f"{kind}-legacy.jfd").write_bytes(legacy)
+    tab_variants("captured", writable)
+    tab_variants("created", create)
+    tab_variants("guard", (allocation / "guard-crossing.jfd").read_bytes())
+    tab_variants("guard-fail", (allocation / "guard-tail-allocated.jfd").read_bytes())
+    tab_variants("guard-placement", (allocation / "guard-placement-fail.jfd").read_bytes())
+    for mask, name in ((0, "route"), (1 << 16, "route-os")):
+        route = bytearray(adffs_writable)
+        struct.pack_into("<HHI", route, 12, 1, 1, 123)
+        struct.pack_into("<I", route, 304, mask)
+        tab_variants(name, route)
+    tab_variants("request", two_jfd)
+    tab_variants("set", build_extended_jfd(
+        build_d_discovery([(b"!Other", True)], b"Other"), b"Other JFD", "D"))
+    tab_variants("probe", (allocation / "old-free.jfd").read_bytes())
+    route_layout = bytearray((args.output / "adffs/writable-layout-fail.jfd").read_bytes())
+    struct.pack_into("<I", route_layout, 16, 123)
+    tab_variants("route-layout", route_layout)
+    (tab / "mixed.m3u").write_text(
+        "set-0.jfd\nset-1.jfd\nset-3.jfd\n",
+        encoding="utf-8", newline="\n")
     creation = args.output / "jfd-creation"
     creation.mkdir(exist_ok=True)
     full = list(range(5))
@@ -6454,6 +6488,8 @@ def main() -> None:
     payload_tail[255] = _old_map_checksum(payload_tail[:255])
     payload_tail[511] = _old_map_checksum(payload_tail[256:511])
     (short_family / "discovery-payload-tail.adf").write_bytes(payload_tail[:-1024])
+    for name in ("short-full", "unschedulable", "nonmatching", "irregular-newmap-free"):
+        tab_variants(name, (creation / f"{name}.jfd").read_bytes())
 
 
 if __name__ == "__main__":

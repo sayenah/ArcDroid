@@ -7,8 +7,8 @@
 #include <stdint.h>
 
 /* Change this when boot observation or launch preparation semantics change. */
-#define ARC_BOOT_OBSERVATION_REVISION 3u
-#define ARC_BOOT_OBSERVATION_SIZE 228u
+#define ARC_BOOT_OBSERVATION_REVISION 4u
+#define ARC_BOOT_OBSERVATION_SIZE 232u
 
 typedef struct {
    char firmware[41];
@@ -20,6 +20,7 @@ typedef struct {
    uint32_t memory;
    uint32_t jfd_boot;
    uint32_t disk_writes;
+   uint32_t jfd_write_policy;
    uint32_t legacy_slot;
    uint32_t hard_disc_policy;
    uint32_t hard_disc_attached;

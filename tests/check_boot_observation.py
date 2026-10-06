@@ -36,9 +36,9 @@ def main() -> None:
     assert len(records) == 1, records
     record = records[0]
     original = record.read_bytes()
-    assert len(original) == 228 and original[:8] == b"ARCBOOT1"
+    assert len(original) == 232 and original[:8] == b"ARCBOOT1"
     assert int.from_bytes(original[8:12], "little") == 1
-    assert int.from_bytes(original[12:16], "little") == 3
+    assert int.from_bytes(original[12:16], "little") == 4
     assert int.from_bytes(original[156:160], "little") == 1
 
     log, lines = run()
@@ -46,13 +46,26 @@ def main() -> None:
     assert "boot-watch=disabled" in lines[0] and "Boot outcome:" not in log
     assert "helper=" in lines[0] and ".adl" in lines[0]
 
+    log, lines = run(("--boot-jfd-write-protect", "off"))
+    assert len(lines) == 2 and "boot-watch=armed" in lines[0], lines
+    assert int.from_bytes(record.read_bytes()[228:232], "little") == 1
+    log, lines = run()
+    assert len(lines) == 2 and "boot-watch=armed" in lines[0], lines
+    assert int.from_bytes(record.read_bytes()[228:232], "little") == 0
+
+    revision_three = bytearray(original)
+    revision_three[12:16] = (3).to_bytes(4, "little")
+    record.write_bytes(revision_three[:228])
+    log, lines = run()
+    assert len(lines) == 2 and "boot-watch=armed" in lines[0], lines
+
     revision_two = bytearray(original)
     revision_two[12:16] = (2).to_bytes(4, "little")
     record.write_bytes(revision_two[:160])
     log, lines = run()
     assert len(lines) == 2 and "boot-watch=armed" in lines[0], lines
     assert "Boot outcome: prompt" in log
-    assert int.from_bytes(record.read_bytes()[12:16], "little") == 3
+    assert int.from_bytes(record.read_bytes()[12:16], "little") == 4
 
     log, lines = run(("--boot-reset-once",))
     assert len(lines) == 2 and all("remembered boot observation" in line for line in lines), lines

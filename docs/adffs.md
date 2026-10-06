@@ -11,8 +11,9 @@ ADFFS. Obtain information from the
 [JASPP forum thread](https://forums.jaspp.org.uk/forum/viewtopic.php?t=722).
 
 `JFD Boot` defaults to `Auto`. A single-image JFD for disc 1 of 1 boots
-natively when its extended header permits writing, its native write layout is
+natively when the image has write authorization, its native write layout is
 supported, and its header OS mask is unspecified or includes RISC OS 3.1.
+`Write-protect Tab: Off` can grant that write authorization (D-136).
 This keeps disc changes in ArcDroid's persistent JFD store even when an ADFFS
 package is installed. An OS mask that excludes RISC OS 3.1, a protected image,
 or an unsupported write layout retains the ADFFS path when eligible.
