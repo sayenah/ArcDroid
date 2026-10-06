@@ -275,7 +275,7 @@ static bool environment(unsigned command, void *data)
       {
          const struct retro_input_descriptor *descriptors = data;
          unsigned count = 0u;
-         assert(phase == PHASE_LOAD);
+         assert(phase == PHASE_LOAD || phase == PHASE_RUN);
          while (descriptors[count].description) ++count;
          assert(count == 30u);
          saw_input_descriptors = true;

@@ -55,12 +55,14 @@ static int64_t vread(struct retro_vfs_file_handle *h, void *out, uint64_t n)
 {
    if (h->slot == 2u && trip(READ_FAULT) && n) --n;
    if (n > files[h->slot].size - h->at) n = files[h->slot].size - h->at;
+   if (!n) return 0;
    memcpy(out, files[h->slot].bytes + h->at, (size_t)n);
    h->at += (size_t)n; return (int64_t)n;
 }
 static int64_t vwrite(struct retro_vfs_file_handle *h, const void *in, uint64_t n)
 {
    if (trip(WRITE_FAULT) && n) --n;
+   if (!n) return 0;
    File *f = &files[h->slot];
    uint8_t *grown = realloc(f->bytes, h->at + (size_t)n); assert(grown || !n);
    f->bytes = grown;

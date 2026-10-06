@@ -20,6 +20,14 @@ static void test_tab_store(const char *root)
    const char *kinds[] = {"captured", "created", "guard", "guard-fail", "guard-placement",
                           "short-full", "unschedulable", "nonmatching", "irregular-newmap-free"};
    uint8_t pattern[1024]; memset(pattern, 0x5a, sizeof(pattern));
+   clear_files();
+   struct retro_vfs_file_handle *empty = vopen("save/empty.tmp",
+      RETRO_VFS_FILE_ACCESS_WRITE, 0u);
+   assert(empty && !vwrite(empty, pattern, 0u) && !vclose(empty));
+   empty = vopen("save/empty.tmp", RETRO_VFS_FILE_ACCESS_READ, 0u);
+   assert(empty && !vread(empty, pattern, 0u) && !vclose(empty));
+   assert(files[2].exists && !files[2].bytes && !files[2].size);
+   clear_files();
    for (unsigned h = 0u; h < 5u; ++h)
       for (unsigned k = 0u; k < sizeof(kinds) / sizeof(kinds[0]); ++k)
          for (unsigned policy = 0u; policy < 2u; ++policy)
@@ -84,8 +92,12 @@ static void test_tab_store(const char *root)
                 image.overlay->generation == 2u && image.overlay->data[1][0] == 0x5au);
          arc_jfd_free(&image);
       }
-      uint8_t *saved = malloc(files[1].size); assert(saved);
-      size_t size = files[1].size; memcpy(saved, files[1].bytes, size);
+      /* The failed rename removed inactive .b; generation 2 remains in .a. */
+      assert(fault == NO_FAULT && files[0].exists && files[0].bytes && files[0].size &&
+             !files[1].exists && !files[1].bytes && !files[1].size);
+      size_t size = files[0].size;
+      uint8_t *saved = malloc(size); assert(saved);
+      memcpy(saved, files[0].bytes, size);
       image = tab_fixture(root, "captured", h);
       unsigned notices_before = notices;
       assert(arc_jfd_store_load(&image, "save", ARC_JFD_WRITE_AS_IMAGED,
@@ -93,7 +105,9 @@ static void test_tab_store(const char *root)
       if (h != 2u)
          assert(image.overlay->hidden_store && !image.overlay->visible &&
                 !image.overlay->generation && notices == notices_before + 1u);
-      assert(files[1].size == size && !memcmp(saved, files[1].bytes, size));
+      assert(files[0].exists && files[0].bytes && files[0].size == size &&
+             !memcmp(saved, files[0].bytes, size) &&
+             !files[1].exists && !files[1].bytes && !files[1].size);
       free(saved); arc_jfd_free(&image);
       image = tab_fixture(root, "captured", h);
       assert(arc_jfd_store_load(&image, "save", ARC_JFD_WRITE_TAB_OFF,
@@ -102,6 +116,8 @@ static void test_tab_store(const char *root)
              image.overlay->commit(&image, 1u, pattern) && image.overlay->generation == 3u);
       arc_jfd_free(&image);
       /* Equal generations, malformed and unreadable slots stay protected. */
+      assert(files[0].exists && files[0].bytes && files[0].size >= 76u &&
+             files[1].exists && files[1].bytes && files[1].size >= 76u);
       unsigned newer = files[0].bytes[68] > files[1].bytes[68] ? 0u : 1u;
       unsigned older = 1u - newer;
       memcpy(files[newer].bytes + 68u, files[older].bytes + 68u, 8u);
