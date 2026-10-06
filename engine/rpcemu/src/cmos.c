@@ -45,7 +45,8 @@ int i2cdata  = 1; /**< The current value of the I2C data pin */
 #define BIN2BCD(val)	((((val) / 10) << 4) | ((val) % 10))
 
 static unsigned char cmosram[256];
-static uint64_t cmos_writes;
+static uint64_t cmos_writes, arc_rpc_cmos_total_writes;
+static uint8_t arc_rpc_cmos_written[32];
 static uint32_t i2c_devices; /**< Bitfield of devices on the I2C bus */
 
 /****************************************************************************/
@@ -99,11 +100,14 @@ void arc_rpc_cmos_seed(const uint8_t bytes[256])
 {
     if (!bytes) fatal("Missing declared CMOS seed");
     memcpy(cmosram, bytes, sizeof(cmosram));
-    cmos_writes = 0;
+    cmos_writes = arc_rpc_cmos_total_writes = 0;
+    memset(arc_rpc_cmos_written, 0, sizeof(arc_rpc_cmos_written));
 }
 void arc_rpc_cmos_snapshot(uint8_t bytes[256]) { memcpy(bytes, cmosram, 256); }
 uint64_t arc_rpc_cmos_writes(void) { return cmos_writes; }
-void cmos_init(void) { memset(cmosram, 0, sizeof(cmosram)); cmos_writes = 0; }
+void cmos_init(void) { uint8_t empty[256] = {0}; arc_rpc_cmos_seed(empty); }
+uint64_t arc_rpc_cmos_write_evidence(uint8_t mask[32])
+{ if(mask)memcpy(mask,arc_rpc_cmos_written,32);return arc_rpc_cmos_total_writes; }
 void cmos_reset(void) { /* Volatile CMOS survives reset. Bus reset is separate. */ }
 void savecmos(void) { /* Persistence is outside the R1 session contract. */ }
 
@@ -140,6 +144,8 @@ pcf8583_write(void *dev, uint8_t data)
 		          data, pcf->reg_address);
 
 		cmosram[pcf->reg_address] = data;
+        ++arc_rpc_cmos_total_writes;
+        arc_rpc_cmos_written[pcf->reg_address / 8] |= (uint8_t)(1u << (pcf->reg_address & 7));
         if (pcf->reg_address >= 16) cmos_writes++;
 
 		// RISC OS updates the checksum byte after any change, so if

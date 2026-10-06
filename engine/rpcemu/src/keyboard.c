@@ -41,6 +41,7 @@
 
 #include "rpcemu.h"
 #include "rpc_timing.h"
+#include "rpc_input.h"
 #include "vidc20.h"
 #include "mem.h"
 #include "iomd.h"
@@ -126,6 +127,7 @@ static PS2Queue msqueue;
 static uint8_t mouse_type;	/**< 0 = PS/2, 3 = IMPS/2, 4 = IMEX */
 static uint8_t mouse_detect_state;
 
+static uint8_t arc_rpc_kbd_parameter;
 static uint8_t oldmouseb;
 static int oldz;
 
@@ -228,6 +230,7 @@ keyboard_reset(void)
 {
 	arc_rpc_response(ARC_RPC_EVENT_KEYBOARD, &kcallback, 0);
 	memset(&kbd, 0, sizeof(kbd));
+    arc_rpc_kbd_parameter = 0;
 
 	msqueue.rptr = 0;
 	msqueue.wptr = 0;
@@ -277,24 +280,29 @@ ps2_read_data(PS2Queue *q)
 void
 keyboard_data_write(uint8_t v)
 {
-	switch (v) {
-	case KBD_CMD_RESET:
-		kbd.reset = 2;
-		arc_rpc_response(ARC_RPC_EVENT_KEYBOARD, &kcallback, 4 * 4);
-		break;
+    if (arc_rpc_kbd_parameter) {
+        if (arc_rpc_kbd_parameter == 0xf3) arc_rpc_input_typematic(v);
+        arc_rpc_kbd_parameter = 0;
+    } else switch (v) {
+    case KBD_CMD_RESET:
+        memset(&kbd.queue,0,sizeof(kbd.queue));
+        arc_rpc_input_scanning(false);
+        kbd.reset = 2;
+        arc_rpc_response(ARC_RPC_EVENT_KEYBOARD, &kcallback, 16);
+        return;
+    case 0xf3: case 0xed: case 0xf0: arc_rpc_kbd_parameter = v; break;
+    case 0xf4: arc_rpc_input_scanning(true); break;
+    case 0xf5: arc_rpc_input_scanning(false); break;
+    case 0xf6: arc_rpc_input_typematic(0x2b);arc_rpc_input_scanning(true);break;
+    case 0xee: ps2_queue(&kbd.queue,0xee);goto queued;
+    default: break;
+    }
+    ps2_queue(&kbd.queue,KBD_REPLY_ACK);
+queued:
+    kbd.command = 0xfe;
+    if (!kcallback && !(kbd.stat & PS2_CONTROL_RX_FULL))
+        arc_rpc_response(ARC_RPC_EVENT_KEYBOARD, &kcallback, 4);
 
-	case KBD_CMD_ENABLE:
-		kbd.reset = 0;
-		kbd.command = KBD_CMD_ENABLE;
-		arc_rpc_response(ARC_RPC_EVENT_KEYBOARD, &kcallback, 1 * 4);
-		break;
-
-	default:
-		kbd.command = 1;
-		kbd.reset = 0;
-		arc_rpc_response(ARC_RPC_EVENT_KEYBOARD, &kcallback, 1 * 4);
-		break;
-	}
 }
 
 /**
@@ -309,6 +317,7 @@ keyboard_control_write(uint8_t v)
 		kbd.reset = 1;
 		arc_rpc_response(ARC_RPC_EVENT_KEYBOARD, &kcallback, 5 * 4);
 	}
+    kbd.enable = v != 0;
 	if (v) {
 		kbd.stat |= PS2_CONTROL_ENABLE;
 	} else {
@@ -334,6 +343,7 @@ void
 keyboard_callback_rpcemu(void)
 {
 	PS2Queue *q = &kbd.queue;
+    if (kbd.stat & PS2_CONTROL_RX_FULL) return;
 
 	if (kbd.reset == 1) {
 		kbd.reset = 0;
@@ -342,7 +352,7 @@ keyboard_callback_rpcemu(void)
 
 	} else if (kbd.reset == 2) {
 		kbd.reset = 3;
-		// keyboardsend(KBD_REPLY_ACK);
+        keyboardsend(KBD_REPLY_ACK);
 		arc_rpc_response(ARC_RPC_EVENT_KEYBOARD, &kcallback, 500 * 4);
 
 	} else if (kbd.reset == 3) {
@@ -359,7 +369,8 @@ keyboard_callback_rpcemu(void)
 		break;
 
 	case 0xfe:
-		keyboardsend(ps2_read_data(q));
+        if (!q->count) { kbd.command = 0; break; }
+        keyboardsend(ps2_read_data(q));
 		arc_rpc_response(ARC_RPC_EVENT_KEYBOARD, &kcallback, 0);
 		if (q->count == 0) {
 			kbd.command = 0;
@@ -389,7 +400,7 @@ keyboard_data_read(void)
 {
 	keyboard_irq_rx_lower();
 	kbd.stat &= ~PS2_CONTROL_RX_FULL;
-	if (kbd.command == 0xfe) {
+	if (!kcallback && (kbd.command == 0xfe || kbd.reset == 3)) {
 		arc_rpc_response(ARC_RPC_EVENT_KEYBOARD, &kcallback, 5 * 4);
 	}
 	return kbd.data;
@@ -568,7 +579,7 @@ mouse_data_read(void)
 
 	/* If there's still more data to send, make sure to call us back the
 	   next time */
-	if (msqueue.count != 0) {
+	if (msqueue.count != 0 || msreset) {
                 arc_rpc_response(ARC_RPC_EVENT_MOUSE, &mcallback, 20);
         }
 
@@ -605,6 +616,7 @@ void
 mouse_ps2_callback(void)
 {
 	if (mcallback != 0) fatal("Mouse callback invariant");
+    if (msstat & PS2_CONTROL_RX_FULL) return;
 
         /* Set EMPTY Flag, clear BUSY flag */
         msstat = (msstat & 0x3f) | PS2_CONTROL_TX_EMPTY;
@@ -712,8 +724,7 @@ mouse_process(void)
         if (y<-256) y=-256;
         if (y>255) y=255;
 
-        y^=0xFFFFFFFF;
-        y++;
+        y = -y;
 
 	/* Calculate relative scrollwheel position from last call */
 	tmpz = oldz - z;
@@ -768,8 +779,8 @@ mouse_process(void)
 		break;
 	}
 
-	/* There's data in the queue, make sure we're called back */
-	arc_rpc_response(ARC_RPC_EVENT_MOUSE, &mcallback, 20);
+    if (!mcallback && !(msstat & PS2_CONTROL_RX_FULL))
+        arc_rpc_response(ARC_RPC_EVENT_MOUSE, &mcallback, 20);
 }
 
 /**
@@ -837,7 +848,7 @@ mouse_buttons_get(void)
 void
 keyboard_key_press(const uint8_t *scan_codes)
 {
-	if (scan_codes == NULL) {
+	if (scan_codes == NULL || arc_rpc_keyboard_room() < 8) {
 		return;
 	}
 
@@ -855,8 +866,9 @@ keyboard_key_press(const uint8_t *scan_codes)
 		ps2_queue(&kbd.queue, scan_codes[6]);
 		ps2_queue(&kbd.queue, scan_codes[7]);
 	}
-	arc_rpc_response(ARC_RPC_EVENT_KEYBOARD, &kcallback, 20);
-	kbd.command = 0xfe;
+    if (!kcallback && !(kbd.stat & PS2_CONTROL_RX_FULL))
+        arc_rpc_response(ARC_RPC_EVENT_KEYBOARD, &kcallback, 20);
+    kbd.command = 0xfe;
 }
 
 /**
@@ -865,7 +877,7 @@ keyboard_key_press(const uint8_t *scan_codes)
 void
 keyboard_key_release(const uint8_t *scan_codes)
 {
-	if (scan_codes == NULL) {
+	if (scan_codes == NULL || arc_rpc_keyboard_room() < 8) {
 		return;
 	}
 
@@ -881,6 +893,10 @@ keyboard_key_release(const uint8_t *scan_codes)
 		ps2_queue(&kbd.queue, 0xf0); /* key-up modifier */
 		ps2_queue(&kbd.queue, scan_codes[1]); /* second byte */
 	}
-	arc_rpc_response(ARC_RPC_EVENT_KEYBOARD, &kcallback, 20);
-	kbd.command = 0xfe;
+    if (!kcallback && !(kbd.stat & PS2_CONTROL_RX_FULL))
+        arc_rpc_response(ARC_RPC_EVENT_KEYBOARD, &kcallback, 20);
+    kbd.command = 0xfe;
 }
+
+unsigned arc_rpc_keyboard_room(void) { return PS2_QUEUE_SIZE - kbd.queue.count; }
+unsigned arc_rpc_mouse_room(void) { return PS2_QUEUE_SIZE - msqueue.count; }

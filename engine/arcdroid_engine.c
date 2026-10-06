@@ -210,6 +210,12 @@ RETRO_API bool arc_rpc_test_start(ArcRpcModel model, const uint8_t *rom, size_t 
 #endif
 
 #if defined(ARCDROID_TEST_FAULTS)
+RETRO_API bool arc_rpc_test_factory_start(ArcRpcModel model, const uint8_t *rom, size_t size,
+    uint64_t epoch, char *error, size_t error_size)
+{
+    arc_backend->stop();arc_backend=&arc_rpc_backend;
+    return arc_rpc_session_factory_start(model,rom,size,epoch,error,error_size);
+}
 RETRO_API const ArcEngineBackendOps *arc_rpc_test_engine_api(void)
 {
    static const ArcEngineBackendOps api = {

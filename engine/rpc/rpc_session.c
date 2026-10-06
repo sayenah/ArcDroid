@@ -8,6 +8,8 @@
 #include "rpc_memory.h"
 #include "rpc_rtc.h"
 #include "rpc_video.h"
+#include "rpc_audio.h"
+#include "rpc_input.h"
 #include "rpcemu.h"
 #include "arm.h"
 #include "cp15.h"
@@ -56,8 +58,12 @@ void arc_rpc_video_bus(unsigned transfers, bool dram)
 }
 extern int arc_rpc_arm_exec_count(unsigned count);
 extern bool arc_rpc_cpu_idle;
-uint32_t soundaddr[4];
-int soundinited, soundlatch, soundcount;
+static ArcInputState *arc_rpc_input_service; /* Valid only during one protected entry. */
+static bool arc_rpc_input_retire;
+static ArcRpcCapture arc_rpc_capture;
+static uint64_t arc_rpc_generation;
+uint64_t arc_rpc_session_generation(void) { return arc_rpc_generation; }
+extern uint64_t arc_rpc_cmos_write_evidence(uint8_t mask[32]);
 #if defined(ARCDROID_TEST_FAULTS)
 static unsigned arc_rpc_fail_alloc;
 static bool arc_rpc_fail_entry;
@@ -81,6 +87,9 @@ void fatal(const char *format, ...)
     vsnprintf(arc_rpc_fault_text, sizeof(arc_rpc_fault_text), format, args);
     va_end(args);
     arc_rpc_fault = true;
+    arc_rpc_sound_purge();
+    arc_rpc_input_service = NULL;
+    if(arc_rpc_capture.state==ARC_RPC_CAPTURE_RUNNING)arc_rpc_capture.state=ARC_RPC_CAPTURE_FAILED;
     /* All callers are CPU/device code under start/reset/advance. There is no
      * log-and-continue or process termination fallback. */
     memset(arc_rpc_scheduler.armed, 0, sizeof(arc_rpc_scheduler.armed));
@@ -93,8 +102,6 @@ bool arc_rpc_rtc_read(ArcRpcCalendar *out)
 {
     return arc_rpc_calendar(arc_rpc_epoch, arc_rpc_rtc_offset + arc_rpc_scheduler.now_ns, out);
 }
-/* Run D replaces these sound-register hooks with timed production/drain. */
-void sound_samplefreq_change(int frequency) { soundlatch = frequency; }
 
 /* Absent IDE: floating data bus, zero status (no BSY/DRQ/IRQ), writes ignored.
  * Absent podule/EASI bus: all bits high; writes have no side effects. */
@@ -116,6 +123,11 @@ ARC_RPC_ABSENT_WRITE(8) ARC_RPC_ABSENT_WRITE(16) ARC_RPC_ABSENT_WRITE(32)
 
 static void arc_rpc_stop(void)
 {
+    arc_rpc_sound_purge();
+    arc_rpc_input_service = NULL;
+    arc_rpc_input_factory(false);
+    if(arc_rpc_capture.state==ARC_RPC_CAPTURE_RUNNING || arc_rpc_capture.state==ARC_RPC_CAPTURE_DONE)
+        arc_rpc_capture.state=ARC_RPC_CAPTURE_CANCELLED;
     arc_rpc_timing_bind(NULL);
     memset(&arc_rpc_scheduler, 0, sizeof(arc_rpc_scheduler));
     closevideo();
@@ -138,8 +150,9 @@ static void arc_rpc_reset_devices(void)
     reseti2c(machine.i2c_devices);
     cmos_reset();
     initvideo();
-    memset(soundaddr, 0, sizeof(soundaddr));
-    soundinited = soundlatch = soundcount = 0;
+    arc_rpc_sound_reset(false);
+    arc_rpc_input_reset();
+    arc_rpc_input_service = NULL;
     arc_rpc_executed = arc_rpc_idle_ns = 0;
     arc_rpc_bus_until = arc_rpc_bus_ns = 0;
 #if defined(ARCDROID_TEST_FAULTS)
@@ -186,14 +199,38 @@ bool arc_rpc_session_start(ArcRpcModel model, const uint8_t *bytes, size_t size,
     arc_rpc_rate = arc_rpc_registry[model].rate;
     arc_rpc_epoch = epoch;
     arc_rpc_rtc_offset = 0;
+    memset(&arc_rpc_capture,0,sizeof(arc_rpc_capture));
+    arc_rpc_input_retire = false;
     arc_rpc_inject_entry();
     mem_init();
     if (!arc_rpc_memory_load_rom(bytes, size)) fatal("ROM admission failed");
     arc_rpc_cmos_seed(seed);
     arc_rpc_reset_devices();
+    arc_rpc_sound_reset(true);
     arc_rpc_live = true;
+    ++arc_rpc_generation;
     if (failure && failure_size) failure[0] = 0;
     return true;
+}
+bool arc_rpc_session_factory_start(ArcRpcModel model,const uint8_t *bytes,size_t size,
+    uint64_t epoch,char *failure,size_t failure_size)
+{
+    uint8_t empty[256]={0};
+    if(!arc_rpc_session_start(model,bytes,size,empty,epoch,failure,failure_size))return false;
+    if(setjmp(arc_rpc_jump))return false;
+    arc_rpc_capture.state=ARC_RPC_CAPTURE_RUNNING;
+    arc_rpc_input_factory(true);
+    return true;
+}
+void arc_rpc_capture_status(ArcRpcCapture *out)
+{
+    if(!out)return;
+    *out=arc_rpc_capture;
+    out->elapsed_ns=arc_rpc_scheduler.now_ns;
+    out->delete_held=arc_rpc_input_delete_held();
+    if(out->state==ARC_RPC_CAPTURE_RUNNING) {
+        out->writes=arc_rpc_cmos_write_evidence(out->written);arc_rpc_cmos_snapshot(out->bytes);
+    }
 }
 static bool arc_rpc_reset(char *failure, size_t failure_size)
 {
@@ -210,6 +247,9 @@ static bool arc_rpc_reset(char *failure, size_t failure_size)
     arc_rpc_rtc_offset += arc_rpc_scheduler.now_ns;
     mem_reset(64, config.vram_size);
     arc_rpc_reset_devices(); /* Volatile CMOS is retained. */
+    arc_rpc_input_retire=true;
+    if(arc_rpc_capture.state==ARC_RPC_CAPTURE_RUNNING || arc_rpc_capture.state==ARC_RPC_CAPTURE_DONE)
+        arc_rpc_capture.state=ARC_RPC_CAPTURE_CANCELLED;
     if (failure && failure_size) failure[0] = 0;
     return true;
 }
@@ -235,7 +275,21 @@ static void arc_rpc_deliver(ArcRpcEvent event)
     case ARC_RPC_EVENT_MOUSE: mcallback = 0; mouse_ps2_callback(); break;
     case ARC_RPC_EVENT_FDC: fdccallback = 0; fdc_callback(); break;
     case ARC_RPC_EVENT_VIDEO: arc_rpc_video_event(); break;
-    default: break; /* Reserved IDE/sound slots, never armed in C2. */
+    case ARC_RPC_EVENT_SOUND: arc_rpc_sound_event(); break;
+    case ARC_RPC_EVENT_INPUT: {
+        ArcInputEvent input;
+        /* One arbitrated event/tick, with complete-packet backpressure. No
+         * frontend callback or retained frontend pointer crosses the boundary. */
+        if(arc_rpc_input_service && arc_rpc_keyboard_room()>=8 && arc_rpc_mouse_room()>=4 &&
+           arc_input_consume(arc_rpc_input_service,true,&input)) {
+            if(input.type==ARC_INPUT_EVENT_KEY)arc_rpc_input_key(input.code,input.down);
+            else if(input.type==ARC_INPUT_EVENT_BUTTON) {
+                if(input.down)mouse_mouse_press((int)input.code);else mouse_mouse_release((int)input.code);
+            } else mouse_mouse_move_relative((int)input.dx,(int)input.dy);
+        }
+        arc_rpc_input_event(); break;
+    }
+    default: break; /* Reserved absent IDE slot. */
     }
 }
 static bool arc_rpc_advance_internal(uint64_t elapsed_ns, bool stop_at_field)
@@ -245,6 +299,9 @@ static bool arc_rpc_advance_internal(uint64_t elapsed_ns, bool stop_at_field)
     if (setjmp(arc_rpc_jump)) return false;
     arc_rpc_inject_entry();
     uint64_t limit = arc_rpc_scheduler.now_ns + elapsed_ns;
+    if(arc_rpc_capture.state==ARC_RPC_CAPTURE_DONE)return true;
+    if(arc_rpc_capture.state==ARC_RPC_CAPTURE_RUNNING && limit>UINT64_C(30000000000))
+        limit=UINT64_C(30000000000);
     ArcRpcVideoStatus video_start; arc_rpc_video_status(&video_start);
     unsigned event_work = 0, instruction_work = 0;
     while (arc_rpc_scheduler.now_ns < limit) {
@@ -284,10 +341,16 @@ static bool arc_rpc_advance_internal(uint64_t elapsed_ns, bool stop_at_field)
         }
         if (completed) break;
     }
+    if(arc_rpc_capture.state==ARC_RPC_CAPTURE_RUNNING && arc_rpc_scheduler.now_ns==UINT64_C(30000000000)) {
+        arc_rpc_capture.writes=arc_rpc_cmos_write_evidence(arc_rpc_capture.written);
+        arc_rpc_cmos_snapshot(arc_rpc_capture.bytes);
+        if(!arc_rpc_capture.writes)fatal("Factory CMOS capture: no guest writes in 30 emulated seconds");
+        arc_rpc_capture.state=ARC_RPC_CAPTURE_DONE;
+    }
     return true;
 }
 
-static bool arc_rpc_advance(uint64_t ns) { return arc_rpc_advance_internal(ns, false); }
+
 
 static ArcEngineCapabilities arc_rpc_capabilities(void)
 {
@@ -305,18 +368,20 @@ static bool arc_rpc_shipping_start(const uint8_t *r, size_t s, const ArcEngineMe
 }
 static bool arc_rpc_frame(ArcInputState *input, ArcEngineFrame *frame)
 {
-    (void)input; /* Run D adds the ArcDroid input adapter, gathered before entry. */
     if (frame) memset(frame, 0, sizeof(*frame));
     if (!frame) return false;
+    if(arc_rpc_input_retire && input) { arc_input_reset(input);arc_rpc_input_retire=false; }
+    arc_rpc_input_service=input;
     uint64_t start = arc_rpc_scheduler.now_ns;
     ArcRpcVideoStatus before, after; arc_rpc_video_status(&before);
     /* At most six budgeted chunks (100 ms): even a stopped/disabled display
      * cannot trap the frontend in an unbounded wait for flyback. */
     for (unsigned chunk = 0; chunk < 6u; ++chunk) {
-        if (!arc_rpc_advance_internal(16666667u, true)) return false;
+        if (!arc_rpc_advance_internal(16666667u, true)) { arc_rpc_input_service=NULL;return false; }
         arc_rpc_video_status(&after);
         if (after.fields != before.fields || !vidc_get_xsize() || !vidc_get_ysize()) break;
     }
+    arc_rpc_input_service=NULL;
     frame->elapsed_us = (arc_rpc_scheduler.now_ns - start) / 1000u;
     if (after.fields != before.fields && after.width && after.height) {
         frame->pixels = arc_rpc_video_pixels(); frame->width = after.width;
@@ -326,6 +391,8 @@ static bool arc_rpc_frame(ArcInputState *input, ArcEngineFrame *frame)
     /* Logs/callbacks occur only after leaving the protected guest stack. */
     if (arc_rpc_logger && arc_rpc_video_take_clip())
         arc_rpc_logger(arc_rpc_logger_opaque, "RPC video clipped to 2048x2048; guest scanout unchanged.\n");
+    if(arc_rpc_logger && arc_rpc_sound_take_unsupported())
+        arc_rpc_logger(arc_rpc_logger_opaque,"RPC 8-bit compatibility sound unsupported; output is silent.\n");
     return true;
 }
 static void arc_rpc_log_callback(ArcEngineLogCallback cb, void *p)
@@ -346,14 +413,20 @@ static void arc_rpc_disc_snapshot(ArcDiscRequest *o) { if(o) memset(o,0,sizeof(*
 static uint64_t arc_rpc_disc_time(void) { return 0; }
 static bool arc_rpc_false(void) { return false; }
 static void arc_rpc_refusal(void (*c)(unsigned,unsigned,unsigned,unsigned)) { (void)c; }
-static size_t arc_rpc_audio(int16_t *o,size_t n) { if(o) memset(o,0,n*2*sizeof(*o)); return o ? n : 0; }
+static size_t arc_rpc_audio(int16_t *o,size_t n)
+{
+    if(arc_rpc_live && arc_rpc_fault && o)arc_rpc_sound_fault_silence(n);
+    size_t count=arc_rpc_audio_peek(o,n);arc_rpc_audio_commit(count,count);return count;
+}
 static void arc_rpc_audio_stats(uint64_t *u,uint64_t *o) { if(u)*u=0;if(o)*o=0; }
 static bool arc_rpc_media(const ArcEngineMedia *m,char *e,size_t n)
 { (void)m;if(e&&n)snprintf(e,n,"RPCEmu media unsupported in R1");return false; }
 static bool arc_rpc_av(unsigned *w,unsigned *h,double *r)
 {
     ArcRpcVideoStatus v; arc_rpc_video_status(&v);
-    if(w)*w=v.width; if(h)*h=v.height; if(r)*r=v.refresh_hz;
+    if(w)*w=v.width;
+    if(h)*h=v.height;
+    if(r)*r=v.refresh_hz;
     return arc_rpc_live && !arc_rpc_fault && v.width && v.height;
 }
 static void arc_rpc_cmos_unavailable(uint8_t o[ARC_CMOS_PAYLOAD_SIZE]) { if(o)memset(o,0,ARC_CMOS_PAYLOAD_SIZE); }
@@ -373,11 +446,16 @@ const ArcEngineBackendOps arc_rpc_backend = {
     .cmos=arc_rpc_cmos_unavailable,.faulted=arc_rpc_faulted,.active=arc_rpc_active
 };
 #if defined(ARCDROID_TEST_FAULTS)
+RETRO_API void arc_rpc_test_cmos_snapshot(uint8_t *out) { if(out)arc_rpc_cmos_snapshot(out); }
+RETRO_API void arc_rpc_test_capture_status(ArcRpcCapture *out) { arc_rpc_capture_status(out); }
+RETRO_API void arc_rpc_test_audio_counts(ArcRpcAudioCounts *out) { arc_rpc_audio_counts(out); }
+RETRO_API size_t arc_rpc_test_audio_peek(int16_t *out,size_t n) { return arc_rpc_audio_peek(out,n); }
+RETRO_API void arc_rpc_test_audio_commit(size_t n,size_t a) { arc_rpc_audio_commit(n,a); }
 RETRO_API void arc_rpc_test_video_status(ArcRpcVideoStatus *out) { if(out)arc_rpc_video_status(out); }
 RETRO_API uint64_t arc_rpc_test_video_bus_ns(void) { return arc_rpc_bus_ns; }
 RETRO_API void arc_rpc_test_fail_alloc(unsigned stage) { arc_rpc_fail_alloc=stage; }
 RETRO_API void arc_rpc_test_fault_next(void) { arc_rpc_fail_entry=true; }
-RETRO_API bool arc_rpc_test_advance(uint64_t ns) { return arc_rpc_advance(ns); }
+RETRO_API bool arc_rpc_test_advance(uint64_t ns) { return arc_rpc_advance_internal(ns,false); }
 RETRO_API void arc_rpc_test_snapshot(ArcRpcTestSnapshot *out)
 {
     if(!out)return;

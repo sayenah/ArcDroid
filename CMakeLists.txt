@@ -114,6 +114,8 @@ set(ARCDROID_ARCULATOR_SOURCES
 
 set(ARCDROID_RPC_SOURCES
   engine/rpc/rpc_session.c
+  engine/rpc/rpc_audio.c
+  engine/rpc/rpc_input.c
   engine/rpc/rpc_timing.c
   engine/rpc/rpc_scheduler.c
   engine/rpc/rpc_floppy.c
@@ -1907,6 +1909,40 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
   endforeach()
   add_test(NAME rpc-video-frontend COMMAND rpc_video_test
     $<TARGET_FILE:arcdroid_libretro_test> --frontend 2)
+
+  # D2 tests are in native Windows CTest and the rpc-.* sanitizer selection.
+  add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/rpc_d2_rom.h"
+    COMMAND "${Python3_EXECUTABLE}" -B "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_d2_rom.py"
+      "${CMAKE_CURRENT_BINARY_DIR}/generated/rpc_d2_rom.h"
+    DEPENDS tests/rpc_d2_rom.py VERBATIM)
+  add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/rpc_d2_expected.h"
+    COMMAND "${Python3_EXECUTABLE}" -B "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_d2_expectations.py"
+      --header "${CMAKE_CURRENT_BINARY_DIR}/generated/rpc_d2_expected.h"
+    DEPENDS tests/rpc_d2_expectations.py tests/rpc_d2_goldens.py tests/rpc_d2_rom.py VERBATIM)
+  add_executable(rpc_d2_test tests/rpc_d2_test.c
+    "${CMAKE_CURRENT_BINARY_DIR}/generated/rpc_d2_rom.h"
+    "${CMAKE_CURRENT_BINARY_DIR}/generated/rpc_d2_expected.h")
+  target_include_directories(rpc_d2_test PRIVATE engine engine/rpc core libretro/include
+    "${CMAKE_CURRENT_BINARY_DIR}/generated")
+  target_compile_definitions(rpc_d2_test PRIVATE ARCDROID_TEST_FAULTS=1 RETRO_IMPORT_SYMBOLS=1)
+  target_compile_options(rpc_d2_test PRIVATE $<$<C_COMPILER_ID:GNU,Clang,AppleClang>:-UNDEBUG;-Wall;-Wextra>)
+  target_link_libraries(rpc_d2_test PRIVATE arcdroid_core ${CMAKE_DL_LIBS})
+  add_dependencies(rpc_d2_test arcdroid_libretro_test)
+  if(ARCDROID_SANITIZERS)
+    target_link_libraries(rpc_d2_test PRIVATE arcdroid_sanitizer_compile arcdroid_sanitizer_link)
+  endif()
+  foreach(model RANGE 0 3)
+    add_test(NAME rpc-d2-guest-${model} COMMAND "${Python3_EXECUTABLE}" -B
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_d2_expectations.py"
+      $<TARGET_FILE:rpc_d2_test> $<TARGET_FILE:arcdroid_libretro_test> --guest ${model}
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/rpc-d2-${model}.trace")
+  endforeach()
+  foreach(model RANGE 2 3)
+    add_test(NAME rpc-factory-capture-${model} COMMAND "${Python3_EXECUTABLE}" -B
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_d2_expectations.py"
+      $<TARGET_FILE:rpc_d2_test> $<TARGET_FILE:arcdroid_libretro_test> --factory ${model}
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/rpc-factory-${model}.trace")
+  endforeach()
 
   add_test(NAME rpc-shipping-route COMMAND rpc_session_test
     $<TARGET_FILE:arcdroid_libretro> --shipping)

@@ -68,7 +68,8 @@
       "sha256": "2f3fbe6f6aa19c97cb94e27676a6f9801b00ec23517dc641a551bb40c6d36098",
       "licence_header": "/*\n  RPCEmu - An Acorn system emulator\n\n  Copyright (C) 2005-2010 Sarah Walker\n\n  This program is free software; you can redistribute it and/or modify\n  it under the terms of the GNU General Public License as published by\n  the Free Software Foundation; either version 2 of the License, or\n  (at your option) any later version.\n\n  This program is distributed in the hope that it will be useful,\n  but WITHOUT ANY WARRANTY; without even the implied warranty of\n  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the\n  GNU General Public License for more details.\n\n  You should have received a copy of the GNU General Public License\n  along with this program; if not, write to the Free Software\n  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.\n */",
       "patches": [
-        "containment-cmos-rtc"
+        "containment-cmos-rtc",
+        "audio-input-capture"
       ]
     },
     {
@@ -146,7 +147,8 @@
       "licence_header": "/*\n  RPCEmu - An Acorn system emulator\n\n  Copyright (C) 2005-2010 Sarah Walker\n\n  This program is free software; you can redistribute it and/or modify\n  it under the terms of the GNU General Public License as published by\n  the Free Software Foundation; either version 2 of the License, or\n  (at your option) any later version.\n\n  This program is distributed in the hope that it will be useful,\n  but WITHOUT ANY WARRANTY; without even the implied warranty of\n  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the\n  GNU General Public License for more details.\n\n  You should have received a copy of the GNU General Public License\n  along with this program; if not, write to the Free Software\n  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.\n */",
       "patches": [
         "containment-device-scheduler",
-        "vidc-line-scanout"
+        "vidc-line-scanout",
+        "audio-input-capture"
       ]
     },
     {
@@ -162,7 +164,8 @@
       "sha256": "0f5185ec7f29055999748a20b0ee883caa5133e5eb78d03b87b2058f30f8d25a",
       "licence_header": "/*\n  RPCEmu - An Acorn system emulator\n\n  Copyright (C) 2005-2010 Sarah Walker\n\n  This program is free software; you can redistribute it and/or modify\n  it under the terms of the GNU General Public License as published by\n  the Free Software Foundation; either version 2 of the License, or\n  (at your option) any later version.\n\n  This program is distributed in the hope that it will be useful,\n  but WITHOUT ANY WARRANTY; without even the implied warranty of\n  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the\n  GNU General Public License for more details.\n\n  You should have received a copy of the GNU General Public License\n  along with this program; if not, write to the Free Software\n  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.\n */",
       "patches": [
-        "containment-device-scheduler"
+        "containment-device-scheduler",
+        "audio-input-capture"
       ]
     },
     {
@@ -234,7 +237,8 @@
       "licence_header": "/*\n  RPCEmu - An Acorn system emulator\n\n  Copyright (C) 2005-2010 Sarah Walker\n\n  This program is free software; you can redistribute it and/or modify\n  it under the terms of the GNU General Public License as published by\n  the Free Software Foundation; either version 2 of the License, or\n  (at your option) any later version.\n\n  This program is distributed in the hope that it will be useful,\n  but WITHOUT ANY WARRANTY; without even the implied warranty of\n  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the\n  GNU General Public License for more details.\n\n  You should have received a copy of the GNU General Public License\n  along with this program; if not, write to the Free Software\n  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.\n */",
       "patches": [
         "containment-device-scheduler",
-        "vidc-line-scanout"
+        "vidc-line-scanout",
+        "audio-input-capture"
       ]
     },
     {
@@ -306,9 +310,30 @@
         "src/vidc20.c",
         "src/iomd.c"
       ]
+    },
+    {
+      "id": "audio-input-capture",
+      "group": "devices/AV/input",
+      "files": [
+        "src/vidc20.c",
+        "src/iomd.c",
+        "src/keyboard.c",
+        "src/cmos.c"
+      ],
+      "reason": "D2 owned rational sound DMA and integer drain accounting, arbitrated PS/2 input, CMOS write evidence."
     }
   ],
-  "adapted_sources": [],
+  "adapted_sources": [
+    {
+      "original_path": "src/sound.c",
+      "licence": "GPL-2.0-or-later",
+      "copyright": "Copyright (C) 2005-2010 Sarah Walker",
+      "destination": "engine/rpc/rpc_audio.c",
+      "reason": "Reviewed and adapted bounded quadword/channel layout; all host threads and host buffer policy excluded.",
+      "sha256": "89c63b5e3be28e097940c3ee5863291c1dc6c19580b52130240b68897866af57",
+      "licence_header": "/*\n  RPCEmu - An Acorn system emulator\n\n  Copyright (C) 2005-2010 Sarah Walker\n\n  This program is free software; you can redistribute it and/or modify\n  it under the terms of the GNU General Public License as published by\n  the Free Software Foundation; either version 2 of the License, or\n  (at your option) any later version.\n\n  This program is distributed in the hope that it will be useful,\n  but WITHOUT ANY WARRANTY; without even the implied warranty of\n  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the\n  GNU General Public License for more details.\n\n  You should have received a copy of the GNU General Public License\n  along with this program; if not, write to the Free Software\n  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.\n */"
+    }
+  ],
   "exclusions": [
     "Qt/GUI",
     "host threads",

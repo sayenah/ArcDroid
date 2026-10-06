@@ -4,6 +4,8 @@
 #include "install_store.h"
 #include "arcdroid_core.h"
 #include "arcdroid_engine.h"
+#include "rpc/rpc_audio.h"
+#include "rpc/rpc_session.h"
 #include "arcdroid_platform.h"
 #include "adffs.h"
 #include "folder_set.h"
@@ -5953,7 +5955,7 @@ static void arc_poll_inputs(void)
          if (port == 0u && (input == ARC_PAD_A || input == ARC_PAD_B) &&
              (error_ready || arc_error_pad_gate)) continue;
          const ArcInputBinding *binding = &arc_input_resolution.binding[port][input];
-         bool joystick_owned = arc_loaded && arc_plan.a3010_joystick && input <= ARC_PAD_A &&
+         bool joystick_owned = !arc_engine_is_rpc() && arc_loaded && arc_plan.a3010_joystick && input <= ARC_PAD_A &&
                                arc_core_options.pad[port][input].automatic;
          if (!joystick_owned && sampled[port][input] && binding->bound &&
              binding->key < ARC_INPUT_KEY_COUNT)
@@ -5987,7 +5989,7 @@ static void arc_poll_inputs(void)
             !(port == 0u && input == ARC_PAD_A &&
               (error_ready || arc_error_pad_gate)) &&
             arc_core_options.pad[port][input].automatic;
-   arc_platform_joystick_snapshot(arc_loaded && arc_plan.a3010_joystick,
+   arc_platform_joystick_snapshot(!arc_engine_is_rpc() && arc_loaded && arc_plan.a3010_joystick,
                                   joystick_levels);
 
    bool pad_pointer = !arc_osk.visible &&
@@ -7398,6 +7400,15 @@ RETRO_API void retro_unload_game(void)
 }
 RETRO_API void retro_reset(void)
 {
+   if(arc_engine_is_rpc() && arc_engine_active()) {
+      char error[192];
+      arc_input_reset(&arc_inputs);
+      memset(arc_keyboard_raw,0,sizeof(arc_keyboard_raw));
+      arc_input_sampling_reset(false);
+      arc_guest_time_us=0;
+      if(!arc_engine_reset(error,sizeof(error)))arc_message(error,RETRO_LOG_ERROR);
+      arc_rpc_av_attempted=false;return;
+   }
    arc_engine_launch_outcome_cancel("reset");
    arc_engine_disc_clear();
    arc_disc_invalidate();
@@ -7690,12 +7701,31 @@ static void arc_present(const ArcEngineFrame *frame)
  * one fresh attempt. Size+rate changes require only the full AV notification. */
 static void arc_rpc_present_run(void)
 {
+   static uint64_t input_generation;
+   if(input_generation!=arc_rpc_session_generation()) {
+      input_generation=arc_rpc_session_generation();
+      arc_input_reset(&arc_inputs);arc_input_sampling_reset(false);
+      memset(arc_keyboard_raw,0,sizeof(arc_keyboard_raw));
+      arc_guest_time_us=0;
+      char error[192];
+      (void)arc_read_options(&arc_core_options,error,sizeof(error));
+      (void)arc_resolve_inputs(&arc_core_options,false);
+   }
+
    if (!arc_engine_get_av_info(NULL, NULL, NULL)) {
       arc_rpc_av_attempted = false;
       if (!arc_engine_faulted(NULL)) arc_fault_reported = false;
    }
    arc_engine_set_log_callback(arc_engine_log, NULL);
+   bool options_updated=false;
+   if(arc_environment && arc_environment(RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE,&options_updated) && options_updated) {
+      ArcCoreOptions updated;char error[192];
+      if(arc_read_options(&updated,error,sizeof(error)) && arc_resolve_inputs(&updated,true))
+         arc_core_options=updated;
+      else arc_message(error[0]?error:"Unable to resolve RPC input options.",RETRO_LOG_ERROR);
+   }
    if (arc_input_poll) arc_input_poll();
+   arc_poll_inputs();
    ArcEngineFrame frame;
    bool ran = arc_engine_run_frame(&arc_inputs, &frame);
    if (!ran)
@@ -7735,17 +7765,21 @@ static void arc_rpc_present_run(void)
    else if (!ran) arc_present(&frame);
    else if (arc_video && arc_can_dupe)
       arc_video(NULL, arc_video_width, arc_video_height, arc_video_pitch);
-   /* D2 replaces the existing RPC silent audio placeholder. */
-   arc_audio_fraction += (long double)frame.elapsed_us * 48000.0L / 1000000.0L;
-   size_t count = (size_t)arc_audio_fraction; arc_audio_fraction -= count;
-   while (count)
+   if (!ran) arc_rpc_sound_fault_silence(960);
+   if(ran) { arc_guest_time_us+=frame.elapsed_us;arc_integrate_stick(frame.elapsed_us); }
+   /* Integer engine production is authoritative, including disabled silence.
+    * Retire every offer exactly once; never let rejection change guest time. */
+   size_t capacity = sizeof(arc_audio_frame) / (2u * sizeof(arc_audio_frame[0]));
+   size_t n;
+   while ((n = arc_rpc_audio_peek(arc_audio_frame, capacity)) != 0)
    {
-      size_t capacity = sizeof(arc_audio_frame) / (2u * sizeof(arc_audio_frame[0]));
-      size_t n = count < capacity ? count : capacity;
-      arc_engine_audio(arc_audio_frame, n);
-      if (arc_audio_batch) arc_audio_batch(arc_audio_frame, n);
-      else if (arc_audio) for (size_t i = 0; i < n; ++i) arc_audio(arc_audio_frame[i*2], arc_audio_frame[i*2+1]);
-      count -= n;
+      size_t accepted = 0;
+      if (arc_audio_batch) accepted = arc_audio_batch(arc_audio_frame, n);
+      else if (arc_audio) {
+         for (size_t i = 0; i < n; ++i) arc_audio(arc_audio_frame[i*2], arc_audio_frame[i*2+1]);
+         accepted = n;
+      }
+      arc_rpc_audio_commit(n, accepted);
    }
 }
 

@@ -44,6 +44,7 @@
 #include "vidc20.h"
 #include "keyboard.h"
 #include "sound.h"
+#include "rpc_audio.h"
 #include "mem.h"
 #include "iomd.h"
 
@@ -337,7 +338,6 @@ void
 writevidc20(uint32_t val)
 {
 	int index;
-	unsigned freq;
 
 	switch (val >> 28) {
 	case 0: /* Video Palette */
@@ -471,20 +471,7 @@ writevidc20(uint32_t val)
 			return;
 		}
 
-		/* Because either the Sound Frequency or Control register has
-		   changed recalculate the sample frequency. */
-
-		/* We only support 16 bit sound (serial sound mode) */
-		if(vidc.b1 & 2) {
-			val = (vidc.b0 & 0xff) + 2;
-			/* Calculated frequency depends on selected clock: */
-			if (vidc.b1 & 1) {
-				freq = 250000u / val;
-			} else {
-				freq = 176400u / val;
-			}
-			sound_samplefreq_change((int) freq);
-		}
+        arc_rpc_sound_format(vidc.b0 & 255, vidc.b1 & 3);
 		break;
 
 	case 0xc: /* External Register */

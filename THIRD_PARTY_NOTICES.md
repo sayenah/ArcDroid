@@ -17,6 +17,9 @@ Its licence remains in `engine/rpcemu/COPYING`; original notices remain in
 every imported C/header file. ArcDroid changes are marked in their files.
 The exact source hashes, pristine commit and patch lineage are recorded in
 `engine/rpcemu/manifest.json` and `engine/rpcemu/UPSTREAM.md`.
+The owned `engine/rpc/rpc_audio.c` adapts the quadword/channel layout reviewed
+from RPCEmu's licensed `src/sound.c`; its full original GPL notice and Sarah
+Walker attribution remain there. No upstream host sound/thread code is used.
 No RPCEmu guest data, header-less disc/HostFS source, GUI, network or binary
 assets are imported. ArcDroid additions are GPL-2.0-only.
 The imported CMOS implementation also preserves its attribution to Softgun

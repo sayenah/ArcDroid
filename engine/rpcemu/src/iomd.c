@@ -31,6 +31,7 @@
 #include "rpc_video.h"
 #include "keyboard.h"
 #include "sound.h"
+#include "rpc_audio.h"
 #include "iomd.h"
 #include "arm.h"
 #include "cmos.h"
@@ -208,7 +209,6 @@ static const IOMDVariant iomds[] = {
 
 static IOMDType iomd_type; /**< The current type of IOMD we're emulating */
 
-static int sndon = 0;
 static int flyback=0;
 
 static uint64_t timer_due[2];
@@ -463,26 +463,10 @@ iomd_write(uint32_t addr, uint32_t val)
         case IOMD_0x184_SD0ENDA: /* Sound DMA 0 EndA */
         case IOMD_0x188_SD0CURB: /* Sound DMA 0 CurB */
         case IOMD_0x18C_SD0ENDB: /* Sound DMA 0 EndB */
-                // rpclog("Write sound DMA %08X %02X\n",addr,val);
-                iomd.sndstat &= IOMD_DMA_STATUS_BUFFER;
-                iomd.irqdma.status &= ~IOMD_IRQDMA_SOUND_0;
-                updateirqs();
-                soundaddr[(addr>>2)&3]=val;
-                // rpclog("Buffer A start %08X len %08X\nBuffer B start %08X len %08X\n",
-                // soundaddr[0],(soundaddr[1]-soundaddr[0])&0xFFC,soundaddr[2],
-                // (soundaddr[3]-soundaddr[2])&0xFFC);
+                arc_rpc_sound_pointer((addr >> 2) & 3, val);
                 return;
         case IOMD_0x190_SD0CR: /* Sound DMA 0 Control */
-                // rpclog("Write sound CTRL %08X %02X\n",addr,val);
-                if (val&0x80)
-                {
-                        iomd.sndstat = IOMD_DMA_STATUS_INTERRUPT |
-                                       IOMD_DMA_STATUS_OVERRUN;
-                        soundinited=1;
-                        iomd.irqdma.status |= IOMD_IRQDMA_SOUND_0;
-                        updateirqs();
-                }
-                sndon=val&0x20;
+                arc_rpc_sound_control((uint8_t)val);
                 return;
 
         case IOMD_0x1C0_CURSCUR: /* Cursor DMA Current */
@@ -913,7 +897,6 @@ iomd_reset(IOMDType type)
 	}
 
 	cinit = 0;
-	sndon = 0;
 	flyback = 0;
 	timer_go(0); timer_go(1);
 	updateirqs();

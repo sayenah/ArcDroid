@@ -11,7 +11,8 @@
 
 `manifest.json` records the exact allowlist, original paths and SHA-256 values,
 quoted original licence headers, and patch lineage. Metadata is separate from
-the upstream file allowlist. No additional upstream source is imported.
+the upstream file allowlist. D2 records the reviewed `sound.c` layout adaptation
+in the owned audio implementation; no additional upstream file is imported.
 
 ## Patch lineage after the pristine import
 
@@ -78,9 +79,9 @@ later DMA request. Unsupported commands return the invalid-command byte.
 FIFO parameter quotas end before execution, writes during execution/results
 are ignored, result indices wrap within 16 bytes, and reset assertion aborts
 pending work. Stale callbacks cannot execute a completed command again.
-No code from the header-less disc layer is adapted. No `sound.c` code is adapted.
+No code from the header-less disc layer is adapted.
 VIDC20 register state and rational raster/flyback timing are retained in C2;
-scanout, DMA progression, interlace and audio production/drain remain for D.
+scanout, DMA progression and interlace are completed in D1; sound follows below.
 
 `containment-cmos-rtc` (run C checkpoint: `src/cmos.c`): remove host file/time
 services, automatic seed patching and checksum changes. Seed and snapshot are
@@ -92,7 +93,7 @@ transaction invariants use the non-returning fatal hook, exercised with a live
 component boundary. Internal read/write callbacks are named read_byte/write_byte
 so the strict host-service guard can distinguish them without exceptions.
 Run C2 supplies epoch plus scheduler time from the real session; reset retains
-volatile CMOS and elapsed RTC time. Factory capture remains for D.
+volatile CMOS and elapsed RTC time. D2 adds factory capture below.
 
 ## Exclusions and verification
 
@@ -141,4 +142,57 @@ Frontend AV notifications happen after engine return; the last attempted
 rate has 0.01 Hz hysteresis. A rejected/missing callback is not retried each
 field; replacing the callback permits a fresh attempt. Size-only changes
 use geometry; rate+size changes use one full AV notification. Arculator's
-frame/AV branch remains unchanged. Audio/input and plan admission remain D2/D3.
+frame/AV branch remains unchanged. Plan admission remains D3.
+
+`audio-input-capture` (run D2: `src/vidc20.c`, `src/iomd.c`,
+`src/keyboard.c`, `src/cmos.c`): the owned `engine/rpc/rpc_audio.c` replaces
+the host-threaded producer. RPCEmu 0.9.5 `src/sound.c` has a complete
+GPL-2.0-or-later notice and Sarah Walker attribution, preserved at the owned
+destination. Only its quadword/channel layout is adapted; no host sound,
+thread, floating-point resampler or upstream output-buffer policy is retained.
+Serial stereo is low signed 16-bit left/high signed 16-bit right per word.
+IOMD alternates ready A/B buffers, copies one quadword, advances/wraps the
+4 KiB page, and raises its DMA status independently of frontend consumption.
+Programming the current bank from idle retains the interrupt requesting the
+other bank; only an inactive-bank END write clears that request. Wrong-bank
+idle writes do not arm a future transfer. A stop flag enters idle even when
+the alternate bank has been programmed; rearming that bank recovers.
+
+Sound source periods are the exact ratio `(SFR+2)/176400` or
+`(SFR+2)/250000` seconds. Enable/format changes restart the source phase at the
+MMIO timestamp. Ceiling nanosecond deadlines carry remainders; tied source
+edges precede 48 kHz output edges, and device events precede tied instructions.
+Integer zero-order hold produces continuous 48 kHz stereo pairs, with silence
+while disabled or in unsupported 8-bit compatibility mode. The unsupported
+mode is logged once outside protected execution when first enabled.
+
+The queue owns 8192 pairs (32768 bytes) plus a four-word DMA cache. Its integer
+contract is `generated = accepted + discarded + queued`; DMA frame/block
+counts are separate. Peek never drains. Commit clamps acceptance to the offer,
+counts the accepted prefix, discards the unaccepted suffix immediately, and
+removes the complete offer. There is no retry; overflow discards the oldest
+pair. Frontend offers are at most 2048 pairs. None of these policies changes
+guest time, DMA progression or interrupts. Reset, stop and fault purge queued
+pairs into discarded; reset/stop retain counters, fresh admission clears them.
+Fault presentation generates 960 silent pairs per `retro_run`, without guest
+execution; a bounded legacy audio read similarly supplies requested silence.
+Arculator sound adapters and the `retro_run` function are unchanged.
+
+Frontend polling and existing pad mapping/arbitration occur before protected
+execution. A new final scheduler slot consumes at most one arbitrated event
+per 1 ms tick, preserving the FIFO and complete-packet backpressure. Owned set-2
+key levels, release-before-make reconciliation and rational virtual typematic
+feed the existing bounded PS/2 transport. RiscPC mouse input uses quadrature;
+A7000 uses PS/2 relative packets. Mousehack and native joystick remain absent.
+Reset retires held input and typematic; source ownership remains in ArcDroid's
+unchanged input service.
+
+Test-only factory admission uses zeroed volatile CMOS and internally owns
+Delete from time zero until exactly 12 seconds. At exactly 30 seconds it freezes
+execution and returns the raw 256-byte snapshot, total guest-write count and
+256-bit write mask. Zero writes produce a contained bounded failure. There
+are no firmware addresses, checksum fixes or guessed seed bytes. Declared
+seeds are copied untouched; reset preserves volatile bytes and cancels capture.
+No seed/captured guest bytes are stored by the backend. Authored tests and their
+analytic synthetic bytes are the only committed capture evidence. D3 supplies
+external plans and runners; shipping admission remains dormant.

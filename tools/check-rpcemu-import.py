@@ -23,7 +23,7 @@ ALLOWLIST = {"COPYING", "readme.txt", "src/rpcemu.h", "src/sound.h",
     f"src/{name}.{extension}" for name in NAMES for extension in ("c", "h")}
 SYSTEM_HEADERS = {"assert.h", "errno.h", "limits.h", "stdarg.h", "stddef.h",
                   "stdint.h", "stdio.h", "stdlib.h", "string.h", "time.h", "stdbool.h"}
-PROJECT_HEADERS = {"engine/rpc/rpc_video.h", "engine/rpc/rpc_floppy.h", "engine/rpc/rpc_memory.h", "engine/rpc/rpc_rtc.h", "engine/rpc/rpc_namespace.h", "engine/rpc/rpc_timing.h", "engine/rpc/rpc_scheduler.h"}
+PROJECT_HEADERS = {"engine/rpc/rpc_audio.h", "engine/rpc/rpc_input.h", "engine/rpc/rpc_video.h", "engine/rpc/rpc_floppy.h", "engine/rpc/rpc_memory.h", "engine/rpc/rpc_rtc.h", "engine/rpc/rpc_namespace.h", "engine/rpc/rpc_timing.h", "engine/rpc/rpc_scheduler.h"}
 
 
 def require(condition, message):
@@ -66,6 +66,21 @@ def verify(root, archive_path=None, compiler=None):
             "duplicate patch ID")
     require(all(set(patch["files"]) <= ALLOWLIST for patch in patches),
             "patch targets outside allowlist")
+    # D2 adapts the sound quadword/channel layout into an owned implementation,
+    # without importing the upstream host-threaded file into the allowlist.
+    adaptations = manifest.get("adapted_sources", [])
+    require(len(adaptations) == 1, "unexpected owned source adaptations")
+    adaptation = adaptations[0]
+    require(adaptation["original_path"] == "src/sound.c"
+            and adaptation["destination"] == "engine/rpc/rpc_audio.c"
+            and adaptation["sha256"] == "89c63b5e3be28e097940c3ee5863291c1dc6c19580b52130240b68897866af57"
+            and adaptation["licence"] == "GPL-2.0-or-later"
+            and adaptation["copyright"] == "Copyright (C) 2005-2010 Sarah Walker",
+            "unexpected sound adaptation provenance")
+    adapted = (root / adaptation["destination"]).read_bytes()
+    require(adaptation["licence_header"].encode() in adapted[:4096]
+            and b"ArcDroid modification (" in adapted[:4096],
+            "sound adaptation notice missing or altered")
     for record in records:
         relative = record["path"]
         require(record["original_path"] == relative, "unexpected original path")
@@ -87,6 +102,10 @@ def verify(root, archive_path=None, compiler=None):
         require(hashlib.sha256(archive_path.read_bytes()).hexdigest() == ARCHIVE_SHA256,
                 "tarball SHA-256 mismatch")
         with tarfile.open(archive_path, "r:gz") as archive:
+            original = archive.extractfile("rpcemu-0.9.5/" + adaptation["original_path"]).read()
+            require(hashlib.sha256(original).hexdigest() == adaptation["sha256"]
+                    and adaptation["licence_header"].encode() in original[:4096],
+                    "sound adaptation archive provenance mismatch")
             for record in records:
                 member = archive.getmember("rpcemu-0.9.5/" + record["original_path"])
                 require(member.isfile(), "upstream source is not a regular file")

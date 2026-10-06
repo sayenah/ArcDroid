@@ -28,6 +28,8 @@ core/cmos_defaults.c
 engine/arcdroid_engine.c
 engine/arculator_backend.c
 engine/rpc/rpc_session.c
+engine/rpc/rpc_audio.c
+engine/rpc/rpc_input.c
 engine/rpc/rpc_timing.c
 engine/rpc/rpc_floppy.c
 engine/rpc/rpc_scheduler.c
@@ -108,7 +110,7 @@ fi
 pattern='(^|[^[:alnum:]_>.])(fopen|open|_wfopen|gz[a-z]*|CreateFile[A-Za-z]*)[[:space:]]*\(|(^|[^[:alnum:]_])dumpregs[[:space:]]*\('
 
 # Every compiled RPC source is scanned, including the session and device hooks.
-rpc_sources='engine/rpc/rpc_session.c engine/rpc/rpc_timing.c
+rpc_sources='engine/rpc/rpc_session.c engine/rpc/rpc_audio.c engine/rpc/rpc_input.c engine/rpc/rpc_timing.c
 engine/rpc/rpc_floppy.c engine/rpc/rpc_scheduler.c engine/rpc/rpc_rtc.c
 engine/rpcemu/src/arm.c engine/rpcemu/src/arm_common.c engine/rpcemu/src/cp15.c
 engine/rpcemu/src/mem.c engine/rpcemu/src/cmos.c engine/rpcemu/src/fdc.c

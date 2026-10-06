@@ -16,6 +16,7 @@ typedef enum {
    ARC_RPC_EVENT_IDE,
    ARC_RPC_EVENT_SOUND,
    ARC_RPC_EVENT_VIDEO,
+   ARC_RPC_EVENT_INPUT, /* Input tick/typematic after pre-existing tied devices. */
    ARC_RPC_EVENT_COUNT
 } ArcRpcEvent;
 

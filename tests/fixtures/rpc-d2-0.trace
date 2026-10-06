@@ -1,0 +1,12 @@
+pcm model=0 generated=480 accepted=480 discarded=0 queued=0 dma=16/4 hash=ecc5aaaf5a68576c
+compat model=0 generated=480 accepted=480 discarded=0 queued=0 dma=16/4 hash=20ea4579c427f925
+dma-state=06,06,02,07,07,03,06,02,00,06,02,00,07,03,06,07 quads=8 pairs=32 wrap=4k
+pressure generated=2400 accepted=1066 discarded=1334 queued=0 recovery=800
+frontend generated=2400 accepted=2400 hash=0b201d7afb0af76c
+overflow generated=9600 discarded=1408 queued=8192 recovered=8192
+fault silence=960 frozen=1 purge=1 reset=1 stop=1
+keyboard make=1c repeat=1c,1c break=f0,1c shared=held reset=released
+typematic param=00 make=1c repeat=1c,1c,1c,1c,1c,1c,1c,1c break=f0,1c
+pad space=29,f0,29 mouse=quadrature=12,7 buttons=30,70
+buttons all=09,0b,0f retire=0e,0c,08 motion=-130,130 split=63,63,4
+frontend-input remap=29,f0,29,1c shared=held keyboard=f0,1c mouse=12,7,30,70
