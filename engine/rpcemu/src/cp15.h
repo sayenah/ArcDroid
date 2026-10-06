@@ -18,6 +18,7 @@
   Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
+/* ArcDroid modification (2026-10-06): unsigned diagnostic counters. */
 #ifndef __CP15__
 #define __CP15__
 
@@ -36,8 +37,8 @@ extern uint32_t cp15_read(uint32_t opcode);
 extern const uint32_t *getpccache(uint32_t addr);
 extern uint32_t translateaddress2(uint32_t addr, int rw, int prefetch);
 
-extern int flushes;
-extern int tlbs;
+extern uint32_t flushes;
+extern uint32_t tlbs;
 extern int dcache;
 
 #ifdef __cplusplus

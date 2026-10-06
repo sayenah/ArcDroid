@@ -22,8 +22,8 @@ Portable host-idle SWI interception. Every SWI takes ordinary guest exception
 handling; the dormant headless backend provides no host filesystem or network.
 
 ArcDroid's `engine/rpc/rpc_namespace.h` maps upstream external identifiers
-to `arc_rpc_` and is forced only for RPCEmu objects. At this checkpoint only
-the FDC component joins the test executable; the full backend is not linked.
+to `arc_rpc_` and is forced only for RPCEmu objects. At the run C checkpoint FDC, CPU/memory/MMU and CMOS/RTC join separate
+component test executables; the full backend is not linked.
 Arculator keeps its legacy private symbols. `engine/backend-symbols.json`
 lists its accepted definitions and boundary services. The object checker
 recognises Mach-O, COFF and ELF, rejects common/weak engine symbols and checks
@@ -38,7 +38,21 @@ part of `devices-empty-fdc`. Other engine containment work remains in R1.
 
 ### Scheduler/MMU
 
-No upstream scheduler or MMU patch in this checkpoint.
+`scheduler-mmu-owned-memory` (run C checkpoint: `src/arm.c`,
+`src/arm_common.h`, `src/cp15.c/.h`, `src/mem.c/.h`): replace permission-free
+translation/pointer shortcuts with a bounded 256-entry, 1 KiB tagged TLB.
+Check domain and AP/S/R on every fetch and data hit, including User transfers.
+Physical descriptor reads replace the cached host table pointer. Fetch pointers
+refer to the actual backing allocation; no guest address is subtracted from a
+host pointer. CPU batches are explicitly sized to at most 200 instructions;
+CPU and CP15 mutable state reset on load. Unsupported CP15 reads and ARMv3
+halfword encodings take Undefined; invalid descriptors take guest translation
+aborts. The rotate helper defines rotation by zero. Allocation is owned at
+each step: 8 MiB ROM aperture, two 32 MiB RAM banks, and exactly 2 MiB VRAM
+on RiscPC or no VRAM on A7000. No realloc remains in memory handling. ROM
+bytes mirror only declared 2/4/8 MiB images. DRAM dirty indices are bounded
+to the existing 4 MiB tracking window. These sources join component tests only;
+device/session containment and scheduler integration remain unfinished.
 
 ### Devices/AV/input
 
@@ -51,6 +65,17 @@ FIFO parameter quotas end before execution, writes during execution/results
 are ignored, result indices wrap within 16 bytes, and reset assertion aborts
 pending work. Stale callbacks cannot execute a completed command again.
 No code from the header-less disc layer is adapted. No `sound.c` code is adapted.
+
+`containment-cmos-rtc` (run C checkpoint: `src/cmos.c`): remove host file/time
+services, automatic seed patching and checksum changes. Seed and snapshot are
+exact in-memory bytes; guest NVRAM writes are counted, reset preserves them.
+Reset clears the complete bus/chip transaction state, including prior pin
+levels and cached slave/register fields. Virtual Gregorian conversion is
+ArcDroid-authored (`engine/rpc/rpc_rtc.c`), bounded to 1970–2399. Remaining
+transaction invariants use the non-returning fatal hook, exercised with a live
+component boundary. Internal read/write callbacks are named read_byte/write_byte
+so the strict host-service guard can distinguish them without exceptions.
+Factory capture and real session ownership of the RTC hook remain unfinished.
 
 ## Exclusions and verification
 

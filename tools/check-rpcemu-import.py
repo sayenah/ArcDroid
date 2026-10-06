@@ -22,8 +22,8 @@ ALLOWLIST = {"COPYING", "readme.txt", "src/rpcemu.h", "src/sound.h",
              "src/ide.h", "src/podules.h"} | {
     f"src/{name}.{extension}" for name in NAMES for extension in ("c", "h")}
 SYSTEM_HEADERS = {"assert.h", "errno.h", "limits.h", "stdarg.h", "stddef.h",
-                  "stdint.h", "stdio.h", "stdlib.h", "string.h", "time.h"}
-PROJECT_HEADERS = {"engine/rpc/rpc_floppy.h", "engine/rpc/rpc_namespace.h"}
+                  "stdint.h", "stdio.h", "stdlib.h", "string.h", "time.h", "stdbool.h"}
+PROJECT_HEADERS = {"engine/rpc/rpc_floppy.h", "engine/rpc/rpc_memory.h", "engine/rpc/rpc_rtc.h", "engine/rpc/rpc_namespace.h"}
 
 
 def require(condition, message):

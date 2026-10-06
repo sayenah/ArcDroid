@@ -18,6 +18,8 @@
   Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
+/* ArcDroid modification (2026-10-06): permission-tagged bounded TLB,
+ * complete reset, physical descriptor reads and in-object instruction pointers. */
 /* System coprocessor + MMU emulation*/
 #include <stdint.h>
 #include <stdio.h>
@@ -28,19 +30,21 @@
 #include "arm.h"
 #include "cp15.h"
 #include "mem.h"
+#include "rpc_memory.h"
 
 int dcache = 0; /* Data cache on StrongARM, unified cache pre-StrongARM */
 
 #define TLBCACHESIZE 256
 
-uint32_t tlbcache[0x100000] = {0};
-static uint32_t tlbcache2[TLBCACHESIZE];
-uintptr_t vraddrl[0x100000];
-uint32_t vraddrls[1024] = {0}, vraddrphys[1024] = {0};
-uintptr_t vwaddrl[0x100000];
-uint32_t vwaddrls[1024] = {0}, vwaddrphys[1024] = {0};
-static int tlbcachepos = 0;
-int tlbs = 0, flushes = 0;
+/* 1 KiB tags preserve small-page subpage permissions. Descriptors and
+ * physical base stay cached until an architected invalidation. Privilege,
+ * access direction and DACR/S/R are checked on every hit, including fetch. */
+typedef struct {
+    uint32_t tag, physical;
+    uint8_t domain, ap, page, valid;
+} ArcRpcTlbEntry;
+static ArcRpcTlbEntry tlb[TLBCACHESIZE];
+uint32_t tlbs, flushes;
 
 static struct cp15 {
 	uint32_t ctrl;				/**< Control register */
@@ -75,56 +79,12 @@ static int icache = 0;
 #define CP15_FAULT_PERMISSION_SECTION	0xd
 #define CP15_FAULT_PERMISSION_PAGE	0xf
 
-static void
-cp15_tlb_flush(void)
+static void cp15_tlb_flush(void) { memset(tlb, 0, sizeof(tlb)); }
+
+void cp15_tlb_invalidate_physical(uint32_t addr)
 {
-	int c;
-
-	for (c = 0; c < TLBCACHESIZE; c++) {
-		if (tlbcache2[c] != 0xffffffff) {
-			tlbcache[tlbcache2[c]] = 0xffffffff;
-			tlbcache2[c] = 0xffffffff;
-		}
-	}
-}
-
-static void
-cp15_vaddr_reset(void)
-{
-	int c;
-
-	for (c = 0; c < 1024; c++) {
-		if (vraddrls[c] != 0xFFFFFFFF) {
-			vraddrl[vraddrls[c]] = 0xFFFFFFFF;
-			vraddrls[c] = 0xFFFFFFFF;
-			vraddrphys[c] = 0xFFFFFFFF;
-		}
-		if (vwaddrls[c] != 0xFFFFFFFF) {
-			vwaddrl[vwaddrls[c]] = 0xFFFFFFFF;
-			vwaddrls[c] = 0xFFFFFFFF;
-			vwaddrphys[c] = 0xFFFFFFFF;
-		}
-	}
-}
-
-/**
- * Invalidate Write-TLB entries corresponding to the given region of physical
- * addresses.
- *
- * @param addr Physical address
- */
-void
-cp15_tlb_invalidate_physical(uint32_t addr)
-{
-	int c;
-
-	for (c = 0; c < 1024; c++) {
-		if ((vwaddrphys[c] & 0x1f000000) == addr) {
-			vwaddrl[vwaddrls[c]] = 0xffffffff;
-			vwaddrls[c] = 0xffffffff;
-			vwaddrphys[c] = 0xffffffff;
-		}
-	}
+    /* No translated writable-pointer cache remains. */
+    NOT_USED(addr);
 }
 
 /**
@@ -136,6 +96,7 @@ cp15_tlb_invalidate_physical(uint32_t addr)
 void
 cp15_reset(CPUModel cpu_model)
 {
+	memset(&cp15, 0, sizeof(cp15));
 	cp15.cpu_model = cpu_model;
 	switch (cpu_model) {
 	case CPUModel_ARM610:
@@ -156,13 +117,9 @@ cp15_reset(CPUModel cpu_model)
 	mmu = 0;
 	prog32 = (cp15.ctrl & CP15_CTRL_PROG32) != 0;
 
-        memset(tlbcache, 0xff, 0x100000 * sizeof(uint32_t));
-        memset(tlbcache2, 0xff, TLBCACHESIZE * sizeof(uint32_t));
-        tlbcachepos=0;
-	memset(vraddrl, 0xff, sizeof(vraddrl));
-	memset(vraddrls, 0xff, sizeof(vraddrls));
-	memset(vwaddrl, 0xff, sizeof(vwaddrl));
-	memset(vwaddrls, 0xff, sizeof(vwaddrls));
+    cp15_tlb_flush();
+    tlbs = flushes = 0;
+
 }
 
 /**
@@ -173,28 +130,11 @@ cp15_init(void)
 {
 }
 
-static uint32_t *tlbram;
-static uint32_t tlbrammask;
-
-static void
-cp15_tlb_flush_all(void)
+static void cp15_tlb_flush_all(void)
 {
-	clearmemcache();
-	cp15_tlb_flush();
-	cp15_vaddr_reset();
-	flushes++;
-}
-
-static void
-cp15_tlb_add_entry(uint32_t vaddr, uint32_t paddr)
-{
-	if (tlbcache2[tlbcachepos] != 0xffffffff) {
-		tlbcache[tlbcache2[tlbcachepos]] = 0xffffffff;
-	}
-	tlbcache2[tlbcachepos] = vaddr >> 12;
-	tlbcache[vaddr >> 12] = paddr & 0xfffff000;
-
-	tlbcachepos = (tlbcachepos + 1) & (TLBCACHESIZE - 1);
+    cp15_tlb_flush();
+    pccache = 0xffffffffu;
+    flushes++;
 }
 
 /**
@@ -235,37 +175,6 @@ cp15_write(uint32_t opcode, uint32_t val)
 
 	case 2: /* Translation Table Base */
 		cp15.translation_table = val & ~0x3fffu;
-		switch (cp15.translation_table & 0x1f000000) {
-		case 0x02000000: /* VRAM */
-			tlbram = vram;
-			tlbrammask = mem_vrammask >> 2;
-			break;
-		case 0x10000000: /* SIMM 0 bank 0 */
-		case 0x11000000:
-		case 0x12000000:
-		case 0x13000000:
-			tlbram = ram00;
-			tlbrammask = mem_rammask >> 2;
-			break;
-		case 0x14000000: /* SIMM 0 bank 1 */
-		case 0x15000000:
-		case 0x16000000:
-		case 0x17000000:
-			tlbram = ram01;
-			tlbrammask = mem_rammask >> 2;
-			break;
-		case 0x18000000: /* SIMM 1 bank 0 */
-		case 0x19000000:
-		case 0x1a000000:
-		case 0x1b000000:
-		case 0x1c000000: /* SIMM 1 bank 1 */
-		case 0x1d000000:
-		case 0x1e000000:
-		case 0x1f000000:
-			tlbram = ram1;
-			tlbrammask = 0x7ffffff >> 2;
-			break;
-		}
 		cp15_tlb_flush_all();
 		resetcodeblocks();
 		return;
@@ -313,9 +222,7 @@ cp15_write(uint32_t opcode, uint32_t val)
 			break;
 
 		default:
-			fprintf(stderr, "cp15_write(): unknown CPU model %d\n",
-				cp15.cpu_model);
-			exit(EXIT_FAILURE);
+			fatal("Unsupported CPU model");
 		}
 		break;
 
@@ -391,7 +298,8 @@ cp15_read(uint32_t opcode)
 	default:
 		UNIMPLEMENTED("CP15 Read", "Unknown register %u, opcode %08x", crn, opcode);
 	}
-	fatal("Bad read CP15 %08x %08x\n", opcode, PC);
+	/* Unimplemented register reads are rejected by the interpreter. */
+	return 0;
 }
 
 /**
@@ -451,155 +359,69 @@ cp15_domain_access(uint32_t domain)
  * @param prefetch Bool of whether this is for instruction fetch
  * @return Translated physical address (if no Fault occurred)
  */
-uint32_t
-translateaddress2(uint32_t addr, int rw, int prefetch)
+uint32_t translateaddress2(uint32_t addr, int rw, int prefetch)
 {
-	uint32_t fld_addr, fld;
-	uint32_t sld_addr, sld;
-	uint32_t domain, fault_code;
-	uint32_t domain_access;
-	uint32_t temp;
-	uint32_t access_permissions;
-	uint32_t phys_addr;
-
-	tlbs++;
-
-	/* Fetch first-level descriptor */
-	fld_addr = cp15.translation_table | ((addr >> 18) & ~3u);
-	fld = tlbram[(fld_addr >> 2) & tlbrammask];
-	domain = (fld >> 5) & 0xf;
-
-	switch (fld & 3) {
-	case 0: /* Fault (Section Translation) */
-		fault_code = CP15_FAULT_TRANSLATION_SECTION;
-		goto do_fault;
-
-	case 1: /* Page */
-		/* Fetch second-level descriptor */
-		sld_addr = (fld & 0xfffffc00) | ((addr >> 10) & 0x3fc);
-		sld = mem_phys_read32(sld_addr);
-
-		/* Check second-level descriptor */
-		switch (sld & 3) {
-		case 1: /* Large page (64 KB) */
-			temp = (addr & 0xc000) >> 13;
-			phys_addr = (sld & 0xffff0000) | (addr & 0xffff);
-			break;
-		case 2: /* Small page (4 KB) */
-			temp = (addr & 0xc00) >> 9;
-			phys_addr = (sld & 0xfffff000) | (addr & 0xfff);
-			break;
-		default: /* 0 (Fault) or 3 (Reserved) */
-			fault_code = CP15_FAULT_TRANSLATION_PAGE;
-			goto do_fault;
-		}
-
-		/* Check Domain */
-		domain_access = cp15_domain_access(domain);
-		if (domain_access == 0 || domain_access == 2) {
-			fault_code = CP15_FAULT_DOMAIN_PAGE;
-			goto do_fault;
-		}
-		if (domain_access == 1) {
-			/* Client Domain - check permissions */
-			access_permissions = (sld >> (temp + 4)) & 3;
-			if (cp15_check_permissions(access_permissions, rw)) {
-				fault_code = CP15_FAULT_PERMISSION_PAGE;
-				goto do_fault;
-			}
-		}
-		cp15_tlb_add_entry(addr, phys_addr);
-		return phys_addr;
-
-	case 2: /* Section (1 MB) */
-		/* Check Domain */
-		domain_access = cp15_domain_access(domain);
-		if (domain_access == 0 || domain_access == 2) {
-			fault_code = CP15_FAULT_DOMAIN_SECTION;
-			goto do_fault;
-		}
-		if (domain_access == 1) {
-			/* Client Domain - check permissions */
-			access_permissions = (fld >> 10) & 3;
-			if (cp15_check_permissions(access_permissions, rw)) {
-				fault_code = CP15_FAULT_PERMISSION_SECTION;
-				goto do_fault;
-			}
-		}
-		phys_addr = (fld & 0xfff00000) | (addr & 0xfffff);
-		cp15_tlb_add_entry(addr, phys_addr);
-		return phys_addr;
-
-	default:
-		fatal("Bad descriptor type %u %08x Address %08x\n", fld & 3, fld, addr);
-	}
-	exit(-1);
+    ArcRpcTlbEntry *entry = &tlb[(addr >> 10) & (TLBCACHESIZE - 1)];
+    uint32_t domain = 0, fault_code;
+    if (!entry->valid || entry->tag != (addr >> 10)) {
+        uint32_t fld = mem_phys_read32(cp15.translation_table | ((addr >> 18) & 0x3ffcu));
+        domain = (fld >> 5) & 15;
+        uint32_t physical, ap;
+        int page = (fld & 3) == 1;
+        tlbs++;
+        if (page) {
+            uint32_t sld = mem_phys_read32((fld & 0xfffffc00u) | ((addr >> 10) & 0x3fcu));
+            unsigned shift;
+            if ((sld & 3) == 1) {
+                physical = (sld & 0xffff0000u) | (addr & 0xffffu);
+                shift = 4 + ((addr >> 13) & 6);
+            } else if ((sld & 3) == 2) {
+                physical = (sld & 0xfffff000u) | (addr & 0xfffu);
+                shift = 4 + ((addr >> 9) & 6);
+            } else {
+                fault_code = CP15_FAULT_TRANSLATION_PAGE;
+                goto do_fault;
+            }
+            ap = (sld >> shift) & 3;
+        } else if ((fld & 3) == 2) {
+            physical = (fld & 0xfff00000u) | (addr & 0xfffffu);
+            ap = (fld >> 10) & 3;
+        } else {
+            /* First-level type 3 is reserved on these ARMv3/v4 models. */
+            fault_code = CP15_FAULT_TRANSLATION_SECTION;
+            goto do_fault;
+        }
+        *entry = (ArcRpcTlbEntry){addr >> 10, physical & ~0x3ffu,
+                                  (uint8_t)domain, (uint8_t)ap, (uint8_t)page, 1};
+    }
+    domain = entry->domain;
+    uint32_t access = cp15_domain_access(domain);
+    if (access == 0 || access == 2) {
+        fault_code = entry->page ? CP15_FAULT_DOMAIN_PAGE : CP15_FAULT_DOMAIN_SECTION;
+        goto do_fault;
+    }
+    if (access == 1 && cp15_check_permissions(entry->ap, rw)) {
+        fault_code = entry->page ? CP15_FAULT_PERMISSION_PAGE : CP15_FAULT_PERMISSION_SECTION;
+        goto do_fault;
+    }
+    return entry->physical | (addr & 0x3ffu);
 
 do_fault:
-	arm.event |= 0x40;
-	if (!prefetch) {
-		cp15.fault_address = addr;
-		cp15.fault_status = (domain << 4) | fault_code;
-	}
-	return 0;
+    arm.event |= 0x40;
+    if (!prefetch) {
+        cp15.fault_address = addr;
+        cp15.fault_status = (domain << 4) | fault_code;
+    }
+    return 0;
 }
 
-/*uint32_t translateaddress(uint32_t addr, int rw)
+const uint32_t *getpccache(uint32_t addr)
 {
-        if (!(addr&0xFC000000) && !(tlbcache[(addr>>12)&0x3FFF]&0xFFF))
-        {
-//                rpclog("Cached %08X\n",tlbcache[addr>>12]);
-                return tlbcache[addr>>12]|(addr&0xFFF);
-        }
-        return translateaddress2(addr,rw);
-}*/
-
-
-const uint32_t *
-getpccache(uint32_t addr)
-{
-	uint32_t phys_addr;
-
-	addr &= ~0xfffu;
-	if (mmu) {
-		phys_addr = translateaddress(addr, 0, 1);
-		if (arm.event & 0x40) {
-			arm.event &= ~0x40u;
-			return NULL;
-		}
-	} else {
-		phys_addr = addr;
-	}
-
-	/* Invalidate write pointer for this page - so we can handle code modification */
-	vwaddrl[addr >> 12] = 0xffffffff;
-
-	switch (phys_addr & 0x1f000000) {
-	case 0x00000000: /* ROM */
-		return &rom[((uintptr_t) (phys_addr & 0x7ff000) - (uintptr_t) addr) >> 2];
-	case 0x02000000: /* VRAM */
-		return &vram[((uintptr_t) (phys_addr & mem_vrammask) - (uintptr_t) addr) >> 2];
-	case 0x10000000: /* SIMM 0 bank 0 */
-	case 0x11000000:
-	case 0x12000000:
-	case 0x13000000:
-		return &ram00[((uintptr_t) (phys_addr & mem_rammask) - (uintptr_t) addr) >> 2];
-	case 0x14000000: /* SIMM 0 bank 1 */
-	case 0x15000000:
-	case 0x16000000:
-	case 0x17000000:
-		return &ram01[((uintptr_t) (phys_addr & mem_rammask) - (uintptr_t) addr) >> 2];
-	case 0x18000000: /* SIMM 1 bank 0 */
-	case 0x19000000:
-	case 0x1a000000:
-	case 0x1b000000:
-	case 0x1c000000: /* SIMM 1 bank 1 */
-	case 0x1d000000:
-	case 0x1e000000:
-	case 0x1f000000:
-		if (ram1 != NULL) {
-			return &ram1[((uintptr_t) (phys_addr & 0x7ffffff) - (uintptr_t) addr) >> 2];
-		}
-	}
-	fatal("Bad PC %08x %08x\n", addr, phys_addr);
+    uint32_t physical = mmu ? translateaddress(addr, 0, 1) : addr;
+    if (arm.event & 0x40) {
+        arm.event &= ~0x40u;
+        return NULL;
+    }
+    /* Absent/external instruction bus: prefetch abort, no FAR/FSR update. */
+    return arc_rpc_phys_page(physical);
 }

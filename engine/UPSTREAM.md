@@ -246,3 +246,12 @@ controller object and timer remain private. The modification is marked in the
 upstream header. The session implementation moved intact to
 `engine/arculator_backend.c`, with public calls dispatched through private
 backend operations. Existing CPU hooks and test symbol names are retained.
+
+## RiscPC R1 sanitizer exposure (run C)
+
+`src/arm.c` masks the complementary shift in `ldrresult` to 0–31. For
+aligned addresses the expression now explicitly yields `v | v == v`; for
+offsets 1, 2 and 3 both shifts are unchanged (8/24, 16/16, 24/8). This is
+the same aligned LDR result emitted by the existing host, MinGW and Android
+compilers, while avoiding C undefined behaviour from a shift by 32. The
+marked patch changes no CPU timing, unaligned result or other instruction.

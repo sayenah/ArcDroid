@@ -720,6 +720,7 @@
     "__imp_memcpy",
     "__imp_memset",
     "__imp_strlen",
+    "bzero",
     "calloc",
     "free",
     "longjmp",

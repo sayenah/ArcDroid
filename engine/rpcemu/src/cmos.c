@@ -25,20 +25,19 @@
   Includes code from Softgun by Jochen Karrer used under the terms of the
   GPLv2.
 */
-#include <errno.h>
+
+/* ArcDroid modification (2026-10-06): declared in-memory CMOS, virtual RTC,
+ * full transaction reset and contained invariant faults; no host services. */
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
-#include <time.h>
+
 
 #include "rpcemu.h"
 #include "cmos.h"
+#include "rpc_rtc.h"
 
-#if 0
-#define dbgprintf(x...) { fprintf(stderr, x); }
-#else
-#define dbgprintf(x...)
-#endif
+#define dbgprintf(...) ((void)0)
 
 int i2cclock = 1; /**< The current value of the I2C clock pin */
 int i2cdata  = 1; /**< The current value of the I2C data pin */
@@ -46,6 +45,7 @@ int i2cdata  = 1; /**< The current value of the I2C data pin */
 #define BIN2BCD(val)	((((val) / 10) << 4) | ((val) % 10))
 
 static unsigned char cmosram[256];
+static uint64_t cmos_writes;
 static uint32_t i2c_devices; /**< Bitfield of devices on the I2C bus */
 
 /****************************************************************************/
@@ -63,8 +63,8 @@ static uint32_t i2c_devices; /**< Bitfield of devices on the I2C bus */
 typedef struct {
 	int (*start)(void *dev, int i2c_addr, int operation);
 	void (*stop)(void *dev);
-	int (*write)(void *dev, uint8_t data);
-	int (*read)(void *dev, uint8_t *data);
+	int (*write_byte)(void *dev, uint8_t data);
+	int (*read_byte)(void *dev, uint8_t *data);
 	/*
 	 * -----------------------------------------------------
 	 * Tell device if read was acked or not
@@ -94,164 +94,29 @@ typedef struct {
 	int state;
 } PCF8583;
 
-/**
- * Update CMOS contents to automatically handle various Host and emulation
- * settings.
- */
-static void
-cmos_update_settings(void)
+/* Declared bytes are never silently patched, checksummed or persisted. */
+void arc_rpc_cmos_seed(const uint8_t bytes[256])
 {
-	time_t now = time(NULL);
-	const struct tm *t = gmtime(&now);
-	const struct tm *tloc = localtime(&now);
-
-	/* The year should be stored too, otherwise RISC OS refuses to
-	 * read any time from the CMOS/RTC chip!
-	 */
-	/* The standard C time functionality subtracts 1900 from the year */
-	cmosram[0xc0] = (t->tm_year + 1900) % 100;
-	cmosram[0xc1] = (t->tm_year + 1900) / 100;
-
-	/* Set the Daylight Savings Time flag */
-	if (tloc->tm_isdst >= 0) {
-		if (tloc->tm_isdst > 0) { /* Is in Daylight Savings Time */
-			cmosram[0x2c] |= 1u << 7;
-		} else { /* Is not in Daylight Savings Time */
-			cmosram[0x2c] &= ~(1u << 7);
-		}
-	}
-
-	/* Automatically configure the mousetype depending on which machine
-	   model is selected. CMOS location has been verified on 3.50-Select 4
-	   and 5.17 (*configure mousetype <number>) */
-	if (machine.model == Model_A7000 ||
-	    machine.model == Model_A7000plus ||
-	    machine.model == Model_Phoebe)
-	{
-		cmosram[0x5d] = 3; /* PS/2 mouse */
-	} else {
-		cmosram[0x5d] = 0; /* Quadrature mouse */
-	}
-
-	// What about also initialising some parts to sensible defaults?
-	// eg default bootfs, number of IDE discs, floppy etc....
+    if (!bytes) fatal("Missing declared CMOS seed");
+    memcpy(cmosram, bytes, sizeof(cmosram));
+    cmos_writes = 0;
 }
+void arc_rpc_cmos_snapshot(uint8_t bytes[256]) { memcpy(bytes, cmosram, 256); }
+uint64_t arc_rpc_cmos_writes(void) { return cmos_writes; }
+void cmos_init(void) { memset(cmosram, 0, sizeof(cmosram)); cmos_writes = 0; }
+void cmos_reset(void) { /* Volatile CMOS survives reset. Bus reset is separate. */ }
+void savecmos(void) { /* Persistence is outside the R1 session contract. */ }
 
-/**
- * Recalculate CMOS checksum byte based on current contents.
- */
-static void
-cmos_update_checksum(void)
+static void cmosgettime(void)
 {
-	unsigned checksum = 0;
-	int i;
-
-	/* Loop through all but one address of the NVRAM. The checksum will go
-	   at the last address */
-	for (i = 0; i < 239; i++) {
-		/* RISC OS uses addresses that are offset by 0x40 */
-		int offset = i + 0x40;
-
-		/* Wrap round the address, skipping addresses 0 .. 15 which
-		   are time and config registers */
-		if (offset > 255) {
-			offset -= 240;
-		}
-
-		checksum += (unsigned) cmosram[offset];
-	}
-
-	/* Checksum goes at last address (offset by 0x40 for RISC OS) */
-	cmosram[0x3f] = (checksum + 1) & 0xff;
-}
-
-/**
- * Load CMOS data from cmos.ram file on file system
- */
-void
-cmos_init(void)
-{
-        char fn[512];
-        FILE *cmosf;
-
-        /* Append "cmos.ram" to the given executable path */
-	snprintf(fn, sizeof(fn), "%scmos.ram", rpcemu_get_datadir());
-        cmosf = fopen(fn, "rb");
-
-        if (cmosf) {
-                /* File open suceeded, load CMOS data */
-                if (fread(cmosram, 1, 256, cmosf) != 256) {
-                        fatal("Unable to read from CMOS file '%s', %s", fn,
-                              strerror(errno));
-                }
-                fclose(cmosf);
-        } else {
-                /* Report failure and initialise the array */
-                fprintf(stderr, "Could not open CMOS file '%s': %s\n", fn, 
-                        strerror(errno));
-                memset(cmosram, 0, 256);
-        }
-
-
-}
-
-/**
- * called on emulated machine reset, apply changes that vary with machine changes
- */
-void
-cmos_reset(void)
-{
-	/* Dynamically update CMOS settings */
-	cmos_update_settings();
-
-	/* Update the checksum used by RISC OS, as updating values above will
-	   probably have invalidated it */
-	cmos_update_checksum();
-
-	/* Clear the bytes that correspond to registers (i.e. not NVRAM) */
-	memset(cmosram, 0, 16);
-}
-
-/**
- * Save CMOS data to file system.
- */
-void
-savecmos(void)
-{
-        char fn[512];
-        FILE *cmosf;
-
-	snprintf(fn, sizeof(fn), "%scmos.ram", rpcemu_get_datadir());
-        cmosf = fopen(fn, "wb");
-
-        if (cmosf) {
-                if(fwrite(cmosram, 256, 1, cmosf) != 1) {
-                        fatal("Unable to write CMOS file '%s': %s", fn,
-                              strerror(errno));
-                        // TODO does it have to be fatal?
-                }
-                fclose(cmosf);
-        } else {
-                fprintf(stderr, "Could not open CMOS file '%s' for writing: %s\n", fn,
-                        strerror(errno));
-        }
-}
-
-/**
- * Update PCF8583 time registers based on the current host system time
- */
-static void
-cmosgettime(void)
-{
-	time_t now = time(NULL);
-	const struct tm *t = gmtime(&now);
-
-	cmosram[1] = 0;
-	cmosram[2] = BIN2BCD(t->tm_sec);
-	cmosram[3] = BIN2BCD(t->tm_min);
-	cmosram[4] = BIN2BCD(t->tm_hour);
-	cmosram[5] = (((t->tm_year + 1900) & 3) << 6) | BIN2BCD(t->tm_mday);
-	cmosram[6] = (t->tm_wday << 5) | BIN2BCD(t->tm_mon + 1);
+    ArcRpcCalendar t;
+    if (!arc_rpc_rtc_read(&t)) fatal("RTC outside declared epoch range");
+    cmosram[1] = BIN2BCD(t.centisecond);
+    cmosram[2] = BIN2BCD(t.second);
+    cmosram[3] = BIN2BCD(t.minute);
+    cmosram[4] = BIN2BCD(t.hour);
+    cmosram[5] = ((t.year & 3) << 6) | BIN2BCD(t.day);
+    cmosram[6] = (t.weekday << 5) | BIN2BCD(t.month);
 }
 
 /**
@@ -275,6 +140,7 @@ pcf8583_write(void *dev, uint8_t data)
 		          data, pcf->reg_address);
 
 		cmosram[pcf->reg_address] = data;
+        if (pcf->reg_address >= 16) cmos_writes++;
 
 		// RISC OS updates the checksum byte after any change, so if
 		// the write is to the RISC OS checksum byte, save the data
@@ -504,6 +370,8 @@ static I2C_SerDes *serdes = &serdes_s; /**< Handle of the I2C state machine */
 static void
 reset_serdes(I2C_SerDes *serdes)
 {
+	memset(serdes, 0, sizeof(*serdes));
+    serdes->oldpinstate = I2C_SCL | I2C_SDA;
 	serdes->state = I2C_STATE_IDLE;
 	serdes->bitcount = 0;
 	serdes->address = 0;
@@ -637,9 +505,7 @@ cmosi2cchange(int scl, int sda)
 			I2C_Slave *slave = serdes->active_slave;
 
 			if (slave == NULL) {
-				fprintf(stderr, "I2C-SerDes Bug: no slave in I2C-read\n");
-				rpclog("I2C-SerDes Bug: no slave in I2C-read\n");
-				exit(5324);
+                fatal("I2C read without active slave");
 			}
 			if (sda) {
 				/* Last was not acknowledged, so read nothing */
@@ -655,8 +521,7 @@ cmosi2cchange(int scl, int sda)
 					slave->devops->read_ack(slave->dev, I2C_NACK);
 				}
 				if (!i2cdata) {
-					fprintf(stderr, "Emulator Bug in %s line %d\n", __FILE__, __LINE__);
-					rpclog("Emulator Bug in %s line %d\n", __FILE__, __LINE__);
+                    fatal("I2C unexpected driven ACK");
 				}
 			} else {
 				/*
@@ -697,8 +562,9 @@ cmosi2cchange(int scl, int sda)
 		/* We change output after falling edge of scl */
 		if (oldscl && !scl) {
 			I2C_Slave *slave = serdes->active_slave;
+            if (!slave) fatal("I2C read without active slave");
 			if (serdes->bitcount == 8) {
-				(void) slave->devops->read(slave->dev, &serdes->outbuf);
+				(void) slave->devops->read_byte(slave->dev, &serdes->outbuf);
 			}
 			if (serdes->bitcount > 0) {
 				serdes->bitcount--;
@@ -708,8 +574,7 @@ cmosi2cchange(int scl, int sda)
 					i2cdata = 1;
 				}
 			} else {
-				fprintf(stderr, "I2C_SerDes Bug: bitcount<=0 should not happen\n");
-				rpclog("I2C_SerDes Bug: bitcount<=0 should not happen\n");
+                fatal("I2C read bit count invalid");
 			}
 		} else if (!oldscl && scl) {
 			if (serdes->bitcount == 0) {
@@ -734,11 +599,9 @@ cmosi2cchange(int scl, int sda)
 
 				slave = serdes->active_slave;
 				if (slave == NULL) {
-					fprintf(stderr, "I2C-SerDes Emulator Bug: no slave in write\n");
-					rpclog("I2C-SerDes Emulator Bug: no slave in write\n");
-					exit(3245);
+                    fatal("I2C write without active slave");
 				}
-				result = slave->devops->write(slave->dev, serdes->inbuf);
+				result = slave->devops->write_byte(slave->dev, serdes->inbuf);
 				serdes->slave_was_accessed = 1;
 				if (result == I2C_ACK) {
 					serdes->state = I2C_STATE_ACK_WRITE;
@@ -747,8 +610,7 @@ cmosi2cchange(int scl, int sda)
 					serdes->state = I2C_STATE_NACK_WRITE;
 					i2cclock = 1;
 				} else {
-					fprintf(stderr, "Bug: Unknown I2C-Result %d\n", result);
-					rpclog("Bug: Unknown I2C-Result %d\n", result);
+                    fatal("I2C device response invalid");
 				}
 			}
 		}
@@ -758,10 +620,7 @@ cmosi2cchange(int scl, int sda)
 		break;
 
 	default:
-		fprintf(stderr, "I2C_SerDes: Bug, no matching handler for state %d\n", serdes->state);
-		rpclog("I2C_SerDes: Bug, no matching handler for state %d\n", serdes->state);
-		i2cclock = 1;
-		i2cdata  = 1;
+        fatal("I2C state invalid");
 	}
 
 	/* Leaving Function, store current state of I2C pins */
@@ -779,6 +638,10 @@ reseti2c(uint32_t chosen_i2c_devices)
 	i2cclock = 1;
 	i2cdata = 1;
 	i2c_devices = chosen_i2c_devices;
+    memset(pcf, 0, sizeof(*pcf));
+    memset(pcf8583, 0, sizeof(*pcf8583));
+    memset(spd, 0, sizeof(*spd));
+    memset(spd_i2c, 0, sizeof(*spd_i2c));
 
 	/* Prepare the Philips Real Time Clock chip slave device */
 	pcf8583->devops = &pcf8583_ops;

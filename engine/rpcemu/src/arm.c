@@ -18,6 +18,8 @@
   Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
+/* ArcDroid modification (2026-10-06): bounded instruction entry, complete
+ * CPU reset and permission-checked in-object fetch on every instruction. */
 /*Preliminary FPA emulation. This works to an extent - !Draw works with it, !SICK
   seems to (FPA Whetstone scores are around 100x without), but !AMPlayer doesn't
   work, and GCC stuff tends to crash.*/
@@ -26,7 +28,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdint.h>
-#include <time.h>
+
 
 #include "rpcemu.h"
 #include "arm.h"
@@ -255,6 +257,9 @@ arm_init(void)
 void
 arm_reset(CPUModel cpu_model)
 {
+    inscount = 0; blockend = 0; unpredictable_count = 1000;
+    pccache2 = NULL; pcpsr = &arm.reg[15];
+    memset(usrregs, 0, sizeof(usrregs));
 	memset(&arm, 0, sizeof(arm));
 
         arm.r15_mask = 0x3fffffc;
@@ -285,7 +290,7 @@ arm_dump(void)
 {
 	char s[1024];
 
-	sprintf(s, "r0 = %08x    r4 = %08x    r8  = %08x    r12 = %08x\n"
+	snprintf(s, sizeof(s), "r0 = %08x    r4 = %08x    r8  = %08x    r12 = %08x\n"
 	           "r1 = %08x    r5 = %08x    r9  = %08x    r13 = %08x\n"
 	           "r2 = %08x    r6 = %08x    r10 = %08x    r14 = %08x\n"
 	           "r3 = %08x    r7 = %08x    r11 = %08x    r15 = %08x\n"
@@ -298,7 +303,7 @@ arm_dump(void)
 	           PC,
 	           mmu ? "MMU enabled" : "MMU disabled");
 	rpclog("%s", s);
-	printf("%s", s);
+
 }
 
 static uint32_t
@@ -543,29 +548,33 @@ arm_unpredictable(uint32_t opcode)
  * @return A hint roughly proportional to the amount of instructions executed.
  */
 int
-arm_exec(void)
+arc_rpc_arm_exec_count(unsigned count)
 {
+    if (count > 200) fatal("Instruction batch exceeds boundary");
 	int linecyc;
 
-	for (linecyc = 0; linecyc < 200; linecyc++) {
+	for (linecyc = 0; linecyc < (int)count; linecyc++) {
 		uint32_t opcode;
 		uint32_t lhs, rhs, dest;
 		uint32_t addr, data, offset, writeback;
 
-		if ((PC >> 12) != pccache) {
-			pccache = PC >> 12;
-			pccache2 = getpccache(PC);
-			if (pccache2 == NULL) {
-				// Prefetch Abort
-				pccache = 0xffffffff;
-				exception(ABORT, 0x10, 4);
-				arm.reg[15] += 4;
-				continue;
-			}
-		}
-		opcode = pccache2[PC >> 2];
+        /* Fetch checks permission at every instruction, including a cached
+         * translation hit and a 1 KiB boundary within the same 4 KiB page. */
+        pccache2 = getpccache(PC);
+        if (!pccache2) {
+            pccache = 0xffffffff;
+            exception(ABORT, 0x10, 4);
+            arm.reg[15] += 4;
+            continue;
+        }
+        opcode = pccache2[(PC & 0x3ffu) >> 2];
 
 		if (flaglookup[opcode >> 28][(*pcpsr) >> 28]) {
+            if (!arm.arch_v4 && (((opcode & 0xe0000f0) == 0xb0) ||
+                ((opcode & 0xe1000d0) == 0x1000d0))) {
+                arm_exception_undefined();
+                goto skip;
+            }
 			if (arm.arch_v4) {
 				if ((opcode & 0xe0000f0) == 0xb0) {
 					// LDRH/STRH
@@ -1831,7 +1840,8 @@ arm_exec(void)
 					break;
 				}
 #endif
-				if ((opcode & 0xf10) == 0xf10 && ARM_MODE_PRIV(arm.mode)) {
+				if ((opcode & 0xf10) == 0xf10 && ARM_MODE_PRIV(arm.mode) &&
+                    (RN == 0 || RN == 1 || RN == 2 || RN == 3 || RN == 5 || RN == 6)) {
 					if (RD == 15) {
 						arm.reg[RD] = (arm.reg[RD] & arm.r15_mask) |
 						              (cp15_read(opcode) & ~arm.r15_mask);
@@ -1884,7 +1894,9 @@ skip:
 
 		arm.reg[15] += 4;
 	}
-	inscount += 200;
+	inscount += count;
 
-	return 200;
+	return (int)count;
 }
+
+int arm_exec(void) { return arc_rpc_arm_exec_count(200); }

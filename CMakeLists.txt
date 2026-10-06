@@ -239,6 +239,55 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
   target_compile_options(rpc_scheduler_test PRIVATE
     $<$<C_COMPILER_ID:GNU,Clang,AppleClang>:-UNDEBUG;-Wall;-Wextra;-Wpedantic>)
   add_test(NAME rpc-scheduler COMMAND rpc_scheduler_test)
+  # A bounded CPU/memory component. Unadapted devices still cannot join cores.
+  add_library(arcdroid_rpc_cpu OBJECT
+    engine/rpcemu/src/arm.c engine/rpcemu/src/arm_common.c
+    engine/rpcemu/src/cp15.c engine/rpcemu/src/mem.c)
+  target_include_directories(arcdroid_rpc_cpu PRIVATE engine/rpc engine/rpcemu/src)
+  target_compile_definitions(arcdroid_rpc_cpu PRIVATE RELEASE_BUILD=1)
+  target_compile_options(arcdroid_rpc_cpu PRIVATE
+    $<$<C_COMPILER_ID:GNU,Clang,AppleClang>:-include;${CMAKE_CURRENT_SOURCE_DIR}/engine/rpc/rpc_namespace.h;-fno-common;-fno-strict-aliasing;-Wall;-Wextra;-Werror=implicit-function-declaration>)
+  add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/rpc_authored_rom.h"
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_cpu_rom.py"
+      "${CMAKE_CURRENT_BINARY_DIR}/generated/rpc_authored_rom.h"
+    DEPENDS tests/rpc_cpu_rom.py VERBATIM)
+  add_executable(rpc_cpu_test tests/rpc_cpu_test.c
+    "${CMAKE_CURRENT_BINARY_DIR}/generated/rpc_authored_rom.h"
+    $<TARGET_OBJECTS:arcdroid_rpc_cpu>)
+  target_include_directories(rpc_cpu_test PRIVATE engine/rpc engine/rpcemu/src
+    "${CMAKE_CURRENT_BINARY_DIR}/generated")
+  target_compile_options(rpc_cpu_test PRIVATE
+    $<$<C_COMPILER_ID:GNU,Clang,AppleClang>:-UNDEBUG;-Wall;-Wextra;-Werror=implicit-function-declaration>)
+  add_test(NAME rpc-cpu-mmu-memory COMMAND rpc_cpu_test)
+  add_library(arcdroid_rpc_cmos OBJECT engine/rpcemu/src/cmos.c engine/rpc/rpc_rtc.c)
+  target_include_directories(arcdroid_rpc_cmos PRIVATE engine/rpc engine/rpcemu/src)
+  target_compile_options(arcdroid_rpc_cmos PRIVATE
+    $<$<C_COMPILER_ID:GNU,Clang,AppleClang>:-include;${CMAKE_CURRENT_SOURCE_DIR}/engine/rpc/rpc_namespace.h;-fno-common;-Wall;-Wextra;-Werror=implicit-function-declaration>)
+  add_executable(rpc_cmos_test tests/rpc_cmos_test.c $<TARGET_OBJECTS:arcdroid_rpc_cmos>)
+  target_include_directories(rpc_cmos_test PRIVATE engine/rpc engine/rpcemu/src)
+  target_compile_options(rpc_cmos_test PRIVATE
+    $<$<C_COMPILER_ID:GNU,Clang,AppleClang>:-UNDEBUG;-Wall;-Wextra;-Werror=implicit-function-declaration>)
+  add_test(NAME rpc-cmos-rtc COMMAND rpc_cmos_test)
+  add_test(NAME rpc-cpu-trace COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_trace_test.py" "$<TARGET_FILE:rpc_cpu_test>"
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/rpc-cpu.trace")
+  add_test(NAME rpc-cmos-trace COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_trace_test.py" "$<TARGET_FILE:rpc_cmos_test>"
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/rpc-cmos.trace")
+  if(ARCDROID_SANITIZERS)
+    target_link_libraries(arcdroid_rpc_cpu PRIVATE arcdroid_sanitizer_compile)
+    target_link_libraries(rpc_cpu_test PRIVATE arcdroid_sanitizer_compile arcdroid_sanitizer_link)
+    target_link_libraries(arcdroid_rpc_cmos PRIVATE arcdroid_sanitizer_compile)
+    target_link_libraries(rpc_cmos_test PRIVATE arcdroid_sanitizer_compile arcdroid_sanitizer_link)
+  endif()
+  add_custom_command(TARGET rpc_cpu_test POST_BUILD
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/check-backend-symbols.py"
+      --nm "${CMAKE_NM}" --rpc "${CMAKE_CURRENT_BINARY_DIR}/CMakeFiles/arcdroid_rpc_cpu.dir"
+      ${ARCDROID_SYMBOL_CHECK_FLAGS} VERBATIM)
+  add_custom_command(TARGET rpc_cmos_test POST_BUILD
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/check-backend-symbols.py"
+      --nm "${CMAKE_NM}" --rpc "${CMAKE_CURRENT_BINARY_DIR}/CMakeFiles/arcdroid_rpc_cmos.dir"
+      ${ARCDROID_SYMBOL_CHECK_FLAGS} VERBATIM)
   add_library(arcdroid_rpc_fdc OBJECT engine/rpcemu/src/fdc.c
     engine/rpc/rpc_floppy.c)
   target_include_directories(arcdroid_rpc_fdc PRIVATE engine/rpc engine/rpcemu/src)

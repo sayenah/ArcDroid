@@ -18,6 +18,7 @@
   Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
+/* ArcDroid modification (2026-10-06): define rotate-right by zero. */
 #ifndef ARM_COMMON_H
 #define ARM_COMMON_H
 
@@ -69,7 +70,8 @@ static const uint32_t msrlookup[16] = {
 static inline uint32_t
 rotate_right32(uint32_t x, uint32_t n)
 {
-	return (x >> n) | (x << (32 - n));
+	n &= 31u;
+	return (x >> n) | (x << ((32u - n) & 31u));
 }
 
 /**

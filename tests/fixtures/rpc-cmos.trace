@@ -1,0 +1,1 @@
+rtc=gregorian,epoch+elapsed,bounds cmos=seed,write,reset,wrap,nack,reload,fault

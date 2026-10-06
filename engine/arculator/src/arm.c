@@ -1,3 +1,4 @@
+/* ArcDroid modification (2026-10-06): define the aligned LDR rotate without a shift by 32. */
 /*Arculator 2.2 by Sarah Walker
   ARM2 & ARM3 emulation*/
 /* ArcDroid modification (2026-09-14): machine failures unwind through the session fault latch. */
@@ -978,7 +979,7 @@ static inline uint32_t shift_mem(uint32_t opcode)
 	return 0;
 }
 
-#define ldrresult(v,a) ((v >> (((a) & 3) << 3)) | (v << (32 - (((a) & 3) << 3))))
+#define ldrresult(v,a) ((v >> (((a) & 3) << 3)) | (v << ((32 - (((a) & 3) << 3)) & 31)))
 
 #define readmemfff(addr,opcode) \
 			if ((addr>>12)==pccache) \
