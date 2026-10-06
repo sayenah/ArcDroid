@@ -28,6 +28,8 @@
          copy_file(argv[8], package);
       }
       bool protected = true;
+      if (jfd_tab_step && !strcmp(argv[10], "unavailable-notice"))
+         fault_mkdir_substring = "/arcdroid/jfd";
       phase = PHASE_LOAD; assert(retro_load_game(&game));
       assert(drive(0u, &protected, NULL));
       char frozen[41]; snprintf(frozen, sizeof(frozen), "%s", identity());
@@ -78,6 +80,46 @@
          option_jfd_tab = "off"; retro_reset();
          assert(drive(0u, &protected, NULL) && !protected && !strcmp(frozen, identity()));
       }
+      else if (!strcmp(argv[10], "digest"))
+      {
+         bool (*media_digest)(char[41]) = dlsym(module, "arc_libretro_test_boot_media_digest");
+         bool (*commit)(unsigned, size_t, uint8_t) =
+            dlsym(module, "arc_libretro_test_jfd_commit");
+         char first[41], second[41], hidden[41];
+         assert(media_digest && commit && !protected && commit(0u, 0u, 0x7cu));
+         struct retro_game_info appended = {game.path, NULL, 0u, NULL};
+         assert(disk_control.set_eject_state(true) && disk_control.add_image_index() &&
+                disk_control.replace_image_index(1u, &appended) &&
+                disk_control.set_image_index(0u) && disk_control.set_eject_state(false) &&
+                media_digest(first));
+         assert(disk_control.set_eject_state(true) && disk_control.set_image_index(1u) &&
+                disk_control.set_eject_state(false) && media_digest(second));
+         /* The same saved view must contribute at both positions, mounted or temporary. */
+         assert(!strcmp(first, second));
+         option_jfd_tab = "as-imaged"; phase = PHASE_RUN; retro_reset();
+         assert(drive(0u, &protected, NULL) && protected && media_digest(hidden) &&
+                strcmp(first, hidden));
+         option_jfd_tab = "off"; retro_reset();
+         assert(media_digest(second) && !strcmp(first, second));
+      }
+      else if (!strcmp(argv[10], "class"))
+      {
+         char expected_class[80];
+         snprintf(expected_class, sizeof(expected_class), "class=%s ", argv[9]);
+         assert(strstr(last_jfd_file_data_log, expected_class));
+      }
+      else if (!strcmp(argv[10], "unavailable-notice"))
+      {
+         bool authorized = !strcmp(option_jfd_tab, "off");
+         assert(jfd_failed_status_calls == (unsigned)authorized && protected);
+         assert((fault_mkdir_substring == NULL) == authorized);
+      }
+      else if (!strcmp(argv[10], "original-notice"))
+      {
+         unsigned expected = (unsigned)!strcmp(option_jfd_tab, "off");
+         assert(jfd_original_notice_calls == expected &&
+                jfd_original_notice_osd_calls == expected);
+      }
       else if (strcmp(argv[10], "raw"))
       {
          printf("tab-writes: %s", last_jfd_writes_log);
@@ -92,7 +134,8 @@
             option_jfd_tab = "off"; variable_update = true;
             phase = PHASE_RUN; retro_run();
             assert(strstr(last_message, "change will apply after reset or reload") &&
-                   drive(0u, &protected, NULL) && protected);
+                   drive(0u, &protected, NULL) && protected &&
+                   jfd_tab_pending_notices == 1u);
             unsigned notices = total_osd_calls;
             variable_update = true; retro_run();
             assert(total_osd_calls == notices);
@@ -106,6 +149,11 @@
             assert(stamp(&changed) && changed.jfd_write_policy == 1u &&
                    !arc_boot_observation_equal(&initial, &changed) &&
                    !strcmp(initial.media, changed.media));
+            option_jfd_tab = "as-imaged"; variable_update = true; retro_run();
+            assert(jfd_tab_pending_notices == 2u &&
+                   drive(0u, &protected, NULL) && !protected);
+            variable_update = true; retro_run(); assert(jfd_tab_pending_notices == 2u);
+            option_jfd_tab = "off"; retro_reset();
             expected = 0x006a0000u;
          }
          bool fault_case = strstr(argv[10], "fault") != NULL;

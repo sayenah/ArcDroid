@@ -120,6 +120,26 @@ def main():
                         log = run(rom, image, root / f"{reason}-{policy}-{boot}",
                                   ["--jfd-tab-route", boot, policy, package])
                         assert f"reason={reason}" in log and "tab-adffs-notices=0" in log
+        elif mode == "evidence":
+            for header in ("0", "1", "3", "legacy"):
+                image = tab / f"captured-{header}.jfd"
+                run("arcdroid-test.rom", image, root / f"digest-{header}",
+                    ["--jfd-tab-step", "A3000", "off", "shadow", "0", "digest"])
+                for policy in ("as-imaged", "off"):
+                    for kind, enabled_class in (("captured", "writable"),
+                                                ("route-layout", "layout-unsupported")):
+                        expected_class = enabled_class if policy == "off" else (
+                            "legacy-header" if header == "legacy" else
+                            "no-flag" if header == "0" else "wp-flag")
+                        run("arcdroid-test.rom", tab / f"{kind}-{header}.jfd",
+                            root / f"class-{kind}-{header}-{policy}",
+                            ["--jfd-tab-step", "A3000", policy, "shadow", expected_class, "class"])
+                    for notice, writes in (("unavailable-notice", "shadow"),
+                                           ("original-notice", "original")):
+                        run("arcdroid-test.rom", image, root / f"{notice}-{header}-{policy}",
+                            ["--jfd-tab-step", "A3000", policy, writes, "0", notice])
+            run("arcdroid-jfd-save-test.rom", tab / "captured-3.jfd", root / "sampling",
+                ["--jfd-tab-step", "A3000", "as-imaged", "shadow", "00006a00", "sampling"])
         else:
             assert mode == "set"
             run("arcdroid-test.rom", tab / "mixed.m3u", root / "set",

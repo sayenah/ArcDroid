@@ -283,7 +283,9 @@ static unsigned jfd_damaged_notice_calls;
 static unsigned jfd_off_notice_calls;
 static unsigned jfd_native_notice_calls;
 static unsigned jfd_original_notice_calls;
+static unsigned jfd_original_notice_osd_calls;
 static unsigned jfd_tab_hidden_notices, jfd_tab_adffs_notices;
+static unsigned jfd_tab_pending_notices;
 static char last_adffs_notice[512];
 static bool adffs_log_leak;
 static unsigned adffs_package_log_lines;
@@ -1177,6 +1179,10 @@ static bool environment(unsigned command, void *data)
             ++jfd_tab_hidden_notices;
          if (strstr(last_message, "Write-protect Tab has no effect on the ADFFS route"))
             ++jfd_tab_adffs_notices;
+         if (strstr(last_message, "change will apply after reset or reload"))
+            ++jfd_tab_pending_notices;
+         if (strstr(last_message, "JFD content is never written in place"))
+            ++jfd_original_notice_osd_calls;
          if (!strncmp(last_message, "Error box: A = OK", 17u))
          {
             ++error_hint_notices;

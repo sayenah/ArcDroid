@@ -22,6 +22,7 @@ static uint64_t audio_frames;
 static bool saw_adffs_log;
 static const char *option_jfd_tab = "as-imaged";
 static bool tab_case, variable_update;
+static bool frontend_reset;
 static unsigned tab_hidden_notices, tab_pending_notices;
 static uint32_t last_pixel;
 
@@ -275,7 +276,7 @@ static bool environment(unsigned command, void *data)
       {
          const struct retro_input_descriptor *descriptors = data;
          unsigned count = 0u;
-         assert(phase == PHASE_LOAD || phase == PHASE_RUN);
+         assert(phase == PHASE_LOAD || (phase == PHASE_RUN && frontend_reset));
          while (descriptors[count].description) ++count;
          assert(count == 30u);
          saw_input_descriptors = true;
@@ -350,6 +351,14 @@ typedef void (*SetInputPollFn)(retro_input_poll_t);
 typedef void (*SetInputStateFn)(retro_input_state_t);
 typedef void (*VoidFn)(void);
 typedef bool (*LoadGameFn)(const struct retro_game_info *);
+
+static void reset_frontend(VoidFn reset)
+{
+   assert(phase == PHASE_RUN && !frontend_reset);
+   frontend_reset = true;
+   reset();
+   frontend_reset = false;
+}
 
 static uint64_t file_hash(const char *path)
 {
@@ -439,7 +448,7 @@ int main(int argc, char **argv)
          retro_run();
          assert(tab_pending_notices == 1u && drive(0u, &protected, NULL) && protected);
          variable_update = true; retro_run(); assert(tab_pending_notices == 1u);
-         retro_reset(); assert(drive(0u, &protected, NULL) && !protected);
+         reset_frontend(retro_reset); assert(drive(0u, &protected, NULL) && !protected);
       }
       unsigned steady = 0u;
       for (unsigned frame = 0u; frame < 900u && steady < 8u; ++frame)
@@ -462,10 +471,10 @@ int main(int argc, char **argv)
       }
       if (!strcmp(argv[5], "--jfd-tab-hide-restore"))
       {
-         option_jfd_tab = "as-imaged"; retro_reset();
+         option_jfd_tab = "as-imaged"; reset_frontend(retro_reset);
          assert(drive(0u, &protected, NULL) && protected && tab_hidden_notices == 1u);
-         retro_reset(); assert(tab_hidden_notices == 1u);
-         option_jfd_tab = "off"; retro_reset();
+         reset_frontend(retro_reset); assert(tab_hidden_notices == 1u);
+         option_jfd_tab = "off"; reset_frontend(retro_reset);
          uint64_t restored = 0u;
          assert(drive(0u, &protected, NULL) && !protected &&
                 map(0u, allocation, false, &restored) && restored >= generation);

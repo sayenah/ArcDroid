@@ -1348,7 +1348,7 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
       "${FIXTURE_DIR}/arcdroid-test.adf"
       "${CMAKE_CURRENT_BINARY_DIR}/power-on-cmos-guest-data"
       --power-on-cmos-guest "${FIXTURE_DIR}/arcdroid-test.rom")
-    foreach(tab_case IN ITEMS guest routing set)
+    foreach(tab_case IN ITEMS guest routing set evidence)
       add_test(NAME jfd-tab-${tab_case}-process COMMAND "${Python3_EXECUTABLE}"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/jfd_tab_process_test.py"
         $<TARGET_FILE:libretro_harness> $<TARGET_FILE:arcdroid_libretro_test>
