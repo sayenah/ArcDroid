@@ -11,6 +11,9 @@ bool arc_rpc_session_start(ArcRpcModel model, const uint8_t *rom, size_t size,
     const uint8_t seed[256], uint64_t epoch, char *error, size_t error_size);
 #if defined(ARCDROID_TEST_FAULTS)
 #include "libretro.h"
+#include "rpc_video.h"
+RETRO_API void arc_rpc_test_video_status(ArcRpcVideoStatus *out);
+RETRO_API uint64_t arc_rpc_test_video_bus_ns(void);
 #include "engine_backend.h"
 RETRO_API const ArcEngineBackendOps *arc_rpc_test_engine_api(void);
 typedef struct {

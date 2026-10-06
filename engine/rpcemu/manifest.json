@@ -145,7 +145,8 @@
       "sha256": "dc30bdc9aeb77cc8b72563003f6b7a04da043597eabf1e96b9c5790b0fb4e788",
       "licence_header": "/*\n  RPCEmu - An Acorn system emulator\n\n  Copyright (C) 2005-2010 Sarah Walker\n\n  This program is free software; you can redistribute it and/or modify\n  it under the terms of the GNU General Public License as published by\n  the Free Software Foundation; either version 2 of the License, or\n  (at your option) any later version.\n\n  This program is distributed in the hope that it will be useful,\n  but WITHOUT ANY WARRANTY; without even the implied warranty of\n  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the\n  GNU General Public License for more details.\n\n  You should have received a copy of the GNU General Public License\n  along with this program; if not, write to the Free Software\n  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.\n */",
       "patches": [
-        "containment-device-scheduler"
+        "containment-device-scheduler",
+        "vidc-line-scanout"
       ]
     },
     {
@@ -232,7 +233,8 @@
       "sha256": "6fbd0694251d50ce62e094f672b92352e120e30fc87b1ac173fc6178309a46db",
       "licence_header": "/*\n  RPCEmu - An Acorn system emulator\n\n  Copyright (C) 2005-2010 Sarah Walker\n\n  This program is free software; you can redistribute it and/or modify\n  it under the terms of the GNU General Public License as published by\n  the Free Software Foundation; either version 2 of the License, or\n  (at your option) any later version.\n\n  This program is distributed in the hope that it will be useful,\n  but WITHOUT ANY WARRANTY; without even the implied warranty of\n  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the\n  GNU General Public License for more details.\n\n  You should have received a copy of the GNU General Public License\n  along with this program; if not, write to the Free Software\n  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.\n */",
       "patches": [
-        "containment-device-scheduler"
+        "containment-device-scheduler",
+        "vidc-line-scanout"
       ]
     },
     {
@@ -295,6 +297,15 @@
       ],
       "reason": "C2 complete device reset, explicit scheduler arms, guest command responses, remove desktop renderer and mousehack, SA idle",
       "group": "containment/reset"
+    },
+    {
+      "id": "vidc-line-scanout",
+      "group": "devices/AV/input",
+      "reason": "D1 line-sampled XRGB scanout, bounded presentation independent of guest progression, DMA writes, flyback and rational field rate.",
+      "files": [
+        "src/vidc20.c",
+        "src/iomd.c"
+      ]
     }
   ],
   "adapted_sources": [],

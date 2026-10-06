@@ -1877,6 +1877,37 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_session_switch_test.py"
     $<TARGET_FILE:rpc_session_test> $<TARGET_FILE:arcdroid_libretro_test>
     "${FIXTURE_DIR}/arcdroid-test.rom")
+  add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/rpc_video_rom.h"
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_video_rom.py"
+      "${CMAKE_CURRENT_BINARY_DIR}/generated/rpc_video_rom.h"
+    DEPENDS tests/rpc_video_rom.py VERBATIM)
+  add_executable(rpc_video_test tests/rpc_video_test.c
+    "${CMAKE_CURRENT_BINARY_DIR}/generated/rpc_video_rom.h")
+  target_include_directories(rpc_video_test PRIVATE engine engine/rpc core
+    libretro/include "${CMAKE_CURRENT_BINARY_DIR}/generated")
+  target_compile_definitions(rpc_video_test PRIVATE ARCDROID_TEST_FAULTS=1 RETRO_IMPORT_SYMBOLS=1)
+  target_compile_options(rpc_video_test PRIVATE $<$<C_COMPILER_ID:GNU,Clang,AppleClang>:-UNDEBUG;-Wall;-Wextra>)
+  target_link_libraries(rpc_video_test PRIVATE arcdroid_core ${CMAKE_DL_LIBS})
+  add_dependencies(rpc_video_test arcdroid_libretro_test)
+  if(ARCDROID_SANITIZERS)
+    target_link_libraries(rpc_video_test PRIVATE arcdroid_sanitizer_compile arcdroid_sanitizer_link)
+  endif()
+  # Included by native Windows CTest and CI's rpc-.* sanitizer selection.
+  foreach(model RANGE 0 3)
+    add_test(NAME rpc-video-guest-${model} COMMAND rpc_video_test
+      $<TARGET_FILE:arcdroid_libretro_test> --guest ${model})
+    add_test(NAME rpc-video-trace-${model} COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_video_trace_test.py" $<TARGET_FILE:rpc_video_test>
+      $<TARGET_FILE:arcdroid_libretro_test> ${model}
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/rpc-video-${model}.trace")
+  endforeach()
+  foreach(model RANGE 2 3)
+    add_test(NAME rpc-video-contention-${model} COMMAND rpc_video_test
+      $<TARGET_FILE:arcdroid_libretro_test> --contention ${model})
+  endforeach()
+  add_test(NAME rpc-video-frontend COMMAND rpc_video_test
+    $<TARGET_FILE:arcdroid_libretro_test> --frontend 2)
+
   add_test(NAME rpc-shipping-route COMMAND rpc_session_test
     $<TARGET_FILE:arcdroid_libretro> --shipping)
 

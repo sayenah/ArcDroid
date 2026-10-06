@@ -37,6 +37,8 @@ typedef struct {
 } ArcEngineCapabilities;
 
 ArcEngineCapabilities arc_engine_capabilities(void);
+/* Private backend identity; never selects a shipping launch route. */
+bool arc_engine_is_rpc(void);
 
 typedef struct {
    const char *path;

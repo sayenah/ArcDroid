@@ -1,8 +1,8 @@
 /* ArcDroid session dispatcher. GPL-2.0-only. */
 #include "engine_backend.h"
+extern const ArcEngineBackendOps arc_rpc_backend;
 #if defined(ARCDROID_TEST_FAULTS)
 #include "rpc/rpc_session.h"
-extern const ArcEngineBackendOps arc_rpc_backend;
 RETRO_API bool arc_rpc_test_start(ArcRpcModel model, const uint8_t *rom, size_t size,
     const uint8_t seed[256], uint64_t epoch, char *error, size_t error_size);
 #endif
@@ -11,6 +11,8 @@ RETRO_API bool arc_rpc_test_start(ArcRpcModel model, const uint8_t *rom, size_t 
  * pointer is also valid before construction and after teardown, keeping
  * observer snapshots and failed-start cleanup identical to the baseline. */
 static const ArcEngineBackendOps *arc_backend = &arc_arculator_backend;
+
+bool arc_engine_is_rpc(void) { return arc_backend == &arc_rpc_backend; }
 
 ArcEngineCapabilities arc_engine_capabilities(void)
 {

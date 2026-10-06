@@ -1,12 +1,13 @@
 /* ArcDroid contained RPCEmu backend. GPL-2.0-only.
- * No frontend callback is called by this translation unit. Device/CPU entries
- * have a live non-returning fault boundary. Unsupported entries touch no guest
+ * Logging callbacks run only after protected guest execution returns. Device/CPU
+ * entries have a live non-returning fault boundary. Unsupported entries touch no guest
  * state; cleanup cancels events before releasing owned memory. */
 #include "engine_backend.h"
 #include "rpc_session.h"
 #include "rpc_timing.h"
 #include "rpc_memory.h"
 #include "rpc_rtc.h"
+#include "rpc_video.h"
 #include "rpcemu.h"
 #include "arm.h"
 #include "cp15.h"
@@ -43,6 +44,16 @@ static char arc_rpc_fault_text[192];
 static uint64_t arc_rpc_epoch, arc_rpc_rtc_offset, arc_rpc_executed, arc_rpc_idle_ns;
 static unsigned arc_rpc_allocations, arc_rpc_live_allocations;
 static unsigned arc_rpc_rate;
+static uint64_t arc_rpc_bus_until, arc_rpc_bus_ns;
+static ArcEngineLogCallback arc_rpc_logger;
+static void *arc_rpc_logger_opaque;
+void arc_rpc_video_bus(unsigned transfers, bool dram)
+{
+    uint64_t ns = (uint64_t)transfers * (dram ? 350u : 156u);
+    uint64_t now = arc_rpc_scheduler.now_ns;
+    if (arc_rpc_bus_until < now) arc_rpc_bus_until = now;
+    arc_rpc_bus_until += ns; arc_rpc_bus_ns += ns;
+}
 extern int arc_rpc_arm_exec_count(unsigned count);
 extern bool arc_rpc_cpu_idle;
 uint32_t soundaddr[4];
@@ -107,6 +118,7 @@ static void arc_rpc_stop(void)
 {
     arc_rpc_timing_bind(NULL);
     memset(&arc_rpc_scheduler, 0, sizeof(arc_rpc_scheduler));
+    closevideo();
     arc_rpc_memory_close();
     arc_rpc_live_allocations = 0;
     arc_rpc_live = false;
@@ -129,6 +141,7 @@ static void arc_rpc_reset_devices(void)
     memset(soundaddr, 0, sizeof(soundaddr));
     soundinited = soundlatch = soundcount = 0;
     arc_rpc_executed = arc_rpc_idle_ns = 0;
+    arc_rpc_bus_until = arc_rpc_bus_ns = 0;
 #if defined(ARCDROID_TEST_FAULTS)
     memset(&arc_rpc_observation, 0, sizeof(arc_rpc_observation));
 #endif
@@ -225,44 +238,56 @@ static void arc_rpc_deliver(ArcRpcEvent event)
     default: break; /* Reserved IDE/sound slots, never armed in C2. */
     }
 }
-static bool arc_rpc_advance(uint64_t elapsed_ns)
+static bool arc_rpc_advance_internal(uint64_t elapsed_ns, bool stop_at_field)
 {
     if (!arc_rpc_live || arc_rpc_fault || elapsed_ns > 16666667u ||
         arc_rpc_scheduler.now_ns > UINT64_MAX - elapsed_ns) return false;
     if (setjmp(arc_rpc_jump)) return false;
     arc_rpc_inject_entry();
     uint64_t limit = arc_rpc_scheduler.now_ns + elapsed_ns;
+    ArcRpcVideoStatus video_start; arc_rpc_video_status(&video_start);
     unsigned event_work = 0, instruction_work = 0;
     while (arc_rpc_scheduler.now_ns < limit) {
         if (arc_rpc_cpu_idle && (arm.event & 3)) arc_rpc_cpu_idle = false;
         bool idle = arc_rpc_cpu_idle;
+        bool blocked = arc_rpc_scheduler.now_ns < arc_rpc_bus_until;
         uint64_t next = arc_rpc_next_deadline(&arc_rpc_scheduler, limit), credit = 0;
-        if (!idle) {
+        if (blocked && arc_rpc_bus_until < next) next = arc_rpc_bus_until;
+        if (!idle && !blocked) {
             uint64_t cpu_next = arc_rpc_scheduler.now_ns +
                 (1000u - arc_rpc_scheduler.cpu_fraction + arc_rpc_rate - 1u) / arc_rpc_rate;
             if (cpu_next < next) next = cpu_next;
             if (!arc_rpc_cpu_credit(&arc_rpc_scheduler, next - arc_rpc_scheduler.now_ns, &credit))
                 fatal("RPC CPU credit overflow");
         } else {
-            arc_rpc_idle_ns += next - arc_rpc_scheduler.now_ns;
+            if (idle) arc_rpc_idle_ns += next - arc_rpc_scheduler.now_ns;
             arc_rpc_scheduler.cpu_fraction = 0;
         }
         arc_rpc_scheduler.now_ns = next;
         ArcRpcEvent event;
+        bool completed = false;
         while (arc_rpc_take_event(&arc_rpc_scheduler, next, &event)) {
             if (++event_work > 131072u) fatal("RPC event budget exceeded");
             arc_rpc_deliver(event);
+            if (event == ARC_RPC_EVENT_VIDEO) {
+                ArcRpcVideoStatus current; arc_rpc_video_status(&current);
+                if (current.pixels - video_start.pixels > 33554432u) fatal("RPC scanout work budget exceeded");
+                completed = stop_at_field && current.fields != video_start.fields;
+            }
         }
         if (arc_rpc_cpu_idle && (arm.event & 3)) arc_rpc_cpu_idle = false;
-        if (credit) {
+        if (credit && arc_rpc_scheduler.now_ns >= arc_rpc_bus_until) {
             if (++instruction_work > 1666667u) fatal("RPC instruction budget exceeded");
             arc_rpc_arm_exec_count(1);
             ++arc_rpc_executed;
             if (arc_rpc_cpu_idle) arc_rpc_scheduler.cpu_fraction = 0;
         }
+        if (completed) break;
     }
     return true;
 }
+
+static bool arc_rpc_advance(uint64_t ns) { return arc_rpc_advance_internal(ns, false); }
 
 static ArcEngineCapabilities arc_rpc_capabilities(void)
 {
@@ -282,11 +307,29 @@ static bool arc_rpc_frame(ArcInputState *input, ArcEngineFrame *frame)
 {
     (void)input; /* Run D adds the ArcDroid input adapter, gathered before entry. */
     if (frame) memset(frame, 0, sizeof(*frame));
-    if (!frame || !arc_rpc_advance(16666667u)) return false;
-    frame->elapsed_us = 16667; frame->refresh_hz = 60;
-    return true; /* C2 has device state only, no completed rendered field. */
+    if (!frame) return false;
+    uint64_t start = arc_rpc_scheduler.now_ns;
+    ArcRpcVideoStatus before, after; arc_rpc_video_status(&before);
+    /* At most six budgeted chunks (100 ms): even a stopped/disabled display
+     * cannot trap the frontend in an unbounded wait for flyback. */
+    for (unsigned chunk = 0; chunk < 6u; ++chunk) {
+        if (!arc_rpc_advance_internal(16666667u, true)) return false;
+        arc_rpc_video_status(&after);
+        if (after.fields != before.fields || !vidc_get_xsize() || !vidc_get_ysize()) break;
+    }
+    frame->elapsed_us = (arc_rpc_scheduler.now_ns - start) / 1000u;
+    if (after.fields != before.fields && after.width && after.height) {
+        frame->pixels = arc_rpc_video_pixels(); frame->width = after.width;
+        frame->height = after.height; frame->pitch = ARC_RPC_VIDEO_LIMIT * sizeof(uint32_t);
+        frame->refresh_hz = after.refresh_hz; frame->field_completed = true;
+    }
+    /* Logs/callbacks occur only after leaving the protected guest stack. */
+    if (arc_rpc_logger && arc_rpc_video_take_clip())
+        arc_rpc_logger(arc_rpc_logger_opaque, "RPC video clipped to 2048x2048; guest scanout unchanged.\n");
+    return true;
 }
-static void arc_rpc_log_callback(ArcEngineLogCallback cb, void *p) { (void)cb; (void)p; }
+static void arc_rpc_log_callback(ArcEngineLogCallback cb, void *p)
+{ arc_rpc_logger = cb; arc_rpc_logger_opaque = p; }
 static void arc_rpc_nop(void) { }
 static void arc_rpc_power_on(ArcInputState *i, bool a) { (void)i; (void)a; }
 static bool arc_rpc_release(uint64_t *t, bool *a) { if (t) *t=0; if (a) *a=false; return false; }
@@ -308,7 +351,11 @@ static void arc_rpc_audio_stats(uint64_t *u,uint64_t *o) { if(u)*u=0;if(o)*o=0; 
 static bool arc_rpc_media(const ArcEngineMedia *m,char *e,size_t n)
 { (void)m;if(e&&n)snprintf(e,n,"RPCEmu media unsupported in R1");return false; }
 static bool arc_rpc_av(unsigned *w,unsigned *h,double *r)
-{ if(w)*w=0;if(h)*h=0;if(r)*r=0;return false; }
+{
+    ArcRpcVideoStatus v; arc_rpc_video_status(&v);
+    if(w)*w=v.width; if(h)*h=v.height; if(r)*r=v.refresh_hz;
+    return arc_rpc_live && !arc_rpc_fault && v.width && v.height;
+}
 static void arc_rpc_cmos_unavailable(uint8_t o[ARC_CMOS_PAYLOAD_SIZE]) { if(o)memset(o,0,ARC_CMOS_PAYLOAD_SIZE); }
 static bool arc_rpc_faulted(const char **m) { if(m)*m=arc_rpc_fault_text;return arc_rpc_fault; }
 static bool arc_rpc_active(void) { return arc_rpc_live; }
@@ -326,6 +373,8 @@ const ArcEngineBackendOps arc_rpc_backend = {
     .cmos=arc_rpc_cmos_unavailable,.faulted=arc_rpc_faulted,.active=arc_rpc_active
 };
 #if defined(ARCDROID_TEST_FAULTS)
+RETRO_API void arc_rpc_test_video_status(ArcRpcVideoStatus *out) { if(out)arc_rpc_video_status(out); }
+RETRO_API uint64_t arc_rpc_test_video_bus_ns(void) { return arc_rpc_bus_ns; }
 RETRO_API void arc_rpc_test_fail_alloc(unsigned stage) { arc_rpc_fail_alloc=stage; }
 RETRO_API void arc_rpc_test_fault_next(void) { arc_rpc_fail_entry=true; }
 RETRO_API bool arc_rpc_test_advance(uint64_t ns) { return arc_rpc_advance(ns); }

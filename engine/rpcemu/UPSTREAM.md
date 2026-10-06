@@ -107,3 +107,38 @@ Add `--compiler <C compiler>` for compiler dependency closure of all 11 C files.
 Add `--tarball <archive>` to verify its digest and compare every original file
 with the pristine commit (the commit must be available locally). The archive
 is read in memory and never extracted or committed. CI uses no private assets.
+
+`vidc-line-scanout` (run D1: `src/vidc20.c`, `src/iomd.c`): sample every
+raster at its leading scheduler edge, after tied devices and before the tied
+instruction. Retain converted XRGB8888 lines across later memory/register
+writes; no pixel-cycle claim. Preserve pending timing edges and carry rational
+fractions; report programmed rates. Flyback reloads INIT; current-pointer
+writes restart packed offset. DRAM (VIDCR bit 6) advances by quadwords; VRAM
+advances its IOMD current register only on half-SAM requests with Inc*256,
+masked END comparison and INIT's last-transfer flag. Cursor DMA is enabled
+with video; there is no independent cursor-enable bit. Synchronous HDWR pads
+the programmed word length. Reserved depths output border without fabricated
+pixels. Interlace publishes fields with a final rational half-line; no weave
+or frontend deinterlacing layer is added. A7000 ignores its reserved INT bit.
+
+Presentation is a single lazily allocated 2048×2048 buffer (16 MiB), 2 KiB row
+flags and 8 KiB sampled border history. Crop origin is the active top-left at
+field start; growth extends it, clips storage only, and never rescans earlier
+lines. Hidden rows and columns still consume DMA and bus occupancy. A queued
+clipping diagnostic is delivered once outside the protected engine stack.
+The session returns at field completion before another line overwrites the
+buffer. At most six 16,666,667 ns chunks per frame entry, each with the existing
+instruction/event limits plus 33,554,432 sampled pixels. Disabled data still
+runs counters/flyback with bounded work. Output allocation failure and scanout
+budget exhaustion are contained faults. Reset reuses output; stop frees it.
+
+The instruction-rate scheduler models aggregated DMA bus occupation at a
+line boundary (IOMD FS issue 4 section 7: 350 ns/DRAM quad, 156 ns/VRAM
+half-SAM, cursor quad every two rows). It blocks instruction credit, while
+all devices continue virtual-time delivery. It does not model individual
+pixel requests, CPU cache/memory cycles or worst-case arbitration latency.
+Frontend AV notifications happen after engine return; the last attempted
+rate has 0.01 Hz hysteresis. A rejected/missing callback is not retried each
+field; replacing the callback permits a fresh attempt. Size-only changes
+use geometry; rate+size changes use one full AV notification. Arculator's
+frame/AV branch remains unchanged. Audio/input and plan admission remain D2/D3.

@@ -28,6 +28,7 @@
 #include "rpcemu.h"
 #include "rpc_timing.h"
 #include "vidc20.h"
+#include "rpc_video.h"
 #include "keyboard.h"
 #include "sound.h"
 #include "iomd.h"
@@ -494,6 +495,7 @@ iomd_write(uint32_t addr, uint32_t val)
 
 	case IOMD_0x1D0_VIDCUR: /* Video DMA Current */
 		iomd.vidcur = val & 0x1ffffff0; /* Mask out bits ignored by IOMD */
+        arc_rpc_video_dma_write(0x1d0);
 		return;
 	case IOMD_0x1D4_VIDEND: /* Video DMA End */
 		iomd.vidend = val & 0x1ffffff0; /* Mask out bits ignored by IOMD */
@@ -510,6 +512,7 @@ iomd_write(uint32_t addr, uint32_t val)
 		return;
 	case IOMD_0x1DC_VIDINIT: /* Video DMA Init */
 		iomd.vidinit = val & 0xfffffff0; /* Ignore bottom 4 bits (quad word aligned) */
+        arc_rpc_video_dma_write(0x1dc);
 		resetbuffer();
 		return;
 	case IOMD_0x1E0_VIDCR: /* Video DMA Control */
@@ -740,7 +743,7 @@ iomd_read(uint32_t addr)
                 return iomd.sndstat;
 
 	case IOMD_0x1D0_VIDCUR: /* Video DMA Current */
-		return iomd.vidcur;
+		return arc_rpc_video_current();
 	case IOMD_0x1D4_VIDEND: /* Video DMA End */
 		return iomd.vidend;
 	case IOMD_0x1D8_VIDSTART: /* Video DMA Start */
