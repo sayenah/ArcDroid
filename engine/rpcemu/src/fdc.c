@@ -1,3 +1,6 @@
+/* ArcDroid modification (2026-10-06): remove image loaders; use the
+ * ArcDroid typed empty-drive interface and bounded controller responses.
+ * GPL-2.0-only additions; original RPCEmu notice preserved below. */
 /*
   RPCEmu - An Acorn system emulator
 
@@ -20,7 +23,6 @@
 
 /* NEC 765/Intel 82077 Floppy drive emulation, on RPC/A7000 a part of the
    SMC 37C665GT PC style Super IO chip */
-#include <assert.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <stdint.h>
@@ -32,9 +34,7 @@
 #include "iomd.h"
 #include "ide.h"
 #include "arm.h"
-#include "disc.h"
-#include "disc_adf.h"
-#include "disc_hfe.h"
+#include "rpc_floppy.h"
 
 /* FDC commands */
 enum {
@@ -77,7 +77,7 @@ static struct
 	int rate;
 	int oldpos;
 	uint8_t results[16];
-	int result_rp, result_wp;
+	uint8_t result_rp, result_wp; /* Bounded ring indices, never lifetime counters. */
 	int drive;
 	int density;
 	int tc;
@@ -85,37 +85,6 @@ static struct
 	int written;
 	int in_read;
 } fdc;
-
-/* This enumeration must be kept in sync with the formats[] array */
-typedef enum {
-	DISC_FORMAT_ADFS_DE_800K,
-	DISC_FORMAT_ADFS_F_1600K,
-	DISC_FORMAT_ADFS_L_640K,
-	DISC_FORMAT_DOS_360K,
-	DISC_FORMAT_DOS_720K,
-	DISC_FORMAT_DOS_1440K,
-} DiscFormat;
-
-typedef struct {
-	const char *name;
-	const char *extension;
-	int sides;
-	int tracks;
-	int sectors;
-	int sectorsize;
-	int sectorskew;		///< What is the first sector in a track? e.g 0-79 or 1-80
-	int density;
-} Format;
-
-/* This array must be kept in sync with the disc_format enumeration */
-static const Format formats[] = {
-	{ "ADFS D/E 800KB",   "adf", 2, 80,  5, 1024, 0, 2 },
-	{ "ADFS F 1600KB",    "adf", 2, 80, 10, 1024, 0, 0 },
-	{ "ADFS L 640KB",     "adl", 2, 80, 16,  256, 0, 2 },
-	{ "DOS 360KB",        "img", 2, 40,  9,  512, 1, 2 },
-	{ "DOS 720KB",        "img", 2, 80,  9,  512, 1, 2 },
-	{ "DOS 1440KB",       "img", 2, 80, 18,  512, 1, 0 }
-};
 
 int fdccallback = 0;
 int motoron = 0;
@@ -153,102 +122,34 @@ fdc_reset(void)
 {
 	fdccallback = 0;
 	motoron = 0;
-	fdc.result_rp = 0;
-	fdc.result_wp = 0;
+	memset(&fdc, 0, sizeof(fdc));
+	fdc.status = 0x80;
+	fdc.density = 1;
+	fdc_irq_lower();
+	fdc_dma_lower();
 }
 
 void
 fdc_init(void)
 {
+	fdc_reset();
 }
 
-/**
- * Load a disc image into one of the two virtual floppy
- * disc drives.
- *
- * @param fn    Filename of disc image to load (including .adf .adl extension)
- * @param drive Which drive to load image into 0 or 1
- */
-void
-fdc_image_load(const char *fn, int drive)
+/* A synchronous no-media result ends the command before a DMA request.
+ * Physical cylinder, requested CHRN and density remain explicit at the edge. */
+static int
+fdc_request(ArcRpcFloppyOperation operation)
 {
-	FILE *f;
-	const char *extension;
-	long len;
-	const Format *format;
-	int is_hfe = 0;
-
-	assert(drive == 0 || drive == 1); // Only support two drives
-	assert(fn != NULL); // Must have filename
-
-	// must be at least a.ext
-	if (strlen(fn) < 5 || fn[strlen(fn) - 4] != '.') {
-		error("Disc image filename must include a file extension (.adf,.adl)");
-		return;
+	ArcRpcFloppyRequest request = {
+		operation, (unsigned)fdc.drive, (unsigned)fdc.track,
+		(unsigned)fdc.side, fdc.parameters[1], fdc.parameters[2],
+		fdc.parameters[3], fdc.parameters[4], (unsigned)fdc.density
+	};
+	if (arc_rpc_floppy_request(&request) == ARC_RPC_FLOPPY_NO_MEDIA) {
+		fdc_notfound();
+		return 0;
 	}
-
-	f = fopen(fn, "rb");
-	if (f == NULL) {
-//		error("Unable to open disc image '%s'", fn);
-		return;
-	}
-
-	fseek(f, 0, SEEK_END);
-	len = ftell(f);
-	if (len < 0) {
-		error("Failed to read size of disc image file");
-		fclose(f);
-		return;
-	}
-
-	extension = fn + strlen(fn) - 4;
-
-	if (strcasecmp(extension, ".adf") == 0) {
-		if (len > 1000000) {
-			format = &formats[DISC_FORMAT_ADFS_F_1600K];
-		} else {
-			format = &formats[DISC_FORMAT_ADFS_DE_800K];
-		}
-	} else if (strcasecmp(extension, ".adl") == 0) {
-		format = &formats[DISC_FORMAT_ADFS_L_640K];
-	} else if (strcasecmp(extension, ".img") == 0) {
-		if (len > 1250000) {
-			format = &formats[DISC_FORMAT_DOS_1440K];
-		} else if (len > 400000) {
-			format = &formats[DISC_FORMAT_DOS_720K];
-		} else {
-			format = &formats[DISC_FORMAT_DOS_360K];
-		}
-	}  else if (strcasecmp(extension, ".hfe") == 0) {
-		is_hfe = 1;
-	} else {
-		error("Unknown disc image file extension '%s', must be .adf, .adl, .img or .hfe", extension);
-		fclose(f);
-		return;
-	}
-	fclose(f);
-
-	if (drive_funcs[drive]) {
-		drive_funcs[drive]->close(drive);
-		drive_funcs[drive] = NULL;
-	}
-
-	rpclog("fdc_image_load: %s (%ld) loaded as '%s'\n", fn, len, is_hfe ? "HFE" : format->name);
-	if (is_hfe)
-		hfe_load(drive, fn);
-	else
-		adf_load(drive, fn, format->sectors, format->sectorsize, format->sides, format->tracks == 40,
-			format->density ? 1 : 2, format->sectorskew);
-}
-
-void
-fdc_image_save(const char *fn, int drive)
-{
-	(void)fn;
-	if (drive_funcs[drive]) {
-		drive_funcs[drive]->close(drive);
-		drive_funcs[drive] = NULL;
-	}
+	return 1;
 }
 
 void
@@ -261,13 +162,10 @@ fdc_write(uint32_t addr, uint32_t val)
 			fdccallback = 500;
 		}
 		if (!(val & 4)) {
-			fdc.status = 0x80;
+			fdc_reset(); /* Reset assertion aborts pending parameters/results/DMA. */
 		}
 		motoron = val & 0x30;
-		if (val & 0x10)
-			disc_set_drivesel(0);
-		else if (val & 0x20)
-			disc_set_drivesel(1);
+		fdc.dor = (uint8_t)val;
 		break;
 
 	case 0x3f4: /* Data Rate Select Register (DSR) */
@@ -278,6 +176,7 @@ fdc_write(uint32_t addr, uint32_t val)
 			fdc.parameters[fdc.curparam++] = val;
 
 			if (fdc.curparam == fdc.params) {
+				fdc.params = 0; /* Further FIFO writes cannot append parameters. */
 				fdc.status &= ~0x80;
 				fdc.tc = 0;
 				fdc.data_ready = 0;
@@ -294,13 +193,13 @@ fdc_write(uint32_t addr, uint32_t val)
 				case FD_CMD_RECALIBRATE:
 					fdccallback = 500;
 					fdc.status |= 1;
-					disc_seek(fdc.parameters[0] & 1, 0);
+
 					break;
 
 				case FD_CMD_SEEK:
 					fdccallback = 500;
 					fdc.status |= 1;
-					disc_seek(fdc.parameters[0] & 1, fdc.parameters[1]);
+
 					break;
 
 				case FD_CMD_CONFIGURE:
@@ -315,8 +214,8 @@ fdc_write(uint32_t addr, uint32_t val)
 					fdc.side       = fdc.parameters[2];
 					fdc.sector     = fdc.parameters[3];
 					fdc.drive      = fdc.st0 & 1;
-					disc_writesector(fdc.st0 & 1, fdc.sector, fdc.track, fdc.side, fdc.density);
-					fdc_dma_raise();
+					if (fdc_request(ARC_RPC_FLOPPY_WRITE))
+						fdc_dma_raise();
 					break;
 
 				case FD_CMD_READ_DATA_MFM:
@@ -329,7 +228,7 @@ fdc_write(uint32_t addr, uint32_t val)
 					fdc.side       = fdc.parameters[2];
 					fdc.sector     = fdc.parameters[3];
 					fdc.drive      = fdc.st0 & 1;
-					disc_readsector(fdc.st0 & 1, fdc.sector, fdc.track, fdc.side, fdc.density);
+					(void)fdc_request(ARC_RPC_FLOPPY_READ);
 					break;
 
 				case FD_CMD_READ_ID_MFM:
@@ -337,7 +236,8 @@ fdc_write(uint32_t addr, uint32_t val)
 					fdc.st1        = 0;
 					fdc.st2        = 0;
 					fdc.drive      = fdc.st0 & 1;
-					disc_readaddress(fdc.st0 & 1, fdc.track, fdc.side, fdc.density);
+					fdc.side = (fdc.st0 >> 2) & 1;
+					(void)fdc_request(ARC_RPC_FLOPPY_READ_ID);
 					break;
 
 				case FD_CMD_READ_ID_FM:
@@ -354,21 +254,21 @@ fdc_write(uint32_t addr, uint32_t val)
 					fdc.st2        = 0;
 					fdc.drive      = fdc.st0 & 1;
 					fdc.side       = (fdc.st0 >> 2) & 1;
-					disc_format(fdc.st0 & 1, fdc.track, fdc.side, fdc.density);
+					(void)fdc_request(ARC_RPC_FLOPPY_FORMAT);
 					break;
 
 				default:
-					UNIMPLEMENTED("FDC command",
-						"Unknown command 0x%02x",
-						fdc.command);
+					fdcsend(0x80);
+					fdc.incommand = fdc.params = 0;
+					fdc.status = 0xd0;
 				}
 			}
 			return;
 		}
 
-		if (fdc.incommand) {
-			fatal("FDC already in command\n");
-		}
+		/* Ignore FIFO writes while executing or returning a result. */
+		if (fdc.incommand || fdc.result_rp != fdc.result_wp)
+			return;
 		fdc.incommand  = 1;
 		fdc.command    = val;
 
@@ -402,7 +302,7 @@ fdc_write(uint32_t addr, uint32_t val)
 			fdc_irq_raise();
 			fdc.incommand = 0;
 			fdccallback   = 0;
-			fdc.status    = 0x80;
+			fdc.status    = 0xd0;
 			break;
 
 		case FD_CMD_SEEK:
@@ -439,9 +339,10 @@ fdc_write(uint32_t addr, uint32_t val)
 			break;
 
 		default:
-			UNIMPLEMENTED("FDC command 2",
-				"Unknown command 0x%02x", fdc.command);
-			fatal("Bad FDC command %02X\n", val);
+			/* Unsupported command: invalid-command result, no session fault. */
+			fdcsend(0x80);
+			fdc.incommand = 0;
+			fdc.status = 0xd0;
 		}
 		break;
 
@@ -475,10 +376,12 @@ fdc_read(uint32_t addr)
 		return fdc.status;
 
 	case 0x3f5: { /* Data (FIFO) */
+		if (fdc.result_rp == fdc.result_wp)
+			return 0;
 		uint8_t data = fdc.results[fdc.result_rp & 0xf];
 
 		if (fdc.result_rp != fdc.result_wp) {
-			fdc.result_rp++;
+			fdc.result_rp = (fdc.result_rp + 1) & 0xf;
 		}
 
 		if (fdc.result_rp == fdc.result_wp) {
@@ -504,8 +407,11 @@ fdc_read(uint32_t addr)
 static void
 fdcsend(uint8_t val)
 {
+	uint8_t next = (fdc.result_wp + 1) & 0xf;
+	if (next == fdc.result_rp)
+		return; /* An accepted command produces at most seven result bytes. */
 	fdc.results[fdc.result_wp & 0xf] = val;
-	fdc.result_wp++;
+	fdc.result_wp = next;
 }
 
 static void
@@ -514,13 +420,18 @@ fdc_end_command(void)
 	fdc.status = 0xD0;
 	fdc.incommand = 0;
 	fdc.params = 0;
+	fdc.curparam = 0;
+	fdc.in_read = 0;
+	fdc.data_ready = fdc.written = 0;
 	fdccallback = 0;
+	fdc_dma_lower();
 	fdc_irq_raise();
 }
 
 void
 fdc_callback(void)
 {
+	fdccallback = 0;
 	if (fdc.reset) {
 		fdc.reset     = 0;
 		fdc.status    = 0x80;
@@ -533,6 +444,8 @@ fdc_callback(void)
 		fdc_irq_raise();
 		return;
 	}
+	if (!fdc.incommand)
+		return;
 
 	switch (fdc.command) {
 	case FD_CMD_SPECIFY:
@@ -543,7 +456,7 @@ fdc_callback(void)
 		break;
 
 	case FD_CMD_SENSE_DRIVE_STATUS:
-		fdc.st3 = (fdc.parameters[0] & 7) | 0x28; // Drive number, 'two side' and 'ready'
+		fdc.st3 = (fdc.parameters[0] & 7) | 0x08; /* Two sides, not ready. */
 		if (fdc.track == 0) {
 			fdc.st3 |= 0x10; // Track is zero
 		}
@@ -619,8 +532,8 @@ fdc_callback(void)
 			fdc.curparam  = 0;
 			fdccallback   = 0;
 		} else {
-			disc_writesector(fdc.drive, fdc.sector, fdc.track, fdc.side, fdc.density);
-			fdc_dma_raise();
+			if (fdc_request(ARC_RPC_FLOPPY_WRITE))
+				fdc_dma_raise();
 		}
 		break;
 
@@ -643,18 +556,12 @@ fdc_callback(void)
 			fdc.curparam  = 0;
 			fdccallback   = 0;
 		} else {
-			disc_readsector(fdc.drive, fdc.sector, fdc.track, fdc.side, fdc.density);
+			(void)fdc_request(ARC_RPC_FLOPPY_READ);
 		}
 		break;
 
 	case FD_CMD_READ_ID_FM:
-		fdc.st0       = 0x40 | (fdc.parameters[0] & 7);
-		fdc.st1       = 1;
-		fdc.st2       = 1;
-		fdc.incommand = 0;
-		fdc.params    = 0;
-		fdc.curparam  = 0;
-		fdc_irq_raise();
+		fdc_notfound();
 		break;
 
 	case FD_CMD_FORMAT_TRACK_MFM:
@@ -697,7 +604,6 @@ fdc_callback(void)
 
 static void fdc_overrun(void)
 {
-	disc_stop(fdc.drive);
 
 	fdcsend(0x40 | (fdc.side ? 4 : 0) | fdc.drive);
 	fdcsend(0x10); /*Overrun*/

@@ -1,3 +1,5 @@
+/* ArcDroid modification (2026-10-06): remove desktop SWI interception;
+ * all SWIs use the ordinary guest exception path. GPL-2.0-only additions. */
 /*
   RPCEmu - An Acorn system emulator
 
@@ -28,11 +30,7 @@
 #include "arm_common.h"
 #include "mem.h"
 #include "keyboard.h"
-#include "hostfs.h"
 
-#ifdef RPCEMU_NETWORKING
-#include "network.h"
-#endif
 
 #define SWI_OS_Byte		0x6
 #define SWI_OS_Word		0x7
@@ -569,87 +567,8 @@ data_abort:
 int
 opSWI(uint32_t opcode)
 {
-	uint32_t swinum = opcode & 0xdffff;
-
-	/* Get actual SWI number from OS_CallASWI and OS_CallASWIR12 */
-	if (swinum == SWI_OS_CallASWI) {
-		swinum = arm.reg[10] & 0xdffff;
-	} else if (swinum == SWI_OS_CallASWIR12) {
-		swinum = arm.reg[12] & 0xdffff;
-	}
-
-	/* Intercept RISC OS Portable SWIs to enable RPCEmu to sleep when
-	   RISC OS is idle */
-	if (config.cpu_idle) {
-		switch (swinum) {
-		case SWI_Portable_ReadFeatures:
-			arm.reg[1] = (1u << 4);	/* Idle supported flag */
-			arm.reg[cpsr] &= ~VFLAG;
-			return 0;
-		case SWI_Portable_Idle:
-			rpcemu_idle();
-			arm.reg[cpsr] &= ~VFLAG;
-			return 0;
-		}
-	}
-
-	/* This is called regardless of whether or not we're in mousehack
-	   as it allows 'fullscreen' or 'mouse capture mode' risc os mode changes
-	   to have their boxes cached, allowing mousehack to work when you change
-	   back to it */
-	if (swinum == SWI_OS_Word && arm.reg[0] == 21 && mem_read8(arm.reg[1]) == 1) {
-			/* OS_Word 21, 1 Define Mouse Coordinate bounding box */
-			mouse_hack_osword_21_1(arm.reg[1]);
-			return 0;
-	}
-	
-	if (mousehack && swinum == SWI_OS_Word && arm.reg[0] == 21) {
-		if (mem_read8(arm.reg[1]) == 4) {
-			/* OS_Word 21, 4 Read unbuffered mouse position */
-			mouse_hack_osword_21_4(arm.reg[1]);
-			return 0;
-		} else if (mem_read8(arm.reg[1]) == 3) {
-			/* OS_Word 21, 3 Move mouse */
-			mouse_hack_osword_21_3(arm.reg[1]);
-			return 0;
-		} else {
-			goto realswi;
-		}
-
-	} else if (mousehack && swinum == SWI_OS_Mouse) {
-		/* OS_Mouse */
-		mouse_hack_osmouse();
-		arm.reg[cpsr] &= ~VFLAG;
-
-	} else if (swinum == ARCEM_SWI_HOSTFS) {
-		ARMul_State state;
-
-		state.Reg = arm.reg;
-		hostfs(&state);
-
-	}
-#ifdef RPCEMU_NETWORKING
-	else if (swinum == ARCEM_SWI_NETWORK) {
-		if (config.network_type != NetworkType_Off) {
-			network_swi(arm.reg[0], arm.reg[1], arm.reg[2], arm.reg[3],
-			            arm.reg[4], arm.reg[5], &arm.reg[0], &arm.reg[1]);
-		}
-	}
-#endif
-	else {
-realswi:
-		if (mousehack && swinum == SWI_OS_Word && arm.reg[0] == 21 &&
-		    mem_read8(arm.reg[1]) == 0)
-		{
-			/* OS_Word 21, 0 Define pointer size, shape and active point */
-			mouse_hack_osword_21_0(arm.reg[1]);
-		}
-		if (mousehack && swinum == SWI_OS_Byte && arm.reg[0] == 106) {
-			/* OS_Byte 106 Select pointer / activate mouse */
-			mouse_hack_osbyte_106(arm.reg[1]);
-		}
-		exception(SUPERVISOR, 0xc, 4);
-	}
+	(void)opcode;
+	exception(SUPERVISOR, 0xc, 4);
 
 	return 0;
 }

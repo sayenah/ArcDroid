@@ -4,7 +4,7 @@
 
 #include "arcdroid_core.h"
 #include "jfd.h"
-#include "arculator/src/ide.h"
+#include "arc_storage.h"
 #include "adffs.h"
 #include "arc_boot_watch.h"
 #include "arc_launch_outcome.h"
@@ -28,6 +28,15 @@ typedef struct {
 typedef void (*ArcEngineLogCallback)(void *opaque, const char *message);
 typedef void (*ArcEngineCmosIgnoredCallback)(void *opaque, unsigned raw,
                                                uint8_t attempted, uint8_t retained);
+
+typedef struct {
+   bool av, keyboard, mouse, reset;
+   bool boot_watch, launch_outcome, error_box, disc_request;
+   bool floppy, helper, ide, native_joystick, power_on_input;
+   bool cmos_persistence, serialisation;
+} ArcEngineCapabilities;
+
+ArcEngineCapabilities arc_engine_capabilities(void);
 
 typedef struct {
    const char *path;
@@ -69,9 +78,6 @@ void arc_engine_launch_outcome_snapshot(ArcLaunchOutcome *outcome);
 void arc_engine_error_snapshot(ArcErrorBox *box);
 bool arc_engine_error_request(ArcErrorAnswer answer);
 void arc_engine_error_discard(void);
-void arc_engine_error_mode(uint32_t old_mode, uint32_t new_mode);
-bool arc_engine_error_poll(uint32_t address, uint32_t mode,
-                           uint32_t sp, uint32_t lr, uint8_t *key);
 typedef unsigned (*ArcDiscResolveCallback)(void *opaque, const char *path,
                                             ArcDiscOperation operation);
 typedef bool (*ArcDiscObservationCallback)(void *opaque, const char *path,
@@ -84,22 +90,8 @@ void arc_engine_disc_snapshot(ArcDiscRequest *out);
 void arc_engine_disc_a_notified(void);
 uint64_t arc_engine_disc_time_us(void);
 bool arc_engine_disc_controller_idle(void);
-void arc_engine_disc_poll(uint32_t address, uint32_t mode, uint32_t sp,
-                           uint32_t r0, uint32_t flags);
-extern bool arc_engine_disc_watch_armed;
-void arc_engine_adf_refused(unsigned drive, unsigned track,
-                           unsigned side, unsigned sector);
 void arc_engine_adf_refusal_callback_set(
    void (*callback)(unsigned, unsigned, unsigned, unsigned));
-#if defined(ARCDROID_TEST_FAULTS)
-void arc_engine_test_boot_watch_snapshot(ArcBootWatch *out);
-bool arc_engine_test_guest_word(uint32_t address, uint32_t *out);
-size_t arc_engine_test_media_extent(void);
-unsigned arc_engine_test_disc_resolve_calls(void);
-bool arc_engine_test_disc_timer_busy(bool busy);
-void arc_engine_test_disc_hold_busy(bool busy);
-unsigned arc_engine_test_disc_eject_count(void);
-#endif
 size_t arc_engine_audio(int16_t *output, size_t capacity_frames);
 void arc_engine_audio_stats(uint64_t *underrun_frames, uint64_t *overrun_frames);
 bool arc_engine_media_eject(void);

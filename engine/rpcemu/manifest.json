@@ -1,0 +1,258 @@
+{
+  "schema": 1,
+  "project": "RPCEmu",
+  "version": "0.9.5",
+  "source_url": "http://www.marutan.net/rpcemu/",
+  "changeset": "1369:f005be758787",
+  "tarball": "rpcemu-0.9.5.tar.gz",
+  "tarball_sha256": "4e4624641cd1a83af275bd6da8765d4a0e5e0c83f008f059014cc24c5c33d59e",
+  "import_date": "2026-10-06",
+  "pristine_commit": "fe96e411a747021c7d110b4302d819fe4bca179c",
+  "licence": "GPL-2.0-or-later",
+  "metadata_files": [
+    "UPSTREAM.md",
+    "manifest.json"
+  ],
+  "files": [
+    {
+      "path": "COPYING",
+      "original_path": "COPYING",
+      "sha256": "ab15fd526bd8dd18a9e77ebc139656bf4d33e97fc7238cd11bf60e2b9b8666c6",
+      "licence_header": null,
+      "patches": []
+    },
+    {
+      "path": "readme.txt",
+      "original_path": "readme.txt",
+      "sha256": "c02bc233edb397c0893796823810608116ea288e0e16b8c7425a7acc427febae",
+      "licence_header": null,
+      "patches": []
+    },
+    {
+      "path": "src/arm.c",
+      "original_path": "src/arm.c",
+      "sha256": "ccb28da1ae84c0ae7dbe0b27248f4821a41db1a40dde522ef38bfad5b15254fb",
+      "licence_header": "/*\n  RPCEmu - An Acorn system emulator\n\n  Copyright (C) 2005-2010 Sarah Walker\n\n  This program is free software; you can redistribute it and/or modify\n  it under the terms of the GNU General Public License as published by\n  the Free Software Foundation; either version 2 of the License, or\n  (at your option) any later version.\n\n  This program is distributed in the hope that it will be useful,\n  but WITHOUT ANY WARRANTY; without even the implied warranty of\n  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the\n  GNU General Public License for more details.\n\n  You should have received a copy of the GNU General Public License\n  along with this program; if not, write to the Free Software\n  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.\n */",
+      "patches": []
+    },
+    {
+      "path": "src/arm.h",
+      "original_path": "src/arm.h",
+      "sha256": "513005682bcb0fc9994c734bf3f4f40308597df9e6bdcbda5c65207968a62b4d",
+      "licence_header": "/*\n  RPCEmu - An Acorn system emulator\n\n  Copyright (C) 2005-2010 Sarah Walker\n\n  This program is free software; you can redistribute it and/or modify\n  it under the terms of the GNU General Public License as published by\n  the Free Software Foundation; either version 2 of the License, or\n  (at your option) any later version.\n\n  This program is distributed in the hope that it will be useful,\n  but WITHOUT ANY WARRANTY; without even the implied warranty of\n  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the\n  GNU General Public License for more details.\n\n  You should have received a copy of the GNU General Public License\n  along with this program; if not, write to the Free Software\n  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.\n */",
+      "patches": []
+    },
+    {
+      "path": "src/arm_common.c",
+      "original_path": "src/arm_common.c",
+      "sha256": "46ceb7b225e07f2d0da0024f7997b36e4594bc091ae8247f20deedf963b3c454",
+      "licence_header": "/*\n  RPCEmu - An Acorn system emulator\n\n  Copyright (C) 2005-2010 Sarah Walker\n\n  This program is free software; you can redistribute it and/or modify\n  it under the terms of the GNU General Public License as published by\n  the Free Software Foundation; either version 2 of the License, or\n  (at your option) any later version.\n\n  This program is distributed in the hope that it will be useful,\n  but WITHOUT ANY WARRANTY; without even the implied warranty of\n  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the\n  GNU General Public License for more details.\n\n  You should have received a copy of the GNU General Public License\n  along with this program; if not, write to the Free Software\n  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.\n */",
+      "patches": [
+        "isolation-swi"
+      ]
+    },
+    {
+      "path": "src/arm_common.h",
+      "original_path": "src/arm_common.h",
+      "sha256": "9e598f9c519cb980ee1b189f903611da7975b7af8cf714ac5a08643544805a65",
+      "licence_header": "/*\n  RPCEmu - An Acorn system emulator\n\n  Copyright (C) 2005-2010 Sarah Walker\n\n  This program is free software; you can redistribute it and/or modify\n  it under the terms of the GNU General Public License as published by\n  the Free Software Foundation; either version 2 of the License, or\n  (at your option) any later version.\n\n  This program is distributed in the hope that it will be useful,\n  but WITHOUT ANY WARRANTY; without even the implied warranty of\n  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the\n  GNU General Public License for more details.\n\n  You should have received a copy of the GNU General Public License\n  along with this program; if not, write to the Free Software\n  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.\n */",
+      "patches": []
+    },
+    {
+      "path": "src/cmos.c",
+      "original_path": "src/cmos.c",
+      "sha256": "2f3fbe6f6aa19c97cb94e27676a6f9801b00ec23517dc641a551bb40c6d36098",
+      "licence_header": "/*\n  RPCEmu - An Acorn system emulator\n\n  Copyright (C) 2005-2010 Sarah Walker\n\n  This program is free software; you can redistribute it and/or modify\n  it under the terms of the GNU General Public License as published by\n  the Free Software Foundation; either version 2 of the License, or\n  (at your option) any later version.\n\n  This program is distributed in the hope that it will be useful,\n  but WITHOUT ANY WARRANTY; without even the implied warranty of\n  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the\n  GNU General Public License for more details.\n\n  You should have received a copy of the GNU General Public License\n  along with this program; if not, write to the Free Software\n  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.\n */",
+      "patches": []
+    },
+    {
+      "path": "src/cmos.h",
+      "original_path": "src/cmos.h",
+      "sha256": "a0c8bb12a2aeaa1576cb9d44f799eeeb17cf4d2b2c822f63e044ddfea0693f02",
+      "licence_header": "/*\n  RPCEmu - An Acorn system emulator\n\n  Copyright (C) 2005-2010 Sarah Walker\n\n  This program is free software; you can redistribute it and/or modify\n  it under the terms of the GNU General Public License as published by\n  the Free Software Foundation; either version 2 of the License, or\n  (at your option) any later version.\n\n  This program is distributed in the hope that it will be useful,\n  but WITHOUT ANY WARRANTY; without even the implied warranty of\n  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the\n  GNU General Public License for more details.\n\n  You should have received a copy of the GNU General Public License\n  along with this program; if not, write to the Free Software\n  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.\n */",
+      "patches": []
+    },
+    {
+      "path": "src/cp15.c",
+      "original_path": "src/cp15.c",
+      "sha256": "41f1b82cca4822318b5ad1f2cb6152585efdf7a49f5b83dab8753c89467e632d",
+      "licence_header": "/*\n  RPCEmu - An Acorn system emulator\n\n  Copyright (C) 2005-2010 Sarah Walker\n\n  This program is free software; you can redistribute it and/or modify\n  it under the terms of the GNU General Public License as published by\n  the Free Software Foundation; either version 2 of the License, or\n  (at your option) any later version.\n\n  This program is distributed in the hope that it will be useful,\n  but WITHOUT ANY WARRANTY; without even the implied warranty of\n  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the\n  GNU General Public License for more details.\n\n  You should have received a copy of the GNU General Public License\n  along with this program; if not, write to the Free Software\n  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.\n */",
+      "patches": []
+    },
+    {
+      "path": "src/cp15.h",
+      "original_path": "src/cp15.h",
+      "sha256": "7eacf258e59ede8b6a7bcc3a036e30116804040dda25fbf9a5e6eb08fb1557e8",
+      "licence_header": "/*\n  RPCEmu - An Acorn system emulator\n\n  Copyright (C) 2005-2010 Sarah Walker\n\n  This program is free software; you can redistribute it and/or modify\n  it under the terms of the GNU General Public License as published by\n  the Free Software Foundation; either version 2 of the License, or\n  (at your option) any later version.\n\n  This program is distributed in the hope that it will be useful,\n  but WITHOUT ANY WARRANTY; without even the implied warranty of\n  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the\n  GNU General Public License for more details.\n\n  You should have received a copy of the GNU General Public License\n  along with this program; if not, write to the Free Software\n  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.\n */",
+      "patches": []
+    },
+    {
+      "path": "src/fdc.c",
+      "original_path": "src/fdc.c",
+      "sha256": "58e5d3a1062b63d741f1aa3b5f09b01a01d5cf5e15e1c742a1c1f2ff32af0e04",
+      "licence_header": "/*\n  RPCEmu - An Acorn system emulator\n\n  Copyright (C) 2005-2010 Sarah Walker\n\n  This program is free software; you can redistribute it and/or modify\n  it under the terms of the GNU General Public License as published by\n  the Free Software Foundation; either version 2 of the License, or\n  (at your option) any later version.\n\n  This program is distributed in the hope that it will be useful,\n  but WITHOUT ANY WARRANTY; without even the implied warranty of\n  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the\n  GNU General Public License for more details.\n\n  You should have received a copy of the GNU General Public License\n  along with this program; if not, write to the Free Software\n  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.\n */",
+      "patches": [
+        "devices-empty-fdc"
+      ]
+    },
+    {
+      "path": "src/fdc.h",
+      "original_path": "src/fdc.h",
+      "sha256": "0ed38f6cca593c7f9e463958069aa20904341e2db749854d3a30890639c4bdeb",
+      "licence_header": "/*\n  RPCEmu - An Acorn system emulator\n\n  Copyright (C) 2005-2010 Sarah Walker\n\n  This program is free software; you can redistribute it and/or modify\n  it under the terms of the GNU General Public License as published by\n  the Free Software Foundation; either version 2 of the License, or\n  (at your option) any later version.\n\n  This program is distributed in the hope that it will be useful,\n  but WITHOUT ANY WARRANTY; without even the implied warranty of\n  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the\n  GNU General Public License for more details.\n\n  You should have received a copy of the GNU General Public License\n  along with this program; if not, write to the Free Software\n  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.\n */",
+      "patches": [
+        "devices-empty-fdc"
+      ]
+    },
+    {
+      "path": "src/i8042.c",
+      "original_path": "src/i8042.c",
+      "sha256": "0908032e9303d8d2d7c8e61611973e03dc635853675fe94998e1cfb372c06aa3",
+      "licence_header": "/*\n  RPCEmu - An Acorn system emulator\n\n  Copyright (C) 2005-2010 Sarah Walker\n\n  This program is free software; you can redistribute it and/or modify\n  it under the terms of the GNU General Public License as published by\n  the Free Software Foundation; either version 2 of the License, or\n  (at your option) any later version.\n\n  This program is distributed in the hope that it will be useful,\n  but WITHOUT ANY WARRANTY; without even the implied warranty of\n  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the\n  GNU General Public License for more details.\n\n  You should have received a copy of the GNU General Public License\n  along with this program; if not, write to the Free Software\n  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.\n */",
+      "patches": []
+    },
+    {
+      "path": "src/i8042.h",
+      "original_path": "src/i8042.h",
+      "sha256": "5b8de6a0c88d39730971f5be5ead49dc4a9c1ab278571215fc6d662e9cb926ac",
+      "licence_header": "/*\n  RPCEmu - An Acorn system emulator\n\n  Copyright (C) 2005-2010 Sarah Walker\n\n  This program is free software; you can redistribute it and/or modify\n  it under the terms of the GNU General Public License as published by\n  the Free Software Foundation; either version 2 of the License, or\n  (at your option) any later version.\n\n  This program is distributed in the hope that it will be useful,\n  but WITHOUT ANY WARRANTY; without even the implied warranty of\n  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the\n  GNU General Public License for more details.\n\n  You should have received a copy of the GNU General Public License\n  along with this program; if not, write to the Free Software\n  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.\n */",
+      "patches": []
+    },
+    {
+      "path": "src/ide.h",
+      "original_path": "src/ide.h",
+      "sha256": "edfe8bb9c0cda20f135c767ee4570db32b4f3cec87a08c4264a44a2ee831d284",
+      "licence_header": "/*\n  RPCEmu - An Acorn system emulator\n\n  Copyright (C) 2005-2010 Sarah Walker\n\n  This program is free software; you can redistribute it and/or modify\n  it under the terms of the GNU General Public License as published by\n  the Free Software Foundation; either version 2 of the License, or\n  (at your option) any later version.\n\n  This program is distributed in the hope that it will be useful,\n  but WITHOUT ANY WARRANTY; without even the implied warranty of\n  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the\n  GNU General Public License for more details.\n\n  You should have received a copy of the GNU General Public License\n  along with this program; if not, write to the Free Software\n  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.\n */",
+      "patches": []
+    },
+    {
+      "path": "src/iomd.c",
+      "original_path": "src/iomd.c",
+      "sha256": "dc30bdc9aeb77cc8b72563003f6b7a04da043597eabf1e96b9c5790b0fb4e788",
+      "licence_header": "/*\n  RPCEmu - An Acorn system emulator\n\n  Copyright (C) 2005-2010 Sarah Walker\n\n  This program is free software; you can redistribute it and/or modify\n  it under the terms of the GNU General Public License as published by\n  the Free Software Foundation; either version 2 of the License, or\n  (at your option) any later version.\n\n  This program is distributed in the hope that it will be useful,\n  but WITHOUT ANY WARRANTY; without even the implied warranty of\n  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the\n  GNU General Public License for more details.\n\n  You should have received a copy of the GNU General Public License\n  along with this program; if not, write to the Free Software\n  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.\n */",
+      "patches": []
+    },
+    {
+      "path": "src/iomd.h",
+      "original_path": "src/iomd.h",
+      "sha256": "8e094028a69e9f8d457a3fd20cd3c852c7f61309b4fdc082b079940e22e49b39",
+      "licence_header": "/*\n  RPCEmu - An Acorn system emulator\n\n  Copyright (C) 2005-2010 Sarah Walker\n\n  This program is free software; you can redistribute it and/or modify\n  it under the terms of the GNU General Public License as published by\n  the Free Software Foundation; either version 2 of the License, or\n  (at your option) any later version.\n\n  This program is distributed in the hope that it will be useful,\n  but WITHOUT ANY WARRANTY; without even the implied warranty of\n  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the\n  GNU General Public License for more details.\n\n  You should have received a copy of the GNU General Public License\n  along with this program; if not, write to the Free Software\n  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.\n */",
+      "patches": []
+    },
+    {
+      "path": "src/keyboard.c",
+      "original_path": "src/keyboard.c",
+      "sha256": "0f5185ec7f29055999748a20b0ee883caa5133e5eb78d03b87b2058f30f8d25a",
+      "licence_header": "/*\n  RPCEmu - An Acorn system emulator\n\n  Copyright (C) 2005-2010 Sarah Walker\n\n  This program is free software; you can redistribute it and/or modify\n  it under the terms of the GNU General Public License as published by\n  the Free Software Foundation; either version 2 of the License, or\n  (at your option) any later version.\n\n  This program is distributed in the hope that it will be useful,\n  but WITHOUT ANY WARRANTY; without even the implied warranty of\n  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the\n  GNU General Public License for more details.\n\n  You should have received a copy of the GNU General Public License\n  along with this program; if not, write to the Free Software\n  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.\n */",
+      "patches": []
+    },
+    {
+      "path": "src/keyboard.h",
+      "original_path": "src/keyboard.h",
+      "sha256": "37c39522a2d79cde1df97d6b89adae357e2e4e86266f5621c6d41a11849f8e7d",
+      "licence_header": "/*\n  RPCEmu - An Acorn system emulator\n\n  Copyright (C) 2005-2010 Sarah Walker\n\n  This program is free software; you can redistribute it and/or modify\n  it under the terms of the GNU General Public License as published by\n  the Free Software Foundation; either version 2 of the License, or\n  (at your option) any later version.\n\n  This program is distributed in the hope that it will be useful,\n  but WITHOUT ANY WARRANTY; without even the implied warranty of\n  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the\n  GNU General Public License for more details.\n\n  You should have received a copy of the GNU General Public License\n  along with this program; if not, write to the Free Software\n  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.\n */",
+      "patches": []
+    },
+    {
+      "path": "src/mem.c",
+      "original_path": "src/mem.c",
+      "sha256": "5f1740847ae3163b8930b277e6a56d3e6be076f16c3c74d803d1868d42aff6e8",
+      "licence_header": "/*\n  RPCEmu - An Acorn system emulator\n\n  Copyright (C) 2005-2010 Sarah Walker\n\n  This program is free software; you can redistribute it and/or modify\n  it under the terms of the GNU General Public License as published by\n  the Free Software Foundation; either version 2 of the License, or\n  (at your option) any later version.\n\n  This program is distributed in the hope that it will be useful,\n  but WITHOUT ANY WARRANTY; without even the implied warranty of\n  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the\n  GNU General Public License for more details.\n\n  You should have received a copy of the GNU General Public License\n  along with this program; if not, write to the Free Software\n  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.\n */",
+      "patches": []
+    },
+    {
+      "path": "src/mem.h",
+      "original_path": "src/mem.h",
+      "sha256": "d3f08dd4153b9b7588c7715fc2366e59490563baeff019ca2e9ab50748f0dbd5",
+      "licence_header": "/*\n  RPCEmu - An Acorn system emulator\n\n  Copyright (C) 2005-2010 Sarah Walker\n\n  This program is free software; you can redistribute it and/or modify\n  it under the terms of the GNU General Public License as published by\n  the Free Software Foundation; either version 2 of the License, or\n  (at your option) any later version.\n\n  This program is distributed in the hope that it will be useful,\n  but WITHOUT ANY WARRANTY; without even the implied warranty of\n  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the\n  GNU General Public License for more details.\n\n  You should have received a copy of the GNU General Public License\n  along with this program; if not, write to the Free Software\n  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.\n */",
+      "patches": []
+    },
+    {
+      "path": "src/podules.h",
+      "original_path": "src/podules.h",
+      "sha256": "0e9db33556e32fe210a795742194ad6aa9b4ae99b1fb69933bf8a40e92712fb8",
+      "licence_header": "/*\n  RPCEmu - An Acorn system emulator\n\n  Copyright (C) 2005-2010 Sarah Walker\n\n  This program is free software; you can redistribute it and/or modify\n  it under the terms of the GNU General Public License as published by\n  the Free Software Foundation; either version 2 of the License, or\n  (at your option) any later version.\n\n  This program is distributed in the hope that it will be useful,\n  but WITHOUT ANY WARRANTY; without even the implied warranty of\n  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the\n  GNU General Public License for more details.\n\n  You should have received a copy of the GNU General Public License\n  along with this program; if not, write to the Free Software\n  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.\n */",
+      "patches": []
+    },
+    {
+      "path": "src/rpcemu.h",
+      "original_path": "src/rpcemu.h",
+      "sha256": "2630391ac828cfcafca1da2bb16c12c57176b8034190c5cd072dbbed1bf23e26",
+      "licence_header": "/*\n  RPCEmu - An Acorn system emulator\n\n  Copyright (C) 2005-2010 Sarah Walker\n\n  This program is free software; you can redistribute it and/or modify\n  it under the terms of the GNU General Public License as published by\n  the Free Software Foundation; either version 2 of the License, or\n  (at your option) any later version.\n\n  This program is distributed in the hope that it will be useful,\n  but WITHOUT ANY WARRANTY; without even the implied warranty of\n  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the\n  GNU General Public License for more details.\n\n  You should have received a copy of the GNU General Public License\n  along with this program; if not, write to the Free Software\n  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.\n */",
+      "patches": []
+    },
+    {
+      "path": "src/sound.h",
+      "original_path": "src/sound.h",
+      "sha256": "5270293213403341f8152866e311229666a77c6b5ed676646c5512e49d11cbe7",
+      "licence_header": "/*\n  RPCEmu - An Acorn system emulator\n\n  Copyright (C) 2005-2010 Sarah Walker\n\n  This program is free software; you can redistribute it and/or modify\n  it under the terms of the GNU General Public License as published by\n  the Free Software Foundation; either version 2 of the License, or\n  (at your option) any later version.\n\n  This program is distributed in the hope that it will be useful,\n  but WITHOUT ANY WARRANTY; without even the implied warranty of\n  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the\n  GNU General Public License for more details.\n\n  You should have received a copy of the GNU General Public License\n  along with this program; if not, write to the Free Software\n  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.\n */",
+      "patches": []
+    },
+    {
+      "path": "src/superio.c",
+      "original_path": "src/superio.c",
+      "sha256": "f96b7eca38685e22efea90d9dce61d60a705fbe6e5e9acf99f8d4d0e06df6d85",
+      "licence_header": "/*\n  RPCEmu - An Acorn system emulator\n\n  Copyright (C) 2005-2010 Sarah Walker\n\n  This program is free software; you can redistribute it and/or modify\n  it under the terms of the GNU General Public License as published by\n  the Free Software Foundation; either version 2 of the License, or\n  (at your option) any later version.\n\n  This program is distributed in the hope that it will be useful,\n  but WITHOUT ANY WARRANTY; without even the implied warranty of\n  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the\n  GNU General Public License for more details.\n\n  You should have received a copy of the GNU General Public License\n  along with this program; if not, write to the Free Software\n  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.\n */",
+      "patches": []
+    },
+    {
+      "path": "src/superio.h",
+      "original_path": "src/superio.h",
+      "sha256": "fa41458c0ea5e7d4c970fc8e7432b1a5e33dab23922533d6d17375af1361117f",
+      "licence_header": "/*\n  RPCEmu - An Acorn system emulator\n\n  Copyright (C) 2005-2010 Sarah Walker\n\n  This program is free software; you can redistribute it and/or modify\n  it under the terms of the GNU General Public License as published by\n  the Free Software Foundation; either version 2 of the License, or\n  (at your option) any later version.\n\n  This program is distributed in the hope that it will be useful,\n  but WITHOUT ANY WARRANTY; without even the implied warranty of\n  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the\n  GNU General Public License for more details.\n\n  You should have received a copy of the GNU General Public License\n  along with this program; if not, write to the Free Software\n  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.\n */",
+      "patches": []
+    },
+    {
+      "path": "src/vidc20.c",
+      "original_path": "src/vidc20.c",
+      "sha256": "6fbd0694251d50ce62e094f672b92352e120e30fc87b1ac173fc6178309a46db",
+      "licence_header": "/*\n  RPCEmu - An Acorn system emulator\n\n  Copyright (C) 2005-2010 Sarah Walker\n\n  This program is free software; you can redistribute it and/or modify\n  it under the terms of the GNU General Public License as published by\n  the Free Software Foundation; either version 2 of the License, or\n  (at your option) any later version.\n\n  This program is distributed in the hope that it will be useful,\n  but WITHOUT ANY WARRANTY; without even the implied warranty of\n  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the\n  GNU General Public License for more details.\n\n  You should have received a copy of the GNU General Public License\n  along with this program; if not, write to the Free Software\n  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.\n */",
+      "patches": []
+    },
+    {
+      "path": "src/vidc20.h",
+      "original_path": "src/vidc20.h",
+      "sha256": "614dc22feb56e768d03a6d7ab4df93d5b9971096bcea4689f6aa1a9acc516845",
+      "licence_header": "/*\n  RPCEmu - An Acorn system emulator\n\n  Copyright (C) 2005-2010 Sarah Walker\n\n  This program is free software; you can redistribute it and/or modify\n  it under the terms of the GNU General Public License as published by\n  the Free Software Foundation; either version 2 of the License, or\n  (at your option) any later version.\n\n  This program is distributed in the hope that it will be useful,\n  but WITHOUT ANY WARRANTY; without even the implied warranty of\n  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the\n  GNU General Public License for more details.\n\n  You should have received a copy of the GNU General Public License\n  along with this program; if not, write to the Free Software\n  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.\n */",
+      "patches": []
+    }
+  ],
+  "patches": [
+    {
+      "id": "isolation-swi",
+      "group": "isolation",
+      "reason": "HostFS, networking, mousehack and Portable host-idle shortcuts are removed; ordinary guest SWI exception only.",
+      "files": [
+        "src/arm_common.c"
+      ]
+    },
+    {
+      "id": "devices-empty-fdc",
+      "group": "devices/AV/input",
+      "reason": "Remove desktop loaders and tables; fresh typed empty-drive edge, complete reset, no stale DMA after synchronous refusal, invalid-command response, bounded result indices and FIFO parameter quotas.",
+      "files": [
+        "src/fdc.c",
+        "src/fdc.h"
+      ]
+    }
+  ],
+  "adapted_sources": [],
+  "exclusions": [
+    "Qt/GUI",
+    "host threads",
+    "network/slirp/TAP",
+    "HostFS",
+    "CD-ROM/ISO",
+    "dynarec",
+    "podule ROM loading/podules",
+    "FPA",
+    "rpcemu.c",
+    "romload.c (concatenation/ROM patch tables)",
+    "sound.c (host threads)",
+    "ide.c",
+    "all disc* files",
+    "cmos.ram",
+    "blank media",
+    "all binaries and guest files"
+  ]
+}

@@ -9,6 +9,19 @@ Slice 10b adds the pinned upstream `src/ide.c` and `src/ide.h` under the same
 license. ArcDroid replaces their desktop file access with an in-memory bounded
 block backend and transaction handling; modification notices are in both files.
 
+## RPCEmu
+
+ArcDroid contains the D-137 allowlisted source snapshot of RPCEmu 0.9.5,
+Copyright (C) 2005–2010 Sarah Walker, under GPL version 2 or any later version.
+Its licence remains in `engine/rpcemu/COPYING`; original notices remain in
+every imported C/header file. ArcDroid changes are marked in their files.
+The exact source hashes, pristine commit and patch lineage are recorded in
+`engine/rpcemu/manifest.json` and `engine/rpcemu/UPSTREAM.md`.
+No RPCEmu guest data, header-less disc/HostFS source, GUI, network or binary
+assets are imported. ArcDroid additions are GPL-2.0-only.
+The imported CMOS implementation also preserves its attribution to Softgun
+by Jochen Karrer, used upstream under GPLv2.
+
 ## libretro API header
 
 `libretro/include/libretro.h` is from libretro-common commit

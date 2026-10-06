@@ -80,12 +80,8 @@ target_compile_options(arcdroid_core PRIVATE
 )
 set_target_properties(arcdroid_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
-set(ARCDROID_LIBRETRO_SOURCES
-  engine/arcdroid_engine.c
-  engine/arc_boot_watch.c
-  engine/arc_launch_outcome.c
-  engine/arc_error_box.c
-  engine/arc_disc_request.c
+set(ARCDROID_ARCULATOR_SOURCES
+  engine/arculator_backend.c
   engine/arcdroid_stubs.c
   engine/arculator/src/82c711.c
   engine/arculator/src/ide.c
@@ -110,24 +106,66 @@ set(ARCDROID_LIBRETRO_SOURCES
   engine/arculator/src/timer.c
   engine/arculator/src/vidc.c
   engine/arculator/src/wd1770.c
-  libretro/arc_io.c
-  libretro/jfd_store.c
-  libretro/install_store.c
-  libretro/arcdroid_libretro.c
   platform/arcdroid_input.c
   platform/arcdroid_joystick.c
   platform/arcdroid_sound.c
   platform/arcdroid_video.c
 )
 
+set(ARCDROID_LIBRETRO_SOURCES
+  engine/arcdroid_engine.c
+  engine/arc_boot_watch.c
+  engine/arc_launch_outcome.c
+  engine/arc_error_box.c
+  engine/arc_disc_request.c
+  libretro/arc_io.c
+  libretro/jfd_store.c
+  libretro/install_store.c
+  libretro/arcdroid_libretro.c
+)
+
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
+set(ARCDROID_SYMBOL_CHECK_FLAGS)
+if(ARCDROID_SANITIZERS)
+  list(APPEND ARCDROID_SYMBOL_CHECK_FLAGS --sanitized)
+endif()
+
 function(arcdroid_add_libretro target shipping)
   set(core_target arcdroid_core)
   if(ARGC GREATER 2)
     set(core_target "${ARGV2}")
   endif()
-  add_library(${target} SHARED ${ARCDROID_LIBRETRO_SOURCES})
-  target_include_directories(${target} PRIVATE
+  add_library(${target}_arculator OBJECT ${ARCDROID_ARCULATOR_SOURCES})
+  target_include_directories(${target}_arculator PRIVATE
     engine engine/compat engine/arculator/src platform libretro libretro/include core)
+  target_compile_definitions(${target}_arculator PRIVATE
+    ARCDROID_VERSION="${PROJECT_VERSION}" RELEASE_BUILD=1)
+  target_compile_options(${target}_arculator PRIVATE
+    $<$<C_COMPILER_ID:GNU,Clang,AppleClang>:-Wall;-Wextra;-Wpedantic;-Werror=implicit-function-declaration;-fno-common;-fno-strict-aliasing;-include;${CMAKE_CURRENT_SOURCE_DIR}/engine/arculator_hooks.h>)
+  set_target_properties(${target}_arculator PROPERTIES POSITION_INDEPENDENT_CODE ON)
+  # The final target may acquire test definitions after this function returns.
+  target_compile_definitions(${target}_arculator PRIVATE
+    $<TARGET_PROPERTY:${target},COMPILE_DEFINITIONS>)
+  if(ARCDROID_SANITIZERS)
+    target_link_libraries(${target}_arculator PRIVATE arcdroid_sanitizer_compile)
+  endif()
+  if(shipping)
+    target_compile_options(${target}_arculator PRIVATE
+      $<$<C_COMPILER_ID:GNU,Clang,AppleClang>:-fvisibility=hidden>)
+  endif()
+  add_library(${target} SHARED ${ARCDROID_LIBRETRO_SOURCES}
+    $<TARGET_OBJECTS:${target}_arculator>)
+  set_property(TARGET ${target} APPEND PROPERTY LINK_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/tools/check-backend-symbols.py"
+    "${CMAKE_CURRENT_SOURCE_DIR}/engine/backend-symbols.json")
+  add_custom_command(TARGET ${target} POST_BUILD
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/check-backend-symbols.py"
+      --nm "${CMAKE_NM}"
+      ${ARCDROID_SYMBOL_CHECK_FLAGS}
+      --arculator "${CMAKE_CURRENT_BINARY_DIR}/CMakeFiles/${target}_arculator.dir"
+    VERBATIM)
+  target_include_directories(${target} PRIVATE
+    engine platform libretro libretro/include core)
   target_compile_definitions(${target} PRIVATE
     ARCDROID_VERSION="${PROJECT_VERSION}"
     RELEASE_BUILD=1)
@@ -186,7 +224,44 @@ install(TARGETS arcdroid_libretro DESTINATION .)
 install(FILES arcdroid_libretro.info DESTINATION .)
 
 if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
-  find_package(Python3 REQUIRED COMPONENTS Interpreter)
+  add_test(NAME rpc-import-guard COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_import_test.py"
+    "${CMAKE_CURRENT_SOURCE_DIR}")
+  add_test(NAME rpc-include-closure COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/tools/check-rpcemu-import.py"
+    --compiler "${CMAKE_C_COMPILER}")
+  add_test(NAME rpc-symbol-guard COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_symbols_test.py"
+    "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_C_COMPILER}" "${CMAKE_NM}")
+  add_executable(rpc_scheduler_test tests/rpc_scheduler_test.c
+    engine/rpc/rpc_scheduler.c)
+  target_include_directories(rpc_scheduler_test PRIVATE engine/rpc)
+  target_compile_options(rpc_scheduler_test PRIVATE
+    $<$<C_COMPILER_ID:GNU,Clang,AppleClang>:-UNDEBUG;-Wall;-Wextra;-Wpedantic>)
+  add_test(NAME rpc-scheduler COMMAND rpc_scheduler_test)
+  add_library(arcdroid_rpc_fdc OBJECT engine/rpcemu/src/fdc.c
+    engine/rpc/rpc_floppy.c)
+  target_include_directories(arcdroid_rpc_fdc PRIVATE engine/rpc engine/rpcemu/src)
+  target_compile_definitions(arcdroid_rpc_fdc PRIVATE RELEASE_BUILD=1)
+  target_compile_options(arcdroid_rpc_fdc PRIVATE
+    $<$<C_COMPILER_ID:GNU,Clang,AppleClang>:-include;${CMAKE_CURRENT_SOURCE_DIR}/engine/rpc/rpc_namespace.h;-fno-common;-fno-strict-aliasing>)
+  add_executable(rpc_fdc_test tests/rpc_fdc_test.c $<TARGET_OBJECTS:arcdroid_rpc_fdc>)
+  target_include_directories(rpc_fdc_test PRIVATE engine/rpc engine/rpcemu/src)
+  target_compile_definitions(rpc_fdc_test PRIVATE RELEASE_BUILD=1)
+  target_compile_options(rpc_fdc_test PRIVATE
+    $<$<C_COMPILER_ID:GNU,Clang,AppleClang>:-UNDEBUG;-Wall;-Wextra;-Wpedantic>)
+  if(ARCDROID_SANITIZERS)
+    target_link_libraries(arcdroid_rpc_fdc PRIVATE arcdroid_sanitizer_compile)
+    target_link_libraries(rpc_fdc_test PRIVATE arcdroid_sanitizer_compile arcdroid_sanitizer_link)
+    target_link_libraries(rpc_scheduler_test PRIVATE arcdroid_sanitizer_compile arcdroid_sanitizer_link)
+  endif()
+  add_test(NAME rpc-fdc-empty COMMAND rpc_fdc_test)
+  add_custom_command(TARGET rpc_fdc_test POST_BUILD
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/check-backend-symbols.py"
+      --nm "${CMAKE_NM}"
+      --rpc "${CMAKE_CURRENT_BINARY_DIR}/CMakeFiles/arcdroid_rpc_fdc.dir"
+      ${ARCDROID_SYMBOL_CHECK_FLAGS}
+    VERBATIM)
   add_executable(core_tests
     tests/core_tests.c
     tests/keytable_provenance.c)
@@ -283,7 +358,7 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
   add_test(NAME hard-disc-program COMMAND hd_program_test)
   add_executable(install_ide_test tests/install_ide_test.c
     engine/arculator/src/ide.c)
-  target_include_directories(install_ide_test PRIVATE engine/arculator/src)
+  target_include_directories(install_ide_test PRIVATE engine engine/arculator/src)
   target_compile_options(install_ide_test PRIVATE
     $<$<C_COMPILER_ID:GNU,Clang,AppleClang>:-UNDEBUG;-Wall;-Wextra;-Wpedantic>)
   if(ARCDROID_SANITIZERS)

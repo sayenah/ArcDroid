@@ -237,3 +237,12 @@ reason through its existing pre-commit veto and data-CRC completion. An absent
 unavailable target keeps the existing index-pulse Record-Not-Found completion,
 with a distinct guard diagnostic. No upstream controller implementation was
 changed.
+
+## RiscPC R1 engine boundary
+
+The ArcDroid-owned block storage contract moved from `src/ide.h` to
+`engine/arc_storage.h`; its layout and constants are unchanged. The Arculator
+controller object and timer remain private. The modification is marked in the
+upstream header. The session implementation moved intact to
+`engine/arculator_backend.c`, with public calls dispatched through private
+backend operations. Existing CPU hooks and test symbol names are retained.
