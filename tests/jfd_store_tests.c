@@ -239,7 +239,7 @@ static void test_native_writable_layout(const char *root)
       assert(arc_jfd_parse_owned(bytes, (size_t)length, &image,
                                  error, sizeof(error)));
       const char *reason = NULL;
-      assert(arc_jfd_store_load(&image, "save", true, false, 1u, &reason));
+      assert(arc_jfd_store_load(&image, "save", ARC_JFD_WRITE_AS_IMAGED, true, false, 1u, &reason));
       assert(image.overlay &&
              image.overlay->layout_supported == cases[i].supported &&
              !strcmp(reason, cases[i].reason));
@@ -298,7 +298,7 @@ static void test_allocation_maps(const char *root)
    const char *reason = NULL;
    clear_files();
    ArcJfdImage old = allocation_fixture(root, "old-free.jfd");
-   assert(arc_jfd_store_load(&old, "save", true, false, 1u, &reason) &&
+   assert(arc_jfd_store_load(&old, "save", ARC_JFD_WRITE_AS_IMAGED, true, false, 1u, &reason) &&
           old.overlay->writable);
    old.overlay->map_enabled = true;
    arc_jfd_map_prepare(&old);
@@ -332,7 +332,7 @@ static void test_allocation_maps(const char *root)
           old.overlay->generation == 3u && blank_at(&old, 0u, 3u));
    arc_jfd_free(&old);
    old = allocation_fixture(root, "old-free.jfd");
-   assert(arc_jfd_store_load(&old, "save", true, false, 1u, &reason));
+   assert(arc_jfd_store_load(&old, "save", ARC_JFD_WRITE_AS_IMAGED, true, false, 1u, &reason));
    old.overlay->map_enabled = true; arc_jfd_map_prepare(&old);
    assert(old.overlay->generation == 3u && blank_at(&old, 0u, 3u) &&
           !old.overlay->probe_mask[0]);
@@ -344,7 +344,7 @@ static void test_allocation_maps(const char *root)
    clear_files();
 
    old = allocation_fixture(root, "old-dual-free.jfd");
-   assert(arc_jfd_store_load(&old, "save", true, false, 1u, &reason));
+   assert(arc_jfd_store_load(&old, "save", ARC_JFD_WRITE_AS_IMAGED, true, false, 1u, &reason));
    old.overlay->map_enabled = true; arc_jfd_map_prepare(&old);
    assert(!blank_at(&old, 0u, 3u) && !blank_at(&old, 0u, 4u));
    uint8_t claim_one[1024];
@@ -366,7 +366,7 @@ static void test_allocation_maps(const char *root)
           blank_at(&old, 0u, 3u) && !blank_at(&old, 0u, 4u));
    arc_jfd_free(&old);
    old = allocation_fixture(root, "old-dual-free.jfd");
-   assert(arc_jfd_store_load(&old, "save", true, false, 1u, &reason));
+   assert(arc_jfd_store_load(&old, "save", ARC_JFD_WRITE_AS_IMAGED, true, false, 1u, &reason));
    old.overlay->map_enabled = true; arc_jfd_map_prepare(&old);
    assert(old.overlay->generation == 1u && !old.overlay->probe_mask[0] &&
           blank_at(&old, 0u, 3u) && !blank_at(&old, 0u, 4u));
@@ -374,7 +374,7 @@ static void test_allocation_maps(const char *root)
    clear_files();
 
    ArcJfdImage newer = allocation_fixture(root, "new-free.jfd");
-   assert(arc_jfd_store_load(&newer, "save", true, false, 1u, &reason) &&
+   assert(arc_jfd_store_load(&newer, "save", ARC_JFD_WRITE_AS_IMAGED, true, false, 1u, &reason) &&
           newer.overlay->writable);
    newer.overlay->map_enabled = true; arc_jfd_map_prepare(&newer);
    assert(newer.overlay->map_kind == 2u && newer.overlay->map_valid &&
@@ -396,7 +396,7 @@ static void test_allocation_maps(const char *root)
           newer.overlay->generation == 2u && blank_at(&newer, 1u, 0u));
    arc_jfd_free(&newer);
    newer = allocation_fixture(root, "new-free.jfd");
-   assert(arc_jfd_store_load(&newer, "save", true, false, 1u, &reason));
+   assert(arc_jfd_store_load(&newer, "save", ARC_JFD_WRITE_AS_IMAGED, true, false, 1u, &reason));
    newer.overlay->map_enabled = true; arc_jfd_map_prepare(&newer);
    assert(newer.overlay->generation == 2u && blank_at(&newer, 1u, 0u));
    uint8_t original_new[1024];
@@ -407,7 +407,7 @@ static void test_allocation_maps(const char *root)
           blank_at(&newer, 1u, 0u)); /* Opposite update order. */
    arc_jfd_free(&newer);
    newer = allocation_fixture(root, "new-free.jfd");
-   assert(arc_jfd_store_load(&newer, "save", true, false, 1u, &reason));
+   assert(arc_jfd_store_load(&newer, "save", ARC_JFD_WRITE_AS_IMAGED, true, false, 1u, &reason));
    newer.overlay->map_enabled = true; arc_jfd_map_prepare(&newer);
    assert(newer.overlay->generation == 4u && blank_at(&newer, 1u, 0u));
    assert(newer.overlay->commit(&newer, 1u, map) &&
@@ -416,7 +416,7 @@ static void test_allocation_maps(const char *root)
    clear_files();
 
    newer = allocation_fixture(root, "new-bad-primary.jfd");
-   assert(arc_jfd_store_load(&newer, "save", true, false, 1u, &reason));
+   assert(arc_jfd_store_load(&newer, "save", ARC_JFD_WRITE_AS_IMAGED, true, false, 1u, &reason));
    newer.overlay->map_enabled = true; arc_jfd_map_prepare(&newer);
    assert(newer.overlay->map_kind == 2u && newer.overlay->map_valid &&
           !blank_at(&newer, 1u, 0u));
@@ -426,7 +426,7 @@ static void test_allocation_maps(const char *root)
    {
       newer = allocation_fixture(root, variant ?
          "new-bad-primary-allocated.jfd" : "new-disagree.jfd");
-      assert(arc_jfd_store_load(&newer, "save", true, false, 1u, &reason));
+      assert(arc_jfd_store_load(&newer, "save", ARC_JFD_WRITE_AS_IMAGED, true, false, 1u, &reason));
       newer.overlay->map_enabled = true; arc_jfd_map_prepare(&newer);
       assert(newer.overlay->map_kind == 2u && newer.overlay->map_valid &&
              blank_at(&newer, 1u, 0u) && newer.overlay->generation == 0u);
@@ -434,7 +434,7 @@ static void test_allocation_maps(const char *root)
       clear_files();
    }
    newer = allocation_fixture(root, "new-free.jfd");
-   assert(arc_jfd_store_load(&newer, "save", true, false, 1u, &reason));
+   assert(arc_jfd_store_load(&newer, "save", ARC_JFD_WRITE_AS_IMAGED, true, false, 1u, &reason));
    newer.overlay->map_enabled = true; arc_jfd_map_prepare(&newer);
    uint8_t invalid_copy[1024];
    memcpy(invalid_copy, newer.decoded + newer.sectors[0].data_offset, 1024u);
@@ -460,7 +460,7 @@ static void test_allocation_maps(const char *root)
    {
       ArcJfdImage invalid = allocation_fixture(root, kind ?
          "new-both-bad.jfd" : "old-no-map.jfd");
-      assert(arc_jfd_store_load(&invalid, "save", true, false, 1u,
+      assert(arc_jfd_store_load(&invalid, "save", ARC_JFD_WRITE_AS_IMAGED, true, false, 1u,
                                 &reason) && invalid.overlay->writable);
       invalid.overlay->map_enabled = true;
       invalid.overlay->log_map_unavailable = map_unavailable_log;
@@ -485,7 +485,7 @@ static void test_allocation_maps(const char *root)
    bounded_map[510] = 0u;
    bounded_map[255] = old_map_checksum(bounded_map);
    bounded_map[511] = old_map_checksum(bounded_map + 256u);
-   assert(arc_jfd_store_load(&bounded, "save", true, false, 1u, &reason));
+   assert(arc_jfd_store_load(&bounded, "save", ARC_JFD_WRITE_AS_IMAGED, true, false, 1u, &reason));
    bounded.overlay->map_enabled = true; arc_jfd_map_prepare(&bounded);
    assert(bounded.overlay->map_valid && blank_at(&bounded, 0u, 1u) &&
           !blank_at(&bounded, 0u, 3u));
@@ -493,7 +493,7 @@ static void test_allocation_maps(const char *root)
    clear_files();
 
    ArcJfdImage damaged = allocation_fixture(root, "old-allocated.jfd");
-   assert(arc_jfd_store_load(&damaged, "save", true, false, 1u, &reason));
+   assert(arc_jfd_store_load(&damaged, "save", ARC_JFD_WRITE_AS_IMAGED, true, false, 1u, &reason));
    damaged.overlay->map_enabled = true; arc_jfd_map_prepare(&damaged);
    assert(blank_at(&damaged, 0u, 3u));
    uint8_t unchanged_map[1024];
@@ -505,7 +505,7 @@ static void test_allocation_maps(const char *root)
    assert(files[damaged_slot].exists);
    files[damaged_slot].bytes[0] ^= 1u;
    damaged = allocation_fixture(root, "old-allocated.jfd");
-   assert(arc_jfd_store_load(&damaged, "save", true, false, 1u, &reason) &&
+   assert(arc_jfd_store_load(&damaged, "save", ARC_JFD_WRITE_AS_IMAGED, true, false, 1u, &reason) &&
           damaged.overlay->damaged && !damaged.overlay->writable);
    damaged.overlay->map_enabled = damaged.overlay->writable;
    arc_jfd_map_prepare(&damaged);
@@ -514,7 +514,7 @@ static void test_allocation_maps(const char *root)
    clear_files();
 
    old = allocation_fixture(root, "old-allocated.jfd");
-   assert(arc_jfd_store_load(&old, "save", true, false, 1u, &reason));
+   assert(arc_jfd_store_load(&old, "save", ARC_JFD_WRITE_AS_IMAGED, true, false, 1u, &reason));
    old.overlay->map_enabled = true; arc_jfd_map_prepare(&old);
    assert(blank_at(&old, 0u, 1u) && blank_at(&old, 0u, 3u));
    uint8_t corrupt_effective[1024], base_map[1024];
@@ -545,7 +545,7 @@ static void test_new_map_metadata(const char *root)
    {
       clear_files();
       ArcJfdImage image = allocation_fixture(root, "new-allocated.jfd");
-      assert(arc_jfd_store_load(&image, "save", true, false, 1u, &reason));
+      assert(arc_jfd_store_load(&image, "save", ARC_JFD_WRITE_AS_IMAGED, true, false, 1u, &reason));
       image.overlay->map_enabled = true; arc_jfd_map_prepare(&image);
       assert(image.overlay->map_valid && blank_at(&image, 0u, 3u));
       for (unsigned copy = 0u; copy < 2u; ++copy)
@@ -564,7 +564,7 @@ static void test_new_map_metadata(const char *root)
       assert(image.overlay->generation == 2u);
       arc_jfd_free(&image);
       image = allocation_fixture(root, "new-allocated.jfd");
-      assert(arc_jfd_store_load(&image, "save", true, false, 1u, &reason));
+      assert(arc_jfd_store_load(&image, "save", ARC_JFD_WRITE_AS_IMAGED, true, false, 1u, &reason));
       image.overlay->map_enabled = true; arc_jfd_map_prepare(&image);
       assert(image.overlay->generation == 2u && image.overlay->map_valid &&
              blank_at(&image, 0u, 3u));
@@ -575,7 +575,7 @@ static void test_new_map_metadata(const char *root)
       {
          ArcJfdImage fresh = allocation_fixture(root, "new-allocated.jfd");
          const char *fresh_reason = NULL;
-         bool okay = arc_jfd_store_load(&fresh, "save", true, false, 1u,
+         bool okay = arc_jfd_store_load(&fresh, "save", ARC_JFD_WRITE_AS_IMAGED, true, false, 1u,
                                         &fresh_reason);
          if (okay)
          {
@@ -594,7 +594,7 @@ static void test_new_map_metadata(const char *root)
    }
    clear_files();
    ArcJfdImage image = allocation_fixture(root, "new-free.jfd");
-   assert(arc_jfd_store_load(&image, "save", true, false, 1u, &reason));
+   assert(arc_jfd_store_load(&image, "save", ARC_JFD_WRITE_AS_IMAGED, true, false, 1u, &reason));
    image.overlay->map_enabled = true; arc_jfd_map_prepare(&image);
    image.overlay->probe_mask[1] = 1u;
    uint8_t claim[1024];
@@ -613,7 +613,7 @@ static void test_map_inactive_transitions(const char *root)
    const char *reason = NULL;
    clear_files();
    ArcJfdImage image = allocation_fixture(root, "old-free.jfd");
-   assert(arc_jfd_store_load(&image, "save", true, false, 1u, &reason));
+   assert(arc_jfd_store_load(&image, "save", ARC_JFD_WRITE_AS_IMAGED, true, false, 1u, &reason));
    image.overlay->map_enabled = true; arc_jfd_map_prepare(&image);
    assert(image.overlay->map_valid);
    image.overlay->probe_mask[0] = 1u << 3u;
@@ -640,14 +640,14 @@ static void test_map_bounds(const char *root)
    const char *reason = NULL;
    clear_files();
    ArcJfdImage partial = allocation_fixture(root, "old-partial-slot.jfd");
-   assert(arc_jfd_store_load(&partial, "save", true, false, 1u, &reason));
+   assert(arc_jfd_store_load(&partial, "save", ARC_JFD_WRITE_AS_IMAGED, true, false, 1u, &reason));
    partial.overlay->map_enabled = true; arc_jfd_map_prepare(&partial);
    assert(partial.overlay->map_valid && blank_at(&partial, 0u, 3u));
    arc_jfd_free(&partial);
    clear_files();
 
    ArcJfdImage tail = allocation_fixture(root, "new-tail-defect.jfd");
-   assert(arc_jfd_store_load(&tail, "save", true, false, 1u, &reason));
+   assert(arc_jfd_store_load(&tail, "save", ARC_JFD_WRITE_AS_IMAGED, true, false, 1u, &reason));
    tail.overlay->map_enabled = true; arc_jfd_map_prepare(&tail);
    assert(tail.overlay->map_valid && !blank_at(&tail, 1u, 0u));
    uint8_t invalid_backup[1024], overbound[1024];
@@ -693,7 +693,7 @@ static void test_primary_map_scope(const char *root)
 static ArcJfdImage load(bool writable)
 {
    ArcJfdImage image = image_new(); const char *reason = NULL;
-   assert(arc_jfd_store_load(&image, "save", writable, true, 1u, &reason));
+   assert(arc_jfd_store_load(&image, "save", ARC_JFD_WRITE_AS_IMAGED, writable, true, 1u, &reason));
    assert(reason);
    return image;
 }
@@ -733,7 +733,7 @@ static void test_file_data_store_classes(const char *root)
    clear_files();
    ArcJfdImage image = file_data_fixture(root, "d-terminal-rw.jfd");
    const char *reason = NULL;
-   assert(arc_jfd_store_load(&image, "save", true, false, 1u, &reason) &&
+   assert(arc_jfd_store_load(&image, "save", ARC_JFD_WRITE_AS_IMAGED, true, false, 1u, &reason) &&
           image.overlay->writable);
    arc_jfd_file_data_prepare(&image, true, false, "writable");
    assert(!image.file_data.presented &&
@@ -747,7 +747,7 @@ static void test_file_data_store_classes(const char *root)
    newest->bytes[0] ^= 1u; /* Valid generation 1 survives damaged newest. */
    arc_jfd_free(&image);
    image = file_data_fixture(root, "d-terminal-rw.jfd");
-   assert(arc_jfd_store_load(&image, "save", true, false, 1u, &reason) &&
+   assert(arc_jfd_store_load(&image, "save", ARC_JFD_WRITE_AS_IMAGED, true, false, 1u, &reason) &&
           image.overlay->damaged && !image.overlay->writable &&
           image.overlay->visible && image.overlay->generation == 1u &&
           image.overlay->records == 1u &&
@@ -757,7 +757,7 @@ static void test_file_data_store_classes(const char *root)
           !strcmp(image.file_data.reason, "damaged-store"));
    arc_jfd_free(&image);
    image = file_data_fixture(root, "d-terminal-rw.jfd");
-   assert(arc_jfd_store_load(&image, "save", false, false, 1u, &reason) &&
+   assert(arc_jfd_store_load(&image, "save", ARC_JFD_WRITE_AS_IMAGED, false, false, 1u, &reason) &&
           image.overlay->damaged && !image.overlay->visible &&
           image.overlay->generation == 1u && image.overlay->records == 1u);
    arc_jfd_file_data_prepare(&image, true, false, "damaged-store");
@@ -766,14 +766,14 @@ static void test_file_data_store_classes(const char *root)
 
    clear_files();
    image = file_data_fixture(root, "d-terminal-rw.jfd");
-   assert(arc_jfd_store_load(&image, "save", true, false, 1u, &reason) &&
+   assert(arc_jfd_store_load(&image, "save", ARC_JFD_WRITE_AS_IMAGED, true, false, 1u, &reason) &&
           image.overlay->commit(&image, 4u, data));
    File *slot_one = files[0].exists ? &files[0] : &files[1];
    assert(slot_one->exists);
    slot_one->bytes[0] ^= 1u;
    arc_jfd_free(&image);
    image = file_data_fixture(root, "d-terminal-rw.jfd");
-   assert(arc_jfd_store_load(&image, "save", true, false, 1u, &reason) &&
+   assert(arc_jfd_store_load(&image, "save", ARC_JFD_WRITE_AS_IMAGED, true, false, 1u, &reason) &&
           image.overlay->damaged && !image.overlay->generation &&
           !image.overlay->records && !image.overlay->writable);
    arc_jfd_file_data_prepare(&image, true, false, "damaged-store");
@@ -782,7 +782,7 @@ static void test_file_data_store_classes(const char *root)
 
    clear_files();
    image = file_data_fixture(root, "d-terminal-rw.jfd");
-   assert(arc_jfd_store_load(&image, "save", true, false, 1u, &reason) &&
+   assert(arc_jfd_store_load(&image, "save", ARC_JFD_WRITE_AS_IMAGED, true, false, 1u, &reason) &&
           image.overlay->commit(&image, 4u, data));
    File *slot = files[0].exists ? &files[0] : &files[1];
    assert(slot->exists && slot->size >= 84u);
@@ -793,12 +793,12 @@ static void test_file_data_store_classes(const char *root)
    fix_checksum(slot);
    arc_jfd_free(&image);
    image = file_data_fixture(root, "d-terminal-rw.jfd");
-   assert(arc_jfd_store_load(&image, "save", true, false, 1u, &reason) &&
+   assert(arc_jfd_store_load(&image, "save", ARC_JFD_WRITE_AS_IMAGED, true, false, 1u, &reason) &&
           !image.overlay->damaged && image.overlay->writable &&
           image.overlay->generation == 1u && !image.overlay->records);
    arc_jfd_free(&image);
    image = file_data_fixture(root, "d-terminal-rw.jfd");
-   assert(arc_jfd_store_load(&image, "save", false, false, 1u, &reason) &&
+   assert(arc_jfd_store_load(&image, "save", ARC_JFD_WRITE_AS_IMAGED, false, false, 1u, &reason) &&
           !image.overlay->damaged && !image.overlay->writable &&
           image.overlay->generation == 1u && !image.overlay->records);
    arc_jfd_file_data_prepare(&image, true, false, "disk-writes-off");
@@ -807,7 +807,7 @@ static void test_file_data_store_classes(const char *root)
 
    clear_files();
    image = file_data_fixture(root, "d-terminal-rw.jfd");
-   assert(arc_jfd_store_load(&image, "save", true, false, 1u, &reason) &&
+   assert(arc_jfd_store_load(&image, "save", ARC_JFD_WRITE_AS_IMAGED, true, false, 1u, &reason) &&
           image.overlay->writable);
    arc_jfd_file_data_prepare(&image, true, false, "writable");
    assert(!image.file_data.presented);
@@ -822,7 +822,7 @@ static void test_file_data_store_classes(const char *root)
    clear_files(); fault = NO_FAULT;
 
    image = allocation_fixture(root, "old-free.jfd");
-   assert(arc_jfd_store_load(&image, "save", true, false, 1u, &reason));
+   assert(arc_jfd_store_load(&image, "save", ARC_JFD_WRITE_AS_IMAGED, true, false, 1u, &reason));
    image.overlay->map_enabled = true;
    arc_jfd_map_prepare(&image);
    arc_jfd_file_data_prepare(&image, true, false, "writable");
@@ -840,7 +840,7 @@ static void test_file_data_store_classes(const char *root)
    memcpy(decoded, image.decoded, image.decoded_size);
    ArcDigest before = arc_digest(image.decoded, image.decoded_size);
    ArcJfdImage writable_key = file_data_fixture(root, "d-terminal-rw.jfd");
-   assert(arc_jfd_store_load(&writable_key, "save", true, false, 1u, &reason));
+   assert(arc_jfd_store_load(&writable_key, "save", ARC_JFD_WRITE_AS_IMAGED, true, false, 1u, &reason));
    ArcDigest key_digest = arc_digest(writable_key.decoded,
                                      writable_key.decoded_size);
    uint8_t *key_decoded = malloc(writable_key.decoded_size);
@@ -906,7 +906,7 @@ static void expect_creation_layout(const char *root, const char *name,
    ArcJfdImage image = creation_fixture(root, name);
    const char *reason = NULL;
    unsigned probes = directory_probes;
-   assert(arc_jfd_store_load(&image, "save", true, false, 1u, &reason));
+   assert(arc_jfd_store_load(&image, "save", ARC_JFD_WRITE_AS_IMAGED, true, false, 1u, &reason));
    if (image.overlay->writable != writable)
       fprintf(stderr, "%s: writable=%d reason=%s\n",
               name, image.overlay->writable, reason);
@@ -958,7 +958,7 @@ static void test_quarantine_gate(const char *root)
    }
    assert(compatible == 80u && hidden == 80u);
    const char *tie_reason = NULL;
-   assert(arc_jfd_store_load(&tie, "save", true, false, 1u, &tie_reason) &&
+   assert(arc_jfd_store_load(&tie, "save", ARC_JFD_WRITE_AS_IMAGED, true, false, 1u, &tie_reason) &&
           tie.overlay->writable && !tie.overlay->pdd5_profile &&
           tie.overlay->layout_supported && tie.overlay->creation_capacity == 0u &&
           !strcmp(tie_reason, "rw-flag"));
@@ -982,7 +982,7 @@ static void test_quarantine_gate(const char *root)
       unsigned side = i == 2u ? 1u : 159u;
       image.tracks[side].quarantine_reason = "size-code";
       const char *reason = NULL;
-      assert(arc_jfd_store_load(&image, "save", true, false, 1u, &reason));
+      assert(arc_jfd_store_load(&image, "save", ARC_JFD_WRITE_AS_IMAGED, true, false, 1u, &reason));
       assert(image.overlay->writable == cases[i].writable &&
              !strcmp(reason, cases[i].writable ? "rw-flag" :
                                                     "layout-unsupported"));
@@ -1012,7 +1012,7 @@ static void test_quarantine_gate(const char *root)
 #endif
          ArcJfdImage reloaded = creation_fixture(root, cases[i].name);
          reloaded.tracks[side].quarantine_reason = "size-code";
-         bool persisted = arc_jfd_store_load(&reloaded, "save", true, false,
+         bool persisted = arc_jfd_store_load(&reloaded, "save", ARC_JFD_WRITE_AS_IMAGED, true, false,
                                               1u, &reason) &&
                           reloaded.overlay->writable && reloaded.overlay->data[0] &&
                           reloaded.overlay->data[0][0] == 0x57u;
@@ -1033,7 +1033,7 @@ static void test_quarantine_gate(const char *root)
    unavailable.tracks[159].quarantine_reason = "size-code";
    unavailable.decoded[unavailable.sectors[0].data_offset + 255u] ^= 1u;
    const char *proof_reason = NULL;
-   assert(arc_jfd_store_load(&unavailable, "save", true, false, 1u,
+   assert(arc_jfd_store_load(&unavailable, "save", ARC_JFD_WRITE_AS_IMAGED, true, false, 1u,
                              &proof_reason) &&
           !unavailable.overlay->writable &&
           !strcmp(proof_reason, "layout-unsupported"));
@@ -1042,7 +1042,7 @@ static void test_quarantine_gate(const char *root)
    ArcJfdImage outside = creation_fixture(root, "partial-untimed.jfd");
    outside.tracks[160].quarantine_reason = "size-code";
    const char *reason = NULL;
-   assert(arc_jfd_store_load(&outside, "save", true, false, 1u, &reason) &&
+   assert(arc_jfd_store_load(&outside, "save", ARC_JFD_WRITE_AS_IMAGED, true, false, 1u, &reason) &&
           outside.overlay->writable && outside.overlay->pdd5_profile);
    ArcJfdView view;
    assert(!arc_jfd_effective_sector(&outside, 160u, 0u, true, &view));
@@ -1059,7 +1059,7 @@ static void test_quarantine_gate(const char *root)
    alias.sectors[14].data_offset = alias.sectors[5].data_offset - 1u;
    assert(!arc_jfd_sector_write_eligible(&alias, 5u) &&
           arc_jfd_sector_write_eligible(&alias, 0u));
-   assert(arc_jfd_store_load(&alias, "save", true, false, 1u, &reason));
+   assert(arc_jfd_store_load(&alias, "save", ARC_JFD_WRITE_AS_IMAGED, true, false, 1u, &reason));
    assert(!alias.overlay->eligible[14] && !alias.overlay->eligible[5] &&
           alias.overlay->eligible[0]);
    arc_jfd_free(&alias);
@@ -1084,7 +1084,7 @@ static void test_quarantine_gate(const char *root)
    alias.tracks[160].sector_count = 1u;
    alias.tracks[160].quarantine_reason = "size-code";
    assert(!arc_jfd_sector_write_eligible(&alias, 5u));
-   assert(arc_jfd_store_load(&alias, "save", true, false, 1u, &reason) &&
+   assert(arc_jfd_store_load(&alias, "save", ARC_JFD_WRITE_AS_IMAGED, true, false, 1u, &reason) &&
           !alias.overlay->eligible[5] &&
           !alias.overlay->eligible[15] && alias.overlay->eligible[0]);
    arc_jfd_free(&alias);
@@ -1092,7 +1092,7 @@ static void test_quarantine_gate(const char *root)
 
    ArcJfdImage snapshot = image_new();
    const char *snapshot_reason = NULL;
-   assert(arc_jfd_store_load(&snapshot, "save", true, false, 1u,
+   assert(arc_jfd_store_load(&snapshot, "save", ARC_JFD_WRITE_AS_IMAGED, true, false, 1u,
                              &snapshot_reason) && snapshot.overlay->writable);
    uint8_t payload[1024]; memset(payload, 0x6du, sizeof(payload));
    assert(snapshot.overlay->commit(&snapshot, 14u, payload));
@@ -1104,7 +1104,7 @@ static void test_quarantine_gate(const char *root)
    arc_jfd_free(&snapshot);
    snapshot = image_new();
    snapshot.tracks[2].quarantine_reason = "size-code";
-   assert(arc_jfd_store_load(&snapshot, "save", true, false, 1u,
+   assert(arc_jfd_store_load(&snapshot, "save", ARC_JFD_WRITE_AS_IMAGED, true, false, 1u,
                              &snapshot_reason) &&
           snapshot.overlay->damaged && !snapshot.overlay->writable &&
           !snapshot.overlay->eligible[14] &&
@@ -1116,6 +1116,7 @@ static void test_quarantine_gate(const char *root)
    commits = 0u;
 }
 #include "jfd_guard_store_tests.inc"
+#include "jfd_tab_store_tests.inc"
 
 int main(int argc, char **argv)
 {
@@ -1123,6 +1124,7 @@ int main(int argc, char **argv)
    arc_io_set_vfs(&vfs);
    if (argc == 3)
    {
+      if (!strcmp(argv[2], "tab")) { test_tab_store(argv[1]); return 0; }
       if (!strcmp(argv[2], "guard")) { test_guard_store(argv[1]); return 0; }
       if (!strcmp(argv[2], "file-data"))
       {
@@ -1283,7 +1285,7 @@ int main(int argc, char **argv)
       excluded_image.flags = excluded[i].flags;
       const char *excluded_reason = NULL;
       unsigned before = directory_probes;
-      assert(arc_jfd_store_load(&excluded_image, NULL, true, true, 1u,
+      assert(arc_jfd_store_load(&excluded_image, NULL, ARC_JFD_WRITE_AS_IMAGED, true, true, 1u,
                                 &excluded_reason));
       assert(!strcmp(excluded_reason, excluded[i].reason) &&
              directory_probes == before && excluded_image.overlay &&
@@ -1293,13 +1295,13 @@ int main(int argc, char **argv)
    ArcJfdImage shared = image_new();
    shared.sectors[1].data_offset = shared.sectors[0].data_offset + 64u;
    const char *shared_reason = NULL;
-   assert(arc_jfd_store_load(&shared, "save", true, false, 1u, &shared_reason));
+   assert(arc_jfd_store_load(&shared, "save", ARC_JFD_WRITE_AS_IMAGED, true, false, 1u, &shared_reason));
    assert(!shared.overlay->eligible[0] && !shared.overlay->eligible[1]);
    arc_jfd_free(&shared);
    ArcJfdImage duplicate = image_new();
    duplicate.sectors[1].id = duplicate.sectors[0].id;
    const char *duplicate_reason = NULL;
-   assert(arc_jfd_store_load(&duplicate, "save", true, false, 1u,
+   assert(arc_jfd_store_load(&duplicate, "save", ARC_JFD_WRITE_AS_IMAGED, true, false, 1u,
                              &duplicate_reason));
    assert(!duplicate.overlay->eligible[0] && !duplicate.overlay->eligible[1]);
    arc_jfd_free(&duplicate);
@@ -1328,7 +1330,7 @@ int main(int argc, char **argv)
    }
    const char *dense_reason = NULL;
    clock_t started = clock();
-   assert(arc_jfd_store_load(&dense, "save", true, false, 1u, &dense_reason));
+   assert(arc_jfd_store_load(&dense, "save", ARC_JFD_WRITE_AS_IMAGED, true, false, 1u, &dense_reason));
    double cpu_seconds = (double)(clock() - started) / CLOCKS_PER_SEC;
    assert(cpu_seconds < 2.0 && dense.overlay->eligible[0] &&
           dense.overlay->eligible[dense.sector_count - 1u]);
@@ -1351,7 +1353,7 @@ int main(int argc, char **argv)
          default: neighbour.sectors[extra].id = 0u; break;
       }
       const char *why = NULL;
-      assert(arc_jfd_store_load(&neighbour, "save", true, false, 1u, &why));
+      assert(arc_jfd_store_load(&neighbour, "save", ARC_JFD_WRITE_AS_IMAGED, true, false, 1u, &why));
       /* Shared payload with ID 4 and duplicate ID 0 leave a P-DD5 ID
        * non-writable; the captured map here cannot justify that gap. */
       if (variant >= 4u)
@@ -1394,7 +1396,7 @@ int main(int argc, char **argv)
       ArcJfdImage sample = creation_fixture(argv[1], layouts[i].name);
       const char *why = NULL;
       unsigned probes = directory_probes;
-      assert(arc_jfd_store_load(&sample, "save", true, false, 1u, &why));
+      assert(arc_jfd_store_load(&sample, "save", ARC_JFD_WRITE_AS_IMAGED, true, false, 1u, &why));
       if (sample.overlay->writable != layouts[i].writable ||
           strcmp(why, layouts[i].reason))
          fprintf(stderr, "%s: writable=%d reason=%s\n",
@@ -1444,7 +1446,7 @@ int main(int argc, char **argv)
    ArcJfdImage no_save_layout = creation_fixture(argv[1], "nonmatching.jfd");
    const char *no_save_reason = NULL;
    unsigned no_save_probes = directory_probes;
-   assert(arc_jfd_store_load(&no_save_layout, NULL, true, false, 1u,
+   assert(arc_jfd_store_load(&no_save_layout, NULL, ARC_JFD_WRITE_AS_IMAGED, true, false, 1u,
                              &no_save_reason) &&
           !strcmp(no_save_reason, "layout-unsupported") &&
           no_save_layout.overlay && !no_save_layout.overlay->writable &&
@@ -1453,7 +1455,7 @@ int main(int argc, char **argv)
    clear_files();
    ArcJfdImage outside = creation_fixture(argv[1], "irregular-allocated.jfd");
    const char *outside_reason = NULL;
-   assert(arc_jfd_store_load(&outside, "save", true, false, 1u,
+   assert(arc_jfd_store_load(&outside, "save", ARC_JFD_WRITE_AS_IMAGED, true, false, 1u,
                              &outside_reason) && outside.overlay->writable &&
           outside.overlay->creation_mask[159] == 0u);
    uint8_t outside_pattern[1024]; memset(outside_pattern, 0x59, 1024u);
@@ -1462,7 +1464,7 @@ int main(int argc, char **argv)
                                           outside_pattern));
    arc_jfd_free(&outside);
    outside = creation_fixture(argv[1], "irregular-allocated.jfd");
-   assert(arc_jfd_store_load(&outside, "save", true, false, 1u,
+   assert(arc_jfd_store_load(&outside, "save", ARC_JFD_WRITE_AS_IMAGED, true, false, 1u,
                              &outside_reason) &&
           outside.overlay->data[0][0] == 0x59u &&
           outside.overlay->created[2][1][0] == 0x59u &&
@@ -1476,7 +1478,7 @@ int main(int argc, char **argv)
    ArcJfdImage launch_full = creation_fixture(argv[1], "launch-full.jfd");
    ArcJfdImage launch_partial = creation_fixture(argv[1], "launch-partial.jfd");
    const char *launch_reason = NULL;
-   assert(arc_jfd_store_load(&launch_partial, "save", true, false, 1u,
+   assert(arc_jfd_store_load(&launch_partial, "save", ARC_JFD_WRITE_AS_IMAGED, true, false, 1u,
                              &launch_reason));
    ArcLaunchDiscovery discovery;
    assert(arc_launch_discover(NULL, 0u, NULL, &launch_partial, &discovery) &&
@@ -1487,13 +1489,13 @@ int main(int argc, char **argv)
           discovery.readable && discovery.application_count == 1u);
    arc_jfd_free(&launch_partial);
    launch_partial = creation_fixture(argv[1], "launch-partial.jfd");
-   assert(arc_jfd_store_load(&launch_partial, "save", true, false, 1u,
+   assert(arc_jfd_store_load(&launch_partial, "save", ARC_JFD_WRITE_AS_IMAGED, true, false, 1u,
                              &launch_reason) &&
           arc_launch_discover(NULL, 0u, NULL, &launch_partial, &discovery) &&
           discovery.application_count == 1u);
    arc_jfd_free(&launch_partial);
    launch_partial = creation_fixture(argv[1], "launch-partial.jfd");
-   assert(arc_jfd_store_load(&launch_partial, "save", false, false, 1u,
+   assert(arc_jfd_store_load(&launch_partial, "save", ARC_JFD_WRITE_AS_IMAGED, false, false, 1u,
                              &launch_reason) &&
           arc_launch_discover(NULL, 0u, NULL, &launch_partial, &discovery) &&
           !discovery.readable);
@@ -1502,7 +1504,7 @@ int main(int argc, char **argv)
    clear_files();
    ArcJfdImage created = creation_fixture(argv[1], "partial-untimed.jfd");
    const char *creation_reason = NULL;
-   assert(arc_jfd_store_load(&created, "save", true, false, 1u,
+   assert(arc_jfd_store_load(&created, "save", ARC_JFD_WRITE_AS_IMAGED, true, false, 1u,
                              &creation_reason));
    ArcJfdView view;
    uint64_t blank_generation = created.overlay->generation;
@@ -1535,7 +1537,7 @@ int main(int argc, char **argv)
    memcpy(first_order, files[0].bytes, first_order_size);
    arc_jfd_free(&created);
    created = creation_fixture(argv[1], "partial-untimed.jfd");
-   assert(arc_jfd_store_load(&created, "save", true, false, 1u,
+   assert(arc_jfd_store_load(&created, "save", ARC_JFD_WRITE_AS_IMAGED, true, false, 1u,
                              &creation_reason) &&
           created.overlay->created[1][1][0] == 0x15u &&
           created.overlay->created[1][3][0] == 0x6au);
@@ -1550,7 +1552,7 @@ int main(int argc, char **argv)
           view.data[0] == 0x6au);
    arc_jfd_free(&created);
    created = creation_fixture(argv[1], "partial-untimed.jfd");
-   assert(arc_jfd_store_load(&created, "save", false, false, 1u,
+   assert(arc_jfd_store_load(&created, "save", ARC_JFD_WRITE_AS_IMAGED, false, false, 1u,
                              &creation_reason) &&
           !created.overlay->writable && !created.overlay->visible &&
           !created.overlay->map_enabled &&
@@ -1559,7 +1561,7 @@ int main(int argc, char **argv)
    arc_jfd_free(&created);
    clear_files();
    created = creation_fixture(argv[1], "partial-untimed.jfd");
-   assert(arc_jfd_store_load(&created, "save", true, false, 1u,
+   assert(arc_jfd_store_load(&created, "save", ARC_JFD_WRITE_AS_IMAGED, true, false, 1u,
                              &creation_reason));
    assert(created.overlay->commit_created(&created, 1u, 1u, pattern));
    memset(pattern, 0x6au, sizeof(pattern));
@@ -1582,7 +1584,7 @@ int main(int argc, char **argv)
       fix_checksum(&files[0]);
       ArcJfdImage fuzzed = creation_fixture(argv[1], "partial-untimed.jfd");
       const char *fuzz_reason = NULL;
-      assert(arc_jfd_store_load(&fuzzed, "save", true, false, 1u,
+      assert(arc_jfd_store_load(&fuzzed, "save", ARC_JFD_WRITE_AS_IMAGED, true, false, 1u,
                                 &fuzz_reason));
       arc_jfd_free(&fuzzed);
       memcpy(files[0].bytes, created_baseline, created_size);
@@ -1590,7 +1592,7 @@ int main(int argc, char **argv)
    files[0].bytes[76u] = 0xffu; fix_checksum(&files[0]);
    ArcJfdImage overbound = creation_fixture(argv[1], "partial-untimed.jfd");
    const char *bound_reason = NULL;
-   assert(arc_jfd_store_load(&overbound, "save", true, false, 1u,
+   assert(arc_jfd_store_load(&overbound, "save", ARC_JFD_WRITE_AS_IMAGED, true, false, 1u,
                              &bound_reason) && overbound.overlay->damaged &&
           !overbound.overlay->writable);
    arc_jfd_free(&overbound);
@@ -1608,7 +1610,7 @@ int main(int argc, char **argv)
           view.data[0] == 0x15u);
    arc_jfd_free(&created);
    created = creation_fixture(argv[1], "partial-untimed.jfd");
-   assert(arc_jfd_store_load(&created, "save", true, false, 1u,
+   assert(arc_jfd_store_load(&created, "save", ARC_JFD_WRITE_AS_IMAGED, true, false, 1u,
                              &creation_reason) &&
           created.overlay->created[1][1][0] == 0x15u);
    arc_jfd_free(&created);
@@ -1617,7 +1619,7 @@ int main(int argc, char **argv)
    uint8_t saved_kind = files[0].bytes[82u];
    files[0].bytes[82u] = 2u; fix_checksum(&files[0]);
    created = creation_fixture(argv[1], "partial-untimed.jfd");
-   assert(arc_jfd_store_load(&created, "save", true, false, 1u,
+   assert(arc_jfd_store_load(&created, "save", ARC_JFD_WRITE_AS_IMAGED, true, false, 1u,
                              &creation_reason) && created.overlay->damaged &&
           !created.overlay->map_enabled &&
           !arc_jfd_effective_sector(&created, 1u, 3u, false, &view));
@@ -1625,7 +1627,7 @@ int main(int argc, char **argv)
    files[0].bytes[82u] = saved_kind; fix_checksum(&files[0]);
    files[0].bytes[4u] = 1u; fix_checksum(&files[0]);
    created = creation_fixture(argv[1], "partial-untimed.jfd");
-   assert(arc_jfd_store_load(&created, "save", true, false, 1u,
+   assert(arc_jfd_store_load(&created, "save", ARC_JFD_WRITE_AS_IMAGED, true, false, 1u,
                              &creation_reason) && created.overlay->damaged &&
           !created.overlay->writable);
    arc_jfd_free(&created);
@@ -1633,7 +1635,7 @@ int main(int argc, char **argv)
    /* A first created record cannot become visible if its publish rename
     * fails. The next load sees no generation at all. */
    created = creation_fixture(argv[1], "partial-untimed.jfd");
-   assert(arc_jfd_store_load(&created, "save", true, false, 1u,
+   assert(arc_jfd_store_load(&created, "save", ARC_JFD_WRITE_AS_IMAGED, true, false, 1u,
                              &creation_reason));
    created.overlay->map_enabled = true;
    created.overlay->map_valid = true;
@@ -1647,7 +1649,7 @@ int main(int argc, char **argv)
    arc_jfd_free(&created);
    clear_files();
    created = creation_fixture(argv[1], "partial-untimed.jfd");
-   assert(arc_jfd_store_load(&created, "save", true, false, 1u,
+   assert(arc_jfd_store_load(&created, "save", ARC_JFD_WRITE_AS_IMAGED, true, false, 1u,
                              &creation_reason) &&
           created.overlay->generation == 0u &&
           !created.overlay->created[1][1]);

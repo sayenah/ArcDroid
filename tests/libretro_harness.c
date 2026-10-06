@@ -245,6 +245,7 @@ static bool hd_guest_logging;
 static const char *option_launch = "auto";
 static const char *option_launch_chooser = "remember";
 static const char *option_jfd_boot = "auto";
+static const char *option_jfd_tab = "as-imaged";
 static const char *option_adffs_package = "verified";
 static const char *stale_input_option_value = "Auto";
 static unsigned stale_input_option_queries;
@@ -282,6 +283,7 @@ static unsigned jfd_damaged_notice_calls;
 static unsigned jfd_off_notice_calls;
 static unsigned jfd_native_notice_calls;
 static unsigned jfd_original_notice_calls;
+static unsigned jfd_tab_hidden_notices, jfd_tab_adffs_notices;
 static char last_adffs_notice[512];
 static bool adffs_log_leak;
 static unsigned adffs_package_log_lines;
@@ -812,15 +814,15 @@ static bool environment(unsigned command, void *data)
          const struct retro_core_options_v2 *options = data;
          unsigned count = 0u;
          while (options->definitions[count].key) ++count;
-         assert(count == (input_trace_mode ? 40u : 42u) ||
-                (input_trace_mode && count == 42u));
+         assert(count == (input_trace_mode ? 40u : 43u) ||
+                (input_trace_mode && (count == 42u || count == 43u)));
          assert(options->categories &&
                 !strcmp(options->categories[0].key, "pad_mapping") &&
                 !strcmp(options->categories[0].desc, "Pad Mapping"));
          bool found_osk = false, found_chooser = false;
          bool found_short_tail = false, found_ramdisc = false;
          bool found_jfd_omitted = false, found_hard_disc = false;
-         bool found_disc_requests = false;
+         bool found_disc_requests = false, found_jfd_tab = false;
          bool found_jfd_boot = false, found_adffs_package = false;
          unsigned pads = 0u, sticks = 0u;
          const char *categorized_pad_labels[ARC_PAD_PORTS * ARC_PAD_INPUT_COUNT] = {0};
@@ -830,6 +832,23 @@ static bool environment(unsigned command, void *data)
                &options->definitions[n];
             assert(strcmp(definition->key, "arcdroid_install_saves") != 0);
             assert(strcmp(definition->key, "arcdroid_input_profile"));
+            if (!strcmp(definition->key, "arcdroid_jfd_write_protect"))
+            {
+               found_jfd_tab = true;
+               assert(!strcmp(definition->desc, "Write-protect Tab") &&
+                      !strcmp(definition->default_value, "as-imaged") &&
+                      !strcmp(definition->values[0].value, "as-imaged") &&
+                      !strcmp(definition->values[0].label, "As imaged") &&
+                      !strcmp(definition->values[1].value, "off") &&
+                      !strcmp(definition->values[1].label, "Off") &&
+                      !definition->values[2].value &&
+                      strstr(definition->info, "JFD floppies only") &&
+                      strstr(definition->info, "original file is never changed") &&
+                      strstr(definition->info, "core-option manager") &&
+                      strstr(definition->info, "content load or reset") &&
+                      strstr(definition->info, "Disk Writes: Off") &&
+                      strstr(definition->info, "ADFFS preferred"));
+            }
             if (!strcmp(definition->key, "arcdroid_osk_toggle")) found_osk = true;
             if (!strcmp(definition->key, "arcdroid_disc_requests"))
             {
@@ -945,9 +964,9 @@ static bool environment(unsigned command, void *data)
                categorized_pad_labels[pads++] = definition->desc_categorized;
             }
          }
-         assert(found_osk && found_chooser && found_short_tail && found_jfd_omitted && found_hard_disc && found_disc_requests && found_ramdisc && found_jfd_boot &&
+         assert((input_trace_mode || found_jfd_tab) && found_osk && found_chooser && found_short_tail && found_jfd_omitted && found_hard_disc && found_disc_requests && found_ramdisc && found_jfd_boot &&
                 found_adffs_package && pads == 20u &&
-                sticks == (count == 42u ? 2u : 0u));
+                sticks == (count >= 42u ? 2u : 0u));
          return true;
       }
       case RETRO_ENVIRONMENT_SET_DISK_CONTROL_EXT_INTERFACE:
@@ -1075,6 +1094,7 @@ static bool environment(unsigned command, void *data)
          else if (!strcmp(variable->key, "arcdroid_disk_writes")) variable->value = option_writes;
          else if (!strcmp(variable->key, "arcdroid_hard_disc")) variable->value = option_hard_disc;
          else if (!strcmp(variable->key, "arcdroid_short_tail")) variable->value = option_short_tail;
+         else if (!strcmp(variable->key, "arcdroid_jfd_write_protect")) variable->value = option_jfd_tab;
          else if (!strcmp(variable->key, "arcdroid_jfd_omitted")) variable->value = option_jfd_omitted;
          else if (!strcmp(variable->key, "arcdroid_disc_requests")) variable->value = option_disc_requests;
          else if (!strcmp(variable->key, "arcdroid_launch_ramdisc"))
@@ -1153,6 +1173,10 @@ static bool environment(unsigned command, void *data)
       case RETRO_ENVIRONMENT_SET_MESSAGE_EXT:
          ++total_osd_calls;
          snprintf(last_message, sizeof(last_message), "%s", ((struct retro_message_ext *)data)->msg);
+         if (strstr(last_message, "hidden while Write-protect Tab is As imaged"))
+            ++jfd_tab_hidden_notices;
+         if (strstr(last_message, "Write-protect Tab has no effect on the ADFFS route"))
+            ++jfd_tab_adffs_notices;
          if (!strncmp(last_message, "Error box: A = OK", 17u))
          {
             ++error_hint_notices;
@@ -1775,6 +1799,7 @@ static void print_usage(FILE *stream, const char *program)
       "  %s CORE ROM CONTENT DATA --real-boot "
       "[--machine A3000|A3010|A3020|A4000] "
       "[--joystick Keyboard|A3010] "
+      "[--boot-jfd-write-protect as-imaged|off] "
       "[--osk-script FILE]\n"
       "  %s --self-test-parser\n"
       "  %s CORE ROM CONTENT DATA MEDIA_ROM PLAYLIST DISC1 DISC2 JFD JFD2 "
@@ -2211,6 +2236,13 @@ static bool parse_real_boot_options(int count, char *const args[],
              strcmp(value, "original")) return false;
          option_writes = value;
       }
+      else if (!strcmp(args[argument], "--boot-jfd-write-protect") &&
+               argument + 1 < count)
+      {
+         const char *value = args[++argument];
+         if (strcmp(value, "as-imaged") && strcmp(value, "off")) return false;
+         option_jfd_tab = value;
+      }
       else if (!strcmp(args[argument], "--boot-jfd-boot") &&
                argument + 1 < count)
       {
@@ -2494,6 +2526,7 @@ int main(int argc, char **argv)
    bool helper_stress = false;
    bool newio_smoke = false;
    bool jfd_writes = false;
+   bool jfd_tab_step = false, jfd_tab_route = false, jfd_tab_set = false;
    bool jfd_create_step = false;
    bool jfd_merge_step = false;
    bool jfd_allocation_step = false;
@@ -2619,6 +2652,12 @@ int main(int argc, char **argv)
       newio_smoke = true;
    else if (argc == 7 && !strcmp(argv[5], "--native-hd-guest"))
       native_hd_guest = true;
+   else if (argc == 11 && !strcmp(argv[5], "--jfd-tab-step"))
+      jfd_tab_step = true;
+   else if ((argc == 9 || argc == 10) && !strcmp(argv[5], "--jfd-tab-route"))
+      jfd_tab_route = true;
+   else if (argc == 8 && !strcmp(argv[5], "--jfd-tab-set"))
+      jfd_tab_set = true;
    else if (argc == 7 && !strcmp(argv[5], "--jfd-writes"))
       jfd_writes = true;
    else if (argc == 9 && !strcmp(argv[5], "--jfd-create-step"))
@@ -3005,7 +3044,7 @@ int main(int argc, char **argv)
          assert(arc_libretro_test_osk_visible && arc_libretro_test_session_state && arc_libretro_test_chooser_focus);
       }
    }
-   else if (!idle_perf && !idle_trace && !disc_request_probe && !cmos_exerciser && !power_on_cmos_guest && !native_hd_guest && !real_boot && !newio_smoke && !jfd_writes && !jfd_create_step &&
+   else if (!jfd_tab_step && !jfd_tab_route && !jfd_tab_set && !idle_perf && !idle_trace && !disc_request_probe && !cmos_exerciser && !power_on_cmos_guest && !native_hd_guest && !real_boot && !newio_smoke && !jfd_writes && !jfd_create_step &&
        !jfd_identification_step && !jfd_file_data_step && !jfd_file_data_set &&
        !jfd_file_data_reasons &&
        !jfd_file_data_recovery && !jfd_file_data_unavailable &&
@@ -3266,6 +3305,7 @@ int main(int argc, char **argv)
    assert(retro_serialize_size() == 0u);
    struct retro_game_info game = {jfd_writes ? jfd_content_path : argv[3], NULL, 0u, NULL};
    uint64_t source_hash = hash_file(game.path);
+   #include "jfd_tab_harness.inc"
    if (disc_request_probe)
    {
       option_machine = (disc_request_newio ||

@@ -22,7 +22,7 @@ static void test_guard_qa_boundaries(const char *root)
    const char *why=NULL;
    clear_files();
    ArcJfdImage image=creation_fixture(root,"irregular-bad-crc-free.jfd");
-   assert(arc_jfd_store_load(&image,"save",true,false,1u,&why));
+   assert(arc_jfd_store_load(&image,"save",ARC_JFD_WRITE_AS_IMAGED, true,false,1u,&why));
    ArcJfdOverlay *o=image.overlay;
    assert(o->guarded && o->map_valid && o->unavailable_slots==1u);
    for (unsigned t=0u;t<ARC_JFD_PDD5_TRACKS;++t)
@@ -40,7 +40,7 @@ static void test_guard_qa_boundaries(const char *root)
    arc_jfd_free(&image); clear_files();
 
    image=allocation_fixture(root,"guard-occupied-bad-crc.jfd");
-   assert(arc_jfd_store_load(&image,"save",true,false,1u,&why)); o=image.overlay;
+   assert(arc_jfd_store_load(&image,"save",ARC_JFD_WRITE_AS_IMAGED, true,false,1u,&why)); o=image.overlay;
    assert(o->guarded && o->unavailable_slots==10u);
    for (unsigned t=0u;t<ARC_JFD_PDD5_TRACKS;++t)
       assert(o->unavailable_mask[t]==((t==157u || t==159u)?0x1fu:0u));
@@ -60,7 +60,7 @@ static void test_guard_qa_boundaries(const char *root)
    arc_jfd_free(&image); clear_files();
 
    image=allocation_fixture(root,"guard-captured-density.jfd");
-   assert(arc_jfd_store_load(&image,"save",true,false,1u,&why)); o=image.overlay;
+   assert(arc_jfd_store_load(&image,"save",ARC_JFD_WRITE_AS_IMAGED, true,false,1u,&why)); o=image.overlay;
    assert(o->guarded && o->unavailable_slots==2u);
    memset(pending,0x5a,1024u);
    for (unsigned t=0u;t<ARC_JFD_PDD5_TRACKS;++t)
@@ -78,7 +78,7 @@ static void test_guard_qa_boundaries(const char *root)
    arc_jfd_free(&image); clear_files();
    /* Captured non-P-DD5 IDs on a U side keep D-075 independently. */
    image=allocation_fixture(root,"guard-occupied.jfd");
-   assert(arc_jfd_store_load(&image,"save",true,false,1u,&why)); o=image.overlay;
+   assert(arc_jfd_store_load(&image,"save",ARC_JFD_WRITE_AS_IMAGED, true,false,1u,&why)); o=image.overlay;
    assert(o->guarded && o->unavailable_slots==10u &&
           o->unavailable_mask[157]==31u && o->unavailable_mask[159]==31u);
    for (unsigned id=0u;id<3u;++id)
@@ -91,7 +91,7 @@ static void test_guard_qa_boundaries(const char *root)
    arc_jfd_free(&image); clear_files();
 
    image=allocation_fixture(root,"guard-profile-admission-fail.jfd");
-   assert(arc_jfd_store_load(&image,"save",true,false,1u,&why)); o=image.overlay;
+   assert(arc_jfd_store_load(&image,"save",ARC_JFD_WRITE_AS_IMAGED, true,false,1u,&why)); o=image.overlay;
    assert(!o->pdd5_profile && !o->layout_supported && !o->guarded &&
           !o->writable && !strcmp(why,"layout-unsupported"));
    for (unsigned t=0u;t<image.track_count;++t)
@@ -105,7 +105,7 @@ static void test_guard_qa_boundaries(const char *root)
    for (unsigned c=0u;c<2u;++c)
    {
       image=allocation_fixture(root,tails[c].name);
-      assert(arc_jfd_store_load(&image,"save",true,false,1u,&why)); o=image.overlay;
+      assert(arc_jfd_store_load(&image,"save",ARC_JFD_WRITE_AS_IMAGED, true,false,1u,&why)); o=image.overlay;
       assert(o->guarded && o->guard_declared_units==tails[c].declared &&
              o->guard_tail_units==tails[c].declared-3200u &&
              arc_jfd_guard_tail_target(o,tails[c].side,0u) &&
@@ -137,7 +137,7 @@ static void test_guard_store(const char *root)
    {
       clear_files();
       ArcJfdImage image=allocation_fixture(root,cases[c].name);
-      assert(arc_jfd_store_load(&image,"save",true,false,1u,&why));
+      assert(arc_jfd_store_load(&image,"save",ARC_JFD_WRITE_AS_IMAGED, true,false,1u,&why));
       ArcJfdOverlay *o=image.overlay;
       assert(o->layout_supported==cases[c].supported &&
              o->guarded==cases[c].guarded && o->writable==cases[c].supported);
@@ -216,16 +216,16 @@ static void test_guard_store(const char *root)
    clear_files();
    ArcJfdImage image=allocation_fixture(root,"guard-crossing.jfd");
    image.tracks[0].quarantine_reason="size-code";
-   assert(arc_jfd_store_load(&image,"save",true,false,1u,&why) &&
+   assert(arc_jfd_store_load(&image,"save",ARC_JFD_WRITE_AS_IMAGED, true,false,1u,&why) &&
           !image.overlay->writable && !image.overlay->guarded);
    arc_jfd_free(&image);
    image=creation_fixture(root,"irregular-newmap-free.jfd");
-   assert(arc_jfd_store_load(&image,"save",true,false,1u,&why) &&
+   assert(arc_jfd_store_load(&image,"save",ARC_JFD_WRITE_AS_IMAGED, true,false,1u,&why) &&
           !image.overlay->writable && !image.overlay->guarded);
    arc_jfd_free(&image);
 
    clear_files(); image=allocation_fixture(root,"guard-crossing.jfd");
-   assert(arc_jfd_store_load(&image,"save",true,false,1u,&why));
+   assert(arc_jfd_store_load(&image,"save",ARC_JFD_WRITE_AS_IMAGED, true,false,1u,&why));
    uint8_t base[1024], pending[1024], mask[ARC_JFD_PDD5_TRACKS];
    memcpy(base,image.decoded+image.sectors[0].data_offset,1024u);
    uint32_t declared=0u; bool tail=false;
@@ -298,7 +298,7 @@ static void test_guard_store(const char *root)
    unsigned records=image.overlay->records;
    arc_jfd_free(&image);
    image=allocation_fixture(root,"guard-crossing.jfd");
-   assert(arc_jfd_store_load(&image,"save",true,false,1u,&why) &&
+   assert(arc_jfd_store_load(&image,"save",ARC_JFD_WRITE_AS_IMAGED, true,false,1u,&why) &&
           image.overlay->writable && image.overlay->map_valid &&
           image.overlay->generation==generation && image.overlay->records==records &&
           !memcmp(image.overlay->created[3][0],merged,1024u) &&
@@ -325,7 +325,7 @@ static void test_guard_store(const char *root)
       char digests[3][41];
       for (unsigned f=0u;f<3u;++f) arc_sha1_hex(files[f].bytes,files[f].size,digests[f]);
       image=allocation_fixture(root,"guard-crossing.jfd");
-      assert(arc_jfd_store_load(&image,"save",true,false,1u,&why) &&
+      assert(arc_jfd_store_load(&image,"save",ARC_JFD_WRITE_AS_IMAGED, true,false,1u,&why) &&
              !strcmp(why,"guard-violated") && image.overlay->guard_violated &&
              !image.overlay->writable && !image.overlay->map_enabled &&
              !image.overlay->map_valid && !image.overlay->damaged &&
@@ -340,7 +340,7 @@ static void test_guard_store(const char *root)
       assert(!image.overlay->commit(&image,1u,merged));
       arc_jfd_free(&image);
       image=allocation_fixture(root,"guard-crossing.jfd");
-      assert(arc_jfd_store_load(&image,"save",false,false,1u,&why) &&
+      assert(arc_jfd_store_load(&image,"save",ARC_JFD_WRITE_AS_IMAGED, false,false,1u,&why) &&
              !strcmp(why,"disk-writes-off") && !image.overlay->visible);
       assert(arc_jfd_effective_sector(&image,0u,0u,false,&v) && !memcmp(v.data,base,1024u));
       assert(!arc_jfd_effective_sector(&image,3u,0u,false,&v));
@@ -354,7 +354,7 @@ static void test_guard_store(const char *root)
    /* A real base-only file-data fallback must disappear beside visible saved
     * metadata, then return with Off. Both saved record kinds remain readable. */
    image=file_data_fixture(root,"guard-terminal.jfd");
-   assert(arc_jfd_store_load(&image,"save",true,false,1u,&why) && image.overlay->guarded);
+   assert(arc_jfd_store_load(&image,"save",ARC_JFD_WRITE_AS_IMAGED, true,false,1u,&why) && image.overlay->guarded);
    memcpy(base,image.decoded+image.sectors[0].data_offset,1024u);
    assert(image.overlay->commit(&image,0u,base));
    memset(merged,0x77,1024u);
@@ -368,7 +368,7 @@ static void test_guard_store(const char *root)
    guard_checksums(bad); fix_checksum(&files[active]);
    for (unsigned f=0u;f<3u;++f) arc_sha1_hex(files[f].bytes,files[f].size,saved_hash[f]);
    image=file_data_fixture(root,"guard-terminal.jfd");
-   assert(arc_jfd_store_load(&image,"save",true,false,1u,&why) &&
+   assert(arc_jfd_store_load(&image,"save",ARC_JFD_WRITE_AS_IMAGED, true,false,1u,&why) &&
           !strcmp(why,"guard-violated"));
    arc_jfd_file_data_prepare(&image,true,false,"guard-violated");
    assert(!image.file_data.presented && !image.file_data.mask[1]);
@@ -378,7 +378,7 @@ static void test_guard_store(const char *root)
           visible.data[0]==0x77u && !visible.write_eligible);
    arc_jfd_free(&image);
    image=file_data_fixture(root,"guard-terminal.jfd");
-   assert(arc_jfd_store_load(&image,"save",false,false,1u,&why));
+   assert(arc_jfd_store_load(&image,"save",ARC_JFD_WRITE_AS_IMAGED, false,false,1u,&why));
    arc_jfd_file_data_prepare(&image,true,false,"disk-writes-off");
    assert(image.file_data.presented==1u && image.file_data.mask[1]==2u);
    assert(arc_jfd_effective_sector(&image,1u,image.tracks[1].sector_count+1u,false,&visible) &&
@@ -389,7 +389,7 @@ static void test_guard_store(const char *root)
    clear_files();
    /* D-121: exact units, not allocation counts or sector masks. */
    image=allocation_fixture(root,"guard-occupied.jfd");
-   assert(arc_jfd_store_load(&image,"save",true,false,1u,&why) &&
+   assert(arc_jfd_store_load(&image,"save",ARC_JFD_WRITE_AS_IMAGED, true,false,1u,&why) &&
           image.overlay->guarded && image.overlay->writable &&
           image.overlay->unavailable_slots==10u &&
           image.overlay->allocation_mask[159]==31u);
@@ -421,13 +421,13 @@ static void test_guard_store(const char *root)
    }
    arc_jfd_free(&image);
    image=allocation_fixture(root,"guard-occupied.jfd");
-   assert(arc_jfd_store_load(&image,"save",true,false,1u,&why) &&
+   assert(arc_jfd_store_load(&image,"save",ARC_JFD_WRITE_AS_IMAGED, true,false,1u,&why) &&
           image.overlay->writable && image.overlay->generation==1u &&
           !image.overlay->commit(&image,0u,base));
    arc_jfd_free(&image); clear_files();
    /* Another allocation unit within a partially allocated U slot. */
    image=allocation_fixture(root,"guard-partial-u.jfd");
-   assert(arc_jfd_store_load(&image,"save",true,false,1u,&why));
+   assert(arc_jfd_store_load(&image,"save",ARC_JFD_WRITE_AS_IMAGED, true,false,1u,&why));
    memcpy(base,image.decoded+image.sectors[0].data_offset,1024u);
    memcpy(pending,base,1024u); guard_u24(pending,14u);
    guard_u24(pending+256u,3249u); guard_checksums(pending);

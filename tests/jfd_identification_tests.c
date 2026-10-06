@@ -118,7 +118,7 @@ int main(int argc, char **argv)
    memset(overlay->eligible, 1, d.sector_count);
    overlay->visible = overlay->writable = true;
    d.overlay = overlay;
-   assert(arc_jfd_plan_creation(&d, overlay) && overlay->pdd5_profile);
+   assert(arc_jfd_plan_creation(&d, overlay, ARC_JFD_WRITE_AS_IMAGED) && overlay->pdd5_profile);
    assert(overlay->creation_time[0][3] == d.identification_time[3] &&
           overlay->creation_time[0][4] == d.identification_time[4]);
    overlay->writable = false;

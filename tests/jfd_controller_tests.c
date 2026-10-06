@@ -359,7 +359,7 @@ static void make_jfd_creation_writable(ArcJfdImage *image)
    assert(image->overlay->eligible);
    for (size_t i = 0u; i < image->sector_count; ++i)
       image->overlay->eligible[i] = arc_jfd_sector_write_eligible(image, i);
-   assert(arc_jfd_plan_creation(image, image->overlay));
+   assert(arc_jfd_plan_creation(image, image->overlay, ARC_JFD_WRITE_AS_IMAGED));
    image->overlay->commit_created = test_jfd_commit_created;
 }
 

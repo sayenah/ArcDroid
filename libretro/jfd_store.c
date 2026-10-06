@@ -422,20 +422,41 @@ static bool store_commit_created(ArcJfdImage *image, unsigned track_side,
 }
 
 bool arc_jfd_store_load(ArcJfdImage *image, const char *save_directory,
-                        bool writes_enabled, bool show_notice, unsigned image_number,
+                        ArcJfdWritePolicy policy, bool writes_enabled,
+                        bool show_notice, unsigned image_number,
                         const char **reason)
 {
    *reason = "no-flag";
    if (!image || !image->decoded) return false;
-   bool eligible = image->extended && (image->flags & 2u) && !(image->flags & 1u);
+   bool eligible = arc_jfd_write_authorized(image, policy);
    if (!eligible)
    {
-      *reason = !image->extended ? "legacy-header" :
-         (image->flags & 1u) ? "wp-flag" : "no-flag";
+      *reason = arc_jfd_header_write_reason(image, policy);
       image->overlay = calloc(1u, sizeof(*image->overlay));
       if (!image->overlay) return false;
       image->overlay->image_number = image_number;
       image->overlay->reason = *reason;
+      /* Presence alone is enough for the notice. Never prepare storage or
+       * inspect records when the immutable header's changes are hidden. */
+      if (save_directory)
+      {
+         char directory[4096], leaf[44], digest[41];
+         arc_sha1_hex(image->decoded, image->decoded_size, digest);
+         int n = snprintf(directory, sizeof(directory), "%s/arcdroid/jfd",
+                           save_directory);
+         if (n >= 0 && (size_t)n < sizeof(directory) &&
+             arc_io_existing_directory(directory))
+            for (unsigned slot = 0u; slot < 2u; ++slot)
+            {
+               bool present = false;
+               snprintf(leaf, sizeof(leaf), "%s.%c", digest, slot ? 'b' : 'a');
+               if (arc_io_directory_contains(directory, leaf, &present) && present)
+                  image->overlay->hidden_store = true;
+            }
+      }
+      if (show_notice && image->overlay->hidden_store)
+         arc_jfd_store_notice(
+            "Saved disc changes are hidden while Write-protect Tab is As imaged.", false);
       return true;
    }
    *reason = "overlay-unreadable";
@@ -447,7 +468,7 @@ bool arc_jfd_store_load(ArcJfdImage *image, const char *save_directory,
    overlay->eligible = calloc(image->sector_count ? image->sector_count : 1u, 1u);
    if (!overlay->eligible) return false;
    if (!prepare_eligibility(image, overlay->eligible)) return false;
-   if (!arc_jfd_plan_creation(image, overlay))
+   if (!arc_jfd_plan_creation(image, overlay, policy))
    {
       *reason = "layout-unsupported";
       overlay->reason = *reason;
@@ -526,10 +547,8 @@ bool arc_jfd_store_load(ArcJfdImage *image, const char *save_directory,
    else if (!writes_enabled && overlay->generation && show_notice)
       arc_jfd_store_notice("Saved disc changes are hidden while Disk Writes is Off.", false);
    if (!damaged)
-      *reason = !image->extended ? "legacy-header" :
-         (image->flags & 1u) ? "wp-flag" :
-         !(image->flags & 2u) ? "no-flag" :
-         !writes_enabled ? "disk-writes-off" : "rw-flag";
+      *reason = !writes_enabled ? "disk-writes-off" :
+         arc_jfd_header_write_reason(image, policy);
    overlay->reason = *reason;
    if (overlay->guarded && writes_enabled)
    {

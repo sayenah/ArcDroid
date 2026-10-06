@@ -476,8 +476,16 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
   list(APPEND ADFFS_FIXTURES
     "${FIXTURE_DIR}/adffs/eligible-hd-rw.jfd"
     "${FIXTURE_DIR}/adffs/install-single-hd.jfd")
+  set(JFD_TAB_FIXTURES "${FIXTURE_DIR}/jfd-tab/mixed.m3u")
+  foreach(tab_kind IN ITEMS captured created guard guard-fail guard-placement
+      route route-os route-layout request set probe short-full unschedulable
+      nonmatching irregular-newmap-free)
+    foreach(tab_header IN ITEMS 0 1 2 3 legacy)
+      list(APPEND JFD_TAB_FIXTURES "${FIXTURE_DIR}/jfd-tab/${tab_kind}-${tab_header}.jfd")
+    endforeach()
+  endforeach()
   add_custom_command(
-    OUTPUT "${FIXTURE_DIR}/arcdroid-test.rom" "${FIXTURE_DIR}/arcdroid-test.adf"
+    OUTPUT ${JFD_TAB_FIXTURES} "${FIXTURE_DIR}/arcdroid-test.rom" "${FIXTURE_DIR}/arcdroid-test.adf"
       "${FIXTURE_DIR}/arcdroid-disc-request-a.rom"
       "${FIXTURE_DIR}/arcdroid-disc-request-b.rom"
       "${FIXTURE_DIR}/arcdroid-disc-request-b-found.rom"
@@ -713,7 +721,7 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
       ${ADFFS_FIXTURES}
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/generate_fixtures.py" "${FIXTURE_DIR}"
     DEPENDS tests/generate_fixtures.py VERBATIM)
-  add_custom_target(test-fixtures ALL DEPENDS
+  add_custom_target(test-fixtures ALL DEPENDS ${JFD_TAB_FIXTURES}
     "${FIXTURE_DIR}/arcdroid-test.rom" "${FIXTURE_DIR}/arcdroid-test.adf"
     "${FIXTURE_DIR}/arcdroid-disc-request-a.rom"
     "${FIXTURE_DIR}/arcdroid-disc-request-b.rom"
@@ -904,6 +912,7 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
   add_test(NAME jfd-guard-wd COMMAND jfd_controller_tests "${FIXTURE_DIR}" --guard-wd)
   add_test(NAME jfd-guard-newio COMMAND jfd_controller_tests "${FIXTURE_DIR}" --guard-newio)
   add_test(NAME jfd-guard-store COMMAND jfd_store_tests "${FIXTURE_DIR}" guard)
+  add_test(NAME jfd-tab-store COMMAND jfd_store_tests "${FIXTURE_DIR}" tab)
   add_test(NAME jfd-store COMMAND jfd_store_tests "${FIXTURE_DIR}")
   add_test(NAME jfd-file-data-store COMMAND jfd_store_tests "${FIXTURE_DIR}" file-data)
   add_test(NAME native-writable-layout COMMAND jfd_store_tests
@@ -976,6 +985,26 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
       "${FIXTURE_DIR}/arcdroid-test.rom"
       "${FIXTURE_DIR}/arcdroid-test.adf"
       "${CMAKE_CURRENT_BINARY_DIR}/windows-shipping-harness-data")
+    foreach(tab_core IN ITEMS shipping test)
+      if(tab_core STREQUAL "shipping")
+        set(tab_core_target arcdroid_libretro)
+      else()
+        set(tab_core_target arcdroid_libretro_test)
+      endif()
+      add_test(NAME windows-jfd-tab-options-${tab_core} COMMAND windows_load_harness
+        $<TARGET_FILE:${tab_core_target}>
+        "${FIXTURE_DIR}/arcdroid-test.rom"
+        "${FIXTURE_DIR}/arcdroid-test.adf"
+        "${CMAKE_CURRENT_BINARY_DIR}/windows-jfd-tab-options-${tab_core}-data")
+    endforeach()
+    foreach(tab_case IN ITEMS load-reset guest-write persistence hide-restore)
+      add_test(NAME windows-jfd-tab-${tab_case} COMMAND windows_load_harness
+        $<TARGET_FILE:arcdroid_libretro_test>
+        "${FIXTURE_DIR}/arcdroid-jfd-save-test.rom"
+        "${FIXTURE_DIR}/jfd-tab/captured-3.jfd"
+        "${CMAKE_CURRENT_BINARY_DIR}/windows-jfd-tab-${tab_case}-data"
+        --jfd-tab-${tab_case})
+    endforeach()
     add_test(NAME windows-test-core-load-harness COMMAND windows_load_harness
       $<TARGET_FILE:arcdroid_libretro_test>
       "${FIXTURE_DIR}/arcdroid-test.rom"
@@ -1319,6 +1348,13 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
       "${FIXTURE_DIR}/arcdroid-test.adf"
       "${CMAKE_CURRENT_BINARY_DIR}/power-on-cmos-guest-data"
       --power-on-cmos-guest "${FIXTURE_DIR}/arcdroid-test.rom")
+    foreach(tab_case IN ITEMS guest routing set)
+      add_test(NAME jfd-tab-${tab_case}-process COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/jfd_tab_process_test.py"
+        $<TARGET_FILE:libretro_harness> $<TARGET_FILE:arcdroid_libretro_test>
+        "${FIXTURE_DIR}" ${tab_case})
+      set_tests_properties(jfd-tab-${tab_case}-process PROPERTIES TIMEOUT 1800)
+    endforeach()
     add_test(NAME jfd-writes-libretro-harness COMMAND libretro_harness
       $<TARGET_FILE:arcdroid_libretro_test>
       "${FIXTURE_DIR}/arcdroid-jfd-save-test.rom"

@@ -104,7 +104,8 @@ bool arc_jfd_place_slots(const ArcJfdImage *image, unsigned track_side,
    return true;
 }
 
-bool arc_jfd_plan_creation(const ArcJfdImage *image, ArcJfdOverlay *overlay)
+bool arc_jfd_plan_creation(const ArcJfdImage *image, ArcJfdOverlay *overlay,
+                           ArcJfdWritePolicy policy)
 {
    if (!image || !overlay || !overlay->eligible) return false;
    /* The file has no descriptor table for missing track-sides, so they cannot
@@ -173,7 +174,7 @@ bool arc_jfd_plan_creation(const ArcJfdImage *image, ArcJfdOverlay *overlay)
          for (unsigned t = 0u; t < tracks; ++t)
             if (irregular[t] && writable_masks[t] != PDD5_ALL)
                unavailable[t] = (uint8_t)(PDD5_ALL & ~writable_masks[t]);
-         if (!image->extended || (image->flags & 3u) != 2u ||
+         if (!arc_jfd_write_authorized(image, policy) ||
              !overlay->pdd5_profile ||
              !arc_jfd_guard_base(image, overlay, unavailable)) return false;
       }

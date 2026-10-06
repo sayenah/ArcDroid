@@ -432,6 +432,9 @@ static void arc_disc_write_observer(const char *path)
    }
 }
 static bool arc_original_jfd_notice_shown;
+static bool arc_jfd_tab_pending_notice_shown;
+static bool arc_jfd_tab_hidden_notice_shown;
+static bool arc_jfd_tab_adffs_notice_shown;
 static bool arc_jfd_failure_status_shown;
 #if defined(ARCDROID_TEST_FAULTS)
 bool arc_libretro_test_jfd_commit(unsigned image_index, size_t descriptor,
@@ -644,6 +647,7 @@ typedef struct {
    ArcLaunchChooserOption launch_chooser;
    bool launch_ramdisc;
    ArcJfdBootOption jfd_boot;
+   ArcJfdWritePolicy jfd_write_policy;
    ArcAdffsOption adffs_package;
    ArcInputOverride pad[ARC_PAD_PORTS][ARC_PAD_INPUT_COUNT];
    ArcOskToggle osk_toggle;
@@ -781,6 +785,7 @@ static bool arc_read_options(ArcCoreOptions *options, char *error, size_t error_
       arc_option_value("arcdroid_launch_chooser", "remember");
    const char *launch_ramdisc =
       arc_option_value("arcdroid_launch_ramdisc", "Auto");
+   const char *jfd_tab = arc_option_value("arcdroid_jfd_write_protect", "as-imaged");
    const char *jfd_boot = arc_option_value("arcdroid_jfd_boot", "auto");
    const char *adffs_package = arc_option_value("arcdroid_adffs_package", "verified");
    const char *osk_toggle = arc_option_value("arcdroid_osk_toggle", "L3");
@@ -811,6 +816,8 @@ static bool arc_read_options(ArcCoreOptions *options, char *error, size_t error_
    else if (!strcmp(pointer_stick, "left")) options->pointer_stick = ARC_POINTER_STICK_LEFT;
    else if (!strcmp(pointer_stick, "disabled")) options->pointer_stick = ARC_POINTER_STICK_DISABLED;
    else goto invalid;
+   if (!strcmp(jfd_tab, "off")) options->jfd_write_policy = ARC_JFD_WRITE_TAB_OFF;
+   else if (strcmp(jfd_tab, "as-imaged")) goto invalid;
    if (!strcmp(jfd_boot, "auto")) options->jfd_boot = ARC_JFD_BOOT_AUTO;
    else if (!strcmp(jfd_boot, "native")) options->jfd_boot = ARC_JFD_BOOT_NATIVE;
    else if (!strcmp(jfd_boot, "adffs")) options->jfd_boot = ARC_JFD_BOOT_ADFFS;
@@ -1173,6 +1180,9 @@ static void arc_release_session(void)
    memset(arc_media, 0, sizeof(arc_media));
    arc_media_count = 0u;
    arc_original_jfd_notice_shown = false;
+   arc_jfd_tab_pending_notice_shown = false;
+   arc_jfd_tab_hidden_notice_shown = false;
+   arc_jfd_tab_adffs_notice_shown = false;
    arc_folder_set_active = false;
    arc_zip_active = false;
    arc_zip_path[0] = '\0';
@@ -2665,6 +2675,7 @@ static void arc_jfd_log_map_unavailable(unsigned image_number)
 }
 
 static bool arc_refresh_jfd(ArcMediaEntry *entry, ArcDiskWriteMode mode,
+                            ArcJfdWritePolicy policy,
                             char *error, size_t error_size)
 {
    if (entry->info.kind != ARC_MEDIA_JFD) return true;
@@ -2683,13 +2694,13 @@ static bool arc_refresh_jfd(ArcMediaEntry *entry, ArcDiskWriteMode mode,
    entry->jfd = parsed;
    const char *reason = NULL;
    unsigned image_number = (unsigned)(entry - arc_media) + 1u;
-   if (!arc_jfd_store_load(&entry->jfd, arc_save_path,
+   if (!arc_jfd_store_load(&entry->jfd, arc_save_path, policy,
                            mode != ARC_DISK_WRITES_OFF, false,
                            image_number, &reason))
    {
       reason = "overlay-unreadable";
-      if (mode != ARC_DISK_WRITES_OFF && entry->jfd.extended &&
-          (entry->jfd.flags & 2u) && !(entry->jfd.flags & 1u))
+      if (mode != ARC_DISK_WRITES_OFF &&
+          arc_jfd_write_authorized(&entry->jfd, policy))
          arc_jfd_store_notice("Disc changes can no longer be saved this session.", true);
    }
    if (entry->jfd.overlay)
@@ -2711,8 +2722,15 @@ static bool arc_refresh_jfd(ArcMediaEntry *entry, ArcDiskWriteMode mode,
       arc_jfd_store_notice("Saved disc changes are hidden while Disk Writes is Off.", false);
       entry->jfd_off_notice_shown = true;
    }
-   if (mode == ARC_DISK_WRITES_ORIGINAL && entry->jfd.extended &&
-       (entry->jfd.flags & 2u) && !(entry->jfd.flags & 1u) &&
+   if (entry->jfd.overlay && entry->jfd.overlay->hidden_store &&
+       !arc_jfd_tab_hidden_notice_shown)
+   {
+      arc_jfd_store_notice(
+         "Saved disc changes are hidden while Write-protect Tab is As imaged.", false);
+      arc_jfd_tab_hidden_notice_shown = true;
+   }
+   if (mode == ARC_DISK_WRITES_ORIGINAL &&
+       arc_jfd_write_authorized(&entry->jfd, policy) &&
        !arc_original_jfd_notice_shown)
    {
       arc_message("JFD content is never written in place; disc changes use the save directory.",
@@ -2723,7 +2741,8 @@ static bool arc_refresh_jfd(ArcMediaEntry *entry, ArcDiskWriteMode mode,
 }
 
 static const char *arc_jfd_file_data_class(const ArcJfdImage *image,
-                                            ArcDiskWriteMode mode)
+                                            ArcDiskWriteMode mode,
+                                            ArcJfdWritePolicy policy)
 {
    const ArcJfdOverlay *overlay = image->overlay;
    /* Only stores inspected by the loader can contribute visible records or
@@ -2732,17 +2751,16 @@ static const char *arc_jfd_file_data_class(const ArcJfdImage *image,
       return "guard-violated";
    if (overlay && overlay->damaged) return "damaged-store";
    if (overlay && overlay->writable) return "writable";
-   if (mode != ARC_DISK_WRITES_OFF && image->extended &&
-       (image->flags & 2u) && !(image->flags & 1u) &&
+   if (mode != ARC_DISK_WRITES_OFF && arc_jfd_write_authorized(image, policy) &&
        overlay && overlay->layout_supported) return "store-unavailable";
    if (mode == ARC_DISK_WRITES_OFF) return "disk-writes-off";
-   if (image->extended && (image->flags & 1u)) return "wp-flag";
-   if (image->extended && !(image->flags & 2u)) return "no-flag";
-   if (!image->extended) return "legacy-header";
+   if (!arc_jfd_write_authorized(image, policy))
+      return arc_jfd_header_write_reason(image, policy);
    return "layout-unsupported";
 }
 
-static void arc_finish_jfd_preparation(ArcMediaEntry *entry, bool native)
+static void arc_finish_jfd_preparation(ArcMediaEntry *entry, bool native,
+                                        ArcJfdWritePolicy policy)
 {
    if (!entry || entry->info.kind != ARC_MEDIA_JFD) return;
    unsigned image_number = (unsigned)(entry - arc_media) + 1u;
@@ -2757,12 +2775,14 @@ static void arc_finish_jfd_preparation(ArcMediaEntry *entry, bool native)
    arc_jfd_prepare_identification(&entry->jfd, native);
 #if defined(ARCDROID_TEST_FAULTS)
    /* Exercise the class boundary that the normal WP loader short-circuits. */
-   if (arc_test_jfd_wp_layout_supported && overlay && entry->jfd.extended &&
+   if (arc_test_jfd_wp_layout_supported && overlay &&
+       !arc_jfd_write_authorized(&entry->jfd, policy) && entry->jfd.extended &&
        (entry->jfd.flags & 3u) == 3u)
       overlay->layout_supported = true;
 #endif
    const char *image_class = arc_jfd_file_data_class(&entry->jfd,
-                                                     arc_plan.disk_writes);
+                                                     arc_plan.disk_writes,
+                                                     policy);
    arc_jfd_file_data_prepare(&entry->jfd, native,
       arc_core_options.jfd_omitted_strict, image_class);
    if (native && arc_log)
@@ -2825,7 +2845,24 @@ static void arc_finish_jfd_preparation(ArcMediaEntry *entry, bool native)
       entry->jfd.identification_basis,
       entry->jfd.identification_maps,
       entry->jfd.identification_reason);
-   if (native && overlay && overlay->guarded && overlay->writable)
+   if (policy == ARC_JFD_WRITE_TAB_OFF)
+   {
+      const char *write_reason = native ?
+         overlay && overlay->reason ? overlay->reason : "overlay-unreadable" :
+         "not-native";
+      arc_log(RETRO_LOG_INFO,
+         "JFD writes: image=%u tab=off header=%s effective=%s state=%s reason=%s guard=%s unavailable=%u tail=%u generation=%llu records=%u\n",
+         image_number,
+         arc_jfd_write_authorized(&entry->jfd, ARC_JFD_WRITE_AS_IMAGED) ? "yes" : "no",
+         arc_jfd_write_authorized(&entry->jfd, policy) ? "yes" : "no",
+         native && overlay && overlay->writable ? "writable" : "protected",
+         write_reason, overlay && overlay->guarded ? "old-map" : "none",
+         overlay ? overlay->unavailable_slots : 0u,
+         overlay ? overlay->guard_tail_units : 0u,
+         (unsigned long long)(overlay ? overlay->generation : 0u),
+         overlay ? overlay->records : 0u);
+   }
+   else if (native && overlay && overlay->guarded && overlay->writable)
       arc_log(RETRO_LOG_INFO,
          "JFD writes: image=%u state=writable reason=rw-flag guard=old-map unavailable=%u tail=%u generation=%llu records=%u; accepted map writes never increase unavailable allocation\n",
          image_number, overlay->unavailable_slots, overlay->guard_tail_units,
@@ -2871,6 +2908,7 @@ static ArcDiscObject arc_disc_image_object(unsigned index, const char *path,
 #endif
          view = &temporary;
          if (!arc_jfd_store_load(view, arc_save_path,
+                 arc_core_options.jfd_write_policy,
                  arc_plan.disk_writes != ARC_DISK_WRITES_OFF,
                  false, index + 1u, &reason))
             goto jfd_done;
@@ -2882,7 +2920,8 @@ static ArcDiscObject arc_disc_image_object(unsigned index, const char *path,
          arc_jfd_prepare_identification(view, true);
          arc_jfd_file_data_prepare(view, true,
              arc_core_options.jfd_omitted_strict,
-             arc_jfd_file_data_class(view, arc_plan.disk_writes));
+             arc_jfd_file_data_class(view, arc_plan.disk_writes,
+                                       arc_core_options.jfd_write_policy));
       }
       if (view->overlay && !view->overlay->damaged && !view->overlay->failed)
          object = path ? arc_disc_resolve(NULL, 0u, NULL, view, path, name) :
@@ -3002,7 +3041,8 @@ bool arc_libretro_test_disc_jfd_root_name(unsigned index, uint8_t first)
        arc_media[index].info.kind != ARC_MEDIA_JFD) return false;
    ArcMediaEntry *entry = &arc_media[index];
    char error[128] = {0};
-   if (!arc_refresh_jfd(entry, arc_plan.disk_writes, error, sizeof(error)))
+   if (!arc_refresh_jfd(entry, arc_plan.disk_writes,
+                        arc_core_options.jfd_write_policy, error, sizeof(error)))
       return false;
    ArcJfdImage *image = &entry->jfd;
    bool changed = false;
@@ -3238,7 +3278,7 @@ bool arc_libretro_test_hd_observation_write(unsigned mode)
    return false;
 }
 #endif
-static bool arc_prepare_adffs(bool notify) {
+static bool arc_prepare_adffs(bool notify, ArcJfdWritePolicy policy) {
    arc_adffs_discard();
    ArcMediaEntry *entry = arc_media_count ? &arc_media[0] : NULL;
    const ArcJfdImage *jfd = entry ? &entry->jfd : NULL;
@@ -3267,7 +3307,7 @@ static bool arc_prepare_adffs(bool notify) {
        arc_media_count == 1u && jfd->disc_number == 1u &&
        jfd->disc_count == 1u &&
        arc_core_options.jfd_boot == ARC_JFD_BOOT_AUTO &&
-       jfd->extended && (jfd->flags & 2u) && !(jfd->flags & 1u) &&
+       arc_jfd_write_authorized(jfd, policy) &&
        jfd->overlay && jfd->overlay->layout_supported &&
        (!(jfd->flags & 0x7f0000u) || (jfd->flags & (1u << 17)))) {
       arc_jfd_boot_log("native-writable");
@@ -3525,6 +3565,13 @@ static bool arc_prepare_adffs(bool notify) {
    arc_adffs_package_free(package);
    free(package);
    arc_adffs_active = true;
+   if (policy == ARC_JFD_WRITE_TAB_OFF &&
+       !arc_jfd_tab_adffs_notice_shown)
+   {
+      arc_message("Write-protect Tab has no effect on the ADFFS route. Use JFD Boot: Native to keep disc writes.",
+                  RETRO_LOG_INFO);
+      arc_jfd_tab_adffs_notice_shown = true;
+   }
    arc_plan.launch_helper = true;
    arc_plan.launch_target[0] = 0;
    arc_plan.launch_target_length = 0;
@@ -3967,6 +4014,7 @@ static bool arc_boot_media_digest(char output[41])
                                      sizeof(error))) return false;
             view = &temporary;
             if (!arc_jfd_store_load(view, arc_save_path,
+                 arc_core_options.jfd_write_policy,
                     arc_plan.disk_writes != ARC_DISK_WRITES_OFF,
                     false, i + 1u, &reason))
             { arc_jfd_free(&temporary); return false; }
@@ -3977,7 +4025,8 @@ static bool arc_boot_media_digest(char output[41])
          if (view == &temporary)
             arc_jfd_file_data_prepare(view, true,
                arc_core_options.jfd_omitted_strict,
-               arc_jfd_file_data_class(view, arc_plan.disk_writes));
+               arc_jfd_file_data_class(view, arc_plan.disk_writes,
+                                       arc_core_options.jfd_write_policy));
          bytes[at++] = 1u; /* Native JFD presentation revision. */
          bytes[at++] = arc_core_options.jfd_omitted_strict ? 0u : 1u;
          memcpy(bytes + at, view->file_data.mask, ARC_JFD_PDD5_TRACKS);
@@ -4026,6 +4075,7 @@ static bool arc_boot_stamp(ArcBootObservation *stamp)
    stamp->memory = arc_plan.memory_kib;
    stamp->jfd_boot = (uint32_t)arc_core_options.jfd_boot;
    stamp->disk_writes = (uint32_t)arc_plan.disk_writes;
+   stamp->jfd_write_policy = (uint32_t)arc_core_options.jfd_write_policy;
    stamp->legacy_slot = 1u;
    stamp->hard_disc_policy = arc_hd_option_auto ? 1u : 0u;
    stamp->hard_disc_attached = arc_hd_store &&
@@ -4679,7 +4729,8 @@ static bool arc_disk_insert_entry(ArcMediaEntry *entry, ArcInsertPhase phase,
    {
       if (!arc_machine_accepts_media(arc_session_machine, entry,
                                      error, error_size) ||
-          !arc_refresh_jfd(entry, arc_plan.disk_writes, error, error_size))
+          !arc_refresh_jfd(entry, arc_plan.disk_writes,
+                           arc_core_options.jfd_write_policy, error, error_size))
       {
          if (phase == ARC_INSERT_PREFLIGHT) arc_jfd_free(&entry->jfd);
          return false;
@@ -4730,7 +4781,7 @@ static bool arc_disk_insert_entry(ArcMediaEntry *entry, ArcInsertPhase phase,
    arc_entry_tail_presentation(entry, zero_tail);
    arc_core_options.short_tail_zero = zero_tail;
    arc_preparing_zero_tail = zero_tail;
-   arc_finish_jfd_preparation(entry, true);
+   arc_finish_jfd_preparation(entry, true, arc_core_options.jfd_write_policy);
    return true;
 }
 #if defined(ARCDROID_TEST_FAULTS)
@@ -6078,6 +6129,9 @@ static const struct retro_core_option_v2_definition arc_base_options[] = {
     "Auto uses the ADFFS package for eligible JFDs, except single-disc JFDs that ArcDroid can write natively, which boot natively to keep saves. Native never uses ADFFS. ADFFS preferred bypasses this rule; saved native changes still take precedence.", NULL,
     NULL, {{"auto", "Auto"}, {"native", "Native"},
            {"adffs", "ADFFS preferred"}, {NULL, NULL}}, "auto"},
+   {"arcdroid_jfd_write_protect", "Write-protect Tab", NULL,
+    "JFD floppies only. Off lets the game write to its floppy like sliding the tab; changes are kept in ArcDroid's save folder and the original file is never changed. Save this per game through RetroArch's core-option manager. Applied at content load or reset. Disk Writes: Off still blocks writes. With JFD Boot: ADFFS preferred, the disc may run through ADFFS, which does not keep these writes.", NULL,
+    NULL, {{"as-imaged", "As imaged"}, {"off", "Off"}, {NULL, NULL}}, "as-imaged"},
    {"arcdroid_adffs_package", "ADFFS Package", NULL,
     "Restrict ADFFS to a verified package profile, or allow an untested package.", NULL,
     NULL, {{"verified", "Verified only"}, {"untested", "Allow untested"}, {NULL, NULL}}, "verified"},
@@ -6104,8 +6158,8 @@ enum {
                       ARC_PAD_PORTS * ARC_PAD_INPUT_COUNT + 3u
 };
 static struct retro_core_option_v2_definition arc_options[ARC_OPTION_COUNT + 1u];
-_Static_assert(ARC_BASE_OPTION_COUNT == 19u, "base option count changed");
-_Static_assert(sizeof(arc_options) / sizeof(arc_options[0]) == 43u,
+_Static_assert(ARC_BASE_OPTION_COUNT == 20u, "base option count changed");
+_Static_assert(sizeof(arc_options) / sizeof(arc_options[0]) == 44u,
                "option destination size changed");
 static struct retro_core_option_v2_category arc_option_categories[] = {
    {"pad_mapping", "Pad Mapping", "Map each RetroPad input to a physical Archimedes key."},
@@ -6581,9 +6635,10 @@ static bool arc_hd_recover(ArcHdHelperMode mode)
    arc_boot_eligible=false;
    arc_boot_attempt=false;
    ArcMediaEntry *entry=&arc_media[arc_image_index];
-   if (!arc_refresh_jfd(entry,arc_plan.disk_writes,error,sizeof(error)))
+   if (!arc_refresh_jfd(entry,arc_plan.disk_writes,
+                        arc_core_options.jfd_write_policy,error,sizeof(error)))
       goto fallback;
-   arc_finish_jfd_preparation(entry,true);
+   arc_finish_jfd_preparation(entry,true, arc_core_options.jfd_write_policy);
    ArcLaunchDiscovery refreshed;
    if (!arc_boot_discover_current(&refreshed))
    { snprintf(error,sizeof(error),"Unable to inspect the disc after preparation."); goto fallback; }
@@ -6725,8 +6780,10 @@ static bool arc_boot_recover_target(const ArcLaunchDiscovery *discovery,
    arc_engine_stop();
    arc_session = ARC_SESSION_PREPARED;
    if (!arc_refresh_jfd(&arc_media[arc_image_index], arc_plan.disk_writes,
+                           arc_core_options.jfd_write_policy,
                         error, sizeof(error))) goto failed;
-   arc_finish_jfd_preparation(&arc_media[arc_image_index], true);
+   arc_finish_jfd_preparation(&arc_media[arc_image_index], true,
+                               arc_core_options.jfd_write_policy);
    ArcLaunchDiscovery refreshed;
    if (!arc_boot_discover_current(&refreshed))
    { snprintf(error, sizeof(error), "Unable to inspect the disc after recovery preparation."); goto failed; }
@@ -7242,15 +7299,17 @@ static bool arc_load_game(const struct retro_game_info *game, bool negotiate)
    arc_session = ARC_SESSION_PREPARED;
    {
       if (!arc_refresh_jfd(&arc_media[arc_image_index], arc_plan.disk_writes,
+                           arc_core_options.jfd_write_policy,
                            error, sizeof(error)))
       {
          arc_message(error, RETRO_LOG_ERROR);
          arc_release_session();
          return false;
       }
-      bool adffs = arc_prepare_adffs(true);
+      bool adffs = arc_prepare_adffs(true, arc_core_options.jfd_write_policy);
       arc_hd_reconcile();
-      arc_finish_jfd_preparation(&arc_media[arc_image_index], !adffs);
+      arc_finish_jfd_preparation(&arc_media[arc_image_index], !adffs,
+                                 arc_core_options.jfd_write_policy);
       bool choosing = !adffs && arc_prepare_launch(&arc_media[arc_image_index], false,
                                                    arc_core_options.launch, false);
       if (choosing)
@@ -7427,6 +7486,7 @@ RETRO_API void retro_reset(void)
    }
    if (!was_ejected && selected < arc_media_count &&
        !arc_refresh_jfd(&arc_media[selected], updated.disk_writes,
+                        updated.jfd_write_policy,
                         error, sizeof(error)))
       goto failed;
    for (unsigned i = 0u; i < arc_media_count; ++i)
@@ -7438,6 +7498,7 @@ RETRO_API void retro_reset(void)
    new_firmware = NULL;
    arc_firmware_size = new_firmware_size;
    arc_core_options = updated;
+   arc_jfd_tab_pending_notice_shown = false;
    arc_session_machine = reset_choice;
    ArcMediaKind plan_media = selected < arc_media_count && arc_media[selected].populated ?
       arc_media[selected].info.kind :
@@ -7465,10 +7526,12 @@ RETRO_API void retro_reset(void)
    arc_seed_cmos();
    if (was_boot_chooser)
       memcpy(arc_cmos_prepared, held_cmos, sizeof(held_cmos));
-   bool adffs = !was_ejected && selected == 0u && arc_prepare_adffs(false);
+   bool adffs = !was_ejected && selected == 0u &&
+      arc_prepare_adffs(false, arc_core_options.jfd_write_policy);
    arc_hd_reconcile();
    if (selected < arc_media_count && !was_ejected)
-      arc_finish_jfd_preparation(&arc_media[selected], !adffs);
+      arc_finish_jfd_preparation(&arc_media[selected], !adffs,
+                                 arc_core_options.jfd_write_policy);
    ArcEngineMedia mounted;
    ArcEngineMedia *mounted_pointer = NULL;
    if (!was_ejected && selected < arc_media_count && arc_media[selected].populated)
@@ -7652,6 +7715,14 @@ RETRO_API void retro_run(void)
          arc_touch_reset();
          arc_stick_x = arc_stick_y = 0;
          arc_stick_fraction_x = arc_stick_fraction_y = 0.0L;
+      }
+      if (valid_update && arc_loaded &&
+          updated.jfd_write_policy != arc_core_options.jfd_write_policy &&
+          !arc_jfd_tab_pending_notice_shown)
+      {
+         arc_message("Write-protect Tab change will apply after reset or reload.",
+                     RETRO_LOG_INFO);
+         arc_jfd_tab_pending_notice_shown = true;
       }
       if (valid_update)
          memcpy(arc_core_options.left_stick_dpad, updated.left_stick_dpad,
