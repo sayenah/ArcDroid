@@ -401,7 +401,7 @@ int main(int argc, char **argv) {
   assert(arc_adffs_support_build(p, &selection, support, error, sizeof(error)));
   arc_sha256_hex(support, ARC_ADFFS_DISC_SIZE, baseline_hash);
   assert(!strcmp(baseline_hash,
-      "d33ee31f0281ab2001f3b3c6a975c1bd49bd1c67290a3225768e6592f4ce52b1"));
+      "9f881abe557f57d3c50cc3e6edd69eea68e0437f08b2e1351ddf4c5c35db431d"));
   walk_disc(support);
   root = support + 1024u;
   const uint8_t *adffs = find_entry(root, "!ADFFS");
@@ -444,7 +444,8 @@ int main(int argc, char **argv) {
   test_stage("launcher goldens");
   static const char launcher_golden[] =
       "| ArcDroid ADFFS RAM launcher\rSet ADFFS$Dir RAM::0.$.!ADFFS\rSet "
-      "ADFFS$Path RAM::0.$.!ADFFS.\rRun RAM::0.$.!ADFFS.SetVars\rSetEval "
+      "ADFFS$Path RAM::0.$.!ADFFS.\rRun RAM::0.$.!ADFFS.SetVars\r"
+      "SetEval LCDGM$Status 0\rSetEval "
       "ADFFS$FileSizeLimit 2048\rSet Alias$StoreCSD ADFDoNothing %%*0\rSet "
       "Alias$RestoreCSD ADFDoNothing %%*0\rSet Alias$ADFClipScreen "
       "ADFDoNothing %%*0\rSet Alias$ADFScreenBorders ADFDoNothing %%*0\r"
@@ -468,7 +469,7 @@ int main(int argc, char **argv) {
          !memcmp(launch, launcher_golden, lsz));
   arc_sha256_hex(launch, lsz, baseline_hash);
   assert(!strcmp(baseline_hash,
-      "e2b7d6744a81ab5d55c45a27df97d6d136f1a05a72890e5765565c7d89d28481"));
+      "c757fe76e0dc35936077e2430ee960d640b539d380ba6f18c45a271f0d3ba4b8"));
   assert(!strstr(launch, "Echo") && !strstr(launch, "ADFS::1") &&
          !strstr(launch, "ArcFixture") &&
          !strstr(launch, "ArcDroid synthetic ADFFS") &&
@@ -486,6 +487,23 @@ int main(int argc, char **argv) {
        *dismount = strstr(launch, "Dismount :0"),
        *boot = strstr(launch, "ADFBootFloppy");
   assert(mount && drive0 == mount + 9 && dismount > mount && boot > dismount);
+  test_stage("loader environment before first mount");
+  static const char *const environment_lines[] = {
+      "\rRun RAM::0.$.!ADFFS.SetVars\r",
+      "\rSetEval ADFFS$FileSizeLimit 2048\r",
+      "\rSetEval ADFFS$JIT 0\r",
+      "\rSetEval ADFFS$CRC 0\r",
+      "\rSetEval LCDGM$Status 0\r"};
+  const char *first_mount = strstr(launch, "\rADFMount ");
+  assert(first_mount);
+  for (unsigned i = 0u;
+       i < sizeof(environment_lines) / sizeof(environment_lines[0]); ++i) {
+    const char *line = strstr(launch, environment_lines[i]);
+    assert(line && line < first_mount);
+  }
+  assert(substring_count(launch, "SetEval LCDGM$Status 0\r") == 1u &&
+         strstr(launch, environment_lines[4]) >
+             strstr(launch, environment_lines[0]));
   size_t stage1_size = 0u;
   assert(arc_adffs_stage1(selection.ram_size, NULL, 0u, &stage1_size));
   char *stage1 = calloc(1u, stage1_size + 1u);

@@ -417,10 +417,17 @@ static bool select_script(SelectionContext *c, const uint8_t *s, size_t n,
   return true;
 }
 
+/* Loader contract: ADFFS$Dir, ADFFS$Path; SetVars establishes ADFFS$OSVersion,
+ * ADFFS$CPUID, ADFFS$VIDC20, ADFFS$HighVectors, ADFFS$ARMv7, ADFFS$Overlays;
+ * the launcher also establishes ADFFS$FileSizeLimit, ADFFS$JIT, ADFFS$CRC,
+ * ADFFS$LCDGM and LCDGM$Status. Deliberate differences: no-op StoreCSD,
+ * RestoreCSD, ADFClipScreen, ADFScreenBorders; no LCD game-modes, AutoVIDC,
+ * VProtect, USBJoystick, DOSMap or filer start. */
 static const char launcher_text[] =
     "| ArcDroid ADFFS RAM launcher\r"
     "Set ADFFS$Dir RAM::0.$.!ADFFS\rSet ADFFS$Path RAM::0.$.!ADFFS.\r"
-    "Run RAM::0.$.!ADFFS.SetVars\rSetEval ADFFS$FileSizeLimit 2048\r"
+    "Run RAM::0.$.!ADFFS.SetVars\rSetEval LCDGM$Status 0\r"
+    "SetEval ADFFS$FileSizeLimit 2048\r"
     "Set Alias$StoreCSD ADFDoNothing %%*0\rSet Alias$RestoreCSD ADFDoNothing "
     "%%*0\rSet Alias$ADFClipScreen ADFDoNothing %%*0\rSet "
     "Alias$ADFScreenBorders ADFDoNothing %%*0\rSetEval ADFFS$JIT 0\r"
