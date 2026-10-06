@@ -196,3 +196,12 @@ seeds are copied untouched; reset preserves volatile bytes and cancels capture.
 No seed/captured guest bytes are stored by the backend. Authored tests and their
 analytic synthetic bytes are the only committed capture evidence. D3 supplies
 external plans and runners; shipping admission remains dormant.
+
+### D3 integrated qualification correction
+
+`src/iomd.c`: writing FIQMSK now recomputes the interrupt level immediately,
+as the existing IRQ mask writes do. The authored guest enables the force-bit
+FIQ, counts one handler entry and clears its mask before exception return.
+The previous code deferred assertion until another device updated interrupts
+and retained the pending FIQ after masking it; both violated MMIO delivery.
+No host service, rate, scheduler order or Arculator behavior changes.

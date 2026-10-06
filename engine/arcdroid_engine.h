@@ -39,6 +39,12 @@ typedef struct {
 ArcEngineCapabilities arc_engine_capabilities(void);
 /* Private backend identity; never selects a shipping launch route. */
 bool arc_engine_is_rpc(void);
+/* Exact production/drain backends only. Unsupported backends return zero;
+ * their existing consuming audio path remains independent. */
+uint64_t arc_engine_session_generation(void);
+size_t arc_engine_audio_peek(int16_t *output, size_t capacity_frames);
+void arc_engine_audio_commit(size_t offered, size_t accepted);
+void arc_engine_audio_fault_silence(size_t frames);
 
 typedef struct {
    const char *path;

@@ -148,7 +148,8 @@
       "patches": [
         "containment-device-scheduler",
         "vidc-line-scanout",
-        "audio-input-capture"
+        "audio-input-capture",
+        "devices-fiq-mask-level"
       ]
     },
     {
@@ -321,6 +322,14 @@
         "src/cmos.c"
       ],
       "reason": "D2 owned rational sound DMA and integer drain accounting, arbitrated PS/2 input, CMOS write evidence."
+    },
+    {
+      "id": "devices-fiq-mask-level",
+      "group": "devices/AV/input",
+      "files": [
+        "src/iomd.c"
+      ],
+      "reason": "D3 guest FIQ qualification: recompute the pending level at FIQ mask writes, including retirement before exception return."
     }
   ],
   "adapted_sources": [

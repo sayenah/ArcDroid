@@ -3,6 +3,20 @@
 extern const ArcEngineBackendOps arc_rpc_backend;
 #if defined(ARCDROID_TEST_FAULTS)
 #include "rpc/rpc_session.h"
+#include "engine_test.h"
+#include <stdio.h>
+static uint64_t arc_test_frame_ns, arc_test_callback_ns;
+static bool arc_test_measuring;
+static ArcEngineLogCallback arc_test_log;
+static void *arc_test_log_opaque;
+static void arc_test_log_proxy(void *opaque, const char *message)
+{
+    (void)opaque;
+    uint64_t start = arc_test_clock_ns();
+    if (arc_test_log) arc_test_log(arc_test_log_opaque, message);
+    if (arc_test_measuring) arc_test_callback_ns += arc_test_clock_ns() - start;
+}
+RETRO_API uint64_t arc_engine_test_frame_ns(void) { return arc_test_frame_ns; }
 RETRO_API bool arc_rpc_test_start(ArcRpcModel model, const uint8_t *rom, size_t size,
     const uint8_t seed[256], uint64_t epoch, char *error, size_t error_size);
 #endif
@@ -13,6 +27,15 @@ RETRO_API bool arc_rpc_test_start(ArcRpcModel model, const uint8_t *rom, size_t 
 static const ArcEngineBackendOps *arc_backend = &arc_arculator_backend;
 
 bool arc_engine_is_rpc(void) { return arc_backend == &arc_rpc_backend; }
+
+uint64_t arc_engine_session_generation(void)
+{ return arc_backend->session_generation ? arc_backend->session_generation() : 0; }
+size_t arc_engine_audio_peek(int16_t *output, size_t capacity)
+{ return arc_backend->audio_peek ? arc_backend->audio_peek(output, capacity) : 0; }
+void arc_engine_audio_commit(size_t offered, size_t accepted)
+{ if (arc_backend->audio_commit) arc_backend->audio_commit(offered, accepted); }
+void arc_engine_audio_fault_silence(size_t frames)
+{ if (arc_backend->audio_fault_silence) arc_backend->audio_fault_silence(frames); }
 
 ArcEngineCapabilities arc_engine_capabilities(void)
 {
@@ -42,6 +65,13 @@ bool arc_engine_start(const uint8_t *firmware, size_t firmware_size,
 
 void arc_engine_set_log_callback(ArcEngineLogCallback callback, void *opaque)
 {
+#if defined(ARCDROID_TEST_FAULTS)
+   if (arc_engine_is_rpc()) {
+      arc_test_log = callback; arc_test_log_opaque = opaque;
+      arc_backend->set_log_callback(callback ? arc_test_log_proxy : NULL, NULL);
+      return;
+   }
+#endif
    arc_backend->set_log_callback(callback, opaque);
 }
 
@@ -57,6 +87,16 @@ void arc_engine_stop(void)
 
 bool arc_engine_run_frame(ArcInputState *input, ArcEngineFrame *frame)
 {
+#if defined(ARCDROID_TEST_FAULTS)
+   if (arc_engine_is_rpc()) {
+      arc_test_callback_ns = 0; arc_test_measuring = true;
+      uint64_t start = arc_test_clock_ns();
+      bool result = arc_backend->run_frame(input, frame);
+      arc_test_frame_ns = arc_test_clock_ns() - start - arc_test_callback_ns;
+      arc_test_measuring = false;
+      return result;
+   }
+#endif
    return arc_backend->run_frame(input, frame);
 }
 
@@ -200,6 +240,24 @@ bool arc_engine_active(void)
 }
 
 #if defined(ARCDROID_TEST_FAULTS)
+void arc_engine_test_plan_input_ready(void)
+{ if (arc_engine_is_rpc()) arc_rpc_session_test_input_ready(); }
+bool arc_engine_test_plan_start(unsigned model, unsigned rate, bool factory,
+    const uint8_t *rom, size_t size, const uint8_t seed[256], uint64_t epoch,
+    char *error, size_t error_size)
+{
+    if (rate > 100) {
+       if (error && error_size) snprintf(error, error_size, "Rate must be 1..100 MIPS");
+       return false;
+    }
+    arc_backend->stop(); arc_backend = &arc_rpc_backend;
+    bool started = factory ? arc_rpc_session_factory_start((ArcRpcModel)model,
+       rom, size, epoch, error, error_size) : arc_rpc_session_start((ArcRpcModel)model,
+       rom, size, seed, epoch, error, error_size);
+    if (started && rate) arc_rpc_session_test_rate(rate);
+    arc_test_frame_ns = 0;
+    return started;
+}
 RETRO_API bool arc_rpc_test_start(ArcRpcModel model, const uint8_t *rom, size_t size,
     const uint8_t seed[256], uint64_t epoch, char *error, size_t error_size)
 {

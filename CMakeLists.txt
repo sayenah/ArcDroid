@@ -200,9 +200,16 @@ function(arcdroid_add_libretro target shipping)
       ${ARCDROID_SYMBOL_CHECK_FLAGS}
       --arculator "${CMAKE_CURRENT_BINARY_DIR}/CMakeFiles/${target}_arculator.dir"
       --rpc "${CMAKE_CURRENT_BINARY_DIR}/CMakeFiles/${target}_rpc.dir"
+      --outside "${CMAKE_CURRENT_BINARY_DIR}/CMakeFiles/${target}.dir"
+      --outside "${CMAKE_CURRENT_BINARY_DIR}/CMakeFiles/${core_target}.dir"
+      --outside "${CMAKE_CURRENT_BINARY_DIR}/CMakeFiles/arcdroid_zlib.dir"
     VERBATIM)
   target_include_directories(${target} PRIVATE
     engine platform libretro libretro/include core)
+  if(NOT shipping)
+    target_sources(${target} PRIVATE tests/arc_test_plan.c tests/rpc_test_clock.c)
+    target_include_directories(${target} PRIVATE tests)
+  endif()
   target_compile_definitions(${target} PRIVATE
     ARCDROID_VERSION="${PROJECT_VERSION}"
     RELEASE_BUILD=1)
@@ -261,6 +268,34 @@ install(TARGETS arcdroid_libretro DESTINATION .)
 install(FILES arcdroid_libretro.info DESTINATION .)
 
 option(ARCDROID_ANDROID_TEST_CORE "Build the non-installed Android test core" OFF)
+option(ARCDROID_RPC_RUNNER "Build the non-installed R1 plan runner" ON)
+if(ARCDROID_RPC_RUNNER AND ((BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32)) OR
+                          (ANDROID AND ARCDROID_ANDROID_TEST_CORE)))
+  add_executable(rpc_runner tools/rpc_runner.c tests/rpc_test_clock.c)
+  target_include_directories(rpc_runner PRIVATE engine engine/rpc core libretro/include)
+  target_compile_definitions(rpc_runner PRIVATE ARCDROID_TEST_FAULTS=1 RETRO_IMPORT_SYMBOLS=1)
+  target_compile_options(rpc_runner PRIVATE
+    $<$<C_COMPILER_ID:GNU,Clang,AppleClang>:-Wall;-Wextra;-Werror=implicit-function-declaration>)
+  target_link_libraries(rpc_runner PRIVATE ${CMAKE_DL_LIBS})
+  if(UNIX AND NOT APPLE)
+    target_link_libraries(rpc_runner PRIVATE m)
+  endif()
+  if(WIN32)
+    target_link_options(rpc_runner PRIVATE -static-libgcc)
+  endif()
+  if(ARCDROID_SANITIZERS)
+    target_link_libraries(rpc_runner PRIVATE arcdroid_sanitizer_compile arcdroid_sanitizer_link)
+  endif()
+  set_property(TARGET rpc_runner APPEND PROPERTY LINK_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/tools/check-backend-symbols.py"
+    "${CMAKE_CURRENT_SOURCE_DIR}/engine/backend-symbols.json")
+  add_custom_command(TARGET rpc_runner POST_BUILD
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/check-backend-symbols.py"
+      --nm "${CMAKE_NM}" ${ARCDROID_SYMBOL_CHECK_FLAGS}
+      --outside "${CMAKE_CURRENT_BINARY_DIR}/CMakeFiles/rpc_runner.dir" VERBATIM)
+endif()
+
+
 if(ANDROID AND ARCDROID_ANDROID_TEST_CORE)
   add_library(arcdroid_core_test STATIC
     ${ARCDROID_CORE_SOURCES} tests/adffs_profiles_test.c tests/firmware_table_test.c)
@@ -285,6 +320,9 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
     --compiler "${CMAKE_C_COMPILER}")
   add_test(NAME rpc-symbol-guard COMMAND "${Python3_EXECUTABLE}"
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_symbols_test.py"
+    "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_C_COMPILER}" "${CMAKE_NM}")
+  add_test(NAME rpc-frontend-boundary-guard COMMAND "${Python3_EXECUTABLE}" -B
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_boundary_test.py"
     "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_C_COMPILER}" "${CMAKE_NM}")
   add_executable(rpc_scheduler_test tests/rpc_scheduler_test.c
     engine/rpc/rpc_scheduler.c)
@@ -1947,4 +1985,44 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
   add_test(NAME rpc-shipping-route COMMAND rpc_session_test
     $<TARGET_FILE:arcdroid_libretro> --shipping)
 
+  if(TARGET rpc_runner)
+  set(RPC_PLAN_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated/rpc-plans")
+  add_custom_command(OUTPUT "${RPC_PLAN_DIR}/matrix-0.arcplan" "${RPC_PLAN_DIR}/ac8.arcplan"
+    COMMAND "${Python3_EXECUTABLE}" -B "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_plan_fixtures.py" "${RPC_PLAN_DIR}"
+    COMMAND "${Python3_EXECUTABLE}" -B "${CMAKE_CURRENT_SOURCE_DIR}/tools/rpc_ac8_workload.py" "${RPC_PLAN_DIR}"
+    DEPENDS tests/rpc_plan_fixtures.py tests/rpc_plan_matrix_rom.py tests/rpc_session_rom.py
+      tests/rpc_video_rom.py tests/rpc_d2_rom.py tools/rpc_ac8_workload.py VERBATIM)
+  add_custom_target(rpc-plan-fixtures ALL DEPENDS "${RPC_PLAN_DIR}/matrix-0.arcplan" "${RPC_PLAN_DIR}/ac8.arcplan")
+  add_dependencies(rpc_runner rpc-plan-fixtures)
+  foreach(mode IN ITEMS admission matrix-0 matrix-1 matrix-2 matrix-3 av-0 av-1 av-2 av-3)
+    add_test(NAME rpc-plan-${mode} COMMAND "${Python3_EXECUTABLE}" -B
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_plan_test.py" $<TARGET_FILE:rpc_runner>
+      $<TARGET_FILE:arcdroid_rpcplan_libretro> $<TARGET_FILE:arcdroid_libretro> "${RPC_PLAN_DIR}" ${mode})
+  endforeach()
+  add_test(NAME rpc-ac8-workload COMMAND "${Python3_EXECUTABLE}" -B
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_ac8_test.py"
+    $<TARGET_FILE:rpc_runner> $<TARGET_FILE:arcdroid_rpcplan_libretro> "${RPC_PLAN_DIR}")
+  add_test(NAME rpc-runner-timing-window COMMAND "${Python3_EXECUTABLE}" -B
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_runner_timing_test.py"
+    $<TARGET_FILE:rpc_runner> $<TARGET_FILE:arcdroid_rpcplan_libretro> "${RPC_PLAN_DIR}")
+  foreach(mode IN ITEMS devices lifecycle factory)
+    add_test(NAME rpc-plan-${mode} COMMAND "${Python3_EXECUTABLE}" -B
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_plan_lifecycle_test.py"
+      $<TARGET_FILE:rpc_runner> $<TARGET_FILE:arcdroid_rpcplan_libretro> "${RPC_PLAN_DIR}" ${mode})
+  endforeach()
+  endif()
+
+endif()
+
+# A plan-enabled test core has its own metadata/content contract. The existing
+# fault-test core keeps the exact interface asserted by unchanged harnesses.
+if(TARGET arcdroid_libretro_test)
+  arcdroid_add_libretro(arcdroid_rpcplan_libretro FALSE arcdroid_core_test)
+  target_compile_definitions(arcdroid_rpcplan_libretro PRIVATE ARCDROID_TEST_FAULTS=1 ARCDROID_TEST_PLANS=1)
+  target_sources(arcdroid_rpcplan_libretro PRIVATE tests/hd_product_seed.c)
+  configure_file(tests/arcdroid_rpcplan_libretro.info arcdroid_rpcplan_libretro.info COPYONLY)
+  if(ANDROID)
+    set_target_properties(arcdroid_rpcplan_libretro PROPERTIES OUTPUT_NAME arcdroid_rpcplan_libretro_android)
+    target_link_options(arcdroid_rpcplan_libretro PRIVATE "-Wl,-z,defs" "-Wl,-z,max-page-size=16384")
+  endif()
 endif()

@@ -443,9 +443,18 @@ const ArcEngineBackendOps arc_rpc_backend = {
     .disc_a_notified=arc_rpc_nop,.disc_time_us=arc_rpc_disc_time,.disc_controller_idle=arc_rpc_false,
     .adf_refusal_callback_set=arc_rpc_refusal,.audio=arc_rpc_audio,.audio_stats=arc_rpc_audio_stats,
     .media_eject=arc_rpc_false,.media_insert=arc_rpc_media,.get_av_info=arc_rpc_av,
-    .cmos=arc_rpc_cmos_unavailable,.faulted=arc_rpc_faulted,.active=arc_rpc_active
+    .cmos=arc_rpc_cmos_unavailable,.faulted=arc_rpc_faulted,.active=arc_rpc_active,
+    .session_generation=arc_rpc_session_generation,.audio_peek=arc_rpc_audio_peek,
+    .audio_commit=arc_rpc_audio_commit,.audio_fault_silence=arc_rpc_sound_fault_silence
 };
 #if defined(ARCDROID_TEST_FAULTS)
+void arc_rpc_session_test_input_ready(void) { arc_rpc_input_retire=false; }
+void arc_rpc_session_test_rate(unsigned rate)
+{
+    if (rate && rate <= 100 && arc_rpc_live && !arc_rpc_scheduler.now_ns) {
+        arc_rpc_rate = rate; arc_rpc_scheduler.rate_mips = rate;
+    }
+}
 RETRO_API void arc_rpc_test_cmos_snapshot(uint8_t *out) { if(out)arc_rpc_cmos_snapshot(out); }
 RETRO_API void arc_rpc_test_capture_status(ArcRpcCapture *out) { arc_rpc_capture_status(out); }
 RETRO_API void arc_rpc_test_audio_counts(ArcRpcAudioCounts *out) { arc_rpc_audio_counts(out); }

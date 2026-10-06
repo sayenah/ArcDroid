@@ -1,0 +1,4 @@
+model=0 timer-irq=60 fiq-handler=1 fdc=40,05,00,00,00,00,00 absent=00000000,0000ffff,0000ffff,ffffffff keyboard=fa mouse=ffffffff
+model=1 timer-irq=60 fiq-handler=1 fdc=40,05,00,00,00,00,00 absent=00000000,0000ffff,0000ffff,ffffffff keyboard=fa mouse=ffffffff
+model=2 timer-irq=60 fiq-handler=1 fdc=40,05,00,00,00,00,00 absent=00000000,0000ffff,0000ffff,ffffffff keyboard=fa mouse=ffffffff
+model=3 timer-irq=60 fiq-handler=1 fdc=40,05,00,00,00,00,00 absent=00000000,0000ffff,0000ffff,ffffffff keyboard=fa mouse=000000fe

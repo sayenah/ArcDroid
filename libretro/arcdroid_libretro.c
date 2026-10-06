@@ -4,8 +4,6 @@
 #include "install_store.h"
 #include "arcdroid_core.h"
 #include "arcdroid_engine.h"
-#include "rpc/rpc_audio.h"
-#include "rpc/rpc_session.h"
 #include "arcdroid_platform.h"
 #include "adffs.h"
 #include "folder_set.h"
@@ -15,6 +13,9 @@
 #include "zip_content.h"
 #include "boot_observation.h"
 #include "hard_disc_scope.h"
+#if defined(ARCDROID_TEST_FAULTS)
+#include "arc_test_plan.h"
+#endif
 
 #include <limits.h>
 #include <ctype.h>
@@ -1127,6 +1128,9 @@ static const char *arc_os_slug(ArcOsClass os)
 
 static void arc_release_session(void)
 {
+#if defined(ARCDROID_TEST_FAULTS)
+   arc_test_plan_clear();
+#endif
    arc_engine_disc_configure(false, NULL, NULL, NULL, NULL);
    arc_io_set_write_observer(NULL);
    arc_disc_owned = false;
@@ -6349,6 +6353,10 @@ RETRO_API void retro_get_system_info(struct retro_system_info *info)
    info->library_name = "ArcDroid";
    info->library_version = ARCDROID_VERSION;
    info->valid_extensions = "adf|adl|jfd|m3u|zip";
+#if defined(ARCDROID_TEST_PLANS)
+   info->library_name = "ArcDroid R1 Test";
+   info->valid_extensions = "adf|adl|jfd|m3u|zip|arcplan";
+#endif
    info->need_fullpath = true;
    info->block_extract = true;
 }
@@ -7375,6 +7383,23 @@ static bool arc_load_game(const struct retro_game_info *game, bool negotiate)
 
 RETRO_API bool retro_load_game(const struct retro_game_info *game)
 {
+#if defined(ARCDROID_TEST_PLANS)
+   if (game && arc_test_plan_path(game->path)) {
+      arc_loaded = false;
+      arc_release_session();
+      const char *system = NULL; char error[256];
+      enum retro_pixel_format format = RETRO_PIXEL_FORMAT_XRGB8888;
+      static const struct retro_keyboard_callback keyboard = {arc_keyboard};
+      if (!arc_environment || !arc_environment(RETRO_ENVIRONMENT_SET_PIXEL_FORMAT, &format)) return false;
+      arc_environment(RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY, &system);
+      arc_environment(RETRO_ENVIRONMENT_SET_KEYBOARD_CALLBACK, (void *)&keyboard);
+      if (!arc_test_plan_load(game->path, system, error, sizeof(error))) {
+         arc_message(error, RETRO_LOG_ERROR); return false;
+      }
+      arc_rpc_av_attempted = false; arc_fault_reported = false;
+      return true;
+   }
+#endif
    return arc_load_game(game, true);
 }
 
@@ -7407,6 +7432,9 @@ RETRO_API void retro_reset(void)
       arc_input_sampling_reset(false);
       arc_guest_time_us=0;
       if(!arc_engine_reset(error,sizeof(error)))arc_message(error,RETRO_LOG_ERROR);
+#if defined(ARCDROID_TEST_FAULTS)
+      else arc_test_plan_reset();
+#endif
       arc_rpc_av_attempted=false;return;
    }
    arc_engine_launch_outcome_cancel("reset");
@@ -7702,8 +7730,8 @@ static void arc_present(const ArcEngineFrame *frame)
 static void arc_rpc_present_run(void)
 {
    static uint64_t input_generation;
-   if(input_generation!=arc_rpc_session_generation()) {
-      input_generation=arc_rpc_session_generation();
+   if(input_generation!=arc_engine_session_generation()) {
+      input_generation=arc_engine_session_generation();
       arc_input_reset(&arc_inputs);arc_input_sampling_reset(false);
       memset(arc_keyboard_raw,0,sizeof(arc_keyboard_raw));
       arc_guest_time_us=0;
@@ -7726,6 +7754,9 @@ static void arc_rpc_present_run(void)
    }
    if (arc_input_poll) arc_input_poll();
    arc_poll_inputs();
+#if defined(ARCDROID_TEST_FAULTS)
+   arc_test_plan_input(&arc_inputs);
+#endif
    ArcEngineFrame frame;
    bool ran = arc_engine_run_frame(&arc_inputs, &frame);
    if (!ran)
@@ -7765,13 +7796,13 @@ static void arc_rpc_present_run(void)
    else if (!ran) arc_present(&frame);
    else if (arc_video && arc_can_dupe)
       arc_video(NULL, arc_video_width, arc_video_height, arc_video_pitch);
-   if (!ran) arc_rpc_sound_fault_silence(960);
+   if (!ran) arc_engine_audio_fault_silence(960);
    if(ran) { arc_guest_time_us+=frame.elapsed_us;arc_integrate_stick(frame.elapsed_us); }
    /* Integer engine production is authoritative, including disabled silence.
     * Retire every offer exactly once; never let rejection change guest time. */
    size_t capacity = sizeof(arc_audio_frame) / (2u * sizeof(arc_audio_frame[0]));
    size_t n;
-   while ((n = arc_rpc_audio_peek(arc_audio_frame, capacity)) != 0)
+   while ((n = arc_engine_audio_peek(arc_audio_frame, capacity)) != 0)
    {
       size_t accepted = 0;
       if (arc_audio_batch) accepted = arc_audio_batch(arc_audio_frame, n);
@@ -7779,7 +7810,7 @@ static void arc_rpc_present_run(void)
          for (size_t i = 0; i < n; ++i) arc_audio(arc_audio_frame[i*2], arc_audio_frame[i*2+1]);
          accepted = n;
       }
-      arc_rpc_audio_commit(n, accepted);
+      arc_engine_audio_commit(n, accepted);
    }
 }
 

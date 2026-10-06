@@ -736,5 +736,6 @@
     "arc_input_consume",
     "arc_input_is_modifier",
     "arc_input_reset"
-  ]
+  ],
+  "outside_test_hooks": []
 }

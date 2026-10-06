@@ -52,6 +52,10 @@ typedef struct {
    void (*cmos)(uint8_t output[ARC_CMOS_PAYLOAD_SIZE]);
    bool (*faulted)(const char **message);
    bool (*active)(void);
+   uint64_t (*session_generation)(void);
+   size_t (*audio_peek)(int16_t *output, size_t capacity_frames);
+   void (*audio_commit)(size_t offered, size_t accepted);
+   void (*audio_fault_silence)(size_t frames);
 } ArcEngineBackendOps;
 
 extern const ArcEngineBackendOps arc_arculator_backend;

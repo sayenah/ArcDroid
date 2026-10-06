@@ -22,6 +22,8 @@ uint64_t arc_rpc_session_generation(void);
 bool arc_rpc_session_start(ArcRpcModel model, const uint8_t *rom, size_t size,
     const uint8_t seed[256], uint64_t epoch, char *error, size_t error_size);
 #if defined(ARCDROID_TEST_FAULTS)
+void arc_rpc_session_test_rate(unsigned rate);
+void arc_rpc_session_test_input_ready(void);
 #include "libretro.h"
 #include "rpc_video.h"
 RETRO_API bool arc_rpc_test_factory_start(ArcRpcModel model, const uint8_t *rom, size_t size,

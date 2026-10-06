@@ -110,6 +110,7 @@ jobs:
         run: |
           mkdir -p build/windows/retroarch-package
           cp build/windows/arcdroid_libretro.dll build/windows/arcdroid_libretro_test.dll build/windows/arcdroid_libretro.info build/windows/windows_load_harness.exe \
+            build/windows/arcdroid_rpcplan_libretro.dll build/windows/arcdroid_rpcplan_libretro.info build/windows/rpc_runner.exe \
             build/windows/tests/fixtures/generated/arcdroid-test.rom \
             build/windows/tests/fixtures/generated/arcdroid-boot-prompt.rom \
             build/windows/tests/fixtures/generated/arcdroid-boot-prompt-write.rom \
@@ -188,6 +189,7 @@ jobs:
           cp -R build/windows/tests/fixtures/generated/jfd-allocation \
             build/windows/retroarch-package/
           mkdir -p build/windows/retroarch-package/disc-request
+          cp -R build/windows/generated/rpc-plans build/windows/retroarch-package/
           cp build/windows/tests/fixtures/generated/disc-request/One.adf \
             build/windows/tests/fixtures/generated/disc-request/Two.adf \
             build/windows/tests/fixtures/generated/disc-request/Set.m3u \
@@ -244,7 +246,7 @@ jobs:
       - name: RPCEmu import and include guard
         run: python3 tools/check-rpcemu-import.py --compiler ${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android21-clang
       - name: Configure
-        run: cmake -S . -B build/android -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE=${{ steps.setup-ndk.outputs.ndk-path }}/build/cmake/android.toolchain.cmake -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-21
+        run: cmake -S . -B build/android -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE=${{ steps.setup-ndk.outputs.ndk-path }}/build/cmake/android.toolchain.cmake -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-21 -DARCDROID_ANDROID_TEST_CORE=ON
       - name: Build
         run: cmake --build build/android --verbose
       - name: Shipping source I/O guard self-test

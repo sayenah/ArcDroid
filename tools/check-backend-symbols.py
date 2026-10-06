@@ -109,10 +109,29 @@ def verify(arculator, rpc, policy, nm, sanitized=False):
     return len(definitions)
 
 
+def verify_outside(directories, policy, nm, sanitized=False):
+    """The dispatcher/engine owns private references; frontend/core do not."""
+    allowed = set(policy["outside_test_hooks"])
+    count = 0
+    for directory in directories:
+        for path in objects(directory):
+            # CMake preserves the source directory beneath the object target.
+            relative = path.relative_to(directory)
+            if relative.parts[0] == "engine":
+                continue
+            for name, undefined in read_symbols(path, nm, sanitized):
+                if undefined and name.startswith("arc_rpc_"):
+                    require(name in allowed,
+                            f"outside engine references RPCEmu: {path}: {name}")
+            count += 1
+    print(f"backend symbols: outside engine: {count} objects passed")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--arculator", type=Path, action="append", default=[])
     parser.add_argument("--rpc", type=Path, action="append", default=[])
+    parser.add_argument("--outside", type=Path, action="append", default=[])
     parser.add_argument("--nm", default="nm")
     parser.add_argument("--sanitized", action="store_true",
                         help="recognise compiler-owned ASan registration bookkeeping")
@@ -120,10 +139,12 @@ def main():
                         default=Path(__file__).resolve().parents[1] / "engine/backend-symbols.json")
     args = parser.parse_args()
     try:
-        require(args.arculator or args.rpc, "no backend selected")
+        require(args.arculator or args.rpc or args.outside, "no objects selected")
         policy = json.loads(args.policy.read_text())
         require(policy["schema"] == 1, "unsupported symbol policy")
         verify(args.arculator, args.rpc, policy, args.nm, args.sanitized)
+        if args.outside:
+            verify_outside(args.outside, policy, args.nm, args.sanitized)
     except (ValueError, KeyError, OSError, subprocess.CalledProcessError) as error:
         print(f"backend symbol guard: {error}", file=sys.stderr)
         return 1

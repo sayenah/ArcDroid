@@ -330,6 +330,9 @@ iomd_write(uint32_t addr, uint32_t val)
 
         case IOMD_0x038_FIQMSK: /* FIQ mask */
                 iomd.fiq.mask = val;
+                /* ArcDroid modification (D3, 2026-10-06): mask writes assert
+                 * or retire the current FIQ level at this MMIO boundary. */
+                updateirqs();
                 return;
 
 	case IOMD_0x03C_CLKCTL: /* Clock divider control (ARM7500/FE) */
