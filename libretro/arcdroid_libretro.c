@@ -456,7 +456,7 @@ bool arc_libretro_test_jfd_commit(unsigned image_index, size_t descriptor,
    return committed;
 }
 /* Exact map I/O for authored lifecycle and snapshot-interruption tests. */
-bool arc_libretro_test_jfd_map(unsigned image_index, uint8_t bytes[1024],
+RETRO_API bool arc_libretro_test_jfd_map(unsigned image_index, uint8_t bytes[1024],
                                bool write, uint64_t *generation)
 {
    if (image_index >= arc_media_count ||
