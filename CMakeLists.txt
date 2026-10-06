@@ -112,6 +112,25 @@ set(ARCDROID_ARCULATOR_SOURCES
   platform/arcdroid_video.c
 )
 
+set(ARCDROID_RPC_SOURCES
+  engine/rpc/rpc_session.c
+  engine/rpc/rpc_timing.c
+  engine/rpc/rpc_scheduler.c
+  engine/rpc/rpc_floppy.c
+  engine/rpc/rpc_rtc.c
+  engine/rpcemu/src/arm.c
+  engine/rpcemu/src/arm_common.c
+  engine/rpcemu/src/cp15.c
+  engine/rpcemu/src/mem.c
+  engine/rpcemu/src/cmos.c
+  engine/rpcemu/src/iomd.c
+  engine/rpcemu/src/keyboard.c
+  engine/rpcemu/src/superio.c
+  engine/rpcemu/src/i8042.c
+  engine/rpcemu/src/vidc20.c
+  engine/rpcemu/src/fdc.c
+)
+
 set(ARCDROID_LIBRETRO_SOURCES
   engine/arcdroid_engine.c
   engine/arc_boot_watch.c
@@ -153,8 +172,23 @@ function(arcdroid_add_libretro target shipping)
     target_compile_options(${target}_arculator PRIVATE
       $<$<C_COMPILER_ID:GNU,Clang,AppleClang>:-fvisibility=hidden>)
   endif()
+  add_library(${target}_rpc OBJECT ${ARCDROID_RPC_SOURCES})
+  target_include_directories(${target}_rpc PRIVATE engine/rpc engine/rpcemu/src
+    engine core libretro/include)
+  target_compile_definitions(${target}_rpc PRIVATE RELEASE_BUILD=1
+    $<TARGET_PROPERTY:${target},COMPILE_DEFINITIONS>)
+  target_compile_options(${target}_rpc PRIVATE
+    $<$<C_COMPILER_ID:GNU,Clang,AppleClang>:-include;${CMAKE_CURRENT_SOURCE_DIR}/engine/rpc/rpc_namespace.h;-fno-common;-fno-strict-aliasing;-Wall;-Wextra;-Werror=implicit-function-declaration>)
+  set_target_properties(${target}_rpc PROPERTIES POSITION_INDEPENDENT_CODE ON)
+  if(ARCDROID_SANITIZERS)
+    target_link_libraries(${target}_rpc PRIVATE arcdroid_sanitizer_compile)
+  endif()
+  if(shipping)
+    target_compile_options(${target}_rpc PRIVATE
+      $<$<C_COMPILER_ID:GNU,Clang,AppleClang>:-fvisibility=hidden>)
+  endif()
   add_library(${target} SHARED ${ARCDROID_LIBRETRO_SOURCES}
-    $<TARGET_OBJECTS:${target}_arculator>)
+    $<TARGET_OBJECTS:${target}_arculator> $<TARGET_OBJECTS:${target}_rpc>)
   set_property(TARGET ${target} APPEND PROPERTY LINK_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/tools/check-backend-symbols.py"
     "${CMAKE_CURRENT_SOURCE_DIR}/engine/backend-symbols.json")
@@ -163,6 +197,7 @@ function(arcdroid_add_libretro target shipping)
       --nm "${CMAKE_NM}"
       ${ARCDROID_SYMBOL_CHECK_FLAGS}
       --arculator "${CMAKE_CURRENT_BINARY_DIR}/CMakeFiles/${target}_arculator.dir"
+      --rpc "${CMAKE_CURRENT_BINARY_DIR}/CMakeFiles/${target}_rpc.dir"
     VERBATIM)
   target_include_directories(${target} PRIVATE
     engine platform libretro libretro/include core)
@@ -222,6 +257,22 @@ configure_file(arcdroid_libretro.info arcdroid_libretro.info COPYONLY)
 
 install(TARGETS arcdroid_libretro DESTINATION .)
 install(FILES arcdroid_libretro.info DESTINATION .)
+
+option(ARCDROID_ANDROID_TEST_CORE "Build the non-installed Android test core" OFF)
+if(ANDROID AND ARCDROID_ANDROID_TEST_CORE)
+  add_library(arcdroid_core_test STATIC
+    ${ARCDROID_CORE_SOURCES} tests/adffs_profiles_test.c tests/firmware_table_test.c)
+  target_include_directories(arcdroid_core_test PUBLIC
+    core libretro/include "${CMAKE_CURRENT_BINARY_DIR}/generated")
+  target_link_libraries(arcdroid_core_test PRIVATE arcdroid_zlib)
+  target_compile_definitions(arcdroid_core_test PUBLIC ARCDROID_TEST_FAULTS=1)
+  set_target_properties(arcdroid_core_test PROPERTIES POSITION_INDEPENDENT_CODE ON)
+  arcdroid_add_libretro(arcdroid_libretro_test FALSE arcdroid_core_test)
+  target_compile_definitions(arcdroid_libretro_test PRIVATE ARCDROID_TEST_FAULTS=1)
+  target_sources(arcdroid_libretro_test PRIVATE tests/hd_product_seed.c)
+  set_target_properties(arcdroid_libretro_test PROPERTIES OUTPUT_NAME arcdroid_libretro_test_android)
+  target_link_options(arcdroid_libretro_test PRIVATE "-Wl,-z,defs" "-Wl,-z,max-page-size=16384")
+endif()
 
 if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
   add_test(NAME rpc-import-guard COMMAND "${Python3_EXECUTABLE}"
@@ -289,7 +340,7 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
       --nm "${CMAKE_NM}" --rpc "${CMAKE_CURRENT_BINARY_DIR}/CMakeFiles/arcdroid_rpc_cmos.dir"
       ${ARCDROID_SYMBOL_CHECK_FLAGS} VERBATIM)
   add_library(arcdroid_rpc_fdc OBJECT engine/rpcemu/src/fdc.c
-    engine/rpc/rpc_floppy.c)
+    engine/rpc/rpc_floppy.c engine/rpc/rpc_timing.c engine/rpc/rpc_scheduler.c)
   target_include_directories(arcdroid_rpc_fdc PRIVATE engine/rpc engine/rpcemu/src)
   target_compile_definitions(arcdroid_rpc_fdc PRIVATE RELEASE_BUILD=1)
   target_compile_options(arcdroid_rpc_fdc PRIVATE
@@ -1800,4 +1851,33 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
   if(ARCDROID_SANITIZERS)
     target_link_libraries(firmware_probe PRIVATE arcdroid_sanitizer_link)
   endif()
+  add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/rpc_session_rom.h"
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_session_rom.py"
+      "${CMAKE_CURRENT_BINARY_DIR}/generated/rpc_session_rom.h"
+    DEPENDS tests/rpc_session_rom.py VERBATIM)
+  add_executable(rpc_session_test tests/rpc_session_test.c
+    "${CMAKE_CURRENT_BINARY_DIR}/generated/rpc_session_rom.h")
+  target_include_directories(rpc_session_test PRIVATE engine engine/rpc core
+    libretro/include "${CMAKE_CURRENT_BINARY_DIR}/generated")
+  target_compile_definitions(rpc_session_test PRIVATE ARCDROID_TEST_FAULTS=1 RETRO_IMPORT_SYMBOLS=1)
+  target_compile_options(rpc_session_test PRIVATE
+    $<$<C_COMPILER_ID:GNU,Clang,AppleClang>:-UNDEBUG;-Wall;-Wextra;-Werror=implicit-function-declaration>)
+  target_link_libraries(rpc_session_test PRIVATE arcdroid_core ${CMAKE_DL_LIBS})
+  add_dependencies(rpc_session_test arcdroid_libretro_test test-fixtures)
+  if(ARCDROID_SANITIZERS)
+    target_link_libraries(rpc_session_test PRIVATE arcdroid_sanitizer_compile arcdroid_sanitizer_link)
+  endif()
+  foreach(model RANGE 0 3)
+    add_test(NAME rpc-session-guest-${model} COMMAND rpc_session_test
+      $<TARGET_FILE:arcdroid_libretro_test> --guest ${model})
+  endforeach()
+  add_test(NAME rpc-session-lifecycle COMMAND rpc_session_test
+    $<TARGET_FILE:arcdroid_libretro_test> --lifecycle)
+  add_test(NAME rpc-session-switch COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_session_switch_test.py"
+    $<TARGET_FILE:rpc_session_test> $<TARGET_FILE:arcdroid_libretro_test>
+    "${FIXTURE_DIR}/arcdroid-test.rom")
+  add_test(NAME rpc-shipping-route COMMAND rpc_session_test
+    $<TARGET_FILE:arcdroid_libretro> --shipping)
+
 endif()

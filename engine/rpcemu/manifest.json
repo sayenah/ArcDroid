@@ -84,7 +84,8 @@
       "sha256": "41f1b82cca4822318b5ad1f2cb6152585efdf7a49f5b83dab8753c89467e632d",
       "licence_header": "/*\n  RPCEmu - An Acorn system emulator\n\n  Copyright (C) 2005-2010 Sarah Walker\n\n  This program is free software; you can redistribute it and/or modify\n  it under the terms of the GNU General Public License as published by\n  the Free Software Foundation; either version 2 of the License, or\n  (at your option) any later version.\n\n  This program is distributed in the hope that it will be useful,\n  but WITHOUT ANY WARRANTY; without even the implied warranty of\n  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the\n  GNU General Public License for more details.\n\n  You should have received a copy of the GNU General Public License\n  along with this program; if not, write to the Free Software\n  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.\n */",
       "patches": [
-        "scheduler-mmu-owned-memory"
+        "scheduler-mmu-owned-memory",
+        "containment-device-scheduler"
       ]
     },
     {
@@ -102,7 +103,8 @@
       "sha256": "58e5d3a1062b63d741f1aa3b5f09b01a01d5cf5e15e1c742a1c1f2ff32af0e04",
       "licence_header": "/*\n  RPCEmu - An Acorn system emulator\n\n  Copyright (C) 2005-2010 Sarah Walker\n\n  This program is free software; you can redistribute it and/or modify\n  it under the terms of the GNU General Public License as published by\n  the Free Software Foundation; either version 2 of the License, or\n  (at your option) any later version.\n\n  This program is distributed in the hope that it will be useful,\n  but WITHOUT ANY WARRANTY; without even the implied warranty of\n  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the\n  GNU General Public License for more details.\n\n  You should have received a copy of the GNU General Public License\n  along with this program; if not, write to the Free Software\n  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.\n */",
       "patches": [
-        "devices-empty-fdc"
+        "devices-empty-fdc",
+        "containment-device-scheduler"
       ]
     },
     {
@@ -119,7 +121,9 @@
       "original_path": "src/i8042.c",
       "sha256": "0908032e9303d8d2d7c8e61611973e03dc635853675fe94998e1cfb372c06aa3",
       "licence_header": "/*\n  RPCEmu - An Acorn system emulator\n\n  Copyright (C) 2005-2010 Sarah Walker\n\n  This program is free software; you can redistribute it and/or modify\n  it under the terms of the GNU General Public License as published by\n  the Free Software Foundation; either version 2 of the License, or\n  (at your option) any later version.\n\n  This program is distributed in the hope that it will be useful,\n  but WITHOUT ANY WARRANTY; without even the implied warranty of\n  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the\n  GNU General Public License for more details.\n\n  You should have received a copy of the GNU General Public License\n  along with this program; if not, write to the Free Software\n  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.\n */",
-      "patches": []
+      "patches": [
+        "containment-device-scheduler"
+      ]
     },
     {
       "path": "src/i8042.h",
@@ -140,7 +144,9 @@
       "original_path": "src/iomd.c",
       "sha256": "dc30bdc9aeb77cc8b72563003f6b7a04da043597eabf1e96b9c5790b0fb4e788",
       "licence_header": "/*\n  RPCEmu - An Acorn system emulator\n\n  Copyright (C) 2005-2010 Sarah Walker\n\n  This program is free software; you can redistribute it and/or modify\n  it under the terms of the GNU General Public License as published by\n  the Free Software Foundation; either version 2 of the License, or\n  (at your option) any later version.\n\n  This program is distributed in the hope that it will be useful,\n  but WITHOUT ANY WARRANTY; without even the implied warranty of\n  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the\n  GNU General Public License for more details.\n\n  You should have received a copy of the GNU General Public License\n  along with this program; if not, write to the Free Software\n  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.\n */",
-      "patches": []
+      "patches": [
+        "containment-device-scheduler"
+      ]
     },
     {
       "path": "src/iomd.h",
@@ -154,7 +160,9 @@
       "original_path": "src/keyboard.c",
       "sha256": "0f5185ec7f29055999748a20b0ee883caa5133e5eb78d03b87b2058f30f8d25a",
       "licence_header": "/*\n  RPCEmu - An Acorn system emulator\n\n  Copyright (C) 2005-2010 Sarah Walker\n\n  This program is free software; you can redistribute it and/or modify\n  it under the terms of the GNU General Public License as published by\n  the Free Software Foundation; either version 2 of the License, or\n  (at your option) any later version.\n\n  This program is distributed in the hope that it will be useful,\n  but WITHOUT ANY WARRANTY; without even the implied warranty of\n  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the\n  GNU General Public License for more details.\n\n  You should have received a copy of the GNU General Public License\n  along with this program; if not, write to the Free Software\n  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.\n */",
-      "patches": []
+      "patches": [
+        "containment-device-scheduler"
+      ]
     },
     {
       "path": "src/keyboard.h",
@@ -207,7 +215,9 @@
       "original_path": "src/superio.c",
       "sha256": "f96b7eca38685e22efea90d9dce61d60a705fbe6e5e9acf99f8d4d0e06df6d85",
       "licence_header": "/*\n  RPCEmu - An Acorn system emulator\n\n  Copyright (C) 2005-2010 Sarah Walker\n\n  This program is free software; you can redistribute it and/or modify\n  it under the terms of the GNU General Public License as published by\n  the Free Software Foundation; either version 2 of the License, or\n  (at your option) any later version.\n\n  This program is distributed in the hope that it will be useful,\n  but WITHOUT ANY WARRANTY; without even the implied warranty of\n  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the\n  GNU General Public License for more details.\n\n  You should have received a copy of the GNU General Public License\n  along with this program; if not, write to the Free Software\n  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.\n */",
-      "patches": []
+      "patches": [
+        "containment-device-scheduler"
+      ]
     },
     {
       "path": "src/superio.h",
@@ -221,7 +231,9 @@
       "original_path": "src/vidc20.c",
       "sha256": "6fbd0694251d50ce62e094f672b92352e120e30fc87b1ac173fc6178309a46db",
       "licence_header": "/*\n  RPCEmu - An Acorn system emulator\n\n  Copyright (C) 2005-2010 Sarah Walker\n\n  This program is free software; you can redistribute it and/or modify\n  it under the terms of the GNU General Public License as published by\n  the Free Software Foundation; either version 2 of the License, or\n  (at your option) any later version.\n\n  This program is distributed in the hope that it will be useful,\n  but WITHOUT ANY WARRANTY; without even the implied warranty of\n  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the\n  GNU General Public License for more details.\n\n  You should have received a copy of the GNU General Public License\n  along with this program; if not, write to the Free Software\n  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.\n */",
-      "patches": []
+      "patches": [
+        "containment-device-scheduler"
+      ]
     },
     {
       "path": "src/vidc20.h",
@@ -269,6 +281,20 @@
         "src/cmos.c"
       ],
       "reason": "Declared volatile seed/snapshot, virtual Gregorian RTC and complete bus reset; host persistence and process exit removed."
+    },
+    {
+      "id": "containment-device-scheduler",
+      "files": [
+        "src/keyboard.c",
+        "src/iomd.c",
+        "src/superio.c",
+        "src/i8042.c",
+        "src/vidc20.c",
+        "src/fdc.c",
+        "src/cp15.c"
+      ],
+      "reason": "C2 complete device reset, explicit scheduler arms, guest command responses, remove desktop renderer and mousehack, SA idle",
+      "group": "containment/reset"
     }
   ],
   "adapted_sources": [],

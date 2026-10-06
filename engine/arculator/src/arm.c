@@ -647,6 +647,8 @@ void updatemode(int m)
 static uint32_t pccache,*pccache2;
 #define countbits(c) countbitstable[c]
 static int countbitstable[65536];
+/* ArcDroid: execution credit belongs to a CPU session, including its reset. */
+static int64_t total_cycles;
 
 void resetarm()
 {
@@ -722,6 +724,7 @@ void resetarm()
 	memset(arm3_cache_tag, TAG_INVALID, sizeof(arm3_cache_tag));
 
 	ins = 0;
+	total_cycles = 0;
 	tsc = 0;
 	mem_available_ts = 0;
 	refresh_ts = 0;
@@ -1168,8 +1171,6 @@ static void exception(uint32_t vector, int new_mode, int pc_offset)
 		} while (0)
 
 #define CHECK_ADDR_EXCEPTION(a) if ((a) & 0xfc000000) { databort = 2; return; }
-
-static int64_t total_cycles;
 
 typedef void (*OpFn)(uint32_t opcode);
 

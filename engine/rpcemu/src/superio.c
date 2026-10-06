@@ -18,6 +18,9 @@
   Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
+/* ArcDroid modification (2026-10-06): contained static reset and explicit virtual device timing; desktop services removed. */
+
+
 /* PC style Super IO chips
  SMC 37C665GT or SMC 37C672
    Combination
@@ -26,8 +29,7 @@
     Serial
     Parallel
  */
-#include <assert.h>
-#include <stdlib.h>
+#include <string.h>
 #include <stdio.h>
 #include <stdint.h>
 
@@ -201,7 +203,12 @@ superio_config_reg_write(uint8_t configreg, uint8_t val)
 void
 superio_reset(SuperIOType chosen_super_type)
 {
-	assert(chosen_super_type == SuperIOType_FDC37C665GT || chosen_super_type == SuperIOType_FDC37C672);
+	if (chosen_super_type != SuperIOType_FDC37C665GT && chosen_super_type != SuperIOType_FDC37C672) fatal("Unsupported SuperIO configuration");
+	memset(configregs665, 0, sizeof(configregs665));
+	memset(configregs672, 0, sizeof(configregs672));
+	memset(gp_regs, 0, sizeof(gp_regs));
+	configreg = scratch = linectrl = 0;
+	gp_index = 0;
 
 	super_type = chosen_super_type;
 	configmode = SUPERIO_MODE_NORMAL;

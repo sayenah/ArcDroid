@@ -18,6 +18,9 @@
   Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
+/* ArcDroid modification (2026-10-06): contained static reset and explicit virtual device timing; desktop services removed. */
+
+
 /*
 
  Emulation of the Intel 8042 keyboard controller embedded in the
@@ -28,7 +31,6 @@
   - OSDev Wiki - http://wiki.osdev.org/%228042%22_PS/2_Controller
 
 */
-#include <assert.h>
 #include <stdint.h>
 #include <stdio.h>
 
@@ -172,7 +174,8 @@ i8042_data_write(uint8_t val)
 		mouse_data_write(val);
 		break;
 	default:
-		exit(1);
+		i8042.status |= STAT_RTIMEOUT;
+		break;
 	}
 	i8042.command = 0;
 }
@@ -214,7 +217,8 @@ i8042_command_write(uint8_t val)
 		i8042.command = val;
 		break;
 	default:
-		exit(1);
+		i8042.status |= STAT_RTIMEOUT;
+		break;
 	}
 }
 

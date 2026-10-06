@@ -18,11 +18,15 @@
   Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
+/* ArcDroid modification (2026-10-06): contained static reset and explicit virtual device timing; desktop services removed. */
+
+
 /* IOMD emulation */
-#include <assert.h>
 #include <stdint.h>
-#include <stdio.h>
+#include <stdbool.h>
+#include <string.h>
 #include "rpcemu.h"
+#include "rpc_timing.h"
 #include "vidc20.h"
 #include "keyboard.h"
 #include "sound.h"
@@ -206,7 +210,8 @@ static IOMDType iomd_type; /**< The current type of IOMD we're emulating */
 static int sndon = 0;
 static int flyback=0;
 
-static uint32_t old_timer_ticks;
+static uint64_t timer_due[2];
+extern bool arc_rpc_cpu_idle;
 
 void
 updateirqs(void)
@@ -227,60 +232,30 @@ updateirqs(void)
 	}
 }
 
-static void
-updatetimers(uint64_t nsec_timer)
+static unsigned timer_period(unsigned timer)
 {
-	const uint32_t new_timer_ticks = (uint32_t) (nsec_timer / 500); // Number of timer ticks since timer epoch
-	const int32_t ticks = (int32_t) (new_timer_ticks - old_timer_ticks);
-
-	if (ticks <= 0) {
-		return;
-	}
-	old_timer_ticks = new_timer_ticks;
-
-        iomd.t0.counter -= ticks;
-        while (iomd.t0.counter < 0 && iomd.t0.in_latch)
-        {
-                iomd.t0.counter += iomd.t0.in_latch;
-                iomd.irqa.status |= IOMD_IRQA_TIMER_0;
-                updateirqs();
-        }
-
-        iomd.t1.counter -= ticks;
-        while (iomd.t1.counter < 0 && iomd.t1.in_latch)
-        {
-                iomd.t1.counter += iomd.t1.in_latch;
-                iomd.irqa.status |= IOMD_IRQA_TIMER_1;
-                updateirqs();
-        }
+    unsigned latch = timer ? iomd.t1.in_latch : iomd.t0.in_latch;
+    return latch + 1u; /* IOMD specification section 4: (latch+1)/2 MHz. */
 }
-
-/**
- * Handle the regularly ticking interrupts, the two
- * IOMD timers, the sound interrupt and podule
- * interrupts
- *
- * Called (theoretically) 500 times a second IMPROVE.
- */
-void
-gentimerirq(uint64_t nsec_timer)
+static void timer_go(unsigned timer)
 {
-	updatetimers(nsec_timer);
-
-        if (soundinited && sndon)
-        {
-                soundcount -= 4000;
-                if (soundcount<0)
-                {
-                        sound_irq_update();
-                        soundcount+=soundlatch;
-//                        rpclog("soundcount now %i %i\n",soundcount,soundlatch);
-                }
-        }
-
-        /* Update Podule interrupts */
-        runpoduletimers(2); /* 2ms * 500 = 1 sec */
+    timer_due[timer] = arc_rpc_time_ns() + (uint64_t)timer_period(timer) * 500u;
+    arc_rpc_event_after(timer ? ARC_RPC_EVENT_TIMER1 : ARC_RPC_EVENT_TIMER0,
+        (uint64_t)timer_period(timer) * 500u);
 }
+static unsigned timer_count(unsigned timer)
+{
+    uint64_t now = arc_rpc_time_ns();
+    return timer_due[timer] > now ? (unsigned)((timer_due[timer] - now - 1u) / 500u) : 0;
+}
+void arc_rpc_iomd_timer_event(unsigned timer)
+{
+    iomd.irqa.status |= timer ? IOMD_IRQA_TIMER_1 : IOMD_IRQA_TIMER_0;
+    updateirqs();
+    timer_go(timer);
+}
+/* Legacy periodic poll is no longer a clock owner. */
+void gentimerirq(uint64_t nsec_timer) { (void)nsec_timer; }
 
 /**
  * Handle writes to the IOMD memory space
@@ -343,6 +318,7 @@ iomd_write(uint32_t addr, uint32_t val)
 			UNIMPLEMENTED("IOMD Register write",
 			              "Call to enter SUSPEND mode 0x%x", val);
 			iomd.susmode = val;
+                        arc_rpc_cpu_idle = true;
 		}
 		return;
 
@@ -368,12 +344,10 @@ iomd_write(uint32_t addr, uint32_t val)
                 iomd.t0.in_latch = (iomd.t0.in_latch & 0xff) | ((val & 0xff) << 8);
                 break;
         case IOMD_0x048_T0GO: /* Timer 0 Go command */
-                updatetimers(rpcemu_nsec_timer_ticks());
-                iomd.t0.counter = iomd.t0.in_latch - 1;
+                timer_go(0);
                 break;
         case IOMD_0x04C_T0LAT: /* Timer 0 Latch command */
-                updatetimers(rpcemu_nsec_timer_ticks());
-                iomd.t0.out_latch = iomd.t0.counter;
+                iomd.t0.out_latch = timer_count(0);
                 break;
 
         case IOMD_0x050_T1LOW: /* Timer 1 low bits */
@@ -383,12 +357,10 @@ iomd_write(uint32_t addr, uint32_t val)
                 iomd.t1.in_latch = (iomd.t1.in_latch & 0xff) | ((val & 0xff) << 8);
                 break;
         case IOMD_0x058_T1GO: /* Timer 1 Go command */
-                updatetimers(rpcemu_nsec_timer_ticks());
-                iomd.t1.counter = iomd.t1.in_latch - 1;
+                timer_go(1);
                 break;
         case IOMD_0x05C_T1LAT: /* Timer 1 Latch command */
-                updatetimers(rpcemu_nsec_timer_ticks());
-                iomd.t1.out_latch = iomd.t1.counter;
+                iomd.t1.out_latch = timer_count(1);
                 break;
 
         case IOMD_0x068_IRQMSKC: /* IRQC mask (ARM7500/FE) */
@@ -882,7 +854,9 @@ iomd_mouse_buttons_read(void)
 void
 iomd_reset(IOMDType type)
 {
-	assert(type == IOMDType_IOMD || type == IOMDType_ARM7500 || type == IOMDType_ARM7500FE || type == IOMDType_IOMD2);
+	if (type != IOMDType_IOMD && type != IOMDType_ARM7500) fatal("Unsupported IOMD configuration");
+	memset(&iomd, 0, sizeof(iomd));
+	memset(timer_due, 0, sizeof(timer_due));
 	iomd_type = type;
 
 	iomd.romcr0 = 0x40; /* ROM Control 0, set to 16bit slowest access time */
@@ -938,6 +912,8 @@ iomd_reset(IOMDType type)
 	cinit = 0;
 	sndon = 0;
 	flyback = 0;
+	timer_go(0); timer_go(1);
+	updateirqs();
 }
 
 /**

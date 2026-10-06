@@ -22,6 +22,7 @@
  * complete reset, physical descriptor reads and in-object instruction pointers. */
 /* System coprocessor + MMU emulation*/
 #include <stdint.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -32,6 +33,7 @@
 #include "mem.h"
 #include "rpc_memory.h"
 
+bool arc_rpc_cpu_idle;
 int dcache = 0; /* Data cache on StrongARM, unified cache pre-StrongARM */
 
 #define TLBCACHESIZE 256
@@ -97,6 +99,7 @@ void
 cp15_reset(CPUModel cpu_model)
 {
 	memset(&cp15, 0, sizeof(cp15));
+	arc_rpc_cpu_idle = false;
 	cp15.cpu_model = cpu_model;
 	switch (cpu_model) {
 	case CPUModel_ARM610:
@@ -251,7 +254,8 @@ cp15_write(uint32_t opcode, uint32_t val)
 
 	case 15:
 		if (cp15.cpu_model == CPUModel_SA110) {
-			/* Test, Clock and Idle control */
+			/* Test, Clock and Idle control: SA-110 manual table 7. */
+            if (opc2 == 2 && crm == 8) { arc_rpc_cpu_idle = true; return; }
 			if (opc2 == 2 && crm == 1) {
 				/* Enable clock switching - no need to implement */
 				return;

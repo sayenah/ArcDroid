@@ -27,6 +27,8 @@ core/persistence.c
 core/cmos_defaults.c
 engine/arcdroid_engine.c
 engine/arculator_backend.c
+engine/rpc/rpc_session.c
+engine/rpc/rpc_timing.c
 engine/rpc/rpc_floppy.c
 engine/rpc/rpc_scheduler.c
 engine/rpc/rpc_rtc.c
@@ -36,6 +38,11 @@ engine/rpcemu/src/cp15.c
 engine/rpcemu/src/mem.c
 engine/rpcemu/src/cmos.c
 engine/rpcemu/src/fdc.c
+engine/rpcemu/src/iomd.c
+engine/rpcemu/src/keyboard.c
+engine/rpcemu/src/vidc20.c
+engine/rpcemu/src/superio.c
+engine/rpcemu/src/i8042.c
 engine/arc_boot_watch.c
 engine/arc_launch_outcome.c
 engine/arc_error_box.c
@@ -82,7 +89,7 @@ libretro/*.h'
 if [ -z "${ARCDROID_SHIPPING_IO_SOURCES:-}" ]; then
   cmake_sources=$(awk '
     /^[[:space:]]*add_library\(arcdroid_core[[:space:]]+STATIC[[:space:]]*$/ { scan = 1; next }
-    /^[[:space:]]*set\(ARCDROID_(LIBRETRO|ARCULATOR)_SOURCES[[:space:]]*$/ { scan = 1; next }
+    /^[[:space:]]*set\(ARCDROID_(LIBRETRO|ARCULATOR|RPC)_SOURCES[[:space:]]*$/ { scan = 1; next }
     scan && /^[[:space:]]*\)[[:space:]]*$/ { scan = 0; next }
     scan && $1 ~ /^(core|libretro|platform|engine)\/.*\.c$/ { print $1 }
   ' CMakeLists.txt | sort -u)
@@ -100,11 +107,13 @@ fi
 
 pattern='(^|[^[:alnum:]_>.])(fopen|open|_wfopen|gz[a-z]*|CreateFile[A-Za-z]*)[[:space:]]*\(|(^|[^[:alnum:]_])dumpregs[[:space:]]*\('
 
-# Scan every RPC source compiled in components at this checkpoint. Remaining
-# imported devices cannot join a core before adaptation and this guard.
-rpc_sources='engine/rpc/rpc_floppy.c engine/rpc/rpc_scheduler.c engine/rpc/rpc_rtc.c
+# Every compiled RPC source is scanned, including the session and device hooks.
+rpc_sources='engine/rpc/rpc_session.c engine/rpc/rpc_timing.c
+engine/rpc/rpc_floppy.c engine/rpc/rpc_scheduler.c engine/rpc/rpc_rtc.c
 engine/rpcemu/src/arm.c engine/rpcemu/src/arm_common.c engine/rpcemu/src/cp15.c
-engine/rpcemu/src/mem.c engine/rpcemu/src/cmos.c engine/rpcemu/src/fdc.c'
+engine/rpcemu/src/mem.c engine/rpcemu/src/cmos.c engine/rpcemu/src/fdc.c
+engine/rpcemu/src/iomd.c engine/rpcemu/src/keyboard.c engine/rpcemu/src/vidc20.c
+engine/rpcemu/src/superio.c engine/rpcemu/src/i8042.c'
 rpc_cmake_sources=$(grep -oE 'engine/(rpc|rpcemu)/[[:alnum:]_./-]+\.c' CMakeLists.txt | sort -u)
 for source in $rpc_cmake_sources; do
   if ! printf '%s\n' "$rpc_sources" | tr ' ' '\n' | grep -Fx "$source" >/dev/null; then

@@ -29,6 +29,7 @@
 #include <string.h>
 
 #include "rpcemu.h"
+#include "rpc_timing.h"
 #include "fdc.h"
 #include "vidc20.h"
 #include "iomd.h"
@@ -120,7 +121,7 @@ fdc_dma_lower(void)
 void
 fdc_reset(void)
 {
-	fdccallback = 0;
+	arc_rpc_response(ARC_RPC_EVENT_FDC, &fdccallback, 0);
 	motoron = 0;
 	memset(&fdc, 0, sizeof(fdc));
 	fdc.status = 0x80;
@@ -159,7 +160,7 @@ fdc_write(uint32_t addr, uint32_t val)
 	case 0x3f2: /* Digital Output Register (DOR) */
 		if ((val & 4) && !(fdc.dor & 4)) { /*Reset*/
 			fdc.reset   = 1;
-			fdccallback = 500;
+			arc_rpc_response(ARC_RPC_EVENT_FDC, &fdccallback, 500);
 		}
 		if (!(val & 4)) {
 			fdc_reset(); /* Reset assertion aborts pending parameters/results/DMA. */
@@ -183,27 +184,27 @@ fdc_write(uint32_t addr, uint32_t val)
 				fdc.in_read = 0;
 				switch (fdc.command) {
 				case FD_CMD_SPECIFY:
-					fdccallback = 100;
+					arc_rpc_response(ARC_RPC_EVENT_FDC, &fdccallback, 100);
 					break;
 
 				case FD_CMD_SENSE_DRIVE_STATUS:
-					fdccallback = 100;
+					arc_rpc_response(ARC_RPC_EVENT_FDC, &fdccallback, 100);
 					break;
 
 				case FD_CMD_RECALIBRATE:
-					fdccallback = 500;
+					arc_rpc_response(ARC_RPC_EVENT_FDC, &fdccallback, 500);
 					fdc.status |= 1;
 
 					break;
 
 				case FD_CMD_SEEK:
-					fdccallback = 500;
+					arc_rpc_response(ARC_RPC_EVENT_FDC, &fdccallback, 500);
 					fdc.status |= 1;
 
 					break;
 
 				case FD_CMD_CONFIGURE:
-					fdccallback = 100;
+					arc_rpc_response(ARC_RPC_EVENT_FDC, &fdccallback, 100);
 					break;
 
 				case FD_CMD_WRITE_DATA_MFM:
@@ -241,7 +242,7 @@ fdc_write(uint32_t addr, uint32_t val)
 					break;
 
 				case FD_CMD_READ_ID_FM:
-					fdccallback    = 4000;
+					arc_rpc_response(ARC_RPC_EVENT_FDC, &fdccallback, 4000);
 					fdc.st0        = fdc.parameters[0] & 7;
 					fdc.st1        = 0;
 					fdc.st2        = 0;
@@ -292,7 +293,7 @@ fdc_write(uint32_t addr, uint32_t val)
 			break;
 
 		case FD_CMD_SENSE_INTERRUPT_STATUS:
-			fdccallback = 100;
+			arc_rpc_response(ARC_RPC_EVENT_FDC, &fdccallback, 100);
 			fdc.status  = 0x10;
 			break;
 
@@ -301,7 +302,7 @@ fdc_write(uint32_t addr, uint32_t val)
 			fdcsend(fdc.st0);
 			fdc_irq_raise();
 			fdc.incommand = 0;
-			fdccallback   = 0;
+			arc_rpc_response(ARC_RPC_EVENT_FDC, &fdccallback, 0);
 			fdc.status    = 0xd0;
 			break;
 
@@ -423,7 +424,7 @@ fdc_end_command(void)
 	fdc.curparam = 0;
 	fdc.in_read = 0;
 	fdc.data_ready = fdc.written = 0;
-	fdccallback = 0;
+	arc_rpc_response(ARC_RPC_EVENT_FDC, &fdccallback, 0);
 	fdc_dma_lower();
 	fdc_irq_raise();
 }
@@ -431,7 +432,7 @@ fdc_end_command(void)
 void
 fdc_callback(void)
 {
-	fdccallback = 0;
+	arc_rpc_response(ARC_RPC_EVENT_FDC, &fdccallback, 0);
 	if (fdc.reset) {
 		fdc.reset     = 0;
 		fdc.status    = 0x80;
@@ -530,7 +531,7 @@ fdc_callback(void)
 			fdc.incommand = 0;
 			fdc.params    = 0;
 			fdc.curparam  = 0;
-			fdccallback   = 0;
+			arc_rpc_response(ARC_RPC_EVENT_FDC, &fdccallback, 0);
 		} else {
 			if (fdc_request(ARC_RPC_FLOPPY_WRITE))
 				fdc_dma_raise();
@@ -554,7 +555,7 @@ fdc_callback(void)
 			fdc.incommand = 0;
 			fdc.params    = 0;
 			fdc.curparam  = 0;
-			fdccallback   = 0;
+			arc_rpc_response(ARC_RPC_EVENT_FDC, &fdccallback, 0);
 		} else {
 			(void)fdc_request(ARC_RPC_FLOPPY_READ);
 		}
@@ -631,7 +632,7 @@ void fdc_data(uint8_t dat)
 
 void fdc_finishread(void)
 {
-	fdccallback = 25;
+	arc_rpc_response(ARC_RPC_EVENT_FDC, &fdccallback, 25);
 }
 
 void fdc_notfound(void)

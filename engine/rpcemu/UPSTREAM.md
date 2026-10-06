@@ -22,8 +22,10 @@ Portable host-idle SWI interception. Every SWI takes ordinary guest exception
 handling; the dormant headless backend provides no host filesystem or network.
 
 ArcDroid's `engine/rpc/rpc_namespace.h` maps upstream external identifiers
-to `arc_rpc_` and is forced only for RPCEmu objects. At the run C checkpoint FDC, CPU/memory/MMU and CMOS/RTC join separate
-component test executables; the full backend is not linked.
+to `arc_rpc_` and is forced only for RPCEmu objects. Run C2 links all eleven
+adapted upstream C files and the owned session/scheduler edges into both cores,
+in addition to the component executables. Only the test core exports session
+admission; shipping launch routes and the machine registry remain Arculator.
 Arculator keeps its legacy private symbols. `engine/backend-symbols.json`
 lists its accepted definitions and boundary services. The object checker
 recognises Mach-O, COFF and ELF, rejects common/weak engine symbols and checks
@@ -34,7 +36,14 @@ registration common is compiler bookkeeping, allowed only with `--sanitized`.
 ### Containment/reset
 
 The controller reset clears its complete volatile state and IRQ/DMA lines as
-part of `devices-empty-fdc`. Other engine containment work remains in R1.
+part of `devices-empty-fdc`. `containment-device-scheduler` completes static
+reset for keyboard, mouse, IOMD, SuperIO, i8042 and VIDC20. Mousehack, renderer
+buffers/threads and desktop services are removed. Unknown i8042 commands set
+receive-timeout; unsupported mouse commands return RESEND. Configuration and
+remaining CPU/I2C/device invariants use a non-returning session unwind. Start
+owns each allocation immediately and cleanup is idempotent; no frontend call
+occurs inside a protected boundary. Absent IDE status is zero (data floats
+high); absent podule/EASI reads float high and writes are ignored.
 
 ### Scheduler/MMU
 
@@ -51,8 +60,13 @@ aborts. The rotate helper defines rotation by zero. Allocation is owned at
 each step: 8 MiB ROM aperture, two 32 MiB RAM banks, and exactly 2 MiB VRAM
 on RiscPC or no VRAM on A7000. No realloc remains in memory handling. ROM
 bytes mirror only declared 2/4/8 MiB images. DRAM dirty indices are bounded
-to the existing 4 MiB tracking window. These sources join component tests only;
-device/session containment and scheduler integration remain unfinished.
+to the existing 4 MiB tracking window. Run C2 connects instruction credit,
+IOMD timers, PS/2 responses, FDC and raster flyback to the integer scheduler.
+Timer GO replaces its deadline; periods use the documented latch-plus-one.
+Events at an instruction boundary precede it, including immediately applied
+MMIO. CPU waits on SA-110 and ARM7500 advance virtual time without credit.
+ARM610/710 have no architected wait instruction in this slice. Rates are
+20/35/100/35 MIPS. Each call bounds time, instructions and event deliveries.
 
 ### Devices/AV/input
 
@@ -65,6 +79,8 @@ FIFO parameter quotas end before execution, writes during execution/results
 are ignored, result indices wrap within 16 bytes, and reset assertion aborts
 pending work. Stale callbacks cannot execute a completed command again.
 No code from the header-less disc layer is adapted. No `sound.c` code is adapted.
+VIDC20 register state and rational raster/flyback timing are retained in C2;
+scanout, DMA progression, interlace and audio production/drain remain for D.
 
 `containment-cmos-rtc` (run C checkpoint: `src/cmos.c`): remove host file/time
 services, automatic seed patching and checksum changes. Seed and snapshot are
@@ -75,7 +91,8 @@ ArcDroid-authored (`engine/rpc/rpc_rtc.c`), bounded to 1970–2399. Remaining
 transaction invariants use the non-returning fatal hook, exercised with a live
 component boundary. Internal read/write callbacks are named read_byte/write_byte
 so the strict host-service guard can distinguish them without exceptions.
-Factory capture and real session ownership of the RTC hook remain unfinished.
+Run C2 supplies epoch plus scheduler time from the real session; reset retains
+volatile CMOS and elapsed RTC time. Factory capture remains for D.
 
 ## Exclusions and verification
 

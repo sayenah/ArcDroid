@@ -255,3 +255,15 @@ offsets 1, 2 and 3 both shifts are unchanged (8/24, 16/16, 24/8). This is
 the same aligned LDR result emitted by the existing host, MinGW and Android
 compilers, while avoiding C undefined behaviour from a shift by 32. The
 marked patch changes no CPU timing, unaligned result or other instruction.
+
+## RiscPC R1 session switching (run C2)
+
+The same-library fresh-process trace exposed retained Arculator execution
+credit and device timing. `src/arm.c` clears instruction-batch credit on CPU
+reset. `src/memc.c` clears DMA requests/timestamps and video/sound/refresh
+enables on a new session. `src/vidc.c` restarts the raster phase on a new
+session while retaining the existing programmed-register/AV startup contract.
+These marked lifecycle fixes
+restore fresh-load state without changing instruction/device transitions.
+No existing test or golden is changed. Full R1 AC-3 qualification remains with
+Fable; C2 runs only the expressly requested regression selection.

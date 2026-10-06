@@ -560,6 +560,11 @@ void clearbitmap()
 
 void initvid()
 {
+	/* ArcDroid (2026-10-06): restart the raster phase of a new session.
+	 * Preserve the existing programmed-register/AV startup contract. */
+	vidc.state = VIDC_HSYNC;
+	vidc.in_display = vidc.displayon = vidc_displayon = 0;
+	vidc.addr = vidc.caddr = 0;
 	buffer = create_bitmap(4096, 2048);
 	vidc.line = 0;
 	vidc.clock = 24000;
