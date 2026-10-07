@@ -246,3 +246,10 @@ DSKCHG; empty drives cannot emit index even with a running motor. Existing R1
 synchronous data-command refusals and FM READ ID completion are retained.
 Reference: SMSC FDC37C665GT datasheet, pp. 34, 36, 42, 69–70:
 https://bitsavers.org/components/standardMicrosystems/_SMSC/_dataSheets/FDC37C665GT_SuperIO.pdf
+
+`video-control-readback` (run F9: `src/iomd.c`): VIDCR reads return the
+programmed D/E/Inc bits. Remove upstream's forced `0x50` DRAM defaults,
+which made a guest enable read-modify-write switch VRAM to DRAM transfers.
+The existing DMA paths then use their proper END+half-SAM versus END+quadword
+wrap boundaries. Authored hardware-scroll tests cover all four CPUs with an
+independent pixel oracle and guest VIDCUR observations; no firmware addresses.

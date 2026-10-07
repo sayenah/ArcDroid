@@ -126,6 +126,41 @@ static void check(unsigned model,const struct RpcVideoGuest *g)
     }
     api->stop();api->stop();
 }
+static void scroll(unsigned model)
+{
+    const struct RpcVideoGuest *g=&rpc_scroll_guests[model];
+    const unsigned length=16384,base=model==3?0x10000000u:0x02000000u;
+    start(model,g);uint64_t wraps=0;
+    for(unsigned step=0;step<8;++step) {
+        unsigned init=(length-2672+step*640)%length;
+        ArcEngineFrame f=frame();ArcRpcVideoStatus v=status();
+        assert(f.width==640&&f.height==32);
+        /* Independent circular byte stream, with no half-SAM implementation
+         * or captured raster involved. Check every displayed pixel. */
+        for(unsigned y=0;y<32;++y)for(unsigned x=0;x<640;++x) {
+            unsigned address=(init+y*640+x)%length;
+            unsigned index=((address/4)^(address/256))&255;
+            expect_pixel(g,&f,x,y,0xff000000u|index*0x010101u);
+        }
+        assert(ram(step*16)==(model==3?0x70u:0x28u));
+        assert(ram(step*16+8)==((base+init) | (model!=3&&init>=length-2048?0x40000000u:0)));
+        /* The guest samples VIDCUR after five rows. DRAM has consumed 3200
+         * bytes; VRAM requests at physical half-SAM boundaries and retains
+         * INIT's low address bits until reloading START. */
+        unsigned consumed=5*640,cur,last=0;
+        if(model==3)cur=(init+consumed)%length;
+        else {
+            if(init+consumed>=length)cur=((init+consumed-length)/2048)*2048;
+            else cur=init+((init%2048+consumed)/2048)*2048;
+            if(cur/2048==(length-2048)/2048)last=0x40000000u;
+        }
+        assert(ram(step*16+4)==((base+cur)|last));
+        wraps+=(init+640*32)/length;assert(v.wraps==wraps);
+        printf("scroll model=%u step=%u init=%u pixels=20480 PASS\n",model,step,init);
+    }
+    api->stop();
+}
+
 static void contention(unsigned model)
 {
     assert(model==2||model==3);
@@ -201,7 +236,8 @@ int main(int argc,char **argv)
     assert(library);LOAD(start_rpc,"arc_rpc_test_start");LOAD(status_rpc,"arc_rpc_test_video_status");
     LOAD(bus_ns,"arc_rpc_test_video_bus_ns");LOAD(snapshot_rpc,"arc_rpc_test_snapshot");LOAD(read_ram,"arc_rpc_test_read_ram");
     LOAD(fail_alloc,"arc_rpc_test_fail_alloc");LOAD(engine_api,"arc_rpc_test_engine_api");api=engine_api();
-    if(!strcmp(argv[2],"--frontend"))frontend(model);
+    if(!strcmp(argv[2],"--scroll"))scroll(model);
+    else if(!strcmp(argv[2],"--frontend"))frontend(model);
     else if(!strcmp(argv[2],"--contention"))contention(model);
     else {
         for(unsigned i=0;i<32;++i)if(i!=27&&i!=28)check(model,&rpc_video_guests[model][i]);

@@ -1946,6 +1946,8 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
   endif()
   # Included by native Windows CTest and CI's rpc-.* sanitizer selection.
   foreach(model RANGE 0 3)
+    add_test(NAME rpc-video-scroll-${model} COMMAND rpc_video_test
+      $<TARGET_FILE:arcdroid_libretro_test> --scroll ${model})
     add_test(NAME rpc-video-guest-${model} COMMAND rpc_video_test
       $<TARGET_FILE:arcdroid_libretro_test> --guest ${model})
     add_test(NAME rpc-video-trace-${model} COMMAND "${Python3_EXECUTABLE}"

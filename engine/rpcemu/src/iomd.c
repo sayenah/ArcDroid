@@ -21,6 +21,8 @@
 /* ArcDroid modification (2026-10-06): contained static reset and explicit virtual device timing; desktop services removed. */
 
 
+/* ArcDroid modification (2026-10-07): hardware VIDCR readback for VRAM scroll. */
+
 /* IOMD emulation */
 #include <stdint.h>
 #include <stdbool.h>
@@ -738,7 +740,10 @@ iomd_read(uint32_t addr)
 	case IOMD_0x1DC_VIDINIT: /* Video DMA Init */
 		return iomd.vidinit;
 	case IOMD_0x1E0_VIDCR: /* Video DMA Control */
-		return iomd.vidcr | 0x50;
+        /* D and Inc are writable state, not fixed DRAM defaults. Forcing
+         * D high here turns a VRAM read-modify-write into DRAM DMA and
+         * wraps at END+16 instead of END+2048 on the two-bank board. */
+        return iomd.vidcr;
 
         case IOMD_0x1F0_DMAST: /* DMA interupt status */
                 return iomd.irqdma.status;

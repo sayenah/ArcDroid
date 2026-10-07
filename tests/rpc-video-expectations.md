@@ -124,3 +124,40 @@ boundary; reset reuses it and stop frees it. Each guest advance is bounded to
 most six such advances (100,000,002 ns), returning at the first field boundary.
 No frontend callback occurs on the protected guest stack. The frontend's
 existing presentation copy owns pixels beyond that return/next engine entry.
+
+## Hardware scrolling and control readback (F9)
+
+`rpc-video-scroll-0` through `-3` run on ARM610, ARM710, SA-110 (2 MiB
+VRAM), and ARM7500 (DRAM), through the real interpreter and MMIO. Native
+Windows CTest includes them; the existing CI sanitizer `rpc-.*` selection
+includes them too. No new golden is captured from the renderer.
+
+The guest writes a 16384-byte screen ring with four equal bytes per word:
+`((word_index XOR (word_index >> 6)) AND 255)`. Palette i is grey i. START
+is the ring base; END is base+16384-2048 for two-bank VRAM (VIDCR Inc=8),
+or base+16384-16 for DRAM (D=1, Inc=16). It enables video by reading VIDCR
+and setting E only. D and Inc must read back unchanged: 0x28 versus 0x70.
+The IOMD specification figure 4.9b defines these as register state, not fixed
+DRAM defaults. The Risc PC TRM pp. 1-14–1-16 agrees on the 2048-byte
+half-SAM, the END convention, flyback reload and last-transfer flag.
+
+Each field is 640x32, 8 bpp. INIT starts 2672 bytes before the buffer end,
+so the first wrap lands 112 pixels into row 4. Eight successive fields advance
+INIT by 640 bytes modulo 16384, crossing the final half-SAM and the end of
+the ring. The guest supplies INIT bit 30 in the final VRAM half-SAM, polls
+flyback, and changes the next INIT only after active video. For every pixel,
+the host independently computes circular address `(init+y*640+x)%16384`
+and expected grey `((address/4) XOR (address/256)) AND 255`.
+
+After five active rows, the guest records VIDCR, VIDINIT and VIDCUR in RAM.
+DRAM's current address has consumed 3200 bytes modulo the ring. VRAM's
+current address advances only on 2048-byte serial boundaries, retaining
+INIT's low bits until START reload; its last bit reports the final half-SAM.
+The test also checks cumulative wraps from total consumed bytes. The old
+forced `VIDCR | 0x50` fails these pixels (SA-110: row 1 column 0 is black
+instead of grey 60), before the readback assertion is reached.
+
+References: [IOMD functional specification](https://www.bitsavers.org/components/arm/IOMD_Functional_Specification_199406.pdf)
+pp. 14–15 and [Acorn Risc PC TRM](https://wiki.gen.net.uk/lib/exe/fetch.php/archive/computers/acorn/systems/acorn-risc-pc-technical-reference.pdf)
+pp. 1-14–1-16. These expectations concern the documented register and buffer
+contracts; they do not claim pixel-cycle or split-SAM bus timing accuracy.
