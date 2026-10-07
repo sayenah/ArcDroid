@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
 """Reject real malformed objects with the backend symbol guard. GPL-2.0-only."""
 import importlib.util
+import contextlib
+import io
 import json
 from pathlib import Path
 import subprocess
 import sys
 import tempfile
+from unittest.mock import patch
 
 sys.dont_write_bytecode = True
 root = Path(sys.argv[1])
@@ -57,6 +60,65 @@ with tempfile.TemporaryDirectory(prefix="arcdroid-symbol-collision-") as temp:
     else:
         raise AssertionError("colliding definitions accepted")
 print("rpc-symbol-guard: data/function/undefined/termination/common/weak/collision injections rejected")
+
+
+def check_nm(output, engine, expected=None, sanitized=False, form="elf"):
+    """Exercise GCC ELF output even when the host compiler emits Mach-O/COFF."""
+    magic = {"elf": b"\x7fELF", "macho": b"\xcf\xfa\xed\xfe", "coff": b"\x64\x86\0\0"}
+    with tempfile.TemporaryDirectory(prefix="arcdroid-symbol-nm-") as temp:
+        directory = Path(temp)
+        (directory / "injected.o").write_bytes(magic[form])
+        with patch.object(guard.subprocess, "check_output", return_value=output), \
+                contextlib.redirect_stdout(io.StringIO()):
+            try:
+                if engine == "outside":
+                    guard.verify_outside([directory], policy, nm, sanitized)
+                else:
+                    guard.verify([directory] if engine == "arculator" else [],
+                                 [directory] if engine == "rpc" else [], policy, nm, sanitized)
+            except ValueError as error:
+                assert expected is not None and expected in str(error), str(error)
+                return
+            assert expected is None, f"invalid nm output was accepted: {output}"
+
+
+for engine in ("arculator", "rpc", "outside"):
+    check_nm("_GLOBAL_OFFSET_TABLE_ U\n", engine)
+    check_nm("_GLOBAL_OFFSET_TABLE_ U\n", engine, sanitized=True)
+    check_nm("__odr_asan.debugon B 0 1\n", engine, sanitized=True)
+    # GCC runtime families include versioned and abort-on-error entry points
+    # beyond the exact Clang service names in the existing policy.
+    check_nm("__asan_report_load4_noabort U\n__asan_version_mismatch_check_v8 U\n"
+             "__ubsan_handle_type_mismatch_v1_abort U\n", engine, sanitized=True)
+
+for engine in ("arculator", "rpc"):
+    definition = "unexpected Arculator definition" if engine == "arculator" else "unprefixed RPCEmu definition"
+    reference = f"unexpected {engine} reference"
+    for output in ("__odr_asan.debugon B 0 1\n", "__asan_report_load4_noabort U\n",
+                   "__ubsan_handle_type_mismatch_v1_abort U\n"):
+        check_nm(output, engine, definition if " B " in output else reference)
+    # Format, exact family spelling, and toolchain role are all necessary.
+    for form in ("macho", "coff"):
+        decoration = "_" if form == "macho" else ""
+        check_nm(decoration + "_GLOBAL_OFFSET_TABLE_ U\n", engine, reference, form=form)
+        check_nm(decoration + "__odr_asan.debugon B 0 1\n", engine, definition,
+                 sanitized=True, form=form)
+    for name in ("_GLOBAL_OFFSET_TABLE_", "__asan_engine", "__ubsan_engine",
+                 "__odr_asan_debugon", "__odr_asan."):
+        check_nm(f"{name} B 0 1\n", engine, definition, sanitized=True)
+    for name in ("_GLOBAL_OFFSET_TABLE_engine", "__asanengine", "__ubsanengine",
+                 "__asan_", "__ubsan_", "__odr_asan.debugon"):
+        check_nm(f"{name} U\n", engine, reference, sanitized=True)
+    for name in ("__odr_asan.debugon", "__asan_engine", "__ubsan_engine"):
+        check_nm(f"{name} C 0 1\n", engine, "common symbol", sanitized=True)
+        check_nm(f"{name} V 0 1\n", engine, "weak external symbol", sanitized=True)
+    check_nm("__asan_engine T 0 4\n", engine, definition, sanitized=True)
+    check_nm("collision_data B 0 1\n__odr_asan.collision_data B 0 1\n", engine,
+             definition, sanitized=True)
+check_nm("arc_rpc_foreign U\n", "arculator", "unexpected arculator reference", sanitized=True)
+check_nm("debugon U\n", "rpc", "unexpected rpc reference", sanitized=True)
+check_nm("arc_rpc_foreign U\n", "outside", "outside engine references RPCEmu", sanitized=True)
+print("rpc-symbol-guard: ELF linker/GCC sanitizer roles accepted; mode/format/look-alike/common/weak/cross-engine violations rejected")
 
 exports = (root / "libretro/arcdroid.exports").read_text().replace("_retro_", "retro_")
 helper = ["sh", str(root / "tools/check-export-names.sh")]

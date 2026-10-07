@@ -42,9 +42,21 @@ def read_symbols(path, nm, sanitized=False):
         if form == "macho" or (form == "coff" and path.read_bytes()[:2] == b"\x4c\x01"):
             require(name.startswith("_"), f"missing ABI decoration: {path}: {name}")
             name = name[1:]
+        # Linker-owned ELF GOT anchor: PIC objects reference it, never define it.
+        if form == "elf" and name == "_GLOBAL_OFFSET_TABLE_" and kind == "U":
+            continue
+        # GCC's ELF sanitizer families have distinct roles: __odr_asan.* is
+        # zero-initialised global bookkeeping; __asan_* / __ubsan_* are runtime
+        # references. Do not exempt engine definitions, commons or weaks just
+        # because their names resemble runtime instrumentation.
+        if form == "elf" and sanitized:
+            if kind == "B" and re.fullmatch(r"__odr_asan\.[A-Za-z_][A-Za-z0-9_.$]*", name):
+                continue
+            if kind == "U" and re.fullmatch(r"__(?:asan|ubsan)_[A-Za-z0-9_]+", name):
+                continue
         # Compiler bookkeeping is not an engine variable. Apple ASan emits
         # this one shared registration flag as a common even with -fno-common.
-        if sanitized and name == "___asan_globals_registered" and kind == "C":
+        if form == "macho" and sanitized and name == "___asan_globals_registered" and kind == "C":
             continue
         require(kind not in "Cc", f"common symbol: {path}: {name}")
         require(kind not in "WwVv", f"weak external symbol: {path}: {name}")
@@ -134,7 +146,7 @@ def main():
     parser.add_argument("--outside", type=Path, action="append", default=[])
     parser.add_argument("--nm", default="nm")
     parser.add_argument("--sanitized", action="store_true",
-                        help="recognise compiler-owned ASan registration bookkeeping")
+                        help="recognise compiler-owned ASan/UBSan instrumentation")
     parser.add_argument("--policy", type=Path,
                         default=Path(__file__).resolve().parents[1] / "engine/backend-symbols.json")
     args = parser.parse_args()
