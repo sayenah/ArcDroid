@@ -234,3 +234,15 @@ board interface. This is a hardware register, not a firmware address or CMOS
 patch. The trial had the same missing-board-latch correction; see Acorn's
 Risc PC Technical Reference Manual (Issue 1, September 1994), mouse interface
 and LK5, and the RISC OS PRM, Filing system locking and resets.
+
+`devices-fdc-control-status` (run F8: `src/fdc.c`): SMC Specify,
+Configure and Sense commands return without an artificial execution delay.
+MSR reads preserve FINT; the first result FIFO read and SIS acknowledge it.
+Reset polling returns four distinct drive-select causes once, and SIS never
+raises an interrupt. Seek results retain drive select and per-drive cylinders.
+The typed empty-drive edge supplies mechanical TRK0 (independent of media),
+DSKCHG and absent index; SMC ST3 bits 3 and 5 are fixed high. DIR exposes
+DSKCHG; empty drives cannot emit index even with a running motor. Existing R1
+synchronous data-command refusals and FM READ ID completion are retained.
+Reference: SMSC FDC37C665GT datasheet, pp. 34, 36, 42, 69–70:
+https://bitsavers.org/components/standardMicrosystems/_SMSC/_dataSheets/FDC37C665GT_SuperIO.pdf

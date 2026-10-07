@@ -4,6 +4,16 @@
 
 #include <stdint.h>
 
+#include <stdbool.h>
+
+typedef struct {
+   bool track_zero, disc_changed, index, write_protected;
+} ArcRpcFloppySignals;
+
+/* Mechanical TRK0 is independent of media. RiscPC exposes two empty drives;
+ * unconnected selects have no track-zero sensor. No empty drive emits index. */
+ArcRpcFloppySignals arc_rpc_floppy_signals(unsigned drive, unsigned cylinder);
+
 typedef enum {
    ARC_RPC_FLOPPY_READ,
    ARC_RPC_FLOPPY_WRITE,

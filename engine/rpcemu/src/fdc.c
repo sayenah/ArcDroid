@@ -1,5 +1,7 @@
 /* ArcDroid modification (2026-10-06): remove image loaders; use the
  * ArcDroid typed empty-drive interface and bounded controller responses.
+ * 2026-10-07: SMC control/result interrupt acknowledgement, per-drive
+ * seek status and empty-drive disc-change/index signals.
  * GPL-2.0-only additions; original RPCEmu notice preserved below. */
 /*
   RPCEmu - An Acorn system emulator
@@ -68,6 +70,8 @@ static struct
 	uint8_t st2;
 	uint8_t st3;
 	int track;
+	uint8_t cylinders[4], physical[4];
+	uint8_t pending_st0[4], pending_pcn[4], pending;
 	int sector;
 	int side;
 	uint8_t data;
@@ -142,7 +146,7 @@ static int
 fdc_request(ArcRpcFloppyOperation operation)
 {
 	ArcRpcFloppyRequest request = {
-		operation, (unsigned)fdc.drive, (unsigned)fdc.track,
+		operation, (unsigned)fdc.drive, fdc.physical[fdc.drive],
 		(unsigned)fdc.side, fdc.parameters[1], fdc.parameters[2],
 		fdc.parameters[3], fdc.parameters[4], (unsigned)fdc.density
 	};
@@ -163,9 +167,13 @@ fdc_write(uint32_t addr, uint32_t val)
 			arc_rpc_response(ARC_RPC_EVENT_FDC, &fdccallback, 500);
 		}
 		if (!(val & 4)) {
-			fdc_reset(); /* Reset assertion aborts pending parameters/results/DMA. */
+			/* Controller reset does not move the physical heads. */
+			uint8_t physical[4];
+			memcpy(physical, fdc.physical, sizeof(physical));
+			fdc_reset(); /* Abort pending parameters/results/DMA. */
+			memcpy(fdc.physical, physical, sizeof(physical));
 		}
-		motoron = val & 0x30;
+		motoron = val & 0xf0;
 		fdc.dor = (uint8_t)val;
 		break;
 
@@ -184,11 +192,11 @@ fdc_write(uint32_t addr, uint32_t val)
 				fdc.in_read = 0;
 				switch (fdc.command) {
 				case FD_CMD_SPECIFY:
-					arc_rpc_response(ARC_RPC_EVENT_FDC, &fdccallback, 100);
+					fdc_callback();
 					break;
 
 				case FD_CMD_SENSE_DRIVE_STATUS:
-					arc_rpc_response(ARC_RPC_EVENT_FDC, &fdccallback, 100);
+					fdc_callback();
 					break;
 
 				case FD_CMD_RECALIBRATE:
@@ -204,7 +212,7 @@ fdc_write(uint32_t addr, uint32_t val)
 					break;
 
 				case FD_CMD_CONFIGURE:
-					arc_rpc_response(ARC_RPC_EVENT_FDC, &fdccallback, 100);
+					fdc_callback();
 					break;
 
 				case FD_CMD_WRITE_DATA_MFM:
@@ -214,7 +222,7 @@ fdc_write(uint32_t addr, uint32_t val)
 					fdc.track      = fdc.parameters[1];
 					fdc.side       = fdc.parameters[2];
 					fdc.sector     = fdc.parameters[3];
-					fdc.drive      = fdc.st0 & 1;
+					fdc.drive      = fdc.st0 & 3;
 					if (fdc_request(ARC_RPC_FLOPPY_WRITE))
 						fdc_dma_raise();
 					break;
@@ -228,7 +236,7 @@ fdc_write(uint32_t addr, uint32_t val)
 					fdc.track      = fdc.parameters[1];
 					fdc.side       = fdc.parameters[2];
 					fdc.sector     = fdc.parameters[3];
-					fdc.drive      = fdc.st0 & 1;
+					fdc.drive      = fdc.st0 & 3;
 					(void)fdc_request(ARC_RPC_FLOPPY_READ);
 					break;
 
@@ -236,7 +244,7 @@ fdc_write(uint32_t addr, uint32_t val)
 					fdc.st0        = fdc.parameters[0] & 7;
 					fdc.st1        = 0;
 					fdc.st2        = 0;
-					fdc.drive      = fdc.st0 & 1;
+					fdc.drive      = fdc.st0 & 3;
 					fdc.side = (fdc.st0 >> 2) & 1;
 					(void)fdc_request(ARC_RPC_FLOPPY_READ_ID);
 					break;
@@ -246,14 +254,14 @@ fdc_write(uint32_t addr, uint32_t val)
 					fdc.st0        = fdc.parameters[0] & 7;
 					fdc.st1        = 0;
 					fdc.st2        = 0;
-					fdc.drive      = fdc.st0 & 1;
+					fdc.drive      = fdc.st0 & 3;
 					break;
 
 				case FD_CMD_FORMAT_TRACK_MFM:
 					fdc.st0        = fdc.parameters[0] & 7;
 					fdc.st1        = 0;
 					fdc.st2        = 0;
-					fdc.drive      = fdc.st0 & 1;
+					fdc.drive      = fdc.st0 & 3;
 					fdc.side       = (fdc.st0 >> 2) & 1;
 					(void)fdc_request(ARC_RPC_FLOPPY_FORMAT);
 					break;
@@ -293,8 +301,8 @@ fdc_write(uint32_t addr, uint32_t val)
 			break;
 
 		case FD_CMD_SENSE_INTERRUPT_STATUS:
-			arc_rpc_response(ARC_RPC_EVENT_FDC, &fdccallback, 100);
-			fdc.status  = 0x10;
+			fdc.status = 0x10;
+			fdc_callback();
 			break;
 
 		case FD_CMD_DUMPREG: /* Used by Linux to identify FDC type. */
@@ -372,13 +380,16 @@ uint8_t
 fdc_read(uint32_t addr)
 {
 	switch (addr) {
-	case 0x3f4: /* Main Status Register (MSR) */
-		fdc_irq_lower();
+	case 0x3f2: /* DOR readback */
+		return fdc.dor;
+	case 0x3f4: /* MSR has no interrupt acknowledgement side effect. */
 		return fdc.status;
 
 	case 0x3f5: { /* Data (FIFO) */
 		if (fdc.result_rp == fdc.result_wp)
 			return 0;
+		/* A result-phase interrupt is acknowledged by the first FIFO read. */
+		fdc_irq_lower();
 		uint8_t data = fdc.results[fdc.result_rp & 0xf];
 
 		if (fdc.result_rp != fdc.result_wp) {
@@ -394,9 +405,9 @@ fdc_read(uint32_t addr)
 		return data;
 	}
 
-	// case 0x3f7: /* Digital Input Register (DIR) */
-		// TODO Disc changed flag
-		// return 0x80;
+	case 0x3f7: /* Empty media cannot clear DSKCHG by stepping. */
+		return arc_rpc_floppy_signals(fdc.dor & 3,
+			fdc.physical[fdc.dor & 3]).disc_changed ? 0x80 : 0;
 
 	default:
 		UNIMPLEMENTED("FDC read", "Unknown register 0x%03x", addr);
@@ -438,6 +449,12 @@ fdc_callback(void)
 		fdc.status    = 0x80;
 		fdc.incommand = 0;
 		fdc.st0       = 0xc0;
+		/* Reset polling reports each of the four drive selects once. */
+		fdc.pending = 0x0f;
+		for (unsigned drive = 0; drive < 4; ++drive) {
+			fdc.pending_st0[drive] = 0xc0 | drive;
+			fdc.pending_pcn[drive] = fdc.cylinders[drive] = 0;
+		}
 		fdc.track     = 0;
 		fdc.curparam  = 0;
 		fdc.params    = 0;
@@ -456,56 +473,61 @@ fdc_callback(void)
 		fdc.curparam  = 0;
 		break;
 
-	case FD_CMD_SENSE_DRIVE_STATUS:
-		fdc.st3 = (fdc.parameters[0] & 7) | 0x08; /* Two sides, not ready. */
-		if (fdc.track == 0) {
-			fdc.st3 |= 0x10; // Track is zero
-		}
-		// TODO Mix in Head number?
-		// TODO Mix in read only?
-
+	case FD_CMD_SENSE_DRIVE_STATUS: {
+		unsigned drive = fdc.parameters[0] & 3;
+		ArcRpcFloppySignals signals = arc_rpc_floppy_signals(drive, fdc.physical[drive]);
+		/* SMC ST3 bits 3 and 5 are fixed high, not a media-ready signal. */
+		fdc.st3 = (fdc.parameters[0] & 7) | 0x28;
+		if (signals.track_zero) fdc.st3 |= 0x10;
+		if (signals.write_protected) fdc.st3 |= 0x40;
 		fdc.incommand = 0;
 		fdcsend(fdc.st3);
-		fdc.status = 0xD0;
-		fdc_irq_raise();
-		fdc.params    = 0;
-		fdc.curparam  = 0;
+		fdc.status = 0xd0;
+		/* Sense Drive Status has no execution phase or completion IRQ. */
 		break;
+	}
 
 	case FD_CMD_RECALIBRATE:
-		fdc.track     = 0;
+	case FD_CMD_SEEK: {
+		unsigned drive = fdc.parameters[0] & 3;
+		uint8_t target = fdc.command == FD_CMD_RECALIBRATE ? 0 : fdc.parameters[1];
+		if (fdc.command == FD_CMD_RECALIBRATE) {
+			fdc.physical[drive] = 0;
+		} else {
+			int position = fdc.physical[drive] + (int)target - fdc.cylinders[drive];
+			fdc.physical[drive] = position < 0 ? 0 : position > 255 ? 255 : position;
+		}
+		fdc.cylinders[drive] = target;
+		fdc.track = fdc.cylinders[drive];
+		fdc.st0 = 0x20 | drive; /* Seek End; H is always zero for seek status. */
+		if (fdc.command == FD_CMD_RECALIBRATE &&
+		    !arc_rpc_floppy_signals(drive, 0).track_zero)
+			fdc.st0 |= 0x50; /* Abnormal termination and equipment check. */
+		fdc.pending_st0[drive] = fdc.st0;
+		fdc.pending_pcn[drive] = fdc.cylinders[drive];
+		fdc.pending |= 1u << drive;
 		fdc.incommand = 0;
-		fdc.status    = 0x80;
-		fdc.params    = 0;
-		fdc.curparam  = 0;
-		// TODO set drive back to track 0
-		fdc.st0       = 0x20; // Seek End
+		fdc.status = 0x80;
 		fdc_irq_raise();
 		break;
+	}
 
-	case FD_CMD_SENSE_INTERRUPT_STATUS:
-		fdcsend(fdc.st0);
-		fdcsend(fdc.track);
-		fdc.status = 0xD0;
-		fdc_irq_raise();
+	case FD_CMD_SENSE_INTERRUPT_STATUS: {
+		fdc_irq_lower();
+		if (fdc.pending) {
+			unsigned drive = 0;
+			while (!(fdc.pending & (1u << drive))) ++drive;
+			fdcsend(fdc.pending_st0[drive]);
+			fdcsend(fdc.pending_pcn[drive]);
+			fdc.pending &= ~(1u << drive);
+		} else {
+			fdcsend(0x80); /* No pending reset/seek: one invalid-status byte. */
+		}
+		fdc.status = 0xd0;
 		fdc.incommand = 0;
+		/* SIS consumes a cause; it must never generate another interrupt. */
 		break;
-
-//	case FD_CMD_DUMPREG: /*Dump registers - act as invalid command*/
-//		fdc.st0 = 0x80;
-//		fdcsend(fdc.st0);
-//		fdc.incommand = 0;
-//		break;
-
-	case FD_CMD_SEEK:
-		fdc.track     = fdc.parameters[1];
-		fdc.incommand = 0;
-		fdc.status    = 0x80;
-		fdc.params    = 0;
-		fdc.curparam  = 0;
-		fdc.st0       = 0x20;
-		fdc_irq_raise();
-		break;
+	}
 
 	case FD_CMD_CONFIGURE:
 		fdc.incommand = 0;
@@ -710,6 +732,9 @@ void fdc_sectorid(uint8_t track, uint8_t side, uint8_t sector, uint8_t size)
 
 void fdc_indexpulse(void)
 {
+	unsigned drive = fdc.dor & 3;
+	if (!(motoron & (0x10 << drive)) ||
+	    !arc_rpc_floppy_signals(drive, fdc.physical[drive]).index) return;
 	iomd.irqa.status |= IOMD_IRQA_FLOPPY_INDEX;
 	updateirqs();
 }

@@ -65,7 +65,7 @@ int main(void)
    command(0x04u, drive, sizeof(drive));
    fdccallback = 0;
    fdc_callback();
-   result(1u, 0x18u, 0u); /* Two sides, track zero, not ready. */
+   result(1u, 0x38u, 0u); /* SMC fixed bits 3/5 and mechanical track zero. */
    /* Reset during parameters/results restores the entire controller. */
    command(0x46u, data, 3u);
    iomd.fiq.status |= IOMD_FIQ_FLOPPY_DMA_REQUEST;
@@ -75,8 +75,8 @@ int main(void)
    command(0x4au, drive, sizeof(drive));
    result(7u, 0x40u, 5u);
    /* Callback-driven commands stop accepting parameters after their quota. */
-   const uint8_t specify[] = {0xdfu, 2u};
-   command(0x03u, specify, sizeof(specify));
+   const uint8_t seek[] = {0u, 2u};
+   command(0x0fu, seek, sizeof(seek));
    for (unsigned i = 0u; i < 1000u; ++i) fdc_write(0x3f5u, i);
    fdc_callback();
    assert(fdc_read(0x3f4u) == 0x80u && !fdccallback);
