@@ -1,12 +1,24 @@
 # ArcDroid Handoff
 
-**Stage:** IMPLEMENTATION — roadmap item 6, RiscPC R2a (memory timing + CMOS), run B
+**Stage:** IMPLEMENTATION — roadmap item 6, RiscPC R2a (memory timing + CMOS), run C
 **Owner:** Sol
-**Next:** Sol R2a **run B** on branch `slice/r2a-timing-cmos` (Sol thread `01a117a9-6af5-7f00-88f7-679a5f43dc99`).
-- **Run A is done:** the timing contract `docs/riscpc-timing.md` is committed on the branch.
-- **Contract acceptance:** Fable accepted it after Astra stage 3, ACCEPT WITH CHANGES; the five rulings below are incorporated.
-- **Run B:** amends the contract by those rulings and implements R2a item 1 (timing) with its tests and revised RPC goldens.
-- **Run C:** items 2–4 (CMOS records, generated defaults, plan route part 1).
+**Next:** Sol R2a **run C** on branch `slice/r2a-timing-cmos` (draft PR #317; Sol thread `01a117a9-6af5-7f00-88f7-679a5f43dc99`): implement R2a **items 2–4** of the R2 work order:
+- CMOS records;
+- generated defaults with the required-mask + stability + checksum oracle;
+- plan v2 part 1.
+
+Fable's run-C prompt fixes the record envelope, the default cache, the oracle masks and the plan keys. The masks are: `ro350` = all payload addresses except physical 194/195; `ro360` and `ro370` = all 240.
+
+**Done:**
+- **Run A** (`7bd1f27`): timing contract `docs/riscpc-timing.md`.
+- **Run B** (`9184996`): timing implementation per the accepted contract and rulings, plus Fable's G7 ruling. G7: an SA-110 D-cache line of cacheable ROM dirtied by a store hit is cast out through the write buffer, at ROMCR initial access time per word, with no burst. Sol's results:
+  - 4,127 independent calibration expectations;
+  - host CTest 273/273 and sanitizer selection 269/269;
+  - MinGW and Android builds pass;
+  - Arculator untouched.
+- **Run B gates (Fable):**
+  - Odin3 hot-throughput and AC-8 gates;
+  - private factory capture on all seven pairs at production rates.
 
 **Contract rulings (S57; Astra stage 3 incorporated).** The §1 exclusions and G1–G6 are accepted as labelled R2 model limits, with these changes:
 1. SA-110 SWP/SWPB follows TRM §9.11. A cacheable/bufferable SWP is performed in the D-cache (with a fill if needed); only a non-cacheable or non-bufferable SWP is an external locked pair. §6 gains hot-code cases: cached hit, cached miss, uncached.
@@ -138,7 +150,7 @@ Governing: `docs/riscpc.md` §§4.4, 4.6, 4.9, 4.11, 6; D-063, D-075, D-076, D-0
 
 **R1-1 diagnosis (S57; private firmware; a scratch `/* PROBE */` build, never a Sol source)**
 - **Where it fails:**
-  - the factory reset fails at 100 MIPS on all six pairs tested (3.71 SA-110/ARM710/ARM7500, 3.70 SA-110, 3.60 ARM710, 3.50 ARM610); the seventh supported pair, 3.60 ARM7500, was not swept;
+  - the factory reset fails at 100 MIPS on all seven pairs (3.71 SA-110/ARM710/ARM7500, 3.70 SA-110, 3.60 ARM710/ARM7500, 3.50 ARM610);
   - it also fails on SA-110 at 40, 60 and 80 MIPS;
   - it succeeds at 35 MIPS and below.
 - **Why:** after the keyboard reset command and its ACK, the firmware:
