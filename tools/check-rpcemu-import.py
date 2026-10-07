@@ -7,7 +7,9 @@ archive member. No extraction or network access is needed. GPL-2.0-only.
 import argparse
 import hashlib
 import json
-from pathlib import Path, PurePosixPath
+import ntpath
+from pathlib import Path, PurePosixPath, PureWindowsPath
+import posixpath
 import re
 import subprocess
 import sys
@@ -51,6 +53,66 @@ def without_comments(text):
     pattern = r'"(?:\\.|[^"\\])*"|/\*.*?\*/|//[^\n]*'
     return re.sub(pattern, lambda match: match[0] if match[0].startswith('"')
                   else "\n" * match[0].count("\n"), text, flags=re.S)
+
+
+def dependency_tokens(text):
+    """Decode GCC/Clang make prerequisites, preserving literal backslashes."""
+    text = re.sub(r"\\\r?\n", " ", text)
+    token = []
+    index = 0
+    while index < len(text):
+        char = text[index]
+        if char == "\\":
+            end = index
+            while end < len(text) and text[end] == "\\":
+                end += 1
+            count = end - index
+            following = text[end:end + 1]
+            if following in (" ", "\t"):
+                # Make doubles literal backslashes before whitespace and
+                # adds one more to escape a space/tab inside a filename.
+                token.append("\\" * (count // 2))
+                if count % 2:
+                    token.append(following)
+                    end += 1
+            elif following == "#":
+                token.extend(("\\" * (count - 1), "#"))
+                end += 1
+            else:
+                # In particular, D:\a\... is not a string escape sequence.
+                token.append("\\" * count)
+            index = end
+            continue
+        if char.isspace():
+            if token:
+                yield "".join(token)
+                token = []
+        else:
+            token.append(char)
+            if char == "$" and text[index:index + 2] == "$$":
+                index += 1
+        index += 1
+    if token:
+        yield "".join(token)
+
+
+def verify_compiler_dependencies(root, output):
+    # Choose the root's path syntax so Windows depfiles can also be tested on
+    # POSIX. POSIX filenames retain literal backslashes; Windows paths use
+    # case-insensitive drive/separator semantics, including mixed separators.
+    windows = bool(PureWindowsPath(str(root)).drive)
+    syntax = ntpath if windows else posixpath
+    path_type = PureWindowsPath if windows else PurePosixPath
+    root = path_type(syntax.normcase(syntax.normpath(str(root))))
+    allowed = PROJECT_HEADERS | {"engine/rpcemu/" + name for name in ALLOWLIST}
+    allowed = {path_type(syntax.normcase(name)).as_posix() for name in allowed}
+    for token in dependency_tokens(output[4:]):
+        dependency = path_type(syntax.normcase(syntax.normpath(syntax.join(str(root), token))))
+        try:
+            relative = dependency.relative_to(root).as_posix()
+        except ValueError:
+            raise ValueError(f"compiler dependency outside allowlist: {dependency}") from None
+        require(relative in allowed, f"compiler dependency outside allowlist: {relative}")
 
 
 def verify(root, archive_path=None, compiler=None):
@@ -170,19 +232,7 @@ def verify(root, archive_path=None, compiler=None):
                  str(root / "engine/rpc/rpc_namespace.h"), "-I", str(directory / "src"),
                  "-I", str(root / "engine/rpc"), str(source)], cwd=root, text=True)
             require(output.startswith("rpc:"), f"missing compiler dependency output: {source}")
-            # Compare escaped paths using the compiler's Makefile spelling;
-            # spaces in a checkout path do not split one dependency into two.
-            dependencies = output[4:].replace("\\\n", " ")
-            tokens = re.findall(r"(?:\\.|[^\s])+", dependencies)
-            for token in tokens:
-                token = re.sub(r"\\(.)", r"\1", token)
-                dependency = Path(token)
-                if not dependency.is_absolute():
-                    dependency = root / dependency
-                relative = dependency.relative_to(root).as_posix()
-                require(relative in PROJECT_HEADERS or relative in {
-                    "engine/rpcemu/" + allowed for allowed in ALLOWLIST},
-                    f"compiler dependency outside allowlist: {relative}")
+            verify_compiler_dependencies(root, output)
     return len(records), len(checked)
 
 
