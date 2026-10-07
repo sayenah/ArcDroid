@@ -1,3 +1,5 @@
+/* ArcDroid modification (2026-10-06): shared block contract moved to
+ * ArcDroid-owned arc_storage.h; controller state stays private. */
 /* Arculator 2.2 by Sarah Walker. GPL-2.0-only.
  * ArcDroid modification (2026-09-25): bounded block-device interface,
  * transaction buffer and lifecycle state replace the host FILE handles;
@@ -7,17 +9,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include "timer.h"
-#define ARC_IDE_SECTOR_SIZE 512u
-#define ARC_IDE_MAX_SECTORS 256u
-typedef struct {
-    void *opaque;
-    bool (*read)(void *, uint32_t, uint32_t, uint8_t *);
-    bool (*write)(void *, uint32_t, uint32_t, const uint8_t *);
-    void (*failed)(void *, const char *);
-    uint32_t sectors;
-    bool writable;
-    void (*unsupported)(void *, uint8_t);
-} ArcIdeBackend;
+#include "arc_storage.h"
 typedef struct ide_t {
     uint8_t status, error, features, count, sector, cylinder_lo, cylinder_hi;
     uint8_t head_drive, device_control, command;

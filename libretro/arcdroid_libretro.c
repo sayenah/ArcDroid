@@ -13,6 +13,9 @@
 #include "zip_content.h"
 #include "boot_observation.h"
 #include "hard_disc_scope.h"
+#if defined(ARCDROID_TEST_FAULTS)
+#include "arc_test_plan.h"
+#endif
 
 #include <limits.h>
 #include <ctype.h>
@@ -120,6 +123,8 @@ static bool arc_vidc_transient_logged;
 static uint64_t arc_vidc_incomplete_us;
 static bool arc_audio_warning_reported;
 static bool arc_loaded;
+static bool arc_rpc_av_attempted;
+static double arc_rpc_fault_audio_fraction;
 static bool arc_can_dupe;
 static bool arc_cmos_last_written_valid;
 static bool arc_cmos_ignored_logged;
@@ -1124,6 +1129,9 @@ static const char *arc_os_slug(ArcOsClass os)
 
 static void arc_release_session(void)
 {
+#if defined(ARCDROID_TEST_FAULTS)
+   arc_test_plan_clear();
+#endif
    arc_engine_disc_configure(false, NULL, NULL, NULL, NULL);
    arc_io_set_write_observer(NULL);
    arc_disc_owned = false;
@@ -5952,7 +5960,7 @@ static void arc_poll_inputs(void)
          if (port == 0u && (input == ARC_PAD_A || input == ARC_PAD_B) &&
              (error_ready || arc_error_pad_gate)) continue;
          const ArcInputBinding *binding = &arc_input_resolution.binding[port][input];
-         bool joystick_owned = arc_loaded && arc_plan.a3010_joystick && input <= ARC_PAD_A &&
+         bool joystick_owned = !arc_engine_is_rpc() && arc_loaded && arc_plan.a3010_joystick && input <= ARC_PAD_A &&
                                arc_core_options.pad[port][input].automatic;
          if (!joystick_owned && sampled[port][input] && binding->bound &&
              binding->key < ARC_INPUT_KEY_COUNT)
@@ -5986,7 +5994,7 @@ static void arc_poll_inputs(void)
             !(port == 0u && input == ARC_PAD_A &&
               (error_ready || arc_error_pad_gate)) &&
             arc_core_options.pad[port][input].automatic;
-   arc_platform_joystick_snapshot(arc_loaded && arc_plan.a3010_joystick,
+   arc_platform_joystick_snapshot(!arc_engine_is_rpc() && arc_loaded && arc_plan.a3010_joystick,
                                   joystick_levels);
 
    bool pad_pointer = !arc_osk.visible &&
@@ -6323,6 +6331,7 @@ RETRO_API void retro_set_environment(retro_environment_t callback)
    bool no_game = false;
    arc_build_options();
    arc_environment = callback;
+   arc_rpc_av_attempted = false;
    if (callback)
    {
       callback(RETRO_ENVIRONMENT_SET_SUPPORT_NO_GAME, &no_game);
@@ -6345,6 +6354,10 @@ RETRO_API void retro_get_system_info(struct retro_system_info *info)
    info->library_name = "ArcDroid";
    info->library_version = ARCDROID_VERSION;
    info->valid_extensions = "adf|adl|jfd|m3u|zip";
+#if defined(ARCDROID_TEST_PLANS)
+   info->library_name = "ArcDroid R1 Test";
+   info->valid_extensions = "adf|adl|jfd|m3u|zip|arcplan";
+#endif
    info->need_fullpath = true;
    info->block_extract = true;
 }
@@ -6355,7 +6368,7 @@ RETRO_API void retro_get_system_av_info(struct retro_system_av_info *info)
    memset(info, 0, sizeof(*info));
    info->geometry.base_width = arc_video_width;
    info->geometry.base_height = arc_video_height;
-   info->geometry.max_width = 4096u;
+   info->geometry.max_width = arc_engine_is_rpc() ? 2048u : 4096u;
    info->geometry.max_height = 2048u;
    info->geometry.aspect_ratio = 4.0f / 3.0f;
    info->timing.fps = arc_video_rate;
@@ -7371,6 +7384,23 @@ static bool arc_load_game(const struct retro_game_info *game, bool negotiate)
 
 RETRO_API bool retro_load_game(const struct retro_game_info *game)
 {
+#if defined(ARCDROID_TEST_PLANS)
+   if (game && arc_test_plan_path(game->path)) {
+      arc_loaded = false;
+      arc_release_session();
+      const char *system = NULL; char error[256];
+      enum retro_pixel_format format = RETRO_PIXEL_FORMAT_XRGB8888;
+      static const struct retro_keyboard_callback keyboard = {arc_keyboard};
+      if (!arc_environment || !arc_environment(RETRO_ENVIRONMENT_SET_PIXEL_FORMAT, &format)) return false;
+      arc_environment(RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY, &system);
+      arc_environment(RETRO_ENVIRONMENT_SET_KEYBOARD_CALLBACK, (void *)&keyboard);
+      if (!arc_test_plan_load(game->path, system, error, sizeof(error))) {
+         arc_message(error, RETRO_LOG_ERROR); return false;
+      }
+      arc_rpc_av_attempted = false; arc_fault_reported = false;
+      return true;
+   }
+#endif
    return arc_load_game(game, true);
 }
 
@@ -7396,6 +7426,18 @@ RETRO_API void retro_unload_game(void)
 }
 RETRO_API void retro_reset(void)
 {
+   if(arc_engine_is_rpc() && arc_engine_active()) {
+      char error[192];
+      arc_input_reset(&arc_inputs);
+      memset(arc_keyboard_raw,0,sizeof(arc_keyboard_raw));
+      arc_input_sampling_reset(false);
+      arc_guest_time_us=0;
+      if(!arc_engine_reset(error,sizeof(error)))arc_message(error,RETRO_LOG_ERROR);
+#if defined(ARCDROID_TEST_FAULTS)
+      else arc_test_plan_reset();
+#endif
+      arc_rpc_av_attempted=false;return;
+   }
    arc_engine_launch_outcome_cancel("reset");
    arc_engine_disc_clear();
    arc_disc_invalidate();
@@ -7682,8 +7724,116 @@ static void arc_present(const ArcEngineFrame *frame)
    arc_osk_present_dirty = false;
 }
 
+/* RPC callbacks run after the contained engine returns. Cache attempted AV
+ * transitions even if rejected/unavailable: a rejection must not cause a driver
+ * restart attempt on every frame. A replacement environment callback permits
+ * one fresh attempt. Size+rate changes require only the full AV notification. */
+static void arc_rpc_present_run(void)
+{
+   static uint64_t input_generation;
+   if(input_generation!=arc_engine_session_generation()) {
+      input_generation=arc_engine_session_generation();
+      arc_rpc_fault_audio_fraction=0;
+      arc_input_reset(&arc_inputs);arc_input_sampling_reset(false);
+      memset(arc_keyboard_raw,0,sizeof(arc_keyboard_raw));
+      arc_guest_time_us=0;
+      char error[192];
+      (void)arc_read_options(&arc_core_options,error,sizeof(error));
+      (void)arc_resolve_inputs(&arc_core_options,false);
+   }
+
+   if (!arc_engine_get_av_info(NULL, NULL, NULL)) {
+      arc_rpc_av_attempted = false;
+      if (!arc_engine_faulted(NULL)) arc_fault_reported = false;
+   }
+   arc_engine_set_log_callback(arc_engine_log, NULL);
+   bool options_updated=false;
+   if(arc_environment && arc_environment(RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE,&options_updated) && options_updated) {
+      ArcCoreOptions updated;char error[192];
+      if(arc_read_options(&updated,error,sizeof(error)) && arc_resolve_inputs(&updated,true))
+         arc_core_options=updated;
+      else arc_message(error[0]?error:"Unable to resolve RPC input options.",RETRO_LOG_ERROR);
+   }
+   if (arc_input_poll) arc_input_poll();
+   arc_poll_inputs();
+#if defined(ARCDROID_TEST_FAULTS)
+   arc_test_plan_input(&arc_inputs);
+#endif
+   ArcEngineFrame frame;
+   bool ran = arc_engine_run_frame(&arc_inputs, &frame);
+   if (!ran)
+   {
+      const char *fault = NULL;
+      if (!arc_fault_reported && arc_engine_faulted(&fault))
+      {
+         arc_message(fault && fault[0] ? fault : "The emulated machine faulted.", RETRO_LOG_ERROR);
+         arc_fault_reported = true;
+      }
+      memset(&frame, 0, sizeof(frame));
+      frame.pixels = arc_frame; frame.width = ARC_WIDTH; frame.height = ARC_HEIGHT;
+      frame.pitch = ARC_WIDTH * sizeof(uint32_t); frame.elapsed_us = 20000u;
+   }
+   if (frame.field_completed && frame.width && frame.height)
+   {
+      bool timing = !arc_rpc_av_attempted || fabs(frame.refresh_hz - arc_video_rate) > 0.01;
+      bool geometry = frame.width != arc_video_width || frame.height != arc_video_height;
+      struct retro_system_av_info av;
+      retro_get_system_av_info(&av);
+      av.geometry.base_width = frame.width; av.geometry.base_height = frame.height;
+      av.timing.fps = frame.refresh_hz;
+      bool accepted = true;
+      if (timing && arc_environment)
+         accepted = arc_environment(RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO, &av);
+      else if (geometry && arc_environment)
+         accepted = arc_environment(RETRO_ENVIRONMENT_SET_GEOMETRY, &av.geometry);
+      if (!accepted && arc_log)
+         arc_log(RETRO_LOG_WARN, "RPC frontend rejected %s update; scanout continues.\n", timing ? "AV" : "geometry");
+      arc_rpc_av_attempted = true;
+      arc_video_width = frame.width; arc_video_height = frame.height;
+      /* Retain the last announced rate for hysteresis; compare against it,
+       * not the preceding frame, so small cumulative changes are detected. */
+      if (timing) arc_video_rate = frame.refresh_hz;
+      arc_present(&frame);
+   }
+   else if (!ran) arc_present(&frame);
+   else if (arc_video && arc_can_dupe)
+      arc_video(NULL, arc_video_width, arc_video_height, arc_video_pitch);
+   size_t silence_remaining = 0;
+   if (!ran) {
+      double samples = ARC_AUDIO_RATE / arc_video_rate + arc_rpc_fault_audio_fraction;
+      size_t whole = (size_t)samples;
+      arc_rpc_fault_audio_fraction = samples - (double)whole;
+      silence_remaining = whole;
+   }
+   if(ran) { arc_guest_time_us+=frame.elapsed_us;arc_integrate_stick(frame.elapsed_us); }
+   /* Integer engine production is authoritative, including disabled silence.
+    * Retire every offer exactly once; never let rejection change guest time. */
+   size_t capacity = sizeof(arc_audio_frame) / (2u * sizeof(arc_audio_frame[0]));
+   size_t n;
+   do {
+      /* A slow announced field can exceed the engine queue. Offer silence in
+       * frontend-sized chunks so no samples are dropped at that boundary. */
+      if (silence_remaining) {
+         size_t chunk = silence_remaining < capacity ? silence_remaining : capacity;
+         arc_engine_audio_fault_silence(chunk);
+         silence_remaining -= chunk;
+      }
+      while ((n = arc_engine_audio_peek(arc_audio_frame, capacity)) != 0)
+      {
+      size_t accepted = 0;
+      if (arc_audio_batch) accepted = arc_audio_batch(arc_audio_frame, n);
+      else if (arc_audio) {
+         for (size_t i = 0; i < n; ++i) arc_audio(arc_audio_frame[i*2], arc_audio_frame[i*2+1]);
+         accepted = n;
+      }
+      arc_engine_audio_commit(n, accepted);
+      }
+   } while (silence_remaining);
+}
+
 RETRO_API void retro_run(void)
 {
+   if (arc_engine_is_rpc() && arc_engine_active()) { arc_rpc_present_run(); return; }
    ArcEngineFrame frame;
    size_t count;
    bool frame_ran;

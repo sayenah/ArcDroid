@@ -237,3 +237,44 @@ reason through its existing pre-commit veto and data-CRC completion. An absent
 unavailable target keeps the existing index-pulse Record-Not-Found completion,
 with a distinct guard diagnostic. No upstream controller implementation was
 changed.
+
+## RiscPC R1 engine boundary
+
+The ArcDroid-owned block storage contract moved from `src/ide.h` to
+`engine/arc_storage.h`; its layout and constants are unchanged. The Arculator
+controller object and timer remain private. The modification is marked in the
+upstream header. The session implementation moved intact to
+`engine/arculator_backend.c`, with public calls dispatched through private
+backend operations. Existing CPU hooks and test symbol names are retained.
+
+## RiscPC R1 sanitizer exposure (run C)
+
+`src/arm.c` masks the complementary shift in `ldrresult` to 0–31. For
+aligned addresses the expression now explicitly yields `v | v == v`; for
+offsets 1, 2 and 3 both shifts are unchanged (8/24, 16/16, 24/8). This is
+the same aligned LDR result emitted by the existing host, MinGW and Android
+compilers, while avoiding C undefined behaviour from a shift by 32. The
+marked patch changes no CPU timing, unaligned result or other instruction.
+
+## RiscPC R1 session switching (run C2)
+
+The same-library fresh-process trace exposed retained Arculator execution
+credit and device timing. `src/arm.c` clears instruction-batch credit on CPU
+reset. `src/memc.c` clears DMA requests/timestamps and video/sound/refresh
+enables on a new session. `src/vidc.c` restarts the raster phase on a new
+session while retaining the existing programmed-register/AV startup contract.
+These marked lifecycle fixes
+restore fresh-load state without changing instruction/device transitions.
+No existing test or golden is changed. Full R1 AC-3 qualification remains with
+Fable; C2 runs only the expressly requested regression selection.
+
+## RiscPC R1 completed-device stress (run E)
+
+`src/fpa.c` registers its existing process-exit FPA diagnostic at most once
+per loaded library, retrying only if registration fails. Previously every
+Arculator CPU reset added another `atexit` callback; repeated backend switches
+retained callback-registry allocations (one additional 1,280-byte block at
+the observed registration boundary on macOS). The registration flag tracks
+host library lifetime, not guest state. All FPA register resets, instruction
+behavior, timing and the exit diagnostic itself remain unchanged. No existing
+test or golden is changed.

@@ -217,6 +217,13 @@ void writecam(uint32_t a)
 void initmemc()
 {
 	int c;
+	/* ArcDroid (2026-10-06): DMA requests and timing enables cannot
+	 * survive destruction of their owning CPU/video/sound session. */
+	memc_dma_sound_req = memc_dma_cursor_req = memc_dma_video_req = 0;
+	memc_dma_sound_req_ts = memc_dma_cursor_req_ts = memc_dma_video_req_ts = 0;
+	memc_dma_video_req_start_ts = memc_dma_video_req_period = 0;
+	memc_videodma_enable = sdmaena = memc_refreshon = memc_refresh_always = 0;
+	mem_dorefresh = 0;
 
 	for (c = 0; c < 0x2000; c++)
 	{

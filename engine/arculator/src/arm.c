@@ -1,3 +1,4 @@
+/* ArcDroid modification (2026-10-06): define the aligned LDR rotate without a shift by 32. */
 /*Arculator 2.2 by Sarah Walker
   ARM2 & ARM3 emulation*/
 /* ArcDroid modification (2026-09-14): machine failures unwind through the session fault latch. */
@@ -646,6 +647,13 @@ void updatemode(int m)
 static uint32_t pccache,*pccache2;
 #define countbits(c) countbitstable[c]
 static int countbitstable[65536];
+/* ArcDroid: execution credit belongs to a CPU session, including its reset. */
+static int64_t total_cycles;
+
+#if defined(ARCDROID_TEST_FAULTS)
+/* ArcDroid (2026-10-07): read-only test observation; absent from shipping. */
+int64_t arc_arculator_test_cpu_credit(void) { return total_cycles; }
+#endif
 
 void resetarm()
 {
@@ -721,6 +729,7 @@ void resetarm()
 	memset(arm3_cache_tag, TAG_INVALID, sizeof(arm3_cache_tag));
 
 	ins = 0;
+	total_cycles = 0;
 	tsc = 0;
 	mem_available_ts = 0;
 	refresh_ts = 0;
@@ -978,7 +987,7 @@ static inline uint32_t shift_mem(uint32_t opcode)
 	return 0;
 }
 
-#define ldrresult(v,a) ((v >> (((a) & 3) << 3)) | (v << (32 - (((a) & 3) << 3))))
+#define ldrresult(v,a) ((v >> (((a) & 3) << 3)) | (v << ((32 - (((a) & 3) << 3)) & 31)))
 
 #define readmemfff(addr,opcode) \
 			if ((addr>>12)==pccache) \
@@ -1167,8 +1176,6 @@ static void exception(uint32_t vector, int new_mode, int pc_offset)
 		} while (0)
 
 #define CHECK_ADDR_EXCEPTION(a) if ((a) & 0xfc000000) { databort = 2; return; }
-
-static int64_t total_cycles;
 
 typedef void (*OpFn)(uint32_t opcode);
 

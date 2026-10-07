@@ -26,6 +26,25 @@ core/jfd.c
 core/persistence.c
 core/cmos_defaults.c
 engine/arcdroid_engine.c
+engine/arculator_backend.c
+engine/rpc/rpc_session.c
+engine/rpc/rpc_audio.c
+engine/rpc/rpc_input.c
+engine/rpc/rpc_timing.c
+engine/rpc/rpc_floppy.c
+engine/rpc/rpc_scheduler.c
+engine/rpc/rpc_rtc.c
+engine/rpcemu/src/arm.c
+engine/rpcemu/src/arm_common.c
+engine/rpcemu/src/cp15.c
+engine/rpcemu/src/mem.c
+engine/rpcemu/src/cmos.c
+engine/rpcemu/src/fdc.c
+engine/rpcemu/src/iomd.c
+engine/rpcemu/src/keyboard.c
+engine/rpcemu/src/vidc20.c
+engine/rpcemu/src/superio.c
+engine/rpcemu/src/i8042.c
 engine/arc_boot_watch.c
 engine/arc_launch_outcome.c
 engine/arc_error_box.c
@@ -72,7 +91,7 @@ libretro/*.h'
 if [ -z "${ARCDROID_SHIPPING_IO_SOURCES:-}" ]; then
   cmake_sources=$(awk '
     /^[[:space:]]*add_library\(arcdroid_core[[:space:]]+STATIC[[:space:]]*$/ { scan = 1; next }
-    /^[[:space:]]*set\(ARCDROID_LIBRETRO_SOURCES[[:space:]]*$/ { scan = 1; next }
+    /^[[:space:]]*set\(ARCDROID_(LIBRETRO|ARCULATOR|RPC)_SOURCES[[:space:]]*$/ { scan = 1; next }
     scan && /^[[:space:]]*\)[[:space:]]*$/ { scan = 0; next }
     scan && $1 ~ /^(core|libretro|platform|engine)\/.*\.c$/ { print $1 }
   ' CMakeLists.txt | sort -u)
@@ -89,6 +108,26 @@ if [ -z "${ARCDROID_SHIPPING_IO_SOURCES:-}" ]; then
 fi
 
 pattern='(^|[^[:alnum:]_>.])(fopen|open|_wfopen|gz[a-z]*|CreateFile[A-Za-z]*)[[:space:]]*\(|(^|[^[:alnum:]_])dumpregs[[:space:]]*\('
+
+# Every compiled RPC source is scanned, including the session and device hooks.
+rpc_sources='engine/rpc/rpc_session.c engine/rpc/rpc_audio.c engine/rpc/rpc_input.c engine/rpc/rpc_timing.c
+engine/rpc/rpc_floppy.c engine/rpc/rpc_scheduler.c engine/rpc/rpc_rtc.c
+engine/rpcemu/src/arm.c engine/rpcemu/src/arm_common.c engine/rpcemu/src/cp15.c
+engine/rpcemu/src/mem.c engine/rpcemu/src/cmos.c engine/rpcemu/src/fdc.c
+engine/rpcemu/src/iomd.c engine/rpcemu/src/keyboard.c engine/rpcemu/src/vidc20.c
+engine/rpcemu/src/superio.c engine/rpcemu/src/i8042.c'
+rpc_cmake_sources=$(grep -oE 'engine/(rpc|rpcemu)/[[:alnum:]_./-]+\.c' CMakeLists.txt | sort -u)
+for source in $rpc_cmake_sources; do
+  if ! printf '%s\n' "$rpc_sources" | tr ' ' '\n' | grep -Fx "$source" >/dev/null; then
+    printf 'shipping I/O guard: compiled RPC source is not scanned: %s\n' "$source" >&2
+    exit 1
+  fi
+done
+rpc_pattern='(^|[^[:alnum:]_])(fopen[0-9]*|freopen|fclose|fread|fwrite|fseek[a-z0-9]*|ftell[a-z0-9]*|open|close|read|write|socket|connect|send[a-z]*|recv[a-z]*|pthread_[a-z_]*|CreateThread|sleep|usleep|nanosleep|Sleep|time|clock|clock_gettime|gettimeofday|localtime|gmtime|getenv|exit|abort|assert)[[:space:]]*\('
+if grep -En "$rpc_pattern" $rpc_sources; then
+  printf '%s\n' 'shipping I/O guard: forbidden RPCEmu host service' >&2
+  exit 1
+fi
 scan_sources=${ARCDROID_SHIPPING_IO_SOURCES:-$sources}
 if all_matches=$(grep -En "$pattern" $scan_sources); then
   matches=$(printf '%s\n' "$all_matches" | grep -Ev '^engine/arculator/src/arc\.h:[0-9]+:[[:space:]]*\*[[:space:]]*dumpregs\(\), and its obsolete declaration was removed from this header\. \*/$' || true)

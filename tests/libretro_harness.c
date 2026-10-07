@@ -2,6 +2,7 @@
 #include "libretro.h"
 #include "arcdroid_core.h"
 #include "arcdroid_engine.h"
+#include "arculator_test.h"
 #include "boot_observation.h"
 #include "arc_io.h"
 #include "e_format_fixture.h"
@@ -1425,11 +1426,36 @@ static void assert_presented_osk_header(void (*run)(void),
    joypad_buttons[0][RETRO_DEVICE_ID_JOYPAD_L3] = false; run();
    assert(!osk_visible());
 }
+static bool poweron_trace;
+static uint64_t poweron_pcm_hash;
+static void assert_reset_poweron_state(const ArcArculatorResetState *state)
+{
+   assert(state->cpu_credit == 0);
+   assert(state->sound_request == 0 && state->cursor_request == 0 &&
+          state->video_request == 0);
+   assert(state->sound_timestamp == 0 && state->cursor_timestamp == 0 &&
+          state->video_timestamp == 0 && state->video_start_timestamp == 0);
+   assert(state->video_enable == 0 && state->sound_enable == 0 &&
+          state->refresh_enable == 0 && state->refresh_always == 0 &&
+          state->do_refresh == 0);
+   /* VIDC_HSYNC = 0; programmed VIDC registers deliberately stay intact. */
+   assert(state->vidc.phase == 0 && state->vidc.line == 0);
+   assert(state->vidc.in_display == 0 && state->vidc.displayon == 0 &&
+          state->vidc.displayon_latch == 0);
+   assert(state->vidc.video_address == 0 && state->vidc.cursor_address == 0);
+}
 static size_t audio(const int16_t *data, size_t frames)
 {
    assert(data && frames <= 2048u);
    for (size_t i = 0; i < frames * 2u; ++i)
       if (data[i]) ++nonzero_audio_samples;
+   if (poweron_trace) for (size_t i=0; i<frames*2u; ++i) {
+      uint16_t sample=(uint16_t)data[i];
+      for(unsigned b=0;b<2;++b) {
+         poweron_pcm_hash ^= (sample>>(b*8))&255u;
+         poweron_pcm_hash *= UINT64_C(1099511628211);
+      }
+   }
    audio_frames += frames;
    if (measure_av) measured_actual_audio += frames;
    return frames;
@@ -2484,6 +2510,8 @@ static void stick_write_trace(FILE *file, const char *leg,
 
 int main(int argc, char **argv)
 {
+   bool reset_poweron = argc == 6 && !strcmp(argv[5], "--reset-poweron");
+   if (reset_poweron) --argc;
    if (argc > 2 && !strcmp(argv[argc - 1], "--cached-frame-probe")) {
       probe_cached_video = true;
       --argc;
@@ -3050,7 +3078,7 @@ int main(int argc, char **argv)
          assert(arc_libretro_test_osk_visible && arc_libretro_test_session_state && arc_libretro_test_chooser_focus);
       }
    }
-   else if (!jfd_tab_step && !jfd_tab_route && !jfd_tab_set && !idle_perf && !idle_trace && !disc_request_probe && !cmos_exerciser && !power_on_cmos_guest && !native_hd_guest && !real_boot && !newio_smoke && !jfd_writes && !jfd_create_step &&
+   else if (!reset_poweron && !jfd_tab_step && !jfd_tab_route && !jfd_tab_set && !idle_perf && !idle_trace && !disc_request_probe && !cmos_exerciser && !power_on_cmos_guest && !native_hd_guest && !real_boot && !newio_smoke && !jfd_writes && !jfd_create_step &&
        !jfd_identification_step && !jfd_file_data_step && !jfd_file_data_set &&
        !jfd_file_data_reasons &&
        !jfd_file_data_recovery && !jfd_file_data_unavailable &&
@@ -3312,6 +3340,45 @@ int main(int argc, char **argv)
    struct retro_game_info game = {jfd_writes ? jfd_content_path : argv[3], NULL, 0u, NULL};
    uint64_t source_hash = hash_file(game.path);
    #include "jfd_tab_harness.inc"
+   if (reset_poweron) {
+      void (*reset_state)(ArcArculatorResetState *) =
+         dlsym(module, "arc_engine_test_reset_state");
+      assert(reset_state);
+      option_machine = "A3000"; option_launch = "off";
+      phase = PHASE_LOAD; assert(retro_load_game(&game)); phase = PHASE_RUN;
+      poweron_trace = true;
+      /* Characterize the current reset path, not cold-load equivalence.
+       * The first frames differ because programmed VIDC registers persist
+       * across machine recreation (initvid/vidc_reset). This is pre-existing
+       * behaviour, carried by Fable as a separate Arculator follow-up. */
+      for (unsigned pass = 0; pass < 2; ++pass) {
+         ArcArculatorResetState state;
+         if (pass) {
+            reset_state(&state);
+            /* Prove the guest exercised all three state groups before reset. */
+            assert(state.cpu_credit != 0);
+            assert(state.video_enable != 0 && state.video_timestamp != 0);
+            assert(state.vidc.line != 0 && state.vidc.video_address != 0);
+            retro_reset();
+         }
+         reset_state(&state);
+         assert_reset_poweron_state(&state);
+         for (unsigned frame = 0; frame < 24; ++frame) {
+            uint64_t before = audio_frames;
+            poweron_pcm_hash = UINT64_C(14695981039346656037);
+            retro_run();
+            printf("arculator-reset %s frame=%u video=%016llx pcm=%016llx pairs=%llu geometry=%ux%u\n",
+                   pass ? "reset" : "fresh", frame,
+                   (unsigned long long)last_video_signature,
+                   (unsigned long long)poweron_pcm_hash,
+                   (unsigned long long)(audio_frames - before),
+                   geometry_width, geometry_height);
+         }
+      }
+      retro_unload_game(); retro_deinit(); assert(dlclose(module) == 0);
+      assert(hash_file(game.path) == source_hash && open_files == 0u && open_dirs == 0u);
+      return 0;
+   }
    if (disc_request_probe)
    {
       option_machine = (disc_request_newio ||

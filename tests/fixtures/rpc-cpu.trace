@@ -1,0 +1,32 @@
+cpu model=arm610 phase=ram26 pc=00000014 mode=03 r1=0000002a r2=0000002b event=00
+cpu model=arm610 phase=ram32 pc=00000014 mode=13 r1=0000002a r2=0000002b event=00
+cpu model=arm610 phase=id r3=41560610
+cpu model=arm610 phase=abort0 pc=00000010 mode=17 lr=00000008 spsr=00000010 fsr=0000000d far=00400100 event=00
+cpu model=arm610 phase=abort1 pc=00000010 mode=17 lr=00000008 spsr=00000013 fsr=0000000d far=00400100 event=00
+cpu model=arm610 phase=abort2 pc=00000010 mode=17 lr=00000008 spsr=00000013 fsr=0000000d far=00400100 event=00
+cpu model=arm610 phase=prefetch pc=0000000c mode=17 lr=00400404 spsr=00000010 fsr=00000000 far=00000000 event=00
+result model=arm610 cpu=pass mmu=pass memory=pass video=pending audio=pending
+cpu model=arm710 phase=ram26 pc=00000014 mode=03 r1=0000002a r2=0000002b event=00
+cpu model=arm710 phase=ram32 pc=00000014 mode=13 r1=0000002a r2=0000002b event=00
+cpu model=arm710 phase=id r3=41007100
+cpu model=arm710 phase=abort0 pc=00000010 mode=17 lr=00000008 spsr=00000010 fsr=0000000d far=00400100 event=00
+cpu model=arm710 phase=abort1 pc=00000010 mode=17 lr=00000008 spsr=00000013 fsr=0000000d far=00400100 event=00
+cpu model=arm710 phase=abort2 pc=00000010 mode=17 lr=00000008 spsr=00000013 fsr=0000000d far=00400100 event=00
+cpu model=arm710 phase=prefetch pc=0000000c mode=17 lr=00400404 spsr=00000010 fsr=00000000 far=00000000 event=00
+result model=arm710 cpu=pass mmu=pass memory=pass video=pending audio=pending
+cpu model=arm7500 phase=ram26 pc=00000014 mode=03 r1=0000002a r2=0000002b event=00
+cpu model=arm7500 phase=ram32 pc=00000014 mode=13 r1=0000002a r2=0000002b event=00
+cpu model=arm7500 phase=id r3=41027100
+cpu model=arm7500 phase=abort0 pc=00000010 mode=17 lr=00000008 spsr=00000010 fsr=0000000d far=00400100 event=00
+cpu model=arm7500 phase=abort1 pc=00000010 mode=17 lr=00000008 spsr=00000013 fsr=0000000d far=00400100 event=00
+cpu model=arm7500 phase=abort2 pc=00000010 mode=17 lr=00000008 spsr=00000013 fsr=0000000d far=00400100 event=00
+cpu model=arm7500 phase=prefetch pc=0000000c mode=17 lr=00400404 spsr=00000010 fsr=00000000 far=00000000 event=00
+result model=arm7500 cpu=pass mmu=pass memory=pass video=pending audio=pending
+cpu model=sa110 phase=ram26 pc=00000014 mode=03 r1=0000002a r2=0000002b event=00
+cpu model=sa110 phase=ram32 pc=00000014 mode=13 r1=0000002a r2=0000002b event=00
+cpu model=sa110 phase=id r3=4401a102
+cpu model=sa110 phase=abort0 pc=00000010 mode=17 lr=00000008 spsr=00000010 fsr=0000000d far=00400100 event=00
+cpu model=sa110 phase=abort1 pc=00000010 mode=17 lr=00000008 spsr=00000013 fsr=0000000d far=00400100 event=00
+cpu model=sa110 phase=abort2 pc=00000010 mode=17 lr=00000008 spsr=00000013 fsr=0000000d far=00400100 event=00
+cpu model=sa110 phase=prefetch pc=0000000c mode=17 lr=00400404 spsr=00000010 fsr=00000000 far=00000000 event=00
+result model=sa110 cpu=pass mmu=pass memory=pass video=pending audio=pending

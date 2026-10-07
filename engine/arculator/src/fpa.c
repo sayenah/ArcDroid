@@ -1,6 +1,9 @@
 /*Arculator 2.2 by Sarah Walker
   FPA emulation*/
 
+/* ArcDroid R1: register the process-exit diagnostic once per loaded library,
+ * not once per guest CPU reset. FPA reset state and execution are unchanged. */
+
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -49,6 +52,7 @@ void dumpfpa(void)
 
 void resetfpa()
 {
+	static int exit_dump_registered;
 	uint32_t temp[3];
 	float *tfs;
 	double tf;
@@ -62,7 +66,8 @@ void resetfpa()
 	else
 		fpsr=0x81000000; /*FPA system*/
 	fpcr = FPCR_SB | FPCR_AB | FPCR_DA;
-	atexit(dumpfpa);
+	if (!exit_dump_registered)
+		exit_dump_registered = atexit(dumpfpa) == 0;
 	rpclog("fpsr=%08x fpu_type=%i\n", fpsr, fpu_type);
 }
 

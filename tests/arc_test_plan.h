@@ -1,0 +1,14 @@
+/* Non-shipping plan frontend. GPL-2.0-only. */
+#ifndef ARC_TEST_PLAN_H
+#define ARC_TEST_PLAN_H
+#include "arcdroid_core.h"
+#include <stdbool.h>
+#include <stddef.h>
+#define ARC_TEST_PLAN_EXTENSION "arcplan"
+bool arc_test_plan_path(const char *path);
+bool arc_test_plan_load(const char *path, const char *system,
+                        char *error, size_t error_size);
+void arc_test_plan_clear(void);
+void arc_test_plan_reset(void);
+void arc_test_plan_input(ArcInputState *input);
+#endif
