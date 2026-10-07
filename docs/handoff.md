@@ -1,16 +1,9 @@
 # ArcDroid Handoff
 
-**Stage:** ORCHESTRATION — roadmap item 6, RiscPC R2 design (D-131); R1 merged S56 as `7244f9c`
-**Owner:** Fable
-**Next:** Design **RiscPC R2 — media bridge, IDE if required, CMOS/persistence** (`docs/riscpc.md` §§4.6, 4.9, 6; D-063, D-123, D-131, D-134, D-137, D-138).
-- **Ground in:** the *R1 outcome* section below; the engine as merged (`engine/rpc/`, `engine/rpcemu/`, test plan route and runner, `tools/rpc-r1-runbook.md`); the trial's media bridge and IDE path (`probe/riscpc-trial` `5ff5481`, reference only); and ArcDroid's JFD/raw/helper media, store and guard code.
-- **Write the R2 work order.** It must cover:
-  - a typed JFD/raw/helper controller bridge, with the §4.6 proofs;
-  - IDE, if the RiscPC-only titles need the hard-disc route (the trial needed IDE for 031/074/084 installs);
-  - CMOS persistence keyed like today, with generated defaults whose provenance is recorded.
-- **Required items:** resolve carried residual **R1-1** (the SA-110 100 MIPS held-Delete factory reset) and QA L5 (FDC interface limits), and keep the two-floppy residual visible.
-- **Layout questions:** D-134 says boot files are user-supplied in the system folder. Their layout and verification are R2/R3 questions, so mark what R2 needs.
-- **Then:** an Astra challenge, then Sol.
+**Stage:** IMPLEMENTATION — roadmap item 6, RiscPC R2a (memory timing + CMOS), run A
+**Owner:** Sol
+**Next:** Sol R2a run A on branch `slice/r2a-timing-cmos` (from `main` after this baton merges): write **`docs/riscpc-timing.md`**, the per-model timing contract of the *R2 work order* item 1 below. No product code in run A. Fable then accepts the contract (after a short Astra check) and authorises run B (items 1–4 implementation).
+- R2 = three sequential PRs on one accepted design (D-139): **R2a** timing + CMOS → **R2b** floppy drives and full controller → **R2c** IDE and scalable hard disc. Each PR gets Fable review and Opus QA; R2 completes with the AC-10 speed gate.
 
 Slice order (D-133): R1–R4 → item 5 release baseline → item 6b faster CPU translator → item 8 save states. Carried: the Arculator VIDC-register reset follow-up (below); follow-up Lows; Slice 23 residuals; physical-stick feel on the Odin3 (Founder check).
 
@@ -25,6 +18,25 @@ Slice order (D-133): R1–R4 → item 5 release baseline → item 6b faster CPU 
 - Faster CPU translator for RiscPC joins the roadmap as item 6b (D-133). Android is arm64-v8a only (D-135).
 
 **Slice 30 work order:** merged; in git history (`docs/handoff.md` at `7a32f93`).
+
+**S57 (Claude Opus 5.5 effort 15; baton by relay from `arcdroid-25`).** R2 designed (D-139). R1-1 diagnosed to its cause (missing CPU memory-transfer cost; see the R2 work order). **Astra** thread `01a11795-811f-7ff2-9065-4200a62d4a1a`:
+- stage 1 gave an independent design that agreed on all main lines: IDE required; an RPC-side drive model over the engine-neutral core; a memory-cost fix rather than a keyboard change; a store redesign;
+- stage 2 returned PROCEED WITH CHANGES. All seven changes were incorporated:
+  1. a worked timing contract before code, with timing-only cache tags preferred and guest progress measured;
+  2. correct TC and short-write semantics;
+  3. a required-mask + stability + checksum completion oracle in place of the 216/240 threshold;
+  4. the CMOS key uses the exact firmware SHA-256, with normative default-cache invalidation;
+  5. the store state machine and concrete bounds frozen before code;
+  6. the plan route arriving incrementally per PR, with the catalogue-before-install replay moved to R2c;
+  7. AC reconciliation (Arculator vs RPC goldens; the 44-title A/B per PR gate; a frozen ATA matrix; Odin3 limits; the end-of-R2 speed gate).
+
+Private evidence: S57 scratchpad `/private/tmp/claude-501/-Users-mac0918-dev-ArcDroid/bd202a6a-899b-41f1-bbdd-15986eaffba2/scratchpad/s57/` (`LEDGER.md` index):
+- `research-*.md` — research notes;
+- `r11sweep.log` and `r11/` — the rate/model sweep;
+- `probe/` — the scratch `/* PROBE */` build, never a Sol source; runs in `r11p/`, `r11q/` and `r11cf/` (the counterfactual);
+- `dis.sh` — the private disassembly helper;
+- `astra/` — briefs and reports;
+- `workorder-r2.md` — drafts.
 
 **S56 (Claude Opus 5.5 effort 15, window `arcdroid-25`; baton by relay from `arcdroid-7e`).** **RiscPC R1 designed, implemented, QA'd and merged as `7244f9c`** (outcome above; D-137, D-138).
 
@@ -59,6 +71,343 @@ No process from this session is left running.
 **S55 outcome (Claude Opus 5.5 effort 15, window `arcdroid-7e`; baton by relay from `arcdroid-df`). Slice 30 merged as `ff048e4`** (PR #307, head `018a05f`; D-132, D-136): per-game core option `arcdroid_jfd_write_protect` ("Write-protect Tab": *As imaged* default / *Off*). One rule `arc_jfd_write_authorized` (Off OR extended RW/not-WP) with the session policy passed explicitly to every header-authorization site (store, `core/jfd_layout.c` guarded admission, D-102 routing, file-data class, refresh notices, temporary decodes, disk control, recovery); header, identities and store keys unchanged; under *As imaged* a store of a header-unauthorized image is hidden (read-only detection, one notice), never deleted; boot observation revision 4 stamps the setting. Release note `docs/release-notes-slice30.md`. **Sol** (GPT-6.1 Sol, thread `01a1103a-9d72-73d3-9ad3-5d7360357a4e`): run 1 `64a37a5` implementation; runs 2–4 test/doc-only (`afcfb2e` Windows test-hook exports, `5751de4` Windows reset descriptor phase + no NULL `memcpy`, `018a05f` QA test gaps TG-1…TG-4 + `docs/adffs.md` wording + reset-scoped Windows relaxation). **Astra** thread `01a11032-bd6d-7600-ab82-00fef64d1785` stages 1–2 (PROCEED WITH CHANGES, all incorporated). **Fable ruling:** As imaged log lines stay byte-identical; extended `JFD writes:` fields under Off only. **Opus QA** (effort 15, `opus-qa` agent): PASS WITH LOWS (no defects; mutants M1–M4, M6–M8 killed; M5, M9–M12 survived) → run 4 → re-check PASS WITH LOWS (all five killed; no production change). **CI** green on all five jobs (PR event) at `018a05f`. **AC-12 PASS** (private, RISC OS 3.11; fresh data directories per run; legs vs `main` code): default no-package 218 zips — 214 frame-identical, differences 105/133/164/205 all run-to-run variance (133 newly shown variable: two `main` runs differ at t060/t090); default with package — 215 identical, 105/133/164 variance; *Off* with package — 101/111/136/146 `native-writable reason=tab-off`, utility reconfigures (CMOS writes 513–515), t150 frames identical to S54's verified title screens; 103 at *Off* stops at its own "MUST be write protected" (identical to S54); *Off* forced on the S54 104-title cohort (no package) — frame differences exactly 019/080/101/103/111/136/146/164/191 and 103/104 titles frame-identical to S54's forced-writable leg (164 variance), 0 error changes; legacy-header 010 (chooser) and 081 (both images) unchanged frames under *Off*, admitted writable, no writes, no corruption. **AC-13 Odin3 PASS** (arm64 `64a37a5`, production-identical to the merge; see the S55 device record in git history at `7a32f93`): 146 per-game *Off* → native-writable → title → gameplay; relaunch reloads the store (`generation=9 records=4`); 103 at default unchanged; 0 `[ERROR]`, peak PSS 175–189 MB. **Item 5** grounded and paused (above). Private evidence: S55 scratchpad `/private/tmp/claude-501/-Users-mac0918-dev-ArcDroid/23f7c4c9-86e2-43f9-878a-2538fbe3ca51/scratchpad/s55/` (`astra/` briefs/reports; `sol30/` prompts 1–4, reports, streams, CI logs; `ac30/` `legs.sh`, `ab55.py`, `cmp55.py`, `vs54.py`, legs `base-nopkg`/`s30-nopkg`/`base-pkg`/`s30-pkg`/`off-nopkg`/`off-pkg`/`off-ten`/`base-133r`; `qa30/` QA clone + `mutate.py`; `a/` = `main` code build; Odin3 screenshots `d146*`, `d103a*`).
 
 **Unit P state (S52).** Branch `probe/riscpc-trial` (never merged), head `5ff5481` after Sol runs 1–14 (`29fdf4f`…`5ff5481`); private report `scratchpad/solP/clone/SOL-REPORT-P.md` (+ archived per-run reports under `probe/riscpc/run/`), runbook `probe/riscpc/RUNBOOK.md`. Fable rulings, all general: R3-1 factory-reset CMOS; R4-1 project-authored multisync MDF + boot step; R5-1 RISC OS Open HardDisc4 + PlingSystem resources (private); R6-1/R7-1 keep ROM modules, run none of RISC OS Open's boot scripts — ArcDroid sets the standard boot variables/paths; R8-1 per-drive media ownership; R9-1/R10-1 single floppy drive, boot from the standard IDE disc (residual risk: unexplained two-floppy FileCore interaction after cataloguing drive 1); R11-1 boot the Resources applications via Filer_Boot; D-127 line-accurate scanout. Odin3 device evidence: `scratchpad/device-p12/` (RetroArch runs `f031-100`, `f074-35`, headless `h031-100`, `h110-100`, thermal `th1–3`); device layout `BIOS/arcdroid/firmware/ROM371`, `BIOS/arcdroid/rpcprobe/trial-{a,b,d}`, content `RetroArch/rpcprobe-content/`, probe core installed as `arcdroid_rpcprobe_libretro_android.so`, runner `/data/local/tmp/s52.sh`, headless kit `/data/local/tmp/rpcprobe-p14/`.
+
+## R2 work order — RiscPC media, IDE, CMOS and memory timing (S57; D-139)
+
+**Objective.** Give the dormant RiscPC backend (D-137) what a RiscPC-only game needs before R3 can launch it:
+- **CMOS** that persists per game, with defaults generated by the user's own firmware.
+- **Two floppy drives** backed by ArcDroid's existing media rules (JFD, ADF/ADL, helper), through a complete 82077-class controller.
+- **A persisted IDE hard disc** large enough for the standard boot resources plus a game install.
+- **The memory-timing correction** that residual R1-1 exposed.
+
+Governing: `docs/riscpc.md` §§4.4, 4.6, 4.9, 4.11, 6; D-063, D-075, D-076, D-090, D-097, D-106, D-107, D-120, D-121, D-131, D-134, D-136, D-137, D-138, D-139; PRD FR-8, FR-10, FR-22, FR-62–FR-68; protocol §10.
+
+**Player-visible outcome: none.** R2 stays dormant. Every new path is reached only through the plan core (`arcdroid_rpcplan_libretro`) and `tools/rpc_runner.c`. Shipping routes, options, machine names and `.info` are unchanged, and Archimedes behaviour is byte-for-byte unchanged.
+
+**Delivery: three sequential PRs on this one design.** Each PR gets its own Sol runs, Fable review and Opus QA, and each starts from the merged previous one. R2 is complete when R2c merges and the end-of-R2 gate (AC-10) passes.
+- **R2a — memory-system timing and CMOS.** Branch `slice/r2a-timing-cmos`.
+- **R2b — floppy drives and full controller.** Branch `slice/r2b-floppy`.
+- **R2c — IDE and a scalable hard disc.** Branch `slice/r2c-ide`.
+
+### Verified state (S57, `main` `a3443c9`)
+
+**RPC backend today**
+- RPC media and CMOS backend ops are stubs (`engine/rpc/rpc_session.c` ~409–452; `.cmos` returns zeros), and `arc_rpc_floppy_request` always returns `NO_MEDIA`.
+- FDC commands are as in QA L5 (*R1 outcome* above).
+- Two R1 FDC hazards would matter once media works:
+  - `fdc_request()` rebuilds CHRN from the original parameters even after `fdc.sector++`;
+  - data commands take the physical side from the requested H (`engine/rpcemu/src/fdc.c:146-158, 242-260, 559-601`).
+- IDE is absent (D-138(1)), and `ARC_RPC_EVENT_IDE` is reserved.
+- The scheduler has nine events; `ArcRpcTestSnapshot.events[9]` and the runner hard-code that count.
+- CMOS lives in session memory only. The factory-capture success test is "≥ 1 guest write", which a failed reset passes.
+- The runner's VFS is read-only.
+
+**Arculator media side**
+- The engine-neutral media policy lives in `core/` and `libretro/`.
+- Arculator's drive side (`disc.c`, `disc_adf.c`, `disc_jfd.c`) is tied to Arculator's controller table, timer and IOC:
+  - JFD is a drive-0 singleton;
+  - raw transfers share global state;
+  - raw writes ignore requested size and the deleted flag.
+
+**Hard-disc store**
+- `libretro/install_store.c` holds the whole 15.75 MiB A3020 image in memory, hashes it at open, and reads it all back at compaction.
+- It compacts only at open, and it refuses in-session writes once the journal reaches 8 MiB.
+
+**CMOS records**
+- `ARCCMOS2` records have 8-bit machine/OS tags and no payload checksum.
+- There is no RiscPC machine and no RISC OS 3.5+ class.
+
+**What the titles need (trial)**
+- 031, 074 and 084 install onto the hard disc and run from it; 074 cannot run from floppy at all.
+- The trial needed a 126 MiB disc. Its 16 MiB and 63 MiB discs left about 2 MiB free after the standard boot resources.
+
+**R1-1 diagnosis (S57; private firmware; a scratch `/* PROBE */` build, never a Sol source)**
+- **Where it fails:**
+  - the factory reset fails at 100 MIPS on all seven firmware/model pairs (3.71 SA-110/ARM710/ARM7500, 3.70 SA-110, 3.60 ARM710, 3.50 ARM610);
+  - it also fails on SA-110 at 40, 60 and 80 MIPS;
+  - it succeeds at 35 MIPS and below.
+- **Why:** after the keyboard reset command and its ACK, the firmware:
+  - clears memory with `TEQ; STMNE r10!,{8 regs}; BNE` at ROM offset 0x1541c — about 10.93 M instructions with no I/O;
+  - then reads CMOS over IIC for about 224 ms, paced by IOMD timers;
+  - then decides.
+
+  The decision window W(rate) = 224 ms + 10.93 M / rate fits 20, 40, 60 and 100 MIPS to within 1 ms.
+- **Keyboard timing is not the fault:** BAT arrives 500 ms after the ACK, within the HT82K629B datasheet's 300–500 ms.
+- **Counterfactual:** charging 240 ns per 8-word store in that loop alone gives a full reset at 100 MIPS on SA-110 and ARM710 (554 writes, all 240 payload addresses).
+- **Root cause:** CPU memory transfers have no cost.
+
+### R2a — memory-system timing and CMOS
+
+**1. Timing contract first (run A, no product code).** Sol writes `docs/riscpc-timing.md`: a worked timing contract for each model.
+
+- **Bus time** for CPU transfers to DRAM, VRAM, ROM and I/O space:
+  - sequential and non-sequential per transferred word;
+  - sharing arbitration with the existing video-DMA hold (`arc_rpc_video_bus`).
+- **Write buffer:** capacity and entry width, drain at bus timing, and a CPU stall when the buffer is full.
+- **Caches:**
+  - ARM610/ARM710 have write-through caches and ARM7500 its integrated cache. The SA-110 has a write-back D-cache with an 8-entry write buffer, in the Risc PC's standard bus mode with bursts of at most 4 words.
+  - Preferred: timing-only cache tags (presence and replacement, no data). They decide store hits vs bus traffic, read misses and line fills, dirty evictions, and the instruction-cache rule for ROM.
+  - The contract must estimate the tags' host cost against the D-131 budget. If Fable rules the tags unaffordable, use a declared bounded approximation instead, and narrow AC-1 to it.
+- **SA-110 reset clock:** DCLK runs from MCLK until clock switching is enabled (SA-110 TRM §8.2).
+- **Sources:** every constant cites a primary source (CPU datasheets/TRMs, the IOMD functional specification, Risc PC board configuration) and shows its derivation.
+- **Calibration workloads:** expected times come from the documentation, never from the implementation. Workloads:
+  - ALU, branches, and LDM/STM lengths;
+  - streaming and random memory;
+  - cache and write-buffer control;
+  - ROM and I/O;
+  - DMA contention;
+  - memory size;
+  - one hot instruction-throughput case.
+- **Firmware reset is validation only,** never the fitting target. BAT timing is not changed.
+
+Fable accepts the contract, after a short Astra check, before run B implements it. Then:
+- **Rates:** D-137 rates are ceilings (SA-110 100 accepted; 20/35/35 provisional). Stalls lower achieved throughput; rates are never lowered, and there is no capture-only mode.
+- **Determinism:** the model is integer and deterministic, with no host-pacing input.
+
+**2. CMOS records.** A new versioned RiscPC envelope that is never read as `ARCCMOS2`. Arculator's format and paths are unchanged.
+
+| Part | Content |
+|---|---|
+| Contents | 240-byte payload (PCF8583 bytes 16..255), content identity, private model id, firmware SHA-256, hardware/layout revision, generation, integrity checksum |
+| Key | content × model × **exact firmware SHA-256**. Grouping firmware versions needs separate layout evidence and is not part of R2 |
+| Location | `<save>/arcdroid/cmos-riscpc/`, a name no Arculator key can produce |
+
+- **Publication:** verified candidate publication into recoverable slots.
+- **When to persist:**
+  - eagerly, outside guest execution, at least once per `retro_run` when changed;
+  - at unload;
+  - reset keeps live CMOS.
+- **Refusals:** corrupt, foreign-version and wrong-key records are refused visibly and never overwritten silently.
+- **No normalisation:** an interrupted guest checksum update is never repaired. Launch-owned bytes (Boot, drive counts, unplug) belong to R3.
+
+**3. Generated defaults.** A missing record is seeded from the factory default for (firmware SHA-256, model, generation-procedure revision, timing-model revision). Changing the timing model, the reset procedure or the relevant machine configuration bumps a revision, which invalidates the cached default.
+
+- **Generation:**
+  - an isolated, media-free session: zero CMOS, an internally held Delete with a fixed schedule, pinned RTC, production rate;
+  - it runs incrementally, in bounded slices, through ordinary frontend calls;
+  - then the session is destroyed and the requested session starts clean.
+- **Completion oracle.** At a fixed capture deadline, all three hold:
+  - (a) every address in the layout family's **required mask** has been written. The mask is 240/240 unless a firmware demonstrably never writes an address during its held-Delete reset: identical write masks at 20 and 35 MIPS and at the production rate, over an extended horizon. Today that covers 3.50's 194/195. The masks and their evidence are recorded.
+  - (b) no payload write occurred during a stated stability interval before the deadline;
+  - (c) the RISC OS checksum (`core/cmos_defaults.c` rule) is valid.
+- **Negative tests:** the 14-write case; no Delete; an interrupted reset; a valid checksum with incomplete coverage.
+- **Cache:** under `<save>/arcdroid/cmos-riscpc/defaults/`, with a provenance record: firmware digest, model, rate, revisions, reset schedule, RTC, completion evidence, payload digest. Never shipped, logged or uploaded (D-134).
+- **On failure:** no default, an explicit error, and no session.
+
+**4. Plan route, part 1.** Plan v2 adds content identity, a writable save directory, and CMOS persistence fields. The runner gets a writable VFS for the save directory only. Version-1 plans still work.
+
+### R2b — floppy drives and full controller (L5)
+
+**5. Drive model (§4.6 as reconciled by D-139).** An ArcDroid-owned, instance-based RPC drive model sitting on the engine-neutral media core.
+
+- **The media core stays authoritative:**
+  - `arc_jfd_effective_sector`, preparation, quarantine, identification and omitted file-data;
+  - the D-120/D-121 guards, the store, the D-136 policy, and Disk Writes Off/Shadow/Original staging.
+- **Arculator's drive side is not modified.** Small shared primitives may be extracted only if Arculator stays byte-identical.
+- **State:** each drive has its own motor, rotation, head position, change latch and mounted-image ownership; there is one controller transfer state.
+- **Media:** drive 0 takes JFD or raw ADF/ADL; drive 1 takes the raw helper through the same mechanics. Raw prefix limits are kept.
+- **Timing — integer virtual deadlines:**
+  - rotation: JFD's accepted 200 ms revolution and its descriptor positions; raw layouts from validated geometry;
+  - index;
+  - byte time per FM/MFM and data rate;
+  - head load, and step/settle from SPECIFY.
+
+  Host storage latency never advances guest time. Deadlines are multiplexed behind the existing FDC slot with a documented internal tie order. A new slot is allowed only with a deliberate snapshot/runner format revision.
+- **Typed interface:**
+  - physical drive, physical cylinder and selected head are kept separate from the requested CHRN;
+  - explicit encoding, rate, modifiers and parameters;
+  - typed ID, read-byte, write-byte-available, index and terminal-status events;
+  - no size sentinels or side channels;
+  - session, mount and command generations: every callback validates its generation, and generations are invalidated before media is released.
+- **Fix both R1 hazards.**
+- **Writes and termination:**
+  - A complete sector commits exactly once, after FIFO consumption and validation. This includes a sector whose last byte arrives with TC.
+  - JFD: an incomplete sector (early TC, overrun, underrun, reset, eject) is discarded. This is the D-075 store guarantee and a documented fidelity limit; the guest sees the datasheet's result status.
+  - Raw ADF/ADL: an early TC completes the sector as the FDC37C665GT datasheet specifies, then commits.
+  - N/DTL that differs from the media's sector size follows the existing size-mismatch handling.
+  - Previously committed sectors are always kept.
+  - Unchanged guest-visible results: veto → data CRC error, store failure → write protect.
+  - A synchronous refusal ends the command before DMA.
+- **Reset, eject, replacement, failed insertion and teardown:**
+  - discard incomplete transfers, lower outstanding DMA, and prevent stale completion;
+  - a replacement is validated before ownership is retired;
+  - a failed insertion leaves an explicit empty drive.
+- **Disk control:** libretro disk control works for RPC sessions in the plan core.
+
+**6. Controller (L5).** The SMSC FDC37C665GT command tables are the authority.
+- **Commands:**
+  - setup and status: SPECIFY, SENSE INTERRUPT, SENSE DRIVE STATUS, RECALIBRATE, SEEK and RELATIVE SEEK;
+  - configuration: CONFIGURE (with effect), VERSION (`0x90`), DUMPREG, LOCK and PERPENDICULAR MODE;
+  - data: READ DATA, WRITE DATA, READ DELETED DATA and WRITE DELETED DATA;
+  - VERIFY, which checks every selected sector without host transfer;
+  - READ ID (FM/MFM);
+  - READ TRACK, which transfers sector data in rotational order, not a fabricated flux stream;
+  - FORMAT TRACK, with N/SC/GPL/fill and incoming CHRN tuples.
+- **Fields and termination:** MT, MFM and SK; EOT, GPL and N/DTL; FIFO and non-DMA modes; implied seek; and the documented result CHRN/status transitions.
+- **Invalid by datasheet:** SCAN and reserved encodings stay invalid.
+- **Valid command vs representable media operation:**
+  - JFD FORMAT and deleted-data writes keep today's refusal results;
+  - raw FORMAT succeeds only for an exactly representable layout, with the supplied fill byte, and is never normalised;
+  - no format invents deleted marks: media without them read as normal data, with CM/SK semantics.
+
+**7. Two drives.** Both drives are always available; nothing restricts a session to one drive.
+- **Synthetic-ROM tests** prove controller and drive isolation, including deliberate DOR/command-unit mismatches.
+- **Fable's private R2b reproduction:**
+  - authored FileCore volumes with replacement media, under private firmware;
+  - helper absent, present but untouched, accessed first, and accessed later;
+  - volume identity, geometry and repeated insertion varied independently;
+  - bounded numeric traces of DOR selection, unit/HDS, physical/requested CHRN, change latch, index phase, bytes serviced, TC, IRQ/FIQ and results.
+- **The original catalogue-before-install case** needs IDE, so it is replayed in R2c.
+- **Outcome:** any controller or bridge defect is fixed before R2 completes. Anything else stays an open residual, with evidence and a next diagnostic. Two-drive compatibility is never claimed unproven.
+
+**8. Plan route, part 2.** Media sets, drive-1 media and timed disk-control operations, all through the shipping adapters and stores.
+
+### R2c — IDE and a scalable hard disc
+
+**9. Store state machine first (run A, no product code).** Sol writes `docs/riscpc-hd-store.md`. Fable accepts it, after a short Astra check, before run B implements it. It must define:
+- **Holes:** only manifest-declared holes read as zero. A missing referenced chunk is corruption.
+- **Chunk verification:** a chunk is verified before its contents are used, including partial-write reconstruction during a checkpoint.
+- **Manifest binding:** each manifest is bound to an exact journal generation and committed-sequence boundary. Writes acknowledged during a checkpoint are retained and replayed.
+- **Garbage collection:** follows references from every retained recovery root, including journals. Unchanged chunks referenced by the new manifest are never deleted.
+- **Failure behaviour:** when a checkpoint cannot finish before the journal cap, on full storage, and on publication failure. The guest sees an ATA error, the disc latches read-only and a visible notice appears; no stall depends on the host.
+- **Fault-injection outcomes** for every boundary.
+- **Concrete bounds for the 126 MiB geometry:**
+
+  | Item | Bound |
+  |---|---|
+  | Chunk size | ≤ 1 MiB |
+  | Resident cache | ≤ 8 MiB |
+  | Journal | ≤ 8 MiB, checkpoint triggered at ≤ 4 MiB |
+  | Files | ≤ 2 manifests + ≤ 2 journals + chunk files |
+  | Peak temporary disk | one chunk plus one manifest per step |
+  | Checkpoint work per `retro_run` | ≤ 1 chunk step |
+  | Disc size | 126 MiB |
+
+**10. IDE controller.** Pristine import of RPCEmu 0.9.5 `src/ide.c` (manifest, notices, import checker), then marked patches:
+- **Device:** single ATA master only — no ATAPI, CD, slave or file-backed loading.
+- **Wiring:** `ArcIdeBackend`; `ARC_RPC_EVENT_IDE` timing in virtual time; IRQ on IOMD IRQB bit 1, honouring nIEN.
+- **Write semantics:** the Arculator rewrite's transaction latch. A whole multi-sector write commits in one backend write. A failed commit latches read-only and returns an ATA error.
+- **Frozen command matrix:**
+  - Implemented: RECALIBRATE (1x), READ SECTORS (20/21), WRITE SECTORS (30/31), READ VERIFY (40/41), SEEK (7x), INITIALIZE DEVICE PARAMETERS (91), IDENTIFY DEVICE (EC), power commands E0–E3/E5 (correct status, no effect).
+  - Everything else: ABRT.
+  - IDENTIFY: 256 cylinders, 16 heads, 63 sectors, current-geometry words, LBA capacity words, ArcDroid-authored model/serial strings, PIO only.
+  - Adding a command needs RISC OS evidence and Fable's approval.
+- **Bounds and cancellation:** commands are bounded to 256 sectors. CHS/LBA limits, 16- vs 8-bit transfers, status vs alternate-status acknowledgement, reset and incomplete-command cancellation all behave correctly. Faults are contained.
+- **No disc attached:** the D-138(1) contract applies.
+
+**11. Hard disc.**
+- **Location and identity:** `<save>/arcdroid/hd-riscpc/<content_id>/`, with explicit geometry and format revisions. Content identity is frozen across swaps and disk-control edits. The disc is shared across RiscPC CPU/firmware selections.
+- **Format:** 63×16×256 (126 MiB), one general size, made by ArcDroid's formatter. The formatter is parameterised correctly (maps, root, checksums, IDENTIFY capacity), and A3020 output is unchanged.
+- **Store:** the chunked sparse store from item 9, plus the existing CRC-framed per-command journal with an in-memory index.
+- **Recovery:** a torn tail is recovered. A damaged disc is reported and never silently reformatted.
+- **A3020:** the A3020 store and its files are untouched and never migrated.
+- **Population hooks:** R2 publishes an authored blank filesystem and provides transactional population hooks — populate a private candidate, publish only when complete. R3 validates user-supplied boot resources under a reserved `<system>/arcdroid/riscpc/boot/` and populates the disc through them.
+
+**12. Plan route, part 3.** Hard-disc fields, plus a test-only key that attaches a privately prepared disc, for Fable's evidence.
+
+### Non-goals
+- **R3:** shipping reachability, firmware inventory, Auto, launch automation, observers, boot-resource population and the missing-files notice.
+- **R4:** gameplay qualification, rate qualification, the 218-title A/B and release notes.
+- **Not planned:** save states, the faster CPU translator, RISC OS 5, podules and CD-ROM.
+
+### Acceptance criteria
+
+**AC-1 Timing (R2a)**
+- Authored workloads match the documentation-derived expectations in `docs/riscpc-timing.md`.
+- The hot-throughput case keeps the 100 MIPS ceiling.
+- Private, by Fable: the factory reset succeeds at production rates on all seven pairs with BAT unchanged.
+- R1 RPC goldens change only where costs apply, and each delta is explained against independent expectations.
+- Odin3 at 100 MIPS on the R1 AC-8 workload, measuring both host frame cost and guest progress: p95 ≤ 0.80 T, and no frame over T.
+
+**AC-2 CMOS (R2a)**
+- Record round trip, key isolation and integrity.
+- Fault injection at every write, flush, rename and publication step.
+- Kill safety.
+- Foreign and corrupt records refused.
+- No cross-reading between Arculator and RPC records.
+- Defaults: generation, cache reuse and invalidation, provenance contents, and the oracle's negative cases.
+- Incremental generation slices.
+- Private:
+  - `*Configure` changes survive a fresh process on each pair;
+  - each captured default restarts cleanly;
+  - default generation wall time is measured on the Odin3.
+
+**AC-3 Controller (R2b)**
+- Synthetic-ROM, guest-driven tests through SuperIO, IOMD and FIQ DMA, with independently stated expectations.
+- Coverage:
+  - every item-6 command and field;
+  - MT/EOT and the end-of-cylinder table;
+  - FM/MFM, CRC errors, absent sectors, empty drives, write protect and deleted marks;
+  - TC on the final byte, TC one byte early, queued FIFO bytes, and multi-sector termination;
+  - both R1 hazards.
+
+**AC-4 Media (R2b)**
+- Authored JFD/ADF/ADL/helper fixtures covering:
+  - identification, quarantine, omitted IDs and data, creation and D-121 guards;
+  - every write policy and the store-failure mapping;
+  - no partial commits;
+  - cancellation on both drives.
+- Differential traces against the Arculator side for presentation and committed results. Controller timing does not have to match.
+- Store files written by one backend are readable by the other.
+
+**AC-5 IDE and store (R2c)**
+- Full-capacity addressing.
+- Installer-like writes far beyond 8 MiB with no reopen.
+- Checkpoint and recovery under fault injection at every boundary.
+- The frozen command matrix, plus storage failures.
+- The item-9 bounds, measured.
+- A3020 store regression identical.
+
+**AC-6 Arculator unchanged (each PR)**
+- Every Arculator test and golden is unchanged. RPC goldens change only under AC-1.
+- Fable's private A/B on the R1 44-title set, in both package states, at each PR gate: identical apart from known variance.
+
+**AC-7 Isolation and determinism (each PR)**
+- Shipping routes reject RPC plans, and capabilities, namespace and exports are correct.
+- Arculator→RPC→Arculator switching, and failed start, reset and unload, all work.
+- Goldens and audio counts are identical across pacing, Linux, Windows, macOS and the Odin3 runner.
+
+**AC-8 Private RISC OS (Fable)**
+- R2b, on 3.50–3.71:
+  - ADFS read, write and format on authored discs in both drives, with swaps;
+  - JFD store persistence across reload;
+  - two-floppy diagnostics.
+- R2c:
+  - hard-disc `*CDir`/`*Save` persist across a fresh process;
+  - 031, 074 and 084 install from their floppies onto the R2c disc, with a privately prepared boot environment, and start cold from it;
+  - the original catalogue-before-install case is replayed.
+
+**AC-9 Devices (Fable, R2c)**
+- Native RetroArch media operations, save/reload and process termination on Windows and the Odin3.
+- Odin3 pass limits:
+  - peak PSS ≤ 240 MB during mount, checkpoint and reload;
+  - store open ≤ 1 s;
+  - AC-1's frame budget holds during an install that checkpoints;
+  - no growth over 20 repeated sessions.
+
+**AC-10 End-of-R2 speed gate (Fable)**
+- Odin3 at 100 MIPS: guest progress and frame rate of the trial's private 031 and 110 gameplay workloads, compared with the trial's record (031 ≈ 27 fps).
+- A drop of more than 10 %, or a visible or audible regression, goes to the Founder before R3.
+
+### Evidence Sol must provide
+- CTest names for AC-1–AC-5 and AC-7, wired into CI (sanitizer selection included).
+- The two contract documents.
+- Every new or revised golden, with its rationale.
+- Fault-injection matrices.
+- Android arm64 test-core and runner build commands.
+- A report listing each source behind each timing constant, each patch with its reason, and the bounds chosen.
+
+### Risks and QA focus
+- Cost constants without primary sources, or fitted to R1-1.
+- Trace churn hiding regressions.
+- Any change to Arculator.
+- Partial or duplicate commits, and stale callbacks across swap or reset.
+- Store recovery and Android storage.
+- CMOS key collisions.
+- The dormant boundary.
+- Provenance of the imported `ide.c`.
+
+**Roles.** Sol: items 1–12 and the evidence above, one PR per part. Fable: contract acceptance, review, AC-1/2 private legs, AC-6, AC-8, AC-9 and AC-10. Opus QA on each PR after Fable's review.
 
 ## R1 outcome (S56) — merged as `7244f9c` (PR #312, head `b084890`; D-137, D-138)
 The R1 work order and implementation record are in git history (`docs/handoff.md` at `07a6ebc`).
