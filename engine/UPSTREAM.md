@@ -267,3 +267,14 @@ These marked lifecycle fixes
 restore fresh-load state without changing instruction/device transitions.
 No existing test or golden is changed. Full R1 AC-3 qualification remains with
 Fable; C2 runs only the expressly requested regression selection.
+
+## RiscPC R1 completed-device stress (run E)
+
+`src/fpa.c` registers its existing process-exit FPA diagnostic at most once
+per loaded library, retrying only if registration fails. Previously every
+Arculator CPU reset added another `atexit` callback; repeated backend switches
+retained callback-registry allocations (one additional 1,280-byte block at
+the observed registration boundary on macOS). The registration flag tracks
+host library lifetime, not guest state. All FPA register resets, instruction
+behavior, timing and the exit diagnostic itself remain unchanged. No existing
+test or golden is changed.
