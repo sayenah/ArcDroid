@@ -342,6 +342,11 @@ static void
 mem_phys_write32(uint32_t addr, uint32_t val)
 {
 	addr &= phys_space_mask;
+    if (addr == 0x03310000u && machine.iomd_type == IOMDType_IOMD) {
+        iomd_mouse_buttons_write(val);
+        return;
+    }
+
 
 	switch (addr & (phys_space_mask & 0xff000000)) { /* Select in 16MB chunks */
 	case 0x02000000: /* VRAM */
@@ -450,6 +455,11 @@ static void
 mem_phys_write8(uint32_t addr, uint8_t val)
 {
 	addr &= phys_space_mask;
+    if (addr == 0x03310000u && machine.iomd_type == IOMDType_IOMD) {
+        iomd_mouse_buttons_write(val);
+        return;
+    }
+
 
 	switch (addr & (phys_space_mask & 0xff000000)) { /* Select in 16MB chunks */
 	case 0x02000000: /* VRAM */

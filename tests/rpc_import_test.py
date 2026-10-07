@@ -71,3 +71,17 @@ def symlinked(c):
 if sys.platform != "win32":
     rejected(symlinked, "symlinked dependency")
 print("rpc-import-guard: 12 malformed trees/records rejected; symlink boundary checked where supported")
+
+# Simulate a Windows core.autocrlf text checkout, including pristine headers,
+# upstream's CRLF readme and the owned sound adaptation notice. Byte-accurate
+# tarball/pristine git audits remain a separate unchanged path in the guard.
+with tempfile.TemporaryDirectory(prefix="arc-import-crlf-") as temp:
+    candidate = Path(temp)
+    shutil.copytree(root / "engine/rpcemu", candidate / "engine/rpcemu")
+    shutil.copytree(root / "engine/rpc", candidate / "engine/rpc")
+    for path in candidate.rglob("*"):
+        if path.is_file():
+            data = path.read_bytes().replace(b"\r\n", b"\n")
+            path.write_bytes(data.replace(b"\n", b"\r\n"))
+    guard.verify(candidate)
+print("rpc-import-guard: complete CRLF checkout accepted; pristine bytes audit unchanged")

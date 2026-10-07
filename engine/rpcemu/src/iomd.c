@@ -794,6 +794,14 @@ iomd_read(uint32_t addr)
  * bit 7 is cmos reset bit (active high) TODO not sure of interpretation
  * bit 8 is 16 bit sound (active low) else 8 bit (high)
  */
+/* The RiscPC board latch echoes only the CMOS reset gate with LK5
+ * unprotected. Mouse, monitor ID and sound-presence bits remain inputs. */
+void
+iomd_mouse_buttons_write(uint32_t val)
+{
+    iomd.cmos_gate = (uint8_t)(val & 0x80u);
+}
+
 uint32_t
 iomd_mouse_buttons_read(void)
 {
@@ -830,7 +838,7 @@ iomd_mouse_buttons_read(void)
 	   return 0 to indicate bit */
 
 	/* Invert the button values */
-	return temp ^ 0x70; // bit 4 5 and 6
+	return (temp ^ 0x70) | iomd.cmos_gate; // bit 4 5 and 6
 }
 
 /**

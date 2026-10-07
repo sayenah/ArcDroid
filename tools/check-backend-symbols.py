@@ -25,22 +25,38 @@ def object_format(path):
     raise ValueError(f"unsupported object format: {path}")
 
 
-def read_symbols(path, nm, sanitized=False):
+def violation(condition, message, errors):
+    if not condition:
+        errors.append(message)
+
+
+def finish(errors):
+    if errors:
+        raise ValueError("\n".join(errors))
+
+
+def read_symbols(path, nm, sanitized=False, errors=None):
+    local = errors is None
+    if local:
+        errors = []
     form = object_format(path)
     output = subprocess.check_output([nm, "-g", "-P", str(path)], text=True)
     # Darwin's POSIX nm does not encode weak attributes in its type letter.
     # Native nm and llvm-nm both expose those attributes in Mach-O mode.
     if form == "macho":
         attributes = subprocess.check_output([nm, "-g", "-m", str(path)], text=True)
-        require(not re.search(r"\bweak\b", attributes), f"weak external symbol: {path}")
+        for line in attributes.splitlines():
+            if re.search(r"\bweak\b", line):
+                errors.append(f"weak external symbol: {path}: {line.strip()}")
     symbols = []
     for line in output.splitlines():
         parts = line.split()
-        require(len(parts) >= 2 and len(parts[1]) == 1,
-                f"unrecognised nm output: {path}: {line}")
+        if len(parts) < 2 or len(parts[1]) != 1:
+            errors.append(f"unrecognised nm output: {path}: {line}")
+            continue
         name, kind = parts[:2]
         if form == "macho" or (form == "coff" and path.read_bytes()[:2] == b"\x4c\x01"):
-            require(name.startswith("_"), f"missing ABI decoration: {path}: {name}")
+            violation(name.startswith("_"), f"missing ABI decoration: {path}: {name}", errors)
             name = name[1:]
         # Linker-owned ELF GOT anchor: PIC objects reference it, never define it.
         if form == "elf" and name == "_GLOBAL_OFFSET_TABLE_" and kind == "U":
@@ -58,15 +74,23 @@ def read_symbols(path, nm, sanitized=False):
         # this one shared registration flag as a common even with -fno-common.
         if form == "macho" and sanitized and name == "___asan_globals_registered" and kind == "C":
             continue
-        require(kind not in "Cc", f"common symbol: {path}: {name}")
-        require(kind not in "WwVv", f"weak external symbol: {path}: {name}")
-        require(kind in "TtDdBbSsRrAU", f"unexpected symbol type {kind}: {path}: {name}")
+        if kind in "Cc":
+            errors.append(f"common symbol: {path}: {name}")
+            continue
+        if kind in "WwVv":
+            errors.append(f"weak external symbol: {path}: {name}")
+            continue
+        if kind not in "TtDdBbSsRrAU":
+            errors.append(f"unexpected symbol type {kind}: {path}: {name}")
+            continue
         # MinGW's COMDAT import-pointer helpers describe the underlying
         # reference. Validate that referent with the same engine policy.
         if form == "coff" and name.startswith(".refptr.") and kind == "R":
             symbols.append((name[len(".refptr."):], True))
         else:
             symbols.append((name, kind == "U"))
+    if local:
+        finish(errors)
     return symbols
 
 
@@ -77,7 +101,10 @@ def objects(directory):
     return paths
 
 
-def verify(arculator, rpc, policy, nm, sanitized=False):
+def verify(arculator, rpc, policy, nm, sanitized=False, errors=None):
+    local = errors is None
+    if local:
+        errors = []
     definitions = {}
     groups = []
     instrumentation = set(policy["compiler_services"])
@@ -89,40 +116,59 @@ def verify(arculator, rpc, policy, nm, sanitized=False):
         paths = [path for directory in directories for path in objects(directory)]
         current = []
         for path in paths:
-            for name, undefined in read_symbols(path, nm, sanitized):
-                current.append((path, name, undefined))
+            try:
+                symbols = read_symbols(path, nm, sanitized, errors)
+            except (ValueError, OSError, subprocess.CalledProcessError) as error:
+                errors.append(str(error))
+                continue
+            form = object_format(path)
+            for name, undefined in symbols:
+                current.append((path, name, undefined, form))
                 if undefined:
                     continue
-                require(name not in definitions, f"duplicate/colliding definition: {name}")
+                violation(name not in definitions, f"duplicate/colliding definition: {name}", errors)
                 definitions[name] = path
                 if engine == "rpc":
-                    require(name.startswith("arc_rpc_"), f"unprefixed RPCEmu definition: {path}: {name}")
+                    violation(name.startswith("arc_rpc_"), f"unprefixed RPCEmu definition: {path}: {name}", errors)
                 else:
-                    require(name in policy["arculator_definitions"],
-                            f"unexpected Arculator definition: {path}: {name}")
+                    violation(name in policy["arculator_definitions"],
+                              f"unexpected Arculator definition: {path}: {name}", errors)
         groups.append((engine, paths, current))
     for engine, paths, current in groups:
         services = set(policy[engine + "_services"]) | instrumentation
-        own = {name for _, name, undefined in current if not undefined}
-        for path, name, undefined in current:
+        own = {name for _, name, undefined, _ in current if not undefined}
+        for path, name, undefined, form in current:
             if not undefined:
                 continue
-            require(name in own or name in services or
-                    (engine == "rpc" and name.startswith("arc_rpc_")),
-                    f"unexpected {engine} reference: {path}: {name}")
+            # glibc/Darwin fortified libc wrappers have the same service role.
+            # Only undefined references qualify; definitions remain private.
+            fortified = re.fullmatch(r"__([A-Za-z][A-Za-z0-9_]*)_chk", name)
+            libc = set(policy[engine + "_services"])
+            fortify_ok = (form in {"elf", "macho"} and fortified is not None
+                          and fortified[1] in libc and not fortified[1].startswith("arc_"))
+            violation(name in own or name in services or fortify_ok or
+                      (engine == "rpc" and name.startswith("arc_rpc_")),
+                      f"unexpected {engine} reference: {path}: {name}", errors)
             if engine == "arculator":
-                require(not name.startswith("arc_rpc_"),
-                        f"Arculator references RPCEmu: {path}: {name}")
+                violation(not name.startswith("arc_rpc_"),
+                          f"Arculator references RPCEmu: {path}: {name}", errors)
             if engine == "rpc":
-                require(name not in {"exit", "abort", "_exit", "assert", "__assert_fail",
-                                     "__assert_rtn", "_assert", "_wassert"},
-                        f"process termination reference: {path}: {name}")
-        print(f"backend symbols: {engine}: {len(paths)} objects, defined + undefined passed")
+                violation(name not in {"exit", "abort", "_exit", "assert", "__assert_fail",
+                                       "__assert_rtn", "_assert", "_wassert"},
+                          f"process termination reference: {path}: {name}", errors)
+    if local:
+        finish(errors)
+    if not errors:
+        for engine, paths, _ in groups:
+            print(f"backend symbols: {engine}: {len(paths)} objects, defined + undefined passed")
     return len(definitions)
 
 
-def verify_outside(directories, policy, nm, sanitized=False):
+def verify_outside(directories, policy, nm, sanitized=False, errors=None):
     """The dispatcher/engine owns private references; frontend/core do not."""
+    local = errors is None
+    if local:
+        errors = []
     allowed = set(policy["outside_test_hooks"])
     count = 0
     for directory in directories:
@@ -131,12 +177,20 @@ def verify_outside(directories, policy, nm, sanitized=False):
             relative = path.relative_to(directory)
             if relative.parts[0] == "engine":
                 continue
-            for name, undefined in read_symbols(path, nm, sanitized):
+            try:
+                symbols = read_symbols(path, nm, sanitized, errors)
+            except (ValueError, OSError, subprocess.CalledProcessError) as error:
+                errors.append(str(error))
+                continue
+            for name, undefined in symbols:
                 if undefined and name.startswith("arc_rpc_"):
-                    require(name in allowed,
-                            f"outside engine references RPCEmu: {path}: {name}")
+                    violation(name in allowed,
+                              f"outside engine references RPCEmu: {path}: {name}", errors)
             count += 1
-    print(f"backend symbols: outside engine: {count} objects passed")
+    if local:
+        finish(errors)
+    if not errors:
+        print(f"backend symbols: outside engine: {count} objects passed")
 
 
 def main():
@@ -154,9 +208,11 @@ def main():
         require(args.arculator or args.rpc or args.outside, "no objects selected")
         policy = json.loads(args.policy.read_text())
         require(policy["schema"] == 1, "unsupported symbol policy")
-        verify(args.arculator, args.rpc, policy, args.nm, args.sanitized)
+        errors = []
+        verify(args.arculator, args.rpc, policy, args.nm, args.sanitized, errors)
         if args.outside:
-            verify_outside(args.outside, policy, args.nm, args.sanitized)
+            verify_outside(args.outside, policy, args.nm, args.sanitized, errors)
+        finish(errors)
     except (ValueError, KeyError, OSError, subprocess.CalledProcessError) as error:
         print(f"backend symbol guard: {error}", file=sys.stderr)
         return 1

@@ -26,9 +26,41 @@ typedef struct {
    bool armed[ARC_RPC_EVENT_COUNT];
    unsigned rate_mips;
    unsigned cpu_fraction;
+   /* Cached minimum; enum order resolves ties. COUNT represents no event,
+    * independently of the deadline value (UINT64_MAX is a valid deadline). */
+   unsigned next_event;
+   uint64_t next_ns;
+   /* Exact next-instruction delta for each carried credit fraction. */
+   uint16_t cpu_delta[1000];
 } ArcRpcScheduler;
 
 bool arc_rpc_scheduler_init(ArcRpcScheduler *scheduler, unsigned rate_mips);
+void arc_rpc_scheduler_rate(ArcRpcScheduler *scheduler, unsigned rate_mips);
+/* Private interpreter batch: first instruction is already credited by the
+ * driver. Every later instruction advances the same clock before executing;
+ * a new MMIO deadline, bus hold, idle or limit returns control to the driver. */
+typedef struct {
+   ArcRpcScheduler *clock;
+   const uint64_t *bus_until;
+   uint64_t limit_ns;
+} ArcRpcCpuBatch;
+
+static inline bool arc_rpc_cpu_batch_next(ArcRpcCpuBatch *batch, bool idle)
+{
+   ArcRpcScheduler *s = batch->clock;
+   if (idle || s->now_ns < *batch->bus_until) return false;
+   unsigned delta = s->cpu_delta[s->cpu_fraction];
+   uint64_t boundary = s->next_ns < batch->limit_ns ? s->next_ns : batch->limit_ns;
+   /* Equality belongs to the driver: events precede a coincident instruction. */
+   if (boundary - s->now_ns <= delta) return false;
+   s->now_ns += delta;
+   s->cpu_fraction += delta * s->rate_mips;
+   s->cpu_fraction -= 1000u;
+   return true;
+}
+extern bool arc_rpc_cpu_idle;
+int arc_rpc_arm_exec_batch(unsigned count, ArcRpcCpuBatch *batch);
+
 bool arc_rpc_schedule(ArcRpcScheduler *scheduler, ArcRpcEvent event, uint64_t due_ns);
 void arc_rpc_cancel(ArcRpcScheduler *scheduler, ArcRpcEvent event);
 uint64_t arc_rpc_next_deadline(const ArcRpcScheduler *scheduler, uint64_t limit_ns);

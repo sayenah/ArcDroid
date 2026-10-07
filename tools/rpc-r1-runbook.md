@@ -237,3 +237,11 @@ lowering its rate. Fixed-frame replays remain pacing-independent. Fable records 
 settings, temperatures and frequencies at start/end and the exact artifact
 hashes. A failure returns to Fable. Private 3.71 desktop timing is diagnostic
 only, not a substitute for this workload.
+
+Frame inspection: repeat `--dump-frame N FILE.ppm` to capture up to 64
+predeclared, zero-based `retro_run` frames as binary P6 RGB. For example,
+`--dump-frame 0 first.ppm --dump-frame 900 desktop.ppm`. The runner retains
+cached presentations for duplicate callbacks. Copying and file output occur
+in the frontend video callback, outside the measured engine interval; timing
+CSV and canonical stdout remain available. A missing frame or failed write
+returns an error. Private smoke images belong in external scratch storage.

@@ -343,7 +343,8 @@ void
 keyboard_callback_rpcemu(void)
 {
 	PS2Queue *q = &kbd.queue;
-    if (kbd.stat & PS2_CONTROL_RX_FULL) return;
+    /* TX link readiness must not be blocked by a pre-enable unread make. */
+    if ((kbd.stat & PS2_CONTROL_RX_FULL) && kbd.reset != 1) return;
 
 	if (kbd.reset == 1) {
 		kbd.reset = 0;
@@ -359,6 +360,9 @@ keyboard_callback_rpcemu(void)
 		arc_rpc_response(ARC_RPC_EVENT_KEYBOARD, &kcallback, 0);
 		kbd.reset = 0;
 		keyboardsend(KBD_REPLY_POR);
+        /* Reset restores scanning; physical held switches survive in input. */
+        arc_rpc_input_typematic(0x2b);
+        arc_rpc_input_scanning(true);
 
 	} else switch (kbd.command) {
 	case 1:

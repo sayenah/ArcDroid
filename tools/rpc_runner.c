@@ -32,6 +32,49 @@ static uint64_t pcm_hash = UINT64_C(14695981039346656037), raster_hash, pcm_fram
 static uint64_t pcm_prefix_hash = UINT64_C(14695981039346656037), first_raster_hash;
 static unsigned raster_width, raster_height, video_calls;
 static double fps = 60;
+/* Predeclared frame captures belong to the frontend, after engine timing. */
+#define DUMP_LIMIT 64u
+#define DUMP_SIDE 2048u
+static struct { uint64_t frame; const char *path; bool written; } dumps[DUMP_LIMIT];
+static unsigned dump_count, dump_width, dump_height;
+static uint64_t runner_frame;
+static uint32_t *dump_pixels;
+static bool dump_failed;
+static void dump_video(const void *data, unsigned width, unsigned height, size_t pitch)
+{
+    if (!dump_count) return;
+    if (data) {
+        if (!width || !height || width > DUMP_SIDE || height > DUMP_SIDE) {
+            dump_failed = true;
+            return;
+        }
+        for (unsigned y = 0; y < height; ++y)
+            memcpy(dump_pixels + y * DUMP_SIDE, (const uint8_t *)data + y * pitch, width * sizeof(uint32_t));
+        dump_width = width; dump_height = height;
+    }
+    for (unsigned i = 0; i < dump_count; ++i) {
+        if (dumps[i].frame != runner_frame) continue;
+        FILE *file = dump_width && dump_height ? fopen(dumps[i].path, "wb") : NULL;
+        bool ok = file && fprintf(file, "P6\n%u %u\n255\n", dump_width, dump_height) > 0;
+        uint8_t row[DUMP_SIDE * 3];
+        for (unsigned y = 0; ok && y < dump_height; ++y) {
+            for (unsigned x = 0; x < dump_width; ++x) {
+                uint32_t pixel = dump_pixels[y * DUMP_SIDE + x];
+                row[x * 3] = (uint8_t)(pixel >> 16);
+                row[x * 3 + 1] = (uint8_t)(pixel >> 8);
+                row[x * 3 + 2] = (uint8_t)pixel;
+            }
+            ok = fwrite(row, 3, dump_width, file) == dump_width;
+        }
+        if (file && fclose(file)) ok = false;
+        dumps[i].written = ok;
+        if (!ok) {
+            fprintf(stderr, "Frame dump failed at frame %" PRIu64 "\n", runner_frame);
+            dump_failed = true;
+        }
+    }
+}
+
 /* A read-only VFS is sufficient for declared plans/ROM/seed/scripts. Factory
  * export is an explicit runner operation, never a core VFS write. */
 struct retro_vfs_file_handle { FILE *file; };
@@ -85,6 +128,7 @@ static bool environment(unsigned command, void *data)
 }
 static void video(const void *data, unsigned width, unsigned height, size_t pitch)
 {
+    dump_video(data, width, height, pitch);
     if (!data) return;
     raster_hash = UINT64_C(14695981039346656037);
     for (unsigned y = 0; y < height; ++y) {
@@ -137,6 +181,13 @@ int main(int argc, char **argv)
         const char *key = argv[i];
         if (!strcmp(key,"--reject")) { reject = true; continue; }
         if (!strcmp(key,"--cmos")) { print_cmos = true; continue; }
+        if (!strcmp(key,"--dump-frame")) {
+            if (i+2 >= argc || dump_count == DUMP_LIMIT ||
+                !unsigned_number(argv[i+1],999999,&dumps[dump_count].frame) || !*argv[i+2]) goto usage;
+            dumps[dump_count++].path = argv[i+2];
+            i += 2;
+            continue;
+        }
         if (i+1 == argc) goto usage;
         const char *v = argv[++i];
         if (!strcmp(key,"--core")) core = v;
@@ -187,17 +238,22 @@ int main(int argc, char **argv)
     LOAD(capture,"arc_rpc_test_capture_status"); LOAD(read_ram,"arc_rpc_test_read_ram"); LOAD(frame_ns,"arc_engine_test_frame_ns");
     void (*cmos_snapshot)(uint8_t *), (*fault_next)(void);
     LOAD(cmos_snapshot,"arc_rpc_test_cmos_snapshot"); LOAD(fault_next,"arc_rpc_test_fault_next");
+    if (dump_count) {
+        dump_pixels = malloc(DUMP_SIDE * DUMP_SIDE * sizeof(uint32_t));
+        if (!dump_pixels) { unload(); deinit(); return 2; }
+    }
     FILE *timing = timing_path ? fopen(timing_path,"w") : NULL;
-    if (timing_path && !timing) { unload(); deinit(); return 2; }
+    if (timing_path && !timing) { free(dump_pixels); unload(); deinit(); return 2; }
     if (timing) fputs("frame,core_ns,T_ns,measured\n", timing);
     uint64_t *times = calloc(1000000, sizeof(*times));
-    if (!times) { if(timing)fclose(timing); unload(); deinit(); return 2; }
+    if (!times) { free(dump_pixels); if(timing)fclose(timing); unload(); deinit(); return 2; }
     size_t sample_count = 0; unsigned result = 0; uint64_t period_ns = 0;
     uint64_t benchmark_start = arc_test_clock_ns(), benchmark_elapsed = 0;
     for (uint64_t f = 0; f < (measure ? 1000000 : frames); ++f) {
         if (f == reset_at) reset();
         if (f == fault_at) fault_next();
         uint64_t frontend_start = arc_test_clock_ns();
+        runner_frame = f;
         run();
         ArcRpcTestSnapshot s; ArcRpcAudioCounts a; ArcRpcVideoStatus v; ArcRpcCapture c;
         snapshot(&s); counts(&a); status(&v); capture(&c);
@@ -258,6 +314,14 @@ int main(int argc, char **argv)
             sample_count,period_ns,p50,p95,p99,p999,(double)p95/period_ns,(double)p999/period_ns,
             p95<=period_ns*8/10 && p999<=period_ns?"pass":"fail");
     }
+    for (unsigned i = 0; i < dump_count; ++i) {
+        if (!dumps[i].written) {
+            fprintf(stderr,"No frame dump completed for frame %" PRIu64 "\n",dumps[i].frame);
+            dump_failed = true;
+        }
+    }
+    if (dump_failed) result = 2;
+    free(dump_pixels);
     free(times); if(timing && fclose(timing))result=2; if(ferror(stdout))result=2;
     unload(); deinit();
 #if defined(_WIN32)
@@ -267,6 +331,6 @@ int main(int argc, char **argv)
 #endif
     return (int)result;
 usage:
-    fputs("rpc_runner --core LIB --plan FILE [--system DIR] [--frames N | --warmup-seconds 120 --measure-seconds 600] [--pacing flat|burst|realtime] [--timing CSV] [--capture-seed FILE] [--ram-offset N --ram-words N] [--reset-at N] [--cmos] [--fail-alloc 1..5] [--fault-at N] [--reject]\n",stderr);
+    fputs("rpc_runner --core LIB --plan FILE [--system DIR] [--frames N | --warmup-seconds 120 --measure-seconds 600] [--pacing flat|burst|realtime] [--timing CSV] [--dump-frame N FILE.ppm ...] [--capture-seed FILE] [--ram-offset N --ram-words N] [--reset-at N] [--cmos] [--fail-alloc 1..5] [--fault-at N] [--reject]\n",stderr);
     return 2;
 }

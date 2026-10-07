@@ -312,7 +312,7 @@ static bool arc_rpc_advance_internal(uint64_t elapsed_ns, bool stop_at_field)
         if (blocked && arc_rpc_bus_until < next) next = arc_rpc_bus_until;
         if (!idle && !blocked) {
             uint64_t cpu_next = arc_rpc_scheduler.now_ns +
-                (1000u - arc_rpc_scheduler.cpu_fraction + arc_rpc_rate - 1u) / arc_rpc_rate;
+                arc_rpc_scheduler.cpu_delta[arc_rpc_scheduler.cpu_fraction];
             if (cpu_next < next) next = cpu_next;
             if (!arc_rpc_cpu_credit(&arc_rpc_scheduler, next - arc_rpc_scheduler.now_ns, &credit))
                 fatal("RPC CPU credit overflow");
@@ -334,9 +334,14 @@ static bool arc_rpc_advance_internal(uint64_t elapsed_ns, bool stop_at_field)
         }
         if (arc_rpc_cpu_idle && (arm.event & 3)) arc_rpc_cpu_idle = false;
         if (credit && arc_rpc_scheduler.now_ns >= arc_rpc_bus_until) {
-            if (++instruction_work > 1666667u) fatal("RPC instruction budget exceeded");
-            arc_rpc_arm_exec_count(1);
-            ++arc_rpc_executed;
+            if (instruction_work == 1666667u) fatal("RPC instruction budget exceeded");
+            unsigned quota = 1666667u - instruction_work;
+            if (quota > 200u) quota = 200u;
+            if (completed) quota = 1u;
+            ArcRpcCpuBatch batch = { &arc_rpc_scheduler, &arc_rpc_bus_until, limit };
+            unsigned executed = (unsigned)arc_rpc_arm_exec_batch(quota, &batch);
+            instruction_work += executed;
+            arc_rpc_executed += executed;
             if (arc_rpc_cpu_idle) arc_rpc_scheduler.cpu_fraction = 0;
         }
         if (completed) break;
@@ -452,7 +457,7 @@ void arc_rpc_session_test_input_ready(void) { arc_rpc_input_retire=false; }
 void arc_rpc_session_test_rate(unsigned rate)
 {
     if (rate && rate <= 100 && arc_rpc_live && !arc_rpc_scheduler.now_ns) {
-        arc_rpc_rate = rate; arc_rpc_scheduler.rate_mips = rate;
+        arc_rpc_rate = rate; arc_rpc_scheduler_rate(&arc_rpc_scheduler, rate);
     }
 }
 RETRO_API void arc_rpc_test_cmos_snapshot(uint8_t *out) { if(out)arc_rpc_cmos_snapshot(out); }

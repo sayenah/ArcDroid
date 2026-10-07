@@ -69,6 +69,17 @@ MMIO. CPU waits on SA-110 and ARM7500 advance virtual time without credit.
 ARM610/710 have no architected wait instruction in this slice. Rates are
 20/35/100/35 MIPS. Each call bounds time, instructions and event deliveries.
 
+`scheduler-mmu-batching` (run F: `src/arm.c`, `src/cp15.c`): keep each
+instruction's exact rational timestamp inside batches of at most 200; yield
+before an event/entry limit, DMA bus hold or CPU idle, and preserve the single
+instruction at a completed-field boundary. MMIO changes the cached minimum
+deadline immediately. A per-rate fraction table removes repeated division;
+minimum scans occur on event mutation. Mix section and 1 KiB subpage bits in
+the bounded TLB index to avoid systematic ROM/RAM/MMIO alias collisions.
+Cache the in-object instruction pointer with the translation; domain/AP/S/R
+and current privilege are still checked on every fetch and data access.
+Invalidations clear metadata and pointers together. No workload/rate change.
+
 ### Devices/AV/input
 
 `devices-empty-fdc` (`src/fdc.c`, `src/fdc.h`): remove image loading/saving and
@@ -205,3 +216,21 @@ FIQ, counts one handler entry and clears its mask before exception return.
 The previous code deferred assertion until another device updated interrupts
 and retained the pending FIQ after masking it; both violated MMIO delivery.
 No host service, rate, scheduler order or Arculator behavior changes.
+
+`devices-keyboard-reset-held` (run F: `src/keyboard.c`): successful PS/2
+self-test restores default scanning and typematic after the existing ACK/BAT
+sequence. Held physical keys survive the guest reset in the input layer and
+are emitted again after BAT. Opening the IOMD link exposes TX readiness even
+when a pre-enable make is unread, allowing firmware to issue its normal reset.
+CMOS factory input and seed mode are unchanged; no firmware-specific test or
+address is used.
+
+`devices-board-cmos-gate` (run F: `src/mem.c`, `src/iomd.c/.h`): the
+RiscPC board latch at physical `0x03310000` echoes bit 7 with its CMOS
+protection link unprotected. Byte/word writes update only that gate; mouse
+buttons, VGA ID and sound-presence inputs keep their existing behavior.
+IOMD reset clears the session-owned gate. ARM7500 has its existing separate
+board interface. This is a hardware register, not a firmware address or CMOS
+patch. The trial had the same missing-board-latch correction; see Acorn's
+Risc PC Technical Reference Manual (Issue 1, September 1994), mouse interface
+and LK5, and the RISC OS PRM, Filing system locking and resets.

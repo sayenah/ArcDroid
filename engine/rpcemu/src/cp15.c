@@ -42,6 +42,7 @@ int dcache = 0; /* Data cache on StrongARM, unified cache pre-StrongARM */
  * physical base stay cached until an architected invalidation. Privilege,
  * access direction and DACR/S/R are checked on every hit, including fetch. */
 typedef struct {
+    const uint32_t *code;
     uint32_t tag, physical;
     uint8_t domain, ap, page, valid;
 } ArcRpcTlbEntry;
@@ -365,7 +366,10 @@ cp15_domain_access(uint32_t domain)
  */
 uint32_t translateaddress2(uint32_t addr, int rw, int prefetch)
 {
-    ArcRpcTlbEntry *entry = &tlb[(addr >> 10) & (TLBCACHESIZE - 1)];
+    /* Mix section and subpage bits: identity ROM/RAM/MMIO and page aliases
+     * should not evict one another simply because their low offsets match. */
+    uint32_t tag = addr >> 10;
+    ArcRpcTlbEntry *entry = &tlb[(tag ^ (tag >> 10) ^ (tag >> 18)) & (TLBCACHESIZE - 1)];
     uint32_t domain = 0, fault_code;
     if (!entry->valid || entry->tag != (addr >> 10)) {
         uint32_t fld = mem_phys_read32(cp15.translation_table | ((addr >> 18) & 0x3ffcu));
@@ -395,7 +399,7 @@ uint32_t translateaddress2(uint32_t addr, int rw, int prefetch)
             fault_code = CP15_FAULT_TRANSLATION_SECTION;
             goto do_fault;
         }
-        *entry = (ArcRpcTlbEntry){addr >> 10, physical & ~0x3ffu,
+        *entry = (ArcRpcTlbEntry){arc_rpc_phys_page(physical), addr >> 10, physical & ~0x3ffu,
                                   (uint8_t)domain, (uint8_t)ap, (uint8_t)page, 1};
     }
     domain = entry->domain;
@@ -427,5 +431,7 @@ const uint32_t *getpccache(uint32_t addr)
         return NULL;
     }
     /* Absent/external instruction bus: prefetch abort, no FAR/FSR update. */
-    return arc_rpc_phys_page(physical);
+    if (!mmu) return arc_rpc_phys_page(physical);
+    uint32_t tag = addr >> 10;
+    return tlb[(tag ^ (tag >> 10) ^ (tag >> 18)) & (TLBCACHESIZE - 1)].code;
 }

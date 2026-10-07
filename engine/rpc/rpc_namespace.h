@@ -99,6 +99,7 @@
 #define iomd_end arc_rpc_iomd_end
 #define iomd_flyback arc_rpc_iomd_flyback
 #define iomd_mouse_buttons_read arc_rpc_iomd_mouse_buttons_read
+#define iomd_mouse_buttons_write arc_rpc_iomd_mouse_buttons_write
 #define iomd_read arc_rpc_iomd_read
 #define iomd_reset arc_rpc_iomd_reset
 #define iomd_write arc_rpc_iomd_write

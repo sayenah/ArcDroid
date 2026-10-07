@@ -128,3 +128,57 @@ for invalid in (exports.replace("retro_api_version", "retro_wrong_name"),
     result = subprocess.run(helper, input=invalid, text=True, capture_output=True)
     assert result.returncode != 0, "non-exact exports were accepted"
 print("rpc-symbol-guard: renamed, added data/weak and duplicate exports rejected")
+
+# FORTIFY wrappers inherit only an allowed libc reference, never a definition
+# or an arbitrary compiler service. Exercise glibc output on every host.
+for engine in ('arculator', 'rpc'):
+    reference = f'unexpected {engine} reference'
+    definition = 'unexpected Arculator definition' if engine == 'arculator' else 'unprefixed RPCEmu definition'
+    for name in policy[engine + '_services']:
+        if name.startswith(('arc_', '__')):
+            continue
+        check_nm(f'__{name}_chk U\n', engine)
+    for name in ('__printf_chk', '__snprintf_chk', '__longjmp_chk'):
+        service = name[2:-4]
+        check_nm(name+' U\n', engine, None if service in policy[engine+'_services'] else reference)
+        for kind, expected in [('T', definition), ('C', 'common symbol'), ('W', 'weak external symbol')]:
+            check_nm(f'{name} {kind} 0 1\n', engine, expected)
+    for name in ('__foreign_chk', '__printf_chk_extra', '__printf_chk_chk',
+                 '__arc_input_consume_chk', '__exit_chk', '__abort_chk'):
+        check_nm(name+' U\n', engine, reference)
+    # A service allowed only in Arculator cannot leak into RPC through FORTIFY.
+    if engine == 'rpc':
+        check_nm('__strcpy_chk U\n__sprintf_chk U\n', engine, reference)
+
+# Collect independent violations across objects, both engines, and outside
+# objects, including malformed symbol roles in the same object as references.
+with tempfile.TemporaryDirectory(prefix='arc-symbol-all-') as temp:
+    base = Path(temp)
+    for directory in ['arculator', 'rpc', 'outside']:
+        (base/directory).mkdir()
+        (base/directory/'bad.o').write_bytes(b'\x7fELF')
+    outputs = {
+        'arculator': 'arc_rpc_cross U\nforeign_a U\n',
+        'rpc': 'bad_definition T 0 4\narc_rpc_common C 0 4\narc_rpc_weak W 0 4\nforeign_b U\nforeign_c U\n',
+        'outside': 'arc_rpc_private U\n',
+    }
+    def nm_result(argv, **kwargs):
+        return outputs[Path(argv[-1]).parent.name]
+    with patch.object(guard.subprocess, 'check_output', side_effect=nm_result):
+        errors = []
+        guard.verify([base/'arculator'], [base/'rpc'], policy, nm, errors=errors)
+        guard.verify_outside([base/'outside'], policy, nm, errors=errors)
+        for fragment in ['arc_rpc_cross', 'foreign_a', 'bad_definition', 'arc_rpc_common',
+                         'arc_rpc_weak', 'foreign_b', 'foreign_c', 'arc_rpc_private']:
+            assert any(fragment in error for error in errors), (fragment, errors)
+        try:
+            guard.finish(errors)
+        except ValueError as error:
+            assert all(fragment in str(error) for fragment in ['foreign_a', 'foreign_b', 'arc_rpc_private'])
+        else:
+            raise AssertionError('collected violations passed')
+print('rpc-symbol-guard: allowed FORTIFY libc families and complete multi-object diagnostics passed')
+
+# Bionic lowers allowed Arculator sprintf through its variadic libc service.
+check_nm('__vsprintf_chk U\n', 'arculator')
+check_nm('__vsprintf_chk U\n', 'rpc', 'unexpected rpc reference')

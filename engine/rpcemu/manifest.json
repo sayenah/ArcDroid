@@ -34,7 +34,8 @@
       "sha256": "ccb28da1ae84c0ae7dbe0b27248f4821a41db1a40dde522ef38bfad5b15254fb",
       "licence_header": "/*\n  RPCEmu - An Acorn system emulator\n\n  Copyright (C) 2005-2010 Sarah Walker\n\n  This program is free software; you can redistribute it and/or modify\n  it under the terms of the GNU General Public License as published by\n  the Free Software Foundation; either version 2 of the License, or\n  (at your option) any later version.\n\n  This program is distributed in the hope that it will be useful,\n  but WITHOUT ANY WARRANTY; without even the implied warranty of\n  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the\n  GNU General Public License for more details.\n\n  You should have received a copy of the GNU General Public License\n  along with this program; if not, write to the Free Software\n  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.\n */",
       "patches": [
-        "scheduler-mmu-owned-memory"
+        "scheduler-mmu-owned-memory",
+        "scheduler-mmu-batching"
       ]
     },
     {
@@ -86,7 +87,8 @@
       "licence_header": "/*\n  RPCEmu - An Acorn system emulator\n\n  Copyright (C) 2005-2010 Sarah Walker\n\n  This program is free software; you can redistribute it and/or modify\n  it under the terms of the GNU General Public License as published by\n  the Free Software Foundation; either version 2 of the License, or\n  (at your option) any later version.\n\n  This program is distributed in the hope that it will be useful,\n  but WITHOUT ANY WARRANTY; without even the implied warranty of\n  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the\n  GNU General Public License for more details.\n\n  You should have received a copy of the GNU General Public License\n  along with this program; if not, write to the Free Software\n  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.\n */",
       "patches": [
         "scheduler-mmu-owned-memory",
-        "containment-device-scheduler"
+        "containment-device-scheduler",
+        "scheduler-mmu-batching"
       ]
     },
     {
@@ -149,7 +151,8 @@
         "containment-device-scheduler",
         "vidc-line-scanout",
         "audio-input-capture",
-        "devices-fiq-mask-level"
+        "devices-fiq-mask-level",
+        "devices-board-cmos-gate"
       ]
     },
     {
@@ -157,7 +160,9 @@
       "original_path": "src/iomd.h",
       "sha256": "8e094028a69e9f8d457a3fd20cd3c852c7f61309b4fdc082b079940e22e49b39",
       "licence_header": "/*\n  RPCEmu - An Acorn system emulator\n\n  Copyright (C) 2005-2010 Sarah Walker\n\n  This program is free software; you can redistribute it and/or modify\n  it under the terms of the GNU General Public License as published by\n  the Free Software Foundation; either version 2 of the License, or\n  (at your option) any later version.\n\n  This program is distributed in the hope that it will be useful,\n  but WITHOUT ANY WARRANTY; without even the implied warranty of\n  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the\n  GNU General Public License for more details.\n\n  You should have received a copy of the GNU General Public License\n  along with this program; if not, write to the Free Software\n  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.\n */",
-      "patches": []
+      "patches": [
+        "devices-board-cmos-gate"
+      ]
     },
     {
       "path": "src/keyboard.c",
@@ -166,7 +171,8 @@
       "licence_header": "/*\n  RPCEmu - An Acorn system emulator\n\n  Copyright (C) 2005-2010 Sarah Walker\n\n  This program is free software; you can redistribute it and/or modify\n  it under the terms of the GNU General Public License as published by\n  the Free Software Foundation; either version 2 of the License, or\n  (at your option) any later version.\n\n  This program is distributed in the hope that it will be useful,\n  but WITHOUT ANY WARRANTY; without even the implied warranty of\n  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the\n  GNU General Public License for more details.\n\n  You should have received a copy of the GNU General Public License\n  along with this program; if not, write to the Free Software\n  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.\n */",
       "patches": [
         "containment-device-scheduler",
-        "audio-input-capture"
+        "audio-input-capture",
+        "devices-keyboard-reset-held"
       ]
     },
     {
@@ -182,7 +188,8 @@
       "sha256": "5f1740847ae3163b8930b277e6a56d3e6be076f16c3c74d803d1868d42aff6e8",
       "licence_header": "/*\n  RPCEmu - An Acorn system emulator\n\n  Copyright (C) 2005-2010 Sarah Walker\n\n  This program is free software; you can redistribute it and/or modify\n  it under the terms of the GNU General Public License as published by\n  the Free Software Foundation; either version 2 of the License, or\n  (at your option) any later version.\n\n  This program is distributed in the hope that it will be useful,\n  but WITHOUT ANY WARRANTY; without even the implied warranty of\n  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the\n  GNU General Public License for more details.\n\n  You should have received a copy of the GNU General Public License\n  along with this program; if not, write to the Free Software\n  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.\n */",
       "patches": [
-        "scheduler-mmu-owned-memory"
+        "scheduler-mmu-owned-memory",
+        "devices-board-cmos-gate"
       ]
     },
     {
@@ -330,6 +337,33 @@
         "src/iomd.c"
       ],
       "reason": "D3 guest FIQ qualification: recompute the pending level at FIQ mask writes, including retirement before exception return."
+    },
+    {
+      "id": "scheduler-mmu-batching",
+      "files": [
+        "src/arm.c",
+        "src/cp15.c"
+      ],
+      "reason": "Exact per-instruction clock inside bounded deadline-aware batches; mixed TLB index and permission-checked cached instruction pointer.",
+      "group": "scheduler/MMU"
+    },
+    {
+      "id": "devices-keyboard-reset-held",
+      "files": [
+        "src/keyboard.c"
+      ],
+      "reason": "Allow link TX readiness while RX holds a pre-enable make; restore held-switch scanning and default typematic after PS/2 reset ACK/BAT.",
+      "group": "devices/AV/input"
+    },
+    {
+      "id": "devices-board-cmos-gate",
+      "group": "devices/AV/input",
+      "files": [
+        "src/mem.c",
+        "src/iomd.c",
+        "src/iomd.h"
+      ],
+      "reason": "RiscPC LK5-unprotected board reset gate bit 7 echoes byte/word writes; board inputs remain read-only and gate resets with IOMD."
     }
   ],
   "adapted_sources": [

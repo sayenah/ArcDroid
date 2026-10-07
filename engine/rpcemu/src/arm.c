@@ -32,6 +32,7 @@
 
 #include "rpcemu.h"
 #include "arm.h"
+#include "rpc_scheduler.h"
 #include "cp15.h"
 #include "mem.h"
 
@@ -548,7 +549,7 @@ arm_unpredictable(uint32_t opcode)
  * @return A hint roughly proportional to the amount of instructions executed.
  */
 int
-arc_rpc_arm_exec_count(unsigned count)
+arc_rpc_arm_exec_batch(unsigned count, ArcRpcCpuBatch *batch)
 {
     if (count > 200) fatal("Instruction batch exceeds boundary");
 	int linecyc;
@@ -565,7 +566,7 @@ arc_rpc_arm_exec_count(unsigned count)
             pccache = 0xffffffff;
             exception(ABORT, 0x10, 4);
             arm.reg[15] += 4;
-            continue;
+            goto instruction_done;
         }
         opcode = pccache2[(PC & 0x3ffu) >> 2];
 
@@ -1893,10 +1894,18 @@ skip:
 		}
 
 		arm.reg[15] += 4;
+instruction_done:
+        if (batch && (linecyc + 1 == (int)count ||
+            !arc_rpc_cpu_batch_next(batch, arc_rpc_cpu_idle))) {
+            ++linecyc;
+            break;
+        }
 	}
-	inscount += count;
+	inscount += (unsigned)linecyc;
 
-	return (int)count;
+	return linecyc;
 }
+
+int arc_rpc_arm_exec_count(unsigned count) { return arc_rpc_arm_exec_batch(count, NULL); }
 
 int arm_exec(void) { return arc_rpc_arm_exec_count(200); }

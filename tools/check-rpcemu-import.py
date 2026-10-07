@@ -31,6 +31,20 @@ def require(condition, message):
         raise ValueError(message)
 
 
+def lf(data):
+    """Text checkout comparisons ignore CRLF; pristine/archive bytes do not."""
+    return data.replace(b"\r\n", b"\n")
+
+
+def pristine_text(data, digest):
+    # The allowlist is text. Upstream readme.txt itself has CRLF, while C
+    # sources have LF. Recognise either checkout convention against the
+    # recorded original-byte digest without altering the pristine audit.
+    text = lf(data)
+    return any(hashlib.sha256(candidate).hexdigest() == digest
+               for candidate in (text, text.replace(b"\n", b"\r\n")))
+
+
 def without_comments(text):
     # Preserve strings and newlines so commented directives cannot satisfy
     # closure and line numbers still locate a rejected directive.
@@ -77,15 +91,16 @@ def verify(root, archive_path=None, compiler=None):
             and adaptation["licence"] == "GPL-2.0-or-later"
             and adaptation["copyright"] == "Copyright (C) 2005-2010 Sarah Walker",
             "unexpected sound adaptation provenance")
-    adapted = (root / adaptation["destination"]).read_bytes()
-    require(adaptation["licence_header"].encode() in adapted[:4096]
+    adapted = lf((root / adaptation["destination"]).read_bytes())
+    require(lf(adaptation["licence_header"].encode()) in adapted[:4096]
             and b"ArcDroid modification (" in adapted[:4096],
             "sound adaptation notice missing or altered")
     for record in records:
         relative = record["path"]
         require(record["original_path"] == relative, "unexpected original path")
         data = (directory / relative).read_bytes()
-        changed = hashlib.sha256(data).hexdigest() != record["sha256"]
+        changed = not pristine_text(data, record["sha256"])
+        text_data = lf(data)
         lineage = [patch["id"] for patch in patches if relative in patch["files"]]
         require(record["patches"] == lineage, f"patch lineage mismatch: {relative}")
         require(changed == bool(lineage), f"unrecorded or empty patch: {relative}")
@@ -96,7 +111,7 @@ def verify(root, archive_path=None, compiler=None):
             header = record["licence_header"]
             require(header and "GNU General Public License" in header
                     and "version 2" in header and "any later version" in header
-                    and header.encode() in data[:4096],
+                    and lf(header.encode()) in text_data[:4096],
                     f"GPL notice missing or altered: {relative}")
     if archive_path:
         require(hashlib.sha256(archive_path.read_bytes()).hexdigest() == ARCHIVE_SHA256,

@@ -44,6 +44,7 @@ void cacheclearpage(uint32_t a) { (void)a; }
 uint32_t iomd_read(uint32_t a) { (void)a; assert(0); return 0; }
 void iomd_write(uint32_t a, uint32_t v) { (void)a; (void)v; assert(0); }
 uint32_t iomd_mouse_buttons_read(void) { assert(0); return 0; }
+void iomd_mouse_buttons_write(uint32_t v) { (void)v; assert(0); }
 uint8_t superio_read(uint32_t a) { (void)a; assert(0); return 0; }
 void superio_write(uint32_t a, uint32_t v) { (void)a; (void)v; assert(0); }
 void writevidc20(uint32_t v) { (void)v; assert(0); }

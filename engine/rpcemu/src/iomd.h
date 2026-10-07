@@ -18,6 +18,9 @@
   Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
+/* ArcDroid modification (2026-10-07): session-owned RiscPC board CMOS reset gate. */
+
+
 #ifndef __IOMD__
 #define __IOMD__
 
@@ -116,6 +119,7 @@ struct iomd
         iomd_timer t0;
         iomd_timer t1;
 	uint8_t ctrl; /**< I/O Control */
+	uint8_t cmos_gate; /**< LK5-unprotected board reset gate, bit 7 */
         unsigned char vidcr;
         unsigned char sndstat;
 	uint8_t refcr; /**< IOMD VRAM control, IOMD/7500/FE DRAM refresh speed */
@@ -144,6 +148,7 @@ extern void iomd_end(void);
 extern uint32_t iomd_read(uint32_t addr);
 extern void iomd_write(uint32_t addr, uint32_t val);
 extern uint32_t iomd_mouse_buttons_read(void);
+extern void iomd_mouse_buttons_write(uint32_t val);
 extern void iomd_flyback(int flyback_new);
 
 extern void gentimerirq(uint64_t nsec_timer);

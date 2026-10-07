@@ -330,6 +330,13 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
   target_compile_options(rpc_scheduler_test PRIVATE
     $<$<C_COMPILER_ID:GNU,Clang,AppleClang>:-UNDEBUG;-Wall;-Wextra;-Wpedantic>)
   add_test(NAME rpc-scheduler COMMAND rpc_scheduler_test)
+  add_executable(rpc_scheduler_batch_test tests/rpc_scheduler_batch_test.c engine/rpc/rpc_scheduler.c)
+  target_include_directories(rpc_scheduler_batch_test PRIVATE engine/rpc)
+  target_compile_options(rpc_scheduler_batch_test PRIVATE -UNDEBUG)
+  add_test(NAME rpc-scheduler-batch COMMAND rpc_scheduler_batch_test)
+  if(ARCDROID_SANITIZERS)
+    target_link_libraries(rpc_scheduler_batch_test PRIVATE arcdroid_sanitizer_compile arcdroid_sanitizer_link)
+  endif()
   # A bounded CPU/memory component. Unadapted devices still cannot join cores.
   add_library(arcdroid_rpc_cpu OBJECT
     engine/rpcemu/src/arm.c engine/rpcemu/src/arm_common.c
@@ -1999,8 +2006,17 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
       "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_plan_test.py" $<TARGET_FILE:rpc_runner>
       $<TARGET_FILE:arcdroid_rpcplan_libretro> $<TARGET_FILE:arcdroid_libretro> "${RPC_PLAN_DIR}" ${mode})
   endforeach()
+  add_test(NAME rpc-keyboard-held-reset COMMAND "${Python3_EXECUTABLE}" -B
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_keyboard_reset_test.py"
+    $<TARGET_FILE:rpc_runner> $<TARGET_FILE:arcdroid_rpcplan_libretro>)
+  add_test(NAME rpc-cmos-reset-gate COMMAND "${Python3_EXECUTABLE}" -B
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_cmos_gate_test.py"
+    $<TARGET_FILE:rpc_runner> $<TARGET_FILE:arcdroid_rpcplan_libretro>)
   add_test(NAME rpc-ac8-workload COMMAND "${Python3_EXECUTABLE}" -B
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_ac8_test.py"
+    $<TARGET_FILE:rpc_runner> $<TARGET_FILE:arcdroid_rpcplan_libretro> "${RPC_PLAN_DIR}")
+  add_test(NAME rpc-runner-dump COMMAND "${Python3_EXECUTABLE}" -B
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_runner_dump_test.py"
     $<TARGET_FILE:rpc_runner> $<TARGET_FILE:arcdroid_rpcplan_libretro> "${RPC_PLAN_DIR}")
   add_test(NAME rpc-runner-timing-window COMMAND "${Python3_EXECUTABLE}" -B
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_runner_timing_test.py"

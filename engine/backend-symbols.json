@@ -629,26 +629,21 @@
     "strrchr",
     "tan",
     "time",
-    "vsnprintf"
+    "vsnprintf",
+    "vsprintf"
   ],
   "compiler_services": [
     "___chkstk_ms",
     "__chkstk",
     "__chkstk_darwin",
     "__main",
-    "__memcpy_chk",
-    "__memset_chk",
     "__mingw_snprintf",
     "__mingw_sprintf",
     "__mingw_vfprintf",
     "__mingw_vsnprintf",
     "__mingw_vsprintf",
-    "__sprintf_chk",
     "__stack_chk_fail",
     "__stack_chk_guard",
-    "__strcpy_chk",
-    "__vsnprintf_chk",
-    "__vsprintf_chk",
     "_fltused",
     "_setjmp"
   ],
