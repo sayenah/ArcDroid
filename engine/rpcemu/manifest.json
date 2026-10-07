@@ -108,7 +108,8 @@
       "patches": [
         "devices-empty-fdc",
         "containment-device-scheduler",
-        "devices-fdc-control-status"
+        "devices-fdc-control-status",
+        "devices-fdc-reset-readiness"
       ]
     },
     {
@@ -153,7 +154,8 @@
         "vidc-line-scanout",
         "audio-input-capture",
         "devices-fiq-mask-level",
-        "devices-board-cmos-gate"
+        "devices-board-cmos-gate",
+        "video-control-readback"
       ]
     },
     {
@@ -173,7 +175,8 @@
       "patches": [
         "containment-device-scheduler",
         "audio-input-capture",
-        "devices-keyboard-reset-held"
+        "devices-keyboard-reset-held",
+        "devices-keyboard-reset-progress"
       ]
     },
     {
@@ -247,7 +250,9 @@
       "patches": [
         "containment-device-scheduler",
         "vidc-line-scanout",
-        "audio-input-capture"
+        "audio-input-capture",
+        "video-control-readback",
+        "video-hardware-work-bounds"
       ]
     },
     {
@@ -372,6 +377,39 @@
       "reason": "SMC immediate control results, interrupt acknowledgement at FIFO/SIS, four reset polling causes, per-drive seek status, mechanical track-zero and empty-drive disc-change/index signals.",
       "files": [
         "src/fdc.c"
+      ]
+    },
+    {
+      "id": "video-control-readback",
+      "group": "devices/AV/input",
+      "reason": "F9/G: stored VIDCR on Risc PC; ARM7500 fixed D/Inc readback, ignored writes and DRAM-only DMA.",
+      "files": [
+        "src/iomd.c",
+        "src/vidc20.c"
+      ]
+    },
+    {
+      "id": "devices-keyboard-reset-progress",
+      "group": "devices/AV/input",
+      "reason": "G: reschedule pending keyboard reset phases while RX is full and on RX drain, preserving independent TX link readiness.",
+      "files": [
+        "src/keyboard.c"
+      ]
+    },
+    {
+      "id": "devices-fdc-reset-readiness",
+      "group": "devices/AV/input",
+      "reason": "G: reject FIFO traffic while reset keeps RQM low; preserve reset callback and implement self-clearing DSR core reset with DOR precedence.",
+      "files": [
+        "src/fdc.c"
+      ]
+    },
+    {
+      "id": "video-hardware-work-bounds",
+      "group": "devices/AV/input",
+      "reason": "G: bound active DMA and synchronous padding by the horizontal line period, and excessive PLL pixel rate by device ceilings.",
+      "files": [
+        "src/vidc20.c"
       ]
     }
   ],

@@ -1536,6 +1536,10 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
         "${CMAKE_CURRENT_BINARY_DIR}/error-box-arbitration-${arbitration_case}-data"
         --error-box-arbitration-${arbitration_case})
     endforeach()
+    add_test(NAME rpc-arculator-reset-poweron COMMAND "${Python3_EXECUTABLE}" -B
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/arculator_reset_test.py"
+      $<TARGET_FILE:libretro_harness> $<TARGET_FILE:arcdroid_libretro_test>
+      "${FIXTURE_DIR}/arcdroid-test.rom" "${FIXTURE_DIR}/arcdroid-test.adf")
     add_test(NAME libretro-harness COMMAND libretro_harness
       $<TARGET_FILE:arcdroid_libretro_test>
       "${FIXTURE_DIR}/arcdroid-test.rom"
@@ -1946,6 +1950,10 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
   endif()
   # Included by native Windows CTest and CI's rpc-.* sanitizer selection.
   foreach(model RANGE 0 3)
+    add_test(NAME rpc-video-extreme-${model} COMMAND rpc_video_test
+      $<TARGET_FILE:arcdroid_libretro_test> --extreme ${model})
+    add_test(NAME rpc-fault-silence-${model} COMMAND rpc_video_test
+      $<TARGET_FILE:arcdroid_libretro_test> --fault-silence ${model})
     add_test(NAME rpc-video-scroll-${model} COMMAND rpc_video_test
       $<TARGET_FILE:arcdroid_libretro_test> --scroll ${model})
     add_test(NAME rpc-video-guest-${model} COMMAND rpc_video_test
@@ -2051,4 +2059,9 @@ if(TARGET arcdroid_libretro_test)
     set_target_properties(arcdroid_rpcplan_libretro PROPERTIES OUTPUT_NAME arcdroid_rpcplan_libretro_android)
     target_link_options(arcdroid_rpcplan_libretro PRIVATE "-Wl,-z,defs" "-Wl,-z,max-page-size=16384")
   endif()
+endif()
+
+if(BUILD_TESTING)
+  get_property(arc_tests DIRECTORY PROPERTY TESTS)
+  set_property(TEST ${arc_tests} APPEND PROPERTY ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1")
 endif()

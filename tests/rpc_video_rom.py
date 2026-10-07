@@ -93,7 +93,7 @@ def scroll_program(model):
     g.emit(0x1a000000 | ((loop-len(g.w)-2)&0xffffff))
     for i in range(256):g.v(0x10000000|i);g.v(i*0x010101)
     g.write(0x032001d8,base);g.write(0x032001d4,base+16384-(16 if model==3 else 2048))
-    g.write(0x032001e0,0x50 if model==3 else 8)
+    g.write(0x032001e0,0 if model==3 else 8)
     # Real read-modify-write: never supply the desired enabled value directly.
     g.literal(0,0x032001e0);g.emit(0xe5901000,0xe3811020,0xe5801000)
     g.v(0x83000000);g.v(0x84000280);g.v(0x93000002);g.v(0x94000022)
@@ -112,6 +112,15 @@ def scroll_program(model):
             g.literal(0,0x10020000+step*16+slot);g.emit(0xe5801000)
         # The next INIT write occurs in flyback; it cannot repaint this field.
         g.literal(0,0x03200000);g.emit(0xe5901000,0xe3110080,0x0afffffc)
+    g.emit(0xeafffffe)
+    return g.w
+
+def extreme_program(model, fast):
+    words = program(model, 16382, 8191, 6, 0, 'plain')
+    g = Guest(); g.w = words[:-1]
+    g.v(0x80000000)  # shortest legal line, eight pixel clocks
+    g.v(0x90001fff)  # largest vertical period
+    g.v(0xd0003f00 if fast else (0xd0000203 if model == 3 else 0xd0000000))
     g.emit(0xeafffffe)
     return g.w
 
@@ -139,6 +148,22 @@ def main():
     for model in range(4):
         words=scroll_program(model)
         out.append(f'static const uint32_t rpc_scroll_{model}[]={{'+','.join(f'0x{x:08x}u' for x in words)+'};')
+    for model in range(4):
+        for fast in range(2):
+            words=extreme_program(model, fast)
+            out.append(f'static const uint32_t rpc_extreme_{model}_{fast}[]={{'+','.join(f'0x{x:08x}u' for x in words)+'};')
+    out.append('static const struct RpcVideoGuest rpc_extreme_guests[4][2]={')
+    for model in range(4):
+        out.append('{'+','.join(f'{{"extreme",16382,8191,6,0,rpc_extreme_{model}_{fast},sizeof(rpc_extreme_{model}_{fast})/4}}' for fast in range(2))+'},')
+    out.append('};')
+    for model in range(4):
+        words=program(model,32,8,3,0,'plain')[:-1]
+        g=Guest();g.w=words;g.v(0x90001fff);g.emit(0xeafffffe)
+        out.append(f'static const uint32_t rpc_slow_{model}[]={{'+','.join(f'0x{x:08x}u' for x in g.w)+'};')
+    out.append('static const struct RpcVideoGuest rpc_slow_guests[]={')
+    for model in range(4):
+        out.append(f'{{"slow",32,8,3,0,rpc_slow_{model},sizeof(rpc_slow_{model})/4}},')
+    out.append('};')
     out.append('static const struct RpcVideoGuest rpc_scroll_guests[]={')
     for model in range(4):
         out.append(f'{{"scroll",640,32,3,0,rpc_scroll_{model},sizeof(rpc_scroll_{model})/4}},')

@@ -247,6 +247,103 @@ static void guest_abort_tests(CPUModel model)
            model_name(model), PC, arm.mode, arm.reg[14], arm.spsr[7], cp_read(5), cp_read(6), arm.event);
 }
 
+/* Cache regressions use independently selected aliases and observed accesses;
+ * they neither inspect TLB entries nor change the canonical trace. */
+static void cache_regressions(CPUModel model)
+{
+    uint32_t *table = ram00 + (0x4000 >> 2);
+    const uint32_t va = 0x00400100, alias = 0x10500100;
+    cpu_reset(model); table[4] = 0x10000c02; table[0x105] = 0x14000c02;
+    enable(model, 0); memmode = 1;
+    ram00[0x100 >> 2] = 0x12345678;
+    ram01[0x100 >> 2] = 0xabcdef01;
+    /* These virtual 1 KiB tags collide in the bounded TLB. Alternating
+     * mappings must still read their own physical bytes (m1). */
+    for (unsigned i = 0; i < 3; ++i) {
+        assert(mem_read32(va) == 0x12345678);
+        assert(mem_read32(alias) == 0xabcdef01);
+    }
+    /* AP2 permits user reads, never writes, including warm read hits (m12). */
+    table[4] = 0x10000802; flush(model); memmode = 0;
+    assert(mem_read32(va) == 0x12345678);
+    mem_write32(va, 0x87654321); fault(0xd, va);
+    mem_write8(va, 0xee); fault(0xd, va);
+    assert(ram00[0x100 >> 2] == 0x12345678);
+    if (model != CPUModel_SA110) {
+        /* ARMv3 c6 is TLB purge, separately from c5 flush (m11). */
+        memmode = 1; table[4] = 0x10000c02; flush(model);
+        assert(mem_read32(va) == 0x12345678);
+        table[4] = 0x14000c02; ram01[0x100 >> 2] = 0xaabbccdd;
+        assert(mem_read32(va) == 0x12345678);
+        cp_write(6, va);
+        assert(mem_read32(va) == 0xaabbccdd);
+        table[4] = 0; cp_write(6, va); mem_read32(va); fault(5, va);
+    }
+    /* Execute privileged code, then fetch the SAME VA/page in user mode.
+     * A VA-only fetch-pointer cache cannot reuse the privileged pointer (m4). */
+    cpu_reset(model); table[0] = 0xc02; table[4] = 0x10000402; enable(model, 0);
+    ram00[0x100 >> 2] = 0xe3a03007; /* MOV r3,#7 */
+    mode32(va, 0); arc_rpc_arm_exec_count(1); assert(arm.reg[3] == 7);
+    uint32_t far = cp_read(6), fsr = cp_read(5);
+    mode32(va, 1); arm.reg[3] = 0xfeed; arc_rpc_arm_exec_count(1);
+    assert(arm.mode == 0x17 && PC == 0xc && arm.reg[14] == va + 4);
+    assert(arm.reg[3] == 0xfeed && arm.spsr[7] == 0x10);
+    assert(cp_read(6) == far && cp_read(5) == fsr && !(arm.event & 0x40));
+}
+
+static void transfer_abort_regressions(CPUModel model)
+{
+    uint32_t *table = ram00 + (0x4000 >> 2), *pages = ram00 + (0x8000 >> 2);
+    /* Post-index P=0 with W=0; both load/store and byte/word. Nonzero
+     * offsets expose ARMv3's updated-base vs SA110's restored-base model. */
+    const uint32_t ops[] = {0xe4901004, 0xe4801004, 0xe4d01004, 0xe4c01004};
+    for (unsigned i = 0; i < 4; ++i) {
+        cpu_reset(model); rom[0] = ops[i]; table[0] = 0xc02;
+        table[4] = 0x10000402; enable(model, 0); mode32(0, 1);
+        arm.reg[0] = 0x00400100; arm.reg[1] = 0x87654321;
+        ram00[0x100 >> 2] = 0x12345678; arc_rpc_arm_exec_count(1);
+        assert(arm.mode == 0x17 && PC == 0x10 && arm.reg[14] == 8);
+        assert(arm.spsr[7] == 0x10 && arm.reg[16] == 0x97);
+        assert(cp_read(5) == 0xd && cp_read(6) == 0x00400100);
+        assert(arm.reg[0] == (model == CPUModel_SA110 ? 0x00400100u : 0x00400104u));
+        assert(arm.reg[1] == 0x87654321 && ram00[0x100 >> 2] == 0x12345678);
+    }
+    /* LDMIA/STMIA r0!,{r1,r2}: first transfer succeeds, second enters a
+     * denied subpage. Pin the partial transfer and model-specific writeback. */
+    for (unsigned store = 0; store < 2; ++store) {
+        cpu_reset(model); rom[0] = store ? 0xe8a00006 : 0xe8b00006;
+        table[0] = 0xc02; table[4] = 0x10008001;
+        pages[0] = 0x10010000 | (3 << 4) | (1 << 6) | 2;
+        enable(model, 0); mode32(0, 1);
+        arm.reg[0] = 0x004003fc; arm.reg[1] = 0x11111111; arm.reg[2] = 0x22222222;
+        ram00[0x103fc >> 2] = 0x33333333; ram00[0x10400 >> 2] = 0x44444444;
+        arc_rpc_arm_exec_count(1);
+        assert(arm.mode == 0x17 && PC == 0x10 && arm.reg[14] == 8);
+        assert(arm.spsr[7] == 0x10 && arm.reg[16] == 0x97);
+        assert(cp_read(5) == 0xf && cp_read(6) == 0x00400400);
+        assert(arm.reg[0] == (model == CPUModel_SA110 ? 0x004003fcu : 0x00400404u));
+        assert(arm.reg[1] == (store ? 0x11111111u : 0x33333333u));
+        assert(arm.reg[2] == 0x22222222);
+        assert(ram00[0x103fc >> 2] == (store ? 0x11111111u : 0x33333333u));
+        assert(ram00[0x10400 >> 2] == 0x44444444);
+    }
+    /* SWP/SWPB: denied read and read-permitted/write-denied AP2. Destination
+     * and memory stay unchanged even if the read part already succeeded. */
+    for (unsigned byte = 0; byte < 2; ++byte)
+    for (unsigned ap = 1; ap <= 2; ++ap) {
+        cpu_reset(model); rom[0] = byte ? 0xe1401092 : 0xe1001092;
+        table[0] = 0xc02; table[4] = 0x10000002 | (ap << 10);
+        enable(model, 0); mode32(0, 1);
+        arm.reg[0] = 0x00400100; arm.reg[1] = 0x11111111; arm.reg[2] = 0x22222222;
+        ram00[0x100 >> 2] = 0x12345678; arc_rpc_arm_exec_count(1);
+        assert(arm.mode == 0x17 && PC == 0x10 && arm.reg[14] == 8);
+        assert(arm.spsr[7] == 0x10 && arm.reg[16] == 0x97);
+        assert(cp_read(5) == 0xd && cp_read(6) == 0x00400100);
+        assert(arm.reg[0] == 0x00400100 && arm.reg[1] == 0x11111111 && arm.reg[2] == 0x22222222);
+        assert(ram00[0x100 >> 2] == 0x12345678);
+    }
+}
+
 int main(void)
 {
     arm_init();
@@ -273,6 +370,7 @@ int main(void)
         if (setjmp(boundary)) { fprintf(stderr, "Unexpected recovered CPU component fault\n"); return 1; }
         memory_tests(); cpu_tests(models[m]); permission_tests(models[m]);
         page_tests(models[m]); guest_abort_tests(models[m]);
+        cache_regressions(models[m]); transfer_abort_regressions(models[m]);
         arc_rpc_memory_close();
         for (unsigned cycle = 0; cycle < 50; ++cycle) {
             mem_init(); cpu_reset(models[m]); assert(!cp_read(2) && !cp_read(3) && !cp_read(5) && !cp_read(6));

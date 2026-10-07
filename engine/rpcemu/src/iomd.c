@@ -505,7 +505,9 @@ iomd_write(uint32_t addr, uint32_t val)
 		resetbuffer();
 		return;
 	case IOMD_0x1E0_VIDCR: /* Video DMA Control */
-		iomd.vidcr = val;
+		/* ARM DDI 0050C 13.3.64: D/Inc writes are ignored. */
+        iomd.vidcr = (iomd_type == IOMDType_ARM7500 || iomd_type == IOMDType_ARM7500FE) ?
+            val & 0xa0u : val;
 		resetbuffer();
 		return;
 
@@ -740,10 +742,9 @@ iomd_read(uint32_t addr)
 	case IOMD_0x1DC_VIDINIT: /* Video DMA Init */
 		return iomd.vidinit;
 	case IOMD_0x1E0_VIDCR: /* Video DMA Control */
-        /* D and Inc are writable state, not fixed DRAM defaults. Forcing
-         * D high here turns a VRAM read-modify-write into DRAM DMA and
-         * wraps at END+16 instead of END+2048 on the two-bank board. */
-        return iomd.vidcr;
+        /* ARM7500 has only DRAM; Risc PC IOMD reads D/E/Inc as written. */
+        return (iomd_type == IOMDType_ARM7500 || iomd_type == IOMDType_ARM7500FE) ?
+            (iomd.vidcr & 0xa0u) | 0x50u : iomd.vidcr;
 
         case IOMD_0x1F0_DMAST: /* DMA interupt status */
                 return iomd.irqdma.status;

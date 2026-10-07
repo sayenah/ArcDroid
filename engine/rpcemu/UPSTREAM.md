@@ -247,9 +247,44 @@ synchronous data-command refusals and FM READ ID completion are retained.
 Reference: SMSC FDC37C665GT datasheet, pp. 34, 36, 42, 69–70:
 https://bitsavers.org/components/standardMicrosystems/_SMSC/_dataSheets/FDC37C665GT_SuperIO.pdf
 
-`video-control-readback` (run F9: `src/iomd.c`): VIDCR reads return the
-programmed D/E/Inc bits. Remove upstream's forced `0x50` DRAM defaults,
+`video-control-readback` (runs F9/G: `src/iomd.c`, `src/vidc20.c`): Risc PC
+IOMD VIDCR reads return the programmed D/E/Inc bits. ARM7500 ignores writes
+to D/Inc, reads `(value & 0xa0) | 0x50`, and always uses DRAM DMA (ARM DDI
+0050C §13.3.64). The A7000 scroll test starts with a zero VIDCR write.
+Remove upstream's forced `0x50` defaults on the Risc PC IOMD,
 which made a guest enable read-modify-write switch VRAM to DRAM transfers.
 The existing DMA paths then use their proper END+half-SAM versus END+quadword
 wrap boundaries. Authored hardware-scroll tests cover all four CPUs with an
 independent pixel oracle and guest VIDCUR observations; no firmware addresses.
+
+### Run G QA remediation
+
+`devices-keyboard-reset-progress` (`src/keyboard.c`): retain a pending reset
+callback when RX is full, and resume reset ACK/BAT after a guest RX read.
+Link reset still exposes TX readiness independently. Authored held-key tests
+cover both extended Delete and single-byte Left Shift with unread RX.
+
+`devices-fdc-reset-readiness` (`src/fdc.c`): RQM stays clear throughout the
+500-unit DOR/DSR reset completion window. FIFO traffic, including synchronous
+control commands and DUMPREG, is rejected while RQM is clear, so it cannot
+consume or cancel the reset callback. DSR bit 7 self-clears; core/FIFO state
+is reset while DOR, CCR, motors and physical head positions survive, and DOR
+assertion takes precedence. Completion supplies the four reset SIS causes.
+Reference: the SMSC FDC37C665GT datasheet linked above, pp. 33–34 and 42.
+
+`video-hardware-work-bounds` (`src/vidc20.c`): HDER and synchronous HDWR
+padding cannot consume pixels beyond HCR+8 clocks. Out-of-range PLL programming
+saturates at the physical device pixel-clock ceiling (VIDC20: 100 MHz;
+ARM7500: 120 MHz), retaining exact rational timing below it. This produces
+bounded garbage display rather than a containment fault. The owned scheduler's
+event backstop allows the legal maximum raster/timer traffic in 16.667 ms;
+its instruction and scanout backstops remain unchanged. No golden is updated.
+References: ARM VIDC20 DDI 0030E, feature summary and horizontal-cycle register;
+ARM7500 DDI 0050C §8.2.4:
+https://www.bitsavers.org/components/arm/VIDC20_Datasheet_199502.pdf
+https://documentation-service.arm.com/static/5ed11babca06a95ce53f8fee
+
+The owned RPC frontend derives post-fault 48 kHz silence from the last
+announced frame rate, carrying fractional pairs and draining bounded chunks
+so slow fields cannot overflow the queue. Factory admission no longer installs
+a redundant unwind boundary around its ordinary input setup.

@@ -1,0 +1,62 @@
+# ArcDroid authored ROM/ADF; A3000, neutral input, 24 fresh then 24 reset frames.
+# Characterization of the current retro_reset path (D-137 / QA L6).
+# Early reset frames differ from a fresh load: programmed VIDC registers persist
+# across machine recreation (initvid/vidc_reset). Pre-existing Arculator behaviour;
+# Fable carries the register-reset change as a separate follow-up, outside R1.
+# Video: harness FNV-1a over every XRGB8888 pixel byte in row order, without pitch
+# padding; offset 1469598103934665603, multiplier 1099511628211, modulo 2^64.
+# CI Linux x64 and Windows x64 (also local macOS arm64) are little-endian, so the
+# full pixel-byte order is identical. Duplicate presentation retains that hash.
+# PCM: FNV-1a offset 14695981039346656037 over every offered stereo int16 sample,
+# explicitly low byte then high byte; pair count is every offered stereo pair.
+# Geometry: frontend-announced width x height after each retro_run.
+# No platform-dependent field is included; no pixel, PCM, count, geometry or
+# startup frame is excluded. Text comparison normalizes only LF/CRLF newlines.
+arculator-reset fresh frame=0 video=f3ee4d06bf3e0383 pcm=0e86a0ab215b02d5 pairs=983 geometry=640x480
+arculator-reset fresh frame=1 video=f3ee4d06bf3e0383 pcm=0e86a0ab215b02d5 pairs=983 geometry=640x480
+arculator-reset fresh frame=2 video=f3ee4d06bf3e0383 pcm=0e86a0ab215b02d5 pairs=983 geometry=640x480
+arculator-reset fresh frame=3 video=f3ee4d06bf3e0383 pcm=0e86a0ab215b02d5 pairs=983 geometry=640x480
+arculator-reset fresh frame=4 video=f3ee4d06bf3e0383 pcm=0e86a0ab215b02d5 pairs=983 geometry=640x480
+arculator-reset fresh frame=5 video=f3ee4d06bf3e0383 pcm=0e86a0ab215b02d5 pairs=983 geometry=640x480
+arculator-reset fresh frame=6 video=f3ee4d06bf3e0383 pcm=0e86a0ab215b02d5 pairs=983 geometry=640x480
+arculator-reset fresh frame=7 video=f3ee4d06bf3e0383 pcm=0e86a0ab215b02d5 pairs=983 geometry=640x480
+arculator-reset fresh frame=8 video=f3ee4d06bf3e0383 pcm=0e86a0ab215b02d5 pairs=983 geometry=640x480
+arculator-reset fresh frame=9 video=f3ee4d06bf3e0383 pcm=0e86a0ab215b02d5 pairs=983 geometry=640x480
+arculator-reset fresh frame=10 video=f3ee4d06bf3e0383 pcm=0e86a0ab215b02d5 pairs=983 geometry=640x480
+arculator-reset fresh frame=11 video=f3ee4d06bf3e0383 pcm=0e86a0ab215b02d5 pairs=983 geometry=640x480
+arculator-reset fresh frame=12 video=bc2aefe55abda003 pcm=ad1806b01441cf25 pairs=960 geometry=640x414
+arculator-reset fresh frame=13 video=bc2aefe55abda003 pcm=0e86a0ab215b02d5 pairs=983 geometry=640x414
+arculator-reset fresh frame=14 video=bc2aefe55abda003 pcm=6f9c58bcbd2b8bd9 pairs=983 geometry=640x414
+arculator-reset fresh frame=15 video=bc2aefe55abda003 pcm=e16c0adad8d1f724 pairs=983 geometry=640x414
+arculator-reset fresh frame=16 video=bc2aefe55abda003 pcm=e16c0adad8d1f724 pairs=983 geometry=640x414
+arculator-reset fresh frame=17 video=bc2aefe55abda003 pcm=e16c0adad8d1f724 pairs=983 geometry=640x414
+arculator-reset fresh frame=18 video=9aea9b2a0ce98383 pcm=b767f368989e1e65 pairs=958 geometry=640x512
+arculator-reset fresh frame=19 video=9aea9b2a0ce98383 pcm=bfb382e67f0853e4 pairs=959 geometry=640x512
+arculator-reset fresh frame=20 video=9aea9b2a0ce98383 pcm=b767f368989e1e65 pairs=958 geometry=640x512
+arculator-reset fresh frame=21 video=9aea9b2a0ce98383 pcm=43c7e18264951424 pairs=959 geometry=640x512
+arculator-reset fresh frame=22 video=9aea9b2a0ce98383 pcm=b767f368989e1e65 pairs=958 geometry=640x512
+arculator-reset fresh frame=23 video=9aea9b2a0ce98383 pcm=43c7e18264951424 pairs=959 geometry=640x512
+arculator-reset reset frame=0 video=4e5610328d9177d3 pcm=712309d1271ecc85 pairs=958 geometry=640x512
+arculator-reset reset frame=1 video=4e5610328d9177d3 pcm=712309d1271ecc85 pairs=958 geometry=640x512
+arculator-reset reset frame=2 video=3f108b95c6b89d83 pcm=5ac15a6ecc2c8355 pairs=959 geometry=640x512
+arculator-reset reset frame=3 video=dc509d564e2be52b pcm=712309d1271ecc85 pairs=958 geometry=640x512
+arculator-reset reset frame=4 video=42020c6404d97e53 pcm=5ac15a6ecc2c8355 pairs=959 geometry=640x512
+arculator-reset reset frame=5 video=f2f270812c151083 pcm=712309d1271ecc85 pairs=958 geometry=640x512
+arculator-reset reset frame=6 video=987f47c0f117a22b pcm=5ac15a6ecc2c8355 pairs=959 geometry=640x512
+arculator-reset reset frame=7 video=79371263b8e716c3 pcm=712309d1271ecc85 pairs=958 geometry=640x512
+arculator-reset reset frame=8 video=5bfa2c6dd5141983 pcm=5ac15a6ecc2c8355 pairs=959 geometry=640x512
+arculator-reset reset frame=9 video=c1a55a038fadfb2b pcm=712309d1271ecc85 pairs=958 geometry=640x512
+arculator-reset reset frame=10 video=e953df5801df26c3 pcm=5ac15a6ecc2c8355 pairs=959 geometry=640x512
+arculator-reset reset frame=11 video=795f6d1a8be45373 pcm=712309d1271ecc85 pairs=958 geometry=640x512
+arculator-reset reset frame=12 video=c0f65683a43c8683 pcm=5ac15a6ecc2c8355 pairs=959 geometry=640x492
+arculator-reset reset frame=13 video=c0f65683a43c8683 pcm=0e86a0ab215b02d5 pairs=983 geometry=640x492
+arculator-reset reset frame=14 video=c0f65683a43c8683 pcm=1c2134519e60e4b2 pairs=983 geometry=640x492
+arculator-reset reset frame=15 video=c0f65683a43c8683 pcm=e16c0adad8d1f724 pairs=983 geometry=640x492
+arculator-reset reset frame=16 video=c0f65683a43c8683 pcm=e16c0adad8d1f724 pairs=983 geometry=640x492
+arculator-reset reset frame=17 video=c0f65683a43c8683 pcm=e16c0adad8d1f724 pairs=983 geometry=640x492
+arculator-reset reset frame=18 video=9aea9b2a0ce98383 pcm=b767f368989e1e65 pairs=958 geometry=640x512
+arculator-reset reset frame=19 video=9aea9b2a0ce98383 pcm=bfb382e67f0853e4 pairs=959 geometry=640x512
+arculator-reset reset frame=20 video=9aea9b2a0ce98383 pcm=b767f368989e1e65 pairs=958 geometry=640x512
+arculator-reset reset frame=21 video=9aea9b2a0ce98383 pcm=43c7e18264951424 pairs=959 geometry=640x512
+arculator-reset reset frame=22 video=9aea9b2a0ce98383 pcm=b767f368989e1e65 pairs=958 geometry=640x512
+arculator-reset reset frame=23 video=9aea9b2a0ce98383 pcm=b767f368989e1e65 pairs=958 geometry=640x512

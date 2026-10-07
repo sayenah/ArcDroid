@@ -184,6 +184,21 @@ static void contention(unsigned model)
     }
     puts("contention: transferred bytes debit CPU credit; disabled display debits none");
 }
+static void extreme(unsigned model)
+{
+    bool (*advance)(uint64_t); LOAD(advance,"arc_rpc_test_advance");
+    for(unsigned fast=0;fast<2;++fast) {
+        start(model,&rpc_extreme_guests[model][fast]);
+        assert(advance(1000000)); /* includes programming plus many shortest lines */
+        for(unsigned i=0;i<2;++i) assert(advance(16666667));
+        ArcRpcVideoStatus v=status();
+        assert(!api->faulted(NULL) && v.fields>0 && v.lines>0);
+        assert(v.pixels<=v.lines*8u && v.bytes==v.pixels*4u);
+        assert(v.refresh_hz<= (model==3?120000000.0:100000000.0)/(8.0*8193.0));
+        api->stop();
+    }
+    puts("extreme HDER/HCR and VCO: bounded DMA/raster without session fault");
+}
 static unsigned av_count,geometry_count,video_count,rejected;
 static bool reject;
 static bool environment(unsigned command,void *data)
@@ -225,6 +240,38 @@ static void frontend(unsigned model)
     av_count=geometry_count=0;set_environment(environment);run();assert(av_count==1);api->stop();
     puts("frontend accepted/rejected/missing callbacks, geometry-only, threshold: PASS");
 }
+static uint64_t silence_pairs;
+static size_t silence(const int16_t *pcm,size_t count)
+{
+    for(size_t i=0;i<count*2;++i)assert(pcm[i]==0);
+    silence_pairs+=count;return count;
+}
+static void fault_silence(unsigned model)
+{
+    void (*run)(void),(*fault)(void),(*set_audio)(retro_audio_sample_batch_t);
+    void (*set_environment)(retro_environment_t);
+    LOAD(run,"retro_run");LOAD(fault,"arc_rpc_test_fault_next");
+    LOAD(set_audio,"retro_set_audio_sample_batch");LOAD(set_environment,"retro_set_environment");
+    set_audio(silence);set_environment(environment);
+    /* 50 Hz, 60 Hz and a fractional rate all exercise post-fault output.
+     * Repeat each fresh load to prove the carry is session-owned. */
+    for(unsigned pass=0;pass<2;++pass)for(unsigned scenario=0;scenario<4;++scenario) {
+        unsigned index=scenario==0?0:scenario==1?1:24;
+        start(model,scenario==3?&rpc_slow_guests[model]:&rpc_video_guests[model][index]);
+        for(unsigned i=0;!status().fields && i<200;++i)run();
+        ArcRpcVideoStatus v=status();assert(v.fields && v.refresh_hz>0);
+        if(scenario==3)assert(48000.0/v.refresh_hz>8192);
+        fault();silence_pairs=0;
+        for(unsigned i=0;i<17;++i) {
+            run();assert(api->faulted(NULL));
+            double expected=(i+1)*48000.0/v.refresh_hz;
+            assert(fabs((double)silence_pairs-expected)<1.000001);
+        }
+        api->stop();
+    }
+    set_audio(NULL);set_environment(NULL);
+    puts("post-fault silence: last announced rate, fractional carry and fresh-load reset passed");
+}
 int main(int argc,char **argv)
 {
     assert(argc==4);unsigned model=(unsigned)atoi(argv[3]);assert(model<4);
@@ -236,7 +283,9 @@ int main(int argc,char **argv)
     assert(library);LOAD(start_rpc,"arc_rpc_test_start");LOAD(status_rpc,"arc_rpc_test_video_status");
     LOAD(bus_ns,"arc_rpc_test_video_bus_ns");LOAD(snapshot_rpc,"arc_rpc_test_snapshot");LOAD(read_ram,"arc_rpc_test_read_ram");
     LOAD(fail_alloc,"arc_rpc_test_fail_alloc");LOAD(engine_api,"arc_rpc_test_engine_api");api=engine_api();
-    if(!strcmp(argv[2],"--scroll"))scroll(model);
+    if(!strcmp(argv[2],"--extreme"))extreme(model);
+    else if(!strcmp(argv[2],"--fault-silence"))fault_silence(model);
+    else if(!strcmp(argv[2],"--scroll"))scroll(model);
     else if(!strcmp(argv[2],"--frontend"))frontend(model);
     else if(!strcmp(argv[2],"--contention"))contention(model);
     else {

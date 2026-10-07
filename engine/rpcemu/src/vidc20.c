@@ -101,6 +101,12 @@ static void pixel_clock(uint64_t *num, uint64_t *den)
         *den = (vidc.synth & 63u) + 1u;
     }
     *den *= ((vidc.control >> 2) & 7u) + 1u;
+    /* Out-of-range PLL programming cannot create an unbounded physical
+     * pixel clock. Saturate the garbage display at the device ceiling:
+     * VIDC20 DDI 0030E feature summary 100 MHz; ARM7500 DDI 0050C 8.2.4
+     * 120 MHz. Normal clocks retain their exact rational value. */
+    uint64_t ceiling = machine.model == Model_A7000 ? 120000000u : 100000000u;
+    if (*num > ceiling * *den) { *num = ceiling; *den = 1; }
 }
 static void video_arm_line(void)
 {
@@ -171,9 +177,14 @@ static unsigned dma_byte(uint32_t address)
 {
     return (dma_word(address) >> ((address & 3u) * 8u)) & 255u;
 }
+static bool dma_dram(void)
+{
+    return machine.iomd_type == IOMDType_ARM7500 ||
+        machine.iomd_type == IOMDType_ARM7500FE || (iomd.vidcr & 0x40u);
+}
 static uint32_t next_quad(uint32_t address, unsigned *transfers)
 {
-    if (iomd.vidcr & 0x40u) {
+    if (dma_dram()) {
         ++*transfers;
         uint32_t next = (address + 16u) & 0x1fffffffu;
         if ((address & 0xffffffu) == (iomd.vidend & 0xffffffu)) {
@@ -216,7 +227,12 @@ static void scan_line(void)
     }
     ++video.lines;
     if (!active() || !(iomd.vidcr & 0x20u) || (vidc.control & 0x4000u)) return;
-    unsigned width = vidc.hder >= vidc.hdsr ? vidc.hder - vidc.hdsr : 0;
+    /* Horizontal timing resets at HCR+8. An HDER beyond that edge cannot
+     * keep serialising pixels into the next line. This bounds guest DMA,
+     * independently of the 2048-column presentation crop. */
+    unsigned end = vidc.hder < vidc.hcycle + 8u ? vidc.hder : vidc.hcycle + 8u;
+    unsigned width = end > vidc.hdsr ? end - vidc.hdsr : 0;
+    unsigned line_pixels = vidc.hcycle + 8u > vidc.hdsr ? vidc.hcycle + 8u - vidc.hdsr : 0;
     unsigned bpp = depths[vidc.bit8];
     if (!bpp) return; /* Reserved hardware depth: border, no fabricated DMA. */
     uint32_t quad = serial_quad;
@@ -251,7 +267,9 @@ static void scan_line(void)
     if ((vidc.data_control & 0x1000u) && !(vidc.data_control & 0x2000u)) {
         unsigned words = vidc.data_control & 1023u;
         unsigned consumed = width * bpp;
-        unsigned padding = words * 32u > consumed ? words * 32u - consumed : 0;
+        unsigned target = words * 32u;
+        if (target > line_pixels * bpp) target = line_pixels * bpp;
+        unsigned padding = target > consumed ? target - consumed : 0;
         while (padding) {
             unsigned step = padding < 128u - offset ? padding : 128u - offset;
             offset += step; padding -= step;
@@ -262,7 +280,7 @@ static void scan_line(void)
     /* Model the aggregate bus occupation at line granularity. DRAM transfers
      * are quadwords; VRAM serial consumption needs only half-SAM copies.
      * No penalty per serial VRAM pixel. See IOMD FS issue 4 section 7. */
-    bool dram = (iomd.vidcr & 0x40u) != 0;
+    bool dram = dma_dram();
     video.transfers += transfers;
     arc_rpc_video_bus(transfers, dram);
     int cursor_row = (int)raster - ((int)vidc.vcsr + 1);
@@ -322,7 +340,7 @@ void arc_rpc_video_event(void)
     video_arm_line();
 }
 uint32_t arc_rpc_video_current(void)
-{ return iomd.vidcur | (!(iomd.vidcr & 0x40u) && vram_last ? 0x40000000u : 0); }
+{ return iomd.vidcur | (!dma_dram() && vram_last ? 0x40000000u : 0); }
 void arc_rpc_video_status(ArcRpcVideoStatus *out)
 {
     *out = video; out->raster = raster; out->vidcur = arc_rpc_video_current(); out->bit_offset = bit_offset;

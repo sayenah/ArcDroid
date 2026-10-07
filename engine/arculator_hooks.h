@@ -7,7 +7,10 @@
 
 #if defined(ARCDROID_TEST_FAULTS)
 #include "arc_boot_watch.h"
+#include "arculator_test.h"
 #include <stddef.h>
+int64_t arc_arculator_test_cpu_credit(void);
+void arc_arculator_test_vidc_state(ArcArculatorVidcResetState *out);
 void arc_engine_test_boot_watch_snapshot(ArcBootWatch *out);
 bool arc_engine_test_guest_word(uint32_t address, uint32_t *out);
 size_t arc_engine_test_media_extent(void);

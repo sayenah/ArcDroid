@@ -558,6 +558,20 @@ void clearbitmap()
 	clear(buffer);
 }
 
+#if defined(ARCDROID_TEST_FAULTS)
+/* ArcDroid (2026-10-07): observe raster reset without changing VIDC registers. */
+void arc_arculator_test_vidc_state(ArcArculatorVidcResetState *out)
+{
+	out->phase = vidc.state;
+	out->line = vidc.line;
+	out->in_display = vidc.in_display;
+	out->displayon = vidc.displayon;
+	out->displayon_latch = vidc_displayon;
+	out->video_address = vidc.addr;
+	out->cursor_address = vidc.caddr;
+}
+#endif
+
 void initvid()
 {
 	/* ArcDroid (2026-10-06): restart the raster phase of a new session.

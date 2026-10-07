@@ -91,6 +91,44 @@ int main(void)
    assert(fdc_read(0x3f4u) == 0x80u && !fdccallback);
    command(0x4au, drive, sizeof(drive));
    result(7u, 0x40u, 5u);
+   /* SMC reset/readiness: all FIFO writes in the 500 us reset window are
+    * rejected, not allowed to consume the scheduled reset callback. */
+   const uint8_t control[] = {0x03, 0x04, 0x13, 0x08, 0x0e};
+   for (unsigned i = 0; i < sizeof(control); ++i) {
+      fdc_reset(); fdc_write(0x3f2, 0x1c);
+      assert(fdccallback == 500 && !(fdc_read(0x3f4) & 0x80));
+      command(control[i], data, 3);
+      assert(fdccallback == 500 && !(iomd.irqb.status & IOMD_IRQB_FLOPPY));
+      fdc_callback();
+      assert(fdc_read(0x3f4) == 0x80 && !fdccallback);
+      assert(iomd.irqb.status & IOMD_IRQB_FLOPPY);
+      for (unsigned drive_index = 0; drive_index < 4; ++drive_index) {
+         command(0x08, NULL, 0); result(2, 0xc0 | drive_index, 0);
+      }
+      command(0x04, drive, sizeof(drive)); result(1, 0x38, 0);
+      command(0x03, data, 2); assert(fdc_read(0x3f4) == 0x80);
+      command(0x13, data, 3); assert(fdc_read(0x3f4) == 0x80);
+   }
+   /* DSR aborts parameters/results/DMA, preserves DOR/motors/physical heads,
+    * self-clears, then produces all four reset SIS causes. */
+   fdc_reset(); fdc_write(0x3f2, 0x1c); fdc_callback();
+   const uint8_t position[] = {0, 9};
+   command(0x0f, position, 2); fdc_callback();
+   command(0x46, data, 3);
+   iomd.fiq.status |= IOMD_FIQ_FLOPPY_DMA_REQUEST;
+   fdc_write(0x3f4, 0x80);
+   assert(fdc_read(0x3f2) == 0x1c && motoron == 0x10);
+   assert(!iomd.fiq.status && fdccallback == 500 && fdc_read(0x3f4) == 0);
+   command(0x0e, NULL, 0); assert(fdccallback == 500);
+   fdc_callback();
+   for (unsigned i = 0; i < 4; ++i) { command(0x08, NULL, 0); result(2, 0xc0 | i, 0); }
+   command(0x04, drive, 1); result(1, 0x28, 0); /* head still at cylinder 9 */
+   command(0xff, NULL, 0); fdc_write(0x3f4, 0x80); fdc_callback();
+   command(0x08, NULL, 0); result(2, 0xc0, 0); /* old result was discarded */
+   fdc_write(0x3f2, 0); fdc_write(0x3f4, 0x80);
+   assert(!fdccallback && fdc_read(0x3f4) == 0); /* DOR holds reset */
+   fdc_write(0x3f2, 0x0c); assert(fdccallback == 500); fdc_callback();
+   command(0x08, NULL, 0); result(2, 0xc0, 0);
    puts("rpc-fdc-empty: no-media results, no stale DMA, invalid traffic and reset passed");
    return 0;
 }

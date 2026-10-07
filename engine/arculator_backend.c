@@ -515,6 +515,26 @@ static bool arc_helper_media_valid(const ArcEngineMedia *helper)
 static bool arc_test_vidc_noncompleting;
 unsigned arc_ide_test_accesses(void);
 
+/* Read immediately after retro_reset, before any guest/device execution. */
+RETRO_API void arc_engine_test_reset_state(ArcArculatorResetState *out)
+{
+   memset(out, 0, sizeof(*out));
+   out->cpu_credit = arc_arculator_test_cpu_credit();
+   out->sound_request = memc_dma_sound_req;
+   out->cursor_request = memc_dma_cursor_req;
+   out->video_request = memc_dma_video_req;
+   out->sound_timestamp = memc_dma_sound_req_ts;
+   out->cursor_timestamp = memc_dma_cursor_req_ts;
+   out->video_timestamp = memc_dma_video_req_ts;
+   out->video_start_timestamp = memc_dma_video_req_start_ts;
+   out->video_enable = memc_videodma_enable;
+   out->sound_enable = sdmaena;
+   out->refresh_enable = memc_refreshon;
+   out->refresh_always = memc_refresh_always;
+   out->do_refresh = mem_dorefresh;
+   arc_arculator_test_vidc_state(&out->vidc);
+}
+
 void arc_engine_test_set_vidc_noncompleting(bool enabled)
 {
    arc_test_vidc_noncompleting = enabled;

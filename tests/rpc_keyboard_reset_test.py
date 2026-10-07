@@ -11,7 +11,7 @@ from rpc_d2_rom import Guest
 runner, core = sys.argv[1:3]
 
 
-def guest(enable, rate):
+def guest(enable, rate, blocked):
     g = Guest()
     g.init()
     # Delay 10 ms: the scripted physical switch is already held before reset.
@@ -27,6 +27,11 @@ def guest(enable, rate):
     g.emit(0xe3100080)
     g.branch(ready, 0)
     g.write(9, 4, 0xff)
+    if blocked:
+        g.load(6, rate*10000)  # 20 ms, past the 4 ms reset ACK deadline
+        loop = len(g.words)
+        g.emit(0xe2566001)
+        g.branch(loop, 1)
     # Every reply is consumed in wire order, with a bounded recording buffer.
     g.mov(7, 0)
     read = len(g.words)
@@ -48,22 +53,25 @@ def guest(enable, rate):
 
 with tempfile.TemporaryDirectory(prefix='arc-held-reset-') as temp:
     d = Path(temp)
-    (d/'held.input').write_text('0 key 127 1\n')  # Delete: extended set 2 E0 71
     (d/'seed').write_bytes(bytes(256))
     for model, rate in [('arm610', 20), ('arm710', 35), ('sa110', 100), ('arm7500', 35)]:
-        for enable in [False, True]:
-            rom = guest(enable, rate)
-            (d/'authored.rom').write_bytes(rom + bytes(2097152-len(rom)))
-            (d/'held.arcplan').write_text(f'version=1\nmodel={model}\nrate_mips={rate}\nfirmware=authored.rom\ncmos=seed\nseed=seed\nrtc_epoch=0\ninput=held.input\n')
-            r = subprocess.run([runner, '--core', core, '--plan', str(d/'held.arcplan'),
-                '--system', str(d), '--frames', '40', '--ram-offset', '131072',
-                '--ram-words', '65'], capture_output=True, text=True)
-            assert r.returncode == 0, r.stderr
-            words = [int(w, 16) for w in re.findall(r'^ram=(.*)$', r.stdout, re.M)[-1].split(',')]
-            wire = words[:min(words[64], 64)]
-            # Reset ACK, successful BAT, optional enable ACK, then held make.
-            expected = [0xfa, 0xaa] + ([0xfa] if enable else []) + [0xe0, 0x71]
-            start = wire.index(0xfa) if 0xfa in wire else len(wire)
-            assert wire[start:start+len(expected)] == expected, (model, enable, wire)
-            assert 0xf0 not in wire, 'reset fabricated a physical release'
+        for key, make in [(127, [0xe0, 0x71]), (304, [0x12])]:
+            (d/'held.input').write_text(f'0 key {key} 1\n')
+            for enable in [False, True]:
+                rom = guest(enable, rate, key == 304)
+                (d/'authored.rom').write_bytes(rom + bytes(2097152-len(rom)))
+                (d/'held.arcplan').write_text(f'version=1\nmodel={model}\nrate_mips={rate}\nfirmware=authored.rom\ncmos=seed\nseed=seed\nrtc_epoch=0\ninput=held.input\n')
+                r = subprocess.run([runner, '--core', core, '--plan', str(d/'held.arcplan'),
+                    '--system', str(d), '--frames', '40', '--ram-offset', '131072',
+                    '--ram-words', '65'], capture_output=True, text=True)
+                assert r.returncode == 0, r.stderr
+                words = [int(w, 16) for w in re.findall(r'^ram=(.*)$', r.stdout, re.M)[-1].split(',')]
+                wire = words[:min(words[64], 64)]
+                # Reset ACK, successful BAT, optional enable ACK, then held make.
+                expected = [0xfa, 0xaa] + ([0xfa] if enable else []) + make
+                start = wire.index(0xfa) if 0xfa in wire else len(wire)
+                if key == 304:
+                    assert wire[:start] == [0x12], 'single-byte make was not unread at reset'
+                assert wire[start:start+len(expected)] == expected, (model, key, enable, wire)
+                assert 0xf0 not in wire, 'reset fabricated a physical release'
 print('held-from-power-on: all models reset ACK/BAT, default scanning and explicit enable rescan passed')

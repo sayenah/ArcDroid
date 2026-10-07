@@ -217,7 +217,6 @@ bool arc_rpc_session_factory_start(ArcRpcModel model,const uint8_t *bytes,size_t
 {
     uint8_t empty[256]={0};
     if(!arc_rpc_session_start(model,bytes,size,empty,epoch,failure,failure_size))return false;
-    if(setjmp(arc_rpc_jump))return false;
     arc_rpc_capture.state=ARC_RPC_CAPTURE_RUNNING;
     arc_rpc_input_factory(true);
     return true;
@@ -324,7 +323,10 @@ static bool arc_rpc_advance_internal(uint64_t elapsed_ns, bool stop_at_field)
         ArcRpcEvent event;
         bool completed = false;
         while (arc_rpc_take_event(&arc_rpc_scheduler, next, &event)) {
-            if (++event_work > 131072u) fatal("RPC event budget exceeded");
+            /* 16.667 ms can contain 333334 interlaced raster edges at the
+             * 120 MHz device ceiling plus 66668 timer edges (latch zero).
+             * Keep a bounded failure backstop above legal hardware traffic. */
+            if (++event_work > 524288u) fatal("RPC event budget exceeded");
             arc_rpc_deliver(event);
             if (event == ARC_RPC_EVENT_VIDEO) {
                 ArcRpcVideoStatus current; arc_rpc_video_status(&current);

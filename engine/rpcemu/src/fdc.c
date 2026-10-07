@@ -164,6 +164,7 @@ fdc_write(uint32_t addr, uint32_t val)
 	case 0x3f2: /* Digital Output Register (DOR) */
 		if ((val & 4) && !(fdc.dor & 4)) { /*Reset*/
 			fdc.reset   = 1;
+            fdc.status = 0; /* RQM remains low until reset completes. */
 			arc_rpc_response(ARC_RPC_EVENT_FDC, &fdccallback, 500);
 		}
 		if (!(val & 4)) {
@@ -178,9 +179,27 @@ fdc_write(uint32_t addr, uint32_t val)
 		break;
 
 	case 0x3f4: /* Data Rate Select Register (DSR) */
+        if (val & 0x80u) {
+            /* SMC pp. 33/42: self-clearing core reset, DOR/CCR and physical
+             * heads survive. DOR reset takes precedence over DSR reset. */
+            uint8_t dor = fdc.dor, physical[4];
+            int rate = fdc.rate, density = fdc.density, motors = motoron;
+            memcpy(physical, fdc.physical, sizeof(physical));
+            fdc_reset();
+            memcpy(fdc.physical, physical, sizeof(physical));
+            fdc.dor = dor; fdc.rate = rate; fdc.density = density; motoron = motors;
+            fdc.status = 0;
+            if (dor & 4u) {
+                fdc.reset = 1;
+                arc_rpc_response(ARC_RPC_EVENT_FDC, &fdccallback, 500);
+            }
+        }
 		break;
 
 	case 0x3f5: /* Data (FIFO) - Command */
+        /* No FIFO access while resetting: reject without consuming or
+         * cancelling the reset event, including DUMPREG and synchronous commands. */
+        if (fdc.reset || !(fdc.status & 0x80u)) return;
 		if (fdc.params) {
 			fdc.parameters[fdc.curparam++] = val;
 
@@ -458,7 +477,6 @@ fdc_callback(void)
 		fdc.track     = 0;
 		fdc.curparam  = 0;
 		fdc.params    = 0;
-		fdc.rate      = 2;
 		fdc_irq_raise();
 		return;
 	}

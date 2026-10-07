@@ -650,6 +650,11 @@ static int countbitstable[65536];
 /* ArcDroid: execution credit belongs to a CPU session, including its reset. */
 static int64_t total_cycles;
 
+#if defined(ARCDROID_TEST_FAULTS)
+/* ArcDroid (2026-10-07): read-only test observation; absent from shipping. */
+int64_t arc_arculator_test_cpu_credit(void) { return total_cycles; }
+#endif
+
 void resetarm()
 {
 	int c,d,exec;

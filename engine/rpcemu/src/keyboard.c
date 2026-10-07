@@ -344,7 +344,12 @@ keyboard_callback_rpcemu(void)
 {
 	PS2Queue *q = &kbd.queue;
     /* TX link readiness must not be blocked by a pre-enable unread make. */
-    if ((kbd.stat & PS2_CONTROL_RX_FULL) && kbd.reset != 1) return;
+    if ((kbd.stat & PS2_CONTROL_RX_FULL) && kbd.reset != 1) {
+        /* RX owns the wire until drained. Keep reset phases live even when
+         * the last queued make has already cleared kbd.command. */
+        if (kbd.reset) arc_rpc_response(ARC_RPC_EVENT_KEYBOARD, &kcallback, 5 * 4);
+        return;
+    }
 
 	if (kbd.reset == 1) {
 		kbd.reset = 0;
@@ -404,7 +409,7 @@ keyboard_data_read(void)
 {
 	keyboard_irq_rx_lower();
 	kbd.stat &= ~PS2_CONTROL_RX_FULL;
-	if (!kcallback && (kbd.command == 0xfe || kbd.reset == 3)) {
+	if (!kcallback && (kbd.command == 0xfe || kbd.reset == 2 || kbd.reset == 3)) {
 		arc_rpc_response(ARC_RPC_EVENT_KEYBOARD, &kcallback, 5 * 4);
 	}
 	return kbd.data;

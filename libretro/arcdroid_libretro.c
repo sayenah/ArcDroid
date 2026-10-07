@@ -124,6 +124,7 @@ static uint64_t arc_vidc_incomplete_us;
 static bool arc_audio_warning_reported;
 static bool arc_loaded;
 static bool arc_rpc_av_attempted;
+static double arc_rpc_fault_audio_fraction;
 static bool arc_can_dupe;
 static bool arc_cmos_last_written_valid;
 static bool arc_cmos_ignored_logged;
@@ -7732,6 +7733,7 @@ static void arc_rpc_present_run(void)
    static uint64_t input_generation;
    if(input_generation!=arc_engine_session_generation()) {
       input_generation=arc_engine_session_generation();
+      arc_rpc_fault_audio_fraction=0;
       arc_input_reset(&arc_inputs);arc_input_sampling_reset(false);
       memset(arc_keyboard_raw,0,sizeof(arc_keyboard_raw));
       arc_guest_time_us=0;
@@ -7796,14 +7798,28 @@ static void arc_rpc_present_run(void)
    else if (!ran) arc_present(&frame);
    else if (arc_video && arc_can_dupe)
       arc_video(NULL, arc_video_width, arc_video_height, arc_video_pitch);
-   if (!ran) arc_engine_audio_fault_silence(960);
+   size_t silence_remaining = 0;
+   if (!ran) {
+      double samples = ARC_AUDIO_RATE / arc_video_rate + arc_rpc_fault_audio_fraction;
+      size_t whole = (size_t)samples;
+      arc_rpc_fault_audio_fraction = samples - (double)whole;
+      silence_remaining = whole;
+   }
    if(ran) { arc_guest_time_us+=frame.elapsed_us;arc_integrate_stick(frame.elapsed_us); }
    /* Integer engine production is authoritative, including disabled silence.
     * Retire every offer exactly once; never let rejection change guest time. */
    size_t capacity = sizeof(arc_audio_frame) / (2u * sizeof(arc_audio_frame[0]));
    size_t n;
-   while ((n = arc_engine_audio_peek(arc_audio_frame, capacity)) != 0)
-   {
+   do {
+      /* A slow announced field can exceed the engine queue. Offer silence in
+       * frontend-sized chunks so no samples are dropped at that boundary. */
+      if (silence_remaining) {
+         size_t chunk = silence_remaining < capacity ? silence_remaining : capacity;
+         arc_engine_audio_fault_silence(chunk);
+         silence_remaining -= chunk;
+      }
+      while ((n = arc_engine_audio_peek(arc_audio_frame, capacity)) != 0)
+      {
       size_t accepted = 0;
       if (arc_audio_batch) accepted = arc_audio_batch(arc_audio_frame, n);
       else if (arc_audio) {
@@ -7811,7 +7827,8 @@ static void arc_rpc_present_run(void)
          accepted = n;
       }
       arc_engine_audio_commit(n, accepted);
-   }
+      }
+   } while (silence_remaining);
 }
 
 RETRO_API void retro_run(void)
