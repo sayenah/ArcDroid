@@ -33,6 +33,23 @@ runner CPU/device/IRQ/raster/PCM output under flat and burst pacing.
 
 ## AV/input and devices
 
+D-139: the ARM7500 matrix observation horizon is six frontend runs instead of
+two, covering uncached reset-clock setup; all 173 records/goldens stay identical.
+Video plan checks still compare the first complete field; A7000 needs an
+initial blank run. Its revised raster lines come from the D1 independent
+timeline documented in `rpc-video-expectations.md`. All four PCM/mixed-prefix
+hash deltas come from the D2 authored issue chronology, with no captured output.
+The A7000 mixed guest's completion window is six runs. Keyboard held-reset
+and FDC windows include their unchanged authored delay loops' bus service;
+ACK/BAT, wire bytes, controller responses and exception assertions are retained.
+
+The AC-8 guest generator/ROM is unchanged. Its 4096/76800/1024-word setup fills
+cost 4.096/76.800/1.024 ms under reset SA base+ROM+RAM service, before the
+remaining setup. Four blank frontend runs precede the original three complete
+fields; their palette progress remains 481/961/1441. The smoke requests seven
+runs and checks startup zeros, all three complete fields, denied STRT recovery,
+live ALU/load/store progress and continuous accepted stereo output.
+
 `rpc-plan-av-*` replay the D1 authored raster cases through content plans and
 compare the unchanged analytic raster expectations. Three-frame D2 audio plans
 produce 2400 actual libretro stereo pairs: analytic signed PCM hash, 2400
@@ -69,10 +86,15 @@ after the frontend clears input and resets the engine, before new input is
 gathered. Existing
 `rpc-session-lifecycle`, `rpc-session-switch` and component tests retain the
 same-library fresh/reload/switch/50-cycle, malformed I²C and scheduler-boundary
-coverage; no prior test or golden is changed. Internal invariant sites that
+coverage and their existing semantic assertions. Internal invariant sites that
 cannot be reached from admitted configuration remain listed in the report.
 
 The AC-8 smoke checks its declared rate, mixed MMU loop, denied STRT recovery,
 640×480/60 Hz geometry, palette-write counts 481/961/1441, live loop count,
 continuous stereo DMA, actual PCM counts and engine timing fields. Device
 throughput acceptance is a separate 120 s warm-up / 600 s wall-clock run.
+
+R2a's hot-throughput generator uses its own `hot.seed` (all zero), rather
+than overwriting the shared `authored.seed` (i XOR 0xa5). This fixes a fixture
+authoring collision exposed by the unchanged lifecycle seed/reset assertion;
+no workload instructions, counts, cadence or timing expectation changes.

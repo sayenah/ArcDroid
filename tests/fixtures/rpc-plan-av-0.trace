@@ -28,6 +28,6 @@ raster vclip 32x2048 75d41b525a8e2325
 raster last 2048x8 dd1b3a46b9e83b25
 raster packed 2x8 f43d81be6bb23e25
 raster unaligned 2x8 810a28d5e5eacb1d
-pcm 0b201d7afb0af76c frames=2400 accepted=2400 discarded=0
-mixed first-raster=2cb875cac6fc1a25 pcm480=ecc5aaaf5a68576c
+pcm 7dd35bf1592db600 frames=2400 accepted=2400 discarded=0
+mixed first-raster=2cb875cac6fc1a25 pcm480=0b65f70997ddb600
 input keyboard=1c,f0,1c mouse=12,7,70

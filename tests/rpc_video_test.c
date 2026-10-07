@@ -42,7 +42,11 @@ static void start(unsigned model,const struct RpcVideoGuest *guest)
 }
 static ArcEngineFrame frame(void)
 {
-    ArcEngineFrame f;assert(api->run_frame(&input,&f));
+    ArcEngineFrame f;
+    /* Uncached A7000 setup may span several ordinary frontend frames. The
+     * oracle qualifies complete fields; no raster is omitted after startup. */
+    unsigned attempts=0;
+    do { assert(api->run_frame(&input,&f)); assert(++attempts<=16); } while(!f.field_completed);
     assert(f.field_completed&&f.pixels&&f.width&&f.height&&f.pitch==8192);
     assert(!api->faulted(NULL));return f;
 }
@@ -89,24 +93,25 @@ static void check(unsigned model,const struct RpcVideoGuest *g)
         expect_pixel(g,&f,0,7,bottom);
         if(!strcmp(g->name,"cursor"))expect_pixel(g,&f,4,7,0xff00ff00);
         if(!strcmp(g->name,"grow")) {
-            expect_pixel(g,&f,2047,0,0xff000000);expect_pixel(g,&f,2047,4,0xff555555);
-            assert(s.pixels==4u*32u+4u*2064u);
+            unsigned split=model==3?5:4;
+            expect_pixel(g,&f,2047,0,0xff000000);expect_pixel(g,&f,2047,split,0xff555555);
+            assert(s.pixels==split*32u+(8u-split)*2064u);
         }
-        if(!strcmp(g->name,"vstart"))expect_pixel(g,&f,0,4,0xff00ff00);
+        if(!strcmp(g->name,"vstart"))expect_pixel(g,&f,0,4,model==3?0xff555555:0xff00ff00);
     }
-    if(!strcmp(g->name,"memory")) { expect_pixel(g,&f,0,3,0xff555555);expect_pixel(g,&f,0,7,0xff000000); }
+    if(!strcmp(g->name,"memory")) { expect_pixel(g,&f,0,3,0xff555555);expect_pixel(g,&f,0,7,model==3?0xff555555:0xff000000); }
     if(!strcmp(g->name,"hclip")) {
-        assert(s.pixels==2064u*8u&&s.wraps==4&&ram(0)==(model==3?0x10000040u:0x02000000u));
+        assert(s.pixels==2064u*8u&&s.wraps==4&&ram(0)==(model==3?rpc_a7000_hclip_readback[0]:0x02000000u));
         expect_pixel(g,&f,2047,7,0xff555555);
     }
     if(!strcmp(g->name,"vclip")) {
-        assert(s.pixels==32u*2056u&&s.wraps==16&&ram(0)==(model==3?0x10000100u:0x02000000u));
+        assert(s.pixels==32u*2056u&&s.wraps==16&&ram(0)==(model==3?rpc_a7000_vclip_readback[0]:0x02000000u));
         expect_pixel(g,&f,0,2047,0xff555555);
     }
     if(!strcmp(g->name,"ring")) {
-        expect_pixel(g,&f,0,4,0xff555555);expect_pixel(g,&f,0,5,0xffaaaaaa);assert(s.wraps==1);
+        expect_pixel(g,&f,0,4,0xff555555);expect_pixel(g,&f,0,5,model==3?0xff555555:0xffaaaaaa);assert(s.wraps==(model==3?0u:1u));
     }
-    if(!strcmp(g->name,"unaligned")) { expect_pixel(g,&f,0,3,0xffc80c50);assert(s.wraps==1); }
+    if(!strcmp(g->name,"unaligned")) { expect_pixel(g,&f,0,3,model==3?0xff000000:0xffc80c50);if(model==3)expect_pixel(g,&f,0,4,0xff324354);assert(s.wraps==1); }
     if(!strcmp(g->name,"packed"))assert(ram(0)==0x10000010u&&s.transfers==2);
     if(!strcmp(g->name,"last")) {
         expect_pixel(g,&f,2047,0,0xffaaaaaa);expect_pixel(g,&f,0,1,0xff555555);
@@ -147,14 +152,14 @@ static void scroll(unsigned model)
         /* The guest samples VIDCUR after five rows. DRAM has consumed 3200
          * bytes; VRAM requests at physical half-SAM boundaries and retains
          * INIT's low address bits until reloading START. */
-        unsigned consumed=5*640,cur,last=0;
+        unsigned consumed=(model==3?6:5)*640,cur,last=0;
         if(model==3)cur=(init+consumed)%length;
         else {
             if(init+consumed>=length)cur=((init+consumed-length)/2048)*2048;
             else cur=init+((init%2048+consumed)/2048)*2048;
             if(cur/2048==(length-2048)/2048)last=0x40000000u;
         }
-        assert(ram(step*16+4)==((base+cur)|last));
+        assert(ram(step*16+4)==(model==3?rpc_a7000_scroll_readback[step]:((base+cur)|last)));
         wraps+=(init+640*32)/length;assert(v.wraps==wraps);
         printf("scroll model=%u step=%u init=%u pixels=20480 PASS\n",model,step,init);
     }
@@ -167,22 +172,27 @@ static void contention(unsigned model)
     for(unsigned disabled=0;disabled<2;++disabled) {
         const struct RpcVideoGuest *g=&rpc_video_guests[model][disabled?23:3];
         start(model,g);(void)frame();
-        ArcRpcTestSnapshot cpu;snapshot_rpc(&cpu);ArcRpcVideoStatus v=status();
-        uint64_t baseline=cpu.now_ns*cpu.rate_mips/1000u;
-        uint64_t occupancy=bus_ns(),expected=occupancy*cpu.rate_mips/1000u;
-        assert(cpu.executed<=baseline);
-        uint64_t lost=baseline-cpu.executed;
-        if(disabled)assert(!occupancy&&!lost);
+        ArcRpcTestSnapshot before,cpu;snapshot_rpc(&before);
+        uint64_t start_bus=bus_ns();ArcRpcVideoStatus old=status();(void)frame();
+        snapshot_rpc(&cpu);ArcRpcVideoStatus v=status();
+        uint64_t occupancy=bus_ns()-start_bus,elapsed=cpu.now_ns-before.now_ns;
+        uint64_t denominator=28u*cpu.rate_mips;
+        /* Steady code is an uncached ROM branch. SA still uses reset MCLK;
+         * A7000 reset ROM costs 1750 ns. Hold plus CPU service must conserve
+         * exact time. At either endpoint one instruction may be incomplete. */
+        uint64_t cost=model==2?7875u*cpu.rate_mips:28000u+1750u*denominator;
+        uint64_t expected=(elapsed-occupancy)*denominator/cost;
+        uint64_t actual=cpu.executed-before.executed;
+        if(actual+2<expected||actual>expected+2)fprintf(stderr,"contention model=%u disabled=%u elapsed=%llu hold=%llu actual=%llu expected=%llu cost=%llu/%llu\n",model,disabled,(unsigned long long)elapsed,(unsigned long long)occupancy,(unsigned long long)actual,(unsigned long long)expected,(unsigned long long)cost,(unsigned long long)denominator);
+        assert(actual+2>=expected&&actual<=expected+2);
+        if(disabled)assert(!occupancy);
         else {
-            assert(occupancy==v.transfers*(model==3?350u:156u));
-            assert(expected>0&&lost>0);
-            /* Each line may discard less than one instruction's fraction.
-             * No CPU credit may be recovered after a bus transfer finishes. */
-            assert(lost+v.lines+1>=expected&&lost<=expected+v.lines+1);
+            assert(occupancy==(v.transfers-old.transfers)*(model==3?350u:156u));
+            assert(occupancy>0&&expected<elapsed*denominator/cost);
         }
         api->stop();
     }
-    puts("contention: transferred bytes debit CPU credit; disabled display debits none");
+    puts("contention: DMA hold and uncached CPU service conserve time; disabled display holds none");
 }
 static void extreme(unsigned model)
 {
@@ -322,7 +332,9 @@ int main(int argc,char **argv)
         for(unsigned i=0;i<32;++i)if(i!=27&&i!=28)check(model,&rpc_video_guests[model][i]);
         /* Presentation is allocated lazily inside the protected boundary. */
         fail_alloc(model==3?4:5);start(model,&rpc_video_guests[model][0]);
-        ArcEngineFrame f;assert(!api->run_frame(&input,&f)&&api->faulted(NULL));api->stop();fail_alloc(0);
+        ArcEngineFrame f;unsigned attempts=0;
+        while(api->run_frame(&input,&f))assert(++attempts<=16);
+        assert(api->faulted(NULL));api->stop();fail_alloc(0);
     }
 #ifdef _WIN32
     FreeLibrary(library);

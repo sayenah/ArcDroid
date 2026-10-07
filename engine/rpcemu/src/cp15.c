@@ -32,6 +32,9 @@
 #include "cp15.h"
 #include "mem.h"
 #include "rpc_memory.h"
+#include "rpc_mem_timing.h"
+/* ArcDroid modification (2026-10-07): retain descriptor B/C and connect
+ * permission-checked fetch, cache maintenance and SA clock-switch timing. */
 
 bool arc_rpc_cpu_idle;
 int dcache = 0; /* Data cache on StrongARM, unified cache pre-StrongARM */
@@ -44,7 +47,7 @@ int dcache = 0; /* Data cache on StrongARM, unified cache pre-StrongARM */
 typedef struct {
     const uint32_t *code;
     uint32_t tag, physical;
-    uint8_t domain, ap, page, valid;
+    uint8_t domain, ap, page, valid, attributes;
 } ArcRpcTlbEntry;
 static ArcRpcTlbEntry tlb[TLBCACHESIZE];
 uint32_t tlbs, flushes;
@@ -82,7 +85,9 @@ static int icache = 0;
 #define CP15_FAULT_PERMISSION_SECTION	0xd
 #define CP15_FAULT_PERMISSION_PAGE	0xf
 
-static void cp15_tlb_flush(void) { memset(tlb, 0, sizeof(tlb)); }
+static unsigned arc_rpc_attributes;
+unsigned arc_rpc_cp15_attributes(void) { return mmu ? arc_rpc_attributes : 0; }
+static void cp15_tlb_flush(void) { memset(tlb, 0, sizeof(tlb)); arc_rpc_mem_permission_change(); }
 
 void cp15_tlb_invalidate_physical(uint32_t addr)
 {
@@ -120,6 +125,7 @@ cp15_reset(CPUModel cpu_model)
 	icache = 0;
 	mmu = 0;
 	prog32 = (cp15.ctrl & CP15_CTRL_PROG32) != 0;
+    arc_rpc_mem_control(cp15.ctrl);
 
     cp15_tlb_flush();
     tlbs = flushes = 0;
@@ -153,6 +159,7 @@ cp15_write(uint32_t opcode, uint32_t val)
 	const uint32_t crn = RN;
 	const uint32_t crm = RM;
 	const uint32_t opc2 = (opcode >> 5) & 7;
+    arc_rpc_mem_maintenance(crn, opc2, crm, val);
 
 	switch (crn) {
 	case 1: /* Control */
@@ -167,6 +174,7 @@ cp15_write(uint32_t opcode, uint32_t val)
 		}
 
 		cp15.ctrl = val;
+        arc_rpc_mem_control(val);
 		dcache = val & CP15_CTRL_CACHE;
 		icache = val & CP15_CTRL_ICACHE;
 		mmu = val & CP15_CTRL_MMU;
@@ -258,9 +266,10 @@ cp15_write(uint32_t opcode, uint32_t val)
 			/* Test, Clock and Idle control: SA-110 manual table 7. */
             if (opc2 == 2 && crm == 8) { arc_rpc_cpu_idle = true; return; }
 			if (opc2 == 2 && crm == 1) {
-				/* Enable clock switching - no need to implement */
+				arc_rpc_mem_clock_switch(true);
 				return;
 			}
+			if (opc2 == 2 && crm == 2) { arc_rpc_mem_clock_switch(false); return; }
 		}
 		break;
 	}
@@ -374,12 +383,13 @@ uint32_t translateaddress2(uint32_t addr, int rw, int prefetch)
     if (!entry->valid || entry->tag != (addr >> 10)) {
         uint32_t fld = mem_phys_read32(cp15.translation_table | ((addr >> 18) & 0x3ffcu));
         domain = (fld >> 5) & 15;
-        uint32_t physical, ap;
+        uint32_t physical, ap, attributes = fld & 12;
         int page = (fld & 3) == 1;
         tlbs++;
         if (page) {
             uint32_t sld = mem_phys_read32((fld & 0xfffffc00u) | ((addr >> 10) & 0x3fcu));
             unsigned shift;
+            attributes = sld & 12;
             if ((sld & 3) == 1) {
                 physical = (sld & 0xffff0000u) | (addr & 0xffffu);
                 shift = 4 + ((addr >> 13) & 6);
@@ -400,7 +410,7 @@ uint32_t translateaddress2(uint32_t addr, int rw, int prefetch)
             goto do_fault;
         }
         *entry = (ArcRpcTlbEntry){arc_rpc_phys_page(physical), addr >> 10, physical & ~0x3ffu,
-                                  (uint8_t)domain, (uint8_t)ap, (uint8_t)page, 1};
+                                  (uint8_t)domain, (uint8_t)ap, (uint8_t)page, 1, (uint8_t)attributes};
     }
     domain = entry->domain;
     uint32_t access = cp15_domain_access(domain);
@@ -412,6 +422,7 @@ uint32_t translateaddress2(uint32_t addr, int rw, int prefetch)
         fault_code = entry->page ? CP15_FAULT_PERMISSION_PAGE : CP15_FAULT_PERMISSION_SECTION;
         goto do_fault;
     }
+    arc_rpc_attributes = entry->attributes;
     return entry->physical | (addr & 0x3ffu);
 
 do_fault:
@@ -430,8 +441,12 @@ const uint32_t *getpccache(uint32_t addr)
         arm.event &= ~0x40u;
         return NULL;
     }
-    /* Absent/external instruction bus: prefetch abort, no FAR/FSR update. */
-    if (!mmu) return arc_rpc_phys_page(physical);
-    uint32_t tag = addr >> 10;
-    return tlb[(tag ^ (tag >> 10) ^ (tag >> 18)) & (TLBCACHESIZE - 1)].code;
+    const uint32_t *code;
+    if (!mmu) code = arc_rpc_phys_page(physical);
+    else {
+        uint32_t tag = addr >> 10;
+        code = tlb[(tag ^ (tag >> 10) ^ (tag >> 18)) & (TLBCACHESIZE - 1)].code;
+    }
+    arc_rpc_mem_fetch(addr, physical, arc_rpc_cp15_attributes(), code != NULL);
+    return code;
 }

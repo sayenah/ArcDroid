@@ -25,6 +25,9 @@ bool arc_rpc_session_start(ArcRpcModel model, const uint8_t *rom, size_t size,
 void arc_rpc_session_test_rate(unsigned rate);
 void arc_rpc_session_test_input_ready(void);
 #include "libretro.h"
+#include "rpc_mem_timing.h"
+RETRO_API void arc_rpc_test_timing_measure(uint64_t first, uint64_t last, bool drained);
+RETRO_API void arc_rpc_test_timing_interval(ArcRpcMemInterval *out);
 #include "rpc_video.h"
 RETRO_API bool arc_rpc_test_factory_start(ArcRpcModel model, const uint8_t *rom, size_t size,
     uint64_t epoch, char *error, size_t error_size);

@@ -1,8 +1,8 @@
 # RiscPC memory-system timing contract — R2a run A (D-139)
 
-Status: **proposal for Fable acceptance and Astra challenge; not authority for
-run B**. Grounded at `7bd1f27`, branch `slice/r2a-timing-cmos`. This document
-defines one deterministic timing model for the four private D-137 models. It
+Status: **accepted by Fable (S57) with rulings**. Grounded at `7bd1f27`,
+accepted under the run B handoff at `23ae98f`, branch `slice/r2a-timing-cmos`.
+This document defines one deterministic timing model for the four private D-137 models. It
 does not qualify their historical instruction throughput. Rates remain ceilings:
 ARM610 20, ARM710 35, SA-110 100, ARM7500 35 million instructions/s
 (`docs/riscpc.md` §4.4; D-131/D-137/D-139). There is no firmware-specific path,
@@ -25,7 +25,7 @@ of the documents.
 | I | IOMD Functional Specification, 0297,030/FS issue 4, June 1994 | §4, sheets 7–9: clocks, RAM and ROM; sheet 17 table 4.1 and sheet 18: I/O; §5 sheets 23–24: map; §6 sheets 25–26: reset registers; §7 sheets 27–29: arbitration/DMA |
 | T | ARM710a macrocell, ARM DDI 0033D | §§5–7: CP15, cache, buffer; §9: descriptors; §10.1 pp. 10-2–10-3: bus concurrency; appendix A pp. A-2–A-3: ARM610 differences |
 | A | ARM7500, ARM DDI 0050C, October 1995 | §§4, 6, 7: CP15/cache/MMU; §13.3.16: CLKCTL; §13.3.32: ROMCR; §§13.3.39–40: I/O controls; §§14.1–2: memory; §§15.4, 15.6: I/O; §16.1: clocks; §§17.3–4: bandwidth/arbitration |
-| S | Digital SA-110 Microprocessor Technical Reference Manual, preliminary | §5.2 tables 5–7: CP15; §§6.1–3: caches/buffer; §7: MMU; §8.2 p. 27: DCLK; §§9.1–3, 9.8–9.9 pp. 30–40: bus |
+| S | Digital SA-110 Microprocessor Technical Reference Manual, preliminary | §5.2 tables 5–7: CP15; §§6.1–3: caches/buffer; §7: MMU; §8.2 p. 27: DCLK; §§9.1–3, 9.8–9.11 pp. 30–40: bus and read-lock-write |
 | SI | Intel SA-110 datasheet, 278230-001 | pp. 1, 3–5: cache sizes, geometry, write policy; corroborates S, does not specify Risc PC card glue |
 | R | Repository evidence at the above base | `rpc_scheduler.h/.c`, `rpc_session.c`, `arm.c`, `arm_common.c`, `cp15.c`, `mem.c`, `iomd.c`, `vidc20.c`; R1 expectation documents/generators under `tests/` |
 
@@ -144,13 +144,30 @@ the buffer enabled (S §§6.3, 9.9). Buffered STM packs consecutive transfers
 within aligned 16-byte entries. This difference must not be generalized to the
 older ARM models, whose uncached LDM/STM generate sequential cycles.
 
+ARM7500 DRAMWID at `0x032000d0` has one width bit per DRAM bank, bits
+3:0, reset zero (A §13.3.42). A set bit selects 16-bit width. Word accesses
+then cost `7q` N and `4q` S: initial upper half `5q`, lower half `2q`,
+subsequent halfwords `2q` each (A §§14.2.3–14.2.4). Thus
+`B16(n)=q(7+4(n-1))`; this applies to instruction/data fills and buffered
+writes as well as direct accesses. Byte accesses still cost `5q`, one DRAM
+access, as explicitly specified in A §14.2.3. DRAMWID does not affect ROM,
+VRAM or I/O. A width change affects subsequent cycles; an already started
+cycle retains its cost.
+
 A byte transfer consumes one addressed word cycle, not one quarter of a cycle.
 Keep current alignment/rotation behavior. SA LDRH/LDRSH read one external word;
 the current STRH emits two byte stores and R2 charges those two N cycles, or two
 buffer entries, rather than pretending that implementation emits one halfword
 bus request. That is an explicit R1 execution-path limit to revisit separately.
-SWP/SWPB read and write externally with the buffer drained; no DMA grant between
-the locked pair (T §6.4, A §6.2, S §9.8).
+On ARM610/710/7500, SWP/SWPB read and write externally with the buffer
+drained; no DMA grant between the locked pair (T §6.4, A §6.2).
+SA-110 follows S §9.11 (p. 35): a cacheable/bufferable SWP performs both
+accesses in the D-cache, filling a missing line first and marking its written
+half dirty. Cache lookup/allocation follows §4; §6's cache-on cases set M/C
+and descriptor C/B. W controls external buffering, not the mapping's B
+attribute. A noncacheable or nonbufferable SA SWP drains then performs two
+locked N accesses, including when a tag for that address exists. SWPB uses the same eligibility and dirty-half rules;
+an external pair has byte width. A translation/permission abort still obeys §5.
 
 ### 2.4 ROM timing and fetch
 
@@ -260,7 +277,12 @@ allocation, not write buffering. Cache-hit stores are still write-through.
 For SA, cache-hit stores mark a dirty half-line without external traffic,
 independent of descriptor B; a miss does not allocate. A missed store buffers
 only with M/W/B set. Dirty castouts use the SA buffer even when W is clear
-(S §§6.2.2, 6.3.4). No buffered I/O or ROM write is introduced.
+(S §§6.2.2, 6.3.4). Ordinary CPU store misses to ROM and all I/O-class
+stores never enter the write buffer; I/O is never cacheable or buffered (§2.5).
+SA dirty ROM castouts are the exception: the cache cannot identify ROM
+backing, so they enter the buffer even with W clear and issue external writes
+to the retained physical address. Each word uses the bank's ROMCR initial
+access time, without a write burst (interim G7); functional ROM is unchanged.
 
 Each buffer packet keeps physical start, byte/word transfer mask, timing class,
 remaining words and whether it is an STM/castout. No stored data is needed.
@@ -318,7 +340,9 @@ shortcut can authorize a denied access. Unified stores update timing residency
 on hits, never allocate on misses, and always generate writes. SA store hits
 set the appropriate dirty bit; misses write via the bus/buffer without allocate.
 Successful loads hit with zero bus cost or allocate a whole line on a cacheable
-miss. Cacheable data ROM loads use the same read cache as DRAM.
+miss. Cacheable data ROM loads use the same read cache as DRAM. SA store
+hits dirty ROM-backed D lines like any other line; their eviction/clean
+packets follow §3, including W=0, and have no functional effect on ROM.
 
 Allocation requires M and control C for unified/D caches and descriptor C.
 For SA I-cache, control I(bit 12) permits allocation; with M clear all backed
@@ -412,12 +436,16 @@ entry. Empty register lists follow existing execution semantics, not a nominal
 ### Integer time and event order
 
 Use exact integer rational arithmetic, not floating point or host-pacing input.
-All nominal costs have a common **1/28 ns** quantum: 31.25 = 875/28,
-62.5 = 1750/28, and 200/7 = 800/28. Larger clock periods in the selected
-profiles are integer multiples. Keep cumulative CPU/service fractions; expose
-timestamps as `ceil(ticks/28)` ns. Do not round each 156.25 ns access up to
-157 ns. The denominator 28 is an arithmetic derivation (LCM of 4 and 7),
+Each session uses denominator **D=28·rate** ticks per ns, fixed at admission
+for every permitted test rate 1–100. The fast base is exactly 28,000 ticks;
+31.25 ns is `875·rate` ticks, and 62.5 ns is `1750·rate` ticks. All selected
+clock costs are integer multiples. Keep cumulative CPU/service fractions;
+expose timestamps as `ceil(ticks/D)` ns. Do not round each 156.25 ns access
+up to 157 ns. D is a sufficient arithmetic multiple of each rate and 4,
 not a hardware clock. Check bounded additions/multiplications for overflow.
+The existing test-only rate override is admitted only at session time zero,
+before any instruction or bus request. Pending ticks are never reinterpreted
+using another denominator.
 
 Device deadlines keep R1's own carried rational phases. At an equal visible
 nanosecond, deliver due device events in enum order: TIMER0, TIMER1, KEYBOARD,
@@ -460,8 +488,9 @@ fills, dirty halves, packets, blocked time and elapsed guest time**.
 Except where named otherwise: nominal `q=31.25 ns`, A7000 CLKCTL=7, SA
 switching enabled, hot code in DRAM fitting one unified/I line, no DMA/interrupts,
 identity-backed mappings, bank-local aligned data, WB empty initially. For
-cache-off data runs on unified CPUs, disable allocation after warming code;
-existing code tags remain valid, and choose noncolliding/noncacheable data.
+uncached data calibration, use descriptor C=0 for the data region and leave
+the warmed instruction cache enabled. ARM610 cache-disable retention is the
+qualified G1 approximation, exercised separately after warming code.
 Also run truly cold/cache-disabled instruction-fetch cases separately.
 
 ### 6.1 Scalar and multiple-transfer numbers
@@ -519,11 +548,12 @@ with `I` the statically counted instructions in the measured authored stream.
 `b` denotes that model's base; helper ALU/branch instructions are included in I.
 For streaming scalar read loops, use one aligned `LDR` with postincrement,
 `SUBS`, `BNE` code line; I=3K. For random reads, use one aligned four-instruction
-line: indexed `LDR` with index shifted by log2(stride), `ADD index,#257`,
+line: indexed `LDR` with index shifted by log2(stride), `ADD index,index,step`,
 `AND index,index,mask` (mask register initialized to 1023), then `B` to the
 line start. I=4K; the harness stops after K iterations. This produces the
 stated permutation without extra pointer-table memory reads or uncounted
-address arithmetic. STR variants substitute STR for LDR. Use set-zero code
+address arithmetic. Preload step=257 in unmeasured setup: the immediate is
+unencodable (ARM710a DDI 0033D §4.4.3; Fable S57 continuation ruling). STR variants substitute STR for LDR. Use set-zero code
 residency as in the streaming case for unified random-line counts below.
 
 - Unbuffered scalar streaming reads or writes, cache off: `Ib+KN`.
@@ -599,6 +629,64 @@ backpressure. A global video hold also stops CPU issue, so it cannot be used
 to enqueue an arbitrary number of new instructions while the bus is frozen.
 Check partial-packet/abort boundaries.
 
+### ROM branch boundaries, including cache hits
+
+Use uncached ROM with initial 7q and burst bits 0x08/0x10/0x18 (ARM7500
+adds bit 5 for normal 32-bit ROM, after setting CLKCTL=7). A taken B to the
+next instruction followed by a NOP costs **2b+14q**, even though the physical
+fetch addresses are contiguous. A ROM B to an already warmed RAM trampoline
+(MOV pc back to the ROM word immediately after the B), followed by that ROM
+NOP, costs **3b+14q**. The intervening cached fetch generates no bus cycle,
+but cannot preserve sequentiality across the branches. For models 0–3 these
+are respectively **537.5 / 494.642857… / 457.5 / 494.642857… ns** and
+**587.5 / 523.214285… / 467.5 / 523.214285… ns**. Setup/warming is excluded;
+these are direct consequences of §2.4, without a new timing rule or constant.
+An EQ branch with Z explicitly cleared by an unmeasured CMP is not taken: its two-word interval instead costs
+`2b+(7+5−burst_code)q`, preserving the sequential second fetch.
+
+### SA-110 dirty ROM castout (Fable G7 ruling)
+
+At 100 MIPS with clock switching enabled, warm all instruction lines, empty
+D tags/buffer, set M/C/I with W=0 or W=1 and descriptor C=1/B=0. Measure
+34 instructions: load a ROM word, store a different value to its cached
+address, then 32 DRAM loads separated by 512 bytes in the same D-cache set.
+The 33rd allocating load evicts the dirty ROM line. There are 33 fills,
+one dirty half, one buffer packet and 268 external words (264 fill words,
+four write words). ROM reads after the interval must retain the original value.
+
+At reset ROMCR=0 the duration is **24,965 ns**:
+`34×10 + BROM(8)=1750 + 32×Bsa(8)=22000 + 4×initialROM=875`.
+For ROMCR=0x18, 0x05, 0x1d respectively, expect **24,027.5 / 23,090 /
+23,090 ns**. The independently calculated fill is §2.3's eight-word read;
+the four write words each use `(7−min(ROMCR&7,5))×31.25 ns`, ignoring burst
+bits. Repeat both W values; ordinary ROM store misses and I/O stores must
+still produce no buffer packet. These are authored instruction counts, not
+firmware constants; exact integer-ledger comparison uses ≤1 ns tolerance.
+
+### SA-110 SWP/SWPB and ARM7500 width cases
+
+Use hot code, a clean target line and W=0 as well as W=1. For SA SWP and
+SWPB, M/C and descriptor B/C set: a warmed D hit costs **10 ns**, no bus
+transfer, one dirty half; a cold miss costs **697.5 ns** (`10+Bsa(8)`),
+eight fill words and one dirty half. With either descriptor B or C clear,
+even with an existing tag, each costs **322.5 ns** (`10+2N`), two locked
+external transfers and no newly dirty tag. Include a prior WB packet to
+verify the uncached pair drains it; queue a video hold between the pair's
+nominal word completions and verify the lock defers it. Dirty victims add
+exactly their declared castout work. These figures follow S §9.11 and §4;
+SA reset-clock cases substitute 62.5 ns for the base.
+
+At nominal ARM7500 memory clock, DRAMWID=1 for the target bank gives N word
+**218.75 ns**, S word **125 ns**, byte **156.25 ns**. A four-word fill costs
+**593.75 ns**; an eight-word uninterrupted burst costs **1093.75 ns**.
+An eight-word buffered packet has the same cost. Add `200/7 ns` base for
+one measured instruction. Repeat with DRAMWID=0 (N 156.25, S 62.5,
+fill 343.75, eight-word 593.75 ns), other banks unchanged, width changes
+between completed requests, changes with a buffered packet pending, bytes
+and words, fills, and divided MEMRFCK (all bus figures double). A begun
+cycle uses its old width; later cycles use the new width, independently
+summed. These expectations derive from A §§13.3.42, 14.2.3–14.2.4.
+
 ### 6.3 ROM, I/O, DMA, memory size and clocks
 
 | Workload, per model | Independent expectation |
@@ -628,6 +716,14 @@ tag hits/fills, packet traffic, device event order and data/exception results
 are exact. One nanosecond covers observation rounding, not percentage fitting.
 Phase-aligned I/O fixtures use exact expectations, not an arbitrary ±one-cycle
 window. Unaligned fixtures calculate their exact phase from issue timestamps.
+
+Run long cumulative fixtures at **60 and 99 MIPS** for at least ten emulated
+seconds, interleaving known uncached RAM service, queued writes/drains and
+video holds with hot instructions. Run identical issue streams through flat
+and burst frontend boundaries, including boundaries inside base and service.
+The independent rational recurrence supplies the exact cumulative endpoint;
+require ≤1 ns difference and exact traffic counts, so per-instruction rounding
+cannot hide across boundaries. Cover all rates 1–100 with shorter exact runs.
 
 Long hot-throughput runs compare cumulative completion to `ceil(Kb)` within
 one ns after setup; counting instructions in a fixed time window permits one
@@ -683,8 +779,8 @@ to force the table. A pathological SA loop repeatedly storing only already
 hot resident lines would defeat the streaming assumption and require a new
 diagnosis, not an increased timing constant.
 
-The handoff says "all seven" pairs but its parenthesis lists **six**:
-3.71 SA/710/7500, 3.70 SA, 3.60 710, 3.50 610. The seventh pair needs naming.
+The seven private pairs are 3.71 SA/710/7500, 3.70 SA, 3.60 710/7500,
+3.50 610; Fable identifies the seventh as **3.60 on ARM7500** (S57).
 The older residual says the 20/35 production models succeed already; the
 new diagnosis describes their failure when forced to 100. Those statements
 are compatible. The table uses the production ceilings, not the forced sweep.
@@ -711,6 +807,14 @@ cost, but that is not proof the tag overhead is cheap. Run B must measure the
 unchanged R1 AC-8 workload and this document's hot ceiling case, report guest
 instructions/work units per emulated second as well as p95 host/T, and retain
 AC-1 p95≤0.80 T/no frame>T and AC-10's >10% gameplay-drop Founder gate.
+Add a runner-measurable cache-hot workload at the 100 MIPS ceiling for at
+least ten emulated seconds. The authored hot fixture uses a private
+`hot.seed`, preserving the shared R1 `authored.seed`; this fixes a generator
+name collision without changing instructions, cadence or expectations. Report its guest instructions per emulated second,
+host ns per instruction and frame p95/T alongside the unchanged R1 AC-8
+workload, each against main. On Odin3, either R1 AC-8 p95>0.80 T or a frame>T,
+or failure of the hot workload to sustain real time, requires returning to
+Fable. Run B must never adopt the fallback below.
 Do not manufacture headroom by lowering rate or muting device work. No device
 performance or implementation correctness was measured in this document run.
 
@@ -761,22 +865,23 @@ Arculator code, costs, fixture bytes and goldens are untouched, including
 
 ## 9. Source gaps and review decisions before run B
 
-The interim values below are frozen proposals so implementation has no hidden
-design choices. Fable accepts or replaces them explicitly, then authorizes B.
+The interim values below and the §1 exclusions are accepted R2 model limits
+under Fable’s S57 rulings, so implementation has no hidden design choices.
 
 | Gap | Missing evidence / consequence | Most defensible interim choice and why |
 |---|---|---|
-| G1 | Full ARM610 cache line/replacement/U behavior; equivalence of shipped ARM710 to supplied ARM710a; exact random replacement algorithms | T appendix A proves 4 KiB/64-way/2-address buffer but not line width. Use 16-byte line and read-allocate/write-through family behavior; use T §6's 16-byte ARM710a lines, not an unsourced eight-word assumption. U is provisionally treated updateable, even when clear. Cyclic victims replace unspecified random placement on 610/710/7500; ascended aligned fills. Hardware conflict/U and critical-word timing claims excluded until direct manuals establish them |
+| G1 | Full ARM610 cache line/replacement/U and cache-disable behavior; equivalence of shipped ARM710 to supplied ARM710a; exact random replacement algorithms | T appendix A proves 4 KiB/64-way/2-address buffer but not line width. Use 16-byte line and read-allocate/write-through family behavior; use T §6's 16-byte ARM710a lines, not an unsourced eight-word assumption. U is provisionally treated updateable, even when clear. Existing tags are provisionally searched with the ARM610 cache disabled, as on the documented later models; this is not established by the supplied ARM610 evidence. Uncached-data calibration uses descriptor C=0 with instruction caching enabled; disable retention is a qualified approximation test. Cyclic victims replace unspecified random placement on 610/710/7500; ascended aligned fills. Hardware conflict/U and critical-word timing claims excluded until direct manuals establish them |
 | G2 | A7000 board MEMCLK/prescaler wiring; historical ARM610/710 FCLKs | External A MEMCLK 32 MHz, divisor honored, external I_OCLK 32 MHz per A §16.1; normal memory q=31.25 ns matches A's worked examples. Reset q=62.5 ns follows documented divider. Rates are the D-137 ceilings, not FCLK; this can only be hardware-qualified after board evidence |
 | G3 | Risc PC StrongARM CONFIG/SnA/card burst conversion/synchronizer specification; TRM itself describes eight-word line transactions | Standard mode and max-four aligned bus bursts from the work order; nominal 16 MHz MCLK from I, exact IOMD word timings, zero extra card wait. Split eight-word fills/writebacks into two N+3S groups, 687.5 ns. Before switch use 62.5 ns base; retain domain on disable until read miss. This is a controller-derived lower wait estimate, not a proven card schematic |
 | G4 | Exact row retention and size-programmed IOMD page breaks | Begin N per instruction/packet, restart at aligned 1 KiB/bank boundary; no row-open state between transactions. A supports 256-word pages and I permits up to 256-word bursts; this conservative common bound may add N where real IOMD retained a row. At most 3q extra per artificial restart versus all-S continuation; bandwidth claims are for this bounded model |
 | G5 | Explicit IOMD PROG cycle length, undefined IOMD IOTCR/ECTCR reset values, board I/O phase/glue, unsupported READY/handshake behavior | 4q PROG from A §17.4 (125 ns nominal), full I table PC cycle counts, legacy minima from A table 15-2, clock-edge alignment, no READY waits; preserve R1's zero IOTCR/ECTCR initialization; all I/O noncacheable/unbuffered in timing. Gaps cannot be represented by "free" I/O or fabricated variable device waits |
 | G6 | Exact per-word buffer release, read-priority and cross-instruction coalescing in each CPU | FIFO complete-packet release, no old-ARM cross-instruction merging, full drain before external data reads. Documented capacities and eligibility retained. Conservative loss of overlap versus silicon; at most the extant finite queue's service is added to any one read, though repeated reads can accumulate this difference |
+| G7 | IOMD does not define ROM write-cycle timing | Fable's ROM-castout ruling: SA dirty ROM halves enter the buffer even with W clear (S §§6.2, 6.2.2, 6.3.4); each castout word consumes its bank's ROMCR initial access time (§2.3), without write bursts. ROM data remains unchanged. This is an interim timing choice, not a documented IOMD write waveform; hardware ROM write timing fidelity is excluded |
 
 Review must also accept the §1 translation/pipeline/coherence exclusions and
 §5 atomic issue-time functional sampling. They are architecture limits, not
 missing nanosecond constants. The table makes a general correction independent
 of firmware outcome, but the available evidence does not support declaring
 cycle-accurate hardware timing or a guaranteed host-budget pass. Run B's
-authorization must reconcile AC-1 with these precise limits and identify the
-seventh private firmware/model pair.
+authorization retains these precise limits and names all seven private
+firmware/model pairs above.

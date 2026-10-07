@@ -18,6 +18,8 @@
   Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
+/* ArcDroid modification (2026-10-07): model-specific ROMCR reset and
+ * ARM7500 DRAMWID readback/width timing state. */
 /* ArcDroid modification (2026-10-06): contained static reset and explicit virtual device timing; desktop services removed. */
 
 
@@ -445,7 +447,7 @@ iomd_write(uint32_t addr, uint32_t val)
 
 	case IOMD_0x0D0_DRAMWID: /* DRAM width control (ARM7500/FE) */
 		if (iomd_type == IOMDType_ARM7500 || iomd_type == IOMDType_ARM7500FE) {
-			iomd.dramcr = val;
+			iomd.dramwid = val & 15;
 		}
 		return;
 
@@ -715,7 +717,7 @@ iomd_read(uint32_t addr)
 
 	case IOMD_0x0D0_DRAMWID: /* DRAM width control (ARM7500/FE) */
 		if (iomd_type == IOMDType_ARM7500 || iomd_type == IOMDType_ARM7500FE) {
-			return iomd.dramcr;
+			return iomd.dramwid;
 		}
 		return 0;
 
@@ -863,8 +865,7 @@ iomd_reset(IOMDType type)
 	memset(timer_due, 0, sizeof(timer_due));
 	iomd_type = type;
 
-	iomd.romcr0 = 0x40; /* ROM Control 0, set to 16bit slowest access time */
-	iomd.romcr1 = 0x40; /* ROM Control 1, set to 16bit slowest access time */
+	iomd.romcr0 = iomd.romcr1 = (type == IOMDType_ARM7500 || type == IOMDType_ARM7500FE) ? 0x40 : 0;
 
         iomd.sndstat = IOMD_DMA_STATUS_INTERRUPT | IOMD_DMA_STATUS_OVERRUN;
 

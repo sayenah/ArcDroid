@@ -63,7 +63,10 @@ if mode=='admission':
 elif mode.startswith('matrix-'):
     model=int(mode[-1]);_,expected=matrix(model)
     extra=['--ram-offset','262144','--ram-words',str(len(expected)*4)]
-    a=run(mode,extra=extra);b=run(mode,pacing='burst',extra=extra);assert a==b,'frontend pacing changed canonical trace'
+    # 4096 table clears and all 173 records include uncached instruction and
+    # data service. Six frontend periods bound A7000 reset-clock setup.
+    count=6 if model==3 else 2
+    a=run(mode,frames=count,extra=extra);b=run(mode,frames=count,pacing='burst',extra=extra);assert a==b,'frontend pacing changed canonical trace'
     words=[int(w,16) for w in re.findall(r'^ram=(.*)$',a,re.M)[-1].split(',')]
     observed='\n'.join(f'{i:03d}: '+','.join(f'{v:08x}' for v in words[i*4:i*4+4]) for i in range(len(expected)))+'\n'
     golden=Path(__file__).with_name('fixtures').joinpath(f'rpc-plan-matrix-{model}.trace').read_text()
@@ -77,7 +80,8 @@ elif mode.startswith('av-'):
     # Every D1 case is admitted through a plan, with unchanged analytic oracle.
     for line in video_expected(m).splitlines():
         fields=line.split();name=fields[0]
-        a=run(f'video-{m}-{name}',frames=1);b=run(f'video-{m}-{name}',frames=1,pacing='burst');assert a==b
+        count=2 if m==3 else 1 # first complete field follows reset-clock setup
+        a=run(f'video-{m}-{name}',frames=count);b=run(f'video-{m}-{name}',frames=count,pacing='burst');assert a==b
         observed=re.findall(r'^video=(\S+) hash=(\S+)',a,re.M)[-1]
         expected_hash=re.search(r'hash=(\S+)',line)[1]
         assert observed==(fields[1],expected_hash),(name,observed,fields[1],expected_hash)
@@ -87,7 +91,8 @@ elif mode.startswith('av-'):
     observed=re.findall(r'^pcm=(\S+) frames=(\d+) generated=(\d+) accepted=(\d+) discarded=(\d+) queued=(\d+)',a,re.M)[-1]
     assert observed==(f'{fnv(pcm):016x}','2400','2400','2400','0','0'),observed
     summaries.append(f'pcm {observed[0]} frames=2400 accepted=2400 discarded=0')
-    a=run(f'mixed-av-{m}',frames=3);b=run(f'mixed-av-{m}',frames=3,pacing='burst');assert a==b
+    count=6 if m==3 else 3
+    a=run(f'mixed-av-{m}',frames=count);b=run(f'mixed-av-{m}',frames=count,pacing='burst');assert a==b
     first,prefix,n=re.findall(r'^first-raster=(\S+) pcm-prefix=(\S+) prefix-frames=(\d+)',a,re.M)[-1]
     palette_line=next(line for line in video_expected(m).splitlines() if line.startswith('palette '))
     pcm,_,_=audio_expected(m,end=10000000)

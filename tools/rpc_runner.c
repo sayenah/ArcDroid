@@ -244,11 +244,12 @@ int main(int argc, char **argv)
     }
     FILE *timing = timing_path ? fopen(timing_path,"w") : NULL;
     if (timing_path && !timing) { free(dump_pixels); unload(); deinit(); return 2; }
-    if (timing) fputs("frame,core_ns,T_ns,measured\n", timing);
+    if (timing) fputs("frame,core_ns,T_ns,measured,guest_instructions,guest_ns\n", timing);
     uint64_t *times = calloc(1000000, sizeof(*times));
     if (!times) { free(dump_pixels); if(timing)fclose(timing); unload(); deinit(); return 2; }
     size_t sample_count = 0; unsigned result = 0; uint64_t period_ns = 0;
     uint64_t benchmark_start = arc_test_clock_ns(), benchmark_elapsed = 0;
+    uint64_t prior_instructions=0,prior_guest_ns=0,measured_instructions=0,measured_guest_ns=0,measured_core_ns=0;
     for (uint64_t f = 0; f < (measure ? 1000000 : frames); ++f) {
         if (f == reset_at) reset();
         if (f == fault_at) fault_next();
@@ -263,8 +264,13 @@ int main(int argc, char **argv)
          * Host time controls only when the frontend stops requesting frames,
          * never guest execution, clocks, input or per-frame engine duration. */
         bool measured = !measure || frontend_start-benchmark_start >= warmup*UINT64_C(1000000000);
-        if (measured) times[sample_count++] = elapsed;
-        if (timing) fprintf(timing,"%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%u\n",f,elapsed,period_ns,measured);
+        uint64_t guest_instructions=s.executed-prior_instructions,guest_ns=s.now_ns-prior_guest_ns;
+        prior_instructions=s.executed;prior_guest_ns=s.now_ns;
+        if (measured) {
+            times[sample_count++] = elapsed; measured_instructions+=guest_instructions;
+            measured_guest_ns+=guest_ns; measured_core_ns+=elapsed;
+        }
+        if (timing) fprintf(timing,"%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%u,%" PRIu64 ",%" PRIu64 "\n",f,elapsed,period_ns,measured,guest_instructions,guest_ns);
         printf("frame=%" PRIu64 " ns=%" PRIu64 " cpu=%" PRIu64 " idle=%" PRIu64 " rate=%u irq=%08x fiq=%08x fault=%u\n",
             f,s.now_ns,s.executed,s.idle_ns,s.rate_mips,s.irq,s.fiq,s.faulted);
         fputs("regs=",stdout); for(unsigned r=0;r<17;++r)printf("%s%08x",r?",":"",s.regs[r]);
@@ -312,7 +318,11 @@ int main(int argc, char **argv)
         uint64_t p50=quantile(times,sample_count,50,100),p95=quantile(times,sample_count,95,100),p99=quantile(times,sample_count,99,100),p999=quantile(times,sample_count,999,1000);
         fprintf(stderr,"timing frames=%zu T_ns=%" PRIu64 " p50=%" PRIu64 " p95=%" PRIu64 " p99=%" PRIu64 " p99.9=%" PRIu64 " p95/T=%.6f p99.9/T=%.6f budget=%s\n",
             sample_count,period_ns,p50,p95,p99,p999,(double)p95/period_ns,(double)p999/period_ns,
-            p95<=period_ns*8/10 && p999<=period_ns?"pass":"fail");
+            p95<=period_ns*8/10 && times[sample_count-1]<=period_ns?"pass":"fail");
+        fprintf(stderr,"throughput guest_instructions=%" PRIu64 " guest_ns=%" PRIu64 " guest_instructions/s=%.3f host_ns/instruction=%.6f max/T=%.6f core/guest=%.6f\n",
+            measured_instructions,measured_guest_ns,measured_guest_ns?(double)measured_instructions*1e9/measured_guest_ns:0,
+            measured_instructions?(double)measured_core_ns/measured_instructions:0,
+            (double)times[sample_count-1]/period_ns,measured_guest_ns?(double)measured_core_ns/measured_guest_ns:0);
     }
     for (unsigned i = 0; i < dump_count; ++i) {
         if (!dumps[i].written) {

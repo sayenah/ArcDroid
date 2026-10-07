@@ -3,6 +3,7 @@
 No firmware bytes or guest binaries are stored. Expected results are stated in
 rpc-session-expectations.md independently of interpreter/device implementation.
 """
+from fractions import Fraction
 from pathlib import Path
 import sys
 class Rom:
@@ -35,12 +36,19 @@ def devices(rate,model):
     r.mov(0,0x70);r.emit(0xee010f10) # CP15 control: permit 32-bit exceptions
     r.mov(0,0xd3);r.emit(0xe121f000) # SVC32, IRQ/FIQ disabled
     r.load(8,0x10000000);r.load(9,0x03200000);r.load(10,0x03010fd0)
-    # Start equal deadlines: timer0=400 ticks, timer1=398 ticks,
-    # GO1 is exactly 1 us (rate instructions) after GO0.
-    for off,val in [(0x40,143),(0x44,1),(0x50,141),(0x54,1)]:
+    # D-139: explicitly account for uncached ROM fetches, GO0 PROG service
+    # and reset SA DCLK / ARM7500 prescaler. No flat-rate delay remains.
+    b=max(Fraction(1000,rate),Fraction(125,2)) if model==2 else Fraction(1000,rate)
+    fetch=Fraction(1750) if model==3 else Fraction(875,4)
+    prog=250 if model==3 else 125
+    spacing=next(n for n in range(1,1001) if ((n*(b+fetch)+prog)/500).denominator==1)
+    gap=int((spacing*(b+fetch)+prog)/500)
+    assert gap<400
+    t1=399-gap
+    for off,val in [(0x40,143),(0x44,1),(0x50,t1&255),(0x54,t1>>8)]:
         r.mov(0,val);r.store(0,9,off)
     r.mov(0,0);r.store(0,9,0x48)
-    r.emit(*([0xe1a00000]*(rate-1)));r.store(0,9,0x58)
+    r.emit(*([0xe1a00000]*(spacing-1)));r.store(0,9,0x58)
     r.mov(0,0x60);r.store(0,9,0x18)
     r.mov(0,0x53);r.emit(0xe121f000) # Enable IRQ, leave FIQ disabled
     # PS/2 ACK at 1 ms; unsupported mouse command requests resend at 5 ms.

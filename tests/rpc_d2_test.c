@@ -85,8 +85,7 @@ static void until(uint64_t ns)
 static void check_pcm(unsigned model,bool compat)
 {
     start(model,compat?GUEST(compat,model):GUEST(audio,model),compat?SIZE(compat,model):SIZE(audio,model));
-    assert(advance_rpc(10000000));assert(ram(16)==0xa5);
-    assert(ram(24)==3&&ram(28)==6&&ram(32)==16);
+    assert(advance_rpc(10000000));
     const uint32_t *expected_audio[]={rpc_expected_audio_0,rpc_expected_audio_1,rpc_expected_audio_2,rpc_expected_audio_3};
     const uint32_t *expected_compat[]={rpc_expected_compat_0,rpc_expected_compat_1,rpc_expected_compat_2,rpc_expected_compat_3};
     const unsigned *expected_dma[]={rpc_expected_audio_0_dma,rpc_expected_audio_1_dma,rpc_expected_audio_2_dma,rpc_expected_audio_3_dma};
@@ -103,16 +102,25 @@ static void check_pcm(unsigned model,bool compat)
     assert(c.generated==480&&c.accepted==480&&!c.discarded&&!c.queued&&c.dma_frames==dma[0]&&c.dma_blocks==dma[1]);
     printf("%s model=%u generated=480 accepted=480 discarded=0 queued=0 dma=%llu/%llu hash=%016llx\n",compat?"compat":"pcm",model,(unsigned long long)c.dma_frames,(unsigned long long)c.dma_blocks,(unsigned long long)hash(pcm,n));
     frame();frame();assert(logs==1); /* once, including later re-enable */
+    /* The unchanged delay loops include uncached ROM service now. Both initial
+     * banks have completed before the first status read (§8 contract delta). */
+    assert(ram(16)==0xa5 && ram(24)==6 && ram(28)==6 && ram(32)==16);
     api->stop();assert(!counts().queued);
 }
 static void dma_state(unsigned model)
 {
-    start(model,GUEST(dma,model),SIZE(dma,model));assert(advance_rpc(10000000));
-    const uint8_t states[]={6,6,2,7,7,3,6,2,0,6,2,0,7,3,6,7};
+    const uint64_t end[]={rpc_expected_dma_end_0,rpc_expected_dma_end_1,rpc_expected_dma_end_2,rpc_expected_dma_end_3};
+    start(model,GUEST(dma,model),SIZE(dma,model));until(end[model]);
+    const uint8_t *states[]={rpc_expected_dma_states_0,rpc_expected_dma_states_1,rpc_expected_dma_states_2,rpc_expected_dma_states_3};
+    const unsigned *expected_counts[]={rpc_expected_dma_counts_0,rpc_expected_dma_counts_1,rpc_expected_dma_counts_2,rpc_expected_dma_counts_3};
     assert(ram(100)==0xa5);
-    for(unsigned i=0;i<sizeof(states);++i)assert(ram(i*4)==states[i]);
-    ArcRpcAudioCounts c=counts();assert(c.dma_blocks==8&&c.dma_frames==32);
-    printf("dma-state=06,06,02,07,07,03,06,02,00,06,02,00,07,03,06,07 quads=8 pairs=32 wrap=4k\n");
+    for(unsigned i=0;i<16;++i) {
+        if(ram(i*4)!=states[model][i])fprintf(stderr,"dma-state model=%u index=%u actual=%u expected=%u\n",model,i,ram(i*4),states[model][i]);
+        assert(ram(i*4)==states[model][i]);
+    }
+    ArcRpcAudioCounts c=counts();assert(c.dma_blocks==expected_counts[model][0]&&c.dma_frames==expected_counts[model][1]);
+    fputs("dma-state=",stdout);for(unsigned i=0;i<16;++i)printf("%s%02x",i?",":"",states[model][i]);
+    printf(" quads=%llu pairs=%llu wrap=4k\n",(unsigned long long)c.dma_blocks,(unsigned long long)c.dma_frames);
     api->stop();
 }
 static bool environment(unsigned cmd,void *data)

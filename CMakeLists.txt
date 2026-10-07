@@ -114,6 +114,7 @@ set(ARCDROID_ARCULATOR_SOURCES
 
 set(ARCDROID_RPC_SOURCES
   engine/rpc/rpc_session.c
+  engine/rpc/rpc_mem_timing.c
   engine/rpc/rpc_audio.c
   engine/rpc/rpc_input.c
   engine/rpc/rpc_timing.c
@@ -339,6 +340,7 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
   endif()
   # A bounded CPU/memory component. Unadapted devices still cannot join cores.
   add_library(arcdroid_rpc_cpu OBJECT
+    engine/rpc/rpc_mem_timing.c
     engine/rpcemu/src/arm.c engine/rpcemu/src/arm_common.c
     engine/rpcemu/src/cp15.c engine/rpcemu/src/mem.c)
   target_include_directories(arcdroid_rpc_cpu PRIVATE engine/rpc engine/rpcemu/src)
@@ -1907,6 +1909,40 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
   if(ARCDROID_SANITIZERS)
     target_link_libraries(firmware_probe PRIVATE arcdroid_sanitizer_link)
   endif()
+  add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/rpc_timing_rom.h"
+    COMMAND "${Python3_EXECUTABLE}" -B "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_timing_rom.py"
+      "${CMAKE_CURRENT_BINARY_DIR}/generated/rpc_timing_rom.h"
+    DEPENDS tests/rpc_timing_rom.py tests/rpc_timing_oracle.py VERBATIM)
+  add_executable(rpc_timing_test tests/rpc_timing_test.c
+    "${CMAKE_CURRENT_BINARY_DIR}/generated/rpc_timing_rom.h")
+  add_executable(rpc_mem_timing_unit tests/rpc_mem_timing_unit.c
+    engine/rpc/rpc_mem_timing.c engine/rpc/rpc_scheduler.c)
+  target_include_directories(rpc_mem_timing_unit PRIVATE engine/rpc engine/rpcemu/src)
+  target_compile_definitions(rpc_mem_timing_unit PRIVATE RELEASE_BUILD=1 ARCDROID_TEST_FAULTS=1)
+  target_compile_options(rpc_mem_timing_unit PRIVATE -UNDEBUG
+    -include ${CMAKE_CURRENT_SOURCE_DIR}/engine/rpc/rpc_namespace.h)
+  if(ARCDROID_SANITIZERS)
+    target_link_libraries(rpc_mem_timing_unit PRIVATE arcdroid_sanitizer_compile arcdroid_sanitizer_link)
+  endif()
+  add_test(NAME rpc-memory-service-boundaries COMMAND rpc_mem_timing_unit)
+  foreach(rate IN ITEMS 60 99)
+    foreach(pacing IN ITEMS 0 1)
+      add_test(NAME rpc-memory-long-${rate}-${pacing} COMMAND rpc_mem_timing_unit ${rate} ${pacing})
+      set_tests_properties(rpc-memory-long-${rate}-${pacing} PROPERTIES TIMEOUT 1800)
+    endforeach()
+  endforeach()
+  target_include_directories(rpc_timing_test PRIVATE engine engine/rpc core libretro/include
+    "${CMAKE_CURRENT_BINARY_DIR}/generated")
+  target_compile_definitions(rpc_timing_test PRIVATE ARCDROID_TEST_FAULTS=1 RETRO_IMPORT_SYMBOLS=1)
+  target_compile_options(rpc_timing_test PRIVATE -UNDEBUG)
+  target_link_libraries(rpc_timing_test PRIVATE ${CMAKE_DL_LIBS})
+  if(ARCDROID_SANITIZERS)
+    target_link_libraries(rpc_timing_test PRIVATE arcdroid_sanitizer_compile arcdroid_sanitizer_link)
+  endif()
+  foreach(model RANGE 0 3)
+    add_test(NAME rpc-memory-timing-${model} COMMAND rpc_timing_test
+      $<TARGET_FILE:arcdroid_libretro_test> ${model})
+  endforeach()
   add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/rpc_session_rom.h"
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_session_rom.py"
       "${CMAKE_CURRENT_BINARY_DIR}/generated/rpc_session_rom.h"
@@ -1936,7 +1972,7 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
   add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/rpc_video_rom.h"
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_video_rom.py"
       "${CMAKE_CURRENT_BINARY_DIR}/generated/rpc_video_rom.h"
-    DEPENDS tests/rpc_video_rom.py VERBATIM)
+    DEPENDS tests/rpc_video_rom.py tests/rpc_raster_timeline.py tests/rpc_authored_timeline.py VERBATIM)
   add_executable(rpc_video_test tests/rpc_video_test.c
     "${CMAKE_CURRENT_BINARY_DIR}/generated/rpc_video_rom.h")
   target_include_directories(rpc_video_test PRIVATE engine engine/rpc core
@@ -1980,7 +2016,7 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
   add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/rpc_d2_expected.h"
     COMMAND "${Python3_EXECUTABLE}" -B "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_d2_expectations.py"
       --header "${CMAKE_CURRENT_BINARY_DIR}/generated/rpc_d2_expected.h"
-    DEPENDS tests/rpc_d2_expectations.py tests/rpc_d2_goldens.py tests/rpc_d2_rom.py VERBATIM)
+    DEPENDS tests/rpc_d2_expectations.py tests/rpc_d2_goldens.py tests/rpc_d2_rom.py tests/rpc_authored_timeline.py VERBATIM)
   add_executable(rpc_d2_test tests/rpc_d2_test.c
     "${CMAKE_CURRENT_BINARY_DIR}/generated/rpc_d2_rom.h"
     "${CMAKE_CURRENT_BINARY_DIR}/generated/rpc_d2_expected.h")
@@ -2011,12 +2047,13 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
 
   if(TARGET rpc_runner)
   set(RPC_PLAN_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated/rpc-plans")
-  add_custom_command(OUTPUT "${RPC_PLAN_DIR}/matrix-0.arcplan" "${RPC_PLAN_DIR}/ac8.arcplan"
+  add_custom_command(OUTPUT "${RPC_PLAN_DIR}/matrix-0.arcplan" "${RPC_PLAN_DIR}/ac8.arcplan" "${RPC_PLAN_DIR}/hot.arcplan"
     COMMAND "${Python3_EXECUTABLE}" -B "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_plan_fixtures.py" "${RPC_PLAN_DIR}"
     COMMAND "${Python3_EXECUTABLE}" -B "${CMAKE_CURRENT_SOURCE_DIR}/tools/rpc_ac8_workload.py" "${RPC_PLAN_DIR}"
+    COMMAND "${Python3_EXECUTABLE}" -B "${CMAKE_CURRENT_SOURCE_DIR}/tools/rpc_hot_workload.py" "${RPC_PLAN_DIR}"
     DEPENDS tests/rpc_plan_fixtures.py tests/rpc_plan_matrix_rom.py tests/rpc_session_rom.py
-      tests/rpc_video_rom.py tests/rpc_d2_rom.py tools/rpc_ac8_workload.py VERBATIM)
-  add_custom_target(rpc-plan-fixtures ALL DEPENDS "${RPC_PLAN_DIR}/matrix-0.arcplan" "${RPC_PLAN_DIR}/ac8.arcplan")
+      tests/rpc_video_rom.py tests/rpc_d2_rom.py tools/rpc_ac8_workload.py tools/rpc_hot_workload.py tests/rpc_timing_rom.py tests/rpc_timing_oracle.py VERBATIM)
+  add_custom_target(rpc-plan-fixtures ALL DEPENDS "${RPC_PLAN_DIR}/matrix-0.arcplan" "${RPC_PLAN_DIR}/ac8.arcplan" "${RPC_PLAN_DIR}/hot.arcplan")
   add_dependencies(rpc_runner rpc-plan-fixtures)
   foreach(mode IN ITEMS admission matrix-0 matrix-1 matrix-2 matrix-3 av-0 av-1 av-2 av-3)
     add_test(NAME rpc-plan-${mode} COMMAND "${Python3_EXECUTABLE}" -B
@@ -2035,6 +2072,10 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
   add_test(NAME rpc-ac8-workload COMMAND "${Python3_EXECUTABLE}" -B
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_ac8_test.py"
     $<TARGET_FILE:rpc_runner> $<TARGET_FILE:arcdroid_rpcplan_libretro> "${RPC_PLAN_DIR}")
+  add_test(NAME rpc-hot-throughput COMMAND "${Python3_EXECUTABLE}" -B
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_hot_test.py"
+    $<TARGET_FILE:rpc_runner> $<TARGET_FILE:arcdroid_rpcplan_libretro> "${RPC_PLAN_DIR}")
+  set_tests_properties(rpc-hot-throughput rpc-memory-timing-2 PROPERTIES TIMEOUT 1800)
   add_test(NAME rpc-runner-dump COMMAND "${Python3_EXECUTABLE}" -B
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_runner_dump_test.py"
     $<TARGET_FILE:rpc_runner> $<TARGET_FILE:arcdroid_rpcplan_libretro> "${RPC_PLAN_DIR}")

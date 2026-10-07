@@ -5,6 +5,7 @@
 #include "engine_backend.h"
 #include "rpc_session.h"
 #include "rpc_timing.h"
+#include "rpc_mem_timing.h"
 #include "rpc_memory.h"
 #include "rpc_rtc.h"
 #include "rpc_video.h"
@@ -52,9 +53,7 @@ static void *arc_rpc_logger_opaque;
 void arc_rpc_video_bus(unsigned transfers, bool dram)
 {
     uint64_t ns = (uint64_t)transfers * (dram ? 350u : 156u);
-    uint64_t now = arc_rpc_scheduler.now_ns;
-    if (arc_rpc_bus_until < now) arc_rpc_bus_until = now;
-    arc_rpc_bus_until += ns; arc_rpc_bus_ns += ns;
+    arc_rpc_mem_video_hold(ns); arc_rpc_bus_ns += ns;
 }
 extern int arc_rpc_arm_exec_count(unsigned count);
 extern bool arc_rpc_cpu_idle;
@@ -129,6 +128,7 @@ static void arc_rpc_stop(void)
     if(arc_rpc_capture.state==ARC_RPC_CAPTURE_RUNNING || arc_rpc_capture.state==ARC_RPC_CAPTURE_DONE)
         arc_rpc_capture.state=ARC_RPC_CAPTURE_CANCELLED;
     arc_rpc_timing_bind(NULL);
+    arc_rpc_mem_bind(NULL, 0, 0);
     memset(&arc_rpc_scheduler, 0, sizeof(arc_rpc_scheduler));
     closevideo();
     arc_rpc_memory_close();
@@ -140,6 +140,9 @@ static void arc_rpc_reset_devices(void)
 {
     arc_rpc_scheduler_init(&arc_rpc_scheduler, arc_rpc_rate);
     arc_rpc_timing_bind(&arc_rpc_scheduler);
+    unsigned timing_model = machine.cpu_model == CPUModel_ARM610 ? 0 :
+        machine.cpu_model == CPUModel_ARM710 ? 1 : machine.cpu_model == CPUModel_SA110 ? 2 : 3;
+    arc_rpc_mem_bind(&arc_rpc_scheduler, timing_model, arc_rpc_rate);
     arm_init();
     cp15_reset(machine.cpu_model);
     arm_reset(machine.cpu_model);
@@ -304,28 +307,12 @@ static bool arc_rpc_advance_internal(uint64_t elapsed_ns, bool stop_at_field)
     ArcRpcVideoStatus video_start; arc_rpc_video_status(&video_start);
     unsigned event_work = 0, instruction_work = 0;
     while (arc_rpc_scheduler.now_ns < limit) {
-        if (arc_rpc_cpu_idle && (arm.event & 3)) arc_rpc_cpu_idle = false;
-        bool idle = arc_rpc_cpu_idle;
-        bool blocked = arc_rpc_scheduler.now_ns < arc_rpc_bus_until;
-        uint64_t next = arc_rpc_next_deadline(&arc_rpc_scheduler, limit), credit = 0;
-        if (blocked && arc_rpc_bus_until < next) next = arc_rpc_bus_until;
-        if (!idle && !blocked) {
-            uint64_t cpu_next = arc_rpc_scheduler.now_ns +
-                arc_rpc_scheduler.cpu_delta[arc_rpc_scheduler.cpu_fraction];
-            if (cpu_next < next) next = cpu_next;
-            if (!arc_rpc_cpu_credit(&arc_rpc_scheduler, next - arc_rpc_scheduler.now_ns, &credit))
-                fatal("RPC CPU credit overflow");
-        } else {
-            if (idle) arc_rpc_idle_ns += next - arc_rpc_scheduler.now_ns;
-            arc_rpc_scheduler.cpu_fraction = 0;
-        }
-        arc_rpc_scheduler.now_ns = next;
+        uint64_t now = arc_rpc_scheduler.now_ns;
         ArcRpcEvent event;
         bool completed = false;
-        while (arc_rpc_take_event(&arc_rpc_scheduler, next, &event)) {
-            /* 16.667 ms can contain 333334 interlaced raster edges at the
-             * 120 MHz device ceiling plus 66668 timer edges (latch zero).
-             * Keep a bounded failure backstop above legal hardware traffic. */
+        /* Deliver all tied devices before completion/release, arbitration or
+         * new issue, including deadlines created by a handler at this instant. */
+        while (arc_rpc_take_event(&arc_rpc_scheduler, now, &event)) {
             if (++event_work > 524288u) fatal("RPC event budget exceeded");
             arc_rpc_deliver(event);
             if (event == ARC_RPC_EVENT_VIDEO) {
@@ -335,18 +322,41 @@ static bool arc_rpc_advance_internal(uint64_t elapsed_ns, bool stop_at_field)
             }
         }
         if (arc_rpc_cpu_idle && (arm.event & 3)) arc_rpc_cpu_idle = false;
-        if (credit && arc_rpc_scheduler.now_ns >= arc_rpc_bus_until) {
+        arc_rpc_mem_idle(arc_rpc_cpu_idle);
+        arc_rpc_mem_run(now);
+        if (arc_rpc_mem_ready(arc_rpc_cpu_idle)) {
             if (instruction_work == 1666667u) fatal("RPC instruction budget exceeded");
             unsigned quota = 1666667u - instruction_work;
             if (quota > 200u) quota = 200u;
             if (completed) quota = 1u;
             ArcRpcCpuBatch batch = { &arc_rpc_scheduler, &arc_rpc_bus_until, limit };
             unsigned executed = (unsigned)arc_rpc_arm_exec_batch(quota, &batch);
-            instruction_work += executed;
-            arc_rpc_executed += executed;
-            if (arc_rpc_cpu_idle) arc_rpc_scheduler.cpu_fraction = 0;
+            instruction_work += executed; arc_rpc_executed += executed;
+            /* Yield even when service is empty: MMIO may have armed a device
+             * at the issue instant. The next iteration delivers it first. */
+            if (completed) break;
+            continue;
         }
         if (completed) break;
+        uint64_t next = arc_rpc_next_deadline(&arc_rpc_scheduler, limit);
+        next = arc_rpc_mem_next(next, arc_rpc_cpu_idle);
+        if (next <= now) fatal("RPC memory scheduler made no progress");
+        if (arc_rpc_cpu_idle) arc_rpc_idle_ns += next - now;
+        arc_rpc_scheduler.now_ns = next;
+        /* A limit is also an event/service boundary, not permission to erase
+         * pending work. Process due devices and service once before returning. */
+        if (next == limit) {
+            while (arc_rpc_take_event(&arc_rpc_scheduler, next, &event)) {
+                if (++event_work > 524288u) fatal("RPC event budget exceeded");
+                arc_rpc_deliver(event);
+            }
+            arc_rpc_mem_run(next);
+            if (arc_rpc_cpu_idle && (arm.event & 3)) arc_rpc_cpu_idle = false;
+            arc_rpc_mem_idle(arc_rpc_cpu_idle);
+            if (arc_rpc_mem_ready(arc_rpc_cpu_idle)) {
+                ++instruction_work; arc_rpc_executed += (unsigned)arc_rpc_arm_exec_batch(1, NULL);
+            }
+        }
     }
     if(arc_rpc_capture.state==ARC_RPC_CAPTURE_RUNNING && arc_rpc_scheduler.now_ns==UINT64_C(30000000000)) {
         arc_rpc_capture.writes=arc_rpc_cmos_write_evidence(arc_rpc_capture.written);
@@ -455,11 +465,19 @@ const ArcEngineBackendOps arc_rpc_backend = {
     .audio_commit=arc_rpc_audio_commit,.audio_fault_silence=arc_rpc_sound_fault_silence
 };
 #if defined(ARCDROID_TEST_FAULTS)
+RETRO_API void arc_rpc_test_timing_measure(uint64_t first, uint64_t last, bool drained)
+{ arc_rpc_mem_measure(first,last,drained); }
+RETRO_API void arc_rpc_test_timing_interval(ArcRpcMemInterval *out)
+{ arc_rpc_mem_interval(out); }
 void arc_rpc_session_test_input_ready(void) { arc_rpc_input_retire=false; }
 void arc_rpc_session_test_rate(unsigned rate)
 {
     if (rate && rate <= 100 && arc_rpc_live && !arc_rpc_scheduler.now_ns) {
         arc_rpc_rate = rate; arc_rpc_scheduler_rate(&arc_rpc_scheduler, rate);
+        unsigned model = machine.cpu_model == CPUModel_ARM610 ? 0 :
+            machine.cpu_model == CPUModel_ARM710 ? 1 : machine.cpu_model == CPUModel_SA110 ? 2 : 3;
+        arc_rpc_mem_bind(&arc_rpc_scheduler, model, rate);
+        arc_rpc_mem_control(cp15_read(0xee110f10));
     }
 }
 RETRO_API void arc_rpc_test_cmos_snapshot(uint8_t *out) { if(out)arc_rpc_cmos_snapshot(out); }

@@ -4,6 +4,7 @@ Every peripheral transition is an ARM store. See rpc-video-expectations.md.
 """
 from pathlib import Path
 import sys
+sys.dont_write_bytecode = True
 class Guest:
     def __init__(self): self.w=[]
     def emit(self,*words): self.w.extend(words)
@@ -148,6 +149,7 @@ def cases():
     return out
 
 def main():
+    from rpc_raster_timeline import readbacks,scroll_readbacks
     out=['/* Generated authored ARM programs. GPL-2.0-only. */','#include <stdint.h>',
          'struct RpcVideoGuest {const char *name; unsigned width,height,depth,hz; const uint32_t *words; unsigned count;};']
     for model in range(4):
@@ -189,5 +191,8 @@ def main():
     for model in range(4):
         out.append(f'{{"scroll",640,32,3,0,rpc_scroll_{model},sizeof(rpc_scroll_{model})/4}},')
     out.append('};')
+    for scenario in ('hclip','vclip','packed'):
+        out.append(f'static const uint32_t rpc_a7000_{scenario}_readback[]={{'+','.join(f'0x{v:08x}u' for v in readbacks(scenario))+'};')
+    out.append('static const uint32_t rpc_a7000_scroll_readback[]={'+','.join(f'0x{v:08x}u' for v in scroll_readbacks())+'};')
     Path(sys.argv[1]).write_text('\n'.join(out)+'\n')
 if __name__=='__main__':main()

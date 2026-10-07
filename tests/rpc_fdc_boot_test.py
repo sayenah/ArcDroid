@@ -159,7 +159,9 @@ with tempfile.TemporaryDirectory(prefix='arc-fdc-boot-') as temp:
     for model in ['arm610', 'arm710', 'sa110', 'arm7500']:
         (d/'probe.arcplan').write_text(f'version=1\nmodel={model}\nfirmware=authored.rom\ncmos=seed\nseed=seed\nrtc_epoch=0\n')
         r = subprocess.run([runner, '--core', core, '--plan', str(d/'probe.arcplan'),
-            '--system', str(d), '--frames', '3', '--ram-offset', '131072',
+            # Reset-held delay now includes ROM service; the declared mechanical
+            # seeks and the longest A7000 setup remain bounded within one second.
+            '--system', str(d), '--frames', '60', '--ram-offset', '131072',
             '--ram-words', str(len(expected))], capture_output=True, text=True)
         assert r.returncode == 0, r.stderr
         words = [int(w, 16) for w in re.findall(r'^ram=(.*)$', r.stdout, re.M)[-1].split(',')]

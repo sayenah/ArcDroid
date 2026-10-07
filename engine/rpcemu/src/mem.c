@@ -22,6 +22,9 @@
  * checked translations and in-object pointers; no desktop allocations. */
 /* Memory handling */
 #include "rpc_memory.h"
+#include "rpc_mem_timing.h"
+/* ArcDroid modification (2026-10-07): charge successful CPU attempts only;
+ * physical descriptor reads and DMA do not enter the CPU timing ledger. */
 
 #include "rpcemu.h"
 #include "vidc20.h"
@@ -575,23 +578,31 @@ uint32_t readmemfl(uint32_t addr)
 {
     uint32_t physical = mmu ? translateaddress(addr, 0, 0) : addr;
     if (arm.event & 0x40) return 0;
+    arc_rpc_mem_access(addr, physical, 4, false, false, arc_rpc_cp15_attributes(),
+                       arc_rpc_phys_page(physical) != NULL);
     return mem_phys_read32(physical);
 }
 uint32_t readmemfb(uint32_t addr)
 {
     uint32_t physical = mmu ? translateaddress(addr, 0, 0) : addr;
     if (arm.event & 0x40) return 0;
+    arc_rpc_mem_access(addr, physical, 1, false, false, arc_rpc_cp15_attributes(),
+                       arc_rpc_phys_page(physical) != NULL);
     return mem_phys_read8(physical);
 }
 void writememfl(uint32_t addr, uint32_t val)
 {
     uint32_t physical = mmu ? translateaddress(addr, 1, 0) : addr;
     if (arm.event & 0x40) return;
+    arc_rpc_mem_access(addr, physical, 4, true, false, arc_rpc_cp15_attributes(),
+                       arc_rpc_phys_page(physical) != NULL);
     mem_phys_write32(physical, val);
 }
 void writememfb(uint32_t addr, uint8_t val)
 {
     uint32_t physical = mmu ? translateaddress(addr, 1, 0) : addr;
     if (arm.event & 0x40) return;
+    arc_rpc_mem_access(addr, physical, 1, true, false, arc_rpc_cp15_attributes(),
+                       arc_rpc_phys_page(physical) != NULL);
     mem_phys_write8(physical, val);
 }

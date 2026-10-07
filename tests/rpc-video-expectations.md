@@ -37,6 +37,32 @@ board model; no unconnected HCLK frequency is invented.
 
 ## Splits, ownership and DMA
 
+D-139 changes the A7000 reset-clock chronology. The independent authored
+timeline derives GO at 43.457 µs after CONTROL, rather than treating a 650 µs
+timer as starting with CONTROL. With ROM/data service, the subsequent single
+register write is no earlier than 707.572 µs, so the affected split is row 5.
+`rpc_raster_timeline.py` independently schedules leading-edge quad requests
+and legal CPU grants, retaining pending deadlines and partially consumed quads.
+No core source or output supplies an expectation.
+
+Consequently only `rpc-video-3.trace` changes: palette/border/cursor/current/
+depth have five original rows and three changed rows; grow consumes 6352 pixels
+and wraps once; delayed VDSR misses its former blank edge, so vstart consumes
+256 pixels; ring END is written after its comparison address was consumed,
+so that field does not wrap; and unaligned has four 1-bit rows before 16-bit
+data, starting at stream bit 8. The memory rewrite's earliest first store is
+716.436 µs; its zeroed prefixes at 700/800/900/1000 µs are 0/60/132/204 bytes,
+behind raster starts 128/160/192/224. Its first field therefore stays grey.
+`prove_a7000_memory_window()` checks this conservative no-hold bound.
+
+Guest readbacks also move: hclip reads `VIDCUR=10000850`, vclip reads after
+flyback (`10000000`), and scroll reads after six rows rather than five.
+Those values are generated independently, while pixel/byte/wrap counts and
+every displayed scroll pixel remain checked. Startup may span blank frontend
+runs; checks still inspect the first complete field, and the allocation-fault
+case keeps its injection until the first presentation attempt. Models 0–2
+retain their committed raster traces byte-for-byte.
+
 32×8 split fixtures use 100 us lines, VDSR=2, VDER=10: active rasters 3–10.
 A guest timer expires 650 us after the clock starts, between active rows 3
 and 4, with enough margin for guest bus instructions on all four rates.
@@ -94,8 +120,10 @@ stores at most 2048×2048. This bound never limits guest width/height or DMA.
   each sampling edge: 350 ns per DRAM quadword, 156 ns per two-bank VRAM
   half-SAM copy (IOMD section 7), cursor quadword 350 ns every two rows.
   The contention tests also compare interpreter instruction counts with virtual
-  elapsed time: lost credit must equal transfer occupancy within one rounding
-  instruction per sampled line; disabled data must lose no credit. The model
+  elapsed time: a steady uncached ROM branch costs base plus reset ROM service.
+  Across a complete subsequent field, CPU work plus DMA occupancy must conserve
+  time within two endpoint instructions total. Disabled data contributes no
+  hold. This replaces the old flat-rate/per-line credit assumption. The model
   carries CPU blockage across scheduler boundaries without moving device time
   or accruing catch-up CPU credit. This is not a cycle-accurate bus-arbitration
   claim. Every hidden column/row contributes equally to this occupancy.
