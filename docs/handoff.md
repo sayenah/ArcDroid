@@ -1,8 +1,23 @@
 # ArcDroid Handoff
 
-**Stage:** IMPLEMENTATION — roadmap item 6, RiscPC R2a (memory timing + CMOS), run A
+**Stage:** IMPLEMENTATION — roadmap item 6, RiscPC R2a (memory timing + CMOS), run B
 **Owner:** Sol
-**Next:** Sol R2a run A on branch `slice/r2a-timing-cmos` (from `main` after this baton merges): write **`docs/riscpc-timing.md`**, the per-model timing contract of the *R2 work order* item 1 below. No product code in run A. Fable then accepts the contract (after a short Astra check) and authorises run B (items 1–4 implementation).
+**Next:** Sol R2a **run B** on branch `slice/r2a-timing-cmos` (Sol thread `01a117a9-6af5-7f00-88f7-679a5f43dc99`).
+- **Run A is done:** the timing contract `docs/riscpc-timing.md` is committed on the branch.
+- **Contract acceptance:** Fable accepted it after Astra stage 3, ACCEPT WITH CHANGES; the five rulings below are incorporated.
+- **Run B:** amends the contract by those rulings and implements R2a item 1 (timing) with its tests and revised RPC goldens.
+- **Run C:** items 2–4 (CMOS records, generated defaults, plan route part 1).
+
+**Contract rulings (S57; Astra stage 3 incorporated).** The §1 exclusions and G1–G6 are accepted as labelled R2 model limits, with these changes:
+1. SA-110 SWP/SWPB follows TRM §9.11. A cacheable/bufferable SWP is performed in the D-cache (with a fill if needed); only a non-cacheable or non-bufferable SWP is an external locked pair. §6 gains hot-code cases: cached hit, cached miss, uncached.
+2. Exact time at every admitted test rate. Use a per-session denominator, e.g. 28·rate, so plan v1 rates 1–100 stay exact. Add long cumulative tests at rates 60 and 99 with stalls and frontend boundaries.
+3. ARM7500 DRAMWID is honoured in timing. 16-bit banks take 7 ticks non-sequential and 4 ticks sequential (DDI 0050C §§14.2.3–14.2.4), including fills and buffered writes; add independent width-switch and byte/word expectations.
+4. ARM610 cache-disable is added to G1 as an approximation. Calibration uses descriptor C=0 for uncached data regions with the warmed instruction cache left enabled; cache-disable behaviour is a separate, qualified test.
+5. Host-cost stop rules. Run B returns to Fable, never adopting the §8 fallback, if either fails on the Odin3:
+   - the R1 AC-8 workload at 100 MIPS: p95 ≤ 0.80 T and no frame over T;
+   - the hot-throughput case: it sustains real time.
+
+IOMD ROMCR resets to 0 (R1 used 0x40). The seventh private pair is **3.60 on ARM7500**.
 - R2 = three sequential PRs on one accepted design (D-139): **R2a** timing + CMOS → **R2b** floppy drives and full controller → **R2c** IDE and scalable hard disc. Each PR gets Fable review and Opus QA; R2 completes with the AC-10 speed gate.
 
 Slice order (D-133): R1–R4 → item 5 release baseline → item 6b faster CPU translator → item 8 save states. Carried: the Arculator VIDC-register reset follow-up (below); follow-up Lows; Slice 23 residuals; physical-stick feel on the Odin3 (Founder check).
@@ -123,7 +138,7 @@ Governing: `docs/riscpc.md` §§4.4, 4.6, 4.9, 4.11, 6; D-063, D-075, D-076, D-0
 
 **R1-1 diagnosis (S57; private firmware; a scratch `/* PROBE */` build, never a Sol source)**
 - **Where it fails:**
-  - the factory reset fails at 100 MIPS on all seven firmware/model pairs (3.71 SA-110/ARM710/ARM7500, 3.70 SA-110, 3.60 ARM710, 3.50 ARM610);
+  - the factory reset fails at 100 MIPS on all six pairs tested (3.71 SA-110/ARM710/ARM7500, 3.70 SA-110, 3.60 ARM710, 3.50 ARM610); the seventh supported pair, 3.60 ARM7500, was not swept;
   - it also fails on SA-110 at 40, 60 and 80 MIPS;
   - it succeeds at 35 MIPS and below.
 - **Why:** after the keyboard reset command and its ACK, the firmware:
