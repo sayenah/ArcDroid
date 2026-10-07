@@ -1889,7 +1889,12 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
           "${CMAKE_CURRENT_BINARY_DIR}/boot-watch-chooser-${chooser_action}-data"
           chooser-${chooser_action})
     endforeach()
-    set_tests_properties(libretro-harness PROPERTIES TIMEOUT 300)
+    if(ARCDROID_SANITIZERS)
+      # R1 instruments Arculator engine objects too, slowing the full harness.
+      set_tests_properties(libretro-harness PROPERTIES TIMEOUT 900)
+    else()
+      set_tests_properties(libretro-harness PROPERTIES TIMEOUT 300)
+    endif()
     set_tests_properties(newio-libretro-harness PROPERTIES TIMEOUT 300)
   endif()
 
