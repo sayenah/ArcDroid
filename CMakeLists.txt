@@ -1950,6 +1950,8 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
   endif()
   # Included by native Windows CTest and CI's rpc-.* sanitizer selection.
   foreach(model RANGE 0 3)
+    add_test(NAME rpc-video-pixel-clock-${model} COMMAND rpc_video_test
+      $<TARGET_FILE:arcdroid_libretro_test> --pixel-clock ${model})
     add_test(NAME rpc-video-extreme-${model} COMMAND rpc_video_test
       $<TARGET_FILE:arcdroid_libretro_test> --extreme ${model})
     add_test(NAME rpc-fault-silence-${model} COMMAND rpc_video_test

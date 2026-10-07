@@ -274,8 +274,8 @@ Reference: the SMSC FDC37C665GT datasheet linked above, pp. 33–34 and 42.
 
 `video-hardware-work-bounds` (`src/vidc20.c`): HDER and synchronous HDWR
 padding cannot consume pixels beyond HCR+8 clocks. Out-of-range PLL programming
-saturates at the physical device pixel-clock ceiling (VIDC20: 100 MHz;
-ARM7500: 120 MHz), retaining exact rational timing below it. This produces
+saturates at 120 MHz on every model (run H), retaining exact rational timing
+through that bound, including software's 108/110 MHz Risc PC modes. This produces
 bounded garbage display rather than a containment fault. The owned scheduler's
 event backstop allows the legal maximum raster/timer traffic in 16.667 ms;
 its instruction and scanout backstops remain unchanged. No golden is updated.
@@ -283,6 +283,11 @@ References: ARM VIDC20 DDI 0030E, feature summary and horizontal-cycle register;
 ARM7500 DDI 0050C §8.2.4:
 https://www.bitsavers.org/components/arm/VIDC20_Datasheet_199502.pdf
 https://documentation-service.arm.com/static/5ed11babca06a95ce53f8fee
+
+Run H (`src/fdc.c`): asserting DOR reset also clears RQM after aborting the
+controller state. FIFO writes remain rejected for the entire held interval;
+only the rising edge of bit 2 starts the existing reset completion sequence.
+The run G DSR software reset and its completion window are unchanged.
 
 The owned RPC frontend derives post-fault 48 kHz silence from the last
 announced frame rate, carrying fractional pairs and draining bounded chunks

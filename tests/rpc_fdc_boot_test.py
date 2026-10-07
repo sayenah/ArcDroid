@@ -60,6 +60,17 @@ def sense(st0, pcn=None):
 # Reset polling and immediate control results. MSR must not clear reset FINT.
 g.write(9, 0x28, 0x10)
 write(0x3f2, 8)
+observe(10, 16, 0)  # RQM stays low for the entire held-reset interval.
+command(4, 0)       # Sense Drive Status must not execute while held.
+command(0x0e)      # Neither can a parameterless DUMPREG.
+observe(10, 16, 0)
+observe(10, 20, 0)
+# Wait at least 1 ms even at SA-110's maximum 100 MIPS: no completion IRQ
+# or readiness until the guest explicitly releases the DOR reset bit.
+for _ in range(10):
+    g.delay(100)
+observe(10, 16, 0)
+observe(9, 0x24, 0)
 write(0x3f2, 12)
 wait_irq()
 observe(10, 16, 0x80)

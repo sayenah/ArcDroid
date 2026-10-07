@@ -194,10 +194,39 @@ static void extreme(unsigned model)
         ArcRpcVideoStatus v=status();
         assert(!api->faulted(NULL) && v.fields>0 && v.lines>0);
         assert(v.pixels<=v.lines*8u && v.bytes==v.pixels*4u);
-        assert(v.refresh_hz<= (model==3?120000000.0:100000000.0)/(8.0*8193.0));
+        assert(v.refresh_hz<=120000000.0/(8.0*8193.0));
         api->stop();
     }
     puts("extreme HDER/HCR and VCO: bounded DMA/raster without session fault");
+}
+static void pixel_clock(unsigned model)
+{
+    bool (*advance)(uint64_t); LOAD(advance,"arc_rpc_test_advance");
+    for(unsigned clock=0;clock<3;++clock) {
+        const uint64_t hz=clock==0?108000000u:120000000u;
+        const uint64_t line_numerator=UINT64_C(1688)*1000000000u;
+        start(model,&rpc_clock_guests[model][clock]);
+        ArcEngineFrame f=frame(); ArcRpcVideoStatus v=status();
+        assert(v.fields==1 && v.raster==0);
+        assert(f.refresh_hz==(double)hz/(1688.0*1066.0));
+        ArcRpcTestSnapshot before; snapshot_rpc(&before);
+        /* Each edge is checked against the independent rational period,
+         * including its carried nanosecond remainder across the field. */
+        for(unsigned line=1;line<=32;++line) {
+            uint64_t previous=(1066u+line-1u)*line_numerator/hz;
+            uint64_t next=(1066u+line)*line_numerator/hz;
+            assert(advance(next-previous-1u));
+            assert(status().raster==line-1u && status().lines==v.lines+line-1u);
+            assert(advance(1));
+            assert(status().raster==line && status().lines==v.lines+line);
+        }
+        (void)frame();
+        ArcRpcTestSnapshot after; snapshot_rpc(&after);
+        assert(after.now_ns-before.now_ns==2132u*line_numerator/hz-1066u*line_numerator/hz);
+        assert(!api->faulted(NULL));
+        api->stop();
+    }
+    puts("pixel-clock: exact 108/120 MHz line and field timing; excessive PLL bounded");
 }
 static unsigned av_count,geometry_count,video_count,rejected;
 static bool reject;
@@ -284,6 +313,7 @@ int main(int argc,char **argv)
     LOAD(bus_ns,"arc_rpc_test_video_bus_ns");LOAD(snapshot_rpc,"arc_rpc_test_snapshot");LOAD(read_ram,"arc_rpc_test_read_ram");
     LOAD(fail_alloc,"arc_rpc_test_fail_alloc");LOAD(engine_api,"arc_rpc_test_engine_api");api=engine_api();
     if(!strcmp(argv[2],"--extreme"))extreme(model);
+    else if(!strcmp(argv[2],"--pixel-clock"))pixel_clock(model);
     else if(!strcmp(argv[2],"--fault-silence"))fault_silence(model);
     else if(!strcmp(argv[2],"--scroll"))scroll(model);
     else if(!strcmp(argv[2],"--frontend"))frontend(model);

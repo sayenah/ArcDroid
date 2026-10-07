@@ -101,11 +101,10 @@ static void pixel_clock(uint64_t *num, uint64_t *den)
         *den = (vidc.synth & 63u) + 1u;
     }
     *den *= ((vidc.control >> 2) & 7u) + 1u;
-    /* Out-of-range PLL programming cannot create an unbounded physical
-     * pixel clock. Saturate the garbage display at the device ceiling:
-     * VIDC20 DDI 0030E feature summary 100 MHz; ARM7500 DDI 0050C 8.2.4
-     * 120 MHz. Normal clocks retain their exact rational value. */
-    uint64_t ceiling = machine.model == Model_A7000 ? 120000000u : 100000000u;
+    /* Bound out-of-spec PLL programming at 120 MHz on every model, above
+     * software's 108/110 MHz Risc PC modes. Clocks within the bound retain
+     * their exact rational value; the event budget is sized for 120 MHz. */
+    uint64_t ceiling = 120000000u;
     if (*num > ceiling * *den) { *num = ceiling; *den = 1; }
 }
 static void video_arm_line(void)

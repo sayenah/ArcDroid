@@ -172,6 +172,7 @@ fdc_write(uint32_t addr, uint32_t val)
 			uint8_t physical[4];
 			memcpy(physical, fdc.physical, sizeof(physical));
 			fdc_reset(); /* Abort pending parameters/results/DMA. */
+			fdc.status = 0; /* DOR holds reset until bit 2 is released. */
 			memcpy(fdc.physical, physical, sizeof(physical));
 		}
 		motoron = val & 0xf0;

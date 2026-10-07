@@ -2,13 +2,21 @@
 #include "rpc_namespace.h"
 #include "rpcemu.h"
 #include "fdc.h"
+#include <stdbool.h>
 
 /* rpcemu.h defaults NDEBUG on in release builds; test assertions stay live. */
 #undef NDEBUG
 #include <assert.h>
 
 struct iomd iomd;
-void updateirqs(void) {}
+static unsigned irq_rises;
+static bool irq_level;
+void updateirqs(void)
+{
+   bool level = (iomd.irqb.status & IOMD_IRQB_FLOPPY) != 0;
+   if (level && !irq_level) ++irq_rises;
+   irq_level = level;
+}
 
 static void command(uint8_t opcode, const uint8_t *parameters, unsigned count)
 {
@@ -88,9 +96,30 @@ int main(void)
    }
    command(0x46u, data, 3u);
    fdc_write(0x3f2u, 0u);
-   assert(fdc_read(0x3f4u) == 0x80u && !fdccallback);
+   unsigned rises = irq_rises;
+   assert(fdc_read(0x3f4u) == 0 && !fdccallback);
+   /* DOR reset is held indefinitely, with no FIFO command or result. */
+   command(0x04u, drive, sizeof(drive));
    command(0x4au, drive, sizeof(drive));
-   result(7u, 0x40u, 5u);
+   command(0x0eu, NULL, 0);
+   command(0x08u, NULL, 0);
+   assert(fdc_read(0x3f4u) == 0 && fdc_read(0x3f5u) == 0);
+   assert(!fdccallback && irq_rises == rises && !irq_level && !iomd.fiq.status);
+   fdc_write(0x3f2u, 0x18u); /* Still held, motor enabled. */
+   assert(fdc_read(0x3f4u) == 0 && !fdccallback);
+   fdc_write(0x3f2u, 0x1cu);
+   assert(fdc_read(0x3f4u) == 0 && fdccallback == 500 && !irq_level);
+   command(0x04u, drive, sizeof(drive));
+   assert(fdccallback == 500 && irq_rises == rises);
+   fdc_callback();
+   assert(fdc_read(0x3f4u) == 0x80 && irq_level && irq_rises == rises+1);
+   for (unsigned i = 0; i < 4; ++i) {
+      command(0x08u, NULL, 0); result(2, 0xc0 | i, 0);
+      assert(!irq_level && irq_rises == rises+1);
+   }
+   command(0x08u, NULL, 0); result(1, 0x80, 0);
+   assert(!irq_level && irq_rises == rises+1);
+   command(0x04u, drive, sizeof(drive)); result(1, 0x28, 0); /* head remains at 2 */
    /* SMC reset/readiness: all FIFO writes in the 500 us reset window are
     * rejected, not allowed to consume the scheduled reset callback. */
    const uint8_t control[] = {0x03, 0x04, 0x13, 0x08, 0x0e};

@@ -124,6 +124,19 @@ def extreme_program(model, fast):
     g.emit(0xeafffffe)
     return g.w
 
+def pixel_clock_program(model, clock):
+    # Small visible area with VESA 1280x1024-class total timing. PLL values
+    # give exactly 108/120 MHz, or deliberately excessive 1536/2048 MHz.
+    g = Guest()
+    g.v(0x83000000); g.v(0x84000020)
+    g.v(0x93000002); g.v(0x9400000a)
+    g.v(0x80000000 | (1688-8)); g.v(0x90000000 | (1066-2))
+    synth = ((0x1a07, 0x0e03, 0x3f00) if model == 3 else
+             (0x0801, 0x0400, 0x3f00))[clock]
+    g.v(0xd0000000 | synth); g.v(0xe0000060)
+    g.emit(0xeafffffe)
+    return g.w
+
 def cases():
     out=[]
     for w,h in [(320,256),(640,480),(800,600)]:
@@ -155,6 +168,14 @@ def main():
     out.append('static const struct RpcVideoGuest rpc_extreme_guests[4][2]={')
     for model in range(4):
         out.append('{'+','.join(f'{{"extreme",16382,8191,6,0,rpc_extreme_{model}_{fast},sizeof(rpc_extreme_{model}_{fast})/4}}' for fast in range(2))+'},')
+    out.append('};')
+    for model in range(4):
+        for clock in range(3):
+            words=pixel_clock_program(model, clock)
+            out.append(f'static const uint32_t rpc_clock_{model}_{clock}[]={{'+','.join(f'0x{x:08x}u' for x in words)+'};')
+    out.append('static const struct RpcVideoGuest rpc_clock_guests[4][3]={')
+    for model in range(4):
+        out.append('{'+','.join(f'{{"pixel-clock",32,8,3,0,rpc_clock_{model}_{clock},sizeof(rpc_clock_{model}_{clock})/4}}' for clock in range(3))+'},')
     out.append('};')
     for model in range(4):
         words=program(model,32,8,3,0,'plain')[:-1]
