@@ -1,8 +1,8 @@
 # ArcDroid Handoff
 
-**Stage:** IMPLEMENTATION — roadmap item 6, RiscPC R1 (D-131, D-137)
-**Owner:** Sol
-**Next:** Sol implements the **RiscPC R1 work order below** on branch `slice/r1-rpcemu-import` from `main` (this baton's merge) — run A: the pristine allowlist only (scope 1), committed verbatim by Fable after verification; run B onward: everything else — then one PR with the evidence the order requires. Fable then reviews the diff and runs AC-3 (private A/B), the AC-5 macOS/Odin3 legs, AC-7 and AC-8 before Opus QA. The RPCEmu 0.9.5 tarball (sha256 `4e4624…d59e`) is placed by Fable outside the repository and named in the Sol prompt. Slice order (D-133): R1–R4 → item 5 release baseline → item 6b faster CPU translator → item 8 save states. Carried: follow-up Lows (below); Slice 23 residuals; physical-stick feel on the Odin3 (Founder check).
+**Stage:** QA — roadmap item 6, RiscPC R1 (D-131, D-137)
+**Owner:** Opus
+**Next:** Opus QA (Claude Opus 5.5, effort **high or above**, fresh clone) of **PR #312** (`slice/r1-rpcemu-import`, head `abe833a`) against the **RiscPC R1 work order below** and the *R1 implementation record* section: review the whole diff from `30c7c5c` (pristine commit `fe96e41` must stay byte-identical to the tarball — check with `tools/check-rpcemu-import.py`), run the RPC tests and guards, and attack the QA focus list. No private firmware is needed for QA; Fable's private/device evidence is recorded below. Slice order (D-133): R1–R4 → item 5 release baseline → item 6b faster CPU translator → item 8 save states. Carried: follow-up Lows (below); Slice 23 residuals; physical-stick feel on the Odin3 (Founder check).
 
 **Item 5 grounding (S55, paused at a safe point: nothing committed, no branch).** `main` `c725bd6`: CI builds Android arm64 only, which is the whole Android target (D-135: no armeabi-v7a); the `.info` is copied into the build tree (`configure_file`) and installed by `install(FILES …)` but no CI artifact bundles core + `.info` + `COPYING` + `THIRD_PARTY_NOTICES.md`; the version lives in three places (`project(… VERSION 0.1.0)`, `ARCDROID_VERSION` fallback in `libretro/arcdroid_libretro.c:28`, `display_version` in `arcdroid_libretro.info`). (armeabi-v7a was found to build unmodified, but is out of scope by D-135.) Android devices: the Odin3 (`arm64-v8a` only) and a second Snapdragon 8 Gen 2 device (Founder S55). No shipping source uses `__FILE__`/`__DATE__`/`__TIME__` or a runtime `assert` (the Slice 8 note on embedded paths is unverified — check with a two-path build comparison). The GPL corresponding-source mechanism for distributed binaries (D-016) stays tied to publication (D-100). Scratch: S55 scratchpad `s55/` (`a/`, `second-checkout-b/` clones, `build-android.sh`).
 
@@ -54,6 +54,68 @@
 **Deterministic evidence required from Sol.** CTest names for AC-4/5/6 and the import/symbol/closure checkers wired into every applicable CI job; sanitizer runs; trace goldens and ROM generators; the AC-8 workload generator; plan-format documentation; runner and Android test-core build commands; a report listing every upstream fatal/exit/error/assert/allocation site and its disposition, every patch with its reason, and the bounds chosen.
 **QA focus.** Symbol, include-path or state leakage between engines; any remaining process-exit or frontend-shutdown path; unwinding across frontend callbacks; host-clock or pacing leakage into guest order; scheduler re-arm and tie order; MMU fast-path bypasses; VIDC20 clipping versus DMA progression; audio accounting under frontend pressure; Arculator regressions from the boundary move; dormant-boundary leaks into the shipping core; provenance completeness.
 **Roles.** Sol: scope 1–10, AC-1…AC-6 evidence. Fable: review, AC-3 private A/B, AC-5 macOS/Odin3 legs, AC-7, AC-8. Opus QA after Fable review.
+### R1 implementation record (S56; PR #312 at `abe833a`)
+**Commits (each Sol run committed verbatim by Fable):**
+
+| Commit | Content |
+|---|---|
+| `fe96e41` | pristine allowlist (28 files, verified byte-identical to the tarball) |
+| `0248a02` | B: dispatcher, guards, scheduler, empty FDC |
+| `2cb4cb1` | C: CPU/MMU/memory, CMOS/RTC, Arculator `ldrresult` UB fix |
+| `1d2e978` | C2: contained session in both cores, Arculator power-on reset of CPU credit, MEMC DMA, VIDC raster phase |
+| `26322d0` | D1: line scanout |
+| `de46041` | D2: audio, input, factory CMOS |
+| `8f22285` | D3: plan route, runner, goldens, AC-8 workload, B-1 boundary fix |
+| `2286564` | E: Arculator FPA `atexit` once per library |
+| `2f2d82a` | E2 |
+| `9046425` | F: scheduler/MMU fast paths, keyboard held-reset, board CMOS gate, guard and import fixes, frame dump |
+| `411a244` | F6: sanitizer-only 900 s harness timeout |
+| `07485a9` | F7: Windows depfile parsing |
+| `6268104` | F8: SMC/82077 empty-drive semantics |
+| `abe833a` | F9: IOMD VIDCR reads return the written state |
+
+**Sol threads:** A/B `01a11226-c998-72a0-81a4-cee070019313`; C `01a1126b-…`; C2 `01a11289-…`; D1 `01a112d6-…`; D2 `01a112f9-…`; D3 `01a1132a-…`; E `01a11365-…`; E2 `01a1157a-…`; F `01a115bf-…`.
+
+**CI:** host, host-sanitizers (Linux ASan+UBSan+LSan), windows (native, all tests), windows-retroarch and android-arm64 are all green at `6268104`. At `abe833a` (F9 changes only `engine/rpcemu/src/iomd.c`, tests, CMake and notices) five jobs are green and host-sanitizers is pending at this baton.
+
+**Fable evidence (private; S56 scratchpad `fable/`, `ab/`):**
+- **AC-3 PASS** at `6268104`.
+  - Method: `main` `30c7c5c` vs R1 on 44 representative library titles (every fifth index, 0–215), real boot 150 s, screenshots at 30/60/90/120/150 s, with and without the ADFFS 2.88 package.
+  - Result: 42/44 identical in both states. The two differences, indices 105 and 205, are run-to-run variance, proven by a `main`-vs-`main` rerun that differs at the same shots.
+  - F9 touches no Arculator or frontend code, so this carries to `abe833a`.
+- **AC-5 PASS** at `abe833a`. 36 predeclared authored plans × 120 frames: macOS flat = macOS burst = Odin3 arm64, byte for byte, and identical to the first references at `2286564`. Remediation runs F–F9 changed no authored guest trace.
+- **AC-7 PASS** with two qualifications.
+  - **Factory seeds.** Captured for 3.71 SA-110/ARM710/A7000, 3.70 SA-110, 3.60 ARM710/A7000 and 3.50 ARM610. Each wrote 544–556 bytes covering all 240 configuration bytes; 3.50 leaves bytes 194–195 unwritten.
+  - **Desktop.** Every pair reaches the Desktop at default rates. The startup message "Machine startup has not completed successfully: 'Disc error 08 at :4/…'" appears at 60–90 s; this is the hardware-faithful no-hard-disc outcome, because the factory CMOS boots from IDE `:4` and the readiness poll times out.
+  - **Input.** Escape cancels the message; the quadrature (Risc PC) and PS/2 (A7000) mice move the pointer; F12 + `help` + Return prints `*Help` correctly on SA-110 and A7000 after F9. Repeat runs are deterministic.
+  - **Odin3 RetroArch 1.22.2.** The plan core was installed through Install or Restore a Core; 3.71 SA-110 reached the Desktop message at 100 MIPS; a gamepad press (A → Return) reached the guest (Retry restarted the boot); QUIT gave a clean exit with 0 `[ERROR]` and peak PSS 180 MB; a relaunch with the same plan reached the same Desktop message, then exited cleanly with 0 `[ERROR]` and peak PSS 170 MB. RetroArch was closed afterwards.
+  - **Qualification 1 — SA-110 seeds captured at 20 MIPS.** See residual R1-1 below.
+  - **Qualification 2 — no native macOS/Windows RetroArch leg.** No RetroArch on the Mac. CI windows-retroarch runs the Arculator scenario only. The RPC plan core was exercised natively on Windows by CTest, not through RetroArch.
+- **AC-8 PASS** at `abe833a`, Odin3:
+  - setup: the predeclared authored workload, SA-110 at 100 MIPS, 120 s warm-up + 600 s measured, realtime pacing;
+  - result: 35,813 frames, p95 0.702 T, p99.9 0.707 T, max 13.24 ms, 0 frames over T;
+  - device: CPU 32 → 45.5 °C at maximum frequencies, AC power, walt governor.
+  - The first run at `2286564` failed at 1.42 T. A profile showed about 35 % scheduler overhead and 18 % MMU slow path, which F fixed (about 2× faster); the guest traces stayed identical.
+
+**Fable rulings this slice:**
+1. Arculator `ldrresult` UB fixed as a marked, behaviour-preserving patch.
+2. Arculator machine recreation starts from power-on CPU credit, MEMC DMA and VIDC raster phase. Before, these leaked from the destroyed session; first loads are unchanged and the existing harness passes.
+3. Arculator FPA `atexit` is registered once per library.
+4. The sanitizer-only 900 s `libretro-harness` timeout is needed because Arculator objects are now instrumented.
+5. The absent-IDE contract (status 0, no device) stands: it is hardware-faithful, since the firmware times out to the Desktop.
+6. AC-8 is measured as an absolute budget.
+
+**Residual R1-1 (carried, required for R2).** On SA-110 at 100 MIPS the firmware misses the held-Delete factory reset: it makes only 14 incidental writes. ARM610/710/7500 at their rates and SA-110 at 20 MIPS reset fully. A real StrongARM Risc PC resets, so this is a rate-dependent keyboard or boot timing fidelity gap. R2 owns CMOS defaults and generation (§4.9) and must resolve it with no silent capture-only rate.
+
+**QA focus (in addition to the order's):**
+- Is the F9 VIDCR readback change correct per the IOMD datasheet, given that RPCEmu forced bits `0x50`?
+- F8's FDC rework against the 82077/SMC semantics, and its interaction with R2's media bridge.
+- F's keyboard reset changes, which rescan held keys and restore scanning after ACK/BAT, and the modelled board CMOS-protection latch.
+- The scheduler's cached next deadline.
+- The symbol guard's toolchain allowlists (ELF GOT, GCC ASan/UBSan, glibc `__*_chk`, Apple ASan): make sure they cannot hide an engine symbol.
+- The scope of the three Arculator lifecycle patches.
+- The dormant boundary: confirm no shipping path reaches RPCEmu.
+
 **Unit P work order:** closed (D-131); in git history (`docs/handoff.md` at `cd32872`).
 
 **Unit P progress (S52, private evidence `scratchpad/solP/clone/SOL-REPORT-P.md` and `probe/riscpc/run/`).** Mac, RISC OS 3.71: AC-5 PASS (seven firmware/CPU pairs to the desktop, keyboard and per-model mouse); host CTest 3/3 also under ASan/UBSan (473 mechanism, 47 controller checks); authored 600 s replay identical across pacing; **031 installs onto the scratch IDE and reaches active racing**; **110 reaches gameplay** (a transient HUD distortion during movement is unclassified); 074/084 install their discs but their shared support installer needs the standard `!Boot`. Fable rulings (general, never title-specific): **R3-1** every session's cold CMOS is the firmware's own Delete-power-on factory reset (all-zero CMOS was unrepresentative); **R4-1** a project-authored multisync monitor definition file (from Acorn/VESA published timings) loaded by a project-authored boot step — without an MDF RISC OS 3.5+ refuses every mode selector; **R5-1** the standard boot sequence from RISC OS Open's Apache-2.0 HardDisc4 (sha256 `28613a8e…`) plus its `!System` resources (PlingSystem, sha256 `0259063d…`), merged as RISC OS Open documents for pre-RISC OS 5 machines — private to the trial; whether ArcDroid may ship or fetch them was answered by D-134: never — user-supplied in the system folder. No AC-7 calibration, cross-platform build or AC-8 tooling yet.
