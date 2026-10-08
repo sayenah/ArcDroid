@@ -52,6 +52,11 @@ def expected(model,case):
 
 def header(path):
     out=['/* Authored packed video path guests. GPL-2.0-only. */']
+    # First 16 stored pixels of row 1 in the right-edge guest. Its 2064-byte
+    # scanline advances the declared repeating stream by 16 modulo 32.
+    data=b''.join(w.to_bytes(4,'little') for w in PATTERN)
+    prefix=[0xff000000|data[(CASES[-1][1]+x)%len(data)]*0x010101 for x in range(16)]
+    out.append('static const uint32_t rpc_path_row1_prefix[16]={'+','.join(f'0x{x:08x}u' for x in prefix)+'};')
     for model in range(4):
         for i,case in enumerate(CASES):
             words=program(model,case)

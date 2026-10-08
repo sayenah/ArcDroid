@@ -166,6 +166,21 @@ static void scroll(unsigned model)
     }
     api->stop();
 }
+static void pending_row(const ArcEngineFrame *f)
+{
+    /* Between rows, the following row must retain the preceding field's
+     * pixels. All reads stay inside the allocation. This catches cropped
+     * quad writes even when later rows/heap padding hide the overrun. */
+    bool (*advance)(uint64_t); LOAD(advance,"arc_rpc_test_advance");
+    ArcRpcVideoStatus s=status();assert(s.raster==0&&s.fields==1);
+    for(unsigned x=0;x<16;++x)assert(pixel(f,x,1)==rpc_path_row1_prefix[x]);
+    unsigned steps=0;
+    do { assert(advance(100));s=status();assert(++steps<=4000); } while(s.raster<3);
+    /* VDSR=2: raster 3 draws row zero; raster 4 has not drawn row one.
+     * HCR+8=2400 at 24 MHz gives one line every 100,000 ns. */
+    assert(s.raster==3&&s.fields==1);
+    for(unsigned x=0;x<16;++x)assert(pixel(f,x,1)==rpc_path_row1_prefix[x]);
+}
 static void paths(unsigned model)
 {
     for(unsigned i=0;i<4;++i){
@@ -176,7 +191,9 @@ static void paths(unsigned model)
             g->name,f.width,f.height,f.refresh_hz,(unsigned long long)hash(&f),
             (unsigned long long)s.pixels,(unsigned long long)s.wraps,
             (unsigned long long)s.transfers,(unsigned long long)bus_ns());
-        assert(s.fields==1 && logs==(g->width>2048));api->stop();
+        assert(s.fields==1 && logs==(g->width>2048));
+        if(!strcmp(g->name,"right-edge"))pending_row(&f);
+        api->stop();
     }
 }
 

@@ -204,6 +204,17 @@ byte lanes select different indices, zero preserves background, and indices
 1/2/3 produce red/green/blue. `right-edge` consumes 2064×2048 guest pixels
 while storing 2048 columns, checking every stored pixel through a canonical
 FNV hash. Its last row also exercises the allocation boundary under ASan.
+The same right-edge guest also checks row 1 before and after row 0 of the next
+field is sampled. At raster 3 (VDSR=2), row 1 has not been redrawn and must keep
+its preceding field's first 16 pixels: the declared stream at byte offsets
+2064..2079, indices 16..31 modulo the 32-byte pattern. HCR+8=2400 at 24 MHz
+gives 100,000 ns per line; 100 ns test slices stop at raster 3 before raster 4.
+All inspected pixels are inside the allocated presentation. V9 writes row
+zero's discarded columns 2048..2063 over this prefix, using pattern indices
+0..15 instead. This detects V9 on Windows even when heap padding tolerates its
+last-row overrun and subsequent row clearing hides earlier corruption from
+the final-field hash. The first-field golden and guest instruction stream
+remain unchanged; no allocator crash is required for this observation.
 Counts and hashes come from the independent generator, never renderer output.
 Existing goldens are unchanged. Every new case is in CTest and CI's `rpc-.*`
 sanitizer selection.
