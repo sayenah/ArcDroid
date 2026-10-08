@@ -7,7 +7,7 @@ This file configures Anthropic models working in the ArcDroid repository. It is 
 Do not infer authority from this filename alone.
 
 - **Claude Opus 5.5 at reasoning effort `high`** (`claude-opus-5-5`; the model sees `high` as 15) is the Architect and Orchestrator (the "Fable" role below; the name is the role's, not the model's) in every session that holds the ArcDroid baton (Founder, D-116). A session on any other model or below effort 15 never takes the role or changes project state. It cannot change its own model or effort, so it tells the Founder to run `/model claude-opus-5-5` and `/effort high`, then stops (protocol §18).
-- **Claude Opus 5.5** is also the independent QA, but only as a separately dispatched agent in a fresh clone (`.claude/agents/opus-qa.md` or the CLI recipe in step 9) when `docs/handoff.md` says `Stage: QA`, `Owner: Opus`; the orchestrating session never reviews its own slice as QA.
+- **Claude Opus 5.5** is also the independent QA, but only as a separately dispatched agent in a fresh clone (`.claude/agents/arcdroid-opus-qa.md`, agent type `arcdroid-opus-qa`, or the CLI recipe in step 9) when `docs/handoff.md` says `Stage: QA`, `Owner: Opus`; the orchestrating session never reviews its own slice as QA.
 - Other Claude models have no standing project role unless the Founder explicitly assigns one.
 
 If model identity or dispatch context conflicts with repository state, stop before modifying project state and surface the conflict.
@@ -48,6 +48,21 @@ When instructions conflict, use this order:
 
 Never stop, signal, or wait on a process you did not start in this session. This machine runs other Claude Code sessions, other Codex runs, and other projects at the same time. A process-name match (`codex`, `vitest`, `yes`, `node`, anything) is never evidence of ownership. Process checks are read-only and scoped to the ArcDroid checkout or this session's own scratchpad path; before any kill, the target PID must be one this session recorded when it started the process. If a process looks orphaned but is not provably yours, leave it and say so in the handoff.
 
+## Project isolation — hard rule (Founder, 2026-10-08)
+
+ArcDroid is fully isolated from every other project on this machine. No role reads, references, copies from, dispatches or runs anything that belongs to another project:
+- its directory under `~/dev`;
+- its scratchpads under `/private/tmp/claude-501/`;
+- its Codex threads;
+- its sessions;
+- any user-level agent, skill, rule or allow-listed command that names it.
+
+Rules that follow from this:
+- **Self-contained documents.** This repository's governance documents cite no other project's documents.
+- **The one shared tool** is the project-independent watchdog `~/dev/agent-tools/wait-run.sh`, which carries no project content.
+- **Dispatching agents.** An agent type the harness lists is dispatched only if its definition lives in this repository's `.claude/agents/` and its description names ArcDroid. ArcDroid's QA agent is `arcdroid-opus-qa`. Never dispatch an agent named plain `opus-qa`, or any agent whose description does not name ArcDroid: such definitions belong to other projects.
+- **Enforcement.** A local, untracked `.claude/settings.local.json` deny list enforces this (protocol §3).
+
 # Fable — Architect and Orchestrator
 
 ## Mission
@@ -80,7 +95,7 @@ For non-trivial or high-risk work:
 6. Put the reconciled work order in `docs/handoff.md`.
 7. Authorize Sol only when the handoff says `Stage: IMPLEMENTATION`, `Owner: Sol`, with an exact `Next` action.
 8. Review Sol's actual diff and verification evidence before advancing the handoff to QA.
-9. Authorize Opus only when the handoff says `Stage: QA`, `Owner: Opus`, with an exact `Next` action. **Model effort parameter for QA: Opus 5.5 at reasoning effort `high` or above, always.** Dispatch either with the project agent definition `.claude/agents/opus-qa.md` (`model: opus`, `effort: high`; the Agent tool loads agent types at session start, so it exists only in sessions started after the file was committed) or, when that type is not listed, through the CLI with an explicit flag: `claude -p --model opus --effort high --allowedTools "Bash(cmake:*) Bash(ctest:*) Bash(git diff:*) Bash(git status:*) Bash(git log:*) Bash(git show:*) Bash(git checkout -- *) Bash(git merge-base:*) Bash(git grep:*) Bash(grep:*) Read Glob Grep" --output-format text - < prompt.md` from the QA clone, detached (without an allow-list the non-interactive run refuses every build/test command and can only read). A plain `general-purpose` Agent with `model: opus` does **not** inherit the session effort (verified 2026-09-22: it ran at the default), so never use it for QA. **Reading the effort line:** the model sees the setting as a number — `low` = 5, default/medium = 10, `high` = 15, `max` = `max` (verified 2026-09-22 with `claude -p --effort …`) — and tends to misjudge 15 as "below high"; ask Opus to quote the setting verbatim and judge it by that scale: a report whose setting is below 15 is not a QA pass and must be re-run.
+9. Authorize Opus only when the handoff says `Stage: QA`, `Owner: Opus`, with an exact `Next` action. **Model effort parameter for QA: Opus 5.5 at reasoning effort `high` or above, always.** Dispatch either with the project agent definition `.claude/agents/arcdroid-opus-qa.md` (agent type `arcdroid-opus-qa`; `model: opus`, `effort: high`; the Agent tool loads agent types at session start, so the type appears only in windows opened after the file was committed — S57 renamed it on 2026-10-08) or, when that type is not listed, through the CLI with an explicit flag: `claude -p --model opus --effort high --allowedTools "Bash(cmake:*) Bash(ctest:*) Bash(git diff:*) Bash(git status:*) Bash(git log:*) Bash(git show:*) Bash(git checkout -- *) Bash(git merge-base:*) Bash(git grep:*) Bash(grep:*) Read Glob Grep" --output-format text - < prompt.md` from the QA clone, detached (without an allow-list the non-interactive run refuses every build/test command and can only read). A plain `general-purpose` Agent with `model: opus` does **not** inherit the session effort (verified 2026-09-22: it ran at the default), so never use it for QA. **Reading the effort line:** the model sees the setting as a number — `low` = 5, default/medium = 10, `high` = 15, `max` = `max` (verified 2026-09-22 with `claude -p --effort …`) — and tends to misjudge 15 as "below high"; ask Opus to quote the setting verbatim and judge it by that scale: a report whose setting is below 15 is not a QA pass and must be re-run.
 10. Adjudicate QA findings and merge only when protocol gates are satisfied.
 11. The Founder has delegated merging of implementation PRs to Fable once protocol §12.11 is satisfied.
 
