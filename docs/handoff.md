@@ -1,22 +1,28 @@
 # ArcDroid Handoff
 
-**Stage:** QA — roadmap item 6, RiscPC R2a (memory timing + CMOS)
-**Owner:** Opus
-**Next:** **Opus QA (`arcdroid-opus-qa`, effort high) of PR #317**, branch `slice/r2a-timing-cmos` at the head Fable names in the dispatch (code head `d65a8a6` plus a merge of `main`).
+**Stage:** IMPLEMENTATION — roadmap item 6, RiscPC R2a, run E (QA remediation)
+**Owner:** Sol
+**Next:** Sol R2a **run E** on `slice/r2a-timing-cmos` (PR #317), remediating the validated Opus QA findings below; then the Opus QA re-check continues the same `arcdroid-opus-qa` agent.
 
-**Scope:** R2a items 1–4 and AC-1, AC-2, AC-6 and AC-7 of the R2 work order below, as amended by:
-- the contract rulings;
-- G7;
-- R-D1;
-- ruling R-H below (D-140).
+**Opus QA (effort 15, `arcdroid-opus-qa`) at `0494b8c`: FAIL.** One HIGH; everything else is a test gap or Low. Fable's adjudication — all validated, all go to run E:
+- **HIGH-1 (defect): a torn or empty CMOS `.tmp` candidate blocks publication for good.** Cause: a kill or short write while the candidate is written leaves it there, and `load`/`put` then refuse the store (`libretro/rpc_cmos_store.c:94-132`). One of two things follows:
+  - a new game cannot start;
+  - an existing one never persists again.
 
-**QA focus:**
-- **Timing contract:** fidelity of `engine/rpc/rpc_mem_timing.c` to `docs/riscpc-timing.md`, and independence of `tests/rpc_timing_oracle.py` from the core.
-- **R1 golden deltas:** the explanations behind every revised R1 RPC golden.
-- **Run-D optimisations:** they must stay exact, including the `vidc20.c` render changes.
-- **CMOS store:** crash safety, key isolation, refusal paths, and the oracle's negatives.
-- **Plan route:** v1 byte-for-byte; the confined `--save` VFS.
-- **Isolation:** the dormant boundary, the symbol guard, and no Arculator change.
+  Fix: a `.tmp` that does not decode as a complete, verified candidate for this key is an abandoned candidate. It is ignored at load, overwritten at the next publication, and never refuses the store. Required tests: a kill at every write step followed by a **successful later publication** (QA cases A, B and C, `scratchpad/s57/qa/repro/torn_tmp.c`).
+- **MEDIUM-1 (risk): the default-cache key omits the generation RTC epoch.** Ruling: generation uses a **fixed, procedure-defined RTC epoch**, independent of the plan or content, recorded in provenance. The generation-procedure revision is bumped to 3, so defaults never depend on which game generated them first.
+- **MEDIUM-2, -3, -4, LOW-1, -2, -3 (test gaps): add the calibrations the contract requires.** Each must kill the named QA mutant:
+  - write-buffer capacity and slot release (contract §6.2 K=1/2/8/9/32 and the third, fifth and ninth stall boundaries; M02–M05, M38);
+  - SA-110 clock-switch disable (§6.3; M08, M10);
+  - cache-hot DMA contention (§6.3/§2.6: hot ALU, LDM/STM, full write buffer, idle; M21);
+  - an oracle negative for full mask, stable, but bad checksum (LOW-1);
+  - authored non-uniform 8bpp, cursor and right-edge VIDC20 goldens (LOW-2: V1, V2, V4, V6, V9);
+  - the 1 KiB restart inside a bank, and SA I-cache allocation with M=0 (M14, M23);
+  - store defence checks: slot parity, header model, reserved bytes, candidate readback, epoch bound (C05, C07, C10, C11, C14).
+- **Suggestions taken:**
+  - `tests/rpc_session_test.c:98`: restore equality, or justify the `<` against the timeline;
+  - the refused-store notice: once per state change, not every frame;
+  - compute the hard-coded A7000 video and oracle refill constants, if cheap.
 
 **Ruling R-H (S57; D-140), Odin3 host-cost gate.** The hot-throughput half of stop rule 5 ("sustains real time at the 100 MIPS ceiling") is replaced by **"no slower than `main` on the same device"**.
 - **Why:** on the Odin3, `main` (R1 flat timing) itself reaches p95 **1.10 T** on that cache-hot workload, so the absolute clause was never met before R2. A pure cache-hot loop at a full 100 MIPS is beyond the R1 interpreter: that is item 6b's job. D-131's budget rests on gameplay (≈ 67 % of each frame).
@@ -33,7 +39,7 @@
   - no package: 42 of 44 identical, with 105 and 205 differing (known variance);
   - with the package: 43 of 44 identical, with 205 differing (known variance).
 - **Odin3 gates:** above.
-- **AC-2, `*Configure` survives a fresh process:** in progress at this baton.
+- **AC-2, `*Configure` survives a fresh process: PASS.** In session 1, `*configure floppies 2` rewrites a record slot; a fresh process then shows "Floppies 2" and a `:1` drive. The roughly 60 s from the absent-IDE dialog to the desktop is identical on `main` (R1), so it is not an R2a regression.
 
 **Done:**
 - **Run A** (`7bd1f27`): the timing contract.
