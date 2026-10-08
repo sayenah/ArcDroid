@@ -1,8 +1,22 @@
 # ArcDroid Handoff
 
-**Stage:** QA — roadmap item 6, RiscPC R2a (re-check after run F)
-**Owner:** Opus
-**Next:** **Opus QA re-check** of PR #317 at `847a1ff` (run F, test-only: oracle geometry plus discriminating calibrations; M39 and M40 killed; Sol: host 324/324, sanitizer `rpc-.*` 131/131). It continues the same `arcdroid-opus-qa` agent.
+**Stage:** IMPLEMENTATION — roadmap item 6, RiscPC R2a, run G (Windows CI + QA LOW-1)
+**Owner:** Sol
+**Next:** Sol R2a **run G** on `slice/r2a-timing-cmos` (PR #317). Two parts:
+
+1. **Make the CI `windows` job green.** It has failed since run B on R2a's new tests. Host, sanitizer and Android builds are green. The failures at `9dc72e8`, run 37819147850:
+   - `rpc-memory-timing-0..3` crash at `tests/rpc_timing_test.c:37` (`assert(p)`, a missing exported test symbol);
+   - `rpc-qa-mutations` fails;
+   - 16 `rpc-cmos-plan-*-{full,ro350,reset,delayed}` tests fail at `tests/rpc_cmos_plan_test.c:114` (`assert(p)`) and `:124` (`accepted`).
+
+   The likely cause is test-only symbols missing from the Windows export path, but Sol diagnoses it from the log. Fix it without weakening any test.
+2. **QA LOW-1 probes:** an ARM7500 fewer-ways probe (2-way vs 4-way), and an SA-110 16- vs 32-set probe for both I and D. Each must kill QA's surviving geometry mutants G2, G8 and G9.
+
+Then Fable checks that CI is green on the PR event, and a brief Opus re-check follows if production code changed.
+
+**Opus QA re-check (effort 15) at `9dc72e8` (run F): PASS WITH LOWS.**
+- MEDIUM-5 is resolved: the oracle geometry is correct, three independent calibrations were added, M39, M40 and G1/G3–G7/G10 are killed, and all other expectations are byte-identical.
+- LOW-1: same-capacity alternatives G2 (ARM7500 128×2) and G8/G9 (SA-110 32×16) survive. Production geometry is correct.
 
 **Opus QA re-check (effort 15) at `4a3ddff`: FAIL, narrow and test-only.** All original findings are resolved:
 - HIGH-1 passes 68 kill/fault scenarios.
