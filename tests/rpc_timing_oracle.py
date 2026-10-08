@@ -5,13 +5,14 @@ Constants and recurrences come from docs/riscpc-timing.md §§2–6.
 """
 from fractions import Fraction as F
 RATES = (20, 35, 100, 35)
-# docs/riscpc-timing.md §4.1: unified, 16-byte-line caches only.
+# docs/riscpc-timing.md §4.1: unified, 16-byte-line caches.
 UNIFIED_GEOMETRY = {0: (4, 64), 1: (128, 4), 3: (64, 4)}
+SA_GEOMETRY = (16, 32)  # each separate 32-byte-line cache
 
 class CyclicTags:
     """Independent declared set occupancy; touch accepts a virtual line number."""
     def __init__(self, model):
-        self.sets, self.ways = UNIFIED_GEOMETRY[model]
+        self.sets, self.ways = SA_GEOMETRY if model==2 else UNIFIED_GEOMETRY[model]
         self.tags = [[None]*self.ways for _ in range(self.sets)]
         self.victim = [0]*self.sets
     def touch(self, line):
@@ -60,6 +61,12 @@ def geometry_fills(c):
     """Warm only code (sets 1/2), visit data in set 0, then declared probes.
     Every fetch/load is included; hits leave the cyclic cursor unchanged.
     """
+    if c['model']==2:
+        # Code occupies a warmed, separate I line. D starts cold; setup's
+        # ROM loads are C=0 and the warm VC loads all fail.
+        tags=CyclicTags(2);data=0x20100000
+        lines=list(range(c['lines']))+list(c['probes'])
+        return sum(tags.touch((data+i*c['stride'])//32) for i in lines)
     tags = CyclicTags(c['model']); code = 0x10001010; data = 0x20100000
     for offset in range(0, 4*(4+len(c['probes'])), 4): tags.touch((code+offset)//16)
     fills = 0
@@ -72,6 +79,12 @@ def geometry_fills(c):
         fills += tags.touch((code+4*offset)//16)
         fills += tags.touch((data+line*c['stride'])//16)
     return fills
+
+def instruction_geometry_fills(c):
+    """SA I starts cold; follow the declared branch chain and revisit first."""
+    tags=CyclicTags(2);code=0x10008020
+    return sum(tags.touch((code+i*c['stride'])//32)
+               for i in list(range(c['lines']))+[0])
 
 def base(c):
     b = F(1000, c['rate'])
@@ -108,7 +121,10 @@ def duration(c):
     b = base(c); k = c.get('k', 1); n = c.get('n', 1)
     kind = c['kind']; a = addresses(c)
     if kind == 'geometry':
-        return (3*c['lines']+len(c['probes']))*b + geometry_fills(c)*ram(c, [0,4,8,12])
+        words=8 if c['model']==2 else 4
+        return (3*c['lines']+len(c['probes']))*b + geometry_fills(c)*ram(c, list(range(0,4*words,4)))
+    if kind == 'geometry-i':
+        return (c['lines']+1)*b + instruction_geometry_fills(c)*ram(c,list(range(0,32,4)))
     if kind=='hot-dma':
         from rpc_hot_dma_rom import calibration
         return calibration(c)[3]
@@ -174,6 +190,11 @@ def cases():
             sets, ways = UNIFIED_GEOMETRY[model]
             yield dict(d,kind='geometry',lines=ways+1,stride=sets*16,
                        probes=(1,0,1,3) if model==0 else (1,0),name='cache-geometry')
+        if model==3:
+            yield dict(d,kind='geometry',lines=3,stride=2048,probes=(0,),name='cache-geometry-fewer-ways')
+        if model==2:
+            yield dict(d,kind='geometry',lines=17,stride=1024,probes=(0,),name='cache-geometry-sa-data')
+            yield dict(d,kind='geometry-i',lines=17,stride=1024,name='cache-geometry-sa-instruction')
         for dram in ((True,) if model==3 else (True,False)):
             yield dict(d,kind='hot-dma',k=1000000,dram=dram,name='hot-dma-'+('dram' if dram else 'vram'))
         for k in (1,2,3,5,8,9,32):

@@ -53,8 +53,9 @@ def geometry_guest(c):
     Warm with V=1/Z=1, so VC transfers and the NE loop branch all fail.
     Measured SUBS never overflows: VC probes still execute after Z becomes 1.
     """
-    g=Guest();code=0x10001010;data=0x20100000
+    g=Guest();code=0x10001020 if c['model']==2 else 0x10001010;data=0x20100000
     g.literal(0,0x70);g.emit(0xee010f10);g.literal(0,0xd3);g.emit(0xe121f000)
+    if c['model']==2:g.emit(0xee0f0f51)
     if c['model']==3:g.store(0x0320003c,7)
     for section,physical,attr in ((0,0,0),(0x100,0x10000000,8),(0x201,0x10100000,8)):
         g.store(0x10004000+section*4,physical|0xc02|attr)
@@ -68,13 +69,27 @@ def geometry_guest(c):
     g.literal(0,0x10004000);g.emit(0xee020f10);g.literal(0,3);g.emit(0xee030f10)
     g.literal(9,data);g.literal(10,data);g.literal(5,c['stride']);g.literal(7,c['lines'])
     if 3 in c['probes']:g.literal(6,3*c['stride'])
-    g.literal(0,0x75);g.emit(0xee010f10)
+    g.literal(0,0x1075 if c['model']==2 else 0x75);g.emit(0xee010f10)
     g.literal(0,0x80000000);g.emit(0xe0900000) # ADDS two negatives: zero, Z=1/V=1
     ret=len(g.words)+2;g.literal(11,0);g.literal(12,code);g.emit(0xe1a0f00c)
     g.words[ret]=len(g.words)*4;g.steps+=len(body)
     g.emit(0xe3500001) # warm ADDS left r0=0; CMP #1 sets Z=0/V=0
     g.emit(0xe1a0f00c);first=g.steps+1
     return g.words,first,first+3*c['lines']+len(c['probes'])-1
+
+def instruction_geometry_guest(c):
+    """Cold SA RAM branch chain: same I set, then first line again. D off."""
+    g=Guest();code=0x10008020
+    g.literal(0,0x70);g.emit(0xee010f10);g.literal(0,0xd3);g.emit(0xe121f000,0xee0f0f51)
+    for section,physical,attr in ((0,0,0),(0x100,0x10000000,8)):
+        g.store(0x10004000+section*4,physical|0xc02|attr)
+    for i in range(c['lines']):
+        address=code+i*c['stride'];target=code+((i+1)%c['lines'])*c['stride']
+        g.store(address,0xea000000|(((target-address-8)//4)&0xffffff))
+    g.literal(0,0x10004000);g.emit(0xee020f10);g.literal(0,3);g.emit(0xee030f10)
+    g.literal(12,code);g.literal(0,0x1071);g.emit(0xee010f10,0xe1a0f00c)
+    first=g.steps+1
+    return g.words,first,first+c['lines']
 
 def rom_castout_guest(c):
     """Warm I tags by execution, then architecturally invalidate only D tags."""
@@ -117,6 +132,7 @@ def rom_detour_guest(c):
     return g.words,first,first+2
 
 def guest(c):
+    if c['kind']=='geometry-i':return instruction_geometry_guest(c)
     if c['kind']=='geometry':return geometry_guest(c)
     if c['kind']=='hot-dma':
         from rpc_hot_dma_rom import calibration

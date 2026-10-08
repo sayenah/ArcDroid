@@ -4,8 +4,9 @@ GPL-2.0-only. Every mutant must compile; only a failed observable check kills it
 Ninja supplies the current compiler/link flags, including sanitizer/platform flags.
 """
 from pathlib import Path
-import argparse,json,os,shlex,subprocess,sys,tempfile
+import argparse,json,os,subprocess,sys,tempfile
 sys.dont_write_bytecode=True
+from rpc_ninja_commands import split_command
 ROOT=Path(__file__).resolve().parent.parent
 p=argparse.ArgumentParser()
 for key in ('build','core','timing','unit','video','store'):p.add_argument('--'+key,required=True)
@@ -29,9 +30,7 @@ def compiler_commands(target):
             rows=[]
             for segment in command.split('&&'):
                 if ' -c ' not in segment and ' -o ' not in segment:continue
-                lexer=shlex.shlex(segment,posix=True);lexer.whitespace_split=True
-                if os.name=='nt':lexer.escape='' # Windows paths retain backslashes
-                rows.append(list(lexer))
+                rows.append(split_command(segment,os.name=='nt'))
             return rows
         entry=next(r for r in database if (build/r['output']).resolve()==Path(target).resolve())
         link=next(row for row in parts(entry['command']) if '-o' in row and '-c' not in row)
@@ -51,9 +50,11 @@ def mutated_binary(target,relative,old,new,directory,label):
     for option,value in (('-c',mutated),('-o',obj),('-MF',directory/(label+'.d')),('-MT',obj)):
         if option in compile:compile[compile.index(option)+1]=str(value)
     result=run(compile);assert result.returncode==0,(label,'compile failed',result.stdout+result.stderr)
-    link=next(row[:] for row in rows if original_obj in row and '-c' not in row and '-o' in row)
+    def original(x):
+        return x.endswith(('.o','.obj')) and (build/x).resolve()==(build/original_obj).resolve()
+    link=next(row[:] for row in rows if '-c' not in row and '-o' in row and any(original(x) for x in row))
     output=directory/(label+Path(target).suffix)
-    link[link.index(original_obj)]=str(obj);link[link.index('-o')+1]=str(output)
+    link[next(i for i,x in enumerate(link) if original(x))]=str(obj);link[link.index('-o')+1]=str(output)
     # MinGW import-library/soname side products must also stay in scratch.
     link=['-Wl,--out-implib,'+str(directory/(label+'.dll.a')) if x.startswith('-Wl,--out-implib,') else x for x in link]
     result=run(link);assert result.returncode==0,(label,'link failed',result.stdout+result.stderr)
@@ -63,6 +64,9 @@ TIMING='engine/rpc/rpc_mem_timing.c';VIDEO='engine/rpcemu/src/vidc20.c';STORE='l
 GEOMETRY='    m.instruction.sets = model == 0 ? 4 : model == 1 ? 128 : model == 2 ? 16 : 64;\n    m.instruction.ways = model == 0 ? 64 : model == 2 ? 32 : 4;'
 # (label, source, old, replacement, link target, observable check)
 mutants=[
+ ('G2',TIMING,GEOMETRY,'    m.instruction.sets = model == 0 ? 4 : model == 1 ? 128 : model == 2 ? 16 : 128;\n    m.instruction.ways = model == 0 ? 64 : model == 2 ? 32 : model == 1 ? 4 : 2;',a.core,('timing',3,'cache-geometry-fewer-ways')),
+ ('G8',TIMING,'m.data.shift = 5; m.data.sets = 16; m.data.ways = 32;','m.data.shift = 5; m.data.sets = 32; m.data.ways = 16;',a.core,('timing',2,'cache-geometry-sa-data')),
+ ('G9',TIMING,'model == 2 ? 16 : 64;\n    m.instruction.ways = model == 0 ? 64 : model == 2 ? 32 : 4;','model == 2 ? 32 : 64;\n    m.instruction.ways = model == 0 ? 64 : model == 2 ? 16 : 4;',a.core,('timing',2,'cache-geometry-sa-instruction')),
  ('M39',TIMING,GEOMETRY,'    m.instruction.sets = model == 0 ? 4 : model == 1 ? 128 : model == 2 ? 16 : 4;\n    m.instruction.ways = model == 0 ? 64 : model == 2 ? 32 : model == 3 ? 64 : 4;',a.core,('timing',3,'cache-geometry')),
  ('M40',TIMING,GEOMETRY,'    m.instruction.sets = model == 0 ? 4 : model == 1 ? 8 : model == 2 ? 16 : 64;\n    m.instruction.ways = model == 0 ? 64 : model == 2 ? 32 : model == 1 ? 64 : 4;',a.core,('timing',1,'cache-geometry')),
  ('M02',TIMING,'#define BUFFER 8u','#define BUFFER 7u',a.core,('timing',2,'buffer-9-retire')),

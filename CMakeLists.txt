@@ -243,6 +243,10 @@ function(arcdroid_add_libretro target shipping)
     if(shipping)
       set_target_properties(${target} PROPERTIES OUTPUT_NAME arcdroid_libretro)
       target_sources(${target} PRIVATE libretro/arcdroid.def)
+    else()
+      # Internal probes loaded by the RPC timing/CMOS harnesses are not
+      # dllexport functions. Export only these from non-installed test DLLs.
+      target_sources(${target} PRIVATE tests/rpc_test_exports.def)
     endif()
     target_link_options(${target} PRIVATE -static-libgcc)
   elseif(APPLE)
@@ -1927,6 +1931,14 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
   endif()
   add_test(NAME rpc-memory-service-boundaries COMMAND rpc_mem_timing_unit)
   add_test(NAME rpc-memory-hot-video-boundaries COMMAND rpc_mem_timing_unit --hot-video)
+  add_test(NAME rpc-qa-command-parsing COMMAND "${Python3_EXECUTABLE}" -B
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_ninja_commands_test.py")
+  if(WIN32)
+    add_test(NAME rpc-windows-test-exports COMMAND "${Python3_EXECUTABLE}" -B
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_windows_exports_test.py" "${CMAKE_OBJDUMP}"
+      "${CMAKE_CURRENT_SOURCE_DIR}" $<TARGET_FILE:arcdroid_libretro_test>
+      $<TARGET_FILE:arcdroid_rpcplan_libretro>)
+  endif()
   if(CMAKE_GENERATOR STREQUAL "Ninja")
     add_test(NAME rpc-qa-mutations COMMAND "${Python3_EXECUTABLE}" -B
       "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_qa_mutations.py"

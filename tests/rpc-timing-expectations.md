@@ -1,4 +1,4 @@
-# Memory-system calibration additions (runs E–F)
+# Memory-system calibration additions (runs E–G)
 
 `rpc_timing_oracle.py` consumes declared model, rate, address and instruction
 counts only. It imports no core and reads no core output. The original 4,127
@@ -40,6 +40,43 @@ or 8×32 gives 66 fills, discriminating both its way boundary and geometry.
 M39/M40's 64-way geometries retain all five lines: five fills and 61725/28 ns,
 343.75 ns too short. The corrected oracle simulates every code/data lookup and reset cursor
 independently; no core source, output or measured duration supplies a result.
+
+Run G adds three same-capacity geometry probes. Every one of the 4,674 pre-G
+rational expectations and guest instruction streams/ordinals is unchanged.
+
+| Probe | Model | Distinct lines | Stride | Measured instructions | Fills | Exact duration, ns |
+|---|---|---:|---:|---:|---:|---:|
+| `cache-geometry-fewer-ways` | ARM7500 | 3 | 2048 | 10 | 3 | 36875/28 |
+| `cache-geometry-sa-data` | SA-110 D | 17 | 1024 | 52 | 17 | 24415/2 |
+| `cache-geometry-sa-instruction` | SA-110 I | 17 | 1024 | 18 | 17 | 23735/2 |
+
+The two data probes use the same conditional warm/three-instruction loop,
+then read the first line once. ARM7500's 2048-byte stride is 128 16-byte
+lines: all three data lines occupy set zero in both 64×4 and G2's 128×2.
+Three lines fit four ways, but the third evicts the first with two ways;
+the final probe adds one fill under G2. Code remains in sets 1/2.
+
+SA's D probe enables M/C/I with C=1 RAM descriptors and clock switching in
+unmeasured setup. Its five-instruction warm body at VA 0x10001020 fits one
+32-byte I line; failed VC data accesses leave D cold. The 1024-byte data
+stride is 32 32-byte lines: set zero under both 16×32 and G8's 32×16.
+Seventeen lines fit 32 ways, while the seventeenth evicts the first with
+16 ways. The first-line probe adds one D fill only under G8.
+
+SA's I probe has D disabled, M/I enabled and clock switching enabled. It
+starts cold at VA 0x10008020, follows 17 authored unconditional RAM branches
+1024 bytes apart, then executes the first once more. All lines occupy set
+one under either geometry; ROM setup has descriptor C=0 and allocates no
+I tags. Seventeen lines fit 32 ways; G9's 16 ways evict the first before
+its revisit. The branches are outside the translation-table storage.
+
+Durations use contract §§2.4/4.1/5: base=1000/35 ns on ARM7500 and 10 ns
+on switched SA; each unified fill is 343.75 ns, each SA fill consists of
+two standard-mode four-word bursts, 2×343.75=687.5 ns. Thus G2 adds
+343.75 ns (mutated duration 23250/14), and G8/G9 add 687.5 ns (12895 and
+12555 ns). The oracle models declared independent I/D occupancy, reset
+cursors and every measured lookup; neither core output nor core source
+supplies any expected duration. There are now 4,677 calibration intervals.
 
 Small scalar streaming/random runs use K=1/2/8/9/32 with the existing three/four
 instruction cadence. New buffer-boundary guests execute conditional stores with

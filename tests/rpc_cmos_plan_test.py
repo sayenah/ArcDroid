@@ -23,7 +23,10 @@ def record(path,magic,firmware,content=None):
 with tempfile.TemporaryDirectory(prefix='arc-rpc-cmos-') as tmp:
     d=Path(tmp);roms=generate(d/'roms');save=d/'save';save.mkdir()
     layout='ro350' if kind=='ro350' else 'ro370'
-    text=f'version=2\nmodel={models[model]}\nfirmware={roms/kind}.rom\ncmos=persist\ncmos_layout={layout}\ncontent_id={"a"*40}\nrtc_epoch=946684800\n'
+    # Reset interrupts the full-mask guest; there is no reset.rom. Construct
+    # the intended basename directly, independent of native path separators.
+    firmware=roms/(('full' if kind=='reset' else kind)+'.rom')
+    text=f'version=2\nmodel={models[model]}\nfirmware={firmware}\ncmos=persist\ncmos_layout={layout}\ncontent_id={"a"*40}\nrtc_epoch=946684800\n'
     plan=d/'test.arcplan';plan.write_text(text)
     def run(mode='positive'):
         r=subprocess.run([exe,core,str(plan),str(roms),str(save),mode,str(rates[model]),str(model)],capture_output=True,text=True)
@@ -53,7 +56,7 @@ with tempfile.TemporaryDirectory(prefix='arc-rpc-cmos-') as tmp:
     elif kind=='nodelete':
         run('nodelete');assert not list(save.rglob('*.0')) and not list(save.rglob('*.1'))
     elif kind=='reset':
-        plan.write_text(text.replace('/reset.rom','/full.rom'));run('reset')
+        run('reset')
         assert not list(save.rglob('*.0')) and not list(save.rglob('*.1'))
     elif kind in ['empty','scatter','incomplete','late','badchecksum']:
         run('negative');assert not list(save.rglob('*.0')) and not list(save.rglob('*.1'))
