@@ -1,24 +1,32 @@
 # ArcDroid Handoff
 
-**Stage:** IMPLEMENTATION — roadmap item 6, RiscPC R2a (memory timing + CMOS), run C
+**Stage:** IMPLEMENTATION — roadmap item 6, RiscPC R2a (memory timing + CMOS), run D
 **Owner:** Sol
-**Next:** Sol R2a **run C** on branch `slice/r2a-timing-cmos` (draft PR #317; Sol thread `01a117a9-6af5-7f00-88f7-679a5f43dc99`): implement R2a **items 2–4** of the R2 work order:
-- CMOS records;
-- generated defaults with the required-mask + stability + checksum oracle;
-- plan v2 part 1.
+**Next:** Sol R2a **run D** on branch `slice/r2a-timing-cmos` (draft PR #317; Sol thread `01a117a9-6af5-7f00-88f7-679a5f43dc99`). Run D does three things.
 
-Fable's run-C prompt fixes the record envelope, the default cache, the oracle masks and the plan keys. The masks are: `ro350` = all payload addresses except physical 194/195; `ro360` and `ro370` = all 240.
+1. **Reset-input schedule (ruling R-D1).** A generated default holds the internal Delete continuously from power-on until a 45 s capture deadline, with a 5 s stability window; the generation-procedure revision is bumped. Reason: under realistic timing, 3.50 on the ARM610 reaches its keyboard check at about 17.8 s (scratch probe, S57). The R2a work order's 0–12 s schedule released Delete first, so the reset was missed (14 writes); the timing model is not at fault. A person holds Delete until the reset happens. Plan v1 `cmos=factory` is unchanged.
+2. **Generation pacing.** Generation advances up to 8 frames of emulated time per `retro_run`, deterministically, so a first launch does not wait the full 45 s in real time.
+3. **Host performance (stop rule 5 triggered).** On the Odin3, the hot-throughput workload at 100 MIPS reaches p95 **1.129 T** (11.24 host ns per instruction; R1 was about 7.0), so it fails. The R1 AC-8 workload passes: p95 0.563 T, max 0.822 T. The §8 fallback stays **not** authorised. Sol optimises the timing service without changing any rule, constant or expectation. Mac targets, interleaved against `main` on the same host:
+   - hot workload host ns per instruction ≤ 1.10 × `main`;
+   - caches-off instruction cost (the R1 AC-8 workload) ≤ 4 × the hot-path cost. It is now about 24×, which also slows every boot from uncached ROM.
+
+   Fable then re-runs the Odin3 gates.
 
 **Done:**
 - **Run A** (`7bd1f27`): timing contract `docs/riscpc-timing.md`.
 - **Run B** (`9184996`): timing implementation per the accepted contract and rulings, plus Fable's G7 ruling. G7: an SA-110 D-cache line of cacheable ROM dirtied by a store hit is cast out through the write buffer, at ROMCR initial access time per word, with no burst. Sol's results:
   - 4,127 independent calibration expectations;
   - host CTest 273/273 and sanitizer selection 269/269;
-  - MinGW and Android builds pass;
   - Arculator untouched.
-- **Run B gates (Fable):**
-  - Odin3 hot-throughput and AC-8 gates;
-  - private factory capture on all seven pairs at production rates.
+- **Run B private gates (Fable):** factory reset now succeeds at production rates on 6/7 pairs:
+  - 3.71 on SA-110, ARM710 and ARM7500;
+  - 3.70 on SA-110;
+  - 3.60 on ARM710 and ARM7500.
+
+  3.50 on the ARM610 fails because of the Delete schedule (R-D1).
+- **Run C** (`a137702`): RiscPC CMOS records `ARCRPCM1`/`ARCRPCD1`, two-slot verified publication, isolated incremental default generation with the oracle, plan v2 part 1, and runner `--save`. Sol's results:
+  - 37 new CTests;
+  - host 310/310 and sanitizer selection 306/306.
 
 **Contract rulings (S57; Astra stage 3 incorporated).** The §1 exclusions and G1–G6 are accepted as labelled R2 model limits, with these changes:
 1. SA-110 SWP/SWPB follows TRM §9.11. A cacheable/bufferable SWP is performed in the D-cache (with a fill if needed); only a non-cacheable or non-bufferable SWP is an external locked pair. §6 gains hot-code cases: cached hit, cached miss, uncached.
