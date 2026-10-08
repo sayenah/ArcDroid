@@ -1,8 +1,25 @@
 # ArcDroid Handoff
 
-**Stage:** QA — roadmap item 6, RiscPC R2a (re-check after run E)
-**Owner:** Opus
-**Next:** **Opus QA re-check** of PR #317 at `765a796` (run E). It continues the same `arcdroid-opus-qa` agent and verifies every finding below against Sol's remediation.
+**Stage:** IMPLEMENTATION — roadmap item 6, RiscPC R2a, run F (test-only)
+**Owner:** Sol
+**Next:** Sol R2a **run F** on `slice/r2a-timing-cmos` (PR #317). It fixes the QA re-check's **MEDIUM-5**, then the same `arcdroid-opus-qa` agent re-checks.
+
+**Opus QA re-check (effort 15) at `4a3ddff`: FAIL, narrow and test-only.** All original findings are resolved:
+- HIGH-1 passes 68 kill/fault scenarios.
+- MEDIUM-1 is resolved.
+- All 22 mutants are killed by two independent drivers.
+- V6 is accepted as equivalent.
+- No production regression was found.
+
+MEDIUM-5 (validated, test gap): the new refill oracle in `tests/rpc_timing_oracle.py:33` uses the wrong unified-cache geometry for ARM710 and ARM7500. It uses (8, 64) and (4, 64) where the contract specifies 128×4 and 64×4. Production is correct (`rpc_mem_timing.c:211-212`). Expected counts happen to coincide, so geometry regressions M39 and M40 survive.
+
+Fix:
+- correct the oracle geometry;
+- add one geometry-discriminating calibration per unified model: at least five distinct lines in one set, at a stride of sets × 16 bytes;
+- add M39 and M40 to `rpc_qa_mutations.py`, killed;
+- correct `tests/rpc-timing-expectations.md`.
+
+LOW-A (a transient listing failure in the reconcile path latches refused for the session; it clears on reload) is accepted as conservative.
 
 Run E (`765a796`):
 - HIGH-1 is fixed: abandoned candidates are ignored and overwritten, and a later publication succeeds after a kill at every step, including QA cases A, B and C.
