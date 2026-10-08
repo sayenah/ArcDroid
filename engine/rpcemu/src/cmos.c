@@ -27,7 +27,8 @@
 */
 
 /* ArcDroid modification (2026-10-06): declared in-memory CMOS, virtual RTC,
- * full transaction reset and contained invariant faults; no host services. */
+ * full transaction reset and contained invariant faults; no host services.
+ * ArcDroid modification (2026-10-07): payload-only evidence and write time. */
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
@@ -47,6 +48,11 @@ int i2cdata  = 1; /**< The current value of the I2C data pin */
 static unsigned char cmosram[256];
 static uint64_t cmos_writes, arc_rpc_cmos_total_writes;
 static uint8_t arc_rpc_cmos_written[32];
+static uint64_t arc_rpc_cmos_last_write;
+static uint64_t (*arc_rpc_cmos_write_clock)(void);
+void arc_rpc_cmos_set_write_clock(uint64_t (*clock)(void)) { arc_rpc_cmos_write_clock=clock; }
+uint64_t arc_rpc_cmos_payload_evidence(uint8_t mask[32],uint64_t *last)
+{ if(mask){memcpy(mask,arc_rpc_cmos_written,32);mask[0]=mask[1]=0;}if(last)*last=arc_rpc_cmos_last_write;return cmos_writes; }
 static uint32_t i2c_devices; /**< Bitfield of devices on the I2C bus */
 
 /****************************************************************************/
@@ -100,7 +106,7 @@ void arc_rpc_cmos_seed(const uint8_t bytes[256])
 {
     if (!bytes) fatal("Missing declared CMOS seed");
     memcpy(cmosram, bytes, sizeof(cmosram));
-    cmos_writes = arc_rpc_cmos_total_writes = 0;
+    cmos_writes = arc_rpc_cmos_total_writes = arc_rpc_cmos_last_write = 0;
     memset(arc_rpc_cmos_written, 0, sizeof(arc_rpc_cmos_written));
 }
 void arc_rpc_cmos_snapshot(uint8_t bytes[256]) { memcpy(bytes, cmosram, 256); }
@@ -146,7 +152,7 @@ pcf8583_write(void *dev, uint8_t data)
 		cmosram[pcf->reg_address] = data;
         ++arc_rpc_cmos_total_writes;
         arc_rpc_cmos_written[pcf->reg_address / 8] |= (uint8_t)(1u << (pcf->reg_address & 7));
-        if (pcf->reg_address >= 16) cmos_writes++;
+        if (pcf->reg_address >= 16) { cmos_writes++; arc_rpc_cmos_last_write=arc_rpc_cmos_write_clock?arc_rpc_cmos_write_clock():0; }
 
 		// RISC OS updates the checksum byte after any change, so if
 		// the write is to the RISC OS checksum byte, save the data

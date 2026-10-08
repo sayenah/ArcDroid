@@ -14,4 +14,6 @@ bool arc_rpc_rtc_read(ArcRpcCalendar *out);
 void arc_rpc_cmos_seed(const uint8_t bytes[256]);
 void arc_rpc_cmos_snapshot(uint8_t bytes[256]);
 uint64_t arc_rpc_cmos_writes(void);
+void arc_rpc_cmos_set_write_clock(uint64_t (*clock)(void));
+uint64_t arc_rpc_cmos_payload_evidence(uint8_t mask[32], uint64_t *last);
 #endif

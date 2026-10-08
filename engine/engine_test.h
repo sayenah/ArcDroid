@@ -9,6 +9,8 @@
 bool arc_engine_test_plan_start(unsigned model, unsigned rate, bool factory,
     const uint8_t *rom, size_t size, const uint8_t seed[256], uint64_t epoch,
     char *error, size_t error_size);
+bool arc_engine_test_cmos_slice(uint64_t ns);
+RETRO_API void arc_engine_test_cmos_evidence(uint8_t bytes[256], uint8_t mask[32], uint64_t *writes, uint64_t *last, uint64_t *now, unsigned *state);
 uint64_t arc_test_clock_ns(void);
 /* Plan frontend has already retired shared input before engine reset. Consume
  * the backend's pending retirement before gathering the restarted script. */

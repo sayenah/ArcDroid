@@ -41,6 +41,7 @@ static const struct {
     { CPUModel_ARM7500, Model_A7000, IOMDType_ARM7500, 0, 35 }
 };
 static ArcRpcScheduler arc_rpc_scheduler;
+static uint64_t arc_rpc_cmos_clock(void) { return arc_rpc_scheduler.now_ns; }
 static jmp_buf arc_rpc_jump;
 static bool arc_rpc_live, arc_rpc_fault;
 static char arc_rpc_fault_text[192];
@@ -208,6 +209,7 @@ bool arc_rpc_session_start(ArcRpcModel model, const uint8_t *bytes, size_t size,
     mem_init();
     if (!arc_rpc_memory_load_rom(bytes, size)) fatal("ROM admission failed");
     arc_rpc_cmos_seed(seed);
+    arc_rpc_cmos_set_write_clock(arc_rpc_cmos_clock);
     arc_rpc_reset_devices();
     arc_rpc_sound_reset(true);
     arc_rpc_live = true;
