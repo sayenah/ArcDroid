@@ -10,6 +10,7 @@ from rpc_plan_matrix_rom import matrix
 from rpc_plan_goldens import matrix_golden
 from rpc_video_goldens import expected as video_expected
 from rpc_d2_goldens import expected as audio_expected, fnv
+from rpc_video_paths import CASES as path_cases, expected as path_expected
 
 runner,core,shipping,directory,mode=sys.argv[1:6]
 directory=Path(directory).resolve()
@@ -77,6 +78,12 @@ elif mode.startswith('matrix-'):
     print(f'{mode}: {len(expected)} integrated guest records match golden; full CPU/device/AV traces identical across pacing')
 elif mode.startswith('av-'):
     m=int(mode[-1]);summaries=[]
+    for case in path_cases:
+        a=run(f'video-paths-{m}-{case[0]}',frames=3)
+        b=run(f'video-paths-{m}-{case[0]}',frames=3,pacing='burst');assert a==b
+        observed=re.findall(r'^video=(\S+) hash=(\S+)',a,re.M)[-1]
+        line=path_expected(m,case)
+        assert observed==(line.split()[1],re.search(r'hash=(\S+)',line)[1]),(case[0],observed)
     # Every D1 case is admitted through a plan, with unchanged analytic oracle.
     for line in video_expected(m).splitlines():
         fields=line.split();name=fields[0]

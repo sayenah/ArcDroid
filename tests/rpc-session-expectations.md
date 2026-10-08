@@ -47,3 +47,12 @@ they contain no firmware. Guest RAM records results of MMIO and an IRQ handler.
 Hardware sources: [IOMD specification](https://www.bitsavers.org/components/arm/IOMD_Functional_Specification_199406.pdf),
 [ARM7500 datasheet](https://documentation-service.arm.com/static/5ed11babca06a95ce53f8fee),
 [SA-110 reference](https://bitsavers.trailing-edge.com/pdf/dec/semiconductor/arm/EC-QPWLC-TE_SA110_Technical_Reference_199610.pdf).
+
+Run E retains the strict `<` throughput assertion for ARM610/710. These guests
+never enable M/C or populate timing tags: every instruction fetch costs at
+least the reset ROM word, 218.75 ns, in addition to base 50 or 200/7 ns.
+Ignoring all data/I/O service and allowing one partly serviced instruction at
+the frontend boundary gives independent upper bounds of 29,768 and 32,347
+issued instructions in 8 ms. Both are strictly below 160,000 and 280,000.
+An equality with the flat ceiling would contradict the accepted memory model;
+the dedicated hot-code calibration checks equality at the rate ceiling.

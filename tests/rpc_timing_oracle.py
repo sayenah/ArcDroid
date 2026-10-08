@@ -6,6 +6,47 @@ Constants and recurrences come from docs/riscpc-timing.md §§2–6.
 from fractions import Fraction as F
 RATES = (20, 35, 100, 35)
 
+def fifo(c, packets):
+    """§3/§6.2 enqueue chronology; return CPU retirement and drained endpoint.
+    packets lists the word counts contributed by each successive instruction.
+    Slots and data words remain occupied until the packet's final word.
+    """
+    capacity = (2, 4, 8, 4)[c['model']]
+    pending = []; eligible = F(0); last = F(0)
+    for instruction in packets:
+        eligible += base(c)
+        for words in instruction:
+            pending = [(end, n) for end, n in pending if end > eligible]
+            while len(pending) >= capacity or (c['model'] != 2 and sum(n for _, n in pending)+words > 8):
+                eligible = pending[0][0]
+                pending = [(end, n) for end, n in pending if end > eligible]
+            last = max(last, eligible)+ram(c, list(range(0, 4*words, 4)), True, True)
+            pending.append((last, words))
+    return eligible, last
+
+def code_refills(c):
+    """Independent round-robin set occupancy for the declared warmed loop.
+    Execute fetches on either side of each load, including failed branches.
+    These are presence/replacement equations, not an import of core tags.
+    """
+    if c['model'] == 2: return 0  # separate I and D caches
+    sets, ways = (4,64) if c['model'] in (0,3) else (8,64)
+    tags = [[None]*ways for _ in range(sets)]; victim = [0]*sets
+    # VA 0x10001000: warmed first 16-byte code line, set zero.
+    code = 0x10001000//16; tags[0][0] = code; victim[0] = 1
+    def touch(line):
+        s = line % sets
+        if line in tags[s]: return False
+        tags[s][victim[s]] = line; victim[s] = (victim[s]+1)%ways
+        return True
+    refills = 0
+    for i in range(c['k']):
+        refills += touch(code)
+        word = ((i*257)&1023)*4 if c['kind']=='random' else i
+        touch(0x20100000//16 + word//4)
+        refills += touch(code)
+    return refills
+
 def base(c):
     b = F(1000, c['rate'])
     return max(b, F(125, 2)) if c.get('slow') and c['model'] == 2 else b
@@ -40,6 +81,16 @@ def addresses(c):
 def duration(c):
     b = base(c); k = c.get('k', 1); n = c.get('n', 1)
     kind = c['kind']; a = addresses(c)
+    if kind=='hot-dma':
+        from rpc_hot_dma_rom import calibration
+        return calibration(c)[3]
+    if kind in ('buffer-retire', 'buffer-drain', 'word-slots'):
+        packets = [[1]]*k if kind != 'word-slots' else ([[4,4],[1]] if c['model']==2 else [[8],[1]])
+        retirement, drained = fifo(c, packets)
+        return drained if c.get('drained') else retirement
+    if kind == 'clock-disable-hot': return (k+1)*b
+    if kind == 'clock-disable-miss': return 2*b+ram(c,[0],False)+k*max(b,F(125,2))
+    if kind == 'icache-m0': return k*b+rom(c,8)
     if kind in ('alu', 'branch', 'disable'): return k*b
     if kind=='romfallthrough':return 2*b+rom(c,2)
     if kind in ('romnext','romdetour'):
@@ -81,16 +132,26 @@ def duration(c):
         if kind == 'stream':
             length = 32 if c['model'] == 2 else 16
             fills = (4*k+length-1)//length
-            extra = 1 if c['model'] in (0,3) and k == 1024 else 0
+            extra = code_refills(c)
             return ins*k*b + (fills+extra)*ram(c, list(range(0,length,4)))
         length = 32 if c['model'] == 2 else 16
-        extra = (4,2,0,4)[c['model']] if k == 1024 else 0
+        extra = code_refills(c)
         return ins*k*b+(k+extra)*ram(c, list(range(0,length,4)))
     raise ValueError(kind)
 
 def cases():
     for model, rate in enumerate(RATES):
         d = dict(model=model,rate=rate)
+        for dram in ((True,) if model==3 else (True,False)):
+            yield dict(d,kind='hot-dma',k=1000000,dram=dram,name='hot-dma-'+('dram' if dram else 'vram'))
+        for k in (1,2,3,5,8,9,32):
+            for drained in (False,True):
+                yield dict(d,kind='buffer-drain' if drained else 'buffer-retire',k=k,wb=True,
+                           drained=drained,name=f'buffer-{k}-'+('drain' if drained else 'retire'))
+        for drained in (False,True):
+            yield dict(d,kind='word-slots',wb=True,drained=drained,name='word-slots-'+('drain' if drained else 'retire'))
+        for kind in ('ldm','stm'):
+            yield dict(d,kind=kind,n=4,offset=0x3b8,name=f'bank-local-restart-{kind}')
         for kind in ('alu','branch'):
             yield dict(d,kind=kind,k=1000000,name=kind)
         for space in ('dram','vram') if model != 3 else ('dram',):
@@ -112,6 +173,9 @@ def cases():
                     for wb in (False,True) if kind.endswith('write') else (False,):
                         yield dict(d,kind=kind,k=1024,cache=cache,wb=wb,space=space,
                                    name=f'{space}-{kind}-cache{int(cache)}w{int(wb)}')
+                        for k in (1,2,8,9,32):
+                            yield dict(d,kind=kind,k=k,cache=cache,wb=wb,space=space,
+                                       name=f'{space}-{kind}-{k}-cache{int(cache)}w{int(wb)}')
         for kind in ('load','store'):
             for wb in (False,True):
                 yield dict(d,kind=kind,cache=True,hot_data=True,wb=wb,name=f'hot-data-{kind}-w{int(wb)}')
@@ -122,6 +186,8 @@ def cases():
                                name=f'write-c{int(cache)}w{int(wb)}b{int(bufferable)}')
         for wb in (False,True):
             yield dict(d,kind='clear',k=1024,wb=wb,name=f'clear-w{int(wb)}')
+            for k in (1,2,8,9,32):
+                yield dict(d,kind='clear',k=k,wb=wb,name=f'clear-{k}-w{int(wb)}')
         yield dict(d,kind='disable',k=1024,name='qualified-disable-retention')
         yield dict(d,kind='io',k=1024,name='prog-register')
         yield dict(d,kind='romhot',k=1024,name='rom-hot')
@@ -137,6 +203,8 @@ def cases():
         for wb in (False,True):
             yield dict(d,kind='abortstore',n=8,wb=wb,name=f'partial-stm-abort-w{int(wb)}')
         if model == 2:
+            for kind in ('clock-disable-hot','clock-disable-miss','icache-m0'):
+                yield dict(d,kind=kind,k=1024,name=kind)
             for cr in (0,24,5,29):
                 for wb in (False,True):
                     yield dict(d,kind='romcastout',romcr=cr,wb=wb,
@@ -156,5 +224,7 @@ def cases():
                                        byte=byte,wb=wb,cache=cache,name=f'width16-{kind}-{int(byte)}{int(wb)}{int(cache)}')
     for rate in range(1,101):
         yield dict(model=2,rate=rate,kind='branch',k=10000,name=f'exact-rate-{rate}')
+    for kind in ('clock-disable-hot','clock-disable-miss'):
+        yield dict(model=2,rate=20,kind=kind,k=1024,name=kind+'-rate20')
     for rate in (60,99):
         yield dict(model=2,rate=rate,kind='random',k=60000000,cache=False,name=f'long-exact-stalls-{rate}')

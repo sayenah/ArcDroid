@@ -17,10 +17,12 @@ static unsigned model,rate;
 static uint64_t b,q;
 static uint64_t next_hold=UINT64_MAX,next_frontend=UINT64_MAX;
 static unsigned remaining_holds,frontend_kind;
+static uint64_t hold_ns=350;
 static void init(unsigned cpu,unsigned speed)
 {
     model=cpu;rate=speed;b=28000;q=875u*rate;
     next_hold=next_frontend=UINT64_MAX;remaining_holds=0;
+    hold_ns=350;
     memset(&iomd,0,sizeof(iomd));iomd.clkctrl=7;iomd.romcr0=cpu==3?64:0;
     assert(arc_rpc_scheduler_init(&clock_state,rate));arc_rpc_mem_bind(&clock_state,model,rate);
     arc_rpc_mem_clock_switch(true);arc_rpc_mem_control(0x100d);
@@ -33,7 +35,7 @@ static void step_time(bool idle)
     if(next_frontend<next)next=next_frontend;
     clock_state.now_ns=next;
     if(next==next_hold) {
-        arc_rpc_mem_video_hold(350);
+        arc_rpc_mem_video_hold(hold_ns);
         next_hold=--remaining_holds?next_hold+687500350:UINT64_MAX;
     }
     if(next==next_frontend)next_frontend+=frontend_kind&&next_frontend%2?333333:16666667;
@@ -204,6 +206,64 @@ static void video_grants(void)
         assert(s.completed_ticks==b+(cpu==2?80:38)*q+350u*28u*rate);
     }
 }
+static void warm_code_data(void)
+{
+    begin(0xe1a00000);arc_rpc_mem_fetch(0x10001000,0x10001000,8,true);finish();
+    begin(0xe5901000);access(0x10002000,false,12,4);finish();
+}
+static void held_hot(unsigned cpu,unsigned kind)
+{
+    init(cpu,100);warm_code_data();
+    ArcRpcMemStats before,after;arc_rpc_mem_stats(&before);
+    uint64_t start=before.completed_ticks;
+    /* One contained D quad and V half-SAM at a declared device edge. The
+     * raster tests independently exercise production transfer generation. */
+    hold_ns=350+156;next_hold=(start+28u*rate-1)/(28u*rate)+5;
+    remaining_holds=1;
+    unsigned count=kind==2?1:1024;
+    for(unsigned i=0;i<count;++i){
+        begin(kind==0?0xe1a00000:kind==1?0xe890000f:0xe880000f);
+        arc_rpc_mem_fetch(0x10001000,0x10001000,8,true);
+        if(kind)for(unsigned lane=0;lane<4;++lane)access(0x10002000+4*lane,kind==2,12,4);
+        finish();
+    }
+    arc_rpc_mem_stats(&after);
+    uint64_t service=kind==2&&cpu!=2?11*q:0;
+    /* Older unified hot stores are write-through; B/W enqueue overlaps base.
+     * Observe their drained endpoint, never mistake it for CPU retirement. */
+    if(service){drain();arc_rpc_mem_stats(&after);service=11*q;}
+    uint64_t expected=count*b+hold_ns*28u*rate+service;
+    if(service){
+        uint64_t end=clock_state.now_ns*28u*rate;
+        assert(end>=start+expected&&end-start-expected<28u*rate);
+    }else assert(after.completed_ticks-start==expected);
+    assert(after.fills==before.fills && remaining_holds==0);
+}
+static void held_buffer(unsigned cpu,bool idle)
+{
+    init(cpu,100);unsigned capacity=cpu==0?2:cpu==2?8:4;
+    for(unsigned i=0;i<capacity;++i){begin(0xe5801000);access(0x10000000+i*512,true,4,4);finish();}
+    ArcRpcMemStats full;arc_rpc_mem_stats(&full);assert(full.buffered_packets==capacity);
+    hold_ns=350+156;next_hold=clock_state.now_ns+1;remaining_holds=1;
+    if(idle)arc_rpc_mem_idle(true);
+    else {
+        begin(0xe5801000);access(0x10004000,true,4,4);
+        assert(finish()==b+5*q+hold_ns*28u*rate);
+    }
+    uint64_t end=drain(),expected=b+(capacity+(idle?0:1))*5*q+hold_ns*28u*rate;
+    assert(end>=expected&&end-expected<28u*rate && !remaining_holds);
+    ArcRpcMemStats done;arc_rpc_mem_stats(&done);
+    assert(done.instructions==capacity+(idle?0:1)&&!done.buffered_packets);
+    if(idle){arc_rpc_mem_idle(false);begin(0xe1a00000);assert(finish()==end+b);}
+}
+static void hot_video_boundaries(void)
+{
+    for(unsigned cpu=0;cpu<4;++cpu){
+        for(unsigned kind=0;kind<3;++kind)held_hot(cpu,kind);
+        held_buffer(cpu,false);held_buffer(cpu,true);
+    }
+    puts("RPC hot ALU/LDM/STM, full FIFO and idle: K*b + 350*D + 156*V with independent grants passed");
+}
 static void long_queue(unsigned speed,unsigned pacing)
 {
     const unsigned k=16000000;
@@ -287,6 +347,7 @@ static void high_time_arithmetic(void)
 }
 int main(int argc,char **argv)
 {
+    if(argc==2 && !strcmp(argv[1],"--hot-video")){hot_video_boundaries();return 0;}
     if(argc==3) {long_queue((unsigned)atoi(argv[1]),(unsigned)atoi(argv[2]));return 0;}
     scalar_and_map();io_phase();ordinary_rom_io_stores();width_and_clock();buffer_capacity_and_order();
     cache_eviction_and_maintenance();video_grants();batch_boundaries();high_time_arithmetic();

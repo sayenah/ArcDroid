@@ -1,6 +1,7 @@
 /* ArcDroid ROM-driven video/frontend qualification. GPL-2.0-only. */
 #include "rpc_session.h"
 #include "rpc_video_rom.h"
+#include "rpc_video_paths.h"
 #include <assert.h>
 #include <math.h>
 #include <stdio.h>
@@ -165,6 +166,19 @@ static void scroll(unsigned model)
     }
     api->stop();
 }
+static void paths(unsigned model)
+{
+    for(unsigned i=0;i<4;++i){
+        const struct RpcVideoGuest *g=&rpc_path_guests[model][i];start(model,g);
+        ArcEngineFrame f=frame();ArcRpcVideoStatus s=status();
+        assert(f.width==(g->width>2048?2048:g->width)&&f.height==g->height);
+        printf("%s %ux%u rate=%.6f hash=%016llx pixels=%llu wraps=%llu transfers=%llu hold=%llu\n",
+            g->name,f.width,f.height,f.refresh_hz,(unsigned long long)hash(&f),
+            (unsigned long long)s.pixels,(unsigned long long)s.wraps,
+            (unsigned long long)s.transfers,(unsigned long long)bus_ns());
+        assert(s.fields==1 && logs==(g->width>2048));api->stop();
+    }
+}
 
 static void contention(unsigned model)
 {
@@ -322,7 +336,8 @@ int main(int argc,char **argv)
     assert(library);LOAD(start_rpc,"arc_rpc_test_start");LOAD(status_rpc,"arc_rpc_test_video_status");
     LOAD(bus_ns,"arc_rpc_test_video_bus_ns");LOAD(snapshot_rpc,"arc_rpc_test_snapshot");LOAD(read_ram,"arc_rpc_test_read_ram");
     LOAD(fail_alloc,"arc_rpc_test_fail_alloc");LOAD(engine_api,"arc_rpc_test_engine_api");api=engine_api();
-    if(!strcmp(argv[2],"--extreme"))extreme(model);
+    if(!strcmp(argv[2],"--paths"))paths(model);
+    else if(!strcmp(argv[2],"--extreme"))extreme(model);
     else if(!strcmp(argv[2],"--pixel-clock"))pixel_clock(model);
     else if(!strcmp(argv[2],"--fault-silence"))fault_silence(model);
     else if(!strcmp(argv[2],"--scroll"))scroll(model);

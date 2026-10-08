@@ -7768,7 +7768,7 @@ static void arc_rpc_present_run(void)
    bool ran = arc_engine_run_frame(&arc_inputs, &frame);
 #if defined(ARCDROID_TEST_PLANS)
    char persist_error[256];
-   if(!arc_test_plan_persist(persist_error,sizeof(persist_error)))arc_message(persist_error,RETRO_LOG_ERROR);
+   if(!arc_test_plan_persist(persist_error,sizeof(persist_error)) && persist_error[0])arc_message(persist_error,RETRO_LOG_ERROR);
 #endif
    if (!ran)
    {

@@ -4,7 +4,9 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <stddef.h>
-#define ARC_RPC_CMOS_PROCEDURE_REVISION 2u
+#define ARC_RPC_CMOS_PROCEDURE_REVISION 3u
+/* Procedure-defined 2000-01-01 UTC; independent of content and plan RTC. */
+#define ARC_RPC_CMOS_GENERATION_EPOCH UINT64_C(946684800)
 #define ARC_RPC_CMOS_TIMING_REVISION 1u
 #define ARC_RPC_CMOS_RECORD_SIZE 512u
 #define ARC_RPC_CMOS_CAPTURE_NS UINT64_C(45000000000)
@@ -26,7 +28,7 @@ typedef struct {
     char base[1024];
     uint64_t generation;
     uint8_t payload[240];
-    bool present, refused;
+    bool present, refused, publication_pending;
     ArcRpcCmosEvidence evidence;
 } ArcRpcCmosStore;
 typedef enum { ARC_RPC_CMOS_REFUSED = -1, ARC_RPC_CMOS_MISSING, ARC_RPC_CMOS_FOUND } ArcRpcCmosResult;

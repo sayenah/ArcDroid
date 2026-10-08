@@ -122,6 +122,16 @@ int main(int argc,char **argv)
 unsigned expected_rate=(unsigned)atoi(argv[6]);
     if(!strcmp(mode,"reject")){assert(!accepted&&errors);unload();deinit();return 0;}
     assert(accepted);ArcRpcTestSnapshot s;snapshot(&s);assert(s.now_ns==0);
+    if(!strcmp(mode,"refused")){
+        assert(phase()==2&&errors==1&&notices==1);
+        unsigned writes=tmp_writes;for(unsigned i=0;i<64;++i)run();
+        assert(errors==1&&notices==1&&tmp_writes==writes);
+        unload();assert(errors==1&&notices==1);
+        assert(load(&game)&&phase()==2&&errors==2&&notices==2);
+        for(unsigned i=0;i<4;++i)run();
+        unload();assert(errors==2&&notices==2);
+        deinit();puts("refused store: one notice per loaded refusal, including unload");return 0;
+    }
     if(!strcmp(mode,"cache")){assert(phase()==2&&notices==0);}
     else if(!strcmp(mode,"record") || !strcmp(mode,"writer")){assert(phase()==2);}
     else {

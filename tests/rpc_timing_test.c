@@ -65,6 +65,10 @@ int main(int argc,char **argv)
             assert(t.end.words-t.start.words==2);
             ArcRpcTestSnapshot s;snapshot(&s);assert((s.regs[16]&31)==23);
         }
+        if(strstr(c->name,"hot-dma-")) {
+            assert(t.end.words==t.start.words && t.end.fills==t.start.fills);
+            assert(t.end.packets==t.start.packets); /* hot CPU; only device DMA holds */
+        }
         if(strstr(c->name,"rom-castout-")) {
             assert(t.end.words-t.start.words==268);
             assert(t.end.fills-t.start.fills==33);

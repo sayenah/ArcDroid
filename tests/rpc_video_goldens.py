@@ -4,6 +4,26 @@ Regeneration computes declared outcomes, never executes the core.
 """
 from pathlib import Path
 from rpc_video_rom import cases
+from functools import cache
+
+@cache
+def a7000_metrics(name):
+    """Derive splits/counts from the existing independent device timeline."""
+    if name not in ('palette','border','cursor','current','depth','grow','vstart','ring','unaligned'):
+        return a7000_metrics('palette')
+    from rpc_raster_timeline import RasterTimeline
+    from rpc_video_rom import program
+    scenario=name if name in ('palette','border','cursor','current','depth','grow','vstart','ring','unaligned') else 'palette'
+    t=RasterTimeline(program(3,2 if scenario=='unaligned' else 32,8,0 if scenario=='unaligned' else 3,0,scenario)).complete()
+    changed={'palette':(0x03400000,0x10000055),'border':(0x03400000,0x4000ff00),
+             'cursor':(0x03400000,0x5000ff00),'current':(0x032001d0,0x10001000),
+             'depth':(0x03400000,0xe0000040),'grow':(0x03400000,0x84000810)}
+    split=0
+    if scenario in changed:
+        address,value=changed[scenario]
+        at=max(now for now,a,v,_ in t.writes if a==address and v==value)
+        split=sum(now<at for _,now,_,_ in t.samples)
+    return split,t.fields[0][2],t.fields[0][3],sum(depth==1 for _,_,_,depth in t.samples)
 
 def prove_a7000_memory_window():
     # Removing all holds gives an earliest possible store timeline. At every
@@ -22,9 +42,9 @@ def prove_a7000_memory_window():
         assert max(written,default=0)<=32*y
 
 def colour(name,depth,x,y,model=0):
-    split=5 if model==3 else 4
+    split=a7000_metrics(name)[0] if model==3 else 4
     if name=='unaligned':
-        rows=4 if model==3 else 3
+        rows=a7000_metrics(name)[3] if model==3 else 3
         bit=y*2+x if y<rows else 2*rows+(y-rows)*32+x*16
         stream=0x765432107654321076543210765432107654321076543210
         value=(stream>>bit)&((1<<(1 if y<rows else 16))-1)
@@ -62,10 +82,10 @@ def expected(model):
                     checksum=((checksum^b)*1099511628211)&((1<<64)-1)
         pixels=width*height
         if name in ('border','disabled'):pixels=0
-        if name=='grow':pixels=6352 if model==3 else 8384
-        if name=='vstart':pixels=256 if model==3 else 224
+        if name=='grow':pixels=a7000_metrics(name)[1] if model==3 else 8384
+        if name=='vstart':pixels=a7000_metrics(name)[1] if model==3 else 224
         wraps=(pixels*[1,2,4,8,16,0,32][depth]//8)//4096
-        if name=='ring':wraps=0 if model==3 else 1
+        if name=='ring':wraps=a7000_metrics(name)[2] if model==3 else 1
         if name=='unaligned':wraps=1
         if name=='init':wraps=0
         rate=hz or 250

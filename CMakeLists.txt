@@ -1912,7 +1912,8 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
   add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/rpc_timing_rom.h"
     COMMAND "${Python3_EXECUTABLE}" -B "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_timing_rom.py"
       "${CMAKE_CURRENT_BINARY_DIR}/generated/rpc_timing_rom.h"
-    DEPENDS tests/rpc_timing_rom.py tests/rpc_timing_oracle.py VERBATIM)
+    DEPENDS tests/rpc_timing_rom.py tests/rpc_timing_oracle.py tests/rpc_hot_dma_rom.py
+      tests/rpc_video_rom.py tests/rpc_raster_timeline.py tests/rpc_authored_timeline.py VERBATIM)
   add_executable(rpc_timing_test tests/rpc_timing_test.c
     "${CMAKE_CURRENT_BINARY_DIR}/generated/rpc_timing_rom.h")
   add_executable(rpc_mem_timing_unit tests/rpc_mem_timing_unit.c
@@ -1925,6 +1926,15 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
     target_link_libraries(rpc_mem_timing_unit PRIVATE arcdroid_sanitizer_compile arcdroid_sanitizer_link)
   endif()
   add_test(NAME rpc-memory-service-boundaries COMMAND rpc_mem_timing_unit)
+  add_test(NAME rpc-memory-hot-video-boundaries COMMAND rpc_mem_timing_unit --hot-video)
+  if(CMAKE_GENERATOR STREQUAL "Ninja")
+    add_test(NAME rpc-qa-mutations COMMAND "${Python3_EXECUTABLE}" -B
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_qa_mutations.py"
+      --build "${CMAKE_CURRENT_BINARY_DIR}" --core $<TARGET_FILE:arcdroid_libretro_test>
+      --timing $<TARGET_FILE:rpc_timing_test> --unit $<TARGET_FILE:rpc_mem_timing_unit>
+      --video $<TARGET_FILE:rpc_video_test> --store $<TARGET_FILE:rpc_cmos_store_test>)
+    set_tests_properties(rpc-qa-mutations PROPERTIES TIMEOUT 600 RUN_SERIAL TRUE)
+  endif()
   foreach(rate IN ITEMS 60 99)
     foreach(pacing IN ITEMS 0 1)
       add_test(NAME rpc-memory-long-${rate}-${pacing} COMMAND rpc_mem_timing_unit ${rate} ${pacing})
@@ -1974,7 +1984,12 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
       "${CMAKE_CURRENT_BINARY_DIR}/generated/rpc_video_rom.h"
     DEPENDS tests/rpc_video_rom.py tests/rpc_raster_timeline.py tests/rpc_authored_timeline.py VERBATIM)
   add_executable(rpc_video_test tests/rpc_video_test.c
-    "${CMAKE_CURRENT_BINARY_DIR}/generated/rpc_video_rom.h")
+    "${CMAKE_CURRENT_BINARY_DIR}/generated/rpc_video_rom.h"
+    "${CMAKE_CURRENT_BINARY_DIR}/generated/rpc_video_paths.h")
+  add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/rpc_video_paths.h"
+    COMMAND "${Python3_EXECUTABLE}" -B "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_video_paths.py"
+      --header "${CMAKE_CURRENT_BINARY_DIR}/generated/rpc_video_paths.h"
+    DEPENDS tests/rpc_video_paths.py tests/rpc_video_rom.py VERBATIM)
   target_include_directories(rpc_video_test PRIVATE engine engine/rpc core
     libretro/include "${CMAKE_CURRENT_BINARY_DIR}/generated")
   target_compile_definitions(rpc_video_test PRIVATE ARCDROID_TEST_FAULTS=1 RETRO_IMPORT_SYMBOLS=1)
@@ -1986,6 +2001,10 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
   endif()
   # Included by native Windows CTest and CI's rpc-.* sanitizer selection.
   foreach(model RANGE 0 3)
+    add_test(NAME rpc-video-paths-${model} COMMAND "${Python3_EXECUTABLE}" -B
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_video_trace_test.py" $<TARGET_FILE:rpc_video_test>
+      $<TARGET_FILE:arcdroid_libretro_test> ${model}
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/rpc-video-paths-${model}.trace" --paths)
     add_test(NAME rpc-video-pixel-clock-${model} COMMAND rpc_video_test
       $<TARGET_FILE:arcdroid_libretro_test> --pixel-clock ${model})
     add_test(NAME rpc-video-extreme-${model} COMMAND rpc_video_test
@@ -2052,7 +2071,7 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
     COMMAND "${Python3_EXECUTABLE}" -B "${CMAKE_CURRENT_SOURCE_DIR}/tools/rpc_ac8_workload.py" "${RPC_PLAN_DIR}"
     COMMAND "${Python3_EXECUTABLE}" -B "${CMAKE_CURRENT_SOURCE_DIR}/tools/rpc_hot_workload.py" "${RPC_PLAN_DIR}"
     DEPENDS tests/rpc_plan_fixtures.py tests/rpc_plan_matrix_rom.py tests/rpc_session_rom.py
-      tests/rpc_video_rom.py tests/rpc_d2_rom.py tools/rpc_ac8_workload.py tools/rpc_hot_workload.py tests/rpc_timing_rom.py tests/rpc_timing_oracle.py VERBATIM)
+      tests/rpc_video_rom.py tests/rpc_video_paths.py tests/rpc_d2_rom.py tools/rpc_ac8_workload.py tools/rpc_hot_workload.py tests/rpc_timing_rom.py tests/rpc_timing_oracle.py VERBATIM)
   add_custom_target(rpc-plan-fixtures ALL DEPENDS "${RPC_PLAN_DIR}/matrix-0.arcplan" "${RPC_PLAN_DIR}/ac8.arcplan" "${RPC_PLAN_DIR}/hot.arcplan")
   add_dependencies(rpc_runner rpc-plan-fixtures)
   foreach(mode IN ITEMS admission matrix-0 matrix-1 matrix-2 matrix-3 av-0 av-1 av-2 av-3)
@@ -2128,7 +2147,7 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
     target_link_libraries(rpc_cmos_plan_test PRIVATE arcdroid_sanitizer_compile arcdroid_sanitizer_link)
   endif()
   foreach(model RANGE 0 3)
-    foreach(case full ro350 empty scatter incomplete late reset nodelete writer delayed)
+    foreach(case full ro350 empty scatter incomplete late reset nodelete writer delayed badchecksum)
       add_test(NAME rpc-cmos-plan-${model}-${case} COMMAND "${Python3_EXECUTABLE}"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_cmos_plan_test.py" $<TARGET_FILE:rpc_cmos_plan_test>
         $<TARGET_FILE:arcdroid_rpcplan_libretro> $<TARGET_FILE:rpc_runner>

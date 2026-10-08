@@ -43,12 +43,19 @@ with tempfile.TemporaryDirectory(prefix='arc-rpc-cmos-') as tmp:
         latest=max(records,key=lambda p:struct.unpack_from('<Q',p.read_bytes(),24)[0])
         final=record(latest,b'ARCRPCM1',roms/'writer.rom','a'*40)
         expected=bytearray(240);expected[47]=1;assert final[104:344]==expected and not (base/'defaults').exists()
+        # Keep one valid recovery slot and a corrupt published peer. A live
+        # guest may run from the former, but refusal is logged once per load.
+        for p in records:p.unlink()
+        target.write_bytes(b)
+        corrupt=base/f'{"a"*40}-m{model+1}-{digest.hex()}.0'
+        corrupt.write_bytes(b'ARCCMOS2'+bytes(504))
+        run('refused');assert target.read_bytes()==b and corrupt.read_bytes()==b'ARCCMOS2'+bytes(504)
     elif kind=='nodelete':
         run('nodelete');assert not list(save.rglob('*.0')) and not list(save.rglob('*.1'))
     elif kind=='reset':
         plan.write_text(text.replace('/reset.rom','/full.rom'));run('reset')
         assert not list(save.rglob('*.0')) and not list(save.rglob('*.1'))
-    elif kind in ['empty','scatter','incomplete','late']:
+    elif kind in ['empty','scatter','incomplete','late','badchecksum']:
         run('negative');assert not list(save.rglob('*.0')) and not list(save.rglob('*.1'))
     else:
         run();base=save/'arcdroid/cmos-riscpc';slots=list(base.glob('*.1'));defaults=list((base/'defaults').glob('*.1'))
@@ -56,7 +63,7 @@ with tempfile.TemporaryDirectory(prefix='arc-rpc-cmos-') as tmp:
         b=record(defaults[0],b'ARCRPCD1',roms/(kind+'.rom'))
         expected=bytearray(240);expected[47]=1
         assert b[104:344]==expected
-        assert struct.unpack_from('<IIII',b,344)==(2,1,rates[model],1)
+        assert struct.unpack_from('<IIII',b,344)==(3,1,rates[model],1)
         assert struct.unpack_from('<QQQQQ',b,360)==(946684800,0,45000000000,45000000000,5000000000)
         writes,last=struct.unpack_from('<QQ',b,400);assert writes==(238 if kind=='ro350' else 240) and 0<last<40000000000
         if kind=='delayed':assert last>18022400000
@@ -71,6 +78,14 @@ with tempfile.TemporaryDirectory(prefix='arc-rpc-cmos-') as tmp:
         one=list((save/'arcdroid/cmos-riscpc/defaults').glob('*.1'))
         assert len(one)==1 and one[0].read_bytes()==b
         save=original_save
+        # A distinct content/plan epoch reuses exactly this cache; a fresh
+        # save at that epoch also independently generates identical bytes.
+        other_text=text.replace('a'*40,'d'*40).replace('rtc_epoch=946684800','rtc_epoch=1234567890')
+        plan.write_text(other_text);run('cache');assert defaults[0].read_bytes()==b
+        original_save=save;save=d/'save-epoch';save.mkdir();run()
+        epoch_defaults=list((save/'arcdroid/cmos-riscpc/defaults').glob('*.1'))
+        assert len(epoch_defaults)==1 and epoch_defaults[0].read_bytes()==b
+        save=original_save;plan.write_text(text)
         original=slots[0].read_bytes();run('record');assert slots[0].read_bytes()==original
         # The same frontend switches through real Arculator persistence.
         import shutil

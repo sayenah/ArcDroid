@@ -1,0 +1,4 @@
+words 36x8 rate=625.000000 hash=050e3ccb7e35d9e2 pixels=288 wraps=0 transfers=0 hold=0
+byte-tail 6x12 rate=500.000000 hash=151e2c6621f481c2 pixels=72 wraps=2 transfers=4 hold=1400
+cursor-lanes 36x8 rate=625.000000 hash=8ce24886ece35edc pixels=288 wraps=0 transfers=0 hold=1400
+right-edge 2048x2048 rate=4.863813 hash=2f04f73cd4322325 pixels=4227072 wraps=1032 transfers=264192 hold=92467200

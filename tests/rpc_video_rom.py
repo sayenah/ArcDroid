@@ -29,7 +29,7 @@ class Guest:
     def v(self,value): self.write(0x03400000,value)
 
 def program(model,width,height,depth,hz,scenario):
-    g=Guest();dram=model==3 or scenario in ('ring','packed','unaligned');base=0x10000000 if dram else 0x02000000
+    g=Guest();dram=model==3 or scenario in ('ring','packed','unaligned','hot-dram');base=0x10000000 if dram else 0x02000000
     g.fill(base,2048,0x76543210 if scenario=='unaligned' else 0x55555555)
     g.fill(base+4096,1024,0xaaaaaaaa)
     if scenario=='last':g.fill(base+2048,512,0xaaaaaaaa)

@@ -189,3 +189,34 @@ References: [IOMD functional specification](https://www.bitsavers.org/components
 pp. 14–15 and [Acorn Risc PC TRM](https://wiki.gen.net.uk/lib/exe/fetch.php/archive/computers/acorn/systems/acorn-risc-pc-technical-reference.pdf)
 pp. 1-14–1-16. These expectations concern the documented register and buffer
 contracts; they do not claim pixel-cycle or split-SAM bus timing accuracy.
+
+## Run E: packed words, cursor lanes and cropped right edge
+
+`rpc_video_paths.py` authors four additional guests and derives their new
+`rpc-video-paths-N.trace` goldens solely from the declared circular byte stream,
+palette and geometry. The eight distinct 32-bit words repeat every 32 bytes,
+with unequal bytes in each word and unequal word lanes in each quad. `words`
+scans 36×8, exercising quad batches and word tails on each model. `byte-tail`
+scans 6×12 in a 32-byte DRAM ring: partial words continue across lines and quad
+boundaries; 72 bytes make two wraps and four completed quad transfers.
+`cursor-lanes` scans 36×8 with eight-byte mixed 2-bpp cursor rows at X=1:
+byte lanes select different indices, zero preserves background, and indices
+1/2/3 produce red/green/blue. `right-edge` consumes 2064×2048 guest pixels
+while storing 2048 columns, checking every stored pixel through a canonical
+FNV hash. Its last row also exercises the allocation boundary under ASan.
+Counts and hashes come from the independent generator, never renderer output.
+Existing goldens are unchanged. Every new case is in CTest and CI's `rpc-.*`
+sanitizer selection.
+
+Fable accepted QA V6 as an equivalent mutant. IOMD masks VIDCUR, VIDSTART,
+VIDEND and VIDINIT to quad alignment. Reload starts offset zero; adding 16 or
+reloading aligned START preserves alignment. General-pixel and padding steps
+are bounded by the quad remainder, and the byte path resets at offset 128.
+Thus for every byte-path entry `j=offset/8` lies in 0..15 and the existing
+word-boundary clamp already gives `n <= 4-(j mod 4) <= 16-j`. The separate
+`n <= (128-offset)/8` guard cannot change a chunk. Exhaustively comparing all
+16 byte positions and remaining widths 1..16,384 yields 262,144 identical
+results. The clamp remains as defence in depth. Replacement V6a removes the
+necessary byte-path `next_quad` transition at offset 128 (advancing the address
+without IOMD transfer/wrap handling); the authored `byte-tail` ring checks both
+pixels and quad/hold counts to detect it.

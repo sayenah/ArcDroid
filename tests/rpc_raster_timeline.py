@@ -14,6 +14,7 @@ class RasterTimeline(Timeline):
         self.hcycle=self.vcycle=self.hstart=self.hend=self.vstart=self.vend=0
         self.control=0;self.synth=0;self.remainder=F(0);self.raster=0;self.fields=[]
         self.blank=True;self.cur=0;self.bits=0;self.wraps=0;self.pixels=0
+        self.samples=[] # independent leading-edge geometry/depth chronology
     def delay(self):
         clock=F(32000000*((self.synth>>8&63)+1),(self.synth&63)+1)
         clock/=((self.control>>2)&7)+1;clock=min(clock,120000000)
@@ -42,6 +43,7 @@ class RasterTimeline(Timeline):
         else:
             depth=(1,2,4,8,16,0,32,0)[self.control>>5&7]
             count=max(0,self.hend-self.hstart)
+            self.samples.append((self.raster,now,count,depth))
             if self.memory.get(0x032001e0,0)&32 and not(self.control&0x4000):
                 self.pixels+=count;remaining=count*depth
                 while remaining:

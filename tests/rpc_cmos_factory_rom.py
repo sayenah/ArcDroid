@@ -33,12 +33,29 @@ def factory(kind='full'):
         send(0xa0);send(address)
         for value in data:send(value)
         for v in [0,2,3]:g.mov(0,v);g.store(0,9)
+    # Read the real RTC hour before any payload write. Fixed generation epoch
+    # is midnight; the other integration plan epoch is 23:31 UTC. Persisting
+    # this read makes plan-dependent generation fail the independent oracle,
+    # even if a faulty implementation merely labels provenance as fixed.
+    for v in [3,2]:g.mov(0,v);g.store(0,9)
+    send(0xa0);send(4)
+    for v in [3,2]:g.mov(0,v);g.store(0,9)
+    send(0xa1);g.mov(7,0);g.mov(5,8);receive=len(g.words)
+    for v in [1,3]:g.mov(3,v);g.store(3,9)
+    g.read(0,9);g.emit(0xe1a07087,0xe2000001,0xe1877000,0xe2555001);g.branch(receive,1)
+    for v in [1,3,0,2,3]:g.mov(3,v);g.store(3,9)
     if kind in ['scatter','incomplete']:
         for address in [16,21,27,38,45,63,82,108,143,163,189,205,234,255]:write(address,[1 if address==63 and kind=="incomplete" else 0])
     elif kind=='ro350':
         write(16,[1 if a==63 else 0 for a in range(16,194)])
         write(196,[0]*60)
-    else:write(16,[1 if a==63 else 0 for a in range(16,256)])
+    else:
+        # First byte uses the sampled hour. The checksum remains one, which is
+        # correct exactly for the declared midnight, zero-payload default.
+        for v in [3,2]:g.mov(0,v);g.store(0,9)
+        send(0xa0);send(16);g.emit(0xe1a00007);calls.append(len(g.words));g.emit(0)
+        for a in range(17,256):send(1 if a==63 and kind!='badchecksum' else 0)
+        for v in [0,2,3]:g.mov(0,v);g.store(0,9)
     if kind=='late':
         # 800 complete 65536-tick timer periods exceed 26.2 s. Thereafter
         # repeatedly write the unchanged checksum byte until capture ends.
@@ -56,7 +73,7 @@ def factory(kind='full'):
 
 def generate(directory):
     directory=Path(directory);directory.mkdir(parents=True,exist_ok=True)
-    for kind in ['full','ro350','empty','scatter','incomplete','late','writer','delayed']:
+    for kind in ['full','ro350','empty','scatter','incomplete','late','writer','delayed','badchecksum']:
         words=factory(kind).words
         (directory/f'{kind}.rom').write_bytes(struct.pack('<%dI'%len(words),*words)+struct.pack('<I',0xeafffffe)*(524288-len(words)))
     return directory

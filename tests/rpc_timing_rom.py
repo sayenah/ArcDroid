@@ -16,6 +16,38 @@ class Guest:
     def store(self,address,value):
         self.literal(0,address); self.literal(1,value); self.emit(0xe5801000)
 
+def boundary_guest(c):
+    """Execute conditional transfers with Z=1 to warm code without stores.
+    Setup is unmeasured; measured execution repeats with Z=0 and empty FIFO.
+    """
+    g=Guest();code=0x10001000;kind=c['kind'];k=c.get('k',1)
+    g.literal(0,0x70);g.emit(0xee010f10);g.literal(0,0xd3);g.emit(0xe121f000)
+    if c['model']==2:g.emit(0xee0f0f51)
+    if c['model']==3:g.store(0x0320003c,7)
+    for section,physical,attr in ((0,0,0),(0x100,0x10000000,8),(0x201,0x10100000,4)):
+        g.store(0x10004000+section*4,physical|0xc02|attr)
+    if kind.startswith('buffer-'):body=[0x14892200]*k+[0xe1a0f00b]
+    elif kind=='word-slots':body=[0x18a901fe,0x15892000,0xe1a0f00b]
+    else:body=[0xee0f0f52]+([0x15992000] if kind.endswith('miss') else [])+[0xe1a0f00b]
+    for i,w in enumerate(body):g.store(code+4*i,w)
+    g.literal(0,0x10004000);g.emit(0xee020f10);g.literal(0,3);g.emit(0xee030f10)
+    g.literal(9,0x20100000);g.literal(0,0x107d);g.emit(0xee010f10,0xe1500000)
+    ret=len(g.words)+2;g.literal(11,0);g.literal(12,code);g.emit(0xe1a0f00c)
+    g.words[ret]=len(g.words)*4;g.steps+=len(body)
+    if kind.startswith('clock-'):g.emit(0xee0f0f51)
+    g.literal(9,0x20100000);g.emit(0xe3500001)
+    if kind.startswith('clock-'):g.literal(11,code+4*(len(body)-1))
+    g.emit(0xe1a0f00c);first=g.steps+1
+    count=k if kind.startswith('buffer-') else 2 if kind=='word-slots' else k+len(body)-1
+    return g.words,first,first+count-1
+
+def icache_m0_guest(c):
+    g=Guest();g.literal(0,0x1070);g.emit(0xee010f10,0xee0f0f51)
+    g.literal(12,0x8000);g.emit(0xe1a0f00c);first=g.steps+1
+    while len(g.words)<0x8000//4:g.words.append(0xeafffffe)
+    g.words.append(0xeafffffe)
+    return g.words,first,first+c['k']-1
+
 def rom_castout_guest(c):
     """Warm I tags by execution, then architecturally invalidate only D tags."""
     g=Guest(); code=0x10001000
@@ -57,6 +89,11 @@ def rom_detour_guest(c):
     return g.words,first,first+2
 
 def guest(c):
+    if c['kind']=='hot-dma':
+        from rpc_hot_dma_rom import calibration
+        return calibration(c)[:3]
+    if c['kind'] in ('buffer-retire','buffer-drain','word-slots','clock-disable-hot','clock-disable-miss'):return boundary_guest(c)
+    if c['kind']=='icache-m0':return icache_m0_guest(c)
     if c['kind']=='romdetour':return rom_detour_guest(c)
     if c['kind'] in ('romnext','romfallthrough'):
         w,first,_=guest(dict(c,kind='rom',k=2,clear_z=c['kind']=='romfallthrough'))
@@ -141,7 +178,7 @@ def main(path):
         w,first,last=guest(c);t=duration(c)
         out.append(f'static const uint32_t rpc_timing_words_{i}[]={{'+','.join(f'0x{x:08x}u' for x in w)+'};')
         rows.append('{"%s",%d,%d,rpc_timing_words_%d,%d,%d,%d,%d,%d,%d}' %
-                    (c['name'],c['model'],c['rate'],i,len(w),first,last,t.numerator,t.denominator,int(c.get('wb',False))))
+                    (c['name'],c['model'],c['rate'],i,len(w),first,last,t.numerator,t.denominator,int(c.get('drained',c.get('wb',False)))))
     out.append('static const RpcTimingCase rpc_timing_cases[]={'+',\n'.join(rows)+'};')
     Path(path).write_text('\n'.join(out)+'\n')
 if __name__=='__main__':main(sys.argv[1])

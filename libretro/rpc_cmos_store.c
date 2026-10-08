@@ -80,6 +80,23 @@ static bool path(const ArcRpcCmosStore *s,const char *suffix,char out[1040])
 { int n=snprintf(out,1040,"%s%s",s->base,suffix);return n>=0 && n<1040; }
 static bool exists(const char *directory,const char *leaf,bool *found)
 { return arc_io_directory_contains(directory,leaf,found); }
+/* Only published slots participate in recovery/refusal. A candidate is not
+ * a recovery root, even when complete; publication always overwrites it. */
+static void inspect_slots(ArcRpcCmosStore *s,char *error,size_t n)
+{
+    char directory[1040];strcpy(directory,s->base);*strrchr(directory,'/')=0;
+    for(unsigned slot=0;slot<2;++slot){
+        char filename[1040];path(s,slot?".1":".0",filename);bool found=false;
+        if(!exists(directory,strrchr(filename,'/')+1,&found)){s->refused=true;fail(error,n,"unable to inspect record slot");continue;}
+        if(!found)continue;
+        void *bytes=NULL;size_t size=0;ArcRpcCmosEvidence e;
+        bool valid=arc_io_read_all_limit(filename,&bytes,&size,512,NULL) && decode(s,bytes,size,&e);
+        if(valid && slot<2 && (get((uint8_t *)bytes+24,8)&1)!=slot)valid=false;
+        if(!valid){s->refused=true;fail(error,n,"refused corrupt, foreign or wrong-key slot; preserved on disk");}
+        else if( get((uint8_t *)bytes+24,8)>s->generation){s->generation=get((uint8_t *)bytes+24,8);s->present=true;memcpy(s->payload,(uint8_t *)bytes+104,240);s->evidence=e;}
+        free(bytes);
+    }
+}
 ArcRpcCmosResult arc_riscpc_cmos_store_load(ArcRpcCmosStore *s,const char *save,const ArcRpcCmosKey *k,char *error,size_t n)
 {
     memset(s,0,sizeof(*s));s->key=*k;if(error&&n)*error=0;
@@ -91,21 +108,19 @@ ArcRpcCmosResult arc_riscpc_cmos_store_load(ArcRpcCmosStore *s,const char *save,
     length=k->defaults?snprintf(s->base,sizeof(s->base),"%s/%s-m%u-p%u-t%u",directory,firmware,k->model+1,k->procedure,k->timing):
         snprintf(s->base,sizeof(s->base),"%s/%s-m%u-%s",directory,content,k->model+1,firmware);
     if(length<0 || length>=(int)sizeof(s->base)){fail(error,n,"save path too long");return ARC_RPC_CMOS_REFUSED;}
-    for(unsigned slot=0;slot<3;++slot){
-        char filename[1040];path(s,slot==2?".tmp":slot?".1":".0",filename);bool found=false;
-        if(!exists(directory,strrchr(filename,'/')+1,&found)){s->refused=true;fail(error,n,"unable to inspect record slot");continue;}
-        if(!found)continue;
-        void *bytes=NULL;size_t size=0;ArcRpcCmosEvidence e;
-        bool valid=arc_io_read_all_limit(filename,&bytes,&size,512,NULL) && decode(s,bytes,size,&e);
-        if(valid && slot<2 && (get((uint8_t *)bytes+24,8)&1)!=slot)valid=false;
-        if(!valid){s->refused=true;fail(error,n,"refused corrupt, foreign or wrong-key slot; preserved on disk");}
-        else if(slot<2 && get((uint8_t *)bytes+24,8)>s->generation){s->generation=get((uint8_t *)bytes+24,8);s->present=true;memcpy(s->payload,(uint8_t *)bytes+104,240);s->evidence=e;}
-        free(bytes);
-    }
+    inspect_slots(s,error,n);
     return s->present?ARC_RPC_CMOS_FOUND:s->refused?ARC_RPC_CMOS_REFUSED:ARC_RPC_CMOS_MISSING;
 }
 bool arc_riscpc_cmos_store_put(ArcRpcCmosStore *s,const uint8_t payload[240],const ArcRpcCmosEvidence *e,char *error,size_t n)
 {
+    /* A failure after rename may have published a verified newer generation
+     * without updating this live handle. Reconcile before the no-change check
+     * or retry, preserving every invalid published slot as at ordinary load. */
+    if(s->publication_pending && !s->refused){
+        s->generation=0;s->present=false;
+        inspect_slots(s,error,n);
+        if(!s->refused)s->publication_pending=false;
+    }
     if(s->present && !memcmp(s->payload,payload,240))return true;
     if(s->refused || s->generation==UINT64_MAX)return fail(error,n,"publication refused; existing refused slots are preserved");
     if(s->key.defaults && (!e || !arc_riscpc_cmos_oracle(s->key.layout,payload,e)))return fail(error,n,"default completion oracle failed");
@@ -121,13 +136,9 @@ bool arc_riscpc_cmos_store_put(ArcRpcCmosStore *s,const uint8_t payload[240],con
         bool old_valid=arc_io_read_all_limit(final,&old,&old_size,512,NULL) && decode(s,old,old_size,&old_e) && get((uint8_t *)old+24,8)<s->generation && (((uint8_t *)old)[24]&1u)==((s->generation+1)&1u);
         free(old);if(!old_valid){s->refused=true;return fail(error,n,"destination changed or refused; preserved on disk");}
     }
-    bool pending=false;
-    if(!exists(directory,strrchr(tmp,'/')+1,&pending))return fail(error,n,"candidate inspection failed");
-    if(pending){
-        void *old=NULL;size_t old_size=0;ArcRpcCmosEvidence old_e;
-        bool old_valid=arc_io_read_all_limit(tmp,&old,&old_size,512,NULL) && decode(s,old,old_size,&old_e);
-        free(old);if(!old_valid){s->refused=true;return fail(error,n,"abandoned candidate refused; preserved on disk");}
-    }
+    /* Empty, torn, foreign and wrong-key .tmp files are abandoned attempts;
+     * they never latch refusal and the truncating write below replaces them. */
+    s->publication_pending=true;
     const char *why=NULL;
     if(!arc_io_write_all_diagnostic(tmp,bytes,512,&why)){fail(error,n,why?why:"candidate write failed");return false;}
     void *read=NULL;size_t size=0;
@@ -139,5 +150,5 @@ bool arc_riscpc_cmos_store_put(ArcRpcCmosStore *s,const uint8_t payload[240],con
     if(!arc_io_rename(tmp,final))return fail(error,n,"candidate rename failed");
     read=NULL;size=0;valid=arc_io_read_all_limit(final,&read,&size,512,NULL) && size==512 && !memcmp(read,bytes,512);free(read);
     if(!valid)return fail(error,n,"published-slot verification failed");
-    ++s->generation;s->present=true;memcpy(s->payload,payload,240);if(e)s->evidence=*e;return true;
+    ++s->generation;s->present=true;s->publication_pending=false;memcpy(s->payload,payload,240);if(e)s->evidence=*e;return true;
 }
