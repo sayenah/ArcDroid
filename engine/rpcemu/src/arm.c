@@ -556,8 +556,12 @@ arm_unpredictable(uint32_t opcode)
 int
 arc_rpc_arm_exec_batch(unsigned count, ArcRpcCpuBatch *batch)
 {
+    /* ArcDroid modification (2026-10-07, R2a run D): materialise integral
+     * hot-batch timing at service/batch boundaries; guest issue times stay
+     * exact and every instruction still checks current fetch permissions. */
     if (count > 200) fatal("Instruction batch exceeds boundary");
 	int linecyc;
+    arc_rpc_mem_batch_begin(batch);
 
 	for (linecyc = 0; linecyc < (int)count; linecyc++) {
 		uint32_t opcode;
@@ -1912,6 +1916,7 @@ instruction_done:
         }
 	}
 	inscount += (unsigned)linecyc;
+    if (arc_rpc_mem_fast.integer_batch) arc_rpc_mem_batch_flush();
 
 	return linecyc;
 }

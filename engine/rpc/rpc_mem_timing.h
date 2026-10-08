@@ -5,11 +5,13 @@
 #include <stdint.h>
 #include "rpc_scheduler.h"
 
-/* Public only to the owned interpreter batch shortcut. A hot batch advances
- * exact rational time; any queue, grant or hold returns to the event driver. */
+/* Public only to the owned interpreter batch shortcut. Exact service can
+ * complete locally before a boundary; intervening events return to the driver. */
 typedef struct {
     bool enabled, pending, bus_busy, memo_valid, recording;
     bool rom_sequential, after_branch, track_rom;
+    bool integer_batch;
+    ArcRpcScheduler *clock;
     uint32_t fetch_pc;
     uint32_t opcode;
     uint64_t instructions;
@@ -45,8 +47,10 @@ void arc_rpc_mem_interval(ArcRpcMemInterval *out);
 void arc_rpc_mem_bind(ArcRpcScheduler *clock, unsigned model, unsigned rate);
 void arc_rpc_mem_begin_slow(void);
 void arc_rpc_mem_end_slow(void);
+void arc_rpc_mem_batch_flush(void);
 void arc_rpc_mem_access(uint32_t va, uint32_t physical, unsigned bytes,
                         bool write, bool fetch, unsigned attributes, bool backed);
+void arc_rpc_mem_fetch_slow(uint32_t va, uint32_t physical, unsigned attributes, bool backed);
 void arc_rpc_mem_control(uint32_t control);
 void arc_rpc_mem_permission_change(void);
 void arc_rpc_mem_maintenance(unsigned crn, unsigned opc2, unsigned crm, uint32_t va);
@@ -56,6 +60,7 @@ void arc_rpc_mem_video_hold(uint64_t ns);
 void arc_rpc_mem_run(uint64_t now_ns);
 uint64_t arc_rpc_mem_next(uint64_t limit_ns, bool idle);
 bool arc_rpc_mem_ready(bool idle);
+bool arc_rpc_mem_batch_service(ArcRpcCpuBatch *batch);
 void arc_rpc_mem_idle(bool idle);
 void arc_rpc_mem_stats(ArcRpcMemStats *out);
 
@@ -65,10 +70,24 @@ static inline void arc_rpc_mem_instruction_begin(void)
     if (!f->enabled) return;
     f->recording=true;f->track_rom=f->rom_sequential;
     if (f->track_rom) f->after_branch=false;
-    f->opcode=0;++f->instructions;
+    ++f->instructions; /* Fetch never classifies the previous data opcode. */
 #if defined(ARCDROID_TEST_FAULTS)
     if (f->test_measure) arc_rpc_mem_begin_slow();
 #endif
+}
+static inline void arc_rpc_mem_batch_begin(ArcRpcCpuBatch *batch)
+{
+    ArcRpcMemFast *f = &arc_rpc_mem_fast;
+    /* Integral costs retain the carried issue fraction, including a phase
+     * left by a preceding bus cycle. The shared clock carries the ceiling;
+     * materialise the redundant rational representations at boundaries. */
+    f->integer_batch = batch && f->enabled && !f->base_fraction &&
+        batch->clock->now_ns == f->issue_floor + (f->issue_fraction != 0) &&
+        UINT64_MAX - f->issue_ticks >= 200u * f->base_ticks
+#if defined(ARCDROID_TEST_FAULTS)
+        && !f->test_measure
+#endif
+        ;
 }
 static inline void arc_rpc_mem_opcode(uint32_t opcode)
 { if (arc_rpc_mem_fast.recording) arc_rpc_mem_fast.opcode=opcode; }
@@ -92,6 +111,13 @@ static inline void arc_rpc_mem_instruction_end(uint32_t next_pc)
     ) { arc_rpc_mem_end_slow(); return; }
     f->recording=false;
     if (f->track_rom && f->after_branch) f->rom_sequential=false;
+    if (f->integer_batch) {
+        if (!f->base_fraction) {
+            f->cpu_due_ns = f->clock->now_ns + f->base_whole;
+            return;
+        }
+        arc_rpc_mem_batch_flush();
+    }
     unsigned fraction=f->issue_fraction+f->base_fraction;
     f->due_floor=f->issue_floor+f->base_whole+(fraction>=f->denominator);
     f->due_fraction=fraction>=f->denominator?fraction-f->denominator:fraction;
@@ -105,22 +131,27 @@ static inline void arc_rpc_mem_fetch(uint32_t va, uint32_t physical,
     ArcRpcMemFast *f = &arc_rpc_mem_fast;
     if (f->track_rom) f->fetch_pc=va;
     if (f->memo_valid && f->memo_line == (va >> f->memo_shift)) { ++f->fetch_hits; return; }
-    arc_rpc_mem_access(va, physical, 4, false, true, attributes, backed);
+    arc_rpc_mem_fetch_slow(va, physical, attributes, backed);
 }
 
 static inline bool arc_rpc_mem_batch_next(ArcRpcCpuBatch *batch, bool idle)
 {
     ArcRpcMemFast *m = &arc_rpc_mem_fast;
     if (!m->enabled) return arc_rpc_cpu_batch_next(batch, idle);
-    if (idle || m->pending || m->bus_busy) return false;
+    if (idle) return false;
 #if defined(ARCDROID_TEST_FAULTS)
     if (m->test_stop) return false;
 #endif
+    if (m->pending || m->bus_busy) {
+        if (m->integer_batch) arc_rpc_mem_batch_flush();
+        return arc_rpc_mem_batch_service(batch);
+    }
     uint64_t due = m->cpu_due_ns;
     uint64_t boundary = batch->clock->next_ns < batch->limit_ns ?
         batch->clock->next_ns : batch->limit_ns;
     if (due >= boundary) return false;
     batch->clock->now_ns = due;
+    if (m->integer_batch) return true;
     m->issue_ticks = m->cpu_due_ticks;
     m->issue_floor = m->due_floor; m->issue_fraction = m->due_fraction;
     return true;

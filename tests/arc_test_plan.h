@@ -15,6 +15,7 @@ bool arc_test_plan_pending(void);
 bool arc_test_plan_slice(char *error, size_t size);
 bool arc_test_plan_persist(char *error, size_t size);
 RETRO_API unsigned arc_test_plan_cmos_phase(void);
+RETRO_API bool arc_test_plan_cmos_pacing(unsigned frames);
 void arc_test_plan_reset(void);
 void arc_test_plan_input(ArcInputState *input);
 #endif

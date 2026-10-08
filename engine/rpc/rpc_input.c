@@ -80,6 +80,8 @@ void arc_rpc_input_factory(bool enabled)
     if(enabled)arc_rpc_input_event(); /* Internal Delete exists at time zero. */
 }
 bool arc_rpc_input_delete_held(void) { return arc_rpc_delete; }
+void arc_rpc_input_factory_release(uint64_t release_ns)
+{ arc_rpc_factory_release=release_ns; }
 void arc_rpc_input_event(void)
 {
     uint64_t now=arc_rpc_time_ns();

@@ -103,9 +103,9 @@ int main(int argc,char **argv)
         char rom_path[4096];snprintf(rom_path,sizeof(rom_path),"%s/full.rom",system_directory);FILE *f=fopen(rom_path,"rb");assert(f);
         uint8_t *rom=malloc(2097152);assert(rom&&fread(rom,1,2097152,f)==2097152);fclose(f);uint8_t seed[256]={0};char error[256];
         assert(rpc_start((ArcRpcModel)atoi(argv[7]),rom,2097152,seed,946684800,error,sizeof(error)));free(rom);
-        uint64_t remaining=UINT64_C(30000000000);while(remaining){uint64_t ns=remaining<16666667?remaining:16666667;assert(advance(ns));remaining-=ns;}
+        uint64_t remaining=UINT64_C(45000000000);while(remaining){uint64_t ns=remaining<16666667?remaining:16666667;assert(advance(ns));remaining-=ns;}
         uint8_t bytes[256],mask[32];uint64_t writes,last,now;unsigned state;payload_evidence(bytes,mask,&writes,&last,&now,&state);
-        assert(!writes&&!last&&now==UINT64_C(30000000000));for(unsigned i=0;i<32;++i)assert(!mask[i]);unload();deinit();return 0;
+        assert(!writes&&!last&&now==UINT64_C(45000000000));for(unsigned i=0;i<32;++i)assert(!mask[i]);unload();deinit();return 0;
     }
     struct retro_game_info game={argv[2],NULL,0,NULL};
     if(!strcmp(mode,"cross")){
@@ -126,14 +126,22 @@ unsigned expected_rate=(unsigned)atoi(argv[6]);
     else if(!strcmp(mode,"record") || !strcmp(mode,"writer")){assert(phase()==2);}
     else {
         assert(phase()==1&&notices==1);assert(s.rate_mips==expected_rate);
-        for(unsigned i=0;i<1800;++i){
+        unsigned frames=!strcmp(mode,"positive1")?1:8;
+        bool (*pacing)(unsigned);void (*capture)(ArcRpcCapture *);
+        LOAD(pacing,"arc_test_plan_cmos_pacing");LOAD(capture,"arc_rpc_test_capture_status");
+        assert(!pacing(3));if(frames==1)assert(pacing(1));
+        uint64_t slice=UINT64_C(16666667)*frames;
+        unsigned calls=(unsigned)((UINT64_C(45000000000)+slice-1)/slice);
+        for(unsigned i=0;i<calls;++i){
             if(i==20 && !strcmp(mode,"reset"))reset();
             run();snapshot(&s);
             if(phase()!=1)break;
-            assert(s.now_ns==(uint64_t)(i+1)*16666667);
+            assert(s.now_ns==(uint64_t)(i+1)*slice);
+            ArcRpcCapture current;capture(&current);assert(current.delete_held);
+            assert(!pacing(1)); /* A capture never changes pacing mid-run. */
         }
         if(!strcmp(mode,"negative") || !strcmp(mode,"reset")){assert(phase()==3&&errors&&!s.active);run();assert(phase()==3);unload();deinit();puts("negative oracle/reset: no requested session");return 0;}
-        assert(phase()==2&&!errors);snapshot(&s);assert(s.now_ns==0&&s.executed==0&&black_frames==1799); /* clean requested session */
+        assert(phase()==2&&!errors);snapshot(&s);assert(s.now_ns==0&&s.executed==0&&black_frames==calls-1); /* clean requested session */
     }
     uint8_t before[256],after[256];cmos(before);reset();cmos(after);assert(!memcmp(before+16,after+16,240));
     if(!strcmp(mode,"writer")){

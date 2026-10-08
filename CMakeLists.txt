@@ -2128,7 +2128,7 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
     target_link_libraries(rpc_cmos_plan_test PRIVATE arcdroid_sanitizer_compile arcdroid_sanitizer_link)
   endif()
   foreach(model RANGE 0 3)
-    foreach(case full ro350 empty scatter incomplete late reset nodelete writer)
+    foreach(case full ro350 empty scatter incomplete late reset nodelete writer delayed)
       add_test(NAME rpc-cmos-plan-${model}-${case} COMMAND "${Python3_EXECUTABLE}"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_cmos_plan_test.py" $<TARGET_FILE:rpc_cmos_plan_test>
         $<TARGET_FILE:arcdroid_rpcplan_libretro> $<TARGET_FILE:rpc_runner>

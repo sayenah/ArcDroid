@@ -50,6 +50,7 @@
 
 static struct vidc_state {
         uint32_t palette[256];		/**< Video Palette */
+        uint32_t rgb_palette[256]; /* Host presentation colours, updated at programming. */
         int palindex;			/**< index into the palette[] array to write to */
         uint32_t border_colour;		/**< Border Colour */
         uint32_t cursor_palette[3];	/**< Cursor Palette */
@@ -172,9 +173,30 @@ static uint32_t dma_word(uint32_t address)
     const uint32_t *page = arc_rpc_phys_page(address);
     return page ? page[(address & 1023u) >> 2] : UINT32_MAX;
 }
-static unsigned dma_byte(uint32_t address)
+/* ArcDroid modification (2026-10-07, R2a run D): scanout remains atomic at
+ * its original line event. Reuse an already sampled DMA word within that
+ * event, and consume word-sized bit fragments instead of resampling each
+ * byte. DMA progression, wrap, clipping and aggregate bus holds are unchanged. */
+typedef struct { uint32_t address, word; bool valid; } DmaSample;
+static uint32_t dma_sample(uint32_t address, DmaSample *sample)
 {
-    return (dma_word(address) >> ((address & 3u) * 8u)) & 255u;
+    address &= ~3u;
+    if (!sample->valid || sample->address != address) {
+        sample->address = address; sample->word = dma_word(address); sample->valid = true;
+    }
+    return sample->word;
+}
+static void palette_word(uint32_t *dest, uint32_t word)
+{
+    if (!((word ^ (word >> 8)) & 0xffffffu)) {
+        uint32_t colour = 0xff000000u | vidc.rgb_palette[word & 255u];
+        dest[0] = dest[1] = dest[2] = dest[3] = colour;
+    } else {
+        dest[0] = 0xff000000u | vidc.rgb_palette[word & 255u];
+        dest[1] = 0xff000000u | vidc.rgb_palette[(word >> 8) & 255u];
+        dest[2] = 0xff000000u | vidc.rgb_palette[(word >> 16) & 255u];
+        dest[3] = 0xff000000u | vidc.rgb_palette[word >> 24];
+    }
 }
 static bool dma_dram(void)
 {
@@ -236,21 +258,61 @@ static void scan_line(void)
     if (!bpp) return; /* Reserved hardware depth: border, no fabricated DMA. */
     uint32_t quad = serial_quad;
     unsigned offset = bit_offset, transfers = 0;
+    DmaSample sample = {0};
+    /* Byte-aligned 8-bit pixels consume each sampled word once. Registers
+     * and backing cannot change inside this atomic line callback. */
+    if (bpp == 8 && !(offset & 7u)) {
+        unsigned pixel = 0;
+        int origin = (int)vidc.hdsr - xorigin;
+        bool full = out && origin >= 0 && (unsigned)origin + width <= ARC_RPC_VIDEO_LIMIT;
+        while (pixel < width) {
+            if (!offset && !(quad & 15u) && full && width - pixel >= 16u) {
+                /* One aligned quad stays inside a physical 1 KiB page. All
+                 * four words are sampled within this same atomic event. */
+                const uint32_t *page = arc_rpc_phys_page(quad);
+                const uint32_t *words = page ? page + ((quad & 1023u) >> 2) : NULL;
+                for (unsigned lane = 0; lane < 4; ++lane)
+                    palette_word(out + origin + pixel + lane * 4u, words ? words[lane] : UINT32_MAX);
+                pixel += 16u; quad = next_quad(quad, &transfers);
+                continue;
+            }
+            uint32_t address = quad + (offset >> 3);
+            unsigned n = 4u - (address & 3u);
+            if (n > width - pixel) n = width - pixel;
+            if (n > (128u - offset) / 8u) n = (128u - offset) / 8u;
+            uint32_t word = dma_sample(address, &sample) >> ((address & 3u) * 8u);
+            if (n == 4 && full) {
+                palette_word(out + origin + pixel, word);
+                pixel += 4; offset += 32;
+            } else {
+                for (unsigned byte = 0; byte < n; ++byte) {
+                    int x = (int)vidc.hdsr - xorigin + (int)pixel++;
+                    if (out && x >= 0 && x < (int)ARC_RPC_VIDEO_LIMIT)
+                        out[x] = 0xff000000u | vidc.rgb_palette[word & 255u];
+                    word >>= 8; offset += 8;
+                }
+            }
+            if (offset == 128u) { offset = 0; quad = next_quad(quad, &transfers); }
+        }
+    } else {
     /* Every guest column is consumed, even with no stored row/column. */
     for (unsigned pixel = 0; pixel < width; ++pixel) {
         unsigned value = 0, remaining = bpp, shift = 0;
         /* A depth change may leave a partial byte/quad in the stream. Consume
          * bits across DMA wrap before interpreting the sampled palette. */
         while (remaining) {
-            unsigned bits = 8u - (offset & 7u);
+            uint32_t address = quad + (offset >> 3);
+            unsigned bit = (address & 3u) * 8u + (offset & 7u);
+            unsigned bits = 32u - bit;
             if (bits > remaining) bits = remaining;
-            unsigned byte = dma_byte(quad + (offset >> 3));
-            value |= ((byte >> (offset & 7u)) & ((1u << bits) - 1u)) << shift;
+            if (bits > 128u - offset) bits = 128u - offset;
+            value |= ((dma_sample(address, &sample) >> bit) &
+                (UINT32_MAX >> (32u - bits))) << shift;
             offset += bits; remaining -= bits; shift += bits;
             if (offset == 128u) { offset = 0; quad = next_quad(quad, &transfers); }
         }
         uint32_t colour;
-        if (bpp <= 8) colour = rgb(vidc.palette[value]);
+        if (bpp <= 8) colour = 0xff000000u | vidc.rgb_palette[value];
         else {
             unsigned green = bpp == 16 ? (value >> 4) & 255u : (value >> 8) & 255u;
             unsigned blue = bpp == 16 ? (value >> 8) & 255u : (value >> 16) & 255u;
@@ -259,6 +321,7 @@ static void scan_line(void)
         }
         int x = (int)vidc.hdsr - xorigin + (int)pixel;
         if (out && x >= 0 && x < (int)ARC_RPC_VIDEO_LIMIT) out[x] = colour;
+    }
     }
     video.pixels += width; video.bytes += ((uint64_t)width * bpp) / 8u;
     /* Synchronous HDWR may pad a partial word at each line's end. The
@@ -286,7 +349,9 @@ static void scan_line(void)
     if (cursor_row >= 0 && raster < vidc.vcer + 1u) {
         uint32_t address = cinit + (unsigned)cursor_row * 8u;
         for (unsigned pixel = 0; pixel < 32u; ++pixel) {
-            unsigned index = (dma_byte(address + pixel / 4u) >> ((pixel & 3u) * 2u)) & 3u;
+            uint32_t byte_address = address + pixel / 4u;
+            unsigned bit = (byte_address & 3u) * 8u + (pixel & 3u) * 2u;
+            unsigned index = (dma_sample(byte_address, &sample) >> bit) & 3u;
             int x = (int)vidc.hcsr - xorigin + (int)pixel;
             if (out && index && x >= 0 && x < (int)ARC_RPC_VIDEO_LIMIT)
                 out[x] = rgb(vidc.cursor_palette[index - 1u]);
@@ -360,6 +425,7 @@ writevidc20(uint32_t val)
 	case 0: /* Video Palette */
 		if (val != vidc.palette[vidc.palindex]) {
 			vidc.palette[vidc.palindex] = val;
+            vidc.rgb_palette[vidc.palindex] = rgb(val) & 0xffffffu;
 			vidc.palchange = 1;
 		}
 		/* Increment Video Palette Address, wraparound from 255 to 0 */

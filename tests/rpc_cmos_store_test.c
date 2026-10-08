@@ -86,7 +86,7 @@ int main(void)
         assert(arc_riscpc_cmos_store_load(&t,"/save",&key,error,sizeof(error))==ARC_RPC_CMOS_REFUSED&&error[0]);}
     for(unsigned length=0;length<512;++length){memcpy(files,baseline,sizeof(files));fresh();char path[1200];snprintf(path,sizeof(path),"%s.0",s.base);int i=index_of(path,false);assert(i>=0);files[i].size=length;
         assert(arc_riscpc_cmos_store_load(&t,"/save",&key,error,sizeof(error))==ARC_RPC_CMOS_FOUND&&t.generation==1&&t.refused);}
-    memset(files,0,sizeof(files));fresh();key.defaults=true;key.procedure=key.timing=1;ArcRpcCmosEvidence e={.rate=20,.epoch=946684800,.writes=240,.last_write=25000000000};arc_riscpc_cmos_required(1,e.mask);
+    memset(files,0,sizeof(files));fresh();key.defaults=true;key.procedure=ARC_RPC_CMOS_PROCEDURE_REVISION;key.timing=ARC_RPC_CMOS_TIMING_REVISION;ArcRpcCmosEvidence e={.rate=20,.epoch=946684800,.writes=240,.last_write=40000000000};arc_riscpc_cmos_required(1,e.mask);
     assert(arc_riscpc_cmos_layout("ro350")==1 && arc_riscpc_cmos_layout("ro360")==2 && arc_riscpc_cmos_layout("ro370")==3 && !arc_riscpc_cmos_layout("unknown"));
     assert(arc_riscpc_cmos_oracle(1,p,&e));
     assert(!arc_riscpc_cmos_oracle(2,p,&e) && !arc_riscpc_cmos_oracle(3,p,&e)); /* 194/195 required in both later families */

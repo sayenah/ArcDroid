@@ -17,15 +17,24 @@ typedef struct { uint32_t va, physical; uint8_t valid, dirty; } Tag;
 typedef struct {
     Tag tags[512];
     uint8_t victim[128];
-    unsigned sets, ways, shift;
+    unsigned sets, ways, shift, populated;
 } Cache;
-typedef struct {
-    uint32_t address[WORDS];
-    uint8_t width[WORDS];
+#if defined(__GNUC__)
+#define PACKET_ALIGN __attribute__((aligned(64)))
+#else
+#define PACKET_ALIGN
+#endif
+/* Scalar requests keep their metadata and first lane together. Host alignment
+ * makes the ring stride a shift and avoids scattering each uncached word over
+ * several cache lines; it has no guest bus or packet-capacity significance. */
+typedef struct PACKET_ALIGN {
     unsigned kind, count, index;
     uint16_t writes;
     bool force_n, locked, fetch, fill;
+    uint8_t width[WORDS];
+    uint32_t address[WORDS];
 } Packet;
+#undef PACKET_ALIGN
 static struct {
     ArcRpcScheduler *clock;
     unsigned model, rate;
@@ -37,6 +46,7 @@ static struct {
     unsigned active_kind;
     bool active_valid, cycle_active, video_active;
     uint64_t cursor, bus_cursor, finish, queued_video, video_arrival, wait_start;
+    uint64_t reciprocal;
     uint32_t last_rom;
     ArcRpcMemStats stats;
 } m;
@@ -75,16 +85,37 @@ static uint64_t ticks(uint64_t ns)
         fatal("RPC memory time overflow");
     return ns * arc_rpc_mem_fast.denominator;
 }
-static uint64_t visible(uint64_t value)
+static uint64_t divide(uint64_t value, unsigned *remainder)
 {
     unsigned d = arc_rpc_mem_fast.denominator;
-    return value / d + (value % d != 0);
+#if defined(__SIZEOF_INT128__)
+    /* ceil(2^64/d) estimates floor(value/d) exactly or one too high. With
+     * 28 <= d <= 2800, an overestimate leaves a wrapped remainder >= d;
+     * correcting it restores the exact quotient and remainder, including
+     * values near UINT64_MAX. All arithmetic here is unsigned. */
+    uint64_t q = (uint64_t)(((__uint128_t)value * m.reciprocal) >> 64);
+    uint64_t r = value - q * d;
+    if (r >= d) { --q; r += d; }
+    *remainder = (unsigned)r;
+    return q;
+#else
+    *remainder = (unsigned)(value % d);
+    return value / d;
+#endif
+}
+static uint64_t visible(uint64_t value)
+{
+    unsigned remainder;
+    uint64_t floor = divide(value, &remainder);
+    return floor + (remainder != 0);
 }
 static void next_base(uint64_t from)
 {
     ArcRpcMemFast *f = &arc_rpc_mem_fast;
-    uint64_t floor = from == f->issue_ticks ? f->issue_floor : from / f->denominator;
-    unsigned fraction = from == f->issue_ticks ? f->issue_fraction : (unsigned)(from % f->denominator);
+    unsigned fraction;
+    uint64_t floor;
+    if (from == f->issue_ticks) { floor = f->issue_floor; fraction = f->issue_fraction; }
+    else floor = divide(from, &fraction);
     fraction += f->base_fraction;
     f->due_floor = floor + f->base_whole + (fraction >= f->denominator);
     f->due_fraction = fraction >= f->denominator ? fraction - f->denominator : fraction;
@@ -120,6 +151,9 @@ static Cache *cache_for(bool fetch)
 }
 static Tag *lookup(Cache *c, uint32_t va)
 {
+    /* Disabling allocation retains tags. Only a genuinely empty cache can
+     * omit its way search, including reset-time uncached instruction fetch. */
+    if (!c->populated) return NULL;
     uint32_t line = va >> c->shift;
     unsigned base = (line & (c->sets - 1u)) * c->ways;
     for (unsigned way = 0; way < c->ways; ++way) {
@@ -133,7 +167,11 @@ static Packet *append(unsigned kind)
     arc_rpc_mem_fast.pending = true;
     if (m.count == COMMANDS) fatal("RPC memory request budget exceeded");
     Packet *p = &m.command[(m.head + m.count++) % COMMANDS];
-    memset(p, 0, sizeof(*p)); p->kind = kind;
+    /* word() initializes exactly the populated lanes. Stale unused lanes
+     * never participate in a cycle, so avoid clearing two whole lane arrays
+     * for every uncached scalar request. */
+    p->kind = kind; p->count = p->index = p->writes = 0;
+    p->force_n = p->locked = p->fetch = p->fill = false;
     return p;
 }
 static void word(Packet *p, uint32_t address, unsigned width, bool write)
@@ -163,8 +201,10 @@ void arc_rpc_mem_bind(ArcRpcScheduler *clock, unsigned model, unsigned rate)
     if (!clock) return;
     if (model > 3 || !rate || rate > 100) fatal("Invalid RPC memory clock");
     m.clock = clock; m.model = model; m.rate = rate;
+    arc_rpc_mem_fast.clock = clock;
     arc_rpc_mem_fast.enabled = true;
     arc_rpc_mem_fast.denominator = 28u * rate;
+    m.reciprocal = UINT64_MAX / arc_rpc_mem_fast.denominator + 1u;
     m.stats.denominator = arc_rpc_mem_fast.denominator;
     m.instruction.shift = model == 2 ? 5 : 4;
     arc_rpc_mem_fast.memo_shift = m.instruction.shift;
@@ -214,12 +254,47 @@ void arc_rpc_mem_begin_slow(void)
 }
 static bool swap(void) { return (arc_rpc_mem_fast.opcode & 0x0fb00ff0u) == 0x01000090u; }
 static bool multiple(void) { return (arc_rpc_mem_fast.opcode & 0x0e000000u) == 0x08000000u; }
+static void uncached_clock(void)
+{
+    if (m.model == 2 && !m.switching) {
+        if (m.fast_clock) {
+            m.fast_clock = false; arc_rpc_mem_control(m.control);
+        } else memo_clear();
+    }
+}
+void arc_rpc_mem_fetch_slow(uint32_t va, uint32_t physical, unsigned attributes, bool backed)
+{
+    if (!arc_rpc_mem_fast.recording) return;
+    bool allocate = m.model == 2 ? (m.control & 0x1000) && (!(m.control & 1) || (attributes & 8)) :
+        (m.control & 5) == 5 && (attributes & 8);
+    if (m.instruction.populated || allocate) {
+        arc_rpc_mem_access(va,physical,4,false,true,attributes,backed);
+        return;
+    }
+    /* Empty tags plus disabled allocation prove an external word fetch.
+     * Retained tags after cache disable still use the full lookup above. */
+    physical &= 0x1fffffffu;
+    if (physical < 0x02000000u && ((physical >> 24 ? iomd.romcr1 : iomd.romcr0) & 24)) {
+        arc_rpc_mem_fast.track_rom = true; arc_rpc_mem_fast.after_branch = false;
+        arc_rpc_mem_fast.fetch_pc = va;
+    }
+    Packet *p = append(DEMAND);p->fetch = true;
+    word(p,physical,4,false);uncached_clock();
+}
 
 void arc_rpc_mem_access(uint32_t va, uint32_t physical, unsigned bytes,
                         bool write, bool fetch, unsigned attributes, bool backed)
 {
     if (!arc_rpc_mem_fast.recording) return; /* no descriptor walks, DMA or component charge */
     physical &= 0x1fffffffu;
+    if (!fetch && m.model == 2 && !m.data.populated && !(m.control & 12) && !swap()) {
+        /* Empty SA data tags, C/W clear: no hit, allocation, buffering or
+         * external burst is possible. SWP retains its locked-pair path. */
+        Packet *p = append(DEMAND);p->force_n = true;
+        word(p,physical,bytes,write);
+        if (!write) uncached_clock();
+        return;
+    }
     unsigned r = region(physical);
     if (fetch && r < 2 && ((r ? iomd.romcr1 : iomd.romcr0) & 24)) {
         /* Only burst ROM can benefit from fetch-history tracking. Cache-hot
@@ -256,6 +331,7 @@ void arc_rpc_mem_access(uint32_t va, uint32_t physical, unsigned bytes,
         unsigned set = line & (c->sets - 1u), way = c->victim[set];
         t = &c->tags[set * c->ways + way];
         if (m.model == 2 && !fetch && t->valid) castout(t);
+        if (!t->valid) ++c->populated;
         memo_clear();
         *t = (Tag){line, physical & ~((1u << c->shift) - 1u), 1, 0};
         c->victim[set] = (uint8_t)((way + 1) % c->ways);
@@ -264,6 +340,9 @@ void arc_rpc_mem_access(uint32_t va, uint32_t physical, unsigned bytes,
         ++m.stats.fills;
         if (write) t->dirty |= 1u << ((va >> 4) & 1);
         if (fetch) { memo_set(line); }
+    } else if (fetch) {
+        Packet *p = append(DEMAND); p->fetch = true;
+        word(p, physical, bytes, false);
     } else {
         bool buffered = write && !locked && memory_region(r) &&
             (m.control & 9) == 9 && (attributes & 4);
@@ -281,13 +360,12 @@ void arc_rpc_mem_access(uint32_t va, uint32_t physical, unsigned bytes,
         if (!join) { p = append(kind); p->locked = locked; p->fetch = fetch; p->force_n = !burst && !fetch; }
         word(p, physical, bytes, write);
     }
-    if (!write && m.model == 2 && !m.switching) {
-        m.fast_clock = false; arc_rpc_mem_control(m.control);
-    }
+    if (!write) uncached_clock();
 }
 static void invalidate(Cache *c)
 {
     for (unsigned i = 0; i < c->sets * c->ways; ++i) c->tags[i].valid = c->tags[i].dirty = 0;
+    c->populated = 0;
     memo_clear();
 }
 void arc_rpc_mem_maintenance(unsigned crn, unsigned opc2, unsigned crm, uint32_t va)
@@ -301,24 +379,35 @@ void arc_rpc_mem_maintenance(unsigned crn, unsigned opc2, unsigned crm, uint32_t
         Tag *t = lookup(&m.data, va);
         if (t) {
             if (crm == 10) castout(t);
-            else { t->valid = t->dirty = 0; memo_clear(); }
+            else { t->valid = t->dirty = 0; --m.data.populated; memo_clear(); }
         }
     } else if (opc2 == 4 && crm == 10) append(DRAIN);
 }
 void arc_rpc_mem_end_slow(void)
 {
     if (!arc_rpc_mem_fast.recording) return;
+    if (arc_rpc_mem_fast.integer_batch) arc_rpc_mem_batch_flush();
     arc_rpc_mem_fast.recording = false;
     m.cursor = arc_rpc_mem_fast.issue_ticks;
 #if defined(ARCDROID_TEST_FAULTS)
-    arc_rpc_mem_fast.test_stop = measure_last && arc_rpc_mem_fast.instructions >= measure_last;
+    if (measure_last) arc_rpc_mem_fast.test_stop = arc_rpc_mem_fast.instructions >= measure_last;
 #endif
-    arc_rpc_mem_fast.pending = m.count != 0;
+    /* append() already marks every queued command pending. */
     if (!m.count) {
         if (arc_rpc_mem_fast.track_rom && arc_rpc_mem_fast.after_branch) arc_rpc_mem_fast.rom_sequential=false;
         complete(arc_rpc_mem_fast.issue_ticks);
         next_base(arc_rpc_mem_fast.issue_ticks);
     }
+}
+
+void arc_rpc_mem_batch_flush(void)
+{
+    ArcRpcMemFast *f = &arc_rpc_mem_fast;
+    if (!f->integer_batch) return;
+    f->integer_batch = false;
+    f->issue_floor = f->clock->now_ns - (f->issue_fraction != 0);
+    f->issue_ticks = add(ticks(f->issue_floor), f->issue_fraction);
+    next_base(f->issue_ticks);
 }
 
 /* Clock-edge alignment is rational and anchored at session time zero. */
@@ -331,6 +420,20 @@ static uint64_t cycle(Packet *p, uint64_t start)
 {
     unsigned i = p->index, r = region(p->address[i]);
     uint64_t q = quantum();
+    if (!i && (memory_region(r) || r == 4)) {
+        unsigned n = m.model == 3 && r >= 6 && p->width[i] != 1 &&
+            (iomd.dramwid & (1u << (r - 6))) ? 7 : 5;
+        arc_rpc_mem_fast.rom_sequential = false;
+        return add(start, n * q);
+    }
+    if (r < 2 && m.model != 3 && p->width[i] <= 4) {
+        unsigned cr = r ? iomd.romcr1 : iomd.romcr0;
+        if (!(cr & 24)) {
+            unsigned speed = cr & 7, initial = 7 - (speed > 5 ? 5 : speed);
+            m.last_rom = p->address[i]; arc_rpc_mem_fast.rom_sequential = false;
+            return add(start, initial * q);
+        }
+    }
     bool sequential = i && !m.restart && !p->force_n &&
         p->width[i] == 4 && p->width[i-1] == 4 &&
         p->address[i] == p->address[i-1] + 4 &&
@@ -527,6 +630,62 @@ bool arc_rpc_mem_ready(bool idle)
     arc_rpc_mem_fast.issue_floor = arc_rpc_mem_fast.due_floor;
     arc_rpc_mem_fast.issue_fraction = arc_rpc_mem_fast.due_fraction;
     return true;
+}
+bool arc_rpc_mem_batch_service(ArcRpcCpuBatch *batch)
+{
+    /* Execute the same service transitions locally while no device or
+     * frontend boundary can intervene. Equality still returns to the driver,
+     * which delivers every tied event before release, grant or CPU issue. */
+    uint64_t boundary = batch->clock->next_ns < batch->limit_ns ?
+        batch->clock->next_ns : batch->limit_ns;
+    if (batch->clock->now_ns >= boundary) return false;
+    if (m.count && !m.bcount && !m.active_valid && !m.video_active && !m.queued_video &&
+        m.cursor <= UINT64_MAX / 2 && m.bus_cursor <= UINT64_MAX / 2) {
+        /* A demand-only run with no intervening deadline needs no resumable
+         * grant state. Use the ordinary word-cycle calculation, then commit
+         * only if service AND the next issue precede the boundary. Roll back
+         * ROM history if a deadline requires the resumable path instead.
+         * Keep the resumable path near overflow: bounded commands cannot
+         * exhaust the upper half, so prediction never faults prematurely. */
+        unsigned words = 0, n = 0;
+        uint64_t at = m.cursor < m.bus_cursor ? m.bus_cursor : m.cursor;
+        bool restart = m.restart, sequential = arc_rpc_mem_fast.rom_sequential;
+        uint32_t last = m.last_rom;
+        for (; n < m.count; ++n) {
+            Packet *p = &m.command[(m.head + n) % COMMANDS];
+            if (p->kind != DEMAND) break;
+            for (p->index = 0; p->index < p->count; ++p->index) {
+                at = cycle(p, at); m.restart = false; ++words;
+            }
+            p->index = 0;
+        }
+        if (n == m.count) {
+            ArcRpcMemFast *f = &arc_rpc_mem_fast;
+            uint64_t due = add(at, f->base_ticks);
+            unsigned fraction;
+            uint64_t floor = divide(due, &fraction);
+            uint64_t ns = floor + (fraction != 0);
+            if (ns < boundary) {
+                m.cursor = m.bus_cursor = m.finish = at;
+                m.stats.words += words; m.head = (m.head + m.count) % COMMANDS; m.count = 0;
+                m.grant_left = 0; f->pending = false;
+                if (f->track_rom && f->after_branch) f->rom_sequential = false;
+                complete(at);
+                f->cpu_due_ticks = due; f->due_floor = floor; f->due_fraction = fraction;
+                batch->clock->now_ns = f->cpu_due_ns = ns;
+                return arc_rpc_mem_ready(false);
+            }
+        }
+        m.restart = restart; m.last_rom = last; arc_rpc_mem_fast.rom_sequential = sequential;
+    }
+    arc_rpc_mem_run(batch->clock->now_ns);
+    for (;;) {
+        if (arc_rpc_mem_ready(false)) return true;
+        uint64_t next = arc_rpc_mem_next(boundary, false);
+        if (next >= boundary) return false;
+        batch->clock->now_ns = next;
+        arc_rpc_mem_run(next);
+    }
 }
 void arc_rpc_mem_idle(bool idle)
 {

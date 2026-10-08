@@ -223,11 +223,73 @@ static void long_queue(unsigned speed,unsigned pacing)
     assert(s.buffer_wait_ticks>0&&!remaining_holds&&!s.buffered_packets);
     printf("long rate=%u pacing=%u instructions=%llu words=%llu packets=%llu blocked_ticks=%llu elapsed_ns=%llu exact oracle passed\n",speed,pacing,(unsigned long long)s.instructions,(unsigned long long)s.words,(unsigned long long)s.packets,(unsigned long long)s.buffer_wait_ticks,(unsigned long long)(observed/denominator));
 }
+static void batch_boundaries(void)
+{
+    uint64_t bus_until = 0;
+    for (unsigned tied = 0; tied < 2; ++tied) {
+        init(2,100);
+        ArcRpcCpuBatch batch = {&clock_state,&bus_until,tied ? 177 : 1000};
+        begin(0xe5901000); access(0x10000000,false,0,4);
+        arc_rpc_mem_instruction_end(4);
+        assert(arc_rpc_mem_batch_next(&batch,false) == !tied);
+        if (tied) {
+            /* Service may finish before the boundary, but an issue whose
+             * rational time rounds to that boundary belongs to the driver. */
+            assert(clock_state.now_ns < 177);
+            clock_state.now_ns=177;arc_rpc_mem_run(177);
+            assert(arc_rpc_mem_ready(false));
+        } else assert(clock_state.now_ns==177);
+        ArcRpcMemStats s;arc_rpc_mem_stats(&s);
+        assert(s.words==1 && s.completed_ticks==b+5*q);
+        assert(arc_rpc_mem_fast.issue_ticks==2*b+5*q);
+    }
+    init(2,100);arc_rpc_mem_measure(0,0,false);
+    while(!arc_rpc_mem_ready(false))step_time(false);
+    ArcRpcCpuBatch batch={&clock_state,&bus_until,100000};
+    arc_rpc_mem_batch_begin(&batch);assert(arc_rpc_mem_fast.integer_batch);
+    for (unsigned i=0;i<200;++i) {
+        arc_rpc_mem_instruction_begin();arc_rpc_mem_instruction_end(4);
+        if(i!=199)assert(arc_rpc_mem_batch_next(&batch,false));
+    }
+    arc_rpc_mem_batch_flush();
+    assert(!arc_rpc_mem_fast.integer_batch && clock_state.now_ns==2000);
+    assert(arc_rpc_mem_fast.issue_ticks==200*b && arc_rpc_mem_fast.cpu_due_ticks==201*b);
+    assert(arc_rpc_mem_fast.cpu_due_ns==2010 && arc_rpc_mem_fast.instructions==200);
+    init(2,100);arc_rpc_mem_measure(0,0,false);
+    begin(0xe5901000);access(0x10000000,false,0,4);arc_rpc_mem_instruction_end(4);
+    assert(arc_rpc_mem_batch_next(&batch,false));assert(clock_state.now_ns==177);
+    arc_rpc_mem_batch_begin(&batch);assert(arc_rpc_mem_fast.integer_batch);
+    for (unsigned i=0;i<200;++i) {
+        arc_rpc_mem_instruction_begin();arc_rpc_mem_instruction_end(4);
+        if(i!=199)assert(arc_rpc_mem_batch_next(&batch,false));
+    }
+    arc_rpc_mem_batch_flush();
+    assert(clock_state.now_ns==2167 && arc_rpc_mem_fast.cpu_due_ns==2177);
+    assert(arc_rpc_mem_fast.issue_ticks==201*b+5*q && arc_rpc_mem_fast.cpu_due_ticks==202*b+5*q);
+}
+static void high_time_arithmetic(void)
+{
+    /* Independent native division oracle at all admitted rates, near the
+     * largest representable rational tick. Include nonzero remainders. */
+    for (unsigned speed=1;speed<=100;++speed) for (unsigned offset=0;offset<32;++offset) {
+        init(2,speed);arc_rpc_mem_measure(0,0,false);
+        uint64_t d=28u*speed, ns=UINT64_MAX/d-4096-offset;
+        clock_state.now_ns=ns;arc_rpc_mem_idle(true);arc_rpc_mem_idle(false);
+        uint64_t expected=ns*d+b;
+        assert(arc_rpc_mem_fast.cpu_due_ns==expected/d+(expected%d!=0));
+        clock_state.now_ns=arc_rpc_mem_fast.cpu_due_ns;
+        begin(0xe5901000);access(0x10000000,false,0,4);
+        assert(finish()==expected+5*q);
+        expected+=5*q+b;
+        assert(arc_rpc_mem_fast.cpu_due_ticks==expected);
+        assert(arc_rpc_mem_fast.cpu_due_ns==expected/d+(expected%d!=0));
+    }
+}
 int main(int argc,char **argv)
 {
     if(argc==3) {long_queue((unsigned)atoi(argv[1]),(unsigned)atoi(argv[2]));return 0;}
     scalar_and_map();io_phase();ordinary_rom_io_stores();width_and_clock();buffer_capacity_and_order();
-    cache_eviction_and_maintenance();video_grants();
+    cache_eviction_and_maintenance();video_grants();batch_boundaries();high_time_arithmetic();
     puts("RPC timing service: independent bus, phase, FIFO, cache, clock/width and grant equations passed");
     return 0;
 }

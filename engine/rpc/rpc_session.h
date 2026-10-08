@@ -17,6 +17,7 @@ typedef struct {
 bool arc_rpc_session_factory_start(ArcRpcModel model, const uint8_t *rom, size_t size,
     uint64_t epoch, char *error, size_t error_size);
 void arc_rpc_capture_status(ArcRpcCapture *out);
+bool arc_rpc_session_capture_schedule(uint64_t deadline_ns, uint64_t delete_ns);
 uint64_t arc_rpc_session_generation(void);
 /* Never included by shipping frontend launch code. */
 bool arc_rpc_session_start(ArcRpcModel model, const uint8_t *rom, size_t size,

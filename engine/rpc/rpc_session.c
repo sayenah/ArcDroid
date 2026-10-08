@@ -61,6 +61,7 @@ extern bool arc_rpc_cpu_idle;
 static ArcInputState *arc_rpc_input_service; /* Valid only during one protected entry. */
 static bool arc_rpc_input_retire;
 static ArcRpcCapture arc_rpc_capture;
+static uint64_t arc_rpc_capture_deadline;
 static uint64_t arc_rpc_generation;
 uint64_t arc_rpc_session_generation(void) { return arc_rpc_generation; }
 extern uint64_t arc_rpc_cmos_write_evidence(uint8_t mask[32]);
@@ -223,7 +224,16 @@ bool arc_rpc_session_factory_start(ArcRpcModel model,const uint8_t *bytes,size_t
     uint8_t empty[256]={0};
     if(!arc_rpc_session_start(model,bytes,size,empty,epoch,failure,failure_size))return false;
     arc_rpc_capture.state=ARC_RPC_CAPTURE_RUNNING;
+    arc_rpc_capture_deadline=UINT64_C(30000000000); /* Plan v1 factory contract. */
     arc_rpc_input_factory(true);
+    return true;
+}
+bool arc_rpc_session_capture_schedule(uint64_t deadline_ns,uint64_t delete_ns)
+{
+    if(arc_rpc_capture.state!=ARC_RPC_CAPTURE_RUNNING || arc_rpc_scheduler.now_ns ||
+        !deadline_ns || !delete_ns || delete_ns>deadline_ns)return false;
+    arc_rpc_capture_deadline=deadline_ns;
+    arc_rpc_input_factory_release(delete_ns);
     return true;
 }
 void arc_rpc_capture_status(ArcRpcCapture *out)
@@ -304,8 +314,8 @@ static bool arc_rpc_advance_internal(uint64_t elapsed_ns, bool stop_at_field)
     arc_rpc_inject_entry();
     uint64_t limit = arc_rpc_scheduler.now_ns + elapsed_ns;
     if(arc_rpc_capture.state==ARC_RPC_CAPTURE_DONE)return true;
-    if(arc_rpc_capture.state==ARC_RPC_CAPTURE_RUNNING && limit>UINT64_C(30000000000))
-        limit=UINT64_C(30000000000);
+    if(arc_rpc_capture.state==ARC_RPC_CAPTURE_RUNNING && limit>arc_rpc_capture_deadline)
+        limit=arc_rpc_capture_deadline;
     ArcRpcVideoStatus video_start; arc_rpc_video_status(&video_start);
     unsigned event_work = 0, instruction_work = 0;
     while (arc_rpc_scheduler.now_ns < limit) {
@@ -360,10 +370,10 @@ static bool arc_rpc_advance_internal(uint64_t elapsed_ns, bool stop_at_field)
             }
         }
     }
-    if(arc_rpc_capture.state==ARC_RPC_CAPTURE_RUNNING && arc_rpc_scheduler.now_ns==UINT64_C(30000000000)) {
+    if(arc_rpc_capture.state==ARC_RPC_CAPTURE_RUNNING && arc_rpc_scheduler.now_ns==arc_rpc_capture_deadline) {
         arc_rpc_capture.writes=arc_rpc_cmos_write_evidence(arc_rpc_capture.written);
         arc_rpc_cmos_snapshot(arc_rpc_capture.bytes);
-        if(!arc_rpc_capture.writes)fatal("Factory CMOS capture: no guest writes in 30 emulated seconds");
+        if(!arc_rpc_capture.writes)fatal("Factory CMOS capture: no guest writes in %llu emulated seconds",(unsigned long long)(arc_rpc_capture_deadline/1000000000));
         arc_rpc_capture.state=ARC_RPC_CAPTURE_DONE;
     }
     return true;

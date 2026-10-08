@@ -15,6 +15,7 @@ static size_t event_count, next_event;
 static uint64_t script_frame;
 static bool script_active;
 static unsigned cmos_phase; /* 0=v1, 1=generating, 2=requested, 3=failed */
+static unsigned cmos_frames=8;
 static ArcRpcCmosStore record, defaults;
 static void *pending_rom;
 static size_t pending_size;
@@ -23,6 +24,15 @@ static unsigned pending_model, pending_rate;
 static void (*plan_notice)(const char *,bool);
 void arc_test_plan_set_notice(void (*notice)(const char *,bool)) { plan_notice=notice; }
 RETRO_API unsigned arc_test_plan_cmos_phase(void) { return cmos_phase; }
+static void evidence(uint8_t bytes[256],ArcRpcCmosEvidence *e,uint64_t *now,unsigned *state);
+RETRO_API bool arc_test_plan_cmos_pacing(unsigned frames)
+{
+    if(cmos_phase!=1 || (frames!=1 && frames!=8))return false;
+    uint8_t bytes[256];ArcRpcCmosEvidence e;uint64_t now;unsigned state;
+    evidence(bytes,&e,&now,&state);
+    if(now)return false;
+    cmos_frames=frames;return true;
+}
 bool arc_test_plan_pending(void) { return cmos_phase==1 || cmos_phase==3; }
 static void evidence(uint8_t bytes[256],ArcRpcCmosEvidence *e,uint64_t *now,unsigned *state)
 { arc_engine_test_cmos_evidence(bytes,e->mask,&e->writes,&e->last_write,now,state); }
@@ -44,12 +54,9 @@ static bool requested_start(char *error,size_t size)
 bool arc_test_plan_slice(char *error,size_t size)
 {
     if(cmos_phase!=1)return true;
-    bool ok=arc_engine_test_cmos_slice(UINT64_C(16666667));
+    bool ok=arc_engine_test_cmos_slice(UINT64_C(16666667)*cmos_frames);
     uint8_t bytes[256];ArcRpcCmosEvidence e={0};uint64_t now;unsigned state;
     evidence(bytes,&e,&now,&state);
-    /* Retire isolated audio without sending it to the frontend. */
-    int16_t audio[2048];size_t n;
-    while((n=arc_engine_audio_peek(audio,1024))!=0)arc_engine_audio_commit(n,0);
     if(ok && state==1 && now<ARC_RPC_CMOS_CAPTURE_NS)return true;
     e.epoch=pending_epoch;static const unsigned rates[]={20,35,100,35};e.rate=rates[pending_model];
     ok=ok && state==2 && now==ARC_RPC_CMOS_CAPTURE_NS && arc_riscpc_cmos_oracle(record.key.layout,bytes+16,&e);
@@ -127,7 +134,7 @@ bool arc_test_plan_path(const char *path)
 void arc_test_plan_clear(void)
 {
     char error[256];if(!arc_test_plan_persist(error,sizeof(error)) && plan_notice)plan_notice(error,true);
-    free(pending_rom);pending_rom=NULL;cmos_phase=0;
+    free(pending_rom);pending_rom=NULL;cmos_phase=0;cmos_frames=8;
     memset(&record,0,sizeof(record));memset(&defaults,0,sizeof(defaults));
     event_count = next_event = 0; script_frame = 0; script_active = false;
 }
@@ -239,7 +246,8 @@ bool arc_test_plan_load(const char *path, const char *system, const char *save, 
                 if(valid && found==ARC_RPC_CMOS_FOUND){valid=arc_riscpc_cmos_store_put(&record,defaults.payload,NULL,error,error_size);if(valid)valid=requested_start(error,error_size);}
                 else if(valid){
                     valid=arc_engine_test_plan_start(model,0,true,pending_rom,pending_size,NULL,epoch,error,error_size);
-                    if(valid){cmos_phase=1;if(plan_notice)plan_notice("RPC default generation: isolated held-Delete capture, 30 emulated seconds",false);}
+                    if(valid)valid=arc_engine_test_cmos_schedule(ARC_RPC_CMOS_CAPTURE_NS,ARC_RPC_CMOS_DELETE_NS);
+                    if(valid){cmos_phase=1;if(plan_notice)plan_notice("RPC default generation: isolated held-Delete capture, 45 emulated seconds",false);}
                 }
             }
         }

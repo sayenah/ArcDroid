@@ -11,6 +11,17 @@ def factory(kind='full'):
     # Cache off keeps the idle workload cheaper than a cache-hot ceiling loop;
     # production rates and memory timing remain the ordinary backend's.
     g.mov(0,0);g.emit(0xee010f10)
+    if kind=='delayed':
+        # A reset after 550 complete 65536-tick/2-MHz IOMD periods occurs
+        # after 18.0224 s, independently of CPU speed. Drain earlier makes,
+        # then issue FF and require the held Delete after its ACK/BAT.
+        for off,v in [(0x40,255),(0x44,255),(0x48,0)]:g.mov(0,v);g.store(0,9,off)
+        g.load(6,550);wait=len(g.words);g.read(0,9,0x10);g.emit(0xe3100020);g.branch(wait,0)
+        g.mov(0,32);g.store(0,9,0x14);g.emit(0xe2566001);g.branch(wait,1)
+        drain=len(g.words);g.read(0,9,8);g.emit(0xe3100020)
+        exit_branch=len(g.words);g.emit(0);g.read(0,9,4);g.branch(drain)
+        g.words[exit_branch]=0x0a000000|((len(g.words)-exit_branch-2)&0xffffff)
+        g.mov(0,255);g.store(0,9,4)
     if kind!='writer':
         loop=len(g.words);g.read(0,9,8);g.emit(0xe3100020);g.branch(loop,0)
         g.read(0,9,4);g.emit(0xe3500071);g.branch(loop,1)
@@ -45,7 +56,7 @@ def factory(kind='full'):
 
 def generate(directory):
     directory=Path(directory);directory.mkdir(parents=True,exist_ok=True)
-    for kind in ['full','ro350','empty','scatter','incomplete','late','writer']:
+    for kind in ['full','ro350','empty','scatter','incomplete','late','writer','delayed']:
         words=factory(kind).words
         (directory/f'{kind}.rom').write_bytes(struct.pack('<%dI'%len(words),*words)+struct.pack('<I',0xeafffffe)*(524288-len(words)))
     return directory

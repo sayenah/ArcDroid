@@ -10,6 +10,7 @@ void arc_rpc_input_typematic(unsigned value);
 void arc_rpc_input_scanning(bool enabled);
 bool arc_rpc_input_delete_held(void);
 void arc_rpc_input_factory(bool enabled);
+void arc_rpc_input_factory_release(uint64_t release_ns);
 unsigned arc_rpc_keyboard_room(void);
 unsigned arc_rpc_mouse_room(void);
 #endif

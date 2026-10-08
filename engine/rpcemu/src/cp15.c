@@ -35,6 +35,9 @@
 #include "rpc_mem_timing.h"
 /* ArcDroid modification (2026-10-07): retain descriptor B/C and connect
  * permission-checked fetch, cache maintenance and SA clock-switch timing. */
+/* ArcDroid modification (2026-10-07, R2a run D): share the checked TLB
+ * result with fetch timing, avoiding a second hash lookup without omitting
+ * current domain, privilege or subpage permission checks. */
 
 bool arc_rpc_cpu_idle;
 int dcache = 0; /* Data cache on StrongARM, unified cache pre-StrongARM */
@@ -373,7 +376,7 @@ cp15_domain_access(uint32_t domain)
  * @param prefetch Bool of whether this is for instruction fetch
  * @return Translated physical address (if no Fault occurred)
  */
-uint32_t translateaddress2(uint32_t addr, int rw, int prefetch)
+static inline ArcRpcTlbEntry *checked_translation(uint32_t addr, int rw, int prefetch)
 {
     /* Mix section and subpage bits: identity ROM/RAM/MMIO and page aliases
      * should not evict one another simply because their low offsets match. */
@@ -423,7 +426,7 @@ uint32_t translateaddress2(uint32_t addr, int rw, int prefetch)
         goto do_fault;
     }
     arc_rpc_attributes = entry->attributes;
-    return entry->physical | (addr & 0x3ffu);
+    return entry;
 
 do_fault:
     arm.event |= 0x40;
@@ -431,22 +434,24 @@ do_fault:
         cp15.fault_address = addr;
         cp15.fault_status = (domain << 4) | fault_code;
     }
-    return 0;
+    return NULL;
+}
+
+uint32_t translateaddress2(uint32_t addr, int rw, int prefetch)
+{
+    ArcRpcTlbEntry *entry = checked_translation(addr, rw, prefetch);
+    return entry ? entry->physical | (addr & 0x3ffu) : 0;
 }
 
 const uint32_t *getpccache(uint32_t addr)
 {
-    uint32_t physical = mmu ? translateaddress(addr, 0, 1) : addr;
+    ArcRpcTlbEntry *entry = mmu ? checked_translation(addr, 0, 1) : NULL;
     if (arm.event & 0x40) {
         arm.event &= ~0x40u;
         return NULL;
     }
-    const uint32_t *code;
-    if (!mmu) code = arc_rpc_phys_page(physical);
-    else {
-        uint32_t tag = addr >> 10;
-        code = tlb[(tag ^ (tag >> 10) ^ (tag >> 18)) & (TLBCACHESIZE - 1)].code;
-    }
+    uint32_t physical = entry ? entry->physical | (addr & 0x3ffu) : addr;
+    const uint32_t *code = entry ? entry->code : arc_rpc_phys_page(physical);
     arc_rpc_mem_fetch(addr, physical, arc_rpc_cp15_attributes(), code != NULL);
     return code;
 }

@@ -56,14 +56,21 @@ with tempfile.TemporaryDirectory(prefix='arc-rpc-cmos-') as tmp:
         b=record(defaults[0],b'ARCRPCD1',roms/(kind+'.rom'))
         expected=bytearray(240);expected[47]=1
         assert b[104:344]==expected
-        assert struct.unpack_from('<IIII',b,344)==(1,1,rates[model],1)
-        assert struct.unpack_from('<QQQQQ',b,360)==(946684800,0,12000000000,30000000000,5000000000)
-        writes,last=struct.unpack_from('<QQ',b,400);assert writes==(238 if kind=='ro350' else 240) and 0<last<25000000000
+        assert struct.unpack_from('<IIII',b,344)==(2,1,rates[model],1)
+        assert struct.unpack_from('<QQQQQ',b,360)==(946684800,0,45000000000,45000000000,5000000000)
+        writes,last=struct.unpack_from('<QQ',b,400);assert writes==(238 if kind=='ro350' else 240) and 0<last<40000000000
+        if kind=='delayed':assert last>18022400000
         mask=b'\0\0'+b'\xff'*30
         if kind=='ro350':mask=mask[:24]+b'\xf3'+mask[25:]
         assert b[416:448]==mask and b[448:480]==hashlib.sha256(expected).digest() and not any(b[480:508])
         ordinary=record(slots[0],b'ARCRPCM1',roms/(kind+'.rom'),'a'*40)
         assert ordinary[104:344]==expected and not any(ordinary[344:508])
+        # Identical firmware/model/content/epoch and procedure at one versus
+        # eight frames per call must produce the entire same default record.
+        original_save=save;save=d/'save-one';save.mkdir();run('positive1')
+        one=list((save/'arcdroid/cmos-riscpc/defaults').glob('*.1'))
+        assert len(one)==1 and one[0].read_bytes()==b
+        save=original_save
         original=slots[0].read_bytes();run('record');assert slots[0].read_bytes()==original
         # The same frontend switches through real Arculator persistence.
         import shutil
