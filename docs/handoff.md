@@ -1,32 +1,49 @@
 # ArcDroid Handoff
 
-**Stage:** IMPLEMENTATION — roadmap item 6, RiscPC R2a (memory timing + CMOS), run D
-**Owner:** Sol
-**Next:** Sol R2a **run D** on branch `slice/r2a-timing-cmos` (draft PR #317; Sol thread `01a117a9-6af5-7f00-88f7-679a5f43dc99`). Run D does three things.
+**Stage:** QA — roadmap item 6, RiscPC R2a (memory timing + CMOS)
+**Owner:** Opus
+**Next:** **Opus QA (`arcdroid-opus-qa`, effort high) of PR #317**, branch `slice/r2a-timing-cmos` at the head Fable names in the dispatch (code head `d65a8a6` plus a merge of `main`).
 
-1. **Reset-input schedule (ruling R-D1).** A generated default holds the internal Delete continuously from power-on until a 45 s capture deadline, with a 5 s stability window; the generation-procedure revision is bumped. Reason: under realistic timing, 3.50 on the ARM610 reaches its keyboard check at about 17.8 s (scratch probe, S57). The R2a work order's 0–12 s schedule released Delete first, so the reset was missed (14 writes); the timing model is not at fault. A person holds Delete until the reset happens. Plan v1 `cmos=factory` is unchanged.
-2. **Generation pacing.** Generation advances up to 8 frames of emulated time per `retro_run`, deterministically, so a first launch does not wait the full 45 s in real time.
-3. **Host performance (stop rule 5 triggered).** On the Odin3, the hot-throughput workload at 100 MIPS reaches p95 **1.129 T** (11.24 host ns per instruction; R1 was about 7.0), so it fails. The R1 AC-8 workload passes: p95 0.563 T, max 0.822 T. The §8 fallback stays **not** authorised. Sol optimises the timing service without changing any rule, constant or expectation. Mac targets, interleaved against `main` on the same host:
-   - hot workload host ns per instruction ≤ 1.10 × `main`;
-   - caches-off instruction cost (the R1 AC-8 workload) ≤ 4 × the hot-path cost. It is now about 24×, which also slows every boot from uncached ROM.
+**Scope:** R2a items 1–4 and AC-1, AC-2, AC-6 and AC-7 of the R2 work order below, as amended by:
+- the contract rulings;
+- G7;
+- R-D1;
+- ruling R-H below (D-140).
 
-   Fable then re-runs the Odin3 gates.
+**QA focus:**
+- **Timing contract:** fidelity of `engine/rpc/rpc_mem_timing.c` to `docs/riscpc-timing.md`, and independence of `tests/rpc_timing_oracle.py` from the core.
+- **R1 golden deltas:** the explanations behind every revised R1 RPC golden.
+- **Run-D optimisations:** they must stay exact, including the `vidc20.c` render changes.
+- **CMOS store:** crash safety, key isolation, refusal paths, and the oracle's negatives.
+- **Plan route:** v1 byte-for-byte; the confined `--save` VFS.
+- **Isolation:** the dormant boundary, the symbol guard, and no Arculator change.
+
+**Ruling R-H (S57; D-140), Odin3 host-cost gate.** The hot-throughput half of stop rule 5 ("sustains real time at the 100 MIPS ceiling") is replaced by **"no slower than `main` on the same device"**.
+- **Why:** on the Odin3, `main` (R1 flat timing) itself reaches p95 **1.10 T** on that cache-hot workload, so the absolute clause was never met before R2. A pure cache-hot loop at a full 100 MIPS is beyond the R1 interpreter: that is item 6b's job. D-131's budget rests on gameplay (≈ 67 % of each frame).
+- **Measured on R2a run D:**
+  - hot workload p95 **0.989 / 1.003 T** against `main` 1.10 / 1.10 T (interleaved legs);
+  - R1 AC-8 workload p95 **0.169 T**, with no frame over T.
+- **Unchanged:** AC-10's end-of-R2 gameplay speed gate is the real guard.
+
+**Fable evidence for R2a (private unless stated):**
+- **AC-1, factory reset at production rates:** the generated default is a full reset on all seven pairs. 3.50/ARM610: 544 writes covering 238 addresses (194/195 never written by that firmware). The other six: 550–556 writes covering all 240.
+- **AC-1, cross-platform:** the 3.71 SA-110 default is byte-identical between macOS and the Odin3.
+- **AC-1, Odin3 cost:** first-launch generation takes about 19–20 s on the Odin3, one time only per firmware/model. R3 must show a notice during it.
+- **AC-6, 44-title Archimedes A/B against `main`:**
+  - no package: 42 of 44 identical, with 105 and 205 differing (known variance);
+  - with the package: 43 of 44 identical, with 205 differing (known variance).
+- **Odin3 gates:** above.
+- **AC-2, `*Configure` survives a fresh process:** in progress at this baton.
 
 **Done:**
-- **Run A** (`7bd1f27`): timing contract `docs/riscpc-timing.md`.
-- **Run B** (`9184996`): timing implementation per the accepted contract and rulings, plus Fable's G7 ruling. G7: an SA-110 D-cache line of cacheable ROM dirtied by a store hit is cast out through the write buffer, at ROMCR initial access time per word, with no burst. Sol's results:
-  - 4,127 independent calibration expectations;
-  - host CTest 273/273 and sanitizer selection 269/269;
-  - Arculator untouched.
-- **Run B private gates (Fable):** factory reset now succeeds at production rates on 6/7 pairs:
-  - 3.71 on SA-110, ARM710 and ARM7500;
-  - 3.70 on SA-110;
-  - 3.60 on ARM710 and ARM7500.
-
-  3.50 on the ARM610 fails because of the Delete schedule (R-D1).
-- **Run C** (`a137702`): RiscPC CMOS records `ARCRPCM1`/`ARCRPCD1`, two-slot verified publication, isolated incremental default generation with the oracle, plan v2 part 1, and runner `--save`. Sol's results:
-  - 37 new CTests;
-  - host 310/310 and sanitizer selection 306/306.
+- **Run A** (`7bd1f27`): the timing contract.
+- **Run B** (`9184996`): the timing implementation.
+- **Run C** (`a137702`): RiscPC CMOS records, generated defaults, plan v2 part 1. 37 new CTests.
+- **Run D** (`d65a8a6`):
+  - R-D1: Delete held to a 45 s deadline, generation-procedure revision 2;
+  - 8-frame generation slices; 1-frame and 8-frame defaults are byte-identical;
+  - exact optimisations, with no rule, expectation or golden change;
+  - Sol's results: host 313/314 and sanitizer 309/310, the one failure being the long `libretro-harness` timeout under load, which passed fresh direct reruns.
 
 **Contract rulings (S57; Astra stage 3 incorporated).** The §1 exclusions and G1–G6 are accepted as labelled R2 model limits, with these changes:
 1. SA-110 SWP/SWPB follows TRM §9.11. A cacheable/bufferable SWP is performed in the D-cache (with a fill if needed); only a non-cacheable or non-bufferable SWP is an external locked pair. §6 gains hot-code cases: cached hit, cached miss, uncached.
@@ -609,7 +626,7 @@ The R1 work order and implementation record are in git history (`docs/handoff.md
 4. **Slice 11 — engine and input tidy-up:** **Slice 27 merged S49** (`28dcd8d`, D-112 left stick = D-pad, D-117; AC-12 Odin3 PASS); **closed for now (S50, D-118)**: ARM3-class machines A5000/A540 (Founder S25), Slice 3b joystick interfaces (D-034) and the audio resampler flush (D-022) deferred — no library title needs them.
 5. **Release baseline:** `.info` beside the core, owed release notes, reproducible builds, libretro buildbot submission (D-016; submission needs publication, D-100). **No armeabi-v7a — Android is arm64-v8a only (D-135).** Grounded S55 (above); after R4 (D-133).
 6. **RiscPC workstream (D-063; trial passed, **GO** D-131 at a 100 MIPS Odin3 StrongARM budget):** R1 contained import → R2 media bridge/IDE/CMOS → R3 firmware, Auto selection, launch → R4 platform and regression qualification (`docs/riscpc.md` §6). Next after Slice 30.
-   **6b. Faster CPU translator for RiscPC (Founder S55, D-133):** an arm64 just-in-time translator so the heaviest 3D titles reach their native frame rate on the Odin3; starts with an evaluation (RPCEmu's dynarec is x86-only; `rpcemu-extended`'s arm64 JIT only as a reviewed input, never wholesale); after R4 and item 5.
+   **6b. Faster CPU translator for RiscPC (Founder S55, D-133; evaluation in parallel with R2b–R4 from R2a merge, D-141):** an arm64 just-in-time translator so the heaviest 3D titles reach their native frame rate on the Odin3; starts with an evaluation (RPCEmu's dynarec is x86-only; `rpcemu-extended`'s arm64 JIT only as a reviewed input, never wholesale); after R4 and item 5.
 7. **ADFFS-path failures:** diagnosed S53/S54 (D-128, D-130); **Slice 30 — "Write-protect Tab" per-game option merged S55** (`ff048e4`, D-136); remaining residue 123/158/176 (icon-bar class, tabled D-085), 75 unexamined; Slice 10c (deprioritised, D-085).
 8. **Save states (D-011):** gated on complete machine-state serialisation.
 Carried Founder checks ride on each slice's device leg. Not scheduled: the clean-room command layer.
