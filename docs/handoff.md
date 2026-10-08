@@ -1,8 +1,8 @@
 # ArcDroid Handoff
 
-**Stage:** IMPLEMENTATION — roadmap item 6, RiscPC R2a, run F (test-only)
-**Owner:** Sol
-**Next:** Sol R2a **run F** on `slice/r2a-timing-cmos` (PR #317). It fixes the QA re-check's **MEDIUM-5**, then the same `arcdroid-opus-qa` agent re-checks.
+**Stage:** QA — roadmap item 6, RiscPC R2a (re-check after run F)
+**Owner:** Opus
+**Next:** **Opus QA re-check** of PR #317 at `847a1ff` (run F, test-only: oracle geometry plus discriminating calibrations; M39 and M40 killed; Sol: host 324/324, sanitizer `rpc-.*` 131/131). It continues the same `arcdroid-opus-qa` agent.
 
 **Opus QA re-check (effort 15) at `4a3ddff`: FAIL, narrow and test-only.** All original findings are resolved:
 - HIGH-1 passes 68 kill/fault scenarios.
