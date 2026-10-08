@@ -1,10 +1,45 @@
-# Run E memory-system calibration additions
+# Memory-system calibration additions (runs E–F)
 
 `rpc_timing_oracle.py` consumes declared model, rate, address and instruction
 counts only. It imports no core and reads no core output. The original 4,127
 rational expectations remain unchanged. Cache refill counts are now computed
 from the documented cyclic set occupancy, including fetches before and after
-each load: stream 1/0/0/1 and random 4/2/0/4 refills at K=1024.
+each load. The run-E oracle incorrectly grouped ARM710/7500 as 64-way caches;
+run F corrects this to contract §4.1: ARM610 4×64, ARM710 128×4 and ARM7500
+64×4, all with 16-byte lines. SA has separate I/D caches, 16×32 with 32-byte
+lines; data does not evict its instruction tags. Existing stream 1/0/0/1 and
+random 4/2/0/4 refills at K=1024 coincide under the old/new unified geometries.
+All 4,671 pre-F rational expectations remain unchanged.
+
+Run F adds one `cache-geometry` ROM interval per unified model. Code begins at
+VA 0x10001010 and spans sets 1/2; it is warmed by executing six instructions
+(eight on ARM610)
+with V=1/Z=1, so conditional loads/arithmetic and the loop branch fail and no
+data tag is allocated. The measured three-instruction loop visits N distinct
+data lines in set zero at VA 0x20100000+i*stride, then probes the second and
+first lines, in that order. ARM610 additionally probes the second and fourth
+lines, distinguishing its geometry from a same-capacity 64×4 cache.
+ADDS 0x80000000+0x80000000 establishes warm flags;
+CMP 0,#1 establishes measured V=0/Z=0. SUBSVC decrements a positive count
+without overflow, so all VC probes execute even after the final SUBS sets Z.
+Warm/setup instructions and the return are outside the measured interval.
+
+| Model | N | Stride (sets×16) | Measured instructions (3N+probes) | Fills | Exact duration, ns |
+|---|---:|---:|---:|---:|---:|
+| ARM610 | 65 | 64 | 199 | 67 | 131925/4 |
+| ARM710 | 5 | 2048 | 17 | 6 | 35675/14 |
+| ARM7500 | 5 | 1024 | 17 | 6 | 35675/14 |
+
+Every fill costs (5+2+2+2)×31.25=343.75 ns; ARM7500 setup selects CLKCTRL=7.
+At ways+1 lines the first is evicted and the second retained. Hits leave the
+cyclic cursor unchanged, so probing second hits, then probing first misses:
+N+1 fills on ARM710/7500. On ARM610 that first miss evicts the second line;
+its extra second probe misses, while the fourth hits, giving N+2=67 fills.
+ARM610 with 4 or 63 ways gives 68 fills, with 65 ways 65 fills, and with 64×4
+or 8×32 gives 66 fills, discriminating both its way boundary and geometry.
+M39/M40's 64-way geometries retain all five lines: five fills and 61725/28 ns,
+343.75 ns too short. The corrected oracle simulates every code/data lookup and reset cursor
+independently; no core source, output or measured duration supplies a result.
 
 Small scalar streaming/random runs use K=1/2/8/9/32 with the existing three/four
 instruction cadence. New buffer-boundary guests execute conditional stores with

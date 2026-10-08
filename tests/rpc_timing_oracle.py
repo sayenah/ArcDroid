@@ -5,6 +5,21 @@ Constants and recurrences come from docs/riscpc-timing.md §§2–6.
 """
 from fractions import Fraction as F
 RATES = (20, 35, 100, 35)
+# docs/riscpc-timing.md §4.1: unified, 16-byte-line caches only.
+UNIFIED_GEOMETRY = {0: (4, 64), 1: (128, 4), 3: (64, 4)}
+
+class CyclicTags:
+    """Independent declared set occupancy; touch accepts a virtual line number."""
+    def __init__(self, model):
+        self.sets, self.ways = UNIFIED_GEOMETRY[model]
+        self.tags = [[None]*self.ways for _ in range(self.sets)]
+        self.victim = [0]*self.sets
+    def touch(self, line):
+        s = line % self.sets
+        if line in self.tags[s]: return False
+        self.tags[s][self.victim[s]] = line
+        self.victim[s] = (self.victim[s]+1)%self.ways
+        return True
 
 def fifo(c, packets):
     """§3/§6.2 enqueue chronology; return CPU retirement and drained endpoint.
@@ -30,22 +45,33 @@ def code_refills(c):
     These are presence/replacement equations, not an import of core tags.
     """
     if c['model'] == 2: return 0  # separate I and D caches
-    sets, ways = (4,64) if c['model'] in (0,3) else (8,64)
-    tags = [[None]*ways for _ in range(sets)]; victim = [0]*sets
+    tags = CyclicTags(c['model'])
     # VA 0x10001000: warmed first 16-byte code line, set zero.
-    code = 0x10001000//16; tags[0][0] = code; victim[0] = 1
-    def touch(line):
-        s = line % sets
-        if line in tags[s]: return False
-        tags[s][victim[s]] = line; victim[s] = (victim[s]+1)%ways
-        return True
+    code = 0x10001000//16; tags.touch(code)
     refills = 0
     for i in range(c['k']):
-        refills += touch(code)
+        refills += tags.touch(code)
         word = ((i*257)&1023)*4 if c['kind']=='random' else i
-        touch(0x20100000//16 + word//4)
-        refills += touch(code)
+        tags.touch(0x20100000//16 + word//4)
+        refills += tags.touch(code)
     return refills
+
+def geometry_fills(c):
+    """Warm only code (sets 1/2), visit data in set 0, then declared probes.
+    Every fetch/load is included; hits leave the cyclic cursor unchanged.
+    """
+    tags = CyclicTags(c['model']); code = 0x10001010; data = 0x20100000
+    for offset in range(0, 4*(4+len(c['probes'])), 4): tags.touch((code+offset)//16)
+    fills = 0
+    for i in range(c['lines']):
+        fills += tags.touch(code//16)
+        fills += tags.touch((data+i*c['stride'])//16)
+        fills += tags.touch((code+4)//16)
+        fills += tags.touch((code+8)//16)
+    for offset, line in enumerate(c['probes'], 3):
+        fills += tags.touch((code+4*offset)//16)
+        fills += tags.touch((data+line*c['stride'])//16)
+    return fills
 
 def base(c):
     b = F(1000, c['rate'])
@@ -81,6 +107,8 @@ def addresses(c):
 def duration(c):
     b = base(c); k = c.get('k', 1); n = c.get('n', 1)
     kind = c['kind']; a = addresses(c)
+    if kind == 'geometry':
+        return (3*c['lines']+len(c['probes']))*b + geometry_fills(c)*ram(c, [0,4,8,12])
     if kind=='hot-dma':
         from rpc_hot_dma_rom import calibration
         return calibration(c)[3]
@@ -142,6 +170,10 @@ def duration(c):
 def cases():
     for model, rate in enumerate(RATES):
         d = dict(model=model,rate=rate)
+        if model != 2:
+            sets, ways = UNIFIED_GEOMETRY[model]
+            yield dict(d,kind='geometry',lines=ways+1,stride=sets*16,
+                       probes=(1,0,1,3) if model==0 else (1,0),name='cache-geometry')
         for dram in ((True,) if model==3 else (True,False)):
             yield dict(d,kind='hot-dma',k=1000000,dram=dram,name='hot-dma-'+('dram' if dram else 'vram'))
         for k in (1,2,3,5,8,9,32):

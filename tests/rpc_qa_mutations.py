@@ -60,8 +60,11 @@ def mutated_binary(target,relative,old,new,directory,label):
     return output
 
 TIMING='engine/rpc/rpc_mem_timing.c';VIDEO='engine/rpcemu/src/vidc20.c';STORE='libretro/rpc_cmos_store.c'
+GEOMETRY='    m.instruction.sets = model == 0 ? 4 : model == 1 ? 128 : model == 2 ? 16 : 64;\n    m.instruction.ways = model == 0 ? 64 : model == 2 ? 32 : 4;'
 # (label, source, old, replacement, link target, observable check)
 mutants=[
+ ('M39',TIMING,GEOMETRY,'    m.instruction.sets = model == 0 ? 4 : model == 1 ? 128 : model == 2 ? 16 : 4;\n    m.instruction.ways = model == 0 ? 64 : model == 2 ? 32 : model == 3 ? 64 : 4;',a.core,('timing',3,'cache-geometry')),
+ ('M40',TIMING,GEOMETRY,'    m.instruction.sets = model == 0 ? 4 : model == 1 ? 8 : model == 2 ? 16 : 64;\n    m.instruction.ways = model == 0 ? 64 : model == 2 ? 32 : model == 1 ? 64 : 4;',a.core,('timing',1,'cache-geometry')),
  ('M02',TIMING,'#define BUFFER 8u','#define BUFFER 7u',a.core,('timing',2,'buffer-9-retire')),
  ('M03',TIMING,'m.model == 0 ? 2 : 4','m.model == 0 ? 3 : 4',a.core,('timing',0,'buffer-3-retire')),
  ('M04',TIMING,'m.model == 0 ? 2 : 4','m.model == 0 ? 2 : 5',a.core,('timing',1,'buffer-5-retire')),
