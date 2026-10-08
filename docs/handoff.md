@@ -1,8 +1,16 @@
 # ArcDroid Handoff
 
-**Stage:** IMPLEMENTATION — roadmap item 6, RiscPC R2a, run E (QA remediation)
-**Owner:** Sol
-**Next:** Sol R2a **run E** on `slice/r2a-timing-cmos` (PR #317), remediating the validated Opus QA findings below; then the Opus QA re-check continues the same `arcdroid-opus-qa` agent.
+**Stage:** QA — roadmap item 6, RiscPC R2a (re-check after run E)
+**Owner:** Opus
+**Next:** **Opus QA re-check** of PR #317 at `765a796` (run E). It continues the same `arcdroid-opus-qa` agent and verifies every finding below against Sol's remediation.
+
+Run E (`765a796`):
+- HIGH-1 is fixed: abandoned candidates are ignored and overwritten, and a later publication succeeds after a kill at every step, including QA cases A, B and C.
+- MEDIUM-1: the generation RTC is fixed at 2000-01-01, procedure revision 3.
+- 544 added exact calibrations; the 4,127 originals are unchanged.
+- 22 QA mutants are killed. V6 is equivalent under IOMD quad alignment, proved over 262,144 cases, and is replaced by V6a.
+- No timing source, rule or existing golden changed.
+- Sol's results: host 324/324, sanitizer 320/320.
 
 **Opus QA (effort 15, `arcdroid-opus-qa`) at `0494b8c`: FAIL.** One HIGH; everything else is a test gap or Low. Fable's adjudication — all validated, all go to run E:
 - **HIGH-1 (defect): a torn or empty CMOS `.tmp` candidate blocks publication for good.** Cause: a kill or short write while the candidate is written leaves it there, and `load`/`put` then refuse the store (`libretro/rpc_cmos_store.c:94-132`). One of two things follows:
