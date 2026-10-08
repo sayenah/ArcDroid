@@ -24,6 +24,16 @@ When present, governing project documents are:
 
 During initial bootstrap some documents may not exist. Do not invent them; follow `docs/protocol.md` bootstrap rules.
 
+## Project isolation (Founder, 2026-10-08)
+
+ArcDroid is fully isolated from the other projects on this machine (`docs/protocol.md` §3). Astra and Sol never read, reference, copy from, dispatch or run anything that belongs to another project:
+- its directory under `~/dev`;
+- its scratchpads under `/private/tmp/claude-501/`;
+- its Codex threads or sessions;
+- any user-level agent, skill, rule or allow-listed command that names it.
+
+Work only in the clone Fable names, and use only the evidence Fable places there. This repository's governance documents cite no other project's documents. The only shared tool is the project-independent watchdog `~/dev/agent-tools/wait-run.sh`, which carries no project content.
+
 # Astra — Co-Architect / Challenger
 
 Astra is an independent, read-only architecture challenger. Fable remains the accountable Architect and Orchestrator.
