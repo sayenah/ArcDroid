@@ -1,30 +1,50 @@
 # ArcDroid Handoff
 
-**Stage:** IMPLEMENTATION — roadmap item 6, RiscPC R2b (floppy drives and full controller); Sol run A **running at this baton**
-**Owner:** Sol (run A in flight); Fable supervises
-**Next (Fable, S58):** supervise and then review **Sol R2b run A**.
+**Stage:** IMPLEMENTATION — roadmap item 6, RiscPC R2b (floppy drives and full controller)
+**Owner:** Sol (run B)
+**Next (Sol, R2b run B):** implement ruling **R2b-1** below on `slice/r2b-floppy`, with its tests; leave the tree uncommitted for Fable. Nothing else.
 
-**Running process, handed over:**
+**Ruling R2b-1 (Fable, S58; D-143) — raw FORMAT accepts the guest's sector skew.**
+- **Evidence.** Private, RISC OS 3.71 on ARM7500 and SA-110: ADFS formats an E-format raw ADF with a track skew. The FORMAT ID tuples were:
+  - cylinder 0, both heads: R = 0,1,2,3,4;
+  - cylinder 1, head 0: R = 4,0,1,2,3.
 
-| | |
-|---|---|
-| PID | `53166` (`codex exec` from `/Users/mac0918/dev/ArcDroid`), detached, started about 2026-10-08 23:40 CDT |
-| Sol thread | `01a11e0b-8fbc-7230-9418-f18000a6a00d` (fresh for R2b) |
-| Clone | S57 scratchpad `s57/sol2b/clone`, branch `slice/r2b-floppy` from `main` `9095521` |
-| Prompt | `s57/sol2b/promptA.md` |
-| Stream | `s57/sol2b/streamA.jsonl` |
-| Final | `s57/sol2b/finalA.md` |
-| Report | `SOL-REPORT-R2B-A.md` in the clone |
-| `.evidence/` | the SMSC FDC37C665GT datasheet (PDF and text), the IOMD text |
+  Run A accepts only R = 0…n−1 in order (`arc_rpc_floppy_format`), so every guest `*Format` of a raw floppy stops at the first skewed track with "disc is write protected", on both drives.
+- **Rule.** A raw ADF/ADL stores sectors by ID, not by rotational position. FORMAT succeeds when the incoming tuples, taken together, are exactly the track's sector-ID set:
+  - the count equals the geometry's sectors per track;
+  - every C equals the physical cylinder and every H the selected head;
+  - every N equals the image's size code;
+  - the R values are a permutation of the geometry's IDs, with no duplicate, missing or out-of-range ID.
 
-- **Supervise first:** arm `/Users/mac0918/dev/agent-tools/wait-run.sh 53166 <stream> <final>`. Earlier long runs went silent during long CTest commands, so a `STALLED` line means look at the process before acting.
-- **When it completes:**
-  - Review the diff. Arculator must be untouched, no shipping route may reach RPC, and upstream patches must carry notices.
-  - Commit verbatim on `slice/r2b-floppy`, push, and open the PR.
-  - Watch CI on **all five jobs, including native Windows**: R2a lost several rounds to Windows-only test-export and path failures.
-  - Run the private AC-8 R2b legs: ADFS read, write and format on authored discs in both drives with swaps; JFD store persistence across reload; the two-floppy diagnostics (work order item 7).
-  - Then dispatch Opus QA (`arcdroid-opus-qa`).
-- **Stop rules:** Sol stops on real contradictions and may fix encoding-only workload defects itself. A stale handoff `Next` also makes Sol stop, so update the handoff before every Sol resume.
+  Each sector is written at its fixed offset with the supplied fill byte.
+- **Still refused (write protect, before any byte changes):** any other tuple set, and JFD FORMAT, as today.
+- **Fidelity limit.** The supplied rotational order (skew or interleave) is not representable in a raw image. Later reads keep the geometry's sequential rotational timing. State this limit in `tests/rpc-floppy-expectations.md` and in the `devices-r2b-floppy` patch record. This is what D-139's "exactly representable, never normalised" means for raw images: no ID, size or content is invented or changed.
+- **Tests.**
+  - AC-3/AC-4 cases: a skewed permutation (the 3.71 pattern above) succeeds and its sectors read back with the fill byte at the right offsets.
+  - A duplicate, a missing ID, an out-of-range R, a wrong C, H or N, and a wrong count each refuse with no byte changed.
+  - A mutant that restores the in-order-only rule must be killed.
+- **Unchanged:** everything else in run A. Run A is committed verbatim as `23a5c0e` on PR #331 (draft), with CI green on all five jobs.
+
+**Sol run B setup:**
+- Resume thread `01a11e0b-8fbc-7230-9418-f18000a6a00d` in the S57 clone `s57/sol2b/clone`. Fable merges this baton into the branch first.
+- Verify:
+  - the focused RPC floppy tests (`rpc-fdc-empty`, `rpc-floppy-guest`, `rpc-fdc-boot-probe`, `rpc-session.*`);
+  - `rpc-qa-mutations` with the new mutant;
+  - the MinGW build and Windows export check;
+  - `git diff --check`.
+
+  A full host CTest is not needed for this change.
+- Report: `SOL-REPORT-R2B-B.md`.
+
+**After run B (Fable):**
+- Review, commit verbatim, push, and watch CI on all five jobs.
+- Re-run the private AC-8 R2b legs. Harness: S58 scratchpad `s58/ac8/leg.py`. Raw media must sit inside the runner's `--save` directory, or the runs use `--disk-writes shadow`, because the runner VFS refuses writes elsewhere.
+  - ADFS read, write and format on authored discs in both drives with swaps, on 3.50–3.71;
+  - JFD store persistence across reload;
+  - the two-floppy diagnostics (work order item 7).
+- Then dispatch Opus QA (`arcdroid-opus-qa`).
+
+**Stop rules:** Sol stops on real contradictions and may fix encoding-only workload defects itself. A stale handoff `Next` also makes Sol stop, so update the handoff before every Sol resume.
 - **R2b QA gate:** the AC-6 44-title A/B in both package states. Tooling: S57 `s57/ab/legs57.sh`, `ab57.py`, `cmp57.py`; the baseline is a `main` RelWithDebInfo build.
 
 - **Parallel workstream (D-141, D-142), item 6b translator evaluation:** the plan is in `docs/riscpc-translator.md`.
