@@ -1,8 +1,52 @@
 # ArcDroid Handoff
 
-**Stage:** QA — roadmap item 6, RiscPC R2b (floppy drives and full controller)
-**Owner:** Opus
-**Next (Opus QA):** independently review PR #331 (`slice/r2b-floppy`: code at `6129e8f`, plus this baton merged in) in the fresh QA clone Fable names, against the R2 work order's R2b items 5–8 and AC-3, AC-4, AC-6 and AC-7, ruling R2b-1 (D-143), the PRD and the protocol. Report findings ranked by severity. Change nothing.
+**Stage:** IMPLEMENTATION — roadmap item 6, RiscPC R2b (floppy drives and full controller); QA remediation
+**Owner:** Sol (run C)
+**Next (Sol, R2b run C):** fix QA MEDIUM-1 and LOW-2, the DSR hardware-reset value and the `fdc.c:41` comment, and add the LOW-5 tests, all on `slice/r2b-floppy`, exactly as specified under *QA adjudication* below. Leave the tree uncommitted for Fable. Nothing else.
+
+**QA adjudication (Fable, S58).** Opus QA (effort 15) returned **FAIL**: one medium defect and four lows. Its evidence and reproductions are in S58 scratchpad `s58/qa/`, including `probe/probe.c` and `probe/probe2.c`. Fable verified MEDIUM-1 and LOW-2 in the code and the two datasheet points in the text.
+- **MEDIUM-1 (defect → run C).** A media change on a drive (eject, replacement, failed insert) disarms that drive's SEEK/RECALIBRATE events (`cancel_drive`, `fdc.c` ~538), and the seek callback drops events whose mount generation changed (~503). So a seek in flight loses its seek-end interrupt and leaves the PCN partly stepped.
+  - **Fix.** Stepping is mechanical and independent of media: datasheet Table 17 (SE/EC), and the R1 contract "Empty media does not inhibit mechanical seek/recalibration/TRK0".
+  - A media change retires only data transfers on that drive.
+  - SEEK, RECALIBRATE and RELATIVE SEEK continue to completion with their normal status and interrupt, still invalidated by session generation (reset, teardown).
+  - Index and head-unload events follow the new medium's presence.
+  - **Tests:** QA's reproduction (seek in flight, then eject; seek in flight, then replace; seek in flight, then failed insert) gets the seek-end interrupt and `SENSE INTERRUPT` `20 28`.
+- **LOW-2 (defect → run C).** `cancel_drive` lowers the floppy IRQ unconditionally, even while another unit's seek-complete status is still pending.
+  - **Fix:** after cancelling a transfer, the IRQ reflects the remaining pending status, as in QA's P2 case.
+  - **Test:** that case.
+- **DSR hardware reset (low defect → run C).** The datasheet (DSR description) says a hardware reset sets DSR to 02H, which is 250 kb/s; `fdc_reset` leaves 500 kb/s.
+  - **Fix:** set it as the datasheet says; a software reset still leaves DSR and CCR alone.
+  - **Stop rule:** if any existing golden changes, stop and report to Fable rather than updating it.
+- **Comment `fdc.c:41`.** Make it match the code: close advances `media.session_generation`; the counter is not advanced.
+- **LOW-5 (test gaps → run C).** Add tests that kill QA's surviving mutants. QA's list, runner and mutant sources are in `s58/qa/probe/` (`m1.tsv`, `mutate.py`, `gmutate.py`).
+  - **Two-drive isolation first:**
+    - Q27, the index interrupt raised for an unselected drive;
+    - Q31, the disc-changed bit read from drive 0 instead of the DOR drive.
+  - **Then:**
+    - FIFO thresholds: Q15, Q16, Q18;
+    - VERIFY with EC: Q20;
+    - raw refusals: Q07, Q08;
+    - LOCK/EFIFO and POLL across reset: Q24, Q33;
+    - mechanics: Q22, Q23, Q26;
+    - store-failure latches: Q03, Q10;
+    - search waits: Q29, Q40;
+    - index with the motor off: Q13;
+    - the BC bit: Q19.
+  - Add each as a registered mutant in `tests/rpc_qa_mutations.py`. If you judge one equivalent, argue it in the report instead.
+  - QA judged Q04 and Q30 equivalent; Fable accepts that.
+- **LOW-3 (risk; carried to R3, no R2b change).** Byte-identical media in both drives share one staged file (Shadow staging is keyed by source SHA-1; Original mode uses the source file). A write through one drive changes the other drive's medium with no disc-change signal. R3 must stage per drive or slot, or refuse identical sources in both drives, before drive 1 becomes reachable outside the plan core.
+- **LOW-4 (risk; carried to R3, no R2b change).** On RPC, raw store failures latch write protect without a notice, and raw write-protect refusals never reach `arc_adf_log_refusal`. The guest result is correct under D-139. R3 must give the player a notice before the RPC path ships.
+- **READ TRACK ND (incorrect finding, no change).** The datasheet's Read A Track text sets ND "if there is no comparison" with the specified value, which is what the code does.
+
+**Sol run C setup:**
+- Resume thread `01a11e0b-8fbc-7230-9418-f18000a6a00d` in `s57/sol2b/clone`. Fable merges this baton into the branch first.
+- Verify:
+  - `rpc-fdc-empty`, `rpc-floppy-guest`, `rpc-fdc-boot-probe`, `rpc-session.*`;
+  - `rpc-qa-mutations` with every new mutant;
+  - the MinGW build and Windows export check;
+  - `git diff --check`.
+- Report: `SOL-REPORT-R2B-C.md`.
+- **After run C:** Fable reviews, commits verbatim and watches CI, then asks the same QA agent for a re-check.
 
 **R2b state:**
 - **Sol run A** (`23a5c0e`) implements items 5–8:
@@ -10,8 +54,8 @@
   - the full FDC37C665GT controller (`engine/rpcemu/src/fdc.c`, patch `devices-r2b-floppy`);
   - plan v2 `media`, `drive1` and `disk_control` keys.
 - **Sol run B** (`6129e8f`) implements ruling R2b-1.
-- Sol thread `01a11e0b-8fbc-7230-9418-f18000a6a00d`; reports `SOL-REPORT-R2B-A.md` and `SOL-REPORT-R2B-B.md` are in the S57 clone `s57/sol2b/clone`.
-- **CI:** all five jobs green at `23a5c0e`. At `6129e8f`: android-arm64, host, windows and windows-retroarch pass; host-sanitizers was still running at this baton.
+- Sol thread `01a11e0b-8fbc-7230-9418-f18000a6a00d`; reports `SOL-REPORT-R2B-A.md` and `SOL-REPORT-R2B-B.md` are in `s57/sol2b/clone`.
+- **CI:** green on all five jobs at `23a5c0e`. At `fcf86bf` (code `6129e8f`): four pass and host-sanitizers was still running at this baton.
 
 **Ruling R2b-1 (D-143).** Raw FORMAT accepts a permutation of the track's complete sector-ID set (count, C, H and N exact); any other set is refused with write protect before any byte changes; the rotational order is a stated fidelity limit.
 - Why: RISC OS 3.71 ADFS formats E-format floppies with a track skew. Cylinder 1 head 0 sends R = 4,0,1,2,3, and run A's in-order-only rule refused every guest `*Format`.
@@ -25,7 +69,7 @@
   - staged images byte-checked per disc.
 - **JFD store persistence across a fresh process — PASS** (3.71 SA-110). Library title 146 with the write-protect tab *Off*: `*Save` in session 1, still listed in session 2, store unchanged by session 2.
 - **Two-floppy diagnostics:** no anomaly reproduced, with the helper absent and with it accessed after drive 0. DOR/TC numeric traces were not captured, because there was nothing to diagnose. The original catalogue-before-install case is R2c's.
-- **AC-6 44-title A/B** (`main` vs `6129e8f`, both package states): running at this baton.
+- **AC-6 44-title A/B — PASS** (`main` `49f78b1`, code `6ee6460`, against `6129e8f`; both package states, 42 of 44 identical in each). Only titles 105 and 205 differ, in screenshots only; both are known run-to-run variance titles. Evidence: `s58/ab/`.
 - **Harness lessons, not product defects:** the runner VFS refuses writes outside `--save`, so raw media opened elsewhere are read-only; identical blank images shared one Shadow staging file.
 
 **QA focus:**
