@@ -105,7 +105,37 @@ mutants += [
  ('F-CHANGE',DRIVE,'if(d->present)d->changed=false;','if(false)d->changed=false;',a.fdc,('fdc',)),
  ('F-GENERATION',DRIVE,'g.mount==f->drives[drive].mount_generation','true',a.fdc,('fdc',)),
  ('F-FORMAT-ORDER',DRIVE,'r>=d->sectors || ids[i*4+3]!=n','r!=i || r>=d->sectors || ids[i*4+3]!=n',a.fdc,('fdc',)),
+ # QA LOW-5 recipes, re-reviewed against the typed boundary. Q22 is
+ # reversed under D-144: the mutant restores the incorrect 80-pulse limit.
+ ('Q27',FDC,'if((fdc.dor&3)==d){iomd.irqa.status','if(true){iomd.irqa.status',a.fdc,('fdc',)),
+ ('Q31',FDC,'case 0x3f7:return arc_rpc_floppy_signals(&media,fdc.dor&3,','case 0x3f7:return arc_rpc_floppy_signals(&media,0,',a.fdc,('fdc',)),
+ ('Q15',FDC,'unsigned trigger=capacity==1?1:(16-threshold?16-threshold:1);','unsigned trigger=capacity==1?1:threshold;',a.fdc,('fdc',)),
+ ('Q16',FDC,'(fdc.service||fdc.fifo_count<=threshold))desired=true;','(fdc.service||fdc.fifo_count<threshold))desired=true;',a.fdc,('fdc',)),
+ ('Q18',FDC,'if(addr==0x302a000){fdc.tc=true;fdc.fifo_count=0;}','if(addr==0x302a000){fdc.tc=true;}',a.fdc,('fdc',)),
+ ('Q20',FDC,'bool count_end=fdc.verify && (fdc.p[0]&0x80) && !--fdc.verify_count;','bool count_end=fdc.verify && !--fdc.verify_count;',a.fdc,('fdc',)),
+ ('Q07',DRIVE,'if(write&&r->deleted)return ARC_RPC_FLOPPY_WRITE_PROTECT;','',a.fdc,('fdc',)),
+ ('Q08',DRIVE,'if(!any && r->n!=out->n)return ARC_RPC_FLOPPY_NOT_FOUND;','',a.fdc,('fdc',)),
+ ('Q24',FDC,'fdc.config=lock?(config&0x2f):0x20','fdc.config=lock?(config&0x0f):0x20',a.fdc,('fdc',)),
+ ('Q22',FDC,'>79?79:media.drives[drive].cylinder','>80?80:media.drives[drive].cylinder',a.fdc,('fdc',)),
+ ('Q23',FDC,'fdc.pending_st0[unit]|=0x10;',';',a.fdc,('fdc',)),
+ ('Q26',FDC,'|(signals.write_protected?0x40:0)','',a.fdc,('fdc',)),
+ ('Q03',DRIVE,'if(!ok){d->writable=false;refused','if(!ok){refused',a.fdc,('fdc',)),
+ ('Q10',DRIVE,'d->writable=false;return ARC_RPC_FLOPPY_WRITE_PROTECT;}','return ARC_RPC_FLOPPY_WRITE_PROTECT;}',a.fdc,('fdc',)),
+ ('Q29',FDC,'delay=load+2*ARC_RPC_FLOPPY_REV_NS-phase;','delay=load+ARC_RPC_FLOPPY_REV_NS-phase;',a.fdc,('fdc',)),
+ ('Q40',FDC,'if(fdc.physical_drive<2 && !media.drives[fdc.physical_drive].loaded)load=head_load();','',a.fdc,('fdc',)),
+ ('Q13',DRIVE,'d->present&&d->motor&&arc_rpc_floppy_phase(f,drive,now)<UINT64_C(2000000)','d->present&&arc_rpc_floppy_phase(f,drive,now)<UINT64_C(2000000)',a.fdc,('fdc',)),
+ ('F-SEEK-MOUNT',FDC,'else if(i>=SEEK0&&i<=SEEK3){unsigned unit=i-SEEK0,drive=fdc.seek_drive[unit];','else if(i>=SEEK0&&i<=SEEK3){unsigned unit=i-SEEK0,drive=fdc.seek_drive[unit];if(drive<2&&fdc.token[i].mount!=media.drives[drive].mount_generation)continue;',a.fdc,('fdc',)),
+ ('F-CANCEL-IRQ',FDC,'irq(fdc.pending!=0);','irq(false);',a.fdc,('fdc',)),
+ ('F-DSR-RESET',FDC,'fdc.config=0x20;fdc.rate=2;','fdc.config=0x20;fdc.rate=0;',a.fdc,('fdc',)),
+ ('F-RECAL-EC',FDC,'fdc.base==7&&(drive>=2||media.drives[drive].cylinder>79)','fdc.base==7&&(drive>=2||media.drives[drive].cylinder>80)',a.fdc,('fdc',)),
 ]
+# Q33 is equivalent: software reset clears POLL (mask 0x2f, even when
+# locked), hardware reset clears it too, and FIFO commands cannot execute
+# during the RESET window. Its callback therefore always sees POLL=0.
+# Q19 is equivalent for representable media: raw has cylinders 0..79;
+# JFD has <=166 track sides. A physical C=255 is rejected before an ID
+# can be selected. Every WRONG_CYLINDER sector C is therefore !=255.
+# Q04/Q30 are the equivalents already accepted by Fable.
 def check(binary,case):
     if case[0]=='timing':return [a.timing,binary,str(case[1]),case[2]]
     if case[0]=='unit':return [binary,'--hot-video']

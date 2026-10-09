@@ -410,6 +410,8 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
     target_link_libraries(rpc_scheduler_test PRIVATE arcdroid_sanitizer_compile arcdroid_sanitizer_link)
   endif()
   add_test(NAME rpc-fdc-empty COMMAND rpc_fdc_test)
+  add_test(NAME rpc-fdc-media-change-seek COMMAND rpc_fdc_test --media-change)
+  add_test(NAME rpc-fdc-pending-irq COMMAND rpc_fdc_test --pending-irq)
   add_custom_command(TARGET rpc_fdc_test POST_BUILD
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/check-backend-symbols.py"
       --nm "${CMAKE_NM}"

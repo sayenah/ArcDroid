@@ -32,13 +32,14 @@
 /* Internal equal-deadline order: reset, seek unit 0..3, index drive 0..1,
  * head unload drive 0..1, transfer. The one scheduler FDC slot is disarmed
  * before entry. A callback validates session/mount/command generations before
- * touching a sector. Seek/index/unload events retain their own drive tokens. */
+ * touching a sector. Seeks depend on the session, not the mounted medium;
+ * index/unload events also validate their drive's mount generation. */
 enum { RESET, SEEK0, SEEK1, SEEK2, SEEK3, INDEX0, INDEX1, UNLOAD0, UNLOAD1, TRANSFER, EVENTS };
 enum { IDLE, PARAMETERS, EXECUTE, RESULT };
 enum { SEARCH, BYTE, CRC, GAP, FORMAT_IDS, FORMAT_CRC, IMPLIED };
 static ArcRpcFloppy media;
 static bool media_initialized;
-static uint64_t media_session_generation; /* Never reused after close/reopen. */
+static uint64_t media_session_generation; /* Init/reset epoch; close advances media's epoch. */
 static struct {
     uint8_t dor,rate,specify[2],config,pretrk,perp,lock,pcn[4],eot;
     uint8_t command,base,p[8],param_count,param_at,phase;
@@ -389,14 +390,15 @@ static void execute(void)
     case 20:fdc.lock=(fdc.command>>7)&1;result[0]=fdc.lock<<4;results(result,1,false);return;
     case 7:case 15:{
         unsigned unit=fdc.p[0]&3,drive=fdc.dor&3;int delta;
-        if(fdc.base==7)delta=drive<2?-(int)(media.drives[drive].cylinder>80?80:media.drives[drive].cylinder):-80;
+        /* D-144: the command definition governs the 79-pulse limit. */
+        if(fdc.base==7)delta=drive<2?-(int)(media.drives[drive].cylinder>79?79:media.drives[drive].cylinder):-79;
         else if(fdc.command&0x80)delta=(fdc.command&0x40)?fdc.p[1]:-(int)fdc.p[1];
         else delta=(int)fdc.p[1]-fdc.pcn[unit];
         fdc.seek_delta[unit]=delta;fdc.seek_drive[unit]=drive;
         fdc.seek_target[unit]=fdc.base==7?0:(fdc.command&0x80)?(uint8_t)(fdc.pcn[unit]+delta):fdc.p[1];
         fdc.pending_st0[unit]=0x20|unit;
         if((fdc.command&0x80)&&drive<2&&delta<0&&(unsigned)-delta>media.drives[drive].cylinder)fdc.pending_st0[unit]|=0x10;
-        if(fdc.base==7&&(drive>=2||media.drives[drive].cylinder>80))fdc.pending_st0[unit]|=0x50;
+        if(fdc.base==7&&(drive>=2||media.drives[drive].cylinder>79))fdc.pending_st0[unit]|=0x50;
         fdc.physical_drive=drive;fdc.seek_at[unit]=0;fdc.seek_total[unit]=(unsigned)(delta<0?-delta:delta);
         arm_event(SEEK0+unit,step_time(fdc.seek_total[unit]?1:0));
         empty_command();return;}
@@ -420,7 +422,8 @@ static void execute(void)
 void fdc_reset(void)
 {
     if(!media_initialized){arc_rpc_floppy_init(&media,++media_session_generation);media_initialized=true;}
-    cancel_transfer();memset(&fdc,0,sizeof(fdc));fdc.config=0x20;
+    else media.session_generation=++media_session_generation;
+    cancel_transfer();memset(&fdc,0,sizeof(fdc));fdc.config=0x20;fdc.rate=2;
     /* Hardware reset moves no carriage; a fresh session initializes mechanics. */
     for(unsigned i=0;i<2;++i){arc_rpc_floppy_motor(&media,i,false,arc_rpc_time_ns());media.drives[i].loaded=false;}
     motoron=0;fdccallback=0;arc_rpc_event_cancel(ARC_RPC_EVENT_FDC);irq(false);dma(false);
@@ -500,8 +503,6 @@ void fdc_callback(void)
             for(unsigned d=0;d<4;++d){fdc.pending_st0[d]=0xc0|d;fdc.pending_pcn[d]=fdc.pcn[d]=0;}
             if(fdc.pending)irq(true);}
         else if(i>=SEEK0&&i<=SEEK3){unsigned unit=i-SEEK0,drive=fdc.seek_drive[unit];
-            if(fdc.token[i].session!=media.session_generation ||
-                (drive<2&&fdc.token[i].mount!=media.drives[drive].mount_generation))continue;
             if(fdc.seek_at[unit]<fdc.seek_total[unit]){
                 int direction=fdc.seek_delta[unit]<0?-1:1;
                 arc_rpc_floppy_step(&media,drive,direction);fdc.pcn[unit]=(uint8_t)(fdc.pcn[unit]+direction);
@@ -534,8 +535,7 @@ void fdc_dma_write(uint32_t addr,uint8_t val)
 }
 static void cancel_drive(unsigned drive)
 {
-    if(fdc.phase==EXECUTE && fdc.physical_drive==drive){cancel_transfer();empty_command();irq(false);}
-    for(unsigned i=0;i<4;++i)if(fdc.seek_drive[i]==drive)fdc.armed[SEEK0+i]=false;
+    if(fdc.phase==EXECUTE && fdc.physical_drive==drive){cancel_transfer();empty_command();irq(fdc.pending!=0);}
     if(drive<2){fdc.armed[INDEX0+drive]=false;fdc.armed[UNLOAD0+drive]=false;}
     mux();
 }
@@ -562,7 +562,7 @@ void arc_rpc_fdc_rebase(void)
     if(!media_initialized)return;
     /* fdc_reset freezes rotation using the old virtual time. Retain physical
      * head position and mounts, then invalidate callbacks from that session. */
-    fdc_reset();media.session_generation=++media_session_generation;
+    fdc_reset();
 }
 /* Legacy RPCEmu entry points remain private; no untyped media callback uses
  * them. All production drive traffic goes through the typed sector/event API. */

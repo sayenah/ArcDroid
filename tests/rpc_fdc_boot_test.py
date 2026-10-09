@@ -80,6 +80,10 @@ for drive in range(4):
 sense(0x80)
 command(0x13, 0, 0x0d, 0)
 observe(10, 16, 0x80)
+# This control workload's SRT/horizon was authored at 500 kb/s. Program CCR
+# explicitly rather than relying on the old, incorrect hardware-reset rate.
+# rpc_fdc_test independently verifies the 02H/250 kb/s reset and retention.
+write(0x3f7, 0)
 command(3, 0xaf, 2)
 observe(10, 16, 0x80)
 observe(9, 0x24, 0)
@@ -164,7 +168,7 @@ with tempfile.TemporaryDirectory(prefix='arc-fdc-boot-') as temp:
         (d/'probe.arcplan').write_text(f'version=1\nmodel={model}\nfirmware=authored.rom\ncmos=seed\nseed=seed\nrtc_epoch=0\n')
         r = subprocess.run([runner, '--core', core, '--plan', str(d/'probe.arcplan'),
             # Reset-held delay now includes ROM service; the declared mechanical
-            # seeks include the datasheet 80-pulse absent-drive recalibration bound.
+            # seeks include D-144's 79-pulse absent-drive recalibration bound.
             '--system', str(d), '--frames', '180', '--ram-offset', '131072',
             '--ram-words', str(len(expected))], capture_output=True, text=True)
         assert r.returncode == 0, r.stderr

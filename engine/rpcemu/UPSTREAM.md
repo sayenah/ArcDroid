@@ -322,3 +322,13 @@ ID set in any tuple order, with exact physical C/H and size N, and fills fixed
 sector offsets. Every other set remains write protected before bytes change;
 JFD FORMAT stays refused. Fidelity limit: raw images do not store the supplied
 rotational skew/interleave; later reads retain sequential geometry timing.
+
+R2b run C (`src/fdc.c`): media retirement cancels data on that drive while
+SEEK/RECALIBRATE/RELATIVE SEEK retain their mechanical session (Table 17,
+pp.39,69–72). Reset/teardown invalidate the session; index and head-unload
+events remain mount-bound. Cancellation republishes the remaining pending
+interrupt instead of acknowledging other units' status. Hardware DSR resets
+to 02H/250 kb/s (p.33); software reset retains the programmed rate. D-144
+reconciles the contradictory recalibrate descriptions: at most 79 pulses,
+with equipment check if TRK0 has not asserted. Existing upstream notices
+remain; no loader or third-party helper is added.

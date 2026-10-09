@@ -174,10 +174,202 @@ static void mount_jfd(void)
     ArcEngineMedia m={0};m.jfd=&jfd;m.kind=ARC_MEDIA_JFD;m.writable=true;
     char error[128];assert(arc_rpc_fdc_mount(0,&m,error,sizeof(error)));
 }
-int main(void)
+static void advance_to(uint64_t until)
+{
+    ArcRpcEvent event;unsigned bound=0;
+    while(arc_rpc_take_event(&clock_state,until,&event)){
+        assert(++bound<100000&&event==ARC_RPC_EVENT_FDC);fdc_callback();
+    }
+}
+static void wait_seek_end(void)
+{
+    unsigned bound=0;
+    while(!(iomd.irqb.status&IOMD_IRQB_FLOPPY)){assert(++bound<100000);tick();}
+}
+static void media_change_seek(void)
+{
+    /* Table 17 / D-144: a medium does not gate STEP or seek completion.
+     * P1's SEEK to 40 must return 20 28 for every media retirement. */
+    for(unsigned drive=0;drive<2;++drive)for(unsigned op=0;op<3;++op)for(unsigned action=0;action<3;++action){
+        start();mount_raw(drive,true);fdc_write(0x3f2,0x3c|drive);
+        if(op==2)seek(drive,drive,40);
+        if(op==2)command(7,(const uint8_t[]){drive},1);
+        else command(op==0?15:0xcf,(const uint8_t[]){drive,40},2);
+        for(unsigned i=0;i<5;++i)tick();
+        assert(fdc_read(0x3f4)&(1u<<drive));
+        if(action==0)arc_rpc_fdc_eject(drive);
+        else if(action==1)mount_raw(drive,true);
+        else {ArcEngineMedia bad={0};assert(!arc_rpc_fdc_mount(drive,&bad,NULL,0));}
+        assert(fdc_read(0x3f4)&(1u<<drive));wait_seek_end();sis(0x20|drive,op==2?0:40);
+        uint8_t res[10];command(14,NULL,0);result(res,10);assert(res[drive]==(op==2?0:40));
+        command(4,(const uint8_t[]){drive},1);result(res,1);
+        assert((res[0]&0x10)==(op==2?0x10:0));
+    }
+    /* Reset and teardown retire the mechanical session, including stale callbacks. */
+    for(unsigned action=0;action<3;++action){
+        start();mount_raw(0,true);command(15,(const uint8_t[]){0,40},2);
+        for(unsigned i=0;i<5;++i)tick();
+        if(action==0)fdc_reset();else if(action==1)arc_rpc_fdc_rebase();else {arc_rpc_fdc_close();start();}
+        fdc_callback();advance_to(UINT64_C(100000000));assert(!(iomd.irqb.status&IOMD_IRQB_FLOPPY));sis(0x80,0);
+    }
+    arc_rpc_fdc_close();
+}
+static void pending_irq_cancel(void)
+{
+    /* P2: unit 1 completes SEEK during a drive-0 read. Ejecting drive 0
+     * cancels DMA, but cannot acknowledge unit 1's pending 21 03 status.
+     * Repeat with the drives reversed and with all three retirement paths. */
+    for(unsigned drive=0;drive<2;++drive)for(unsigned action=0;action<3;++action){
+        unsigned other=drive^1;start();mount_raw(0,true);mount_raw(1,true);
+        fdc_write(0x3f2,0x3c|other);command(15,(const uint8_t[]){other,3},2);
+        fdc_write(0x3f2,0x3c|drive);data_command(0x46,drive,0,0,0,0,drive?1:3,4,255);
+        wait_seek_end();assert((fdc_read(0x3f4)&0xf0)==0x50);
+        if(action==0)arc_rpc_fdc_eject(drive);
+        else if(action==1)mount_raw(drive,true);
+        else {ArcEngineMedia bad={0};assert(!arc_rpc_fdc_mount(drive,&bad,NULL,0));}
+        assert(iomd.irqb.status&IOMD_IRQB_FLOPPY);assert(!iomd.fiq.status);
+        sis(0x20|other,3);assert(!(iomd.irqb.status&IOMD_IRQB_FLOPPY));
+    }
+    arc_rpc_fdc_close();
+}
+static void qa_drive_isolation(void)
+{
+    /* Only the DOR-selected drive's index reaches IOMD (Q27). */
+    start();mount_raw(0,true);mount_raw(1,true);fdc_write(0x3f2,0x2c);
+    advance_to(UINT64_C(200500000));assert(!(iomd.irqa.status&IOMD_IRQA_FLOPPY_INDEX));
+    fdc_write(0x3f2,0x2d);advance_to(UINT64_C(400500000));assert(iomd.irqa.status&IOMD_IRQA_FLOPPY_INDEX);
+    iomd.irqa.status&=~IOMD_IRQA_FLOPPY_INDEX;arc_rpc_fdc_eject(1);
+    advance_to(UINT64_C(600500000));assert(!(iomd.irqa.status&IOMD_IRQA_FLOPPY_INDEX));
+    mount_raw(1,true);advance_to(UINT64_C(800500000));assert(iomd.irqa.status&IOMD_IRQA_FLOPPY_INDEX);
+    /* Independent change latches; DOR selects DIR even when PCN differs (Q31). */
+    seek(0,0,1);assert(fdc_read(0x3f7)==0);fdc_write(0x3f2,0x3d);assert(fdc_read(0x3f7)==0x80);
+    seek(1,1,1);assert(fdc_read(0x3f7)==0);arc_rpc_fdc_eject(0);assert(fdc_read(0x3f7)==0);
+    fdc_write(0x3f2,0x3c);assert(fdc_read(0x3f7)==0x80);
+    /* A stopped spindle at index position has no index signal (Q13). */
+    ArcRpcFloppy model;arc_rpc_floppy_init(&model,1);
+    ArcEngineMedia m={0};m.data=raw[0];m.size=sizeof(raw[0]);m.kind=ARC_MEDIA_ADF_800K;m.geometry=ARC_GEOMETRY_800K_D;
+    assert(arc_rpc_floppy_mount(&model,0,&m,NULL,0));
+    assert(!arc_rpc_floppy_signals(&model,0,0).index);arc_rpc_floppy_motor(&model,0,true,0);
+    assert(arc_rpc_floppy_signals(&model,0,0).index);arc_rpc_floppy_motor(&model,0,false,0);
+    assert(!arc_rpc_floppy_signals(&model,0,0).index);arc_rpc_floppy_close(&model);
+}
+static void qa_fifo(void)
+{
+    /* p.44: reads assert at 16-threshold and stay active until empty;
+     * writes resume at exactly threshold bytes left, including equality. */
+    uint8_t res[7],bytes[32768];memset(raw[0],0x57,1024);
+    for(unsigned threshold=2;threshold<=14;threshold+=6){
+        start();mount_raw(0,true);command(19,(const uint8_t[]){0,threshold-1,0},3);
+        data_command(0x46,0,0,0,0,0,3,0,255);unsigned trigger=16-threshold;
+        advance_to(UINT64_C(200000000)+(trigger-1)*UINT64_C(32000));assert(!iomd.fiq.status);
+        advance_to(UINT64_C(200000000)+trigger*UINT64_C(32000));assert(iomd.fiq.status&1);
+        for(unsigned i=0;i<trigger;++i){assert(iomd.fiq.status&1);assert(fdc_dma_read(0x3012000)==0x57);}
+        assert(!iomd.fiq.status);assert(read_transfer(bytes,1024-trigger,false)==1024-trigger);result(res,7);assert(!res[1]);
+        start();mount_raw(0,true);command(19,(const uint8_t[]){0,threshold-1,0},3);
+        data_command(0x45,0,0,0,0,0,3,0,255);
+        for(unsigned i=0;i<16;++i){assert(iomd.fiq.status&1);fdc_dma_write(0x3012000,0x57);}
+        assert(!iomd.fiq.status);
+        advance_to(UINT64_C(200000000)+(16-threshold-1)*UINT64_C(32000));assert(!iomd.fiq.status);
+        advance_to(UINT64_C(200000000)+(16-threshold)*UINT64_C(32000));assert(iomd.fiq.status&1);
+        write_transfer(1008,true,0x57,false);result(res,7);assert(!res[1]);
+    }
+    /* TC consumes its byte and discards already queued read bytes (Q18). */
+    start();mount_raw(0,true);command(19,(const uint8_t[]){0,7,0},3);
+    data_command(0x46,0,0,0,0,0,3,0,255);
+    while(!(iomd.fiq.status&1))tick();
+    assert(fdc_dma_read(0x302a000)==0x57);
+    assert(!iomd.fiq.status&&fdc_dma_read(0x3012000)==0);wait_result();result(res,7);assert(!res[1]);
+}
+static void qa_controls(void)
+{
+    uint8_t res[10];
+    start();mount_raw(0,true);
+    /* EC=0 ignores SC; EC=1 counts sectors, without host DMA (Q20, p.66). */
+    command(0x56,(const uint8_t[]){0,0,0,0,3,4,0x35,1},8);
+    while((fdc_read(0x3f4)&0xf0)!=0xd0){assert(!iomd.fiq.status);tick();}
+    result(res,7);assert(res[0]==0&&res[1]==0&&res[3]==1&&res[5]==1);
+    command(0x56,(const uint8_t[]){0x80,0,0,0,3,4,0x35,2},8);
+    while((fdc_read(0x3f4)&0xf0)!=0xd0){assert(!iomd.fiq.status);tick();}
+    result(res,7);assert(res[0]==0&&res[1]==0&&res[3]==0&&res[5]==2);
+    /* LOCK retains EFIFO/threshold, while EIS/POLL reset (Q24/Q33). */
+    for(unsigned config=0x1d;config<=0x3d;config+=0x20){
+        command(19,(const uint8_t[]){0,config,11},3);command(0x94,NULL,0);result(res,1);
+        fdc_write(0x3f4,0x82);tick();for(unsigned d=0;d<4;++d)sis(0xc0|d,0);
+        command(14,NULL,0);result(res,10);assert(res[8]==(config&0x2f)&&res[9]==11);
+        assert(!(iomd.irqb.status&IOMD_IRQB_FLOPPY));sis(0x80,0);
+    }
+    /* Hardware DSR is 02H; last DSR/CCR write and software-reset retention
+     * are observed through one STEP's independent SRT duration (p.33). */
+    for(unsigned variant=0;variant<4;++variant){
+        start();mount_raw(0,true);
+        if(variant==0){fdc_reset();fdc_write(0x3f2,0x1c);}
+        else if(variant==1){fdc_write(0x3f7,0);fdc_write(0x3f2,8);fdc_write(0x3f2,0x1c);}
+        else if(variant==2)fdc_write(0x3f4,0x81);
+        else {fdc_write(0x3f4,2);fdc_write(0x3f7,3);}
+        if(variant<3){tick();for(unsigned d=0;d<4;++d)sis(0xc0|d,0);}
+        command(3,(const uint8_t[]){0xf1,2},2);uint64_t begin=clock_state.now_ns;
+        command(15,(const uint8_t[]){0,1},2);wait_seek_end();
+        const uint64_t step[]={2000000,1000000,1666667,500000};assert(clock_state.now_ns-begin==step[variant]);sis(0x20,1);
+    }
+}
+static void qa_mechanics(void)
+{
+    uint8_t res[10];
+    /* D-144: 79 pulses suffice from 79; from 80 they leave carriage at 1
+     * and raise SE|EC/abnormal. PCN resets to zero in both cases (Q22). */
+    for(unsigned cylinder=79;cylinder<=80;++cylinder){
+        start();mount_raw(0,true);seek(0,0,cylinder);uint64_t begin=clock_state.now_ns;
+        command(7,(const uint8_t[]){0},1);wait_seek_end();assert(clock_state.now_ns-begin==UINT64_C(158000000));
+        sis(cylinder==79?0x20:0x70,0);command(14,NULL,0);result(res,10);assert(res[0]==0);
+        command(4,(const uint8_t[]){0},1);result(res,1);assert(res[0]==(cylinder==79?0x38:0x28));
+        /* PCN is zero; a +1 Relative Seek distinguishes carriage 0/1 by
+         * then stepping out twice: EC occurs only from carriage 1 (Q23). */
+        command(0xcf,(const uint8_t[]){0,1},2);wait_seek_end();sis(0x20,1);
+        command(0x8f,(const uint8_t[]){0,2},2);wait_seek_end();sis(cylinder==79?0x30:0x20,255);
+        command(4,(const uint8_t[]){0},1);result(res,1);assert(res[0]==0x38);
+    }
+    start();fdc_write(0x3f2,0x1e);uint64_t begin=clock_state.now_ns;
+    command(7,(const uint8_t[]){2},1);wait_seek_end();assert(clock_state.now_ns-begin==UINT64_C(158000000));sis(0x72,0);
+    /* Physical WP is reported by SENSE DRIVE STATUS (Q26). */
+    start();mount_raw(0,false);command(4,(const uint8_t[]){0},1);result(res,1);assert(res[0]==0x78);
+}
+static void qa_refusals_waits(void)
+{
+    uint8_t res[7];unsigned before;
+    start();mount_raw(0,true);before=raw_writes;
+    data_command(0x49,0,0,0,0,0,3,0,255);result(res,7);assert(res[1]==2&&raw_writes==before);
+    data_command(0x46,0,0,0,0,0,2,0,255);wait_result();result(res,7);assert(res[1]==4);
+    /* Failed JFD/raw stores latch WP even after the host store recovers. */
+    for(unsigned kind=0;kind<2;++kind){
+        start();if(kind==0)mount_jfd();else mount_raw(0,true);
+        fail_store=true;data_command(0x45,0,0,0,0,0,3,0,255);write_transfer(1024,true,0x39,false);result(res,7);assert(res[1]==2);
+        fail_store=false;before=kind==0?commits:raw_writes;
+        data_command(0x45,0,0,0,0,0,3,0,255);result(res,7);assert(res[1]==2);
+        assert(before==(kind==0?commits:raw_writes));
+    }
+    /* Q10 removes FORMAT's distinct raw-store failure latch. */
+    start();mount_raw(0,true);uint8_t ids[20];
+    for(unsigned r=0;r<5;++r){ids[4*r]=ids[4*r+1]=0;ids[4*r+2]=r;ids[4*r+3]=3;}
+    fail_store=true;format_track(0,0,3,ids,5,0x48,res);assert(res[1]==2);fail_store=false;before=raw_writes;
+    command(0x4d,(const uint8_t[]){0,3,5,0x32,0x48},5);result(res,7);assert(res[1]==2&&raw_writes==before);
+    /* Missing ID waits through two index occurrences (Q29, pp.40/69). */
+    start();mount_raw(0,true);advance_to(UINT64_C(55000000));data_command(0x46,0,0,0,0,99,3,99,255);
+    while((fdc_read(0x3f4)&0xf0)!=0xd0){assert(!iomd.fiq.status);tick();}
+    assert(clock_state.now_ns==UINT64_C(400000000));result(res,7);assert(res[1]==4);
+    /* Head load at 198 ms crosses index; R0 must wait to 400 ms (Q40). */
+    start();mount_raw(0,true);advance_to(UINT64_C(198000000));data_command(0x46,0,0,0,0,0,3,0,255);
+    unsigned bound=0;while(!(iomd.fiq.status&1)){assert(++bound<100000);tick();}
+    assert(clock_state.now_ns==UINT64_C(400032000));arc_rpc_fdc_eject(0);
+}
+int main(int argc,char **argv)
 {
     struct retro_vfs_interface vfs={0};vfs.open=open_file;vfs.close=close_file;vfs.size=file_size;vfs.seek=seek_file;
     vfs.read=read_file;vfs.write=write_file;vfs.flush=flush_file;arc_io_set_vfs(&vfs);
+    if(argc==2){
+        if(!strcmp(argv[1],"--media-change"))media_change_seek();
+        else {assert(!strcmp(argv[1],"--pending-irq"));pending_irq_cancel();}
+        puts("rpc-fdc: media-change mechanics / pending IRQ passed");return 0;
+    }
     uint8_t res[10],bytes[32768];
     start();command(16,NULL,0);result(res,1);assert(res[0]==0x90);
     for(unsigned op=0;op<256;++op)if((op&31)==17||(op&31)==25||(op&31)==29){command(op,NULL,0);result(res,1);assert(res[0]==0x80);}
@@ -329,5 +521,6 @@ int main(void)
         request.r=1;assert(arc_rpc_floppy_select(&model,&request,0,&selected)==ARC_RPC_FLOPPY_NOT_FOUND);
     }
     arc_rpc_floppy_close(&model);assert(!arc_rpc_floppy_valid(&model,1,selected.generation));arc_rpc_fdc_close();
-    puts("rpc-fdc: command fields, physical drive/head isolation, FIFO/ND, TC and generations passed");return 0;
+    qa_drive_isolation();qa_fifo();qa_controls();qa_mechanics();qa_refusals_waits();media_change_seek();pending_irq_cancel();arc_rpc_fdc_close();
+    puts("rpc-fdc: command fields, drive isolation, FIFO/ND, TC, media-change mechanics, pending IRQ and generations passed");return 0;
 }

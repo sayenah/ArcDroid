@@ -63,8 +63,25 @@ samples the new policy and re-stages Shadow/Original raw ownership.
 
 The R1 device guest previously polled DIO alone. Its encoding now requires
 RQM and DIO; its expected data and golden remain unchanged. The R1 mechanical
-probe now writes DOR for each physical drive, and includes the 80-pulse absent
-drive recalibration duration in its horizon. These are workload corrections.
+probe writes DOR for each physical drive. D-144 replaces its former 80-pulse
+absent-drive recalibration bound with 79 pulses: cylinder 79 reaches TRK0/SE,
+cylinder 80 leaves the carriage at 1
+and reports SE|EC; PCN resets to zero in both cases. A drive whose TRK0 never
+asserts reports SE|EC after 79 pulses. TRK0 on the two modeled carriages is
+mechanical and remains available without an image.
+
+Run C's `rpc-fdc-media-change-seek` checks SEEK, RECALIBRATE and RELATIVE SEEK
+through eject, replacement and failed insertion on both drives. P1 ends with
+SE and PCN 40 (`20 28` on unit 0); media retirement cannot stop STEP. Reset
+and teardown cancel that mechanical session. `rpc-fdc-pending-irq` checks P2:
+a unit-1 seek completion during a drive-0 read remains pending after drive 0
+is retired, with IRQ asserted until SIS returns `21 03`. Both retirement
+directions and all three media-change paths are covered. Index events follow
+the newly mounted medium's presence; only the DOR-selected drive raises index.
+Hardware DSR is 02H (250 kb/s), while software reset retains the last DSR/CCR
+rate. Exact SRT and FIFO service boundaries are independently asserted.
+The R1 control guest explicitly programs its authored 500 kb/s rate; its result
+expectations and 180-frame horizon remain unchanged.
 
 ## Plan v2 media keys
 
