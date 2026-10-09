@@ -19,6 +19,10 @@
   - MEDIUM: multi-megabyte work in one tick;
   - MEDIUM: the prepared-disc key was undefined.
 - **Fable accepted the contract with D-145 (six binding amendments):** the four Astra changes; A1, which drops the per-command record readback (the A3020 store's proven pattern); and A2, which keeps full SHA-256 per cache miss but allows faster hashing.
+- **Run B so far:**
+  - **First stop (correct):** the prompt wrongly asked for a tenth scheduler event. Ruling: activate the existing reserved IDE slot; the count stays at nine.
+  - **Second stop (correct, with an executable probe):** the VFS `readdir` cannot report errors, so listing-based GC could exceed the disc bound after a kill. **Ruling R2c-1 (D-147):** RETIRE removes garbage before removal; debris is found by fixed paths; listing is advisory only.
+  - Run B continues from there.
 - **Contract honesty, accepted:**
   - the frontend VFS gives no power-loss durability and no bounded wall-clock latency;
   - "no stall depends on the host" means guest-visible timing is virtual and identical however slow the host is;
