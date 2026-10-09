@@ -1,12 +1,28 @@
 # ArcDroid Handoff
 
-**Stage:** IMPLEMENTATION — roadmap item 6, RiscPC **R2c** (IDE and a scalable hard disc), run A (store state machine document, no product code)
-**Owner:** Fable (dispatch), then Sol
-**Next (Fable, S59):** dispatch **Sol R2c run A**.
-- In a fresh clone on a new branch `slice/r2c-ide` from `main`, Sol writes `docs/riscpc-hd-store.md`, the store state machine of work-order item 9 below. No product code.
-- Give it a **fresh** Sol thread, and arm `wait-run.sh` at dispatch.
-- Then a short Astra check, Fable acceptance, and run B (implementation).
-- R2c run A's first change also adds QA N1: an assertion that the floppy IRQ stays low when a transfer is cancelled with nothing pending. This is test-only, from the R2b QA re-check.
+**Stage:** IMPLEMENTATION — roadmap item 6, RiscPC **R2c** (IDE and a scalable hard disc), run B (implementation of items 9–12)
+**Owner:** Sol (run B), supervised by Fable
+**Next:** Sol R2c run B on branch `slice/r2c-ide` (draft PR #337), resuming Sol thread `01a120ab-7bf4-7843-a879-6fab6d9b3736` in its S59 clone after `main` is merged into the branch.
+- Sol first writes the six D-145 amendments into `docs/riscpc-hd-store.md`.
+- Then Sol implements work-order items 9–12 and their AC-5/AC-7 tests exactly as the amended contract states.
+- The pristine `rpcemu-0.9.5.tar.gz` (SHA-256 `4e4624641cd1a83af275bd6da8765d4a0e5e0c83f008f059014cc24c5c33d59e`, as in `engine/rpcemu/UPSTREAM.md`) is supplied in the clone's git-ignored `.evidence/`.
+- Arm `wait-run.sh` at dispatch.
+- Then Fable reviews, and runs AC-6, AC-8 and AC-9 privately, before Opus QA.
+
+**R2c run A outcome (S59).**
+- **Sol run A** (fresh thread above, 1,831 s) is committed verbatim as `b4bc633`:
+  - `docs/riscpc-hd-store.md`, the item-9 store contract. It has 256 KiB chunks (504 for 126 MiB), a checkpoint armed at 1 MiB of journal, both journals together ≤ 8 MiB, store memory ≤ 4.9 MB, and an incremental ROTATE → MATERIALIZE → MANIFEST → PUBLISH → RETIRE → GC cycle, one step per `retro_run`. The RPC formatter uses five zones with 8 KiB per map bit, and the A3020 output is unchanged.
+  - QA N1 in `tests/rpc_fdc_test.c`. Its mutant (an unconditional IRQ on cancel) is killed.
+- **Astra** (thread `01a120c8-fcb0-7523-981d-5fafe50f01d7`) returned ACCEPT WITH CHANGES:
+  - HIGH: population could drop acknowledged writes that had not yet been checkpointed;
+  - HIGH: a POPULATION header could not explain a leftover source journal after a kill;
+  - MEDIUM: multi-megabyte work in one tick;
+  - MEDIUM: the prepared-disc key was undefined.
+- **Fable accepted the contract with D-145 (six binding amendments):** the four Astra changes; A1, which drops the per-command record readback (the A3020 store's proven pattern); and A2, which keeps full SHA-256 per cache miss but allows faster hashing.
+- **Contract honesty, accepted:**
+  - the frontend VFS gives no power-loss durability and no bounded wall-clock latency;
+  - "no stall depends on the host" means guest-visible timing is virtual and identical however slow the host is;
+  - AC-9 measures whether host I/O fits the frame budget.
 
 **R2b outcome (merged S58).** PR #331 merged as `f3424fa` (head `a8dc85c`); D-139, D-143, D-144.
 - **What it adds:**
@@ -33,7 +49,7 @@
 **Carried from R2b:**
 - **To R3 (LOW-3):** byte-identical media in both drives share one staged file (Shadow staging is keyed by source SHA-1; Original mode uses the source file), so a write through one drive changes the other medium with no disc-change signal. Stage per drive or slot, or refuse identical sources, before drive 1 is reachable outside the plan core.
 - **To R3 (LOW-4):** on RPC, raw store failures latch write protect with no notice, and raw refusals never reach `arc_adf_log_refusal`. The player needs a notice before the RPC path ships.
-- **To R2c run A (N1):** the IRQ-low assertion above.
+- **N1:** done in R2c run A.
 - **Harness lesson for private legs (`s58/ac8/leg.py`, `legfull.sh`):** the runner VFS refuses writes outside `--save`, so use `--disk-writes shadow` or keep media inside the save directory, and give every blank disc distinct bytes.
 
 - **Parallel workstream (D-141, D-142), item 6b translator evaluation:** the plan is in `docs/riscpc-translator.md`.
@@ -43,10 +59,15 @@
     - Phase 2: a guarded arm64 fast path;
     - Phase 3: a rate change, on a Founder decision.
   - **S58 Astra challenge done:** ACCEPT WITH CHANGES, all nine incorporated (D-142). Thread `01a11e3a-d351-75a1-8424-b370d8b9f354`.
-  - **Remaining Phase-0 steps for Fable, independent of R2b:**
-    - the profile workload set, on the Odin3 and Windows;
-    - the executable-memory probe inside RetroArch;
-    - draft guard and exit invariants.
+  - **S59 Phase-0 progress** (details in `docs/riscpc-translator.md`, *Phase 0 evidence*):
+    - **Executable-memory probe: PASS** inside RetroArch on the Odin3. Dual RW/RX mapping is allowed, and code replacement, the helper ABI, the `longjmp` fault unwind with x18 intact, and teardown all work.
+    - **First Odin3 profile done.** Fetch translation is a third of cache-hot cost. Warm load/store code reaches p95 1.83 T at 100 MIPS. The timing model dominates memory-bound code. Devices cost about 0.04 T.
+    - **Invariants:** a first draft, awaiting Fable review.
+  - **Remaining Phase-0 steps for Fable:**
+    - the Windows profile (waiting on the Founder, below);
+    - representative gameplay (after R2c);
+    - block-shape and churn instrumentation;
+    - review of the invariants draft, then an Astra check.
   - **Founder questions:** Q1 (design objective, with Q2) at the end of Phase 0; Q3 (fork copying) before any copied helper; Q4 at qualification. None is needed now.
 - **R2a merged** as `6ee6460` (PR #317, head `880e528`; D-139, D-140). Outcome below.
 
@@ -89,7 +110,11 @@ Slice order (D-133): R1–R4 → item 5 release baseline → item 6b faster CPU 
 **Item 5 grounding (S55, paused at a safe point: nothing committed, no branch).** `main` `c725bd6`: CI builds Android arm64 only, which is the whole Android target (D-135: no armeabi-v7a); the `.info` is copied into the build tree (`configure_file`) and installed by `install(FILES …)` but no CI artifact bundles core + `.info` + `COPYING` + `THIRD_PARTY_NOTICES.md`; the version lives in three places (`project(… VERSION 0.1.0)`, `ARCDROID_VERSION` fallback in `libretro/arcdroid_libretro.c:28`, `display_version` in `arcdroid_libretro.info`). (armeabi-v7a was found to build unmodified, but is out of scope by D-135.) Android devices: the Odin3 (`arm64-v8a` only) and a second Snapdragon 8 Gen 2 device (Founder S55). No shipping source uses `__FILE__`/`__DATE__`/`__TIME__` or a runtime `assert` (the Slice 8 note on embedded paths is unverified — check with a two-path build comparison). The GPL corresponding-source mechanism for distributed binaries (D-016) stays tied to publication (D-100). Scratch: S55 scratchpad `s55/` (`a/`, `second-checkout-b/` clones, `build-android.sh`).
 
 ## Waiting on the Founder (protocol §18, D-124)
-- *(none)*
+- **Windows half of the item 6b Phase-0 profile (S59).**
+  - **The blocker:** `ssh sinmu@192.168.1.66 ver`, run to reach the Founder's Windows box, was denied by the auto-mode classifier ("Containment Escape"). It was not retried or worked around, and a `PushNotification` was sent.
+  - **The decision:** either allow SSH to the Windows box for the profile, or defer the Windows profile (for example, to after R4 or to CI timing only).
+  - **Independent of it:** R2c and the Odin3 Phase-0 work.
+  - **Also affected later:** R2c AC-9's Windows native-RetroArch leg, if it uses the Windows box. The CI `windows-retroarch` job is the fallback evidence path.
 
 ## Answered S55 (D-131…D-135; full option texts in git history, `docs/handoff.md` at `7a32f93`)
 - RiscPC go/no-go → **GO** at a 100 MIPS Odin3 StrongARM budget (D-131); boot files are never shipped or fetched — user-supplied in RetroArch's system folder (D-134).

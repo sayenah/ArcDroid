@@ -86,6 +86,7 @@ These ranges are research targets, not predictions (Astra S58):
   - **An executable-memory probe inside the real RetroArch on the Odin3.** It emits through RW and executes through RX, repeatedly replaces code at reused addresses, does the required cache synchronisation, and calls a C helper and returns with ABI state intact. It includes an injected helper-to-session-fault unwind, and records Android and RetroArch versions, runtime page size, mapping failures and teardown. If the probe copies or adapts any fork code, Q3 must be answered first.
   - **Draft timing-contract amendments.** They cover the exit contract and guard invariants (constraints 2–4).
   - **This Astra challenge.** Done S58: ACCEPT WITH CHANGES, all incorporated here (D-142).
+  - **Progress (S59).** Done: the executable-memory probe and a first Odin3 profile. A first draft of the invariants exists and awaits Fable review. Open: the Windows profile, representative gameplay, and block-shape and churn measurements. Results are under *Phase 0 evidence* below.
   - **Outputs:** accepted guard and exit invariants, a workload-based cost model, the smallest justified implementation scope, and a Founder decision on the design objective (Q1). Performance is re-baselined against the integrated R4/item-5 core before implementation.
 - **Phase 1 (after R4 and item 5).**
   - **First,** exact interpreter optimisations that the profile identifies.
@@ -109,6 +110,66 @@ These ranges are research targets, not predictions (Astra S58):
 - Sequence fuzzing: MMU, modes, self-modifying code, DMA, IRQ edges, full write buffers.
 - Mutation testing.
 - Private seven-pair boot, factory defaults, gameplay replays, the 44-title A/B, and a 30-minute thermal leg.
+
+## Phase 0 evidence (S59, private scratch probes, never Sol sources)
+
+**Executable memory inside RetroArch on the Odin3.**
+- **Setup:**
+  - Android 15, RetroArch 1.22.2, process domain `untrusted_app`, 4 KiB pages.
+  - The probe was written from scratch, so Q3 is not engaged.
+- **What works:**
+  - A dual RW/RX mapping is permitted through both memfd and `ASharedMemory`.
+  - 20,000 replacements at reused addresses with cache maintenance gave no mismatch, at about 46 ns per small publish and call.
+  - Emitted code calling a C helper keeps x19–x28, d8–d15, x18 and sp intact.
+  - An injected session fatal, raised by `longjmp` from the helper through emitted frames, unwinds 1000 out of 1000 times with x18 (the shadow call stack) intact.
+  - 500 create/destroy cycles leak no mapping or descriptor.
+  - Regions of 8 and 32 MiB work.
+  - RetroArch unloads the core cleanly.
+- **Design consequences:**
+  - The preferred dual mapping is available, so no RWX fallback is needed. RWX was also permitted, but that was recorded only.
+  - A W^X `mprotect` toggle costs about 40 times as much per publish.
+  - Emitted code must never write x18.
+- **Not covered:** a second Android device and Windows.
+
+**Interpreter profile on the Odin3.**
+- **Setup:**
+  - Binary: `main` `ee364d9`, a Release build with debug info.
+  - Rate: SA-110 at 100 MIPS, flat pacing, 601 frames per workload.
+  - Profiler: `simpleperf`, sampling cpu-cycles.
+- **Workloads:** the committed hot and AC-8 workloads, plus scratch sustained loops: a 32-instruction ALU block, warm loads and stores, LDM/STM, streaming reads and writes, translation-cache conflicts, and an MMIO loop.
+
+| Workload | Guest MIPS | Host ns/instr | p95/T | Execute | MMU | Timing | Devices |
+|---|---|---|---|---|---|---|---|
+| hot (branch) | 100 | 9.7 | 0.98 | 65 % | 33 % | 0 % | 0 % |
+| 32-instruction ALU block | 100 | 10.0 | 1.01 | 55 % | 34 % | 9 % | 0 % |
+| warm load/store block (63 % memory ops) | 100 | 18.2 | 1.83 | 40 % | 25 % | 22 % | 0 % |
+| LDM/STM 8 registers | 4.4 | 163 | 0.72 | 6 % | 9 % | 71 % | 0 % |
+| streaming reads | 25.9 | 19.1 | 0.50 | 30 % | 20 % | 40 % | 0 % |
+| streaming writes | 19.2 | 32.1 | 0.62 | 16 % | 12 % | 63 % | 0 % |
+| translation-cache conflicts | 5.6 | 31.9 | 0.18 | 17 % | 11 % | 65 % | 0 % |
+| MMIO loop | 19.4 | 17.5 | 0.34 | 32 % | 23 % | 34 % | 2 % |
+| AC-8 (video, audio, aborts) | 1.7 | 43.4 | 0.07 | 8 % | 6 % | 21 % | 54 % |
+
+- **Instruction-fetch translation is a third of cache-hot cost.** `checked_translation` plus `arc_rpc_getpccache` take about a third even inside one page. This is the largest exact-interpreter target, and it sits on constraint 3, so the fetch-permission ruling must come before Phase 1.
+- **Warm load/store-dense code misses real time at the 100 MIPS ceiling today** (p95 1.83 T). There, timing-model work is as large as MMU work.
+- **Memory-bound code is dominated by the R2a timing service** (40–71 %). A translator that removes only dispatch gains little there.
+- **Device work is small at this mode.** 640×480 at 8 bpp with audio DMA costs about 0.04 T. Higher modes are unmeasured.
+
+**Draft invariants (first pass, Fable review pending).** These findings affect the verification plan:
+- **The calibrations do not exercise the fast paths.** Their measurement mode forces the slow path on every instruction and disables integer batching (`tests/rpc_timing_test.c`, `rpc_mem_timing.h`). So "calibrations byte-identical with the translator on" proves nothing about a fast path gated the same way; the `rpc-*` goldens and new fast-path tests must carry that proof.
+- **IRQ and FIQ timing.** They are sampled only after an instruction completes, and a prefetch abort skips the check.
+- **The shared translation cache fills before the permission check,** so even a denied data access can evict the fetch entry.
+- **No device writes guest memory today.** RiscPC floppy transfers are guest stores through ports, and video and audio DMA only read, so code invalidation can hook the physical write functions, keyed by backing allocation.
+- **Bus costs read live IOMD registers,** so a lazy drain must catch up before any IOMD write.
+- **One possible oracle gap, Low.** The fetch memo is keyed by virtual line only. A shared-TLB eviction followed by a re-walk onto a descriptor the guest changed without TLB maintenance would keep the memo. This is architecturally unpredictable on real hardware, so it needs a targeted test before Phase 1, not a fix now.
+
+**Still open in Phase 0:**
+- the Windows profile;
+- representative gameplay (after R2c, with AC-10);
+- the block-length distribution, fallback frequency and code churn, which need block instrumentation;
+- cold-start against sustained frame tails;
+- repeated runs;
+- Fable acceptance and an Astra check of the invariants.
 
 ## Founder decisions (none needed now)
 - **Q1, design objective — at the end of Phase 0.** Is the translator designed for headroom at 100 MIPS, or for the capacity to support a ceiling of about 200 MIPS? This decides whether the portable path is enough and whether a Windows backend may be needed. The actual rate stays a Phase 3 decision.
