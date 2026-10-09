@@ -86,7 +86,7 @@ These ranges are research targets, not predictions (Astra S58):
   - **An executable-memory probe inside the real RetroArch on the Odin3.** It emits through RW and executes through RX, repeatedly replaces code at reused addresses, does the required cache synchronisation, and calls a C helper and returns with ABI state intact. It includes an injected helper-to-session-fault unwind, and records Android and RetroArch versions, runtime page size, mapping failures and teardown. If the probe copies or adapts any fork code, Q3 must be answered first.
   - **Draft timing-contract amendments.** They cover the exit contract and guard invariants (constraints 2–4).
   - **This Astra challenge.** Done S58: ACCEPT WITH CHANGES, all incorporated here (D-142).
-  - **Progress (S59).** Done: the executable-memory probe and a first Odin3 profile. A first draft of the invariants exists and awaits Fable review. Open: the Windows profile, representative gameplay, and block-shape and churn measurements. Results are under *Phase 0 evidence* below.
+  - **Progress (S59).** Done: the executable-memory probe, a first Odin3 profile, and the guard and exit invariants, accepted as the Phase-0 basis in `docs/riscpc-translator-invariants.md` (D-146). Open: the Windows profile, representative gameplay, block-shape and churn measurements, and the Q-3 oracle fix. Results are under *Phase 0 evidence* below.
   - **Outputs:** accepted guard and exit invariants, a workload-based cost model, the smallest justified implementation scope, and a Founder decision on the design objective (Q1). Performance is re-baselined against the integrated R4/item-5 core before implementation.
 - **Phase 1 (after R4 and item 5).**
   - **First,** exact interpreter optimisations that the profile identifies.
@@ -155,13 +155,13 @@ These ranges are research targets, not predictions (Astra S58):
 - **Memory-bound code is dominated by the R2a timing service** (40–71 %). A translator that removes only dispatch gains little there.
 - **Device work is small at this mode.** 640×480 at 8 bpp with audio DMA costs about 0.04 T. Higher modes are unmeasured.
 
-**Draft invariants (first pass, Fable review pending).** These findings affect the verification plan:
-- **The calibrations do not exercise the fast paths.** Their measurement mode forces the slow path on every instruction and disables integer batching (`tests/rpc_timing_test.c`, `rpc_mem_timing.h`). So "calibrations byte-identical with the translator on" proves nothing about a fast path gated the same way; the `rpc-*` goldens and new fast-path tests must carry that proof.
-- **IRQ and FIQ timing.** They are sampled only after an instruction completes, and a prefetch abort skips the check.
-- **The shared translation cache fills before the permission check,** so even a denied data access can evict the fetch entry.
-- **No device writes guest memory today.** RiscPC floppy transfers are guest stores through ports, and video and audio DMA only read, so code invalidation can hook the physical write functions, keyed by backing allocation.
-- **Bus costs read live IOMD registers,** so a lazy drain must catch up before any IOMD write.
-- **One possible oracle gap, Low.** The fetch memo is keyed by virtual line only. A shared-TLB eviction followed by a re-walk onto a descriptor the guest changed without TLB maintenance would keep the memo. This is architecturally unpredictable on real hardware, so it needs a targeted test before Phase 1, not a fix now.
+**Invariants (accepted as the Phase-0 basis, D-146; `docs/riscpc-translator-invariants.md`).** These findings affect the verification plan:
+- **The calibrations do not prove the production fast paths.** Their measurement mode forces slow instruction begin/end and disables integer batching (`tests/rpc_timing_test.c`, `rpc_mem_timing.h`); the memo and demand-service shortcut still run. Non-intrusive endpoint measurement is to be added (Q-2).
+- **Interrupts.** They are taken at the next event check reached while they are still eligible. A prefetch abort skips that check.
+- **The shared translation cache fills before the permission check,** so even a denied data access can evict the fetch entry. Guard-time walks are forbidden.
+- **Only CPU stores write guest memory today.** Code invalidation hooks the physical write functions, keyed by backing allocation plus offset (RAM repeats twice per 64 MiB aperture).
+- **Bus catch-up covers older work only,** never the current instruction's own requests.
+- **Oracle defect (Q-3).** The fetch memo is keyed by virtual line only and can outlive a change of eligibility after a translation-cache re-walk. A separate small corrective work order fixes it after R2c merges, before any translator baseline.
 
 **Still open in Phase 0:**
 - the Windows profile;
@@ -169,7 +169,7 @@ These ranges are research targets, not predictions (Astra S58):
 - the block-length distribution, fallback frequency and code churn, which need block instrumentation;
 - cold-start against sustained frame tails;
 - repeated runs;
-- Fable acceptance and an Astra check of the invariants.
+- the Q-3 oracle fix.
 
 ## Founder decisions (none needed now)
 - **Q1, design objective — at the end of Phase 0.** Is the translator designed for headroom at 100 MIPS, or for the capacity to support a ceiling of about 200 MIPS? This decides whether the portable path is enough and whether a Windows backend may be needed. The actual rate stays a Phase 3 decision.
