@@ -2,7 +2,7 @@
 
 **Stage:** IMPLEMENTATION — roadmap item 6, RiscPC R2b (floppy drives and full controller); QA remediation
 **Owner:** Sol (run C)
-**Next (Sol, R2b run C):** fix QA MEDIUM-1 and LOW-2, the DSR hardware-reset value and the `fdc.c:41` comment, and add the LOW-5 tests, all on `slice/r2b-floppy`, exactly as specified under *QA adjudication* below. Leave the tree uncommitted for Fable. Nothing else.
+**Next (Sol, R2b run C, resumed):** apply ruling **R2b-2** (79-pulse recalibrate), fix QA MEDIUM-1 and LOW-2, the DSR hardware-reset value and the `fdc.c:41` comment, and add the LOW-5 tests, all on `slice/r2b-floppy`, exactly as specified under *QA adjudication* below. Leave the tree uncommitted for Fable. Nothing else.
 
 **QA adjudication (Fable, S58).** Opus QA (effort 15) returned **FAIL**: one medium defect and four lows. Its evidence and reproductions are in S58 scratchpad `s58/qa/`, including `probe/probe.c` and `probe/probe2.c`. Fable verified MEDIUM-1 and LOW-2 in the code and the two datasheet points in the text.
 - **MEDIUM-1 (defect → run C).** A media change on a drive (eject, replacement, failed insert) disarms that drive's SEEK/RECALIBRATE events (`cancel_drive`, `fdc.c` ~538), and the seek callback drops events whose mount generation changed (~503). So a seek in flight loses its seek-end interrupt and leaves the PCN partly stepped.
@@ -37,6 +37,20 @@
 - **LOW-3 (risk; carried to R3, no R2b change).** Byte-identical media in both drives share one staged file (Shadow staging is keyed by source SHA-1; Original mode uses the source file). A write through one drive changes the other drive's medium with no disc-change signal. R3 must stage per drive or slot, or refuse identical sources in both drives, before drive 1 becomes reachable outside the plan core.
 - **LOW-4 (risk; carried to R3, no R2b change).** On RPC, raw store failures latch write protect without a notice, and raw write-protect refusals never reach `arc_adf_log_refusal`. The guest result is correct under D-139. R3 must give the player a notice before the RPC path ships.
 - **READ TRACK ND (incorrect finding, no change).** The datasheet's Read A Track text sets ND "if there is no comparison" with the specified value, which is what the code does.
+
+**Ruling R2b-2 (Fable, S58; D-144) — the recalibrate pulse limit.** Sol's run C stopped, correctly, on contradictory datasheet passages:
+- p.69, the Recalibrate definition: SE and EC "if the nTR0 pin is still low after **79** step pulses";
+- the Relative Seek note: Recalibrate "will return an error if the head is farther than **79**", citing a "maximum of 80 step pulses";
+- Table 17, the EC description: "**80** step pulses".
+
+The command definition and the "farther than 79" behaviour agree; Table 17's "80" is a summary.
+- **Rule.** Recalibrate issues at most **79** step pulses. A head at physical cylinder 79 or less reaches TRK0 and ends with SE. A head at cylinder 80 or beyond, or a drive whose TRK0 never asserts (an empty or absent drive), ends with SE|EC after 79 pulses, with the carriage 79 cylinders further out than before.
+- **So:** run A's 80-pulse limit (`fdc.c` ~392, and the related cylinder-80 equipment-check boundary ~399) is an off-by-one defect, and QA's mutant Q22 describes the correct behaviour.
+- **Run C:**
+  - fix the limit;
+  - add tests for cylinder 79 → SE and cylinder 80 → SE|EC, with the resulting PCN and carriage;
+  - register the mutant that restores 80, killed.
+- **Goldens.** Any existing RPC golden or R1 test expectation may change **only** where the 79-pulse rule changes it (for example the absent-drive recalibrate horizon or timing). Each delta must be explained against this ruling. Any other change is a stop.
 
 **Sol run C setup:**
 - Resume thread `01a11e0b-8fbc-7230-9418-f18000a6a00d` in `s57/sol2b/clone`. Fable merges this baton into the branch first.
