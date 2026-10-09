@@ -33,6 +33,10 @@
 #include "rpcemu.h"
 #include "arm.h"
 #include "rpc_scheduler.h"
+#include "rpc_mem_timing.h"
+/* ArcDroid modification (2026-10-07): atomic timing request collection and
+ * exact event-bounded batching and ROM branch boundaries; pending service
+ * always returns to the driver. */
 #include "cp15.h"
 #include "mem.h"
 
@@ -489,6 +493,7 @@ shift4(uint32_t opcode)
 void
 exception(uint32_t mmode, uint32_t address, uint32_t diff)
 {
+    arc_rpc_mem_branch();
 	uint32_t link;
 	uint32_t irq_disable;
 
@@ -551,14 +556,19 @@ arm_unpredictable(uint32_t opcode)
 int
 arc_rpc_arm_exec_batch(unsigned count, ArcRpcCpuBatch *batch)
 {
+    /* ArcDroid modification (2026-10-07, R2a run D): materialise integral
+     * hot-batch timing at service/batch boundaries; guest issue times stay
+     * exact and every instruction still checks current fetch permissions. */
     if (count > 200) fatal("Instruction batch exceeds boundary");
 	int linecyc;
+    arc_rpc_mem_batch_begin(batch);
 
 	for (linecyc = 0; linecyc < (int)count; linecyc++) {
 		uint32_t opcode;
 		uint32_t lhs, rhs, dest;
 		uint32_t addr, data, offset, writeback;
 
+        arc_rpc_mem_instruction_begin();
         /* Fetch checks permission at every instruction, including a cached
          * translation hit and a 1 KiB boundary within the same 4 KiB page. */
         pccache2 = getpccache(PC);
@@ -569,6 +579,7 @@ arc_rpc_arm_exec_batch(unsigned count, ArcRpcCpuBatch *batch)
             goto instruction_done;
         }
         opcode = pccache2[(PC & 0x3ffu) >> 2];
+        arc_rpc_mem_opcode(opcode);
 
 		if (flaglookup[opcode >> 28][(*pcpsr) >> 28]) {
             if (!arm.arch_v4 && (((opcode & 0xe0000f0) == 0xb0) ||
@@ -1782,6 +1793,7 @@ arc_rpc_arm_exec_batch(unsigned count, ArcRpcCpuBatch *batch)
 			case 0xa4: case 0xa5: case 0xa6: case 0xa7:
 			case 0xa8: case 0xa9: case 0xaa: case 0xab:
 			case 0xac: case 0xad: case 0xae: case 0xaf:
+				arc_rpc_mem_branch();
 				// Extract offset bits, and sign-extend
 				offset = (opcode << 8);
 				offset = (uint32_t) ((int32_t) offset >> 6);
@@ -1793,6 +1805,7 @@ arc_rpc_arm_exec_batch(unsigned count, ArcRpcCpuBatch *batch)
 			case 0xb4: case 0xb5: case 0xb6: case 0xb7:
 			case 0xb8: case 0xb9: case 0xba: case 0xbb:
 			case 0xbc: case 0xbd: case 0xbe: case 0xbf:
+				arc_rpc_mem_branch();
 				// Extract offset bits, and sign-extend
 				offset = (opcode << 8);
 				offset = (uint32_t) ((int32_t) offset >> 6);
@@ -1895,13 +1908,15 @@ skip:
 
 		arm.reg[15] += 4;
 instruction_done:
+        arc_rpc_mem_instruction_end(PC);
         if (batch && (linecyc + 1 == (int)count ||
-            !arc_rpc_cpu_batch_next(batch, arc_rpc_cpu_idle))) {
+            !arc_rpc_mem_batch_next(batch, arc_rpc_cpu_idle))) {
             ++linecyc;
             break;
         }
 	}
 	inscount += (unsigned)linecyc;
+    if (arc_rpc_mem_fast.integer_batch) arc_rpc_mem_batch_flush();
 
 	return linecyc;
 }

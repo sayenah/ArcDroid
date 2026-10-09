@@ -7382,19 +7382,24 @@ static bool arc_load_game(const struct retro_game_info *game, bool negotiate)
    return true;
 }
 
+#if defined(ARCDROID_TEST_PLANS)
+static void arc_plan_notice(const char *message,bool error) { arc_message(message,error?RETRO_LOG_ERROR:RETRO_LOG_INFO); }
+#endif
 RETRO_API bool retro_load_game(const struct retro_game_info *game)
 {
 #if defined(ARCDROID_TEST_PLANS)
    if (game && arc_test_plan_path(game->path)) {
       arc_loaded = false;
       arc_release_session();
-      const char *system = NULL; char error[256];
+      const char *system = NULL, *save = NULL; char error[256];
       enum retro_pixel_format format = RETRO_PIXEL_FORMAT_XRGB8888;
       static const struct retro_keyboard_callback keyboard = {arc_keyboard};
       if (!arc_environment || !arc_environment(RETRO_ENVIRONMENT_SET_PIXEL_FORMAT, &format)) return false;
       arc_environment(RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY, &system);
       arc_environment(RETRO_ENVIRONMENT_SET_KEYBOARD_CALLBACK, (void *)&keyboard);
-      if (!arc_test_plan_load(game->path, system, error, sizeof(error))) {
+      arc_environment(RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY, &save);
+      arc_test_plan_set_notice(arc_plan_notice);
+      if (!arc_test_plan_load(game->path, system, save, error, sizeof(error))) {
          arc_message(error, RETRO_LOG_ERROR); return false;
       }
       arc_rpc_av_attempted = false; arc_fault_reported = false;
@@ -7761,6 +7766,10 @@ static void arc_rpc_present_run(void)
 #endif
    ArcEngineFrame frame;
    bool ran = arc_engine_run_frame(&arc_inputs, &frame);
+#if defined(ARCDROID_TEST_PLANS)
+   char persist_error[256];
+   if(!arc_test_plan_persist(persist_error,sizeof(persist_error)) && persist_error[0])arc_message(persist_error,RETRO_LOG_ERROR);
+#endif
    if (!ran)
    {
       const char *fault = NULL;
@@ -7833,6 +7842,20 @@ static void arc_rpc_present_run(void)
 
 RETRO_API void retro_run(void)
 {
+#if defined(ARCDROID_TEST_PLANS)
+   if(arc_test_plan_pending()) {
+      /* Match the bounded 60 Hz capture slices and 48 kHz silence to the
+       * announced frontend cadence, including after an Arculator session. */
+      arc_notify_av_change(ARC_WIDTH,ARC_HEIGHT,60.0);
+      char error[256];if(!arc_test_plan_slice(error,sizeof(error)))arc_message(error,RETRO_LOG_ERROR);
+      memset(arc_frame,0,sizeof(arc_frame));
+      if(arc_video)arc_video(arc_frame,ARC_WIDTH,ARC_HEIGHT,ARC_WIDTH*sizeof(uint32_t));
+      memset(arc_audio_frame,0,1600*sizeof(int16_t));
+      if(arc_audio_batch)arc_audio_batch(arc_audio_frame,800);
+      else if(arc_audio)for(unsigned i=0;i<800;++i)arc_audio(0,0);
+      return;
+   }
+#endif
    if (arc_engine_is_rpc() && arc_engine_active()) { arc_rpc_present_run(); return; }
    ArcEngineFrame frame;
    size_t count;

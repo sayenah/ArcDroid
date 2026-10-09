@@ -37,6 +37,32 @@ board model; no unconnected HCLK frequency is invented.
 
 ## Splits, ownership and DMA
 
+D-139 changes the A7000 reset-clock chronology. The independent authored
+timeline derives GO at 43.457 µs after CONTROL, rather than treating a 650 µs
+timer as starting with CONTROL. With ROM/data service, the subsequent single
+register write is no earlier than 707.572 µs, so the affected split is row 5.
+`rpc_raster_timeline.py` independently schedules leading-edge quad requests
+and legal CPU grants, retaining pending deadlines and partially consumed quads.
+No core source or output supplies an expectation.
+
+Consequently only `rpc-video-3.trace` changes: palette/border/cursor/current/
+depth have five original rows and three changed rows; grow consumes 6352 pixels
+and wraps once; delayed VDSR misses its former blank edge, so vstart consumes
+256 pixels; ring END is written after its comparison address was consumed,
+so that field does not wrap; and unaligned has four 1-bit rows before 16-bit
+data, starting at stream bit 8. The memory rewrite's earliest first store is
+716.436 µs; its zeroed prefixes at 700/800/900/1000 µs are 0/60/132/204 bytes,
+behind raster starts 128/160/192/224. Its first field therefore stays grey.
+`prove_a7000_memory_window()` checks this conservative no-hold bound.
+
+Guest readbacks also move: hclip reads `VIDCUR=10000850`, vclip reads after
+flyback (`10000000`), and scroll reads after six rows rather than five.
+Those values are generated independently, while pixel/byte/wrap counts and
+every displayed scroll pixel remain checked. Startup may span blank frontend
+runs; checks still inspect the first complete field, and the allocation-fault
+case keeps its injection until the first presentation attempt. Models 0–2
+retain their committed raster traces byte-for-byte.
+
 32×8 split fixtures use 100 us lines, VDSR=2, VDER=10: active rasters 3–10.
 A guest timer expires 650 us after the clock starts, between active rows 3
 and 4, with enough margin for guest bus instructions on all four rates.
@@ -94,8 +120,10 @@ stores at most 2048×2048. This bound never limits guest width/height or DMA.
   each sampling edge: 350 ns per DRAM quadword, 156 ns per two-bank VRAM
   half-SAM copy (IOMD section 7), cursor quadword 350 ns every two rows.
   The contention tests also compare interpreter instruction counts with virtual
-  elapsed time: lost credit must equal transfer occupancy within one rounding
-  instruction per sampled line; disabled data must lose no credit. The model
+  elapsed time: a steady uncached ROM branch costs base plus reset ROM service.
+  Across a complete subsequent field, CPU work plus DMA occupancy must conserve
+  time within two endpoint instructions total. Disabled data contributes no
+  hold. This replaces the old flat-rate/per-line credit assumption. The model
   carries CPU blockage across scheduler boundaries without moving device time
   or accruing catch-up CPU credit. This is not a cycle-accurate bus-arbitration
   claim. Every hidden column/row contributes equally to this occupancy.
@@ -161,3 +189,45 @@ References: [IOMD functional specification](https://www.bitsavers.org/components
 pp. 14–15 and [Acorn Risc PC TRM](https://wiki.gen.net.uk/lib/exe/fetch.php/archive/computers/acorn/systems/acorn-risc-pc-technical-reference.pdf)
 pp. 1-14–1-16. These expectations concern the documented register and buffer
 contracts; they do not claim pixel-cycle or split-SAM bus timing accuracy.
+
+## Run E: packed words, cursor lanes and cropped right edge
+
+`rpc_video_paths.py` authors four additional guests and derives their new
+`rpc-video-paths-N.trace` goldens solely from the declared circular byte stream,
+palette and geometry. The eight distinct 32-bit words repeat every 32 bytes,
+with unequal bytes in each word and unequal word lanes in each quad. `words`
+scans 36×8, exercising quad batches and word tails on each model. `byte-tail`
+scans 6×12 in a 32-byte DRAM ring: partial words continue across lines and quad
+boundaries; 72 bytes make two wraps and four completed quad transfers.
+`cursor-lanes` scans 36×8 with eight-byte mixed 2-bpp cursor rows at X=1:
+byte lanes select different indices, zero preserves background, and indices
+1/2/3 produce red/green/blue. `right-edge` consumes 2064×2048 guest pixels
+while storing 2048 columns, checking every stored pixel through a canonical
+FNV hash. Its last row also exercises the allocation boundary under ASan.
+The same right-edge guest also checks row 1 before and after row 0 of the next
+field is sampled. At raster 3 (VDSR=2), row 1 has not been redrawn and must keep
+its preceding field's first 16 pixels: the declared stream at byte offsets
+2064..2079, indices 16..31 modulo the 32-byte pattern. HCR+8=2400 at 24 MHz
+gives 100,000 ns per line; 100 ns test slices stop at raster 3 before raster 4.
+All inspected pixels are inside the allocated presentation. V9 writes row
+zero's discarded columns 2048..2063 over this prefix, using pattern indices
+0..15 instead. This detects V9 on Windows even when heap padding tolerates its
+last-row overrun and subsequent row clearing hides earlier corruption from
+the final-field hash. The first-field golden and guest instruction stream
+remain unchanged; no allocator crash is required for this observation.
+Counts and hashes come from the independent generator, never renderer output.
+Existing goldens are unchanged. Every new case is in CTest and CI's `rpc-.*`
+sanitizer selection.
+
+Fable accepted QA V6 as an equivalent mutant. IOMD masks VIDCUR, VIDSTART,
+VIDEND and VIDINIT to quad alignment. Reload starts offset zero; adding 16 or
+reloading aligned START preserves alignment. General-pixel and padding steps
+are bounded by the quad remainder, and the byte path resets at offset 128.
+Thus for every byte-path entry `j=offset/8` lies in 0..15 and the existing
+word-boundary clamp already gives `n <= 4-(j mod 4) <= 16-j`. The separate
+`n <= (128-offset)/8` guard cannot change a chunk. Exhaustively comparing all
+16 byte positions and remaining widths 1..16,384 yields 262,144 identical
+results. The clamp remains as defence in depth. Replacement V6a removes the
+necessary byte-path `next_quad` transition at offset 128 (advancing the address
+without IOMD transfer/wrap handling); the authored `byte-tail` ring checks both
+pixels and quad/hold counts to detect it.

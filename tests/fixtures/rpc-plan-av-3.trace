@@ -10,24 +10,24 @@ raster depth-2 32x8 4e797bed22408f25
 raster depth-3 32x8 13653ef19d588f25
 raster depth-4 32x8 13653ef19d588f25
 raster depth-6 32x8 13653ef19d588f25
-raster palette 32x8 2cb875cac6fc1a25
-raster border 32x8 09e6382186b79c25
-raster cursor 32x8 0a68dabd950a9565
-raster memory 32x8 c5b1f5aa3eb7ed25
-raster current 32x8 ffa0e2f7580d6325
+raster palette 32x8 5bcde431a28327e5
+raster border 32x8 bed4802737bce1e5
+raster cursor 32x8 b79202940d349015
+raster memory 32x8 13653ef19d588f25
+raster current 32x8 f7ae5b4b17a98125
 raster init 32x8 13653ef19d588f25
-raster depth 32x8 5ffae0318fcc8f25
-raster grow 2048x8 0558d89a98334525
-raster vstart 32x8 98fb94e46a6ab0a5
+raster depth 32x8 35b2c05a08869b25
+raster grow 2048x8 d6efdba5838e83a5
+raster vstart 32x8 13653ef19d588f25
 raster timing 32x8 13653ef19d588f25
-raster ring 32x8 f7ae5b4b17a98125
+raster ring 32x8 13653ef19d588f25
 raster disabled 32x8 1f8732193a3f4d25
 raster interlace 32x8 13653ef19d588f25
 raster hclip 2048x8 41797a5df9bd2325
 raster vclip 32x2048 75d41b525a8e2325
 raster last 2048x8 dd1b3a46b9e83b25
 raster packed 2x8 f43d81be6bb23e25
-raster unaligned 2x8 810a28d5e5eacb1d
-pcm 449b3b67b50d6f87 frames=2400 accepted=2400 discarded=0
-mixed first-raster=2cb875cac6fc1a25 pcm480=de414754d9742787
+raster unaligned 2x8 8ca351ef307740c6
+pcm 18e1112de14bd31b frames=2400 accepted=2400 discarded=0
+mixed first-raster=5bcde431a28327e5 pcm480=1e608aee06ce10cb
 input keyboard=1c,f0,1c mouse=fa,09,00,00,09,0c,07,08,00,00

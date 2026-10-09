@@ -40,6 +40,8 @@ extern uint32_t translateaddress2(uint32_t addr, int rw, int prefetch);
 extern uint32_t flushes;
 extern uint32_t tlbs;
 extern int dcache;
+/* ArcDroid modification (2026-10-07): attributes of the checked translation. */
+unsigned arc_rpc_cp15_attributes(void);
 
 #ifdef __cplusplus
 } /* extern "C" */

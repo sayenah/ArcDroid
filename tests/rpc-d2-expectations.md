@@ -26,11 +26,15 @@ output is never used as a golden generator.
   gives 250 ms delay and `1/30` second per repeat. These wire expectations
   are constants declared here, independent of the implementation mapping.
 
-The accepted instruction-rate model is 20/35/100/35 MIPS for models 0…3.
-An instruction ordinal n executes at `ceil(n*1000/rate)` ns. Events tied with
+The D-139 rates 20/35/100/35 MIPS are ceilings. The independent authored
+instruction subset in `rpc_authored_timeline.py` now derives each issue from
+base plus ROM/data/I/O service (`riscpc-timing.md` §§2/5). These guests leave
+caching and SA clock switching disabled: SA base is 62.5 ns; reset fetches
+cost 218.75 ns on RiscPC and 1750 ns on divided-clock/16-bit A7000.
+Events tied with
 an instruction run first; tied source sound runs before 48 kHz output. Rational
 deadlines are ceiling-rounded with carried remainders. This is the accepted
-integer scheduler contract, not a CPU cache/bus-cycle accuracy claim.
+integer scheduler contract.
 
 ## PCM and integer acceptance
 
@@ -50,9 +54,14 @@ sound. Serial format/rate changes restart source phase at the MMIO timestamp;
 they preserve already generated output. Zero-order hold samples at exactly
 48 kHz; disabled/compatibility output is zero. No floating-point tolerance is
 used. At 10 ms each model generates 480 pairs and consumes 16 DMA pairs in
-four quadwords. Guest-visible DMA status is `03` after bank A's first transfer,
+four quadwords on RiscPC; A7000 has reached only the first enable at 10 ms
+and consumes eight DMA pairs/two quadwords. The unchanged delay loops now
+take longer than both initial banks, so the first saved status is `06`,
 `06` after exhaustion, and RAW sound IRQ is `10`. Compatibility mode has the
-same DMA counts, all-zero output, and one deferred unsupported-mode log.
+same per-model DMA counts, all-zero output, and one deferred unsupported-mode log.
+PCM/hash deltas in all four `rpc-d2-N.trace` and `rpc-plan-av-N.trace` follow
+the newly derived MMIO chronology. The sample horizon remains 10 ms; completion
+and the unchanged status assertions are checked after subsequent frontend runs.
 
 A separate state-machine guest expects status sequence
 `06,06,02,07,07,03,06,02,00,06,02,00,07,03,06,07`:
@@ -62,7 +71,12 @@ which similarly requires B before requesting A. Programming the inactive bank
 clears the interrupt. StopA prevents continuation even with B programmed;
 explicit B rearming recovers. The final transfer runs from offset `ff0` through
 page wrap to `000`, with exactly two quadwords. Total is eight quadwords/32
-pairs. These status constants are declared separately from the PCM generator
+pairs. D-139 moves observations 8 and 11 from `00` to `03` on ARM610/A7000:
+the first A quad is fetched while the guest programs B. The other models keep
+their original sequence. `dma_observations()` independently applies the stated
+IOMD transitions to authored issue times, including source-before-MMIO ties;
+its final-store deadline bounds the completion check. These status constants
+are declared separately from the PCM generator
 and are observed by guest register reads.
 
 Hashes use FNV-1a over canonical little-endian stereo words, independent of

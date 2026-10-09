@@ -4,13 +4,17 @@ The instruction arrays in `rpc_session_rom.py` are authored for these tests;
 they contain no firmware. Guest RAM records results of MMIO and an IRQ handler.
 
 - ARM610, ARM710, SA-110 and ARM7500 receive respectively 20, 35, 100 and 35
-  instructions per microsecond. ARM610/710 continue executing; SA-110's CP15
+  maximum instructions per microsecond; D-139 memory service reduces achieved throughput. The dedicated hot-code calibration verifies the unchanged ceiling. ARM610/710 continue executing; SA-110's CP15
   wait and ARM7500's SUSMODE suspend until a permitted interrupt. Suspended time
   receives no instruction credit. Eight milliseconds cannot exceed 160000,
   280000, 800000 and 280000 instructions respectively.
-- Timer periods are `(latch+1)/2 MHz` (IOMD specification, section 4). GO0 with
-  latch 399 and GO1 with latch 397, exactly one microsecond later, expire at the
-  same timestamp. The order is timer0 then timer1. Both requests must reach the
+- Timer periods are `(latch+1)/2 MHz` (IOMD specification, section 4). GO0 uses latch 399 (200 us). With reset ROMCR and no caches,
+  GO1 follows after `n*(base+ROMword)+PROG`, including GO0's service.
+  Derived `(n,delay,latch1)` are ARM610 `(20,5500 ns,388)`, ARM710
+  `(420,104000 ns,191)`, SA-110 `(12,3500 ns,392)`, ARM7500
+  `(35,62500 ns,274)`. SA uses reset 62.5 ns base; A uses divided memory
+  clock, 16-bit ROM (1750 ns/word) and 250 ns PROG. These sequences expire
+  both timers at exactly the same timestamp. The order is timer0 then timer1. Both requests must reach the
   guest IRQ handler, whose accumulated request bits equal 0x60. Events due at
   an instruction timestamp precede that instruction; its MMIO takes effect
   immediately. The standalone scheduler tests check replacement before/at/after
@@ -43,3 +47,12 @@ they contain no firmware. Guest RAM records results of MMIO and an IRQ handler.
 Hardware sources: [IOMD specification](https://www.bitsavers.org/components/arm/IOMD_Functional_Specification_199406.pdf),
 [ARM7500 datasheet](https://documentation-service.arm.com/static/5ed11babca06a95ce53f8fee),
 [SA-110 reference](https://bitsavers.trailing-edge.com/pdf/dec/semiconductor/arm/EC-QPWLC-TE_SA110_Technical_Reference_199610.pdf).
+
+Run E retains the strict `<` throughput assertion for ARM610/710. These guests
+never enable M/C or populate timing tags: every instruction fetch costs at
+least the reset ROM word, 218.75 ns, in addition to base 50 or 200/7 ns.
+Ignoring all data/I/O service and allowing one partly serviced instruction at
+the frontend boundary gives independent upper bounds of 29,768 and 32,347
+issued instructions in 8 ms. Both are strictly below 160,000 and 280,000.
+An equality with the flat ceiling would contradict the accepted memory model;
+the dedicated hot-code calibration checks equality at the rate ceiling.

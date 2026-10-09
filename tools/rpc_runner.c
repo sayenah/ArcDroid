@@ -3,6 +3,7 @@
  * frontend callbacks, hashes, output, sleep and input are outside that interval. */
 #if !defined(_WIN32)
 #define _POSIX_C_SOURCE 200809L
+#define _XOPEN_SOURCE 700
 #endif
 #include "libretro.h"
 #include "rpc_session.h"
@@ -75,35 +76,7 @@ static void dump_video(const void *data, unsigned width, unsigned height, size_t
     }
 }
 
-/* A read-only VFS is sufficient for declared plans/ROM/seed/scripts. Factory
- * export is an explicit runner operation, never a core VFS write. */
-struct retro_vfs_file_handle { FILE *file; };
-static struct retro_vfs_file_handle *vfs_open(const char *path, unsigned mode, unsigned hints)
-{
-    (void)hints;
-    if (mode != RETRO_VFS_FILE_ACCESS_READ) return NULL;
-    FILE *file = fopen(path, "rb");
-    if (!file) return NULL;
-    struct retro_vfs_file_handle *h = malloc(sizeof(*h));
-    if (!h) { fclose(file); return NULL; }
-    h->file = file; return h;
-}
-static int vfs_close(struct retro_vfs_file_handle *h)
-{ int result = fclose(h->file); free(h); return result; }
-static int64_t vfs_size(struct retro_vfs_file_handle *h)
-{
-    long at = ftell(h->file);
-    if (at < 0 || fseek(h->file, 0, SEEK_END)) return -1;
-    long size = ftell(h->file);
-    return fseek(h->file, at, SEEK_SET) ? -1 : size;
-}
-static int64_t vfs_read(struct retro_vfs_file_handle *h, void *data, uint64_t size)
-{
-    if (size > SIZE_MAX) return -1;
-    size_t got = fread(data, 1, (size_t)size, h->file);
-    return ferror(h->file) ? -1 : (int64_t)got;
-}
-static struct retro_vfs_interface vfs = {.open=vfs_open, .close=vfs_close, .size=vfs_size, .read=vfs_read};
+#include "rpc_runner_vfs.h"
 static void hash_byte(uint64_t *hash, unsigned byte)
 { *hash = (*hash ^ (byte & 255)) * UINT64_C(1099511628211); }
 static bool environment(unsigned command, void *data)
@@ -114,6 +87,7 @@ static bool environment(unsigned command, void *data)
         if(request->required_interface_version>3)return false;
         request->iface=&vfs;return true;
     }
+    case RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY: *(const char **)data = *save_directory ? save_directory : NULL; return *save_directory != 0;
     case RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY: *(const char **)data = system_directory; return true;
     case RETRO_ENVIRONMENT_GET_CAN_DUPE: *(bool *)data = true; return true;
     case RETRO_ENVIRONMENT_SET_PIXEL_FORMAT: return *(enum retro_pixel_format *)data == RETRO_PIXEL_FORMAT_XRGB8888;
@@ -192,6 +166,7 @@ int main(int argc, char **argv)
         const char *v = argv[++i];
         if (!strcmp(key,"--core")) core = v;
         else if (!strcmp(key,"--plan")) plan = v;
+        else if (!strcmp(key,"--save")) { if(!canonical(v,save_directory) || !(vfs_stat(save_directory,NULL)&RETRO_VFS_STAT_IS_DIRECTORY)){fprintf(stderr,"--save must name an existing directory\n");return 2;} }
         else if (!strcmp(key,"--system")) system_directory = v;
         else if (!strcmp(key,"--pacing")) pacing = v;
         else if (!strcmp(key,"--timing")) timing_path = v;
@@ -238,17 +213,21 @@ int main(int argc, char **argv)
     LOAD(capture,"arc_rpc_test_capture_status"); LOAD(read_ram,"arc_rpc_test_read_ram"); LOAD(frame_ns,"arc_engine_test_frame_ns");
     void (*cmos_snapshot)(uint8_t *), (*fault_next)(void);
     LOAD(cmos_snapshot,"arc_rpc_test_cmos_snapshot"); LOAD(fault_next,"arc_rpc_test_fault_next");
+    unsigned (*plan_phase)(void)=NULL;
+    void *phase_symbol=symbol("arc_test_plan_cmos_phase");if(phase_symbol)memcpy(&plan_phase,&phase_symbol,sizeof(plan_phase));
+    if(plan_phase && plan_phase() && (print_cmos || capture_path)) {fprintf(stderr,"Persistent CMOS is never exported as bytes\n");unload();deinit();return 2;}
     if (dump_count) {
         dump_pixels = malloc(DUMP_SIDE * DUMP_SIDE * sizeof(uint32_t));
         if (!dump_pixels) { unload(); deinit(); return 2; }
     }
     FILE *timing = timing_path ? fopen(timing_path,"w") : NULL;
     if (timing_path && !timing) { free(dump_pixels); unload(); deinit(); return 2; }
-    if (timing) fputs("frame,core_ns,T_ns,measured\n", timing);
+    if (timing) fputs("frame,core_ns,T_ns,measured,guest_instructions,guest_ns\n", timing);
     uint64_t *times = calloc(1000000, sizeof(*times));
     if (!times) { free(dump_pixels); if(timing)fclose(timing); unload(); deinit(); return 2; }
     size_t sample_count = 0; unsigned result = 0; uint64_t period_ns = 0;
     uint64_t benchmark_start = arc_test_clock_ns(), benchmark_elapsed = 0;
+    uint64_t prior_instructions=0,prior_guest_ns=0,measured_instructions=0,measured_guest_ns=0,measured_core_ns=0;
     for (uint64_t f = 0; f < (measure ? 1000000 : frames); ++f) {
         if (f == reset_at) reset();
         if (f == fault_at) fault_next();
@@ -257,14 +236,22 @@ int main(int argc, char **argv)
         run();
         ArcRpcTestSnapshot s; ArcRpcAudioCounts a; ArcRpcVideoStatus v; ArcRpcCapture c;
         snapshot(&s); counts(&a); status(&v); capture(&c);
+        if(plan_phase && plan_phase()==3){result=1;break;}
         uint64_t elapsed = frame_ns();
         period_ns = (uint64_t)llround(1000000000.0 / fps);
         /* Frontend wall-clock windows measure sustained device conditions.
          * Host time controls only when the frontend stops requesting frames,
          * never guest execution, clocks, input or per-frame engine duration. */
         bool measured = !measure || frontend_start-benchmark_start >= warmup*UINT64_C(1000000000);
-        if (measured) times[sample_count++] = elapsed;
-        if (timing) fprintf(timing,"%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%u\n",f,elapsed,period_ns,measured);
+        bool restarted=s.executed<prior_instructions || s.now_ns<prior_guest_ns;
+        uint64_t guest_instructions=restarted?s.executed:s.executed-prior_instructions;
+        uint64_t guest_ns=restarted?s.now_ns:s.now_ns-prior_guest_ns;
+        prior_instructions=s.executed;prior_guest_ns=s.now_ns;
+        if (measured) {
+            times[sample_count++] = elapsed; measured_instructions+=guest_instructions;
+            measured_guest_ns+=guest_ns; measured_core_ns+=elapsed;
+        }
+        if (timing) fprintf(timing,"%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%u,%" PRIu64 ",%" PRIu64 "\n",f,elapsed,period_ns,measured,guest_instructions,guest_ns);
         printf("frame=%" PRIu64 " ns=%" PRIu64 " cpu=%" PRIu64 " idle=%" PRIu64 " rate=%u irq=%08x fiq=%08x fault=%u\n",
             f,s.now_ns,s.executed,s.idle_ns,s.rate_mips,s.irq,s.fiq,s.faulted);
         fputs("regs=",stdout); for(unsigned r=0;r<17;++r)printf("%s%08x",r?",":"",s.regs[r]);
@@ -312,7 +299,11 @@ int main(int argc, char **argv)
         uint64_t p50=quantile(times,sample_count,50,100),p95=quantile(times,sample_count,95,100),p99=quantile(times,sample_count,99,100),p999=quantile(times,sample_count,999,1000);
         fprintf(stderr,"timing frames=%zu T_ns=%" PRIu64 " p50=%" PRIu64 " p95=%" PRIu64 " p99=%" PRIu64 " p99.9=%" PRIu64 " p95/T=%.6f p99.9/T=%.6f budget=%s\n",
             sample_count,period_ns,p50,p95,p99,p999,(double)p95/period_ns,(double)p999/period_ns,
-            p95<=period_ns*8/10 && p999<=period_ns?"pass":"fail");
+            p95<=period_ns*8/10 && times[sample_count-1]<=period_ns?"pass":"fail");
+        fprintf(stderr,"throughput guest_instructions=%" PRIu64 " guest_ns=%" PRIu64 " guest_instructions/s=%.3f host_ns/instruction=%.6f max/T=%.6f core/guest=%.6f\n",
+            measured_instructions,measured_guest_ns,measured_guest_ns?(double)measured_instructions*1e9/measured_guest_ns:0,
+            measured_instructions?(double)measured_core_ns/measured_instructions:0,
+            (double)times[sample_count-1]/period_ns,measured_guest_ns?(double)measured_core_ns/measured_guest_ns:0);
     }
     for (unsigned i = 0; i < dump_count; ++i) {
         if (!dumps[i].written) {
@@ -331,6 +322,6 @@ int main(int argc, char **argv)
 #endif
     return (int)result;
 usage:
-    fputs("rpc_runner --core LIB --plan FILE [--system DIR] [--frames N | --warmup-seconds 120 --measure-seconds 600] [--pacing flat|burst|realtime] [--timing CSV] [--dump-frame N FILE.ppm ...] [--capture-seed FILE] [--ram-offset N --ram-words N] [--reset-at N] [--cmos] [--fail-alloc 1..5] [--fault-at N] [--reject]\n",stderr);
+    fputs("rpc_runner --core LIB --plan FILE [--system DIR] [--save DIR] [--frames N | --warmup-seconds 120 --measure-seconds 600] [--pacing flat|burst|realtime] [--timing CSV] [--dump-frame N FILE.ppm ...] [--capture-seed FILE] [--ram-offset N --ram-words N] [--reset-at N] [--cmos] [--fail-alloc 1..5] [--fault-at N] [--reject]\n",stderr);
     return 2;
 }

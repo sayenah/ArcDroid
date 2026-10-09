@@ -3,6 +3,7 @@
 extern const ArcEngineBackendOps arc_rpc_backend;
 #if defined(ARCDROID_TEST_FAULTS)
 #include "rpc/rpc_session.h"
+#include "rpc/rpc_rtc.h"
 #include "engine_test.h"
 #include <stdio.h>
 static uint64_t arc_test_frame_ns, arc_test_callback_ns;
@@ -240,6 +241,26 @@ bool arc_engine_active(void)
 }
 
 #if defined(ARCDROID_TEST_FAULTS)
+bool arc_engine_test_cmos_slice(uint64_t ns)
+{
+    arc_test_callback_ns=0;arc_test_measuring=true;uint64_t start=arc_test_clock_ns();
+    bool ok=arc_engine_is_rpc();
+    while(ok && ns){
+        uint64_t step=ns<16666667u?ns:16666667u;
+        ok=arc_rpc_test_advance(step);ns-=step;
+        /* Keep the isolated queue retirement identical at one/eight frames
+         * per call, and bounded even if boot firmware enables sound DMA. */
+        int16_t audio[2048];size_t n;
+        while((n=arc_engine_audio_peek(audio,1024))!=0)arc_engine_audio_commit(n,0);
+        ArcRpcCapture capture;arc_rpc_capture_status(&capture);
+        if(capture.state!=ARC_RPC_CAPTURE_RUNNING)break;
+    }
+    arc_test_frame_ns=arc_test_clock_ns()-start-arc_test_callback_ns;arc_test_measuring=false;return ok;
+}
+bool arc_engine_test_cmos_schedule(uint64_t deadline_ns,uint64_t delete_ns)
+{ return arc_engine_is_rpc() && arc_rpc_session_capture_schedule(deadline_ns,delete_ns); }
+void arc_engine_test_cmos_evidence(uint8_t bytes[256],uint8_t mask[32],uint64_t *writes,uint64_t *last,uint64_t *now,unsigned *state)
+{ ArcRpcCapture capture;arc_rpc_capture_status(&capture);arc_rpc_cmos_snapshot(bytes);*writes=arc_rpc_cmos_payload_evidence(mask,last);*now=capture.elapsed_ns;*state=(unsigned)capture.state; }
 void arc_engine_test_plan_input_ready(void)
 { if (arc_engine_is_rpc()) arc_rpc_session_test_input_ready(); }
 bool arc_engine_test_plan_start(unsigned model, unsigned rate, bool factory,

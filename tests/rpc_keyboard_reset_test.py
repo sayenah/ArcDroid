@@ -6,6 +6,7 @@ import struct
 import subprocess
 import sys
 import tempfile
+from fractions import Fraction
 from rpc_d2_rom import Guest
 
 runner, core = sys.argv[1:3]
@@ -61,8 +62,15 @@ with tempfile.TemporaryDirectory(prefix='arc-held-reset-') as temp:
                 rom = guest(enable, rate, key == 304)
                 (d/'authored.rom').write_bytes(rom + bytes(2097152-len(rom)))
                 (d/'held.arcplan').write_text(f'version=1\nmodel={model}\nrate_mips={rate}\nfirmware=authored.rom\ncmos=seed\nseed=seed\nrtc_epoch=0\ninput=held.input\n')
+                # Two SUBS/BNE delays precede RX draining; the unread make can
+                # postpone ACK. Bound both instruction loops, 5 ms wire retry,
+                # the unchanged 500 ms BAT interval and 30 ms response polling.
+                b=max(Fraction(1000,rate),Fraction(125,2)) if model=='sa110' else Fraction(1000,rate)
+                fetch=Fraction(1750 if model=='arm7500' else 875,1 if model=='arm7500' else 4)
+                bound=(rate*10000+(rate*20000 if key==304 else 0)+1000)*(b+fetch)+535000000
+                frames=-(-bound.numerator//(bound.denominator*16666667))
                 r = subprocess.run([runner, '--core', core, '--plan', str(d/'held.arcplan'),
-                    '--system', str(d), '--frames', '40', '--ram-offset', '131072',
+                    '--system', str(d), '--frames', str(frames), '--ram-offset', '131072',
                     '--ram-words', '65'], capture_output=True, text=True)
                 assert r.returncode == 0, r.stderr
                 words = [int(w, 16) for w in re.findall(r'^ram=(.*)$', r.stdout, re.M)[-1].split(',')]

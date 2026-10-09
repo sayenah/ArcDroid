@@ -293,3 +293,16 @@ The owned RPC frontend derives post-fault 48 kHz silence from the last
 announced frame rate, carrying fractional pairs and draining bounded chunks
 so slow fields cannot overflow the queue. Factory admission no longer installs
 a redundant unwind boundary around its ordinary input setup.
+
+### R2a D-139 timing
+
+`src/arm.c` records atomic instruction requests and yields to exact memory
+service; `src/cp15.c/.h` preserve descriptor B/C and connect permission-checked
+fetches, maintenance and SA clock switching; `src/mem.c` records successful
+CPU attempts without charging descriptor walks or DMA; `src/iomd.c/.h` expose
+DRAMWID and distinguish IOMD ROMCR reset 0 from ARM7500 reset 0x40. The owned
+implementation is `engine/rpc/rpc_mem_timing.c/.h`, governed by
+`docs/riscpc-timing.md`. Existing upstream copyright/licence and ArcDroid
+modification notices remain. No firmware identity, PC or loop recognizer is
+introduced. Dirty SA ROM castouts follow the accepted G7 interim timing rule;
+ordinary ROM/I/O store misses remain unbuffered.

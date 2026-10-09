@@ -1,8 +1,8 @@
-pcm model=1 generated=480 accepted=480 discarded=0 queued=0 dma=16/4 hash=de414754d9742787
+pcm model=1 generated=480 accepted=480 discarded=0 queued=0 dma=16/4 hash=856c22edd0e14a14
 compat model=1 generated=480 accepted=480 discarded=0 queued=0 dma=16/4 hash=20ea4579c427f925
 dma-state=06,06,02,07,07,03,06,02,00,06,02,00,07,03,06,07 quads=8 pairs=32 wrap=4k
 pressure generated=2400 accepted=1066 discarded=1334 queued=0 recovery=800
-frontend generated=2400 accepted=2400 hash=449b3b67b50d6f87
+frontend generated=2400 accepted=2400 hash=c0d512fbc0f2aa14
 overflow generated=9600 discarded=1408 queued=8192 recovered=8192
 fault silence=960 frozen=1 purge=1 reset=1 stop=1
 keyboard make=1c repeat=1c,1c break=f0,1c shared=held reset=released

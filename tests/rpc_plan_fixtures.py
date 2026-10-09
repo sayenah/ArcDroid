@@ -8,6 +8,7 @@ from rpc_session_rom import devices
 from rpc_video_rom import Guest, program, cases
 from rpc_d2_rom import audio, inputs, RATES
 from rpc_plan_matrix_rom import matrix
+from rpc_video_paths import CASES as path_cases, program as path_program
 
 
 def rom(directory, name, words):
@@ -44,6 +45,9 @@ def generate(directory):
         for name,w,h,d,hz,scenario in cases():
             if name in ('frontend','threshold'):continue
             name=f'video-{m}-{name}';rom(directory,name,program(m,w,h,d,hz,scenario));plan(directory,name,model)
+        for case in path_cases:
+            name=f'video-paths-{m}-{case[0]}'
+            rom(directory,name,path_program(m,case));plan(directory,name,model)
         g=Guest();g.w=[0xeafffffe]*64;g.w[0]=0xea00003e;g.w[7]=0xea000017
         g.w[32:44]=[0xe59f0018,0xe3a01000,0xe5801000,0xe59f0018,
                      0xe5901000,0xe2811001,0xe5801000,0xe25ef004,

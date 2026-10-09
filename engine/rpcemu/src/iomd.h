@@ -136,6 +136,8 @@ struct iomd
 	uint8_t clkctrl; /**< Clock Control */
 	uint8_t vidimux; /**< LCD and IIS control bits */
 	uint8_t dramcr;  /**< DRAM Control */
+	/* ArcDroid modification (2026-10-07): bank-width timing register. */
+	uint8_t dramwid; /**< DRAMWID, ARM7500 bank width bits 3:0 */
 	uint8_t selfref; /**< DRAM Self-Refresh Control */
 };
 

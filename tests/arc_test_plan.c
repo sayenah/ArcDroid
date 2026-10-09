@@ -2,6 +2,7 @@
 #include "arc_test_plan.h"
 #include "engine_test.h"
 #include "arc_io.h"
+#include "rpc_cmos_store.h"
 #include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -13,6 +14,64 @@ static Event events[EVENT_LIMIT];
 static size_t event_count, next_event;
 static uint64_t script_frame;
 static bool script_active;
+static unsigned cmos_phase; /* 0=v1, 1=generating, 2=requested, 3=failed */
+static unsigned cmos_frames=8;
+static bool refusal_reported;
+static ArcRpcCmosStore record, defaults;
+static void *pending_rom;
+static size_t pending_size;
+static uint64_t pending_epoch;
+static unsigned pending_model, pending_rate;
+static void (*plan_notice)(const char *,bool);
+void arc_test_plan_set_notice(void (*notice)(const char *,bool)) { plan_notice=notice; }
+RETRO_API unsigned arc_test_plan_cmos_phase(void) { return cmos_phase; }
+static void evidence(uint8_t bytes[256],ArcRpcCmosEvidence *e,uint64_t *now,unsigned *state);
+RETRO_API bool arc_test_plan_cmos_pacing(unsigned frames)
+{
+    if(cmos_phase!=1 || (frames!=1 && frames!=8))return false;
+    uint8_t bytes[256];ArcRpcCmosEvidence e;uint64_t now;unsigned state;
+    evidence(bytes,&e,&now,&state);
+    if(now)return false;
+    cmos_frames=frames;return true;
+}
+bool arc_test_plan_pending(void) { return cmos_phase==1 || cmos_phase==3; }
+static void evidence(uint8_t bytes[256],ArcRpcCmosEvidence *e,uint64_t *now,unsigned *state)
+{ arc_engine_test_cmos_evidence(bytes,e->mask,&e->writes,&e->last_write,now,state); }
+bool arc_test_plan_persist(char *error,size_t size)
+{
+    if(cmos_phase!=2 || !arc_engine_is_rpc() || !arc_engine_active())return true;
+    uint8_t bytes[256];ArcRpcCmosEvidence e;uint64_t now;unsigned state;
+    evidence(bytes,&e,&now,&state);
+    bool ok=arc_riscpc_cmos_store_put(&record,bytes+16,NULL,error,size);
+    if(record.refused){
+        if(refusal_reported && error && size)error[0]=0;
+        refusal_reported=true;
+    }else refusal_reported=false;
+    return ok;
+}
+static bool requested_start(char *error,size_t size)
+{
+    uint8_t seed[256]={0};memcpy(seed+16,record.payload,240);
+    arc_engine_stop();
+    bool ok=arc_engine_test_plan_start(pending_model,pending_rate,false,pending_rom,pending_size,seed,pending_epoch,error,size);
+    free(pending_rom);pending_rom=NULL;cmos_phase=ok?2:3;script_active=ok;
+    return ok;
+}
+bool arc_test_plan_slice(char *error,size_t size)
+{
+    if(cmos_phase!=1)return true;
+    bool ok=arc_engine_test_cmos_slice(UINT64_C(16666667)*cmos_frames);
+    uint8_t bytes[256];ArcRpcCmosEvidence e={0};uint64_t now;unsigned state;
+    evidence(bytes,&e,&now,&state);
+    if(ok && state==1 && now<ARC_RPC_CMOS_CAPTURE_NS)return true;
+    e.epoch=ARC_RPC_CMOS_GENERATION_EPOCH;static const unsigned rates[]={20,35,100,35};e.rate=rates[pending_model];
+    ok=ok && state==2 && now==ARC_RPC_CMOS_CAPTURE_NS && arc_riscpc_cmos_oracle(record.key.layout,bytes+16,&e);
+    if(!ok){if(error&&size)snprintf(error,size,"RPC default failed: required mask, stability, checksum or interrupted capture (writes=%llu)",(unsigned long long)e.writes);}
+    else ok=arc_riscpc_cmos_store_put(&defaults,bytes+16,&e,error,size);
+    if(ok)ok=arc_riscpc_cmos_store_put(&record,bytes+16,NULL,error,size);
+    if(ok)return requested_start(error,size);
+    arc_engine_stop();free(pending_rom);pending_rom=NULL;cmos_phase=3;script_active=false;return false;
+}
 static bool fail(char *error, size_t size, const char *message)
 { if (error && size) snprintf(error, size, "%s", message); return false; }
 static char *trim(char *s)
@@ -79,9 +138,17 @@ bool arc_test_plan_path(const char *path)
     return !*dot;
 }
 void arc_test_plan_clear(void)
-{ event_count = next_event = 0; script_frame = 0; script_active = false; }
+{
+    char error[256];if(!arc_test_plan_persist(error,sizeof(error)) && error[0] && plan_notice)plan_notice(error,true);
+    free(pending_rom);pending_rom=NULL;cmos_phase=0;cmos_frames=8;refusal_reported=false;
+    memset(&record,0,sizeof(record));memset(&defaults,0,sizeof(defaults));
+    event_count = next_event = 0; script_frame = 0; script_active = false;
+}
 void arc_test_plan_reset(void)
 {
+    if(cmos_phase==1){arc_engine_stop();free(pending_rom);pending_rom=NULL;cmos_phase=3;script_active=false;
+        if(plan_notice)plan_notice("RPC default capture interrupted by reset; no default published",true);
+        return;}
     next_event = 0; script_frame = 0;
     if (script_active) arc_engine_test_plan_input_ready();
 }
@@ -126,13 +193,13 @@ static bool script_load(const char *path)
     }
     free(text); return valid;
 }
-bool arc_test_plan_load(const char *path, const char *system, char *error, size_t error_size)
+bool arc_test_plan_load(const char *path, const char *system, const char *save, char *error, size_t error_size)
 {
     arc_test_plan_clear();
     char *text = NULL;
     if (!text_file(path, TEXT_LIMIT, &text)) return fail(error, error_size, "Plan must be bounded ASCII text");
-    const char *keys[] = {"version", "model", "rate_mips", "firmware", "cmos", "seed", "rtc_epoch", "input"};
-    char *values[8] = {0}; bool valid = true;
+    const char *keys[] = {"version", "model", "rate_mips", "firmware", "cmos", "seed", "rtc_epoch", "input", "content_id", "cmos_layout"};
+    char *values[10] = {0}; bool valid = true;
     for (char *line = text; line && valid;) {
         char *end = strchr(line, '\n'); if (end) *end++ = 0;
         char *s = trim(line);
@@ -140,8 +207,8 @@ bool arc_test_plan_load(const char *path, const char *system, char *error, size_
             char *equal = strchr(s, '=');
             if (!equal) { valid = false; break; }
             *equal++ = 0; s = trim(s); equal = trim(equal);
-            unsigned k; for (k = 0; k < 8 && strcmp(keys[k], s); ++k) {}
-            if (k == 8 || values[k] || !*equal) { valid = false; break; }
+            unsigned k; for (k = 0; k < 10 && strcmp(keys[k], s); ++k) {}
+            if (k == 10 || values[k] || !*equal) { valid = false; break; }
             values[k] = equal;
         }
         line = end;
@@ -150,22 +217,48 @@ bool arc_test_plan_load(const char *path, const char *system, char *error, size_
     const char *models[] = {"arm610", "arm710", "sa110", "arm7500"};
     if (values[1]) for (unsigned i = 0; i < 4; ++i) if (!strcmp(values[1], models[i])) model = i;
     bool factory = values[4] && !strcmp(values[4], "factory");
-    valid = valid && values[0] && !strcmp(values[0], "1") && model < 4 && values[3] &&
-        values[4] && (factory || !strcmp(values[4], "seed")) &&
-        (factory ? !values[5] : values[5] != NULL) && values[6] &&
+    bool persist=values[0] && !strcmp(values[0],"2") && values[4] && !strcmp(values[4],"persist");
+    ArcRpcCmosKey key={0};key.model=model;key.layout=arc_riscpc_cmos_layout(values[9]);
+    bool version=persist?values[8] && arc_riscpc_cmos_hex(values[8],40,key.content) && key.layout && !values[5] && save && *save:
+        values[0] && !strcmp(values[0],"1") && !values[8] && !values[9];
+    valid = valid && version && model < 4 && values[3] &&
+        values[4] && (persist || factory || !strcmp(values[4], "seed")) &&
+        (persist || (factory ? !values[5] : values[5] != NULL)) && values[6] &&
         number(values[6], UINT64_C(13569465599), &epoch) &&
         (!values[2] || (number(values[2], 100, &rate) && rate));
     char firmware[PATH_LIMIT], seed_path[PATH_LIMIT], input_path[PATH_LIMIT];
     if (valid) valid = resolve(values[3], system, firmware) &&
-        (factory || resolve(values[5], system, seed_path)) &&
+        (persist || factory || resolve(values[5], system, seed_path)) &&
         (!values[7] || (resolve(values[7], system, input_path) && script_load(input_path)));
     void *rom = NULL, *seed = NULL; size_t rom_size = 0, seed_size = 0;
     if (valid) valid = arc_io_read_all_limit(firmware, &rom, &rom_size, 8388608, NULL) &&
         (rom_size == 2097152 || rom_size == 4194304 || rom_size == 8388608) &&
-        (factory || (arc_io_read_all_limit(seed_path, &seed, &seed_size, 256, NULL) && seed_size == 256));
+        (persist || factory || (arc_io_read_all_limit(seed_path, &seed, &seed_size, 256, NULL) && seed_size == 256));
     if (!valid) fail(error, error_size, "Invalid plan, path, script, ROM size or seed size");
-    else valid = arc_engine_test_plan_start(model, (unsigned)rate, factory, rom, rom_size, seed, epoch, error, error_size);
+    else if(!persist)valid=arc_engine_test_plan_start(model,(unsigned)rate,factory,rom,rom_size,seed,epoch,error,error_size);
+    else {
+        arc_sha256_hex(rom,rom_size,key.firmware);
+        ArcRpcCmosResult found=arc_riscpc_cmos_store_load(&record,save,&key,error,error_size);
+        if(error&&*error && plan_notice){plan_notice(error,true);refusal_reported=record.refused;}
+        valid=found!=ARC_RPC_CMOS_REFUSED;
+        if(valid){
+            pending_rom=rom;rom=NULL;pending_size=rom_size;pending_model=model;pending_rate=(unsigned)rate;pending_epoch=epoch;
+            if(found==ARC_RPC_CMOS_FOUND)valid=requested_start(error,error_size);
+            else {
+                key.defaults=true;key.procedure=ARC_RPC_CMOS_PROCEDURE_REVISION;key.timing=ARC_RPC_CMOS_TIMING_REVISION;
+                found=arc_riscpc_cmos_store_load(&defaults,save,&key,error,error_size);
+                if(error&&*error && plan_notice)plan_notice(error,true);
+                valid=found!=ARC_RPC_CMOS_REFUSED;
+                if(valid && found==ARC_RPC_CMOS_FOUND){valid=arc_riscpc_cmos_store_put(&record,defaults.payload,NULL,error,error_size);if(valid)valid=requested_start(error,error_size);}
+                else if(valid){
+                    valid=arc_engine_test_plan_start(model,0,true,pending_rom,pending_size,NULL,ARC_RPC_CMOS_GENERATION_EPOCH,error,error_size);
+                    if(valid)valid=arc_engine_test_cmos_schedule(ARC_RPC_CMOS_CAPTURE_NS,ARC_RPC_CMOS_DELETE_NS);
+                    if(valid){cmos_phase=1;if(plan_notice)plan_notice("RPC default generation: isolated held-Delete capture, 45 emulated seconds",false);}
+                }
+            }
+        }
+    }
     free(seed); free(rom); free(text);
-    if (!valid) arc_test_plan_clear(); else script_active = true;
+    if (!valid) arc_test_plan_clear(); else script_active = cmos_phase!=1;
     return valid;
 }

@@ -3,7 +3,7 @@
 from pathlib import Path
 import subprocess
 import sys
-r=subprocess.run([sys.argv[1],sys.argv[2],'--guest',sys.argv[3]],capture_output=True,text=True)
+r=subprocess.run([sys.argv[1],sys.argv[2],sys.argv[5] if len(sys.argv)>5 else '--guest',sys.argv[3]],capture_output=True,text=True)
 if r.returncode:
     sys.stderr.write(r.stdout+r.stderr)
     raise SystemExit(f'raster guest exited {r.returncode}')

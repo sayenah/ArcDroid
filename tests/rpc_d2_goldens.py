@@ -5,12 +5,57 @@ MMIO after tied source/output edges. All clocks are exact Fractions.
 """
 from fractions import Fraction
 from pathlib import Path
-from rpc_d2_rom import audio, RATES, PCM
+from rpc_d2_rom import audio, dma_state, RATES, PCM
+from rpc_authored_timeline import actions as timed_actions,Timeline
+
+def dma_observations(model):
+    """IOMD figure 4.8a state transitions at independently derived bus issues.
+    Source quad acquisition precedes a tied CPU read/write; a fetched quad
+    supplies four source samples even after the state changes to the next bank.
+    """
+    guest=dma_state(RATES[model]);cpu=Timeline(guest.words,model).through(guest.n-1)
+    events=sorted([(t,1,a,v) for t,a,v,_ in cpu.writes if a>=0x03000000]+
+                  [(t,2,a,0) for t,a,_ in cpu.reads if a==0x03200194])
+    ready=[False,False];pointers=[0]*4;state=6;enabled=False;frequency=control=0
+    origin=Fraction(0);index=1;source=None;quad_left=0;blocks=frames=0;observed=[]
+    def period():return Fraction(1000000000*(frequency+2),250000 if control&1 else 176400)
+    for now,kind,address,value in events:
+        while enabled and source is not None and ceil(source)<=now:
+            bank=state&1
+            if quad_left==0 and ready[bank]:
+                blocks+=1;quad_left=4;current=pointers[2*bank]&0x1ffffff0;end=pointers[2*bank+1]
+                pointers[2*bank]=(current&~4095)|((current+16)&4095)
+                if (current&4080)==(end&4080):
+                    ready[bank]=False;bank^=1;state=bank|2
+                    if end&0x80000000 or not ready[bank]:state|=4
+                    if end&0x80000000:ready[bank]=False
+            if quad_left:quad_left-=1;frames+=1
+            index+=1;source=origin+index*period()
+        if kind==2:observed.append(state);continue
+        if address==0x03400000:
+            if value>>24==0xb0:frequency=value&255
+            elif value>>24==0xb1:control=value&255
+            else:continue
+            origin=now;index=1;source=origin+period()
+        elif address==0x03200190:
+            if value&128:state=6;ready=[False,False];quad_left=0
+            if enabled!=bool(value&32):
+                enabled=bool(value&32);origin=now;index=1;source=origin+period()
+        elif 0x03200180<=address<=0x0320018c:
+            slot=(address-0x03200180)//4;pointers[slot]=value
+            if slot&1:
+                bank=slot//2
+                if state&4:
+                    if bank==state&1:ready[bank]=True;state&=~4
+                else:
+                    ready[bank]=True
+                    if bank!=state&1:state&=~2
+    return observed,blocks,frames,ceil(cpu.time)
 
 def ceil(value):return -(-value.numerator//value.denominator)
 def expected(model,compat=False,end=10000000):
     g=audio(RATES[model],compat)
-    actions=[(ceil(Fraction(n*1000,RATES[model])),kind,value) for n,kind,value in g.actions]
+    actions=timed_actions(g,model)
     enabled=False;frequency=control=0;source=None;source_origin=0;source_index=0
     ready=[False,False];bank=0;cache=[];held=0;frames=blocks=0;pcm=[]
     output_index=1;action_index=0
@@ -59,7 +104,8 @@ def trace(model):
     for compat in [False,True]:
         pcm,frames,blocks=expected(model,compat)
         lines.append(f'{"compat" if compat else "pcm"} model={model} generated=480 accepted=480 discarded=0 queued=0 dma={frames}/{blocks} hash={fnv(pcm):016x}')
-    lines.append('dma-state=06,06,02,07,07,03,06,02,00,06,02,00,07,03,06,07 quads=8 pairs=32 wrap=4k')
+    states,blocks,frames,_=dma_observations(model)
+    lines.append('dma-state='+','.join(f'{v:02x}' for v in states)+f' quads={blocks} pairs={frames} wrap=4k')
     lines.append('pressure generated=2400 accepted=1066 discarded=1334 queued=0 recovery=800')
     pcm,_,_=expected(model,end=50000001)
     lines.append(f'frontend generated=2400 accepted=2400 hash={fnv(pcm):016x}')
