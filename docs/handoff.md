@@ -1,112 +1,40 @@
 # ArcDroid Handoff
 
-**Stage:** IMPLEMENTATION — roadmap item 6, RiscPC R2b (floppy drives and full controller); QA remediation
-**Owner:** Sol (run C)
-**Next (Sol, R2b run C, resumed):** apply ruling **R2b-2** (79-pulse recalibrate), fix QA MEDIUM-1 and LOW-2, the DSR hardware-reset value and the `fdc.c:41` comment, and add the LOW-5 tests, all on `slice/r2b-floppy`, exactly as specified under *QA adjudication* below. Leave the tree uncommitted for Fable. Nothing else.
+**Stage:** IMPLEMENTATION — roadmap item 6, RiscPC **R2c** (IDE and a scalable hard disc), run A (store state machine document, no product code)
+**Owner:** Fable (dispatch), then Sol
+**Next (Fable, S59):** dispatch **Sol R2c run A**.
+- In a fresh clone on a new branch `slice/r2c-ide` from `main`, Sol writes `docs/riscpc-hd-store.md`, the store state machine of work-order item 9 below. No product code.
+- Give it a **fresh** Sol thread, and arm `wait-run.sh` at dispatch.
+- Then a short Astra check, Fable acceptance, and run B (implementation).
+- R2c run A's first change also adds QA N1: an assertion that the floppy IRQ stays low when a transfer is cancelled with nothing pending. This is test-only, from the R2b QA re-check.
 
-**QA adjudication (Fable, S58).** Opus QA (effort 15) returned **FAIL**: one medium defect and four lows. Its evidence and reproductions are in S58 scratchpad `s58/qa/`, including `probe/probe.c` and `probe/probe2.c`. Fable verified MEDIUM-1 and LOW-2 in the code and the two datasheet points in the text.
-- **MEDIUM-1 (defect → run C).** A media change on a drive (eject, replacement, failed insert) disarms that drive's SEEK/RECALIBRATE events (`cancel_drive`, `fdc.c` ~538), and the seek callback drops events whose mount generation changed (~503). So a seek in flight loses its seek-end interrupt and leaves the PCN partly stepped.
-  - **Fix.** Stepping is mechanical and independent of media: datasheet Table 17 (SE/EC), and the R1 contract "Empty media does not inhibit mechanical seek/recalibration/TRK0".
-  - A media change retires only data transfers on that drive.
-  - SEEK, RECALIBRATE and RELATIVE SEEK continue to completion with their normal status and interrupt, still invalidated by session generation (reset, teardown).
-  - Index and head-unload events follow the new medium's presence.
-  - **Tests:** QA's reproduction (seek in flight, then eject; seek in flight, then replace; seek in flight, then failed insert) gets the seek-end interrupt and `SENSE INTERRUPT` `20 28`.
-- **LOW-2 (defect → run C).** `cancel_drive` lowers the floppy IRQ unconditionally, even while another unit's seek-complete status is still pending.
-  - **Fix:** after cancelling a transfer, the IRQ reflects the remaining pending status, as in QA's P2 case.
-  - **Test:** that case.
-- **DSR hardware reset (low defect → run C).** The datasheet (DSR description) says a hardware reset sets DSR to 02H, which is 250 kb/s; `fdc_reset` leaves 500 kb/s.
-  - **Fix:** set it as the datasheet says; a software reset still leaves DSR and CCR alone.
-  - **Stop rule:** if any existing golden changes, stop and report to Fable rather than updating it.
-- **Comment `fdc.c:41`.** Make it match the code: close advances `media.session_generation`; the counter is not advanced.
-- **LOW-5 (test gaps → run C).** Add tests that kill QA's surviving mutants. QA's list, runner and mutant sources are in `s58/qa/probe/` (`m1.tsv`, `mutate.py`, `gmutate.py`).
-  - **Two-drive isolation first:**
-    - Q27, the index interrupt raised for an unselected drive;
-    - Q31, the disc-changed bit read from drive 0 instead of the DOR drive.
-  - **Then:**
-    - FIFO thresholds: Q15, Q16, Q18;
-    - VERIFY with EC: Q20;
-    - raw refusals: Q07, Q08;
-    - LOCK/EFIFO and POLL across reset: Q24, Q33;
-    - mechanics: Q22, Q23, Q26;
-    - store-failure latches: Q03, Q10;
-    - search waits: Q29, Q40;
-    - index with the motor off: Q13;
-    - the BC bit: Q19.
-  - Add each as a registered mutant in `tests/rpc_qa_mutations.py`. If you judge one equivalent, argue it in the report instead.
-  - QA judged Q04 and Q30 equivalent; Fable accepts that.
-- **LOW-3 (risk; carried to R3, no R2b change).** Byte-identical media in both drives share one staged file (Shadow staging is keyed by source SHA-1; Original mode uses the source file). A write through one drive changes the other drive's medium with no disc-change signal. R3 must stage per drive or slot, or refuse identical sources in both drives, before drive 1 becomes reachable outside the plan core.
-- **LOW-4 (risk; carried to R3, no R2b change).** On RPC, raw store failures latch write protect without a notice, and raw write-protect refusals never reach `arc_adf_log_refusal`. The guest result is correct under D-139. R3 must give the player a notice before the RPC path ships.
-- **READ TRACK ND (incorrect finding, no change).** The datasheet's Read A Track text sets ND "if there is no comparison" with the specified value, which is what the code does.
-
-**Ruling R2b-2 (Fable, S58; D-144) — the recalibrate pulse limit.** Sol's run C stopped, correctly, on contradictory datasheet passages:
-- p.69, the Recalibrate definition: SE and EC "if the nTR0 pin is still low after **79** step pulses";
-- the Relative Seek note: Recalibrate "will return an error if the head is farther than **79**", citing a "maximum of 80 step pulses";
-- Table 17, the EC description: "**80** step pulses".
-
-The command definition and the "farther than 79" behaviour agree; Table 17's "80" is a summary.
-- **Rule.** Recalibrate issues at most **79** step pulses. A head at physical cylinder 79 or less reaches TRK0 and ends with SE. A head at cylinder 80 or beyond, or a drive whose TRK0 never asserts (an empty or absent drive), ends with SE|EC after 79 pulses, with the carriage 79 cylinders further out than before.
-- **So:** run A's 80-pulse limit (`fdc.c` ~392, and the related cylinder-80 equipment-check boundary ~399) is an off-by-one defect, and QA's mutant Q22 describes the correct behaviour.
-- **Run C:**
-  - fix the limit;
-  - add tests for cylinder 79 → SE and cylinder 80 → SE|EC, with the resulting PCN and carriage;
-  - register the mutant that restores 80, killed.
-- **Goldens.** Any existing RPC golden or R1 test expectation may change **only** where the 79-pulse rule changes it (for example the absent-drive recalibrate horizon or timing). Each delta must be explained against this ruling. Any other change is a stop.
-
-**Sol run C setup:**
-- Resume thread `01a11e0b-8fbc-7230-9418-f18000a6a00d` in `s57/sol2b/clone`. Fable merges this baton into the branch first.
-- Verify:
-  - `rpc-fdc-empty`, `rpc-floppy-guest`, `rpc-fdc-boot-probe`, `rpc-session.*`;
-  - `rpc-qa-mutations` with every new mutant;
-  - the MinGW build and Windows export check;
-  - `git diff --check`.
-- Report: `SOL-REPORT-R2B-C.md`.
-- **After run C:** Fable reviews, commits verbatim and watches CI, then asks the same QA agent for a re-check.
-
-**R2b state:**
-- **Sol run A** (`23a5c0e`) implements items 5–8:
+**R2b outcome (merged S58).** PR #331 merged as `f3424fa` (head `a8dc85c`); D-139, D-143, D-144.
+- **What it adds:**
   - an instance-based two-drive model (`engine/rpc/rpc_floppy.*`) on the unchanged media core;
   - the full FDC37C665GT controller (`engine/rpcemu/src/fdc.c`, patch `devices-r2b-floppy`);
   - plan v2 `media`, `drive1` and `disk_control` keys.
-- **Sol run B** (`6129e8f`) implements ruling R2b-1.
-- Sol thread `01a11e0b-8fbc-7230-9418-f18000a6a00d`; reports `SOL-REPORT-R2B-A.md` and `SOL-REPORT-R2B-B.md` are in `s57/sol2b/clone`.
-- **CI:** green on all five jobs at `23a5c0e`. At `fcf86bf` (code `6129e8f`): four pass and host-sanitizers was still running at this baton.
+- **Sol runs:**
+  - A `23a5c0e`: items 5–8;
+  - B `6129e8f`: R2b-1;
+  - C `a8dc85c`: QA remediation and R2b-2.
+- **Rulings:**
+  - **R2b-1 (D-143):** raw FORMAT accepts a permutation of the track's ID set, because RISC OS ADFS formats with a track skew.
+  - **R2b-2 (D-144):** Recalibrate issues at most 79 pulses. A present drive, even with no disc, reaches TRK0; only an absent drive (units 2 and 3) gets EC.
+- **Opus QA (effort 15):**
+  - FAIL: MEDIUM-1, a media change killed an in-flight seek; LOW-2, the IRQ dropped on cancel; 19 surviving mutants.
+  - Re-check after run C: **PASS WITH LOWS**. P1 and P2 fixed, the R2b-2 boundary exact, every former survivor killed, Q19/Q33/Q04/Q30 equivalent.
+- **CI:** green on all five jobs at `a8dc85c`, including native Windows RetroArch.
+- **Fable, private:**
+  - **AC-8 R2b PASS** at `6129e8f` and again at `a8dc85c`, on 3.50 ARM610, 3.60 ARM7500 and 3.71 SA-110 (authored distinct blank 800K raw discs, Shadow writes): guest `*Format` of both drives (160 tracks), `*Save`/`*CDir`/`*Cat` per drive, a disk-control swap of drive 0 to a third disc plus format, a swap back with both drives intact, and staged images byte-checked per disc.
+  - **JFD store persistence PASS** (3.71 SA-110, title 146 with the tab *Off*): `*Save` in session 1, still listed in a fresh process.
+  - **AC-6 44-title A/B PASS** (`main` against `6129e8f`, both package states): 42 of 44 identical, with only 105 and 205 differing, both known variance. Run C changed only the FDC.
+  - **Two-floppy diagnostics:** no anomaly reproduced (helper absent, or accessed after drive 0). DOR/TC numeric traces were not captured, because there was nothing to diagnose. The catalogue-before-install case is replayed in R2c.
 
-**Ruling R2b-1 (D-143).** Raw FORMAT accepts a permutation of the track's complete sector-ID set (count, C, H and N exact); any other set is refused with write protect before any byte changes; the rotational order is a stated fidelity limit.
-- Why: RISC OS 3.71 ADFS formats E-format floppies with a track skew. Cylinder 1 head 0 sends R = 4,0,1,2,3, and run A's in-order-only rule refused every guest `*Format`.
-
-**Fable evidence (private, S58 scratchpad `s58/`, `LEDGER.md` index):**
-- **AC-8 R2b — PASS on 3.50 ARM610, 3.60 ARM7500 and 3.71 SA-110,** using authored distinct blank 800K raw discs and Shadow writes:
-  - guest `*Format` of drive 0 and drive 1 (160 tracks each);
-  - `*Save` and `*CDir` on each drive, with `*Cat` correct per drive;
-  - a disk-control swap of drive 0 to a third disc, then format;
-  - a swap back, with both drives' contents intact;
-  - staged images byte-checked per disc.
-- **JFD store persistence across a fresh process — PASS** (3.71 SA-110). Library title 146 with the write-protect tab *Off*: `*Save` in session 1, still listed in session 2, store unchanged by session 2.
-- **Two-floppy diagnostics:** no anomaly reproduced, with the helper absent and with it accessed after drive 0. DOR/TC numeric traces were not captured, because there was nothing to diagnose. The original catalogue-before-install case is R2c's.
-- **AC-6 44-title A/B — PASS** (`main` `49f78b1`, code `6ee6460`, against `6129e8f`; both package states, 42 of 44 identical in each). Only titles 105 and 205 differ, in screenshots only; both are known run-to-run variance titles. Evidence: `s58/ab/`.
-- **Harness lessons, not product defects:** the runner VFS refuses writes outside `--save`, so raw media opened elsewhere are read-only; identical blank images shared one Shadow staging file.
-
-**QA focus:**
-1. **Controller against the datasheet** (`.evidence/` in the QA clone holds the SMSC FDC37C665GT text):
-   - every item-6 command and field; result CHRN and status transitions;
-   - MT/EOT and end of cylinder; TC on the final byte and one byte early; FIFO and non-DMA;
-   - both R1 hazards; physical DOR selection against the command unit.
-2. **Commit rules:**
-   - a complete sector commits exactly once;
-   - an incomplete JFD sector is discarded; raw early TC is handled;
-   - veto → data CRC; store failure → write protect; a synchronous refusal comes before DMA.
-3. **Lifetime and cancellation:**
-   - the drive pins the frontend's prepared JFD (`ArcRpcFloppyDrive.jfd`). Check every frontend path that frees or replaces an entry — disk control (replace, remove, add, index), reset (`arc_rpc_plan_reset_media`), unload and failed load — for retiring the mount first;
-   - session, mount and command generations, and stale completion.
-4. **Frontend isolation:** `arc_disk_insert_entry` and `arc_disk_replace` skip `arc_machine_accepts_media` when `arc_engine_is_rpc()`. Confirm that shipping behaviour is byte-identical and that no shipping route reaches RPC.
-5. **R2b-1:** the permutation check, its bounds (`1u<<r` against the sector count), and no partial write.
-6. **Residuals to classify (defect, risk, or out of scope):**
-   - byte-identical media in both drives share one Shadow staging copy, so writes on one drive appear on the other;
-   - a raw store failure latches write protect without a refusal notice, whereas JFD gives one.
-7. **Tests and mutants:** mutant adequacy for the eight run-A mutants and `F-FORMAT-ORDER`; Windows test exports; determinism across pacing.
-8. **AC-6 and AC-7:** Arculator sources, tests and goldens unchanged; RPC goldens unchanged; import, symbol and shipping guards.
-
-**After QA (Fable):** adjudicate the findings; send validated remediation to Sol (resume the same thread); merge once protocol §12.11 is satisfied: QA pass, CI green on all five jobs, and the AC-6 A/B accepted.
+**Carried from R2b:**
+- **To R3 (LOW-3):** byte-identical media in both drives share one staged file (Shadow staging is keyed by source SHA-1; Original mode uses the source file), so a write through one drive changes the other medium with no disc-change signal. Stage per drive or slot, or refuse identical sources, before drive 1 is reachable outside the plan core.
+- **To R3 (LOW-4):** on RPC, raw store failures latch write protect with no notice, and raw refusals never reach `arc_adf_log_refusal`. The player needs a notice before the RPC path ships.
+- **To R2c run A (N1):** the IRQ-low assertion above.
+- **Harness lesson for private legs (`s58/ac8/leg.py`, `legfull.sh`):** the runner VFS refuses writes outside `--save`, so use `--disk-writes shadow` or keep media inside the save directory, and give every blank disc distinct bytes.
 
 - **Parallel workstream (D-141, D-142), item 6b translator evaluation:** the plan is in `docs/riscpc-translator.md`.
   - **Phases:**
@@ -154,7 +82,7 @@ Rulings, recorded in D-140:
 - After the absent-IDE startup dialog, the desktop takes about 60 s to appear. This is identical on R1 and goes away once R2c's IDE exists.
 - AC-10, the end-of-R2 gameplay speed gate, is still owed after R2c.
 
-**R2 work order** (below): R2a done; **R2b next**; R2c follows.
+**R2 work order** (below): R2a and R2b done; **R2c next**.
 
 Slice order (D-133): R1–R4 → item 5 release baseline → item 6b faster CPU translator → item 8 save states. Carried: the Arculator VIDC-register reset follow-up (below); follow-up Lows; Slice 23 residuals; physical-stick feel on the Odin3 (Founder check).
 
@@ -169,6 +97,23 @@ Slice order (D-133): R1–R4 → item 5 release baseline → item 6b faster CPU 
 - Faster CPU translator for RiscPC joins the roadmap as item 6b (D-133). Android is arm64-v8a only (D-135).
 
 **Slice 30 work order:** merged; in git history (`docs/handoff.md` at `7a32f93`).
+
+**S58 (Claude Opus 5.5 effort 15, window `arcdroid-99`; baton by relay from `arcdroid-ba`).**
+- **Work done:**
+  - took over Sol R2b run A (PID 53166) from S57 and supervised it to completion;
+  - **R2b reviewed, privately verified, QA'd and merged** (outcome above; D-143, D-144);
+  - the item 6b Phase-0 Astra challenge: ACCEPT WITH CHANGES, all nine incorporated (D-142); Astra thread `01a11e3a-d351-75a1-8424-b370d8b9f354`.
+- **Founder (S58):** after an auto-mode classifier block on a self-merge, the Founder said in the window, "Yes yes please merge." Governance and implementation merges continued.
+- **Nothing left running.** No Sol, Astra, QA, runner or watchdog process started by S58 is running.
+- **Private evidence:** S58 scratchpad `/private/tmp/claude-501/-Users-mac0918-dev-ArcDroid/96a9a3c8-cfc4-45af-b638-d566632c35c9/scratchpad/s58/`, indexed by `LEDGER.md`:
+  - `astra/`: brief, stream and report for the 6b challenge;
+  - `r2b/`: Fable's slice build;
+  - `probe/`: a `/* PROBE */` format-tuple logger, never a Sol source;
+  - `ac8/`: `leg.py`, `legfull.sh`, the authored blank discs `media/u*.adf`, and the legs `legA2`, `leg350`, `leg360`, `c350`, `c360`, `c371`, `jfd1`, `jfd2`, `cfg350`, `cfg360` (their saves have Floppies 2 persisted);
+  - `ab/`: `legs58.sh`, `ab58.py`, `cmp58.py` and the legs;
+  - `main/`: the baseline clone;
+  - `qa/`: the QA clone, probes, mutants and logs.
+- **Sol files** are in the S57 scratchpad `s57/sol2b/`: prompts A, B, C and C2, streams, final messages, and the clone with `SOL-REPORT-R2B-{A,B,C}.md`.
 
 **S57 (Claude Opus 5.5 effort 15, window `arcdroid-ba`; baton by relay from `arcdroid-25`; closed on the Founder's instruction because context was nearly full).**
 - **Work done:**
@@ -712,7 +657,7 @@ The R1 work order and implementation record are in git history (`docs/handoff.md
   - **Clones and probes:** Sol, Astra and QA clones and scratch probes live under this project's own scratchpad (`/private/tmp/claude-501/-Users-mac0918-dev-ArcDroid/…`), which the deny list does not cover. Sol's own build directories (`/private/tmp/arcdroid-r2*`) are outside `claude-501` and are confined by the Codex sandbox.
   - **Sibling directory `~/dev/ArcDroid-evidence`:** denied by the generated list, like every other sibling. If it holds this project's evidence, exempt it by removing its three lines.
 - **Founder instruction (S54, relayed S55):** never stack shell commands — no `&&`, `;` or pipes chaining git steps; run each command separately (stacked commands get denied). Put multi-step work in a script file under the scratchpad instead.
-- **Used windows (never relay to these; each closing holder adds its own name):** `arcdroid-d9` (S33), `arcdroid-6c` (S43), `ArcDroid-45` (S45), `arcdroid-83` (2026-10-02 governance edit), `ArcDroid-49` (S49), `arcdroid-d4` (S50), `arcdroid-10` (S51), `arcdroid-1b` (S52), `ArcDroid-52` (S53), `arcdroid-df` (S54), `arcdroid-7e` (S55), `arcdroid-25` (S56), `arcdroid-ba` (S57). Earlier holders were not recorded; window names change between days.
+- **Used windows (never relay to these; each closing holder adds its own name):** `arcdroid-d9` (S33), `arcdroid-6c` (S43), `ArcDroid-45` (S45), `arcdroid-83` (2026-10-02 governance edit), `ArcDroid-49` (S49), `arcdroid-d4` (S50), `arcdroid-10` (S51), `arcdroid-1b` (S52), `ArcDroid-52` (S53), `arcdroid-df` (S54), `arcdroid-7e` (S55), `arcdroid-25` (S56), `arcdroid-ba` (S57), `arcdroid-99` (S58). Earlier holders were not recorded; window names change between days.
 
 **Relay brief:** "ArcDroid baton handoff from <window> (S<n>), for /Users/mac0918/dev/ArcDroid only. Before anything else, run the receipt checks in docs/protocol.md §18: you must be Claude Opus 5.5 at reasoning effort 15 (high) or above, your working directory must be /Users/mac0918/dev/ArcDroid, and this must be the first message in your window. If any check fails, change nothing, tell the Founder in your window which check failed (for a wrong model or effort: run /model claude-opus-5-5 and /effort high, then say \"pick up from handoff\"), send a PushNotification, and stop. If all pass, take the baton without asking the Founder to confirm, number yourself S<n+1>, read CLAUDE.md and docs/handoff.md, take the active Next (never a workstream under Waiting on the Founder until its answer is recorded), and work towards the Founder vision D-073. Founder instruction (S54): never stack shell commands (no `&&`, `;` or pipes chaining git steps) — run each command separately. Close by protocol §18: relay only to one idle arcdroid- window, never another project's session; if no ArcDroid window is eligible, stop all work and close. Repeat this rule in your own relay."
 
