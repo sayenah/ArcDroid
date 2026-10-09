@@ -65,6 +65,9 @@ static struct retro_vfs_file_handle *vfs_open(const char *path,unsigned mode,uns
 {
     ARC_RUNNER_VFS_AUDIT(path,mode);
     (void)hints;bool write=(mode&RETRO_VFS_FILE_ACCESS_WRITE)!=0;
+#if defined(ARC_RUNNER_VFS_WRITE_REFUSE)
+    if(write && ARC_RUNNER_VFS_WRITE_REFUSE(path))return NULL;
+#endif
     if(write && !writable(path))return NULL;
     if(!(mode&RETRO_VFS_FILE_ACCESS_READ) && !write)return NULL;
     const char *access=write?(mode&RETRO_VFS_FILE_ACCESS_UPDATE_EXISTING?"r+b":"wb+"):"rb";

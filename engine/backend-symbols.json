@@ -679,6 +679,7 @@
     "__asan_shadow_memory_dynamic_address",
     "__asan_stack_free_5",
     "__asan_stack_free_7",
+    "__asan_stack_free_9",
     "__asan_stack_malloc_0",
     "__asan_stack_malloc_1",
     "__asan_stack_malloc_10",
@@ -734,7 +735,17 @@
     "vsnprintf",
     "arc_input_consume",
     "arc_input_is_modifier",
-    "arc_input_reset"
+    "arc_input_reset",
+    "arc_io_open_file",
+    "arc_io_close_file",
+    "arc_io_file_length",
+    "arc_io_seek_file",
+    "arc_io_read_file",
+    "arc_io_write_file",
+    "arc_io_flush_file",
+    "arc_jfd_effective_sector",
+    "arc_jfd_sector_write_eligible",
+    "arc_jfd_write_veto_reason"
   ],
   "outside_test_hooks": []
 }

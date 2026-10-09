@@ -15,6 +15,7 @@
 #include "hard_disc_scope.h"
 #if defined(ARCDROID_TEST_FAULTS)
 #include "arc_test_plan.h"
+#include "engine_test.h"
 #endif
 
 #include <limits.h>
@@ -369,6 +370,9 @@ typedef struct {
 } ArcMediaEntry;
 
 static ArcMediaEntry arc_media[ARC_PLAYLIST_MAX_ENTRIES];
+#if defined(ARCDROID_TEST_PLANS)
+static ArcMediaEntry arc_rpc_helper_entry;
+#endif
 static unsigned arc_media_count;
 typedef struct {
    bool valid;
@@ -1157,6 +1161,10 @@ static void arc_release_session(void)
    arc_chooser_input_armed = false;
    arc_chooser_release_gate = false;
    arc_engine_stop();
+#if defined(ARCDROID_TEST_PLANS)
+   arc_jfd_free(&arc_rpc_helper_entry.jfd);
+   memset(&arc_rpc_helper_entry,0,sizeof(arc_rpc_helper_entry));
+#endif
    arc_error_pad_gate = false;
    arc_error_was_ready = false;
    arc_error_seen_generation = 0u;
@@ -4735,8 +4743,8 @@ static bool arc_disk_insert_entry(ArcMediaEntry *entry, ArcInsertPhase phase,
 {
    if (phase != ARC_INSERT_COMMIT)
    {
-      if (!arc_machine_accepts_media(arc_session_machine, entry,
-                                     error, error_size) ||
+      if ((!arc_engine_is_rpc() && !arc_machine_accepts_media(arc_session_machine, entry,
+                                     error, error_size)) ||
           !arc_refresh_jfd(entry, arc_plan.disk_writes,
                            arc_core_options.jfd_write_policy, error, error_size))
       {
@@ -5178,7 +5186,7 @@ static bool arc_disk_replace(unsigned index, const struct retro_game_info *info)
       arc_message(error[0] ? error : "Replacement floppy image is invalid.", RETRO_LOG_ERROR);
       return false;
    }
-   if (!arc_machine_accepts_media(arc_session_machine, &replacement,
+   if (!arc_engine_is_rpc() && !arc_machine_accepts_media(arc_session_machine, &replacement,
                                   error, sizeof(error)))
    {
       arc_discard_candidate(&replacement);
@@ -7383,6 +7391,90 @@ static bool arc_load_game(const struct retro_game_info *game, bool negotiate)
 }
 
 #if defined(ARCDROID_TEST_PLANS)
+static bool arc_rpc_plan_media(const char *content,const char *helper,char *error,size_t size)
+{
+    const char *save=NULL;
+    if(!arc_environment || !arc_environment(RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY,&save) ||
+       !save || !*save || strlen(save)>=sizeof(arc_save_path) ||
+       !arc_read_options(&arc_core_options,error,size))return false;
+    strcpy(arc_save_path,save);arc_preparing_zero_tail=arc_core_options.short_tail_zero;
+    arc_plan.disk_writes=arc_core_options.disk_writes;
+    if(*content && !arc_prepare_media_list(content,arc_plan.disk_writes,error,size))return false;
+    if(*helper){
+        if(!arc_prepare_source(helper,NULL,arc_plan.disk_writes,true,NULL,&arc_rpc_helper_entry,error,size))return false;
+        if(arc_rpc_helper_entry.info.kind==ARC_MEDIA_JFD){
+            snprintf(error,size,"RPC drive 1 requires raw helper media");return false;
+        }
+        ArcEngineMedia h=arc_engine_media(&arc_rpc_helper_entry);
+        if(!arc_engine_test_floppy_mount(1,&h,error,size))return false;
+    }
+    arc_image_index=0;arc_ejected=arc_media_count==0;
+    if(arc_media_count){
+        ArcMediaEntry *entry=&arc_media[0];
+        if(!arc_refresh_jfd(entry,arc_plan.disk_writes,arc_core_options.jfd_write_policy,error,size))return false;
+        arc_finish_jfd_preparation(entry,true,arc_core_options.jfd_write_policy);
+        ArcEngineMedia m=arc_engine_media(entry);
+        if(!arc_engine_media_insert(&m,error,size))return false;
+    }
+    arc_loaded=true;arc_session=ARC_SESSION_RUNNING;return true;
+}
+static bool arc_rpc_plan_reset_media(char *error,size_t size)
+{
+    if(!arc_loaded)return true;
+    ArcCoreOptions updated;
+    if(!arc_read_options(&updated,error,size))return false;
+    /* Retire every borrowed presentation before rebuilding its policy view. */
+    arc_engine_test_floppy_eject(0);arc_engine_test_floppy_eject(1);
+    bool was_ejected=arc_ejected;arc_ejected=true;
+    unsigned selected=arc_image_index;
+    arc_preparing_zero_tail=updated.short_tail_zero;
+    if(updated.disk_writes!=arc_plan.disk_writes){
+        if(arc_zip_active){if(!arc_reprepare_zip_media(updated.disk_writes,&selected,error,size))return false;}
+        else if(arc_folder_set_active){if(!arc_reprepare_folder_media(updated.disk_writes,&selected,error,size))return false;}
+        else for(unsigned i=0;i<arc_media_count;++i){
+            if(!arc_media[i].populated)continue;
+            ArcMediaEntry next;
+            if(!arc_prepare_source(arc_media[i].source,arc_media[i].label,updated.disk_writes,true,NULL,&next,error,size))return false;
+            arc_jfd_free(&arc_media[i].jfd);arc_media[i]=next;
+        }
+        if(arc_rpc_helper_entry.populated){
+            ArcMediaEntry next;
+            if(!arc_prepare_source(arc_rpc_helper_entry.source,NULL,updated.disk_writes,true,NULL,&next,error,size))return false;
+            arc_rpc_helper_entry=next;
+        }
+    }
+    for(unsigned i=0;i<arc_media_count;++i)if(arc_media[i].populated)arc_entry_tail_presentation(&arc_media[i],updated.short_tail_zero);
+    if(arc_rpc_helper_entry.populated)arc_entry_tail_presentation(&arc_rpc_helper_entry,updated.short_tail_zero);
+    arc_core_options=updated;arc_plan.disk_writes=updated.disk_writes;arc_image_index=selected;
+    arc_jfd_tab_pending_notice_shown=false;
+    if(arc_rpc_helper_entry.populated){ArcEngineMedia h=arc_engine_media(&arc_rpc_helper_entry);
+        if(!arc_engine_test_floppy_mount(1,&h,error,size))return false;}
+    if(!was_ejected && selected<arc_media_count){
+        ArcMediaEntry *entry=&arc_media[selected];
+        if(!arc_refresh_jfd(entry,updated.disk_writes,updated.jfd_write_policy,error,size))return false;
+        arc_finish_jfd_preparation(entry,true,updated.jfd_write_policy);
+        ArcEngineMedia m=arc_engine_media(entry);
+        if(!arc_engine_media_insert(&m,error,size))return false;
+        arc_ejected=false;
+    }
+    return true;
+}
+static void arc_rpc_keep_media_options(ArcCoreOptions *updated,bool notify)
+{
+    if(!arc_loaded)return;
+    bool changed=updated->disk_writes!=arc_plan.disk_writes ||
+        updated->jfd_write_policy!=arc_core_options.jfd_write_policy ||
+        updated->short_tail_zero!=arc_core_options.short_tail_zero ||
+        updated->jfd_omitted_strict!=arc_core_options.jfd_omitted_strict;
+    if(notify && changed && !arc_jfd_tab_pending_notice_shown){
+        arc_message("Disk options change will apply after reset or reload.",RETRO_LOG_INFO);
+        arc_jfd_tab_pending_notice_shown=true;
+    }
+    updated->disk_writes=arc_plan.disk_writes;
+    updated->jfd_write_policy=arc_core_options.jfd_write_policy;
+    updated->short_tail_zero=arc_core_options.short_tail_zero;
+    updated->jfd_omitted_strict=arc_core_options.jfd_omitted_strict;
+}
 static void arc_plan_notice(const char *message,bool error) { arc_message(message,error?RETRO_LOG_ERROR:RETRO_LOG_INFO); }
 #endif
 RETRO_API bool retro_load_game(const struct retro_game_info *game)
@@ -7391,7 +7483,7 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game)
    if (game && arc_test_plan_path(game->path)) {
       arc_loaded = false;
       arc_release_session();
-      const char *system = NULL, *save = NULL; char error[256];
+      const char *system = NULL, *save = NULL; char error[256]={0};
       enum retro_pixel_format format = RETRO_PIXEL_FORMAT_XRGB8888;
       static const struct retro_keyboard_callback keyboard = {arc_keyboard};
       if (!arc_environment || !arc_environment(RETRO_ENVIRONMENT_SET_PIXEL_FORMAT, &format)) return false;
@@ -7399,8 +7491,10 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game)
       arc_environment(RETRO_ENVIRONMENT_SET_KEYBOARD_CALLBACK, (void *)&keyboard);
       arc_environment(RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY, &save);
       arc_test_plan_set_notice(arc_plan_notice);
+      const ArcTestPlanMedia callbacks={arc_rpc_plan_media,arc_disk_set_eject,arc_disk_set_index,arc_disk_replace,arc_disk_add};
+      arc_test_plan_set_media(&callbacks);
       if (!arc_test_plan_load(game->path, system, save, error, sizeof(error))) {
-         arc_message(error, RETRO_LOG_ERROR); return false;
+         arc_message(error, RETRO_LOG_ERROR); arc_release_session(); return false;
       }
       arc_rpc_av_attempted = false; arc_fault_reported = false;
       return true;
@@ -7439,7 +7533,12 @@ RETRO_API void retro_reset(void)
       arc_guest_time_us=0;
       if(!arc_engine_reset(error,sizeof(error)))arc_message(error,RETRO_LOG_ERROR);
 #if defined(ARCDROID_TEST_FAULTS)
-      else arc_test_plan_reset();
+      else {
+#if defined(ARCDROID_TEST_PLANS)
+         if(!arc_rpc_plan_reset_media(error,sizeof(error)))arc_message(error,RETRO_LOG_ERROR);
+#endif
+         arc_test_plan_reset();
+      }
 #endif
       arc_rpc_av_attempted=false;return;
    }
@@ -7743,7 +7842,13 @@ static void arc_rpc_present_run(void)
       memset(arc_keyboard_raw,0,sizeof(arc_keyboard_raw));
       arc_guest_time_us=0;
       char error[192];
-      (void)arc_read_options(&arc_core_options,error,sizeof(error));
+      ArcCoreOptions updated;
+      if(arc_read_options(&updated,error,sizeof(error))){
+#if defined(ARCDROID_TEST_PLANS)
+         arc_rpc_keep_media_options(&updated,false);
+#endif
+         arc_core_options=updated;
+      }
       (void)arc_resolve_inputs(&arc_core_options,false);
    }
 
@@ -7755,9 +7860,12 @@ static void arc_rpc_present_run(void)
    bool options_updated=false;
    if(arc_environment && arc_environment(RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE,&options_updated) && options_updated) {
       ArcCoreOptions updated;char error[192];
-      if(arc_read_options(&updated,error,sizeof(error)) && arc_resolve_inputs(&updated,true))
+      if(arc_read_options(&updated,error,sizeof(error)) && arc_resolve_inputs(&updated,true)){
+#if defined(ARCDROID_TEST_PLANS)
+         arc_rpc_keep_media_options(&updated,true);
+#endif
          arc_core_options=updated;
-      else arc_message(error[0]?error:"Unable to resolve RPC input options.",RETRO_LOG_ERROR);
+      }else arc_message(error[0]?error:"Unable to resolve RPC input options.",RETRO_LOG_ERROR);
    }
    if (arc_input_poll) arc_input_poll();
    arc_poll_inputs();

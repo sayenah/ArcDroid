@@ -29,6 +29,10 @@ static void pause_ns(uint64_t n) { struct timespec t = {(time_t)(n/1000000000), 
 #endif
 uint64_t arc_test_clock_ns(void);
 static const char *system_directory;
+static bool fail_jfd_store,variable_updated;
+static struct { uint64_t frame;const char *value;bool policy; } option_events[2];
+static unsigned option_count;
+static const char *disk_writes="shadow",*jfd_policy="as-imaged",*jfd_omitted="file-data";
 static uint64_t pcm_hash = UINT64_C(14695981039346656037), raster_hash, pcm_frames;
 static uint64_t pcm_prefix_hash = UINT64_C(14695981039346656037), first_raster_hash;
 static unsigned raster_width, raster_height, video_calls;
@@ -76,6 +80,7 @@ static void dump_video(const void *data, unsigned width, unsigned height, size_t
     }
 }
 
+#define ARC_RUNNER_VFS_WRITE_REFUSE(path) (fail_jfd_store && (strstr(path,"/arcdroid/jfd/") || strstr(path,"\\arcdroid\\jfd\\")))
 #include "rpc_runner_vfs.h"
 static void hash_byte(uint64_t *hash, unsigned byte)
 { *hash = (*hash ^ (byte & 255)) * UINT64_C(1099511628211); }
@@ -92,7 +97,13 @@ static bool environment(unsigned command, void *data)
     case RETRO_ENVIRONMENT_GET_CAN_DUPE: *(bool *)data = true; return true;
     case RETRO_ENVIRONMENT_SET_PIXEL_FORMAT: return *(enum retro_pixel_format *)data == RETRO_PIXEL_FORMAT_XRGB8888;
     case RETRO_ENVIRONMENT_GET_INPUT_DEVICE_CAPABILITIES: *(uint64_t *)data = UINT64_C(1) << RETRO_DEVICE_KEYBOARD; return true;
-    case RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE: *(bool *)data = false; return true;
+    case RETRO_ENVIRONMENT_GET_VARIABLE:{
+        struct retro_variable *v=data;
+        v->value=!strcmp(v->key,"arcdroid_disk_writes")?disk_writes:
+            !strcmp(v->key,"arcdroid_jfd_write_protect")?jfd_policy:
+            !strcmp(v->key,"arcdroid_jfd_omitted")?jfd_omitted:NULL;
+        return v->value!=NULL;}
+    case RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE: *(bool *)data = variable_updated;variable_updated=false;return true;
     case RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO: fps = ((struct retro_system_av_info *)data)->timing.fps; return true;
     case RETRO_ENVIRONMENT_SET_GEOMETRY: return true;
     case RETRO_ENVIRONMENT_SET_MESSAGE_EXT:
@@ -153,8 +164,16 @@ int main(int argc, char **argv)
     uint64_t fail_alloc = 0, fault_at = UINT64_MAX;
     for (int i = 1; i < argc; ++i) {
         const char *key = argv[i];
+        if (!strcmp(key,"--fail-jfd-store")) { fail_jfd_store=true;continue; }
         if (!strcmp(key,"--reject")) { reject = true; continue; }
         if (!strcmp(key,"--cmos")) { print_cmos = true; continue; }
+        if (!strcmp(key,"--jfd-policy-at") || !strcmp(key,"--disk-writes-at")){
+            if(i+2>=argc || option_count==2 || !unsigned_number(argv[i+1],999999,&option_events[option_count].frame))goto usage;
+            bool policy=!strcmp(key,"--jfd-policy-at");const char *value=argv[i+2];
+            if(policy ? (strcmp(value,"off")&&strcmp(value,"as-imaged")) :
+                (strcmp(value,"off")&&strcmp(value,"shadow")&&strcmp(value,"original")))goto usage;
+            option_events[option_count].value=value;option_events[option_count++].policy=policy;i+=2;continue;
+        }
         if (!strcmp(key,"--dump-frame")) {
             if (i+2 >= argc || dump_count == DUMP_LIMIT ||
                 !unsigned_number(argv[i+1],999999,&dumps[dump_count].frame) || !*argv[i+2]) goto usage;
@@ -168,6 +187,9 @@ int main(int argc, char **argv)
         else if (!strcmp(key,"--plan")) plan = v;
         else if (!strcmp(key,"--save")) { if(!canonical(v,save_directory) || !(vfs_stat(save_directory,NULL)&RETRO_VFS_STAT_IS_DIRECTORY)){fprintf(stderr,"--save must name an existing directory\n");return 2;} }
         else if (!strcmp(key,"--system")) system_directory = v;
+        else if (!strcmp(key,"--disk-writes")) {if(strcmp(v,"off")&&strcmp(v,"shadow")&&strcmp(v,"original"))goto usage;disk_writes=v;}
+        else if (!strcmp(key,"--jfd-policy")) {if(strcmp(v,"off")&&strcmp(v,"as-imaged"))goto usage;jfd_policy=v;}
+        else if (!strcmp(key,"--jfd-omitted")) {if(strcmp(v,"strict")&&strcmp(v,"file-data"))goto usage;jfd_omitted=v;}
         else if (!strcmp(key,"--pacing")) pacing = v;
         else if (!strcmp(key,"--timing")) timing_path = v;
         else if (!strcmp(key,"--capture-seed")) capture_path = v;
@@ -229,6 +251,10 @@ int main(int argc, char **argv)
     uint64_t benchmark_start = arc_test_clock_ns(), benchmark_elapsed = 0;
     uint64_t prior_instructions=0,prior_guest_ns=0,measured_instructions=0,measured_guest_ns=0,measured_core_ns=0;
     for (uint64_t f = 0; f < (measure ? 1000000 : frames); ++f) {
+        for(unsigned i=0;i<option_count;++i)if(f==option_events[i].frame){
+            if(option_events[i].policy)jfd_policy=option_events[i].value;else disk_writes=option_events[i].value;
+            variable_updated=true;
+        }
         if (f == reset_at) reset();
         if (f == fault_at) fault_next();
         uint64_t frontend_start = arc_test_clock_ns();
@@ -322,6 +348,6 @@ int main(int argc, char **argv)
 #endif
     return (int)result;
 usage:
-    fputs("rpc_runner --core LIB --plan FILE [--system DIR] [--save DIR] [--frames N | --warmup-seconds 120 --measure-seconds 600] [--pacing flat|burst|realtime] [--timing CSV] [--dump-frame N FILE.ppm ...] [--capture-seed FILE] [--ram-offset N --ram-words N] [--reset-at N] [--cmos] [--fail-alloc 1..5] [--fault-at N] [--reject]\n",stderr);
+    fputs("rpc_runner --core LIB --plan FILE [--system DIR] [--save DIR] [--frames N | --warmup-seconds 120 --measure-seconds 600] [--pacing flat|burst|realtime] [--disk-writes off|shadow|original] [--jfd-policy as-imaged|off] [--jfd-policy-at FRAME VALUE] [--disk-writes-at FRAME VALUE] [--jfd-omitted strict|file-data] [--timing CSV] [--dump-frame N FILE.ppm ...] [--capture-seed FILE] [--ram-offset N --ram-words N] [--reset-at N] [--cmos] [--fail-alloc 1..5] [--fault-at N] [--reject]\n",stderr);
     return 2;
 }

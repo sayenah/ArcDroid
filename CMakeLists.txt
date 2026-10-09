@@ -177,7 +177,7 @@ function(arcdroid_add_libretro target shipping)
   endif()
   add_library(${target}_rpc OBJECT ${ARCDROID_RPC_SOURCES})
   target_include_directories(${target}_rpc PRIVATE engine/rpc engine/rpcemu/src
-    engine core libretro/include)
+    engine core libretro libretro/include)
   target_compile_definitions(${target}_rpc PRIVATE RELEASE_BUILD=1
     $<TARGET_PROPERTY:${target},COMPILE_DEFINITIONS>)
   target_compile_options(${target}_rpc PRIVATE
@@ -394,12 +394,13 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
       ${ARCDROID_SYMBOL_CHECK_FLAGS} VERBATIM)
   add_library(arcdroid_rpc_fdc OBJECT engine/rpcemu/src/fdc.c
     engine/rpc/rpc_floppy.c engine/rpc/rpc_timing.c engine/rpc/rpc_scheduler.c)
-  target_include_directories(arcdroid_rpc_fdc PRIVATE engine/rpc engine/rpcemu/src)
+  target_include_directories(arcdroid_rpc_fdc PRIVATE engine/rpc engine/rpcemu/src engine core libretro libretro/include)
   target_compile_definitions(arcdroid_rpc_fdc PRIVATE RELEASE_BUILD=1)
   target_compile_options(arcdroid_rpc_fdc PRIVATE
     $<$<C_COMPILER_ID:GNU,Clang,AppleClang>:-include;${CMAKE_CURRENT_SOURCE_DIR}/engine/rpc/rpc_namespace.h;-fno-common;-fno-strict-aliasing>)
-  add_executable(rpc_fdc_test tests/rpc_fdc_test.c $<TARGET_OBJECTS:arcdroid_rpc_fdc>)
-  target_include_directories(rpc_fdc_test PRIVATE engine/rpc engine/rpcemu/src)
+  add_executable(rpc_fdc_test tests/rpc_fdc_test.c libretro/arc_io.c $<TARGET_OBJECTS:arcdroid_rpc_fdc>)
+  target_link_libraries(rpc_fdc_test PRIVATE arcdroid_core)
+  target_include_directories(rpc_fdc_test PRIVATE engine/rpc engine/rpcemu/src engine core libretro libretro/include)
   target_compile_definitions(rpc_fdc_test PRIVATE RELEASE_BUILD=1)
   target_compile_options(rpc_fdc_test PRIVATE
     $<$<C_COMPILER_ID:GNU,Clang,AppleClang>:-UNDEBUG;-Wall;-Wextra;-Wpedantic>)
@@ -1944,7 +1945,8 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
       "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_qa_mutations.py"
       --build "${CMAKE_CURRENT_BINARY_DIR}" --core $<TARGET_FILE:arcdroid_libretro_test>
       --timing $<TARGET_FILE:rpc_timing_test> --unit $<TARGET_FILE:rpc_mem_timing_unit>
-      --video $<TARGET_FILE:rpc_video_test> --store $<TARGET_FILE:rpc_cmos_store_test>)
+      --video $<TARGET_FILE:rpc_video_test> --store $<TARGET_FILE:rpc_cmos_store_test>
+      --fdc $<TARGET_FILE:rpc_fdc_test>)
     set_tests_properties(rpc-qa-mutations PROPERTIES TIMEOUT 600 RUN_SERIAL TRUE)
   endif()
   foreach(rate IN ITEMS 60 99)
@@ -2094,6 +2096,15 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
   add_test(NAME rpc-keyboard-held-reset COMMAND "${Python3_EXECUTABLE}" -B
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_keyboard_reset_test.py"
     $<TARGET_FILE:rpc_runner> $<TARGET_FILE:arcdroid_rpcplan_libretro>)
+  set(RPC_FLOPPY_DIFFERENTIAL_ARGS)
+  if(TARGET libretro_harness)
+    list(APPEND RPC_FLOPPY_DIFFERENTIAL_ARGS $<TARGET_FILE:libretro_harness> $<TARGET_FILE:arcdroid_libretro_test>)
+  endif()
+  add_test(NAME rpc-floppy-guest COMMAND "${Python3_EXECUTABLE}" -B
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_floppy_guest_test.py"
+    $<TARGET_FILE:rpc_runner> $<TARGET_FILE:arcdroid_rpcplan_libretro> $<TARGET_FILE:arcdroid_libretro>
+    "${FIXTURE_DIR}" ${RPC_FLOPPY_DIFFERENTIAL_ARGS})
+  set_tests_properties(rpc-floppy-guest PROPERTIES TIMEOUT 1800)
   add_test(NAME rpc-fdc-boot-probe COMMAND "${Python3_EXECUTABLE}" -B
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_fdc_boot_test.py"
     $<TARGET_FILE:rpc_runner> $<TARGET_FILE:arcdroid_rpcplan_libretro>)

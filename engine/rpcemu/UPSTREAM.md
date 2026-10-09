@@ -306,3 +306,13 @@ implementation is `engine/rpc/rpc_mem_timing.c/.h`, governed by
 modification notices remain. No firmware identity, PC or loop recognizer is
 introduced. Dirty SA ROM castouts follow the accepted G7 interim timing rule;
 ordinary ROM/I/O store misses remain unbuffered.
+
+`devices-r2b-floppy` (R2b run A, `src/fdc.c`): D-139 replaces the empty-drive
+controller with default-AT DOR pin enables (p.28), all FDC37C665GT commands
+from tables 21/22 (pp.46–61), byte/FIFO
+execution (pp.43–45), data/TC/result rules (pp.62–68), controls (pp.69–75), and
+software-reset retention. Physical DOR selection and HDS are independent from
+internal unit/PCN and requested CHRN. All deadlines share the existing FDC slot,
+with the internal order documented in the source. The owned `rpc_floppy` service
+uses the unchanged effective-sector/guard/store interfaces; no upstream floppy
+loader or trial code is copied. Arculator is unchanged.

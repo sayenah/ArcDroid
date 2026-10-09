@@ -11,6 +11,7 @@
 #include "rpc_video.h"
 #include "rpc_audio.h"
 #include "rpc_input.h"
+#include "rpc_floppy.h"
 #include "rpcemu.h"
 #include "arm.h"
 #include "cp15.h"
@@ -124,6 +125,7 @@ ARC_RPC_ABSENT_WRITE(8) ARC_RPC_ABSENT_WRITE(16) ARC_RPC_ABSENT_WRITE(32)
 
 static void arc_rpc_stop(void)
 {
+    arc_rpc_fdc_close();
     arc_rpc_sound_purge();
     arc_rpc_input_service = NULL;
     arc_rpc_input_factory(false);
@@ -140,6 +142,7 @@ static void arc_rpc_stop(void)
 }
 static void arc_rpc_reset_devices(void)
 {
+    arc_rpc_fdc_rebase();
     arc_rpc_scheduler_init(&arc_rpc_scheduler, arc_rpc_rate);
     arc_rpc_timing_bind(&arc_rpc_scheduler);
     unsigned timing_model = machine.cpu_model == CPUModel_ARM610 ? 0 :
@@ -383,7 +386,7 @@ static bool arc_rpc_advance_internal(uint64_t elapsed_ns, bool stop_at_field)
 
 static ArcEngineCapabilities arc_rpc_capabilities(void)
 {
-    return (ArcEngineCapabilities){ .av = true, .keyboard = true, .mouse = true, .reset = true };
+    return (ArcEngineCapabilities){ .av = true, .keyboard = true, .mouse = true, .reset = true, .floppy = true, .helper = true };
 }
 static bool arc_rpc_shipping_start(const uint8_t *r, size_t s, const ArcEngineMedia *m,
     const ArcEngineMedia *h, const ArcMachineDescriptor *d, ArcOsClass o,
@@ -449,7 +452,9 @@ static size_t arc_rpc_audio(int16_t *o,size_t n)
 }
 static void arc_rpc_audio_stats(uint64_t *u,uint64_t *o) { if(u)*u=0;if(o)*o=0; }
 static bool arc_rpc_media(const ArcEngineMedia *m,char *e,size_t n)
-{ (void)m;if(e&&n)snprintf(e,n,"RPCEmu media unsupported in R1");return false; }
+{ return arc_rpc_live && !arc_rpc_fault && arc_rpc_fdc_mount(0,m,e,n); }
+static bool arc_rpc_eject(void)
+{ if(!arc_rpc_live)return false;arc_rpc_fdc_eject(0);return true; }
 static bool arc_rpc_av(unsigned *w,unsigned *h,double *r)
 {
     ArcRpcVideoStatus v; arc_rpc_video_status(&v);
@@ -471,7 +476,7 @@ const ArcEngineBackendOps arc_rpc_backend = {
     .disc_configure=arc_rpc_disc,.disc_clear=arc_rpc_nop,.disc_snapshot=arc_rpc_disc_snapshot,
     .disc_a_notified=arc_rpc_nop,.disc_time_us=arc_rpc_disc_time,.disc_controller_idle=arc_rpc_false,
     .adf_refusal_callback_set=arc_rpc_refusal,.audio=arc_rpc_audio,.audio_stats=arc_rpc_audio_stats,
-    .media_eject=arc_rpc_false,.media_insert=arc_rpc_media,.get_av_info=arc_rpc_av,
+    .media_eject=arc_rpc_eject,.media_insert=arc_rpc_media,.get_av_info=arc_rpc_av,
     .cmos=arc_rpc_cmos_unavailable,.faulted=arc_rpc_faulted,.active=arc_rpc_active,
     .session_generation=arc_rpc_session_generation,.audio_peek=arc_rpc_audio_peek,
     .audio_commit=arc_rpc_audio_commit,.audio_fault_silence=arc_rpc_sound_fault_silence

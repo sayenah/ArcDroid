@@ -9,7 +9,7 @@ sys.dont_write_bytecode=True
 from rpc_ninja_commands import split_command
 ROOT=Path(__file__).resolve().parent.parent
 p=argparse.ArgumentParser()
-for key in ('build','core','timing','unit','video','store'):p.add_argument('--'+key,required=True)
+for key in ('build','core','timing','unit','video','store','fdc'):p.add_argument('--'+key,required=True)
 p.add_argument('--only',default='');a=p.parse_args();build=Path(a.build).resolve()
 cache=(build/'CMakeCache.txt').read_text()
 ninja=next(line.split('=',1)[1] for line in cache.splitlines() if line.startswith('CMAKE_MAKE_PROGRAM:FILEPATH='))
@@ -92,10 +92,23 @@ mutants=[
  ('C14',STORE,'|| e->epoch>UINT64_C(13569465599) ','',a.store,('store',)),
  ('C01',STORE,'|| !arc_riscpc_cmos_checksum(p))return false;',')return false;',a.store,('store',)),
 ]
+# R2b independently asserted controller/drive mutations, linked into the real
+# FDC component executable (same scheduler, FIFO and neutral media service).
+FDC='engine/rpcemu/src/fdc.c';DRIVE='engine/rpc/rpc_floppy.c'
+mutants += [
+ ('F-CHRN',FDC,'++fdc.r;return false;','fdc.r=fdc.p[3]+1;return false;',a.fdc,('fdc',)),
+ ('F-SIDE',FDC,'r.head=fdc.head;','r.head=fdc.h;',a.fdc,('fdc',)),
+ ('F-HEAD',FDC,'r.cylinder=r.drive<2?media.drives[r.drive].cylinder:0;','r.cylinder=fdc.pcn[fdc.unit];',a.fdc,('fdc',)),
+ ('F-TC',DRIVE,'if(s->jfd && consumed!=s->bytes)','if(s->jfd && (tc || consumed!=s->bytes))',a.fdc,('fdc',)),
+ ('F-MT',FDC,'if(fdc.head==1)return false;','if(false)return false;',a.fdc,('fdc',)),
+ ('F-SELECT',FDC,'fdc.physical_drive=fdc.dor&3;','fdc.physical_drive=fdc.unit;',a.fdc,('fdc',)),
+ ('F-CHANGE',DRIVE,'if(d->present)d->changed=false;','if(false)d->changed=false;',a.fdc,('fdc',)),
+ ('F-GENERATION',DRIVE,'g.mount==f->drives[drive].mount_generation','true',a.fdc,('fdc',)),
+]
 def check(binary,case):
     if case[0]=='timing':return [a.timing,binary,str(case[1]),case[2]]
     if case[0]=='unit':return [binary,'--hot-video']
-    if case[0]=='store':return [binary]
+    if case[0] in ('store','fdc'):return [binary]
     return [sys.executable,'-B',ROOT/'tests/rpc_video_trace_test.py',a.video,binary,'2',ROOT/'tests/fixtures/rpc-video-paths-2.trace','--paths']
 
 selected=[m for m in mutants if not a.only or m[0] in a.only.split(',')];assert selected
