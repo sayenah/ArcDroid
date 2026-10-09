@@ -9,7 +9,10 @@
 - item 8: plan route part 2.
 
 The acceptance criteria are AC-3, AC-4, AC-6 and AC-7. After run A: Fable review, the private AC-8 R2b legs, then Opus QA (`arcdroid-opus-qa`).
-- **Parallel workstream (D-141):** Fable runs the **item 6b translator evaluation** (research and design only, no product code).
+- **Parallel workstream (D-141), item 6b translator evaluation:** the research report is done; the evaluation and plan are in `docs/riscpc-translator.md`.
+  - Phases: Phase 0 now (evidence only), Phase 1 a pre-decoded interpreter after R4 and item 5, Phase 2 a guarded arm64 fast path, Phase 3 a rate change on a Founder decision.
+  - Next Phase-0 steps for Fable, independent of R2b: an Odin3 profile of the hot workload; a disposable executable-memory probe inside RetroArch; timing-contract amendment drafts; an Astra challenge.
+  - Founder questions Q1–Q4 (target rate, platform parity, fork use, default) are needed by Phase 2/3, not now.
 - **R2a merged** as `6ee6460` (PR #317, head `880e528`; D-139, D-140). Outcome below.
 
 **R2a outcome (merged S57).** Sol runs A–G:
