@@ -1,51 +1,54 @@
 # ArcDroid Handoff
 
-**Stage:** IMPLEMENTATION — roadmap item 6, RiscPC R2b (floppy drives and full controller)
-**Owner:** Sol (run B)
-**Next (Sol, R2b run B):** implement ruling **R2b-1** below on `slice/r2b-floppy`, with its tests; leave the tree uncommitted for Fable. Nothing else.
+**Stage:** QA — roadmap item 6, RiscPC R2b (floppy drives and full controller)
+**Owner:** Opus
+**Next (Opus QA):** independently review PR #331 (`slice/r2b-floppy`: code at `6129e8f`, plus this baton merged in) in the fresh QA clone Fable names, against the R2 work order's R2b items 5–8 and AC-3, AC-4, AC-6 and AC-7, ruling R2b-1 (D-143), the PRD and the protocol. Report findings ranked by severity. Change nothing.
 
-**Ruling R2b-1 (Fable, S58; D-143) — raw FORMAT accepts the guest's sector skew.**
-- **Evidence.** Private, RISC OS 3.71 on ARM7500 and SA-110: ADFS formats an E-format raw ADF with a track skew. The FORMAT ID tuples were:
-  - cylinder 0, both heads: R = 0,1,2,3,4;
-  - cylinder 1, head 0: R = 4,0,1,2,3.
+**R2b state:**
+- **Sol run A** (`23a5c0e`) implements items 5–8:
+  - an instance-based two-drive model (`engine/rpc/rpc_floppy.*`) on the unchanged media core;
+  - the full FDC37C665GT controller (`engine/rpcemu/src/fdc.c`, patch `devices-r2b-floppy`);
+  - plan v2 `media`, `drive1` and `disk_control` keys.
+- **Sol run B** (`6129e8f`) implements ruling R2b-1.
+- Sol thread `01a11e0b-8fbc-7230-9418-f18000a6a00d`; reports `SOL-REPORT-R2B-A.md` and `SOL-REPORT-R2B-B.md` are in the S57 clone `s57/sol2b/clone`.
+- **CI:** all five jobs green at `23a5c0e`. At `6129e8f`: android-arm64, host, windows and windows-retroarch pass; host-sanitizers was still running at this baton.
 
-  Run A accepts only R = 0…n−1 in order (`arc_rpc_floppy_format`), so every guest `*Format` of a raw floppy stops at the first skewed track with "disc is write protected", on both drives.
-- **Rule.** A raw ADF/ADL stores sectors by ID, not by rotational position. FORMAT succeeds when the incoming tuples, taken together, are exactly the track's sector-ID set:
-  - the count equals the geometry's sectors per track;
-  - every C equals the physical cylinder and every H the selected head;
-  - every N equals the image's size code;
-  - the R values are a permutation of the geometry's IDs, with no duplicate, missing or out-of-range ID.
+**Ruling R2b-1 (D-143).** Raw FORMAT accepts a permutation of the track's complete sector-ID set (count, C, H and N exact); any other set is refused with write protect before any byte changes; the rotational order is a stated fidelity limit.
+- Why: RISC OS 3.71 ADFS formats E-format floppies with a track skew. Cylinder 1 head 0 sends R = 4,0,1,2,3, and run A's in-order-only rule refused every guest `*Format`.
 
-  Each sector is written at its fixed offset with the supplied fill byte.
-- **Still refused (write protect, before any byte changes):** any other tuple set, and JFD FORMAT, as today.
-- **Fidelity limit.** The supplied rotational order (skew or interleave) is not representable in a raw image. Later reads keep the geometry's sequential rotational timing. State this limit in `tests/rpc-floppy-expectations.md` and in the `devices-r2b-floppy` patch record. This is what D-139's "exactly representable, never normalised" means for raw images: no ID, size or content is invented or changed.
-- **Tests.**
-  - AC-3/AC-4 cases: a skewed permutation (the 3.71 pattern above) succeeds and its sectors read back with the fill byte at the right offsets.
-  - A duplicate, a missing ID, an out-of-range R, a wrong C, H or N, and a wrong count each refuse with no byte changed.
-  - A mutant that restores the in-order-only rule must be killed.
-- **Unchanged:** everything else in run A. Run A is committed verbatim as `23a5c0e` on PR #331 (draft), with CI green on all five jobs.
+**Fable evidence (private, S58 scratchpad `s58/`, `LEDGER.md` index):**
+- **AC-8 R2b — PASS on 3.50 ARM610, 3.60 ARM7500 and 3.71 SA-110,** using authored distinct blank 800K raw discs and Shadow writes:
+  - guest `*Format` of drive 0 and drive 1 (160 tracks each);
+  - `*Save` and `*CDir` on each drive, with `*Cat` correct per drive;
+  - a disk-control swap of drive 0 to a third disc, then format;
+  - a swap back, with both drives' contents intact;
+  - staged images byte-checked per disc.
+- **JFD store persistence across a fresh process — PASS** (3.71 SA-110). Library title 146 with the write-protect tab *Off*: `*Save` in session 1, still listed in session 2, store unchanged by session 2.
+- **Two-floppy diagnostics:** no anomaly reproduced, with the helper absent and with it accessed after drive 0. DOR/TC numeric traces were not captured, because there was nothing to diagnose. The original catalogue-before-install case is R2c's.
+- **AC-6 44-title A/B** (`main` vs `6129e8f`, both package states): running at this baton.
+- **Harness lessons, not product defects:** the runner VFS refuses writes outside `--save`, so raw media opened elsewhere are read-only; identical blank images shared one Shadow staging file.
 
-**Sol run B setup:**
-- Resume thread `01a11e0b-8fbc-7230-9418-f18000a6a00d` in the S57 clone `s57/sol2b/clone`. Fable merges this baton into the branch first.
-- Verify:
-  - the focused RPC floppy tests (`rpc-fdc-empty`, `rpc-floppy-guest`, `rpc-fdc-boot-probe`, `rpc-session.*`);
-  - `rpc-qa-mutations` with the new mutant;
-  - the MinGW build and Windows export check;
-  - `git diff --check`.
+**QA focus:**
+1. **Controller against the datasheet** (`.evidence/` in the QA clone holds the SMSC FDC37C665GT text):
+   - every item-6 command and field; result CHRN and status transitions;
+   - MT/EOT and end of cylinder; TC on the final byte and one byte early; FIFO and non-DMA;
+   - both R1 hazards; physical DOR selection against the command unit.
+2. **Commit rules:**
+   - a complete sector commits exactly once;
+   - an incomplete JFD sector is discarded; raw early TC is handled;
+   - veto → data CRC; store failure → write protect; a synchronous refusal comes before DMA.
+3. **Lifetime and cancellation:**
+   - the drive pins the frontend's prepared JFD (`ArcRpcFloppyDrive.jfd`). Check every frontend path that frees or replaces an entry — disk control (replace, remove, add, index), reset (`arc_rpc_plan_reset_media`), unload and failed load — for retiring the mount first;
+   - session, mount and command generations, and stale completion.
+4. **Frontend isolation:** `arc_disk_insert_entry` and `arc_disk_replace` skip `arc_machine_accepts_media` when `arc_engine_is_rpc()`. Confirm that shipping behaviour is byte-identical and that no shipping route reaches RPC.
+5. **R2b-1:** the permutation check, its bounds (`1u<<r` against the sector count), and no partial write.
+6. **Residuals to classify (defect, risk, or out of scope):**
+   - byte-identical media in both drives share one Shadow staging copy, so writes on one drive appear on the other;
+   - a raw store failure latches write protect without a refusal notice, whereas JFD gives one.
+7. **Tests and mutants:** mutant adequacy for the eight run-A mutants and `F-FORMAT-ORDER`; Windows test exports; determinism across pacing.
+8. **AC-6 and AC-7:** Arculator sources, tests and goldens unchanged; RPC goldens unchanged; import, symbol and shipping guards.
 
-  A full host CTest is not needed for this change.
-- Report: `SOL-REPORT-R2B-B.md`.
-
-**After run B (Fable):**
-- Review, commit verbatim, push, and watch CI on all five jobs.
-- Re-run the private AC-8 R2b legs. Harness: S58 scratchpad `s58/ac8/leg.py`. Raw media must sit inside the runner's `--save` directory, or the runs use `--disk-writes shadow`, because the runner VFS refuses writes elsewhere.
-  - ADFS read, write and format on authored discs in both drives with swaps, on 3.50–3.71;
-  - JFD store persistence across reload;
-  - the two-floppy diagnostics (work order item 7).
-- Then dispatch Opus QA (`arcdroid-opus-qa`).
-
-**Stop rules:** Sol stops on real contradictions and may fix encoding-only workload defects itself. A stale handoff `Next` also makes Sol stop, so update the handoff before every Sol resume.
-- **R2b QA gate:** the AC-6 44-title A/B in both package states. Tooling: S57 `s57/ab/legs57.sh`, `ab57.py`, `cmp57.py`; the baseline is a `main` RelWithDebInfo build.
+**After QA (Fable):** adjudicate the findings; send validated remediation to Sol (resume the same thread); merge once protocol §12.11 is satisfied: QA pass, CI green on all five jobs, and the AC-6 A/B accepted.
 
 - **Parallel workstream (D-141, D-142), item 6b translator evaluation:** the plan is in `docs/riscpc-translator.md`.
   - **Phases:**
