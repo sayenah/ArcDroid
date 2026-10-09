@@ -240,10 +240,15 @@ ArcRpcFloppyResult arc_rpc_floppy_format(ArcRpcFloppy *f,ArcRpcFloppySector *s,
     ArcRpcFloppyDrive *d=&f->drives[drive];
     if(d->jfd||!d->writable||count!=d->sectors)return ARC_RPC_FLOPPY_WRITE_PROTECT;
     uint8_t n=size_code(d->bytes);
-    /* Raw records have fixed rotational IDs. Never normalize supplied tuples. */
-    for(unsigned i=0;i<count;++i)
-        if(ids[i*4]!=(uint8_t)d->cylinder || ids[i*4+1]!=s->request.head || ids[i*4+2]!=i || ids[i*4+3]!=n)
+    /* D-143: raw offsets identify sectors, not the supplied rotational order.
+     * Validate the entire ID set before changing any bytes. */
+    unsigned seen=0;
+    for(unsigned i=0;i<count;++i){
+        unsigned r=ids[i*4+2];
+        if(ids[i*4]!=(uint8_t)d->cylinder || ids[i*4+1]!=s->request.head || r>=d->sectors || ids[i*4+3]!=n || (seen&(1u<<r)))
             return ARC_RPC_FLOPPY_WRITE_PROTECT;
+        seen|=1u<<r;
+    }
     size_t offset=((size_t)d->cylinder*d->sides+s->request.head)*d->sectors*d->bytes;
     size_t length=(size_t)d->sectors*d->bytes;
     if(offset>d->extent || length>d->extent-offset)return ARC_RPC_FLOPPY_NOT_FOUND;

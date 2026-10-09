@@ -104,6 +104,7 @@ mutants += [
  ('F-SELECT',FDC,'fdc.physical_drive=fdc.dor&3;','fdc.physical_drive=fdc.unit;',a.fdc,('fdc',)),
  ('F-CHANGE',DRIVE,'if(d->present)d->changed=false;','if(false)d->changed=false;',a.fdc,('fdc',)),
  ('F-GENERATION',DRIVE,'g.mount==f->drives[drive].mount_generation','true',a.fdc,('fdc',)),
+ ('F-FORMAT-ORDER',DRIVE,'r>=d->sectors || ids[i*4+3]!=n','r!=i || r>=d->sectors || ids[i*4+3]!=n',a.fdc,('fdc',)),
 ]
 def check(binary,case):
     if case[0]=='timing':return [a.timing,binary,str(case[1]),case[2]]

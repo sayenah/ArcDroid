@@ -96,6 +96,65 @@ static void write_transfer(unsigned count,bool tc,uint8_t value,bool nd)
         else tick();
     }assert(at==count);
 }
+static void format_track(unsigned drive,unsigned head,unsigned n,const uint8_t *ids,unsigned count,uint8_t fill,uint8_t *res)
+{
+    fdc_write(0x3f2,0x3c|drive);
+    command(0x4d,(const uint8_t[]){drive|(head<<2),n,count,0x32,fill},5);
+    unsigned at=0,bound=0;
+    while((fdc_read(0x3f4)&0xf0)!=0xd0){
+        assert(++bound<100000);
+        if(iomd.fiq.status&1){assert(at<count*4);fdc_dma_write(at+1==count*4?0x302a000:0x3012000,ids[at]);++at;}
+        else tick();
+    }
+    result(res,7);
+    assert(at==(count==(drive?16u:5u)?count*4:0));
+}
+static void format_id_sets(void)
+{
+    /* D-143: validate all tuples before any write, including a bad last ID.
+     * E/D raw has five IDs; the ADL helper has sixteen, on either head. */
+    static uint8_t snapshot[sizeof(raw[0])];
+    uint8_t ids[17*4],bad[sizeof(ids)],res[7],bytes[32768];
+    for(unsigned drive=0;drive<2;++drive){
+        unsigned count=drive?16:5,n=drive?1:3,size=drive?256:1024;
+        for(unsigned track=0;track<3;++track){
+            unsigned c=track/2,h=track%2;seek(drive,drive,c);
+            for(unsigned i=0;i<count;++i){
+                ids[4*i]=c;ids[4*i+1]=h;ids[4*i+2]=track==2?(i+count-1)%count:i;ids[4*i+3]=n;
+            }
+            uint8_t fill=0xa0+drive*8+track;
+            memcpy(snapshot,raw[drive],sizeof(snapshot));
+            format_track(drive,h,n,ids,count,fill,res);
+            assert(res[0]==(drive|(h<<2))&&res[1]==0&&res[2]==0);
+            assert(!memcmp(res+3,ids+(count-1)*4,4));
+            memset(snapshot+(size_t)track*count*size,fill,count*size);
+            assert(!memcmp(raw[drive],snapshot,sizeof(snapshot)));
+            for(unsigned r=0;r<count;++r){
+                data_command(0x46,drive,h,c,h,r,n,r,255);
+                assert(read_transfer(bytes,size,false)==size);result(res,7);
+                assert(res[1]==0&&res[2]==0);
+                for(unsigned b=0;b<size;++b)assert(bytes[b]==fill);
+            }
+        }
+        /* Duplicate (also omits an ID), missing tuple, out-of-range R,
+         * wrong C/H/N on the last tuple, and an excess count. */
+        for(unsigned defect=0;defect<7;++defect){
+            memcpy(bad,ids,count*4);unsigned supplied=count;
+            if(defect==0)bad[(count-1)*4+2]=bad[2];
+            else if(defect==1)--supplied;
+            else if(defect==2)bad[(count-1)*4+2]=count;
+            else if(defect==3)bad[(count-1)*4]=0;
+            else if(defect==4)bad[(count-1)*4+1]=1;
+            else if(defect==5)bad[(count-1)*4+3]=n+1;
+            else ++supplied;
+            unsigned before=raw_writes;
+            format_track(drive,0,n,bad,supplied,0xf2,res);
+            assert(res[0]==(0x40|drive)&&res[1]==2&&res[2]==0);
+            assert(raw_writes==before&&!memcmp(raw[drive],snapshot,sizeof(snapshot)));
+        }
+    }
+    seek(0,0,0);
+}
 static ArcJfdImage jfd;
 static ArcJfdOverlay overlay;
 static uint8_t decoded[5*1024],eligible[5],*replacements[5];
@@ -209,6 +268,7 @@ int main(void)
     while((fdc_read(0x3f4)&0xf0)!=0xd0){if(iomd.fiq.status&1){unsigned lane=at%4;
         uint8_t value=lane==0?1:lane==1?0:lane==2?at/4:3;fdc_dma_write(at==19?0x302a000:0x3012000,value);++at;}else tick();}
     result(res,7);assert(res[1]==2&&raw_writes==before&&raw[0][0]==0xa6);
+    format_id_sets();
     /* Relative PCN wraps, while physical cylinder remains independent. */
     command(0xcf,(const uint8_t[]){0,255},2);while(!(iomd.irqb.status&0x10))tick();sis(0x20,255);
     command(0xcf,(const uint8_t[]){0,1},2);while(!(iomd.irqb.status&0x10))tick();sis(0x20,0);

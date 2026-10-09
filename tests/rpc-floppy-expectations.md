@@ -30,8 +30,12 @@ with physical movement kept separate. SCAN and reserved encodings return 0x80.
 VERIFY never raises a host data request. READ TRACK begins at index, including
 after an implied seek, returns
 rotational sector data and accumulates ID/data CRC errors. FORMAT accepts N,
-SC, GPL, fill and supplied tuples; unrepresentable raw tuples are refused,
-never reordered. JFD FORMAT/deleted writes are protected. Normal data read by
+SC, GPL, fill and supplied tuples. D-143 accepts a raw track's complete ID set
+in any order, with exact physical C/H and geometry N; each sector receives the
+fill at its fixed offset. Duplicate, missing, out-of-range or mismatched IDs
+and wrong counts give write protect before any bytes change. Raw images cannot
+store the supplied skew/interleave: later reads retain the geometry's sequential
+rotational timing. JFD FORMAT/deleted writes are protected. Normal data read by
 READ DELETED has CM; SK skips such data.
 
 In the default AT interface, DOR bit 3 gates FINTR/DRQ and ignores nDACK/TC

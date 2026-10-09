@@ -316,3 +316,9 @@ internal unit/PCN and requested CHRN. All deadlines share the existing FDC slot,
 with the internal order documented in the source. The owned `rpc_floppy` service
 uses the unchanged effective-sector/guard/store interfaces; no upstream floppy
 loader or trial code is copied. Arculator is unchanged.
+
+R2b run B (D-143, owned `rpc_floppy`): raw FORMAT accepts the complete geometry
+ID set in any tuple order, with exact physical C/H and size N, and fills fixed
+sector offsets. Every other set remains write protected before bytes change;
+JFD FORMAT stays refused. Fidelity limit: raw images do not store the supplied
+rotational skew/interleave; later reads retain sequential geometry timing.

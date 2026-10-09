@@ -6,7 +6,7 @@ from pathlib import Path
 import hashlib,re,struct,subprocess,sys,tempfile,zlib,zipfile
 sys.dont_write_bytecode=True
 from rpc_d2_rom import Guest
-from generate_fixtures import build_d_discovery,build_l_discovery,build_pdd5_jfd,pdd5_descriptor_offset,build_extended_jfd
+from generate_fixtures import build_d_discovery,build_e_discovery,build_l_discovery,build_pdd5_jfd,pdd5_descriptor_offset,build_extended_jfd
 runner,core,shipping=sys.argv[1:4]
 fixtures=Path(sys.argv[4]) if len(sys.argv)>4 else None
 class FdcGuest:
@@ -33,6 +33,14 @@ class FdcGuest:
         self.write(0x3f2,0x3c|drive);self.cmd(15,unit,c);self.irq();self.cmd(8);self.result([0x20|unit,c])
     def data(self,op,unit=0,head=0,c=0,h=0,r=3,n=3,eot=4,dtl=255,gpl=0x35):
         self.cmd(op,unit|(head<<2),c,h,r,n,eot,gpl,dtl)
+    def format(self,drive,head,ids,fill):
+        self.write(0x3f2,0x3c|drive);self.cmd(0x4d,drive|(head<<2),3,len(ids),0x32,fill)
+        if len(ids)!=5:return # Geometry/count refusal precedes DMA.
+        values=[value for sector in ids for value in sector]
+        for at,value in enumerate(values):
+            loop=len(self.g.words);self.g.read(0,9,0x30);self.g.emit(0xe3100001);self.g.branch(loop,0)
+            self.g.load(1,0x0302a000 if at+1==len(values) else 0x03012000)
+            self.g.mov(0,value);self.g.emit(0xe5c10000)
     def transfer(self,count,total,write=None,tc=True,nd=False):
         g=self.g;g.load(1,0x03012000);g.load(2,0x0302a000);g.load(5,count)
         g.mov(3,0);g.mov(4,0)
@@ -144,6 +152,34 @@ with tempfile.TemporaryDirectory(prefix='arc-rpc-floppy-') as tmp:
 
     # The shipping core rejects these plans before accessing authored media.
     r=subprocess.run([runner,'--core',shipping,'--plan',str(plan),'--save',str(save),'--reject'],capture_output=True,text=True);assert r.returncode==0,r.stderr
+    # D-143: the 3.71 E-format ID pattern is representable on both drives.
+    # Compare every source byte as well as reading every filled sector by ID.
+    skew=d/'format-skew';skew.mkdir();original=build_e_discovery([],b'Skew authored')
+    expected=[bytearray(original),bytearray(original)];p=FdcGuest()
+    for drive in range(2):
+        for c,head,order in [(0,0,[0,1,2,3,4]),(0,1,[0,1,2,3,4]),(1,0,[4,0,1,2,3])]:
+            p.seek(drive,drive,c);ids=[(c,head,r,3) for r in order];fill=0xa0+drive*8+c*2+head
+            p.format(drive,head,ids,fill);p.result([drive|(head<<2),0,0,c,head,order[-1],3])
+            offset=(c*2+head)*5*1024;expected[drive][offset:offset+5120]=bytes([fill])*5120
+            for r in range(5):
+                p.data(0x46,unit=drive,head=head,c=c,h=head,r=r,eot=r)
+                p.transfer(1024,fill*1024);p.result([drive|(head<<2),0,0,c+1,head,1,3])
+        # Keep the rejected tuple changes late, after otherwise valid IDs.
+        for defect in ['duplicate','missing','range','c','h','n','count']:
+            bad=[list(v) for v in ids]
+            if defect=='duplicate':bad[-1][2]=bad[0][2]
+            elif defect=='missing':bad.pop()
+            elif defect=='range':bad[-1][2]=5
+            elif defect=='c':bad[-1][0]=0
+            elif defect=='h':bad[-1][1]=1
+            elif defect=='n':bad[-1][3]=4
+            else:bad.append([1,0,0,3])
+            p.format(drive,0,bad,0xf2);p.result([0x40|drive,2,0,1,0,0,3])
+    for model in [2,3]:
+        (skew/'disc.adf').write_bytes(original);(skew/'helper.adf').write_bytes(original)
+        execute(skew,p,'disc.adf','helper.adf',extra=('--disk-writes','original'),save=skew,frames=900,model=model)
+        for drive,name in enumerate(['disc.adf','helper.adf']):
+            assert (skew/name).read_bytes()==expected[drive],('FORMAT fixed offsets/refusal',model,drive)
     # Raw/JFD write-policy matrix; full TC commits, early TC never reaches JFD store.
     j=build_pdd5_jfd(a,{t:list(range(5)) for t in range(160)})
     for header in [0,1,2,3]:
