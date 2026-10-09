@@ -216,6 +216,19 @@ static void media_change_seek(void)
 }
 static void pending_irq_cancel(void)
 {
+    /* N1: cancelling a read with no pending interrupt must not raise IRQB.
+     * Cover both drives and eject, replacement, and failed insertion. */
+    for(unsigned drive=0;drive<2;++drive)for(unsigned action=0;action<3;++action){
+        start();mount_raw(drive,true);fdc_write(0x3f2,0x3c|drive);
+        data_command(0x46,drive,0,0,0,0,drive?1:3,4,255);
+        assert((fdc_read(0x3f4)&0xf0)==0x50);
+        assert(!(iomd.irqb.status&IOMD_IRQB_FLOPPY));
+        if(action==0)arc_rpc_fdc_eject(drive);
+        else if(action==1)mount_raw(drive,true);
+        else {ArcEngineMedia bad={0};assert(!arc_rpc_fdc_mount(drive,&bad,NULL,0));}
+        assert(!(iomd.irqb.status&IOMD_IRQB_FLOPPY));
+        assert(!iomd.fiq.status);
+    }
     /* P2: unit 1 completes SEEK during a drive-0 read. Ejecting drive 0
      * cancels DMA, but cannot acknowledge unit 1's pending 21 03 status.
      * Repeat with the drives reversed and with all three retirement paths. */
