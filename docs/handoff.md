@@ -1,15 +1,64 @@
 # ArcDroid Handoff
 
 **Stage:** IMPLEMENTATION — roadmap item 6, RiscPC R2b (floppy drives and full controller)
-**Owner:** Sol
-**Next:** Sol R2b **run A** on a new branch `slice/r2b-floppy` from `main` `6ee6460`. It implements **R2b items 5–8** of the *R2 work order* below:
-- item 5: the instance-based RPC drive model over the engine-neutral media core;
-- item 6: the FDC37C665GT controller, closing L5;
-- item 7: both drives, plus the two-floppy diagnostics;
-- item 8: plan route part 2.
+**Owner:** Sol (run B)
+**Next (Sol, R2b run B):** implement ruling **R2b-1** below on `slice/r2b-floppy`, with its tests; leave the tree uncommitted for Fable. Nothing else.
 
-The acceptance criteria are AC-3, AC-4, AC-6 and AC-7. After run A: Fable review, the private AC-8 R2b legs, then Opus QA (`arcdroid-opus-qa`).
-- **Parallel workstream (D-141):** Fable runs the **item 6b translator evaluation** (research and design only, no product code).
+**Ruling R2b-1 (Fable, S58; D-143) — raw FORMAT accepts the guest's sector skew.**
+- **Evidence.** Private, RISC OS 3.71 on ARM7500 and SA-110: ADFS formats an E-format raw ADF with a track skew. The FORMAT ID tuples were:
+  - cylinder 0, both heads: R = 0,1,2,3,4;
+  - cylinder 1, head 0: R = 4,0,1,2,3.
+
+  Run A accepts only R = 0…n−1 in order (`arc_rpc_floppy_format`), so every guest `*Format` of a raw floppy stops at the first skewed track with "disc is write protected", on both drives.
+- **Rule.** A raw ADF/ADL stores sectors by ID, not by rotational position. FORMAT succeeds when the incoming tuples, taken together, are exactly the track's sector-ID set:
+  - the count equals the geometry's sectors per track;
+  - every C equals the physical cylinder and every H the selected head;
+  - every N equals the image's size code;
+  - the R values are a permutation of the geometry's IDs, with no duplicate, missing or out-of-range ID.
+
+  Each sector is written at its fixed offset with the supplied fill byte.
+- **Still refused (write protect, before any byte changes):** any other tuple set, and JFD FORMAT, as today.
+- **Fidelity limit.** The supplied rotational order (skew or interleave) is not representable in a raw image. Later reads keep the geometry's sequential rotational timing. State this limit in `tests/rpc-floppy-expectations.md` and in the `devices-r2b-floppy` patch record. This is what D-139's "exactly representable, never normalised" means for raw images: no ID, size or content is invented or changed.
+- **Tests.**
+  - AC-3/AC-4 cases: a skewed permutation (the 3.71 pattern above) succeeds and its sectors read back with the fill byte at the right offsets.
+  - A duplicate, a missing ID, an out-of-range R, a wrong C, H or N, and a wrong count each refuse with no byte changed.
+  - A mutant that restores the in-order-only rule must be killed.
+- **Unchanged:** everything else in run A. Run A is committed verbatim as `23a5c0e` on PR #331 (draft), with CI green on all five jobs.
+
+**Sol run B setup:**
+- Resume thread `01a11e0b-8fbc-7230-9418-f18000a6a00d` in the S57 clone `s57/sol2b/clone`. Fable merges this baton into the branch first.
+- Verify:
+  - the focused RPC floppy tests (`rpc-fdc-empty`, `rpc-floppy-guest`, `rpc-fdc-boot-probe`, `rpc-session.*`);
+  - `rpc-qa-mutations` with the new mutant;
+  - the MinGW build and Windows export check;
+  - `git diff --check`.
+
+  A full host CTest is not needed for this change.
+- Report: `SOL-REPORT-R2B-B.md`.
+
+**After run B (Fable):**
+- Review, commit verbatim, push, and watch CI on all five jobs.
+- Re-run the private AC-8 R2b legs. Harness: S58 scratchpad `s58/ac8/leg.py`. Raw media must sit inside the runner's `--save` directory, or the runs use `--disk-writes shadow`, because the runner VFS refuses writes elsewhere.
+  - ADFS read, write and format on authored discs in both drives with swaps, on 3.50–3.71;
+  - JFD store persistence across reload;
+  - the two-floppy diagnostics (work order item 7).
+- Then dispatch Opus QA (`arcdroid-opus-qa`).
+
+**Stop rules:** Sol stops on real contradictions and may fix encoding-only workload defects itself. A stale handoff `Next` also makes Sol stop, so update the handoff before every Sol resume.
+- **R2b QA gate:** the AC-6 44-title A/B in both package states. Tooling: S57 `s57/ab/legs57.sh`, `ab57.py`, `cmp57.py`; the baseline is a `main` RelWithDebInfo build.
+
+- **Parallel workstream (D-141, D-142), item 6b translator evaluation:** the plan is in `docs/riscpc-translator.md`.
+  - **Phases:**
+    - Phase 0 now, evidence only;
+    - Phase 1 after R4 and item 5: profile-led exact interpreter optimisations, then a minimal block/exit foundation;
+    - Phase 2: a guarded arm64 fast path;
+    - Phase 3: a rate change, on a Founder decision.
+  - **S58 Astra challenge done:** ACCEPT WITH CHANGES, all nine incorporated (D-142). Thread `01a11e3a-d351-75a1-8424-b370d8b9f354`.
+  - **Remaining Phase-0 steps for Fable, independent of R2b:**
+    - the profile workload set, on the Odin3 and Windows;
+    - the executable-memory probe inside RetroArch;
+    - draft guard and exit invariants.
+  - **Founder questions:** Q1 (design objective, with Q2) at the end of Phase 0; Q3 (fork copying) before any copied helper; Q4 at qualification. None is needed now.
 - **R2a merged** as `6ee6460` (PR #317, head `880e528`; D-139, D-140). Outcome below.
 
 **R2a outcome (merged S57).** Sol runs A–G:
@@ -60,7 +109,16 @@ Slice order (D-133): R1–R4 → item 5 release baseline → item 6b faster CPU 
 
 **Slice 30 work order:** merged; in git history (`docs/handoff.md` at `7a32f93`).
 
-**S57 (Claude Opus 5.5 effort 15; baton by relay from `arcdroid-25`).** R2 designed (D-139). R1-1 diagnosed to its cause (missing CPU memory-transfer cost; see the R2 work order). **Astra** thread `01a11795-811f-7ff2-9065-4200a62d4a1a`:
+**S57 (Claude Opus 5.5 effort 15, window `arcdroid-ba`; baton by relay from `arcdroid-25`; closed on the Founder's instruction because context was nearly full).**
+- **Work done:**
+  - R2 designed (D-139);
+  - **R2a designed, implemented, QA'd and merged** as `6ee6460` (D-140);
+  - Founder project isolation applied (`arcdroid-opus-qa`, isolation rule, local deny list);
+  - 6b evaluation done (D-141, `docs/riscpc-translator.md`);
+  - R2b run A dispatched.
+- **Left running:** Sol R2b run A, PID 53166, recorded above. The S57 watchdog on it ends with this window. Nothing else S57 started is running: the Opus QA and research agents have finished, and on the Odin3 neither the runner nor RetroArch is running.
+- **Odin3 state (S57):** `/data/local/tmp/arcdroid-r2a/` and `/data/local/tmp/arcdroid-r2d/` hold the run-B and run-D arm64 runners, plan cores and workloads (`gates.sh`, `compare.sh`, `defgen.sh`). The installed RetroArch cores are unchanged since S56.
+- **Earlier S57 work:** R2 designed (D-139). R1-1 diagnosed to its cause (missing CPU memory-transfer cost; see the R2 work order). **Astra** thread `01a11795-811f-7ff2-9065-4200a62d4a1a`:
 - stage 1 gave an independent design that agreed on all main lines: IDE required; an RPC-side drive model over the engine-neutral core; a memory-cost fix rather than a keyboard change; a store redesign;
 - stage 2 returned PROCEED WITH CHANGES. All seven changes were incorporated:
   1. a worked timing contract before code, with timing-only cache tags preferred and guest progress measured;
@@ -593,7 +651,7 @@ The R1 work order and implementation record are in git history (`docs/handoff.md
   - **Clones and probes:** Sol, Astra and QA clones and scratch probes live under this project's own scratchpad (`/private/tmp/claude-501/-Users-mac0918-dev-ArcDroid/…`), which the deny list does not cover. Sol's own build directories (`/private/tmp/arcdroid-r2*`) are outside `claude-501` and are confined by the Codex sandbox.
   - **Sibling directory `~/dev/ArcDroid-evidence`:** denied by the generated list, like every other sibling. If it holds this project's evidence, exempt it by removing its three lines.
 - **Founder instruction (S54, relayed S55):** never stack shell commands — no `&&`, `;` or pipes chaining git steps; run each command separately (stacked commands get denied). Put multi-step work in a script file under the scratchpad instead.
-- **Used windows (never relay to these; each closing holder adds its own name):** `arcdroid-d9` (S33), `arcdroid-6c` (S43), `ArcDroid-45` (S45), `arcdroid-83` (2026-10-02 governance edit), `ArcDroid-49` (S49), `arcdroid-d4` (S50), `arcdroid-10` (S51), `arcdroid-1b` (S52), `ArcDroid-52` (S53), `arcdroid-df` (S54), `arcdroid-7e` (S55), `arcdroid-25` (S56). Earlier holders were not recorded; window names change between days.
+- **Used windows (never relay to these; each closing holder adds its own name):** `arcdroid-d9` (S33), `arcdroid-6c` (S43), `ArcDroid-45` (S45), `arcdroid-83` (2026-10-02 governance edit), `ArcDroid-49` (S49), `arcdroid-d4` (S50), `arcdroid-10` (S51), `arcdroid-1b` (S52), `ArcDroid-52` (S53), `arcdroid-df` (S54), `arcdroid-7e` (S55), `arcdroid-25` (S56), `arcdroid-ba` (S57). Earlier holders were not recorded; window names change between days.
 
 **Relay brief:** "ArcDroid baton handoff from <window> (S<n>), for /Users/mac0918/dev/ArcDroid only. Before anything else, run the receipt checks in docs/protocol.md §18: you must be Claude Opus 5.5 at reasoning effort 15 (high) or above, your working directory must be /Users/mac0918/dev/ArcDroid, and this must be the first message in your window. If any check fails, change nothing, tell the Founder in your window which check failed (for a wrong model or effort: run /model claude-opus-5-5 and /effort high, then say \"pick up from handoff\"), send a PushNotification, and stop. If all pass, take the baton without asking the Founder to confirm, number yourself S<n+1>, read CLAUDE.md and docs/handoff.md, take the active Next (never a workstream under Waiting on the Founder until its answer is recorded), and work towards the Founder vision D-073. Founder instruction (S54): never stack shell commands (no `&&`, `;` or pipes chaining git steps) — run each command separately. Close by protocol §18: relay only to one idle arcdroid- window, never another project's session; if no ArcDroid window is eligible, stop all work and close. Repeat this rule in your own relay."
 
