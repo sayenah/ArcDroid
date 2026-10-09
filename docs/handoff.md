@@ -27,10 +27,18 @@
 - **Stop rules:** Sol stops on real contradictions and may fix encoding-only workload defects itself. A stale handoff `Next` also makes Sol stop, so update the handoff before every Sol resume.
 - **R2b QA gate:** the AC-6 44-title A/B in both package states. Tooling: S57 `s57/ab/legs57.sh`, `ab57.py`, `cmp57.py`; the baseline is a `main` RelWithDebInfo build.
 
-- **Parallel workstream (D-141), item 6b translator evaluation:** the research report is done; the evaluation and plan are in `docs/riscpc-translator.md`.
-  - Phases: Phase 0 now (evidence only), Phase 1 a pre-decoded interpreter after R4 and item 5, Phase 2 a guarded arm64 fast path, Phase 3 a rate change on a Founder decision.
-  - Next Phase-0 steps for Fable, independent of R2b: an Odin3 profile of the hot workload; a disposable executable-memory probe inside RetroArch; timing-contract amendment drafts; an Astra challenge.
-  - Founder questions Q1–Q4 (target rate, platform parity, fork use, default) are needed by Phase 2/3, not now.
+- **Parallel workstream (D-141, D-142), item 6b translator evaluation:** the plan is in `docs/riscpc-translator.md`.
+  - **Phases:**
+    - Phase 0 now, evidence only;
+    - Phase 1 after R4 and item 5: profile-led exact interpreter optimisations, then a minimal block/exit foundation;
+    - Phase 2: a guarded arm64 fast path;
+    - Phase 3: a rate change, on a Founder decision.
+  - **S58 Astra challenge done:** ACCEPT WITH CHANGES, all nine incorporated (D-142). Thread `01a11e3a-d351-75a1-8424-b370d8b9f354`.
+  - **Remaining Phase-0 steps for Fable, independent of R2b:**
+    - the profile workload set, on the Odin3 and Windows;
+    - the executable-memory probe inside RetroArch;
+    - draft guard and exit invariants.
+  - **Founder questions:** Q1 (design objective, with Q2) at the end of Phase 0; Q3 (fork copying) before any copied helper; Q4 at qualification. None is needed now.
 - **R2a merged** as `6ee6460` (PR #317, head `880e528`; D-139, D-140). Outcome below.
 
 **R2a outcome (merged S57).** Sol runs A–G:
