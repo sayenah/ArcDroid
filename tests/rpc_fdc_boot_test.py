@@ -80,6 +80,10 @@ for drive in range(4):
 sense(0x80)
 command(0x13, 0, 0x0d, 0)
 observe(10, 16, 0x80)
+# This control workload's SRT/horizon was authored at 500 kb/s. Program CCR
+# explicitly rather than relying on the old, incorrect hardware-reset rate.
+# rpc_fdc_test independently verifies the 02H/250 kb/s reset and retention.
+write(0x3f7, 0)
 command(3, 0xaf, 2)
 observe(10, 16, 0x80)
 observe(9, 0x24, 0)
@@ -89,6 +93,7 @@ observe(10, 28, 0x80)
 
 # Empty media does not inhibit mechanical seek/recalibration/TRK0.
 for drive, cylinder in [(0, 44), (0, 2), (1, 3)]:
+    write(0x3f2, 0x1c | drive)  # Datasheet: DOR selects the physical carriage.
     command(15, drive, cylinder)
     wait_irq()
     observe(10, 16, 0x80)
@@ -105,10 +110,12 @@ wait_irq()
 for drive in range(4):
     sense(0xc0 | drive, 0)
 for drive in [0, 1]:
+    write(0x3f2, 0x1c | drive)
     command(4, drive)
     result(0x28 | drive)
 write(0x3f2, 0x1c)
 for drive in [0, 1, 2]:
+    write(0x3f2, 0x1c | drive)
     command(7, drive)
     wait_irq()
     sense((0x20 if drive < 2 else 0x70) | drive, 0)
@@ -118,6 +125,7 @@ for drive in [0, 1, 2]:
 
 # READ ID and READ DATA: retain the declared R1 no-media edge contract.
 # An MSR poll cannot swallow FINT; first result read acknowledges it; no DMA.
+write(0x3f2, 0x1c)
 for opcode, parameters in [(0x4a, [0]), (0x0a, [0]),
                             (0x46, [4, 0, 1, 1, 2, 1, 0x1b, 0xff])]:
     command(opcode, *parameters)
@@ -160,8 +168,8 @@ with tempfile.TemporaryDirectory(prefix='arc-fdc-boot-') as temp:
         (d/'probe.arcplan').write_text(f'version=1\nmodel={model}\nfirmware=authored.rom\ncmos=seed\nseed=seed\nrtc_epoch=0\n')
         r = subprocess.run([runner, '--core', core, '--plan', str(d/'probe.arcplan'),
             # Reset-held delay now includes ROM service; the declared mechanical
-            # seeks and the longest A7000 setup remain bounded within one second.
-            '--system', str(d), '--frames', '60', '--ram-offset', '131072',
+            # seeks include D-144's 79-pulse absent-drive recalibration bound.
+            '--system', str(d), '--frames', '180', '--ram-offset', '131072',
             '--ram-words', str(len(expected))], capture_output=True, text=True)
         assert r.returncode == 0, r.stderr
         words = [int(w, 16) for w in re.findall(r'^ram=(.*)$', r.stdout, re.M)[-1].split(',')]

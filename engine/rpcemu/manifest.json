@@ -109,7 +109,8 @@
         "devices-empty-fdc",
         "containment-device-scheduler",
         "devices-fdc-control-status",
-        "devices-fdc-reset-readiness"
+        "devices-fdc-reset-readiness",
+        "devices-r2b-floppy"
       ]
     },
     {
@@ -410,6 +411,14 @@
       "reason": "G: bound active DMA and synchronous padding by the horizontal line period, and excessive PLL pixel rate by device ceilings.",
       "files": [
         "src/vidc20.c"
+      ]
+    },
+    {
+      "id": "devices-r2b-floppy",
+      "group": "devices/AV/input",
+      "reason": "D-139: full FDC37C665GT command, FIFO and virtual-deadline controller; instance-based typed media presentation, TC commits, physical DOR/HDS selection and generation cancellation.",
+      "files": [
+        "src/fdc.c"
       ]
     }
   ],

@@ -3,3 +3,5 @@ EXPORTS
   arc_rpc_session_test_rate
   arc_engine_test_cmos_write
   arc_engine_test_cmos_image
+  arc_engine_test_floppy_mount
+  arc_engine_test_floppy_eject

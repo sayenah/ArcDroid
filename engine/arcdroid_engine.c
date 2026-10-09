@@ -3,6 +3,7 @@
 extern const ArcEngineBackendOps arc_rpc_backend;
 #if defined(ARCDROID_TEST_FAULTS)
 #include "rpc/rpc_session.h"
+#include "rpc/rpc_floppy.h"
 #include "rpc/rpc_rtc.h"
 #include "engine_test.h"
 #include <stdio.h>
@@ -261,6 +262,10 @@ bool arc_engine_test_cmos_schedule(uint64_t deadline_ns,uint64_t delete_ns)
 { return arc_engine_is_rpc() && arc_rpc_session_capture_schedule(deadline_ns,delete_ns); }
 void arc_engine_test_cmos_evidence(uint8_t bytes[256],uint8_t mask[32],uint64_t *writes,uint64_t *last,uint64_t *now,unsigned *state)
 { ArcRpcCapture capture;arc_rpc_capture_status(&capture);arc_rpc_cmos_snapshot(bytes);*writes=arc_rpc_cmos_payload_evidence(mask,last);*now=capture.elapsed_ns;*state=(unsigned)capture.state; }
+RETRO_API bool arc_engine_test_floppy_mount(unsigned drive,const ArcEngineMedia *media,char *error,size_t size)
+{ return arc_engine_is_rpc() && arc_engine_active() && arc_rpc_fdc_mount(drive,media,error,size); }
+RETRO_API void arc_engine_test_floppy_eject(unsigned drive)
+{ if(arc_engine_is_rpc() && arc_engine_active())arc_rpc_fdc_eject(drive); }
 void arc_engine_test_plan_input_ready(void)
 { if (arc_engine_is_rpc()) arc_rpc_session_test_input_ready(); }
 bool arc_engine_test_plan_start(unsigned model, unsigned rate, bool factory,

@@ -61,8 +61,8 @@ def devices(rate,model):
     if model==2:r.emit(0xee0f0f58) # SA-110 MCR p15,0,r0,c15,c8,2
     elif model==3:r.store(0,9,0x1c) # ARM7500 SUSMODE
     poll=len(r.words)
-    r.read(0,10,0,True);r.emit(0xe3100040)
-    branch_pos=len(r.words);r.emit(0x0a000000|((poll-branch_pos-2)&0xffffff))
+    r.read(0,10,0,True);r.emit(0xe20000c0,0xe35000c0)
+    branch_pos=len(r.words);r.emit(0x1a000000|((poll-branch_pos-2)&0xffffff))
     for i in range(7):r.read(0,10,4,True);r.store(0,8,8+i*4)
     # Defined absent buses: status=0, data=ffff, podule and EASI floating high.
     r.load(1,0x030107dc);r.read(0,1,0,True);r.store(0,8,36)

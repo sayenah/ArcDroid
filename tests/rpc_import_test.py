@@ -20,6 +20,10 @@ def rejected(change, expected):
         candidate = Path(temp)
         shutil.copytree(root / "engine/rpcemu", candidate / "engine/rpcemu")
         shutil.copytree(root / "engine/rpc", candidate / "engine/rpc")
+        for name in guard.PROJECT_HEADERS:
+            if name.startswith("engine/rpc/"): continue
+            target=candidate/name;target.parent.mkdir(parents=True,exist_ok=True)
+            shutil.copyfile(root/name,target)
         change(candidate)
         try:
             guard.verify(candidate)
@@ -80,6 +84,10 @@ with tempfile.TemporaryDirectory(prefix="arc-import-crlf-") as temp:
     candidate = Path(temp)
     shutil.copytree(root / "engine/rpcemu", candidate / "engine/rpcemu")
     shutil.copytree(root / "engine/rpc", candidate / "engine/rpc")
+    for name in guard.PROJECT_HEADERS:
+        if name.startswith("engine/rpc/"): continue
+        target=candidate/name;target.parent.mkdir(parents=True,exist_ok=True)
+        shutil.copyfile(root/name,target)
     for path in candidate.rglob("*"):
         if path.is_file():
             data = path.read_bytes().replace(b"\r\n", b"\n")

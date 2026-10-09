@@ -26,6 +26,12 @@ ALLOWLIST = {"COPYING", "readme.txt", "src/rpcemu.h", "src/sound.h",
 SYSTEM_HEADERS = {"assert.h", "errno.h", "limits.h", "stdarg.h", "stddef.h",
                   "stdint.h", "stdio.h", "stdlib.h", "string.h", "time.h", "stdbool.h"}
 PROJECT_HEADERS = {"engine/rpc/rpc_audio.h", "engine/rpc/rpc_input.h", "engine/rpc/rpc_video.h", "engine/rpc/rpc_floppy.h", "engine/rpc/rpc_memory.h", "engine/rpc/rpc_rtc.h", "engine/rpc/rpc_namespace.h", "engine/rpc/rpc_timing.h", "engine/rpc/rpc_scheduler.h", "engine/rpc/rpc_mem_timing.h"}
+# R2b typed media service: exact neutral API closure, never another backend.
+PROJECT_HEADERS |= {"core/adffs.h", "core/arcdroid_core.h", "core/hd_program.h",
+    "core/jfd.h", "engine/arc_boot_watch.h", "engine/arc_disc_request.h",
+    "engine/arc_error_box.h", "engine/arc_launch_outcome.h", "engine/arc_storage.h",
+    "engine/arcdroid_engine.h", "libretro/arc_io.h", "libretro/include/libretro.h"}
+
 
 
 def require(condition, message):
@@ -213,7 +219,9 @@ def verify(root, archive_path=None, compiler=None):
             require(not PurePosixPath(quoted).is_absolute() and ".." not in PurePosixPath(quoted).parts,
                     f"escaping include: {path}:{number}")
             choices = [path.parent / quoted, directory / "src" / quoted,
-                       root / "engine/rpc" / quoted]
+                       root / "engine/rpc" / quoted, root / "engine" / quoted,
+                       root / "core" / quoted, root / "libretro" / quoted,
+                       root / "libretro/include" / quoted]
             resolved = next((candidate for candidate in choices if candidate.is_file()), None)
             require(resolved is not None, f"unresolved include: {path}:{number}: {quoted}")
             require(resolved.resolve() == resolved.absolute(),
@@ -230,7 +238,9 @@ def verify(root, archive_path=None, compiler=None):
             output = subprocess.check_output(
                 [compiler, "-MM", "-MT", "rpc", "-include",
                  str(root / "engine/rpc/rpc_namespace.h"), "-I", str(directory / "src"),
-                 "-I", str(root / "engine/rpc"), str(source)], cwd=root, text=True)
+                 "-I", str(root / "engine/rpc"), "-I", str(root / "engine"),
+                 "-I", str(root / "core"), "-I", str(root / "libretro"),
+                 "-I", str(root / "libretro/include"), str(source)], cwd=root, text=True)
             require(output.startswith("rpc:"), f"missing compiler dependency output: {source}")
             verify_compiler_dependencies(root, output)
     return len(records), len(checked)
