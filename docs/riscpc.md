@@ -1,6 +1,6 @@
 # RiscPC workstream — engine evaluation and architecture (D-063, D-122, D-123)
 
-Status: **GO (D-131): slices R1–R4 on RPCEmu 0.9.5's interpreter; R1 merged as `7244f9c` (D-137, D-138); R2 designed (D-139) as R2a timing + CMOS → R2b floppy → R2c IDE.** The disposable trial (D-126) is closed and kept unmerged as the record. Indices refer to the Founder's private 218-zip library (0-based sorted position); they are test-coverage identifiers only and never implementation keys (D-090).
+Status: **GO (D-131): slices R1–R4 on RPCEmu 0.9.5's interpreter; R1 merged as `7244f9c` (D-137, D-138); R2 designed (D-139); R2a (memory timing + CMOS) merged as `6ee6460` (D-140); R2b floppy next, then R2c IDE.** The disposable trial (D-126) is closed and kept unmerged as the record. Indices refer to the Founder's private 218-zip library (0-based sorted position); they are test-coverage identifiers only and never implementation keys (D-090).
 
 ## 1. Why
 

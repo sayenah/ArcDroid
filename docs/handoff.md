@@ -1,106 +1,50 @@
 # ArcDroid Handoff
 
-**Stage:** IMPLEMENTATION — roadmap item 6, RiscPC R2a, run G (Windows CI + QA LOW-1)
+**Stage:** IMPLEMENTATION — roadmap item 6, RiscPC R2b (floppy drives and full controller)
 **Owner:** Sol
-**Next:** Sol R2a **run G** on `slice/r2a-timing-cmos` (PR #317). Two parts:
+**Next:** Sol R2b **run A** on a new branch `slice/r2b-floppy` from `main` `6ee6460`. It implements **R2b items 5–8** of the *R2 work order* below:
+- item 5: the instance-based RPC drive model over the engine-neutral media core;
+- item 6: the FDC37C665GT controller, closing L5;
+- item 7: both drives, plus the two-floppy diagnostics;
+- item 8: plan route part 2.
 
-1. **Make the CI `windows` job green.** It has failed since run B on R2a's new tests. Host, sanitizer and Android builds are green. The failures at `9dc72e8`, run 37819147850:
-   - `rpc-memory-timing-0..3` crash at `tests/rpc_timing_test.c:37` (`assert(p)`, a missing exported test symbol);
-   - `rpc-qa-mutations` fails;
-   - 16 `rpc-cmos-plan-*-{full,ro350,reset,delayed}` tests fail at `tests/rpc_cmos_plan_test.c:114` (`assert(p)`) and `:124` (`accepted`).
+The acceptance criteria are AC-3, AC-4, AC-6 and AC-7. After run A: Fable review, the private AC-8 R2b legs, then Opus QA (`arcdroid-opus-qa`).
+- **Parallel workstream (D-141):** Fable runs the **item 6b translator evaluation** (research and design only, no product code).
+- **R2a merged** as `6ee6460` (PR #317, head `880e528`; D-139, D-140). Outcome below.
 
-   The likely cause is test-only symbols missing from the Windows export path, but Sol diagnoses it from the log. Fix it without weakening any test.
-2. **QA LOW-1 probes:** an ARM7500 fewer-ways probe (2-way vs 4-way), and an SA-110 16- vs 32-set probe for both I and D. Each must kill QA's surviving geometry mutants G2, G8 and G9.
+**R2a outcome (merged S57).** Sol runs A–G:
+- A: the timing contract `docs/riscpc-timing.md`;
+- B: the memory-system timing model;
+- C: RiscPC CMOS records and generated defaults;
+- D: Delete held to 45 s, 8-frame generation, optimisation;
+- E, F, G: QA remediation and Windows CI.
 
-Then Fable checks that CI is green on the PR event, and a brief Opus re-check follows if production code changed.
+Rulings, recorded in D-140:
+- G7, dirty ROM castouts;
+- R-D1, the Delete schedule;
+- R-H, the Odin3 host-cost gate relative to `main`;
+- ROMCR reset;
+- a fixed generation epoch, with procedure revision 3.
 
-**Opus QA re-check (effort 15) at `9dc72e8` (run F): PASS WITH LOWS.**
-- MEDIUM-5 is resolved: the oracle geometry is correct, three independent calibrations were added, M39, M40 and G1/G3–G7/G10 are killed, and all other expectations are byte-identical.
-- LOW-1: same-capacity alternatives G2 (ARM7500 128×2) and G8/G9 (SA-110 32×16) survive. Production geometry is correct.
+**R2a evidence:**
+- **Calibrations:** 4,674 independent exact timing calibrations. Every QA mutant is killed; V6 is accepted as equivalent.
+- **Opus QA (effort 15):** FAIL (HIGH-1, CMOS torn candidate) → FAIL (MEDIUM-5, test-only) → **PASS WITH LOWS** at `9dc72e8`. Run G after that was test-only: Windows test exports and paths, plus geometry probes.
+- **CI:** green on all five jobs at `880e528`, including windows-retroarch. The windows job was re-run once and passed.
+- **Fable, private:**
+  - R1-1 is resolved: generated defaults are full factory resets on all seven pairs at production rates.
+  - The Odin3 3.71 default is byte-identical to macOS; first-launch generation takes about 19–20 s on the Odin3.
+  - `*Configure` survives a fresh process.
+  - The 44-title Archimedes A/B in both package states matches `main` apart from known variance.
+  - Odin3: hot workload p95 0.99–1.00 T against `main` 1.10 T; AC-8 0.169 T.
 
-**Opus QA re-check (effort 15) at `4a3ddff`: FAIL, narrow and test-only.** All original findings are resolved:
-- HIGH-1 passes 68 kill/fault scenarios.
-- MEDIUM-1 is resolved.
-- All 22 mutants are killed by two independent drivers.
-- V6 is accepted as equivalent.
-- No production regression was found.
+**Carried from R2a:**
+- `rpc-cpu-trace` produced empty output once on Windows CI at `5648bd4`, then passed twice on identical code. An intermittent fault; investigate if it recurs.
+- QA LOW-A: a transient directory-listing failure in the CMOS reconcile path latches refused for that session. It is conservative and clears on reload.
+- R3 must show a notice during first-launch default generation (about 20 s on the Odin3).
+- After the absent-IDE startup dialog, the desktop takes about 60 s to appear. This is identical on R1 and goes away once R2c's IDE exists.
+- AC-10, the end-of-R2 gameplay speed gate, is still owed after R2c.
 
-MEDIUM-5 (validated, test gap): the new refill oracle in `tests/rpc_timing_oracle.py:33` uses the wrong unified-cache geometry for ARM710 and ARM7500. It uses (8, 64) and (4, 64) where the contract specifies 128×4 and 64×4. Production is correct (`rpc_mem_timing.c:211-212`). Expected counts happen to coincide, so geometry regressions M39 and M40 survive.
-
-Fix:
-- correct the oracle geometry;
-- add one geometry-discriminating calibration per unified model: at least five distinct lines in one set, at a stride of sets × 16 bytes;
-- add M39 and M40 to `rpc_qa_mutations.py`, killed;
-- correct `tests/rpc-timing-expectations.md`.
-
-LOW-A (a transient listing failure in the reconcile path latches refused for the session; it clears on reload) is accepted as conservative.
-
-Run E (`765a796`):
-- HIGH-1 is fixed: abandoned candidates are ignored and overwritten, and a later publication succeeds after a kill at every step, including QA cases A, B and C.
-- MEDIUM-1: the generation RTC is fixed at 2000-01-01, procedure revision 3.
-- 544 added exact calibrations; the 4,127 originals are unchanged.
-- 22 QA mutants are killed. V6 is equivalent under IOMD quad alignment, proved over 262,144 cases, and is replaced by V6a.
-- No timing source, rule or existing golden changed.
-- Sol's results: host 324/324, sanitizer 320/320.
-
-**Opus QA (effort 15, `arcdroid-opus-qa`) at `0494b8c`: FAIL.** One HIGH; everything else is a test gap or Low. Fable's adjudication — all validated, all go to run E:
-- **HIGH-1 (defect): a torn or empty CMOS `.tmp` candidate blocks publication for good.** Cause: a kill or short write while the candidate is written leaves it there, and `load`/`put` then refuse the store (`libretro/rpc_cmos_store.c:94-132`). One of two things follows:
-  - a new game cannot start;
-  - an existing one never persists again.
-
-  Fix: a `.tmp` that does not decode as a complete, verified candidate for this key is an abandoned candidate. It is ignored at load, overwritten at the next publication, and never refuses the store. Required tests: a kill at every write step followed by a **successful later publication** (QA cases A, B and C, `scratchpad/s57/qa/repro/torn_tmp.c`).
-- **MEDIUM-1 (risk): the default-cache key omits the generation RTC epoch.** Ruling: generation uses a **fixed, procedure-defined RTC epoch**, independent of the plan or content, recorded in provenance. The generation-procedure revision is bumped to 3, so defaults never depend on which game generated them first.
-- **MEDIUM-2, -3, -4, LOW-1, -2, -3 (test gaps): add the calibrations the contract requires.** Each must kill the named QA mutant:
-  - write-buffer capacity and slot release (contract §6.2 K=1/2/8/9/32 and the third, fifth and ninth stall boundaries; M02–M05, M38);
-  - SA-110 clock-switch disable (§6.3; M08, M10);
-  - cache-hot DMA contention (§6.3/§2.6: hot ALU, LDM/STM, full write buffer, idle; M21);
-  - an oracle negative for full mask, stable, but bad checksum (LOW-1);
-  - authored non-uniform 8bpp, cursor and right-edge VIDC20 goldens (LOW-2: V1, V2, V4, V6, V9);
-  - the 1 KiB restart inside a bank, and SA I-cache allocation with M=0 (M14, M23);
-  - store defence checks: slot parity, header model, reserved bytes, candidate readback, epoch bound (C05, C07, C10, C11, C14).
-- **Suggestions taken:**
-  - `tests/rpc_session_test.c:98`: restore equality, or justify the `<` against the timeline;
-  - the refused-store notice: once per state change, not every frame;
-  - compute the hard-coded A7000 video and oracle refill constants, if cheap.
-
-**Ruling R-H (S57; D-140), Odin3 host-cost gate.** The hot-throughput half of stop rule 5 ("sustains real time at the 100 MIPS ceiling") is replaced by **"no slower than `main` on the same device"**.
-- **Why:** on the Odin3, `main` (R1 flat timing) itself reaches p95 **1.10 T** on that cache-hot workload, so the absolute clause was never met before R2. A pure cache-hot loop at a full 100 MIPS is beyond the R1 interpreter: that is item 6b's job. D-131's budget rests on gameplay (≈ 67 % of each frame).
-- **Measured on R2a run D:**
-  - hot workload p95 **0.989 / 1.003 T** against `main` 1.10 / 1.10 T (interleaved legs);
-  - R1 AC-8 workload p95 **0.169 T**, with no frame over T.
-- **Unchanged:** AC-10's end-of-R2 gameplay speed gate is the real guard.
-
-**Fable evidence for R2a (private unless stated):**
-- **AC-1, factory reset at production rates:** the generated default is a full reset on all seven pairs. 3.50/ARM610: 544 writes covering 238 addresses (194/195 never written by that firmware). The other six: 550–556 writes covering all 240.
-- **AC-1, cross-platform:** the 3.71 SA-110 default is byte-identical between macOS and the Odin3.
-- **AC-1, Odin3 cost:** first-launch generation takes about 19–20 s on the Odin3, one time only per firmware/model. R3 must show a notice during it.
-- **AC-6, 44-title Archimedes A/B against `main`:**
-  - no package: 42 of 44 identical, with 105 and 205 differing (known variance);
-  - with the package: 43 of 44 identical, with 205 differing (known variance).
-- **Odin3 gates:** above.
-- **AC-2, `*Configure` survives a fresh process: PASS.** In session 1, `*configure floppies 2` rewrites a record slot; a fresh process then shows "Floppies 2" and a `:1` drive. The roughly 60 s from the absent-IDE dialog to the desktop is identical on `main` (R1), so it is not an R2a regression.
-
-**Done:**
-- **Run A** (`7bd1f27`): the timing contract.
-- **Run B** (`9184996`): the timing implementation.
-- **Run C** (`a137702`): RiscPC CMOS records, generated defaults, plan v2 part 1. 37 new CTests.
-- **Run D** (`d65a8a6`):
-  - R-D1: Delete held to a 45 s deadline, generation-procedure revision 2;
-  - 8-frame generation slices; 1-frame and 8-frame defaults are byte-identical;
-  - exact optimisations, with no rule, expectation or golden change;
-  - Sol's results: host 313/314 and sanitizer 309/310, the one failure being the long `libretro-harness` timeout under load, which passed fresh direct reruns.
-
-**Contract rulings (S57; Astra stage 3 incorporated).** The §1 exclusions and G1–G6 are accepted as labelled R2 model limits, with these changes:
-1. SA-110 SWP/SWPB follows TRM §9.11. A cacheable/bufferable SWP is performed in the D-cache (with a fill if needed); only a non-cacheable or non-bufferable SWP is an external locked pair. §6 gains hot-code cases: cached hit, cached miss, uncached.
-2. Exact time at every admitted test rate. Use a per-session denominator, e.g. 28·rate, so plan v1 rates 1–100 stay exact. Add long cumulative tests at rates 60 and 99 with stalls and frontend boundaries.
-3. ARM7500 DRAMWID is honoured in timing. 16-bit banks take 7 ticks non-sequential and 4 ticks sequential (DDI 0050C §§14.2.3–14.2.4), including fills and buffered writes; add independent width-switch and byte/word expectations.
-4. ARM610 cache-disable is added to G1 as an approximation. Calibration uses descriptor C=0 for uncached data regions with the warmed instruction cache left enabled; cache-disable behaviour is a separate, qualified test.
-5. Host-cost stop rules. Run B returns to Fable, never adopting the §8 fallback, if either fails on the Odin3:
-   - the R1 AC-8 workload at 100 MIPS: p95 ≤ 0.80 T and no frame over T;
-   - the hot-throughput case: it sustains real time.
-
-IOMD ROMCR resets to 0 (R1 used 0x40). The seventh private pair is **3.60 on ARM7500**.
-- R2 = three sequential PRs on one accepted design (D-139): **R2a** timing + CMOS → **R2b** floppy drives and full controller → **R2c** IDE and scalable hard disc. Each PR gets Fable review and Opus QA; R2 completes with the AC-10 speed gate.
+**R2 work order** (below): R2a done; **R2b next**; R2c follows.
 
 Slice order (D-133): R1–R4 → item 5 release baseline → item 6b faster CPU translator → item 8 save states. Carried: the Arculator VIDC-register reset follow-up (below); follow-up Lows; Slice 23 residuals; physical-stick feel on the Odin3 (Founder check).
 
