@@ -269,7 +269,14 @@ endfunction()
 # The installed/packaged core never contains test fault-injection hooks.
 arcdroid_add_libretro(arcdroid_libretro TRUE)
 
-configure_file(arcdroid_libretro.info arcdroid_libretro.info COPYONLY)
+# Register source/output pairs with the metadata guard, including installed
+# shipping metadata and non-installed test metadata.
+function(arcdroid_configure_core_info source output)
+  configure_file("${source}" "${output}" COPYONLY)
+  set_property(GLOBAL APPEND PROPERTY ARCDROID_CORE_INFO_FILES
+    "${CMAKE_CURRENT_SOURCE_DIR}/${source}" "${CMAKE_CURRENT_BINARY_DIR}/${output}")
+endfunction()
+arcdroid_configure_core_info(arcdroid_libretro.info arcdroid_libretro.info)
 
 install(TARGETS arcdroid_libretro DESTINATION .)
 install(FILES arcdroid_libretro.info DESTINATION .)
@@ -2168,7 +2175,7 @@ if(TARGET arcdroid_libretro_test)
     add_test(NAME rpc-windows-crash-locator COMMAND rpc_crash_locator_test
       "${CMAKE_CURRENT_BINARY_DIR}/rpc-crash-locator-data")
   endif()
-  configure_file(tests/arcdroid_rpcplan_libretro.info arcdroid_rpcplan_libretro.info COPYONLY)
+  arcdroid_configure_core_info(tests/arcdroid_rpcplan_libretro.info arcdroid_rpcplan_libretro.info)
   if(ANDROID)
     set_target_properties(arcdroid_rpcplan_libretro PROPERTIES OUTPUT_NAME arcdroid_rpcplan_libretro_android)
     target_link_options(arcdroid_rpcplan_libretro PRIVATE "-Wl,-z,defs" "-Wl,-z,max-page-size=16384")
@@ -2176,6 +2183,10 @@ if(TARGET arcdroid_libretro_test)
 endif()
 
 if(BUILD_TESTING)
+  get_property(arc_core_info_files GLOBAL PROPERTY ARCDROID_CORE_INFO_FILES)
+  add_test(NAME rpc-core-info COMMAND "${Python3_EXECUTABLE}" -B
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/core_info_test.py"
+    "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}" ${arc_core_info_files})
   get_property(arc_tests DIRECTORY PROPERTY TESTS)
   set_property(TEST ${arc_tests} APPEND PROPERTY ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1")
 endif()
