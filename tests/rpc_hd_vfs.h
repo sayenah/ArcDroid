@@ -7,7 +7,8 @@
 #define TEST_FILES 1024u
 typedef struct {char path[1100];uint8_t *data;size_t size,capacity;bool present;} TestFile;
 static TestFile files[TEST_FILES],baseline[TEST_FILES];
-struct retro_vfs_file_handle {unsigned file;size_t at;bool writable,used;};
+/* RetroArch buffered VFS: seek returns zero; size is owned by this handle. */
+struct retro_vfs_file_handle {unsigned file;size_t at,cached_size;bool writable,used;};
 struct retro_vfs_dir_handle {char path[1100];unsigned at,current;};
 static struct retro_vfs_file_handle handles[16];static struct retro_vfs_dir_handle directory;
 static bool silent_readdir,full_storage,case_folded;
@@ -40,17 +41,18 @@ static bool before(unsigned kind)
 {++steps;if(kill_at&&steps==kill_at)killed=true;return !killed&&!(steps==fail_at&&(fault==0||fault==kind));}
 static struct retro_vfs_file_handle *test_open(const char *p,unsigned mode,unsigned hint)
 {(void)hint;if(!before(1))return NULL;bool write=(mode&2)!=0,update=(mode&4)!=0;int i=find(p,write&&!update);if(i<0)return NULL;
- if(write&&!update)files[i].size=0;measure_files();for(unsigned h=0;h<16;++h)if(!handles[h].used){handles[h]=(struct retro_vfs_file_handle){(unsigned)i,0,write,true};return handles+h;}assert(0);return NULL;}
+ if(write&&!update)files[i].size=0;measure_files();for(unsigned h=0;h<16;++h)if(!handles[h].used){handles[h]=(struct retro_vfs_file_handle){(unsigned)i,0,files[i].size,write,true};return handles+h;}assert(0);return NULL;}
 static int test_close(struct retro_vfs_file_handle *f) {bool ok=before(2);f->used=false;return ok?0:-1;}
-static int64_t test_size(struct retro_vfs_file_handle *f) {return before(3)?(int64_t)files[f->file].size:-1;}
+static int64_t test_size(struct retro_vfs_file_handle *f) {return before(3)?(int64_t)f->cached_size:-1;}
+static int64_t test_tell(struct retro_vfs_file_handle *f) {return before(18)?(int64_t)f->at:-1;}
 static int64_t test_seek(struct retro_vfs_file_handle *f,int64_t at,int origin)
-{if(!before(4))return -1;int64_t base=origin==0?0:origin==1?(int64_t)f->at:(int64_t)files[f->file].size;if(at< -base)return -1;f->at=(size_t)(base+at);return (int64_t)f->at;}
+{if(!before(4))return -1;int64_t base=origin==0?0:origin==1?(int64_t)f->at:(int64_t)files[f->file].size;if(at< -base)return -1;f->at=(size_t)(base+at);return 0;}
 static int64_t test_read(struct retro_vfs_file_handle *f,void *p,uint64_t n)
 {if(!before(5))return -1;TestFile *file=files+f->file;if(f->at>file->size)return -1;if(n>file->size-f->at)n=file->size-f->at;memcpy(p,file->data+f->at,(size_t)n);f->at+=(size_t)n;return (int64_t)n;}
 static int64_t test_write(struct retro_vfs_file_handle *f,const void *p,uint64_t n)
 {bool ok=before(6);if(killed||!f->writable||(!ok&&full_storage))return -1;if(!ok)n=n?n/2:0;TestFile *file=files+f->file;size_t end=f->at+(size_t)n;
  if(end>file->capacity){size_t cap=end+4096;uint8_t *q=realloc(file->data,cap);assert(q);file->data=q;file->capacity=cap;}
- if(f->at>file->size)memset(file->data+file->size,0,f->at-file->size);memcpy(file->data+f->at,p,(size_t)n);f->at=end;if(end>file->size)file->size=end;measure_files();return (int64_t)n;}
+ if(f->at>file->size)memset(file->data+file->size,0,f->at-file->size);memcpy(file->data+f->at,p,(size_t)n);f->at=end;if(end>file->size)file->size=end;if(end>f->cached_size)f->cached_size=end;measure_files();return (int64_t)n;}
 static int test_flush(struct retro_vfs_file_handle *f) {(void)f;return before(7)?0:-1;}
 static int test_remove(const char *p) {if(!before(8))return -1;int i=find(p,false);if(i<0)return -1;files[i].present=false;measure_files();return 0;}
 static int test_rename(const char *a,const char *b) {if(!before(9))return -1;int i=find(a,false);if(i<0||find(b,false)>=0)return -1;snprintf(files[i].path,sizeof(files[i].path),"%s",b);measure_files();return 0;}
@@ -65,8 +67,8 @@ static const char *test_name(struct retro_vfs_dir_handle *d) {return before(14)?
 static bool test_isdir(struct retro_vfs_dir_handle *d) {(void)d;return !before(15);}
 static int test_closedir(struct retro_vfs_dir_handle *d) {(void)d;return before(16)?0:-1;}
 static int64_t test_truncate(struct retro_vfs_file_handle *f,int64_t n)
-{if(!before(17)||n<0||(uint64_t)n>files[f->file].size)return -1;files[f->file].size=(size_t)n;return 0;}
-static struct retro_vfs_interface vfs={.open=test_open,.close=test_close,.size=test_size,.seek=test_seek,.read=test_read,.write=test_write,.flush=test_flush,.remove=test_remove,.rename=test_rename,.stat=test_stat,.mkdir=test_mkdir,.opendir=test_opendir,.readdir=test_readdir,.dirent_get_name=test_name,.dirent_is_dir=test_isdir,.closedir=test_closedir,.truncate=test_truncate};
+{if(!before(17)||n<0||(uint64_t)n>files[f->file].size)return -1;files[f->file].size=f->cached_size=(size_t)n;return 0;}
+static struct retro_vfs_interface vfs={.open=test_open,.close=test_close,.size=test_size,.tell=test_tell,.seek=test_seek,.read=test_read,.write=test_write,.flush=test_flush,.remove=test_remove,.rename=test_rename,.stat=test_stat,.mkdir=test_mkdir,.opendir=test_opendir,.readdir=test_readdir,.dirent_get_name=test_name,.dirent_is_dir=test_isdir,.closedir=test_closedir,.truncate=test_truncate};
 static void reset_fault(void) {steps=fail_at=kill_at=fault=0;killed=false;full_storage=false;memset(handles,0,sizeof(handles));}
 static void fresh_files(void) {for(unsigned i=0;i<TEST_FILES;++i){free(files[i].data);memset(files+i,0,sizeof(*files));}physical_high=temp_high=physical_chunks_high=0;dir_count=0;silent_readdir=case_folded=false;test_mkdir("/save");reset_fault();arc_io_set_vfs(&vfs);}
 static void snapshot(void)

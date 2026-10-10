@@ -18,6 +18,7 @@
 #define vfs_close base_close
 #define vfs_size base_size
 #define vfs_seek base_seek
+#define vfs_tell base_tell
 #define vfs_read base_read
 #define vfs_write base_write
 #define vfs_flush base_flush
@@ -29,6 +30,7 @@
 #undef vfs_close
 #undef vfs_size
 #undef vfs_seek
+#undef vfs_tell
 #undef vfs_read
 #undef vfs_write
 #undef vfs_flush
@@ -52,6 +54,7 @@ void arc_riscpc_hd_test_point(unsigned stage) {assert(stage>=1&&stage<=3);point(
 WRAP(open,struct retro_vfs_file_handle *,(const char *p,unsigned m,unsigned h),(p,m,h))
 WRAP(close,int,(struct retro_vfs_file_handle *h),(h))
 WRAP(size,int64_t,(struct retro_vfs_file_handle *h),(h))
+WRAP(tell,int64_t,(struct retro_vfs_file_handle *h),(h))
 WRAP(seek,int64_t,(struct retro_vfs_file_handle *h,int64_t n,int o),(h,n,o))
 WRAP(read,int64_t,(struct retro_vfs_file_handle *h,void *p,uint64_t n),(h,p,n))
 WRAP(write,int64_t,(struct retro_vfs_file_handle *h,const void *p,uint64_t n),(h,p,n))
@@ -70,7 +73,7 @@ static void sector(ArcRpcHdStore *s,unsigned lba,unsigned value)
 int main(int argc,char **argv)
 {
     assert(argc==5);assert(canonical(argv[1],save_directory));arc_io_set_vfs(&vfs);vfs.readdir=no_listing;
-    vfs.open=observed_open;vfs.close=observed_close;vfs.size=observed_size;vfs.seek=observed_seek;
+    vfs.open=observed_open;vfs.close=observed_close;vfs.size=observed_size;vfs.seek=observed_seek;vfs.tell=observed_tell;
     vfs.read=observed_read;vfs.write=observed_write;vfs.flush=observed_flush;vfs.stat=observed_stat;
     vfs.remove=observed_remove;vfs.rename=observed_rename;
     const char *mode=argv[2];bool population=!strcmp(argv[3],"population"),interleaved=!strcmp(argv[3],"interleaved");

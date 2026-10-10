@@ -595,6 +595,21 @@ on native non-Windows paths. This is source evidence, not certification of the
 installed frontend build, filesystem, or power-loss ordering. SAF is a separate
 path; native-path admission excludes it.
 
+D-150/D-151: buffered `seek` returns zero on success (`fseeko` or `_fseeki64`),
+while another VFS may return the resulting position. Every store positioned
+access MUST accept a nonnegative seek result and confirm the exact offset with
+`tell` before transferring bytes. A missing, failed or mismatching tell refuses
+the operation. Count the tell callback in host-operation accounting. Preserve
+the first failed operation in diagnostics when closing its handle for cleanup.
+Handle `size` starts at the file length at open and is updated by that handle's
+own writes and truncates; it does not reflect another handle's or process's
+changes. Use stat or a fresh open for an independent length. Recovery and
+publication readbacks use freshly opened read-only handles; acknowledgement
+checks the journal's length with stat after close. Frontend test VFSs model
+these per-handle size semantics and successful buffered seek-zero by default.
+Replay confirms its initial journal offset once, then consumes records
+sequentially using exact read counts, preserving the accepted open-work bound.
+
 | Step/assumption | Windows | Android native/emulated storage | macOS | Safe behavior without stronger guarantee |
 |---|---|---|---|---|
 | Exact reads, seeks, sizes, writes and close return results accurately | Required; device-test actual VFS | Required; device-test actual VFS | Required; test actual VFS | Wrong length/status/readback → refusal, no acknowledgement |

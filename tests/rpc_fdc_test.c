@@ -28,7 +28,7 @@ static int64_t file_size(struct retro_vfs_file_handle *f) { return f->drive?6553
 static int64_t seek_file(struct retro_vfs_file_handle *f,int64_t at,int whence)
 { int64_t start=whence==RETRO_VFS_SEEK_POSITION_CURRENT?(int64_t)f->at:whence==RETRO_VFS_SEEK_POSITION_END?file_size(f):0;
   if(start+at<0||start+at>file_size(f))return -1;
-  f->at=(size_t)(start+at);return (int64_t)f->at; }
+  f->at=(size_t)(start+at);return 0; }
 static int64_t read_file(struct retro_vfs_file_handle *f,void *out,uint64_t n)
 { if(n>(uint64_t)file_size(f)-f->at)return -1;memcpy(out,raw[f->drive]+f->at,(size_t)n);f->at+=(size_t)n;return (int64_t)n; }
 static int64_t write_file(struct retro_vfs_file_handle *f,const void *in,uint64_t n)

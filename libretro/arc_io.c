@@ -409,6 +409,13 @@ int64_t arc_io_file_length(ArcIoFile *file)
       arc_io_vfs->size(file->handle) : -1;
 }
 
+int64_t arc_io_tell_file(ArcIoFile *file)
+{
+   if (file && file->memory) return (int64_t)file->memory_at;
+   return file && arc_io_vfs && arc_io_vfs->tell ?
+      arc_io_vfs->tell(file->handle) : -1;
+}
+
 int64_t arc_io_seek_file(ArcIoFile *file, int64_t offset, int origin)
 {
    if (file && file->memory)

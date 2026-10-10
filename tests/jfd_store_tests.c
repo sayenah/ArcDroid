@@ -12,7 +12,7 @@
 #include <unistd.h>
 #endif
 
-struct retro_vfs_file_handle { unsigned slot, mode; size_t at; };
+struct retro_vfs_file_handle { unsigned slot, mode; size_t at, cached_size; };
 struct retro_vfs_dir_handle { unsigned at, current; };
 typedef struct { char path[256]; uint8_t *bytes; size_t size; bool exists; } File;
 static File files[3];
@@ -45,12 +45,13 @@ static struct retro_vfs_file_handle *vopen(const char *p, unsigned mode, unsigne
    if (mode & RETRO_VFS_FILE_ACCESS_WRITE)
    { free(files[i].bytes); files[i].bytes = NULL; files[i].size = 0u;
      files[i].exists = true; snprintf(files[i].path, sizeof(files[i].path), "%s", p); }
+   h->cached_size = files[i].size;
    return h;
 }
 static int vclose(struct retro_vfs_file_handle *h)
 { bool failed = h->mode & RETRO_VFS_FILE_ACCESS_WRITE ? trip(CLOSE_FAULT) : false;
   free(h); return failed ? -1 : 0; }
-static int64_t vsize(struct retro_vfs_file_handle *h) { return (int64_t)files[h->slot].size; }
+static int64_t vsize(struct retro_vfs_file_handle *h) { return (int64_t)h->cached_size; }
 static int64_t vread(struct retro_vfs_file_handle *h, void *out, uint64_t n)
 {
    if (h->slot == 2u && trip(READ_FAULT) && n) --n;
@@ -68,6 +69,7 @@ static int64_t vwrite(struct retro_vfs_file_handle *h, const void *in, uint64_t 
    f->bytes = grown;
    memcpy(f->bytes + h->at, in, (size_t)n);
    h->at += (size_t)n; if (h->at > f->size) f->size = h->at;
+   if (h->at > h->cached_size) h->cached_size = h->at;
    return (int64_t)n;
 }
 static int vflush(struct retro_vfs_file_handle *h)

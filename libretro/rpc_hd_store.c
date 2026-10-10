@@ -128,10 +128,17 @@ static bool rename_leaf(ArcRpcHdStore *s,const char *from,const char *to)
   path(s,from,a);path(s,to,b);op(s);return arc_io_rename(a,b); }
 static ArcIoFile *open_leaf(ArcRpcHdStore *s,const char *leaf,bool write,bool create)
 { char p[1100];snprintf(s->io_leaf,sizeof(s->io_leaf),"%s",leaf);s->io_operation=create?"create":"open";path(s,leaf,p);op(s);return create?arc_io_create_file_counted(p,&s->stats.operations):arc_io_open_stream_counted(p,write,&s->stats.operations); }
-static bool close_file(ArcRpcHdStore *s,ArcIoFile *f)
-{ s->io_operation="close";op(s);return arc_io_close_file(f); }
+/* Cleanup must not replace the operation that already failed. */
+static bool close_file(ArcRpcHdStore *s,ArcIoFile *f,bool previous_ok)
+{ if(previous_ok)s->io_operation="close";op(s);return arc_io_close_file(f); }
 static bool seek(ArcRpcHdStore *s,ArcIoFile *f,uint32_t at)
-{ s->io_operation="seek";op(s);return arc_io_seek_file(f,at,RETRO_VFS_SEEK_POSITION_START)==at; }
+{
+    s->io_operation="seek";op(s);
+    if(arc_io_seek_file(f,at,RETRO_VFS_SEEK_POSITION_START)<0)return false;
+    s->io_operation="tell";op(s);return arc_io_tell_file(f)==at;
+}
+static int64_t length(ArcRpcHdStore *s,ArcIoFile *f)
+{ s->io_operation="size";op(s);return arc_io_file_length(f); }
 static bool read_file(ArcRpcHdStore *s,ArcIoFile *f,void *p,size_t n)
 { s->io_operation="read";op(s);s->stats.requested_bytes+=n;size_t got=arc_io_read_file(f,p,n);s->stats.bytes_read+=got;return got==n; }
 static bool write_file(ArcRpcHdStore *s,ArcIoFile *f,const void *p,size_t n)
@@ -141,13 +148,13 @@ static bool flush(ArcRpcHdStore *s,ArcIoFile *f)
 static bool read_leaf(ArcRpcHdStore *s,const char *leaf,void *p,size_t n)
 {
     ArcIoFile *f=open_leaf(s,leaf,false,false);if(!f)return false;
-    op(s);bool ok=arc_io_file_length(f)==(int64_t)n;
-    if(ok)ok=read_file(s,f,p,n);bool closed=close_file(s,f);return ok&&closed;
+    bool ok=length(s,f)==(int64_t)n;
+    if(ok)ok=read_file(s,f,p,n);bool closed=close_file(s,f,ok);return ok&&closed;
 }
 static bool write_leaf(ArcRpcHdStore *s,const char *leaf,const void *p,size_t n)
 {
     ArcIoFile *f=open_leaf(s,leaf,true,true);if(!f)return false;
-    bool ok=write_file(s,f,p,n)&&flush(s,f);bool closed=close_file(s,f);
+    bool ok=write_file(s,f,p,n)&&flush(s,f);bool closed=close_file(s,f,ok);
     size_t actual;return ok&&closed&&size(s,leaf,&actual)&&actual==n;
 }
 static uint8_t *entry(uint8_t *m,unsigned index) { return m+128u+index*48u; }
@@ -203,10 +210,14 @@ static void index_record(ArcRpcHdStore *s,const Record *r,uint32_t *index)
 static bool replay(ArcRpcHdStore *s,unsigned slot,uint32_t *index,uint64_t *last)
 {
     char leaf[16];journal_leaf(slot,leaf);ArcIoFile *f=open_leaf(s,leaf,false,false);if(!f)return false;
-    bool ok=true,torn=false;uint32_t at=256,physical=s->lengths[slot];*last=get(s->headers[slot]+112,8);
+    bool torn=false;uint32_t at=256,physical=s->lengths[slot];*last=get(s->headers[slot]+112,8);
+    /* Replay is sequential after one confirmed position. Exact read counts
+     * advance the cursor; redundant per-record seek/tell would exceed the
+     * accepted near-cap open-operation budget for one-sector commands. */
+    bool ok=physical==at||seek(s,f,at);
     arc_sha256_init(&s->digest[slot]);stream_hash(s,slot,s->headers[slot],256);
     while(ok&&at<physical){uint32_t left=physical-at;if(left<80){torn=true;break;}
-        ok=seek(s,f,at)&&read_file(s,f,s->record,80);if(!ok)break;
+        ok=read_file(s,f,s->record,80);if(!ok)break;
         uint8_t *p=s->record;uint32_t count=(uint32_t)get(p+68,4),lba=(uint32_t)get(p+64,4);
         uint64_t sequence=get(p+56,8);
         ok=!memcmp(p,"RCJR",4)&&get(p+4,4)==1&&!memcmp(p+8,s->content,40)&&
@@ -220,7 +231,7 @@ static bool replay(ArcRpcHdStore *s,unsigned slot,uint32_t *index,uint64_t *last
         Record *r=&s->records[s->records_count++];*r=(Record){at,lba,count,slot};
         if(index)index_record(s,r,index);stream_hash(s,slot,p,total);*last=sequence;at+=total;
     }
-    bool closed=close_file(s,f);if(!ok||!closed)return false;
+    bool closed=close_file(s,f,ok);if(!ok||!closed)return false;
     if(torn){s->lengths[slot]=at;s->torn[slot]=true;}
     return true;
 }
@@ -229,12 +240,12 @@ static bool base_chunk(ArcRpcHdStore *s,const uint8_t *m,unsigned index)
     const uint8_t *e=m+128+index*48;if(get(e,4)==0){memset(s->scratch,0,ARC_RPC_HD_CHUNK);return true;}
     bool damage=!(m==s->manifests[2]&&(!s->published||get(e+8,8)>s->generation));
     char leaf[23];chunk_leaf(index,get(e+8,8),leaf);ArcIoFile *f=open_leaf(s,leaf,false,false);if(!f)return failure(s,damage);
-    uint8_t h[128],tail[4],digest[32];op(s);bool ok=arc_io_file_length(f)==CHUNK_BYTES&&read_file(s,f,h,128)&&
+    uint8_t h[128],tail[4],digest[32];bool ok=length(s,f)==CHUNK_BYTES&&read_file(s,f,h,128)&&
         !memcmp(h,"ARCRHDC1",8)&&get(h+8,4)==1&&get(h+12,4)==CHUNK_BYTES&&!memcmp(h+16,s->content,40)&&
         get(h+56,4)==index&&get(h+60,4)==1&&get(h+64,4)==1&&get(h+68,4)==ARC_RPC_HD_CHUNK&&
         get(h+72,8)==get(e+8,8)&&!memcmp(h+80,e+16,32)&&zero(h+112,12)&&get(h+124,4)==crc(s,h,124);
     if(ok)ok=read_file(s,f,s->scratch,ARC_RPC_HD_CHUNK)&&read_file(s,f,tail,4);
-    bool closed=close_file(s,f);if(ok){sha(s,s->scratch,ARC_RPC_HD_CHUNK,digest);
+    bool closed=close_file(s,f,ok);if(ok){sha(s,s->scratch,ARC_RPC_HD_CHUNK,digest);
         ok=get(tail,4)==crc(s,s->scratch,ARC_RPC_HD_CHUNK)&&!memcmp(digest,e+16,32);}
     if(!closed)return failure(s,false);
     return ok?true:failure(s,damage);
@@ -251,7 +262,7 @@ static bool reconstruct(ArcRpcHdStore *s,const uint8_t *m,unsigned chunk,const u
         for(unsigned i=lo;i<hi;++i)if(index[i]==((rec->slot?SLOT_BIT:0)|(rec->offset+80+(i-rec->lba)*512))){used=true;break;}
         if(!used)continue;char leaf[16];journal_leaf(rec->slot,leaf);ArcIoFile *f=open_leaf(s,leaf,false,false);
         if(!f)return failure(s,true);unsigned bytes=96+rec->count*512;
-        bool ok=seek(s,f,rec->offset)&&read_file(s,f,s->record,bytes);bool closed=close_file(s,f);
+        bool ok=seek(s,f,rec->offset)&&read_file(s,f,s->record,bytes);bool closed=close_file(s,f,ok);
         uint8_t *p=s->record;ok=ok&&closed&&!memcmp(p,"RCJR",4)&&get(p+4,4)==1&&!memcmp(p+8,s->content,40)&&
             get(p+48,8)==s->jgeneration[rec->slot]&&get(p+64,4)==rec->lba&&get(p+68,4)==rec->count&&get(p+72,4)==rec->count*512&&
             get(p+76,4)==crc(s,p,76)&&get(p+80+rec->count*512,8)==get(p+56,8)&&
@@ -286,13 +297,13 @@ static bool publish_chunk(ArcRpcHdStore *s,unsigned index)
     copy(s,h+80,digest,32);put(h+124,crc(s,h,124),4);put(tail,crc(s,s->scratch,ARC_RPC_HD_CHUNK),4);
     ArcIoFile *f=open_leaf(s,"chunk.tmp",true,true);if(!f)return false;
     bool ok=write_file(s,f,h,128)&&write_file(s,f,s->scratch,ARC_RPC_HD_CHUNK)&&write_file(s,f,tail,4)&&flush(s,f);
-    bool closed=close_file(s,f);if(!ok||!closed)return false;
+    bool closed=close_file(s,f,ok);if(!ok||!closed)return false;
     memset(e,0,48);put(e,1,4);put(e+8,generation,8);copy(s,e+16,digest,32);
     /* Verify temporary using an exact derived entry, with the same envelope
      * checks as every cache miss. It cannot be a recovery root. */
     f=open_leaf(s,"chunk.tmp",false,false);if(!f)return false;
-    uint8_t check[128],crc[4];op(s);ok=arc_io_file_length(f)==CHUNK_BYTES&&read_file(s,f,check,128)&&!memcmp(check,h,128)&&
-        read_file(s,f,s->scratch,ARC_RPC_HD_CHUNK)&&read_file(s,f,crc,4);closed=close_file(s,f);
+    uint8_t check[128],crc[4];ok=length(s,f)==CHUNK_BYTES&&read_file(s,f,check,128)&&!memcmp(check,h,128)&&
+        read_file(s,f,s->scratch,ARC_RPC_HD_CHUNK)&&read_file(s,f,crc,4);closed=close_file(s,f,ok);
     uint8_t actual[32];sha(s,s->scratch,ARC_RPC_HD_CHUNK,actual);
     if(!ok||!closed||memcmp(crc,tail,4)||memcmp(actual,digest,32))return false;
     size_t n;if(size(s,leaf,&n)){
@@ -375,7 +386,7 @@ static bool prepare_manifest(ArcRpcHdStore *s)
 static bool read_header(ArcRpcHdStore *s,unsigned slot,uint8_t h[256])
 {
     char leaf[16];journal_leaf(slot,leaf);ArcIoFile *f=open_leaf(s,leaf,false,false);if(!f)return false;
-    bool ok=read_file(s,f,h,256),closed=close_file(s,f);return ok&&closed;
+    bool ok=read_file(s,f,h,256),closed=close_file(s,f,ok);return ok&&closed;
 }
 static bool retire(ArcRpcHdStore *s)
 {
@@ -459,7 +470,7 @@ bool arc_riscpc_hd_write(ArcRpcHdStore *s,uint32_t lba,uint32_t count,const uint
     copy(s,p+80,in,count*512);put(p+80+count*512,s->sequence+1,8);put(p+88+count*512,crc(s,in,count*512),4);copy(s,p+92+count*512,"RCCM",4);
     char leaf[16];journal_leaf(s->current,leaf);ArcIoFile *f=open_leaf(s,leaf,true,false);if(!f)return failure(s,false);
     uint32_t tail=s->lengths[s->current];bool ok=seek(s,f,tail)&&write_file(s,f,p,80)&&write_file(s,f,p+80,count*512)&&write_file(s,f,p+80+count*512,16)&&flush(s,f);
-    bool closed=close_file(s,f);size_t actual;
+    bool closed=close_file(s,f,ok);size_t actual;
     if(!ok||!closed||!size(s,leaf,&actual)||actual!=tail+bytes)return failure(s,false);
     commit_point(1); /* Durable record, before resident publication. */
     /* A1: no per-record reopen/readback. Only successful publication advances
@@ -571,7 +582,7 @@ static bool recover(ArcRpcHdStore *s)
         if(s->stat_failed)return false;
     /* Validation of both roots/journals is complete before any cleanup. */
     for(unsigned i=0;i<2;++i)if(s->torn[i]){journal_leaf(i,leaf);ArcIoFile *f=open_leaf(s,leaf,true,false);bool ok=false;
-        if(f){op(s);ok=arc_io_truncate_file(f,s->lengths[i])&&flush(s,f);bool closed=close_file(s,f);ok&=closed;}
+        if(f){s->io_operation="truncate";op(s);ok=arc_io_truncate_file(f,s->lengths[i])&&flush(s,f);bool closed=close_file(s,f,ok);ok&=closed;}
         if(!ok){failure(s,false);s->notice="An interrupted hard-disc write was recovered; the hard disc is read-only.";}
         else{s->notice="An interrupted hard-disc write was recovered.";size_t actual;if(!size(s,leaf,&actual)||actual!=s->lengths[i])failure(s,false);}}
     if(s->refused)return true;
@@ -695,9 +706,9 @@ bool arc_riscpc_hd_import(ArcRpcHdStore *s,const char *source)
 {
     if(!s||s->published||s->refused||!arc_install_store_native_path(source))return false;
     op(s);ArcIoFile *f=arc_io_open_stream_counted(source,false,&s->stats.operations);if(!f)return false;
-    op(s);bool ok=arc_io_file_length(f)==ARC_RPC_HD_BYTES&&arc_riscpc_hd_population_begin(s);
+    bool ok=length(s,f)==ARC_RPC_HD_BYTES&&arc_riscpc_hd_population_begin(s);
     uint8_t *block=s->cache[1];s->tags[1].valid=false;for(uint32_t lba=0;ok&&lba<ARC_RPC_HD_SECTORS;lba+=256){
         ok=read_file(s,f,block,131072)&&arc_riscpc_hd_population_write(s,lba,256,block);}
-    bool closed=close_file(s,f);ok&=closed;if(ok)ok=arc_riscpc_hd_population_seal(s)&&arc_riscpc_hd_population_publish(s);
+    bool closed=close_file(s,f,ok);ok&=closed;if(ok)ok=arc_riscpc_hd_population_seal(s)&&arc_riscpc_hd_population_publish(s);
     if(!ok)arc_riscpc_hd_population_abort(s);return ok;
 }

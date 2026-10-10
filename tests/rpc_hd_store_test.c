@@ -31,6 +31,60 @@ static void bounds(ArcRpcHdStore *s)
         if(!strcmp(p,"chunk.tmp")||!strcmp(p,"manifest.tmp"))temp+=files[i].size;}
     assert(manifests<=2&&journals<=2&&chunks<=1008&&journal_bytes<=8388608&&temp<=286600);
 }
+static int64_t position_seek(struct retro_vfs_file_handle *f,int64_t at,int origin)
+{ return test_seek(f,at,origin)<0?-1:(int64_t)f->at; }
+static int64_t misplaced_seek(struct retro_vfs_file_handle *f,int64_t at,int origin)
+{ (void)f;(void)at;(void)origin;return before(4)?0:-1; }
+static void vfs_conformance(void)
+{
+    fresh_files();uint8_t p[512];fill(p,1,0x5a);
+    struct retro_vfs_file_handle *a=test_open("/save/probe",2,0);assert(a);
+    assert(test_write(a,p,16)==16&&test_size(a)==16);
+    struct retro_vfs_file_handle *b=test_open("/save/probe",1,0);assert(b&&test_size(b)==16);
+    assert(test_seek(a,16,0)==0&&test_tell(a)==16);
+    assert(test_write(a,p,8)==8&&test_size(a)==24&&test_size(b)==16);
+    int32_t length;assert(test_stat("/save/probe",&length)==1&&length==24);
+    struct retro_vfs_file_handle *c=test_open("/save/probe",1,0);assert(c&&test_size(c)==24);
+    assert(test_truncate(a,8)==0&&test_size(a)==8&&test_size(b)==16&&test_size(c)==24);
+    assert(test_close(a)==0&&test_close(b)==0&&test_close(c)==0);
+    fresh_files();ArcRpcHdStore *s=open_store(true);idle(s);
+    /* This first nonzero seek refused the command before D-150 remediation. */
+    assert(arc_riscpc_hd_write(s,8192,1,p));check_sector(s,8192,0x5a);
+    arc_riscpc_hd_close(s);s=open_store(false);idle(s);check_sector(s,8192,0x5a);
+    arc_riscpc_hd_close(s);
+    /* Position-return VFSs remain supported. A dishonest successful seek must
+     * fail the independent tell check before transferring a record byte. */
+    for(unsigned mode=0;mode<2;++mode){fresh_files();s=open_store(true);idle(s);
+        vfs.seek=mode?misplaced_seek:position_seek;bool ok=arc_riscpc_hd_write(s,8192,1,p);
+        assert(ok==!mode);if(ok)check_sector(s,8192,0x5a);
+        else{const char *diagnostic=arc_riscpc_hd_diagnostic(s);assert(diagnostic&&strstr(diagnostic,"operation=tell "));
+            int j=find("/save/arcdroid/hd-riscpc/0123456789012345678901234567890123456789/journal.a",false);
+            assert(j>=0&&files[j].size==256);}
+        vfs.seek=test_seek;arc_riscpc_hd_close(s);}
+    /* Every append failure reports its actual step, even after close cleanup.
+     * A short write is injected at each header/payload/trailer separately. */
+    const char *operations[]={"open","seek","tell","write","write","write","flush","close","stat"};
+    for(unsigned at=1;at<=sizeof(operations)/sizeof(*operations);++at){
+        fresh_files();s=open_store(true);idle(s);reset_fault();fail_at=at;
+        assert(!arc_riscpc_hd_write(s,8192,1,p));const char *diagnostic=arc_riscpc_hd_diagnostic(s);
+        char expected[32];snprintf(expected,sizeof(expected),"operation=%s ",operations[at-1]);
+        assert(diagnostic&&strstr(diagnostic,expected));assert(arc_riscpc_hd_notice(s));
+        ArcRpcHdStats a;arc_riscpc_hd_stats(s,&a);assert(a.read_only);reset_fault();arc_riscpc_hd_close(s);}
+    fresh_files();s=open_store(true);idle(s);vfs.tell=NULL;
+    assert(!arc_riscpc_hd_write(s,8192,1,p));const char *diagnostic=arc_riscpc_hd_diagnostic(s);
+    assert(diagnostic&&strstr(diagnostic,"operation=tell "));vfs.tell=test_tell;arc_riscpc_hd_close(s);
+    /* Smallest records maximize replay callbacks. Confirm tell accounting
+     * still fits the accepted open bound at the aggregate journal cap. */
+    fresh_files();s=open_store(true);idle(s);unsigned commands=0;
+    while(arc_riscpc_hd_write(s,8192,1,p)){++commands;assert(commands<14000);}
+    assert(commands>13000);arc_riscpc_hd_close(s);s=open_store(false);
+    ArcRpcHdStats near_cap;arc_riscpc_hd_stats(s,&near_cap);
+    assert(!near_cap.read_only&&near_cap.open_bytes<=8437256&&near_cap.open_operations-near_cap.advisory_operations<=49152);
+    printf("minimum-record near-cap open: commands=%u bytes=%" PRIu64 " operations=%" PRIu64 "\n",
+        commands,near_cap.open_bytes,near_cap.open_operations-near_cap.advisory_operations);
+    check_sector(s,8192,0x5a);arc_riscpc_hd_close(s);
+    puts("RetroArch VFS: seek-zero/position command/replay; per-handle size isolation; exact tell and first-failure diagnostics");
+}
 static void bridge_accounting(void)
 {
     /* Independent VFS callback count includes make_path's internal metadata,
@@ -376,6 +430,7 @@ int main(int argc,char **argv)
 {
     if(argc>1&&!strcmp(argv[1],"bounds")){stream(false,false,argc>2?argv[2]:NULL);stream(true,true,argc>3?argv[3]:NULL);}
     else if(argc>2&&!strcmp(argv[1],"reopen"))reopen_stream(argv[2]);
+    else if(argc>1&&!strcmp(argv[1],"vfs"))vfs_conformance();
     else if(argc>1&&!strcmp(argv[1],"population"))population();
     else if(argc>1&&!strcmp(argv[1],"command"))faults();
     else if(argc>1&&!strcmp(argv[1],"binding"))binding_fault();

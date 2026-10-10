@@ -55,6 +55,8 @@ ArcIoFile *arc_io_create_file_counted(const char *path, uint64_t *operations);
 bool arc_io_close_file(ArcIoFile *file);
 int64_t arc_io_file_length(ArcIoFile *file);
 int64_t arc_io_seek_file(ArcIoFile *file, int64_t offset, int origin);
+/* Independent position confirmation; seek's successful return may be zero. */
+int64_t arc_io_tell_file(ArcIoFile *file);
 size_t arc_io_read_file(ArcIoFile *file, void *data, size_t size);
 size_t arc_io_write_file(ArcIoFile *file, const void *data, size_t size);
 void arc_io_set_write_observer(void (*observer)(const char *path));

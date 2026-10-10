@@ -137,6 +137,10 @@ mutants += [
 # checks; original build objects remain untouched.
 HD='libretro/rpc_hd_store.c';IDE='engine/rpcemu/src/ide.c';SCHEDULER='engine/rpc/rpc_scheduler.c'
 mutants += [
+ ('HD-SEEK',HD,'if(arc_io_seek_file(f,at,RETRO_VFS_SEEK_POSITION_START)<0)return false;',
+  'if(arc_io_seek_file(f,at,RETRO_VFS_SEEK_POSITION_START)!=at)return false;',a.hd,('hd','vfs')),
+ ('HD-TELL',HD,'return arc_io_tell_file(f)==at;','return arc_io_tell_file(f)>=0;',a.hd,('hd','vfs')),
+ ('HD-DIAGNOSTIC',HD,'if(previous_ok)s->io_operation="close";','s->io_operation="close";',a.hd,('hd','vfs')),
  ('HD-ORDER',HD,'uint32_t tail=s->lengths[s->current];bool ok=seek(s,f,tail)&&',
   'uint32_t tail=s->lengths[s->current];for(unsigned i=0;i<8;++i)if(s->tags[i].valid){unsigned first=s->tags[i].index*512;unsigned lo=lba>first?lba:first,hi=lba+count<first+512?lba+count:first+512;if(lo<hi)copy(s,s->cache[i]+(lo-first)*512,in+(lo-lba)*512,(hi-lo)*512);}bool ok=seek(s,f,tail)&&',a.hd,('hd','command')),
  ('HD-BIND',HD,'return !memcmp(digest,h+120,32);','return true;',a.hd,('hd','binding')),
