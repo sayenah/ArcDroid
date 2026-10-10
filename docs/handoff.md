@@ -19,6 +19,10 @@
   - MEDIUM: multi-megabyte work in one tick;
   - MEDIUM: the prepared-disc key was undefined.
 - **Fable accepted the contract with D-145 (six binding amendments):** the four Astra changes; A1, which drops the per-command record readback (the A3020 store's proven pattern); and A2, which keeps full SHA-256 per cache miss but allows faster hashing.
+- **Run B so far:**
+  - **First stop (correct):** the prompt wrongly asked for a tenth scheduler event. Ruling: activate the existing reserved IDE slot; the count stays at nine.
+  - **Second stop (correct, with an executable probe):** the VFS `readdir` cannot report errors, so listing-based GC could exceed the disc bound after a kill. **Ruling R2c-1 (D-147):** RETIRE removes garbage before removal; debris is found by fixed paths; listing is advisory only.
+  - Run B continues from there.
 - **Contract honesty, accepted:**
   - the frontend VFS gives no power-loss durability and no bounded wall-clock latency;
   - "no stall depends on the host" means guest-visible timing is virtual and identical however slow the host is;
@@ -62,12 +66,13 @@
   - **S59 Phase-0 progress** (details in `docs/riscpc-translator.md`, *Phase 0 evidence*):
     - **Executable-memory probe: PASS** inside RetroArch on the Odin3. Dual RW/RX mapping is allowed, and code replacement, the helper ABI, the `longjmp` fault unwind with x18 intact, and teardown all work.
     - **First Odin3 profile done.** Fetch translation is a third of cache-hot cost. Warm load/store code reaches p95 1.83 T at 100 MIPS. The timing model dominates memory-bound code. Devices cost about 0.04 T.
-    - **Invariants:** a first draft, awaiting Fable review.
+    - **Invariants accepted as the Phase-0 basis (D-146)**, in `docs/riscpc-translator-invariants.md`, after an Astra check: ACCEPT WITH CHANGES, three HIGH and four MEDIUM, all incorporated. Rulings are Q-1 to Q-11.
+  - **Q-3 oracle fix (D-146), queued after R2c merges and before R3.** The R2a fetch memo is keyed by virtual line only and can outlive a change of eligibility after a translation-cache re-walk. The work order is a small corrective slice: a targeted reproduction plus the smallest fix, with no blanket golden regeneration, and its own Fable review and QA.
   - **Remaining Phase-0 steps for Fable:**
     - the Windows profile (waiting on the Founder, below);
     - representative gameplay (after R2c);
     - block-shape and churn instrumentation;
-    - review of the invariants draft, then an Astra check.
+    - the Q-1 design objective, put to the Founder at the end of Phase 0.
   - **Founder questions:** Q1 (design objective, with Q2) at the end of Phase 0; Q3 (fork copying) before any copied helper; Q4 at qualification. None is needed now.
 - **R2a merged** as `6ee6460` (PR #317, head `880e528`; D-139, D-140). Outcome below.
 
