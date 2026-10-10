@@ -1,8 +1,41 @@
 # ArcDroid Handoff
 
-**Stage:** IMPLEMENTATION — roadmap item 6, RiscPC **R2c**, run H (test-only: plan core `.info` `systemid`)
-**Owner:** Sol (run H), supervised by Fable
-**Next:** Sol R2c run H in `.work/s60/sol2c/clone` (thread `01a120ab-7bf4-7843-a879-6fab6d9b3736`). Then Fable reviews and pushes it, confirms the `windows-retroarch` hard-disc leg passes, and asks Opus QA to re-check runs D–H. The merge waits for the Odin3 (D-153).
+**Stage:** IMPLEMENTATION — roadmap item 6, RiscPC **R2c**, run I (QA 2 LOW clean-up)
+**Owner:** Sol (run I), supervised by Fable
+**Next:** Sol R2c run I in `.work/s60/sol2c/clone` (thread `01a120ab-7bf4-7843-a879-6fab6d9b3736`). Fable then reviews and pushes it and confirms CI, including the `windows-retroarch` hard-disc leg. After that come the Odin3 legs (D-153) and the merge.
+
+**Opus QA 2 (re-check, effort 15) at `5630d83`: PASS WITH LOWS.** The condition is that CI's native Windows RetroArch hard-disc leg must run and pass. CI run 38069603020 flaked in an earlier Archimedes leg (`zip-name-disc1-1`), and a re-run is requested.
+- **Closed:** M1, every QA 1 test gap and H1's diagnosis.
+- **M1 numbers:** the worst MATERIALIZE tick dropped from 2,583 to 1,561 VFS operations (bound 1,600), and an adjacent-record miss from 32.5 ms to 0.24 ms.
+- **LOWs:** adjudicated in `.work/s60/qa/adjudication-1.md` (QA 2 section).
+
+**Run I work order:**
+1. The test VFSs assert that no handle is open at store close and after any failure. This covers the surviving close-on-failed-reconstruction mutant.
+2. Crash locator:
+   - label first-chance exceptions;
+   - keep it active through the persistence work in unload and deinit, removing it last.
+3. Narrow CI's Windows `-g` to the plan core target only. The shipping DLL build returns to plain Release.
+4. `Enable-RpcHdCrashDumps` warns, rather than failing, when HKLM is not writable.
+5. Fixture generation runs Python with `-B`; no `__pycache__` in the source tree.
+6. Add a runbook note: RetroArch 1.22.2 `GET_STATUS` crashes for any core loaded without a matching `.info` (`command.c` copies `system_id` unchecked).
+
+Re-run what each item touches, plus the host suite.
+
+**Since QA 1 (`c0e3dd4`):**
+
+| Commit | Run | Content |
+|---|---|---|
+| `8103d9c` | F | test-only Windows crash capture (WER LocalDumps and `cdb`; produced no dump) |
+| `6d73e6b` | G | QA 1 remediation: M1 single journal open per reconstruction, all eight survivors killed, the LOW items; Windows-only vectored exception locator in the plan core |
+| `5630d83` | H | test-only: the plan `.info` declares `systemid`; a core metadata guard |
+
+Fable's adjudication of QA 1 is in `.work/s60/qa/adjudication-1.md`, reproduced in the QA clone's `.evidence/`.
+
+**Re-check focus:**
+1. Every QA 1 finding against its disposition, with mutants re-run.
+2. The M1 change (journal handle reuse, the position cursor, failure paths) and its per-tick accounting.
+3. The crash locator: test-only, Windows-only, never swallowing an exception, absent from the shipping core.
+4. The H1 diagnosis and the run H fix: does the guard cover every field RetroArch 1.22.2 dereferences from a core `.info`?
 
 **H1 located (Fable, S60) with run G's crash locator** (CI run 38065741237 at `6d73e6b`). The fault is RetroArch's `strlcpy` reading NULL (`retroarch.exe+0x1af761`), called from its network-command `GET_STATUS` handler (`retroarch.exe+0x1c4e3`). The surrounding strings are "GET_STATUS ", "PLAYING" and " ". RetroArch processes network commands inside the core's `input_poll`; the core frames are `arc_poll_osk_controls` ← `arc_poll_inputs` ← `arc_rpc_present_run`.
 - RetroArch 1.22.2's `command_get_status` (`command.c` at `69a4f0e`) copies `core_info->system_id` with no NULL check.
