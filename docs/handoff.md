@@ -1,8 +1,25 @@
 # ArcDroid Handoff
 
-**Stage:** QA — roadmap item 6, RiscPC **R2c**, re-check of PR #337 at `5630d83` (runs F, G, H)
-**Owner:** Opus (independent QA, `arcdroid-opus-qa`, effort high)
-**Next:** Opus QA re-check of PR #337 at `5630d83`. Fable then adjudicates it and confirms CI, including the `windows-retroarch` hard-disc leg on `5630d83`. The merge waits for the Odin3 (D-153).
+**Stage:** IMPLEMENTATION — roadmap item 6, RiscPC **R2c**, run I (QA 2 LOW clean-up)
+**Owner:** Sol (run I), supervised by Fable
+**Next:** Sol R2c run I in `.work/s60/sol2c/clone` (thread `01a120ab-7bf4-7843-a879-6fab6d9b3736`). Fable then reviews and pushes it and confirms CI, including the `windows-retroarch` hard-disc leg. After that come the Odin3 legs (D-153) and the merge.
+
+**Opus QA 2 (re-check, effort 15) at `5630d83`: PASS WITH LOWS.** The condition is that CI's native Windows RetroArch hard-disc leg must run and pass. CI run 38069603020 flaked in an earlier Archimedes leg (`zip-name-disc1-1`), and a re-run is requested.
+- **Closed:** M1, every QA 1 test gap and H1's diagnosis.
+- **M1 numbers:** the worst MATERIALIZE tick dropped from 2,583 to 1,561 VFS operations (bound 1,600), and an adjacent-record miss from 32.5 ms to 0.24 ms.
+- **LOWs:** adjudicated in `.work/s60/qa/adjudication-1.md` (QA 2 section).
+
+**Run I work order:**
+1. The test VFSs assert that no handle is open at store close and after any failure. This covers the surviving close-on-failed-reconstruction mutant.
+2. Crash locator:
+   - label first-chance exceptions;
+   - keep it active through the persistence work in unload and deinit, removing it last.
+3. Narrow CI's Windows `-g` to the plan core target only. The shipping DLL build returns to plain Release.
+4. `Enable-RpcHdCrashDumps` warns, rather than failing, when HKLM is not writable.
+5. Fixture generation runs Python with `-B`; no `__pycache__` in the source tree.
+6. Add a runbook note: RetroArch 1.22.2 `GET_STATUS` crashes for any core loaded without a matching `.info` (`command.c` copies `system_id` unchecked).
+
+Re-run what each item touches, plus the host suite.
 
 **Since QA 1 (`c0e3dd4`):**
 
