@@ -1,8 +1,28 @@
 # ArcDroid Handoff
 
-**Stage:** IMPLEMENTATION — roadmap item 6, RiscPC **R2c**, run D (remediation of R2c-2, D-150 as corrected by D-151)
-**Owner:** Sol (run D), supervised by Fable
-**Next:** Sol R2c run D on `slice/r2c-ide` (PR #337), resuming thread `01a120ab-7bf4-7843-a879-6fab6d9b3736` in `.work/s60/sol2c/clone`. Run D carries out the **R2c-2 work order below**. Then Fable reviews it, re-runs the Odin3 native leg and checks CI's `windows-retroarch` hard-disc leg. After that, AC-8 and AC-9 finish and PR #337 goes to Opus QA.
+**Stage:** IMPLEMENTATION — roadmap item 6, RiscPC **R2c**, run E (R2c-3, D-152: hard-disc frame cost on the Odin3)
+**Owner:** Sol (run E), supervised by Fable
+**Next:** Sol R2c run E on `slice/r2c-ide` (PR #337), resuming thread `01a120ab-7bf4-7843-a879-6fab6d9b3736` in `.work/s60/sol2c/clone`, carrying out the **R2c-3 work order below**. Then Fable reviews it, re-measures on the Odin3 and checks CI. After that, PR #337 goes to Opus QA.
+
+**R2c-3 work order (D-152): hard-disc work must fit the frame budget on the Odin3.**
+- **Measured (S60, run D core, arm64 runner, authored guest, hard disc on against off):** 256-sector writes add 1.7–3.3 ms; checkpoint steps add 5.0–5.8 ms (0.35 T). simpleperf puts the cost mainly in `arc_sha256_transform` and `arc_crc32`. The bound is 0.20 T (3.33 ms) extra on any frame.
+- **Required:**
+  1. Hardware-accelerated SHA-256 and CRC-32 with results identical to the portable code (D-145 A2):
+     - arm64 SHA2 and CRC32 instructions, detected at run time (Android: `getauxval`), with the portable code as fallback;
+     - x86-64 where available (for example SHA-NI; carry-less multiply or slice-by-N for CRC-32), likewise detected at run time.
+
+     If the shared `core/hash.c` functions change, shipping Arculator stores receive identical results. Prove it with known-answer vectors and a randomized differential test of every implementation against the portable one, on every length and alignment.
+  2. If hashing alone cannot keep every hard-disc frame within 0.20 T, split maintenance steps further, re-prove the contract's occupancy and journal bounds, and say exactly what changed in `docs/riscpc-hd-store.md`.
+  3. A test-only per-frame hard-disc cost report in the runner, so Fable can measure the bound on the Odin3. It should give, per frame, the hard-disc time inside `retro_run`: acknowledgement and maintenance phase, in nanoseconds.
+  4. Re-run everything: host and sanitizer suites, mutants, fault and kill sweeps, the run C guest, and the MinGW and Android builds and guards.
+- **Fable's acceptance on the Odin3:** the authored guest and the 031 install through the arm64 runner, hard disc on against off. No frame may exceed 0.20 T extra, and every earlier AC-9 leg is repeated on the run E core.
+
+**AC-9 Odin3 results so far (run D core):**
+- **Native RetroArch, authored guest: PASS.** Cyan, then force-stop; blue, then network QUIT; green. Generations went 2 → 4 → 4, each session included a floppy swap, there were 0 errors and peak PSS was about 178 MB.
+- **20 repeated sessions: PASS.** Peak PSS 173–179 MB with no growth, 0 errors, all clean exits.
+- **Store open: PASS.** About 9 ms with a 63 MB installed disc (44 against 35 ms for one frame with the disc on against off).
+- **Frame budget: FAIL under D-152.** This is R2c-3.
+- **AC-8 on the run D build: PASS.** HD persistence on 3.71, and the 031 install and cold start from floppies; frames are identical to run B.
 
 **R2c-2 work order (D-150): the store must work on RetroArch's real VFS.**
 - **Defect (found by Fable's AC-9 Odin3 leg):** in native RetroArch 1.22.2 on Android, the authored guest's first hard-disc write is refused, the store latches read-only and the player sees "Hard-disc changes can no longer be saved this session." RetroArch's buffered `seek` returns 0, not the new position, so the store's `seek(...) == offset` check fails for every non-zero offset. That breaks journal appends, indexed journal reads and any other positioned access. Windows RetroArch behaves the same (`_fseeki64`). The runner VFS returns `ftell()` after seeking, so every host test passed.
