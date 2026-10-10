@@ -1,8 +1,26 @@
 # ArcDroid Handoff
 
-**Stage:** IMPLEMENTATION — roadmap item 6, RiscPC **R2c**, run I (QA 2 LOW clean-up)
-**Owner:** Sol (run I), supervised by Fable
-**Next:** Sol R2c run I in `.work/s60/sol2c/clone` (thread `01a120ab-7bf4-7843-a879-6fab6d9b3736`). Fable then reviews and pushes it and confirms CI, including the `windows-retroarch` hard-disc leg. After that come the Odin3 legs (D-153) and the merge.
+**Stage:** IMPLEMENTATION — roadmap item 6, RiscPC **R2c**, run J (intermittent Windows crash in the RPC CPU tests)
+**Owner:** Sol (run J), supervised by Fable
+**Next:** Sol R2c run J in `.work/s60/sol2c/clone` (thread `01a120ab-7bf4-7843-a879-6fab6d9b3736`). Then Fable reviews and pushes it and confirms CI, including the `windows-retroarch` hard-disc leg, which has not yet run with the H1 fix. After that come the Odin3 legs (D-153) and the merge.
+
+**Recurrence (S60):** CI run 38076039462 at `b587f60` (run I). The `windows` job failed on one test: `rpc-cpu-mmu-memory` (`rpc_cpu_test`) crashed with `SegFault` after 0.31 s and no output. That test and its code are unchanged by runs G–I, and it passed on Windows at `5630d83` and earlier.
+- This is the second intermittent Windows-only failure in the RPC CPU tests. The first was R2a's `rpc-cpu-trace` producing empty output at `5648bd4`, carried as "investigate if it recurs".
+- The code predates R2c (R1/R2a), but CI must be reliably green to merge, and a non-deterministic CPU crash would reach players once R3 ships RPC.
+
+**Run J work order:**
+1. **Static audit** of the RPC CPU, MMU, memory and timing code (the imported RPCEmu sources and ArcDroid's `engine/rpc/`) for Windows-only or address-dependent hazards:
+   - LLP64 (`long` is 32-bit on Windows; pointer or size truncation);
+   - uninitialized state;
+   - alignment and strict aliasing;
+   - stack size;
+   - reliance on allocation addresses (for example high-entropy ASLR placing buffers above 4 GiB);
+   - undefined behaviour that MinGW GCC `-O3` exploits differently.
+2. **Windows test diagnostics (test-only):**
+   - link the crash locator into the RPC test executables on Windows, so a crash prints the faulting module offset and a stack;
+   - add a CI step that runs `rpc_cpu_test` and `rpc-cpu-trace` repeatedly (for example 50 times each), with output on failure.
+3. **If a cause is found:** fix it, with a test that fails before the fix. Prefer a deterministic reproduction, for example forcing allocations above 4 GiB on Windows, or a host-side check of the hazard.
+4. Re-run the full host suite, sanitizers and cross builds.
 
 **Opus QA 2 (re-check, effort 15) at `5630d83`: PASS WITH LOWS.** The condition is that CI's native Windows RetroArch hard-disc leg must run and pass. CI run 38069603020 flaked in an earlier Archimedes leg (`zip-name-disc1-1`), and a re-run is requested.
 - **Closed:** M1, every QA 1 test gap and H1's diagnosis.
