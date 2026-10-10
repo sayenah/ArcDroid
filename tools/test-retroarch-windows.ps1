@@ -638,6 +638,8 @@ function Write-MediaRunFailureEvidence($Run, [string]$Context) {
     $Run["FailureEvidenceWritten"] = $true
     Write-RetroArchFailureEvidence $Run.Name $Run.Process $Run.StartUtc `
         @($Run.RetroLog, $Run.Stdout, $Run.Stderr) $Context
+    # Also reached when the RPC process crashes before Start-MediaRun returns.
+    if ($Run.Name -like 'rpc-hd-session-*') { Save-RpcHdCrashEvidence $Run }
 }
 
 function Send-MediaCommand($Run, [string]$Command) {
@@ -2751,6 +2753,134 @@ screenshot_directory = "$(ConfigPath ((Resolve-Path $evidenceDirectory).Path))"
     $core = '"' + (Resolve-Path $rpcCore).Path + '"'
     $rpcPlan = '"' + (Join-Path $rpcFixture 'hd.arcplan') + '"'
     $rpcRoot = Join-Path $rpcSave ('arcdroid/hd-riscpc/' + ('c' * 40))
+    $rpcDumpDirectory = Join-Path $evidenceDirectory 'rpc-hd-crash'
+    New-Item -ItemType Directory -Force $rpcDumpDirectory | Out-Null
+    $rpcDumpDirectory = (Resolve-Path $rpcDumpDirectory).Path
+    Copy-Item -LiteralPath $rpcCore -Destination $rpcDumpDirectory
+    foreach ($file in @('rpc-hd-symbols.txt', 'rpc-hd-image.txt', 'rpc-hd-revision.txt')) {
+        Copy-Item -LiteralPath (Join-Path $InputDirectory $file) -Destination $rpcDumpDirectory
+    }
+    "core_sha256=$((Get-FileHash -Algorithm SHA256 -LiteralPath $rpcCore).Hash)" |
+        Set-Content -Encoding ASCII (Join-Path $rpcDumpDirectory 'core-sha256.txt')
+@'
+The DLL is the exact Release (-O3 -DNDEBUG) image loaded by these sessions,
+with -g DWARF retained. cdb provides the runtime module base and fault RIP;
+it need not understand MinGW DWARF. Compute RVA = RIP - runtime module base,
+then address = preferred ImageBase (rpc-hd-image.txt) + RVA. With matching
+MinGW binutils, map to source and inlined callers using:
+  addr2line -e arcdroid_rpcplan_libretro.dll -f -C -i <address>
+  objdump -d -l arcdroid_rpcplan_libretro.dll
+rpc-hd-symbols.txt is sorted by preferred virtual address. The commit and
+DLL SHA-256 accompany it. Never use symbols from a separately rebuilt DLL.
+'@ | Set-Content -Encoding ASCII (Join-Path $rpcDumpDirectory 'source-mapping.txt')
+    function Enable-RpcHdCrashDumps {
+        $parent = 'HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps'
+        $key = "$parent\retroarch.exe"
+        $parentExisted = Test-Path -LiteralPath $parent
+        $existed = Test-Path -LiteralPath $key
+        $previous = @{}
+        if ($existed) {
+            $item = Get-Item -LiteralPath $key
+            foreach ($name in @('DumpFolder', 'DumpType', 'DumpCount')) {
+                if ($item.GetValueNames() -contains $name) {
+                    $previous[$name] = @{ Value = $item.GetValue($name, $null,
+                        [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames);
+                        Kind = $item.GetValueKind($name) }
+                }
+            }
+        }
+        $settings = @{ Key = $key; Existed = $existed; Previous = $previous;
+            Parent = $parent; ParentExisted = $parentExisted }
+        try {
+            # New-Item -Force can replace an existing registry key. Preserve
+            # every pre-existing property, including settings we do not own.
+            if (-not $existed) { New-Item -Path $key -Force | Out-Null }
+            New-ItemProperty -LiteralPath $key -Name DumpFolder -PropertyType ExpandString -Value $rpcDumpDirectory -Force | Out-Null
+            New-ItemProperty -LiteralPath $key -Name DumpType -PropertyType DWord -Value 2 -Force | Out-Null
+            New-ItemProperty -LiteralPath $key -Name DumpCount -PropertyType DWord -Value 3 -Force | Out-Null
+        } catch {
+            Restore-RpcHdCrashDumps $settings
+            throw
+        }
+        Write-Host "RPC-only WER full dumps enabled: $rpcDumpDirectory"
+        return $settings
+    }
+    function Restore-RpcHdCrashDumps($Settings) {
+        if (-not $Settings.Existed) {
+            if (Test-Path -LiteralPath $Settings.Key) { Remove-Item -LiteralPath $Settings.Key }
+            if (-not $Settings.ParentExisted -and (Test-Path -LiteralPath $Settings.Parent)) {
+                $item = Get-Item -LiteralPath $Settings.Parent
+                if ($item.SubKeyCount -eq 0 -and $item.ValueCount -eq 0) {
+                    Remove-Item -LiteralPath $Settings.Parent
+                }
+            }
+            return
+        }
+        foreach ($name in @('DumpFolder', 'DumpType', 'DumpCount')) {
+            if ($Settings.Previous.ContainsKey($name)) {
+                $old = $Settings.Previous[$name]
+                New-ItemProperty -LiteralPath $Settings.Key -Name $name -PropertyType $old.Kind -Value $old.Value -Force | Out-Null
+            } else {
+                Remove-ItemProperty -LiteralPath $Settings.Key -Name $name -ErrorAction SilentlyContinue
+            }
+        }
+    }
+    function Save-RpcHdCrashEvidence($Run) {
+        if ($Run['RpcHdForceStopped'] -or -not $Run.Process.HasExited -or $Run.Process.ExitCode -eq 0) { return }
+        $summary = Join-Path $rpcDumpDirectory "$($Run.Name)-capture.txt"
+        try {
+            "pid=$($Run.Process.Id) exit_code=$($Run.Process.ExitCode)" | Set-Content -Encoding ASCII $summary
+            $deadline = [DateTime]::UtcNow.AddSeconds(30)
+            do {
+                $dumps = @(Get-ChildItem -LiteralPath $rpcDumpDirectory -Filter 'retroarch*.dmp' |
+                    Where-Object { $_.Name -match ('\.' + $Run.Process.Id + '\.') -and
+                        $_.LastWriteTimeUtc -ge $Run.StartUtc -and $_.Length -gt 0 })
+                if ($dumps.Count) { break }
+                Start-Sleep -Milliseconds 250
+            } while ([DateTime]::UtcNow -lt $deadline)
+            if (-not $dumps.Count) {
+                'No WER dump appeared for this PID within 30 s; logs and matching DLL/symbols retained.' |
+                    Add-Content -Encoding ASCII $summary
+                Write-Warning "No WER dump for $($Run.Name); see $summary"
+                return
+            }
+            $cdb = Get-Command cdb.exe -ErrorAction SilentlyContinue
+            $debugger = if ($cdb) { $cdb.Source } else { $null }
+            if (-not $debugger) {
+                foreach ($base in @(${env:ProgramFiles(x86)}, $env:ProgramFiles)) {
+                    if (-not $base) { continue }
+                    $candidate = Join-Path $base 'Windows Kits\10\Debuggers\x64\cdb.exe'
+                    if (Test-Path -LiteralPath $candidate) { $debugger = $candidate; break }
+                }
+            }
+            if (-not $debugger) {
+                'cdb absent; full dumps and matching DLL/symbols retained for offline analysis.' |
+                    Add-Content -Encoding ASCII $summary
+                Write-Warning "cdb is unavailable; dumps retained in $rpcDumpDirectory"
+                return
+            }
+            foreach ($dump in $dumps) {
+                $out = Join-Path $rpcDumpDirectory "$($Run.Name)-cdb.txt"
+                $err = Join-Path $rpcDumpDirectory "$($Run.Name)-cdb.stderr.txt"
+                $commands = '.exr -1; .ecxr; r; kv 30; lmv m arcdroid*; !teb; ~* kv 8; q'
+                "dump=$($dump.Name) cdb=$debugger commands=$commands" | Add-Content -Encoding ASCII $summary
+                $arguments = @('-z', ('"' + $dump.FullName + '"'), '-i', ('"' + $rpcDumpDirectory + '"'),
+                    '-y', ('"' + $rpcDumpDirectory + '"'), '-c', ('"' + $commands + '"'))
+                $process = Start-Process -FilePath $debugger -ArgumentList $arguments -PassThru -NoNewWindow `
+                    -RedirectStandardOutput $out -RedirectStandardError $err
+                if (-not $process.WaitForExit(60000)) {
+                    Stop-Process -Id $process.Id -Force
+                    $process.WaitForExit()
+                    'cdb timed out after 60 s; partial output and dump retained.' | Add-Content -Encoding ASCII $summary
+                } else {
+                    $process.WaitForExit()
+                    "cdb_exit_code=$($process.ExitCode)" | Add-Content -Encoding ASCII $summary
+                }
+            }
+        } catch {
+            Write-Warning "RPC dump analysis failed without changing the original failure: $($_.Exception.Message)"
+        }
+    }
     Add-Type -TypeDefinition @'
 using System;
 public static class ArcRpcHdCrc {
@@ -2890,6 +3020,8 @@ public static class ArcRpcHdCrc {
             throw "$($Run.Name) damage/refusal/frontend error; see collected logs"
         }
     }
+    $rpcDumpSettings = Enable-RpcHdCrashDumps
+    try {
     $previous = [UInt64]0
     foreach ($session in @(1, 2, 3)) {
         $run = $null
@@ -2899,6 +3031,7 @@ public static class ArcRpcHdCrc {
             Wait-RpcHdScreen $run $expected
             if ($session -eq 1) {
                 # No unload: the screenshot proves marker acknowledgement.
+                $run['RpcHdForceStopped'] = $true  # intentional termination is not a WER crash
                 Stop-Process -Id $run.Process.Id -Force
                 if (-not $run.Process.WaitForExit(30000)) { throw 'R2c force termination timed out' }
                 $run.Udp.Dispose()
@@ -2928,6 +3061,7 @@ public static class ArcRpcHdCrc {
             }
         }
     }
+    } finally { Restore-RpcHdCrashDumps $rpcDumpSettings }
     $rpcElapsed = ([DateTime]::UtcNow - $rpcStarted).TotalSeconds
     $result = "R2c native Windows RetroArch: force termination, reload gen1, write gen2, QUIT, reload gen2, timed frontend floppy eject/insert and full IDENTIFY/data comparisons PASS; added seconds=$('{0:F1}' -f $rpcElapsed)"
     Write-Host $result
