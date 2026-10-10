@@ -1,15 +1,21 @@
 # ArcDroid Handoff
 
-**Stage:** IMPLEMENTATION — roadmap item 6, RiscPC **R2c** (IDE and a scalable hard disc), run B (implementation of items 9–12)
-**Owner:** Sol (run B), supervised by Fable
-**Next:** supervise Sol R2c run B4 (the recovery run) to completion, then Fable reviews it and runs AC-6, AC-8 and AC-9 privately, before Opus QA.
-- **Running:** codex PID 74871, started 2026-10-10 00:05 CDT, resuming Sol thread `01a120ab-7bf4-7843-a879-6fab6d9b3736`.
-  - Clone: `.work/s60/sol2c/clone` on `slice/r2c-ide` at `7e55526` (run A plus `main` through `ff2b5f0`; draft PR #337).
-  - Prompt `.work/s60/sol2c/promptB4.md`; stream `streamB4.jsonl`; final message `finalB4.md`; report `SOL-REPORT-R2C-B.md` in the clone.
-  - Watchdog: detached `wait-run.sh`, PID 75829, writing its one line to `.work/s60/watch-solB4.txt`.
-- **Why a recovery run:** the Mac rebooted at about 12:30 CDT on 2026-10-09 while S59's Sol run B3 was in its final verification. The boot wiped `/private/tmp`, taking the uncommitted run B clone and every Fable scratchpad from S55 to S59. Nothing committed was lost. Sol's thread log survived, so run B4 rebuilds its tree from `.evidence/sol-run-b-replay.md` (its own 258 recorded calls) and then re-runs all verification. Earlier results do not count.
-- The pristine `rpcemu-0.9.5.tar.gz` was downloaded again from upstream; its SHA-256 matches the pin `4e4624641cd1a83af275bd6da8765d4a0e5e0c83f008f059014cc24c5c33d59e` in `engine/rpcemu/UPSTREAM.md`. Astra's store report was recovered from its thread log.
-- **Private work now lives in `.work/s<n>/`** inside this checkout (git-excluded through `.git/info/exclude`), not in `/private/tmp`, so a reboot cannot wipe it (D-149).
+**Stage:** IMPLEMENTATION — roadmap item 6, RiscPC **R2c** (IDE and a scalable hard disc), run C (test-only AC-9 Windows evidence)
+**Owner:** Sol (run C), supervised by Fable
+**Next:** supervise Sol R2c run C to completion, review it, commit it verbatim to `slice/r2c-ide` and check that CI's `windows-retroarch` job runs the new hard-disc leg. Finish AC-8 (running) and AC-9 on the Odin3, then hand PR #337 to Opus QA.
+- **Running:**
+  - **Sol run C:** codex PID 99550, started 2026-10-10 01:56 CDT, resuming thread `01a120ab-7bf4-7843-a879-6fab6d9b3736` in `.work/s60/sol2c/clone`. Prompt `promptC.md`, stream `streamC.jsonl`, final `finalC.md`, report `SOL-REPORT-R2C-C.md`. Watchdog: detached `wait-run.sh`, PID 343, writing to `.work/s60/watch-solC.txt`.
+  - **AC-8:** a Fable helper agent runs the private legs with the R2c build in `.work/s60/ab/r2c/`. Its evidence goes to `.work/s60/ac8/` (`LEDGER.md`). It ends with this window; a new holder re-runs any leg not marked done there.
+- **Run C's purpose (Fable decision, S60):** AC-9 needs native RetroArch save/reload, process termination and a media operation with the R2c disc on Windows. RetroArch cannot be driven interactively over SSH on the Founder's box, and CI must not use private firmware. Run C therefore adds a test-only `windows-retroarch` leg with an authored IDE guest: write at least 2 MiB so a checkpoint runs, `Stop-Process`, verify on reload, write again, network `QUIT`, verify, plus a floppy swap. The same plan and ROM serve Fable's Odin3 native RetroArch leg.
+- **R2c run B (recovered):** Sol run B4 rebuilt run B from its thread log after the reboot (below) and re-ran everything: host CTest 338/338, ASan/UBSan 333/333, 65/65 mutants killed, MinGW and Android arm64 builds and guards. Committed verbatim as `342e010`; `main` merged as `1ef7dc4` (draft PR #337).
+  - **Fable review: PASS.** Nothing outside scope changed: no Arculator, A3020-store, governance or CI file. The shipping `arc_io` keeps every existing call's behaviour (new counted/create/stream variants only). In an independent build, the A3020 formatter (SHA-256 `9ec06c75…`) and CRC-32 results are identical to `main`, and the new table equals the reflected `0xEDB88320` table. The import guard authenticates `ide.c` against the pinned archive, and the store's write path follows A1 (journal append, flush, length check, then index, cache and acknowledgement).
+  - **AC-6: PASS.** `main` `f13c5c7` against `1ef7dc4` on the 44-title set, in both package states: 42 of 44 identical. Only 105 and 205 differ, both known variance.
+- **Why run B was recovered:** the Mac rebooted at about 12:30 CDT on 2026-10-09 during S59's run B3, and the boot wiped `/private/tmp`, taking the uncommitted run B clone and every Fable scratchpad from S55 to S59. Run B4 rebuilt the tree from `.evidence/sol-run-b-replay.md` (Sol's own 258 recorded calls).
+- **Recovered private inputs** (in `.work/s60/`, indexed by `LEDGER.md`):
+  - the A/B scripts (`ab/`);
+  - the trial boot environment (`bootenv/`): HardDisc4 and PlingSystem re-downloaded with their SHA-256s verified, and the authored files from `probe/riscpc-trial` `5ff5481`;
+  - the trial's boot disc and installed 031/074 discs with CMOS (`bootenv/odin3/`, pulled from the Odin3, SHA-1 verified).
+- **Private work now lives in `.work/s<n>/`** inside this checkout (git-excluded through `.git/info/exclude`), not in `/private/tmp` (D-149).
 
 **R2c run A outcome (S59).**
 - **Sol run A** (fresh thread above, 1,831 s) is committed verbatim as `b4bc633`:
