@@ -1,9 +1,42 @@
 # ArcDroid Handoff
 
-**Stage:** IMPLEMENTATION — roadmap item 6, RiscPC **R2c**, run E2 (test-only: Windows RetroArch hard-disc leg directories)
-**Owner:** Sol (run E2), supervised by Fable
-**Next:** Sol R2c run E2 in `.work/s60/sol2c/clone` (thread `01a120ab-7bf4-7843-a879-6fab6d9b3736`), on top of run E `6882283` (committed locally by Fable). Fix `tools/test-retroarch-windows.ps1` so the run C hard-disc leg uses the fixture system directory and its own save directory, and asserts both from the RetroArch log before judging screenshots. CI at `30376e0` showed the leg refused at load because RetroArch used its default `system` directory and a per-core save subfolder (evidence in the clone's `.evidence/ci-windows-d/`). This is test-only; nothing else changes. Then Fable pushes runs E and E2 together, checks CI and dispatches Opus QA. The Odin3 legs and the merge wait for the device (D-153).
-- **Run E (D-152) result so far:** Fable's review is pending. On the Odin3, before the device left: hash identity passed on every arm64 path; SHA-256 ran at about 1,455–1,940 MiB/s (portable 343) and CRC-32 at 7,300–10,900 MiB/s (portable 510); the authored guest's worst hard-disc frame was 2.86–3.05 ms in three runs (bound 3.33 ms), with 0 frames over 0.20 T. On the Founder's Windows box (Ryzen 7800X3D) the SHA-NI path passed identity, at 938 MiB/s against portable 400.
+**Stage:** QA — roadmap item 6, RiscPC **R2c** (IDE and a scalable hard disc), PR #337 at `c0e3dd4`
+**Owner:** Opus (independent QA, `arcdroid-opus-qa`, effort high)
+**Next:** Opus QA of PR #337 at `c0e3dd4` in a fresh clone. Fable then adjudicates the findings. The merge also waits for the Odin3 legs on the final core (D-153) and for green CI, including the `windows-retroarch` hard-disc leg.
+
+**R2c implementation record (all Sol runs committed verbatim by Fable):**
+
+| Commit | Run | Content |
+|---|---|---|
+| `b4bc633` | A | the store contract `docs/riscpc-hd-store.md`; QA N1 |
+| `342e010` | B (rebuilt in B4 after the reboot) | items 9–12: the store, the IDE import and its patch, the formatter, plan v2 hard-disc fields and `hd_import` |
+| `a0830b9` | C | test-only native-RetroArch hard-disc leg: authored guest, Windows CI leg, CTest |
+| `30376e0` | D | R2c-2 (D-150/D-151): correct on RetroArch's real VFS; faithful test VFSs; audit |
+| `6882283` | E | R2c-3 (D-152): hardware SHA-256/CRC-32 with identical results; per-frame hard-disc cost report |
+| `c0e3dd4` | E2 | test-only: the Windows leg's fixture directories |
+
+**Fable evidence (S60):**
+- **Review:** PASS at runs B, D and E. Scope is clean; the shared `arc_io`, CRC and formatter keep identical results.
+- **AC-6 at `1ef7dc4`:** PASS, 42 of 44 identical with 105 and 205 as known variance. It is being re-run at `c0e3dd4`.
+- **AC-8:** PASS on the run B and run D builds:
+  - HD persistence on 3.71, 3.60 and 3.50;
+  - 031, 074 and 084 installed from floppies onto the imported boot disc and cold-started;
+  - the catalogue-before-install replay;
+  - cold starts from the trial's own images.
+- **AC-9:**
+  - **Odin3, run D core, native RetroArch:** the three-session leg (kill, quit, floppy swap) passed; 20 sessions passed at 173–179 MB PSS with 0 errors; store open takes about 9 ms.
+  - **Odin3, run E:** arm64 hash identity passed; the authored guest's worst hard-disc frame was 2.86–3.05 ms (bound 3.33 ms) over three runs.
+  - **SHA-NI:** identity passed on the Founder's 7800X3D.
+  - **Still owed on the device (D-153):** the 031 install with `--hd-cost`, plus repeats of the native legs on the final core.
+- **Carried to R3:** the false "flagged for RiscPC-class machines … not emulated" notice appears on RPC plan launches. Also: the plan cannot seed CMOS together with `cmos=persist` (installs configure CMOS in the guest); drive 1 refuses `.jfd` (raw helper media only, by design); RISC OS 3.50 on ARM610 shows about 18 s of blank screen before the desktop (with or without the hard disc).
+
+**QA focus:**
+1. The store against `docs/riscpc-hd-store.md`, D-145, D-147, D-150 and D-151: acknowledgement order, recovery, retirement and GC without listings, debris by fixed paths, population and import, bounds.
+2. The RetroArch-faithful test VFSs: do they truly model RetroArch 1.22.2? Could any test still pass only on a generous VFS?
+3. The shared hash change: identity of every path, run-time detection and fallback, ISA confinement, and any risk to shipping Arculator stores.
+4. The IDE import and patch provenance (`archive_only_imports`), the frozen command matrix, the scheduler slot, IRQ/nIEN and reset.
+5. The dormant boundary: shipping routes, options, exports and `.info` unchanged.
+6. The test-only Windows leg and the per-frame cost report: do they prove what they claim?
 
 **R2c-3 work order (D-152): hard-disc work must fit the frame budget on the Odin3.**
 - **Measured (S60, run D core, arm64 runner, authored guest, hard disc on against off):** 256-sector writes add 1.7–3.3 ms; checkpoint steps add 5.0–5.8 ms (0.35 T). simpleperf puts the cost mainly in `arc_sha256_transform` and `arc_crc32`. The bound is 0.20 T (3.33 ms) extra on any frame.
