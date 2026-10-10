@@ -86,7 +86,7 @@ These ranges are research targets, not predictions (Astra S58):
   - **An executable-memory probe inside the real RetroArch on the Odin3.** It emits through RW and executes through RX, repeatedly replaces code at reused addresses, does the required cache synchronisation, and calls a C helper and returns with ABI state intact. It includes an injected helper-to-session-fault unwind, and records Android and RetroArch versions, runtime page size, mapping failures and teardown. If the probe copies or adapts any fork code, Q3 must be answered first.
   - **Draft timing-contract amendments.** They cover the exit contract and guard invariants (constraints 2–4).
   - **This Astra challenge.** Done S58: ACCEPT WITH CHANGES, all incorporated here (D-142).
-  - **Progress (S59).** Done: the executable-memory probe, a first Odin3 profile, and the guard and exit invariants, accepted as the Phase-0 basis in `docs/riscpc-translator-invariants.md` (D-146). Open: the Windows profile, representative gameplay, block-shape and churn measurements, and the Q-3 oracle fix. Results are under *Phase 0 evidence* below.
+  - **Progress (S59, S60).** Done: the executable-memory probe, a first Odin3 profile, the guard and exit invariants (accepted as the Phase-0 basis in `docs/riscpc-translator-invariants.md`, D-146), and the Windows profile (S60). Open: representative gameplay, block-shape and churn measurements, and the Q-3 oracle fix. Results are under *Phase 0 evidence* below.
   - **Outputs:** accepted guard and exit invariants, a workload-based cost model, the smallest justified implementation scope, and a Founder decision on the design objective (Q1). Performance is re-baselined against the integrated R4/item-5 core before implementation.
 - **Phase 1 (after R4 and item 5).**
   - **First,** exact interpreter optimisations that the profile identifies.
@@ -163,12 +163,43 @@ These ranges are research targets, not predictions (Astra S58):
 - **Bus catch-up covers older work only,** never the current instruction's own requests.
 - **Oracle defect (Q-3).** The fetch memo is keyed by virtual line only and can outlive a change of eligibility after a translation-cache re-walk. A separate small corrective work order fixes it after R2c merges, before any translator baseline.
 
+**Interpreter profile on Windows (S60).**
+- **Setup:**
+  - Binary: `main` `211c9a7` (code identical to the Odin3 run's `ee364d9`), a Release build with `-g`, cross-built on macOS with MinGW-w64 GCC 16.2 against UCRT. The shipped CI build uses MSYS2 UCRT64 GCC, so the compiler version differs.
+  - Host: the Founder's Windows box, a Ryzen 7 7800X3D (8 cores, 64 GB), Windows build 26300, High performance power plan.
+  - Workloads: the same ten as the Odin3, with the same bytes (all hashes checked against the Odin3 copies). Same rate, pacing and 601 frames.
+  - Timing: three unprofiled runs per workload. The table gives the median ns per instruction and the p95 range.
+  - Profiler: a scratch sampler that suspends the runner's thread and reads its instruction pointer about 4,000 times a second, then symbolises against the MinGW symbol table. Sampling slows the run by about 10 %; the timing columns come from the unprofiled runs.
+- **Cross-platform equality holds.** On all ten workloads, the guest instruction counts and the runner traces are byte-identical to the Odin3.
+
+| Workload | Guest MIPS | ns/instr, Windows (Odin3) | p95/T, Windows (Odin3) | Execute | MMU | Timing | Devices |
+|---|---|---|---|---|---|---|---|
+| hot (branch) | 100 | 7.5 (9.7) | 0.77–0.78 (0.98) | 67 % | 31 % | 1 % | 0 % |
+| 32-instruction ALU block | 100 | 9.3 (10.0) | 0.94–0.96 (1.01) | 62 % | 30 % | 7 % | 0 % |
+| warm load/store block | 100 | 15.9 (18.2) | 1.60–1.63 (1.83) | 41 % | 33 % | 20 % | 0 % |
+| LDM/STM 8 registers | 4.4 | 159 (163) | 0.70–0.71 (0.72) | 5 % | 12 % | 74 % | 0 % |
+| streaming reads | 25.9 | 17.9 (19.1) | 0.47–0.48 (0.50) | 37 % | 22 % | 37 % | 0 % |
+| streaming writes | 19.2 | 31.5 (32.1) | 0.61–0.63 (0.62) | 18 % | 13 % | 64 % | 0 % |
+| translation-cache conflicts | 5.6 | 29.8 (31.9) | 0.17 (0.18) | 21 % | 12 % | 62 % | 0 % |
+| MMIO loop | 19.4 | 15.7 (17.5) | 0.31–0.33 (0.34) | 40 % | 26 % | 28 % | 2 % |
+| AC-8 (video, audio, aborts) | 1.7 | 43.6 (43.4) | 0.08 (0.07) | 8 % | 9 % | 25 % | 50 % |
+
+- **The Windows desktop gives little more headroom than the Odin3.** Its cost per instruction is 0–23 % lower (AC-8 is level), so the shape of the problem is the same on both platforms.
+  - Warm load/store-dense code misses real time on Windows too (p95 1.60 T at 100 MIPS).
+  - Cache-hot ALU code uses 0.94–0.96 T, leaving no room for devices or a higher rate.
+  - This bears on Q1 and Q2: neither platform can fund a higher ceiling alone, and the portable path has to help both.
+- **Instruction-fetch translation is again about a third of cache-hot cost** (30–33 %). GCC inlines `checked_translation` into `arc_rpc_getpccache` on x86-64, so the cost appears under that one symbol.
+- **Memory-bound code is dominated by the R2a timing service** (37–74 %), as on the Odin3.
+- **Devices** cost about 0.04 T in the AC-8 mode on both platforms.
+- **Run-to-run spread is small:** p95 varies by at most 0.03 T across three runs.
+- **Not covered:** executable memory on Windows (the probe was Odin3-only), and the native RetroArch frontend (the runner was used).
+
 **Still open in Phase 0:**
-- the Windows profile;
 - representative gameplay (after R2c, with AC-10);
 - the block-length distribution, fallback frequency and code churn, which need block instrumentation;
 - cold-start against sustained frame tails;
-- repeated runs;
+- repeated runs on the Odin3 (done on Windows);
+- the executable-memory probe on Windows;
 - the Q-3 oracle fix.
 
 ## Founder decisions (none needed now)

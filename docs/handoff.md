@@ -70,8 +70,9 @@
     - **First Odin3 profile done.** Fetch translation is a third of cache-hot cost. Warm load/store code reaches p95 1.83 T at 100 MIPS. The timing model dominates memory-bound code. Devices cost about 0.04 T.
     - **Invariants accepted as the Phase-0 basis (D-146)**, in `docs/riscpc-translator-invariants.md`, after an Astra check: ACCEPT WITH CHANGES, three HIGH and four MEDIUM, all incorporated. Rulings are Q-1 to Q-11.
   - **Q-3 oracle fix (D-146), queued after R2c merges and before R3.** The R2a fetch memo is keyed by virtual line only and can outlive a change of eligibility after a translation-cache re-walk. The work order is a small corrective slice: a targeted reproduction plus the smallest fix, with no blanket golden regeneration, and its own Fable review and QA.
+  - **Windows profile done (S60, D-148).** It is in `docs/riscpc-translator.md`, *Interpreter profile on Windows*. The 7800X3D costs 0–23 % less per instruction than the Odin3; warm load/store code still misses real time (p95 1.60 T), fetch translation is again about a third of cache-hot cost, and traces are byte-identical to the Odin3. Private files are in `.work/s60/prof/` (`winsample.py`, `winrun.py`, `symbolise.py`, `winout/`); the copies on the Windows box are in `C:\Users\sinmu\arcdroid-s60prof\`.
   - **Remaining Phase-0 steps for Fable:**
-    - the Windows profile, by SSH to the Founder's Windows box (Founder S60, D-148);
+    - the executable-memory probe on Windows;
     - representative gameplay (after R2c);
     - block-shape and churn instrumentation;
     - the Q-1 design objective, put to the Founder at the end of Phase 0.
