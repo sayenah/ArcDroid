@@ -19,13 +19,13 @@ import tarfile
 ARCHIVE_SHA256 = "4e4624641cd1a83af275bd6da8765d4a0e5e0c83f008f059014cc24c5c33d59e"
 PRISTINE = "fe96e411a747021c7d110b4302d819fe4bca179c"
 NAMES = ("arm", "arm_common", "cp15", "mem", "iomd", "vidc20", "keyboard",
-         "cmos", "superio", "i8042", "fdc")
+         "cmos", "superio", "i8042", "fdc", "ide")
 ALLOWLIST = {"COPYING", "readme.txt", "src/rpcemu.h", "src/sound.h",
              "src/ide.h", "src/podules.h"} | {
     f"src/{name}.{extension}" for name in NAMES for extension in ("c", "h")}
 SYSTEM_HEADERS = {"assert.h", "errno.h", "limits.h", "stdarg.h", "stddef.h",
                   "stdint.h", "stdio.h", "stdlib.h", "string.h", "time.h", "stdbool.h"}
-PROJECT_HEADERS = {"engine/rpc/rpc_audio.h", "engine/rpc/rpc_input.h", "engine/rpc/rpc_video.h", "engine/rpc/rpc_floppy.h", "engine/rpc/rpc_memory.h", "engine/rpc/rpc_rtc.h", "engine/rpc/rpc_namespace.h", "engine/rpc/rpc_timing.h", "engine/rpc/rpc_scheduler.h", "engine/rpc/rpc_mem_timing.h"}
+PROJECT_HEADERS = {"engine/rpc/rpc_ide.h", "engine/rpc/rpc_audio.h", "engine/rpc/rpc_input.h", "engine/rpc/rpc_video.h", "engine/rpc/rpc_floppy.h", "engine/rpc/rpc_memory.h", "engine/rpc/rpc_rtc.h", "engine/rpc/rpc_namespace.h", "engine/rpc/rpc_timing.h", "engine/rpc/rpc_scheduler.h", "engine/rpc/rpc_mem_timing.h"}
 # R2b typed media service: exact neutral API closure, never another backend.
 PROJECT_HEADERS |= {"core/adffs.h", "core/arcdroid_core.h", "core/hd_program.h",
     "core/jfd.h", "engine/arc_boot_watch.h", "engine/arc_disc_request.h",
@@ -130,7 +130,13 @@ def verify(root, archive_path=None, compiler=None):
             and manifest["pristine_commit"] == PRISTINE
             and manifest["tarball_sha256"] == ARCHIVE_SHA256,
             "unexpected release/provenance")
+    additions = {"src/ide.c": "0c86b5f5e3677cfef725ed275086345cf4dedf425413c83fc8f1022a87f4cd62"}
+    require(manifest.get("archive_only_imports") == additions,
+            "unexpected R2c archive import provenance")
     records = manifest["files"]
+    require(all(record["sha256"] == additions[record["path"]]
+                for record in records if record["path"] in additions),
+            "R2c original hash differs from pinned source")
     paths = [record["path"] for record in records]
     require(len(paths) == len(set(paths)) and set(paths) == ALLOWLIST,
             "manifest differs from D-137 allowlist")
@@ -195,6 +201,11 @@ def verify(root, archive_path=None, compiler=None):
                 original = archive.extractfile(member).read()
                 require(hashlib.sha256(original).hexdigest() == record["sha256"],
                         f"original hash mismatch: {record['path']}")
+                # R2c's new file cannot exist in the immutable R1 import
+                # commit. Its original bytes are pinned above and verified
+                # directly against the same authenticated release archive.
+                if record["path"] in additions:
+                    continue
                 pristine = subprocess.check_output(
                     ["git", "show", f"{PRISTINE}:engine/rpcemu/{record['path']}"], cwd=root)
                 require(original == pristine, f"pristine blob mismatch: {record['path']}")

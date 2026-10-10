@@ -7476,6 +7476,7 @@ static void arc_rpc_keep_media_options(ArcCoreOptions *updated,bool notify)
     updated->jfd_omitted_strict=arc_core_options.jfd_omitted_strict;
 }
 static void arc_plan_notice(const char *message,bool error) { arc_message(message,error?RETRO_LOG_ERROR:RETRO_LOG_INFO); }
+static void arc_plan_log(const char *message) { if(arc_log)arc_log(RETRO_LOG_ERROR,"%s\n",message); }
 #endif
 RETRO_API bool retro_load_game(const struct retro_game_info *game)
 {
@@ -7491,6 +7492,7 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game)
       arc_environment(RETRO_ENVIRONMENT_SET_KEYBOARD_CALLBACK, (void *)&keyboard);
       arc_environment(RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY, &save);
       arc_test_plan_set_notice(arc_plan_notice);
+      arc_test_plan_set_log(arc_plan_log);
       const ArcTestPlanMedia callbacks={arc_rpc_plan_media,arc_disk_set_eject,arc_disk_set_index,arc_disk_replace,arc_disk_add};
       arc_test_plan_set_media(&callbacks);
       if (!arc_test_plan_load(game->path, system, save, error, sizeof(error))) {
@@ -7875,6 +7877,7 @@ static void arc_rpc_present_run(void)
    ArcEngineFrame frame;
    bool ran = arc_engine_run_frame(&arc_inputs, &frame);
 #if defined(ARCDROID_TEST_PLANS)
+   arc_test_plan_hd_frame();
    char persist_error[256];
    if(!arc_test_plan_persist(persist_error,sizeof(persist_error)) && persist_error[0])arc_message(persist_error,RETRO_LOG_ERROR);
 #endif

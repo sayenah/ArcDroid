@@ -82,28 +82,44 @@ static uint8_t boot_check(const uint8_t *p)
    return (uint8_t)sum;
 }
 
-bool arc_install_hd_format(uint8_t *output, size_t size)
+static void emit(uint8_t *output, size_t size, uint64_t offset,
+                 uint64_t at, const uint8_t *data, size_t length)
 {
-   if (!output || size != ARC_INSTALL_HD_BYTES ||
-       ROOT_ADDRESS + 2048u > ARC_INSTALL_HD_BYTES) return false;
+   uint64_t end = offset + size, limit = at + length;
+   uint64_t lo = offset > at ? offset : at, hi = end < limit ? end : limit;
+   if (lo < hi) memcpy(output + (size_t)(lo - offset), data + (size_t)(lo - at), (size_t)(hi - lo));
+}
+
+bool arc_hd_format_range(unsigned cylinders, unsigned log_map_bit,
+    uint64_t offset, uint8_t *output, size_t size)
+{
+   if (!output || !((cylinders == 32u && log_map_bit == 10u) ||
+                    (cylinders == 256u && log_map_bit == 13u))) return false;
+   uint32_t bytes = cylinders * 63u * 16u * 512u;
+   uint32_t map_address = (2u * MAP_ZONE_BITS - 480u) << log_map_bit;
+   uint32_t root_address = map_address + 2u * MAP_BYTES;
+   unsigned last_zone_end = 32u + (bytes >> log_map_bit) -
+      ((MAP_ZONES - 1u) * MAP_ZONE_BITS - 480u);
+   if (offset > bytes || size > bytes - offset || root_address + 2048u > bytes) return false;
    memset(output, 0, size);
    uint8_t record[60] = {0};
    record[0] = 9u; record[1] = ARC_INSTALL_HD_SPT;
    record[2] = ARC_INSTALL_HD_HEADS; record[3] = 0u;
-   record[4] = 15u; record[5] = 10u;
+   record[4] = 15u; record[5] = (uint8_t)log_map_bit;
    record[9] = MAP_ZONES;
    record[10] = 32u;
    put32(record + 12u, 0x20bu);
-   put32(record + 16u, ARC_INSTALL_HD_BYTES);
+   put32(record + 16u, bytes);
    record[20u] = 0x44u; record[21u] = 0x41u; /* disc id 0x4144 */
    memcpy(record + 22u, "ArcDroidHD", 10u);
-   put32(output + 0xc00u, 0x20000000u);
-   memcpy(output + 0xdc0u, record, sizeof(record));
+   uint8_t boot[512] = {0};
+   put32(boot, 0x20000000u);
+   memcpy(boot + 0x1c0u, record, sizeof(record));
    uint8_t map[MAP_BYTES] = {0};
    for (unsigned zone = 0u; zone < MAP_ZONES; ++zone) {
       uint8_t *block = map + zone * MAP_ZONE_BYTES;
       unsigned start = zone ? 32u : 512u;
-      unsigned end = zone == MAP_ZONES - 1u ? LAST_ZONE_END : 4096u;
+      unsigned end = zone == MAP_ZONES - 1u ? last_zone_end : 4096u;
       if (zone == 0u) memcpy(block + 4u, record, sizeof(record));
       /* Fragment 2 owns the boot block in zone 0 and the maps/root in zone 2. */
       if (zone == 0u || zone == 2u) {
@@ -124,9 +140,17 @@ bool arc_install_hd_format(uint8_t *output, size_t size)
       block[3] = zone ? 0u : 0xffu;
       block[0] = zone_check(block);
    }
-   memcpy(output + MAP_ADDRESS, map, MAP_BYTES);
-   memcpy(output + MAP_ADDRESS + MAP_BYTES, map, MAP_BYTES);
-   make_root(output + ROOT_ADDRESS);
-   output[0xdffu] = boot_check(output + 0xc00u);
+   uint8_t root[2048]; make_root(root);
+   boot[511] = boot_check(boot);
+   emit(output, size, offset, 0xc00u, boot, sizeof(boot));
+   emit(output, size, offset, map_address, map, sizeof(map));
+   emit(output, size, offset, map_address + MAP_BYTES, map, sizeof(map));
+   emit(output, size, offset, root_address, root, sizeof(root));
    return true;
+}
+
+bool arc_install_hd_format(uint8_t *output, size_t size)
+{
+   return size == ARC_INSTALL_HD_BYTES &&
+      arc_hd_format_range(32u, 10u, 0u, output, size);
 }

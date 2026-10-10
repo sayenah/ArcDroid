@@ -41,6 +41,7 @@ engine/rpcemu/src/cp15.c
 engine/rpcemu/src/mem.c
 engine/rpcemu/src/cmos.c
 engine/rpcemu/src/fdc.c
+engine/rpcemu/src/ide.c
 engine/rpcemu/src/iomd.c
 engine/rpcemu/src/keyboard.c
 engine/rpcemu/src/vidc20.c
@@ -80,6 +81,7 @@ platform/arcdroid_sound.c
 platform/arcdroid_video.c
 libretro/arc_io.c
 libretro/install_store.c
+libretro/rpc_hd_store.c
 libretro/jfd_store.c
 libretro/arcdroid_libretro.c
 core/*.h
@@ -114,7 +116,7 @@ pattern='(^|[^[:alnum:]_>.])(fopen|open|_wfopen|gz[a-z]*|CreateFile[A-Za-z]*)[[:
 rpc_sources='engine/rpc/rpc_session.c engine/rpc/rpc_audio.c engine/rpc/rpc_input.c engine/rpc/rpc_timing.c engine/rpc/rpc_mem_timing.c
 engine/rpc/rpc_floppy.c engine/rpc/rpc_scheduler.c engine/rpc/rpc_rtc.c
 engine/rpcemu/src/arm.c engine/rpcemu/src/arm_common.c engine/rpcemu/src/cp15.c
-engine/rpcemu/src/mem.c engine/rpcemu/src/cmos.c engine/rpcemu/src/fdc.c
+engine/rpcemu/src/mem.c engine/rpcemu/src/cmos.c engine/rpcemu/src/fdc.c engine/rpcemu/src/ide.c
 engine/rpcemu/src/iomd.c engine/rpcemu/src/keyboard.c engine/rpcemu/src/vidc20.c
 engine/rpcemu/src/superio.c engine/rpcemu/src/i8042.c'
 rpc_cmake_sources=$(grep -oE 'engine/(rpc|rpcemu)/[[:alnum:]_./-]+\.c' CMakeLists.txt | sort -u)
@@ -124,7 +126,8 @@ for source in $rpc_cmake_sources; do
     exit 1
   fi
 done
-rpc_pattern='(^|[^[:alnum:]_])(fopen[0-9]*|freopen|fclose|fread|fwrite|fseek[a-z0-9]*|ftell[a-z0-9]*|open|close|read|write|socket|connect|send[a-z]*|recv[a-z]*|pthread_[a-z_]*|CreateThread|sleep|usleep|nanosleep|Sleep|time|clock|clock_gettime|gettimeofday|localtime|gmtime|getenv|exit|abort|assert)[[:space:]]*\('
+# Backend member callbacks are the authorized frontend boundary, not host libc calls.
+rpc_pattern='(^|[^[:alnum:]_>.])(fopen[0-9]*|freopen|fclose|fread|fwrite|fseek[a-z0-9]*|ftell[a-z0-9]*|open|close|read|write|socket|connect|send[a-z]*|recv[a-z]*|pthread_[a-z_]*|CreateThread|sleep|usleep|nanosleep|Sleep|time|clock|clock_gettime|gettimeofday|localtime|gmtime|getenv|exit|abort|assert)[[:space:]]*\('
 if grep -En "$rpc_pattern" $rpc_sources; then
   printf '%s\n' 'shipping I/O guard: forbidden RPCEmu host service' >&2
   exit 1
@@ -205,6 +208,18 @@ case "${1:-}" in
     printf '%s\n' 'void injected_header(void) { dumpregs(); }' > "$guard_tmp/injected.h"
     if ARCDROID_SHIPPING_IO_SOURCES="$guard_tmp/injected.h" sh "$0" --scan-only >/dev/null 2>&1; then
       printf '%s\n' 'shipping I/O guard self-test: injected header dump was not rejected' >&2
+      exit 1
+    fi
+    for call in 'read(0,0,0)' 'write(0,0,0)' 'clock_gettime(0,0)'; do
+      printf 'void injected(void) { (void)%s; }\n' "$call" > "$guard_tmp/rpc.c"
+      if ! grep -Eq "$rpc_pattern" "$guard_tmp/rpc.c"; then
+        printf 'shipping I/O guard self-test: direct RPC %s was not rejected\n' "$call" >&2
+        exit 1
+      fi
+    done
+    printf '%s\n' 'void adapter(void) { ide.backend.read(0,0,0,0); ide.backend.write(0,0,0,0); }' > "$guard_tmp/rpc.c"
+    if grep -Eq "$rpc_pattern" "$guard_tmp/rpc.c"; then
+      printf '%s\n' 'shipping I/O guard self-test: authorized backend callbacks were rejected' >&2
       exit 1
     fi
     printf '%s\n' 'shipping I/O guard self-test: file, gzip, platform-open and dump injections rejected'

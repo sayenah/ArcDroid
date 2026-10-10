@@ -3,6 +3,7 @@
 #define ARC_TEST_PLAN_H
 #include "arcdroid_core.h"
 #include "libretro.h"
+#include "rpc_hd_store.h"
 #include <stdbool.h>
 #include <stddef.h>
 #define ARC_TEST_PLAN_EXTENSION "arcplan"
@@ -19,9 +20,13 @@ typedef struct {
 } ArcTestPlanMedia;
 void arc_test_plan_set_media(const ArcTestPlanMedia *callbacks);
 void arc_test_plan_set_notice(void (*notice)(const char *, bool));
+void arc_test_plan_set_log(void (*log)(const char *));
 bool arc_test_plan_pending(void);
 bool arc_test_plan_slice(char *error, size_t size);
+void arc_test_plan_hd_frame(void);
 bool arc_test_plan_persist(char *error, size_t size);
+RETRO_API bool arc_test_plan_hd_stats(ArcRpcHdStats *out);
+RETRO_API bool arc_test_plan_hd_write(uint32_t lba,uint32_t count,const uint8_t *bytes);
 RETRO_API unsigned arc_test_plan_cmos_phase(void);
 RETRO_API bool arc_test_plan_cmos_pacing(unsigned frames);
 void arc_test_plan_reset(void);

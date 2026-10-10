@@ -252,6 +252,16 @@ typedef struct {
 
 uint32_t arc_crc32(const void *data, size_t size);
 void arc_sha1_hex(const void *data, size_t size, char output[41]);
+typedef struct {
+   uint32_t state[8];
+   uint64_t length;
+   uint8_t block[64];
+   size_t used;
+} ArcSha256;
+void arc_sha256_init(ArcSha256 *ctx);
+void arc_sha256_update(ArcSha256 *ctx, const void *data, size_t size);
+/* Finalises a copy; append state remains usable. */
+void arc_sha256_final(const ArcSha256 *ctx, uint8_t output[32]);
 void arc_sha256_hex(const void *data, size_t size, char output[65]);
 ArcDigest arc_digest(const void *data, size_t size);
 static inline uint64_t arc_timestamp_elapsed_cycles(uint64_t start, uint64_t end)

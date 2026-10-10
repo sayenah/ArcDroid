@@ -143,7 +143,9 @@
       "original_path": "src/ide.h",
       "sha256": "edfe8bb9c0cda20f135c767ee4570db32b4f3cec87a08c4264a44a2ee831d284",
       "licence_header": "/*\n  RPCEmu - An Acorn system emulator\n\n  Copyright (C) 2005-2010 Sarah Walker\n\n  This program is free software; you can redistribute it and/or modify\n  it under the terms of the GNU General Public License as published by\n  the Free Software Foundation; either version 2 of the License, or\n  (at your option) any later version.\n\n  This program is distributed in the hope that it will be useful,\n  but WITHOUT ANY WARRANTY; without even the implied warranty of\n  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the\n  GNU General Public License for more details.\n\n  You should have received a copy of the GNU General Public License\n  along with this program; if not, write to the Free Software\n  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.\n */",
-      "patches": []
+      "patches": [
+        "devices-r2c-ide"
+      ]
     },
     {
       "path": "src/iomd.c",
@@ -262,6 +264,15 @@
       "sha256": "614dc22feb56e768d03a6d7ab4df93d5b9971096bcea4689f6aa1a9acc516845",
       "licence_header": "/*\n  RPCEmu - An Acorn system emulator\n\n  Copyright (C) 2005-2010 Sarah Walker\n\n  This program is free software; you can redistribute it and/or modify\n  it under the terms of the GNU General Public License as published by\n  the Free Software Foundation; either version 2 of the License, or\n  (at your option) any later version.\n\n  This program is distributed in the hope that it will be useful,\n  but WITHOUT ANY WARRANTY; without even the implied warranty of\n  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the\n  GNU General Public License for more details.\n\n  You should have received a copy of the GNU General Public License\n  along with this program; if not, write to the Free Software\n  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.\n */",
       "patches": []
+    },
+    {
+      "path": "src/ide.c",
+      "original_path": "src/ide.c",
+      "sha256": "0c86b5f5e3677cfef725ed275086345cf4dedf425413c83fc8f1022a87f4cd62",
+      "licence_header": "/*\n  RPCEmu - An Acorn system emulator\n\n  Copyright (C) 2005-2010 Sarah Walker\n\n  This program is free software; you can redistribute it and/or modify\n  it under the terms of the GNU General Public License as published by\n  the Free Software Foundation; either version 2 of the License, or\n  (at your option) any later version.\n\n  This program is distributed in the hope that it will be useful,\n  but WITHOUT ANY WARRANTY; without even the implied warranty of\n  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the\n  GNU General Public License for more details.\n\n  You should have received a copy of the GNU General Public License\n  along with this program; if not, write to the Free Software\n  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.\n */",
+      "patches": [
+        "devices-r2c-ide"
+      ]
     }
   ],
   "patches": [
@@ -420,6 +431,14 @@
       "files": [
         "src/fdc.c"
       ]
+    },
+    {
+      "id": "devices-r2c-ide",
+      "files": [
+        "src/ide.c",
+        "src/ide.h"
+      ],
+      "reason": "D-139 single transactional ATA master, owned backend, virtual timing and IRQ/reset containment; remove host files, ATAPI and slave."
     }
   ],
   "adapted_sources": [
@@ -450,5 +469,8 @@
     "cmos.ram",
     "blank media",
     "all binaries and guest files"
-  ]
+  ],
+  "archive_only_imports": {
+    "src/ide.c": "0c86b5f5e3677cfef725ed275086345cf4dedf425413c83fc8f1022a87f4cd62"
+  }
 }

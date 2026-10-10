@@ -1,0 +1,133 @@
+/* Real file VFS process-termination oracle. Authored GPL-2.0-only. */
+#if !defined(_WIN32)
+#define _POSIX_C_SOURCE 200809L
+#define _XOPEN_SOURCE 700
+#endif
+#include "rpc_hd_store.h"
+#include "arc_io.h"
+#include <assert.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <signal.h>
+#ifdef _WIN32
+#include <windows.h>
+#include <io.h>
+#endif
+#define vfs_open base_open
+#define vfs_close base_close
+#define vfs_size base_size
+#define vfs_seek base_seek
+#define vfs_read base_read
+#define vfs_write base_write
+#define vfs_flush base_flush
+#define vfs_stat base_stat
+#define vfs_remove base_remove
+#define vfs_rename base_rename
+#include "../tools/rpc_runner_vfs.h"
+#undef vfs_open
+#undef vfs_close
+#undef vfs_size
+#undef vfs_seek
+#undef vfs_read
+#undef vfs_write
+#undef vfs_flush
+#undef vfs_stat
+#undef vfs_remove
+#undef vfs_rename
+static unsigned boundary,cut;
+static void point(void)
+{
+    ++boundary;if(cut==boundary){
+#ifdef _WIN32
+        TerminateProcess(GetCurrentProcess(),77);
+#else
+        raise(SIGKILL);
+#endif
+        abort();
+    }
+}
+void arc_riscpc_hd_test_point(unsigned stage) {assert(stage>=1&&stage<=3);point();}
+#define WRAP(name,type,params,args) static type observed_##name params {point();type result=base_##name args;point();return result;}
+WRAP(open,struct retro_vfs_file_handle *,(const char *p,unsigned m,unsigned h),(p,m,h))
+WRAP(close,int,(struct retro_vfs_file_handle *h),(h))
+WRAP(size,int64_t,(struct retro_vfs_file_handle *h),(h))
+WRAP(seek,int64_t,(struct retro_vfs_file_handle *h,int64_t n,int o),(h,n,o))
+WRAP(read,int64_t,(struct retro_vfs_file_handle *h,void *p,uint64_t n),(h,p,n))
+WRAP(write,int64_t,(struct retro_vfs_file_handle *h,const void *p,uint64_t n),(h,p,n))
+WRAP(flush,int,(struct retro_vfs_file_handle *h),(h))
+WRAP(stat,int32_t,(const char *p,int32_t *n),(p,n))
+WRAP(remove,int,(const char *p),(p))
+WRAP(rename,int,(const char *a,const char *b),(a,b))
+static bool no_listing(struct retro_vfs_dir_handle *d){(void)d;return false;}
+static void idle(ArcRpcHdStore *s)
+{ArcRpcHdStats a;for(unsigned n=0;n<2000;++n){arc_riscpc_hd_tick(s);arc_riscpc_hd_stats(s,&a);assert(!a.read_only);if(a.state==ARC_RPC_HD_IDLE)return;}assert(0);}
+static const char *id="0123456789012345678901234567890123456789";
+static ArcRpcHdStore *open_store(bool blank)
+{char error[256];ArcRpcHdStore *s=arc_riscpc_hd_open(save_directory,id,blank,error,sizeof(error));if(!s)fprintf(stderr,"open: %s\n",error);assert(s);return s;}
+static void sector(ArcRpcHdStore *s,unsigned lba,unsigned value)
+{uint8_t p[512];assert(arc_riscpc_hd_read(s,lba,1,p));for(unsigned i=0;i<512;++i)assert(p[i]==value);}
+int main(int argc,char **argv)
+{
+    assert(argc==5);assert(canonical(argv[1],save_directory));arc_io_set_vfs(&vfs);vfs.readdir=no_listing;
+    vfs.open=observed_open;vfs.close=observed_close;vfs.size=observed_size;vfs.seek=observed_seek;
+    vfs.read=observed_read;vfs.write=observed_write;vfs.flush=observed_flush;vfs.stat=observed_stat;
+    vfs.remove=observed_remove;vfs.rename=observed_rename;
+    const char *mode=argv[2];bool population=!strcmp(argv[3],"population"),interleaved=!strcmp(argv[3],"interleaved");
+    if(!strcmp(argv[3],"creation")){
+        if(!strcmp(mode,"write")){
+            boundary=0;cut=(unsigned)strtoul(argv[4],NULL,10);
+            ArcRpcHdStore *s=open_store(true);idle(s);
+            printf("boundaries=%u\n",boundary);arc_riscpc_hd_close(s);return 0;
+        }
+        assert(!strcmp(mode,"verify"));
+        ArcRpcHdStore *s=open_store(false);ArcRpcHdStats a;arc_riscpc_hd_stats(s,&a);
+        uint8_t p[512];
+        if(a.published)assert(arc_riscpc_hd_read(s,6,1,p)&&p[3]==0x20);
+        else assert(!arc_riscpc_hd_read(s,6,1,p));
+        arc_riscpc_hd_close(s);s=open_store(true);idle(s);arc_riscpc_hd_stats(s,&a);
+        assert(a.published&&arc_riscpc_hd_read(s,6,1,p)&&p[3]==0x20);
+        arc_riscpc_hd_close(s);return 0;
+    }
+    if(!strcmp(mode,"prepare")){
+        ArcRpcHdStore *s=open_store(true);idle(s);uint8_t p[131072];memset(p,0x31,sizeof(p));
+        assert(arc_riscpc_hd_population_begin(s));for(unsigned i=0;i<3;++i)assert(arc_riscpc_hd_population_write(s,2048+i*512,256,p));
+        assert(arc_riscpc_hd_population_seal(s)&&arc_riscpc_hd_population_publish(s));idle(s);
+        memset(p,0x73,512);assert(arc_riscpc_hd_write(s,70000,1,p));arc_riscpc_hd_close(s);return 0;
+    }
+    if(!strcmp(mode,"verify")){
+        ArcRpcHdStore *s=open_store(false);ArcRpcHdStats recovered;arc_riscpc_hd_stats(s,&recovered);
+        if(recovered.read_only)assert(arc_riscpc_hd_notice(s));else idle(s);
+        sector(s,70000,0x73);uint8_t p[131072];
+        unsigned acknowledged=(unsigned)strtoul(argv[4],NULL,10);
+        for(unsigned i=0;i<3;++i){assert(arc_riscpc_hd_read(s,2048+i*512,256,p));unsigned value=p[0];assert(value==0x31||value==0x42);
+            if(interleaved&&(acknowledged&(1u<<i)))assert(value==0x42);
+            if(population)assert(value==(recovered.generation==1?0x31:0x42));
+            for(unsigned j=0;j<sizeof(p);++j)assert(p[j]==value);}
+        ArcRpcHdStats a;arc_riscpc_hd_stats(s,&a);assert(a.chunk_files<=1008&&a.journal_high<=8388608);
+        assert(a.max_tick_operations<=4096);arc_riscpc_hd_close(s);return 0;
+    }
+    ArcRpcHdStore *s=open_store(false);idle(s);boundary=0;cut=(unsigned)strtoul(argv[4],NULL,10);
+    uint8_t p[131072];memset(p,0x42,sizeof(p));
+    if(population){assert(arc_riscpc_hd_population_begin(s));for(unsigned i=0;i<3;++i)assert(arc_riscpc_hd_population_write(s,2048+i*512,256,p));
+        assert(arc_riscpc_hd_population_seal(s)&&arc_riscpc_hd_population_publish(s));idle(s);}
+    else if(interleaved){
+        unsigned mask=0;
+        for(unsigned cycle=0;cycle<2;++cycle){
+            ArcRpcHdStats before;arc_riscpc_hd_stats(s,&before);
+            for(unsigned i=0;i<8;++i){unsigned chunk=i%3;assert(arc_riscpc_hd_write(s,2048+chunk*512,256,p));
+                mask|=1u<<chunk;printf("ack_mask=%u\n",mask);fflush(stdout);}
+            bool materialized=false,published=false;
+            for(unsigned tick=0;tick<100;++tick){arc_riscpc_hd_tick(s);ArcRpcHdStats a;arc_riscpc_hd_stats(s,&a);assert(!a.read_only);
+                if(!materialized&&a.state==ARC_RPC_HD_MATERIALIZE&&a.materialized>before.materialized){
+                    assert(arc_riscpc_hd_write(s,2048,256,p));materialized=true;printf("ack_mask=%u\n",mask);fflush(stdout);}
+                if(!published&&a.state==ARC_RPC_HD_RETIRE){
+                    assert(arc_riscpc_hd_write(s,2560,256,p));published=true;printf("ack_mask=%u\n",mask);fflush(stdout);}
+                if(a.state==ARC_RPC_HD_IDLE){assert(materialized&&published);break;}assert(tick<99);
+            }
+        }
+    }else{
+        for(unsigned cycle=0;cycle<2;++cycle){for(unsigned i=0;i<8;++i)assert(arc_riscpc_hd_write(s,2048+(i%3)*512,256,p));idle(s);}
+    }
+    printf("boundaries=%u\n",boundary);arc_riscpc_hd_close(s);return 0;
+}

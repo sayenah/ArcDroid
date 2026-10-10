@@ -4,6 +4,7 @@ extern const ArcEngineBackendOps arc_rpc_backend;
 #if defined(ARCDROID_TEST_FAULTS)
 #include "rpc/rpc_session.h"
 #include "rpc/rpc_floppy.h"
+#include "rpc/rpc_ide.h"
 #include "rpc/rpc_rtc.h"
 #include "engine_test.h"
 #include <stdio.h>
@@ -19,6 +20,9 @@ static void arc_test_log_proxy(void *opaque, const char *message)
     if (arc_test_measuring) arc_test_callback_ns += arc_test_clock_ns() - start;
 }
 RETRO_API uint64_t arc_engine_test_frame_ns(void) { return arc_test_frame_ns; }
+void arc_engine_test_frame_add_ns(uint64_t elapsed) { arc_test_frame_ns += elapsed; }
+RETRO_API bool arc_engine_test_ide_backend(const ArcIdeBackend *backend)
+{ if(!arc_engine_is_rpc() || !arc_engine_active())return false;arc_rpc_ide_set_backend(backend);return true; }
 RETRO_API bool arc_rpc_test_start(ArcRpcModel model, const uint8_t *rom, size_t size,
     const uint8_t seed[256], uint64_t epoch, char *error, size_t error_size);
 #endif

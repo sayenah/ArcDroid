@@ -9,8 +9,9 @@ sys.dont_write_bytecode=True
 from rpc_ninja_commands import split_command
 ROOT=Path(__file__).resolve().parent.parent
 p=argparse.ArgumentParser()
-for key in ('build','core','timing','unit','video','store','fdc'):p.add_argument('--'+key,required=True)
+for key in ('build','core','timing','unit','video','store','fdc','hd','ide'):p.add_argument('--'+key,required=True)
 p.add_argument('--only',default='');a=p.parse_args();build=Path(a.build).resolve()
+for key in ('core','timing','unit','video','store','fdc','hd','ide'):setattr(a,key,str(Path(getattr(a,key)).resolve()))
 cache=(build/'CMakeCache.txt').read_text()
 ninja=next(line.split('=',1)[1] for line in cache.splitlines() if line.startswith('CMAKE_MAKE_PROGRAM:FILEPATH='))
 commands={};database=None
@@ -132,6 +133,23 @@ mutants += [
 # Q33 is equivalent: software reset clears POLL (mask 0x2f, even when
 # locked), hardware reset clears it too, and FIFO commands cannot execute
 # during the RESET window. Its callback therefore always sees POLL=0.
+# R2c store and IDE boundary mutations use independently asserted component
+# checks; original build objects remain untouched.
+HD='libretro/rpc_hd_store.c';IDE='engine/rpcemu/src/ide.c';SCHEDULER='engine/rpc/rpc_scheduler.c'
+mutants += [
+ ('HD-ORDER',HD,'uint32_t tail=s->lengths[s->current];bool ok=seek(s,f,tail)&&',
+  'uint32_t tail=s->lengths[s->current];for(unsigned i=0;i<8;++i)if(s->tags[i].valid){unsigned first=s->tags[i].index*512;unsigned lo=lba>first?lba:first,hi=lba+count<first+512?lba+count:first+512;if(lo<hi)copy(s,s->cache[i]+(lo-first)*512,in+(lo-lba)*512,(hi-lo)*512);}bool ok=seek(s,f,tail)&&',a.hd,('hd','command')),
+ ('HD-BIND',HD,'return !memcmp(digest,h+120,32);','return true;',a.hd,('hd','binding')),
+ ('HD-GC',HD,'if(get(e,4)!=1||(get(live,4)==1&&get(live+8,8)==get(e+8,8)))continue;',
+  'if(get(e,4)!=1)continue;',a.hd,('hd',)),
+ ('HD-HOLE',HD,'if(!f)return failure(s,damage);\n    uint8_t h[128]',
+  'if(!f){memset(s->scratch,0,ARC_RPC_HD_CHUNK);return true;}\n    uint8_t h[128]',a.hd,('hd',)),
+ ('HD-CAP',HD,'aggregate+bytes>ARC_RPC_HD_JOURNAL_CAP||','',a.hd,('hd','command')),
+ ('IDE-LATCH',IDE,'!ide.backend.write(ide.backend.opaque,ide.lba,ide.total,ide.transaction)',
+  '(!ide.backend.write(ide.backend.opaque,ide.lba,ide.total,ide.transaction)||!ide.backend.write(ide.backend.opaque,ide.lba,ide.total,ide.transaction))',a.ide,('ide',)),
+ ('IDE-NIEN',IDE,'master()&&ide.irq&&!(ide.control&2)','master()&&ide.irq',a.ide,('ide',)),
+ ('IDE-TIE',SCHEDULER,'s->deadlines[i] < s->next_ns','s->deadlines[i] <= s->next_ns',a.ide,('ide',)),
+]
 # Q19 is equivalent for representable media: raw has cylinders 0..79;
 # JFD has <=166 track sides. A physical C=255 is rejected before an ID
 # can be selected. Every WRONG_CYLINDER sector C is therefore !=255.
@@ -139,7 +157,7 @@ mutants += [
 def check(binary,case):
     if case[0]=='timing':return [a.timing,binary,str(case[1]),case[2]]
     if case[0]=='unit':return [binary,'--hot-video']
-    if case[0] in ('store','fdc'):return [binary]
+    if case[0] in ('store','fdc','hd','ide'):return [binary,*case[1:]]
     return [sys.executable,'-B',ROOT/'tests/rpc_video_trace_test.py',a.video,binary,'2',ROOT/'tests/fixtures/rpc-video-paths-2.trace','--paths']
 
 selected=[m for m in mutants if not a.only or m[0] in a.only.split(',')];assert selected
