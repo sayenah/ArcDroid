@@ -49,7 +49,7 @@ static LONG CALLBACK locate(EXCEPTION_POINTERS *e)
 {
     if(!fatal(e->ExceptionRecord->ExceptionCode)||InterlockedCompareExchange(&recording,1,0))
         return EXCEPTION_CONTINUE_SEARCH;
-    used=0;text("RPC exception code=");hex(e->ExceptionRecord->ExceptionCode);
+    used=0;text("RPC first-chance exception code=");hex(e->ExceptionRecord->ExceptionCode);
     text(" thread=");hex(GetCurrentThreadId());
     if((e->ExceptionRecord->ExceptionCode==EXCEPTION_ACCESS_VIOLATION||e->ExceptionRecord->ExceptionCode==EXCEPTION_IN_PAGE_ERROR)&&e->ExceptionRecord->NumberParameters>=2){
         text(" access=");hex(e->ExceptionRecord->ExceptionInformation[0]);

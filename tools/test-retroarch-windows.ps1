@@ -2776,22 +2776,23 @@ DLL SHA-256 accompany it. Never use symbols from a separately rebuilt DLL.
     function Enable-RpcHdCrashDumps {
         $parent = 'HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps'
         $key = "$parent\retroarch.exe"
-        $parentExisted = Test-Path -LiteralPath $parent
-        $existed = Test-Path -LiteralPath $key
-        $previous = @{}
-        if ($existed) {
-            $item = Get-Item -LiteralPath $key
-            foreach ($name in @('DumpFolder', 'DumpType', 'DumpCount')) {
-                if ($item.GetValueNames() -contains $name) {
-                    $previous[$name] = @{ Value = $item.GetValue($name, $null,
-                        [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames);
-                        Kind = $item.GetValueKind($name) }
+        $settings = $null
+        try {
+            $parentExisted = Test-Path -LiteralPath $parent
+            $existed = Test-Path -LiteralPath $key
+            $previous = @{}
+            if ($existed) {
+                $item = Get-Item -LiteralPath $key
+                foreach ($name in @('DumpFolder', 'DumpType', 'DumpCount')) {
+                    if ($item.GetValueNames() -contains $name) {
+                        $previous[$name] = @{ Value = $item.GetValue($name, $null,
+                            [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames);
+                            Kind = $item.GetValueKind($name) }
+                    }
                 }
             }
-        }
-        $settings = @{ Key = $key; Existed = $existed; Previous = $previous;
-            Parent = $parent; ParentExisted = $parentExisted }
-        try {
+            $settings = @{ Key = $key; Existed = $existed; Previous = $previous;
+                Parent = $parent; ParentExisted = $parentExisted }
             # New-Item -Force can replace an existing registry key. Preserve
             # every pre-existing property, including settings we do not own.
             if (-not $existed) { New-Item -Path $key -Force | Out-Null }
@@ -2799,13 +2800,18 @@ DLL SHA-256 accompany it. Never use symbols from a separately rebuilt DLL.
             New-ItemProperty -LiteralPath $key -Name DumpType -PropertyType DWord -Value 2 -Force | Out-Null
             New-ItemProperty -LiteralPath $key -Name DumpCount -PropertyType DWord -Value 3 -Force | Out-Null
         } catch {
-            Restore-RpcHdCrashDumps $settings
-            throw
+            if ($settings) {
+                try { Restore-RpcHdCrashDumps $settings }
+                catch { Write-Warning "RPC WER settings restore failed: $($_.Exception.Message)" }
+            }
+            Write-Warning "RPC WER LocalDumps unavailable (HKLM may not be writable): $($_.Exception.Message). Continuing with the first-chance locator."
+            return $null
         }
         Write-Host "RPC-only WER full dumps enabled: $rpcDumpDirectory"
         return $settings
     }
     function Restore-RpcHdCrashDumps($Settings) {
+        if (-not $Settings) { return }
         if (-not $Settings.Existed) {
             if (Test-Path -LiteralPath $Settings.Key) { Remove-Item -LiteralPath $Settings.Key }
             if (-not $Settings.ParentExisted -and (Test-Path -LiteralPath $Settings.Parent)) {

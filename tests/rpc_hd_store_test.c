@@ -487,6 +487,43 @@ static void import_roundtrip(void)
     while(a.state!=ARC_RPC_HD_IDLE);assert(ticks>=27);import_verify(s,97);arc_riscpc_hd_close(s);
     puts("nonzero import: every sector, checkpoint, reopen, second import refusal, unchanged source and bounded abort GC pass");
 }
+static void reconstruction_failures(void)
+{
+    /* Reopen clears the resident cache; these sectors exist only in indexed
+     * journal records. Exercise cleanup immediately, before close/reset can
+     * obscure an open handle, with both adjacent and gapped records. */
+    unsigned cases=0;
+    for(unsigned gapped=0;gapped<2;++gapped){
+        fresh_files();ArcRpcHdStore *s=open_store(true);idle(s);uint8_t p[512],out[512];fill(p,1,0x51);
+        assert(arc_riscpc_hd_write(s,5120,1,p));
+        if(gapped)assert(arc_riscpc_hd_write(s,51200,1,p));
+        assert(arc_riscpc_hd_write(s,5121,1,p));arc_riscpc_hd_close(s);snapshot();
+        s=open_store(false);reset_fault();assert(arc_riscpc_hd_read(s,5121,1,out));
+        unsigned callbacks=steps;arc_riscpc_hd_close(s);
+        for(unsigned at=1;at<=callbacks;++at){
+            restore();s=open_store(false);reset_fault();fail_at=at;
+            assert(!arc_riscpc_hd_read(s,5121,1,out));test_vfs_no_open_handles();
+            assert(arc_riscpc_hd_notice(s));arc_riscpc_hd_close(s);++cases;
+        }
+        /* Each frame's integrity check must close the already-open journal.
+         * Corrupt after open so recovery validation is not the refusal site. */
+        for(unsigned record=0;record<2;++record){
+            restore();s=open_store(false);int j=named("journal.a");
+            unsigned offset=256+(record?(gapped?2:1)*608:0);files[j].data[offset+80]^=1;
+            assert(!arc_riscpc_hd_read(s,5121,1,out));test_vfs_no_open_handles();
+            assert(arc_riscpc_hd_notice(s));arc_riscpc_hd_close(s);++cases;
+        }
+    }
+    /* The same reconstruction failure during a MATERIALIZE tick. */
+    fresh_files();ArcRpcHdStore *s=open_store(true);idle(s);uint8_t p[131072];fill(p,256,0x62);
+    assert(arc_riscpc_hd_write(s,5120,1,p));
+    for(unsigned i=0;i<8;++i)assert(arc_riscpc_hd_write(s,51200+i*256,256,p));
+    arc_riscpc_hd_tick(s);arc_riscpc_hd_tick(s);
+    int j=named("journal.a");files[j].data[256+80]^=1;
+    arc_riscpc_hd_tick(s);test_vfs_no_open_handles();ArcRpcHdStats a;arc_riscpc_hd_stats(s,&a);
+    assert(a.read_only&&arc_riscpc_hd_notice(s));arc_riscpc_hd_close(s);++cases;
+    printf("handle cleanup: %u failed indexed reads/materialization cases, zero file/directory handles at every return and close\n",cases);
+}
 static void reconstruction_budget(void)
 {
     fresh_files();ArcRpcHdStore *s=open_store(true);idle(s);uint8_t p[131072],out[512];fill(p,256,0x5a);
@@ -530,6 +567,7 @@ int main(int argc,char **argv)
     else if(argc>1&&!strcmp(argv[1],"qa-integrity"))qa_integrity();
     else if(argc>1&&!strcmp(argv[1],"import-roundtrip"))import_roundtrip();
     else if(argc>1&&!strcmp(argv[1],"reconstruction"))reconstruction_budget();
+    else if(argc>1&&!strcmp(argv[1],"handles"))reconstruction_failures();
     else if(argc>1&&!strcmp(argv[1],"vfs"))vfs_conformance();
     else if(argc>1&&!strcmp(argv[1],"population"))population();
     else if(argc>1&&!strcmp(argv[1],"command"))faults();

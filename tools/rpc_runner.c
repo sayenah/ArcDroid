@@ -226,12 +226,12 @@ int main(int argc, char **argv)
     if (reject) {
         bool loaded = load(&game);
         bool passed = !loaded && !symbol("arc_rpc_test_start") && !strstr(core_info.valid_extensions,"arcplan");
-        unload(); deinit(); puts(passed ? "shipping-plan rejected" : "shipping-plan rejection FAILED"); return passed ? 0 : 1;
+        unload(); deinit(); vfs_assert_no_open_handles(); puts(passed ? "shipping-plan rejected" : "shipping-plan rejection FAILED"); return passed ? 0 : 1;
     }
     if (fail_alloc) {
         void (*inject)(unsigned); LOAD(inject,"arc_rpc_test_fail_alloc"); inject((unsigned)fail_alloc);
     }
-    if (!load(&game)) { deinit(); return 1; }
+    if (!load(&game)) { deinit(); vfs_assert_no_open_handles(); return 1; }
     void (*snapshot)(ArcRpcTestSnapshot *), (*counts)(ArcRpcAudioCounts *), (*status)(ArcRpcVideoStatus *), (*capture)(ArcRpcCapture *);
     bool (*read_ram)(unsigned, uint32_t *); uint64_t (*frame_ns)(void);
     LOAD(snapshot,"arc_rpc_test_snapshot"); LOAD(counts,"arc_rpc_test_audio_counts"); LOAD(status,"arc_rpc_test_video_status");
@@ -240,21 +240,21 @@ int main(int argc, char **argv)
     LOAD(cmos_snapshot,"arc_rpc_test_cmos_snapshot"); LOAD(fault_next,"arc_rpc_test_fault_next");
     unsigned (*plan_phase)(void)=NULL;
     void *phase_symbol=symbol("arc_test_plan_cmos_phase");if(phase_symbol)memcpy(&plan_phase,&phase_symbol,sizeof(plan_phase));
-    if(plan_phase && plan_phase() && (print_cmos || capture_path)) {fprintf(stderr,"Persistent CMOS is never exported as bytes\n");unload();deinit();return 2;}
+    if(plan_phase && plan_phase() && (print_cmos || capture_path)) {fprintf(stderr,"Persistent CMOS is never exported as bytes\n");unload();deinit(); vfs_assert_no_open_handles();return 2;}
     if (dump_count) {
         dump_pixels = malloc(DUMP_SIDE * DUMP_SIDE * sizeof(uint32_t));
-        if (!dump_pixels) { unload(); deinit(); return 2; }
+        if (!dump_pixels) { unload(); deinit(); vfs_assert_no_open_handles(); return 2; }
     }
     void (*hd_cost_get)(ArcTestHdCost *,bool)=NULL;
     FILE *hd_cost_file=NULL;uint64_t hd_cost_max=0,hd_cost_over=0,hd_cost_frames=0;
     if(hd_cost_path){LOAD(hd_cost_get,"arc_test_plan_hd_cost");hd_cost_get(NULL,true);
-        hd_cost_file=fopen(hd_cost_path,"w");if(!hd_cost_file){free(dump_pixels);unload();deinit();return 2;}
+        hd_cost_file=fopen(hd_cost_path,"w");if(!hd_cost_file){free(dump_pixels);unload();deinit(); vfs_assert_no_open_handles();return 2;}
         fputs("frame,T_ns,read_ns,acknowledgement_ns,maintenance_ns,total_ns,phase,next_phase,read_commands,write_commands,generation,checkpoints,attached,open_ns\n",hd_cost_file);}
     FILE *timing = timing_path ? fopen(timing_path,"w") : NULL;
-    if (timing_path && !timing) { free(dump_pixels); if(hd_cost_file)fclose(hd_cost_file); unload(); deinit(); return 2; }
+    if (timing_path && !timing) { free(dump_pixels); if(hd_cost_file)fclose(hd_cost_file); unload(); deinit(); vfs_assert_no_open_handles(); return 2; }
     if (timing) fputs("frame,core_ns,T_ns,measured,guest_instructions,guest_ns\n", timing);
     uint64_t *times = calloc(1000000, sizeof(*times));
-    if (!times) { free(dump_pixels); if(timing)fclose(timing); if(hd_cost_file)fclose(hd_cost_file); unload(); deinit(); return 2; }
+    if (!times) { free(dump_pixels); if(timing)fclose(timing); if(hd_cost_file)fclose(hd_cost_file); unload(); deinit(); vfs_assert_no_open_handles(); return 2; }
     size_t sample_count = 0; unsigned result = 0; uint64_t period_ns = 0;
     uint64_t benchmark_start = arc_test_clock_ns(), benchmark_elapsed = 0;
     uint64_t prior_instructions=0,prior_guest_ns=0,measured_instructions=0,measured_guest_ns=0,measured_core_ns=0;
@@ -360,7 +360,7 @@ int main(int argc, char **argv)
         fprintf(stderr,"hd-cost frames=%" PRIu64 " max_ns=%" PRIu64 " over_0.20T=%" PRIu64 " budget=%s\n",hd_cost_frames,hd_cost_max,hd_cost_over,hd_cost_over?"exceeded":"passed");}
     if(timing && fclose(timing))result=2;
     if(ferror(stdout))result=2;
-    unload(); deinit();
+    unload(); deinit(); vfs_assert_no_open_handles();
 #if defined(_WIN32)
     FreeLibrary(library);
 #else

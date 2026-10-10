@@ -50,5 +50,5 @@ int main(int argc,char **argv)
     assert(vfs.close(a)==0&&vfs.close(b)==0&&vfs.close(c)==0&&vfs.close(d)==0);
     assert(vfs.remove(path)==0);
     puts("runner VFS: buffered seek-zero, tell, independent per-handle size caches");
-    return 0;
+    vfs_assert_no_open_handles();return 0;
 }

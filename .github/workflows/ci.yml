@@ -97,9 +97,9 @@ jobs:
       - name: RPCEmu import guard
         run: python3 tools/check-rpcemu-import.py
       - name: Configure
-        # Keep Release optimisation/assertion settings; retain DWARF for the
-        # exact DLL tested here and loaded by the native RetroArch leg.
-        run: cmake -S . -B build/windows -G Ninja -DCMAKE_BUILD_TYPE=Release "-DCMAKE_C_FLAGS_RELEASE=-O3 -DNDEBUG -g" -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+        # CMake retains DWARF only for the non-shipping plan core and its
+        # private engine objects. Shipping remains plain Release.
+        run: cmake -S . -B build/windows -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
       - name: Build
         run: cmake --build build/windows --verbose
       - name: Shipping source I/O guard self-test

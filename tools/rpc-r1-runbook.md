@@ -7,6 +7,15 @@ AV/input sources. Only this variant advertises `arcplan`. Neither it nor the
 runner is installed. Copy its matching `.info` alongside the frontend's other
 core metadata when sideloading; select this core explicitly in RetroArch.
 
+RetroArch 1.22.2's network `GET_STATUS` can crash for any loaded core without
+its matching `.info`, or with an omitted/empty `systemid`: its
+[`command_get_status`](https://github.com/libretro/RetroArch/blob/v1.22.2/command.c#L972-L1007)
+copies `core_info->system_id` without checking for NULL. Install this plan
+core's matching `.info` in the configured Core Info directory before using
+network commands. It declares `systemid = "riscpc"`; `rpc-core-info` checks
+source and configured metadata. This applies to frontend status polling,
+including the Windows leg's command-port readiness check.
+
 ## Plan version 1
 
 UTF-8's ASCII subset, at most 16 KiB, `key=value` per line; spaces/tabs around

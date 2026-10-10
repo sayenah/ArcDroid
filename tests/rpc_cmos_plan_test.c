@@ -108,7 +108,7 @@ int main(int argc,char **argv)
         assert(rpc_start((ArcRpcModel)atoi(argv[7]),rom,2097152,seed,946684800,error,sizeof(error)));free(rom);
         uint64_t remaining=UINT64_C(45000000000);while(remaining){uint64_t ns=remaining<16666667?remaining:16666667;assert(advance(ns));remaining-=ns;}
         uint8_t bytes[256],mask[32];uint64_t writes,last,now;unsigned state;payload_evidence(bytes,mask,&writes,&last,&now,&state);
-        assert(!writes&&!last&&now==UINT64_C(45000000000));for(unsigned i=0;i<32;++i)assert(!mask[i]);unload();deinit();return 0;
+        assert(!writes&&!last&&now==UINT64_C(45000000000));for(unsigned i=0;i<32;++i)assert(!mask[i]);unload();deinit();vfs_assert_no_open_handles();return 0;
     }
     struct retro_game_info game={argv[2],NULL,0,NULL};
     if(!strcmp(mode,"cross")){
@@ -119,11 +119,11 @@ int main(int argc,char **argv)
         audit_mode=0;assert(load(&game)&&phase()==2); /* existing Arc eager persistence survives the switch */
         audit_mode=1;run();unload();assert(rpc_accesses);
         audit_mode=2;assert(load(&arc_game));uint8_t live[256];assert(arc_image(live));assert(live[100]==0x22);
-        run();unload();assert(arc_accesses);deinit();puts("Arculator/RPC/Arculator persistence and audited path isolation passed");return 0;
+        run();unload();assert(arc_accesses);deinit();vfs_assert_no_open_handles();puts("Arculator/RPC/Arculator persistence and audited path isolation passed");return 0;
     }
     audit_mode=1;bool accepted=load(&game);
 unsigned expected_rate=(unsigned)atoi(argv[6]);
-    if(!strcmp(mode,"reject")){assert(!accepted&&errors);unload();deinit();return 0;}
+    if(!strcmp(mode,"reject")){assert(!accepted&&errors);unload();deinit();vfs_assert_no_open_handles();return 0;}
     assert(accepted);ArcRpcTestSnapshot s;snapshot(&s);assert(s.now_ns==0);
     if(!strcmp(mode,"hd")||!strcmp(mode,"hd-frame")||!strcmp(mode,"hd-reload")){
         bool (*stats)(ArcRpcHdStats *);LOAD(stats,"arc_test_plan_hd_stats");
@@ -148,7 +148,7 @@ unsigned expected_rate=(unsigned)atoi(argv[6]);
             printf("frame workload payload=%u journal_high=%" PRIu64 " memory=%" PRIu64 " open_bytes=%" PRIu64 " open_ops=%" PRIu64 " advisory_ops=%" PRIu64 " cpu_s=%.3f\n",160*131072,a.journal_high,a.allocation_high,a.open_bytes,a.open_operations,a.advisory_operations,(double)(clock()-start)/CLOCKS_PER_SEC);
         }
         for(unsigned frame=0;frame<1000;++frame){assert(stats(&a));if(a.state==ARC_RPC_HD_IDLE)break;run();assert(frame<999);}
-        reset();assert(stats(&a)&&a.published);unload();assert(!stats(&a));deinit();
+        reset();assert(stats(&a)&&a.published);unload();assert(!stats(&a));deinit();vfs_assert_no_open_handles();
         assert(!errors);puts("RPC hard-disc plan: real adapter/store, guest roundtrip, reset/unload ownership pass");return 0;
     }
     if(!strcmp(mode,"refused")){
@@ -159,7 +159,7 @@ unsigned expected_rate=(unsigned)atoi(argv[6]);
         assert(load(&game)&&phase()==2&&errors==2&&notices==2);
         for(unsigned i=0;i<4;++i)run();
         unload();assert(errors==2&&notices==2);
-        deinit();puts("refused store: one notice per loaded refusal, including unload");return 0;
+        deinit();vfs_assert_no_open_handles();puts("refused store: one notice per loaded refusal, including unload");return 0;
     }
     if(!strcmp(mode,"cache")){assert(phase()==2&&notices==0);}
     else if(!strcmp(mode,"record") || !strcmp(mode,"writer")){assert(phase()==2);}
@@ -179,7 +179,7 @@ unsigned expected_rate=(unsigned)atoi(argv[6]);
             ArcRpcCapture current;capture(&current);assert(current.delete_held);
             assert(!pacing(1)); /* A capture never changes pacing mid-run. */
         }
-        if(!strcmp(mode,"negative") || !strcmp(mode,"reset")){assert(phase()==3&&errors&&!s.active);run();assert(phase()==3);unload();deinit();puts("negative oracle/reset: no requested session");return 0;}
+        if(!strcmp(mode,"negative") || !strcmp(mode,"reset")){assert(phase()==3&&errors&&!s.active);run();assert(phase()==3);unload();deinit();vfs_assert_no_open_handles();puts("negative oracle/reset: no requested session");return 0;}
         assert(phase()==2&&!errors);snapshot(&s);assert(s.now_ns==0&&s.executed==0&&black_frames==calls-1); /* clean requested session */
     }
     uint8_t before[256],after[256];cmos(before);reset();cmos(after);assert(!memcmp(before+16,after+16,240));
@@ -194,7 +194,7 @@ unsigned expected_rate=(unsigned)atoi(argv[6]);
     /* Guest work outside retro_run is persisted specifically by unload. */
     assert(advance(10000000));cmos(before);unload();assert(load(&game)&&phase()==2);cmos(after);assert(!memcmp(before+16,after+16,240));unload();
     /* Failed admission leaves persistence unarmed. */
-    game.path="/missing.arcplan";assert(!load(&game)&&phase()==0);unload();deinit();
+    game.path="/missing.arcplan";assert(!load(&game)&&phase()==0);unload();deinit();vfs_assert_no_open_handles();
     puts("RPC plan CMOS: slices, clean restart, reset, eager/unload and failed start passed");
 #ifdef _WIN32
     FreeLibrary(library);

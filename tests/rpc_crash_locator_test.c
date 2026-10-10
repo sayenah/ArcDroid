@@ -20,7 +20,7 @@ int main(int argc,char **argv)
     assert(passed==2&&logged>=4);arc_test_crash_locator_stop();
     char path[4096],bytes[65536];snprintf(path,sizeof(path),"%s/rpc-hd-exception.txt",argv[1]);
     FILE *file=fopen(path,"rb");assert(file);size_t n=fread(bytes,1,sizeof(bytes)-1,file);bytes[n]=0;assert(!ferror(file)&&!fclose(file));
-    assert(strstr(bytes,"RPC exception code=0x00000000c000001d")&&strstr(bytes,"RPC stack frame=")&&strstr(bytes,".exe+0x"));
+    assert(strstr(bytes,"RPC first-chance exception code=0x00000000c000001d")&&strstr(bytes,"RPC stack frame=")&&strstr(bytes,".exe+0x"));
     assert(strstr(bytes,"code=0x00000000c0000005")&&strstr(bytes,"access=0x0000000000000001 address=0x00000000deadcafe"));
     unsigned before=logged;RaiseException(EXCEPTION_ILLEGAL_INSTRUCTION,0,0,NULL);
     assert(passed==3&&logged==before);RemoveVectoredExceptionHandler(last);

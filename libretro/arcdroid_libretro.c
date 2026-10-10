@@ -6452,9 +6452,6 @@ RETRO_API void retro_init(void)
 
 RETRO_API void retro_deinit(void)
 {
-#if defined(ARCDROID_TEST_PLANS) && defined(_WIN32)
-   arc_test_crash_locator_stop();
-#endif
    arc_persist_cmos();
    arc_release_session();
    arc_osk_reset(&arc_osk, &arc_inputs);
@@ -6471,6 +6468,9 @@ RETRO_API void retro_deinit(void)
    arc_audio_batch = NULL;
    arc_input_poll = NULL;
    arc_input_state = NULL;
+#if defined(ARCDROID_TEST_PLANS) && defined(_WIN32)
+   arc_test_crash_locator_stop();
+#endif
 }
 
 static bool arc_construct_machine(const ArcMachineDescriptor *machine,
@@ -7517,9 +7517,6 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game)
 
 RETRO_API void retro_unload_game(void)
 {
-#if defined(ARCDROID_TEST_PLANS) && defined(_WIN32)
-   arc_test_crash_locator_stop();
-#endif
    arc_boot_persist_seed();
    arc_persist_cmos();
    if (arc_engine_active() && arc_log)
@@ -7537,6 +7534,9 @@ RETRO_API void retro_unload_game(void)
    arc_osk_present_dirty = false;
    arc_input_sampling_reset(false);
    arc_guest_time_us = 0u;
+#if defined(ARCDROID_TEST_PLANS) && defined(_WIN32)
+   arc_test_crash_locator_stop();
+#endif
 }
 RETRO_API void retro_reset(void)
 {

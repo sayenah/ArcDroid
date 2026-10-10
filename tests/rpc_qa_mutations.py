@@ -155,6 +155,8 @@ mutants += [
  ('IDE-TIE',SCHEDULER,'s->deadlines[i] < s->next_ns','s->deadlines[i] <= s->next_ns',a.ide,('ide',)),
 ]
 mutants += [
+ ('M1-NO-CLOSE-ON-FAIL', HD, 'if(!ok){close_file(s,f,false);return failure(s,true);}',
+  'if(!ok){return failure(s,true);}', a.hd, ('hd','handles')),
  ('Q04-CRC-ONLY', 'libretro/rpc_hd_store.c', 'ok=get(tail,4)==crc(s,s->scratch,ARC_RPC_HD_CHUNK)&&!memcmp(digest,e+16,32);', 'ok=get(tail,4)==crc(s,s->scratch,ARC_RPC_HD_CHUNK);', a.hd, ('hd','qa-integrity')),
  ('Q05-SEQ-GAP', 'libretro/rpc_hd_store.c', 'sequence==*last+1&&', 'sequence>*last&&', a.hd, ('hd','qa-integrity')),
  ('Q11-PREFIX-DIGEST', 'libretro/rpc_hd_store.c', 'arc_sha256_final(&s->digest[parent],digest);if(memcmp(digest,h+160,32))return false;', '', a.hd, ('hd','qa-integrity')),

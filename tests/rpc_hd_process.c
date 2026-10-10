@@ -37,6 +37,8 @@
 #undef vfs_stat
 #undef vfs_remove
 #undef vfs_rename
+#define rpc_hd_test_no_open_handles vfs_assert_no_open_handles
+#include "rpc_hd_handle_checks.h"
 static unsigned boundary,cut;
 static void point(void)
 {
