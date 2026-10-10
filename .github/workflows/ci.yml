@@ -190,6 +190,7 @@ jobs:
             build/windows/retroarch-package/
           mkdir -p build/windows/retroarch-package/disc-request
           cp -R build/windows/generated/rpc-plans build/windows/retroarch-package/
+          cp -R build/windows/generated/rpc-hd-retroarch build/windows/retroarch-package/
           cp build/windows/tests/fixtures/generated/disc-request/One.adf \
             build/windows/tests/fixtures/generated/disc-request/Two.adf \
             build/windows/tests/fixtures/generated/disc-request/Set.m3u \

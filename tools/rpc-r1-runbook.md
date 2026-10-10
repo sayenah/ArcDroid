@@ -245,3 +245,50 @@ cached presentations for duplicate callbacks. Copying and file output occur
 in the frontend video callback, outside the measured engine interval; timing
 CSV and canonical stdout remain available. A missing frame or failed write
 returns an error. Private smoke images belong in external scratch storage.
+
+## R2c authored native RetroArch hard-disc leg (Windows CI / Android)
+
+Build `rpc-hd-retroarch-fixtures` and the **plan** core. The generated
+`generated/rpc-hd-retroarch/` contains `hd.rom`, `hd.arcplan`, `floppy.adf`,
+`disk.script`, and an authored CMOS record under `save/`. These are entirely
+project-authored GPL-2.0-only test assets, not RISC OS firmware. Use a fresh
+save directory; copy the fixture's `save/arcdroid` into it **once**, before the
+first launch. Never re-copy the seed between sessions. Set RetroArch's system
+directory to the fixture directory and use that same save directory and plan
+for all three launches. Select the separately named plan core and its matching
+`.info`, not the shipping core. Relative paths in the plan need no platform
+edits. On Android, put fixtures/saves in frontend-accessible emulated storage
+and install the arm64 plan core through RetroArch's core installation UI.
+
+1. Launch `hd.arcplan`. Cyan means generation 1's 2 MiB write and completion
+   marker were acknowledged. Force-stop **the process you launched**, without
+   unloading (Android App info → Force stop, or Fable's owned-process tooling).
+2. Launch again. Blue means every generation-1 word verified and the different
+   generation-2 pattern and marker were acknowledged. Quit cleanly through
+   RetroArch (the network `QUIT` pair is used on Windows CI).
+3. Launch again. Green means generation 2 verified. Quit cleanly. Red is FAIL;
+   black is still running. Do not accept blue on the third launch: a stale
+   generation-1 store would take that branch again.
+
+Each launch executes the plan's timed floppy eject/insert at frontend frames
+4/6 through the registered disk-control callbacks. The ROM compares all 512
+IDENTIFY bytes before/after the operation, independently checks 256 cylinders,
+16 heads, 63 sectors and 258,048-sector capacity, then reads every payload word.
+The fixed hard-disc identity is `cccccccccccccccccccccccccccccccccccccccc`.
+The data begins at LBA 8192; the completion sector is LBA 4096. A virtual timer
+wait allows 120 maintenance ticks before writing the marker. After each
+session the canonical store should have exactly one `manifest.?` and one
+`journal.?`, with every declared chunk present and no temporaries. Manifest
+generation (little-endian uint64 at offset 88) must advance from blank 0 to
+at least 1 after session 1, advance again in session 2, and remain unchanged in
+session 3. This proves publication **and completed RETIRE/GC**, rather than
+only an acknowledgement in the journal. Capture screenshots, logs and the
+store listing; no damage, refusal or saving-failure notice is acceptable.
+
+Windows CI packages these fixtures with the existing plan DLL/`.info`; the
+added leg of `tools/test-retroarch-windows.ps1` checks nine screenshot samples,
+manifest/header/chunk checksums and bindings, canonical references, generation
+progression and logs. Its evidence and measured added seconds are uploaded in
+`arcdroid-windows-retroarch-evidence`. The host `rpc-hd-retroarch-guest` CTest
+runs the same ROM/plan through the runner, kills session 1, and also proves a
+stale reload and a wrong pattern cannot satisfy the green-screen oracle.

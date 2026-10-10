@@ -2235,6 +2235,19 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
     target_link_libraries(rpc_ide_guest_test PRIVATE arcdroid_sanitizer_compile arcdroid_sanitizer_link)
   endif()
   add_test(NAME rpc-ide-guest COMMAND rpc_ide_guest_test $<TARGET_FILE:arcdroid_libretro_test>)
+  set(RPC_HD_RETROARCH_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated/rpc-hd-retroarch")
+  add_custom_command(OUTPUT "${RPC_HD_RETROARCH_DIR}/hd.arcplan"
+    BYPRODUCTS "${RPC_HD_RETROARCH_DIR}/hd.rom" "${RPC_HD_RETROARCH_DIR}/floppy.adf"
+      "${RPC_HD_RETROARCH_DIR}/disk.script"
+    COMMAND "${Python3_EXECUTABLE}" -B "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_hd_retroarch_rom.py"
+      "${RPC_HD_RETROARCH_DIR}"
+    DEPENDS tests/rpc_hd_retroarch_rom.py tests/rpc_video_rom.py tests/generate_fixtures.py VERBATIM)
+  add_custom_target(rpc-hd-retroarch-fixtures ALL DEPENDS "${RPC_HD_RETROARCH_DIR}/hd.arcplan")
+  add_dependencies(rpc_runner rpc-hd-retroarch-fixtures)
+  add_test(NAME rpc-hd-retroarch-guest COMMAND "${Python3_EXECUTABLE}" -B
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_hd_retroarch_test.py"
+    $<TARGET_FILE:rpc_runner> $<TARGET_FILE:arcdroid_rpcplan_libretro> "${RPC_HD_RETROARCH_DIR}")
+  set_tests_properties(rpc-hd-retroarch-guest PROPERTIES TIMEOUT 600)
   add_test(NAME rpc-hd-plan COMMAND "${Python3_EXECUTABLE}" -B
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_hd_plan_test.py" $<TARGET_FILE:rpc_cmos_plan_test>
     $<TARGET_FILE:arcdroid_rpcplan_libretro> $<TARGET_FILE:rpc_runner>
