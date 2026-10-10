@@ -356,3 +356,13 @@ arguments and starting store, adding `--hd-cost installer-hd.csv` and
 is separate from the hard-disc bound (D-152). Native RetroArch termination,
 media/persistence legs and the Windows CI leg must still be repeated on the
 run E core.
+
+Run K (D-156): D-152 measurements use saves on `/storage/emulated/0` (FUSE)
+and `rpc_runner --vfs-flush retroarch --hd-cost <CSV>`: the VFS flush checks
+`fflush` only, matching RetroArch 1.22.2 `retro_vfs_file_flush_impl`.
+`--vfs-flush fsync` is the default and adds `fsync` (`_commit` on Windows);
+retain this mode for termination and durability experiments. Neither mode
+changes the core's acknowledgement checks or promises directory/power-loss
+durability. Always record the save path and flush mode alongside timing.
+The two modes are checked by `rpc-vfs-conformance`; the real kill sweeps keep
+the default sync mode. Reject other `--vfs-flush` values.

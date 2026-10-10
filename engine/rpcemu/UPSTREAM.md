@@ -361,3 +361,13 @@ The 500 us software-reset release is a deterministic engineering latency,
 not a measured physical-drive constant. Reset is bus-wide: the master completes
 its signature even while the absent slave is selected. R2c activates the private
 backend IDE capability; shipping RPC admission remains dormant.
+
+### R2c run K signed long multiply (D-157)
+
+`cpu-smlal-modulo` (`src/arm.c`): SMLAL/SMLALS retain the signed
+32×32→64 product (always representable) and convert it to unsigned before
+adding the unsigned high/low accumulator. Guest results wrap modulo 2^64;
+N/Z observe the resulting bits, and C/V stay unchanged. This removes signed
+left-shift and addition overflow. `rpc-cpu-smlal` runs the actual interpreter
+on sign-bit, signed-overflow, wrap, negative-product and flag boundaries,
+including halt-on-error UBSan. Original copyright and licence remain intact.

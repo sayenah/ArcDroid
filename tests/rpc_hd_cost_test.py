@@ -22,7 +22,7 @@ def main():
             shot = root / f'{measured}.ppm'
             report = root / 'hd.csv'
             args = [str(runner), '--core', str(core), '--plan', str(fixture / 'hd.arcplan'),
-                    '--system', str(fixture), '--save', str(save), '--frames', '700',
+                    '--system', str(fixture), '--save', str(save), '--vfs-flush', 'retroarch', '--frames', '700',
                     '--dump-frame', '699', str(shot)]
             if measured:
                 args += ['--hd-cost', str(report)]

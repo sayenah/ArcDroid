@@ -24,7 +24,7 @@
 #include "ide.h"
 #include "rpc_ide.h"
 #include "podules.h"
-#include <setjmp.h>
+#include "../arc_fault_jump.h"
 #include <stdarg.h>
 #include <stdio.h>
 

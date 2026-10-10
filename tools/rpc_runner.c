@@ -195,6 +195,10 @@ int main(int argc, char **argv)
         else if (!strcmp(key,"--pacing")) pacing = v;
         else if (!strcmp(key,"--timing")) timing_path = v;
         else if (!strcmp(key,"--hd-cost")) hd_cost_path = v;
+        else if (!strcmp(key,"--vfs-flush")) {
+            if(strcmp(v,"retroarch")&&strcmp(v,"fsync"))goto usage;
+            vfs_flush_fsync=!strcmp(v,"fsync");
+        }
         else if (!strcmp(key,"--capture-seed")) capture_path = v;
         else if (!strcmp(key,"--frames")) { if (!unsigned_number(v,1000000,&frames) || !frames) goto usage; }
         else if (!strcmp(key,"--warmup-seconds")) { if (!unsigned_number(v,3600,&warmup)) goto usage; }
@@ -368,6 +372,6 @@ int main(int argc, char **argv)
 #endif
     return (int)result;
 usage:
-    fputs("rpc_runner --core LIB --plan FILE [--system DIR] [--save DIR] [--frames N | --warmup-seconds 120 --measure-seconds 600] [--pacing flat|burst|realtime] [--disk-writes off|shadow|original] [--jfd-policy as-imaged|off] [--jfd-policy-at FRAME VALUE] [--disk-writes-at FRAME VALUE] [--jfd-omitted strict|file-data] [--timing CSV] [--hd-cost CSV] [--dump-frame N FILE.ppm ...] [--capture-seed FILE] [--ram-offset N --ram-words N] [--reset-at N] [--cmos] [--fail-alloc 1..5] [--fault-at N] [--reject]\n",stderr);
+    fputs("rpc_runner --core LIB --plan FILE [--system DIR] [--save DIR] [--frames N | --warmup-seconds 120 --measure-seconds 600] [--pacing flat|burst|realtime] [--disk-writes off|shadow|original] [--jfd-policy as-imaged|off] [--jfd-policy-at FRAME VALUE] [--disk-writes-at FRAME VALUE] [--jfd-omitted strict|file-data] [--timing CSV] [--hd-cost CSV] [--vfs-flush retroarch|fsync] [--dump-frame N FILE.ppm ...] [--capture-seed FILE] [--ram-offset N --ram-words N] [--reset-at N] [--cmos] [--fail-alloc 1..5] [--fault-at N] [--reject]\n",stderr);
     return 2;
 }

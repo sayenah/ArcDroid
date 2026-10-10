@@ -35,7 +35,8 @@
       "licence_header": "/*\n  RPCEmu - An Acorn system emulator\n\n  Copyright (C) 2005-2010 Sarah Walker\n\n  This program is free software; you can redistribute it and/or modify\n  it under the terms of the GNU General Public License as published by\n  the Free Software Foundation; either version 2 of the License, or\n  (at your option) any later version.\n\n  This program is distributed in the hope that it will be useful,\n  but WITHOUT ANY WARRANTY; without even the implied warranty of\n  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the\n  GNU General Public License for more details.\n\n  You should have received a copy of the GNU General Public License\n  along with this program; if not, write to the Free Software\n  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.\n */",
       "patches": [
         "scheduler-mmu-owned-memory",
-        "scheduler-mmu-batching"
+        "scheduler-mmu-batching",
+        "cpu-smlal-modulo"
       ]
     },
     {
@@ -439,6 +440,14 @@
         "src/ide.h"
       ],
       "reason": "D-139 single transactional ATA master, owned backend, virtual timing and IRQ/reset containment; remove host files, ATAPI and slave."
+    },
+    {
+      "id": "cpu-smlal-modulo",
+      "group": "CPU/MMU/memory",
+      "files": [
+        "src/arm.c"
+      ],
+      "reason": "D-157: retain signed 32x32 product; assemble and accumulate unsigned 64-bit modulo results without signed shift/add overflow, including flag-setting SMLALS."
     }
   ],
   "adapted_sources": [

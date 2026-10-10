@@ -34,7 +34,7 @@
 #include "libretro.h"
 #endif
 
-#include <setjmp.h>
+#include "arc_fault_jump.h"
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>

@@ -49,6 +49,18 @@ int main(int argc,char **argv)
     assert(vfs.read(update,data,6)==6&&vfs.close(update)==0);
     assert(vfs.close(a)==0&&vfs.close(b)==0&&vfs.close(c)==0&&vfs.close(d)==0);
     assert(vfs.remove(path)==0);
+    /* Both modes preserve checked publication; RetroArch mode needs only a
+     * buffered flush. A read-only handle remains an invalid flush target. */
+    for(unsigned sync=0;sync<2;++sync){
+        uint8_t expected[32],actual[32];
+        for(unsigned i=0;i<32;++i)expected[i]=(uint8_t)(i+sync+1);
+        vfs_flush_fsync=sync!=0;a=vfs.open(path,2,0);assert(a);
+        assert(vfs.write(a,expected,32)==32&&vfs.flush(a)==0);
+        b=vfs.open(path,1,0);assert(b&&vfs.read(b,actual,32)==32);
+        assert(!memcmp(actual,expected,32)&&vfs.flush(b)==-1);
+        assert(vfs.close(b)==0&&vfs.close(a)==0&&vfs.remove(path)==0);
+    }
+    vfs_flush_fsync=true;
     puts("runner VFS: buffered seek-zero, tell, independent per-handle size caches");
     vfs_assert_no_open_handles();return 0;
 }

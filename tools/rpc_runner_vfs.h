@@ -6,6 +6,9 @@
 #ifndef ARC_RUNNER_VFS_AUDIT
 #define ARC_RUNNER_VFS_AUDIT(path,mode) ((void)(path), (void)(mode))
 #endif
+/* Durability/process-kill tests retain sync by default. Timing opts into the
+ * frontend's fflush-only behavior explicitly (D-156). */
+static bool vfs_flush_fsync = true;
 static char save_directory[4096];
 static unsigned vfs_open_handles,vfs_open_directories;
 static inline void vfs_assert_no_open_handles(void)
@@ -102,6 +105,7 @@ static int64_t vfs_write(struct retro_vfs_file_handle *h,const void *data,uint64
 static int vfs_flush(struct retro_vfs_file_handle *h)
 {
     if(!h->writable || fflush(h->file))return -1;
+    if(!vfs_flush_fsync)return 0;
 #if defined(_WIN32)
     return _commit(_fileno(h->file));
 #else

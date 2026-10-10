@@ -2325,6 +2325,18 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
   add_test(NAME rpc-ide-registers COMMAND rpc_ide_test)
 endif()
 
+# D-157: sanitizer CI includes rpc-.*; use the real imported CPU objects.
+if(BUILD_TESTING AND NOT ANDROID)
+  add_executable(rpc_smlal_test tests/rpc_smlal_test.c $<TARGET_OBJECTS:arcdroid_rpc_cpu>)
+  target_include_directories(rpc_smlal_test PRIVATE engine/rpc engine/rpcemu/src "${CMAKE_CURRENT_BINARY_DIR}/generated")
+  target_compile_options(rpc_smlal_test PRIVATE -UNDEBUG -Wall -Wextra)
+  add_dependencies(rpc_smlal_test rpc_cpu_test)
+  if(ARCDROID_SANITIZERS)
+    target_link_libraries(rpc_smlal_test PRIVATE arcdroid_sanitizer_compile arcdroid_sanitizer_link)
+  endif()
+  add_test(NAME rpc-cpu-smlal COMMAND rpc_smlal_test)
+endif()
+
 # D-155 part (a): independently committable repetition before the fix.
 if(BUILD_TESTING AND NOT ANDROID)
   foreach(kind IN ITEMS cpu cmos session)
