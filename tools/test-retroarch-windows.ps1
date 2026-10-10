@@ -2726,15 +2726,22 @@ if (-not $GuardedJfdOnly) {
     if (Test-Path $rpcSave) { throw 'R2c evidence requires a fresh rpc-hd-save directory' }
     New-Item -ItemType Directory $rpcSave | Out-Null
     Copy-Item -Recurse (Join-Path $rpcFixture 'save/arcdroid') $rpcSave
+    $rpcSave = (Resolve-Path $rpcSave).Path
     $rpcCore = Join-Path $coreDirectory 'arcdroid_rpcplan_libretro.dll'
     Copy-Item (Join-Path $InputDirectory 'arcdroid_rpcplan_libretro.dll') $rpcCore
     Copy-Item (Join-Path $InputDirectory 'arcdroid_rpcplan_libretro.info') $infoDirectory
     $rpcConfig = Join-Path $WorkDirectory 'rpc-hd.cfg'
-    Copy-Item $config $rpcConfig
+    # RetroArch keeps the first occurrence of a config key. Replace the shared
+    # leg's values instead of appending duplicate directory keys.
+    Get-Content -LiteralPath $config | Where-Object {
+        $_ -notmatch '^\s*(system_directory|savefile_directory|savestate_directory|sort_savefiles_enable|sort_savefiles_by_content_enable)\s*='
+    } | Set-Content -Encoding ASCII $rpcConfig
 @"
 system_directory = "$(ConfigPath $rpcFixture)"
-savefile_directory = "$(ConfigPath ((Resolve-Path $rpcSave).Path))"
-savestate_directory = "$(ConfigPath ((Resolve-Path $rpcSave).Path))"
+savefile_directory = "$(ConfigPath $rpcSave)"
+savestate_directory = "$(ConfigPath $rpcSave)"
+sort_savefiles_enable = "false"
+sort_savefiles_by_content_enable = "false"
 video_shader_enable = "false"
 screenshot_gpu = "false"
 screenshot_directory = "$(ConfigPath ((Resolve-Path $evidenceDirectory).Path))"
@@ -2819,7 +2826,35 @@ public static class ArcRpcHdCrc {
             Add-Content -Encoding ASCII (Join-Path $evidenceDirectory 'rpc-hd-results.txt')
         return $generation
     }
+    function Wait-RpcHdDirectories($Run) {
+        $expected = @{ SYSTEM = $rpcFixture; SAVE = $rpcSave }
+        $deadline = [DateTime]::UtcNow.AddSeconds(10)
+        do {
+            $seen = @{}
+            if (Test-Path -LiteralPath $Run.RetroLog) {
+                foreach ($line in @(Get-Content -LiteralPath $Run.RetroLog)) {
+                    if ($line -match 'GET_(SYSTEM|SAVE)_DIRECTORY:\s*"([^"]*)"') {
+                        $kind = $Matches[1]
+                        $actual = $Matches[2].Replace('\', '/').TrimEnd('/')
+                        $wanted = $expected[$kind].Replace('\', '/').TrimEnd('/')
+                        if (-not [string]::Equals($actual, $wanted, [StringComparison]::OrdinalIgnoreCase)) {
+                            throw "$($Run.Name) GET_${kind}_DIRECTORY expected '$wanted'; got '$actual'"
+                        }
+                        $seen[$kind] = $true
+                    }
+                }
+            }
+            if ($seen.SYSTEM -and $seen.SAVE) {
+                Write-Host "$($Run.Name) frontend directories verified: system=$rpcFixture save=$rpcSave"
+                return
+            }
+            if ($Run.Process.HasExited) { throw "$($Run.Name) exited before both frontend directories were verified" }
+            Start-Sleep -Milliseconds 100
+        } while ([DateTime]::UtcNow -lt $deadline)
+        throw "$($Run.Name) missing GET_SYSTEM_DIRECTORY or GET_SAVE_DIRECTORY in its RetroArch log"
+    }
     function Wait-RpcHdScreen($Run, [int]$Rgb) {
+        Wait-RpcHdDirectories $Run
         $deadline = [DateTime]::UtcNow.AddSeconds(90)
         $attempt = 0
         do {
