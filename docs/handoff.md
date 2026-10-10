@@ -2,7 +2,37 @@
 
 **Stage:** IMPLEMENTATION — roadmap item 6, RiscPC **R2c**, run J (intermittent Windows crash in the RPC CPU tests)
 **Owner:** Sol (run J), supervised by Fable
-**Next:** Sol R2c run J in `.work/s60/sol2c/clone` (thread `01a120ab-7bf4-7843-a879-6fab6d9b3736`). Then Fable reviews and pushes it and confirms CI, including the `windows-retroarch` hard-disc leg, which has not yet run with the H1 fix. After that come the Odin3 legs (D-153) and the merge.
+**Next:** the incoming Fable (S61) supervises Sol run J (already running; see below) to completion, then works through the steps below. Everything here is in the S60 private ledger `.work/s60/LEDGER.md`.
+1. **Review run J.** Commit it verbatim to `slice/r2c-ide` in `.work/s60/sol2c/clone`, push, and require green CI on all jobs. In particular:
+   - the `windows` job must pass `rpc-cpu-mmu-memory`;
+   - `windows-retroarch` must reach and pass the authored hard-disc leg (`rpc-hd-session-1/2/3`). It has never yet run with the H1 fix (run H).
+
+   If `windows-retroarch` flakes in an earlier Archimedes leg, re-run the failed job. Earlier flakes: a screenshot timeout in Slice 15, and `zip-name-disc1-1`.
+2. **Odin3 legs on the final core** (D-153, D-154; owed):
+   - Build arm64 from the final head (`.work/s60/ab/r2c`: `cmake --build build/android --target arcdroid_rpcplan_libretro rpc_runner hash_accel_test`).
+   - Run `hash_accel_test --require-arm`.
+   - Run the authored guest with `--hd-cost`, three times, with the save directory on `/storage/emulated/0` (FUSE), not `/data/local/tmp`.
+   - Run the **031 install with `--hd-cost`**, with saves on `/storage/emulated/0`. The pre-install store is `.work/s60/odin/st031`; the device script is `.work/s60/odin/i031.sh`; the plan, input and disk files are in `/data/local/tmp/arcdroid-r2c/i031/`.
+   - **Accept** only if no frame exceeds 0.20 T extra (D-152), checked with `tools/check-rpc-hd-cost.py`.
+   - Install the final plan core through RetroArch's menu and repeat the native three-session authored leg (`ra2.sh`, `arcdroid-hd.cfg`, fixture in `RetroArch/rpc-r2c/hdra/`, fresh `hdsave/`, network QUIT pair via `/data/local/tmp/s52.sh net QUIT`). Then repeat a short multi-session check (`rep20.sh`).
+
+   Opus QA 2 found scattered-write reconstruction ticks of 6–10 ms on a loaded Mac. The 031 FUSE leg decides whether further step splitting is needed (D-152 item 2).
+3. **Opus QA** of the delta from runs I and J, then **merge PR #337** under protocol §12.11. After the merge, the Q-3 oracle fix comes before R3.
+
+- **Running at close (S60 started these):**
+  - **Sol run J:** codex PID 94334, started 2026-10-10 about 14:15 CDT, resuming thread `01a120ab-7bf4-7843-a879-6fab6d9b3736` in `.work/s60/sol2c/clone`. Prompt `promptJ.md`, stream `streamJ.jsonl`, final `finalJ.md`, report `SOL-REPORT-R2C-J.md`.
+  - **Its detached watchdog:** `wait-run.sh`, PID 94802. It writes its single line to `.work/s60/watch-solJ.txt`.
+
+  The next holder adopts both, under protocol §15. To wait: `until [ -s .work/s60/watch-solJ.txt ]; do sleep 30; done`.
+- **The clone carries a local merge of `main` that is not pushed.** It includes this baton. Push the branch after committing run J.
+- **Private S60 work** is in `.work/s60/` (D-149), indexed by `LEDGER.md`. It includes:
+  - the A/B scripts (`ab/`);
+  - the boot environment (`bootenv/`);
+  - AC-8 (`ac8/`);
+  - Odin3 tooling and results (`odin/`);
+  - CI evidence (`ci-evidence-*`);
+  - RetroArch 1.22.2 for Windows (`winra/`);
+  - QA clones (`qa/`, `qa2/`) and their adjudication (`qa/adjudication-1.md`).
 
 **Recurrence (S60):** CI run 38076039462 at `b587f60` (run I). The `windows` job failed on one test: `rpc-cpu-mmu-memory` (`rpc_cpu_test`) crashed with `SegFault` after 0.31 s and no output. That test and its code are unchanged by runs G–I, and it passed on Windows at `5630d83` and earlier.
 - This is the second intermittent Windows-only failure in the RPC CPU tests. The first was R2a's `rpc-cpu-trace` producing empty output at `5648bd4`, carried as "investigate if it recurs".
@@ -289,17 +319,7 @@ Slice order (D-133): R1–R4 → item 5 release baseline → item 6b faster CPU 
 **Item 5 grounding (S55, paused at a safe point: nothing committed, no branch).** `main` `c725bd6`: CI builds Android arm64 only, which is the whole Android target (D-135: no armeabi-v7a); the `.info` is copied into the build tree (`configure_file`) and installed by `install(FILES …)` but no CI artifact bundles core + `.info` + `COPYING` + `THIRD_PARTY_NOTICES.md`; the version lives in three places (`project(… VERSION 0.1.0)`, `ARCDROID_VERSION` fallback in `libretro/arcdroid_libretro.c:28`, `display_version` in `arcdroid_libretro.info`). (armeabi-v7a was found to build unmodified, but is out of scope by D-135.) Android devices: the Odin3 (`arm64-v8a` only) and a second Snapdragon 8 Gen 2 device (Founder S55). **Windows signing risk (S60):** Smart App Control, on by default for many Windows 11 installs, blocked one unsigned ArcDroid-built probe executable on the Founder's box while allowing the unsigned runner and plan core. Item 5 must decide whether an unsigned `arcdroid_libretro.dll` is acceptable, or whether it needs signing or a documented workaround. No shipping source uses `__FILE__`/`__DATE__`/`__TIME__` or a runtime `assert` (the Slice 8 note on embedded paths is unverified — check with a two-path build comparison). The GPL corresponding-source mechanism for distributed binaries (D-016) stays tied to publication (D-100). Scratch: S55 scratchpad `s55/` (`a/`, `second-checkout-b/` clones, `build-android.sh`).
 
 ## Waiting on the Founder (protocol §18, D-124)
-- **The Odin3 is away (D-153, S60).**
-  - **Blocks:** the remaining R2c Odin3 gates, and therefore merging PR #337.
-  - **Legs still owed on the final R2c core** (run E or later):
-    - the 031 install with `--hd-cost` (stopped part-way when the device left);
-    - the native-RetroArch three-session authored leg;
-    - a short repeat of the multi-session check.
-  - **Already passed on run E:**
-    - hash identity on the arm64 paths;
-    - the authored-guest frame cost, three runs at 2.86–3.05 ms with 0 frames over 0.20 T.
-  - **Device state:** nothing of S60's is running. The run E plan core is not yet installed in RetroArch; the installed core is from run D.
-  - **Independent of it:** Sol runs, CI, Fable review and Opus QA.
+- None. The Odin3 and the Windows PC are available again (D-154).
 
 **Answered S60:** SSH to the Founder's Windows box (`sinmu@192.168.1.66`) is allowed for the item 6b Windows profile (D-148). It may also serve R2c AC-9's Windows native-RetroArch leg.
 
@@ -874,7 +894,7 @@ The R1 work order and implementation record are in git history (`docs/handoff.md
   - **Clones and probes:** Sol, Astra and QA clones and scratch probes live under this project's own scratchpad (`/private/tmp/claude-501/-Users-mac0918-dev-ArcDroid/…`), which the deny list does not cover. Sol's own build directories (`/private/tmp/arcdroid-r2*`) are outside `claude-501` and are confined by the Codex sandbox.
   - **Sibling directory `~/dev/ArcDroid-evidence`:** denied by the generated list, like every other sibling. If it holds this project's evidence, exempt it by removing its three lines.
 - **Founder instruction (S54, relayed S55):** never stack shell commands — no `&&`, `;` or pipes chaining git steps; run each command separately (stacked commands get denied). Put multi-step work in a script file under the scratchpad instead.
-- **Used windows (never relay to these; each closing holder adds its own name):** `arcdroid-d9` (S33), `arcdroid-6c` (S43), `ArcDroid-45` (S45), `arcdroid-83` (2026-10-02 governance edit), `ArcDroid-49` (S49), `arcdroid-d4` (S50), `arcdroid-10` (S51), `arcdroid-1b` (S52), `ArcDroid-52` (S53), `arcdroid-df` (S54), `arcdroid-7e` (S55), `arcdroid-25` (S56), `arcdroid-ba` (S57), `arcdroid-99` (S58). Earlier holders were not recorded; window names change between days.
+- **Used windows (never relay to these; each closing holder adds its own name):** `arcdroid-d9` (S33), `arcdroid-6c` (S43), `ArcDroid-45` (S45), `arcdroid-83` (2026-10-02 governance edit), `ArcDroid-49` (S49), `arcdroid-d4` (S50), `arcdroid-10` (S51), `arcdroid-1b` (S52), `ArcDroid-52` (S53), `arcdroid-df` (S54), `arcdroid-7e` (S55), `arcdroid-25` (S56), `arcdroid-ba` (S57), `arcdroid-99` (S58), `arcdroid-db` (S60; the S59 window crashed before recording its name). Earlier holders were not recorded; window names change between days.
 
 **Relay brief:** "ArcDroid baton handoff from <window> (S<n>), for /Users/mac0918/dev/ArcDroid only. Before anything else, run the receipt checks in docs/protocol.md §18: you must be Claude Opus 5.5 at reasoning effort 15 (high) or above, your working directory must be /Users/mac0918/dev/ArcDroid, and this must be the first message in your window. If any check fails, change nothing, tell the Founder in your window which check failed (for a wrong model or effort: run /model claude-opus-5-5 and /effort high, then say \"pick up from handoff\"), send a PushNotification, and stop. If all pass, take the baton without asking the Founder to confirm, number yourself S<n+1>, read CLAUDE.md and docs/handoff.md, take the active Next (never a workstream under Waiting on the Founder until its answer is recorded), and work towards the Founder vision D-073. Founder instruction (S54): never stack shell commands (no `&&`, `;` or pipes chaining git steps) — run each command separately. Close by protocol §18: relay only to one idle arcdroid- window, never another project's session; if no ArcDroid window is eligible, stop all work and close. Repeat this rule in your own relay."
 
