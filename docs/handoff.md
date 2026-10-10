@@ -1,8 +1,9 @@
 # ArcDroid Handoff
 
-**Stage:** IMPLEMENTATION — roadmap item 6, RiscPC **R2c**, run E (R2c-3, D-152: hard-disc frame cost on the Odin3)
-**Owner:** Sol (run E), supervised by Fable
-**Next:** Sol R2c run E on `slice/r2c-ide` (PR #337), resuming thread `01a120ab-7bf4-7843-a879-6fab6d9b3736` in `.work/s60/sol2c/clone`, carrying out the **R2c-3 work order below**. Then Fable reviews it, re-measures on the Odin3 and checks CI. After that, PR #337 goes to Opus QA.
+**Stage:** IMPLEMENTATION — roadmap item 6, RiscPC **R2c**, run E2 (test-only: Windows RetroArch hard-disc leg directories)
+**Owner:** Sol (run E2), supervised by Fable
+**Next:** Sol R2c run E2 in `.work/s60/sol2c/clone` (thread `01a120ab-7bf4-7843-a879-6fab6d9b3736`), on top of run E `6882283` (committed locally by Fable). Fix `tools/test-retroarch-windows.ps1` so the run C hard-disc leg uses the fixture system directory and its own save directory, and asserts both from the RetroArch log before judging screenshots. CI at `30376e0` showed the leg refused at load because RetroArch used its default `system` directory and a per-core save subfolder (evidence in the clone's `.evidence/ci-windows-d/`). This is test-only; nothing else changes. Then Fable pushes runs E and E2 together, checks CI and dispatches Opus QA. The Odin3 legs and the merge wait for the device (D-153).
+- **Run E (D-152) result so far:** Fable's review is pending. On the Odin3, before the device left: hash identity passed on every arm64 path; SHA-256 ran at about 1,455–1,940 MiB/s (portable 343) and CRC-32 at 7,300–10,900 MiB/s (portable 510); the authored guest's worst hard-disc frame was 2.86–3.05 ms in three runs (bound 3.33 ms), with 0 frames over 0.20 T. On the Founder's Windows box (Ryzen 7800X3D) the SHA-NI path passed identity, at 938 MiB/s against portable 400.
 
 **R2c-3 work order (D-152): hard-disc work must fit the frame budget on the Odin3.**
 - **Measured (S60, run D core, arm64 runner, authored guest, hard disc on against off):** 256-sector writes add 1.7–3.3 ms; checkpoint steps add 5.0–5.8 ms (0.35 T). simpleperf puts the cost mainly in `arc_sha256_transform` and `arc_crc32`. The bound is 0.20 T (3.33 ms) extra on any frame.
