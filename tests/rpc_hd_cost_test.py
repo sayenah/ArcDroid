@@ -1,0 +1,76 @@
+#!/usr/bin/env python3
+"""HD timing is observational; every measured frame and phase is reported. GPL-2.0-only."""
+import csv
+from pathlib import Path
+import shutil
+import subprocess
+import sys
+import tempfile
+sys.dont_write_bytecode = True
+from rpc_hd_retroarch_test import pixels, store_check
+
+
+def main():
+    runner, core, fixture, checker = map(lambda p: Path(p).resolve(), sys.argv[1:5])
+    with tempfile.TemporaryDirectory(prefix='arc-hd-cost-') as temp:
+        root = Path(temp)
+        traces = []
+        stores = []
+        for measured in (False, True):
+            save = root / str(measured)
+            shutil.copytree(fixture / 'save', save)
+            shot = root / f'{measured}.ppm'
+            report = root / 'hd.csv'
+            args = [str(runner), '--core', str(core), '--plan', str(fixture / 'hd.arcplan'),
+                    '--system', str(fixture), '--save', str(save), '--frames', '700',
+                    '--dump-frame', '699', str(shot)]
+            if measured:
+                args += ['--hd-cost', str(report)]
+            result = subprocess.run(args, capture_output=True, text=True, timeout=180)
+            assert result.returncode == 0, result.stderr
+            traces.append(result.stdout)
+            pixels(shot, 1)
+            store_check(save, 2)
+            stores.append({p.relative_to(save): p.read_bytes() for p in save.rglob('*') if p.is_file()})
+        assert traces[0] == traces[1], 'timing changed virtual execution'
+        assert stores[0] == stores[1], 'timing changed persistent bytes'
+        rows = list(csv.DictReader(report.open()))
+        assert len(rows) == 700 and all(r['attached'] == '1' for r in rows)
+        assert sum(int(r['write_commands']) for r in rows) >= 17
+        assert any(int(r['acknowledgement_ns']) > 0 for r in rows)
+        assert any(int(r['read_commands']) > 0 and int(r['read_ns']) > 0 for r in rows)
+        assert {'ROTATE', 'MATERIALIZE', 'MANIFEST', 'PUBLISH', 'RETIRE'} <= {r['phase'] for r in rows}
+        assert int(rows[-1]['checkpoints']) >= 2
+        # Wall-clock qualification belongs to the Odin3; exercise the checker
+        # deterministically without asserting a budget on a loaded CI host.
+        for row in rows:
+            row['read_ns'] = row['acknowledgement_ns'] = '0'
+            row['maintenance_ns'] = row['total_ns'] = str(int(row['T_ns']) // 5)
+        def write_rows():
+            with report.open('w', newline='') as output:
+                writer = csv.DictWriter(output, fieldnames=rows[0].keys())
+                writer.writeheader(); writer.writerows(rows)
+        write_rows()
+        check_args = [sys.executable, '-B', str(checker), str(report), '--frames', '700']
+        assert subprocess.run(check_args, capture_output=True).returncode == 0
+        assert subprocess.run(check_args[:-1] + ['701'], capture_output=True).returncode == 2
+        rows[0]['total_ns'] = rows[0]['maintenance_ns'] = str(int(rows[0]['T_ns']) // 5 + 1)
+        write_rows()
+        assert subprocess.run(check_args, capture_output=True).returncode == 1
+        plan = root / 'off.arcplan'
+        plan.write_text((fixture / 'hd.arcplan').read_text().replace('hard_disc=on', 'hard_disc=off'))
+        # Make the relative ROM/media/input paths absolute after moving the plan.
+        plan.write_text(plan.read_text().replace('firmware=hd.rom', f'firmware={fixture / "hd.rom"}')
+                        .replace('media=floppy.adf', f'media={fixture / "floppy.adf"}')
+                        .replace('disk_control=disk.script', f'disk_control={fixture / "disk.script"}'))
+        result = subprocess.run([str(runner), '--core', str(core), '--plan', str(plan),
+                                 '--system', str(fixture), '--save', str(root / 'True'),
+                                 '--frames', '12', '--hd-cost', str(report)], capture_output=True, text=True)
+        assert result.returncode == 0, result.stderr
+        assert subprocess.run([sys.executable, '-B', str(checker), str(report)], capture_output=True).returncode == 0
+        assert all(r['attached'] == '0' for r in csv.DictReader(report.open()))
+        print('rpc-hd-cost-report: measured/unmeasured execution and store identical; phases, off and budget checker pass')
+
+
+if __name__ == '__main__':
+    main()

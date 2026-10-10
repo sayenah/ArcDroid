@@ -9,6 +9,9 @@ command -v grep >/dev/null 2>&1 || {
 sources='core/adffs.c
 core/install_disc.c
 core/hash.c
+core/hash_accel.inc
+core/hash_accel.h
+core/hash_crc_slices.h
 core/machine.c
 core/input.c
 core/input_mapping.c

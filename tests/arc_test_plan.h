@@ -25,6 +25,14 @@ bool arc_test_plan_pending(void);
 bool arc_test_plan_slice(char *error, size_t size);
 void arc_test_plan_hd_frame(void);
 bool arc_test_plan_persist(char *error, size_t size);
+typedef struct {
+    uint64_t read_ns, acknowledgement_ns, maintenance_ns, read_commands, write_commands,
+        generation, checkpoints;
+    unsigned phase, next_phase;
+    bool attached;
+} ArcTestHdCost;
+/* Opt-in test-only clocks; no host measurement controls guest execution. */
+RETRO_API void arc_test_plan_hd_cost(ArcTestHdCost *out,bool enabled);
 RETRO_API bool arc_test_plan_hd_stats(ArcRpcHdStats *out);
 RETRO_API bool arc_test_plan_hd_write(uint32_t lba,uint32_t count,const uint8_t *bytes);
 RETRO_API unsigned arc_test_plan_cmos_phase(void);

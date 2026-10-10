@@ -278,8 +278,22 @@ option(ARCDROID_ANDROID_TEST_CORE "Build the non-installed Android test core" OF
 option(ARCDROID_RPC_RUNNER "Build the non-installed R1 plan runner" ON)
 if(ARCDROID_RPC_RUNNER AND ((BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32)) OR
                           (ANDROID AND ARCDROID_ANDROID_TEST_CORE)))
+  add_executable(hash_accel_test tests/hash_accel_test.c core/hash.c tests/rpc_test_clock.c)
+  target_include_directories(hash_accel_test PRIVATE core)
+  target_compile_definitions(hash_accel_test PRIVATE ARCDROID_HASH_TEST=1)
+  target_compile_options(hash_accel_test PRIVATE -UNDEBUG -Wall -Wextra)
+  if(ARCDROID_SANITIZERS)
+    target_link_libraries(hash_accel_test PRIVATE arcdroid_sanitizer_compile arcdroid_sanitizer_link)
+  endif()
+  if(WIN32)
+    target_link_options(hash_accel_test PRIVATE -static-libgcc)
+  endif()
+  if(NOT CMAKE_CROSSCOMPILING OR WIN32)
+    add_test(NAME rpc-hash-identity COMMAND hash_accel_test)
+    set_tests_properties(rpc-hash-identity PROPERTIES TIMEOUT 600)
+  endif()
   add_executable(rpc_runner tools/rpc_runner.c tests/rpc_test_clock.c)
-  target_include_directories(rpc_runner PRIVATE engine engine/rpc core libretro/include)
+  target_include_directories(rpc_runner PRIVATE engine engine/rpc core libretro libretro/include tests)
   target_compile_definitions(rpc_runner PRIVATE ARCDROID_TEST_FAULTS=1 RETRO_IMPORT_SYMBOLS=1)
   target_compile_options(rpc_runner PRIVATE
     $<$<C_COMPILER_ID:GNU,Clang,AppleClang>:-Wall;-Wextra;-Werror=implicit-function-declaration>)
@@ -2248,6 +2262,11 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_hd_retroarch_test.py"
     $<TARGET_FILE:rpc_runner> $<TARGET_FILE:arcdroid_rpcplan_libretro> "${RPC_HD_RETROARCH_DIR}")
   set_tests_properties(rpc-hd-retroarch-guest PROPERTIES TIMEOUT 600)
+  add_test(NAME rpc-hd-cost-report COMMAND "${Python3_EXECUTABLE}" -B
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_hd_cost_test.py"
+    $<TARGET_FILE:rpc_runner> $<TARGET_FILE:arcdroid_rpcplan_libretro> "${RPC_HD_RETROARCH_DIR}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/tools/check-rpc-hd-cost.py")
+  set_tests_properties(rpc-hd-cost-report PROPERTIES TIMEOUT 600)
   add_test(NAME rpc-hd-plan COMMAND "${Python3_EXECUTABLE}" -B
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_hd_plan_test.py" $<TARGET_FILE:rpc_cmos_plan_test>
     $<TARGET_FILE:arcdroid_rpcplan_libretro> $<TARGET_FILE:rpc_runner>

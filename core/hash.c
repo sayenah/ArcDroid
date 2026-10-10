@@ -2,16 +2,15 @@
 #include "arcdroid_core.h"
 
 #include <string.h>
+#include <stdatomic.h>
+#include "hash_accel.h"
 
 static uint32_t arc_rotl32(uint32_t value, unsigned shift)
 {
    return (value << shift) | (value >> (32u - shift));
 }
 
-uint32_t arc_crc32(const void *data, size_t size)
-{
-   /* Portable table-driven reflected CRC-32, identical polynomial/result. */
-   static const uint32_t table[256] = {
+static const uint32_t table[256] = {
       UINT32_C(0x00000000),UINT32_C(0x77073096),UINT32_C(0xee0e612c),UINT32_C(0x990951ba),
       UINT32_C(0x076dc419),UINT32_C(0x706af48f),UINT32_C(0xe963a535),UINT32_C(0x9e6495a3),
       UINT32_C(0x0edb8832),UINT32_C(0x79dcb8a4),UINT32_C(0xe0d5e91e),UINT32_C(0x97d2d988),
@@ -77,6 +76,10 @@ uint32_t arc_crc32(const void *data, size_t size)
       UINT32_C(0xb3667a2e),UINT32_C(0xc4614ab8),UINT32_C(0x5d681b02),UINT32_C(0x2a6f2b94),
       UINT32_C(0xb40bbe37),UINT32_C(0xc30c8ea1),UINT32_C(0x5a05df1b),UINT32_C(0x2d02ef8d),
    };
+
+static uint32_t arc_crc32_portable(const void *data, size_t size)
+{
+   /* Portable table-driven reflected CRC-32, identical polynomial/result. */
    const uint8_t *bytes = data;
    uint32_t crc = UINT32_C(0xffffffff);
    for (size_t i = 0; i < size; ++i)
@@ -174,9 +177,7 @@ ArcDigest arc_digest(const void *data, size_t size)
 static uint32_t arc_rotr32(uint32_t value, unsigned shift)
 { return (value >> shift) | (value << (32u - shift)); }
 
-static void arc_sha256_transform(ArcSha256 *ctx, const uint8_t block[64])
-{
-   static const uint32_t k[64] = {
+static const uint32_t sha256_k[64] = {
       0x428a2f98u,0x71374491u,0xb5c0fbcfu,0xe9b5dba5u,0x3956c25bu,0x59f111f1u,0x923f82a4u,0xab1c5ed5u,
       0xd807aa98u,0x12835b01u,0x243185beu,0x550c7dc3u,0x72be5d74u,0x80deb1feu,0x9bdc06a7u,0xc19bf174u,
       0xe49b69c1u,0xefbe4786u,0x0fc19dc6u,0x240ca1ccu,0x2de92c6fu,0x4a7484aau,0x5cb0a9dcu,0x76f988dau,
@@ -186,6 +187,9 @@ static void arc_sha256_transform(ArcSha256 *ctx, const uint8_t block[64])
       0x19a4c116u,0x1e376c08u,0x2748774cu,0x34b0bcb5u,0x391c0cb3u,0x4ed8aa4au,0x5b9cca4fu,0x682e6ff3u,
       0x748f82eeu,0x78a5636fu,0x84c87814u,0x8cc70208u,0x90befffau,0xa4506cebu,0xbef9a3f7u,0xc67178f2u
    };
+
+static void arc_sha256_portable(ArcSha256 *ctx, const uint8_t block[64])
+{
    uint32_t w[64];
    for (unsigned i = 0; i < 16u; ++i)
       w[i] = ((uint32_t)block[i*4u]<<24)|((uint32_t)block[i*4u+1u]<<16)|
@@ -201,7 +205,7 @@ static void arc_sha256_transform(ArcSha256 *ctx, const uint8_t block[64])
    for (unsigned i=0;i<64u;++i)
    {
       uint32_t s1=arc_rotr32(e,6)^arc_rotr32(e,11)^arc_rotr32(e,25);
-      uint32_t ch=(e&f)^((~e)&g), t1=h+s1+ch+k[i]+w[i];
+      uint32_t ch=(e&f)^((~e)&g), t1=h+s1+ch+sha256_k[i]+w[i];
       uint32_t s0=arc_rotr32(a,2)^arc_rotr32(a,13)^arc_rotr32(a,22);
       uint32_t maj=(a&b)^(a&c)^(b&c), t2=s0+maj;
       h=g;g=f;f=e;e=d+t1;d=c;c=b;b=a;a=t1+t2;
@@ -209,6 +213,8 @@ static void arc_sha256_transform(ArcSha256 *ctx, const uint8_t block[64])
    ctx->state[0]+=a;ctx->state[1]+=b;ctx->state[2]+=c;ctx->state[3]+=d;
    ctx->state[4]+=e;ctx->state[5]+=f;ctx->state[6]+=g;ctx->state[7]+=h;
 }
+
+#include "hash_accel.inc"
 
 void arc_sha256_init(ArcSha256 *ctx)
 {
@@ -219,17 +225,20 @@ void arc_sha256_init(ArcSha256 *ctx)
 void arc_sha256_update(ArcSha256 *ctx, const void *data, size_t size)
 {
    const uint8_t *p=data; ctx->length+=(uint64_t)size*8u;
-   while(size){size_t n=64u-ctx->used;if(n>size)n=size;
+   ArcSha256Transform transform=arc_sha256_dispatch();
+   while(size){if(!ctx->used && size>=64u){transform(ctx,p);p+=64u;size-=64u;continue;}
+      size_t n=64u-ctx->used;if(n>size)n=size;
       memcpy(ctx->block+ctx->used,p,n);ctx->used+=n;p+=n;size-=n;
-      if(ctx->used==64u){arc_sha256_transform(ctx,ctx->block);ctx->used=0u;}}
+      if(ctx->used==64u){transform(ctx,ctx->block);ctx->used=0u;}}
 }
 void arc_sha256_final(const ArcSha256 *source, uint8_t output[32])
 {
    ArcSha256 ctx=*source;ctx.block[ctx.used++]=0x80u;
-   if(ctx.used>56u){memset(ctx.block+ctx.used,0,64u-ctx.used);arc_sha256_transform(&ctx,ctx.block);ctx.used=0u;}
+   ArcSha256Transform transform=arc_sha256_dispatch();
+   if(ctx.used>56u){memset(ctx.block+ctx.used,0,64u-ctx.used);transform(&ctx,ctx.block);ctx.used=0u;}
    memset(ctx.block+ctx.used,0,56u-ctx.used);
    for(unsigned i=0;i<8u;++i)ctx.block[63u-i]=(uint8_t)(ctx.length>>(i*8u));
-   arc_sha256_transform(&ctx,ctx.block);
+   transform(&ctx,ctx.block);
    for(unsigned i=0;i<32u;++i)output[i]=(uint8_t)(ctx.state[i/4u]>>(24u-8u*(i%4u)));
 }
 void arc_sha256_hex(const void *data, size_t size, char output[65])

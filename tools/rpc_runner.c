@@ -1,12 +1,14 @@
 /* Non-shipping libretro plan runner. GPL-2.0-only.
  * Measurement surrounds dispatcher/backend execution inside the test core;
- * frontend callbacks, hashes, output, sleep and input are outside that interval. */
+ * frontend callbacks, framebuffer/PCM hashes, output, sleep and input are
+ * outside that interval. HD hashes belong to the timed backend work. */
 #if !defined(_WIN32)
 #define _POSIX_C_SOURCE 200809L
 #define _XOPEN_SOURCE 700
 #endif
 #include "libretro.h"
 #include "rpc_session.h"
+#include "arc_test_plan.h"
 #include <inttypes.h>
 #include <errno.h>
 #include <math.h>
@@ -158,7 +160,7 @@ int main(int argc, char **argv)
     /* Canonical traces use the same LF bytes on every platform. */
     if (_setmode(_fileno(stdout), _O_BINARY) == -1) return 2;
 #endif
-    const char *core = NULL, *plan = NULL, *pacing = "flat", *timing_path = NULL, *capture_path = NULL;
+    const char *core = NULL, *plan = NULL, *pacing = "flat", *timing_path = NULL, *capture_path = NULL, *hd_cost_path = NULL;
     uint64_t frames = 1, warmup = 0, measure = 0, ram_offset = 0, ram_count = 0, reset_at = UINT64_MAX;
     bool reject = false, print_cmos = false;
     uint64_t fail_alloc = 0, fault_at = UINT64_MAX;
@@ -192,6 +194,7 @@ int main(int argc, char **argv)
         else if (!strcmp(key,"--jfd-omitted")) {if(strcmp(v,"strict")&&strcmp(v,"file-data"))goto usage;jfd_omitted=v;}
         else if (!strcmp(key,"--pacing")) pacing = v;
         else if (!strcmp(key,"--timing")) timing_path = v;
+        else if (!strcmp(key,"--hd-cost")) hd_cost_path = v;
         else if (!strcmp(key,"--capture-seed")) capture_path = v;
         else if (!strcmp(key,"--frames")) { if (!unsigned_number(v,1000000,&frames) || !frames) goto usage; }
         else if (!strcmp(key,"--warmup-seconds")) { if (!unsigned_number(v,3600,&warmup)) goto usage; }
@@ -242,11 +245,16 @@ int main(int argc, char **argv)
         dump_pixels = malloc(DUMP_SIDE * DUMP_SIDE * sizeof(uint32_t));
         if (!dump_pixels) { unload(); deinit(); return 2; }
     }
+    void (*hd_cost_get)(ArcTestHdCost *,bool)=NULL;
+    FILE *hd_cost_file=NULL;uint64_t hd_cost_max=0,hd_cost_over=0,hd_cost_frames=0;
+    if(hd_cost_path){LOAD(hd_cost_get,"arc_test_plan_hd_cost");hd_cost_get(NULL,true);
+        hd_cost_file=fopen(hd_cost_path,"w");if(!hd_cost_file){free(dump_pixels);unload();deinit();return 2;}
+        fputs("frame,T_ns,read_ns,acknowledgement_ns,maintenance_ns,total_ns,phase,next_phase,read_commands,write_commands,generation,checkpoints,attached\n",hd_cost_file);}
     FILE *timing = timing_path ? fopen(timing_path,"w") : NULL;
-    if (timing_path && !timing) { free(dump_pixels); unload(); deinit(); return 2; }
+    if (timing_path && !timing) { free(dump_pixels); if(hd_cost_file)fclose(hd_cost_file); unload(); deinit(); return 2; }
     if (timing) fputs("frame,core_ns,T_ns,measured,guest_instructions,guest_ns\n", timing);
     uint64_t *times = calloc(1000000, sizeof(*times));
-    if (!times) { free(dump_pixels); if(timing)fclose(timing); unload(); deinit(); return 2; }
+    if (!times) { free(dump_pixels); if(timing)fclose(timing); if(hd_cost_file)fclose(hd_cost_file); unload(); deinit(); return 2; }
     size_t sample_count = 0; unsigned result = 0; uint64_t period_ns = 0;
     uint64_t benchmark_start = arc_test_clock_ns(), benchmark_elapsed = 0;
     uint64_t prior_instructions=0,prior_guest_ns=0,measured_instructions=0,measured_guest_ns=0,measured_core_ns=0;
@@ -276,6 +284,15 @@ int main(int argc, char **argv)
         if (measured) {
             times[sample_count++] = elapsed; measured_instructions+=guest_instructions;
             measured_guest_ns+=guest_ns; measured_core_ns+=elapsed;
+        }
+        if(hd_cost_file){ArcTestHdCost h;hd_cost_get(&h,true);
+            uint64_t total=h.read_ns+h.acknowledgement_ns+h.maintenance_ns;
+            static const char *phases[]={"IDLE","ROTATE","MATERIALIZE","MANIFEST","PUBLISH","RETIRE","GC","READ_ONLY","DAMAGED"};
+            if(h.phase>8||h.next_phase>8){result=2;break;}
+            fprintf(hd_cost_file,"%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%s,%s,%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%u\n",
+                f,period_ns,h.read_ns,h.acknowledgement_ns,h.maintenance_ns,total,phases[h.phase],phases[h.next_phase],
+                h.read_commands,h.write_commands,h.generation,h.checkpoints,h.attached);
+            ++hd_cost_frames;if(total>hd_cost_max)hd_cost_max=total;if(total>period_ns/5)++hd_cost_over;
         }
         if (timing) fprintf(timing,"%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%u,%" PRIu64 ",%" PRIu64 "\n",f,elapsed,period_ns,measured,guest_instructions,guest_ns);
         printf("frame=%" PRIu64 " ns=%" PRIu64 " cpu=%" PRIu64 " idle=%" PRIu64 " rate=%u irq=%08x fiq=%08x fault=%u\n",
@@ -339,7 +356,10 @@ int main(int argc, char **argv)
     }
     if (dump_failed) result = 2;
     free(dump_pixels);
-    free(times); if(timing && fclose(timing))result=2; if(ferror(stdout))result=2;
+    free(times); if(hd_cost_file){if(ferror(hd_cost_file))result=2;if(fclose(hd_cost_file))result=2;
+        fprintf(stderr,"hd-cost frames=%" PRIu64 " max_ns=%" PRIu64 " over_0.20T=%" PRIu64 " budget=%s\n",hd_cost_frames,hd_cost_max,hd_cost_over,hd_cost_over?"exceeded":"passed");}
+    if(timing && fclose(timing))result=2;
+    if(ferror(stdout))result=2;
     unload(); deinit();
 #if defined(_WIN32)
     FreeLibrary(library);
@@ -348,6 +368,6 @@ int main(int argc, char **argv)
 #endif
     return (int)result;
 usage:
-    fputs("rpc_runner --core LIB --plan FILE [--system DIR] [--save DIR] [--frames N | --warmup-seconds 120 --measure-seconds 600] [--pacing flat|burst|realtime] [--disk-writes off|shadow|original] [--jfd-policy as-imaged|off] [--jfd-policy-at FRAME VALUE] [--disk-writes-at FRAME VALUE] [--jfd-omitted strict|file-data] [--timing CSV] [--dump-frame N FILE.ppm ...] [--capture-seed FILE] [--ram-offset N --ram-words N] [--reset-at N] [--cmos] [--fail-alloc 1..5] [--fault-at N] [--reject]\n",stderr);
+    fputs("rpc_runner --core LIB --plan FILE [--system DIR] [--save DIR] [--frames N | --warmup-seconds 120 --measure-seconds 600] [--pacing flat|burst|realtime] [--disk-writes off|shadow|original] [--jfd-policy as-imaged|off] [--jfd-policy-at FRAME VALUE] [--disk-writes-at FRAME VALUE] [--jfd-omitted strict|file-data] [--timing CSV] [--hd-cost CSV] [--dump-frame N FILE.ppm ...] [--capture-seed FILE] [--ram-offset N --ram-words N] [--reset-at N] [--cmos] [--fail-alloc 1..5] [--fault-at N] [--reject]\n",stderr);
     return 2;
 }

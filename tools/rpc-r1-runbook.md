@@ -292,3 +292,54 @@ progression and logs. Its evidence and measured added seconds are uploaded in
 `arcdroid-windows-retroarch-evidence`. The host `rpc-hd-retroarch-guest` CTest
 runs the same ROM/plan through the runner, kills session 1, and also proves a
 stale reload and a wrong pattern cannot satisfy the green-screen oracle.
+
+## R2c run E: hash identity and hard-disc work on the Odin3
+
+Build the Android test core, runner and standalone hash test (NDK arm64 API 21
+baseline; optional instructions are selected at runtime):
+
+```sh
+cmake --build build/r2c-b/android --target arcdroid_rpcplan_libretro rpc_runner hash_accel_test -j1
+python3 -B tests/rpc_hd_retroarch_rom.py build/r2c-e/odin-fixture
+sed 's/hard_disc=on/hard_disc=off/' build/r2c-e/odin-fixture/hd.arcplan > build/r2c-e/odin-fixture/hd-off.arcplan
+adb shell mkdir -p /data/local/tmp/arcdroid-r2c-e
+adb push build/r2c-b/android/rpc_runner build/r2c-b/android/hash_accel_test \
+  build/r2c-b/android/arcdroid_rpcplan_libretro_android.so \
+  build/r2c-e/odin-fixture /data/local/tmp/arcdroid-r2c-e/
+adb shell 'cd /data/local/tmp/arcdroid-r2c-e && chmod 755 rpc_runner hash_accel_test && ./hash_accel_test --require-arm'
+adb shell 'cd /data/local/tmp/arcdroid-r2c-e && ./hash_accel_test --bench'
+adb shell 'cd /data/local/tmp/arcdroid-r2c-e && mkdir save-on && cp -R odin-fixture/save/arcdroid save-on/ && ./rpc_runner --core ./arcdroid_rpcplan_libretro_android.so --plan odin-fixture/hd.arcplan --system odin-fixture --save save-on --frames 1500 --pacing flat --timing on.csv --hd-cost hd.csv --ram-offset 131072 --ram-words 1 > on.trace 2> on.log'
+adb shell 'cd /data/local/tmp/arcdroid-r2c-e && mkdir save-off && cp -R odin-fixture/save/arcdroid save-off/ && ./rpc_runner --core ./arcdroid_rpcplan_libretro_android.so --plan odin-fixture/hd-off.arcplan --system odin-fixture --save save-off --frames 1500 --pacing flat --timing off.csv --hd-cost hd-off.csv > off.trace 2> off.log'
+adb pull /data/local/tmp/arcdroid-r2c-e/hd.csv build/r2c-e/odin-hd.csv
+adb pull /data/local/tmp/arcdroid-r2c-e/hd-off.csv build/r2c-e/odin-hd-off.csv
+python3 -B tools/check-rpc-hd-cost.py build/r2c-e/odin-hd.csv --frames 1500
+python3 -B tools/check-rpc-hd-cost.py build/r2c-e/odin-hd-off.csv --frames 1500
+```
+
+Use new save-directory names for a repeat; never replace the seed in an existing
+store. `--require-arm` fails unless **both** SHA2 and CRC32 were detected through
+Android's `getauxval`; it then runs the vectors and differential tests, including
+forced portable modes. `--bench` compares all available modes without changing
+capability detection. Windows' `hash_accel_test.exe` runs the same tests and
+executes SHA-NI only when CPUID reports it.
+
+`--hd-cost` is opt-in and requires the plan test core. Its separate CSV records
+every requested frame, including warm-up: backend read verification, complete
+write acknowledgement (hashing, VFS, index/cache), maintenance tick time,
+maintenance entry/exit phases, read/write command counts, generation and
+checkpoint count. `total_ns` is the sum of those three timed intervals inside
+`retro_run`. Clocks and reporting never control guest execution. CSV writes,
+framebuffer/PCM hashing and frontend pacing are outside these intervals. It
+keeps the existing trace and `--timing` format unchanged.
+
+The checker refuses an incomplete report and fails if **any** frame has `5 * total_ns > T_ns`; it never qualifies
+a run using an average or percentile. Inspect `on.trace`'s last RAM word: it
+must be `ram=00000001` (fresh session, cyan), and the final HD row must show at least two completed
+checkpoints and an advanced generation. Collect `on/off.csv`, traces/logs and
+the canonical store, and compare with the prior on/off device measurement.
+For Fable's private 031 installer replay, use the identical existing runner
+arguments and starting store, adding `--hd-cost installer-hd.csv` and
+`--timing installer-on.csv`; check that report the same way. Its emulation cost
+is separate from the hard-disc bound (D-152). Native RetroArch termination,
+media/persistence legs and the Windows CI leg must still be repeated on the
+run E core.

@@ -30,7 +30,23 @@ static bool refusal_reported;
 static ArcRpcCmosStore record, defaults;
 static ArcRpcHdStore *hard_disc;
 static char hd_save[PATH_LIMIT],hd_content[41],hd_import[PATH_LIMIT];
-static bool hd_enabled;
+static bool hd_enabled,hd_cost_enabled;
+static ArcTestHdCost hd_cost;
+static ArcIdeBackend hd_delegate;
+RETRO_API void arc_test_plan_hd_cost(ArcTestHdCost *out,bool enabled)
+{ if(out)*out=hd_cost;hd_cost_enabled=enabled; }
+static bool hd_read(void *opaque,uint32_t lba,uint32_t count,uint8_t *out)
+{
+    (void)opaque;if(!hd_cost_enabled)return hd_delegate.read(hd_delegate.opaque,lba,count,out);
+    uint64_t start=arc_test_clock_ns();bool ok=hd_delegate.read(hd_delegate.opaque,lba,count,out);
+    hd_cost.read_ns+=arc_test_clock_ns()-start;++hd_cost.read_commands;return ok;
+}
+static bool hd_write(void *opaque,uint32_t lba,uint32_t count,const uint8_t *in)
+{
+    (void)opaque;if(!hd_cost_enabled)return hd_delegate.write(hd_delegate.opaque,lba,count,in);
+    uint64_t start=arc_test_clock_ns();bool ok=hd_delegate.write(hd_delegate.opaque,lba,count,in);
+    hd_cost.acknowledgement_ns+=arc_test_clock_ns()-start;++hd_cost.write_commands;return ok;
+}
 RETRO_API bool arc_test_plan_hd_stats(ArcRpcHdStats *out)
 { if(!hard_disc||!out)return false;arc_riscpc_hd_stats(hard_disc,out);return true; }
 RETRO_API bool arc_test_plan_hd_write(uint32_t lba,uint32_t count,const uint8_t *bytes)
@@ -43,6 +59,7 @@ static bool hd_start(char *error,size_t size)
     if(hd_import[0]&&!arc_riscpc_hd_import(hard_disc,hd_import)){
         if(error&&size)snprintf(error,size,"RiscPC hd_import refused: published store, raw size or population failure");return false;}
     ArcIdeBackend backend;arc_riscpc_hd_backend(hard_disc,&backend);
+    hd_delegate=backend;backend.read=hd_read;backend.write=hd_write;
     return backend.sectors && arc_engine_test_ide_backend(&backend);
 }
 static void *pending_rom;
@@ -69,8 +86,12 @@ static void evidence(uint8_t bytes[256],ArcRpcCmosEvidence *e,uint64_t *now,unsi
 void arc_test_plan_hd_frame(void)
 {
     if(hard_disc && arc_engine_is_rpc() && arc_engine_active()){
+        ArcRpcHdStats stats;
+        if(hd_cost_enabled){arc_riscpc_hd_stats(hard_disc,&stats);hd_cost.phase=stats.state;hd_cost.attached=true;}
         uint64_t start=arc_test_clock_ns();arc_riscpc_hd_tick(hard_disc);
-        arc_engine_test_frame_add_ns(arc_test_clock_ns()-start);
+        uint64_t elapsed=arc_test_clock_ns()-start;arc_engine_test_frame_add_ns(elapsed);
+        if(hd_cost_enabled){hd_cost.maintenance_ns=elapsed;arc_riscpc_hd_stats(hard_disc,&stats);
+            hd_cost.next_phase=stats.state;hd_cost.generation=stats.generation;hd_cost.checkpoints=stats.checkpoints;}
         const char *diagnostic=arc_riscpc_hd_diagnostic(hard_disc);if(diagnostic && plan_log)plan_log(diagnostic);
         const char *notice=arc_riscpc_hd_notice(hard_disc);if(notice && plan_notice)plan_notice(notice,true);
     }
@@ -181,7 +202,7 @@ void arc_test_plan_clear(void)
 {
     char error[256];if(!arc_test_plan_persist(error,sizeof(error)) && error[0] && plan_notice)plan_notice(error,true);
     if(hard_disc){arc_engine_test_ide_backend(NULL);arc_riscpc_hd_close(hard_disc);hard_disc=NULL;}
-    hd_enabled=false;hd_save[0]=hd_content[0]=hd_import[0]=0;
+    hd_enabled=hd_cost_enabled=false;memset(&hd_cost,0,sizeof(hd_cost));memset(&hd_delegate,0,sizeof(hd_delegate));hd_save[0]=hd_content[0]=hd_import[0]=0;
     free(pending_rom);pending_rom=NULL;cmos_phase=0;cmos_frames=8;refusal_reported=false;
     memset(&record,0,sizeof(record));memset(&defaults,0,sizeof(defaults));
     event_count = next_event = disk_count = disk_next = 0; media_content[0]=media_helper[0]=0; script_frame = 0; script_active = false;
@@ -196,6 +217,7 @@ void arc_test_plan_reset(void)
 }
 void arc_test_plan_input(ArcInputState *input)
 {
+    if(hd_cost_enabled)memset(&hd_cost,0,sizeof(hd_cost));
     if (!script_active) return;
     while (next_event < event_count && events[next_event].frame == script_frame) {
         Event *e = &events[next_event++];
