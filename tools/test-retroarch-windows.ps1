@@ -2825,7 +2825,16 @@ DLL SHA-256 accompany it. Never use symbols from a separately rebuilt DLL.
             }
         }
     }
+    function Save-RpcHdExceptionEvidence($Run) {
+        try {
+            $locator = Join-Path $rpcSave 'rpc-hd-exception.txt'
+            if (Test-Path -LiteralPath $locator) {
+                Copy-Item -Force -LiteralPath $locator -Destination (Join-Path $rpcDumpDirectory "$($Run.Name)-exception.txt")
+            }
+        } catch { Write-Warning "RPC exception evidence copy failed: $($_.Exception.Message)" }
+    }
     function Save-RpcHdCrashEvidence($Run) {
+        Save-RpcHdExceptionEvidence $Run
         if ($Run['RpcHdForceStopped'] -or -not $Run.Process.HasExited -or $Run.Process.ExitCode -eq 0) { return }
         $summary = Join-Path $rpcDumpDirectory "$($Run.Name)-capture.txt"
         try {
@@ -3049,6 +3058,7 @@ public static class ArcRpcHdCrc {
         } finally {
             if ($run) {
                 if (-not $run.Process.HasExited) { Stop-Process -Id $run.Process.Id -Force; $run.Process.WaitForExit() }
+                Save-RpcHdExceptionEvidence $run
                 $run.Udp.Dispose()
                 @($run.Stdout, $run.Stderr) | ForEach-Object {
                     if (Test-Path -LiteralPath $_) { Copy-Item -Force $_ $evidenceDirectory }
@@ -3063,7 +3073,7 @@ public static class ArcRpcHdCrc {
     }
     } finally { Restore-RpcHdCrashDumps $rpcDumpSettings }
     $rpcElapsed = ([DateTime]::UtcNow - $rpcStarted).TotalSeconds
-    $result = "R2c native Windows RetroArch: force termination, reload gen1, write gen2, QUIT, reload gen2, timed frontend floppy eject/insert and full IDENTIFY/data comparisons PASS; added seconds=$('{0:F1}' -f $rpcElapsed)"
+    $result = "R2c native Windows RetroArch: force termination, reload gen1, write gen2, QUIT, reload gen2, timed plan disk-control callbacks and full IDENTIFY/data comparisons PASS; added seconds=$('{0:F1}' -f $rpcElapsed)"
     Write-Host $result
     $result | Add-Content -Encoding ASCII (Join-Path $evidenceDirectory 'rpc-hd-results.txt')
     if ($env:GITHUB_STEP_SUMMARY) { Add-Content -Encoding UTF8 $env:GITHUB_STEP_SUMMARY "- $result" }

@@ -154,6 +154,16 @@ mutants += [
  ('IDE-NIEN',IDE,'master()&&ide.irq&&!(ide.control&2)','master()&&ide.irq',a.ide,('ide',)),
  ('IDE-TIE',SCHEDULER,'s->deadlines[i] < s->next_ns','s->deadlines[i] <= s->next_ns',a.ide,('ide',)),
 ]
+mutants += [
+ ('Q04-CRC-ONLY', 'libretro/rpc_hd_store.c', 'ok=get(tail,4)==crc(s,s->scratch,ARC_RPC_HD_CHUNK)&&!memcmp(digest,e+16,32);', 'ok=get(tail,4)==crc(s,s->scratch,ARC_RPC_HD_CHUNK);', a.hd, ('hd','qa-integrity')),
+ ('Q05-SEQ-GAP', 'libretro/rpc_hd_store.c', 'sequence==*last+1&&', 'sequence>*last&&', a.hd, ('hd','qa-integrity')),
+ ('Q11-PREFIX-DIGEST', 'libretro/rpc_hd_store.c', 'arc_sha256_final(&s->digest[parent],digest);if(memcmp(digest,h+160,32))return false;', '', a.hd, ('hd','qa-integrity')),
+ ('Q12-CHUNK-GEN', 'libretro/rpc_hd_store.c', '||\n           (get(e,4)==1&&get(e+8,8)>get(m+88,8)))return false;', ')return false;', a.hd, ('hd','qa-integrity')),
+ ('Q16-DEBRIS-PROBE', 'libretro/rpc_hd_store.c', 'char name[23];chunk_leaf(i,candidate,name);\n        if(size(s,name,&n)){if(!remove_leaf(s,name))return failure(s,false);untrack_chunk(s,name);}', 'char name[23];chunk_leaf(i,candidate,name);(void)name;', a.hd, ('hd','qa-integrity')),
+ ('I08-RESET-GATE', 'engine/rpcemu/src/ide.c', 'if(!master()||(ide.control&4))return;', 'if(!master())return;', a.ide, ('ide',)),
+ ('I09-WRITE-IRQ', 'engine/rpcemu/src/ide.c', 'ide.active=ide.writing=false;ide.status=READY;\n            }else{ide.position=0;ide.status=READY|DRQ;}', 'ide.active=ide.writing=false;ide.status=READY;return;\n            }else{ide.position=0;ide.status=READY|DRQ;}', a.ide, ('ide',)),
+ ('I10-CHS-SECTOR0', 'engine/rpcemu/src/ide.c', 'if(!ide.sector||ide.sector>ide.spt||', 'if(ide.sector>ide.spt||', a.ide, ('ide',)),
+]
 # Q19 is equivalent for representable media: raw has cylinders 0..79;
 # JFD has <=166 track sides. A physical C=255 is rejected before an ID
 # can be selected. Every WRONG_CYLINDER sector C is therefore !=255.

@@ -131,6 +131,7 @@ static int64_t vseek(struct retro_vfs_file_handle *h, int64_t offset, int origin
 }
 static int64_t vread(struct retro_vfs_file_handle *h, void *data, uint64_t n)
 {
+   if (!(h->mode & (RETRO_VFS_FILE_ACCESS_READ | RETRO_VFS_FILE_ACCESS_UPDATE_EXISTING))) return -1;
    File *f = &files[h->index];
    if (h->at > f->size) return 0;
    if (n > f->size - h->at) n = f->size - h->at;

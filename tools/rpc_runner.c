@@ -249,7 +249,7 @@ int main(int argc, char **argv)
     FILE *hd_cost_file=NULL;uint64_t hd_cost_max=0,hd_cost_over=0,hd_cost_frames=0;
     if(hd_cost_path){LOAD(hd_cost_get,"arc_test_plan_hd_cost");hd_cost_get(NULL,true);
         hd_cost_file=fopen(hd_cost_path,"w");if(!hd_cost_file){free(dump_pixels);unload();deinit();return 2;}
-        fputs("frame,T_ns,read_ns,acknowledgement_ns,maintenance_ns,total_ns,phase,next_phase,read_commands,write_commands,generation,checkpoints,attached\n",hd_cost_file);}
+        fputs("frame,T_ns,read_ns,acknowledgement_ns,maintenance_ns,total_ns,phase,next_phase,read_commands,write_commands,generation,checkpoints,attached,open_ns\n",hd_cost_file);}
     FILE *timing = timing_path ? fopen(timing_path,"w") : NULL;
     if (timing_path && !timing) { free(dump_pixels); if(hd_cost_file)fclose(hd_cost_file); unload(); deinit(); return 2; }
     if (timing) fputs("frame,core_ns,T_ns,measured,guest_instructions,guest_ns\n", timing);
@@ -286,12 +286,12 @@ int main(int argc, char **argv)
             measured_guest_ns+=guest_ns; measured_core_ns+=elapsed;
         }
         if(hd_cost_file){ArcTestHdCost h;hd_cost_get(&h,true);
-            uint64_t total=h.read_ns+h.acknowledgement_ns+h.maintenance_ns;
+            uint64_t total=h.read_ns+h.acknowledgement_ns+h.maintenance_ns+h.open_ns;
             static const char *phases[]={"IDLE","ROTATE","MATERIALIZE","MANIFEST","PUBLISH","RETIRE","GC","READ_ONLY","DAMAGED"};
             if(h.phase>8||h.next_phase>8){result=2;break;}
-            fprintf(hd_cost_file,"%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%s,%s,%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%u\n",
+            fprintf(hd_cost_file,"%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%s,%s,%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%u,%" PRIu64 "\n",
                 f,period_ns,h.read_ns,h.acknowledgement_ns,h.maintenance_ns,total,phases[h.phase],phases[h.next_phase],
-                h.read_commands,h.write_commands,h.generation,h.checkpoints,h.attached);
+                h.read_commands,h.write_commands,h.generation,h.checkpoints,h.attached,h.open_ns);
             ++hd_cost_frames;if(total>hd_cost_max)hd_cost_max=total;if(total>period_ns/5)++hd_cost_over;
         }
         if (timing) fprintf(timing,"%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%u,%" PRIu64 ",%" PRIu64 "\n",f,elapsed,period_ns,measured,guest_instructions,guest_ns);

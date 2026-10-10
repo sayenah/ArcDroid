@@ -494,6 +494,7 @@ static int64_t vfs_tell(struct retro_vfs_file_handle *h) { return ftell(h->file)
 static int64_t vfs_seek(struct retro_vfs_file_handle *h, int64_t o, int origin) { return fseek(h->file, (long)o, origin) ? -1 : 0; }
 static int64_t vfs_read(struct retro_vfs_file_handle *h, void *s, uint64_t n)
 {
+   if (!(h->mode & (RETRO_VFS_FILE_ACCESS_READ | RETRO_VFS_FILE_ACCESS_UPDATE_EXISTING))) return -1;
    if (observed_vfs_path && !strcmp(h->path, observed_vfs_path))
       ++observed_vfs_reads;
    if (fault_once(h->path, &fault_read_substring) && n) --n;

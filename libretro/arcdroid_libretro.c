@@ -6383,6 +6383,9 @@ RETRO_API void retro_get_system_av_info(struct retro_system_av_info *info)
    info->timing.sample_rate = ARC_AUDIO_RATE;
 }
 
+#if defined(ARCDROID_TEST_PLANS) && defined(_WIN32)
+#include "rpc_crash_locator.h"
+#endif
 RETRO_API void retro_init(void)
 {
    static const struct retro_disk_control_ext_callback disk = {
@@ -6449,6 +6452,9 @@ RETRO_API void retro_init(void)
 
 RETRO_API void retro_deinit(void)
 {
+#if defined(ARCDROID_TEST_PLANS) && defined(_WIN32)
+   arc_test_crash_locator_stop();
+#endif
    arc_persist_cmos();
    arc_release_session();
    arc_osk_reset(&arc_osk, &arc_inputs);
@@ -7491,6 +7497,10 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game)
       arc_environment(RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY, &system);
       arc_environment(RETRO_ENVIRONMENT_SET_KEYBOARD_CALLBACK, (void *)&keyboard);
       arc_environment(RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY, &save);
+#if defined(_WIN32)
+      if(!arc_test_crash_locator_start(save,arc_log))
+         arc_message("RPC test crash locator unavailable",RETRO_LOG_WARN);
+#endif
       arc_test_plan_set_notice(arc_plan_notice);
       arc_test_plan_set_log(arc_plan_log);
       const ArcTestPlanMedia callbacks={arc_rpc_plan_media,arc_disk_set_eject,arc_disk_set_index,arc_disk_replace,arc_disk_add};
@@ -7507,6 +7517,9 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game)
 
 RETRO_API void retro_unload_game(void)
 {
+#if defined(ARCDROID_TEST_PLANS) && defined(_WIN32)
+   arc_test_crash_locator_stop();
+#endif
    arc_boot_persist_seed();
    arc_persist_cmos();
    if (arc_engine_active() && arc_log)
@@ -7954,6 +7967,7 @@ static void arc_rpc_present_run(void)
 RETRO_API void retro_run(void)
 {
 #if defined(ARCDROID_TEST_PLANS)
+   arc_test_plan_hd_begin_frame();
    if(arc_test_plan_pending()) {
       /* Match the bounded 60 Hz capture slices and 48 kHz silence to the
        * announced frontend cadence, including after an Arculator session. */

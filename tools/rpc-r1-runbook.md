@@ -321,13 +321,17 @@ store. `--require-arm` fails unless **both** SHA2 and CRC32 were detected throug
 Android's `getauxval`; it then runs the vectors and differential tests, including
 forced portable modes. `--bench` compares all available modes without changing
 capability detection. Windows' `hash_accel_test.exe` runs the same tests and
-executes SHA-NI only when CPUID reports it.
+executes SHA-NI only when CPUID reports it. `--require-x86` prints CPUID SHA
+advertisement and the selected automatic SHA path, and fails when advertised
+SHA-NI is not selected (CI runs this explicitly).
 
 `--hd-cost` is opt-in and requires the plan test core. Its separate CSV records
 every requested frame, including warm-up: backend read verification, complete
 write acknowledgement (hashing, VFS, index/cache), maintenance tick time,
 maintenance entry/exit phases, read/write command counts, generation and
-checkpoint count. `total_ns` is the sum of those three timed intervals inside
+checkpoint count, plus `open_ns` for store open/import/blank creation reached
+during the first-launch CMOS capture transition. Load-time work outside
+`retro_run` is excluded. `total_ns` sums all four timed intervals inside
 `retro_run`. Clocks and reporting never control guest execution. CSV writes,
 framebuffer/PCM hashing and frontend pacing are outside these intervals. It
 keeps the existing trace and `--timing` format unchanged.

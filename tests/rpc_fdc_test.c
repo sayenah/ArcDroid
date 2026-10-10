@@ -15,13 +15,13 @@ static ArcRpcScheduler clock_state;
 static uint8_t raw[2][819200];
 static bool fail_store;
 static unsigned commits,raw_writes;
-struct retro_vfs_file_handle { unsigned drive;size_t at;bool writable; };
+struct retro_vfs_file_handle { unsigned drive;size_t at;bool writable,readable; };
 static struct retro_vfs_file_handle handles[2];
 static struct retro_vfs_file_handle *open_file(const char *path,unsigned mode,unsigned hints)
 {
     (void)hints;unsigned d=!strcmp(path,"raw0")?0:!strcmp(path,"raw1")?1:2;
     if(d==2)return NULL;
-    handles[d]=(struct retro_vfs_file_handle){d,0,(mode&RETRO_VFS_FILE_ACCESS_WRITE)!=0};return &handles[d];
+    handles[d]=(struct retro_vfs_file_handle){d,0,(mode&RETRO_VFS_FILE_ACCESS_WRITE)!=0,(mode&(RETRO_VFS_FILE_ACCESS_READ|RETRO_VFS_FILE_ACCESS_UPDATE_EXISTING))!=0};return &handles[d];
 }
 static int close_file(struct retro_vfs_file_handle *f) { (void)f;return 0; }
 static int64_t file_size(struct retro_vfs_file_handle *f) { return f->drive?655360:819200; }
@@ -30,7 +30,7 @@ static int64_t seek_file(struct retro_vfs_file_handle *f,int64_t at,int whence)
   if(start+at<0||start+at>file_size(f))return -1;
   f->at=(size_t)(start+at);return 0; }
 static int64_t read_file(struct retro_vfs_file_handle *f,void *out,uint64_t n)
-{ if(n>(uint64_t)file_size(f)-f->at)return -1;memcpy(out,raw[f->drive]+f->at,(size_t)n);f->at+=(size_t)n;return (int64_t)n; }
+{ if(!f->readable||n>(uint64_t)file_size(f)-f->at)return -1;memcpy(out,raw[f->drive]+f->at,(size_t)n);f->at+=(size_t)n;return (int64_t)n; }
 static int64_t write_file(struct retro_vfs_file_handle *f,const void *in,uint64_t n)
 { if(fail_store||!f->writable||n>(uint64_t)file_size(f)-f->at)return -1;memcpy(raw[f->drive]+f->at,in,(size_t)n);f->at+=(size_t)n;++raw_writes;return (int64_t)n; }
 static int flush_file(struct retro_vfs_file_handle *f) { (void)f;return fail_store?-1:0; }

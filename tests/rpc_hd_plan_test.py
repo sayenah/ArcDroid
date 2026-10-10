@@ -56,7 +56,10 @@ with tempfile.TemporaryDirectory(prefix='arc-rpc-hd-plan-') as temp:
     # Published stores refuse import, preserving every existing canonical byte.
     before={p.name:p.read_bytes() for p in store.iterdir()}
     image=system/'raw.data'
-    with image.open('wb') as f:f.truncate(132120576)
+    with image.open('wb') as f:
+        f.truncate(132120576)
+        f.seek(10*262144);f.write(bytes((i*7+31)&255 for i in range(262144)))
+        f.seek(200*262144);f.write(b'\xd3'*512)
     original=hashlib.sha256(image.read_bytes()).digest()
     plan.write_text(text+f'hd_import={image}\n');run('reject')
     assert before=={p.name:p.read_bytes() for p in store.iterdir()}
@@ -65,6 +68,21 @@ with tempfile.TemporaryDirectory(prefix='arc-rpc-hd-plan-') as temp:
     assert hashlib.sha256(image.read_bytes()).digest()==original
     store=save/'arcdroid/hd-riscpc'/content;b=next(store.glob('manifest.?')).read_bytes()
     assert struct.unpack_from('<I',b,128)[0]==0  # raw zeros, not formatter bytes
+    def imported_bytes(root):
+        manifest=max(root.glob('manifest.?'),key=lambda p:struct.unpack_from('<Q',p.read_bytes(),88)[0]).read_bytes()
+        for index,expected in ((10,bytes((i*7+31)&255 for i in range(262144))),
+                               (200,b'\xd3'*512+bytes(262144-512))):
+            entry=128+index*48;assert struct.unpack_from('<I',manifest,entry)[0]==1
+            gen=struct.unpack_from('<Q',manifest,entry+8)[0]
+            envelope=(root/f'c{index:03x}.g{gen:016x}').read_bytes()
+            assert envelope[128:-4]==expected
+            assert hashlib.sha256(expected).digest()==manifest[entry+16:entry+48]
+            assert zlib.crc32(expected)==struct.unpack_from('<I',envelope,len(envelope)-4)[0]
+    imported_bytes(store)
+    plan.write_text(text);run('hd-reload');imported_bytes(store)
+    plan.write_text(text+f'hd_import={image}\n')
+    before={p.name:p.read_bytes() for p in store.iterdir()};run('reject')
+    assert before=={p.name:p.read_bytes() for p in store.iterdir()}
     # Wrong-size and contradictory fields refuse rather than creating a disc.
     save=d/'short-save';save.mkdir();seed(save);image.write_bytes(b'short');run('reject')
     plan.write_text(text.replace('hard_disc=on','hard_disc=off')+f'hd_import={image}\n');run('reject')

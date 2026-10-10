@@ -8,6 +8,7 @@ enum { ARC_HASH_PORTABLE=1, ARC_HASH_SLICE8=2, ARC_HASH_ARM_SHA2=4,
 #ifdef ARCDROID_HASH_TEST
 /* Test executable only: never bypass capability detection to execute an ISA. */
 unsigned arc_hash_test_available(void);
+unsigned arc_hash_test_sha_selected(void);
 bool arc_hash_test_select(unsigned implementation); /* zero = automatic */
 #endif
 #endif

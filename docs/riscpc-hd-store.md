@@ -197,7 +197,11 @@ A read miss verifies the entire referenced base into one scratch buffer (or
 initializes an explicit HOLE), then applies indexed journal sectors in order.
 Read only records named by the sector index that overlap this chunk; never
 scan unrelated records. Group by command so each contributing framed record is
-read/CRC-checked once per miss. A record's verification precedes copying *any* payload from it. This
+read/CRC-checked once per miss. Open each contributing journal once, visit its
+indexed records in increasing file-offset order, and seek/tell only when the
+confirmed read cursor differs from the next offset. A frozen reconstruction uses
+one parent handle; a live miss can need one handle for each of the two bound
+journals. Never reopen per record. A record's verification precedes copying *any* payload from it. This
 can read up to the full ≤8 MiB journal set plus one chunk for a pathological
 single-sector miss. The same rule applies to checkpoint reconstruction, using
 only the frozen prefix. A cached live payload that contains post-boundary writes
@@ -240,7 +244,7 @@ checkpoint on the first tick after retirement/GC. No third journal/root exists.
 | MANIFEST | Encode next manifest generation, binding successor generation and S; write/flush/close/readback `manifest.tmp`; → PUBLISH | Old root + successor; complete `.tmp` still not selectable |
 | PUBLISH | Inactive manifest slot must be empty (any older root was retired before this cycle). Rename candidate into it; readback/check exact bytes; switch selected manifest and live index/cache tags only after verification; → RETIRE | Before rename: old root + journals; after valid rename: new root + successor, or old root + journals. Both recover the same acknowledged view |
 | RETIRE | Revalidate newest published root and journal header, expected length and recorded streaming digest without rescanning records. Before GC → GC; after old-only GC finishes, remove old manifest then old journal → IDLE. Next ROTATE waits for completion | Old manifest is retained as the garbage inventory until every old-only leaf is gone. After manifest removal the new root suffices; a leftover journal is recognised retirement debris |
-| GC | Compute old-only CHUNK leaves from the retiring and new manifests, excluding every pin; remove at most 16 per tick by fixed paths. On completion → RETIRE for manifest/journal removal; abort cleanup → IDLE | New root remains selectable; missing chunks of a bound retiring manifest are expected garbage, never damage |
+| GC | Compute old-only CHUNK leaves from the retiring and new manifests, excluding every pin; remove at most 16 per tick by fixed paths. On completion → RETIRE for manifest/journal removal; abort cleanup examines at most 16 tracked entries per tick (including retained entries), then → IDLE | New root remains selectable; missing chunks of a bound retiring manifest are expected garbage, never damage |
 | READ_ONLY | No further publication, append, truncation or GC in this session | Preserve recovery roots and uncertain files; reopen diagnoses them |
 | DAMAGED | No mutation or attachment of an unverified disc | Preserve every file; report damage |
 
@@ -266,7 +270,15 @@ recovery. ROTATE snapshots/finalises a copy; it never rereads the journal.
 RETIRE compares the header, actual size and previously recorded digest/state
 under §10's no-external-edits assumption; it never hashes the journal again.
 Reconstruction seeks only indexed overlapping records, deduplicates them, and
-checks each complete frame before use. D-147 adds the final RETIRE control tick after GC; §8 revises both
+checks each complete frame before use. Run G reduces the worst reconstruction
+callback count to ≤1,550 for a live miss: ≤512 reads + 1,024 seek/tell
+callbacks for nonadjacent records + two opens/closes + six base-chunk callbacks
+(1,546, rounded upward). One-parent materialization including publication stays
+≤1,600, below the frozen 4,096 ceiling. Adjacent 512 one-sector records use 516
+callbacks on a HOLE miss and 539 in MATERIALIZE. Abort GC checks at most 16
+inventory entries per tick, even if every entry is retained. Its extra RAM-only
+ticks occur under offline population ownership; ordinary checkpoint/retirement
+occupancy and byte/hash/copy budgets are unchanged. D-147 adds the final RETIRE control tick after GC; §8 revises both
 cycle lengths and the sustained-write occupancy proof accordingly. These maxima bound work,
 not wall time: AC-9 measures every state inside the installing frame. A measured
 frame-budget failure returns to Fable rather than weakening verification.
@@ -711,6 +723,9 @@ are authored bytes, never firmware, games or user boot resources.
 | CTest | Required observable evidence |
 |---|---|
 | `rpc-hd-formatter` | AC-5: independent five-zone FileCore parsing, allocation/reserved/free extents, root, checksums, 126 MiB and IDENTIFY agreement; A3020 hash unchanged |
+| `rpc-hd-reconstruction` | AC-5/M1: 512 single-sector records, confirmed sequential cursor, bounded miss/tick VFS callbacks |
+| `rpc-hd-qa-integrity` | Q04/05/11/12/16: independently CRC-valid integrity failures and fixed-path interrupted-candidate reconciliation |
+| `rpc-hd-import-roundtrip` | Nonzero full-disc import, every-sector readback/reopen/checkpoint, source unchanged, second-import refusal and bounded abort GC |
 | `rpc-hd-store` | AC-5: holes versus missing chunks, full-chunk pre-use verification including partial/full overwrite, command atomicity, last LBA, crossings, cache eviction when all entries dirty |
 | `rpc-hd-store-bounds` | AC-5: allocation/physical file/temp/journal totals after every boundary; ≥512 MiB sequential and ≥64 MiB scattered without reopen; all earlier writes compared; adversarial cap → ATA failure/notice |
 | `rpc-hd-store-faults` | AC-5: complete §11 Cartesian matrix, every repeated operation, valid uncertain commit, invalid full tail versus truncated tail, missing flush/truncate, no-replace and case-fold VFS, GC retains unchanged chunks and both roots |

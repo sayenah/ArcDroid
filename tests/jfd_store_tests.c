@@ -54,6 +54,7 @@ static int vclose(struct retro_vfs_file_handle *h)
 static int64_t vsize(struct retro_vfs_file_handle *h) { return (int64_t)h->cached_size; }
 static int64_t vread(struct retro_vfs_file_handle *h, void *out, uint64_t n)
 {
+   if (!(h->mode & (RETRO_VFS_FILE_ACCESS_READ | RETRO_VFS_FILE_ACCESS_UPDATE_EXISTING))) return -1;
    if (h->slot == 2u && trip(READ_FAULT) && n) --n;
    if (n > files[h->slot].size - h->at) n = files[h->slot].size - h->at;
    if (!n) return 0;

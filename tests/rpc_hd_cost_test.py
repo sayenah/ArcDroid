@@ -44,7 +44,7 @@ def main():
         # Wall-clock qualification belongs to the Odin3; exercise the checker
         # deterministically without asserting a budget on a loaded CI host.
         for row in rows:
-            row['read_ns'] = row['acknowledgement_ns'] = '0'
+            row['open_ns'] = row['read_ns'] = row['acknowledgement_ns'] = '0'
             row['maintenance_ns'] = row['total_ns'] = str(int(row['T_ns']) // 5)
         def write_rows():
             with report.open('w', newline='') as output:
@@ -69,6 +69,35 @@ def main():
         assert result.returncode == 0, result.stderr
         assert subprocess.run([sys.executable, '-B', str(checker), str(report)], capture_output=True).returncode == 0
         assert all(r['attached'] == '0' for r in csv.DictReader(report.open()))
+        # A first-launch factory guest reaches requested_start inside retro_run.
+        # No CMOS seed exists: open/blank creation must appear exactly once.
+        from rpc_cmos_factory_rom import generate
+        factory = generate(root / 'factory')
+        cold = root / 'cold'; cold.mkdir()
+        plan.write_text(f'version=2\nmodel=arm610\nfirmware={factory / "full.rom"}\n'
+                        f'cmos=persist\ncmos_layout=ro370\ncontent_id={"e" * 40}\n'
+                        'rtc_epoch=946684800\nhard_disc=on\n')
+        result = subprocess.run([str(runner), '--core', str(core), '--plan', str(plan),
+                                 '--system', str(factory), '--save', str(cold), '--frames', '345',
+                                 '--hd-cost', str(report)], capture_output=True, text=True, timeout=180)
+        assert result.returncode == 0, result.stderr
+        cold_rows = list(csv.DictReader(report.open()))
+        opening = [r for r in cold_rows if int(r['open_ns'])]
+        assert len(opening) == 1 and opening[0]['attached'] == '1'
+        for r in cold_rows:
+            assert int(r['total_ns']) == sum(int(r[k]) for k in ('open_ns','read_ns','acknowledgement_ns','maintenance_ns'))
+        assert any(cold.glob('arcdroid/hd-riscpc/' + 'e' * 40 + '/manifest.?'))
+        # An unsuccessful opening still counts its work without an attachment;
+        # unattached read/write/maintenance work remains invalid.
+        rows = [dict(opening[0])]
+        rows[0].update(frame='0', attached='0', open_ns='1', total_ns='1',
+                       read_ns='0', acknowledgement_ns='0', maintenance_ns='0',
+                       read_commands='0', write_commands='0')
+        write_rows()
+        assert subprocess.run([sys.executable, '-B', str(checker), str(report)], capture_output=True).returncode == 0
+        rows[0].update(open_ns='0', maintenance_ns='1')
+        write_rows()
+        assert subprocess.run([sys.executable, '-B', str(checker), str(report)], capture_output=True).returncode == 2
         print('rpc-hd-cost-report: measured/unmeasured execution and store identical; phases, off and budget checker pass')
 
 

@@ -15,12 +15,14 @@ def check(path, frames=None):
     for frame, row in enumerate(rows):
         assert int(row['frame']) == frame, 'missing or reordered frame'
         values = [int(row[k]) for k in
-                  ('T_ns', 'read_ns', 'acknowledgement_ns', 'maintenance_ns', 'total_ns')]
-        period, read, ack, maintenance, total = values
-        assert period > 0 and min(values) >= 0 and total == read + ack + maintenance
+                  ('T_ns', 'read_ns', 'acknowledgement_ns', 'maintenance_ns', 'open_ns', 'total_ns')]
+        period, read, ack, maintenance, opened, total = values
+        assert period > 0 and min(values) >= 0 and total == read + ack + maintenance + opened
         assert row['attached'] in ('0', '1')
         if row['attached'] == '0':
-            assert total == 0 and int(row['write_commands']) == int(row['read_commands']) == 0
+            # A failed open can consume time without attaching a backend.
+            assert read == ack == maintenance == 0
+            assert int(row['write_commands']) == int(row['read_commands']) == 0
         label = row['phase']
         maxima[label] = max(maxima.get(label, 0), total)
         if total * 5 > period:

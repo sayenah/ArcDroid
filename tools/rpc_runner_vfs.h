@@ -61,7 +61,7 @@ static bool writable(const char *p)
     return canonical(*parent?parent:"/",resolved) && below_save(resolved);
 }
 /* RetroArch buffered seek and per-handle size semantics (D-150/D-151). */
-struct retro_vfs_file_handle { FILE *file; bool writable; int64_t cached_size; };
+struct retro_vfs_file_handle { FILE *file; bool writable,readable; int64_t cached_size; };
 static struct retro_vfs_file_handle *vfs_open(const char *path,unsigned mode,unsigned hints)
 {
     ARC_RUNNER_VFS_AUDIT(path,mode);
@@ -71,10 +71,10 @@ static struct retro_vfs_file_handle *vfs_open(const char *path,unsigned mode,uns
 #endif
     if(write && !writable(path))return NULL;
     if(!(mode&RETRO_VFS_FILE_ACCESS_READ) && !write)return NULL;
-    const char *access=write?(mode&RETRO_VFS_FILE_ACCESS_UPDATE_EXISTING?"r+b":"wb+"):"rb";
+    const char *access=write?(mode&RETRO_VFS_FILE_ACCESS_UPDATE_EXISTING?"r+b":((mode&RETRO_VFS_FILE_ACCESS_READ)?"wb+":"wb")):"rb";
     FILE *file=fopen(path,access);if(!file)return NULL;
     struct retro_vfs_file_handle *h=malloc(sizeof(*h));if(!h){fclose(file);return NULL;}
-    h->file=file;h->writable=write;
+    h->file=file;h->writable=write;h->readable=(mode&RETRO_VFS_FILE_ACCESS_READ)!=0 || (write&&(mode&RETRO_VFS_FILE_ACCESS_UPDATE_EXISTING));
     if(fseek(file,0,SEEK_END)){fclose(file);free(h);return NULL;}
     h->cached_size=ftell(file);
     if(h->cached_size<0 || fseek(file,0,SEEK_SET)){fclose(file);free(h);return NULL;}
@@ -89,7 +89,7 @@ static int64_t vfs_seek(struct retro_vfs_file_handle *h,int64_t offset,int posit
   if(offset<LONG_MIN || offset>LONG_MAX || fseek(h->file,(long)offset,origin))return -1;
   return 0; }
 static int64_t vfs_read(struct retro_vfs_file_handle *h,void *data,uint64_t size)
-{ if(size>SIZE_MAX)return -1;size_t n=fread(data,1,(size_t)size,h->file);return ferror(h->file)?-1:(int64_t)n; }
+{ if(!h->readable||size>SIZE_MAX)return -1;size_t n=fread(data,1,(size_t)size,h->file);return ferror(h->file)?-1:(int64_t)n; }
 static int64_t vfs_write(struct retro_vfs_file_handle *h,const void *data,uint64_t size)
 { if(!h->writable || size>SIZE_MAX)return -1;int64_t at=ftell(h->file);if(at<0)return -1;
   size_t n=fwrite(data,1,(size_t)size,h->file);

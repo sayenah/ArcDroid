@@ -6,6 +6,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#if defined(__x86_64__)
+#include <cpuid.h>
+#endif
 uint64_t arc_test_clock_ns(void);
 static uint64_t random_state=UINT64_C(0xc231e76a209d4b85);
 static uint32_t random_word(void)
@@ -43,7 +46,15 @@ static void compare(unsigned mode,const uint8_t *p,size_t n)
 }
 int main(int argc,char **argv)
 {
-    unsigned available=arc_hash_test_available();printf("hash capabilities=0x%x\n",available);
+    unsigned available=arc_hash_test_available();bool advertised=false;
+#if defined(__x86_64__)
+    unsigned a,b,c,d;advertised=__get_cpuid_count(7,0,&a,&b,&c,&d)&&(b&(1u<<29));
+#endif
+    assert(arc_hash_test_select(0));unsigned selected=arc_hash_test_sha_selected();
+    printf("hash capabilities=0x%x x86_SHA_advertised=%u auto_SHA=%s\n",available,advertised,name(selected));fflush(stdout);
+    if(argc>1&&!strcmp(argv[1],"--require-x86")&&advertised&&
+       (!(available&ARC_HASH_X86_SHA)||selected!=ARC_HASH_X86_SHA)){
+        fputs("Advertised x86 SHA-NI was not selected\n",stderr);return 2;}
     if(argc>1&&!strcmp(argv[1],"--require-arm") &&
        (available&(ARC_HASH_ARM_SHA2|ARC_HASH_ARM_CRC32))!=(ARC_HASH_ARM_SHA2|ARC_HASH_ARM_CRC32)){
         fputs("Required arm64 SHA2/CRC32 paths unavailable\n",stderr);return 2;}

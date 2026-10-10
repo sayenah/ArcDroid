@@ -83,6 +83,8 @@ RETRO_API bool arc_test_plan_cmos_pacing(unsigned frames)
 bool arc_test_plan_pending(void) { return cmos_phase==1 || cmos_phase==3; }
 static void evidence(uint8_t bytes[256],ArcRpcCmosEvidence *e,uint64_t *now,unsigned *state)
 { arc_engine_test_cmos_evidence(bytes,e->mask,&e->writes,&e->last_write,now,state); }
+void arc_test_plan_hd_begin_frame(void)
+{ if(hd_cost_enabled)memset(&hd_cost,0,sizeof(hd_cost)); }
 void arc_test_plan_hd_frame(void)
 {
     if(hard_disc && arc_engine_is_rpc() && arc_engine_active()){
@@ -108,12 +110,15 @@ bool arc_test_plan_persist(char *error,size_t size)
     }else refusal_reported=false;
     return ok;
 }
-static bool requested_start(char *error,size_t size)
+static bool requested_start(char *error,size_t size,bool inside_frame)
 {
     uint8_t seed[256]={0};memcpy(seed+16,record.payload,240);
     arc_engine_stop();
     bool ok=arc_engine_test_plan_start(pending_model,pending_rate,false,pending_rom,pending_size,seed,pending_epoch,error,size);
-    free(pending_rom);pending_rom=NULL;if(ok)ok=media_start(error,size);if(ok)ok=hd_start(error,size);
+    free(pending_rom);pending_rom=NULL;if(ok)ok=media_start(error,size);if(ok){uint64_t start=hd_cost_enabled&&inside_frame?arc_test_clock_ns():0;
+        ok=hd_start(error,size);
+        if(hd_cost_enabled&&inside_frame&&hd_enabled){hd_cost.open_ns+=arc_test_clock_ns()-start;
+            hd_cost.attached=hard_disc!=NULL;}}
     if(!ok)arc_engine_stop();
     cmos_phase=ok?2:3;script_active=ok;
     return ok;
@@ -130,7 +135,7 @@ bool arc_test_plan_slice(char *error,size_t size)
     if(!ok){if(error&&size)snprintf(error,size,"RPC default failed: required mask, stability, checksum or interrupted capture (writes=%llu)",(unsigned long long)e.writes);}
     else ok=arc_riscpc_cmos_store_put(&defaults,bytes+16,&e,error,size);
     if(ok)ok=arc_riscpc_cmos_store_put(&record,bytes+16,NULL,error,size);
-    if(ok)return requested_start(error,size);
+    if(ok)return requested_start(error,size,true);
     arc_engine_stop();free(pending_rom);pending_rom=NULL;cmos_phase=3;script_active=false;return false;
 }
 static bool fail(char *error, size_t size, const char *message)
@@ -217,7 +222,6 @@ void arc_test_plan_reset(void)
 }
 void arc_test_plan_input(ArcInputState *input)
 {
-    if(hd_cost_enabled)memset(&hd_cost,0,sizeof(hd_cost));
     if (!script_active) return;
     while (next_event < event_count && events[next_event].frame == script_frame) {
         Event *e = &events[next_event++];
@@ -353,13 +357,13 @@ bool arc_test_plan_load(const char *path, const char *system, const char *save, 
         valid=found!=ARC_RPC_CMOS_REFUSED;
         if(valid){
             pending_rom=rom;rom=NULL;pending_size=rom_size;pending_model=model;pending_rate=(unsigned)rate;pending_epoch=epoch;
-            if(found==ARC_RPC_CMOS_FOUND)valid=requested_start(error,error_size);
+            if(found==ARC_RPC_CMOS_FOUND)valid=requested_start(error,error_size,false);
             else {
                 key.defaults=true;key.procedure=ARC_RPC_CMOS_PROCEDURE_REVISION;key.timing=ARC_RPC_CMOS_TIMING_REVISION;
                 found=arc_riscpc_cmos_store_load(&defaults,save,&key,error,error_size);
                 if(error&&*error && plan_notice)plan_notice(error,true);
                 valid=found!=ARC_RPC_CMOS_REFUSED;
-                if(valid && found==ARC_RPC_CMOS_FOUND){valid=arc_riscpc_cmos_store_put(&record,defaults.payload,NULL,error,error_size);if(valid)valid=requested_start(error,error_size);}
+                if(valid && found==ARC_RPC_CMOS_FOUND){valid=arc_riscpc_cmos_store_put(&record,defaults.payload,NULL,error,error_size);if(valid)valid=requested_start(error,error_size,false);}
                 else if(valid){
                     valid=arc_engine_test_plan_start(model,0,true,pending_rom,pending_size,NULL,ARC_RPC_CMOS_GENERATION_EPOCH,error,error_size);
                     if(valid)valid=arc_engine_test_cmos_schedule(ARC_RPC_CMOS_CAPTURE_NS,ARC_RPC_CMOS_DELETE_NS);

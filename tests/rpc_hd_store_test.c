@@ -41,11 +41,14 @@ static void vfs_conformance(void)
     struct retro_vfs_file_handle *a=test_open("/save/probe",2,0);assert(a);
     assert(test_write(a,p,16)==16&&test_size(a)==16);
     struct retro_vfs_file_handle *b=test_open("/save/probe",1,0);assert(b&&test_size(b)==16);
+    assert(test_read(a,p,1)==-1);
     assert(test_seek(a,16,0)==0&&test_tell(a)==16);
     assert(test_write(a,p,8)==8&&test_size(a)==24&&test_size(b)==16);
     int32_t length;assert(test_stat("/save/probe",&length)==1&&length==24);
     struct retro_vfs_file_handle *c=test_open("/save/probe",1,0);assert(c&&test_size(c)==24);
     assert(test_truncate(a,8)==0&&test_size(a)==8&&test_size(b)==16&&test_size(c)==24);
+    struct retro_vfs_file_handle *update=test_open("/save/probe",6,0);assert(update);
+    assert(test_read(update,p,8)==8&&test_close(update)==0);
     assert(test_close(a)==0&&test_close(b)==0&&test_close(c)==0);
     fresh_files();ArcRpcHdStore *s=open_store(true);idle(s);
     /* This first nonzero seek refused the command before D-150 remediation. */
@@ -426,10 +429,107 @@ static void stream(bool scatter,bool silent,const char *dump)
     idle(s);verify_stream(s);bounds(s);if(dump)dump_stream(dump);ArcRpcHdStats a;arc_riscpc_hd_stats(s,&a);arc_riscpc_hd_close(s);s=open_store(false);idle(s);bounds(s);arc_riscpc_hd_close(s);
     printf("stream %s bytes=%" PRIu64 " frames=%u journal_high=%" PRIu64 " allocation=%" PRIu64 " files=%u physical_files=%u physical_bytes=%" PRIu64 " temp_bytes=%" PRIu64 " tick_bytes=%" PRIu64 " tick_ops=%" PRIu64 " tick_hash=%" PRIu64 " tick_copy=%" PRIu64 " cpu_s=%.3f\n",scatter?"scatter":"sequential",bytes,frames,a.journal_high,a.allocation_high,a.max_chunk_files,physical_chunks_high,physical_high,temp_high,a.max_tick_bytes,a.max_tick_operations,a.max_tick_hash_bytes,a.max_tick_copied_bytes,(double)(clock()-begin)/CLOCKS_PER_SEC);fflush(stdout);
 }
+static void qa_integrity(void)
+{
+    uint8_t p[131072];fill(p,256,0x42);ArcRpcHdStore *s;ArcRpcHdStats a;
+    /* Q04: the payload CRC remains valid; only SHA detects this change. */
+    fresh_files();s=open_store(true);idle(s);arc_riscpc_hd_close(s);
+    int c=named("c000.g0000000000000000");files[c].data[128+3000]^=0x40;
+    put32(files[c].data+128+ARC_RPC_HD_CHUNK,arc_crc32(files[c].data+128,ARC_RPC_HD_CHUNK));
+    s=open_store(false);assert(!arc_riscpc_hd_read(s,6,1,p));assert(arc_riscpc_hd_notice(s));arc_riscpc_hd_close(s);
+    /* Q05: repair both sequence copies and header CRC, leaving a true gap. */
+    fresh_files();s=open_store(true);idle(s);assert(arc_riscpc_hd_write(s,800,1,p));arc_riscpc_hd_close(s);
+    int j=named("journal.a");uint8_t *r=files[j].data+256;put64(r+56,2);put64(r+80+512,2);repair(r,80);
+    assert(!arc_riscpc_hd_open("/save",id,false,error,sizeof(error))&&error[0]);
+    /* Q11: a well-framed successor bound to the wrong frozen prefix. */
+    fresh_files();s=open_store(true);idle(s);for(unsigned i=0;i<8;++i)assert(arc_riscpc_hd_write(s,800+i*256,256,p));
+    arc_riscpc_hd_tick(s);arc_riscpc_hd_tick(s);arc_riscpc_hd_close(s);
+    j=named("journal.b");files[j].data[160]^=1;repair(files[j].data,256);
+    assert(!arc_riscpc_hd_open("/save",id,false,error,sizeof(error))&&error[0]);
+    /* Q12: future chunk generation, with a valid manifest envelope. */
+    fresh_files();s=open_store(true);idle(s);arc_riscpc_hd_close(s);int m=named("manifest.a");
+    put64(files[m].data+128+8,1);repair(files[m].data,24324);
+    c=named("c000.g0000000000000000");char *generation=strrchr(files[c].path,'g');generation[16]='1';
+    put64(files[c].data+72,1);repair(files[c].data,128);
+    assert(!arc_riscpc_hd_open("/save",id,false,error,sizeof(error))&&error[0]);
+    /* Q16: interrupted private work, both with and without a published root.
+     * Closing aborts ownership but does not run the queued GC tick. */
+    for(unsigned published=0;published<2;++published){fresh_files();silent_readdir=true;s=open_store(published!=0);idle(s);
+        assert(arc_riscpc_hd_population_begin(s));assert(arc_riscpc_hd_population_write(s,5120,1,p));
+        arc_riscpc_hd_close(s);const char *leaf=published?"c00a.g0000000000000001":"c00a.g0000000000000000";
+        (void)named(leaf);s=open_store(false);
+        for(unsigned i=0;i<TEST_FILES;++i)assert(!files[i].present||strcmp(strrchr(files[i].path,'/')+1,leaf));
+        arc_riscpc_hd_stats(s,&a);assert(!a.read_only&&a.published==(published!=0));arc_riscpc_hd_close(s);}
+    puts("Q04/Q05/Q11/Q12/Q16: CRC-valid trust-boundary rejection and fixed-path debris cleanup pass");
+}
+static uint8_t import_pattern(uint32_t lba,unsigned byte)
+{unsigned chunk=lba/512;return chunk%7==3?0:(uint8_t)(lba*31+byte*7+chunk+1);}
+static void import_verify(ArcRpcHdStore *s,unsigned stride)
+{uint8_t p[512];for(uint32_t lba=0;lba<ARC_RPC_HD_SECTORS;lba+=stride){assert(arc_riscpc_hd_read(s,lba,1,p));
+    for(unsigned b=0;b<512;++b)assert(p[b]==import_pattern(lba,b));}}
+static void import_roundtrip(void)
+{
+    fresh_files();int raw=find("/save/raw.img",true);assert(raw>=0);
+    files[raw].data=malloc(ARC_RPC_HD_BYTES);assert(files[raw].data);files[raw].size=files[raw].capacity=ARC_RPC_HD_BYTES;
+    for(uint32_t lba=0;lba<ARC_RPC_HD_SECTORS;++lba)for(unsigned b=0;b<512;++b)files[raw].data[(size_t)lba*512+b]=import_pattern(lba,b);
+    uint8_t before[32],after[32];ArcSha256 hash;arc_sha256_init(&hash);arc_sha256_update(&hash,files[raw].data,ARC_RPC_HD_BYTES);arc_sha256_final(&hash,before);
+    ArcRpcHdStore *s=open_store(false);assert(arc_riscpc_hd_import(s,"/save/raw.img"));idle(s);import_verify(s,1);
+    uint8_t p[131072];for(unsigned k=0;k<12;++k){uint32_t lba=k*20000+5;
+        for(unsigned b=0;b<sizeof(p);++b)p[b]=import_pattern(lba+b/512,b%512);
+        assert(arc_riscpc_hd_write(s,lba,256,p));arc_riscpc_hd_tick(s);}
+    idle(s);ArcRpcHdStats a;arc_riscpc_hd_stats(s,&a);assert(a.checkpoints>=2);bounds(s);arc_riscpc_hd_close(s);
+    s=open_store(false);idle(s);import_verify(s,1);assert(!arc_riscpc_hd_import(s,"/save/raw.img"));import_verify(s,97);arc_riscpc_hd_close(s);
+    arc_sha256_init(&hash);arc_sha256_update(&hash,files[raw].data,ARC_RPC_HD_BYTES);arc_sha256_final(&hash,after);assert(!memcmp(before,after,32));
+    /* Pop-abort GC must advance even when its inventory begins with hundreds
+     * of retained chunks, checking no more than 16 entries in a tick. */
+    s=open_store(false);idle(s);assert(arc_riscpc_hd_population_begin(s));assert(arc_riscpc_hd_population_write(s,512,1,p));
+    arc_riscpc_hd_population_abort(s);unsigned ticks=0;do{arc_riscpc_hd_tick(s);arc_riscpc_hd_stats(s,&a);assert(++ticks<100&&!a.read_only);}
+    while(a.state!=ARC_RPC_HD_IDLE);assert(ticks>=27);import_verify(s,97);arc_riscpc_hd_close(s);
+    puts("nonzero import: every sector, checkpoint, reopen, second import refusal, unchanged source and bounded abort GC pass");
+}
+static void reconstruction_budget(void)
+{
+    fresh_files();ArcRpcHdStore *s=open_store(true);idle(s);uint8_t p[131072],out[512];fill(p,256,0x5a);
+    for(unsigned i=0;i<512;++i)assert(arc_riscpc_hd_write(s,5120+i,1,p));
+    for(unsigned i=0;i<9;++i)assert(arc_riscpc_hd_write(s,51200+i*256,256,p));
+    for(unsigned i=0;i<8;++i)check_sector(s,(300+i)*512,0);
+    ArcRpcHdStats a,b;arc_riscpc_hd_stats(s,&a);unsigned callbacks=steps;
+    assert(arc_riscpc_hd_read(s,5121,1,out));arc_riscpc_hd_stats(s,&b);
+    assert(b.operations-a.operations==steps-callbacks&&b.operations-a.operations<=516);
+    for(unsigned i=0;i<512;++i)assert(out[i]==0x5a);
+    uint64_t miss=b.operations-a.operations;uint64_t worst=0;do{arc_riscpc_hd_tick(s);arc_riscpc_hd_stats(s,&b);
+        if(b.tick_operations>worst)worst=b.tick_operations;
+        assert(b.tick_operations<=550&&!b.read_only);
+    }while(b.state!=ARC_RPC_HD_IDLE);
+    printf("512 single-sector reconstruction: miss_ops=%" PRIu64 " worst_tick_ops=%" PRIu64 "\n",miss,worst);
+    arc_riscpc_hd_close(s);
+    /* Nonadjacent indexed frames require seek/tell, but still only one open.
+     * A live miss after ROTATE must retain sectors from both journal slots. */
+    fresh_files();s=open_store(true);idle(s);
+    for(unsigned i=0;i<512;++i){assert(arc_riscpc_hd_write(s,5120+i,1,p));
+        assert(arc_riscpc_hd_write(s,51200,1,p));}
+    for(unsigned i=0;i<8;++i)check_sector(s,(300+i)*512,0);
+    arc_riscpc_hd_stats(s,&a);assert(arc_riscpc_hd_read(s,5121,1,out));arc_riscpc_hd_stats(s,&b);
+    assert(b.operations-a.operations<=1540);uint64_t gaps=b.operations-a.operations;
+    for(unsigned i=0;i<9;++i)assert(arc_riscpc_hd_write(s,51200+i*256,256,p));
+    arc_riscpc_hd_tick(s);arc_riscpc_hd_tick(s);
+    fill(p,1,0x91);assert(arc_riscpc_hd_write(s,5121,1,p));
+    for(unsigned i=0;i<8;++i)check_sector(s,(300+i)*512,0);
+    arc_riscpc_hd_stats(s,&a);check_sector(s,5121,0x91);check_sector(s,5120,0x5a);arc_riscpc_hd_stats(s,&b);
+    assert(b.operations-a.operations<=1550);
+    do{arc_riscpc_hd_tick(s);arc_riscpc_hd_stats(s,&b);assert(b.tick_operations<=1600&&!b.read_only);}
+    while(b.state!=ARC_RPC_HD_IDLE);
+    check_sector(s,5121,0x91);check_sector(s,5120,0x5a);
+    printf("gapped record miss_ops=%" PRIu64 "; two-journal effective view retained\n",gaps);
+    arc_riscpc_hd_close(s);
+}
 int main(int argc,char **argv)
 {
     if(argc>1&&!strcmp(argv[1],"bounds")){stream(false,false,argc>2?argv[2]:NULL);stream(true,true,argc>3?argv[3]:NULL);}
     else if(argc>2&&!strcmp(argv[1],"reopen"))reopen_stream(argv[2]);
+    else if(argc>1&&!strcmp(argv[1],"qa-integrity"))qa_integrity();
+    else if(argc>1&&!strcmp(argv[1],"import-roundtrip"))import_roundtrip();
+    else if(argc>1&&!strcmp(argv[1],"reconstruction"))reconstruction_budget();
     else if(argc>1&&!strcmp(argv[1],"vfs"))vfs_conformance();
     else if(argc>1&&!strcmp(argv[1],"population"))population();
     else if(argc>1&&!strcmp(argv[1],"command"))faults();

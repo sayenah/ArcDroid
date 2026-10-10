@@ -35,7 +35,10 @@ static void write_command(unsigned count,bool words)
     lba(511,count);writeide(0x1f7,0x30);assert(readide(0x3f6)&8);
     for(unsigned sector=0;sector<count;++sector){for(unsigned i=0;i<512;i+=words?2:1){
         if(words)writeidew((uint16_t)((sector+i)&255)|((uint16_t)((sector+i+1)&255)<<8));else writeide(0x1f0,(uint8_t)(sector+i));}
-        assert(writes==0);assert(readide(0x3f6)&0x80);tick();
+        assert(writes==0);assert(readide(0x3f6)&0x80);
+        (void)readide(0x1f7);assert(!(iomd.irqb.status&2));tick();
+        /* Each callback must raise its own IRQ, including the last commit. */
+        assert(iomd.irqb.status&2);
         if(sector+1<count)assert(readide(0x3f6)&8);
     }
     assert(writes==1&&last_count==count&&last_lba==511&&!(readide(0x3f6)&9));
@@ -62,6 +65,15 @@ int main(void)
     for(unsigned i=0;i<256;++i){uint16_t value=readidew();assert((value&255)==(uint8_t)(258047+i*2)&&value>>8==(uint8_t)(258047+i*2+1));}
     writeide(0x1f6,0xaf);writeide(0x1f4,255);writeide(0x1f3,63);writeide(0x1f2,2);writeide(0x1f7,0x20);assert(readide(0x1f1)==0x10);
     start(true);writeide(0x1f3,0);writeide(0x1f7,0x20);assert(readide(0x1f1)==0x10);
+    for(unsigned chs=0;chs<2;++chs){start(true);writeide(0x1f6,(uint8_t)(0xa0+chs));
+        writeide(0x1f4,(uint8_t)(1-chs));writeide(0x1f3,0);writeide(0x1f2,1);writeide(0x1f7,0x20);
+        assert(readide(0x1f1)==0x10&&scheduler.next_event==ARC_RPC_EVENT_COUNT&&!reads);}
+    start(true);writeide(0x3f6,4);unsigned before[6];
+    for(unsigned i=0;i<5;++i)before[i]=readide(0x1f1+i);
+    for(unsigned i=0;i<5;++i)writeide(0x1f1+i,(uint8_t)(0xe0+i));writeide(0x1f7,0xec);
+    for(unsigned i=0;i<5;++i)assert(readide(0x1f1+i)==before[i]);
+    assert(scheduler.next_event==ARC_RPC_EVENT_COUNT&&!writes&&!reads&&(readide(0x3f6)&0x80));
+    writeide(0x3f6,0);tick();assert(!(iomd.irqb.status&2));
     start(true);lba(20,1);writeide(0x1f7,0x30);for(unsigned i=0;i<511;++i)writeide(0x1f0,0x99);resetide();assert(!writes&&scheduler.next_event==ARC_RPC_EVENT_COUNT);
     start(true);lba(20,1);writeide(0x1f7,0x30);for(unsigned i=0;i<512;++i)writeide(0x1f0,0x99);writeide(0x3f6,4);assert(!writes&&scheduler.next_event==ARC_RPC_EVENT_COUNT);
     writeide(0x3f6,0);assert(scheduler.next_ns==500000);tick();assert(readide(0x1f2)==1&&readide(0x1f3)==1&&!readide(0x1f4)&&!readide(0x1f5));assert(!(iomd.irqb.status&2));

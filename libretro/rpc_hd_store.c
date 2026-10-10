@@ -253,23 +253,33 @@ static bool base_chunk(ArcRpcHdStore *s,const uint8_t *m,unsigned index)
 static bool reconstruct(ArcRpcHdStore *s,const uint8_t *m,unsigned chunk,const uint32_t *index)
 {
     if(!base_chunk(s,m,chunk))return false;
-    /* Indexed overlap only; at most 512 records. Whole framed record is checked
-     * before copying any of its indexed sectors into the reconstruction. */
+    /* One lazily opened handle per contributing journal. Each slot's record
+     * index is in append-offset order; retained slots can both contribute to a
+     * live miss, while frozen checkpoint reconstruction uses only its parent.
+     * Adjacent records continue from the confirmed cursor without another seek.
+     * Every whole frame is validated before copying indexed sectors. */
     unsigned first=chunk*512;
-    for(unsigned r=0;r<s->records_count;++r){const Record *rec=&s->records[r];
-        unsigned lo=rec->lba>first?rec->lba:first,hi=rec->lba+rec->count<first+512?rec->lba+rec->count:first+512;
-        if(lo>=hi)continue;bool used=false;
-        for(unsigned i=lo;i<hi;++i)if(index[i]==((rec->slot?SLOT_BIT:0)|(rec->offset+80+(i-rec->lba)*512))){used=true;break;}
-        if(!used)continue;char leaf[16];journal_leaf(rec->slot,leaf);ArcIoFile *f=open_leaf(s,leaf,false,false);
-        if(!f)return failure(s,true);unsigned bytes=96+rec->count*512;
-        bool ok=seek(s,f,rec->offset)&&read_file(s,f,s->record,bytes);bool closed=close_file(s,f,ok);
-        uint8_t *p=s->record;ok=ok&&closed&&!memcmp(p,"RCJR",4)&&get(p+4,4)==1&&!memcmp(p+8,s->content,40)&&
-            get(p+48,8)==s->jgeneration[rec->slot]&&get(p+64,4)==rec->lba&&get(p+68,4)==rec->count&&get(p+72,4)==rec->count*512&&
-            get(p+76,4)==crc(s,p,76)&&get(p+80+rec->count*512,8)==get(p+56,8)&&
-            get(p+88+rec->count*512,4)==crc(s,p+80,rec->count*512)&&!memcmp(p+92+rec->count*512,"RCCM",4);
-        if(!ok)return failure(s,true);
-        for(unsigned i=lo;i<hi;++i)if(index[i]==((rec->slot?SLOT_BIT:0)|(rec->offset+80+(i-rec->lba)*512)))
-            copy(s,s->scratch+(i-first)*512,p+80+(i-rec->lba)*512,512);
+    for(unsigned slot=0;slot<2;++slot){ArcIoFile *f=NULL;uint32_t position=0;
+        for(unsigned r=0;r<s->records_count;++r){const Record *rec=&s->records[r];
+            if(rec->slot!=slot)continue;
+            unsigned lo=rec->lba>first?rec->lba:first,hi=rec->lba+rec->count<first+512?rec->lba+rec->count:first+512;
+            if(lo>=hi)continue;bool used=false;
+            for(unsigned i=lo;i<hi;++i)if(index[i]==((slot?SLOT_BIT:0)|(rec->offset+80+(i-rec->lba)*512))){used=true;break;}
+            if(!used)continue;
+            if(!f){char leaf[16];journal_leaf(slot,leaf);f=open_leaf(s,leaf,false,false);
+                if(!f)return failure(s,true);}
+            unsigned bytes=96+rec->count*512;
+            bool ok=(position==rec->offset||seek(s,f,rec->offset))&&read_file(s,f,s->record,bytes);
+            position=rec->offset+bytes;
+            uint8_t *p=s->record;ok=ok&&!memcmp(p,"RCJR",4)&&get(p+4,4)==1&&!memcmp(p+8,s->content,40)&&
+                get(p+48,8)==s->jgeneration[slot]&&get(p+64,4)==rec->lba&&get(p+68,4)==rec->count&&get(p+72,4)==rec->count*512&&
+                get(p+76,4)==crc(s,p,76)&&get(p+80+rec->count*512,8)==get(p+56,8)&&
+                get(p+88+rec->count*512,4)==crc(s,p+80,rec->count*512)&&!memcmp(p+92+rec->count*512,"RCCM",4);
+            if(!ok){close_file(s,f,false);return failure(s,true);}
+            for(unsigned i=lo;i<hi;++i)if(index[i]==((slot?SLOT_BIT:0)|(rec->offset+80+(i-rec->lba)*512)))
+                copy(s,s->scratch+(i-first)*512,p+80+(i-rec->lba)*512,512);
+        }
+        if(f&&!close_file(s,f,true))return failure(s,true);
     }
     return true;
 }
@@ -340,7 +350,7 @@ static void untrack_chunk(ArcRpcHdStore *s,const char *leaf)
 }
 static bool gc(ArcRpcHdStore *s)
 {
-    unsigned removed=0,old=s->selected^1;size_t n;
+    unsigned removed=0,inspected=0,old=s->selected^1;size_t n;
     bool retiring=s->published&&s->parent!=s->current&&s->journal_present[s->parent];
     if(retiring){
         /* D-147: the old manifest is an inventory, not a selectable root.
@@ -358,7 +368,7 @@ static bool gc(ArcRpcHdStore *s)
     }else{
         /* Abort debris is the bounded fixed-path inventory assembled at open
          * or by successful private publication, never advisory directory data. */
-        while(s->gc_at<s->chunk_count&&removed<16){const char *leaf=s->chunks[s->gc_at];
+        while(s->gc_at<s->chunk_count&&inspected++<16){const char *leaf=s->chunks[s->gc_at];
             if(referenced(s,leaf)){++s->gc_at;continue;}
             char owned[23];copy(s,owned,leaf,23);
             if(size(s,owned,&n)&&!remove_leaf(s,owned))return failure(s,false);

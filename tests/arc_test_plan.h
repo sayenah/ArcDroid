@@ -24,10 +24,11 @@ void arc_test_plan_set_log(void (*log)(const char *));
 bool arc_test_plan_pending(void);
 bool arc_test_plan_slice(char *error, size_t size);
 void arc_test_plan_hd_frame(void);
+void arc_test_plan_hd_begin_frame(void);
 bool arc_test_plan_persist(char *error, size_t size);
 typedef struct {
     uint64_t read_ns, acknowledgement_ns, maintenance_ns, read_commands, write_commands,
-        generation, checkpoints;
+        generation, checkpoints, open_ns;
     unsigned phase, next_phase;
     bool attached;
 } ArcTestHdCost;

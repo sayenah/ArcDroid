@@ -153,3 +153,15 @@ static ArcSha256Transform arc_sha256_dispatch(void)
 #endif
     (void)f;return arc_sha256_portable;
 }
+
+#ifdef ARCDROID_HASH_TEST
+unsigned arc_hash_test_sha_selected(void)
+{
+#if defined(ARC_HASH_X86)
+    if(arc_sha256_dispatch()==arc_sha256_x86)return ARC_HASH_X86_SHA;
+#elif defined(ARC_HASH_ARM)
+    if(arc_sha256_dispatch()==arc_sha256_arm)return ARC_HASH_ARM_SHA2;
+#endif
+    return ARC_HASH_PORTABLE;
+}
+#endif

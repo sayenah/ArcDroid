@@ -106,6 +106,8 @@ jobs:
         run: tools/check-shipping-io.sh --self-test
       - name: Tests
         run: ctest --test-dir build/windows --output-on-failure
+      - name: Visible x86 hash identity and dispatch
+        run: build/windows/hash_accel_test.exe --require-x86
       - name: Windows import and export guard
         run: tools/check-windows.sh build/windows/arcdroid_libretro.dll
       - name: Package native RetroArch inputs

@@ -71,7 +71,7 @@ static int64_t vfs_tell(struct retro_vfs_file_handle *h) { return _ftelli64(h->f
 static int64_t vfs_seek(struct retro_vfs_file_handle *h, int64_t offset, int origin)
 { return _fseeki64(h->file, offset, origin) ? -1 : 0; }
 static int64_t vfs_read(struct retro_vfs_file_handle *h, void *data, uint64_t size)
-{ return (int64_t)fread(data, 1u, (size_t)size, h->file); }
+{ if (!(h->mode & (RETRO_VFS_FILE_ACCESS_READ | RETRO_VFS_FILE_ACCESS_UPDATE_EXISTING))) return -1;return (int64_t)fread(data, 1u, (size_t)size, h->file); }
 static int64_t vfs_write(struct retro_vfs_file_handle *h, const void *data, uint64_t size)
 { int64_t at = _ftelli64(h->file); if (at < 0) return -1;
    int64_t written = (int64_t)fwrite(data, 1u, (size_t)size, h->file);
