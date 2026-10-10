@@ -2324,3 +2324,29 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
   set_tests_properties(rpc-hd-store-bounds PROPERTIES TIMEOUT 3600 RUN_SERIAL TRUE)
   add_test(NAME rpc-ide-registers COMMAND rpc_ide_test)
 endif()
+
+# Capture first-chance faults before main in every non-shipping RPC executable.
+# Keep Release optimization/assertion settings: only add matching DWARF, so the
+# RVA and module base in stderr map directly using addr2line on the CI artifact.
+if(WIN32 AND BUILD_TESTING)
+  add_executable(rpc_crash_probe tests/rpc_crash_probe.c)
+  target_compile_options(rpc_crash_probe PRIVATE -UNDEBUG)
+  add_test(NAME rpc-windows-crash-stderr COMMAND "${Python3_EXECUTABLE}" -B
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_crash_stderr_test.py" $<TARGET_FILE:rpc_crash_probe>
+    "${CMAKE_OBJDUMP}" "${CMAKE_ADDR2LINE}")
+  get_property(rpc_diagnostic_targets DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
+  foreach(rpc_target IN LISTS rpc_diagnostic_targets)
+    get_target_property(rpc_type ${rpc_target} TYPE)
+    if(rpc_type STREQUAL "EXECUTABLE" AND
+        (rpc_target MATCHES "^rpc_" OR rpc_target STREQUAL "hash_accel_test"))
+      target_compile_options(${rpc_target} PRIVATE -g)
+      # This lifecycle oracle owns its registrations explicitly.
+      if(NOT rpc_target STREQUAL "rpc_crash_locator_test")
+        target_sources(${rpc_target} PRIVATE tests/rpc_test_crash.c tests/rpc_crash_locator.c)
+        target_include_directories(${rpc_target} PRIVATE tests libretro/include)
+      endif()
+    elseif(rpc_type STREQUAL "OBJECT_LIBRARY" AND rpc_target MATCHES "^arcdroid_rpc_(cpu|cmos|fdc)$")
+      target_compile_options(${rpc_target} PRIVATE -g)
+    endif()
+  endforeach()
+endif()

@@ -1,5 +1,5 @@
 /* Test-only Windows x64 first-chance crash locator. GPL-2.0-only.
- * Registered only by the plan core. No recovery or context modification.
+ * Registered only by the plan core and RPC tests. No context modification.
  * Sources: Microsoft AddVectoredExceptionHandler / RtlVirtualUnwind docs.
  * Uses fixed storage and an already-open file; no malloc/stdio/symbol loading
  * after a fault. The frontend's log callback may itself allocate internally. */
@@ -8,6 +8,8 @@
 #include <stdint.h>
 static PVOID registration;
 static HANDLE output=INVALID_HANDLE_VALUE;
+/* Borrowed from the CRT: never close it. CTest/Python capture this pipe. */
+static HANDLE diagnostic_stderr=INVALID_HANDLE_VALUE;
 static retro_log_printf_t logger;
 static volatile LONG recording;
 static char line[2048];
@@ -21,6 +23,7 @@ static void emit(void)
     text("\n");line[used]=0;DWORD written;
     /* Preserve location even if logging or unwinding faults subsequently. */
     if(output!=INVALID_HANDLE_VALUE){WriteFile(output,line,used,&written,NULL);FlushFileBuffers(output);}
+    if(diagnostic_stderr!=INVALID_HANDLE_VALUE){WriteFile(diagnostic_stderr,line,used,&written,NULL);FlushFileBuffers(diagnostic_stderr);}
     if(logger)logger(RETRO_LOG_ERROR,"%s",line);
     used=0;
 }
@@ -81,6 +84,17 @@ void arc_test_crash_locator_stop(void)
     if(registration){RemoveVectoredExceptionHandler(registration);registration=NULL;}
     if(output!=INVALID_HANDLE_VALUE){CloseHandle(output);output=INVALID_HANDLE_VALUE;}
     logger=NULL;
+    diagnostic_stderr=INVALID_HANDLE_VALUE;
+}
+bool arc_test_crash_locator_start_stderr(void)
+{
+    arc_test_crash_locator_stop();
+    HANDLE handle=GetStdHandle(STD_ERROR_HANDLE);
+    if(!handle||handle==INVALID_HANDLE_VALUE)return false;
+    diagnostic_stderr=handle;recording=0;
+    registration=AddVectoredExceptionHandler(1,locate);
+    if(!registration){arc_test_crash_locator_stop();return false;}
+    return true;
 }
 bool arc_test_crash_locator_start(const char *save,retro_log_printf_t log)
 {

@@ -97,19 +97,37 @@ jobs:
       - name: RPCEmu import guard
         run: python3 tools/check-rpcemu-import.py
       - name: Configure
-        # CMake retains DWARF only for the non-shipping plan core and its
-        # private engine objects. Shipping remains plain Release.
+        # CMake retains DWARF only for the non-shipping plan core, RPC tests
+        # and their private engine objects. Shipping remains plain Release.
         run: cmake -S . -B build/windows -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
       - name: Build
         run: cmake --build build/windows --verbose
       - name: Shipping source I/O guard self-test
         run: tools/check-shipping-io.sh --self-test
+      - name: Validate crash locator and repeat Windows RPC CPU checks
+        timeout-minutes: 10
+        run: |
+          set -e -o pipefail
+          ctest --test-dir build/windows --output-on-failure -R '^rpc-windows-crash-(locator|stderr)$' 2>&1 | tee build/windows/rpc-repeat.log
+          ctest --test-dir build/windows --output-on-failure --repeat until-fail:50 -R '^rpc-cpu-(mmu-memory|trace)$' 2>&1 | tee -a build/windows/rpc-repeat.log
       - name: Tests
         run: ctest --test-dir build/windows --output-on-failure
       - name: Visible x86 hash identity and dispatch
         run: build/windows/hash_accel_test.exe --require-x86
       - name: Windows import and export guard
         run: tools/check-windows.sh build/windows/arcdroid_libretro.dll
+      - name: Upload matching Windows RPC crash diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: arcdroid-windows-rpc-diagnostics
+          path: |
+            build/windows/rpc*.exe
+            build/windows/hash_accel_test.exe
+            build/windows/arcdroid*libretro*.dll
+            build/windows/rpc-repeat.log
+            build/windows/Testing/Temporary/LastTest*.log
+          if-no-files-found: warn
       - name: Package native RetroArch inputs
         run: |
           mkdir -p build/windows/retroarch-package
