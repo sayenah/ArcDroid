@@ -1,8 +1,21 @@
 # ArcDroid Handoff
 
-**Stage:** IMPLEMENTATION — roadmap item 6, RiscPC **R2c**, run G (QA remediation and Windows crash location)
-**Owner:** Sol (run G), supervised by Fable
-**Next:** Sol R2c run G in `.work/s60/sol2c/clone` (thread `01a120ab-7bf4-7843-a879-6fab6d9b3736`), carrying out the work order below. Fable then reviews it, pushes it, reads the Windows crash location from CI, and orders the crash fix. After that comes the Opus QA re-check. The merge waits for the Odin3 (D-153).
+**Stage:** IMPLEMENTATION — roadmap item 6, RiscPC **R2c**, run H (test-only: plan core `.info` `systemid`)
+**Owner:** Sol (run H), supervised by Fable
+**Next:** Sol R2c run H in `.work/s60/sol2c/clone` (thread `01a120ab-7bf4-7843-a879-6fab6d9b3736`). Then Fable reviews and pushes it, confirms the `windows-retroarch` hard-disc leg passes, and asks Opus QA to re-check runs D–H. The merge waits for the Odin3 (D-153).
+
+**H1 located (Fable, S60) with run G's crash locator** (CI run 38065741237 at `6d73e6b`). The fault is RetroArch's `strlcpy` reading NULL (`retroarch.exe+0x1af761`), called from its network-command `GET_STATUS` handler (`retroarch.exe+0x1c4e3`). The surrounding strings are "GET_STATUS ", "PLAYING" and " ". RetroArch processes network commands inside the core's `input_poll`; the core frames are `arc_poll_osk_controls` ← `arc_poll_inputs` ← `arc_rpc_present_run`.
+- RetroArch 1.22.2's `command_get_status` (`command.c` at `69a4f0e`) copies `core_info->system_id` with no NULL check.
+- `tests/arcdroid_rpcplan_libretro.info` has no `systemid`. The shipping `arcdroid_libretro.info` has `systemid = "archimedes"`.
+- The Windows leg sends `GET_STATUS` while it waits for the command port, so the crash is not in the hard disc or the store.
+- The Odin3 native leg never sent `GET_STATUS`, which is why it passed.
+- The optional `network-reload` probe's forensics in the same run is the known fallback (RetroArch 1.22.2 does not recognise `LOAD_CONTENT`), not a failure.
+
+**Run H work order (test-only):**
+1. Add a `systemid` to `tests/arcdroid_rpcplan_libretro.info` (for example `"riscpc"`). Check what RetroArch requires of a core `.info` for its status and menu paths in 1.22.2, and fill every field those paths dereference.
+2. Add a guard test that every core `.info` the repository builds, shipping and test alike, declares those fields. It must fail on the current plan `.info`.
+3. Keep run G's crash locator; it stays test-only.
+4. Re-run the affected tests.
 
 **Opus QA 1 (effort 15) at `c0e3dd4`: FAIL.**
 - **H1:** the native Windows RetroArch crash.
