@@ -192,14 +192,15 @@ These ranges are research targets, not predictions (Astra S58):
 - **Memory-bound code is dominated by the R2a timing service** (37–74 %), as on the Odin3.
 - **Devices** cost about 0.04 T in the AC-8 mode on both platforms.
 - **Run-to-run spread is small:** p95 varies by at most 0.03 T across three runs.
-- **Not covered:** executable memory on Windows (the probe was Odin3-only), and the native RetroArch frontend (the runner was used).
+- **Not covered:** the native RetroArch frontend (the runner was used), and executable memory on Windows.
+  - **The Windows executable-memory probe was blocked.** Smart App Control (Windows 11, on for this box) refused the unsigned probe executable (CodeIntegrity events 3033/3077/3118). The unsigned runner and plan core from the same toolchain were allowed. The block was not worked around.
+  - **It is not needed in Phase 0.** Phase 2 targets arm64 only. The probe matters only if Q1/Q2 call for an x64 backend, and then it runs on a host where it is allowed (for example a CI runner).
 
 **Still open in Phase 0:**
 - representative gameplay (after R2c, with AC-10);
 - the block-length distribution, fallback frequency and code churn, which need block instrumentation;
 - cold-start against sustained frame tails;
 - repeated runs on the Odin3 (done on Windows);
-- the executable-memory probe on Windows;
 - the Q-3 oracle fix.
 
 ## Founder decisions (none needed now)
