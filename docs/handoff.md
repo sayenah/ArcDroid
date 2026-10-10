@@ -1,8 +1,13 @@
 # ArcDroid Handoff
 
-**Stage:** QA — roadmap item 6, RiscPC **R2c** (IDE and a scalable hard disc), PR #337 at `c0e3dd4`
-**Owner:** Opus (independent QA, `arcdroid-opus-qa`, effort high)
-**Next:** Opus QA of PR #337 at `c0e3dd4` in a fresh clone. Fable then adjudicates the findings. The merge also waits for the Odin3 legs on the final core (D-153) and for green CI, including the `windows-retroarch` hard-disc leg.
+**Stage:** IMPLEMENTATION — roadmap item 6, RiscPC **R2c**, run F (native Windows RetroArch crash); Opus QA of `c0e3dd4` continues in parallel
+**Owner:** Sol (run F), supervised by Fable
+**Next:** Sol R2c run F in `.work/s60/sol2c/clone` (thread `01a120ab-7bf4-7843-a879-6fab6d9b3736`). Fable then reviews it, pushes it, checks CI and adjudicates the Opus QA findings together with run F. The merge waits for the Odin3 (D-153).
+- **Defect:** CI `windows-retroarch` at `c0e3dd4` (run 38049055570). With the fixture directories now correct, RetroArch 1.22.2 crashes with `0xC0000005` (access violation) in session 1 of the authored hard-disc leg. This happens after the core starts running frames: the blank store is published, but `journal.a` stays at its 256-byte header. Windows recorded no crash event. The same DLL passed the same guest through the runner (`rpc-hd-retroarch-guest`) on the same CI machine, and the Odin3 native leg passed with the run D core. The trigger is therefore specific to native RetroArch on Windows, around the store's first guest I/O. Evidence is in `.work/s60/ci-evidence-e2/`.
+- **Run F scope:**
+  1. **Test-only crash capture** in the Windows leg: enable WER LocalDumps for `retroarch.exe` (the runner is admin), and on a crash run the Windows SDK debugger (`cdb`) on the dump. Upload the dump, the debugger's exception, register and stack summary, and the exact core DLL as evidence.
+  2. **Static investigation** against RetroArch 1.22.2's Windows paths (`vfs_implementation.c` and the frontend's core-facing calls): VFS open modes and hints, stat, the directory functions, disk control and threads.
+  3. **Fix** the cause if it is found. Otherwise leave the capture in place so the next CI run pinpoints it.
 
 **R2c implementation record (all Sol runs committed verbatim by Fable):**
 
