@@ -1,56 +1,50 @@
 # ArcDroid Handoff
 
-**Stage:** IMPLEMENTATION — roadmap item 6, RiscPC **R2c**, run J (intermittent Windows crash in the RPC CPU tests)
-**Owner:** Sol (run J), supervised by Fable
-**Next:** the incoming Fable (S61) supervises Sol run J (already running; see below) to completion, then works through the steps below. Everything here is in the S60 private ledger `.work/s60/LEDGER.md`.
-1. **Review run J.** Commit it verbatim to `slice/r2c-ide` in `.work/s60/sol2c/clone`, push, and require green CI on all jobs. In particular:
-   - the `windows` job must pass `rpc-cpu-mmu-memory`;
-   - `windows-retroarch` must reach and pass the authored hard-disc leg (`rpc-hd-session-1/2/3`). It has never yet run with the H1 fix (run H).
-
-   If `windows-retroarch` flakes in an earlier Archimedes leg, re-run the failed job. Earlier flakes: a screenshot timeout in Slice 15, and `zip-name-disc1-1`.
-2. **Odin3 legs on the final core** (D-153, D-154; owed):
-   - Build arm64 from the final head (`.work/s60/ab/r2c`: `cmake --build build/android --target arcdroid_rpcplan_libretro rpc_runner hash_accel_test`).
+**Stage:** IMPLEMENTATION — roadmap item 6, RiscPC **R2c**, run K (Windows non-local jumps, D-155; hard-disc maintenance on FUSE storage, D-156; SMLAL, D-157)
+**Owner:** Sol (run K), supervised by Fable
+**Next:** Fable (S61 or the next holder) supervises Sol run K to completion, then:
+1. **Review run K** and commit it on `slice/r2c-ide` in `.work/s60/sol2c/clone` in two commits:
+   - (a) the Windows repeat regression alone. Push it and confirm CI's `windows` job fails on it (the proof that it fails before the fix).
+   - (b) the rest of run K. Push it and require green CI on all jobs. `windows` must pass the regression and the 50× repeat step. `windows-retroarch` must reach and pass the authored hard-disc leg (`rpc-hd-session-1/2/3`), which has never yet run with the H1 fix (run H). If `windows-retroarch` flakes in an earlier Archimedes leg, re-run the failed job (known flakes: a Slice 15 screenshot timeout, `zip-name-disc1-1`).
+2. **Odin3 legs on the run K core** (D-152, D-156), with saves on `/storage/emulated/0` and the runner in RetroArch flush mode:
+   - Build arm64 in `.work/s60/ab/r2c` (`cmake --build build/android --target arcdroid_rpcplan_libretro rpc_runner hash_accel_test`).
    - Run `hash_accel_test --require-arm`.
-   - Run the authored guest with `--hd-cost`, three times, with the save directory on `/storage/emulated/0` (FUSE), not `/data/local/tmp`.
-   - Run the **031 install with `--hd-cost`**, with saves on `/storage/emulated/0`. The pre-install store is `.work/s60/odin/st031`; the device script is `.work/s60/odin/i031.sh`; the plan, input and disk files are in `/data/local/tmp/arcdroid-r2c/i031/`.
-   - **Accept** only if no frame exceeds 0.20 T extra (D-152), checked with `tools/check-rpc-hd-cost.py`.
-   - Install the final plan core through RetroArch's menu and repeat the native three-session authored leg (`ra2.sh`, `arcdroid-hd.cfg`, fixture in `RetroArch/rpc-r2c/hdra/`, fresh `hdsave/`, network QUIT pair via `/data/local/tmp/s52.sh net QUIT`). Then repeat a short multi-session check (`rep20.sh`).
+   - Run the authored guest three times with `--hd-cost`, then the 031 install with `--hd-cost`. Template: `.work/s61/odin/s61.sh`, plus the run K flush-mode option. The pre-install store is `/data/local/tmp/arcdroid-r2c/i031/st0`.
+   - **Accept** only if `tools/check-rpc-hd-cost.py` finds no frame over 0.20 T.
+   - Install the plan core through RetroArch's menu and repeat the native three-session authored leg (`ra2.sh`, `arcdroid-hd.cfg`, fixture `RetroArch/rpc-r2c/hdra/`, fresh `hdsave/`, QUIT pair via `/data/local/tmp/s52.sh net QUIT`). Then repeat `rep20.sh`.
+3. **Opus QA** of the delta from runs I, J and K (a fresh `arcdroid-opus-qa` agent in a fresh clone; the S60 QA agents are gone). Then **merge PR #337** under protocol §12.11. After the merge, the Q-3 oracle fix (D-146) comes before R3.
 
-   Opus QA 2 found scattered-write reconstruction ticks of 6–10 ms on a loaded Mac. The 031 FUSE leg decides whether further step splitting is needed (D-152 item 2).
-3. **Opus QA** of the delta from runs I and J, then **merge PR #337** under protocol §12.11. After the merge, the Q-3 oracle fix comes before R3.
+- **Running:** see the S61 entry under Waiting on the Founder (it lists the Sol run K PID and its watchdog).
+- **Private work:** S60's is in `.work/s60/` (index `LEDGER.md`); S61's is in `.work/s61/` (index `LEDGER.md`), including the device scripts and results (`odin/`) and the CI diagnostics (`ci-diag-1/`).
+- **Codex refusal (S61):** run J's last turn was refused by the Codex service as "possible cybersecurity risk" (its crash-locator subject matter). The run had already written its code and report; only its local full-suite runs were lost, and CI covered them. Word Sol prompts about fault handling neutrally ("fault path", "non-local jump").
 
-- **Running at close (S60 started these):**
-  - **Sol run J:** codex PID 94334, started 2026-10-10 about 14:15 CDT, resuming thread `01a120ab-7bf4-7843-a879-6fab6d9b3736` in `.work/s60/sol2c/clone`. Prompt `promptJ.md`, stream `streamJ.jsonl`, final `finalJ.md`, report `SOL-REPORT-R2C-J.md`.
-  - **Its detached watchdog:** `wait-run.sh`, PID 94802. It writes its single line to `.work/s60/watch-solJ.txt`.
+**Run J outcome (S61):** committed verbatim as `d18f08e` (test-only and CI). The static audit found no address-size, initialisation, alignment, stack or allocation-address hazard. It found the SMLAL undefined behaviour (D-157). CI run 38080624445 at `d18f08e`: android-arm64 passed. On `windows`, the locator oracles passed. In the 50× repeat step, `rpc-cpu-mmu-memory` and `rpc-cpu-trace` each crashed once with the same stack. **Located (D-155):** UCRT's unwinding `longjmp` from the test's `fatal()` (after the injected allocation failure at `engine/rpcemu/src/mem.c:103`) back to `setjmp` at `tests/rpc_cpu_test.c:359` faults in `ntdll` just past the top of the stack. The executables, logs and `addr2line` mapping are in `.work/s61/ci-diag-1/`.
 
-  The next holder adopts both, under protocol §15. To wait: `until [ -s .work/s60/watch-solJ.txt ]; do sleep 30; done`.
-- **The clone carries a local merge of `main` that is not pushed.** It includes this baton. Push the branch after committing run J.
-- **Private S60 work** is in `.work/s60/` (D-149), indexed by `LEDGER.md`. It includes:
-  - the A/B scripts (`ab/`);
-  - the boot environment (`bootenv/`);
-  - AC-8 (`ac8/`);
-  - Odin3 tooling and results (`odin/`);
-  - CI evidence (`ci-evidence-*`);
-  - RetroArch 1.22.2 for Windows (`winra/`);
-  - QA clones (`qa/`, `qa2/`) and their adjudication (`qa/adjudication-1.md`).
+**Odin3 on the run J core (S61; D-156):** `hash_accel_test --require-arm` passed (`auto_SHA=arm-sha2`, all arm64 paths identical).
 
-**Recurrence (S60):** CI run 38076039462 at `b587f60` (run I). The `windows` job failed on one test: `rpc-cpu-mmu-memory` (`rpc_cpu_test`) crashed with `SegFault` after 0.31 s and no output. That test and its code are unchanged by runs G–I, and it passed on Windows at `5630d83` and earlier.
-- This is the second intermittent Windows-only failure in the RPC CPU tests. The first was R2a's `rpc-cpu-trace` producing empty output at `5648bd4`, carried as "investigate if it recurs".
-- The code predates R2c (R1/R2a), but CI must be reliably green to merge, and a non-deterministic CPU crash would reach players once R3 ships RPC.
+| Leg (saves on) | Runner flush | Authored guest ×3: frames over 0.20 T (worst) | 031 install: frames over (worst) |
+|---|---|---|---|
+| `/data/local/tmp` | `fsync` | 0, 0, 0 (2.94 ms) | — |
+| FUSE | `fsync` | 11, 10, 10 (7.6 ms) | 78 (10.8 ms) |
+| FUSE | `fflush` only, as RetroArch (probe) | 5, 5, 5 (7.4 ms) | 33 (12.2 ms; MATERIALIZE 27, GC 3) |
 
-**Run J work order:**
-1. **Static audit** of the RPC CPU, MMU, memory and timing code (the imported RPCEmu sources and ArcDroid's `engine/rpc/`) for Windows-only or address-dependent hazards:
-   - LLP64 (`long` is 32-bit on Windows; pointer or size truncation);
-   - uninitialized state;
-   - alignment and strict aliasing;
-   - stack size;
-   - reliance on allocation addresses (for example high-entropy ASLR placing buffers above 4 GiB);
-   - undefined behaviour that MinGW GCC `-O3` exploits differently.
-2. **Windows test diagnostics (test-only):**
-   - link the crash locator into the RPC test executables on Windows, so a crash prints the faulting module offset and a stack;
-   - add a CI step that runs `rpc_cpu_test` and `rpc-cpu-trace` repeatedly (for example 50 times each), with output on failure.
-3. **If a cause is found:** fix it, with a test that fails before the fix. Prefer a deterministic reproduction, for example forcing allocations above 4 GiB on Windows, or a host-side check of the hazard.
-4. Re-run the full host suite, sanitizers and cross builds.
+Write acknowledgement passes with faithful flush (worst 1.03 ms). Maintenance fails: about 0.6 ms per FUSE metadata call. RetroArch was not running. The 031 install reached frame 14,000 in every leg.
+
+**Run K work order** (D-155, D-156, D-157):
+1. **Windows non-local jumps (D-155).**
+   - Every `setjmp`/`longjmp` pair built for Windows x64 must use a non-local jump that is correct for MinGW-w64 GCC with UCRT. This covers shipping code (`engine/arculator_backend.c`, `engine/rpc/rpc_session.c`) and tests (`tests/rpc_cpu_test.c`, `tests/rpc_cmos_test.c`, any others).
+   - The toolchain header expands `setjmp` to `_setjmp(buf, __builtin_frame_address(0))` under GCC with SEH. Candidates include the header's own non-SEH form (`__USE_MINGW_SETJMP_NON_SEH`, which gives `_setjmp(buf, NULL)`) and GCC's `__builtin_setjmp`/`__builtin_longjmp`.
+   - Justify the choice from the headers and documentation, keep Linux, macOS and Android behaviour unchanged, and explain the intermittency as far as the evidence allows.
+   - Deliver two separable parts and list the files in each: (a) a Windows test that repeats each boundary's fault path at least 1,000 times in one process; (b) the fix. Keep run J's locator and repeat step.
+2. **Hard-disc maintenance on FUSE (D-156).**
+   - Give the runner VFS a flush mode matching RetroArch 1.22.2 (`fflush` only). D-152 timing uses it; the `fsync` mode stays for termination and durability tests. Document both in the runbook.
+   - Bound every maintenance tick by a per-tick budget of filesystem metadata operations (open, close, flush, rename, remove, stat/size, mkdir), alongside the existing byte, hash and operation budgets. The target is no tick over 0.20 T on the Odin3 with saves on FUSE. At about 0.6 ms per call plus hashing, a budget of 4 per tick is the starting proposal; justify any other value from the per-tick accounting. Shrink GC and abort-cleanup removals per tick to fit.
+   - Every split point must keep the state recoverable under the existing phase tables. Never skip a flush or readback, and never weaken verification (contract §8).
+   - Update `docs/riscpc-hd-store.md` (per-tick tables and the recovery reasoning).
+   - Report how many ticks a checkpoint cycle now takes, and show that journal growth during the longer cycle stays within the journal cap and frozen threshold.
+   - Host test: the test VFS counts metadata operations, and every phase stays within the budget, including the 512-record chunk regression, GC and abort cleanup. Write acknowledgement is unchanged.
+3. **SMLAL/SMLALS (D-157).** Use unsigned 64-bit accumulation, keeping the signed 32×32 product and the guest's modulo-2^64 result. Record it as an imported-source patch under the RPCEmu import policy, add a UBSan regression, and make the import guard pass.
+4. **Verification.** Full host suite; sanitizers (run the harness directly with a fresh data directory); MinGW and Android cross builds; the export, import and shipping-I/O guards. Re-run the store mutation set that the maintenance split touches. Do not commit or push. Write `SOL-REPORT-R2C-K.md`.
 
 **Opus QA 2 (re-check, effort 15) at `5630d83`: PASS WITH LOWS.** The condition is that CI's native Windows RetroArch hard-disc leg must run and pass. CI run 38069603020 flaked in an earlier Archimedes leg (`zip-name-disc1-1`), and a re-run is requested.
 - **Closed:** M1, every QA 1 test gap and H1's diagnosis.
@@ -306,7 +300,7 @@ Rulings, recorded in D-140:
   - Odin3: hot workload p95 0.99–1.00 T against `main` 1.10 T; AC-8 0.169 T.
 
 **Carried from R2a:**
-- `rpc-cpu-trace` produced empty output once on Windows CI at `5648bd4`, then passed twice on identical code. An intermittent fault; investigate if it recurs.
+- `rpc-cpu-trace` produced empty output once on Windows CI at `5648bd4`. It recurred in S60/S61 and is located: the Windows non-local jump fault (D-155), fixed by run K.
 - QA LOW-A: a transient directory-listing failure in the CMOS reconcile path latches refused for that session. It is conservative and clears on reload.
 - R3 must show a notice during first-launch default generation (about 20 s on the Odin3).
 - After the absent-IDE startup dialog, the desktop takes about 60 s to appear. This is identical on R1 and goes away once R2c's IDE exists.
@@ -320,6 +314,12 @@ Slice order (D-133): R1–R4 → item 5 release baseline → item 6b faster CPU 
 
 ## Waiting on the Founder (protocol §18, D-124)
 - None. The Odin3 and the Windows PC are available again (D-154).
+
+**S61 (Claude Opus 5.5 effort 15; baton by relay from `arcdroid-db`).**
+- Adopted Sol run J, which had already died: the Codex service refused its last turn. Reviewed it and committed it as `d18f08e`.
+- CI located the Windows crash (D-155). The Odin3 legs failed D-152 on FUSE storage (D-156). Recorded the SMLAL ruling (D-157) and dispatched Sol run K.
+- **Running:** Sol run K and its watchdog (PIDs in `.work/s61/LEDGER.md`).
+- **Odin3 state:** RetroArch closed. Under `/data/local/tmp/arcdroid-r2c/s61/` are the run J arm64 core, runner, probe runner (`rpc_runner_nofsync`), scripts and results. FUSE save directories are under `/storage/emulated/0/arcdroid-s61/`; delete them after R2c.
 
 **Answered S60:** SSH to the Founder's Windows box (`sinmu@192.168.1.66`) is allowed for the item 6b Windows profile (D-148). It may also serve R2c AC-9's Windows native-RetroArch leg.
 
