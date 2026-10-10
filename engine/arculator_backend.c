@@ -513,6 +513,12 @@ static bool arc_helper_media_valid(const ArcEngineMedia *helper)
 }
 #if defined(ARCDROID_TEST_FAULTS)
 static bool arc_test_vidc_noncompleting;
+static bool arc_test_fault_entry;
+RETRO_API void arc_engine_test_fault_next(void) { arc_test_fault_entry = true; }
+static void arc_test_inject_fault(void)
+{
+   if (arc_test_fault_entry) { arc_test_fault_entry = false; fatal("Injected Arculator entry fault"); }
+}
 unsigned arc_ide_test_accesses(void);
 
 /* Read immediately after retro_reset, before any guest/device execution. */
@@ -913,6 +919,9 @@ static bool arc_machine_create(char *failure, size_t failure_size)
       return false;
    }
 
+#if defined(ARCDROID_TEST_FAULTS)
+   arc_test_inject_fault();
+#endif
    if (!descriptor) fatal("Invalid machine descriptor");
    arm_cpu_type = descriptor->cpu;
    memc_type = descriptor->memc;
@@ -1139,6 +1148,9 @@ static bool arc_arculator_run_frame(ArcInputState *input, ArcEngineFrame *frame)
       arc_fault_boundary = false;
       return false;
    }
+#if defined(ARCDROID_TEST_FAULTS)
+   arc_test_inject_fault();
+#endif
    do
    {
       execarm(2048);

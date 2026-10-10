@@ -2325,6 +2325,31 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
   add_test(NAME rpc-ide-registers COMMAND rpc_ide_test)
 endif()
 
+# D-155 part (a): independently committable repetition before the fix.
+if(BUILD_TESTING AND NOT ANDROID)
+  foreach(kind IN ITEMS cpu cmos session)
+    add_executable(rpc_jump_repeat_${kind} tests/rpc_jump_repeat_${kind}.c)
+    target_compile_options(rpc_jump_repeat_${kind} PRIVATE -UNDEBUG -Wall -Wextra)
+    target_include_directories(rpc_jump_repeat_${kind} PRIVATE engine engine/rpc
+      engine/rpcemu/src core libretro/include "${CMAKE_CURRENT_BINARY_DIR}/generated")
+    if(kind STREQUAL "session")
+      target_compile_definitions(rpc_jump_repeat_${kind} PRIVATE ARCDROID_TEST_FAULTS=1 RETRO_IMPORT_SYMBOLS=1)
+      target_link_libraries(rpc_jump_repeat_${kind} PRIVATE arcdroid_core ${CMAKE_DL_LIBS})
+      add_dependencies(rpc_jump_repeat_${kind} arcdroid_libretro_test rpc_session_test test-fixtures)
+      add_test(NAME rpc-windows-jump-repeat-session COMMAND rpc_jump_repeat_${kind}
+        $<TARGET_FILE:arcdroid_libretro_test> "${FIXTURE_DIR}/arcdroid-test.rom")
+    else()
+      target_sources(rpc_jump_repeat_${kind} PRIVATE $<TARGET_OBJECTS:arcdroid_rpc_${kind}>)
+      add_dependencies(rpc_jump_repeat_${kind} rpc_${kind}_test)
+      add_test(NAME rpc-windows-jump-repeat-${kind} COMMAND rpc_jump_repeat_${kind})
+    endif()
+    if(ARCDROID_SANITIZERS)
+      target_link_libraries(rpc_jump_repeat_${kind} PRIVATE arcdroid_sanitizer_compile arcdroid_sanitizer_link)
+    endif()
+    set_tests_properties(rpc-windows-jump-repeat-${kind} PROPERTIES TIMEOUT 600)
+  endforeach()
+endif()
+
 # Capture first-chance faults before main in every non-shipping RPC executable.
 # Keep Release optimization/assertion settings: only add matching DWARF, so the
 # RVA and module base in stderr map directly using addr2line on the CI artifact.
