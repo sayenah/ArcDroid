@@ -2,12 +2,14 @@
 
 **Stage:** IMPLEMENTATION — roadmap item 6, RiscPC **R2c** (IDE and a scalable hard disc), run B (implementation of items 9–12)
 **Owner:** Sol (run B), supervised by Fable
-**Next:** Sol R2c run B on branch `slice/r2c-ide` (draft PR #337), resuming Sol thread `01a120ab-7bf4-7843-a879-6fab6d9b3736` in its S59 clone after `main` is merged into the branch.
-- Sol first writes the six D-145 amendments into `docs/riscpc-hd-store.md`.
-- Then Sol implements work-order items 9–12 and their AC-5/AC-7 tests exactly as the amended contract states.
-- The pristine `rpcemu-0.9.5.tar.gz` (SHA-256 `4e4624641cd1a83af275bd6da8765d4a0e5e0c83f008f059014cc24c5c33d59e`, as in `engine/rpcemu/UPSTREAM.md`) is supplied in the clone's git-ignored `.evidence/`.
-- Arm `wait-run.sh` at dispatch.
-- Then Fable reviews, and runs AC-6, AC-8 and AC-9 privately, before Opus QA.
+**Next:** supervise Sol R2c run B4 (the recovery run) to completion, then Fable reviews it and runs AC-6, AC-8 and AC-9 privately, before Opus QA.
+- **Running:** codex PID 74871, started 2026-10-10 00:05 CDT, resuming Sol thread `01a120ab-7bf4-7843-a879-6fab6d9b3736`.
+  - Clone: `.work/s60/sol2c/clone` on `slice/r2c-ide` at `7e55526` (run A plus `main` through `ff2b5f0`; draft PR #337).
+  - Prompt `.work/s60/sol2c/promptB4.md`; stream `streamB4.jsonl`; final message `finalB4.md`; report `SOL-REPORT-R2C-B.md` in the clone.
+  - Watchdog: detached `wait-run.sh`, PID 75829, writing its one line to `.work/s60/watch-solB4.txt`.
+- **Why a recovery run:** the Mac rebooted at about 12:30 CDT on 2026-10-09 while S59's Sol run B3 was in its final verification. The boot wiped `/private/tmp`, taking the uncommitted run B clone and every Fable scratchpad from S55 to S59. Nothing committed was lost. Sol's thread log survived, so run B4 rebuilds its tree from `.evidence/sol-run-b-replay.md` (its own 258 recorded calls) and then re-runs all verification. Earlier results do not count.
+- The pristine `rpcemu-0.9.5.tar.gz` was downloaded again from upstream; its SHA-256 matches the pin `4e4624641cd1a83af275bd6da8765d4a0e5e0c83f008f059014cc24c5c33d59e` in `engine/rpcemu/UPSTREAM.md`. Astra's store report was recovered from its thread log.
+- **Private work now lives in `.work/s<n>/`** inside this checkout (git-excluded through `.git/info/exclude`), not in `/private/tmp`, so a reboot cannot wipe it (D-149).
 
 **R2c run A outcome (S59).**
 - **Sol run A** (fresh thread above, 1,831 s) is committed verbatim as `b4bc633`:
@@ -22,7 +24,7 @@
 - **Run B so far:**
   - **First stop (correct):** the prompt wrongly asked for a tenth scheduler event. Ruling: activate the existing reserved IDE slot; the count stays at nine.
   - **Second stop (correct, with an executable probe):** the VFS `readdir` cannot report errors, so listing-based GC could exceed the disc bound after a kill. **Ruling R2c-1 (D-147):** RETIRE removes garbage before removal; debris is found by fixed paths; listing is advisory only.
-  - Run B continues from there.
+  - **Run B3** then reached its final verification, and was lost in the reboot (see Next). Run B4 is the recovery.
 - **Contract honesty, accepted:**
   - the frontend VFS gives no power-loss durability and no bounded wall-clock latency;
   - "no stall depends on the host" means guest-visible timing is virtual and identical however slow the host is;
@@ -68,8 +70,9 @@
     - **First Odin3 profile done.** Fetch translation is a third of cache-hot cost. Warm load/store code reaches p95 1.83 T at 100 MIPS. The timing model dominates memory-bound code. Devices cost about 0.04 T.
     - **Invariants accepted as the Phase-0 basis (D-146)**, in `docs/riscpc-translator-invariants.md`, after an Astra check: ACCEPT WITH CHANGES, three HIGH and four MEDIUM, all incorporated. Rulings are Q-1 to Q-11.
   - **Q-3 oracle fix (D-146), queued after R2c merges and before R3.** The R2a fetch memo is keyed by virtual line only and can outlive a change of eligibility after a translation-cache re-walk. The work order is a small corrective slice: a targeted reproduction plus the smallest fix, with no blanket golden regeneration, and its own Fable review and QA.
+  - **Windows profile done (S60, D-148).** It is in `docs/riscpc-translator.md`, *Interpreter profile on Windows*. The 7800X3D costs 0–23 % less per instruction than the Odin3; warm load/store code still misses real time (p95 1.60 T), fetch translation is again about a third of cache-hot cost, and traces are byte-identical to the Odin3. Private files are in `.work/s60/prof/` (`winsample.py`, `winrun.py`, `symbolise.py`, `winout/`); the copies on the Windows box are in `C:\Users\sinmu\arcdroid-s60prof\`.
+  - **Windows executable-memory probe: PASS (S60),** after the Founder switched Smart App Control off on the box (its first attempt had been blocked). Dual RW/RX views work. A CRT `longjmp` through an emitted frame needs unwind data registered with `RtlAddFunctionTable`; without it the process dies with `0xC00000FF`. Details are in `docs/riscpc-translator.md`; the source is `.work/s60/xprobe/`. **The Windows box no longer has Smart App Control on,** so it no longer represents players who do.
   - **Remaining Phase-0 steps for Fable:**
-    - the Windows profile (waiting on the Founder, below);
     - representative gameplay (after R2c);
     - block-shape and churn instrumentation;
     - the Q-1 design objective, put to the Founder at the end of Phase 0.
@@ -112,14 +115,17 @@ Rulings, recorded in D-140:
 
 Slice order (D-133): R1–R4 → item 5 release baseline → item 6b faster CPU translator → item 8 save states. Carried: the Arculator VIDC-register reset follow-up (below); follow-up Lows; Slice 23 residuals; physical-stick feel on the Odin3 (Founder check).
 
-**Item 5 grounding (S55, paused at a safe point: nothing committed, no branch).** `main` `c725bd6`: CI builds Android arm64 only, which is the whole Android target (D-135: no armeabi-v7a); the `.info` is copied into the build tree (`configure_file`) and installed by `install(FILES …)` but no CI artifact bundles core + `.info` + `COPYING` + `THIRD_PARTY_NOTICES.md`; the version lives in three places (`project(… VERSION 0.1.0)`, `ARCDROID_VERSION` fallback in `libretro/arcdroid_libretro.c:28`, `display_version` in `arcdroid_libretro.info`). (armeabi-v7a was found to build unmodified, but is out of scope by D-135.) Android devices: the Odin3 (`arm64-v8a` only) and a second Snapdragon 8 Gen 2 device (Founder S55). No shipping source uses `__FILE__`/`__DATE__`/`__TIME__` or a runtime `assert` (the Slice 8 note on embedded paths is unverified — check with a two-path build comparison). The GPL corresponding-source mechanism for distributed binaries (D-016) stays tied to publication (D-100). Scratch: S55 scratchpad `s55/` (`a/`, `second-checkout-b/` clones, `build-android.sh`).
+**Item 5 grounding (S55, paused at a safe point: nothing committed, no branch).** `main` `c725bd6`: CI builds Android arm64 only, which is the whole Android target (D-135: no armeabi-v7a); the `.info` is copied into the build tree (`configure_file`) and installed by `install(FILES …)` but no CI artifact bundles core + `.info` + `COPYING` + `THIRD_PARTY_NOTICES.md`; the version lives in three places (`project(… VERSION 0.1.0)`, `ARCDROID_VERSION` fallback in `libretro/arcdroid_libretro.c:28`, `display_version` in `arcdroid_libretro.info`). (armeabi-v7a was found to build unmodified, but is out of scope by D-135.) Android devices: the Odin3 (`arm64-v8a` only) and a second Snapdragon 8 Gen 2 device (Founder S55). **Windows signing risk (S60):** Smart App Control, on by default for many Windows 11 installs, blocked one unsigned ArcDroid-built probe executable on the Founder's box while allowing the unsigned runner and plan core. Item 5 must decide whether an unsigned `arcdroid_libretro.dll` is acceptable, or whether it needs signing or a documented workaround. No shipping source uses `__FILE__`/`__DATE__`/`__TIME__` or a runtime `assert` (the Slice 8 note on embedded paths is unverified — check with a two-path build comparison). The GPL corresponding-source mechanism for distributed binaries (D-016) stays tied to publication (D-100). Scratch: S55 scratchpad `s55/` (`a/`, `second-checkout-b/` clones, `build-android.sh`).
 
 ## Waiting on the Founder (protocol §18, D-124)
-- **Windows half of the item 6b Phase-0 profile (S59).**
-  - **The blocker:** `ssh sinmu@192.168.1.66 ver`, run to reach the Founder's Windows box, was denied by the auto-mode classifier ("Containment Escape"). It was not retried or worked around, and a `PushNotification` was sent.
-  - **The decision:** either allow SSH to the Windows box for the profile, or defer the Windows profile (for example, to after R4 or to CI timing only).
-  - **Independent of it:** R2c and the Odin3 Phase-0 work.
-  - **Also affected later:** R2c AC-9's Windows native-RetroArch leg, if it uses the Windows box. The CI `windows-retroarch` job is the fallback evidence path.
+- None.
+
+**Answered S60:** SSH to the Founder's Windows box (`sinmu@192.168.1.66`) is allowed for the item 6b Windows profile (D-148). It may also serve R2c AC-9's Windows native-RetroArch leg.
+
+**S60 (Claude Opus 5.5 effort 15, window `arcdroid-db`; started by the Founder by hand after the reboot).**
+- Found the loss described under Next, re-created the clone and evidence, and dispatched Sol run B4.
+- The S59 window crashed before closing, so its name was never recorded. Its work is recorded in the R2c run A outcome above and in D-145 to D-147.
+- Fable private scratchpads from S55 to S59, which earlier entries below cite, no longer exist. Their results are recorded in these entries and in the decision log; only the harness scripts are gone. The Odin3 tooling under `/data/local/tmp/` is unaffected.
 
 ## Answered S55 (D-131…D-135; full option texts in git history, `docs/handoff.md` at `7a32f93`)
 - RiscPC go/no-go → **GO** at a 100 MIPS Odin3 StrongARM budget (D-131); boot files are never shipped or fetched — user-supplied in RetroArch's system folder (D-134).
