@@ -129,7 +129,7 @@ These ranges are research targets, not predictions (Astra S58):
   - The preferred dual mapping is available, so no RWX fallback is needed. RWX was also permitted, but that was recorded only.
   - A W^X `mprotect` toggle costs about 40 times as much per publish.
   - Emitted code must never write x18.
-- **Not covered:** a second Android device and Windows.
+- **Not covered:** a second Android device. Windows is covered by the S60 probe below.
 
 **Interpreter profile on the Odin3.**
 - **Setup:**
@@ -192,9 +192,20 @@ These ranges are research targets, not predictions (Astra S58):
 - **Memory-bound code is dominated by the R2a timing service** (37–74 %), as on the Odin3.
 - **Devices** cost about 0.04 T in the AC-8 mode on both platforms.
 - **Run-to-run spread is small:** p95 varies by at most 0.03 T across three runs.
-- **Not covered:** the native RetroArch frontend (the runner was used), and executable memory on Windows.
-  - **The Windows executable-memory probe was blocked.** Smart App Control (Windows 11, on for this box) refused the unsigned probe executable (CodeIntegrity events 3033/3077/3118). The unsigned runner and plan core from the same toolchain were allowed. The block was not worked around.
-  - **It is not needed in Phase 0.** Phase 2 targets arm64 only. The probe matters only if Q1/Q2 call for an x64 backend, and then it runs on a host where it is allowed (for example a CI runner).
+- **Not covered:** the native RetroArch frontend (the runner was used).
+
+**Executable memory on Windows (S60).** A standalone x64 probe, written from scratch (Q3 not engaged), was run on the same box.
+- **First attempt blocked.** Smart App Control refused the unsigned probe executable (CodeIntegrity events 3033/3077/3118), while the unsigned runner and plan core from the same toolchain were allowed. It was not worked around. The Founder then switched Smart App Control off and restarted the machine, and the probe ran.
+- **What works:**
+  - Dual RW/RX views of one pagefile-backed section (`CreateFileMapping` plus two `MapViewOfFile` views).
+  - 20,000 replacements at reused addresses with `FlushInstructionCache` gave no mismatch, at about 19 ns per publish and call. A `VirtualProtect` W^X toggle costs about 2.7 µs, roughly 140 times as much.
+  - Emitted code calling a C helper.
+  - `longjmp` from the helper through an emitted frame works 1000 out of 1000 times when the frame's unwind data is registered with `RtlAddFunctionTable`. `__builtin_longjmp`, which does not unwind, also works 1000 out of 1000 times.
+  - 500 create/destroy cycles of 8 and 32 MiB regions leak no handle.
+  - RWX allocation was also permitted; that was recorded only.
+- **Design consequence (Windows x64):** the CRT `longjmp` unwinds frame by frame. Through an emitted frame with no registered unwind data, the process is killed at once with `0xC00000FF` (bad function table), and no exception filter runs. Any x64 backend must therefore either register unwind data for every emitted frame that a helper can unwind through, or have helpers that leave emitted code use a non-unwinding exit.
+- **Release note:** with Smart App Control on, an unsigned ArcDroid-built executable was blocked (see the handoff's item 5 notes).
+- **Not covered:** inside RetroArch on Windows (RetroArch is not installed on the box).
 
 **Still open in Phase 0:**
 - representative gameplay (after R2c, with AC-10);
