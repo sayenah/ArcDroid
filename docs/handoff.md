@@ -1,13 +1,42 @@
 # ArcDroid Handoff
 
-**Stage:** IMPLEMENTATION — roadmap item 6, RiscPC **R2c**, run F (native Windows RetroArch crash); Opus QA of `c0e3dd4` continues in parallel
-**Owner:** Sol (run F), supervised by Fable
-**Next:** Sol R2c run F in `.work/s60/sol2c/clone` (thread `01a120ab-7bf4-7843-a879-6fab6d9b3736`). Fable then reviews it, pushes it, checks CI and adjudicates the Opus QA findings together with run F. The merge waits for the Odin3 (D-153).
-- **Defect:** CI `windows-retroarch` at `c0e3dd4` (run 38049055570). With the fixture directories now correct, RetroArch 1.22.2 crashes with `0xC0000005` (access violation) in session 1 of the authored hard-disc leg. This happens after the core starts running frames: the blank store is published, but `journal.a` stays at its 256-byte header. Windows recorded no crash event. The same DLL passed the same guest through the runner (`rpc-hd-retroarch-guest`) on the same CI machine, and the Odin3 native leg passed with the run D core. The trigger is therefore specific to native RetroArch on Windows, around the store's first guest I/O. Evidence is in `.work/s60/ci-evidence-e2/`.
-- **Run F scope:**
-  1. **Test-only crash capture** in the Windows leg: enable WER LocalDumps for `retroarch.exe` (the runner is admin), and on a crash run the Windows SDK debugger (`cdb`) on the dump. Upload the dump, the debugger's exception, register and stack summary, and the exact core DLL as evidence.
-  2. **Static investigation** against RetroArch 1.22.2's Windows paths (`vfs_implementation.c` and the frontend's core-facing calls): VFS open modes and hints, stat, the directory functions, disk control and threads.
-  3. **Fix** the cause if it is found. Otherwise leave the capture in place so the next CI run pinpoints it.
+**Stage:** IMPLEMENTATION — roadmap item 6, RiscPC **R2c**, run G (QA remediation and Windows crash location)
+**Owner:** Sol (run G), supervised by Fable
+**Next:** Sol R2c run G in `.work/s60/sol2c/clone` (thread `01a120ab-7bf4-7843-a879-6fab6d9b3736`), carrying out the work order below. Fable then reviews it, pushes it, reads the Windows crash location from CI, and orders the crash fix. After that comes the Opus QA re-check. The merge waits for the Odin3 (D-153).
+
+**Opus QA 1 (effort 15) at `c0e3dd4`: FAIL.**
+- **H1:** the native Windows RetroArch crash.
+- **M1:** reconstruction reopens the journal once per overlapping record, a D-152 risk for installer write patterns.
+- **LOW:** test gaps.
+
+Fable's per-finding adjudication is in `.work/s60/qa/adjudication-1.md`; every substantive finding was accepted.
+
+**The Windows crash still has no location.** Run F's WER LocalDumps capture produced no dump (CI run 38054933321: "No WER dump appeared"). This suggests the access violation is handled in-process before WER sees it.
+
+**Run G work order:**
+1. **Crash locator (test-only, Windows, plan core only).** A vectored exception handler installed while the plan core is loaded and removed on unload. On an access violation or other fatal exception it logs, through the core's log callback and a flushed file in the save directory:
+   - the exception code and access address;
+   - the faulting module, as a module-relative offset;
+   - a bounded stack walk with module-relative offsets.
+
+   It must never swallow the exception. The Windows leg uploads that file. The shipping core does not contain it.
+2. **M1:** one journal open per reconstruction and per read miss, reading the overlapping records in offset order from one confirmed position. Add a regression with 512 single-sector records in one chunk that bounds the VFS operations per tick and per read miss. Report the new worst-case per-tick operation count against the contract's bounds, and update `docs/riscpc-hd-store.md` if the accounting changes.
+3. **QA LOW test gaps**, all as tests:
+   - Q04: a CRC-valid chunk with the wrong SHA-256 is refused on a miss;
+   - Q05: a CRC-valid journal sequence gap is corruption;
+   - Q11: the parent-prefix digest;
+   - Q12: chunk generation ≤ manifest generation;
+   - Q16: leftovers from an interrupted population or creation are gone after reopen;
+   - IDE I08 (register writes during a held reset), I09 (the write-completion IRQ) and I10 (CHS sector 0 beyond cylinder 0, head 0);
+   - a non-zero `hd_import` round trip;
+   - an x86 `--require-x86` identity mode, with CI printing the capability line.
+4. **Smaller items:**
+   - the cost report also counts store open and blank creation inside `retro_run`;
+   - the Windows result wording says "plan disk-control callbacks";
+   - test VFSs refuse reads on write-only handles;
+   - GC respects the per-tick budget after a population abort;
+   - `libretro-harness` gets a reasoned timeout increase.
+5. **Re-run** everything as before.
 
 **R2c implementation record (all Sol runs committed verbatim by Fable):**
 
