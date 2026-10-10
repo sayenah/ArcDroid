@@ -1,8 +1,24 @@
 # ArcDroid Handoff
 
-**Stage:** IMPLEMENTATION — roadmap item 6, RiscPC **R2c**, run H (test-only: plan core `.info` `systemid`)
-**Owner:** Sol (run H), supervised by Fable
-**Next:** Sol R2c run H in `.work/s60/sol2c/clone` (thread `01a120ab-7bf4-7843-a879-6fab6d9b3736`). Then Fable reviews and pushes it, confirms the `windows-retroarch` hard-disc leg passes, and asks Opus QA to re-check runs D–H. The merge waits for the Odin3 (D-153).
+**Stage:** QA — roadmap item 6, RiscPC **R2c**, re-check of PR #337 at `5630d83` (runs F, G, H)
+**Owner:** Opus (independent QA, `arcdroid-opus-qa`, effort high)
+**Next:** Opus QA re-check of PR #337 at `5630d83`. Fable then adjudicates it and confirms CI, including the `windows-retroarch` hard-disc leg on `5630d83`. The merge waits for the Odin3 (D-153).
+
+**Since QA 1 (`c0e3dd4`):**
+
+| Commit | Run | Content |
+|---|---|---|
+| `8103d9c` | F | test-only Windows crash capture (WER LocalDumps and `cdb`; produced no dump) |
+| `6d73e6b` | G | QA 1 remediation: M1 single journal open per reconstruction, all eight survivors killed, the LOW items; Windows-only vectored exception locator in the plan core |
+| `5630d83` | H | test-only: the plan `.info` declares `systemid`; a core metadata guard |
+
+Fable's adjudication of QA 1 is in `.work/s60/qa/adjudication-1.md`, reproduced in the QA clone's `.evidence/`.
+
+**Re-check focus:**
+1. Every QA 1 finding against its disposition, with mutants re-run.
+2. The M1 change (journal handle reuse, the position cursor, failure paths) and its per-tick accounting.
+3. The crash locator: test-only, Windows-only, never swallowing an exception, absent from the shipping core.
+4. The H1 diagnosis and the run H fix: does the guard cover every field RetroArch 1.22.2 dereferences from a core `.info`?
 
 **H1 located (Fable, S60) with run G's crash locator** (CI run 38065741237 at `6d73e6b`). The fault is RetroArch's `strlcpy` reading NULL (`retroarch.exe+0x1af761`), called from its network-command `GET_STATUS` handler (`retroarch.exe+0x1c4e3`). The surrounding strings are "GET_STATUS ", "PLAYING" and " ". RetroArch processes network commands inside the core's `input_poll`; the core frames are `arc_poll_osk_controls` ← `arc_poll_inputs` ← `arc_rpc_present_run`.
 - RetroArch 1.22.2's `command_get_status` (`command.c` at `69a4f0e`) copies `core_info->system_id` with no NULL check.
