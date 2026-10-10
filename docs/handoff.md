@@ -1,6 +1,6 @@
 # ArcDroid Handoff
 
-**Stage:** IMPLEMENTATION — roadmap item 6, RiscPC **R2c**, run D (remediation of R2c-2, D-150)
+**Stage:** IMPLEMENTATION — roadmap item 6, RiscPC **R2c**, run D (remediation of R2c-2, D-150 as corrected by D-151)
 **Owner:** Sol (run D), supervised by Fable
 **Next:** Sol R2c run D on `slice/r2c-ide` (PR #337), resuming thread `01a120ab-7bf4-7843-a879-6fab6d9b3736` in `.work/s60/sol2c/clone`. Run D carries out the **R2c-2 work order below**. Then Fable reviews it, re-runs the Odin3 native leg and checks CI's `windows-retroarch` hard-disc leg. After that, AC-8 and AC-9 finish and PR #337 goes to Opus QA.
 
@@ -8,9 +8,9 @@
 - **Defect (found by Fable's AC-9 Odin3 leg):** in native RetroArch 1.22.2 on Android, the authored guest's first hard-disc write is refused, the store latches read-only and the player sees "Hard-disc changes can no longer be saved this session." RetroArch's buffered `seek` returns 0, not the new position, so the store's `seek(...) == offset` check fails for every non-zero offset. That breaks journal appends, indexed journal reads and any other positioned access. Windows RetroArch behaves the same (`_fseeki64`). The runner VFS returns `ftell()` after seeking, so every host test passed.
 - **Required behaviour:**
   1. Every positioned access in the R2c store treats a non-negative `seek` result as success and confirms the position with `tell` before reading or writing, so a VFS that returns either convention works.
-  2. No code uses `size` on a handle after writing to it; use `stat` or a fresh open. Audit every existing use.
+  2. Corrected by D-151: a handle's `size` follows that handle's own writes and truncates only. No code relies on it to see changes made through another handle or process; use `stat` or a fresh open for an independent length. Audit every existing use.
   3. The failure diagnostic names the step that actually failed (seek, write, flush, close or stat). Today a failed seek is reported as `operation=close`.
-  4. **Test VFSs model RetroArch 1.22.2 by default:** the runner VFS (`tools/rpc_runner_vfs.h`) and the store's test mock VFSs return 0 from a successful buffered seek, and return a handle's size as cached at open. A switchable "documented-contract" mode may stay for comparison. Add a test that fails on the old `== offset` check under the RetroArch-faithful VFS.
+  4. **Test VFSs model RetroArch 1.22.2 by default:** the runner VFS (`tools/rpc_runner_vfs.h`) and the store's test mock VFSs return 0 from a successful buffered seek, and keep a handle's size as at open, updated only by that handle's own writes and truncates (D-151). A switchable "documented-contract" mode may stay for comparison. Add a test that fails on the old `== offset` check under the RetroArch-faithful VFS.
   5. **Audit the other ArcDroid stores and file users** that reach the frontend VFS (`install_store`, `jfd_store`, `rpc_cmos_store`, media staging, ADFFS/zip helpers, `arc_io`) for the same two assumptions. Fix any RPC-side use; report any shipping-path use with evidence before changing it.
   6. Re-run the full host and sanitizer suites, the fault and process-kill sweeps, the mutants, the run C guest and the MinGW and Android builds and guards, all under the RetroArch-faithful VFS.
 - **Non-goals:** no contract change beyond the VFS assumptions section of `docs/riscpc-hd-store.md`, which must state both RetroArch behaviours. No golden change, and no Arculator behaviour change.
