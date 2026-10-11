@@ -1,19 +1,19 @@
 # ArcDroid Handoff
 
-**Stage:** IMPLEMENTATION — roadmap item 6, RiscPC **R2c**, run L (hard-disc maintenance split for FUSE storage, D-156/D-158)
-**Owner:** Sol (run L), supervised by Fable
+**Stage:** IMPLEMENTATION — roadmap item 6, RiscPC **R2c**, run M (hard-disc maintenance split for FUSE storage, D-156/D-158/D-159)
+**Owner:** Sol (run M), supervised by Fable
 **Next:** Fable (S61 or the next holder):
-1. **Windows evidence for run K** (in parallel with run L). Part (a) `08e3df7` is pushed: confirm CI's `windows` job fails on its repeat regressions (fail before the fix). Then push part (b), `0d1522f`, already committed in `.work/s60/sol2c/clone` (`git push origin slice/r2c-ide` touches no working tree, so it is safe while Sol runs). Require `windows` to pass the regressions and the 50× repeat step.
-2. **Supervise Sol run L to completion.** Review it, commit it verbatim on `slice/r2c-ide`, push, and require green CI on all jobs. `windows-retroarch` must reach and pass `rpc-hd-session-1/2/3`, which has never yet run with the H1 fix. Re-run the job if it flakes in an earlier Archimedes leg (known flakes: a Slice 15 screenshot timeout, `zip-name-disc1-1`).
-3. **Odin3 legs on the run L core** (D-152, D-156, D-158), with saves on `/storage/emulated/0` and `--vfs-flush retroarch`:
+1. **Windows evidence for run K: done (S61).** On part (a) `08e3df7` (CI 38089532777), `windows` failed in the 50× repeat step with the same crash. The new regressions sit later in the job and were not reached. On part (b) at `7521f1a` (CI 38090184344), **all five jobs are green**: `windows` passed 210/210, including `rpc-cpu-smlal` and the three 1,000× jump-repeat regressions, with 100/100 repeats. `windows-retroarch` passed `rpc-hd-session-1/2/3` for the first time ("force termination, reload gen1, write gen2, QUIT, reload gen2 … full IDENTIFY/data comparisons PASS"). This closes QA 2's condition and H1.
+2. **Supervise Sol run M to completion.** Review it, commit it verbatim on `slice/r2c-ide`, push, and require green CI on all jobs again, including `windows-retroarch`'s `rpc-hd-session-1/2/3`. Re-run the job if it flakes in an earlier Archimedes leg (known flakes: a Slice 15 screenshot timeout, `zip-name-disc1-1`).
+3. **Odin3 legs on the run M core** (D-152, D-156, D-158, D-159), with saves on `/storage/emulated/0` and `--vfs-flush retroarch`:
    - Build arm64 in `.work/s60/ab/r2c` (`cmake --build build/android --target arcdroid_rpcplan_libretro rpc_runner hash_accel_test`).
    - Run `hash_accel_test --require-arm`.
    - Run the authored guest three times, then the 031 install, both with `--hd-cost`. Template: `.work/s61/odin/s61.sh`, with `--vfs-flush retroarch` added. The pre-install store is `/data/local/tmp/arcdroid-r2c/i031/st0`.
    - **Accept** only if `tools/check-rpc-hd-cost.py` finds no frame over 0.20 T.
    - Install the plan core through RetroArch's menu and repeat the native three-session authored leg (`ra2.sh`, `arcdroid-hd.cfg`, fixture `RetroArch/rpc-r2c/hdra/`, fresh `hdsave/`, QUIT pair via `/data/local/tmp/s52.sh net QUIT`). Then repeat `rep20.sh`.
-4. **Opus QA** of the delta from runs I, J, K and L (a fresh `arcdroid-opus-qa` agent in a fresh clone; the S60 QA agents are gone). Then **merge PR #337** under protocol §12.11. After the merge, the Q-3 oracle fix (D-146) comes before R3.
+4. **Opus QA** of the delta from runs I, J, K and M (a fresh `arcdroid-opus-qa` agent in a fresh clone; the S60 QA agents are gone). Then **merge PR #337** under protocol §12.11. After the merge, the Q-3 oracle fix (D-146) comes before R3.
 
-- **Running:** see the S61 entry under Waiting on the Founder (it lists the Sol run L PID and its watchdog).
+- **Running:** see the S61 entry under Waiting on the Founder (it lists the Sol run M PID and its watchdog).
 - **Private work:** S60's is in `.work/s60/` (index `LEDGER.md`); S61's is in `.work/s61/` (index `LEDGER.md`), including the device scripts and results (`odin/`), the CI diagnostics (`ci-diag-1/`) and run K's partition patches (`k/`). Sol's clone holds a stash `runK-backup` with run K's original working tree; drop it after R2c merges.
 - **Codex refusal (S61):** run J's last turn was refused by the Codex service as "possible cybersecurity risk" (its crash-locator subject matter). The run had already written its code and report; only its local full-suite runs were lost, and CI covered them. Word Sol prompts about fault handling neutrally ("fault path", "non-local jump").
 
@@ -34,14 +34,16 @@ Write acknowledgement passes with faithful flush (worst 1.03 ms). Maintenance fa
 - **D-157:** SMLAL/SMLALS use unsigned accumulation (imported patch `cpu-smlal-modulo`). `rpc-cpu-smlal` runs 12 interpreter executions; each defect, restored alone, aborts under UBSan.
 - **D-156 runner:** `--vfs-flush retroarch|fsync` (`fsync` stays the default). It has flush-visibility readback tests and a runbook entry.
 - **The maintenance split was returned correctly.** A budget of 4 calls conflicts with §8's 128 KiB/frame stream (census: MATERIALIZE up to 19 calls, GC up to 33, and 15 for a fully verified nonzero chunk). Splitting ROTATE naively would break the frozen-prefix binding. Fable ruled in **D-158**.
-- **Commits:** part (a) `08e3df7` (regressions only, pushed); part (b) `0d1522f` (fix, SMLAL, runner modes; local, verified byte-for-byte against Sol's tree).
+- **Commits:** part (a) `08e3df7` (regressions only); part (b) `0d1522f` (fix, SMLAL, runner modes; verified byte-for-byte against Sol's tree). Both are pushed (head `7521f1a`).
 
-**Run L work order** (D-156, D-158; the same clone, resuming run K's thread):
+**Run L outcome (S61):** a correct stop under D-158(2), with no code change (`SOL-REPORT-R2C-L.md`). The floor of 40 commands/frame with all 504 chunks dirty needs at least 378 ticks of chunk writes, and the 8 MiB cap allows 300. Fable corrected the floor from measured installer behaviour in **D-159**.
+
+**Run M work order** (run L's items under D-156, D-158 and D-159; the same clone, resuming the same thread):
 1. **Metadata budget.** Every maintenance tick, in every phase including GC and abort cleanup, makes at most 4 metadata calls under D-158(1). The test VFS counts them, including failed calls, and a host test asserts the budget across reconstruction (including the 512-record chunk), import and population, sustained streams, GC, abort cleanup and the fault matrix.
 2. **Phase split.** Split MATERIALIZE, ROTATE, MANIFEST, PUBLISH, RETIRE and GC into steps that fit. Under D-158(4), S is bound and the parent frozen only at the switching step. Retained checkpoint data has its own budgeted buffer. Every intermediate state must stay recoverable, and kill or fault at every new boundary must recover the same acknowledged view (extend the §11 matrix). Formats may change (D-158(3)); never weaken verification.
-3. **Contract.** Update `docs/riscpc-hd-store.md`: the phase table, the per-tick budgets, the new frame-count proofs for the re-derived sequential and scattered streams (D-158(2), with the 10× floor over the measured 031 install), the resident and buffer accounting, and the recovery reasoning for each new boundary.
+3. **Contract.** Update `docs/riscpc-hd-store.md`: the phase table, the per-tick budgets, the new frame-count proofs for the re-derived streams (D-159: ≥4,300 journal B/frame sustained, up to 80 dirty chunks per cycle, a 2 MiB burst within 60 frames), the resident and buffer accounting, and the recovery reasoning for each new boundary.
 4. **Tests.** AC-5's ≥512 MiB sequential and ≥64 MiB scattered traffic without reopen, at the new rates, comparing data after each checkpoint and recovering in a fresh process. Existing store tests and mutants still pass. Add mutants for the new step boundaries.
-5. **Verification** as for run K. Report the worst-case calls per phase step, the ticks per cycle, the stream rates and their proofs. Do not commit or push. Write `SOL-REPORT-R2C-L.md`.
+5. **Verification** as for run K. Report the worst-case calls per phase step, the ticks per cycle, the stream rates and their proofs. Do not commit or push. Write `SOL-REPORT-R2C-M.md`.
 
 **Opus QA 2 (re-check, effort 15) at `5630d83`: PASS WITH LOWS.** The condition is that CI's native Windows RetroArch hard-disc leg must run and pass. CI run 38069603020 flaked in an earlier Archimedes leg (`zip-name-disc1-1`), and a re-run is requested.
 - **Closed:** M1, every QA 1 test gap and H1's diagnosis.
@@ -315,7 +317,7 @@ Slice order (D-133): R1–R4 → item 5 release baseline → item 6b faster CPU 
 **S61 (Claude Opus 5.5 effort 15; baton by relay from `arcdroid-db`).**
 - Adopted Sol run J, which had already died: the Codex service refused its last turn. Reviewed it and committed it as `d18f08e`.
 - CI located the Windows crash (D-155). The Odin3 legs failed D-152 on FUSE storage (D-156). Recorded the SMLAL ruling (D-157) and dispatched Sol run K.
-- **Running:** Sol run L and its watchdog (PIDs in `.work/s61/LEDGER.md`). Run K finished (D-158 ruled on its returned conflict).
+- **Running:** Sol run M and its watchdog (PIDs in `.work/s61/LEDGER.md`). Runs K and L finished (D-158 and D-159 ruled on their returned conflicts).
 - **Odin3 state:** RetroArch closed. Under `/data/local/tmp/arcdroid-r2c/s61/` are the run J arm64 core, runner, probe runner (`rpc_runner_nofsync`), scripts and results. FUSE save directories are under `/storage/emulated/0/arcdroid-s61/`; delete them after R2c.
 
 **Answered S60:** SSH to the Founder's Windows box (`sinmu@192.168.1.66`) is allowed for the item 6b Windows profile (D-148). It may also serve R2c AC-9's Windows native-RetroArch leg.
