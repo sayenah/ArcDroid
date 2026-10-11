@@ -1,8 +1,23 @@
 # ArcDroid Handoff
 
-**Stage:** QA — roadmap item 6, RiscPC **R2c** (PR #337, head `f51cd68`), re-check of the delta from runs I to O
-**Owner:** Opus (QA), dispatched by Fable
-**Next:** Opus QA (a fresh `arcdroid-opus-qa` agent, effort 15 or above, fresh clone of `slice/r2c-ide` at `f51cd68`) reviews the delta `5630d83..f51cd68` against the QA focus below and reports. Then Fable adjudicates. If it passes, Fable confirms green CI at the head and merges PR #337 under protocol §12.11. After the merge, the Q-3 oracle fix (D-146) comes before R3.
+**Stage:** IMPLEMENTATION — roadmap item 6, RiscPC **R2c**, run P (test-only remediation of Opus QA 3 LOWs)
+**Owner:** Sol (run P), supervised by Fable
+**Next:** Fable supervises Sol run P (test-only; no change to the plan core, the store or the checker logic), reviews it, commits it verbatim on `slice/r2c-ide`, and pushes. Then Fable asks the same Opus QA agent to re-check, or a fresh `arcdroid-opus-qa` agent in a fresh clone if the original is gone. If the re-check passes, Fable confirms green CI on all jobs at the head and merges PR #337 under protocol §12.11. After the merge, the Q-3 oracle fix (D-146) comes before R3.
+
+**Opus QA 3 (effort 15) at `f51cd68`: PASS WITH LOWS, no defects.** Fable's adjudication is in `.work/s61/qa/adjudication-3.md` (QA clone `.work/s61/qa/clone`, scratch under `build/qa3/`).
+- Host 352/352. Sanitizer subset 76/77 (the one timeout passed alone).
+- The import guard and MinGW build pass.
+- The D-161 checker gives `over_D161=0` on the Odin3 CSVs.
+- D-155 is verified statically across all 8 boundaries, and D-157 by hand calculation and UBSan.
+- The §8 arithmetic re-derived; the late S binding, the private buffer and the counted budgets are enforced.
+- Accepted without remediation: the D-155 fail-before gap (fault reproduced twice at the CPU boundary; one shared header), and the import guard not tying patches to content (pre-existing D-137 design; follow-up Low).
+
+**Run P work order** (test-only; the same clone, resuming the same thread; QA's mutants and probe are in `.evidence/qa3/`):
+1. A multi-leaf abort-GC test that kills mutant S4 (abort GC must remove at most one leaf per tick).
+2. Store tests that kill S11 (switch header readback), S17 (the switch's 256-byte cap check, at the cap edge), S14, S18 and S19 (RETIRE length, binding and header comparisons), S15 (the prepare destination-absence probe), S20 (zero-alternative removal) and S21 (materialize from the live index, in the regular store tests and not only the bounds stream). If S8 (the destination reference check) is unreachable, document it as equivalent with the reason.
+3. Add every mutant to `tests/rpc_qa_mutations.py`, killed.
+4. `tests/rpc_hd_cost_test.py` cases that kill checker mutants C3 (namespace call in a read-only substep) and C6 (unknown substep) separately.
+5. **Do not change** `libretro/`, `engine/`, `core/`, `tests/arc_test_plan.*` or the checker logic. Run the full host suite and the sanitizer store tests. Do not commit or push. Write `SOL-REPORT-R2C-P.md`.
 1. **Windows evidence for run K: done (S61).** On part (a) `08e3df7` (CI 38089532777), `windows` failed in the 50× repeat step with the same crash. The new regressions sit later in the job and were not reached. On part (b) at `7521f1a` (CI 38090184344), **all five jobs are green**: `windows` passed 210/210, including `rpc-cpu-smlal` and the three 1,000× jump-repeat regressions, with 100/100 repeats. `windows-retroarch` passed `rpc-hd-session-1/2/3` for the first time ("force termination, reload gen1, write gen2, QUIT, reload gen2 … full IDENTIFY/data comparisons PASS"). This closes QA 2's condition and H1.
 2. **Run O: done (S61).** Committed verbatim as `f51cd68` (the checker, runner summary, cost test, runbook and contract text apply D-161; the plan core and store are unchanged; host 353/353). CI on `f51cd68` must be green on all jobs before merge. Run N's CI (`2d2b00c`) passed windows, windows-retroarch (`rpc-hd-session-1/2/3`), host and android-arm64.
 3. **Odin3 legs on the run N core (`2d2b00c`): done (S61), with saves on `/storage/emulated/0` and `--vfs-flush retroarch`.** The D-161 checker gives `over_D161=0` for all four device runs (authored ×3 and the clean 031). `rep20.sh` on the run N core: 20 sessions, 0 errors, 0 forced stops, peak PSS 174–181 MB.
@@ -332,7 +347,7 @@ Slice order (D-133): R1–R4 → item 5 release baseline → item 6b faster CPU 
 **S61 (Claude Opus 5.5 effort 15; baton by relay from `arcdroid-db`).**
 - Adopted Sol run J, which had already died: the Codex service refused its last turn. Reviewed it and committed it as `d18f08e`.
 - CI located the Windows crash (D-155). The Odin3 legs failed D-152 on FUSE storage (D-156). Recorded the SMLAL ruling (D-157) and dispatched Sol run K.
-- **Running:** Opus QA of R2c (dispatched by S61; see `.work/s61/LEDGER.md`). Sol runs J–O are finished.
+- **Running:** Sol run P and its watchdog (PIDs in `.work/s61/LEDGER.md`). Opus QA 3 finished (PASS WITH LOWS).
 - **Odin3 state:** RetroArch closed. Under `/data/local/tmp/arcdroid-r2c/s61/` are the run J arm64 core, runner, probe runner (`rpc_runner_nofsync`), scripts and results. FUSE save directories are under `/storage/emulated/0/arcdroid-s61/`; delete them after R2c.
 
 **Answered S60:** SSH to the Founder's Windows box (`sinmu@192.168.1.66`) is allowed for the item 6b Windows profile (D-148). It may also serve R2c AC-9's Windows native-RetroArch leg.
@@ -944,6 +959,7 @@ Windows-PC real boot (Slice 1 AC-12(b)); Windows real-ADFFS evidence (6a AC-16);
 - Complete: Library loading (5a, 5b, 5b-2, 5c), JFD boot through user-supplied ADFFS (6a, single disc), Zip content (7a), Zip boot-disc selection (7b), High-density and protected-format media (8), ADFFS on New-IO + install path (9), native JFD writes (10a), persisted install disc (10b), native routing (10d). Shelved: ADFFS multi-disc mechanism (6b Run 1, D-059).
 
 ## Follow-up Lows (not scheduled)
+**R2c QA 3 Low (accepted):** `tools/check-rpcemu-import.py` checks per file that a changed file has some recorded patch, but does not tie each patch to the file's content; deleting a patch record from an already-patched file still passes. Suggested: per-patch digests.
 **Slice 30 Lows (Opus QA, accepted):** S-6 the pending-change notice and the observation stamp ignore the content type (ADF/ADL/hard-disc sessions see "will apply after reset" and one re-observation for an option with no effect on them); S-7 every *As imaged* load of a write-protected or legacy JFD (incl. cached temporary decodes) now hashes the decoded image and scans `save/arcdroid/jfd` read-only to detect a hidden store — measure on Android if the store directory grows large; N-9 under *Off* the guarded-image `JFD writes:` line drops its "accepted map writes never increase unavailable allocation" suffix (diagnostics only). Interaction (by design, D-106): a disc made writable by *Off* leaves the Slice 20 omitted-file-data presentation (non-writable images only); the forced-*Off* cohort leg showed no frame change for 68/69/200.
 **Slice 29 note (Opus QA, out of scope, pre-existing):** running the host suite leaves an untracked `tests/__pycache__/` (`.gitignore` has no `__pycache__` entry) — repo hygiene for a later slice.
 **Slice 27 Lows (Opus QA and device leg, accepted):** M11 — removing the `bound` comparison in the stick routing snapshot survives (only an `a`↔`Unbound` change differs in `bound` alone; the per-port neutral gate still holds, so the effect is one neutral poll instead of two); S-2 existing right-stick/release-gate harness scripts now drive port 0 only (port-1 incidental analog coverage lost); S-3 on the poll where RetroArch first registers a stick, non-forced Analog to Digital can still turn a held stick into one frame of D-pad (pre-existing on `main`, within C-5); redundant await guards kept as defence in depth (S-1); RetroArch renders the value `off` as an OFF toggle (cosmetic). **Slice 27 design Low (Astra S49 F5, out of scope):** a physical D-pad direction changed from `Auto` to an explicit key equal to its resolved key under the A3010 plan moves it from the joystick to the key path without a neutral gate (pre-existing; the stick contribution has its own await-neutral rule).
