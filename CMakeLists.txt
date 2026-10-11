@@ -132,6 +132,7 @@ set(ARCDROID_RPC_SOURCES
   engine/rpcemu/src/i8042.c
   engine/rpcemu/src/vidc20.c
   engine/rpcemu/src/fdc.c
+  engine/rpcemu/src/ide.c
 )
 
 set(ARCDROID_LIBRETRO_SOURCES
@@ -143,6 +144,7 @@ set(ARCDROID_LIBRETRO_SOURCES
   libretro/arc_io.c
   libretro/jfd_store.c
   libretro/install_store.c
+  libretro/rpc_hd_store.c
   libretro/arcdroid_libretro.c
 )
 
@@ -196,7 +198,7 @@ function(arcdroid_add_libretro target shipping)
     "${CMAKE_CURRENT_SOURCE_DIR}/tools/check-backend-symbols.py"
     "${CMAKE_CURRENT_SOURCE_DIR}/engine/backend-symbols.json")
   add_custom_command(TARGET ${target} POST_BUILD
-    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/check-backend-symbols.py"
+    COMMAND "${Python3_EXECUTABLE}" -B "${CMAKE_CURRENT_SOURCE_DIR}/tools/check-backend-symbols.py"
       --nm "${CMAKE_NM}"
       ${ARCDROID_SYMBOL_CHECK_FLAGS}
       --arculator "${CMAKE_CURRENT_BINARY_DIR}/CMakeFiles/${target}_arculator.dir"
@@ -267,7 +269,14 @@ endfunction()
 # The installed/packaged core never contains test fault-injection hooks.
 arcdroid_add_libretro(arcdroid_libretro TRUE)
 
-configure_file(arcdroid_libretro.info arcdroid_libretro.info COPYONLY)
+# Register source/output pairs with the metadata guard, including installed
+# shipping metadata and non-installed test metadata.
+function(arcdroid_configure_core_info source output)
+  configure_file("${source}" "${output}" COPYONLY)
+  set_property(GLOBAL APPEND PROPERTY ARCDROID_CORE_INFO_FILES
+    "${CMAKE_CURRENT_SOURCE_DIR}/${source}" "${CMAKE_CURRENT_BINARY_DIR}/${output}")
+endfunction()
+arcdroid_configure_core_info(arcdroid_libretro.info arcdroid_libretro.info)
 
 install(TARGETS arcdroid_libretro DESTINATION .)
 install(FILES arcdroid_libretro.info DESTINATION .)
@@ -276,11 +285,25 @@ option(ARCDROID_ANDROID_TEST_CORE "Build the non-installed Android test core" OF
 option(ARCDROID_RPC_RUNNER "Build the non-installed R1 plan runner" ON)
 if(ARCDROID_RPC_RUNNER AND ((BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32)) OR
                           (ANDROID AND ARCDROID_ANDROID_TEST_CORE)))
+  add_executable(hash_accel_test tests/hash_accel_test.c core/hash.c tests/rpc_test_clock.c)
+  target_include_directories(hash_accel_test PRIVATE core)
+  target_compile_definitions(hash_accel_test PRIVATE ARCDROID_HASH_TEST=1)
+  target_compile_options(hash_accel_test PRIVATE -UNDEBUG -Wall -Wextra)
+  if(ARCDROID_SANITIZERS)
+    target_link_libraries(hash_accel_test PRIVATE arcdroid_sanitizer_compile arcdroid_sanitizer_link)
+  endif()
+  if(WIN32)
+    target_link_options(hash_accel_test PRIVATE -static-libgcc)
+  endif()
+  if(NOT CMAKE_CROSSCOMPILING OR WIN32)
+    add_test(NAME rpc-hash-identity COMMAND hash_accel_test)
+    set_tests_properties(rpc-hash-identity PROPERTIES TIMEOUT 600)
+  endif()
   add_executable(rpc_runner tools/rpc_runner.c tests/rpc_test_clock.c)
-  target_include_directories(rpc_runner PRIVATE engine engine/rpc core libretro/include)
+  target_include_directories(rpc_runner PRIVATE engine engine/rpc core libretro libretro/include tests)
   target_compile_definitions(rpc_runner PRIVATE ARCDROID_TEST_FAULTS=1 RETRO_IMPORT_SYMBOLS=1)
   target_compile_options(rpc_runner PRIVATE
-    $<$<C_COMPILER_ID:GNU,Clang,AppleClang>:-Wall;-Wextra;-Werror=implicit-function-declaration>)
+    $<$<C_COMPILER_ID:GNU,Clang,AppleClang>:-UNDEBUG;-Wall;-Wextra;-Werror=implicit-function-declaration>)
   target_link_libraries(rpc_runner PRIVATE ${CMAKE_DL_LIBS})
   if(UNIX AND NOT APPLE)
     target_link_libraries(rpc_runner PRIVATE m)
@@ -295,7 +318,7 @@ if(ARCDROID_RPC_RUNNER AND ((BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN3
     "${CMAKE_CURRENT_SOURCE_DIR}/tools/check-backend-symbols.py"
     "${CMAKE_CURRENT_SOURCE_DIR}/engine/backend-symbols.json")
   add_custom_command(TARGET rpc_runner POST_BUILD
-    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/check-backend-symbols.py"
+    COMMAND "${Python3_EXECUTABLE}" -B "${CMAKE_CURRENT_SOURCE_DIR}/tools/check-backend-symbols.py"
       --nm "${CMAKE_NM}" ${ARCDROID_SYMBOL_CHECK_FLAGS}
       --outside "${CMAKE_CURRENT_BINARY_DIR}/CMakeFiles/rpc_runner.dir" VERBATIM)
 endif()
@@ -352,7 +375,7 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
   target_compile_options(arcdroid_rpc_cpu PRIVATE
     $<$<C_COMPILER_ID:GNU,Clang,AppleClang>:-include;${CMAKE_CURRENT_SOURCE_DIR}/engine/rpc/rpc_namespace.h;-fno-common;-fno-strict-aliasing;-Wall;-Wextra;-Werror=implicit-function-declaration>)
   add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/rpc_authored_rom.h"
-    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_cpu_rom.py"
+    COMMAND "${Python3_EXECUTABLE}" -B "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_cpu_rom.py"
       "${CMAKE_CURRENT_BINARY_DIR}/generated/rpc_authored_rom.h"
     DEPENDS tests/rpc_cpu_rom.py VERBATIM)
   add_executable(rpc_cpu_test tests/rpc_cpu_test.c
@@ -385,11 +408,11 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
     target_link_libraries(rpc_cmos_test PRIVATE arcdroid_sanitizer_compile arcdroid_sanitizer_link)
   endif()
   add_custom_command(TARGET rpc_cpu_test POST_BUILD
-    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/check-backend-symbols.py"
+    COMMAND "${Python3_EXECUTABLE}" -B "${CMAKE_CURRENT_SOURCE_DIR}/tools/check-backend-symbols.py"
       --nm "${CMAKE_NM}" --rpc "${CMAKE_CURRENT_BINARY_DIR}/CMakeFiles/arcdroid_rpc_cpu.dir"
       ${ARCDROID_SYMBOL_CHECK_FLAGS} VERBATIM)
   add_custom_command(TARGET rpc_cmos_test POST_BUILD
-    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/check-backend-symbols.py"
+    COMMAND "${Python3_EXECUTABLE}" -B "${CMAKE_CURRENT_SOURCE_DIR}/tools/check-backend-symbols.py"
       --nm "${CMAKE_NM}" --rpc "${CMAKE_CURRENT_BINARY_DIR}/CMakeFiles/arcdroid_rpc_cmos.dir"
       ${ARCDROID_SYMBOL_CHECK_FLAGS} VERBATIM)
   add_library(arcdroid_rpc_fdc OBJECT engine/rpcemu/src/fdc.c
@@ -413,7 +436,7 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
   add_test(NAME rpc-fdc-media-change-seek COMMAND rpc_fdc_test --media-change)
   add_test(NAME rpc-fdc-pending-irq COMMAND rpc_fdc_test --pending-irq)
   add_custom_command(TARGET rpc_fdc_test POST_BUILD
-    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/check-backend-symbols.py"
+    COMMAND "${Python3_EXECUTABLE}" -B "${CMAKE_CURRENT_SOURCE_DIR}/tools/check-backend-symbols.py"
       --nm "${CMAKE_NM}"
       --rpc "${CMAKE_CURRENT_BINARY_DIR}/CMakeFiles/arcdroid_rpc_fdc.dir"
       ${ARCDROID_SYMBOL_CHECK_FLAGS}
@@ -568,7 +591,7 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
   target_link_libraries(arcdroid_core_test PRIVATE arcdroid_zlib)
   add_custom_command(
     OUTPUT "${FIXTURE_DIR}/arcdroid-native-hd-guest.rom"
-    COMMAND "${Python3_EXECUTABLE}"
+    COMMAND "${Python3_EXECUTABLE}" -B
       "${CMAKE_CURRENT_SOURCE_DIR}/tests/generate_native_hd_guest.py"
       "${FIXTURE_DIR}/arcdroid-native-hd-guest.rom"
     DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/tests/generate_native_hd_guest.py"
@@ -578,7 +601,7 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
     "${FIXTURE_DIR}/arcdroid-native-hd-guest.rom")
   add_custom_command(
     OUTPUT "${FIXTURE_DIR}/arcdroid-native-hd-stress.rom"
-    COMMAND "${Python3_EXECUTABLE}"
+    COMMAND "${Python3_EXECUTABLE}" -B
       "${CMAKE_CURRENT_SOURCE_DIR}/tests/generate_native_hd_guest.py"
       "${FIXTURE_DIR}/arcdroid-native-hd-stress.rom" --stress
     DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/tests/generate_native_hd_guest.py"
@@ -950,7 +973,7 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
       "${FIXTURE_DIR}/jfd-identification/sparse-f-past-end.jfd"
       "${FIXTURE_DIR}/zip-content/single.zip"
       ${ADFFS_FIXTURES}
-    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/generate_fixtures.py" "${FIXTURE_DIR}"
+    COMMAND "${Python3_EXECUTABLE}" -B "${CMAKE_CURRENT_SOURCE_DIR}/tests/generate_fixtures.py" "${FIXTURE_DIR}"
     DEPENDS tests/generate_fixtures.py VERBATIM)
   add_custom_target(test-fixtures ALL DEPENDS ${JFD_TAB_FIXTURES}
     "${FIXTURE_DIR}/arcdroid-test.rom" "${FIXTURE_DIR}/arcdroid-test.adf"
@@ -1906,7 +1929,9 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
       # R1 instruments Arculator engine objects too, slowing the full harness.
       set_tests_properties(libretro-harness PROPERTIES TIMEOUT 900)
     else()
-      set_tests_properties(libretro-harness PROPERTIES TIMEOUT 300)
+      # Lifecycle/media/save stress takes nearly 300 s on loaded hosts. Allow
+      # scheduling variance without changing the workload or correctness checks.
+      set_tests_properties(libretro-harness PROPERTIES TIMEOUT 900)
     endif()
     set_tests_properties(newio-libretro-harness PROPERTIES TIMEOUT 300)
   endif()
@@ -1942,13 +1967,17 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
       "${CMAKE_CURRENT_SOURCE_DIR}" $<TARGET_FILE:arcdroid_libretro_test>
       $<TARGET_FILE:arcdroid_rpcplan_libretro>)
   endif()
-  if(CMAKE_GENERATOR STREQUAL "Ninja")
+  # Mutation kills are checked by the ordinary host/Windows builds. Sanitizer
+  # builds retain the unmutated regression tests, without recompiling mutants.
+  if(CMAKE_GENERATOR STREQUAL "Ninja" AND NOT ARCDROID_SANITIZERS)
     add_test(NAME rpc-qa-mutations COMMAND "${Python3_EXECUTABLE}" -B
       "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_qa_mutations.py"
       --build "${CMAKE_CURRENT_BINARY_DIR}" --core $<TARGET_FILE:arcdroid_libretro_test>
       --timing $<TARGET_FILE:rpc_timing_test> --unit $<TARGET_FILE:rpc_mem_timing_unit>
       --video $<TARGET_FILE:rpc_video_test> --store $<TARGET_FILE:rpc_cmos_store_test>
-      --fdc $<TARGET_FILE:rpc_fdc_test>)
+      --fdc $<TARGET_FILE:rpc_fdc_test> --hd $<TARGET_FILE:rpc_hd_store_test>
+      --ide $<TARGET_FILE:rpc_ide_test> --runner $<TARGET_FILE:rpc_runner>
+      --plan $<TARGET_FILE:arcdroid_rpcplan_libretro>)
     set_tests_properties(rpc-qa-mutations PROPERTIES TIMEOUT 600 RUN_SERIAL TRUE)
   endif()
   foreach(rate IN ITEMS 60 99)
@@ -1970,7 +1999,7 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
       $<TARGET_FILE:arcdroid_libretro_test> ${model})
   endforeach()
   add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/rpc_session_rom.h"
-    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_session_rom.py"
+    COMMAND "${Python3_EXECUTABLE}" -B "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_session_rom.py"
       "${CMAKE_CURRENT_BINARY_DIR}/generated/rpc_session_rom.h"
     DEPENDS tests/rpc_session_rom.py VERBATIM)
   add_executable(rpc_session_test tests/rpc_session_test.c
@@ -1996,7 +2025,7 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
     $<TARGET_FILE:rpc_session_test> $<TARGET_FILE:arcdroid_libretro_test>
     "${FIXTURE_DIR}/arcdroid-test.rom")
   add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/rpc_video_rom.h"
-    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_video_rom.py"
+    COMMAND "${Python3_EXECUTABLE}" -B "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_video_rom.py"
       "${CMAKE_CURRENT_BINARY_DIR}/generated/rpc_video_rom.h"
     DEPENDS tests/rpc_video_rom.py tests/rpc_raster_timeline.py tests/rpc_authored_timeline.py VERBATIM)
   add_executable(rpc_video_test tests/rpc_video_test.c
@@ -2141,7 +2170,21 @@ if(TARGET arcdroid_libretro_test)
   arcdroid_add_libretro(arcdroid_rpcplan_libretro FALSE arcdroid_core_test)
   target_compile_definitions(arcdroid_rpcplan_libretro PRIVATE ARCDROID_TEST_FAULTS=1 ARCDROID_TEST_PLANS=1)
   target_sources(arcdroid_rpcplan_libretro PRIVATE tests/hd_product_seed.c)
-  configure_file(tests/arcdroid_rpcplan_libretro.info arcdroid_rpcplan_libretro.info COPYONLY)
+  if(WIN32)
+    # Keep matching source locations for the native RetroArch exception
+    # locator, without adding debug information to any shipping target.
+    foreach(plan_target IN ITEMS arcdroid_rpcplan_libretro
+        arcdroid_rpcplan_libretro_arculator arcdroid_rpcplan_libretro_rpc)
+      target_compile_options(${plan_target} PRIVATE -g)
+    endforeach()
+    target_sources(arcdroid_rpcplan_libretro PRIVATE tests/rpc_crash_locator.c)
+    add_executable(rpc_crash_locator_test tests/rpc_crash_locator_test.c tests/rpc_crash_locator.c)
+    target_include_directories(rpc_crash_locator_test PRIVATE tests libretro/include)
+    target_compile_options(rpc_crash_locator_test PRIVATE -UNDEBUG -Wall -Wextra)
+    add_test(NAME rpc-windows-crash-locator COMMAND rpc_crash_locator_test
+      "${CMAKE_CURRENT_BINARY_DIR}/rpc-crash-locator-data")
+  endif()
+  arcdroid_configure_core_info(tests/arcdroid_rpcplan_libretro.info arcdroid_rpcplan_libretro.info)
   if(ANDROID)
     set_target_properties(arcdroid_rpcplan_libretro PROPERTIES OUTPUT_NAME arcdroid_rpcplan_libretro_android)
     target_link_options(arcdroid_rpcplan_libretro PRIVATE "-Wl,-z,defs" "-Wl,-z,max-page-size=16384")
@@ -2149,6 +2192,10 @@ if(TARGET arcdroid_libretro_test)
 endif()
 
 if(BUILD_TESTING)
+  get_property(arc_core_info_files GLOBAL PROPERTY ARCDROID_CORE_INFO_FILES)
+  add_test(NAME rpc-core-info COMMAND "${Python3_EXECUTABLE}" -B
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/core_info_test.py"
+    "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}" ${arc_core_info_files})
   get_property(arc_tests DIRECTORY PROPERTY TESTS)
   set_property(TEST ${arc_tests} APPEND PROPERTY ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1")
 endif()
@@ -2178,5 +2225,174 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
         $<TARGET_FILE:arcdroid_rpcplan_libretro> $<TARGET_FILE:rpc_runner>
         $<TARGET_FILE:arcdroid_libretro> "${FIXTURE_DIR}" ${model} ${case})
     endforeach()
+  endforeach()
+endif()
+
+if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
+  add_executable(rpc_hd_store_test tests/rpc_hd_store_test.c libretro/rpc_hd_store.c
+    libretro/install_store.c libretro/arc_io.c)
+  target_include_directories(rpc_hd_store_test PRIVATE core engine libretro libretro/include)
+  target_link_libraries(rpc_hd_store_test PRIVATE arcdroid_core)
+  target_compile_definitions(rpc_hd_store_test PRIVATE ARCDROID_HD_TEST_ALLOC=1)
+  target_compile_options(rpc_hd_store_test PRIVATE -UNDEBUG -Wall -Wextra)
+  add_test(NAME rpc-hd-handle-cleanup COMMAND rpc_hd_store_test handles)
+  add_test(NAME rpc-hd-maintenance-steps COMMAND rpc_hd_store_test steps)
+  add_executable(rpc_ide_test tests/rpc_ide_test.c engine/rpcemu/src/ide.c
+    engine/rpc/rpc_scheduler.c engine/rpc/rpc_timing.c)
+  target_include_directories(rpc_ide_test PRIVATE engine/rpc engine/rpcemu/src engine core libretro/include)
+  target_compile_options(rpc_ide_test PRIVATE -UNDEBUG -Wall -Wextra
+    -include ${CMAKE_CURRENT_SOURCE_DIR}/engine/rpc/rpc_namespace.h)
+  if(ARCDROID_SANITIZERS)
+    target_link_libraries(rpc_hd_store_test PRIVATE arcdroid_sanitizer_compile arcdroid_sanitizer_link)
+    target_link_libraries(rpc_ide_test PRIVATE arcdroid_sanitizer_compile arcdroid_sanitizer_link)
+  endif()
+  add_executable(rpc_hd_process tests/rpc_hd_process.c libretro/rpc_hd_store.c
+    libretro/install_store.c libretro/arc_io.c)
+  target_include_directories(rpc_hd_process PRIVATE core engine libretro libretro/include)
+  target_link_libraries(rpc_hd_process PRIVATE arcdroid_core)
+  target_compile_definitions(rpc_hd_process PRIVATE ARCDROID_HD_TEST_POINTS=1)
+  target_compile_options(rpc_hd_process PRIVATE -UNDEBUG -Wall -Wextra)
+  if(ARCDROID_SANITIZERS)
+    target_link_libraries(rpc_hd_process PRIVATE arcdroid_sanitizer_compile arcdroid_sanitizer_link)
+  endif()
+  add_test(NAME rpc-hd-store-process COMMAND "${Python3_EXECUTABLE}" -B
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_hd_process_test.py" $<TARGET_FILE:rpc_hd_process>)
+  set_tests_properties(rpc-hd-store-process PROPERTIES TIMEOUT 3600 RUN_SERIAL TRUE)
+  add_executable(rpc_hd_formatter_test tests/rpc_hd_formatter_test.c)
+  target_include_directories(rpc_hd_formatter_test PRIVATE core)
+  target_link_libraries(rpc_hd_formatter_test PRIVATE arcdroid_core)
+  target_compile_options(rpc_hd_formatter_test PRIVATE -UNDEBUG)
+  if(ARCDROID_SANITIZERS)
+    target_link_libraries(rpc_hd_formatter_test PRIVATE arcdroid_sanitizer_compile arcdroid_sanitizer_link)
+  endif()
+  add_test(NAME rpc-hd-formatter COMMAND rpc_hd_formatter_test)
+  add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/rpc_ide_rom.h"
+    COMMAND "${Python3_EXECUTABLE}" -B "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_ide_rom.py"
+      "${CMAKE_CURRENT_BINARY_DIR}/generated/rpc_ide_rom.h"
+    DEPENDS tests/rpc_ide_rom.py tests/rpc_session_rom.py VERBATIM)
+  add_executable(rpc_ide_guest_test tests/rpc_ide_guest_test.c libretro/rpc_hd_store.c
+    libretro/install_store.c libretro/arc_io.c "${CMAKE_CURRENT_BINARY_DIR}/generated/rpc_ide_rom.h")
+  target_include_directories(rpc_ide_guest_test PRIVATE core engine engine/rpc libretro
+    libretro/include "${CMAKE_CURRENT_BINARY_DIR}/generated")
+  target_compile_definitions(rpc_ide_guest_test PRIVATE ARCDROID_TEST_FAULTS=1 RETRO_IMPORT_SYMBOLS=1)
+  target_compile_options(rpc_ide_guest_test PRIVATE -UNDEBUG)
+  target_link_libraries(rpc_ide_guest_test PRIVATE arcdroid_core ${CMAKE_DL_LIBS})
+  if(ARCDROID_SANITIZERS)
+    target_link_libraries(rpc_ide_guest_test PRIVATE arcdroid_sanitizer_compile arcdroid_sanitizer_link)
+  endif()
+  add_test(NAME rpc-ide-guest COMMAND rpc_ide_guest_test $<TARGET_FILE:arcdroid_libretro_test>)
+  set(RPC_HD_RETROARCH_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated/rpc-hd-retroarch")
+  add_custom_command(OUTPUT "${RPC_HD_RETROARCH_DIR}/hd.arcplan"
+    BYPRODUCTS "${RPC_HD_RETROARCH_DIR}/hd.rom" "${RPC_HD_RETROARCH_DIR}/floppy.adf"
+      "${RPC_HD_RETROARCH_DIR}/disk.script"
+    COMMAND "${Python3_EXECUTABLE}" -B "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_hd_retroarch_rom.py"
+      "${RPC_HD_RETROARCH_DIR}"
+    DEPENDS tests/rpc_hd_retroarch_rom.py tests/rpc_video_rom.py tests/generate_fixtures.py VERBATIM)
+  add_custom_target(rpc-hd-retroarch-fixtures ALL DEPENDS "${RPC_HD_RETROARCH_DIR}/hd.arcplan")
+  add_dependencies(rpc_runner rpc-hd-retroarch-fixtures)
+  add_test(NAME rpc-hd-retroarch-guest COMMAND "${Python3_EXECUTABLE}" -B
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_hd_retroarch_test.py"
+    $<TARGET_FILE:rpc_runner> $<TARGET_FILE:arcdroid_rpcplan_libretro> "${RPC_HD_RETROARCH_DIR}")
+  set_tests_properties(rpc-hd-retroarch-guest PROPERTIES TIMEOUT 600)
+  add_test(NAME rpc-hd-cost-report COMMAND "${Python3_EXECUTABLE}" -B
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_hd_cost_test.py"
+    $<TARGET_FILE:rpc_runner> $<TARGET_FILE:arcdroid_rpcplan_libretro> "${RPC_HD_RETROARCH_DIR}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/tools/check-rpc-hd-cost.py")
+  set_tests_properties(rpc-hd-cost-report PROPERTIES TIMEOUT 600)
+  add_test(NAME rpc-hd-plan COMMAND "${Python3_EXECUTABLE}" -B
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_hd_plan_test.py" $<TARGET_FILE:rpc_cmos_plan_test>
+    $<TARGET_FILE:arcdroid_rpcplan_libretro> $<TARGET_FILE:rpc_runner>
+    $<TARGET_FILE:arcdroid_libretro> "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_ide_rom.py")
+  add_test(NAME rpc-hd-frame-cost COMMAND "${Python3_EXECUTABLE}" -B
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_hd_plan_test.py" $<TARGET_FILE:rpc_cmos_plan_test>
+    $<TARGET_FILE:arcdroid_rpcplan_libretro> $<TARGET_FILE:rpc_runner>
+    $<TARGET_FILE:arcdroid_libretro> "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_ide_rom.py" frame)
+  add_test(NAME rpc-hd-store COMMAND rpc_hd_store_test)
+  add_test(NAME rpc-hd-reconstruction COMMAND rpc_hd_store_test reconstruction)
+  add_test(NAME rpc-hd-qa-integrity COMMAND rpc_hd_store_test qa-integrity)
+  add_test(NAME rpc-hd-import-roundtrip COMMAND rpc_hd_store_test import-roundtrip)
+  add_test(NAME rpc-hd-vfs-conformance COMMAND rpc_hd_store_test vfs)
+  add_executable(rpc_vfs_test tests/rpc_vfs_test.c)
+  target_include_directories(rpc_vfs_test PRIVATE libretro/include)
+  target_compile_options(rpc_vfs_test PRIVATE -UNDEBUG -Wall -Wextra)
+  if(ARCDROID_SANITIZERS)
+    target_link_libraries(rpc_vfs_test PRIVATE arcdroid_sanitizer_compile arcdroid_sanitizer_link)
+  endif()
+  add_test(NAME rpc-vfs-conformance COMMAND rpc_vfs_test
+    "${CMAKE_CURRENT_BINARY_DIR}/rpc-vfs-conformance-data")
+  add_test(NAME rpc-hd-population COMMAND rpc_hd_store_test population)
+  add_test(NAME rpc-hd-store-faults COMMAND rpc_hd_store_test faults)
+  set_tests_properties(rpc-hd-store-faults PROPERTIES TIMEOUT 3600)
+  set(RPC_HD_BOUNDS_PROFILE full)
+  if(ARCDROID_SANITIZERS)
+    set(RPC_HD_BOUNDS_PROFILE sanitizer)
+  endif()
+  add_test(NAME rpc-hd-store-bounds COMMAND "${Python3_EXECUTABLE}" -B
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_hd_bounds_test.py" $<TARGET_FILE:rpc_hd_store_test>
+    --profile "${RPC_HD_BOUNDS_PROFILE}")
+  set_tests_properties(rpc-hd-store-bounds PROPERTIES TIMEOUT 3600 RUN_SERIAL TRUE)
+  add_test(NAME rpc-ide-registers COMMAND rpc_ide_test)
+endif()
+
+# D-157: sanitizer CI includes rpc-.*; use the real imported CPU objects.
+if(BUILD_TESTING AND NOT ANDROID)
+  add_executable(rpc_smlal_test tests/rpc_smlal_test.c $<TARGET_OBJECTS:arcdroid_rpc_cpu>)
+  target_include_directories(rpc_smlal_test PRIVATE engine/rpc engine/rpcemu/src "${CMAKE_CURRENT_BINARY_DIR}/generated")
+  target_compile_options(rpc_smlal_test PRIVATE -UNDEBUG -Wall -Wextra)
+  add_dependencies(rpc_smlal_test rpc_cpu_test)
+  if(ARCDROID_SANITIZERS)
+    target_link_libraries(rpc_smlal_test PRIVATE arcdroid_sanitizer_compile arcdroid_sanitizer_link)
+  endif()
+  add_test(NAME rpc-cpu-smlal COMMAND rpc_smlal_test)
+endif()
+
+# D-155 part (a): independently committable repetition before the fix.
+if(BUILD_TESTING AND NOT ANDROID)
+  foreach(kind IN ITEMS cpu cmos session)
+    add_executable(rpc_jump_repeat_${kind} tests/rpc_jump_repeat_${kind}.c)
+    target_compile_options(rpc_jump_repeat_${kind} PRIVATE -UNDEBUG -Wall -Wextra)
+    target_include_directories(rpc_jump_repeat_${kind} PRIVATE engine engine/rpc
+      engine/rpcemu/src core libretro/include "${CMAKE_CURRENT_BINARY_DIR}/generated")
+    if(kind STREQUAL "session")
+      target_compile_definitions(rpc_jump_repeat_${kind} PRIVATE ARCDROID_TEST_FAULTS=1 RETRO_IMPORT_SYMBOLS=1)
+      target_link_libraries(rpc_jump_repeat_${kind} PRIVATE arcdroid_core ${CMAKE_DL_LIBS})
+      add_dependencies(rpc_jump_repeat_${kind} arcdroid_libretro_test rpc_session_test test-fixtures)
+      add_test(NAME rpc-windows-jump-repeat-session COMMAND rpc_jump_repeat_${kind}
+        $<TARGET_FILE:arcdroid_libretro_test> "${FIXTURE_DIR}/arcdroid-test.rom")
+    else()
+      target_sources(rpc_jump_repeat_${kind} PRIVATE $<TARGET_OBJECTS:arcdroid_rpc_${kind}>)
+      add_dependencies(rpc_jump_repeat_${kind} rpc_${kind}_test)
+      add_test(NAME rpc-windows-jump-repeat-${kind} COMMAND rpc_jump_repeat_${kind})
+    endif()
+    if(ARCDROID_SANITIZERS)
+      target_link_libraries(rpc_jump_repeat_${kind} PRIVATE arcdroid_sanitizer_compile arcdroid_sanitizer_link)
+    endif()
+    set_tests_properties(rpc-windows-jump-repeat-${kind} PROPERTIES TIMEOUT 600)
+  endforeach()
+endif()
+
+# Capture first-chance faults before main in every non-shipping RPC executable.
+# Keep Release optimization/assertion settings: only add matching DWARF, so the
+# RVA and module base in stderr map directly using addr2line on the CI artifact.
+if(WIN32 AND BUILD_TESTING)
+  add_executable(rpc_crash_probe tests/rpc_crash_probe.c)
+  target_compile_options(rpc_crash_probe PRIVATE -UNDEBUG)
+  add_test(NAME rpc-windows-crash-stderr COMMAND "${Python3_EXECUTABLE}" -B
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_crash_stderr_test.py" $<TARGET_FILE:rpc_crash_probe>
+    "${CMAKE_OBJDUMP}" "${CMAKE_ADDR2LINE}")
+  get_property(rpc_diagnostic_targets DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
+  foreach(rpc_target IN LISTS rpc_diagnostic_targets)
+    get_target_property(rpc_type ${rpc_target} TYPE)
+    if(rpc_type STREQUAL "EXECUTABLE" AND
+        (rpc_target MATCHES "^rpc_" OR rpc_target STREQUAL "hash_accel_test"))
+      target_compile_options(${rpc_target} PRIVATE -g)
+      # This lifecycle oracle owns its registrations explicitly.
+      if(NOT rpc_target STREQUAL "rpc_crash_locator_test")
+        target_sources(${rpc_target} PRIVATE tests/rpc_test_crash.c tests/rpc_crash_locator.c)
+        target_include_directories(${rpc_target} PRIVATE tests libretro/include)
+      endif()
+    elseif(rpc_type STREQUAL "OBJECT_LIBRARY" AND rpc_target MATCHES "^arcdroid_rpc_(cpu|cmos|fdc)$")
+      target_compile_options(${rpc_target} PRIVATE -g)
+    endif()
   endforeach()
 endif()

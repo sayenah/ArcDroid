@@ -1,6 +1,6 @@
 /* Authored deterministic RTC and bit-level PCF8583 checks. GPL-2.0-only. */
 #include <assert.h>
-#include <setjmp.h>
+#include "../engine/arc_fault_jump.h"
 #include <stdio.h>
 #include <string.h>
 #include "rpc_namespace.h"

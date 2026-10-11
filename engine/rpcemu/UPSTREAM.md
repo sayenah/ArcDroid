@@ -23,7 +23,7 @@ Portable host-idle SWI interception. Every SWI takes ordinary guest exception
 handling; the dormant headless backend provides no host filesystem or network.
 
 ArcDroid's `engine/rpc/rpc_namespace.h` maps upstream external identifiers
-to `arc_rpc_` and is forced only for RPCEmu objects. Run C2 links all eleven
+to `arc_rpc_` and is forced only for RPCEmu objects. Run C2 links all twelve
 adapted upstream C files and the owned session/scheduler edges into both cores,
 in addition to the component executables. Only the test core exports session
 admission; shipping launch routes and the machine registry remain Arculator.
@@ -110,12 +110,12 @@ volatile CMOS and elapsed RTC time. D2 adds factory capture below.
 
 Excluded: Qt/GUI; host threads; network/slirp/TAP; HostFS; CD-ROM/ISO; dynarec;
 podule loading/podules; FPA; `rpcemu.c`; `romload.c`, including ROM concatenation
-and patch tables; host-threaded `sound.c`; `ide.c`; all `disc*` files;
+and patch tables; host-threaded `sound.c`; all `disc*` files;
 `cmos.ram`; blank media; every binary and guest file. None is in this subtree.
 
 Run `python3 tools/check-rpcemu-import.py` to verify the tree, licence and
 modification notices, patch records and literal/transitive include closure.
-Add `--compiler <C compiler>` for compiler dependency closure of all 11 C files.
+Add `--compiler <C compiler>` for compiler dependency closure of all 12 C files.
 Add `--tarball <archive>` to verify its digest and compare every original file
 with the pristine commit (the commit must be available locally). The archive
 is read in memory and never extracted or committed. CI uses no private assets.
@@ -332,3 +332,42 @@ to 02H/250 kb/s (p.33); software reset retains the programmed rate. D-144
 reconciles the contradictory recalibrate descriptions: at most 79 pulses,
 with equipment check if TRK0 has not asserted. Existing upstream notices
 remain; no loader or third-party helper is added.
+
+### R2c ATA import and patch
+
+`src/ide.c` is added from the same pinned release archive, original SHA-256
+`0c86b5f5e3677cfef725ed275086345cf4dedf425413c83fc8f1022a87f4cd62`.
+It was imported byte-identically and checked before adaptation. The unchanged
+original `ide.h` also matched the archive. This additional original is recorded
+in `archive_only_imports`; the existing 28-file pristine commit remains immutable.
+The tarball audit checks this original directly and retains the original git-blob
+comparison for every earlier file. No git writes are required by implementation.
+
+`devices-r2c-ide` (`src/ide.c`, `src/ide.h`): replace host-file, slave and ATAPI
+paths with one `ArcIdeBackend` master. Freeze the command matrix to D-139;
+PIO transfers use a 256-sector transaction latch and exactly one backend write
+at completion. Use the reserved IDE slot between FDC and SOUND (nine slots
+unchanged); readiness/completion takes 1 ms of virtual time, software reset
+release 500 us. Byte and word PIO have identical readiness timing. nIEN masks
+IOMD IRQB bit 1; main status acknowledges, alternate status preserves pending
+IRQ. Reset, task replacement and detachment discard incomplete transfers.
+IDENTIFY strings are ArcDroid-authored, with PIO and exact CHS/LBA capacities.
+Absent device status stays zero and no IDE event is armed. Each change removes
+an excluded host service or supplies the accepted bounded transactional device.
+
+PIO readiness uses the existing ArcDroid Arculator IDE delay of 1,000 us
+(`engine/arculator/src/ide.c:78`), expressed in the RPC virtual scheduler.
+The 500 us software-reset release is a deterministic engineering latency,
+not a measured physical-drive constant. Reset is bus-wide: the master completes
+its signature even while the absent slave is selected. R2c activates the private
+backend IDE capability; shipping RPC admission remains dormant.
+
+### R2c run K signed long multiply (D-157)
+
+`cpu-smlal-modulo` (`src/arm.c`): SMLAL/SMLALS retain the signed
+32×32→64 product (always representable) and convert it to unsigned before
+adding the unsigned high/low accumulator. Guest results wrap modulo 2^64;
+N/Z observe the resulting bits, and C/V stay unchanged. This removes signed
+left-shift and addition overflow. `rpc-cpu-smlal` runs the actual interpreter
+on sign-bit, signed-overflow, wrap, negative-product and flag boundaries,
+including halt-on-error UBSan. Original copyright and licence remain intact.

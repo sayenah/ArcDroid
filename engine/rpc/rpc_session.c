@@ -22,8 +22,9 @@
 #include "fdc.h"
 #include "i8042.h"
 #include "ide.h"
+#include "rpc_ide.h"
 #include "podules.h"
-#include <setjmp.h>
+#include "../arc_fault_jump.h"
 #include <stdarg.h>
 #include <stdio.h>
 
@@ -105,15 +106,7 @@ bool arc_rpc_rtc_read(ArcRpcCalendar *out)
     return arc_rpc_calendar(arc_rpc_epoch, arc_rpc_rtc_offset + arc_rpc_scheduler.now_ns, out);
 }
 
-/* Absent IDE: floating data bus, zero status (no BSY/DRQ/IRQ), writes ignored.
- * Absent podule/EASI bus: all bits high; writes have no side effects. */
-uint8_t readide(uint16_t address)
-{
-    return (address == 0x1f7 || address == 0x3f6) ? 0 : 0xff;
-}
-uint16_t readidew(void) { return 0xffff; }
-void writeide(uint16_t address, uint8_t value) { (void)address; (void)value; }
-void writeidew(uint16_t value) { (void)value; }
+/* Absent podule/EASI bus floats high; IDE owns its absent-device path. */
 #define ARC_RPC_ABSENT_READ(bits) \
 uint##bits##_t podules_read##bits(int n, PoduleIoType t, uint32_t a) \
 { (void)n; (void)t; (void)a; return (uint##bits##_t)~0u; }
@@ -125,6 +118,7 @@ ARC_RPC_ABSENT_WRITE(8) ARC_RPC_ABSENT_WRITE(16) ARC_RPC_ABSENT_WRITE(32)
 
 static void arc_rpc_stop(void)
 {
+    arc_rpc_ide_set_backend(NULL);
     arc_rpc_fdc_close();
     arc_rpc_sound_purge();
     arc_rpc_input_service = NULL;
@@ -152,6 +146,7 @@ static void arc_rpc_reset_devices(void)
     cp15_reset(machine.cpu_model);
     arm_reset(machine.cpu_model);
     iomd_reset(machine.iomd_type);
+    resetide();
     keyboard_reset();
     i8042_reset();
     superio_reset(machine.super_type);
@@ -291,6 +286,7 @@ static void arc_rpc_deliver(ArcRpcEvent event)
     case ARC_RPC_EVENT_KEYBOARD: kcallback = 0; keyboard_callback_rpcemu(); break;
     case ARC_RPC_EVENT_MOUSE: mcallback = 0; mouse_ps2_callback(); break;
     case ARC_RPC_EVENT_FDC: fdccallback = 0; fdc_callback(); break;
+    case ARC_RPC_EVENT_IDE: callbackide(); break;
     case ARC_RPC_EVENT_VIDEO: arc_rpc_video_event(); break;
     case ARC_RPC_EVENT_SOUND: arc_rpc_sound_event(); break;
     case ARC_RPC_EVENT_INPUT: {
@@ -386,7 +382,7 @@ static bool arc_rpc_advance_internal(uint64_t elapsed_ns, bool stop_at_field)
 
 static ArcEngineCapabilities arc_rpc_capabilities(void)
 {
-    return (ArcEngineCapabilities){ .av = true, .keyboard = true, .mouse = true, .reset = true, .floppy = true, .helper = true };
+    return (ArcEngineCapabilities){ .av = true, .keyboard = true, .mouse = true, .reset = true, .floppy = true, .helper = true, .ide = true };
 }
 static bool arc_rpc_shipping_start(const uint8_t *r, size_t s, const ArcEngineMedia *m,
     const ArcEngineMedia *h, const ArcMachineDescriptor *d, ArcOsClass o,

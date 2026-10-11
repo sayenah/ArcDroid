@@ -638,6 +638,8 @@ function Write-MediaRunFailureEvidence($Run, [string]$Context) {
     $Run["FailureEvidenceWritten"] = $true
     Write-RetroArchFailureEvidence $Run.Name $Run.Process $Run.StartUtc `
         @($Run.RetroLog, $Run.Stdout, $Run.Stderr) $Context
+    # Also reached when the RPC process crashes before Start-MediaRun returns.
+    if ($Run.Name -like 'rpc-hd-session-*') { Save-RpcHdCrashEvidence $Run }
 }
 
 function Send-MediaCommand($Run, [string]$Command) {
@@ -2715,3 +2717,370 @@ try {
 }
 finally { Stop-MediaRun $requestReload }
 Write-Host 'Slice 26 Windows RetroArch: automatic insertion, Disk Control previous-index selection and fresh-process launch image passed'
+
+# R2c AC-9: one authored RPC ROM; disc markers alone choose the three sessions.
+# Keep this after the existing Arculator legs so their core/config/save paths
+# and behaviour remain unchanged. The guarded-JFD-only run needs no RPC leg.
+if (-not $GuardedJfdOnly) {
+    $rpcStarted = [DateTime]::UtcNow
+    $rpcFixture = (Resolve-Path (Join-Path $InputDirectory 'rpc-hd-retroarch')).Path
+    $rpcSave = Join-Path $WorkDirectory 'rpc-hd-save'
+    if (Test-Path $rpcSave) { throw 'R2c evidence requires a fresh rpc-hd-save directory' }
+    New-Item -ItemType Directory $rpcSave | Out-Null
+    Copy-Item -Recurse (Join-Path $rpcFixture 'save/arcdroid') $rpcSave
+    $rpcSave = (Resolve-Path $rpcSave).Path
+    $rpcCore = Join-Path $coreDirectory 'arcdroid_rpcplan_libretro.dll'
+    Copy-Item (Join-Path $InputDirectory 'arcdroid_rpcplan_libretro.dll') $rpcCore
+    Copy-Item (Join-Path $InputDirectory 'arcdroid_rpcplan_libretro.info') $infoDirectory
+    $rpcConfig = Join-Path $WorkDirectory 'rpc-hd.cfg'
+    # RetroArch keeps the first occurrence of a config key. Replace the shared
+    # leg's values instead of appending duplicate directory keys.
+    Get-Content -LiteralPath $config | Where-Object {
+        $_ -notmatch '^\s*(system_directory|savefile_directory|savestate_directory|sort_savefiles_enable|sort_savefiles_by_content_enable)\s*='
+    } | Set-Content -Encoding ASCII $rpcConfig
+@"
+system_directory = "$(ConfigPath $rpcFixture)"
+savefile_directory = "$(ConfigPath $rpcSave)"
+savestate_directory = "$(ConfigPath $rpcSave)"
+sort_savefiles_enable = "false"
+sort_savefiles_by_content_enable = "false"
+video_shader_enable = "false"
+screenshot_gpu = "false"
+screenshot_directory = "$(ConfigPath ((Resolve-Path $evidenceDirectory).Path))"
+"@ | Add-Content -Encoding ASCII $rpcConfig
+    # Start-Process joins ArgumentList with spaces; quote all new leg paths.
+    $config = '"' + (Resolve-Path $rpcConfig).Path + '"'
+    $core = '"' + (Resolve-Path $rpcCore).Path + '"'
+    $rpcPlan = '"' + (Join-Path $rpcFixture 'hd.arcplan') + '"'
+    $rpcRoot = Join-Path $rpcSave ('arcdroid/hd-riscpc/' + ('c' * 40))
+    $rpcDumpDirectory = Join-Path $evidenceDirectory 'rpc-hd-crash'
+    New-Item -ItemType Directory -Force $rpcDumpDirectory | Out-Null
+    $rpcDumpDirectory = (Resolve-Path $rpcDumpDirectory).Path
+    Copy-Item -LiteralPath $rpcCore -Destination $rpcDumpDirectory
+    foreach ($file in @('rpc-hd-symbols.txt', 'rpc-hd-image.txt', 'rpc-hd-revision.txt')) {
+        Copy-Item -LiteralPath (Join-Path $InputDirectory $file) -Destination $rpcDumpDirectory
+    }
+    "core_sha256=$((Get-FileHash -Algorithm SHA256 -LiteralPath $rpcCore).Hash)" |
+        Set-Content -Encoding ASCII (Join-Path $rpcDumpDirectory 'core-sha256.txt')
+@'
+The DLL is the exact Release (-O3 -DNDEBUG) image loaded by these sessions,
+with -g DWARF retained. cdb provides the runtime module base and fault RIP;
+it need not understand MinGW DWARF. Compute RVA = RIP - runtime module base,
+then address = preferred ImageBase (rpc-hd-image.txt) + RVA. With matching
+MinGW binutils, map to source and inlined callers using:
+  addr2line -e arcdroid_rpcplan_libretro.dll -f -C -i <address>
+  objdump -d -l arcdroid_rpcplan_libretro.dll
+rpc-hd-symbols.txt is sorted by preferred virtual address. The commit and
+DLL SHA-256 accompany it. Never use symbols from a separately rebuilt DLL.
+'@ | Set-Content -Encoding ASCII (Join-Path $rpcDumpDirectory 'source-mapping.txt')
+    function Enable-RpcHdCrashDumps {
+        $parent = 'HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps'
+        $key = "$parent\retroarch.exe"
+        $settings = $null
+        try {
+            $parentExisted = Test-Path -LiteralPath $parent
+            $existed = Test-Path -LiteralPath $key
+            $previous = @{}
+            if ($existed) {
+                $item = Get-Item -LiteralPath $key
+                foreach ($name in @('DumpFolder', 'DumpType', 'DumpCount')) {
+                    if ($item.GetValueNames() -contains $name) {
+                        $previous[$name] = @{ Value = $item.GetValue($name, $null,
+                            [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames);
+                            Kind = $item.GetValueKind($name) }
+                    }
+                }
+            }
+            $settings = @{ Key = $key; Existed = $existed; Previous = $previous;
+                Parent = $parent; ParentExisted = $parentExisted }
+            # New-Item -Force can replace an existing registry key. Preserve
+            # every pre-existing property, including settings we do not own.
+            if (-not $existed) { New-Item -Path $key -Force | Out-Null }
+            New-ItemProperty -LiteralPath $key -Name DumpFolder -PropertyType ExpandString -Value $rpcDumpDirectory -Force | Out-Null
+            New-ItemProperty -LiteralPath $key -Name DumpType -PropertyType DWord -Value 2 -Force | Out-Null
+            New-ItemProperty -LiteralPath $key -Name DumpCount -PropertyType DWord -Value 3 -Force | Out-Null
+        } catch {
+            if ($settings) {
+                try { Restore-RpcHdCrashDumps $settings }
+                catch { Write-Warning "RPC WER settings restore failed: $($_.Exception.Message)" }
+            }
+            Write-Warning "RPC WER LocalDumps unavailable (HKLM may not be writable): $($_.Exception.Message). Continuing with the first-chance locator."
+            return $null
+        }
+        Write-Host "RPC-only WER full dumps enabled: $rpcDumpDirectory"
+        return $settings
+    }
+    function Restore-RpcHdCrashDumps($Settings) {
+        if (-not $Settings) { return }
+        if (-not $Settings.Existed) {
+            if (Test-Path -LiteralPath $Settings.Key) { Remove-Item -LiteralPath $Settings.Key }
+            if (-not $Settings.ParentExisted -and (Test-Path -LiteralPath $Settings.Parent)) {
+                $item = Get-Item -LiteralPath $Settings.Parent
+                if ($item.SubKeyCount -eq 0 -and $item.ValueCount -eq 0) {
+                    Remove-Item -LiteralPath $Settings.Parent
+                }
+            }
+            return
+        }
+        foreach ($name in @('DumpFolder', 'DumpType', 'DumpCount')) {
+            if ($Settings.Previous.ContainsKey($name)) {
+                $old = $Settings.Previous[$name]
+                New-ItemProperty -LiteralPath $Settings.Key -Name $name -PropertyType $old.Kind -Value $old.Value -Force | Out-Null
+            } else {
+                Remove-ItemProperty -LiteralPath $Settings.Key -Name $name -ErrorAction SilentlyContinue
+            }
+        }
+    }
+    function Save-RpcHdExceptionEvidence($Run) {
+        try {
+            $locator = Join-Path $rpcSave 'rpc-hd-exception.txt'
+            if (Test-Path -LiteralPath $locator) {
+                Copy-Item -Force -LiteralPath $locator -Destination (Join-Path $rpcDumpDirectory "$($Run.Name)-exception.txt")
+            }
+        } catch { Write-Warning "RPC exception evidence copy failed: $($_.Exception.Message)" }
+    }
+    function Save-RpcHdCrashEvidence($Run) {
+        Save-RpcHdExceptionEvidence $Run
+        if ($Run['RpcHdForceStopped'] -or -not $Run.Process.HasExited -or $Run.Process.ExitCode -eq 0) { return }
+        $summary = Join-Path $rpcDumpDirectory "$($Run.Name)-capture.txt"
+        try {
+            "pid=$($Run.Process.Id) exit_code=$($Run.Process.ExitCode)" | Set-Content -Encoding ASCII $summary
+            $deadline = [DateTime]::UtcNow.AddSeconds(30)
+            do {
+                $dumps = @(Get-ChildItem -LiteralPath $rpcDumpDirectory -Filter 'retroarch*.dmp' |
+                    Where-Object { $_.Name -match ('\.' + $Run.Process.Id + '\.') -and
+                        $_.LastWriteTimeUtc -ge $Run.StartUtc -and $_.Length -gt 0 })
+                if ($dumps.Count) { break }
+                Start-Sleep -Milliseconds 250
+            } while ([DateTime]::UtcNow -lt $deadline)
+            if (-not $dumps.Count) {
+                'No WER dump appeared for this PID within 30 s; logs and matching DLL/symbols retained.' |
+                    Add-Content -Encoding ASCII $summary
+                Write-Warning "No WER dump for $($Run.Name); see $summary"
+                return
+            }
+            $cdb = Get-Command cdb.exe -ErrorAction SilentlyContinue
+            $debugger = if ($cdb) { $cdb.Source } else { $null }
+            if (-not $debugger) {
+                foreach ($base in @(${env:ProgramFiles(x86)}, $env:ProgramFiles)) {
+                    if (-not $base) { continue }
+                    $candidate = Join-Path $base 'Windows Kits\10\Debuggers\x64\cdb.exe'
+                    if (Test-Path -LiteralPath $candidate) { $debugger = $candidate; break }
+                }
+            }
+            if (-not $debugger) {
+                'cdb absent; full dumps and matching DLL/symbols retained for offline analysis.' |
+                    Add-Content -Encoding ASCII $summary
+                Write-Warning "cdb is unavailable; dumps retained in $rpcDumpDirectory"
+                return
+            }
+            foreach ($dump in $dumps) {
+                $out = Join-Path $rpcDumpDirectory "$($Run.Name)-cdb.txt"
+                $err = Join-Path $rpcDumpDirectory "$($Run.Name)-cdb.stderr.txt"
+                $commands = '.exr -1; .ecxr; r; kv 30; lmv m arcdroid*; !teb; ~* kv 8; q'
+                "dump=$($dump.Name) cdb=$debugger commands=$commands" | Add-Content -Encoding ASCII $summary
+                $arguments = @('-z', ('"' + $dump.FullName + '"'), '-i', ('"' + $rpcDumpDirectory + '"'),
+                    '-y', ('"' + $rpcDumpDirectory + '"'), '-c', ('"' + $commands + '"'))
+                $process = Start-Process -FilePath $debugger -ArgumentList $arguments -PassThru -NoNewWindow `
+                    -RedirectStandardOutput $out -RedirectStandardError $err
+                if (-not $process.WaitForExit(60000)) {
+                    Stop-Process -Id $process.Id -Force
+                    $process.WaitForExit()
+                    'cdb timed out after 60 s; partial output and dump retained.' | Add-Content -Encoding ASCII $summary
+                } else {
+                    $process.WaitForExit()
+                    "cdb_exit_code=$($process.ExitCode)" | Add-Content -Encoding ASCII $summary
+                }
+            }
+        } catch {
+            Write-Warning "RPC dump analysis failed without changing the original failure: $($_.Exception.Message)"
+        }
+    }
+    Add-Type -TypeDefinition @'
+using System;
+public static class ArcRpcHdCrc {
+    public static uint Calculate(byte[] b, int start, int count) {
+        uint c = 0xffffffff;
+        for (int i = start; i < start + count; ++i) {
+            c ^= b[i];
+            for (int bit = 0; bit < 8; ++bit)
+                c = (c >> 1) ^ ((c & 1) != 0 ? 0xedb88320u : 0u);
+        }
+        return c ^ 0xffffffff;
+    }
+}
+'@
+    function Test-RpcHdStore([string]$Name, [UInt64]$Minimum) {
+        Get-ChildItem -LiteralPath $rpcRoot | Sort-Object Name |
+            Select-Object Name, Length | Format-Table -AutoSize | Out-String |
+            Set-Content -Encoding UTF8 (Join-Path $evidenceDirectory "$Name-store.txt")
+        $manifests = @(Get-ChildItem -LiteralPath $rpcRoot -Filter 'manifest.?')
+        $journals = @(Get-ChildItem -LiteralPath $rpcRoot -Filter 'journal.?')
+        if ($manifests.Count -ne 1 -or $journals.Count -ne 1) {
+            throw "$Name checkpoint did not finish RETIRE/GC"
+        }
+        $m = [IO.File]::ReadAllBytes($manifests[0].FullName)
+        if ($m.Length -ne 24324 -or [Text.Encoding]::ASCII.GetString($m, 0, 8) -ne 'ARCRHDM1' -or
+            [Text.Encoding]::ASCII.GetString($m, 16, 40) -ne ('c' * 40) -or
+            [ArcRpcHdCrc]::Calculate($m, 0, 24320) -ne [BitConverter]::ToUInt32($m, 24320)) {
+            throw "$Name manifest framing, identity or CRC failed"
+        }
+        $generation = [BitConverter]::ToUInt64($m, 88)
+        $expectedManifest = if (($generation % 2) -eq 0) { 'manifest.a' } else { 'manifest.b' }
+        if ($manifests[0].Name -ne $expectedManifest) { throw "$Name noncanonical manifest slot" }
+        if ($generation -lt $Minimum) { throw "$Name expected manifest generation >= $Minimum; got $generation" }
+        $geometry = @(512, 63, 16, 256, 262144, 504)
+        for ($i = 0; $i -lt 6; $i++) {
+            if ([BitConverter]::ToUInt32($m, 64 + 4 * $i) -ne $geometry[$i]) { throw "$Name geometry failed" }
+        }
+        $known = [System.Collections.Generic.HashSet[string]]::new()
+        [void]$known.Add($manifests[0].Name); [void]$known.Add($journals[0].Name)
+        for ($i = 0; $i -lt 504; $i++) {
+            $entry = 128 + 48 * $i
+            $kind = [BitConverter]::ToUInt32($m, $entry)
+            if ($kind -eq 0) { continue }
+            if ($kind -ne 1) { throw "$Name invalid chunk kind" }
+            $chunkGen = [BitConverter]::ToUInt64($m, $entry + 8)
+            $leaf = 'c{0:x3}.g{1:x16}' -f $i, $chunkGen
+            [void]$known.Add($leaf)
+            $b = [IO.File]::ReadAllBytes((Join-Path $rpcRoot $leaf))
+            if ($b.Length -ne 262276 -or [Text.Encoding]::ASCII.GetString($b, 0, 8) -ne 'ARCRHDC1' -or
+                [ArcRpcHdCrc]::Calculate($b, 0, 124) -ne [BitConverter]::ToUInt32($b, 124) -or
+                [ArcRpcHdCrc]::Calculate($b, 128, 262144) -ne [BitConverter]::ToUInt32($b, 262272)) {
+                throw "$Name chunk $leaf framing/CRC failed"
+            }
+            $sha = [Security.Cryptography.SHA256]::Create()
+            try { $digest = $sha.ComputeHash($b, 128, 262144) } finally { $sha.Dispose() }
+            for ($k = 0; $k -lt 32; $k++) {
+                if ($digest[$k] -ne $m[$entry + 16 + $k] -or $digest[$k] -ne $b[80 + $k]) {
+                    throw "$Name chunk $leaf digest failed"
+                }
+            }
+        }
+        foreach ($file in @(Get-ChildItem -LiteralPath $rpcRoot)) {
+            if (-not $known.Contains($file.Name)) { throw "$Name leftover/unknown canonical file $($file.Name)" }
+        }
+        $j = [IO.File]::ReadAllBytes($journals[0].FullName)
+        if ($j.Length -lt 256 -or $j.Length -gt 8388608 -or
+            [Text.Encoding]::ASCII.GetString($j, 0, 8) -ne 'ARCRHDJ1' -or
+            [ArcRpcHdCrc]::Calculate($j, 0, 252) -ne [BitConverter]::ToUInt32($j, 252) -or
+            [BitConverter]::ToUInt64($j, 88) -ne [BitConverter]::ToUInt64($m, 96)) {
+            throw "$Name journal header/binding failed"
+        }
+        "$Name manifest_generation=$generation chunks=$($known.Count - 2) journal_bytes=$($j.Length) RETIRE/GC=complete" |
+            Add-Content -Encoding ASCII (Join-Path $evidenceDirectory 'rpc-hd-results.txt')
+        return $generation
+    }
+    function Wait-RpcHdDirectories($Run) {
+        $expected = @{ SYSTEM = $rpcFixture; SAVE = $rpcSave }
+        $deadline = [DateTime]::UtcNow.AddSeconds(10)
+        do {
+            $seen = @{}
+            if (Test-Path -LiteralPath $Run.RetroLog) {
+                foreach ($line in @(Get-Content -LiteralPath $Run.RetroLog)) {
+                    if ($line -match 'GET_(SYSTEM|SAVE)_DIRECTORY:\s*"([^"]*)"') {
+                        $kind = $Matches[1]
+                        $actual = $Matches[2].Replace('\', '/').TrimEnd('/')
+                        $wanted = $expected[$kind].Replace('\', '/').TrimEnd('/')
+                        if (-not [string]::Equals($actual, $wanted, [StringComparison]::OrdinalIgnoreCase)) {
+                            throw "$($Run.Name) GET_${kind}_DIRECTORY expected '$wanted'; got '$actual'"
+                        }
+                        $seen[$kind] = $true
+                    }
+                }
+            }
+            if ($seen.SYSTEM -and $seen.SAVE) {
+                Write-Host "$($Run.Name) frontend directories verified: system=$rpcFixture save=$rpcSave"
+                return
+            }
+            if ($Run.Process.HasExited) { throw "$($Run.Name) exited before both frontend directories were verified" }
+            Start-Sleep -Milliseconds 100
+        } while ([DateTime]::UtcNow -lt $deadline)
+        throw "$($Run.Name) missing GET_SYSTEM_DIRECTORY or GET_SAVE_DIRECTORY in its RetroArch log"
+    }
+    function Wait-RpcHdScreen($Run, [int]$Rgb) {
+        Wait-RpcHdDirectories $Run
+        $deadline = [DateTime]::UtcNow.AddSeconds(90)
+        $attempt = 0
+        do {
+            $attempt++
+            $shot = Capture-RawScreenshot $Run "$($Run.Name)-$attempt"
+            $image = [System.Drawing.Bitmap]::new($shot.Path)
+            try {
+                $match = $true
+                foreach ($x in @(0.25, 0.5, 0.75)) {
+                    foreach ($y in @(0.25, 0.5, 0.75)) {
+                        $actual = $image.GetPixel([int]($image.Width*$x), [int]($image.Height*$y)).ToArgb() -band 0xffffff
+                        if ($actual -eq 0xff0000) { throw "$($Run.Name) authored guest FAIL (red)" }
+                        if ($actual -ne $Rgb) { $match = $false }
+                    }
+                }
+                if ($match) { return }
+            } finally { $image.Dispose() }
+            Start-Sleep -Milliseconds 750
+        } while ([DateTime]::UtcNow -lt $deadline)
+        throw "$($Run.Name) did not reach expected RGB $('{0:x6}' -f $Rgb) within 90 seconds"
+    }
+    function Save-RpcHdLogs($Run) {
+        if (-not (Test-Path -LiteralPath $Run.RetroLog)) {
+            throw "$($Run.Name) did not produce its RetroArch log"
+        }
+        @($Run.Stdout, $Run.Stderr) | ForEach-Object {
+            if (Test-Path -LiteralPath $_) { Copy-Item -Force $_ $evidenceDirectory }
+        }
+        $lines = @($Run.RetroLog, $Run.Stdout, $Run.Stderr, (Join-Path $evidenceDirectory "$($Run.Name)-process.log")) | ForEach-Object {
+            if (Test-Path -LiteralPath $_) { Get-Content -LiteralPath $_ }
+        }
+        if (@($lines | Where-Object { $_ -match '(?i)RiscPC HD phase=|saved RiscPC hard disc is damaged|Hard-disc changes can no longer be saved|RPC plan refused|RPC default generation|Timed RPC disk-control operation refused|\[ERROR\]' }).Count) {
+            throw "$($Run.Name) damage/refusal/frontend error; see collected logs"
+        }
+    }
+    $rpcDumpSettings = Enable-RpcHdCrashDumps
+    try {
+    $previous = [UInt64]0
+    foreach ($session in @(1, 2, 3)) {
+        $run = $null
+        try {
+            $run = Start-MediaRun $rpcPlan "rpc-hd-session-$session"
+            $expected = @(0x00ffff, 0x0000ff, 0x00ff00)[$session - 1]
+            Wait-RpcHdScreen $run $expected
+            if ($session -eq 1) {
+                # No unload: the screenshot proves marker acknowledgement.
+                $run['RpcHdForceStopped'] = $true  # intentional termination is not a WER crash
+                Stop-Process -Id $run.Process.Id -Force
+                if (-not $run.Process.WaitForExit(30000)) { throw 'R2c force termination timed out' }
+                $run.Udp.Dispose()
+            } else {
+                Stop-MediaRun $run  # existing network QUIT pair, exit code 0
+            }
+            Save-RpcHdLogs $run
+            $minimum = if ($session -eq 3) { $previous } else { $previous + 1 }
+            $observed = Test-RpcHdStore $run.Name $minimum
+            if ($session -eq 3 -and $observed -ne $previous) { throw 'Verify-only session changed HD generation' }
+            $previous = $observed
+        } catch {
+            if ($run) { Write-MediaRunFailureEvidence $run 'R2c authored hard-disc evidence failed' }
+            throw
+        } finally {
+            if ($run) {
+                if (-not $run.Process.HasExited) { Stop-Process -Id $run.Process.Id -Force; $run.Process.WaitForExit() }
+                Save-RpcHdExceptionEvidence $run
+                $run.Udp.Dispose()
+                @($run.Stdout, $run.Stderr) | ForEach-Object {
+                    if (Test-Path -LiteralPath $_) { Copy-Item -Force $_ $evidenceDirectory }
+                }
+            }
+            if (Test-Path -LiteralPath $rpcRoot) {
+                Get-ChildItem -LiteralPath $rpcRoot | Sort-Object Name | Select-Object Name, Length |
+                    Format-Table -AutoSize | Out-String |
+                    Set-Content -Encoding UTF8 (Join-Path $evidenceDirectory "rpc-hd-session-$session-store.txt")
+            }
+        }
+    }
+    } finally { Restore-RpcHdCrashDumps $rpcDumpSettings }
+    $rpcElapsed = ([DateTime]::UtcNow - $rpcStarted).TotalSeconds
+    $result = "R2c native Windows RetroArch: force termination, reload gen1, write gen2, QUIT, reload gen2, timed plan disk-control callbacks and full IDENTIFY/data comparisons PASS; added seconds=$('{0:F1}' -f $rpcElapsed)"
+    Write-Host $result
+    $result | Add-Content -Encoding ASCII (Join-Path $evidenceDirectory 'rpc-hd-results.txt')
+    if ($env:GITHUB_STEP_SUMMARY) { Add-Content -Encoding UTF8 $env:GITHUB_STEP_SUMMARY "- $result" }
+}

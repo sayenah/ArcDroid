@@ -7,6 +7,15 @@ AV/input sources. Only this variant advertises `arcplan`. Neither it nor the
 runner is installed. Copy its matching `.info` alongside the frontend's other
 core metadata when sideloading; select this core explicitly in RetroArch.
 
+RetroArch 1.22.2's network `GET_STATUS` can crash for any loaded core without
+its matching `.info`, or with an omitted/empty `systemid`: its
+[`command_get_status`](https://github.com/libretro/RetroArch/blob/v1.22.2/command.c#L972-L1007)
+copies `core_info->system_id` without checking for NULL. Install this plan
+core's matching `.info` in the configured Core Info directory before using
+network commands. It declares `systemid = "riscpc"`; `rpc-core-info` checks
+source and configured metadata. This applies to frontend status polling,
+including the Windows leg's command-port readiness check.
+
 ## Plan version 1
 
 UTF-8's ASCII subset, at most 16 KiB, `key=value` per line; spaces/tabs around
@@ -245,3 +254,121 @@ cached presentations for duplicate callbacks. Copying and file output occur
 in the frontend video callback, outside the measured engine interval; timing
 CSV and canonical stdout remain available. A missing frame or failed write
 returns an error. Private smoke images belong in external scratch storage.
+
+## R2c authored native RetroArch hard-disc leg (Windows CI / Android)
+
+Build `rpc-hd-retroarch-fixtures` and the **plan** core. The generated
+`generated/rpc-hd-retroarch/` contains `hd.rom`, `hd.arcplan`, `floppy.adf`,
+`disk.script`, and an authored CMOS record under `save/`. These are entirely
+project-authored GPL-2.0-only test assets, not RISC OS firmware. Use a fresh
+save directory; copy the fixture's `save/arcdroid` into it **once**, before the
+first launch. Never re-copy the seed between sessions. Set RetroArch's system
+directory to the fixture directory and use that same save directory and plan
+for all three launches. Select the separately named plan core and its matching
+`.info`, not the shipping core. Relative paths in the plan need no platform
+edits. On Android, put fixtures/saves in frontend-accessible emulated storage
+and install the arm64 plan core through RetroArch's core installation UI.
+
+1. Launch `hd.arcplan`. Cyan means generation 1's 2 MiB write and completion
+   marker were acknowledged. Force-stop **the process you launched**, without
+   unloading (Android App info → Force stop, or Fable's owned-process tooling).
+2. Launch again. Blue means every generation-1 word verified and the different
+   generation-2 pattern and marker were acknowledged. Quit cleanly through
+   RetroArch (the network `QUIT` pair is used on Windows CI).
+3. Launch again. Green means generation 2 verified. Quit cleanly. Red is FAIL;
+   black is still running. Do not accept blue on the third launch: a stale
+   generation-1 store would take that branch again.
+
+Each launch executes the plan's timed floppy eject/insert at frontend frames
+4/6 through the registered disk-control callbacks. The ROM compares all 512
+IDENTIFY bytes before/after the operation, independently checks 256 cylinders,
+16 heads, 63 sectors and 258,048-sector capacity, then reads every payload word.
+The fixed hard-disc identity is `cccccccccccccccccccccccccccccccccccccccc`.
+The data begins at LBA 8192; the completion sector is LBA 4096. A virtual timer
+wait allows 120 maintenance ticks before writing the marker. After each
+session the canonical store should have exactly one `manifest.?` and one
+`journal.?`, with every declared chunk present and no temporaries. Manifest
+generation (little-endian uint64 at offset 88) must advance from blank 0 to
+at least 1 after session 1, advance again in session 2, and remain unchanged in
+session 3. This proves publication **and completed RETIRE/GC**, rather than
+only an acknowledgement in the journal. Capture screenshots, logs and the
+store listing; no damage, refusal or saving-failure notice is acceptable.
+
+Windows CI packages these fixtures with the existing plan DLL/`.info`; the
+added leg of `tools/test-retroarch-windows.ps1` checks nine screenshot samples,
+manifest/header/chunk checksums and bindings, canonical references, generation
+progression and logs. Its evidence and measured added seconds are uploaded in
+`arcdroid-windows-retroarch-evidence`. The host `rpc-hd-retroarch-guest` CTest
+runs the same ROM/plan through the runner, kills session 1, and also proves a
+stale reload and a wrong pattern cannot satisfy the green-screen oracle.
+
+## R2c run E: hash identity and hard-disc work on the Odin3
+
+Build the Android test core, runner and standalone hash test (NDK arm64 API 21
+baseline; optional instructions are selected at runtime):
+
+```sh
+cmake --build build/r2c-b/android --target arcdroid_rpcplan_libretro rpc_runner hash_accel_test -j1
+python3 -B tests/rpc_hd_retroarch_rom.py build/r2c-e/odin-fixture
+sed 's/hard_disc=on/hard_disc=off/' build/r2c-e/odin-fixture/hd.arcplan > build/r2c-e/odin-fixture/hd-off.arcplan
+adb shell mkdir -p /data/local/tmp/arcdroid-r2c-e
+adb push build/r2c-b/android/rpc_runner build/r2c-b/android/hash_accel_test \
+  build/r2c-b/android/arcdroid_rpcplan_libretro_android.so \
+  build/r2c-e/odin-fixture /data/local/tmp/arcdroid-r2c-e/
+adb shell 'cd /data/local/tmp/arcdroid-r2c-e && chmod 755 rpc_runner hash_accel_test && ./hash_accel_test --require-arm'
+adb shell 'cd /data/local/tmp/arcdroid-r2c-e && ./hash_accel_test --bench'
+adb shell 'cd /data/local/tmp/arcdroid-r2c-e && mkdir save-on && cp -R odin-fixture/save/arcdroid save-on/ && ./rpc_runner --core ./arcdroid_rpcplan_libretro_android.so --plan odin-fixture/hd.arcplan --system odin-fixture --save save-on --frames 1500 --pacing flat --timing on.csv --hd-cost hd.csv --ram-offset 131072 --ram-words 1 > on.trace 2> on.log'
+adb shell 'cd /data/local/tmp/arcdroid-r2c-e && mkdir save-off && cp -R odin-fixture/save/arcdroid save-off/ && ./rpc_runner --core ./arcdroid_rpcplan_libretro_android.so --plan odin-fixture/hd-off.arcplan --system odin-fixture --save save-off --frames 1500 --pacing flat --timing off.csv --hd-cost hd-off.csv > off.trace 2> off.log'
+adb pull /data/local/tmp/arcdroid-r2c-e/hd.csv build/r2c-e/odin-hd.csv
+adb pull /data/local/tmp/arcdroid-r2c-e/hd-off.csv build/r2c-e/odin-hd-off.csv
+python3 -B tools/check-rpc-hd-cost.py build/r2c-e/odin-hd.csv --frames 1500
+python3 -B tools/check-rpc-hd-cost.py build/r2c-e/odin-hd-off.csv --frames 1500
+```
+
+Use new save-directory names for a repeat; never replace the seed in an existing
+store. `--require-arm` fails unless **both** SHA2 and CRC32 were detected through
+Android's `getauxval`; it then runs the vectors and differential tests, including
+forced portable modes. `--bench` compares all available modes without changing
+capability detection. Windows' `hash_accel_test.exe` runs the same tests and
+executes SHA-NI only when CPUID reports it. `--require-x86` prints CPUID SHA
+advertisement and the selected automatic SHA path, and fails when advertised
+SHA-NI is not selected (CI runs this explicitly).
+
+`--hd-cost` is opt-in and requires the plan test core. Its separate CSV records
+every requested frame, including warm-up: backend read verification, complete
+write acknowledgement (hashing, VFS, index/cache), maintenance tick time,
+maintenance entry/exit phases, the executed `substep` and its attempted
+`namespace_operations`, read/write command counts, generation and
+checkpoint count, plus `open_ns` for store open/import/blank creation reached
+during the first-launch CMOS capture transition. Load-time work outside
+`retro_run` is excluded. `total_ns` sums all four timed intervals inside
+`retro_run`. Clocks and reporting never control guest execution. CSV writes,
+framebuffer/PCM hashing and frontend pacing are outside these intervals. It
+keeps the existing trace and `--timing` format unchanged.
+
+The checker requires run N’s substep/namespace columns and refuses incomplete
+reports or namespace counts outside 0/1. Under D-161 it fails any frame with
+`2 * total_ns > T_ns` when its maintenance tick made one namespace call,
+or `5 * total_ns > T_ns` otherwise. Write acknowledgement independently keeps
+`5 * acknowledgement_ns <= T_ns` even in a namespace tick. Inspect phase/substep
+outliers and `over_D161`; averages and percentiles cannot qualify the run.
+AC-9’s whole-frame no-over-T gate still stands. Inspect `on.trace`'s last RAM word: it
+must be `ram=00000001` (fresh session, cyan), and the final HD row must show at least two completed
+checkpoints and an advanced generation. Collect `on/off.csv`, traces/logs and
+the canonical store, and compare with the prior on/off device measurement.
+For Fable's private 031 installer replay, use the identical existing runner
+arguments and starting store, adding `--hd-cost installer-hd.csv` and
+`--timing installer-on.csv`; check that report the same way. Its emulation cost
+is separate from the hard-disc bound (D-152). Native RetroArch termination,
+media/persistence legs and the Windows CI leg must still be repeated on the
+final core.
+
+Run K (D-156): D-152 measurements use saves on `/storage/emulated/0` (FUSE)
+and `rpc_runner --vfs-flush retroarch --hd-cost <CSV>`: the VFS flush checks
+`fflush` only, matching RetroArch 1.22.2 `retro_vfs_file_flush_impl`.
+`--vfs-flush fsync` is the default and adds `fsync` (`_commit` on Windows);
+retain this mode for termination and durability experiments. Neither mode
+changes the core's acknowledgement checks or promises directory/power-loss
+durability. Always record the save path and flush mode alongside timing.
+The two modes are checked by `rpc-vfs-conformance`; the real kill sweeps keep
+the default sync mode. Reject other `--vfs-flush` values.

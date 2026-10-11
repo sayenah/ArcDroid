@@ -2,7 +2,7 @@
  * These device seams deliberately fail if the component executes MMIO. They
  * are not substitutes for the contained backend or guest device qualification. */
 #include <assert.h>
-#include <setjmp.h>
+#include "../engine/arc_fault_jump.h"
 #include <stdarg.h>
 #include <stdio.h>
 #include "rpc_namespace.h"

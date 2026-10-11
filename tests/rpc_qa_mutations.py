@@ -4,13 +4,14 @@ GPL-2.0-only. Every mutant must compile; only a failed observable check kills it
 Ninja supplies the current compiler/link flags, including sanitizer/platform flags.
 """
 from pathlib import Path
-import argparse,json,os,subprocess,sys,tempfile
+import argparse,builtins,json,os,subprocess,sys,tempfile
 sys.dont_write_bytecode=True
 from rpc_ninja_commands import split_command
 ROOT=Path(__file__).resolve().parent.parent
 p=argparse.ArgumentParser()
-for key in ('build','core','timing','unit','video','store','fdc'):p.add_argument('--'+key,required=True)
+for key in ('build','core','timing','unit','video','store','fdc','hd','ide','runner','plan'):p.add_argument('--'+key,required=True)
 p.add_argument('--only',default='');a=p.parse_args();build=Path(a.build).resolve()
+for key in ('core','timing','unit','video','store','fdc','hd','ide','runner','plan'):setattr(a,key,str(Path(getattr(a,key)).resolve()))
 cache=(build/'CMakeCache.txt').read_text()
 ninja=next(line.split('=',1)[1] for line in cache.splitlines() if line.startswith('CMAKE_MAKE_PROGRAM:FILEPATH='))
 commands={};database=None
@@ -40,10 +41,16 @@ def compiler_commands(target):
     return commands[target]
 
 def mutated_binary(target,relative,old,new,directory,label):
-    source=ROOT/relative;text=source.read_text();assert old in text,(label,'missing recipe')
-    # M23 changes both the allocation fast check and the full access check.
-    text=text.replace(old,new,1 if label=='V6a' else text.count(old))
+    source=ROOT/relative;text=source.read_text()
+    for before,after in ([(old,new)] if isinstance(old,str) else old):
+        assert before in text,(label,'missing recipe')
+        if label.startswith('S'):assert text.count(before)==1,(label,'ambiguous recipe')
+        # M23 changes both the allocation fast check and the full access check.
+        text=text.replace(before,after,1 if label=='V6a' else text.count(before))
     mutated=directory/(label+'-'+source.name);mutated.write_text(text)
+    if source.suffix=='.py':
+        builtins.compile(text,str(mutated),'exec')
+        return mutated
     rows=compiler_commands(target)
     compile=next(row[:] for row in rows if '-c' in row and Path(row[row.index('-c')+1]).resolve()==source)
     original_obj=compile[compile.index('-o')+1];obj=directory/(label+'.o')
@@ -132,17 +139,110 @@ mutants += [
 # Q33 is equivalent: software reset clears POLL (mask 0x2f, even when
 # locked), hardware reset clears it too, and FIFO commands cannot execute
 # during the RESET window. Its callback therefore always sees POLL=0.
+# R2c store and IDE boundary mutations use independently asserted component
+# checks; original build objects remain untouched.
+HD='libretro/rpc_hd_store.c';IDE='engine/rpcemu/src/ide.c';SCHEDULER='engine/rpc/rpc_scheduler.c'
+mutants += [
+ ('HD-SEEK',HD,'if(arc_io_seek_file(f,at,RETRO_VFS_SEEK_POSITION_START)<0)return false;',
+  'if(arc_io_seek_file(f,at,RETRO_VFS_SEEK_POSITION_START)!=at)return false;',a.hd,('hd','vfs')),
+ ('HD-TELL',HD,'return arc_io_tell_file(f)==at;','return arc_io_tell_file(f)>=0;',a.hd,('hd','vfs')),
+ ('HD-DIAGNOSTIC',HD,'if(previous_ok)s->io_operation="close";','s->io_operation="close";',a.hd,('hd','vfs')),
+ ('HD-ORDER',HD,'uint32_t tail=s->lengths[s->current];bool ok=seek(s,f,tail)&&',
+  'uint32_t tail=s->lengths[s->current];for(unsigned i=0;i<CACHE_COUNT;++i)if(s->tags[i].valid){unsigned first=s->tags[i].index*512;unsigned lo=lba>first?lba:first,hi=lba+count<first+512?lba+count:first+512;if(lo<hi)copy(s,s->cache[i]+(lo-first)*512,in+(lo-lba)*512,(hi-lo)*512);}bool ok=seek(s,f,tail)&&',a.hd,('hd','command')),
+ ('HD-BIND',HD,'return !memcmp(digest,h+120,32);','return true;',a.hd,('hd','binding')),
+ ('HD-GC',HD,'if(get(e,4)!=1||(get(live,4)==1&&get(live+8,8)==get(e+8,8)))continue;',
+  'if(get(e,4)!=1)continue;',a.hd,('hd',)),
+ ('HD-HOLE',HD,'if(!f)return failure(s,damage);\n    uint8_t h[128]',
+  'if(!f){memset(out,0,ARC_RPC_HD_CHUNK);return true;}\n    uint8_t h[128]',a.hd,('hd',)),
+ ('HD-CAP',HD,'aggregate+bytes>ARC_RPC_HD_JOURNAL_CAP||','',a.hd,('hd','command')),
+ ('IDE-LATCH',IDE,'!ide.backend.write(ide.backend.opaque,ide.lba,ide.total,ide.transaction)',
+  '(!ide.backend.write(ide.backend.opaque,ide.lba,ide.total,ide.transaction)||!ide.backend.write(ide.backend.opaque,ide.lba,ide.total,ide.transaction))',a.ide,('ide',)),
+ ('IDE-NIEN',IDE,'master()&&ide.irq&&!(ide.control&2)','master()&&ide.irq',a.ide,('ide',)),
+ ('IDE-TIE',SCHEDULER,'s->deadlines[i] < s->next_ns','s->deadlines[i] <= s->next_ns',a.ide,('ide',)),
+]
+mutants += [
+ ('M1-NO-CLOSE-ON-FAIL', HD, 'if(!ok){close_file(s,f,false);return failure(s,true);}',
+  'if(!ok){return failure(s,true);}', a.hd, ('hd','handles')),
+ ('Q04-CRC-ONLY', 'libretro/rpc_hd_store.c', 'ok=get(tail,4)==crc(s,out,ARC_RPC_HD_CHUNK)&&!memcmp(digest,e+16,32);', 'ok=get(tail,4)==crc(s,out,ARC_RPC_HD_CHUNK);', a.hd, ('hd','qa-integrity')),
+ ('Q05-SEQ-GAP', 'libretro/rpc_hd_store.c', 'sequence==*last+1&&', 'sequence>*last&&', a.hd, ('hd','qa-integrity')),
+ ('Q11-PREFIX-DIGEST', 'libretro/rpc_hd_store.c', 'arc_sha256_final(&s->digest[parent],digest);if(memcmp(digest,h+160,32))return false;', '', a.hd, ('hd','qa-integrity')),
+ ('Q12-CHUNK-GEN', 'libretro/rpc_hd_store.c', '||\n           (get(e,4)==1&&get(e+8,8)>get(m+88,8)))return false;', ')return false;', a.hd, ('hd','qa-integrity')),
+ ('Q16-DEBRIS-PROBE', 'libretro/rpc_hd_store.c', 'char name[23];chunk_leaf(i,candidate,name);\n        if(size(s,name,&n)){if(!remove_leaf(s,name))return failure(s,false);untrack_chunk(s,name);}', 'char name[23];chunk_leaf(i,candidate,name);(void)name;', a.hd, ('hd','qa-integrity')),
+ ('I08-RESET-GATE', 'engine/rpcemu/src/ide.c', 'if(!master()||(ide.control&4))return;', 'if(!master())return;', a.ide, ('ide',)),
+ ('I09-WRITE-IRQ', 'engine/rpcemu/src/ide.c', 'ide.active=ide.writing=false;ide.status=READY;\n            }else{ide.position=0;ide.status=READY|DRQ;}', 'ide.active=ide.writing=false;ide.status=READY;return;\n            }else{ide.position=0;ide.status=READY|DRQ;}', a.ide, ('ide',)),
+ ('I10-CHS-SECTOR0', 'engine/rpcemu/src/ide.c', 'if(!ide.sector||ide.sector>ide.spt||', 'if(ide.sector>ide.spt||', a.ide, ('ide',)),
+]
+# Split-boundary regressions, each linked into the real store component.
+mutants += [
+ ('N-RETIRE-TWO',HD,'++s->phase_step;return true;}\n    case 4:', '}\n    case 4:',a.hd,('hd','steps')),
+ ('M-SCRATCH',HD,'s->checkpoint','s->scratch',a.hd,('hd','steps')),
+ ('M-TEMP-VERIFY',HD,'if(!chunk_read(s,s->manifests[2],i,s->checkpoint,"chunk.tmp"))return false;','',a.hd,('hd','steps')),
+ ('M-FINAL-VERIFY',HD,'||!base_chunk_into(s,s->manifests[2],i,s->checkpoint)','',a.hd,('hd','steps')),
+ ('M-MANIFEST-VERIFY',HD,'ok=read_leaf(s,"manifest.tmp",s->record,MANIFEST_BYTES)&&!memcmp(s->record,s->manifests[2],MANIFEST_BYTES);','ok=true;',a.hd,('hd','steps')),
+ ('M-PUBLISH-VERIFY',HD,'ok=read_leaf(s,leaf,s->record,MANIFEST_BYTES)&&!memcmp(s->record,s->manifests[2],MANIFEST_BYTES);','copy(s,s->record,s->manifests[2],MANIFEST_BYTES);ok=true;',a.hd,('hd','steps')),
+ ('M-GC-TWO',HD,'removed<1','removed<2',a.hd,('hd','steps')),
+ ('M-LATE-S',HD,'s->parent=s->current;s->snapshot=s->sequence;copy(s,s->frozen,s->live,sizeof(s->live));','s->parent=s->current;s->snapshot=s->sequence-1;copy(s,s->frozen,s->live,sizeof(s->live));',a.hd,('hd','steps')),
+ ('M-WRITER-UNLOAD',HD,'if(s->rotation_writer){ArcIoFile *f=s->rotation_writer;s->rotation_writer=NULL;(void)close_file(s,f,true);}','',a.hd,('hd','steps')),
+ ('M-WRITER-FAILURE',HD,'if(s->rotation_writer){ArcIoFile *f=s->rotation_writer;s->rotation_writer=NULL;metadata(s);(void)arc_io_close_file(f);}','',a.hd,('hd','steps')),
+]
+# Opus QA 3 canonical store recipes (run P), independent of the evidence tree.
+# S8 is equivalent: each validated retained entry has chunk generation <= its
+# manifest generation <= selected s->generation. The prospective destination
+# is s->generation+1, so it cannot be referenced. ROTATE/population refuse
+# UINT64_MAX before constructing this destination; publication and recovery
+# update generation before any later materialization. No API mutates a retained
+# manifest between these checks. Compile and run S8, but never call it a kill.
+mutants += [
+ ('S1-early-S-binding',HD,(('s->rotation_writer=open_leaf(s,leaf,true,true);if(!s->rotation_writer)return false;', 's->rotation_writer=open_leaf(s,leaf,true,true);if(!s->rotation_writer)return false;s->snapshot=s->sequence;copy(s,s->frozen,s->live,sizeof(s->live));'), ('s->parent=s->current;s->snapshot=s->sequence;copy(s,s->frozen,s->live,sizeof(s->live));', 's->parent=s->current;')),None,a.hd,('hd', 'steps')),
+ ('S2-checkpoint-aliases-scratch',HD,(('checkpoint[ARC_RPC_HD_CHUNK], record', 'record'), ('ArcIoFile *rotation_writer;', 'ArcIoFile *rotation_writer;\n#define checkpoint scratch')),None,a.hd,('hd', 'steps')),
+ ('S3-gc-two-removals',HD,'while(s->gc_at<ARC_RPC_HD_CHUNKS&&removed<1)','while(s->gc_at<ARC_RPC_HD_CHUNKS&&removed<2)',a.hd,('hd', 'steps')),
+ ('S4-abort-gc-two-removals',HD,'while(s->gc_at<s->chunk_count&&removed<1&&inspected++<16)','while(s->gc_at<s->chunk_count&&removed<2&&inspected++<16)',a.hd,('hd', 'population')),
+ ('S5-retire-removals-merged',HD,'if(s->present[old]){manifest_leaf(old,leaf);if(!remove_leaf(s,leaf))return false;s->present[old]=false;}\n        ++s->phase_step;return true;}','if(s->present[old]){manifest_leaf(old,leaf);if(!remove_leaf(s,leaf))return false;s->present[old]=false;}\n        ++s->phase_step;}\n        /* fallthrough */',a.hd,('hd', 'steps')),
+ ('S6-skip-candidate-verify',HD,'if(!chunk_read(s,s->manifests[2],i,s->checkpoint,"chunk.tmp"))return false;','',a.hd,('hd', 'steps')),
+ ('S7-skip-final-readback',HD,'||!track_chunk(s,leaf)||!base_chunk_into(s,s->manifests[2],i,s->checkpoint))return false;','||!track_chunk(s,leaf))return false;',a.hd,('hd', 'steps')),
+ ('S9-skip-manifest-verify',HD,'}else{ok=read_leaf(s,"manifest.tmp",s->record,MANIFEST_BYTES)&&!memcmp(s->record,s->manifests[2],MANIFEST_BYTES);','}else{ok=true;',a.hd,('hd', 'steps')),
+ ('S10-skip-publish-verify-compare',HD,'ok=read_leaf(s,leaf,s->record,MANIFEST_BYTES)&&!memcmp(s->record,s->manifests[2],MANIFEST_BYTES);\n            if(ok){copy(s,s->manifests[slot]','ok=read_leaf(s,leaf,s->record,MANIFEST_BYTES);\n            if(ok){copy(s,s->manifests[slot]',a.hd,('hd', 'steps')),
+ ('S11-skip-switch-header-readback',HD,'if(!ok||!closed||!read_leaf(s,leaf,check,256)||memcmp(h,check,256))return false;','(void)check;if(!ok||!closed)return false;',a.hd,('hd', 'steps')),
+ ('S12-failure-keeps-writer-open',HD,'if(s->rotation_writer){ArcIoFile *f=s->rotation_writer;s->rotation_writer=NULL;metadata(s);(void)arc_io_close_file(f);}\n    s->refused=true;','s->refused=true;',a.hd,('hd', 'steps')),
+ ('S13-close-leaks-writer',HD,'if(s->rotation_writer){ArcIoFile *f=s->rotation_writer;s->rotation_writer=NULL;(void)close_file(s,f,true);}free(s);','free(s);',a.hd,('hd', 'steps')),
+ ('S14-skip-retire-length-check',HD,'if(!size(s,leaf,&n)||n!=s->lengths[s->current])return false;','(void)n;',a.hd,('hd', 'steps')),
+ ('S15-skip-prepare-dest-probe',HD,'size_t n;if(size(s,leaf,&n)||s->refused)return false;\n        if(s->jgeneration','\n        if(s->jgeneration',a.hd,('hd', 'steps')),
+ ('S16-create-not-namespace',HD,'if(create)++s->stats.namespace_operations;metadata(s);','metadata(s);',a.hd,('hd', 'steps')),
+ ('S17-switch-skip-cap',HD,'if(s->phase_step!=1||!s->rotation_writer||\n        (uint64_t)s->lengths[0]+s->lengths[1]+256>ARC_RPC_HD_JOURNAL_CAP)return false;','if(s->phase_step!=1||!s->rotation_writer)return false;',a.hd,('hd', 'steps')),
+ ('S18-retire-skip-binding',HD,'if(get(bound+96,8)!=s->jgeneration[s->parent]||get(bound+152,8)!=s->lengths[s->parent]||memcmp(bound+160,digest,32))return failure(s,true);','(void)bound;',a.hd,('hd', 'steps')),
+ ('S19-retire-skip-header-compare',HD,'if(!read_header(s,s->current,h)||memcmp(h,s->headers[s->current],256))return false;','if(!read_header(s,s->current,h))return false;',a.hd,('hd', 'steps')),
+ ('S20-zero-alt-no-remove',HD,'if(size(s,leaf,&n)){if(!remove_leaf(s,leaf))return false;untrack_chunk(s,leaf);}\n            if(s->refused)return false;memset(e,0,48);materialized(s);return true;','if(s->refused)return false;memset(e,0,48);materialized(s);return true;',a.hd,('hd', 'steps')),
+ ('S21-materialize-uses-live-index',HD,'if(!reconstruct_into(s,s->manifests[s->selected],i,s->frozen,s->checkpoint))return false;','if(!reconstruct_into(s,s->manifests[s->selected],i,s->live,s->checkpoint))return false;',a.hd,('hd',)),
+ ('S22-retire-skip-gc',HD,'if(!s->gc_done){s->state=ARC_RPC_HD_GC;s->gc_at=0;s->phase_step=0;return true;}','',a.hd,('hd', 'steps')),
+ ('S23-reconstruct-fail-no-close',HD,'if(!ok){close_file(s,f,false);return failure(s,true);}','if(!ok){return failure(s,true);}',a.hd,('hd', 'handles')),
+]
+equivalents = [
+ ('S8-skip-destination-ref-check',HD,'for(unsigned slot=0;slot<2;++slot)if(s->present[slot]&&get(entry(s->manifests[slot],i),4)==1&&get(entry(s->manifests[slot],i)+8,8)==s->generation+1)return false;\n','',a.hd,('hd', 'steps')),
+]
+CHECKER='tools/check-rpc-hd-cost.py'
+mutants += [
+ ('C1-always-half-T',CHECKER,'divisor = 2 if namespace else 5','divisor = 2',str(ROOT/CHECKER),('cost',)),
+ ('C2-no-ack-check',CHECKER,'if ack * 5 > period:','if False:',str(ROOT/CHECKER),('cost',)),
+ ('C3-namespace-any-substep',CHECKER,"assert not namespace or (phase, substep) in namespace_steps, 'namespace call in read-only substep'",'pass',str(ROOT/CHECKER),('cost',)),
+ ('C4-namespace-gt1',CHECKER,"assert namespace in (0, 1), 'namespace budget exceeded'",'assert namespace >= 0',str(ROOT/CHECKER),('cost',)),
+ ('C5-boundary-ge',CHECKER,'if total * divisor > period:','if total * divisor >= period:',str(ROOT/CHECKER),('cost',)),
+ ('C6-no-substep-check',CHECKER,"assert phase in steps and substep in steps[phase], 'unknown maintenance substep'",'pass',str(ROOT/CHECKER),('cost',)),
+ ('C7-phase-only-allowance',CHECKER,'divisor = 2 if namespace else 5',"divisor = 2 if phase in ('ROTATE','MATERIALIZE','MANIFEST','PUBLISH','RETIRE','GC') else 5",str(ROOT/CHECKER),('cost',)),
+]
 # Q19 is equivalent for representable media: raw has cylinders 0..79;
 # JFD has <=166 track sides. A physical C=255 is rejected before an ID
 # can be selected. Every WRONG_CYLINDER sector C is therefore !=255.
 # Q04/Q30 are the equivalents already accepted by Fable.
 def check(binary,case):
+    if case[0]=='cost':return [sys.executable,'-B',ROOT/'tests/rpc_hd_cost_test.py',a.runner,a.plan,build/'generated/rpc-hd-retroarch',binary]
     if case[0]=='timing':return [a.timing,binary,str(case[1]),case[2]]
     if case[0]=='unit':return [binary,'--hot-video']
-    if case[0] in ('store','fdc'):return [binary]
+    if case[0] in ('store','fdc','hd','ide'):return [binary,*case[1:]]
     return [sys.executable,'-B',ROOT/'tests/rpc_video_trace_test.py',a.video,binary,'2',ROOT/'tests/fixtures/rpc-video-paths-2.trace','--paths']
 
-selected=[m for m in mutants if not a.only or m[0] in a.only.split(',')];assert selected
+selected=[m for m in mutants if not a.only or m[0] in a.only.split(',')]
+selected_equivalents=[m for m in equivalents if not a.only or m[0] in a.only.split(',')]
+assert selected or selected_equivalents
 for byte in range(16):
     for remaining in range(1,16385):
         n=min(4-byte%4,remaining)
@@ -151,13 +251,14 @@ print('V6: EQUIVALENT in all 262144 aligned-quad byte-boundary cases; Fable ruli
 # Prove each corresponding unmutated check passes first. A broken baseline,
 # compilation/link failure or timeout is never counted as a mutation kill.
 seen=set()
-for label,relative,old,new,target,case in selected:
+for label,relative,old,new,target,case in selected+selected_equivalents:
     key=(target,case)
     if key not in seen:must_pass(check(target,case));seen.add(key)
 with tempfile.TemporaryDirectory(prefix='arc-rpc-qa-mutants-') as tmp:
     directory=Path(tmp)
     for label,relative,old,new,target,case in selected:
         binary=mutated_binary(target,relative,old,new,directory,label)
+        print(f'{label}: COMPILED',flush=True)
         result=run(check(binary,case))
         assert result.returncode!=0,(label,'SURVIVED',result.stdout+result.stderr)
         # Report the assertion/duration/golden/ASan diagnostic, keeping no CMOS bytes.
@@ -168,4 +269,9 @@ with tempfile.TemporaryDirectory(prefix='arc-rpc-qa-mutants-') as tmp:
                       next((line for line in lines if line.startswith(('+','-')) and 'hash=' in line),
                            lines[0] if lines else f'exit {result.returncode}'))
         print(f'{label}: KILLED by {case}: {evidence}',flush=True)
+    for label,relative,old,new,target,case in selected_equivalents:
+        binary=mutated_binary(target,relative,old,new,directory,label)
+        print(f'{label}: COMPILED',flush=True)
+        must_pass(check(binary,case))
+        print(f'{label}: EQUIVALENT under the validated-generation invariant; regular steps pass',flush=True)
 print(f'{len(selected)} QA mutants compiled and killed by passing-baseline checks')

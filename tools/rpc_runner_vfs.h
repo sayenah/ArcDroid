@@ -1,11 +1,18 @@
 #include <limits.h>
+#include <assert.h>
 /* Non-shipping confined runner VFS. GPL-2.0-only. */
 /* Reads remain unrestricted. Mutations require an existing canonical parent
  * below --save; existing symlinks/junctions must also resolve below that root. */
 #ifndef ARC_RUNNER_VFS_AUDIT
 #define ARC_RUNNER_VFS_AUDIT(path,mode) ((void)(path), (void)(mode))
 #endif
+/* Durability/process-kill tests retain sync by default. Timing opts into the
+ * frontend's fflush-only behavior explicitly (D-156). */
+static bool vfs_flush_fsync = true;
 static char save_directory[4096];
+static unsigned vfs_open_handles,vfs_open_directories;
+static inline void vfs_assert_no_open_handles(void)
+{assert(vfs_open_handles==0&&vfs_open_directories==0);}
 #if defined(_WIN32)
 #include <direct.h>
 #include <sys/stat.h>
@@ -60,7 +67,8 @@ static bool writable(const char *p)
 #endif
     return canonical(*parent?parent:"/",resolved) && below_save(resolved);
 }
-struct retro_vfs_file_handle { FILE *file; bool writable; };
+/* RetroArch buffered seek and per-handle size semantics (D-150/D-151). */
+struct retro_vfs_file_handle { FILE *file; bool writable,readable; int64_t cached_size; };
 static struct retro_vfs_file_handle *vfs_open(const char *path,unsigned mode,unsigned hints)
 {
     ARC_RUNNER_VFS_AUDIT(path,mode);
@@ -70,29 +78,34 @@ static struct retro_vfs_file_handle *vfs_open(const char *path,unsigned mode,uns
 #endif
     if(write && !writable(path))return NULL;
     if(!(mode&RETRO_VFS_FILE_ACCESS_READ) && !write)return NULL;
-    const char *access=write?(mode&RETRO_VFS_FILE_ACCESS_UPDATE_EXISTING?"r+b":"wb+"):"rb";
+    const char *access=write?(mode&RETRO_VFS_FILE_ACCESS_UPDATE_EXISTING?"r+b":((mode&RETRO_VFS_FILE_ACCESS_READ)?"wb+":"wb")):"rb";
     FILE *file=fopen(path,access);if(!file)return NULL;
     struct retro_vfs_file_handle *h=malloc(sizeof(*h));if(!h){fclose(file);return NULL;}
-    h->file=file;h->writable=write;return h;
+    h->file=file;h->writable=write;h->readable=(mode&RETRO_VFS_FILE_ACCESS_READ)!=0 || (write&&(mode&RETRO_VFS_FILE_ACCESS_UPDATE_EXISTING));
+    if(fseek(file,0,SEEK_END)){fclose(file);free(h);return NULL;}
+    h->cached_size=ftell(file);
+    if(h->cached_size<0 || fseek(file,0,SEEK_SET)){fclose(file);free(h);return NULL;}
+    ++vfs_open_handles;return h;
 }
 static int vfs_close(struct retro_vfs_file_handle *h)
-{ int result=fclose(h->file);free(h);return result; }
-static int64_t vfs_size(struct retro_vfs_file_handle *h)
-{
-    long at=ftell(h->file);if(at<0 || fseek(h->file,0,SEEK_END))return -1;
-    long size=ftell(h->file);return fseek(h->file,at,SEEK_SET)?-1:size;
-}
+{ assert(vfs_open_handles);int result=fclose(h->file);free(h);--vfs_open_handles;return result; }
+static int64_t vfs_size(struct retro_vfs_file_handle *h) { return h->cached_size; }
+static int64_t vfs_tell(struct retro_vfs_file_handle *h) { return ftell(h->file); }
 static int64_t vfs_seek(struct retro_vfs_file_handle *h,int64_t offset,int position)
 { int origin=position==RETRO_VFS_SEEK_POSITION_START?SEEK_SET:position==RETRO_VFS_SEEK_POSITION_CURRENT?SEEK_CUR:SEEK_END;
   if(offset<LONG_MIN || offset>LONG_MAX || fseek(h->file,(long)offset,origin))return -1;
-  return ftell(h->file); }
+  return 0; }
 static int64_t vfs_read(struct retro_vfs_file_handle *h,void *data,uint64_t size)
-{ if(size>SIZE_MAX)return -1;size_t n=fread(data,1,(size_t)size,h->file);return ferror(h->file)?-1:(int64_t)n; }
+{ if(!h->readable||size>SIZE_MAX)return -1;size_t n=fread(data,1,(size_t)size,h->file);return ferror(h->file)?-1:(int64_t)n; }
 static int64_t vfs_write(struct retro_vfs_file_handle *h,const void *data,uint64_t size)
-{ if(!h->writable || size>SIZE_MAX)return -1;size_t n=fwrite(data,1,(size_t)size,h->file);return ferror(h->file)?-1:(int64_t)n; }
+{ if(!h->writable || size>SIZE_MAX)return -1;int64_t at=ftell(h->file);if(at<0)return -1;
+  size_t n=fwrite(data,1,(size_t)size,h->file);
+  if(at+(int64_t)n>h->cached_size)h->cached_size=at+(int64_t)n;
+  return ferror(h->file)?-1:(int64_t)n; }
 static int vfs_flush(struct retro_vfs_file_handle *h)
 {
     if(!h->writable || fflush(h->file))return -1;
+    if(!vfs_flush_fsync)return 0;
 #if defined(_WIN32)
     return _commit(_fileno(h->file));
 #else
@@ -134,7 +147,7 @@ static struct retro_vfs_dir_handle *vfs_opendir(const char *p,bool hidden)
 #else
     d->handle=opendir(p);if(!d->handle){free(d);return NULL;}
 #endif
-    return d;
+    ++vfs_open_directories;return d;
 }
 static bool vfs_readdir(struct retro_vfs_dir_handle *d)
 {
@@ -157,8 +170,8 @@ static int vfs_closedir(struct retro_vfs_dir_handle *d)
 #else
     int result=closedir(d->handle);
 #endif
-    free(d);return result;
+    assert(vfs_open_directories);free(d);--vfs_open_directories;return result;
 }
-static struct retro_vfs_interface vfs={.open=vfs_open,.close=vfs_close,.size=vfs_size,.read=vfs_read,.seek=vfs_seek,
+static struct retro_vfs_interface vfs={.open=vfs_open,.close=vfs_close,.size=vfs_size,.tell=vfs_tell,.read=vfs_read,.seek=vfs_seek,
     .write=vfs_write,.flush=vfs_flush,.remove=vfs_remove,.rename=vfs_rename,.stat=vfs_stat,.mkdir=vfs_mkdir,
     .opendir=vfs_opendir,.readdir=vfs_readdir,.dirent_get_name=vfs_dirname,.dirent_is_dir=vfs_isdir,.closedir=vfs_closedir};

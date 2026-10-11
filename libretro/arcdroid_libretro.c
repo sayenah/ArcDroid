@@ -6383,6 +6383,9 @@ RETRO_API void retro_get_system_av_info(struct retro_system_av_info *info)
    info->timing.sample_rate = ARC_AUDIO_RATE;
 }
 
+#if defined(ARCDROID_TEST_PLANS) && defined(_WIN32)
+#include "rpc_crash_locator.h"
+#endif
 RETRO_API void retro_init(void)
 {
    static const struct retro_disk_control_ext_callback disk = {
@@ -6465,6 +6468,9 @@ RETRO_API void retro_deinit(void)
    arc_audio_batch = NULL;
    arc_input_poll = NULL;
    arc_input_state = NULL;
+#if defined(ARCDROID_TEST_PLANS) && defined(_WIN32)
+   arc_test_crash_locator_stop();
+#endif
 }
 
 static bool arc_construct_machine(const ArcMachineDescriptor *machine,
@@ -7476,6 +7482,7 @@ static void arc_rpc_keep_media_options(ArcCoreOptions *updated,bool notify)
     updated->jfd_omitted_strict=arc_core_options.jfd_omitted_strict;
 }
 static void arc_plan_notice(const char *message,bool error) { arc_message(message,error?RETRO_LOG_ERROR:RETRO_LOG_INFO); }
+static void arc_plan_log(const char *message) { if(arc_log)arc_log(RETRO_LOG_ERROR,"%s\n",message); }
 #endif
 RETRO_API bool retro_load_game(const struct retro_game_info *game)
 {
@@ -7490,7 +7497,12 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game)
       arc_environment(RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY, &system);
       arc_environment(RETRO_ENVIRONMENT_SET_KEYBOARD_CALLBACK, (void *)&keyboard);
       arc_environment(RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY, &save);
+#if defined(_WIN32)
+      if(!arc_test_crash_locator_start(save,arc_log))
+         arc_message("RPC test crash locator unavailable",RETRO_LOG_WARN);
+#endif
       arc_test_plan_set_notice(arc_plan_notice);
+      arc_test_plan_set_log(arc_plan_log);
       const ArcTestPlanMedia callbacks={arc_rpc_plan_media,arc_disk_set_eject,arc_disk_set_index,arc_disk_replace,arc_disk_add};
       arc_test_plan_set_media(&callbacks);
       if (!arc_test_plan_load(game->path, system, save, error, sizeof(error))) {
@@ -7522,6 +7534,9 @@ RETRO_API void retro_unload_game(void)
    arc_osk_present_dirty = false;
    arc_input_sampling_reset(false);
    arc_guest_time_us = 0u;
+#if defined(ARCDROID_TEST_PLANS) && defined(_WIN32)
+   arc_test_crash_locator_stop();
+#endif
 }
 RETRO_API void retro_reset(void)
 {
@@ -7875,6 +7890,7 @@ static void arc_rpc_present_run(void)
    ArcEngineFrame frame;
    bool ran = arc_engine_run_frame(&arc_inputs, &frame);
 #if defined(ARCDROID_TEST_PLANS)
+   arc_test_plan_hd_frame();
    char persist_error[256];
    if(!arc_test_plan_persist(persist_error,sizeof(persist_error)) && persist_error[0])arc_message(persist_error,RETRO_LOG_ERROR);
 #endif
@@ -7951,6 +7967,7 @@ static void arc_rpc_present_run(void)
 RETRO_API void retro_run(void)
 {
 #if defined(ARCDROID_TEST_PLANS)
+   arc_test_plan_hd_begin_frame();
    if(arc_test_plan_pending()) {
       /* Match the bounded 60 Hz capture slices and 48 kHz silence to the
        * announced frontend cadence, including after an Arculator session. */

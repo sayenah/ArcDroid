@@ -40,6 +40,7 @@
     "arc_engine_test_disc_timer_busy",
     "arc_engine_test_drive_media",
     "arc_engine_test_fail_next_media_insert",
+    "arc_engine_test_fault_next",
     "arc_engine_test_guest_word",
     "arc_engine_test_helper_media_valid",
     "arc_engine_test_ioeb_clock",

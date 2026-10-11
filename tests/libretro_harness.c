@@ -416,7 +416,8 @@ static size_t heap_bytes_in_use(void)
 #endif
 }
 
-struct retro_vfs_file_handle { FILE *file; char *path; unsigned mode; };
+/* D-151: independent size cache, maintained by this handle only. */
+struct retro_vfs_file_handle { FILE *file; char *path; unsigned mode; int64_t cached_size; };
 struct retro_vfs_dir_handle { DIR *dir; struct dirent *entry; char path[4096]; };
 static const char *fault_open_substring;
 static const char *fault_read_substring;
@@ -475,7 +476,9 @@ static struct retro_vfs_file_handle *vfs_open(const char *path, unsigned mode, u
    if (!f) return NULL;
    struct retro_vfs_file_handle *h = calloc(1u, sizeof(*h));
    assert(h);
-   h->file = f; h->path = copy_string(path); h->mode = mode; ++open_files;
+   h->file = f; h->path = copy_string(path); h->mode = mode;
+   assert(!fseek(f, 0, SEEK_END)); h->cached_size = ftell(f);
+   assert(h->cached_size >= 0 && !fseek(f, 0, SEEK_SET)); ++open_files;
    if ((mode & RETRO_VFS_FILE_ACCESS_WRITE) && strstr(path, "/arcdroid/cmos/"))
       ++cmos_write_opens;
    return h;
@@ -486,15 +489,12 @@ static int vfs_close(struct retro_vfs_file_handle *h)
    int result = fclose(h->file); free(h->path); free(h); --open_files;
    return fail ? -1 : result;
 }
-static int64_t vfs_size(struct retro_vfs_file_handle *h)
-{
-   long at = ftell(h->file); assert(at >= 0); assert(fseek(h->file, 0, SEEK_END) == 0);
-   long size = ftell(h->file); assert(size >= 0); assert(fseek(h->file, at, SEEK_SET) == 0); return size;
-}
+static int64_t vfs_size(struct retro_vfs_file_handle *h) { return h->cached_size; }
 static int64_t vfs_tell(struct retro_vfs_file_handle *h) { return ftell(h->file); }
-static int64_t vfs_seek(struct retro_vfs_file_handle *h, int64_t o, int origin) { return fseek(h->file, (long)o, origin) ? -1 : ftell(h->file); }
+static int64_t vfs_seek(struct retro_vfs_file_handle *h, int64_t o, int origin) { return fseek(h->file, (long)o, origin) ? -1 : 0; }
 static int64_t vfs_read(struct retro_vfs_file_handle *h, void *s, uint64_t n)
 {
+   if (!(h->mode & (RETRO_VFS_FILE_ACCESS_READ | RETRO_VFS_FILE_ACCESS_UPDATE_EXISTING))) return -1;
    if (observed_vfs_path && !strcmp(h->path, observed_vfs_path))
       ++observed_vfs_reads;
    if (fault_once(h->path, &fault_read_substring) && n) --n;
@@ -503,7 +503,10 @@ static int64_t vfs_read(struct retro_vfs_file_handle *h, void *s, uint64_t n)
 static int64_t vfs_write(struct retro_vfs_file_handle *h, const void *s, uint64_t n)
 {
    if (fault_once(h->path, &fault_write_substring) && n) --n;
-   return (int64_t)fwrite(s, 1u, (size_t)n, h->file);
+   int64_t at = ftell(h->file); if (at < 0) return -1;
+   int64_t written = (int64_t)fwrite(s, 1u, (size_t)n, h->file);
+   if (at + written > h->cached_size) h->cached_size = at + written;
+   return written;
 }
 static int vfs_flush(struct retro_vfs_file_handle *h)
 {
@@ -538,7 +541,8 @@ static int vfs_rename(const char *a, const char *b)
    }
    return rename(a, b);
 }
-static int64_t vfs_truncate(struct retro_vfs_file_handle *h, int64_t n) { return ftruncate(fileno(h->file), n); }
+static int64_t vfs_truncate(struct retro_vfs_file_handle *h, int64_t n)
+{ if (ftruncate(fileno(h->file), n)) return -1; h->cached_size = n; return 0; }
 static int32_t vfs_stat(const char *p, int32_t *size)
 {
    count_install_prefix(p);
@@ -3507,10 +3511,11 @@ int main(int argc, char **argv)
             dlsym(module, "arc_io_seek_file");
          size_t (*write_file)(ArcIoFile *, const void *, size_t) =
             dlsym(module, "arc_io_write_file");
+         int64_t (*tell_file)(ArcIoFile *) = dlsym(module, "arc_io_tell_file");
          bool (*flush_file)(ArcIoFile *) = dlsym(module, "arc_io_flush_file");
          bool (*close_file)(ArcIoFile *) = dlsym(module, "arc_io_close_file");
          assert(candidate && staged_path && open_file && seek_file &&
-                write_file && flush_file && close_file);
+                write_file && tell_file && flush_file && close_file);
          const char *path = "$.!Demo.!Run";
          assert(candidate(path, ARC_DISC_CATALOGUE) == 1);
          assert(candidate("$.!Demo", ARC_DISC_CATALOGUE) == 1 &&
@@ -3519,12 +3524,14 @@ int main(int argc, char **argv)
          const char *staged = staged_path(1u);
          assert(staged && *staged);
          ArcIoFile *file = open_file(staged, true);
-         assert(file && seek_file(file, 1029, RETRO_VFS_SEEK_POSITION_START) == 1029);
+         assert(file && seek_file(file, 1029, RETRO_VFS_SEEK_POSITION_START) >= 0);
+         assert(tell_file(file) == 1029);
          const char absent = 0;
          assert(write_file(file, &absent, 1u) == 1u);
          assert(flush_file(file));
          assert(candidate(path, ARC_DISC_CATALOGUE) == -1);
-         assert(seek_file(file, 1029, RETRO_VFS_SEEK_POSITION_START) == 1029);
+         assert(seek_file(file, 1029, RETRO_VFS_SEEK_POSITION_START) >= 0);
+         assert(tell_file(file) == 1029);
          const char present = '!';
          assert(write_file(file, &present, 1u) == 1u);
          assert(flush_file(file));

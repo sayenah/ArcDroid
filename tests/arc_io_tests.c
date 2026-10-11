@@ -37,6 +37,7 @@ static int64_t test_read(struct retro_vfs_file_handle *file,
                          void *data, uint64_t size) {
   static const uint8_t contents[] = {4u, 5u, 6u};
   assert(file == &handle && data && size == sizeof(contents));
+  if (!(file->mode & (RETRO_VFS_FILE_ACCESS_READ | RETRO_VFS_FILE_ACCESS_UPDATE_EXISTING))) return -1;
   memcpy(data, contents, sizeof(contents));
   ++reads;
   return (int64_t)sizeof(contents);

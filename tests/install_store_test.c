@@ -11,7 +11,7 @@
 
 #define FILES 64u
 #define DIRECTORIES 16u
-struct retro_vfs_file_handle { unsigned index, mode; size_t at; };
+struct retro_vfs_file_handle { unsigned index, mode; size_t at, cached_size; };
 struct retro_vfs_dir_handle { char path[256]; unsigned at, current; };
 typedef struct { char path[256]; uint8_t *bytes; size_t size; bool exists; } File;
 static File files[FILES];
@@ -110,7 +110,7 @@ static struct retro_vfs_file_handle *vopen(const char *path, unsigned mode,
       assert(canonical(path,files[i].path));
    } else if (i < 0) return NULL;
    struct retro_vfs_file_handle *h = calloc(1u, sizeof(*h)); assert(h);
-   h->index = (unsigned)i; h->mode = mode; return h;
+   h->index = (unsigned)i; h->mode = mode; h->cached_size = files[i].size; return h;
 }
 static int vclose(struct retro_vfs_file_handle *h)
 {
@@ -120,17 +120,18 @@ static int vclose(struct retro_vfs_file_handle *h)
    free(h); return fail ? -1 : 0;
 }
 static int64_t vsize(struct retro_vfs_file_handle *h)
-{ return (int64_t)files[h->index].size; }
+{ return (int64_t)h->cached_size; }
 static int64_t vseek(struct retro_vfs_file_handle *h, int64_t offset, int origin)
 {
    int64_t base = origin == RETRO_VFS_SEEK_POSITION_START ? 0 :
       origin == RETRO_VFS_SEEK_POSITION_CURRENT ? (int64_t)h->at :
       origin == RETRO_VFS_SEEK_POSITION_END ? (int64_t)files[h->index].size : -1;
    if (base < 0 || offset < -base || base + offset < 0) return -1;
-   h->at = (size_t)(base + offset); return (int64_t)h->at;
+   h->at = (size_t)(base + offset); return 0;
 }
 static int64_t vread(struct retro_vfs_file_handle *h, void *data, uint64_t n)
 {
+   if (!(h->mode & (RETRO_VFS_FILE_ACCESS_READ | RETRO_VFS_FILE_ACCESS_UPDATE_EXISTING))) return -1;
    File *f = &files[h->index];
    if (h->at > f->size) return 0;
    if (n > f->size - h->at) n = f->size - h->at;
@@ -156,7 +157,7 @@ static int64_t vwrite(struct retro_vfs_file_handle *h, const void *data,
       f->bytes = grown; f->size = end;
    }
    if (n) memcpy(f->bytes + h->at, data, (size_t)n);
-   h->at = end; return (int64_t)n;
+   h->at = end; if (end > h->cached_size) h->cached_size = end; return (int64_t)n;
 }
 static int vflush(struct retro_vfs_file_handle *h)
 { (void)h; return fail_now() ? -1 : 0; }
@@ -181,7 +182,7 @@ static int64_t vtruncate(struct retro_vfs_file_handle *h, int64_t length)
    assert(grown);
    if ((size_t)length > f->size)
       memset(grown + f->size, 0, (size_t)length - f->size);
-   f->bytes = grown; f->size = (size_t)length;
+   f->bytes = grown; f->size = h->cached_size = (size_t)length;
    return 0;
 }
 static int32_t vstat(const char *path, int32_t *size)

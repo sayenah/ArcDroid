@@ -20,6 +20,8 @@
 
 /* ArcDroid modification (2026-10-06): bounded instruction entry, complete
  * CPU reset and permission-checked in-object fetch on every instruction. */
+/* ArcDroid modification (2026-10-10, D-157): signed 32x32 product,
+ * unsigned accumulator and modulo-2^64 SMLAL/SMLALS result. */
 /*Preliminary FPA emulation. This works to an extent - !Draw works with it, !SICK
   seems to (FPA Whetstone scores are around 100x without), but !AMPlayer doesn't
   work, and GCC stuff tends to crash.*/
@@ -823,9 +825,9 @@ arc_rpc_arm_exec_batch(unsigned count, ArcRpcCpuBatch *batch)
 					// SMLAL
 					int64_t mula = (int64_t) (int32_t) arm.reg[MULRS];
 					int64_t mulb = (int64_t) (int32_t) arm.reg[MULRM];
-					int64_t current = ((int64_t) arm.reg[MULRD] << 32) |
+					uint64_t current = ((uint64_t) arm.reg[MULRD] << 32) |
 					                  arm.reg[MULRN];
-					int64_t mulres = (mula * mulb) + current;
+					uint64_t mulres = (uint64_t) (mula * mulb) + current;
 
 					arm.reg[MULRN] = (uint32_t) mulres;
 					arm.reg[MULRD] = (uint32_t) (mulres >> 32);
@@ -840,9 +842,9 @@ arc_rpc_arm_exec_batch(unsigned count, ArcRpcCpuBatch *batch)
 					// SMLALS
 					int64_t mula = (int64_t) (int32_t) arm.reg[MULRS];
 					int64_t mulb = (int64_t) (int32_t) arm.reg[MULRM];
-					int64_t current = ((int64_t) arm.reg[MULRD] << 32) |
+					uint64_t current = ((uint64_t) arm.reg[MULRD] << 32) |
 					                  arm.reg[MULRN];
-					int64_t mulres = (mula * mulb) + current;
+					uint64_t mulres = (uint64_t) (mula * mulb) + current;
 
 					arm.reg[MULRN] = (uint32_t) mulres;
 					arm.reg[MULRD] = (uint32_t) (mulres >> 32);

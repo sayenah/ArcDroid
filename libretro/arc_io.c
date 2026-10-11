@@ -152,18 +152,22 @@ bool arc_io_file_size(const char *path, size_t *size)
    return true;
 }
 
-static bool arc_io_is_directory(const char *path)
+static bool arc_io_is_directory_counted(const char *path, uint64_t *operations)
 {
    int32_t result;
    if (!arc_io_vfs || !arc_io_vfs->stat) return false;
+   if (operations) ++*operations;
    result = arc_io_vfs->stat(path, NULL);
    return result >= 0 && (result & RETRO_VFS_STAT_IS_DIRECTORY) != 0;
 }
+static bool arc_io_is_directory(const char *path)
+{ return arc_io_is_directory_counted(path, NULL); }
 bool arc_io_existing_directory(const char *path)
 { return path && arc_io_is_directory(path); }
 
-bool arc_io_make_path_diagnostic(const char *path, char *failed_path,
-                                 size_t failed_path_size, const char **failure)
+static bool arc_io_make_path_inner(const char *path, char *failed_path,
+                                   size_t failed_path_size, const char **failure,
+                                   uint64_t *operations)
 {
    char buffer[4096];
    size_t length;
@@ -184,14 +188,16 @@ bool arc_io_make_path_diagnostic(const char *path, char *failed_path,
          char separator = buffer[i];
          if (i == 2u && buffer[1] == ':') continue;
          buffer[i] = '\0';
-         if (buffer[0] && !arc_io_is_directory(buffer) && arc_io_vfs->mkdir(buffer) != 0) {
+         if (buffer[0] && !arc_io_is_directory_counted(buffer, operations) &&
+             ((operations ? ++*operations : 0), arc_io_vfs->mkdir(buffer)) != 0) {
             if (failed_path && failed_path_size)
                snprintf(failed_path, failed_path_size, "%s", buffer);
             return false;
          }
          buffer[i] = separator;
       }
-   if (arc_io_is_directory(buffer) || arc_io_vfs->mkdir(buffer) == 0) {
+   if (arc_io_is_directory_counted(buffer, operations) ||
+       ((operations ? ++*operations : 0), arc_io_vfs->mkdir(buffer)) == 0) {
       if (failure) *failure = NULL;
       return true;
    }
@@ -199,6 +205,11 @@ bool arc_io_make_path_diagnostic(const char *path, char *failed_path,
       snprintf(failed_path, failed_path_size, "%s", buffer);
    return false;
 }
+bool arc_io_make_path_diagnostic(const char *path, char *failed_path,
+                                 size_t failed_path_size, const char **failure)
+{ return arc_io_make_path_inner(path, failed_path, failed_path_size, failure, NULL); }
+bool arc_io_make_path_counted(const char *path, uint64_t *operations)
+{ return arc_io_make_path_inner(path, NULL, 0u, NULL, operations); }
 bool arc_io_make_path(const char *path)
 { return arc_io_make_path_diagnostic(path, NULL, 0u, NULL); }
 
@@ -236,23 +247,29 @@ bool arc_io_directory_contains(const char *directory, const char *name,
                                bool *contains)
 { return arc_io_directory_contains_diagnostic(directory, name, contains, NULL); }
 
-bool arc_io_list_directory_diagnostic(const char *directory,
+static bool arc_io_list_directory_inner(const char *directory,
                                       ArcIoDirectoryVisit visit, void *opaque,
-                                      const char **failure)
+                                      const char **failure, uint64_t *operations)
 {
+   if (operations) *operations = 0;
    if (failure) *failure = "vfs-unavailable";
    if (!arc_io_vfs || !arc_io_vfs->opendir || !arc_io_vfs->readdir ||
        !arc_io_vfs->dirent_get_name || !arc_io_vfs->dirent_is_dir ||
        !arc_io_vfs->closedir || !directory || !visit) return false;
    if (failure) *failure = "opendir";
+   if (operations) ++*operations;
    struct retro_vfs_dir_handle *dir = arc_io_vfs->opendir(directory, false);
    if (!dir) return false;
    bool complete = true;
-   while (arc_io_vfs->readdir(dir))
+   for (;;)
    {
+      if (operations) ++*operations;
+      if (!arc_io_vfs->readdir(dir)) break;
+      if (operations) ++*operations;
       const char *name = arc_io_vfs->dirent_get_name(dir);
       if (!name || !name[0] || !strcmp(name, ".") || !strcmp(name, ".."))
          continue;
+      if (operations) ++*operations;
       if (!visit(name, !arc_io_vfs->dirent_is_dir(dir), opaque))
       {
          if (failure) *failure = "visit";
@@ -260,6 +277,7 @@ bool arc_io_list_directory_diagnostic(const char *directory,
          break;
       }
    }
+   if (operations) ++*operations;
    int closed = arc_io_vfs->closedir(dir);
    if (closed != 0) {
       if (failure) *failure = "closedir";
@@ -268,6 +286,13 @@ bool arc_io_list_directory_diagnostic(const char *directory,
    if (complete && failure) *failure = NULL;
    return complete;
 }
+bool arc_io_list_directory_diagnostic(const char *directory,
+                                      ArcIoDirectoryVisit visit, void *opaque,
+                                      const char **failure)
+{ return arc_io_list_directory_inner(directory, visit, opaque, failure, NULL); }
+bool arc_io_list_directory_counted(const char *directory, ArcIoDirectoryVisit visit,
+                                   void *opaque, uint64_t *operations)
+{ return arc_io_list_directory_inner(directory, visit, opaque, NULL, operations); }
 bool arc_io_list_directory(const char *directory, ArcIoDirectoryVisit visit,
                            void *opaque)
 { return arc_io_list_directory_diagnostic(directory, visit, opaque, NULL); }
@@ -317,7 +342,8 @@ bool arc_io_walk(const char *directory, unsigned max_depth,
    return directory && visit && arc_io_walk_inner(directory, max_depth, visit, opaque);
 }
 
-ArcIoFile *arc_io_open_file(const char *path, bool writable)
+static ArcIoFile *arc_io_file_open(const char *path, bool writable, bool create,
+                                  unsigned hints, uint64_t *operations)
 {
    int memory_slot = arc_io_memory_slot(path);
    if (memory_slot >= 0)
@@ -330,15 +356,16 @@ ArcIoFile *arc_io_open_file(const char *path, bool writable)
       return file;
    }
    if (!arc_io_vfs || !arc_io_vfs->open || !path) return NULL;
-   unsigned mode = writable ?
+   unsigned mode = create ? RETRO_VFS_FILE_ACCESS_WRITE : writable ?
       RETRO_VFS_FILE_ACCESS_READ_WRITE | RETRO_VFS_FILE_ACCESS_UPDATE_EXISTING :
       RETRO_VFS_FILE_ACCESS_READ;
    struct retro_vfs_file_handle *handle = arc_io_vfs->open(
-      path, mode, RETRO_VFS_FILE_ACCESS_HINT_FREQUENT_ACCESS);
+      path, mode, hints);
    if (!handle) return NULL;
    ArcIoFile *file = malloc(sizeof(*file));
    if (!file)
    {
+      if (operations) ++*operations;
       arc_io_vfs->close(handle);
       return NULL;
    }
@@ -349,11 +376,19 @@ ArcIoFile *arc_io_open_file(const char *path, bool writable)
    {
       file->path = malloc(strlen(path) + 1u);
       if (!file->path)
-      { arc_io_vfs->close(handle); free(file); return NULL; }
+      { if (operations) ++*operations; arc_io_vfs->close(handle); free(file); return NULL; }
       strcpy(file->path, path);
    }
    return file;
 }
+
+bool arc_io_flush_available(void) { return arc_io_vfs && arc_io_vfs->flush; }
+ArcIoFile *arc_io_open_file(const char *path, bool writable)
+{ return arc_io_file_open(path, writable, false, RETRO_VFS_FILE_ACCESS_HINT_FREQUENT_ACCESS, NULL); }
+ArcIoFile *arc_io_create_file(const char *path)
+{ return arc_io_file_open(path, true, true, RETRO_VFS_FILE_ACCESS_HINT_FREQUENT_ACCESS, NULL); }
+ArcIoFile *arc_io_create_file_counted(const char *path, uint64_t *operations)
+{ return arc_io_file_open(path, true, true, RETRO_VFS_FILE_ACCESS_HINT_FREQUENT_ACCESS, operations); }
 
 bool arc_io_close_file(ArcIoFile *file)
 {
@@ -372,6 +407,13 @@ int64_t arc_io_file_length(ArcIoFile *file)
    if (file && file->memory) return (int64_t)file->memory_size;
    return file && arc_io_vfs && arc_io_vfs->size ?
       arc_io_vfs->size(file->handle) : -1;
+}
+
+int64_t arc_io_tell_file(ArcIoFile *file)
+{
+   if (file && file->memory) return (int64_t)file->memory_at;
+   return file && arc_io_vfs && arc_io_vfs->tell ?
+      arc_io_vfs->tell(file->handle) : -1;
 }
 
 int64_t arc_io_seek_file(ArcIoFile *file, int64_t offset, int origin)
@@ -426,3 +468,9 @@ bool arc_io_truncate_file(ArcIoFile *file, int64_t length)
    if (truncated && arc_io_write_observer) arc_io_write_observer(file->path);
    return truncated;
 }
+
+/* Explicit bounded streaming access; do not request frontend whole-file maps. */
+ArcIoFile *arc_io_open_stream(const char *path, bool writable)
+{ return arc_io_file_open(path, writable, false, RETRO_VFS_FILE_ACCESS_HINT_NONE, NULL); }
+ArcIoFile *arc_io_open_stream_counted(const char *path, bool writable, uint64_t *operations)
+{ return arc_io_file_open(path, writable, false, RETRO_VFS_FILE_ACCESS_HINT_NONE, operations); }

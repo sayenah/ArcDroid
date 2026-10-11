@@ -98,3 +98,11 @@ R2a's hot-throughput generator uses its own `hot.seed` (all zero), rather
 than overwriting the shared `authored.seed` (i XOR 0xa5). This fixes a fixture
 authoring collision exposed by the unchanged lifecycle seed/reset assertion;
 no workload instructions, counts, cadence or timing expectation changes.
+
+R2c plan v2 adds `hard_disc=on|off` (omission keeps the absent IDE bus) and
+`hd_import=<file>` (implies on). `hd_import` is a read-only raw image of exactly
+132,120,576 bytes, only for an empty or unpublished content-owned store; a
+published store refuses it. The ordinary store/adapter are used. Without import,
+on auto-publishes the authored 126 MiB blank. Off plus import is invalid; v1 and
+shipping routes reject both new fields. Identity follows the unchanged v2
+`content_id`, independent of CPU/firmware and disk-control changes.

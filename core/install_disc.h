@@ -11,5 +11,10 @@
 #define ARC_INSTALL_HD_SECTORS (ARC_INSTALL_HD_SPT * ARC_INSTALL_HD_HEADS * ARC_INSTALL_HD_CYLINDERS)
 #define ARC_INSTALL_HD_BYTES (ARC_INSTALL_HD_SECTORS * ARC_INSTALL_HD_SECTOR)
 #define ARC_INSTALL_HD_FORMAT_VERSION 2u
+#define ARC_RPC_HD_SECTORS (63u * 16u * 256u)
+#define ARC_RPC_HD_BYTES (ARC_RPC_HD_SECTORS * 512u)
+/* Bounded authored formatter ranges; supported pairs: 32/10 and 256/13. */
+bool arc_hd_format_range(unsigned cylinders, unsigned log_map_bit,
+    uint64_t offset, uint8_t *output, size_t size);
 bool arc_install_hd_format(uint8_t *output, size_t size);
 #endif

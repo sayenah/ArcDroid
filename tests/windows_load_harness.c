@@ -36,7 +36,8 @@ static void check_failed(const char *file, int line, const char *expression)
 #define assert(expression) do { if (!(expression)) \
    check_failed(__FILE__, __LINE__, #expression); } while (0)
 
-struct retro_vfs_file_handle { FILE *file; char *path; unsigned mode; };
+/* D-151: independent size cache, maintained by this handle only. */
+struct retro_vfs_file_handle { FILE *file; char *path; unsigned mode; int64_t cached_size; };
 struct retro_vfs_dir_handle { HANDLE find; WIN32_FIND_DATAA data; bool first; };
 
 static const char *vfs_get_path(struct retro_vfs_file_handle *h) { return h->path; }
@@ -53,6 +54,9 @@ static struct retro_vfs_file_handle *vfs_open(const char *path, unsigned mode, u
    assert(handle->path);
    handle->file = file;
    handle->mode = mode;
+   assert(!_fseeki64(file, 0, SEEK_END));
+   handle->cached_size = _ftelli64(file);
+   assert(handle->cached_size >= 0 && !_fseeki64(file, 0, SEEK_SET));
    ++open_files;
    return handle;
 }
@@ -62,21 +66,17 @@ static int vfs_close(struct retro_vfs_file_handle *h)
    free(h->path); free(h); --open_files;
    return result;
 }
-static int64_t vfs_size(struct retro_vfs_file_handle *h)
-{
-   __int64 at = _ftelli64(h->file);
-   assert(at >= 0 && !_fseeki64(h->file, 0, SEEK_END));
-   __int64 size = _ftelli64(h->file);
-   assert(size >= 0 && !_fseeki64(h->file, at, SEEK_SET));
-   return size;
-}
+static int64_t vfs_size(struct retro_vfs_file_handle *h) { return h->cached_size; }
 static int64_t vfs_tell(struct retro_vfs_file_handle *h) { return _ftelli64(h->file); }
 static int64_t vfs_seek(struct retro_vfs_file_handle *h, int64_t offset, int origin)
-{ return _fseeki64(h->file, offset, origin) ? -1 : _ftelli64(h->file); }
+{ return _fseeki64(h->file, offset, origin) ? -1 : 0; }
 static int64_t vfs_read(struct retro_vfs_file_handle *h, void *data, uint64_t size)
-{ return (int64_t)fread(data, 1u, (size_t)size, h->file); }
+{ if (!(h->mode & (RETRO_VFS_FILE_ACCESS_READ | RETRO_VFS_FILE_ACCESS_UPDATE_EXISTING))) return -1;return (int64_t)fread(data, 1u, (size_t)size, h->file); }
 static int64_t vfs_write(struct retro_vfs_file_handle *h, const void *data, uint64_t size)
-{ return (int64_t)fwrite(data, 1u, (size_t)size, h->file); }
+{ int64_t at = _ftelli64(h->file); if (at < 0) return -1;
+   int64_t written = (int64_t)fwrite(data, 1u, (size_t)size, h->file);
+   if (at + written > h->cached_size) h->cached_size = at + written;
+   return written; }
 static int vfs_flush(struct retro_vfs_file_handle *h)
 {
    return (h->mode & RETRO_VFS_FILE_ACCESS_WRITE) ? fflush(h->file) : -1;
@@ -84,7 +84,7 @@ static int vfs_flush(struct retro_vfs_file_handle *h)
 static int vfs_remove(const char *path) { return remove(path); }
 static int vfs_rename(const char *from, const char *to) { return rename(from, to); }
 static int64_t vfs_truncate(struct retro_vfs_file_handle *h, int64_t size)
-{ return _chsize_s(_fileno(h->file), size) ? -1 : 0; }
+{ if (_chsize_s(_fileno(h->file), size)) return -1; h->cached_size = size; return 0; }
 static int32_t vfs_stat(const char *path, int32_t *size)
 {
    WIN32_FILE_ATTRIBUTE_DATA data;

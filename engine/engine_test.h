@@ -19,5 +19,7 @@ uint64_t arc_test_clock_ns(void);
  * the backend's pending retirement before gathering the restarted script. */
 void arc_engine_test_plan_input_ready(void);
 RETRO_API uint64_t arc_engine_test_frame_ns(void);
+RETRO_API bool arc_engine_test_ide_backend(const ArcIdeBackend *backend);
+void arc_engine_test_frame_add_ns(uint64_t elapsed);
 #endif
 #endif

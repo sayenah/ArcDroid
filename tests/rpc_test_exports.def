@@ -5,3 +5,8 @@ EXPORTS
   arc_engine_test_cmos_image
   arc_engine_test_floppy_mount
   arc_engine_test_floppy_eject
+  arc_engine_test_ide_backend
+  arc_test_plan_hd_stats
+  arc_test_plan_hd_write
+  arc_test_plan_hd_cost
+  arc_engine_test_fault_next
