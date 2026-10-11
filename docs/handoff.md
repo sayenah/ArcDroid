@@ -1,20 +1,21 @@
 # ArcDroid Handoff
 
-**Stage:** IMPLEMENTATION — roadmap item 6, RiscPC **R2c**, run N (one namespace operation per maintenance tick, D-160)
-**Owner:** Sol (run N), supervised by Fable
+**Stage:** IMPLEMENTATION — roadmap item 6, RiscPC **R2c**, run O (checker bound 0.50 T for namespace ticks, D-161; tooling, tests and contract text only)
+**Owner:** Sol (run O), supervised by Fable
 **Next:** Fable (S61 or the next holder):
 1. **Windows evidence for run K: done (S61).** On part (a) `08e3df7` (CI 38089532777), `windows` failed in the 50× repeat step with the same crash. The new regressions sit later in the job and were not reached. On part (b) at `7521f1a` (CI 38090184344), **all five jobs are green**: `windows` passed 210/210, including `rpc-cpu-smlal` and the three 1,000× jump-repeat regressions, with 100/100 repeats. `windows-retroarch` passed `rpc-hd-session-1/2/3` for the first time ("force termination, reload gen1, write gen2, QUIT, reload gen2 … full IDENTIFY/data comparisons PASS"). This closes QA 2's condition and H1.
-2. **Supervise Sol run N to completion.** Review it, commit it verbatim on `slice/r2c-ide`, push, and require green CI on all jobs again, including `windows-retroarch`'s `rpc-hd-session-1/2/3`. Re-run the job if it flakes in an earlier Archimedes leg (known flakes: a Slice 15 screenshot timeout, `zip-name-disc1-1`).
-3. **Odin3 legs on the run N core** (D-152, D-156, D-158, D-159, D-160), with saves on `/storage/emulated/0` and `--vfs-flush retroarch`:
-   - Build arm64 in `.work/s60/ab/r2c` (`cmake --build build/android --target arcdroid_rpcplan_libretro rpc_runner hash_accel_test`).
-   - Run `hash_accel_test --require-arm`.
-   - Run the authored guest three times, then the 031 install, both with `--hd-cost`. Template: `.work/s61/odin/s61m.sh` (already passes `--vfs-flush retroarch`; change its directories). The pre-install store is `/data/local/tmp/arcdroid-r2c/i031/st0`.
-   - **Accept (D-160)** only if HD work stays ≤0.40 T in ticks that make a namespace operation and ≤0.20 T in all other ticks, including acknowledgement. Use run N's substep column with `tools/check-rpc-hd-cost.py`.
-   - Before any RetroArch leg, check `pidof com.retroarch.aarch64`. At 22:10 on 2026-10-10 an idle instance not started by S61 was present (PID 13611, 0 % CPU). Only the Founder closes such an instance.
-   - Install the plan core through RetroArch's menu and repeat the native three-session authored leg (`ra2.sh`, `arcdroid-hd.cfg`, fixture `RetroArch/rpc-r2c/hdra/`, fresh `hdsave/`, QUIT pair via `/data/local/tmp/s52.sh net QUIT`). Then repeat `rep20.sh`.
-4. **Opus QA** of the delta from runs I, J, K, M and N (a fresh `arcdroid-opus-qa` agent in a fresh clone; the S60 QA agents are gone). Then **merge PR #337** under protocol §12.11. After the merge, the Q-3 oracle fix (D-146) comes before R3.
+2. **Supervise Sol run O to completion.** Review it. It must not change the plan core or the store (`libretro/`, `engine/`, `core/`, `tests/arc_test_plan.*`); if it does, the Odin3 evidence below must be re-run. Commit it verbatim on `slice/r2c-ide`, push, and require green CI on all jobs, including `windows-retroarch`'s `rpc-hd-session-1/2/3`. Re-run the job if it flakes in an earlier Archimedes leg (known flakes: a Slice 15 screenshot timeout, `zip-name-disc1-1`).
+3. **Odin3 legs on the run N core (`2d2b00c`): done (S61), with saves on `/storage/emulated/0` and `--vfs-flush retroarch`.**
+   - `hash_accel_test --require-arm` passed.
+   - Authored guest ×3: 0 frames over D-160. Worst namespace tick about 6.5 ms; acknowledgement ≤0.73 ms.
+   - 031 install, first run: invalidated by an external event. Android's scheduled full backup restarted MediaProvider (the FUSE daemon) at 00:06:25. One ROTATE/prepare tick stalled 56.8 s, then the store latched read-only with its notice: the designed safe failure, with earlier writes kept.
+   - 031 install, clean re-run (`i031b`): 2 ticks over 0.40 T (MATERIALIZE/write, 7.23 and 6.93 ms). Every tick passes D-161's 0.50 T; acknowledgement ≤1.15 ms.
+   - Native RetroArch, three sessions, plan core installed through the menu: session 1 cyan, then force-stopped; session 2 blue, then QUIT; session 3 green, verify-only. 0 errors, no store notices, peak PSS 178–180 MB.
+   - `rep20.sh`: see the S61 entry under Waiting on the Founder.
+   - Evidence in `.work/s61/odin/resn/` and `n-s*.png`; device `/data/local/tmp/arcdroid-r2c/s61n/`.
+4. **Opus QA** of the delta from runs I, J, K, M, N and O (a fresh `arcdroid-opus-qa` agent in a fresh clone; the S60 QA agents are gone). Then **merge PR #337** under protocol §12.11. After the merge, the Q-3 oracle fix (D-146) comes before R3.
 
-- **Running:** see the S61 entry under Waiting on the Founder (it lists the Sol run N PID and its watchdog).
+- **Running:** see the S61 entry under Waiting on the Founder (it lists the Sol run O PID and its watchdog).
 - **Private work:** S60's is in `.work/s60/` (index `LEDGER.md`); S61's is in `.work/s61/` (index `LEDGER.md`), including the device scripts and results (`odin/`), the CI diagnostics (`ci-diag-1/`) and run K's partition patches (`k/`). Sol's clone holds a stash `runK-backup` with run K's original working tree; drop it after R2c merges.
 - **Codex refusal (S61):** run J's last turn was refused by the Codex service as "possible cybersecurity risk" (its crash-locator subject matter). The run had already written its code and report; only its local full-suite runs were lost, and CI covered them. Word Sol prompts about fault handling neutrally ("fault path", "non-local jump").
 
@@ -46,11 +47,13 @@ Write acknowledgement passes with faithful flush (worst 1.03 ms). Maintenance fa
 - **Odin3 (FUSE, RetroArch flush): still over 0.20 T.** Authored guest 6, 5 and 5 frames over; 031 install 30 over (worst MATERIALIZE 9.1 ms). Acknowledgement ≤1.24 ms.
 - **Cause, from a per-operation probe:** a single create, rename or unlink costs up to 3–4 ms on shared storage. Fable ruled in **D-160**.
 
-**Run N work order** (D-160; the same clone, resuming the same thread):
-1. **At most one namespace operation per maintenance tick** (create, rename, remove, mkdir), in addition to the four-call budget. Split the steps that make more: RETIRE's two removes, and any other step your census shows. Every new boundary stays recoverable and joins the §11 kill/fault matrix. The test VFS counts namespace operations per tick, and a host test asserts at most one in every phase and substep, including GC, abort cleanup, population and streams.
-2. **Substep in the cost report.** `--hd-cost` gains a column naming the maintenance substep and one counting the namespace operations in that tick, so every device outlier can be attributed. `tools/check-rpc-hd-cost.py` checks D-160: ≤0.40 T in ticks with a namespace operation, ≤0.20 T otherwise. Update `tests/rpc_hd_cost_test.py`.
-3. **Contract.** Update `docs/riscpc-hd-store.md` (the substep table, the namespace budget, the cycle bound and the stream proofs, which must still meet D-159 within the existing caps; if they cannot, return the numbers). Reference D-160 in §8.
-4. **Verification** as for run M. Do not commit or push. Write `SOL-REPORT-R2C-N.md`.
+**Run N outcome (S61):** committed verbatim as `2d2b00c` (`SOL-REPORT-R2C-N.md`). RETIRE's two removes were split, so every maintenance tick makes at most one namespace operation, asserted by the test VFS. The cycle bound is 6N+16; the D-159 proofs are unchanged. `--hd-cost` gains `substep` and `namespace_operations`, and the checker applies D-160. Local results: host 353/353, sanitizer 348/348, 87 mutants killed. Odin3: see Next item 3. Fable corrected the namespace-tick bound to 0.50 T in **D-161**.
+
+**Run O work order** (D-161; the same clone, resuming the same thread):
+1. `tools/check-rpc-hd-cost.py` and the runner's summary apply D-161: ≤0.50 T in ticks with one namespace operation, ≤0.20 T otherwise and for acknowledgement. Rename the summary field so it names D-161.
+2. Update `tests/rpc_hd_cost_test.py` (exact-threshold and threshold+1 ns cases at 0.50 T), the runbook, and `docs/riscpc-hd-store.md` §8 and §12 to cite D-161.
+3. **Do not change the plan core or the store** (`libretro/`, `engine/`, `core/`, `tests/arc_test_plan.*`): the Odin3 evidence on the `2d2b00c` core must stay valid.
+4. Run the affected tests plus the full host suite. Do not commit or push. Write `SOL-REPORT-R2C-O.md`.
 
 **Opus QA 2 (re-check, effort 15) at `5630d83`: PASS WITH LOWS.** The condition is that CI's native Windows RetroArch hard-disc leg must run and pass. CI run 38069603020 flaked in an earlier Archimedes leg (`zip-name-disc1-1`), and a re-run is requested.
 - **Closed:** M1, every QA 1 test gap and H1's diagnosis.
@@ -324,7 +327,7 @@ Slice order (D-133): R1–R4 → item 5 release baseline → item 6b faster CPU 
 **S61 (Claude Opus 5.5 effort 15; baton by relay from `arcdroid-db`).**
 - Adopted Sol run J, which had already died: the Codex service refused its last turn. Reviewed it and committed it as `d18f08e`.
 - CI located the Windows crash (D-155). The Odin3 legs failed D-152 on FUSE storage (D-156). Recorded the SMLAL ruling (D-157) and dispatched Sol run K.
-- **Running:** Sol run N and its watchdog (PIDs in `.work/s61/LEDGER.md`). Runs K, L and M finished (D-158, D-159 and D-160).
+- **Running:** Sol run O and its watchdog (PIDs in `.work/s61/LEDGER.md`). Runs K, L, M and N finished (D-158, D-159, D-160 and D-161).
 - **Odin3 state:** RetroArch closed. Under `/data/local/tmp/arcdroid-r2c/s61/` are the run J arm64 core, runner, probe runner (`rpc_runner_nofsync`), scripts and results. FUSE save directories are under `/storage/emulated/0/arcdroid-s61/`; delete them after R2c.
 
 **Answered S60:** SSH to the Founder's Windows box (`sinmu@192.168.1.66`) is allowed for the item 6b Windows profile (D-148). It may also serve R2c AC-9's Windows native-RetroArch leg.
@@ -906,7 +909,7 @@ The R1 work order and implementation record are in git history (`docs/handoff.md
 
 ## State (carried)
 - **Role note (Founder S26–S28, S38, D-115, D-116):** earlier orchestrators ran Claude Opus 5.5 or Claude Fable 5.1 (each session outcome above names its model). **Every baton holder is Claude Opus 5.5 at effort high (D-116; D-115 briefly named Fable 5.1 and was corrected the same day).** QA independence is kept by dispatching QA to a separate `arcdroid-opus-qa` agent (effort high) with a fresh clone and no conversation context; the orchestrator does not write implementation or tests.
-- **Founder-visible decisions recorded as reversible (not gates):** **D-160 (S61):** RiscPC hard-disc checkpoint steps on Android shared storage may take up to 0.40 T of a frame when they create, rename or remove a file, so a heavy title can drop a single frame during an install checkpoint. The alternative, an in-place slot store with no file namespace operations during play, stays open until R3. HD media auto-selects the A3020; the 800 K short-tail tolerance is two cylinders; eight RiscPC-flagged JFDs are not currently reachable (PRD parity target unchanged; D-063 workstream). Say so if any should change.
+- **Founder-visible decisions recorded as reversible (not gates):** **D-160/D-161 (S61):** RiscPC hard-disc checkpoint steps on Android shared storage may take up to 0.50 T of a frame when they create, rename or remove a file, so a heavy title can drop a single frame during an install checkpoint. The alternative, an in-place slot store with no file namespace operations during play, stays open until R3. HD media auto-selects the A3020; the 800 K short-tail tolerance is two cylinders; eight RiscPC-flagged JFDs are not currently reachable (PRD parity target unchanged; D-063 workstream). Say so if any should change.
 - **Sweep baseline:** S28 re-baseline supersedes the S24 residual counts; S24 per-title tables stay in the S24 scratchpad `16ff5ea2…/scratchpad/sweep/`. **Sweep recipe (S28):** `sweep/sweep.py RUNS OSK OUT [workers] [idx-file]` (3 workers ≈ 55 min on this Mac under load), `analyze.py`, `sheet2.py`, `score.py`, `jfdflags.py`, `jfdtracks.py` in the S28 scratchpad `sweep/`.
 - **Windows CI flake:** rider R-W merged with Slice 8 (bounded RetroArch/port wait, chooser retries); the in-session reload never works on 1.22.2 stable and always falls back to relaunch; occasional "RetroArch start timed out after 30 s" at runner start-up (`test-retroarch-windows.ps1:67`) passes on rerun.
 - **QA effort rule (Founder S24, D-060):** Opus 5.5 QA at effort `high` (= 15 on the model's scale) via the `arcdroid-opus-qa` agent or CLI `--effort high`; a `general-purpose` Agent ran at 10 and is never used for QA.
