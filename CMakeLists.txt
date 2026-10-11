@@ -1967,7 +1967,9 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
       "${CMAKE_CURRENT_SOURCE_DIR}" $<TARGET_FILE:arcdroid_libretro_test>
       $<TARGET_FILE:arcdroid_rpcplan_libretro>)
   endif()
-  if(CMAKE_GENERATOR STREQUAL "Ninja")
+  # Mutation kills are checked by the ordinary host/Windows builds. Sanitizer
+  # builds retain the unmutated regression tests, without recompiling mutants.
+  if(CMAKE_GENERATOR STREQUAL "Ninja" AND NOT ARCDROID_SANITIZERS)
     add_test(NAME rpc-qa-mutations COMMAND "${Python3_EXECUTABLE}" -B
       "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_qa_mutations.py"
       --build "${CMAKE_CURRENT_BINARY_DIR}" --core $<TARGET_FILE:arcdroid_libretro_test>
@@ -2321,8 +2323,13 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
   add_test(NAME rpc-hd-population COMMAND rpc_hd_store_test population)
   add_test(NAME rpc-hd-store-faults COMMAND rpc_hd_store_test faults)
   set_tests_properties(rpc-hd-store-faults PROPERTIES TIMEOUT 3600)
+  set(RPC_HD_BOUNDS_PROFILE full)
+  if(ARCDROID_SANITIZERS)
+    set(RPC_HD_BOUNDS_PROFILE sanitizer)
+  endif()
   add_test(NAME rpc-hd-store-bounds COMMAND "${Python3_EXECUTABLE}" -B
-    "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_hd_bounds_test.py" $<TARGET_FILE:rpc_hd_store_test>)
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_hd_bounds_test.py" $<TARGET_FILE:rpc_hd_store_test>
+    --profile "${RPC_HD_BOUNDS_PROFILE}")
   set_tests_properties(rpc-hd-store-bounds PROPERTIES TIMEOUT 3600 RUN_SERIAL TRUE)
   add_test(NAME rpc-ide-registers COMMAND rpc_ide_test)
 endif()

@@ -434,12 +434,16 @@ static void reopen_stream(const char *filename)
     assert(fclose(f)==0);ArcRpcHdStore *s=open_store(false);idle(s);verify_stream(s);bounds(s);arc_riscpc_hd_close(s);
     puts("stream fresh process: all retained command bytes recovered without listing");
 }
-static void stream(bool scatter,bool silent,const char *dump)
+static void stream(bool scatter,bool silent,const char *dump,bool sanitizer)
 {
     fresh_files();memset(expected,0,sizeof(expected));memset(touched,0,sizeof(touched));silent_readdir=silent;
     ArcRpcHdStore *s=open_store(true);idle(s);uint8_t p[131072],q[131072];
-    uint64_t bytes=0,target=scatter?UINT64_C(64)*1048576:UINT64_C(512)*1048576;
-    uint32_t at=scatter?0:17,random=0x13579bdf;unsigned frames=0,burst_start=UINT32_MAX,burst_commands=0;
+    /* The sanitizer profile shortens duration and starts near the disc end to
+     * retain clipping/wrap coverage. Commands, burst and assertions are shared. */
+    uint64_t bytes=0,target=(sanitizer?(scatter?UINT64_C(12):UINT64_C(16)):
+        (scatter?UINT64_C(64):UINT64_C(512)))*1048576;
+    uint32_t at=scatter?0:(sanitizer?ARC_RPC_HD_SECTORS-17:17),random=0x13579bdf;
+    unsigned frames=0,burst_start=UINT32_MAX,burst_commands=0,wraps=0;
     uint64_t checkpoint=0,burst_bytes=0,window_bytes=0,window[600]={0};clock_t begin=clock();
     unsigned cycle_ticks=0,max_cycle_ticks=0;uint64_t materialized_before=0;ArcRpcHdStats previous;arc_riscpc_hd_stats(s,&previous);
     while(bytes<target){unsigned commands=scatter?8:1;uint64_t frame_bytes=0;
@@ -458,7 +462,7 @@ static void stream(bool scatter,bool silent,const char *dump)
             for(unsigned i=0;i<count;++i){expected[at+i]=value;touched[at+i]=1;}
             bytes+=count*512;frame_bytes+=96+count*512;
             if(burst){burst_bytes+=96+count*512;++burst_commands;}
-            at=(at+count)%ARC_RPC_HD_SECTORS;
+            if(at+count==ARC_RPC_HD_SECTORS)++wraps;at=(at+count)%ARC_RPC_HD_SECTORS;
         }
         window_bytes-=window[frames%600];window[frames%600]=frame_bytes;window_bytes+=frame_bytes;
         if(frames>=599)assert(window_bytes>=UINT64_C(4300)*600);
@@ -474,7 +478,7 @@ static void stream(bool scatter,bool silent,const char *dump)
     }
     assert(burst_commands==16&&burst_bytes==2097152);idle(s);verify_stream(s);bounds(s);if(dump)dump_stream(dump);
     ArcRpcHdStats a;arc_riscpc_hd_stats(s,&a);arc_riscpc_hd_close(s);s=open_store(false);idle(s);bounds(s);arc_riscpc_hd_close(s);
-    printf("stream %s bytes=%" PRIu64 " frames=%u burst_journal=%" PRIu64 " max_cycle_ticks=%u journal_high=%" PRIu64 " allocation=%" PRIu64 " files=%u physical_files=%u physical_bytes=%" PRIu64 " temp_bytes=%" PRIu64 " tick_bytes=%" PRIu64 " tick_ops=%" PRIu64 " tick_metadata=%" PRIu64 " tick_hash=%" PRIu64 " tick_copy=%" PRIu64 " cpu_s=%.3f\n",scatter?"scatter":"sequential",bytes,frames,burst_bytes,max_cycle_ticks,a.journal_high,a.allocation_high,a.max_chunk_files,physical_chunks_high,physical_high,temp_high,a.max_tick_bytes,a.max_tick_operations,a.max_tick_metadata_operations,a.max_tick_hash_bytes,a.max_tick_copied_bytes,(double)(clock()-begin)/CLOCKS_PER_SEC);fflush(stdout);
+    printf("stream %s bytes=%" PRIu64 " frames=%u burst_journal=%" PRIu64 " max_cycle_ticks=%u journal_high=%" PRIu64 " allocation=%" PRIu64 " files=%u physical_files=%u physical_bytes=%" PRIu64 " temp_bytes=%" PRIu64 " tick_bytes=%" PRIu64 " tick_ops=%" PRIu64 " tick_metadata=%" PRIu64 " tick_hash=%" PRIu64 " tick_copy=%" PRIu64 " checkpoints=%" PRIu64 " wraps=%u cpu_s=%.3f\n",scatter?"scatter":"sequential",bytes,frames,burst_bytes,max_cycle_ticks,a.journal_high,a.allocation_high,a.max_chunk_files,physical_chunks_high,physical_high,temp_high,a.max_tick_bytes,a.max_tick_operations,a.max_tick_metadata_operations,a.max_tick_hash_bytes,a.max_tick_copied_bytes,a.checkpoints,wraps,(double)(clock()-begin)/CLOCKS_PER_SEC);fflush(stdout);
 }
 static void qa_integrity(void)
 {
@@ -825,7 +829,8 @@ static void switch_cap_edge(void)
 }
 int main(int argc,char **argv)
 {
-    if(argc>1&&!strcmp(argv[1],"bounds")){stream(false,false,argc>2?argv[2]:NULL);stream(true,true,argc>3?argv[3]:NULL);}
+    if(argc>1&&(!strcmp(argv[1],"bounds")||!strcmp(argv[1],"bounds-sanitizer"))){bool sanitizer=!strcmp(argv[1],"bounds-sanitizer");
+        stream(false,false,argc>2?argv[2]:NULL,sanitizer);stream(true,true,argc>3?argv[3]:NULL,sanitizer);}
     else if(argc>2&&!strcmp(argv[1],"reopen"))reopen_stream(argv[2]);
     else if(argc>1&&!strcmp(argv[1],"qa-integrity"))qa_integrity();
     else if(argc>1&&!strcmp(argv[1],"import-roundtrip"))import_roundtrip();
