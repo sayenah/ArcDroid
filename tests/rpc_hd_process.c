@@ -37,8 +37,9 @@
 #undef vfs_stat
 #undef vfs_remove
 #undef vfs_rename
-#define rpc_hd_test_no_open_handles vfs_assert_no_open_handles
-#include "rpc_hd_handle_checks.h"
+
+static uint64_t metadata_calls;
+static struct retro_vfs_file_handle *rotation_handle;
 static unsigned boundary,cut;
 static void point(void)
 {
@@ -53,20 +54,31 @@ static void point(void)
 }
 void arc_riscpc_hd_test_point(unsigned stage) {assert(stage>=1&&stage<=3);point();}
 #define WRAP(name,type,params,args) static type observed_##name params {point();type result=base_##name args;point();return result;}
-WRAP(open,struct retro_vfs_file_handle *,(const char *p,unsigned m,unsigned h),(p,m,h))
-WRAP(close,int,(struct retro_vfs_file_handle *h),(h))
+static struct retro_vfs_file_handle *observed_open(const char *p,unsigned m,unsigned h)
+{++metadata_calls;point();struct retro_vfs_file_handle *f=base_open(p,m,h);point();
+ if(f&&m==RETRO_VFS_FILE_ACCESS_WRITE&&f->cached_size==0&&strstr(p,"/journal."))rotation_handle=f;return f;}
+static int observed_close(struct retro_vfs_file_handle *h)
+{++metadata_calls;point();if(h==rotation_handle)rotation_handle=NULL;int result=base_close(h);point();return result;}
+
+#define META_WRAP(name,type,params,args) static type observed_##name params {++metadata_calls;point();type result=base_##name args;point();return result;}
 WRAP(size,int64_t,(struct retro_vfs_file_handle *h),(h))
 WRAP(tell,int64_t,(struct retro_vfs_file_handle *h),(h))
 WRAP(seek,int64_t,(struct retro_vfs_file_handle *h,int64_t n,int o),(h,n,o))
 WRAP(read,int64_t,(struct retro_vfs_file_handle *h,void *p,uint64_t n),(h,p,n))
 WRAP(write,int64_t,(struct retro_vfs_file_handle *h,const void *p,uint64_t n),(h,p,n))
-WRAP(flush,int,(struct retro_vfs_file_handle *h),(h))
-WRAP(stat,int32_t,(const char *p,int32_t *n),(p,n))
-WRAP(remove,int,(const char *p),(p))
-WRAP(rename,int,(const char *a,const char *b),(a,b))
+META_WRAP(flush,int,(struct retro_vfs_file_handle *h),(h))
+META_WRAP(stat,int32_t,(const char *p,int32_t *n),(p,n))
+META_WRAP(remove,int,(const char *p),(p))
+META_WRAP(rename,int,(const char *a,const char *b),(a,b))
+static void process_rotation_writer(void)
+{assert(vfs_open_handles==1&&vfs_open_directories==0&&rotation_handle&&rotation_handle->writable&&!rotation_handle->readable&&rotation_handle->cached_size==0);}
+#define rpc_hd_test_rotation_writer process_rotation_writer
+#define rpc_hd_test_metadata_calls() metadata_calls
+#define rpc_hd_test_no_open_handles vfs_assert_no_open_handles
+#include "rpc_hd_handle_checks.h"
 static bool no_listing(struct retro_vfs_dir_handle *d){(void)d;return false;}
 static void idle(ArcRpcHdStore *s)
-{ArcRpcHdStats a;for(unsigned n=0;n<2000;++n){arc_riscpc_hd_tick(s);arc_riscpc_hd_stats(s,&a);assert(!a.read_only);if(a.state==ARC_RPC_HD_IDLE)return;}assert(0);}
+{ArcRpcHdStats a;for(unsigned n=0;n<4096;++n){arc_riscpc_hd_tick(s);arc_riscpc_hd_stats(s,&a);assert(!a.read_only);if(a.state==ARC_RPC_HD_IDLE)return;}assert(0);}
 static const char *id="0123456789012345678901234567890123456789";
 static ArcRpcHdStore *open_store(bool blank)
 {char error[256];ArcRpcHdStore *s=arc_riscpc_hd_open(save_directory,id,blank,error,sizeof(error));if(!s)fprintf(stderr,"open: %s\n",error);assert(s);return s;}
@@ -109,6 +121,12 @@ int main(int argc,char **argv)
             if(interleaved&&(acknowledged&(1u<<i)))assert(value==0x42);
             if(population)assert(value==(recovered.generation==1?0x31:0x42));
             for(unsigned j=0;j<sizeof(p);++j)assert(p[j]==value);}
+        if(interleaved){
+            const unsigned lbas[2]={80000,90000},values[2]={0x7b,0x58};
+            for(unsigned i=0;i<2;++i){assert(arc_riscpc_hd_read(s,lbas[i],1,p));unsigned value=p[0];
+                assert(value==0||value==values[i]);if(acknowledged&(8u<<i))assert(value==values[i]);
+                for(unsigned j=0;j<512;++j)assert(p[j]==value);}
+        }
         ArcRpcHdStats a;arc_riscpc_hd_stats(s,&a);assert(a.chunk_files<=1008&&a.journal_high<=8388608);
         assert(a.max_tick_operations<=4096);arc_riscpc_hd_close(s);return 0;
     }
@@ -122,13 +140,19 @@ int main(int argc,char **argv)
             ArcRpcHdStats before;arc_riscpc_hd_stats(s,&before);
             for(unsigned i=0;i<8;++i){unsigned chunk=i%3;assert(arc_riscpc_hd_write(s,2048+chunk*512,256,p));
                 mask|=1u<<chunk;printf("ack_mask=%u\n",mask);fflush(stdout);}
-            bool materialized=false,published=false;
+            bool prepared=false,materialized=false,published=false;uint8_t sector_data[512];
             for(unsigned tick=0;tick<100;++tick){arc_riscpc_hd_tick(s);ArcRpcHdStats a;arc_riscpc_hd_stats(s,&a);assert(!a.read_only);
+                if(!prepared&&a.state==ARC_RPC_HD_ROTATE&&a.phase_step==1){
+                    memset(sector_data,0x7b,sizeof(sector_data));assert(arc_riscpc_hd_write(s,80000,1,sector_data));
+                    prepared=true;mask|=8;printf("ack_mask=%u\n",mask);fflush(stdout);}
+                if(a.state>=ARC_RPC_HD_MATERIALIZE&&a.state<=ARC_RPC_HD_RETIRE){
+                    memset(sector_data,0x58,sizeof(sector_data));assert(arc_riscpc_hd_write(s,90000,1,sector_data));
+                    mask|=16;printf("ack_mask=%u\n",mask);fflush(stdout);}
                 if(!materialized&&a.state==ARC_RPC_HD_MATERIALIZE&&a.materialized>before.materialized){
                     assert(arc_riscpc_hd_write(s,2048,256,p));materialized=true;printf("ack_mask=%u\n",mask);fflush(stdout);}
                 if(!published&&a.state==ARC_RPC_HD_RETIRE){
                     assert(arc_riscpc_hd_write(s,2560,256,p));published=true;printf("ack_mask=%u\n",mask);fflush(stdout);}
-                if(a.state==ARC_RPC_HD_IDLE){assert(materialized&&published);break;}assert(tick<99);
+                if(a.state==ARC_RPC_HD_IDLE){assert(prepared&&materialized&&published);break;}assert(tick<99);
             }
         }
     }else{

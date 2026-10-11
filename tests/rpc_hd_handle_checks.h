@@ -1,17 +1,30 @@
 /* Test-only ownership oracles after every public store call, including failed
  * open/read/reconstruction/population/import and close. GPL-2.0-only.
- * The store has no persistent VFS handles. Real process kills intentionally
+ * Only an empty inactive ROTATE writer may survive a successful call. Real process kills intentionally
  * never return; the OS owns their handle cleanup. */
 #include "rpc_hd_store.h"
 static inline ArcRpcHdStore *checked_hd_open(const char *save,const char *id,bool blank,char *error,size_t size)
 {ArcRpcHdStore *s=arc_riscpc_hd_open(save,id,blank,error,size);rpc_hd_test_no_open_handles();return s;}
 static inline void checked_hd_close(ArcRpcHdStore *s)
 {arc_riscpc_hd_close(s);rpc_hd_test_no_open_handles();}
+static inline void checked_hd_handles(ArcRpcHdStore *s)
+{
+ if(!s){rpc_hd_test_no_open_handles();return;}
+ ArcRpcHdStats a;arc_riscpc_hd_stats(s,&a);
+ if(!a.read_only&&a.state==ARC_RPC_HD_ROTATE&&a.phase_step==1)rpc_hd_test_rotation_writer();
+ else rpc_hd_test_no_open_handles();
+}
 static inline void checked_hd_tick(ArcRpcHdStore *s)
-{arc_riscpc_hd_tick(s);rpc_hd_test_no_open_handles();}
+{
+ uint64_t before=rpc_hd_test_metadata_calls();arc_riscpc_hd_tick(s);
+ ArcRpcHdStats a;arc_riscpc_hd_stats(s,&a);
+ assert(rpc_hd_test_metadata_calls()-before<=4);
+ assert(a.tick_metadata_operations==rpc_hd_test_metadata_calls()-before);
+ checked_hd_handles(s);
+}
 #define CHECKED_HD_TRANSFER(name,type) \
 static inline bool checked_hd_##name(ArcRpcHdStore *s,uint32_t lba,uint32_t count,type p) \
-{bool ok=arc_riscpc_hd_##name(s,lba,count,p);rpc_hd_test_no_open_handles();return ok;}
+{bool ok=arc_riscpc_hd_##name(s,lba,count,p);checked_hd_handles(s);return ok;}
 CHECKED_HD_TRANSFER(read,uint8_t *)
 CHECKED_HD_TRANSFER(write,const uint8_t *)
 CHECKED_HD_TRANSFER(population_read,uint8_t *)
@@ -19,15 +32,15 @@ CHECKED_HD_TRANSFER(population_write,const uint8_t *)
 #undef CHECKED_HD_TRANSFER
 #define CHECKED_HD_POPULATION(name) \
 static inline bool checked_hd_population_##name(ArcRpcHdStore *s) \
-{bool ok=arc_riscpc_hd_population_##name(s);rpc_hd_test_no_open_handles();return ok;}
+{bool ok=arc_riscpc_hd_population_##name(s);checked_hd_handles(s);return ok;}
 CHECKED_HD_POPULATION(begin)
 CHECKED_HD_POPULATION(seal)
 CHECKED_HD_POPULATION(publish)
 #undef CHECKED_HD_POPULATION
 static inline void checked_hd_population_abort(ArcRpcHdStore *s)
-{arc_riscpc_hd_population_abort(s);rpc_hd_test_no_open_handles();}
+{arc_riscpc_hd_population_abort(s);checked_hd_handles(s);}
 static inline bool checked_hd_import(ArcRpcHdStore *s,const char *source)
-{bool ok=arc_riscpc_hd_import(s,source);rpc_hd_test_no_open_handles();return ok;}
+{bool ok=arc_riscpc_hd_import(s,source);checked_hd_handles(s);return ok;}
 #define arc_riscpc_hd_open checked_hd_open
 #define arc_riscpc_hd_close checked_hd_close
 #define arc_riscpc_hd_tick checked_hd_tick

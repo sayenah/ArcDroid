@@ -2233,6 +2233,7 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
   target_compile_definitions(rpc_hd_store_test PRIVATE ARCDROID_HD_TEST_ALLOC=1)
   target_compile_options(rpc_hd_store_test PRIVATE -UNDEBUG -Wall -Wextra)
   add_test(NAME rpc-hd-handle-cleanup COMMAND rpc_hd_store_test handles)
+  add_test(NAME rpc-hd-maintenance-steps COMMAND rpc_hd_store_test steps)
   add_executable(rpc_ide_test tests/rpc_ide_test.c engine/rpcemu/src/ide.c
     engine/rpc/rpc_scheduler.c engine/rpc/rpc_timing.c)
   target_include_directories(rpc_ide_test PRIVATE engine/rpc engine/rpcemu/src engine core libretro/include)

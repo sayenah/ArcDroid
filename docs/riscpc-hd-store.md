@@ -1,7 +1,7 @@
 # RiscPC hard-disc store contract (D-139)
 
 Status: **accepted by Fable (D-145)**. Run A at `b4bc633`, amended by D-147 (R2c-1) for run B
-on `slice/r2c-ide`. This freezes work-order item 9 and the store interfaces
+on `slice/r2c-ide`; run M applies D-156/D-158/D-159. This freezes work-order item 9 and the store interfaces
 needed by items 10–12. Platform qualification remains separate; RPC is not
 exposed through a shipping route. MUST statements below are requirements.
 
@@ -64,7 +64,9 @@ canonical fixed names; hidden foreign entries cannot affect correctness. Do not 
 | Chunk candidate | `chunk.tmp` | At most one, same framing as a chunk; never guest-visible |
 
 There are no other file kinds, pointer files, backups, lock files or journal
-temporaries. Journal headers are created directly in an **empty inactive slot**;
+temporaries. ROTATE first creates an empty inactive journal and retains its writer across
+one frame, without capturing S. Empty unbound journals are abandonable on open.
+Journal headers are written directly in that **empty inactive slot**;
 no command is admitted there until the closed header has been verified. This
 keeps the two-journal and temporary-space limits literal, even during rotation.
 Probe writability with the actual inactive header/candidate operations, not
@@ -186,7 +188,7 @@ continues to reflect writes to the successor. At publication clear entries
 backed by the retired parent, retaining **every** successor entry; this changes
 representation, never guest bytes.
 
-Cache at most eight 256 KiB **effective** chunk payloads, tagged with chunk index,
+Cache at most six 256 KiB **effective** chunk payloads, tagged with chunk index,
 manifest generation and live sequence. Use deterministic LRU (index breaks ties).
 Evict clean or journal-backed dirty chunks alike. If all are not yet checkpointed,
 evict the LRU after its command has passed acknowledgement checks: the journal and
@@ -208,80 +210,88 @@ only the frozen prefix. A cached live payload that contains post-boundary writes
 cannot be used as the checkpoint's frozen payload. No 126 MiB allocation, mmap,
 whole-journal payload retention or filesystem-sized formatter buffer is permitted.
 
-Budget all store-owned buffers, not just cached data: indexes 2,064,384 bytes;
-cache 2,097,152; scratch 262,144; command verification 131,168; three manifests
-72,972; all other metadata/paths/hash state ≤262,144. Total ≤4,889,964 bytes
-(<8 MiB). The IDE's existing 131,072-byte latch is outside the store but MUST
-be reported separately. Use streaming readback/hashing, not a second chunk
-payload buffer. Run B measures allocation high-water marks, including open,
-recovery, creation and population, and checks the actual structures fit this budget.
+Budget all store-owned buffers: indexes 2,064,384 bytes; six cached payloads
+1,572,864; guest read-miss scratch 262,144; a **private checkpoint payload**
+262,144; command verification 131,168; three manifests 72,972; other metadata,
+paths, hash state and the one retained ROTATE writer within the existing allowance.
+Total remains **≤4,889,964 bytes**, with 262,144 bytes released by exchanging
+two of the former eight cache slots for one private payload. The existing IDE
+131,072-byte latch is outside the store and reported separately. No checkpoint
+payload or candidate entry retained between ticks aliases the guest scratch,
+record buffer or effective cache. Guest reads/writes can run between every step.
+Allocation counters and a structure-size assertion cover this arrangement.
 
-## 4. Checkpoint state machine
+## 4. Checkpoint state machine (run M, D-158)
 
-No worker thread or host-time deadline. At the end of each RPC `retro_run`, after
-the guest frame and before frontend notices, call one bounded maintenance tick.
-The runner's equivalent frame boundary uses the same tick. Do not add a
-scheduler event or change its nine-slot trace format. A tick either advances one
-control state, materializes **one** chunk, or removes at most 16 garbage chunks.
-It never loops into another state/chunk. Work limits count I/O, verification and
-allocation; guest reads and per-command commits are separately measured, not
-hidden as maintenance. Multiple internal frames must not multiply work per
-frontend call. Population ownership suppresses every maintenance state, including ROTATE,
-from begin through publish/abort. An unload closes handles and leaves recovery state; no forced
-whole checkpoint. Reset cancels the IDE transfer and retains the session store.
+One bounded maintenance tick runs at the existing frontend frame boundary;
+no worker, host deadline, scheduler event, catch-up credit or virtual-time change.
+Population's synchronous offline operations retain their existing API; ownership
+suppresses ticks until publish/abort. Their subsequent retirement and abort GC
+use the same budgeted ticks below. Unload closes the sole retained writer without
+forcing a checkpoint. Reset retains the store.
 
-Arm the checkpoint request immediately after the commit that crosses **1 MiB**,
-at a journal length no greater than 1 MiB+131168 (<4 MiB). Service it on the
-next tick (IDLE → ROTATE, then the rotation tick). If publication
-has just finished and the successor is already over threshold, begin the next
-checkpoint on the first tick after retirement/GC. No third journal/root exists.
+Each tick makes **at most four metadata callbacks**, failed attempts included:
+open, close, flush, rename, remove, path stat and mkdir. An already-open handle's
+cached size is excluded (D-151/D-158). Data callbacks and hashes remain counted
+under the existing limits: requested bytes ≤9,437,712, total VFS callbacks ≤4,096,
+hash input ≤18,948,908 and explicit copies ≤2,097,152 per tick. Tests independently
+count actual VFS metadata calls and compare the store counter, including cleanup.
+A failed stat may consume stat + exact-path open + close =3 calls; allocation
+failure after VFS open may consume open + cleanup close =2. No step relies on
+success-only counts. Failure closes the retained writer immediately.
 
-| State | One tick and next state | Files after a process kill |
-|---|---|---|
-| IDLE | Under threshold: no work. Otherwise → ROTATE | Current manifest + journal recover current acknowledged view |
-| ROTATE | Capture S=last committed sequence; freeze parent journal length, a snapshot/finalisation of its streaming SHA-256 state, and frozen index (no journal rescan). Reserve 256 header bytes within the aggregate cap, then write/flush/close/readback the empty-slot SUCCESSOR header binding current root and S. Switch future commits to it **only after verification**; make candidate entries from current manifest; → MATERIALIZE | Before verified header: old root/prefix; after header: old root follows successor and includes all later committed commands |
-| MATERIALIZE | Ascending dirty chunk index: verify parent base, apply frozen records through S; write one `chunk.tmp`, flush/close, verify, rename to empty generation leaf, verify final. Update candidate entry; zero payload → HOLE with no chunk. One chunk maximum. Last dirty chunk → MANIFEST | Old root + both journals remain sufficient; new chunks are unreachable candidates, not roots |
-| MANIFEST | Encode next manifest generation, binding successor generation and S; write/flush/close/readback `manifest.tmp`; → PUBLISH | Old root + successor; complete `.tmp` still not selectable |
-| PUBLISH | Inactive manifest slot must be empty (any older root was retired before this cycle). Rename candidate into it; readback/check exact bytes; switch selected manifest and live index/cache tags only after verification; → RETIRE | Before rename: old root + journals; after valid rename: new root + successor, or old root + journals. Both recover the same acknowledged view |
-| RETIRE | Revalidate newest published root and journal header, expected length and recorded streaming digest without rescanning records. Before GC → GC; after old-only GC finishes, remove old manifest then old journal → IDLE. Next ROTATE waits for completion | Old manifest is retained as the garbage inventory until every old-only leaf is gone. After manifest removal the new root suffices; a leftover journal is recognised retirement debris |
-| GC | Compute old-only CHUNK leaves from the retiring and new manifests, excluding every pin; remove at most 16 per tick by fixed paths. On completion → RETIRE for manifest/journal removal; abort cleanup examines at most 16 tracked entries per tick (including retained entries), then → IDLE | New root remains selectable; missing chunks of a bound retiring manifest are expected garbage, never damage |
-| READ_ONLY | No further publication, append, truncation or GC in this session | Preserve recovery roots and uncertain files; reopen diagnoses them |
-| DAMAGED | No mutation or attachment of an unverified disc | Preserve every file; report damage |
+The 1 MiB request trigger remains. IDLE admits ROTATE; preparation never freezes
+parent/index or binds S. New command admission always checks actual aggregate
+journal lengths; the switching step separately reserves its 256-byte header.
 
-D-145 freezes the following worst-case **VFS transferred-byte and operation**
-budgets per maintenance tick. Count each open, size/stat, seek, read, write,
-flush, close, rename, remove and directory operation, including failed calls;
-count actual transferred bytes on failure and requested bytes separately. Hash
-input bytes, memory copied, allocations and peak allocated bytes are separate
-counters. An operation never processes another state or a second chunk.
+| Phase / step | Metadata calls, including worst failure | Retained data and next step | Recovery after kill |
+|---|---:|---|---|
+| IDLE / admit | 0 | Requested → ROTATE / prepare | Selected root and current journal |
+| ROTATE / prepare | ≤4: destination stat/absence probe, writer open (or its allocation cleanup); existing destination refuses | Keep an empty inactive writer; S/index/parent remain live → switch | Empty inactive file is unbound partial header, removed only after root validation; acknowledged parent writes remain |
+| ROTATE / switch | ≤4: writer flush, close, fresh read open, close | Capture S/frozen index/digest **now**, write full header, verify fresh length/bytes, then switch commits; → MATERIALIZE | <256-byte unbound header abandoned; valid full successor binds exactly this S; no later parent append after failure; full-invalid header is damage |
+| MATERIALIZE / reconstruct | ≤4: base open/close plus parent journal open/close, including failed-open cleanup | Fully verified frozen payload in private checkpoint buffer; no use of live scratch → write | Old root and both journals recover all acknowledgements |
+| MATERIALIZE / write | ≤3: candidate writer open, flush, close | Encode header/CRC/hash; write complete `chunk.tmp`; → verify | Candidate is unreachable; old roots/journals retained |
+| MATERIALIZE / verify | ≤2: fresh candidate read open/close | Verify full envelope, SHA-256 and CRC into private payload against candidate entry; → destination | Candidate remains unreachable; guest misses cannot overwrite verified payload |
+| MATERIALIZE / destination | ≤3: stat/probe/close, optional private-leaf remove | Prove destination empty under exclusive ownership; → publish | Any removed leaf belongs only to candidate generation; old view remains |
+| MATERIALIZE / publish | ≤3: rename plus fresh final read open/close | Verify full final chunk SHA-256/CRC; advance ascending dirty index; last chunk → MANIFEST | Candidate leaves are not roots; recovery discards/rebuilds them from bound journals |
+| MATERIALIZE / zero alternative | ≤3: destination stat/probe/close and optional private-leaf remove | After reconstruction, declare HOLE only for fully verified all-zero payload; finish chunk | Old view remains; explicit candidate HOLE only |
+| MANIFEST / write | ≤3: writer open, flush, close | Encode candidate root and write; → verify | `manifest.tmp` is never selectable |
+| MANIFEST / verify | ≤2: fresh read open/close | Exact length and bytes/CRC; → PUBLISH | Old root and both journals suffice |
+| PUBLISH / rename | ≤4: destination stat/probe/close or absence probe + rename | Only empty inactive slot; → verify | Valid published new root or old root + journals gives same acknowledged view; invalid published root is damage |
+| PUBLISH / verify | ≤2: fresh read open/close | Exact length/bytes; switch selected root, retain successor offsets, invalidate effective cache; → RETIRE | New root + successor; old root is retiring inventory |
+| RETIRE / manifest | ≤2: fresh root read open/close | Exact root length/bytes; → header | New root + successor; no removals yet |
+| RETIRE / header | ≤2: fresh journal read open/close | Compare immutable header; → length/binding | Same, even if guest appended between checks |
+| RETIRE / length/binding | ≤3: path stat with failed-stat probe/close | Check **current** expected length and streaming parent binding without rescan; → GC, or removals after GC | Same; current header is immutable, expected append length sampled in this step |
+| RETIRE / removals | ≤2: remove old manifest then old journal | Only after old-only GC; compact record metadata → IDLE | New root remains; leftover journal recognized from exact SUCCESSOR/POPULATION binding |
+| GC / one inventory leaf | ≤3: stat/probe/close and optional remove | Scan fixed manifest/inventory in RAM, at most one unreferenced leaf/tick; finish → RETIRE or IDLE | Retiring manifest stays until all old-only chunks removed; missing already-removed leaves are expected |
 
-| State | Maximum transferred bytes | Maximum VFS operations | Derivation |
-|---|---:|---:|---|
-| IDLE | 0 | 0 | Request/ownership check only |
-| ROTATE | 768 | 32 | Header write and two header-sized checks; streaming digest snapshot has no journal I/O; frozen-index copy is 1,032,192 RAM bytes |
-| MATERIALIZE | 9,437,712 | 4,096 | At most 8,388,608 indexed journal bytes plus four complete chunk envelopes (base read, candidate write, candidate and final readback); at most 512 distinct overlapping records, checked once each |
-| MANIFEST | 48,648 | 32 | One manifest write and one readback |
-| PUBLISH | 24,324 | 32 | Empty-slot rename and final manifest readback |
-| RETIRE | 24,580 | 32 | Manifest plus 256-byte journal header; size/digest comparison uses validated streaming state, no record rescan; two removals |
-| GC | 0 | 1,040 | Scan at most 504 manifest entries in RAM; fixed-path stat plus remove for at most 16 old-only leaves per tick; no listing or chunk read |
+An empty ROTATE writer is the only handle retained across ticks. It is closed
+before fresh header verification, including all failures and teardown. The
+existing file encodings are unchanged: no prepared header, third journal,
+pointer file, backup or temporary journal is introduced. The existing <256-byte
+unbound-header recovery rule covers the preparation boundary.
 
-Maintain a journal SHA-256 context during each successful append and during
-recovery. ROTATE snapshots/finalises a copy; it never rereads the journal.
-RETIRE compares the header, actual size and previously recorded digest/state
-under §10's no-external-edits assumption; it never hashes the journal again.
-Reconstruction seeks only indexed overlapping records, deduplicates them, and
-checks each complete frame before use. Run G reduces the worst reconstruction
-callback count to ≤1,550 for a live miss: ≤512 reads + 1,024 seek/tell
-callbacks for nonadjacent records + two opens/closes + six base-chunk callbacks
-(1,546, rounded upward). One-parent materialization including publication stays
-≤1,600, below the frozen 4,096 ceiling. Adjacent 512 one-sector records use 516
-callbacks on a HOLE miss and 539 in MATERIALIZE. Abort GC checks at most 16
-inventory entries per tick, even if every entry is retained. Its extra RAM-only
-ticks occur under offline population ownership; ordinary checkpoint/retirement
-occupancy and byte/hash/copy budgets are unchanged. D-147 adds the final RETIRE control tick after GC; §8 revises both
-cycle lengths and the sustained-write occupancy proof accordingly. These maxima bound work,
-not wall time: AC-9 measures every state inside the installing frame. A measured
-frame-budget failure returns to Fable rather than weakening verification.
+Candidate destination absence is established in its own step, then rename is
+performed without a duplicate stat under §10's exclusive-writer/no-external-edit
+assumption. Final readback still verifies the entire chunk. A zero reconstruction
+uses the alternative cleanup step; it never skips validation of its source.
+A tick never starts another chunk. GC scans remaining unchanged entries in RAM;
+there may be one final empty-inventory tick. Abort GC inspects at most 16 RAM
+inventory entries but performs at most one deletion per tick.
+
+A checkpoint with N dirty chunks and at most N old-only leaves needs ≤5N
+materialization ticks, ≤N+1 GC ticks and 14 control/admission/rotation ticks:
+**≤6N+15 ticks** from one commit switch to the next immediately requested switch.
+This includes both RETIRE validation passes. A first cold creation/population
+is offline; subsequent maintenance uses these bounds. All-504 dirtiness remains
+budgeted and recoverable but is outside D-159's sustained scattered envelope.
+
+Maintain streaming journal SHA-256 on append/recovery. Reconstruction checks
+only indexed overlapping records, once per contributing record, in increasing
+file-offset order. Its base plus frozen-parent callbacks fit ≤1,600, and the
+512-record case stays under the old byte/hash/copy ceilings. RETIRE never rescans
+a journal. The per-step budget is an operation bound; the Odin3 FUSE + RetroArch
+flush measurements remain the host-time gate, never inferred from the arithmetic.
 
 Writes arriving in MATERIALIZE/MANIFEST/PUBLISH append exclusively to the
 successor. The new manifest is the view **at S**, not the latest live cache.
@@ -311,7 +321,7 @@ indefinitely. Invalid newest roots remain damage; falling back is forbidden.
 
 After PUBLISH, retain the old manifest while removing its CHUNK leaves referenced
 by neither the new manifest nor any pin. Derive each leaf from its index and
-generation. Remove at most 16 per tick; then remove old manifest, then old journal.
+generation. Remove at most one per tick; then remove old manifest, then old journal.
 Required remove failure latches READ_ONLY. No next ROTATE or competing population
 starts before retirement completes. Thus **no generation other than selected+1
 can contain unreferenced candidate chunks** (generation zero before first
@@ -442,8 +452,8 @@ overlapping moves. Record per-tick and session maxima. Hash input per maintenanc
 tick is bounded by twice the transfer ceiling plus three manifest envelopes and
 512 header bytes: 2×9437712+3×24324+512 = **18948908**. Explicit copies are bounded
 by **2097152** bytes: ROTATE copies one 1032192-byte index plus a manifest/header;
-MATERIALIZE applies at most one chunk of indexed sectors, and a GC batch moves
-at most 16×1007×23 =370576 metadata bytes. Hash-internal state copies, zero fills
+MATERIALIZE applies at most one chunk of indexed sectors, and a GC deletion moves
+at most 1007×23 =23161 metadata bytes. Hash-internal state copies, zero fills
 and scalar index stores are fixed CPU work, covered by the frame measurement.
 Advisory directory callbacks have a separate exact operation counter; they
 never populate the fixed-path inventory. Reconciliation/replay uses at most
@@ -460,7 +470,7 @@ bounded root/header, close and torn-tail controls. Report advisory work separate
 | Journal | **Both files together ≤8388608**; request armed by threshold crossing at <1179744; freezing awaits the bounded tick, with stream-specific bounds below | Actual file-size and append-reservation high-water counters; cap-edge failure |
 | Files | ≤2 manifests **including candidate**, ≤2 journals, plus chunks; ≤1 chunk temporary | Count canonical fixed paths after every operation/kill/reload; count candidates too; no listing dependence |
 | Temporary disk | ≤262276+24324 =286600 bytes, one chunk and one manifest | Count `.tmp` bytes after each boundary; no journal/header temporary |
-| Maintenance | One chunk step/tick or one control step or ≤16 chunk removals; never two chunk reconstructions | Tick operation trace, bytes, elapsed host time; frontend/runner parity |
+| Maintenance | One phase step/tick, ≤4 metadata callbacks and ≤1 chunk removal; never two chunk reconstructions | Tick operation trace, bytes, elapsed host time; frontend/runner parity |
 | Published disk | At most 1008×262276 +2×24324 +8388608 =272811464 bytes, excluding ≤286600 temporary bytes | Peak physical owned bytes; sparse HOLE and unchanged-reference cases |
 | Tick work | §4 state-specific limits; MATERIALIZE ≤9437712 transferred bytes and ≤4096 VFS operations, one chunk | Counters include verification/publication and failed calls; host frame cost measured |
 | Open | ≤8437256 bytes of manifest+journal payload reads, bounded metadata; ≤1 s on Odin3 | VFS byte counts and wall time, cold and near-cap recovery |
@@ -469,35 +479,58 @@ New immutable chunks retained alongside old ones are **published candidate
 storage**, included in the published-disk bound, not hidden as `.tmp` space.
 There is no requirement for total physical storage to equal the logical 126 MiB.
 
-Two sustained streams have conservative *frame-count* proofs, independent of
-host latency. Let R be journal bytes added per frontend tick and P the frozen
-parent bytes. No third journal is opened while a cycle is incomplete.
+D-159 replaces the old peak-command/all-504-scatter floor. Rates count **encoded
+journal bytes**, including all 96 command-framing bytes. Define a sustained
+baseline and an additional **B=2,097,152-byte burst allowance**. For any interval
+of n running frames, admitted workload bytes are bounded by `r*n+B`; the burst
+can arrive within 60 frames (the proof tolerates earlier arrival). B is a single
+allowance across an interval covering both retained journals, not an allowance
+added independently to each checkpoint. Repeated bursts require intervening
+traffic below r to replenish the allowance. Tests drive a baseline above 4,300
+B/frame throughout every complete 600-frame window and add a full B-byte burst.
+This defines workload traffic; it introduces no guest admission throttling.
 
-* Sequential installer-like stream: ≤128 KiB guest payload/frame in ≤256
-  commands/frame gives R≤131072+256×96=155648. A contiguous frozen interval
-  with P≤4 MiB touches ≤17 chunks, including an unaligned start. A cycle takes
-  ≤17 materialization ticks +5 control ticks +ceil(17/16) GC ticks +1 admission
-  tick =25. Successor length ≤256+25R=3891456 <4 MiB. Initially
-  P≤1048576+2R=1359872 (threshold crossing and next rotation frame);
-  by induction every later P<4 MiB. Aggregate ≤4194304+3891456=8085760 <8 MiB.
-  Thus arbitrarily many disc wraps, far beyond 8 MiB, require no reopen or stall.
-* Scattered stream: ≤4096 guest bytes/frame in ≤8 commands gives R≤4864.
-  Even all 504 chunks dirty: ≤504+5+32+1=542 ticks; successor ≤2636544 <4 MiB.
-  Aggregate ≤6830848 <8 MiB. This tolerates scatter without assuming allocation
-  locality. At 60 Hz the payload allowance is 240 KiB/s; use **per-frame**
-  limits at other refresh rates, not a wall-clock rate.
+* **Scattered:** eight one-sector commands/frame give r=8×608=**4,864 journal
+  B/frame**, 4,096 guest bytes/frame. At most **80 distinct frozen dirty chunks
+  per checkpoint** (writes through chunk boundaries count both). N≤80 gives
+  6N+15≤495; use **H=500** conservatively. The baseline yields 2,918,400 journal
+  bytes per 600 frames, above D-159's 2,580,000 floor.
+* **Sequential:** one 32-sector command/frame gives r=**16,480 journal B/frame**,
+  16,384 guest bytes/frame. Include unaligned starts and disc-end wraps. Induct
+  P≤6 MiB: a contiguous interval of that payload length touches ≤25 chunks,
+  hence 6N+15≤165; use **H=170**. The next parent's length is at most
+  `256+max(r*H,1048576)+3r+B =4,948,448 <6 MiB`, including request/switch
+  delay. Initial threshold crossing has the smaller bound. The sequential rate
+  exceeds the scattered floor; no unbounded locality assumption is substituted.
 
-Run B must run ≥512 MiB sequential and ≥64 MiB scattered traffic without reopen,
-with data comparison after each checkpoint and fresh-process recovery. Include
-one-sector commands, maximum commands, unaligned chunk crossings, disc-end wraps
-and writes to already materialized chunks during checkpoint. These rates are
-test workload definitions, not a universal measured installer throughput claim.
-Fable must record the actual install's command rate/locality and verify it fits
-one bound or directly measure its occupancy. More aggressive/adversarial streams
-can exhaust headroom: precisely the first command for which retained journal
-lengths +80+512×count+16 >8388608 gets ABRT/read-only/notice. Host duration cannot
-change that decision. There is no evidence here for a promise about *every*
-possible real installer or an AC-9 wall-time pass; those are measured gates.
+For either stream, if a successor already exceeds the trigger when retirement
+finishes, the combined parent/successor lifetime is at most two H-frame active
+cycles. If it is below threshold and an idle fill intervenes, charge that prefix
+as at most the trigger and cover the following H-frame active cycle plus three
+admission/rotation frames. There are at most two 256-byte headers. Therefore
+aggregate journal occupancy is bounded by:
+
+`512+B+max(2*r*H,1048576+r*(H+3))`.
+
+| Stream | Active-cycle term | Idle-fill term | Aggregate upper bound | Cap |
+|---|---:|---:|---:|---:|
+| Scattered (r=4864,H=500) | 4,864,000 | 3,495,168 | **6,961,664** | 8,388,608 |
+| Sequential (r=16480,H=170) | 5,603,200 | 3,899,616 | **7,700,864** | 8,388,608 |
+
+This applies a burst once to the complete retained interval, so a burst spanning
+rotation is included without double counting. The proof is independent of host
+latency and supports arbitrarily many wraps/checkpoints. AC-5 keeps ≥512 MiB
+sequential and ≥64 MiB scattered without reopen, comparing after every checkpoint
+and recovering all bytes in a fresh process. Tests also cover an exact B-byte
+burst, requests during ROTATE preparation, guest misses between materialization
+steps, the 512-record reconstruction, import/population and abort cleanup.
+
+Traffic outside these envelopes, including a 504-chunk frozen scatter footprint,
+retains the exact aggregate admission check: the first record that would make
+actual journal lengths exceed 8,388,608 gets deterministic ABRT/read-only/notice.
+No retry, capacity wait, asynchronous writer, virtual-time change or reduced
+verification is permitted. The new metadata and tick bounds apply even outside
+the sustained envelopes; native FUSE frame costs remain a separate measured gate.
 
 ## 9. Creation, formatter and R3 population hooks
 
@@ -640,8 +673,9 @@ Only store-owned canonical files count toward the physical bound; foreign
 entries remain untouched and outside it. A silently failing `readdir` must leave
 all canonical-file recovery, maintenance and guest outcomes identical.
 
-The runner VFS (`tools/rpc_runner_vfs.h`) performs `fflush` followed by `_commit`
-or `fsync`, but does not sync directory metadata or currently supply truncate.
+The runner VFS (`tools/rpc_runner_vfs.h`) defaults to `fflush` followed by `_commit`
+or `fsync`; `--vfs-flush retroarch` uses `fflush` only for D-152/D-156 timing.
+Neither mode syncs directory metadata or currently supplies truncate.
 Runner results cannot establish RetroArch's stronger guarantees. Native Windows
 and Odin3 save/reload/termination legs are mandatory; macOS is host evidence.
 Use a fault VFS with no replace support, missing flush/truncate, case-folded
@@ -688,7 +722,7 @@ journal tails are D, not T. Every code inherits the virtual-time rule in §7.
 | Command trailer append | W | W | — | W | K/T | D on use | D | T/D |
 | Command exact seek/count, flush, close, expected length (no record readback) | W | W (whole command may recover) | — | W | K (whole or absent unacknowledged command) | D on use | D | T/D |
 | Index/cache update, backend return, ATA ack | — | — | — | — | K (whole command, including after ack) | D on next uncached use | D | D; intact complete record replays |
-| ROTATE: successor header create/verify | C; <256-byte unbound header abandonable | C | — | C | K | D on use | D | D for complete-invalid header; incomplete unbound header abandoned |
+| ROTATE: empty writer prepare, then bind S/header/verify/switch | C; <256-byte unbound header abandonable | C | — | C | K | D on use | D | D for complete-invalid header; incomplete unbound header abandoned |
 | MATERIALIZE: base reconstruction | — | C on read-close failure | — | C on allocation/write | K | D **before any copied byte** | D | D |
 | MATERIALIZE: chunk.tmp write/flush/readback | C | C | — | C | K | C for candidate; D for source | D | D |
 | MATERIALIZE: chunk rename/final readback | — | C on read-close failure | C | C | K | C for candidate; D for source | D | D |
@@ -696,11 +730,17 @@ journal tails are D, not T. Every code inherits the virtual-time rule in §7.
 | PUBLISH: empty-slot rename/final verification | — | C on read-close failure | C (may leave valid new root; reconcile on reopen) | C | K; invalid published leaf → D | D on use | D for published slot | D |
 | RETIRE: bounded revalidation, old-only GC, old manifest then journal removal | — | C on revalidation-close failure | — | C if operation fails | K (new root remains) | D on use | D | D |
 | Population RETIRE: kill between source manifest and source journal removals | — | C on revalidation failure | — | C if removal fails | K: complete new root; leftover source journal recognised by POPULATION generation/length/digest, never replayed | D on use | D | D |
-| GC: fixed old-only references/at most 16 removals | — | C on metadata/read-close failure | — | C if removal fails | K | D for referenced, unreferenced removed only by ownership rule | D suppresses GC | D suppresses GC |
+| GC: fixed old-only references/at most one removal | — | C on metadata/read-close failure | — | C if removal fails | K | D for referenced, unreferenced removed only by ownership rule | D suppresses GC | D suppresses GC |
 | Open: root selection/replay | — | D on read-close failure | — | Read-only if mutation unavailable | K (no mutation before validation) | D on first use | D, preserve both slots | T/D; failed truncate → read-only |
 | Create/populate: begin and private chunk writes | U | U | U | U | Source unchanged or unpublished first candidate | U for candidate, D for source | U for candidate, D for source | D for bound source; no private guest records |
 | Create/populate: seal/header/manifest.tmp | U | U | U | U | Source unchanged or unpublished first candidate | U/D | U/D | D for bound source |
 | Create/populate: final publish/retire | U/C | U/C | U/C | U/C | K (old/unpublished or complete new root) | D for selected chunk | D for published slot | T/D for selected journal |
+
+Apply the matrix before/after every step in §4, including retained-writer
+preparation, frozen-payload write/readback, destination probe, final verification,
+each RETIRE validation and both removals. Guest writes/read misses intervene
+between steps; every acknowledgement survives recovery. A failed step must close
+its retained handle and preserve the first failing diagnostic.
 
 Kill before and after every old-only GC removal and between old manifest and
 old journal removal, after both checkpoint and population publication. Recovery
@@ -734,7 +774,7 @@ are authored bytes, never firmware, games or user boot resources.
 | `rpc-ide-registers` | AC-5: frozen item-10 command matrix, 256-sector latch/one backend write, range/width/nIEN/IRQ/status/reset/cancel, absence, read failure IDNF and write failure ABRT |
 | `rpc-ide-guest` | AC-5/AC-7: authored guest through real MMIO/scheduler/store, virtual timestamps, host VFS delay/outcome equivalence, reset/unload/stale generations, audio counts, two frontend pacings |
 | `rpc-hd-plan` | AC-7: `hd_import=<file>` exact-size read-only raw import only from empty/unpublished state through population and real adapter/store; published-store refusal; content identity frozen across swaps/edits/model selection; shipping routes still reject RPC plans |
-| `rpc-hd-frame-cost` | AC-9 support: authored checkpoint workload exports per-state byte/operation counters (including indexed reconstruction, streaming ROTATE and bounded RETIRE), allocations, host frame time/T, open time and guest progress; no mock timing pass presented as Odin3 evidence |
+| `rpc-hd-frame-cost` | AC-9 support: authored checkpoint workload at §8’s sequential rate exports per-state byte/operation/metadata counters (including indexed reconstruction, streaming ROTATE and bounded RETIRE), allocations, host frame time/T, open time and guest progress; no mock timing pass presented as Odin3 evidence |
 | Existing `native-hard-disc-store`, `hard-disc-formatter`, `install-ide-registers` | AC-5/AC-6: run unchanged A3020 fixtures/assertions; identical store bytes and no writes outside RPC namespace |
 | Existing `rpc-frontend-boundary-guard`, `rpc-symbol-guard`, `rpc-windows-test-exports`, `rpc-shipping-route`, `rpc-session-switch`, `rpc-session-lifecycle` | AC-7: dormant reachability, namespace, ABI and Arculator→RPC→Arculator isolation remain intact |
 

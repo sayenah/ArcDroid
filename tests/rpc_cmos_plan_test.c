@@ -134,18 +134,20 @@ unsigned expected_rate=(unsigned)atoi(argv[6]);
         if(!strcmp(mode,"hd-frame")){
             bool (*write)(uint32_t,uint32_t,const uint8_t *);uint64_t (*frame_ns)(void);
             LOAD(write,"arc_test_plan_hd_write");LOAD(frame_ns,"arc_engine_test_frame_ns");
-            unsigned seen[7]={0};uint64_t high_bytes[7]={0},high_ops[7]={0},high_ns[7]={0},high_hash[7]={0},high_copy[7]={0};
+            unsigned seen[7]={0};uint64_t high_bytes[7]={0},high_ops[7]={0},high_ns[7]={0},high_hash[7]={0},high_copy[7]={0},high_metadata[7]={0};
             uint8_t bytes[131072];memset(bytes,0x61,sizeof(bytes));clock_t start=clock();
-            for(unsigned frame=0;frame<160;++frame){assert(write(10000+(frame*256)%100000,256,bytes));
+            /* D-159 sequential envelope: 16,480 journal bytes/frame. */
+            for(unsigned frame=0;frame<160;++frame){assert(write(10000+(frame*32)%100000,32,bytes));
                 assert(stats(&a));unsigned state=a.state;run();assert(stats(&a)&&!a.read_only);
-                assert(a.tick_bytes<=9437712&&a.tick_operations<=4096&&a.allocation_high<=4889964);
+                assert(a.tick_bytes<=9437712&&a.tick_operations<=4096&&a.allocation_high<=4889964&&a.tick_metadata_operations<=4);
                 if(state<7){++seen[state];if(a.tick_bytes>high_bytes[state])high_bytes[state]=a.tick_bytes;
                     if(a.tick_operations>high_ops[state])high_ops[state]=a.tick_operations;
+                    if(a.tick_metadata_operations>high_metadata[state])high_metadata[state]=a.tick_metadata_operations;
                     if(a.tick_hash_bytes>high_hash[state])high_hash[state]=a.tick_hash_bytes;
                     if(a.tick_copied_bytes>high_copy[state])high_copy[state]=a.tick_copied_bytes;
                     uint64_t elapsed=frame_ns();if(elapsed>high_ns[state])high_ns[state]=elapsed;}}
-            for(unsigned state=0;state<7;++state){assert(seen[state]);printf("frame state=%u calls=%u bytes=%" PRIu64 " ops=%" PRIu64 " hash=%" PRIu64 " copy=%" PRIu64 " host_ns=%" PRIu64 "\n",state,seen[state],high_bytes[state],high_ops[state],high_hash[state],high_copy[state],high_ns[state]);}
-            printf("frame workload payload=%u journal_high=%" PRIu64 " memory=%" PRIu64 " open_bytes=%" PRIu64 " open_ops=%" PRIu64 " advisory_ops=%" PRIu64 " cpu_s=%.3f\n",160*131072,a.journal_high,a.allocation_high,a.open_bytes,a.open_operations,a.advisory_operations,(double)(clock()-start)/CLOCKS_PER_SEC);
+            for(unsigned state=0;state<7;++state){assert(seen[state]);printf("frame state=%u calls=%u bytes=%" PRIu64 " ops=%" PRIu64 " metadata=%" PRIu64 " hash=%" PRIu64 " copy=%" PRIu64 " host_ns=%" PRIu64 "\n",state,seen[state],high_bytes[state],high_ops[state],high_metadata[state],high_hash[state],high_copy[state],high_ns[state]);}
+            printf("frame workload payload=%u journal_high=%" PRIu64 " memory=%" PRIu64 " open_bytes=%" PRIu64 " open_ops=%" PRIu64 " advisory_ops=%" PRIu64 " cpu_s=%.3f\n",160*16384,a.journal_high,a.allocation_high,a.open_bytes,a.open_operations,a.advisory_operations,(double)(clock()-start)/CLOCKS_PER_SEC);
         }
         for(unsigned frame=0;frame<1000;++frame){assert(stats(&a));if(a.state==ARC_RPC_HD_IDLE)break;run();assert(frame<999);}
         reset();assert(stats(&a)&&a.published);unload();assert(!stats(&a));deinit();vfs_assert_no_open_handles();

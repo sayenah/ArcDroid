@@ -142,12 +142,12 @@ mutants += [
  ('HD-TELL',HD,'return arc_io_tell_file(f)==at;','return arc_io_tell_file(f)>=0;',a.hd,('hd','vfs')),
  ('HD-DIAGNOSTIC',HD,'if(previous_ok)s->io_operation="close";','s->io_operation="close";',a.hd,('hd','vfs')),
  ('HD-ORDER',HD,'uint32_t tail=s->lengths[s->current];bool ok=seek(s,f,tail)&&',
-  'uint32_t tail=s->lengths[s->current];for(unsigned i=0;i<8;++i)if(s->tags[i].valid){unsigned first=s->tags[i].index*512;unsigned lo=lba>first?lba:first,hi=lba+count<first+512?lba+count:first+512;if(lo<hi)copy(s,s->cache[i]+(lo-first)*512,in+(lo-lba)*512,(hi-lo)*512);}bool ok=seek(s,f,tail)&&',a.hd,('hd','command')),
+  'uint32_t tail=s->lengths[s->current];for(unsigned i=0;i<CACHE_COUNT;++i)if(s->tags[i].valid){unsigned first=s->tags[i].index*512;unsigned lo=lba>first?lba:first,hi=lba+count<first+512?lba+count:first+512;if(lo<hi)copy(s,s->cache[i]+(lo-first)*512,in+(lo-lba)*512,(hi-lo)*512);}bool ok=seek(s,f,tail)&&',a.hd,('hd','command')),
  ('HD-BIND',HD,'return !memcmp(digest,h+120,32);','return true;',a.hd,('hd','binding')),
  ('HD-GC',HD,'if(get(e,4)!=1||(get(live,4)==1&&get(live+8,8)==get(e+8,8)))continue;',
   'if(get(e,4)!=1)continue;',a.hd,('hd',)),
  ('HD-HOLE',HD,'if(!f)return failure(s,damage);\n    uint8_t h[128]',
-  'if(!f){memset(s->scratch,0,ARC_RPC_HD_CHUNK);return true;}\n    uint8_t h[128]',a.hd,('hd',)),
+  'if(!f){memset(out,0,ARC_RPC_HD_CHUNK);return true;}\n    uint8_t h[128]',a.hd,('hd',)),
  ('HD-CAP',HD,'aggregate+bytes>ARC_RPC_HD_JOURNAL_CAP||','',a.hd,('hd','command')),
  ('IDE-LATCH',IDE,'!ide.backend.write(ide.backend.opaque,ide.lba,ide.total,ide.transaction)',
   '(!ide.backend.write(ide.backend.opaque,ide.lba,ide.total,ide.transaction)||!ide.backend.write(ide.backend.opaque,ide.lba,ide.total,ide.transaction))',a.ide,('ide',)),
@@ -157,7 +157,7 @@ mutants += [
 mutants += [
  ('M1-NO-CLOSE-ON-FAIL', HD, 'if(!ok){close_file(s,f,false);return failure(s,true);}',
   'if(!ok){return failure(s,true);}', a.hd, ('hd','handles')),
- ('Q04-CRC-ONLY', 'libretro/rpc_hd_store.c', 'ok=get(tail,4)==crc(s,s->scratch,ARC_RPC_HD_CHUNK)&&!memcmp(digest,e+16,32);', 'ok=get(tail,4)==crc(s,s->scratch,ARC_RPC_HD_CHUNK);', a.hd, ('hd','qa-integrity')),
+ ('Q04-CRC-ONLY', 'libretro/rpc_hd_store.c', 'ok=get(tail,4)==crc(s,out,ARC_RPC_HD_CHUNK)&&!memcmp(digest,e+16,32);', 'ok=get(tail,4)==crc(s,out,ARC_RPC_HD_CHUNK);', a.hd, ('hd','qa-integrity')),
  ('Q05-SEQ-GAP', 'libretro/rpc_hd_store.c', 'sequence==*last+1&&', 'sequence>*last&&', a.hd, ('hd','qa-integrity')),
  ('Q11-PREFIX-DIGEST', 'libretro/rpc_hd_store.c', 'arc_sha256_final(&s->digest[parent],digest);if(memcmp(digest,h+160,32))return false;', '', a.hd, ('hd','qa-integrity')),
  ('Q12-CHUNK-GEN', 'libretro/rpc_hd_store.c', '||\n           (get(e,4)==1&&get(e+8,8)>get(m+88,8)))return false;', ')return false;', a.hd, ('hd','qa-integrity')),
@@ -165,6 +165,18 @@ mutants += [
  ('I08-RESET-GATE', 'engine/rpcemu/src/ide.c', 'if(!master()||(ide.control&4))return;', 'if(!master())return;', a.ide, ('ide',)),
  ('I09-WRITE-IRQ', 'engine/rpcemu/src/ide.c', 'ide.active=ide.writing=false;ide.status=READY;\n            }else{ide.position=0;ide.status=READY|DRQ;}', 'ide.active=ide.writing=false;ide.status=READY;return;\n            }else{ide.position=0;ide.status=READY|DRQ;}', a.ide, ('ide',)),
  ('I10-CHS-SECTOR0', 'engine/rpcemu/src/ide.c', 'if(!ide.sector||ide.sector>ide.spt||', 'if(ide.sector>ide.spt||', a.ide, ('ide',)),
+]
+# Split-boundary regressions, each linked into the real store component.
+mutants += [
+ ('M-SCRATCH',HD,'s->checkpoint','s->scratch',a.hd,('hd','steps')),
+ ('M-TEMP-VERIFY',HD,'if(!chunk_read(s,s->manifests[2],i,s->checkpoint,"chunk.tmp"))return false;','',a.hd,('hd','steps')),
+ ('M-FINAL-VERIFY',HD,'||!base_chunk_into(s,s->manifests[2],i,s->checkpoint)','',a.hd,('hd','steps')),
+ ('M-MANIFEST-VERIFY',HD,'ok=read_leaf(s,"manifest.tmp",s->record,MANIFEST_BYTES)&&!memcmp(s->record,s->manifests[2],MANIFEST_BYTES);','ok=true;',a.hd,('hd','steps')),
+ ('M-PUBLISH-VERIFY',HD,'ok=read_leaf(s,leaf,s->record,MANIFEST_BYTES)&&!memcmp(s->record,s->manifests[2],MANIFEST_BYTES);','copy(s,s->record,s->manifests[2],MANIFEST_BYTES);ok=true;',a.hd,('hd','steps')),
+ ('M-GC-TWO',HD,'removed<1','removed<2',a.hd,('hd','steps')),
+ ('M-LATE-S',HD,'s->parent=s->current;s->snapshot=s->sequence;copy(s,s->frozen,s->live,sizeof(s->live));','s->parent=s->current;s->snapshot=s->sequence-1;copy(s,s->frozen,s->live,sizeof(s->live));',a.hd,('hd','steps')),
+ ('M-WRITER-UNLOAD',HD,'if(s->rotation_writer){ArcIoFile *f=s->rotation_writer;s->rotation_writer=NULL;(void)close_file(s,f,true);}','',a.hd,('hd','steps')),
+ ('M-WRITER-FAILURE',HD,'if(s->rotation_writer){ArcIoFile *f=s->rotation_writer;s->rotation_writer=NULL;metadata(s);(void)arc_io_close_file(f);}','',a.hd,('hd','steps')),
 ]
 # Q19 is equivalent for representable media: raw has cylinders 0..79;
 # JFD has <=166 track sides. A physical C=255 is rejected before an ID

@@ -17,8 +17,9 @@ typedef struct {
         max_tick_bytes, max_tick_operations, journal_high, allocation_high,
         commands, checkpoints, sequence, generation, requested_bytes, hash_bytes,
         copied_bytes, open_bytes, open_operations, advisory_operations,
-        tick_hash_bytes, tick_copied_bytes, max_tick_hash_bytes, max_tick_copied_bytes;
-    unsigned chunk_files, max_chunk_files, materialized, state;
+        tick_hash_bytes, tick_copied_bytes, max_tick_hash_bytes, max_tick_copied_bytes, metadata_operations,
+        tick_metadata_operations, max_tick_metadata_operations;
+    unsigned chunk_files, max_chunk_files, materialized, state, phase_step;
     bool published, population, read_only;
 } ArcRpcHdStats;
 /* No creation on damage; create_blank only admits an empty/unpublished store. */

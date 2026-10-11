@@ -12,6 +12,7 @@ struct retro_vfs_file_handle {unsigned file;size_t at,cached_size;bool writable,
 struct retro_vfs_dir_handle {char path[1100];unsigned at,current;bool used;};
 static struct retro_vfs_file_handle handles[16];static struct retro_vfs_dir_handle directory;
 static bool silent_readdir,full_storage,case_folded;
+static uint64_t metadata_calls;
 static unsigned steps,fail_at,kill_at;static bool killed;static unsigned fault;
 static char directories[16][1100];static unsigned dir_count;
 static char baseline_directories[16][1100];static unsigned baseline_dir_count;
@@ -40,7 +41,8 @@ static int find(const char *p,bool create)
 {for(unsigned i=0;i<TEST_FILES;++i)if(files[i].present&&same_name(files[i].path,p))return (int)i;
  if(create)for(unsigned i=0;i<TEST_FILES;++i)if(!files[i].present){snprintf(files[i].path,sizeof(files[i].path),"%s",p);files[i].present=true;files[i].size=0;return (int)i;}return -1;}
 static bool before(unsigned kind)
-{++steps;if(kill_at&&steps==kill_at)killed=true;return !killed&&!(steps==fail_at&&(fault==0||fault==kind));}
+{if(kind==1||kind==2||(kind>=7&&kind<=11))++metadata_calls;
+ ++steps;if(kill_at&&steps==kill_at)killed=true;return !killed&&!(steps==fail_at&&(fault==0||fault==kind));}
 static struct retro_vfs_file_handle *test_open(const char *p,unsigned mode,unsigned hint)
 {(void)hint;if(!before(1))return NULL;bool write=(mode&2)!=0,update=(mode&4)!=0;int i=find(p,write&&!update);if(i<0)return NULL;
  if(write&&!update)files[i].size=0;measure_files();for(unsigned h=0;h<16;++h)if(!handles[h].used){handles[h]=(struct retro_vfs_file_handle){(unsigned)i,0,files[i].size,write,(mode&1)!=0||(write&&update),true};return handles+h;}assert(0);return NULL;}
@@ -81,5 +83,15 @@ static void restore(void)
 {dir_count=baseline_dir_count;memcpy(directories,baseline_directories,sizeof(directories));
  for(unsigned i=0;i<TEST_FILES;++i){free(files[i].data);files[i]=baseline[i];files[i].data=NULL;files[i].capacity=files[i].size;
  if(files[i].present&&files[i].size){files[i].data=malloc(files[i].size);assert(files[i].data);memcpy(files[i].data,baseline[i].data,files[i].size);}}reset_fault();}
+static void test_vfs_rotation_writer(void)
+{
+ unsigned count=0;
+ for(unsigned i=0;i<16;++i)if(handles[i].used){++count;assert(handles[i].writable&&!handles[i].readable&&handles[i].at==0&&handles[i].cached_size==0);
+  const char *leaf=strrchr(files[handles[i].file].path,'/')+1;
+  assert((!strcmp(leaf,"journal.a")||!strcmp(leaf,"journal.b"))&&files[handles[i].file].size==0);}
+ assert(count==1&&!directory.used);
+}
+#define rpc_hd_test_rotation_writer test_vfs_rotation_writer
+#define rpc_hd_test_metadata_calls() metadata_calls
 #define rpc_hd_test_no_open_handles test_vfs_no_open_handles
 #include "rpc_hd_handle_checks.h"
