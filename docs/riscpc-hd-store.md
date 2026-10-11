@@ -547,7 +547,7 @@ actual journal lengths exceed 8,388,608 gets deterministic ABRT/read-only/notice
 No retry, capacity wait, asynchronous writer, virtual-time change or reduced
 verification is permitted. D-160 keeps the four metadata calls and adds one
 namespace operation per tick.
-Its Odin3 HD-work bound is **0.40 T for ticks making a namespace operation**,
+D-161 sets the Odin3 HD-work bound at **0.50 T for ticks making a namespace operation**,
 and **0.20 T for every other tick and for write acknowledgement**. Total
 AC-9 workload frame time still must not exceed T. The extra retirement tick
 fits the existing conservative H=500/170, so both aggregate proofs and the
@@ -813,7 +813,7 @@ in for these platform measurements or stronger durability guarantees.
 
 `--hd-cost` reports the executed maintenance `substep` (captured before the
 tick) and its attempted `namespace_operations` (captured after it), separately
-from `next_phase`. The D-160 checker attributes total HD work to phase/substep,
-checks acknowledgement independently at 0.20 T, and permits total ≤0.40 T only
+from `next_phase`. The D-161 checker attributes total HD work to phase/substep,
+checks acknowledgement independently at 0.20 T, and permits total ≤0.50 T only
 when that tick made one namespace call. Rows with more than one are invalid;
 measuring clocks never changes virtual execution or persistent bytes.

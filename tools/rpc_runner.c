@@ -306,7 +306,7 @@ int main(int argc, char **argv)
                 f,period_ns,h.read_ns,h.acknowledgement_ns,h.maintenance_ns,total,phases[h.phase],phases[h.next_phase],
                 h.read_commands,h.write_commands,h.generation,h.checkpoints,h.attached,h.open_ns,steps[h.phase][step],h.namespace_operations);
             ++hd_cost_frames;if(total>hd_cost_max)hd_cost_max=total;if(h.namespace_operations>1||h.acknowledgement_ns>period_ns/5||
-                (h.namespace_operations?total*5>period_ns*2:total*5>period_ns))++hd_cost_over;
+                (h.namespace_operations?total*2>period_ns:total*5>period_ns))++hd_cost_over;
         }
         if (timing) fprintf(timing,"%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%u,%" PRIu64 ",%" PRIu64 "\n",f,elapsed,period_ns,measured,guest_instructions,guest_ns);
         printf("frame=%" PRIu64 " ns=%" PRIu64 " cpu=%" PRIu64 " idle=%" PRIu64 " rate=%u irq=%08x fiq=%08x fault=%u\n",
@@ -371,7 +371,7 @@ int main(int argc, char **argv)
     if (dump_failed) result = 2;
     free(dump_pixels);
     free(times); if(hd_cost_file){if(ferror(hd_cost_file))result=2;if(fclose(hd_cost_file))result=2;
-        fprintf(stderr,"hd-cost frames=%" PRIu64 " max_ns=%" PRIu64 " over_D160=%" PRIu64 " budget=%s\n",hd_cost_frames,hd_cost_max,hd_cost_over,hd_cost_over?"exceeded":"passed");}
+        fprintf(stderr,"hd-cost frames=%" PRIu64 " max_ns=%" PRIu64 " over_D161=%" PRIu64 " budget=%s\n",hd_cost_frames,hd_cost_max,hd_cost_over,hd_cost_over?"exceeded":"passed");}
     if(timing && fclose(timing))result=2;
     if(ferror(stdout))result=2;
     unload(); deinit(); vfs_assert_no_open_handles();

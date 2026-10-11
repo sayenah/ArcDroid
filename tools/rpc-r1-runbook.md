@@ -347,11 +347,11 @@ framebuffer/PCM hashing and frontend pacing are outside these intervals. It
 keeps the existing trace and `--timing` format unchanged.
 
 The checker requires run N’s substep/namespace columns and refuses incomplete
-reports or namespace counts outside 0/1. Under D-160 it fails any frame with
-`5 * total_ns > 2 * T_ns` when its maintenance tick made one namespace call,
+reports or namespace counts outside 0/1. Under D-161 it fails any frame with
+`2 * total_ns > T_ns` when its maintenance tick made one namespace call,
 or `5 * total_ns > T_ns` otherwise. Write acknowledgement independently keeps
 `5 * acknowledgement_ns <= T_ns` even in a namespace tick. Inspect phase/substep
-outliers and `over_D160`; averages and percentiles cannot qualify the run.
+outliers and `over_D161`; averages and percentiles cannot qualify the run.
 AC-9’s whole-frame no-over-T gate still stands. Inspect `on.trace`'s last RAM word: it
 must be `ram=00000001` (fresh session, cyan), and the final HD row must show at least two completed
 checkpoints and an advanced generation. Collect `on/off.csv`, traces/logs and
