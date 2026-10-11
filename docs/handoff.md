@@ -1,8 +1,23 @@
 # ArcDroid Handoff
 
-**Stage:** IMPLEMENTATION — roadmap item 6, RiscPC **R2c**, run P (test-only remediation of Opus QA 3 LOWs)
-**Owner:** Sol (run P), supervised by Fable
-**Next:** Fable supervises Sol run P (test-only; no change to the plan core, the store or the checker logic), reviews it, commits it verbatim on `slice/r2c-ide`, and pushes. Then Fable asks the same Opus QA agent to re-check, or a fresh `arcdroid-opus-qa` agent in a fresh clone if the original is gone. If the re-check passes, Fable confirms green CI on all jobs at the head and merges PR #337 under protocol §12.11. After the merge, the Q-3 oracle fix (D-146) comes before R3.
+**Stage:** IMPLEMENTATION — roadmap item 6, RiscPC **R2c**, run Q (sanitizer CI timeouts; test and CI infrastructure only)
+**Owner:** Sol (run Q), supervised by Fable
+**Next:** Fable supervises Sol run Q, reviews it, commits it verbatim on `slice/r2c-ide`, and pushes. The QA agent re-checks the run Q delta. When CI is green on all five jobs at the head, Fable merges PR #337 under protocol §12.11. After the merge, the Q-3 oracle fix (D-146) comes before R3.
+
+**Opus QA re-check of run P (effort 15): PASS.** Every QA 3 survivor is killed by the regular tests (22/22 store, 7/7 checker mutants); S8's equivalence holds; no protected path changed.
+
+**CI at `18bb756` (run 38132825671):** windows, windows-retroarch, host and android-arm64 passed. **host-sanitizers failed on two timeouts, with no assertion or sanitizer report:**
+- `rpc-qa-mutations` hit CTest's 600 s limit. It took 124 s at `f51cd68`; run P added 30 recipes, and every reported mutant was killed.
+- `rpc-hd-store-bounds` hit `tests/rpc_hd_bounds_test.py`'s 3,000 s subprocess limit during the scatter stream, after finishing the 512 MiB sequential stream (2,257 s CPU). It took 2,749 s at `f51cd68` (8 % headroom). Run P did not touch the bounds stream.
+- The sanitizer job grew from 3 h 23 min to 4 h 17 min.
+
+**Run Q work order** (test and CI infrastructure only; the same clone, resuming the same thread):
+1. `rpc-qa-mutations` must fit with at least 50 % headroom wherever it runs. Mutation kills do not need sanitizer builds, so excluding it from the `host-sanitizers` selection while keeping it in `host` is acceptable; otherwise raise its timeout with a measured reason.
+2. `rpc-hd-store-bounds`: the host job keeps AC-5's full volumes (≥512 MiB sequential, ≥64 MiB scattered, without reopen; about 209 s today). The sanitizer job must still exercise every stream path, including the burst, the cycle limits and fresh-process recovery, with at least 50 % headroom against both the Python and the CTest limit. A reduced sanitizer volume is acceptable if it still crosses several checkpoint cycles of each stream and reaches the cap-relevant high-water marks; say what it covers.
+3. Target a `host-sanitizers` job of at most about 3.5 h.
+4. **Do not change** `libretro/`, `engine/`, `core/`, `tests/arc_test_plan.*`, the store tests' assertions or the checker logic. Run the affected tests in both host and sanitizer builds and report their timings. Do not commit or push. Write `SOL-REPORT-R2C-Q.md`.
+
+**Run P outcome (S61):** committed verbatim as `18bb756` (tests only: `tests/rpc_hd_store_test.c`, `tests/rpc_hd_cost_test.py`, `tests/rpc_qa_mutations.py`, and one CMake line passing the runner and plan core to `rpc-qa-mutations`). Host 353/353; sanitizer HD tests 16/16. The mutation suite has 117 recipes: 116 killed, and S8 is equivalent under the validated-generation invariant. CI at `f51cd68` was green on all five jobs (run 38117044989).
 
 **Opus QA 3 (effort 15) at `f51cd68`: PASS WITH LOWS, no defects.** Fable's adjudication is in `.work/s61/qa/adjudication-3.md` (QA clone `.work/s61/qa/clone`, scratch under `build/qa3/`).
 - Host 352/352. Sanitizer subset 76/77 (the one timeout passed alone).
@@ -347,7 +362,7 @@ Slice order (D-133): R1–R4 → item 5 release baseline → item 6b faster CPU 
 **S61 (Claude Opus 5.5 effort 15; baton by relay from `arcdroid-db`).**
 - Adopted Sol run J, which had already died: the Codex service refused its last turn. Reviewed it and committed it as `d18f08e`.
 - CI located the Windows crash (D-155). The Odin3 legs failed D-152 on FUSE storage (D-156). Recorded the SMLAL ruling (D-157) and dispatched Sol run K.
-- **Running:** Sol run P and its watchdog (PIDs in `.work/s61/LEDGER.md`). Opus QA 3 finished (PASS WITH LOWS).
+- **Running:** Sol run Q and its watchdog (PIDs in `.work/s61/LEDGER.md`). The QA re-check of run P passed.
 - **Odin3 state:** RetroArch closed. Under `/data/local/tmp/arcdroid-r2c/s61/` are the run J arm64 core, runner, probe runner (`rpc_runner_nofsync`), scripts and results. FUSE save directories are under `/storage/emulated/0/arcdroid-s61/`; delete them after R2c.
 
 **Answered S60:** SSH to the Founder's Windows box (`sinmu@192.168.1.66`) is allowed for the item 6b Windows profile (D-148). It may also serve R2c AC-9's Windows native-RetroArch leg.
