@@ -1,275 +1,43 @@
 # ArcDroid Handoff
 
-**Stage:** QA — roadmap item 6, RiscPC **R2c** (PR #337, head `83cbf7e`), re-check of run Q (sanitizer CI headroom; test infrastructure only)
-**Owner:** Opus (QA re-check), dispatched by Fable
-**Next:** the same Opus QA agent re-checks `18bb756..83cbf7e` (run Q): the sanitizer bounds profile still covers every stream path (wrap, at least four checkpoints per stream, the 2 MiB burst, the full-volume journal high-water marks, fresh-process recovery); the host job keeps AC-5's full volumes; mutation testing stays in the host and Windows builds; no store assertion and no protected path changed. Then, when CI is green on all five jobs at `83cbf7e`, Fable merges PR #337 under protocol §12.11. After the merge, the Q-3 oracle fix (D-146) comes before R3.
-
-**Run Q outcome (S61):** committed verbatim as `83cbf7e` (`CMakeLists.txt`, `tests/rpc_hd_bounds_test.py`, `tests/rpc_hd_store_test.c`). Local timings: host mutations 138 s (limit 600); host full bounds 165 s; sanitizer bounds profile 73 s (limit 3,000/3,600). Projected sanitizer job about 3 h 18 min.
-
-**Opus QA re-check of run P (effort 15): PASS.** Every QA 3 survivor is killed by the regular tests (22/22 store, 7/7 checker mutants); S8's equivalence holds; no protected path changed.
-
-**CI at `18bb756` (run 38132825671):** windows, windows-retroarch, host and android-arm64 passed. **host-sanitizers failed on two timeouts, with no assertion or sanitizer report:**
-- `rpc-qa-mutations` hit CTest's 600 s limit. It took 124 s at `f51cd68`; run P added 30 recipes, and every reported mutant was killed.
-- `rpc-hd-store-bounds` hit `tests/rpc_hd_bounds_test.py`'s 3,000 s subprocess limit during the scatter stream, after finishing the 512 MiB sequential stream (2,257 s CPU). It took 2,749 s at `f51cd68` (8 % headroom). Run P did not touch the bounds stream.
-- The sanitizer job grew from 3 h 23 min to 4 h 17 min.
-
-**Run Q work order** (test and CI infrastructure only; the same clone, resuming the same thread):
-1. `rpc-qa-mutations` must fit with at least 50 % headroom wherever it runs. Mutation kills do not need sanitizer builds, so excluding it from the `host-sanitizers` selection while keeping it in `host` is acceptable; otherwise raise its timeout with a measured reason.
-2. `rpc-hd-store-bounds`: the host job keeps AC-5's full volumes (≥512 MiB sequential, ≥64 MiB scattered, without reopen; about 209 s today). The sanitizer job must still exercise every stream path, including the burst, the cycle limits and fresh-process recovery, with at least 50 % headroom against both the Python and the CTest limit. A reduced sanitizer volume is acceptable if it still crosses several checkpoint cycles of each stream and reaches the cap-relevant high-water marks; say what it covers.
-3. Target a `host-sanitizers` job of at most about 3.5 h.
-4. **Do not change** `libretro/`, `engine/`, `core/`, `tests/arc_test_plan.*`, the store tests' assertions or the checker logic. Run the affected tests in both host and sanitizer builds and report their timings. Do not commit or push. Write `SOL-REPORT-R2C-Q.md`.
-
-**Run P outcome (S61):** committed verbatim as `18bb756` (tests only: `tests/rpc_hd_store_test.c`, `tests/rpc_hd_cost_test.py`, `tests/rpc_qa_mutations.py`, and one CMake line passing the runner and plan core to `rpc-qa-mutations`). Host 353/353; sanitizer HD tests 16/16. The mutation suite has 117 recipes: 116 killed, and S8 is equivalent under the validated-generation invariant. CI at `f51cd68` was green on all five jobs (run 38117044989).
-
-**Opus QA 3 (effort 15) at `f51cd68`: PASS WITH LOWS, no defects.** Fable's adjudication is in `.work/s61/qa/adjudication-3.md` (QA clone `.work/s61/qa/clone`, scratch under `build/qa3/`).
-- Host 352/352. Sanitizer subset 76/77 (the one timeout passed alone).
-- The import guard and MinGW build pass.
-- The D-161 checker gives `over_D161=0` on the Odin3 CSVs.
-- D-155 is verified statically across all 8 boundaries, and D-157 by hand calculation and UBSan.
-- The §8 arithmetic re-derived; the late S binding, the private buffer and the counted budgets are enforced.
-- Accepted without remediation: the D-155 fail-before gap (fault reproduced twice at the CPU boundary; one shared header), and the import guard not tying patches to content (pre-existing D-137 design; follow-up Low).
-
-**Run P work order** (test-only; the same clone, resuming the same thread; QA's mutants and probe are in `.evidence/qa3/`):
-1. A multi-leaf abort-GC test that kills mutant S4 (abort GC must remove at most one leaf per tick).
-2. Store tests that kill S11 (switch header readback), S17 (the switch's 256-byte cap check, at the cap edge), S14, S18 and S19 (RETIRE length, binding and header comparisons), S15 (the prepare destination-absence probe), S20 (zero-alternative removal) and S21 (materialize from the live index, in the regular store tests and not only the bounds stream). If S8 (the destination reference check) is unreachable, document it as equivalent with the reason.
-3. Add every mutant to `tests/rpc_qa_mutations.py`, killed.
-4. `tests/rpc_hd_cost_test.py` cases that kill checker mutants C3 (namespace call in a read-only substep) and C6 (unknown substep) separately.
-5. **Do not change** `libretro/`, `engine/`, `core/`, `tests/arc_test_plan.*` or the checker logic. Run the full host suite and the sanitizer store tests. Do not commit or push. Write `SOL-REPORT-R2C-P.md`.
-1. **Windows evidence for run K: done (S61).** On part (a) `08e3df7` (CI 38089532777), `windows` failed in the 50× repeat step with the same crash. The new regressions sit later in the job and were not reached. On part (b) at `7521f1a` (CI 38090184344), **all five jobs are green**: `windows` passed 210/210, including `rpc-cpu-smlal` and the three 1,000× jump-repeat regressions, with 100/100 repeats. `windows-retroarch` passed `rpc-hd-session-1/2/3` for the first time ("force termination, reload gen1, write gen2, QUIT, reload gen2 … full IDENTIFY/data comparisons PASS"). This closes QA 2's condition and H1.
-2. **Run O: done (S61).** Committed verbatim as `f51cd68` (the checker, runner summary, cost test, runbook and contract text apply D-161; the plan core and store are unchanged; host 353/353). CI on `f51cd68` must be green on all jobs before merge. Run N's CI (`2d2b00c`) passed windows, windows-retroarch (`rpc-hd-session-1/2/3`), host and android-arm64.
-3. **Odin3 legs on the run N core (`2d2b00c`): done (S61), with saves on `/storage/emulated/0` and `--vfs-flush retroarch`.** The D-161 checker gives `over_D161=0` for all four device runs (authored ×3 and the clean 031). `rep20.sh` on the run N core: 20 sessions, 0 errors, 0 forced stops, peak PSS 174–181 MB.
-   - `hash_accel_test --require-arm` passed.
-   - Authored guest ×3: 0 frames over D-160. Worst namespace tick about 6.5 ms; acknowledgement ≤0.73 ms.
-   - 031 install, first run: invalidated by an external event. Android's scheduled full backup restarted MediaProvider (the FUSE daemon) at 00:06:25. One ROTATE/prepare tick stalled 56.8 s, then the store latched read-only with its notice: the designed safe failure, with earlier writes kept.
-   - 031 install, clean re-run (`i031b`): 2 ticks over 0.40 T (MATERIALIZE/write, 7.23 and 6.93 ms). Every tick passes D-161's 0.50 T; acknowledgement ≤1.15 ms.
-   - Native RetroArch, three sessions, plan core installed through the menu: session 1 cyan, then force-stopped; session 2 blue, then QUIT; session 3 green, verify-only. 0 errors, no store notices, peak PSS 178–180 MB.
-   - Evidence in `.work/s61/odin/resn/` and `n-s*.png`; device `/data/local/tmp/arcdroid-r2c/s61n/`.
-4. **QA focus (the delta `5630d83..f51cd68`, runs I–O):**
-   - **D-155:** every Windows x64 `setjmp`/`longjmp` boundary uses the non-SEH form (`engine/arc_fault_jump.h`); other platforms are unchanged; the repeat regressions; the test-only crash locator never swallows a fault and is absent from shipping cores.
-   - **D-157:** SMLAL/SMLALS correctness, the imported-source patch record and the import guard.
-   - **D-156/D-158/D-159/D-160/D-161 store split:** recovery at every new substep boundary (kill, fault and intervening guest writes); late S binding at the ROTATE switch; the private checkpoint buffer; the GC and RETIRE splits; the four-call and one-namespace-operation assertions; the 6N+16 cycle and the D-159 stream proofs in `docs/riscpc-hd-store.md` §8; AC-5's volumes without reopen; no weakened verification; write acknowledgement and virtual timing unchanged.
-   - **Tools:** the runner `--vfs-flush` modes, the `--hd-cost` substep columns and `check-rpc-hd-cost.py` against D-161.
-   - **QA 2 LOWs** remediated in run I.
-   - Evidence: the Sol reports `SOL-REPORT-R2C-{I..O}.md` (in Fable's clone, not the repository) and the S61 Odin3 and CI results summarised above.
+**Stage:** IMPLEMENTATION — roadmap item 6, RiscPC: the **Q-3 oracle correction** (D-146), on branch `slice/q3-memo` from `main` `0e71237`
+**Owner:** Sol (Q-3), supervised by Fable. In parallel, Fable runs **AC-10**, the end-of-R2 speed gate.
+**Next:**
+1. **Supervise the Sol Q-3 run** (work order below). Review it, commit it verbatim on `slice/q3-memo`, open a PR, and require green CI on all five jobs. Then Opus QA (`arcdroid-opus-qa`, effort 15, fresh clone), then merge under protocol §12.11.
+2. **AC-10 (Fable, independent of Q-3).** On the Odin3 at 100 MIPS, measure guest progress and frame rate of the trial's 031 and 110 gameplay workloads against the trial's record (031 ≈ 27 fps).
+   - Guest timing is virtual and host-independent, so the guest frame rate can be measured from runner frame dumps on any host. The Odin3 shows whether the host keeps real time.
+   - The trial's gameplay scripts were lost. S60 rebuilt a 031 cold start to racing gameplay (`.work/s60/ac8/leg4-031-c-cold`, frames 6400–7400; store `l4-031`). 110 runs from floppy on the common standard boot disc (trial-d).
+   - A drop of more than 10 %, or a visible or audible regression, goes to the Founder before R3.
+3. **Then R3** (firmware, Auto machine selection and launch), after Q-3 merges and AC-10 passes or the Founder rules. It must carry the R2 items listed below.
 
 - **Running:** see the S61 entry under Waiting on the Founder.
-- **Private work:** S60's is in `.work/s60/` (index `LEDGER.md`); S61's is in `.work/s61/` (index `LEDGER.md`), including the device scripts and results (`odin/`), the CI diagnostics (`ci-diag-1/`) and run K's partition patches (`k/`). Sol's clone holds a stash `runK-backup` with run K's original working tree; drop it after R2c merges.
-- **Codex refusal (S61):** run J's last turn was refused by the Codex service as "possible cybersecurity risk" (its crash-locator subject matter). The run had already written its code and report; only its local full-suite runs were lost, and CI covered them. Word Sol prompts about fault handling neutrally ("fault path", "non-local jump").
+- **Private work:** S60's is in `.work/s60/` (index `LEDGER.md`); S61's is in `.work/s61/` (index `LEDGER.md`). Sol's R2c clone `.work/s60/sol2c/clone` is finished; its `runK-backup` stash can be dropped.
+- **Codex refusal (S61):** the Codex service once refused a turn about crash-locator code as "possible cybersecurity risk". Word Sol prompts about fault handling neutrally.
 
-**Run J outcome (S61):** committed verbatim as `d18f08e` (test-only and CI). The static audit found no address-size, initialisation, alignment, stack or allocation-address hazard. It found the SMLAL undefined behaviour (D-157). CI run 38080624445 at `d18f08e`: android-arm64 passed. On `windows`, the locator oracles passed. In the 50× repeat step, `rpc-cpu-mmu-memory` and `rpc-cpu-trace` each crashed once with the same stack. **Located (D-155):** UCRT's unwinding `longjmp` from the test's `fatal()` (after the injected allocation failure at `engine/rpcemu/src/mem.c:103`) back to `setjmp` at `tests/rpc_cpu_test.c:359` faults in `ntdll` just past the top of the stack. The executables, logs and `addr2line` mapping are in `.work/s61/ci-diag-1/`.
-
-**Odin3 on the run J core (S61; D-156):** `hash_accel_test --require-arm` passed (`auto_SHA=arm-sha2`, all arm64 paths identical).
-
-| Leg (saves on) | Runner flush | Authored guest ×3: frames over 0.20 T (worst) | 031 install: frames over (worst) |
-|---|---|---|---|
-| `/data/local/tmp` | `fsync` | 0, 0, 0 (2.94 ms) | — |
-| FUSE | `fsync` | 11, 10, 10 (7.6 ms) | 78 (10.8 ms) |
-| FUSE | `fflush` only, as RetroArch (probe) | 5, 5, 5 (7.4 ms) | 33 (12.2 ms; MATERIALIZE 27, GC 3) |
-
-Write acknowledgement passes with faithful flush (worst 1.03 ms). Maintenance fails: about 0.6 ms per FUSE metadata call. RetroArch was not running. The 031 install reached frame 14,000 in every leg.
-
-**Run K outcome (S61):** Sol ran a fresh thread (`01a12775-70af-7701-a339-42a1f790a269`) with report `SOL-REPORT-R2C-K.md`. Local results: host 352/352, sanitizer 347/347, the direct sanitizer harness, cross builds, all guards, and 14 store mutants killed.
-- **D-155:** `engine/arc_fault_jump.h` selects MinGW-w64's `__USE_MINGW_SETJMP_NON_SEH` form, `_setjmp(buf, NULL)`, on Windows x86-64 only. It covers every boundary: Arculator backend, RPC session, and the CPU and CMOS tests. The 1,000× repeat regressions cover CPU, CMOS, RPC session and Arculator. The intermittency mechanism inside UCRT is not proven; the fix removes the SEH unwind traversal.
-- **D-157:** SMLAL/SMLALS use unsigned accumulation (imported patch `cpu-smlal-modulo`). `rpc-cpu-smlal` runs 12 interpreter executions; each defect, restored alone, aborts under UBSan.
-- **D-156 runner:** `--vfs-flush retroarch|fsync` (`fsync` stays the default). It has flush-visibility readback tests and a runbook entry.
-- **The maintenance split was returned correctly.** A budget of 4 calls conflicts with §8's 128 KiB/frame stream (census: MATERIALIZE up to 19 calls, GC up to 33, and 15 for a fully verified nonzero chunk). Splitting ROTATE naively would break the frozen-prefix binding. Fable ruled in **D-158**.
-- **Commits:** part (a) `08e3df7` (regressions only); part (b) `0d1522f` (fix, SMLAL, runner modes; verified byte-for-byte against Sol's tree). Both are pushed (head `7521f1a`).
-
-**Run L outcome (S61):** a correct stop under D-158(2), with no code change (`SOL-REPORT-R2C-L.md`). The floor of 40 commands/frame with all 504 chunks dirty needs at least 378 ticks of chunk writes, and the 8 MiB cap allows 300. Fable corrected the floor from measured installer behaviour in **D-159**.
-
-**Run M outcome (S61):** implemented and committed verbatim as `bedfe61` (`SOL-REPORT-R2C-M.md`).
-- At most 4 metadata calls per tick, asserted by the test VFS. ROTATE prepares an empty writer and binds S only at the switch. Mutation is separate from full fresh readback. GC removes one leaf per tick. The cycle bound is 6N+15 ticks. No format change.
-- D-159 streams: scattered 4,864 and sequential 16,480 journal B/frame, plus one 2 MiB burst. Aggregate bounds are 6.96 MB and 7.70 MB, against the unchanged 8 MiB cap. AC-5 ran 512 MiB sequential and 64 MiB scattered without reopen, with fresh-process comparison.
-- Local results: host 353/353, sanitizer 348/348, 86 mutants killed (9 new), 6,524 termination cuts.
-- **Odin3 (FUSE, RetroArch flush): still over 0.20 T.** Authored guest 6, 5 and 5 frames over; 031 install 30 over (worst MATERIALIZE 9.1 ms). Acknowledgement ≤1.24 ms.
-- **Cause, from a per-operation probe:** a single create, rename or unlink costs up to 3–4 ms on shared storage. Fable ruled in **D-160**.
-
-**Run N outcome (S61):** committed verbatim as `2d2b00c` (`SOL-REPORT-R2C-N.md`). RETIRE's two removes were split, so every maintenance tick makes at most one namespace operation, asserted by the test VFS. The cycle bound is 6N+16; the D-159 proofs are unchanged. `--hd-cost` gains `substep` and `namespace_operations`, and the checker applies D-160. Local results: host 353/353, sanitizer 348/348, 87 mutants killed. Odin3: see Next item 3. Fable corrected the namespace-tick bound to 0.50 T in **D-161**.
-
-**Run O work order** (D-161; the same clone, resuming the same thread):
-1. `tools/check-rpc-hd-cost.py` and the runner's summary apply D-161: ≤0.50 T in ticks with one namespace operation, ≤0.20 T otherwise and for acknowledgement. Rename the summary field so it names D-161.
-2. Update `tests/rpc_hd_cost_test.py` (exact-threshold and threshold+1 ns cases at 0.50 T), the runbook, and `docs/riscpc-hd-store.md` §8 and §12 to cite D-161.
-3. **Do not change the plan core or the store** (`libretro/`, `engine/`, `core/`, `tests/arc_test_plan.*`): the Odin3 evidence on the `2d2b00c` core must stay valid.
-4. Run the affected tests plus the full host suite. Do not commit or push. Write `SOL-REPORT-R2C-O.md`.
-
-**Opus QA 2 (re-check, effort 15) at `5630d83`: PASS WITH LOWS.** The condition is that CI's native Windows RetroArch hard-disc leg must run and pass. CI run 38069603020 flaked in an earlier Archimedes leg (`zip-name-disc1-1`), and a re-run is requested.
-- **Closed:** M1, every QA 1 test gap and H1's diagnosis.
-- **M1 numbers:** the worst MATERIALIZE tick dropped from 2,583 to 1,561 VFS operations (bound 1,600), and an adjacent-record miss from 32.5 ms to 0.24 ms.
-- **LOWs:** adjudicated in `.work/s60/qa/adjudication-1.md` (QA 2 section).
-
-**Run I work order:**
-1. The test VFSs assert that no handle is open at store close and after any failure. This covers the surviving close-on-failed-reconstruction mutant.
-2. Crash locator:
-   - label first-chance exceptions;
-   - keep it active through the persistence work in unload and deinit, removing it last.
-3. Narrow CI's Windows `-g` to the plan core target only. The shipping DLL build returns to plain Release.
-4. `Enable-RpcHdCrashDumps` warns, rather than failing, when HKLM is not writable.
-5. Fixture generation runs Python with `-B`; no `__pycache__` in the source tree.
-6. Add a runbook note: RetroArch 1.22.2 `GET_STATUS` crashes for any core loaded without a matching `.info` (`command.c` copies `system_id` unchecked).
-
-Re-run what each item touches, plus the host suite.
-
-**Since QA 1 (`c0e3dd4`):**
-
-| Commit | Run | Content |
-|---|---|---|
-| `8103d9c` | F | test-only Windows crash capture (WER LocalDumps and `cdb`; produced no dump) |
-| `6d73e6b` | G | QA 1 remediation: M1 single journal open per reconstruction, all eight survivors killed, the LOW items; Windows-only vectored exception locator in the plan core |
-| `5630d83` | H | test-only: the plan `.info` declares `systemid`; a core metadata guard |
-
-Fable's adjudication of QA 1 is in `.work/s60/qa/adjudication-1.md`, reproduced in the QA clone's `.evidence/`.
-
-**Re-check focus:**
-1. Every QA 1 finding against its disposition, with mutants re-run.
-2. The M1 change (journal handle reuse, the position cursor, failure paths) and its per-tick accounting.
-3. The crash locator: test-only, Windows-only, never swallowing an exception, absent from the shipping core.
-4. The H1 diagnosis and the run H fix: does the guard cover every field RetroArch 1.22.2 dereferences from a core `.info`?
-
-**H1 located (Fable, S60) with run G's crash locator** (CI run 38065741237 at `6d73e6b`). The fault is RetroArch's `strlcpy` reading NULL (`retroarch.exe+0x1af761`), called from its network-command `GET_STATUS` handler (`retroarch.exe+0x1c4e3`). The surrounding strings are "GET_STATUS ", "PLAYING" and " ". RetroArch processes network commands inside the core's `input_poll`; the core frames are `arc_poll_osk_controls` ← `arc_poll_inputs` ← `arc_rpc_present_run`.
-- RetroArch 1.22.2's `command_get_status` (`command.c` at `69a4f0e`) copies `core_info->system_id` with no NULL check.
-- `tests/arcdroid_rpcplan_libretro.info` has no `systemid`. The shipping `arcdroid_libretro.info` has `systemid = "archimedes"`.
-- The Windows leg sends `GET_STATUS` while it waits for the command port, so the crash is not in the hard disc or the store.
-- The Odin3 native leg never sent `GET_STATUS`, which is why it passed.
-- The optional `network-reload` probe's forensics in the same run is the known fallback (RetroArch 1.22.2 does not recognise `LOAD_CONTENT`), not a failure.
-
-**Run H work order (test-only):**
-1. Add a `systemid` to `tests/arcdroid_rpcplan_libretro.info` (for example `"riscpc"`). Check what RetroArch requires of a core `.info` for its status and menu paths in 1.22.2, and fill every field those paths dereference.
-2. Add a guard test that every core `.info` the repository builds, shipping and test alike, declares those fields. It must fail on the current plan `.info`.
-3. Keep run G's crash locator; it stays test-only.
-4. Re-run the affected tests.
-
-**Opus QA 1 (effort 15) at `c0e3dd4`: FAIL.**
-- **H1:** the native Windows RetroArch crash.
-- **M1:** reconstruction reopens the journal once per overlapping record, a D-152 risk for installer write patterns.
-- **LOW:** test gaps.
-
-Fable's per-finding adjudication is in `.work/s60/qa/adjudication-1.md`; every substantive finding was accepted.
-
-**The Windows crash still has no location.** Run F's WER LocalDumps capture produced no dump (CI run 38054933321: "No WER dump appeared"). This suggests the access violation is handled in-process before WER sees it.
-
-**Run G work order:**
-1. **Crash locator (test-only, Windows, plan core only).** A vectored exception handler installed while the plan core is loaded and removed on unload. On an access violation or other fatal exception it logs, through the core's log callback and a flushed file in the save directory:
-   - the exception code and access address;
-   - the faulting module, as a module-relative offset;
-   - a bounded stack walk with module-relative offsets.
-
-   It must never swallow the exception. The Windows leg uploads that file. The shipping core does not contain it.
-2. **M1:** one journal open per reconstruction and per read miss, reading the overlapping records in offset order from one confirmed position. Add a regression with 512 single-sector records in one chunk that bounds the VFS operations per tick and per read miss. Report the new worst-case per-tick operation count against the contract's bounds, and update `docs/riscpc-hd-store.md` if the accounting changes.
-3. **QA LOW test gaps**, all as tests:
-   - Q04: a CRC-valid chunk with the wrong SHA-256 is refused on a miss;
-   - Q05: a CRC-valid journal sequence gap is corruption;
-   - Q11: the parent-prefix digest;
-   - Q12: chunk generation ≤ manifest generation;
-   - Q16: leftovers from an interrupted population or creation are gone after reopen;
-   - IDE I08 (register writes during a held reset), I09 (the write-completion IRQ) and I10 (CHS sector 0 beyond cylinder 0, head 0);
-   - a non-zero `hd_import` round trip;
-   - an x86 `--require-x86` identity mode, with CI printing the capability line.
-4. **Smaller items:**
-   - the cost report also counts store open and blank creation inside `retro_run`;
-   - the Windows result wording says "plan disk-control callbacks";
-   - test VFSs refuse reads on write-only handles;
-   - GC respects the per-tick budget after a population abort;
-   - `libretro-harness` gets a reasoned timeout increase.
-5. **Re-run** everything as before.
-
-**R2c implementation record (all Sol runs committed verbatim by Fable):**
-
-| Commit | Run | Content |
-|---|---|---|
-| `b4bc633` | A | the store contract `docs/riscpc-hd-store.md`; QA N1 |
-| `342e010` | B (rebuilt in B4 after the reboot) | items 9–12: the store, the IDE import and its patch, the formatter, plan v2 hard-disc fields and `hd_import` |
-| `a0830b9` | C | test-only native-RetroArch hard-disc leg: authored guest, Windows CI leg, CTest |
-| `30376e0` | D | R2c-2 (D-150/D-151): correct on RetroArch's real VFS; faithful test VFSs; audit |
-| `6882283` | E | R2c-3 (D-152): hardware SHA-256/CRC-32 with identical results; per-frame hard-disc cost report |
-| `c0e3dd4` | E2 | test-only: the Windows leg's fixture directories |
-
-**Fable evidence (S60):**
-- **Review:** PASS at runs B, D and E. Scope is clean; the shared `arc_io`, CRC and formatter keep identical results.
-- **AC-6 at `1ef7dc4`:** PASS, 42 of 44 identical with 105 and 205 as known variance. It is being re-run at `c0e3dd4`.
-- **AC-8:** PASS on the run B and run D builds:
-  - HD persistence on 3.71, 3.60 and 3.50;
-  - 031, 074 and 084 installed from floppies onto the imported boot disc and cold-started;
-  - the catalogue-before-install replay;
-  - cold starts from the trial's own images.
-- **AC-9:**
-  - **Odin3, run D core, native RetroArch:** the three-session leg (kill, quit, floppy swap) passed; 20 sessions passed at 173–179 MB PSS with 0 errors; store open takes about 9 ms.
-  - **Odin3, run E:** arm64 hash identity passed; the authored guest's worst hard-disc frame was 2.86–3.05 ms (bound 3.33 ms) over three runs.
-  - **SHA-NI:** identity passed on the Founder's 7800X3D.
-  - **Still owed on the device (D-153):** the 031 install with `--hd-cost`, plus repeats of the native legs on the final core.
-- **Carried to R3:** the false "flagged for RiscPC-class machines … not emulated" notice appears on RPC plan launches. Also: the plan cannot seed CMOS together with `cmos=persist` (installs configure CMOS in the guest); drive 1 refuses `.jfd` (raw helper media only, by design); RISC OS 3.50 on ARM610 shows about 18 s of blank screen before the desktop (with or without the hard disc).
-
-**QA focus:**
-1. The store against `docs/riscpc-hd-store.md`, D-145, D-147, D-150 and D-151: acknowledgement order, recovery, retirement and GC without listings, debris by fixed paths, population and import, bounds.
-2. The RetroArch-faithful test VFSs: do they truly model RetroArch 1.22.2? Could any test still pass only on a generous VFS?
-3. The shared hash change: identity of every path, run-time detection and fallback, ISA confinement, and any risk to shipping Arculator stores.
-4. The IDE import and patch provenance (`archive_only_imports`), the frozen command matrix, the scheduler slot, IRQ/nIEN and reset.
-5. The dormant boundary: shipping routes, options, exports and `.info` unchanged.
-6. The test-only Windows leg and the per-frame cost report: do they prove what they claim?
-
-**R2c-3 work order (D-152): hard-disc work must fit the frame budget on the Odin3.**
-- **Measured (S60, run D core, arm64 runner, authored guest, hard disc on against off):** 256-sector writes add 1.7–3.3 ms; checkpoint steps add 5.0–5.8 ms (0.35 T). simpleperf puts the cost mainly in `arc_sha256_transform` and `arc_crc32`. The bound is 0.20 T (3.33 ms) extra on any frame.
+**Q-3 work order (D-146; `docs/riscpc-translator-invariants.md` §1.8 and §5):**
+- **Defect.** The R2a fetch memo (`arc_rpc_mem_fast.memo_valid`/`memo_line`, `engine/rpc/rpc_mem_timing.c` and `.h`) is keyed by virtual line only. A memo hit skips the eligibility checks the slow path makes before any tag lookup (`backed` and the region, about `rpc_mem_timing.c:309`). A collision eviction followed by a translation-cache re-walk can change that eligibility without clearing the memo, so a memo hit can then override it.
 - **Required:**
-  1. Hardware-accelerated SHA-256 and CRC-32 with results identical to the portable code (D-145 A2):
-     - arm64 SHA2 and CRC32 instructions, detected at run time (Android: `getauxval`), with the portable code as fallback;
-     - x86-64 where available (for example SHA-NI; carry-less multiply or slice-by-N for CRC-32), likewise detected at run time.
+  1. A targeted reproduction: a deterministic test that drives the eviction and re-walk sequence and fails on current `main`.
+  2. The smallest fix: a memo hit must never override changed eligibility.
+  3. Show the fix keeps every existing timing calibration and golden unchanged, except any that genuinely exercised the defect. **No blanket golden regeneration**; justify each changed expectation individually.
+  4. Full host suite, sanitizers, MinGW and Android builds, guards; mutants on the fix.
+- **Non-goals:** translator work, other timing changes, and Q-1/Q-2/Q-4 to Q-11.
+- **QA focus:** the reproduction really exercises the sequence; the fix is minimal and complete across fetch paths (including SA D-cache fills, c7 invalidation, slow-clock reads and control writes); no change to timing outside the defect.
 
-     If the shared `core/hash.c` functions change, shipping Arculator stores receive identical results. Prove it with known-answer vectors and a randomized differential test of every implementation against the portable one, on every length and alignment.
-  2. If hashing alone cannot keep every hard-disc frame within 0.20 T, split maintenance steps further, re-prove the contract's occupancy and journal bounds, and say exactly what changed in `docs/riscpc-hd-store.md`.
-  3. A test-only per-frame hard-disc cost report in the runner, so Fable can measure the bound on the Odin3. It should give, per frame, the hard-disc time inside `retro_run`: acknowledgement and maintenance phase, in nanoseconds.
-  4. Re-run everything: host and sanitizer suites, mutants, fault and kill sweeps, the run C guest, and the MinGW and Android builds and guards.
-- **Fable's acceptance on the Odin3:** the authored guest and the 031 install through the arm64 runner, hard disc on against off. No frame may exceed 0.20 T extra, and every earlier AC-9 leg is repeated on the run E core.
+**R2c outcome (merged S61 as `0e71237`, PR #337, head `83cbf7e`).** The IDE and a 126 MiB persistent hard disc on a journalled, chunked, fully verified store (`docs/riscpc-hd-store.md`). The record is in `docs/build-log.md` and D-145 to D-162; the run history is in git history (`docs/handoff.md` at `3a548ec`).
+- **Evidence:** CI green on all five jobs, including the native Windows RetroArch hard-disc sessions. Opus QA 3 PASS WITH LOWS, then re-checks of runs P and Q PASS (adjudication `.work/s61/qa/adjudication-3.md`).
+- **Odin3, run N core, FUSE storage, RetroArch flush:** runner legs within D-161; native RetroArch three sessions; 20 repeated sessions (0 errors, 174–181 MB).
+- **Store design:** D-160/D-161, with the Founder keeping it (D-162). A heavy title may drop a single frame during an install checkpoint on Android shared storage, never during ordinary saves.
 
-**AC-9 Odin3 results so far (run D core):**
-- **Native RetroArch, authored guest: PASS.** Cyan, then force-stop; blue, then network QUIT; green. Generations went 2 → 4 → 4, each session included a floppy swap, there were 0 errors and peak PSS was about 178 MB.
-- **20 repeated sessions: PASS.** Peak PSS 173–179 MB with no growth, 0 errors, all clean exits.
-- **Store open: PASS.** About 9 ms with a 63 MB installed disc (44 against 35 ms for one frame with the disc on against off).
-- **Frame budget: FAIL under D-152.** This is R2c-3.
-- **AC-8 on the run D build: PASS.** HD persistence on 3.71, and the 031 install and cold start from floppies; frames are identical to run B.
-
-**R2c-2 work order (D-150): the store must work on RetroArch's real VFS.**
-- **Defect (found by Fable's AC-9 Odin3 leg):** in native RetroArch 1.22.2 on Android, the authored guest's first hard-disc write is refused, the store latches read-only and the player sees "Hard-disc changes can no longer be saved this session." RetroArch's buffered `seek` returns 0, not the new position, so the store's `seek(...) == offset` check fails for every non-zero offset. That breaks journal appends, indexed journal reads and any other positioned access. Windows RetroArch behaves the same (`_fseeki64`). The runner VFS returns `ftell()` after seeking, so every host test passed.
-- **Required behaviour:**
-  1. Every positioned access in the R2c store treats a non-negative `seek` result as success and confirms the position with `tell` before reading or writing, so a VFS that returns either convention works.
-  2. Corrected by D-151: a handle's `size` follows that handle's own writes and truncates only. No code relies on it to see changes made through another handle or process; use `stat` or a fresh open for an independent length. Audit every existing use.
-  3. The failure diagnostic names the step that actually failed (seek, write, flush, close or stat). Today a failed seek is reported as `operation=close`.
-  4. **Test VFSs model RetroArch 1.22.2 by default:** the runner VFS (`tools/rpc_runner_vfs.h`) and the store's test mock VFSs return 0 from a successful buffered seek, and keep a handle's size as at open, updated only by that handle's own writes and truncates (D-151). A switchable "documented-contract" mode may stay for comparison. Add a test that fails on the old `== offset` check under the RetroArch-faithful VFS.
-  5. **Audit the other ArcDroid stores and file users** that reach the frontend VFS (`install_store`, `jfd_store`, `rpc_cmos_store`, media staging, ADFFS/zip helpers, `arc_io`) for the same two assumptions. Fix any RPC-side use; report any shipping-path use with evidence before changing it.
-  6. Re-run the full host and sanitizer suites, the fault and process-kill sweeps, the mutants, the run C guest and the MinGW and Android builds and guards, all under the RetroArch-faithful VFS.
-- **Non-goals:** no contract change beyond the VFS assumptions section of `docs/riscpc-hd-store.md`, which must state both RetroArch behaviours. No golden change, and no Arculator behaviour change.
-- **Evidence Fable will add after run D:** the Odin3 native three-session leg (write, force-stop, verify and write, quit, verify) and CI's Windows native leg must both pass.
-
-- **Run C (test-only) is committed** as `a0830b9`. It adds an authored native-RetroArch hard-disc leg to CI's `windows-retroarch` job and the `rpc-hd-retroarch-guest` CTest. On the Odin3, the same guest exposed R2c-2. The Windows leg is expected to fail in the same way until run D lands.
-- **AC-8:** a Fable helper agent is running the private legs with the run B build (`.work/s60/ab/r2c/`) through the runner, whose VFS is not RetroArch's. Evidence goes to `.work/s60/ac8/` (`LEDGER.md`). After run D, any AC-8 leg that writes the hard disc is repeated on the fixed build.
-- **Odin3 state (S60):** the run B plan core is installed in RetroArch (to be replaced after run D). The authored fixture is in `/storage/emulated/0/RetroArch/rpc-r2c/hdra/` and its save directory is `rpc-r2c/hdsave/`; `RetroArch/arcdroid-hd.cfg` points at them. The driver is `/data/local/tmp/arcdroid-r2c/ra2.sh`. RetroArch is not running.
-- **Run C's purpose (Fable decision, S60):** AC-9 needs native RetroArch save/reload, process termination and a media operation with the R2c disc on Windows. RetroArch cannot be driven interactively over SSH on the Founder's box, and CI must not use private firmware. Run C therefore adds a test-only `windows-retroarch` leg with an authored IDE guest: write at least 2 MiB so a checkpoint runs, `Stop-Process`, verify on reload, write again, network `QUIT`, verify, plus a floppy swap. The same plan and ROM serve Fable's Odin3 native RetroArch leg.
-- **R2c run B (recovered):** Sol run B4 rebuilt run B from its thread log after the reboot (below) and re-ran everything: host CTest 338/338, ASan/UBSan 333/333, 65/65 mutants killed, MinGW and Android arm64 builds and guards. Committed verbatim as `342e010`; `main` merged as `1ef7dc4` (draft PR #337).
-  - **Fable review: PASS.** Nothing outside scope changed: no Arculator, A3020-store, governance or CI file. The shipping `arc_io` keeps every existing call's behaviour (new counted/create/stream variants only). In an independent build, the A3020 formatter (SHA-256 `9ec06c75…`) and CRC-32 results are identical to `main`, and the new table equals the reflected `0xEDB88320` table. The import guard authenticates `ide.c` against the pinned archive, and the store's write path follows A1 (journal append, flush, length check, then index, cache and acknowledgement).
-  - **AC-6: PASS.** `main` `f13c5c7` against `1ef7dc4` on the 44-title set, in both package states: 42 of 44 identical. Only 105 and 205 differ, both known variance.
-- **Why run B was recovered:** the Mac rebooted at about 12:30 CDT on 2026-10-09 during S59's run B3, and the boot wiped `/private/tmp`, taking the uncommitted run B clone and every Fable scratchpad from S55 to S59. Run B4 rebuilt the tree from `.evidence/sol-run-b-replay.md` (Sol's own 258 recorded calls).
-- **Recovered private inputs** (in `.work/s60/`, indexed by `LEDGER.md`):
-  - the A/B scripts (`ab/`);
-  - the trial boot environment (`bootenv/`): HardDisc4 and PlingSystem re-downloaded with their SHA-256s verified, and the authored files from `probe/riscpc-trial` `5ff5481`;
-  - the trial's boot disc and installed 031/074 discs with CMOS (`bootenv/odin3/`, pulled from the Odin3, SHA-1 verified).
-- **Private work now lives in `.work/s<n>/`** inside this checkout (git-excluded through `.git/info/exclude`), not in `/private/tmp` (D-149).
-
-**R2c run A outcome (S59).**
-- **Sol run A** (fresh thread above, 1,831 s) is committed verbatim as `b4bc633`:
-  - `docs/riscpc-hd-store.md`, the item-9 store contract. It has 256 KiB chunks (504 for 126 MiB), a checkpoint armed at 1 MiB of journal, both journals together ≤ 8 MiB, store memory ≤ 4.9 MB, and an incremental ROTATE → MATERIALIZE → MANIFEST → PUBLISH → RETIRE → GC cycle, one step per `retro_run`. The RPC formatter uses five zones with 8 KiB per map bit, and the A3020 output is unchanged.
-  - QA N1 in `tests/rpc_fdc_test.c`. Its mutant (an unconditional IRQ on cancel) is killed.
-- **Astra** (thread `01a120c8-fcb0-7523-981d-5fafe50f01d7`) returned ACCEPT WITH CHANGES:
-  - HIGH: population could drop acknowledged writes that had not yet been checkpointed;
-  - HIGH: a POPULATION header could not explain a leftover source journal after a kill;
-  - MEDIUM: multi-megabyte work in one tick;
-  - MEDIUM: the prepared-disc key was undefined.
-- **Fable accepted the contract with D-145 (six binding amendments):** the four Astra changes; A1, which drops the per-command record readback (the A3020 store's proven pattern); and A2, which keeps full SHA-256 per cache miss but allows faster hashing.
-- **Run B so far:**
-  - **First stop (correct):** the prompt wrongly asked for a tenth scheduler event. Ruling: activate the existing reserved IDE slot; the count stays at nine.
-  - **Second stop (correct, with an executable probe):** the VFS `readdir` cannot report errors, so listing-based GC could exceed the disc bound after a kill. **Ruling R2c-1 (D-147):** RETIRE removes garbage before removal; debris is found by fixed paths; listing is advisory only.
-  - **Run B3** then reached its final verification, and was lost in the reboot (see Next). Run B4 is the recovery.
-- **Contract honesty, accepted:**
-  - the frontend VFS gives no power-loss durability and no bounded wall-clock latency;
-  - "no stall depends on the host" means guest-visible timing is virtual and identical however slow the host is;
-  - AC-9 measures whether host I/O fits the frame budget.
+**Carried from R2c (to R3 unless noted):**
+- The false "flagged for RiscPC-class machines … not emulated" notice appears on RPC launches.
+- The plan cannot seed CMOS together with `cmos=persist` (installs configure CMOS in the guest).
+- Drive 1 refuses `.jfd` (raw helper media only, by design).
+- RISC OS 3.50 on ARM610 shows about 18 s of blank screen before the desktop.
+- A notice is needed during first-launch default generation (about 20 s on the Odin3; from R2a).
+- RetroArch 1.22.2 `GET_STATUS` crashes for any core loaded without a matching `.info` (`command.c` copies `system_id` unchecked). Release-note or runbook item for item 5; the shipping `.info` declares `systemid`.
+- An Android scheduled full backup that restarts MediaProvider stalls shared storage for about a minute. The store then latches read-only with its notice, as designed (S61).
+- Follow-up Low: the import guard does not tie a recorded patch to file content (QA 3).
 
 **R2b outcome (merged S58).** PR #331 merged as `f3424fa` (head `a8dc85c`); D-139, D-143, D-144.
 - **What it adds:**
@@ -352,7 +120,7 @@ Rulings, recorded in D-140:
 - After the absent-IDE startup dialog, the desktop takes about 60 s to appear. This is identical on R1 and goes away once R2c's IDE exists.
 - AC-10, the end-of-R2 gameplay speed gate, is still owed after R2c.
 
-**R2 work order** (below): R2a and R2b done; **R2c next**.
+**R2 work order** (below): R2a, R2b and R2c merged; AC-10 (Fable) still owed.
 
 Slice order (D-133): R1–R4 → item 5 release baseline → item 6b faster CPU translator → item 8 save states. Carried: the Arculator VIDC-register reset follow-up (below); follow-up Lows; Slice 23 residuals; physical-stick feel on the Odin3 (Founder check).
 
@@ -364,7 +132,8 @@ Slice order (D-133): R1–R4 → item 5 release baseline → item 6b faster CPU 
 **S61 (Claude Opus 5.5 effort 15; baton by relay from `arcdroid-db`).**
 - Adopted Sol run J, which had already died: the Codex service refused its last turn. Reviewed it and committed it as `d18f08e`.
 - CI located the Windows crash (D-155). The Odin3 legs failed D-152 on FUSE storage (D-156). Recorded the SMLAL ruling (D-157) and dispatched Sol run K.
-- **Running:** the Opus QA re-check of run Q (in-session agent; see `.work/s61/LEDGER.md`). Sol run Q finished.
+- R2c: runs K–Q, the Odin3 FUSE and native RetroArch legs, Opus QA 3 and its re-checks; merged PR #337 as `0e71237`. Founder decision D-162.
+- **Running:** the Sol Q-3 run and its watchdog (PIDs in `.work/s61/LEDGER.md`); AC-10 in progress (Fable).
 - **Odin3 state:** RetroArch closed. Under `/data/local/tmp/arcdroid-r2c/s61/` are the run J arm64 core, runner, probe runner (`rpc_runner_nofsync`), scripts and results. FUSE save directories are under `/storage/emulated/0/arcdroid-s61/`; delete them after R2c.
 
 **Answered S60:** SSH to the Founder's Windows box (`sinmu@192.168.1.66`) is allowed for the item 6b Windows profile (D-148). It may also serve R2c AC-9's Windows native-RetroArch leg.
