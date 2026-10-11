@@ -168,6 +168,7 @@ mutants += [
 ]
 # Split-boundary regressions, each linked into the real store component.
 mutants += [
+ ('N-RETIRE-TWO',HD,'++s->phase_step;return true;}\n    case 4:', '}\n    case 4:',a.hd,('hd','steps')),
  ('M-SCRATCH',HD,'s->checkpoint','s->scratch',a.hd,('hd','steps')),
  ('M-TEMP-VERIFY',HD,'if(!chunk_read(s,s->manifests[2],i,s->checkpoint,"chunk.tmp"))return false;','',a.hd,('hd','steps')),
  ('M-FINAL-VERIFY',HD,'||!base_chunk_into(s,s->manifests[2],i,s->checkpoint)','',a.hd,('hd','steps')),

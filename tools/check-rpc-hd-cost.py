@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check runner HD work against D-152's 0.20 T bound. GPL-2.0-only."""
+"""Check runner HD work against D-160's namespace-aware HD work bounds. GPL-2.0-only."""
 import csv
 import argparse
 import sys
@@ -10,6 +10,17 @@ def check(path, frames=None):
     rows = list(csv.DictReader(Path(path).open(newline='')))
     assert rows, 'empty HD report'
     assert frames is None or len(rows) == frames, 'incomplete HD report'
+    steps = {
+        'IDLE': {'admit'}, 'ROTATE': {'prepare', 'switch'},
+        'MATERIALIZE': {'reconstruct', 'write', 'verify', 'destination', 'publish'},
+        'MANIFEST': {'write', 'verify'}, 'PUBLISH': {'rename', 'verify'},
+        'RETIRE': {'manifest', 'header', 'length-binding', 'remove-manifest', 'remove-journal'},
+        'GC': {'inventory'}, 'READ_ONLY': {'stopped'}, 'DAMAGED': {'stopped'},
+    }
+    namespace_steps = {('ROTATE', 'prepare'), ('MATERIALIZE', 'write'),
+                       ('MATERIALIZE', 'destination'), ('MATERIALIZE', 'publish'),
+                       ('MANIFEST', 'write'), ('PUBLISH', 'rename'),
+                       ('RETIRE', 'remove-manifest'), ('RETIRE', 'remove-journal'), ('GC', 'inventory')}
     maxima = {}
     over = []
     for frame, row in enumerate(rows):
@@ -19,18 +30,26 @@ def check(path, frames=None):
         period, read, ack, maintenance, opened, total = values
         assert period > 0 and min(values) >= 0 and total == read + ack + maintenance + opened
         assert row['attached'] in ('0', '1')
+        phase, substep = row['phase'], row['substep']
+        assert phase in steps and substep in steps[phase], 'unknown maintenance substep'
+        namespace = int(row['namespace_operations'])
+        assert namespace in (0, 1), 'namespace budget exceeded'
+        assert not namespace or (phase, substep) in namespace_steps, 'namespace call in read-only substep'
         if row['attached'] == '0':
             # A failed open can consume time without attaching a backend.
-            assert read == ack == maintenance == 0
+            assert read == ack == maintenance == namespace == 0
             assert int(row['write_commands']) == int(row['read_commands']) == 0
-        label = row['phase']
+        label = f'{phase}/{substep}'
         maxima[label] = max(maxima.get(label, 0), total)
-        if total * 5 > period:
-            over.append((frame, label, total, period // 5))
+        budget = period * (2 if namespace else 1) // 5
+        if total * 5 > period * (2 if namespace else 1):
+            over.append((frame, label, total, budget))
+        if ack * 5 > period:
+            over.append((frame, 'acknowledgement', ack, period // 5))
     for phase, maximum in sorted(maxima.items()):
         print(f'{phase}: max HD ns={maximum}')
     print(f'frames={len(rows)} acknowledgement max ns={max(int(r["acknowledgement_ns"]) for r in rows)} '
-          f'over_0.20T={len(over)}')
+          f'over_D160={len({entry[0] for entry in over})}')
     for frame, phase, total, budget in over:
         print(f'FAIL frame={frame} phase={phase} HD_ns={total} budget_ns={budget}')
     return bool(over)

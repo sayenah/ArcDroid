@@ -28,7 +28,7 @@ static void check_sector(ArcRpcHdStore *s,uint32_t at,uint8_t value)
 static void bounds(ArcRpcHdStore *s)
 {
     ArcRpcHdStats a;arc_riscpc_hd_stats(s,&a);assert(a.allocation_high<=4889964&&a.max_chunk_files<=1008&&a.journal_high<=8388608);
-    assert(a.max_tick_bytes<=9437712&&a.max_tick_operations<=4096&&a.max_tick_metadata_operations<=4);
+    assert(a.max_tick_bytes<=9437712&&a.max_tick_operations<=4096&&a.max_tick_metadata_operations<=4&&a.max_tick_namespace_operations<=1);
     assert(a.max_tick_hash_bytes<=18948908&&a.max_tick_copied_bytes<=2097152);
     unsigned manifests=0,journals=0,chunks=0;uint64_t journal_bytes=0,temp=0;
     for(unsigned i=0;i<TEST_FILES;++i)if(files[i].present){const char *p=strrchr(files[i].path,'/')+1;
@@ -453,7 +453,7 @@ static void stream(bool scatter,bool silent,const char *dump)
         if(previous.state==ARC_RPC_HD_IDLE&&current.state==ARC_RPC_HD_ROTATE){cycle_ticks=1;materialized_before=current.materialized;}
         else if(cycle_ticks)++cycle_ticks;
         if(cycle_ticks&&current.state==ARC_RPC_HD_IDLE){unsigned n=current.materialized-(unsigned)materialized_before;
-            assert(n<=(scatter?80u:25u)&&cycle_ticks<=6*n+15);
+            assert(n<=(scatter?80u:25u)&&cycle_ticks<=6*n+16);
             if(cycle_ticks>max_cycle_ticks)max_cycle_ticks=cycle_ticks;cycle_ticks=0;}
         if(current.checkpoints!=checkpoint){verify_stream(s);checkpoint=current.checkpoints;}
         previous=current;++frames;
@@ -620,7 +620,7 @@ static void split_steps(void)
     arc_riscpc_hd_tick(s);int j=named("journal.b");uint64_t bound=0;
     for(unsigned i=0;i<8;++i)bound|=(uint64_t)files[j].data[112+i]<<(8*i);
     assert(bound==snapshot_sequence); /* preparation must not bind S */
-    unsigned seen[7]={0};uint64_t maxima[7][5]={{0}};bool wrote=false;
+    unsigned seen[7]={0};uint64_t maxima[7][5]={{0}},namespace_maxima[7][5]={{0}};bool wrote=false;
     for(unsigned tick=0;tick<1000;++tick){arc_riscpc_hd_stats(s,&a);assert(!a.read_only);
         if(a.state==ARC_RPC_HD_IDLE)break;assert(a.state<7&&a.phase_step<5);seen[a.state]|=1u<<a.phase_step;
         /* Effective-cache eviction plus a miss at each step must never mutate
@@ -631,14 +631,15 @@ static void split_steps(void)
         }
         arc_riscpc_hd_tick(s);ArcRpcHdStats after;arc_riscpc_hd_stats(s,&after);
         if(after.tick_metadata_operations>maxima[a.state][a.phase_step])maxima[a.state][a.phase_step]=after.tick_metadata_operations;
+        if(after.tick_namespace_operations>namespace_maxima[a.state][a.phase_step])namespace_maxima[a.state][a.phase_step]=after.tick_namespace_operations;
         bounds(s);assert(tick<999);
     }
-    assert(wrote&&seen[ARC_RPC_HD_MATERIALIZE]==31&&seen[ARC_RPC_HD_MANIFEST]==3&&seen[ARC_RPC_HD_PUBLISH]==3&&seen[ARC_RPC_HD_RETIRE]==15);
+    assert(wrote&&seen[ARC_RPC_HD_MATERIALIZE]==31&&seen[ARC_RPC_HD_MANIFEST]==3&&seen[ARC_RPC_HD_PUBLISH]==3&&seen[ARC_RPC_HD_RETIRE]==31);
     int c=named("c004.g0000000000000001");for(unsigned i=0;i<512;++i)assert(files[c].data[128+i]==0x65);
     check_sector(s,2048,0x92);check_sector(s,60000,0x7b);arc_riscpc_hd_close(s);
     s=open_store(false);idle(s);check_sector(s,2048,0x92);check_sector(s,60000,0x7b);arc_riscpc_hd_close(s);
     for(unsigned phase=2;phase<7;++phase)for(unsigned step=0;step<5;++step)if(seen[phase]&(1u<<step))
-        printf("split phase=%u step=%u maximum_metadata=%" PRIu64 "\n",phase,step,maxima[phase][step]);
+        printf("split phase=%u step=%u maximum_metadata=%" PRIu64 " maximum_namespace=%" PRIu64 "\n",phase,step,maxima[phase][step],namespace_maxima[phase][step]);
     /* Corruption between steps must be caught at the intended readback,
      * before the next publication or selected-root update. */
     for(unsigned which=0;which<4;++which){
@@ -662,6 +663,24 @@ static void split_steps(void)
     until_phase(s,ARC_RPC_HD_GC,0);fail_at=steps+3;fault=10;
     arc_riscpc_hd_tick(s);arc_riscpc_hd_tick(s);arc_riscpc_hd_stats(s,&a);assert(a.read_only);
     arc_riscpc_hd_close(s);reset_fault();s=open_store(false);idle(s);check_sector(s,2048,0x42);arc_riscpc_hd_close(s);
+    /* The new retirement boundary retains the parent alone. Writes between
+     * the two removals must recover for checkpoint and population roots. */
+    for(unsigned populate=0;populate<2;++populate){
+        fresh_files();s=open_store(true);idle(s);fill(p,256,0x37);
+        if(populate){assert(arc_riscpc_hd_population_begin(s));
+            for(unsigned i=0;i<3;++i)assert(arc_riscpc_hd_population_write(s,2048+i*512,256,p));
+            assert(arc_riscpc_hd_population_seal(s)&&arc_riscpc_hd_population_publish(s));}
+        else for(unsigned i=0;i<9;++i)assert(arc_riscpc_hd_write(s,2048+(i%3)*512,256,p));
+        until_phase(s,ARC_RPC_HD_RETIRE,3);arc_riscpc_hd_tick(s);arc_riscpc_hd_stats(s,&a);
+        assert(a.state==ARC_RPC_HD_RETIRE&&a.phase_step==4&&a.tick_namespace_operations==1);
+        unsigned roots=0,journals=0;for(unsigned i=0;i<TEST_FILES;++i)if(files[i].present){
+            const char *leaf=strrchr(files[i].path,'/')+1;
+            if(!strncmp(leaf,"manifest.",9))++roots;if(!strncmp(leaf,"journal.",8))++journals;}
+        assert(roots==1&&journals==2);
+        fill(p,1,0x94);assert(arc_riscpc_hd_write(s,90000,1,p));arc_riscpc_hd_close(s);
+        s=open_store(false);idle(s);check_sector(s,90000,0x94);
+        for(unsigned i=0;i<3;++i)check_sector(s,2048+i*512,0x37);bounds(s);arc_riscpc_hd_close(s);
+    }
     /* Unload and a guest failure can occur while the empty writer is held. */
     for(unsigned failing=0;failing<2;++failing){
         fresh_files();s=open_store(true);idle(s);fill(p,256,0x65);
@@ -674,7 +693,7 @@ static void split_steps(void)
         for(unsigned i=0;i<9;++i)check_sector(s,2048+i*512,0x65);
         arc_riscpc_hd_close(s);
     }
-    puts("split boundaries: late S, private frozen payload, full readbacks, failed-stat GC budget, prepared-writer cleanup and recovery pass");
+    puts("split boundaries: late S, private frozen payload, full readbacks, separate retirement removals, failed-stat GC budget, prepared-writer cleanup and recovery pass");
 }
 int main(int argc,char **argv)
 {

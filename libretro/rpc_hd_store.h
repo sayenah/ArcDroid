@@ -18,7 +18,8 @@ typedef struct {
         commands, checkpoints, sequence, generation, requested_bytes, hash_bytes,
         copied_bytes, open_bytes, open_operations, advisory_operations,
         tick_hash_bytes, tick_copied_bytes, max_tick_hash_bytes, max_tick_copied_bytes, metadata_operations,
-        tick_metadata_operations, max_tick_metadata_operations;
+        tick_metadata_operations, max_tick_metadata_operations, namespace_operations,
+        tick_namespace_operations, max_tick_namespace_operations;
     unsigned chunk_files, max_chunk_files, materialized, state, phase_step;
     bool published, population, read_only;
 } ArcRpcHdStats;

@@ -1,7 +1,7 @@
 # RiscPC hard-disc store contract (D-139)
 
 Status: **accepted by Fable (D-145)**. Run A at `b4bc633`, amended by D-147 (R2c-1) for run B
-on `slice/r2c-ide`; run M applies D-156/D-158/D-159. This freezes work-order item 9 and the store interfaces
+on `slice/r2c-ide`; runs M/N apply D-156/D-158/D-159/D-160. This freezes work-order item 9 and the store interfaces
 needed by items 10–12. Platform qualification remains separate; RPC is not
 exposed through a shipping route. MUST statements below are requirements.
 
@@ -221,7 +221,7 @@ payload or candidate entry retained between ticks aliases the guest scratch,
 record buffer or effective cache. Guest reads/writes can run between every step.
 Allocation counters and a structure-size assertion cover this arrangement.
 
-## 4. Checkpoint state machine (run M, D-158)
+## 4. Checkpoint state machine (runs M/N, D-158/D-160)
 
 One bounded maintenance tick runs at the existing frontend frame boundary;
 no worker, host deadline, scheduler event, catch-up credit or virtual-time change.
@@ -236,6 +236,11 @@ cached size is excluded (D-151/D-158). Data callbacks and hashes remain counted
 under the existing limits: requested bytes ≤9,437,712, total VFS callbacks ≤4,096,
 hash input ≤18,948,908 and explicit copies ≤2,097,152 per tick. Tests independently
 count actual VFS metadata calls and compare the store counter, including cleanup.
+D-160 additionally permits **at most one namespace operation per tick**: create
+(open with create/truncate mode), rename, remove or mkdir, failed calls included.
+Update-existing and read-only opens are not namespace operations. Creating a
+candidate counts even when it replaces an existing temporary leaf. Test VFSs
+count the attempted callback independently, including failed creates.
 A failed stat may consume stat + exact-path open + close =3 calls; allocation
 failure after VFS open may consume open + cleanup close =2. No step relies on
 success-only counts. Failure closes the retained writer immediately.
@@ -262,8 +267,19 @@ journal lengths; the switching step separately reserves its 256-byte header.
 | RETIRE / manifest | ≤2: fresh root read open/close | Exact root length/bytes; → header | New root + successor; no removals yet |
 | RETIRE / header | ≤2: fresh journal read open/close | Compare immutable header; → length/binding | Same, even if guest appended between checks |
 | RETIRE / length/binding | ≤3: path stat with failed-stat probe/close | Check **current** expected length and streaming parent binding without rescan; → GC, or removals after GC | Same; current header is immutable, expected append length sampled in this step |
-| RETIRE / removals | ≤2: remove old manifest then old journal | Only after old-only GC; compact record metadata → IDLE | New root remains; leftover journal recognized from exact SUCCESSOR/POPULATION binding |
+| RETIRE / manifest removal | ≤1: remove old manifest | Only after both complete validation passes and old-only GC; → journal removal | New root remains; parent journal is retirement debris recognized by its exact SUCCESSOR/POPULATION binding |
+| RETIRE / journal removal | ≤1: remove old journal | Compact record metadata → IDLE; no next rotation/population before completion | New root + successor recover all acknowledgements, including writes between the removals |
 | GC / one inventory leaf | ≤3: stat/probe/close and optional remove | Scan fixed manifest/inventory in RAM, at most one unreferenced leaf/tick; finish → RETIRE or IDLE | Retiring manifest stays until all old-only chunks removed; missing already-removed leaves are expected |
+
+Namespace census per substep (before run N → after): IDLE 0→0; ROTATE
+prepare 1→1, switch 0→0; MATERIALIZE reconstruct 0→0, write 1→1,
+verify 0→0, destination 1→1, publish 1→1, zero alternative 1→1; MANIFEST
+write 1→1, verify 0→0; PUBLISH rename 1→1, verify 0→0; RETIRE manifest/header/
+length-binding 0→0, combined removals 2→two separate steps of 1; GC and abort
+GC 1→1. These are worst-case attempted namespace calls, not successful changes.
+No mkdir or hidden namespace cleanup occurs in any maintenance substep.
+Synchronous offline create/import/population APIs retain their existing scope;
+their maintenance retirement and abort cleanup obey both tick budgets.
 
 An empty ROTATE writer is the only handle retained across ticks. It is closed
 before fresh header verification, including all failures and teardown. The
@@ -280,8 +296,8 @@ there may be one final empty-inventory tick. Abort GC inspects at most 16 RAM
 inventory entries but performs at most one deletion per tick.
 
 A checkpoint with N dirty chunks and at most N old-only leaves needs ≤5N
-materialization ticks, ≤N+1 GC ticks and 14 control/admission/rotation ticks:
-**≤6N+15 ticks** from one commit switch to the next immediately requested switch.
+materialization ticks, ≤N+1 GC ticks and 15 control/admission/rotation ticks:
+**≤6N+16 ticks** from one commit switch to the next immediately requested switch.
 This includes both RETIRE validation passes. A first cold creation/population
 is offline; subsequent maintenance uses these bounds. All-504 dirtiness remains
 budgeted and recoverable but is outside D-159's sustained scattered envelope.
@@ -479,8 +495,8 @@ New immutable chunks retained alongside old ones are **published candidate
 storage**, included in the published-disk bound, not hidden as `.tmp` space.
 There is no requirement for total physical storage to equal the logical 126 MiB.
 
-D-159 replaces the old peak-command/all-504-scatter floor. Rates count **encoded
-journal bytes**, including all 96 command-framing bytes. Define a sustained
+D-159, retained under D-160, replaces the old peak-command/all-504-scatter floor.
+Rates count **encoded journal bytes**, including all 96 command-framing bytes. Define a sustained
 baseline and an additional **B=2,097,152-byte burst allowance**. For any interval
 of n running frames, admitted workload bytes are bounded by `r*n+B`; the burst
 can arrive within 60 frames (the proof tolerates earlier arrival). B is a single
@@ -493,12 +509,12 @@ This defines workload traffic; it introduces no guest admission throttling.
 * **Scattered:** eight one-sector commands/frame give r=8×608=**4,864 journal
   B/frame**, 4,096 guest bytes/frame. At most **80 distinct frozen dirty chunks
   per checkpoint** (writes through chunk boundaries count both). N≤80 gives
-  6N+15≤495; use **H=500** conservatively. The baseline yields 2,918,400 journal
+  6N+16≤496; use **H=500** conservatively. The baseline yields 2,918,400 journal
   bytes per 600 frames, above D-159's 2,580,000 floor.
 * **Sequential:** one 32-sector command/frame gives r=**16,480 journal B/frame**,
   16,384 guest bytes/frame. Include unaligned starts and disc-end wraps. Induct
   P≤6 MiB: a contiguous interval of that payload length touches ≤25 chunks,
-  hence 6N+15≤165; use **H=170**. The next parent's length is at most
+  hence 6N+16≤166; use **H=170**. The next parent's length is at most
   `256+max(r*H,1048576)+3r+B =4,948,448 <6 MiB`, including request/switch
   delay. Initial threshold crossing has the smaller bound. The sequential rate
   exceeds the scattered floor; no unbounded locality assumption is substituted.
@@ -529,7 +545,14 @@ Traffic outside these envelopes, including a 504-chunk frozen scatter footprint,
 retains the exact aggregate admission check: the first record that would make
 actual journal lengths exceed 8,388,608 gets deterministic ABRT/read-only/notice.
 No retry, capacity wait, asynchronous writer, virtual-time change or reduced
-verification is permitted. The new metadata and tick bounds apply even outside
+verification is permitted. D-160 keeps the four metadata calls and adds one
+namespace operation per tick.
+Its Odin3 HD-work bound is **0.40 T for ticks making a namespace operation**,
+and **0.20 T for every other tick and for write acknowledgement**. Total
+AC-9 workload frame time still must not exceed T. The extra retirement tick
+fits the existing conservative H=500/170, so both aggregate proofs and the
+sequential parent-length induction above remain unchanged.
+The new metadata and tick bounds apply even outside
 the sustained envelopes; native FUSE frame costs remain a separate measured gate.
 
 ## 9. Creation, formatter and R3 population hooks
@@ -738,8 +761,10 @@ journal tails are D, not T. Every code inherits the virtual-time rule in §7.
 
 Apply the matrix before/after every step in §4, including retained-writer
 preparation, frozen-payload write/readback, destination probe, final verification,
-each RETIRE validation and both removals. Guest writes/read misses intervene
-between steps; every acknowledgement survives recovery. A failed step must close
+each RETIRE validation and the separate manifest/journal removal ticks. The
+new boundary retains a bound parent journal after its old manifest is removed;
+guest appends to the successor can intervene and must survive fresh recovery.
+Guest writes/read misses intervene between steps; every acknowledgement survives recovery. A failed step must close
 its retained handle and preserve the first failing diagnostic.
 
 Kill before and after every old-only GC removal and between old manifest and
@@ -774,7 +799,7 @@ are authored bytes, never firmware, games or user boot resources.
 | `rpc-ide-registers` | AC-5: frozen item-10 command matrix, 256-sector latch/one backend write, range/width/nIEN/IRQ/status/reset/cancel, absence, read failure IDNF and write failure ABRT |
 | `rpc-ide-guest` | AC-5/AC-7: authored guest through real MMIO/scheduler/store, virtual timestamps, host VFS delay/outcome equivalence, reset/unload/stale generations, audio counts, two frontend pacings |
 | `rpc-hd-plan` | AC-7: `hd_import=<file>` exact-size read-only raw import only from empty/unpublished state through population and real adapter/store; published-store refusal; content identity frozen across swaps/edits/model selection; shipping routes still reject RPC plans |
-| `rpc-hd-frame-cost` | AC-9 support: authored checkpoint workload at §8’s sequential rate exports per-state byte/operation/metadata counters (including indexed reconstruction, streaming ROTATE and bounded RETIRE), allocations, host frame time/T, open time and guest progress; no mock timing pass presented as Odin3 evidence |
+| `rpc-hd-frame-cost` | AC-9 support: authored checkpoint workload at §8’s sequential rate exports per-state byte/operation/metadata/namespace counters (including indexed reconstruction, streaming ROTATE and bounded RETIRE), allocations, host frame time/T, open time and guest progress; no mock timing pass presented as Odin3 evidence |
 | Existing `native-hard-disc-store`, `hard-disc-formatter`, `install-ide-registers` | AC-5/AC-6: run unchanged A3020 fixtures/assertions; identical store bytes and no writes outside RPC namespace |
 | Existing `rpc-frontend-boundary-guard`, `rpc-symbol-guard`, `rpc-windows-test-exports`, `rpc-shipping-route`, `rpc-session-switch`, `rpc-session-lifecycle` | AC-7: dormant reachability, namespace, ABI and Arculator→RPC→Arculator isolation remain intact |
 
@@ -785,3 +810,10 @@ reload, p95≤0.80 T/no frame>T while installing, and 20 sessions without growth
 Record command rates/locality and all high-water counters alongside results.
 AC-10 remains owed. Host tests, analytic bounds and runner fsync cannot stand
 in for these platform measurements or stronger durability guarantees.
+
+`--hd-cost` reports the executed maintenance `substep` (captured before the
+tick) and its attempted `namespace_operations` (captured after it), separately
+from `next_phase`. The D-160 checker attributes total HD work to phase/substep,
+checks acknowledgement independently at 0.20 T, and permits total ≤0.40 T only
+when that tick made one namespace call. Rows with more than one are invalid;
+measuring clocks never changes virtual execution or persistent bytes.

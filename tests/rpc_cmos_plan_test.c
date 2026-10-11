@@ -139,7 +139,7 @@ unsigned expected_rate=(unsigned)atoi(argv[6]);
             /* D-159 sequential envelope: 16,480 journal bytes/frame. */
             for(unsigned frame=0;frame<160;++frame){assert(write(10000+(frame*32)%100000,32,bytes));
                 assert(stats(&a));unsigned state=a.state;run();assert(stats(&a)&&!a.read_only);
-                assert(a.tick_bytes<=9437712&&a.tick_operations<=4096&&a.allocation_high<=4889964&&a.tick_metadata_operations<=4);
+                assert(a.tick_bytes<=9437712&&a.tick_operations<=4096&&a.allocation_high<=4889964&&a.tick_metadata_operations<=4&&a.tick_namespace_operations<=1);
                 if(state<7){++seen[state];if(a.tick_bytes>high_bytes[state])high_bytes[state]=a.tick_bytes;
                     if(a.tick_operations>high_ops[state])high_ops[state]=a.tick_operations;
                     if(a.tick_metadata_operations>high_metadata[state])high_metadata[state]=a.tick_metadata_operations;

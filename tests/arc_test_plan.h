@@ -28,8 +28,8 @@ void arc_test_plan_hd_begin_frame(void);
 bool arc_test_plan_persist(char *error, size_t size);
 typedef struct {
     uint64_t read_ns, acknowledgement_ns, maintenance_ns, read_commands, write_commands,
-        generation, checkpoints, open_ns;
-    unsigned phase, next_phase;
+        generation, checkpoints, open_ns, namespace_operations;
+    unsigned phase, next_phase, phase_step;
     bool attached;
 } ArcTestHdCost;
 /* Opt-in test-only clocks; no host measurement controls guest execution. */

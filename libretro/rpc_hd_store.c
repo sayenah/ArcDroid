@@ -126,15 +126,15 @@ static bool size(ArcRpcHdStore *s,const char *leaf,size_t *n)
     return false;
 }
 static bool remove_leaf(ArcRpcHdStore *s,const char *leaf)
-{ char p[1100];snprintf(s->io_leaf,sizeof(s->io_leaf),"%s",leaf);s->io_operation="remove";path(s,leaf,p);metadata(s);return arc_io_remove(p); }
+{ char p[1100];snprintf(s->io_leaf,sizeof(s->io_leaf),"%s",leaf);s->io_operation="remove";path(s,leaf,p);++s->stats.namespace_operations;metadata(s);return arc_io_remove(p); }
 /* The split destination step already proved absence under exclusive ownership. */
 static bool rename_empty(ArcRpcHdStore *s,const char *from,const char *to)
 { char a[1100],b[1100];snprintf(s->io_leaf,sizeof(s->io_leaf),"%s",to);s->io_operation="rename";
-  path(s,from,a);path(s,to,b);metadata(s);return arc_io_rename(a,b); }
+  path(s,from,a);path(s,to,b);++s->stats.namespace_operations;metadata(s);return arc_io_rename(a,b); }
 static bool rename_leaf(ArcRpcHdStore *s,const char *from,const char *to)
 { size_t n;if(size(s,to,&n)||s->refused)return false;return rename_empty(s,from,to); }
 static ArcIoFile *open_leaf(ArcRpcHdStore *s,const char *leaf,bool write,bool create)
-{ char p[1100];snprintf(s->io_leaf,sizeof(s->io_leaf),"%s",leaf);s->io_operation=create?"create":"open";path(s,leaf,p);metadata(s);
+{ char p[1100];snprintf(s->io_leaf,sizeof(s->io_leaf),"%s",leaf);s->io_operation=create?"create":"open";path(s,leaf,p);if(create)++s->stats.namespace_operations;metadata(s);
   uint64_t before=s->stats.operations;ArcIoFile *f=create?arc_io_create_file_counted(p,&s->stats.operations):arc_io_open_stream_counted(p,write,&s->stats.operations);
   s->stats.metadata_operations+=s->stats.operations-before;return f; }
 /* Cleanup must not replace the operation that already failed. */
@@ -437,10 +437,12 @@ static bool retire_step(ArcRpcHdStore *s)
     case 3:{
         unsigned old=s->selected^1;
         if(s->present[old]){manifest_leaf(old,leaf);if(!remove_leaf(s,leaf))return false;s->present[old]=false;}
+        ++s->phase_step;return true;}
+    case 4:
         journal_leaf(s->parent,leaf);if(!remove_leaf(s,leaf))return false;
         s->journal_present[s->parent]=false;s->lengths[s->parent]=0;
         unsigned keep=0;for(unsigned r=0;r<s->records_count;++r)if(s->records[r].slot==s->current)s->records[keep++]=s->records[r];s->records_count=keep;
-        break;}
+        break;
     default:return false;
     }
     s->state=ARC_RPC_HD_IDLE;s->phase_step=0;s->gc_at=0;s->gc_done=false;return true;
@@ -517,10 +519,10 @@ static bool rotate_step(ArcRpcHdStore *s)
 void arc_riscpc_hd_tick(ArcRpcHdStore *s)
 {
     if(!s)return;
-    s->stats.tick_bytes=s->stats.tick_operations=s->stats.tick_hash_bytes=s->stats.tick_copied_bytes=s->stats.tick_metadata_operations=0;
+    s->stats.tick_bytes=s->stats.tick_operations=s->stats.tick_hash_bytes=s->stats.tick_copied_bytes=s->stats.tick_metadata_operations=s->stats.tick_namespace_operations=0;
     if(s->population||s->refused)return;
     uint64_t bytes=s->stats.requested_bytes,ops=s->stats.operations,
-        hashes=s->stats.hash_bytes,copies=s->stats.copied_bytes,meta=s->stats.metadata_operations;
+        hashes=s->stats.hash_bytes,copies=s->stats.copied_bytes,meta=s->stats.metadata_operations,namespace=s->stats.namespace_operations;
     bool ok=true;switch(s->state){
     case ARC_RPC_HD_IDLE:if(s->requested){s->requested=false;s->state=ARC_RPC_HD_ROTATE;s->phase_step=0;}break;
     case ARC_RPC_HD_ROTATE:ok=rotate_step(s);break;
@@ -554,11 +556,13 @@ void arc_riscpc_hd_tick(ArcRpcHdStore *s)
     s->stats.tick_bytes=s->stats.requested_bytes-bytes;s->stats.tick_operations=s->stats.operations-ops;
     s->stats.tick_hash_bytes=s->stats.hash_bytes-hashes;s->stats.tick_copied_bytes=s->stats.copied_bytes-copies;
     s->stats.tick_metadata_operations=s->stats.metadata_operations-meta;
+    s->stats.tick_namespace_operations=s->stats.namespace_operations-namespace;
     if(s->stats.tick_bytes>s->stats.max_tick_bytes)s->stats.max_tick_bytes=s->stats.tick_bytes;
     if(s->stats.tick_operations>s->stats.max_tick_operations)s->stats.max_tick_operations=s->stats.tick_operations;
     if(s->stats.tick_hash_bytes>s->stats.max_tick_hash_bytes)s->stats.max_tick_hash_bytes=s->stats.tick_hash_bytes;
     if(s->stats.tick_copied_bytes>s->stats.max_tick_copied_bytes)s->stats.max_tick_copied_bytes=s->stats.tick_copied_bytes;
     if(s->stats.tick_metadata_operations>s->stats.max_tick_metadata_operations)s->stats.max_tick_metadata_operations=s->stats.tick_metadata_operations;
+    if(s->stats.tick_namespace_operations>s->stats.max_tick_namespace_operations)s->stats.max_tick_namespace_operations=s->stats.tick_namespace_operations;
 }
 static bool range(uint32_t lba,uint32_t count)
 { return count&&count<=256&&lba<ARC_RPC_HD_SECTORS&&count<=ARC_RPC_HD_SECTORS-lba; }

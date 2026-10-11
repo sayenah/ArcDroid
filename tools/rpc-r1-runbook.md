@@ -337,7 +337,8 @@ SHA-NI is not selected (CI runs this explicitly).
 `--hd-cost` is opt-in and requires the plan test core. Its separate CSV records
 every requested frame, including warm-up: backend read verification, complete
 write acknowledgement (hashing, VFS, index/cache), maintenance tick time,
-maintenance entry/exit phases, read/write command counts, generation and
+maintenance entry/exit phases, the executed `substep` and its attempted
+`namespace_operations`, read/write command counts, generation and
 checkpoint count, plus `open_ns` for store open/import/blank creation reached
 during the first-launch CMOS capture transition. Load-time work outside
 `retro_run` is excluded. `total_ns` sums all four timed intervals inside
@@ -345,8 +346,13 @@ during the first-launch CMOS capture transition. Load-time work outside
 framebuffer/PCM hashing and frontend pacing are outside these intervals. It
 keeps the existing trace and `--timing` format unchanged.
 
-The checker refuses an incomplete report and fails if **any** frame has `5 * total_ns > T_ns`; it never qualifies
-a run using an average or percentile. Inspect `on.trace`'s last RAM word: it
+The checker requires run N’s substep/namespace columns and refuses incomplete
+reports or namespace counts outside 0/1. Under D-160 it fails any frame with
+`5 * total_ns > 2 * T_ns` when its maintenance tick made one namespace call,
+or `5 * total_ns > T_ns` otherwise. Write acknowledgement independently keeps
+`5 * acknowledgement_ns <= T_ns` even in a namespace tick. Inspect phase/substep
+outliers and `over_D160`; averages and percentiles cannot qualify the run.
+AC-9’s whole-frame no-over-T gate still stands. Inspect `on.trace`'s last RAM word: it
 must be `ram=00000001` (fresh session, cyan), and the final HD row must show at least two completed
 checkpoints and an advanced generation. Collect `on/off.csv`, traces/logs and
 the canonical store, and compare with the prior on/off device measurement.
@@ -355,7 +361,7 @@ arguments and starting store, adding `--hd-cost installer-hd.csv` and
 `--timing installer-on.csv`; check that report the same way. Its emulation cost
 is separate from the hard-disc bound (D-152). Native RetroArch termination,
 media/persistence legs and the Windows CI leg must still be repeated on the
-run E core.
+final core.
 
 Run K (D-156): D-152 measurements use saves on `/storage/emulated/0` (FUSE)
 and `rpc_runner --vfs-flush retroarch --hd-cost <CSV>`: the VFS flush checks

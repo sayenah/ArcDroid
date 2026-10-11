@@ -253,7 +253,7 @@ int main(int argc, char **argv)
     FILE *hd_cost_file=NULL;uint64_t hd_cost_max=0,hd_cost_over=0,hd_cost_frames=0;
     if(hd_cost_path){LOAD(hd_cost_get,"arc_test_plan_hd_cost");hd_cost_get(NULL,true);
         hd_cost_file=fopen(hd_cost_path,"w");if(!hd_cost_file){free(dump_pixels);unload();deinit(); vfs_assert_no_open_handles();return 2;}
-        fputs("frame,T_ns,read_ns,acknowledgement_ns,maintenance_ns,total_ns,phase,next_phase,read_commands,write_commands,generation,checkpoints,attached,open_ns\n",hd_cost_file);}
+        fputs("frame,T_ns,read_ns,acknowledgement_ns,maintenance_ns,total_ns,phase,next_phase,read_commands,write_commands,generation,checkpoints,attached,open_ns,substep,namespace_operations\n",hd_cost_file);}
     FILE *timing = timing_path ? fopen(timing_path,"w") : NULL;
     if (timing_path && !timing) { free(dump_pixels); if(hd_cost_file)fclose(hd_cost_file); unload(); deinit(); vfs_assert_no_open_handles(); return 2; }
     if (timing) fputs("frame,core_ns,T_ns,measured,guest_instructions,guest_ns\n", timing);
@@ -292,11 +292,21 @@ int main(int argc, char **argv)
         if(hd_cost_file){ArcTestHdCost h;hd_cost_get(&h,true);
             uint64_t total=h.read_ns+h.acknowledgement_ns+h.maintenance_ns+h.open_ns;
             static const char *phases[]={"IDLE","ROTATE","MATERIALIZE","MANIFEST","PUBLISH","RETIRE","GC","READ_ONLY","DAMAGED"};
-            if(h.phase>8||h.next_phase>8){result=2;break;}
-            fprintf(hd_cost_file,"%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%s,%s,%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%u,%" PRIu64 "\n",
+            static const char *steps[9][5]={
+                {"admit"}, {"prepare","switch"},
+                {"reconstruct","write","verify","destination","publish"},
+                {"write","verify"}, {"rename","verify"},
+                {"manifest","header","length-binding","remove-manifest","remove-journal"},
+                {"inventory"}, {"stopped"}, {"stopped"}};
+            if(h.phase>8||h.next_phase>8||h.phase_step>4){result=2;break;}
+            /* IDLE/GC and stopped states can retain the previous step number. */
+            unsigned step=(h.phase==0||h.phase>=6)?0:h.phase_step;
+            if(!steps[h.phase][step]){result=2;break;}
+            fprintf(hd_cost_file,"%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%s,%s,%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%u,%" PRIu64 ",%s,%" PRIu64 "\n",
                 f,period_ns,h.read_ns,h.acknowledgement_ns,h.maintenance_ns,total,phases[h.phase],phases[h.next_phase],
-                h.read_commands,h.write_commands,h.generation,h.checkpoints,h.attached,h.open_ns);
-            ++hd_cost_frames;if(total>hd_cost_max)hd_cost_max=total;if(total>period_ns/5)++hd_cost_over;
+                h.read_commands,h.write_commands,h.generation,h.checkpoints,h.attached,h.open_ns,steps[h.phase][step],h.namespace_operations);
+            ++hd_cost_frames;if(total>hd_cost_max)hd_cost_max=total;if(h.namespace_operations>1||h.acknowledgement_ns>period_ns/5||
+                (h.namespace_operations?total*5>period_ns*2:total*5>period_ns))++hd_cost_over;
         }
         if (timing) fprintf(timing,"%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%u,%" PRIu64 ",%" PRIu64 "\n",f,elapsed,period_ns,measured,guest_instructions,guest_ns);
         printf("frame=%" PRIu64 " ns=%" PRIu64 " cpu=%" PRIu64 " idle=%" PRIu64 " rate=%u irq=%08x fiq=%08x fault=%u\n",
@@ -361,7 +371,7 @@ int main(int argc, char **argv)
     if (dump_failed) result = 2;
     free(dump_pixels);
     free(times); if(hd_cost_file){if(ferror(hd_cost_file))result=2;if(fclose(hd_cost_file))result=2;
-        fprintf(stderr,"hd-cost frames=%" PRIu64 " max_ns=%" PRIu64 " over_0.20T=%" PRIu64 " budget=%s\n",hd_cost_frames,hd_cost_max,hd_cost_over,hd_cost_over?"exceeded":"passed");}
+        fprintf(stderr,"hd-cost frames=%" PRIu64 " max_ns=%" PRIu64 " over_D160=%" PRIu64 " budget=%s\n",hd_cost_frames,hd_cost_max,hd_cost_over,hd_cost_over?"exceeded":"passed");}
     if(timing && fclose(timing))result=2;
     if(ferror(stdout))result=2;
     unload(); deinit(); vfs_assert_no_open_handles();

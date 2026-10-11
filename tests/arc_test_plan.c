@@ -89,11 +89,11 @@ void arc_test_plan_hd_frame(void)
 {
     if(hard_disc && arc_engine_is_rpc() && arc_engine_active()){
         ArcRpcHdStats stats;
-        if(hd_cost_enabled){arc_riscpc_hd_stats(hard_disc,&stats);hd_cost.phase=stats.state;hd_cost.attached=true;}
+        if(hd_cost_enabled){arc_riscpc_hd_stats(hard_disc,&stats);hd_cost.phase=stats.state;hd_cost.phase_step=stats.phase_step;hd_cost.attached=true;}
         uint64_t start=arc_test_clock_ns();arc_riscpc_hd_tick(hard_disc);
         uint64_t elapsed=arc_test_clock_ns()-start;arc_engine_test_frame_add_ns(elapsed);
         if(hd_cost_enabled){hd_cost.maintenance_ns=elapsed;arc_riscpc_hd_stats(hard_disc,&stats);
-            hd_cost.next_phase=stats.state;hd_cost.generation=stats.generation;hd_cost.checkpoints=stats.checkpoints;}
+            hd_cost.namespace_operations=stats.tick_namespace_operations;hd_cost.next_phase=stats.state;hd_cost.generation=stats.generation;hd_cost.checkpoints=stats.checkpoints;}
         const char *diagnostic=arc_riscpc_hd_diagnostic(hard_disc);if(diagnostic && plan_log)plan_log(diagnostic);
         const char *notice=arc_riscpc_hd_notice(hard_disc);if(notice && plan_notice)plan_notice(notice,true);
     }

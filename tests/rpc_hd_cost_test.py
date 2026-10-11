@@ -40,12 +40,17 @@ def main():
         assert any(int(r['acknowledgement_ns']) > 0 for r in rows)
         assert any(int(r['read_commands']) > 0 and int(r['read_ns']) > 0 for r in rows)
         assert {'ROTATE', 'MATERIALIZE', 'MANIFEST', 'PUBLISH', 'RETIRE'} <= {r['phase'] for r in rows}
+        assert {r['substep'] for r in rows if r['phase']=='RETIRE'} == {
+            'manifest', 'header', 'length-binding', 'remove-manifest', 'remove-journal'}
+        assert any(r['namespace_operations']=='1' for r in rows)
+        assert all(r['namespace_operations'] in ('0','1') and r['substep'] for r in rows)
+        assert all(r['namespace_operations']=='0' for r in rows if r['substep']=='reconstruct')
         assert int(rows[-1]['checkpoints']) >= 2
         # Wall-clock qualification belongs to the Odin3; exercise the checker
         # deterministically without asserting a budget on a loaded CI host.
         for row in rows:
             row['open_ns'] = row['read_ns'] = row['acknowledgement_ns'] = '0'
-            row['maintenance_ns'] = row['total_ns'] = str(int(row['T_ns']) // 5)
+            row['maintenance_ns'] = row['total_ns'] = str(int(row['T_ns']) * (2 if row['namespace_operations']=='1' else 1) // 5)
         def write_rows():
             with report.open('w', newline='') as output:
                 writer = csv.DictWriter(output, fieldnames=rows[0].keys())
@@ -54,9 +59,28 @@ def main():
         check_args = [sys.executable, '-B', str(checker), str(report), '--frames', '700']
         assert subprocess.run(check_args, capture_output=True).returncode == 0
         assert subprocess.run(check_args[:-1] + ['701'], capture_output=True).returncode == 2
-        rows[0]['total_ns'] = rows[0]['maintenance_ns'] = str(int(rows[0]['T_ns']) // 5 + 1)
+        ordinary = next(r for r in rows if r['namespace_operations']=='0')
+        namespaced = next(r for r in rows if r['namespace_operations']=='1')
+        for row, factor in ((ordinary,1),(namespaced,2)):
+            row['total_ns'] = row['maintenance_ns'] = str(int(row['T_ns'])*factor//5+1)
+            write_rows()
+            assert subprocess.run(check_args, capture_output=True).returncode == 1
+            row['total_ns'] = row['maintenance_ns'] = str(int(row['T_ns'])*factor//5)
+        # The relaxed maintenance tick never relaxes acknowledgement.
+        namespaced['acknowledgement_ns'] = str(int(namespaced['T_ns'])//5+1)
+        namespaced['maintenance_ns'] = '0'; namespaced['total_ns'] = namespaced['acknowledgement_ns']
         write_rows()
         assert subprocess.run(check_args, capture_output=True).returncode == 1
+        namespaced['acknowledgement_ns']='0'
+        namespaced['total_ns']=namespaced['maintenance_ns']=str(int(namespaced['T_ns'])*2//5)
+        for key,value in (('namespace_operations','2'),('substep','unknown')):
+            previous=namespaced[key];namespaced[key]=value;write_rows()
+            assert subprocess.run(check_args, capture_output=True).returncode == 2
+            namespaced[key]=previous
+        # Zero namespace calls cannot earn the larger allowance by phase alone.
+        namespaced['namespace_operations']='0';write_rows()
+        assert subprocess.run(check_args, capture_output=True).returncode == 1
+        namespaced['namespace_operations']='1';write_rows()
         plan = root / 'off.arcplan'
         plan.write_text((fixture / 'hd.arcplan').read_text().replace('hard_disc=on', 'hard_disc=off'))
         # Make the relative ROM/media/input paths absolute after moving the plan.
@@ -92,13 +116,13 @@ def main():
         rows = [dict(opening[0])]
         rows[0].update(frame='0', attached='0', open_ns='1', total_ns='1',
                        read_ns='0', acknowledgement_ns='0', maintenance_ns='0',
-                       read_commands='0', write_commands='0')
+                       read_commands='0', write_commands='0', namespace_operations='0')
         write_rows()
         assert subprocess.run([sys.executable, '-B', str(checker), str(report)], capture_output=True).returncode == 0
         rows[0].update(open_ns='0', maintenance_ns='1')
         write_rows()
         assert subprocess.run([sys.executable, '-B', str(checker), str(report)], capture_output=True).returncode == 2
-        print('rpc-hd-cost-report: measured/unmeasured execution and store identical; phases, off and budget checker pass')
+        print('rpc-hd-cost-report: measured/unmeasured execution and store identical; substeps, namespace census, off and D-160 boundary/acknowledgement checker pass')
 
 
 if __name__ == '__main__':

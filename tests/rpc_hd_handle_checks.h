@@ -16,10 +16,12 @@ static inline void checked_hd_handles(ArcRpcHdStore *s)
 }
 static inline void checked_hd_tick(ArcRpcHdStore *s)
 {
- uint64_t before=rpc_hd_test_metadata_calls();arc_riscpc_hd_tick(s);
+ uint64_t before=rpc_hd_test_metadata_calls(),namespace_before=rpc_hd_test_namespace_calls();arc_riscpc_hd_tick(s);
  ArcRpcHdStats a;arc_riscpc_hd_stats(s,&a);
  assert(rpc_hd_test_metadata_calls()-before<=4);
  assert(a.tick_metadata_operations==rpc_hd_test_metadata_calls()-before);
+ assert(rpc_hd_test_namespace_calls()-namespace_before<=1);
+ assert(a.tick_namespace_operations==rpc_hd_test_namespace_calls()-namespace_before);
  checked_hd_handles(s);
 }
 #define CHECKED_HD_TRANSFER(name,type) \

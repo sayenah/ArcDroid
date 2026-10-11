@@ -38,7 +38,7 @@
 #undef vfs_remove
 #undef vfs_rename
 
-static uint64_t metadata_calls;
+static uint64_t metadata_calls,namespace_calls;
 static struct retro_vfs_file_handle *rotation_handle;
 static unsigned boundary,cut;
 static void point(void)
@@ -55,7 +55,7 @@ static void point(void)
 void arc_riscpc_hd_test_point(unsigned stage) {assert(stage>=1&&stage<=3);point();}
 #define WRAP(name,type,params,args) static type observed_##name params {point();type result=base_##name args;point();return result;}
 static struct retro_vfs_file_handle *observed_open(const char *p,unsigned m,unsigned h)
-{++metadata_calls;point();struct retro_vfs_file_handle *f=base_open(p,m,h);point();
+{++metadata_calls;if((m&RETRO_VFS_FILE_ACCESS_WRITE)&&!(m&RETRO_VFS_FILE_ACCESS_UPDATE_EXISTING))++namespace_calls;point();struct retro_vfs_file_handle *f=base_open(p,m,h);point();
  if(f&&m==RETRO_VFS_FILE_ACCESS_WRITE&&f->cached_size==0&&strstr(p,"/journal."))rotation_handle=f;return f;}
 static int observed_close(struct retro_vfs_file_handle *h)
 {++metadata_calls;point();if(h==rotation_handle)rotation_handle=NULL;int result=base_close(h);point();return result;}
@@ -68,12 +68,15 @@ WRAP(read,int64_t,(struct retro_vfs_file_handle *h,void *p,uint64_t n),(h,p,n))
 WRAP(write,int64_t,(struct retro_vfs_file_handle *h,const void *p,uint64_t n),(h,p,n))
 META_WRAP(flush,int,(struct retro_vfs_file_handle *h),(h))
 META_WRAP(stat,int32_t,(const char *p,int32_t *n),(p,n))
-META_WRAP(remove,int,(const char *p),(p))
-META_WRAP(rename,int,(const char *a,const char *b),(a,b))
+static int observed_remove(const char *p)
+{++namespace_calls;++metadata_calls;point();int result=base_remove(p);point();return result;}
+static int observed_rename(const char *a,const char *b)
+{++namespace_calls;++metadata_calls;point();int result=base_rename(a,b);point();return result;}
 static void process_rotation_writer(void)
 {assert(vfs_open_handles==1&&vfs_open_directories==0&&rotation_handle&&rotation_handle->writable&&!rotation_handle->readable&&rotation_handle->cached_size==0);}
 #define rpc_hd_test_rotation_writer process_rotation_writer
 #define rpc_hd_test_metadata_calls() metadata_calls
+#define rpc_hd_test_namespace_calls() namespace_calls
 #define rpc_hd_test_no_open_handles vfs_assert_no_open_handles
 #include "rpc_hd_handle_checks.h"
 static bool no_listing(struct retro_vfs_dir_handle *d){(void)d;return false;}
