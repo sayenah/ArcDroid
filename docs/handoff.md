@@ -1,8 +1,10 @@
 # ArcDroid Handoff
 
-**Stage:** IMPLEMENTATION — roadmap item 6, RiscPC **R2c**, run P (test-only remediation of Opus QA 3 LOWs)
-**Owner:** Sol (run P), supervised by Fable
-**Next:** Fable supervises Sol run P (test-only; no change to the plan core, the store or the checker logic), reviews it, commits it verbatim on `slice/r2c-ide`, and pushes. Then Fable asks the same Opus QA agent to re-check, or a fresh `arcdroid-opus-qa` agent in a fresh clone if the original is gone. If the re-check passes, Fable confirms green CI on all jobs at the head and merges PR #337 under protocol §12.11. After the merge, the Q-3 oracle fix (D-146) comes before R3.
+**Stage:** QA — roadmap item 6, RiscPC **R2c** (PR #337, head `18bb756`), re-check of run P (test-only remediation of Opus QA 3)
+**Owner:** Opus (QA re-check), dispatched by Fable
+**Next:** the same Opus QA agent re-checks `f51cd68..18bb756` (run P, test-only): every QA 3 mutant (S4, S11, S14, S15, S17–S21, C3, C6) is now killed by the regular tests, S8's equivalence argument holds, and no protected path changed. If the re-check passes, Fable confirms green CI on all jobs at `18bb756` and merges PR #337 under protocol §12.11. After the merge, the Q-3 oracle fix (D-146) comes before R3.
+
+**Run P outcome (S61):** committed verbatim as `18bb756` (tests only: `tests/rpc_hd_store_test.c`, `tests/rpc_hd_cost_test.py`, `tests/rpc_qa_mutations.py`, and one CMake line passing the runner and plan core to `rpc-qa-mutations`). Host 353/353; sanitizer HD tests 16/16. The mutation suite has 117 recipes: 116 killed, and S8 is equivalent under the validated-generation invariant. CI at `f51cd68` was green on all five jobs (run 38117044989).
 
 **Opus QA 3 (effort 15) at `f51cd68`: PASS WITH LOWS, no defects.** Fable's adjudication is in `.work/s61/qa/adjudication-3.md` (QA clone `.work/s61/qa/clone`, scratch under `build/qa3/`).
 - Host 352/352. Sanitizer subset 76/77 (the one timeout passed alone).
@@ -347,7 +349,7 @@ Slice order (D-133): R1–R4 → item 5 release baseline → item 6b faster CPU 
 **S61 (Claude Opus 5.5 effort 15; baton by relay from `arcdroid-db`).**
 - Adopted Sol run J, which had already died: the Codex service refused its last turn. Reviewed it and committed it as `d18f08e`.
 - CI located the Windows crash (D-155). The Odin3 legs failed D-152 on FUSE storage (D-156). Recorded the SMLAL ruling (D-157) and dispatched Sol run K.
-- **Running:** Sol run P and its watchdog (PIDs in `.work/s61/LEDGER.md`). Opus QA 3 finished (PASS WITH LOWS).
+- **Running:** the Opus QA re-check of run P (in-session agent; see `.work/s61/LEDGER.md`). Sol run P finished.
 - **Odin3 state:** RetroArch closed. Under `/data/local/tmp/arcdroid-r2c/s61/` are the run J arm64 core, runner, probe runner (`rpc_runner_nofsync`), scripts and results. FUSE save directories are under `/storage/emulated/0/arcdroid-s61/`; delete them after R2c.
 
 **Answered S60:** SSH to the Founder's Windows box (`sinmu@192.168.1.66`) is allowed for the item 6b Windows profile (D-148). It may also serve R2c AC-9's Windows native-RetroArch leg.
