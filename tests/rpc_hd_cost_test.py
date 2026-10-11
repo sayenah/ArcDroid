@@ -93,6 +93,20 @@ def main():
             previous=namespaced[key];namespaced[key]=value;write_rows()
             assert subprocess.run(check_args, capture_output=True).returncode == 2
             namespaced[key]=previous
+        # Exercise the two independent shape rules without another rule
+        # rejecting the row first (QA C3 and C6).
+        original = namespaced.copy()
+        namespaced.update(phase='MATERIALIZE', substep='verify', namespace_operations='0',
+                          maintenance_ns='1', total_ns='1')
+        write_rows()
+        assert subprocess.run(check_args, capture_output=True).returncode == 0
+        namespaced['namespace_operations']='1';write_rows()
+        checked = subprocess.run(check_args, capture_output=True, text=True)
+        assert checked.returncode == 2 and 'namespace call in read-only substep' in checked.stderr, checked
+        namespaced.update(namespace_operations='0', substep='unknown');write_rows()
+        checked = subprocess.run(check_args, capture_output=True, text=True)
+        assert checked.returncode == 2 and 'unknown maintenance substep' in checked.stderr, checked
+        namespaced.clear();namespaced.update(original)
         # Zero namespace calls cannot earn the larger allowance by phase alone.
         namespaced['namespace_operations']='0';write_rows()
         assert subprocess.run(check_args, capture_output=True).returncode == 1

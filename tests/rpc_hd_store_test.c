@@ -10,8 +10,11 @@ static const char *id="0123456789012345678901234567890123456789";
 static char error[256];
 #ifdef ARCDROID_HD_TEST_ALLOC
 static bool out_of_memory;
+static void *store_allocation;
+static size_t store_allocation_bytes;
 void *arc_riscpc_hd_test_calloc(size_t count,size_t size)
-{if(out_of_memory){out_of_memory=false;return NULL;}return calloc(count,size);}
+{if(out_of_memory){out_of_memory=false;return NULL;}
+ store_allocation=calloc(count,size);store_allocation_bytes=count*size;return store_allocation;}
 #endif
 static ArcRpcHdStore *open_store(bool blank)
 {ArcRpcHdStore *s=arc_riscpc_hd_open("/save",id,blank,error,sizeof(error));assert(s);return s;}
@@ -126,7 +129,18 @@ static void store(void)
     assert(chunk>=0);files[chunk].present=false;s=open_store(false);assert(!arc_riscpc_hd_read(s,6,1,out));assert(arc_riscpc_hd_notice(s));ArcRpcHdStats a;arc_riscpc_hd_stats(s,&a);assert(a.read_only);arc_riscpc_hd_close(s);
     fresh_files();s=open_store(true);idle(s);arc_riscpc_hd_close(s);chunk=-1;for(unsigned i=0;i<TEST_FILES;++i)if(files[i].present&&strstr(files[i].path,"/c000.g"))chunk=(int)i;assert(chunk>=0);files[chunk].data[128+30000]^=1;
     s=open_store(false);assert(!arc_riscpc_hd_read(s,6,1,out));arc_riscpc_hd_close(s);
-    puts("rpc-hd-store: pass");
+    /* The checkpoint is exactly the frozen prefix, even when the successor
+     * overwrites a sector before its first reconstruction (QA S21). */
+    fresh_files();s=open_store(true);idle(s);fill(in,256,0x35);
+    for(unsigned i=0;i<9;++i)assert(arc_riscpc_hd_write(s,2048+i*512,256,in));
+    until_phase(s,ARC_RPC_HD_MATERIALIZE,0);fill(in,1,0x93);
+    assert(arc_riscpc_hd_write(s,2048,1,in));idle(s);
+    int frozen=find("/save/arcdroid/hd-riscpc/0123456789012345678901234567890123456789/c004.g0000000000000001",false);
+    assert(frozen>=0);for(unsigned b=0;b<512;++b)assert(files[frozen].data[128+b]==0x35);
+    check_sector(s,2048,0x93);check_sector(s,2049,0x35);bounds(s);arc_riscpc_hd_close(s);
+    s=open_store(false);idle(s);check_sector(s,2048,0x93);check_sector(s,2049,0x35);
+    for(unsigned i=1;i<9;++i)check_sector(s,2048+i*512,0x35);arc_riscpc_hd_close(s);
+    puts("rpc-hd-store: frozen prefix before reconstruction, successor overwrite and reopen pass");
 }
 static void population(void)
 {
@@ -695,6 +709,120 @@ static void split_steps(void)
     }
     puts("split boundaries: late S, private frozen payload, full readbacks, separate retirement removals, failed-stat GC budget, prepared-writer cleanup and recovery pass");
 }
+/* QA 3: several private leaves must be retired through ordinary GC ticks. */
+static void abort_gc_leaves(void)
+{
+    fresh_files();silent_readdir=true;ArcRpcHdStore *s=open_store(true);idle(s);
+    ArcRpcHdStats before,a;arc_riscpc_hd_stats(s,&before);uint8_t p[131072];fill(p,256,0x5c);
+    assert(arc_riscpc_hd_population_begin(s));
+    for(unsigned c=0;c<6;++c)assert(arc_riscpc_hd_population_write(s,2048+c*512,256,p));
+    arc_riscpc_hd_stats(s,&a);assert(a.chunk_files==before.chunk_files+6);
+    arc_riscpc_hd_population_abort(s);unsigned ticks=0,removed=0;
+    do{unsigned leaves=a.chunk_files;arc_riscpc_hd_tick(s);arc_riscpc_hd_stats(s,&a);
+        assert(!a.read_only&&++ticks<100&&a.chunk_files<=leaves&&leaves-a.chunk_files<=1);
+        removed+=leaves-a.chunk_files;bounds(s);
+    }while(a.state!=ARC_RPC_HD_IDLE);
+    assert(ticks>=6&&removed==6&&a.chunk_files==before.chunk_files&&a.generation==before.generation);
+    for(unsigned c=0;c<6;++c){char leaf[1100];snprintf(leaf,sizeof(leaf),
+        "/save/arcdroid/hd-riscpc/%s/c%03x.g0000000000000001",id,c+4);
+        assert(find(leaf,false)<0);check_sector(s,2048+c*512,0);}
+    arc_riscpc_hd_close(s);s=open_store(false);idle(s);
+    for(unsigned c=0;c<6;++c)check_sector(s,2048+c*512,0);bounds(s);arc_riscpc_hd_close(s);
+    printf("abort GC: six private leaves, %u ticks, <=one removal per tick, unchanged source and reopen pass\n",ticks);
+}
+static ArcRpcHdStore *checkpoint_seed(void)
+{
+    fresh_files();ArcRpcHdStore *s=open_store(true);idle(s);uint8_t p[131072];fill(p,256,0x65);
+    for(unsigned i=0;i<9;++i)assert(arc_riscpc_hd_write(s,2048+i*512,256,p));return s;
+}
+static void checkpoint_reopen(ArcRpcHdStore *s)
+{
+    arc_riscpc_hd_close(s);s=open_store(false);idle(s);
+    for(unsigned i=0;i<9;++i)check_sector(s,2048+i*512,0x65);bounds(s);arc_riscpc_hd_close(s);
+}
+static unsigned switch_read_corruptions;
+static int64_t corrupt_switch_read(struct retro_vfs_file_handle *f,void *p,uint64_t n)
+{
+    size_t at=f->at;int64_t got=test_read(f,p,n);
+    const char *leaf=strrchr(files[f->file].path,'/')+1;
+    if(!strcmp(leaf,"journal.b")&&at==0&&n==256&&got==256){((uint8_t *)p)[252]^=1;++switch_read_corruptions;}
+    return got;
+}
+#ifdef ARCDROID_HD_TEST_ALLOC
+/* Inject a resident-header fault through the existing test allocator. Match
+ * the unique cached envelope, rather than duplicating the opaque struct or
+ * guessing its offsets. RETIRE's binding check compares this cached envelope
+ * with the independently retained parent model, not another disk read. */
+static void tamper_resident_header(ArcRpcHdStore *s,const uint8_t header[256],unsigned field)
+{
+    assert(store_allocation==(void *)s&&store_allocation_bytes>=256&&field<252);
+    uint8_t *allocation=store_allocation,*cached=NULL;unsigned matches=0;
+    for(size_t at=0;at<=store_allocation_bytes-256;++at)
+        if(!memcmp(allocation+at,header,256)){cached=allocation+at;++matches;}
+    assert(matches==1);cached[field]^=1;
+}
+#endif
+static void split_verification(void)
+{
+    ArcRpcHdStats a;ArcRpcHdStore *s=checkpoint_seed();until_phase(s,ARC_RPC_HD_ROTATE,1);
+    switch_read_corruptions=0;vfs.read=corrupt_switch_read;arc_riscpc_hd_tick(s);vfs.read=test_read;
+    arc_riscpc_hd_stats(s,&a);assert(a.read_only&&a.generation==0&&arc_riscpc_hd_notice(s));
+    assert(switch_read_corruptions==1);checkpoint_reopen(s);
+    /* An occupied successor name must be refused before a truncating create. */
+    s=checkpoint_seed();until_phase(s,ARC_RPC_HD_ROTATE,0);uint8_t sentinel[256];memset(sentinel,0x83,sizeof(sentinel));
+    struct retro_vfs_file_handle *f=test_open("/save/arcdroid/hd-riscpc/0123456789012345678901234567890123456789/journal.b",2,0);
+    assert(f&&test_write(f,sentinel,256)==256&&test_close(f)==0);int j=named("journal.b");
+    arc_riscpc_hd_tick(s);arc_riscpc_hd_stats(s,&a);assert(a.read_only&&a.generation==0&&arc_riscpc_hd_notice(s));
+    assert(files[j].size==256&&!memcmp(files[j].data,sentinel,256));arc_riscpc_hd_close(s);
+    /* The injected foreign file is removed by its test owner before recovery. */
+    assert(test_remove(files[j].path)==0);s=open_store(false);idle(s);
+    for(unsigned i=0;i<9;++i)check_sector(s,2048+i*512,0x65);arc_riscpc_hd_close(s);
+    /* A physical length change after the header step must block retirement. */
+    for(unsigned longer=0;longer<2;++longer){s=checkpoint_seed();until_phase(s,ARC_RPC_HD_RETIRE,2);
+        j=named("journal.b");size_t length=files[j].size;assert(length<files[j].capacity);
+        if(longer)files[j].data[files[j].size++]=0x7d;else --files[j].size;
+        arc_riscpc_hd_tick(s);arc_riscpc_hd_stats(s,&a);assert(a.read_only&&arc_riscpc_hd_notice(s));
+        (void)named("manifest.a");(void)named("journal.a");files[j].size=length;checkpoint_reopen(s);}
+    /* CRC-valid replacement of the successor header after publication must
+     * still fail comparison with the cached header at RETIRE/header. */
+    s=checkpoint_seed();until_phase(s,ARC_RPC_HD_RETIRE,1);j=named("journal.b");uint8_t original[256];
+    memcpy(original,files[j].data,256);files[j].data[104]^=1;repair(files[j].data,256);
+    arc_riscpc_hd_tick(s);arc_riscpc_hd_stats(s,&a);assert(a.read_only&&arc_riscpc_hd_notice(s));
+    (void)named("manifest.a");(void)named("journal.a");memcpy(files[j].data,original,256);checkpoint_reopen(s);
+#ifdef ARCDROID_HD_TEST_ALLOC
+    const unsigned bindings[]={96,152,160};
+    for(unsigned k=0;k<3;++k){s=checkpoint_seed();until_phase(s,ARC_RPC_HD_RETIRE,2);j=named("journal.b");
+        tamper_resident_header(s,files[j].data,bindings[k]);arc_riscpc_hd_tick(s);arc_riscpc_hd_stats(s,&a);
+        assert(a.read_only&&arc_riscpc_hd_notice(s));(void)named("manifest.a");(void)named("journal.a");checkpoint_reopen(s);}
+#endif
+    /* A zero reconstruction must remove an existing private alternative before
+     * publishing HOLE, even without directory listings (QA S20). */
+    fresh_files();silent_readdir=true;s=open_store(true);idle(s);uint8_t p[131072];fill(p,256,0);
+    for(unsigned i=0;i<9;++i)assert(arc_riscpc_hd_write(s,2048,256,p));until_phase(s,ARC_RPC_HD_MATERIALIZE,1);
+    f=test_open("/save/arcdroid/hd-riscpc/0123456789012345678901234567890123456789/c004.g0000000000000001",2,0);
+    assert(f&&test_write(f,sentinel,256)==256&&test_close(f)==0);int debris=named("c004.g0000000000000001");
+    arc_riscpc_hd_tick(s);arc_riscpc_hd_stats(s,&a);assert(!a.read_only&&!files[debris].present);
+    idle(s);check_sector(s,2048,0);bounds(s);arc_riscpc_hd_close(s);s=open_store(false);idle(s);check_sector(s,2048,0);arc_riscpc_hd_close(s);
+    puts("QA 3 split verification: switch readback, occupied destination, RETIRE length/header/parent bindings and zero alternative pass");
+}
+static void switch_cap_edge(void)
+{
+    fresh_files();ArcRpcHdStore *s=open_store(true);idle(s);ArcRpcHdStats a;uint8_t p[131072];fill(p,256,0x65);
+    for(unsigned i=0;i<8;++i)assert(arc_riscpc_hd_write(s,2048,256,p));until_phase(s,ARC_RPC_HD_ROTATE,1);
+    /* 72 records: 63*256 sectors +8*1 +234, plus 72*96 framing
+     * bytes and the parent header, exactly fill the 8 MiB cap. All extra
+     * writes arrive while the empty successor writer is held. */
+    for(unsigned i=8;i<63;++i)assert(arc_riscpc_hd_write(s,2048,256,p));
+    for(unsigned i=0;i<8;++i)assert(arc_riscpc_hd_write(s,2048,1,p));
+    assert(arc_riscpc_hd_write(s,2048,234,p));arc_riscpc_hd_stats(s,&a);
+    assert(a.sequence==72&&a.journal_high==ARC_RPC_HD_JOURNAL_CAP);
+    int parent=named("journal.a"),writer=named("journal.b");assert(files[parent].size==ARC_RPC_HD_JOURNAL_CAP&&files[writer].size==0);
+    arc_riscpc_hd_tick(s);arc_riscpc_hd_stats(s,&a);assert(a.read_only&&arc_riscpc_hd_notice(s));
+    assert(files[parent].size==ARC_RPC_HD_JOURNAL_CAP&&files[writer].size==0);bounds(s);arc_riscpc_hd_close(s);
+    s=open_store(false);arc_riscpc_hd_stats(s,&a);assert(!a.read_only&&a.sequence==72);
+    check_sector(s,2048,0x65);check_sector(s,2303,0x65);bounds(s);arc_riscpc_hd_close(s);
+    puts("switch cap edge: parent at 8 MiB after preparation, successor header refused, all 72 acknowledgements recover");
+}
 int main(int argc,char **argv)
 {
     if(argc>1&&!strcmp(argv[1],"bounds")){stream(false,false,argc>2?argv[2]:NULL);stream(true,true,argc>3?argv[3]:NULL);}
@@ -704,8 +832,8 @@ int main(int argc,char **argv)
     else if(argc>1&&!strcmp(argv[1],"reconstruction"))reconstruction_budget();
     else if(argc>1&&!strcmp(argv[1],"handles"))reconstruction_failures();
     else if(argc>1&&!strcmp(argv[1],"vfs"))vfs_conformance();
-    else if(argc>1&&!strcmp(argv[1],"population"))population();
-    else if(argc>1&&!strcmp(argv[1],"steps"))split_steps();
+    else if(argc>1&&!strcmp(argv[1],"population")){population();abort_gc_leaves();}
+    else if(argc>1&&!strcmp(argv[1],"steps")){split_steps();split_verification();switch_cap_edge();}
     else if(argc>1&&!strcmp(argv[1],"command"))faults();
     else if(argc>1&&!strcmp(argv[1],"binding"))binding_fault();
     else if(argc>1&&!strcmp(argv[1],"accounting"))bridge_accounting();

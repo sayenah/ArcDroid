@@ -1974,7 +1974,8 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
       --timing $<TARGET_FILE:rpc_timing_test> --unit $<TARGET_FILE:rpc_mem_timing_unit>
       --video $<TARGET_FILE:rpc_video_test> --store $<TARGET_FILE:rpc_cmos_store_test>
       --fdc $<TARGET_FILE:rpc_fdc_test> --hd $<TARGET_FILE:rpc_hd_store_test>
-      --ide $<TARGET_FILE:rpc_ide_test>)
+      --ide $<TARGET_FILE:rpc_ide_test> --runner $<TARGET_FILE:rpc_runner>
+      --plan $<TARGET_FILE:arcdroid_rpcplan_libretro>)
     set_tests_properties(rpc-qa-mutations PROPERTIES TIMEOUT 600 RUN_SERIAL TRUE)
   endif()
   foreach(rate IN ITEMS 60 99)
