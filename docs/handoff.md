@@ -1,21 +1,26 @@
 # ArcDroid Handoff
 
-**Stage:** IMPLEMENTATION — roadmap item 6, RiscPC **R2c**, run O (checker bound 0.50 T for namespace ticks, D-161; tooling, tests and contract text only)
-**Owner:** Sol (run O), supervised by Fable
-**Next:** Fable (S61 or the next holder):
+**Stage:** QA — roadmap item 6, RiscPC **R2c** (PR #337, head `f51cd68`), re-check of the delta from runs I to O
+**Owner:** Opus (QA), dispatched by Fable
+**Next:** Opus QA (a fresh `arcdroid-opus-qa` agent, effort 15 or above, fresh clone of `slice/r2c-ide` at `f51cd68`) reviews the delta `5630d83..f51cd68` against the QA focus below and reports. Then Fable adjudicates. If it passes, Fable confirms green CI at the head and merges PR #337 under protocol §12.11. After the merge, the Q-3 oracle fix (D-146) comes before R3.
 1. **Windows evidence for run K: done (S61).** On part (a) `08e3df7` (CI 38089532777), `windows` failed in the 50× repeat step with the same crash. The new regressions sit later in the job and were not reached. On part (b) at `7521f1a` (CI 38090184344), **all five jobs are green**: `windows` passed 210/210, including `rpc-cpu-smlal` and the three 1,000× jump-repeat regressions, with 100/100 repeats. `windows-retroarch` passed `rpc-hd-session-1/2/3` for the first time ("force termination, reload gen1, write gen2, QUIT, reload gen2 … full IDENTIFY/data comparisons PASS"). This closes QA 2's condition and H1.
-2. **Supervise Sol run O to completion.** Review it. It must not change the plan core or the store (`libretro/`, `engine/`, `core/`, `tests/arc_test_plan.*`); if it does, the Odin3 evidence below must be re-run. Commit it verbatim on `slice/r2c-ide`, push, and require green CI on all jobs, including `windows-retroarch`'s `rpc-hd-session-1/2/3`. Re-run the job if it flakes in an earlier Archimedes leg (known flakes: a Slice 15 screenshot timeout, `zip-name-disc1-1`).
-3. **Odin3 legs on the run N core (`2d2b00c`): done (S61), with saves on `/storage/emulated/0` and `--vfs-flush retroarch`.**
+2. **Run O: done (S61).** Committed verbatim as `f51cd68` (the checker, runner summary, cost test, runbook and contract text apply D-161; the plan core and store are unchanged; host 353/353). CI on `f51cd68` must be green on all jobs before merge. Run N's CI (`2d2b00c`) passed windows, windows-retroarch (`rpc-hd-session-1/2/3`), host and android-arm64.
+3. **Odin3 legs on the run N core (`2d2b00c`): done (S61), with saves on `/storage/emulated/0` and `--vfs-flush retroarch`.** The D-161 checker gives `over_D161=0` for all four device runs (authored ×3 and the clean 031). `rep20.sh` on the run N core: 20 sessions, 0 errors, 0 forced stops, peak PSS 174–181 MB.
    - `hash_accel_test --require-arm` passed.
    - Authored guest ×3: 0 frames over D-160. Worst namespace tick about 6.5 ms; acknowledgement ≤0.73 ms.
    - 031 install, first run: invalidated by an external event. Android's scheduled full backup restarted MediaProvider (the FUSE daemon) at 00:06:25. One ROTATE/prepare tick stalled 56.8 s, then the store latched read-only with its notice: the designed safe failure, with earlier writes kept.
    - 031 install, clean re-run (`i031b`): 2 ticks over 0.40 T (MATERIALIZE/write, 7.23 and 6.93 ms). Every tick passes D-161's 0.50 T; acknowledgement ≤1.15 ms.
    - Native RetroArch, three sessions, plan core installed through the menu: session 1 cyan, then force-stopped; session 2 blue, then QUIT; session 3 green, verify-only. 0 errors, no store notices, peak PSS 178–180 MB.
-   - `rep20.sh`: see the S61 entry under Waiting on the Founder.
    - Evidence in `.work/s61/odin/resn/` and `n-s*.png`; device `/data/local/tmp/arcdroid-r2c/s61n/`.
-4. **Opus QA** of the delta from runs I, J, K, M, N and O (a fresh `arcdroid-opus-qa` agent in a fresh clone; the S60 QA agents are gone). Then **merge PR #337** under protocol §12.11. After the merge, the Q-3 oracle fix (D-146) comes before R3.
+4. **QA focus (the delta `5630d83..f51cd68`, runs I–O):**
+   - **D-155:** every Windows x64 `setjmp`/`longjmp` boundary uses the non-SEH form (`engine/arc_fault_jump.h`); other platforms are unchanged; the repeat regressions; the test-only crash locator never swallows a fault and is absent from shipping cores.
+   - **D-157:** SMLAL/SMLALS correctness, the imported-source patch record and the import guard.
+   - **D-156/D-158/D-159/D-160/D-161 store split:** recovery at every new substep boundary (kill, fault and intervening guest writes); late S binding at the ROTATE switch; the private checkpoint buffer; the GC and RETIRE splits; the four-call and one-namespace-operation assertions; the 6N+16 cycle and the D-159 stream proofs in `docs/riscpc-hd-store.md` §8; AC-5's volumes without reopen; no weakened verification; write acknowledgement and virtual timing unchanged.
+   - **Tools:** the runner `--vfs-flush` modes, the `--hd-cost` substep columns and `check-rpc-hd-cost.py` against D-161.
+   - **QA 2 LOWs** remediated in run I.
+   - Evidence: the Sol reports `SOL-REPORT-R2C-{I..O}.md` (in Fable's clone, not the repository) and the S61 Odin3 and CI results summarised above.
 
-- **Running:** see the S61 entry under Waiting on the Founder (it lists the Sol run O PID and its watchdog).
+- **Running:** see the S61 entry under Waiting on the Founder.
 - **Private work:** S60's is in `.work/s60/` (index `LEDGER.md`); S61's is in `.work/s61/` (index `LEDGER.md`), including the device scripts and results (`odin/`), the CI diagnostics (`ci-diag-1/`) and run K's partition patches (`k/`). Sol's clone holds a stash `runK-backup` with run K's original working tree; drop it after R2c merges.
 - **Codex refusal (S61):** run J's last turn was refused by the Codex service as "possible cybersecurity risk" (its crash-locator subject matter). The run had already written its code and report; only its local full-suite runs were lost, and CI covered them. Word Sol prompts about fault handling neutrally ("fault path", "non-local jump").
 
@@ -327,7 +332,7 @@ Slice order (D-133): R1–R4 → item 5 release baseline → item 6b faster CPU 
 **S61 (Claude Opus 5.5 effort 15; baton by relay from `arcdroid-db`).**
 - Adopted Sol run J, which had already died: the Codex service refused its last turn. Reviewed it and committed it as `d18f08e`.
 - CI located the Windows crash (D-155). The Odin3 legs failed D-152 on FUSE storage (D-156). Recorded the SMLAL ruling (D-157) and dispatched Sol run K.
-- **Running:** Sol run O and its watchdog (PIDs in `.work/s61/LEDGER.md`). Runs K, L, M and N finished (D-158, D-159, D-160 and D-161).
+- **Running:** Opus QA of R2c (dispatched by S61; see `.work/s61/LEDGER.md`). Sol runs J–O are finished.
 - **Odin3 state:** RetroArch closed. Under `/data/local/tmp/arcdroid-r2c/s61/` are the run J arm64 core, runner, probe runner (`rpc_runner_nofsync`), scripts and results. FUSE save directories are under `/storage/emulated/0/arcdroid-s61/`; delete them after R2c.
 
 **Answered S60:** SSH to the Founder's Windows box (`sinmu@192.168.1.66`) is allowed for the item 6b Windows profile (D-148). It may also serve R2c AC-9's Windows native-RetroArch leg.
