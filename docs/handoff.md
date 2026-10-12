@@ -1,10 +1,10 @@
 # ArcDroid Handoff
 
-**Stage:** IMPLEMENTATION — roadmap item 6, RiscPC **R3a** (D-164/D-165) on `slice/r3a-selection`. Q-3 merged S61 (`44d007e`).
-**Owner:** Sol (R3a), supervised by Fable.
+**Stage:** IMPLEMENTATION — RiscPC **R3a run 2** (D-166), PR #378, branch `slice/r3a-selection`.
+**Owner:** Sol (R3a run 2), supervised by Fable.
 **Next:**
 1. **Q-3: merged** as `44d007e` (PR #375) after Opus QA PASS WITH LOWS (adjudication `.work/s61/qa-q3/adjudication.md`) and green CI on all five jobs. Follow-up Low: the CPU reproduction comment (`tests/rpc_cpu_test.c:373–374`) overstates which term the I/O/reserved/EASI targets test; fix it in the next RPC slice that touches the test.
-2b. **R3a (Sol):** supervise to completion, review, commit verbatim, open a PR, green CI, Fable's private fingerprint check and library A/B (AC-2, AC-4), Opus QA, merge. Then R3b.
+2b. **R3a:** Opus QA (effort 15) PASS WITH LOWS, no defects. Fable's library A/B shows no regression (D-166). **Run 2 (Sol, D-166(1)–(3)):** scan only when a disc meets the RiscPC notice predicate; partial manual override semantics; the depth-bound, dot-entry and `resource_failure` tests; mutants in CTest with an integration mode. Then Fable reviews and commits it, gets green CI, has the QA agent re-check the delta, and merges. Then R3b.
 2. **AC-10: measured (S61); Founder decision D-163.** R3 next, then 6b before R4. Original text: On the Odin3 at 100 MIPS, measure guest progress and frame rate of the trial's 031 and 110 gameplay workloads against the trial's record (031 ≈ 27 fps).
    - Guest timing is virtual and host-independent, so the guest frame rate can be measured from runner frame dumps on any host. The Odin3 shows whether the host keeps real time.
    - The trial's gameplay scripts were lost. S60 rebuilt a 031 cold start to racing gameplay (`.work/s60/ac8/leg4-031-c-cold`, frames 6400–7400; store `l4-031`). 110 runs from floppy on the common standard boot disc (trial-d).
@@ -152,7 +152,7 @@ Slice order (D-133 as amended by D-163): R1–R3 → item 6b faster CPU work →
 - Adopted Sol run J, which had already died: the Codex service refused its last turn. Reviewed it and committed it as `d18f08e`.
 - CI located the Windows crash (D-155). The Odin3 legs failed D-152 on FUSE storage (D-156). Recorded the SMLAL ruling (D-157) and dispatched Sol run K.
 - R2c: runs K–Q, the Odin3 FUSE and native RetroArch legs, Opus QA 3 and its re-checks; merged PR #337 as `0e71237`. Founder decision D-162.
-- **Running:** Sol R3a and its watchdog (PIDs in `.work/s61/LEDGER.md`). Q-3 merged; AC-10 decided (D-163).
+- **Running:** Sol R3a run 2 and its watchdog (PIDs in `.work/s61/LEDGER.md`). R3a QA passed; A/B done.
 - **Odin3 state:** RetroArch closed. Under `/data/local/tmp/arcdroid-r2c/s61/` are the run J arm64 core, runner, probe runner (`rpc_runner_nofsync`), scripts and results. FUSE save directories are under `/storage/emulated/0/arcdroid-s61/`; delete them after R2c.
 
 **Answered S60:** SSH to the Founder's Windows box (`sinmu@192.168.1.66`) is allowed for the item 6b Windows profile (D-148). It may also serve R2c AC-9's Windows native-RetroArch leg.
