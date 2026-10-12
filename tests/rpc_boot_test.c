@@ -38,13 +38,72 @@
 #undef vfs_rename
 static unsigned current_phase, points, cut, package_opens;
 static const char *mode;
-static bool point(void) {
-  if (current_phase < ARC_RPC_BOOT_FORMAT)
+/* Trace only the existing injection points; never add callbacks or cuts.
+ * File kinds separate candidate/readback, sealed receipt and cleanup targets.
+ */
+static ArcRpcHdStore *observed_store;
+static struct { struct retro_vfs_file_handle *handle; const char *kind; } handles[16];
+static const char *file_kind(const char *p) {
+  const char *leaf = strrchr(p, '/');
+  leaf = leaf ? leaf + 1 : p;
+  if (strstr(p, "/riscpc/boot/"))
+    return !strcmp(leaf, "HardDisc4.zip") ? "harddisc-package" : "system-package";
+  if (!strcmp(leaf, "chunk.tmp")) return "chunk-candidate";
+  if (!strncmp(leaf, "c", 1)) return "chunk";
+  if (!strcmp(leaf, "manifest.tmp")) return "manifest-candidate";
+  if (!strncmp(leaf, "manifest", 8)) return "manifest";
+  if (!strncmp(leaf, "journal", 7)) return "journal";
+  return "other";
+}
+static const char *handle_kind(struct retro_vfs_file_handle *f) {
+  for (unsigned i = 0; i < 16; ++i)
+    if (handles[i].handle == f) return handles[i].kind;
+  assert(false); return "unknown";
+}
+static void track_handle(struct retro_vfs_file_handle *f, const char *kind) {
+  for (unsigned i = 0; i < 16; ++i)
+    if (!handles[i].handle) { handles[i].handle = f; handles[i].kind = kind; return; }
+  assert(false);
+}
+static void untrack_handle(struct retro_vfs_file_handle *f) {
+  for (unsigned i = 0; i < 16; ++i)
+    if (handles[i].handle == f) { handles[i].handle = NULL; return; }
+  assert(false);
+}
+static const char *transfer_operation(const char *kind, uint64_t n, bool write) {
+  if (!strncmp(kind, "chunk", 5)) {
+    if (n == 128) return write ? "write-header" : "read-header";
+    if (n == 4) return write ? "write-tail" : "read-tail";
+    return write ? "write-payload" : "read-payload";
+  }
+  if (!strcmp(kind, "journal")) {
+    if (n == 256 || n == 80) return write ? "write-header" : "read-header";
+    if (n == 16) return write ? "write-tail" : "read-tail";
+    return write ? "write-payload" : "read-payload";
+  }
+  return write ? "write" : "read";
+}
+static bool recovery_mode(void) { return !strncmp(mode, "recovery-", 9); }
+static bool trace_mode(void) { return strstr(mode, "trace") != NULL; }
+static bool point(const char *operation, const char *side, const char *kind) {
+  if (current_phase < ARC_RPC_BOOT_FORMAT && !recovery_mode())
     return true;
   ++points;
+  if (trace_mode()) {
+    static const char *phases[] = {"open", "hash", "index", "preflight", "tree",
+      "assets", "allocate", "format", "write", "validate", "rehash", "receipt",
+      "seal", "publish", "done", "legacy", "failed", "cancelled"};
+    static const char *states[] = {"idle", "rotate", "materialize", "manifest",
+      "publish", "retire", "cleanup", "read-only", "damaged"};
+    ArcRpcHdStats a;
+    memset(&a, 0, sizeof(a));
+    if (observed_store) arc_riscpc_hd_stats(observed_store, &a);
+    printf("boundary=%u %s/%s/%u/%s/%s/%s\n", points, recovery_mode() ? "recovery" : phases[current_phase],
+           observed_store ? states[a.state] : "open", a.phase_step, kind, operation, side);
+  }
   if (points != cut)
     return true;
-  if ((!strcmp(mode, "kill") || !strcmp(mode, "checkpoint-kill"))) {
+  if (strstr(mode, "kill")) {
 #ifdef _WIN32
     TerminateProcess(GetCurrentProcess(), 77);
 #else
@@ -52,52 +111,64 @@ static bool point(void) {
 #endif
     abort();
   }
-  return strcmp(mode, "fault") != 0 && strcmp(mode, "checkpoint-fault") != 0;
+  return strstr(mode, "fault") == NULL;
 }
 static struct retro_vfs_file_handle *observed_open(const char *p, unsigned m,
                                                    unsigned h) {
   if (strstr(p, "/riscpc/boot/"))
     ++package_opens;
-  if (!point())
+  const char *kind = file_kind(p);
+  const char *operation = m & RETRO_VFS_FILE_ACCESS_WRITE ? "open-write" : "open-read";
+  if (!point(operation, "before", kind))
     return NULL;
   struct retro_vfs_file_handle *f = base_open(p, m, h);
   if (f && !strcmp(mode, "swap") && strstr(p, "/riscpc/boot/"))
     assert(setvbuf(f->file, NULL, _IONBF, 0) == 0);
-  if (!point() && f) {
+  if (!point(operation, "after", kind) && f) {
     base_close(f);
     return NULL;
   }
+  if (f) track_handle(f, kind);
   return f;
 }
 static int observed_close(struct retro_vfs_file_handle *f) {
-  bool before = point();
+  const char *kind = handle_kind(f);
+  bool before = point("close", "before", kind);
+  untrack_handle(f);
   int result = base_close(f);
-  bool after = point();
+  bool after = point("close", "after", kind);
   return before && after ? result : -1;
 }
-#define WRAP(name, type, params, args, invalid)                                \
-  static type observed_##name params {                                         \
-    if (!point())                                                              \
-      return invalid;                                                          \
-    type r = base_##name args;                                                 \
-    return point() ? r : invalid;                                              \
+#define WRAP(name, type, params, args, invalid, kind)                           \
+  static type observed_##name params {                                        \
+    if (!point(#name, "before", kind))                                         \
+      return invalid;                                                         \
+    type r = base_##name args;                                                \
+    return point(#name, "after", kind) ? r : invalid;                          \
   }
-WRAP(size, int64_t, (struct retro_vfs_file_handle * f), (f), -1)
-WRAP(tell, int64_t, (struct retro_vfs_file_handle * f), (f), -1)
+WRAP(size, int64_t, (struct retro_vfs_file_handle * f), (f), -1, handle_kind(f))
+WRAP(tell, int64_t, (struct retro_vfs_file_handle * f), (f), -1, handle_kind(f))
 WRAP(seek, int64_t, (struct retro_vfs_file_handle * f, int64_t n, int o),
-     (f, n, o), -1)
-WRAP(read, int64_t, (struct retro_vfs_file_handle * f, void *p, uint64_t n),
-     (f, p, n), -1)
+     (f, n, o), -1, handle_kind(f))
+static int64_t observed_read(struct retro_vfs_file_handle *f, void *p, uint64_t n) {
+  const char *kind = handle_kind(f);
+  const char *operation = transfer_operation(kind, n, false);
+  if (!point(operation, "before", kind)) return -1;
+  int64_t result = base_read(f, p, n);
+  return point(operation, "after", kind) ? result : -1;
+}
 static int64_t observed_write(struct retro_vfs_file_handle *f, const void *p,
                               uint64_t n) {
-  bool before = point();
+  const char *kind = handle_kind(f);
+  const char *operation = transfer_operation(kind, n, true);
+  bool before = point(operation, "before", kind);
   int64_t result = base_write(f, p, before ? n : n / 2);
-  return point() ? result : -1;
+  return point(operation, "after", kind) ? result : -1;
 }
-WRAP(flush, int, (struct retro_vfs_file_handle * f), (f), -1)
-WRAP(stat, int32_t, (const char *p, int32_t *n), (p, n), 0)
-WRAP(remove, int, (const char *p), (p), -1)
-WRAP(rename, int, (const char *a, const char *b), (a, b), -1)
+WRAP(flush, int, (struct retro_vfs_file_handle * f), (f), -1, handle_kind(f))
+WRAP(stat, int32_t, (const char *p, int32_t *n), (p, n), 0, file_kind(p))
+WRAP(remove, int, (const char *p), (p), -1, file_kind(p))
+WRAP(rename, int, (const char *a, const char *b), (a, b), -1, file_kind(b))
 static void replace_package(const char *system, const char *name) {
   char from[1200], to[1200];
   snprintf(from, sizeof(from), "%s/arcdroid/riscpc/boot/%s", system, name);
@@ -139,6 +210,7 @@ int main(int argc, char **argv) {
     fprintf(stderr, "%s\n", error);
     return 3;
   }
+  observed_store = s;
   if (!strcmp(mode, "forge")) {
     for (unsigned n = 0; n < 100; ++n)
       arc_riscpc_hd_tick(s);
@@ -152,11 +224,12 @@ int main(int argc, char **argv) {
     s = arc_riscpc_hd_open(save_directory, id, false, error, sizeof(error));
     assert(s && !arc_riscpc_hd_receipt(s, NULL));
   }
-  if (!strcmp(mode, "verify")) {
+  if (!strcmp(mode, "verify") || recovery_mode()) {
     ArcRpcHdStats a;
     arc_riscpc_hd_stats(s, &a);
     printf("{\"published\":%u,\"receipt\":%u}\n", a.published,
            arc_riscpc_hd_receipt(s, NULL));
+    printf("points=%u\n", points);
     arc_riscpc_hd_close(s);
     vfs_assert_no_open_handles();
     return 0;
@@ -223,12 +296,40 @@ int main(int argc, char **argv) {
   ArcRpcHdReceipt original_receipt;
   bool have_receipt = arc_riscpc_hd_receipt(s, &original_receipt);
   if (!strcmp(mode, "checkpoint") || !strcmp(mode, "checkpoint-fault") ||
-      !strcmp(mode, "checkpoint-kill")) {
+      !strcmp(mode, "checkpoint-kill") || !strcmp(mode, "checkpoint-trace")) {
     uint8_t payload[131072];
     memset(payload, 0xa5, sizeof(payload));
     for (unsigned i = 0; i < 8; ++i)
       if (!arc_riscpc_hd_write(s, 200000 + i * 256, 256, payload))
         break;
+  }
+  if (!strncmp(mode, "rotation", 8)) {
+    /* Supplement the original append-only checkpoint matrix. Two cycles
+     * replace a retained manifest and chunk and retire both parent journals.
+     * An initial tick is necessary to start a requested idle checkpoint.
+     */
+    uint8_t payload[131072];
+    for (unsigned cycle = 0; cycle < 2; ++cycle) {
+      memset(payload, 0xa5 + cycle, sizeof(payload));
+      bool wrote = true;
+      for (unsigned i = 0; i < 8; ++i)
+        if (!arc_riscpc_hd_write(s, 200000 + i * 256, 256, payload)) {
+          wrote = false; break;
+        }
+      if (!wrote) break;
+      for (unsigned n = 0; n < 4096; ++n) {
+        arc_riscpc_hd_tick(s);
+        ArcRpcHdStats a;
+        arc_riscpc_hd_stats(s, &a);
+        if (a.read_only || a.state == ARC_RPC_HD_IDLE) break;
+        assert(n < 4095);
+      }
+    }
+    if (!strstr(mode, "fault") && !strstr(mode, "kill")) {
+      ArcRpcHdStats a;
+      arc_riscpc_hd_stats(s, &a);
+      assert(a.checkpoints == 2 && a.generation == 2 && a.state == ARC_RPC_HD_IDLE);
+    }
   }
   for (unsigned n = 0; n < 4096; ++n) {
     ArcRpcHdStats a;

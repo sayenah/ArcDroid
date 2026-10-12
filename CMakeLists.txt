@@ -2335,19 +2335,26 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
   endif()
   add_test(NAME rpc-boot-packages COMMAND "${Python3_EXECUTABLE}" -B
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_boot_packages_test.py" $<TARGET_FILE:rpc_boot_test>)
-  add_test(NAME rpc-boot-faults COMMAND "${Python3_EXECUTABLE}" -B
-    "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_boot_faults_test.py" $<TARGET_FILE:rpc_boot_test>)
-  set(RPC_BOOT_MUTANT_FLAGS)
+  set(RPC_BOOT_FAULTS_PROFILE full)
+  set(RPC_BOOT_FAULTS_TIMEOUT 3600)
   if(ARCDROID_SANITIZERS)
-    list(APPEND RPC_BOOT_MUTANT_FLAGS --sanitized)
+    set(RPC_BOOT_FAULTS_PROFILE sanitizer)
+    set(RPC_BOOT_FAULTS_TIMEOUT 600)
   endif()
-  add_test(NAME rpc-boot-mutants COMMAND "${Python3_EXECUTABLE}" -B
-    "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_boot_mutants.py" "${CMAKE_C_COMPILER}"
-    $<TARGET_FILE:arcdroid_core> $<TARGET_FILE:arcdroid_zlib>
-    "${CMAKE_CURRENT_SOURCE_DIR}" ${RPC_BOOT_MUTANT_FLAGS})
-  set_tests_properties(rpc-boot-mutants PROPERTIES TIMEOUT 1800 RUN_SERIAL TRUE)
+  add_test(NAME rpc-boot-faults COMMAND "${Python3_EXECUTABLE}" -B
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_boot_faults_test.py" $<TARGET_FILE:rpc_boot_test>
+    --profile "${RPC_BOOT_FAULTS_PROFILE}")
+  # R2c run Q precedent: ordinary builds kill all writer mutants; sanitizers
+  # retain the unmutated package regressions and every fault boundary class.
+  if(NOT ARCDROID_SANITIZERS)
+    add_test(NAME rpc-boot-mutants COMMAND "${Python3_EXECUTABLE}" -B
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_boot_mutants.py" "${CMAKE_C_COMPILER}"
+      $<TARGET_FILE:arcdroid_core> $<TARGET_FILE:arcdroid_zlib>
+      "${CMAKE_CURRENT_SOURCE_DIR}")
+    set_tests_properties(rpc-boot-mutants PROPERTIES TIMEOUT 1800 RUN_SERIAL TRUE)
+  endif()
   set_tests_properties(rpc-boot-packages PROPERTIES TIMEOUT 600)
-  set_tests_properties(rpc-boot-faults PROPERTIES TIMEOUT 3600 RUN_SERIAL TRUE)
+  set_tests_properties(rpc-boot-faults PROPERTIES TIMEOUT "${RPC_BOOT_FAULTS_TIMEOUT}" RUN_SERIAL TRUE)
   add_executable(rpc_hd_formatter_test tests/rpc_hd_formatter_test.c)
   target_include_directories(rpc_hd_formatter_test PRIVATE core)
   target_link_libraries(rpc_hd_formatter_test PRIVATE arcdroid_core)
