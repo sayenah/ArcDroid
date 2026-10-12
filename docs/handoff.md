@@ -8,7 +8,7 @@
    - Guest timing is virtual and host-independent, so the guest frame rate can be measured from runner frame dumps on any host. The Odin3 shows whether the host keeps real time.
    - The trial's gameplay scripts were lost. S60 rebuilt a 031 cold start to racing gameplay (`.work/s60/ac8/leg4-031-c-cold`, frames 6400–7400; store `l4-031`). 110 runs from floppy on the common standard boot disc (trial-d).
    - A drop of more than 10 %, or a visible or audible regression, goes to the Founder before R3.
-3. **Then R3** (firmware, Auto machine selection and launch), after Q-3 merges (D-163), planned in **D-164** as R3a–R3d. The R3a work order is below; Astra's stage 2 challenge of it is the next Fable step. Then item 6b, before R4 and item 5. It must carry the R2 items listed below.
+3. **Then R3** (firmware, Auto machine selection and launch), after Q-3 merges (D-163), planned in **D-164** as R3a–R3d. The R3a work order is below, with Astra's stage 2 changes incorporated (D-165); Sol starts it after Q-3 merges. Then item 6b, before R4 and item 5. It must carry the R2 items listed below.
 
 - **Running:** see the S61 entry under Waiting on the Founder.
 - **Private work:** S60's is in `.work/s60/` (index `LEDGER.md`); S61's is in `.work/s61/` (index `LEDGER.md`). Sol's R2c clone `.work/s60/sol2c/clone` is finished; its `runK-backup` stash can be dropped.
@@ -24,8 +24,8 @@
 - **Non-goals:** translator work, other timing changes, and Q-1/Q-2/Q-4 to Q-11.
 - **QA focus:** the reproduction really exercises the sequence; the fix is minimal and complete across fetch paths (including SA D-cache fills, c7 invalidation, slow-clock reads and control writes); no change to timing outside the defect.
 
-**R3a work order (D-164; queued: Sol starts after Q-3 merges, once the Astra stage 2 challenge is adjudicated).** Branch `slice/r3a-selection` from `main`.
-- **Objective:** RiscPC firmware inventory and Auto machine selection, as pure, fully tested logic wired into load preparation. **No player-visible behaviour change:** production computes and logs the RPC decision but keeps today's Arculator route and notice until R3d.
+**R3a work order (D-164 as amended by D-165, which incorporated Astra's stage 2 challenge; queued: Sol starts after Q-3 merges).** Branch `slice/r3a-selection` from `main`.
+- **Objective:** RiscPC firmware inventory and Auto machine selection, as pure, fully tested logic wired into load preparation. **No player-visible behaviour change (D-165(1)):** a separate diagnostic inventory and catalogue view computes and logs the RPC decision. The legacy catalogue, search, diagnostics, notices, options, launch and persistence stay unchanged and keep today's Arculator route, and existing enum values are pinned. The selection policy, candidate ranking and failure-reason order are in D-165(2).
 - **Firmware fingerprints (Fable, from the Founder's private dumps; fingerprints only, never bytes):**
   - RISC OS 3.50: 2,097,152 bytes, CRC-32 `541b1415`, SHA-1 `c31318e712ee7de92e46f9df6c791b614d4c9304`
   - RISC OS 3.60: 4,194,304 bytes, CRC-32 `a9822c2c`, SHA-1 `3cf75aa4d4dc8fe57110a124fbd1560d46c549b1`
@@ -33,9 +33,10 @@
   - RISC OS 3.71: 4,194,304 bytes, CRC-32 `211cf888`, SHA-1 `c5fe0645e48894fb4b245abeefdc9a65d659af59` (SHA-256 `fabbf1ae…f8f8`, the R2 CMOS key)
 - **Acceptance criteria:**
   - **AC-1 Selection matrix:** pure tests over every JFD CPU and OS category, zero (unknown) against nonzero-unsupported masks, multi-disc intersection, contradictions, missing firmware, unqualified pairs and manual overrides. Results distinguish conflicting discs, unsupported requirement, unqualified pair, missing firmware and unreadable inventory.
-  - **AC-2 Recognition:** the four RiscPC fingerprints above are recognized independent of filename. Tests cover renamed, duplicate and ambiguous files, wrong sizes and deterministic ordering, using authored fixtures only (no firmware bytes in the repository).
-  - **AC-3 Qualified pairs:** only D-164(3)'s seven pairs are selectable. Recognized but unqualified pairs never are. Preference follows D-164(2).
-  - **AC-4 No behaviour change:** existing Archimedes selection, firmware priority, persistence identities and launch routes are unchanged. The RPC decision appears as one diagnostic log line. Fable runs the full-library A/B in both package states, which must match `main` apart from known variance and the new line.
+  - **AC-2 Recognition (D-165(4)):** public tests check the four catalogue tuples above. Authored fingerprints exercise the real scanner's rename, duplicate, corruption, wrong-size and ordering behaviour (no firmware bytes in the repository). Fable privately recomputes the tuples from the four dumps and exercises recognition through the implemented inventory.
+  - **AC-3 Qualified pairs:** only D-164(3)'s seven pairs are selectable, as eligible for R3 selection development. Recognized but unqualified pairs never are. Ranking and failure reasons follow D-165(2), with fixed expected results for the boundary cases (for example, a set allowing ARM610/710 and SA with both RPC OS families but only 3.70 installed selects 3.70 on SA-110), including impossible single-disc combinations against contradictions between discs.
+  - **AC-3b Wiring (D-165(3)):** validated JFD masks are kept in the media entries. Integration tests run through ordinary load preparation over every case listed in D-165(3).
+  - **AC-4 No behaviour change:** existing Archimedes selection, firmware priority, persistence identities and bytes, notices and launch routes are unchanged. The RPC decision appears as one diagnostic log line. Fable runs the full-library A/B in both package states, pinned to the post-Q-3 branch parent, which must match it apart from known variance and the new line.
   - **AC-5 Evidence:** host and sanitizer suites, MinGW and Android builds, the export, import and shipping-I/O guards, and mutants on the selection rules.
 - **Non-goals:** RPC production launch, CMOS preparation, boot-file population, observers (R3b–R3d); any rate change (6b).
 
