@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include "rpc_namespace.h"
 #include "rpc_memory.h"
+#include "rpc_mem_timing.h"
 #include "rpcemu.h"
 #include "arm.h"
 #include "cp15.h"
@@ -344,8 +345,97 @@ static void transfer_abort_regressions(CPUModel model)
     }
 }
 
-int main(void)
+/* Q-3: exercise the shared TLB, not a fabricated timing memo. The data
+ * alias collides with the fetch translation but is C/B=0, so it cannot
+ * allocate a timing tag or clear the memo. Descriptor writes use the existing
+ * component fixture seam; no CP15 flush/control write occurs in the sequence. */
+static void memo_finish(ArcRpcScheduler *clock)
 {
+    arc_rpc_mem_instruction_end(0);
+    arc_rpc_mem_run(clock->now_ns);
+    while (arc_rpc_mem_fast.pending) {
+        uint64_t next = arc_rpc_mem_next(UINT64_MAX, false);
+        assert(next > clock->now_ns);
+        clock->now_ns = next; arc_rpc_mem_run(next);
+    }
+    clock->now_ns = arc_rpc_mem_fast.cpu_due_ns;
+    arc_rpc_mem_run(clock->now_ns);
+    assert(arc_rpc_mem_ready(false));
+}
+static unsigned tlb_slot(uint32_t va)
+{
+    uint32_t t = va >> 10;
+    return (t ^ (t >> 10) ^ (t >> 18)) & 255;
+}
+static void fetch_memo_rewalk(CPUModel model)
+{
+    const uint32_t va = 0x00400100, alias = 0x10500100;
+    /* Absent VRAM isolates backed=false in a cache-eligible region. I/O,
+     * reserved and EASI mappings also change the physical timing region. */
+    const uint32_t targets[] = {0x02000000, 0x03000000, 0x04000000, 0x08000000};
+    uint32_t *table = ram00 + (0x4000 >> 2);
+    assert(!vram && tlb_slot(va) == tlb_slot(alias));
+    for (unsigned i = 0; i < sizeof(targets)/sizeof(*targets); ++i) {
+        arc_rpc_mem_bind(NULL, 0, 0); cpu_reset(model);
+        table[4] = 0x10000c0e; table[0x105] = 0x14000c02;
+        enable(model, 0x100c); memmode = 1;
+        ram00[0x100 >> 2] = 0xe1a00000; ram01[0x100 >> 2] = 0x12345678;
+        memset(&iomd, 0, sizeof(iomd)); iomd.clkctrl = 7;
+        ArcRpcScheduler clock = {0};
+        arc_rpc_mem_bind(&clock, model, 100);
+        arc_rpc_mem_clock_switch(true); arc_rpc_mem_control(cp_read(1));
+        clock.now_ns = arc_rpc_mem_fast.cpu_due_ns; arc_rpc_mem_run(clock.now_ns);
+        assert(arc_rpc_mem_ready(false));
+        arc_rpc_mem_instruction_begin();
+        assert(getpccache(va) == ram00);
+        memo_finish(&clock);
+        assert(arc_rpc_mem_fast.memo_valid && arc_rpc_mem_fast.memo_line == (va >> arc_rpc_mem_fast.memo_shift));
+        ArcRpcMemStats warm; arc_rpc_mem_stats(&warm);
+        assert(warm.fills == 1 && warm.words == (model == CPUModel_SA110 ? 8u : 4u));
+        table[4] = targets[i] | 0xc0e;
+        unsigned walks = tlbs;
+        arc_rpc_mem_instruction_begin(); assert(getpccache(va) == ram00);
+        memo_finish(&clock); assert(tlbs == walks); /* stale descriptor still cached */
+        arc_rpc_mem_instruction_begin();
+        assert(mem_read32(alias) == 0x12345678);
+        memo_finish(&clock); assert(tlbs == walks + 1); /* actual collision eviction */
+        assert(arc_rpc_mem_fast.memo_valid && arc_rpc_mem_fast.memo_line == (va >> arc_rpc_mem_fast.memo_shift));
+        ArcRpcMemStats before, after; arc_rpc_mem_stats(&before);
+        arc_rpc_mem_instruction_begin(); assert(getpccache(va) == NULL);
+        assert(tlbs == walks + 2 && !(arm.event & 0x40)); /* successful re-walk, no backing */
+        memo_finish(&clock); arc_rpc_mem_stats(&after);
+        assert(after.hits == before.hits); /* memo cannot override eligibility */
+        assert(after.words == before.words + 1 && after.fills == before.fills);
+        /* One external word: 125 ns PROG I/O, 156.25 ns VRAM/reserved,
+         * or slow-A EASI (9 PC ticks after alignment to a 62.5 ns edge).
+         * Add the next 100-MIPS base before service. */
+        uint64_t expected = before.completed_ticks + 28000u;
+        if (i == 3) expected = ((expected + 174999u)/175000u + 9u)*175000u;
+        else expected += i == 1 ? 350000u : 437500u;
+        if(after.completed_ticks != expected)
+            fprintf(stderr,"memo model=%u target=%08x before=%llu actual=%llu expected=%llu\n",
+                model,targets[i],(unsigned long long)before.completed_ticks,
+                (unsigned long long)after.completed_ticks,(unsigned long long)expected);
+        assert(after.completed_ticks == expected);
+        arc_rpc_mem_bind(NULL, 0, 0);
+    }
+}
+int main(int argc, char **argv)
+{
+    if (argc == 2 && !strcmp(argv[1], "--fetch-memo")) {
+        arm_init(); protected = 1;
+        if (setjmp(boundary)) { fprintf(stderr, "Unexpected memo component fault\n"); return 1; }
+        const Model machines[] = {Model_RPCARM610, Model_RPCARM710, Model_RPCSA110, Model_A7000};
+        for (unsigned m = 0; m < 4; ++m) {
+            config.mem_size = 64; config.vram_size = 0;
+            machine.cpu_model = (CPUModel)m; machine.model = machines[m];
+            mem_init(); fetch_memo_rewalk((CPUModel)m); arc_rpc_memory_close();
+        }
+        puts("Q-3: all four models charged changed eligibility after collision eviction and re-walk");
+        return 0;
+    }
+    assert(argc == 1);
+
     arm_init();
     const CPUModel models[] = {CPUModel_ARM610, CPUModel_ARM710, CPUModel_ARM7500, CPUModel_SA110};
     for (unsigned m = 0; m < 4; ++m) {
