@@ -1,6 +1,7 @@
 /* ArcDroid libretro adapter. Copyright 2026 ArcDroid contributors. GPL-2.0-only. */
 #include "libretro.h"
 #include "arc_io.h"
+#include "rpc_inventory.h"
 #include "install_store.h"
 #include "arcdroid_core.h"
 #include "arcdroid_engine.h"
@@ -360,6 +361,7 @@ typedef struct {
    bool jfd_native_notice_shown;
    bool jfd_map_unavailable_shown;
    uint8_t jfd_refusal_seen[ARC_JFD_MAX_TRACK_SIDES][32];
+   ArcRpcCompatibility compatibility; /* Validated masks survive decoded-buffer release. */
    uint32_t jfd_game_id;
    uint16_t jfd_disc_number;
    uint16_t jfd_disc_count;
@@ -374,6 +376,19 @@ static ArcMediaEntry arc_media[ARC_PLAYLIST_MAX_ENTRIES];
 static ArcMediaEntry arc_rpc_helper_entry;
 #endif
 static unsigned arc_media_count;
+#if defined(ARCDROID_TEST_FAULTS)
+static const ArcRpcFirmwareFingerprint *arc_test_rpc_catalogue;
+static size_t arc_test_rpc_catalogue_count;
+RETRO_API void arc_libretro_test_rpc_catalogue(const ArcRpcFirmwareFingerprint *table, size_t count)
+{ arc_test_rpc_catalogue=table; arc_test_rpc_catalogue_count=count; }
+RETRO_API bool arc_libretro_test_rpc_media(unsigned i, ArcRpcCompatibility *out)
+{
+   if (i>=arc_media_count || !out) return false;
+   *out=arc_media[i].compatibility;
+   return arc_media[i].jfd.decoded == NULL;
+}
+#endif
+
 typedef struct {
    bool valid;
    uint64_t last_used;
@@ -1535,6 +1550,7 @@ static bool arc_prepare_bytes(const char *source, const char *playlist_label,
                        error_size);
       if (!parsed)
          return false;
+      entry->compatibility = arc_riscpc_compatibility(entry->jfd.extended, entry->jfd.flags);
       entry->high_density = arc_jfd_high_density(&entry->jfd);
       if (arc_log)
       {
@@ -7257,6 +7273,23 @@ static bool arc_load_game(const struct retro_game_info *game, bool negotiate)
       return false;
    }
    strcpy(arc_system_path, system_dir);
+   /* R3a has no authority over the legacy search, options, ownership or plan. */
+   size_t rpc_count;
+   const ArcRpcFirmwareFingerprint *rpc_table = arc_riscpc_firmware_catalogue(&rpc_count);
+#if defined(ARCDROID_TEST_FAULTS)
+   if (arc_test_rpc_catalogue) { rpc_table=arc_test_rpc_catalogue; rpc_count=arc_test_rpc_catalogue_count; }
+#endif
+   ArcRpcFirmwareInventory rpc_inventory = arc_riscpc_inventory_scan(arc_vfs,
+      firmware_dir, rpc_table, rpc_count);
+   ArcRpcCompatibility rpc_discs[ARC_PLAYLIST_MAX_ENTRIES];
+   for (unsigned i=0; i<arc_media_count; ++i) rpc_discs[i] = arc_media[i].compatibility;
+   ArcRpcSelection rpc_selection = arc_riscpc_select(rpc_discs, arc_media_count,
+      &rpc_inventory, ARC_RPC_SELECT_AUTO, ARC_RPC_OS_AUTO);
+   if (arc_log) {
+      char diagnostic[256];
+      arc_riscpc_selection_diagnostic(&rpc_selection, diagnostic, sizeof(diagnostic));
+      arc_log(RETRO_LOG_INFO, "%s", diagnostic);
+   }
    search.requested_os = arc_core_options.requested_os;
    search.machine = arc_core_options.machine;
    arc_io_walk(firmware_dir, 8u, arc_visit_firmware, &search);
