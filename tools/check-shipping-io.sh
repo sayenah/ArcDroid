@@ -14,6 +14,10 @@ core/hash_accel.inc
 core/hash_accel.h
 core/hash_crc_slices.h
 core/machine.c
+core/rpc_selection.c
+core/rpc_selection.h
+libretro/rpc_inventory.c
+libretro/rpc_inventory.h
 core/input.c
 core/input_mapping.c
 core/osk.c
