@@ -9,9 +9,9 @@ sys.dont_write_bytecode=True
 from rpc_ninja_commands import split_command
 ROOT=Path(__file__).resolve().parent.parent
 p=argparse.ArgumentParser()
-for key in ('build','core','timing','unit','video','store','fdc','hd','ide','runner','plan'):p.add_argument('--'+key,required=True)
+for key in ('build','core','timing','unit','video','store','fdc','hd','ide','runner','plan','cpu'):p.add_argument('--'+key,required=True)
 p.add_argument('--only',default='');a=p.parse_args();build=Path(a.build).resolve()
-for key in ('core','timing','unit','video','store','fdc','hd','ide','runner','plan'):setattr(a,key,str(Path(getattr(a,key)).resolve()))
+for key in ('core','timing','unit','video','store','fdc','hd','ide','runner','plan','cpu'):setattr(a,key,str(Path(getattr(a,key)).resolve()))
 cache=(build/'CMakeCache.txt').read_text()
 ninja=next(line.split('=',1)[1] for line in cache.splitlines() if line.startswith('CMAKE_MAKE_PROGRAM:FILEPATH='))
 commands={};database=None
@@ -52,6 +52,25 @@ def mutated_binary(target,relative,old,new,directory,label):
         builtins.compile(text,str(mutated),'exec')
         return mutated
     rows=compiler_commands(target)
+    if source.suffix=='.h':
+        # Inline fixes must reach every translation unit in this temporary
+        # executable. Force the mutated guarded header before its ordinary
+        # includes; rebuild all linked objects with unchanged Ninja flags.
+        replacements={}
+        for index,row in enumerate(rows):
+            if '-c' not in row:continue
+            compile=row[:];original_obj=compile[compile.index('-o')+1]
+            obj=directory/(label+'-'+str(index)+'.o')
+            for option,value in (('-o',obj),('-MF',directory/(label+'-'+str(index)+'.d')),('-MT',obj)):
+                if option in compile:compile[compile.index(option)+1]=str(value)
+            compile+=['-I',str(source.parent),'-include',str(mutated)]
+            result=run(compile);assert result.returncode==0,(label,'compile failed',result.stdout+result.stderr)
+            replacements[(build/original_obj).resolve()]=str(obj)
+        link=rows[-1][:];output=directory/(label+Path(target).suffix)
+        link=[replacements.get((build/x).resolve(),x) if x.endswith(('.o','.obj')) else x for x in link]
+        link[link.index('-o')+1]=str(output)
+        result=run(link);assert result.returncode==0,(label,'link failed',result.stdout+result.stderr)
+        return output
     compile=next(row[:] for row in rows if '-c' in row and Path(row[row.index('-c')+1]).resolve()==source)
     original_obj=compile[compile.index('-o')+1];obj=directory/(label+'.o')
     for option,value in (('-c',mutated),('-o',obj),('-MF',directory/(label+'.d')),('-MT',obj)):
@@ -98,6 +117,17 @@ mutants=[
  ('C11',STORE,'if(!valid)return fail(error,n,"candidate readback verification failed");','',a.store,('store',)),
  ('C14',STORE,'|| e->epoch>UINT64_C(13569465599) ','',a.store,('store',)),
  ('C01',STORE,'|| !arc_riscpc_cmos_checksum(p))return false;',')return false;',a.store,('store',)),
+]
+# Q-3: independent predicate failures, whole-defect restoration through the
+# actual TLB sequence, physical aperture masking and retained C=0 tag hits.
+FETCH='engine/rpc/rpc_mem_timing.h'
+ELIGIBILITY='backed && (pa < 0x03000000u || pa >= 0x10000000u) &&'
+mutants += [
+ ('Q3-BACKED',FETCH,ELIGIBILITY,'(pa < 0x03000000u || pa >= 0x10000000u) &&',a.unit,('memo-unit',)),
+ ('Q3-REGION',FETCH,ELIGIBILITY,'backed &&',a.unit,('memo-unit',)),
+ ('Q3-REVERT',FETCH,ELIGIBILITY,'',a.cpu,('memo-cpu',)),
+ ('Q3-MASK',FETCH,'uint32_t pa = physical & 0x1fffffffu;','uint32_t pa = physical;',a.unit,('memo-unit',)),
+ ('Q3-C',FETCH,ELIGIBILITY,'(attributes & 8) && '+ELIGIBILITY,a.unit,('memo-unit',)),
 ]
 # R2b independently asserted controller/drive mutations, linked into the real
 # FDC component executable (same scheduler, FIFO and neutral media service).
@@ -237,6 +267,7 @@ def check(binary,case):
     if case[0]=='cost':return [sys.executable,'-B',ROOT/'tests/rpc_hd_cost_test.py',a.runner,a.plan,build/'generated/rpc-hd-retroarch',binary]
     if case[0]=='timing':return [a.timing,binary,str(case[1]),case[2]]
     if case[0]=='unit':return [binary,'--hot-video']
+    if case[0] in ('memo-unit','memo-cpu'):return [binary,'--fetch-memo']
     if case[0] in ('store','fdc','hd','ide'):return [binary,*case[1:]]
     return [sys.executable,'-B',ROOT/'tests/rpc_video_trace_test.py',a.video,binary,'2',ROOT/'tests/fixtures/rpc-video-paths-2.trace','--paths']
 

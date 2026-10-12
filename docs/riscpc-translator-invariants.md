@@ -208,14 +208,14 @@ All of these are [C].
 - **Stale descriptors:** they persist until the entry is evicted or flushed (`tests/rpc_cpu_test.c:184`).
 - **Flush triggers:** a change to M/R/S; a TTBR write; a DACR change; ARMv3 c5/c6; SA c8 (`cp15.c:174-176,191-202,214-222,251-263`).
 
-**Fetch memo.** It is a virtual-line-only key (`rpc_mem_timing.h:133`).
+**Fetch memo.** It is a virtual-line-only key (`rpc_mem_timing.h:130–138`); since Q-3 a hit also requires a backed, cache-eligible physical region (`:135–137`).
 - **Cleared by:**
   - **any** allocation in either cache, **SA D-cache fills included** (`rpc_mem_timing.c:335`);
   - control writes (`:220`) and TLB flush (`:230-233`);
   - c7 invalidation (`:369,382`);
   - SA slow-clock uncached reads (`:262`).
 - **Not cleared** by a mode change. [C]
-- **Defect (§5 Q-3).** A memo hit does not check `backed` or the region, whereas the slow path requires both before any tag lookup (`:309`). A collision eviction followed by a re-walk can change that eligibility without clearing the memo. [C for each half; I for the sequence]
+- **Defect (§5 Q-3) — resolved (PR #375, `44d007e`).** A memo hit did not check `backed` or the region, whereas the slow path requires both before any tag lookup (`rpc_mem_timing.c:306–309`). A collision eviction followed by a re-walk could change that eligibility without clearing the memo. The gate now mirrors the slow path; `rpc-fetch-memo-rewalk` reproduces the sequence. Note for 6b: in the integrated system `backed` implies a cache region (`mem.c:124–135`), so the region term never decides the outcome there, but it is kept to mirror the slow path exactly (Opus QA, S61).
 
 ---
 
@@ -444,7 +444,7 @@ Any `updatemode` ends the block (E4).
 
 - **Q-1 Post-fetch resume.** Use only non-mutating pre-fetch probes for now; E2′ is disabled. A post-fetch resume entry point may be reviewed separately later, with differential evidence beyond the existing goldens.
 - **Q-2 Calibration measurement.** Add non-intrusive endpoint measurement alongside the existing measurement mode. Keep the exact first and last ordinals, the drain semantics and the stop behaviour. Require counters that prove the production fast paths executed.
-- **Q-3 Memo eligibility defect.** Fix the oracle before translator qualification. A separate R2a corrective work order, opened now, covers a targeted reproduction and the smallest fix: a virtual-line-only memo must not override changed eligibility. No blanket golden regeneration.
+- **Q-3 Memo eligibility defect — fixed by PR #375 (`44d007e`).** Fix the oracle before translator qualification. A separate R2a corrective work order, opened now, covers a targeted reproduction and the smallest fix: a virtual-line-only memo must not override changed eligibility. No blanket golden regeneration.
 - **Q-4 All-writers rule.** Keep it, with device writes labelled as future scope. Floppy transfers reach RAM through CPU stores. Re-audit new writers after R2c/R3.
 - **Q-5 `dirtybuffer`.** Excluded from semantic parity at this baseline, since it has no reader. Record the exclusion and re-audit at R4 before inline stores omit it.
 - **Q-6 Raw R15 arithmetic.** Match it exactly, including the 26-bit carry. Any fidelity fix is separate work. Boundary tests use `PC=(reg[15]-8)&r15_mask` and never equate PC with raw R15.

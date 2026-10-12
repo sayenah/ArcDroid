@@ -388,6 +388,7 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
   target_compile_options(rpc_cpu_test PRIVATE
     $<$<C_COMPILER_ID:GNU,Clang,AppleClang>:-UNDEBUG;-Wall;-Wextra;-Werror=implicit-function-declaration>)
   add_test(NAME rpc-cpu-mmu-memory COMMAND rpc_cpu_test)
+  add_test(NAME rpc-fetch-memo-rewalk COMMAND rpc_cpu_test --fetch-memo)
   add_library(arcdroid_rpc_cmos OBJECT engine/rpcemu/src/cmos.c engine/rpc/rpc_rtc.c)
   target_include_directories(arcdroid_rpc_cmos PRIVATE engine/rpc engine/rpcemu/src)
   target_compile_options(arcdroid_rpc_cmos PRIVATE
@@ -1990,6 +1991,7 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
     target_link_libraries(rpc_mem_timing_unit PRIVATE arcdroid_sanitizer_compile arcdroid_sanitizer_link)
   endif()
   add_test(NAME rpc-memory-service-boundaries COMMAND rpc_mem_timing_unit)
+  add_test(NAME rpc-fetch-memo-eligibility COMMAND rpc_mem_timing_unit --fetch-memo)
   add_test(NAME rpc-memory-hot-video-boundaries COMMAND rpc_mem_timing_unit --hot-video)
   add_test(NAME rpc-qa-command-parsing COMMAND "${Python3_EXECUTABLE}" -B
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_ninja_commands_test.py")
@@ -2009,7 +2011,7 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
       --video $<TARGET_FILE:rpc_video_test> --store $<TARGET_FILE:rpc_cmos_store_test>
       --fdc $<TARGET_FILE:rpc_fdc_test> --hd $<TARGET_FILE:rpc_hd_store_test>
       --ide $<TARGET_FILE:rpc_ide_test> --runner $<TARGET_FILE:rpc_runner>
-      --plan $<TARGET_FILE:arcdroid_rpcplan_libretro>)
+      --plan $<TARGET_FILE:arcdroid_rpcplan_libretro> --cpu $<TARGET_FILE:rpc_cpu_test>)
     set_tests_properties(rpc-qa-mutations PROPERTIES TIMEOUT 600 RUN_SERIAL TRUE)
   endif()
   foreach(rate IN ITEMS 60 99)

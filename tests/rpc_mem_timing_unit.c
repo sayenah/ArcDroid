@@ -188,6 +188,60 @@ static void cache_eviction_and_maintenance(void)
         assert(end==(clean?3*b+33*q:4*b+22*q));
     }
 }
+/* Q-3: isolate each input to the fetch eligibility boundary. Real MMU
+ * eviction/re-walk is covered by rpc-fetch-memo-rewalk; this seam additionally
+ * prevents one predicate masking a defect in the other. Retained virtual tags
+ * still hit with descriptor C clear, including after an eligible remap. */
+static void fetch_memo_eligibility(void)
+{
+    /* ROM/VRAM and DRAM admit tags; I/O, reserved and EASI do not (§2.2).
+     * The last three rows exercise the 29-bit physical aperture aliases. */
+    const struct {uint32_t address;bool cache_region;} physical[] = {
+        {0,true},{0x01000000,true},{0x02000000,true},{0x02fffffc,true},
+        {0x03000000,false},{0x03fffffc,false},{0x04000000,false},{0x07fffffc,false},
+        {0x08000000,false},{0x0ffffffc,false},{0x10000000,true},{0x14000000,true},
+        {0x18000000,true},{0x1ffffffc,true},{0x20000000,true},{0x23000000,false},{0x30000000,true}};
+    const uint32_t va = 0x00400100;
+    for(unsigned cpu=0;cpu<4;++cpu)for(unsigned backed=0;backed<2;++backed)
+    for(unsigned i=0;i<sizeof(physical)/sizeof(*physical);++i) {
+        init(cpu,100);begin(0xe1a00000);
+        arc_rpc_mem_fetch(va,0x10000100,8,true);finish();
+        assert(arc_rpc_mem_fast.memo_valid);
+        ArcRpcMemStats before,after;arc_rpc_mem_stats(&before);
+        begin(0xe1a00000);arc_rpc_mem_fetch(va,physical[i].address,0,backed!=0);finish();
+        arc_rpc_mem_stats(&after);
+        bool eligible=backed&&physical[i].cache_region;
+        assert(after.hits-before.hits==(unsigned)eligible);
+        assert(arc_rpc_mem_fast.fetch_hits==(unsigned)eligible); /* retained memo, even with C=0 */
+        assert(after.words-before.words==(unsigned)!eligible && after.fills==before.fills);
+    }
+    /* All existing memo-clearing paths must continue to force a real lookup.
+     * Warm I, allocate D (SA too), c7 invalidate, control/TLB changes and an
+     * uncached read while SA switching is disabled. */
+    for(unsigned cpu=0;cpu<4;++cpu)for(unsigned operation=0;operation<6;++operation) {
+        if(operation==5&&cpu!=2)continue;
+        init(cpu,100);begin(0xe1a00000);arc_rpc_mem_fetch(va,0x10000100,8,true);finish();
+        assert(arc_rpc_mem_fast.memo_valid);
+        if(operation==0) {begin(0xe5901000);access(0x10001000,false,8,4);finish();}
+        if(operation==1) {begin(0xee070f10);arc_rpc_mem_maintenance(7,0,cpu==2?5:0,0);finish();}
+        if(operation==2) {begin(0xee070f10);arc_rpc_mem_maintenance(7,0,cpu==2?6:0,0);finish();}
+        if(operation==3)arc_rpc_mem_control(0);
+        if(operation==4)arc_rpc_mem_permission_change();
+        if(operation==5) {
+            arc_rpc_mem_clock_switch(false);
+            begin(0xe1a00000);arc_rpc_mem_fetch(va,0x10000100,8,true);finish();
+            assert(arc_rpc_mem_fast.memo_valid);
+            begin(0xe5901000);access(0x10001000,false,0,4);finish();
+        }
+        assert(!arc_rpc_mem_fast.memo_valid);
+        ArcRpcMemStats before,after;arc_rpc_mem_stats(&before);
+        begin(0xe1a00000);arc_rpc_mem_fetch(va,0x10000100,8,true);finish();arc_rpc_mem_stats(&after);
+        bool invalidated=operation==1||(cpu!=2&&operation==2);
+        assert(after.hits-before.hits==(unsigned)!invalidated);
+        assert(after.words-before.words==(invalidated?(cpu==2?8u:4u):0u));
+    }
+    puts("Q-3: independent backed/region boundaries and memo invalidation paths passed");
+}
 static void video_grants(void)
 {
     for(unsigned cpu=0;cpu<4;++cpu) {
@@ -347,6 +401,7 @@ static void high_time_arithmetic(void)
 }
 int main(int argc,char **argv)
 {
+    if(argc==2 && !strcmp(argv[1],"--fetch-memo")){fetch_memo_eligibility();return 0;}
     if(argc==2 && !strcmp(argv[1],"--hot-video")){hot_video_boundaries();return 0;}
     if(argc==3) {long_queue((unsigned)atoi(argv[1]),(unsigned)atoi(argv[2]));return 0;}
     scalar_and_map();io_phase();ordinary_rom_io_stores();width_and_clock();buffer_capacity_and_order();
