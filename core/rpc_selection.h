@@ -43,9 +43,12 @@ const ArcRpcFirmwareFingerprint *arc_riscpc_firmware_catalogue(size_t *count);
 const ArcRpcFirmwareFingerprint *arc_riscpc_firmware_recognize(const ArcDigest *digest,
    const ArcRpcFirmwareFingerprint *catalogue, size_t count);
 ArcRpcCompatibility arc_riscpc_compatibility(bool extended, uint32_t flags);
+/* Existing per-disc RiscPC notice predicate; also gates diagnostic scanning. */
+bool arc_riscpc_notice_required(ArcRpcCompatibility disc);
 bool arc_riscpc_selection_qualified(ArcRpcSelectionModel model, ArcRpcSelectionOs os);
 /* Zero masks are independently unknown. Nonzero masks are never widened.
- * Manual choices override hints, but cannot bypass qualification/recognition. */
+ * A manual model overrides CPU hints only; a manual OS overrides OS hints only.
+ * Neither can bypass qualification/recognition (D-166(2)). */
 ArcRpcSelection arc_riscpc_select(const ArcRpcCompatibility *discs, size_t count,
    const ArcRpcFirmwareInventory *inventory, ArcRpcSelectionModel manual_model,
    ArcRpcSelectionOs manual_os);

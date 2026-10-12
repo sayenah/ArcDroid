@@ -8,10 +8,14 @@ typedef struct { const char *name; const uint8_t *data; size_t size; bool direct
 static Entry entries[1100];static unsigned count;
 static int fail_open=-1,fail_size=-1,fail_read=-1,fail_close=-1,fail_name=-1;
 static bool fail_dir_open,fail_dir_close,silent_end;
-static unsigned opens,closes,dir_opens,dir_closes;
+static bool finite_tree;
+static int fail_allocation=-1;
+static unsigned opens,closes,dir_opens,dir_closes,reads,allocations;
 static uint8_t data[4][40];static ArcRpcFirmwareFingerprint table[4];static ArcDigest digests[4];
 struct retro_vfs_file_handle { unsigned at; };
-struct retro_vfs_dir_handle { unsigned next,current; };
+struct retro_vfs_dir_handle { unsigned next,current,depth; };
+void *arc_test_rpc_inventory_malloc(size_t size)
+{unsigned at=allocations++;return fail_allocation==-2||(int)at==fail_allocation?NULL:malloc(size);}
 static struct retro_vfs_file_handle *open_file(const char *p,unsigned mode,unsigned hints)
 {
    (void)hints;assert(mode==RETRO_VFS_FILE_ACCESS_READ);const char *leaf=strrchr(p,'/');assert(leaf);
@@ -26,11 +30,24 @@ static int close_file(struct retro_vfs_file_handle *h)
 static int64_t size_file(struct retro_vfs_file_handle *h)
 {return (int)h->at==fail_size?-1:(int64_t)entries[h->at].size;}
 static int64_t read_file(struct retro_vfs_file_handle *h,void *p,uint64_t size)
-{if((int)h->at==fail_read)return -1;assert(size==entries[h->at].size);memcpy(p,entries[h->at].data,(size_t)size);return (int64_t)size;}
+{++reads;if((int)h->at==fail_read)return -1;assert(size==entries[h->at].size);memcpy(p,entries[h->at].data,(size_t)size);return (int64_t)size;}
 static struct retro_vfs_dir_handle *open_dir(const char *p,bool hidden)
-{(void)p;(void)hidden;if(fail_dir_open)return NULL;struct retro_vfs_dir_handle *d=calloc(1,sizeof(*d));assert(d);++dir_opens;return d;}
+{
+   (void)hidden;assert(!strstr(p,"/.")&&!strstr(p,"/.."));
+   if(fail_dir_open)return NULL;
+   struct retro_vfs_dir_handle *d=calloc(1,sizeof(*d));assert(d);
+   if(finite_tree)for(const char *at=p;(at=strstr(at,"/nested"))!=NULL;at+=7)++d->depth;
+   ++dir_opens;return d;
+}
 static bool read_dir(struct retro_vfs_dir_handle *d)
-{if(silent_end||d->next==count)return false;d->current=d->next++;return true;}
+{
+   if(silent_end)return false;
+   while(d->next<count){unsigned i=d->next++;
+      if(finite_tree&&!((i<=8&&entries[i].directory&&i==d->depth)||(i==9&&d->depth==8)||(i==10&&d->depth==9)))continue;
+      d->current=i;return true;
+   }
+   return false;
+}
 static const char *dir_name(struct retro_vfs_dir_handle *d)
 {return (int)d->current==fail_name?NULL:entries[d->current].name;}
 static bool dir_is_dir(struct retro_vfs_dir_handle *d){return entries[d->current].directory;}
@@ -38,7 +55,8 @@ static int close_dir(struct retro_vfs_dir_handle *d){free(d);++dir_closes;return
 static struct retro_vfs_interface vfs={.open=open_file,.close=close_file,.size=size_file,.read=read_file,
    .opendir=open_dir,.readdir=read_dir,.dirent_get_name=dir_name,.dirent_is_dir=dir_is_dir,.closedir=close_dir};
 static void reset(void)
-{count=0;fail_open=fail_size=fail_read=fail_close=fail_name=-1;fail_dir_open=fail_dir_close=silent_end=false;opens=closes=dir_opens=dir_closes=0;}
+{count=0;fail_open=fail_size=fail_read=fail_close=fail_name=fail_allocation=-1;
+   fail_dir_open=fail_dir_close=silent_end=finite_tree=false;opens=closes=dir_opens=dir_closes=reads=allocations=0;}
 static ArcRpcFirmwareInventory scan(void)
 {ArcRpcFirmwareInventory r=arc_riscpc_inventory_scan(&vfs,"/system/arcdroid/firmware",table,4);assert(opens==closes&&dir_opens==dir_closes);return r;}
 static void add(const char *name,unsigned os)
@@ -77,8 +95,31 @@ int main(void)
    reset();entries[count++]=(Entry){".",NULL,0,false};count=1100;
    for(unsigned i=1;i<count;++i)entries[i]=entries[0];
    assert(scan().bounded);
-   reset();entries[count++]=(Entry){"nested",NULL,0,true};add("good",3);
-   assert(scan().bounded&&!scan().vfs_failure&&scan().installed==16); /* Cyclic nesting bounded at eight. */
+   /* Dot entries are directory typed, but must never recurse or open files. */
+   reset();entries[count++]=(Entry){".",NULL,0,true};entries[count++]=(Entry){"..",NULL,0,true};add("good",3);
+   ArcRpcFirmwareInventory dots=scan();assert(dots.installed==16&&!dots.bounded&&!dots.vfs_failure&&dir_opens==1&&opens==1);
+   /* A finite tree proves both sides of the exact bound, independently of
+    * entry/path budgets: depth-eight files count; depth-nine files do not. */
+   reset();finite_tree=true;
+   for(unsigned i=0;i<=8;++i)entries[count++]=(Entry){"nested",NULL,0,true};
+   add("at-bound",0);add("too-deep",3);
+   ArcRpcFirmwareInventory depth=scan();
+   assert(depth.bounded&&!depth.vfs_failure&&depth.installed==2&&dir_opens==9&&opens==1);
+   reset();finite_tree=true;count=8;
+   for(unsigned i=0;i<8;++i)entries[i]=(Entry){"nested",NULL,0,true};
+   entries[count++]=(Entry){"unused",NULL,0,false};add("at-bound",0);
+   depth=scan();assert(!depth.bounded&&depth.installed==2&&dir_opens==9&&opens==1);
+   /* Only scanner buffers use the failing allocator; VFS handles remain real.
+    * Failure closes its file and scanning can still recognize another one. */
+   reset();add("failed",0);add("good",3);fail_allocation=0;
+   ArcRpcFirmwareInventory resource=scan();
+   assert(resource.resource_failure&&!resource.vfs_failure&&!resource.bounded&&resource.installed==16&&reads==1);
+   ArcRpcCompatibility hints={4,4};ArcRpcSelection selection=arc_riscpc_select(&hints,1,&resource,0,0);
+   assert(selection.reason==ARC_RPC_SELECTION_MISSING_FIRMWARE&&selection.incomplete);
+   hints=(ArcRpcCompatibility){4,8};selection=arc_riscpc_select(&hints,1,&resource,0,0);
+   assert(selection.reason==ARC_RPC_SELECTION_SELECTED&&selection.incomplete&&selection.os==ARC_RPC_OS_371);
+   reset();add("failed",0);fail_allocation=-2;resource=scan();
+   assert(resource.resource_failure&&!resource.vfs_failure&&!resource.installed&&!reads&&opens==1&&closes==1);
    reset();char long_name[4096];memset(long_name,'x',sizeof(long_name)-1);long_name[4095]=0;
    entries[count++]=(Entry){long_name,NULL,0,false};assert(scan().bounded&&!scan().vfs_failure);
    /* Byte budget is real even for repeated recognised files. */

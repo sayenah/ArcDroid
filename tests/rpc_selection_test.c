@@ -131,9 +131,51 @@ static void boundaries(void)
    assert(a.cpu==63&&a.os==127);
    a=arc_riscpc_compatibility(false,0xffffffff);assert(!a.cpu&&!a.os);
 }
+static void manual_overrides(void)
+{
+   /* Independent oracle: constrain the unoverridden axis, then apply the
+    * fixed seven-pair ranking. Include every category/mask and installed set. */
+   const unsigned model_cpu[]={0,4,4,16,8};
+   for(unsigned cpu=0;cpu<64;++cpu)for(unsigned os=0;os<128;++os)
+   for(unsigned m=0;m<=4;++m)for(unsigned f=0;f<=4;++f){
+      if(!m&&!f)continue;
+      unsigned c=m?63:cpu?cpu:63,o=f?127:os?os:127;
+      bool feasible=false;unsigned needed=0;
+      for(unsigned cm=1;cm<=4;++cm)for(unsigned of=1;of<=4;++of)
+         if((!m||cm==m)&&(!f||of==f)&&(c&model_cpu[cm])&&(o&(of<=2?4:8)))feasible=true;
+      for(unsigned p=0;p<7;++p)
+         if((!m||m==expected_pairs[p].model)&&(!f||f==expected_pairs[p].os)&&
+            (c&expected_pairs[p].cpu)&&(o&expected_pairs[p].family))needed|=1u<<expected_pairs[p].os;
+      for(unsigned installed=0;installed<16;++installed){
+         unsigned model=0,firmware=0;bool failure=(installed&1)!=0;
+         for(unsigned p=0;p<7;++p)
+            if(!model&&(!m||m==expected_pairs[p].model)&&(!f||f==expected_pairs[p].os)&&
+               (c&expected_pairs[p].cpu)&&(o&expected_pairs[p].family)&&
+               ((installed<<1)&(1u<<expected_pairs[p].os))){model=expected_pairs[p].model;firmware=expected_pairs[p].os;}
+         unsigned reason=model?ARC_RPC_SELECTION_SELECTED:!feasible?ARC_RPC_SELECTION_UNSUPPORTED:
+            !needed?ARC_RPC_SELECTION_UNQUALIFIED:failure?ARC_RPC_SELECTION_UNREADABLE_INVENTORY:ARC_RPC_SELECTION_MISSING_FIRMWARE;
+         ArcRpcCompatibility d={(uint8_t)cpu,(uint8_t)os};
+         ArcRpcSelection r=select_set(&d,1,installed<<1,failure,m,f);
+         assert((unsigned)r.reason==reason&&(unsigned)r.model==model&&(unsigned)r.os==firmware&&r.needed==needed);
+      }
+   }
+   ArcRpcCompatibility cpu_conflict[]={{4,8},{16,8}},os_conflict[]={{4,4},{4,8}},both_conflict[]={{4,4},{16,8}};
+   assert(select_set(cpu_conflict,2,30,false,2,0).reason==ARC_RPC_SELECTION_SELECTED);
+   assert(select_set(cpu_conflict,2,30,false,0,4).reason==ARC_RPC_SELECTION_CONFLICTING_DISCS);
+   assert(select_set(os_conflict,2,30,false,0,4).reason==ARC_RPC_SELECTION_SELECTED);
+   assert(select_set(os_conflict,2,30,false,2,0).reason==ARC_RPC_SELECTION_CONFLICTING_DISCS);
+   assert(select_set(both_conflict,2,30,false,2,0).reason==ARC_RPC_SELECTION_CONFLICTING_DISCS);
+   assert(select_set(both_conflict,2,30,false,0,4).reason==ARC_RPC_SELECTION_CONFLICTING_DISCS);
+   assert(select_set(both_conflict,2,30,false,2,4).reason==ARC_RPC_SELECTION_SELECTED);
+   ArcRpcCompatibility unknown={0,0},unsupported={32,64};
+   assert(select_set(&unknown,1,30,false,2,0).os==ARC_RPC_OS_371);
+   assert(select_set(&unknown,1,30,false,0,1).model==ARC_RPC_SELECT_ARM610);
+   assert(select_set(&unsupported,1,30,false,2,0).reason==ARC_RPC_SELECTION_UNSUPPORTED);
+   assert(select_set(&unsupported,1,30,false,0,4).reason==ARC_RPC_SELECTION_UNSUPPORTED);
+}
 int main(void)
 {
-   public_tuples();matrix();boundaries();
+   public_tuples();matrix();boundaries();manual_overrides();
    printf("R3a selection: %u matrix/boundary checks, public tuples and pinned persistence enums\n",checks);
    return 0;
 }

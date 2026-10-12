@@ -27,6 +27,10 @@ ArcRpcCompatibility arc_riscpc_compatibility(bool extended, uint32_t flags)
    if (extended) { c.cpu = (flags >> 8u) & 0x3fu; c.os = (flags >> 16u) & 0x7fu; }
    return c;
 }
+bool arc_riscpc_notice_required(ArcRpcCompatibility disc)
+{
+   return disc.cpu && disc.os && !(disc.cpu & 3u) && !(disc.os & 3u);
+}
 bool arc_riscpc_selection_qualified(ArcRpcSelectionModel m, ArcRpcSelectionOs os)
 {
    /* Recognition is not qualification; these are exactly D-164(3)'s seven. */
@@ -47,8 +51,7 @@ ArcRpcSelection arc_riscpc_select(const ArcRpcCompatibility *discs, size_t count
    unsigned cpu = 0x3fu, os = 0x7fu;
    bool rpc_notice = false;
    for (size_t i=0; i<count; ++i) {
-      if (discs[i].cpu && discs[i].os &&
-          !(discs[i].cpu & 3u) && !(discs[i].os & 3u)) rpc_notice = true;
+      if (arc_riscpc_notice_required(discs[i])) rpc_notice = true;
       if (discs[i].cpu) cpu &= discs[i].cpu;
       if (discs[i].os) os &= discs[i].os;
    }
@@ -57,10 +60,11 @@ ArcRpcSelection arc_riscpc_select(const ArcRpcCompatibility *discs, size_t count
     * infer a new RPC route from separately unknown CPU/OS hints or from
     * incompatible legacy categories spread across discs (D-165(2)). */
    if (!manual && !rpc_notice) return r;
-   if (!manual && (!cpu || !os)) {
+   if (manual_model) cpu = 0x3fu;
+   if (manual_os) os = 0x7fu;
+   if (!cpu || !os) {
       r.reason = ARC_RPC_SELECTION_CONFLICTING_DISCS; return r;
    }
-   if (manual) { cpu = 0x3fu; os = 0x7fu; }
    /* JFD category layout: MAME src/lib/formats/jfd_dsk.cpp, bits 8..22.
     * CPU and OS are independent feasibility categories, not qualifications. */
    static const ArcRpcSelectionModel rank[] = { ARC_RPC_SELECT_ARM710,

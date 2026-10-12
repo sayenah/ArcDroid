@@ -35,18 +35,21 @@ static char root[4096],system_path[4096],firmware_path[4096],diagnostic[256],log
 static char identity[41],persistent_path[4096];
 static const char *machine_option="Auto",*os_option="Auto";
 static unsigned log_count,notice_count,mask_count;
+static unsigned firmware_dirs,firmware_files,diagnostic_dirs,diagnostic_files;
 static ArcRpcCompatibility masks[32];
 static bool root_failure,close_failure,read_failure,name_failure,silent_listing,budget_listing;
 static unsigned listing_mode,listing_at;static bool listing_armed;static struct retro_vfs_dir_handle *scan_dir;
 static const char *const permuted_names[]={"rpc-3", "legacy-rom", "rpc-1", "rpc-0", "rpc-2", "rpc-copy", "tiny"};
 static struct retro_vfs_interface wrapper;
 static struct retro_vfs_file_handle *test_open(const char *p,unsigned mode,unsigned hints)
-{return vfs_open(p,mode,hints);}
+{if(!strncmp(p,firmware_path,strlen(firmware_path))&&p[strlen(firmware_path)]=='/')++firmware_files;
+   return vfs_open(p,mode,hints);}
 static int64_t test_read(struct retro_vfs_file_handle *h,void *data,uint64_t size)
 {if(read_failure&&size==35)return -1;return vfs_read(h,data,size);}
 static struct retro_vfs_dir_handle *test_opendir(const char *p,bool hidden)
 {
    bool firmware=!strcmp(p,firmware_path);
+   if(firmware)++firmware_dirs;
    if(firmware&&root_failure){root_failure=false;return NULL;}
    struct retro_vfs_dir_handle *d=vfs_opendir(p,hidden);
    if(firmware&&listing_armed){listing_armed=false;scan_dir=d;listing_at=0;}
@@ -70,6 +73,7 @@ static void log_line(enum retro_log_level level,const char *format,...)
    (void)level;char line[4096];va_list a;va_start(a,format);vsnprintf(line,sizeof(line),format,a);va_end(a);
    if(!strncmp(line,"RPC selection:",14)){
       ++log_count;snprintf(diagnostic,sizeof(diagnostic),"%s",line);mask_count=0;
+      diagnostic_dirs=firmware_dirs;diagnostic_files=firmware_files;
       for(unsigned i=0;i<32;++i){ArcRpcCompatibility m;if(!media_masks(i,&m))break;masks[mask_count++]=m;}
    }else if(strlen(logs)+strlen(line)<sizeof(logs))strcat(logs,line);
 }
@@ -114,10 +118,17 @@ static void make_jfd(const char *leaf,unsigned cpu,unsigned os,bool legacy,unsig
 static bool prepare(const char *leaf,const char *reason,const char *model,const char *os)
 {
    diagnostic[0]=logs[0]=notices[0]=0;notice_count=log_count=mask_count=0;
+   firmware_dirs=firmware_files=diagnostic_dirs=diagnostic_files=0;
    listing_armed=true;char file[4096];path(file,root,leaf);
    struct retro_game_info g={.path=file};bool ok=load_core(&g);
    if(log_count!=1||!strstr(diagnostic,reason)||!strstr(diagnostic,model)||!strstr(diagnostic,os)){
       fprintf(stderr,"load %s -> %d diag=%s logs=%s\n",leaf,ok,diagnostic,logs);assert(0);}
+   if(!strcmp(reason,"reason=legacy")){
+      /* At the diagnostic line no firmware has been touched. The one later
+       * directory walk belongs to the unchanged legacy firmware search. */
+      assert(diagnostic_dirs==0&&diagnostic_files==0&&firmware_dirs==1);
+      assert(strstr(diagnostic,"inventory=complete")&&!strstr(notices,"RiscPC-class"));
+   }else assert(diagnostic_dirs==1&&firmware_dirs==2);
    return ok;
 }
 static ArcDigest file_digest(const char *p)
@@ -175,6 +186,10 @@ int main(int argc,char **argv)
    make_jfd("legacy.jfd",0,0,true,1,1);make_jfd("arm3.jfd",1,2,false,1,1);
    make_jfd("unqualified.jfd",16,4,false,1,1);
    make_jfd("impossible.jfd",32,8,false,1,1);make_jfd("unknown.jfd",0,0,false,1,1);
+   make_jfd("unknown-cpu.jfd",0,8,false,1,1);make_jfd("unknown-os.jfd",4,0,false,1,1);
+   make_jfd("legacy-cpu.jfd",5,8,false,1,1);make_jfd("legacy-os.jfd",4,10,false,1,1);
+   write_bytes(root,"split.m3u","unknown-cpu.jfd\nunknown-os.jfd\n",31);
+   write_bytes(root,"later-rpc.m3u","unknown.jfd\nrpc.jfd\n",20);
    write_bytes(root,"conflict.m3u","first.jfd\nlater.jfd\n",20);
    uint8_t *raw=calloc(1,327680);assert(raw);write_bytes(root,"raw.adf",raw,327680);free(raw);
    write_bytes(root,"mixed.m3u","raw.adf\nrpc.jfd\nlegacy.jfd\n",27);
@@ -202,6 +217,11 @@ int main(int argc,char **argv)
    assert(prepare("arm3.jfd","reason=legacy","model=none","os=none"));unload_core();
    assert(prepare("raw.adf","reason=legacy","model=none","os=none"));unload_core();
    assert(prepare("unknown.jfd","reason=legacy","model=none","os=none"));unload_core();
+   const char *no_notice[]={"unknown-cpu.jfd","unknown-os.jfd","legacy-cpu.jfd","legacy-os.jfd","split.m3u"};
+   for(unsigned i=0;i<sizeof(no_notice)/sizeof(no_notice[0]);++i){
+      assert(prepare(no_notice[i],"reason=legacy","model=none","os=none"));unload_core();}
+   require_legacy("later-rpc.m3u","reason=selected","model=ARM710","os=3.71");
+   assert(mask_count==2&&masks[0].cpu==0&&masks[1].cpu==20);unload_core();
    require_legacy("unqualified.jfd","reason=unqualified-pair","model=none","os=none");unload_core();
    require_legacy("impossible.jfd","reason=unsupported-requirement","model=none","os=none");unload_core();
    /* Catalogue is injectable only in the test core; production tuples unchanged. */
