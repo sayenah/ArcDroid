@@ -130,7 +130,11 @@ static inline void arc_rpc_mem_fetch(uint32_t va, uint32_t physical,
 {
     ArcRpcMemFast *f = &arc_rpc_mem_fast;
     if (f->track_rom) f->fetch_pc=va;
-    if (f->memo_valid && f->memo_line == (va >> f->memo_shift)) { ++f->fetch_hits; return; }
+    /* A TLB collision/re-walk can change backing or region without clearing
+     * this virtual-line memo. Match the slow path's pre-lookup eligibility. */
+    uint32_t pa = physical & 0x1fffffffu;
+    if (backed && (pa < 0x03000000u || pa >= 0x10000000u) &&
+        f->memo_valid && f->memo_line == (va >> f->memo_shift)) { ++f->fetch_hits; return; }
     arc_rpc_mem_fetch_slow(va, physical, attributes, backed);
 }
 
