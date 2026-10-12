@@ -1,42 +1,20 @@
 # ArcDroid Handoff
 
-**Stage:** IMPLEMENTATION — **R3b-1** (boot-resource population, D-167) with Sol on `slice/r3b1-population`; R3a run 2 (`8590079`, PR #378) has passed QA and awaits green CI before merge.
-**Owner:** Sol (R3b-1); Fable (S62) merges R3a and reviews R3b-1.
+**Stage:** IMPLEMENTATION — **R3b-1** (boot-resource population, D-167) with Sol on `slice/r3b1-population` (`.work/s62/r3b1/clone`).
+**Owner:** Sol (R3b-1); Fable (S62) reviews.
 **Next (S62):**
-1. **R3a run 2: QA re-check PASS WITH LOWS (S62).** The `arcdroid-opus-qa` agent ran at effort 15 and found no defects. It confirmed D-166(1)–(3), killed every QA and Sol mutant except one pre-existing equivalent-for-production survivor, and passed the full host suite (361/361) and guards. Adjudication: `.work/s62/qa-r3a2/adjudication.md`.
-   - **Follow-up Lows:**
-     - The `recognize-os-range` mutant survives. Add an injected out-of-range catalogue entry, or record the mutant as equivalent.
-     - Policy-mode mutants do not observe `resource_failure` handling. Add two asserts in `rpc_selection_test`.
-     - The mutation script uses Python `assert`.
-   - **To R3d:** a skipped scan should log `inventory=skipped`.
-   - **Next step:** Fable merges PR #378 under §12.11 once CI run 38222417027 is green on all five jobs (`.work/s62/ci-r3a2.txt`). Earlier R3a evidence: Opus QA run 1 PASS WITH LOWS, and Fable's private recognition check and library A/B (`.work/s61/r3a/ab/`).
+1. **R3a: merged** as `d7a92ec` (PR #378, head `8590079`) after the Opus QA re-check PASS WITH LOWS (adjudication `.work/s62/qa-r3a2/adjudication.md`) and green CI on all five jobs; recorded in `docs/build-log.md`. Follow-up Lows: the `recognize-os-range` mutant (inject an out-of-range entry or record it equivalent); two `resource_failure` asserts in `rpc_selection_test`; Python `assert` in the mutation script. To R3d: a skipped scan logs `inventory=skipped`.
 2. **R3b-1 with Sol (authorised S62, D-167):**
-   - **Dispatch:** Sol (GPT-6.1 Sol) works in `.work/s62/r3b1/clone`, on `slice/r3b1-population` from `main` `f74f615`, dispatched in parallel with R3a's CI. Fable merges `main` into the branch after R3a lands. The prompt is `.work/s62/r3b1/promptR3b1.md`.
+   - **Dispatch:** Sol (GPT-6.1 Sol) works in `.work/s62/r3b1/clone`, on `slice/r3b1-population` from `main` `3d7fd30` (thread `01a12f51-f828-7d42-9552-61459ce001fb`). Fable merges `main` (now with R3a) into the branch before committing. Prompts: `.work/s62/r3b1/promptR3b1.md`, then `promptR3b1-cont.md`. Part 1 stopped correctly at the capacity gate after specifying the receipt (manifest v2) and adding the independent checker. Fable supplied a metadata-only inventory of the merged tree (`.evidence/boot-tree-metadata.tsv` in the clone; never commit) and a tally of about 71.5 MiB of 125.75 MiB with sibling sharing (`.work/s62/capacity.py`). Part 2 is running (see the ledger).
    - **Order of work:** first the capacity and sharing note (policy 5) and the receipt format extension (policy 7). If the merged tree cannot fit with sharing, Sol stops and reports.
    - **Report:** Sol does not commit or push, and writes `SOL-REPORT-R3B1.md`.
    - **Then Fable:** reviews, commits verbatim, opens the PR, gathers AC-5's private evidence, and arranges Opus QA.
    - R3b-2's full work order follows R3b-1 QA. D-166(4) carries two R3d items.
-1. **Q-3: merged** as `44d007e` (PR #375) after Opus QA PASS WITH LOWS (adjudication `.work/s61/qa-q3/adjudication.md`) and green CI on all five jobs. Follow-up Low: the CPU reproduction comment (`tests/rpc_cpu_test.c:373–374`) overstates which term the I/O/reserved/EASI targets test; fix it in the next RPC slice that touches the test.
-2b. **R3a history (S61):** Sol run 1 committed as `961e8e2`; Opus QA (effort 15) PASS WITH LOWS, no defects; Fable's AC-2 (renamed real ROMs recognised; titles 50/110/116 select SA-110/3.71, 90/117/144 select ARM710/3.71, an ordinary title stays `legacy`) and AC-4 A/B (package present 218 titles, absent 44, 60 s; no regression; 105/205/133 vary between runs of the same build); D-166 ruled run 2.
-2. **AC-10: measured (S61); Founder decision D-163.** R3 next, then 6b before R4. Original text: On the Odin3 at 100 MIPS, measure guest progress and frame rate of the trial's 031 and 110 gameplay workloads against the trial's record (031 ≈ 27 fps).
-   - Guest timing is virtual and host-independent, so the guest frame rate can be measured from runner frame dumps on any host. The Odin3 shows whether the host keeps real time.
-   - The trial's gameplay scripts were lost. S60 rebuilt a 031 cold start to racing gameplay (`.work/s60/ac8/leg4-031-c-cold`, frames 6400–7400; store `l4-031`). 110 runs from floppy on the common standard boot disc (trial-d).
-   - A drop of more than 10 %, or a visible or audible regression, goes to the Founder before R3.
-3. **Then R3** (firmware, Auto machine selection and launch), after Q-3 merges (D-163), planned in **D-164** as R3a–R3d. The R3a work order is below, with Astra's stage 2 changes incorporated (D-165); Sol starts it after Q-3 merges. Then item 6b, before R4 and item 5. It must carry the R2 items listed below.
+- **Earlier (S61):** Q-3 merged as `44d007e` (follow-up Low: the CPU reproduction comment at `tests/rpc_cpu_test.c:373–374` overstates which term the I/O/reserved/EASI targets test; fix it in the next RPC slice that touches the test). AC-10 measured; Founder decision D-163 (R3, then item 6b before R4 and item 5). R3 is planned as R3a–R3d (D-164); R3a is done.
 
-- **Running:** see the S61 entry under Waiting on the Founder.
-- **Private work:** S60's is in `.work/s60/` (index `LEDGER.md`); S61's is in `.work/s61/` (index `LEDGER.md`). Sol's R2c clone `.work/s60/sol2c/clone` is finished; its `runK-backup` stash can be dropped.
+- **Running:** Sol R3b-1 part 2 (S62; PID and watchdog in `.work/s62/LEDGER.md`).
+- **Private work:** S60's is in `.work/s60/`, S61's in `.work/s61/`, S62's in `.work/s62/` (each indexed by its `LEDGER.md`). The trial boot environment (packages, authored files, record) is in `.work/s60/bootenv/`. Sol's R2c clone `.work/s60/sol2c/clone` is finished; its `runK-backup` stash can be dropped.
 - **Codex refusal (S61):** the Codex service once refused a turn about crash-locator code as "possible cybersecurity risk". Word Sol prompts about fault handling neutrally.
-
-**Q-3 work order (D-146; `docs/riscpc-translator-invariants.md` §1.8 and §5):**
-- **Defect.** The R2a fetch memo (`arc_rpc_mem_fast.memo_valid`/`memo_line`, `engine/rpc/rpc_mem_timing.c` and `.h`) is keyed by virtual line only. A memo hit skips the eligibility checks the slow path makes before any tag lookup (`backed` and the region, about `rpc_mem_timing.c:309`). A collision eviction followed by a translation-cache re-walk can change that eligibility without clearing the memo, so a memo hit can then override it.
-- **Required:**
-  1. A targeted reproduction: a deterministic test that drives the eviction and re-walk sequence and fails on current `main`.
-  2. The smallest fix: a memo hit must never override changed eligibility.
-  3. Show the fix keeps every existing timing calibration and golden unchanged, except any that genuinely exercised the defect. **No blanket golden regeneration**; justify each changed expectation individually.
-  4. Full host suite, sanitizers, MinGW and Android builds, guards; mutants on the fix.
-- **Non-goals:** translator work, other timing changes, and Q-1/Q-2/Q-4 to Q-11.
-- **QA focus:** the reproduction really exercises the sequence; the fix is minimal and complete across fetch paths (including SA D-cache fills, c7 invalidation, slow-clock reads and control writes); no change to timing outside the defect.
 
 **R3a work order (D-164 as amended by D-165, which incorporated Astra's stage 2 challenge; Sol dispatched S61 in parallel with Q-3 QA, merged only after Q-3).** Branch `slice/r3a-selection` from `main`.
 - **Objective:** RiscPC firmware inventory and Auto machine selection, as pure, fully tested logic wired into load preparation. **No player-visible behaviour change (D-165(1)):** a separate diagnostic inventory and catalogue view computes and logs the RPC decision. The legacy catalogue, search, diagnostics, notices, options, launch and persistence stay unchanged and keep today's Arculator route, and existing enum values are pinned. The selection policy, candidate ranking and failure-reason order are in D-165(2).
