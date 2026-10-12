@@ -102,6 +102,45 @@ corruption, even if the guest reads only one sector or overwrites part of it.
 An all-zero materialized chunk may become HOLE only after complete reconstruction
 and verification. Unchanged entries are copied verbatim into the next manifest.
 
+### R3b creation receipt (D-167; envelope version 2)
+
+Version 1 remains exactly as above. A populated creation uses magic `ARCRHDM1`,
+envelope version 2, length **24452**, the same 128-byte header and 504 entries,
+then a 128-byte creation receipt at offset 24320 and CRC at 24448 over all
+preceding bytes. Header reserved bytes remain zero. There is no separate receipt
+file or guest sector: manifest rename publishes the receipt and root together.
+
+| Receipt-relative offset | Field |
+|---:|---|
+| 0 | magic `ARCRBOOT` (8 bytes) |
+| 8, 12, 16 | receipt version 1, populator revision 1, authored-step revision 1 |
+| 20 | zero u32 |
+| 24, 56 | HardDisc4 and PlingSystem SHA-256 (32 raw bytes each) |
+| 88, 96 | created file count and file byte count (u64; after transformation, including authored assets) |
+| 104–127 | zero |
+
+Unknown envelope/receipt/populator/authored revisions refuse before mutation.
+A version-2 manifest must contain a valid receipt; version 1 contains none.
+The complete exact-length manifest (including receipt and CRC) is used in journal
+parent bindings. Checkpoint/rotation/recovery preserve the receipt verbatim.
+Guest writes only update sectors and journal records; neither can create or
+alter the manifest receipt. A receipt proves creation provenance, not the current
+integrity of boot files after guest edits.
+
+Only an unpublished all-HOLE population can set a creation receipt. Existing
+published stores with a known receipt return success without opening packages;
+legacy stores without a receipt are unchanged with a notice. Interruption before
+manifest publication restarts package preflight and population from scratch;
+fixed-path candidate cleanup uses the existing bounded inventory (504 leaves,
+`chunk.tmp`, `manifest.tmp`, and unbound journal header), never a guessed tree.
+Relative to the version-1 bounds below, published owned storage increases by
+at most 256 bytes to **272,811,720**, temporary storage by 128 to **286,728**,
+and their combined ceiling by 384 to **273,098,448**. Two-manifest open payload
+reads increase by at most 256 to **8,437,512**. The conservative tick hash
+formula uses three extended envelopes: **18,949,292** bytes. Existing transfer,
+callback, resident-memory and chunk/journal bounds still cover version 2;
+geometry and guest-write contracts do not change.
+
 ### Chunk (128-byte header, 256 KiB payload, 4-byte payload CRC)
 
 Header: magic `ARCRHDC1` at 0; envelope version/total length at 8/12; content
@@ -634,6 +673,62 @@ complete new root. Population never resumes from guessed incomplete application
 state. R3 owns validation, preservation of existing guest files and boot-resource
 policy; R2 implements transaction mechanics only. No whole-disc temporary image.
 
+### R3b capacity and sharing (before allocation implementation)
+
+The supplied shape is approximately 2,289 HardDisc4 entries / 31 MB expanded,
+plus 63 PlingSystem files after overlap merging; the largest directory has 54
+entries. One minimum fragment per entry would charge 2,352 fragments, or
+294 MiB, exceeding 126 MiB. Sharing is mandatory.
+
+The proposed strategy follows the [FileCore PRM, internal disc addresses](https://www.riscos.com/support/developers/prm/filecore.html)
+and [FileCore extensions, sharing](https://www.riscos.com/support/developers/prm/filecorenew.html):
+sharing is confined to siblings, optionally with their parent directory at the
+start; never pack unrelated parents or two directories into one disc object.
+Objects are sector aligned. An indirect address is `(fragment_id << 8) | (s+1)`
+for shared sector offsets s=0..254; an unshared object uses offset zero.
+Keep share_size=0 for RISC OS 3.50. Ordinary directory objects start at sector
+offset zero (shared encoding 1); the reserved root keeps address 0x20b. Eligible
+small child files follow their directory; remaining files form sibling-only groups.
+Empty files use address zero. Larger files may have several fragments, resolved
+from id/254 with zone wraparound (object 2 starts in zone 2).
+
+The usable map has 16,128 units, with 32 units reserved for object 2: **125.75
+MiB** available. For each sibling group, sector-round file sizes, include 2 KiB
+for its directory when appropriate, split groups when the next start would
+exceed sector 254, and charge each resulting disc object
+`8192 * max(16, ceil(group_bytes / 8192))`, plus minimum-fragment padding at
+zone splits and any zone-tail padding shorter than 16 units. The final sum must be <=125.75 MiB. This encoding lets guest
+FileCore growth/deletion identify shared neighbours by directory entries.
+
+The supplied metadata-only filtered/merged inventory was independently tallied:
+**390 directories, 1,444 files, 30,430,101 file bytes**, maximum fanout 54 and
+maximum component length 10. No inventory listing or individual package path
+is retained in the repository. Per directory, reserve four sectors in its first
+255-sector window; pack nonempty sibling files of at most 251 sectors first-fit
+in decreasing sector-rounded size, using additional windows when needed. Each
+window occupies a 128 KiB fragment; larger files have private disc objects,
+rounded to 8 KiB, with a 128 KiB minimum. Equal-size files use FileCore name order.
+The root keeps its existing reservation; charging a separate first window with
+four unused sectors for its files is conservative and keeps the tally simple.
+
+This calculation gives **434 shared windows + 22 private objects** (18,096,128
+bytes for the latter): **74,981,376 bytes = 71.5078125 MiB**, leaving
+**54.2421875 MiB** of the 125.75 MiB usable space. Reserve a conservative further
+2 MiB for authored boot assets, new directories and fragment/zone padding:
+**at least 52.24 MiB remains for game installs**. Repeating the tally after
+startup relocation and all seven authored assets (6,470 bytes) gives 391
+directories, 1,451 files, fanout still 54, **435 shared windows + 22 private
+objects = 75,112,448 bytes**, leaving **54.1171875 MiB before zone padding**.
+The production allocator was also exercised directly on that metadata-only
+transformed tree: **75,177,984 allocated bytes**, including 65,536 bytes of
+fragment padding, leaving **56,680,448 bytes = 54.0546875 MiB for installs**.
+No package content or inventory listing was used by a public test.
+The authored tally adds one 128 KiB window. Five zone tails and four split
+objects can add at most 135 padding units (1.055 MiB), so the total addition
+over the original tally stays below the reserved 2 MiB. Population also
+performs the exact allocation calculation on every supplied transformed tree
+and refuses capacity exhaustion before publishing. Geometry is unchanged.
+
 Plan v2 (plan core only) accepts `hard_disc=on|off` and `hd_import=<file>`.
 Omitting both keeps IDE absent. `on` automatically publishes the authored blank
 when no import is provided; import implies on, and off plus import is refused.
@@ -817,3 +912,113 @@ from `next_phase`. The D-161 checker attributes total HD work to phase/substep,
 checks acknowledgement independently at 0.20 T, and permits total ≤0.50 T only
 when that tick made one namespace call. Rows with more than one are invalid;
 measuring clocks never changes virtual execution or persistent bytes.
+
+## 13. R3b population implementation and authored step
+
+`libretro/rpc_boot.*` owns one offline creation. `begin` checks store provenance
+before touching packages. `step(n)` advances at most min(n,32) deterministic work
+units; cancellation aborts the candidate. Package indexing and extraction use
+`rpc_boot_zip.*`, independently of the unchanged `core/zip.c` and `core/adffs.c`.
+All reads use frontend VFS. Each raw package is capped at 32 MiB, each at 4,096
+entries, each expanded member at 16 MiB, combined expanded data at 96 MiB;
+there are at most 4,096 transformed nodes, depth 32, fanout 77 and names of 10
+FileCore bytes. ZIP member paths and transformed paths are capped at 255 bytes
+each. These cover the current inventories with margin (raw HardDisc4
+2,289 entries and PlingSystem 88, against 4,096 each; merged 1,834 entries
+and 30,430,101 file bytes against 4,096 nodes and 96 MiB; the largest
+filtered member is 2,280,588 bytes, over seven times smaller than the member cap).
+The supplied metadata paths reach 104 bytes / depth 14; startup relocation adds
+at most nine bytes / one level, still well below 255 / 32. The 32 MiB raw-input
+limit also exceeds the handoff's approximately 31 MB expanded HardDisc4 size,
+leaving room for ordinary ZIP framing even without compression. Metadata extra
+fields/comments remain bounded by ZIP's 16-bit framing. ZIP64, encryption,
+unsupported methods, duplicate/overlapping local records, traversal and missing
+or mismatched ARC0 fields refuse. CRCs are checked for every member, including
+excluded/omitted members. Implied/created directories use load/exec zero and
+attributes 3 (plus the FileCore directory flag); explicit ARC0 takes precedence.
+ARC0 attributes use the OS_File access byte. Owner/public read/write bits stay
+in place; OS_File lock bit 3 maps to Nick lock bit 2, while Nick bit 3 marks a
+directory independently. Bits with no Nick representation refuse. The independent
+reader returns OS_File attributes and checks Nick's reserved bits. The mapping
+follows the [FileSwitch attributes](https://www.riscos.com/support/developers/prm/fileswitch.html)
+and [FileCore NewDirAtts](https://www.riscos.com/support/developers/prm/filecore.html)
+tables, rather than the trial builder's direct-byte assignment. Filename syntax
+also excludes FileSwitch's `%` library-directory marker; other printable bytes
+remain representable, including slash from a ZIP dot.
+
+Additional resident memory is <=8 MiB (fixed indices/tree/buffers plus bounded
+zlib allocations); no whole archive, expanded member or disc is allocated.
+One work unit performs one 32 KiB hash/inflate/write/readback quantum, one index
+entry, one bounded tree/directory operation, one seal-chunk check or one control
+operation: <=4 MiB I/O and <=128 callbacks, measured deterministically. A call
+with n units multiplies those maxima by min(n,32). Index-entry comparisons are
+bounded by 4,096 preceding entries; a transformed insertion by 32x77 siblings;
+allocation/sorting by 77 siblings and five zones. No host clock changes work or
+output. The existing synchronous seal API loops over the new seal-step API;
+legacy caller output remains identical. Seal forbids further candidate writes.
+Deflate may produce a partial sector before its stream ends. Writing retains
+at most 511 bytes between units, emits complete sectors, and pads only the final
+sector. Thus an output write is at most 33,280 bytes (32 KiB plus one sector),
+within the same I/O/callback bounds; no member-sized buffer is introduced.
+
+Preflight hashes both complete packages and pins SHA-256 for each initial
+32 KiB archive range. Every subsequent index, member or output read verifies
+the complete touched range before copying any bytes, preventing a changed or
+changed-and-restored package from mixing snapshots. It validates framing/metadata, then
+streams every member and CRC/hash. Tree transformation implements D-167's
+restricted merge (SHA-256 byte equality, exact attributes, equal file type;
+newer 40-bit date retained for typed files). Untyped load/exec must match exactly.
+Case aliases and collisions refuse; directory metadata stays with HardDisc4.
+Each archive-root file keeps its RISC OS name under its own release-doc directory;
+dots map to slash characters in names. The exact numeric exclusions precede
+FileCore name/depth checks. The candidate is formatted and populated only after
+preflight, transformation and allocation succeed. Its boot block, maps,
+directories and file hashes are read back against the expected tree before seal.
+After receipt encoding and seal, both packages are reopened and SHA-256 checked
+immediately before publication. This detects changed supplied content, including same-size
+replacement. The initial pinned snapshot supplies every consumed byte; final revalidation
+checks the current paths against it. The VFS has no atomic multi-file snapshot
+or package lock. No package writes are performed.
+
+The test-only plan-v2 key is `hd_populate=on`; it implies hard_disc=on, conflicts
+with hard_disc=off and hd_import, and is rejected by v1 and shipping routes.
+The plan opens with create_blank=false, drives the same step API offline, and
+attaches IDE only after a complete root. R3b-2 supplies frame-loop preparation.
+A known receipt is a no-op without package I/O; legacy roots get a notice and
+remain unchanged. Unknown receipt or envelope revisions refuse before mutation.
+Qualified package SHA-256s are diagnostic only; they never gate acceptance.
+
+### Project-authored assets and custody (D-167(6))
+
+All files in `assets/riscpc-boot/` are ArcDroid-authored **GPL-2.0-only**, adapted
+from trial commit **5ff5481** (`origin/probe/riscpc-trial`); no third-party guest
+bytes are embedded. The build script embeds exactly these seven files. Sources
+use LF; all deployed scripts use CR only, while the MDF retains LF. Project
+files and imported package data remain separately represented until candidate
+sector writing. Each authored destination collision refuses. The intentional
+active-startup replacements are possible because the supplied originals move,
+unchanged in bytes and metadata, under `!Boot.Inactive`. That also holds for
+PreDesktop and all retained numeric RO<n>Hook subtrees. Those relocated startup
+files are never called by the authored step. Supplied System SysPaths/!Boot and
+the Resources applications' !Boot entries do run.
+
+| Repository asset | Destination | Type | Source at 5ff5481; adaptation |
+|---|---|---:|---|
+| Multisync | $.Multisync | FED | probe/riscpc/boot/Multisync; published timings retained, LF MDF |
+| BootEnv | $.BootEnv | FFF | probe/riscpc/boot/BootEnv; trial labels removed; Choices creation made idempotent |
+| BootRes | $.BootRes | FFF | probe/riscpc/boot/BootRes; resource dispatch retained; trial ResAudit output removed |
+| BootTasks | $.BootTasks | FFF | probe/riscpc/boot/BootTasks; installed-task enumeration retained |
+| Run | $.!Boot.!Run | FEB | probe/riscpc/boot/HDRun; ProbeTasks renamed ArcTasks, trial label removed |
+| Boot | $.!Boot.!Boot | FEB | probe/riscpc/tools/boot_disc.py:134–160; authored IconSprites entry, trial label removed |
+| ArcTasks | $.!Boot.ArcTasks | FEA | probe/riscpc/boot/HDTasks; desktop-stage dispatch retained, destination renamed |
+
+Authored files have zero date stamp and attributes 3. The boot option is run (3)
+in the boot record and both map records, with all checks recomputed. Root,
+boot/map reservations, sector size, map scale and five-zone geometry remain R2c's.
+
+At guest startup BootEnv creates missing Choices/Boot/PreDesk/Tasks directories
+through ordinary guest FileCore calls. BootRes creates `$.ResBoot`, a CR-only
+Obey file (FEB) containing the resource dispatch commands, through the guest.
+These runtime outputs use guest-assigned dates/attributes and are not embedded
+assets or part of the creation receipt's initial file/byte counts. ResAudit is
+not generated.

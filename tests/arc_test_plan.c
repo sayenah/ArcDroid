@@ -4,6 +4,7 @@
 #include "arc_io.h"
 #include "rpc_cmos_store.h"
 #include "rpc_hd_store.h"
+#include "rpc_boot.h"
 #include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -29,7 +30,10 @@ static unsigned cmos_frames=8;
 static bool refusal_reported;
 static ArcRpcCmosStore record, defaults;
 static ArcRpcHdStore *hard_disc;
-static char hd_save[PATH_LIMIT],hd_content[41],hd_import[PATH_LIMIT];
+static char hd_save[PATH_LIMIT],hd_content[41],hd_import[PATH_LIMIT],hd_system[PATH_LIMIT];
+static bool hd_populate;
+static void (*plan_notice)(const char *,bool);
+static void (*plan_log)(const char *);
 static bool hd_enabled,hd_cost_enabled;
 static ArcTestHdCost hd_cost;
 static ArcIdeBackend hd_delegate;
@@ -54,10 +58,28 @@ RETRO_API bool arc_test_plan_hd_write(uint32_t lba,uint32_t count,const uint8_t 
 static bool hd_start(char *error,size_t size)
 {
     if(!hd_enabled)return true;
-    hard_disc=arc_riscpc_hd_open(hd_save,hd_content,!hd_import[0],error,size);
+    hard_disc=arc_riscpc_hd_open(hd_save,hd_content,!hd_import[0]&&!hd_populate,error,size);
     if(!hard_disc)return false;
     if(hd_import[0]&&!arc_riscpc_hd_import(hard_disc,hd_import)){
         if(error&&size)snprintf(error,size,"RiscPC hd_import refused: published store, raw size or population failure");return false;}
+    if(hd_populate){
+        ArcRpcBoot *boot=arc_riscpc_boot_begin(hard_disc,hd_system,error,size);
+        if(!boot)return false;
+        ArcRpcBootState state;
+        do{state=arc_riscpc_boot_step(boot,8);}while(state<ARC_RPC_BOOT_DONE);
+        const char *notice=arc_riscpc_boot_notice(boot);
+        if(notice&&plan_notice)plan_notice(notice,state==ARC_RPC_BOOT_FAILED||state==ARC_RPC_BOOT_CANCELLED);
+        if(state==ARC_RPC_BOOT_FAILED||state==ARC_RPC_BOOT_CANCELLED){
+            if(error&&size)snprintf(error,size,"%s",notice?notice:"Boot population failed");
+            arc_riscpc_boot_free(boot);return false;
+        }
+        ArcRpcBootStats stats;arc_riscpc_boot_stats(boot,&stats);
+        if(plan_log){char line[256];
+            snprintf(line,sizeof(line),"RPC boot packages: HardDisc4=%s PlingSystem=%s files=%llu bytes=%llu",
+                stats.qualified[0]?"qualified":"unqualified",stats.qualified[1]?"qualified":"unqualified",
+                (unsigned long long)stats.files,(unsigned long long)stats.file_bytes);plan_log(line);}
+        arc_riscpc_boot_free(boot);
+    }
     ArcIdeBackend backend;arc_riscpc_hd_backend(hard_disc,&backend);
     hd_delegate=backend;backend.read=hd_read;backend.write=hd_write;
     return backend.sectors && arc_engine_test_ide_backend(&backend);
@@ -66,8 +88,6 @@ static void *pending_rom;
 static size_t pending_size;
 static uint64_t pending_epoch;
 static unsigned pending_model, pending_rate;
-static void (*plan_notice)(const char *,bool);
-static void (*plan_log)(const char *);
 void arc_test_plan_set_notice(void (*notice)(const char *,bool)) { plan_notice=notice; }
 void arc_test_plan_set_log(void (*log)(const char *)) { plan_log=log; }
 RETRO_API unsigned arc_test_plan_cmos_phase(void) { return cmos_phase; }
@@ -207,7 +227,7 @@ void arc_test_plan_clear(void)
 {
     char error[256];if(!arc_test_plan_persist(error,sizeof(error)) && error[0] && plan_notice)plan_notice(error,true);
     if(hard_disc){arc_engine_test_ide_backend(NULL);arc_riscpc_hd_close(hard_disc);hard_disc=NULL;}
-    hd_enabled=hd_cost_enabled=false;memset(&hd_cost,0,sizeof(hd_cost));memset(&hd_delegate,0,sizeof(hd_delegate));hd_save[0]=hd_content[0]=hd_import[0]=0;
+    hd_enabled=hd_cost_enabled=hd_populate=false;memset(&hd_cost,0,sizeof(hd_cost));memset(&hd_delegate,0,sizeof(hd_delegate));hd_save[0]=hd_content[0]=hd_import[0]=hd_system[0]=0;
     free(pending_rom);pending_rom=NULL;cmos_phase=0;cmos_frames=8;refusal_reported=false;
     memset(&record,0,sizeof(record));memset(&defaults,0,sizeof(defaults));
     event_count = next_event = disk_count = disk_next = 0; media_content[0]=media_helper[0]=0; script_frame = 0; script_active = false;
@@ -302,8 +322,8 @@ bool arc_test_plan_load(const char *path, const char *system, const char *save, 
     arc_test_plan_clear();
     char *text = NULL;
     if (!text_file(path, TEXT_LIMIT, &text)) return fail(error, error_size, "Plan must be bounded ASCII text");
-    const char *keys[] = {"version", "model", "rate_mips", "firmware", "cmos", "seed", "rtc_epoch", "input", "content_id", "cmos_layout", "media", "drive1", "disk_control", "hard_disc", "hd_import"};
-    char *values[15] = {0}; bool valid = true;
+    const char *keys[] = {"version", "model", "rate_mips", "firmware", "cmos", "seed", "rtc_epoch", "input", "content_id", "cmos_layout", "media", "drive1", "disk_control", "hard_disc", "hd_import", "hd_populate"};
+    char *values[16] = {0}; bool valid = true;
     for (char *line = text; line && valid;) {
         char *end = strchr(line, '\n'); if (end) *end++ = 0;
         char *s = trim(line);
@@ -311,8 +331,8 @@ bool arc_test_plan_load(const char *path, const char *system, const char *save, 
             char *equal = strchr(s, '=');
             if (!equal) { valid = false; break; }
             *equal++ = 0; s = trim(s); equal = trim(equal);
-            unsigned k; for (k = 0; k < 15 && strcmp(keys[k], s); ++k) {}
-            if (k == 15 || values[k] || !*equal) { valid = false; break; }
+            unsigned k; for (k = 0; k < 16 && strcmp(keys[k], s); ++k) {}
+            if (k == 16 || values[k] || !*equal) { valid = false; break; }
             values[k] = equal;
         }
         line = end;
@@ -324,7 +344,7 @@ bool arc_test_plan_load(const char *path, const char *system, const char *save, 
     bool persist=values[0] && !strcmp(values[0],"2") && values[4] && !strcmp(values[4],"persist");
     ArcRpcCmosKey key={0};key.model=model;key.layout=arc_riscpc_cmos_layout(values[9]);
     bool version=persist?values[8] && arc_riscpc_cmos_hex(values[8],40,key.content) && key.layout && !values[5] && save && *save:
-        values[0] && !strcmp(values[0],"1") && !values[8] && !values[9] && !values[10] && !values[11] && !values[12] && !values[13] && !values[14];
+        values[0] && !strcmp(values[0],"1") && !values[8] && !values[9] && !values[10] && !values[11] && !values[12] && !values[13] && !values[14] && !values[15];
     valid = valid && version && model < 4 && values[3] &&
         values[4] && (persist || factory || !strcmp(values[4], "seed")) &&
         (persist || (factory ? !values[5] : values[5] != NULL)) && values[6] &&
@@ -339,10 +359,12 @@ bool arc_test_plan_load(const char *path, const char *system, const char *save, 
         (!values[12]||(resolve(values[12],system,disks)&&disk_script_load(disks,system)));}
     if(valid && persist){
         valid=(!values[13]||!strcmp(values[13],"on")||!strcmp(values[13],"off")) &&
-            !(values[14]&&values[13]&&!strcmp(values[13],"off"));
-        hd_enabled=values[14] || (values[13]&&!strcmp(values[13],"on"));
+            !((values[14]||values[15])&&values[13]&&!strcmp(values[13],"off")) &&
+            (!values[15]||!strcmp(values[15],"on")) && !(values[14]&&values[15]);
+        hd_populate=values[15]!=NULL;
+        hd_enabled=hd_populate || values[14] || (values[13]&&!strcmp(values[13],"on"));
         if(hd_enabled){int n=snprintf(hd_save,sizeof(hd_save),"%s",save);valid=valid&&n>=0&&n<PATH_LIMIT;
-            memcpy(hd_content,key.content,41);if(values[14])valid=valid&&resolve(values[14],system,hd_import);}
+            memcpy(hd_content,key.content,41);if(hd_populate){int copied=snprintf(hd_system,sizeof(hd_system),"%s",system?system:"");valid=valid&&copied>0&&copied<PATH_LIMIT;}if(values[14])valid=valid&&resolve(values[14],system,hd_import);}
     }
     void *rom = NULL, *seed = NULL; size_t rom_size = 0, seed_size = 0;
     if (valid) valid = arc_io_read_all_limit(firmware, &rom, &rom_size, 8388608, NULL) &&

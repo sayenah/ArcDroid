@@ -1,0 +1,25 @@
+10 REM ArcDroid-authored resource dispatch plan, GPL-2.0-only.
+20 REM HardDisc4 RO350/360/370Hook.Boot.Desktop: Filer_Boot Resources apps.
+30 DIM b% 512,n$(255):p$="ADFS::4.$.!Boot.Resources":off%=0:count%=0
+40 REPEAT
+50 SYS "OS_GBPB",9,p$,b%,1,off%,512,"!*" TO ,,,got%,off%
+60 IF got%=0 THEN GOTO 110
+70 i%=0:WHILE 255>i% AND b%?i%>0:i%+=1:ENDWHILE
+80 IF i%=255 THEN ERROR 0,"Resource name bound"
+90 b%?i%=13:SYS "OS_File",5,p$+"."+$b% TO kind%
+100 IF kind%=2 THEN IF count%=256 THEN ERROR 0,"Resource count bound" ELSE n$(count%)=$b%:count%+=1
+110 UNTIL off%=-1
+120 IF count%=0 THEN ERROR 0,"No resource applications"
+130 f%=OPENOUT("ADFS::4.$.ResBoot"):IF f%=0 THEN ERROR 0,"Resource plan open failed"
+140 REM Resource boots only; no trial audit file
+150 FOR i%=0 TO count%-1
+160 SYS "OS_File",5,p$+"."+n$(i%)+".!Boot" TO kind%
+170 IF kind%=1 THEN PROCemit("Filer_Boot "+p$+"."+n$(i%))
+180 REM Dispatch is written as an ordinary Obey file
+190 NEXT
+200 REM End of resource plan
+210 CLOSE#f%:OSCLI "SetType ADFS::4.$.ResBoot Obey"
+220 END
+230 DEF PROCemit(s$)
+240 $b%=s$:SYS "OS_GBPB",2,f%,b%,LEN(s$)+1
+250 ENDPROC

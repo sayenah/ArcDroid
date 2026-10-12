@@ -32,7 +32,7 @@ static uint8_t independent_zone_sum(const uint8_t *p)
    w += p[3] + (z >> 8u);
    return (uint8_t)(x ^ y ^ z ^ w);
 }
-int main(void)
+int main(int argc, char **argv)
 {
    assert(ARC_RPC_HD_SECTORS == 258048u);
    assert(ARC_RPC_HD_BYTES == 132120576u);
@@ -91,6 +91,11 @@ int main(void)
           root[2010u] == 0x0bu && root[2011u] == 2u &&
           !memcmp(root+2013u,"ArcDroid fixture",16u) &&
           root[2042u] == 1u && !memcmp(root + 2043u, "Nick", 4u));
+   if (argc == 3 && !strcmp(argv[1], "--write")) {
+      FILE *file = fopen(argv[2], "wb");
+      assert(file && fwrite(first, 1, ARC_RPC_HD_BYTES, file) == ARC_RPC_HD_BYTES);
+      assert(!fclose(file));
+   } else assert(argc == 1);
    free(first);
    free(second);
    puts("rpc-hd-formatter: independent 126 MiB map/root/checksums pass");

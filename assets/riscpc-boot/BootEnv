@@ -1,0 +1,31 @@
+10 REM ArcDroid-authored resource environment, GPL-2.0-only.
+20 REM Sources: PRM bootapp.html environment/Choices and 3.7 UG bookb/book_5.html.
+30 SYS "OS_File",5,"ADFS::4.$.Choices" TO kind%
+31 IF kind%=0 THEN OSCLI "CDir ADFS::4.$.Choices"
+32 IF kind%<>0 AND kind%<>2 THEN ERROR 0,"Choices path is a file"
+40 SYS "OS_File",5,"ADFS::4.$.Choices.Boot" TO kind%
+41 IF kind%=0 THEN OSCLI "CDir ADFS::4.$.Choices.Boot"
+42 IF kind%<>0 AND kind%<>2 THEN ERROR 0,"Choices path is a file"
+50 SYS "OS_File",5,"ADFS::4.$.Choices.Boot.PreDesk" TO kind%
+51 IF kind%=0 THEN OSCLI "CDir ADFS::4.$.Choices.Boot.PreDesk"
+52 IF kind%<>0 AND kind%<>2 THEN ERROR 0,"Choices path is a file"
+60 SYS "OS_File",5,"ADFS::4.$.Choices.Boot.Tasks" TO kind%
+61 IF kind%=0 THEN OSCLI "CDir ADFS::4.$.Choices.Boot.Tasks"
+62 IF kind%<>0 AND kind%<>2 THEN ERROR 0,"Choices path is a file"
+70 OSCLI "Set Choices$Dir ADFS::4.$.Choices"
+80 OSCLI "Set Choices$Path ADFS::4.$.Choices."
+90 OSCLI "Set Choices$Write ADFS::4.$.Choices"
+100 OSCLI "Set Boot$Dir ADFS::4.$.!Boot"
+110 OSCLI "Set Boot$Path ADFS::4.$.!Boot."
+120 OSCLI "Set Boot$State desktop"
+130 OSCLI "Set Boot$Unique Local"
+140 OSCLI "Set Boot$ToBeLoaded ADFS::4.$.Choices.Boot.PreDesk"
+150 OSCLI "Set Boot$ToBeTasks ADFS::4.$.Choices.Boot.Tasks"
+160 REM HardDisc4 BootResources convention: resources tree, no ROxxx hooks.
+170 OSCLI "Set BootResources$Dir ADFS::4.$.!Boot.Resources"
+180 OSCLI "Set BootResources$Path ADFS::4.$.!Boot.Resources."
+190 OSCLI "Set System$Dir ADFS::4.$.!Boot.Resources.!System"
+200 REM Own !Boot Obey next runs SysPaths then !System.!Boot; never !System.!Run.
+210 REM SysPaths sets Boot$OSVersion from UtilityModule and System$Path/Sys$Path.
+220 OSCLI "Set Run$Path ADFS::4.$.!Boot.Library.,<Run$Path>"
+230 END

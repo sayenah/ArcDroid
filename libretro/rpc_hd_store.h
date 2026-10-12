@@ -9,6 +9,15 @@
 #define ARC_RPC_HD_JOURNAL_CAP 8388608u
 #define ARC_RPC_HD_TRIGGER 1048576u
 typedef struct ArcRpcHdStore ArcRpcHdStore;
+/* Host-owned creation provenance; never represented by guest sectors. */
+typedef struct {
+    uint8_t packages[2][32];
+    uint64_t files, bytes;
+} ArcRpcHdReceipt;
+bool arc_riscpc_hd_receipt(const ArcRpcHdStore *, ArcRpcHdReceipt *);
+bool arc_riscpc_hd_population_receipt(ArcRpcHdStore *, const ArcRpcHdReceipt *);
+/* One chunk verification or one control operation; done only after sealing. */
+bool arc_riscpc_hd_population_seal_step(ArcRpcHdStore *, bool *done);
 typedef enum { ARC_RPC_HD_IDLE, ARC_RPC_HD_ROTATE, ARC_RPC_HD_MATERIALIZE,
     ARC_RPC_HD_MANIFEST, ARC_RPC_HD_PUBLISH, ARC_RPC_HD_RETIRE, ARC_RPC_HD_GC,
     ARC_RPC_HD_READ_ONLY, ARC_RPC_HD_DAMAGED } ArcRpcHdState;
