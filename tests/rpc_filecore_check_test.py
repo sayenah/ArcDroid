@@ -96,7 +96,7 @@ def blank(exe):
             def read(at, n):
                 file.seek(at)
                 return file.read(n)
-            r = check(read)
+            r = check(read, boot_option=0)
             if r.tree != {'$': {'directory': True}} or r.free_bytes != SIZE - 262144:
                 raise RuntimeError('blank allocation / directory')
             boot = bytearray(read(3072, 512))
@@ -169,12 +169,28 @@ def blank(exe):
             maps[2048] = zone_checksum(maps[2048:2560])
             expect_bad(lambda: check(overridden), 'cross-check')
             maps[:] = read(MAP, 2560)
-            boot[455] = 3
+            boot[455] = 2
             total = sum(boot[:511])
             while total > 255:
                 total = total % 256 + total // 256
             boot[511] = total
-            expect_bad(lambda: check(overridden), 'disc-record copies')
+            expect_bad(lambda: check(overridden, boot_option=2), 'disc-record copies')
+            # Independent *Opt 4 vectors: all three disc records agree and
+            # their checks are valid, so Exec must fail on its meaning alone.
+            for option in (2, 0, 1, 3):
+                boot[455] = maps[11] = option
+                maps[0] = zone_checksum(maps[:512])
+                total = sum(boot[:511])
+                while total > 255:
+                    total = total % 256 + total // 256
+                boot[511] = total
+                if option in (0, 2):
+                    check(overridden, boot_option=option)
+                    expect_bad(lambda: check(overridden, boot_option=2-option),
+                               'boot option')
+                else:
+                    expect_bad(lambda: check(overridden, boot_option=2),
+                               'boot option')
     print('rpc-filecore-check: blank, free links, sharing, fragmentation, wrap, final zone, names/directories pass')
 
 

@@ -135,7 +135,7 @@ def store_tree(save):
             at += take
             count -= take
         return bytes(result)
-    return check(read), manifest
+    return check(read, boot_option=2), manifest
 
 
 def compare(save, expected=EXPECTED):
@@ -152,7 +152,7 @@ def compare(save, expected=EXPECTED):
             directories.add(parent)
             parent = parent.rsplit('.', 1)[0]
     require({p for p, v in reader.tree.items() if v['directory']} == directories, 'transformed directories differ')
-    require(reader.boot_option == 3, 'boot option is not run')
+    require(reader.boot_option == 2, 'boot option is not run')
     require(struct.unpack_from('<QQ', manifest, 24408) == (len(expected), sum(len(v[0]) for v in expected.values())),
             'receipt file/byte counts')
     return reader, manifest

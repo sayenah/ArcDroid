@@ -1012,7 +1012,7 @@ the Resources applications' !Boot entries do run.
 | Boot | $.!Boot.!Boot | FEB | probe/riscpc/tools/boot_disc.py:134–160; authored IconSprites entry, trial label removed |
 | ArcTasks | $.!Boot.ArcTasks | FEA | probe/riscpc/boot/HDTasks; desktop-stage dispatch retained, destination renamed |
 
-Authored files have zero date stamp and attributes 3. The boot option is run (3)
+Authored files have zero date stamp and attributes 3. The boot option is run (2)
 in the boot record and both map records, with all checks recomputed. Root,
 boot/map reservations, sector size, map scale and five-zone geometry remain R2c's.
 

@@ -91,7 +91,12 @@ class Reader:
         require(record[9:12] == bytes([5, 32, 0]), 'map geometry')
         require(integer(record, 12) == 0x20b and integer(record, 16) == SIZE,
                 'root / size')
-        require(record[7] in (0, 3), 'boot option')
+        # Independent FileSwitch PRM, *Opt 4 table: 0 none, 1 *Load,
+        # 2 *Run, 3 *Exec. Populated boot discs require Run; blanks keep none.
+        # https://www.riscos.com/support/developers/prm/fileswitch.html
+        # FileCore PRM, disc-record offset 7, binds this byte to *Opt 4,n:
+        # https://www.riscos.com/support/developers/prm/filecore.html
+        require(record[7] in (0, 2), 'boot option')
         self.boot_option = record[7]
         data = self.exact(MAP, 2560)
         require(data == self.exact(MAP + 2560, 2560), 'map copies')
@@ -235,8 +240,9 @@ class Reader:
             require(len({e[4] for e in neighbours}) <= 1, 'sharing across parents')
 
 
-def check(read):
+def check(read, boot_option=0):
     reader = Reader(read).maps().walk()
+    require(reader.boot_option == boot_option, 'boot option')
     require({e[3] for e in reader.extents} == {e[2] for e in reader.used},
             'unreferenced allocated object')
     return reader

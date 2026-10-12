@@ -49,7 +49,7 @@ static uint8_t zone_check(const uint8_t *p) {
 void arc_boot_layout_init(ArcBootLayout *l) {
   memset(l, 0, sizeof(*l));
   (void)arc_hd_format_range(256, 13, ARC_BOOT_MAP_AT, l->map, 2560);
-  l->map[11] = 3; /* map copy of disc-record boot option */
+  l->map[11] = 2; /* map copy of disc-record boot option */
   l->cursor[0] = 528;
   l->cursor[1] = 32;
   l->cursor[2] = 48;
@@ -192,7 +192,7 @@ void arc_boot_layout_finish(ArcBootLayout *l) {
 }
 void arc_boot_layout_boot(uint8_t out[512]) {
   (void)arc_hd_format_range(256, 13, 3072, out, 512);
-  out[455] = 3;
+  out[455] = 2;
   unsigned sum = 0;
   for (unsigned i = 0; i < 511; ++i)
     sum += out[i];
