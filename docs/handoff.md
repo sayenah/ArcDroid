@@ -4,11 +4,11 @@
 **Owner:** Sol (Q-3), supervised by Fable. In parallel, Fable runs **AC-10**, the end-of-R2 speed gate.
 **Next:**
 1. **Supervise the Sol Q-3 run** (work order below). Review it, commit it verbatim on `slice/q3-memo`, open a PR, and require green CI on all five jobs. Then Opus QA (`arcdroid-opus-qa`, effort 15, fresh clone), then merge under protocol §12.11.
-2. **AC-10: measured (S61); the decision is waiting on the Founder (see Waiting on the Founder).** On the Odin3 at 100 MIPS, measure guest progress and frame rate of the trial's 031 and 110 gameplay workloads against the trial's record (031 ≈ 27 fps).
+2. **AC-10: measured (S61); Founder decision D-163.** R3 next, then 6b before R4. Original text: On the Odin3 at 100 MIPS, measure guest progress and frame rate of the trial's 031 and 110 gameplay workloads against the trial's record (031 ≈ 27 fps).
    - Guest timing is virtual and host-independent, so the guest frame rate can be measured from runner frame dumps on any host. The Odin3 shows whether the host keeps real time.
    - The trial's gameplay scripts were lost. S60 rebuilt a 031 cold start to racing gameplay (`.work/s60/ac8/leg4-031-c-cold`, frames 6400–7400; store `l4-031`). 110 runs from floppy on the common standard boot disc (trial-d).
    - A drop of more than 10 %, or a visible or audible regression, goes to the Founder before R3.
-3. **Then R3** (firmware, Auto machine selection and launch), after Q-3 merges and AC-10 passes or the Founder rules. It must carry the R2 items listed below.
+3. **Then R3** (firmware, Auto machine selection and launch), after Q-3 merges (D-163). Then item 6b, before R4 and item 5. It must carry the R2 items listed below.
 
 - **Running:** see the S61 entry under Waiting on the Founder.
 - **Private work:** S60's is in `.work/s60/` (index `LEDGER.md`); S61's is in `.work/s61/` (index `LEDGER.md`). Sol's R2c clone `.work/s60/sol2c/clone` is finished; its `runK-backup` stash can be dropped.
@@ -70,7 +70,7 @@
 - **Parallel workstream (D-141, D-142), item 6b translator evaluation:** the plan is in `docs/riscpc-translator.md`.
   - **Phases:**
     - Phase 0 now, evidence only;
-    - Phase 1 after R4 and item 5: profile-led exact interpreter optimisations, then a minimal block/exit foundation;
+    - Phase 1 after R3 (D-163; was after R4 and item 5): profile-led exact interpreter optimisations, then a minimal block/exit foundation;
     - Phase 2: a guarded arm64 fast path;
     - Phase 3: a rate change, on a Founder decision.
   - **S58 Astra challenge done:** ACCEPT WITH CHANGES, all nine incorporated (D-142). Thread `01a11e3a-d351-75a1-8424-b370d8b9f354`.
@@ -118,32 +118,24 @@ Rulings, recorded in D-140:
 - QA LOW-A: a transient directory-listing failure in the CMOS reconcile path latches refused for that session. It is conservative and clears on reload.
 - R3 must show a notice during first-launch default generation (about 20 s on the Odin3).
 - After the absent-IDE startup dialog, the desktop takes about 60 s to appear. This is identical on R1 and goes away once R2c's IDE exists.
-- AC-10, the end-of-R2 gameplay speed gate, is still owed after R2c.
+- AC-10 measured (S61): 031 at 11.6 guest fps (trial ≈27); Founder decision D-163.
 
-**R2 work order** (below): R2a, R2b and R2c merged; AC-10 (Fable) still owed.
+**R2 work order** (below): R2a, R2b and R2c merged; AC-10 measured and decided (D-163). R2 is complete.
 
-Slice order (D-133): R1–R4 → item 5 release baseline → item 6b faster CPU translator → item 8 save states. Carried: the Arculator VIDC-register reset follow-up (below); follow-up Lows; Slice 23 residuals; physical-stick feel on the Odin3 (Founder check).
+Slice order (D-133 as amended by D-163): R1–R3 → item 6b faster CPU work → R4 → item 5 release baseline → item 8 save states. RiscPC is not released until games like 031 run at near-hardware speed. Carried: the Arculator VIDC-register reset follow-up (below); follow-up Lows; Slice 23 residuals; physical-stick feel on the Odin3 (Founder check).
 
 **Item 5 grounding (S55, paused at a safe point: nothing committed, no branch).** `main` `c725bd6`: CI builds Android arm64 only, which is the whole Android target (D-135: no armeabi-v7a); the `.info` is copied into the build tree (`configure_file`) and installed by `install(FILES …)` but no CI artifact bundles core + `.info` + `COPYING` + `THIRD_PARTY_NOTICES.md`; the version lives in three places (`project(… VERSION 0.1.0)`, `ARCDROID_VERSION` fallback in `libretro/arcdroid_libretro.c:28`, `display_version` in `arcdroid_libretro.info`). (armeabi-v7a was found to build unmodified, but is out of scope by D-135.) Android devices: the Odin3 (`arm64-v8a` only) and a second Snapdragon 8 Gen 2 device (Founder S55). **Windows signing risk (S60):** Smart App Control, on by default for many Windows 11 installs, blocked one unsigned ArcDroid-built probe executable on the Founder's box while allowing the unsigned runner and plan core. Item 5 must decide whether an unsigned `arcdroid_libretro.dll` is acceptable, or whether it needs signing or a documented workaround. No shipping source uses `__FILE__`/`__DATE__`/`__TIME__` or a runtime `assert` (the Slice 8 note on embedded paths is unverified — check with a two-path build comparison). The GPL corresponding-source mechanism for distributed binaries (D-016) stays tied to publication (D-100). Scratch: S55 scratchpad `s55/` (`a/`, `second-checkout-b/` clones, `build-android.sh`).
 
 ## Waiting on the Founder (protocol §18, D-124)
-- **AC-10, the end-of-R2 speed gate (asked S61, 2026-10-11).** R3 waits on the answer; Q-3 continues (it is independent).
-  - **Measured:** 031 cold start to racing gameplay on the final R2c core, accelerating, frames 6400–7400.
-    - Guest frame rate **11.6 fps**, against the trial's ≈27. Identical on the Mac and the Odin3, because emulated time is deterministic.
-    - The guest executes **51 MIPS** in the race against the 100 MIPS ceiling (98 at boot). The R2a memory-stall model halves this game's throughput; the trial predates that model.
-    - On the Odin3 the host does not keep real time: p50 1.46 T, p95 1.60 T, 999 of 1,001 frames over T, about 24 host ns per guest instruction. In RetroArch the race would run at about 0.68× real time, so roughly 8 visible fps with stretched audio.
-    - Evidence is in `.work/s61/ac10/` (`odin/cold-t.csv`, `odin/cold.trace`) and S60's `ac8/leg4-031-c-cold`. Workload 110 is not yet measured; 031 alone exceeds the 10 % gate.
-  - **Options put to the Founder** (Fable's recommendation is first):
-    1. R3 next as planned (after Q-3), then item 6b ahead of R4 and the release baseline. RiscPC support does not ship until 6b makes games like 031 run in real time at near-hardware speed (a rate decision then).
-    2. Pause RiscPC and do item 6b now, before R3.
-    3. Accept the current speed and keep the order R3 → R4 → item 5 → 6b, so RiscPC first ships slow.
-    4. Reduce memory-timing fidelity to regain speed. Not recommended: the timing contract forbids it without revalidation, and the host would still miss real time.
+- None. The Odin3 and the Windows PC are available.
+
+**Answered S61 — D-163 (AC-10):** R3 next (after Q-3), then item 6b ahead of R4 and the release baseline. RiscPC is not released until games like 031 run in real time at near-hardware speed; the rate budget is revisited in 6b. Measurements are in D-163 and `.work/s61/ac10/`.
 
 **S61 (Claude Opus 5.5 effort 15; baton by relay from `arcdroid-db`).**
 - Adopted Sol run J, which had already died: the Codex service refused its last turn. Reviewed it and committed it as `d18f08e`.
 - CI located the Windows crash (D-155). The Odin3 legs failed D-152 on FUSE storage (D-156). Recorded the SMLAL ruling (D-157) and dispatched Sol run K.
 - R2c: runs K–Q, the Odin3 FUSE and native RetroArch legs, Opus QA 3 and its re-checks; merged PR #337 as `0e71237`. Founder decision D-162.
-- **Running:** the Sol Q-3 run and its watchdog (PIDs in `.work/s61/LEDGER.md`). AC-10 measured; the decision is waiting on the Founder.
+- **Running:** the Sol Q-3 run and its watchdog (PIDs in `.work/s61/LEDGER.md`). AC-10 decided (D-163).
 - **Odin3 state:** RetroArch closed. Under `/data/local/tmp/arcdroid-r2c/s61/` are the run J arm64 core, runner, probe runner (`rpc_runner_nofsync`), scripts and results. FUSE save directories are under `/storage/emulated/0/arcdroid-s61/`; delete them after R2c.
 
 **Answered S60:** SSH to the Founder's Windows box (`sinmu@192.168.1.66`) is allowed for the item 6b Windows profile (D-148). It may also serve R2c AC-9's Windows native-RetroArch leg.
@@ -742,7 +734,7 @@ The R1 work order and implementation record are in git history (`docs/handoff.md
 4. **Slice 11 — engine and input tidy-up:** **Slice 27 merged S49** (`28dcd8d`, D-112 left stick = D-pad, D-117; AC-12 Odin3 PASS); **closed for now (S50, D-118)**: ARM3-class machines A5000/A540 (Founder S25), Slice 3b joystick interfaces (D-034) and the audio resampler flush (D-022) deferred — no library title needs them.
 5. **Release baseline:** `.info` beside the core, owed release notes, reproducible builds, libretro buildbot submission (D-016; submission needs publication, D-100). **No armeabi-v7a — Android is arm64-v8a only (D-135).** Grounded S55 (above); after R4 (D-133).
 6. **RiscPC workstream (D-063; trial passed, **GO** D-131 at a 100 MIPS Odin3 StrongARM budget):** R1 contained import → R2 media bridge/IDE/CMOS → R3 firmware, Auto selection, launch → R4 platform and regression qualification (`docs/riscpc.md` §6). Next after Slice 30.
-   **6b. Faster CPU translator for RiscPC (Founder S55, D-133; evaluation in parallel with R2b–R4 from R2a merge, D-141):** an arm64 just-in-time translator so the heaviest 3D titles reach their native frame rate on the Odin3; starts with an evaluation (RPCEmu's dynarec is x86-only; `rpcemu-extended`'s arm64 JIT only as a reviewed input, never wholesale); after R4 and item 5.
+   **6b. Faster CPU translator for RiscPC (Founder S55, D-133; evaluation in parallel with R2b–R4 from R2a merge, D-141):** an arm64 just-in-time translator so the heaviest 3D titles reach their native frame rate on the Odin3; starts with an evaluation (RPCEmu's dynarec is x86-only; `rpcemu-extended`'s arm64 JIT only as a reviewed input, never wholesale); after R3 and before R4 (D-163); RiscPC is not released until games like 031 run at near-hardware speed.
 7. **ADFFS-path failures:** diagnosed S53/S54 (D-128, D-130); **Slice 30 — "Write-protect Tab" per-game option merged S55** (`ff048e4`, D-136); remaining residue 123/158/176 (icon-bar class, tabled D-085), 75 unexamined; Slice 10c (deprioritised, D-085).
 8. **Save states (D-011):** gated on complete machine-state serialisation.
 Carried Founder checks ride on each slice's device leg. Not scheduled: the clean-room command layer.
