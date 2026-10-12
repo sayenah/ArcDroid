@@ -1,11 +1,21 @@
 # ArcDroid Handoff
 
-**Stage:** QA — RiscPC **R3a run 2** (D-166) committed as `8590079` on `slice/r3a-selection` (PR #378; merges `main` `53cee9a`).
-**Owner:** Opus (re-check of the run 2 delta); Fable (S62) runs R3b planning in parallel.
+**Stage:** IMPLEMENTATION — **R3b-1** (boot-resource population, D-167) with Sol on `slice/r3b1-population`; R3a run 2 (`8590079`, PR #378) has passed QA and awaits green CI before merge.
+**Owner:** Sol (R3b-1); Fable (S62) merges R3a and reviews R3b-1.
 **Next (S62):**
-1. **Done (S62): Fable's review of R3a run 2.** The diff meets D-166(1): load preparation scans only when a prepared disc meets `arc_riscpc_notice_required`, which is the same predicate as the legacy notice (`libretro/arcdroid_libretro.c` near line 1570); otherwise the inventory stays zeroed and the result is `legacy`. It meets D-166(2): a manual model resets only the CPU intersection and a manual OS only the OS intersection, and both still pass recognition and the seven-pair gate. D-166(3) tests are present (depth bound both sides, directory-typed dots, allocation failure through the test-only `tests/rpc_inventory_scan.c` seam, three CTest mutation modes, 43 mutants). Fable re-ran the six focused tests: 6/6 pass. The ninth file, `tests/rpc_inventory_scan.c`, is new and test-only.
-2. **QA re-check (Opus, `arcdroid-opus-qa`, fresh clone):** review the run 2 delta `1c88a7a..8590079` (excluding the `main` merge) against D-166(1)–(3) and the R3a work order below; run the focused tests, the sanitizer focused tests and the mutation modes; confirm that ordinary loads do no firmware I/O before the diagnostic line, that partial overrides keep contradictions on the other axis, and that the new CTest mutation tests are robust on all CI generators (Ninja only; ccache launcher). Then Fable merges PR #378 under §12.11 once CI is green on all five jobs. The R3a run 1 evidence is already in: Opus QA PASS WITH LOWS; Fable's private recognition check and library A/B (no regression; `.work/s61/r3a/ab/`).
-3. **R3b-1: the work order is final (D-167).** Astra's stage 2 returned ACCEPT WITH CHANGES; all eight changes are incorporated (one in part). The work order is below; Astra's brief and report are in `.work/s62/astra/`. Once R3a has merged, Fable dispatches Sol (GPT-6.1 Sol) from a fresh clone of `main` on `slice/r3b1-population`. The prompt points Sol at this work order and D-167, asks for the capacity and sharing note (policy 5) before allocation code, and forbids any commit or push. R3b-2's full work order follows R3b-1 QA. D-166(4) carries two R3d items.
+1. **R3a run 2: QA re-check PASS WITH LOWS (S62).** The `arcdroid-opus-qa` agent ran at effort 15 and found no defects. It confirmed D-166(1)–(3), killed every QA and Sol mutant except one pre-existing equivalent-for-production survivor, and passed the full host suite (361/361) and guards. Adjudication: `.work/s62/qa-r3a2/adjudication.md`.
+   - **Follow-up Lows:**
+     - The `recognize-os-range` mutant survives. Add an injected out-of-range catalogue entry, or record the mutant as equivalent.
+     - Policy-mode mutants do not observe `resource_failure` handling. Add two asserts in `rpc_selection_test`.
+     - The mutation script uses Python `assert`.
+   - **To R3d:** a skipped scan should log `inventory=skipped`.
+   - **Next step:** Fable merges PR #378 under §12.11 once CI run 38222417027 is green on all five jobs (`.work/s62/ci-r3a2.txt`). Earlier R3a evidence: Opus QA run 1 PASS WITH LOWS, and Fable's private recognition check and library A/B (`.work/s61/r3a/ab/`).
+2. **R3b-1 with Sol (authorised S62, D-167):**
+   - **Dispatch:** Sol (GPT-6.1 Sol) works in `.work/s62/r3b1/clone`, on `slice/r3b1-population` from `main` `f74f615`, dispatched in parallel with R3a's CI. Fable merges `main` into the branch after R3a lands. The prompt is `.work/s62/r3b1/promptR3b1.md`.
+   - **Order of work:** first the capacity and sharing note (policy 5) and the receipt format extension (policy 7). If the merged tree cannot fit with sharing, Sol stops and reports.
+   - **Report:** Sol does not commit or push, and writes `SOL-REPORT-R3B1.md`.
+   - **Then Fable:** reviews, commits verbatim, opens the PR, gathers AC-5's private evidence, and arranges Opus QA.
+   - R3b-2's full work order follows R3b-1 QA. D-166(4) carries two R3d items.
 1. **Q-3: merged** as `44d007e` (PR #375) after Opus QA PASS WITH LOWS (adjudication `.work/s61/qa-q3/adjudication.md`) and green CI on all five jobs. Follow-up Low: the CPU reproduction comment (`tests/rpc_cpu_test.c:373–374`) overstates which term the I/O/reserved/EASI targets test; fix it in the next RPC slice that touches the test.
 2b. **R3a history (S61):** Sol run 1 committed as `961e8e2`; Opus QA (effort 15) PASS WITH LOWS, no defects; Fable's AC-2 (renamed real ROMs recognised; titles 50/110/116 select SA-110/3.71, 90/117/144 select ARM710/3.71, an ordinary title stays `legacy`) and AC-4 A/B (package present 218 titles, absent 44, 60 s; no regression; 105/205/133 vary between runs of the same build); D-166 ruled run 2.
 2. **AC-10: measured (S61); Founder decision D-163.** R3 next, then 6b before R4. Original text: On the Odin3 at 100 MIPS, measure guest progress and frame rate of the trial's 031 and 110 gameplay workloads against the trial's record (031 ≈ 27 fps).
