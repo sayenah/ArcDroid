@@ -10,3 +10,8 @@ EXPORTS
   arc_test_plan_hd_write
   arc_test_plan_hd_cost
   arc_engine_test_fault_next
+
+  ; R3a ordinary-load inspection hooks, non-installed test DLL only.
+  arc_libretro_test_content_id
+  arc_libretro_test_cmos_path
+  arc_libretro_test_staged_path

@@ -52,6 +52,7 @@ set(ARCDROID_CORE_SOURCES
   core/zip.c
   core/zip_content.c
   core/machine.c
+  core/rpc_selection.c
   core/hash.c
   core/input.c
   core/input_mapping.c
@@ -142,6 +143,7 @@ set(ARCDROID_LIBRETRO_SOURCES
   engine/arc_error_box.c
   engine/arc_disc_request.c
   libretro/arc_io.c
+  libretro/rpc_inventory.c
   libretro/jfd_store.c
   libretro/install_store.c
   libretro/rpc_hd_store.c
@@ -1143,6 +1145,55 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
   add_dependencies(zip_content_tests test-fixtures)
   add_test(NAME zip-content COMMAND zip_content_tests "${FIXTURE_DIR}")
   add_test(NAME adffs-shipping-profile COMMAND adffs_shipping_profile_test)
+  add_executable(rpc_selection_test tests/rpc_selection_test.c)
+  target_link_libraries(rpc_selection_test PRIVATE arcdroid_core)
+  target_compile_options(rpc_selection_test PRIVATE
+    $<$<C_COMPILER_ID:GNU,Clang,AppleClang>:-UNDEBUG;-Wall;-Wextra;-Wpedantic>)
+  if(ARCDROID_SANITIZERS)
+    target_link_libraries(rpc_selection_test PRIVATE arcdroid_sanitizer_link)
+  endif()
+  add_test(NAME rpc-selection-matrix COMMAND rpc_selection_test)
+  add_executable(rpc_inventory_test tests/rpc_inventory_test.c tests/rpc_inventory_scan.c)
+  target_include_directories(rpc_inventory_test PRIVATE libretro)
+  target_link_libraries(rpc_inventory_test PRIVATE arcdroid_core)
+  target_compile_options(rpc_inventory_test PRIVATE
+    $<$<C_COMPILER_ID:GNU,Clang,AppleClang>:-UNDEBUG;-Wall;-Wextra;-Wpedantic>)
+  if(ARCDROID_SANITIZERS)
+    target_link_libraries(rpc_inventory_test PRIVATE arcdroid_sanitizer_compile arcdroid_sanitizer_link)
+  endif()
+  add_test(NAME rpc-firmware-inventory COMMAND rpc_inventory_test)
+  add_executable(rpc_selection_load_test tests/rpc_selection_load_test.c)
+  target_include_directories(rpc_selection_load_test PRIVATE core libretro/include)
+  target_link_libraries(rpc_selection_load_test PRIVATE arcdroid_core ${CMAKE_DL_LIBS})
+  target_compile_options(rpc_selection_load_test PRIVATE
+    $<$<C_COMPILER_ID:GNU,Clang,AppleClang>:-UNDEBUG;-Wall;-Wextra;-Wpedantic>)
+  if(ARCDROID_SANITIZERS)
+    target_link_libraries(rpc_selection_load_test PRIVATE arcdroid_sanitizer_compile arcdroid_sanitizer_link)
+  endif()
+  add_dependencies(rpc_selection_load_test test-fixtures)
+  add_test(NAME rpc-selection-load-preparation
+    COMMAND "${Python3_EXECUTABLE}" -B "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_selection_load_test.py"
+      $<TARGET_FILE:rpc_selection_load_test> $<TARGET_FILE:arcdroid_libretro_test>
+      "${FIXTURE_DIR}/arcdroid-test.rom" "${CMAKE_CURRENT_BINARY_DIR}/rpc-selection-load-data")
+  # Reuse configured Ninja flags (including sanitizer and Windows link flags),
+  # rebuilding only copied sources into temporary binaries, never build objects.
+  if(CMAKE_GENERATOR STREQUAL "Ninja")
+    foreach(mode IN ITEMS policy inventory integration)
+      if(mode STREQUAL "policy")
+        set(rpc_mutation_target rpc_selection_test)
+      elseif(mode STREQUAL "inventory")
+        set(rpc_mutation_target rpc_inventory_test)
+      else()
+        set(rpc_mutation_target arcdroid_libretro_test)
+      endif()
+      add_test(NAME rpc-selection-mutations-${mode}
+        COMMAND "${Python3_EXECUTABLE}" -B "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_selection_mutants.py"
+          --build "${CMAKE_CURRENT_BINARY_DIR}" --mode ${mode}
+          --target $<TARGET_FILE:${rpc_mutation_target}>
+          --load $<TARGET_FILE:rpc_selection_load_test> --rom "${FIXTURE_DIR}/arcdroid-test.rom")
+      set_tests_properties(rpc-selection-mutations-${mode} PROPERTIES TIMEOUT 600)
+    endforeach()
+  endif()
   add_executable(arc_io_tests tests/arc_io_tests.c libretro/arc_io.c)
   target_include_directories(arc_io_tests PRIVATE libretro libretro/include)
   target_compile_options(arc_io_tests PRIVATE

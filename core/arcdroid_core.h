@@ -11,29 +11,29 @@
 
 typedef enum {
    ARC_OS_UNKNOWN = 0,
-   ARC_OS_TEST,
-   ARC_OS_RISCOS_311,
-   ARC_OS_RISCOS_310,
-   ARC_OS_RISCOS_319,
-   ARC_OS_RISCOS_300,
-   ARC_OS_RISCOS_201,
-   ARC_OS_RISCOS_200,
-   ARC_OS_ARTHUR_120,
-   ARC_OS_ARTHUR_030
+   ARC_OS_TEST = 1,
+   ARC_OS_RISCOS_311 = 2,
+   ARC_OS_RISCOS_310 = 3,
+   ARC_OS_RISCOS_319 = 4,
+   ARC_OS_RISCOS_300 = 5,
+   ARC_OS_RISCOS_201 = 6,
+   ARC_OS_RISCOS_200 = 7,
+   ARC_OS_ARTHUR_120 = 8,
+   ARC_OS_ARTHUR_030 = 9
 } ArcOsClass;
 
 #define ARC_OS_MASK(os_) (UINT32_C(1) << (unsigned)(os_))
 
 typedef enum {
    ARC_MACHINE_A3000 = 0,
-   ARC_MACHINE_A3010,
-   ARC_MACHINE_A3020,
-   ARC_MACHINE_A4000,
-   ARC_MACHINE_COUNT
+   ARC_MACHINE_A3010 = 1,
+   ARC_MACHINE_A3020 = 2,
+   ARC_MACHINE_A4000 = 3,
+   ARC_MACHINE_COUNT = 4
 } ArcMachine;
 
 typedef enum { ARC_IO_OLD_WD1770 = 0, ARC_IO_NEW_82C711 } ArcIoClass;
-typedef enum { ARC_CPU_ARM2 = 0, ARC_CPU_ARM250 } ArcCpu;
+typedef enum { ARC_CPU_ARM2 = 0, ARC_CPU_ARM250 = 1 } ArcCpu;
 
 typedef struct {
    ArcMachine id;
