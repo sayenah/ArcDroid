@@ -5,7 +5,7 @@
 **Next (S62):**
 1. **Done (S62): Fable's review of R3a run 2.** The diff meets D-166(1): load preparation scans only when a prepared disc meets `arc_riscpc_notice_required`, which is the same predicate as the legacy notice (`libretro/arcdroid_libretro.c` near line 1570); otherwise the inventory stays zeroed and the result is `legacy`. It meets D-166(2): a manual model resets only the CPU intersection and a manual OS only the OS intersection, and both still pass recognition and the seven-pair gate. D-166(3) tests are present (depth bound both sides, directory-typed dots, allocation failure through the test-only `tests/rpc_inventory_scan.c` seam, three CTest mutation modes, 43 mutants). Fable re-ran the six focused tests: 6/6 pass. The ninth file, `tests/rpc_inventory_scan.c`, is new and test-only.
 2. **QA re-check (Opus, `arcdroid-opus-qa`, fresh clone):** review the run 2 delta `1c88a7a..8590079` (excluding the `main` merge) against D-166(1)–(3) and the R3a work order below; run the focused tests, the sanitizer focused tests and the mutation modes; confirm that ordinary loads do no firmware I/O before the diagnostic line, that partial overrides keep contradictions on the other axis, and that the new CTest mutation tests are robust on all CI generators (Ninja only; ccache launcher). Then Fable merges PR #378 under §12.11 once CI is green on all five jobs. The R3a run 1 evidence is already in: Opus QA PASS WITH LOWS; Fable's private recognition check and library A/B (no regression; `.work/s61/r3a/ab/`).
-3. **R3b (S62, in progress):** Fable has drafted the work order below (R3b-1 population, then R3b-2 production session preparation) from D-164 and Astra's stage 1 design. Astra's stage 2 challenge of the draft continues thread `01a12e11-8501-7f21-bf44-6abd36974d5e` (brief and report in `.work/s62/astra/`). Fable then adjudicates (a new decision entry), finalises R3b-1, and dispatches Sol once R3a has merged. D-166(4) carries two R3d items.
+3. **R3b-1: the work order is final (D-167).** Astra's stage 2 returned ACCEPT WITH CHANGES; all eight changes are incorporated (one in part). The work order is below; Astra's brief and report are in `.work/s62/astra/`. Once R3a has merged, Fable dispatches Sol (GPT-6.1 Sol) from a fresh clone of `main` on `slice/r3b1-population`. The prompt points Sol at this work order and D-167, asks for the capacity and sharing note (policy 5) before allocation code, and forbids any commit or push. R3b-2's full work order follows R3b-1 QA. D-166(4) carries two R3d items.
 1. **Q-3: merged** as `44d007e` (PR #375) after Opus QA PASS WITH LOWS (adjudication `.work/s61/qa-q3/adjudication.md`) and green CI on all five jobs. Follow-up Low: the CPU reproduction comment (`tests/rpc_cpu_test.c:373–374`) overstates which term the I/O/reserved/EASI targets test; fix it in the next RPC slice that touches the test.
 2b. **R3a history (S61):** Sol run 1 committed as `961e8e2`; Opus QA (effort 15) PASS WITH LOWS, no defects; Fable's AC-2 (renamed real ROMs recognised; titles 50/110/116 select SA-110/3.71, 90/117/144 select ARM710/3.71, an ordinary title stays `legacy`) and AC-4 A/B (package present 218 titles, absent 44, 60 s; no regression; 105/205/133 vary between runs of the same build); D-166 ruled run 2.
 2. **AC-10: measured (S61); Founder decision D-163.** R3 next, then 6b before R4. Original text: On the Odin3 at 100 MIPS, measure guest progress and frame rate of the trial's 031 and 110 gameplay workloads against the trial's record (031 ≈ 27 fps).
@@ -44,111 +44,129 @@
   - **AC-5 Evidence:** host and sanitizer suites, MinGW and Android builds, the export, import and shipping-I/O guards, and mutants on the selection rules.
 - **Non-goals:** RPC production launch, CMOS preparation, boot-file population, observers (R3b–R3d); any rate change (6b).
 
-**R3b work order — DRAFT (S62), from D-164 and Astra's stage 1 design; awaiting Astra's stage 2 challenge. Sol is not dispatched until Fable records the adjudication.** R3b ships as two PRs, each with its own Fable review and Opus QA: **R3b-1** (population) and then **R3b-2** (production session preparation). Production loads keep today's route until R3d (D-164(5)), and RiscPC stays unreleased (D-163).
+**R3b work order (D-164 as refined by D-167, which incorporated Astra's stage 2 challenge).** R3b ships as two PRs, each with its own Fable review and Opus QA: **R3b-1** (population, including the authored boot step) and then **R3b-2** (production session preparation). Production loads keep today's route until R3d (D-164(5)), and RiscPC stays unreleased (D-163).
 
 *Repo facts (verified S62 on `main` `5912daa`):*
-- **Hard-disc store:** `libretro/rpc_hd_store.h:27-45` exposes the population API (`arc_riscpc_hd_population_begin/_read/_write/_seal/_publish/_abort`, plus `arc_riscpc_hd_import`). `core/install_disc.c:93-150` (`arc_hd_format_range(256, 13, …)`) writes only the boot block, both map copies and an empty `Nick` root.
-- **Checker gap:** the RPC formatter checker (`tests/rpc_hd_formatter_test.c`) neither walks free links or free extents nor parses directories, although `docs/riscpc-hd-store.md` §9 requires "all free extents". The only fragment resolver, `core/hard_disc_scope.c`, is hard-coded to A3020 geometry.
+- **Hard-disc store:** `libretro/rpc_hd_store.h:27-45` exposes the population API (`arc_riscpc_hd_population_begin/_read/_write/_seal/_publish/_abort`, plus `arc_riscpc_hd_import`).
+  - `arc_riscpc_hd_open(…, create_blank=true, …)` publishes the authored blank at once (`rpc_hd_store.c:743`).
+  - Abort schedules cleanup only when the store is not refused (`:818`).
+  - The manifest format is fixed, with zero reserved bytes (`docs/riscpc-hd-store.md:66`).
+- **Formatter:** `core/install_disc.c:93-150` (`arc_hd_format_range(256, 13, …)`) writes only the boot block, both map copies and an empty `Nick` root.
+- **Checker gap:** the RPC formatter checker (`tests/rpc_hd_formatter_test.c`) neither walks free links or free extents nor parses directories, although §9 requires "all free extents". The only fragment resolver, `core/hard_disc_scope.c`, is hard-coded to A3020 geometry.
 - **No FileCore writer** in the repository allocates new-map objects.
-- **ZIP metadata:** `core/adffs.c:69-87` parses ARC0 (`0x4341`) metadata, and `core/zip.c` checks that the local and central copies agree. Today's ZIP caps (1,024 entries) are below HardDisc4's 2,289 entries.
-- **CMOS:** generation, record load/persist and the defaults cache are test-only today (`tests/arc_test_plan.c`; `rpc_cmos_store.c` is outside the shipping sources, CMakeLists.txt:212-214). The generation notice is a 5 s message that expires before a 20 s generation finishes.
+- **ZIP:** `core/adffs.c:69-87` parses ARC0 (`0x4341`) metadata, and `core/zip.c` checks that the local and central copies agree.
+  - Today's ZIP caps (1,024 entries) are below HardDisc4's 2,289 entries.
+  - `arc_zip_extract` takes the whole archive buffer and allocates the whole expanded member (`core/zip.c:395`).
+- **CMOS:** generation, record load/persist and the defaults cache are test-only (`tests/arc_test_plan.c`; `rpc_cmos_store.c` is outside the shipping sources, CMakeLists.txt:212-214). The generation notice is a 5 s message that expires before a 20 s generation finishes.
 - **Engine:** `arc_engine_start` reverts any RPC selection to Arculator (`engine/arcdroid_engine.c:63-66`).
 
-*Boot packages (Fable S62, private copies in `.work/s60/bootenv/`).* RISC OS Open's HardDisc4 (2,289 entries, about 31 MB expanded) and PlingSystem (88 entries):
+*Boot packages (Fable S62; private copies and the trial record in `.work/s60/bootenv/`, README §3, §6).* RISC OS Open's HardDisc4 (2,289 entries, about 31 MB expanded) and PlingSystem (88 entries):
 - Every member carries ARC0 metadata.
-- The two `!System` trees overlap in 7 files, all byte-identical; PlingSystem adds 63 files.
-- The only names longer than 10 characters are three under RISC OS 5-only subtrees (`!System.500`, `!Boot.RO500Hook`, `!Boot.RO510Hook`).
+- The two `!System` trees overlap in 7 files. All 7 match in bytes, type and attributes; only `!Run`'s date stamp differs, and HardDisc4's is newer. PlingSystem adds 63 files.
+- The only names longer than 10 characters lie in RISC OS 5-only subtrees.
 - The largest directory has 54 entries.
-- The trial's working environment and authored boot step are recorded in `.work/s60/bootenv/README.md` (§6.5: the power-on sequence; §6.1: the guest-written CMOS diff).
 
 **R3b-1 — boot-resource population.** Branch `slice/r3b1-population` from `main` once R3a has merged.
 - **Objective:** shipping-source, host-side population that builds a ready-to-boot RiscPC hard disc from the player's boot packages when the store is created, in one R2c population transaction. In this slice it is reachable only through the test plan route.
 - **Inputs (D-134, D-164(4)):**
   - The files are `<system>/arcdroid/riscpc/boot/HardDisc4.zip` and `PlingSystem.zip`, read through the frontend VFS and never written.
-  - They are recognised by structure, never by hash. HardDisc4 is a `HardDisc4/` tree whose `!Boot` contains `Resources/!System`. PlingSystem is a `!System/` tree.
-- **Policies:**
-  1. **Layout.**
+  - They are recognised by structure: HardDisc4 is a `HardDisc4/` tree whose `!Boot` contains `Resources/!System`; PlingSystem is a `!System/` tree. Required bootstrap members are checked (D-167(6)).
+  - The log reports whether each package's SHA-256 is one Fable has privately qualified (HardDisc4 `28613a8e…47b5`, PlingSystem `0259063d…9019`, full values in `.work/s60/bootenv/README.md` §3). This is diagnostic only and never gates population.
+- **Policies (D-167):**
+  1. **Layout and restricted merge.**
      - `HardDisc4/` becomes the disc root.
-     - PlingSystem's `!System/…` merges into `$.!Boot.Resources.!System`. This is the host equivalent of RISC OS Open's `!SysMerge` for these packages.
-     - A file present in both packages must be byte-identical; otherwise population is refused with a notice naming the file.
-     - Archive-root licence and ReadMe files go under `$.RelDocs`, so third-party notices stay with the imported resources.
+     - PlingSystem's `!System/…` merges into `$.!Boot.Resources.!System` under D-167(4): overlapping files need identical bytes, type and attributes. When only the date stamp differs, the newer stamp is kept. A directory keeps HardDisc4's metadata. Any other overlap, or a file/directory collision, refuses with a notice naming it.
+     - Each package's archive-root licence, notice and ReadMe files keep their names under their own `$.RelDocs` subdirectory.
      - PlingSystem's `!SysMerge` is not installed.
-  2. **RISC OS 5-only subtrees are excluded by a general rule:** `!System` version directories numbered 500 and above, and `!Boot.RO5xxHook`. RISC OS 5 is outside the launch contract (`docs/riscpc.md` §4.11).
-     - Any other name that does not fit the directory format (10 characters, 77 entries per directory, the FileCore character set) refuses population with a notice. Names are never truncated or renamed.
+  2. **RISC OS 5 exclusion, by exact path (D-167(5)):** `!Boot.Resources.!System.<n>` and `!Boot.RO<n>Hook` with numeric n ≥ 500. Nearby names (for example `!System.400`, `RO400Hook`, `!System.500x`) survive.
+     - Any other name or directory that does not fit (10 characters, 77 entries, the FileCore character set) refuses. Names are never truncated or renamed.
      - Dots in ZIP names map to `/`.
-  3. **Metadata.**
-     - Load, exec and attributes come from ARC0, with local and central copies agreeing. A member without ARC0 refuses.
-     - Boot packages get their own explicit caps on entries, expanded bytes and member size, with stated margin over the current packages; beyond them population is refused.
-     - Members are streamed. Population never allocates a whole-disc image (§9).
-  4. **Authored boot step** (project-authored, GPL-2.0-only, from the trial at `5ff5481:probe/riscpc/boot/`):
-     - The step comprises the multisync MDF, `BootEnv`, `BootRes`, `BootTasks`, `HDRun` (which becomes the active `!Boot.!Run`) and `HDTasks` (the desktop file). Probe names are renamed.
-     - The supplied `!Boot.!Boot` and `!Boot.!Run` move unchanged to `!Boot.Inactive`.
-     - No RISC OS Open boot script runs, and every ROM module stays resident (trial R6-1/R7-1/R10-1/R11-1).
-     - The disc's boot option is "run".
-  5. **Population happens only at creation.**
-     - The source is the unpublished all-HOLE store. The formatter output and every imported object go into one candidate, which is validated, sealed and published once.
-     - R3b never repopulates a published store. One with a valid population record is a no-op that reads no packages. One without a record (for example a plan-created blank) is left unchanged, with a notice.
-     - Missing, unreadable or rejected packages publish nothing and leave no candidate files.
-  6. **Population record:** a versioned record bound to the same publication: each package's SHA-256, the populator revision, the authored-step revision, and file and byte counts.
-     - It must be readable without running the guest, and atomic with the published root.
-     - Guest writes must never be able to forge a "complete" record.
-     - Placement is Sol's choice within the store contract.
-  7. **FileCore writing:**
-     - It uses the RPC new-map geometry (5 zones, 8 KiB units, `Nick` directories).
-     - Objects are allocated under FileCore's new-map rules, with directories in FileCore order and with valid checks and checksums.
-     - The writer is general, not tuned to these two packages.
+  3. **Metadata.** Load, exec and attributes come from ARC0, with local and central copies agreeing. A member without ARC0 refuses.
+  4. **Bounds and stepping (D-167(8)).** State and enforce caps on:
+     - compressed input, entries, expanded bytes and member size, each with stated margin over the current packages;
+     - peak additional memory (index plus buffers);
+     - work per step.
+
+     Population runs through a step interface with bounded work per call, which R3b-2 drives from the frame loop. It supports cancellation, and it refuses if a package changes between preflight and publication.
+     - Output is byte-identical for any step size.
+     - Deterministic memory and I/O counters are exposed to tests.
+     - Population never allocates a whole-disc image (§9).
+  5. **Capacity and sharing (D-167(2)).** The minimum fragment is 128 KiB at this geometry. Before implementing, Sol writes down a capacity calculation for the filtered, merged tree and the small-object sharing strategy, using FileCore sharing offsets as in the FileCore PRM. Guest growth and deletion of a shared object must preserve its neighbours.
+  6. **Authored boot step (D-167(6);** project-authored, GPL-2.0-only, adapted from the trial at `5ff5481:probe/riscpc/boot/` and the active `!Boot.!Boot` that `probe/riscpc/tools/boot_disc.py:134-160` writes).
+     - Enumerate the complete authored output: names, destinations, file types, CR/LF treatment and collisions. That covers the MDF, `BootEnv`, `BootRes`, `BootTasks`, the active `!Boot.!Run` (from `HDRun`), the active `!Boot.!Boot` (`IconSprites`) and the desktop tasks file (from `HDTasks`). Probe names are renamed.
+     - The supplied top-level startup (`!Boot.!Boot`, `!Boot.!Run`, PreDesktop, `RO<n>Hook`) moves unchanged to `!Boot.Inactive`. The supplied `!System` `SysPaths` and `!Boot`, and the Resources applications' own `!Boot` files, do run.
+     - The disc's boot option is "run", and it is consistent across the disc-record copies.
+     - Record each authored asset's source commit, licence and adaptation. Imported package bytes are kept apart from project-authored GPL assets.
+  7. **Creation only, with a receipt (D-167(3), D-167(7)).**
+     - The source is the unpublished all-HOLE store, opened without automatic blank creation. The formatter output and every object go into one candidate, which is validated, sealed and published with a creation receipt.
+     - The receipt is a versioned store-format extension that Sol specifies in `docs/riscpc-hd-store.md`. It is published atomically with the root and preserved through checkpoint, rotation and recovery, and guest writes cannot forge it. It records each package's SHA-256, the populator revision, the authored-step revision, and file and byte counts.
+     - A published store with a receipt is a no-op that reads no packages. A store without one (a legacy or plan-created blank) is left unchanged, with a notice. An unknown receipt revision refuses.
+     - Missing, unreadable or rejected packages publish nothing. Candidate-owned files are cleaned up within bounds after recovery.
+  8. **FileCore writing:** it uses the RPC new-map geometry (5 zones, 8 KiB units, 15-bit IDs, `Nick` directories). Objects follow FileCore's new-map rules, with directories in FileCore order and valid checks and checksums. The writer is general, not tuned to these packages.
 - **Acceptance criteria:**
-  - **AC-1 Independent checker:** a test-side FileCore reader for the RPC geometry, written independently of the writer. It covers:
+  - **AC-1 Independent checker:** a test-side FileCore reader for the RPC geometry. It shares no allocation, resolution or checksum helpers with the writer. It verifies:
     - both map copies, zone checks and the cross-check;
     - every free link and free extent;
-    - object resolution;
-    - directory structure, order and checks;
-    - names, metadata and bytes.
+    - reserved objects;
+    - no overlapping extents;
+    - object resolution with sharing offsets;
+    - directory structure, FileCore order and checks;
+    - names, metadata and bytes;
+    - boot-option consistency.
 
-    It also validates the authored blank, closing the §9 gap noted above.
-  - **AC-2 Authored packages:** public tests use authored ZIPs with ARC0 metadata and no RISC OS bytes. They cover:
-    - depth and per-directory entry bounds;
-    - identical and differing overlaps;
-    - the RISC OS 5 exclusion, and an over-long name outside it;
+    It has independently specified vectors for:
+    - sharing offsets and fragmented objects;
+    - zone-order wraparound and the partial final zone;
+    - 10/11-character names and 77/78-entry directories.
+
+    It validates the authored blank too, closing the §9 gap.
+  - **AC-2 Authored packages:** public tests use authored ZIPs with ARC0 metadata and no RISC OS bytes. Each case is compared against an independently defined transformed-tree expectation (after relocation, exclusion, merge and authored replacement). The cases cover:
+    - depth and per-directory bounds;
+    - overlaps: identical, date-only, differing bytes, differing type or attributes, and file/directory collisions;
+    - the RISC OS 5 exclusion, with surviving neighbours, and an over-long name outside it;
     - missing ARC0, and local/central disagreement;
     - traversal, duplicate and case-colliding destinations;
     - truncated, corrupt and CRC-failing members;
-    - exceeded caps;
-    - a missing package, and reported VFS failures.
-
-    Each case either publishes a disc that AC-1's reader matches file-for-file against the packages, or refuses with its named notice, publishing nothing and leaving no stray files.
+    - every cap exceeded;
+    - a missing package, a missing required bootstrap member, a package changed mid-population, and reported VFS failures;
+    - capacity exhaustion.
   - **AC-3 Faults and restart:**
-    - Fault and kill injection at every population write, seal, publish and retirement boundary (R2c's matrix) leaves either nothing published or the complete new root.
-    - An interrupted population starts again from scratch.
+    - Fault and kill injection at every population write, seal, receipt, publish, retirement and cleanup boundary (R2c's matrix, plus cleanup failures) never leaves a partially published root.
+    - Interruption restarts from scratch.
     - Reopening a populated store reads no packages.
-  - **AC-4 Plan route and non-interference:**
-    - Plan v2 gains a test-only key that creates a populated disc through ordinary store open.
-    - Shipping routes still reject RPC plans.
-    - Shared code (`core/zip.c`, `core/adffs.c`) keeps its existing callers' limits and behaviour byte-for-byte. If any shared code changes, Fable runs the library A/B in both package states.
+    - Guest attempts to manufacture a receipt fail.
+    - Legacy stores and unknown revisions behave as policy 7 says.
+  - **AC-4 Stepping and non-interference:**
+    - Identical output across step sizes, with memory and I/O counters within the stated bounds.
+    - Plan v2 gains a test-only key that creates a populated disc through ordinary store open; shipping routes still reject RPC plans.
+    - Shared code (`core/zip.c`, `core/adffs.c`) keeps its existing callers' limits and behaviour. If any shared code changes, Fable runs the library A/B in both package states.
   - **AC-5 Private (Fable):**
     - The real packages populate.
-    - The disc boots to the desktop on all seven qualified pairs through the authored step: MDF loaded, Resources applications booted (`Wimp$Scrap`, `Font$Path`), no error box.
-    - At least one title that needs these resources installs from floppy onto the populated disc and runs (074 or 084).
-    - The imported tree matches the trial's merged `!System` destinations.
+    - Using the plan route with a private test-only CMOS seed (generated defaults plus guest-written boot configuration), the disc boots to the desktop on all seven qualified pairs within a stated virtual-time bound. There is no error box, the ROM modules stay resident, and the resource variables are set (`Wimp$Scrap`, `Font$Path`).
+    - Guest file growth and deletion on shared objects survive a reopen.
+    - A title that needs these resources installs from floppy onto the populated disc and runs (074 or 084).
+    - Population, interruption and reopen run on native Windows and on the Odin3's storage.
   - **AC-6 Evidence:**
     - host and sanitizer suites;
     - MinGW and Android builds;
-    - the export, import, shipping-I/O and asset guards (authored fixtures only);
-    - mutants on the validation, merge, exclusion and allocation rules.
+    - the export, import, shipping-I/O and asset guards (authored fixtures only; private runs report hashes, metadata and outcomes, never package contents);
+    - mutants on the merge, exclusion, validation, allocation, sharing and receipt rules.
 - **Non-goals:** CMOS and production session preparation (R3b-2); launch actions and observers (R3c); production launch and switching (R3d); repopulating or upgrading used discs; a second-floppy policy.
 - **QA focus:**
-  - no package bytes in the repository, logs or fixtures;
-  - a refusal leaves nothing behind;
   - the checker is genuinely independent;
-  - allocation and directory order are correct at the boundaries.
+  - sharing and allocation are correct at zone boundaries;
+  - the receipt resists forgery and survives recovery;
+  - a refusal leaves nothing published;
+  - no package bytes in the repository, logs or fixtures.
 
-**R3b-2 — production session preparation** (outline; the full work order follows R3b-1 QA):
-- **Shipping module:** a shipping-source RPC session preparation, driven by an R3a selection. The plan core becomes a thin client of it. Production loads still take today's route until R3d. It covers:
+**R3b-2 — production session preparation** (outline; Fable writes the full work order after R3b-1 QA, starting with Astra 7):
+- **Shipping module:** a shipping-source RPC session preparation, driven by an R3a selection, with production inactive until R3d. The plan core becomes a thin client of it. It covers:
   - firmware bytes loaded through VFS and re-verified against the recognised fingerprint;
-  - the CMOS record and defaults store moved into shipping sources;
-  - held-Delete defaults generation, under a status notice that lasts the whole generation and is cleared afterwards (it replaces the 5 s message);
-  - launch-owned CMOS fields applied after generation, preserving every other byte and never repairing a torn checksum: boot from IDE drive 4, FileSystem ADFS, and the IDE count (the trial's guest-written diff: bytes 19 and 253 plus the checksum);
-  - hard-disc open, create and populate through R3b-1, with maintenance and eager CMOS persistence on the RPC frame path, reset and unload;
+  - boot packages preflighted **before** defaults generation, because generation executes firmware;
+  - `rpc_cmos_store` moved into shipping sources, keeping test-clock separation;
+  - held-Delete defaults generation under a long-lived status notice. The notice is cleared on success, failure, reset and unload, with a fallback for frontends that lack long-lived messages;
+  - launch-owned CMOS fields defined per layout as masked fields (boot, FileSystem ADFS, drive 4, the IDE count in byte 199 without importing the trial's floppy count). They are applied to generated and loaded records, preserve unrelated bits, never repair a torn checksum, and are validated against guest-written configuration on all seven pairs;
+  - hard-disc open, create and populate through R3b-1's step interface, with maintenance and eager CMOS persistence on the RPC frame path, reset and unload;
   - missing-firmware and missing-boot-files notices before any guest execution.
 - **Carried into it:**
   - QA LOW-A (the CMOS reconcile latch);
