@@ -61,6 +61,9 @@ bool arc_riscpc_hd_write(ArcRpcHdStore *, uint32_t lba, uint32_t count, const ui
 void arc_riscpc_hd_tick(ArcRpcHdStore *store);
 void arc_riscpc_hd_stats(const ArcRpcHdStore *, ArcRpcHdStats *out);
 const char *arc_riscpc_hd_notice(ArcRpcHdStore *store);
+/* Severity of the pending notice; query before consuming it. Recovery,
+ * including a recovered read-only view, is an advisory. */
+bool arc_riscpc_hd_notice_is_terminal(const ArcRpcHdStore *store);
 const char *arc_riscpc_hd_diagnostic(ArcRpcHdStore *store);
 /* Offline ownership: caller quiesces/detaches IDE before begin. R2 creates and
  * imports before attaching the backend; R3 must preserve that precondition. */

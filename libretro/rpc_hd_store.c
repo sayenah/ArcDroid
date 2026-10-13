@@ -72,7 +72,7 @@ struct ArcRpcHdStore {
     bool population_changed[ARC_RPC_HD_CHUNKS];
     ArcRpcHdState state;
     char base[1024], content[41], io_leaf[23], diagnostic[192];
-    const char *notice, *io_operation; bool diagnostic_pending;
+    const char *notice, *io_operation; bool diagnostic_pending,notice_terminal;
     ArcRpcHdStats stats;
 };
 /* Store buffers, index and metadata are one allocation; VFS handles and the
@@ -123,6 +123,7 @@ static bool failure(ArcRpcHdStore *s,bool damage)
     unsigned phase=s->state;
     if(s->rotation_writer){ArcIoFile *f=s->rotation_writer;s->rotation_writer=NULL;metadata(s);(void)arc_io_close_file(f);}
     s->refused=true;s->damaged|=damage;damage=s->damaged;s->state=damage?ARC_RPC_HD_DAMAGED:ARC_RPC_HD_READ_ONLY;
+    s->notice_terminal=true;
     if(damage&&!s->damage_notified){s->damage_notified=true;
         s->notice="The saved RiscPC hard disc is damaged; files have been preserved.";}
     else if(!damage&&!s->saving_notified){s->saving_notified=true;
@@ -676,6 +677,7 @@ void arc_riscpc_hd_backend(ArcRpcHdStore *s,ArcIdeBackend *out)
 void arc_riscpc_hd_stats(const ArcRpcHdStore *s,ArcRpcHdStats *out)
 { *out=s->stats;out->phase_step=s->phase_step;out->chunk_files=s->chunk_count;out->sequence=s->sequence;out->generation=s->generation;out->state=s->state;out->published=s->published;out->population=s->population;out->read_only=s->refused; }
 const char *arc_riscpc_hd_notice(ArcRpcHdStore *s) { if(!s)return NULL;const char *n=s->notice;s->notice=NULL;return n; }
+bool arc_riscpc_hd_notice_is_terminal(const ArcRpcHdStore *s) { return s && s->notice_terminal; }
 const char *arc_riscpc_hd_diagnostic(ArcRpcHdStore *s)
 { if(!s||!s->diagnostic_pending)return NULL;s->diagnostic_pending=false;return s->diagnostic; }
 static bool directory_visit(const char *leaf,bool regular,void *opaque)
@@ -729,6 +731,7 @@ static bool open_failure(ArcRpcHdStore *s, ArcRpcHdOutcome outcome) {
     s->refused = true;
     s->damaged = outcome == ARC_RPC_HD_CORRUPT;
     s->notice = arc_riscpc_hd_outcome_notice(outcome);
+    s->notice_terminal = true;
     s->state = s->damaged ? ARC_RPC_HD_DAMAGED : ARC_RPC_HD_READ_ONLY;
     return false;
 }
@@ -779,6 +782,7 @@ static bool recovered_read_only(ArcRpcHdStore *s) {
     s->stats.open_operations = s->stats.operations;
     s->notice = "An interrupted hard-disc write was recovered; the "
                 "hard disc is read-only.";
+    s->notice_terminal = false;
     return true;
 }
 static void step_start(ArcRpcHdStore *s, ArcRpcHdStats *before) {
@@ -1219,6 +1223,7 @@ static bool recover_step(ArcRpcHdStore *s) {
         if (!size(s, leaf, &n) || n != s->lengths[s->open_at])
             return recovered_read_only(s);
         s->notice = "An interrupted hard-disc write was recovered.";
+        s->notice_terminal = false;
         ++s->open_at;
         s->open_phase = 13;
         return true;

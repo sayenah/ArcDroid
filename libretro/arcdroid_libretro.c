@@ -7531,6 +7531,9 @@ static char arc_plan_terminal[512];
 static unsigned arc_plan_terminal_refresh;
 static void arc_plan_notice(const char *message,bool error)
 {
+   /* Pending non-errors are progress; running non-errors are timed advisories.
+    * An advisory must not replace a retained terminal status. */
+   if(!error && message[0] && arc_test_plan_cmos_phase()==2){arc_message(message,RETRO_LOG_INFO);return;}
    if(error){
       snprintf(arc_plan_terminal,sizeof(arc_plan_terminal),"%s",message);
       if(arc_log)arc_log(RETRO_LOG_ERROR,"%s\n",message);

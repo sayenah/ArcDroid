@@ -9,6 +9,11 @@ static unsigned notices,terminal_notices,clears,attach_calls;
 static char last_notice[512];
 static uint64_t clock_value,clock_delta;
 static unsigned clock_mode,clock_reads,all_clock_reads;
+static unsigned observations,stall_after;
+static bool work_seen[ARC_RPC_BOOT_WORK_COUNT];
+static bool phase_seen[ARC_RPC_BOOT_CANCELLED+1];
+static uint64_t oracle[ARC_RPC_PREP_COST_KINDS][2][16];
+static unsigned oracle_at[ARC_RPC_PREP_COST_KINDS][2],previous_ns;
 static uint64_t frame_budget;
 static bool last_clear,attachment_io,attachment_fail,reopen_expected;
 static unsigned last_kind;
@@ -27,6 +32,42 @@ static uint64_t clock_read(void *opaque)
     }
     if(clock_mode==10){
         if(clock_reads++ && (clock_reads==2 || clock_reads%8==0))clock_value+=1000;
+        return clock_value;
+    }
+    if(clock_mode>=11){
+        if(clock_reads++){
+            ArcRpcPreparationStats s;arc_riscpc_preparation_stats(current,&s);
+            uint64_t cost=50000;
+            if(clock_mode==11 && frame_budget==ARC_RPC_GENERATION_BUDGET_NS)cost=13000000;
+            if(clock_mode==12 && s.unit_kind==ARC_RPC_PREP_VERIFY){
+                ++observations;if(observations==1)cost=2000000;
+                else if(observations==2)assert(s.estimated_ns==1000000);
+            }
+            if(clock_mode==13 && s.unit_kind==ARC_RPC_PREP_VERIFY){
+                ++observations;
+                assert(s.estimated_ns==(observations==1?1000000:observations<=17?900000:50000));
+                if(observations==1)cost=900000;
+            }
+            if(clock_mode==14){
+                bool ns=s.namespace_units>previous_ns;previous_ns=s.namespace_units;
+                uint64_t expected=0;
+                for(unsigned i=0;i<16;++i)if(oracle[s.unit_kind][ns][i]>expected)expected=oracle[s.unit_kind][ns][i];
+                uint64_t ceiling=ns||s.attachment_units?8333333:1000000;
+                if(!expected || expected>ceiling)expected=ceiling;
+                if(s.attachment_units)expected=ceiling;
+                assert(s.estimated_ns==expected);
+                if(s.unit_kind>=ARC_RPC_PREP_CANCELLED){
+                    unsigned unit=s.unit_kind-ARC_RPC_PREP_CANCELLED;
+                    unsigned work=unit%ARC_RPC_BOOT_WORK_COUNT,phase=unit/ARC_RPC_BOOT_WORK_COUNT;
+                    assert(phase<=ARC_RPC_BOOT_CANCELLED);work_seen[work]=true;phase_seen[phase]=true;
+                    cost=work==ARC_RPC_BOOT_WORK_HASH?800000:work==ARC_RPC_BOOT_WORK_FORMAT?900000:
+                         work==ARC_RPC_BOOT_WORK_WRITE?100000:work==ARC_RPC_BOOT_WORK_READ?70000:50000;
+                }
+                oracle[s.unit_kind][ns][oracle_at[s.unit_kind][ns]++%16]=cost;
+            }
+            if(clock_mode==15 && ++observations>stall_after)cost=0;
+            clock_value+=cost;
+        }
         return clock_value;
     }
     if(clock_mode>=4){
@@ -119,12 +160,14 @@ static ArcRpcPreparation *new_request(const uint8_t *rom,size_t size,bool seed,
 static ArcRpcPreparationState frame(ArcRpcPreparation *p)
 {
     uint64_t ns=namespace_calls;ArcRpcPreparationState old=arc_riscpc_preparation_state(p);
-    clock_reads=0;frame_budget=old==ARC_RPC_PREP_GENERATE?UINT64_C(66666664):UINT64_C(13333333);
+    clock_reads=previous_ns=0;frame_budget=old==ARC_RPC_PREP_GENERATE?UINT64_C(66666664):UINT64_C(13333333);
     ArcRpcPreparationState state=arc_riscpc_preparation_frame(p);ArcRpcPreparationStats s;
     arc_riscpc_preparation_stats(p,&s);
     assert(s.steps<=ARC_RPC_PREP_STEPS);
     assert(s.namespace_attempts==namespace_calls-ns);
-    assert(s.reserved_ns<=frame_budget);
+    /* The unit first detecting a stall was admitted by its previous estimate;
+     * its declared cost can consume the remaining allowance. No next unit fits. */
+    assert(s.reserved_ns<=frame_budget+(old==ARC_RPC_PREP_GENERATE?UINT64_C(66666664):UINT64_C(8333333)));
     assert(s.budget_ns==frame_budget); /* Every offline kind gets 0.80 T. */
     assert(s.generation_quanta<=8);
     if(old==ARC_RPC_PREP_GENERATE && state==ARC_RPC_PREP_GENERATE && arc_engine_active()){
@@ -200,7 +243,7 @@ static void scheduler_matrix(const uint8_t *rom,size_t size,ArcRpcPreparationHos
         assert(arc_riscpc_preparation_state(p)==ARC_RPC_PREP_RUNNING);
         if(mode==4)assert(max_steps>=50 && max_namespaces>=2);
         else if(mode>=9)assert(max_steps>=50);
-        else assert(max_steps==17 && ordinary_above_old && namespace_above_old); /* floor(13.333333 ms / 0.75 ms) */
+        else assert(max_steps==16 && ordinary_above_old && namespace_above_old); /* floor(12.5 ms / 0.75 ms) */
         uint8_t hash[32];disk_hash(hash);if(mode==4)memcpy(gold,hash,32);else assert(!memcmp(gold,hash,32));
         finish(p);
     }
@@ -221,12 +264,12 @@ static void scheduler_matrix(const uint8_t *rom,size_t size,ArcRpcPreparationHos
     do{frame(p);arc_riscpc_preparation_stats(p,&s);}while(!s.namespace_units);
     assert(s.namespace_units==2 && s.steps==2 && s.elapsed_ns==600000 && s.budget_ns==UINT64_C(13333333));
     arc_riscpc_preparation_cancel(p);finish(p);
-    /* The declared-cost fallback caps a stationary clock at thirteen ordinary
+    /* The declared-cost fallback caps a stationary clock at twelve ordinary
      * units. A backward clock admits at most the first indivisible unit. */
     for(unsigned mode=1;mode<=2;++mode){
         restore();clock_mode=mode;clock_value=1000000;
         p=new_request(rom,size,true,false,host);frame(p);arc_riscpc_preparation_stats(p,&s);
-        assert(s.steps==(mode==1?13u:1u));arc_riscpc_preparation_cancel(p);finish(p);
+        assert(s.steps==(mode==1?12u:1u));arc_riscpc_preparation_cancel(p);finish(p);
     }
     restore();clock_mode=3;clock_value=0;
     p=new_request(rom,size,true,false,host);
@@ -235,11 +278,30 @@ static void scheduler_matrix(const uint8_t *rom,size_t size,ArcRpcPreparationHos
     clock_mode=1;frame(p);arc_riscpc_preparation_stats(p,&s);
     assert(s.namespace_units==1 && s.reserved_ns==UINT64_C(8333333)+(s.steps-1)*UINT64_C(1000000));
     arc_riscpc_preparation_cancel(p);finish(p);
+    for(unsigned mode=12;mode<=15;++mode){
+        restore();clock_mode=mode;clock_value=0;observations=0;stall_after=1;
+        memset(oracle,0,sizeof(oracle));memset(oracle_at,0,sizeof(oracle_at));memset(work_seen,0,sizeof(work_seen));
+        memset(phase_seen,0,sizeof(phase_seen));
+        p=new_request(rom,size,true,false,host);frame(p);arc_riscpc_preparation_stats(p,&s);
+        if(mode==12){assert(s.steps==1 && s.elapsed_ns==2000000);frame(p);assert(observations>1);}
+        if(mode==13)assert(observations>=18);
+        if(mode==14){settle(p);for(unsigned work=ARC_RPC_BOOT_WORK_INFLATE;work<ARC_RPC_BOOT_WORK_COUNT;++work)assert(work_seen[work]);
+            assert(phase_seen[ARC_RPC_BOOT_FORMAT] && phase_seen[ARC_RPC_BOOT_WRITE] && phase_seen[ARC_RPC_BOOT_VALIDATE] && phase_seen[ARC_RPC_BOOT_SEAL]);}
+        if(mode==15){assert(s.steps==13 && s.elapsed_ns==50000 && s.reserved_ns==12050000);
+        }
+        arc_riscpc_preparation_cancel(p);finish(p);
+    }
+    restore();clock_mode=12;observations=0;clock_value=0;
+    p=new_request(rom,size,true,false,host);frame(p);
+    clock_mode=15;observations=0;stall_after=20;frame(p);arc_riscpc_preparation_stats(p,&s);
+    assert(s.steps==31 && s.elapsed_ns==1000000 && s.reserved_ns==12000000);
+    arc_riscpc_preparation_cancel(p);finish(p);
     restore();clock_mode=4;attachment_fail=true;terminal_notices=0;
     p=new_request(rom,size,true,false,host);settle(p);arc_riscpc_preparation_stats(p,&s);
     assert(arc_riscpc_preparation_state(p)==ARC_RPC_PREP_FAILED && terminal_notices==1 && s.attachment_operations==1 && !s.attachment_namespace && s.steps==1);
     finish(p);attachment_fail=false;
-    for(unsigned mode=7;mode<=8;++mode)for(unsigned one=0;one<2;++one){
+    for(unsigned index=0;index<3;++index)for(unsigned one=0;one<2;++one){
+        unsigned mode=index==2?11:7+index;
         restore();clock_mode=3;clock_value=0;terminal_notices=0;
         p=new_request(rom,size,false,false,host);
         if(one)assert(arc_riscpc_preparation_pacing(p,1));
@@ -247,7 +309,7 @@ static void scheduler_matrix(const uint8_t *rom,size_t size,ArcRpcPreparationHos
         clock_mode=mode;
         while(!arc_engine_active())frame(p);
         frame(p);arc_riscpc_preparation_stats(p,&s);
-        assert(s.generation_quanta==(one?1u:mode==7?4u:8u));
+        assert(s.generation_quanta==(one?1u:mode==8?8u:4u));
         assert(s.elapsed_ns<=ARC_RPC_GENERATION_BUDGET_NS);
         if(mode==8 && !one){unsigned before=notices;
             for(unsigned i=0;i<59;++i)frame(p);
@@ -258,6 +320,34 @@ static void scheduler_matrix(const uint8_t *rom,size_t size,ArcRpcPreparationHos
 }
 static struct retro_vfs_file_handle *unavailable_manifest(const char *path,unsigned mode,unsigned hint)
 { if(strstr(path,"hd-riscpc") && strstr(path,"/manifest."))return NULL;return test_open(path,mode,hint); }
+static int64_t unavailable_hd_write(struct retro_vfs_file_handle *f,const void *data,uint64_t n)
+{if(strstr(files[f->file].path,"/hd-riscpc/"))return -1;return test_write(f,data,n);}
+static void hd_notices(const uint8_t *rom,size_t size,ArcRpcPreparationHost host)
+{
+    for(unsigned ro=0;ro<2;++ro){
+        restore();clock_mode=4;clock_value=0;terminal_notices=0;
+        ArcRpcPreparation *p=new_request(rom,size,true,false,host);settle(p);finish(p);
+        unsigned journals=0;
+        for(unsigned i=0;i<TEST_FILES;++i)if(files[i].present && strstr(files[i].path,"/journal.")){
+            size_t n=files[i].size;files[i].data=realloc(files[i].data,n+7);assert(files[i].data);
+            memset(files[i].data+n,0x55,7);files[i].capacity=files[i].size=n+7;++journals;
+        }
+        assert(journals);refuse_truncate=ro!=0;
+        p=new_request(rom,size,true,false,host);settle(p);
+        assert(arc_riscpc_preparation_state(p)==ARC_RPC_PREP_RUNNING);
+        ArcRpcHdStats s;arc_riscpc_hd_stats(arc_riscpc_preparation_disc(p),&s);assert(s.read_only==(ro!=0));
+        unsigned n=notices;arc_riscpc_preparation_maintenance(p);
+        assert(notices==n+1 && !terminal_notices && last_kind==1 && strstr(last_notice,"interrupted hard-disc write was recovered"));
+        if(!ro){
+            vfs.write=unavailable_hd_write;uint8_t sector[512]={0x42};
+            assert(!arc_riscpc_hd_write(arc_riscpc_preparation_disc(p),100,1,sector));vfs.write=test_write;
+            arc_riscpc_preparation_maintenance(p);
+            assert(terminal_notices==1 && last_kind==2 && strstr(last_notice,"can no longer be saved"));
+            n=notices;arc_riscpc_preparation_maintenance(p);assert(notices==n);
+        }
+        refuse_truncate=false;finish(p);
+    }
+}
 static void store_refusals(const uint8_t *rom,size_t size,ArcRpcPreparationHost host)
 {
     assert(strstr(arc_riscpc_hd_outcome_notice(ARC_RPC_HD_LEGACY),"without a creation receipt"));
@@ -395,7 +485,7 @@ int main(int argc,char **argv)
     snapshot();ArcRpcPreparationHost host={.clock=clock_read,.notice=notice,.attach=attach};
     /* Initial package validation precedes either CMOS generation or seed. */
     state_matrix(rom,size,host,sanitizer,!strcmp(argv[4],"mutant"));
-    scheduler_matrix(rom,size,host);store_refusals(rom,size,host);
+    scheduler_matrix(rom,size,host);hd_notices(rom,size,host);store_refusals(rom,size,host);
     uint8_t gold[32];
     for(unsigned mode=0;mode<3;++mode){
         restore();clock_mode=mode;clock_value=UINT64_C(1000000000000);clock_delta=1000;attach_calls=terminal_notices=0;

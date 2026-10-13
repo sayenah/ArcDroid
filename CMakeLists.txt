@@ -2288,6 +2288,10 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
     target_link_libraries(rpc_cmos_plan_test PRIVATE arcdroid_sanitizer_compile arcdroid_sanitizer_link)
   endif()
   set(RPC_CMOS_PLAN_PROFILE full)
+  add_test(NAME rpc-hd-notices COMMAND "${Python3_EXECUTABLE}" -B
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_hd_notices_test.py"
+    $<TARGET_FILE:rpc_cmos_plan_test> $<TARGET_FILE:arcdroid_rpcplan_libretro>)
+  set_tests_properties(rpc-hd-notices PROPERTIES TIMEOUT 180)
   if(ARCDROID_SANITIZERS)
     set(RPC_CMOS_PLAN_PROFILE sanitizer)
   endif()

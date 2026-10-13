@@ -37,11 +37,14 @@ static void audit(const char *p,unsigned mode)
 static const char *system_directory;static unsigned black_frames, errors, notices;
 static bool extended_messages=true;
 static unsigned progress_messages,fallback_messages,cleared_messages,fallback_lifetime;
+static unsigned advisory_messages;
 static bool terminal_active,last_status_clear;
 static enum retro_log_level message_level;
 static bool (*rpc_start)(ArcRpcModel,const uint8_t *,size_t,const uint8_t *,uint64_t,char *,size_t);
 static void (*payload_evidence)(uint8_t *,uint8_t *,uint64_t *,uint64_t *,uint64_t *,unsigned *);
 static unsigned (*phase)(void);static bool (*advance)(uint64_t);static void (*snapshot)(ArcRpcTestSnapshot *);
+static int64_t reject_truncate(struct retro_vfs_file_handle *f,int64_t n)
+{(void)f;(void)n;return -1;}
 static bool environment(unsigned command,void *data)
 {
     switch(command){
@@ -62,6 +65,10 @@ static bool environment(unsigned command,void *data)
     case RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE:*(bool *)data=false;return true;
     case RETRO_ENVIRONMENT_SET_MESSAGE_EXT:{struct retro_message_ext *m=data;
         message_level=m->level;
+        if(strstr(m->msg,"interrupted hard-disc write was recovered")){
+            assert(m->type==RETRO_MESSAGE_TYPE_NOTIFICATION && m->duration==5000 && m->level==RETRO_LOG_INFO);
+            ++advisory_messages;
+        }
         if(m->type==RETRO_MESSAGE_TYPE_STATUS && m->msg[0]){
             if(m->level==RETRO_LOG_ERROR){assert(m->duration==UINT_MAX && last_status_clear);terminal_active=true;}
             else {assert(m->duration==60000);++progress_messages;}
@@ -125,7 +132,8 @@ int main(int argc,char **argv)
     bool (*load)(const struct retro_game_info *);void (*cmos)(uint8_t *);
     LOAD(set_environment,"retro_set_environment");LOAD(init,"retro_init");LOAD(deinit,"retro_deinit");LOAD(set_video,"retro_set_video_refresh");LOAD(set_audio,"retro_set_audio_sample_batch");LOAD(set_poll,"retro_set_input_poll");LOAD(set_input,"retro_set_input_state");LOAD(run,"retro_run");LOAD(reset,"retro_reset");LOAD(unload,"retro_unload_game");LOAD(load,"retro_load_game");LOAD(phase,"arc_test_plan_cmos_phase");LOAD(snapshot,"arc_rpc_test_snapshot");LOAD(cmos,"arc_rpc_test_cmos_snapshot");LOAD(advance,"arc_rpc_test_advance");
     set_environment(environment);init();set_video(video);set_audio(audio);set_poll(poll);set_input(input);
-    const char *mode=argv[5];extended_messages=strcmp(mode,"fallback") && strcmp(mode,"terminalfallback");
+    const char *mode=argv[5];extended_messages=strstr(mode,"fallback")==NULL;
+    if(strstr(mode,"hd-advisory") && strstr(mode,"-ro"))vfs.truncate=reject_truncate;
     if(!strcmp(mode,"nodelete")){
         LOAD(rpc_start,"arc_rpc_test_start");LOAD(payload_evidence,"arc_engine_test_cmos_evidence");
         char rom_path[4096];snprintf(rom_path,sizeof(rom_path),"%s/full.rom",system_directory);FILE *f=fopen(rom_path,"rb");assert(f);
@@ -154,6 +162,20 @@ unsigned expected_rate=(unsigned)atoi(argv[6]);
     /* V2 admission now yields black preparation frames. They execute neither
      * the requested guest nor scripted input; semantic refusals are deferred. */
     if(strcmp(mode,"positive")&&strcmp(mode,"positive1")&&strcmp(mode,"negative")&&strcmp(mode,"reset")&&strcmp(mode,"fallback")&&strcmp(mode,"terminalfallback"))settle(run);
+
+    if(strstr(mode,"hd-advisory")){
+        bool retained=strstr(mode,"retained")!=NULL;
+        assert(phase()==2 && terminal_active==retained);
+        unsigned errors_before=errors;run();
+        assert(advisory_messages==1 && errors==errors_before && terminal_active==retained);
+        if(!extended_messages && !retained)assert(fallback_lifetime>0 && fallback_lifetime<=300);
+        for(unsigned i=0;i<301;++i){run();assert(terminal_active==retained);}
+        assert(advisory_messages==1);
+        if(!extended_messages && !retained)assert(!fallback_lifetime);
+        reset();assert(!terminal_active && last_status_clear);
+        unload();assert(!terminal_active && last_status_clear);
+        deinit();vfs_assert_no_open_handles();puts("HD recovery advisory: timed, no persistent status; terminal retention/reset/unload pass");return 0;
+    }
 
     if(!strcmp(mode,"hd")||!strcmp(mode,"hd-frame")||!strcmp(mode,"hd-reload")){
         bool (*stats)(ArcRpcHdStats *);LOAD(stats,"arc_test_plan_hd_stats");

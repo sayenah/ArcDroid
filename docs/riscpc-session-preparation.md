@@ -22,12 +22,17 @@ Later extraction/hash/readback/seal/rehash failure stops preparation but preserv
 completed CMOS publications. A receipt is creation provenance, not integrity of
 subsequent guest files.
 
-Run C applies D-172 as supplied in the dispatch (its repository merge is pending),
-retaining D-171's measured admission. Offline preparation covers recovery,
+Run D retains D-172 and D-171's measured admission. Offline preparation covers recovery,
 package validation, population and publication before the requested session;
 every unit kind, namespace and final attachment included, shares a 13,333,333 ns
 (0.80 T) frame budget. Generation has its separate allowance below. The remaining
 fifth of the offline frame is available for frontend presentation.
+Once a frame has begun, admission reserves another 833,333 ns (0.05 T) within
+that allowance for estimator variation. A first indivisible unit retains the
+full allowance. POPULATE learns inflate, hash, format, read and write costs
+separately by boot phase as well as namespace class; cheap inflate units cannot
+evict a format or hash observation from its sixteen-sample window. Estimators
+use the recent maximum, explicitly clamped to the declared ceiling.
 Admission uses elapsed time plus the recent maximum of
 that unit kind's last sixteen costs, bounded by its declared ceiling. Cold
 estimates use the ceiling: ordinary 1,000,000 ns, namespace 8,333,333 ns.
@@ -36,10 +41,11 @@ attempt and exceeding its estimate ends the batch. Stat-only path checks do not
 end a batch as namespace spikes. Ordinary units update the estimate without wasting
 the remaining frame allowance. Advances also stop on an underestimated cost. CMOS and disc work share elapsed accounting across transitions.
 A stationary/backward clock cannot reduce an estimate: declared accumulated
-costs supply a conservative fallback cap (thirteen ordinary units), while an
+costs supply a conservative fallback cap (twelve ordinary units), while an
 absolute 4096-unit cap also bounds nearly stationary clocks. Equal readings
-after measured frame progress are timer quantization, not a backward clock;
-they preserve estimates rather than spuriously reserving all prior units.
+at any point in a frame activate declared-cost accounting from the last measured
+elapsed time, including the unit whose clock reading stalled. Clock progress
+resumes measured accounting. Equal samples never lower learned estimates.
 D-172's Odin3 shared-storage targets replace D-171's: first use within 50 s,
 including generation, and a receipted reopen within 1 s, on all seven pairs.
 These measured admission limits still require Fable's whole-frame device
@@ -107,6 +113,11 @@ clear/error precedence and suppresses completion's progress clear. Receipted
 reopens with saved CMOS say "Starting RiscPC". Memory seeds, like seed paths,
 never override bytes 0–15 when a saved record is authoritative.
 Legacy discs say “without a creation receipt”. No time estimate is shown.
+Recovery advisories, including a recovered read-only view, are ordinary timed
+messages (5 s extended / 300 frames fallback), not persistent error statuses.
+The store carries notice severity; it is not inferred from text or read-only
+state. Only terminal errors use the retained error status. An advisory does not
+clear an existing terminal status.
 
 Pinned plan baseline: `d374114`. V1 device/AV/input/factory goldens must remain
 unchanged. V2 gains preparation black/silent frames and preparation reset now

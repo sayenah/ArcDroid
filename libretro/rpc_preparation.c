@@ -47,8 +47,8 @@ struct ArcRpcPreparation {
     ArcRpcPreparationState state;
     const char *status;
     ArcRpcPreparationStats stats;
-    uint64_t costs[ARC_RPC_PREP_CANCELLED][2][ARC_RPC_COST_SAMPLES];
-    unsigned cost_at[ARC_RPC_PREP_CANCELLED][2];
+    uint64_t costs[ARC_RPC_PREP_COST_KINDS][2][ARC_RPC_COST_SAMPLES];
+    unsigned cost_at[ARC_RPC_PREP_COST_KINDS][2];
 };
 static const char *status(const ArcRpcPreparation *p)
 {
@@ -351,11 +351,21 @@ static void unit(ArcRpcPreparation *p)
 /* Recent maxima belong to a state/unit kind and namespace class. Construction
  * and virtual advances are separate kinds even within GENERATE. Cold admission
  * uses the ceiling; a valid clock replaces it with the last sixteen costs. */
+static unsigned cost_kind(const ArcRpcPreparation *p,bool advance)
+{
+    if(advance)return ARC_RPC_PREP_RUNNING;
+    if(p->state!=ARC_RPC_PREP_POPULATE)return (unsigned)p->state;
+    if(p->boot)return ARC_RPC_PREP_CANCELLED+arc_riscpc_boot_next_work(p->boot);
+    ArcRpcBootWork work=p->io_pending||p->substep==3?ARC_RPC_BOOT_WORK_WRITE:
+        p->substep==2?ARC_RPC_BOOT_WORK_HASH:
+        p->substep==1?(p->import?ARC_RPC_BOOT_WORK_READ:ARC_RPC_BOOT_WORK_FORMAT):ARC_RPC_BOOT_WORK_OTHER;
+    return ARC_RPC_PREP_CANCELLED+ARC_RPC_BOOT_DONE*ARC_RPC_BOOT_WORK_COUNT+(unsigned)work;
+}
 static uint64_t estimate(const ArcRpcPreparation *p,unsigned kind,bool ns,uint64_t ceiling)
 {
     uint64_t cost=0;
     for(unsigned i=0;i<ARC_RPC_COST_SAMPLES;++i)if(p->costs[kind][ns][i]>cost)cost=p->costs[kind][ns][i];
-    return cost?cost:ceiling;
+    return cost && cost<ceiling?cost:ceiling;
 }
 ArcRpcPreparationState arc_riscpc_preparation_frame(ArcRpcPreparation *p)
 {
@@ -364,13 +374,14 @@ ArcRpcPreparationState arc_riscpc_preparation_frame(ArcRpcPreparation *p)
     bool generation=p->state==ARC_RPC_PREP_GENERATE,faulty=false;
     p->stats.steps=p->stats.generation_quanta=p->stats.namespace_units=p->stats.attachment_units=0;p->stats.namespace_attempts=0;
     p->stats.attachment_operations=p->stats.attachment_bytes=p->stats.attachment_namespace=0;
+    p->stats.estimated_ns=0;
     p->stats.budget_ns=generation?ARC_RPC_GENERATION_BUDGET_NS:ARC_RPC_PREP_OFFLINE_BUDGET_NS;
     refresh(p,true);
     while(p->state<ARC_RPC_PREP_RUNNING && p->stats.steps<ARC_RPC_PREP_STEPS){
         if((p->state==ARC_RPC_PREP_GENERATE)!=generation)break;
         bool ns=next_namespace(p),attachment=p->state==ARC_RPC_PREP_START && p->substep==2;
         bool advance=generation && p->substep==1;
-        unsigned kind=advance?ARC_RPC_PREP_RUNNING:(unsigned)p->state;
+        unsigned kind=cost_kind(p,advance);
         uint64_t ceiling=advance?ARC_RPC_GENERATION_UNIT_NS:ns||attachment?ARC_RPC_PREP_NAMESPACE_UNIT_NS:ARC_RPC_PREP_UNIT_NS;
         uint64_t budget=generation?ARC_RPC_GENERATION_BUDGET_NS:ARC_RPC_PREP_OFFLINE_BUDGET_NS;
         uint64_t cost=attachment||faulty?ceiling:estimate(p,kind,ns,ceiling);
@@ -379,10 +390,11 @@ ArcRpcPreparationState arc_riscpc_preparation_frame(ArcRpcPreparation *p)
         if(attachment && p->stats.steps)break;
         uint64_t charged=faulty?(used>reserved?used:reserved):used;
         if(charged>budget || cost>budget-charged || (advance && p->stats.generation_quanta>=p->pacing))break;
-        /* Leave 2.67 ms for pending presentation and cost variation once a
-         * frame has begun. A cold indivisible advance retains the full 4 T. */
-        if(generation && p->stats.steps && (charged>budget-ARC_RPC_GENERATION_HEADROOM_NS ||
-            cost>budget-ARC_RPC_GENERATION_HEADROOM_NS-charged))break;
+        /* A first indivisible unit retains the full allowance. Later units
+         * leave the offline/generation margin for cost variation. */
+        uint64_t headroom=generation?ARC_RPC_GENERATION_HEADROOM_NS:ARC_RPC_PREP_HEADROOM_NS;
+        if(p->stats.steps && (charged>budget-headroom || cost>budget-headroom-charged))break;
+        p->stats.unit_kind=kind;p->stats.estimated_ns=cost;
         ArcRpcHdStats hd_before={0},hd_after={0};if(p->disc)arc_riscpc_hd_stats(p->disc,&hd_before);
         uint64_t cmos_before=p->record.stats.namespace_operations+p->defaults.stats.namespace_operations;
         unit(p);++p->stats.steps;if(ns)++p->stats.namespace_units;reserved+=ceiling;refresh(p,false);
@@ -396,13 +408,13 @@ ArcRpcPreparationState arc_riscpc_preparation_frame(ArcRpcPreparation *p)
         if(now<previous){
             faulty=true;used=UINT64_MAX;
         }else if(now==previous){
-            /* Quantized monotonic clocks often repeat during cheap units.
-             * Keep the estimate, and fall back only if the whole frame has
-             * made no clock progress. A later stuck clock is capped as well. */
-            if(!used)faulty=true;
+            /* Any stall activates declared costs from the last clock
+             * progress, including the already-admitted stalled unit. */
+            faulty=true;
         }else{
             uint64_t actual=now-previous;used=now>=start_ns?now-start_ns:UINT64_MAX;faulty=false;
-            p->costs[kind][ns][p->cost_at[kind][ns]++%ARC_RPC_COST_SAMPLES]=actual<ceiling?actual:ceiling;
+            reserved=used;
+            p->costs[kind][ns][p->cost_at[kind][ns]++%ARC_RPC_COST_SAMPLES]=actual;
             if(((attempts||advance) && actual>cost) || actual>ceiling){previous=now;break;}
         }
         previous=now;
@@ -440,9 +452,10 @@ void arc_riscpc_preparation_maintenance(ArcRpcPreparation *p)
     if(!p || p->state!=ARC_RPC_PREP_RUNNING)return;
     if(p->disc){arc_riscpc_hd_tick(p->disc);
         const char *s=arc_riscpc_hd_diagnostic(p->disc);if(s&&p->host.log)p->host.log(p->host.opaque,s);
-        s=arc_riscpc_hd_notice(p->disc);if(s)notice(p,s,true);}
+        bool terminal=arc_riscpc_hd_notice_is_terminal(p->disc);
+        s=arc_riscpc_hd_notice(p->disc);if(s){if(terminal)notice(p,"",false);notice(p,s,terminal);}}
     char e[256]={0};
-    if(!arc_riscpc_preparation_persist(p,e,sizeof(e)) && !p->refusal_reported){notice(p,e,true);p->refusal_reported=true;}
+    if(!arc_riscpc_preparation_persist(p,e,sizeof(e)) && !p->refusal_reported){notice(p,"",false);notice(p,e,true);p->refusal_reported=true;}
 }
 bool arc_riscpc_preparation_free(ArcRpcPreparation *p,char *e,size_t n)
 {

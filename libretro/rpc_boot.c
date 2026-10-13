@@ -800,6 +800,28 @@ const char *arc_riscpc_boot_notice(const ArcRpcBoot *b) {
 
 bool arc_riscpc_boot_validation_complete(const ArcRpcBoot *b)
 { return b && b->phase == ARC_RPC_BOOT_FORMAT && b->candidate; }
+static ArcRpcBootWork next_work(const ArcRpcBoot *b)
+{
+    if(!b)return ARC_RPC_BOOT_WORK_OTHER;
+    if(b->io_pending)return b->io_write?ARC_RPC_BOOT_WORK_WRITE:ARC_RPC_BOOT_WORK_READ;
+    switch(b->phase){
+    case ARC_RPC_BOOT_HASH:case ARC_RPC_BOOT_REHASH:case ARC_RPC_BOOT_SEAL:
+        return ARC_RPC_BOOT_WORK_HASH;
+    case ARC_RPC_BOOT_FORMAT:return ARC_RPC_BOOT_WORK_FORMAT;
+    case ARC_RPC_BOOT_WRITE:
+        if(b->object_io)return ARC_RPC_BOOT_WORK_WRITE;
+        if(b->object<b->used && !b->nodes[b->object].directory && !b->nodes[b->object].authored)
+            return ARC_RPC_BOOT_WORK_INFLATE;
+        return ARC_RPC_BOOT_WORK_FORMAT;
+    case ARC_RPC_BOOT_VALIDATE:
+        if(b->part<3)return ARC_RPC_BOOT_WORK_FORMAT;
+        return b->io_ready?ARC_RPC_BOOT_WORK_HASH:ARC_RPC_BOOT_WORK_READ;
+    case ARC_RPC_BOOT_PUBLISH:return ARC_RPC_BOOT_WORK_WRITE;
+    default:return ARC_RPC_BOOT_WORK_OTHER;
+    }
+}
+unsigned arc_riscpc_boot_next_work(const ArcRpcBoot *b)
+{ return (b?b->phase:ARC_RPC_BOOT_CANCELLED)*ARC_RPC_BOOT_WORK_COUNT+(unsigned)next_work(b); }
 bool arc_riscpc_boot_next_namespace(const ArcRpcBoot *b)
 {
     if (!b) return false;
