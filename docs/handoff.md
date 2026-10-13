@@ -1,7 +1,7 @@
 # ArcDroid Handoff
 
-**Stage:** QA — **R3b-1** (boot-resource population, D-167), draft PR #386, branch `slice/r3b1-population` at `d819674`.
-**Owner:** Opus (QA, fresh `arcdroid-opus-qa` agent in a fresh clone); Fable (S62) watches CI, finishes AC-5's Windows leg, then adjudicates.
+**Stage:** QA done — **R3b-1** (boot-resource population, D-167), draft PR #386, branch `slice/r3b1-population` at `0a18209`: Opus QA PASS WITH LOWS, then run E fixed LOW-1 to LOW-4 and the re-check PASSED. Merge waits on green CI and the Windows leg.
+**Owner:** Fable (S62): merge R3b-1 under §12.11 once CI is green on all five jobs at `0a18209` and the AC-5 Windows leg has run (Waiting on the Founder); meanwhile the R3b-2 draft goes to Astra stage 2.
 **Next (S62):**
 1. **R3a: merged** as `d7a92ec` (PR #378). Follow-up Lows: the `recognize-os-range` mutant (inject an out-of-range entry or record it equivalent); two `resource_failure` asserts in `rpc_selection_test`; Python `assert` in the mutation script. To R3d: a skipped scan logs `inventory=skipped`.
 2. **R3b-1 under Opus QA.**
@@ -35,7 +35,11 @@
      - provenance of `assets/riscpc-boot`;
      - the CI profile.
    - **After QA:** Fable adjudicates. Merging needs green CI on all five jobs and the Windows leg (or a recorded Founder ruling).
-3. R3b-2's full work order follows R3b-1 QA. D-166(4) carries two R3d items.
+3. **QA outcome (S62):** adjudication `.work/s62/qa-r3b1/adjudication.md`.
+   - Run E (`0a18209`) closed LOW-1 to LOW-4: the checker's unshared-alias refusal, disc-record pins, pre-FORMAT VFS faults and asset revision goldens. The re-check PASSED.
+   - LOW-5 (a newer receipt shows "damaged") and QA's I/O measurement go to R3b-2.
+   - A guest-tolerant checker mode is required before R3c/R3d reuse the checker.
+4. **R3b-2:** Fable drafted the work order below. Astra's stage 2 challenge continues thread `01a12e11-8501-7f21-bf44-6abd36974d5e` (`.work/s62/astra/brief3.md`, `report3.md`). D-166(4) carries two R3d items.
 - **Earlier (S61):** Q-3 merged as `44d007e` (follow-up Low: the CPU reproduction comment at `tests/rpc_cpu_test.c:373–374` overstates which term the I/O/reserved/EASI targets test; fix it in the next RPC slice that touches the test). AC-10 measured; Founder decision D-163 (R3, then item 6b before R4 and item 5). R3 is planned as R3a–R3d (D-164); R3a is done.
 
 - **Running:** see the ledger (`.work/s62/LEDGER.md`) for Fable's private runners and the CI watch.
@@ -173,19 +177,58 @@
   - a refusal leaves nothing published;
   - no package bytes in the repository, logs or fixtures.
 
-**R3b-2 — production session preparation** (outline; Fable writes the full work order after R3b-1 QA, starting with Astra 7):
-- **Shipping module:** a shipping-source RPC session preparation, driven by an R3a selection, with production inactive until R3d. The plan core becomes a thin client of it. It covers:
-  - firmware bytes loaded through VFS and re-verified against the recognised fingerprint;
-  - boot packages preflighted **before** defaults generation, because generation executes firmware;
-  - `rpc_cmos_store` moved into shipping sources, keeping test-clock separation;
-  - held-Delete defaults generation under a long-lived status notice. The notice is cleared on success, failure, reset and unload, with a fallback for frontends that lack long-lived messages;
-  - launch-owned CMOS fields defined per layout as masked fields (boot, FileSystem ADFS, drive 4, the IDE count in byte 199 without importing the trial's floppy count). They are applied to generated and loaded records, preserve unrelated bits, never repair a torn checksum, and are validated against guest-written configuration on all seven pairs;
-  - hard-disc open, create and populate through R3b-1's step interface, with maintenance and eager CMOS persistence on the RPC frame path, reset and unload;
-  - missing-firmware and missing-boot-files notices before any guest execution.
-- **Carried into it:**
-  - QA LOW-A (the CMOS reconcile latch);
-  - the seed-plus-persist limitation, kept as a test facility that seeds only an absent record;
-  - the 3.50 blank-screen status.
+**R3b-2 work order — DRAFT (S62), from D-164, D-167 and R3b-1's evidence; awaiting Astra's stage 2 challenge. Sol is not dispatched until Fable records the adjudication and R3b-1 has merged.** Branch `slice/r3b2-preparation` from `main` after R3b-1.
+- **Objective:** a shipping-source RiscPC session preparation. It turns an R3a selection, the recognised firmware, the CMOS record and the populated hard disc into a running RPC session through production engine entry points, with no test export on its path. Production content loads still take today's route until R3d (D-164(5)). The plan core becomes a thin test client that drives the same module. RiscPC stays unreleased (D-163).
+- **Repo facts (S62):**
+  - **Engine and plan exports:** RPC start, held-Delete generation and IDE attach are test-only exports today (`engine/arcdroid_engine.c:248-297`, `arc_engine_test_*`). `arc_engine_start` reverts RPC to Arculator (`:63-66`).
+  - **Build split:** `libretro/rpc_cmos_store.c` and `tests/arc_test_plan.c` build only into test cores (CMakeLists.txt:229).
+  - **Plan-route behaviour:** population runs synchronously at load (about 21 s on the Odin3). Generation shows a 5 s message.
+  - **R3b-1's step interface:** `arc_riscpc_boot_begin/step/cancel/free`. QA measured I/O at about 40 bytes per payload byte plus 47.6 MB fixed.
+- **Evidence that changes the outline (Fable, S62, `.work/s62/ac5/`):**
+  - On all seven pairs, the generated factory defaults alone already boot the populated disc from ADFS drive 4. No guest or host configuration was applied (sessions `q-*`).
+  - After that boot, the per-content records differ from the defaults only in byte 19 (0x54→0x50, or 0x55→0x51 on 3.60), byte 253 and checksum byte 63. Byte 253 varies between generations. The guest wrote these during the session.
+  - So the outline's "launch-owned CMOS fields" are **not needed to boot**. Policy 3 below replaces them.
+- **Policies:**
+  1. **Preparation states:** selection → firmware → boot packages (preflight) → CMOS (record, or defaults generation) → hard disc (open, or create and populate) → start.
+     - Each long step advances in bounded work per frame on the RPC frame path, under a long-lived status notice: "Preparing RiscPC settings for first use" for generation, and "Preparing the RiscPC hard disc" for population.
+     - Notices clear on completion, failure, reset and unload, with a fallback for frontends without long-lived messages.
+     - No guest instruction runs before the session's firmware, CMOS and disc are final.
+     - Preflight of the packages happens before generation, because generation executes firmware. A failure at any step shows its notice and starts no guest.
+  2. **Firmware:** read through the VFS and re-verified (size, CRC-32 and SHA-1) against the selected catalogue entry at preparation time. A mismatch or read failure refuses with the missing-firmware notice naming the family and folder (R3a's diagnostic reason gives the cause).
+  3. **CMOS:**
+     - The per-content record comes from the store, or from the defaults cache through R2a's held-Delete procedure. `rpc_cmos_store` moves into the shipping sources, with test-clock separation kept.
+     - **No host-applied launch fields.** If guest evidence shows a field is needed for a supported path, it is added as a per-layout masked field, with its own decision entry.
+     - Eager persistence works as in the plan route, including on reset and unload.
+     - QA LOW-A (the reconcile latch) is fixed: a transient listing failure retries within bounds instead of latching refusal for the session.
+     - The seed-plus-persist limitation stays a test facility: a seed is accepted only for an absent record, and published state is never replaced.
+  4. **Hard disc:**
+     - Opened, or created and populated through R3b-1's step interface, inside the frame loop, within a stated per-frame budget derived from QA's I/O measurement and R2c's D-152 ceiling (0.20 T per frame).
+     - The disc is attached only after publication.
+     - Missing or rejected boot packages give the missing-boot-files notice naming `<system>/arcdroid/riscpc/boot/`, and start no guest. Nothing is published.
+     - A receipted store opens without package I/O.
+     - An unknown receipt revision gets a distinct "created by a newer ArcDroid" notice, not "damaged" (QA LOW-5).
+     - A legacy blank store (no receipt) is left unchanged, and the session refuses with its notice. No session runs without boot resources in R3b-2.
+  5. **Engine boundary:** a production start for a resolved RPC session description (model, firmware bytes, CMOS seed, IDE backend, epoch). It is reachable from the shipping core but not yet called by ordinary loads. The test exports remain test-only and delegate to the same code. Switching back to Arculator stays covered.
+- **Acceptance criteria:**
+  - **AC-1 State machine:** deterministic tests drive every state and transition, including every failure and its notice, reset and unload in each state, and cancellation. The guest never starts before every input is final.
+  - **AC-2 Bounded stepping:**
+    - Per-frame work stays within the stated budget, measured with deterministic counters.
+    - Generation and population produce output byte-identical to the synchronous plan route.
+    - The notice lifecycle passes on frontends with and without long-lived messages.
+  - **AC-3 Firmware and packages:** re-verification refuses mismatched, truncated and unreadable firmware. A package preflight failure refuses before any generation.
+  - **AC-4 CMOS:**
+    - The record and defaults paths each give the expected payload.
+    - Eager persistence survives a fresh process.
+    - The LOW-A retry is tested, and so is seed-plus-persist on an absent record only.
+  - **AC-5 No production route change:** shipping routes still reject RPC plans, and no production load reaches the new module. If any shared load-preparation code changes, the library A/B runs in both package states.
+  - **AC-6 Private (Fable):**
+    - On all seven pairs through the plan route as a thin client: a first-use session generates defaults under the notice, populates the disc, and boots to the desktop with the R3b-1 variables. A second session boots from the record with no package I/O.
+    - A reset or unload during generation or population leaves nothing published.
+    - Odin3 RetroArch: no visible stall beyond the stated budget, and the notice stays visible throughout.
+    - Windows native: the same session pair.
+  - **AC-7 Evidence:** host and sanitizer suites (within CI timeouts), MinGW and Android builds, guards, and mutants on the state transitions and budgets.
+- **Non-goals:** RPC launch from ordinary loads, Arculator→RPC switching in production, the false RiscPC notice, and drive-ownership items (R3d); launch actions and observers (R3c); repopulating or upgrading used discs.
+- **QA focus:** no guest start before final inputs; the notice lifecycle; stepping budgets; LOW-A; test exports not on the production path.
 
 **R2c outcome (merged S61 as `0e71237`, PR #337, head `83cbf7e`).** The IDE and a 126 MiB persistent hard disc on a journalled, chunked, fully verified store (`docs/riscpc-hd-store.md`). The record is in `docs/build-log.md` and D-145 to D-162; the run history is in git history (`docs/handoff.md` at `3a548ec`).
 - **Evidence:** CI green on all five jobs, including the native Windows RetroArch hard-disc sessions. Opus QA 3 PASS WITH LOWS, then re-checks of runs P and Q PASS (adjudication `.work/s61/qa/adjudication-3.md`).
