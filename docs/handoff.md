@@ -1,7 +1,7 @@
 # ArcDroid Handoff
 
-**Stage:** IMPLEMENTATION — **R3b-2b run B** (D-171 scheduling correction plus QA items) with Sol on `slice/r3b2b-orchestration` (draft PR #395).
-**Owner:** Sol (run B). Fable (S62) then commits, re-runs the Odin3 seven-pair legs against the D-171 targets and the library A/B, and arranges the QA re-check.
+**Stage:** IMPLEMENTATION — **R3b-2b run C** (D-172: offline preparation budget 0.80 T) with Sol on `slice/r3b2b-orchestration` (draft PR #395). Run B (`48d6e97`, D-171) is committed.
+**Owner:** Sol (run C). Fable (S62) then re-runs the Odin3 legs against D-172's targets, finishes the library A/B and the RetroArch legs, and arranges the QA re-check of runs B and C.
 **Next (S62):**
 1. **R3a: merged** as `d7a92ec` (PR #378). Follow-up Lows: the `recognize-os-range` mutant (inject an out-of-range entry or record it equivalent); two `resource_failure` asserts in `rpc_selection_test`; Python `assert` in the mutation script. To R3d: a skipped scan logs `inventory=skipped`.
 2. **R3b-1: merged** as `6ba7376` (PR #386, head `0a18209`) after Opus QA PASS WITH LOWS, a re-check PASS, green CI on all five jobs and Fable's AC-5. The record is in `docs/build-log.md`; the evidence is in `.work/s62/` (`ac5/`, `odin/`, `win/`, `qa-r3b1/`).
@@ -17,6 +17,7 @@
      - **Fable's Odin3 seven-pair legs:** functionally PASS, but first use took about 490 s and every reopen about 10 s.
      - **Opus QA:** PASS WITH LOWS, with M-1 being the same scheduling fault (`.work/s62/qa-r3b2b/QA-REPORT.md`).
      - **Ruling:** D-171 (measured admission, namespace units sharing frames offline, generation within 4 T). Run B implements it together with QA's L-1 to L-9, S-1, S-2 and S-5 (`.work/s62/qa-r3b2b/adjudication.md`).
+   - **Run B on the Odin3 (S62):** first use now takes 78–88 s (it was about 490 s) and a reopen 0.7 s (it was about 10 s); generation stays at or below 3.93 T. D-171(4)'s targets were inconsistent with the 0.50 T namespace ceiling. D-172 raises the offline preparation budget to 0.80 T, with new targets: first use within 50 s and a reopen within 1 s. Run C implements it.
    - **QA focus:**
      - D-170(1)–(7);
      - no requested-session instruction before final inputs;
