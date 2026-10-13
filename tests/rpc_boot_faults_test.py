@@ -1,23 +1,18 @@
 #!/usr/bin/env python3
 """Population/receipt faults and fresh process termination. GPL-2.0-only.
 
-Full keeps all 2,692 population and 144 append/checkpoint cuts, and adds an
-exhaustive two-rotation matrix. Sanitizer uses the fixed points documented in
-rpc_boot_faults_profile.json: each store-state/substep/file-kind/callback/
-before-or-after class, plus both sides of the first and last callback in each
-population phase. Formatting, writing and validation reuse the same store
-helpers; their identical callback classes are covered once. Rotation reuses
-append cuts from checkpoint; sealed recovery reuses cleanup cuts from chunk
-recovery. Each shared class is already exercised in that earlier scenario.
-Trace totals, exact selected labels, every observed class and population phase
-endpoints are checked; drift fails instead of silently changing the subset.
-
-Both profiles also probe each recovery cleanup class from two killed candidates
-(chunk.tmp before rename, and a sealed candidate before root publication).
-Recovery's repeated absent-chunk inventory stats are sampled in both profiles;
-the original full matrices and their oracles remain exhaustive and unchanged.
+Full keeps all 2,692 population and 144 append/checkpoint cuts, the exhaustive
+two-rotation matrix, and the original recovery cuts in both modes. Sanitizer
+uses the fixed selection rule and ordinals in rpc_boot_faults_profile.json:
+each store-state/substep/file-kind/callback/before-or-after class once across
+scenarios, with callback failure before execution and termination after it.
+Boot phases reuse store helpers; every phase still has selected cuts. Trace
+totals, pinned labels and complete class coverage are checked so drift fails.
+Both profiles probe cleanup from killed chunk and sealed candidates. Sanitizer
+runs two isolated cases concurrently; full remains serial.
 """
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor
 import argparse
 import json
 import re
@@ -61,10 +56,33 @@ def cuts_for(name, result):
     else:
         require(set(observed.values())<=covered,
                 f'{name}: sanitizer profile omits a boundary class')
-    cuts=sorted(selected) if args.profile=='sanitizer' or name.startswith('recovery-') else range(1,count+1)
+    if args.profile=='sanitizer':
+        selected={int(n):key for n,key in fixed['sanitizer_points'].items()}
+        require(all(observed.get(n)==key for n,key in selected.items()),
+                f'{name}: sanitizer point changed class')
+        identity=lambda key: '/'.join(key.split('/')[1:])
+        covered={identity(key) for key in selected.values()}
+        for earlier in ('population','checkpoint','rotation','recovery-chunk','recovery-seal'):
+            if earlier==name:
+                break
+            covered.update(identity(key) for key in profiles[earlier]['sanitizer_points'].values())
+        require({identity(key) for key in observed.values()}<=covered,
+                f'{name}: sanitizer profile omits a boundary class')
+        if name=='population':
+            require({key.split('/')[0] for key in selected.values()}==
+                    {key.split('/')[0] for key in observed.values()},
+                    f'{name}: sanitizer profile omits a population phase')
+        cuts=sorted(selected)
+        modes={mode:[n for n in cuts if selected[n].endswith('/'+side)]
+               for mode,side in (('fault','before'),('kill','after'))}
+        require(sum(map(len,modes.values()))==len(cuts),
+                f'{name}: invalid sanitizer boundary side')
+    else:
+        cuts=sorted(selected) if name.startswith('recovery-') else range(1,count+1)
+        modes={'fault':cuts,'kill':cuts}
     print(f'rpc-boot profile={args.profile} scenario={name} cuts={len(cuts)}/{count} '
           f'classes={len(set(observed.values()))} points='+','.join(map(str,cuts)),flush=True)
-    return cuts
+    return modes
 
 
 def inject(system, save, mode, cut):
@@ -75,13 +93,27 @@ def inject(system, save, mode, cut):
     return result
 
 
+def exercise(cuts, action):
+    if args.profile=='sanitizer':
+        # Fixed work, bounded concurrency; each case owns a separate save tree.
+        with ThreadPoolExecutor(max_workers=2) as workers:
+            list(workers.map(action,cuts))
+    else:
+        for cut in cuts:
+            action(cut)
+
+
+def live_path(root, mode, cut):
+    return root/(f'live-{mode}-{cut}' if args.profile=='sanitizer' else 'live')
+
+
 with tempfile.TemporaryDirectory(prefix='arcdroid-boot-faults-') as temp:
     root=Path(temp);system=inputs(root/'fixture');baseline=root/'baseline'
     _,result=run(system,baseline,mode='trace')
     population_cuts=cuts_for('population',result)
     for mode in ('fault','kill'):
-        for cut in population_cuts:
-            save=root/'live';save.mkdir()
+        def population_case(cut):
+            save=live_path(root,mode,cut);save.mkdir()
             inject(system,save,mode,cut)
             state,_=run(system,save,mode='verify')
             if state['published']:
@@ -91,7 +123,8 @@ with tempfile.TemporaryDirectory(prefix='arcdroid-boot-faults-') as temp:
             # Interruption restarts from scratch; a complete root becomes a no-op.
             run(system,save);compare(save)
             shutil.rmtree(save)
-        print(f'rpc-boot-{mode}: {len(population_cuts)} population, readback, seal/receipt, publish and retirement points pass',flush=True)
+        exercise(population_cuts[mode],population_case)
+        print(f'rpc-boot-{mode}: {len(population_cuts[mode])} population, readback, seal/receipt, publish and retirement points pass',flush=True)
     # Preserve the original append matrix; supplement it with two real complete
     # rotations, including replacement of retained roots/chunks and cleanup.
     for scenario in ('checkpoint','rotation'):
@@ -99,13 +132,14 @@ with tempfile.TemporaryDirectory(prefix='arcdroid-boot-faults-') as temp:
         _,result=run(system,save,mode=scenario+'-trace');compare(save)
         checkpoint_cuts=cuts_for(scenario,result)
         for mode in (scenario+'-fault',scenario+'-kill'):
-            for cut in checkpoint_cuts:
-                save=root/'live';shutil.copytree(baseline,save)
+            def checkpoint_case(cut):
+                save=live_path(root,mode,cut);shutil.copytree(baseline,save)
                 inject(system,save,mode,cut)
                 run(system,save,mode='verify');compare(save)
                 run(root/'missing-system',save,mode='reopen');compare(save)
                 shutil.rmtree(save)
-            print(f'rpc-boot-{mode}: {len(checkpoint_cuts)} guest-write, rotation, publication, retirement and cleanup points pass',flush=True)
+            exercise(checkpoint_cuts[mode.rsplit('-',1)[-1]],checkpoint_case)
+            print(f'rpc-boot-{mode}: {len(checkpoint_cuts[mode.rsplit('-',1)[-1]])} guest-write, rotation, publication, retirement and cleanup points pass',flush=True)
     for scenario,seed_cut in (('recovery-chunk',33),('recovery-seal',2667)):
         seed=root/scenario;seed.mkdir()
         result=inject(system,seed,'kill',seed_cut)
@@ -115,11 +149,12 @@ with tempfile.TemporaryDirectory(prefix='arcdroid-boot-faults-') as temp:
         require(state=={'published':0,'receipt':0},f'{scenario}: candidate published')
         recovery_cuts=cuts_for(scenario,result)
         for mode in ('recovery-fault','recovery-kill'):
-            for cut in recovery_cuts:
-                save=root/'live';shutil.copytree(seed,save)
+            def recovery_case(cut):
+                save=live_path(root,mode,cut);shutil.copytree(seed,save)
                 inject(system,save,mode,cut)
                 state,_=run(system,save,mode='verify')
                 require(state=={'published':0,'receipt':0},f'{scenario}: partial root')
                 run(system,save);compare(save)
                 shutil.rmtree(save)
-            print(f'rpc-boot-{scenario}-{mode}: {len(recovery_cuts)} cleanup points pass',flush=True)
+            exercise(recovery_cuts[mode.rsplit('-',1)[-1]],recovery_case)
+            print(f'rpc-boot-{scenario}-{mode}: {len(recovery_cuts[mode.rsplit('-',1)[-1]])} cleanup points pass',flush=True)

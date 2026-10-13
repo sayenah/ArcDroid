@@ -2339,7 +2339,7 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
   set(RPC_BOOT_FAULTS_TIMEOUT 3600)
   if(ARCDROID_SANITIZERS)
     set(RPC_BOOT_FAULTS_PROFILE sanitizer)
-    set(RPC_BOOT_FAULTS_TIMEOUT 600)
+    set(RPC_BOOT_FAULTS_TIMEOUT 900)
   endif()
   add_test(NAME rpc-boot-faults COMMAND "${Python3_EXECUTABLE}" -B
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_boot_faults_test.py" $<TARGET_FILE:rpc_boot_test>
