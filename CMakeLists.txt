@@ -148,6 +148,7 @@ set(ARCDROID_LIBRETRO_SOURCES
   libretro/jfd_store.c
   libretro/install_store.c
   libretro/rpc_hd_store.c
+  libretro/rpc_cmos_store.c
   libretro/rpc_boot_zip.c
   libretro/rpc_boot.c
   libretro/arcdroid_libretro.c
@@ -226,7 +227,7 @@ function(arcdroid_add_libretro target shipping)
   target_include_directories(${target} PRIVATE
     engine platform libretro libretro/include core third_party/zlib)
   if(NOT shipping)
-    target_sources(${target} PRIVATE tests/arc_test_plan.c tests/rpc_test_clock.c libretro/rpc_cmos_store.c)
+    target_sources(${target} PRIVATE tests/arc_test_plan.c tests/rpc_test_clock.c)
     target_include_directories(${target} PRIVATE tests)
   endif()
   target_compile_definitions(${target} PRIVATE
@@ -2286,6 +2287,10 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
     target_link_libraries(rpc_cmos_plan_test PRIVATE arcdroid_sanitizer_compile arcdroid_sanitizer_link)
   endif()
   foreach(model RANGE 0 3)
+    add_test(NAME rpc-cmos-seed-${model} COMMAND "${Python3_EXECUTABLE}" -B
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_cmos_seed_plan_test.py" $<TARGET_FILE:rpc_cmos_plan_test>
+      $<TARGET_FILE:arcdroid_rpcplan_libretro> ${model})
+    set_tests_properties(rpc-cmos-seed-${model} PROPERTIES TIMEOUT 180)
     foreach(case full ro350 empty scatter incomplete late reset nodelete writer delayed badchecksum)
       add_test(NAME rpc-cmos-plan-${model}-${case} COMMAND "${Python3_EXECUTABLE}"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_cmos_plan_test.py" $<TARGET_FILE:rpc_cmos_plan_test>
@@ -2296,6 +2301,21 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
 endif()
 
 if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
+  add_executable(rpc_preparation_test tests/rpc_preparation_test.c libretro/rpc_hd_store.c libretro/install_store.c libretro/arc_io.c)
+  target_include_directories(rpc_preparation_test PRIVATE core engine libretro libretro/include)
+  target_link_libraries(rpc_preparation_test PRIVATE arcdroid_core)
+  target_compile_options(rpc_preparation_test PRIVATE -UNDEBUG -Wall -Wextra)
+  if(ARCDROID_SANITIZERS)
+    target_link_libraries(rpc_preparation_test PRIVATE arcdroid_sanitizer_compile arcdroid_sanitizer_link)
+  endif()
+  add_test(NAME rpc-preparation-store COMMAND rpc_preparation_test)
+  set_tests_properties(rpc-preparation-store PROPERTIES TIMEOUT 120)
+  if(NOT ARCDROID_SANITIZERS)
+    add_test(NAME rpc-preparation-mutants COMMAND "${Python3_EXECUTABLE}" -B
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_preparation_mutants.py" "${CMAKE_C_COMPILER}"
+      $<TARGET_FILE:arcdroid_core> "${CMAKE_CURRENT_SOURCE_DIR}")
+    set_tests_properties(rpc-preparation-mutants PROPERTIES TIMEOUT 300 RUN_SERIAL TRUE)
+  endif()
   add_executable(rpc_hd_store_test tests/rpc_hd_store_test.c libretro/rpc_hd_store.c
     libretro/install_store.c libretro/arc_io.c)
   target_include_directories(rpc_hd_store_test PRIVATE core engine libretro libretro/include)
@@ -2322,9 +2342,16 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
   if(ARCDROID_SANITIZERS)
     target_link_libraries(rpc_hd_process PRIVATE arcdroid_sanitizer_compile arcdroid_sanitizer_link)
   endif()
+  set(RPC_HD_PROCESS_PROFILE full)
+  set(RPC_HD_PROCESS_TIMEOUT 3600)
+  if(ARCDROID_SANITIZERS)
+    set(RPC_HD_PROCESS_PROFILE sanitizer)
+    set(RPC_HD_PROCESS_TIMEOUT 900)
+  endif()
   add_test(NAME rpc-hd-store-process COMMAND "${Python3_EXECUTABLE}" -B
-    "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_hd_process_test.py" $<TARGET_FILE:rpc_hd_process>)
-  set_tests_properties(rpc-hd-store-process PROPERTIES TIMEOUT 3600 RUN_SERIAL TRUE)
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_hd_process_test.py" $<TARGET_FILE:rpc_hd_process>
+    --profile "${RPC_HD_PROCESS_PROFILE}")
+  set_tests_properties(rpc-hd-store-process PROPERTIES TIMEOUT "${RPC_HD_PROCESS_TIMEOUT}" RUN_SERIAL TRUE)
   add_executable(rpc_boot_test tests/rpc_boot_test.c libretro/rpc_boot.c
     libretro/rpc_boot_zip.c libretro/rpc_hd_store.c libretro/arc_io.c libretro/install_store.c)
   target_include_directories(rpc_boot_test PRIVATE core engine libretro libretro/include third_party/zlib)
@@ -2341,6 +2368,10 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
     set(RPC_BOOT_FAULTS_PROFILE sanitizer)
     set(RPC_BOOT_FAULTS_TIMEOUT 900)
   endif()
+  add_test(NAME rpc-boot-budget COMMAND "${Python3_EXECUTABLE}" -B
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_boot_budget_test.py" $<TARGET_FILE:rpc_boot_test>
+    "${RPC_BOOT_FAULTS_PROFILE}")
+  set_tests_properties(rpc-boot-budget PROPERTIES TIMEOUT 600)
   add_test(NAME rpc-boot-faults COMMAND "${Python3_EXECUTABLE}" -B
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_boot_faults_test.py" $<TARGET_FILE:rpc_boot_test>
     --profile "${RPC_BOOT_FAULTS_PROFILE}")
@@ -2430,8 +2461,14 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
   add_test(NAME rpc-vfs-conformance COMMAND rpc_vfs_test
     "${CMAKE_CURRENT_BINARY_DIR}/rpc-vfs-conformance-data")
   add_test(NAME rpc-hd-population COMMAND rpc_hd_store_test population)
-  add_test(NAME rpc-hd-store-faults COMMAND rpc_hd_store_test faults)
-  set_tests_properties(rpc-hd-store-faults PROPERTIES TIMEOUT 3600)
+  set(RPC_HD_MEMORY_FAULTS faults)
+  set(RPC_HD_MEMORY_TIMEOUT 3600)
+  if(ARCDROID_SANITIZERS)
+    set(RPC_HD_MEMORY_FAULTS faults-sanitizer)
+    set(RPC_HD_MEMORY_TIMEOUT 900)
+  endif()
+  add_test(NAME rpc-hd-store-faults COMMAND rpc_hd_store_test "${RPC_HD_MEMORY_FAULTS}")
+  set_tests_properties(rpc-hd-store-faults PROPERTIES TIMEOUT "${RPC_HD_MEMORY_TIMEOUT}")
   set(RPC_HD_BOUNDS_PROFILE full)
   if(ARCDROID_SANITIZERS)
     set(RPC_HD_BOUNDS_PROFILE sanitizer)

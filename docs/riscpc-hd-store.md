@@ -1022,3 +1022,151 @@ Obey file (FEB) containing the resource dispatch commands, through the guest.
 These runtime outputs use guest-assigned dates/attributes and are not embedded
 assets or part of the creation receipt's initial file/byte counts. ResAudit is
 not generated.
+
+
+## R3b-2a operation inventory and stepping plan (D-168)
+
+This inventory is written before implementation. A step is deterministic work,
+never a host-time deadline. Namespace calls (including failed calls) are create,
+mkdir, rename and remove. The device gates remain 0.20 T without a namespace
+call and 0.50 T with one; only Fable's Odin3 FUSE/RetroArch-flush measurements
+can establish those time limits.
+
+| Surface | Indivisible work | Planned suspension boundaries |
+|---|---|---|
+| Directory preparation | one stat or mkdir of a canonical prefix | one prefix per step, at most one mkdir |
+| Advisory listing | opendir; readdir/name/type; closedir | one entry per step; listing is never absence evidence |
+| Open manifests | fixed-path stat/absence probe; open/size/read/close; CRC, framing and identity | one slot per control step; no mutation until all slots and bindings validate |
+| Journal recovery | header read; one framed record read, CRC, sequence/index update, streaming SHA | bounded record batch; retained cursor; a torn tail is decided only at EOF |
+| Recovery inventory | one retained/candidate leaf stat; candidate removal; truncate/flush/close | stat and removal on different steps; one candidate per step |
+| Population reads/writes | verified base chunk; indexed framed overlays; copy of at most 128 KiB input | retain reconstruction state; bounded overlay batch; copy precedes private publication |
+| Chunk publication | SHA/CRC/envelope; create/write/flush/close; temporary readback; destination stat/remove; rename; final readback | separate write, verify, destination, rename and final verification steps; one namespace operation |
+| Seal | inspect one chunk's frozen offsets; materialize overlays; verify referenced chunk | one chunk/job step; journal creation and verification separated from manifest preparation |
+| Receipt | encode 128 bytes of host provenance into candidate manifest | memory-only step; no separate receipt file |
+| Manifest publication | encode CRC; create/write/flush/close; temporary readback; destination stat; rename; final readback; switch indexes | each control transition separately; rename is the root/receipt publication boundary |
+| Retirement | root/header/length binding read; one old-only chunk removal; manifest removal; journal removal | existing retirement ordering retained; at most one namespace callback |
+| CMOS inspection | canonical directory preparation; listing entry; fixed-slot existence probe; read/size/close; 512-byte decode | retry reported inspection failures at most three times; never admit a seed while incomplete |
+| CMOS persistence | encode; destination inspection; create/write/flush/close; candidate readback; older-slot removal; rename; final readback | explicit steps; retain immutable candidate bytes and reconcile after ambiguous rename/readback |
+| ZIP population | package open/size; pinned range read; central/local framing; one inflate quantum; one directory allocation | existing 32 KiB inflate limit; separate store job pumping from package work |
+
+The synchronous APIs remain adapters which drain these steps for offline test
+clients. Frame clients use the step APIs once per frame. Larger caller quanta
+cannot combine multiple namespace calls into a single frame step. Encodings,
+geometry, checksums, receipt bytes and guest acknowledgement are unchanged.
+Counters expose requested transfer bytes, callbacks, metadata and namespace
+attempts, hashing and copying, including failure cleanup. Tests compare these
+against independently counted VFS operations and compare complete output across
+caller quanta. Shipping RPC admission remains closed.
+
+
+### R3b-2a implemented step bounds and compatibility
+
+The step APIs are `arc_riscpc_hd_open_begin/open_step`, population
+`io_begin/io_step`, `seal_step` and `publish_step`, and CMOS
+`store_begin/store_step` and `store_put_begin/store_put_step`. A nonzero
+`arc_riscpc_boot_step` advances exactly one unit, including when its caller
+requests 8 or 32. Zero does no work. Synchronous adapters drain the same units
+for offline callers; the plan client remains synchronous until R3b-2b adds
+session orchestration. No production load reaches these APIs.
+
+| Counter / indivisible limit | Per HD preparation or maintenance step |
+|---|---:|
+| Requested transfer bytes | 788,612 = 262,276-byte verified base + 526,336-byte framed-overlay batch |
+| VFS callbacks, including failure cleanup | 1,600; a maximally gapped reconstruction needs at most 512 × 3 + 8 = 1,544 |
+| Metadata callbacks | 4; advisory directory callbacks are separately counted as callbacks |
+| Namespace attempts | 1 |
+| Hash input | 1,572,864; full base SHA/CRC plus bounded batch CRC fits this ceiling |
+| Explicit copies | 2,097,152; largest control copy is the 1,032,192-byte frozen index plus manifest/header |
+| Journal recovery batch | at most 32 records; at most 262,208 framed bytes including the last whole record |
+| Reconstruction batch | at most 512 contributing records and 526,336 framed bytes; the next record waits when it would exceed the byte allowance |
+| CMOS step | at most 4 callbacks, 512 requested bytes, one namespace attempt; at most 3 inspection attempts |
+| ZIP index step | one central/local/descriptor range, at most three pinned 32 KiB blocks; extraction stays at 32 KiB output |
+
+Every framed record is fully validated before any of its sectors are copied.
+Reconstruction resumes with a private record buffer while guest reads and writes
+use their original buffers. Five effective-cache slots plus that private
+131,168-byte record buffer replace six slots without increasing the existing
+4,889,964-byte resident ceiling. No persistent format or guest byte changes.
+The reduced transfer/callback/hash ceilings supersede the older coarse per-tick
+ceilings above; guest acknowledgement remains the original whole-command path.
+
+Under the two sustained envelopes in section 8, a frozen chunk's contributing
+records fit one reconstruction batch: scattered records are at most 512 × 608
+= 311,296 bytes; sequential intervals contribute at most one chunk payload plus
+two edge-command payloads and their bounded framing, below 526,336 bytes.
+Thus the original five materialization steps and 6N+16 / H=500,170 occupancy
+proofs remain. Outside those envelopes, reconstruction may need several steps;
+the exact journal admission cap still applies. The full and sanitizer stream
+oracles verify the original cycle and aggregate limits.
+
+Open distinguishes unpublished, legacy and receipted valid stores from
+unsupported, damaged and unavailable refusals. In a known manifest it verifies
+length, content identity, CRC and entry framing before classifying an unknown
+receipt/populator/authored revision. Unknown envelopes are opaque and never
+used for cleanup or fallback. Unbound partial journal headers must have a known
+magic prefix; unfamiliar bytes are preserved. Both roots and journal bindings
+are validated before candidate cleanup. Notice strings are exposed separately
+from production loads.
+
+CMOS `reconciled` gates payload use, seeding and new publications. A reported
+inspection error retries without clearing a corruption refusal. Exhaustion is
+unavailable, not missing. A fixed-path stat and read-only probe supplement the
+listing, so a silently short listing is not absence evidence. As in section 10,
+a frontend that simultaneously falsely reports absence through both stat and
+open cannot be distinguished from actual absence. Found-plus-refused remains
+available to the old plan client for its existing read-only fallback; no seed
+or publication can replace either refused slot. An ambiguous publication must
+reconcile before another put; the newest verified generation remains authoritative.
+
+The authored package output is byte-identical to the branch parent `2efcfee`
+(R3b-1 `0a18209` plus main) at quanta 1, 8 and 32, including every envelope,
+chunk, receipt and journal. Hardware timing remains a separate Fable gate:
+these operation bounds do not certify 0.20 T / 0.50 T on the Odin3.
+
+
+### R3b-2a verification profiles
+
+Ordinary builds keep every in-memory and real-process fault/termination cut.
+Sanitizers use three explicit profiles, each with a 900-second timeout:
+
+- Boot population retains every callback class and each phase, with fixed
+  class labels and ordinals; failure-before and termination-after cuts are
+  distinct. It runs two independent save trees concurrently.
+- The real-process store matrix retains every state/substep/population/file-kind/
+  callback/side class from its pinned trace, also in two independent save trees.
+- The in-memory store matrix retains every mutation callback (create, write,
+  flush, remove, rename, mkdir and truncate), and the first and last inspection
+  callback in each file-kind/transfer-size class. All command, corruption,
+  pre-use verification and retirement checks remain exhaustive.
+
+Native path-prefix stat probes have platform-dependent ordinals. Profiles
+canonicalise only those probes, verify their callback class set and 2,048-call
+ceiling, and still inject them separately. Every remaining ordinal stays pinned.
+A verified torn-tail prefix remains legacy/receipted and readable when truncate
+is absent or fails, with a read-only notice. This is a write-capability failure,
+not a failed inspection of the already verified root. Unknown/unverified roots
+never expose a backend or a receipt.
+
+### R3b-2a run B classification and independent verification
+
+Manifest inspection authenticates any same-magic frame through 131,168 bytes
+(the existing record scratch capacity), using its length, content identity and
+trailing CRC before interpreting revisions. An authenticated unknown length or
+revision is unsupported. Journal headers use the same bound and ordering,
+including complete headers shorter than 256 bytes; only a supported header's
+geometry and journal contents are interpreted. An envelope above the inspection
+bound is opaque and refused as unsupported. Reported read/close failures remain
+unavailable. Supported encodings and per-step limits are unchanged.
+
+CMOS advisory enumeration stops at 4,096 entries and continues through both
+fixed-path probes; reaching that cap never consumes a retry. Torn-tail recovery
+with a verified committed prefix keeps the readable, read-only view and notice
+when either the writable open or truncate fails.
+
+The VFS test boundaries independently count requested transfer bytes (including
+failed attempts), callbacks, metadata and namespace attempts. Coverage includes
+a 240-file authored package with members through 1 MiB, a >5 MiB journal reopen,
+overlapping journal reconstruction and checkpoint writes, and cancellation
+before and after every publication step. The larger package's sanitizer profile
+executes the whole workload at quantum 8; the host profile compares owned bytes
+at 1, 8 and 32. The existing long fault profiles remain unchanged.

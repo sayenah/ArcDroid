@@ -18,19 +18,18 @@ static bool bad(char *e, size_t n, const char *reason) {
 static bool raw_read(ArcBootZip *z, uint32_t at, void *p, size_t n) {
   if (!z->file || at > z->length || n > z->length - at)
     return false;
-  z->operations += 3;
-  if (arc_io_seek_file(z->file, at, RETRO_VFS_SEEK_POSITION_START) < 0 ||
-      arc_io_tell_file(z->file) != at)
-    return false;
-  size_t got = arc_io_read_file(z->file, p, n);
-  z->io_bytes += got;
+  ++z->operations;
+  if(arc_io_seek_file(z->file,at,RETRO_VFS_SEEK_POSITION_START)<0)return false;
+  ++z->operations;if(arc_io_tell_file(z->file)!=at)return false;
+  ++z->operations;z->io_bytes+=n;
+  size_t got=arc_io_read_file(z->file,p,n);
   return got == n;
 }
 void arc_boot_zip_pin(ArcBootZip *z, uint32_t at, const void *data,
                       size_t bytes) {
   ArcSha256 h;
   arc_sha256_init(&h);
-  arc_sha256_update(&h, data, bytes);
+  z->hash_bytes+=bytes;arc_sha256_update(&h, data, bytes);
   arc_sha256_final(&h, z->pins[at / ARC_BOOT_QUANTUM]);
 }
 bool arc_boot_zip_read(ArcBootZip *z, uint32_t at, void *output, size_t bytes) {
@@ -50,14 +49,14 @@ bool arc_boot_zip_read(ArcBootZip *z, uint32_t at, void *output, size_t bytes) {
     ArcSha256 h;
     uint8_t digest[32];
     arc_sha256_init(&h);
-    arc_sha256_update(&h, z->verify, count);
+    z->hash_bytes+=count;arc_sha256_update(&h, z->verify, count);
     arc_sha256_final(&h, digest);
     if (memcmp(digest, z->pins[index], 32))
       return false;
     unsigned offset = at - first, take = count - offset;
     if (take > bytes)
       take = (unsigned)bytes;
-    memcpy(out, z->verify + offset, take);
+    z->copied_bytes+=take;memcpy(out, z->verify + offset, take);
     out += take;
     at += take;
     bytes -= take;
@@ -160,99 +159,61 @@ bool arc_boot_zip_directory(ArcBootZip *z, char *e, size_t n) {
   }
   return bad(e, n, "missing ZIP end record");
 }
-bool arc_boot_zip_index_step(ArcBootZip *z, char *e, size_t n) {
-  if (z->indexed == z->count)
-    return z->central_at == z->central_end ||
-           bad(e, n, "central directory length");
-  uint8_t h[46], local[30], cdigest[32], ldigest[32];
-  uint32_t cm[3], lm[3];
-  ArcBootZipEntry *a = &z->entries[z->indexed];
-  if (z->central_at > z->central_end || z->central_end - z->central_at < 46 ||
-      !arc_boot_zip_read(z, z->central_at, h, 46) || get(h, 4) != 0x02014b50)
-    return bad(e, n, "central entry read or signature");
-  unsigned names = get(h + 28, 2), extras = get(h + 30, 2),
-           comments = get(h + 32, 2);
-  uint64_t end = (uint64_t)z->central_at + 46 + names + extras + comments;
-  if (!names || names >= 256 || end > z->central_end || get(h + 34, 2))
-    return bad(e, n, "central entry length or multi-disc ZIP");
-  if (!arc_boot_zip_read(z, z->central_at + 46, z->scratch, names) ||
-      !safe_name(z->scratch, names))
-    return bad(e, n, "unsafe ZIP name");
-  memcpy(a->name, z->scratch, names);
-  a->name[names] = 0;
-  a->directory = a->name[names - 1] == '/';
-  a->flags = (uint16_t)get(h + 8, 2);
-  a->method = (uint16_t)get(h + 10, 2);
-  a->crc = get(h + 16, 4);
-  a->packed = get(h + 20, 4);
-  a->size = get(h + 24, 4);
-  a->local = get(h + 42, 4);
-  if (a->flags & 0x2061 || !(a->method == 0 || a->method == 8) ||
-      a->size > ARC_BOOT_MEMBER_CAP || a->packed > ARC_BOOT_INPUT_CAP ||
-      a->local >= z->central || (a->directory && a->size) ||
-      (a->method == 0 && a->size != a->packed))
-    return bad(e, n, "member cap, flags, method or directory size");
-  if (!arc_boot_zip_read(z, z->central_at + 46 + names, z->scratch, extras) ||
-      !extra(z->scratch, extras, cm, cdigest))
-    return bad(e, n, "missing or malformed central ARC0");
-  if (!arc_boot_zip_read(z, a->local, local, 30) ||
-      get(local, 4) != 0x04034b50 || get(local + 6, 2) != a->flags ||
-      get(local + 8, 2) != a->method || get(local + 26, 2) != names)
-    return bad(e, n, "local/central disagreement");
-  unsigned lextra = get(local + 28, 2);
-  if (!arc_boot_zip_read(z, a->local + 30, z->scratch, names) ||
-      memcmp(z->scratch, a->name, names) ||
-      !arc_boot_zip_read(z, a->local + 30 + names, z->scratch, lextra) ||
-      !extra(z->scratch, lextra, lm, ldigest) || memcmp(cm, lm, sizeof(cm)) ||
-      memcmp(cdigest, ldigest, 32))
-    return bad(e, n, "local/central ARC0 disagreement");
-  uint32_t lc = get(local + 14, 4), lp = get(local + 18, 4),
-           ls = get(local + 22, 4);
-  if ((!(a->flags & 8) && (lc != a->crc || lp != a->packed || ls != a->size)) ||
-      ((a->flags & 8) && ((lc && lc != a->crc) || (lp && lp != a->packed) ||
-                          (ls && ls != a->size))))
-    return bad(e, n, "local member fields disagree");
-  uint64_t data = (uint64_t)a->local + 30 + names + lextra,
-           finish = data + a->packed;
-  if (finish > z->central)
-    return bad(e, n, "member range overlaps directory");
-  a->data = (uint32_t)data;
-  if (a->flags & 8) {
-    uint8_t descriptor[16];
-    if (finish + 12 > z->central ||
-        !arc_boot_zip_read(z, (uint32_t)finish, descriptor, 12))
-      return bad(e, n, "truncated descriptor");
-    if (get(descriptor, 4) == 0x08074b50) {
-      finish += 4;
-      if (finish + 12 > z->central ||
-          !arc_boot_zip_read(z, (uint32_t)finish, descriptor, 12))
-        return bad(e, n, "truncated signed descriptor");
-    }
-    if (get(descriptor, 4) != a->crc || get(descriptor + 4, 4) != a->packed ||
-        get(descriptor + 8, 4) != a->size)
-      return bad(e, n, "descriptor mismatch");
-    finish += 12;
+
+bool arc_boot_zip_index_step(ArcBootZip *z,char *e,size_t n)
+{
+  if(z->indexed==z->count)return z->central_at==z->central_end||bad(e,n,"central directory length");
+  uint8_t *h=z->index_header,*local=z->index_local,*descriptor=z->index_descriptor;
+  uint32_t *cm=z->central_meta,*lm=z->local_meta;
+  ArcBootZipEntry *a=&z->entries[z->indexed];
+  unsigned names=get(h+28,2),extras=get(h+30,2),comments=get(h+32,2),lextra=get(local+28,2);
+  uint64_t end=(uint64_t)z->central_at+46+names+extras+comments;
+  switch(z->index_phase){
+  case 0:
+    if(z->central_at>z->central_end||z->central_end-z->central_at<46||!arc_boot_zip_read(z,z->central_at,h,46)||get(h,4)!=0x02014b50)return bad(e,n,"central entry read or signature");
+    ++z->index_phase;return true;
+  case 1:
+    if(!names||names>=256||end>z->central_end||get(h+34,2))return bad(e,n,"central entry length or multi-disc ZIP");
+    if(!arc_boot_zip_read(z,z->central_at+46,z->scratch,names)||!safe_name(z->scratch,names))return bad(e,n,"unsafe ZIP name");
+    memcpy(a->name,z->scratch,names);a->name[names]=0;a->directory=a->name[names-1]=='/';
+    a->flags=(uint16_t)get(h+8,2);a->method=(uint16_t)get(h+10,2);a->crc=get(h+16,4);a->packed=get(h+20,4);a->size=get(h+24,4);a->local=get(h+42,4);
+    if(a->flags&0x2061||!(a->method==0||a->method==8)||a->size>ARC_BOOT_MEMBER_CAP||a->packed>ARC_BOOT_INPUT_CAP||a->local>=z->central||(a->directory&&a->size)||(a->method==0&&a->size!=a->packed))return bad(e,n,"member cap, flags, method or directory size");
+    ++z->index_phase;return true;
+  case 2:
+    if(!arc_boot_zip_read(z,z->central_at+46+names,z->scratch,extras)||!extra(z->scratch,extras,cm,z->central_digest))return bad(e,n,"missing or malformed central ARC0");
+    z->hash_bytes+=extras;++z->index_phase;return true;
+  case 3:
+    if(!arc_boot_zip_read(z,a->local,local,30)||get(local,4)!=0x04034b50||get(local+6,2)!=a->flags||get(local+8,2)!=a->method||get(local+26,2)!=names)return bad(e,n,"local/central disagreement");
+    ++z->index_phase;return true;
+  case 4:
+    if(!arc_boot_zip_read(z,a->local+30,z->scratch,names)||memcmp(z->scratch,a->name,names))return bad(e,n,"local/central ARC0 disagreement");
+    ++z->index_phase;return true;
+  case 5:{
+    if(!arc_boot_zip_read(z,a->local+30+names,z->scratch,lextra)||!extra(z->scratch,lextra,lm,z->local_digest)||memcmp(cm,lm,12)||memcmp(z->central_digest,z->local_digest,32))return bad(e,n,"local/central ARC0 disagreement");
+    z->hash_bytes+=lextra;
+    uint32_t lc=get(local+14,4),lp=get(local+18,4),ls=get(local+22,4);
+    if((!(a->flags&8)&&(lc!=a->crc||lp!=a->packed||ls!=a->size))||((a->flags&8)&&((lc&&lc!=a->crc)||(lp&&lp!=a->packed)||(ls&&ls!=a->size))))return bad(e,n,"local member fields disagree");
+    uint64_t data=(uint64_t)a->local+30+names+lextra,finish=data+a->packed;
+    if(finish>z->central)return bad(e,n,"member range overlaps directory");
+    a->data=(uint32_t)data;z->index_finish=(uint32_t)finish;z->index_phase=(a->flags&8)?6:8;return true;}
+  case 6:
+    if((uint64_t)z->index_finish+12>z->central||!arc_boot_zip_read(z,z->index_finish,descriptor,12))return bad(e,n,"truncated descriptor");
+    if(get(descriptor,4)==0x08074b50){z->index_finish+=4;z->index_phase=7;}else z->index_phase=8;
+    return true;
+  case 7:
+    if((uint64_t)z->index_finish+12>z->central||!arc_boot_zip_read(z,z->index_finish,descriptor,12))return bad(e,n,"truncated signed descriptor");
+    z->index_phase=8;return true;
+  case 8:
+    if(a->flags&8){if(get(descriptor,4)!=a->crc||get(descriptor+4,4)!=a->packed||get(descriptor+8,4)!=a->size)return bad(e,n,"descriptor mismatch");z->index_finish+=12;}
+    a->end=z->index_finish;a->load=cm[0];a->exec=cm[1];a->attr=cm[2];
+    if(a->attr&~0x3bu)return bad(e,n,"unrepresentable attributes");
+    for(unsigned i=0;i<z->indexed;++i){ArcBootZipEntry *b=&z->entries[i];
+      if(!strcmp(a->name,b->name)||(a->local<b->end&&b->local<a->end))return bad(e,n,"duplicate or overlapping ZIP member");}
+    z->expanded+=a->size;if(z->expanded>ARC_BOOT_EXPANDED_CAP)return bad(e,n,"expanded byte cap");
+    z->central_at=(uint32_t)end;++z->indexed;z->index_phase=0;
+    return z->indexed!=z->count||z->central_at==z->central_end||bad(e,n,"central directory length");
+  default:return bad(e,n,"index state");
   }
-  a->end = (uint32_t)finish;
-  a->load = cm[0];
-  a->exec = cm[1];
-  a->attr = cm[2];
-  /* ARC0 carries OS_File attributes, not Nick entry flags. FileCore can
-   * represent owner/public R/W and lock; the other bits have no Nick form. */
-  if (a->attr & ~0x3bu)
-    return bad(e, n, "unrepresentable attributes");
-  for (unsigned i = 0; i < z->indexed; ++i) {
-    ArcBootZipEntry *b = &z->entries[i];
-    if (!strcmp(a->name, b->name) || (a->local < b->end && b->local < a->end))
-      return bad(e, n, "duplicate or overlapping ZIP member");
-  }
-  z->expanded += a->size;
-  if (z->expanded > ARC_BOOT_EXPANDED_CAP)
-    return bad(e, n, "expanded byte cap");
-  z->central_at = (uint32_t)end;
-  ++z->indexed;
-  return z->indexed != z->count || z->central_at == z->central_end ||
-         bad(e, n, "central directory length");
 }
 static voidpf alloc(voidpf opaque, uInt count, uInt bytes) {
   ArcBootZip *z = opaque;
@@ -349,7 +310,7 @@ bool arc_boot_zip_extract_step(ArcBootZip *z, size_t *bytes, bool *done,
     return bad(e, n, "expanded member size mismatch");
   z->output_at += (uint32_t)*bytes;
   z->crc = (uint32_t)crc32(z->crc, z->output, (uInt)*bytes);
-  arc_sha256_update(&z->hash, z->output, *bytes);
+  z->hash_bytes+=2*(*bytes);arc_sha256_update(&z->hash, z->output, *bytes);
   if (z->ended) {
     if (z->output_at != a->size || z->crc != a->crc)
       return bad(e, n, "member length or CRC failure");

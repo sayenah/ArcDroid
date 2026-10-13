@@ -24,6 +24,12 @@
 #define vfs_stat base_stat
 #define vfs_remove base_remove
 #define vfs_rename base_rename
+#define vfs_mkdir base_mkdir
+#define vfs_opendir base_opendir
+#define vfs_readdir base_readdir
+#define vfs_dirname base_dirname
+#define vfs_isdir base_isdir
+#define vfs_closedir base_closedir
 #include "../tools/rpc_runner_vfs.h"
 #undef vfs_open
 #undef vfs_close
@@ -36,7 +42,15 @@
 #undef vfs_stat
 #undef vfs_remove
 #undef vfs_rename
+#undef vfs_mkdir
+#undef vfs_opendir
+#undef vfs_readdir
+#undef vfs_dirname
+#undef vfs_isdir
+#undef vfs_closedir
 static unsigned current_phase, points, cut, package_opens;
+static uint64_t counted_bytes,counted_ops,counted_meta,counted_namespace;
+static uint64_t high_bytes,high_ops,high_meta,high_namespace;
 static const char *mode;
 static unsigned package_fault_phase, package_fault_points, package_faults;
 /* Trace only the existing injection points; never add callbacks or cuts.
@@ -50,7 +64,7 @@ static const char *file_kind(const char *p) {
   if (strstr(p, "/riscpc/boot/"))
     return !strcmp(leaf, "HardDisc4.zip") ? "harddisc-package" : "system-package";
   if (!strcmp(leaf, "chunk.tmp")) return "chunk-candidate";
-  if (!strncmp(leaf, "c", 1)) return "chunk";
+  if (strlen(leaf)==22 && leaf[0]=='c' && leaf[4]=='.' && leaf[5]=='g') return "chunk";
   if (!strcmp(leaf, "manifest.tmp")) return "manifest-candidate";
   if (!strncmp(leaf, "manifest", 8)) return "manifest";
   if (!strncmp(leaf, "journal", 7)) return "journal";
@@ -87,6 +101,13 @@ static const char *transfer_operation(const char *kind, uint64_t n, bool write) 
 static bool recovery_mode(void) { return !strncmp(mode, "recovery-", 9); }
 static bool trace_mode(void) { return strstr(mode, "trace") != NULL; }
 static bool point(const char *operation, const char *side, const char *kind) {
+  if (!strcmp(side,"before")) {
+    ++counted_ops;
+    if (!strncmp(operation,"open-",5) || !strcmp(operation,"close") ||
+        !strcmp(operation,"flush") || !strcmp(operation,"stat") ||
+        !strcmp(operation,"remove") || !strcmp(operation,"rename")) ++counted_meta;
+    if (!strcmp(operation,"remove") || !strcmp(operation,"rename")) ++counted_namespace;
+  }
   if (current_phase < ARC_RPC_BOOT_FORMAT && !recovery_mode()) {
     /* Separate counter: preflight refusals must not renumber run D's matrix. */
     if (current_phase == package_fault_phase && !strcmp(side, "before") &&
@@ -127,6 +148,7 @@ static bool point(const char *operation, const char *side, const char *kind) {
 }
 static struct retro_vfs_file_handle *observed_open(const char *p, unsigned m,
                                                    unsigned h) {
+  if ((m & RETRO_VFS_FILE_ACCESS_WRITE) && !(m & RETRO_VFS_FILE_ACCESS_UPDATE_EXISTING)) ++counted_namespace;
   if (strstr(p, "/riscpc/boot/"))
     ++package_opens;
   const char *kind = file_kind(p);
@@ -164,6 +186,7 @@ WRAP(seek, int64_t, (struct retro_vfs_file_handle * f, int64_t n, int o),
      (f, n, o), -1, handle_kind(f))
 static int64_t observed_read(struct retro_vfs_file_handle *f, void *p, uint64_t n) {
   const char *kind = handle_kind(f);
+  counted_bytes+=n;
   const char *operation = transfer_operation(kind, n, false);
   if (!point(operation, "before", kind)) return -1;
   int64_t result = base_read(f, p, n);
@@ -172,6 +195,7 @@ static int64_t observed_read(struct retro_vfs_file_handle *f, void *p, uint64_t 
 static int64_t observed_write(struct retro_vfs_file_handle *f, const void *p,
                               uint64_t n) {
   const char *kind = handle_kind(f);
+  counted_bytes+=n;
   const char *operation = transfer_operation(kind, n, true);
   bool before = point(operation, "before", kind);
   int64_t result = base_write(f, p, before ? n : n / 2);
@@ -181,6 +205,26 @@ WRAP(flush, int, (struct retro_vfs_file_handle * f), (f), -1, handle_kind(f))
 WRAP(stat, int32_t, (const char *p, int32_t *n), (p, n), 0, file_kind(p))
 WRAP(remove, int, (const char *p), (p), -1, file_kind(p))
 WRAP(rename, int, (const char *a, const char *b), (a, b), -1, file_kind(b))
+static int counted_mkdir(const char *p) {
+  ++counted_ops;++counted_meta;++counted_namespace;return base_mkdir(p);
+}
+static struct retro_vfs_dir_handle *counted_opendir(const char *p,bool h) {
+  ++counted_ops;return base_opendir(p,h);
+}
+static bool counted_readdir(struct retro_vfs_dir_handle *d) {++counted_ops;return base_readdir(d);}
+static const char *counted_name(struct retro_vfs_dir_handle *d) {++counted_ops;return base_dirname(d);}
+static bool counted_isdir(struct retro_vfs_dir_handle *d) {++counted_ops;return base_isdir(d);}
+static int counted_closedir(struct retro_vfs_dir_handle *d) {++counted_ops;return base_closedir(d);}
+static void check_step(ArcRpcBoot *b,uint64_t bytes,uint64_t ops,uint64_t meta,uint64_t ns) {
+  bytes=counted_bytes-bytes;ops=counted_ops-ops;meta=counted_meta-meta;ns=counted_namespace-ns;
+  assert(bytes<=ARC_RPC_HD_STEP_BYTES && ops<=ARC_RPC_HD_STEP_OPERATIONS);
+  assert(meta<=4 && ns<=1);
+  ArcRpcBootStats a;arc_riscpc_boot_stats(b,&a);
+  assert(a.step_io_bytes==bytes && a.step_operations==ops && a.step_namespace_operations==ns);
+  assert(a.step_hash_bytes<=ARC_RPC_HD_STEP_HASH_BYTES && a.memory_high<=8388608);
+  if(bytes>high_bytes)high_bytes=bytes;if(ops>high_ops)high_ops=ops;
+  if(meta>high_meta)high_meta=meta;if(ns>high_namespace)high_namespace=ns;
+}
 static void replace_package(const char *system, const char *name) {
   char from[1200], to[1200];
   snprintf(from, sizeof(from), "%s/arcdroid/riscpc/boot/%s", system, name);
@@ -215,6 +259,9 @@ int main(int argc, char **argv) {
   vfs.stat = observed_stat;
   vfs.remove = observed_remove;
   vfs.rename = observed_rename;
+  vfs.mkdir=counted_mkdir;vfs.opendir=counted_opendir;vfs.readdir=counted_readdir;
+  vfs.dirent_get_name=counted_name;vfs.dirent_is_dir=counted_isdir;
+  vfs.closedir=counted_closedir;
   char error[512] = {0};
   bool blank = !strcmp(mode, "legacy") || !strcmp(mode, "forge");
   ArcRpcHdStore *s =
@@ -283,7 +330,9 @@ int main(int argc, char **argv) {
         restored = true;
       }
     }
+    uint64_t bytes=counted_bytes,ops=counted_ops,meta=counted_meta,ns=counted_namespace;
     state = arc_riscpc_boot_step(b, units);
+    if(!strcmp(mode,"budgets"))check_step(b,bytes,ops,meta,ns);
     if (state >= ARC_RPC_BOOT_DONE)
       break;
   }
@@ -291,8 +340,8 @@ int main(int argc, char **argv) {
   const char *notice = arc_riscpc_boot_notice(b);
   if (notice)
     fprintf(stderr, "%s\n", notice);
-  assert(stats.memory_high <= 8388608 && stats.max_unit_io_bytes <= 4194304 &&
-         stats.max_unit_operations <= 128);
+  assert(stats.memory_high <= 8388608 && stats.max_unit_io_bytes <= ARC_RPC_HD_STEP_BYTES &&
+         stats.max_unit_operations <= ARC_RPC_HD_STEP_OPERATIONS && stats.max_step_namespace_operations <= 1 && stats.max_step_hash_bytes <= ARC_RPC_HD_STEP_HASH_BYTES);
   printf(
       "{\"phase\":%u,\"files\":%llu,\"bytes\":%llu,\"units\":%llu,\"io_bytes\":"
       "%llu,\"operations\":%llu,\"memory\":%llu,\"max_bytes\":%llu,\"max_ops\":"
@@ -304,6 +353,7 @@ int main(int argc, char **argv) {
       (unsigned long long)stats.max_unit_io_bytes,
       (unsigned long long)stats.max_unit_operations,
       (unsigned long long)stats.allocated_bytes, points, package_opens, package_faults);
+  if(!strcmp(mode,"budgets"))printf("vfs-max-bytes=%llu ops=%llu metadata=%llu namespace=%llu\n",(unsigned long long)high_bytes,(unsigned long long)high_ops,(unsigned long long)high_meta,(unsigned long long)high_namespace);
   arc_riscpc_boot_free(b);
   current_phase = ARC_RPC_BOOT_DONE;
   ArcRpcHdReceipt original_receipt;

@@ -265,15 +265,15 @@ static void open_and_creation_faults(void)
 {
     fresh_files();silent_readdir=true;ArcRpcHdStore *s=open_store(true);idle(s);uint8_t p[512];fill(p,1,0x71);
     assert(arc_riscpc_hd_write(s,800,1,p));arc_riscpc_hd_close(s);snapshot();
-    reset_fault();s=open_store(false);unsigned operations=steps;arc_riscpc_hd_close(s);
-    for(unsigned mode=0;mode<3;++mode)for(unsigned at=1;at<=operations;++at){restore();silent_readdir=true;
+    reset_fault();s=open_store(false);unsigned operations=steps;select_callbacks(operations);arc_riscpc_hd_close(s);
+    for(unsigned mode=0;mode<3;++mode)for(unsigned at=1;at<=operations;++at){if(!callback_selected[at])continue;restore();silent_readdir=true;
         full_storage=mode==2;if(mode==1)kill_at=at;else fail_at=at;
         s=arc_riscpc_hd_open("/save",id,false,error,sizeof(error));if(!s)assert(error[0]);else arc_riscpc_hd_close(s);
         reset_fault();s=open_store(false);check_sector(s,800,0x71);bounds(s);arc_riscpc_hd_close(s);
     }
     printf("open matrix: %u invocations, all earlier acknowledgements retained\n",operations);fflush(stdout);
-    fresh_files();silent_readdir=true;snapshot();reset_fault();s=open_store(true);unsigned creation_steps=steps;arc_riscpc_hd_close(s);
-    for(unsigned mode=0;mode<3;++mode)for(unsigned at=1;at<=creation_steps;++at){restore();silent_readdir=true;
+    fresh_files();silent_readdir=true;snapshot();reset_fault();s=open_store(true);unsigned creation_steps=steps;select_callbacks(creation_steps);arc_riscpc_hd_close(s);
+    for(unsigned mode=0;mode<3;++mode)for(unsigned at=1;at<=creation_steps;++at){if(!callback_selected[at])continue;restore();silent_readdir=true;
         full_storage=mode==2;if(mode==1)kill_at=at;else fail_at=at;
         s=arc_riscpc_hd_open("/save",id,true,error,sizeof(error));if(!s)assert(error[0]);else arc_riscpc_hd_close(s);
         reset_fault();s=open_store(true);idle(s);uint8_t boot[512];assert(arc_riscpc_hd_read(s,6,1,boot)&&boot[3]==0x20);
@@ -340,9 +340,9 @@ static void population_fault_matrix(void)
 {
     fresh_files();ArcRpcHdStore *s=open_store(true);idle(s);uint8_t p[512];fill(p,1,0x73);
     assert(arc_riscpc_hd_write(s,70000,1,p));arc_riscpc_hd_close(s);snapshot();
-    s=open_store(false);reset_fault();assert(population_action(s));unsigned operations=steps;arc_riscpc_hd_close(s);
+    s=open_store(false);reset_fault();assert(population_action(s));unsigned operations=steps;select_callbacks(operations);arc_riscpc_hd_close(s);
     for(unsigned mode=0;mode<3;++mode)for(unsigned at=1;at<=operations;++at){
-        restore();silent_readdir=true;s=open_store(false);reset_fault();full_storage=mode==2;if(mode==1)kill_at=at;else fail_at=at;
+        if(!callback_selected[at])continue;restore();silent_readdir=true;s=open_store(false);reset_fault();full_storage=mode==2;if(mode==1)kill_at=at;else fail_at=at;
         bool published=population_action(s);if(!published)arc_riscpc_hd_population_abort(s);
         arc_riscpc_hd_close(s);reset_fault();s=open_store(false);idle(s);check_sector(s,70000,0x73);
         ArcRpcHdStats a;arc_riscpc_hd_stats(s,&a);unsigned value=a.generation?0x42:0;
@@ -365,9 +365,9 @@ static void checkpoint_fault_matrix(void)
     fresh_files();ArcRpcHdStore *s=open_store(true);idle(s);uint8_t p[131072];fill(p,256,0x65);
     for(unsigned i=0;i<9;++i)assert(arc_riscpc_hd_write(s,2048+i*512,256,p));
     arc_riscpc_hd_close(s);snapshot();s=open_store(false);reset_fault();idle(s);
-    unsigned operations=steps;arc_riscpc_hd_close(s);
+    unsigned operations=steps;select_callbacks(operations);arc_riscpc_hd_close(s);
     for(unsigned mode=0;mode<3;++mode)for(unsigned at=1;at<=operations;++at){
-        restore();silent_readdir=true;s=open_store(false);reset_fault();full_storage=mode==2;if(mode==1)kill_at=at;else fail_at=at;
+        if(!callback_selected[at])continue;restore();silent_readdir=true;s=open_store(false);reset_fault();full_storage=mode==2;if(mode==1)kill_at=at;else fail_at=at;
         ArcRpcHdStats a;for(unsigned t=0;t<100;++t){arc_riscpc_hd_tick(s);arc_riscpc_hd_stats(s,&a);if(killed||a.read_only||a.state==ARC_RPC_HD_IDLE)break;}
         if(a.read_only)assert(arc_riscpc_hd_notice(s));arc_riscpc_hd_close(s);reset_fault();
         s=open_store(false);idle(s);for(unsigned i=0;i<9;++i)check_sector(s,2048+i*512,0x65);
@@ -843,6 +843,6 @@ int main(int argc,char **argv)
     else if(argc>1&&!strcmp(argv[1],"binding"))binding_fault();
     else if(argc>1&&!strcmp(argv[1],"accounting"))bridge_accounting();
     else if(argc>1&&!strcmp(argv[1],"integrity"))phase_corruption_matrix();
-    else if(argc>1&&!strcmp(argv[1],"faults")){bridge_accounting();faults();binding_fault();trust_boundaries();pre_use_verification();phase_corruption_matrix();open_and_creation_faults();checkpoint_fault_matrix();population_fault_matrix();retirement(false);retirement(true);}else store();
+    else if(argc>1&&(!strcmp(argv[1],"faults")||!strcmp(argv[1],"faults-sanitizer"))){sanitizer_faults=!strcmp(argv[1],"faults-sanitizer");bridge_accounting();faults();binding_fault();trust_boundaries();pre_use_verification();phase_corruption_matrix();open_and_creation_faults();checkpoint_fault_matrix();population_fault_matrix();retirement(false);retirement(true);}else store();
     fresh_files();for(unsigned i=0;i<TEST_FILES;++i)free(baseline[i].data);return 0;
 }

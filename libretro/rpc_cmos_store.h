@@ -4,6 +4,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <stddef.h>
+#include "arc_io.h"
 #define ARC_RPC_CMOS_PROCEDURE_REVISION 3u
 /* Procedure-defined 2000-01-01 UTC; independent of content and plan RTC. */
 #define ARC_RPC_CMOS_GENERATION_EPOCH UINT64_C(946684800)
@@ -24,14 +25,38 @@ typedef struct {
     uint8_t mask[32];
 } ArcRpcCmosEvidence;
 typedef struct {
+    uint64_t operations, bytes, metadata, namespace_operations,
+        step_operations, step_bytes, step_metadata, step_namespace,
+        max_operations, max_bytes, max_metadata, max_namespace;
+} ArcRpcCmosStats;
+typedef struct {
     ArcRpcCmosKey key;
     char base[1024];
     uint64_t generation;
     uint8_t payload[240];
     bool present, refused, publication_pending;
     ArcRpcCmosEvidence evidence;
+    ArcRpcCmosStats stats;
+    struct retro_vfs_dir_handle *directory_handle;
+    char directory[1024];
+    uint8_t candidate[512], inspected[512];
+    unsigned phase, slot, attempts;
+    size_t path_cursor;
+    bool reconciled, exhausted, slot_found[2], destination_found, putting;
 } ArcRpcCmosStore;
-typedef enum { ARC_RPC_CMOS_REFUSED = -1, ARC_RPC_CMOS_MISSING, ARC_RPC_CMOS_FOUND } ArcRpcCmosResult;
+typedef enum { ARC_RPC_CMOS_UNAVAILABLE = -2, ARC_RPC_CMOS_REFUSED = -1,
+    ARC_RPC_CMOS_MISSING, ARC_RPC_CMOS_FOUND, ARC_RPC_CMOS_INSPECTING } ArcRpcCmosResult;
+/* Begin does no I/O. Step retries reported inspection errors at most 3 times.
+ * Payload is usable only after reconciliation, even if one slot was read. */
+ArcRpcCmosResult arc_riscpc_cmos_store_begin(ArcRpcCmosStore *, const char *,
+    const ArcRpcCmosKey *, char *, size_t);
+ArcRpcCmosResult arc_riscpc_cmos_store_step(ArcRpcCmosStore *, char *, size_t);
+bool arc_riscpc_cmos_store_put_begin(ArcRpcCmosStore *, const uint8_t[240],
+    const ArcRpcCmosEvidence *, char *, size_t);
+bool arc_riscpc_cmos_store_put_step(ArcRpcCmosStore *, bool *done, char *, size_t);
+void arc_riscpc_cmos_store_close(ArcRpcCmosStore *);
+/* A seed is admitted only after verified absence; never overwrites a record. */
+bool arc_riscpc_cmos_store_seed(ArcRpcCmosStore *, const uint8_t[240], char *, size_t);
 unsigned arc_riscpc_cmos_layout(const char *name);
 bool arc_riscpc_cmos_hex(const char *text, size_t length, char *out);
 bool arc_riscpc_cmos_checksum(const uint8_t payload[240]);

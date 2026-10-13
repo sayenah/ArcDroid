@@ -4,7 +4,7 @@ GPL-2.0-only. Every mutant must compile; only a failed observable check kills it
 Ninja supplies the current compiler/link flags, including sanitizer/platform flags.
 """
 from pathlib import Path
-import argparse,builtins,json,os,subprocess,sys,tempfile
+import argparse,builtins,json,os,re,subprocess,sys,tempfile
 sys.dont_write_bytecode=True
 from rpc_ninja_commands import split_command
 ROOT=Path(__file__).resolve().parent.parent
@@ -43,10 +43,17 @@ def compiler_commands(target):
 def mutated_binary(target,relative,old,new,directory,label):
     source=ROOT/relative;text=source.read_text()
     for before,after in ([(old,new)] if isinstance(old,str) else old):
-        assert before in text,(label,'missing recipe')
-        if label.startswith('S'):assert text.count(before)==1,(label,'ambiguous recipe')
-        # M23 changes both the allocation fast check and the full access check.
-        text=text.replace(before,after,1 if label=='V6a' else text.count(before))
+        # Store stepping changed formatting, not the mutation's semantics.
+        if before not in text and source.suffix in ('.c','.h'):
+            pattern=r'\s*'.join(re.escape(c) for c in before if not c.isspace())
+            matches=list(re.finditer(pattern,text));assert matches,(label,'missing recipe')
+            if label.startswith('S'):assert len(matches)==1,(label,'ambiguous recipe')
+            text=re.sub(pattern,lambda m:after,text,count=1 if label=='V6a' else 0)
+        else:
+            assert before in text,(label,'missing recipe')
+            if label.startswith('S'):assert text.count(before)==1,(label,'ambiguous recipe')
+            # M23 changes both the allocation fast check and the full access check.
+            text=text.replace(before,after,1 if label=='V6a' else text.count(before))
     mutated=directory/(label+'-'+source.name);mutated.write_text(text)
     if source.suffix=='.py':
         builtins.compile(text,str(mutated),'exec')
@@ -111,10 +118,10 @@ mutants=[
  ('V4',VIDEO,'unsigned bit = (byte_address & 3u) * 8u + (pixel & 3u) * 2u;','unsigned bit = (pixel & 3u) * 2u;',a.core,('video',)),
  ('V6a',VIDEO,'if (offset == 128u) { offset = 0; quad = next_quad(quad, &transfers); }','if (offset == 128u) { offset = 0; quad += 16u; }',a.core,('video',)),
  ('V9',VIDEO,'bool full = out && origin >= 0 && (unsigned)origin + width <= ARC_RPC_VIDEO_LIMIT;','bool full = out && origin >= 0;',a.core,('video',)),
- ('C05',STORE,'if(valid && slot<2 && (get((uint8_t *)bytes+24,8)&1)!=slot)valid=false;','',a.store,('store',)),
+ ('C05',STORE,'(get(s->inspected+24,8)&1)!=s->slot','false',a.store,('store',)),
  ('C07',STORE,'put(p+16,k->model+1,4);','put(p+16,1,4);',a.store,('store',)),
  ('C10',STORE,'}else for(unsigned i=344;i<508;++i)if(p[i])return false;','}',a.store,('store',)),
- ('C11',STORE,'if(!valid)return fail(error,n,"candidate readback verification failed");','',a.store,('store',)),
+ ('C11',STORE,'ok=read_record(s,tmp,s->inspected,&invalid)&&!invalid&&!memcmp(s->candidate,s->inspected,512);','ok=true;',a.store,('store',)),
  ('C14',STORE,'|| e->epoch>UINT64_C(13569465599) ','',a.store,('store',)),
  ('C01',STORE,'|| !arc_riscpc_cmos_checksum(p))return false;',')return false;',a.store,('store',)),
 ]
@@ -194,10 +201,10 @@ mutants += [
  ('M1-NO-CLOSE-ON-FAIL', HD, 'if(!ok){close_file(s,f,false);return failure(s,true);}',
   'if(!ok){return failure(s,true);}', a.hd, ('hd','handles')),
  ('Q04-CRC-ONLY', 'libretro/rpc_hd_store.c', 'ok=get(tail,4)==crc(s,out,ARC_RPC_HD_CHUNK)&&!memcmp(digest,e+16,32);', 'ok=get(tail,4)==crc(s,out,ARC_RPC_HD_CHUNK);', a.hd, ('hd','qa-integrity')),
- ('Q05-SEQ-GAP', 'libretro/rpc_hd_store.c', 'sequence==*last+1&&', 'sequence>*last&&', a.hd, ('hd','qa-integrity')),
+ ('Q05-SEQ-GAP', 'libretro/rpc_hd_store.c', 'sequence!=s->replay_last[slot]+1||', 'sequence<=s->replay_last[slot]||', a.hd, ('hd','qa-integrity')),
  ('Q11-PREFIX-DIGEST', 'libretro/rpc_hd_store.c', 'arc_sha256_final(&s->digest[parent],digest);if(memcmp(digest,h+160,32))return false;', '', a.hd, ('hd','qa-integrity')),
- ('Q12-CHUNK-GEN', 'libretro/rpc_hd_store.c', '||\n           (get(e,4)==1&&get(e+8,8)>get(m+88,8)))return false;', ')return false;', a.hd, ('hd','qa-integrity')),
- ('Q16-DEBRIS-PROBE', 'libretro/rpc_hd_store.c', 'char name[23];chunk_leaf(i,candidate,name);\n        if(size(s,name,&n)){if(!remove_leaf(s,name))return failure(s,false);untrack_chunk(s,name);}', 'char name[23];chunk_leaf(i,candidate,name);(void)name;', a.hd, ('hd','qa-integrity')),
+ ('Q12-CHUNK-GEN', 'libretro/rpc_hd_store.c', 'get(e,4)==1&&get(e+8,8)>get(m+88,8)', 'false', a.hd, ('hd','qa-integrity')),
+ ('Q16-DEBRIS-PROBE', 'libretro/rpc_hd_store.c', 'if(!remove_leaf(s,leaf))return open_failure(s,ARC_RPC_HD_UNAVAILABLE);untrack_chunk(s,leaf);', 'untrack_chunk(s,leaf);', a.hd, ('hd','qa-integrity')),
  ('I08-RESET-GATE', 'engine/rpcemu/src/ide.c', 'if(!master()||(ide.control&4))return;', 'if(!master())return;', a.ide, ('ide',)),
  ('I09-WRITE-IRQ', 'engine/rpcemu/src/ide.c', 'ide.active=ide.writing=false;ide.status=READY;\n            }else{ide.position=0;ide.status=READY|DRQ;}', 'ide.active=ide.writing=false;ide.status=READY;return;\n            }else{ide.position=0;ide.status=READY|DRQ;}', a.ide, ('ide',)),
  ('I10-CHS-SECTOR0', 'engine/rpcemu/src/ide.c', 'if(!ide.sector||ide.sector>ide.spt||', 'if(ide.sector>ide.spt||', a.ide, ('ide',)),
@@ -242,7 +249,7 @@ mutants += [
  ('S18-retire-skip-binding',HD,'if(get(bound+96,8)!=s->jgeneration[s->parent]||get(bound+152,8)!=s->lengths[s->parent]||memcmp(bound+160,digest,32))return failure(s,true);','(void)bound;',a.hd,('hd', 'steps')),
  ('S19-retire-skip-header-compare',HD,'if(!read_header(s,s->current,h)||memcmp(h,s->headers[s->current],256))return false;','if(!read_header(s,s->current,h))return false;',a.hd,('hd', 'steps')),
  ('S20-zero-alt-no-remove',HD,'if(size(s,leaf,&n)){if(!remove_leaf(s,leaf))return false;untrack_chunk(s,leaf);}\n            if(s->refused)return false;memset(e,0,48);materialized(s);return true;','if(s->refused)return false;memset(e,0,48);materialized(s);return true;',a.hd,('hd', 'steps')),
- ('S21-materialize-uses-live-index',HD,'if(!reconstruct_into(s,s->manifests[s->selected],i,s->frozen,s->checkpoint))return false;','if(!reconstruct_into(s,s->manifests[s->selected],i,s->live,s->checkpoint))return false;',a.hd,('hd',)),
+ ('S21-materialize-uses-live-index',HD,'reconstruction_step(s,s->manifests[s->selected],i,s->frozen,s->checkpoint,&done)','reconstruction_step(s,s->manifests[s->selected],i,s->live,s->checkpoint,&done)',a.hd,('hd',)),
  ('S22-retire-skip-gc',HD,'if(!s->gc_done){s->state=ARC_RPC_HD_GC;s->gc_at=0;s->phase_step=0;return true;}','',a.hd,('hd', 'steps')),
  ('S23-reconstruct-fail-no-close',HD,'if(!ok){close_file(s,f,false);return failure(s,true);}','if(!ok){return failure(s,true);}',a.hd,('hd', 'handles')),
 ]

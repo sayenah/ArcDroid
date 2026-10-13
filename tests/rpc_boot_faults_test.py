@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Population/receipt faults and fresh process termination. GPL-2.0-only.
 
-Full keeps all 2,692 population and 144 append/checkpoint cuts, the exhaustive
+Full keeps every population and append/checkpoint cut, the exhaustive
 two-rotation matrix, and the original recovery cuts in both modes. Sanitizer
 uses the fixed selection rule and ordinals in rpc_boot_faults_profile.json:
 each store-state/substep/file-kind/callback/before-or-after class once across
@@ -21,6 +21,7 @@ import subprocess
 import tempfile
 # The authored fixture module is the only input; private inventories are absent.
 from rpc_boot_packages_test import inputs, run, compare, require
+from rpc_fault_profile import checked
 
 parser=argparse.ArgumentParser()
 parser.add_argument('binary')
@@ -33,8 +34,9 @@ def cuts_for(name, result):
     rows=[(int(n),key) for n,key in re.findall(r'^boundary=(\d+) (.+)$',result.stdout,re.M)]
     count=int(re.findall(r'^points=(\d+)$',result.stdout,re.M)[-1])
     fixed=profiles[name]
-    require(count==fixed['total'] and [n for n,_ in rows]==list(range(1,count+1)),
-            f'{name}: injection trace/count changed; review the fixed profile')
+    require(count==len(rows),f'{name}: raw trace/count changed')
+    rows,to_raw,prefix=checked(rows,fixed)
+    count=len(rows)
     selected={int(n):key for n,key in fixed['points'].items()}
     observed=dict(rows)
     require(all(observed.get(n)==key for n,key in selected.items()),
@@ -80,6 +82,15 @@ def cuts_for(name, result):
     else:
         cuts=sorted(selected) if name.startswith('recovery-') else range(1,count+1)
         modes={'fault':cuts,'kill':cuts}
+    modes={mode:[to_raw[n] for n in ordinals] for mode,ordinals in modes.items()}
+    # Prefix stat counts depend on native path depth. Preserve injection of
+    # both sides while pinning the remaining operation graph exactly.
+    for mode,side in (('fault','before'),('kill','after')):
+        candidates=[(n,key) for n,key in prefix if key.endswith('/'+side)]
+        if args.profile=='sanitizer':
+            seen=set();candidates=[(n,key) for n,key in candidates if not (key in seen or seen.add(key))]
+        modes[mode].extend(n for n,_ in candidates)
+        modes[mode].sort()
     print(f'rpc-boot profile={args.profile} scenario={name} cuts={len(cuts)}/{count} '
           f'classes={len(set(observed.values()))} points='+','.join(map(str,cuts)),flush=True)
     return modes
@@ -140,7 +151,8 @@ with tempfile.TemporaryDirectory(prefix='arcdroid-boot-faults-') as temp:
                 shutil.rmtree(save)
             exercise(checkpoint_cuts[mode.rsplit('-',1)[-1]],checkpoint_case)
             print(f'rpc-boot-{mode}: {len(checkpoint_cuts[mode.rsplit('-',1)[-1]])} guest-write, rotation, publication, retirement and cleanup points pass',flush=True)
-    for scenario,seed_cut in (('recovery-chunk',33),('recovery-seal',2667)):
+    for scenario in ('recovery-chunk','recovery-seal'):
+        seed_cut=profiles[scenario]['seed_cut']
         seed=root/scenario;seed.mkdir()
         result=inject(system,seed,'kill',seed_cut)
         require(result.returncode in (-9,77),f'{scenario}: seed did not terminate')

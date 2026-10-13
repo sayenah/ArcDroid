@@ -343,7 +343,7 @@ bool arc_test_plan_load(const char *path, const char *system, const char *save, 
     bool factory = values[4] && !strcmp(values[4], "factory");
     bool persist=values[0] && !strcmp(values[0],"2") && values[4] && !strcmp(values[4],"persist");
     ArcRpcCmosKey key={0};key.model=model;key.layout=arc_riscpc_cmos_layout(values[9]);
-    bool version=persist?values[8] && arc_riscpc_cmos_hex(values[8],40,key.content) && key.layout && !values[5] && save && *save:
+    bool version=persist?values[8] && arc_riscpc_cmos_hex(values[8],40,key.content) && key.layout && save && *save:
         values[0] && !strcmp(values[0],"1") && !values[8] && !values[9] && !values[10] && !values[11] && !values[12] && !values[13] && !values[14] && !values[15];
     valid = valid && version && model < 4 && values[3] &&
         values[4] && (persist || factory || !strcmp(values[4], "seed")) &&
@@ -352,7 +352,7 @@ bool arc_test_plan_load(const char *path, const char *system, const char *save, 
         (!values[2] || (number(values[2], 100, &rate) && rate));
     char firmware[PATH_LIMIT], seed_path[PATH_LIMIT], input_path[PATH_LIMIT];
     if (valid) valid = resolve(values[3], system, firmware) &&
-        (persist || factory || resolve(values[5], system, seed_path)) &&
+        ((persist && !values[5]) || factory || resolve(values[5], system, seed_path)) &&
         (!values[7] || (resolve(values[7], system, input_path) && script_load(input_path)));
     if(valid && persist){char disks[PATH_LIMIT];valid=(!values[10]||resolve(values[10],system,media_content)) &&
         (!values[11]||resolve(values[11],system,media_helper)) &&
@@ -376,15 +376,20 @@ bool arc_test_plan_load(const char *path, const char *system, const char *save, 
         arc_sha256_hex(rom,rom_size,key.firmware);
         ArcRpcCmosResult found=arc_riscpc_cmos_store_load(&record,save,&key,error,error_size);
         if(error&&*error && plan_notice){plan_notice(error,true);refusal_reported=record.refused;}
-        valid=found!=ARC_RPC_CMOS_REFUSED;
+        valid=found==ARC_RPC_CMOS_FOUND||found==ARC_RPC_CMOS_MISSING;
         if(valid){
             pending_rom=rom;rom=NULL;pending_size=rom_size;pending_model=model;pending_rate=(unsigned)rate;pending_epoch=epoch;
             if(found==ARC_RPC_CMOS_FOUND)valid=requested_start(error,error_size,false);
-            else {
+            else if(values[5]){
+                valid=arc_io_read_all_limit(seed_path,&seed,&seed_size,256,NULL)&&seed_size==256;
+                if(valid)valid=arc_riscpc_cmos_store_seed(&record,(uint8_t *)seed+16,error,error_size);
+                else fail(error,error_size,"RPC CMOS seed is unavailable or has the wrong size");
+                if(valid)valid=requested_start(error,error_size,false);
+            }else {
                 key.defaults=true;key.procedure=ARC_RPC_CMOS_PROCEDURE_REVISION;key.timing=ARC_RPC_CMOS_TIMING_REVISION;
                 found=arc_riscpc_cmos_store_load(&defaults,save,&key,error,error_size);
                 if(error&&*error && plan_notice)plan_notice(error,true);
-                valid=found!=ARC_RPC_CMOS_REFUSED;
+                valid=found==ARC_RPC_CMOS_FOUND||found==ARC_RPC_CMOS_MISSING;
                 if(valid && found==ARC_RPC_CMOS_FOUND){valid=arc_riscpc_cmos_store_put(&record,defaults.payload,NULL,error,error_size);if(valid)valid=requested_start(error,error_size,false);}
                 else if(valid){
                     valid=arc_engine_test_plan_start(model,0,true,pending_rom,pending_size,NULL,ARC_RPC_CMOS_GENERATION_EPOCH,error,error_size);
