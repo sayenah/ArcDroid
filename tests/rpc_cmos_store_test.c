@@ -8,9 +8,10 @@
 typedef struct { char path[1200];uint8_t bytes[1024];size_t size;bool exists; } File;
 static File files[64], baseline[64];
 struct retro_vfs_file_handle { unsigned slot;bool used,write,read;size_t cached_size; };
-struct retro_vfs_dir_handle { unsigned at,current; };
+struct retro_vfs_dir_handle { unsigned at,current,unrelated; };
 static struct retro_vfs_file_handle handles[16];
 static struct retro_vfs_dir_handle directory;
+static unsigned unrelated_entries,listed_entries;
 static unsigned step,fail_step,kill_step,write_open_step;static unsigned listing_failures;static bool unreadable;static bool corrupt_readback;static bool killed;
 /* A simulated kill stops every subsequent VFS operation; restart below uses
  * only persistent bytes and a new store, never the interrupted store state. */
@@ -41,8 +42,8 @@ static int32_t stat_file(const char *p,int32_t *n)
 { if(!before())return 0;int i=index_of(p,false);if(i>=0){if(n)*n=(int32_t)files[i].size;after();return RETRO_VFS_STAT_IS_VALID;}after();return RETRO_VFS_STAT_IS_VALID|RETRO_VFS_STAT_IS_DIRECTORY; }
 static int mkdir_file(const char *p){(void)p;if(!before())return -1;after();return 0;}
 static struct retro_vfs_dir_handle *opendir_file(const char *p,bool hidden){(void)p;(void)hidden;if(!before())return NULL;if(listing_failures){--listing_failures;return NULL;}memset(&directory,0,sizeof(directory));after();return &directory;}
-static bool readdir_file(struct retro_vfs_dir_handle *d){if(!before())return false;while(d->at<64){unsigned i=d->at++;if(files[i].exists){d->current=i;after();return true;}}after();return false;}
-static const char *name_file(struct retro_vfs_dir_handle *d){if(!before())return NULL;const char *name=strrchr(files[d->current].path,'/')+1;after();return name;}
+static bool readdir_file(struct retro_vfs_dir_handle *d){if(!before())return false;if(d->unrelated<unrelated_entries){++d->unrelated;++listed_entries;d->current=64;after();return true;}while(d->at<64){unsigned i=d->at++;if(files[i].exists){d->current=i;after();return true;}}after();return false;}
+static const char *name_file(struct retro_vfs_dir_handle *d){if(!before())return NULL;static char filler[32];if(d->current==64){snprintf(filler,sizeof(filler),"unrelated%u",d->unrelated);after();return filler;}const char *name=strrchr(files[d->current].path,'/')+1;after();return name;}
 static bool isdir_file(struct retro_vfs_dir_handle *d){(void)d;if(!before())return true;after();return false;}
 static int closedir_file(struct retro_vfs_dir_handle *d){(void)d;if(!before())return -1;after();return 0;}
 static struct retro_vfs_interface vfs={.open=open_file,.close=close_file,.size=size_file,.read=read_file,.write=write_file,.flush=flush_file,.remove=remove_file,.rename=rename_file,.stat=stat_file,.mkdir=mkdir_file,.opendir=opendir_file,.readdir=readdir_file,.dirent_get_name=name_file,.dirent_is_dir=isdir_file,.closedir=closedir_file};
@@ -201,5 +202,29 @@ int main(void)
     assert(interrupted&&t.refused&&t.reconciled&&t.generation==1&&state==ARC_RPC_CMOS_FOUND);
     assert(!arc_riscpc_cmos_store_seed(&t,q,error,sizeof(error)));
     assert(!arc_riscpc_cmos_store_put(&t,p,NULL,error,sizeof(error)));
+    /* LOW-2: more than 4096 unrelated records precede both canonical slots.
+     * Stop advisory enumeration, then inspect the fixed paths independently. */
+    memcpy(files,baseline,sizeof(files));fresh();
+    unrelated_entries=5000;listed_entries=0;
+    state=arc_riscpc_cmos_store_begin(&t,"/save",&key,error,sizeof(error));
+    unsigned ticks=0;
+    while(state==ARC_RPC_CMOS_INSPECTING){
+        assert(++ticks<4200);unsigned ops=step;
+        state=arc_riscpc_cmos_store_step(&t,error,sizeof(error));
+        assert(step-ops<=4 && t.stats.step_operations==step-ops);
+        assert(t.stats.step_namespace<=1 && t.stats.step_bytes<=512);
+    }
+    assert(listed_entries==4096 && !t.attempts && state==ARC_RPC_CMOS_FOUND);
+    assert(t.generation==2 && !memcmp(t.payload,q,240) && !t.refused);
+    ArcRpcCmosKey absent=key;absent.content[0]='c';listed_entries=0;
+    assert(arc_riscpc_cmos_store_load(&t,"/save",&absent,error,sizeof(error))==ARC_RPC_CMOS_MISSING);
+    assert(listed_entries==4096 && !t.attempts);
+    files[corrupt].bytes[104]^=1;
+    assert(arc_riscpc_cmos_store_load(&t,"/save",&key,error,sizeof(error))==ARC_RPC_CMOS_FOUND && t.refused);
+    assert(!arc_riscpc_cmos_store_seed(&t,p,error,sizeof(error)));
+    unreadable=true;
+    assert(arc_riscpc_cmos_store_load(&t,"/save",&key,error,sizeof(error))==ARC_RPC_CMOS_UNAVAILABLE);
+    assert(!arc_riscpc_cmos_store_seed(&t,p,error,sizeof(error)));
+    unreadable=false;unrelated_entries=0;
     puts("RPC CMOS: byte integrity, keys, fallback/refusal, all publication failures and simulated kills, oracle and revisions passed");return 0;
 }

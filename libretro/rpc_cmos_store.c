@@ -249,11 +249,12 @@ ArcRpcCmosResult arc_riscpc_cmos_store_step(ArcRpcCmosStore *s, char *e,
         int r = arc_io_read_directory(s->directory_handle, &name, &regular,
                                       &s->stats.operations);
         s->stats.metadata += s->stats.operations - before;
-        if (r < 0 || ++s->slot > 4096) {
+        if (r < 0) {
             retry(s, e, n);
             break;
         }
-        if (!r) {
+        if (!r || ++s->slot >= 4096) {
+            /* Listing is advisory. Its cap never proves inspection failure. */
             s->phase = 3;
             break;
         }

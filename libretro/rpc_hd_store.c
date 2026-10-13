@@ -27,6 +27,9 @@ extern void arc_riscpc_hd_test_point(unsigned boundary);
 #define RECEIPT_AT 24320u
 #define CHUNK_BYTES (ARC_RPC_HD_CHUNK + 132u)
 #define RECORD_MAX 131168u
+/* Unknown envelopes share the existing scratch record; no new allocation. */
+#define ENVELOPE_MAX RECORD_MAX
+#define ENVELOPE_MIN 60u
 #define RECORDS_MAX ((ARC_RPC_HD_JOURNAL_CAP - 512u) / 608u)
 #define SLOT_BIT UINT32_C(0x80000000)
 #define OFFSET_MASK UINT32_C(0x7fffffff)
@@ -734,19 +737,21 @@ static bool open_failure(ArcRpcHdStore *s, ArcRpcHdOutcome outcome) {
  * interpreted. */
 static ArcRpcHdOutcome manifest_outcome(ArcRpcHdStore *s, const uint8_t *m,
                                         size_t n, unsigned slot) {
+    if (n < 8)
+        return ARC_RPC_HD_CORRUPT;
     if (memcmp(m, "ARCRHDM1", 8))
         return ARC_RPC_HD_UNSUPPORTED;
-    if (n != get(m + 12, 4) || memcmp(m + 16, s->content, 40) ||
+    if (n < ENVELOPE_MIN || n != get(m + 12, 4) || memcmp(m + 16, s->content, 40) ||
         get(m + n - 4, 4) != crc(s, m, n - 4))
         return ARC_RPC_HD_CORRUPT;
     unsigned revision = (unsigned)get(m + 8, 4);
-    if (revision != 1 && revision != 2)
+    if ((revision != 1 && revision != 2) || n != manifest_length(m))
         return ARC_RPC_HD_UNSUPPORTED;
-    if (n != manifest_length(m) || !geometry_valid(m + 64) ||
-        !zero(m + 112, 16) || get(m + 88, 8) % 2 != slot)
-        return ARC_RPC_HD_CORRUPT;
     if (get(m + 56, 4) != 1 || get(m + 60, 4) != 1)
         return ARC_RPC_HD_UNSUPPORTED;
+    if (!geometry_valid(m + 64) || !zero(m + 112, 16) ||
+        get(m + 88, 8) % 2 != slot)
+        return ARC_RPC_HD_CORRUPT;
     /* Validate the entry framing before classifying a future receipt. */
     for (unsigned i = 0; i < 504; ++i) {
         const uint8_t *e = entry((uint8_t *)m, i);
@@ -765,6 +770,16 @@ static ArcRpcHdOutcome manifest_outcome(ArcRpcHdStore *s, const uint8_t *m,
             return ARC_RPC_HD_CORRUPT;
     }
     return ARC_RPC_HD_OPEN_PENDING;
+}
+static bool recovered_read_only(ArcRpcHdStore *s) {
+    failure(s, false);
+    s->outcome = get(s->manifests[s->selected] + 8, 4) == 2
+                     ? ARC_RPC_HD_RECEIPTED : ARC_RPC_HD_LEGACY;
+    s->stats.open_bytes = s->stats.bytes_read + s->stats.bytes_written;
+    s->stats.open_operations = s->stats.operations;
+    s->notice = "An interrupted hard-disc write was recovered; the "
+                "hard disc is read-only.";
+    return true;
 }
 static void step_start(ArcRpcHdStore *s, ArcRpcHdStats *before) {
     *before = s->stats;
@@ -918,24 +933,23 @@ static bool recover_step(ArcRpcHdStore *s) {
     case 4:
         manifest_leaf(s->open_at, leaf);
         if (size(s, leaf, &n)) {
-            if (n != MANIFEST_BYTES && n != MANIFEST_V1_BYTES) {
+            if (n > ENVELOPE_MAX) {
                 ArcIoFile *f = open_leaf(s, leaf, false, false);
                 if (!f)
                     return open_failure(s, ARC_RPC_HD_UNAVAILABLE);
                 uint8_t magic[8];
-                bool ok = n >= 8 && read_file(s, f, magic, 8);
+                bool ok = read_file(s, f, magic, 8);
                 bool closed = close_file(s, f, ok);
-                if (!closed || (n>=8 && !ok))
+                if (!ok || !closed)
                     return open_failure(s, ARC_RPC_HD_UNAVAILABLE);
-                return open_failure(s, (!ok || !memcmp(magic, "ARCRHDM1", 8))
-                                           ? ARC_RPC_HD_CORRUPT
-                                           : ARC_RPC_HD_UNSUPPORTED);
+                /* Larger envelopes cannot be interpreted within this bound. */
+                return open_failure(s, ARC_RPC_HD_UNSUPPORTED);
             }
-
-            if (!read_leaf(s, leaf, s->manifests[s->open_at], n))
+            uint8_t *m = (n == MANIFEST_BYTES || n == MANIFEST_V1_BYTES)
+                             ? s->manifests[s->open_at] : s->record;
+            if (!read_leaf(s, leaf, m, n))
                 return open_failure(s, ARC_RPC_HD_UNAVAILABLE);
-            ArcRpcHdOutcome outcome =
-                manifest_outcome(s, s->manifests[s->open_at], n, s->open_at);
+            ArcRpcHdOutcome outcome = manifest_outcome(s, m, n, s->open_at);
             if (outcome != ARC_RPC_HD_OPEN_PENDING)
                 return open_failure(s, outcome);
             s->present[s->open_at] = true;
@@ -967,33 +981,55 @@ static bool recover_step(ArcRpcHdStore *s) {
         journal_leaf(i, leaf);
         if (size(s, leaf, &n)) {
             if (n < 256) {
+                if(n){
+                    if(!read_leaf(s,leaf,s->headers[i],n))return open_failure(s,ARC_RPC_HD_UNAVAILABLE);
+                    uint8_t *h=s->headers[i];
+                    if(memcmp(h,"ARCRHDJ1",n<8?n:8))return open_failure(s,ARC_RPC_HD_UNSUPPORTED);
+                    size_t header_bytes=n>=16?(size_t)get(h+12,4):0;
+                    if(n>=ENVELOPE_MIN && header_bytes>=ENVELOPE_MIN && header_bytes<=n){
+                        if(memcmp(h+16,s->content,40)||get(h+header_bytes-4,4)!=crc(s,h,header_bytes-4))
+                            return open_failure(s,ARC_RPC_HD_CORRUPT);
+                        return open_failure(s,ARC_RPC_HD_UNSUPPORTED);
+                    }
+                    if(n>=16&&header_bytes!=256)return open_failure(s,ARC_RPC_HD_CORRUPT);
+                    if(n>=56&&memcmp(h+16,s->content,40))return open_failure(s,ARC_RPC_HD_CORRUPT);
+                    if(n>=12&&get(h+8,4)!=1)return open_failure(s,ARC_RPC_HD_UNSUPPORTED);
+                }
                 for (unsigned m = 0; m < 2; ++m)
                     if (s->present[m] &&
                         (get(s->manifests[m] + 96, 8) & 1) == i)
                         return open_failure(s, ARC_RPC_HD_CORRUPT);
-                if(n){
-                    if(!read_leaf(s,leaf,s->headers[i],n))return open_failure(s,ARC_RPC_HD_UNAVAILABLE);
-                    if(memcmp(s->headers[i],"ARCRHDJ1",n<8?n:8))return open_failure(s,ARC_RPC_HD_UNSUPPORTED);
-                    if(n>=12&&get(s->headers[i]+8,4)!=1)return open_failure(s,ARC_RPC_HD_UNSUPPORTED);
-                    if(n>=16&&get(s->headers[i]+12,4)!=256)return open_failure(s,ARC_RPC_HD_CORRUPT);
-                    if(n>=56&&memcmp(s->headers[i]+16,s->content,40))return open_failure(s,ARC_RPC_HD_CORRUPT);
-                }
                 s->partial[i] = true;
             } else {
-                if (n > ARC_RPC_HD_JOURNAL_CAP)
-                    return open_failure(s, ARC_RPC_HD_CORRUPT);
                 s->lengths[i] = (uint32_t)n;
-                if (!read_header(s, i, s->headers[i]))
+                ArcIoFile *f = open_leaf(s, leaf, false, false);
+                if (!f)
                     return open_failure(s, ARC_RPC_HD_UNAVAILABLE);
-                uint8_t *h = s->headers[i];
+                uint8_t *h = s->record;
+                bool ok = read_file(s, f, h, 256);
+                size_t header_bytes = ok ? (size_t)get(h + 12, 4) : 0;
+                if (ok && !memcmp(h, "ARCRHDJ1", 8) &&
+                    header_bytes >= ENVELOPE_MIN && header_bytes <= ENVELOPE_MAX &&
+                    header_bytes <= n && header_bytes > 256)
+                    ok = read_file(s, f, h + 256, header_bytes - 256);
+                bool closed = close_file(s, f, ok);
+                if (!ok || !closed)
+                    return open_failure(s, ARC_RPC_HD_UNAVAILABLE);
                 if (memcmp(h, "ARCRHDJ1", 8))
                     return open_failure(s, ARC_RPC_HD_UNSUPPORTED);
-                if (get(h + 12, 4) != 256 || memcmp(h + 16, s->content, 40) ||
-                    get(h + 252, 4) != crc(s, h, 252))
+                if (header_bytes < ENVELOPE_MIN || header_bytes > n ||
+                    memcmp(h + 16, s->content, 40))
                     return open_failure(s, ARC_RPC_HD_CORRUPT);
-                if (get(h + 8, 4) != 1 || get(h + 56, 4) != 1 ||
-                    get(h + 60, 4) != 1)
+                if (header_bytes > ENVELOPE_MAX)
                     return open_failure(s, ARC_RPC_HD_UNSUPPORTED);
+                if (get(h + header_bytes - 4, 4) != crc(s, h, header_bytes - 4))
+                    return open_failure(s, ARC_RPC_HD_CORRUPT);
+                if (get(h + 8, 4) != 1 || header_bytes != 256 ||
+                    get(h + 56, 4) != 1 || get(h + 60, 4) != 1)
+                    return open_failure(s, ARC_RPC_HD_UNSUPPORTED);
+                copy(s, s->headers[i], h, 256);
+                if (n > ARC_RPC_HD_JOURNAL_CAP)
+                    return open_failure(s, ARC_RPC_HD_CORRUPT);
                 if (!header_valid(s, h, i))
                     return open_failure(s, ARC_RPC_HD_CORRUPT);
                 s->jgeneration[i] = get(h + 88, 8);
@@ -1158,7 +1194,7 @@ static bool recover_step(ArcRpcHdStore *s) {
         journal_leaf(s->open_at, leaf);
         s->rotation_writer = open_leaf(s, leaf, true, false);
         if (!s->rotation_writer)
-            return open_failure(s, ARC_RPC_HD_UNAVAILABLE);
+            return recovered_read_only(s);
         s->open_phase = 14;
         return true;
     case 14: {
@@ -1171,13 +1207,7 @@ static bool recover_step(ArcRpcHdStore *s) {
         if (!ok || !closed) {
             /* The root and committed prefix already validated. An absent
              * or failing truncate prevents writes, not use of that view. */
-            failure(s,false);
-            s->outcome=get(s->manifests[s->selected]+8,4)==2?ARC_RPC_HD_RECEIPTED:ARC_RPC_HD_LEGACY;
-            s->stats.open_bytes=s->stats.bytes_read+s->stats.bytes_written;
-            s->stats.open_operations=s->stats.operations;
-            s->notice = "An interrupted hard-disc write was recovered; the "
-                        "hard disc is read-only.";
-            return true;
+            return recovered_read_only(s);
         }
         s->open_phase = 18;
         return true;

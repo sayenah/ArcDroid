@@ -2368,6 +2368,10 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
     set(RPC_BOOT_FAULTS_PROFILE sanitizer)
     set(RPC_BOOT_FAULTS_TIMEOUT 900)
   endif()
+  add_test(NAME rpc-boot-budget COMMAND "${Python3_EXECUTABLE}" -B
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_boot_budget_test.py" $<TARGET_FILE:rpc_boot_test>
+    "${RPC_BOOT_FAULTS_PROFILE}")
+  set_tests_properties(rpc-boot-budget PROPERTIES TIMEOUT 600)
   add_test(NAME rpc-boot-faults COMMAND "${Python3_EXECUTABLE}" -B
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_boot_faults_test.py" $<TARGET_FILE:rpc_boot_test>
     --profile "${RPC_BOOT_FAULTS_PROFILE}")

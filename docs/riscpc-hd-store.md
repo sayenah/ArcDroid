@@ -1146,3 +1146,27 @@ A verified torn-tail prefix remains legacy/receipted and readable when truncate
 is absent or fails, with a read-only notice. This is a write-capability failure,
 not a failed inspection of the already verified root. Unknown/unverified roots
 never expose a backend or a receipt.
+
+### R3b-2a run B classification and independent verification
+
+Manifest inspection authenticates any same-magic frame through 131,168 bytes
+(the existing record scratch capacity), using its length, content identity and
+trailing CRC before interpreting revisions. An authenticated unknown length or
+revision is unsupported. Journal headers use the same bound and ordering,
+including complete headers shorter than 256 bytes; only a supported header's
+geometry and journal contents are interpreted. An envelope above the inspection
+bound is opaque and refused as unsupported. Reported read/close failures remain
+unavailable. Supported encodings and per-step limits are unchanged.
+
+CMOS advisory enumeration stops at 4,096 entries and continues through both
+fixed-path probes; reaching that cap never consumes a retry. Torn-tail recovery
+with a verified committed prefix keeps the readable, read-only view and notice
+when either the writable open or truncate fails.
+
+The VFS test boundaries independently count requested transfer bytes (including
+failed attempts), callbacks, metadata and namespace attempts. Coverage includes
+a 240-file authored package with members through 1 MiB, a >5 MiB journal reopen,
+overlapping journal reconstruction and checkpoint writes, and cancellation
+before and after every publication step. The larger package's sanitizer profile
+executes the whole workload at quantum 8; the host profile compares owned bytes
+at 1, 8 and 32. The existing long fault profiles remain unchanged.

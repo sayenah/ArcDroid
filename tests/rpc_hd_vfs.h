@@ -11,8 +11,8 @@ static TestFile files[TEST_FILES],baseline[TEST_FILES];
 struct retro_vfs_file_handle {unsigned file;size_t at,cached_size;bool writable,readable,used;};
 struct retro_vfs_dir_handle {char path[1100];unsigned at,current;bool used;};
 static struct retro_vfs_file_handle handles[16];static struct retro_vfs_dir_handle directory;
-static bool silent_readdir,full_storage,case_folded;
-static uint64_t metadata_calls,namespace_calls;
+static bool silent_readdir,full_storage,case_folded,refuse_update_open,refuse_truncate;
+static uint64_t metadata_calls,namespace_calls,vfs_requested_bytes;
 static unsigned steps,fail_at,kill_at;static bool killed;static unsigned fault;
 static char directories[16][1100];static unsigned dir_count;
 static char baseline_directories[16][1100];static unsigned baseline_dir_count;
@@ -70,7 +70,7 @@ static bool before(unsigned kind)
  if(kind==1||kind==2||(kind>=7&&kind<=11))++metadata_calls;
  ++steps;if(steps<TEST_CALLBACK_CAP)callback_tags[steps]=callback_detail|kind;callback_detail=0;if(kill_at&&steps==kill_at)killed=true;return !killed&&!(steps==fail_at&&(fault==0||fault==kind));}
 static struct retro_vfs_file_handle *test_open(const char *p,unsigned mode,unsigned hint)
-{(void)hint;callback_file(p,0,(mode&2)&&!(mode&4));if((mode&2)&&!(mode&4))++namespace_calls;if(!before(1))return NULL;bool write=(mode&2)!=0,update=(mode&4)!=0;int i=find(p,write&&!update);if(i<0)return NULL;
+{(void)hint;callback_file(p,0,(mode&2)&&!(mode&4));if((mode&2)&&!(mode&4))++namespace_calls;if(!before(1)|| (refuse_update_open&&(mode&2)&&(mode&4)))return NULL;bool write=(mode&2)!=0,update=(mode&4)!=0;int i=find(p,write&&!update);if(i<0)return NULL;
  if(write&&!update)files[i].size=0;measure_files();for(unsigned h=0;h<16;++h)if(!handles[h].used){handles[h]=(struct retro_vfs_file_handle){(unsigned)i,0,files[i].size,write,(mode&1)!=0||(write&&update),true};return handles+h;}assert(0);return NULL;}
 static int test_close(struct retro_vfs_file_handle *f) {assert(f->used);callback_file(files[f->file].path,0,false);bool ok=before(2);f->used=false;return ok?0:-1;}
 static int64_t test_size(struct retro_vfs_file_handle *f) {callback_file(files[f->file].path,0,false);return before(3)?(int64_t)f->cached_size:-1;}
@@ -78,9 +78,9 @@ static int64_t test_tell(struct retro_vfs_file_handle *f) {callback_file(files[f
 static int64_t test_seek(struct retro_vfs_file_handle *f,int64_t at,int origin)
 {callback_file(files[f->file].path,0,false);if(!before(4))return -1;int64_t base=origin==0?0:origin==1?(int64_t)f->at:(int64_t)files[f->file].size;if(at< -base)return -1;f->at=(size_t)(base+at);return 0;}
 static int64_t test_read(struct retro_vfs_file_handle *f,void *p,uint64_t n)
-{callback_file(files[f->file].path,n,false);if(!before(5)||!f->readable)return -1;TestFile *file=files+f->file;if(f->at>file->size)return -1;if(n>file->size-f->at)n=file->size-f->at;memcpy(p,file->data+f->at,(size_t)n);f->at+=(size_t)n;return (int64_t)n;}
+{vfs_requested_bytes+=n;callback_file(files[f->file].path,n,false);if(!before(5)||!f->readable)return -1;TestFile *file=files+f->file;if(f->at>file->size)return -1;if(n>file->size-f->at)n=file->size-f->at;memcpy(p,file->data+f->at,(size_t)n);f->at+=(size_t)n;return (int64_t)n;}
 static int64_t test_write(struct retro_vfs_file_handle *f,const void *p,uint64_t n)
-{callback_file(files[f->file].path,n,false);bool ok=before(6);if(killed||!f->writable||(!ok&&full_storage))return -1;if(!ok)n=n?n/2:0;TestFile *file=files+f->file;size_t end=f->at+(size_t)n;
+{vfs_requested_bytes+=n;callback_file(files[f->file].path,n,false);bool ok=before(6);if(killed||!f->writable||(!ok&&full_storage))return -1;if(!ok)n=n?n/2:0;TestFile *file=files+f->file;size_t end=f->at+(size_t)n;
  if(end>file->capacity){size_t cap=end+4096;uint8_t *q=realloc(file->data,cap);assert(q);file->data=q;file->capacity=cap;}
  if(f->at>file->size)memset(file->data+file->size,0,f->at-file->size);memcpy(file->data+f->at,p,(size_t)n);f->at=end;if(end>file->size)file->size=end;if(end>f->cached_size)f->cached_size=end;measure_files();return (int64_t)n;}
 static int test_flush(struct retro_vfs_file_handle *f) {callback_file(files[f->file].path,0,false);return before(7)?0:-1;}
@@ -97,10 +97,10 @@ static const char *test_name(struct retro_vfs_dir_handle *d) {return before(14)?
 static bool test_isdir(struct retro_vfs_dir_handle *d) {(void)d;return !before(15);}
 static int test_closedir(struct retro_vfs_dir_handle *d) {assert(d->used);bool ok=before(16);d->used=false;return ok?0:-1;}
 static int64_t test_truncate(struct retro_vfs_file_handle *f,int64_t n)
-{callback_file(files[f->file].path,0,false);if(!before(17)||n<0||(uint64_t)n>files[f->file].size)return -1;files[f->file].size=f->cached_size=(size_t)n;return 0;}
+{callback_file(files[f->file].path,0,false);if(!before(17)||refuse_truncate||n<0||(uint64_t)n>files[f->file].size)return -1;files[f->file].size=f->cached_size=(size_t)n;return 0;}
 static struct retro_vfs_interface vfs={.open=test_open,.close=test_close,.size=test_size,.tell=test_tell,.seek=test_seek,.read=test_read,.write=test_write,.flush=test_flush,.remove=test_remove,.rename=test_rename,.stat=test_stat,.mkdir=test_mkdir,.opendir=test_opendir,.readdir=test_readdir,.dirent_get_name=test_name,.dirent_is_dir=test_isdir,.closedir=test_closedir,.truncate=test_truncate};
 static void reset_fault(void) {test_vfs_no_open_handles();steps=fail_at=kill_at=fault=0;killed=false;full_storage=false;}
-static void fresh_files(void) {for(unsigned i=0;i<TEST_FILES;++i){free(files[i].data);memset(files+i,0,sizeof(*files));}physical_high=temp_high=physical_chunks_high=0;dir_count=0;silent_readdir=case_folded=false;test_mkdir("/save");reset_fault();arc_io_set_vfs(&vfs);}
+static void fresh_files(void) {for(unsigned i=0;i<TEST_FILES;++i){free(files[i].data);memset(files+i,0,sizeof(*files));}physical_high=temp_high=physical_chunks_high=0;dir_count=0;silent_readdir=case_folded=refuse_update_open=refuse_truncate=false;test_mkdir("/save");reset_fault();arc_io_set_vfs(&vfs);}
 static void snapshot(void)
 {baseline_dir_count=dir_count;memcpy(baseline_directories,directories,sizeof(directories));
  for(unsigned i=0;i<TEST_FILES;++i){free(baseline[i].data);baseline[i]=files[i];baseline[i].data=NULL;baseline[i].capacity=baseline[i].size;
