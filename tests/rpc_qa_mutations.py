@@ -265,6 +265,8 @@ mutants += [
  ('C5-boundary-ge',CHECKER,'if total * divisor > period:','if total * divisor >= period:',str(ROOT/CHECKER),('cost',)),
  ('C6-no-substep-check',CHECKER,"assert phase in steps and substep in steps[phase], 'unknown maintenance substep'",'pass',str(ROOT/CHECKER),('cost',)),
  ('C7-phase-only-allowance',CHECKER,'divisor = 2 if namespace else 5',"divisor = 2 if phase in ('ROTATE','MATERIALIZE','MANIFEST','PUBLISH','RETIRE','GC') else 5",str(ROOT/CHECKER),('cost',)),
+ ('C8-offline-ordinary-live',CHECKER,'divisor = 2 if namespace else 5','divisor = 2 if namespace else 1.25',str(ROOT/CHECKER),('cost',)),
+ ('C9-offline-namespace-live',CHECKER,'divisor = 2 if namespace else 5','divisor = 1.25 if namespace else 5',str(ROOT/CHECKER),('cost',)),
 ]
 # Q19 is equivalent for representable media: raw has cylinders 0..79;
 # JFD has <=166 track sides. A physical C=255 is rejected before an ID

@@ -361,18 +361,18 @@ ArcRpcPreparationState arc_riscpc_preparation_frame(ArcRpcPreparation *p)
 {
     if(!p || p->state>=ARC_RPC_PREP_RUNNING)return p?p->state:ARC_RPC_PREP_CANCELLED;
     uint64_t start_ns=p->host.clock(p->host.opaque),previous=start_ns,used=0,reserved=0;
-    bool generation=p->state==ARC_RPC_PREP_GENERATE,namespace_frame=false,faulty=false;
+    bool generation=p->state==ARC_RPC_PREP_GENERATE,faulty=false;
     p->stats.steps=p->stats.generation_quanta=p->stats.namespace_units=p->stats.attachment_units=0;p->stats.namespace_attempts=0;
     p->stats.attachment_operations=p->stats.attachment_bytes=p->stats.attachment_namespace=0;
-    p->stats.budget_ns=generation?ARC_RPC_GENERATION_BUDGET_NS:ARC_RPC_PREP_BUDGET_NS;
+    p->stats.budget_ns=generation?ARC_RPC_GENERATION_BUDGET_NS:ARC_RPC_PREP_OFFLINE_BUDGET_NS;
     refresh(p,true);
     while(p->state<ARC_RPC_PREP_RUNNING && p->stats.steps<ARC_RPC_PREP_STEPS){
         if((p->state==ARC_RPC_PREP_GENERATE)!=generation)break;
         bool ns=next_namespace(p),attachment=p->state==ARC_RPC_PREP_START && p->substep==2;
         bool advance=generation && p->substep==1;
         unsigned kind=advance?ARC_RPC_PREP_RUNNING:(unsigned)p->state;
-        uint64_t ceiling=advance?ARC_RPC_GENERATION_UNIT_NS:ns||attachment?ARC_RPC_PREP_NAMESPACE_NS:ARC_RPC_PREP_UNIT_NS;
-        uint64_t budget=generation?ARC_RPC_GENERATION_BUDGET_NS:ns||attachment||namespace_frame?ARC_RPC_PREP_NAMESPACE_NS:ARC_RPC_PREP_BUDGET_NS;
+        uint64_t ceiling=advance?ARC_RPC_GENERATION_UNIT_NS:ns||attachment?ARC_RPC_PREP_NAMESPACE_UNIT_NS:ARC_RPC_PREP_UNIT_NS;
+        uint64_t budget=generation?ARC_RPC_GENERATION_BUDGET_NS:ARC_RPC_PREP_OFFLINE_BUDGET_NS;
         uint64_t cost=attachment||faulty?ceiling:estimate(p,kind,ns,ceiling);
         /* The final frontend attachment is indivisible, may do several file
          * and namespace callbacks, and never shares a frame with other work. */
@@ -390,7 +390,7 @@ ArcRpcPreparationState arc_riscpc_preparation_frame(ArcRpcPreparation *p)
         uint64_t attempts=hd_after.namespace_operations-hd_before.namespace_operations+
             p->record.stats.namespace_operations+p->defaults.stats.namespace_operations-cmos_before;
         if(attachment){++p->stats.attachment_units;attempts+=p->stats.attachment_namespace;}
-        p->stats.namespace_attempts+=attempts;namespace_frame|=ns||attempts!=0;
+        p->stats.namespace_attempts+=attempts;
         p->stats.budget_ns=budget;
         uint64_t now=p->host.clock(p->host.opaque);
         if(now<previous){

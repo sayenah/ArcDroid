@@ -8,7 +8,7 @@
 static unsigned notices,terminal_notices,clears,attach_calls;
 static char last_notice[512];
 static uint64_t clock_value,clock_delta;
-static unsigned clock_mode,clock_reads;
+static unsigned clock_mode,clock_reads,all_clock_reads;
 static uint64_t frame_budget;
 static bool last_clear,attachment_io,attachment_fail,reopen_expected;
 static unsigned last_kind;
@@ -18,7 +18,7 @@ static ArcRpcSelectionOs test_os=ARC_RPC_OS_350;
 static const char *id="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 static uint64_t clock_read(void *opaque)
 {
-    (void)opaque;
+    (void)opaque;++all_clock_reads;
     if(clock_mode==1)return 0;
     if(clock_mode==2)return clock_value--;
     if(clock_mode==3){
@@ -119,15 +119,13 @@ static ArcRpcPreparation *new_request(const uint8_t *rom,size_t size,bool seed,
 static ArcRpcPreparationState frame(ArcRpcPreparation *p)
 {
     uint64_t ns=namespace_calls;ArcRpcPreparationState old=arc_riscpc_preparation_state(p);
-    clock_reads=0;frame_budget=old==ARC_RPC_PREP_GENERATE?ARC_RPC_GENERATION_BUDGET_NS:ARC_RPC_PREP_BUDGET_NS;
+    clock_reads=0;frame_budget=old==ARC_RPC_PREP_GENERATE?UINT64_C(66666664):UINT64_C(13333333);
     ArcRpcPreparationState state=arc_riscpc_preparation_frame(p);ArcRpcPreparationStats s;
     arc_riscpc_preparation_stats(p,&s);
     assert(s.steps<=ARC_RPC_PREP_STEPS);
     assert(s.namespace_attempts==namespace_calls-ns);
-    assert(s.reserved_ns<=(old==ARC_RPC_PREP_GENERATE?ARC_RPC_GENERATION_BUDGET_NS:
-                          s.namespace_units||s.attachment_units?ARC_RPC_PREP_NAMESPACE_NS:ARC_RPC_PREP_BUDGET_NS));
-    assert(s.budget_ns==(old==ARC_RPC_PREP_GENERATE?ARC_RPC_GENERATION_BUDGET_NS:
-                       s.namespace_units||s.attachment_units?ARC_RPC_PREP_NAMESPACE_NS:ARC_RPC_PREP_BUDGET_NS));
+    assert(s.reserved_ns<=frame_budget);
+    assert(s.budget_ns==frame_budget); /* Every offline kind gets 0.80 T. */
     assert(s.generation_quanta<=8);
     if(old==ARC_RPC_PREP_GENERATE && state==ARC_RPC_PREP_GENERATE && arc_engine_active()){
         ArcRpcCalendar actual,expected;uint8_t b[256],m[32];uint64_t w,l,now;unsigned capture;
@@ -191,16 +189,18 @@ static void scheduler_matrix(const uint8_t *rom,size_t size,ArcRpcPreparationHos
         unsigned mode=index==3?10:index==2?9:index+4;
         restore();clock_mode=mode;clock_value=0;attach_calls=terminal_notices=0;
         ArcRpcPreparation *p=new_request(rom,size,true,false,host);
-        unsigned max_steps=0,max_namespaces=0;
+        unsigned max_steps=0,max_namespaces=0;bool ordinary_above_old=false,namespace_above_old=false;
         for(unsigned i=0;arc_riscpc_preparation_state(p)<ARC_RPC_PREP_RUNNING;++i){
             assert(i<100000);frame(p);ArcRpcPreparationStats s;arc_riscpc_preparation_stats(p,&s);
             if(s.attachment_units)assert(s.steps==1 && s.attachment_operations==8 && s.attachment_bytes==10 && s.attachment_namespace==1);
             if(s.steps>max_steps)max_steps=s.steps;if(s.namespace_attempts>max_namespaces)max_namespaces=(unsigned)s.namespace_attempts;
+            if(!s.namespace_units && !s.attachment_units && s.elapsed_ns>UINT64_C(3333333))ordinary_above_old=true;
+            if(s.namespace_attempts && s.elapsed_ns>UINT64_C(8333333))namespace_above_old=true;
         }
         assert(arc_riscpc_preparation_state(p)==ARC_RPC_PREP_RUNNING);
         if(mode==4)assert(max_steps>=50 && max_namespaces>=2);
         else if(mode>=9)assert(max_steps>=50);
-        else assert(max_steps<=11); /* 0.75 ms, with a 0.50 T namespace frame */
+        else assert(max_steps==17 && ordinary_above_old && namespace_above_old); /* floor(13.333333 ms / 0.75 ms) */
         uint8_t hash[32];disk_hash(hash);if(mode==4)memcpy(gold,hash,32);else assert(!memcmp(gold,hash,32));
         finish(p);
     }
@@ -219,15 +219,22 @@ static void scheduler_matrix(const uint8_t *rom,size_t size,ArcRpcPreparationHos
     ArcRpcPreparation *p=new_request(rom,size,true,false,host);
     ArcRpcPreparationStats s;
     do{frame(p);arc_riscpc_preparation_stats(p,&s);}while(!s.namespace_units);
-    assert(s.namespace_units==2 && s.steps==2 && s.elapsed_ns==600000 && s.budget_ns==ARC_RPC_PREP_NAMESPACE_NS);
+    assert(s.namespace_units==2 && s.steps==2 && s.elapsed_ns==600000 && s.budget_ns==UINT64_C(13333333));
     arc_riscpc_preparation_cancel(p);finish(p);
-    /* The declared-cost fallback caps a stationary clock at three ordinary
+    /* The declared-cost fallback caps a stationary clock at thirteen ordinary
      * units. A backward clock admits at most the first indivisible unit. */
     for(unsigned mode=1;mode<=2;++mode){
         restore();clock_mode=mode;clock_value=1000000;
         p=new_request(rom,size,true,false,host);frame(p);arc_riscpc_preparation_stats(p,&s);
-        assert(s.steps==(mode==1?3u:1u));arc_riscpc_preparation_cancel(p);finish(p);
+        assert(s.steps==(mode==1?13u:1u));arc_riscpc_preparation_cancel(p);finish(p);
     }
+    restore();clock_mode=3;clock_value=0;
+    p=new_request(rom,size,true,false,host);
+    while(arc_riscpc_preparation_state(p)!=ARC_RPC_PREP_RECOVER)frame(p);
+    while(!arc_riscpc_preparation_disc(p))frame(p);
+    clock_mode=1;frame(p);arc_riscpc_preparation_stats(p,&s);
+    assert(s.namespace_units==1 && s.reserved_ns==UINT64_C(8333333)+(s.steps-1)*UINT64_C(1000000));
+    arc_riscpc_preparation_cancel(p);finish(p);
     restore();clock_mode=4;attachment_fail=true;terminal_notices=0;
     p=new_request(rom,size,true,false,host);settle(p);arc_riscpc_preparation_stats(p,&s);
     assert(arc_riscpc_preparation_state(p)==ARC_RPC_PREP_FAILED && terminal_notices==1 && s.attachment_operations==1 && !s.attachment_namespace && s.steps==1);
@@ -403,7 +410,9 @@ int main(int argc,char **argv)
         assert(now==0 && b[69]==5 && b[75]==2 && !(b[80]&0x10) && b[19]==0 && b[253]==9 && b[199]==0x95 && b[63]==0x51);
         ArcRpcHdStats before_tick,after_tick;
         arc_riscpc_hd_stats(arc_riscpc_preparation_disc(p),&before_tick);
+        unsigned reads=all_clock_reads;
         arc_riscpc_preparation_maintenance(p);
+        assert(all_clock_reads==reads); /* Live work never uses offline admission. */
         arc_riscpc_hd_stats(arc_riscpc_preparation_disc(p),&after_tick);
         assert(before_tick.state==ARC_RPC_HD_RETIRE && after_tick.phase_step==1);
         uint8_t hash[32];disk_hash(hash);if(!mode)memcpy(gold,hash,32);else assert(!memcmp(gold,hash,32));

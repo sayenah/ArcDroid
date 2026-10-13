@@ -1,4 +1,4 @@
-# RiscPC session preparation (D-168, D-170)
+# RiscPC session preparation (D-168, D-170, D-171, D-172)
 
 Written before implementation, against `d374114`. Shipping ordinary loads keep
 Arculator. The shipping-source module is dormant; plan v2 is its low-level client.
@@ -22,9 +22,13 @@ Later extraction/hash/readback/seal/rehash failure stops preparation but preserv
 completed CMOS publications. A receipt is creation provenance, not integrity of
 subsequent guest files.
 
-Run B applies the supplied D-171 ruling (its repository merge is pending).
-Preparation budgets remain 3,333,333 ns for ordinary frames and 8,333,333 ns
-for namespace frames. Admission uses elapsed time plus the recent maximum of
+Run C applies D-172 as supplied in the dispatch (its repository merge is pending),
+retaining D-171's measured admission. Offline preparation covers recovery,
+package validation, population and publication before the requested session;
+every unit kind, namespace and final attachment included, shares a 13,333,333 ns
+(0.80 T) frame budget. Generation has its separate allowance below. The remaining
+fifth of the offline frame is available for frontend presentation.
+Admission uses elapsed time plus the recent maximum of
 that unit kind's last sixteen costs, bounded by its declared ceiling. Cold
 estimates use the ceiling: ordinary 1,000,000 ns, namespace 8,333,333 ns.
 A namespace frame may contain several units; a unit making an actual namespace
@@ -32,11 +36,12 @@ attempt and exceeding its estimate ends the batch. Stat-only path checks do not
 end a batch as namespace spikes. Ordinary units update the estimate without wasting
 the remaining frame allowance. Advances also stop on an underestimated cost. CMOS and disc work share elapsed accounting across transitions.
 A stationary/backward clock cannot reduce an estimate: declared accumulated
-costs supply a conservative fallback cap (three ordinary units), while an
+costs supply a conservative fallback cap (thirteen ordinary units), while an
 absolute 4096-unit cap also bounds nearly stationary clocks. Equal readings
 after measured frame progress are timer quantization, not a backward clock;
-they preserve estimates rather than spuriously reserving all prior units. Raising that cap
-allows a healthy clock to meet D-171's fast preparation/reopen targets.
+they preserve estimates rather than spuriously reserving all prior units.
+D-172's Odin3 shared-storage targets replace D-171's: first use within 50 s,
+including generation, and a receipted reopen within 1 s, on all seven pairs.
 These measured admission limits still require Fable's whole-frame device
 qualification; D-169 permits isolated indivisible namespace spikes.
 Engine construction suspends after each owned allocation, at most 1 MiB RAM
@@ -63,7 +68,10 @@ quantum or host-dependent rate/deadline is introduced. Qualification of that
 measured advance estimate on all seven private pairs remains Fable's AC-6 evidence.
 Generation frames cannot combine with storage frames. Host time is used only
 here and in offline preparation; running maintenance is one deterministic HD
-tick and eager CMOS persistence per frontend call. The requested epoch is
+tick and eager CMOS persistence per frontend call. Live HD budgets remain
+0.20 T ordinarily, 0.50 T with a namespace attempt, and 0.20 T for acknowledgement;
+neither elapsed host time nor the offline allowance changes that schedule.
+The requested epoch is
 captured once in the request; requested counters and scripted input start only
 at START's successful transition, never during generation.
 
