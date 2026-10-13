@@ -1,7 +1,7 @@
 # ArcDroid Handoff
 
-**Stage:** R3b-2a awaits CI only: QA PASS WITH LOWS, then run B fixed all eight items, and the re-check is PASS WITH LOWS (R-1 and R-2 carried into R3b-2b). PR #390 head `2c4d161`, CI run 38380567305. The R3b-2b draft is with Astra.
-**Owner:** Fable (S62): merge R3b-2a under §12.11 once CI is green on all five jobs; adjudicate Astra on R3b-2b; dispatch Sol on R3b-2b after R3b-2a merges.
+**Stage:** R3b-2a awaits CI only: QA PASS WITH LOWS, then run B fixed all eight items, and the re-check is PASS WITH LOWS (R-1 and R-2 carried into R3b-2b). PR #390 head `2c4d161`, CI run 38380567305. The R3b-2b work order is final (D-170).
+**Owner:** Fable (S62): merge R3b-2a under §12.11 once CI is green on all five jobs; dispatch Sol on R3b-2b (D-170) once R3b-2a merges.
 **Next (S62):**
 1. **R3a: merged** as `d7a92ec` (PR #378). Follow-up Lows: the `recognize-os-range` mutant (inject an out-of-range entry or record it equivalent); two `resource_failure` asserts in `rpc_selection_test`; Python `assert` in the mutation script. To R3d: a skipped scan logs `inventory=skipped`.
 2. **R3b-1: merged** as `6ba7376` (PR #386, head `0a18209`) after Opus QA PASS WITH LOWS, a re-check PASS, green CI on all five jobs and Fable's AC-5. The record is in `docs/build-log.md`; the evidence is in `.work/s62/` (`ac5/`, `odin/`, `win/`, `qa-r3b1/`).
@@ -207,7 +207,17 @@
   - **AC-4 Evidence:** host and sanitizer suites within CI timeouts; MinGW and Android builds; guards; mutants on the outcome classification, the retry rules and the step budgets.
 - **Non-goals:** the preparation state machine, production engine operations and notices (R3b-2b).
 
-**R3b-2b — session orchestration (DRAFT, S62; awaiting Astra's stage 2 challenge).** Branch `slice/r3b2b-orchestration` from `main` once R3b-2a has merged.
+**R3b-2b — session orchestration (D-168 as refined by D-170, which incorporated Astra's stage 2; one slice).** Branch `slice/r3b2b-orchestration` from `main` once R3b-2a has merged.
+- **Binding refinements (D-170):**
+  1. **Validation pause:** the pause after ALLOCATE holds the offline candidate. Its ownership is defined, and later failures stop the requested session.
+  2. **Batch admission:** steps are admitted by their declared worst case. A namespace attempt ends the batch, and a hard step cap guards against a broken clock.
+  3. **Clock confinement:** host time drives batching only in preparation and generation. The RTC epoch and input start are anchored to the execution transition, and the clock is injectable.
+  4. **Generation:** a numeric host budget, with the smallest advance qualified on all seven pairs.
+  5. **Teardown:** separate rules for preparation reset, a running reset, unload and process termination.
+  6. **Engine scope:** media and helper attachment, low-level test modes preserved, and goldens compared against a pinned baseline.
+  7. **Notices:** shown from the first pending frame, with "without a creation receipt" wording and defined fallback cadence and expiry.
+
+  Where the text below differs, D-170 governs.
 - **Objective:** a shipping-source RiscPC session preparation. It turns an R3a selection into a running RPC session through production engine operations, advances in time-boxed steps on the frame loop, and shows long-lived notices. Production content loads still take today's route until R3d. The plan core becomes a thin client, and a harness built without the test flags drives the same module.
 - **Order (D-168(2)):**
   1. Firmware re-verification (size, CRC-32 and SHA-1, against the selected catalogue entry).
@@ -222,10 +232,10 @@
   - Generation advances several guest frames per host frame within a stated host budget, and keeps its fixed virtual-time capture.
   - Pending frames present black video and silence at normal AV timing and ignore player input.
 - **Notices:**
-  - Long-lived status notices: "Preparing RiscPC settings for first use (about 20 seconds)", then "Preparing the RiscPC hard disc".
+  - Long-lived status notices: from the first pending frame: checking the RiscPC hard disc, checking boot files, "Preparing RiscPC settings for first use", then "Preparing the RiscPC hard disc" (no time estimate unless revalidated, D-170(4)).
   - They clear on completion and are replaced by any terminal error, which wins precedence.
   - Frontends without long-lived messages get a periodic refresh.
-  - Terminal notices: missing or unverifiable firmware (naming the family and `<system>/arcdroid/firmware/`); missing or rejected boot files (naming `<system>/arcdroid/riscpc/boot/` and the cause); disc from a newer ArcDroid; damaged disc; disc unavailable; legacy disc without boot files.
+  - Terminal notices: missing or unverifiable firmware (naming the family and `<system>/arcdroid/firmware/`); missing or rejected boot files (naming `<system>/arcdroid/riscpc/boot/` and the cause); disc from a newer ArcDroid; damaged disc; disc unavailable; disc without a creation receipt (D-170(7)).
 - **Lifecycle (D-168(5)):**
   - **Reset** during preparation cancels any in-flight work and restarts preparation from the start. Completed CMOS publications and a completed disc publication are kept; a partial disc candidate is aborted and cleaned up within bounds.
   - **Unload** cancels and frees in every state.
