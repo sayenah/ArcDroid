@@ -1,298 +1,31 @@
 # ArcDroid Handoff
 
-**Stage:** QA — **R3b-2b** re-check of run D (`e997786`; QA N-1 to N-4), PR #395, branch head `50c94e9`.
-**Owner:** Opus (re-check, the same `arcdroid-opus-qa` agent). **Next for Opus:** review `git diff b088c04 e997786` against QA N-1 to N-4 (`.work/s62/qa-r3b2b/QA-REPORT.md`):
-- **N-1:** the Windows command lookup in `tests/rpc_orchestration_mutants.py`, now going through the shared Ninja parser;
-- **N-2:** offline headroom, per-kind POPULATE estimates, and margin tests and mutants;
-- **N-3:** the mid-frame stall fallback;
-- **N-4:** advisory notices stay timed, and only terminal errors persist.
+**Stage:** PLANNING — **R3c** (launch machinery and the RPC observer adapter, D-164). R3a, R3b-1, R3b-2a and R3b-2b are merged; R3b is complete.
+**Owner:** Fable (S63).
+**Next (S63):**
+1. **Plan R3c.** Its scope, from D-164: launch machinery and the RPC observer adapter (boot watch, launch outcome, error box, disc request), each qualified per firmware, gated independently, with manual input preserved.
+   - **Astra stage 1 (D-164; protocol §8):** run it on the objective and constraints only, without Fable's design: RPCEmu observer hooks (SWI entry, continuation and mode-transition events, safe virtual-memory peeks, controlled completion, controller-idle and virtual time), the existing Arculator observers (`engine/arc_error_box.c`, launch outcome, boot watch, disc request) and their firmware assumptions, D-090 (no per-game data), and the R3b-2b session module (`libretro/rpc_preparation.*`, `docs/riscpc-session-preparation.md`).
+   - **Then:** write the work order, get the Astra stage 2 challenge, and dispatch Sol (GPT-6.1 Sol).
+   - **Evidence available:** Fable's private seven-pair and 084 install harness (`.work/s62/ac5/leg.py`, `pairs2.sh`, `readq.py`, `hdexport.c`) and the Odin3 runner kit (`/data/local/tmp/arcdroid-r3b2b/`, `s62prep.sh`).
+2. **Before R3c or R3d reuse it:** add a guest-tolerant mode to the independent FileCore checker (QA R3b-1). It must accept the map disc-ID byte, Nick sequence bytes, stale bytes after a delete, and name padding. Fable's private relaxation is `.work/s62/ac5/cmptree.py`.
+3. **R3d must include** (D-173) the RetroArch-frontend legs on the Odin3 and native Windows: preparation notices visible, and frames presenting during first use and reopen with the shipping core on ordinary loads.
+4. **R3b record (S62):** `docs/build-log.md` entries for R3a, R3b-1, R3b-2a and R3b-2b; D-167 to D-173. Odin3 at R3b-2b: first use 45–49 s and reopen 0.2 s on every pair (D-172).
+5. **Carried Lows:**
+   - **R3a:** the `recognize-os-range` mutant; two `resource_failure` asserts; Python `assert` in the mutation script; `inventory=skipped` wording (to R3d).
+   - **Q-3:** the CPU test comment.
+   - **R2c:** the import guard does not tie a patch ID to file content.
+   - **R3b-2b QA S-4:** live CMOS persistence is synchronous; revisit with R3d/R4 timing.
+6. **Device and box cleanup when convenient:**
+   - **Odin3:** `/data/local/tmp/arcdroid-r3b1/`, `/data/local/tmp/arcdroid-r3b2b/`, `/storage/emulated/0/arcdroid-s62/`, `/storage/emulated/0/arcdroid-s62b/`.
+   - **Windows:** `S:\dev\ArcDroid\work\s62pop`.
 
-Confirm output is still independent of batching, that the goldens and route isolation are unchanged, and that sanitizer margins hold. Append the verdict to the report. Fable (S62) runs the Odin3 seven-pair legs on run D and watches CI, then merges under §12.11.
-**Next (S62):**
-1. **R3a: merged** as `d7a92ec` (PR #378). Follow-up Lows: the `recognize-os-range` mutant (inject an out-of-range entry or record it equivalent); two `resource_failure` asserts in `rpc_selection_test`; Python `assert` in the mutation script. To R3d: a skipped scan logs `inventory=skipped`.
-2. **R3b-1: merged** as `6ba7376` (PR #386, head `0a18209`) after Opus QA PASS WITH LOWS, a re-check PASS, green CI on all five jobs and Fable's AC-5. The record is in `docs/build-log.md`; the evidence is in `.work/s62/` (`ac5/`, `odin/`, `win/`, `qa-r3b1/`).
-   - **Carried:** a guest-tolerant checker mode, required before R3c/R3d reuse it. LOW-5 and the I/O measurement go to R3b-2.
-   - **Device cleanup when convenient:** Odin3 `/data/local/tmp/arcdroid-r3b1/` and `/storage/emulated/0/arcdroid-s62/`; Windows `S:\dev\ArcDroid\work\s62pop`.
-3. **R3b-2a: merged** as `47a1326` (PR #390, head `2c4d161`) after QA PASS WITH LOWS, a run B re-check PASS WITH LOWS and green CI on all five jobs. The record is in `docs/build-log.md`; the evidence is in `.work/s62/qa-r3b2a/` and `.work/s62/r3b2a/`. R-1 and R-2 are carried into R3b-2b.
-4. **R3b-2b under QA (S62).**
-   - **Commit:** Sol's work (thread `01a13546-1cdc-7c11-8185-2f0d8b27d3fa`) is committed verbatim. Report: `.work/s62/r3b2b/clone/SOL-REPORT-R3B2B.md`.
-   - **Sol's evidence:** 380 host tests, 75 sanitizer tests, 23 pinned plan comparisons against `d374114`, MinGW and Android builds, and the guards.
-   - **Library A/B (Fable, PASS):** base `d374114` against R3b-2b, with the package present (218 titles) and absent (44). There are zero differences: screenshots, FDC and CMOS counters, and every launch, JFD and machine line (`.work/s62/r3b2b/ab/`).
-   - **Sol's own changes beyond the work order:** engine construction is now staged (64 MiB RAM clear, ROM copy), with the RPCEmu patch series updated (`engine/rpcemu/manifest.json`, `src/mem.c`); and `core/hash.c` gains incremental hashing.
-   - **Outcome (S62):**
-     - **Fable's Odin3 seven-pair legs:** functionally PASS, but first use took about 490 s and every reopen about 10 s.
-     - **Opus QA:** PASS WITH LOWS, with M-1 being the same scheduling fault (`.work/s62/qa-r3b2b/QA-REPORT.md`).
-     - **Ruling:** D-171 (measured admission, namespace units sharing frames offline, generation within 4 T). Run B implements it together with QA's L-1 to L-9, S-1, S-2 and S-5 (`.work/s62/qa-r3b2b/adjudication.md`).
-   - **Run B on the Odin3 (S62):** first use now takes 78–88 s (it was about 490 s) and a reopen 0.7 s (it was about 10 s); generation stays at or below 3.93 T. D-171(4)'s targets were inconsistent with the 0.50 T namespace ceiling. D-172 raises the offline preparation budget to 0.80 T, with new targets: first use within 50 s and a reopen within 1 s. Run C implements it.
-   - **QA focus:**
-     - D-170(1)–(7);
-     - no requested-session instruction before final inputs;
-     - generation isolation;
-     - batch admission and the step cap;
-     - clock confinement and determinism;
-     - teardown rules;
-     - engine ownership and partial-start cleanup;
-     - the RPCEmu patch provenance;
-     - notice precedence;
-     - test exports as wrappers;
-     - goldens against the pinned baseline.
-5. **R3b-2: planned (D-168).** Astra's stage 2 returned ACCEPT WITH CHANGES, all seven incorporated (`.work/s62/astra/report3.md`). The work order below splits it into R3b-2a (store and CMOS groundwork, ready for Sol once R3b-1 merges) and R3b-2b (orchestration, outlined). D-166(4) carries two R3d items.
 - **Earlier (S61):** Q-3 merged as `44d007e` (follow-up Low: the CPU reproduction comment at `tests/rpc_cpu_test.c:373–374` overstates which term the I/O/reserved/EASI targets test; fix it in the next RPC slice that touches the test). AC-10 measured; Founder decision D-163 (R3, then item 6b before R4 and item 5). R3 is planned as R3a–R3d (D-164); R3a is done.
 
-- **Running:** see the ledger (`.work/s62/LEDGER.md`) for Fable's private runners and the CI watch.
+- **Running at S62 close:** nothing. No Sol, Astra, QA, runner or CI watch started by S62 is still running.
 - **Private work:** S60's is in `.work/s60/`, S61's in `.work/s61/`, S62's in `.work/s62/` (each indexed by its `LEDGER.md`). The trial boot environment (packages, authored files, record) is in `.work/s60/bootenv/`. Sol's R2c clone `.work/s60/sol2c/clone` is finished; its `runK-backup` stash can be dropped.
 - **Codex refusal (S61):** the Codex service once refused a turn about crash-locator code as "possible cybersecurity risk". Word Sol prompts about fault handling neutrally.
 
-**R3a work order (D-164 as amended by D-165, which incorporated Astra's stage 2 challenge; Sol dispatched S61 in parallel with Q-3 QA, merged only after Q-3).** Branch `slice/r3a-selection` from `main`.
-- **Objective:** RiscPC firmware inventory and Auto machine selection, as pure, fully tested logic wired into load preparation. **No player-visible behaviour change (D-165(1)):** a separate diagnostic inventory and catalogue view computes and logs the RPC decision. The legacy catalogue, search, diagnostics, notices, options, launch and persistence stay unchanged and keep today's Arculator route, and existing enum values are pinned. The selection policy, candidate ranking and failure-reason order are in D-165(2).
-- **Firmware fingerprints (Fable, from the Founder's private dumps; fingerprints only, never bytes):**
-  - RISC OS 3.50: 2,097,152 bytes, CRC-32 `541b1415`, SHA-1 `c31318e712ee7de92e46f9df6c791b614d4c9304`
-  - RISC OS 3.60: 4,194,304 bytes, CRC-32 `a9822c2c`, SHA-1 `3cf75aa4d4dc8fe57110a124fbd1560d46c549b1`
-  - RISC OS 3.70: 4,194,304 bytes, CRC-32 `63fc131a`, SHA-1 `71cbc9f12debaa7aa2aeb91d38682e6c5c4a34a5`
-  - RISC OS 3.71: 4,194,304 bytes, CRC-32 `211cf888`, SHA-1 `c5fe0645e48894fb4b245abeefdc9a65d659af59` (SHA-256 `fabbf1ae…f8f8`, the R2 CMOS key)
-- **Acceptance criteria:**
-  - **AC-1 Selection matrix:** pure tests over every JFD CPU and OS category, zero (unknown) against nonzero-unsupported masks, multi-disc intersection, contradictions, missing firmware, unqualified pairs and manual overrides. Results distinguish conflicting discs, unsupported requirement, unqualified pair, missing firmware and unreadable inventory.
-  - **AC-2 Recognition (D-165(4)):** public tests check the four catalogue tuples above. Authored fingerprints exercise the real scanner's rename, duplicate, corruption, wrong-size and ordering behaviour (no firmware bytes in the repository). Fable privately recomputes the tuples from the four dumps and exercises recognition through the implemented inventory.
-  - **AC-3 Qualified pairs:** only D-164(3)'s seven pairs are selectable, as eligible for R3 selection development. Recognized but unqualified pairs never are. Ranking and failure reasons follow D-165(2), with fixed expected results for the boundary cases (for example, a set allowing ARM610/710 and SA with both RPC OS families but only 3.70 installed selects 3.70 on SA-110), including impossible single-disc combinations against contradictions between discs.
-  - **AC-3b Wiring (D-165(3)):** validated JFD masks are kept in the media entries. Integration tests run through ordinary load preparation over every case listed in D-165(3).
-  - **AC-4 No behaviour change:** existing Archimedes selection, firmware priority, persistence identities and bytes, notices and launch routes are unchanged. The RPC decision appears as one diagnostic log line. Fable runs the full-library A/B in both package states, pinned to the post-Q-3 branch parent, which must match it apart from known variance and the new line.
-  - **AC-5 Evidence:** host and sanitizer suites, MinGW and Android builds, the export, import and shipping-I/O guards, and mutants on the selection rules.
-- **Non-goals:** RPC production launch, CMOS preparation, boot-file population, observers (R3b–R3d); any rate change (6b).
-
-**R3b work order (D-164 as refined by D-167, which incorporated Astra's stage 2 challenge).** R3b ships as two PRs, each with its own Fable review and Opus QA: **R3b-1** (population, including the authored boot step) and then **R3b-2** (production session preparation). Production loads keep today's route until R3d (D-164(5)), and RiscPC stays unreleased (D-163).
-
-*Repo facts (verified S62 on `main` `5912daa`):*
-- **Hard-disc store:** `libretro/rpc_hd_store.h:27-45` exposes the population API (`arc_riscpc_hd_population_begin/_read/_write/_seal/_publish/_abort`, plus `arc_riscpc_hd_import`).
-  - `arc_riscpc_hd_open(…, create_blank=true, …)` publishes the authored blank at once (`rpc_hd_store.c:743`).
-  - Abort schedules cleanup only when the store is not refused (`:818`).
-  - The manifest format is fixed, with zero reserved bytes (`docs/riscpc-hd-store.md:66`).
-- **Formatter:** `core/install_disc.c:93-150` (`arc_hd_format_range(256, 13, …)`) writes only the boot block, both map copies and an empty `Nick` root.
-- **Checker gap:** the RPC formatter checker (`tests/rpc_hd_formatter_test.c`) neither walks free links or free extents nor parses directories, although §9 requires "all free extents". The only fragment resolver, `core/hard_disc_scope.c`, is hard-coded to A3020 geometry.
-- **No FileCore writer** in the repository allocates new-map objects.
-- **ZIP:** `core/adffs.c:69-87` parses ARC0 (`0x4341`) metadata, and `core/zip.c` checks that the local and central copies agree.
-  - Today's ZIP caps (1,024 entries) are below HardDisc4's 2,289 entries.
-  - `arc_zip_extract` takes the whole archive buffer and allocates the whole expanded member (`core/zip.c:395`).
-- **CMOS:** generation, record load/persist and the defaults cache are test-only (`tests/arc_test_plan.c`; `rpc_cmos_store.c` is outside the shipping sources, CMakeLists.txt:212-214). The generation notice is a 5 s message that expires before a 20 s generation finishes.
-- **Engine:** `arc_engine_start` reverts any RPC selection to Arculator (`engine/arcdroid_engine.c:63-66`).
-
-*Boot packages (Fable S62; private copies and the trial record in `.work/s60/bootenv/`, README §3, §6).* RISC OS Open's HardDisc4 (2,289 entries, about 31 MB expanded) and PlingSystem (88 entries):
-- Every member carries ARC0 metadata.
-- The two `!System` trees overlap in 7 files. All 7 match in bytes, type and attributes; only `!Run`'s date stamp differs, and HardDisc4's is newer. PlingSystem adds 63 files.
-- The only names longer than 10 characters lie in RISC OS 5-only subtrees.
-- The largest directory has 54 entries.
-
-**R3b-1 — boot-resource population.** Branch `slice/r3b1-population` from `main` once R3a has merged.
-- **Objective:** shipping-source, host-side population that builds a ready-to-boot RiscPC hard disc from the player's boot packages when the store is created, in one R2c population transaction. In this slice it is reachable only through the test plan route.
-- **Inputs (D-134, D-164(4)):**
-  - The files are `<system>/arcdroid/riscpc/boot/HardDisc4.zip` and `PlingSystem.zip`, read through the frontend VFS and never written.
-  - They are recognised by structure: HardDisc4 is a `HardDisc4/` tree whose `!Boot` contains `Resources/!System`; PlingSystem is a `!System/` tree. Required bootstrap members are checked (D-167(6)).
-  - The log reports whether each package's SHA-256 is one Fable has privately qualified (HardDisc4 `28613a8e…47b5`, PlingSystem `0259063d…9019`, full values in `.work/s60/bootenv/README.md` §3). This is diagnostic only and never gates population.
-- **Policies (D-167):**
-  1. **Layout and restricted merge.**
-     - `HardDisc4/` becomes the disc root.
-     - PlingSystem's `!System/…` merges into `$.!Boot.Resources.!System` under D-167(4): overlapping files need identical bytes, type and attributes. When only the date stamp differs, the newer stamp is kept. A directory keeps HardDisc4's metadata. Any other overlap, or a file/directory collision, refuses with a notice naming it.
-     - Each package's archive-root licence, notice and ReadMe files keep their names under their own `$.RelDocs` subdirectory.
-     - PlingSystem's `!SysMerge` is not installed.
-  2. **RISC OS 5 exclusion, by exact path (D-167(5)):** `!Boot.Resources.!System.<n>` and `!Boot.RO<n>Hook` with numeric n ≥ 500. Nearby names (for example `!System.400`, `RO400Hook`, `!System.500x`) survive.
-     - Any other name or directory that does not fit (10 characters, 77 entries, the FileCore character set) refuses. Names are never truncated or renamed.
-     - Dots in ZIP names map to `/`.
-  3. **Metadata.** Load, exec and attributes come from ARC0, with local and central copies agreeing. A member without ARC0 refuses.
-  4. **Bounds and stepping (D-167(8)).** State and enforce caps on:
-     - compressed input, entries, expanded bytes and member size, each with stated margin over the current packages;
-     - peak additional memory (index plus buffers);
-     - work per step.
-
-     Population runs through a step interface with bounded work per call, which R3b-2 drives from the frame loop. It supports cancellation, and it refuses if a package changes between preflight and publication.
-     - Output is byte-identical for any step size.
-     - Deterministic memory and I/O counters are exposed to tests.
-     - Population never allocates a whole-disc image (§9).
-  5. **Capacity and sharing (D-167(2)).** The minimum fragment is 128 KiB at this geometry. Before implementing, Sol writes down a capacity calculation for the filtered, merged tree and the small-object sharing strategy, using FileCore sharing offsets as in the FileCore PRM. Guest growth and deletion of a shared object must preserve its neighbours.
-  6. **Authored boot step (D-167(6);** project-authored, GPL-2.0-only, adapted from the trial at `5ff5481:probe/riscpc/boot/` and the active `!Boot.!Boot` that `probe/riscpc/tools/boot_disc.py:134-160` writes).
-     - Enumerate the complete authored output: names, destinations, file types, CR/LF treatment and collisions. That covers the MDF, `BootEnv`, `BootRes`, `BootTasks`, the active `!Boot.!Run` (from `HDRun`), the active `!Boot.!Boot` (`IconSprites`) and the desktop tasks file (from `HDTasks`). Probe names are renamed.
-     - The supplied top-level startup (`!Boot.!Boot`, `!Boot.!Run`, PreDesktop, `RO<n>Hook`) moves unchanged to `!Boot.Inactive`. The supplied `!System` `SysPaths` and `!Boot`, and the Resources applications' own `!Boot` files, do run.
-     - The disc's boot option is "run", and it is consistent across the disc-record copies.
-     - Record each authored asset's source commit, licence and adaptation. Imported package bytes are kept apart from project-authored GPL assets.
-  7. **Creation only, with a receipt (D-167(3), D-167(7)).**
-     - The source is the unpublished all-HOLE store, opened without automatic blank creation. The formatter output and every object go into one candidate, which is validated, sealed and published with a creation receipt.
-     - The receipt is a versioned store-format extension that Sol specifies in `docs/riscpc-hd-store.md`. It is published atomically with the root and preserved through checkpoint, rotation and recovery, and guest writes cannot forge it. It records each package's SHA-256, the populator revision, the authored-step revision, and file and byte counts.
-     - A published store with a receipt is a no-op that reads no packages. A store without one (a legacy or plan-created blank) is left unchanged, with a notice. An unknown receipt revision refuses.
-     - Missing, unreadable or rejected packages publish nothing. Candidate-owned files are cleaned up within bounds after recovery.
-  8. **FileCore writing:** it uses the RPC new-map geometry (5 zones, 8 KiB units, 15-bit IDs, `Nick` directories). Objects follow FileCore's new-map rules, with directories in FileCore order and valid checks and checksums. The writer is general, not tuned to these packages.
-- **Acceptance criteria:**
-  - **AC-1 Independent checker:** a test-side FileCore reader for the RPC geometry. It shares no allocation, resolution or checksum helpers with the writer. It verifies:
-    - both map copies, zone checks and the cross-check;
-    - every free link and free extent;
-    - reserved objects;
-    - no overlapping extents;
-    - object resolution with sharing offsets;
-    - directory structure, FileCore order and checks;
-    - names, metadata and bytes;
-    - boot-option consistency.
-
-    It has independently specified vectors for:
-    - sharing offsets and fragmented objects;
-    - zone-order wraparound and the partial final zone;
-    - 10/11-character names and 77/78-entry directories.
-
-    It validates the authored blank too, closing the §9 gap.
-  - **AC-2 Authored packages:** public tests use authored ZIPs with ARC0 metadata and no RISC OS bytes. Each case is compared against an independently defined transformed-tree expectation (after relocation, exclusion, merge and authored replacement). The cases cover:
-    - depth and per-directory bounds;
-    - overlaps: identical, date-only, differing bytes, differing type or attributes, and file/directory collisions;
-    - the RISC OS 5 exclusion, with surviving neighbours, and an over-long name outside it;
-    - missing ARC0, and local/central disagreement;
-    - traversal, duplicate and case-colliding destinations;
-    - truncated, corrupt and CRC-failing members;
-    - every cap exceeded;
-    - a missing package, a missing required bootstrap member, a package changed mid-population, and reported VFS failures;
-    - capacity exhaustion.
-  - **AC-3 Faults and restart:**
-    - Fault and kill injection at every population write, seal, receipt, publish, retirement and cleanup boundary (R2c's matrix, plus cleanup failures) never leaves a partially published root.
-    - Interruption restarts from scratch.
-    - Reopening a populated store reads no packages.
-    - Guest attempts to manufacture a receipt fail.
-    - Legacy stores and unknown revisions behave as policy 7 says.
-  - **AC-4 Stepping and non-interference:**
-    - Identical output across step sizes, with memory and I/O counters within the stated bounds.
-    - Plan v2 gains a test-only key that creates a populated disc through ordinary store open; shipping routes still reject RPC plans.
-    - Shared code (`core/zip.c`, `core/adffs.c`) keeps its existing callers' limits and behaviour. If any shared code changes, Fable runs the library A/B in both package states.
-  - **AC-5 Private (Fable):**
-    - The real packages populate.
-    - Using the plan route with a private test-only CMOS seed (generated defaults plus guest-written boot configuration), the disc boots to the desktop on all seven qualified pairs within a stated virtual-time bound. There is no error box, the ROM modules stay resident, and the resource variables are set (`Wimp$Scrap`, `Font$Path`).
-    - Guest file growth and deletion on shared objects survive a reopen.
-    - A title that needs these resources installs from floppy onto the populated disc and runs (074 or 084).
-    - Population, interruption and reopen run on native Windows and on the Odin3's storage.
-  - **AC-6 Evidence:**
-    - host and sanitizer suites;
-    - MinGW and Android builds;
-    - the export, import, shipping-I/O and asset guards (authored fixtures only; private runs report hashes, metadata and outcomes, never package contents);
-    - mutants on the merge, exclusion, validation, allocation, sharing and receipt rules.
-- **Non-goals:** CMOS and production session preparation (R3b-2); launch actions and observers (R3c); production launch and switching (R3d); repopulating or upgrading used discs; a second-floppy policy.
-- **QA focus:**
-  - the checker is genuinely independent;
-  - sharing and allocation are correct at zone boundaries;
-  - the receipt resists forgery and survives recovery;
-  - a refusal leaves nothing published;
-  - no package bytes in the repository, logs or fixtures.
-
-**R3b-2 work order (D-164, D-167 and D-168; Astra's stage 2 changes incorporated).** Two PRs, each with its own Fable review and Opus QA: **R3b-2a** (store and CMOS groundwork), then **R3b-2b** (session orchestration). Production content loads keep today's route until R3d (D-164(5)), and RiscPC stays unreleased (D-163).
-
-*Repo facts (S62):*
-- **Test-only exports:** RPC start, held-Delete generation and IDE attach are test-only exports (`engine/arcdroid_engine.c:248-297`). `arc_engine_start` reverts RPC to Arculator (`:63-66`).
-- **Test-only builds:** `libretro/rpc_cmos_store.c` and `tests/arc_test_plan.c` build only into test cores (CMakeLists.txt:229). HD maintenance and CMOS persistence sit inside test conditionals on the frame path (`libretro/arcdroid_libretro.c:7930`).
-- **Reset:** dispatch needs an active RPC engine (`:7581`).
-- **CMOS store:** `refused` conflates listing failures with invalid records (`libretro/rpc_cmos_store.c:85-112`).
-- **R3b-1 (`0a18209`):**
-  - A work unit may do up to 4 MiB of I/O and 128 callbacks (`libretro/rpc_boot.h:39-42`).
-  - Store open/recovery and parts of publication are synchronous.
-  - `receipt_valid` returns a bare boolean, and open maps every failure to "damaged" (`libretro/rpc_hd_store.c:178-210,763-764`).
-  - Population costs about 40 bytes of I/O per payload byte plus 47.6 MB fixed (QA), and takes about 21 s on the Odin3 when run synchronously.
-- **Fable's evidence:** factory defaults boot the populated disc on all seven pairs, and the guest writes bytes 19, 253 and 63 itself (D-168(1)).
-
-**R3b-2a — store and CMOS groundwork.** Branch `slice/r3b2a-groundwork`, stacked on R3b-1 `0a18209` plus `main` (S62). It merges after R3b-1.
-- **Objective:** make every operation that session preparation needs fit a frame budget and report its outcome precisely. No orchestration and no production engine change.
-- **Required:**
-  1. **Budgets (D-168(4)):**
-     - Enumerate every indivisible operation in store open/recovery, population (index, allocate, write, readback), seal, receipt, publication, retirement and CMOS persistence.
-     - Split them, or step them more finely, so that preparation work per frame stays at or under 0.20 T and every namespace tick stays at or under 0.50 T on Odin3 shared storage with RetroArch flush.
-     - Expose deterministic per-step operation counters.
-     - Output stays byte-identical to the current synchronous path for every step size.
-  2. **Structured store outcomes (D-168(3)):** open and recovery return distinct outcomes: unsupported format, damaged, unavailable (I/O), legacy (no receipt) and receipted.
-     - For a known envelope, validate framing, identity and integrity before calling a receipt revision unsupported.
-     - Never interpret or clean up unfamiliar formats.
-     - Refusal mutates nothing.
-     - Provide notice texts for each outcome, including "created by a newer version of ArcDroid".
-  3. **CMOS store (D-168(3), LOW-A):** distinguish a retryable inspection failure, verified absence and refused published data.
-     - A transient listing failure retries within bounds and does not latch refusal for the session.
-     - While reconciliation is incomplete, neither a seed nor a new publication is admitted.
-     - An unreadable record is never treated as absent.
-     - Move `rpc_cmos_store` into the shipping sources, keeping test-clock separation.
-- **Acceptance criteria:**
-  - **AC-1 Budgets:** operation-count bounds per step, plus an Odin3 FUSE runner measurement (Fable private, through the plan route):
-    - a first-use population;
-    - a reopen;
-    - a checkpoint-heavy guest session.
-
-    Each must stay within D-168(4) on the maximum frame, not just the median, and produce the same images as today.
-  - **AC-2 Outcomes:** tests cover future receipt, populator and authored revisions; bad CRCs; unknown envelopes; mixed supported/unsupported slots; I/O failures (unavailable, not damaged); and legacy stores. Every refusal mutates nothing.
-  - **AC-3 CMOS:** fault injection after rename, during partial slot inspection, on repeated listing failure, and in recovery. The newest valid generation survives, and corruption refusal is not cleared. Seed-plus-persist is tested against absent, existing, corrupt, wrong-key and temporarily unreadable records.
-  - **AC-4 Evidence:** host and sanitizer suites within CI timeouts; MinGW and Android builds; guards; mutants on the outcome classification, the retry rules and the step budgets.
-- **Non-goals:** the preparation state machine, production engine operations and notices (R3b-2b).
-
-**R3b-2b — session orchestration (D-168 as refined by D-170, which incorporated Astra's stage 2; one slice).** Branch `slice/r3b2b-orchestration` from `main` once R3b-2a has merged.
-- **Binding refinements (D-170):**
-  1. **Validation pause:** the pause after ALLOCATE holds the offline candidate. Its ownership is defined, and later failures stop the requested session.
-  2. **Batch admission:** steps are admitted by their declared worst case. A namespace attempt ends the batch, and a hard step cap guards against a broken clock.
-  3. **Clock confinement:** host time drives batching only in preparation and generation. The RTC epoch and input start are anchored to the execution transition, and the clock is injectable.
-  4. **Generation:** a numeric host budget, with the smallest advance qualified on all seven pairs.
-  5. **Teardown:** separate rules for preparation reset, a running reset, unload and process termination.
-  6. **Engine scope:** media and helper attachment, low-level test modes preserved, and goldens compared against a pinned baseline.
-  7. **Notices:** shown from the first pending frame, with "without a creation receipt" wording and defined fallback cadence and expiry.
-
-  Where the text below differs, D-170 governs.
-- **Objective:** a shipping-source RiscPC session preparation. It turns an R3a selection into a running RPC session through production engine operations, advances in time-boxed steps on the frame loop, and shows long-lived notices. Production content loads still take today's route until R3d. The plan core becomes a thin client, and a harness built without the test flags drives the same module.
-- **Order (D-168(2)):**
-  1. Firmware re-verification (size, CRC-32 and SHA-1, against the selected catalogue entry).
-  2. Store open and classification (R3b-2a's stepped open).
-  3. Package validation, only when the store is unpublished: R3b-1's boot steps up to an explicit "validation complete" boundary, after allocation and before FORMAT.
-  4. The CMOS record, or isolated held-Delete defaults generation, with firmware only and no media or IDE attached.
-  5. The remaining population steps and publication.
-  6. The requested session, started only when the firmware, CMOS, disc and media are final.
-- **Scheduling (D-168(4), D-169):**
-  - Each frame runs as many steps as fit the frame budget, using a host clock for scheduling only. Output never depends on step boundaries: R3b-1 and R3b-2a prove step-size independence.
-  - A step that performs a namespace operation ends that frame's batch.
-  - Generation advances several guest frames per host frame within a stated host budget, and keeps its fixed virtual-time capture.
-  - Pending frames present black video and silence at normal AV timing and ignore player input.
-- **Notices:**
-  - Long-lived status notices: from the first pending frame: checking the RiscPC hard disc, checking boot files, "Preparing RiscPC settings for first use", then "Preparing the RiscPC hard disc" (no time estimate unless revalidated, D-170(4)).
-  - They clear on completion and are replaced by any terminal error, which wins precedence.
-  - Frontends without long-lived messages get a periodic refresh.
-  - Terminal notices: missing or unverifiable firmware (naming the family and `<system>/arcdroid/firmware/`); missing or rejected boot files (naming `<system>/arcdroid/riscpc/boot/` and the cause); disc from a newer ArcDroid; damaged disc; disc unavailable; disc without a creation receipt (D-170(7)).
-- **Lifecycle (D-168(5)):**
-  - **Reset** during preparation cancels any in-flight work and restarts preparation from the start. Completed CMOS publications and a completed disc publication are kept; a partial disc candidate is aborted and cleaned up within bounds.
-  - **Unload** cancels and frees in every state.
-  - None of this depends on whether the engine is active.
-- **Engine (D-168(6)):**
-  - Shared production operations: resolved start (model, firmware bytes, CMOS seed, epoch); isolated generation begin, advance and evidence; IDE attach; frame maintenance (store tick and eager CMOS persistence); teardown.
-  - Ownership of firmware bytes, buffers and the backend is defined, including cleanup after a partial start.
-  - The `arc_engine_test_*` exports become thin wrappers, with test rate overrides and fault instrumentation outside production policy.
-  - Legacy `arc_engine_start` keeps its Arculator route.
-- **Saved records (D-168(1)):** a saved record stays authoritative. Tests cover NoBoot, a different filesystem or drive, and changed counts in byte 199; the session starts as configured.
-- **Carried in:** QA R-1 (stat disagreement after truncate gives the "recovered" read-only outcome) and R-2 (read an oversized manifest's length field before classifying).
-- **Acceptance criteria:**
-  - **AC-1 State machine:** deterministic tests cover:
-    - every state, transition and failure, each with its notice;
-    - reset and unload in every state;
-    - cancellation before and after each publication;
-    - that no requested-session instruction runs before the inputs are final;
-    - that generation runs with nothing attached.
-  - **AC-2 Scheduling:**
-    - the time-boxed batches respect the budget, with an injected clock;
-    - output is byte-identical to the synchronous plan route for any batching;
-    - the notice lifecycle works with and without long-lived message support.
-  - **AC-3 Engine:**
-    - a harness built without `ARCDROID_TEST_PLANS`/`ARCDROID_TEST_FAULTS` runs a successful and a failed preparation through the production operations, then an ordinary Arculator load, checking persistence identity, options, AV and resource cleanup;
-    - the test exports delegate to the same code;
-    - the library A/B runs in both package states if shared engine or lifecycle code changes.
-  - **AC-4 Saved records and follow-ups:** the saved-record cases, R-1 and R-2.
-  - **AC-5 No production route change:** shipping routes still reject RPC plans, and ordinary loads never reach the module.
-  - **AC-6 Private (Fable):**
-    - all seven pairs through the plan route as a thin client: first use (generation and population under notices, then desktop with the boot-step variables), then a reopen with no package I/O;
-    - reset and unload in each state;
-    - Odin3 RetroArch: frames keep presenting during preparation, the maximum frame is within the D-169 accepted envelope, and the notices stay visible;
-    - native Windows RetroArch: the same.
-  - **AC-7 Evidence:**
-    - host and sanitizer suites within CI timeouts;
-    - MinGW and Android builds;
-    - the guards;
-    - mutants on transitions, ordering, notice precedence and the scheduling bounds.
-- **Non-goals:** RPC launch from ordinary loads and Arculator→RPC switching in production (R3d); launch actions and observers (R3c); repopulating or upgrading discs.
-- **QA focus:**
-  - no guest start before final inputs;
-  - generation isolation;
-  - reset and unload in every state;
-  - scheduling independent of output;
-  - test exports not on the production path;
-  - notice precedence.
+**R3a and R3b work orders:** complete and merged; their full text is in git history (`docs/handoff.md` at `8e420ab`), and the record is in `docs/build-log.md` and D-164 to D-173.
 
 **R2c outcome (merged S61 as `0e71237`, PR #337, head `83cbf7e`).** The IDE and a 126 MiB persistent hard disc on a journalled, chunked, fully verified store (`docs/riscpc-hd-store.md`). The record is in `docs/build-log.md` and D-145 to D-162; the run history is in git history (`docs/handoff.md` at `3a548ec`).
 - **Evidence:** CI green on all five jobs, including the native Windows RetroArch hard-disc sessions. Opus QA 3 PASS WITH LOWS, then re-checks of runs P and Q PASS (adjudication `.work/s61/qa/adjudication-3.md`).
@@ -397,7 +130,16 @@ Slice order (D-133 as amended by D-163): R1–R3 → item 6b faster CPU work →
 **Item 5 grounding (S55, paused at a safe point: nothing committed, no branch).** `main` `c725bd6`: CI builds Android arm64 only, which is the whole Android target (D-135: no armeabi-v7a); the `.info` is copied into the build tree (`configure_file`) and installed by `install(FILES …)` but no CI artifact bundles core + `.info` + `COPYING` + `THIRD_PARTY_NOTICES.md`; the version lives in three places (`project(… VERSION 0.1.0)`, `ARCDROID_VERSION` fallback in `libretro/arcdroid_libretro.c:28`, `display_version` in `arcdroid_libretro.info`). (armeabi-v7a was found to build unmodified, but is out of scope by D-135.) Android devices: the Odin3 (`arm64-v8a` only) and a second Snapdragon 8 Gen 2 device (Founder S55). **Windows signing risk (S60):** Smart App Control, on by default for many Windows 11 installs, blocked one unsigned ArcDroid-built probe executable on the Founder's box while allowing the unsigned runner and plan core. Item 5 must decide whether an unsigned `arcdroid_libretro.dll` is acceptable, or whether it needs signing or a documented workaround. No shipping source uses `__FILE__`/`__DATE__`/`__TIME__` or a runtime `assert` (the Slice 8 note on embedded paths is unverified — check with a two-path build comparison). The GPL corresponding-source mechanism for distributed binaries (D-016) stays tied to publication (D-100). Scratch: S55 scratchpad `s55/` (`a/`, `second-checkout-b/` clones, `build-android.sh`).
 
 ## Waiting on the Founder (protocol §18, D-124)
-- None. The Windows PC is reachable again; R3b-1's Windows leg passed in S62.
+- None.
+
+**S62 (Claude Opus 5.5 effort 15; window `arcdroid-e5`; baton by relay from `arcdroid-b5`).**
+- **Merged:** R3a (`d7a92ec`), R3b-1 (`6ba7376`), R3b-2a (`47a1326`) and R3b-2b (`3d126d0`).
+- **Decisions:** D-167 to D-173.
+- **Private evidence:** `.work/s62/`, indexed by `LEDGER.md`.
+- **Process lessons:**
+  - Set the handoff to Stage QA before any QA dispatch or re-check (QA refused twice, correctly).
+  - Watch CI with an error-tolerant poll; `gh run watch` dies on GitHub HTTP 502.
+  - Codex turns died twice: once at model capacity, and once on a refusal over "kill" wording. Resume with neutral wording.
 
 **Answered S61 — D-163 (AC-10):** R3 next (after Q-3), then item 6b ahead of R4 and the release baseline. RiscPC is not released until games like 031 run in real time at near-hardware speed; the rate budget is revisited in 6b. Measurements are in D-163 and `.work/s61/ac10/`.
 
@@ -983,7 +725,7 @@ The R1 work order and implementation record are in git history (`docs/handoff.md
   - **Clones and probes:** Sol, Astra and QA clones and scratch probes live under this project's own scratchpad (`/private/tmp/claude-501/-Users-mac0918-dev-ArcDroid/…`), which the deny list does not cover. Sol's own build directories (`/private/tmp/arcdroid-r2*`) are outside `claude-501` and are confined by the Codex sandbox.
   - **Sibling directory `~/dev/ArcDroid-evidence`:** denied by the generated list, like every other sibling. If it holds this project's evidence, exempt it by removing its three lines.
 - **Founder instruction (S54, relayed S55):** never stack shell commands — no `&&`, `;` or pipes chaining git steps; run each command separately (stacked commands get denied). Put multi-step work in a script file under the scratchpad instead.
-- **Used windows (never relay to these; each closing holder adds its own name):** `arcdroid-d9` (S33), `arcdroid-6c` (S43), `ArcDroid-45` (S45), `arcdroid-83` (2026-10-02 governance edit), `ArcDroid-49` (S49), `arcdroid-d4` (S50), `arcdroid-10` (S51), `arcdroid-1b` (S52), `ArcDroid-52` (S53), `arcdroid-df` (S54), `arcdroid-7e` (S55), `arcdroid-25` (S56), `arcdroid-ba` (S57), `arcdroid-99` (S58), `arcdroid-db` (S60; the S59 window crashed before recording its name), `arcdroid-b5` (S61). Earlier holders were not recorded; window names change between days.
+- **Used windows (never relay to these; each closing holder adds its own name):** `arcdroid-d9` (S33), `arcdroid-6c` (S43), `ArcDroid-45` (S45), `arcdroid-83` (2026-10-02 governance edit), `ArcDroid-49` (S49), `arcdroid-d4` (S50), `arcdroid-10` (S51), `arcdroid-1b` (S52), `ArcDroid-52` (S53), `arcdroid-df` (S54), `arcdroid-7e` (S55), `arcdroid-25` (S56), `arcdroid-ba` (S57), `arcdroid-99` (S58), `arcdroid-db` (S60; the S59 window crashed before recording its name), `arcdroid-b5` (S61), `arcdroid-e5` (S62). Earlier holders were not recorded; window names change between days.
 
 **Relay brief:** "ArcDroid baton handoff from <window> (S<n>), for /Users/mac0918/dev/ArcDroid only. Before anything else, run the receipt checks in docs/protocol.md §18: you must be Claude Opus 5.5 at reasoning effort 15 (high) or above, your working directory must be /Users/mac0918/dev/ArcDroid, and this must be the first message in your window. If any check fails, change nothing, tell the Founder in your window which check failed (for a wrong model or effort: run /model claude-opus-5-5 and /effort high, then say \"pick up from handoff\"), send a PushNotification, and stop. If all pass, take the baton without asking the Founder to confirm, number yourself S<n+1>, read CLAUDE.md and docs/handoff.md, take the active Next (never a workstream under Waiting on the Founder until its answer is recorded), and work towards the Founder vision D-073. Founder instruction (S54): never stack shell commands (no `&&`, `;` or pipes chaining git steps) — run each command separately. Close by protocol §18: relay only to one idle arcdroid- window, never another project's session; if no ArcDroid window is eligible, stop all work and close. Repeat this rule in your own relay."
 
