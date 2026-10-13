@@ -1,14 +1,31 @@
 # ArcDroid Handoff
 
-**Stage:** IMPLEMENTATION — **R3b-2b** (session orchestration, D-168, D-170). Sol works on `slice/r3b2b-orchestration` from `main`. R3b-2a merged as `47a1326`.
-**Owner:** Sol (R3b-2b). Fable (S62) then reviews, commits verbatim, gathers AC-6's private evidence and arranges Opus QA.
+**Stage:** QA — **R3b-2b** (session orchestration, D-168, D-170), draft PR #395, branch `slice/r3b2b-orchestration` at `1f28c1a`.
+**Owner:** Opus (QA, a fresh `arcdroid-opus-qa` agent in a fresh clone). In parallel, Fable (S62) runs AC-6's private evidence (Odin3 seven-pair first-use and reopen legs, then RetroArch, Windows, and reset/unload in each state).
 **Next (S62):**
 1. **R3a: merged** as `d7a92ec` (PR #378). Follow-up Lows: the `recognize-os-range` mutant (inject an out-of-range entry or record it equivalent); two `resource_failure` asserts in `rpc_selection_test`; Python `assert` in the mutation script. To R3d: a skipped scan logs `inventory=skipped`.
 2. **R3b-1: merged** as `6ba7376` (PR #386, head `0a18209`) after Opus QA PASS WITH LOWS, a re-check PASS, green CI on all five jobs and Fable's AC-5. The record is in `docs/build-log.md`; the evidence is in `.work/s62/` (`ac5/`, `odin/`, `win/`, `qa-r3b1/`).
    - **Carried:** a guest-tolerant checker mode, required before R3c/R3d reuse it. LOW-5 and the I/O measurement go to R3b-2.
    - **Device cleanup when convenient:** Odin3 `/data/local/tmp/arcdroid-r3b1/` and `/storage/emulated/0/arcdroid-s62/`; Windows `S:\dev\ArcDroid\work\s62pop`.
 3. **R3b-2a: merged** as `47a1326` (PR #390, head `2c4d161`) after QA PASS WITH LOWS, a run B re-check PASS WITH LOWS and green CI on all five jobs. The record is in `docs/build-log.md`; the evidence is in `.work/s62/qa-r3b2a/` and `.work/s62/r3b2a/`. R-1 and R-2 are carried into R3b-2b.
-4. **R3b-2: planned (D-168).** Astra's stage 2 returned ACCEPT WITH CHANGES, all seven incorporated (`.work/s62/astra/report3.md`). The work order below splits it into R3b-2a (store and CMOS groundwork, ready for Sol once R3b-1 merges) and R3b-2b (orchestration, outlined). D-166(4) carries two R3d items.
+4. **R3b-2b under QA (S62).**
+   - **Commit:** Sol's work (thread `01a13546-1cdc-7c11-8185-2f0d8b27d3fa`) is committed verbatim. Report: `.work/s62/r3b2b/clone/SOL-REPORT-R3B2B.md`.
+   - **Sol's evidence:** 380 host tests, 75 sanitizer tests, 23 pinned plan comparisons against `d374114`, MinGW and Android builds, and the guards.
+   - **Library A/B (Fable, PASS):** base `d374114` against R3b-2b, with the package present (218 titles) and absent (44). There are zero differences: screenshots, FDC and CMOS counters, and every launch, JFD and machine line (`.work/s62/r3b2b/ab/`).
+   - **Sol's own changes beyond the work order:** engine construction is now staged (64 MiB RAM clear, ROM copy), with the RPCEmu patch series updated (`engine/rpcemu/manifest.json`, `src/mem.c`); and `core/hash.c` gains incremental hashing.
+   - **QA focus:**
+     - D-170(1)–(7);
+     - no requested-session instruction before final inputs;
+     - generation isolation;
+     - batch admission and the step cap;
+     - clock confinement and determinism;
+     - teardown rules;
+     - engine ownership and partial-start cleanup;
+     - the RPCEmu patch provenance;
+     - notice precedence;
+     - test exports as wrappers;
+     - goldens against the pinned baseline.
+5. **R3b-2: planned (D-168).** Astra's stage 2 returned ACCEPT WITH CHANGES, all seven incorporated (`.work/s62/astra/report3.md`). The work order below splits it into R3b-2a (store and CMOS groundwork, ready for Sol once R3b-1 merges) and R3b-2b (orchestration, outlined). D-166(4) carries two R3d items.
 - **Earlier (S61):** Q-3 merged as `44d007e` (follow-up Low: the CPU reproduction comment at `tests/rpc_cpu_test.c:373–374` overstates which term the I/O/reserved/EASI targets test; fix it in the next RPC slice that touches the test). AC-10 measured; Founder decision D-163 (R3, then item 6b before R4 and item 5). R3 is planned as R3a–R3d (D-164); R3a is done.
 
 - **Running:** see the ledger (`.work/s62/LEDGER.md`) for Fable's private runners and the CI watch.
