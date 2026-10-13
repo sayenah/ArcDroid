@@ -1,7 +1,7 @@
 # ArcDroid Handoff
 
 **Stage:** QA done — **R3b-1** (boot-resource population, D-167), draft PR #386, branch `slice/r3b1-population` at `0a18209`: Opus QA PASS WITH LOWS, then run E fixed LOW-1 to LOW-4 and the re-check PASSED. Merge waits on green CI and the Windows leg.
-**Owner:** Fable (S62): merge R3b-1 under §12.11 once CI is green on all five jobs at `0a18209` and the AC-5 Windows leg has run (Waiting on the Founder); then dispatch Sol on R3b-2a (D-168).
+**Owner:** Fable (S62): merge R3b-1 under §12.11 once CI is green on all five jobs at `0a18209` and the AC-5 Windows leg has run (Waiting on the Founder). **Also IMPLEMENTATION — R3b-2a, Owner Sol:** dispatched stacked on R3b-1 (`slice/r3b2a-groundwork` from `0a18209` plus `main`). It merges only after R3b-1, with `main` merged in again first.
 **Next (S62):**
 1. **R3a: merged** as `d7a92ec` (PR #378). Follow-up Lows: the `recognize-os-range` mutant (inject an out-of-range entry or record it equivalent); two `resource_failure` asserts in `rpc_selection_test`; Python `assert` in the mutation script. To R3d: a skipped scan logs `inventory=skipped`.
 2. **R3b-1 under Opus QA.**
@@ -191,7 +191,7 @@
   - Population costs about 40 bytes of I/O per payload byte plus 47.6 MB fixed (QA), and takes about 21 s on the Odin3 when run synchronously.
 - **Fable's evidence:** factory defaults boot the populated disc on all seven pairs, and the guest writes bytes 19, 253 and 63 itself (D-168(1)).
 
-**R3b-2a — store and CMOS groundwork.** Branch `slice/r3b2a-groundwork` from `main` once R3b-1 has merged.
+**R3b-2a — store and CMOS groundwork.** Branch `slice/r3b2a-groundwork`, stacked on R3b-1 `0a18209` plus `main` (S62). It merges after R3b-1.
 - **Objective:** make every operation that session preparation needs fit a frame budget and report its outcome precisely. No orchestration and no production engine change.
 - **Required:**
   1. **Budgets (D-168(4)):**
