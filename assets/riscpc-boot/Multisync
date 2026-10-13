@@ -1,0 +1,98 @@
+# ArcDroid-authored generic multisync monitor; GPL-2.0-only.
+# Copyright 2026 ArcDroid contributors. No third-party MDF bytes used.
+# Grammar: Acorn Video PRM, ModeInfo files (RISC OS 3.5+):
+# https://www.riscos.com/support/developers/prm/video.html
+# TV geometry/timing facts: Acorn Video Specification, issue 1, March 1993,
+# pp.7-9, monitor type 0: 15.625 kHz, 312 lines, 50.080128 Hz.
+# https://chrisacorns.computinghistory.org.uk/docs/Acorn/Tech/Acorn_A3xA4xVideoSpec.pdf
+# Odd back/front porches redistributed by one pixel for VIDC20 even counts.
+# 200/240-line variants centre the display in the same 312-line TV envelope.
+# VGA/SVGA facts: VESA DMT v1.0 revision 10, pp.10,14,15:
+# https://glenwing.github.io/docs/VESA-DMT-1.10.pdf
+# VGA borders folded into porches: H back 48, front 16; V back 33, front 10.
+# Each geometry supports all depths ScreenModes accepts (1/2/4/8/16/32 bpp).
+# ScreenModes retains its hardware bandwidth and screen-capacity checks.
+file_format: 1
+monitor_title: ArcDroid generic multisync
+
+startmode
+ mode_name: TV 320x256
+ x_res: 320
+ y_res: 256
+ h_timings: 38,44,48,320,48,14
+ v_timings: 3,19,16,256,16,2
+ pixel_rate: 8000
+ sync_pol: 0
+endmode
+startmode
+ mode_name: TV 640x256
+ x_res: 640
+ y_res: 256
+ h_timings: 76,88,96,640,96,28
+ v_timings: 3,19,16,256,16,2
+ pixel_rate: 16000
+ sync_pol: 0
+endmode
+startmode
+ mode_name: TV 320x240
+ x_res: 320
+ y_res: 240
+ h_timings: 38,44,48,320,48,14
+ v_timings: 3,19,24,240,24,2
+ pixel_rate: 8000
+ sync_pol: 0
+endmode
+startmode
+ mode_name: TV 640x240
+ x_res: 640
+ y_res: 240
+ h_timings: 76,88,96,640,96,28
+ v_timings: 3,19,24,240,24,2
+ pixel_rate: 16000
+ sync_pol: 0
+endmode
+startmode
+ mode_name: TV 320x200
+ x_res: 320
+ y_res: 200
+ h_timings: 38,44,48,320,48,14
+ v_timings: 3,19,44,200,44,2
+ pixel_rate: 8000
+ sync_pol: 0
+endmode
+startmode
+ mode_name: TV 640x200
+ x_res: 640
+ y_res: 200
+ h_timings: 76,88,96,640,96,28
+ v_timings: 3,19,44,200,44,2
+ pixel_rate: 16000
+ sync_pol: 0
+endmode
+startmode
+ mode_name: VGA 640x480 60Hz
+ x_res: 640
+ y_res: 480
+ h_timings: 96,48,0,640,0,16
+ v_timings: 2,33,0,480,0,10
+ pixel_rate: 25175
+ sync_pol: 0
+endmode
+startmode
+ mode_name: SVGA 800x600 56Hz
+ x_res: 800
+ y_res: 600
+ h_timings: 72,128,0,800,0,24
+ v_timings: 2,22,0,600,0,1
+ pixel_rate: 36000
+ sync_pol: 3
+endmode
+startmode
+ mode_name: SVGA 800x600 60Hz
+ x_res: 800
+ y_res: 600
+ h_timings: 128,88,0,800,0,40
+ v_timings: 4,23,0,600,0,1
+ pixel_rate: 40000
+ sync_pol: 3
+endmode

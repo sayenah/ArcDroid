@@ -1,2 +1,4 @@
 engine/arculator/src/*.c whitespace=cr-at-eol
 engine/arculator/src/*.h whitespace=cr-at-eol
+# Authored boot sources stay LF; embedding selects guest CR/LF explicitly.
+assets/riscpc-boot/* text eol=lf

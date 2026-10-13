@@ -1,0 +1,10 @@
+10 REM ArcDroid-authored installed task enumeration, GPL-2.0-only.
+20 REM PRM bootapp.html: installed Tasks use ordinary Filer_Run.
+30 DIM b% 256:p$="ADFS::4.$.Choices.Boot.Tasks":off%=0:count%=0
+40 REPEAT
+50 SYS "OS_GBPB",9,p$,b%,1,off%,256,0 TO ,,,n%,off%
+60 IF n%<>0 THEN i%=0:WHILE b%?i%<>0 AND i%<255:i%+=1:ENDWHILE:IF i%=255 THEN ERROR 0,"Boot task name bound"
+70 IF n%<>0 THEN b%?i%=13:OSCLI "Filer_Run "+p$+"."+$b%
+80 count%+=1:IF count%>256 THEN ERROR 0,"Boot task count bound"
+90 UNTIL off%=-1
+100 END

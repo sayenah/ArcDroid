@@ -8,6 +8,7 @@ command -v grep >/dev/null 2>&1 || {
 
 sources='core/adffs.c
 core/install_disc.c
+core/rpc_boot_filecore.c
 core/hash.c
 core/hash_accel.inc
 core/hash_accel.h
@@ -89,6 +90,8 @@ platform/arcdroid_video.c
 libretro/arc_io.c
 libretro/install_store.c
 libretro/rpc_hd_store.c
+libretro/rpc_boot.c
+libretro/rpc_boot_zip.c
 libretro/jfd_store.c
 libretro/arcdroid_libretro.c
 core/*.h

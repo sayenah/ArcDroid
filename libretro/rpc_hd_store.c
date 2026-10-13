@@ -22,7 +22,9 @@ extern void arc_riscpc_hd_test_point(unsigned boundary);
 #define commit_point(n) ((void)0)
 #endif
 
-#define MANIFEST_BYTES 24324u
+#define MANIFEST_V1_BYTES 24324u
+#define MANIFEST_BYTES 24452u
+#define RECEIPT_AT 24320u
 #define CHUNK_BYTES (ARC_RPC_HD_CHUNK + 132u)
 #define RECORD_MAX 131168u
 #define RECORDS_MAX ((ARC_RPC_HD_JOURNAL_CAP - 512u) / 608u)
@@ -46,7 +48,7 @@ struct ArcRpcHdStore {
     CacheTag tags[CACHE_COUNT]; uint64_t clock;
     ArcSha256 digest[2]; uint32_t lengths[2];
     uint64_t sequence, snapshot, generation, jgeneration[2];
-    unsigned selected, current, parent, next_chunk, phase_step;
+    unsigned selected, current, parent, next_chunk, phase_step, seal_at;
     ArcIoFile *rotation_writer;
     bool present[2], journal_present[2], torn[2], dirty[ARC_RPC_HD_CHUNKS];
     bool population, sealed, published, refused, damaged, requested, authored, gc_done, foreign_entry, stat_failed,
@@ -171,18 +173,41 @@ static void geometry(uint8_t *p)
 { const uint32_t values[]={512,63,16,256,262144,504};for(unsigned i=0;i<6;++i)put(p+4*i,values[i],4); }
 static bool geometry_valid(const uint8_t *p)
 { uint8_t expected[24];geometry(expected);return !memcmp(p,expected,24); }
+static size_t manifest_length(const uint8_t *m)
+{ return get(m+8,4)==2 ? MANIFEST_BYTES : MANIFEST_V1_BYTES; }
+static bool receipt_valid(const uint8_t *r)
+{ return !memcmp(r,"ARCRBOOT",8)&&get(r+8,4)==1&&get(r+12,4)==1&&get(r+16,4)==1&&
+    zero(r+20,4)&&zero(r+104,24); }
+bool arc_riscpc_hd_receipt(const ArcRpcHdStore *s,ArcRpcHdReceipt *r)
+{
+    if(!s||!s->published||get(s->manifests[s->selected]+8,4)!=2)return false;
+    const uint8_t *p=s->manifests[s->selected]+RECEIPT_AT;
+    if(r){memcpy(r->packages,p+24,64);r->files=get(p+88,8);r->bytes=get(p+96,8);}
+    return true;
+}
+bool arc_riscpc_hd_population_receipt(ArcRpcHdStore *s,const ArcRpcHdReceipt *r)
+{
+    if(!s||!r||!s->population||s->published||s->sealed||s->seal_at||s->refused)return false;
+    uint8_t *m=s->manifests[2],*p=m+RECEIPT_AT;
+    memset(p,0,128);memcpy(p,"ARCRBOOT",8);put(p+8,1,4);put(p+12,1,4);put(p+16,1,4);
+    memcpy(p+24,r->packages,64);put(p+88,r->files,8);put(p+96,r->bytes,8);put(m+8,2,4);
+    return true;
+}
 static void manifest_encode(ArcRpcHdStore *s,uint8_t *m,uint64_t generation,uint64_t jgen,uint64_t boundary)
 {
-    memset(m,0,128);copy(s,m,"ARCRHDM1",8);put(m+8,1,4);put(m+12,MANIFEST_BYTES,4);
+    size_t n=manifest_length(m);unsigned version=n==MANIFEST_BYTES?2:1;
+    memset(m,0,128);copy(s,m,"ARCRHDM1",8);put(m+8,version,4);put(m+12,n,4);
     copy(s,m+16,s->content,40);put(m+56,1,4);put(m+60,1,4);geometry(m+64);
     put(m+88,generation,8);put(m+96,jgen,8);put(m+104,boundary,8);
-    put(m+MANIFEST_BYTES-4,crc(s,m,MANIFEST_BYTES-4),4);
+    put(m+n-4,crc(s,m,n-4),4);
 }
 static bool manifest_valid(ArcRpcHdStore *s,const uint8_t *m,unsigned slot)
 {
-    if(memcmp(m,"ARCRHDM1",8)||get(m+8,4)!=1||get(m+12,4)!=MANIFEST_BYTES||
+    size_t n=manifest_length(m);
+    if(memcmp(m,"ARCRHDM1",8)||(get(m+8,4)!=1&&get(m+8,4)!=2)||get(m+12,4)!=n||
+       (n==MANIFEST_BYTES&&!receipt_valid(m+RECEIPT_AT))||
        memcmp(m+16,s->content,40)||get(m+56,4)!=1||get(m+60,4)!=1||!geometry_valid(m+64)||
-       !zero(m+112,16)||get(m+88,8)%2!=slot||get(m+MANIFEST_BYTES-4,4)!=crc(s,m,MANIFEST_BYTES-4))return false;
+       !zero(m+112,16)||get(m+88,8)%2!=slot||get(m+n-4,4)!=crc(s,m,n-4))return false;
     for(unsigned i=0;i<ARC_RPC_HD_CHUNKS;++i){const uint8_t *e=m+128+i*48;
         if(get(e,4)>1||!zero(e+4,4)||(get(e,4)==0&&!zero(e+8,40))||
            (get(e,4)==1&&get(e+8,8)>get(m+88,8)))return false;}
@@ -193,7 +218,7 @@ static void header_encode(ArcRpcHdStore *s,uint8_t h[256],uint64_t gen,unsigned 
     memset(h,0,256);copy(s,h,"ARCRHDJ1",8);put(h+8,1,4);put(h+12,256,4);copy(s,h+16,s->content,40);
     put(h+56,1,4);put(h+60,1,4);geometry(h+64);put(h+88,gen,8);put(h+112,s->snapshot,8);put(h+192,role,4);
     if(s->published){put(h+96,s->jgeneration[s->parent],8);put(h+104,s->generation,8);
-       sha(s,s->manifests[s->selected],MANIFEST_BYTES,h+120);put(h+152,s->lengths[s->parent],8);
+       sha(s,s->manifests[s->selected],manifest_length(s->manifests[s->selected]),h+120);put(h+152,s->lengths[s->parent],8);
        arc_sha256_final(&s->digest[s->parent],h+160);}
     put(h+252,crc(s,h,252),4);
 }
@@ -347,7 +372,7 @@ static bool parent_binding(ArcRpcHdStore *s,unsigned child,unsigned parent,unsig
     if(get(h+96,8)!=s->jgeneration[parent]||get(h+104,8)!=get(s->manifests[manifest]+88,8)||
        get(h+152,8)!=s->lengths[parent])return false;
     arc_sha256_final(&s->digest[parent],digest);if(memcmp(digest,h+160,32))return false;
-    sha(s,s->manifests[manifest],MANIFEST_BYTES,digest);return !memcmp(digest,h+120,32);
+    sha(s,s->manifests[manifest],manifest_length(s->manifests[manifest]),digest);return !memcmp(digest,h+120,32);
 }
 static bool referenced(ArcRpcHdStore *s,const char *leaf)
 {
@@ -397,7 +422,7 @@ static bool gc(ArcRpcHdStore *s)
 static bool publish_manifest(ArcRpcHdStore *s)
 {
     uint8_t *check=s->record;unsigned slot=(unsigned)(get(s->manifests[2]+88,8)&1);char leaf[16];manifest_leaf(slot,leaf);
-    if(!rename_leaf(s,"manifest.tmp",leaf)||!read_leaf(s,leaf,check,MANIFEST_BYTES)||memcmp(check,s->manifests[2],MANIFEST_BYTES))return failure(s,false);
+    if(!rename_leaf(s,"manifest.tmp",leaf)||!read_leaf(s,leaf,check,manifest_length(s->manifests[2]))||memcmp(check,s->manifests[2],manifest_length(s->manifests[2])))return failure(s,false);
     copy(s,s->manifests[slot],check,MANIFEST_BYTES);s->present[slot]=true;s->selected=slot;
     s->generation=get(check+88,8);s->published=true;s->gc_done=false;
     for(unsigned i=0;i<ARC_RPC_HD_SECTORS;++i)if(s->live[i]&&((s->live[i]&SLOT_BIT)!=0)==(s->parent!=0))s->live[i]=0;
@@ -406,7 +431,7 @@ static bool publish_manifest(ArcRpcHdStore *s)
 static bool prepare_manifest(ArcRpcHdStore *s)
 {
     uint8_t *check=s->record;manifest_encode(s,s->manifests[2],s->published?s->generation+1:0,s->jgeneration[s->current],s->snapshot);
-    return write_leaf(s,"manifest.tmp",s->manifests[2],MANIFEST_BYTES)&&read_leaf(s,"manifest.tmp",check,MANIFEST_BYTES)&&!memcmp(check,s->manifests[2],MANIFEST_BYTES);
+    return write_leaf(s,"manifest.tmp",s->manifests[2],manifest_length(s->manifests[2]))&&read_leaf(s,"manifest.tmp",check,manifest_length(s->manifests[2]))&&!memcmp(check,s->manifests[2],manifest_length(s->manifests[2]));
 }
 static bool read_header(ArcRpcHdStore *s,unsigned slot,uint8_t h[256])
 {
@@ -419,7 +444,7 @@ static bool retire_step(ArcRpcHdStore *s)
     switch(s->phase_step){
     case 0:
         manifest_leaf(s->selected,leaf);
-        if(!read_leaf(s,leaf,check,MANIFEST_BYTES)||memcmp(check,s->manifests[s->selected],MANIFEST_BYTES))return false;
+        if(!read_leaf(s,leaf,check,manifest_length(s->manifests[s->selected]))||memcmp(check,s->manifests[s->selected],manifest_length(s->manifests[s->selected])))return false;
         ++s->phase_step;return true;
     case 1:
         if(!read_header(s,s->current,h)||memcmp(h,s->headers[s->current],256))return false;
@@ -531,9 +556,9 @@ void arc_riscpc_hd_tick(ArcRpcHdStore *s)
         if(s->phase_step==0){manifest_encode(s,s->manifests[2],s->generation+1,s->jgeneration[s->current],s->snapshot);
             /* Fresh readback in the next step establishes independent length. */
             ArcIoFile *f=open_leaf(s,"manifest.tmp",true,true);if(!f){ok=false;break;}
-            ok=write_file(s,f,s->manifests[2],MANIFEST_BYTES)&&flush(s,f);bool closed=close_file(s,f,ok);ok&=closed;
+            ok=write_file(s,f,s->manifests[2],manifest_length(s->manifests[2]))&&flush(s,f);bool closed=close_file(s,f,ok);ok&=closed;
             if(ok)s->phase_step=1;
-        }else{ok=read_leaf(s,"manifest.tmp",s->record,MANIFEST_BYTES)&&!memcmp(s->record,s->manifests[2],MANIFEST_BYTES);
+        }else{ok=read_leaf(s,"manifest.tmp",s->record,manifest_length(s->manifests[2]))&&!memcmp(s->record,s->manifests[2],manifest_length(s->manifests[2]));
             if(ok){s->state=ARC_RPC_HD_PUBLISH;s->phase_step=0;}}
         break;
     case ARC_RPC_HD_PUBLISH:
@@ -541,7 +566,7 @@ void arc_riscpc_hd_tick(ArcRpcHdStore *s)
             ok=rename_leaf(s,"manifest.tmp",leaf);if(ok)s->phase_step=1;
         }else{
             unsigned slot=(unsigned)(get(s->manifests[2]+88,8)&1);char leaf[16];manifest_leaf(slot,leaf);
-            ok=read_leaf(s,leaf,s->record,MANIFEST_BYTES)&&!memcmp(s->record,s->manifests[2],MANIFEST_BYTES);
+            ok=read_leaf(s,leaf,s->record,manifest_length(s->manifests[2]))&&!memcmp(s->record,s->manifests[2],manifest_length(s->manifests[2]));
             if(ok){copy(s,s->manifests[slot],s->record,MANIFEST_BYTES);s->present[slot]=true;s->selected=slot;
                 s->generation=get(s->record+88,8);s->published=true;s->gc_done=false;
                 for(unsigned i=0;i<ARC_RPC_HD_SECTORS;++i)if(s->live[i]&&((s->live[i]&SLOT_BIT)!=0)==(s->parent!=0))s->live[i]=0;
@@ -635,7 +660,7 @@ static bool recover(ArcRpcHdStore *s)
 {
     char leaf[16];size_t n;
     for(unsigned i=0;i<2;++i){manifest_leaf(i,leaf);if(size(s,leaf,&n)){
-        if(n!=MANIFEST_BYTES||!read_leaf(s,leaf,s->manifests[i],MANIFEST_BYTES)||!manifest_valid(s,s->manifests[i],i))return failure(s,true);
+        if((n!=MANIFEST_BYTES&&n!=MANIFEST_V1_BYTES)||!read_leaf(s,leaf,s->manifests[i],n)||n!=manifest_length(s->manifests[i])||!manifest_valid(s,s->manifests[i],i))return failure(s,true);
         s->present[i]=true;}}
     if(s->stat_failed)return false;
     if(s->present[0]&&s->present[1]&&get(s->manifests[0]+88,8)==get(s->manifests[1]+88,8))return failure(s,true);
@@ -756,7 +781,7 @@ bool arc_riscpc_hd_population_begin(ArcRpcHdStore *s)
 {
     if(!s||s->refused||s->population||s->state!=ARC_RPC_HD_IDLE||s->requested||s->generation==UINT64_MAX||
        (s->published&&s->jgeneration[s->current]==UINT64_MAX))return false;
-    s->population=true;s->sealed=false;s->snapshot=s->sequence;s->parent=s->current;
+    s->population=true;s->sealed=false;s->seal_at=0;s->snapshot=s->sequence;s->parent=s->current;
     copy(s,s->frozen,s->live,sizeof(s->live));memset(s->population_changed,0,sizeof(s->population_changed));
     if(s->published)copy(s,s->manifests[2],s->manifests[s->selected],MANIFEST_BYTES);else memset(s->manifests[2],0,MANIFEST_BYTES);
     return true;
@@ -774,7 +799,7 @@ bool arc_riscpc_hd_population_read(ArcRpcHdStore *s,uint32_t lba,uint32_t count,
 }
 bool arc_riscpc_hd_population_write(ArcRpcHdStore *s,uint32_t lba,uint32_t count,const uint8_t *in)
 {
-    if(!s||!s->population||s->sealed||s->refused||!in||!range(lba,count))return false;
+    if(!s||!s->population||s->sealed||s->seal_at||s->refused||!in||!range(lba,count))return false;
     /* The source may alias the reconstruction scratch or journal buffer; copy
      * the complete bounded input before base/record reconstruction. */
     uint8_t *input=s->cache[0];s->tags[0].valid=false;copy(s,input,in,count*512);
@@ -784,16 +809,29 @@ bool arc_riscpc_hd_population_write(ArcRpcHdStore *s,uint32_t lba,uint32_t count
         if(count){s->stats.copied_bytes+=count*512;memmove(input,input+take*512,count*512);}
     }return true;
 }
+bool arc_riscpc_hd_population_seal_step(ArcRpcHdStore *s,bool *done)
+{
+    if(done)*done=false;
+    if(!s||!done||!s->population||s->refused||s->snapshot!=s->sequence)return false;
+    if(s->sealed){*done=true;return true;}
+    if(s->seal_at<504){unsigned i=s->seal_at;
+        if(!s->population_changed[i]){
+            bool dirty=false;for(unsigned j=0;j<512;++j)dirty|=s->frozen[i*512+j]!=0;
+            if(dirty){if(!population_chunk(s,i)||!publish_chunk(s,i))return failure(s,false);s->population_changed[i]=true;}}
+        if(!base_chunk(s,s->manifests[2],i))return false;
+        ++s->seal_at;return true;
+    }
+    if(s->seal_at==504){unsigned next=s->published?s->current^1:0;
+        if(!create_header(s,next,s->published?s->jgeneration[s->current]+1:0,s->published?2:(s->authored?0:2)))return failure(s,false);
+        s->current=next;++s->seal_at;return true;
+    }
+    if(!prepare_manifest(s))return failure(s,false);s->sealed=true;*done=true;return true;
+}
 bool arc_riscpc_hd_population_seal(ArcRpcHdStore *s)
 {
-    if(!s||!s->population||s->sealed||s->refused||s->snapshot!=s->sequence)return false;
-    for(unsigned i=0;i<504;++i){if(!s->population_changed[i]){
-        bool dirty=false;for(unsigned j=0;j<512;++j)dirty|=s->frozen[i*512+j]!=0;
-        if(dirty){if(!population_chunk(s,i)||!publish_chunk(s,i))return failure(s,false);s->population_changed[i]=true;}}
-        if(!base_chunk(s,s->manifests[2],i))return false;}
-    unsigned next=s->published?s->current^1:0;
-    if(!create_header(s,next,s->published?s->jgeneration[s->current]+1:0,s->published?2:(s->authored?0:2)))return failure(s,false);
-    s->current=next;if(!prepare_manifest(s))return failure(s,false);s->sealed=true;return true;
+    if(!s||s->sealed)return false;
+    bool done=false;while(!done)if(!arc_riscpc_hd_population_seal_step(s,&done))return false;
+    return true;
 }
 bool arc_riscpc_hd_population_publish(ArcRpcHdStore *s)
 {
@@ -804,7 +842,7 @@ bool arc_riscpc_hd_population_publish(ArcRpcHdStore *s)
          * bounded; source payloads were verified during candidate sealing. */
         char leaf[16];uint8_t h[256],digest[32];size_t n;
         manifest_leaf(s->selected,leaf);
-        if(!read_leaf(s,leaf,s->record,MANIFEST_BYTES)||memcmp(s->record,s->manifests[s->selected],MANIFEST_BYTES))return failure(s,true);
+        if(!read_leaf(s,leaf,s->record,manifest_length(s->manifests[s->selected]))||memcmp(s->record,s->manifests[s->selected],manifest_length(s->manifests[s->selected])))return failure(s,true);
         journal_leaf(s->parent,leaf);arc_sha256_final(&s->digest[s->parent],digest);
         if(!read_header(s,s->parent,h)||memcmp(h,s->headers[s->parent],256)||!size(s,leaf,&n)||n!=s->lengths[s->parent]||
             get(s->headers[s->current]+96,8)!=s->jgeneration[s->parent]||
@@ -818,7 +856,7 @@ bool arc_riscpc_hd_population_publish(ArcRpcHdStore *s)
 void arc_riscpc_hd_population_abort(ArcRpcHdStore *s)
 {
     if(!s||!s->population)return;s->population=false;
-    if(s->sealed&&!s->refused){char leaf[16];journal_leaf(s->current,leaf);if(!remove_leaf(s,leaf))failure(s,false);
+    if((s->sealed||s->seal_at>504)&&!s->refused){char leaf[16];journal_leaf(s->current,leaf);if(!remove_leaf(s,leaf))failure(s,false);
         else{s->journal_present[s->current]=false;s->lengths[s->current]=0;s->current=s->parent;}}
     s->sealed=false;if(!s->refused){s->state=ARC_RPC_HD_GC;s->phase_step=0;s->gc_at=0;}
 }
