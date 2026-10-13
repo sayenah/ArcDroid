@@ -1,18 +1,13 @@
 # ArcDroid Handoff
 
-**Stage:** QA — **R3b-2b** re-check of runs B (`48d6e97`, D-171 plus QA remediation) and C (`b088c04`, D-172), PR #395, branch head `0373b26`.
-**Owner:** Opus (re-check, the same `arcdroid-opus-qa` agent). **Next for Opus:**
-- **Review:** the run B and C delta `git diff 1f28c1a b088c04` (merge-only docs excluded), against D-171 and D-172 and the adjudication `.work/s62/qa-r3b2b/adjudication.md` (L-1 to L-9, S-1, S-2, S-5).
-- **Confirm:**
-  - the declared worst-case guard and step cap are intact;
-  - live budgets are unchanged;
-  - output is independent of batching;
-  - there is no regression to ordering, isolation, teardown, engine ownership, goldens or route isolation;
-  - sanitizer timeouts have margin.
-- **Fable's evidence at run C:** Odin3 first use 40.8–44.2 s and reopen 0.2 s on all seven pairs; generation at most 3.81 T; offline frames p99 0.80–0.83 T, with some just above 0.80 T. Say what the estimator does.
-- **Output:** append the verdict to `.work/s62/qa-r3b2b/QA-REPORT.md`.
+**Stage:** QA — **R3b-2b** re-check of run D (`e997786`; QA N-1 to N-4), PR #395, branch head `50c94e9`.
+**Owner:** Opus (re-check, the same `arcdroid-opus-qa` agent). **Next for Opus:** review `git diff b088c04 e997786` against QA N-1 to N-4 (`.work/s62/qa-r3b2b/QA-REPORT.md`):
+- **N-1:** the Windows command lookup in `tests/rpc_orchestration_mutants.py`, now going through the shared Ninja parser;
+- **N-2:** offline headroom, per-kind POPULATE estimates, and margin tests and mutants;
+- **N-3:** the mid-frame stall fallback;
+- **N-4:** advisory notices stay timed, and only terminal errors persist.
 
-Fable (S62) watches CI (run 38450991436) and then merges under §12.11.
+Confirm output is still independent of batching, that the goldens and route isolation are unchanged, and that sanitizer margins hold. Append the verdict to the report. Fable (S62) runs the Odin3 seven-pair legs on run D and watches CI, then merges under §12.11.
 **Next (S62):**
 1. **R3a: merged** as `d7a92ec` (PR #378). Follow-up Lows: the `recognize-os-range` mutant (inject an out-of-range entry or record it equivalent); two `resource_failure` asserts in `rpc_selection_test`; Python `assert` in the mutation script. To R3d: a skipped scan logs `inventory=skipped`.
 2. **R3b-1: merged** as `6ba7376` (PR #386, head `0a18209`) after Opus QA PASS WITH LOWS, a re-check PASS, green CI on all five jobs and Fable's AC-5. The record is in `docs/build-log.md`; the evidence is in `.work/s62/` (`ac5/`, `odin/`, `win/`, `qa-r3b1/`).
