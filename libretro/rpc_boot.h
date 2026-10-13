@@ -25,15 +25,18 @@ typedef enum {
 } ArcRpcBootState;
 typedef struct {
   uint64_t units, io_bytes, operations, memory_high, max_unit_io_bytes,
-      max_unit_operations, allocated_bytes, files, file_bytes;
+      max_unit_operations, allocated_bytes, files, file_bytes,
+      step_io_bytes, step_operations, step_namespace_operations,
+      max_step_namespace_operations, step_hash_bytes, max_step_hash_bytes;
   unsigned phase, entries, nodes;
   uint8_t packages[2][32];
   bool qualified[2];
 } ArcRpcBootStats;
-/* Additional resident memory <=8 MiB; per unit <=4 MiB I/O, <=128 callbacks,
- * one 32 KiB inflate output, or one bounded tree/directory operation.
- * step clamps its quantum count to 32. Caller keeps IDE quiescent throughout.
- */
+/* Additional resident memory <=8 MiB. Each nonzero step advances one unit,
+ * regardless of caller quantum: <=ARC_RPC_HD_STEP_BYTES requested I/O,
+ * <=1600 callbacks, <=4 metadata callbacks, <=1 namespace attempt, <=1.5 MiB
+ * hash input; one 32 KiB inflate output or one bounded tree operation.
+ * Caller keeps IDE quiescent throughout. No host clock in these bounds. */
 ArcRpcBoot *arc_riscpc_boot_begin(ArcRpcHdStore *, const char *system,
                                   char *error, size_t error_size);
 ArcRpcBootState arc_riscpc_boot_step(ArcRpcBoot *, unsigned units);

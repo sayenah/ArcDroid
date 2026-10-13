@@ -29,6 +29,14 @@ bool arc_io_make_path_counted(const char *path, uint64_t *operations);
 bool arc_io_make_path_diagnostic(const char *path, char *failed_path,
                                  size_t failed_path_size, const char **failure);
 bool arc_io_existing_directory(const char *path);
+/* Bounded primitives for preparation; existing synchronous callers unchanged. */
+bool arc_io_make_path_step(const char *path, size_t *cursor, bool *done,
+                          uint64_t *operations, uint64_t *namespace_operations);
+struct retro_vfs_dir_handle *arc_io_open_directory(const char *path);
+/* -1 reported error, 0 end (VFS cannot distinguish silent readdir failure), 1 entry. */
+int arc_io_read_directory(struct retro_vfs_dir_handle *, const char **name,
+                          bool *regular, uint64_t *operations);
+bool arc_io_close_directory(struct retro_vfs_dir_handle *);
 bool arc_io_directory_contains(const char *directory, const char *name,
                                bool *contains);
 bool arc_io_directory_contains_diagnostic(const char *directory, const char *name,

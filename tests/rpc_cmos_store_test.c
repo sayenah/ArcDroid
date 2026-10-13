@@ -11,7 +11,7 @@ struct retro_vfs_file_handle { unsigned slot;bool used,write,read;size_t cached_
 struct retro_vfs_dir_handle { unsigned at,current; };
 static struct retro_vfs_file_handle handles[16];
 static struct retro_vfs_dir_handle directory;
-static unsigned step,fail_step,kill_step,write_open_step;static bool corrupt_readback;static bool killed;
+static unsigned step,fail_step,kill_step,write_open_step;static unsigned listing_failures;static bool unreadable;static bool corrupt_readback;static bool killed;
 /* A simulated kill stops every subsequent VFS operation; restart below uses
  * only persistent bytes and a new store, never the interrupted store state. */
 static bool before(void){++step;return !killed && step!=fail_step;}
@@ -30,7 +30,7 @@ static struct retro_vfs_file_handle *open_file(const char *p,unsigned mode,unsig
 static int close_file(struct retro_vfs_file_handle *h){bool ok=before();h->used=false;after();return ok?0:-1;}
 static int64_t size_file(struct retro_vfs_file_handle *h){if(!before())return -1;int64_t n=(int64_t)h->cached_size;after();return n;}
 static int64_t read_file(struct retro_vfs_file_handle *h,void *p,uint64_t n)
-{ if(!before()||!h->read)return -1;if(n>files[h->slot].size)n=files[h->slot].size;memcpy(p,files[h->slot].bytes,(size_t)n);if(corrupt_readback && strstr(files[h->slot].path,".tmp") && n>104){((uint8_t *)p)[104]^=1;corrupt_readback=false;}after();return (int64_t)n; }
+{ if(!before()||!h->read||unreadable)return -1;if(n>files[h->slot].size)n=files[h->slot].size;memcpy(p,files[h->slot].bytes,(size_t)n);if(corrupt_readback && strstr(files[h->slot].path,".tmp") && n>104){((uint8_t *)p)[104]^=1;corrupt_readback=false;}after();return (int64_t)n; }
 static int64_t write_file(struct retro_vfs_file_handle *h,const void *p,uint64_t n)
 { if(!before()){if(killed)return -1;assert(n<=1024);if((size_t)n/2>files[h->slot].size)files[h->slot].size=(size_t)n/2;if((size_t)n/2>h->cached_size)h->cached_size=(size_t)n/2;memcpy(files[h->slot].bytes,p,(size_t)n/2);return (int64_t)n/2;}assert(n<=1024);memcpy(files[h->slot].bytes,p,(size_t)n);if((size_t)n>files[h->slot].size)files[h->slot].size=(size_t)n;if((size_t)n>h->cached_size)h->cached_size=(size_t)n;after();return (int64_t)n; }
 static int flush_file(struct retro_vfs_file_handle *h){(void)h;if(!before())return -1;after();return 0;}
@@ -38,9 +38,9 @@ static int remove_file(const char *p){if(!before())return -1;int i=index_of(p,fa
 static int rename_file(const char *a,const char *b)
 { if(!before())return -1;int i=index_of(a,false);if(i<0 || index_of(b,false)>=0)return -1;snprintf(files[i].path,sizeof(files[i].path),"%s",b);after();return 0; }
 static int32_t stat_file(const char *p,int32_t *n)
-{ int i=index_of(p,false);if(i>=0){if(n)*n=(int32_t)files[i].size;return RETRO_VFS_STAT_IS_VALID;}return RETRO_VFS_STAT_IS_VALID|RETRO_VFS_STAT_IS_DIRECTORY; }
+{ if(!before())return 0;int i=index_of(p,false);if(i>=0){if(n)*n=(int32_t)files[i].size;after();return RETRO_VFS_STAT_IS_VALID;}after();return RETRO_VFS_STAT_IS_VALID|RETRO_VFS_STAT_IS_DIRECTORY; }
 static int mkdir_file(const char *p){(void)p;if(!before())return -1;after();return 0;}
-static struct retro_vfs_dir_handle *opendir_file(const char *p,bool hidden){(void)p;(void)hidden;if(!before())return NULL;memset(&directory,0,sizeof(directory));after();return &directory;}
+static struct retro_vfs_dir_handle *opendir_file(const char *p,bool hidden){(void)p;(void)hidden;if(!before())return NULL;if(listing_failures){--listing_failures;return NULL;}memset(&directory,0,sizeof(directory));after();return &directory;}
 static bool readdir_file(struct retro_vfs_dir_handle *d){if(!before())return false;while(d->at<64){unsigned i=d->at++;if(files[i].exists){d->current=i;after();return true;}}after();return false;}
 static const char *name_file(struct retro_vfs_dir_handle *d){if(!before())return NULL;const char *name=strrchr(files[d->current].path,'/')+1;after();return name;}
 static bool isdir_file(struct retro_vfs_dir_handle *d){(void)d;if(!before())return true;after();return false;}
@@ -152,5 +152,54 @@ int main(void)
         memcpy(files,baseline,sizeof(files));fresh();for(unsigned i=0;i<64;++i)if(files[i].exists){if(offset==360){uint64_t outside=UINT64_C(13569465600);for(unsigned byte=0;byte<8;++byte)files[i].bytes[360+byte]=(uint8_t)(outside>>(8*byte));}else if(offset==400){memset(files[i].bytes+400,0,8);files[i].bytes[400]=1;}else files[i].bytes[offset]^=1;crc(&files[i]);}
         assert(arc_riscpc_cmos_store_load(&t,"/save",&key,error,sizeof(error))==ARC_RPC_CMOS_REFUSED);
     }
+
+    /* LOW-A: retry listing and partial inspection failures without latching
+     * corruption; seeds/publications are barred until both slots reconcile. */
+    memset(files,0,sizeof(files));fresh();key.defaults=false;
+    assert(arc_riscpc_cmos_store_begin(&s,"/save",&key,error,sizeof(error))==ARC_RPC_CMOS_INSPECTING);
+    assert(!arc_riscpc_cmos_store_seed(&s,p,error,sizeof(error)));
+    assert(!arc_riscpc_cmos_store_put_begin(&s,p,NULL,error,sizeof(error)));
+    listing_failures=1;ArcRpcCmosResult state;
+    do{unsigned ops=step;state=arc_riscpc_cmos_store_step(&s,error,sizeof(error));
+        assert(s.stats.step_operations==step-ops&&s.stats.step_operations<=4&&s.stats.step_namespace<=1);
+    }while(state==ARC_RPC_CMOS_INSPECTING);
+    assert(state==ARC_RPC_CMOS_MISSING&&s.reconciled&&!s.refused&&!error[0]);
+    assert(arc_riscpc_cmos_store_seed(&s,p,error,sizeof(error)));
+    assert(!arc_riscpc_cmos_store_seed(&s,q,error,sizeof(error)));
+    assert(arc_riscpc_cmos_store_load(&s,"/save",&key,error,sizeof(error))==ARC_RPC_CMOS_FOUND);
+    listing_failures=3;assert(arc_riscpc_cmos_store_load(&t,"/save",&key,error,sizeof(error))==ARC_RPC_CMOS_UNAVAILABLE);
+    assert(t.exhausted&&!t.refused&&!t.reconciled&&!arc_riscpc_cmos_store_seed(&t,q,error,sizeof(error)));
+    assert(!arc_riscpc_cmos_store_put(&t,q,NULL,error,sizeof(error)));
+    unreadable=true;assert(arc_riscpc_cmos_store_load(&t,"/save",&key,error,sizeof(error))==ARC_RPC_CMOS_UNAVAILABLE);
+    assert(!t.reconciled&&!t.refused&&!arc_riscpc_cmos_store_seed(&t,q,error,sizeof(error)));unreadable=false;
+    assert(arc_riscpc_cmos_store_load(&t,"/save",&key,error,sizeof(error))==ARC_RPC_CMOS_FOUND&&!memcmp(t.payload,p,240));
+    /* Explicit publication steps obey counts independently of quantum and
+     * preserve the newest published slot after rename/readback interruption. */
+    assert(arc_riscpc_cmos_store_put_begin(&t,q,NULL,error,sizeof(error)));
+    bool done=false;while(!done){unsigned ops=step;assert(arc_riscpc_cmos_store_put_step(&t,&done,error,sizeof(error)));
+        assert(t.stats.step_operations==step-ops&&t.stats.step_operations<=4&&t.stats.step_bytes<=512&&t.stats.step_namespace<=1);}
+    assert(t.generation==2&&!memcmp(t.payload,q,240));
+    memcpy(baseline,files,sizeof(files));
+    /* Partial-slot inspection is never a found/missing result, and an invalid
+     * slot found before a transient failure remains refused after retry. */
+    for(unsigned at=1;at<=40;++at){memcpy(files,baseline,sizeof(files));fresh();fail_step=at;
+        state=arc_riscpc_cmos_store_begin(&t,"/save",&key,error,sizeof(error));
+        while(state==ARC_RPC_CMOS_INSPECTING){assert(!t.reconciled);
+            assert(!arc_riscpc_cmos_store_put_begin(&t,p,NULL,error,sizeof(error)));
+            state=arc_riscpc_cmos_store_step(&t,error,sizeof(error));}
+        assert(state==ARC_RPC_CMOS_FOUND&&t.generation==2&&!t.refused&&!memcmp(t.payload,q,240));
+    }
+
+    memcpy(files,baseline,sizeof(files));fresh();
+    char corrupt_path[1200];snprintf(corrupt_path,sizeof(corrupt_path),"%s.0",s.base);
+    int corrupt=index_of(corrupt_path,false);assert(corrupt>=0);files[corrupt].bytes[104]^=1;
+    state=arc_riscpc_cmos_store_begin(&t,"/save",&key,error,sizeof(error));bool interrupted=false;
+    while(state==ARC_RPC_CMOS_INSPECTING){
+        if(t.phase==5&&t.slot==1&&!interrupted){assert(t.refused);unreadable=true;interrupted=true;}
+        state=arc_riscpc_cmos_store_step(&t,error,sizeof(error));unreadable=false;
+    }
+    assert(interrupted&&t.refused&&t.reconciled&&t.generation==1&&state==ARC_RPC_CMOS_FOUND);
+    assert(!arc_riscpc_cmos_store_seed(&t,q,error,sizeof(error)));
+    assert(!arc_riscpc_cmos_store_put(&t,p,NULL,error,sizeof(error)));
     puts("RPC CMOS: byte integrity, keys, fallback/refusal, all publication failures and simulated kills, oracle and revisions passed");return 0;
 }

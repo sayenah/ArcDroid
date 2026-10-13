@@ -29,6 +29,11 @@ typedef struct {
   uint8_t pins[ARC_BOOT_INPUT_CAP / ARC_BOOT_QUANTUM][32],
       verify[ARC_BOOT_QUANTUM];
   bool pinned;
+  unsigned index_phase;
+  uint8_t index_header[46], index_local[30], index_descriptor[16],
+      central_digest[32], local_digest[32];
+  uint32_t central_meta[3], local_meta[3], index_finish;
+  uint64_t hash_bytes, copied_bytes;
   ArcSha256 hash;
   z_stream stream;
   bool inflating, extracting_active, ended;

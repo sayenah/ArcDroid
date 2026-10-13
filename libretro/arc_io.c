@@ -165,6 +165,43 @@ static bool arc_io_is_directory(const char *path)
 bool arc_io_existing_directory(const char *path)
 { return path && arc_io_is_directory(path); }
 
+bool arc_io_make_path_step(const char *path, size_t *cursor, bool *done,
+                          uint64_t *operations, uint64_t *namespace_operations)
+{
+   char prefix[4096]; size_t length = path ? strlen(path) : 0;
+   *done = false;
+   if (!length || length >= sizeof(prefix) || !arc_io_vfs || !arc_io_vfs->mkdir)
+      return false;
+   size_t at = *cursor ? *cursor : 1;
+   while (at < length && !(path[at] == '/' || path[at] == '\\')) ++at;
+   /* Same drive-prefix treatment as the synchronous bridge. */
+   if (at == 2 && path[1] == ':') { *cursor = at + 1; return true; }
+   memcpy(prefix, path, at); prefix[at] = 0;
+   if (!arc_io_is_directory_counted(prefix, operations)) {
+      ++*operations; ++*namespace_operations;
+      if (arc_io_vfs->mkdir(prefix) != 0) return false;
+   }
+   *cursor = at + 1; *done = at == length; return true;
+}
+struct retro_vfs_dir_handle *arc_io_open_directory(const char *path)
+{
+   if (!arc_io_vfs || !arc_io_vfs->opendir || !arc_io_vfs->readdir ||
+       !arc_io_vfs->dirent_get_name || !arc_io_vfs->dirent_is_dir ||
+       !arc_io_vfs->closedir) return NULL;
+   return arc_io_vfs->opendir(path, false);
+}
+int arc_io_read_directory(struct retro_vfs_dir_handle *dir, const char **name,
+                          bool *regular, uint64_t *operations)
+{
+   ++*operations;
+   if (!arc_io_vfs->readdir(dir)) return 0;
+   ++*operations; *name = arc_io_vfs->dirent_get_name(dir);
+   if (!*name || !**name) return -1;
+   ++*operations; *regular = !arc_io_vfs->dirent_is_dir(dir); return 1;
+}
+bool arc_io_close_directory(struct retro_vfs_dir_handle *dir)
+{ return arc_io_vfs->closedir(dir) == 0; }
+
 static bool arc_io_make_path_inner(const char *path, char *failed_path,
                                    size_t failed_path_size, const char **failure,
                                    uint64_t *operations)

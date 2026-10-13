@@ -8,7 +8,19 @@
 #define ARC_RPC_HD_CHUNKS 504u
 #define ARC_RPC_HD_JOURNAL_CAP 8388608u
 #define ARC_RPC_HD_TRIGGER 1048576u
+#define ARC_RPC_HD_STEP_BYTES 788612u
+#define ARC_RPC_HD_STEP_OPERATIONS 1600u
+#define ARC_RPC_HD_STEP_HASH_BYTES 1572864u
+#define ARC_RPC_HD_STEP_COPY_BYTES 2097152u
 typedef struct ArcRpcHdStore ArcRpcHdStore;
+typedef enum { ARC_RPC_HD_OPEN_PENDING, ARC_RPC_HD_UNPUBLISHED,
+    ARC_RPC_HD_UNSUPPORTED, ARC_RPC_HD_UNAVAILABLE, ARC_RPC_HD_CORRUPT,
+    ARC_RPC_HD_LEGACY, ARC_RPC_HD_RECEIPTED } ArcRpcHdOutcome;
+/* No I/O at begin; one deterministic preparation step per call. */
+ArcRpcHdStore *arc_riscpc_hd_open_begin(const char *, const char *, char *, size_t);
+ArcRpcHdOutcome arc_riscpc_hd_open_step(ArcRpcHdStore *);
+ArcRpcHdOutcome arc_riscpc_hd_outcome(const ArcRpcHdStore *);
+const char *arc_riscpc_hd_outcome_notice(ArcRpcHdOutcome);
 /* Host-owned creation provenance; never represented by guest sectors. */
 typedef struct {
     uint8_t packages[2][32];
@@ -18,6 +30,11 @@ bool arc_riscpc_hd_receipt(const ArcRpcHdStore *, ArcRpcHdReceipt *);
 bool arc_riscpc_hd_population_receipt(ArcRpcHdStore *, const ArcRpcHdReceipt *);
 /* One chunk verification or one control operation; done only after sealing. */
 bool arc_riscpc_hd_population_seal_step(ArcRpcHdStore *, bool *done);
+/* Start captures input; each step performs one chunk/control substep. */
+bool arc_riscpc_hd_population_io_begin(ArcRpcHdStore *, uint32_t, uint32_t,
+                                      uint8_t *, bool write);
+bool arc_riscpc_hd_population_io_step(ArcRpcHdStore *, bool *done);
+bool arc_riscpc_hd_population_publish_step(ArcRpcHdStore *, bool *done);
 typedef enum { ARC_RPC_HD_IDLE, ARC_RPC_HD_ROTATE, ARC_RPC_HD_MATERIALIZE,
     ARC_RPC_HD_MANIFEST, ARC_RPC_HD_PUBLISH, ARC_RPC_HD_RETIRE, ARC_RPC_HD_GC,
     ARC_RPC_HD_READ_ONLY, ARC_RPC_HD_DAMAGED } ArcRpcHdState;

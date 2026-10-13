@@ -22,6 +22,10 @@ struct ArcRpcBoot {
   uint32_t offset, pending;
   uint64_t store_bytes, store_operations;
   bool candidate, cancel;
+  bool io_pending, io_ready, io_write, object_io, object_done;
+  uint32_t io_offset, io_remaining, io_take, io_lba, object_payload;
+  uint8_t *io_data;
+  ArcBootNode *io_node;
 };
 _Static_assert(sizeof(ArcRpcBoot) + 262144 <= 8388608,
                "boot population memory cap");
@@ -321,58 +325,49 @@ static bool bootstrap(ArcRpcBoot *b) {
   }
   return true;
 }
-static bool candidate_io(ArcRpcBoot *b, ArcBootNode *node, uint32_t offset,
-                         uint8_t *data, unsigned n, bool read) {
-  while (n) {
-    uint32_t at, take;
-    if (!arc_boot_layout_resolve(&b->layout, node->address, offset, n, &at,
-                                 &take) ||
-        at % 512 || take % 512)
-      return false;
-    if (!(read ? arc_riscpc_hd_population_read(b->store, at / 512, take / 512,
-                                               data)
-               : arc_riscpc_hd_population_write(b->store, at / 512, take / 512,
-                                                data)))
-      return false;
-    n -= take;
-    offset += take;
-    data += take;
+
+/* Completion is consumed by the same object/format unit which queued it.
+ * Package buffers cannot change while a store job is pending. */
+static int candidate_io(ArcRpcBoot *b,ArcBootNode *node,uint32_t offset,uint8_t *data,unsigned n,bool read)
+{
+  if(b->io_ready){b->io_ready=false;return 1;}
+  if(b->io_pending)return 0;
+  b->io_node=node;b->io_offset=offset;b->io_data=data;b->io_remaining=n;b->io_write=!read;
+  b->io_take=0;b->io_pending=true;return 0;
+}
+static bool pump_io(ArcRpcBoot *b)
+{
+  if(!b->io_take){uint32_t at,take;
+    if(b->io_node){if(!arc_boot_layout_resolve(&b->layout,b->io_node->address,b->io_offset,b->io_remaining,&at,&take))return false;}
+    else{at=b->io_lba*512;take=b->io_remaining;}
+    if(at%512||take%512)return false;
+    b->io_take=take;
+    return arc_riscpc_hd_population_io_begin(b->store,at/512,take/512,b->io_data,b->io_write);
   }
+  bool done;if(!arc_riscpc_hd_population_io_step(b->store,&done))return false;
+  if(done){b->io_remaining-=b->io_take;b->io_offset+=b->io_take;b->io_data+=b->io_take;b->io_take=0;
+    if(!b->io_remaining){b->io_pending=false;b->io_ready=true;}}
   return true;
 }
-static bool format_part(ArcRpcBoot *b, bool read) {
-  uint32_t at, bytes;
-  const uint8_t *expected;
-  if (b->part == 0) {
-    arc_boot_layout_boot(b->block);
-    at = 3072;
-    bytes = 512;
-    expected = b->block;
-  } else {
-    at = ARC_BOOT_MAP_AT + (b->part - 1) * 2560;
-    bytes = 2560;
-    expected = b->layout.map;
-  }
-  if (read) {
-    if (!arc_riscpc_hd_population_read(b->store, at / 512, bytes / 512,
-                                       b->zip[0].output) ||
-        memcmp(b->zip[0].output, expected, bytes))
-      return false;
-  } else if (!arc_riscpc_hd_population_write(b->store, at / 512, bytes / 512,
-                                             expected))
-    return false;
-  return true;
+
+static bool format_part(ArcRpcBoot *b,bool read,bool *done)
+{
+  *done=false;uint32_t at,bytes;const uint8_t *expected;
+  if(!b->part){arc_boot_layout_boot(b->block);at=3072;bytes=512;expected=b->block;}
+  else{at=ARC_BOOT_MAP_AT+(b->part-1)*2560;bytes=2560;expected=b->layout.map;}
+  if(b->io_ready){b->io_ready=false;*done=true;
+    return !read||!memcmp(b->zip[0].output,expected,bytes);}
+  b->io_node=NULL;b->io_lba=at/512;b->io_remaining=bytes;b->io_offset=b->io_take=0;
+  b->io_data=read?b->zip[0].output:(uint8_t *)expected;b->io_write=!read;b->io_pending=true;return true;
 }
 static bool object_step(ArcRpcBoot *b, bool read) {
   ArcBootNode *node = &b->nodes[b->object];
   if (node->directory) {
     arc_boot_layout_nick(b->nodes, b->object, b->directory);
-    if (read) {
-      if (!candidate_io(b, node, 0, b->block, 2048, true) ||
-          memcmp(b->block, b->directory, 2048))
-        return false;
-    } else if (!candidate_io(b, node, 0, b->directory, 2048, false))
-      return false;
+    int io=candidate_io(b,node,0,read?b->block:b->directory,2048,read);
+    if(io<0)return false;
+    if(!io)return true;
+    if(read&&memcmp(b->block,b->directory,2048))return false;
     ++b->object;
     return true;
   }
@@ -386,10 +381,10 @@ static bool object_step(ArcRpcBoot *b, bool read) {
       bytes = ARC_BOOT_QUANTUM;
     if (!b->offset)
       arc_sha256_init(&b->hash);
-    if (!candidate_io(b, node, b->offset, b->block, (bytes + 511) & ~511u,
-                      true))
-      return false;
-    arc_sha256_update(&b->hash, b->block, bytes);
+    int io=candidate_io(b,node,b->offset,b->block,(bytes+511)&~511u,true);
+    if(io<0)return false;
+    if(!io)return true;
+    b->zip[b->package].hash_bytes+=bytes;arc_sha256_update(&b->hash, b->block, bytes);
     b->offset += bytes;
     if (b->offset == node->size) {
       uint8_t digest[32];
@@ -403,6 +398,16 @@ static bool object_step(ArcRpcBoot *b, bool read) {
   }
   size_t bytes;
   bool done;
+  if(b->object_io){
+    int io=candidate_io(b,node,b->offset,b->block,0,false);
+    if(io<0)return false;
+    if(!io)return true;
+    b->object_io=false;done=b->object_done;
+    b->offset+=b->object_payload;b->pending-=b->object_payload;
+    if(b->pending)memmove(b->block,b->block+b->object_payload,b->pending);
+    if(done){if(b->offset!=node->size)return false;++b->object;b->offset=0;}
+    return true;
+  }
   if (node->authored) {
     const ArcBootAsset *a = &arc_boot_assets[node->asset];
     bytes = a->size;
@@ -431,9 +436,8 @@ static bool object_step(ArcRpcBoot *b, bool read) {
   unsigned sectors = done ? (payload + 511u) & ~511u : payload;
   if (sectors) {
     memset(b->block + payload, 0, sectors - payload);
-    if (!candidate_io(b, node, b->offset, b->block, sectors, false))
-      return false;
-    b->offset += payload;
+    if(candidate_io(b,node,b->offset,b->block,sectors,false)<0)return false;
+    b->object_io=true;b->object_done=done;b->object_payload=payload;return true;
   }
   b->pending -= payload;
   if (b->pending)
@@ -450,6 +454,7 @@ static bool unit(ArcRpcBoot *b) {
   ArcBootZip *z = &b->zip[b->package];
   if (b->cancel)
     return fail(b, "cancelled");
+  if(b->io_pending)return pump_io(b);
   switch (b->phase) {
   case ARC_RPC_BOOT_OPEN:
     if (!arc_boot_zip_open(z, b->paths[b->package], b->error, sizeof(b->error)))
@@ -465,7 +470,7 @@ static bool unit(ArcRpcBoot *b) {
       bytes = ARC_BOOT_QUANTUM;
     if (bytes && !arc_boot_zip_read(z, b->offset, b->block, bytes))
       return false;
-    arc_sha256_update(&b->hash, b->block, bytes);
+    b->zip[b->package].hash_bytes+=bytes;arc_sha256_update(&b->hash, b->block, bytes);
     if (b->phase == ARC_RPC_BOOT_HASH)
       arc_boot_zip_pin(z, b->offset, b->block, bytes);
     b->offset += bytes;
@@ -588,9 +593,8 @@ static bool unit(ArcRpcBoot *b) {
     return true;
   case ARC_RPC_BOOT_FORMAT:
     if (b->part < 3) {
-      if (!format_part(b, false))
-        return false;
-      ++b->part;
+      bool done;if(!format_part(b,false,&done))return false;
+      if(done)++b->part;
       return true;
     }
     b->phase = ARC_RPC_BOOT_WRITE;
@@ -604,9 +608,8 @@ static bool unit(ArcRpcBoot *b) {
     return true;
   case ARC_RPC_BOOT_VALIDATE:
     if (b->part < 3) {
-      if (!format_part(b, true))
-        return false;
-      ++b->part;
+      bool done;if(!format_part(b,true,&done))return false;
+      if(done)++b->part;
       return true;
     }
     if (b->object < b->used)
@@ -647,8 +650,8 @@ static bool unit(ArcRpcBoot *b) {
     return true;
   }
   case ARC_RPC_BOOT_PUBLISH:
-    if (!arc_riscpc_hd_population_publish(b->store))
-      return false;
+    {bool done;if(!arc_riscpc_hd_population_publish_step(b->store,&done))return false;
+    if(!done)return true;}
     b->candidate = false;
     b->phase = ARC_RPC_BOOT_DONE;
     return true;
@@ -668,7 +671,8 @@ static void counts(ArcRpcBoot *b, uint64_t *bytes, uint64_t *ops) {
 }
 ArcRpcBoot *arc_riscpc_boot_begin(ArcRpcHdStore *store, const char *system,
                                   char *error, size_t n) {
-  if (!store) {
+  ArcRpcHdOutcome outcome=arc_riscpc_hd_outcome(store);
+  if (!store || outcome==ARC_RPC_HD_OPEN_PENDING) {
     if (error && n)
       snprintf(error, n, "Boot population requires a store");
     return NULL;
@@ -685,6 +689,9 @@ ArcRpcBoot *arc_riscpc_boot_begin(ArcRpcHdStore *store, const char *system,
   b->store_bytes = s.bytes_read + s.bytes_written;
   b->store_operations = s.operations;
   b->stats.memory_high = sizeof(*b);
+  if(outcome==ARC_RPC_HD_UNSUPPORTED||outcome==ARC_RPC_HD_CORRUPT||outcome==ARC_RPC_HD_UNAVAILABLE){
+    fail(b,arc_riscpc_hd_outcome_notice(outcome));return b;
+  }
   b->used = 1;
   strcpy(b->nodes[0].name, "$");
   b->nodes[0].directory = true;
@@ -726,15 +733,25 @@ ArcRpcBoot *arc_riscpc_boot_begin(ArcRpcHdStore *store, const char *system,
 ArcRpcBootState arc_riscpc_boot_step(ArcRpcBoot *b, unsigned units) {
   if (!b)
     return ARC_RPC_BOOT_FAILED;
-  if (units > 32)
-    units = 32;
+  b->stats.step_io_bytes=b->stats.step_operations=b->stats.step_namespace_operations=b->stats.step_hash_bytes=0;
+  if (units > 1)
+    units = 1;
   for (unsigned i = 0; i < units && !terminal(b->phase); ++i) {
     uint64_t bytes, ops, after_bytes, after_ops;
+    ArcRpcHdStats store_before,store_after;arc_riscpc_hd_stats(b->store,&store_before);
+    uint64_t zip_hash=b->zip[0].hash_bytes+b->zip[1].hash_bytes;
     counts(b, &bytes, &ops);
     bool ok = unit(b);
     if (!ok && !terminal(b->phase))
       fail(b, "I/O, validation or allocation failure");
     counts(b, &after_bytes, &after_ops);
+    arc_riscpc_hd_stats(b->store,&store_after);
+    b->stats.step_io_bytes=after_bytes-bytes;b->stats.step_operations=after_ops-ops;
+    b->stats.step_namespace_operations=store_after.namespace_operations-store_before.namespace_operations;
+    b->stats.step_hash_bytes=store_after.hash_bytes-store_before.hash_bytes+
+        b->zip[0].hash_bytes+b->zip[1].hash_bytes-zip_hash;
+    if(b->stats.step_namespace_operations>b->stats.max_step_namespace_operations)b->stats.max_step_namespace_operations=b->stats.step_namespace_operations;
+    if(b->stats.step_hash_bytes>b->stats.max_step_hash_bytes)b->stats.max_step_hash_bytes=b->stats.step_hash_bytes;
     ++b->stats.units;
     if (after_bytes - bytes > b->stats.max_unit_io_bytes)
       b->stats.max_unit_io_bytes = after_bytes - bytes;

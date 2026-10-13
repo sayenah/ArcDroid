@@ -23,7 +23,7 @@ mutants=[
  ('exclude-500',modules[0],'return value>=500','return value>=501'),
  ('exclude-neighbour',modules[0],'numeric(parts[3],parts[3]+strlen(parts[3]))','strtoul(parts[3],NULL,10)>=500'),
  ('inactive-startup',modules[0],'strcpy(parts[1],"Inactive")','strcpy(parts[1],"Active")'),
- ('arc0-validation',modules[1],'memcmp(cm,lm,sizeof(cm))||memcmp(cdigest,ldigest,32)','false'),
+ ('arc0-validation',modules[1],'memcmp(cm,lm,12)||memcmp(z->central_digest,z->local_digest,32)','false'),
  ('snapshot-pinning',modules[1],'memcmp(digest,z->pins[index],32)','false'),
  ('crc-validation',modules[1],'z->crc!=a->crc','false'),
  ('deflate-sector-buffer',modules[0],'done ? b->pending : b->pending & ~511u','b->pending'),
@@ -35,7 +35,7 @@ mutants=[
  ('boot-option-exec',modules[2],'out[455]=2','out[455]=3'),
  ('attribute-lock',modules[2],'((a->attr & 8u) >> 1)','0'),
  ('receipt-persist',modules[3],'size_t n=manifest_length(m);unsigned version=n==MANIFEST_BYTES?2:1;', 'size_t n=MANIFEST_V1_BYTES;unsigned version=1;'),
- ('receipt-unknown',modules[3],'get(r+8,4)==1','get(r+8,4)>=1'),
+ ('receipt-unknown',modules[3],'get(r+8,4)!=1','false'),
  ('receipt-forgery',modules[3],'get(s->manifests[s->selected]+8,4)!=2','false'),
  ('receipt-noop',modules[0],'b->phase=ARC_RPC_BOOT_DONE;\n            memcpy(b->stats.packages','b->phase=ARC_RPC_BOOT_OPEN;\n            memcpy(b->stats.packages'),
 ]

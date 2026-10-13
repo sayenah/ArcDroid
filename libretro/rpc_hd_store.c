@@ -31,7 +31,7 @@ extern void arc_riscpc_hd_test_point(unsigned boundary);
 #define SLOT_BIT UINT32_C(0x80000000)
 #define OFFSET_MASK UINT32_C(0x7fffffff)
 #define FILES_MAX 1008u
-#define CACHE_COUNT 6u
+#define CACHE_COUNT 5u
 
 typedef struct { uint32_t offset, lba, count, slot; } Record;
 typedef struct {
@@ -49,6 +49,19 @@ struct ArcRpcHdStore {
     ArcSha256 digest[2]; uint32_t lengths[2];
     uint64_t sequence, snapshot, generation, jgeneration[2];
     unsigned selected, current, parent, next_chunk, phase_step, seal_at;
+    ArcRpcHdOutcome outcome;
+    unsigned open_phase, open_at, replay_phase, replay_slot, replay_mode;
+    uint32_t replay_at; uint64_t replay_last[2];
+    size_t path_cursor;
+    struct retro_vfs_dir_handle *listing;
+    ArcIoFile *replay_file;
+    bool partial[2], abandon, open_validated;
+    unsigned population_phase, population_lba, population_count;
+    uint8_t *population_output; bool population_write, population_io;
+    unsigned publish_step, seal_step;
+    unsigned reconstruction_at, reconstruction_slot;
+    bool reconstruction_active;
+    uint8_t reconstruction_record[RECORD_MAX];
     ArcIoFile *rotation_writer;
     bool present[2], journal_present[2], torn[2], dirty[ARC_RPC_HD_CHUNKS];
     bool population, sealed, published, refused, damaged, requested, authored, gc_done, foreign_entry, stat_failed,
@@ -62,6 +75,11 @@ struct ArcRpcHdStore {
 /* Store buffers, index and metadata are one allocation; VFS handles and the
  * formatter's bounded stack buffers fit the contract's remaining allowance. */
 _Static_assert(sizeof(ArcRpcHdStore) + 12288u <= 4889964u, "RPC store memory bound");
+static void step_start(ArcRpcHdStore *,ArcRpcHdStats *);
+static void step_finish(ArcRpcHdStore *,const ArcRpcHdStats *);
+static bool view_ready(const ArcRpcHdStore *s)
+{ return s && (s->outcome==ARC_RPC_HD_LEGACY||s->outcome==ARC_RPC_HD_RECEIPTED||
+    (s->outcome==ARC_RPC_HD_UNAVAILABLE&&s->open_validated)); }
 static uint64_t get(const uint8_t *p, unsigned n)
 { uint64_t v=0;for(unsigned i=0;i<n;++i)v|=(uint64_t)p[i]<<(i*8u);return v; }
 static void put(uint8_t *p, uint64_t v, unsigned n)
@@ -166,7 +184,7 @@ static bool write_leaf(ArcRpcHdStore *s,const char *leaf,const void *p,size_t n)
 {
     ArcIoFile *f=open_leaf(s,leaf,true,true);if(!f)return false;
     bool ok=write_file(s,f,p,n)&&flush(s,f);bool closed=close_file(s,f,ok);
-    size_t actual;return ok&&closed&&size(s,leaf,&actual)&&actual==n;
+    return ok&&closed; /* The following readback step verifies fresh length. */
 }
 static uint8_t *entry(uint8_t *m,unsigned index) { return m+128u+index*48u; }
 static void geometry(uint8_t *p)
@@ -175,12 +193,9 @@ static bool geometry_valid(const uint8_t *p)
 { uint8_t expected[24];geometry(expected);return !memcmp(p,expected,24); }
 static size_t manifest_length(const uint8_t *m)
 { return get(m+8,4)==2 ? MANIFEST_BYTES : MANIFEST_V1_BYTES; }
-static bool receipt_valid(const uint8_t *r)
-{ return !memcmp(r,"ARCRBOOT",8)&&get(r+8,4)==1&&get(r+12,4)==1&&get(r+16,4)==1&&
-    zero(r+20,4)&&zero(r+104,24); }
 bool arc_riscpc_hd_receipt(const ArcRpcHdStore *s,ArcRpcHdReceipt *r)
 {
-    if(!s||!s->published||get(s->manifests[s->selected]+8,4)!=2)return false;
+    if(!view_ready(s)||!s->published||get(s->manifests[s->selected]+8,4)!=2)return false;
     const uint8_t *p=s->manifests[s->selected]+RECEIPT_AT;
     if(r){memcpy(r->packages,p+24,64);r->files=get(p+88,8);r->bytes=get(p+96,8);}
     return true;
@@ -201,18 +216,6 @@ static void manifest_encode(ArcRpcHdStore *s,uint8_t *m,uint64_t generation,uint
     put(m+88,generation,8);put(m+96,jgen,8);put(m+104,boundary,8);
     put(m+n-4,crc(s,m,n-4),4);
 }
-static bool manifest_valid(ArcRpcHdStore *s,const uint8_t *m,unsigned slot)
-{
-    size_t n=manifest_length(m);
-    if(memcmp(m,"ARCRHDM1",8)||(get(m+8,4)!=1&&get(m+8,4)!=2)||get(m+12,4)!=n||
-       (n==MANIFEST_BYTES&&!receipt_valid(m+RECEIPT_AT))||
-       memcmp(m+16,s->content,40)||get(m+56,4)!=1||get(m+60,4)!=1||!geometry_valid(m+64)||
-       !zero(m+112,16)||get(m+88,8)%2!=slot||get(m+n-4,4)!=crc(s,m,n-4))return false;
-    for(unsigned i=0;i<ARC_RPC_HD_CHUNKS;++i){const uint8_t *e=m+128+i*48;
-        if(get(e,4)>1||!zero(e+4,4)||(get(e,4)==0&&!zero(e+8,40))||
-           (get(e,4)==1&&get(e+8,8)>get(m+88,8)))return false;}
-    return true;
-}
 static void header_encode(ArcRpcHdStore *s,uint8_t h[256],uint64_t gen,unsigned role)
 {
     memset(h,0,256);copy(s,h,"ARCRHDJ1",8);put(h+8,1,4);put(h+12,256,4);copy(s,h+16,s->content,40);
@@ -231,44 +234,8 @@ static bool header_valid(ArcRpcHdStore *s,const uint8_t h[256],unsigned slot)
     if(get(h+192,4)==0)return get(h+88,8)==0&&zero(h+96,96);
     return get(h+88,8)==get(h+96,8)+1 && get(h+152,8)>=256&&get(h+152,8)<=ARC_RPC_HD_JOURNAL_CAP;
 }
-static bool create_header(ArcRpcHdStore *s,unsigned slot,uint64_t gen,unsigned role)
-{
-    if((uint64_t)s->lengths[0]+s->lengths[1]+256>ARC_RPC_HD_JOURNAL_CAP)return false;
-    char leaf[16];journal_leaf(slot,leaf);uint8_t h[256],check[256];header_encode(s,h,gen,role);
-    if(!write_leaf(s,leaf,h,256)||!read_leaf(s,leaf,check,256)||memcmp(h,check,256))return false;
-    copy(s,s->headers[slot],h,256);s->lengths[slot]=256;s->jgeneration[slot]=gen;s->journal_present[slot]=true;
-    arc_sha256_init(&s->digest[slot]);stream_hash(s,slot,h,256);return true;
-}
 static void index_record(ArcRpcHdStore *s,const Record *r,uint32_t *index)
 { (void)s;for(unsigned i=0;i<r->count;++i)index[r->lba+i]=(r->slot?SLOT_BIT:0)|(r->offset+80+i*512); }
-static bool replay(ArcRpcHdStore *s,unsigned slot,uint32_t *index,uint64_t *last)
-{
-    char leaf[16];journal_leaf(slot,leaf);ArcIoFile *f=open_leaf(s,leaf,false,false);if(!f)return false;
-    bool torn=false;uint32_t at=256,physical=s->lengths[slot];*last=get(s->headers[slot]+112,8);
-    /* Replay is sequential after one confirmed position. Exact read counts
-     * advance the cursor; redundant per-record seek/tell would exceed the
-     * accepted near-cap open-operation budget for one-sector commands. */
-    bool ok=physical==at||seek(s,f,at);
-    arc_sha256_init(&s->digest[slot]);stream_hash(s,slot,s->headers[slot],256);
-    while(ok&&at<physical){uint32_t left=physical-at;if(left<80){torn=true;break;}
-        ok=read_file(s,f,s->record,80);if(!ok)break;
-        uint8_t *p=s->record;uint32_t count=(uint32_t)get(p+68,4),lba=(uint32_t)get(p+64,4);
-        uint64_t sequence=get(p+56,8);
-        ok=!memcmp(p,"RCJR",4)&&get(p+4,4)==1&&!memcmp(p+8,s->content,40)&&
-            get(p+48,8)==s->jgeneration[slot]&&*last!=UINT64_MAX&&sequence==*last+1&&
-            count>=1&&count<=256&&lba<ARC_RPC_HD_SECTORS&&count<=ARC_RPC_HD_SECTORS-lba&&
-            get(p+72,4)==count*512&&get(p+76,4)==crc(s,p,76);
-        if(!ok)break;uint32_t total=96+count*512;if(left<total){torn=true;break;}
-        ok=read_file(s,f,p+80,total-80)&&get(p+80+count*512,8)==sequence&&
-            get(p+88+count*512,4)==crc(s,p+80,count*512)&&!memcmp(p+92+count*512,"RCCM",4);
-        if(!ok||s->records_count==RECORDS_MAX){ok=false;break;}
-        Record *r=&s->records[s->records_count++];*r=(Record){at,lba,count,slot};
-        if(index)index_record(s,r,index);stream_hash(s,slot,p,total);*last=sequence;at+=total;
-    }
-    bool closed=close_file(s,f,ok);if(!ok||!closed)return false;
-    if(torn){s->lengths[slot]=at;s->torn[slot]=true;}
-    return true;
-}
 static bool chunk_read(ArcRpcHdStore *s,const uint8_t *m,unsigned index,uint8_t *out,const char *source)
 {
     const uint8_t *e=m+128+index*48;if(get(e,4)==0){memset(out,0,ARC_RPC_HD_CHUNK);return true;}
@@ -319,6 +286,122 @@ static bool reconstruct_into(ArcRpcHdStore *s,const uint8_t *m,unsigned chunk,co
     }
     return true;
 }
+
+/* Bounded frozen reconstruction. Persistent state is private to preparation /
+ * maintenance, so guest reads and appends cannot overwrite its framed record.
+ */
+static bool reconstruction_step(ArcRpcHdStore *s, const uint8_t *m,
+                                unsigned chunk, const uint32_t *index,
+                                uint8_t *out, bool *done) {
+    *done = false;
+    if (!s->reconstruction_active) {
+        if (!base_chunk_into(s, m, chunk, out))
+            return false;
+        s->reconstruction_active = true;
+        s->reconstruction_at = s->reconstruction_slot = 0;
+        /* Base verification consumes a whole chunk. Overlay work starts in a
+         * later step only when there actually are contributing records. */
+        bool dirty = false, slot0 = false;
+        for (unsigned i = chunk * 512; i < (chunk + 1) * 512; ++i) {
+            dirty |= index[i] != 0;
+            slot0 |= index[i] && !(index[i] & SLOT_BIT);
+        }
+        if (dirty && !slot0)
+            s->reconstruction_slot = 1;
+        if (!dirty) {
+            s->reconstruction_active = false;
+            *done = true;
+            return true;
+        }
+    }
+    unsigned first = chunk * 512, inspected = 0, used_records = 0;
+    uint64_t transferred = 0;
+    ArcIoFile *f = NULL;
+    uint32_t position = 0;
+    unsigned slot = s->reconstruction_slot;
+    while (s->reconstruction_at < s->records_count &&
+           inspected++ < RECORDS_MAX && used_records < 512 &&
+           transferred < 526336) {
+        const Record *rec = &s->records[s->reconstruction_at];
+        if (rec->slot != slot) {
+            ++s->reconstruction_at;
+            continue;
+        }
+        unsigned lo = rec->lba > first ? rec->lba : first,
+                 hi = rec->lba + rec->count < first + 512
+                          ? rec->lba + rec->count
+                          : first + 512;
+        bool used = false;
+        for (unsigned i = lo; i < hi; ++i)
+            if (index[i] == ((slot ? SLOT_BIT : 0) |
+                             (rec->offset + 80 + (i - rec->lba) * 512))) {
+                used = true;
+                break;
+            }
+        if (!used) {
+            ++s->reconstruction_at;
+            continue;
+        }
+        unsigned bytes = 96 + rec->count * 512;
+        if (transferred + bytes > 526336)
+            break;
+        if (!f) {
+            char leaf[16];
+            journal_leaf(slot, leaf);
+            f = open_leaf(s, leaf, false, false);
+            if (!f)
+                return failure(s, false);
+        }
+        uint8_t *p = s->reconstruction_record;
+        bool ok = (position == rec->offset || seek(s, f, rec->offset)) &&
+                  read_file(s, f, p, bytes);
+        position = rec->offset + bytes;
+        if (!ok) {
+            close_file(s, f, false);
+            return failure(s, false);
+        }
+        ok = !memcmp(p, "RCJR", 4) && get(p + 4, 4) == 1 &&
+             !memcmp(p + 8, s->content, 40) &&
+             get(p + 48, 8) == s->jgeneration[slot] &&
+             get(p + 64, 4) == rec->lba && get(p + 68, 4) == rec->count &&
+             get(p + 72, 4) == rec->count * 512 &&
+             get(p + 76, 4) == crc(s, p, 76) &&
+             get(p + 80 + rec->count * 512, 8) == get(p + 56, 8) &&
+             get(p + 88 + rec->count * 512, 4) ==
+                 crc(s, p + 80, rec->count * 512) &&
+             !memcmp(p + 92 + rec->count * 512, "RCCM", 4);
+        if (!ok) {
+            close_file(s, f, false);
+            return failure(s, true);
+        }
+        for (unsigned i = lo; i < hi; ++i)
+            if (index[i] == ((slot ? SLOT_BIT : 0) |
+                             (rec->offset + 80 + (i - rec->lba) * 512)))
+                copy(s, out + (i - first) * 512, p + 80 + (i - rec->lba) * 512,
+                     512);
+        ++s->reconstruction_at;
+        ++used_records;
+        transferred += bytes;
+    }
+    if (f && !close_file(s, f, true))
+        return failure(s, false);
+    if (s->reconstruction_at == s->records_count) {
+        /* Frozen indexes name only the parent. Avoid scanning the other slot
+         * when it cannot contribute. */
+        bool another = false;
+        if (slot == 0)
+            for (unsigned i = first; i < first + 512; ++i)
+                another |= (index[i] & SLOT_BIT) != 0;
+        if (another) {
+            s->reconstruction_slot = 1;
+            s->reconstruction_at = 0;
+        } else {
+            s->reconstruction_active = false;
+            *done = true;
+        }
+    }
+    return true;
+}
 static bool base_chunk(ArcRpcHdStore *s,const uint8_t *m,unsigned index)
 { return base_chunk_into(s,m,index,s->scratch); }
 static bool reconstruct(ArcRpcHdStore *s,const uint8_t *m,unsigned chunk,const uint32_t *index)
@@ -331,41 +414,6 @@ static bool track_chunk(ArcRpcHdStore *s,const char *leaf)
     return true;
 }
 static void untrack_chunk(ArcRpcHdStore *s,const char *leaf);
-static bool publish_chunk(ArcRpcHdStore *s,unsigned index)
-{
-    uint8_t *e=entry(s->manifests[2],index);
-    uint64_t generation=s->published?s->generation+1:0;char leaf[23];chunk_leaf(index,generation,leaf);
-    if(zero(s->scratch,ARC_RPC_HD_CHUNK)){
-        /* Repeated population writes can turn a private CHUNK into HOLE.
-         * Remove that private leaf before publication loses its inventory. */
-        size_t n;if(size(s,leaf,&n)){if(!remove_leaf(s,leaf))return false;untrack_chunk(s,leaf);}
-        if(s->refused)return false;memset(e,0,48);return true;
-    }
-    uint8_t h[128]={0},tail[4],digest[32];sha(s,s->scratch,ARC_RPC_HD_CHUNK,digest);
-    copy(s,h,"ARCRHDC1",8);put(h+8,1,4);put(h+12,CHUNK_BYTES,4);copy(s,h+16,s->content,40);
-    put(h+56,index,4);put(h+60,1,4);put(h+64,1,4);put(h+68,ARC_RPC_HD_CHUNK,4);put(h+72,generation,8);
-    copy(s,h+80,digest,32);put(h+124,crc(s,h,124),4);put(tail,crc(s,s->scratch,ARC_RPC_HD_CHUNK),4);
-    ArcIoFile *f=open_leaf(s,"chunk.tmp",true,true);if(!f)return false;
-    bool ok=write_file(s,f,h,128)&&write_file(s,f,s->scratch,ARC_RPC_HD_CHUNK)&&write_file(s,f,tail,4)&&flush(s,f);
-    bool closed=close_file(s,f,ok);if(!ok||!closed)return false;
-    memset(e,0,48);put(e,1,4);put(e+8,generation,8);copy(s,e+16,digest,32);
-    /* Verify temporary using an exact derived entry, with the same envelope
-     * checks as every cache miss. It cannot be a recovery root. */
-    f=open_leaf(s,"chunk.tmp",false,false);if(!f)return false;
-    uint8_t check[128],crc[4];ok=length(s,f)==CHUNK_BYTES&&read_file(s,f,check,128)&&!memcmp(check,h,128)&&
-        read_file(s,f,s->scratch,ARC_RPC_HD_CHUNK)&&read_file(s,f,crc,4);closed=close_file(s,f,ok);
-    uint8_t actual[32];sha(s,s->scratch,ARC_RPC_HD_CHUNK,actual);
-    if(!ok||!closed||memcmp(crc,tail,4)||memcmp(actual,digest,32))return false;
-    size_t n;if(size(s,leaf,&n)){
-        /* Only a private generation can already exist (interrupted checkpoint
-         * or repeated population write); no retained root may reference it. */
-        for(unsigned slot=0;slot<2;++slot)if(s->present[slot]&&get(entry(s->manifests[slot],index),4)==1&&
-            get(entry(s->manifests[slot],index)+8,8)==generation)return false;
-        if(!remove_leaf(s,leaf))return false;
-    }
-    if(!rename_leaf(s,"chunk.tmp",leaf)||!track_chunk(s,leaf))return false;
-    return base_chunk(s,s->manifests[2],index);
-}
 static bool parent_binding(ArcRpcHdStore *s,unsigned child,unsigned parent,unsigned manifest)
 {
     uint8_t digest[32];const uint8_t *h=s->headers[child];
@@ -418,20 +466,6 @@ static bool gc(ArcRpcHdStore *s)
         if(s->gc_at==s->chunk_count){s->gc_at=0;s->state=ARC_RPC_HD_IDLE;}
     }
     return true;
-}
-static bool publish_manifest(ArcRpcHdStore *s)
-{
-    uint8_t *check=s->record;unsigned slot=(unsigned)(get(s->manifests[2]+88,8)&1);char leaf[16];manifest_leaf(slot,leaf);
-    if(!rename_leaf(s,"manifest.tmp",leaf)||!read_leaf(s,leaf,check,manifest_length(s->manifests[2]))||memcmp(check,s->manifests[2],manifest_length(s->manifests[2])))return failure(s,false);
-    copy(s,s->manifests[slot],check,MANIFEST_BYTES);s->present[slot]=true;s->selected=slot;
-    s->generation=get(check+88,8);s->published=true;s->gc_done=false;
-    for(unsigned i=0;i<ARC_RPC_HD_SECTORS;++i)if(s->live[i]&&((s->live[i]&SLOT_BIT)!=0)==(s->parent!=0))s->live[i]=0;
-    memset(s->tags,0,sizeof(s->tags));s->state=ARC_RPC_HD_RETIRE;s->phase_step=0;++s->stats.checkpoints;return true;
-}
-static bool prepare_manifest(ArcRpcHdStore *s)
-{
-    uint8_t *check=s->record;manifest_encode(s,s->manifests[2],s->published?s->generation+1:0,s->jgeneration[s->current],s->snapshot);
-    return write_leaf(s,"manifest.tmp",s->manifests[2],manifest_length(s->manifests[2]))&&read_leaf(s,"manifest.tmp",check,manifest_length(s->manifests[2]))&&!memcmp(check,s->manifests[2],manifest_length(s->manifests[2]));
 }
 static bool read_header(ArcRpcHdStore *s,unsigned slot,uint8_t h[256])
 {
@@ -486,8 +520,8 @@ static bool materialize_step(ArcRpcHdStore *s)
     chunk_leaf(i,s->generation+1,leaf);
     switch(s->phase_step){
     case 0:
-        if(!reconstruct_into(s,s->manifests[s->selected],i,s->frozen,s->checkpoint))return false;
-        ++s->phase_step;return true;
+        {bool done;if(!reconstruction_step(s,s->manifests[s->selected],i,s->frozen,s->checkpoint,&done))return false;
+        if(done)++s->phase_step;return true;}
     case 1:{
         if(zero(s->checkpoint,ARC_RPC_HD_CHUNK)){
             if(size(s,leaf,&n)){if(!remove_leaf(s,leaf))return false;untrack_chunk(s,leaf);}
@@ -545,7 +579,7 @@ void arc_riscpc_hd_tick(ArcRpcHdStore *s)
 {
     if(!s)return;
     s->stats.tick_bytes=s->stats.tick_operations=s->stats.tick_hash_bytes=s->stats.tick_copied_bytes=s->stats.tick_metadata_operations=s->stats.tick_namespace_operations=0;
-    if(s->population||s->refused)return;
+    if(s->outcome==ARC_RPC_HD_OPEN_PENDING||s->population||s->refused)return;
     uint64_t bytes=s->stats.requested_bytes,ops=s->stats.operations,
         hashes=s->stats.hash_bytes,copies=s->stats.copied_bytes,meta=s->stats.metadata_operations,namespace=s->stats.namespace_operations;
     bool ok=true;switch(s->state){
@@ -593,7 +627,7 @@ static bool range(uint32_t lba,uint32_t count)
 { return count&&count<=256&&lba<ARC_RPC_HD_SECTORS&&count<=ARC_RPC_HD_SECTORS-lba; }
 bool arc_riscpc_hd_read(ArcRpcHdStore *s,uint32_t lba,uint32_t count,uint8_t *out)
 {
-    if(!s||!out||!s->published||s->population||s->damaged||!range(lba,count))return false;
+    if(!view_ready(s)||!out||!s->published||s->population||s->damaged||!range(lba,count))return false;
     while(count){unsigned chunk=lba/512,offset=lba%512,take=512-offset;if(take>count)take=count;
         unsigned at=CACHE_COUNT;for(unsigned i=0;i<CACHE_COUNT;++i)if(s->tags[i].valid&&s->tags[i].index==chunk&&
             s->tags[i].generation==s->generation&&s->tags[i].sequence==s->sequence){at=i;break;}
@@ -606,7 +640,7 @@ bool arc_riscpc_hd_read(ArcRpcHdStore *s,uint32_t lba,uint32_t count,uint8_t *ou
 }
 bool arc_riscpc_hd_write(ArcRpcHdStore *s,uint32_t lba,uint32_t count,const uint8_t *in)
 {
-    if(!s||!in||!s->published||s->population||s->refused||!range(lba,count))return false;
+    if(!s||s->outcome==ARC_RPC_HD_OPEN_PENDING||!in||!s->published||s->population||s->refused||!range(lba,count))return false;
     s->io_operation="append-admission";journal_leaf(s->current,s->io_leaf);
     uint32_t bytes=96+count*512;uint64_t aggregate=(uint64_t)s->lengths[0]+s->lengths[1];
     if(aggregate+bytes>ARC_RPC_HD_JOURNAL_CAP||s->sequence==UINT64_MAX||s->records_count==RECORDS_MAX)return failure(s,false);
@@ -635,7 +669,7 @@ static bool backend_read(void *p,uint32_t lba,uint32_t count,uint8_t *out) { ret
 static bool backend_write(void *p,uint32_t lba,uint32_t count,const uint8_t *in) { return arc_riscpc_hd_write(p,lba,count,in); }
 static void backend_failed(void *p,const char *reason) { (void)reason;failure(p,false); }
 void arc_riscpc_hd_backend(ArcRpcHdStore *s,ArcIdeBackend *out)
-{ memset(out,0,sizeof(*out));if(s&&s->published&&!s->damaged){out->opaque=s;out->read=backend_read;out->write=backend_write;out->failed=backend_failed;out->sectors=ARC_RPC_HD_SECTORS;out->writable=!s->refused;} }
+{ memset(out,0,sizeof(*out));if(view_ready(s)&&s->published&&!s->damaged){out->opaque=s;out->read=backend_read;out->write=backend_write;out->failed=backend_failed;out->sectors=ARC_RPC_HD_SECTORS;out->writable=!s->refused;} }
 void arc_riscpc_hd_stats(const ArcRpcHdStore *s,ArcRpcHdStats *out)
 { *out=s->stats;out->phase_step=s->phase_step;out->chunk_files=s->chunk_count;out->sequence=s->sequence;out->generation=s->generation;out->state=s->state;out->published=s->published;out->population=s->population;out->read_only=s->refused; }
 const char *arc_riscpc_hd_notice(ArcRpcHdStore *s) { if(!s)return NULL;const char *n=s->notice;s->notice=NULL;return n; }
@@ -656,114 +690,612 @@ static bool directory_visit(const char *leaf,bool regular,void *opaque)
 }
 static bool key_valid(const char *id)
 { if(!id||strlen(id)!=40)return false;for(unsigned i=0;i<40;++i)if(!((id[i]>='0'&&id[i]<='9')||(id[i]>='a'&&id[i]<='f')))return false;return true; }
-static bool recover(ArcRpcHdStore *s)
-{
-    char leaf[16];size_t n;
-    for(unsigned i=0;i<2;++i){manifest_leaf(i,leaf);if(size(s,leaf,&n)){
-        if((n!=MANIFEST_BYTES&&n!=MANIFEST_V1_BYTES)||!read_leaf(s,leaf,s->manifests[i],n)||n!=manifest_length(s->manifests[i])||!manifest_valid(s,s->manifests[i],i))return failure(s,true);
-        s->present[i]=true;}}
-    if(s->stat_failed)return false;
-    if(s->present[0]&&s->present[1]&&get(s->manifests[0]+88,8)==get(s->manifests[1]+88,8))return failure(s,true);
-    s->published=s->present[0]||s->present[1];s->selected=s->present[1]&&(!s->present[0]||get(s->manifests[1]+88,8)>get(s->manifests[0]+88,8))?1:0;
-    if(s->published){s->generation=get(s->manifests[s->selected]+88,8);s->current=(unsigned)(get(s->manifests[s->selected]+96,8)&1);}
-    bool partial[2]={false,false};
-    for(unsigned i=0;i<2;++i){journal_leaf(i,leaf);if(!size(s,leaf,&n))continue;
-        if(n<256){for(unsigned m=0;m<2;++m)if(s->present[m]&&(get(s->manifests[m]+96,8)&1)==i)return failure(s,true);partial[i]=true;continue;}
-        if(n>ARC_RPC_HD_JOURNAL_CAP)return failure(s,true);s->lengths[i]=(uint32_t)n;
-        if(!read_header(s,i,s->headers[i])||!header_valid(s,s->headers[i],i))return failure(s,true);
-        s->jgeneration[i]=get(s->headers[i]+88,8);s->journal_present[i]=true;
+
+const char *arc_riscpc_hd_outcome_notice(ArcRpcHdOutcome outcome) {
+    switch (outcome) {
+    case ARC_RPC_HD_UNSUPPORTED:
+        return "The saved RiscPC hard disc was created by a newer version of "
+               "ArcDroid; files have been preserved.";
+    case ARC_RPC_HD_UNAVAILABLE:
+        return "The saved RiscPC hard disc is unavailable; files have been "
+               "preserved. Check the save folder and try again.";
+    case ARC_RPC_HD_CORRUPT:
+        return "The saved RiscPC hard disc is damaged; files have been "
+               "preserved.";
+    case ARC_RPC_HD_LEGACY:
+        return "The existing RiscPC hard disc has no creation receipt; it was "
+               "left unchanged.";
+    case ARC_RPC_HD_RECEIPTED:
+        return "The saved RiscPC hard disc has a verified creation receipt.";
+    case ARC_RPC_HD_UNPUBLISHED:
+        return "The RiscPC hard disc needs boot-resource population.";
+    default:
+        return NULL;
     }
-    if(s->stat_failed)return false;
-    if((uint64_t)s->lengths[0]+s->lengths[1]>ARC_RPC_HD_JOURNAL_CAP)return failure(s,true);
-    for(unsigned m=0;m<2;++m)if(s->present[m]){unsigned j=(unsigned)(get(s->manifests[m]+96,8)&1);
-        if(!s->journal_present[j]||get(s->manifests[m]+96,8)!=s->jgeneration[j]||get(s->manifests[m]+104,8)!=get(s->headers[j]+112,8))return failure(s,true);
-        uint64_t generation=get(s->manifests[m]+88,8),parent=get(s->headers[j]+104,8);
-        if(s->jgeneration[j]==0?generation!=0:parent==UINT64_MAX||generation!=parent+1)return failure(s,true);
+}
+ArcRpcHdOutcome arc_riscpc_hd_outcome(const ArcRpcHdStore *s) {
+    return s ? s->outcome : ARC_RPC_HD_UNAVAILABLE;
+}
+static bool open_failure(ArcRpcHdStore *s, ArcRpcHdOutcome outcome) {
+    if (s->replay_file) {
+        ArcIoFile *f = s->replay_file;
+        s->replay_file = NULL;
+        (void)close_file(s, f, false);
     }
-    bool abandon=false;unsigned other=s->current^1;uint64_t last[2]={0,0};
-    if(s->present[0]&&s->present[1]&&
-       (!s->journal_present[other]||s->jgeneration[other]>=s->jgeneration[s->current]||
-        get(s->manifests[s->selected^1]+96,8)!=s->jgeneration[other]))return failure(s,true);
-    if(!s->published){for(unsigned i=0;i<2;++i)if(s->journal_present[i]){
-            if(s->lengths[i]!=256||get(s->headers[i]+88,8)!=0||get(s->headers[i]+112,8)!=0)return failure(s,true);}
-    }else if(s->journal_present[other]&&s->jgeneration[other]>s->jgeneration[s->current]){
-        if(!replay(s,s->current,s->live,&last[s->current]))return failure(s,true);
-        if(!parent_binding(s,other,s->current,s->selected)||get(s->headers[other]+112,8)!=last[s->current])return failure(s,true);
-        unsigned role=(unsigned)get(s->headers[other]+192,4);
-        if(role==2){if(s->lengths[other]!=256)return failure(s,true);abandon=true;s->sequence=last[s->current];}
-        else if(role==1){s->snapshot=last[s->current];copy(s,s->frozen,s->live,sizeof(s->live));
-            copy(s,s->manifests[2],s->manifests[s->selected],MANIFEST_BYTES);s->parent=s->current;s->current=other;
-            if(!replay(s,s->current,s->live,&last[s->current]))return failure(s,true);s->sequence=last[s->current];
-            for(unsigned i=0;i<ARC_RPC_HD_SECTORS;++i)if(s->frozen[i])s->dirty[i/512]=true;
-            s->state=ARC_RPC_HD_MATERIALIZE;
-        }else return failure(s,true);
-    }else{
-        if(s->journal_present[other]){
-            if(!replay(s,other,NULL,&last[other]))return failure(s,true);
-            uint8_t digest[32];arc_sha256_final(&s->digest[other],digest);const uint8_t *h=s->headers[s->current];
-            if(get(h+192,4)==0||get(h+96,8)!=s->jgeneration[other]||get(h+152,8)!=s->lengths[other]||
-               get(h+112,8)!=last[other]||memcmp(digest,h+160,32))return failure(s,true);
-            if(s->present[s->selected^1]&&!parent_binding(s,s->current,other,s->selected^1))return failure(s,true);
-            s->parent=other;s->state=ARC_RPC_HD_RETIRE;
+    s->outcome = outcome;
+    s->refused = true;
+    s->damaged = outcome == ARC_RPC_HD_CORRUPT;
+    s->notice = arc_riscpc_hd_outcome_notice(outcome);
+    s->state = s->damaged ? ARC_RPC_HD_DAMAGED : ARC_RPC_HD_READ_ONLY;
+    return false;
+}
+/* Known envelopes authenticate framing, key and CRC before revision refusal.
+ * Unknown envelopes are opaque: no entries, bindings or cleanup are
+ * interpreted. */
+static ArcRpcHdOutcome manifest_outcome(ArcRpcHdStore *s, const uint8_t *m,
+                                        size_t n, unsigned slot) {
+    if (memcmp(m, "ARCRHDM1", 8))
+        return ARC_RPC_HD_UNSUPPORTED;
+    if (n != get(m + 12, 4) || memcmp(m + 16, s->content, 40) ||
+        get(m + n - 4, 4) != crc(s, m, n - 4))
+        return ARC_RPC_HD_CORRUPT;
+    unsigned revision = (unsigned)get(m + 8, 4);
+    if (revision != 1 && revision != 2)
+        return ARC_RPC_HD_UNSUPPORTED;
+    if (n != manifest_length(m) || !geometry_valid(m + 64) ||
+        !zero(m + 112, 16) || get(m + 88, 8) % 2 != slot)
+        return ARC_RPC_HD_CORRUPT;
+    if (get(m + 56, 4) != 1 || get(m + 60, 4) != 1)
+        return ARC_RPC_HD_UNSUPPORTED;
+    /* Validate the entry framing before classifying a future receipt. */
+    for (unsigned i = 0; i < 504; ++i) {
+        const uint8_t *e = entry((uint8_t *)m, i);
+        if (get(e, 4) > 1 || !zero(e + 4, 4) ||
+            (get(e, 4) == 0 && !zero(e + 8, 40)) ||
+            (get(e, 4) == 1 && get(e + 8, 8) > get(m + 88, 8)))
+            return ARC_RPC_HD_CORRUPT;
+    }
+    if (revision == 2) {
+        const uint8_t *r = m + RECEIPT_AT;
+        if (memcmp(r, "ARCRBOOT", 8))
+            return ARC_RPC_HD_CORRUPT;
+        if (get(r + 8, 4) != 1 || get(r + 12, 4) != 1 || get(r + 16, 4) != 1)
+            return ARC_RPC_HD_UNSUPPORTED;
+        if (!zero(r + 20, 4) || !zero(r + 104, 24))
+            return ARC_RPC_HD_CORRUPT;
+    }
+    return ARC_RPC_HD_OPEN_PENDING;
+}
+static void step_start(ArcRpcHdStore *s, ArcRpcHdStats *before) {
+    *before = s->stats;
+    s->stats.tick_bytes = s->stats.tick_operations = s->stats.tick_hash_bytes =
+        s->stats.tick_copied_bytes = s->stats.tick_metadata_operations =
+            s->stats.tick_namespace_operations = 0;
+}
+static void step_finish(ArcRpcHdStore *s, const ArcRpcHdStats *before) {
+#define COUNT(tick, total, max)                                                \
+    s->stats.tick = s->stats.total - before->total;                            \
+    if (s->stats.tick > s->stats.max)                                          \
+    s->stats.max = s->stats.tick
+    COUNT(tick_bytes, requested_bytes, max_tick_bytes);
+    COUNT(tick_operations, operations, max_tick_operations);
+    COUNT(tick_hash_bytes, hash_bytes, max_tick_hash_bytes);
+    COUNT(tick_copied_bytes, copied_bytes, max_tick_copied_bytes);
+    COUNT(tick_metadata_operations, metadata_operations,
+          max_tick_metadata_operations);
+    COUNT(tick_namespace_operations, namespace_operations,
+          max_tick_namespace_operations);
+#undef COUNT
+}
+static bool range(uint32_t, uint32_t);
+/* Recovery's retained cursor consumes a bounded record batch, independent of
+ * journal capacity. A complete invalid record is damage; failed I/O is
+ * unavailable. */
+static bool replay_step(ArcRpcHdStore *s, unsigned slot, uint32_t *index,
+                        bool *done) {
+    *done = false;
+    char leaf[16];
+    journal_leaf(slot, leaf);
+    if (!s->replay_file) {
+        s->replay_file = open_leaf(s, leaf, false, false);
+        if (!s->replay_file)
+            return open_failure(s, ARC_RPC_HD_UNAVAILABLE);
+        s->replay_at = 256;
+        s->replay_last[slot] = get(s->headers[slot] + 112, 8);
+        arc_sha256_init(&s->digest[slot]);
+        stream_hash(s, slot, s->headers[slot], 256);
+        if (s->lengths[slot] != 256 && !seek(s, s->replay_file, 256))
+            return open_failure(s, ARC_RPC_HD_UNAVAILABLE);
+        return true;
+    }
+    uint64_t transferred = 0;
+    unsigned records = 0;
+    while (s->replay_at < s->lengths[slot] && records++ < 32 &&
+           transferred < 131072) {
+        uint32_t at = s->replay_at, left = s->lengths[slot] - at;
+        if (left < 80) {
+            s->torn[slot] = true;
+            s->lengths[slot] = at;
+            break;
         }
-        if(s->published){if(!replay(s,s->current,s->live,&last[s->current]))return failure(s,true);s->sequence=last[s->current];}
+        if (!read_file(s, s->replay_file, s->record, 80))
+            return open_failure(s, ARC_RPC_HD_UNAVAILABLE);
+        uint8_t *p = s->record;
+        uint32_t count = (uint32_t)get(p + 68, 4),
+                 lba = (uint32_t)get(p + 64, 4);
+        uint64_t sequence = get(p + 56, 8);
+        if (memcmp(p, "RCJR", 4) || get(p + 4, 4) != 1 ||
+            memcmp(p + 8, s->content, 40) ||
+            get(p + 48, 8) != s->jgeneration[slot] ||
+            s->replay_last[slot] == UINT64_MAX ||
+            sequence != s->replay_last[slot] + 1 || !range(lba, count) ||
+            get(p + 72, 4) != count * 512 || get(p + 76, 4) != crc(s, p, 76))
+            return open_failure(s, ARC_RPC_HD_CORRUPT);
+        uint32_t total = 96 + count * 512;
+        if (left < total) {
+            s->torn[slot] = true;
+            s->lengths[slot] = at;
+            break;
+        }
+        if (!read_file(s, s->replay_file, p + 80, total - 80))
+            return open_failure(s, ARC_RPC_HD_UNAVAILABLE);
+        if (get(p + 80 + count * 512, 8) != sequence ||
+            get(p + 88 + count * 512, 4) != crc(s, p + 80, count * 512) ||
+            memcmp(p + 92 + count * 512, "RCCM", 4) ||
+            s->records_count == RECORDS_MAX)
+            return open_failure(s, ARC_RPC_HD_CORRUPT);
+        Record *r = &s->records[s->records_count++];
+        *r = (Record){at, lba, count, slot};
+        if (index)
+            index_record(s, r, index);
+        stream_hash(s, slot, p, total);
+        s->replay_last[slot] = sequence;
+        s->replay_at += total;
+        transferred += total;
     }
-    /* A truthful listing may expose foreign canonical-looking generations.
-     * Empty/failed listings prove nothing; only fixed roots build inventory. */
-    uint64_t candidate=s->published?s->generation+1:0;
-    for(unsigned i=0;i<s->advisory_count;++i){unsigned idx;uint64_t gen;
-        sscanf(s->chunks[i],"c%3x.g%16" SCNx64,&idx,&gen);
-        if(((s->published&&s->generation==UINT64_MAX)||gen!=candidate)&&
-           !referenced(s,s->chunks[i]))return failure(s,true);
+    if (s->replay_at >= s->lengths[slot]) {
+        ArcIoFile *f = s->replay_file;
+        s->replay_file = NULL;
+        if (!close_file(s, f, true))
+            return open_failure(s, ARC_RPC_HD_UNAVAILABLE);
+        *done = true;
     }
-    s->advisory_count=0;
-    /* D-147: root entries provide the retained inventory; listings are never
-     * authoritative. A next cycle cannot exist before RETIRE finishes. */
-    for(unsigned m=0;m<2;++m)if(s->present[m])for(unsigned i=0;i<ARC_RPC_HD_CHUNKS;++i){
-        const uint8_t *e=entry(s->manifests[m],i);if(get(e,4)!=1)continue;
-        char name[23];chunk_leaf(i,get(e+8,8),name);
-        if(size(s,name,&n)&&!track_chunk(s,name))return failure(s,true);
-    }
-        if(s->stat_failed)return false;
-    /* Validation of both roots/journals is complete before any cleanup. */
-    for(unsigned i=0;i<2;++i)if(s->torn[i]){journal_leaf(i,leaf);ArcIoFile *f=open_leaf(s,leaf,true,false);bool ok=false;
-        if(f){s->io_operation="truncate";op(s);ok=arc_io_truncate_file(f,s->lengths[i])&&flush(s,f);bool closed=close_file(s,f,ok);ok&=closed;}
-        if(!ok){failure(s,false);s->notice="An interrupted hard-disc write was recovered; the hard disc is read-only.";}
-        else{s->notice="An interrupted hard-disc write was recovered.";size_t actual;if(!size(s,leaf,&actual)||actual!=s->lengths[i])failure(s,false);}}
-    if(s->refused)return true;
-    for(unsigned i=0;i<2;++i)if(partial[i]||(!s->published&&s->journal_present[i])||(abandon&&i==other)){journal_leaf(i,leaf);
-        if(!remove_leaf(s,leaf))return failure(s,false);s->journal_present[i]=false;s->lengths[i]=0;}
-    /* Interrupted checkpoint/population leaves only selected+1 (or zero for
-     * unpublished creation). Remove fixed candidate paths, restart materialize
-     * from the frozen index, and leave retiring old-only cleanup to ticks. */
-    if(!s->published||s->generation!=UINT64_MAX)for(unsigned i=0;i<ARC_RPC_HD_CHUNKS;++i){
-        char name[23];chunk_leaf(i,candidate,name);
-        if(size(s,name,&n)){if(!remove_leaf(s,name))return failure(s,false);untrack_chunk(s,name);}
-        if(s->refused)return false;
-    }
-    const char *temps[]={"chunk.tmp","manifest.tmp"};
-    for(unsigned i=0;i<2;++i){if(size(s,temps[i],&n)&&!remove_leaf(s,temps[i]))return failure(s,false);
-        if(s->refused)return false;}
-    if(s->stat_failed)return failure(s,false);
-    if(s->state==ARC_RPC_HD_IDLE&&s->published&&s->lengths[s->current]>=ARC_RPC_HD_TRIGGER)s->requested=true;
     return true;
+}
+static bool recover_step(ArcRpcHdStore *s) {
+    char leaf[23];
+    size_t n;
+    bool done;
+    unsigned other = s->current ^ 1;
+    switch (s->open_phase) {
+    case 0: {
+        uint64_t ops = s->stats.operations;
+        if (!arc_io_make_path_step(s->base, &s->path_cursor, &done,
+                                   &s->stats.operations,
+                                   &s->stats.namespace_operations))
+            return open_failure(s, ARC_RPC_HD_UNAVAILABLE);
+        s->stats.metadata_operations += s->stats.operations - ops;
+        if (done)
+            ++s->open_phase;
+        return true;
+    }
+    case 1:
+        op(s);
+        ++s->stats.advisory_operations;
+        s->listing = arc_io_open_directory(s->base);
+        ++s->open_phase;
+        return true;
+    case 2:
+        if (s->listing) {
+            const char *name;
+            bool regular;
+            uint64_t before = s->stats.operations;
+            int r = arc_io_read_directory(s->listing, &name, &regular,
+                                          &s->stats.operations);
+            s->stats.advisory_operations += s->stats.operations - before;
+            if (r > 0) {
+                if (strcmp(name, ".") && strcmp(name, ".."))
+                    directory_visit(name, regular, s);
+                if (s->foreign_entry)
+                    s->open_phase = 3;
+                return true;
+            }
+        }
+        ++s->open_phase;
+        return true;
+    case 3:
+        if (s->listing) {
+            op(s);
+            ++s->stats.advisory_operations;
+            (void)arc_io_close_directory(s->listing);
+            s->listing = NULL;
+        }
+        if (s->foreign_entry)
+            return open_failure(s, ARC_RPC_HD_CORRUPT);
+        ++s->open_phase;
+        s->open_at = 0;
+        return true;
+    case 4:
+        manifest_leaf(s->open_at, leaf);
+        if (size(s, leaf, &n)) {
+            if (n != MANIFEST_BYTES && n != MANIFEST_V1_BYTES) {
+                ArcIoFile *f = open_leaf(s, leaf, false, false);
+                if (!f)
+                    return open_failure(s, ARC_RPC_HD_UNAVAILABLE);
+                uint8_t magic[8];
+                bool ok = n >= 8 && read_file(s, f, magic, 8);
+                bool closed = close_file(s, f, ok);
+                if (!closed || (n>=8 && !ok))
+                    return open_failure(s, ARC_RPC_HD_UNAVAILABLE);
+                return open_failure(s, (!ok || !memcmp(magic, "ARCRHDM1", 8))
+                                           ? ARC_RPC_HD_CORRUPT
+                                           : ARC_RPC_HD_UNSUPPORTED);
+            }
+
+            if (!read_leaf(s, leaf, s->manifests[s->open_at], n))
+                return open_failure(s, ARC_RPC_HD_UNAVAILABLE);
+            ArcRpcHdOutcome outcome =
+                manifest_outcome(s, s->manifests[s->open_at], n, s->open_at);
+            if (outcome != ARC_RPC_HD_OPEN_PENDING)
+                return open_failure(s, outcome);
+            s->present[s->open_at] = true;
+        } else if (s->stat_failed)
+            return open_failure(s, ARC_RPC_HD_UNAVAILABLE);
+        if (++s->open_at == 2) {
+            ++s->open_phase;
+            s->open_at = 0;
+        }
+        return true;
+    case 5:
+        if (s->present[0] && s->present[1] &&
+            get(s->manifests[0] + 88, 8) == get(s->manifests[1] + 88, 8))
+            return open_failure(s, ARC_RPC_HD_CORRUPT);
+        s->published = s->present[0] || s->present[1];
+        s->selected = s->present[1] && (!s->present[0] ||
+                                        get(s->manifests[1] + 88, 8) >
+                                            get(s->manifests[0] + 88, 8))
+                          ? 1
+                          : 0;
+        if (s->published) {
+            s->generation = get(s->manifests[s->selected] + 88, 8);
+            s->current = (unsigned)(get(s->manifests[s->selected] + 96, 8) & 1);
+        }
+        ++s->open_phase;
+        return true;
+    case 6: {
+        unsigned i = s->open_at;
+        journal_leaf(i, leaf);
+        if (size(s, leaf, &n)) {
+            if (n < 256) {
+                for (unsigned m = 0; m < 2; ++m)
+                    if (s->present[m] &&
+                        (get(s->manifests[m] + 96, 8) & 1) == i)
+                        return open_failure(s, ARC_RPC_HD_CORRUPT);
+                if(n){
+                    if(!read_leaf(s,leaf,s->headers[i],n))return open_failure(s,ARC_RPC_HD_UNAVAILABLE);
+                    if(memcmp(s->headers[i],"ARCRHDJ1",n<8?n:8))return open_failure(s,ARC_RPC_HD_UNSUPPORTED);
+                    if(n>=12&&get(s->headers[i]+8,4)!=1)return open_failure(s,ARC_RPC_HD_UNSUPPORTED);
+                    if(n>=16&&get(s->headers[i]+12,4)!=256)return open_failure(s,ARC_RPC_HD_CORRUPT);
+                    if(n>=56&&memcmp(s->headers[i]+16,s->content,40))return open_failure(s,ARC_RPC_HD_CORRUPT);
+                }
+                s->partial[i] = true;
+            } else {
+                if (n > ARC_RPC_HD_JOURNAL_CAP)
+                    return open_failure(s, ARC_RPC_HD_CORRUPT);
+                s->lengths[i] = (uint32_t)n;
+                if (!read_header(s, i, s->headers[i]))
+                    return open_failure(s, ARC_RPC_HD_UNAVAILABLE);
+                uint8_t *h = s->headers[i];
+                if (memcmp(h, "ARCRHDJ1", 8))
+                    return open_failure(s, ARC_RPC_HD_UNSUPPORTED);
+                if (get(h + 12, 4) != 256 || memcmp(h + 16, s->content, 40) ||
+                    get(h + 252, 4) != crc(s, h, 252))
+                    return open_failure(s, ARC_RPC_HD_CORRUPT);
+                if (get(h + 8, 4) != 1 || get(h + 56, 4) != 1 ||
+                    get(h + 60, 4) != 1)
+                    return open_failure(s, ARC_RPC_HD_UNSUPPORTED);
+                if (!header_valid(s, h, i))
+                    return open_failure(s, ARC_RPC_HD_CORRUPT);
+                s->jgeneration[i] = get(h + 88, 8);
+                s->journal_present[i] = true;
+            }
+        } else if (s->stat_failed)
+            return open_failure(s, ARC_RPC_HD_UNAVAILABLE);
+        if (++s->open_at == 2) {
+            ++s->open_phase;
+            s->open_at = 0;
+        }
+        return true;
+    }
+    case 7:
+        if ((uint64_t)s->lengths[0] + s->lengths[1] > ARC_RPC_HD_JOURNAL_CAP)
+            return open_failure(s, ARC_RPC_HD_CORRUPT);
+        for (unsigned m = 0; m < 2; ++m)
+            if (s->present[m]) {
+                unsigned j = (unsigned)(get(s->manifests[m] + 96, 8) & 1);
+                if (!s->journal_present[j] ||
+                    get(s->manifests[m] + 96, 8) != s->jgeneration[j] ||
+                    get(s->manifests[m] + 104, 8) !=
+                        get(s->headers[j] + 112, 8))
+                    return open_failure(s, ARC_RPC_HD_CORRUPT);
+                uint64_t gen = get(s->manifests[m] + 88, 8),
+                         parent = get(s->headers[j] + 104, 8);
+                if (s->jgeneration[j] == 0
+                        ? gen != 0
+                        : parent == UINT64_MAX || gen != parent + 1)
+                    return open_failure(s, ARC_RPC_HD_CORRUPT);
+            }
+        if (s->present[0] && s->present[1] &&
+            (!s->journal_present[other] ||
+             s->jgeneration[other] >= s->jgeneration[s->current] ||
+             get(s->manifests[s->selected ^ 1] + 96, 8) !=
+                 s->jgeneration[other]))
+            return open_failure(s, ARC_RPC_HD_CORRUPT);
+        if (!s->published) {
+            for (unsigned i = 0; i < 2; ++i)
+                if (s->journal_present[i] &&
+                    (s->lengths[i] != 256 || get(s->headers[i] + 88, 8) != 0 ||
+                     get(s->headers[i] + 112, 8) != 0))
+                    return open_failure(s, ARC_RPC_HD_CORRUPT);
+            s->open_phase = 11;
+        } else if (s->journal_present[other] &&
+                   s->jgeneration[other] > s->jgeneration[s->current]) {
+            s->replay_mode = 1;
+            s->replay_slot = s->current;
+            s->open_phase = 8;
+        } else if (s->journal_present[other]) {
+            s->replay_mode = 2;
+            s->replay_slot = other;
+            s->open_phase = 8;
+        } else {
+            s->replay_mode = 0;
+            s->replay_slot = s->current;
+            s->open_phase = 8;
+        }
+        return true;
+    case 8:
+        if (!replay_step(s, s->replay_slot,
+                         s->replay_mode == 2 ? NULL : s->live, &done))
+            return false;
+        if (done)
+            ++s->open_phase;
+        return true;
+    case 9:
+        if (s->replay_mode == 1) {
+            if (!parent_binding(s, other, s->current, s->selected) ||
+                get(s->headers[other] + 112, 8) != s->replay_last[s->current])
+                return open_failure(s, ARC_RPC_HD_CORRUPT);
+            unsigned role = (unsigned)get(s->headers[other] + 192, 4);
+            if (role == 2) {
+                if (s->lengths[other] != 256)
+                    return open_failure(s, ARC_RPC_HD_CORRUPT);
+                s->abandon = true;
+                s->sequence = s->replay_last[s->current];
+                s->open_phase = 11;
+                return true;
+            }
+            if (role != 1)
+                return open_failure(s, ARC_RPC_HD_CORRUPT);
+            s->snapshot = s->replay_last[s->current];
+            copy(s, s->frozen, s->live, sizeof(s->live));
+            copy(s, s->manifests[2], s->manifests[s->selected], MANIFEST_BYTES);
+            s->parent = s->current;
+            s->current = other;
+            for (unsigned i = 0; i < ARC_RPC_HD_SECTORS; ++i)
+                if (s->frozen[i])
+                    s->dirty[i / 512] = true;
+            s->state = ARC_RPC_HD_MATERIALIZE;
+        } else if (s->replay_mode == 2) {
+            uint8_t digest[32];
+            arc_sha256_final(&s->digest[other], digest);
+            const uint8_t *h = s->headers[s->current];
+            if (get(h + 192, 4) == 0 ||
+                get(h + 96, 8) != s->jgeneration[other] ||
+                get(h + 152, 8) != s->lengths[other] ||
+                get(h + 112, 8) != s->replay_last[other] ||
+                memcmp(digest, h + 160, 32))
+                return open_failure(s, ARC_RPC_HD_CORRUPT);
+            if (s->present[s->selected ^ 1] &&
+                !parent_binding(s, s->current, other, s->selected ^ 1))
+                return open_failure(s, ARC_RPC_HD_CORRUPT);
+            s->parent = other;
+            s->state = ARC_RPC_HD_RETIRE;
+        } else {
+            s->sequence = s->replay_last[s->current];
+            s->open_phase = 11;
+            return true;
+        }
+        s->replay_mode = 0;
+        s->replay_slot = s->current;
+        s->open_phase = 8;
+        return true;
+    case 11: {
+        uint64_t candidate = s->published ? s->generation + 1 : 0;
+        if (s->open_at < s->advisory_count) {
+            unsigned idx;
+            uint64_t gen;
+            sscanf(s->chunks[s->open_at], "c%3x.g%16" SCNx64, &idx, &gen);
+            if (((s->published && s->generation == UINT64_MAX) ||
+                 gen != candidate) &&
+                !referenced(s, s->chunks[s->open_at]))
+                return open_failure(s, ARC_RPC_HD_CORRUPT);
+            ++s->open_at;
+            return true;
+        }
+        s->advisory_count = 0;
+        s->open_at = 0;
+        ++s->open_phase;
+        return true;
+    }
+    case 12:
+        while (s->open_at < 1008) {
+            unsigned m = s->open_at / 504, i = s->open_at % 504;
+            const uint8_t *e = entry(s->manifests[m], i);
+            ++s->open_at;
+            if (s->present[m] && get(e, 4) == 1) {
+                chunk_leaf(i, get(e + 8, 8), leaf);
+                if (size(s, leaf, &n) && !track_chunk(s, leaf))
+                    return open_failure(s, ARC_RPC_HD_CORRUPT);
+                if (s->stat_failed)
+                    return open_failure(s, ARC_RPC_HD_UNAVAILABLE);
+                return true;
+            }
+        }
+        s->open_at = 0;
+        s->open_validated = true;
+        ++s->open_phase;
+        return true;
+    case 13:
+        if (s->open_at == 2) {
+            s->open_at = 0;
+            s->open_phase = 15;
+            return true;
+        }
+        if (!s->torn[s->open_at]) {
+            ++s->open_at;
+            return true;
+        }
+        journal_leaf(s->open_at, leaf);
+        s->rotation_writer = open_leaf(s, leaf, true, false);
+        if (!s->rotation_writer)
+            return open_failure(s, ARC_RPC_HD_UNAVAILABLE);
+        s->open_phase = 14;
+        return true;
+    case 14: {
+        ArcIoFile *f = s->rotation_writer;
+        s->rotation_writer = NULL;
+        op(s);
+        bool ok =
+            arc_io_truncate_file(f, s->lengths[s->open_at]) && flush(s, f);
+        bool closed = close_file(s, f, ok);
+        if (!ok || !closed) {
+            /* The root and committed prefix already validated. An absent
+             * or failing truncate prevents writes, not use of that view. */
+            failure(s,false);
+            s->outcome=get(s->manifests[s->selected]+8,4)==2?ARC_RPC_HD_RECEIPTED:ARC_RPC_HD_LEGACY;
+            s->stats.open_bytes=s->stats.bytes_read+s->stats.bytes_written;
+            s->stats.open_operations=s->stats.operations;
+            s->notice = "An interrupted hard-disc write was recovered; the "
+                        "hard disc is read-only.";
+            return true;
+        }
+        s->open_phase = 18;
+        return true;
+    }
+    case 18:
+        journal_leaf(s->open_at, leaf);
+        if (!size(s, leaf, &n) || n != s->lengths[s->open_at])
+            return open_failure(s, ARC_RPC_HD_UNAVAILABLE);
+        s->notice = "An interrupted hard-disc write was recovered.";
+        ++s->open_at;
+        s->open_phase = 13;
+        return true;
+    case 15:
+        if (s->open_at < 2) {
+            unsigned i = s->open_at++;
+            if (s->partial[i] || (!s->published && s->journal_present[i]) ||
+                (s->abandon && i == (s->current ^ 1))) {
+                journal_leaf(i, leaf);
+                if (!remove_leaf(s, leaf))
+                    return open_failure(s, ARC_RPC_HD_UNAVAILABLE);
+                s->journal_present[i] = false;
+                s->lengths[i] = 0;
+            }
+            return true;
+        }
+        s->open_at = 0;
+        s->open_phase = 16;
+        return true;
+    case 16:
+        if (s->open_at < 506) {
+            if (s->open_at < 504) {
+                if (s->published && s->generation == UINT64_MAX) {
+                    s->open_at = 504;
+                    return true;
+                }
+                chunk_leaf(s->open_at, s->published ? s->generation + 1 : 0,
+                           leaf);
+            } else
+                strcpy(leaf, s->open_at == 504 ? "chunk.tmp" : "manifest.tmp");
+            if (size(s, leaf, &n))
+                s->open_phase = 17;
+            else
+                ++s->open_at;
+            if (s->stat_failed)
+                return open_failure(s, ARC_RPC_HD_UNAVAILABLE);
+            return true;
+        }
+        if (s->state == ARC_RPC_HD_IDLE && s->published &&
+            s->lengths[s->current] >= ARC_RPC_HD_TRIGGER)
+            s->requested = true;
+        s->outcome = s->published ? (get(s->manifests[s->selected] + 8, 4) == 2
+                                         ? ARC_RPC_HD_RECEIPTED
+                                         : ARC_RPC_HD_LEGACY)
+                                  : ARC_RPC_HD_UNPUBLISHED;
+        s->stats.open_bytes = s->stats.bytes_read + s->stats.bytes_written;
+        s->stats.open_operations = s->stats.operations;
+        if (!arc_io_flush_available())
+            failure(s, false);
+        return true;
+    case 17:
+        if (s->open_at < 504)
+            chunk_leaf(s->open_at, s->published ? s->generation + 1 : 0, leaf);
+        else
+            strcpy(leaf, s->open_at == 504 ? "chunk.tmp" : "manifest.tmp");
+        if (!remove_leaf(s, leaf))
+            return open_failure(s, ARC_RPC_HD_UNAVAILABLE);
+        untrack_chunk(s, leaf);
+        ++s->open_at;
+        s->open_phase = 16;
+        return true;
+    default:
+        return open_failure(s, ARC_RPC_HD_CORRUPT);
+    }
+}
+ArcRpcHdOutcome arc_riscpc_hd_open_step(ArcRpcHdStore *s) {
+    if (!s)
+        return ARC_RPC_HD_UNAVAILABLE;
+    ArcRpcHdStats before;
+    step_start(s, &before);
+    if (s->outcome == ARC_RPC_HD_OPEN_PENDING)
+        (void)recover_step(s);
+    step_finish(s, &before);
+    return s->outcome;
+}
+ArcRpcHdStore *arc_riscpc_hd_open_begin(const char *save, const char *content,
+                                        char *error, size_t n) {
+    if (error && n)
+        *error = 0;
+    if (!arc_install_store_native_path(save) || !key_valid(content)) {
+        if (error && n)
+            snprintf(error, n,
+                     "Invalid RiscPC hard-disc path or content identity");
+        return NULL;
+    }
+    ArcRpcHdStore *s = store_allocate(1, sizeof(*s));
+    if (!s) {
+        if (error && n)
+            snprintf(error, n, "RiscPC hard-disc allocation failed");
+        return NULL;
+    }
+    int len = snprintf(s->base, sizeof(s->base), "%s/arcdroid/hd-riscpc/%s",
+                       save, content);
+    if (len < 0 || (size_t)len >= sizeof(s->base)) {
+        free(s);
+        if (error && n)
+            snprintf(error, n, "RiscPC hard-disc path is too long");
+        return NULL;
+    }
+    copy(s, s->content, content, 41);
+    s->stats.allocation_high = sizeof(*s) + 12288;
+    return s;
 }
 ArcRpcHdStore *arc_riscpc_hd_open(const char *save,const char *content,bool create_blank,char *error,size_t error_size)
 {
-    if(error&&error_size)error[0]=0;
-    if(!arc_install_store_native_path(save)||!key_valid(content)){if(error&&error_size)snprintf(error,error_size,"Invalid RiscPC hard-disc path or content identity");return NULL;}
-    ArcRpcHdStore *s=store_allocate(1,sizeof(*s));if(!s){if(error&&error_size)snprintf(error,error_size,"RiscPC hard-disc allocation failed");return NULL;}
-    int n=snprintf(s->base,sizeof(s->base),"%s/arcdroid/hd-riscpc/%s",save,content);
-    if(n<0||(size_t)n>=sizeof(s->base)){if(error&&error_size)snprintf(error,error_size,"RiscPC hard-disc path is too long");free(s);return NULL;}copy(s,s->content,content,41);
-    s->stats.allocation_high=sizeof(*s)+12288;
-    op(s);bool exists=arc_io_existing_directory(s->base);
-    if(!exists){if(!arc_io_make_path_counted(s->base,&s->stats.operations)){if(error&&error_size)snprintf(error,error_size,"RiscPC hard-disc directory creation failed");free(s);return NULL;}}
-    (void)arc_io_list_directory_counted(s->base,directory_visit,s,&s->stats.advisory_operations);
-    s->stats.operations+=s->stats.advisory_operations;
-    if(s->foreign_entry||!recover(s)){
-        if(error&&error_size)snprintf(error,error_size,"The saved RiscPC hard disc is damaged; files have been preserved.");free(s);return NULL;}
-    s->stats.open_bytes=s->stats.bytes_read+s->stats.bytes_written;s->stats.open_operations=s->stats.operations;
-    if(!arc_io_flush_available())failure(s,false);
+    ArcRpcHdStore *s=arc_riscpc_hd_open_begin(save,content,error,error_size);if(!s)return NULL;
+    ArcRpcHdOutcome outcome;do{outcome=arc_riscpc_hd_open_step(s);}while(outcome==ARC_RPC_HD_OPEN_PENDING);
+    if(outcome==ARC_RPC_HD_CORRUPT||outcome==ARC_RPC_HD_UNSUPPORTED||(outcome==ARC_RPC_HD_UNAVAILABLE&&!s->open_validated)){
+        if(error&&error_size)snprintf(error,error_size,"%s",arc_riscpc_hd_outcome_notice(outcome));arc_riscpc_hd_close(s);return NULL;}
     if(!s->published&&!s->refused){
         if(create_blank&&arc_riscpc_hd_population_begin(s)){s->authored=true;
             bool ok=true;for(unsigned i=0;i<504&&ok;++i){ok=arc_hd_format_range(256,13,(uint64_t)i*ARC_RPC_HD_CHUNK,s->scratch,ARC_RPC_HD_CHUNK);
@@ -776,56 +1308,296 @@ ArcRpcHdStore *arc_riscpc_hd_open(const char *save,const char *content,bool crea
         }}
     if(s->refused&&error&&error_size)snprintf(error,error_size,"%s",s->notice?s->notice:"RiscPC hard disc is read-only");return s;
 }
-void arc_riscpc_hd_close(ArcRpcHdStore *s) { if(s){if(s->population)arc_riscpc_hd_population_abort(s);if(s->rotation_writer){ArcIoFile *f=s->rotation_writer;s->rotation_writer=NULL;(void)close_file(s,f,true);}free(s);} }
+void arc_riscpc_hd_close(ArcRpcHdStore *s) { if(s){if(s->listing)(void)arc_io_close_directory(s->listing);if(s->replay_file)(void)close_file(s,s->replay_file,true);if(s->population)arc_riscpc_hd_population_abort(s);if(s->rotation_writer){ArcIoFile *f=s->rotation_writer;s->rotation_writer=NULL;(void)close_file(s,f,true);}free(s);} }
 bool arc_riscpc_hd_population_begin(ArcRpcHdStore *s)
 {
-    if(!s||s->refused||s->population||s->state!=ARC_RPC_HD_IDLE||s->requested||s->generation==UINT64_MAX||
+    if(!s||s->outcome==ARC_RPC_HD_OPEN_PENDING||s->refused||s->population||s->state!=ARC_RPC_HD_IDLE||s->requested||s->generation==UINT64_MAX||
        (s->published&&s->jgeneration[s->current]==UINT64_MAX))return false;
-    s->population=true;s->sealed=false;s->seal_at=0;s->snapshot=s->sequence;s->parent=s->current;
+    s->population=true;s->sealed=false;s->seal_at=0;s->seal_step=s->publish_step=0;s->reconstruction_active=false;s->snapshot=s->sequence;s->parent=s->current;
     copy(s,s->frozen,s->live,sizeof(s->live));memset(s->population_changed,0,sizeof(s->population_changed));
     if(s->published)copy(s,s->manifests[2],s->manifests[s->selected],MANIFEST_BYTES);else memset(s->manifests[2],0,MANIFEST_BYTES);
     return true;
 }
-static bool population_chunk(ArcRpcHdStore *s,unsigned i)
-{
-    return s->population_changed[i]?base_chunk(s,s->manifests[2],i):
-        reconstruct(s,s->published?s->manifests[s->selected]:s->manifests[2],i,s->frozen);
-}
-bool arc_riscpc_hd_population_read(ArcRpcHdStore *s,uint32_t lba,uint32_t count,uint8_t *out)
-{
-    if(!s||!s->population||s->refused||!out||!range(lba,count))return false;
-    while(count){unsigned i=lba/512,at=lba%512,take=512-at;if(take>count)take=count;
-        if(!population_chunk(s,i))return false;copy(s,out,s->scratch+at*512,take*512);out+=take*512;lba+=take;count-=take;}return true;
-}
-bool arc_riscpc_hd_population_write(ArcRpcHdStore *s,uint32_t lba,uint32_t count,const uint8_t *in)
-{
-    if(!s||!s->population||s->sealed||s->seal_at||s->refused||!in||!range(lba,count))return false;
-    /* The source may alias the reconstruction scratch or journal buffer; copy
-     * the complete bounded input before base/record reconstruction. */
-    uint8_t *input=s->cache[0];s->tags[0].valid=false;copy(s,input,in,count*512);
-    while(count){unsigned i=lba/512,at=lba%512,take=512-at;if(take>count)take=count;
-        if(!population_chunk(s,i))return false;copy(s,s->scratch+at*512,input,take*512);
-        if(!publish_chunk(s,i))return failure(s,false);s->population_changed[i]=true;lba+=take;count-=take;
-        if(count){s->stats.copied_bytes+=count*512;memmove(input,input+take*512,count*512);}
-    }return true;
-}
-bool arc_riscpc_hd_population_seal_step(ArcRpcHdStore *s,bool *done)
-{
-    if(done)*done=false;
-    if(!s||!done||!s->population||s->refused||s->snapshot!=s->sequence)return false;
-    if(s->sealed){*done=true;return true;}
-    if(s->seal_at<504){unsigned i=s->seal_at;
-        if(!s->population_changed[i]){
-            bool dirty=false;for(unsigned j=0;j<512;++j)dirty|=s->frozen[i*512+j]!=0;
-            if(dirty){if(!population_chunk(s,i)||!publish_chunk(s,i))return failure(s,false);s->population_changed[i]=true;}}
-        if(!base_chunk(s,s->manifests[2],i))return false;
-        ++s->seal_at;return true;
+bool arc_riscpc_hd_population_io_begin(ArcRpcHdStore *s, uint32_t lba,
+                                       uint32_t count, uint8_t *data,
+                                       bool write) {
+    if (!s || !s->population || s->refused || s->population_io || !data ||
+        !range(lba, count) || (write && (s->sealed || s->seal_at)))
+        return false;
+    s->population_io = true;
+    s->population_write = write;
+    s->population_lba = lba;
+    s->population_count = count;
+    s->population_output = data;
+    s->population_phase = 0;
+    if (write) {
+        s->tags[0].valid = false;
+        copy(s, s->cache[0], data, count * 512);
     }
-    if(s->seal_at==504){unsigned next=s->published?s->current^1:0;
-        if(!create_header(s,next,s->published?s->jgeneration[s->current]+1:0,s->published?2:(s->authored?0:2)))return failure(s,false);
-        s->current=next;++s->seal_at;return true;
+    return true;
+}
+/* One private chunk publication substep; buffers are retained until final
+ * readback. The encoded bytes match the original publish_chunk exactly. */
+static bool population_publish_chunk_step(ArcRpcHdStore *s, unsigned i,
+                                          bool *done) {
+    *done = false;
+    uint8_t *e = entry(s->manifests[2], i);
+    uint64_t gen = s->published ? s->generation + 1 : 0;
+    char leaf[23];
+    chunk_leaf(i, gen, leaf);
+    size_t n;
+    switch (s->population_phase) {
+    case 1: {
+        if (zero(s->scratch, ARC_RPC_HD_CHUNK)) {
+            if (size(s, leaf, &n)) {
+                if (!remove_leaf(s, leaf))
+                    return false;
+                untrack_chunk(s, leaf);
+            }
+            if (s->refused)
+                return false;
+            memset(e, 0, 48);
+            *done = true;
+            return true;
+        }
+        uint8_t h[128] = {0}, tail[4], digest[32];
+        sha(s, s->scratch, ARC_RPC_HD_CHUNK, digest);
+        memcpy(h, "ARCRHDC1", 8);
+        put(h + 8, 1, 4);
+        put(h + 12, CHUNK_BYTES, 4);
+        memcpy(h + 16, s->content, 40);
+        put(h + 56, i, 4);
+        put(h + 60, 1, 4);
+        put(h + 64, 1, 4);
+        put(h + 68, ARC_RPC_HD_CHUNK, 4);
+        put(h + 72, gen, 8);
+        memcpy(h + 80, digest, 32);
+        put(h + 124, crc(s, h, 124), 4);
+        put(tail, crc(s, s->scratch, ARC_RPC_HD_CHUNK), 4);
+        ArcIoFile *f = open_leaf(s, "chunk.tmp", true, true);
+        if (!f)
+            return false;
+        bool ok = write_file(s, f, h, 128) &&
+                  write_file(s, f, s->scratch, ARC_RPC_HD_CHUNK) &&
+                  write_file(s, f, tail, 4) && flush(s, f);
+        bool closed = close_file(s, f, ok);
+        if (!ok || !closed)
+            return false;
+        memset(e, 0, 48);
+        put(e, 1, 4);
+        put(e + 8, gen, 8);
+        copy(s, e + 16, digest, 32);
+        ++s->population_phase;
+        return true;
     }
-    if(!prepare_manifest(s))return failure(s,false);s->sealed=true;*done=true;return true;
+    case 2:
+        if (!chunk_read(s, s->manifests[2], i, s->scratch, "chunk.tmp"))
+            return false;
+        ++s->population_phase;
+        return true;
+    case 3:
+        if (size(s, leaf, &n)) {
+            for (unsigned m = 0; m < 2; ++m)
+                if (s->present[m] && get(entry(s->manifests[m], i), 4) == 1 &&
+                    get(entry(s->manifests[m], i) + 8, 8) == gen)
+                    return false;
+            if (!remove_leaf(s, leaf))
+                return false;
+            untrack_chunk(s, leaf);
+        }
+        if (s->refused)
+            return false;
+        ++s->population_phase;
+        return true;
+    case 4:
+        if (!rename_empty(s, "chunk.tmp", leaf) || !track_chunk(s, leaf))
+            return false;
+        ++s->population_phase;
+        return true;
+    case 5:
+        if (!base_chunk(s, s->manifests[2], i))
+            return false;
+        *done = true;
+        return true;
+    default:
+        return false;
+    }
+}
+bool arc_riscpc_hd_population_io_step(ArcRpcHdStore *s, bool *done) {
+    *done = false;
+    if (!s || !s->population_io || s->refused)
+        return false;
+    ArcRpcHdStats before;
+    step_start(s, &before);
+    unsigned i = s->population_lba / 512, at = s->population_lba % 512;
+    unsigned take = 512 - at;
+    if (take > s->population_count)
+        take = s->population_count;
+    bool ok = true, ready = false;
+    if (s->population_phase == 0) {
+        if (s->population_changed[i]) {
+            ok = base_chunk(s, s->manifests[2], i);
+            ready = ok;
+        } else
+            ok = reconstruction_step(
+                s, s->published ? s->manifests[s->selected] : s->manifests[2],
+                i, s->frozen, s->scratch, &ready);
+        if (ok && ready) {
+            if (s->population_write) {
+                copy(s, s->scratch + at * 512, s->cache[0], take * 512);
+                s->population_phase = 1;
+                ready = false;
+            } else
+                copy(s, s->population_output, s->scratch + at * 512,
+                     take * 512);
+        }
+    } else
+        ok = population_publish_chunk_step(s, i, &ready);
+    if (ok && ready) {
+        if (s->population_write)
+            s->population_changed[i] = true;
+        s->population_lba += take;
+        s->population_count -= take;
+        s->population_output += take * 512;
+        s->population_phase = 0;
+        if (s->population_count && s->population_write) {
+            s->stats.copied_bytes += s->population_count * 512;
+            memmove(s->cache[0], s->cache[0] + take * 512,
+                    s->population_count * 512);
+        }
+        if (!s->population_count) {
+            s->population_io = false;
+            *done = true;
+        }
+    }
+    if (!ok && !s->refused)
+        failure(s, false);
+    step_finish(s, &before);
+    return ok;
+}
+bool arc_riscpc_hd_population_read(ArcRpcHdStore *s, uint32_t lba,
+                                   uint32_t count, uint8_t *out) {
+    if (!arc_riscpc_hd_population_io_begin(s, lba, count, out, false))
+        return false;
+    bool done = false;
+    while (!done)
+        if (!arc_riscpc_hd_population_io_step(s, &done))
+            return false;
+    return true;
+}
+bool arc_riscpc_hd_population_write(ArcRpcHdStore *s, uint32_t lba,
+                                    uint32_t count, const uint8_t *in) {
+    if (!arc_riscpc_hd_population_io_begin(s, lba, count, (uint8_t *)in, true))
+        return false;
+    bool done = false;
+    while (!done)
+        if (!arc_riscpc_hd_population_io_step(s, &done))
+            return false;
+    return true;
+}
+
+static bool seal_unit(ArcRpcHdStore *s, bool *done) {
+    *done = false;
+    if (!s || !s->population || s->refused || s->population_io ||
+        s->snapshot != s->sequence)
+        return false;
+    if (s->sealed) {
+        *done = true;
+        return true;
+    }
+    if (s->seal_at < 504) {
+        unsigned i = s->seal_at;
+        bool ready;
+        if (!s->population_changed[i]) {
+            bool dirty = false;
+            for (unsigned j = 0; j < 512; ++j)
+                dirty |= s->frozen[i * 512 + j] != 0;
+            if (dirty) {
+                if (!s->seal_step) {
+                    if (!reconstruction_step(s, s->manifests[s->selected], i,
+                                             s->frozen, s->scratch, &ready))
+                        return false;
+                    if (ready) {
+                        s->population_phase = 1;
+                        s->seal_step = 1;
+                    }
+                    return true;
+                }
+                if (s->seal_step == 1) {
+                    if (!population_publish_chunk_step(s, i, &ready))
+                        return false;
+                    if (ready) {
+                        s->population_changed[i] = true;
+                        s->seal_step = 2;
+                    }
+                    return true;
+                }
+            }
+        }
+        if (!base_chunk(s, s->manifests[2], i))
+            return false;
+        ++s->seal_at;
+        s->seal_step = 0;
+        return true;
+    }
+    unsigned next = s->published ? s->parent ^ 1 : 0;
+    char leaf[16];
+    journal_leaf(next, leaf);
+    if (s->seal_at == 504) {
+        if (!s->seal_step) {
+            if ((uint64_t)s->lengths[0] + s->lengths[1] + 256 >
+                ARC_RPC_HD_JOURNAL_CAP)
+                return false;
+            header_encode(s, s->headers[next],
+                          s->published ? s->jgeneration[s->parent] + 1 : 0,
+                          s->published ? 2 : (s->authored ? 0 : 2));
+            if (!write_leaf(s, leaf, s->headers[next], 256))
+                return false;
+            s->seal_step = 1;
+            return true;
+        }
+        if (!read_leaf(s, leaf, s->record, 256) ||
+            memcmp(s->record, s->headers[next], 256))
+            return false;
+        s->lengths[next] = 256;
+        s->jgeneration[next] = get(s->headers[next] + 88, 8);
+        s->journal_present[next] = true;
+        arc_sha256_init(&s->digest[next]);
+        stream_hash(s, next, s->headers[next], 256);
+        s->current = next;
+        ++s->seal_at;
+        s->seal_step = 0;
+        return true;
+    }
+    if (!s->seal_step) {
+        manifest_encode(s, s->manifests[2],
+                        s->published ? s->generation + 1 : 0,
+                        s->jgeneration[s->current], s->snapshot);
+        if (!write_leaf(s, "manifest.tmp", s->manifests[2],
+                        manifest_length(s->manifests[2])))
+            return false;
+        s->seal_step = 1;
+        return true;
+    }
+    if (!read_leaf(s, "manifest.tmp", s->record,
+                   manifest_length(s->manifests[2])) ||
+        memcmp(s->record, s->manifests[2], manifest_length(s->manifests[2])))
+        return false;
+    s->sealed = true;
+    s->publish_step = 0;
+    *done = true;
+    return true;
+}
+bool arc_riscpc_hd_population_seal_step(ArcRpcHdStore *s, bool *done) {
+    if (!s || !done)
+        return false;
+    ArcRpcHdStats before;
+    step_start(s, &before);
+    bool ok = seal_unit(s, done);
+    if (!ok && !s->refused)
+        failure(s, false);
+    step_finish(s, &before);
+    return ok;
 }
 bool arc_riscpc_hd_population_seal(ArcRpcHdStore *s)
 {
@@ -833,32 +1605,143 @@ bool arc_riscpc_hd_population_seal(ArcRpcHdStore *s)
     bool done=false;while(!done)if(!arc_riscpc_hd_population_seal_step(s,&done))return false;
     return true;
 }
-bool arc_riscpc_hd_population_publish(ArcRpcHdStore *s)
-{
-    if(!s||!s->population||!s->sealed||s->refused||s->snapshot!=s->sequence)return false;
-    if(s->published){
-        /* D-145: revalidate the frozen source before publication. Exclusive
-         * ownership precludes append/maintenance, and metadata checks remain
-         * bounded; source payloads were verified during candidate sealing. */
-        char leaf[16];uint8_t h[256],digest[32];size_t n;
-        manifest_leaf(s->selected,leaf);
-        if(!read_leaf(s,leaf,s->record,manifest_length(s->manifests[s->selected]))||memcmp(s->record,s->manifests[s->selected],manifest_length(s->manifests[s->selected])))return failure(s,true);
-        journal_leaf(s->parent,leaf);arc_sha256_final(&s->digest[s->parent],digest);
-        if(!read_header(s,s->parent,h)||memcmp(h,s->headers[s->parent],256)||!size(s,leaf,&n)||n!=s->lengths[s->parent]||
-            get(s->headers[s->current]+96,8)!=s->jgeneration[s->parent]||
-            get(s->headers[s->current]+152,8)!=n||memcmp(s->headers[s->current]+160,digest,32))return failure(s,true);
+
+static bool population_publish_unit(ArcRpcHdStore *s, bool *done) {
+    *done = false;
+    if (!s || !s->population || !s->sealed || s->refused ||
+        s->snapshot != s->sequence)
+        return false;
+    char leaf[16];
+    size_t n;
+    uint8_t digest[32];
+    switch (s->publish_step) {
+    case 0:
+        if (s->published) {
+            manifest_leaf(s->selected, leaf);
+            if (!read_leaf(s, leaf, s->record,
+                           manifest_length(s->manifests[s->selected])))
+                return failure(s, false);
+            if (memcmp(s->record, s->manifests[s->selected],
+                       manifest_length(s->manifests[s->selected])))
+                return failure(s, true);
+        }
+        ++s->publish_step;
+        return true;
+    case 1:
+        if (s->published) {
+            journal_leaf(s->parent, leaf);
+            if (!read_header(s, s->parent, s->record))
+                return failure(s, false);
+            if (memcmp(s->record, s->headers[s->parent], 256))
+                return failure(s, true);
+        }
+        ++s->publish_step;
+        return true;
+    case 2:
+        if (s->published) {
+            journal_leaf(s->parent, leaf);
+            arc_sha256_final(&s->digest[s->parent], digest);
+            if (!size(s, leaf, &n))
+                return failure(s, false);
+            if (n != s->lengths[s->parent] ||
+                get(s->headers[s->current] + 96, 8) !=
+                    s->jgeneration[s->parent] ||
+                get(s->headers[s->current] + 152, 8) != n ||
+                memcmp(s->headers[s->current] + 160, digest, 32))
+                return failure(s, true);
+        }
+        ++s->publish_step;
+        return true;
+    case 3:
+        manifest_leaf((unsigned)(get(s->manifests[2] + 88, 8) & 1), leaf);
+        if (size(s, leaf, &n) || s->refused)
+            return false;
+        ++s->publish_step;
+        return true;
+    case 4:
+        manifest_leaf((unsigned)(get(s->manifests[2] + 88, 8) & 1), leaf);
+        if (!rename_empty(s, "manifest.tmp", leaf))
+            return false;
+        ++s->publish_step;
+        return true;
+    case 5: {
+        unsigned slot = (unsigned)(get(s->manifests[2] + 88, 8) & 1);
+        manifest_leaf(slot, leaf);
+        if (!read_leaf(s, leaf, s->record, manifest_length(s->manifests[2])) ||
+            memcmp(s->record, s->manifests[2],
+                   manifest_length(s->manifests[2])))
+            return false;
+        copy(s, s->manifests[slot], s->record, MANIFEST_BYTES);
+        s->present[slot] = true;
+        s->selected = slot;
+        s->generation = get(s->record + 88, 8);
+        s->published = true;
+        s->gc_done = false;
+        memset(s->live, 0, sizeof(s->live));
+        memset(s->tags, 0, sizeof(s->tags));
+        s->state = ARC_RPC_HD_RETIRE;
+        s->phase_step = 0;
+        ++s->stats.checkpoints;
+        s->population = s->sealed = false;
+        s->outcome = get(s->manifests[slot] + 8, 4) == 2 ? ARC_RPC_HD_RECEIPTED
+                                                         : ARC_RPC_HD_LEGACY;
+        *done = true;
+        return true;
     }
-    if(!publish_manifest(s))return false;s->population=false;s->sealed=false;
-    /* Retirement and GC remain bounded frame maintenance; exclusive ownership
-     * ends only after a complete new recovery root has been published. */
+    default:
+        return false;
+    }
+}
+bool arc_riscpc_hd_population_publish_step(ArcRpcHdStore *s, bool *done) {
+    if (!s || !done)
+        return false;
+    ArcRpcHdStats before;
+    step_start(s, &before);
+    bool ok = population_publish_unit(s, done);
+    if (!ok && !s->refused)
+        failure(s, false);
+    step_finish(s, &before);
+    return ok;
+}
+bool arc_riscpc_hd_population_publish(ArcRpcHdStore *s) {
+    bool done = false;
+    while (!done)
+        if (!arc_riscpc_hd_population_publish_step(s, &done))
+            return false;
     return true;
 }
-void arc_riscpc_hd_population_abort(ArcRpcHdStore *s)
-{
-    if(!s||!s->population)return;s->population=false;
-    if((s->sealed||s->seal_at>504)&&!s->refused){char leaf[16];journal_leaf(s->current,leaf);if(!remove_leaf(s,leaf))failure(s,false);
-        else{s->journal_present[s->current]=false;s->lengths[s->current]=0;s->current=s->parent;}}
-    s->sealed=false;if(!s->refused){s->state=ARC_RPC_HD_GC;s->phase_step=0;s->gc_at=0;}
+void arc_riscpc_hd_population_abort(ArcRpcHdStore *s) {
+    if (!s || !s->population)
+        return;
+    s->population = false;
+    s->population_io = s->reconstruction_active = false;
+    /* Rename already published a complete root. Preserve it and its journal
+     * even when cancellation precedes final live-handle verification. */
+    if (s->publish_step >= 5) {
+        s->sealed = false;
+        failure(s, false);
+        return;
+    }
+    if ((s->sealed || s->seal_at > 504 ||
+         (s->seal_at == 504 && s->seal_step)) &&
+        !s->refused) {
+        char leaf[16];
+        unsigned candidate = s->published ? s->parent ^ 1 : 0;
+        journal_leaf(candidate, leaf);
+        if (!remove_leaf(s, leaf))
+            failure(s, false);
+        else {
+            s->journal_present[candidate] = false;
+            s->lengths[candidate] = 0;
+            s->current = s->parent;
+        }
+    }
+    s->sealed = false;
+    if (!s->refused) {
+        s->state = ARC_RPC_HD_GC;
+        s->phase_step = 0;
+        s->gc_at = 0;
+    }
 }
 bool arc_riscpc_hd_import(ArcRpcHdStore *s,const char *source)
 {

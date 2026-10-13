@@ -50,7 +50,7 @@ static const char *file_kind(const char *p) {
   if (strstr(p, "/riscpc/boot/"))
     return !strcmp(leaf, "HardDisc4.zip") ? "harddisc-package" : "system-package";
   if (!strcmp(leaf, "chunk.tmp")) return "chunk-candidate";
-  if (!strncmp(leaf, "c", 1)) return "chunk";
+  if (strlen(leaf)==22 && leaf[0]=='c' && leaf[4]=='.' && leaf[5]=='g') return "chunk";
   if (!strcmp(leaf, "manifest.tmp")) return "manifest-candidate";
   if (!strncmp(leaf, "manifest", 8)) return "manifest";
   if (!strncmp(leaf, "journal", 7)) return "journal";
@@ -291,8 +291,8 @@ int main(int argc, char **argv) {
   const char *notice = arc_riscpc_boot_notice(b);
   if (notice)
     fprintf(stderr, "%s\n", notice);
-  assert(stats.memory_high <= 8388608 && stats.max_unit_io_bytes <= 4194304 &&
-         stats.max_unit_operations <= 128);
+  assert(stats.memory_high <= 8388608 && stats.max_unit_io_bytes <= ARC_RPC_HD_STEP_BYTES &&
+         stats.max_unit_operations <= ARC_RPC_HD_STEP_OPERATIONS && stats.max_step_namespace_operations <= 1 && stats.max_step_hash_bytes <= ARC_RPC_HD_STEP_HASH_BYTES);
   printf(
       "{\"phase\":%u,\"files\":%llu,\"bytes\":%llu,\"units\":%llu,\"io_bytes\":"
       "%llu,\"operations\":%llu,\"memory\":%llu,\"max_bytes\":%llu,\"max_ops\":"

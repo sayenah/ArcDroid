@@ -78,77 +78,428 @@ static bool decode(ArcRpcCmosStore *s,const uint8_t *p,size_t size,ArcRpcCmosEvi
 }
 static bool path(const ArcRpcCmosStore *s,const char *suffix,char out[1040])
 { int n=snprintf(out,1040,"%s%s",s->base,suffix);return n>=0 && n<1040; }
-static bool exists(const char *directory,const char *leaf,bool *found)
-{ return arc_io_directory_contains(directory,leaf,found); }
-/* Only published slots participate in recovery/refusal. A candidate is not
- * a recovery root, even when complete; publication always overwrites it. */
-static void inspect_slots(ArcRpcCmosStore *s,char *error,size_t n)
-{
-    char directory[1040];strcpy(directory,s->base);*strrchr(directory,'/')=0;
-    for(unsigned slot=0;slot<2;++slot){
-        char filename[1040];path(s,slot?".1":".0",filename);bool found=false;
-        if(!exists(directory,strrchr(filename,'/')+1,&found)){s->refused=true;fail(error,n,"unable to inspect record slot");continue;}
-        if(!found)continue;
-        void *bytes=NULL;size_t size=0;ArcRpcCmosEvidence e;
-        bool valid=arc_io_read_all_limit(filename,&bytes,&size,512,NULL) && decode(s,bytes,size,&e);
-        if(valid && slot<2 && (get((uint8_t *)bytes+24,8)&1)!=slot)valid=false;
-        if(!valid){s->refused=true;fail(error,n,"refused corrupt, foreign or wrong-key slot; preserved on disk");}
-        else if( get((uint8_t *)bytes+24,8)>s->generation){s->generation=get((uint8_t *)bytes+24,8);s->present=true;memcpy(s->payload,(uint8_t *)bytes+104,240);s->evidence=e;}
-        free(bytes);
+
+/* Step counters include failed calls and cleanup, without a production clock.
+ */
+static void begin_count(ArcRpcCmosStore *s) {
+    s->stats.step_operations = s->stats.operations;
+    s->stats.step_bytes = s->stats.bytes;
+    s->stats.step_metadata = s->stats.metadata;
+    s->stats.step_namespace = s->stats.namespace_operations;
+}
+static void end_count(ArcRpcCmosStore *s) {
+#define FINISH(field, total, max)                                              \
+    s->stats.field = s->stats.total - s->stats.field;                          \
+    if (s->stats.field > s->stats.max)                                         \
+    s->stats.max = s->stats.field
+    FINISH(step_operations, operations, max_operations);
+    FINISH(step_bytes, bytes, max_bytes);
+    FINISH(step_metadata, metadata, max_metadata);
+    FINISH(step_namespace, namespace_operations, max_namespace);
+#undef FINISH
+}
+static void meta(ArcRpcCmosStore *s) {
+    ++s->stats.operations;
+    ++s->stats.metadata;
+}
+static ArcIoFile *open_record(ArcRpcCmosStore *s, const char *p, bool create) {
+    meta(s);
+    if (create)
+        ++s->stats.namespace_operations;
+    uint64_t before = s->stats.operations;
+    ArcIoFile *f =
+        create ? arc_io_create_file_counted(p, &s->stats.operations)
+               : arc_io_open_stream_counted(p, false, &s->stats.operations);
+    s->stats.metadata += s->stats.operations - before;
+    return f;
+}
+static bool close_record(ArcRpcCmosStore *s, ArcIoFile *f) {
+    meta(s);
+    return arc_io_close_file(f);
+}
+static bool read_record(ArcRpcCmosStore *s, const char *p, uint8_t out[512],
+                        bool *invalid) {
+    *invalid = false;
+    ArcIoFile *f = open_record(s, p, false);
+    if (!f)
+        return false;
+    ++s->stats.operations;
+    int64_t n = arc_io_file_length(f);
+    bool ok = n >= 0;
+    if (n >= 0 && n != 512)
+        *invalid = true;
+    if (n == 512) {
+        ++s->stats.operations;
+        s->stats.bytes += 512;
+        ok = arc_io_read_file(f, out, 512) == 512;
+    }
+    bool closed = close_record(s, f);
+    return ok && closed;
+}
+static ArcRpcCmosResult result(const ArcRpcCmosStore *s) {
+    return !s->reconciled ? (s->exhausted ? ARC_RPC_CMOS_UNAVAILABLE
+                                          : ARC_RPC_CMOS_INSPECTING)
+           : s->present   ? ARC_RPC_CMOS_FOUND
+           : s->refused   ? ARC_RPC_CMOS_REFUSED
+                          : ARC_RPC_CMOS_MISSING;
+}
+void arc_riscpc_cmos_store_close(ArcRpcCmosStore *s) {
+    if (s->directory_handle) {
+        meta(s);
+        (void)arc_io_close_directory(s->directory_handle);
+        s->directory_handle = NULL;
     }
 }
-ArcRpcCmosResult arc_riscpc_cmos_store_load(ArcRpcCmosStore *s,const char *save,const ArcRpcCmosKey *k,char *error,size_t n)
-{
-    memset(s,0,sizeof(*s));s->key=*k;if(error&&n)*error=0;
-    char content[41],firmware[65];
-    if(!save || !*save || k->model>=4 || k->layout<1 || k->layout>3 || !arc_riscpc_cmos_hex(k->firmware,64,firmware) || (!k->defaults && !arc_riscpc_cmos_hex(k->content,40,content))){fail(error,n,"invalid key or save directory");return ARC_RPC_CMOS_REFUSED;}
-    memcpy(s->key.firmware,firmware,65);if(!k->defaults)memcpy(s->key.content,content,41);
-    char directory[1024];int length=snprintf(directory,sizeof(directory),"%s/arcdroid/cmos-riscpc%s",save,k->defaults?"/defaults":"");
-    if(length<0 || length>=(int)sizeof(directory) || !arc_io_make_path(directory)){fail(error,n,"save directory unavailable");return ARC_RPC_CMOS_REFUSED;}
-    length=k->defaults?snprintf(s->base,sizeof(s->base),"%s/%s-m%u-p%u-t%u",directory,firmware,k->model+1,k->procedure,k->timing):
-        snprintf(s->base,sizeof(s->base),"%s/%s-m%u-%s",directory,content,k->model+1,firmware);
-    if(length<0 || length>=(int)sizeof(s->base)){fail(error,n,"save path too long");return ARC_RPC_CMOS_REFUSED;}
-    inspect_slots(s,error,n);
-    return s->present?ARC_RPC_CMOS_FOUND:s->refused?ARC_RPC_CMOS_REFUSED:ARC_RPC_CMOS_MISSING;
+static void retry(ArcRpcCmosStore *s, char *e, size_t n) {
+    arc_riscpc_cmos_store_close(s);
+    s->reconciled = false;
+    s->putting = false;
+    /* Never clear a corruption refusal, including during later reconciliation.
+     */
+    s->phase = 1;
+    s->slot = 0;
+    memset(s->slot_found, 0, sizeof(s->slot_found));
+    if (++s->attempts >= 3)
+        s->exhausted = true;
+    fail(e, n,
+         "record inspection unavailable; no seed or publication admitted");
 }
-bool arc_riscpc_cmos_store_put(ArcRpcCmosStore *s,const uint8_t payload[240],const ArcRpcCmosEvidence *e,char *error,size_t n)
-{
-    /* A failure after rename may have published a verified newer generation
-     * without updating this live handle. Reconcile before the no-change check
-     * or retry, preserving every invalid published slot as at ordinary load. */
-    if(s->publication_pending && !s->refused){
-        s->generation=0;s->present=false;
-        inspect_slots(s,error,n);
-        if(!s->refused)s->publication_pending=false;
+ArcRpcCmosResult arc_riscpc_cmos_store_begin(ArcRpcCmosStore *s,
+                                             const char *save,
+                                             const ArcRpcCmosKey *k, char *e,
+                                             size_t n) {
+    memset(s, 0, sizeof(*s));
+    if (e && n)
+        *e = 0;
+    if (!k) {
+        s->refused = s->reconciled = true;
+        fail(e, n, "invalid key");
+        return ARC_RPC_CMOS_REFUSED;
     }
-    if(s->present && !memcmp(s->payload,payload,240))return true;
-    if(s->refused || s->generation==UINT64_MAX)return fail(error,n,"publication refused; existing refused slots are preserved");
-    if(s->key.defaults && (!e || !arc_riscpc_cmos_oracle(s->key.layout,payload,e)))return fail(error,n,"default completion oracle failed");
-    uint8_t bytes[512];encode(s,payload,e,bytes);char tmp[1040],final[1040];
-    path(s,".tmp",tmp);path(s,(s->generation+1)&1?".1":".0",final);
-    /* Revalidate the destination before retirement; an externally replaced
-     * foreign/corrupt slot must never be silently replaced while live. */
-    char directory[1040];strcpy(directory,final);*strrchr(directory,'/')=0;
-    bool found=false;
-    if(!exists(directory,strrchr(final,'/')+1,&found))return fail(error,n,"destination inspection failed");
-    if(found){
-        void *old=NULL;size_t old_size=0;ArcRpcCmosEvidence old_e;
-        bool old_valid=arc_io_read_all_limit(final,&old,&old_size,512,NULL) && decode(s,old,old_size,&old_e) && get((uint8_t *)old+24,8)<s->generation && (((uint8_t *)old)[24]&1u)==((s->generation+1)&1u);
-        free(old);if(!old_valid){s->refused=true;return fail(error,n,"destination changed or refused; preserved on disk");}
+    s->key = *k;
+    char content[41], firmware[65];
+    if (!save || !*save || k->model >= 4 || k->layout < 1 || k->layout > 3 ||
+        !arc_riscpc_cmos_hex(k->firmware, 64, firmware) ||
+        (!k->defaults && !arc_riscpc_cmos_hex(k->content, 40, content))) {
+        s->refused = s->reconciled = true;
+        fail(e, n, "invalid key or save directory");
+        return ARC_RPC_CMOS_REFUSED;
     }
-    /* Empty, torn, foreign and wrong-key .tmp files are abandoned attempts;
-     * they never latch refusal and the truncating write below replaces them. */
-    s->publication_pending=true;
-    const char *why=NULL;
-    if(!arc_io_write_all_diagnostic(tmp,bytes,512,&why)){fail(error,n,why?why:"candidate write failed");return false;}
-    void *read=NULL;size_t size=0;
-    bool valid=arc_io_read_all_limit(tmp,&read,&size,512,NULL) && size==512 && !memcmp(read,bytes,512);free(read);
-    if(!valid)return fail(error,n,"candidate readback verification failed");
-    /* Only the older verified slot is removed. The newest remains recoverable
-     * across remove/rename and on platforms whose rename cannot replace. */
-    if(found && !arc_io_remove(final))return fail(error,n,"older-slot retirement failed");
-    if(!arc_io_rename(tmp,final))return fail(error,n,"candidate rename failed");
-    read=NULL;size=0;valid=arc_io_read_all_limit(final,&read,&size,512,NULL) && size==512 && !memcmp(read,bytes,512);free(read);
-    if(!valid)return fail(error,n,"published-slot verification failed");
-    ++s->generation;s->present=true;s->publication_pending=false;memcpy(s->payload,payload,240);if(e)s->evidence=*e;return true;
+    memcpy(s->key.firmware, firmware, 65);
+    if (!k->defaults)
+        memcpy(s->key.content, content, 41);
+    int len = snprintf(s->directory, sizeof(s->directory),
+                       "%s/arcdroid/cmos-riscpc%s", save,
+                       k->defaults ? "/defaults" : "");
+    if (len < 0 || len >= (int)sizeof(s->directory))
+        goto invalid;
+    len = k->defaults ? snprintf(s->base, sizeof(s->base), "%s/%s-m%u-p%u-t%u",
+                                 s->directory, firmware, k->model + 1,
+                                 k->procedure, k->timing)
+                      : snprintf(s->base, sizeof(s->base), "%s/%s-m%u-%s",
+                                 s->directory, content, k->model + 1, firmware);
+    if (len < 0 || len >= (int)sizeof(s->base))
+        goto invalid;
+    return ARC_RPC_CMOS_INSPECTING;
+invalid:
+    s->refused = s->reconciled = true;
+    fail(e, n, "save path too long");
+    return ARC_RPC_CMOS_REFUSED;
+}
+ArcRpcCmosResult arc_riscpc_cmos_store_step(ArcRpcCmosStore *s, char *e,
+                                            size_t n) {
+    if (s->reconciled || s->exhausted || s->putting) {
+        begin_count(s);
+        end_count(s);
+        return result(s);
+    }
+    begin_count(s);
+    char filename[1040];
+    bool done, invalid;
+    size_t bytes;
+    switch (s->phase) {
+    case 0: {
+        uint64_t before = s->stats.operations;
+        bool ok = arc_io_make_path_step(s->directory, &s->path_cursor, &done,
+                                        &s->stats.operations,
+                                        &s->stats.namespace_operations);
+        s->stats.metadata += s->stats.operations - before;
+        if (!ok) {
+            retry(s, e, n);
+            s->phase = 0;
+            s->path_cursor = 0;
+        } else if (done)
+            s->phase = 1;
+        break;
+    }
+    case 1:
+        meta(s);
+        s->directory_handle = arc_io_open_directory(s->directory);
+        if (!s->directory_handle)
+            retry(s, e, n);
+        else {
+            s->phase = 2;
+            s->slot = 0;
+        }
+        break;
+    case 2: {
+        const char *name;
+        bool regular;
+        uint64_t before = s->stats.operations;
+        int r = arc_io_read_directory(s->directory_handle, &name, &regular,
+                                      &s->stats.operations);
+        s->stats.metadata += s->stats.operations - before;
+        if (r < 0 || ++s->slot > 4096) {
+            retry(s, e, n);
+            break;
+        }
+        if (!r) {
+            s->phase = 3;
+            break;
+        }
+        for (unsigned i = 0; i < 2; ++i) {
+            path(s, i ? ".1" : ".0", filename);
+            if (!strcmp(name, strrchr(filename, '/') + 1))
+                s->slot_found[i] = true;
+        }
+        break;
+    }
+    case 3: {
+        meta(s);
+        bool ok = arc_io_close_directory(s->directory_handle);
+        s->directory_handle = NULL;
+        if (!ok)
+            retry(s, e, n);
+        else {
+            s->slot = 0;
+            s->phase = 4;
+        }
+        break;
+    }
+    case 4:
+        path(s, s->slot ? ".1" : ".0", filename);
+        meta(s);
+        if (arc_io_file_size(filename, &bytes))
+            s->slot_found[s->slot] = true;
+        /* A silent/partial listing cannot turn an existing unreadable record
+         * into absence. Exact-path open supplements stat under the same
+         * truthful-path assumption as the HD store (contract section 10). */
+        if (!s->slot_found[s->slot]) {
+            ArcIoFile *f = open_record(s, filename, false);
+            if (f) {
+                (void)close_record(s, f);
+                s->slot_found[s->slot] = true;
+            }
+        }
+        s->phase = 5;
+        break;
+    case 5:
+        if (s->slot_found[s->slot]) {
+            path(s, s->slot ? ".1" : ".0", filename);
+            if (!read_record(s, filename, s->inspected, &invalid)) {
+                retry(s, e, n);
+                break;
+            }
+            ArcRpcCmosEvidence evidence;
+            if (invalid || !decode(s, s->inspected, 512, &evidence) ||
+                (get(s->inspected + 24, 8) & 1) != s->slot) {
+                s->refused = true;
+                fail(e, n,
+                     "refused corrupt, foreign or wrong-key slot; preserved on "
+                     "disk");
+            } else if (get(s->inspected + 24, 8) > s->generation) {
+                s->generation = get(s->inspected + 24, 8);
+                s->present = true;
+                memcpy(s->payload, s->inspected + 104, 240);
+                s->evidence = evidence;
+            }
+        }
+        if (++s->slot < 2)
+            s->phase = 4;
+        else {
+            s->reconciled = true;
+            s->publication_pending = false;
+            s->attempts = 0;
+            if (!s->refused && e && n)
+                *e = 0;
+        }
+        break;
+    default:
+        retry(s, e, n);
+        break;
+    }
+    end_count(s);
+    return result(s);
+}
+ArcRpcCmosResult arc_riscpc_cmos_store_load(ArcRpcCmosStore *s,
+                                            const char *save,
+                                            const ArcRpcCmosKey *k, char *e,
+                                            size_t n) {
+    ArcRpcCmosResult r = arc_riscpc_cmos_store_begin(s, save, k, e, n);
+    while (r == ARC_RPC_CMOS_INSPECTING)
+        r = arc_riscpc_cmos_store_step(s, e, n);
+    return r;
+}
+bool arc_riscpc_cmos_store_put_begin(ArcRpcCmosStore *s,
+                                     const uint8_t payload[240],
+                                     const ArcRpcCmosEvidence *e, char *error,
+                                     size_t n) {
+    if (s->refused || !s->reconciled || s->publication_pending || s->putting ||
+        s->generation == UINT64_MAX)
+        return fail(error, n,
+                    "publication refused while inspection is incomplete or "
+                    "data is refused");
+    if (s->present && !memcmp(s->payload, payload, 240)) {
+        s->phase = 100;
+        return true;
+    }
+    if (s->key.defaults &&
+        (!e || !arc_riscpc_cmos_oracle(s->key.layout, payload, e)))
+        return fail(error, n, "default completion oracle failed");
+    encode(s, payload, e, s->candidate);
+    s->putting = true;
+    s->phase = 10;
+    return true;
+}
+bool arc_riscpc_cmos_store_put_step(ArcRpcCmosStore *s, bool *done, char *e,
+                                    size_t n) {
+    *done = false;
+    if (s->phase == 100) {
+        begin_count(s);
+        end_count(s);
+        *done = true;
+        return true;
+    }
+    if (!s->putting || s->refused || !s->reconciled)
+        return false;
+    begin_count(s);
+    char tmp[1040], final[1040];
+    path(s, ".tmp", tmp);
+    path(s, (s->generation + 1) & 1 ? ".1" : ".0", final);
+    bool ok = true, invalid;
+    size_t length;
+    switch (s->phase) {
+    case 10:
+        meta(s);
+        s->destination_found = arc_io_file_size(final, &length);
+        if (!s->destination_found) {
+            ArcIoFile *f = open_record(s, final, false);
+            if (f) {
+                s->destination_found = true;
+                ok = close_record(s, f);
+            }
+        }
+        ++s->phase;
+        break;
+    case 11:
+        if (s->destination_found) {
+            ok = read_record(s, final, s->inspected, &invalid);
+            ArcRpcCmosEvidence old;
+            if (ok && (invalid || !decode(s, s->inspected, 512, &old) ||
+                       get(s->inspected + 24, 8) >= s->generation ||
+                       (get(s->inspected + 24, 8) & 1) !=
+                           ((s->generation + 1) & 1))) {
+                s->refused = true;
+                ok = false;
+                fail(e, n, "destination changed or refused; preserved on disk");
+            }
+        }
+        ++s->phase;
+        break;
+    case 12: {
+        s->publication_pending = true;
+        ArcIoFile *f = open_record(s, tmp, true);
+        if (!f) {
+            ok = false;
+            break;
+        }
+        ++s->stats.operations;
+        s->stats.bytes += 512;
+        ok = arc_io_write_file(f, s->candidate, 512) == 512;
+        if (ok) {
+            meta(s);
+            ok = arc_io_flush_available() && arc_io_flush_file(f);
+        }
+        bool closed = close_record(s, f);
+        ok &= closed;
+        ++s->phase;
+        break;
+    }
+    case 13:
+        ok = read_record(s, tmp, s->inspected, &invalid) && !invalid &&
+             !memcmp(s->candidate, s->inspected, 512);
+        if (!ok)
+            fail(e, n, "candidate readback verification failed");
+        ++s->phase;
+        break;
+    case 14:
+        if (s->destination_found) {
+            meta(s);
+            ++s->stats.namespace_operations;
+            ok = arc_io_remove(final);
+        }
+        ++s->phase;
+        break;
+    case 15:
+        meta(s);
+        ++s->stats.namespace_operations;
+        ok = arc_io_rename(tmp, final);
+        ++s->phase;
+        break;
+    case 16:
+        ok = read_record(s, final, s->inspected, &invalid) && !invalid &&
+             !memcmp(s->candidate, s->inspected, 512);
+        if (ok) {
+            ArcRpcCmosEvidence evidence;
+            ok = decode(s, s->candidate, 512, &evidence);
+            if (ok) {
+                ++s->generation;
+                s->present = true;
+                s->publication_pending = s->putting = false;
+                memcpy(s->payload, s->candidate + 104, 240);
+                s->evidence = evidence;
+                s->phase = 100;
+                *done = true;
+            }
+        } else
+            fail(e, n, "published-slot verification failed");
+        break;
+    default:
+        ok = false;
+        break;
+    }
+    if (!ok) {
+        s->reconciled = false;
+        s->phase = 1;
+        s->slot = s->attempts = 0;
+        s->putting = false;
+        memset(s->slot_found, 0, sizeof(s->slot_found));
+        if (!e || !n || !*e)
+            fail(e, n, "publication I/O unavailable; reconcile before retry");
+    }
+    end_count(s);
+    return ok;
+}
+bool arc_riscpc_cmos_store_put(ArcRpcCmosStore *s, const uint8_t payload[240],
+                               const ArcRpcCmosEvidence *e, char *error,
+                               size_t n) {
+    if (!s->reconciled && !s->exhausted) {
+        ArcRpcCmosResult r;
+        do {
+            r = arc_riscpc_cmos_store_step(s, error, n);
+        } while (r == ARC_RPC_CMOS_INSPECTING);
+    }
+    if (!arc_riscpc_cmos_store_put_begin(s, payload, e, error, n))
+        return false;
+    bool done = false;
+    while (!done)
+        if (!arc_riscpc_cmos_store_put_step(s, &done, error, n))
+            return false;
+    return true;
+}
+bool arc_riscpc_cmos_store_seed(ArcRpcCmosStore *s, const uint8_t payload[240],
+                                char *e, size_t n) {
+    if (!s->reconciled || s->present || s->refused || s->publication_pending)
+        return fail(e, n, "seed requires verified record absence");
+    return arc_riscpc_cmos_store_put(s, payload, NULL, e, n);
 }

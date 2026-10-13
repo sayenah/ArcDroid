@@ -366,7 +366,8 @@ def cases(root):
         owned=directory/'arcdroid/hd-riscpc'/IDENTITY;path=next(owned.glob('manifest.?'));data=bytearray(path.read_bytes())
         struct.pack_into('<I',data,at,99);struct.pack_into('<I',data,len(data)-4,zlib.crc32(data[:-4]));path.write_bytes(data)
         before={p.name:p.read_bytes() for p in owned.iterdir()}
-        run(root/'absent-system',directory,success=False)
+        _,result=run(root/'absent-system',directory,success=False)
+        require('created by a newer version of ArcDroid' in result.stderr,'future revision mislabeled as damage')
         require(before=={p.name:p.read_bytes() for p in owned.iterdir()},'unknown revision mutated store')
     for phase in (0, 2, 3, 4, 7, 8, 9, 11, 12, 10, 13):
         directory=root/f'cancel-{phase}';sy=inputs(directory)
