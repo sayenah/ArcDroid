@@ -1,44 +1,30 @@
 # ArcDroid Handoff
 
-**Stage:** QA done — **R3b-1** (boot-resource population, D-167), draft PR #386, branch `slice/r3b1-population` at `0a18209`: Opus QA PASS WITH LOWS, then run E fixed LOW-1 to LOW-4 and the re-check PASSED. Merge waits on green CI and the Windows leg.
-**Owner:** Fable (S62): merge R3b-1 under §12.11 once CI is green on all five jobs at `0a18209` and the AC-5 Windows leg has run (Waiting on the Founder). **Also IMPLEMENTATION — R3b-2a, Owner Sol:** dispatched stacked on R3b-1 (`slice/r3b2a-groundwork` from `0a18209` plus `main`). It merges only after R3b-1, with `main` merged in again first.
+**Stage:** IMPLEMENTATION — **R3b-2a** run B (QA remediation) with Sol on `slice/r3b2a-groundwork` (draft PR #390). R3b-1 merged as `6ba7376`.
+**Owner:** Sol (R3b-2a run B); Fable (S62) then commits, merges `main` into the branch, and asks QA to re-check.
 **Next (S62):**
 1. **R3a: merged** as `d7a92ec` (PR #378). Follow-up Lows: the `recognize-os-range` mutant (inject an out-of-range entry or record it equivalent); two `resource_failure` asserts in `rpc_selection_test`; Python `assert` in the mutation script. To R3d: a skipped scan logs `inventory=skipped`.
-2. **R3b-1 under Opus QA.**
-   - **Commits:** Sol's runs (thread `01a12f51-…`, then `01a130bf-1186-73b1-8599-cefab907b58c`), each committed verbatim:
-     - `88a0a98`: population, receipt, checker and tests;
-     - a clean merge of `main` with R3a;
-     - `d3ab3e7` run B: the sanitizer fault profile, with writer mutants host-only;
-     - `a131433` run C: the boot option is Run (2);
-     - `d819674` run D: a 286-point sanitizer profile with a 900 s timeout.
-   - **Sol's evidence:** host 361/361; host full fault matrix about 1,108–1,324 s; 22/22 writer mutants; sanitizer profile 121 s on the Mac; guards and MinGW/Android builds pass. Report: `.work/s62/r3b1/clone/SOL-REPORT-R3B1.md`.
-   - **CI:**
-     - At `a131433`: four jobs green. host-sanitizers failed only on `rpc-boot-faults` (Timeout 600 s), which run D addresses.
-     - At `d819674`: running.
-   - **Fable's AC-5 so far (`.work/s62/ac5/`, `.work/s62/odin/`, ledger `.work/s62/LEDGER.md`):**
-     - **Defect D-1 (fixed in run C):** the populated disc's boot option was 3 (`*Exec`), so the factory CMOS boot stopped with "'&.!BOOT' is a directory".
-     - **Seven pairs:** with run C, all seven pairs boot from the populated disc to the desktop. The authored step sets `Boot$Dir`, `Boot$OSVersion`, `Font$Path`, `Run$Path`, `System$Path` (matched to the firmware) and `Wimp$Scrap`. Every module stays at ROM addresses, none is RAM-loaded, and none is unplugged.
-     - **Guest edits:** a guest delete, add and grow inside a shared fragment preserves every other one of the 1,830 entries, and the maps, checks and sharing rules still hold.
-     - **084:** installs onto the populated disc across both discs. Its support flow reports "GEKonfig has been installed in your !Boot folder". A cold start of the installed payload is being checked.
-     - **Odin3 FUSE:** population takes 21 s; SIGKILL at 2, 5 and 9 s followed by a restart repopulates cleanly; reopening is a no-op. All images are byte-identical to the Mac's.
-     - **Windows leg:** waiting on the Founder (below).
-   - **Notes for QA:**
-     - The independent reader (`tests/rpc_filecore_check.py`) rejects legitimate guest-modified FileCore states: the map disc-ID byte, Nick sequence bytes, stale bytes after a delete, and name padding. That is fine for writer output; judge whether it matters.
-     - Plan-route population is synchronous (about 21 s on the Odin3). Frame-loop stepping is R3b-2's.
-   - **QA focus:**
-     - D-167 policies 1–8;
-     - the receipt format extension (forgery, recovery, legacy, unknown revisions);
-     - writer correctness at zone boundaries and sharing;
-     - checker independence;
-     - bounds and stepping;
-     - no package bytes in the repository or logs;
-     - provenance of `assets/riscpc-boot`;
-     - the CI profile.
-   - **After QA:** Fable adjudicates. Merging needs green CI on all five jobs and the Windows leg (or a recorded Founder ruling).
-3. **QA outcome (S62):** adjudication `.work/s62/qa-r3b1/adjudication.md`.
-   - Run E (`0a18209`) closed LOW-1 to LOW-4: the checker's unshared-alias refusal, disc-record pins, pre-FORMAT VFS faults and asset revision goldens. The re-check PASSED.
-   - LOW-5 (a newer receipt shows "damaged") and QA's I/O measurement go to R3b-2.
-   - A guest-tolerant checker mode is required before R3c/R3d reuse the checker.
+2. **R3b-1: merged** as `6ba7376` (PR #386, head `0a18209`) after Opus QA PASS WITH LOWS, a re-check PASS, green CI on all five jobs and Fable's AC-5. The record is in `docs/build-log.md`; the evidence is in `.work/s62/` (`ac5/`, `odin/`, `win/`, `qa-r3b1/`).
+   - **Carried:** a guest-tolerant checker mode, required before R3c/R3d reuse it. LOW-5 and the I/O measurement go to R3b-2.
+   - **Device cleanup when convenient:** Odin3 `/data/local/tmp/arcdroid-r3b1/` and `/storage/emulated/0/arcdroid-s62/`; Windows `S:\dev\ArcDroid\work\s62pop`.
+3. **R3b-2a under QA (S62).**
+   - **Commit:** Sol's work (thread `01a133df-b566-73f3-aee7-5740b6444432`) is committed verbatim on `slice/r3b2a-groundwork`, draft PR #390, after a local merge of `main`.
+   - **Sol's evidence:** host suite passing after repairs; ASan/UBSan 21/21; 11 new mutants, 22 writer mutants and the QA mutation suite all killed; MinGW and Android builds; guards pass. Output is byte-identical to the parent at every step size. Report: `.work/s62/r3b2a/clone/SOL-REPORT-R3B2A.md`.
+   - **Fable's AC-1 on the Odin3 (D-169):** every ordinary step is within budget. Three isolated FUSE spikes during first-use population were accepted.
+   - **QA (S62): PASS WITH LOWS** (adjudication `.work/s62/qa-r3b2a/adjudication.md`). Run B is fixing:
+     - LOW-1: a newer-length manifest is classified as damaged;
+     - LOW-2: a regression from the CMOS listing cap;
+     - LOW-3: the asymmetric torn-tail handling;
+     - TG-1 to TG-5.
+
+     Sol's thread is `01a133df-b566-73f3-aee7-5740b6444432`. After run B, a re-check by the same QA agent, CI, then merge.
+   - **QA focus (done):**
+     - the operation inventory and step bounds against D-168(4);
+     - byte-identical output;
+     - structured outcomes (refusals mutate nothing; the newer-ArcDroid notice; unavailable versus damaged);
+     - the CMOS store's uncertainty versus absence and the seed gate (LOW-A);
+     - `rpc_cmos_store` in shipping sources with no production behaviour change;
+     - the sanitizer profiles against CI timeouts.
 4. **R3b-2: planned (D-168).** Astra's stage 2 returned ACCEPT WITH CHANGES, all seven incorporated (`.work/s62/astra/report3.md`). The work order below splits it into R3b-2a (store and CMOS groundwork, ready for Sol once R3b-1 merges) and R3b-2b (orchestration, outlined). D-166(4) carries two R3d items.
 - **Earlier (S61):** Q-3 merged as `44d007e` (follow-up Low: the CPU reproduction comment at `tests/rpc_cpu_test.c:373–374` overstates which term the I/O/reserved/EASI targets test; fix it in the next RPC slice that touches the test). AC-10 measured; Founder decision D-163 (R3, then item 6b before R4 and item 5). R3 is planned as R3a–R3d (D-164); R3a is done.
 
@@ -339,7 +325,7 @@ Slice order (D-133 as amended by D-163): R1–R3 → item 6b faster CPU work →
 **Item 5 grounding (S55, paused at a safe point: nothing committed, no branch).** `main` `c725bd6`: CI builds Android arm64 only, which is the whole Android target (D-135: no armeabi-v7a); the `.info` is copied into the build tree (`configure_file`) and installed by `install(FILES …)` but no CI artifact bundles core + `.info` + `COPYING` + `THIRD_PARTY_NOTICES.md`; the version lives in three places (`project(… VERSION 0.1.0)`, `ARCDROID_VERSION` fallback in `libretro/arcdroid_libretro.c:28`, `display_version` in `arcdroid_libretro.info`). (armeabi-v7a was found to build unmodified, but is out of scope by D-135.) Android devices: the Odin3 (`arm64-v8a` only) and a second Snapdragon 8 Gen 2 device (Founder S55). **Windows signing risk (S60):** Smart App Control, on by default for many Windows 11 installs, blocked one unsigned ArcDroid-built probe executable on the Founder's box while allowing the unsigned runner and plan core. Item 5 must decide whether an unsigned `arcdroid_libretro.dll` is acceptable, or whether it needs signing or a documented workaround. No shipping source uses `__FILE__`/`__DATE__`/`__TIME__` or a runtime `assert` (the Slice 8 note on embedded paths is unverified — check with a two-path build comparison). The GPL corresponding-source mechanism for distributed binaries (D-016) stays tied to publication (D-100). Scratch: S55 scratchpad `s55/` (`a/`, `second-checkout-b/` clones, `build-android.sh`).
 
 ## Waiting on the Founder (protocol §18, D-124)
-- **Windows PC (S62):** SSH to `sinmu@192.168.1.66` timed out (port 22). R3b-1's AC-5 Windows leg (population, interruption and reopen on native Windows storage) is parked until the PC is awake and reachable. Everything else continues.
+- None. The Windows PC is reachable again; R3b-1's Windows leg passed in S62.
 
 **Answered S61 — D-163 (AC-10):** R3 next (after Q-3), then item 6b ahead of R4 and the release baseline. RiscPC is not released until games like 031 run in real time at near-hardware speed; the rate budget is revisited in 6b. Measurements are in D-163 and `.work/s61/ac10/`.
 
