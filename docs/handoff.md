@@ -1,7 +1,7 @@
 # ArcDroid Handoff
 
-**Stage:** IMPLEMENTATION — **R3b-2a** run B (QA remediation) with Sol on `slice/r3b2a-groundwork` (draft PR #390). R3b-1 merged as `6ba7376`.
-**Owner:** Sol (R3b-2a run B); Fable (S62) then commits, merges `main` into the branch, and asks QA to re-check.
+**Stage:** R3b-2a awaits CI only: QA PASS WITH LOWS, then run B fixed all eight items, and the re-check is PASS WITH LOWS (R-1 and R-2 carried into R3b-2b). PR #390 head `2c4d161`, CI run 38380567305. The R3b-2b draft is with Astra.
+**Owner:** Fable (S62): merge R3b-2a under §12.11 once CI is green on all five jobs; adjudicate Astra on R3b-2b; dispatch Sol on R3b-2b after R3b-2a merges.
 **Next (S62):**
 1. **R3a: merged** as `d7a92ec` (PR #378). Follow-up Lows: the `recognize-os-range` mutant (inject an out-of-range entry or record it equivalent); two `resource_failure` asserts in `rpc_selection_test`; Python `assert` in the mutation script. To R3d: a skipped scan logs `inventory=skipped`.
 2. **R3b-1: merged** as `6ba7376` (PR #386, head `0a18209`) after Opus QA PASS WITH LOWS, a re-check PASS, green CI on all five jobs and Fable's AC-5. The record is in `docs/build-log.md`; the evidence is in `.work/s62/` (`ac5/`, `odin/`, `win/`, `qa-r3b1/`).
@@ -207,20 +207,71 @@
   - **AC-4 Evidence:** host and sanitizer suites within CI timeouts; MinGW and Android builds; guards; mutants on the outcome classification, the retry rules and the step budgets.
 - **Non-goals:** the preparation state machine, production engine operations and notices (R3b-2b).
 
-**R3b-2b — session orchestration (outline; full work order after R3b-2a QA).**
+**R3b-2b — session orchestration (DRAFT, S62; awaiting Astra's stage 2 challenge).** Branch `slice/r3b2b-orchestration` from `main` once R3b-2a has merged.
+- **Objective:** a shipping-source RiscPC session preparation. It turns an R3a selection into a running RPC session through production engine operations, advances in time-boxed steps on the frame loop, and shows long-lived notices. Production content loads still take today's route until R3d. The plan core becomes a thin client, and a harness built without the test flags drives the same module.
 - **Order (D-168(2)):**
-  1. firmware re-verification (size, CRC-32, SHA-1);
-  2. store recovery and classification;
-  3. package validation, only when population is needed; it ends at an explicit "all validation complete" boundary;
-  4. CMOS record, or isolated defaults generation (firmware only, no media or IDE);
-  5. population and publication;
-  6. the requested session, started only when every attachment and input is final.
-
-  Each failure gets its own notice: missing firmware (naming the family and folder), missing or rejected boot files (naming `<system>/arcdroid/riscpc/boot/`), a newer or damaged store, or an unavailable store. A legacy blank store refuses with its notice.
-- **Lifecycle (D-168(5)):** reset, unload and cancel are defined for every state, independently of engine activity. Pending frames present video and silence and keep input isolated. Notices are long-lived, with a fallback refresh, and a terminal error takes precedence.
-- **Engine (D-168(6)):** shared production operations, wrapped by the test exports. A harness built without the test flags runs them and then an ordinary Arculator load. The library A/B runs if shared engine or lifecycle code changes.
-- **Saved records (D-168(1)):** they stay authoritative. Tests and private evidence cover NoBoot, another filesystem or drive, and byte-199 counts; an unsuccessful automatic boot is left to the player or to R3c's boot watch.
-- **Private evidence:** seven pairs through the plan route as a thin client (first use, then reopen), reset and unload in each state, Odin3 RetroArch, and native Windows.
+  1. Firmware re-verification (size, CRC-32 and SHA-1, against the selected catalogue entry).
+  2. Store open and classification (R3b-2a's stepped open).
+  3. Package validation, only when the store is unpublished: R3b-1's boot steps up to an explicit "validation complete" boundary, after allocation and before FORMAT.
+  4. The CMOS record, or isolated held-Delete defaults generation, with firmware only and no media or IDE attached.
+  5. The remaining population steps and publication.
+  6. The requested session, started only when the firmware, CMOS, disc and media are final.
+- **Scheduling (D-168(4), D-169):**
+  - Each frame runs as many steps as fit the frame budget, using a host clock for scheduling only. Output never depends on step boundaries: R3b-1 and R3b-2a prove step-size independence.
+  - A step that performs a namespace operation ends that frame's batch.
+  - Generation advances several guest frames per host frame within a stated host budget, and keeps its fixed virtual-time capture.
+  - Pending frames present black video and silence at normal AV timing and ignore player input.
+- **Notices:**
+  - Long-lived status notices: "Preparing RiscPC settings for first use (about 20 seconds)", then "Preparing the RiscPC hard disc".
+  - They clear on completion and are replaced by any terminal error, which wins precedence.
+  - Frontends without long-lived messages get a periodic refresh.
+  - Terminal notices: missing or unverifiable firmware (naming the family and `<system>/arcdroid/firmware/`); missing or rejected boot files (naming `<system>/arcdroid/riscpc/boot/` and the cause); disc from a newer ArcDroid; damaged disc; disc unavailable; legacy disc without boot files.
+- **Lifecycle (D-168(5)):**
+  - **Reset** during preparation cancels any in-flight work and restarts preparation from the start. Completed CMOS publications and a completed disc publication are kept; a partial disc candidate is aborted and cleaned up within bounds.
+  - **Unload** cancels and frees in every state.
+  - None of this depends on whether the engine is active.
+- **Engine (D-168(6)):**
+  - Shared production operations: resolved start (model, firmware bytes, CMOS seed, epoch); isolated generation begin, advance and evidence; IDE attach; frame maintenance (store tick and eager CMOS persistence); teardown.
+  - Ownership of firmware bytes, buffers and the backend is defined, including cleanup after a partial start.
+  - The `arc_engine_test_*` exports become thin wrappers, with test rate overrides and fault instrumentation outside production policy.
+  - Legacy `arc_engine_start` keeps its Arculator route.
+- **Saved records (D-168(1)):** a saved record stays authoritative. Tests cover NoBoot, a different filesystem or drive, and changed counts in byte 199; the session starts as configured.
+- **Carried in:** QA R-1 (stat disagreement after truncate gives the "recovered" read-only outcome) and R-2 (read an oversized manifest's length field before classifying).
+- **Acceptance criteria:**
+  - **AC-1 State machine:** deterministic tests cover:
+    - every state, transition and failure, each with its notice;
+    - reset and unload in every state;
+    - cancellation before and after each publication;
+    - that no requested-session instruction runs before the inputs are final;
+    - that generation runs with nothing attached.
+  - **AC-2 Scheduling:**
+    - the time-boxed batches respect the budget, with an injected clock;
+    - output is byte-identical to the synchronous plan route for any batching;
+    - the notice lifecycle works with and without long-lived message support.
+  - **AC-3 Engine:**
+    - a harness built without `ARCDROID_TEST_PLANS`/`ARCDROID_TEST_FAULTS` runs a successful and a failed preparation through the production operations, then an ordinary Arculator load, checking persistence identity, options, AV and resource cleanup;
+    - the test exports delegate to the same code;
+    - the library A/B runs in both package states if shared engine or lifecycle code changes.
+  - **AC-4 Saved records and follow-ups:** the saved-record cases, R-1 and R-2.
+  - **AC-5 No production route change:** shipping routes still reject RPC plans, and ordinary loads never reach the module.
+  - **AC-6 Private (Fable):**
+    - all seven pairs through the plan route as a thin client: first use (generation and population under notices, then desktop with the boot-step variables), then a reopen with no package I/O;
+    - reset and unload in each state;
+    - Odin3 RetroArch: frames keep presenting during preparation, the maximum frame is within the D-169 accepted envelope, and the notices stay visible;
+    - native Windows RetroArch: the same.
+  - **AC-7 Evidence:**
+    - host and sanitizer suites within CI timeouts;
+    - MinGW and Android builds;
+    - the guards;
+    - mutants on transitions, ordering, notice precedence and the scheduling bounds.
+- **Non-goals:** RPC launch from ordinary loads and Arculator→RPC switching in production (R3d); launch actions and observers (R3c); repopulating or upgrading discs.
+- **QA focus:**
+  - no guest start before final inputs;
+  - generation isolation;
+  - reset and unload in every state;
+  - scheduling independent of output;
+  - test exports not on the production path;
+  - notice precedence.
 
 **R2c outcome (merged S61 as `0e71237`, PR #337, head `83cbf7e`).** The IDE and a 126 MiB persistent hard disc on a journalled, chunked, fully verified store (`docs/riscpc-hd-store.md`). The record is in `docs/build-log.md` and D-145 to D-162; the run history is in git history (`docs/handoff.md` at `3a548ec`).
 - **Evidence:** CI green on all five jobs, including the native Windows RetroArch hard-disc sessions. Opus QA 3 PASS WITH LOWS, then re-checks of runs P and Q PASS (adjudication `.work/s61/qa/adjudication-3.md`).
