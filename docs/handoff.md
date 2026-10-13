@@ -1,7 +1,7 @@
 # ArcDroid Handoff
 
-**Stage:** QA — **R3b-2b** (session orchestration, D-168, D-170), draft PR #395, branch `slice/r3b2b-orchestration` at `1f28c1a`.
-**Owner:** Opus (QA, a fresh `arcdroid-opus-qa` agent in a fresh clone). In parallel, Fable (S62) runs AC-6's private evidence (Odin3 seven-pair first-use and reopen legs, then RetroArch, Windows, and reset/unload in each state).
+**Stage:** IMPLEMENTATION — **R3b-2b run B** (D-171 scheduling correction plus QA items) with Sol on `slice/r3b2b-orchestration` (draft PR #395).
+**Owner:** Sol (run B). Fable (S62) then commits, re-runs the Odin3 seven-pair legs against the D-171 targets and the library A/B, and arranges the QA re-check.
 **Next (S62):**
 1. **R3a: merged** as `d7a92ec` (PR #378). Follow-up Lows: the `recognize-os-range` mutant (inject an out-of-range entry or record it equivalent); two `resource_failure` asserts in `rpc_selection_test`; Python `assert` in the mutation script. To R3d: a skipped scan logs `inventory=skipped`.
 2. **R3b-1: merged** as `6ba7376` (PR #386, head `0a18209`) after Opus QA PASS WITH LOWS, a re-check PASS, green CI on all five jobs and Fable's AC-5. The record is in `docs/build-log.md`; the evidence is in `.work/s62/` (`ac5/`, `odin/`, `win/`, `qa-r3b1/`).
@@ -13,6 +13,10 @@
    - **Sol's evidence:** 380 host tests, 75 sanitizer tests, 23 pinned plan comparisons against `d374114`, MinGW and Android builds, and the guards.
    - **Library A/B (Fable, PASS):** base `d374114` against R3b-2b, with the package present (218 titles) and absent (44). There are zero differences: screenshots, FDC and CMOS counters, and every launch, JFD and machine line (`.work/s62/r3b2b/ab/`).
    - **Sol's own changes beyond the work order:** engine construction is now staged (64 MiB RAM clear, ROM copy), with the RPCEmu patch series updated (`engine/rpcemu/manifest.json`, `src/mem.c`); and `core/hash.c` gains incremental hashing.
+   - **Outcome (S62):**
+     - **Fable's Odin3 seven-pair legs:** functionally PASS, but first use took about 490 s and every reopen about 10 s.
+     - **Opus QA:** PASS WITH LOWS, with M-1 being the same scheduling fault (`.work/s62/qa-r3b2b/QA-REPORT.md`).
+     - **Ruling:** D-171 (measured admission, namespace units sharing frames offline, generation within 4 T). Run B implements it together with QA's L-1 to L-9, S-1, S-2 and S-5 (`.work/s62/qa-r3b2b/adjudication.md`).
    - **QA focus:**
      - D-170(1)–(7);
      - no requested-session instruction before final inputs;
