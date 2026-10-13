@@ -98,6 +98,23 @@ class Reader:
         # https://www.riscos.com/support/developers/prm/filecore.html
         require(record[7] in (0, 2), 'boot option')
         self.boot_option = record[7]
+        # FileCore PRM vol. 5a, Disc record / Internal disc addresses:
+        # byte 40 is log2(sharing granularity in sectors). Zero preserves
+        # the one-sector offsets understood by RISC OS 3.50.
+        # https://www.riscos.com/support/developers/prm/filecorenew.html
+        require(record[40] == 0, 'share size')
+        # Same PRM table: byte 41 bit 0 selects >512 MiB addressing, with
+        # bits 1..7 reserved. This 126 MiB, Nick-directory format keeps zero.
+        # Acorn's later FileCore specification (7.5) assigns bit 1 to big dirs:
+        # https://www.4corn.co.uk/archive/Acorn_Developer_Site/reference/ro4/api/html/filecore2.html
+        require(record[41] == 0, 'big-directory / addressing flags')
+        # PRM vol. 5a reserves bytes 42..59 as zero. Acorn's later table
+        # identifies byte 42 as nzones_2; these five zones need no high byte.
+        require(record[42] == 0, 'high zone count')
+        # The same reserved-zero PRM bytes include the word at 44. The later
+        # specification (3.14.5) defines version 0 for existing Nick discs,
+        # version 1 for big directories. Check the entire four-byte word.
+        require(integer(record, 44) == 0, 'format version')
         data = self.exact(MAP, 2560)
         require(data == self.exact(MAP + 2560, 2560), 'map copies')
         require(data[4:64] == record, 'disc-record copies / boot option')
@@ -229,6 +246,12 @@ class Reader:
                     require(at + count <= MAP or at >= ROOT + 2048,
                             'reserved map/root bytes')
         neighbours = [entry for entry in self.used if entry[2] == identity]
+        # FileCore PRM vol. 2, Internal disc addresses: sector offset 0
+        # means this object does not share its disc object (fragment group).
+        # https://www.riscos.com/support/developers/prm/filecore.html
+        # Multiple extents belonging to one object are still legal.
+        require(len({e[3] for e in neighbours}) <= 1 or
+                all(e[6] & 255 for e in neighbours), 'unshared disc object alias')
         dirs = {entry[3]: entry for entry in neighbours if entry[5]}
         require(len(dirs) <= 1, 'two shared directories')
         if dirs:

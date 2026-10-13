@@ -38,6 +38,7 @@
 #undef vfs_rename
 static unsigned current_phase, points, cut, package_opens;
 static const char *mode;
+static unsigned package_fault_phase, package_fault_points, package_faults;
 /* Trace only the existing injection points; never add callbacks or cuts.
  * File kinds separate candidate/readback, sealed receipt and cleanup targets.
  */
@@ -86,8 +87,19 @@ static const char *transfer_operation(const char *kind, uint64_t n, bool write) 
 static bool recovery_mode(void) { return !strncmp(mode, "recovery-", 9); }
 static bool trace_mode(void) { return strstr(mode, "trace") != NULL; }
 static bool point(const char *operation, const char *side, const char *kind) {
-  if (current_phase < ARC_RPC_BOOT_FORMAT && !recovery_mode())
+  if (current_phase < ARC_RPC_BOOT_FORMAT && !recovery_mode()) {
+    /* Separate counter: preflight refusals must not renumber run D's matrix. */
+    if (current_phase == package_fault_phase && !strcmp(side, "before") &&
+        !strncmp(mode, "package-fault-", 14)) {
+      char expected[128];
+      snprintf(expected, sizeof(expected), "package-fault-%s-%s", kind, operation);
+      if (!strcmp(mode, expected) && ++package_fault_points == cut) {
+        ++package_faults;
+        return false;
+      }
+    }
     return true;
+  }
   ++points;
   if (trace_mode()) {
     static const char *phases[] = {"open", "hash", "index", "preflight", "tree",
@@ -190,6 +202,7 @@ int main(int argc, char **argv) {
   mode = argv[4];
   cut = (unsigned)strtoul(argv[5], NULL, 10);
   unsigned special = (unsigned)strtoul(argv[6], NULL, 10);
+  package_fault_phase = special;
   arc_io_set_vfs(&vfs);
   vfs.open = observed_open;
   vfs.close = observed_close;
@@ -283,14 +296,14 @@ int main(int argc, char **argv) {
   printf(
       "{\"phase\":%u,\"files\":%llu,\"bytes\":%llu,\"units\":%llu,\"io_bytes\":"
       "%llu,\"operations\":%llu,\"memory\":%llu,\"max_bytes\":%llu,\"max_ops\":"
-      "%llu,\"allocated\":%llu,\"points\":%u,\"package_opens\":%u}\n",
+      "%llu,\"allocated\":%llu,\"points\":%u,\"package_opens\":%u,\"package_faults\":%u}\n",
       state, (unsigned long long)stats.files,
       (unsigned long long)stats.file_bytes, (unsigned long long)stats.units,
       (unsigned long long)stats.io_bytes, (unsigned long long)stats.operations,
       (unsigned long long)stats.memory_high,
       (unsigned long long)stats.max_unit_io_bytes,
       (unsigned long long)stats.max_unit_operations,
-      (unsigned long long)stats.allocated_bytes, points, package_opens);
+      (unsigned long long)stats.allocated_bytes, points, package_opens, package_faults);
   arc_riscpc_boot_free(b);
   current_phase = ARC_RPC_BOOT_DONE;
   ArcRpcHdReceipt original_receipt;

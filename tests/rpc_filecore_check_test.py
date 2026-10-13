@@ -158,6 +158,14 @@ def blank(exe):
             shared = check(fragmented)
             if shared.tree['$.B']['size'] != 2048:
                 raise RuntimeError('shared vector')
+            # Neither file overlaps the other, but offset zero claims the
+            # entire disc object exclusively. Check both directory orders.
+            for entries in ([('A', 1019 << 8, 512),
+                             ('B', (1019 << 8) | 2, 512)],
+                            [('A', (1019 << 8) | 2, 512),
+                             ('B', 1019 << 8, 512)]):
+                root[:] = directory(entries)
+                expect_bad(lambda: check(fragmented), 'unshared disc object alias')
             maps[:] = read(MAP, 2560)
             root[:] = saved_root
             # CRC-valid free link into the middle of an extent cannot pass.
@@ -191,6 +199,32 @@ def blank(exe):
                 else:
                     expect_bad(lambda: check(overridden, boot_option=2),
                                'boot option')
+            # Independently alter each format field in all three records;
+            # valid checks and matching copies isolate its semantic refusal.
+            for option in (0, 2):
+                boot[:] = read(3072, 512)
+                maps[:] = read(MAP, 2560)
+                boot[455] = maps[11] = option
+                for offset, value, reason in ((40, 1, 'share size'),
+                                              (40, 16, 'share size'),
+                                              (41, 1, 'addressing flags'),
+                                              (41, 2, 'big-directory'),
+                                              (42, 1, 'high zone count'),
+                                              *((at, 1, 'format version') for at in range(44, 48))):
+                    boot[448 + offset] = maps[4 + offset] = value
+                    maps[0] = zone_checksum(maps[:512])
+                    total = sum(boot[:511])
+                    while total > 255:
+                        total = total % 256 + total // 256
+                    boot[511] = total
+                    expect_bad(lambda: check(overridden, boot_option=option), reason)
+                    boot[448 + offset] = maps[4 + offset] = 0
+                maps[0] = zone_checksum(maps[:512])
+                total = sum(boot[:511])
+                while total > 255:
+                    total = total % 256 + total // 256
+                boot[511] = total
+                check(overridden, boot_option=option)
     print('rpc-filecore-check: blank, free links, sharing, fragmentation, wrap, final zone, names/directories pass')
 
 

@@ -116,7 +116,7 @@ def store_tree(save):
             'receipt envelope')
     require(zlib.crc32(manifest[:-4]) == struct.unpack_from('<I', manifest, len(manifest)-4)[0], 'manifest CRC')
     require(manifest[24320:24328] == b'ARCRBOOT', 'receipt magic')
-    require(struct.unpack_from('<III', manifest, 24328) == (1, 1, 1), 'receipt revisions')
+    require(struct.unpack_from('<III', manifest, 24328) == (1, 1, AUTHORED_STEP_REVISION), 'receipt revisions')
     def read(at, count):
         result = bytearray()
         while count:
@@ -162,7 +162,30 @@ def no_root(save):
     require(not list((save/'arcdroid/hd-riscpc'/IDENTITY).glob('manifest.?')), 'refusal published a root')
 
 
+# Authored-step revision 1: independent SHA-256 goldens of the source assets.
+# The receipt's authored revision is checked against the same revision below.
+AUTHORED_STEP_REVISION = 1
+ASSET_SHA256_BY_REVISION = {1: {
+    'Multisync': '8ab8d572817801276883103a3154250f8691ae9df0636661f7a7e172de573b27',
+    'BootEnv': '942d3602e8d43695640e45df293b5d63b9aed45b3530e2d7c0898a133b565add',
+    'BootRes': '7bca5af47a9c8d74668a583046b602c2b6a2199fc203193da64233b37942effd',
+    'BootTasks': '1d605cb0b8e1f06e4de2495ff4e31a126f9931d41526043d24ea3694a7929504',
+    'ArcTasks': '24b50db4a3317d85e21ebe9eb4c1ff92bbae20d4fe9df7588e45481d7ecf1fa1',
+    'Run': '3ef1d46087dd9745538d4264266f576fd09d497c0bd33f3ad218e798d859949e',
+    'Boot': '2190a1ea1bdae384556f0dba674f34db39588398c32669bb812ddd0468b4380d',
+}}
+
+
+def check_asset_revision(directory=ASSETS, revision=AUTHORED_STEP_REVISION):
+    expected = ASSET_SHA256_BY_REVISION.get(revision)
+    require(expected is not None, 'authored revision lacks asset goldens')
+    actual = {name: hashlib.sha256((directory/name).read_bytes()).hexdigest()
+              for name in expected}
+    require(actual == expected, 'authored boot asset changed without revision update')
+
+
 def cases(root):
+    check_asset_revision()
     initial = root / 'normal'
     system = inputs(initial)
     outputs = []
@@ -254,6 +277,23 @@ def cases(root):
     for label, (hard, other) in failures.items():
         directory = root/label;sy = inputs(directory, hard, other)
         run(sy, directory/'save', success=False);no_root(directory/'save')
+    # Reported VFS failures before FORMAT, for both package handles. Open and
+    # size happen in OPEN (0); reads also occur in HASH/INDEX/PREFLIGHT (1/2/3).
+    for kind in ('harddisc-package', 'system-package'):
+        for operation, phase in (('open-read', 0), ('size', 0), ('read', 1),
+                                 ('read', 2), ('read', 3)):
+            directory = root/f'vfs-{kind}-{operation}-{phase}'
+            sy = inputs(directory);save = directory/'save'
+            state,_ = run(sy,save,mode=f'package-fault-{kind}-{operation}',
+                          cut=1,phase=phase,success=False)
+            require(state['phase']==16 and state['package_faults']==1 and state['points']==0,
+                    'pre-FORMAT package failure was not reached / refused')
+            no_root(save)
+            require(not any(p.is_file() for p in save.rglob('*')),
+                    'pre-FORMAT package failure left stray files')
+            reopened,_ = run(root/'absent-system',save,mode='verify')
+            require(reopened=={'published':0,'receipt':0},
+                    'pre-FORMAT package failure published state')
     # Missing packages, missing ARC0 and local/central mismatch refuse before any root.
     for label in ('missing-package', 'no-arc0', 'local-metadata', 'truncated', 'crc', 'corrupt-deflate', 'duplicate'):
         directory = root/label;sy = inputs(directory);path = sy/'arcdroid/riscpc/boot/HardDisc4.zip'
