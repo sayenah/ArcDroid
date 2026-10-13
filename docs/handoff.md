@@ -1,23 +1,51 @@
 # ArcDroid Handoff
 
-**Stage:** PLANNING — **R3c** (launch machinery and the RPC observer adapter, D-164). R3a, R3b-1, R3b-2a and R3b-2b are merged; R3b is complete.
+**Stage:** PLANNING — **R3c-1** (RPC observation primitives; draft work order below, awaiting Astra stage 2). R3c is planned as three PRs (D-174).
 **Owner:** Fable (S63).
 **Next (S63):**
-1. **Plan R3c.** Its scope, from D-164: launch machinery and the RPC observer adapter (boot watch, launch outcome, error box, disc request), each qualified per firmware, gated independently, with manual input preserved.
-   - **Astra stage 1 (D-164; protocol §8):** run it on the objective and constraints only, without Fable's design: RPCEmu observer hooks (SWI entry, continuation and mode-transition events, safe virtual-memory peeks, controlled completion, controller-idle and virtual time), the existing Arculator observers (`engine/arc_error_box.c`, launch outcome, boot watch, disc request) and their firmware assumptions, D-090 (no per-game data), and the R3b-2b session module (`libretro/rpc_preparation.*`, `docs/riscpc-session-preparation.md`).
-   - **Then:** write the work order, get the Astra stage 2 challenge, and dispatch Sol (GPT-6.1 Sol).
-   - **Evidence available:** Fable's private seven-pair and 084 install harness (`.work/s62/ac5/leg.py`, `pairs2.sh`, `readq.py`, `hdexport.c`) and the Odin3 runner kit (`/data/local/tmp/arcdroid-r3b2b/`, `s62prep.sh`).
-2. **Before R3c or R3d reuse it:** add a guest-tolerant mode to the independent FileCore checker (QA R3b-1). It must accept the map disc-ID byte, Nick sequence bytes, stale bytes after a delete, and name padding. Fable's private relaxation is `.work/s62/ac5/cmptree.py`.
+1. **Astra stage 2 on the R3c-1 draft** (resume thread `01a1376a-e9b4-7193-9f1b-d1f2872ac3b3`), adjudicate, finalise the work order, then set Stage IMPLEMENTATION / Owner Sol and dispatch GPT-6.1 Sol on `slice/r3c1-observation`.
+2. **While Sol runs R3c-1:** nothing for R3c-2 can be traced until R3c-1's trace mode exists. Fable then records each pair's error-box, disc-request, launch and prompt sequences privately and writes R3c-2's recognition predicates from that evidence (D-174(4)).
 3. **R3d must include** (D-173) the RetroArch-frontend legs on the Odin3 and native Windows: preparation notices visible, and frames presenting during first use and reopen with the shipping core on ordinary loads.
-4. **R3b record (S62):** `docs/build-log.md` entries for R3a, R3b-1, R3b-2a and R3b-2b; D-167 to D-173. Odin3 at R3b-2b: first use 45–49 s and reopen 0.2 s on every pair (D-172).
-5. **Carried Lows:**
+4. **Carried Lows:**
    - **R3a:** the `recognize-os-range` mutant; two `resource_failure` asserts; Python `assert` in the mutation script; `inventory=skipped` wording (to R3d).
-   - **Q-3:** the CPU test comment.
+   - **Q-3:** the CPU test comment (`tests/rpc_cpu_test.c:373–374`); carried into R3c-1, which touches the CPU tests.
    - **R2c:** the import guard does not tie a patch ID to file content.
    - **R3b-2b QA S-4:** live CMOS persistence is synchronous; revisit with R3d/R4 timing.
-6. **Device and box cleanup when convenient:**
+5. **Device and box cleanup when convenient:**
    - **Odin3:** `/data/local/tmp/arcdroid-r3b1/`, `/data/local/tmp/arcdroid-r3b2b/`, `/storage/emulated/0/arcdroid-s62/`, `/storage/emulated/0/arcdroid-s62b/`.
    - **Windows:** `S:\dev\ArcDroid\work\s62pop`.
+
+**R3c plan (D-174; Astra stage 1 `.work/s63/astra/report1.md`).**
+- **R3c-1, observation primitives** (below).
+- **R3c-2, observers and arbitration:** boot watch, launch outcome, error box and disc request on RPC through the adapter. Each observer and sub-capability is enabled per recognised firmware × qualified CPU pair × qualified profile; every one of the 28 cells is qualified by Fable's private evidence, and unproven cells stay disabled with a recorded reason. The error box gets its own 3.5+ profile. The boot watch is armed only around a launch phase. Automatic disc replacement needs controller idle, the current media generation, preflight and its own modal-dialog exclusion. Frame-boundary processing for RPC sessions (the RPC presentation route bypasses it today). Recognition predicates come from Fable's traces, never from committed ROM bytes.
+- **R3c-3, launch delivery:** a minimal, version-stable hook at the end of the authored desktop startup (`assets/riscpc-boot/ArcTasks`) hands off to a launch plan on a read-only per-session helper in drive 1; with no helper it does nothing. Authored-step revision 2; revision-1 discs open with launch automation unavailable and a notice. Each launch runs once with its outcome observed. RPC boot observations versioned separately. The FileCore checker's guest-tolerant mode (map disc-ID byte, Nick sequence bytes, stale bytes after a delete, name padding; strict mode kept for writer output). Seven-pair launch and private install evidence.
+- **R3d** then enables ordinary loads (D-164).
+
+**R3c-1 — RPC observation primitives (DRAFT for Astra stage 2; D-174(1), (2), (4)).** Branch `slice/r3c1-observation` from `main`.
+- **Objective:** give the RPC backend the CPU-side observation and intervention services that the four observers need, behind a session-owned adapter. No observer is enabled in production, and the guest behaves identically when nothing is armed.
+- **Scope:**
+  1. **Events.** SWI entry (in `opSWI`, before the exception is entered; `engine/rpcemu/src/arm_common.c:568`), continuation (at the instruction boundary where execution resumes at a registered return address with matching mode and stack pointer), and mode transitions (through `updatemode`). Each event carries: the full SWI number with its X bit; the instruction's virtual address and the backing it was fetched from (ROM, RAM, other); the full architectural mode, its privilege class and address width (26/32); NZCV; R0–R3 and any further registers a registered filter requests; SP and LR; the observer epoch; exact virtual time. A condition-failed SWI produces no event.
+  2. **Inspector.** A non-mutating, bounds-checked read of guest virtual memory (words, bytes, NUL- or CR-terminated strings up to a stated bound). It honours existing TLB entries, stale ones included, and current permissions and domains. On a miss it walks descriptors only in backed RAM or ROM, refuses unbacked or MMIO tables, and installs nothing. It changes no TLB, FAR/FSR, translation attribute, timing state (memo, cursors, pending requests), cache model, device or scheduler state. "Read, then restore" is not allowed.
+  3. **Controlled completion.** Complete the SWI currently being observed without entering the exception: set the specified result registers and C/V, preserve every other register, bank and flag, advance the PC exactly as a normal SWI return would, and keep the interpreter's ordinary event check at that boundary. Refused when the event is stale (different instruction or epoch). R3c-1 exercises it only from authored tests.
+  4. **Services.** Exact virtual time in microseconds from the scheduler; an observer epoch that changes on start, reset, contained fault and stop (reset rewinds scheduler time without changing the session generation); a floppy-controller idle query per drive that is false during a command phase, pending DMA, a pending IRQ or a scheduled controller event, and is not made false by motor or index activity alone.
+  5. **Deferred work.** A bounded queue for observations that need host action. It is drained only after leaving protected CPU execution, at the frame boundary. Overflow is counted and ends that observer's generation (fails closed). Nothing calls frontend, VFS or media code from inside a CPU hook.
+  6. **Capability records.** The data model of D-174(2): per observer and sub-capability, keyed by firmware catalogue entry × CPU pair, with a recorded reason for each disabled cell. The production table has no enabled cell in R3c-1. Test profiles exist only in builds with the test flags.
+  7. **Backend operations.** The RPC observer entries in `engine/rpc/rpc_session.c` route to the adapter and still report every observer unavailable in production.
+  8. **Test-build trace (for Fable's qualification).** A plan-route key records observation events to a bounded local file: event kind, SWI number, mode class, address width, virtual time, registers, and inspector-read bounded strings for SWIs whose arguments are strings. Test builds only; it is never compiled into shipping builds, and it never alters guest behaviour.
+  9. **Upstream boundary.** CPU, MMU and FDC hook points form a new marked patch over the pinned import, with `engine/rpcemu/UPSTREAM.md`, `manifest.json`, namespace prefixing and export checks updated. Observer policy lives in ArcDroid-owned code under `engine/rpc/`.
+  10. **Translator compatibility.** Observation points are G-12 barriers (`docs/riscpc-translator-invariants.md`): an SWI event is a P1 helper; any handoff completes the instruction and leaves through P2/P3; no post-fetch resume path; no timing flush merely to inspect; continuation checks run at the same instruction boundary. Extend the equivalence state (observer state, pending events and answers, epoch) in that document.
+  11. **Carried:** the Q-3 comment at `tests/rpc_cpu_test.c:373–374`.
+- **Non-goals:** the observer state machines on RPC and their qualification (R3c-2); launch delivery, the helper, the startup hook, boot records and the checker mode (R3c-3); ordinary loads (R3d); any change to Arculator behaviour.
+- **Acceptance criteria:**
+  - **AC-1 Events:** authored guests on ARM610, ARM710, ARM7500 and SA-110 cover condition-failed SWIs, X and non-X forms, User and SVC in 26- and 32-bit modes, IRQ and FIQ interleaving, exception returns, nested SWIs and wrong continuations (address matches but mode or SP differs), with exact timestamps and epochs.
+  - **AC-2 Inspector:** MMU off and on; sections, large and small pages, subpages; permissions and domains; stale TLB entries; tag collisions and aliases; strings crossing page and subpage boundaries; length bounds and address overflow; MMIO or unbacked descriptors refused. A before/after comparison of registers, CP15 (FAR/FSR included), TLB contents, timing state, device state and memory shows no change.
+  - **AC-3 Completion:** register, bank and flag preservation apart from the specified results and C/V; the PC advance; a pending IRQ taken at the same boundary as after a normal SWI return; stale requests refused.
+  - **AC-4 Non-interference:** with nothing armed, and with filters armed that never match, guest traces, audio sample counts and persistent bytes are identical to a pinned `main` baseline across the existing RPC trace, golden and plan suites. Reset, contained fault, failed start and teardown discard queued events and pending completions, with a test per state.
+  - **AC-5 Services:** time and epoch across reset; the controller idle query across every FDC command phase, DMA, IRQ, seek and motor-only activity.
+  - **AC-6 Isolation:** the patch is recorded with provenance; symbol prefixing and export checks pass on host, MinGW and Android; a flag-free build carries no enabled capability, no test profile and no trace; Arculator sources are unchanged (if shared code changes, the library A/B runs in both package states).
+  - **AC-7 Private (Fable):** the Odin3 hot workload with nothing armed is no slower than `main` on the same device (R-H, D-140); the trace mode records the seven pairs' boot to the desktop.
+  - **AC-8 Evidence:** host and sanitizer suites within CI timeouts; MinGW and Android builds; the guards; mutants on event filters (mode, condition, X bit), continuation matching, inspector permissions and bounds, completion preservation and epoch discard.
+- **QA focus:** inspector side effects; cost and determinism with nothing armed; completion correctness; epoch and lifecycle; translator-barrier compatibility; patch provenance.
 
 - **Earlier (S61):** Q-3 merged as `44d007e` (follow-up Low: the CPU reproduction comment at `tests/rpc_cpu_test.c:373–374` overstates which term the I/O/reserved/EASI targets test; fix it in the next RPC slice that touches the test). AC-10 measured; Founder decision D-163 (R3, then item 6b before R4 and item 5). R3 is planned as R3a–R3d (D-164); R3a is done.
 
