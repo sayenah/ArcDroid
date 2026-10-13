@@ -1,18 +1,44 @@
 # ArcDroid Handoff
 
-**Stage:** IMPLEMENTATION — **R3b-1** (boot-resource population, D-167) with Sol on `slice/r3b1-population` (`.work/s62/r3b1/clone`).
-**Owner:** Sol (R3b-1); Fable (S62) reviews.
+**Stage:** QA — **R3b-1** (boot-resource population, D-167), draft PR #386, branch `slice/r3b1-population` at `d819674`.
+**Owner:** Opus (QA, fresh `arcdroid-opus-qa` agent in a fresh clone); Fable (S62) watches CI, finishes AC-5's Windows leg, then adjudicates.
 **Next (S62):**
-1. **R3a: merged** as `d7a92ec` (PR #378, head `8590079`) after the Opus QA re-check PASS WITH LOWS (adjudication `.work/s62/qa-r3a2/adjudication.md`) and green CI on all five jobs; recorded in `docs/build-log.md`. Follow-up Lows: the `recognize-os-range` mutant (inject an out-of-range entry or record it equivalent); two `resource_failure` asserts in `rpc_selection_test`; Python `assert` in the mutation script. To R3d: a skipped scan logs `inventory=skipped`.
-2. **R3b-1 with Sol (authorised S62, D-167):**
-   - **Dispatch:** Sol (GPT-6.1 Sol) works in `.work/s62/r3b1/clone`, on `slice/r3b1-population` from `main` `3d7fd30` (thread `01a12f51-f828-7d42-9552-61459ce001fb`). Fable merges `main` (now with R3a) into the branch before committing. Prompts: `.work/s62/r3b1/promptR3b1.md`, then `promptR3b1-cont.md`. Part 1 stopped correctly at the capacity gate after specifying the receipt (manifest v2) and adding the independent checker. Fable supplied a metadata-only inventory of the merged tree (`.evidence/boot-tree-metadata.tsv` in the clone; never commit) and a tally of about 71.5 MiB of 125.75 MiB with sibling sharing (`.work/s62/capacity.py`). Part 2 is running (see the ledger).
-   - **Order of work:** first the capacity and sharing note (policy 5) and the receipt format extension (policy 7). If the merged tree cannot fit with sharing, Sol stops and reports.
-   - **Report:** Sol does not commit or push, and writes `SOL-REPORT-R3B1.md`.
-   - **Then Fable:** reviews, commits verbatim, opens the PR, gathers AC-5's private evidence, and arranges Opus QA.
-   - R3b-2's full work order follows R3b-1 QA. D-166(4) carries two R3d items.
+1. **R3a: merged** as `d7a92ec` (PR #378). Follow-up Lows: the `recognize-os-range` mutant (inject an out-of-range entry or record it equivalent); two `resource_failure` asserts in `rpc_selection_test`; Python `assert` in the mutation script. To R3d: a skipped scan logs `inventory=skipped`.
+2. **R3b-1 under Opus QA.**
+   - **Commits:** Sol's runs (thread `01a12f51-…`, then `01a130bf-1186-73b1-8599-cefab907b58c`), each committed verbatim:
+     - `88a0a98`: population, receipt, checker and tests;
+     - a clean merge of `main` with R3a;
+     - `d3ab3e7` run B: the sanitizer fault profile, with writer mutants host-only;
+     - `a131433` run C: the boot option is Run (2);
+     - `d819674` run D: a 286-point sanitizer profile with a 900 s timeout.
+   - **Sol's evidence:** host 361/361; host full fault matrix about 1,108–1,324 s; 22/22 writer mutants; sanitizer profile 121 s on the Mac; guards and MinGW/Android builds pass. Report: `.work/s62/r3b1/clone/SOL-REPORT-R3B1.md`.
+   - **CI:**
+     - At `a131433`: four jobs green. host-sanitizers failed only on `rpc-boot-faults` (Timeout 600 s), which run D addresses.
+     - At `d819674`: running.
+   - **Fable's AC-5 so far (`.work/s62/ac5/`, `.work/s62/odin/`, ledger `.work/s62/LEDGER.md`):**
+     - **Defect D-1 (fixed in run C):** the populated disc's boot option was 3 (`*Exec`), so the factory CMOS boot stopped with "'&.!BOOT' is a directory".
+     - **Seven pairs:** with run C, all seven pairs boot from the populated disc to the desktop. The authored step sets `Boot$Dir`, `Boot$OSVersion`, `Font$Path`, `Run$Path`, `System$Path` (matched to the firmware) and `Wimp$Scrap`. Every module stays at ROM addresses, none is RAM-loaded, and none is unplugged.
+     - **Guest edits:** a guest delete, add and grow inside a shared fragment preserves every other one of the 1,830 entries, and the maps, checks and sharing rules still hold.
+     - **084:** installs onto the populated disc across both discs. Its support flow reports "GEKonfig has been installed in your !Boot folder". A cold start of the installed payload is being checked.
+     - **Odin3 FUSE:** population takes 21 s; SIGKILL at 2, 5 and 9 s followed by a restart repopulates cleanly; reopening is a no-op. All images are byte-identical to the Mac's.
+     - **Windows leg:** waiting on the Founder (below).
+   - **Notes for QA:**
+     - The independent reader (`tests/rpc_filecore_check.py`) rejects legitimate guest-modified FileCore states: the map disc-ID byte, Nick sequence bytes, stale bytes after a delete, and name padding. That is fine for writer output; judge whether it matters.
+     - Plan-route population is synchronous (about 21 s on the Odin3). Frame-loop stepping is R3b-2's.
+   - **QA focus:**
+     - D-167 policies 1–8;
+     - the receipt format extension (forgery, recovery, legacy, unknown revisions);
+     - writer correctness at zone boundaries and sharing;
+     - checker independence;
+     - bounds and stepping;
+     - no package bytes in the repository or logs;
+     - provenance of `assets/riscpc-boot`;
+     - the CI profile.
+   - **After QA:** Fable adjudicates. Merging needs green CI on all five jobs and the Windows leg (or a recorded Founder ruling).
+3. R3b-2's full work order follows R3b-1 QA. D-166(4) carries two R3d items.
 - **Earlier (S61):** Q-3 merged as `44d007e` (follow-up Low: the CPU reproduction comment at `tests/rpc_cpu_test.c:373–374` overstates which term the I/O/reserved/EASI targets test; fix it in the next RPC slice that touches the test). AC-10 measured; Founder decision D-163 (R3, then item 6b before R4 and item 5). R3 is planned as R3a–R3d (D-164); R3a is done.
 
-- **Running:** Sol R3b-1 part 2 (S62; PID and watchdog in `.work/s62/LEDGER.md`).
+- **Running:** see the ledger (`.work/s62/LEDGER.md`) for Fable's private runners and the CI watch.
 - **Private work:** S60's is in `.work/s60/`, S61's in `.work/s61/`, S62's in `.work/s62/` (each indexed by its `LEDGER.md`). The trial boot environment (packages, authored files, record) is in `.work/s60/bootenv/`. Sol's R2c clone `.work/s60/sol2c/clone` is finished; its `runK-backup` stash can be dropped.
 - **Codex refusal (S61):** the Codex service once refused a turn about crash-locator code as "possible cybersecurity risk". Word Sol prompts about fault handling neutrally.
 
@@ -264,7 +290,7 @@ Slice order (D-133 as amended by D-163): R1–R3 → item 6b faster CPU work →
 **Item 5 grounding (S55, paused at a safe point: nothing committed, no branch).** `main` `c725bd6`: CI builds Android arm64 only, which is the whole Android target (D-135: no armeabi-v7a); the `.info` is copied into the build tree (`configure_file`) and installed by `install(FILES …)` but no CI artifact bundles core + `.info` + `COPYING` + `THIRD_PARTY_NOTICES.md`; the version lives in three places (`project(… VERSION 0.1.0)`, `ARCDROID_VERSION` fallback in `libretro/arcdroid_libretro.c:28`, `display_version` in `arcdroid_libretro.info`). (armeabi-v7a was found to build unmodified, but is out of scope by D-135.) Android devices: the Odin3 (`arm64-v8a` only) and a second Snapdragon 8 Gen 2 device (Founder S55). **Windows signing risk (S60):** Smart App Control, on by default for many Windows 11 installs, blocked one unsigned ArcDroid-built probe executable on the Founder's box while allowing the unsigned runner and plan core. Item 5 must decide whether an unsigned `arcdroid_libretro.dll` is acceptable, or whether it needs signing or a documented workaround. No shipping source uses `__FILE__`/`__DATE__`/`__TIME__` or a runtime `assert` (the Slice 8 note on embedded paths is unverified — check with a two-path build comparison). The GPL corresponding-source mechanism for distributed binaries (D-016) stays tied to publication (D-100). Scratch: S55 scratchpad `s55/` (`a/`, `second-checkout-b/` clones, `build-android.sh`).
 
 ## Waiting on the Founder (protocol §18, D-124)
-- None. The Odin3 and the Windows PC are available.
+- **Windows PC (S62):** SSH to `sinmu@192.168.1.66` timed out (port 22). R3b-1's AC-5 Windows leg (population, interruption and reopen on native Windows storage) is parked until the PC is awake and reachable. Everything else continues.
 
 **Answered S61 — D-163 (AC-10):** R3 next (after Q-3), then item 6b ahead of R4 and the release baseline. RiscPC is not released until games like 031 run in real time at near-hardware speed; the rate budget is revisited in 6b. Measurements are in D-163 and `.work/s61/ac10/`.
 
