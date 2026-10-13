@@ -26,7 +26,7 @@ with tempfile.TemporaryDirectory(prefix='arc-rpc-cmos-') as tmp:
     layout='ro350' if kind=='ro350' else 'ro370'
     # Reset interrupts the full-mask guest; there is no reset.rom. Construct
     # the intended basename directly, independent of native path separators.
-    firmware=roms/(('full' if kind in ('reset','fallback') else kind)+'.rom')
+    firmware=roms/(('full' if kind in ('reset','fallback') else 'empty' if kind=='terminalfallback' else kind)+'.rom')
     text=f'version=2\nmodel={models[model]}\nfirmware={firmware}\ncmos=persist\ncmos_layout={layout}\ncontent_id={"a"*40}\nrtc_epoch=946684800\n'
     plan=d/'test.arcplan';plan.write_text(text)
     def run(mode='positive'):
@@ -58,6 +58,8 @@ with tempfile.TemporaryDirectory(prefix='arc-rpc-cmos-') as tmp:
         run('nodelete');assert not list(save.rglob('*.0')) and not list(save.rglob('*.1'))
     elif kind=='fallback':
         run('fallback')
+    elif kind=='terminalfallback':
+        run('terminalfallback');assert not list(save.rglob('*.0')) and not list(save.rglob('*.1'))
     elif kind=='reset':
         run('reset')
         assert list(save.rglob('*.1')), 'preparation reset must restart and publish'

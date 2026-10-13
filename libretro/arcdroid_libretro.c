@@ -7527,14 +7527,30 @@ static void arc_rpc_keep_media_options(ArcCoreOptions *updated,bool notify)
     updated->short_tail_zero=arc_core_options.short_tail_zero;
     updated->jfd_omitted_strict=arc_core_options.jfd_omitted_strict;
 }
+static char arc_plan_terminal[512];
+static unsigned arc_plan_terminal_refresh;
 static void arc_plan_notice(const char *message,bool error)
 {
-   if(error){arc_message(message,RETRO_LOG_ERROR);return;}
-   struct retro_message_ext status={message,message[0]?60000u:1u,2u,RETRO_LOG_INFO,
+   if(error){
+      snprintf(arc_plan_terminal,sizeof(arc_plan_terminal),"%s",message);
+      if(arc_log)arc_log(RETRO_LOG_ERROR,"%s\n",message);
+   }else{arc_plan_terminal[0]=0;arc_plan_terminal_refresh=0;}
+   struct retro_message_ext status={message,error?UINT_MAX:message[0]?60000u:1u,
+      error?3u:2u,error?RETRO_LOG_ERROR:RETRO_LOG_INFO,
       RETRO_MESSAGE_TARGET_OSD,RETRO_MESSAGE_TYPE_STATUS,-1};
    if(arc_environment && arc_environment(RETRO_ENVIRONMENT_SET_MESSAGE_EXT,&status))return;
-   if(message[0] && arc_environment){struct retro_message fallback={message,120u};
+   if(arc_environment){struct retro_message fallback={message,message[0]?120u:1u};
       (void)arc_environment(RETRO_ENVIRONMENT_SET_MESSAGE,&fallback);}
+   if(error)arc_plan_terminal_refresh=60;
+}
+static void arc_plan_notice_tick(void)
+{
+   /* Extended terminal status is retained until explicit clear. Ordinary
+    * messages expire, so refresh that fallback without repeating the log. */
+   if(!arc_plan_terminal_refresh || --arc_plan_terminal_refresh)return;
+   struct retro_message fallback={arc_plan_terminal,120u};
+   if(arc_environment)(void)arc_environment(RETRO_ENVIRONMENT_SET_MESSAGE,&fallback);
+   arc_plan_terminal_refresh=60;
 }
 static void arc_plan_log(const char *message) { if(arc_log)arc_log(RETRO_LOG_ERROR,"%s\n",message); }
 #endif
@@ -7602,6 +7618,9 @@ RETRO_API void retro_reset(void)
    }
 #endif
    if(arc_engine_is_rpc() && arc_engine_active()) {
+#if defined(ARCDROID_TEST_PLANS)
+      if(arc_test_plan_cmos_phase())arc_plan_notice("",false);
+#endif
       char error[192];
       arc_input_reset(&arc_inputs);
       memset(arc_keyboard_raw,0,sizeof(arc_keyboard_raw));
@@ -8026,6 +8045,9 @@ static void arc_rpc_present_run(void)
 
 RETRO_API void retro_run(void)
 {
+#if defined(ARCDROID_TEST_PLANS)
+   arc_plan_notice_tick();
+#endif
 #if defined(ARCDROID_TEST_PLANS)
    arc_test_plan_hd_begin_frame();
    if(arc_test_plan_pending()) {

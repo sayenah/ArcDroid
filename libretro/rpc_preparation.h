@@ -9,9 +9,11 @@
 #define ARC_RPC_PREP_NAMESPACE_NS UINT64_C(8333333)
 #define ARC_RPC_PREP_UNIT_NS UINT64_C(1000000)
 #define ARC_RPC_GENERATION_BUDGET_NS UINT64_C(66666664)
-#define ARC_RPC_GENERATION_UNIT_NS UINT64_C(8333333)
+#define ARC_RPC_GENERATION_UNIT_NS ARC_RPC_GENERATION_BUDGET_NS
+#define ARC_RPC_GENERATION_HEADROOM_NS UINT64_C(2666664)
 #define ARC_RPC_GENERATION_QUANTUM_NS UINT64_C(16666667)
-#define ARC_RPC_PREP_STEPS 32u
+#define ARC_RPC_PREP_STEPS 4096u
+#define ARC_RPC_COST_SAMPLES 16u
 typedef enum {
     ARC_RPC_PREP_VERIFY, ARC_RPC_PREP_RECOVER, ARC_RPC_PREP_VALIDATE,
     ARC_RPC_PREP_RECORD, ARC_RPC_PREP_DEFAULTS, ARC_RPC_PREP_GENERATE,
@@ -44,7 +46,8 @@ typedef struct {
 typedef struct ArcRpcPreparation ArcRpcPreparation;
 typedef struct {
     uint64_t frames, elapsed_ns, max_frame_ns, reserved_ns, namespace_attempts;
-    unsigned steps, generation_quanta;
+    uint64_t budget_ns, attachment_operations, attachment_bytes, attachment_namespace;
+    unsigned steps, generation_quanta, namespace_units, attachment_units;
     ArcRpcPreparationState state;
 } ArcRpcPreparationStats;
 /* Resolved policy entry requires the qualified pair and matching catalogue.

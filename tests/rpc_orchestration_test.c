@@ -4,10 +4,14 @@
 #endif
 #include "rpc_preparation.h"
 #include "rpc_hd_vfs.h"
+#include "rpc/rpc_rtc.h"
 static unsigned notices,terminal_notices,clears,attach_calls;
 static char last_notice[512];
 static uint64_t clock_value,clock_delta;
-static unsigned clock_mode;
+static unsigned clock_mode,clock_reads;
+static uint64_t frame_budget;
+static bool last_clear,attachment_io,attachment_fail,reopen_expected;
+static unsigned last_kind;
 static ArcRpcPreparation *current;
 static unsigned test_model;
 static ArcRpcSelectionOs test_os=ARC_RPC_OS_350;
@@ -17,13 +21,32 @@ static uint64_t clock_read(void *opaque)
     (void)opaque;
     if(clock_mode==1)return 0;
     if(clock_mode==2)return clock_value--;
+    if(clock_mode==3){
+        if(clock_reads++){ArcRpcPreparationStats s;arc_riscpc_preparation_stats(current,&s);clock_value+=s.budget_ns;}
+        return clock_value;
+    }
+    if(clock_mode==10){
+        if(clock_reads++ && (clock_reads==2 || clock_reads%8==0))clock_value+=1000;
+        return clock_value;
+    }
+    if(clock_mode>=4){
+        if(clock_reads++){
+            uint64_t cost=clock_mode==4?50000:clock_mode==5?750000:
+                clock_mode==6?100000:clock_mode==9?1:
+                frame_budget==ARC_RPC_GENERATION_BUDGET_NS?(clock_mode==7?16000000:2000000):50000;
+            if(clock_mode==6){ArcRpcPreparationStats s;arc_riscpc_preparation_stats(current,&s);if(s.namespace_units==2)cost=500000;}
+            clock_value+=cost;
+        }
+        return clock_value;
+    }
     clock_value+=clock_delta;return clock_value;
 }
 static void notice(void *opaque,const char *s,bool terminal)
 {
-    (void)opaque;++notices;
-    if(terminal)++terminal_notices;
-    if(!*s)++clears;
+    (void)opaque;++notices;if(reopen_expected)assert(!strstr(s,"first use"));
+    if(terminal){assert(last_clear);++terminal_notices;last_kind=2;}
+    else last_kind=*s?1:0;
+    last_clear=!s[0];if(last_clear)++clears;
     snprintf(last_notice,sizeof(last_notice),"%s",s);
 }
 static bool attach(void *opaque,char *e,size_t n)
@@ -31,9 +54,18 @@ static bool attach(void *opaque,char *e,size_t n)
     (void)opaque;(void)e;(void)n;++attach_calls;
     uint8_t b[256],m[32];uint64_t w,l,now;unsigned state;
     arc_engine_rpc_evidence(b,m,&w,&l,&now,&state);
+    ArcRpcCalendar actual,expected;assert(arc_rpc_rtc_read(&actual));
+    assert(arc_rpc_calendar(1234567890,0,&expected));assert(!memcmp(&actual,&expected,sizeof(actual)));
     assert(now==0 && state==0); /* No requested instruction before final attachment. */
     ArcRpcHdStore *disc=arc_riscpc_preparation_disc(current);
     assert(disc && arc_riscpc_hd_receipt(disc,NULL));
+    if(attachment_io || attachment_fail){
+        void *data=NULL;size_t bytes=0;
+        if(!arc_io_read_all_limit(attachment_fail?"/missing-media":"/system/attachment.raw",&data,&bytes,5,NULL)){
+            snprintf(e,n,"final media unavailable");return false;
+        }
+        bool ok=arc_io_write_all("/save/media-view",data,bytes);free(data);if(!ok)return false;
+    }
     return true;
 }
 static void file_bytes(const char *p,const void *data,size_t n)
@@ -73,7 +105,7 @@ static ArcRpcPreparation *new_request(const uint8_t *rom,size_t size,bool seed,
      * https://www.riscos.com/support/developers/prm/cmos.html
      * NetFS, ADFS drive 2, NoBoot, altered floppy/IDE counts; extra raw
      * 19/253/checksum bytes remain deliberately authoritative too. */
-    uint8_t bytes[256]={0};bytes[69]=5;bytes[75]=2;bytes[80]=0;
+    uint8_t bytes[256]={0};memset(bytes,0xee,16);bytes[69]=5;bytes[75]=2;bytes[80]=0;
     bytes[19]=0;bytes[253]=9;bytes[199]=0x95;bytes[63]=0x51;
     if(seed)r.seed=bytes;
     ArcDigest d=arc_digest(rom,size);
@@ -87,13 +119,24 @@ static ArcRpcPreparation *new_request(const uint8_t *rom,size_t size,bool seed,
 static ArcRpcPreparationState frame(ArcRpcPreparation *p)
 {
     uint64_t ns=namespace_calls;ArcRpcPreparationState old=arc_riscpc_preparation_state(p);
+    clock_reads=0;frame_budget=old==ARC_RPC_PREP_GENERATE?ARC_RPC_GENERATION_BUDGET_NS:ARC_RPC_PREP_BUDGET_NS;
     ArcRpcPreparationState state=arc_riscpc_preparation_frame(p);ArcRpcPreparationStats s;
     arc_riscpc_preparation_stats(p,&s);
-    assert(s.steps<=ARC_RPC_PREP_STEPS && namespace_calls-ns<=1);
+    assert(s.steps<=ARC_RPC_PREP_STEPS);
     assert(s.namespace_attempts==namespace_calls-ns);
-    if(s.namespace_attempts)assert(s.steps==1);
     assert(s.reserved_ns<=(old==ARC_RPC_PREP_GENERATE?ARC_RPC_GENERATION_BUDGET_NS:
-                          s.namespace_attempts?ARC_RPC_PREP_NAMESPACE_NS:ARC_RPC_PREP_NAMESPACE_NS));
+                          s.namespace_units||s.attachment_units?ARC_RPC_PREP_NAMESPACE_NS:ARC_RPC_PREP_BUDGET_NS));
+    assert(s.budget_ns==(old==ARC_RPC_PREP_GENERATE?ARC_RPC_GENERATION_BUDGET_NS:
+                       s.namespace_units||s.attachment_units?ARC_RPC_PREP_NAMESPACE_NS:ARC_RPC_PREP_BUDGET_NS));
+    assert(s.generation_quanta<=8);
+    if(old==ARC_RPC_PREP_GENERATE && state==ARC_RPC_PREP_GENERATE && arc_engine_active()){
+        ArcRpcCalendar actual,expected;uint8_t b[256],m[32];uint64_t w,l,now;unsigned capture;
+        arc_engine_rpc_evidence(b,m,&w,&l,&now,&capture);
+        assert(arc_rpc_rtc_read(&actual));assert(arc_rpc_calendar(ARC_RPC_CMOS_GENERATION_EPOCH,now,&expected));
+        assert(!memcmp(&actual,&expected,sizeof(actual)));
+        assert(now%ARC_RPC_GENERATION_QUANTUM_NS==0);
+    }
+    if(clock_mode==3 || clock_mode>=4)assert(s.elapsed_ns<=s.budget_ns);
     if(state!=ARC_RPC_PREP_RUNNING && old!=ARC_RPC_PREP_GENERATE && arc_engine_active()){
         uint8_t b[256],m[32];uint64_t w,l,now;unsigned capture;
         arc_engine_rpc_evidence(b,m,&w,&l,&now,&capture);
@@ -108,14 +151,14 @@ static void settle(ArcRpcPreparation *p)
 static void finish(ArcRpcPreparation *p)
 {
     char e[512]={0};assert(arc_riscpc_preparation_free(p,e,sizeof(e)));
-    current=NULL;assert(!arc_engine_active());test_vfs_no_open_handles();
+    current=NULL;assert(last_clear && last_kind==0);assert(!arc_engine_active());test_vfs_no_open_handles();
 }
 static void state_matrix(const uint8_t *rom,size_t size,ArcRpcPreparationHost host,bool sanitizer,bool mutant)
 {
     for(unsigned action=0;action<3;++action)
         for(unsigned target=0;target<ARC_RPC_PREP_RUNNING;++target){
             if(mutant && target>=ARC_RPC_PREP_SAVE_DEFAULT)continue;
-            restore();attach_calls=0;terminal_notices=0;clock_mode=0;clock_delta=2500000;
+            restore();attach_calls=0;terminal_notices=0;clock_mode=3;clock_delta=2500000;
             ArcRpcPreparation *p=new_request(rom,size,sanitizer && target>=ARC_RPC_PREP_SAVE_RECORD,false,host);
             /* One unit/frame makes every transition observable. */
             assert(arc_riscpc_preparation_pacing(p,1));
@@ -124,14 +167,14 @@ static void state_matrix(const uint8_t *rom,size_t size,ArcRpcPreparationHost ho
             if(target==ARC_RPC_PREP_GENERATE && action==0){
                 unsigned old_notices=notices;
                 for(unsigned j=0;j<121;++j)frame(p);
-                assert(notices>=old_notices+2 && !terminal_notices);
+                assert(notices>=old_notices+2 && notices<=old_notices+3 && !terminal_notices);
             }
             if(target==ARC_RPC_PREP_RECORD || target==ARC_RPC_PREP_GENERATE){
                 ArcRpcHdStats a;arc_riscpc_hd_stats(arc_riscpc_preparation_disc(p),&a);
                 assert(a.population && !a.published && !a.commands);
             }
             if(action==0){arc_riscpc_preparation_cancel(p);assert(arc_riscpc_preparation_state(p)==ARC_RPC_PREP_CANCELLED);}
-            else if(action==1){assert(arc_riscpc_preparation_reset(p));assert(arc_riscpc_preparation_state(p)==ARC_RPC_PREP_VERIFY);assert(!arc_engine_active());}
+            else if(action==1){assert(arc_riscpc_preparation_reset(p));assert(arc_riscpc_preparation_state(p)==ARC_RPC_PREP_VERIFY);assert(last_clear && last_kind==0);assert(!arc_engine_active());}
             finish(p);
             /* Reset and unload preserve completed publications, and recovery
              * cleans only the offline candidate; no partial root can attach. */
@@ -140,6 +183,113 @@ static void state_matrix(const uint8_t *rom,size_t size,ArcRpcPreparationHost ho
             assert(outcome==ARC_RPC_HD_UNPUBLISHED || outcome==ARC_RPC_HD_RECEIPTED);arc_riscpc_hd_close(disc);
             if(sanitizer && target==ARC_RPC_PREP_SAVE_DEFAULT)fprintf(stdout,"sanitizer: generation publication boundary exercised\n");
         }
+}
+static void scheduler_matrix(const uint8_t *rom,size_t size,ArcRpcPreparationHost host)
+{
+    uint8_t gold[32];attachment_io=true;
+    for(unsigned index=0;index<4;++index){
+        unsigned mode=index==3?10:index==2?9:index+4;
+        restore();clock_mode=mode;clock_value=0;attach_calls=terminal_notices=0;
+        ArcRpcPreparation *p=new_request(rom,size,true,false,host);
+        unsigned max_steps=0,max_namespaces=0;
+        for(unsigned i=0;arc_riscpc_preparation_state(p)<ARC_RPC_PREP_RUNNING;++i){
+            assert(i<100000);frame(p);ArcRpcPreparationStats s;arc_riscpc_preparation_stats(p,&s);
+            if(s.attachment_units)assert(s.steps==1 && s.attachment_operations==8 && s.attachment_bytes==10 && s.attachment_namespace==1);
+            if(s.steps>max_steps)max_steps=s.steps;if(s.namespace_attempts>max_namespaces)max_namespaces=(unsigned)s.namespace_attempts;
+        }
+        assert(arc_riscpc_preparation_state(p)==ARC_RPC_PREP_RUNNING);
+        if(mode==4)assert(max_steps>=50 && max_namespaces>=2);
+        else if(mode>=9)assert(max_steps>=50);
+        else assert(max_steps<=11); /* 0.75 ms, with a 0.50 T namespace frame */
+        uint8_t hash[32];disk_hash(hash);if(mode==4)memcpy(gold,hash,32);else assert(!memcmp(gold,hash,32));
+        finish(p);
+    }
+    attachment_io=false;
+    restore();clock_mode=9;clock_value=0;
+    int cap=find("/system/cap.zip",false);assert(cap>=0);
+    file_bytes("/system/arcdroid/riscpc/boot/HardDisc4.zip",files[cap].data,files[cap].size);
+    ArcRpcPreparation *large=new_request(rom,size,true,false,host);bool capped=false;
+    for(unsigned i=0;i<128 && !capped;++i){
+        assert(frame(large)<ARC_RPC_PREP_RUNNING);ArcRpcPreparationStats stats;arc_riscpc_preparation_stats(large,&stats);
+        capped=stats.steps==ARC_RPC_PREP_STEPS;
+        if(capped)assert(stats.elapsed_ns==ARC_RPC_PREP_STEPS);
+    }
+    assert(capped);arc_riscpc_preparation_cancel(large);finish(large);
+    restore();clock_mode=6;clock_value=0;terminal_notices=0;
+    ArcRpcPreparation *p=new_request(rom,size,true,false,host);
+    ArcRpcPreparationStats s;
+    do{frame(p);arc_riscpc_preparation_stats(p,&s);}while(!s.namespace_units);
+    assert(s.namespace_units==2 && s.steps==2 && s.elapsed_ns==600000 && s.budget_ns==ARC_RPC_PREP_NAMESPACE_NS);
+    arc_riscpc_preparation_cancel(p);finish(p);
+    /* The declared-cost fallback caps a stationary clock at three ordinary
+     * units. A backward clock admits at most the first indivisible unit. */
+    for(unsigned mode=1;mode<=2;++mode){
+        restore();clock_mode=mode;clock_value=1000000;
+        p=new_request(rom,size,true,false,host);frame(p);arc_riscpc_preparation_stats(p,&s);
+        assert(s.steps==(mode==1?3u:1u));arc_riscpc_preparation_cancel(p);finish(p);
+    }
+    restore();clock_mode=4;attachment_fail=true;terminal_notices=0;
+    p=new_request(rom,size,true,false,host);settle(p);arc_riscpc_preparation_stats(p,&s);
+    assert(arc_riscpc_preparation_state(p)==ARC_RPC_PREP_FAILED && terminal_notices==1 && s.attachment_operations==1 && !s.attachment_namespace && s.steps==1);
+    finish(p);attachment_fail=false;
+    for(unsigned mode=7;mode<=8;++mode)for(unsigned one=0;one<2;++one){
+        restore();clock_mode=3;clock_value=0;terminal_notices=0;
+        p=new_request(rom,size,false,false,host);
+        if(one)assert(arc_riscpc_preparation_pacing(p,1));
+        while(arc_riscpc_preparation_state(p)!=ARC_RPC_PREP_GENERATE)frame(p);
+        clock_mode=mode;
+        while(!arc_engine_active())frame(p);
+        frame(p);arc_riscpc_preparation_stats(p,&s);
+        assert(s.generation_quanta==(one?1u:mode==7?4u:8u));
+        assert(s.elapsed_ns<=ARC_RPC_GENERATION_BUDGET_NS);
+        if(mode==8 && !one){unsigned before=notices;
+            for(unsigned i=0;i<59;++i)frame(p);
+            assert(notices-before<=1); /* Cadence is frames, never unit count. */
+        }
+        arc_riscpc_preparation_cancel(p);finish(p);
+    }
+}
+static struct retro_vfs_file_handle *unavailable_manifest(const char *path,unsigned mode,unsigned hint)
+{ if(strstr(path,"hd-riscpc") && strstr(path,"/manifest."))return NULL;return test_open(path,mode,hint); }
+static void store_refusals(const uint8_t *rom,size_t size,ArcRpcPreparationHost host)
+{
+    assert(strstr(arc_riscpc_hd_outcome_notice(ARC_RPC_HD_LEGACY),"without a creation receipt"));
+    const char *messages[]={"newer version","damaged","unavailable","without a creation receipt"};
+    for(unsigned kind=0;kind<4;++kind){
+        restore();clock_mode=4;clock_value=0;terminal_notices=attach_calls=0;
+        if(kind==3){
+            char e[512];ArcRpcHdStore *disc=arc_riscpc_hd_open("/save",id,true,e,sizeof(e));assert(disc);
+            assert(!arc_riscpc_hd_receipt(disc,NULL));arc_riscpc_hd_close(disc);
+        }else{
+            ArcRpcPreparation *good=new_request(rom,size,true,false,host);settle(good);finish(good);
+        }
+        if(kind<2)for(unsigned i=0;i<TEST_FILES;++i)if(files[i].present && strstr(files[i].path,"/manifest.")){
+            if(kind==0){files[i].data[8]=3;uint32_t crc=arc_crc32(files[i].data,files[i].size-4);
+                for(unsigned j=0;j<4;++j)files[i].data[files[i].size-4+j]=(uint8_t)(crc>>(8*j));}
+            else files[i].data[files[i].size-1]^=1;
+        }
+        if(kind==2)vfs.open=unavailable_manifest;
+        terminal_notices=attach_calls=0;uint8_t before[32],after[32];disk_hash(before);
+        ArcRpcPreparation *p=new_request(rom,size,true,false,host);settle(p);
+        assert(arc_riscpc_preparation_state(p)==ARC_RPC_PREP_FAILED && terminal_notices==1 && !attach_calls && !arc_engine_active());
+        assert(last_kind==2 && strstr(last_notice,messages[kind]));
+        disk_hash(after);assert(!memcmp(before,after,32));unsigned n=notices;
+        for(unsigned i=0;i<180;++i)arc_riscpc_preparation_frame(p);assert(notices==n);
+        finish(p);vfs.open=test_open;
+    }
+    /* Corrupt per-content CMOS is preserved, read-only, and its terminal
+     * notice must survive the transition to a running requested session. */
+    restore();clock_mode=4;ArcRpcPreparation *p=new_request(rom,size,true,false,host);settle(p);finish(p);
+    bool altered=false;for(unsigned i=0;i<TEST_FILES;++i)if(files[i].present && strstr(files[i].path,"/cmos-riscpc/") && files[i].size==512){
+        char corrupt[1100];snprintf(corrupt,sizeof(corrupt),"%s",files[i].path);corrupt[strlen(corrupt)-1]='0';
+        file_bytes(corrupt,files[i].data,512);int bad=find(corrupt,false);assert(bad>=0);
+        files[bad].data[511]^=1;altered=true;break;
+    }
+    assert(altered);uint8_t before[32],after[32];disk_hash(before);terminal_notices=0;
+    p=new_request(rom,size,true,false,host);settle(p);
+    assert(arc_riscpc_preparation_state(p)==ARC_RPC_PREP_RUNNING && terminal_notices==1 && last_kind==2);
+    char e[512];assert(!arc_riscpc_preparation_free(p,e,sizeof(e)));assert(last_clear);current=NULL;
+    disk_hash(after);assert(!memcmp(before,after,32));test_vfs_no_open_handles();
 }
 static void construction_and_attachments(const uint8_t *rom,size_t size)
 {
@@ -230,12 +380,15 @@ int main(int argc,char **argv)
     file_copy("/system/arcdroid/riscpc/boot/HardDisc4.zip",source);
     snprintf(source,sizeof(source),"%s/arcdroid/riscpc/boot/PlingSystem.zip",argv[1]);
     file_copy("/system/arcdroid/riscpc/boot/PlingSystem.zip",source);
+    snprintf(source,sizeof(source),"%s/cap.zip",argv[1]);file_copy("/system/cap.zip",source);
     file_copy("/system/full.rom",argv[2]);int i=find("/system/full.rom",false);assert(i>=0);
     size_t size=files[i].size;uint8_t *rom=malloc(size);assert(rom);memcpy(rom,files[i].data,size);
     construction_and_attachments(rom,size);
+    file_bytes("/system/attachment.raw","media",5);
     snapshot();ArcRpcPreparationHost host={.clock=clock_read,.notice=notice,.attach=attach};
     /* Initial package validation precedes either CMOS generation or seed. */
     state_matrix(rom,size,host,sanitizer,!strcmp(argv[4],"mutant"));
+    scheduler_matrix(rom,size,host);store_refusals(rom,size,host);
     uint8_t gold[32];
     for(unsigned mode=0;mode<3;++mode){
         restore();clock_mode=mode;clock_value=UINT64_C(1000000000000);clock_delta=1000;attach_calls=terminal_notices=0;
@@ -243,8 +396,10 @@ int main(int argc,char **argv)
         assert(arc_riscpc_preparation_state(p)==ARC_RPC_PREP_RUNNING && attach_calls==1 && !terminal_notices);
         uint8_t b[256],m[32];uint64_t w,l,now;unsigned capture;
         arc_engine_rpc_evidence(b,m,&w,&l,&now,&capture);
+        for(unsigned i=0;i<16;++i)assert(!b[i]);
         assert(now==0 && b[69]==5 && b[75]==2 && !(b[80]&0x10) && b[19]==0 && b[253]==9 && b[199]==0x95 && b[63]==0x51);
         assert(arc_riscpc_preparation_reset(p));arc_engine_rpc_evidence(b,m,&w,&l,&now,&capture);
+        for(unsigned i=0;i<16;++i)assert(!b[i]);
         assert(now==0 && b[69]==5 && b[75]==2 && !(b[80]&0x10) && b[19]==0 && b[253]==9 && b[199]==0x95 && b[63]==0x51);
         ArcRpcHdStats before_tick,after_tick;
         arc_riscpc_hd_stats(arc_riscpc_preparation_disc(p),&before_tick);
@@ -281,10 +436,17 @@ int main(int argc,char **argv)
     /* Receipted reopen performs no package reads, even when files disappear. */
     int a=find("/system/arcdroid/riscpc/boot/HardDisc4.zip",false),b=find("/system/arcdroid/riscpc/boot/PlingSystem.zip",false);
     files[a].present=files[b].present=false;clock_mode=1;
-    ArcRpcPreparation *p=new_request(rom,size,false,false,host);settle(p);assert(arc_riscpc_preparation_state(p)==ARC_RPC_PREP_RUNNING);
+    reopen_expected=true;
+    ArcRpcPreparation *p=new_request(rom,size,true,false,host);settle(p);assert(arc_riscpc_preparation_state(p)==ARC_RPC_PREP_RUNNING);
     uint8_t saved_bytes[256],saved_mask[32];uint64_t saved_writes,saved_last,saved_now;unsigned saved_state;
     arc_engine_rpc_evidence(saved_bytes,saved_mask,&saved_writes,&saved_last,&saved_now,&saved_state);
-    assert(saved_bytes[69]==5 && saved_bytes[75]==2 && !(saved_bytes[80]&0x10) && saved_bytes[19]==0 && saved_bytes[253]==9 && saved_bytes[199]==0x95 && saved_bytes[63]==0x51);finish(p);
+    for(unsigned i=0;i<16;++i)assert(!saved_bytes[i]);
+    assert(saved_bytes[69]==5 && saved_bytes[75]==2 && !(saved_bytes[80]&0x10) && saved_bytes[19]==0 && saved_bytes[253]==9 && saved_bytes[199]==0x95 && saved_bytes[63]==0x51);finish(p);reopen_expected=false;
+    /* A receipt remains a reopen even if its per-content settings vanished. */
+    for(unsigned j=0;j<TEST_FILES;++j)if(files[j].present && strstr(files[j].path,"/cmos-riscpc/"))files[j].present=false;
+    reopen_expected=true;clock_mode=3;p=new_request(rom,size,false,false,host);
+    while(arc_riscpc_preparation_state(p)!=ARC_RPC_PREP_GENERATE)frame(p);
+    frame(p);arc_riscpc_preparation_cancel(p);finish(p);reopen_expected=false;
     char writer[4096];snprintf(writer,sizeof(writer),"%s",argv[2]);char *leaf=strrchr(writer,'/'),*backslash=strrchr(writer,'\\');
     if(backslash && (!leaf || backslash>leaf))leaf=backslash;assert(leaf);strcpy(leaf+1,"writer.rom");
     pending_unload(writer,host);

@@ -11,6 +11,8 @@ Every state can fail to FAILED (no requested guest), reset, or unload. Low-level
 clients may explicitly omit IDE, create a blank, import, or supply authored
 firmware/seed; they do not pass through firmware qualification policy. Production
 requests require a qualified R3a pair and reverify size, CRC-32 and SHA-1.
+Low-level requests without a catalogue entry skip unused CRC/SHA-1 calculations,
+while retaining complete SHA-256 derivation for their persistence identity.
 
 VALIDATE stops exactly on the first FORMAT state, after ALLOCATE. The module
 owns the boot context, open package handles and offline candidate until publish
@@ -20,26 +22,45 @@ Later extraction/hash/readback/seal/rehash failure stops preparation but preserv
 completed CMOS publications. A receipt is creation provenance, not integrity of
 subsequent guest files.
 
-Preparation budgets are 3,333,333 ns without namespace work and 8,333,333 ns for
-an isolated namespace step. Declared costs: bounded ordinary unit 1,000,000 ns,
-namespace-capable unit 8,333,333 ns. Namespace-capable work starts only in an
-otherwise empty frame; any attempted namespace callback ends the batch. Admission
-uses both elapsed monotonic time and reserved declared costs, across state
-transitions; at most 32 units/frame even with a stationary/backward clock.
-These are admission bounds requiring Fable's whole-frame device qualification;
-VFS latency has no hard bound and D-169 permits isolated indivisible spikes.
+Run B applies the supplied D-171 ruling (its repository merge is pending).
+Preparation budgets remain 3,333,333 ns for ordinary frames and 8,333,333 ns
+for namespace frames. Admission uses elapsed time plus the recent maximum of
+that unit kind's last sixteen costs, bounded by its declared ceiling. Cold
+estimates use the ceiling: ordinary 1,000,000 ns, namespace 8,333,333 ns.
+A namespace frame may contain several units; a unit making an actual namespace
+attempt and exceeding its estimate ends the batch. Stat-only path checks do not
+end a batch as namespace spikes. Ordinary units update the estimate without wasting
+the remaining frame allowance. Advances also stop on an underestimated cost. CMOS and disc work share elapsed accounting across transitions.
+A stationary/backward clock cannot reduce an estimate: declared accumulated
+costs supply a conservative fallback cap (three ordinary units), while an
+absolute 4096-unit cap also bounds nearly stationary clocks. Equal readings
+after measured frame progress are timer quantization, not a backward clock;
+they preserve estimates rather than spuriously reserving all prior units. Raising that cap
+allows a healthy clock to meet D-171's fast preparation/reopen targets.
+These measured admission limits still require Fable's whole-frame device
+qualification; D-169 permits isolated indivisible namespace spikes.
 Engine construction suspends after each owned allocation, at most 1 MiB RAM
 clear, at most 32 KiB ROM copy, and device initialization. Low-level blank/import
 also uses the stepped candidate I/O, seal and publish APIs. Final media backing
 is frontend-owned; attachment and teardown still require whole-frame device
-measurement alongside the storage units.
+measurement alongside the storage units. Final attachment is a separate,
+indivisible 8,333,333 ns unit running in an otherwise empty frame; a scoped
+VFS census includes attempted file callbacks, transfer bytes, namespace work
+and partial-start cleanup. It does not pretend this whole frontend operation
+is a bounded 1 ms storage step.
 
 Generation retains the original 16,666,667 ns virtual quantum, 45 s capture,
 45 s Delete release and fixed generation epoch. Its numeric host allowance is
-66,666,664 ns, reserving 8,333,333 ns per quantum, at most eight quanta/frame.
+66,666,664 ns, with at most eight quanta/frame. Admission learns the recent
+per-advance maximum independently of construction. A cold advance's declared
+ceiling is the complete generation budget, replacing the disproven 8.33 ms
+ceiling. Slow hosts admit fewer advances; elapsed time never changes guest
+capture, rate or quantum. Once a frame has begun, admission leaves 2,666,664 ns
+for cost variation and pending presentation within that 4 T allowance. A cold
+indivisible advance can use the full allowance.
 The existing one/eight-quantum seam can reduce this cap. No smaller virtual
 quantum or host-dependent rate/deadline is introduced. Qualification of that
-host reservation on all seven private pairs remains Fable's AC-6 evidence.
+measured advance estimate on all seven private pairs remains Fable's AC-6 evidence.
 Generation frames cannot combine with storage frames. Host time is used only
 here and in offline preparation; running maintenance is one deterministic HD
 tick and eager CMOS persistence per frontend call. The requested epoch is
@@ -70,7 +91,13 @@ verification), checking boot files, preparing settings, preparing hard disc.
 Status refreshes every 60 pending frames with a 60 s extended-message lifetime; completion, reset
 and unload send an empty status. A fallback ordinary message also lasts 120
 frames, so an uncleared fallback expires within 120 frontend frames (2 s at 60 Hz). Terminal errors clear
-status first, then emit one notification; FAILED never refreshes progress.
+status first, then emit one terminal status; FAILED never refreshes progress.
+Extended terminal status uses the maximum unsigned lifetime and is cleared on
+reset/unload. Its ordinary-message fallback refreshes every sixty frames until
+clear. A valid saved record alongside refused CMOS data follows the same
+clear/error precedence and suppresses completion's progress clear. Receipted
+reopens with saved CMOS say "Starting RiscPC". Memory seeds, like seed paths,
+never override bytes 0–15 when a saved record is authoritative.
 Legacy discs say “without a creation receipt”. No time estimate is shown.
 
 Pinned plan baseline: `d374114`. V1 device/AV/input/factory goldens must remain

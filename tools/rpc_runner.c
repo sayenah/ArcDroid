@@ -255,14 +255,14 @@ int main(int argc, char **argv)
     if(preparation_path&&!prep){unload();deinit();vfs_assert_no_open_handles();return 2;}
     void (*prep_stats)(ArcRpcPreparationStats *)=NULL;
     if(prep){LOAD(prep_stats,"arc_test_plan_preparation_stats");
-        fputs("frame,core_ns,whole_ns,state,steps,reserved_ns,namespace_attempts,generation_quanta\n",prep);}
+        fputs("frame,core_ns,whole_ns,state,steps,reserved_ns,namespace_attempts,generation_quanta,budget_ns,attachment_operations,attachment_bytes,attachment_namespace\n",prep);}
     runner_preparing=true;
     for(unsigned pending=0;plan_phase && plan_phase()==1;++pending){
         if(pending>=100000){if(prep)fclose(prep);unload();deinit();vfs_assert_no_open_handles();return 1;}
         uint64_t before=arc_test_clock_ns();run();uint64_t whole=arc_test_clock_ns()-before;
         if(prep){ArcRpcPreparationStats s={0};prep_stats(&s);
-            fprintf(prep,"%u,%" PRIu64 ",%" PRIu64 ",%u,%u,%" PRIu64 ",%" PRIu64 ",%u\n",
-                pending,frame_ns(),whole,(unsigned)s.state,s.steps,s.reserved_ns,s.namespace_attempts,s.generation_quanta);}
+            fprintf(prep,"%u,%" PRIu64 ",%" PRIu64 ",%u,%u,%" PRIu64 ",%" PRIu64 ",%u,%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 "\n",
+                pending,frame_ns(),whole,(unsigned)s.state,s.steps,s.reserved_ns,s.namespace_attempts,s.generation_quanta,s.budget_ns,s.attachment_operations,s.attachment_bytes,s.attachment_namespace);}
     }
     runner_preparing=false;
     if(prep)fclose(prep);

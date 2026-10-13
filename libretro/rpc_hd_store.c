@@ -706,7 +706,7 @@ const char *arc_riscpc_hd_outcome_notice(ArcRpcHdOutcome outcome) {
         return "The saved RiscPC hard disc is damaged; files have been "
                "preserved.";
     case ARC_RPC_HD_LEGACY:
-        return "The existing RiscPC hard disc has no creation receipt; it was "
+        return "The existing RiscPC hard disc is without a creation receipt; it was "
                "left unchanged.";
     case ARC_RPC_HD_RECEIPTED:
         return "The saved RiscPC hard disc has a verified creation receipt.";

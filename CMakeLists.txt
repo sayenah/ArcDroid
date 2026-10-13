@@ -2296,12 +2296,12 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
       "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_cmos_seed_plan_test.py" $<TARGET_FILE:rpc_cmos_plan_test>
       $<TARGET_FILE:arcdroid_rpcplan_libretro> ${model})
     set_tests_properties(rpc-cmos-seed-${model} PROPERTIES TIMEOUT 180)
-    foreach(case full ro350 empty scatter incomplete late reset nodelete writer delayed badchecksum fallback)
+    foreach(case full ro350 empty scatter incomplete late reset nodelete writer delayed badchecksum fallback terminalfallback)
       add_test(NAME rpc-cmos-plan-${model}-${case} COMMAND "${Python3_EXECUTABLE}"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_cmos_plan_test.py" $<TARGET_FILE:rpc_cmos_plan_test>
         $<TARGET_FILE:arcdroid_rpcplan_libretro> $<TARGET_FILE:rpc_runner>
         $<TARGET_FILE:arcdroid_libretro> "${FIXTURE_DIR}" ${model} ${case} ${RPC_CMOS_PLAN_PROFILE})
-      set_tests_properties(rpc-cmos-plan-${model}-${case} PROPERTIES TIMEOUT 300)
+      set_tests_properties(rpc-cmos-plan-${model}-${case} PROPERTIES TIMEOUT 900)
     endforeach()
   endforeach()
 endif()

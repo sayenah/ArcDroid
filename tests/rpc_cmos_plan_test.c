@@ -13,6 +13,7 @@
 #include <errno.h>
 #include <time.h>
 #include <inttypes.h>
+#include <limits.h>
 #if defined(_WIN32)
 #include <windows.h>
 #include <io.h>
@@ -35,7 +36,8 @@ static void audit(const char *p,unsigned mode)
 #include "../tools/rpc_runner_vfs.h"
 static const char *system_directory;static unsigned black_frames, errors, notices;
 static bool extended_messages=true;
-static unsigned progress_messages,fallback_messages;
+static unsigned progress_messages,fallback_messages,cleared_messages,fallback_lifetime;
+static bool terminal_active,last_status_clear;
 static enum retro_log_level message_level;
 static bool (*rpc_start)(ArcRpcModel,const uint8_t *,size_t,const uint8_t *,uint64_t,char *,size_t);
 static void (*payload_evidence)(uint8_t *,uint8_t *,uint64_t *,uint64_t *,uint64_t *,unsigned *);
@@ -60,17 +62,26 @@ static bool environment(unsigned command,void *data)
     case RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE:*(bool *)data=false;return true;
     case RETRO_ENVIRONMENT_SET_MESSAGE_EXT:{struct retro_message_ext *m=data;
         message_level=m->level;
-        if(m->type==RETRO_MESSAGE_TYPE_STATUS && m->msg[0]){assert(m->duration==60000);++progress_messages;}
+        if(m->type==RETRO_MESSAGE_TYPE_STATUS && m->msg[0]){
+            if(m->level==RETRO_LOG_ERROR){assert(m->duration==UINT_MAX && last_status_clear);terminal_active=true;}
+            else {assert(m->duration==60000);++progress_messages;}
+        }
+        if(m->type==RETRO_MESSAGE_TYPE_STATUS){
+            last_status_clear=!m->msg[0];
+            if(last_status_clear){++cleared_messages;terminal_active=false;}
+        }
         if(!extended_messages)return false;
         ++notices;if(m->level==RETRO_LOG_ERROR)++errors;return true;}
     case RETRO_ENVIRONMENT_SET_MESSAGE:{struct retro_message *m=data;
-        if(message_level!=RETRO_LOG_ERROR)assert(m->frames==120 || m->frames==300);
+        if(message_level!=RETRO_LOG_ERROR)assert(m->frames==1 || m->frames==120 || m->frames==300);
+        fallback_lifetime=m->frames;
         ++fallback_messages;++notices;if(message_level==RETRO_LOG_ERROR)++errors;return true;}
     default:return false;
     }
 }
 static void video(const void *p,unsigned w,unsigned h,size_t pitch)
 {
+    if(fallback_lifetime)--fallback_lifetime;
     if(phase() && phase()!=2){assert(p&&w&&h);const uint32_t *first=p,*last=(const uint32_t *)((const uint8_t *)p+(h-1)*pitch);assert(!first[0]&&!last[w-1]);++black_frames;}
 }
 static size_t audio(const int16_t *p,size_t n){
@@ -114,7 +125,7 @@ int main(int argc,char **argv)
     bool (*load)(const struct retro_game_info *);void (*cmos)(uint8_t *);
     LOAD(set_environment,"retro_set_environment");LOAD(init,"retro_init");LOAD(deinit,"retro_deinit");LOAD(set_video,"retro_set_video_refresh");LOAD(set_audio,"retro_set_audio_sample_batch");LOAD(set_poll,"retro_set_input_poll");LOAD(set_input,"retro_set_input_state");LOAD(run,"retro_run");LOAD(reset,"retro_reset");LOAD(unload,"retro_unload_game");LOAD(load,"retro_load_game");LOAD(phase,"arc_test_plan_cmos_phase");LOAD(snapshot,"arc_rpc_test_snapshot");LOAD(cmos,"arc_rpc_test_cmos_snapshot");LOAD(advance,"arc_rpc_test_advance");
     set_environment(environment);init();set_video(video);set_audio(audio);set_poll(poll);set_input(input);
-    const char *mode=argv[5];extended_messages=strcmp(mode,"fallback")!=0;
+    const char *mode=argv[5];extended_messages=strcmp(mode,"fallback") && strcmp(mode,"terminalfallback");
     if(!strcmp(mode,"nodelete")){
         LOAD(rpc_start,"arc_rpc_test_start");LOAD(payload_evidence,"arc_engine_test_cmos_evidence");
         char rom_path[4096];snprintf(rom_path,sizeof(rom_path),"%s/full.rom",system_directory);FILE *f=fopen(rom_path,"rb");assert(f);
@@ -142,7 +153,7 @@ unsigned expected_rate=(unsigned)atoi(argv[6]);
     if(!strcmp(mode,"positive1")){bool (*pacing)(unsigned);LOAD(pacing,"arc_test_plan_cmos_pacing");assert(pacing(1));}
     /* V2 admission now yields black preparation frames. They execute neither
      * the requested guest nor scripted input; semantic refusals are deferred. */
-    if(strcmp(mode,"positive")&&strcmp(mode,"positive1")&&strcmp(mode,"negative")&&strcmp(mode,"reset")&&strcmp(mode,"fallback"))settle(run);
+    if(strcmp(mode,"positive")&&strcmp(mode,"positive1")&&strcmp(mode,"negative")&&strcmp(mode,"reset")&&strcmp(mode,"fallback")&&strcmp(mode,"terminalfallback"))settle(run);
 
     if(!strcmp(mode,"hd")||!strcmp(mode,"hd-frame")||!strcmp(mode,"hd-reload")){
         bool (*stats)(ArcRpcHdStats *);LOAD(stats,"arc_test_plan_hd_stats");
@@ -208,7 +219,16 @@ unsigned expected_rate=(unsigned)atoi(argv[6]);
                 previous=current.elapsed_ns;++generation_frames;
             }
         }
-        if(!strcmp(mode,"negative")){assert(phase()==3&&errors&&!s.active);unsigned old=notices;run();assert(phase()==3&&notices==old);unload();deinit();vfs_assert_no_open_handles();return 0;}
+        if(!strcmp(mode,"negative") || !strcmp(mode,"terminalfallback")){
+            assert(phase()==3&&errors&&!s.active && terminal_active);
+            unsigned old=notices,progress=progress_messages,clears_before=cleared_messages;
+            for(unsigned j=0;j<181;++j){run();assert(terminal_active);if(!extended_messages)assert(fallback_lifetime);}
+            assert(phase()==3 && progress_messages==progress);
+            if(extended_messages)assert(notices==old);else assert(notices>=old+3);
+            reset();assert(!terminal_active && cleared_messages>clears_before && phase()==1);
+            clears_before=cleared_messages;unload();assert(cleared_messages>clears_before && !terminal_active);
+            deinit();vfs_assert_no_open_handles();return 0;
+        }
         assert(phase()==2&&!errors&&generation_frames);snapshot(&s);
         assert(s.now_ns==0&&s.executed==0&&black_frames); /* clean requested session */
         if(!strcmp(mode,"reset"))assert(reset_done);

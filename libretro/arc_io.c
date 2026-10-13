@@ -7,6 +7,75 @@
 #include <string.h>
 
 static struct retro_vfs_interface *arc_io_vfs;
+/* Measurement changes no callback availability or return value. The frontend
+ * and engine are confined to the libretro thread; scopes never nest. */
+static struct retro_vfs_interface *arc_io_measured_vfs,arc_io_measure_proxy;
+static ArcIoMeasurement arc_io_measurement;
+static struct retro_vfs_file_handle * arc_io_measure_open(const char *p,unsigned mode,unsigned hint)
+{ ++arc_io_measurement.operations;if((mode&RETRO_VFS_FILE_ACCESS_WRITE)&&!(mode&RETRO_VFS_FILE_ACCESS_UPDATE_EXISTING))++arc_io_measurement.namespace_operations;return arc_io_measured_vfs->open(p,mode,hint); }
+static int arc_io_measure_close(struct retro_vfs_file_handle *f)
+{ ++arc_io_measurement.operations;return arc_io_measured_vfs->close(f); }
+static int64_t arc_io_measure_size(struct retro_vfs_file_handle *f)
+{ ++arc_io_measurement.operations;return arc_io_measured_vfs->size(f); }
+static int64_t arc_io_measure_tell(struct retro_vfs_file_handle *f)
+{ ++arc_io_measurement.operations;return arc_io_measured_vfs->tell(f); }
+static int64_t arc_io_measure_seek(struct retro_vfs_file_handle *f,int64_t off,int origin)
+{ ++arc_io_measurement.operations;return arc_io_measured_vfs->seek(f,off,origin); }
+static int64_t arc_io_measure_read(struct retro_vfs_file_handle *f,void *p,uint64_t n)
+{ ++arc_io_measurement.operations;arc_io_measurement.bytes+=n;return arc_io_measured_vfs->read(f,p,n); }
+static int64_t arc_io_measure_write(struct retro_vfs_file_handle *f,const void *p,uint64_t n)
+{ ++arc_io_measurement.operations;arc_io_measurement.bytes+=n;return arc_io_measured_vfs->write(f,p,n); }
+static int arc_io_measure_flush(struct retro_vfs_file_handle *f)
+{ ++arc_io_measurement.operations;return arc_io_measured_vfs->flush(f); }
+static int arc_io_measure_remove(const char *p)
+{ ++arc_io_measurement.operations;++arc_io_measurement.namespace_operations;return arc_io_measured_vfs->remove(p); }
+static int arc_io_measure_rename(const char *p,const char *q)
+{ ++arc_io_measurement.operations;++arc_io_measurement.namespace_operations;return arc_io_measured_vfs->rename(p,q); }
+static int32_t arc_io_measure_stat(const char *p,int32_t *n)
+{ ++arc_io_measurement.operations;return arc_io_measured_vfs->stat(p,n); }
+static int arc_io_measure_mkdir(const char *p)
+{ ++arc_io_measurement.operations;++arc_io_measurement.namespace_operations;return arc_io_measured_vfs->mkdir(p); }
+static struct retro_vfs_dir_handle * arc_io_measure_opendir(const char *p,bool hidden)
+{ ++arc_io_measurement.operations;return arc_io_measured_vfs->opendir(p,hidden); }
+static bool arc_io_measure_readdir(struct retro_vfs_dir_handle *d)
+{ ++arc_io_measurement.operations;return arc_io_measured_vfs->readdir(d); }
+static const char * arc_io_measure_dirent_get_name(struct retro_vfs_dir_handle *d)
+{ ++arc_io_measurement.operations;return arc_io_measured_vfs->dirent_get_name(d); }
+static bool arc_io_measure_dirent_is_dir(struct retro_vfs_dir_handle *d)
+{ ++arc_io_measurement.operations;return arc_io_measured_vfs->dirent_is_dir(d); }
+static int arc_io_measure_closedir(struct retro_vfs_dir_handle *d)
+{ ++arc_io_measurement.operations;return arc_io_measured_vfs->closedir(d); }
+static int64_t arc_io_measure_truncate(struct retro_vfs_file_handle *f,int64_t n)
+{ ++arc_io_measurement.operations;return arc_io_measured_vfs->truncate(f,n); }
+void arc_io_measure_begin(void)
+{
+    memset(&arc_io_measurement,0,sizeof(arc_io_measurement));
+    arc_io_measured_vfs=arc_io_vfs;
+    if(!arc_io_vfs)return;
+    arc_io_measure_proxy=*arc_io_vfs;
+    if(arc_io_vfs->open)arc_io_measure_proxy.open=arc_io_measure_open;
+    if(arc_io_vfs->close)arc_io_measure_proxy.close=arc_io_measure_close;
+    if(arc_io_vfs->size)arc_io_measure_proxy.size=arc_io_measure_size;
+    if(arc_io_vfs->tell)arc_io_measure_proxy.tell=arc_io_measure_tell;
+    if(arc_io_vfs->seek)arc_io_measure_proxy.seek=arc_io_measure_seek;
+    if(arc_io_vfs->read)arc_io_measure_proxy.read=arc_io_measure_read;
+    if(arc_io_vfs->write)arc_io_measure_proxy.write=arc_io_measure_write;
+    if(arc_io_vfs->flush)arc_io_measure_proxy.flush=arc_io_measure_flush;
+    if(arc_io_vfs->remove)arc_io_measure_proxy.remove=arc_io_measure_remove;
+    if(arc_io_vfs->rename)arc_io_measure_proxy.rename=arc_io_measure_rename;
+    if(arc_io_vfs->stat)arc_io_measure_proxy.stat=arc_io_measure_stat;
+    if(arc_io_vfs->mkdir)arc_io_measure_proxy.mkdir=arc_io_measure_mkdir;
+    if(arc_io_vfs->opendir)arc_io_measure_proxy.opendir=arc_io_measure_opendir;
+    if(arc_io_vfs->readdir)arc_io_measure_proxy.readdir=arc_io_measure_readdir;
+    if(arc_io_vfs->dirent_get_name)arc_io_measure_proxy.dirent_get_name=arc_io_measure_dirent_get_name;
+    if(arc_io_vfs->dirent_is_dir)arc_io_measure_proxy.dirent_is_dir=arc_io_measure_dirent_is_dir;
+    if(arc_io_vfs->closedir)arc_io_measure_proxy.closedir=arc_io_measure_closedir;
+    if(arc_io_vfs->truncate)arc_io_measure_proxy.truncate=arc_io_measure_truncate;
+    arc_io_vfs=&arc_io_measure_proxy;
+}
+ArcIoMeasurement arc_io_measure_end(void)
+{ arc_io_vfs=arc_io_measured_vfs;arc_io_measured_vfs=NULL;return arc_io_measurement; }
+
 static void (*arc_io_write_observer)(const char *path);
 void arc_io_set_write_observer(void (*observer)(const char *path))
 { arc_io_write_observer = observer; }

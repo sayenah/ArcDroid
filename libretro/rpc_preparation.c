@@ -43,13 +43,17 @@ struct ArcRpcPreparation {
     uint32_t crc,lba;
     size_t verify_at;
     unsigned substep,pacing,notice_frames;
-    bool needs_population,io_pending,have_seed,refusal_reported;
+    bool needs_population,receipted,io_pending,have_seed,refusal_reported;
     ArcRpcPreparationState state;
     const char *status;
     ArcRpcPreparationStats stats;
+    uint64_t costs[ARC_RPC_PREP_CANCELLED][2][ARC_RPC_COST_SAMPLES];
+    unsigned cost_at[ARC_RPC_PREP_CANCELLED][2];
 };
-static const char *status(ArcRpcPreparationState state)
+static const char *status(const ArcRpcPreparation *p)
 {
+    ArcRpcPreparationState state=p->state;
+    if(state>=ARC_RPC_PREP_RECORD && p->receipted) return "Starting RiscPC";
     if (state <= ARC_RPC_PREP_RECOVER) return "Checking the RiscPC hard disc";
     if (state == ARC_RPC_PREP_VALIDATE) return "Checking RiscPC boot files";
     if (state <= ARC_RPC_PREP_SAVE_RECORD) return "Preparing RiscPC settings for first use";
@@ -58,14 +62,14 @@ static const char *status(ArcRpcPreparationState state)
 }
 static void notice(ArcRpcPreparation *p,const char *s,bool terminal)
 { if (p->host.notice) p->host.notice(p->host.opaque,s,terminal); }
-static void refresh(ArcRpcPreparation *p)
+static void refresh(ArcRpcPreparation *p,bool tick)
 {
-    const char *s=status(p->state);
+    const char *s=status(p);
     if (p->state >= ARC_RPC_PREP_RUNNING || p->refusal_reported) return;
-    if (p->status != s || !p->notice_frames) {
+    if (p->status != s || (tick && !p->notice_frames)) {
         notice(p,s,false);p->status=s;p->notice_frames=60;
     }
-    --p->notice_frames;
+    if(tick && p->notice_frames)--p->notice_frames;
 }
 static void snapshot_cmos(uint8_t payload[240])
 {
@@ -97,7 +101,7 @@ static void restart(ArcRpcPreparation *p)
 {
     memset(&p->record,0,sizeof(p->record));memset(&p->defaults,0,sizeof(p->defaults));
     p->state=ARC_RPC_PREP_VERIFY;p->substep=0;p->verify_at=0;p->crc=0;
-    p->lba=0;p->io_pending=false;p->needs_population=false;p->refusal_reported=false;
+    p->lba=0;p->io_pending=false;p->needs_population=p->receipted=false;p->refusal_reported=false;
     p->status=NULL;p->notice_frames=0;p->error[0]=0;
     arc_sha1_init(&p->hash1);arc_sha256_init(&p->hash256);
 }
@@ -189,8 +193,10 @@ static void unit(ArcRpcPreparation *p)
     case ARC_RPC_PREP_VERIFY:{
         size_t take=p->request.firmware_size-p->verify_at;if(take>32768)take=32768;
         const uint8_t *data=p->firmware+p->verify_at;
-        arc_sha1_update(&p->hash1,data,take);arc_sha256_update(&p->hash256,data,take);
-        p->crc=arc_crc32_append(p->crc,data,take);p->verify_at+=take;
+        /* Only resolved/catalogued requests have CRC/SHA-1 to compare. The
+         * explicit low-level entry still derives its complete SHA-256 key. */
+        if(p->request.fingerprint){arc_sha1_update(&p->hash1,data,take);p->crc=arc_crc32_append(p->crc,data,take);}
+        arc_sha256_update(&p->hash256,data,take);p->verify_at+=take;
         if(p->verify_at!=p->request.firmware_size)break;
         char sha1[41];uint8_t sha256[32];arc_sha1_final(&p->hash1,sha1);arc_sha256_final(&p->hash256,sha256);
         const ArcRpcFirmwareFingerprint *f=p->request.fingerprint;
@@ -211,7 +217,7 @@ static void unit(ArcRpcPreparation *p)
         if(o==ARC_RPC_HD_UNSUPPORTED||o==ARC_RPC_HD_CORRUPT||o==ARC_RPC_HD_UNAVAILABLE){failed(p,arc_riscpc_hd_outcome_notice(o));break;}
         if(p->request.populate && o==ARC_RPC_HD_LEGACY){failed(p,"The RiscPC hard disc is without a creation receipt; files have been preserved.");break;}
         if(p->source[0] && o!=ARC_RPC_HD_UNPUBLISHED){failed(p,"RiscPC hd_import refused: published store");break;}
-        p->needs_population=o==ARC_RPC_HD_UNPUBLISHED;
+        p->needs_population=o==ARC_RPC_HD_UNPUBLISHED;p->receipted=o==ARC_RPC_HD_RECEIPTED;
         if(p->request.populate && p->needs_population){
             p->boot=arc_riscpc_boot_begin(p->disc,p->system,p->error,sizeof(p->error));
             if(!p->boot)failed(p,p->error);else p->state=ARC_RPC_PREP_VALIDATE;
@@ -273,8 +279,8 @@ static void unit(ArcRpcPreparation *p)
         if(r==ARC_RPC_CMOS_INSPECTING)break;
         if(r<0){failed(p,p->error);break;}
         if(r==ARC_RPC_CMOS_FOUND){
-            if(p->record.refused){notice(p,p->error,true);p->refusal_reported=true;}
-            memcpy(p->seed+16,p->record.payload,240);after_cmos(p);break;}
+            if(p->record.refused){notice(p,"",false);notice(p,p->error,true);p->refusal_reported=true;p->status=NULL;}
+            memset(p->seed,0,16);memcpy(p->seed+16,p->record.payload,240);after_cmos(p);break;}
         if(p->have_seed){save_record(p,p->seed+16);break;}
         if(p->seed_path[0]){p->substep=1;break;}
         ArcRpcCmosKey k=p->request.key;k.defaults=true;k.procedure=ARC_RPC_CMOS_PROCEDURE_REVISION;k.timing=ARC_RPC_CMOS_TIMING_REVISION;
@@ -329,39 +335,80 @@ static void unit(ArcRpcPreparation *p)
             break;
         }
         ArcIdeBackend ide={0};if(p->disc)arc_riscpc_hd_backend(p->disc,&ide);
-        if(!arc_engine_rpc_attach(p->request.media,p->request.helper,p->disc?&ide:NULL,p->error,sizeof(p->error)) ||
-            (p->host.attach&&!p->host.attach(p->host.opaque,p->error,sizeof(p->error)))){failed(p,p->error);break;}
-        p->state=ARC_RPC_PREP_RUNNING;notice(p,"",false);p->status=NULL;break;
+        arc_io_measure_begin();
+        bool attached=arc_engine_rpc_attach(p->request.media,p->request.helper,p->disc?&ide:NULL,p->error,sizeof(p->error)) &&
+            (!p->host.attach||p->host.attach(p->host.opaque,p->error,sizeof(p->error)));
+        if(!attached)arc_engine_stop(); /* Include partial media cleanup in the census. */
+        ArcIoMeasurement io=arc_io_measure_end();
+        p->stats.attachment_operations=io.operations;p->stats.attachment_bytes=io.bytes;
+        p->stats.attachment_namespace=io.namespace_operations;
+        if(!attached){failed(p,p->error);break;}
+        p->state=ARC_RPC_PREP_RUNNING;if(!p->refusal_reported)notice(p,"",false);p->status=NULL;break;
     }
     default:break;
     }
 }
+/* Recent maxima belong to a state/unit kind and namespace class. Construction
+ * and virtual advances are separate kinds even within GENERATE. Cold admission
+ * uses the ceiling; a valid clock replaces it with the last sixteen costs. */
+static uint64_t estimate(const ArcRpcPreparation *p,unsigned kind,bool ns,uint64_t ceiling)
+{
+    uint64_t cost=0;
+    for(unsigned i=0;i<ARC_RPC_COST_SAMPLES;++i)if(p->costs[kind][ns][i]>cost)cost=p->costs[kind][ns][i];
+    return cost?cost:ceiling;
+}
 ArcRpcPreparationState arc_riscpc_preparation_frame(ArcRpcPreparation *p)
 {
     if(!p || p->state>=ARC_RPC_PREP_RUNNING)return p?p->state:ARC_RPC_PREP_CANCELLED;
-    uint64_t start_ns=p->host.clock(p->host.opaque),used=0,reserved=0;
-    bool generation=p->state==ARC_RPC_PREP_GENERATE;
-    p->stats.steps=p->stats.generation_quanta=0;p->stats.namespace_attempts=0;
-    refresh(p);
+    uint64_t start_ns=p->host.clock(p->host.opaque),previous=start_ns,used=0,reserved=0;
+    bool generation=p->state==ARC_RPC_PREP_GENERATE,namespace_frame=false,faulty=false;
+    p->stats.steps=p->stats.generation_quanta=p->stats.namespace_units=p->stats.attachment_units=0;p->stats.namespace_attempts=0;
+    p->stats.attachment_operations=p->stats.attachment_bytes=p->stats.attachment_namespace=0;
+    p->stats.budget_ns=generation?ARC_RPC_GENERATION_BUDGET_NS:ARC_RPC_PREP_BUDGET_NS;
+    refresh(p,true);
     while(p->state<ARC_RPC_PREP_RUNNING && p->stats.steps<ARC_RPC_PREP_STEPS){
         if((p->state==ARC_RPC_PREP_GENERATE)!=generation)break;
-        bool ns=next_namespace(p);
-        uint64_t budget=generation?ARC_RPC_GENERATION_BUDGET_NS:ns?ARC_RPC_PREP_NAMESPACE_NS:ARC_RPC_PREP_BUDGET_NS;
-        uint64_t cost=generation?ARC_RPC_GENERATION_UNIT_NS:ns?ARC_RPC_PREP_NAMESPACE_NS:ARC_RPC_PREP_UNIT_NS;
-        if(ns && p->stats.steps)break;
-        uint64_t charged=used>reserved?used:reserved;
-        if(charged>budget || cost>budget-charged || (generation && p->stats.generation_quanta>=p->pacing))break;
+        bool ns=next_namespace(p),attachment=p->state==ARC_RPC_PREP_START && p->substep==2;
+        bool advance=generation && p->substep==1;
+        unsigned kind=advance?ARC_RPC_PREP_RUNNING:(unsigned)p->state;
+        uint64_t ceiling=advance?ARC_RPC_GENERATION_UNIT_NS:ns||attachment?ARC_RPC_PREP_NAMESPACE_NS:ARC_RPC_PREP_UNIT_NS;
+        uint64_t budget=generation?ARC_RPC_GENERATION_BUDGET_NS:ns||attachment||namespace_frame?ARC_RPC_PREP_NAMESPACE_NS:ARC_RPC_PREP_BUDGET_NS;
+        uint64_t cost=attachment||faulty?ceiling:estimate(p,kind,ns,ceiling);
+        /* The final frontend attachment is indivisible, may do several file
+         * and namespace callbacks, and never shares a frame with other work. */
+        if(attachment && p->stats.steps)break;
+        uint64_t charged=faulty?(used>reserved?used:reserved):used;
+        if(charged>budget || cost>budget-charged || (advance && p->stats.generation_quanta>=p->pacing))break;
+        /* Leave 2.67 ms for pending presentation and cost variation once a
+         * frame has begun. A cold indivisible advance retains the full 4 T. */
+        if(generation && p->stats.steps && (charged>budget-ARC_RPC_GENERATION_HEADROOM_NS ||
+            cost>budget-ARC_RPC_GENERATION_HEADROOM_NS-charged))break;
         ArcRpcHdStats hd_before={0},hd_after={0};if(p->disc)arc_riscpc_hd_stats(p->disc,&hd_before);
         uint64_t cmos_before=p->record.stats.namespace_operations+p->defaults.stats.namespace_operations;
-        unit(p);++p->stats.steps;reserved+=cost;
+        unit(p);++p->stats.steps;if(ns)++p->stats.namespace_units;reserved+=ceiling;refresh(p,false);
         if(p->disc)arc_riscpc_hd_stats(p->disc,&hd_after);
         uint64_t attempts=hd_after.namespace_operations-hd_before.namespace_operations+
             p->record.stats.namespace_operations+p->defaults.stats.namespace_operations-cmos_before;
-        p->stats.namespace_attempts+=attempts;
-        uint64_t now=p->host.clock(p->host.opaque);used=now>=start_ns?now-start_ns:UINT64_MAX;
-        if(attempts || ns)break;
+        if(attachment){++p->stats.attachment_units;attempts+=p->stats.attachment_namespace;}
+        p->stats.namespace_attempts+=attempts;namespace_frame|=ns||attempts!=0;
+        p->stats.budget_ns=budget;
+        uint64_t now=p->host.clock(p->host.opaque);
+        if(now<previous){
+            faulty=true;used=UINT64_MAX;
+        }else if(now==previous){
+            /* Quantized monotonic clocks often repeat during cheap units.
+             * Keep the estimate, and fall back only if the whole frame has
+             * made no clock progress. A later stuck clock is capped as well. */
+            if(!used)faulty=true;
+        }else{
+            uint64_t actual=now-previous;used=now>=start_ns?now-start_ns:UINT64_MAX;faulty=false;
+            p->costs[kind][ns][p->cost_at[kind][ns]++%ARC_RPC_COST_SAMPLES]=actual<ceiling?actual:ceiling;
+            if(((attempts||advance) && actual>cost) || actual>ceiling){previous=now;break;}
+        }
+        previous=now;
+        if(attachment || (attempts && !ns))break;
     }
-    p->stats.elapsed_ns=used;p->stats.reserved_ns=reserved;++p->stats.frames;
+    p->stats.elapsed_ns=used;p->stats.reserved_ns=faulty?reserved:0;++p->stats.frames;
     if(used>p->stats.max_frame_ns)p->stats.max_frame_ns=used;
     p->stats.state=p->state;return p->state;
 }
