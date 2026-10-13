@@ -64,6 +64,11 @@ static ArcInputState *arc_rpc_input_service; /* Valid only during one protected 
 static bool arc_rpc_input_retire;
 static ArcRpcCapture arc_rpc_capture;
 static uint64_t arc_rpc_capture_deadline;
+static const uint8_t *arc_rpc_start_rom;
+static size_t arc_rpc_start_size,arc_rpc_start_at;
+static uint8_t arc_rpc_start_seed[256];
+static unsigned arc_rpc_start_phase;
+static bool arc_rpc_start_pending,arc_rpc_start_factory;
 static uint64_t arc_rpc_generation;
 uint64_t arc_rpc_session_generation(void) { return arc_rpc_generation; }
 extern uint64_t arc_rpc_cmos_write_evidence(uint8_t mask[32]);
@@ -131,7 +136,7 @@ static void arc_rpc_stop(void)
     closevideo();
     arc_rpc_memory_close();
     arc_rpc_live_allocations = 0;
-    arc_rpc_live = false;
+    arc_rpc_live = false;arc_rpc_start_pending=false;arc_rpc_start_rom=NULL;
     arc_rpc_cpu_idle = false;
 }
 static void arc_rpc_reset_devices(void)
@@ -171,15 +176,15 @@ static void arc_rpc_inject_entry(void)
     }
 #endif
 }
-bool arc_rpc_session_start(ArcRpcModel model, const uint8_t *bytes, size_t size,
-    const uint8_t seed[256], uint64_t epoch, char *failure, size_t failure_size)
+bool arc_rpc_session_start_begin(ArcRpcModel model, const uint8_t *bytes, size_t size,
+    const uint8_t seed[256], uint64_t epoch, bool factory, char *failure, size_t failure_size)
 {
     ArcRpcCalendar calendar;
     arc_rpc_stop();
     arc_rpc_fault = false;
     arc_rpc_fault_text[0] = 0;
     arc_rpc_allocations = 0;
-    if (model >= ARC_RPC_MODEL_COUNT || (int)model < 0 || !bytes || !seed ||
+    if (model >= ARC_RPC_MODEL_COUNT || (int)model < 0 || !bytes || (!factory && !seed) ||
         (size != 2u*1024u*1024u && size != 4u*1024u*1024u && size != 8u*1024u*1024u) ||
         !arc_rpc_calendar(epoch, 0, &calendar)) {
         if (failure && failure_size) snprintf(failure, failure_size, "Invalid RPC model, ROM, CMOS seed or RTC epoch");
@@ -205,15 +210,34 @@ bool arc_rpc_session_start(ArcRpcModel model, const uint8_t *bytes, size_t size,
     memset(&arc_rpc_capture,0,sizeof(arc_rpc_capture));
     arc_rpc_input_retire = false;
     arc_rpc_inject_entry();
-    mem_init();
-    if (!arc_rpc_memory_load_rom(bytes, size)) fatal("ROM admission failed");
-    arc_rpc_cmos_seed(seed);
-    arc_rpc_cmos_set_write_clock(arc_rpc_cmos_clock);
-    arc_rpc_reset_devices();
-    arc_rpc_sound_reset(true);
-    arc_rpc_live = true;
-    ++arc_rpc_generation;
-    if (failure && failure_size) failure[0] = 0;
+    arc_rpc_start_pending=true;arc_rpc_start_factory=factory;
+    arc_rpc_start_rom=bytes;arc_rpc_start_size=size;arc_rpc_start_at=0;arc_rpc_start_phase=0;
+    if(factory)memset(arc_rpc_start_seed,0,256);else memcpy(arc_rpc_start_seed,seed,256);
+    if(failure&&failure_size)*failure=0;return true;
+}
+bool arc_rpc_session_start_step(bool *done,char *failure,size_t failure_size)
+{
+    *done=false;
+    if(!arc_rpc_start_pending)return false;
+    if(setjmp(arc_rpc_jump)){
+        arc_rpc_stop();if(failure&&failure_size)snprintf(failure,failure_size,"%s",arc_rpc_fault_text);return false;
+    }
+    arc_rpc_inject_entry();
+    if(!arc_rpc_memory_prepare(arc_rpc_start_rom,arc_rpc_start_size,&arc_rpc_start_phase,&arc_rpc_start_at))return true;
+    arc_rpc_cmos_seed(arc_rpc_start_seed);
+    arc_rpc_cmos_set_write_clock(arc_rpc_cmos_clock);arc_rpc_reset_devices();arc_rpc_sound_reset(true);
+    if(arc_rpc_start_factory){
+        arc_rpc_capture.state=ARC_RPC_CAPTURE_RUNNING;arc_rpc_capture_deadline=UINT64_C(30000000000);
+        arc_rpc_input_factory(true);
+    }
+    arc_rpc_start_pending=false;arc_rpc_start_rom=NULL;arc_rpc_live=true;++arc_rpc_generation;*done=true;
+    if(failure&&failure_size)*failure=0;return true;
+}
+bool arc_rpc_session_start(ArcRpcModel model,const uint8_t *bytes,size_t size,
+    const uint8_t seed[256],uint64_t epoch,char *failure,size_t failure_size)
+{
+    if(!arc_rpc_session_start_begin(model,bytes,size,seed,epoch,false,failure,failure_size))return false;
+    bool done=false;while(!done)if(!arc_rpc_session_start_step(&done,failure,failure_size))return false;
     return true;
 }
 bool arc_rpc_session_factory_start(ArcRpcModel model,const uint8_t *bytes,size_t size,
@@ -380,6 +404,8 @@ static bool arc_rpc_advance_internal(uint64_t elapsed_ns, bool stop_at_field)
 
 
 
+bool arc_rpc_session_advance(uint64_t ns) { return arc_rpc_advance_internal(ns, false); }
+
 static ArcEngineCapabilities arc_rpc_capabilities(void)
 {
     return (ArcEngineCapabilities){ .av = true, .keyboard = true, .mouse = true, .reset = true, .floppy = true, .helper = true, .ide = true };
@@ -502,7 +528,7 @@ RETRO_API void arc_rpc_test_video_status(ArcRpcVideoStatus *out) { if(out)arc_rp
 RETRO_API uint64_t arc_rpc_test_video_bus_ns(void) { return arc_rpc_bus_ns; }
 RETRO_API void arc_rpc_test_fail_alloc(unsigned stage) { arc_rpc_fail_alloc=stage; }
 RETRO_API void arc_rpc_test_fault_next(void) { arc_rpc_fail_entry=true; }
-RETRO_API bool arc_rpc_test_advance(uint64_t ns) { return arc_rpc_advance_internal(ns,false); }
+RETRO_API bool arc_rpc_test_advance(uint64_t ns) { return arc_rpc_session_advance(ns); }
 RETRO_API void arc_rpc_test_snapshot(ArcRpcTestSnapshot *out)
 {
     if(!out)return;

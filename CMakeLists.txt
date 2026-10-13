@@ -149,6 +149,7 @@ set(ARCDROID_LIBRETRO_SOURCES
   libretro/install_store.c
   libretro/rpc_hd_store.c
   libretro/rpc_cmos_store.c
+  libretro/rpc_preparation.c
   libretro/rpc_boot_zip.c
   libretro/rpc_boot.c
   libretro/arcdroid_libretro.c
@@ -2286,21 +2287,60 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
   if(ARCDROID_SANITIZERS)
     target_link_libraries(rpc_cmos_plan_test PRIVATE arcdroid_sanitizer_compile arcdroid_sanitizer_link)
   endif()
+  set(RPC_CMOS_PLAN_PROFILE full)
+  add_test(NAME rpc-hd-notices COMMAND "${Python3_EXECUTABLE}" -B
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_hd_notices_test.py"
+    $<TARGET_FILE:rpc_cmos_plan_test> $<TARGET_FILE:arcdroid_rpcplan_libretro>)
+  set_tests_properties(rpc-hd-notices PROPERTIES TIMEOUT 180)
+  if(ARCDROID_SANITIZERS)
+    set(RPC_CMOS_PLAN_PROFILE sanitizer)
+  endif()
   foreach(model RANGE 0 3)
     add_test(NAME rpc-cmos-seed-${model} COMMAND "${Python3_EXECUTABLE}" -B
       "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_cmos_seed_plan_test.py" $<TARGET_FILE:rpc_cmos_plan_test>
       $<TARGET_FILE:arcdroid_rpcplan_libretro> ${model})
     set_tests_properties(rpc-cmos-seed-${model} PROPERTIES TIMEOUT 180)
-    foreach(case full ro350 empty scatter incomplete late reset nodelete writer delayed badchecksum)
+    foreach(case full ro350 empty scatter incomplete late reset nodelete writer delayed badchecksum fallback terminalfallback)
       add_test(NAME rpc-cmos-plan-${model}-${case} COMMAND "${Python3_EXECUTABLE}"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_cmos_plan_test.py" $<TARGET_FILE:rpc_cmos_plan_test>
         $<TARGET_FILE:arcdroid_rpcplan_libretro> $<TARGET_FILE:rpc_runner>
-        $<TARGET_FILE:arcdroid_libretro> "${FIXTURE_DIR}" ${model} ${case})
+        $<TARGET_FILE:arcdroid_libretro> "${FIXTURE_DIR}" ${model} ${case} ${RPC_CMOS_PLAN_PROFILE})
+      set_tests_properties(rpc-cmos-plan-${model}-${case} PROPERTIES TIMEOUT 900)
     endforeach()
   endforeach()
 endif()
 
 if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
+  # Same shipping sources/objects, with neither plan nor fault definitions.
+  add_executable(rpc_orchestration_test tests/rpc_orchestration_test.c
+    ${ARCDROID_LIBRETRO_SOURCES}
+    $<TARGET_OBJECTS:arcdroid_libretro_arculator> $<TARGET_OBJECTS:arcdroid_libretro_rpc>)
+  target_include_directories(rpc_orchestration_test PRIVATE core engine platform libretro
+    libretro/include third_party/zlib tests)
+  target_compile_definitions(rpc_orchestration_test PRIVATE RELEASE_BUILD=1)
+  target_compile_options(rpc_orchestration_test PRIVATE -UNDEBUG -Wall -Wextra -fno-strict-aliasing)
+  target_link_libraries(rpc_orchestration_test PRIVATE arcdroid_core)
+  if(UNIX)
+    target_link_libraries(rpc_orchestration_test PRIVATE m)
+  endif()
+  if(ARCDROID_SANITIZERS)
+    target_link_libraries(rpc_orchestration_test PRIVATE arcdroid_sanitizer_compile arcdroid_sanitizer_link)
+  endif()
+  set(RPC_ORCHESTRATION_PROFILE full)
+  if(ARCDROID_SANITIZERS)
+    set(RPC_ORCHESTRATION_PROFILE sanitizer)
+  endif()
+  add_test(NAME rpc-session-orchestration COMMAND "${Python3_EXECUTABLE}" -B
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_orchestration_test.py"
+    $<TARGET_FILE:rpc_orchestration_test> "${CMAKE_CURRENT_BINARY_DIR}/tests/fixtures/generated"
+    ${RPC_ORCHESTRATION_PROFILE})
+  set_tests_properties(rpc-session-orchestration PROPERTIES TIMEOUT 300 RUN_SERIAL TRUE)
+  if(NOT ARCDROID_SANITIZERS)
+    add_test(NAME rpc-orchestration-mutants COMMAND "${Python3_EXECUTABLE}" -B
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_orchestration_mutants.py"
+      "${CMAKE_CURRENT_BINARY_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}" "${FIXTURE_DIR}")
+    set_tests_properties(rpc-orchestration-mutants PROPERTIES TIMEOUT 300 RUN_SERIAL TRUE)
+  endif()
   add_executable(rpc_preparation_test tests/rpc_preparation_test.c libretro/rpc_hd_store.c libretro/install_store.c libretro/arc_io.c)
   target_include_directories(rpc_preparation_test PRIVATE core engine libretro libretro/include)
   target_link_libraries(rpc_preparation_test PRIVATE arcdroid_core)
@@ -2428,10 +2468,14 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_hd_retroarch_test.py"
     $<TARGET_FILE:rpc_runner> $<TARGET_FILE:arcdroid_rpcplan_libretro> "${RPC_HD_RETROARCH_DIR}")
   set_tests_properties(rpc-hd-retroarch-guest PROPERTIES TIMEOUT 600)
+  set(RPC_HD_COST_PROFILE)
+  if(ARCDROID_SANITIZERS)
+    list(APPEND RPC_HD_COST_PROFILE --sanitizer)
+  endif()
   add_test(NAME rpc-hd-cost-report COMMAND "${Python3_EXECUTABLE}" -B
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_hd_cost_test.py"
     $<TARGET_FILE:rpc_runner> $<TARGET_FILE:arcdroid_rpcplan_libretro> "${RPC_HD_RETROARCH_DIR}"
-    "${CMAKE_CURRENT_SOURCE_DIR}/tools/check-rpc-hd-cost.py")
+    "${CMAKE_CURRENT_SOURCE_DIR}/tools/check-rpc-hd-cost.py" ${RPC_HD_COST_PROFILE})
   set_tests_properties(rpc-hd-cost-report PROPERTIES TIMEOUT 600)
   add_test(NAME rpc-boot-plan COMMAND "${Python3_EXECUTABLE}" -B
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_boot_plan_test.py"

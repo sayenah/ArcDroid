@@ -46,7 +46,7 @@ static struct { uint64_t frame; const char *path; bool written; } dumps[DUMP_LIM
 static unsigned dump_count, dump_width, dump_height;
 static uint64_t runner_frame;
 static uint32_t *dump_pixels;
-static bool dump_failed;
+static bool dump_failed,runner_preparing;
 static void dump_video(const void *data, unsigned width, unsigned height, size_t pitch)
 {
     if (!dump_count) return;
@@ -115,6 +115,7 @@ static bool environment(unsigned command, void *data)
 }
 static void video(const void *data, unsigned width, unsigned height, size_t pitch)
 {
+    if(runner_preparing)return;
     dump_video(data, width, height, pitch);
     if (!data) return;
     raster_hash = UINT64_C(14695981039346656037);
@@ -128,6 +129,7 @@ static void video(const void *data, unsigned width, unsigned height, size_t pitc
 }
 static size_t audio(const int16_t *data, size_t frames)
 {
+    if(runner_preparing)return frames;
     for (size_t i = 0; i < frames*2; ++i) {
         hash_byte(&pcm_hash, (uint16_t)data[i]); hash_byte(&pcm_hash, (uint16_t)data[i] >> 8);
         if(pcm_frames+i/2<480) {
@@ -160,7 +162,7 @@ int main(int argc, char **argv)
     /* Canonical traces use the same LF bytes on every platform. */
     if (_setmode(_fileno(stdout), _O_BINARY) == -1) return 2;
 #endif
-    const char *core = NULL, *plan = NULL, *pacing = "flat", *timing_path = NULL, *capture_path = NULL, *hd_cost_path = NULL;
+    const char *core = NULL, *plan = NULL, *pacing = "flat", *timing_path = NULL, *capture_path = NULL, *hd_cost_path = NULL, *preparation_path=NULL;
     uint64_t frames = 1, warmup = 0, measure = 0, ram_offset = 0, ram_count = 0, reset_at = UINT64_MAX;
     bool reject = false, print_cmos = false;
     uint64_t fail_alloc = 0, fault_at = UINT64_MAX;
@@ -199,6 +201,7 @@ int main(int argc, char **argv)
             if(strcmp(v,"retroarch")&&strcmp(v,"fsync"))goto usage;
             vfs_flush_fsync=!strcmp(v,"fsync");
         }
+        else if (!strcmp(key,"--preparation-timing")) preparation_path=v;
         else if (!strcmp(key,"--capture-seed")) capture_path = v;
         else if (!strcmp(key,"--frames")) { if (!unsigned_number(v,1000000,&frames) || !frames) goto usage; }
         else if (!strcmp(key,"--warmup-seconds")) { if (!unsigned_number(v,3600,&warmup)) goto usage; }
@@ -245,6 +248,29 @@ int main(int argc, char **argv)
     unsigned (*plan_phase)(void)=NULL;
     void *phase_symbol=symbol("arc_test_plan_cmos_phase");if(phase_symbol)memcpy(&plan_phase,&phase_symbol,sizeof(plan_phase));
     if(plan_phase && plan_phase() && (print_cmos || capture_path)) {fprintf(stderr,"Persistent CMOS is never exported as bytes\n");unload();deinit(); vfs_assert_no_open_handles();return 2;}
+    /* Requested frame ordinals are independent of preparation batching. The
+     * separate CSV includes each complete preparation retro_run, including
+     * presentation callbacks, notices and state-transition work. */
+    FILE *prep=preparation_path?fopen(preparation_path,"w"):NULL;
+    if(preparation_path&&!prep){unload();deinit();vfs_assert_no_open_handles();return 2;}
+    void (*prep_stats)(ArcRpcPreparationStats *)=NULL;
+    if(prep){LOAD(prep_stats,"arc_test_plan_preparation_stats");
+        fputs("frame,core_ns,whole_ns,state,steps,reserved_ns,namespace_attempts,generation_quanta,budget_ns,attachment_operations,attachment_bytes,attachment_namespace\n",prep);}
+    runner_preparing=true;
+    for(unsigned pending=0;plan_phase && plan_phase()==1;++pending){
+        if(pending>=100000){if(prep)fclose(prep);unload();deinit();vfs_assert_no_open_handles();return 1;}
+        uint64_t before=arc_test_clock_ns();run();uint64_t whole=arc_test_clock_ns()-before;
+        if(prep){ArcRpcPreparationStats s={0};prep_stats(&s);
+            fprintf(prep,"%u,%" PRIu64 ",%" PRIu64 ",%u,%u,%" PRIu64 ",%" PRIu64 ",%u,%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 "\n",
+                pending,frame_ns(),whole,(unsigned)s.state,s.steps,s.reserved_ns,s.namespace_attempts,s.generation_quanta,s.budget_ns,s.attachment_operations,s.attachment_bytes,s.attachment_namespace);}
+    }
+    runner_preparing=false;
+    if(prep)fclose(prep);
+    if(plan_phase && plan_phase()==3){unload();deinit();vfs_assert_no_open_handles();return 1;}
+    /* Pending black/silent frames are tested separately; requested goldens use
+     * exactly the baseline counters and input frame-zero boundary. */
+    pcm_hash=pcm_prefix_hash=UINT64_C(14695981039346656037);pcm_frames=0;
+    first_raster_hash=raster_hash=0;video_calls=0;raster_width=raster_height=0;
     if (dump_count) {
         dump_pixels = malloc(DUMP_SIDE * DUMP_SIDE * sizeof(uint32_t));
         if (!dump_pixels) { unload(); deinit(); vfs_assert_no_open_handles(); return 2; }
@@ -382,6 +408,6 @@ int main(int argc, char **argv)
 #endif
     return (int)result;
 usage:
-    fputs("rpc_runner --core LIB --plan FILE [--system DIR] [--save DIR] [--frames N | --warmup-seconds 120 --measure-seconds 600] [--pacing flat|burst|realtime] [--disk-writes off|shadow|original] [--jfd-policy as-imaged|off] [--jfd-policy-at FRAME VALUE] [--disk-writes-at FRAME VALUE] [--jfd-omitted strict|file-data] [--timing CSV] [--hd-cost CSV] [--vfs-flush retroarch|fsync] [--dump-frame N FILE.ppm ...] [--capture-seed FILE] [--ram-offset N --ram-words N] [--reset-at N] [--cmos] [--fail-alloc 1..5] [--fault-at N] [--reject]\n",stderr);
+    fputs("rpc_runner --core LIB --plan FILE [--system DIR] [--save DIR] [--frames N | --warmup-seconds 120 --measure-seconds 600] [--pacing flat|burst|realtime] [--disk-writes off|shadow|original] [--jfd-policy as-imaged|off] [--jfd-policy-at FRAME VALUE] [--disk-writes-at FRAME VALUE] [--jfd-omitted strict|file-data] [--timing CSV] [--hd-cost CSV] [--preparation-timing CSV] [--vfs-flush retroarch|fsync] [--dump-frame N FILE.ppm ...] [--capture-seed FILE] [--ram-offset N --ram-words N] [--reset-at N] [--cmos] [--fail-alloc 1..5] [--fault-at N] [--reject]\n",stderr);
     return 2;
 }

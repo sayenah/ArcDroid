@@ -110,4 +110,23 @@ void arc_engine_cmos(uint8_t output[ARC_CMOS_PAYLOAD_SIZE]);
 bool arc_engine_faulted(const char **message);
 bool arc_engine_active(void);
 
+/* Dormant resolved RPC operations. Begin copies the CMOS seed and borrows
+ * ROM bytes through start-step completion; synchronous start copies before
+ * return. No instructions run until run_frame/advance. Media backing and IDE
+ * opaque stay borrowed until stop. Failed construction or combined final
+ * attachment stops/detaches partial ownership; a per-drive mount failure only
+ * empties that drive, preserving the running-session insertion contract. */
+bool arc_engine_rpc_start_begin(unsigned,const uint8_t *,size_t,const uint8_t[256],uint64_t,bool,char *,size_t);
+bool arc_engine_rpc_start_step(bool *,char *,size_t);
+bool arc_engine_rpc_start(unsigned model, const uint8_t *rom, size_t size,
+    const uint8_t seed[256], uint64_t epoch, bool factory, char *, size_t);
+bool arc_engine_rpc_attach(const ArcEngineMedia *media, const ArcEngineMedia *helper,
+    const ArcIdeBackend *ide, char *, size_t);
+bool arc_engine_rpc_ide(const ArcIdeBackend *ide);
+bool arc_engine_rpc_mount(unsigned drive, const ArcEngineMedia *, char *, size_t);
+void arc_engine_rpc_eject(unsigned drive);
+bool arc_engine_rpc_capture_schedule(uint64_t deadline_ns, uint64_t delete_ns);
+bool arc_engine_rpc_advance(uint64_t ns);
+void arc_engine_rpc_evidence(uint8_t bytes[256], uint8_t mask[32], uint64_t *writes,
+    uint64_t *last, uint64_t *now, unsigned *state);
 #endif

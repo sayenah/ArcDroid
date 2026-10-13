@@ -106,6 +106,43 @@ void mem_init(void)
     mem_reset(config.mem_size, config.vram_size);
 }
 
+/* ArcDroid modification (2026-10-13, session-preparation-r3b2b):
+ * suspended construction owns allocations immediately, never executes guest
+ * code, and produces exactly mem_init + memory_load_rom's final bytes. */
+bool arc_rpc_memory_prepare(const uint8_t *bytes,size_t size,unsigned *phase,size_t *at)
+{
+    switch(*phase){
+    case 0:
+        rom=arc_rpc_alloc(ROMSIZE);if(!rom)fatal("ROM allocation failed");romb=(uint8_t *)rom;break;
+    case 1:
+        ram00=arc_rpc_alloc(32u*1024u*1024u);if(!ram00)fatal("RAM bank 0 allocation failed");ramb00=(uint8_t *)ram00;break;
+    case 2:
+        ram01=arc_rpc_alloc(32u*1024u*1024u);if(!ram01)fatal("RAM bank 1 allocation failed");ramb01=(uint8_t *)ram01;break;
+    case 3:
+        if(config.vram_size){vram=arc_rpc_alloc(2u*1024u*1024u);if(!vram)fatal("VRAM allocation failed");vramb=(uint8_t *)vram;}break;
+    case 4:case 5:case 6:{
+        uint8_t *data=*phase==4?ramb00:*phase==5?ramb01:vramb;
+        size_t total=*phase==6?(config.vram_size?2u*1024u*1024u:0):32u*1024u*1024u;
+        size_t take=total-*at;if(take>1048576)take=1048576;
+        if(take)memset(data+*at,0,take);*at+=take;
+        if(*at<total)return false;
+        *at=0;break;
+    }
+    case 7:{
+        size_t offset=*at%size,take=32768;
+        if(take>size-offset)take=size-offset;
+        if(take>ROMSIZE-*at)take=ROMSIZE-*at;
+        memcpy(romb+*at,bytes+offset,take);*at+=take;
+        if(*at<ROMSIZE)return false;
+        *at=0;mem_rammask=32u*1024u*1024u-1u;
+        mem_vrammask=config.vram_size?2u*1024u*1024u-1u:0;
+        phys_space_mask=0x1fffffffu;break;
+    }
+    default:return true;
+    }
+    ++*phase;return false;
+}
+
 void mem_reset(uint32_t ramsize, uint32_t vram_size)
 {
     if (ramsize != 64 || vram_size != config.vram_size || !rom ||

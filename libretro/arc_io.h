@@ -10,6 +10,12 @@ typedef bool (*ArcIoVisit)(const char *path, void *opaque);
 typedef bool (*ArcIoDirectoryVisit)(const char *name, bool regular_file,
                                     void *opaque);
 typedef struct ArcIoFile ArcIoFile;
+/* Single-threaded scoped census of actual VFS callbacks, including failures.
+ * Used only around the indivisible final preparation attachment. Byte counts
+ * are requested read/write lengths, including failed or partial transfers. */
+typedef struct { uint64_t operations, namespace_operations, bytes; } ArcIoMeasurement;
+void arc_io_measure_begin(void);
+ArcIoMeasurement arc_io_measure_end(void);
 
 void arc_io_set_vfs(struct retro_vfs_interface *vfs);
 bool arc_io_set_memory_source(unsigned slot, const void *data, size_t size);

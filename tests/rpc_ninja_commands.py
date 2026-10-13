@@ -4,7 +4,32 @@ Windows uses the MS C-runtime rules documented by subprocess.list2cmdline:
 backslashes are literal except immediately before a double quote. POSIX
 shlex with escapes disabled loses the quotes in Ninja's -DNAME=\"value\".
 """
+import ntpath
+from pathlib import Path
 import shlex
+
+def same_path(a, b, build, windows=False):
+    if windows:
+        def canonical(p):
+            return ntpath.normcase(ntpath.normpath(ntpath.join(str(build),str(p))))
+    else:
+        def canonical(p):return (Path(build)/p).resolve()
+    return canonical(a)==canonical(b)
+
+def rebuild_commands(commands, source, target, build, windows=False):
+    # Split CMake's cd/link/post-build wrappers before decoding argv, as the
+    # QA rebuild scripts do. Compare parsed paths, not raw command spelling.
+    rows=[split_command(segment.strip(),windows) for command in commands
+          for segment in command.split('&&') if ' -o ' in segment]
+    compile=next((r for r in rows if '-c' in r and '-o' in r and
+        same_path(r[r.index('-c')+1],source,build,windows) and
+        f'{target}.dir/' in r[r.index('-o')+1].replace('\\','/')),None)
+    if compile is None:raise RuntimeError(f'No {target} compile command for {source}')
+    obj=compile[compile.index('-o')+1]
+    link=next((r for r in rows if '-c' not in r and '-o' in r and
+        any(same_path(x,obj,build,windows) for x in r if x.lower().endswith(('.o','.obj')))),None)
+    if link is None:raise RuntimeError(f'No {target} link command for {obj}')
+    return compile,link
 
 def split_command(command, windows=False):
     if not windows:

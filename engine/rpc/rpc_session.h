@@ -14,12 +14,15 @@ typedef struct {
     ArcRpcCaptureState state; uint64_t elapsed_ns, writes;
     bool delete_held; uint8_t bytes[256], written[32];
 } ArcRpcCapture;
+bool arc_rpc_session_start_begin(ArcRpcModel,const uint8_t *,size_t,const uint8_t[256],uint64_t,bool,char *,size_t);
+bool arc_rpc_session_start_step(bool *,char *,size_t);
 bool arc_rpc_session_factory_start(ArcRpcModel model, const uint8_t *rom, size_t size,
     uint64_t epoch, char *error, size_t error_size);
 void arc_rpc_capture_status(ArcRpcCapture *out);
 bool arc_rpc_session_capture_schedule(uint64_t deadline_ns, uint64_t delete_ns);
 uint64_t arc_rpc_session_generation(void);
-/* Never included by shipping frontend launch code. */
+bool arc_rpc_session_advance(uint64_t elapsed_ns);
+/* Resolved construction; ordinary frontend policy remains outside this API. */
 bool arc_rpc_session_start(ArcRpcModel model, const uint8_t *rom, size_t size,
     const uint8_t seed[256], uint64_t epoch, char *error, size_t error_size);
 #if defined(ARCDROID_TEST_FAULTS)

@@ -87,12 +87,14 @@ static uint32_t arc_crc32_portable(const void *data, size_t size)
    return ~crc;
 }
 
-typedef struct {
-   uint32_t state[5];
-   uint64_t length;
-   uint8_t block[64];
-   size_t used;
-} ArcSha1;
+uint32_t arc_crc32_append(uint32_t crc, const void *data, size_t size)
+{
+   const uint8_t *bytes = data;
+   crc = ~crc;
+   for (size_t i = 0; i < size; ++i)
+      crc = table[(crc ^ bytes[i]) & 255u] ^ (crc >> 8);
+   return ~crc;
+}
 
 static void arc_sha1_transform(ArcSha1 *ctx, const uint8_t block[64])
 {
@@ -121,7 +123,7 @@ static void arc_sha1_transform(ArcSha1 *ctx, const uint8_t block[64])
    ctx->state[3] += d; ctx->state[4] += e;
 }
 
-static void arc_sha1_update(ArcSha1 *ctx, const uint8_t *data, size_t size)
+void arc_sha1_update(ArcSha1 *ctx, const uint8_t *data, size_t size)
 {
    ctx->length += (uint64_t)size * 8u;
    while (size)
@@ -138,13 +140,16 @@ static void arc_sha1_update(ArcSha1 *ctx, const uint8_t *data, size_t size)
    }
 }
 
-void arc_sha1_hex(const void *data, size_t size, char output[41])
+void arc_sha1_init(ArcSha1 *ctx)
 {
-   static const char hex[] = "0123456789abcdef";
-   ArcSha1 ctx = {{UINT32_C(0x67452301), UINT32_C(0xefcdab89),
+   *ctx = (ArcSha1){{UINT32_C(0x67452301), UINT32_C(0xefcdab89),
                    UINT32_C(0x98badcfe), UINT32_C(0x10325476),
                    UINT32_C(0xc3d2e1f0)}, 0u, {0}, 0u};
-   arc_sha1_update(&ctx, (const uint8_t *)data, size);
+}
+void arc_sha1_final(const ArcSha1 *source, char output[41])
+{
+   static const char hex[] = "0123456789abcdef";
+   ArcSha1 ctx = *source;
    ctx.block[ctx.used++] = 0x80u;
    if (ctx.used > 56u)
    {
@@ -163,6 +168,12 @@ void arc_sha1_hex(const void *data, size_t size, char output[41])
       output[i * 2u + 1u] = hex[byte & 15u];
    }
    output[40] = '\0';
+}
+
+void arc_sha1_hex(const void *data, size_t size, char output[41])
+{
+   ArcSha1 ctx; arc_sha1_init(&ctx);
+   arc_sha1_update(&ctx, data, size); arc_sha1_final(&ctx, output);
 }
 
 ArcDigest arc_digest(const void *data, size_t size)

@@ -9,7 +9,8 @@ import tempfile
 import zlib
 sys.dont_write_bytecode=True
 from rpc_cmos_factory_rom import generate
-exe,core,runner,shipping,fixtures,model,kind=sys.argv[1:]
+exe,core,runner,shipping,fixtures,model,kind=sys.argv[1:8]
+profile=sys.argv[8] if len(sys.argv)>8 else "full"
 model=int(model);rates=[20,35,100,35];models=['arm610','arm710','sa110','arm7500']
 
 def record(path,magic,firmware,content=None):
@@ -25,7 +26,7 @@ with tempfile.TemporaryDirectory(prefix='arc-rpc-cmos-') as tmp:
     layout='ro350' if kind=='ro350' else 'ro370'
     # Reset interrupts the full-mask guest; there is no reset.rom. Construct
     # the intended basename directly, independent of native path separators.
-    firmware=roms/(('full' if kind=='reset' else kind)+'.rom')
+    firmware=roms/(('full' if kind in ('reset','fallback') else 'empty' if kind=='terminalfallback' else kind)+'.rom')
     text=f'version=2\nmodel={models[model]}\nfirmware={firmware}\ncmos=persist\ncmos_layout={layout}\ncontent_id={"a"*40}\nrtc_epoch=946684800\n'
     plan=d/'test.arcplan';plan.write_text(text)
     def run(mode='positive'):
@@ -55,9 +56,13 @@ with tempfile.TemporaryDirectory(prefix='arc-rpc-cmos-') as tmp:
         run('refused');assert target.read_bytes()==b and corrupt.read_bytes()==b'ARCCMOS2'+bytes(504)
     elif kind=='nodelete':
         run('nodelete');assert not list(save.rglob('*.0')) and not list(save.rglob('*.1'))
+    elif kind=='fallback':
+        run('fallback')
+    elif kind=='terminalfallback':
+        run('terminalfallback');assert not list(save.rglob('*.0')) and not list(save.rglob('*.1'))
     elif kind=='reset':
         run('reset')
-        assert not list(save.rglob('*.0')) and not list(save.rglob('*.1'))
+        assert list(save.rglob('*.1')), 'preparation reset must restart and publish'
     elif kind in ['empty','scatter','incomplete','late','badchecksum']:
         run('negative');assert not list(save.rglob('*.0')) and not list(save.rglob('*.1'))
     else:
@@ -75,20 +80,22 @@ with tempfile.TemporaryDirectory(prefix='arc-rpc-cmos-') as tmp:
         assert b[416:448]==mask and b[448:480]==hashlib.sha256(expected).digest() and not any(b[480:508])
         ordinary=record(slots[0],b'ARCRPCM1',roms/(kind+'.rom'),'a'*40)
         assert ordinary[104:344]==expected and not any(ordinary[344:508])
-        # Identical firmware/model/content/epoch and procedure at one versus
-        # eight frames per call must produce the entire same default record.
-        original_save=save;save=d/'save-one';save.mkdir();run('positive1')
-        one=list((save/'arcdroid/cmos-riscpc/defaults').glob('*.1'))
-        assert len(one)==1 and one[0].read_bytes()==b
-        save=original_save
-        # A distinct content/plan epoch reuses exactly this cache; a fresh
-        # save at that epoch also independently generates identical bytes.
-        other_text=text.replace('a'*40,'d'*40).replace('rtc_epoch=946684800','rtc_epoch=1234567890')
-        plan.write_text(other_text);run('cache');assert defaults[0].read_bytes()==b
-        original_save=save;save=d/'save-epoch';save.mkdir();run()
-        epoch_defaults=list((save/'arcdroid/cmos-riscpc/defaults').glob('*.1'))
-        assert len(epoch_defaults)==1 and epoch_defaults[0].read_bytes()==b
-        save=original_save;plan.write_text(text)
+        if profile=="full":
+            # Identical firmware/model/content/epoch and procedure at one versus
+            # eight frames per call must produce the entire same default record.
+            original_save=save;save=d/'save-one';save.mkdir();run('positive1')
+            one=list((save/'arcdroid/cmos-riscpc/defaults').glob('*.1'))
+            assert len(one)==1 and one[0].read_bytes()==b
+            save=original_save
+            # A distinct content/plan epoch reuses exactly this cache; a fresh
+            # save at that epoch also independently generates identical bytes.
+            other_text=text.replace('a'*40,'d'*40).replace('rtc_epoch=946684800','rtc_epoch=1234567890')
+            plan.write_text(other_text);run('cache');assert defaults[0].read_bytes()==b
+            original_save=save;save=d/'save-epoch';save.mkdir();run()
+            epoch_defaults=list((save/'arcdroid/cmos-riscpc/defaults').glob('*.1'))
+            assert len(epoch_defaults)==1 and epoch_defaults[0].read_bytes()==b
+            save=original_save;plan.write_text(text)
+
         original=slots[0].read_bytes();run('record');assert slots[0].read_bytes()==original
         # The same frontend switches through real Arculator persistence.
         import shutil

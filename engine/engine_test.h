@@ -6,6 +6,7 @@
 #include "libretro.h"
 /* Model order: ARM610, ARM710, SA-110, ARM7500. Rate zero selects the
  * accepted model default; explicit overrides are 1..100 MIPS. */
+void arc_engine_test_plan_rate(unsigned);
 bool arc_engine_test_plan_start(unsigned model, unsigned rate, bool factory,
     const uint8_t *rom, size_t size, const uint8_t seed[256], uint64_t epoch,
     char *error, size_t error_size);
@@ -21,5 +22,6 @@ void arc_engine_test_plan_input_ready(void);
 RETRO_API uint64_t arc_engine_test_frame_ns(void);
 RETRO_API bool arc_engine_test_ide_backend(const ArcIdeBackend *backend);
 void arc_engine_test_frame_add_ns(uint64_t elapsed);
+void arc_engine_test_frame_begin(void);
 #endif
 #endif

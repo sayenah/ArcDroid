@@ -4,6 +4,8 @@ from pathlib import Path
 import re,subprocess,sys,tempfile
 compiler,core,root=sys.argv[1:4];root=Path(root).resolve()
 mutants=[
+ ('truncate-stat-disagrees','hd','if(!size(s,leaf,&n)||n!=s->lengths[s->open_at])return recovered_read_only(s);','if(!size(s,leaf,&n)||n!=s->lengths[s->open_at])return open_failure(s,ARC_RPC_HD_UNAVAILABLE);'),
+ ('oversized-length-opaque','hd','!memcmp(prefix,"ARCRHDM1",8)&&n!=get(prefix+12,4)','false'),
  ('receipt-future','hd','get(r+8,4)!=1','false'),
  ('populator-future','hd','get(r+12,4)!=1','false'),
  ('authored-future','hd','get(r+16,4)!=1','false'),

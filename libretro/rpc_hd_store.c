@@ -72,7 +72,7 @@ struct ArcRpcHdStore {
     bool population_changed[ARC_RPC_HD_CHUNKS];
     ArcRpcHdState state;
     char base[1024], content[41], io_leaf[23], diagnostic[192];
-    const char *notice, *io_operation; bool diagnostic_pending;
+    const char *notice, *io_operation; bool diagnostic_pending,notice_terminal;
     ArcRpcHdStats stats;
 };
 /* Store buffers, index and metadata are one allocation; VFS handles and the
@@ -123,6 +123,7 @@ static bool failure(ArcRpcHdStore *s,bool damage)
     unsigned phase=s->state;
     if(s->rotation_writer){ArcIoFile *f=s->rotation_writer;s->rotation_writer=NULL;metadata(s);(void)arc_io_close_file(f);}
     s->refused=true;s->damaged|=damage;damage=s->damaged;s->state=damage?ARC_RPC_HD_DAMAGED:ARC_RPC_HD_READ_ONLY;
+    s->notice_terminal=true;
     if(damage&&!s->damage_notified){s->damage_notified=true;
         s->notice="The saved RiscPC hard disc is damaged; files have been preserved.";}
     else if(!damage&&!s->saving_notified){s->saving_notified=true;
@@ -676,6 +677,7 @@ void arc_riscpc_hd_backend(ArcRpcHdStore *s,ArcIdeBackend *out)
 void arc_riscpc_hd_stats(const ArcRpcHdStore *s,ArcRpcHdStats *out)
 { *out=s->stats;out->phase_step=s->phase_step;out->chunk_files=s->chunk_count;out->sequence=s->sequence;out->generation=s->generation;out->state=s->state;out->published=s->published;out->population=s->population;out->read_only=s->refused; }
 const char *arc_riscpc_hd_notice(ArcRpcHdStore *s) { if(!s)return NULL;const char *n=s->notice;s->notice=NULL;return n; }
+bool arc_riscpc_hd_notice_is_terminal(const ArcRpcHdStore *s) { return s && s->notice_terminal; }
 const char *arc_riscpc_hd_diagnostic(ArcRpcHdStore *s)
 { if(!s||!s->diagnostic_pending)return NULL;s->diagnostic_pending=false;return s->diagnostic; }
 static bool directory_visit(const char *leaf,bool regular,void *opaque)
@@ -706,7 +708,7 @@ const char *arc_riscpc_hd_outcome_notice(ArcRpcHdOutcome outcome) {
         return "The saved RiscPC hard disc is damaged; files have been "
                "preserved.";
     case ARC_RPC_HD_LEGACY:
-        return "The existing RiscPC hard disc has no creation receipt; it was "
+        return "The existing RiscPC hard disc is without a creation receipt; it was "
                "left unchanged.";
     case ARC_RPC_HD_RECEIPTED:
         return "The saved RiscPC hard disc has a verified creation receipt.";
@@ -729,6 +731,7 @@ static bool open_failure(ArcRpcHdStore *s, ArcRpcHdOutcome outcome) {
     s->refused = true;
     s->damaged = outcome == ARC_RPC_HD_CORRUPT;
     s->notice = arc_riscpc_hd_outcome_notice(outcome);
+    s->notice_terminal = true;
     s->state = s->damaged ? ARC_RPC_HD_DAMAGED : ARC_RPC_HD_READ_ONLY;
     return false;
 }
@@ -779,6 +782,7 @@ static bool recovered_read_only(ArcRpcHdStore *s) {
     s->stats.open_operations = s->stats.operations;
     s->notice = "An interrupted hard-disc write was recovered; the "
                 "hard disc is read-only.";
+    s->notice_terminal = false;
     return true;
 }
 static void step_start(ArcRpcHdStore *s, ArcRpcHdStats *before) {
@@ -937,13 +941,15 @@ static bool recover_step(ArcRpcHdStore *s) {
                 ArcIoFile *f = open_leaf(s, leaf, false, false);
                 if (!f)
                     return open_failure(s, ARC_RPC_HD_UNAVAILABLE);
-                uint8_t magic[8];
-                bool ok = read_file(s, f, magic, 8);
+                uint8_t prefix[16];
+                bool ok = read_file(s, f, prefix, sizeof(prefix));
                 bool closed = close_file(s, f, ok);
                 if (!ok || !closed)
                     return open_failure(s, ARC_RPC_HD_UNAVAILABLE);
-                /* Larger envelopes cannot be interpreted within this bound. */
-                return open_failure(s, ARC_RPC_HD_UNSUPPORTED);
+                /* Same-magic framing is inspected before treating the remainder as opaque. */
+                ArcRpcHdOutcome outcome = !memcmp(prefix,"ARCRHDM1",8) && n != get(prefix+12,4)
+                    ? ARC_RPC_HD_CORRUPT : ARC_RPC_HD_UNSUPPORTED;
+                return open_failure(s, outcome);
             }
             uint8_t *m = (n == MANIFEST_BYTES || n == MANIFEST_V1_BYTES)
                              ? s->manifests[s->open_at] : s->record;
@@ -1215,8 +1221,9 @@ static bool recover_step(ArcRpcHdStore *s) {
     case 18:
         journal_leaf(s->open_at, leaf);
         if (!size(s, leaf, &n) || n != s->lengths[s->open_at])
-            return open_failure(s, ARC_RPC_HD_UNAVAILABLE);
+            return recovered_read_only(s);
         s->notice = "An interrupted hard-disc write was recovered.";
+        s->notice_terminal = false;
         ++s->open_at;
         s->open_phase = 13;
         return true;
@@ -1347,6 +1354,11 @@ bool arc_riscpc_hd_population_begin(ArcRpcHdStore *s)
     copy(s,s->frozen,s->live,sizeof(s->live));memset(s->population_changed,0,sizeof(s->population_changed));
     if(s->published)copy(s,s->manifests[2],s->manifests[s->selected],MANIFEST_BYTES);else memset(s->manifests[2],0,MANIFEST_BYTES);
     return true;
+}
+bool arc_riscpc_hd_population_blank_begin(ArcRpcHdStore *s)
+{
+    if(!arc_riscpc_hd_population_begin(s))return false;
+    s->authored=true;return true;
 }
 bool arc_riscpc_hd_population_io_begin(ArcRpcHdStore *s, uint32_t lba,
                                        uint32_t count, uint8_t *data,
@@ -1782,4 +1794,17 @@ bool arc_riscpc_hd_import(ArcRpcHdStore *s,const char *source)
         ok=read_file(s,f,block,131072)&&arc_riscpc_hd_population_write(s,lba,256,block);}
     bool closed=close_file(s,f,ok);ok&=closed;if(ok)ok=arc_riscpc_hd_population_seal(s)&&arc_riscpc_hd_population_publish(s);
     if(!ok)arc_riscpc_hd_population_abort(s);return ok;
+}
+
+/* Conservative declaration includes failed namespace attempts and abort after
+ * a sealed candidate. No clock or speculative filesystem probe is used. */
+bool arc_riscpc_hd_next_namespace(const ArcRpcHdStore *s, unsigned operation)
+{
+    if (!s) return false;
+    if (operation == 0) return s->open_phase == 0 || s->open_phase == 15 || s->open_phase == 17;
+    if (operation == 1) return s->population_io && (s->population_phase == 1 || s->population_phase == 3 || s->population_phase == 4);
+    if (operation == 2) return (s->seal_at >= 504 && !s->seal_step) ||
+        (s->seal_step == 1 && (s->population_phase == 1 || s->population_phase == 3 || s->population_phase == 4));
+    if (operation == 4) return s->seal_at > 504 || (s->seal_at == 504 && s->seal_step);
+    return s->publish_step == 4;
 }

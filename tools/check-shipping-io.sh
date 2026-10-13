@@ -90,6 +90,8 @@ platform/arcdroid_video.c
 libretro/arc_io.c
 libretro/install_store.c
 libretro/rpc_hd_store.c
+libretro/rpc_preparation.c
+libretro/rpc_preparation.h
 libretro/rpc_cmos_store.c
 libretro/rpc_boot.c
 libretro/rpc_boot_zip.c

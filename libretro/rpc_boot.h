@@ -23,6 +23,11 @@ typedef enum {
   ARC_RPC_BOOT_FAILED,
   ARC_RPC_BOOT_CANCELLED
 } ArcRpcBootState;
+typedef enum {
+  ARC_RPC_BOOT_WORK_OTHER, ARC_RPC_BOOT_WORK_INFLATE, ARC_RPC_BOOT_WORK_HASH,
+  ARC_RPC_BOOT_WORK_FORMAT, ARC_RPC_BOOT_WORK_READ, ARC_RPC_BOOT_WORK_WRITE,
+  ARC_RPC_BOOT_WORK_COUNT
+} ArcRpcBootWork;
 typedef struct {
   uint64_t units, io_bytes, operations, memory_high, max_unit_io_bytes,
       max_unit_operations, allocated_bytes, files, file_bytes,
@@ -40,6 +45,11 @@ typedef struct {
 ArcRpcBoot *arc_riscpc_boot_begin(ArcRpcHdStore *, const char *system,
                                   char *error, size_t error_size);
 ArcRpcBootState arc_riscpc_boot_step(ArcRpcBoot *, unsigned units);
+bool arc_riscpc_boot_validation_complete(const ArcRpcBoot *);
+bool arc_riscpc_boot_next_namespace(const ArcRpcBoot *);
+/* Pure next-unit declaration: phase * WORK_COUNT + work. Phase separation
+ * keeps directory formatting from evicting a map-format cost, for example. */
+unsigned arc_riscpc_boot_next_work(const ArcRpcBoot *);
 void arc_riscpc_boot_cancel(ArcRpcBoot *);
 void arc_riscpc_boot_free(ArcRpcBoot *);
 void arc_riscpc_boot_stats(const ArcRpcBoot *, ArcRpcBootStats *);

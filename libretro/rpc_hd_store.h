@@ -21,6 +21,8 @@ ArcRpcHdStore *arc_riscpc_hd_open_begin(const char *, const char *, char *, size
 ArcRpcHdOutcome arc_riscpc_hd_open_step(ArcRpcHdStore *);
 ArcRpcHdOutcome arc_riscpc_hd_outcome(const ArcRpcHdStore *);
 const char *arc_riscpc_hd_outcome_notice(ArcRpcHdOutcome);
+/* 0 recovery, 1 population I/O, 2 seal, 3 publish, 4 abort. Worst-case admission. */
+bool arc_riscpc_hd_next_namespace(const ArcRpcHdStore *, unsigned operation);
 /* Host-owned creation provenance; never represented by guest sectors. */
 typedef struct {
     uint8_t packages[2][32];
@@ -59,10 +61,14 @@ bool arc_riscpc_hd_write(ArcRpcHdStore *, uint32_t lba, uint32_t count, const ui
 void arc_riscpc_hd_tick(ArcRpcHdStore *store);
 void arc_riscpc_hd_stats(const ArcRpcHdStore *, ArcRpcHdStats *out);
 const char *arc_riscpc_hd_notice(ArcRpcHdStore *store);
+/* Severity of the pending notice; query before consuming it. Recovery,
+ * including a recovered read-only view, is an advisory. */
+bool arc_riscpc_hd_notice_is_terminal(const ArcRpcHdStore *store);
 const char *arc_riscpc_hd_diagnostic(ArcRpcHdStore *store);
 /* Offline ownership: caller quiesces/detaches IDE before begin. R2 creates and
  * imports before attaching the backend; R3 must preserve that precondition. */
 bool arc_riscpc_hd_population_begin(ArcRpcHdStore *store);
+bool arc_riscpc_hd_population_blank_begin(ArcRpcHdStore *store);
 bool arc_riscpc_hd_population_read(ArcRpcHdStore *, uint32_t lba, uint32_t count, uint8_t *out);
 bool arc_riscpc_hd_population_write(ArcRpcHdStore *, uint32_t lba, uint32_t count, const uint8_t *in);
 bool arc_riscpc_hd_population_seal(ArcRpcHdStore *store);

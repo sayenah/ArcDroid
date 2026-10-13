@@ -706,7 +706,7 @@ ArcRpcBoot *arc_riscpc_boot_begin(ArcRpcHdStore *store, const char *system,
       b->stats.file_bytes = r.bytes;
     } else {
       b->phase = ARC_RPC_BOOT_LEGACY;
-      strcpy(b->error, "The existing RiscPC hard disc has no creation receipt; "
+      strcpy(b->error, "The existing RiscPC hard disc is without a creation receipt; "
                        "it was left unchanged.");
     }
     return b;
@@ -796,4 +796,37 @@ void arc_riscpc_boot_stats(const ArcRpcBoot *b, ArcRpcBootStats *out) {
 }
 const char *arc_riscpc_boot_notice(const ArcRpcBoot *b) {
   return b && b->error[0] ? b->error : NULL;
+}
+
+bool arc_riscpc_boot_validation_complete(const ArcRpcBoot *b)
+{ return b && b->phase == ARC_RPC_BOOT_FORMAT && b->candidate; }
+static ArcRpcBootWork next_work(const ArcRpcBoot *b)
+{
+    if(!b)return ARC_RPC_BOOT_WORK_OTHER;
+    if(b->io_pending)return b->io_write?ARC_RPC_BOOT_WORK_WRITE:ARC_RPC_BOOT_WORK_READ;
+    switch(b->phase){
+    case ARC_RPC_BOOT_HASH:case ARC_RPC_BOOT_REHASH:case ARC_RPC_BOOT_SEAL:
+        return ARC_RPC_BOOT_WORK_HASH;
+    case ARC_RPC_BOOT_FORMAT:return ARC_RPC_BOOT_WORK_FORMAT;
+    case ARC_RPC_BOOT_WRITE:
+        if(b->object_io)return ARC_RPC_BOOT_WORK_WRITE;
+        if(b->object<b->used && !b->nodes[b->object].directory && !b->nodes[b->object].authored)
+            return ARC_RPC_BOOT_WORK_INFLATE;
+        return ARC_RPC_BOOT_WORK_FORMAT;
+    case ARC_RPC_BOOT_VALIDATE:
+        if(b->part<3)return ARC_RPC_BOOT_WORK_FORMAT;
+        return b->io_ready?ARC_RPC_BOOT_WORK_HASH:ARC_RPC_BOOT_WORK_READ;
+    case ARC_RPC_BOOT_PUBLISH:return ARC_RPC_BOOT_WORK_WRITE;
+    default:return ARC_RPC_BOOT_WORK_OTHER;
+    }
+}
+unsigned arc_riscpc_boot_next_work(const ArcRpcBoot *b)
+{ return (b?b->phase:ARC_RPC_BOOT_CANCELLED)*ARC_RPC_BOOT_WORK_COUNT+(unsigned)next_work(b); }
+bool arc_riscpc_boot_next_namespace(const ArcRpcBoot *b)
+{
+    if (!b) return false;
+    if (b->io_pending && b->io_take) return arc_riscpc_hd_next_namespace(b->store,1);
+    /* A later failure can abort the sealed candidate and remove its journal. */
+    if (b->phase == ARC_RPC_BOOT_SEAL) return arc_riscpc_hd_next_namespace(b->store,2) || arc_riscpc_hd_next_namespace(b->store,4);
+    return b->phase == ARC_RPC_BOOT_REHASH || b->phase == ARC_RPC_BOOT_PUBLISH;
 }
