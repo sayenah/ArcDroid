@@ -251,6 +251,13 @@ typedef struct {
 #define ARC_CMOS_MACHINE_SIZE 256u
 
 uint32_t arc_crc32(const void *data, size_t size);
+uint32_t arc_crc32_append(uint32_t crc, const void *data, size_t size);
+typedef struct {
+   uint32_t state[5]; uint64_t length; uint8_t block[64]; size_t used;
+} ArcSha1;
+void arc_sha1_init(ArcSha1 *ctx);
+void arc_sha1_update(ArcSha1 *ctx, const uint8_t *data, size_t size);
+void arc_sha1_final(const ArcSha1 *ctx, char output[41]);
 void arc_sha1_hex(const void *data, size_t size, char output[41]);
 typedef struct {
    uint32_t state[8];

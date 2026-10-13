@@ -277,6 +277,31 @@ static void future_envelopes(void) {
     refusal(ARC_RPC_HD_CORRUPT);
 
 }
+static bool truncate_completed;
+static int64_t disagree_truncate(struct retro_vfs_file_handle *f,int64_t n)
+{ int64_t r=test_truncate(f,n);truncate_completed=r>=0;return r; }
+static int32_t disagree_stat(const char *p,int32_t *n)
+{
+    int32_t r=test_stat(p,n);
+    if(truncate_completed && r==1 && strstr(p,"journal.a") && n)++*n;
+    return r;
+}
+static void carryovers(void)
+{
+    restore();TestFile *f=&files[manifest()];size_t n=131169;
+    uint8_t *p=realloc(f->data,n);assert(p);f->data=p;memset(p+f->size,0,n-f->size);f->size=f->capacity=n;
+    set32(p+8,3);set32(p+12,(unsigned)n);fix_crc(f);refusal(ARC_RPC_HD_UNSUPPORTED);
+    set32(p+12,(unsigned)n-1);fix_crc(f);refusal(ARC_RPC_HD_CORRUPT);
+    restore();f=&files[journal()];n=f->size;
+    p=realloc(f->data,n+7);assert(p);f->data=p;memset(p+n,0x73,7);f->size=f->capacity=n+7;
+    truncate_completed=false;vfs.truncate=disagree_truncate;vfs.stat=disagree_stat;
+    ArcRpcHdStore *s;assert(open_steps(&s)==ARC_RPC_HD_RECEIPTED);
+    ArcRpcHdStats a;arc_riscpc_hd_stats(s,&a);assert(truncate_completed&&a.read_only&&a.published);
+    const char *notice=arc_riscpc_hd_notice(s);assert(notice&&strstr(notice,"recovered; the hard disc is read-only"));
+    uint8_t read[512];assert(arc_riscpc_hd_read(s,511,1,read));for(unsigned i=0;i<512;++i)assert(read[i]==0x73);
+    assert(!arc_riscpc_hd_write(s,0,1,read));arc_riscpc_hd_close(s);test_vfs_no_open_handles();
+    vfs.truncate=test_truncate;vfs.stat=test_stat;truncate_completed=false;
+}
 static void publish_cancellation(void) {
     for(unsigned cut=0;cut<=6;++cut){
         fresh_files();ArcRpcHdStore *s;assert(open_steps(&s)==ARC_RPC_HD_UNPUBLISHED);
@@ -382,6 +407,7 @@ int main(void) {
     receipt_store();
     outcomes();
     future_envelopes();
+    carryovers();
     publish_cancellation();
     reconstruction_failure();
     torn_write_refusal();

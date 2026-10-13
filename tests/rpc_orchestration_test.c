@@ -1,0 +1,319 @@
+/* Production-source harness: no plan/fault compile definitions. GPL-2.0-only. */
+#if defined(ARCDROID_TEST_PLANS) || defined(ARCDROID_TEST_FAULTS)
+#error Production orchestration harness must not enable test flags
+#endif
+#include "rpc_preparation.h"
+#include "rpc_hd_vfs.h"
+static unsigned notices,terminal_notices,clears,attach_calls;
+static char last_notice[512];
+static uint64_t clock_value,clock_delta;
+static unsigned clock_mode;
+static ArcRpcPreparation *current;
+static unsigned test_model;
+static ArcRpcSelectionOs test_os=ARC_RPC_OS_350;
+static const char *id="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+static uint64_t clock_read(void *opaque)
+{
+    (void)opaque;
+    if(clock_mode==1)return 0;
+    if(clock_mode==2)return clock_value--;
+    clock_value+=clock_delta;return clock_value;
+}
+static void notice(void *opaque,const char *s,bool terminal)
+{
+    (void)opaque;++notices;
+    if(terminal)++terminal_notices;
+    if(!*s)++clears;
+    snprintf(last_notice,sizeof(last_notice),"%s",s);
+}
+static bool attach(void *opaque,char *e,size_t n)
+{
+    (void)opaque;(void)e;(void)n;++attach_calls;
+    uint8_t b[256],m[32];uint64_t w,l,now;unsigned state;
+    arc_engine_rpc_evidence(b,m,&w,&l,&now,&state);
+    assert(now==0 && state==0); /* No requested instruction before final attachment. */
+    ArcRpcHdStore *disc=arc_riscpc_preparation_disc(current);
+    assert(disc && arc_riscpc_hd_receipt(disc,NULL));
+    return true;
+}
+static void file_bytes(const char *p,const void *data,size_t n)
+{
+    int i=find(p,true);assert(i>=0);free(files[i].data);
+    files[i].data=malloc(n);assert(files[i].data);memcpy(files[i].data,data,n);
+    files[i].size=files[i].capacity=n;
+}
+static void file_copy(const char *p,const char *source)
+{
+    FILE *f=fopen(source,"rb");assert(f);assert(!fseek(f,0,SEEK_END));long n=ftell(f);assert(n>0);rewind(f);
+    uint8_t *b=malloc((size_t)n);assert(b&&fread(b,1,(size_t)n,f)==(size_t)n);assert(!fclose(f));file_bytes(p,b,(size_t)n);free(b);
+}
+static void disk_hash(uint8_t output[32])
+{
+    ArcSha256 h;arc_sha256_init(&h);
+    /* Canonical lexical order, independent of allocation/publication ordinals. */
+    const char *previous="";
+    for(;;){int best=-1;
+        for(unsigned i=0;i<TEST_FILES;++i)if(files[i].present && strstr(files[i].path,"/save/arcdroid/") &&
+            !strstr(files[i].path,".tmp") && strcmp(files[i].path,previous)>0 &&
+            (best<0||strcmp(files[i].path,files[best].path)<0))best=(int)i;
+        if(best<0)break;
+        previous=files[best].path;arc_sha256_update(&h,previous,strlen(previous));
+        arc_sha256_update(&h,files[best].data,files[best].size);
+    }
+    arc_sha256_final(&h,output);
+}
+static ArcRpcPreparation *new_request(const uint8_t *rom,size_t size,bool seed,
+    bool fingerprint,ArcRpcPreparationHost host)
+{
+    ArcRpcPreparationRequest r={0};r.firmware=rom;r.firmware_size=size;r.key.model=test_model;r.key.layout=test_os==ARC_RPC_OS_350?1:3;
+    strcpy(r.key.content,id);r.save="/save";r.system="/system";r.epoch=1234567890;
+    r.hard_disc=r.populate=true;
+    /* PRM CMOS allocation (RO3.6), logical 5/11/16/135;
+     * core/cmos_defaults.c documents n+0x40 wrapping past 255 to 16.
+     * https://www.riscos.com/support/developers/prm/cmos.html
+     * NetFS, ADFS drive 2, NoBoot, altered floppy/IDE counts; extra raw
+     * 19/253/checksum bytes remain deliberately authoritative too. */
+    uint8_t bytes[256]={0};bytes[69]=5;bytes[75]=2;bytes[80]=0;
+    bytes[19]=0;bytes[253]=9;bytes[199]=0x95;bytes[63]=0x51;
+    if(seed)r.seed=bytes;
+    ArcDigest d=arc_digest(rom,size);
+    ArcRpcFirmwareFingerprint f={test_os,size,d.crc32,d.sha1};
+    if(fingerprint){r.fingerprint=&f;r.selection=(ArcRpcSelection){.reason=ARC_RPC_SELECTION_SELECTED,.model=(ArcRpcSelectionModel)(test_model+1),.os=test_os};}
+    char error[512]={0};
+    current=fingerprint?arc_riscpc_preparation_begin(&r,&host,error,sizeof(error)):
+                        arc_riscpc_preparation_low_level(&r,&host,error,sizeof(error));
+    assert(current && !error[0]);return current;
+}
+static ArcRpcPreparationState frame(ArcRpcPreparation *p)
+{
+    uint64_t ns=namespace_calls;ArcRpcPreparationState old=arc_riscpc_preparation_state(p);
+    ArcRpcPreparationState state=arc_riscpc_preparation_frame(p);ArcRpcPreparationStats s;
+    arc_riscpc_preparation_stats(p,&s);
+    assert(s.steps<=ARC_RPC_PREP_STEPS && namespace_calls-ns<=1);
+    assert(s.namespace_attempts==namespace_calls-ns);
+    if(s.namespace_attempts)assert(s.steps==1);
+    assert(s.reserved_ns<=(old==ARC_RPC_PREP_GENERATE?ARC_RPC_GENERATION_BUDGET_NS:
+                          s.namespace_attempts?ARC_RPC_PREP_NAMESPACE_NS:ARC_RPC_PREP_NAMESPACE_NS));
+    if(state!=ARC_RPC_PREP_RUNNING && old!=ARC_RPC_PREP_GENERATE && arc_engine_active()){
+        uint8_t b[256],m[32];uint64_t w,l,now;unsigned capture;
+        arc_engine_rpc_evidence(b,m,&w,&l,&now,&capture);
+        assert(now==0 && ((state==ARC_RPC_PREP_GENERATE && capture==1) || (state==ARC_RPC_PREP_START && capture==0)));
+    }
+    return state;
+}
+static void settle(ArcRpcPreparation *p)
+{
+    for(unsigned i=0;arc_riscpc_preparation_state(p)<ARC_RPC_PREP_RUNNING;++i){assert(i<100000);frame(p);}
+}
+static void finish(ArcRpcPreparation *p)
+{
+    char e[512]={0};assert(arc_riscpc_preparation_free(p,e,sizeof(e)));
+    current=NULL;assert(!arc_engine_active());test_vfs_no_open_handles();
+}
+static void state_matrix(const uint8_t *rom,size_t size,ArcRpcPreparationHost host,bool sanitizer,bool mutant)
+{
+    for(unsigned action=0;action<3;++action)
+        for(unsigned target=0;target<ARC_RPC_PREP_RUNNING;++target){
+            if(mutant && target>=ARC_RPC_PREP_SAVE_DEFAULT)continue;
+            restore();attach_calls=0;terminal_notices=0;clock_mode=0;clock_delta=2500000;
+            ArcRpcPreparation *p=new_request(rom,size,sanitizer && target>=ARC_RPC_PREP_SAVE_RECORD,false,host);
+            /* One unit/frame makes every transition observable. */
+            assert(arc_riscpc_preparation_pacing(p,1));
+            for(unsigned i=0;arc_riscpc_preparation_state(p)!=target;++i){assert(i<100000);frame(p);assert(arc_riscpc_preparation_state(p)<ARC_RPC_PREP_RUNNING);}
+            assert(!attach_calls);
+            if(target==ARC_RPC_PREP_GENERATE && action==0){
+                unsigned old_notices=notices;
+                for(unsigned j=0;j<121;++j)frame(p);
+                assert(notices>=old_notices+2 && !terminal_notices);
+            }
+            if(target==ARC_RPC_PREP_RECORD || target==ARC_RPC_PREP_GENERATE){
+                ArcRpcHdStats a;arc_riscpc_hd_stats(arc_riscpc_preparation_disc(p),&a);
+                assert(a.population && !a.published && !a.commands);
+            }
+            if(action==0){arc_riscpc_preparation_cancel(p);assert(arc_riscpc_preparation_state(p)==ARC_RPC_PREP_CANCELLED);}
+            else if(action==1){assert(arc_riscpc_preparation_reset(p));assert(arc_riscpc_preparation_state(p)==ARC_RPC_PREP_VERIFY);assert(!arc_engine_active());}
+            finish(p);
+            /* Reset and unload preserve completed publications, and recovery
+             * cleans only the offline candidate; no partial root can attach. */
+            char error[512];ArcRpcHdStore *disc=arc_riscpc_hd_open_begin("/save",id,error,sizeof(error));assert(disc);
+            ArcRpcHdOutcome outcome;do{outcome=arc_riscpc_hd_open_step(disc);}while(outcome==ARC_RPC_HD_OPEN_PENDING);
+            assert(outcome==ARC_RPC_HD_UNPUBLISHED || outcome==ARC_RPC_HD_RECEIPTED);arc_riscpc_hd_close(disc);
+            if(sanitizer && target==ARC_RPC_PREP_SAVE_DEFAULT)fprintf(stdout,"sanitizer: generation publication boundary exercised\n");
+        }
+}
+static void construction_and_attachments(const uint8_t *rom,size_t size)
+{
+    const unsigned cuts[]={0,1,2,3,4,5,36,68,70,72,328,329,330};
+    uint8_t seed[256]={0},raw[1024]={0};char error[512];
+    for(unsigned model=0;model<4;++model)
+        for(unsigned c=0;c<sizeof(cuts)/sizeof(*cuts);++c){
+            assert(arc_engine_rpc_start_begin(model,rom,size,seed,946684800,false,error,sizeof(error)));
+            bool done=false;for(unsigned j=0;j<cuts[c]&&!done;++j)assert(arc_engine_rpc_start_step(&done,error,sizeof(error)));
+            uint8_t b[256],m[32];uint64_t w,l,now;unsigned state;
+            arc_engine_rpc_evidence(b,m,&w,&l,&now,&state);assert(now==0 && state==0);
+            arc_engine_stop();assert(!arc_engine_active());test_vfs_no_open_handles();
+        }
+    ArcEngineMedia good={.kind=ARC_MEDIA_ADF_800K,.geometry=ARC_GEOMETRY_800K_E,.data=raw,.size=sizeof(raw)},bad={.kind=ARC_MEDIA_JFD};
+    for(unsigned stage=0;stage<3;++stage){
+        assert(arc_engine_rpc_start(0,rom,size,seed,946684800,false,error,sizeof(error)));
+        if(stage==0)assert(!arc_engine_rpc_attach(&bad,NULL,NULL,error,sizeof(error)));
+        if(stage==1)assert(!arc_engine_rpc_attach(&good,&bad,NULL,error,sizeof(error)));
+        if(stage==2){assert(arc_engine_rpc_attach(&good,&good,NULL,error,sizeof(error)));arc_engine_stop();}
+        assert(!arc_engine_active());test_vfs_no_open_handles();
+    }
+    assert(!arc_engine_rpc_start_begin(4,rom,size,seed,946684800,false,error,sizeof(error)));
+    assert(!arc_engine_active());
+}
+static bool fail_final_cmos_read;
+static char writer_firmware[65];
+static int64_t pending_read(struct retro_vfs_file_handle *f,void *out,uint64_t n)
+{
+    const char *p=files[f->file].path;
+    bool fail=fail_final_cmos_read && strstr(p,writer_firmware) && p[strlen(p)-1]=='0';
+    if(fail){fail_final_cmos_read=false;fault=5;fail_at=steps+1;}
+    int64_t result=test_read(f,out,n);
+    if(fail){fault=fail_at=0;}
+    return result;
+}
+static void pending_unload(const char *source,ArcRpcPreparationHost host)
+{
+    file_copy("/system/writer.rom",source);int i=find("/system/writer.rom",false);assert(i>=0);
+    uint8_t *rom=malloc(files[i].size);assert(rom);memcpy(rom,files[i].data,files[i].size);
+    arc_sha256_hex(rom,files[i].size,writer_firmware);
+    ArcRpcPreparation *p=new_request(rom,files[i].size,true,false,host);settle(p);
+    assert(arc_riscpc_preparation_state(p)==ARC_RPC_PREP_RUNNING);
+    ArcInputState input_state;arc_input_reset(&input_state);ArcEngineFrame f;
+    assert(arc_engine_run_frame(&input_state,&f));
+    uint8_t bytes[256],mask[32];uint64_t writes,last,now;unsigned state;
+    arc_engine_rpc_evidence(bytes,mask,&writes,&last,&now,&state);assert(writes && now);
+    vfs.read=pending_read;fail_final_cmos_read=true;char error[512]={0};
+    assert(!arc_riscpc_preparation_persist(p,error,sizeof(error)) && !fail_final_cmos_read && error[0]);
+    vfs.read=test_read;
+    /* Publication has already renamed, but its readback failed. Normal unload
+     * must reconcile the pending slot and save the latest live snapshot. */
+    finish(p);
+    bool newest=false;
+    for(unsigned j=0;j<TEST_FILES;++j)if(files[j].present && strstr(files[j].path,writer_firmware) && files[j].path[strlen(files[j].path)-1]=='0'){
+        assert(files[j].size==512 && files[j].data[24]==2 && !memcmp(files[j].data+104,bytes+16,240));newest=true;
+    }
+    assert(newest);free(rom);
+}
+static unsigned video_calls,audio_calls;
+static bool environment(unsigned command,void *data)
+{
+    switch(command){
+    case RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY:*(const char **)data="/system";return true;
+    case RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY:*(const char **)data="/save";return true;
+    case RETRO_ENVIRONMENT_GET_VFS_INTERFACE:((struct retro_vfs_interface_info *)data)->iface=&vfs;return true;
+    case RETRO_ENVIRONMENT_SET_PIXEL_FORMAT:return *(enum retro_pixel_format *)data==RETRO_PIXEL_FORMAT_XRGB8888;
+    case RETRO_ENVIRONMENT_GET_CAN_DUPE:*(bool *)data=true;return true;
+    case RETRO_ENVIRONMENT_GET_VARIABLE:{struct retro_variable *v=data;
+        if(!strcmp(v->key,"arcdroid_machine"))v->value="A3000";
+        else if(!strcmp(v->key,"arcdroid_launch"))v->value="off";
+        else if(!strcmp(v->key,"arcdroid_hard_disc"))v->value="off";
+        else return false;return true;}
+    case RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE:*(bool *)data=false;return true;
+    default:return false;
+    }
+}
+static void video(const void *p,unsigned w,unsigned h,size_t pitch)
+{assert(w && h && pitch>=w*4);(void)p;++video_calls;}
+static size_t audio(const int16_t *p,size_t n){assert(p&&n);++audio_calls;return n;}
+static void poll(void){}
+static int16_t input(unsigned p,unsigned d,unsigned i,unsigned id_){(void)p;(void)d;(void)i;(void)id_;return 0;}
+int main(int argc,char **argv)
+{
+    assert(argc==5);bool sanitizer=!strcmp(argv[4],"sanitizer") || !strcmp(argv[4],"sanitizer-idle");
+    if(!strcmp(argv[4],"sanitizer-idle")){test_model=2;test_os=ARC_RPC_OS_371;}
+    fresh_files();
+    char source[4096];snprintf(source,sizeof(source),"%s/arcdroid/riscpc/boot/HardDisc4.zip",argv[1]);
+    file_copy("/system/arcdroid/riscpc/boot/HardDisc4.zip",source);
+    snprintf(source,sizeof(source),"%s/arcdroid/riscpc/boot/PlingSystem.zip",argv[1]);
+    file_copy("/system/arcdroid/riscpc/boot/PlingSystem.zip",source);
+    file_copy("/system/full.rom",argv[2]);int i=find("/system/full.rom",false);assert(i>=0);
+    size_t size=files[i].size;uint8_t *rom=malloc(size);assert(rom);memcpy(rom,files[i].data,size);
+    construction_and_attachments(rom,size);
+    snapshot();ArcRpcPreparationHost host={.clock=clock_read,.notice=notice,.attach=attach};
+    /* Initial package validation precedes either CMOS generation or seed. */
+    state_matrix(rom,size,host,sanitizer,!strcmp(argv[4],"mutant"));
+    uint8_t gold[32];
+    for(unsigned mode=0;mode<3;++mode){
+        restore();clock_mode=mode;clock_value=UINT64_C(1000000000000);clock_delta=1000;attach_calls=terminal_notices=0;
+        ArcRpcPreparation *p=new_request(rom,size,true,mode==0,host);settle(p);
+        assert(arc_riscpc_preparation_state(p)==ARC_RPC_PREP_RUNNING && attach_calls==1 && !terminal_notices);
+        uint8_t b[256],m[32];uint64_t w,l,now;unsigned capture;
+        arc_engine_rpc_evidence(b,m,&w,&l,&now,&capture);
+        assert(now==0 && b[69]==5 && b[75]==2 && !(b[80]&0x10) && b[19]==0 && b[253]==9 && b[199]==0x95 && b[63]==0x51);
+        assert(arc_riscpc_preparation_reset(p));arc_engine_rpc_evidence(b,m,&w,&l,&now,&capture);
+        assert(now==0 && b[69]==5 && b[75]==2 && !(b[80]&0x10) && b[19]==0 && b[253]==9 && b[199]==0x95 && b[63]==0x51);
+        ArcRpcHdStats before_tick,after_tick;
+        arc_riscpc_hd_stats(arc_riscpc_preparation_disc(p),&before_tick);
+        arc_riscpc_preparation_maintenance(p);
+        arc_riscpc_hd_stats(arc_riscpc_preparation_disc(p),&after_tick);
+        assert(before_tick.state==ARC_RPC_HD_RETIRE && after_tick.phase_step==1);
+        uint8_t hash[32];disk_hash(hash);if(!mode)memcpy(gold,hash,32);else assert(!memcmp(gold,hash,32));
+        finish(p);
+    }
+    /* Reverify the selected family before opening any store or generation. */
+    restore();clock_mode=1;terminal_notices=attach_calls=0;
+    ArcDigest original=arc_digest(rom,size);ArcRpcFirmwareFingerprint fingerprint={test_os,size,original.crc32,original.sha1};
+    ArcRpcPreparationRequest request={.firmware=rom,.firmware_size=size,.fingerprint=&fingerprint,.save="/save",.system="/system",.epoch=946684800,.hard_disc=true,.populate=true};
+    request.selection=(ArcRpcSelection){.reason=ARC_RPC_SELECTION_SELECTED,.model=(ArcRpcSelectionModel)(test_model+1),.os=test_os};
+    request.key.model=test_model;request.key.layout=test_os==ARC_RPC_OS_350?1:3;strcpy(request.key.content,id);
+    uint8_t *bad_rom=malloc(size);assert(bad_rom);memcpy(bad_rom,rom,size);bad_rom[4096]^=1;request.firmware=bad_rom;
+    char verify_error[512];ArcRpcPreparation *unverified=arc_riscpc_preparation_begin(&request,&host,verify_error,sizeof(verify_error));
+    assert(unverified);settle(unverified);
+    assert(arc_riscpc_preparation_state(unverified)==ARC_RPC_PREP_FAILED && terminal_notices==1 && !attach_calls && !arc_engine_active());
+    assert(strstr(last_notice,"firmware/") && strstr(last_notice,arc_riscpc_selection_os_name(test_os)));
+    assert(!arc_riscpc_preparation_disc(unverified));finish(unverified);free(bad_rom);
+    /* A later pinned-package failure preserves the completed CMOS seed and
+     * cannot start a requested guest. */
+    restore();clock_mode=0;clock_delta=2500000;attach_calls=terminal_notices=0;
+    ArcRpcPreparation *later=new_request(rom,size,true,false,host);
+    for(unsigned j=0;arc_riscpc_preparation_state(later)!=ARC_RPC_PREP_POPULATE;++j){assert(j<100000);frame(later);}
+    int package=find("/system/arcdroid/riscpc/boot/HardDisc4.zip",false);assert(package>=0);
+    files[package].data[files[package].size-1]^=1;
+    settle(later);assert(arc_riscpc_preparation_state(later)==ARC_RPC_PREP_FAILED && !attach_calls && terminal_notices==1);
+    bool saved=false;for(unsigned j=0;j<TEST_FILES;++j)if(files[j].present && strstr(files[j].path,"/cmos-riscpc/") && !strstr(files[j].path,".tmp"))saved=true;
+    assert(saved);finish(later);
+    /* Restore a complete root from the last successful preparation for reopen. */
+    restore();clock_mode=1;later=new_request(rom,size,true,false,host);settle(later);finish(later);
+    /* Receipted reopen performs no package reads, even when files disappear. */
+    int a=find("/system/arcdroid/riscpc/boot/HardDisc4.zip",false),b=find("/system/arcdroid/riscpc/boot/PlingSystem.zip",false);
+    files[a].present=files[b].present=false;clock_mode=1;
+    ArcRpcPreparation *p=new_request(rom,size,false,false,host);settle(p);assert(arc_riscpc_preparation_state(p)==ARC_RPC_PREP_RUNNING);
+    uint8_t saved_bytes[256],saved_mask[32];uint64_t saved_writes,saved_last,saved_now;unsigned saved_state;
+    arc_engine_rpc_evidence(saved_bytes,saved_mask,&saved_writes,&saved_last,&saved_now,&saved_state);
+    assert(saved_bytes[69]==5 && saved_bytes[75]==2 && !(saved_bytes[80]&0x10) && saved_bytes[19]==0 && saved_bytes[253]==9 && saved_bytes[199]==0x95 && saved_bytes[63]==0x51);finish(p);
+    char writer[4096];snprintf(writer,sizeof(writer),"%s",argv[2]);char *leaf=strrchr(writer,'/'),*backslash=strrchr(writer,'\\');
+    if(backslash && (!leaf || backslash>leaf))leaf=backslash;assert(leaf);strcpy(leaf+1,"writer.rom");
+    pending_unload(writer,host);
+    /* Missing packages terminalize before the isolated engine starts; failed
+     * preparation never refreshes progress. */
+    restore();files[a].present=false;terminal_notices=0;attach_calls=0;
+    p=new_request(rom,size,false,false,host);settle(p);
+    assert(arc_riscpc_preparation_state(p)==ARC_RPC_PREP_FAILED && !attach_calls && !arc_engine_active());
+    assert(terminal_notices==1 && strstr(last_notice,"boot/"));unsigned count=notices;
+    for(unsigned j=0;j<180;++j)arc_riscpc_preparation_frame(p);assert(notices==count);
+    assert(arc_riscpc_preparation_reset(p));assert(arc_riscpc_preparation_state(p)==ARC_RPC_PREP_VERIFY);settle(p);
+    assert(arc_riscpc_preparation_state(p)==ARC_RPC_PREP_FAILED && terminal_notices==2 && !arc_engine_active());finish(p);
+    /* Follow the production module with an ordinary libretro Arculator load. */
+    fresh_files();snprintf(source,sizeof(source),"%s/arcdroid-test.rom",argv[3]);
+    file_copy("/system/arcdroid/firmware/authored.data",source);
+    snprintf(source,sizeof(source),"%s/arcdroid-test.adf",argv[3]);file_copy("/content.adf",source);
+    retro_set_environment(environment);retro_set_video_refresh(video);retro_set_audio_sample_batch(audio);
+    retro_set_input_poll(poll);retro_set_input_state(input);retro_init();
+    struct retro_game_info content={.path="/content.adf"};assert(retro_load_game(&content));assert(!arc_engine_is_rpc());
+    for(unsigned j=0;j<4;++j)retro_run();assert(video_calls==4&&audio_calls==4);
+    retro_unload_game();
+    int medium=find("/content.adf",false);assert(medium>=0);char identity[41];arc_sha1_hex(files[medium].data,files[medium].size,identity);
+    bool own_cmos=false;for(unsigned j=0;j<TEST_FILES;++j)if(files[j].present && strstr(files[j].path,"/arcdroid/cmos/")){
+        assert(strstr(files[j].path,identity) && !strstr(files[j].path,"cmos-riscpc"));
+        assert(files[j].size==256 && !memcmp(files[j].data,"ARCCMOS2",8));own_cmos=true;
+    }
+    assert(own_cmos);assert(retro_load_game(&content));assert(!arc_engine_is_rpc());retro_run();retro_unload_game();
+    retro_deinit();assert(!arc_engine_active());test_vfs_no_open_handles();
+    free(rom);fresh_files();for(unsigned j=0;j<TEST_FILES;++j){free(baseline[j].data);baseline[j].data=NULL;}
+    puts("production orchestration: states/reset/cancel, clock confinement, authoritative seed, notices, receipt reopen, then ordinary Arculator passed");
+    return 0;
+}

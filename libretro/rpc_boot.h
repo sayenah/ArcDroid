@@ -40,6 +40,8 @@ typedef struct {
 ArcRpcBoot *arc_riscpc_boot_begin(ArcRpcHdStore *, const char *system,
                                   char *error, size_t error_size);
 ArcRpcBootState arc_riscpc_boot_step(ArcRpcBoot *, unsigned units);
+bool arc_riscpc_boot_validation_complete(const ArcRpcBoot *);
+bool arc_riscpc_boot_next_namespace(const ArcRpcBoot *);
 void arc_riscpc_boot_cancel(ArcRpcBoot *);
 void arc_riscpc_boot_free(ArcRpcBoot *);
 void arc_riscpc_boot_stats(const ArcRpcBoot *, ArcRpcBootStats *);

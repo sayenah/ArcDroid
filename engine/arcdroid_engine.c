@@ -1,11 +1,11 @@
 /* ArcDroid session dispatcher. GPL-2.0-only. */
 #include "engine_backend.h"
 extern const ArcEngineBackendOps arc_rpc_backend;
-#if defined(ARCDROID_TEST_FAULTS)
 #include "rpc/rpc_session.h"
 #include "rpc/rpc_floppy.h"
 #include "rpc/rpc_ide.h"
 #include "rpc/rpc_rtc.h"
+#if defined(ARCDROID_TEST_FAULTS)
 #include "engine_test.h"
 #include <stdio.h>
 static uint64_t arc_test_frame_ns, arc_test_callback_ns;
@@ -20,9 +20,10 @@ static void arc_test_log_proxy(void *opaque, const char *message)
     if (arc_test_measuring) arc_test_callback_ns += arc_test_clock_ns() - start;
 }
 RETRO_API uint64_t arc_engine_test_frame_ns(void) { return arc_test_frame_ns; }
+void arc_engine_test_frame_begin(void) { arc_test_frame_ns=0; }
 void arc_engine_test_frame_add_ns(uint64_t elapsed) { arc_test_frame_ns += elapsed; }
 RETRO_API bool arc_engine_test_ide_backend(const ArcIdeBackend *backend)
-{ if(!arc_engine_is_rpc() || !arc_engine_active())return false;arc_rpc_ide_set_backend(backend);return true; }
+{ return arc_engine_rpc_ide(backend); }
 RETRO_API bool arc_rpc_test_start(ArcRpcModel model, const uint8_t *rom, size_t size,
     const uint8_t seed[256], uint64_t epoch, char *error, size_t error_size);
 #endif
@@ -245,33 +246,85 @@ bool arc_engine_active(void)
    return arc_backend->active();
 }
 
+bool arc_engine_rpc_start_begin(unsigned model,const uint8_t *rom,size_t size,
+    const uint8_t seed[256],uint64_t epoch,bool factory,char *e,size_t n)
+{
+    arc_backend->stop();arc_backend=&arc_rpc_backend;
+    return arc_rpc_session_start_begin((ArcRpcModel)model,rom,size,seed,epoch,factory,e,n);
+}
+bool arc_engine_rpc_start_step(bool *done,char *e,size_t n)
+{ return arc_engine_is_rpc() && arc_rpc_session_start_step(done,e,n); }
+bool arc_engine_rpc_start(unsigned model, const uint8_t *rom, size_t size,
+    const uint8_t seed[256], uint64_t epoch, bool factory, char *error, size_t n)
+{
+    arc_backend->stop(); arc_backend = &arc_rpc_backend;
+    bool ok = factory ? arc_rpc_session_factory_start((ArcRpcModel)model,rom,size,epoch,error,n)
+                      : arc_rpc_session_start((ArcRpcModel)model,rom,size,seed,epoch,error,n);
+    if (!ok) arc_backend->stop();
+    return ok;
+}
+bool arc_engine_rpc_ide(const ArcIdeBackend *ide)
+{
+    if (!arc_engine_is_rpc() || !arc_engine_active()) return false;
+    arc_rpc_ide_set_backend(ide); return true;
+}
+bool arc_engine_rpc_mount(unsigned drive,const ArcEngineMedia *media,char *e,size_t n)
+{
+    bool ok = arc_engine_is_rpc() && arc_engine_active() && arc_rpc_fdc_mount(drive,media,e,n);
+    return ok;
+}
+void arc_engine_rpc_eject(unsigned drive)
+{ if (arc_engine_is_rpc() && arc_engine_active()) arc_rpc_fdc_eject(drive); }
+bool arc_engine_rpc_attach(const ArcEngineMedia *media,const ArcEngineMedia *helper,
+    const ArcIdeBackend *ide,char *e,size_t n)
+{
+    bool ok = (!media || arc_engine_rpc_mount(0,media,e,n)) &&
+              (!helper || arc_engine_rpc_mount(1,helper,e,n)) && arc_engine_rpc_ide(ide);
+    if (!ok) arc_engine_stop();
+    return ok;
+}
+bool arc_engine_rpc_capture_schedule(uint64_t deadline,uint64_t release)
+{ return arc_engine_is_rpc() && arc_rpc_session_capture_schedule(deadline,release); }
+bool arc_engine_rpc_advance(uint64_t ns)
+{
+    if (!arc_engine_is_rpc()) return false;
+    while (ns) {
+        uint64_t step = ns < 16666667u ? ns : 16666667u;
+        if (!arc_rpc_session_advance(step)) return false;
+        ns -= step;
+        int16_t audio[2048]; size_t n;
+        while ((n=arc_engine_audio_peek(audio,1024))!=0) arc_engine_audio_commit(n,0);
+        ArcRpcCapture c; arc_rpc_capture_status(&c);
+        if (c.state != ARC_RPC_CAPTURE_RUNNING) break;
+    }
+    return true;
+}
+void arc_engine_rpc_evidence(uint8_t bytes[256],uint8_t mask[32],uint64_t *writes,
+    uint64_t *last,uint64_t *now,unsigned *state)
+{
+    ArcRpcCapture c; arc_rpc_capture_status(&c); arc_rpc_cmos_snapshot(bytes);
+    *writes=arc_rpc_cmos_payload_evidence(mask,last); *now=c.elapsed_ns; *state=(unsigned)c.state;
+}
+
 #if defined(ARCDROID_TEST_FAULTS)
 bool arc_engine_test_cmos_slice(uint64_t ns)
 {
     arc_test_callback_ns=0;arc_test_measuring=true;uint64_t start=arc_test_clock_ns();
-    bool ok=arc_engine_is_rpc();
-    while(ok && ns){
-        uint64_t step=ns<16666667u?ns:16666667u;
-        ok=arc_rpc_test_advance(step);ns-=step;
-        /* Keep the isolated queue retirement identical at one/eight frames
-         * per call, and bounded even if boot firmware enables sound DMA. */
-        int16_t audio[2048];size_t n;
-        while((n=arc_engine_audio_peek(audio,1024))!=0)arc_engine_audio_commit(n,0);
-        ArcRpcCapture capture;arc_rpc_capture_status(&capture);
-        if(capture.state!=ARC_RPC_CAPTURE_RUNNING)break;
-    }
+    bool ok=arc_engine_rpc_advance(ns);
     arc_test_frame_ns=arc_test_clock_ns()-start-arc_test_callback_ns;arc_test_measuring=false;return ok;
 }
 bool arc_engine_test_cmos_schedule(uint64_t deadline_ns,uint64_t delete_ns)
-{ return arc_engine_is_rpc() && arc_rpc_session_capture_schedule(deadline_ns,delete_ns); }
+{ return arc_engine_rpc_capture_schedule(deadline_ns,delete_ns); }
 void arc_engine_test_cmos_evidence(uint8_t bytes[256],uint8_t mask[32],uint64_t *writes,uint64_t *last,uint64_t *now,unsigned *state)
-{ ArcRpcCapture capture;arc_rpc_capture_status(&capture);arc_rpc_cmos_snapshot(bytes);*writes=arc_rpc_cmos_payload_evidence(mask,last);*now=capture.elapsed_ns;*state=(unsigned)capture.state; }
+{ arc_engine_rpc_evidence(bytes,mask,writes,last,now,state); }
 RETRO_API bool arc_engine_test_floppy_mount(unsigned drive,const ArcEngineMedia *media,char *error,size_t size)
-{ return arc_engine_is_rpc() && arc_engine_active() && arc_rpc_fdc_mount(drive,media,error,size); }
+{ return arc_engine_rpc_mount(drive,media,error,size); }
 RETRO_API void arc_engine_test_floppy_eject(unsigned drive)
-{ if(arc_engine_is_rpc() && arc_engine_active())arc_rpc_fdc_eject(drive); }
+{ arc_engine_rpc_eject(drive); }
 void arc_engine_test_plan_input_ready(void)
 { if (arc_engine_is_rpc()) arc_rpc_session_test_input_ready(); }
+void arc_engine_test_plan_rate(unsigned rate)
+{ if(arc_engine_is_rpc() && rate)arc_rpc_session_test_rate(rate); }
 bool arc_engine_test_plan_start(unsigned model, unsigned rate, bool factory,
     const uint8_t *rom, size_t size, const uint8_t seed[256], uint64_t epoch,
     char *error, size_t error_size)
@@ -280,10 +333,7 @@ bool arc_engine_test_plan_start(unsigned model, unsigned rate, bool factory,
        if (error && error_size) snprintf(error, error_size, "Rate must be 1..100 MIPS");
        return false;
     }
-    arc_backend->stop(); arc_backend = &arc_rpc_backend;
-    bool started = factory ? arc_rpc_session_factory_start((ArcRpcModel)model,
-       rom, size, epoch, error, error_size) : arc_rpc_session_start((ArcRpcModel)model,
-       rom, size, seed, epoch, error, error_size);
+    bool started = arc_engine_rpc_start(model,rom,size,seed,epoch,factory,error,error_size);
     if (started && rate) arc_rpc_session_test_rate(rate);
     arc_test_frame_ns = 0;
     return started;
@@ -291,9 +341,7 @@ bool arc_engine_test_plan_start(unsigned model, unsigned rate, bool factory,
 RETRO_API bool arc_rpc_test_start(ArcRpcModel model, const uint8_t *rom, size_t size,
     const uint8_t seed[256], uint64_t epoch, char *error, size_t error_size)
 {
-    arc_backend->stop();
-    arc_backend = &arc_rpc_backend; /* Partial start ownership is explicit. */
-    return arc_rpc_session_start(model, rom, size, seed, epoch, error, error_size);
+    return arc_engine_rpc_start(model,rom,size,seed,epoch,false,error,error_size);
 }
 #endif
 
@@ -301,8 +349,7 @@ RETRO_API bool arc_rpc_test_start(ArcRpcModel model, const uint8_t *rom, size_t 
 RETRO_API bool arc_rpc_test_factory_start(ArcRpcModel model, const uint8_t *rom, size_t size,
     uint64_t epoch, char *error, size_t error_size)
 {
-    arc_backend->stop();arc_backend=&arc_rpc_backend;
-    return arc_rpc_session_factory_start(model,rom,size,epoch,error,error_size);
+    return arc_engine_rpc_start(model,rom,size,NULL,epoch,true,error,error_size);
 }
 RETRO_API const ArcEngineBackendOps *arc_rpc_test_engine_api(void)
 {

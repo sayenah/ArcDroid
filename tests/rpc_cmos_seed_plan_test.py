@@ -18,6 +18,11 @@ with tempfile.TemporaryDirectory(prefix='arc-rpc-cmos-seed-') as temp:
     assert not list(save.rglob('defaults')),'seed must not generate defaults'
     # A saved record remains authoritative when a different seed is supplied.
     seed.write_bytes(bytes(256));run();assert record.read_bytes()==original
+    # An authoritative record needs no optional seed I/O, even when the seed
+    # disappeared or is the wrong size. Admission still checks absent records.
+    seed.unlink();run();assert record.read_bytes()==original
+    seed.write_bytes(bytes(255));run();assert record.read_bytes()==original
+    seed.write_bytes(bytes(256))
     for foreign in (False,True):
         changed=bytearray(original)
         if foreign:

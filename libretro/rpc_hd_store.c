@@ -937,13 +937,15 @@ static bool recover_step(ArcRpcHdStore *s) {
                 ArcIoFile *f = open_leaf(s, leaf, false, false);
                 if (!f)
                     return open_failure(s, ARC_RPC_HD_UNAVAILABLE);
-                uint8_t magic[8];
-                bool ok = read_file(s, f, magic, 8);
+                uint8_t prefix[16];
+                bool ok = read_file(s, f, prefix, sizeof(prefix));
                 bool closed = close_file(s, f, ok);
                 if (!ok || !closed)
                     return open_failure(s, ARC_RPC_HD_UNAVAILABLE);
-                /* Larger envelopes cannot be interpreted within this bound. */
-                return open_failure(s, ARC_RPC_HD_UNSUPPORTED);
+                /* Same-magic framing is inspected before treating the remainder as opaque. */
+                ArcRpcHdOutcome outcome = !memcmp(prefix,"ARCRHDM1",8) && n != get(prefix+12,4)
+                    ? ARC_RPC_HD_CORRUPT : ARC_RPC_HD_UNSUPPORTED;
+                return open_failure(s, outcome);
             }
             uint8_t *m = (n == MANIFEST_BYTES || n == MANIFEST_V1_BYTES)
                              ? s->manifests[s->open_at] : s->record;
@@ -1215,7 +1217,7 @@ static bool recover_step(ArcRpcHdStore *s) {
     case 18:
         journal_leaf(s->open_at, leaf);
         if (!size(s, leaf, &n) || n != s->lengths[s->open_at])
-            return open_failure(s, ARC_RPC_HD_UNAVAILABLE);
+            return recovered_read_only(s);
         s->notice = "An interrupted hard-disc write was recovered.";
         ++s->open_at;
         s->open_phase = 13;
@@ -1347,6 +1349,11 @@ bool arc_riscpc_hd_population_begin(ArcRpcHdStore *s)
     copy(s,s->frozen,s->live,sizeof(s->live));memset(s->population_changed,0,sizeof(s->population_changed));
     if(s->published)copy(s,s->manifests[2],s->manifests[s->selected],MANIFEST_BYTES);else memset(s->manifests[2],0,MANIFEST_BYTES);
     return true;
+}
+bool arc_riscpc_hd_population_blank_begin(ArcRpcHdStore *s)
+{
+    if(!arc_riscpc_hd_population_begin(s))return false;
+    s->authored=true;return true;
 }
 bool arc_riscpc_hd_population_io_begin(ArcRpcHdStore *s, uint32_t lba,
                                        uint32_t count, uint8_t *data,
@@ -1782,4 +1789,17 @@ bool arc_riscpc_hd_import(ArcRpcHdStore *s,const char *source)
         ok=read_file(s,f,block,131072)&&arc_riscpc_hd_population_write(s,lba,256,block);}
     bool closed=close_file(s,f,ok);ok&=closed;if(ok)ok=arc_riscpc_hd_population_seal(s)&&arc_riscpc_hd_population_publish(s);
     if(!ok)arc_riscpc_hd_population_abort(s);return ok;
+}
+
+/* Conservative declaration includes failed namespace attempts and abort after
+ * a sealed candidate. No clock or speculative filesystem probe is used. */
+bool arc_riscpc_hd_next_namespace(const ArcRpcHdStore *s, unsigned operation)
+{
+    if (!s) return false;
+    if (operation == 0) return s->open_phase == 0 || s->open_phase == 15 || s->open_phase == 17;
+    if (operation == 1) return s->population_io && (s->population_phase == 1 || s->population_phase == 3 || s->population_phase == 4);
+    if (operation == 2) return (s->seal_at >= 504 && !s->seal_step) ||
+        (s->seal_step == 1 && (s->population_phase == 1 || s->population_phase == 3 || s->population_phase == 4));
+    if (operation == 4) return s->seal_at > 504 || (s->seal_at == 504 && s->seal_step);
+    return s->publish_step == 4;
 }

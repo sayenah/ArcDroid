@@ -13,6 +13,7 @@ from rpc_hd_retroarch_test import pixels, store_check
 
 def main():
     runner, core, fixture, checker = map(lambda p: Path(p).resolve(), sys.argv[1:5])
+    sanitizer = "--sanitizer" in sys.argv[5:]
     with tempfile.TemporaryDirectory(prefix='arc-hd-cost-') as temp:
         root = Path(temp)
         traces = []
@@ -123,27 +124,47 @@ def main():
         assert result.returncode == 0, result.stderr
         assert subprocess.run([sys.executable, '-B', str(checker), str(report)], capture_output=True).returncode == 0
         assert all(r['attached'] == '0' for r in csv.DictReader(report.open()))
-        # A first-launch factory guest reaches requested_start inside retro_run.
-        # No CMOS seed exists: open/blank creation must appear exactly once.
-        from rpc_cmos_factory_rom import generate
+        # First use is measured across complete preparation frames in its own
+        # CSV. Running maintenance no longer includes synchronous open work.
+        from rpc_cmos_factory_rom import generate, factory as factory_guest
         factory = generate(root / 'factory')
+        cold_model = 'arm610'
+        cold_frames = '345'
+        if sanitizer:
+            # The 700-frame live workload above stays exhaustive. Cold setup
+            # retains every preparation state and the 45 s capture, using the
+            # existing SA idle instruction after the complete CMOS write.
+            import struct
+            words=factory_guest('full').words
+            idle=max(i for i,w in enumerate(words) if w==0xeafffffe)
+            words[idle]=0xee0f0f58
+            (factory/'full.rom').write_bytes(struct.pack('<%dI'%len(words),*words)+struct.pack('<I',0xeafffffe)*(524288-len(words)))
+            cold_model='sa110';cold_frames='3'
         cold = root / 'cold'; cold.mkdir()
-        plan.write_text(f'version=2\nmodel=arm610\nfirmware={factory / "full.rom"}\n'
+        plan.write_text(f'version=2\nmodel={cold_model}\nfirmware={factory / "full.rom"}\n'
                         f'cmos=persist\ncmos_layout=ro370\ncontent_id={"e" * 40}\n'
                         'rtc_epoch=946684800\nhard_disc=on\n')
+        preparation = root / 'preparation.csv'
         result = subprocess.run([str(runner), '--core', str(core), '--plan', str(plan),
-                                 '--system', str(factory), '--save', str(cold), '--frames', '345',
-                                 '--hd-cost', str(report)], capture_output=True, text=True, timeout=180)
+                                 '--system', str(factory), '--save', str(cold), '--frames', cold_frames,
+                                 '--hd-cost', str(report), '--preparation-timing', str(preparation)], capture_output=True, text=True, timeout=180)
         assert result.returncode == 0, result.stderr
         cold_rows = list(csv.DictReader(report.open()))
-        opening = [r for r in cold_rows if int(r['open_ns'])]
-        assert len(opening) == 1 and opening[0]['attached'] == '1'
+        assert all(r['open_ns']=='0' and r['attached']=='1' for r in cold_rows)
+        pending = list(csv.DictReader(preparation.open()))
+        assert len(pending)>1 and pending[-1]['state']=='10'
+        assert {0,1,3,4,5,6,7,8,9,10}<={int(r['state']) for r in pending}
+        assert all(int(r['whole_ns'])>=int(r['core_ns']) for r in pending)
+        assert all(int(r['steps'])<=32 and int(r['namespace_attempts'])<=1 for r in pending)
+        assert all(int(r['steps'])==1 for r in pending if int(r['namespace_attempts']))
+        assert any(int(r['generation_quanta']) for r in pending)
+        assert any(int(r['namespace_attempts']) for r in pending)
         for r in cold_rows:
             assert int(r['total_ns']) == sum(int(r[k]) for k in ('open_ns','read_ns','acknowledgement_ns','maintenance_ns'))
         assert any(cold.glob('arcdroid/hd-riscpc/' + 'e' * 40 + '/manifest.?'))
         # An unsuccessful opening still counts its work without an attachment;
         # unattached read/write/maintenance work remains invalid.
-        rows = [dict(opening[0])]
+        rows = [dict(cold_rows[0])]
         rows[0].update(frame='0', attached='0', open_ns='1', total_ns='1',
                        read_ns='0', acknowledgement_ns='0', maintenance_ns='0',
                        read_commands='0', write_commands='0', namespace_operations='0')

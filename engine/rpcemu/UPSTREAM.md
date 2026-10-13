@@ -371,3 +371,10 @@ N/Z observe the resulting bits, and C/V stay unchanged. This removes signed
 left-shift and addition overflow. `rpc-cpu-smlal` runs the actual interpreter
 on sign-bit, signed-overflow, wrap, negative-product and flag boundaries,
 including halt-on-error UBSan. Original copyright and licence remain intact.
+
+`session-preparation-r3b2b` (`src/mem.c`): D-170's offline construction edge
+allocates one owned buffer, clears at most 1 MiB of RAM or copies at most 32 KiB
+of mirrored ROM per step. No instructions run before complete construction and
+final attachment; teardown releases partial allocations. Synchronous low-level
+start drains the identical steps, preserving memory bytes, allocation order,
+reset behavior and factory-capture timing. No upstream source was added.
