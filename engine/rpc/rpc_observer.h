@@ -11,7 +11,7 @@ enum { ARC_RPC_OBSERVERS=4, ARC_RPC_WATCHES=8, ARC_RPC_WORK_LIMIT=16,
 typedef enum { ARC_RPC_OBS_BOOT, ARC_RPC_OBS_LAUNCH, ARC_RPC_OBS_ERROR,
                ARC_RPC_OBS_DISC } ArcRpcObserver;
 typedef enum { ARC_RPC_OBS_SWI=1, ARC_RPC_OBS_CONTINUATION=2,
-               ARC_RPC_OBS_MODE=4, ARC_RPC_OBS_GAP=8 } ArcRpcObservationKind;
+               ARC_RPC_OBS_MODE=4, ARC_RPC_OBS_GAP=8, ARC_RPC_OBS_WATCH_LOST=16 } ArcRpcObservationKind;
 typedef enum { ARC_RPC_BACKING_NONE, ARC_RPC_BACKING_ROM,
                ARC_RPC_BACKING_RAM0, ARC_RPC_BACKING_RAM1,
                ARC_RPC_BACKING_VRAM } ArcRpcBackingKind;
@@ -35,7 +35,7 @@ typedef struct {
     ArcRpcObserveCallback callback; void *opaque;
 } ArcRpcObserveFilter;
 typedef enum { ARC_RPC_CAP_OBSERVE, ARC_RPC_CAP_COMPLETE,
-               ARC_RPC_CAP_REPLACE } ArcRpcObserverCapability;
+               ARC_RPC_CAP_REPLACE, ARC_RPC_CAP_OBSERVE_B, ARC_RPC_CAP_REPLACE_B } ArcRpcObserverCapability;
 typedef struct {
     unsigned catalogue, cpu, profile;
     ArcRpcObserver observer; ArcRpcObserverCapability capability;
@@ -44,6 +44,8 @@ typedef struct {
 ArcRpcObserverQualification arc_rpc_observer_qualification(unsigned catalogue,
     unsigned cpu, ArcRpcObserver, ArcRpcObserverCapability);
 
+bool arc_rpc_observer_filter(ArcRpcObserver, const ArcRpcObserveFilter *);
+bool arc_rpc_observer_watch_live(ArcRpcObserver, uint64_t);
 /* The interpreter tests this before constructing any observation context. */
 extern bool arc_rpc_observer_active;
 void arc_rpc_observe_begin(uint32_t pc);
@@ -78,8 +80,9 @@ bool arc_rpc_inspect_physical(uint32_t address, uint8_t *out);
 bool arc_rpc_inspect_translate(uint32_t va, bool privileged, uint32_t *physical);
 
 typedef struct {
-    ArcRpcObserver observer; uint64_t generation, epoch, media_generation, ns;
-    unsigned kind; size_t size; uint8_t bytes[ARC_RPC_COPY_LIMIT];
+    ArcRpcObserver observer; uint64_t generation, epoch, media_generation, helper_generation, ns;
+    unsigned kind; uint32_t operation, continuation, sp; uint64_t watch;
+    size_t size; uint8_t bytes[ARC_RPC_COPY_LIMIT];
 } ArcRpcHostWork;
 typedef struct {
     bool (*valid)(void *, const ArcRpcHostWork *);

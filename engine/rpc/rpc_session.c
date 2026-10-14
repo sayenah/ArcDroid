@@ -5,6 +5,7 @@
 #include "engine_backend.h"
 #include "rpc_session.h"
 #include "rpc_observer.h"
+#include "rpc_observers.h"
 #include "rpc_timing.h"
 #include "rpc_mem_timing.h"
 #include "rpc_memory.h"
@@ -71,7 +72,13 @@ static uint8_t arc_rpc_start_seed[256];
 static unsigned arc_rpc_start_phase;
 static bool arc_rpc_start_pending,arc_rpc_start_factory;
 static uint64_t arc_rpc_generation;
+static ArcSha1 arc_rpc_firmware_hash;
+static ArcDigest arc_rpc_firmware_digest;
+static bool arc_rpc_firmware_valid;
+bool arc_rpc_session_firmware(ArcDigest *out)
+{ if(!out || !arc_rpc_live || arc_rpc_fault || !arc_rpc_firmware_valid)return false;*out=arc_rpc_firmware_digest;return true; }
 uint64_t arc_rpc_session_generation(void) { return arc_rpc_generation; }
+unsigned arc_rpc_session_cpu(void) { return (unsigned)machine.cpu_model; }
 extern uint64_t arc_rpc_cmos_write_evidence(uint8_t mask[32]);
 #if defined(ARCDROID_TEST_FAULTS)
 static unsigned arc_rpc_fail_alloc;
@@ -98,6 +105,7 @@ void fatal(const char *format, ...)
     va_end(args);
     arc_rpc_fault = true;
     arc_rpc_observer_retire(false);
+    arc_rpc_observers_retire();
     arc_rpc_sound_purge();
     arc_rpc_input_service = NULL;
     if(arc_rpc_capture.state==ARC_RPC_CAPTURE_RUNNING)arc_rpc_capture.state=ARC_RPC_CAPTURE_FAILED;
@@ -127,6 +135,7 @@ ARC_RPC_ABSENT_WRITE(8) ARC_RPC_ABSENT_WRITE(16) ARC_RPC_ABSENT_WRITE(32)
 static void arc_rpc_stop(void)
 {
     arc_rpc_observer_retire(false);
+    arc_rpc_observers_retire();
     arc_rpc_ide_set_backend(NULL);
     arc_rpc_fdc_close();
     arc_rpc_sound_purge();
@@ -143,6 +152,7 @@ static void arc_rpc_stop(void)
 #if defined(ARCDROID_TEST_FAULTS)
     arc_rpc_test_quota=200;
 #endif
+    arc_rpc_firmware_valid=false;
     arc_rpc_live = false;arc_rpc_start_pending=false;arc_rpc_start_rom=NULL;
     arc_rpc_cpu_idle = false;
 }
@@ -218,6 +228,7 @@ bool arc_rpc_session_start_begin(ArcRpcModel model, const uint8_t *bytes, size_t
     arc_rpc_input_retire = false;
     arc_rpc_inject_entry();
     arc_rpc_start_pending=true;arc_rpc_start_factory=factory;
+    arc_rpc_firmware_valid=false;arc_rpc_firmware_digest=(ArcDigest){.size=size};arc_sha1_init(&arc_rpc_firmware_hash);
     arc_rpc_start_rom=bytes;arc_rpc_start_size=size;arc_rpc_start_at=0;arc_rpc_start_phase=0;
     if(factory)memset(arc_rpc_start_seed,0,256);else memcpy(arc_rpc_start_seed,seed,256);
     if(failure&&failure_size)*failure=0;return true;
@@ -230,7 +241,18 @@ bool arc_rpc_session_start_step(bool *done,char *failure,size_t failure_size)
         arc_rpc_stop();if(failure&&failure_size)snprintf(failure,failure_size,"%s",arc_rpc_fault_text);return false;
     }
     arc_rpc_inject_entry();
-    if(!arc_rpc_memory_prepare(arc_rpc_start_rom,arc_rpc_start_size,&arc_rpc_start_phase,&arc_rpc_start_at))return true;
+    /* Hash exactly the actual copied image, incrementally within the existing
+     * 32 KiB ROM-copy units; no extra allocation or unbounded start step. */
+    size_t copied_at=arc_rpc_start_at;
+    bool hashing=arc_rpc_start_phase==7 && copied_at<arc_rpc_start_size;
+    bool prepared=arc_rpc_memory_prepare(arc_rpc_start_rom,arc_rpc_start_size,&arc_rpc_start_phase,&arc_rpc_start_at);
+    if(hashing){size_t take=arc_rpc_start_size-copied_at;if(take>32768)take=32768;
+        const uint8_t *copied=(const uint8_t *)rom+copied_at;
+        arc_sha1_update(&arc_rpc_firmware_hash,copied,take);
+        arc_rpc_firmware_digest.crc32=arc_crc32_append(arc_rpc_firmware_digest.crc32,copied,take);
+    }
+    if(!prepared)return true;
+    arc_sha1_final(&arc_rpc_firmware_hash,arc_rpc_firmware_digest.sha1);arc_rpc_firmware_valid=true;
     arc_rpc_cmos_seed(arc_rpc_start_seed);
     arc_rpc_cmos_set_write_clock(arc_rpc_cmos_clock);arc_rpc_reset_devices();arc_rpc_sound_reset(true);
     if(arc_rpc_start_factory){
@@ -292,6 +314,7 @@ static bool arc_rpc_reset(char *failure, size_t failure_size)
     mem_reset(64, config.vram_size);
     arc_rpc_reset_devices(); /* Volatile CMOS is retained. */
     arc_rpc_input_retire=true;
+    arc_rpc_observers_rebase(arc_rpc_session_cpu());
     if(arc_rpc_capture.state==ARC_RPC_CAPTURE_RUNNING || arc_rpc_capture.state==ARC_RPC_CAPTURE_DONE)
         arc_rpc_capture.state=ARC_RPC_CAPTURE_CANCELLED;
     if (failure && failure_size) failure[0] = 0;
@@ -419,7 +442,11 @@ bool arc_rpc_session_advance(uint64_t ns) { return arc_rpc_advance_internal(ns, 
 
 static ArcEngineCapabilities arc_rpc_capabilities(void)
 {
-    return (ArcEngineCapabilities){ .av = true, .keyboard = true, .mouse = true, .reset = true, .floppy = true, .helper = true, .ide = true };
+    return (ArcEngineCapabilities){ .av = true, .keyboard = true, .mouse = true, .reset = true, .floppy = true, .helper = true, .ide = true,
+        .boot_watch=arc_rpc_observers_capability(ARC_RPC_CELL_BOOT),
+        .launch_outcome=arc_rpc_observers_capability(ARC_RPC_CELL_LAUNCH),
+        .error_box=arc_rpc_observers_capability(ARC_RPC_CELL_ERROR),
+        .disc_request=arc_rpc_observers_capability(ARC_RPC_CELL_DISC_A) || arc_rpc_observers_capability(ARC_RPC_CELL_DISC_B) };
 }
 static bool arc_rpc_shipping_start(const uint8_t *r, size_t s, const ArcEngineMedia *m,
     const ArcEngineMedia *h, const ArcMachineDescriptor *d, ArcOsClass o,
@@ -453,6 +480,7 @@ static bool arc_rpc_frame(ArcInputState *input, ArcEngineFrame *frame)
         frame->height = after.height; frame->pitch = ARC_RPC_VIDEO_LIMIT * sizeof(uint32_t);
         frame->refresh_hz = after.refresh_hz; frame->field_completed = true;
     }
+    arc_rpc_observers_frame(arc_rpc_scheduler.now_ns/1000u);
     arc_rpc_observer_drain();
     /* Logs/callbacks occur only after leaving the protected guest stack. */
     if (arc_rpc_logger && arc_rpc_video_take_clip())
@@ -463,22 +491,8 @@ static bool arc_rpc_frame(ArcInputState *input, ArcEngineFrame *frame)
 }
 static void arc_rpc_log_callback(ArcEngineLogCallback cb, void *p)
 { arc_rpc_logger = cb; arc_rpc_logger_opaque = p; }
-static void arc_rpc_nop(void) { }
-static void arc_rpc_boot_cancel(void) { arc_rpc_observer_cancel(ARC_RPC_OBS_BOOT); }
-static void arc_rpc_error_discard(void) { arc_rpc_observer_cancel(ARC_RPC_OBS_ERROR); }
-static void arc_rpc_disc_clear(void) { arc_rpc_observer_cancel(ARC_RPC_OBS_DISC); }
 static void arc_rpc_power_on(ArcInputState *i, bool a) { (void)i; (void)a; }
 static bool arc_rpc_release(uint64_t *t, bool *a) { if (t) *t=0; if (a) *a=false; return false; }
-static ArcBootWatchState arc_rpc_boot(void) { (void)arc_rpc_observer_unavailable(ARC_RPC_OBS_BOOT,ARC_RPC_CAP_OBSERVE);return ARC_BOOT_WATCH_DISABLED; }
-static bool arc_rpc_command(const char *c) { (void)c;return !arc_rpc_observer_unavailable(ARC_RPC_OBS_LAUNCH,ARC_RPC_CAP_OBSERVE); }
-static void arc_rpc_reason(const char *c) { (void)c;arc_rpc_observer_cancel(ARC_RPC_OBS_LAUNCH); }
-static void arc_rpc_drive(unsigned d) { (void)d; }
-static void arc_rpc_outcome(ArcLaunchOutcome *o) { if (o) memset(o,0,sizeof(*o)); }
-static void arc_rpc_error_box(ArcErrorBox *o) { if (o) memset(o,0,sizeof(*o)); }
-static bool arc_rpc_answer(ArcErrorAnswer a) { (void)a;return !arc_rpc_observer_unavailable(ARC_RPC_OBS_ERROR,ARC_RPC_CAP_COMPLETE); }
-static void arc_rpc_disc(bool e,const char *n,ArcDiscResolveCallback r,ArcDiscObservationCallback o,void *p)
-{ (void)e;(void)n;(void)r;(void)o;(void)p;arc_rpc_observer_cancel(ARC_RPC_OBS_DISC); }
-static void arc_rpc_disc_snapshot(ArcDiscRequest *o) { if(o) memset(o,0,sizeof(*o)); }
 static uint64_t arc_rpc_disc_time(void) { return arc_rpc_time_ns()/1000; }
 static bool arc_rpc_controller_idle(void) { return arc_rpc_live && !arc_rpc_fault && arc_rpc_fdc_idle(0); }
 
@@ -507,12 +521,12 @@ static bool arc_rpc_active(void) { return arc_rpc_live; }
 const ArcEngineBackendOps arc_rpc_backend = {
     .capabilities=arc_rpc_capabilities,.start=arc_rpc_shipping_start,.set_log_callback=arc_rpc_log_callback,
     .reset=arc_rpc_reset,.stop=arc_rpc_stop,.run_frame=arc_rpc_frame,.power_on_arm=arc_rpc_power_on,
-    .power_on_take_release=arc_rpc_release,.boot_watch_arm=arc_rpc_nop,.boot_watch_cancel=arc_rpc_boot_cancel,
-    .boot_watch_state=arc_rpc_boot,.launch_outcome_arm=arc_rpc_command,.launch_outcome_cancel=arc_rpc_reason,
-    .launch_outcome_refused=arc_rpc_drive,.launch_outcome_snapshot=arc_rpc_outcome,
-    .error_snapshot=arc_rpc_error_box,.error_request=arc_rpc_answer,.error_discard=arc_rpc_error_discard,
-    .disc_configure=arc_rpc_disc,.disc_clear=arc_rpc_disc_clear,.disc_snapshot=arc_rpc_disc_snapshot,
-    .disc_a_notified=arc_rpc_nop,.disc_time_us=arc_rpc_disc_time,.disc_controller_idle=arc_rpc_controller_idle,
+    .power_on_take_release=arc_rpc_release,.boot_watch_arm=arc_rpc_observers_boot_arm,.boot_watch_cancel=arc_rpc_observers_boot_cancel,
+    .boot_watch_state=arc_rpc_observers_boot_state,.launch_outcome_arm=arc_rpc_observers_launch_arm,.launch_outcome_cancel=arc_rpc_observers_launch_cancel,
+    .launch_outcome_refused=arc_rpc_observers_refused,.launch_outcome_snapshot=arc_rpc_observers_launch_snapshot,
+    .error_snapshot=arc_rpc_observers_error_snapshot,.error_request=arc_rpc_observers_answer,.error_discard=arc_rpc_observers_discard,
+    .disc_configure=arc_rpc_observers_disc_configure,.disc_clear=arc_rpc_observers_disc_clear,.disc_snapshot=arc_rpc_observers_disc_snapshot,
+    .disc_a_notified=arc_rpc_observers_disc_notified,.disc_time_us=arc_rpc_disc_time,.disc_controller_idle=arc_rpc_controller_idle,
     .adf_refusal_callback_set=arc_rpc_refusal,.audio=arc_rpc_audio,.audio_stats=arc_rpc_audio_stats,
     .media_eject=arc_rpc_eject,.media_insert=arc_rpc_media,.get_av_info=arc_rpc_av,
     .cmos=arc_rpc_cmos_unavailable,.faulted=arc_rpc_faulted,.active=arc_rpc_active,

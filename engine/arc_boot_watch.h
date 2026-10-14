@@ -12,7 +12,9 @@ typedef enum {
    ARC_BOOT_WATCH_PROMPT
 } ArcBootWatchState;
 
+typedef struct { uint64_t horizon_us, wait_us; uint32_t buffer_limit; bool user_only, rom; } ArcBootProfile;
 typedef struct {
+   const ArcBootProfile *profile;
    ArcBootWatchState state;
    uint64_t armed_us;
    uint64_t read_us;
@@ -20,6 +22,7 @@ typedef struct {
    bool pending;
 } ArcBootWatch;
 
+void arc_boot_watch_arm_profile(ArcBootWatch *,uint64_t,const ArcBootProfile *);
 void arc_boot_watch_clear(ArcBootWatch *watch);
 void arc_boot_watch_arm(ArcBootWatch *watch, uint64_t now_us);
 void arc_boot_watch_cancel(ArcBootWatch *watch);

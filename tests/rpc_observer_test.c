@@ -107,7 +107,7 @@ static void events(CPUModel model)
     }
     for(unsigned source=0;source<4;++source)for(unsigned target=0;target<4;++target){
         const uint32_t modes[]={0,16,3,19};
-        if(source<2 && target<2)continue;
+        if(source==target && source<2)continue;
         fixture(model,modes[source],0x100);arm_filter(~0u,0,0);rom[0x100/4]=0xef000007;
         expected_pc=0x104;expected_mode=modes[target];expected_sp=arm.reg[13];action=12;
         arc_rpc_arm_exec_count(1);action=0;arc_rpc_arm_exec_count(2);
@@ -404,7 +404,7 @@ static void services(CPUModel model)
     arm.reg[15]=0x108;arm.reg[0]=0x100;arc_rpc_arm_exec_count(1);
     n=arc_rpc_observer_trace_read(records,4);assert(n==1 && !records[0].scalar_valid && records[0].inspection==ARC_RPC_INSPECT_REFUSED);
     const struct {uint32_t swi,reason;uint16_t mask;} masks[]={
-        {7,21,3},{7,99,1},{8,5,0xb},{8,99,1},{0x400df,0,0x3f}};
+        {6,129,7},{7,21,3},{7,99,1},{8,5,0xb},{8,99,1},{0x400df,0,0x3f}};
     for(unsigned k=0;k<sizeof(masks)/sizeof(masks[0]);++k){
         arc_rpc_observer_trace(true,false);rom[0x100/4]=0xef000000|masks[k].swi;arm.reg[15]=0x108;
         for(unsigned r=0;r<13;++r)arm.reg[r]=0xa000+r;
@@ -412,6 +412,22 @@ static void services(CPUModel model)
         uint32_t before[13];memcpy(before,arm.reg,sizeof(before));arc_rpc_arm_exec_count(1);
         n=arc_rpc_observer_trace_read(records,4);assert(n==1 && records[0].event.register_mask==(0x6000|masks[k].mask));
         for(unsigned r=0;r<13;++r)assert(records[0].event.registers[r]==((masks[k].mask&(1u<<r))?before[r]:0));
+    }
+    /* LOW-R1: privileged File SWIs must never acquire trace watches. */
+    fixture(model,19,0x100);arc_rpc_observer_trace(true,false);
+    ArcRpcTraceSelection privileged={.classes=7,.capacity=16};assert(arc_rpc_observer_trace_select(&privileged));
+    rom[0x100/4]=0xef000008;arm.reg[0]=5;arm.reg[1]=0x10000000;
+    arc_rpc_arm_exec_count(3);n=arc_rpc_observer_trace_read(records,4);
+    for(size_t i=0;i<n;++i)assert(records[i].event.kind!=ARC_RPC_OBS_CONTINUATION);
+    /* LOW-R2: an UpCall path reads at most 12 bytes, not a full path. */
+    for(unsigned length=10;length<=12;++length){
+        fixture(model,19,0x100);arc_rpc_observer_trace(true,true);
+        rom[0x100/4]=0xef020033;arm.reg[0]=2;arm.reg[1]=8;arm.reg[2]=0x10000000;arm.reg[3]=0;
+        memset(ram00,'A',length);((char *)ram00)[length]=0;
+        arc_rpc_arm_exec_count(1);n=arc_rpc_observer_trace_read(records,4);assert(n==1);
+        assert(records[0].inspection==(length<12?ARC_RPC_INSPECT_OK:ARC_RPC_INSPECT_TRUNCATED));
+        assert(strlen(records[0].path)==(length<12?length:11));
+        assert(records[0].event.register_mask==0x600f);
     }
     arc_rpc_observer_trace(true,false);rom[0x100/4]=0xef000007;
     for(unsigned i=0;i<1000;++i){arm.reg[15]=0x108;arc_rpc_arm_exec_count(1);}
@@ -556,6 +572,8 @@ static void identity_equality(CPUModel model)
     }
 }
 
+
+#ifndef ARC_RPC_OBSERVERS_TEST
 int main(int argc,char **argv)
 {
     arm_init();protected=1;if(setjmp(boundary)){fputs("Unexpected observation component fault\n",stderr);return 1;}
@@ -571,3 +589,5 @@ int main(int argc,char **argv)
     for(unsigned model=0;model<4;++model){watch_boundaries((CPUModel)model);identity_equality((CPUModel)model);identity_guest((CPUModel)model,true);events((CPUModel)model);timing_events((CPUModel)model);completion((CPUModel)model);inspector((CPUModel)model);services((CPUModel)model);trace_interrupt_burst((CPUModel)model);}
     arc_rpc_observer_retire(false);arc_rpc_memory_close();puts("RPC observation: four CPUs, events, inspector values/purity, completion, generations, queue and trace");return 0;
 }
+
+#endif

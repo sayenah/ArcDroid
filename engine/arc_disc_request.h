@@ -14,7 +14,9 @@ typedef struct {
    uint32_t continuation, sp;
    uint64_t observed_us, order;
 } ArcDiscIdentity;
+typedef struct { uint32_t user_modes, svc_modes, device; bool require_x, allow_unspecified, strict_bare; } ArcDiscProfile;
 typedef struct {
+   const ArcDiscProfile *profile;
    bool armed, a_active, b_triggered, a_notified;
    char a_name[11], object[256];
    uint32_t continuation, sp;
@@ -40,6 +42,7 @@ typedef struct {
    const char *reason;
 } ArcDiscResult;
 
+bool arc_disc_request_signal_a(const ArcDiscProfile *,const ArcDiscSwi *);
 void arc_disc_request_clear(ArcDiscRequest *request);
 void arc_disc_request_swi(ArcDiscRequest *request, const ArcDiscSwi *event,
                           const char *inserted_name);

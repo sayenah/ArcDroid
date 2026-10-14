@@ -11,10 +11,12 @@ sys.dont_write_bytecode = True
 runner, core, shipping, fixtures = sys.argv[1:5]
 fixtures = Path(fixtures).resolve()
 profile = sys.argv[5] if len(sys.argv)>5 else 'full'
+baseline = sys.argv[6] if len(sys.argv)>6 else None
+matrix_frames=3 if profile=='full' else 1
 # Frozen input schedule, RTC and generated seed; no host timing is compared.
 def projection(text):
     return '\n'.join(x for x in text.splitlines() if x.startswith(('frame=','regs=','video=','pcm=','first-raster=','ram=','cmos=')))
-def run(plan, folder, library=core, frames=3, pacing='flat', extra=()):
+def run(plan, folder, library=core, frames=matrix_frames, pacing='flat', extra=()):
     r=subprocess.run([runner,'--core',library,'--plan',str(plan),'--system',str(fixtures),
         '--save',str(folder),'--frames',str(frames),'--pacing',pacing,*extra],capture_output=True,text=True,timeout=60)
     if r.returncode:raise RuntimeError(r.stderr+r.stdout)
@@ -27,11 +29,13 @@ with tempfile.TemporaryDirectory(prefix='arc-observation-plan-') as temp:
             original=(fixtures/f'{workload}-{model}.arcplan').read_text()
             plan=folder/'test.arcplan';plan.write_text(original)
             off=projection(run(plan,folder).stdout)
+            if baseline and projection(run(plan,folder,library=baseline).stdout)!=off:raise RuntimeError((model,workload,'main differs'))
             for quota in (1,7,200):
-                for mode in ('off','unmatched','trace'):
+                for mode in ('off','unmatched','trace','active'):
                     suffix=f'observation_quota={quota}\n'
                     if mode=='unmatched':suffix+='observation_profile=unmatched\n'
                     if mode=='trace':suffix+='observation_trace=numeric.jsonl\n'
+                    if mode=='active':suffix+='observer_cells=255\nobserver_forms=0xffffffff\nobserver_launch=Run Unmatched\nobserver_boot=launch\n'
                     plan.write_text(original+suffix)
                     result=run(plan,folder)
                     if projection(result.stdout)!=off:raise RuntimeError((model,workload,quota,mode,'projection changed'))
@@ -41,12 +45,13 @@ with tempfile.TemporaryDirectory(prefix='arc-observation-plan-') as temp:
     # The hot SA workload enables the fast clock and warms the instruction
     # cache. Active diagnostics prove integer batches actually executed.
     original=(fixtures/'hot.arcplan').read_text();plan=folder/'hot.arcplan';plan.write_text(original)
-    off=projection(run(plan,folder,frames=3).stdout)
+    off=projection(run(plan,folder,frames=matrix_frames).stdout)
     for quota in (1,7,200):
-        for mode in ('unmatched','trace'):
+        for mode in ('unmatched','trace','active'):
             suffix=f'observation_quota={quota}\n'
             suffix+= 'observation_profile=unmatched\n' if mode=='unmatched' else 'observation_trace=hot.jsonl\n'
-            plan.write_text(original+suffix);r=run(plan,folder,frames=3)
+            if mode=='active':suffix+='observer_cells=255\nobserver_forms=0xffffffff\nobserver_launch=Run Unmatched\nobserver_boot=launch\n'
+            plan.write_text(original+suffix);r=run(plan,folder,frames=matrix_frames)
             if projection(r.stdout)!=off or not re.search(r'integer_attempts=[1-9]',r.stderr):raise RuntimeError('integer batching parity/coverage')
     # Compact guest emits a defined User32 SWI, a returned error number, an
     # unknown SWI with forbidden payload and then an SVC32 SWI storm.
@@ -119,4 +124,24 @@ with tempfile.TemporaryDirectory(prefix='arc-observation-plan-') as temp:
     # Shipping admission remains unavailable, with no test trace symbol/profile.
     r=subprocess.run([runner,'--core',shipping,'--plan',str(plan),'--reject'],capture_output=True,text=True,timeout=30)
     if r.returncode:raise RuntimeError('shipping trace admission')
+# The local baseline leg additionally compares persisted guest writes, not
+# merely frame hashes. Reuse the authored PIO guest and ordinary seed API.
+if baseline:
+    with tempfile.TemporaryDirectory(prefix='arc-observer-persist-parity-') as temp:
+        folder=Path(temp);header=folder/'pio.h'
+        subprocess.run([sys.executable,'-B',str(Path(__file__).with_name('rpc_ide_rom.py')),str(header)],check=True)
+        words=[int(x,16) for x in re.findall(r'0x([0-9a-f]{8})u',header.read_text())]
+        data=struct.pack('<'+'I'*len(words),*words);rom_path=folder/'pio.rom'
+        rom_path.write_bytes(data+bytes(2097152-len(data)));(folder/'seed').write_bytes(bytes(256))
+        original=f'version=2\nmodel=sa110\nfirmware={rom_path}\ncmos=persist\nseed={folder/"seed"}\ncmos_layout=ro370\ncontent_id={"a"*40}\nrtc_epoch=0\nhard_disc=on\n'
+        expected=None;expected_files=None
+        for name,library,suffix in [('main',baseline,''),('off',core,''),('active',core,'observer_cells=255\nobserver_forms=0xffffffff\nobserver_launch=Run Unmatched\nobserver_boot=launch\n')]:
+            save=folder/name;save.mkdir();plan=folder/(name+'.arcplan');plan.write_text(original+suffix)
+            result=run(plan,save,library=library,frames=5,extra=['--ram-words','7'])
+            files={str(path.relative_to(save)):path.read_bytes() for path in save.rglob('*') if path.is_file()}
+            projected=projection(result.stdout)
+            if expected is None:expected,expected_files=projected,files
+            elif projected!=expected or files!=expected_files:raise RuntimeError((name,'persisted projection differs from main'))
+        if not expected_files or not any('hd-riscpc' in name for name in expected_files):raise RuntimeError('persistence leg produced no hard-disc evidence')
+    print('main/off/active: identical PIO guest projection, CMOS records, hard-disc manifests/chunks/journal bytes')
 print('observation plan: 4 CPUs, quotas 1/7/200, off/unmatched/trace parity; schema, allowlist, overflow and failed sink')

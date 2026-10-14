@@ -31,6 +31,8 @@ typedef struct {
      * frontend-owned through engine stop. Optional rate seam stays in client. */
     bool (*attach)(void *, char *, size_t);
     void (*started)(void *, bool factory);
+    void (*diagnostics)(void *);
+    void (*attached)(void *);
     void *opaque;
 } ArcRpcPreparationHost;
 typedef struct {

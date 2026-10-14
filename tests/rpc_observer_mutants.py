@@ -59,7 +59,9 @@ mutants = [
  ('trace-observer-order','engine/rpc/rpc_observer.c','ArcRpcObservation e=capture_event(ARC_RPC_OBS_CONTINUATION,0);e.watch=trace.watches[i].id;','ArcRpcObservation e=event(ARC_RPC_OBS_CONTINUATION,0);e.watch=trace.watches[i].id;'),
  ('trace-observer-watch-id','engine/rpc/rpc_observer.c','trace.watches[slot].id=++trace.watch_id;','trace.watches[slot].id=++observer.watch_id;'),
  ('watch-source-user','engine/rpc/rpc_observer.c','(source==0 || source==16) &&','true &&'),
- ('watch-target-user','engine/rpc/rpc_observer.c','(target==0 || target==16)','true'),
+ ('watch-same-width','engine/rpc/rpc_observer.c','&& source==target','&& true'),
+ ('trace-privileged-watch','engine/rpc/rpc_observer.c','watch_eligible(e.mode,e.mode)','true'),
+ ('trace-upcall-name-bound','engine/rpc/rpc_observer.c','swi==0x33?12:sizeof(t.path)','swi==0x33?256:sizeof(t.path)'),
  ('trace-return-eligibility','engine/rpc/rpc_observer.c','trace.watches[i].wait_return || arm.mode','false || arm.mode'),
 
 ]

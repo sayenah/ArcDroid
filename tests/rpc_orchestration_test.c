@@ -90,6 +90,16 @@ static void notice(void *opaque,const char *s,bool terminal)
     last_clear=!s[0];if(last_clear)++clears;
     snprintf(last_notice,sizeof(last_notice),"%s",s);
 }
+static void observer_attached(void *opaque)
+{
+    (void)opaque;
+    /* Flag-free harness reaches the production arms/snapshots. No override
+     * exists in this executable; every unqualified cell refuses authority. */
+    arc_engine_boot_watch_arm();assert(arc_engine_boot_watch_state()==ARC_BOOT_WATCH_DISABLED);
+    assert(!arc_engine_launch_outcome_arm("Run Authored"));
+    ArcLaunchOutcome launch;arc_engine_launch_outcome_snapshot(&launch);assert(launch.state==ARC_OUTCOME_OFF);
+    ArcErrorBox box;arc_engine_error_snapshot(&box);assert(!box.recognised_open && box.modal_unknown);
+}
 static bool attach(void *opaque,char *e,size_t n)
 {
     (void)opaque;(void)e;(void)n;++attach_calls;
@@ -482,7 +492,7 @@ int main(int argc,char **argv)
     size_t size=files[i].size;uint8_t *rom=malloc(size);assert(rom);memcpy(rom,files[i].data,size);
     construction_and_attachments(rom,size);
     file_bytes("/system/attachment.raw","media",5);
-    snapshot();ArcRpcPreparationHost host={.clock=clock_read,.notice=notice,.attach=attach};
+    snapshot();ArcRpcPreparationHost host={.clock=clock_read,.notice=notice,.attach=attach,.attached=observer_attached};
     /* Initial package validation precedes either CMOS generation or seed. */
     state_matrix(rom,size,host,sanitizer,!strcmp(argv[4],"mutant"));
     scheduler_matrix(rom,size,host);hd_notices(rom,size,host);store_refusals(rom,size,host);

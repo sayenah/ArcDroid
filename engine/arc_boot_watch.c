@@ -27,7 +27,7 @@ void arc_boot_watch_observe(ArcBootWatch *watch, uint32_t swi,
 {
    (void)r1; (void)r2; (void)r3; (void)address; (void)mode;
    if (watch->state != ARC_BOOT_WATCH_ARMED) return;
-   if (now_us - watch->armed_us >= ARC_BOOT_HORIZON_US)
+   if (now_us - watch->armed_us >= (watch->profile ? watch->profile->horizon_us : ARC_BOOT_HORIZON_US))
    { watch->state = ARC_BOOT_WATCH_EXPIRED; watch->pending = false; return; }
    watch->last_event_us = now_us;
    /* The X bit is the only decoration removed from the 24-bit SWI field. */
@@ -35,15 +35,23 @@ void arc_boot_watch_observe(ArcBootWatch *watch, uint32_t swi,
    if (swi == 0x400c0u)
    { watch->state = ARC_BOOT_WATCH_DISABLED; watch->pending = false; }
    else if (swi == 5u) watch->pending = false;
-   else if (swi == 0x0eu && r0 < 0x8000u && in_rom)
+   else if (swi == 0x0eu && r0 < (watch->profile ? watch->profile->buffer_limit : 0x8000u) &&
+       (in_rom || (watch->profile && !watch->profile->rom)) &&
+       (!watch->profile || !watch->profile->user_only || mode == 0u || mode == 16u))
    { watch->read_us = now_us; watch->pending = true; }
 }
 
 void arc_boot_watch_frame(ArcBootWatch *watch, uint64_t now_us)
 {
    if (watch->state != ARC_BOOT_WATCH_ARMED) return;
-   if (now_us - watch->armed_us >= ARC_BOOT_HORIZON_US)
+   if (now_us - watch->armed_us >= (watch->profile ? watch->profile->horizon_us : ARC_BOOT_HORIZON_US))
    { watch->state = ARC_BOOT_WATCH_EXPIRED; watch->pending = false; }
-   else if (watch->pending && now_us - watch->read_us >= ARC_BOOT_WAIT_US)
+   else if (watch->pending && now_us - watch->read_us >= (watch->profile ? watch->profile->wait_us : ARC_BOOT_WAIT_US))
    { watch->state = ARC_BOOT_WATCH_PROMPT; watch->pending = false; }
+}
+
+void arc_boot_watch_arm_profile(ArcBootWatch *watch,uint64_t now_us,const ArcBootProfile *profile)
+{
+   if(!watch || !profile || !profile->horizon_us || !profile->wait_us)return;
+   arc_boot_watch_arm(watch,now_us);watch->profile=profile;
 }

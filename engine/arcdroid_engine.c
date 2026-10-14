@@ -5,6 +5,11 @@ extern const ArcEngineBackendOps arc_rpc_backend;
 #include "rpc/rpc_floppy.h"
 #include "rpc/rpc_ide.h"
 #include "rpc/rpc_rtc.h"
+#include "rpc/rpc_observers.h"
+#include "arc_io.h"
+#include "rpc_selection.h"
+#include <stdlib.h>
+#include <string.h>
 #if defined(ARCDROID_TEST_FAULTS)
 #include "engine_test.h"
 #include <stdio.h>
@@ -33,6 +38,12 @@ RETRO_API bool arc_rpc_test_start(ArcRpcModel model, const uint8_t *rom, size_t 
  * observer snapshots and failed-start cleanup identical to the baseline. */
 static const ArcEngineBackendOps *arc_backend = &arc_arculator_backend;
 
+static ArcEngineMedia rpc_helper;
+static char rpc_helper_path[1024];
+static uint64_t rpc_identity_epoch;
+static ArcIdeBackend rpc_identity_ide;
+static void rpc_identity_clear(void)
+{ rpc_helper=(ArcEngineMedia){0};rpc_identity_ide=(ArcIdeBackend){0};rpc_identity_epoch=0;rpc_helper_path[0]=0; }
 bool arc_engine_is_rpc(void) { return arc_backend == &arc_rpc_backend; }
 
 uint64_t arc_engine_session_generation(void)
@@ -84,12 +95,14 @@ void arc_engine_set_log_callback(ArcEngineLogCallback callback, void *opaque)
 
 bool arc_engine_reset(char *error, size_t error_size)
 {
-   return arc_backend->reset(error, error_size);
+   bool ok=arc_backend->reset(error,error_size);
+   if(ok && arc_engine_is_rpc())rpc_identity_epoch=arc_rpc_observer_epoch();
+   return ok;
 }
 
 void arc_engine_stop(void)
 {
-   arc_backend->stop();
+   arc_backend->stop();rpc_identity_clear();
 }
 
 bool arc_engine_run_frame(ArcInputState *input, ArcEngineFrame *frame)
@@ -249,7 +262,7 @@ bool arc_engine_active(void)
 bool arc_engine_rpc_start_begin(unsigned model,const uint8_t *rom,size_t size,
     const uint8_t seed[256],uint64_t epoch,bool factory,char *e,size_t n)
 {
-    arc_backend->stop();arc_backend=&arc_rpc_backend;
+    rpc_identity_clear();arc_backend->stop();arc_backend=&arc_rpc_backend;
     return arc_rpc_session_start_begin((ArcRpcModel)model,rom,size,seed,epoch,factory,e,n);
 }
 bool arc_engine_rpc_start_step(bool *done,char *e,size_t n)
@@ -257,24 +270,88 @@ bool arc_engine_rpc_start_step(bool *done,char *e,size_t n)
 bool arc_engine_rpc_start(unsigned model, const uint8_t *rom, size_t size,
     const uint8_t seed[256], uint64_t epoch, bool factory, char *error, size_t n)
 {
-    arc_backend->stop(); arc_backend = &arc_rpc_backend;
+    rpc_identity_clear();arc_backend->stop(); arc_backend = &arc_rpc_backend;
     bool ok = factory ? arc_rpc_session_factory_start((ArcRpcModel)model,rom,size,epoch,error,n)
                       : arc_rpc_session_start((ArcRpcModel)model,rom,size,seed,epoch,error,n);
     if (!ok) arc_backend->stop();
     return ok;
 }
+void arc_engine_rpc_observers_bind(unsigned catalogue)
+{
+    if(!arc_engine_is_rpc())return;
+    ArcDigest digest;size_t count=0;unsigned actual=0;
+    const ArcRpcFirmwareFingerprint *table=arc_riscpc_firmware_catalogue(&count);
+    if(arc_rpc_session_firmware(&digest)){
+        const ArcRpcFirmwareFingerprint *fingerprint=arc_riscpc_firmware_recognize(&digest,table,count);
+        if(fingerprint)actual=(unsigned)fingerprint->os;
+    }
+    arc_rpc_observers_bind(catalogue==actual?actual:0,arc_rpc_session_cpu());
+}
+bool arc_engine_rpc_observers_replace(ArcDiscSignal signal)
+{ return arc_engine_is_rpc() && arc_rpc_observers_replace(signal); }
+bool arc_engine_rpc_observers_capability(unsigned bit)
+{ return arc_engine_is_rpc() && arc_rpc_observers_capability(bit); }
+void arc_engine_rpc_diagnostics(void)
+{ if(arc_engine_is_rpc())arc_rpc_observer_drain(); }
+bool arc_rpc_observers_identities(char helper[11],char hd[11])
+{
+    helper[0]=hd[0]=0;
+    if(rpc_identity_epoch!=arc_rpc_observer_epoch())return false;
+    if(rpc_helper.kind){
+        void *allocated=NULL;const uint8_t *data=rpc_helper.data;size_t size=rpc_helper.size;
+        if(!data && !arc_io_read_all(rpc_helper.path,&allocated,&size))return false;
+        if(!data)data=allocated;
+        ArcMediaInfo info={0};ArcGuestName name={0};
+        bool valid=arc_media_inspect(rpc_helper.path?rpc_helper.path:"helper.adf",data,size,&info,NULL,0) && arc_disc_read_name(data,size,&info,NULL,&name) && name.length<=10;
+        if(valid){memcpy(helper,name.bytes,name.length);helper[name.length]=0;}
+        free(allocated);if(!valid)return false;
+    }
+    if(rpc_identity_ide.read){
+        uint8_t boot[512],map[512],backup[512];
+        /* Authored 126 MiB format: primary and backup new-map records and
+         * boot record must agree. A partial guest rename stays manual. */
+        const uint32_t map_lba=((2u*(512u*8u-32u)-480u)<<13)/512u;
+        if(!rpc_identity_ide.read(rpc_identity_ide.opaque,6,1,boot) ||
+           !rpc_identity_ide.read(rpc_identity_ide.opaque,map_lba,1,map) ||
+           !rpc_identity_ide.read(rpc_identity_ide.opaque,map_lba+5,1,backup))return false;
+        unsigned sum=0;for(unsigned i=0;i<511;++i)sum+=boot[i];
+        while(sum>255)sum=(sum&255)+(sum>>8);
+        if(sum!=boot[511] || boot[0x1c0]!=9 || boot[0x1c1]!=63 || boot[0x1c2]!=16 ||
+           memcmp(boot+0x1c0+22,map+4+22,10) || memcmp(map+4+22,backup+4+22,10))return false;
+        memcpy(hd,boot+0x1c0+22,10);hd[10]=0;
+        size_t end=10;while(end && (hd[end-1]==' ' || !hd[end-1]))hd[--end]=0;
+        if(!end)return false;
+    }
+    for(unsigned which=0;which<2;++which){char *s=which?hd:helper;
+        for(unsigned i=0;s[i];++i)if((unsigned char)s[i]<0x21 || (unsigned char)s[i]>0x7e || strchr(".:*/\\",s[i]))return false;
+    }
+    if(helper[0] && hd[0]){
+        unsigned i=0;bool same=true;
+        while(helper[i] || hd[i]){unsigned a=(unsigned char)helper[i],b=(unsigned char)hd[i];
+            if(a>='A' && a<='Z')a+='a'-'A';if(b>='A' && b<='Z')b+='a'-'A';
+            if(a!=b){same=false;break;}++i;}
+        if(same)return false;
+    }
+    return true;
+}
 bool arc_engine_rpc_ide(const ArcIdeBackend *ide)
 {
     if (!arc_engine_is_rpc() || !arc_engine_active()) return false;
+    rpc_identity_epoch=arc_rpc_observer_epoch();rpc_identity_ide=ide?*ide:(ArcIdeBackend){0};
     arc_rpc_ide_set_backend(ide); return true;
 }
 bool arc_engine_rpc_mount(unsigned drive,const ArcEngineMedia *media,char *e,size_t n)
 {
     bool ok = arc_engine_is_rpc() && arc_engine_active() && arc_rpc_fdc_mount(drive,media,e,n);
+    if(drive==1){rpc_identity_epoch=arc_rpc_observer_epoch();rpc_helper=(ArcEngineMedia){0};
+        if(ok && media){rpc_helper=*media;
+            if(media->path){size_t length=strlen(media->path);if(length>=sizeof(rpc_helper_path))return false;
+                memcpy(rpc_helper_path,media->path,length+1);rpc_helper.path=rpc_helper_path;}}
+    }
     return ok;
 }
 void arc_engine_rpc_eject(unsigned drive)
-{ if (arc_engine_is_rpc() && arc_engine_active()) arc_rpc_fdc_eject(drive); }
+{ if (arc_engine_is_rpc() && arc_engine_active()){arc_rpc_fdc_eject(drive);if(drive==1)rpc_helper=(ArcEngineMedia){0};} }
 bool arc_engine_rpc_attach(const ArcEngineMedia *media,const ArcEngineMedia *helper,
     const ArcIdeBackend *ide,char *e,size_t n)
 {
@@ -393,6 +470,10 @@ RETRO_API const ArcEngineBackendOps *arc_rpc_test_engine_api(void)
 #endif
 
 #if defined(ARCDROID_TEST_FAULTS)
+RETRO_API void arc_engine_test_observers_buttons(uint32_t ok,uint32_t cancel,uint32_t defaults)
+{ if(arc_engine_is_rpc())arc_rpc_observers_test_buttons(ok,cancel,defaults); }
+RETRO_API void arc_engine_test_observers_override(unsigned mask,uint32_t r1,uint32_t r2,uint32_t forms)
+{ if(arc_engine_is_rpc())arc_rpc_observers_override(mask,r1,r2,forms); }
 void arc_engine_test_observation_profile(bool unmatched,unsigned quota)
 {
     if(!arc_engine_is_rpc())return;

@@ -33,6 +33,7 @@ static struct {
 } trace;
 static void trace_loss(const ArcRpcObservation *);
 #endif
+static void watch_lost(unsigned slot);
 static void gate(void)
 {
     observers_active=false;
@@ -42,12 +43,29 @@ static void gate(void)
     arc_rpc_observer_active|=trace.status.enabled;
 #endif
 }
+#define CELL(cat,cpu,owner,cap) {cat,cpu,1,owner,cap,false,"awaiting Fable qualification"}
+#define PAIR(cat,cpu) CELL(cat,cpu,ARC_RPC_OBS_BOOT,ARC_RPC_CAP_OBSERVE), \
+    CELL(cat,cpu,ARC_RPC_OBS_LAUNCH,ARC_RPC_CAP_OBSERVE), \
+    CELL(cat,cpu,ARC_RPC_OBS_ERROR,ARC_RPC_CAP_OBSERVE), \
+    CELL(cat,cpu,ARC_RPC_OBS_ERROR,ARC_RPC_CAP_COMPLETE), \
+    CELL(cat,cpu,ARC_RPC_OBS_DISC,ARC_RPC_CAP_OBSERVE), \
+    CELL(cat,cpu,ARC_RPC_OBS_DISC,ARC_RPC_CAP_REPLACE), \
+    CELL(cat,cpu,ARC_RPC_OBS_DISC,ARC_RPC_CAP_OBSERVE_B), \
+    CELL(cat,cpu,ARC_RPC_OBS_DISC,ARC_RPC_CAP_REPLACE_B)
+static const ArcRpcObserverQualification qualifications[]={
+    PAIR(1,0),PAIR(2,1),PAIR(2,3),PAIR(3,2),PAIR(4,1),PAIR(4,2),PAIR(4,3)
+};
+#undef PAIR
+#undef CELL
 ArcRpcObserverQualification arc_rpc_observer_qualification(unsigned catalogue,
     unsigned cpu, ArcRpcObserver owner, ArcRpcObserverCapability capability)
 {
-    /* Production table deliberately empty. Recognition is separate authority. */
-    return (ArcRpcObserverQualification){catalogue,cpu,0,owner,capability,false,
-        "R3c-1: observer profile unqualified"};
+    for(unsigned i=0;i<sizeof(qualifications)/sizeof(qualifications[0]);++i){
+        const ArcRpcObserverQualification *q=&qualifications[i];
+        if(q->catalogue==catalogue && q->cpu==cpu && q->observer==owner && q->capability==capability)return *q;
+    }
+    return (ArcRpcObserverQualification){catalogue,cpu,1,owner,capability,false,
+        "unknown firmware, CPU pair or sub-capability"};
 }
 bool arc_rpc_observer_unavailable(ArcRpcObserver owner,ArcRpcObserverCapability capability)
 { return !arc_rpc_observer_qualification(0,0,owner,capability).enabled; }
@@ -58,7 +76,7 @@ void arc_rpc_observer_cancel(ArcRpcObserver owner)
 {
     if((unsigned)owner>=ARC_RPC_OBSERVERS)return;
     ++observer.owners[owner].generation;observer.owners[owner].answer=false;
-    for(unsigned i=0;i<ARC_RPC_WATCHES;++i)if(observer.watches[i].owner==owner)observer.watches[i].live=false;
+    for(unsigned i=0;i<ARC_RPC_WATCHES;++i)if(observer.watches[i].live && observer.watches[i].owner==owner)watch_lost(i);
     unsigned count=0;
     for(unsigned i=0;i<observer.work_count;++i)if(observer.work[i].observer!=owner)observer.work[count++]=observer.work[i];
     observer.work_count=count;
@@ -123,7 +141,7 @@ static ArcRpcObservation event(ArcRpcObservationKind kind,uint16_t mask)
     ArcRpcObservation e=capture_event(kind,mask);e.order=observers_active?++observer.order:0;return e;
 }
 static bool watch_eligible(uint32_t source,uint32_t target)
-{ return (source==0 || source==16) && (target==0 || target==16); }
+{ return (source==0 || source==16) && source==target; }
 #if defined(ARCDROID_TEST_FAULTS)
 static bool trace_file_reason(uint32_t reason)
 {
@@ -138,14 +156,14 @@ static bool trace_find_reason(uint32_t reason)
 static uint16_t trace_mask(uint32_t swi,uint32_t reason)
 {
     switch(swi&~0x20000u){
-    case 6:return reason==15 || reason==21?7:1; /* error-box byte reasons */
+    case 6:return reason==15 || reason==21 || reason==129?7:1; /* error-box byte reasons */
     case 7:return reason==21?3:1; /* bounded word reason/block pointer */
     case 0x29:return reason==15?3:1; /* confirmation reason */
     case 8:return trace_file_reason(reason)?0xb:1;
     case 0xd:return trace_find_reason(reason)?0xb:reason==0?3:1;
     case 5:return 1; /* OS_CLI command pointer */
     case 0xe:return 0xf; /* OS_ReadLine pointer, bound and character limits */
-    case 0x33:return reason==1 || reason==2?7:1; /* named disc requests only */
+    case 0x33:return reason==1 || reason==2?0xf:1; /* named disc requests only */
     case 0x11:return 7; /* OS_Exit error/identifier/result */
     case 0x400c0:case 0x400c7:case 0x400e1:return 0xf;
     case 0x400dd:return 3; /* Wimp_CloseDown task/identifier */
@@ -255,6 +273,20 @@ static void deliver(unsigned i,ArcRpcObservation *e)
     observer.current_generation=observer.owners[i].generation;observer.current_results=f.results;observer.current_kind=e->kind;
     if(f.callback)f.callback(f.opaque,e);
 }
+static void watch_lost(unsigned slot)
+{
+    unsigned owner=observer.watches[slot].owner;
+    ArcRpcObservation e=event(ARC_RPC_OBS_WATCH_LOST,0);
+    e.watch=observer.watches[slot].id;
+    observer.watches[slot].live=false;
+    if(observer.owners[owner].filter.kinds&ARC_RPC_OBS_WATCH_LOST)deliver(owner,&e);
+}
+bool arc_rpc_observer_watch_live(ArcRpcObserver owner,uint64_t id)
+{
+    for(unsigned i=0;i<ARC_RPC_WATCHES;++i)if(observer.watches[i].live &&
+        observer.watches[i].owner==owner && observer.watches[i].id==id)return true;
+    return false;
+}
 void arc_rpc_observe_fetched(const uint32_t *page)
 {
     observer.origin.backing=arc_rpc_observer_backing(page+((observer.origin.pc&0x3ffu)>>2));
@@ -273,7 +305,7 @@ void arc_rpc_observe_fetched(const uint32_t *page)
         if(!observer.watches[i].live)continue;
         unsigned owner=observer.watches[i].owner;
         if(observer.watches[i].generation!=observer.owners[owner].generation ||
-            observer.instruction>observer.watches[i].deadline){observer.watches[i].live=false;continue;}
+            observer.instruction>observer.watches[i].deadline){watch_lost(i);continue;}
         if(observer.watches[i].wait_return || arm.mode!=observer.watches[i].mode)continue;
         ArcRpcObservation e=event(ARC_RPC_OBS_CONTINUATION,0);
         e.watch=observer.watches[i].id;
@@ -332,6 +364,7 @@ uint64_t arc_rpc_observer_watch(ArcRpcObserver owner,uint32_t pc,uint32_t mode,u
     for(unsigned i=0;i<ARC_RPC_WATCHES;++i)if(observer.watches[i].live && observer.watches[i].owner==owner){slot=i;break;}
     if(slot==ARC_RPC_WATCHES)for(unsigned i=0;i<ARC_RPC_WATCHES;++i)if(!observer.watches[i].live){slot=i;break;}
     if(slot==ARC_RPC_WATCHES)return 0;
+    if(observer.watches[slot].live)watch_lost(slot);
     observer.watches[slot].live=true;observer.watches[slot].owner=owner;
     observer.watches[slot].id=++observer.watch_id;observer.watches[slot].generation=observer.owners[owner].generation;
     observer.watches[slot].deadline=observer.instruction+attempts;
@@ -396,13 +429,15 @@ void arc_rpc_observer_drain(void)
     }
     host_active=false;
 }
-#if defined(ARCDROID_TEST_FAULTS)
-RETRO_API bool arc_rpc_observer_test_filter(ArcRpcObserver owner,const ArcRpcObserveFilter *filter)
+bool arc_rpc_observer_filter(ArcRpcObserver owner,const ArcRpcObserveFilter *filter)
 {
     if((unsigned)owner>=ARC_RPC_OBSERVERS || (filter && ((filter->results&~0x1fffu) || (filter->registers&~0x1fffu))))return false;
     arc_rpc_observer_cancel(owner);observer.owners[owner].filter=filter?*filter:(ArcRpcObserveFilter){0};
     observer.owners[owner].armed=filter!=NULL;gate();return true;
 }
+#if defined(ARCDROID_TEST_FAULTS)
+RETRO_API bool arc_rpc_observer_test_filter(ArcRpcObserver o,const ArcRpcObserveFilter *f)
+{ return arc_rpc_observer_filter(o,f); }
 RETRO_API void arc_rpc_observer_trace(bool enabled,bool private_paths)
 {
     /* Reset metadata; count gates all record reads. Avoid touching the entire

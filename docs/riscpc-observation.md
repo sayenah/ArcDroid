@@ -173,3 +173,98 @@ Trace-only captures never increment observer order or watch counters, and trace
 watches use trace attempt deadlines. A trace record has its own ordered identity
 even when it copies an observer event. Turning trace on, changing selection or
 losing trace records cannot change any observer-visible identity.
+
+## R3c-2 observer contract (D-177)
+
+RPC revision 1 is a parameterised profile of the shared pure observers. The
+3.1 ordered error sequence remains the Arculator default. RPC instead opens on
+a user26/user32 ReportError and owns a same-width user return watch. Old-style
+synchronous flag forms are explicitly 0x00 through 0x1f; each form has separate
+button/default and poll qualification. Bit-8 forms are observation-only; bits
+5/6 (immediate return/close control) are excluded. Unknown flags still block
+replacement as an open user report. No serious-error classification is inferred
+from an error number. A qualification must prove the effective buttons, default
+and absence of competing reads for that form; otherwise manual interaction is
+the only hint. The initial test candidate uses the ordinary low-five-bit button
+interpretation and poll R1=R2=0, pending Fable's re-recording and adjudication.
+
+Learning and consumption require the profile's exact full SVC mode (3 or 19),
+ROM fetched backing, OS_Byte 129 and exact R1/R2. The first eligible poll learns
+VA/SP; it cannot consume. Later eligible polls must match both. IRQ activity is
+neutral. Nested reports retire the parent and pending answer; no parent resumes.
+The return, disqualifying return, watch admission refusal, expiry, cancellation,
+replacement, reset, stop or fault ends eligibility synchronously. Watch loss
+leaves modal state unknown until a new bounded report or epoch. Observation and
+completion are separate capabilities; completion also needs form qualification.
+
+The frontend snapshot distinguishes recognised open, answer available and modal
+unknown. Unknown/immediate/close forms are modal-unknown while their user return
+watch is pending; accepted synchronous forms alone claim recognised-open. An
+already queued or consumed answer is no longer available. Only answer availability owns pad A/B, with the existing neutral and
+release gates. Observation-only generations retain normal keyboard, mouse, OSK
+and pad mapping and show a manual hint. Disc mutation requires a known nonmodal
+state, including before poll learning and for unanswerable user reports. Lack of
+an error observer never proves nonmodal state.
+
+Disc A admits only ROM SVC XOS_UpCall reason 1/2, filesystem 8, device R3=0,
+with a terminated bare printable medium name of 1..10 bytes (12-byte inspection
+bound). Disc B admits only user OS_File/OS_Find operations already recognised
+by the shared logic, a validated ADFS::name.$ path for the inserted floppy,
+and a same-width user return watch with the existing miss semantics. A and B
+have separate observe/replace cells. Shared two-miss identity history retains
+its 120-second window. Copied deferred records contain signal, canonical name
+or object, operation, continuation/SP/watch, time, epoch, owner and both drive
+generations. A valid signal A synchronously cancels queued B work. Resolution restores this copied identity, never the latest mutable
+request. Cancellation is synchronous; validation precedes resolution and
+mutation. Overflow retires only the disc generation.
+
+Helper and IDE names come from their current FileCore disc records; missing,
+malformed, conflicting or unreadable identity disables automatic replacement.
+Identity is re-read before resolution and commit, covering guest renames.
+ADFS::1/4, unspecified devices, helper names and hard-disc names are refused.
+Replacement is drive 0 only, current generation, controller idle, unique content
+candidate, successful preflight and known nonmodal state; FileCore retries the
+UpCall without answering its box. Manual Disk Control remains independent.
+
+Launch outcome uses the production command arm/snapshot API after attachment,
+inside an explicit launch phase. Its profile sets the 600-second horizon and
+ROM provenance requirements for exit/close/poll; user-mode SWIs only. It reports
+termination, never installed-product or gameplay success. Boot uses the same
+phase arm API and profile parameters: 40-second horizon, 2-second prompt wait,
+user-mode ROM ReadLine, R0 below 0x8000. Plan/harness keys schedule these arms at
+a requested presentation frame; no machine-startup arm. Both stay test-armed
+until R3c-3; flag-free harnesses may call production arms but gain no override.
+
+The session hashes the actual owned image incrementally in the existing 32 KiB
+copy units; binding checks that digest against the verified catalogue request.
+The session binds that fingerprint, actual CPU and profile
+revision only after attachment. All production cells are disabled with reason
+"awaiting Fable qualification"; unknown/authored firmware has no authority.
+The test-fault build alone offers an explicitly labelled per-cell override and
+candidate profile parameters. Promotion is a later run changing exactly Fable's
+adjudicated cells with evidence references, followed by override-free QA.
+
+Boundary ownership: the RPC frontend polls input/arbitrates once, then runs the
+protected frame. Engine frame return advances observer horizons and drains copied
+host work (including B resolution and commit callbacks) outside the fault boundary.
+The frontend then drains trace, performs A resolution/hints/commit, and runs
+maintenance once. The next call polls input once for its next guest frame. Preparation owns its own diagnostics
+drain after each isolated advance and before stop, with no hints, answers or
+replacement during generation. Requested-session binding/activation occurs
+only after attachment. A diagnostic sink is supplied by the client so generation
+records drain before retirement; otherwise loss is explicitly retained.
+
+Canonical translator state includes profile/identity/capabilities, phase arms,
+all four pure states, modal knowledge, learned poll identity, return-watch loss,
+pending intent, deferred copied observations and media generation. Unavailable,
+unmatched and trace-only operation retain integer batching and quotas 1/7/200.
+Enabling any observer selects R3c-1's instrumented interpreter; Fable's Odin3
+R-H comparison must enable candidate observers and arm launch/boot, not merely
+trace. No firmware addresses or bytes are part of this profile.
+
+Hardware reset preserves the verified binding/profile and host callback leases,
+then rebinds in the new epoch with all watches, intent, histories and phase arms
+empty. A test override remains session-scoped across reset; it is never promoted.
+Stop/failed start/unload clear borrowed helper/IDE metadata before a later session
+can refresh the identity epoch. A helper-free reopen cannot inherit a helper name
+or pointer from its predecessor.

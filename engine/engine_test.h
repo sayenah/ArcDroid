@@ -5,6 +5,8 @@
 #if defined(ARCDROID_TEST_FAULTS)
 #include "libretro.h"
 #include "rpc/rpc_observer.h"
+RETRO_API void arc_engine_test_observers_buttons(uint32_t,uint32_t,uint32_t);
+RETRO_API void arc_engine_test_observers_override(unsigned mask,uint32_t r1,uint32_t r2,uint32_t forms);
 void arc_engine_test_observation_trace(bool,bool);
 bool arc_engine_test_observation_select(const ArcRpcTraceSelection *);
 void arc_engine_test_observation_profile(bool,unsigned);

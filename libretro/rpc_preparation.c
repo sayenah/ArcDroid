@@ -31,6 +31,7 @@ struct ArcRpcPreparation {
     ArcRpcPreparationHost host;
     ArcRpcPreparationRequest request;
     ArcRpcFirmwareFingerprint fingerprint;
+    unsigned verified_catalogue;
     char sha1[41],save[1024],system[1024],source[1024],media_path[1024],helper_path[1024],seed_path[1024],error[512];
     uint8_t *firmware,seed[256],captured[256],block[131072];
     ArcEngineMedia media,helper;
@@ -86,6 +87,7 @@ static void release(ArcRpcPreparation *p)
 }
 static void failed(ArcRpcPreparation *p,const char *s)
 {
+    arc_engine_rpc_diagnostics();if(p->host.diagnostics)p->host.diagnostics(p->host.opaque);
     if (s && s != p->error) snprintf(p->error,sizeof(p->error),"%s",s);
     if (!p->error[0]) strcpy(p->error,"RiscPC session preparation failed");
     arc_engine_stop();p->state=ARC_RPC_PREP_FAILED;
@@ -100,7 +102,7 @@ static bool copied(char out[1024],const char *in)
 static void restart(ArcRpcPreparation *p)
 {
     memset(&p->record,0,sizeof(p->record));memset(&p->defaults,0,sizeof(p->defaults));
-    p->state=ARC_RPC_PREP_VERIFY;p->substep=0;p->verify_at=0;p->crc=0;
+    p->state=ARC_RPC_PREP_VERIFY;p->substep=0;p->verify_at=0;p->crc=0;p->verified_catalogue=0;
     p->lba=0;p->io_pending=false;p->needs_population=p->receipted=false;p->refusal_reported=false;
     p->status=NULL;p->notice_frames=0;p->error[0]=0;
     arc_sha1_init(&p->hash1);arc_sha256_init(&p->hash256);
@@ -193,9 +195,9 @@ static void unit(ArcRpcPreparation *p)
     case ARC_RPC_PREP_VERIFY:{
         size_t take=p->request.firmware_size-p->verify_at;if(take>32768)take=32768;
         const uint8_t *data=p->firmware+p->verify_at;
-        /* Only resolved/catalogued requests have CRC/SHA-1 to compare. The
-         * explicit low-level entry still derives its complete SHA-256 key. */
-        if(p->request.fingerprint){arc_sha1_update(&p->hash1,data,take);p->crc=arc_crc32_append(p->crc,data,take);}
+        /* All requested sessions derive exact recognition; a caller-supplied
+         * fingerprint is additionally verified, never treated as authority. */
+        arc_sha1_update(&p->hash1,data,take);p->crc=arc_crc32_append(p->crc,data,take);
         arc_sha256_update(&p->hash256,data,take);p->verify_at+=take;
         if(p->verify_at!=p->request.firmware_size)break;
         char sha1[41];uint8_t sha256[32];arc_sha1_final(&p->hash1,sha1);arc_sha256_final(&p->hash256,sha256);
@@ -204,6 +206,10 @@ static void unit(ArcRpcPreparation *p)
             snprintf(p->error,sizeof(p->error),"RISC OS %s firmware cannot be verified; check <system>/arcdroid/firmware/",
                 arc_riscpc_selection_os_name(f->os));failed(p,p->error);break;
         }
+        size_t catalogue_count=0;const ArcRpcFirmwareFingerprint *catalogue=arc_riscpc_firmware_catalogue(&catalogue_count);
+        ArcDigest digest={.size=p->request.firmware_size,.crc32=p->crc};memcpy(digest.sha1,sha1,sizeof(digest.sha1));
+        const ArcRpcFirmwareFingerprint *recognized=arc_riscpc_firmware_recognize(&digest,catalogue,catalogue_count);
+        p->verified_catalogue=recognized?(unsigned)recognized->os:0;
         static const char hex[]="0123456789abcdef";
         for(unsigned i=0;i<32;++i){p->request.key.firmware[2*i]=hex[sha256[i]>>4];p->request.key.firmware[2*i+1]=hex[sha256[i]&15];}
         p->request.key.firmware[64]=0;
@@ -308,6 +314,8 @@ static void unit(ArcRpcPreparation *p)
             break;
         }
         if(!arc_engine_rpc_advance(ARC_RPC_GENERATION_QUANTUM_NS)){failed(p,"RiscPC isolated settings generation failed");break;}
+        arc_engine_rpc_diagnostics();
+        if(p->host.diagnostics)p->host.diagnostics(p->host.opaque);
         ++p->stats.generation_quanta;
         uint64_t now;unsigned s;
         arc_engine_rpc_evidence(p->captured,p->evidence.mask,&p->evidence.writes,&p->evidence.last_write,&now,&s);
@@ -343,6 +351,8 @@ static void unit(ArcRpcPreparation *p)
         p->stats.attachment_operations=io.operations;p->stats.attachment_bytes=io.bytes;
         p->stats.attachment_namespace=io.namespace_operations;
         if(!attached){failed(p,p->error);break;}
+        arc_engine_rpc_observers_bind(p->verified_catalogue);
+        if(p->host.attached)p->host.attached(p->host.opaque);
         p->state=ARC_RPC_PREP_RUNNING;if(!p->refusal_reported)notice(p,"",false);p->status=NULL;break;
     }
     default:break;

@@ -1,0 +1,203 @@
+/* Authored instruction fixtures through the actual adapter/interpreter.
+ * No firmware content. GPL-2.0-only. */
+#define ARC_RPC_OBSERVERS_TEST
+#include "rpc_observer_test.c"
+#include "rpc_observers.h"
+static uint64_t clock_ns,media[2]={1,1};
+static bool identities_ok=true;
+static char helper_name[11],hd_name[11];
+uint64_t arc_rpc_time_ns(void) { return clock_ns; }
+uint64_t arc_rpc_fdc_media_generation(unsigned d) { return media[d]; }
+bool arc_rpc_observers_identities(char helper[11],char hd[11])
+{ strcpy(helper,helper_name);strcpy(hd,hd_name);return identities_ok; }
+static ArcErrorBox box(void) { ArcErrorBox result;arc_rpc_observers_error_snapshot(&result);return result; }
+static void start(CPUModel model,unsigned cells)
+{
+    arc_rpc_observers_test_watch_budget(ARC_RPC_WATCH_ATTEMPT_LIMIT);fixture(model,16,0x100);memset(rom+64,0,512);arc_rpc_observers_bind(0,model);
+    arc_rpc_observers_override(cells,0,0,UINT32_MAX);
+    clock_ns=0;identities_ok=true;helper_name[0]=hd_name[0]=0;
+    rom[2]=0xe1b0f00e; /* default handler: MOVS pc,lr */
+}
+static void issue(uint32_t pc,uint32_t mode,uint32_t swi,uint32_t r0,uint32_t r1,uint32_t r2,uint32_t r3,uint32_t sp)
+{
+    updatemode(mode);arm.reg[16]=mode;arm.reg[15]=pc+8;
+    if(mode<16)arm.reg[15]|=mode;
+    arm.event=0;arm.reg[0]=r0;arm.reg[1]=r1;arm.reg[2]=r2;arm.reg[3]=r3;arm.reg[13]=sp;
+    rom[pc/4]=0xef000000|swi;arc_rpc_arm_exec_count(1);
+}
+static void report(uint32_t flags) { issue(0x100,16,0x400df,0,flags,0,0,0x10008000); }
+static void poll(uint32_t pc,uint32_t mode,uint32_t r1,uint32_t r2,uint32_t sp)
+{ issue(pc,mode,6,129,r1,r2,0,sp); }
+static void error_cases(CPUModel model)
+{
+    for(unsigned cells=0;cells<16;cells+=4){
+        start(model,cells);assert(arc_rpc_observers_capability(ARC_RPC_CELL_ERROR)==((cells&4)!=0));report(3);
+        assert(box().recognised_open==((cells&4)!=0));
+        if(!(cells&4)){assert(box().modal_unknown);assert(!arc_rpc_observers_answer(ARC_ERROR_OK));continue;}
+        assert(!box().answer_available);
+        assert(!arc_rpc_observers_answer(ARC_ERROR_OK));
+        poll(0x180,19,1,0,0x10001000);assert(box().stage==ARC_ERROR_POLL); /* unrelated earlier read */
+        poll(0x184,18,0,0,0x10001000);assert(box().stage==ARC_ERROR_POLL); /* IRQ */
+        poll(0x188,19,0,1,0x10001000);assert(box().stage==ARC_ERROR_POLL);
+        poll(0x18c,19,0,0,0x10001000);
+        assert(arm.reg[15]==16);
+        assert(box().site==0x18c && box().answer_available==((cells&8)!=0));
+        if(!(cells&8)){assert(!arc_rpc_observers_answer(ARC_ERROR_OK));continue;}
+        ArcErrorBox local=box();uint8_t ignored=0;
+        assert(arc_error_request(&local,ARC_ERROR_OK));
+        assert(!arc_error_poll(&local,0,0,local.site,19,local.sp,false,&ignored) && local.pending==ARC_ERROR_OK);
+        assert(arc_error_poll(&local,0,0,local.site,19,local.sp,true,&ignored) && ignored==13);
+        assert(arc_rpc_observers_answer(ARC_ERROR_OK));
+        poll(0x180,19,0,0,0x10001000);assert(box().pending==ARC_ERROR_OK && arm.mode==19);
+        poll(0x18c,19,0,0,0x10001004);assert(box().pending==ARC_ERROR_OK);
+        poll(0x18c,3,0,0,0x10001000);assert(box().pending==ARC_ERROR_OK);
+        poll(0x18c,19,1,0,0x10001000);assert(box().pending==ARC_ERROR_OK);
+        /* Same VA fetched from RAM must not consume. */
+        updatemode(19);arm.reg[16]=19;arm.reg[15]=0x1000018c+8;arm.reg[0]=129;arm.reg[1]=arm.reg[2]=0;
+        ram00[0x18c/4]=0xef000006;arc_rpc_arm_exec_count(1);assert(box().pending==ARC_ERROR_OK);
+        poll(0x18c,19,0,0,0x10001000);
+        assert(box().consumed==ARC_ERROR_OK && arm.reg[1]==13 && arm.reg[2]==0 && arm.mode==19);
+        assert(!arc_rpc_observers_answer(ARC_ERROR_OK));
+        /* Real user return ends the generation before fetching its body. */
+        arm.reg[14]=0x104;arm.spsr[3]=16;arm.reg[15]=16;
+        arc_rpc_arm_exec_count(2);assert(!box().recognised_open && !box().answer_available);
+        assert(!arc_rpc_observers_answer(ARC_ERROR_CANCEL));
+    }
+    start(model,12);arc_rpc_observers_override(12,0,0,1u<<3);report(14);poll(0x18c,19,0,0,0x10001000);
+    assert(!box().answer_available && !arc_rpc_observers_answer(ARC_ERROR_CANCEL));
+    /* Qualified effective button/default masks can differ from raw flags;
+     * no firmware error-number classification is needed or copied. */
+    start(model,12);arc_rpc_observers_test_buttons(1u<<3,1u<<3,1u<<3);
+    report(3);poll(0x18c,19,0,0,0x10001000);assert(arc_rpc_observers_answer(ARC_ERROR_OK));
+    poll(0x18c,19,0,0,0x10001000);assert(arm.reg[1]==27);
+    start(model,12);arc_rpc_observers_test_buttons(0,1u<<3,1u<<3);
+    report(3);poll(0x18c,19,0,0,0x10001000);
+    assert(!arc_rpc_observers_answer(ARC_ERROR_OK) && arc_rpc_observers_answer(ARC_ERROR_CANCEL));
+    poll(0x18c,19,0,0,0x10001000);assert(arm.reg[1]==13);
+    start(model,12);report(3);poll(0x18c,19,0,0,0x10001000);assert(arc_rpc_observers_answer(ARC_ERROR_OK));
+    arm.reg[14]=0x108;arm.spsr[3]=16;arm.reg[15]=16;arc_rpc_arm_exec_count(2);
+    assert(!box().recognised_open && box().modal_unknown && !arc_rpc_observers_answer(ARC_ERROR_OK));
+    for(unsigned flags=0;flags<32;++flags){
+        start(model,12);report(flags);poll(0x18c,19,0,0,0x10001000);
+        ArcErrorBox b=box();assert(b.recognised_open && b.answer_available);
+        ArcErrorAnswer answer=b.cancel?ARC_ERROR_CANCEL:ARC_ERROR_OK;
+        assert(arc_rpc_observers_answer(answer));poll(0x18c,19,0,0,0x10001000);
+        assert(arm.reg[1]==(((answer==ARC_ERROR_CANCEL)==b.default_cancel)?13u:27u));
+    }
+    for(unsigned flags=0x20;flags<=0x100;flags+=0x20){
+        start(model,12);report(flags);poll(0x18c,19,0,0,0x10001000);
+        assert(box().recognised_open==(flags==0x100) && !box().answer_available);assert(!arc_rpc_observers_answer(ARC_ERROR_OK));
+    }
+    start(model,12);report(3);poll(0x18c,19,0,0,0x10001000);assert(arc_rpc_observers_answer(ARC_ERROR_OK));
+    report(0x100);assert(!box().answer_available && box().pending==ARC_ERROR_NONE); /* no parent revival */
+    start(model,12);report(3);poll(0x18c,19,0,0,0x10001000);assert(arc_rpc_observers_answer(ARC_ERROR_OK));
+    arc_rpc_observer_cancel(ARC_RPC_OBS_ERROR);assert(box().modal_unknown && !box().recognised_open);
+    start(model,12);arc_rpc_observers_test_watch_budget(0);report(3);
+    assert(box().modal_unknown && !box().recognised_open && !arc_rpc_observers_answer(ARC_ERROR_OK));
+    start(model,12);report(3);poll(0x18c,19,0,0,0x10001000);assert(arc_rpc_observers_answer(ARC_ERROR_OK));
+    assert(arc_rpc_observer_filter(ARC_RPC_OBS_ERROR,NULL));
+    assert(box().modal_unknown && box().pending==ARC_ERROR_NONE && !arc_rpc_observers_answer(ARC_ERROR_OK));
+    for(unsigned pending=0;pending<2;++pending){
+        start(model,12);arc_rpc_observers_test_watch_budget(3);report(3);
+        poll(0x18c,19,0,0,0x10001000);
+        if(pending)assert(arc_rpc_observers_answer(ARC_ERROR_OK));
+        /* Expiry before a return or before answering is synchronous. */
+        poll(0x180,19,1,0,0x10001000);poll(0x184,19,1,0,0x10001000);poll(0x188,19,1,0,0x10001000);
+        assert(box().modal_unknown && !box().answer_available && box().pending==ARC_ERROR_NONE);
+        assert(!arc_rpc_observers_answer(ARC_ERROR_OK));
+    }
+    start(model,12);report(3);poll(0x18c,19,0,0,0x10001000);
+    arc_rpc_observer_retire(false);assert(box().modal_unknown && !arc_rpc_observers_answer(ARC_ERROR_OK));
+}
+static unsigned resolve_count,observe_count,trigger_count;
+static char resolved[16][208];
+static unsigned resolve_disc(void *opaque,const char *path,ArcDiscOperation operation)
+{ (void)opaque;assert(operation==ARC_DISC_CATALOGUE);strcpy(resolved[resolve_count++],path);return 1; }
+static bool observe_disc(void *opaque,const char *path,unsigned candidate,unsigned observation,bool trigger)
+{ (void)opaque;(void)path;assert(candidate==1 && observation);++observe_count;trigger_count+=trigger;return false; }
+static void miss(const char *path,uint32_t pc)
+{
+    strcpy((char *)ram00,path);issue(pc,16,8,5,0x10000000,0,0,0x10008000);
+    arm.reg[0]=0;arc_rpc_arm_exec_count(2);
+}
+static void disc_cases(CPUModel model)
+{
+    start(model,255);arc_rpc_observers_disc_configure(true,"AuthDisc",resolve_disc,observe_disc,NULL);
+    for(unsigned device=0;device<5;++device){
+        strcpy((char *)ram00,"NextDisc");issue(0x180,19,0x20033,2,8,0x10000000,device,0x10001000);
+        ArcDiscRequest d;arc_rpc_observers_disc_snapshot(&d);assert(d.a_active==(device==0));
+        arc_rpc_observers_disc_clear();
+    }
+    strcpy((char *)ram00,"ADFS::X.$");issue(0x180,19,0x20033,2,8,0x10000000,0,0x10001000);
+    ArcDiscRequest invalid;arc_rpc_observers_disc_snapshot(&invalid);assert(!invalid.a_active);
+    strcpy((char *)ram00,"12345678901");issue(0x180,19,0x20033,2,8,0x10000000,0,0x10001000);
+    ArcDiscRequest d;arc_rpc_observers_disc_snapshot(&d);assert(!d.a_active);
+    strcpy((char *)ram00,"NextDisc");issue(0x180,19,0x33,2,8,0x10000000,0,0x10001000);
+    arc_rpc_observers_disc_snapshot(&d);assert(!d.a_active); /* non-X refused */
+    strcpy((char *)ram00,"NextDisc");issue(0x180,19,0x20033,2,8,0x10000000,0,0x10001000);
+    assert(arc_rpc_observers_replace(ARC_DISC_SIGNAL_A));
+    strcpy(helper_name,"NextDisc");arc_rpc_observers_disc_snapshot(&d);assert(!d.a_active && !arc_rpc_observers_replace(ARC_DISC_SIGNAL_A));
+    helper_name[0]=0;strcpy(hd_name,"NextDisc");arc_rpc_observers_disc_snapshot(&d);assert(!d.a_active);
+    hd_name[0]=0;identities_ok=false;arc_rpc_observers_disc_snapshot(&d);assert(!d.a_active && !arc_rpc_observers_replace(ARC_DISC_SIGNAL_A));identities_ok=true;
+    report(0x100);assert(!arc_rpc_observers_replace(ARC_DISC_SIGNAL_A));
+    arc_rpc_observer_cancel(ARC_RPC_OBS_ERROR);assert(box().modal_unknown && !arc_rpc_observers_replace(ARC_DISC_SIGNAL_A));
+    start(model,255);resolve_count=observe_count=trigger_count=0;
+    arc_rpc_observers_disc_configure(true,"AuthDisc",resolve_disc,observe_disc,NULL);
+    miss("ADFS::AuthDisc.$.First",0x100);miss("ADFS::AuthDisc.$.Second",0x140);
+    arc_rpc_observer_drain();assert(resolve_count==2 && !strcmp(resolved[0],"$.First") && !strcmp(resolved[1],"$.Second"));
+    assert(!trigger_count);miss("ADFS::AuthDisc.$.First",0x100);arc_rpc_observer_drain();assert(trigger_count==1);
+    unsigned before=resolve_count;miss("ADFS::AuthDisc.$.Stale",0x140);++media[0];arc_rpc_observer_drain();assert(resolve_count==before);
+    miss("ADFS::AuthDisc.$.Cancel",0x140);arc_rpc_observers_disc_clear();arc_rpc_observer_drain();assert(resolve_count==before);
+    miss("ADFS::1.$.Wrong",0x140);arc_rpc_observer_drain();assert(resolve_count==before);
+    miss("ADFS::4.$.Wrong",0x140);arc_rpc_observer_drain();assert(resolve_count==before);
+    for(unsigned i=0;i<17;++i)miss("ADFS::AuthDisc.$.Overflow",0x140);
+    arc_rpc_observer_drain();assert(resolve_count==before);
+    start(model,255);resolve_count=observe_count=trigger_count=0;
+    arc_rpc_observers_disc_configure(true,"AuthDisc",resolve_disc,observe_disc,NULL);
+    miss("ADFS::AuthDisc.$.Before",0x100);++media[1];miss("ADFS::AuthDisc.$.After",0x140);
+    arc_rpc_observer_drain();assert(resolve_count==1 && !strcmp(resolved[0],"$.After"));
+    start(model,255);resolve_count=observe_count=trigger_count=0;
+    arc_rpc_observers_disc_configure(true,"AuthDisc",resolve_disc,observe_disc,NULL);
+    miss("ADFS::AuthDisc.$.Before",0x100);
+    strcpy((char *)ram00,"NextDisc");issue(0x180,19,0x20033,2,8,0x10000000,0,0x10001000);
+    arc_rpc_observer_drain();assert(resolve_count==0);
+    start(model,0);assert(!arc_rpc_observers_replace(ARC_DISC_SIGNAL_A));
+}
+static void phase_cases(CPUModel model)
+{
+    start(model,3);issue(0x100,16,0xe,0x1000,0,0,0,0x10008000);
+    arc_rpc_observers_frame(3000000);assert(arc_rpc_observers_boot_state()==ARC_BOOT_WATCH_DISABLED);
+    arc_rpc_observers_boot_arm();issue(0x100,19,0xe,0x1000,0,0,0,0x10001000);
+    arc_rpc_observers_frame(3000000);assert(arc_rpc_observers_boot_state()==ARC_BOOT_WATCH_ARMED);
+    updatemode(16);arm.reg[16]=16;arm.reg[15]=0x10000100+8;arm.reg[0]=0x1000;
+    ram00[0x100/4]=0xef00000e;arc_rpc_arm_exec_count(1);arc_rpc_observers_frame(3000000);
+    assert(arc_rpc_observers_boot_state()==ARC_BOOT_WATCH_ARMED);
+    issue(0x100,16,0xe,0x8000,0,0,0,0x10008000);arc_rpc_observers_frame(3000000);
+    assert(arc_rpc_observers_boot_state()==ARC_BOOT_WATCH_ARMED);
+    issue(0x100,16,0xe,0x1000,0,0,0,0x10008000);arc_rpc_observers_frame(2000000);
+    assert(arc_rpc_observers_boot_state()==ARC_BOOT_WATCH_PROMPT);
+    assert(arc_rpc_observers_launch_arm("Run Authored"));strcpy((char *)ram00,"Run Other");
+    issue(0x100,16,0x400de,0x10000000,0,0,0,0x10008000);
+    ArcLaunchOutcome out;arc_rpc_observers_launch_snapshot(&out);assert(out.state==ARC_OUTCOME_WAIT);
+    strcpy((char *)ram00,"Run Authored");issue(0x100,16,0x400de,0x10000000,0,0,0,0x10008000);
+    arc_rpc_observers_refused(0);arc_rpc_observers_refused(4);
+    issue(0x104,16,0x11,0,0x58454241,9,0,0x10008000);
+    issue(0x108,16,0x400dd,0,5,0,0,0x10008000);issue(0x10c,16,0x400c7,0,0,0,0,0x10008000);
+    arc_rpc_observers_launch_snapshot(&out);assert(out.state==ARC_OUTCOME_POLL && out.last_rc==9 && out.refused_hd==1 && out.refused_floppy==1);
+    assert(arc_rpc_observers_launch_arm("Run Authored"));issue(0x100,16,0x400de,0x10000000,0,0,0,0x10008000);
+    issue(0x104,16,0x400de,0x10000000,0,0,0,0x10008000);arc_rpc_observers_launch_snapshot(&out);assert(out.state==ARC_OUTCOME_CANCEL);
+    assert(arc_rpc_observers_launch_arm("Run Authored"));arc_rpc_observers_frame(600000000);arc_rpc_observers_launch_snapshot(&out);assert(out.state==ARC_OUTCOME_CANCEL);
+    arc_rpc_observers_boot_arm();arc_rpc_observers_frame(40000000);assert(arc_rpc_observers_boot_state()==ARC_BOOT_WATCH_EXPIRED);
+}
+int main(void)
+{
+    arm_init();protected=1;if(setjmp(boundary))return 1;
+    config.mem_size=64;config.vram_size=2;mem_init();
+    for(unsigned catalogue=1;catalogue<=4;++catalogue)for(unsigned cpu=0;cpu<4;++cpu)
+        for(unsigned owner=0;owner<4;++owner)for(unsigned capability=0;capability<=ARC_RPC_CAP_REPLACE_B;++capability){
+            ArcRpcObserverQualification q=arc_rpc_observer_qualification(catalogue,cpu,(ArcRpcObserver)owner,(ArcRpcObserverCapability)capability);
+            assert(!q.enabled && q.profile==ARC_RPC_PROFILE_REVISION && q.reason && q.reason[0]);
+        }
+    for(unsigned model=0;model<4;++model){error_cases((CPUModel)model);disc_cases((CPUModel)model);phase_cases((CPUModel)model);}
+    arc_rpc_observer_retire(false);arc_rpc_memory_close();puts("RPC observers: authored four-CPU error/disc/phase matrix");return 0;
+}

@@ -5,6 +5,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include "rpc_audio.h"
+#include "arcdroid_core.h"
 typedef enum { ARC_RPC_ARM610, ARC_RPC_ARM710, ARC_RPC_SA110, ARC_RPC_ARM7500,
     ARC_RPC_MODEL_COUNT } ArcRpcModel;
 
@@ -21,6 +22,8 @@ bool arc_rpc_session_factory_start(ArcRpcModel model, const uint8_t *rom, size_t
 void arc_rpc_capture_status(ArcRpcCapture *out);
 bool arc_rpc_session_capture_schedule(uint64_t deadline_ns, uint64_t delete_ns);
 uint64_t arc_rpc_session_generation(void);
+unsigned arc_rpc_session_cpu(void);
+bool arc_rpc_session_firmware(ArcDigest *);
 bool arc_rpc_session_advance(uint64_t elapsed_ns);
 /* Resolved construction; ordinary frontend policy remains outside this API. */
 bool arc_rpc_session_start(ArcRpcModel model, const uint8_t *rom, size_t size,
