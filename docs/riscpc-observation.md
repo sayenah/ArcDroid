@@ -206,7 +206,7 @@ and pad mapping and show a manual hint. Disc mutation requires a known nonmodal
 state, including before poll learning and for unanswerable user reports. Lack of
 an error observer never proves nonmodal state.
 
-Disc A admits only ROM SVC XOS_UpCall reason 1/2, filesystem 8, device R3=0,
+Disc A admits only ROM SVC XOS_UpCall reason 1/2, filesystem 8, device R3=0xffffffff (Run D correction),
 with a terminated bare printable medium name of 1..10 bytes (12-byte inspection
 bound). Disc B admits only user OS_File/OS_Find operations already recognised
 by the shared logic, a validated ADFS::name.$ path for the inserted floppy,
@@ -234,7 +234,8 @@ replacement availability. Changed names and unsuccessful writes stay unknown.
 Invalidated, unreadable, malformed or conflicting identities keep replacement
 manual until a lifecycle refresh validates all records again; a guest rename
 can never reuse the previously cached name to resolve content media.
-ADFS::1/4, unspecified devices, helper names and hard-disc names are refused.
+ADFS::1/4, explicit device numbers, helper names and hard-disc names are refused
+by the default RPC profile. The unspecified device form is admitted (Run D).
 Replacement is drive 0 only, current generation, controller idle, unique content
 candidate, successful preflight and known nonmodal state; FileCore retries the
 UpCall without answering its box. Manual Disk Control remains independent.
@@ -303,9 +304,36 @@ combine them with cached identity, media-generation and modal eligibility at the
 host boundary. No logger, filesystem or IDE read runs in the observer callback.
 Boundary logs include signal refusal, identity exclusion, candidate resolution,
 hints, controller busy and commit results. Changes print immediately; identical
-states print at most once per two virtual seconds. Missing signals print an
+busy retries print at most once per two virtual seconds; all other unchanged
+states stay quiet (Run D). Missing signals print an
 explicit waiting state. These diagnostics neither relax predicates nor enable
 production cells. Windows test-only DLL exports explicitly include every seam
 loaded by the observer frontend harness. The orchestration mutant idle profile
 uses the authored SA-110 factory guest's existing idle instruction after its
 last CMOS write, retaining all mutants and all assertions.
+
+## Run D — corrected signal A device evidence and decision logging
+
+Fable's ruling (to be recorded as D-179) corrects the S63 evidence basis: R3
+was absent from that trace's allowlist, so its displayed zero was an artefact.
+R3-capable traces on 3.50 ARM610 and 3.71 SA-110 show ROM SVC XOS_UpCall
+R0=2, R1=8, R3=0xffffffff during both a task catalogue miss and the real disc
+install request. The RPC profile therefore admits the unspecified-device form,
+not explicit drive 0. It still replaces only content media in drive 0, with
+all existing identity, generation, preflight, controller and modal gates.
+
+The shared pure profile's admitted device forms become a two-bit parameter:
+bit 0 is explicit drive 0; bit 1 is unspecified (R3=-1). The NULL Arculator
+profile keeps its existing acceptance of both forms. RPC's default is bit 1
+only. Its test-only plan key is `observer_disc_devices=MASK`, decimal or `0x`
+hexadecimal, 0..3 inclusive: 0 admits neither, 1 tests drive 0 alone, 2 tests
+unspecified alone (the default), and 3 tests both. Drives 1 and 4 and all other
+R3 values remain refused under every mask. This override never enables cells,
+is applied after the cell override, cancels prior disc observations if it
+changes the mask, survives reset, and is cleared on a new session. The override
+label includes the selected device mask. Production cells remain disabled.
+
+Disc decision logs print when the decision changes. Only an active `busy`
+retry may repeat, at most once per two virtual seconds. Disabled, waiting,
+resolved, hinted and completed decisions never repeat unchanged. Clock rewind
+restarts the busy-repeat interval without emitting an unchanged disabled log.

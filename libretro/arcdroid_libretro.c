@@ -5077,12 +5077,17 @@ static void arc_rpc_disc_log(const char *action,const char *reason,const char *c
    if(!arc_engine_is_rpc() || !arc_log)return;
    unsigned slot=!strcmp(action,"resolved")?1u:!strcmp(action,"busy")?2u:
       (!strcmp(action,"inserted") || !strcmp(action,"hint") || !strcmp(action,"ignored"))?3u:0u;
+   /* Waiting/terminal decisions end the previous attempt. A later retry
+    * becomes a fresh decision even when its candidate is the same. */
+   if(slot==0u || slot==3u){history[1].line[0]=0;history[2].line[0]=0;}
    ArcRpcDiscStatus status;arc_engine_rpc_disc_status(&status);
    char line[384];snprintf(line,sizeof(line),
       "RPC disc: signal=%s gate=%s name=%s active=%u notified=%u replacement=%s candidate=%s action=%s reason=%s observation=%s:%s\n",
       status.signal,status.gate,status.name,status.active,status.notified,status.replacement,candidate,action,reason,status.last_signal,status.last_reason);
    uint64_t time=arc_engine_disc_time_us(),session=arc_engine_session_generation();
-   if(session!=history[slot].generation || time<history[slot].time || strcmp(line,history[slot].line) || time-history[slot].time>=UINT64_C(2000000)){
+   if(time<history[slot].time)history[slot].time=time;
+   bool busy_repeat=slot==2u && time-history[slot].time>=UINT64_C(2000000);
+   if(session!=history[slot].generation || strcmp(line,history[slot].line) || busy_repeat){
       arc_log(RETRO_LOG_INFO,"%s",line);snprintf(history[slot].line,sizeof(history[slot].line),"%s",line);history[slot].time=time;history[slot].generation=session;
    }
 }

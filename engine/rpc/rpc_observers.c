@@ -9,6 +9,7 @@ static struct {
     unsigned catalogue,cpu,cells;
     uint64_t epoch,error_watch,disc_watch,disc_media,helper_media;
     ArcErrorProfile error_profile;
+    ArcDiscProfile disc_profile;
     ArcErrorBox error;
     ArcLaunchOutcome launch;
     ArcBootWatch boot;
@@ -23,7 +24,7 @@ static struct {
     unsigned resolved_candidate;
 } state;
 static unsigned watch_budget=ARC_RPC_WATCH_ATTEMPT_LIMIT;
-static const ArcDiscProfile disc_profile={(1u<<0)|(1u<<16),(1u<<3)|(1u<<19),0,true,false,true};
+static const ArcDiscProfile default_disc_profile={(1u<<0)|(1u<<16),(1u<<3)|(1u<<19),ARC_DISC_DEVICE_UNSPECIFIED,true,true};
 static const ArcOutcomeProfile launch_profile={600000000u,true,true,true};
 static const ArcBootProfile boot_profile={40000000u,2000000u,0x8000u,true,true};
 static const unsigned bits[4]={ARC_RPC_CELL_BOOT,ARC_RPC_CELL_LAUNCH,ARC_RPC_CELL_ERROR,ARC_RPC_CELL_DISC_A|ARC_RPC_CELL_DISC_B};
@@ -209,12 +210,13 @@ static void disc_event(void *opaque,const ArcRpcObservation *e)
          * exposed at the boundary, then revalidated by the frontend commit. */
         ArcDiscSwi input={.swi=e->swi,.r0=e->registers[0],.r1=8,.r3=e->registers[3],.mode=e->mode,.in_rom=true,
             .name_readable=true,.name=name};
-        if(!arc_disc_request_signal_a(&disc_profile,&input)){
+        if(!arc_disc_request_signal_a(&state.disc_profile,&input)){
             state.disc_reason=!(e->swi&0x20000u)?"non-x":
-                (e->mode!=3 && e->mode!=19)?"non-svc":e->registers[3]!=0?"device":"bare-name";return;}
+                (e->mode!=3 && e->mode!=19)?"non-svc":
+                !((e->registers[3]==0?ARC_DISC_DEVICE_0:e->registers[3]==UINT32_MAX?ARC_DISC_DEVICE_UNSPECIFIED:0u)&state.disc_profile.device_forms)?"device":"bare-name";return;}
         state.disc_reason="seen";
         arc_rpc_observer_cancel(ARC_RPC_OBS_DISC); /* A supersedes copied B misses synchronously. */
-        state.disc.profile=&disc_profile;arc_disc_request_swi(&state.disc,&input,state.inserted);
+        state.disc.profile=&state.disc_profile;arc_disc_request_swi(&state.disc,&input,state.inserted);
         state.disc_media=arc_rpc_fdc_media_generation(0);state.helper_media=arc_rpc_fdc_media_generation(1);
         return;
     }
@@ -227,7 +229,7 @@ static void disc_event(void *opaque,const ArcRpcObservation *e)
     if(arc_rpc_inspect_string(e->registers[1],false,path,sizeof(path)).status!=ARC_RPC_INSPECT_OK){state.disc_reason="path-inspection";return;}
     ArcDiscSwi input={.swi=e->swi,.r0=e->registers[0],.mode=e->mode,.address=e->pc,.user_sp=e->registers[13],
         .name_readable=true,.name=path,.now_us=e->ns/1000u};
-    state.disc.profile=&disc_profile;arc_disc_request_swi(&state.disc,&input,state.inserted);
+    state.disc.profile=&state.disc_profile;arc_disc_request_swi(&state.disc,&input,state.inserted);
     state.disc_reason=state.disc.armed?"armed":"path-refused";
     if(state.disc.armed){
         state.disc_watch=arc_rpc_observer_watch(ARC_RPC_OBS_DISC,e->pc+4,e->mode,e->registers[13],watch_budget);
@@ -249,6 +251,7 @@ static void filters(void)
 void arc_rpc_observers_bind(unsigned catalogue,unsigned cpu)
 {
     arc_rpc_observers_retire();state.epoch=arc_rpc_observer_epoch();state.catalogue=catalogue;state.cpu=cpu;
+    state.disc_profile=default_disc_profile;
     state.error_profile=(ArcErrorProfile){.contextual=true};state.error.profile=&state.error_profile;
     state.boot.profile=&boot_profile;state.launch.profile=&launch_profile;
     /* Every cell is disabled. Future promotion derives cells only from the
@@ -272,6 +275,12 @@ void arc_rpc_observers_bind(unsigned catalogue,unsigned cpu)
 #if defined(ARCDROID_TEST_FAULTS)
 void arc_rpc_observers_test_binding(unsigned *catalogue,unsigned *cpu)
 { *catalogue=state.catalogue;*cpu=state.cpu; }
+bool arc_rpc_observers_test_disc_devices(unsigned forms)
+{
+    if(!state.overridden || (forms&~3u))return false;
+    if(forms!=state.disc_profile.device_forms)arc_rpc_observers_disc_clear();
+    state.disc_profile.device_forms=forms;return true;
+}
 void arc_rpc_observers_test_buttons(uint32_t ok,uint32_t cancel,uint32_t defaults)
 { state.error_profile.ok_forms=ok;state.error_profile.cancel_forms=cancel;state.error_profile.default_cancel_forms=defaults; }
 void arc_rpc_observers_test_watch_budget(unsigned attempts)
@@ -300,12 +309,13 @@ void arc_rpc_observers_rebase(unsigned actual_cpu)
     bool enabled=state.disc_enabled;char inserted[11];memcpy(inserted,state.inserted,sizeof(inserted));
     ArcDiscResolveCallback resolve=state.resolve;ArcDiscObservationCallback observe=state.observe;void *opaque=state.opaque;
 #if defined(ARCDROID_TEST_FAULTS)
-    bool overridden=state.overridden;unsigned cells=state.cells;ArcErrorProfile profile=state.error_profile;
+    bool overridden=state.overridden;unsigned cells=state.cells,devices=state.disc_profile.device_forms;ArcErrorProfile profile=state.error_profile;
 #endif
     arc_rpc_observers_bind(catalogue,cpu);
 #if defined(ARCDROID_TEST_FAULTS)
     if(overridden){arc_rpc_observers_override(cells,profile.poll_r1,profile.poll_r2,profile.answer_forms);
-        arc_rpc_observers_test_buttons(profile.ok_forms,profile.cancel_forms,profile.default_cancel_forms);}
+        arc_rpc_observers_test_buttons(profile.ok_forms,profile.cancel_forms,profile.default_cancel_forms);
+        (void)arc_rpc_observers_test_disc_devices(devices);}
 #endif
     arc_rpc_observers_disc_configure(enabled,inserted,resolve,observe,opaque);
 }

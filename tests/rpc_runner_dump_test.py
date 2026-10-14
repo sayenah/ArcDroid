@@ -81,7 +81,7 @@ with tempfile.TemporaryDirectory(prefix='arc-rpc-runner-disc-') as temp:
     words=[0xe59fa1f8,0xe3a0003c,0xe5ca0008,0xe3a01ffa,0xe2511001,0x1afffffd]
     for _ in range(4):words += [0xe3a00008,0xe5ca0014,0xe5da0014,0xe5da0014]
     words += [0xe3a02201]
-    at=0x100+4*len(words);words += [0xe59f0000|(0x304-at-8),0xe5820000,0xe3a00002,0xe3a01008,0xe3a03000,0xef020033,0xe3a01033,0xef0400df,0xeafffffd]
+    at=0x100+4*len(words);words += [0xe59f0000|(0x304-at-8),0xe5820000,0xe3a00002,0xe3a01008,0xe3e03000,0xef020033,0xe3a01033,0xef0400df,0xeafffffd]
     for i,w in enumerate(words):struct.pack_into('<I',rom,0x100+4*i,w)
     struct.pack_into('<II',rom,0x300,0x03010fc0,0x006f7754) # authored "Two"
     (d/'disc.rom').write_bytes(rom);(d/'seed').write_bytes(bytes(256))
@@ -97,4 +97,21 @@ with tempfile.TemporaryDirectory(prefix='arc-rpc-runner-disc-') as temp:
         assert result.stderr.count('RPC disc:')<=6,'unbounded per-frame diagnostics'
         print("\n".join(line for line in result.stderr.splitlines() if line.startswith("RPC disc:")))
     assert any('hd-riscpc' in str(p) for p in save.rglob('*')),'no populated hard disc'
-print('rpc-runner: populated and reopened persisted route, cells 52, privileged disc loop, unique disc 2 insertion and bounded diagnostics passed')
+    print('rpc-runner: populated and reopened persisted route, cells 52, privileged disc loop, unique disc 2 insertion and bounded diagnostics passed')
+
+    # Qualification chooses one admitted form; actual R3 values are independent.
+    original=(d/'disc.arcplan').read_text()
+    device_at=0x100+4*words.index(0xe3e03000)
+    for forms,device,admitted in [(2,0,False),(1,0,True),(1,0xffffffff,False),
+            (0,0xffffffff,False),(3,0xffffffff,True),(3,1,False),(3,4,False)]:
+        instruction=0xe3e03000 if device==0xffffffff else 0xe3a03000|device
+        struct.pack_into('<I',rom,device_at,instruction);(d/'disc.rom').write_bytes(rom)
+        (d/'disc.arcplan').write_text(original+f'observer_disc_devices=0x{forms:x}\n')
+        result=subprocess.run(args,capture_output=True,text=True,check=True)
+        assert f'disc-devices=0x{forms:x}' in result.stderr
+        assert ('action=inserted reason=unique' in result.stderr)==admitted,(forms,device,result.stderr)
+        if not admitted:assert 'gate=device' in result.stderr,(forms,device,result.stderr)
+    for value in ['4','0xffffffff','-1','+1','unspecified','2junk']:
+        (d/'disc.arcplan').write_text(original+f'observer_disc_devices={value}\n')
+        assert subprocess.run(args,capture_output=True).returncode!=0,('invalid device mask',value)
+print('rpc-runner: separate unspecified/drive-0 qualification masks, forbidden drives and invalid device masks passed')

@@ -107,12 +107,13 @@ bool arc_disc_request_operation(uint32_t swi, uint32_t r0,
 
 bool arc_disc_request_signal_a(const ArcDiscProfile *profile,const ArcDiscSwi *event)
 {
+   unsigned device_form=!event?0u:event->r3==0u?ARC_DISC_DEVICE_0:
+      event->r3==UINT32_MAX?ARC_DISC_DEVICE_UNSPECIFIED:0u;
    if(!event || (event->swi&~UINT32_C(0x20000))!=0x33u || !event->in_rom ||
       (profile ? event->mode>=32 || !(profile->svc_modes&(UINT32_C(1)<<event->mode)) : event->mode!=3u) ||
       (profile && profile->require_x && !(event->swi&0x20000u)) ||
       (event->r0!=1u && event->r0!=2u) || event->r1!=8u ||
-      !(event->r3==(profile?profile->device:0u) ||
-        (event->r3==UINT32_MAX && (!profile || profile->allow_unspecified))) ||
+      !(device_form & (profile?profile->device_forms:(ARC_DISC_DEVICE_0|ARC_DISC_DEVICE_UNSPECIFIED))) ||
       !event->name_readable || !event->name)return false;
    size_t length=0;
    while(length<11 && event->name[length] && (unsigned char)event->name[length]>=0x20u &&

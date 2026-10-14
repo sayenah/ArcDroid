@@ -31,7 +31,13 @@ mutants=[
  ('open-modal','engine/rpc/rpc_observers.c','!state.error.recognised_open && !state.error.modal_unknown','true'),
  ('unknown-modal','engine/rpc/rpc_observers.c','&& !state.error.modal_unknown','&& true'),
  ('upcall-x','engine/arc_disc_request.c','(profile && profile->require_x && !(event->swi&0x20000u))','false'),
- ('upcall-device','engine/arc_disc_request.c','event->r3==(profile?profile->device:0u)','true'),
+ ('upcall-device','engine/arc_disc_request.c','!(device_form & (profile?profile->device_forms:(ARC_DISC_DEVICE_0|ARC_DISC_DEVICE_UNSPECIFIED)))','false'),
+ ('upcall-default','engine/rpc/rpc_observers.c','ARC_DISC_DEVICE_UNSPECIFIED,true,true','ARC_DISC_DEVICE_0,true,true'),
+ ('upcall-other-device','engine/arc_disc_request.c','event->r3==UINT32_MAX?ARC_DISC_DEVICE_UNSPECIFIED:0u','event->r3==UINT32_MAX?ARC_DISC_DEVICE_UNSPECIFIED:ARC_DISC_DEVICE_0'),
+ ('device-override','engine/rpc/rpc_observers.c','state.disc_profile.device_forms=forms;','state.disc_profile.device_forms=ARC_DISC_DEVICE_UNSPECIFIED;'),
+ ('device-override-bound','engine/rpc/rpc_observers.c','!state.overridden || (forms&~3u)','!state.overridden'),
+ ('device-reset','engine/rpc/rpc_observers.c','arc_rpc_observers_test_disc_devices(devices)','arc_rpc_observers_test_disc_devices(ARC_DISC_DEVICE_UNSPECIFIED)'),
+ ('device-retirement','engine/rpc/rpc_observers.c','if(forms!=state.disc_profile.device_forms)arc_rpc_observers_disc_clear();','if(false)arc_rpc_observers_disc_clear();'),
  ('a-supersedes-b','engine/rpc/rpc_observers.c','arc_rpc_observer_cancel(ARC_RPC_OBS_DISC); /* A supersedes copied B misses synchronously. */','(void)0;'),
  ('helper-generation','engine/rpc/rpc_observers.c','w->helper_generation==arc_rpc_fdc_media_generation(1)','state.helper_media==arc_rpc_fdc_media_generation(1)'),
  ('bare-name','engine/arc_disc_request.c','profile && profile->strict_bare &&','false &&'),
@@ -71,6 +77,8 @@ if frontend:
       ('identity-frame-reads','engine/arcdroid_engine.c','memcpy(helper,rpc_helper_name,11);memcpy(hd,rpc_hd_name,11);','rpc_helper_derive();rpc_hd_derive();memcpy(helper,rpc_helper_name,11);memcpy(hd,rpc_hd_name,11);'),
       ('hint-transition','libretro/arcdroid_libretro.c','rpc_error && arc_error_hint_state != hint_state','false'),
       ('hint-retired','libretro/arcdroid_libretro.c','error_hint_open || error_hint_unknown','error_hint_open'),
+      ('disc-disabled-repeat','libretro/arcdroid_libretro.c','slot==2u && time-history[slot].time','true && time-history[slot].time'),
+      ('disc-busy-repeat','libretro/arcdroid_libretro.c','slot==2u && time-history[slot].time','false && time-history[slot].time'),
       ('manual-hint','libretro/arcdroid_libretro.c','rpc_error ? error_box.recognised_open : error_ready','rpc_error ? false : error_ready'),
     ]
     subprocess.run([sys.executable,str(root/'tests/rpc_observers_frontend_test.py'),str(target),str(core),str(build/"tests/fixtures/generated")],check=True,cwd=build,timeout=60,capture_output=True)

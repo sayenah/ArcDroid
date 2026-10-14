@@ -127,18 +127,31 @@ static void miss(const char *path,uint32_t pc)
 static void disc_cases(CPUModel model)
 {
     start(model,255);arc_rpc_observers_disc_configure(true,"AuthDisc",resolve_disc,observe_disc,NULL);
-    for(unsigned device=0;device<5;++device){
-        strcpy((char *)ram00,"NextDisc");issue(0x180,19,0x20033,2,8,0x10000000,device,0x10001000);
-        ArcDiscRequest d;arc_rpc_observers_disc_snapshot(&d);assert(d.a_active==(device==0));
-        arc_rpc_observers_disc_clear();
+    strcpy((char *)ram00,"NextDisc");
+    issue(0x180,19,0x20033,2,8,0x10000000,UINT32_MAX,0x10001000);
+    ArcDiscRequest default_request;arc_rpc_observers_disc_snapshot(&default_request);assert(default_request.a_active);
+    assert(arc_rpc_observers_test_disc_devices(0));arc_rpc_observers_disc_snapshot(&default_request);assert(!default_request.a_active);
+    const uint32_t devices[]={0,1,2,3,4,UINT32_MAX,UINT32_MAX-1};
+    for(unsigned forms=0;forms<=3;++forms){
+        assert(arc_rpc_observers_test_disc_devices(forms));
+        assert(!arc_rpc_observers_test_disc_devices(4)); /* Invalid does not change the mask. */
+        for(unsigned i=0;i<sizeof(devices)/sizeof(devices[0]);++i){
+            uint32_t device=devices[i];strcpy((char *)ram00,"NextDisc");
+            issue(0x180,19,0x20033,2,8,0x10000000,device,0x10001000);
+            ArcDiscRequest d;arc_rpc_observers_disc_snapshot(&d);
+            bool admitted=(device==0 && (forms&ARC_DISC_DEVICE_0)) ||
+                (device==UINT32_MAX && (forms&ARC_DISC_DEVICE_UNSPECIFIED));
+            assert(d.a_active==admitted);arc_rpc_observers_disc_clear();
+        }
     }
-    strcpy((char *)ram00,"ADFS::X.$");issue(0x180,19,0x20033,2,8,0x10000000,0,0x10001000);
+    assert(arc_rpc_observers_test_disc_devices(ARC_DISC_DEVICE_UNSPECIFIED));
+    strcpy((char *)ram00,"ADFS::X.$");issue(0x180,19,0x20033,2,8,0x10000000,UINT32_MAX,0x10001000);
     ArcDiscRequest invalid;arc_rpc_observers_disc_snapshot(&invalid);assert(!invalid.a_active);
-    strcpy((char *)ram00,"12345678901");issue(0x180,19,0x20033,2,8,0x10000000,0,0x10001000);
+    strcpy((char *)ram00,"12345678901");issue(0x180,19,0x20033,2,8,0x10000000,UINT32_MAX,0x10001000);
     ArcDiscRequest d;arc_rpc_observers_disc_snapshot(&d);assert(!d.a_active);
-    strcpy((char *)ram00,"NextDisc");issue(0x180,19,0x33,2,8,0x10000000,0,0x10001000);
+    strcpy((char *)ram00,"NextDisc");issue(0x180,19,0x33,2,8,0x10000000,UINT32_MAX,0x10001000);
     arc_rpc_observers_disc_snapshot(&d);assert(!d.a_active); /* non-X refused */
-    strcpy((char *)ram00,"NextDisc");issue(0x180,19,0x20033,2,8,0x10000000,0,0x10001000);
+    strcpy((char *)ram00,"NextDisc");issue(0x180,19,0x20033,2,8,0x10000000,UINT32_MAX,0x10001000);
     assert(arc_rpc_observers_replace(ARC_DISC_SIGNAL_A));
     strcpy(helper_name,"NextDisc");arc_rpc_observers_disc_snapshot(&d);assert(!d.a_active && !arc_rpc_observers_replace(ARC_DISC_SIGNAL_A));
     helper_name[0]=0;strcpy(hd_name,"NextDisc");arc_rpc_observers_disc_snapshot(&d);assert(!d.a_active);
@@ -163,9 +176,14 @@ static void disc_cases(CPUModel model)
     start(model,255);resolve_count=observe_count=trigger_count=0;
     arc_rpc_observers_disc_configure(true,"AuthDisc",resolve_disc,observe_disc,NULL);
     miss("ADFS::AuthDisc.$.Before",0x100);
-    strcpy((char *)ram00,"NextDisc");issue(0x180,19,0x20033,2,8,0x10000000,0,0x10001000);
+    strcpy((char *)ram00,"NextDisc");issue(0x180,19,0x20033,2,8,0x10000000,UINT32_MAX,0x10001000);
     arc_rpc_observer_drain();assert(resolve_count==0);
+    assert(arc_rpc_observers_test_disc_devices(ARC_DISC_DEVICE_0));
+    arc_rpc_observers_rebase(model);strcpy((char *)ram00,"NextDisc");
+    issue(0x180,19,0x20033,2,8,0x10000000,0,0x10001000);
+    arc_rpc_observers_disc_snapshot(&d);assert(d.a_active);
     start(model,0);assert(!arc_rpc_observers_replace(ARC_DISC_SIGNAL_A));
+    arc_rpc_observers_bind(0,model);assert(!arc_rpc_observers_test_disc_devices(1));
 }
 static void phase_cases(CPUModel model)
 {

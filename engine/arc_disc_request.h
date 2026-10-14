@@ -14,7 +14,8 @@ typedef struct {
    uint32_t continuation, sp;
    uint64_t observed_us, order;
 } ArcDiscIdentity;
-typedef struct { uint32_t user_modes, svc_modes, device; bool require_x, allow_unspecified, strict_bare; } ArcDiscProfile;
+enum { ARC_DISC_DEVICE_0 = 1u, ARC_DISC_DEVICE_UNSPECIFIED = 2u };
+typedef struct { uint32_t user_modes, svc_modes, device_forms; bool require_x, strict_bare; } ArcDiscProfile;
 typedef struct {
    const ArcDiscProfile *profile;
    bool armed, a_active, b_triggered, a_notified;
