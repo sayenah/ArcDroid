@@ -41,8 +41,33 @@ mutants = [
  ('trace-resume','engine/rpc/rpc_observer.c','if(!trace.status.enabled || !trace_selected(e))','if(trace.status.incomplete || !trace.status.enabled || !trace_selected(e))'),
  ('trace-gap-count','engine/rpc/rpc_observer.c','++trace.gap.lost;','trace.gap.lost=1;'),
  ('trace-allowlist','engine/rpc/rpc_observer.c','default:return 0;','default:return 0x1fff;'),
+ ('completion-nz','engine/rpc/rpc_observer.c','(cv&~0x30000000u)','(cv&~0xf0000000u)'),
+ ('private-path-opt-in','engine/rpc/rpc_observer.c','trace.paths && e->kind','true && e->kind'),
+ ('queue-pre-resolution','engine/rpc/rpc_observer.c','if(work_valid(&w,&h) && h.resolve','if(true && h.resolve'),
+ ('ldm-return-hook','engine/rpcemu/src/arm_common.c','        arc_rpc_observe_return(arm.mode);','        (void)0;'),
+ ('ldm-pc-bit','engine/rpcemu/src/arm_common.c','(opcode&(1u<<15)) &&','true &&'),
+ ('ldm-abort-guard','engine/rpcemu/src/arm_common.c','!(arm.event&0x40) &&','true &&'),
+ ('watch-outside-swi','engine/rpc/rpc_observer.c','|| !observer.in_swi || observer.current_owner!=(unsigned)owner','|| false || observer.current_owner!=(unsigned)owner'),
+ ('handler-replacement','engine/rpc/rpc_observer.c','arc_rpc_observer_cancel(owner);observer.handlers[owner]','(void)0;observer.handlers[owner]'),
+ ('watch-exact-deadline','engine/rpc/rpc_observer.c','observer.instruction>observer.watches[i].deadline','observer.instruction>=observer.watches[i].deadline'),
+ ('invalid-second-level','engine/rpcemu/src/cp15.c','else if((second&3)==2){pa=','else if(true){pa='),
+ ('mask-os-word','engine/rpc/rpc_observer.c','case 7:return reason==21?3:1;','case 7:return 0x1fff;'),
+ ('mask-os-file','engine/rpc/rpc_observer.c','case 8:return trace_file_reason(reason)?0xb:1;','case 8:return 0x1fff;'),
+ ('mask-wimp-report-error','engine/rpc/rpc_observer.c','case 0x400df:return 0x3f;','case 0x400df:return 0x1fff;'),
+ ('trace-only-observer-order','engine/rpc/rpc_observer.c','e.order=observers_active?++observer.order:0;','e.order=++observer.order;'),
+ ('trace-only-observer-attempt','engine/rpc/rpc_observer.c','if(observers_active)++observer.instruction;','++observer.instruction;'),
+ ('trace-observer-order','engine/rpc/rpc_observer.c','ArcRpcObservation e=capture_event(ARC_RPC_OBS_CONTINUATION,0);e.watch=trace.watches[i].id;','ArcRpcObservation e=event(ARC_RPC_OBS_CONTINUATION,0);e.watch=trace.watches[i].id;'),
+ ('trace-observer-watch-id','engine/rpc/rpc_observer.c','trace.watches[slot].id=++trace.watch_id;','trace.watches[slot].id=++observer.watch_id;'),
+ ('watch-source-user','engine/rpc/rpc_observer.c','(source==0 || source==16) &&','true &&'),
+ ('watch-target-user','engine/rpc/rpc_observer.c','(target==0 || target==16)','true'),
+ ('trace-return-eligibility','engine/rpc/rpc_observer.c','trace.watches[i].wait_return || arm.mode','false || arm.mode'),
+
 ]
 subprocess.run([str(target)],check=True,cwd=build,timeout=30,capture_output=True)
+off=subprocess.check_output([str(target),'--identity','0'],cwd=build,timeout=30)
+on=subprocess.check_output([str(target),'--identity','1'],cwd=build,timeout=30)
+if off!=on:raise RuntimeError('trace altered canonical identities across fresh processes')
+print('trace off/on: identical absolute observer order, instruction, epoch and watch identities',flush=True)
 for name,relative,old,new in mutants:
     source = root/relative
     text = source.read_text()

@@ -28,7 +28,7 @@ int main(int argc,char **argv)
     uint8_t *bytes=malloc((size_t)n);assert(bytes&&fread(bytes,1,(size_t)n,f)==(size_t)n);assert(!fclose(f));
     uint8_t cmos[ARC_CMOS_MACHINE_SIZE]={0},mask[32]={0};
     const ArcMachineDescriptor *model=arc_machine_descriptor(ARC_MACHINE_A3000);
-    for(unsigned i=0;i<repetitions;++i) {
+    for(unsigned i=0;i<1000;++i) {
         arc_fault_next();
         assert(!api->start(bytes,(size_t)n,NULL,NULL,model,ARC_OS_TEST,NULL,cmos,mask,NULL,NULL,error,sizeof(error)));
         assert(error[0]&&!api->active());api->stop();
@@ -42,5 +42,5 @@ int main(int argc,char **argv)
 #else
     assert(!dlclose(library));
 #endif
-    printf("jump repeat: RPC start/allocation/reset/advance and Arculator create/frame faults %u each\n",repetitions);return 0;
+    printf("jump repeat: RPC start/allocation/reset/advance %u; Arculator create/frame faults 1000\n",repetitions);return 0;
 }

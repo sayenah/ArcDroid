@@ -500,3 +500,10 @@ P0–P3, integer-batch and service boundaries; admission is not an early yield.
 An armed callback may disarm during the batch without creating a later event.
 Trace classes/SWI selection, recoverable gap counts/windows and incomplete status
 remain diagnostic state and cannot change canonical guest or observer state.
+
+D-176 restricts continuation admission to user-mode SWI callbacks and user-mode
+returns (mode 0/16), refusing all other requests. Successful-fetch eligibility
+requires a completed status-restoring PC write into that mode or controlled
+completion; trace watches use the identical rule. Trace event/attempt/watch
+counters are separate from canonical observer identities, which must compare
+equal with tracing enabled or disabled.

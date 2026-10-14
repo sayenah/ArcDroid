@@ -52,10 +52,13 @@ with tempfile.TemporaryDirectory(prefix='arc-observation-plan-') as temp:
     # unknown SWI with forbidden payload and then an SVC32 SWI storm.
     rom=bytearray(struct.pack('<I',0xeafffffe)*(2097152//4))
     # Reset branches over vectors. SWI vector jumps to handler.
-    program={0:0xea00003e,8:0xea00004c,0x100:0xe321f010,0x104:0xe3a00005,
-             0x108:0xef020008,0x10c:0xef123456,0x110:0xe321f013,
-             0x114:0xe3a02b02,0x118:0xef000007,0x11c:0xe2522001,
-             0x120:0x1afffffc,0x124:0xeafffffe,0x140:0xe1b0f00e}
+    program={0:0xea00003e,8:0xea00004c,
+             0x100:0xe3a01201,0x104:0xe59f2054,0x108:0xe5812000,
+             0x10c:0xe59f2050,0x110:0xe5812004,0x114:0xe321f010,
+             0x118:0xe3a00005,0x11c:0xef020008,0x120:0xef123456,0x124:0xe321f013,
+             0x128:0xe3a02b02,0x12c:0xef000007,0x130:0xe2522001,
+             0x134:0x1afffffc,0x138:0xeafffffe,0x140:0xe1b0f00e,
+             0x160:0x68747541,0x164:0x000d502e} # Copy authored "Auth.P\r" into readable RAM.
     # Supervisor handler restores the saved status; no error/message bytes.
     for offset,word in program.items():struct.pack_into('<I',rom,offset,word)
     (folder/'trace.rom').write_bytes(rom);(folder/'seed').write_bytes(bytes(256))
@@ -68,11 +71,19 @@ with tempfile.TemporaryDirectory(prefix='arc-observation-plan-') as temp:
     if len(rows)<2048 or any(x['kind']!=1 for x in rows):raise RuntimeError('default classes/burst')
     events=rows
     if any(x['schema']!=2 or 'instruction_bytes' in x for x in events):raise RuntimeError('schema')
+    file_event=next(x for x in events if x['swi']==0x20008)
+    if file_event['registers'][1]!=0x10000000:raise RuntimeError('path fixture is not RAM')
     if any(x['path_hex'] for x in events):raise RuntimeError('path leaked without private opt-in')
     if not any(x['swi']==0x20008 for x in events):raise RuntimeError('X SWI missing')
     unknown=next(x for x in events if x['swi']==0x123456)
     if any(unknown['registers'][:13]) or unknown['mask']!=0x6000:raise RuntimeError('unknown SWI payload leaked')
     if any(a['order']>=b['order'] for a,b in zip(events,events[1:])):raise RuntimeError('event order')
+    plan.write_text(original+'observation_trace=private.jsonl\nobservation_paths=private\n')
+    private=run(plan,folder,frames=1)
+    if projection(private.stdout)!=off:raise RuntimeError('private trace parity')
+    private_rows=[json.loads(x) for x in (folder/'private.jsonl').read_text().splitlines()]
+    path_event=next(x for x in private_rows if x['swi']==0x20008)
+    if path_event['path_hex']!='Auth.P'.encode().hex() or path_event['inspection']!=0:raise RuntimeError('RAM private path missing')
     plan.write_text(original+'observation_trace=selected.jsonl\nobservation_classes=swi,mode,continuation\nobservation_swis=0x20008\n')
     selected=run(plan,folder,frames=1)
     if projection(selected.stdout)!=off:raise RuntimeError('selected trace parity')
@@ -81,7 +92,7 @@ with tempfile.TemporaryDirectory(prefix='arc-observation-plan-') as temp:
     if any(x['kind']==1 and x['swi']!=0x20008 for x in rows):raise RuntimeError('SWI selection')
     # An unbounded authored storm forces gaps in consecutive frames. Output
     # must resume after the first gap; the whole trace remains incomplete.
-    struct.pack_into('<I',rom,0x120,0xeafffffc)
+    struct.pack_into('<I',rom,0x134,0xeafffffc)
     (folder/'trace.rom').write_bytes(rom)
     plan.write_text(original);storm_off=projection(run(plan,folder,frames=2).stdout)
     plan.write_text(original+'observation_trace=gap.jsonl\nobservation_capacity=16\n')
@@ -92,7 +103,7 @@ with tempfile.TemporaryDirectory(prefix='arc-observation-plan-') as temp:
     if gap is None or not rows[gap]['lost'] or rows[gap]['lost_end_ns']<=rows[gap]['ns']:raise RuntimeError('gap missing/window')
     if not any(x['kind']==1 for x in rows[gap+1:]):raise RuntimeError('recording did not resume')
     if r.stderr.count('RPC observation:')!=1 or 'incomplete loss' not in r.stderr:raise RuntimeError('exit loss summary')
-    struct.pack_into('<I',rom,0x120,0x1afffffc);(folder/'trace.rom').write_bytes(rom)
+    struct.pack_into('<I',rom,0x134,0x1afffffc);(folder/'trace.rom').write_bytes(rom)
     for suffix in ('observation_classes=bogus','observation_classes=swi,swi','observation_swis=0x1000000','observation_swis=7,7','observation_capacity=0'):
         plan.write_text(original+'observation_trace=invalid.jsonl\n'+suffix+'\n')
         rejected=subprocess.run([runner,'--core',core,'--plan',str(plan),'--system',str(fixtures),'--save',str(folder),'--frames','1'],capture_output=True,text=True,timeout=30)

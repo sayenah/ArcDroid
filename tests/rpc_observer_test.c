@@ -11,7 +11,11 @@ static uint64_t watch;
 static void observe(void *opaque,const ArcRpcObservation *e)
 {
     (void)opaque;assert(seen_count<128);seen[seen_count++]=*e;
+    if(action==11 && e->kind!=ARC_RPC_OBS_SWI)
+        assert(!arc_rpc_observer_watch(ARC_RPC_OBS_DISC,0x104,16,0x10008000,100));
     if(e->kind!=ARC_RPC_OBS_SWI)return;
+    if(action==12){watch=arc_rpc_observer_watch(ARC_RPC_OBS_DISC,expected_pc,expected_mode,expected_sp,100);assert(!watch);}
+    if(action==13){watch=arc_rpc_observer_watch(ARC_RPC_OBS_DISC,expected_pc,expected_mode,expected_sp,2);assert(watch);}
     if(action==1)watch=arc_rpc_observer_watch(ARC_RPC_OBS_DISC,expected_pc,expected_mode,expected_sp,100);
     if(action==5){
         uint64_t first=arc_rpc_observer_watch(ARC_RPC_OBS_DISC,expected_pc+4,expected_mode,expected_sp,100);
@@ -29,7 +33,7 @@ static void observe(void *opaque,const ArcRpcObservation *e)
             arc_rpc_observer_generation(ARC_RPC_OBS_DISC),1,registers,0));assert(!memcmp(&before,&arm,sizeof(arm)));
     }
     if(action==8){
-        watch=arc_rpc_observer_watch(ARC_RPC_OBS_DISC,e->pc+4,e->mode,e->registers[13],100);assert(watch);
+        watch=arc_rpc_observer_watch(ARC_RPC_OBS_DISC,e->pc+4,e->mode,e->registers[13],100);assert((watch!=0)==!e->privileged);
         uint32_t registers[13]={0};assert(arc_rpc_observer_complete(ARC_RPC_OBS_DISC,e->order,e->epoch,
             arc_rpc_observer_generation(ARC_RPC_OBS_DISC),1,registers,0));
     }
@@ -39,6 +43,8 @@ static void observe(void *opaque,const ArcRpcObservation *e)
         assert(!arc_rpc_observer_complete(ARC_RPC_OBS_DISC,e->order,e->epoch,g,0x8000,result,0));
         assert(!arc_rpc_observer_complete(ARC_RPC_OBS_DISC,e->order,e->epoch,g,4,result,0));
         assert(!arc_rpc_observer_complete(ARC_RPC_OBS_DISC,e->order,e->epoch,g,1,result,1));
+        assert(!arc_rpc_observer_complete(ARC_RPC_OBS_DISC,e->order,e->epoch,g,1,result,0x80000000));
+        assert(!arc_rpc_observer_complete(ARC_RPC_OBS_DISC,e->order,e->epoch,g,1,result,0x40000000));
         assert(!arc_rpc_observer_complete(ARC_RPC_OBS_DISC,e->order-1,e->epoch,g,1,result,0));
         assert(!arc_rpc_observer_complete(ARC_RPC_OBS_DISC,e->order,e->epoch-1,g,1,result,0));
         assert(!memcmp(&before,&arm,sizeof(arm)));
@@ -99,11 +105,14 @@ static void events(CPUModel model)
         assert(seen[seen_count-1].pc==0x104 && seen[seen_count-1].watch==watch);
         unsigned count=seen_count;arm.reg[15]=(width?0x10c:0x10c|mode);arc_rpc_arm_exec_count(1);assert(seen_count==count);
     }
-    fixture(model,0x13,0x100);arm_filter(~0u,0,0);rom[0x100/4]=0xef000007;
-    expected_pc=0x104;expected_mode=0x13;expected_sp=arm.reg[13];action=1;
-    arc_rpc_arm_exec_count(1);action=0;unsigned initial=seen_count;
-    arc_rpc_arm_exec_count(1);assert(seen_count==initial); /* same-mode handler */
-    arc_rpc_arm_exec_count(1);assert(seen_count==initial+1 && seen[initial].matched);
+    for(unsigned source=0;source<4;++source)for(unsigned target=0;target<4;++target){
+        const uint32_t modes[]={0,16,3,19};
+        if(source<2 && target<2)continue;
+        fixture(model,modes[source],0x100);arm_filter(~0u,0,0);rom[0x100/4]=0xef000007;
+        expected_pc=0x104;expected_mode=modes[target];expected_sp=arm.reg[13];action=12;
+        arc_rpc_arm_exec_count(1);action=0;arc_rpc_arm_exec_count(2);
+        for(unsigned i=0;i<seen_count;++i)assert(seen[i].kind!=ARC_RPC_OBS_CONTINUATION);
+    }
     for(unsigned policy=0;policy<3;++policy){
         fixture(model,0x10,0x100);arm_filter(~0u,0,0);rom[0x100/4]=0xef000007;
         expected_pc=0x104;expected_mode=0x10;expected_sp=arm.reg[13];action=policy==2?6:5;
@@ -144,6 +153,7 @@ static void events(CPUModel model)
     assert(seen[0].swi==7 && seen[1].swi==0x20006 && seen[1].pc==8);
     fixture(model,0x10,0x100);arm_filter(~0u,0,0);rom[0x100/4]=0xef000007;action=10;
     arc_rpc_arm_exec_count(1);assert(seen_count==1 && arc_rpc_observer_test_events()==seen[0].order);
+    assert(arc_rpc_observer_test_origin().mode==16); /* Disarm suppresses context updates too. */
     /* CP15 program-width clear: report only after full updatemode completion. */
     fixture(model,0x13,0x100);arm_filter(~0u,0,0);rom[0x100/4]=0xee010f10;arm.reg[0]=0;
     arc_rpc_arm_exec_count(1);assert(seen_count==1 && seen[0].old_mode==0x13 && seen[0].mode==3 && seen[0].width==26);
@@ -173,7 +183,7 @@ static void completion(CPUModel model)
     for(unsigned width=0;width<2;++width){
         fixture(model,width?0x13:3,0x100);arm_filter(~0u,0,0);rom[0x100/4]=0xef000007;
         action=8;arc_rpc_arm_exec_count(1);action=0;arc_rpc_arm_exec_count(1);
-        assert(seen_count==2 && seen[1].kind==ARC_RPC_OBS_CONTINUATION && seen[1].matched);
+        assert(!watch && seen_count==1); /* SVC completion cannot arm a watch. */
     }
     fixture(model,3,0x3fffffc);arm_filter(~0u,0,0);
     /* MMU maps final 26-bit PC to backed RAM without altering raw PC arithmetic. */
@@ -183,7 +193,9 @@ static void completion(CPUModel model)
     fixture(model,0x13,0x100);arm_filter(~0u,0,0);rom[0x100/4]=0xef000007;action=3;
     arc_rpc_arm_exec_count(1);arm.reg[15]=0x108;arc_rpc_arm_exec_count(1);assert(action==0);
     /* Inactive execution performs no origin capture at all. */
-    arc_rpc_observer_retire(false);uint64_t attempts=arc_rpc_observer_test_attempts();arc_rpc_arm_exec_count(1);
+    arc_rpc_observer_retire(false);uint64_t attempts=arc_rpc_observer_test_attempts();
+    assert(!arc_rpc_observer_test_origin().epoch);arc_rpc_arm_exec_count(1);
+    assert(!arc_rpc_observer_test_origin().epoch);
     assert(arc_rpc_observer_test_attempts()==attempts);
 }
 static void inspector(CPUModel model)
@@ -244,6 +256,10 @@ static void inspector(CPUModel model)
     pages[1]=0;memset(text,0xa5,sizeof(text));r=arc_rpc_inspect_bytes(0x00400ffe,false,text,4);
     assert(r.status==ARC_RPC_INSPECT_REFUSED && r.copied==2 && text[0]=='A' && text[1]=='B' && (uint8_t)text[2]==0xa5);
     r=arc_rpc_inspect_string(0x00400ffe,false,text,sizeof(text));assert(r.status==ARC_RPC_INSPECT_REFUSED&&!strcmp(text,"AB"));
+    for(unsigned type=0;type<=3;type+=3){
+        pages[1]=0x14000ff0|type;value=0xfeed;
+        assert(!arc_rpc_inspect_word(0x00401000,false,&value) && value==0xfeed);
+    }
     pages[0]=0x10000ff2;((uint8_t *)ram00)[1023]='Q';((uint8_t *)ram00)[1024]='S';((uint8_t *)ram00)[1025]=13;
     r=arc_rpc_inspect_string(0x004003ff,false,text,sizeof(text));assert(r.status==ARC_RPC_INSPECT_OK&&!strcmp(text,"QS"));
     pages[0]=0x10000f32; /* subpage 0/2/3 allowed; 1 denied */
@@ -355,7 +371,13 @@ static void services(CPUModel model)
     assert(!arc_rpc_observer_queue(&stale));resolutions=mutations=revalidation_action=0;arc_rpc_observer_drain();assert(mutations==1);
     ArcRpcHostWork w=work(ARC_RPC_OBS_DISC);assert(arc_rpc_observer_queue(&w));arc_rpc_observer_cancel(ARC_RPC_OBS_DISC);
     arc_rpc_observer_drain();assert(mutations==1);assert(!arc_rpc_observer_queue(&w));
-    w=work(ARC_RPC_OBS_DISC);assert(arc_rpc_observer_queue(&w));++media_generation;arc_rpc_observer_drain();assert(mutations==1);
+    w=work(ARC_RPC_OBS_DISC);assert(arc_rpc_observer_queue(&w));++media_generation;unsigned before_resolution=resolutions;arc_rpc_observer_drain();assert(mutations==1 && resolutions==before_resolution);
+    w=work(ARC_RPC_OBS_DISC);assert(arc_rpc_observer_queue(&w));
+    uint64_t generation=arc_rpc_observer_generation(ARC_RPC_OBS_DISC);before_resolution=resolutions;
+    arc_rpc_observer_host_handler(ARC_RPC_OBS_DISC,&h);
+    assert(arc_rpc_observer_generation(ARC_RPC_OBS_DISC)==generation+1);
+    arc_rpc_observer_drain();assert(mutations==1 && resolutions==before_resolution);
+    assert(!arc_rpc_observer_queue(&w));
     arc_rpc_observer_test_seed_pending();uint64_t epoch=arc_rpc_observer_epoch();arc_rpc_observer_retire(false);
     assert(arc_rpc_observer_epoch()==epoch+1 && arc_rpc_observer_test_clean());
     fixture(model,0x13,0x100);arc_rpc_observer_trace(true,false);rom[0x100/4]=0xef123456;
@@ -365,6 +387,9 @@ static void services(CPUModel model)
     assert(!records[0].path[0]);
     arm.reg[15]=0x108;rom[0x100/4]=0xef000007;arm.reg[0]=21;arm.reg[1]=0x10000000;((uint8_t *)ram00)[0]=1;
     arc_rpc_arm_exec_count(1);n=arc_rpc_observer_trace_read(records,4);assert(n==1 && records[0].scalar_valid && records[0].scalar==1);
+    arm.reg[15]=0x108;rom[0x100/4]=0xef000008;arm.reg[0]=5;arm.reg[1]=0x10000000;memcpy(ram00,"Authored.Path\r",14);
+    arc_rpc_arm_exec_count(1);n=arc_rpc_observer_trace_read(records,4);
+    assert(n==1 && !records[0].path[0]); /* RAM is readable; only opt-in denies the copy. */
     arc_rpc_observer_trace(true,true);arm.reg[15]=0x108;rom[0x100/4]=0xef000008;
     arm.reg[0]=5;arm.reg[1]=0x10000000;memcpy(ram00,"Authored.Path\r",14);
     arc_rpc_arm_exec_count(1);n=arc_rpc_observer_trace_read(records,4);
@@ -378,6 +403,16 @@ static void services(CPUModel model)
     n=arc_rpc_observer_trace_read(records,4);assert(n==1 && records[0].scalar_valid && records[0].scalar==0x1234);
     arm.reg[15]=0x108;arm.reg[0]=0x100;arc_rpc_arm_exec_count(1);
     n=arc_rpc_observer_trace_read(records,4);assert(n==1 && !records[0].scalar_valid && records[0].inspection==ARC_RPC_INSPECT_REFUSED);
+    const struct {uint32_t swi,reason;uint16_t mask;} masks[]={
+        {7,21,3},{7,99,1},{8,5,0xb},{8,99,1},{0x400df,0,0x3f}};
+    for(unsigned k=0;k<sizeof(masks)/sizeof(masks[0]);++k){
+        arc_rpc_observer_trace(true,false);rom[0x100/4]=0xef000000|masks[k].swi;arm.reg[15]=0x108;
+        for(unsigned r=0;r<13;++r)arm.reg[r]=0xa000+r;
+        arm.reg[0]=masks[k].reason;arm.reg[1]=0x10000000;
+        uint32_t before[13];memcpy(before,arm.reg,sizeof(before));arc_rpc_arm_exec_count(1);
+        n=arc_rpc_observer_trace_read(records,4);assert(n==1 && records[0].event.register_mask==(0x6000|masks[k].mask));
+        for(unsigned r=0;r<13;++r)assert(records[0].event.registers[r]==((masks[k].mask&(1u<<r))?before[r]:0));
+    }
     arc_rpc_observer_trace(true,false);rom[0x100/4]=0xef000007;
     for(unsigned i=0;i<1000;++i){arm.reg[15]=0x108;arc_rpc_arm_exec_count(1);}
     ArcRpcTraceStatus status;arc_rpc_observer_trace_status(&status);
@@ -435,10 +470,104 @@ static void trace_interrupt_burst(CPUModel model)
     }
 }
 
-int main(void)
+static unsigned continuation_count(void)
+{ unsigned n=0;for(unsigned i=0;i<seen_count;++i)n+=seen[i].kind==ARC_RPC_OBS_CONTINUATION;return n; }
+static void watch_boundaries(CPUModel model)
+{
+    /* Deadline is inclusive: return fetch is exactly two attempts after SWI. */
+    fixture(model,16,0x100);arm_filter(~0u,0,0);rom[0x100/4]=0xef000008;
+    expected_pc=0x104;expected_mode=16;expected_sp=arm.reg[13];action=13;
+    arc_rpc_arm_exec_count(1);action=0;arc_rpc_arm_exec_count(2);
+    assert(continuation_count()==1 && seen[seen_count-1].matched);
+    /* Refuse mode/continuation callbacks and the host after a user completion. */
+    fixture(model,16,0x100);arm_filter(~0u,0,0);rom[0x100/4]=0xef000008;action=1;
+    expected_sp=arm.reg[13];arc_rpc_arm_exec_count(1);action=11;arc_rpc_arm_exec_count(2);
+    assert(continuation_count()==1);
+    fixture(model,16,0x100);arm_filter(~0u,0,0);rom[0x100/4]=0xef000008;action=8;
+    arc_rpc_arm_exec_count(1);assert(watch && arm.mode==16);
+    assert(!arc_rpc_observer_watch(ARC_RPC_OBS_DISC,0x104,16,arm.reg[13],100));
+    action=0;arc_rpc_arm_exec_count(1);assert(continuation_count()==1 && seen[seen_count-1].matched);
+    for(unsigned width=0;width<2;++width){
+        fixture(model,width?16:0,0x100);arm_filter(~0u,0,0);rom[0x100/4]=0xef000008;
+        expected_mode=width?16:0;expected_sp=arm.reg[13];expected_pc=0x104;action=1;
+        rom[2]=0xe8fd8000; /* LDMIA sp!,{pc}^: real status-restoring return. */
+        arc_rpc_arm_exec_count(1);action=0;
+        arm.reg[13]=0x10001000;ram00[0x1000/4]=arm.reg[14];
+        arc_rpc_arm_exec_count(2);assert(continuation_count()==1 && seen[seen_count-1].matched);
+    }
+    for(unsigned aborting=0;aborting<2;++aborting){
+        fixture(model,16,0x100);arm_filter(~0u,0,0);rom[0x100/4]=0xef000008;
+        expected_mode=16;expected_sp=arm.reg[13];expected_pc=0x104;action=1;
+        arm.reg[0]=5;arm.reg[1]=0x10000000;arc_rpc_observer_trace(true,false);
+        ArcRpcTraceSelection selection={.classes=7,.capacity=32};assert(arc_rpc_observer_trace_select(&selection));
+        rom[2]=0xe321f010; /* MSR mode to User does not release the watch. */
+        rom[3]=aborting?0xe8d28000:0xe8d20001; /* LDM^ PC abort / no-PC success. */
+        arm.reg[2]=aborting?0x00400000:0x10000000;arm.reg[3]=0x104;
+        if(aborting){
+            uint32_t *table=ram00+0x4000/4;memset(table,0,16384);
+            table[0]=0x00000c02;table[0x100]=0x10000c02;enable(model,0);
+            rom[4]=0xe321f010;rom[5]=0xe1a0f003; /* Abort: MSR User; MOV pc,r3 (non-S). */
+        }else rom[4]=0xe1a00000;
+        arc_rpc_arm_exec_count(1);action=0;arc_rpc_arm_exec_count(aborting?5:3);
+        assert(!continuation_count());
+        ArcRpcObservationTrace rows[32];size_t n=arc_rpc_observer_trace_read(rows,32);
+        for(size_t i=0;i<n;++i)assert(rows[i].event.kind!=ARC_RPC_OBS_CONTINUATION);
+    }
+}
+static void identity_guest(CPUModel model,bool tracing)
+{
+    fixture(model,16,0x100);rom[0x100/4]=0xef000008;
+    arm.reg[0]=5;arm.reg[1]=0x10000000;memcpy(ram00,"Identity.Path\r",14);
+    arc_rpc_observer_trace(tracing,false);
+    ArcRpcTraceSelection prelude={.classes=7,.capacity=2};assert(arc_rpc_observer_trace_select(&prelude));
+    uint64_t order=arc_rpc_observer_test_events(),attempt=arc_rpc_observer_test_attempts();
+    arc_rpc_arm_exec_count(3);
+    assert(arc_rpc_observer_test_events()==order && arc_rpc_observer_test_attempts()==attempt);
+    arm_filter(~0u,0,0);
+    expected_pc=0x104;expected_mode=16;expected_sp=arm.reg[13];action=1;
+    arc_rpc_observer_trace(tracing,false);
+    ArcRpcTraceSelection selection={.classes=7,.capacity=2};assert(arc_rpc_observer_trace_select(&selection));
+    for(unsigned i=0;i<2;++i){arm.reg[15]=0x108;arc_rpc_arm_exec_count(3);}
+    assert(continuation_count()==2);
+}
+static void identity_equality(CPUModel model)
+{
+    ArcRpcObservation off[128];unsigned count=0;
+    for(unsigned tracing=0;tracing<2;++tracing){
+        /* Seed a canonical watch to measure the counter before tracing starts. */
+        fixture(model,16,0x100);arm_filter(~0u,0,0);rom[0x100/4]=0xef000008;
+        expected_pc=0x104;expected_mode=16;expected_sp=arm.reg[13];action=1;
+        arc_rpc_arm_exec_count(3);uint64_t base_watch=watch,base_order=arc_rpc_observer_test_events(),base_attempt=arc_rpc_observer_test_attempts();
+        seen_count=0;arc_rpc_observer_trace(tracing,false);
+        ArcRpcTraceSelection selection={.classes=7,.capacity=2};assert(arc_rpc_observer_trace_select(&selection));
+        arm.reg[0]=5;
+        for(unsigned i=0;i<2;++i){arm.reg[15]=0x108;arc_rpc_arm_exec_count(3);}
+        assert(continuation_count()==2);
+        for(unsigned i=0;i<seen_count;++i){ArcRpcObservation *e=&seen[i];
+            e->order-=base_order;e->instruction-=base_attempt;e->epoch=0;
+            if(e->watch)e->watch-=base_watch;
+        }
+        if(!tracing){count=seen_count;memcpy(off,seen,count*sizeof(*off));}
+        else {assert(count==seen_count);for(unsigned i=0;i<count;++i){
+            assert(off[i].order==seen[i].order && off[i].watch==seen[i].watch && off[i].instruction==seen[i].instruction);
+            assert(off[i].kind==seen[i].kind && off[i].pc==seen[i].pc && off[i].mode==seen[i].mode);
+            assert(!memcmp(off[i].registers,seen[i].registers,sizeof(off[i].registers)));
+        }}
+    }
+}
+
+int main(int argc,char **argv)
 {
     arm_init();protected=1;if(setjmp(boundary)){fputs("Unexpected observation component fault\n",stderr);return 1;}
     config.mem_size=64;config.vram_size=2;mem_init();
-    for(unsigned model=0;model<4;++model){events((CPUModel)model);timing_events((CPUModel)model);completion((CPUModel)model);inspector((CPUModel)model);services((CPUModel)model);trace_interrupt_burst((CPUModel)model);}
+    if(argc==3 && !strcmp(argv[1],"--identity")){
+        for(unsigned model=0;model<4;++model){identity_guest((CPUModel)model,atoi(argv[2])!=0);
+            for(unsigned i=0;i<seen_count;++i)printf("%u %llu %llu %llu %llu %u\n",model,
+                (unsigned long long)seen[i].order,(unsigned long long)seen[i].instruction,
+                (unsigned long long)seen[i].epoch,(unsigned long long)seen[i].watch,seen[i].kind);
+        }
+        arc_rpc_observer_retire(false);arc_rpc_memory_close();return 0;
+    }
+    for(unsigned model=0;model<4;++model){watch_boundaries((CPUModel)model);identity_equality((CPUModel)model);identity_guest((CPUModel)model,true);events((CPUModel)model);timing_events((CPUModel)model);completion((CPUModel)model);inspector((CPUModel)model);services((CPUModel)model);trace_interrupt_burst((CPUModel)model);}
     arc_rpc_observer_retire(false);arc_rpc_memory_close();puts("RPC observation: four CPUs, events, inspector values/purity, completion, generations, queue and trace");return 0;
 }

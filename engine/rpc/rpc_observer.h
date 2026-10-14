@@ -120,6 +120,7 @@ RETRO_API void arc_rpc_observer_test_seed_pending(void);
 RETRO_API bool arc_rpc_observer_test_clean(void);
 RETRO_API uint64_t arc_rpc_observer_test_epoch(void);
 uint64_t arc_rpc_observer_test_attempts(void);
+ArcRpcObservation arc_rpc_observer_test_origin(void); /* Captured metadata only. */
 uint64_t arc_rpc_observer_test_events(void);
 #endif
 #endif

@@ -25,9 +25,10 @@ abort produces no continuation; a condition-failed instruction does. Eight
 watches are bounded by owner, generation, epoch and instruction-attempt deadline.
 Attempt bounds are caller-selected, at most one billion active instruction
 attempts; trace watches use that upper bound and mark expiry as lost evidence.
-The first fetched instruction in the requested return mode ends a watch with a
+Only user-mode returns from user-mode SWIs are admitted (D-176). The first
+eligible fetched instruction in the requested user mode ends a watch with a
 match (VA and SP equal) or disqualification; there is no accidental later match.
-Same-mode watches wait for a completed status-restoring PC write before
+User watches wait for a completed status-restoring PC write before
 considering a fetch a return; handler entry in that same mode does not count.
 Controlled completion also releases its same-mode watch for the next fetch.
 A watch can be armed only from a synchronous SWI event, so that event's fetch
@@ -156,3 +157,19 @@ write failures and lifecycle discards remain incomplete. Hooks never block or
 perform host I/O. The runner reports cumulative attempts/loss/failure once at
 exit, including close failures. Trace selection does not alter guest execution,
 observer watches, answers or host work.
+
+## Run C: D-176 eligibility and identity isolation
+
+A continuation watch is admitted only synchronously in a user-mode SWI callback,
+and only for a user-mode return (full mode 0 or 16). Privileged SWIs and
+privileged return modes are refused. Other call nesting is outside R3c-1.
+Every admitted watch waits for a completed status-restoring PC write into its
+requested user mode, or controlled completion, before considering a successful
+fetch. The test trace uses the same admission and return rule, including LDM^;
+an MSR/TEQP plus non-S PC write alone does not release either watch.
+
+Trace event, instruction-attempt and watch identities have separate counters.
+Trace-only captures never increment observer order or watch counters, and trace
+watches use trace attempt deadlines. A trace record has its own ordered identity
+even when it copies an observer event. Turning trace on, changing selection or
+losing trace records cannot change any observer-visible identity.

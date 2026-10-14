@@ -6,7 +6,7 @@
 #include <string.h>
 
 bool arc_rpc_observer_active;
-static bool host_active;
+static bool host_active, observers_active;
 bool arc_rpc_observer_in_host(void) { return host_active; }
 static struct {
     uint64_t epoch, order, instruction, watch_id;
@@ -26,16 +26,18 @@ static struct {
 static struct {
     ArcRpcObservationTrace records[ARC_RPC_TRACE_LIMIT];
     ArcRpcTraceStatus status; bool paths;
+    uint64_t order, instruction, watch_id;
     ArcRpcTraceSelection selection;
     ArcRpcObservationTrace gap;
-    struct { bool live; uint64_t id, deadline; uint32_t pc,mode,sp; } watches[ARC_RPC_WATCHES];
+    struct { bool live, wait_return; uint64_t id, deadline; uint32_t pc,mode,sp; } watches[ARC_RPC_WATCHES];
 } trace;
 static void trace_loss(const ArcRpcObservation *);
 #endif
 static void gate(void)
 {
-    arc_rpc_observer_active=false;
-    for(unsigned i=0;i<ARC_RPC_OBSERVERS;++i)arc_rpc_observer_active|=observer.owners[i].armed;
+    observers_active=false;
+    for(unsigned i=0;i<ARC_RPC_OBSERVERS;++i)observers_active|=observer.owners[i].armed;
+    arc_rpc_observer_active=observers_active;
 #if defined(ARCDROID_TEST_FAULTS)
     arc_rpc_observer_active|=trace.status.enabled;
 #endif
@@ -98,23 +100,30 @@ ArcRpcBacking arc_rpc_observer_backing(const uint32_t *word)
 }
 void arc_rpc_observe_begin(uint32_t pc)
 {
-    ++observer.instruction;
+    if(observers_active)++observer.instruction;
 #if defined(ARCDROID_TEST_FAULTS)
+    if(trace.status.enabled)++trace.instruction;
     if(arc_rpc_mem_fast.integer_batch)++trace.status.integer_attempts;
 #endif
     observer.origin=(ArcRpcObservation){.instruction=observer.instruction,.epoch=observer.epoch,
         .ns=arc_rpc_mem_fast.clock?arc_rpc_mem_fast.clock->now_ns:0,.pc=pc,.mode=arm.mode};
 }
-static ArcRpcObservation event(ArcRpcObservationKind kind, uint16_t mask)
+static ArcRpcObservation capture_event(ArcRpcObservationKind kind, uint16_t mask)
 {
     ArcRpcObservation e=observer.origin;
-    e.order=++observer.order;e.kind=kind;e.old_mode=observer.origin.mode;e.mode=arm.mode;
+    e.order=0;e.kind=kind;e.old_mode=observer.origin.mode;e.mode=arm.mode;
     e.privileged=(arm.mode&15)!=0;e.width=(arm.mode&16)?32:26;
     e.nzcv=arm.reg[(arm.mode&16)?16:15]&0xf0000000u;
     e.register_mask=(uint16_t)(mask|0x600fu);
     for(unsigned i=0;i<15;++i)if(e.register_mask&(1u<<i))e.registers[i]=arm.reg[i];
     return e;
 }
+static ArcRpcObservation event(ArcRpcObservationKind kind,uint16_t mask)
+{
+    ArcRpcObservation e=capture_event(kind,mask);e.order=observers_active?++observer.order:0;return e;
+}
+static bool watch_eligible(uint32_t source,uint32_t target)
+{ return (source==0 || source==16) && (target==0 || target==16); }
 #if defined(ARCDROID_TEST_FAULTS)
 static bool trace_file_reason(uint32_t reason)
 {
@@ -203,6 +212,7 @@ static void trace_gap(void)
 static void trace_event(const ArcRpcObservation *e)
 {
     if(!trace.status.enabled || !trace_selected(e))return;
+    ArcRpcObservation identity=*e;identity.order=++trace.order;identity.instruction=trace.instruction;e=&identity;
     trace_gap();
     if(trace.status.count==trace.selection.capacity){trace_loss(e);return;}
     ArcRpcObservationTrace t={.event=*e,.inspection=ARC_RPC_INSPECT_OK};
@@ -251,10 +261,10 @@ void arc_rpc_observe_fetched(const uint32_t *page)
 #if defined(ARCDROID_TEST_FAULTS)
     if(trace.status.enabled)for(unsigned i=0;i<ARC_RPC_WATCHES;++i){
         if(!trace.watches[i].live)continue;
-        if(observer.instruction>trace.watches[i].deadline){trace.watches[i].live=false;
-            ArcRpcObservation lost=event(ARC_RPC_OBS_CONTINUATION,0);trace_loss(&lost);continue;}
-        if(arm.mode!=trace.watches[i].mode)continue;
-        ArcRpcObservation e=event(ARC_RPC_OBS_CONTINUATION,0);e.watch=trace.watches[i].id;
+        if(trace.instruction>trace.watches[i].deadline){trace.watches[i].live=false;
+            ArcRpcObservation lost=capture_event(ARC_RPC_OBS_CONTINUATION,0);lost.order=++trace.order;lost.instruction=trace.instruction;trace_loss(&lost);continue;}
+        if(trace.watches[i].wait_return || arm.mode!=trace.watches[i].mode)continue;
+        ArcRpcObservation e=capture_event(ARC_RPC_OBS_CONTINUATION,0);e.watch=trace.watches[i].id;
         e.matched=e.pc==trace.watches[i].pc && arm.reg[13]==trace.watches[i].sp;
         trace.watches[i].live=false;trace_event(&e);
     }
@@ -274,6 +284,10 @@ void arc_rpc_observe_fetched(const uint32_t *page)
 }
 void arc_rpc_observe_return(uint32_t mode)
 {
+#if defined(ARCDROID_TEST_FAULTS)
+    for(unsigned i=0;i<ARC_RPC_WATCHES;++i)if(trace.watches[i].live && trace.watches[i].mode==mode)
+        trace.watches[i].wait_return=false;
+#endif
     for(unsigned i=0;i<ARC_RPC_WATCHES;++i)if(observer.watches[i].live && observer.watches[i].mode==mode)
         observer.watches[i].wait_return=false;
 }
@@ -292,13 +306,13 @@ bool arc_rpc_observe_swi(uint32_t opcode)
     e.swi=opcode&0xffffffu;trace_event(&e);
 #if defined(ARCDROID_TEST_FAULTS)
     uint32_t normalized=e.swi&~0x20000u;
-    if(trace.status.enabled && (trace.selection.classes&ARC_RPC_OBS_CONTINUATION) && trace_swi_selected(e.swi) && !e.privileged &&
+    if(trace.status.enabled && (trace.selection.classes&ARC_RPC_OBS_CONTINUATION) && trace_swi_selected(e.swi) && watch_eligible(e.mode,e.mode) &&
         ((normalized==8 && trace_file_reason(e.registers[0])) || (normalized==0xd && trace_find_reason(e.registers[0])))){
         unsigned slot=ARC_RPC_WATCHES;
         for(unsigned i=0;i<ARC_RPC_WATCHES;++i)if(!trace.watches[i].live){slot=i;break;}
-        if(slot==ARC_RPC_WATCHES){ArcRpcObservation lost=event(ARC_RPC_OBS_CONTINUATION,0);trace_loss(&lost);}
-        else {trace.watches[slot].live=true;trace.watches[slot].id=++observer.watch_id;
-            trace.watches[slot].deadline=observer.instruction+ARC_RPC_WATCH_ATTEMPT_LIMIT;
+        if(slot==ARC_RPC_WATCHES){ArcRpcObservation lost=capture_event(ARC_RPC_OBS_CONTINUATION,0);lost.order=++trace.order;lost.instruction=trace.instruction;trace_loss(&lost);}
+        else {trace.watches[slot].live=true;trace.watches[slot].id=++trace.watch_id;trace.watches[slot].wait_return=true;
+            trace.watches[slot].deadline=trace.instruction+ARC_RPC_WATCH_ATTEMPT_LIMIT;
             trace.watches[slot].pc=e.pc+4;trace.watches[slot].mode=e.mode;trace.watches[slot].sp=e.registers[13];}
     }
 #endif
@@ -313,7 +327,7 @@ bool arc_rpc_observe_swi(uint32_t opcode)
 uint64_t arc_rpc_observer_watch(ArcRpcObserver owner,uint32_t pc,uint32_t mode,uint32_t sp,unsigned attempts)
 {
     if((unsigned)owner>=ARC_RPC_OBSERVERS || !observer.in_swi || observer.current_owner!=(unsigned)owner ||
-        !observer.owners[owner].armed || mode>31 || (pc&3) || !attempts || attempts>ARC_RPC_WATCH_ATTEMPT_LIMIT)return 0;
+        !observer.owners[owner].armed || !watch_eligible(observer.origin.mode,mode) || mode>31 || (pc&3) || !attempts || attempts>ARC_RPC_WATCH_ATTEMPT_LIMIT)return 0;
     unsigned slot=ARC_RPC_WATCHES;
     for(unsigned i=0;i<ARC_RPC_WATCHES;++i)if(observer.watches[i].live && observer.watches[i].owner==owner){slot=i;break;}
     if(slot==ARC_RPC_WATCHES)for(unsigned i=0;i<ARC_RPC_WATCHES;++i)if(!observer.watches[i].live){slot=i;break;}
@@ -321,7 +335,7 @@ uint64_t arc_rpc_observer_watch(ArcRpcObserver owner,uint32_t pc,uint32_t mode,u
     observer.watches[slot].live=true;observer.watches[slot].owner=owner;
     observer.watches[slot].id=++observer.watch_id;observer.watches[slot].generation=observer.owners[owner].generation;
     observer.watches[slot].deadline=observer.instruction+attempts;
-    observer.watches[slot].wait_return=mode==arm.mode;
+    observer.watches[slot].wait_return=true;
     observer.watches[slot].pc=pc;observer.watches[slot].mode=mode;observer.watches[slot].sp=sp;
     return observer.watch_id;
 }
@@ -393,6 +407,7 @@ RETRO_API void arc_rpc_observer_trace(bool enabled,bool private_paths)
 {
     /* Reset metadata; count gates all record reads. Avoid touching the entire
      * qualification buffer on ordinary test-session loads. */
+    trace.order=trace.instruction=trace.watch_id=0;
     trace.status=(ArcRpcTraceStatus){.enabled=enabled};trace.paths=private_paths;
     memset(&trace.gap,0,sizeof(trace.gap));memset(trace.watches,0,sizeof(trace.watches));
     trace.selection=(ArcRpcTraceSelection){.classes=ARC_RPC_OBS_SWI,.capacity=ARC_RPC_TRACE_LIMIT};gate();
@@ -445,6 +460,7 @@ RETRO_API void arc_rpc_observer_test_seed_pending(void)
 }
 RETRO_API uint64_t arc_rpc_observer_test_epoch(void) { return observer.epoch; }
 uint64_t arc_rpc_observer_test_events(void) { return observer.order; }
+ArcRpcObservation arc_rpc_observer_test_origin(void) { return observer.origin; }
 uint64_t arc_rpc_observer_test_attempts(void) { return observer.instruction; }
 RETRO_API bool arc_rpc_observer_test_clean(void)
 {
