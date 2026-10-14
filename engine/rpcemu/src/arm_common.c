@@ -22,6 +22,7 @@
 
 /* arm_common.c - sections of code that are shared between the interpreted and dynarec builds */
 
+#include "rpc_observer.h"
 #include <stdint.h>
 
 #include "rpcemu.h"
@@ -567,9 +568,25 @@ data_abort:
 int
 opSWI(uint32_t opcode)
 {
-	(void)opcode;
 	exception(SUPERVISOR, 0xc, 4);
 
 	return 0;
 }
 #endif /* ifndef TEST */
+
+/* ArcDroid modification (R3c-1 run B): only the armed loop calls these. */
+#ifndef TEST
+int arc_rpc_opSWI_observed(uint32_t opcode)
+{
+    /* Current condition-passed SWI shortcut; raw PC/event continuation is
+     * entirely in the shared interpreter body. */
+    if(arc_rpc_observer_active && arc_rpc_observe_swi(opcode))return 0;
+    return opSWI(opcode);
+}
+#endif
+void arc_rpc_arm_load_multiple_s_observed(uint32_t opcode,uint32_t address,uint32_t writeback)
+{
+    arm_load_multiple_s(opcode,address,writeback);
+    if((opcode&(1u<<15)) && !(arm.event&0x40) && arc_rpc_observer_active)
+        arc_rpc_observe_return(arm.mode);
+}

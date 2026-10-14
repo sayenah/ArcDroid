@@ -378,3 +378,24 @@ of mirrored ROM per step. No instructions run before complete construction and
 final attachment; teardown releases partial allocations. Synchronous low-level
 start drains the identical steps, preserving memory bytes, allocation order,
 reset behavior and factory-capture timing. No upstream source was added.
+
+### R3c-1 observation primitives
+
+`observation-r3c1` (`src/arm.c`, `src/arm_common.c/.h`, `src/cp15.c`,
+`src/mem.c`, `src/fdc.c`): gated original-fetch and successful-fetch continuation
+hooks, condition-passed SWI entry/controlled completion, completed body and
+event-check mode reports, pure stale-TLB/backed-memory inspector edges, and
+internal per-drive idle/media-generation services. No observer policy, firmware
+recognition, trace sink or production capability lives in the import. New
+external edges already use `arc_rpc_` names; the existing forced namespace and
+Mach-O/COFF/ELF definition/reference and export guards apply unchanged.
+The session-owned adapter and contract are `engine/rpc/rpc_observer.*`,
+`rpc_inspector.c` and `docs/riscpc-observation.md`. Original upstream hashes
+and licence headers are unchanged.
+
+R3c-1 run B retains this patch lineage. `arm.c` includes its own loop-only
+section twice under compile-time macros, sharing one instruction body. Batch
+admission selects the inactive or observed instantiation; the inactive body
+has no observer loads or tests. `arm_common.c/.h` expose prefixed armed-only
+SWI and status-restoring PC helpers. Timing/service/flush and exception ordering
+are unchanged. No imported file, opcode or execution policy was added.

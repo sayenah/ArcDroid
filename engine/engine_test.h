@@ -4,6 +4,12 @@
 #include "arcdroid_engine.h"
 #if defined(ARCDROID_TEST_FAULTS)
 #include "libretro.h"
+#include "rpc/rpc_observer.h"
+void arc_engine_test_observation_trace(bool,bool);
+bool arc_engine_test_observation_select(const ArcRpcTraceSelection *);
+void arc_engine_test_observation_profile(bool,unsigned);
+void arc_engine_test_observation_drain(ArcRpcTraceSink,void *);
+RETRO_API void arc_engine_test_observation_status(ArcRpcTraceStatus *);
 /* Model order: ARM610, ARM710, SA-110, ARM7500. Rate zero selects the
  * accepted model default; explicit overrides are 1..100 MIPS. */
 void arc_engine_test_plan_rate(unsigned);

@@ -26,6 +26,7 @@
 #include "fdc.h"
 #include "rpc_timing.h"
 #include "rpc_floppy.h"
+#include "rpc_observer.h"
 #include <string.h>
 #include <limits.h>
 
@@ -575,3 +576,22 @@ void fdc_writeprotect(void) { terminal(ARC_RPC_FLOPPY_WRITE_PROTECT); }
 int fdc_getdata(int last) { (void)last;return fdc.fifo_count?pop():-1; }
 void fdc_sectorid(uint8_t c,uint8_t h,uint8_t r,uint8_t n) { fdc.c=c;fdc.h=h;fdc.r=r;fdc.n=n;finish(0,0,false); }
 void fdc_indexpulse(void) { if(arc_rpc_floppy_signals(&media,fdc.dor&3,arc_rpc_time_ns()).index){iomd.irqa.status|=IOMD_IRQA_FLOPPY_INDEX;updateirqs();} }
+
+/* ArcDroid modification (2026-10-13, observation-r3c1): controller state
+ * admission service, independent of IRQ masking/acknowledgement. */
+bool arc_rpc_fdc_idle(unsigned drive)
+{
+    if(drive>=2 || !media_initialized || !(fdc.dor&4) || fdc.held || fdc.resetting)return false;
+    /* The shared command/FIFO/result engine is busy for both drives. A
+     * background seek is drive-specific only after that engine returns IDLE. */
+    if(fdc.phase!=IDLE || fdc.fifo_count || fdc.service || fdc.fifo_irq ||
+        (iomd.fiq.status&IOMD_FIQ_FLOPPY_DMA_REQUEST))return false;
+    for(unsigned unit=0;unit<4;++unit){
+        if(fdc.armed[SEEK0+unit] && fdc.seek_drive[unit]==drive)return false;
+        if((fdc.pending&(1u<<unit)) &&
+            ((fdc.pending_st0[unit]&0xc0)==0xc0 || fdc.seek_drive[unit]==drive))return false;
+    }
+    return true;
+}
+uint64_t arc_rpc_fdc_media_generation(unsigned drive)
+{ return media_initialized && drive<2?media.drives[drive].mount_generation:0; }

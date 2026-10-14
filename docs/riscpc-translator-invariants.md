@@ -228,7 +228,7 @@ Every exit lands on exactly one of the phases below. The resumer then performs e
 | Phase | Where | Materialised time representation [C] |
 |---|---|---|
 | **P0(k)** | `arm.c:571`, before k. Reached after continuation returned true, or by a driver issue through `arc_rpc_mem_ready`. The command queue is empty; older work has run to `now`. | `now_ns` = visible issue time of k. `issue_*` = issue of k and `cpu_due_*` = the same values (`rpc_mem_timing.h:153-156`; `rpc_mem_timing.c:629-631`). In integer mode, `issue_floor/ticks` are derived with the flush **formulas** (`rpc_mem_timing.c:408-409`) **without** `next_base`. Calling `batch_flush` here would set `cpu_due=issue+base` and so add a base: forbidden as a canonicaliser. |
-| **P1(k)** | Mid-k, at a helper call. | As P0. Plus k's collected requests in program order, `recording=true`, `opcode` set, and `arc_rpc_attributes` as the current access's translation left it. |
+| **P1(k)** | Mid-k, at a helper call, including successful-fetch continuation (after opcode capture, before condition), SWI entry and completed-transition observation (§6). | As P0. Plus k's collected requests in program order, `recording=true`, `opcode` set after a successful fetch (a prefetch-abort mode report retains the prior value), and `arc_rpc_attributes` as the current access's translation left it. |
 | **P2(k)** | Just after `instruction_end(k)` (`arm.c:1911`), before continuation. | No requests: `cpu_due_*` = issue + base. Here a flush is equivalent (`:410`). With requests: `pending`, `cursor=issue_ticks`, `cpu_due_*` unresolved and excluded from comparison (§1.2). |
 | **P3(k)** | After the continuation step returned false, or the quota/`NULL`-batch return, and the final flush (`arm.c:1912-1919`). | `now_ns` and the bus may have **advanced past P2** through batch service (`rpc_mem_timing.c:681-688`). The state is whatever service left; the resumer is the driver at `rpc_session.c:324`. |
 
@@ -262,6 +262,12 @@ Every exit lands on exactly one of the phases below. The resumer then performs e
   - `cursor`, `bus_cursor`, `finish` (only while a cycle or video is active), `wait_start`, `last_rom`;
   - every `stats` field;
 - **Measurement state, when `ARCDROID_TEST_FAULTS` is enabled:** `test_measure`, `test_stop`, `measure_first`/`last`/`drained`, and the interval.
+- **RPC observer semantic state (R3c-1, §6):** epoch, ordered event and active
+  instruction identities, original VA/backing/mode context, owner generations
+  and enabled filters (callback pointers normalised by owner), live watches and
+  their deadlines/return eligibility, future answer intent/order, and live copied
+  host requests with generation/epoch/media/time. Inactive slots and diagnostic
+  trace buffers/counters are excluded. Host handlers are identified by owner.
 - **Counts:** `linecyc`, `instruction_work`, `arc_rpc_executed`, `arc_rpc_idle_ns`.
 
 **Excluded fields.**
@@ -395,7 +401,10 @@ Any `updatemode` ends the block (E4).
 - **Observation barriers.** Every enabled trace or debug hook needs materialised state at its observation point:
   - event trace in `arc_rpc_deliver` (`rpc_session.c:279-286`);
   - interval start and end (`rpc_mem_timing.c:66-75,246-252,578-581`);
-  - snapshot and `read_ram` (`rpc_session.c:510-523`).
+  - snapshot and `read_ram` (`rpc_session.c:510-523`);
+  - R3c-1 successful-fetch continuation before condition/body, condition-passed
+    SWI entry before exception entry, and completed body/event-check mode events
+    (§6). No batch flush or early service is permitted at these barriers.
 
   This requires no new debugger.
 
@@ -461,3 +470,40 @@ Any `updatemode` ends the block (E4).
 - **Start with the fetch path.** Phase 1 starts with exact fetch-path overhead reduction that keeps every per-fetch check.
 - **Permission reuse needs a ruling.** Any guarded reuse of a permission check is benchmarked only under an explicit Fable ruling.
 - **Not yet justified.** Neither the S59 profile nor the executable-memory probe justifies bypassing the minimal portable foundation or advancing the guest-rate decision.
+
+## 6. R3c-1 observation equivalence (D-174/D-175)
+
+The contract in `riscpc-observation.md` adds G-12 barriers without changing
+P0–P3 or enabling E2′. SWI entry is a P1 helper after condition success, before
+exception entry. Completion writes only approved R0–R12 and C/V, then the
+ordinary event check and raw R15 +4 lead to P2/P3. It adds no branch cost.
+A successful-fetch continuation is P1 before condition/body, even when the
+condition fails; prefetch abort reports no continuation. Its first requested-mode
+return is either a match or disqualification and retires the watch. Mode events
+report full old/new modes after the completed body and after the event check,
+including CP15 and exception returns. Banks/SP/LR are settled; raw R15 can still
+be transitional before its final +4. Origin VA and backing remain those fetched.
+
+Active observation requires visible issue `now_ns` without batch flush,
+`next_base` or early service of current requests. Inspector descriptor walks
+never install execution translations, even on a miss. Canonical equivalence
+includes observer epoch/generations, watch identities/deadlines/return outcomes,
+pending future answer intent, copied host requests and cancellation state.
+Host work drains only after a protected frame entry returns; both revalidations
+must agree. Trace buffers and loss/failure state are a separate diagnostic domain,
+excluded from guest projection and unable to cancel observers. G-9/G-10 remain
+unchanged: inspection never writes memory or affects cache maintenance.
+
+Run B selects an observation-free interpreter instantiation at batch admission
+when nothing is armed. Both instantiations share one source body and identical
+P0–P3, integer-batch and service boundaries; admission is not an early yield.
+An armed callback may disarm during the batch without creating a later event.
+Trace classes/SWI selection, recoverable gap counts/windows and incomplete status
+remain diagnostic state and cannot change canonical guest or observer state.
+
+D-176 restricts continuation admission to user-mode SWI callbacks and user-mode
+returns (mode 0/16), refusing all other requests. Successful-fetch eligibility
+requires a completed status-restoring PC write into that mode or controlled
+completion; trace watches use the identical rule. Trace event/attempt/watch
+counters are separate from canonical observer identities, which must compare
+equal with tracing enabled or disabled.

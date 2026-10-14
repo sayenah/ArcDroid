@@ -33,6 +33,7 @@ typedef struct {
     bool attached;
 } ArcTestHdCost;
 /* Opt-in test-only clocks; no host measurement controls guest execution. */
+RETRO_API bool arc_test_plan_observation_complete(void);
 RETRO_API void arc_test_plan_hd_cost(ArcTestHdCost *out,bool enabled);
 RETRO_API bool arc_test_plan_hd_stats(ArcRpcHdStats *out);
 RETRO_API bool arc_test_plan_hd_write(uint32_t lba,uint32_t count,const uint8_t *bytes);

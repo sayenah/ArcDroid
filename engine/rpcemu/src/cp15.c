@@ -32,6 +32,7 @@
 #include "cp15.h"
 #include "mem.h"
 #include "rpc_memory.h"
+#include "rpc_observer.h"
 #include "rpc_mem_timing.h"
 /* ArcDroid modification (2026-10-07): retain descriptor B/C and connect
  * permission-checked fetch, cache maintenance and SA clock-switch timing. */
@@ -455,3 +456,59 @@ const uint32_t *getpccache(uint32_t addr)
     arc_rpc_mem_fetch(addr, physical, arc_rpc_cp15_attributes(), code != NULL);
     return code;
 }
+
+/* ArcDroid modification (2026-10-13, observation-r3c1): pure inspection
+ * honours stale tagged entries but never installs a translation or touches
+ * fault/attribute/timing state. Descriptor reads have no device dispatch. */
+static bool inspect_descriptor(uint32_t pa,uint32_t *out)
+{
+    if(pa&3)return false;
+    uint32_t value=0;
+    for(unsigned i=0;i<4;++i){uint8_t byte;if(!arc_rpc_inspect_physical(pa+i,&byte))return false;
+        value|=(uint32_t)byte<<(8*i);}
+    *out=value;return true;
+}
+bool arc_rpc_inspect_translate(uint32_t va,bool privileged,uint32_t *physical)
+{
+    if(!physical)return false;
+    if(!mmu){*physical=va;return true;}
+    uint32_t tag=va>>10;
+    const ArcRpcTlbEntry *cached=&tlb[(tag^(tag>>10)^(tag>>18))&255];
+    ArcRpcTlbEntry local={0};
+    if(!cached->valid || cached->tag!=tag){
+        uint32_t first,second,pa,ap,domain;
+        if(!inspect_descriptor(cp15.translation_table|((va>>18)&0x3ffcu),&first))return false;
+        domain=(first>>5)&15;
+        if((first&3)==2){pa=(first&0xfff00000u)|(va&0xfffffu);ap=(first>>10)&3;}
+        else if((first&3)==1){
+            if(!inspect_descriptor((first&0xfffffc00u)|((va>>10)&0x3fcu),&second))return false;
+            unsigned shift;
+            if((second&3)==1){pa=(second&0xffff0000u)|(va&0xffffu);shift=4+((va>>13)&6);}
+            else if((second&3)==2){pa=(second&0xfffff000u)|(va&0xfffu);shift=4+((va>>9)&6);}
+            else return false;
+            ap=(second>>shift)&3;
+        }else return false;
+        local.physical=pa&~0x3ffu;local.domain=(uint8_t)domain;local.ap=(uint8_t)ap;cached=&local;
+    }
+    uint32_t access=cp15_domain_access(cached->domain);
+    if(access==0 || access==2)return false;
+    if(access==1){
+        unsigned ap=cached->ap;
+        if(ap==0){unsigned sr=(cp15.ctrl>>8)&3;
+            if(sr==0 || sr==3 || (sr==1 && !privileged))return false;
+        }else if(ap==1 && !privileged)return false;
+    }
+    *physical=cached->physical|(va&0x3ffu);return true;
+}
+#if defined(ARCDROID_TEST_FAULTS)
+size_t arc_rpc_inspector_snapshot(void *out,size_t capacity)
+{
+    size_t n=sizeof(cp15)+sizeof(tlb)+sizeof(arc_rpc_attributes)+sizeof(tlbs)+sizeof(flushes);
+    if(!out || capacity<n)return n;
+    uint8_t *p=out;
+    memcpy(p,&cp15,sizeof(cp15));p+=sizeof(cp15);
+    memcpy(p,tlb,sizeof(tlb));p+=sizeof(tlb);
+    memcpy(p,&arc_rpc_attributes,sizeof(arc_rpc_attributes));p+=sizeof(arc_rpc_attributes);
+    memcpy(p,&tlbs,sizeof(tlbs));p+=sizeof(tlbs);memcpy(p,&flushes,sizeof(flushes));return n;
+}
+#endif

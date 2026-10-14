@@ -32,6 +32,61 @@ static bool hd_populate;
 static void (*plan_notice)(const char *,bool);
 static void (*plan_log)(const char *);
 static unsigned pending_rate;
+static bool observation_final_failure;
+RETRO_API bool arc_test_plan_observation_complete(void) { return !observation_final_failure; }
+static bool observation_unmatched;
+static unsigned observation_quota=200;
+static ArcRpcTraceSelection observation_selection={.classes=ARC_RPC_OBS_SWI,.capacity=ARC_RPC_TRACE_LIMIT};
+static bool observation_enabled,observation_paths,observation_failed;
+static ArcIoFile *observation_file;
+static char observation_path[PATH_LIMIT];
+static bool observation_write(const char *text)
+{
+    size_t n=strlen(text);
+    if(observation_file && arc_io_write_file(observation_file,text,n)==n)return true;
+    observation_failed=observation_final_failure=true;return false;
+}
+static bool observation_sink(void *opaque,const ArcRpcObservationTrace *t)
+{
+    (void)opaque;const ArcRpcObservation *e=&t->event;char line[2048];
+    if(e->kind==ARC_RPC_OBS_GAP){
+        snprintf(line,sizeof(line),"{\"schema\":2,\"kind\":8,\"order\":%llu,\"instruction\":%llu,\"epoch\":%llu,\"ns\":%llu,\"lost_end_ns\":%llu,\"lost\":%llu,\"incomplete\":true}\n",
+            (unsigned long long)e->order,(unsigned long long)e->instruction,(unsigned long long)e->epoch,
+            (unsigned long long)e->ns,(unsigned long long)t->lost_end_ns,(unsigned long long)t->lost);
+        return observation_write(line);
+    }
+    int n=snprintf(line,sizeof(line),"{\"schema\":2,\"order\":%llu,\"instruction\":%llu,\"epoch\":%llu,\"ns\":%llu,\"kind\":%u,\"swi\":%u,\"pc\":%u,\"backing\":%u,\"offset\":%u,\"old_mode\":%u,\"mode\":%u,\"width\":%u,\"privileged\":%u,\"nzcv\":%u,\"mask\":%u,\"watch\":%llu,\"matched\":%u,\"inspection\":%u,\"scalar_valid\":%u,\"scalar\":%u,\"registers\":[",
+        (unsigned long long)e->order,(unsigned long long)e->instruction,(unsigned long long)e->epoch,
+        (unsigned long long)e->ns,e->kind,e->swi,e->pc,e->backing.kind,e->backing.offset,
+        e->old_mode,e->mode,e->width,e->privileged,e->nzcv,e->register_mask,
+        (unsigned long long)e->watch,e->matched,t->inspection,t->scalar_valid,t->scalar);
+    if(n<0 || (size_t)n>=sizeof(line))return false;
+    size_t at=(size_t)n;
+    for(unsigned i=0;i<15;++i){n=snprintf(line+at,sizeof(line)-at,"%s%u",i?",":"",e->registers[i]);if(n<0 || (size_t)n>=sizeof(line)-at)return false;at+=(size_t)n;}
+    n=snprintf(line+at,sizeof(line)-at,"],\"path_hex\":\"");if(n<0 || (size_t)n>=sizeof(line)-at)return false;at+=(size_t)n;
+    for(size_t i=0;t->path[i];++i){if(at+3>=sizeof(line))return false;
+        n=snprintf(line+at,sizeof(line)-at,"%02x",(unsigned char)t->path[i]);at+=(size_t)n;}
+    if(at+5>=sizeof(line))return false;
+    memcpy(line+at,"\"}\n",4);return observation_write(line);
+}
+static void observation_start(void)
+{
+    arc_engine_test_observation_profile(observation_unmatched,observation_quota);
+    if(!observation_enabled)return;
+    observation_file=arc_io_create_file(observation_path);
+    observation_failed=observation_file==NULL;
+    arc_engine_test_observation_trace(true,observation_paths);
+    (void)arc_engine_test_observation_select(&observation_selection);
+    if(observation_failed){observation_final_failure=true;arc_engine_test_observation_drain(NULL,NULL);}
+}
+static void observation_frame(void)
+{
+    if(!observation_enabled)return;
+    arc_engine_test_observation_drain(observation_failed?NULL:observation_sink,NULL);
+    ArcRpcTraceStatus s;arc_engine_test_observation_status(&s);
+    if(s.incomplete || observation_failed)observation_final_failure=true;
+}
+
 static bool hd_enabled,hd_cost_enabled;
 static ArcTestHdCost hd_cost;
 static ArcIdeBackend hd_delegate;
@@ -70,7 +125,7 @@ static bool preparation_attach(void *opaque,char *e,size_t n)
     if(ok && hard_disc){ArcIdeBackend backend;arc_riscpc_hd_backend(hard_disc,&backend);
         hd_delegate=backend;backend.read=hd_read;backend.write=hd_write;
         ok=arc_engine_rpc_ide(&backend);}
-    if(ok){script_active=true;next_event=disk_next=0;script_frame=0;}
+    if(ok){observation_start();script_active=true;next_event=disk_next=0;script_frame=0;}
     return ok;
 }
 RETRO_API void arc_test_plan_preparation_stats(ArcRpcPreparationStats *s)
@@ -89,6 +144,7 @@ void arc_test_plan_hd_begin_frame(void)
 { arc_engine_test_frame_begin();if(hd_cost_enabled)memset(&hd_cost,0,sizeof(hd_cost)); }
 void arc_test_plan_hd_frame(void)
 {
+    observation_frame();
     hard_disc=arc_riscpc_preparation_disc(preparation);
     if(!preparation)return;
     ArcRpcHdStats stats={0};if(hard_disc)arc_riscpc_hd_stats(hard_disc,&stats);
@@ -174,6 +230,15 @@ bool arc_test_plan_path(const char *path)
 }
 void arc_test_plan_clear(void)
 {
+    observation_frame();
+    if(observation_file && !arc_io_close_file(observation_file)){
+        observation_final_failure=true;
+
+    }
+    observation_unmatched=false;observation_quota=200;
+    observation_selection=(ArcRpcTraceSelection){.classes=ARC_RPC_OBS_SWI,.capacity=ARC_RPC_TRACE_LIMIT};
+    observation_file=NULL;observation_enabled=observation_paths=observation_failed=false;observation_path[0]=0;
+    arc_engine_test_observation_trace(false,false);
     char error[256]={0};(void)arc_riscpc_preparation_free(preparation,error,sizeof(error));preparation=NULL;hard_disc=NULL;
     hd_enabled=hd_cost_enabled=hd_populate=false;memset(&hd_cost,0,sizeof(hd_cost));memset(&hd_delegate,0,sizeof(hd_delegate));hd_save[0]=hd_content[0]=hd_import[0]=hd_system[0]=0;
     event_count=next_event=disk_count=disk_next=0;media_content[0]=media_helper[0]=0;script_frame=0;script_active=false;
@@ -269,11 +334,11 @@ static bool disk_script_load(const char *path,const char *system)
 }
 bool arc_test_plan_load(const char *path, const char *system, const char *save, char *error, size_t error_size)
 {
-    arc_test_plan_clear();
+    arc_test_plan_clear();observation_final_failure=false;
     char *text = NULL;
     if (!text_file(path, TEXT_LIMIT, &text)) return fail(error, error_size, "Plan must be bounded ASCII text");
-    const char *keys[] = {"version", "model", "rate_mips", "firmware", "cmos", "seed", "rtc_epoch", "input", "content_id", "cmos_layout", "media", "drive1", "disk_control", "hard_disc", "hd_import", "hd_populate"};
-    char *values[16] = {0}; bool valid = true;
+    const char *keys[] = {"version", "model", "rate_mips", "firmware", "cmos", "seed", "rtc_epoch", "input", "content_id", "cmos_layout", "media", "drive1", "disk_control", "hard_disc", "hd_import", "hd_populate", "observation_trace", "observation_paths", "observation_profile", "observation_quota", "observation_classes", "observation_swis", "observation_capacity"};
+    char *values[23] = {0}; bool valid = true;
     for (char *line = text; line && valid;) {
         char *end = strchr(line, '\n'); if (end) *end++ = 0;
         char *s = trim(line);
@@ -281,8 +346,8 @@ bool arc_test_plan_load(const char *path, const char *system, const char *save, 
             char *equal = strchr(s, '=');
             if (!equal) { valid = false; break; }
             *equal++ = 0; s = trim(s); equal = trim(equal);
-            unsigned k; for (k = 0; k < 16 && strcmp(keys[k], s); ++k) {}
-            if (k == 16 || values[k] || !*equal) { valid = false; break; }
+            unsigned k; for (k = 0; k < 23 && strcmp(keys[k], s); ++k) {}
+            if (k == 23 || values[k] || !*equal) { valid = false; break; }
             values[k] = equal;
         }
         line = end;
@@ -316,6 +381,34 @@ bool arc_test_plan_load(const char *path, const char *system, const char *save, 
         if(hd_enabled){int n=snprintf(hd_save,sizeof(hd_save),"%s",save);valid=valid&&n>=0&&n<PATH_LIMIT;
             memcpy(hd_content,key.content,41);if(hd_populate){int copied=snprintf(hd_system,sizeof(hd_system),"%s",system?system:"");valid=valid&&copied>0&&copied<PATH_LIMIT;}if(values[14])valid=valid&&resolve(values[14],system,hd_import);}
     }
+    if(valid && (values[20] || values[21] || values[22]) && !values[16])valid=false;
+    if(valid && values[20]){
+        observation_selection.classes=0;
+        for(char *v=values[20];v && valid;){
+            char *next=strchr(v,',');if(next)*next++=0;
+            unsigned kind=!strcmp(v,"swi")?1:!strcmp(v,"continuation")?2:!strcmp(v,"mode")?4:0;
+            valid=kind && !(observation_selection.classes&kind);
+            observation_selection.classes|=kind;v=next;
+        }
+    }
+    if(valid && values[21])for(char *v=values[21];v && valid;){
+        char *next=strchr(v,',');if(next)*next++=0;
+        char *end=NULL;unsigned long n=strtoul(v,&end,!strncmp(v,"0x",2)?16:10);
+        valid=*v && *v!='-' && *v!='+' && end && !*end && n<=0xffffff && observation_selection.swi_count<64;
+        for(unsigned i=0;i<observation_selection.swi_count;++i)if(observation_selection.swis[i]==n)valid=false;
+        if(valid)observation_selection.swis[observation_selection.swi_count++]=(uint32_t)n;
+        v=next;
+    }
+    if(valid && values[22]){
+        uint64_t n=0;valid=number(values[22],ARC_RPC_TRACE_LIMIT,&n) && n;
+        observation_selection.capacity=(unsigned)n;
+    }
+    if(valid && values[18]){valid=!strcmp(values[18],"unmatched");observation_unmatched=valid;}
+    if(valid && values[19]){uint64_t q=0;valid=number(values[19],200,&q) && (q==1||q==7||q==200);observation_quota=(unsigned)q;}
+    if(valid && values[16]){
+        valid=resolve(values[16],save,observation_path) && (!values[17] || !strcmp(values[17],"private"));
+        observation_enabled=valid;observation_paths=values[17]!=NULL;
+    }else if(values[17])valid=false;
     void *rom = NULL, *seed = NULL; size_t rom_size = 0, seed_size = 0;
     if (valid) valid = arc_io_read_all_limit(firmware, &rom, &rom_size, 8388608, NULL) &&
         (rom_size == 2097152 || rom_size == 4194304 || rom_size == 8388608) &&
@@ -336,6 +429,6 @@ bool arc_test_plan_load(const char *path, const char *system, const char *save, 
         }
     }
     free(seed); free(rom); free(text);
-    if (!valid) arc_test_plan_clear(); else script_active = !persist;
+    if (!valid) arc_test_plan_clear(); else {script_active = !persist;if(!persist)observation_start();}
     return valid;
 }

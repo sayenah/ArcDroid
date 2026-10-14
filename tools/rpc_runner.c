@@ -9,6 +9,7 @@
 #include "libretro.h"
 #include "rpc_session.h"
 #include "arc_test_plan.h"
+#include "rpc_observer.h"
 #include <inttypes.h>
 #include <errno.h>
 #include <math.h>
@@ -82,6 +83,8 @@ static void dump_video(const void *data, unsigned width, unsigned height, size_t
     }
 }
 
+static bool fail_observation_close;
+#define ARC_RUNNER_VFS_CLOSE_RESULT(h,result) ((fail_observation_close && (h)->writable)?-1:(result))
 #define ARC_RUNNER_VFS_WRITE_REFUSE(path) (fail_jfd_store && (strstr(path,"/arcdroid/jfd/") || strstr(path,"\\arcdroid\\jfd\\")))
 #include "rpc_runner_vfs.h"
 static void hash_byte(uint64_t *hash, unsigned byte)
@@ -168,6 +171,7 @@ int main(int argc, char **argv)
     uint64_t fail_alloc = 0, fault_at = UINT64_MAX;
     for (int i = 1; i < argc; ++i) {
         const char *key = argv[i];
+        if (!strcmp(key,"--fail-observation-close")) { fail_observation_close=true;continue; }
         if (!strcmp(key,"--fail-jfd-store")) { fail_jfd_store=true;continue; }
         if (!strcmp(key,"--reject")) { reject = true; continue; }
         if (!strcmp(key,"--cmos")) { print_cmos = true; continue; }
@@ -400,7 +404,20 @@ int main(int argc, char **argv)
         fprintf(stderr,"hd-cost frames=%" PRIu64 " max_ns=%" PRIu64 " over_D161=%" PRIu64 " budget=%s\n",hd_cost_frames,hd_cost_max,hd_cost_over,hd_cost_over?"exceeded":"passed");}
     if(timing && fclose(timing))result=2;
     if(ferror(stdout))result=2;
-    unload(); deinit(); vfs_assert_no_open_handles();
+    ArcRpcTraceStatus observation={0};
+    void (*observation_status)(ArcRpcTraceStatus *)=NULL;
+    void *observation_symbol=symbol("arc_engine_test_observation_status");
+    if(observation_symbol){memcpy(&observation_status,&observation_symbol,sizeof(observation_status));observation_status(&observation);}
+    unload();
+    bool complete=true;
+    bool (*observation_complete)(void)=NULL;void *observation_final=symbol("arc_test_plan_observation_complete");
+    if(observation_final){memcpy(&observation_complete,&observation_final,sizeof(observation_complete));complete=observation_complete();}
+    if(observation.enabled || observation.integer_attempts || observation.incomplete || !complete)
+        fprintf(stderr,"RPC observation: integer_attempts=%" PRIu64 " lost=%" PRIu64 " %s\n",
+            observation.integer_attempts,observation.lost,
+            observation.failed?"incomplete write-failure":observation.incomplete?"incomplete loss":
+            !complete?"incomplete final sink/close":"complete");
+    deinit();vfs_assert_no_open_handles();
 #if defined(_WIN32)
     FreeLibrary(library);
 #else

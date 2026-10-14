@@ -27,6 +27,7 @@ bool arc_rpc_session_start(ArcRpcModel model, const uint8_t *rom, size_t size,
     const uint8_t seed[256], uint64_t epoch, char *error, size_t error_size);
 #if defined(ARCDROID_TEST_FAULTS)
 void arc_rpc_session_test_rate(unsigned rate);
+void arc_rpc_session_test_quota(unsigned);
 void arc_rpc_session_test_input_ready(void);
 #include "libretro.h"
 #include "rpc_mem_timing.h"
@@ -55,6 +56,7 @@ typedef struct {
 RETRO_API bool arc_rpc_test_start(ArcRpcModel model, const uint8_t *rom, size_t size,
     const uint8_t seed[256], uint64_t epoch, char *error, size_t error_size);
 RETRO_API bool arc_rpc_test_advance(uint64_t elapsed_ns);
+RETRO_API uint64_t arc_rpc_test_session_generation(void);
 RETRO_API void arc_rpc_test_snapshot(ArcRpcTestSnapshot *out);
 RETRO_API bool arc_rpc_test_read_ram(unsigned offset, uint32_t *out);
 RETRO_API void arc_rpc_test_fail_alloc(unsigned stage);

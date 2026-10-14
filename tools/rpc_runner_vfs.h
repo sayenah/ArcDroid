@@ -87,8 +87,11 @@ static struct retro_vfs_file_handle *vfs_open(const char *path,unsigned mode,uns
     if(h->cached_size<0 || fseek(file,0,SEEK_SET)){fclose(file);free(h);return NULL;}
     ++vfs_open_handles;return h;
 }
+#ifndef ARC_RUNNER_VFS_CLOSE_RESULT
+#define ARC_RUNNER_VFS_CLOSE_RESULT(h,result) (result)
+#endif
 static int vfs_close(struct retro_vfs_file_handle *h)
-{ assert(vfs_open_handles);int result=fclose(h->file);free(h);--vfs_open_handles;return result; }
+{ assert(vfs_open_handles);int result=fclose(h->file);result=ARC_RUNNER_VFS_CLOSE_RESULT(h,result);free(h);--vfs_open_handles;return result; }
 static int64_t vfs_size(struct retro_vfs_file_handle *h) { return h->cached_size; }
 static int64_t vfs_tell(struct retro_vfs_file_handle *h) { return ftell(h->file); }
 static int64_t vfs_seek(struct retro_vfs_file_handle *h,int64_t offset,int position)

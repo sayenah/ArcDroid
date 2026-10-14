@@ -22,6 +22,7 @@
  * checked translations and in-object pointers; no desktop allocations. */
 /* Memory handling */
 #include "rpc_memory.h"
+#include "rpc_observer.h"
 #include "rpc_mem_timing.h"
 /* ArcDroid modification (2026-10-07): charge successful CPU attempts only;
  * physical descriptor reads and DMA do not enter the CPU timing ledger. */
@@ -642,4 +643,24 @@ void writememfb(uint32_t addr, uint8_t val)
     arc_rpc_mem_access(addr, physical, 1, true, false, arc_rpc_cp15_attributes(),
                        arc_rpc_phys_page(physical) != NULL);
     mem_phys_write8(physical, val);
+}
+
+/* ArcDroid modification (2026-10-13, observation-r3c1): allocated backing
+ * only, with the existing physical mirrors; no mem_phys_read/device calls. */
+bool arc_rpc_inspect_physical(uint32_t address,uint8_t *out)
+{
+    if(!out)return false;
+    uint32_t pa=address&phys_space_mask,offset;
+    const uint32_t *base;
+    switch(pa&0x1f000000u){
+    case 0:base=rom;offset=pa&0x7fffffu;break;
+    case 0x02000000:base=vram;offset=pa&mem_vrammask;break;
+    case 0x10000000:case 0x11000000:case 0x12000000:case 0x13000000:
+        base=ram00;offset=pa&mem_rammask;break;
+    case 0x14000000:case 0x15000000:case 0x16000000:case 0x17000000:
+        base=ram01;offset=pa&mem_rammask;break;
+    default:return false;
+    }
+    if(!base)return false;
+    *out=(uint8_t)(base[offset>>2]>>((offset&3)*8));return true;
 }
