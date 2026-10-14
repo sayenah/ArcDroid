@@ -63,6 +63,9 @@ set(ARCDROID_CORE_SOURCES
   core/jfd_layout.c
   core/jfd_file_data.c
   core/launch_disc.c
+  core/rpc_launch_plan.c
+  core/rpc_launch_attempt.c
+  core/rpc_boot_record.c
   core/launch_chooser.c
   core/boot_observation.c
   core/folder_set.c
@@ -2466,6 +2469,19 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
   target_compile_options(rpc_hd_store_test PRIVATE -UNDEBUG -Wall -Wextra)
   add_test(NAME rpc-hd-handle-cleanup COMMAND rpc_hd_store_test handles)
   add_test(NAME rpc-hd-maintenance-steps COMMAND rpc_hd_store_test steps)
+  add_test(NAME rpc-hd-launch-identity COMMAND rpc_hd_store_test identity)
+  set_tests_properties(rpc-hd-launch-identity PROPERTIES TIMEOUT 300)
+  add_executable(rpc_launch_test tests/rpc_launch_test.c)
+  add_dependencies(rpc_launch_test test-fixtures)
+  target_link_libraries(rpc_launch_test PRIVATE arcdroid_core)
+  target_compile_options(rpc_launch_test PRIVATE -UNDEBUG -Wall -Wextra)
+  if(ARCDROID_SANITIZERS)
+    target_link_libraries(rpc_launch_test PRIVATE arcdroid_sanitizer_compile arcdroid_sanitizer_link)
+  endif()
+  foreach(part IN ITEMS plan attempt record)
+    add_test(NAME rpc-launch-${part} COMMAND rpc_launch_test ${part} "${FIXTURE_DIR}")
+    set_tests_properties(rpc-launch-${part} PROPERTIES TIMEOUT 60)
+  endforeach()
   add_executable(rpc_ide_test tests/rpc_ide_test.c engine/rpcemu/src/ide.c
     engine/rpc/rpc_scheduler.c engine/rpc/rpc_timing.c)
   target_include_directories(rpc_ide_test PRIVATE engine/rpc engine/rpcemu/src engine core libretro/include)

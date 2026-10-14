@@ -4,6 +4,7 @@
 #include "install_disc.h"
 #include "arcdroid_core.h"
 #include "rpc_hd_vfs.h"
+#include "rpc_boot_record.h"
 #include <time.h>
 #include <inttypes.h>
 static const char *id="0123456789012345678901234567890123456789";
@@ -827,11 +828,120 @@ static void switch_cap_edge(void)
     check_sector(s,2048,0x65);check_sector(s,2303,0x65);bounds(s);arc_riscpc_hd_close(s);
     puts("switch cap edge: parent at 8 MiB after preparation, successor header refused, all 72 acknowledgements recover");
 }
+static ArcRpcHdIdentity identity_capture(ArcRpcHdStore *s)
+{
+    ArcRpcHdIdentity out;ArcRpcHdStats before,after;arc_riscpc_hd_stats(s,&before);
+    unsigned callbacks=steps;uint64_t bytes=vfs_requested_bytes;
+    assert(arc_riscpc_hd_identity(s,&out));arc_riscpc_hd_stats(s,&after);
+    assert(steps==callbacks&&vfs_requested_bytes==bytes);
+    assert(after.operations==before.operations&&after.requested_bytes==before.requested_bytes&&
+           after.bytes_read==before.bytes_read&&after.bytes_written==before.bytes_written&&
+           after.copied_bytes==before.copied_bytes&&after.allocation_high==before.allocation_high);
+    assert(after.hash_bytes-before.hash_bytes<=ARC_RPC_HD_IDENTITY_HASH_BYTES);
+    assert(after.hash_bytes>before.hash_bytes);return out;
+}
+static void launch_identity(void)
+{
+    fresh_files();ArcRpcHdStore *s=arc_riscpc_hd_open_begin("/save",id,error,sizeof(error));assert(s);
+    ArcRpcHdIdentity before,current;memset(&current,0xa5,sizeof(current));
+    assert(!arc_riscpc_hd_identity(s,&current)&&current.bytes[0]==0xa5);
+    while(arc_riscpc_hd_open_step(s)==ARC_RPC_HD_OPEN_PENDING){}
+    assert(!arc_riscpc_hd_identity(s,&current));arc_riscpc_hd_close(s);
+    s=open_store(true);idle(s);before=identity_capture(s);
+    assert(arc_riscpc_hd_identity_matches(s,&before));
+    arc_riscpc_hd_close(s);s=open_store(false);current=identity_capture(s);
+    assert(!memcmp(before.bytes,current.bytes,32));
+    uint8_t p[131072];fill(p,1,0x51);assert(arc_riscpc_hd_write(s,8000,1,p));
+    assert(!arc_riscpc_hd_identity_matches(s,&before));current=identity_capture(s);
+    /* Same sequence/count/LBA but a different payload cannot collide merely
+     * because generation and sequence match. Replay hashes actual records. */
+    arc_riscpc_hd_close(s);snapshot();s=open_store(false);
+    assert(arc_riscpc_hd_identity_matches(s,&current));
+    fill(p,1,0x52);assert(arc_riscpc_hd_write(s,8000,1,p));before=identity_capture(s);
+    assert(memcmp(before.bytes,current.bytes,32));arc_riscpc_hd_close(s);
+    restore();s=open_store(false);fill(p,1,0x53);assert(arc_riscpc_hd_write(s,8000,1,p));
+    current=identity_capture(s);assert(memcmp(before.bytes,current.bytes,32));
+    /* Post-install product proof brackets structural inspection. An edit
+     * invalidates both its offer and publication of a launch observation. */
+    ArcLaunchDiscovery d={0};d.readable=true;d.candidate_count=d.application_count=1;
+    memcpy(d.candidates[0].name.bytes,"!Example",8);d.candidates[0].name.length=8;
+    arc_launch_candidate_classify_counts(&d.candidates[0],1,1);
+    ArcRpcLaunchPlan plan;uint8_t media[32]={1};
+    assert(arc_riscpc_plan_build_product(&d,0,false,media,current.bytes,current.bytes,&plan)==ARC_RPC_PLAN_OK);
+    ArcRpcLaunchAttempt a;ArcRpcAttemptToken token;ArcRpcBootKey key={0},edited;ArcRpcBootRecord record;
+    key.cpu=1;key.plan_revision=2;key.profile_revision=1;key.action=ARC_RPC_PLAN_PRODUCT;
+    memset(key.firmware,1,32);memset(key.configuration,2,32);memset(key.content,3,32);
+    memcpy(key.media,media,32);memcpy(key.store,current.bytes,32);memset(key.helper,6,32);
+    assert(arc_riscpc_plan_digest(&plan,key.plan));assert(arc_riscpc_attempt_init(&a,1,1));
+    assert(arc_riscpc_attempt_prepare(&a,&plan,ARC_RPC_ATTEMPT_OUTCOME_CAP,&token));
+    assert(arc_riscpc_attempt_consume(&a,&token)==ARC_RPC_TRANSITION_APPLIED);
+    assert(arc_riscpc_attempt_event(&a,&token,1,ARC_RPC_EVENT_DISPATCH)==ARC_RPC_TRANSITION_APPLIED);
+    assert(arc_riscpc_attempt_event(&a,&token,2,ARC_RPC_EVENT_RETURNED)==ARC_RPC_TRANSITION_APPLIED);
+    assert(arc_riscpc_boot_record_capture(&a,&key,&key,&record));
+    fill(p,1,0x54);assert(arc_riscpc_hd_write(s,8000,1,p));before=identity_capture(s);
+    assert(arc_riscpc_plan_build_product(&d,0,false,media,current.bytes,before.bytes,&plan)==ARC_RPC_PLAN_STALE_PRODUCT);
+    edited=key;memcpy(edited.store,before.bytes,32);
+    assert(!arc_riscpc_boot_record_capture(&a,&key,&edited,&record));arc_riscpc_hd_close(s);
+    /* Distinct namespaces, even when all root/journal bytes are copied. */
+    fresh_files();s=open_store(true);idle(s);before=identity_capture(s);arc_riscpc_hd_close(s);
+    for(unsigned i=0;i<TEST_FILES;++i)if(files[i].present){
+        char name[1100];snprintf(name,sizeof(name),"/other%s",files[i].path+5);
+        snprintf(files[i].path,sizeof(files[i].path),"%s",name);}
+    s=arc_riscpc_hd_open("/other",id,false,error,sizeof(error));assert(s);idle(s);
+    current=identity_capture(s);assert(memcmp(before.bytes,current.bytes,32));arc_riscpc_hd_close(s);
+    /* Checkpoint changes the root conservatively; normal reopen stays stable. */
+    fresh_files();s=open_store(true);idle(s);fill(p,256,0x61);
+    for(unsigned i=0;i<8;++i)assert(arc_riscpc_hd_write(s,2048,256,p));
+    before=identity_capture(s);until_phase(s,ARC_RPC_HD_MATERIALIZE,0);
+    assert(!arc_riscpc_hd_identity(s,&current));idle(s);current=identity_capture(s);
+    assert(memcmp(before.bytes,current.bytes,32));arc_riscpc_hd_close(s);
+    s=open_store(false);assert(arc_riscpc_hd_identity_matches(s,&current));arc_riscpc_hd_close(s);
+    /* Each publication cut recovers data, but supplies no identity on that
+     * handle. A later clean reopen admits the newly established root. */
+    const unsigned phases[][2]={{ARC_RPC_HD_ROTATE,1},{ARC_RPC_HD_MATERIALIZE,0},
+        {ARC_RPC_HD_MANIFEST,0},{ARC_RPC_HD_MANIFEST,1},
+        {ARC_RPC_HD_PUBLISH,0},{ARC_RPC_HD_PUBLISH,1},{ARC_RPC_HD_RETIRE,0},{ARC_RPC_HD_RETIRE,4}};
+    for(unsigned cut=0;cut<sizeof(phases)/sizeof(*phases);++cut){
+        fresh_files();s=open_store(true);idle(s);fill(p,256,0x62);
+        for(unsigned i=0;i<8;++i)assert(arc_riscpc_hd_write(s,2048,256,p));
+        until_phase(s,phases[cut][0],phases[cut][1]);assert(!arc_riscpc_hd_identity(s,&current));
+        arc_riscpc_hd_close(s);s=open_store(false);idle(s);check_sector(s,2048,0x62);
+        assert(!arc_riscpc_hd_identity(s,&current));arc_riscpc_hd_close(s);
+        s=open_store(false);idle(s);current=identity_capture(s);arc_riscpc_hd_close(s);
+        s=open_store(false);assert(arc_riscpc_hd_identity_matches(s,&current));arc_riscpc_hd_close(s);
+    }
+    /* A recovered torn suffix can return to exactly the old committed view.
+     * Suppression still prevents reuse in the recovery session. */
+    fresh_files();s=open_store(true);idle(s);before=identity_capture(s);arc_riscpc_hd_close(s);
+    int j=named("journal.a");size_t end=files[j].size;
+    struct retro_vfs_file_handle *f=test_open(files[j].path,6,0);assert(f);
+    assert(test_seek(f,(int64_t)end,0)==0);memset(p,0x66,13);assert(test_write(f,p,13)==13&&test_close(f)==0);
+    s=open_store(false);idle(s);assert(!arc_riscpc_hd_identity(s,&current));arc_riscpc_hd_close(s);
+    s=open_store(false);assert(arc_riscpc_hd_identity_matches(s,&before));arc_riscpc_hd_close(s);
+    /* Failed append can have a committed but unacknowledged record; neither
+     * a failed live view nor a recovered partial suffix gets a boot record. */
+    for(unsigned at=1;at<=9;++at){fresh_files();s=open_store(true);idle(s);reset_fault();fail_at=at;
+        fill(p,1,0x67);assert(!arc_riscpc_hd_write(s,8000,1,p));assert(!arc_riscpc_hd_identity(s,&current));
+        reset_fault();arc_riscpc_hd_close(s);s=open_store(false);idle(s);arc_riscpc_hd_close(s);}
+    /* Extended roots include the host receipt; private population and the
+     * publication window cannot supply a current writable identity. */
+    fresh_files();s=open_store(false);assert(arc_riscpc_hd_population_begin(s));
+    fill(p,1,0x68);assert(arc_riscpc_hd_population_write(s,8000,1,p));
+    ArcRpcHdReceipt receipt={.files=1,.bytes=512};memset(receipt.packages,0x71,64);
+    assert(arc_riscpc_hd_population_receipt(s,&receipt));
+    assert(!arc_riscpc_hd_identity(s,&current));assert(arc_riscpc_hd_population_seal(s));
+    bool done=false;while(!done){assert(!arc_riscpc_hd_identity(s,&current));
+        assert(arc_riscpc_hd_population_publish_step(s,&done));}
+    assert(!arc_riscpc_hd_identity(s,&current));idle(s);before=identity_capture(s);
+    arc_riscpc_hd_close(s);s=open_store(false);assert(arc_riscpc_hd_identity_matches(s,&before));arc_riscpc_hd_close(s);
+    puts("RPC identity: zero I/O bounded acquisition; namespace/root/journal/product bindings; checkpoint/reopen; recovery and publication cuts");
+}
 int main(int argc,char **argv)
 {
     if(argc>1&&(!strcmp(argv[1],"bounds")||!strcmp(argv[1],"bounds-sanitizer"))){bool sanitizer=!strcmp(argv[1],"bounds-sanitizer");
         stream(false,false,argc>2?argv[2]:NULL,sanitizer);stream(true,true,argc>3?argv[3]:NULL,sanitizer);}
     else if(argc>2&&!strcmp(argv[1],"reopen"))reopen_stream(argv[2]);
+    else if(argc>1&&!strcmp(argv[1],"identity"))launch_identity();
     else if(argc>1&&!strcmp(argv[1],"qa-integrity"))qa_integrity();
     else if(argc>1&&!strcmp(argv[1],"import-roundtrip"))import_roundtrip();
     else if(argc>1&&!strcmp(argv[1],"reconstruction"))reconstruction_budget();

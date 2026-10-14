@@ -190,6 +190,8 @@ typedef struct {
    unsigned application_count;
    unsigned unknown_count;
    bool root_boot;
+   unsigned root_boot_count; /* RPC explicit boot admission; legacy policy unchanged. */
+   bool root_boot_is_file;
    bool nested_scope;
    bool scan_incomplete;
    unsigned unreadable_parents;
@@ -305,6 +307,8 @@ const char *arc_launch_reason_name(ArcLaunchReason reason);
 bool arc_launch_escape_name(const ArcGuestName *name, char *output,
                             size_t capacity);
 bool arc_launch_sibling_bootable(const ArcLaunchCandidate *candidate);
+bool arc_launch_candidate_path(const ArcLaunchCandidate *, unsigned drive,
+                               char *, size_t);
 bool arc_launch_target_compose(const ArcLaunchCandidate *candidate,
                                char *output, size_t capacity,
                                uint8_t *output_length);

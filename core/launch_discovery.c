@@ -1898,7 +1898,11 @@ bool arc_launch_discover(const uint8_t *data, size_t size,
    for (unsigned i = 0u; i < root_count; ++i)
    {
       if (arc_name_ascii_literal(&root[i].name, "!Boot"))
+      {
          discovery->root_boot = true;
+         ++discovery->root_boot_count;
+         discovery->root_boot_is_file = !root[i].directory;
+      }
       if (root[i].directory && arc_candidate_name(&root[i].name))
          has_root_candidate = true;
    }
