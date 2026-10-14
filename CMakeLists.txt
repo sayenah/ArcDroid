@@ -437,6 +437,10 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
   endif()
   add_test(NAME rpc-observers COMMAND rpc_observers_test)
   set_tests_properties(rpc-observers PROPERTIES TIMEOUT 60)
+  add_test(NAME rpc-observers-qualification COMMAND "${Python3_EXECUTABLE}" -B
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_observer_qualification_test.py"
+    $<TARGET_FILE:rpc_observers_test> "${CMAKE_CURRENT_SOURCE_DIR}/docs/riscpc-observer-qualification.md")
+  set_tests_properties(rpc-observers-qualification PROPERTIES TIMEOUT 60)
   if(NOT ARCDROID_SANITIZERS AND NOT CMAKE_CROSSCOMPILING AND CMAKE_GENERATOR STREQUAL "Ninja")
     add_test(NAME rpc-observers-mutants COMMAND "${Python3_EXECUTABLE}" -B
       "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_observers_mutants.py"
