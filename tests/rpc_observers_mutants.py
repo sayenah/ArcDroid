@@ -69,6 +69,8 @@ if frontend:
       ('identity-unchanged-name','engine/arcdroid_engine.c','!memcmp(record+(r?26:0x1c0+22),rpc_hd_record_name,10)','true'),
       ('identity-write-success','engine/arcdroid_engine.c','rpc_hd_known=ok && known && unchanged;','rpc_hd_known=known && unchanged;'),
       ('identity-frame-reads','engine/arcdroid_engine.c','memcpy(helper,rpc_helper_name,11);memcpy(hd,rpc_hd_name,11);','rpc_helper_derive();rpc_hd_derive();memcpy(helper,rpc_helper_name,11);memcpy(hd,rpc_hd_name,11);'),
+      ('hint-transition','libretro/arcdroid_libretro.c','rpc_error && arc_error_hint_state != hint_state','false'),
+      ('hint-retired','libretro/arcdroid_libretro.c','error_hint_open || error_hint_unknown','error_hint_open'),
       ('manual-hint','libretro/arcdroid_libretro.c','rpc_error ? error_box.recognised_open : error_ready','rpc_error ? false : error_ready'),
     ]
     subprocess.run([sys.executable,str(root/'tests/rpc_observers_frontend_test.py'),str(target),str(core),str(build/"tests/fixtures/generated")],check=True,cwd=build,timeout=60,capture_output=True)

@@ -154,6 +154,7 @@ static bool arc_error_was_ready;
 static uint64_t arc_error_seen_generation;
 static bool arc_error_pad_levels[2];
 static uint64_t arc_error_hint_generation;
+static unsigned arc_error_hint_state;
 typedef enum {
    ARC_SESSION_EMPTY = 0,
    ARC_SESSION_PREPARED,
@@ -1185,6 +1186,7 @@ static void arc_release_session(void)
    arc_error_seen_generation = 0u;
    arc_error_pad_levels[0] = arc_error_pad_levels[1] = false;
    arc_error_hint_generation = 0u;
+   arc_error_hint_state = 0u;
    arc_install_store_close(arc_hd_store);
    arc_hd_store = NULL;
    arc_hd_failure_noticed = false;
@@ -5067,16 +5069,39 @@ static void arc_disc_option_refresh(void)
    arc_disc_setup();
 }
 
+/* Host boundary only: a changed decision is immediate; repeats are bounded
+ * by virtual time, including busy requests that retry every frame. */
+static void arc_rpc_disc_log(const char *action,const char *reason,const char *candidate)
+{
+   static struct {char line[384];uint64_t time,generation;} history[4];
+   if(!arc_engine_is_rpc() || !arc_log)return;
+   unsigned slot=!strcmp(action,"resolved")?1u:!strcmp(action,"busy")?2u:
+      (!strcmp(action,"inserted") || !strcmp(action,"hint") || !strcmp(action,"ignored"))?3u:0u;
+   ArcRpcDiscStatus status;arc_engine_rpc_disc_status(&status);
+   char line[384];snprintf(line,sizeof(line),
+      "RPC disc: signal=%s gate=%s name=%s active=%u notified=%u replacement=%s candidate=%s action=%s reason=%s observation=%s:%s\n",
+      status.signal,status.gate,status.name,status.active,status.notified,status.replacement,candidate,action,reason,status.last_signal,status.last_reason);
+   uint64_t time=arc_engine_disc_time_us(),session=arc_engine_session_generation();
+   if(session!=history[slot].generation || time<history[slot].time || strcmp(line,history[slot].line) || time-history[slot].time>=UINT64_C(2000000)){
+      arc_log(RETRO_LOG_INFO,"%s",line);snprintf(history[slot].line,sizeof(history[slot].line),"%s",line);history[slot].time=time;history[slot].generation=session;
+   }
+}
+
 static void arc_disc_boundary(void)
 {
    arc_disc_option_refresh();
    arc_disc_present_notice();
    if (arc_disc_mode == ARC_DISC_MODE_OFF || arc_adffs_active ||
        arc_session != ARC_SESSION_RUNNING || arc_ejected ||
-       arc_media_count < 2u) return;
+       arc_media_count < 2u) {
+      arc_rpc_disc_log("refused",arc_disc_mode==ARC_DISC_MODE_OFF?"option-off":arc_adffs_active?"adffs":
+         arc_session!=ARC_SESSION_RUNNING?"session":arc_ejected?"ejected":"single-media","none");return;
+   }
    ArcDiscRequest request;
    arc_engine_disc_snapshot(&request);
-   if (!request.a_active || request.a_notified) return;
+   if (!request.a_active || request.a_notified) {
+      arc_rpc_disc_log("waiting",request.a_notified?"already-notified":"signal-gate","none");return;
+   }
    unsigned candidate = UINT_MAX, count = 0u;
    bool unknown = false;
    for (unsigned i = 0u; i < arc_media_count; ++i)
@@ -5115,12 +5140,19 @@ static void arc_disc_boundary(void)
       }
       else
       {
+         arc_rpc_disc_log("resolved","unique",candidate_text);
+         uint64_t attempt_generation=arc_disc_generation;
          ArcDiscCommit commit = arc_disc_commit(candidate, arc_disc_generation, ARC_DISC_SIGNAL_A);
-         if (commit == ARC_DISC_COMMIT_BUSY) return; /* Retry next boundary. */
+         if (commit == ARC_DISC_COMMIT_BUSY) {
+            arc_rpc_disc_log("busy",attempt_generation!=arc_disc_generation?"stale-generation":
+               !arc_engine_disc_controller_idle()?"controller-busy":"replacement-gate",candidate_text);
+            return; /* Retry next boundary. */
+         }
          action = commit == ARC_DISC_COMMIT_INSERTED ? "inserted" : "ignored";
          reason = commit == ARC_DISC_COMMIT_INSERTED ? "unique" : "commit-failed";
       }
    }
+   arc_rpc_disc_log(action,reason,candidate_text);
    if (arc_log) arc_log(RETRO_LOG_INFO,
       "Disc request: signal=A name=%s candidate=%s action=%s reason=%s\n",
       request.a_name, candidate_text, action, reason);
@@ -5957,13 +5989,19 @@ static void arc_poll_inputs(void)
    bool error_b = error_pad && arc_input_state(0u, RETRO_DEVICE_JOYPAD, 0u,
                                   RETRO_DEVICE_ID_JOYPAD_B) != 0;
    if (!error_a && !error_b) arc_error_pad_gate = false;
-   if (error_hint_open && !arc_osk.visible &&
+   bool error_hint_unknown=rpc_error && error_box.modal_unknown && arc_error_hint_state &&
+      arc_error_hint_generation==error_box.generation;
+   unsigned hint_state=error_hint_unknown?3u:error_box.answer_available?2u:1u;
+   if ((error_hint_open || error_hint_unknown) && !arc_osk.visible &&
        (arc_session == ARC_SESSION_RUNNING || (rpc_error && arc_engine_active())) &&
-       arc_error_hint_generation != error_box.generation)
+       (arc_error_hint_generation != error_box.generation ||
+        (rpc_error && arc_error_hint_state != hint_state)))
    {
-      if(rpc_error && !error_box.answer_available)arc_message("Error box open; use keyboard or mouse to respond.",RETRO_LOG_INFO);
+      if(error_hint_unknown)arc_message("Error box state unknown; use keyboard or mouse to respond.",RETRO_LOG_INFO);
+      else if(rpc_error && !error_box.answer_available)arc_message("Error box open; use keyboard or mouse to respond.",RETRO_LOG_INFO);
       else arc_error_hint(&error_box);
       arc_error_hint_generation = error_box.generation;
+      arc_error_hint_state = hint_state;
    }
    bool sampled[2][10] = {{false}};
    bool desired[ARC_PAD_PORTS][ARC_INPUT_KEY_COUNT] = {{false}};

@@ -281,3 +281,31 @@ empty. A test override remains session-scoped across reset; it is never promoted
 Stop/failed start/unload clear borrowed helper/IDE metadata before a later session
 can refresh the identity epoch. A helper-free reopen cannot inherit a helper name
 or pointer from its predecessor.
+
+## Run C qualification tools and boundary diagnostics
+
+RPC error hints are keyed by generation and displayed eligibility (manual or
+answer available). A transition within a generation replaces the hint once;
+unchanged eligibility does not repeat it. Watch loss after a displayed hint
+changes it to a manual hint that states modal uncertainty, without claiming the
+box remains recognised open. The Arculator generation rule stays
+unchanged. Queued/consumed answers are unavailable in the production snapshot.
+
+The non-shipping runner supplies the libretro log callback on stderr and accepts
+`--pad-at FRAME MASK` events: decimal 16-bit RetroPad button masks for port 0,
+latched until the next event (zero releases all buttons). Frame zero is the first
+requested presentation frame after preparation; preparation always sees neutral
+pads. Events use the real libretro input callback, including mask queries. The
+plan's keyboard/mouse script remains independent and unchanged.
+
+RPC disc diagnostics copy bounded signal outcomes during guest observation and
+combine them with cached identity, media-generation and modal eligibility at the
+host boundary. No logger, filesystem or IDE read runs in the observer callback.
+Boundary logs include signal refusal, identity exclusion, candidate resolution,
+hints, controller busy and commit results. Changes print immediately; identical
+states print at most once per two virtual seconds. Missing signals print an
+explicit waiting state. These diagnostics neither relax predicates nor enable
+production cells. Windows test-only DLL exports explicitly include every seam
+loaded by the observer frontend harness. The orchestration mutant idle profile
+uses the authored SA-110 factory guest's existing idle instruction after its
+last CMOS write, retaining all mutants and all assertions.

@@ -129,6 +129,9 @@ enum { ARC_RPC_CELL_BOOT=1, ARC_RPC_CELL_LAUNCH=2, ARC_RPC_CELL_ERROR=4,
    ARC_RPC_CELL_DISC_B=64, ARC_RPC_CELL_REPLACE_B=128 };
 void arc_engine_rpc_observers_bind(unsigned verified_catalogue);
 bool arc_engine_rpc_observers_replace(ArcDiscSignal signal);
+/* Copied RPC signal and boundary gate diagnostics; no guest pointers or I/O. */
+typedef struct { char name[11]; const char *signal, *gate, *replacement, *last_signal, *last_reason; bool active, notified; } ArcRpcDiscStatus;
+void arc_engine_rpc_disc_status(ArcRpcDiscStatus *);
 bool arc_engine_rpc_observers_capability(unsigned bit);
 void arc_engine_rpc_diagnostics(void);
 bool arc_engine_rpc_mount(unsigned drive, const ArcEngineMedia *, char *, size_t);

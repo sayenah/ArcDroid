@@ -17,6 +17,7 @@ static int64_t counted_read(struct retro_vfs_file_handle *handle,void *bytes,uin
 { ++vfs_reads;return vfs_read(handle,bytes,size); }
 static const char *directory;
 static unsigned pad_a,pad_b,polls,hints,manual_hints;
+static unsigned disc_logs;static bool saw_disc_insert,saw_identity_unknown;
 static struct retro_disk_control_callback disks;
 static unsigned hd_identity_case,hd_identity_reads,hd_identity_writes;
 static bool hd_record_store;
@@ -26,7 +27,9 @@ static bool (*identity_query)(char *,char *);
 static bool identity_write_fail;
 static void block_replacement(void) { override_cells(20,0,0,0); }
 static void log_line(enum retro_log_level level,const char *format,...)
-{ if(level>=RETRO_LOG_WARN){va_list args;va_start(args,format);vfprintf(stderr,format,args);va_end(args);} }
+{ va_list args;va_start(args,format);char line[512];vsnprintf(line,sizeof(line),format,args);va_end(args);
+  if(strstr(line,"RPC disc:")){++disc_logs;if(strstr(line,"action=inserted"))saw_disc_insert=true;if(strstr(line,"identity-unknown"))saw_identity_unknown=true;}
+  if(level>=RETRO_LOG_WARN)fputs(line,stderr); }
 static bool environment(unsigned command,void *data)
 {
     switch(command){
@@ -80,7 +83,7 @@ static void observer_guest(unsigned flags)
         0xe3a07201,0xe5871000,0xe169f009,0xe1b0f008};
     for(unsigned i=0;i<sizeof(handler)/4;++i)put_word(0x180+4*i,handler[i]);
 }
-static void disc_guest(bool busy,bool modal,uint32_t rename_lba,bool rename)
+static void disc_guest(bool busy,bool modal,uint32_t rename_lba,bool rename,bool privileged_box)
 {
     rom_words(NULL,0);put_word(0,branch(0,0x100,14));put_word(8,0xe1b0f00e);
     unsigned at=0x100;
@@ -107,6 +110,7 @@ static void disc_guest(bool busy,bool modal,uint32_t rename_lba,bool rename)
     EMIT(0xe3a02201); /* medium name in authored RAM */
     EMIT(0xe59f0000|((0x304-at-8)&0xfff));EMIT(0xe5820000);
     EMIT(0xe3a00002);EMIT(0xe3a01008);EMIT(0xe3a03000);EMIT(0xef020033);
+    if(privileged_box){EMIT(0xe3a01033);unsigned box_loop=at;EMIT(0xef0400df);EMIT(branch(at,box_loop,14));}
     if(modal){
         EMIT(0xe321f010);EMIT(0xe3a0d201);EMIT(0xe3a00000);EMIT(0xe3a01c01);EMIT(0xef0400df);
         put_word(8,branch(8,0x200,14));
@@ -206,6 +210,36 @@ int main(int argc,char **argv)
         run();assert(word(0)==((answer==(flags==7))?13u:27u) && !pad_level(0,RETROK_SPACE) && !pad_level(0,RETROK_RETURN));
         pad_a=pad_b=0;run();pad_a=1;run();assert(pad_level(0,RETROK_SPACE));unload();
     }
+    /* Drawing spans several frames before the first qualified poll. A hint
+     * follows eligibility changes once within the same generation. */
+    observer_guest(3);
+    const uint32_t delay[]={0xe3a06701,0xe2566001,0x1afffffd}; /* authored draw delay */
+    memmove(rom+0x19c,rom+0x190,14*4);
+    for(unsigned i=0;i<3;++i)put_word(0x190+4*i,delay[i]);
+    write_file("guest.rom",rom,2097152);
+    int delayed_count=snprintf(plan,sizeof(plan),"version=1\nmodel=arm610\nfirmware=%s/guest.rom\ncmos=seed\nseed=%s/seed\nrtc_epoch=0\nobserver_cells=12\nobserver_forms=8\n",directory,directory);
+    write_file("test.arcplan",plan,(size_t)delayed_count);pad_a=pad_b=0;hints=manual_hints=0;assert(load(&game));
+    run();ArcErrorBox delayed;api->error_snapshot(&delayed);assert(delayed.recognised_open && !delayed.answer_available);
+    uint64_t delayed_generation=delayed.generation;unsigned drawing_frames=0;
+    do {run();api->error_snapshot(&delayed);++drawing_frames;assert(drawing_frames<60);
+        assert(delayed.generation==delayed_generation);if(!delayed.answer_available)assert(hints==1 && manual_hints==1);
+    } while(!delayed.answer_available);
+    assert(drawing_frames>=3);run();assert(hints==2 && manual_hints==1);
+    run();assert(hints==2);assert(api->error_request(ARC_ERROR_OK));
+    api->error_snapshot(&delayed);assert(delayed.recognised_open && !delayed.answer_available);
+    run();assert(hints==3 && manual_hints==2 && word(0)==13);run();assert(hints==3);unload();
+    /* A later privileged nested report retires eligibility into unknown
+     * modal state. Retire the pad hint even though recognised-open is gone. */
+    observer_guest(3);put_word(0x10c,0xe3a06902); /* authored countdown */
+    put_word(0x1b0,branch(0x1b0,0x200,14));
+    put_word(0x200,0xe2566001);put_word(0x204,branch(0x204,0x190,1));
+    put_word(0x208,0xe3a01033);put_word(0x20c,0xef0400df);put_word(0x210,branch(0x210,0x190,14));
+    write_file("guest.rom",rom,2097152);hints=manual_hints=0;assert(load(&game));
+    run();api->error_snapshot(&delayed);assert(delayed.answer_available);delayed_generation=delayed.generation;
+    unsigned retired_frames=0;
+    do {run();api->error_snapshot(&delayed);assert(++retired_frames<60);}while(!delayed.modal_unknown);
+    assert(!delayed.recognised_open && !delayed.answer_available && delayed.generation==delayed_generation);
+    run();assert(hints==2 && manual_hints==1 && word(0)==0);run();assert(hints==2);unload();
     /* Observation-only: truthful manual hint, no completion; reset/unload
      * retire eligibility even with A held. */
     observer_guest(3);write_file("guest.rom",rom,2097152);
@@ -231,12 +265,17 @@ int main(int argc,char **argv)
     bool (*mount_helper)(unsigned,const ArcEngineMedia *,char *,size_t);
     LOAD(mount_helper,"arc_engine_test_floppy_mount");
     LOAD(after_preflight,"arc_libretro_test_disc_after_preflight");LOAD(hold_reset,"arc_rpc_test_fdc_hold_reset");
-    for(unsigned scenario=0;scenario<23;++scenario){
+    for(unsigned scenario=0;scenario<25;++scenario){
+        disc_logs=0;saw_disc_insert=saw_identity_unknown=false;
         const uint32_t map_lba=((2u*(512u*8u-32u)-480u)<<13)/512u;
         uint32_t rename_lba=scenario==12?6:scenario==13?map_lba:scenario==14?map_lba+5:scenario==18?UINT32_MAX:scenario==19 || scenario==22?6:scenario==20?map_lba:scenario==21?map_lba+5:0;
-        disc_guest(scenario==1,scenario==8,rename_lba,scenario<19);write_file("guest.rom",rom,2097152);
+        disc_guest(scenario==1,scenario==8,rename_lba,scenario<19,scenario==24);
+        write_file("guest.rom",rom,2097152);
         count=snprintf(plan,sizeof(plan),"version=2\nmodel=sa110\nfirmware=%s/guest.rom\ncmos=persist\nseed=%s/seed\ncmos_layout=ro350\ncontent_id=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nrtc_epoch=0\nhard_disc=off\nmedia=%s/disc-request/Set.m3u\nobserver_cells=%u\n%s",
             directory,directory,argv[3],(scenario==2 || scenario==11)?20:scenario==9?48:52,(scenario==3 || scenario==11)?"drive1=HELPER\n":"");
+        if(scenario>=23){
+            count=snprintf(plan,sizeof(plan),"version=2\nmodel=sa110\nfirmware=%s/guest.rom\ncmos=persist\nseed=%s/seed\ncmos_layout=ro370\ncontent_id=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\nrtc_epoch=0\nhard_disc=on\nhd_populate=on\nmedia=%s/disc-request/Set.m3u\nobserver_cells=52\n",directory,directory,argv[3]);
+        }
         if(scenario==3 || scenario==11){char helper[2048];snprintf(helper,sizeof(helper),"%s/disc-request/%s.adf",argv[3],scenario==3?"Two":"One");
             char *mark=strstr(plan,"HELPER");assert(mark);snprintf(mark,sizeof(plan)-(size_t)(mark-plan),"%s\n",helper);count=(int)strlen(plan);}
         write_file("test.arcplan",plan,(size_t)count);pad_a=pad_b=0;assert(load(&game));
@@ -248,7 +287,7 @@ int main(int argc,char **argv)
         if(scenario==11){char helper_path[2048];snprintf(helper_path,sizeof(helper_path),"%s/disc-request/One.adf",argv[3]);
             ArcEngineMedia helper={.path=helper_path,.kind=ARC_MEDIA_ADF_800K,.geometry=ARC_GEOMETRY_800K_D};
             assert(mount_helper(1,&helper,error,sizeof(error)));}
-        if((scenario>=4 && scenario<=6) || ((scenario>=11 && scenario<=14) || scenario>=18)){
+        if((scenario>=4 && scenario<=6) || ((scenario>=11 && scenario<=14) || (scenario>=18 && scenario<=22))){
             hd_identity_case=scenario<=6?scenario-3:0;
             ArcIdeBackend ide={.read=hd_identity_read,.write=hd_identity_write,.writable=true,.sectors=256u*16u*63u};
             assert(attach_ide(&ide));
@@ -275,8 +314,11 @@ int main(int argc,char **argv)
             for(unsigned frame=0;frame<4;++frame)run();assert(hd_identity_reads==6);}
         }
         after_preflight(NULL,false);
-        assert(disks.get_image_index()==(scenario==0 || scenario==10 || (scenario>=19 && scenario<=21)?1u:0u));
-        if(scenario!=0 && scenario!=10 && !(scenario>=19 && scenario<=21)){assert(disks.set_eject_state(true) && disks.set_image_index(1) && disks.set_eject_state(false));assert(disks.get_image_index()==1);}
+        assert(disks.get_image_index()==(scenario==0 || scenario==10 || (scenario>=19 && scenario<=21) || scenario>=23?1u:0u));
+        if(scenario>=23){char helper[11],hd[11];assert(identity_query(helper,hd) && !strcmp(hd,"ArcDroidHD") && saw_disc_insert);}
+        if(scenario==6)assert(saw_identity_unknown);
+        if(scenario==11)assert(disc_logs<=4);
+        if(scenario!=0 && scenario!=10 && scenario<23 && !(scenario>=19 && scenario<=21)){assert(disks.set_eject_state(true) && disks.set_image_index(1) && disks.set_eject_state(false));assert(disks.get_image_index()==1);}
         unload();vfs_assert_no_open_handles();
     }
     deinit();free(rom);vfs_assert_no_open_handles();

@@ -14,6 +14,7 @@ static struct {
     ArcBootWatch boot;
     ArcDiscRequest disc;
     bool disc_enabled;
+    const char *disc_signal, *disc_reason;
 #if defined(ARCDROID_TEST_FAULTS)
     bool overridden;
 #endif
@@ -140,6 +141,7 @@ static bool work_resolve(void *opaque,const ArcRpcHostWork *w)
     (void)opaque;DiscCopy copy=disc_copy(w);
     if(copy.signal!=ARC_DISC_SIGNAL_B || !state.resolve)return false;
     state.resolved_candidate=state.resolve(state.opaque,copy.object,(ArcDiscOperation)copy.operation);
+    state.disc_reason=state.resolved_candidate!=UINT_MAX?"candidate-resolved":"no-candidate";
     return state.resolved_candidate!=UINT_MAX;
 }
 static void work_mutate(void *opaque,const ArcRpcHostWork *w)
@@ -177,12 +179,13 @@ static void queue_miss(const ArcRpcObservation *e)
 static void disc_event(void *opaque,const ArcRpcObservation *e)
 {
     (void)opaque;if(!state.disc_enabled)return;
-    if(e->kind==ARC_RPC_OBS_WATCH_LOST){state.disc.armed=false;state.disc_watch=0;return;}
+    if(e->kind==ARC_RPC_OBS_WATCH_LOST){state.disc_reason="watch-lost";state.disc.armed=false;state.disc_watch=0;return;}
     if(e->kind==ARC_RPC_OBS_CONTINUATION){
         if(e->watch!=state.disc_watch)return;
         uint32_t error=0;bool valid=arc_rpc_inspect_word(e->registers[0],false,&error);
         ArcDiscResult result=arc_disc_request_outcome(&state.disc,e->matched?state.disc.continuation:UINT32_MAX,
             0,e->registers[13],e->registers[0],(e->nzcv&0x10000000u)!=0,valid,error);
+        state.disc_reason=result.needs_resolution?"miss-queued":"outcome-refused";
         if(result.needs_resolution)queue_miss(e);
         else if(!(e->nzcv&0x10000000u) &&
             (state.disc.operation==ARC_DISC_LOAD || e->registers[0]!=0))
@@ -194,16 +197,22 @@ static void disc_event(void *opaque,const ArcRpcObservation *e)
     if(swi==0x400c7u || swi==0x400e1u || swi==0x400c0u || swi==0x400ddu || swi==0x400deu || swi==0x11u || swi==0x40u ||
         (swi==0x33u && e->registers[0]==4u)){arc_rpc_observers_disc_clear();return;}
     if(swi==0x33u){
-        if(!arc_rpc_observers_capability(ARC_RPC_CELL_DISC_A) ||
-            e->backing.kind!=ARC_RPC_BACKING_ROM || (e->registers[0]!=1 && e->registers[0]!=2) ||
-            e->registers[1]!=8)return;
+        state.disc_signal="A";
+        state.disc_reason=!arc_rpc_observers_capability(ARC_RPC_CELL_DISC_A)?"observation-disabled":
+            e->backing.kind!=ARC_RPC_BACKING_ROM?"non-rom":
+            (e->registers[0]!=1 && e->registers[0]!=2)?"upcall-reason":
+            e->registers[1]!=8?"filesystem":NULL;
+        if(state.disc_reason)return;
         char name[12];
-        if(arc_rpc_inspect_string(e->registers[2],true,name,sizeof(name)).status!=ARC_RPC_INSPECT_OK)return;
+        if(arc_rpc_inspect_string(e->registers[2],true,name,sizeof(name)).status!=ARC_RPC_INSPECT_OK){state.disc_reason="name-inspection";return;}
         /* Identity inspection/resolution is host-only. A copied name is
          * exposed at the boundary, then revalidated by the frontend commit. */
         ArcDiscSwi input={.swi=e->swi,.r0=e->registers[0],.r1=8,.r3=e->registers[3],.mode=e->mode,.in_rom=true,
             .name_readable=true,.name=name};
-        if(!arc_disc_request_signal_a(&disc_profile,&input))return;
+        if(!arc_disc_request_signal_a(&disc_profile,&input)){
+            state.disc_reason=!(e->swi&0x20000u)?"non-x":
+                (e->mode!=3 && e->mode!=19)?"non-svc":e->registers[3]!=0?"device":"bare-name";return;}
+        state.disc_reason="seen";
         arc_rpc_observer_cancel(ARC_RPC_OBS_DISC); /* A supersedes copied B misses synchronously. */
         state.disc.profile=&disc_profile;arc_disc_request_swi(&state.disc,&input,state.inserted);
         state.disc_media=arc_rpc_fdc_media_generation(0);state.helper_media=arc_rpc_fdc_media_generation(1);
@@ -211,17 +220,19 @@ static void disc_event(void *opaque,const ArcRpcObservation *e)
     }
     ArcDiscOperation operation;
     if(!arc_disc_request_operation(e->swi,e->registers[0],&operation))return;
-    state.disc.armed=false;
-    if(!arc_rpc_observers_capability(ARC_RPC_CELL_DISC_B) || !user(e->mode))return;
+    state.disc.armed=false;state.disc_signal="B";
+    state.disc_reason=!arc_rpc_observers_capability(ARC_RPC_CELL_DISC_B)?"observation-disabled":!user(e->mode)?"non-user":NULL;
+    if(state.disc_reason)return;
     char path[256];
-    if(arc_rpc_inspect_string(e->registers[1],false,path,sizeof(path)).status!=ARC_RPC_INSPECT_OK)return;
+    if(arc_rpc_inspect_string(e->registers[1],false,path,sizeof(path)).status!=ARC_RPC_INSPECT_OK){state.disc_reason="path-inspection";return;}
     ArcDiscSwi input={.swi=e->swi,.r0=e->registers[0],.mode=e->mode,.address=e->pc,.user_sp=e->registers[13],
         .name_readable=true,.name=path,.now_us=e->ns/1000u};
     state.disc.profile=&disc_profile;arc_disc_request_swi(&state.disc,&input,state.inserted);
+    state.disc_reason=state.disc.armed?"armed":"path-refused";
     if(state.disc.armed){
         state.disc_watch=arc_rpc_observer_watch(ARC_RPC_OBS_DISC,e->pc+4,e->mode,e->registers[13],watch_budget);
         state.disc_media=arc_rpc_fdc_media_generation(0);state.helper_media=arc_rpc_fdc_media_generation(1);
-        if(!state.disc_watch)state.disc.armed=false;
+        if(!state.disc_watch){state.disc_reason="watch-admission";state.disc.armed=false;}
     }
 }
 static void filters(void)
@@ -341,3 +352,29 @@ void arc_rpc_observers_disc_snapshot(ArcDiscRequest *out)
         state.helper_media!=arc_rpc_fdc_media_generation(1) || excluded(out->a_name)))out->a_active=false;
 }
 void arc_rpc_observers_disc_notified(void) { state.disc.a_notified=true; }
+
+void arc_rpc_observers_disc_status(ArcRpcDiscStatus *out)
+{
+    if(!out)return;
+    memset(out,0,sizeof(*out));out->last_signal=state.disc_signal?state.disc_signal:"none";
+    out->last_reason=state.disc_reason?state.disc_reason:"waiting-signal";
+    out->signal=state.disc.a_active?"A":out->last_signal;
+    memcpy(out->name,state.disc.a_name,sizeof(out->name));
+    out->active=state.disc.a_active;out->notified=state.disc.a_notified;
+    out->gate=out->last_reason;
+    if(!state.disc_enabled)out->gate="frontend-disabled";
+    else if(!(state.cells&(ARC_RPC_CELL_DISC_A|ARC_RPC_CELL_DISC_B)))out->gate="observation-disabled";
+    if(state.disc.a_active){
+        char helper[11],hd[11];
+        out->gate=state.disc_media!=arc_rpc_fdc_media_generation(0) ||
+            state.helper_media!=arc_rpc_fdc_media_generation(1)?"stale-media":
+            arc_rpc_observers_identities(helper,hd)==false?"identity-unknown":
+            (helper[0] && equal(state.disc.a_name,helper))?"helper-excluded":
+            (hd[0] && equal(state.disc.a_name,hd))?"hd-excluded":
+            excluded(state.disc.a_name)?"device-excluded":"seen";
+    }
+    unsigned replacement=state.disc.a_active || !state.disc_signal || state.disc_signal[0]!='B'?ARC_RPC_CELL_REPLACE_A:ARC_RPC_CELL_REPLACE_B;
+    out->replacement=!arc_rpc_observers_capability(replacement)?"replacement-disabled":
+        !arc_rpc_observers_capability(ARC_RPC_CELL_ERROR)?"error-observation-disabled":
+        state.error.recognised_open?"user-error-open":state.error.modal_unknown?"modal-unknown":"eligible";
+}

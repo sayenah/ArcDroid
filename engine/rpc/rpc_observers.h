@@ -22,6 +22,7 @@ void arc_rpc_observers_disc_configure(bool,const char *,ArcDiscResolveCallback,A
 void arc_rpc_observers_disc_clear(void);
 void arc_rpc_observers_disc_snapshot(ArcDiscRequest *);
 void arc_rpc_observers_disc_notified(void);
+void arc_rpc_observers_disc_status(ArcRpcDiscStatus *);
 bool arc_rpc_observers_replace(ArcDiscSignal);
 bool arc_rpc_observers_capability(unsigned bit);
 /* Host-only identity query, supplied by the dispatcher from current media. */

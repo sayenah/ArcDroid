@@ -485,7 +485,7 @@ static int16_t input(unsigned p,unsigned d,unsigned i,unsigned id_){(void)p;(voi
 int main(int argc,char **argv)
 {
     assert(argc==5);bool sanitizer=!strcmp(argv[4],"sanitizer") || !strcmp(argv[4],"sanitizer-idle");
-    if(!strcmp(argv[4],"sanitizer-idle")){test_model=2;test_os=ARC_RPC_OS_371;}
+    if(!strcmp(argv[4],"sanitizer-idle") || !strcmp(argv[4],"mutant-idle")){test_model=2;test_os=ARC_RPC_OS_371;}
     fresh_files();
     char source[4096];snprintf(source,sizeof(source),"%s/arcdroid/riscpc/boot/HardDisc4.zip",argv[1]);
     file_copy("/system/arcdroid/riscpc/boot/HardDisc4.zip",source);
@@ -498,7 +498,7 @@ int main(int argc,char **argv)
     file_bytes("/system/attachment.raw","media",5);
     snapshot();ArcRpcPreparationHost host={.clock=clock_read,.notice=notice,.attach=attach,.attached=observer_attached};
     /* Initial package validation precedes either CMOS generation or seed. */
-    state_matrix(rom,size,host,sanitizer,!strcmp(argv[4],"mutant"));
+    state_matrix(rom,size,host,sanitizer,!strcmp(argv[4],"mutant") || !strcmp(argv[4],"mutant-idle"));
     scheduler_matrix(rom,size,host);hd_notices(rom,size,host);store_refusals(rom,size,host);
     uint8_t gold[32];
     for(unsigned mode=0;mode<3;++mode){
