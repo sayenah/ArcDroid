@@ -252,11 +252,23 @@ until R3c-3; flag-free harnesses may call production arms but gain no override.
 The session hashes the actual owned image incrementally in the existing 32 KiB
 copy units; binding checks that digest against the verified catalogue request.
 The session binds that fingerprint, actual CPU and profile
-revision only after attachment. All production cells are disabled with reason
-"awaiting Fable qualification"; unknown/authored firmware has no authority.
+revision only after attachment. Run F adopts D-181's cell record in
+`docs/riscpc-observer-qualification.md`: error observation/answer and both disc
+signals' observation/replacement on exactly its seven pairs at revision 1.
+Boot and launch remain disabled with the record's exact reason; enabled cells
+carry that record's applicable leg references. Unknown/authored firmware has no authority.
 The test-fault build alone offers an explicitly labelled per-cell override and
 candidate profile parameters. Promotion is a later run changing exactly Fable's
 adjudicated cells with evidence references, followed by override-free QA.
+
+Run F's production error profile admits ROM SVC26/SVC32 polls with R1/R2 zero,
+and answers only forms 3 (OK/Cancel, default OK) and 14 (Cancel, default Cancel).
+The record exercised error number zero only and excludes serious-error
+transformations: a nonzero or unreadable error number remains observable but
+manual. The test override retains its candidate forms and parameters for further
+qualification. Signal A stays unspecified-device only; signal B is unchanged.
+Disabled/idle boundary diagnostics use `action=inactive`, preserving the gate
+and reason without announcing a refusal notice.
 
 Boundary ownership: the RPC frontend polls input/arbitrates once, then runs the
 protected frame. Engine frame return advances observer horizons and drains copied

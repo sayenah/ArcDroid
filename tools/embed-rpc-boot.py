@@ -6,7 +6,7 @@ root, output = map(Path, sys.argv[1:])
 assets = [('Multisync', 'Multisync', 0xfed), ('BootEnv', 'BootEnv', 0xfff),
           ('BootRes', 'BootRes', 0xfff), ('BootTasks', 'BootTasks', 0xfff),
           ('ArcTasks', '!Boot.ArcTasks', 0xfea), ('Run', '!Boot.!Run', 0xfeb),
-          ('Boot', '!Boot.!Boot', 0xfeb)]
+          ('Boot', '!Boot.!Boot', 0xfeb), ('ArcGate', 'ArcGate', 0xfff)]
 text = ['/* Generated from ArcDroid GPL-2.0-only text; no package data. */',
         '#include "rpc_boot_assets.h"']
 sizes = []

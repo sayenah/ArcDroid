@@ -5,6 +5,9 @@
 #include "rpc_preparation.h"
 #include "rpc_hd_vfs.h"
 #include "rpc/rpc_rtc.h"
+#include "rpc/rpc_observers.h"
+#include "rpc/rpc_floppy.h"
+#include "rpc_launch_helper.h"
 static unsigned notices,terminal_notices,clears,attach_calls;
 static char last_notice[512];
 static uint64_t clock_value,clock_delta;
@@ -19,6 +22,9 @@ static bool last_clear,attachment_io,attachment_fail,reopen_expected;
 static unsigned last_kind;
 static ArcRpcPreparation *current;
 static unsigned test_model;
+static bool helper_override;
+static unsigned revision1_notices;
+static uint64_t helper_construction_bytes;
 static ArcRpcSelectionOs test_os=ARC_RPC_OS_350;
 static const char *id="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 static uint64_t clock_read(void *opaque)
@@ -84,7 +90,7 @@ static uint64_t clock_read(void *opaque)
 }
 static void notice(void *opaque,const char *s,bool terminal)
 {
-    (void)opaque;++notices;if(reopen_expected)assert(!strstr(s,"first use"));
+    (void)opaque;++notices;if(strstr(s,"startup revision 1"))++revision1_notices;if(reopen_expected)assert(!strstr(s,"first use"));
     if(terminal){assert(last_clear);++terminal_notices;last_kind=2;}
     else last_kind=*s?1:0;
     last_clear=!s[0];if(last_clear)++clears;
@@ -110,6 +116,9 @@ static bool attach(void *opaque,char *e,size_t n)
     assert(now==0 && state==0); /* No requested instruction before final attachment. */
     ArcRpcHdStore *disc=arc_riscpc_preparation_disc(current);
     assert(disc && arc_riscpc_hd_receipt(disc,NULL));
+    char helper[11],hd[11];assert(arc_rpc_observers_identities(helper,hd));
+    ArcRpcHdReceipt r;assert(arc_riscpc_hd_receipt(disc,&r));
+    assert(!strcmp(helper,helper_override||r.authored_revision==1?"":"ArcDroid"));
     if(attachment_io || attachment_fail){
         void *data=NULL;size_t bytes=0;
         if(!arc_io_read_all_limit(attachment_fail?"/missing-media":"/system/attachment.raw",&data,&bytes,5,NULL)){
@@ -150,7 +159,7 @@ static ArcRpcPreparation *new_request(const uint8_t *rom,size_t size,bool seed,
 {
     ArcRpcPreparationRequest r={0};r.firmware=rom;r.firmware_size=size;r.key.model=test_model;r.key.layout=test_os==ARC_RPC_OS_350?1:3;
     strcpy(r.key.content,id);r.save="/save";r.system="/system";r.epoch=1234567890;
-    r.hard_disc=r.populate=true;
+    r.hard_disc=r.populate=true;r.helper_override=helper_override;
     /* PRM CMOS allocation (RO3.6), logical 5/11/16/135;
      * core/cmos_defaults.c documents n+0x40 wrapping past 255 to 16.
      * https://www.riscos.com/support/developers/prm/cmos.html
@@ -173,6 +182,7 @@ static ArcRpcPreparationState frame(ArcRpcPreparation *p)
     clock_reads=previous_ns=0;frame_budget=old==ARC_RPC_PREP_GENERATE?UINT64_C(66666664):UINT64_C(13333333);
     ArcRpcPreparationState state=arc_riscpc_preparation_frame(p);ArcRpcPreparationStats s;
     arc_riscpc_preparation_stats(p,&s);
+    helper_construction_bytes+=s.helper_bytes;
     assert(s.steps<=ARC_RPC_PREP_STEPS);
     assert(s.namespace_attempts==namespace_calls-ns);
     /* The unit first detecting a stall was admitted by its previous estimate;
@@ -425,6 +435,45 @@ static void construction_and_attachments(const uint8_t *rom,size_t size)
     assert(!arc_engine_rpc_start_begin(4,rom,size,seed,946684800,false,error,sizeof(error)));
     assert(!arc_engine_active());
 }
+static void helper_ownership(const uint8_t *rom,size_t size,ArcRpcPreparationHost host)
+{
+    for(unsigned explicit_empty=0;explicit_empty<2;++explicit_empty){
+        restore();helper_override=explicit_empty;clock_mode=1;helper_construction_bytes=0;
+        ArcRpcPreparation *p=new_request(rom,size,true,false,host);settle(p);
+        assert(arc_riscpc_preparation_state(p)==ARC_RPC_PREP_RUNNING);
+        assert(helper_construction_bytes==(explicit_empty?0:ARC_RPC_HELPER_SIZE));
+        char h[11],d[11];assert(arc_rpc_observers_identities(h,d));assert(!strcmp(h,explicit_empty?"":"ArcDroid"));
+        assert(arc_riscpc_preparation_reset(p));assert(arc_rpc_observers_identities(h,d));assert(!strcmp(h,explicit_empty?"":"ArcDroid"));
+        finish(p);assert(!arc_engine_active());
+    }
+    helper_override=false;
+    /* A revision-1 root remains manual without opening even invalid packages. */
+    restore();clock_mode=1;ArcRpcPreparation *p=new_request(rom,size,true,false,host);settle(p);finish(p);
+    unsigned changed=0;
+    for(unsigned i=0;i<TEST_FILES;++i)if(files[i].present && strstr(files[i].path,"/manifest.")){
+        assert(files[i].size==24452);files[i].data[24336]=1;
+        uint32_t crc=arc_crc32(files[i].data,files[i].size-4);
+        for(unsigned b=0;b<4;++b)files[i].data[files[i].size-4+b]=(uint8_t)(crc>>(8*b));++changed;
+    }
+    assert(changed);
+    for(unsigned i=0;i<TEST_FILES;++i)if(files[i].present && strstr(files[i].path,".zip"))files[i].data[0]^=1;
+    uint8_t before[32],after[32];disk_hash(before);revision1_notices=0;
+    helper_construction_bytes=0;p=new_request(rom,size,true,false,host);settle(p);
+    assert(arc_riscpc_preparation_state(p)==ARC_RPC_PREP_RUNNING && revision1_notices==1);
+    assert(helper_construction_bytes==0);
+    char h[11],d[11];assert(arc_rpc_observers_identities(h,d)&&!h[0]);finish(p);
+    disk_hash(after);assert(!memcmp(before,after,32));
+    uint8_t *image=malloc(ARC_RPC_HELPER_SIZE);assert(image);assert(arc_riscpc_helper_build(image,ARC_RPC_HELPER_SIZE));
+    ArcEngineMedia helper={.kind=ARC_MEDIA_ADL_640K,.geometry=ARC_GEOMETRY_640K_L,
+        .data=image,.size=ARC_RPC_HELPER_SIZE,.writable=false};
+    ArcRpcFloppy f;arc_rpc_floppy_init(&f,1);char error[256];assert(arc_rpc_floppy_mount(&f,1,&helper,error,sizeof(error)));
+    assert(arc_rpc_floppy_signals(&f,1,0).write_protected);
+    arc_rpc_floppy_motor(&f,1,true,0);
+    ArcRpcFloppyRequest req={.drive=1,.cylinder=0,.head=0,.c=0,.h=0,.r=0,.n=1,.eot=15,
+        .encoding=ARC_RPC_FLOPPY_MFM,.rate_kbps=250,.operation=ARC_RPC_FLOPPY_WRITE};
+    ArcRpcFloppySector sector;assert(arc_rpc_floppy_select(&f,&req,0,&sector)==ARC_RPC_FLOPPY_WRITE_PROTECT);
+    arc_rpc_floppy_close(&f);free(image);
+}
 static bool fail_final_cmos_read;
 static char writer_firmware[65];
 static int64_t pending_read(struct retro_vfs_file_handle *f,void *out,uint64_t n)
@@ -499,6 +548,7 @@ int main(int argc,char **argv)
     snapshot();ArcRpcPreparationHost host={.clock=clock_read,.notice=notice,.attach=attach,.attached=observer_attached};
     /* Initial package validation precedes either CMOS generation or seed. */
     state_matrix(rom,size,host,sanitizer,!strcmp(argv[4],"mutant") || !strcmp(argv[4],"mutant-idle"));
+    helper_ownership(rom,size,host);
     scheduler_matrix(rom,size,host);hd_notices(rom,size,host);store_refusals(rom,size,host);
     uint8_t gold[32];
     for(unsigned mode=0;mode<3;++mode){

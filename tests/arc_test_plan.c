@@ -387,7 +387,7 @@ bool arc_test_plan_load(const char *path, const char *system, const char *save, 
             if (!equal) { valid = false; break; }
             *equal++ = 0; s = trim(s); equal = trim(equal);
             unsigned k; for (k = 0; k < 34 && strcmp(keys[k], s); ++k) {}
-            if (k == 34 || values[k] || !*equal) { valid = false; break; }
+            if (k == 34 || values[k] || (!*equal && k!=11)) { valid = false; break; }
             values[k] = equal;
         }
         line = end;
@@ -410,7 +410,7 @@ bool arc_test_plan_load(const char *path, const char *system, const char *save, 
         ((persist && !values[5]) || factory || resolve(values[5], system, seed_path)) &&
         (!values[7] || (resolve(values[7], system, input_path) && script_load(input_path)));
     if(valid && persist){char disks[PATH_LIMIT];valid=(!values[10]||resolve(values[10],system,media_content)) &&
-        (!values[11]||resolve(values[11],system,media_helper)) &&
+        (!values[11]||!*values[11]||resolve(values[11],system,media_helper)) &&
         (!values[12]||(resolve(values[12],system,disks)&&disk_script_load(disks,system)));}
     if(valid && persist){
         valid=(!values[13]||!strcmp(values[13],"on")||!strcmp(values[13],"off")) &&
@@ -481,6 +481,7 @@ bool arc_test_plan_load(const char *path, const char *system, const char *save, 
             ArcRpcPreparationRequest request={0};request.firmware=rom;request.firmware_size=rom_size;
             request.key=key;request.save=save;request.system=system;request.epoch=epoch;
             request.seed_path=values[5]?seed_path:NULL;request.hard_disc=hd_enabled;request.populate=hd_populate;
+            request.helper_override=values[11]!=NULL;
             request.import_path=hd_import[0]?hd_import:NULL;
             ArcRpcPreparationHost host={0};host.notice=preparation_notice;host.log=preparation_log;
             host.attach=preparation_attach;host.started=preparation_started;host.diagnostics=preparation_diagnostics;host.attached=preparation_attached;

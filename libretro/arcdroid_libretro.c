@@ -5099,7 +5099,7 @@ static void arc_disc_boundary(void)
    if (arc_disc_mode == ARC_DISC_MODE_OFF || arc_adffs_active ||
        arc_session != ARC_SESSION_RUNNING || arc_ejected ||
        arc_media_count < 2u) {
-      arc_rpc_disc_log("refused",arc_disc_mode==ARC_DISC_MODE_OFF?"option-off":arc_adffs_active?"adffs":
+      arc_rpc_disc_log("inactive",arc_disc_mode==ARC_DISC_MODE_OFF?"option-off":arc_adffs_active?"adffs":
          arc_session!=ARC_SESSION_RUNNING?"session":arc_ejected?"ejected":"single-media","none");return;
    }
    ArcDiscRequest request;

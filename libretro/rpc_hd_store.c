@@ -234,14 +234,14 @@ bool arc_riscpc_hd_receipt(const ArcRpcHdStore *s,ArcRpcHdReceipt *r)
 {
     if(!view_ready(s)||!s->published||get(s->manifests[s->selected]+8,4)!=2)return false;
     const uint8_t *p=s->manifests[s->selected]+RECEIPT_AT;
-    if(r){memcpy(r->packages,p+24,64);r->files=get(p+88,8);r->bytes=get(p+96,8);}
+    if(r){memset(r,0,sizeof(*r));r->receipt_revision=get(p+8,4);r->populator_revision=get(p+12,4);r->authored_revision=get(p+16,4);memcpy(r->packages,p+24,64);r->files=get(p+88,8);r->bytes=get(p+96,8);}
     return true;
 }
 bool arc_riscpc_hd_population_receipt(ArcRpcHdStore *s,const ArcRpcHdReceipt *r)
 {
     if(!s||!r||!s->population||s->published||s->sealed||s->seal_at||s->refused)return false;
     uint8_t *m=s->manifests[2],*p=m+RECEIPT_AT;
-    memset(p,0,128);memcpy(p,"ARCRBOOT",8);put(p+8,1,4);put(p+12,1,4);put(p+16,1,4);
+    memset(p,0,128);memcpy(p,"ARCRBOOT",8);put(p+8,1,4);put(p+12,1,4);put(p+16,2,4);
     memcpy(p+24,r->packages,64);put(p+88,r->files,8);put(p+96,r->bytes,8);put(m+8,2,4);
     return true;
 }
@@ -800,7 +800,7 @@ static ArcRpcHdOutcome manifest_outcome(ArcRpcHdStore *s, const uint8_t *m,
         const uint8_t *r = m + RECEIPT_AT;
         if (memcmp(r, "ARCRBOOT", 8))
             return ARC_RPC_HD_CORRUPT;
-        if (get(r + 8, 4) != 1 || get(r + 12, 4) != 1 || get(r + 16, 4) != 1)
+        if (get(r + 8, 4) != 1 || get(r + 12, 4) != 1 || (get(r + 16, 4) != 1 && get(r + 16, 4) != 2))
             return ARC_RPC_HD_UNSUPPORTED;
         if (!zero(r + 20, 4) || !zero(r + 104, 24))
             return ARC_RPC_HD_CORRUPT;

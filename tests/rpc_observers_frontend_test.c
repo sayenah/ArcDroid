@@ -192,6 +192,18 @@ int main(int argc,char **argv)
     const char *models[]={"arm610","arm710","sa110","arm7500"};
     char path[2048],plan[4096];snprintf(path,sizeof(path),"%s/test.arcplan",directory);
     struct retro_game_info game={path,NULL,0,NULL};
+    /* No observer keys: an actual copied authored image cannot inherit any
+     * promoted catalogue, even if a caller requests one explicitly. */
+    for(unsigned model=0;model<4;++model){
+        observer_guest(3);write_file("guest.rom",rom,2097152);
+        int count=snprintf(plan,sizeof(plan),"version=1\nmodel=%s\nfirmware=%s/guest.rom\ncmos=seed\nseed=%s/seed\nrtc_epoch=0\n",models[model],directory,directory);
+        write_file("test.arcplan",plan,(size_t)count);pad_a=pad_b=0;hints=manual_hints=0;assert(load(&game));
+        for(unsigned requested=0;requested<=4;++requested){
+            unsigned catalogue,cpu;binding(requested,&catalogue,&cpu);assert(catalogue==0 && cpu==model);
+            run();ArcErrorBox b;api->error_snapshot(&b);assert(b.modal_unknown && !b.recognised_open && !b.answer_available);
+        }
+        assert(!hints && !manual_hints);unload();
+    }
     for(unsigned model=0;model<4;++model)for(unsigned answer=0;answer<2;++answer)for(unsigned flags=3;flags<=7;flags+=4){
         if(sanitizer && model!=2)continue;
         observer_guest(flags);write_file("guest.rom",rom,2097152);

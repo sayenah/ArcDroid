@@ -113,13 +113,18 @@ file or guest sector: manifest rename publishes the receipt and root together.
 | Receipt-relative offset | Field |
 |---:|---|
 | 0 | magic `ARCRBOOT` (8 bytes) |
-| 8, 12, 16 | receipt version 1, populator revision 1, authored-step revision 1 |
+| 8, 12, 16 | receipt version 1, populator revision 1, authored-step revision 1 or 2 |
 | 20 | zero u32 |
 | 24, 56 | HardDisc4 and PlingSystem SHA-256 (32 raw bytes each) |
 | 88, 96 | created file count and file byte count (u64; after transformation, including authored assets) |
 | 104–127 | zero |
 
-Unknown envelope/receipt/populator/authored revisions refuse before mutation.
+Supported receipt tuples are `(1,1,1)` and `(1,1,2)`; new populations use
+`(1,1,2)`. Validated revisions are exposed by the receipt API. Revision 1
+opens unchanged with one manual-launch notice and no package access or generated
+helper. Revision 2 is gate-eligible, which never proves the gate ran.
+Unknown envelope/receipt/populator/authored revisions refuse before mutation,
+including an authenticated unsupported recovery slot beside a supported root.
 A version-2 manifest must contain a valid receipt; version 1 contains none.
 The complete exact-length manifest (including receipt and CRC) is used in journal
 parent bindings. Checkpoint/rotation/recovery preserve the receipt verbatim.
@@ -992,7 +997,7 @@ Qualified package SHA-256s are diagnostic only; they never gate acceptance.
 
 All files in `assets/riscpc-boot/` are ArcDroid-authored **GPL-2.0-only**, adapted
 from trial commit **5ff5481** (`origin/probe/riscpc-trial`); no third-party guest
-bytes are embedded. The build script embeds exactly these seven files. Sources
+bytes are embedded. The build script embeds exactly these eight files. Sources
 use LF; all deployed scripts use CR only, while the MDF retains LF. Project
 files and imported package data remain separately represented until candidate
 sector writing. Each authored destination collision refuses. The intentional
@@ -1010,6 +1015,7 @@ the Resources applications' !Boot entries do run.
 | BootTasks | $.BootTasks | FFF | probe/riscpc/boot/BootTasks; installed-task enumeration retained |
 | Run | $.!Boot.!Run | FEB | probe/riscpc/boot/HDRun; ProbeTasks renamed ArcTasks, trial label removed |
 | Boot | $.!Boot.!Boot | FEB | probe/riscpc/tools/boot_disc.py:134–160; authored IconSprites entry, trial label removed |
+| ArcGate | $.ArcGate | FFF | authored R3c-3a; bounded gate described in `riscpc-launch-gate.md` |
 | ArcTasks | $.!Boot.ArcTasks | FEA | probe/riscpc/boot/HDTasks; desktop-stage dispatch retained, destination renamed |
 
 Authored files have zero date stamp and attributes 3. The boot option is run (2)

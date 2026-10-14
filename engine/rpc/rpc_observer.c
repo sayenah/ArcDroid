@@ -49,20 +49,32 @@ static void gate(void)
     arc_rpc_observer_active|=trace.status.enabled;arc_rpc_observer_context|=trace.status.enabled;
 #endif
 }
-#define CELL(cat,cpu,owner,cap) {cat,cpu,1,owner,cap,false,"awaiting Fable qualification"}
-#define PAIR(cat,cpu) CELL(cat,cpu,ARC_RPC_OBS_BOOT,ARC_RPC_CAP_OBSERVE), \
-    CELL(cat,cpu,ARC_RPC_OBS_LAUNCH,ARC_RPC_CAP_OBSERVE), \
-    CELL(cat,cpu,ARC_RPC_OBS_ERROR,ARC_RPC_CAP_OBSERVE), \
-    CELL(cat,cpu,ARC_RPC_OBS_ERROR,ARC_RPC_CAP_COMPLETE), \
-    CELL(cat,cpu,ARC_RPC_OBS_DISC,ARC_RPC_CAP_OBSERVE), \
-    CELL(cat,cpu,ARC_RPC_OBS_DISC,ARC_RPC_CAP_REPLACE), \
-    CELL(cat,cpu,ARC_RPC_OBS_DISC,ARC_RPC_CAP_OBSERVE_B), \
-    CELL(cat,cpu,ARC_RPC_OBS_DISC,ARC_RPC_CAP_REPLACE_B)
+/* D-181: reasons/references are pinned to the adopted qualification record. */
+#define DEFERRED "awaiting R3c-3 launch hook (S64: *WimpTask starts tasks in SVC mode; F12 calls Wimp_Initialise; 3.5+ prompt buffers lie above 0x8000)"
+#define ERROR_EVIDENCE "docs/riscpc-observer-qualification.md: a3-*, b3-*, b14-*, a14-*"
+#define DISC_A_EVIDENCE "docs/riscpc-observer-qualification.md: k-*, u-*"
+#define DISC_B_EVIDENCE "docs/riscpc-observer-qualification.md: sb-*"
+#define CELL(cat,cpu,owner,cap,on,reason) {cat,cpu,1,owner,cap,on,reason}
+#define PAIR(cat,cpu,error,disc_a) CELL(cat,cpu,ARC_RPC_OBS_BOOT,ARC_RPC_CAP_OBSERVE,false,DEFERRED), \
+    CELL(cat,cpu,ARC_RPC_OBS_LAUNCH,ARC_RPC_CAP_OBSERVE,false,DEFERRED), \
+    CELL(cat,cpu,ARC_RPC_OBS_ERROR,ARC_RPC_CAP_OBSERVE,true,error), \
+    CELL(cat,cpu,ARC_RPC_OBS_ERROR,ARC_RPC_CAP_COMPLETE,true,ERROR_EVIDENCE), \
+    CELL(cat,cpu,ARC_RPC_OBS_DISC,ARC_RPC_CAP_OBSERVE,true,disc_a), \
+    CELL(cat,cpu,ARC_RPC_OBS_DISC,ARC_RPC_CAP_REPLACE,true,disc_a), \
+    CELL(cat,cpu,ARC_RPC_OBS_DISC,ARC_RPC_CAP_OBSERVE_B,true,DISC_B_EVIDENCE), \
+    CELL(cat,cpu,ARC_RPC_OBS_DISC,ARC_RPC_CAP_REPLACE_B,true,DISC_B_EVIDENCE)
 static const ArcRpcObserverQualification qualifications[]={
-    PAIR(1,0),PAIR(2,1),PAIR(2,3),PAIR(3,2),PAIR(4,1),PAIR(4,2),PAIR(4,3)
+    PAIR(1,0,ERROR_EVIDENCE ", o-350-arm610",DISC_A_EVIDENCE),
+    PAIR(2,1,ERROR_EVIDENCE,DISC_A_EVIDENCE),PAIR(2,3,ERROR_EVIDENCE,DISC_A_EVIDENCE),
+    PAIR(3,2,ERROR_EVIDENCE,DISC_A_EVIDENCE),PAIR(4,1,ERROR_EVIDENCE,DISC_A_EVIDENCE),
+    PAIR(4,2,ERROR_EVIDENCE,DISC_A_EVIDENCE ", d-084d"),PAIR(4,3,ERROR_EVIDENCE,DISC_A_EVIDENCE)
 };
 #undef PAIR
 #undef CELL
+#undef DISC_B_EVIDENCE
+#undef DISC_A_EVIDENCE
+#undef ERROR_EVIDENCE
+#undef DEFERRED
 ArcRpcObserverQualification arc_rpc_observer_qualification(unsigned catalogue,
     unsigned cpu, ArcRpcObserver owner, ArcRpcObserverCapability capability)
 {
@@ -477,6 +489,8 @@ bool arc_rpc_observer_filter(ArcRpcObserver owner,const ArcRpcObserveFilter *fil
 #if defined(ARCDROID_TEST_FAULTS)
 RETRO_API bool arc_rpc_observer_test_filter(ArcRpcObserver o,const ArcRpcObserveFilter *f)
 { return arc_rpc_observer_filter(o,f); }
+const ArcRpcObserverQualification *arc_rpc_observer_test_qualifications(size_t *count)
+{ *count=sizeof(qualifications)/sizeof(qualifications[0]);return qualifications; }
 RETRO_API void arc_rpc_observer_trace(bool enabled,bool private_paths)
 {
     /* Reset metadata; count gates all record reads. Avoid touching the entire
