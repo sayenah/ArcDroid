@@ -1,8 +1,63 @@
 # ArcDroid Handoff
 
-**Stage:** IMPLEMENTATION — **R3c-2** (RPC observers and arbitration; work order below, D-177). R3c-1 is merged (`ea3503d`).
-**Owner:** Sol (GPT-6.1 Sol), orchestrated by Fable (S64).
-**Next (S64):**
+**Workstreams (D-182: parallel at Fable's discretion; each has its own Stage, Owner, Next, review, CI, QA and merge).**
+
+**W1 — R3c-2 observers (PR #408, `slice/r3c2-observers`, head `686b1b7`, runs A–E).**
+**Stage:** QA — R3c-2 runs A–E. **Owner:** Opus (QA), Fable orchestrating (S64).
+**Next (W1):**
+1. **Opus QA** of runs A–E in a fresh clone of `slice/r3c2-observers` at `686b1b7` merged with this governance head, against the R3c-2 work order below, D-177, D-179 and D-180. Every production cell is still disabled at `686b1b7`.
+2. **In parallel, the promotion run (Sol run F, same clone and thread as runs A–E):**
+   - enable exactly the cells in `docs/riscpc-observer-qualification.md` with that record's profile values (D-181, recorded once the Odin3 R-H passes);
+   - fix the CI failure at `f185c16`: `rpc-hd-retroarch-guest` treats the shipping `RPC disc: … action=refused reason=session` line as a refusal notice, so the disabled state must not be worded as a refusal;
+   - run the full host suite.
+
+   QA then re-checks run F only: table-to-record equality, and enabled behaviour without overrides (D-177(8)).
+3. **Fable's evidence so far:**
+   - seven-pair qualification for the error box (forms 3 and 14), disc signal A and disc signal B;
+   - the 084 install completed with no manual swap;
+   - the Arculator library A/B passed (only the known-variance titles differ);
+   - launch outcome and boot watch could not be qualified (they move to R3c-3).
+
+   The record is `docs/riscpc-observer-qualification.md`, with private legs in `.work/s64/q/` and `.work/s64/LEDGER.md`. The Odin3 R-H with observers active at run E is running in `.work/s64/odin/`.
+
+**W2 — R3c-3 launch delivery.** **Stage:** DESIGN. **Owner:** Fable, with Astra stage 1 running (thread `01a1376a-…`, brief `.work/s63/astra/brief4.md`).
+**Next (W2):** adjudicate Astra's report, then draft the R3c-3 work order and send it to Astra stage 2. Sol implements after W1 merges. The scope includes qualifying launch outcome and boot watch from the hook, per the S64 findings: SVC-mode `*WimpTask`, F12's `Wimp_Initialise`, and 3.5+ prompt buffers above 0x8000.
+
+**W3 — item 6b Phase 0 completion (D-141, D-142, D-146, D-182).** **Stage:** IMPLEMENTATION — **6b-P0i** profiling instrumentation (work order below). **Owner:** Sol (second instance, own clone, branch `slice/6b-p0i-profile` stacked on `686b1b7`, rebased after W1 merges).
+**Next (W3):**
+1. Sol implements 6b-P0i.
+2. Fable then profiles representative gameplay (031 and a 3D title) on the Odin3 and the Mac, closing Phase 0's open items in `docs/riscpc-translator.md`.
+3. The Founder answers Q1 (design objective) at the end of Phase 0.
+4. A Phase 1a work order follows: exact interpreter optimisations the profile identifies.
+
+**6b-P0i — RPC interpreter profiling instrumentation (test-only).**
+- **Objective.** Give Fable the measurements Phase 0 still lacks (`docs/riscpc-translator.md`, *Still open in Phase 0*):
+  - host cost split by fetch translation, dispatch, timing model, bus/MMIO service and devices on representative gameplay;
+  - the dynamic basic-block length distribution (straight-line runs ending at a branch, a PC write, an exception or an instruction that needs the slow path);
+  - the instruction-class mix, including load/store multiples and coprocessor operations;
+  - writes landing in pages executed recently (a code-churn proxy for a later translator);
+  - the share of instructions a minimal block/exit foundation could cover under the invariants in `docs/riscpc-translator-invariants.md`, with each exit cause counted (E1–E11 where they apply);
+  - cold-start against sustained frame tails, per emulated second.
+- **Scope.**
+  - A build option (for example `ARCDROID_RPC_PROFILE`), off by default, that compiles the counters only into the runner and the test-flagged plan core.
+  - A runner option that writes the profile as JSON at exit and at a chosen frame interval.
+  - A short design note added to `docs/riscpc-translator.md`, *Phase 0 evidence*, saying what each counter measures and its overhead.
+- **Constraints.**
+  - **The shipping core is untouched.** With the option off, every build is byte-identical in guest behaviour and in code paths to the starting head.
+  - **R3c-1/R3c-2 R-H stays valid.** The inactive, observed and cheap interpreter instantiations keep their selection and cost.
+  - **Counters never change guest behaviour.** With profiling on, guest output, goldens and the canonical comparison stay identical. Timing cost is reported, not hidden.
+  - **Provenance.** Any change inside `engine/rpcemu/` is a marked patch with `UPSTREAM.md` and `manifest.json`, preferably confined to compile-time hooks. Commit no ROM bytes, private titles or traces.
+  - **Builds.** Android arm64 and MinGW must build with the option on and off.
+- **Acceptance criteria.**
+  - **AC-1:** with the option off, every existing test passes, and the pinned comparison against `686b1b7` shows identical guest projection and persisted state.
+  - **AC-2:** with the option on, authored guests produce exact expected counts. Cover blocks of known lengths ending at each exit cause, known class mixes, writes to executed pages, and MMIO and device accesses.
+  - **AC-3:** with the option on, the observation and translator equivalence suites and the RPC goldens stay identical.
+  - **AC-4:** the runner's JSON is versioned and documented. Fable can run it on the Odin3 with the documented command, and its overhead is measured on the hot workload.
+  - **AC-5:** host, sanitizer, MinGW and Android builds pass, the guards pass, and mutants show the counters are fed.
+- **Non-goals.** No optimisation, translator, rate change or production behaviour.
+
+**Earlier header (S63 close), kept for its device kit and carried items:**
+**Next (S63 close):**
 1. **Dispatch Sol on R3c-2** exactly as the work order below and D-177 define it: branch `slice/r3c2-observers` from `main`, a fresh clone of the governance branch that carries this handoff, `.evidence/rpcemu-0.9.5.tar.gz` (copy from `.work/s60/upstream/`, and add `.evidence/` to the clone's `.git/info/exclude`). Give Sol Fable's evidence `.work/s63/q2/FINDINGS.md` as `.evidence/R3C2-EVIDENCE.md`. Then Fable review, CI, Opus QA, and the qualification-and-promotion checkpoint (D-177(8)): Fable's private legs on all seven pairs with the test override, per-cell adjudication, then a Sol run that enables exactly the qualified cells.
 2. **Fable's private kit for R3c-2:**
    - seven-pair evidence driver `.work/s63/q2/leg.py` and `legE.py` (focused classes), `pairs.sh`, `box.sh`, `summ.py`, `box.py`, `seq.py`; S62's populated pair stores in `.work/s62/ac5/stores/q-*`;
