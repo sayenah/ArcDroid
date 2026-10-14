@@ -1,32 +1,77 @@
 # ArcDroid Handoff
 
-**Workstreams (D-182: parallel at Fable's discretion; each has its own Stage, Owner, Next, review, CI, QA and merge).**
+**S64 close (arcdroid-41).** Workstreams run in parallel (D-182). Each one has its own Stage, Owner, Next, review, CI, QA and merge. Private evidence is indexed in `.work/s64/LEDGER.md`.
 
-**W1 — R3c-2 observers (PR #408, `slice/r3c2-observers`, head `686b1b7`, runs A–E).**
-**Stage:** QA — R3c-2 runs A–E. **Owner:** Opus (QA), Fable orchestrating (S64).
-**Next (W1):**
-1. **Opus QA** of runs A–E in a fresh clone of `slice/r3c2-observers` at `686b1b7` merged with this governance head, against the R3c-2 work order below, D-177, D-179 and D-180. Every production cell is still disabled at `686b1b7`.
-2. **In parallel, the promotion run (Sol run F, same clone and thread as runs A–E):**
-   - enable exactly the cells in `docs/riscpc-observer-qualification.md` with that record's profile values (D-181, recorded once the Odin3 R-H passes);
-   - fix the CI failure at `f185c16`: `rpc-hd-retroarch-guest` treats the shipping `RPC disc: … action=refused reason=session` line as a refusal notice, so the disabled state must not be worded as a refusal;
-   - run the full host suite.
+**Running at close.** These belong to S64, and the next holder now owns them. Never stop any other process.
+- **Codex Sol runs.** Each is detached and writes `final*.md` when it ends.
+  - **W1, R3c-2 run G:** PID 34277, thread `01a139e9-6d03-7690-8663-c08acabdd1b8`, clone `.work/s64/r3c2/clone`, prompt `promptR3c2-G.md`, output `finalG.md`.
+  - **W2, R3c-3a run B:** PID 38960, thread `01a13bb3-3968-7021-aec8-87d3f8cbb524`, clone `.work/s64/r3c3a/clone`, prompt `promptR3c3a-B.md`, output `finalB.md`.
+  - **W3, 6b-P0i:** PID 66407, thread `01a13baf-51d1-7332-8769-29f41581d64a`, clone `.work/s64/p0i/clone`, prompt `promptP0i.md`, output `final.md`.
+- **Watchdogs.** Each Codex run has a `wait-run.sh` watchdog writing `watch*.txt` beside it. A STALLED line can be a long silent ctest; check that the child processes still use CPU before treating it as a hang.
+- **Fable's private legs.** `.work/s64/q/nbox5.sh` runs the ordinary error number 291 on five pairs; its log is `q/nbox5.log`.
+- **S64's three workflows.** If they did not finish before the close, they died with the S64 window, and their partial journals sit under the S64 session's `subagents/workflows/` directory. Finished results are saved to `.work/s64/review/WF-*.md`.
+  - **R3c-2 deep review:** eight dimensions, three skeptics per finding.
+  - **R3d design:** area maps, three drafts, judges, synthesis and a critic.
+  - **6b Phase 1 candidates:** exact interpreter optimisations, vetted.
 
-   QA then re-checks run F only: table-to-record equality, and enabled behaviour without overrides (D-177(8)).
-3. **Fable's evidence so far:**
-   - seven-pair qualification for the error box (forms 3 and 14), disc signal A and disc signal B;
-   - the 084 install completed with no manual swap;
-   - the Arculator library A/B passed (only the known-variance titles differ);
-   - launch outcome and boot watch could not be qualified (they move to R3c-3).
+**W1 — R3c-2 observers.** PR #408, `slice/r3c2-observers`, head `ac43e85` (runs A–F). **Stage:** IMPLEMENTATION (run G), then QA re-check. **Owner:** Sol, then Opus.
+- **State.**
+  - **Runs A–E:** Opus QA returned PASS WITH LOWS (`.work/s64/qa-r3c2/QA-REPORT.md`, adjudication `adjudication.md`). MEDIUM-1, plus LOW-2 to LOW-4, go to run G.
+  - **Run F `ac43e85`:** promotes the 42 cells in `docs/riscpc-observer-qualification.md` (D-181). It answers error number 0 only, and fixes the "refused" log wording. Host 394/394.
+  - **Run G, in progress:**
+    - G-1, MEDIUM-1: error-watch renewal while the learned box poll runs, and modal-unknown recovery on a user-mode `Wimp_Poll`;
+    - G-2: disc WATCH_LOST identity;
+    - G-3: hint keys after reset;
+    - G-4: binding digest test;
+    - G-5: the error-number class as a profile parameter, with production at zero only.
+  - **Fable's evidence since D-181:**
+    - **Graphical form 3** (a `*WimpTask` BASIC program, `q/gboxpairs.sh`): A gives 1 and B gives 2 on all seven pairs. The earlier `a3/b3` legs were text-mode reports from F12; both modes are now qualified.
+    - **Ordinary error number 291:** the same Cancel/OK box, with A 1 and B 2 on 3.50 ARM610 and 3.71 SA-110. Five more pairs are in `nbox5`.
+    - **Serious number &80000123:** RISC OS turns the box into "may have gone wrong… Describe/Quit/Continue", so serious errors stay observation-only.
+  - **Odin3 R-H at run E:** PASS (D-181).
+  - **Arculator library A/B:** PASS.
+- **Next (W1).**
+  1. When run G ends, review its diff and commit it verbatim, push, and watch CI on all five jobs.
+  2. Re-dispatch Opus QA with the `arcdroid-opus-qa` agent in a fresh clone. It re-checks runs F and G against `QA-REPORT.md`, the adjudication, D-181 and the qualification record: table-to-record equality, the MEDIUM-1 fix, and enabled behaviour without overrides.
+  3. **Fable's override-free private rerun.** Use `q/boxpairs.sh`, `q/gboxpairs.sh`, `q/discpairs.sh` and `q/discBpairs.sh` with the `--plan observer_*` lines removed and `QB` pointed at a run-G build. It confirms the real firmware binds and the cells act on all seven pairs.
+  4. **Ordinary error numbers.** If `nbox5` passes on all pairs, add `gna/gnb` and `ga/gb` to the record (with an "ordinary numbers" class), record a D entry, and send Sol a run H that sets production to "ordinary numbers" with a table test. QA re-checks it.
+  5. Adjudicate the deep-review workflow's surviving findings (`.work/s64/review/WF-r3c2-deep-review.md`, if it was saved) into run H.
+  6. Merge PR #408 under §12.11 once CI is green on all five jobs and QA passes.
+  7. Record R3c-2 in `docs/build-log.md`.
 
-   The record is `docs/riscpc-observer-qualification.md`, with private legs in `.work/s64/q/` and `.work/s64/LEDGER.md`. The Odin3 R-H with observers active at run E is running in `.work/s64/odin/`.
+**W2 — R3c-3 launch delivery (D-184, D-185).**
+- **R3c-3a.** Branch `slice/r3c3a-gate`, head `d775086`: run A `1363852`, then merges of R3c-2 run F and `main`. It is pushed, with no PR yet. **Stage:** IMPLEMENTATION (run B). **Owner:** Sol.
+  - **Run B** settles three things before the gate bytes freeze (D-185): the controller lifetime, a collision-free status transport replacing the authored UpCall reasons, and the storage lifetime when a vector release fails.
+  - **Next:**
+    1. Commit run B and review it.
+    2. Fable's AC-6 seven-pair absence legs and AC-7 Odin3/Windows legs, with the commands in `.work/s64/r3c3a/clone/SOL-REPORT-R3C3A.md`.
+    3. Open the PR once R3c-2 merges (base `main`), then CI and Opus QA.
+- **R3c-3b.** Branch `slice/r3c3b-launch`, head `7b11b47`: part 1 `6775d8e` (host-side plan v2, attempt state machines, store identity, boot records), merged with R3c-3a.
+  - Fable checked the merged tree: the build passes and 16/16 affected tests pass.
+  - **Next:** after R3c-3a run B, write and dispatch part 2: the controller on run B's model and transport, the frontend and preparation integration points, profiles and cost, and qualification. The work order is below.
+- **R3d.** **Next:** take the R3d design workflow result (`.work/s64/review/WF-r3d-design.md`, if saved; otherwise rerun the design), draft the work order, then run Astra stages 1 and 2 on a fresh thread.
 
-**W2 — R3c-3 launch delivery (D-184: two slices, R3c-3a then R3c-3b).**
-**Stage:** IMPLEMENTATION — **R3c-3a**. **Owner:** Sol (third instance, own clone, branch `slice/r3c3a-gate`, stacked on `686b1b7`, rebased onto W1's merge).
-**Next (W2):**
-1. Sol implements R3c-3a run A.
-2. Run B then settles the gate's controller lifetime, its status transport and its release-failure storage (D-185). These have to be fixed before the gate bytes freeze.
-3. Fable review, the seven-pair absence legs and Opus QA follow.
-4. In parallel, a fourth Sol instance builds R3c-3b part 1 (host-side), using the work order below. R3d design starts once R3c-3b's controller model is fixed.
+**W3 — item 6b Phase 0 completion.** Branch `slice/6b-p0i-profile` (stacked on `686b1b7`). **Stage:** IMPLEMENTATION, 6b-P0i (work order below). **Owner:** Sol.
+- **Next:**
+  1. When 6b-P0i ends, commit, review, CI and QA.
+  2. Profile 031 gameplay on the Mac and the Odin3 with the S61 kit (`.work/s61/ac10/run031.sh`, `cold031-odin.arcplan`) and a 3D title.
+  3. Close Phase 0's open items in `docs/riscpc-translator.md`.
+  4. Put Q1 (the design objective) to the Founder.
+  5. Draft 6b Phase 1a from the profile and the workflow's candidates (`.work/s64/review/WF-r6b-phase1.md`, if saved), then run Astra.
+
+**Device kit (Odin3).** `/data/local/tmp/arcdroid-s64/`:
+- `base` (98bb162) and `cand` (run E) Android runner and plan core;
+- `hot/` with `hot.arcplan`, `hot-obs.arcplan` (cells 252) and `rh64.sh`.
+
+The S63 and S62 kits listed in the S63 header below are still on the device.
+
+**Lessons (S64).**
+- **Trace allowlist:** a register outside the allowlist is recorded as zero. S63's "R3=0" disc evidence came from this (D-179).
+- **BASIC `Wimp_ReportError` from F12** gives a text-mode report. Use a `*WimpTask` program for the graphical box.
+- **`rpc_runner` legs** need `--pad-at` for pad answers. Core logs go to stderr.
+- **Sol cannot write `.git`.** Fable merges `main` or other branches into Sol's branch before dispatch.
+- **Distinct prefixes:** give every private leg directory a distinct prefix, because names collided once (`sb-`).
+
 
 **R3c-3a — startup gate, helper handoff, authored revision 2, guest-tolerant checker (D-184; Astra stage 1 `.work/s63/astra/report4.md`, stage 2 `report5.md`, all changes incorporated).**
 - **Objective.**
@@ -215,13 +260,6 @@
     - Host, sanitizer, MinGW and Android builds, and the guards.
     - Arculator and ordinary loads unchanged.
 - **Non-goals.** Ordinary loads and switching (R3d); shipping RetroArch evidence (R3d, D-173).
-
-**W3 — item 6b Phase 0 completion (D-141, D-142, D-146, D-182).** **Stage:** IMPLEMENTATION — **6b-P0i** profiling instrumentation (work order below). **Owner:** Sol (second instance, own clone, branch `slice/6b-p0i-profile` stacked on `686b1b7`, rebased after W1 merges).
-**Next (W3):**
-1. Sol implements 6b-P0i.
-2. Fable then profiles representative gameplay (031 and a 3D title) on the Odin3 and the Mac, closing Phase 0's open items in `docs/riscpc-translator.md`.
-3. The Founder answers Q1 (design objective) at the end of Phase 0.
-4. A Phase 1a work order follows: exact interpreter optimisations the profile identifies.
 
 **6b-P0i — RPC interpreter profiling instrumentation (test-only).**
 - **Objective.** Give Fable the measurements Phase 0 still lacks (`docs/riscpc-translator.md`, *Still open in Phase 0*):
@@ -1032,7 +1070,7 @@ The R1 work order and implementation record are in git history (`docs/handoff.md
   - **Clones and probes:** Sol, Astra and QA clones and scratch probes live under this project's own scratchpad (`/private/tmp/claude-501/-Users-mac0918-dev-ArcDroid/…`), which the deny list does not cover. Sol's own build directories (`/private/tmp/arcdroid-r2*`) are outside `claude-501` and are confined by the Codex sandbox.
   - **Sibling directory `~/dev/ArcDroid-evidence`:** denied by the generated list, like every other sibling. If it holds this project's evidence, exempt it by removing its three lines.
 - **Founder instruction (S54, relayed S55):** never stack shell commands — no `&&`, `;` or pipes chaining git steps; run each command separately (stacked commands get denied). Put multi-step work in a script file under the scratchpad instead.
-- **Used windows (never relay to these; each closing holder adds its own name):** `arcdroid-d9` (S33), `arcdroid-6c` (S43), `ArcDroid-45` (S45), `arcdroid-83` (2026-10-02 governance edit), `ArcDroid-49` (S49), `arcdroid-d4` (S50), `arcdroid-10` (S51), `arcdroid-1b` (S52), `ArcDroid-52` (S53), `arcdroid-df` (S54), `arcdroid-7e` (S55), `arcdroid-25` (S56), `arcdroid-ba` (S57), `arcdroid-99` (S58), `arcdroid-db` (S60; the S59 window crashed before recording its name), `arcdroid-b5` (S61), `arcdroid-e5` (S62), `arcdroid-e7` (S63). Earlier holders were not recorded; window names change between days.
+- **Used windows (never relay to these; each closing holder adds its own name):** `arcdroid-d9` (S33), `arcdroid-6c` (S43), `ArcDroid-45` (S45), `arcdroid-83` (2026-10-02 governance edit), `ArcDroid-49` (S49), `arcdroid-d4` (S50), `arcdroid-10` (S51), `arcdroid-1b` (S52), `ArcDroid-52` (S53), `arcdroid-df` (S54), `arcdroid-7e` (S55), `arcdroid-25` (S56), `arcdroid-ba` (S57), `arcdroid-99` (S58), `arcdroid-db` (S60; the S59 window crashed before recording its name), `arcdroid-b5` (S61), `arcdroid-e5` (S62), `arcdroid-e7` (S63), `arcdroid-41` (S64). Earlier holders were not recorded; window names change between days.
 
 **Relay brief:** "ArcDroid baton handoff from <window> (S<n>), for /Users/mac0918/dev/ArcDroid only. Before anything else, run the receipt checks in docs/protocol.md §18: you must be Claude Opus 5.5 at reasoning effort 15 (high) or above, your working directory must be /Users/mac0918/dev/ArcDroid, and this must be the first message in your window. If any check fails, change nothing, tell the Founder in your window which check failed (for a wrong model or effort: run /model claude-opus-5-5 and /effort high, then say \"pick up from handoff\"), send a PushNotification, and stop. If all pass, take the baton without asking the Founder to confirm, number yourself S<n+1>, read CLAUDE.md and docs/handoff.md, take the active Next (never a workstream under Waiting on the Founder until its answer is recorded), and work towards the Founder vision D-073. Founder instruction (S54): never stack shell commands (no `&&`, `;` or pipes chaining git steps) — run each command separately. Close by protocol §18: relay only to one idle arcdroid- window, never another project's session; if no ArcDroid window is eligible, stop all work and close. Repeat this rule in your own relay."
 
