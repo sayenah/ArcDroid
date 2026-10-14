@@ -115,6 +115,7 @@ set(ARCDROID_ARCULATOR_SOURCES
 )
 
 set(ARCDROID_RPC_SOURCES
+  engine/rpc/rpc_observer.c engine/rpc/rpc_inspector.c
   engine/rpc/rpc_session.c
   engine/rpc/rpc_mem_timing.c
   engine/rpc/rpc_audio.c
@@ -385,6 +386,7 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
   endif()
   # A bounded CPU/memory component. Unadapted devices still cannot join cores.
   add_library(arcdroid_rpc_cpu OBJECT
+    engine/rpc/rpc_observer.c engine/rpc/rpc_inspector.c
     engine/rpc/rpc_mem_timing.c
     engine/rpcemu/src/arm.c engine/rpcemu/src/arm_common.c
     engine/rpcemu/src/cp15.c engine/rpcemu/src/mem.c)
@@ -403,6 +405,28 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
     "${CMAKE_CURRENT_BINARY_DIR}/generated")
   target_compile_options(rpc_cpu_test PRIVATE
     $<$<C_COMPILER_ID:GNU,Clang,AppleClang>:-UNDEBUG;-Wall;-Wextra;-Werror=implicit-function-declaration>)
+  add_executable(rpc_observer_test tests/rpc_observer_test.c
+    engine/rpc/rpc_observer.c engine/rpc/rpc_inspector.c
+    engine/rpc/rpc_mem_timing.c engine/rpc/rpc_scheduler.c
+    engine/rpcemu/src/arm.c engine/rpcemu/src/arm_common.c
+    engine/rpcemu/src/cp15.c engine/rpcemu/src/mem.c
+    "${CMAKE_CURRENT_BINARY_DIR}/generated/rpc_authored_rom.h")
+  target_include_directories(rpc_observer_test PRIVATE engine/rpc engine/rpcemu/src
+    libretro/include "${CMAKE_CURRENT_BINARY_DIR}/generated")
+  target_compile_definitions(rpc_observer_test PRIVATE ARCDROID_TEST_FAULTS=1 ARCDROID_OBSERVATION_TEST=1 RELEASE_BUILD=1)
+  target_compile_options(rpc_observer_test PRIVATE -UNDEBUG -Wall -Wextra -fno-strict-aliasing
+    -include "${CMAKE_CURRENT_SOURCE_DIR}/engine/rpc/rpc_namespace.h")
+  if(ARCDROID_SANITIZERS)
+    target_link_libraries(rpc_observer_test PRIVATE arcdroid_sanitizer_compile arcdroid_sanitizer_link)
+  endif()
+  add_test(NAME rpc-observation-primitives COMMAND rpc_observer_test)
+  set_tests_properties(rpc-observation-primitives PROPERTIES TIMEOUT 60)
+  if(CMAKE_GENERATOR STREQUAL "Ninja" AND NOT ARCDROID_SANITIZERS)
+    add_test(NAME rpc-observation-mutants COMMAND "${Python3_EXECUTABLE}" -B
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_observer_mutants.py"
+      "${CMAKE_CURRENT_BINARY_DIR}" $<TARGET_FILE:rpc_observer_test>)
+    set_tests_properties(rpc-observation-mutants PROPERTIES TIMEOUT 180 RUN_SERIAL TRUE)
+  endif()
   add_test(NAME rpc-cpu-mmu-memory COMMAND rpc_cpu_test)
   add_test(NAME rpc-fetch-memo-rewalk COMMAND rpc_cpu_test --fetch-memo)
   add_library(arcdroid_rpc_cmos OBJECT engine/rpcemu/src/cmos.c engine/rpc/rpc_rtc.c)
@@ -2087,6 +2111,19 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
     add_test(NAME rpc-session-guest-${model} COMMAND rpc_session_test
       $<TARGET_FILE:arcdroid_libretro_test> --guest ${model})
   endforeach()
+  add_executable(rpc_observer_lifecycle_test tests/rpc_observer_lifecycle_test.c
+    "${CMAKE_CURRENT_BINARY_DIR}/generated/rpc_session_rom.h")
+  target_include_directories(rpc_observer_lifecycle_test PRIVATE engine engine/rpc core
+    libretro/include "${CMAKE_CURRENT_BINARY_DIR}/generated")
+  target_compile_definitions(rpc_observer_lifecycle_test PRIVATE ARCDROID_TEST_FAULTS=1 RETRO_IMPORT_SYMBOLS=1)
+  target_compile_options(rpc_observer_lifecycle_test PRIVATE -UNDEBUG -Wall -Wextra)
+  target_link_libraries(rpc_observer_lifecycle_test PRIVATE arcdroid_core ${CMAKE_DL_LIBS})
+  add_dependencies(rpc_observer_lifecycle_test arcdroid_libretro_test)
+  if(ARCDROID_SANITIZERS)
+    target_link_libraries(rpc_observer_lifecycle_test PRIVATE arcdroid_sanitizer_compile arcdroid_sanitizer_link)
+  endif()
+  add_test(NAME rpc-observation-lifecycle COMMAND rpc_observer_lifecycle_test $<TARGET_FILE:arcdroid_libretro_test>)
+  set_tests_properties(rpc-observation-lifecycle PROPERTIES TIMEOUT 60)
   add_test(NAME rpc-session-lifecycle COMMAND rpc_session_test
     $<TARGET_FILE:arcdroid_libretro_test> --lifecycle)
   add_test(NAME rpc-session-switch COMMAND "${Python3_EXECUTABLE}"
@@ -2218,6 +2255,16 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_hot_test.py"
     $<TARGET_FILE:rpc_runner> $<TARGET_FILE:arcdroid_rpcplan_libretro> "${RPC_PLAN_DIR}")
   set_tests_properties(rpc-hot-throughput rpc-memory-timing-2 PROPERTIES TIMEOUT 1800)
+  set(RPC_OBSERVATION_PROFILE full)
+  if(ARCDROID_SANITIZERS)
+    set(RPC_OBSERVATION_PROFILE sanitizer)
+  endif()
+  add_test(NAME rpc-observation-plan COMMAND "${Python3_EXECUTABLE}" -B
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_observation_plan_test.py"
+    $<TARGET_FILE:rpc_runner> $<TARGET_FILE:arcdroid_rpcplan_libretro>
+    $<TARGET_FILE:arcdroid_libretro> "${RPC_PLAN_DIR}" "${RPC_OBSERVATION_PROFILE}")
+  set_tests_properties(rpc-observation-plan PROPERTIES TIMEOUT 300 RUN_SERIAL TRUE)
+
   add_test(NAME rpc-runner-dump COMMAND "${Python3_EXECUTABLE}" -B
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_runner_dump_test.py"
     $<TARGET_FILE:rpc_runner> $<TARGET_FILE:arcdroid_rpcplan_libretro> "${RPC_PLAN_DIR}")
@@ -2545,6 +2592,9 @@ if(BUILD_TESTING AND NOT ANDROID)
       engine/rpcemu/src core libretro/include "${CMAKE_CURRENT_BINARY_DIR}/generated")
     if(kind STREQUAL "session")
       target_compile_definitions(rpc_jump_repeat_${kind} PRIVATE ARCDROID_TEST_FAULTS=1 RETRO_IMPORT_SYMBOLS=1)
+      if(ARCDROID_SANITIZERS)
+        target_compile_definitions(rpc_jump_repeat_${kind} PRIVATE ARCDROID_SANITIZER_PROFILE=1)
+      endif()
       target_link_libraries(rpc_jump_repeat_${kind} PRIVATE arcdroid_core ${CMAKE_DL_LIBS})
       add_dependencies(rpc_jump_repeat_${kind} arcdroid_libretro_test rpc_session_test test-fixtures)
       add_test(NAME rpc-windows-jump-repeat-session COMMAND rpc_jump_repeat_${kind}

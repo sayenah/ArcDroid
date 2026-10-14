@@ -698,3 +698,13 @@ void arc_rpc_mem_stats(ArcRpcMemStats *out)
     if (!out) return;
     *out = m.stats; out->instructions = arc_rpc_mem_fast.instructions; out->hits += arc_rpc_mem_fast.fetch_hits; out->buffered_words = m.bwords; out->buffered_packets = m.bcount;
 }
+
+#if defined(ARCDROID_TEST_FAULTS)
+/* Snapshot private timing state without flushing or servicing any request. */
+size_t arc_rpc_mem_observation_snapshot(void *out,size_t capacity)
+{
+    size_t n=sizeof(m)+sizeof(arc_rpc_mem_fast);
+    if(!out || capacity<n)return n;
+    memcpy(out,&m,sizeof(m));memcpy((uint8_t *)out+sizeof(m),&arc_rpc_mem_fast,sizeof(arc_rpc_mem_fast));return n;
+}
+#endif

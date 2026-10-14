@@ -9,6 +9,7 @@
 #include "libretro.h"
 #include "rpc_session.h"
 #include "arc_test_plan.h"
+#include "rpc_observer.h"
 #include <inttypes.h>
 #include <errno.h>
 #include <math.h>
@@ -82,6 +83,8 @@ static void dump_video(const void *data, unsigned width, unsigned height, size_t
     }
 }
 
+static bool fail_observation_close;
+#define ARC_RUNNER_VFS_CLOSE_RESULT(h,result) ((fail_observation_close && (h)->writable)?-1:(result))
 #define ARC_RUNNER_VFS_WRITE_REFUSE(path) (fail_jfd_store && (strstr(path,"/arcdroid/jfd/") || strstr(path,"\\arcdroid\\jfd\\")))
 #include "rpc_runner_vfs.h"
 static void hash_byte(uint64_t *hash, unsigned byte)
@@ -168,6 +171,7 @@ int main(int argc, char **argv)
     uint64_t fail_alloc = 0, fault_at = UINT64_MAX;
     for (int i = 1; i < argc; ++i) {
         const char *key = argv[i];
+        if (!strcmp(key,"--fail-observation-close")) { fail_observation_close=true;continue; }
         if (!strcmp(key,"--fail-jfd-store")) { fail_jfd_store=true;continue; }
         if (!strcmp(key,"--reject")) { reject = true; continue; }
         if (!strcmp(key,"--cmos")) { print_cmos = true; continue; }
@@ -301,6 +305,13 @@ int main(int argc, char **argv)
         ArcRpcTestSnapshot s; ArcRpcAudioCounts a; ArcRpcVideoStatus v; ArcRpcCapture c;
         snapshot(&s); counts(&a); status(&v); capture(&c);
         if(plan_phase && plan_phase()==3){result=1;break;}
+        void (*observation_status)(ArcRpcTraceStatus *)=NULL;
+        void *observation_symbol=symbol("arc_engine_test_observation_status");
+        if(observation_symbol){memcpy(&observation_status,&observation_symbol,sizeof(observation_status));
+            ArcRpcTraceStatus observation;observation_status(&observation);
+            if(observation.integer_attempts)fprintf(stderr,"RPC observation: integer_attempts=%" PRIu64 "\n",observation.integer_attempts);
+            if(observation.incomplete)fprintf(stderr,"RPC observation: incomplete %s lost=%" PRIu64 "\n",
+                observation.failed?"write-failure":"loss",observation.lost);}
         uint64_t elapsed = frame_ns();
         period_ns = (uint64_t)llround(1000000000.0 / fps);
         /* Frontend wall-clock windows measure sustained device conditions.
@@ -400,7 +411,11 @@ int main(int argc, char **argv)
         fprintf(stderr,"hd-cost frames=%" PRIu64 " max_ns=%" PRIu64 " over_D161=%" PRIu64 " budget=%s\n",hd_cost_frames,hd_cost_max,hd_cost_over,hd_cost_over?"exceeded":"passed");}
     if(timing && fclose(timing))result=2;
     if(ferror(stdout))result=2;
-    unload(); deinit(); vfs_assert_no_open_handles();
+    unload();
+    bool (*observation_complete)(void)=NULL;void *observation_final=symbol("arc_test_plan_observation_complete");
+    if(observation_final){memcpy(&observation_complete,&observation_final,sizeof(observation_complete));
+        if(!observation_complete())fprintf(stderr,"RPC observation: incomplete final sink/close\n");}
+    deinit();vfs_assert_no_open_handles();
 #if defined(_WIN32)
     FreeLibrary(library);
 #else

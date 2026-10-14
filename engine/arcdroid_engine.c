@@ -391,3 +391,19 @@ RETRO_API const ArcEngineBackendOps *arc_rpc_test_engine_api(void)
    return &api;
 }
 #endif
+
+#if defined(ARCDROID_TEST_FAULTS)
+void arc_engine_test_observation_profile(bool unmatched,unsigned quota)
+{
+    if(!arc_engine_is_rpc())return;
+    arc_rpc_session_test_quota(quota);
+    ArcRpcObserveFilter f={.modes=~0u,.swi=0xffffff,.swi_mask=0xffffff,.kinds=ARC_RPC_OBS_SWI};
+    arc_rpc_observer_test_filter(ARC_RPC_OBS_BOOT,unmatched?&f:NULL);
+}
+void arc_engine_test_observation_trace(bool enabled,bool paths)
+{ arc_rpc_observer_trace(enabled && arc_engine_is_rpc(),paths); }
+void arc_engine_test_observation_drain(ArcRpcTraceSink sink,void *opaque)
+{ arc_rpc_observer_trace_drain(sink,opaque); }
+RETRO_API void arc_engine_test_observation_status(ArcRpcTraceStatus *status)
+{ arc_rpc_observer_trace_status(status); }
+#endif

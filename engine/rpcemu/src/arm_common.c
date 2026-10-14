@@ -22,6 +22,7 @@
 
 /* arm_common.c - sections of code that are shared between the interpreted and dynarec builds */
 
+#include "rpc_observer.h"
 #include <stdint.h>
 
 #include "rpcemu.h"
@@ -567,7 +568,10 @@ data_abort:
 int
 opSWI(uint32_t opcode)
 {
-	(void)opcode;
+	/* ArcDroid modification (2026-10-13, observation-r3c1): current SWI
+	 * shortcut only. Caller already passed its condition; raw PC/event
+	 * continuation remains entirely in the interpreter. */
+	if(arc_rpc_observer_active && arc_rpc_observe_swi(opcode))return 0;
 	exception(SUPERVISOR, 0xc, 4);
 
 	return 0;

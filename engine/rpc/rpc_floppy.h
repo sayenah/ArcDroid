@@ -94,4 +94,6 @@ void arc_rpc_fdc_eject(unsigned drive);
 void arc_rpc_fdc_close(void);
 /* Quiesce mechanics in the old clock domain before a session clock reset. */
 void arc_rpc_fdc_rebase(void);
+bool arc_rpc_fdc_idle(unsigned drive);
+uint64_t arc_rpc_fdc_media_generation(unsigned drive);
 #endif

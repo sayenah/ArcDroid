@@ -19,6 +19,9 @@
  */
 
 /* ArcDroid modification (2026-10-06): define rotate-right by zero. */
+/* ArcDroid modification (2026-10-13, observation-r3c1): settled same-mode
+ * exception-return notification; no mode event during bank switching. */
+#include "rpc_observer.h"
 #ifndef ARM_COMMON_H
 #define ARM_COMMON_H
 
@@ -330,6 +333,7 @@ arm_write_r15(uint32_t opcode, uint32_t dest)
 			updatemode(arm.reg[cpsr] & arm.mmask);
 		}
 	}
+    if(arc_rpc_observer_active)arc_rpc_observe_return(arm.mode);
 }
 
 /**

@@ -27,6 +27,9 @@
   work, and GCC stuff tends to crash.*/
 //#define FPA
 
+/* ArcDroid modification (2026-10-13, observation-r3c1): gated original-fetch,
+ * continuation and completed-transition hooks; no timing service or yield. */
+#include "rpc_observer.h"
 #include <stdio.h>
 #include <string.h>
 #include <stdint.h>
@@ -570,6 +573,8 @@ arc_rpc_arm_exec_batch(unsigned count, ArcRpcCpuBatch *batch)
 		uint32_t lhs, rhs, dest;
 		uint32_t addr, data, offset, writeback;
 
+        bool observing=arc_rpc_observer_active;
+        if(observing)arc_rpc_observe_begin(PC);
         arc_rpc_mem_instruction_begin();
         /* Fetch checks permission at every instruction, including a cached
          * translation hit and a 1 KiB boundary within the same 4 KiB page. */
@@ -582,6 +587,7 @@ arc_rpc_arm_exec_batch(unsigned count, ArcRpcCpuBatch *batch)
         }
         opcode = pccache2[(PC & 0x3ffu) >> 2];
         arc_rpc_mem_opcode(opcode);
+        if(observing)arc_rpc_observe_fetched(pccache2);
 
 		if (flaglookup[opcode >> 28][(*pcpsr) >> 28]) {
             if (!arm.arch_v4 && (((opcode & 0xe0000f0) == 0xb0) ||
@@ -1888,6 +1894,7 @@ arc_rpc_arm_exec_batch(unsigned count, ArcRpcCpuBatch *batch)
 
 	// This label is used to skip the switch above
 skip:
+        if(observing)arc_rpc_observe_mode();
 
 		if (arm.event != 0) {
 			if (!ARM_MODE_32(arm.mode)) {
@@ -1910,6 +1917,7 @@ skip:
 
 		arm.reg[15] += 4;
 instruction_done:
+        if(observing)arc_rpc_observe_mode();
         arc_rpc_mem_instruction_end(PC);
         if (batch && (linecyc + 1 == (int)count ||
             !arc_rpc_mem_batch_next(batch, arc_rpc_cpu_idle))) {

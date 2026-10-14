@@ -36,7 +36,8 @@
       "patches": [
         "scheduler-mmu-owned-memory",
         "scheduler-mmu-batching",
-        "cpu-smlal-modulo"
+        "cpu-smlal-modulo",
+        "observation-r3c1"
       ]
     },
     {
@@ -52,7 +53,8 @@
       "sha256": "46ceb7b225e07f2d0da0024f7997b36e4594bc091ae8247f20deedf963b3c454",
       "licence_header": "/*\n  RPCEmu - An Acorn system emulator\n\n  Copyright (C) 2005-2010 Sarah Walker\n\n  This program is free software; you can redistribute it and/or modify\n  it under the terms of the GNU General Public License as published by\n  the Free Software Foundation; either version 2 of the License, or\n  (at your option) any later version.\n\n  This program is distributed in the hope that it will be useful,\n  but WITHOUT ANY WARRANTY; without even the implied warranty of\n  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the\n  GNU General Public License for more details.\n\n  You should have received a copy of the GNU General Public License\n  along with this program; if not, write to the Free Software\n  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.\n */",
       "patches": [
-        "isolation-swi"
+        "isolation-swi",
+        "observation-r3c1"
       ]
     },
     {
@@ -61,7 +63,8 @@
       "sha256": "9e598f9c519cb980ee1b189f903611da7975b7af8cf714ac5a08643544805a65",
       "licence_header": "/*\n  RPCEmu - An Acorn system emulator\n\n  Copyright (C) 2005-2010 Sarah Walker\n\n  This program is free software; you can redistribute it and/or modify\n  it under the terms of the GNU General Public License as published by\n  the Free Software Foundation; either version 2 of the License, or\n  (at your option) any later version.\n\n  This program is distributed in the hope that it will be useful,\n  but WITHOUT ANY WARRANTY; without even the implied warranty of\n  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the\n  GNU General Public License for more details.\n\n  You should have received a copy of the GNU General Public License\n  along with this program; if not, write to the Free Software\n  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.\n */",
       "patches": [
-        "scheduler-mmu-owned-memory"
+        "scheduler-mmu-owned-memory",
+        "observation-r3c1"
       ]
     },
     {
@@ -89,7 +92,8 @@
       "patches": [
         "scheduler-mmu-owned-memory",
         "containment-device-scheduler",
-        "scheduler-mmu-batching"
+        "scheduler-mmu-batching",
+        "observation-r3c1"
       ]
     },
     {
@@ -111,7 +115,8 @@
         "containment-device-scheduler",
         "devices-fdc-control-status",
         "devices-fdc-reset-readiness",
-        "devices-r2b-floppy"
+        "devices-r2b-floppy",
+        "observation-r3c1"
       ]
     },
     {
@@ -198,7 +203,8 @@
       "patches": [
         "scheduler-mmu-owned-memory",
         "devices-board-cmos-gate",
-        "session-preparation-r3b2b"
+        "session-preparation-r3b2b",
+        "observation-r3c1"
       ]
     },
     {
@@ -457,6 +463,19 @@
       ],
       "reason": "D-170 suspended construction: one owned allocation, <=1 MiB RAM clear or <=32 KiB mirrored ROM copy per start step, with identical final bytes and partial-start teardown.",
       "group": "session orchestration"
+    },
+    {
+      "id": "observation-r3c1",
+      "files": [
+        "src/arm.c",
+        "src/arm_common.c",
+        "src/cp15.c",
+        "src/mem.c",
+        "src/fdc.c",
+        "src/arm_common.h"
+      ],
+      "reason": "D-174/D-175 gated CPU observations, pure MMU/backing inspection and internal controller-idle services; policy remains ArcDroid-owned.",
+      "group": "observation"
     }
   ],
   "adapted_sources": [

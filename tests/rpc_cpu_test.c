@@ -35,7 +35,11 @@ void *arc_rpc_alloc(size_t size)
 }
 void fatal(const char *format, ...)
 {
+#if defined(ARCDROID_OBSERVATION_TEST)
+    va_list args;va_start(args,format);vfprintf(stderr,format,args);va_end(args);fputc('\n',stderr);
+#else
     (void)format;
+#endif
     assert(protected);
     longjmp(boundary, 1);
 }
@@ -370,8 +374,8 @@ static unsigned tlb_slot(uint32_t va)
 static void fetch_memo_rewalk(CPUModel model)
 {
     const uint32_t va = 0x00400100, alias = 0x10500100;
-    /* Absent VRAM isolates backed=false in a cache-eligible region. I/O,
-     * reserved and EASI mappings also change the physical timing region. */
+    /* Absent VRAM, I/O, reserved and EASI targets all isolate backed=false.
+     * The region term is redundant for current backed allocations. */
     const uint32_t targets[] = {0x02000000, 0x03000000, 0x04000000, 0x08000000};
     uint32_t *table = ram00 + (0x4000 >> 2);
     assert(!vram && tlb_slot(va) == tlb_slot(alias));

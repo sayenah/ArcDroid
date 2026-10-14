@@ -43,11 +43,13 @@ static void tick(void)
     assert(event==ARC_RPC_EVENT_FDC);fdc_callback();
 }
 static void command(uint8_t op,const uint8_t *p,unsigned n)
-{ assert((fdc_read(0x3f4)&0xc0)==0x80);fdc_write(0x3f5,op);for(unsigned i=0;i<n;++i)fdc_write(0x3f5,p[i]); }
+{ assert((fdc_read(0x3f4)&0xc0)==0x80);fdc_write(0x3f5,op);
+  if(n)assert(!arc_rpc_fdc_idle(0)&&!arc_rpc_fdc_idle(1));
+  for(unsigned i=0;i<n;++i)fdc_write(0x3f5,p[i]); }
 static void result(uint8_t *out,unsigned count)
 {
     assert((fdc_read(0x3f4)&0xf0)==0xd0);
-    for(unsigned i=0;i<count;++i)out[i]=fdc_read(0x3f5);
+    for(unsigned i=0;i<count;++i){assert(!arc_rpc_fdc_idle(0)&&!arc_rpc_fdc_idle(1));out[i]=fdc_read(0x3f5);}
     assert((fdc_read(0x3f4)&0xf0)==0x80);
     assert(!(iomd.fiq.status&IOMD_FIQ_FLOPPY_DMA_REQUEST));
 }
@@ -58,7 +60,11 @@ static void sis(uint8_t st0,uint8_t pcn)
 static void start(void)
 {
     arc_rpc_fdc_close();memset(&iomd,0,sizeof(iomd));assert(arc_rpc_scheduler_init(&clock_state,100));arc_rpc_timing_bind(&clock_state);
-    fdc_reset();fdc_write(0x3f2,0x1c);tick();for(unsigned d=0;d<4;++d)sis(0xc0|d,0);
+    fdc_reset();assert(!arc_rpc_fdc_idle(0)&&!arc_rpc_fdc_idle(1));
+    fdc_write(0x3f2,0x1c);assert(!arc_rpc_fdc_idle(0)&&!arc_rpc_fdc_idle(1));
+    tick();assert(!arc_rpc_fdc_idle(0)&&!arc_rpc_fdc_idle(1));
+    for(unsigned d=0;d<4;++d)sis(0xc0|d,0);
+    assert(arc_rpc_fdc_idle(0)&&arc_rpc_fdc_idle(1));
     uint8_t specify[]={0xf1,2};command(3,specify,2);fdc_write(0x3f7,2);
 }
 static void mount_raw(unsigned drive,bool writable)
@@ -374,6 +380,38 @@ static void qa_refusals_waits(void)
     unsigned bound=0;while(!(iomd.fiq.status&1)){assert(++bound<100000);tick();}
     assert(clock_state.now_ns==UINT64_C(400032000));arc_rpc_fdc_eject(0);
 }
+static void idle_services(void)
+{
+    uint8_t bytes[7];
+    for(unsigned drive=0;drive<2;++drive){
+        start();mount_raw(0,true);mount_raw(1,true);fdc_write(0x3f2,0x3c|drive);
+        uint64_t generation=arc_rpc_fdc_media_generation(drive);
+        assert(arc_rpc_fdc_idle(0)&&arc_rpc_fdc_idle(1));
+        /* Motor and recurring index IRQs do not block admission. */
+        tick();assert(arc_rpc_fdc_idle(0)&&arc_rpc_fdc_idle(1));
+        command(15,(const uint8_t[]){drive,1},2);
+        assert(!arc_rpc_fdc_idle(drive)&&arc_rpc_fdc_idle(drive^1));
+        while(!(iomd.irqb.status&IOMD_IRQB_FLOPPY))tick();
+        assert(!arc_rpc_fdc_idle(drive)&&arc_rpc_fdc_idle(drive^1));
+        /* Reading an unrelated result acknowledges IRQ, preserving seek cause. */
+        command(16,NULL,0);result(bytes,1);assert(!(iomd.irqb.status&IOMD_IRQB_FLOPPY));
+        assert(!arc_rpc_fdc_idle(drive));sis(0x20|drive,1);assert(arc_rpc_fdc_idle(drive));
+        command(7,(const uint8_t[]){drive},1);assert(!arc_rpc_fdc_idle(drive));
+        while(!(iomd.irqb.status&IOMD_IRQB_FLOPPY))tick();sis(0x20|drive,0);assert(arc_rpc_fdc_idle(drive));
+        data_command(0x46,drive,0,0,0,0,drive?1:3,0,255);
+        assert(!arc_rpc_fdc_idle(drive)&&!arc_rpc_fdc_idle(drive^1));
+        while(!(iomd.fiq.status&1))tick();assert(!arc_rpc_fdc_idle(drive));
+        /* IRQ/FIQ masks never decide controller idle. */
+        iomd.fiq.mask=0;iomd.irqb.mask=0;assert(!arc_rpc_fdc_idle(drive));
+        (void)fdc_dma_read(0x302a000);wait_result();assert(!arc_rpc_fdc_idle(drive));
+        (void)fdc_read(0x3f5);assert(!arc_rpc_fdc_idle(drive));
+        for(unsigned i=1;i<7;++i)(void)fdc_read(0x3f5);
+        assert(arc_rpc_fdc_idle(drive)&&arc_rpc_fdc_idle(drive^1));
+        arc_rpc_fdc_eject(drive);assert(arc_rpc_fdc_media_generation(drive)!=generation);
+        fdc_write(0x3f2,0x38|drive);assert(!arc_rpc_fdc_idle(0)&&!arc_rpc_fdc_idle(1));
+    }
+    arc_rpc_fdc_close();assert(!arc_rpc_fdc_idle(0)&&!arc_rpc_fdc_idle(2));
+}
 int main(int argc,char **argv)
 {
     struct retro_vfs_interface vfs={0};vfs.open=open_file;vfs.close=close_file;vfs.size=file_size;vfs.seek=seek_file;
@@ -534,6 +572,6 @@ int main(int argc,char **argv)
         request.r=1;assert(arc_rpc_floppy_select(&model,&request,0,&selected)==ARC_RPC_FLOPPY_NOT_FOUND);
     }
     arc_rpc_floppy_close(&model);assert(!arc_rpc_floppy_valid(&model,1,selected.generation));arc_rpc_fdc_close();
-    qa_drive_isolation();qa_fifo();qa_controls();qa_mechanics();qa_refusals_waits();media_change_seek();pending_irq_cancel();arc_rpc_fdc_close();
+    idle_services();qa_drive_isolation();qa_fifo();qa_controls();qa_mechanics();qa_refusals_waits();media_change_seek();pending_irq_cancel();arc_rpc_fdc_close();
     puts("rpc-fdc: command fields, drive isolation, FIFO/ND, TC, media-change mechanics, pending IRQ and generations passed");return 0;
 }
