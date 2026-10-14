@@ -570,6 +570,10 @@ ARC_RPC_ARM_LOOP(unsigned count, ArcRpcCpuBatch *batch)
      * exact and every instruction still checks current fetch permissions. */
     if (count > 200) fatal("Instruction batch exceeds boundary");
 	int linecyc;
+#if ARC_RPC_ARM_OBSERVING == 2
+    unsigned accounted=0;uint32_t observed_mode=arm.mode;
+    arc_rpc_observe_batch_begin();
+#endif
     arc_rpc_mem_batch_begin(batch);
 
 	for (linecyc = 0; linecyc < (int)count; linecyc++) {
@@ -577,9 +581,13 @@ ARC_RPC_ARM_LOOP(unsigned count, ArcRpcCpuBatch *batch)
 		uint32_t lhs, rhs, dest;
 		uint32_t addr, data, offset, writeback;
 
-#if ARC_RPC_ARM_OBSERVING
+#if ARC_RPC_ARM_OBSERVING == 1
         bool observing=arc_rpc_observer_active;
         if(observing)arc_rpc_observe_begin(PC);
+#elif ARC_RPC_ARM_OBSERVING == 2
+#if defined(ARCDROID_TEST_FAULTS)
+        if(arc_rpc_mem_fast.integer_batch)++arc_rpc_observer_integer_attempts;
+#endif
 #endif
         arc_rpc_mem_instruction_begin();
         /* Fetch checks permission at every instruction, including a cached
@@ -593,7 +601,7 @@ ARC_RPC_ARM_LOOP(unsigned count, ArcRpcCpuBatch *batch)
         }
         opcode = pccache2[(PC & 0x3ffu) >> 2];
         arc_rpc_mem_opcode(opcode);
-#if ARC_RPC_ARM_OBSERVING
+#if ARC_RPC_ARM_OBSERVING == 1
         if(observing)arc_rpc_observe_fetched(pccache2);
 #endif
 
@@ -1887,7 +1895,13 @@ ARC_RPC_ARM_LOOP(unsigned count, ArcRpcCpuBatch *batch)
 			case 0xf4: case 0xf5: case 0xf6: case 0xf7:
 			case 0xf8: case 0xf9: case 0xfa: case 0xfb:
 			case 0xfc: case 0xfd: case 0xfe: case 0xff:
+#if ARC_RPC_ARM_OBSERVING == 2
+                arc_rpc_observe_advance((unsigned)linecyc+1-accounted);accounted=(unsigned)linecyc+1;
+                if(!arc_rpc_observe_swi_at(opcode,PC,pccache2))opSWI(opcode);
+                if(arc_rpc_observer_context || !arc_rpc_observer_active)count=(unsigned)linecyc+1;
+#else
 				opSWI(opcode);
+#endif
 				break;
 
 			default:
@@ -1902,8 +1916,10 @@ ARC_RPC_ARM_LOOP(unsigned count, ArcRpcCpuBatch *batch)
 
 	// This label is used to skip the switch above
 skip:
-#if ARC_RPC_ARM_OBSERVING
+#if ARC_RPC_ARM_OBSERVING == 1
         if(observing)arc_rpc_observe_mode();
+#elif ARC_RPC_ARM_OBSERVING == 2
+        if(arm.mode!=observed_mode){arc_rpc_observe_unsubscribed_mode(observed_mode);observed_mode=arm.mode;}
 #endif
 
 		if (arm.event != 0) {
@@ -1927,8 +1943,10 @@ skip:
 
 		arm.reg[15] += 4;
 instruction_done:
-#if ARC_RPC_ARM_OBSERVING
+#if ARC_RPC_ARM_OBSERVING == 1
         if(observing)arc_rpc_observe_mode();
+#elif ARC_RPC_ARM_OBSERVING == 2
+        if(arm.mode!=observed_mode){arc_rpc_observe_unsubscribed_mode(observed_mode);observed_mode=arm.mode;}
 #endif
         arc_rpc_mem_instruction_end(PC);
         if (batch && (linecyc + 1 == (int)count ||
@@ -1937,6 +1955,10 @@ instruction_done:
             break;
         }
 	}
+#if ARC_RPC_ARM_OBSERVING == 2
+    arc_rpc_observe_advance((unsigned)linecyc-accounted);
+    arc_rpc_observe_batch_end();
+#endif
 	inscount += (unsigned)linecyc;
     if (arc_rpc_mem_fast.integer_batch) arc_rpc_mem_batch_flush();
 
@@ -1965,9 +1987,18 @@ instruction_done:
 #undef arm_write_r15
 #undef ARC_RPC_ARM_LOOP
 #undef ARC_RPC_ARM_OBSERVING
+/* ArcDroid modification (R3c-2 run E, D-180): no-watch/no-mode/no-trace
+ * batches defer context to SWIs and account instruction prefixes in bulk. */
+#define arm_load_multiple_s arc_rpc_arm_load_multiple_s
+#define opSWI arc_rpc_opSWI
+#define ARC_RPC_ARM_LOOP arc_rpc_arm_exec_cheap
+#define ARC_RPC_ARM_OBSERVING 2
+#include "arm.c"
+#undef ARC_RPC_ARM_LOOP
+#undef ARC_RPC_ARM_OBSERVING
 int arc_rpc_arm_exec_batch(unsigned count, ArcRpcCpuBatch *batch)
 {
-    return arc_rpc_observer_active ? arc_rpc_arm_exec_observed(count,batch) :
+    return arc_rpc_observer_active ? (arc_rpc_observer_context?arc_rpc_arm_exec_observed(count,batch):arc_rpc_arm_exec_cheap(count,batch)) :
         arc_rpc_arm_exec_unobserved(count,batch);
 }
 

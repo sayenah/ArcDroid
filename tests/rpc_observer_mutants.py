@@ -15,14 +15,20 @@ cache = (build/'CMakeCache.txt').read_text()
 ninja = next(x.split('=',1)[1] for x in cache.splitlines() if x.startswith('CMAKE_MAKE_PROGRAM:FILEPATH='))
 commands = [x['command'] for x in json.loads(subprocess.check_output([ninja,'-t','compdb','-x'],cwd=build,text=True))]
 mutants = [
- ('fast-gate','engine/rpcemu/src/arm.c','#if ARC_RPC_ARM_OBSERVING\n        bool observing=arc_rpc_observer_active;','#if 1\n        bool observing=true;'),
- ('disarm-gate','engine/rpc/rpc_observer.c','if(!arc_rpc_observer_active)return;','if(false)return;'),
+ ('fast-gate','engine/rpcemu/src/arm.c','#if ARC_RPC_ARM_OBSERVING == 1\n        bool observing=arc_rpc_observer_active;','#if 1\n        bool observing=true;'),
+ ('disarm-gate','engine/rpc/rpc_observer.c','void arc_rpc_observe_mode(void)\n{\n    if(!arc_rpc_observer_active)return;','void arc_rpc_observe_mode(void)\n{\n    if(false)return;'),
+ ('cheap-prefix','engine/rpcemu/src/arm.c','arc_rpc_observe_advance((unsigned)linecyc+1-accounted)','arc_rpc_observe_advance(0)'),
+ ('cheap-batch','engine/rpcemu/src/arm.c','arc_rpc_observe_advance((unsigned)linecyc-accounted)','arc_rpc_observe_advance(0)'),
+ ('cheap-watch-switch','engine/rpcemu/src/arm.c','if(arc_rpc_observer_context || !arc_rpc_observer_active)count=','if(false)count='),
+ ('cheap-mode-order','engine/rpc/rpc_observer.c','else if(arm.mode!=old_mode && observers_active)++observer.order;','else if(false)++observer.order;'),
+ ('cheap-swi-fetch','engine/rpc/rpc_observer.c','observer.origin.pc=pc;observer.origin.mode=arm.mode;\n    observer.origin.word=page','observer.origin.pc=pc+4;observer.origin.mode=arm.mode;\n    observer.origin.word=page'),
+ ('cheap-fault-prefix','engine/rpc/rpc_observer.c','observer.instruction+=arc_rpc_mem_fast.instructions-observer.batch.start-observer.batch.accounted;','observer.instruction+=0;'),
  ('condition','engine/rpcemu/src/arm.c','if (flaglookup[opcode >> 28][(*pcpsr) >> 28])','if (1)'),
  ('x-bit','engine/rpc/rpc_observer.c','e.swi=opcode&0xffffffu','e.swi=opcode&0xfdffffu'),
  ('mode-filter','engine/rpc/rpc_observer.c','(f->modes&(1u<<e->mode))','true'),
  ('address-match','engine/rpc/rpc_observer.c','e.pc==observer.watches[i].pc &&','true &&'),
  ('sp-match','engine/rpc/rpc_observer.c','arm.reg[13]==observer.watches[i].sp','true'),
- ('disqualify','engine/rpc/rpc_observer.c','observer.watches[i].live=false; /* end before callbacks can replace */','if(e.matched)observer.watches[i].live=false;'),
+ ('disqualify','engine/rpc/rpc_observer.c','observer.watches[i].live=false;gate(); /* end before callbacks can replace */','if(e.matched)observer.watches[i].live=false;'),
  ('same-mode-return','engine/rpc/rpc_observer.c','observer.watches[i].wait_return || arm.mode','false || arm.mode'),
  ('inspector-values','engine/rpc/rpc_inspector.c','return out && arc_rpc_inspect_translate','return false && out && arc_rpc_inspect_translate'),
  ('inspector-permission','engine/rpcemu/src/cp15.c','else if(ap==1 && !privileged)return false;','else if(false)return false;'),

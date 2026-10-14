@@ -115,3 +115,18 @@ with tempfile.TemporaryDirectory(prefix='arc-rpc-runner-disc-') as temp:
         (d/'disc.arcplan').write_text(original+f'observer_disc_devices={value}\n')
         assert subprocess.run(args,capture_output=True).returncode!=0,('invalid device mask',value)
 print('rpc-runner: separate unspecified/drive-0 qualification masks, forbidden drives and invalid device masks passed')
+
+# Cost-fixture smoke: same warmed branch, real held user-report watch, and
+# unchanged guest output when observers only observe it.
+sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'tools'))
+from rpc_hot_workload import generate
+with tempfile.TemporaryDirectory(prefix='arc-rpc-held-watch-') as temp:
+    d=Path(temp);generate(d,True);original=(d/'hot.arcplan').read_text()
+    args=[runner,'--core',core,'--plan',str(d/'hot.arcplan'),'--system',str(d),'--frames','4']
+    off=subprocess.run(args,capture_output=True,text=True,check=True)
+    (d/'hot.arcplan').write_text(original+'observer_cells=252\n')
+    on=subprocess.run(args,capture_output=True,text=True,check=True)
+    assert off.stdout==on.stdout,'held watch changed guest projection'
+    assert 'recognised-open=1 answer-available=0 modal-unknown=0' in on.stderr
+    assert 'modal-unknown=1' not in on.stderr,'held-watch fixture expired or lost its watch'
+print('rpc-runner: authored hot held-watch fixture, production report/watch admission and unchanged guest projection passed')

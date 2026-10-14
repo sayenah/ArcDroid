@@ -198,6 +198,60 @@ static void completion(CPUModel model)
     assert(!arc_rpc_observer_test_origin().epoch);
     assert(arc_rpc_observer_test_attempts()==attempts);
 }
+/* Long batches without watches must feed later instruction deadlines and
+ * switch to checked fetches immediately when a SWI admits a watch. */
+static void interpreter_equivalence(CPUModel model)
+{
+    uint32_t words[]={0xe3a01201,0xe3a02001,0xe4812004,0xe2822001,0xe3520014,
+        0x1afffffb,0xef000007,0xe1a00002,0xeafffffe};
+    uint32_t saved[9];memcpy(saved,rom+0x100/4,sizeof(saved));
+    for(unsigned width=0;width<2;++width){
+        ARMState baseline;uint32_t data[32];
+        for(unsigned path=0;path<3;++path){
+            fixture(model,width?16:0,0x100);memcpy(rom+0x100/4,words,sizeof(words));
+            if(path){ArcRpcObserveFilter f={.modes=~0u,.kinds=path==1?ARC_RPC_OBS_SWI:ARC_RPC_OBS_SWI|ARC_RPC_OBS_MODE};
+                assert(arc_rpc_observer_test_filter(ARC_RPC_OBS_DISC,&f));}
+            arc_rpc_arm_exec_count(200);
+            if(!path){baseline=arm;memcpy(data,ram00,sizeof(data));}
+            else {assert(!memcmp(&baseline,&arm,sizeof(arm)));assert(!memcmp(data,ram00,sizeof(data)));}
+        }
+    }
+    memcpy(rom+0x100/4,saved,sizeof(saved));
+}
+static void cheap_events(CPUModel model)
+{
+    uint32_t saved_words[1024];memcpy(saved_words,rom+0x100/4,sizeof(saved_words));
+    for(unsigned expiry=0;expiry<2;++expiry){
+        fixture(model,16,0x100);
+        ArcRpcObserveFilter f={.modes=~0u,.kinds=ARC_RPC_OBS_SWI|ARC_RPC_OBS_CONTINUATION|ARC_RPC_OBS_WATCH_LOST,.callback=observe};
+        assert(arc_rpc_observer_test_filter(ARC_RPC_OBS_DISC,&f));assert(!arc_rpc_observer_context);
+        for(unsigned i=0;i<1000;++i)rom[0x100/4+i]=0xe1a00000;
+        for(unsigned i=0;i<5;++i)assert(arc_rpc_arm_exec_count(200)==200);
+        assert(arc_rpc_observer_test_attempts()>=1000 && !seen_count && !arc_rpc_observer_test_origin().epoch);
+        uint64_t base=arc_rpc_observer_test_attempts();uint32_t pc=PC;
+        rom[pc/4]=0xef000007;rom[pc/4+1]=0x01a00000;
+        expected_pc=pc+4;expected_mode=16;expected_sp=arm.reg[13];action=expiry?6:1;
+        assert(arc_rpc_arm_exec_count(8)==1); /* admission ends the cheap batch */
+        assert(seen_count==1 && seen[0].pc==pc && seen[0].instruction==base+1 && watch);
+        action=0;arc_rpc_arm_exec_count(1);arc_rpc_arm_exec_count(1);
+        assert(!arc_rpc_observer_watch_live(ARC_RPC_OBS_DISC,watch) && !arc_rpc_observer_context);
+        assert(seen_count==2 && seen[1].instruction==base+3);
+        assert(seen[1].kind==(expiry?ARC_RPC_OBS_WATCH_LOST:ARC_RPC_OBS_CONTINUATION));
+        if(!expiry)assert(seen[1].matched); /* condition-failed instruction still matches */
+    }
+    ArcRpcObservation saved[2];
+    for(unsigned tracing=0;tracing<2;++tracing){
+        fixture(model,16,0x100);
+        ArcRpcObserveFilter f={.modes=~0u,.kinds=ARC_RPC_OBS_SWI,.callback=observe};
+        assert(arc_rpc_observer_test_filter(ARC_RPC_OBS_DISC,&f));arc_rpc_observer_trace(tracing,false);
+        rom[0x100/4]=0xef000007;rom[0x104/4]=0xef000007;
+        uint64_t base_order=arc_rpc_observer_test_events(),base_attempt=arc_rpc_observer_test_attempts();
+        arc_rpc_arm_exec_count(4);assert(seen_count==2);
+        for(unsigned i=0;i<2;++i){seen[i].order-=base_order;seen[i].instruction-=base_attempt;
+            if(!tracing)saved[i]=seen[i];else assert(saved[i].order==seen[i].order && saved[i].instruction==seen[i].instruction);}
+    }
+    memcpy(rom+0x100/4,saved_words,sizeof(saved_words));
+}
 static void inspector(CPUModel model)
 {
     fixture(model,0x13,0x100);uint32_t value=0;uint8_t byte;
@@ -333,7 +387,36 @@ static void timing_events(CPUModel model)
     assert(seen[0].ns==ceiling(b,d) && seen[1].ns==seen[0].ns &&
         seen[2].ns==ceiling(2*b+fetch,d) && seen[3].ns==ceiling(3*b+2*fetch,d));
     for(unsigned i=0;i<4;++i){assert(seen[i].epoch==epoch);if(i)assert(seen[i].order>seen[i-1].order);}
+    /* The no-mode/no-trace entry captures the same pre-fetch SWI clock and
+     * original word backing even when a cold fetch starts memory service. */
+    fixture(model,16,0x100);
+    ArcRpcObserveFilter f={.modes=~0u,.kinds=ARC_RPC_OBS_SWI|ARC_RPC_OBS_CONTINUATION,.callback=observe};
+    assert(arc_rpc_observer_test_filter(ARC_RPC_OBS_DISC,&f));assert(!arc_rpc_observer_context);
+    rom[0x100/4]=0xef000007;rom[0x104/4]=0x01a00000;clock=(ArcRpcScheduler){0};
+    iomd.clkctrl=7;iomd.romcr0=iomd.romcr1=0x20;arc_rpc_mem_bind(&clock,model,rate);arc_rpc_mem_control(cp_read(1));
+    expected_pc=0x104;expected_mode=16;expected_sp=arm.reg[13];action=1;
+    timed_step(&clock);action=0;timed_step(&clock);timed_step(&clock);
+    assert(seen_count==2 && seen[0].ns==ceiling(b,d) && seen[1].ns==ceiling(3*b+2*fetch,d));
+    assert(seen[0].pc==0x100 && seen[0].backing.kind==ARC_RPC_BACKING_ROM && seen[0].backing.offset==0x100);
     arc_rpc_mem_bind(NULL,0,0);
+}
+static void cheap_fault(CPUModel model)
+{
+    uint32_t saved[6];memcpy(saved,rom+0x100/4,sizeof(saved));
+    fixture(model,19,0x100);
+    ArcRpcObserveFilter f={.modes=~0u,.kinds=ARC_RPC_OBS_SWI,.callback=observe};
+    assert(arc_rpc_observer_test_filter(ARC_RPC_OBS_DISC,&f));assert(!arc_rpc_observer_context);
+    for(unsigned i=0;i<5;++i)rom[0x100/4+i]=0xe1a00000;
+    rom[0x100/4+5]=0xe321f014; /* Authored invalid mode: existing fatal boundary. */
+    ArcRpcScheduler clock={0};arc_rpc_mem_bind(&clock,model,100);
+    uint64_t before=arc_rpc_observer_test_attempts(),epoch=arc_rpc_observer_epoch();
+    if(!setjmp(boundary)){arc_rpc_arm_exec_count(8);assert(0);}
+    /* The component boundary leaves retirement to its caller; the contained
+     * session's fatal() retires before its jump, with the same live counter. */
+    arc_rpc_observer_retire(false);
+    assert(arc_rpc_observer_test_attempts()==before+6 && arc_rpc_observer_epoch()==epoch+1);
+    assert(!arc_rpc_observer_active && !seen_count);
+    arc_rpc_mem_bind(NULL,0,0);memcpy(rom+0x100/4,saved,sizeof(saved));
 }
 static uint64_t media_generation=5;
 static unsigned resolutions,mutations,revalidation_action;
@@ -586,7 +669,8 @@ int main(int argc,char **argv)
         }
         arc_rpc_observer_retire(false);arc_rpc_memory_close();return 0;
     }
-    for(unsigned model=0;model<4;++model){watch_boundaries((CPUModel)model);identity_equality((CPUModel)model);identity_guest((CPUModel)model,true);events((CPUModel)model);timing_events((CPUModel)model);completion((CPUModel)model);inspector((CPUModel)model);services((CPUModel)model);trace_interrupt_burst((CPUModel)model);}
+    for(unsigned model=0;model<4;++model){interpreter_equivalence((CPUModel)model);cheap_events((CPUModel)model);watch_boundaries((CPUModel)model);identity_equality((CPUModel)model);identity_guest((CPUModel)model,true);events((CPUModel)model);timing_events((CPUModel)model);completion((CPUModel)model);inspector((CPUModel)model);services((CPUModel)model);trace_interrupt_burst((CPUModel)model);}
+    for(unsigned model=0;model<4;++model)cheap_fault((CPUModel)model);
     arc_rpc_observer_retire(false);arc_rpc_memory_close();puts("RPC observation: four CPUs, events, inspector values/purity, completion, generations, queue and trace");return 0;
 }
 

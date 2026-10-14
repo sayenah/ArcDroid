@@ -47,7 +47,13 @@ ArcRpcObserverQualification arc_rpc_observer_qualification(unsigned catalogue,
 bool arc_rpc_observer_filter(ArcRpcObserver, const ArcRpcObserveFilter *);
 bool arc_rpc_observer_watch_live(ArcRpcObserver, uint64_t);
 /* The interpreter tests this before constructing any observation context. */
-extern bool arc_rpc_observer_active;
+extern bool arc_rpc_observer_active, arc_rpc_observer_context;
+void arc_rpc_observe_batch_begin(void);
+void arc_rpc_observe_advance(unsigned attempts);
+void arc_rpc_observe_batch_end(void);
+void arc_rpc_observe_unsubscribed_mode(uint32_t old_mode);
+bool arc_rpc_observe_swi_at(uint32_t opcode,uint32_t pc,const uint32_t *page);
+
 void arc_rpc_observe_begin(uint32_t pc);
 void arc_rpc_observe_fetched(const uint32_t *page);
 bool arc_rpc_observe_swi(uint32_t opcode);
@@ -97,6 +103,7 @@ void arc_rpc_observer_drain(void); /* Frame boundary only, never guest execution
 
 #if defined(ARCDROID_TEST_FAULTS)
 #include "libretro.h"
+extern uint64_t arc_rpc_observer_integer_attempts;
 RETRO_API bool arc_rpc_observer_test_filter(ArcRpcObserver, const ArcRpcObserveFilter *);
 typedef struct {
     ArcRpcObservation event;

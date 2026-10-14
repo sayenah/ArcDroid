@@ -337,3 +337,31 @@ Disc decision logs print when the decision changes. Only an active `busy`
 retry may repeat, at most once per two virtual seconds. Disabled, waiting,
 resolved, hinted and completed decisions never repeat unchanged. Clock rewind
 restarts the busy-repeat interval without emitting an unchanged disabled log.
+
+## Run E — observed interpreter cost (Fable ruling, to be D-180)
+
+The inactive interpreter instantiation remains unchanged. An additional
+instantiation serves active observers with no live continuation watch, no mode
+subscriber and no trace. Attempt prefixes are accounted before SWI admission
+and at batch return, so a newly armed watch's deadline includes preceding cheap
+instructions. The first SWI that changes the observation requirements ends that
+batch after its normal instruction/event work. The next fetch selects the
+checked path; no instruction or event is skipped or replayed.
+
+Real sessions already count every attempt in memory timing. Batch admission
+records that counter once; normal return closes it, and existing epoch retirement
+reconciles an unfinished prefix if a contained fault jumps past batch return.
+This adds no per-instruction counter and no unwind mechanism. The faulting
+attempt remains counted, and resource retirement still follows observer retirement.
+
+The cheap path builds context only at a condition-passed SWI, using its current
+PC, mode, instruction-start clock and actual successful fetch pointer. Mode
+changes without subscribers preserve observer ordering without constructing
+records. The checked path retains per-attempt watch checks and trace semantics,
+with a scalar origin and lazy backing/register/record construction at events.
+Watch/filter/trace changes maintain the admission gate outside the common hot
+path. Tests must cover a long cheap prefix before watch admission, exact expiry,
+condition-failed continuation and trace-independent event identities. Paired
+measurement uses the same authored hot workload for inactive, active without a
+watch and active with a real user-report watch held; no production cell is
+promoted by this cost work.
