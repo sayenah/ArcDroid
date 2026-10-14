@@ -23,9 +23,10 @@
 **W2 — R3c-3 launch delivery (D-184: two slices, R3c-3a then R3c-3b).**
 **Stage:** IMPLEMENTATION — **R3c-3a**. **Owner:** Sol (third instance, own clone, branch `slice/r3c3a-gate`, stacked on `686b1b7`, rebased onto W1's merge).
 **Next (W2):**
-1. Sol implements R3c-3a (work order below).
-2. Fable reviews it and runs the seven-pair absence legs, then Opus QA.
-3. In parallel, Fable drafts R3c-3b: launch plans, the once-per-attempt lifecycle, the authored status protocol, RPC boot and outcome profiles and records, then qualification. It goes to Astra stage 2. R3d design starts with the R3c-3b draft.
+1. Sol implements R3c-3a run A.
+2. Run B then settles the gate's controller lifetime, its status transport and its release-failure storage (D-185). These have to be fixed before the gate bytes freeze.
+3. Fable review, the seven-pair absence legs and Opus QA follow.
+4. In parallel, a fourth Sol instance builds R3c-3b part 1 (host-side), using the work order below. R3d design starts once R3c-3b's controller model is fixed.
 
 **R3c-3a — startup gate, helper handoff, authored revision 2, guest-tolerant checker (D-184; Astra stage 1 `.work/s63/astra/report4.md`, stage 2 `report5.md`, all changes incorporated).**
 - **Objective.**
@@ -133,6 +134,87 @@
   - Admission bypasses.
   - Helper ownership and override.
   - Evidence that the gate actually ran.
+
+**R3c-3b — launch plans, attempt lifecycle, status protocol, RPC launch and boot profiles and records (D-184, D-185; Astra stage 2 `.work/s63/astra/report6.md`, all changes incorporated).**
+- **Branch.** `slice/r3c3b-launch`, stacked on R3c-3a and rebased as R3c-2 and R3c-3a merge.
+- **Part 1 runs now, in parallel with R3c-3a's review.** It is host-side only:
+  - plan v2 validation;
+  - the attempt state machine;
+  - the boot-record schema and identity API;
+  - deterministic host fixtures.
+- **Part 2 waits for R3c-3a run B.** It covers controller integration, the frontend and preparation integration points, and the private qualification. Run B fixes three things first: the controller lifetime, a collision-free status transport, and the release-failure storage lifetime.
+- **Objective.**
+  - A requested RiscPC session launches the chosen content at most once per explicit attempt, through the R3c-3a gate and a helper-owned controller and plan.
+  - Delivery and outcome are reported through the R3c-3a transport, never through global heuristics.
+  - The RPC boot-watch and launch-outcome observers are re-profiled to that protocol and qualified per pair.
+  - RPC boot records remember only established observations.
+- **Scope.**
+  1. **Helper plan v2.** The plan is helper-owned and separately versioned, and the gate bytes do not change.
+     - Actions:
+       - an explicitly selected content boot action;
+       - application launch;
+       - launch of a validated installed product.
+     - Preparation builds the plan using `core/launch_disc.c`'s structural discovery, ambiguity handling and path escaping. It does not reuse that helper's Desktop restart, sibling boots or CMOS changes.
+     - RAMFS is optional, and the guest creates it only if it is absent.
+     - Unknown versions or actions are rejected without action, and the rejection is reported.
+  2. **Controller.** The controller follows the lifetime model R3c-3a run B freezes.
+     - It is a user-mode Wimp task that issues `Wimp_StartTask` for the exact generated command.
+     - Outcomes describe the command actually started. A wrapper's return does not establish that the application it launched has terminated.
+     - While `Wimp_StartTask` is blocked, "waiting for input" comes from the host observer, not from controller status.
+  3. **Delivery states are separate from outcome states.**
+     - Delivery states: prepared, consumed, dispatch attempted, observed outcome, interrupted or unknown.
+     - Tokens are issued with a defined session and epoch binding. The design note fixes the permitted transitions and duplicate handling.
+     - Consumption is synchronous and comes before the first effect. It works even when the launch and boot capability cells are disabled.
+     - Guest-side protection stops a duplicate invocation. On reset, the host replaces the helper with a no-op before any resumed guest instruction, with a defined failure path.
+     - The promise is at-most-once automated execution. After an interruption, a new explicit attempt is needed; execution is never guaranteed across a reset.
+     - A non-returning title is not a failure. Expiry means the outcome is unknown, never a retry.
+     - An installer's termination does not prove installation. The product is verified against the post-install state before it is offered.
+  4. **Frontend integration points are in scope.** Three places need care:
+     - automatic disc insertion currently cancels both observers (`libretro/arcdroid_libretro.c:4887`);
+     - ordinary input cancels launch observation (`:6166`);
+     - preparation reset calls engine reset directly (`libretro/rpc_preparation.c:445`).
+
+     Authorised in-set disc swaps and normal interaction keep the attempt alive. Dismissing a prompt hint is distinct from cancelling delivery or outcome tracking. Arculator's policy is unchanged.
+  5. **RPC boot records.** They are versioned separately from Arculator's.
+     - **Store identity API.** Its acquisition budget is defined before code. It covers the accepted root plus the journal and current writable state. It distinguishes stores and is invalidated by relevant guest edits or recovery.
+     - **Bindings.** Records bind to verified firmware and CPU, the relevant configuration, the content and media state, the selected action or product, and the helper implementation and plan revision.
+     - **Capture.** The design note says when identity is captured and when it is revalidated.
+     - **What is remembered.** Only established observations: a timeout, a reset or an unsupported observer never creates a record.
+  6. **Profiles and cost.**
+     - Launch outcome and boot watch bind to the attempt and to the exact generated command.
+     - The boot watch uses launch-phase context and qualified `OS_ReadLine` arguments with a still-pending read, never `R0 < 0x8000`. A recognised prompt offers manual interaction, never a relaunch.
+     - No continuation watch or mode subscription lasts the whole launch. Watch budgets and the handling of termination and disqualification are stated.
+     - Cost on the Odin3 hot workload stays within 3 % of the pinned baseline with no launch phase active (D-180). The cost of dispatch, a blocked command, a prompt, a desktop handoff and expired observation is measured with tracing off against numeric ceilings fixed in the design note.
+- **Acceptance criteria.**
+  - **AC-1 Plan v2.** Encoding and validation; refusals; gate bytes unchanged.
+  - **AC-2 Delivery and outcome state machines.** Reset at each of these points:
+    - before consumption;
+    - between consumption and dispatch;
+    - during execution;
+    - after handoff.
+
+    Also covered: repeated helper invocation, stale events after a fresh attempt, a failed swap rollback, unload and contained faults. All are tested through the real frontend and preparation route.
+  - **AC-3 Transport and status.**
+    - Each status is observed from the actual controller.
+    - A StartTask return while the child is alive is distinguished from termination.
+    - Unrelated task starts and exits, unrelated ReadLine calls, stale status blocks and duplicate markers are all rejected.
+  - **AC-4 Profiles.** Authored guests on four CPUs. Guest equivalence with observation on and off. The cost ceilings met.
+  - **AC-5 Boot records.** Versioning; identity checks across checkpoint and reopen, journal writes, edited products and interrupted publication; no record from an unestablished observation.
+  - **AC-6 Fable's private legs on all seven pairs, through the real gate and controller.** They cover:
+    - returning commands;
+    - desktop applications;
+    - non-returning titles;
+    - prompts;
+    - reset mid-attempt;
+    - initial and in-flight disc changes;
+    - the 084 install, with automatic exchange, then product verification and a cold relaunch.
+
+    A promotion run follows, as in D-177(8) and D-181.
+  - **AC-7 Platforms and builds.**
+    - Odin3 and native Windows legs.
+    - Host, sanitizer, MinGW and Android builds, and the guards.
+    - Arculator and ordinary loads unchanged.
+- **Non-goals.** Ordinary loads and switching (R3d); shipping RetroArch evidence (R3d, D-173).
 
 **W3 — item 6b Phase 0 completion (D-141, D-142, D-146, D-182).** **Stage:** IMPLEMENTATION — **6b-P0i** profiling instrumentation (work order below). **Owner:** Sol (second instance, own clone, branch `slice/6b-p0i-profile` stacked on `686b1b7`, rebased after W1 merges).
 **Next (W3):**
