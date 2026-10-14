@@ -20,3 +20,5 @@ EXPORTS
   ; R3c-2 frontend arbitration probe (no shipping export).
   arc_libretro_test_pad_source_level
   arc_libretro_test_fail_disc_preflight
+  arc_engine_test_observers_error_numbers
+  arc_engine_test_observers_firmware

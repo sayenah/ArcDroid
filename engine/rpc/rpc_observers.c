@@ -27,7 +27,8 @@ static unsigned watch_budget=ARC_RPC_WATCH_ATTEMPT_LIMIT;
 static const ArcDiscProfile default_disc_profile={(1u<<0)|(1u<<16),(1u<<3)|(1u<<19),ARC_DISC_DEVICE_UNSPECIFIED,true,true};
 static const ArcErrorProfile default_error_profile={.contextual=true,.poll_r1=0,.poll_r2=0,
     .poll_modes=(1u<<3)|(1u<<19),.answer_forms=(1u<<3)|(1u<<14),
-    .ok_forms=1u<<3,.cancel_forms=(1u<<3)|(1u<<14),.default_cancel_forms=1u<<14};
+    .ok_forms=1u<<3,.cancel_forms=(1u<<3)|(1u<<14),.default_cancel_forms=1u<<14,
+    .numbers=ARC_ERROR_NUMBER_ZERO};
 static const ArcOutcomeProfile launch_profile={600000000u,true,true,true};
 static const ArcBootProfile boot_profile={40000000u,2000000u,0x8000u,true,true};
 static const unsigned bits[4]={ARC_RPC_CELL_BOOT,ARC_RPC_CELL_LAUNCH,ARC_RPC_CELL_ERROR,ARC_RPC_CELL_DISC_A|ARC_RPC_CELL_DISC_B};
@@ -55,6 +56,10 @@ static void error_event(void *opaque,const ArcRpcObservation *e)
     }
     if(e->kind!=ARC_RPC_OBS_SWI)return;
     uint32_t swi=e->swi&~0x20000u;
+    if((swi==0x400c7u || swi==0x400e1u) && user(e->mode) &&
+        !state.error_watch && !state.error.recognised_open){
+        state.error.modal_unknown=false;return;
+    }
     if(swi==0x400dfu){
         /* A privileged nested report also retires the parent's answer. */
         if(state.error_watch){arc_rpc_observer_cancel(ARC_RPC_OBS_ERROR);error_loss();}
@@ -62,16 +67,13 @@ static void error_event(void *opaque,const ArcRpcObservation *e)
         arc_rpc_observer_cancel(ARC_RPC_OBS_ERROR);
         arc_error_swi(&state.error,e->swi,e->registers[0],e->registers[1],e->registers[2],
             e->pc,e->mode,e->registers[13],e->registers[14],e->backing.kind==ARC_RPC_BACKING_ROM,false,0);
-        /* D-181 qualified error number zero, not serious-error button
-         * transformations. Other/unreadable reports remain manual. */
+        /* Production admits only the qualified zero class. Serious errors
+         * and unreadable blocks remain manual under every test override. */
         if(state.error.ok || state.error.cancel){
-#if defined(ARCDROID_TEST_FAULTS)
-            if(!state.overridden)
-#endif
-            { uint32_t number=0;
-                if(!arc_rpc_inspect_word(e->registers[0],false,&number) || number!=0)
-                    state.error.ok=state.error.cancel=state.error.default_cancel=false;
-            }
+            uint32_t number=0;
+            if(!arc_rpc_inspect_word(e->registers[0],false,&number) ||
+                !arc_error_number_answerable(&state.error_profile,number))
+                state.error.ok=state.error.cancel=state.error.default_cancel=false;
         }
         state.error_watch=arc_rpc_observer_watch(ARC_RPC_OBS_ERROR,e->pc+4,e->mode,e->registers[13],watch_budget);
         /* Track every user report, even unknown/asynchronous flag forms:
@@ -82,6 +84,11 @@ static void error_event(void *opaque,const ArcRpcObservation *e)
     if(swi!=6u || e->registers[0]!=129u || !state.error_watch ||
         !arc_rpc_observer_watch_live(ARC_RPC_OBS_ERROR,state.error_watch))return;
     uint8_t key=0;
+    if(arc_error_poll_matches(&state.error,e->registers[1],e->registers[2],e->pc,e->mode,
+        e->registers[13],e->backing.kind==ARC_RPC_BACKING_ROM) &&
+        !arc_rpc_observer_watch_renew(ARC_RPC_OBS_ERROR,state.error_watch,watch_budget)){
+        error_loss();return;
+    }
     if(arc_error_poll(&state.error,e->registers[1],e->registers[2],e->pc,e->mode,
         e->registers[13],e->backing.kind==ARC_RPC_BACKING_ROM,&key)){
         uint32_t results[13]={0};results[1]=key;
@@ -194,7 +201,10 @@ static void queue_miss(const ArcRpcObservation *e)
 static void disc_event(void *opaque,const ArcRpcObservation *e)
 {
     (void)opaque;if(!state.disc_enabled)return;
-    if(e->kind==ARC_RPC_OBS_WATCH_LOST){state.disc_reason="watch-lost";state.disc.armed=false;state.disc_watch=0;return;}
+    if(e->kind==ARC_RPC_OBS_WATCH_LOST){
+        if(e->watch!=state.disc_watch)return;
+        state.disc_reason="watch-lost";state.disc.armed=false;state.disc_watch=0;return;
+    }
     if(e->kind==ARC_RPC_OBS_CONTINUATION){
         if(e->watch!=state.disc_watch)return;
         uint32_t error=0;bool valid=arc_rpc_inspect_word(e->registers[0],false,&error);
@@ -246,6 +256,7 @@ static void disc_event(void *opaque,const ArcRpcObservation *e)
     state.disc.profile=&state.disc_profile;arc_disc_request_swi(&state.disc,&input,state.inserted);
     state.disc_reason=state.disc.armed?"armed":"path-refused";
     if(state.disc.armed){
+        state.disc_watch=0; /* Replacement loss belongs to the superseded request. */
         state.disc_watch=arc_rpc_observer_watch(ARC_RPC_OBS_DISC,e->pc+4,e->mode,e->registers[13],watch_budget);
         state.disc_media=arc_rpc_fdc_media_generation(0);state.helper_media=arc_rpc_fdc_media_generation(1);
         if(!state.disc_watch){state.disc_reason="watch-admission";state.disc.armed=false;}
@@ -297,6 +308,12 @@ bool arc_rpc_observers_test_disc_devices(unsigned forms)
 }
 void arc_rpc_observers_test_buttons(uint32_t ok,uint32_t cancel,uint32_t defaults)
 { state.error_profile.ok_forms=ok;state.error_profile.cancel_forms=cancel;state.error_profile.default_cancel_forms=defaults; }
+bool arc_rpc_observers_test_error_numbers(ArcErrorNumberClass numbers)
+{
+    if(!state.overridden || (numbers!=ARC_ERROR_NUMBER_ZERO && numbers!=ARC_ERROR_NUMBER_ORDINARY))return false;
+    if(numbers!=state.error_profile.numbers && state.error_watch){arc_rpc_observer_cancel(ARC_RPC_OBS_ERROR);error_loss();}
+    state.error_profile.numbers=numbers;return true;
+}
 void arc_rpc_observers_test_watch_budget(unsigned attempts)
 { watch_budget=attempts<=ARC_RPC_WATCH_ATTEMPT_LIMIT?attempts:ARC_RPC_WATCH_ATTEMPT_LIMIT; }
 void arc_rpc_observers_override(unsigned mask,uint32_t r1,uint32_t r2,uint32_t forms)
@@ -329,6 +346,7 @@ void arc_rpc_observers_rebase(unsigned actual_cpu)
 #if defined(ARCDROID_TEST_FAULTS)
     if(overridden){arc_rpc_observers_override(cells,profile.poll_r1,profile.poll_r2,profile.answer_forms);
         arc_rpc_observers_test_buttons(profile.ok_forms,profile.cancel_forms,profile.default_cancel_forms);
+        (void)arc_rpc_observers_test_error_numbers(profile.numbers);
         (void)arc_rpc_observers_test_disc_devices(devices);}
 #endif
     arc_rpc_observers_disc_configure(enabled,inserted,resolve,observe,opaque);

@@ -46,6 +46,9 @@ ArcRpcObserverQualification arc_rpc_observer_qualification(unsigned catalogue,
 
 bool arc_rpc_observer_filter(ArcRpcObserver, const ArcRpcObserveFilter *);
 bool arc_rpc_observer_watch_live(ArcRpcObserver, uint64_t);
+/* Renew only a live current-generation watch from its owner's SWI callback.
+ * Continuation identity and return state are preserved. */
+bool arc_rpc_observer_watch_renew(ArcRpcObserver, uint64_t, unsigned attempts);
 /* The interpreter tests this before constructing any observation context. */
 extern bool arc_rpc_observer_active, arc_rpc_observer_context;
 void arc_rpc_observe_batch_begin(void);

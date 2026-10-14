@@ -20,7 +20,24 @@ mutants=[
  ('production-reason','engine/rpc/rpc_observer.c','awaiting R3c-3 launch hook','awaiting a different hook'),
  ('production-duplicate-row','engine/rpc/rpc_observer.c','PAIR(4,3,ERROR_EVIDENCE,DISC_A_EVIDENCE)\n};','PAIR(4,3,ERROR_EVIDENCE,DISC_A_EVIDENCE),PAIR(1,0,ERROR_EVIDENCE,DISC_A_EVIDENCE)\n};'),
  ('production-extra-row','engine/rpc/rpc_observer.c','PAIR(4,3,ERROR_EVIDENCE,DISC_A_EVIDENCE)\n};','PAIR(4,3,ERROR_EVIDENCE,DISC_A_EVIDENCE),PAIR(100,0,ERROR_EVIDENCE,DISC_A_EVIDENCE)\n};'),
- ('production-error-number','engine/rpc/rpc_observers.c','!arc_rpc_inspect_word(e->registers[0],false,&number) || number!=0','false'),
+ ('production-error-number','engine/rpc/rpc_observers.c','!arc_rpc_inspect_word(e->registers[0],false,&number) ||\n                !arc_error_number_answerable(&state.error_profile,number)','false'),
+ ('watch-renew','engine/rpc/rpc_observer.c','observer.watches[i].deadline=observer.instruction+attempts;return true;','return true;'),
+ ('renew-site','engine/arc_error_box.c','address == box->site && sp == box->sp && mode == box->poll_mode','true && sp == box->sp && mode == box->poll_mode'),
+ ('renew-stack','engine/arc_error_box.c','address == box->site && sp == box->sp && mode == box->poll_mode','address == box->site && true && mode == box->poll_mode'),
+ ('renew-mode','engine/arc_error_box.c','address == box->site && sp == box->sp && mode == box->poll_mode','address == box->site && sp == box->sp && true'),
+ ('renew-rom','engine/arc_error_box.c','box->recognised_open && in_rom &&','box->recognised_open && true &&'),
+ ('modal-recovery','engine/rpc/rpc_observers.c','state.error.modal_unknown=false;return;','return;'),
+ ('modal-recovery-user','engine/rpc/rpc_observers.c','swi==0x400e1u) && user(e->mode) &&','swi==0x400e1u) && true &&'),
+ ('modal-recovery-pending','engine/rpc/rpc_observers.c','!state.error_watch && !state.error.recognised_open','true'),
+ ('modal-recovery-idle','engine/rpc/rpc_observers.c','(swi==0x400c7u || swi==0x400e1u) && user(e->mode)','swi==0x400c7u && user(e->mode)'),
+ ('disc-loss-identity','engine/rpc/rpc_observers.c','if(e->kind==ARC_RPC_OBS_WATCH_LOST){\n        if(e->watch!=state.disc_watch)return;','if(e->kind==ARC_RPC_OBS_WATCH_LOST){'),
+ ('disc-replacement-identity','engine/rpc/rpc_observers.c','state.disc_watch=0; /* Replacement loss belongs to the superseded request. */','(void)0;'),
+ ('production-number-class','engine/rpc/rpc_observers.c','.numbers=ARC_ERROR_NUMBER_ZERO};','.numbers=ARC_ERROR_NUMBER_ORDINARY};'),
+ ('number-zero','engine/arc_error_box.c','(number == 0 || p->numbers == ARC_ERROR_NUMBER_ORDINARY)','true'),
+ ('number-ordinary','engine/arc_error_box.c','(number == 0 || p->numbers == ARC_ERROR_NUMBER_ORDINARY)','number == 0'),
+ ('number-serious','engine/arc_error_box.c','!(number & UINT32_C(0x80000000))','true'),
+ ('number-reset','engine/rpc/rpc_observers.c','arc_rpc_observers_test_error_numbers(profile.numbers)','arc_rpc_observers_test_error_numbers(ARC_ERROR_NUMBER_ZERO)'),
+ ('number-retirement','engine/rpc/rpc_observers.c','numbers!=state.error_profile.numbers && state.error_watch','false'),
  ('cell-gate','engine/rpc/rpc_observers.c','(state.cells&bit)==bit','true'),
  ('poll-r1','engine/arc_error_box.c','r1 != p->poll_r1 ||','false ||'),
  ('poll-r2','engine/arc_error_box.c','r2 != p->poll_r2','false'),
@@ -66,6 +83,9 @@ mutants=[
 ]
 if frontend:
     mutants=[
+      ('hash-skip','engine/rpc/rpc_session.c','arc_sha1_update(&arc_rpc_firmware_hash,copied,take);','(void)0;'),
+      ('hash-halve','engine/rpc/rpc_session.c','arc_sha1_update(&arc_rpc_firmware_hash,copied,take);','arc_sha1_update(&arc_rpc_firmware_hash,copied,take/2);'),
+      ('reset-hint','libretro/arcdroid_libretro.c','if(arc_engine_is_rpc() && arc_engine_active()) {\n      arc_error_hint_generation=arc_error_seen_generation=0;arc_error_hint_state=0;','if(arc_engine_is_rpc() && arc_engine_active()) {'),
       ('observation-only-pad','libretro/arcdroid_libretro.c','rpc_error ? error_box.answer_available :','rpc_error ? error_box.recognised_open :'),
       ('pad-release','libretro/arcdroid_libretro.c','(error_ready || arc_error_pad_gate)) continue;','(error_ready || false)) continue;'),
       ('pad-simultaneous','libretro/arcdroid_libretro.c','!arc_error_pad_gate && error_a != error_b','!arc_error_pad_gate && true'),
@@ -94,7 +114,8 @@ for name,relative,old,new in mutants:
     for before,after in edits:
         if text.count(before)!=1:raise RuntimeError((name,'anchor',text.count(before)))
         text=text.replace(before,after)
-    compile,link=rebuild_commands(commands,source,'arcdroid_rpcplan_libretro' if frontend else 'rpc_observers_test',build,os.name=='nt')
+    target_name=('arcdroid_rpcplan_libretro_rpc' if relative.startswith('engine/rpc/') else 'arcdroid_rpcplan_libretro') if frontend else 'rpc_observers_test'
+    compile,link=rebuild_commands(commands,source,target_name,build,os.name=='nt')
     with tempfile.TemporaryDirectory(prefix='arc-rpc-observers-mutant-') as folder:
         folder=Path(folder);copy=folder/source.name;obj=folder/'mutant.o';binary=folder/(core.name if frontend else target.name)
         copy.write_text(text)

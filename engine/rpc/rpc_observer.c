@@ -330,6 +330,18 @@ bool arc_rpc_observer_watch_live(ArcRpcObserver owner,uint64_t id)
         observer.watches[i].owner==owner && observer.watches[i].id==id)return true;
     return false;
 }
+bool arc_rpc_observer_watch_renew(ArcRpcObserver owner,uint64_t id,unsigned attempts)
+{
+    if((unsigned)owner>=ARC_RPC_OBSERVERS || !observer.in_swi ||
+        observer.current_owner!=(unsigned)owner || observer.current_kind!=ARC_RPC_OBS_SWI ||
+        !observer.owners[owner].armed || !attempts || attempts>ARC_RPC_WATCH_ATTEMPT_LIMIT)return false;
+    for(unsigned i=0;i<ARC_RPC_WATCHES;++i)if(observer.watches[i].live &&
+        observer.watches[i].owner==owner && observer.watches[i].id==id &&
+        observer.watches[i].generation==observer.owners[owner].generation){
+        observer.watches[i].deadline=observer.instruction+attempts;return true;
+    }
+    return false;
+}
 void arc_rpc_observe_fetched(const uint32_t *page)
 {
     observer.origin.word=page+((observer.origin.pc&0x3ffu)>>2);

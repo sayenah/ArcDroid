@@ -50,8 +50,8 @@ print('rpc-runner-dump: repeatable exact PPM RGB/pitch, independent palette orac
 import struct
 with tempfile.TemporaryDirectory(prefix='arc-rpc-runner-pad-') as temp:
     d=Path(temp);rom=bytearray(struct.pack('<I',0xeafffffe)*524288)
-    program={0:0xea00003e,8:0xea00005c}
-    boot=[0xe3a0d201,0xe321f010,0xe3a0d201,0xe3a00000,0xe3a01003,0xef0400df,0xeafffffe]
+    program={0:0xea00003e,8:0xea00005c,0x800:0}
+    boot=[0xe3a0d201,0xe321f010,0xe3a0d201,0xe3a00c08,0xe3a01003,0xef0400df,0xeafffffe]
     handler=[0xe3500081,0x01b0f00e,0xe1a0800e,0xe14f9000,0xe3a00081,0xe3a01000,0xe3a02000,0xef000006,0xe351000d,0x0a000003,0xe351001b,0x0a000001,0xeafffff6,0xe1a00000,0xe3a07201,0xe5871000,0xe169f009,0xe1b0f008]
     program.update({0x100+4*i:w for i,w in enumerate(boot)})
     program.update({0x180+4*i:w for i,w in enumerate(handler)})
@@ -69,6 +69,26 @@ with tempfile.TemporaryDirectory(prefix='arc-rpc-runner-pad-') as temp:
         assert words[:5]==[0]*5 and words[5:]==[key,key],(mask,words,result.stderr)
     for options in [['--pad-at','0'],['--pad-at','0','65536'],['--pad-at','-1','0'],['--pad-at','1','0','--pad-at','1','256'],['--pad-at','2','0','--pad-at','1','0']]:
         assert subprocess.run(base+options,capture_output=True).returncode!=0
+    original=(d/'guest.arcplan').read_text()
+    for number in (0,0x123,0x7fffffff,0x80000000,0x80000123):
+        struct.pack_into('<I',rom,0x800,number);(d/'guest.rom').write_bytes(rom)
+        for numbers in ('zero','ordinary'):
+            (d/'guest.arcplan').write_text(original+f'observer_error_numbers={numbers}\n')
+            result=subprocess.run(base+['--pad-at','0','0','--pad-at','2','256','--pad-at','3','0'],capture_output=True,text=True,check=True)
+            allowed=number<0x80000000 and (number==0 or numbers=='ordinary')
+            words=[int(x,16) for x in re.findall(r'^ram=([0-9a-f]+)$',result.stdout,re.M)]
+            assert words[-1]==(13 if allowed else 0),(number,numbers,words,result.stderr)
+            assert f'error-numbers={numbers}' in result.stderr
+            assert f'recognised-open=1 answer-available={int(allowed)} modal-unknown=0' in result.stderr
+    # A fresh load with no class key returns to zero, after the ordinary run.
+    struct.pack_into('<I',rom,0x800,0x123);(d/'guest.rom').write_bytes(rom)
+    (d/'guest.arcplan').write_text(original)
+    result=subprocess.run(base+['--pad-at','2','256'],capture_output=True,text=True,check=True)
+    assert 'error-numbers=zero' in result.stderr and 'answer-available=1' not in result.stderr
+    for value in ('serious','ZERO','1','','ordinary\nobserver_error_numbers=zero'):
+        (d/'guest.arcplan').write_text(original+f'observer_error_numbers={value}\n')
+        assert subprocess.run(base,capture_output=True).returncode!=0,('invalid error-number class',value)
+    print('rpc-runner: zero/ordinary number classes, serious errors always manual, new-load default and invalid keys passed')
 print('rpc-runner: stderr core logs, port-0 A/B, holds, releases, simultaneous arbitration and invalid scripts passed')
 
 # Persisted CMOS, populated store and a FileCore-shaped privileged disc loop.

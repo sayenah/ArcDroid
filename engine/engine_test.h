@@ -6,6 +6,8 @@
 #include "libretro.h"
 #include "rpc/rpc_observer.h"
 RETRO_API bool arc_engine_test_observers_disc_devices(unsigned forms);
+RETRO_API bool arc_engine_test_observers_error_numbers(ArcErrorNumberClass);
+RETRO_API bool arc_engine_test_observers_firmware(ArcDigest *);
 RETRO_API void arc_engine_test_observers_buttons(uint32_t,uint32_t,uint32_t);
 RETRO_API void arc_engine_test_observers_override(unsigned mask,uint32_t r1,uint32_t r2,uint32_t forms);
 RETRO_API void arc_engine_test_observers_binding(unsigned,unsigned *,unsigned *);

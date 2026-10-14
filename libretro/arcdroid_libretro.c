@@ -7679,12 +7679,14 @@ RETRO_API void retro_reset(void)
 {
 #if defined(ARCDROID_TEST_PLANS)
    if(arc_test_plan_pending()) {
+      arc_error_hint_generation=arc_error_seen_generation=0;arc_error_hint_state=0;
       arc_input_reset(&arc_inputs);memset(arc_keyboard_raw,0,sizeof(arc_keyboard_raw));
       arc_input_sampling_reset(false);arc_guest_time_us=0;arc_test_plan_reset();
       arc_rpc_av_attempted=false;return;
    }
 #endif
    if(arc_engine_is_rpc() && arc_engine_active()) {
+      arc_error_hint_generation=arc_error_seen_generation=0;arc_error_hint_state=0;
 #if defined(ARCDROID_TEST_PLANS)
       if(arc_test_plan_cmos_phase())arc_plan_notice("",false);
 #endif

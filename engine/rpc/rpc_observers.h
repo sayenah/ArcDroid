@@ -28,6 +28,7 @@ bool arc_rpc_observers_capability(unsigned bit);
 /* Host-only identity query, supplied by the dispatcher from current media. */
 bool arc_rpc_observers_identities(char helper[11],char hd[11]);
 #if defined(ARCDROID_TEST_FAULTS)
+bool arc_rpc_observers_test_error_numbers(ArcErrorNumberClass);
 void arc_rpc_observers_test_binding(unsigned *,unsigned *);
 bool arc_rpc_observers_test_disc_devices(unsigned forms);
 void arc_rpc_observers_test_buttons(uint32_t,uint32_t,uint32_t);

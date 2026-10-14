@@ -16,6 +16,7 @@ static void start(CPUModel model,unsigned cells)
     arc_rpc_observers_test_watch_budget(ARC_RPC_WATCH_ATTEMPT_LIMIT);fixture(model,16,0x100);memset(rom+64,0,512);arc_rpc_observers_bind(0,model);
     arc_rpc_observers_override(cells,0,0,UINT32_MAX);
     clock_ns=0;identities_ok=true;helper_name[0]=hd_name[0]=0;
+    ram00[0x400/4]=0;
     rom[2]=0xe1b0f00e; /* default handler: MOVS pc,lr */
 }
 static void issue(uint32_t pc,uint32_t mode,uint32_t swi,uint32_t r0,uint32_t r1,uint32_t r2,uint32_t r3,uint32_t sp)
@@ -25,7 +26,7 @@ static void issue(uint32_t pc,uint32_t mode,uint32_t swi,uint32_t r0,uint32_t r1
     arm.event=0;arm.reg[0]=r0;arm.reg[1]=r1;arm.reg[2]=r2;arm.reg[3]=r3;arm.reg[13]=sp;
     rom[pc/4]=0xef000000|swi;arc_rpc_arm_exec_count(1);
 }
-static void report(uint32_t flags) { issue(0x100,16,0x400df,0,flags,0,0,0x10008000); }
+static void report(uint32_t flags) { issue(0x100,16,0x400df,0x10000400,flags,0,0,0x10008000); }
 static void poll(uint32_t pc,uint32_t mode,uint32_t r1,uint32_t r2,uint32_t sp)
 { issue(pc,mode,6,129,r1,r2,0,sp); }
 static void error_cases(CPUModel model)
@@ -106,7 +107,7 @@ static void error_cases(CPUModel model)
         poll(0x18c,19,0,0,0x10001000);
         if(pending)assert(arc_rpc_observers_answer(ARC_ERROR_OK));
         /* Expiry before a return or before answering is synchronous. */
-        poll(0x180,19,1,0,0x10001000);poll(0x184,19,1,0,0x10001000);poll(0x188,19,1,0,0x10001000);
+        poll(0x180,19,1,0,0x10001000);poll(0x184,19,1,0,0x10001000);poll(0x188,19,1,0,0x10001000);poll(0x188,19,1,0,0x10001000);
         assert(box().modal_unknown && !box().answer_available && box().pending==ARC_ERROR_NONE);
         assert(!arc_rpc_observers_answer(ARC_ERROR_OK));
     }
@@ -126,6 +127,14 @@ static void miss(const char *path,uint32_t pc)
 }
 static void disc_cases(CPUModel model)
 {
+    /* A second user call can replace a live watch without a status-restoring
+     * return (for example after MSR). The old loss must not disarm it. */
+    start(model,255);resolve_count=observe_count=trigger_count=0;
+    arc_rpc_observers_disc_configure(true,"AuthDisc",resolve_disc,observe_disc,NULL);
+    strcpy((char *)ram00,"ADFS::AuthDisc.$.Old");
+    issue(0x100,16,8,5,0x10000000,0,0,0x10008000);
+    miss("ADFS::AuthDisc.$.New",0x140);arc_rpc_observer_drain();
+    assert(resolve_count==1 && !strcmp(resolved[0],"$.New"));
     start(model,255);arc_rpc_observers_disc_configure(true,"AuthDisc",resolve_disc,observe_disc,NULL);
     strcpy((char *)ram00,"NextDisc");
     issue(0x180,19,0x20033,2,8,0x10000000,UINT32_MAX,0x10001000);
@@ -185,6 +194,84 @@ static void disc_cases(CPUModel model)
     start(model,0);assert(!arc_rpc_observers_replace(ARC_DISC_SIGNAL_A));
     arc_rpc_observers_bind(0,model);assert(!arc_rpc_observers_test_disc_devices(1));
 }
+static void sustained_error_cases(CPUModel model)
+{
+    start(model,252);arc_rpc_observers_test_watch_budget(8);report(3);
+    poll(0x18c,19,0,0,0x10001000);uint64_t generation=box().generation;
+    /* Same instruction-deadline semantics with a shortened test budget:
+     * thousands of budgets, no pad intent, then an actual answer/return. */
+    for(unsigned i=0;i<10000;++i){
+        poll(0x18c,19,0,0,0x10001000);
+        assert(box().answer_available && box().generation==generation && !box().modal_unknown);
+    }
+    assert(arc_rpc_observers_answer(ARC_ERROR_OK));
+    poll(0x18c,19,0,0,0x10001000);assert(arm.reg[1]==13);
+    arm.reg[14]=0x104;arm.spsr[3]=16;arm.reg[15]=16;arc_rpc_arm_exec_count(2);
+    assert(!box().recognised_open && !box().modal_unknown && !arc_rpc_observer_context);
+    for(unsigned wrong=0;wrong<6;++wrong){
+        start(model,252);arc_rpc_observers_test_watch_budget(8);report(3);poll(0x18c,19,0,0,0x10001000);
+        if(wrong==5){
+            ram00[0x4000/4]=0x10000c02;cp_write(2,0x10004000);cp_write(3,3);
+            cp_write(1,cp_read(1)|1u);flush(model);ram00[0x18c/4]=0xef000006;
+        }
+        for(unsigned i=0;i<9;++i){
+            if(wrong==5){ /* Identical poll fetched from RAM. */
+                updatemode(19);arm.reg[16]=19;arm.reg[15]=0x194;
+                arm.reg[0]=129;arm.reg[1]=arm.reg[2]=0;arm.reg[13]=0x10001000;
+                arc_rpc_arm_exec_count(1);
+            }else poll(wrong==0?0x180:0x18c,wrong==1?3:19,
+                wrong==2?1:0,wrong==3?1:0,wrong==4?0x10001004:0x10001000);
+        }
+        assert(box().modal_unknown && !box().recognised_open && !box().answer_available);
+        assert(!arc_rpc_observers_answer(ARC_ERROR_OK));
+    }
+    for(unsigned which=0;which<2;++which){
+        uint32_t swi=which?0x600e1:0x400c7;
+        start(model,252);arc_rpc_observers_disc_configure(true,"AuthDisc",resolve_disc,observe_disc,NULL);
+        report(3);arc_rpc_observer_cancel(ARC_RPC_OBS_ERROR);
+        strcpy((char *)ram00,"NextDisc");issue(0x180,19,0x20033,2,8,0x10000000,UINT32_MAX,0x10001000);
+        assert(box().modal_unknown && !arc_rpc_observers_replace(ARC_DISC_SIGNAL_A));
+        issue(0x190,19,swi,0,0,0,0,0x10001000);
+        assert(box().modal_unknown); /* Privileged Wimp polls are no evidence. */
+        issue(0x190,which?0:16,swi,0,0,0,0,0x10008000);
+        assert(!box().modal_unknown && !box().recognised_open && !arc_rpc_observer_context);
+        strcpy((char *)ram00,"NextDisc");issue(0x180,19,0x20033,2,8,0x10000000,UINT32_MAX,0x10001000);
+        assert(arc_rpc_observers_replace(ARC_DISC_SIGNAL_A));
+        arc_rpc_observers_disc_clear();
+        miss("ADFS::AuthDisc.$.After",0x100);arc_rpc_observer_drain();
+        miss("ADFS::AuthDisc.$.After",0x100);arc_rpc_observer_drain();
+        assert(arc_rpc_observers_replace(ARC_DISC_SIGNAL_B));
+        report(3);issue(0x190,16,swi,0,0,0,0,0x10008000);
+        assert(box().recognised_open && !arc_rpc_observers_replace(ARC_DISC_SIGNAL_B));
+        arc_rpc_observer_cancel(ARC_RPC_OBS_ERROR);
+        assert(box().modal_unknown && !arc_rpc_observers_replace(ARC_DISC_SIGNAL_B));
+        report(0x20);assert(box().modal_unknown && !box().recognised_open);
+        issue(0x190,16,swi,0,0,0,0,0x10008000);
+        assert(box().modal_unknown); /* An unrecognised pending report is still modal. */
+    }
+}
+static void number_cases(CPUModel model)
+{
+    const uint32_t numbers[]={0,1,0x123,0x7fffffff,0x80000000,0x80000123,UINT32_MAX};
+    for(unsigned ordinary=0;ordinary<2;++ordinary)for(unsigned i=0;i<sizeof(numbers)/sizeof(numbers[0]);++i){
+        start(model,12);assert(arc_rpc_observers_test_error_numbers((ArcErrorNumberClass)ordinary));
+        assert(!arc_rpc_observers_test_error_numbers((ArcErrorNumberClass)2));
+        ram00[0x400/4]=numbers[i];report(3);poll(0x18c,19,0,0,0x10001000);
+        bool allowed=!(numbers[i]&0x80000000u) && (ordinary || !numbers[i]);
+        assert(box().recognised_open && box().answer_available==allowed);
+        assert(arc_rpc_observers_answer(ARC_ERROR_OK)==allowed);
+        poll(0x18c,19,0,0,0x10001000);assert(arm.reg[1]==(allowed?13u:0u));
+        arc_rpc_observers_rebase(model);assert(box().profile->numbers==(ArcErrorNumberClass)ordinary);
+        arc_rpc_observers_bind(0,model);assert(!arc_rpc_observers_test_error_numbers(ARC_ERROR_NUMBER_ORDINARY));
+        assert(box().modal_unknown);
+    }
+    start(model,12);assert(arc_rpc_observers_test_error_numbers(ARC_ERROR_NUMBER_ORDINARY));
+    issue(0x100,16,0x400df,0x03000000,3,0,0,0x10008000);poll(0x18c,19,0,0,0x10001000);
+    assert(box().recognised_open && !box().answer_available);
+    start(model,12);report(3);poll(0x18c,19,0,0,0x10001000);assert(arc_rpc_observers_answer(ARC_ERROR_OK));
+    assert(arc_rpc_observers_test_error_numbers(ARC_ERROR_NUMBER_ORDINARY));
+    assert(box().modal_unknown && !box().answer_available && box().pending==ARC_ERROR_NONE);
+}
 static void phase_cases(CPUModel model)
 {
     start(model,3);issue(0x100,16,0xe,0x1000,0,0,0,0x10008000);
@@ -235,7 +322,7 @@ static bool production_pair(unsigned catalogue,unsigned cpu)
 static void production_start(unsigned catalogue,CPUModel model)
 {
     fixture(model,16,0x100);arc_rpc_observers_bind(catalogue,model);
-    clock_ns=0;identities_ok=true;helper_name[0]=hd_name[0]=0;
+    clock_ns=0;identities_ok=true;helper_name[0]=hd_name[0]=0;ram00[0x400/4]=0;
 }
 static void production_cases(unsigned catalogue,CPUModel model)
 {
@@ -310,7 +397,7 @@ static void qualification_dump(void)
         }
     for(unsigned catalogue=1;catalogue<=4;++catalogue)for(unsigned cpu=0;cpu<4;++cpu)if(production_pair(catalogue,cpu)){
         production_start(catalogue,(CPUModel)cpu);ArcErrorBox b=box();const ArcErrorProfile *e=b.profile;assert(e);
-        printf("error\t%u\t%u\t%u\t%u\t%u\t%u\t%u\t%u\t%u\t%u\n",catalogue,cpu,e->contextual,e->poll_r1,e->poll_r2,e->poll_modes,e->answer_forms,e->ok_forms,e->cancel_forms,e->default_cancel_forms);
+        printf("error\t%u\t%u\t%u\t%u\t%u\t%u\t%u\t%u\t%u\t%u\t%u\n",catalogue,cpu,e->contextual,e->poll_r1,e->poll_r2,e->poll_modes,e->answer_forms,e->ok_forms,e->cancel_forms,e->default_cancel_forms,e->numbers);
         arc_rpc_observers_disc_configure(true,"AuthDisc",resolve_disc,observe_disc,NULL);strcpy((char *)ram00,"NextDisc");
         issue(0x180,19,0x20033,2,8,0x10000000,UINT32_MAX,0x10001000);
         ArcDiscRequest d;arc_rpc_observers_disc_snapshot(&d);const ArcDiscProfile *p=d.profile;assert(p);
@@ -333,6 +420,7 @@ int main(int argc,char **argv)
         if(production_pair(catalogue,cpu))production_cases(catalogue,(CPUModel)cpu);
         else {production_start(catalogue,(CPUModel)cpu);assert(!arc_rpc_observer_active && !arc_rpc_observers_capability(252));report(3);assert(box().modal_unknown && !box().recognised_open);}
     }
-    for(unsigned model=0;model<4;++model){error_cases((CPUModel)model);disc_cases((CPUModel)model);phase_cases((CPUModel)model);}
+    for(unsigned model=0;model<4;++model){error_cases((CPUModel)model);disc_cases((CPUModel)model);
+        resolve_count=observe_count=trigger_count=0;sustained_error_cases((CPUModel)model);number_cases((CPUModel)model);phase_cases((CPUModel)model);}
     arc_rpc_observer_retire(false);arc_rpc_memory_close();puts("RPC observers: authored four-CPU error/disc/phase matrix");return 0;
 }

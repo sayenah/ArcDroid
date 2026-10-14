@@ -73,8 +73,9 @@ static void observer_guest(unsigned flags)
     rom_words(NULL,0);
     put_word(0,branch(0,0x100,14));put_word(8,branch(8,0x180,14));
     /* SVC stack; enter User32; user ReportError; hang after its return. */
-    const uint32_t boot[]={0xe3a0d201,0xe321f010,0xe3a0d201,0xe3a00000,0xe3a01000|flags,0xef0400df,0xeafffffe};
+    const uint32_t boot[]={0xe3a0d201,0xe321f010,0xe3a0d201,0xe3a00c08,0xe3a01000|flags,0xef0400df,0xeafffffe};
     for(unsigned i=0;i<sizeof(boot)/4;++i)put_word(0x100+4*i,boot[i]);
+    put_word(0x800,0); /* Authored error-number header. */
     /* Authored SWI handler: a nested OS_Byte returns; ReportError preserves
      * its user LR/SPSR across the repeated key reads. */
     const uint32_t handler[]={0xe3500081,0x01b0f00e,0xe1a0800e,0xe14f9000,
@@ -184,6 +185,8 @@ int main(int argc,char **argv)
     LOAD(set_poll,"retro_set_input_poll");LOAD(set_input,"retro_set_input_state");LOAD(init,"retro_init");LOAD(deinit,"retro_deinit");
     LOAD(run,"retro_run");LOAD(unload,"retro_unload_game");LOAD(load,"retro_load_game");LOAD(reset,"retro_reset");
     void (*binding)(unsigned,unsigned *,unsigned *);
+    bool (*firmware_digest)(ArcDigest *);
+    LOAD(firmware_digest,"arc_engine_test_observers_firmware");
     LOAD(binding,"arc_engine_test_observers_binding");LOAD(override_cells,"arc_engine_test_observers_override");
     LOAD(identity_query,"arc_engine_test_observers_identities");
     vfs.read=counted_read;
@@ -196,13 +199,23 @@ int main(int argc,char **argv)
      * promoted catalogue, even if a caller requests one explicitly. */
     for(unsigned model=0;model<4;++model){
         observer_guest(3);write_file("guest.rom",rom,2097152);
+        /* Varied authored bytes across every 32 KiB copy unit; the Python
+         * driver independently checks the actual copied-image digest. */
+        for(unsigned i=0x1000;i<2097152;++i)rom[i]=(uint8_t)((i*37u)^(i>>11)^(model*13u));
+        write_file("guest.rom",rom,2097152);
+        char digest_name[32];snprintf(digest_name,sizeof(digest_name),"digest-%u.rom",model);
+        write_file(digest_name,rom,2097152);
         int count=snprintf(plan,sizeof(plan),"version=1\nmodel=%s\nfirmware=%s/guest.rom\ncmos=seed\nseed=%s/seed\nrtc_epoch=0\n",models[model],directory,directory);
         write_file("test.arcplan",plan,(size_t)count);pad_a=pad_b=0;hints=manual_hints=0;assert(load(&game));
+        memset(rom,0xa5,2097152);write_file("guest.rom",rom,2097152); /* Replace the source after copying. */
+        ArcDigest digest;assert(firmware_digest(&digest));
+        printf("copied-image\t%u\t%llu\t%08x\t",model,(unsigned long long)digest.size,digest.crc32);
+        printf("%s\n",digest.sha1);
         for(unsigned requested=0;requested<=4;++requested){
             unsigned catalogue,cpu;binding(requested,&catalogue,&cpu);assert(catalogue==0 && cpu==model);
             run();ArcErrorBox b;api->error_snapshot(&b);assert(b.modal_unknown && !b.recognised_open && !b.answer_available);
         }
-        assert(!hints && !manual_hints);unload();
+        assert(!hints && !manual_hints);unload();assert(!firmware_digest(&digest));
     }
     for(unsigned model=0;model<4;++model)for(unsigned answer=0;answer<2;++answer)for(unsigned flags=3;flags<=7;flags+=4){
         if(sanitizer && model!=2)continue;
@@ -242,7 +255,7 @@ int main(int argc,char **argv)
     run();assert(hints==3 && manual_hints==2 && word(0)==13);run();assert(hints==3);unload();
     /* A later privileged nested report retires eligibility into unknown
      * modal state. Retire the pad hint even though recognised-open is gone. */
-    observer_guest(3);put_word(0x10c,0xe3a06902); /* authored countdown */
+    observer_guest(3);put_word(0x100,0xe3a00c08);put_word(0x10c,0xe3a06902); /* authored countdown */
     put_word(0x1b0,branch(0x1b0,0x200,14));
     put_word(0x200,0xe2566001);put_word(0x204,branch(0x204,0x190,1));
     put_word(0x208,0xe3a01033);put_word(0x20c,0xef0400df);put_word(0x210,branch(0x210,0x190,14));
@@ -258,7 +271,7 @@ int main(int argc,char **argv)
     int count=snprintf(plan,sizeof(plan),"version=1\nmodel=sa110\nfirmware=%s/guest.rom\ncmos=seed\nseed=%s/seed\nrtc_epoch=0\nobserver_cells=4\nobserver_forms=0xffffffff\n",directory,directory);
     write_file("test.arcplan",plan,(size_t)count);pad_a=pad_b=0;hints=manual_hints=0;assert(load(&game));run();run();
     ArcErrorBox box;api->error_snapshot(&box);assert(box.recognised_open && !box.answer_available && manual_hints);
-    pad_a=1;run();assert(word(0)==0 && pad_level(0,RETROK_SPACE));reset();api->error_snapshot(&box);assert(!box.answer_available);run();api->error_snapshot(&box);assert(box.recognised_open && !box.answer_available);unload();
+    pad_a=1;run();assert(word(0)==0 && pad_level(0,RETROK_SPACE));unsigned old_hints=manual_hints;reset();api->error_snapshot(&box);assert(!box.answer_available);run();api->error_snapshot(&box);assert(box.recognised_open && !box.answer_available);run();assert(manual_hints==old_hints+1);run();assert(manual_hints==old_hints+1);unload();
     /* Contained fault during a recognised generation retires all observers. */
     observer_guest(3);write_file("guest.rom",rom,2097152);
     count=snprintf(plan,sizeof(plan),"version=1\nmodel=sa110\nfirmware=%s/guest.rom\ncmos=seed\nseed=%s/seed\nrtc_epoch=0\nobserver_cells=15\nobserver_forms=0xffffffff\nobserver_launch=Run Authored\nobserver_boot=launch\n",directory,directory);

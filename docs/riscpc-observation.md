@@ -377,3 +377,37 @@ condition-failed continuation and trace-independent event identities. Paired
 measurement uses the same authored hot workload for inactive, active without a
 watch and active with a real user-report watch held; no production cell is
 promoted by this cost work.
+
+## Run G — QA adjudication and error-number qualification
+
+An open report retains its original continuation identity and owner generation.
+At each valid ROM OS_Byte 129 read, the shared contextual profile validates
+R1/R2, mode, learned site and SVC stack independently of pending answer intent.
+Learning and subsequent matching polls renew the existing return watch's
+instruction deadline by the bounded watch budget. Renewal never creates a new
+watch, changes its return PC/SP/mode, or revives a lost watch. Nonmatching reads
+do not renew it; cessation of polling still expires it. This work occurs only
+at observed SWIs and adds nothing to the no-watch instruction path.
+
+After loss, a user-mode Wimp_Poll or Wimp_PollIdle entry clears modal-unknown
+only when there is no current synchronous report watch or recognised open
+report. Privileged polls and polls during a report cannot establish non-modal
+state. Until that positive evidence, both disc replacement gates stay closed.
+Disc losses are accepted only for the current disc watch ID. Before replacing
+a watch, policy removes the old ID so its synchronous loss cannot disarm the
+new request. RPC reset clears the frontend's error-hint generation, hint state
+and seen-generation keys; Arculator reset remains unchanged.
+
+The contextual error profile gains an answerable number class: `zero` or
+`ordinary` (bit 31 clear). Production remains `zero`. Both classes refuse
+serious numbers (bit 31 set) and unreadable error blocks. This is an authored
+predicate, not a firmware classification table. The test-only plan key is
+`observer_error_numbers=zero|ordinary`, case-sensitive, default `zero`; it is
+applied only with `observer_cells`, logged in the TEST OVERRIDE label, preserved
+on RPC reset and cleared on a new load. It changes neither admitted forms nor
+effective buttons. Pure Arculator logic with its NULL profile is unaffected.
+
+Digest evidence compares the actual copied-image session digest with Python's
+independently computed SHA-1 and CRC32 of the authored input image. Tests use
+varied bytes across all copy units and require the size, SHA-1 and CRC32 to
+agree. No catalogue injection or firmware material is needed.

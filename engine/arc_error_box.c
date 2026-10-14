@@ -137,6 +137,21 @@ bool arc_error_consume(ArcErrorBox *box, uint32_t address, uint32_t mode,
 
 /* Contextual profile: eligibility is checked on every read, including READY.
  * Learning never consumes. No address, stack or firmware byte is prescribed. */
+bool arc_error_number_answerable(const ArcErrorProfile *p, uint32_t number)
+{
+   return p && !(number & UINT32_C(0x80000000)) &&
+      (number == 0 || p->numbers == ARC_ERROR_NUMBER_ORDINARY);
+}
+bool arc_error_poll_matches(const ArcErrorBox *box, uint32_t r1, uint32_t r2,
+   uint32_t address, uint32_t mode, uint32_t sp, bool in_rom)
+{
+   const ArcErrorProfile *p = box->profile;
+   return p && p->contextual && box->recognised_open && in_rom &&
+      mode <= 31 && (p->poll_modes & (UINT32_C(1)<<mode)) &&
+      r1 == p->poll_r1 && r2 == p->poll_r2 &&
+      (box->stage == ARC_ERROR_POLL || (box->stage == ARC_ERROR_READY &&
+       address == box->site && sp == box->sp && mode == box->poll_mode));
+}
 bool arc_error_poll(ArcErrorBox *box, uint32_t r1, uint32_t r2,
    uint32_t address, uint32_t mode, uint32_t sp, bool in_rom, uint8_t *key)
 {

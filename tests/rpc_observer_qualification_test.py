@@ -67,7 +67,7 @@ for line in output.splitlines():
     elif kind == 'error':
         catalogue, cpu, *profile = map(int, values); key = catalogue, cpu
         assert key not in seen_error; seen_error.add(key)
-        assert profile == [1, 0, 0, (1 << 3) | (1 << 19), (1 << 3) | (1 << 14), 1 << 3, (1 << 3) | (1 << 14), 1 << 14], line
+        assert profile == [1, 0, 0, (1 << 3) | (1 << 19), (1 << 3) | (1 << 14), 1 << 3, (1 << 3) | (1 << 14), 1 << 14, 0], line
     elif kind == 'disc':
         catalogue, cpu, *profile = map(int, values); key = catalogue, cpu
         assert key not in seen_disc; seen_disc.add(key)

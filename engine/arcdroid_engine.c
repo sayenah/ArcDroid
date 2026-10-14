@@ -537,6 +537,10 @@ RETRO_API const ArcEngineBackendOps *arc_rpc_test_engine_api(void)
 #if defined(ARCDROID_TEST_FAULTS)
 RETRO_API bool arc_engine_test_observers_disc_devices(unsigned forms)
 { return arc_engine_is_rpc() && arc_rpc_observers_test_disc_devices(forms); }
+RETRO_API bool arc_engine_test_observers_error_numbers(ArcErrorNumberClass numbers)
+{ return arc_engine_is_rpc() && arc_rpc_observers_test_error_numbers(numbers); }
+RETRO_API bool arc_engine_test_observers_firmware(ArcDigest *out)
+{ return arc_engine_is_rpc() && arc_rpc_session_firmware(out); }
 RETRO_API void arc_engine_test_observers_buttons(uint32_t ok,uint32_t cancel,uint32_t defaults)
 { if(arc_engine_is_rpc())arc_rpc_observers_test_buttons(ok,cancel,defaults); }
 RETRO_API void arc_engine_test_observers_override(unsigned mask,uint32_t r1,uint32_t r2,uint32_t forms)
