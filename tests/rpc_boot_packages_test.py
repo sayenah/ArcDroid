@@ -65,7 +65,8 @@ for name, dest, kind in [('Multisync', '$.Multisync', 0xfed),
                          ('BootTasks', '$.BootTasks', 0xfff),
                          ('Run', '$.!Boot.!Run', 0xfeb),
                          ('Boot', '$.!Boot.!Boot', 0xfeb),
-                         ('ArcTasks', '$.!Boot.ArcTasks', 0xfea)]:
+                         ('ArcTasks', '$.!Boot.ArcTasks', 0xfea),
+                         ('ArcGate', '$.ArcGate', 0xfff)]:
     data = (ASSETS / name).read_bytes()
     if name != 'Multisync':
         data = data.replace(b'\n', b'\r')
@@ -164,7 +165,7 @@ def no_root(save):
 
 # Authored-step revision 1: independent SHA-256 goldens of the source assets.
 # The receipt's authored revision is checked against the same revision below.
-AUTHORED_STEP_REVISION = 1
+AUTHORED_STEP_REVISION = 2
 ASSET_SHA256_BY_REVISION = {1: {
     'Multisync': '8ab8d572817801276883103a3154250f8691ae9df0636661f7a7e172de573b27',
     'BootEnv': '942d3602e8d43695640e45df293b5d63b9aed45b3530e2d7c0898a133b565add',
@@ -173,7 +174,8 @@ ASSET_SHA256_BY_REVISION = {1: {
     'ArcTasks': '24b50db4a3317d85e21ebe9eb4c1ff92bbae20d4fe9df7588e45481d7ecf1fa1',
     'Run': '3ef1d46087dd9745538d4264266f576fd09d497c0bd33f3ad218e798d859949e',
     'Boot': '2190a1ea1bdae384556f0dba674f34db39588398c32669bb812ddd0468b4380d',
-}}
+}, 2: {'Multisync': '8ab8d572817801276883103a3154250f8691ae9df0636661f7a7e172de573b27', 'BootEnv': '942d3602e8d43695640e45df293b5d63b9aed45b3530e2d7c0898a133b565add', 'BootRes': '7bca5af47a9c8d74668a583046b602c2b6a2199fc203193da64233b37942effd', 'BootTasks': '1d605cb0b8e1f06e4de2495ff4e31a126f9931d41526043d24ea3694a7929504', 'ArcTasks': 'e229aea03e29249bac7c52621d9949a301074f4e28312fa4db078c5ef4fd6556', 'Run': '3ef1d46087dd9745538d4264266f576fd09d497c0bd33f3ad218e798d859949e', 'Boot': '2190a1ea1bdae384556f0dba674f34db39588398c32669bb812ddd0468b4380d', 'ArcGate': 'e64b86491cc84dc81b16d5a9b69b93e71863e465a66257650ad3b9a70e207cd9'}}
+
 
 
 def check_asset_revision(directory=ASSETS, revision=AUTHORED_STEP_REVISION):
@@ -313,7 +315,7 @@ def cases(root):
             path.write_bytes(data)
         run(sy, directory/'save', success=False);no_root(directory/'save')
     # Each configured cap and both boundaries of depth/fanout are executable.
-    for label, count, expected_ok in (('fanout-77', 70, True), ('fanout-78', 71, False)):
+    for label, count, expected_ok in (('fanout-77', 69, True), ('fanout-78', 70, False)):
         hard=dict(BASE);expected=dict(EXPECTED)
         for i in range(count):
             name=f'F{i:03d}';item=(b'x',0xffffff00,0,3)

@@ -46,6 +46,7 @@ typedef struct {
     const ArcEngineMedia *media, *helper;
     uint64_t epoch;
     bool hard_disc, populate;
+    bool helper_override; /* Explicit drive1, including empty, suppresses generation. */
 } ArcRpcPreparationRequest;
 typedef struct ArcRpcPreparation ArcRpcPreparation;
 typedef struct {
@@ -55,6 +56,7 @@ typedef struct {
      * + work. Boot DONE groups low-level blank/import units without a boot
      * context. RUNNING denotes a virtual advance. */
     uint64_t estimated_ns;
+    uint64_t helper_bytes; /* In-memory construction bytes this frame, no VFS I/O. */
     unsigned unit_kind;
     unsigned steps, generation_quanta, namespace_units, attachment_units;
     ArcRpcPreparationState state;

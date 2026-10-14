@@ -1,0 +1,75 @@
+10 REM ArcDroid revision-2 startup gate; GPL-2.0-only.
+20 REM Fixed ABI and bounds: docs/riscpc-launch-gate.md.
+25 SYS "XOS_UpCall",&A3C301
+30 DIM codeblock% 259,imageblock% 8195,ackblock% 35
+32 code%=(codeblock%+3) AND NOT 3:image%=(imageblock%+3) AND NOT 3:ack%=(ackblock%+3) AND NOT 3
+40 h%=0:claimed%=0:valid%=0:bytes%=0:flags%=0
+50 FOR pass%=0 TO 2 STEP 2
+60 P%=code%
+70 [OPT pass%
+80 .upcall
+90 CMP R0,#256
+100 MOVEQ R0,#0
+110 LDMEQFD R13!,{PC}
+120 CMP R0,#4
+130 LDMEQFD R13!,{PC}
+140 CMP R0,#1
+150 BEQ medium
+160 CMP R0,#2
+170 BNE onward
+180 .medium
+190 CMP R1,#8
+200 MVNEQ R0,#0
+210 LDMEQFD R13!,{PC}
+220 .onward
+230 MOVS PC,R14
+240 ]
+250 NEXT
+260 ON ERROR GOTO 700
+262 SYS &2006D,0 TO features%;flags%
+263 IF (flags% AND 1)<>0 THEN features%=0
+265 SYS "XOS_ReadMonotonicTime" TO now%:!ack%=now%
+266 SYS "XOS_SetVarVal","ArcGate$Entry",ack%,4,0,1
+270 flags%=0:IF (features% AND 1)<>0 THEN SYS &2006E,1,code%,P%-4 TO ;flags%
+275 IF (flags% AND 1)<>0 THEN GOTO 950
+280 SYS "XOS_Claim",&1D,code%,0 TO ;flags%
+290 IF (flags% AND 1)<>0 THEN GOTO 750
+300 claimed%=1
+310 SYS "XOS_Find",&4F,"ADFS::1.$.ArcHelper" TO opened%;flags%
+315 IF (flags% AND 1)<>0 THEN GOTO 700
+317 h%=opened%
+320 IF h%=0 THEN GOTO 700
+330 SYS "XOS_Args",2,h% TO ,,bytes%;flags%
+340 IF (flags% AND 1)<>0 OR bytes%<68 OR bytes%>8192 OR (bytes% AND 3)<>0 THEN GOTO 700
+350 SYS "XOS_GBPB",4,h%,image%,bytes%,0 TO ,,,left%;flags%
+360 IF (flags% AND 1)=0 AND left%=0 THEN valid%=1
+370 GOTO 700
+700 REM All paths close while cancellation is still installed, then release.
+710 ON ERROR OFF
+715 SYS "XOS_Byte",124
+720 IF h%<>0 THEN SYS "XOS_Find",0,h%:h%=0
+730 IF claimed%<>0 THEN SYS "XOS_Release",&1D,code%,0:claimed%=0
+750 REM No vector or handle is retained across descriptor parsing or CALL.
+760 ON ERROR GOTO 950
+770 IF valid%=0 THEN GOTO 950
+780 IF !image%<>&52435241 OR image%!4<>&31504C48 THEN GOTO 950
+790 IF image%!8<>1 OR image%!12<>64 OR image%!16<>bytes% THEN GOTO 950
+800 IF image%!20<>1 OR image%!24<>1 THEN GOTO 950
+810 entry%=image%!28:plan%=image%!44:plen%=image%!48
+820 IF entry%<64 OR entry%>bytes%-4 OR (entry% AND 3)<>0 THEN GOTO 950
+830 IF image%!32<>1 OR image%!36<>1 OR image%!40<>1 THEN GOTO 950
+840 IF plan%<entry%+4 OR plan%>bytes% OR (plan% AND 3)<>0 THEN GOTO 950
+850 IF plen%<0 OR plen%>bytes%-plan% THEN GOTO 950
+860 IF image%!52<>0 OR image%!56<>0 OR image%!60<>0 THEN GOTO 950
+870 FOR i%=0 TO 28 STEP 4:ack%!i%=0:NEXT
+880 !ack%=&314B4341:ack%!4=1
+885 flags%=0:IF (features% AND 1)<>0 THEN SYS &2006E,1,image%,image%+bytes%-4 TO ;flags%
+887 IF (flags% AND 1)<>0 THEN GOTO 950
+890 A%=image%:B%=bytes%:C%=ack%:D%=1
+900 CALL image%+entry%
+910 result%=ack%!12:IF result%<0 OR result%>7 THEN result%=0
+920 SYS "XOS_UpCall",&A3C310+result%
+950 SYS "XOS_ReadMonotonicTime" TO now%:!ack%=now%
+952 SYS "XOS_SetVarVal","ArcGate$Return",ack%,4,0,1
+954 SYS "XOS_UpCall",&A3C302
+960 END

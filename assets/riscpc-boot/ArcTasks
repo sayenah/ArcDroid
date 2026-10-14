@@ -3,3 +3,4 @@
 BASIC -quit ADFS::4.$.BootRes
 Obey ADFS::4.$.ResBoot
 BASIC -quit ADFS::4.$.BootTasks
+BASIC -quit ADFS::4.$.ArcGate

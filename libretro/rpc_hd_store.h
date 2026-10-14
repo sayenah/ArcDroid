@@ -26,6 +26,7 @@ bool arc_riscpc_hd_next_namespace(const ArcRpcHdStore *, unsigned operation);
 /* Host-owned creation provenance; never represented by guest sectors. */
 typedef struct {
     uint8_t packages[2][32];
+    uint32_t receipt_revision, populator_revision, authored_revision;
     uint64_t files, bytes;
 } ArcRpcHdReceipt;
 bool arc_riscpc_hd_receipt(const ArcRpcHdStore *, ArcRpcHdReceipt *);

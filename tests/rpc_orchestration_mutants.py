@@ -10,6 +10,11 @@ ninja=next(s.split('=',1)[1] for s in (build/'CMakeCache.txt').read_text().split
 commands=[r['command'] for r in json.loads(subprocess.check_output([ninja,'-C',str(build),'-t','compdb','-x'],text=True))]
 compile,link=rebuild_commands(commands,source,'rpc_orchestration_test',build,os.name=='nt')
 mutants=[
+ ('helper-explicit-empty','!p->request.helper_override &&',''),
+ ('helper-revision','r.authored_revision==2','r.authored_revision>=1'),
+ ('helper-attachment','p->generated_helper?&p->helper:p->request.helper','p->request.helper'),
+ ('helper-budget','p->stats.helper_bytes=ARC_RPC_HELPER_SIZE;','p->stats.helper_bytes=0;'),
+ ('revision1-notice','receipt.authored_revision==1','false'),
  ('validation-before-candidate','arc_riscpc_boot_validation_complete(p->boot)','true'),
  ('requested-before-population','if(p->needs_population){p->state=ARC_RPC_PREP_POPULATE;p->substep=0;}','if(p->needs_population){p->state=ARC_RPC_PREP_START;p->substep=0;}'),
  ('generation-isolated-factory','if(!start(p,true))','if(!start(p,false))'),
@@ -58,7 +63,7 @@ mutants=[
  ('step-cap','p->stats.steps<ARC_RPC_PREP_STEPS','true'),
  ('spike-ends-batch','((attempts||advance) && actual>cost) || actual>ceiling','actual>ceiling'),
  ('generation-estimate','advance?ARC_RPC_GENERATION_UNIT_NS:','advance?UINT64_C(8333333):'),
- ('attachment-declaration','attachment=p->state==ARC_RPC_PREP_START && p->substep==2','attachment=false'),
+ ('attachment-declaration','attachment=p->state==ARC_RPC_PREP_START && p->substep==3','attachment=false'),
  ('attachment-census','p->stats.attachment_operations=io.operations','p->stats.attachment_operations=0'),
  ('refresh-unit-count','reserved+=ceiling;refresh(p,false);','reserved+=ceiling;refresh(p,true);'),
  ('notice-refresh','p->notice_frames=60;','p->notice_frames=600;'),

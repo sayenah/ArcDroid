@@ -48,6 +48,7 @@ set(ARCDROID_CORE_SOURCES
   core/adffs.c
   core/install_disc.c
   core/rpc_boot_filecore.c
+  core/rpc_launch_helper.c
   core/hard_disc_scope.c
   core/hd_program.c
   core/zip.c
@@ -164,7 +165,7 @@ add_custom_command(OUTPUT ${RPC_BOOT_ASSETS}
   DEPENDS tools/embed-rpc-boot.py core/rpc_boot_assets.h
     assets/riscpc-boot/Multisync assets/riscpc-boot/BootEnv
     assets/riscpc-boot/BootRes assets/riscpc-boot/BootTasks
-    assets/riscpc-boot/ArcTasks assets/riscpc-boot/Run assets/riscpc-boot/Boot
+    assets/riscpc-boot/ArcTasks assets/riscpc-boot/Run assets/riscpc-boot/Boot assets/riscpc-boot/ArcGate
   VERBATIM)
 target_sources(arcdroid_core PRIVATE ${RPC_BOOT_ASSETS})
 
@@ -2443,6 +2444,29 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
       "${CMAKE_CURRENT_BINARY_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}" "${FIXTURE_DIR}" ${RPC_ORCHESTRATION_MUTANT_PROFILE})
     set_tests_properties(rpc-orchestration-mutants PROPERTIES TIMEOUT 300 RUN_SERIAL TRUE)
   endif()
+  if(NOT ARCDROID_SANITIZERS AND NOT CMAKE_CROSSCOMPILING)
+    add_test(NAME rpc-launch-gate-mutants COMMAND "${Python3_EXECUTABLE}" -B
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_launch_gate_mutants.py" "${CMAKE_C_COMPILER}"
+      $<TARGET_FILE:rpc_runner> $<TARGET_FILE:arcdroid_rpcplan_libretro> "${CMAKE_CURRENT_SOURCE_DIR}")
+    set_tests_properties(rpc-launch-gate-mutants PROPERTIES TIMEOUT 120 RUN_SERIAL TRUE)
+  endif()
+  add_executable(rpc_launch_helper_test tests/rpc_launch_helper_test.c core/rpc_launch_helper.c)
+  target_include_directories(rpc_launch_helper_test PRIVATE core)
+  target_compile_options(rpc_launch_helper_test PRIVATE -UNDEBUG -Wall -Wextra)
+  if(ARCDROID_SANITIZERS)
+    target_link_libraries(rpc_launch_helper_test PRIVATE arcdroid_sanitizer_compile arcdroid_sanitizer_link)
+  endif()
+  add_test(NAME rpc-launch-gate-vector COMMAND "${Python3_EXECUTABLE}" -B
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_gate_vector_test.py"
+    $<TARGET_FILE:rpc_runner> $<TARGET_FILE:arcdroid_rpcplan_libretro>
+    "${CMAKE_CURRENT_SOURCE_DIR}/assets/riscpc-boot/ArcGate")
+  set_tests_properties(rpc-launch-gate-vector PROPERTIES TIMEOUT 90)
+  add_test(NAME rpc-launch-helper-guest COMMAND "${Python3_EXECUTABLE}" -B
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_launch_helper_guest_test.py"
+    $<TARGET_FILE:rpc_runner> $<TARGET_FILE:arcdroid_rpcplan_libretro> $<TARGET_FILE:rpc_launch_helper_test>)
+  set_tests_properties(rpc-launch-helper-guest PROPERTIES TIMEOUT 90)
+  add_test(NAME rpc-launch-helper COMMAND rpc_launch_helper_test)
+  set_tests_properties(rpc-launch-helper PROPERTIES TIMEOUT 30)
   add_executable(rpc_preparation_test tests/rpc_preparation_test.c libretro/rpc_hd_store.c libretro/install_store.c libretro/arc_io.c)
   target_include_directories(rpc_preparation_test PRIVATE core engine libretro libretro/include)
   target_link_libraries(rpc_preparation_test PRIVATE arcdroid_core)

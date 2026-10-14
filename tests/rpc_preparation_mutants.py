@@ -8,7 +8,7 @@ mutants=[
  ('oversized-length-opaque','hd','!memcmp(prefix,"ARCRHDM1",8)&&n!=get(prefix+12,4)','false'),
  ('receipt-future','hd','get(r+8,4)!=1','false'),
  ('populator-future','hd','get(r+12,4)!=1','false'),
- ('authored-future','hd','get(r+16,4)!=1','false'),
+ ('authored-future','hd','(get(r+16,4)!=1&&get(r+16,4)!=2)','false'),
  ('envelope-future','hd','if((revision!=1&&revision!=2)||n!=manifest_length(m))return ARC_RPC_HD_UNSUPPORTED;','if(revision!=1&&revision!=2)return ARC_RPC_HD_CORRUPT;'),
  ('crc-before-revision','hd','if(n<ENVELOPE_MIN||n!=get(m+12,4)||memcmp(m+16,s->content,40)||get(m+n-4,4)!=crc(s,m,n-4))','if(n!=get(m+12,4)||memcmp(m+16,s->content,40))'),
  ('io-is-unavailable','hd','if(!read_leaf(s,leaf,m,n))return open_failure(s,ARC_RPC_HD_UNAVAILABLE);','if(!read_leaf(s,leaf,m,n))return open_failure(s,ARC_RPC_HD_CORRUPT);'),
