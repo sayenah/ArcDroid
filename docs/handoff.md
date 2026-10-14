@@ -1,19 +1,23 @@
 # ArcDroid Handoff
 
-**Stage:** IMPLEMENTATION — **R3c-1** (RPC observation primitives; work order below). R3c is planned as three PRs (D-174, D-175).
-**Owner:** Sol (GPT-6.1 Sol), orchestrated by Fable (S63).
+**Stage:** QA — **R3c-1** (RPC observation primitives), draft PR #403, branch `slice/r3c1-observation`, head `98b43df`.
+**Owner:** Opus (independent QA, `arcdroid-opus-qa`, effort high), orchestrated by Fable (S63).
 **Next (S63):**
-1. **Sol implements R3c-1** on `slice/r3c1-observation` exactly as the work order below and D-175 define it, then writes `SOL-REPORT-R3C1.md`. Fable reviews the diff and evidence, commits, opens the PR, runs AC-8, then sets Stage QA.
-2. **While Sol runs R3c-1:** nothing for R3c-2 can be traced until R3c-1's trace mode exists. Fable then records each pair's error-box, disc-request, launch and prompt sequences privately and writes R3c-2's recognition predicates from that evidence (D-174(4)).
+1. **Opus QA of R3c-1** against the work order below, D-174 and D-175, in a fresh clone of `98b43df` with `main` merged. Report findings by severity; Fable adjudicates. Then CI green on every job, merge, and the R3c-2 work order.
+   - **Sol runs:** A `cac2690` (the slice); B `98b43df` (Fable's AC-8 findings: the unarmed interpreter path now carries no observer work, through two compile-time instantiations selected per batch; the trace defaults to SWI events, with class and SWI selection, 65,536 records and gap records that resume after a loss).
+   - **Fable review:** diff read; focused tests and the pinned `30c0bab` comparison re-run (17 plans and persisted files identical).
+   - **AC-8 (Fable, private):**
+     - **R-H, Odin3:** run A failed (every adjacent pair slower, +1.1 % to +4.2 % p50). Run B passes: two alternations of six 300 s runs (base-first and candidate-first) give p50 differences of +0.3 % and 0.0 %, within the ±0.5 % run-to-run spread; p95 likewise.
+     - **Traces:** run A's trace stopped for good after its first loss. Run B: all seven pairs boot their populated discs to the desktop with complete traces (no loss, no gaps, about 70 guest seconds, up to 9.7 million SWI records).
+   - **CI:** run 38500890596 on `98b43df`.
+2. **R3c-2 preparation (Fable, private, with the run B trace):** record each pair's error-box, disc-request, launch and prompt sequences and write R3c-2's recognition predicates from that evidence (D-174(4)). Boot traces alone do not qualify the error box or disc requests (D-175(6)).
 3. **R3d must include** (D-173) the RetroArch-frontend legs on the Odin3 and native Windows: preparation notices visible, and frames presenting during first use and reopen with the shipping core on ordinary loads.
 4. **Carried Lows:**
    - **R3a:** the `recognize-os-range` mutant; two `resource_failure` asserts; Python `assert` in the mutation script; `inventory=skipped` wording (to R3d).
-   - **Q-3:** the CPU test comment (`tests/rpc_cpu_test.c:373–374`); carried into R3c-1, which touches the CPU tests.
+   - **Q-3:** the CPU test comment (`tests/rpc_cpu_test.c:373–374`), corrected in R3c-1 (closes when it merges).
    - **R2c:** the import guard does not tie a patch ID to file content.
    - **R3b-2b QA S-4:** live CMOS persistence is synchronous; revisit with R3d/R4 timing.
-5. **Device and box cleanup when convenient:**
-   - **Odin3:** `/data/local/tmp/arcdroid-r3b1/`, `/data/local/tmp/arcdroid-r3b2b/`, `/storage/emulated/0/arcdroid-s62/`, `/storage/emulated/0/arcdroid-s62b/`.
-   - **Windows:** `S:\dev\ArcDroid\work\s62pop`.
+5. **Device kit:** the Odin3 keeps `/data/local/tmp/arcdroid-r3b2b/` (runner kit and boot packages), `/storage/emulated/0/arcdroid-s62b/` (seven populated pair stores) and `/data/local/tmp/arcdroid-s63/` (R-H kit and results). S63 removed the R3b-1 folders on the Odin3 and the Windows box.
 
 **R3c plan (D-174; Astra stage 1 `.work/s63/astra/report1.md`).**
 - **R3c-1, observation primitives** (below).
