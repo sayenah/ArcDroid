@@ -43,6 +43,15 @@ mutants=[
  ('nested-pending','engine/arc_error_box.c','box->pending = box->consumed = ARC_ERROR_NONE;','box->consumed = ARC_ERROR_NONE;'),
  ('watch-expiry','engine/rpc/rpc_observer.c','observer.instruction>observer.watches[i].deadline','false'),
  ('watch-loss','engine/rpc/rpc_observers.c','if(e->kind==ARC_RPC_OBS_WATCH_LOST || e->kind==ARC_RPC_OBS_CONTINUATION)','if(e->kind==ARC_RPC_OBS_CONTINUATION)'),
+ ('privileged-nested-report','engine/rpc/rpc_observers.c','if(state.error_watch){arc_rpc_observer_cancel(ARC_RPC_OBS_ERROR);error_loss();}','if(false){arc_rpc_observer_cancel(ARC_RPC_OBS_ERROR);error_loss();}'),
+ ('launch-user','engine/rpc/rpc_observers.c','(void)opaque;if(e->kind!=ARC_RPC_OBS_SWI || !user(e->mode))return;\n    char command','(void)opaque;if(e->kind!=ARC_RPC_OBS_SWI)return;\n    char command'),
+ ('launch-exit-rom','engine/rpc/rpc_observers.c','{600000000u,true,true,true}','{600000000u,false,true,true}'),
+ ('launch-close-rom','engine/rpc/rpc_observers.c','{600000000u,true,true,true}','{600000000u,true,false,true}'),
+ ('launch-poll-rom','engine/rpc/rpc_observers.c','{600000000u,true,true,true}','{600000000u,true,true,false}'),
+ ('launch-horizon','engine/rpc/rpc_observers.c','{600000000u,true,true,true}','{600000001u,true,true,true}'),
+ ('boot-user','engine/rpc/rpc_observers.c',('0x8000u,true,true','(void)opaque;if(e->kind!=ARC_RPC_OBS_SWI || !user(e->mode))return;\n    arc_boot_watch_observe'),('0x8000u,false,true','(void)opaque;if(e->kind!=ARC_RPC_OBS_SWI)return;\n    arc_boot_watch_observe')),
+ ('boot-buffer','engine/rpc/rpc_observers.c','0x8000u,true,true','0x8001u,true,true'),
+ ('boot-horizon','engine/rpc/rpc_observers.c','{40000000u,2000000u,0x8000u,true,true}','{40000001u,2000000u,0x8000u,true,true}'),
  ('boot-rom','engine/rpc/rpc_observers.c','0x8000u,true,true','0x8000u,true,false'),
 ]
 if frontend:
@@ -51,6 +60,15 @@ if frontend:
       ('pad-release','libretro/arcdroid_libretro.c','(error_ready || arc_error_pad_gate)) continue;','(error_ready || false)) continue;'),
       ('pad-simultaneous','libretro/arcdroid_libretro.c','!arc_error_pad_gate && error_a != error_b','!arc_error_pad_gate && true'),
       ('pad-answer','libretro/arcdroid_libretro.c','(void)arc_engine_error_request(ARC_ERROR_OK);','(void)arc_engine_error_request(ARC_ERROR_CANCEL);'),
+      ('binding-catalogue','engine/arcdroid_engine.c','catalogue==actual?actual:0','catalogue'),
+      ('binding-cpu','engine/arcdroid_engine.c','arc_rpc_observers_bind(catalogue==actual?actual:0,arc_rpc_session_cpu());','arc_rpc_observers_bind(catalogue==actual?actual:0,0);'),
+      ('commit-recheck-generation','libretro/arcdroid_libretro.c','if(arc_engine_is_rpc() && (generation!=arc_disc_generation ||','if(arc_engine_is_rpc() && (false ||'),
+      ('commit-recheck-idle','libretro/arcdroid_libretro.c','!arc_engine_disc_controller_idle() || !arc_engine_rpc_observers_replace(signal)))','false || !arc_engine_rpc_observers_replace(signal)))'),
+      ('commit-recheck-replacement','libretro/arcdroid_libretro.c','!arc_engine_disc_controller_idle() || !arc_engine_rpc_observers_replace(signal)))','!arc_engine_disc_controller_idle() || false))'),
+      ('identity-write-invalidation','engine/arcdroid_engine.c','end>rpc_map_lba+5)))rpc_hd_known=false;','end>rpc_map_lba+5)))rpc_hd_known=true;'),
+      ('identity-unchanged-name','engine/arcdroid_engine.c','!memcmp(record+(r?26:0x1c0+22),rpc_hd_record_name,10)','true'),
+      ('identity-write-success','engine/arcdroid_engine.c','rpc_hd_known=ok && known && unchanged;','rpc_hd_known=known && unchanged;'),
+      ('identity-frame-reads','engine/arcdroid_engine.c','memcpy(helper,rpc_helper_name,11);memcpy(hd,rpc_hd_name,11);','rpc_helper_derive();rpc_hd_derive();memcpy(helper,rpc_helper_name,11);memcpy(hd,rpc_hd_name,11);'),
       ('manual-hint','libretro/arcdroid_libretro.c','rpc_error ? error_box.recognised_open : error_ready','rpc_error ? false : error_ready'),
     ]
     subprocess.run([sys.executable,str(root/'tests/rpc_observers_frontend_test.py'),str(target),str(core),str(build/"tests/fixtures/generated")],check=True,cwd=build,timeout=60,capture_output=True)

@@ -245,7 +245,11 @@ static void scheduler_matrix(const uint8_t *rom,size_t size,ArcRpcPreparationHos
         unsigned max_steps=0,max_namespaces=0;bool ordinary_above_old=false,namespace_above_old=false;
         for(unsigned i=0;arc_riscpc_preparation_state(p)<ARC_RPC_PREP_RUNNING;++i){
             assert(i<100000);frame(p);ArcRpcPreparationStats s;arc_riscpc_preparation_stats(p,&s);
-            if(s.attachment_units)assert(s.steps==1 && s.attachment_operations==8 && s.attachment_bytes==10 && s.attachment_namespace==1);
+            /* Identity derivation loads the boot and map chunks once at attach:
+             * each verified chunk is open/size/three reads/close, 128-byte
+             * header + 256 KiB payload + 4-byte trailer. Frame queries do no I/O. */
+            if(s.attachment_units)assert(s.steps==1 && s.attachment_operations==8+2*6 &&
+                s.attachment_bytes==10+2*(128+ARC_RPC_HD_CHUNK+4) && s.attachment_namespace==1);
             if(s.steps>max_steps)max_steps=s.steps;if(s.namespace_attempts>max_namespaces)max_namespaces=(unsigned)s.namespace_attempts;
             if(!s.namespace_units && !s.attachment_units && s.elapsed_ns>UINT64_C(3333333))ordinary_above_old=true;
             if(s.namespace_attempts && s.elapsed_ns>UINT64_C(8333333))namespace_above_old=true;
@@ -308,7 +312,7 @@ static void scheduler_matrix(const uint8_t *rom,size_t size,ArcRpcPreparationHos
     arc_riscpc_preparation_cancel(p);finish(p);
     restore();clock_mode=4;attachment_fail=true;terminal_notices=0;
     p=new_request(rom,size,true,false,host);settle(p);arc_riscpc_preparation_stats(p,&s);
-    assert(arc_riscpc_preparation_state(p)==ARC_RPC_PREP_FAILED && terminal_notices==1 && s.attachment_operations==1 && !s.attachment_namespace && s.steps==1);
+    assert(arc_riscpc_preparation_state(p)==ARC_RPC_PREP_FAILED && terminal_notices==1 && s.attachment_operations==1+2*6 && s.attachment_bytes==2*(128+ARC_RPC_HD_CHUNK+4) && !s.attachment_namespace && s.steps==1);
     finish(p);attachment_fail=false;
     for(unsigned index=0;index<3;++index)for(unsigned one=0;one<2;++one){
         unsigned mode=index==2?11:7+index;

@@ -560,6 +560,7 @@ RETRO_API void arc_rpc_test_video_status(ArcRpcVideoStatus *out) { if(out)arc_rp
 RETRO_API uint64_t arc_rpc_test_video_bus_ns(void) { return arc_rpc_bus_ns; }
 RETRO_API void arc_rpc_test_fail_alloc(unsigned stage) { arc_rpc_fail_alloc=stage; }
 RETRO_API void arc_rpc_test_fault_next(void) { arc_rpc_fail_entry=true; }
+RETRO_API void arc_rpc_test_fdc_hold_reset(void) { fdc_write(0x3f2,0); }
 RETRO_API bool arc_rpc_test_advance(uint64_t ns) { return arc_rpc_session_advance(ns); }
 RETRO_API uint64_t arc_rpc_test_session_generation(void) { return arc_rpc_generation; }
 RETRO_API void arc_rpc_test_snapshot(ArcRpcTestSnapshot *out)

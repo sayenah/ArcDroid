@@ -91,6 +91,10 @@ static void error_cases(CPUModel model)
     start(model,12);report(3);poll(0x18c,19,0,0,0x10001000);assert(arc_rpc_observers_answer(ARC_ERROR_OK));
     report(0x100);assert(!box().answer_available && box().pending==ARC_ERROR_NONE); /* no parent revival */
     start(model,12);report(3);poll(0x18c,19,0,0,0x10001000);assert(arc_rpc_observers_answer(ARC_ERROR_OK));
+    issue(0x190,19,0x400df,0,0x33,0,0,0x10001000);
+    assert(box().modal_unknown && !box().recognised_open && box().pending==ARC_ERROR_NONE);
+    poll(0x18c,19,0,0,0x10001000);assert(arm.reg[1]==0 && !arc_rpc_observers_answer(ARC_ERROR_OK));
+    start(model,12);report(3);poll(0x18c,19,0,0,0x10001000);assert(arc_rpc_observers_answer(ARC_ERROR_OK));
     arc_rpc_observer_cancel(ARC_RPC_OBS_ERROR);assert(box().modal_unknown && !box().recognised_open);
     start(model,12);arc_rpc_observers_test_watch_budget(0);report(3);
     assert(box().modal_unknown && !box().recognised_open && !arc_rpc_observers_answer(ARC_ERROR_OK));
@@ -180,14 +184,32 @@ static void phase_cases(CPUModel model)
     issue(0x100,16,0x400de,0x10000000,0,0,0,0x10008000);
     ArcLaunchOutcome out;arc_rpc_observers_launch_snapshot(&out);assert(out.state==ARC_OUTCOME_WAIT);
     strcpy((char *)ram00,"Run Authored");issue(0x100,16,0x400de,0x10000000,0,0,0,0x10008000);
+    /* Privileged launch traffic cannot match or cancel the user phase. */
+    issue(0x104,19,0x400de,0x10000000,0,0,0,0x10001000);
+    arc_rpc_observers_launch_snapshot(&out);assert(out.state==ARC_OUTCOME_EXIT);
+    /* Each terminal step requires fetched ROM provenance independently. */
+    const uint32_t terminal[]={0x11,0x400dd,0x400c7};
+    const unsigned expected[]={ARC_OUTCOME_EXIT,ARC_OUTCOME_CLOSE,ARC_OUTCOME_END};
+    for(unsigned step=0;step<3;++step){
+        updatemode(16);arm.reg[16]=16;arm.reg[15]=0x10000200+8;
+        arm.reg[0]=0;arm.reg[1]=5;arm.reg[2]=0;arm.reg[13]=0x10008000;
+        ram00[0x200/4]=0xef000000|terminal[step];arc_rpc_arm_exec_count(1);
+        arc_rpc_observers_launch_snapshot(&out);assert(out.state==expected[step]);
+        issue(0x104+4*step,16,terminal[step],0,5,0,0,0x10008000);
+    }
+    assert(arc_rpc_observers_launch_arm("Run Authored"));
+    issue(0x100,16,0x400de,0x10000000,0,0,0,0x10008000);
     arc_rpc_observers_refused(0);arc_rpc_observers_refused(4);
     issue(0x104,16,0x11,0,0x58454241,9,0,0x10008000);
     issue(0x108,16,0x400dd,0,5,0,0,0x10008000);issue(0x10c,16,0x400c7,0,0,0,0,0x10008000);
     arc_rpc_observers_launch_snapshot(&out);assert(out.state==ARC_OUTCOME_POLL && out.last_rc==9 && out.refused_hd==1 && out.refused_floppy==1);
     assert(arc_rpc_observers_launch_arm("Run Authored"));issue(0x100,16,0x400de,0x10000000,0,0,0,0x10008000);
     issue(0x104,16,0x400de,0x10000000,0,0,0,0x10008000);arc_rpc_observers_launch_snapshot(&out);assert(out.state==ARC_OUTCOME_CANCEL);
-    assert(arc_rpc_observers_launch_arm("Run Authored"));arc_rpc_observers_frame(600000000);arc_rpc_observers_launch_snapshot(&out);assert(out.state==ARC_OUTCOME_CANCEL);
-    arc_rpc_observers_boot_arm();arc_rpc_observers_frame(40000000);assert(arc_rpc_observers_boot_state()==ARC_BOOT_WATCH_EXPIRED);
+    assert(arc_rpc_observers_launch_arm("Run Authored"));arc_rpc_observers_frame(599999999);
+    arc_rpc_observers_launch_snapshot(&out);assert(out.state==ARC_OUTCOME_WAIT);
+    arc_rpc_observers_frame(600000000);arc_rpc_observers_launch_snapshot(&out);assert(out.state==ARC_OUTCOME_CANCEL);
+    arc_rpc_observers_boot_arm();arc_rpc_observers_frame(39999999);assert(arc_rpc_observers_boot_state()==ARC_BOOT_WATCH_ARMED);
+    arc_rpc_observers_frame(40000000);assert(arc_rpc_observers_boot_state()==ARC_BOOT_WATCH_EXPIRED);
 }
 int main(void)
 {

@@ -42,8 +42,18 @@ static ArcEngineMedia rpc_helper;
 static char rpc_helper_path[1024];
 static uint64_t rpc_identity_epoch;
 static ArcIdeBackend rpc_identity_ide;
+static char rpc_helper_name[11],rpc_hd_name[11];
+static uint8_t rpc_hd_record_name[10];
+static bool rpc_helper_known=true,rpc_hd_known=true;
+static const uint32_t rpc_map_lba=((2u*(512u*8u-32u)-480u)<<13)/512u;
+static void rpc_helper_derive(void);
+static void rpc_hd_derive(void);
 static void rpc_identity_clear(void)
-{ rpc_helper=(ArcEngineMedia){0};rpc_identity_ide=(ArcIdeBackend){0};rpc_identity_epoch=0;rpc_helper_path[0]=0; }
+{
+    rpc_helper=(ArcEngineMedia){0};rpc_identity_ide=(ArcIdeBackend){0};
+    rpc_identity_epoch=0;rpc_helper_path[0]=rpc_helper_name[0]=rpc_hd_name[0]=0;
+    rpc_helper_known=rpc_hd_known=true;
+}
 bool arc_engine_is_rpc(void) { return arc_backend == &arc_rpc_backend; }
 
 uint64_t arc_engine_session_generation(void)
@@ -96,7 +106,10 @@ void arc_engine_set_log_callback(ArcEngineLogCallback callback, void *opaque)
 bool arc_engine_reset(char *error, size_t error_size)
 {
    bool ok=arc_backend->reset(error,error_size);
-   if(ok && arc_engine_is_rpc())rpc_identity_epoch=arc_rpc_observer_epoch();
+   if(arc_engine_is_rpc()){
+      rpc_helper_known=rpc_hd_known=false;
+      if(ok){rpc_identity_epoch=arc_rpc_observer_epoch();rpc_helper_derive();rpc_hd_derive();}
+   }
    return ok;
 }
 
@@ -293,38 +306,48 @@ bool arc_engine_rpc_observers_capability(unsigned bit)
 { return arc_engine_is_rpc() && arc_rpc_observers_capability(bit); }
 void arc_engine_rpc_diagnostics(void)
 { if(arc_engine_is_rpc())arc_rpc_observer_drain(); }
+static bool rpc_identity_name_valid(const char *s)
+{
+    for(unsigned i=0;s[i];++i)
+        if((unsigned char)s[i]<0x21 || (unsigned char)s[i]>0x7e || strchr(".:*/\\",s[i]))return false;
+    return true;
+}
+static void rpc_helper_derive(void)
+{
+    rpc_helper_name[0]=0;rpc_helper_known=!rpc_helper.kind;
+    if(!rpc_helper.kind || rpc_helper.writable)return;
+    void *allocated=NULL;const uint8_t *data=rpc_helper.data;size_t size=rpc_helper.size;
+    if(!data && !arc_io_read_all(rpc_helper.path,&allocated,&size))return;
+    if(!data)data=allocated;
+    ArcMediaInfo info={0};ArcGuestName name={0};
+    bool valid=arc_media_inspect(rpc_helper.path?rpc_helper.path:"helper.adf",data,size,&info,NULL,0) &&
+        arc_disc_read_name(data,size,&info,NULL,&name) && name.length>0 && name.length<=10;
+    if(valid){memcpy(rpc_helper_name,name.bytes,name.length);rpc_helper_name[name.length]=0;}
+    free(allocated);rpc_helper_known=valid && rpc_identity_name_valid(rpc_helper_name);
+}
+static void rpc_hd_derive(void)
+{
+    rpc_hd_name[0]=0;rpc_hd_known=!rpc_identity_ide.read;
+    if(!rpc_identity_ide.read)return;
+    uint8_t boot[512],map[512],backup[512];
+    /* Authored 126 MiB format: all three records must agree. */
+    if(!rpc_identity_ide.read(rpc_identity_ide.opaque,6,1,boot) ||
+       !rpc_identity_ide.read(rpc_identity_ide.opaque,rpc_map_lba,1,map) ||
+       !rpc_identity_ide.read(rpc_identity_ide.opaque,rpc_map_lba+5,1,backup))return;
+    unsigned sum=0;for(unsigned i=0;i<511;++i)sum+=boot[i];
+    while(sum>255)sum=(sum&255)+(sum>>8);
+    if(sum!=boot[511] || boot[0x1c0]!=9 || boot[0x1c1]!=63 || boot[0x1c2]!=16 ||
+       memcmp(boot+0x1c0+22,map+26,10) || memcmp(map+26,backup+26,10))return;
+    memcpy(rpc_hd_name,boot+0x1c0+22,10);rpc_hd_name[10]=0;
+    memcpy(rpc_hd_record_name,boot+0x1c0+22,10);
+    size_t end=10;while(end && (rpc_hd_name[end-1]==' ' || !rpc_hd_name[end-1]))rpc_hd_name[--end]=0;
+    rpc_hd_known=end && rpc_identity_name_valid(rpc_hd_name);
+}
 bool arc_rpc_observers_identities(char helper[11],char hd[11])
 {
     helper[0]=hd[0]=0;
-    if(rpc_identity_epoch!=arc_rpc_observer_epoch())return false;
-    if(rpc_helper.kind){
-        void *allocated=NULL;const uint8_t *data=rpc_helper.data;size_t size=rpc_helper.size;
-        if(!data && !arc_io_read_all(rpc_helper.path,&allocated,&size))return false;
-        if(!data)data=allocated;
-        ArcMediaInfo info={0};ArcGuestName name={0};
-        bool valid=arc_media_inspect(rpc_helper.path?rpc_helper.path:"helper.adf",data,size,&info,NULL,0) && arc_disc_read_name(data,size,&info,NULL,&name) && name.length<=10;
-        if(valid){memcpy(helper,name.bytes,name.length);helper[name.length]=0;}
-        free(allocated);if(!valid)return false;
-    }
-    if(rpc_identity_ide.read){
-        uint8_t boot[512],map[512],backup[512];
-        /* Authored 126 MiB format: primary and backup new-map records and
-         * boot record must agree. A partial guest rename stays manual. */
-        const uint32_t map_lba=((2u*(512u*8u-32u)-480u)<<13)/512u;
-        if(!rpc_identity_ide.read(rpc_identity_ide.opaque,6,1,boot) ||
-           !rpc_identity_ide.read(rpc_identity_ide.opaque,map_lba,1,map) ||
-           !rpc_identity_ide.read(rpc_identity_ide.opaque,map_lba+5,1,backup))return false;
-        unsigned sum=0;for(unsigned i=0;i<511;++i)sum+=boot[i];
-        while(sum>255)sum=(sum&255)+(sum>>8);
-        if(sum!=boot[511] || boot[0x1c0]!=9 || boot[0x1c1]!=63 || boot[0x1c2]!=16 ||
-           memcmp(boot+0x1c0+22,map+4+22,10) || memcmp(map+4+22,backup+4+22,10))return false;
-        memcpy(hd,boot+0x1c0+22,10);hd[10]=0;
-        size_t end=10;while(end && (hd[end-1]==' ' || !hd[end-1]))hd[--end]=0;
-        if(!end)return false;
-    }
-    for(unsigned which=0;which<2;++which){char *s=which?hd:helper;
-        for(unsigned i=0;s[i];++i)if((unsigned char)s[i]<0x21 || (unsigned char)s[i]>0x7e || strchr(".:*/\\",s[i]))return false;
-    }
+    if(rpc_identity_epoch!=arc_rpc_observer_epoch() || !rpc_helper_known || !rpc_hd_known)return false;
+    memcpy(helper,rpc_helper_name,11);memcpy(hd,rpc_hd_name,11);
     if(helper[0] && hd[0]){
         unsigned i=0;bool same=true;
         while(helper[i] || hd[i]){unsigned a=(unsigned char)helper[i],b=(unsigned char)hd[i];
@@ -334,24 +357,64 @@ bool arc_rpc_observers_identities(char helper[11],char hd[11])
     }
     return true;
 }
+static bool rpc_ide_read(void *opaque,uint32_t lba,uint32_t count,uint8_t *out)
+{ (void)opaque;return rpc_identity_ide.read(rpc_identity_ide.opaque,lba,count,out); }
+static bool rpc_ide_write(void *opaque,uint32_t lba,uint32_t count,const uint8_t *bytes)
+{
+    (void)opaque;
+    uint64_t end=(uint64_t)lba+count;
+    bool known=rpc_hd_known,unchanged=true;
+    const uint32_t records[]={6,rpc_map_lba,rpc_map_lba+5};
+    for(unsigned r=0;r<3;++r)if(lba<=records[r] && end>records[r]){
+        const uint8_t *record=bytes+(size_t)(records[r]-lba)*512;
+        unchanged=unchanged && !memcmp(record+(r?26:0x1c0+22),rpc_hd_record_name,10);
+        if(!r){
+            unsigned sum=0;for(unsigned i=0;i<511;++i)sum+=record[i];
+            while(sum>255)sum=(sum&255)+(sum>>8);
+            unchanged=unchanged && sum==record[511] && record[0x1c0]==9 &&
+                record[0x1c1]==63 && record[0x1c2]==16;
+        }
+    }
+    if(count && ((lba<=6 && end>6) || (lba<=rpc_map_lba && end>rpc_map_lba) ||
+        (lba<=rpc_map_lba+5 && end>rpc_map_lba+5)))rpc_hd_known=false;
+    bool ok=rpc_identity_ide.write(rpc_identity_ide.opaque,lba,count,bytes);
+    /* A successful ordinary map update proves the cached identity unchanged.
+     * Changed names or failed writes remain unknown until lifecycle refresh. */
+    rpc_hd_known=ok && known && unchanged;
+    return ok;
+}
+static void rpc_ide_failed(void *opaque,const char *message)
+{
+    (void)opaque;rpc_hd_known=false;
+    rpc_identity_ide.failed(rpc_identity_ide.opaque,message);
+}
+static void rpc_ide_unsupported(void *opaque,uint8_t command)
+{ (void)opaque;rpc_identity_ide.unsupported(rpc_identity_ide.opaque,command); }
 bool arc_engine_rpc_ide(const ArcIdeBackend *ide)
 {
     if (!arc_engine_is_rpc() || !arc_engine_active()) return false;
     rpc_identity_epoch=arc_rpc_observer_epoch();rpc_identity_ide=ide?*ide:(ArcIdeBackend){0};
-    arc_rpc_ide_set_backend(ide); return true;
+    rpc_hd_derive();
+    ArcIdeBackend bridge=rpc_identity_ide;
+    bridge.opaque=NULL;
+    bridge.read=bridge.read?rpc_ide_read:NULL;bridge.write=bridge.write?rpc_ide_write:NULL;
+    bridge.failed=bridge.failed?rpc_ide_failed:NULL;
+    bridge.unsupported=bridge.unsupported?rpc_ide_unsupported:NULL;
+    arc_rpc_ide_set_backend(ide?&bridge:NULL); return true;
 }
 bool arc_engine_rpc_mount(unsigned drive,const ArcEngineMedia *media,char *e,size_t n)
 {
     bool ok = arc_engine_is_rpc() && arc_engine_active() && arc_rpc_fdc_mount(drive,media,e,n);
     if(drive==1){rpc_identity_epoch=arc_rpc_observer_epoch();rpc_helper=(ArcEngineMedia){0};
         if(ok && media){rpc_helper=*media;
-            if(media->path){size_t length=strlen(media->path);if(length>=sizeof(rpc_helper_path))return false;
+            if(media->path){size_t length=strlen(media->path);if(length>=sizeof(rpc_helper_path)){rpc_helper_known=false;return false;}
                 memcpy(rpc_helper_path,media->path,length+1);rpc_helper.path=rpc_helper_path;}}
+        rpc_helper_derive();
     }
     return ok;
 }
 void arc_engine_rpc_eject(unsigned drive)
-{ if (arc_engine_is_rpc() && arc_engine_active()){arc_rpc_fdc_eject(drive);if(drive==1)rpc_helper=(ArcEngineMedia){0};} }
+{ if (arc_engine_is_rpc() && arc_engine_active()){arc_rpc_fdc_eject(drive);if(drive==1){rpc_helper=(ArcEngineMedia){0};rpc_helper_derive();}} }
 bool arc_engine_rpc_attach(const ArcEngineMedia *media,const ArcEngineMedia *helper,
     const ArcIdeBackend *ide,char *e,size_t n)
 {
@@ -474,6 +537,10 @@ RETRO_API void arc_engine_test_observers_buttons(uint32_t ok,uint32_t cancel,uin
 { if(arc_engine_is_rpc())arc_rpc_observers_test_buttons(ok,cancel,defaults); }
 RETRO_API void arc_engine_test_observers_override(unsigned mask,uint32_t r1,uint32_t r2,uint32_t forms)
 { if(arc_engine_is_rpc())arc_rpc_observers_override(mask,r1,r2,forms); }
+RETRO_API void arc_engine_test_observers_binding(unsigned requested,unsigned *catalogue,unsigned *cpu)
+{ arc_engine_rpc_observers_bind(requested);arc_rpc_observers_test_binding(catalogue,cpu); }
+RETRO_API bool arc_engine_test_observers_identities(char helper[11],char hd[11])
+{ return arc_rpc_observers_identities(helper,hd); }
 void arc_engine_test_observation_profile(bool unmatched,unsigned quota)
 {
     if(!arc_engine_is_rpc())return;

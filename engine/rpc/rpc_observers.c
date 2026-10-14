@@ -259,6 +259,8 @@ void arc_rpc_observers_bind(unsigned catalogue,unsigned cpu)
     state.error.modal_unknown=!(state.cells&ARC_RPC_CELL_ERROR);filters();
 }
 #if defined(ARCDROID_TEST_FAULTS)
+void arc_rpc_observers_test_binding(unsigned *catalogue,unsigned *cpu)
+{ *catalogue=state.catalogue;*cpu=state.cpu; }
 void arc_rpc_observers_test_buttons(uint32_t ok,uint32_t cancel,uint32_t defaults)
 { state.error_profile.ok_forms=ok;state.error_profile.cancel_forms=cancel;state.error_profile.default_cancel_forms=defaults; }
 void arc_rpc_observers_test_watch_budget(unsigned attempts)

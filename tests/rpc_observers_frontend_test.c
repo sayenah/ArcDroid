@@ -11,11 +11,20 @@
 #ifdef _WIN32
 #include <io.h>
 #endif
+static unsigned vfs_reads;
 #include "../tools/rpc_runner_vfs.h"
+static int64_t counted_read(struct retro_vfs_file_handle *handle,void *bytes,uint64_t size)
+{ ++vfs_reads;return vfs_read(handle,bytes,size); }
 static const char *directory;
 static unsigned pad_a,pad_b,polls,hints,manual_hints;
 static struct retro_disk_control_callback disks;
-static unsigned hd_identity_case;
+static unsigned hd_identity_case,hd_identity_reads,hd_identity_writes;
+static bool hd_record_store;
+static uint8_t identity_records[3][512];
+static void (*override_cells)(unsigned,uint32_t,uint32_t,uint32_t);
+static bool (*identity_query)(char *,char *);
+static bool identity_write_fail;
+static void block_replacement(void) { override_cells(20,0,0,0); }
 static void log_line(enum retro_log_level level,const char *format,...)
 { if(level>=RETRO_LOG_WARN){va_list args;va_start(args,format);vfprintf(stderr,format,args);va_end(args);} }
 static bool environment(unsigned command,void *data)
@@ -71,7 +80,7 @@ static void observer_guest(unsigned flags)
         0xe3a07201,0xe5871000,0xe169f009,0xe1b0f008};
     for(unsigned i=0;i<sizeof(handler)/4;++i)put_word(0x180+4*i,handler[i]);
 }
-static void disc_guest(bool busy,bool modal)
+static void disc_guest(bool busy,bool modal,uint32_t rename_lba,bool rename)
 {
     rom_words(NULL,0);put_word(0,branch(0,0x100,14));put_word(8,0xe1b0f00e);
     unsigned at=0x100;
@@ -82,6 +91,18 @@ static void disc_guest(bool busy,bool modal)
     unsigned loop=at;EMIT(0xe2511001);EMIT(branch(at,loop,1));
     if(!busy)for(unsigned d=0;d<4;++d){
         EMIT(0xe3a00008);EMIT(0xe5ca0014);EMIT(0xe5da0014);EMIT(0xe5da0014);
+    }
+    if(rename_lba){
+        /* Transfer authored FileCore records through guest ATA PIO. */
+        EMIT(0xe59f9000|((0x308-at-8)&0xfff));
+        unsigned first=rename_lba==UINT32_MAX?0:rename_lba==6?0:rename_lba==122368?1:2;
+        unsigned copies=rename_lba==UINT32_MAX?3:1;
+        for(unsigned i=first;i<first+copies;++i){
+            EMIT(0xe59f1000|((0x310+4*i-at-8)&0xfff));
+            EMIT(0xe3a04a01); /* ROM record base 0x1000 */
+            if(i)EMIT(0xe2844c00|(2*i)); /* +512*i */
+            EMIT(branch(at,0x400,14)|0x01000000); /* BL write record */
+        }
     }
     EMIT(0xe3a02201); /* medium name in authored RAM */
     EMIT(0xe59f0000|((0x304-at-8)&0xfff));EMIT(0xe5820000);
@@ -94,20 +115,47 @@ static void disc_guest(bool busy,bool modal)
         for(unsigned i=0;i<sizeof(box_handler)/4;++i)put_word(0x200+4*i,box_handler[i]);
     }
     EMIT(0xeafffffe);
-    put_word(0x300,0x03010fc0);put_word(0x304,0x006f7754); /* authored Two */
+    put_word(0x300,0x03010fc0);put_word(0x304,0x006f7754);put_word(0x308,0x030107c0); /* authored Two */
+    const uint32_t map_lba=((2u*(512u*8u-32u)-480u)<<13)/512u;
+    const uint32_t lbas[]={6,map_lba,map_lba+5};
+    for(unsigned i=0;i<3;++i){
+        put_word(0x310+4*i,lbas[i]);uint8_t *record=rom+0x1000+512*i;
+        assert(arc_hd_format_range(256,13,(uint64_t)lbas[i]*512,record,512));
+        if(rename){memset(record+(i?26:0x1c0+22),' ',10);memcpy(record+(i?26:0x1c0+22),"Two",3);}
+        if(!i){unsigned sum=0;for(unsigned j=0;j<511;++j)sum+=record[j];while(sum>255)sum=(sum&255)+(sum>>8);record[511]=(uint8_t)sum;}
+    }
+    /* r1=LBA, r4=source, r9=ATA base; preserve LR until PIO completes. */
+    const uint32_t writer[]={
+        0xe3a000e0,0xe5c90018,0xe1a00821,0xe5c90014,0xe1a00421,0xe5c90010,
+        0xe5c9100c,0xe3a00001,0xe5c90008,0xe3a00030,0xe5c9001c,0xe3a02c02,
+        0xe5d9001c,0xe3100008,0x0afffffc,0xe4d40001,0xe5c90000,0xe2522001,0x1afffff8,
+        0xe5d9001c,0xe3100080,0x1afffffc,0xe1a0f00e};
+    for(unsigned i=0;i<sizeof(writer)/4;++i)put_word(0x400+4*i,writer[i]);
 #undef EMIT
 }
 static bool hd_identity_read(void *opaque,uint32_t lba,uint32_t count,uint8_t *out)
 {
-    (void)opaque;if(hd_identity_case==3 || count!=1)return false;
+    (void)opaque;++hd_identity_reads;if(hd_identity_case==3 || count!=1)return false;
+    const uint32_t record_lbas[]={6,122368,122373};
+    if(hd_record_store){for(unsigned i=0;i<3;++i)if(lba==record_lbas[i]){memcpy(out,identity_records[i],512);return true;}return false;}
     if(!arc_hd_format_range(256,13,(uint64_t)lba*512,out,512))return false;
     const unsigned map_lba=((2u*(512u*8u-32u)-480u)<<13)/512u;
     unsigned offset=lba==6?0x1c0+22:26;
-    if((lba==6 || lba==map_lba || lba==map_lba+5) && (hd_identity_case==1 || lba==6)){
+    if((lba==6 || lba==map_lba || lba==map_lba+5) && (hd_identity_case==1 || (hd_identity_case==2 && lba==6))){
         memset(out+offset,' ',10);memcpy(out+offset,"Two",3);
         if(lba==6){unsigned sum=0;for(unsigned i=0;i<511;++i)sum+=out[i];while(sum>255)sum=(sum&255)+(sum>>8);out[511]=(uint8_t)sum;}
     }
     return true;
+}
+static bool hd_identity_write(void *opaque,uint32_t lba,uint32_t count,const uint8_t *bytes)
+{
+    (void)opaque;assert(count==1);
+    char helper[11],hd[11];assert(!identity_query(helper,hd)); /* Unknown before backend mutation. */
+    const uint32_t map_lba=((2u*(512u*8u-32u)-480u)<<13)/512u;
+    assert(lba==6 || lba==map_lba || lba==map_lba+5);
+    const uint32_t lbas[]={6,map_lba,map_lba+5};
+    for(unsigned i=0;i<3;++i)if(lba==lbas[i])memcpy(identity_records[i],bytes,512);
+    ++hd_identity_writes;return !identity_write_fail;
 }
 static void write_file(const char *name,const void *bytes,size_t size)
 {
@@ -131,6 +179,10 @@ int main(int argc,char **argv)
     LOAD(set_env,"retro_set_environment");LOAD(set_video,"retro_set_video_refresh");LOAD(set_audio,"retro_set_audio_sample_batch");
     LOAD(set_poll,"retro_set_input_poll");LOAD(set_input,"retro_set_input_state");LOAD(init,"retro_init");LOAD(deinit,"retro_deinit");
     LOAD(run,"retro_run");LOAD(unload,"retro_unload_game");LOAD(load,"retro_load_game");LOAD(reset,"retro_reset");
+    void (*binding)(unsigned,unsigned *,unsigned *);
+    LOAD(binding,"arc_engine_test_observers_binding");LOAD(override_cells,"arc_engine_test_observers_override");
+    LOAD(identity_query,"arc_engine_test_observers_identities");
+    vfs.read=counted_read;
     set_env(environment);set_video(video);set_audio(audio);set_poll(poll_input);set_input(input);init();
     rom=calloc(1,2097152);assert(rom);write_file("seed",seed,sizeof(seed));
     const char *models[]={"arm610","arm710","sa110","arm7500"};
@@ -141,6 +193,9 @@ int main(int argc,char **argv)
         observer_guest(flags);write_file("guest.rom",rom,2097152);
         int count=snprintf(plan,sizeof(plan),"version=1\nmodel=%s\nfirmware=%s/guest.rom\ncmos=seed\nseed=%s/seed\nrtc_epoch=0\nobserver_cells=12\nobserver_forms=0xffffffff\n",models[model],directory,directory);
         write_file("test.arcplan",plan,(size_t)count);pad_a=1;pad_b=0;hints=manual_hints=0;assert(load(&game));
+        unsigned catalogue,cpu;binding(1,&catalogue,&cpu);
+        assert(catalogue==0 && cpu==model); /* Authored image cannot inherit catalogue 1. */
+        override_cells(12,0,0,UINT32_MAX);
         unsigned before=polls;run();assert(polls==before+1);
         ArcErrorBox box;api->error_snapshot(&box);assert(box.recognised_open && box.answer_available && word(0)==0);
         run();assert(word(0)==0 && !pad_level(0,RETROK_SPACE)); /* held A cannot answer the newly opened generation */
@@ -172,20 +227,56 @@ int main(int argc,char **argv)
     unsigned (*phase)(void);void (*preflight_fail)(void);bool (*attach_ide)(const ArcIdeBackend *);
     LOAD(phase,"arc_test_plan_cmos_phase");LOAD(preflight_fail,"arc_libretro_test_fail_disc_preflight");
     LOAD(attach_ide,"arc_engine_test_ide_backend");
-    for(unsigned scenario=0;scenario<11;++scenario){
-        disc_guest(scenario==1,scenario==8);write_file("guest.rom",rom,2097152);
+    void (*after_preflight)(void (*)(void),bool),(*hold_reset)(void);
+    bool (*mount_helper)(unsigned,const ArcEngineMedia *,char *,size_t);
+    LOAD(mount_helper,"arc_engine_test_floppy_mount");
+    LOAD(after_preflight,"arc_libretro_test_disc_after_preflight");LOAD(hold_reset,"arc_rpc_test_fdc_hold_reset");
+    for(unsigned scenario=0;scenario<23;++scenario){
+        const uint32_t map_lba=((2u*(512u*8u-32u)-480u)<<13)/512u;
+        uint32_t rename_lba=scenario==12?6:scenario==13?map_lba:scenario==14?map_lba+5:scenario==18?UINT32_MAX:scenario==19 || scenario==22?6:scenario==20?map_lba:scenario==21?map_lba+5:0;
+        disc_guest(scenario==1,scenario==8,rename_lba,scenario<19);write_file("guest.rom",rom,2097152);
         count=snprintf(plan,sizeof(plan),"version=2\nmodel=sa110\nfirmware=%s/guest.rom\ncmos=persist\nseed=%s/seed\ncmos_layout=ro350\ncontent_id=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nrtc_epoch=0\nhard_disc=off\nmedia=%s/disc-request/Set.m3u\nobserver_cells=%u\n%s",
-            directory,directory,argv[3],scenario==2?20:scenario==9?48:52,scenario==3?"drive1=HELPER\n":"");
-        if(scenario==3){char helper[2048];snprintf(helper,sizeof(helper),"%s/disc-request/Two.adf",argv[3]);
+            directory,directory,argv[3],(scenario==2 || scenario==11)?20:scenario==9?48:52,(scenario==3 || scenario==11)?"drive1=HELPER\n":"");
+        if(scenario==3 || scenario==11){char helper[2048];snprintf(helper,sizeof(helper),"%s/disc-request/%s.adf",argv[3],scenario==3?"Two":"One");
             char *mark=strstr(plan,"HELPER");assert(mark);snprintf(mark,sizeof(plan)-(size_t)(mark-plan),"%s\n",helper);count=(int)strlen(plan);}
         write_file("test.arcplan",plan,(size_t)count);pad_a=pad_b=0;assert(load(&game));
         for(unsigned step=0;phase()!=2 && step<10000;++step)run();assert(phase()==2);
-        if(scenario>=4 && scenario<=6){hd_identity_case=scenario-3;
-            ArcIdeBackend ide={.read=hd_identity_read,.sectors=256u*16u*63u};assert(attach_ide(&ide));}
+        hd_identity_reads=hd_identity_writes=0;
+        hd_record_store=rename_lba!=0;identity_write_fail=scenario==22;
+        if(hd_record_store){const uint32_t lbas[]={6,map_lba,map_lba+5};for(unsigned i=0;i<3;++i)
+            assert(arc_hd_format_range(256,13,(uint64_t)lbas[i]*512,identity_records[i],512));}
+        if(scenario==11){char helper_path[2048];snprintf(helper_path,sizeof(helper_path),"%s/disc-request/One.adf",argv[3]);
+            ArcEngineMedia helper={.path=helper_path,.kind=ARC_MEDIA_ADF_800K,.geometry=ARC_GEOMETRY_800K_D};
+            assert(mount_helper(1,&helper,error,sizeof(error)));}
+        if((scenario>=4 && scenario<=6) || ((scenario>=11 && scenario<=14) || scenario>=18)){
+            hd_identity_case=scenario<=6?scenario-3:0;
+            ArcIdeBackend ide={.read=hd_identity_read,.write=hd_identity_write,.writable=true,.sectors=256u*16u*63u};
+            assert(attach_ide(&ide));
+        }
+        if(scenario==15)after_preflight(NULL,true);
+        if(scenario==16)after_preflight(hold_reset,false);
+        if(scenario==17)after_preflight(block_replacement,false);
         if(scenario==7)preflight_fail();
-        for(unsigned frame=0;frame<4;++frame)run();
-        assert(disks.get_image_index()==(scenario==0 || scenario==10?1u:0u));
-        if(scenario!=0 && scenario!=10){assert(disks.set_eject_state(true) && disks.set_image_index(1) && disks.set_eject_state(false));assert(disks.get_image_index()==1);}
+        run();unsigned reads_before=vfs_reads;
+        for(unsigned frame=1;frame<((scenario>=15 && scenario<=17)?1u:scenario==11?32u:4u);++frame)run();
+        if(scenario==11){
+            ArcDiscRequest request;api->disc_snapshot(&request);assert(request.a_active && request.a_notified);
+            assert(hd_identity_reads==3 && vfs_reads==reads_before);
+        }
+        if(rename_lba){
+            char helper[11],hd[11];
+            assert(identity_query(helper,hd)==(scenario>=19 && scenario<=21));
+            if(scenario>=19 && scenario<=21)assert(!strcmp(hd,"ArcDroidHD"));
+            assert(hd_identity_writes==(scenario==18?3u:1u) && hd_identity_reads==3);
+            unsigned first=scenario==12 || scenario==18?0:scenario==13?1:2;
+            unsigned copies=scenario==18?3:1;
+            for(unsigned i=first;i<first+copies;++i)assert(!memcmp(identity_records[i]+(i?26:0x1c0+22),scenario<19?"Two       ":"ArcDroidHD",10));
+            if(scenario<19){reset();assert(hd_identity_reads==6); /* Refresh sees partial or coherent guest rename. */
+            for(unsigned frame=0;frame<4;++frame)run();assert(hd_identity_reads==6);}
+        }
+        after_preflight(NULL,false);
+        assert(disks.get_image_index()==(scenario==0 || scenario==10 || (scenario>=19 && scenario<=21)?1u:0u));
+        if(scenario!=0 && scenario!=10 && !(scenario>=19 && scenario<=21)){assert(disks.set_eject_state(true) && disks.set_image_index(1) && disks.set_eject_state(false));assert(disks.get_image_index()==1);}
         unload();vfs_assert_no_open_handles();
     }
     deinit();free(rom);vfs_assert_no_open_handles();

@@ -220,7 +220,20 @@ mutation. Overflow retires only the disc generation.
 
 Helper and IDE names come from their current FileCore disc records; missing,
 malformed, conflicting or unreadable identity disables automatic replacement.
-Identity is re-read before resolution and commit, covering guest renames.
+Identity queries before resolution and commit read only cached host memory.
+The helper name is derived at drive-1 mount/eject and reset; writable helper
+media stays unknown because its identity can change in the guest. IDE attach,
+reopen and reset derive the boot, primary-map and backup-map names once.
+An ArcDroid-owned IDE callback bridge invalidates the IDE identity before any
+write overlapping those record sectors, including failed writes, and on backend
+failure. No file or store read occurs in a frame-boundary identity query.
+After a successful write, bounded inspection of its full sector payload can
+restore the previously known identity only if every affected name and boot
+identity still agrees with the cache. Ordinary map updates therefore preserve
+replacement availability. Changed names and unsuccessful writes stay unknown.
+Invalidated, unreadable, malformed or conflicting identities keep replacement
+manual until a lifecycle refresh validates all records again; a guest rename
+can never reuse the previously cached name to resolve content media.
 ADFS::1/4, unspecified devices, helper names and hard-disc names are refused.
 Replacement is drive 0 only, current generation, controller idle, unique content
 candidate, successful preflight and known nonmodal state; FileCore retries the

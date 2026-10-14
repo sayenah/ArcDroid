@@ -4825,6 +4825,10 @@ void arc_libretro_test_disc_adffs_active(bool active)
 static bool arc_test_disc_preflight_fail;
 void arc_libretro_test_fail_disc_preflight(void)
 { arc_test_disc_preflight_fail = true; }
+static void (*arc_test_disc_preflight_callback)(void);
+static bool arc_test_disc_preflight_stale;
+RETRO_API void arc_libretro_test_disc_after_preflight(void (*callback)(void),bool stale)
+{ arc_test_disc_preflight_callback=callback;arc_test_disc_preflight_stale=stale; }
 #endif
 typedef enum {
    ARC_DISC_COMMIT_INSERTED, ARC_DISC_COMMIT_BUSY, ARC_DISC_COMMIT_FAILED
@@ -4850,6 +4854,13 @@ static ArcDiscCommit arc_disc_commit(unsigned candidate, uint64_t generation, Ar
 #endif
    if (!arc_disk_insert_entry(entry, ARC_INSERT_PREFLIGHT,
                               error, sizeof(error))) goto failed;
+#if defined(ARCDROID_TEST_FAULTS)
+   if(arc_test_disc_preflight_stale){arc_test_disc_preflight_stale=false;++arc_disc_generation;}
+   if(arc_test_disc_preflight_callback){
+      void (*callback)(void)=arc_test_disc_preflight_callback;
+      arc_test_disc_preflight_callback=NULL;callback();
+   }
+#endif
    if(arc_engine_is_rpc() && (generation!=arc_disc_generation ||
       !arc_engine_disc_controller_idle() || !arc_engine_rpc_observers_replace(signal)))return ARC_DISC_COMMIT_BUSY;
    unsigned old_index = arc_image_index;
