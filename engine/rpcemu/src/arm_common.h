@@ -333,8 +333,16 @@ arm_write_r15(uint32_t opcode, uint32_t dest)
 			updatemode(arm.reg[cpsr] & arm.mmask);
 		}
 	}
+}
+
+/* ArcDroid modification (R3c-1 run B): armed-loop helper only. */
+static inline void arc_rpc_arm_write_r15_observed(uint32_t opcode,uint32_t dest)
+{
+    arm_write_r15(opcode,dest);
     if(arc_rpc_observer_active)arc_rpc_observe_return(arm.mode);
 }
+extern int arc_rpc_opSWI_observed(uint32_t opcode);
+extern void arc_rpc_arm_load_multiple_s_observed(uint32_t opcode,uint32_t address,uint32_t writeback);
 
 /**
  * Implement compare instructions when Rd==15 (i.e. P flag is used).

@@ -305,13 +305,6 @@ int main(int argc, char **argv)
         ArcRpcTestSnapshot s; ArcRpcAudioCounts a; ArcRpcVideoStatus v; ArcRpcCapture c;
         snapshot(&s); counts(&a); status(&v); capture(&c);
         if(plan_phase && plan_phase()==3){result=1;break;}
-        void (*observation_status)(ArcRpcTraceStatus *)=NULL;
-        void *observation_symbol=symbol("arc_engine_test_observation_status");
-        if(observation_symbol){memcpy(&observation_status,&observation_symbol,sizeof(observation_status));
-            ArcRpcTraceStatus observation;observation_status(&observation);
-            if(observation.integer_attempts)fprintf(stderr,"RPC observation: integer_attempts=%" PRIu64 "\n",observation.integer_attempts);
-            if(observation.incomplete)fprintf(stderr,"RPC observation: incomplete %s lost=%" PRIu64 "\n",
-                observation.failed?"write-failure":"loss",observation.lost);}
         uint64_t elapsed = frame_ns();
         period_ns = (uint64_t)llround(1000000000.0 / fps);
         /* Frontend wall-clock windows measure sustained device conditions.
@@ -411,10 +404,19 @@ int main(int argc, char **argv)
         fprintf(stderr,"hd-cost frames=%" PRIu64 " max_ns=%" PRIu64 " over_D161=%" PRIu64 " budget=%s\n",hd_cost_frames,hd_cost_max,hd_cost_over,hd_cost_over?"exceeded":"passed");}
     if(timing && fclose(timing))result=2;
     if(ferror(stdout))result=2;
+    ArcRpcTraceStatus observation={0};
+    void (*observation_status)(ArcRpcTraceStatus *)=NULL;
+    void *observation_symbol=symbol("arc_engine_test_observation_status");
+    if(observation_symbol){memcpy(&observation_status,&observation_symbol,sizeof(observation_status));observation_status(&observation);}
     unload();
+    bool complete=true;
     bool (*observation_complete)(void)=NULL;void *observation_final=symbol("arc_test_plan_observation_complete");
-    if(observation_final){memcpy(&observation_complete,&observation_final,sizeof(observation_complete));
-        if(!observation_complete())fprintf(stderr,"RPC observation: incomplete final sink/close\n");}
+    if(observation_final){memcpy(&observation_complete,&observation_final,sizeof(observation_complete));complete=observation_complete();}
+    if(observation.enabled || observation.integer_attempts || observation.incomplete || !complete)
+        fprintf(stderr,"RPC observation: integer_attempts=%" PRIu64 " lost=%" PRIu64 " %s\n",
+            observation.integer_attempts,observation.lost,
+            observation.failed?"incomplete write-failure":observation.incomplete?"incomplete loss":
+            !complete?"incomplete final sink/close":"complete");
     deinit();vfs_assert_no_open_handles();
 #if defined(_WIN32)
     FreeLibrary(library);

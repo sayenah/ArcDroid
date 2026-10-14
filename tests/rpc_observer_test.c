@@ -379,16 +379,66 @@ static void services(CPUModel model)
     arm.reg[15]=0x108;arm.reg[0]=0x100;arc_rpc_arm_exec_count(1);
     n=arc_rpc_observer_trace_read(records,4);assert(n==1 && !records[0].scalar_valid && records[0].inspection==ARC_RPC_INSPECT_REFUSED);
     arc_rpc_observer_trace(true,false);rom[0x100/4]=0xef000007;
-    for(unsigned i=0;i<300;++i){arm.reg[15]=0x108;arc_rpc_arm_exec_count(1);}
-    ArcRpcTraceStatus status;arc_rpc_observer_trace_status(&status);assert(status.incomplete && status.lost && status.count==256);
+    for(unsigned i=0;i<1000;++i){arm.reg[15]=0x108;arc_rpc_arm_exec_count(1);}
+    ArcRpcTraceStatus status;arc_rpc_observer_trace_status(&status);
+    assert(!status.incomplete && !status.lost && status.count==1000);
+    arc_rpc_observer_trace(true,false);
+    ArcRpcTraceSelection selection={.classes=ARC_RPC_OBS_SWI,.capacity=4};
+    assert(arc_rpc_observer_trace_select(&selection));
+    for(unsigned i=0;i<7;++i){arm.reg[15]=0x108;arc_rpc_arm_exec_count(1);}
+    arc_rpc_observer_trace_status(&status);assert(status.incomplete && status.lost==3 && status.count==4);
+    n=arc_rpc_observer_trace_read(records,4);assert(n==4);
+    arm.reg[15]=0x108;arc_rpc_arm_exec_count(1);
+    n=arc_rpc_observer_trace_read(records,4);assert(n==2 && records[0].event.kind==ARC_RPC_OBS_GAP);
+    assert(records[0].lost==3 && records[0].lost_end_ns>=records[0].event.ns);
+    assert(records[1].event.kind==ARC_RPC_OBS_SWI && records[1].event.order>records[0].event.order);
+    arc_rpc_observer_trace_status(&status);assert(status.incomplete && status.lost==3);
+    arc_rpc_observer_trace(true,false);selection=(ArcRpcTraceSelection){.classes=ARC_RPC_OBS_SWI,.capacity=4};
+    assert(arc_rpc_observer_trace_select(&selection));
+    for(unsigned i=0;i<7;++i){arm.reg[15]=0x108;arc_rpc_arm_exec_count(1);}
+    arc_rpc_observer_retire(true);arc_rpc_observer_trace_status(&status);
+    assert(status.lost==7 && status.incomplete);
+    n=arc_rpc_observer_trace_read(records,4);assert(n==1 && records[0].event.kind==ARC_RPC_OBS_GAP && records[0].lost==7);
+    arm.reg[15]=0x108;arc_rpc_arm_exec_count(1);
+    n=arc_rpc_observer_trace_read(records,4);assert(n==1 && records[0].event.kind==ARC_RPC_OBS_SWI);
+    arc_rpc_observer_trace(true,false);selection=(ArcRpcTraceSelection){.classes=ARC_RPC_OBS_SWI,.capacity=4,.swi_count=1,.swis={0x20007}};
+    assert(arc_rpc_observer_trace_select(&selection));
+    arm.reg[15]=0x108;arc_rpc_arm_exec_count(1);assert(!arc_rpc_observer_trace_read(records,4));
+    rom[0x100/4]=0xef020007;arm.reg[15]=0x108;arc_rpc_arm_exec_count(1);
+    assert(arc_rpc_observer_trace_read(records,4)==1 && records[0].event.swi==0x20007);
+    selection.swis[0]=0x1000000;assert(!arc_rpc_observer_trace_select(&selection));
+    arc_rpc_observer_trace(true,false);selection=(ArcRpcTraceSelection){.classes=ARC_RPC_OBS_MODE,.capacity=4};
+    assert(arc_rpc_observer_trace_select(&selection));
+    updatemode(0x10);arm.reg[16]=0x10;arm.reg[15]=0x108;arc_rpc_arm_exec_count(1);
+    n=arc_rpc_observer_trace_read(records,4);assert(n==1 && records[0].event.kind==ARC_RPC_OBS_MODE);
     arc_rpc_observer_trace(true,false);arm.reg[15]=0x108;arc_rpc_arm_exec_count(1);arc_rpc_observer_trace_drain(sink_fail,NULL);
     arc_rpc_observer_trace_status(&status);assert(status.failed&&status.incomplete&&status.lost);
     assert(arc_rpc_observer_qualification(0,model,ARC_RPC_OBS_DISC,ARC_RPC_CAP_REPLACE).enabled==false);
 }
+static void trace_interrupt_burst(CPUModel model)
+{
+    ARMState off={0};
+    for(unsigned enabled=0;enabled<2;++enabled){
+        fixture(model,0x10,0x100);
+        rom[0x100/4]=0xef000007;rom[8/4]=0xe1b0f00e;rom[0x18/4]=0xe25ef004;
+        arc_rpc_observer_trace(enabled,false);
+        for(unsigned i=0;i<1000;++i){
+            arm.reg[15]=0x108;arm.event=0;arc_rpc_arm_exec_count(1);
+            arm.reg[16]&=~0x80u;arm.event=1;arc_rpc_arm_exec_count(1);
+            assert(arm.mode==0x12);arm.event=0;arc_rpc_arm_exec_count(1);
+            assert(arm.mode==0x10);
+        }
+        if(!enabled)off=arm;else assert(!memcmp(&off,&arm,sizeof(arm)));
+        ArcRpcTraceStatus status;arc_rpc_observer_trace_status(&status);
+        assert(!status.incomplete && !status.lost);
+        if(enabled)assert(status.count==1000);
+    }
+}
+
 int main(void)
 {
     arm_init();protected=1;if(setjmp(boundary)){fputs("Unexpected observation component fault\n",stderr);return 1;}
     config.mem_size=64;config.vram_size=2;mem_init();
-    for(unsigned model=0;model<4;++model){events((CPUModel)model);timing_events((CPUModel)model);completion((CPUModel)model);inspector((CPUModel)model);services((CPUModel)model);}
+    for(unsigned model=0;model<4;++model){events((CPUModel)model);timing_events((CPUModel)model);completion((CPUModel)model);inspector((CPUModel)model);services((CPUModel)model);trace_interrupt_burst((CPUModel)model);}
     arc_rpc_observer_retire(false);arc_rpc_memory_close();puts("RPC observation: four CPUs, events, inspector values/purity, completion, generations, queue and trace");return 0;
 }

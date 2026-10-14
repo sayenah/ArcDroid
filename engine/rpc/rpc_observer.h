@@ -6,12 +6,12 @@
 #include <stdint.h>
 
 enum { ARC_RPC_OBSERVERS=4, ARC_RPC_WATCHES=8, ARC_RPC_WORK_LIMIT=16,
-       ARC_RPC_COPY_LIMIT=256, ARC_RPC_TRACE_LIMIT=256,
+       ARC_RPC_COPY_LIMIT=256, ARC_RPC_TRACE_LIMIT=65536,
        ARC_RPC_WATCH_ATTEMPT_LIMIT=1000000000 };
 typedef enum { ARC_RPC_OBS_BOOT, ARC_RPC_OBS_LAUNCH, ARC_RPC_OBS_ERROR,
                ARC_RPC_OBS_DISC } ArcRpcObserver;
 typedef enum { ARC_RPC_OBS_SWI=1, ARC_RPC_OBS_CONTINUATION=2,
-               ARC_RPC_OBS_MODE=4 } ArcRpcObservationKind;
+               ARC_RPC_OBS_MODE=4, ARC_RPC_OBS_GAP=8 } ArcRpcObservationKind;
 typedef enum { ARC_RPC_BACKING_NONE, ARC_RPC_BACKING_ROM,
                ARC_RPC_BACKING_RAM0, ARC_RPC_BACKING_RAM1,
                ARC_RPC_BACKING_VRAM } ArcRpcBackingKind;
@@ -100,8 +100,14 @@ typedef struct {
     ArcRpcInspectStatus inspection;
     bool scalar_valid; uint32_t scalar;
     char path[ARC_RPC_COPY_LIMIT];
+    uint64_t lost, lost_end_ns;
 } ArcRpcObservationTrace;
 typedef struct { unsigned count; uint64_t lost, integer_attempts; bool enabled, failed, incomplete; } ArcRpcTraceStatus;
+typedef struct {
+    unsigned classes, capacity, swi_count;
+    uint32_t swis[64];
+} ArcRpcTraceSelection;
+RETRO_API bool arc_rpc_observer_trace_select(const ArcRpcTraceSelection *);
 typedef bool (*ArcRpcTraceSink)(void *, const ArcRpcObservationTrace *);
 RETRO_API void arc_rpc_observer_trace(bool enabled, bool private_paths);
 RETRO_API void arc_rpc_observer_trace_status(ArcRpcTraceStatus *);

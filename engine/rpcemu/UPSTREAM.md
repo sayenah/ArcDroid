@@ -392,3 +392,10 @@ Mach-O/COFF/ELF definition/reference and export guards apply unchanged.
 The session-owned adapter and contract are `engine/rpc/rpc_observer.*`,
 `rpc_inspector.c` and `docs/riscpc-observation.md`. Original upstream hashes
 and licence headers are unchanged.
+
+R3c-1 run B retains this patch lineage. `arm.c` includes its own loop-only
+section twice under compile-time macros, sharing one instruction body. Batch
+admission selects the inactive or observed instantiation; the inactive body
+has no observer loads or tests. `arm_common.c/.h` expose prefixed armed-only
+SWI and status-restoring PC helpers. Timing/service/flush and exception ordering
+are unchanged. No imported file, opcode or execution policy was added.

@@ -52,10 +52,10 @@ with tempfile.TemporaryDirectory(prefix='arc-observation-plan-') as temp:
     # unknown SWI with forbidden payload and then an SVC32 SWI storm.
     rom=bytearray(struct.pack('<I',0xeafffffe)*(2097152//4))
     # Reset branches over vectors. SWI vector jumps to handler.
-    program={0:0xea00003e,8:0xea000046,0x100:0xe321f010,0x104:0xe3a00005,
+    program={0:0xea00003e,8:0xea00004c,0x100:0xe321f010,0x104:0xe3a00005,
              0x108:0xef020008,0x10c:0xef123456,0x110:0xe321f013,
-             0x114:0xef000007,0x118:0xeafffffd,0x120:0x10000000,
-             0x128:0xe1b0f00e}
+             0x114:0xe3a02b02,0x118:0xef000007,0x11c:0xe2522001,
+             0x120:0x1afffffc,0x124:0xeafffffe,0x140:0xe1b0f00e}
     # Supervisor handler restores the saved status; no error/message bytes.
     for offset,word in program.items():struct.pack_into('<I',rom,offset,word)
     (folder/'trace.rom').write_bytes(rom);(folder/'seed').write_bytes(bytes(256))
@@ -64,15 +64,39 @@ with tempfile.TemporaryDirectory(prefix='arc-observation-plan-') as temp:
     plan.write_text(original+'observation_trace=trace.jsonl\n');r=run(plan,folder,frames=1)
     if projection(r.stdout)!=off:raise RuntimeError('overflow trace changed guest')
     rows=[json.loads(x) for x in (folder/'trace.jsonl').read_text().splitlines()]
-    if not rows or not rows[-1].get('incomplete') or rows[-1]['lost']<1:raise RuntimeError('loss marker missing')
-    events=rows[:-1]
-    if any(x['schema']!=1 or 'instruction_bytes' in x for x in events):raise RuntimeError('schema')
+    if not rows or any(x.get('incomplete') for x in rows):raise RuntimeError('default burst lost events')
+    if len(rows)<2048 or any(x['kind']!=1 for x in rows):raise RuntimeError('default classes/burst')
+    events=rows
+    if any(x['schema']!=2 or 'instruction_bytes' in x for x in events):raise RuntimeError('schema')
     if any(x['path_hex'] for x in events):raise RuntimeError('path leaked without private opt-in')
     if not any(x['swi']==0x20008 for x in events):raise RuntimeError('X SWI missing')
-    if not any(x['kind']==2 and x['matched'] for x in events):raise RuntimeError('continuation missing')
     unknown=next(x for x in events if x['swi']==0x123456)
     if any(unknown['registers'][:13]) or unknown['mask']!=0x6000:raise RuntimeError('unknown SWI payload leaked')
     if any(a['order']>=b['order'] for a,b in zip(events,events[1:])):raise RuntimeError('event order')
+    plan.write_text(original+'observation_trace=selected.jsonl\nobservation_classes=swi,mode,continuation\nobservation_swis=0x20008\n')
+    selected=run(plan,folder,frames=1)
+    if projection(selected.stdout)!=off:raise RuntimeError('selected trace parity')
+    rows=[json.loads(x) for x in (folder/'selected.jsonl').read_text().splitlines()]
+    if not any(x['kind']==2 and x['matched'] for x in rows) or not any(x['kind']==4 for x in rows):raise RuntimeError('class selection')
+    if any(x['kind']==1 and x['swi']!=0x20008 for x in rows):raise RuntimeError('SWI selection')
+    # An unbounded authored storm forces gaps in consecutive frames. Output
+    # must resume after the first gap; the whole trace remains incomplete.
+    struct.pack_into('<I',rom,0x120,0xeafffffc)
+    (folder/'trace.rom').write_bytes(rom)
+    plan.write_text(original);storm_off=projection(run(plan,folder,frames=2).stdout)
+    plan.write_text(original+'observation_trace=gap.jsonl\nobservation_capacity=16\n')
+    r=run(plan,folder,frames=2)
+    if projection(r.stdout)!=storm_off:raise RuntimeError('gap trace parity')
+    rows=[json.loads(x) for x in (folder/'gap.jsonl').read_text().splitlines()]
+    gap=next((i for i,x in enumerate(rows) if x['kind']==8),None)
+    if gap is None or not rows[gap]['lost'] or rows[gap]['lost_end_ns']<=rows[gap]['ns']:raise RuntimeError('gap missing/window')
+    if not any(x['kind']==1 for x in rows[gap+1:]):raise RuntimeError('recording did not resume')
+    if r.stderr.count('RPC observation:')!=1 or 'incomplete loss' not in r.stderr:raise RuntimeError('exit loss summary')
+    struct.pack_into('<I',rom,0x120,0x1afffffc);(folder/'trace.rom').write_bytes(rom)
+    for suffix in ('observation_classes=bogus','observation_classes=swi,swi','observation_swis=0x1000000','observation_swis=7,7','observation_capacity=0'):
+        plan.write_text(original+'observation_trace=invalid.jsonl\n'+suffix+'\n')
+        rejected=subprocess.run([runner,'--core',core,'--plan',str(plan),'--system',str(fixtures),'--save',str(folder),'--frames','1'],capture_output=True,text=True,timeout=30)
+        if rejected.returncode==0:raise RuntimeError(('invalid selection accepted',suffix))
     # Failure to open/write has its own explicit diagnostic and unchanged guest.
     plan.write_text(original+'observation_trace=missing/trace.jsonl\n');r=run(plan,folder,frames=1)
     if projection(r.stdout)!=off or 'incomplete write-failure' not in r.stderr:raise RuntimeError(('write failure parity/marker',r.stderr,r.stdout,projection(r.stdout)==off))

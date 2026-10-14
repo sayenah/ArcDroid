@@ -1,3 +1,4 @@
+#ifndef ARC_RPC_ARM_LOOP
 /*
   RPCEmu - An Acorn system emulator
 
@@ -553,13 +554,16 @@ arm_unpredictable(uint32_t opcode)
 	}
 }
 
+#endif /* declarations and non-loop helpers */
+
+#ifdef ARC_RPC_ARM_LOOP
 /**
  * Execute several ARM instructions.
  *
  * @return A hint roughly proportional to the amount of instructions executed.
  */
-int
-arc_rpc_arm_exec_batch(unsigned count, ArcRpcCpuBatch *batch)
+static int
+ARC_RPC_ARM_LOOP(unsigned count, ArcRpcCpuBatch *batch)
 {
     /* ArcDroid modification (2026-10-07, R2a run D): materialise integral
      * hot-batch timing at service/batch boundaries; guest issue times stay
@@ -573,8 +577,10 @@ arc_rpc_arm_exec_batch(unsigned count, ArcRpcCpuBatch *batch)
 		uint32_t lhs, rhs, dest;
 		uint32_t addr, data, offset, writeback;
 
+#if ARC_RPC_ARM_OBSERVING
         bool observing=arc_rpc_observer_active;
         if(observing)arc_rpc_observe_begin(PC);
+#endif
         arc_rpc_mem_instruction_begin();
         /* Fetch checks permission at every instruction, including a cached
          * translation hit and a 1 KiB boundary within the same 4 KiB page. */
@@ -587,7 +593,9 @@ arc_rpc_arm_exec_batch(unsigned count, ArcRpcCpuBatch *batch)
         }
         opcode = pccache2[(PC & 0x3ffu) >> 2];
         arc_rpc_mem_opcode(opcode);
+#if ARC_RPC_ARM_OBSERVING
         if(observing)arc_rpc_observe_fetched(pccache2);
+#endif
 
 		if (flaglookup[opcode >> 28][(*pcpsr) >> 28]) {
             if (!arm.arch_v4 && (((opcode & 0xe0000f0) == 0xb0) ||
@@ -1894,7 +1902,9 @@ arc_rpc_arm_exec_batch(unsigned count, ArcRpcCpuBatch *batch)
 
 	// This label is used to skip the switch above
 skip:
+#if ARC_RPC_ARM_OBSERVING
         if(observing)arc_rpc_observe_mode();
+#endif
 
 		if (arm.event != 0) {
 			if (!ARM_MODE_32(arm.mode)) {
@@ -1917,7 +1927,9 @@ skip:
 
 		arm.reg[15] += 4;
 instruction_done:
+#if ARC_RPC_ARM_OBSERVING
         if(observing)arc_rpc_observe_mode();
+#endif
         arc_rpc_mem_instruction_end(PC);
         if (batch && (linecyc + 1 == (int)count ||
             !arc_rpc_mem_batch_next(batch, arc_rpc_cpu_idle))) {
@@ -1931,6 +1943,36 @@ instruction_done:
 	return linecyc;
 }
 
+#else
+/* ArcDroid modification (2026-10-13, R3c-1 run B): instantiate one source
+ * body twice. Inactive instructions compile without observation work. */
+#define ARC_RPC_ARM_LOOP arc_rpc_arm_exec_unobserved
+#define ARC_RPC_ARM_OBSERVING 0
+#include "arm.c"
+#undef ARC_RPC_ARM_LOOP
+#undef ARC_RPC_ARM_OBSERVING
+#define ARC_RPC_ARM_LOOP arc_rpc_arm_exec_observed
+#define ARC_RPC_ARM_OBSERVING 1
+#undef arm_write_r15
+#undef arm_load_multiple_s
+#undef opSWI
+#define arm_write_r15 arc_rpc_arm_write_r15_observed
+#define arm_load_multiple_s arc_rpc_arm_load_multiple_s_observed
+#define opSWI arc_rpc_opSWI_observed
+#include "arm.c"
+#undef opSWI
+#undef arm_load_multiple_s
+#undef arm_write_r15
+#undef ARC_RPC_ARM_LOOP
+#undef ARC_RPC_ARM_OBSERVING
+int arc_rpc_arm_exec_batch(unsigned count, ArcRpcCpuBatch *batch)
+{
+    return arc_rpc_observer_active ? arc_rpc_arm_exec_observed(count,batch) :
+        arc_rpc_arm_exec_unobserved(count,batch);
+}
+
 int arc_rpc_arm_exec_count(unsigned count) { return arc_rpc_arm_exec_batch(count, NULL); }
 
 int arm_exec(void) { return arc_rpc_arm_exec_count(200); }
+
+#endif /* ARC_RPC_ARM_LOOP */

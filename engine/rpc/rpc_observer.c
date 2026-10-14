@@ -26,8 +26,11 @@ static struct {
 static struct {
     ArcRpcObservationTrace records[ARC_RPC_TRACE_LIMIT];
     ArcRpcTraceStatus status; bool paths;
+    ArcRpcTraceSelection selection;
+    ArcRpcObservationTrace gap;
     struct { bool live; uint64_t id, deadline; uint32_t pc,mode,sp; } watches[ARC_RPC_WATCHES];
 } trace;
+static void trace_loss(const ArcRpcObservation *);
 #endif
 static void gate(void)
 {
@@ -67,9 +70,16 @@ void arc_rpc_observer_retire(bool retain_trace)
     memset(observer.handlers,0,sizeof(observer.handlers));
     memset(&observer.origin,0,sizeof(observer.origin));
 #if defined(ARCDROID_TEST_FAULTS)
-    if(trace.status.count){trace.status.lost+=trace.status.count;trace.status.incomplete=true;}
+    for(unsigned i=0;i<trace.status.count;++i){
+        const ArcRpcObservationTrace *t=&trace.records[i];
+        if(t->event.kind==ARC_RPC_OBS_GAP){
+            if(!trace.gap.lost || t->event.order<trace.gap.event.order)trace.gap.event=t->event;
+            if(t->lost_end_ns>trace.gap.lost_end_ns)trace.gap.lost_end_ns=t->lost_end_ns;
+            trace.gap.lost+=t->lost;
+        }else trace_loss(&t->event);
+    }
     trace.status.count=0;memset(trace.watches,0,sizeof(trace.watches));
-    if(!retain_trace)trace.status.enabled=false;
+    if(!retain_trace){trace.status.enabled=false;memset(&trace.gap,0,sizeof(trace.gap));}
 #else
     (void)retain_trace;
 #endif
@@ -163,10 +173,38 @@ static ArcRpcInspectStatus trace_path(uint32_t va,bool privileged,char *out,size
     }
     return ARC_RPC_INSPECT_TRUNCATED;
 }
+static bool trace_swi_selected(uint32_t swi)
+{
+    if(!trace.selection.swi_count)return true;
+    for(unsigned i=0;i<trace.selection.swi_count;++i)if(trace.selection.swis[i]==swi)return true;
+    return false;
+}
+static bool trace_selected(const ArcRpcObservation *e)
+{
+    return (trace.selection.classes&e->kind) &&
+        (e->kind!=ARC_RPC_OBS_SWI || trace_swi_selected(e->swi));
+}
+static void trace_loss(const ArcRpcObservation *e)
+{
+    if(!trace.gap.lost || e->order<trace.gap.event.order)
+        trace.gap.event=(ArcRpcObservation){.kind=ARC_RPC_OBS_GAP,.order=e->order,
+            .instruction=e->instruction,.epoch=e->epoch,.ns=e->ns};
+    if(!trace.gap.lost || e->ns>trace.gap.lost_end_ns)trace.gap.lost_end_ns=e->ns;
+    ++trace.gap.lost;
+    ++trace.status.lost;trace.status.incomplete=true;
+}
+static void trace_gap(void)
+{
+    if(trace.gap.lost && trace.status.count<trace.selection.capacity){
+        trace.records[trace.status.count++]=trace.gap;
+        memset(&trace.gap,0,sizeof(trace.gap));
+    }
+}
 static void trace_event(const ArcRpcObservation *e)
 {
-    if(!trace.status.enabled || trace.status.incomplete)return;
-    if(trace.status.count==ARC_RPC_TRACE_LIMIT){++trace.status.lost;trace.status.incomplete=true;return;}
+    if(!trace.status.enabled || !trace_selected(e))return;
+    trace_gap();
+    if(trace.status.count==trace.selection.capacity){trace_loss(e);return;}
     ArcRpcObservationTrace t={.event=*e,.inspection=ARC_RPC_INSPECT_OK};
     uint16_t mask=e->kind==ARC_RPC_OBS_SWI?trace_mask(e->swi,e->registers[0]):
         e->kind==ARC_RPC_OBS_CONTINUATION?1:0;
@@ -214,7 +252,7 @@ void arc_rpc_observe_fetched(const uint32_t *page)
     if(trace.status.enabled)for(unsigned i=0;i<ARC_RPC_WATCHES;++i){
         if(!trace.watches[i].live)continue;
         if(observer.instruction>trace.watches[i].deadline){trace.watches[i].live=false;
-            ++trace.status.lost;trace.status.incomplete=true;continue;}
+            ArcRpcObservation lost=event(ARC_RPC_OBS_CONTINUATION,0);trace_loss(&lost);continue;}
         if(arm.mode!=trace.watches[i].mode)continue;
         ArcRpcObservation e=event(ARC_RPC_OBS_CONTINUATION,0);e.watch=trace.watches[i].id;
         e.matched=e.pc==trace.watches[i].pc && arm.reg[13]==trace.watches[i].sp;
@@ -254,11 +292,11 @@ bool arc_rpc_observe_swi(uint32_t opcode)
     e.swi=opcode&0xffffffu;trace_event(&e);
 #if defined(ARCDROID_TEST_FAULTS)
     uint32_t normalized=e.swi&~0x20000u;
-    if(trace.status.enabled && !trace.status.incomplete && !e.privileged &&
+    if(trace.status.enabled && (trace.selection.classes&ARC_RPC_OBS_CONTINUATION) && trace_swi_selected(e.swi) && !e.privileged &&
         ((normalized==8 && trace_file_reason(e.registers[0])) || (normalized==0xd && trace_find_reason(e.registers[0])))){
         unsigned slot=ARC_RPC_WATCHES;
         for(unsigned i=0;i<ARC_RPC_WATCHES;++i)if(!trace.watches[i].live){slot=i;break;}
-        if(slot==ARC_RPC_WATCHES){++trace.status.lost;trace.status.incomplete=true;}
+        if(slot==ARC_RPC_WATCHES){ArcRpcObservation lost=event(ARC_RPC_OBS_CONTINUATION,0);trace_loss(&lost);}
         else {trace.watches[slot].live=true;trace.watches[slot].id=++observer.watch_id;
             trace.watches[slot].deadline=observer.instruction+ARC_RPC_WATCH_ATTEMPT_LIMIT;
             trace.watches[slot].pc=e.pc+4;trace.watches[slot].mode=e.mode;trace.watches[slot].sp=e.registers[13];}
@@ -353,24 +391,47 @@ RETRO_API bool arc_rpc_observer_test_filter(ArcRpcObserver owner,const ArcRpcObs
 }
 RETRO_API void arc_rpc_observer_trace(bool enabled,bool private_paths)
 {
-    memset(&trace,0,sizeof(trace));trace.status.enabled=enabled;trace.paths=private_paths;gate();
+    /* Reset metadata; count gates all record reads. Avoid touching the entire
+     * qualification buffer on ordinary test-session loads. */
+    trace.status=(ArcRpcTraceStatus){.enabled=enabled};trace.paths=private_paths;
+    memset(&trace.gap,0,sizeof(trace.gap));memset(trace.watches,0,sizeof(trace.watches));
+    trace.selection=(ArcRpcTraceSelection){.classes=ARC_RPC_OBS_SWI,.capacity=ARC_RPC_TRACE_LIMIT};gate();
+}
+RETRO_API bool arc_rpc_observer_trace_select(const ArcRpcTraceSelection *selection)
+{
+    if(!selection || !selection->classes || (selection->classes&~7u) ||
+        !selection->capacity || selection->capacity>ARC_RPC_TRACE_LIMIT ||
+        selection->swi_count>64 || trace.status.count || trace.gap.lost)return false;
+    for(unsigned i=0;i<selection->swi_count;++i){
+        if(selection->swis[i]>0xffffffu)return false;
+        for(unsigned j=0;j<i;++j)if(selection->swis[j]==selection->swis[i])return false;
+    }
+    trace.selection=*selection;return true;
 }
 RETRO_API void arc_rpc_observer_trace_status(ArcRpcTraceStatus *out) { if(out)*out=trace.status; }
 RETRO_API size_t arc_rpc_observer_trace_read(ArcRpcObservationTrace *out,size_t n)
 {
     if(!out)return 0;
+    trace_gap();
     if(n>trace.status.count)n=trace.status.count;
     memcpy(out,trace.records,n*sizeof(*out));
-    trace.status.count-=(unsigned)n;memmove(trace.records,trace.records+n,trace.status.count*sizeof(*out));return n;
+    trace.status.count-=(unsigned)n;memmove(trace.records,trace.records+n,trace.status.count*sizeof(*out));trace_gap();return n;
 }
 RETRO_API void arc_rpc_observer_trace_drain(ArcRpcTraceSink sink,void *opaque)
 {
+    trace_gap();
     unsigned n=trace.status.count;
-    if(!sink){trace.status.failed=trace.status.incomplete=true;trace.status.lost+=n;trace.status.count=0;return;}
+    bool failed=!sink;
     for(unsigned i=0;i<n;++i)if(!sink || !sink(opaque,&trace.records[i])){
-        trace.status.failed=trace.status.incomplete=true;trace.status.lost+=n-i;break;
+        for(unsigned j=i;j<n;++j)if(trace.records[j].event.kind!=ARC_RPC_OBS_GAP)++trace.status.lost;
+        failed=true;break;
     }
     trace.status.count=0;
+    if(trace.gap.lost){
+        if(!failed && !sink(opaque,&trace.gap))failed=true;
+        memset(&trace.gap,0,sizeof(trace.gap));
+    }
+    if(failed)trace.status.failed=trace.status.incomplete=true;
 }
 RETRO_API void arc_rpc_observer_test_seed_pending(void)
 {

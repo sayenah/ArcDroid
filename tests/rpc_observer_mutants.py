@@ -15,7 +15,7 @@ cache = (build/'CMakeCache.txt').read_text()
 ninja = next(x.split('=',1)[1] for x in cache.splitlines() if x.startswith('CMAKE_MAKE_PROGRAM:FILEPATH='))
 commands = [x['command'] for x in json.loads(subprocess.check_output([ninja,'-t','compdb','-x'],cwd=build,text=True))]
 mutants = [
- ('fast-gate','engine/rpcemu/src/arm.c','if(observing)arc_rpc_observe_begin(PC);','arc_rpc_observe_begin(PC);'),
+ ('fast-gate','engine/rpcemu/src/arm.c','#if ARC_RPC_ARM_OBSERVING\n        bool observing=arc_rpc_observer_active;','#if 1\n        bool observing=true;'),
  ('disarm-gate','engine/rpc/rpc_observer.c','if(!arc_rpc_observer_active)return;','if(false)return;'),
  ('condition','engine/rpcemu/src/arm.c','if (flaglookup[opcode >> 28][(*pcpsr) >> 28])','if (1)'),
  ('x-bit','engine/rpc/rpc_observer.c','e.swi=opcode&0xffffffu','e.swi=opcode&0xfdffffu'),
@@ -37,6 +37,9 @@ mutants = [
  ('queue-epoch','engine/rpc/rpc_observer.c','work->epoch!=observer.epoch ||','false ||'),
  ('epoch-advance','engine/rpc/rpc_observer.c','++observer.epoch;','observer.epoch+=0;'),
  ('epoch-discard','engine/rpc/rpc_observer.c','observer.owners[i].armed=false;memset','observer.owners[i].armed=true;memset'),
+ ('trace-selection','engine/rpc/rpc_observer.c','|| !trace_selected(e)','|| false'),
+ ('trace-resume','engine/rpc/rpc_observer.c','if(!trace.status.enabled || !trace_selected(e))','if(trace.status.incomplete || !trace.status.enabled || !trace_selected(e))'),
+ ('trace-gap-count','engine/rpc/rpc_observer.c','++trace.gap.lost;','trace.gap.lost=1;'),
  ('trace-allowlist','engine/rpc/rpc_observer.c','default:return 0;','default:return 0x1fff;'),
 ]
 subprocess.run([str(target)],check=True,cwd=build,timeout=30,capture_output=True)

@@ -6,6 +6,7 @@
 #include "libretro.h"
 #include "rpc/rpc_observer.h"
 void arc_engine_test_observation_trace(bool,bool);
+bool arc_engine_test_observation_select(const ArcRpcTraceSelection *);
 void arc_engine_test_observation_profile(bool,unsigned);
 void arc_engine_test_observation_drain(ArcRpcTraceSink,void *);
 RETRO_API void arc_engine_test_observation_status(ArcRpcTraceStatus *);

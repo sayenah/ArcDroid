@@ -493,3 +493,10 @@ Host work drains only after a protected frame entry returns; both revalidations
 must agree. Trace buffers and loss/failure state are a separate diagnostic domain,
 excluded from guest projection and unable to cancel observers. G-9/G-10 remain
 unchanged: inspection never writes memory or affects cache maintenance.
+
+Run B selects an observation-free interpreter instantiation at batch admission
+when nothing is armed. Both instantiations share one source body and identical
+P0–P3, integer-batch and service boundaries; admission is not an early yield.
+An armed callback may disarm during the batch without creating a later event.
+Trace classes/SWI selection, recoverable gap counts/windows and incomplete status
+remain diagnostic state and cannot change canonical guest or observer state.

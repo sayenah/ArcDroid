@@ -402,6 +402,8 @@ void arc_engine_test_observation_profile(bool unmatched,unsigned quota)
 }
 void arc_engine_test_observation_trace(bool enabled,bool paths)
 { arc_rpc_observer_trace(enabled && arc_engine_is_rpc(),paths); }
+bool arc_engine_test_observation_select(const ArcRpcTraceSelection *s)
+{ return arc_rpc_observer_trace_select(s); }
 void arc_engine_test_observation_drain(ArcRpcTraceSink sink,void *opaque)
 { arc_rpc_observer_trace_drain(sink,opaque); }
 RETRO_API void arc_engine_test_observation_status(ArcRpcTraceStatus *status)

@@ -474,7 +474,7 @@
         "src/fdc.c",
         "src/arm_common.h"
       ],
-      "reason": "D-174/D-175 gated CPU observations, pure MMU/backing inspection and internal controller-idle services; policy remains ArcDroid-owned.",
+      "reason": "D-174/D-175 gated CPU observations, pure MMU/backing inspection and internal controller-idle services; run B instantiates the interpreter body for armed and unarmed batch admission and confines SWI/return hooks to armed helpers; policy remains ArcDroid-owned.",
       "group": "observation"
     }
   ],

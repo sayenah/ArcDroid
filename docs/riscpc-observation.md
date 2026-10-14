@@ -9,8 +9,8 @@ and trace admission are compiled only with ARCDROID_TEST_FAULTS.
 
 ## CPU boundaries and records
 
-One inactive gate at instruction entry precedes origin capture, classification,
-register copies and time materialisation. The SWI edge also gates before work.
+One inactive gate at batch entry precedes origin capture, classification,
+register copies and time materialisation. The armed SWI edge also gates before work.
 There is no allocation, inspection or translation walk on the inactive path.
 An active instruction context retains its original VA and the backing pointer
 returned by its actual fetch. Backing is reported as allocation kind and byte
@@ -93,15 +93,15 @@ entries while draining, and nested drains return immediately. The queue never cr
 ## Qualification trace
 
 Test plans may select numeric observation trace, with a separate explicit private
-path opt-in. The bounded 256-record buffer has its own loss counter and write
-failure marker. Overflow stops recording and marks evidence incomplete; writing
+path opt-in. The bounded 65536-record buffer has its own loss counter and write
+failure marker. Overflow emits a gap and marks evidence incomplete; writing
 occurs only outside protected execution. A failed sink marks evidence incomplete
 without cancelling recognisers or changing execution. The plan client retains
 final sink/close failure status through unload, and the runner prints an explicit
-final incomplete marker; qualification must check both JSONL and runner diagnostics. Lifecycle discards pending
+single exit summary; qualification must check both JSONL and runner diagnostics. Lifecycle discards pending
 records while preserving an incomplete marker when evidence was lost.
 
-Schema version 1 records event/instruction/epoch/ns/kind, original VA/backing,
+Schema version 2 records event/instruction/epoch/ns/kind, original VA/backing,
 old/new modes, NZCV, allowlisted registers, SP/LR, watch identity and inspection
 status. The explicit SWI allowlist includes OS_Byte, OS_Word, OS_CLI, OS_File,
 OS_Find, OS_UpCall and the Wimp launch/poll/report/close calls. OS_Word 21 may
@@ -126,3 +126,33 @@ loss domain. Inactive and unmatched/trace-only operation preserve the pinned
 persisted bytes; host duration/path and new diagnostics excluded). Quotas 1, 7
 and 200 and integer batching are included; measurement mode is not used to
 prove batching parity.
+
+## Run B: inactive loop and usable qualification traces
+
+The batch entry selects two compile-time instantiations of the same interpreter
+body. The unarmed instantiation contains no observer loads, branches or hooks,
+including SWI and status-restoring PC helpers. Selection never changes batch
+length, memory service or flush boundaries. The armed instantiation retains the
+original successful-fetch and completed-transition hooks; disarming during a
+callback is still checked there. Arming occurs outside execution or from an
+already active callback, so it is visible at the next batch admission.
+
+Default trace selection is SWI only. `observation_classes` accepts comma-separated
+`swi`, `mode`, `continuation`; `observation_swis` accepts at most 64 distinct
+24-bit decimal or 0x-prefixed numbers (X forms are distinct). Selection precedes
+trace register copies and inspection. Continuation tracing creates bounded
+watches only for selected SWIs. The test-only buffer holds 65536 records, covering
+65536 selected events between frame drains: 256 times the former capacity,
+and above the private boot's reported 120 SWIs when the earlier trace overflowed. This is a bounded
+qualification budget, not a guarantee for arbitrary guests. A test-only
+`observation_capacity` plan key can lower it to exercise overflow.
+
+An overflow accumulates a pending gap containing the count, first and last lost
+scheduler timestamps, and first lost event identity/epoch. The next available
+slot emits that gap before any subsequent selected event; frame drains also
+emit a pending gap after retained records. Recording resumes after a drain.
+Gap records use schema 2 and kind 8. Every loss marks the entire trace incomplete;
+write failures and lifecycle discards remain incomplete. Hooks never block or
+perform host I/O. The runner reports cumulative attempts/loss/failure once at
+exit, including close failures. Trace selection does not alter guest execution,
+observer watches, answers or host work.
