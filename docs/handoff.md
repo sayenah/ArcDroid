@@ -20,8 +20,119 @@
 
    The record is `docs/riscpc-observer-qualification.md`, with private legs in `.work/s64/q/` and `.work/s64/LEDGER.md`. The Odin3 R-H with observers active at run E is running in `.work/s64/odin/`.
 
-**W2 — R3c-3 launch delivery.** **Stage:** DESIGN. **Owner:** Fable, with Astra stage 1 running (thread `01a1376a-…`, brief `.work/s63/astra/brief4.md`).
-**Next (W2):** adjudicate Astra's report, then draft the R3c-3 work order and send it to Astra stage 2. Sol implements after W1 merges. The scope includes qualifying launch outcome and boot watch from the hook, per the S64 findings: SVC-mode `*WimpTask`, F12's `Wimp_Initialise`, and 3.5+ prompt buffers above 0x8000.
+**W2 — R3c-3 launch delivery (D-184: two slices, R3c-3a then R3c-3b).**
+**Stage:** IMPLEMENTATION — **R3c-3a**. **Owner:** Sol (third instance, own clone, branch `slice/r3c3a-gate`, stacked on `686b1b7`, rebased onto W1's merge).
+**Next (W2):**
+1. Sol implements R3c-3a (work order below).
+2. Fable reviews it and runs the seven-pair absence legs, then Opus QA.
+3. In parallel, Fable drafts R3c-3b: launch plans, the once-per-attempt lifecycle, the authored status protocol, RPC boot and outcome profiles and records, then qualification. It goes to Astra stage 2. R3d design starts with the R3c-3b draft.
+
+**R3c-3a — startup gate, helper handoff, authored revision 2, guest-tolerant checker (D-184; Astra stage 1 `.work/s63/astra/report4.md`, stage 2 `report5.md`, all changes incorporated).**
+- **Objective.**
+  - A version-stable authored gate at the end of the RPC desktop startup. It looks for a read-only per-session helper in drive 1 and hands control to it through a frozen, validated handoff.
+  - In this slice the helper is an authored no-op.
+  - The gate is proven bounded and non-interactive whatever drive 1 holds.
+  - Authored revision 2 is admitted beside revision 1.
+  - The FileCore checker gains a guest-tolerant mode.
+- **Scope.**
+  1. **Guest-tolerant checker** (`tests/rpc_filecore_check.py`).
+     - An explicit guest mode permits:
+       - the mutable disc-ID field;
+       - matching variable Nick sequence bytes;
+       - stale bytes beyond a directory's terminator;
+       - legal name padding.
+     - Strict mode stays the default for writer output.
+     - Both modes keep the integrity checks: checksums, matching sequence ends, allocation bounds, ownership, overlap, ordering and cycles.
+  2. **Revision admission** (`libretro/rpc_hd_store.c`, `docs/riscpc-hd-store.md`).
+     - Receipts expose validated revisions. The admitted tuples are receipt, populator and authored revision `(1,1,1)` and `(1,1,2)`, unless the writer genuinely needs another. Envelope versions stay distinct.
+     - `(1,1,1)` opens normally with launch delivery ineligible and one notice. Its receipt and guest files are preserved, with no package access and no repopulation.
+     - `(1,1,2)` is eligible for the gate.
+     - Anything else refuses before mutation. An authenticated but unsupported recovery candidate can never be bypassed to reopen an older supported root and mutate the store.
+     - New populations write `(1,1,2)` atomically with their root. Recovery and checkpointing preserve either supported receipt verbatim.
+  3. **Helper handoff, frozen now so R3c-3b needs no new hard-disc revision.**
+     - The hard-disc gate validates a bounded descriptor:
+       - encoding, bounds and version negotiation;
+       - entry-point rules;
+       - media binding;
+       - cleanup ownership;
+       - a reserved acknowledgement contract for R3c-3b's delivery status.
+     - The gate then hands control to the helper's entry. Action and target interpretation belong to the replaceable helper, through its own separately versioned plan.
+     - Unknown versions and malformed descriptors are rejected without execution.
+     - R3c-3a supplies only an authored no-op helper.
+     - A test shows that a replacement compatible helper works with unchanged revision-2 hard-disc bytes.
+  4. **Absence guard (D-175(1)), with its mechanism fixed in the design note before code.** The note states:
+     - where interception happens relative to the Wimp's media-request handler;
+     - how ownership of the gate's own lookup is established, without relying on R3 to identify drive 1 (D-179: requests carry an unspecified device);
+     - how every path restores handlers, including errors, Escape, exit and application replacement;
+     - what bounds each potentially blocking guest operation;
+     - a numeric virtual-time bound from gate entry to gate return, stated before results are accepted.
+
+     Two forms of evidence are not acceptable on their own:
+     - an `IfThere` or `OS_File 5` probe;
+     - a host watchdog that detects a hang.
+
+     The proof needs authored execution evidence of gate entry and return.
+  5. **Delivery status.**
+     - Revision-based eligibility stays separate from observed delivery. Runtime detection that delivery is unavailable belongs to R3c-3b's acknowledgement.
+     - In R3c-3a, edited or missing startup files are preserved. They never cause host repair or a false claim that the gate ran.
+  6. **Helper attachment ownership.**
+     - Preparation attaches a generated read-only no-op helper only under a documented policy. An explicitly supplied drive-1 image, or an explicit empty drive, overrides it, so plan tests keep their meaning.
+     - Ownership of the backing runs until the engine detaches. Helpers never take part in isolated CMOS generation.
+     - Drive-0 and hard-disc attachments are unchanged, and preparation-budget accounting is updated.
+     - Ordinary loads stay on today's route (R3d).
+  7. **Private validation by Sol (D-183).** Sol may run the gate against the local firmware and boot archives Fable names, through `rpc_runner` with test plans, as private local evidence only. Nothing from them enters commits, tests, docs or the report beyond observed behaviour: no bytes, addresses or listings.
+- **Acceptance criteria.**
+  - **AC-1 Checker guest mode.**
+    - Each permitted mutation passes alone and combined.
+    - Nearby corruptions are rejected in both modes.
+    - Strict-mode output is unchanged on every existing fixture.
+  - **AC-2 Revision admission.**
+    - The tuple matrix.
+    - Corrupted against unsupported receipts.
+    - Mixed recovery candidates, including the authenticated-unsupported bypass case.
+    - Interruption during a new population.
+    - Reopen and checkpoint preservation.
+    - Revision-1 admission without package access.
+  - **AC-3 Handoff ABI.**
+    - A valid no-op is consumed.
+    - Every malformed form, and every unknown version or action, is rejected without execution.
+    - A compatible replacement helper runs with unchanged revision-2 bytes.
+  - **AC-4 Helper attachment.**
+    - Reset, failed attachment, unload, and helper-free reopen.
+    - Guest writes to the helper refused.
+    - The explicit-media override.
+    - Helper exclusion from disc automation with R3c-2's promoted cells enabled, rerun after rebasing.
+  - **AC-5 Sol's private legs on at least 3.71 SA-110 and 3.50 ARM610.**
+    - Drive-1 cases:
+      - empty;
+      - unconfigured;
+      - unrelated media;
+      - damaged filesystem metadata;
+      - unreadable or truncated media;
+      - a malformed helper: truncated, bad lengths, an unsupported version, a missing entry;
+      - a valid no-op.
+    - Each case has entry-to-return evidence within the stated bound, with:
+      - no dialogue;
+      - no continuing retries;
+      - handlers intact;
+      - saved CMOS unchanged;
+      - an unrelated media request after cleanup behaving normally.
+  - **AC-6 Fable's private legs on all seven pairs.** The D-175(1) proof, plus a revision-1 disc opening with its notice.
+  - **AC-7 Platform and cost evidence.**
+    - Odin3 and native Windows runner or harness legs for a valid no-op, absence, and reset/reopen.
+    - The added virtual startup time, and the host frame and attachment cost, against pinned `686b1b7`.
+    - Deterministic guest results across repeated runs, with the trace on and off.
+    - Arculator and ordinary loads unchanged.
+    - Host, sanitizer, MinGW and Android builds, and the guards.
+- **Non-goals.**
+  - Executing anything but the no-op helper.
+  - Launch plans, attempt lifecycle, the status protocol, observers and boot records (all R3c-3b).
+  - Ordinary loads (R3d).
+- **QA focus.**
+  - Absence-guard soundness and handler restoration.
+  - Admission bypasses.
+  - Helper ownership and override.
+  - Evidence that the gate actually ran.
 
 **W3 — item 6b Phase 0 completion (D-141, D-142, D-146, D-182).** **Stage:** IMPLEMENTATION — **6b-P0i** profiling instrumentation (work order below). **Owner:** Sol (second instance, own clone, branch `slice/6b-p0i-profile` stacked on `686b1b7`, rebased after W1 merges).
 **Next (W3):**
