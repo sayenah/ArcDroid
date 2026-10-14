@@ -25,6 +25,9 @@ static struct {
 } state;
 static unsigned watch_budget=ARC_RPC_WATCH_ATTEMPT_LIMIT;
 static const ArcDiscProfile default_disc_profile={(1u<<0)|(1u<<16),(1u<<3)|(1u<<19),ARC_DISC_DEVICE_UNSPECIFIED,true,true};
+static const ArcErrorProfile default_error_profile={.contextual=true,.poll_r1=0,.poll_r2=0,
+    .poll_modes=(1u<<3)|(1u<<19),.answer_forms=(1u<<3)|(1u<<14),
+    .ok_forms=1u<<3,.cancel_forms=(1u<<3)|(1u<<14),.default_cancel_forms=1u<<14};
 static const ArcOutcomeProfile launch_profile={600000000u,true,true,true};
 static const ArcBootProfile boot_profile={40000000u,2000000u,0x8000u,true,true};
 static const unsigned bits[4]={ARC_RPC_CELL_BOOT,ARC_RPC_CELL_LAUNCH,ARC_RPC_CELL_ERROR,ARC_RPC_CELL_DISC_A|ARC_RPC_CELL_DISC_B};
@@ -59,6 +62,17 @@ static void error_event(void *opaque,const ArcRpcObservation *e)
         arc_rpc_observer_cancel(ARC_RPC_OBS_ERROR);
         arc_error_swi(&state.error,e->swi,e->registers[0],e->registers[1],e->registers[2],
             e->pc,e->mode,e->registers[13],e->registers[14],e->backing.kind==ARC_RPC_BACKING_ROM,false,0);
+        /* D-181 qualified error number zero, not serious-error button
+         * transformations. Other/unreadable reports remain manual. */
+        if(state.error.ok || state.error.cancel){
+#if defined(ARCDROID_TEST_FAULTS)
+            if(!state.overridden)
+#endif
+            { uint32_t number=0;
+                if(!arc_rpc_inspect_word(e->registers[0],false,&number) || number!=0)
+                    state.error.ok=state.error.cancel=state.error.default_cancel=false;
+            }
+        }
         state.error_watch=arc_rpc_observer_watch(ARC_RPC_OBS_ERROR,e->pc+4,e->mode,e->registers[13],watch_budget);
         /* Track every user report, even unknown/asynchronous flag forms:
          * this conservatively blocks replacement until its return. */
@@ -252,10 +266,10 @@ void arc_rpc_observers_bind(unsigned catalogue,unsigned cpu)
 {
     arc_rpc_observers_retire();state.epoch=arc_rpc_observer_epoch();state.catalogue=catalogue;state.cpu=cpu;
     state.disc_profile=default_disc_profile;
-    state.error_profile=(ArcErrorProfile){.contextual=true};state.error.profile=&state.error_profile;
+    state.error_profile=default_error_profile;state.error.profile=&state.error_profile;
     state.boot.profile=&boot_profile;state.launch.profile=&launch_profile;
-    /* Every cell is disabled. Future promotion derives cells only from the
-     * exact verified tuple; recognition itself is never an enabling rule. */
+    /* D-181 promotion derives cells only from the exact verified tuple and
+     * profile revision; recognition itself is never an enabling rule. */
     const struct {ArcRpcObserver owner;ArcRpcObserverCapability capability;unsigned bit;} cells[]={
         {ARC_RPC_OBS_BOOT,ARC_RPC_CAP_OBSERVE,ARC_RPC_CELL_BOOT},
         {ARC_RPC_OBS_LAUNCH,ARC_RPC_CAP_OBSERVE,ARC_RPC_CELL_LAUNCH},

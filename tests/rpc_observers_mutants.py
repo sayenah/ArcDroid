@@ -16,7 +16,11 @@ cache=(build/'CMakeCache.txt').read_text()
 ninja=next(x.split('=',1)[1] for x in cache.splitlines() if x.startswith('CMAKE_MAKE_PROGRAM:FILEPATH='))
 commands=[x['command'] for x in json.loads(subprocess.check_output([ninja,'-t','compdb','-x'],cwd=build,text=True))]
 mutants=[
- ('production-table','engine/rpc/rpc_observer.c','cap,false,"awaiting Fable qualification"','cap,true,"awaiting Fable qualification"'),
+ ('production-table','engine/rpc/rpc_observer.c','ARC_RPC_OBS_ERROR,ARC_RPC_CAP_OBSERVE,true,error','ARC_RPC_OBS_ERROR,ARC_RPC_CAP_OBSERVE,false,error'),
+ ('production-reason','engine/rpc/rpc_observer.c','awaiting R3c-3 launch hook','awaiting a different hook'),
+ ('production-duplicate-row','engine/rpc/rpc_observer.c','PAIR(4,3,ERROR_EVIDENCE,DISC_A_EVIDENCE)\n};','PAIR(4,3,ERROR_EVIDENCE,DISC_A_EVIDENCE),PAIR(1,0,ERROR_EVIDENCE,DISC_A_EVIDENCE)\n};'),
+ ('production-extra-row','engine/rpc/rpc_observer.c','PAIR(4,3,ERROR_EVIDENCE,DISC_A_EVIDENCE)\n};','PAIR(4,3,ERROR_EVIDENCE,DISC_A_EVIDENCE),PAIR(100,0,ERROR_EVIDENCE,DISC_A_EVIDENCE)\n};'),
+ ('production-error-number','engine/rpc/rpc_observers.c','!arc_rpc_inspect_word(e->registers[0],false,&number) || number!=0','false'),
  ('cell-gate','engine/rpc/rpc_observers.c','(state.cells&bit)==bit','true'),
  ('poll-r1','engine/arc_error_box.c','r1 != p->poll_r1 ||','false ||'),
  ('poll-r2','engine/arc_error_box.c','r2 != p->poll_r2','false'),
@@ -101,6 +105,8 @@ for name,relative,old,new in mutants:
             if result.returncode:raise RuntimeError((name,'build failure',result.stderr))
         argv=[sys.executable,str(root/'tests/rpc_observers_frontend_test.py'),str(target),str(binary),str(build/"tests/fixtures/generated")] if frontend else [str(binary)]
         result=subprocess.run(argv,cwd=build,capture_output=True,text=True,timeout=60)
+        if not result.returncode and not frontend:
+            result=subprocess.run([sys.executable,'-B',str(root/'tests/rpc_observer_qualification_test.py'),str(binary),str(root/'docs/riscpc-observer-qualification.md')],cwd=build,capture_output=True,text=True,timeout=30)
         if not result.returncode:raise RuntimeError((name,'SURVIVED'))
         print(name+': killed',flush=True)
 print(f'{len(mutants)} RPC observer mutants killed; no build failures counted')

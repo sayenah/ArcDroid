@@ -1,6 +1,6 @@
 # RiscPC observer qualification record (R3c-2)
 
-Status: Fable's adjudication for the R3c-2 qualification-and-promotion checkpoint (D-177(8), D-181). The production capability table in `engine/rpc/rpc_observer.c` must equal this record exactly. A cell absent from this record stays disabled with the reason given here.
+Status: adopted (D-181). Fable's adjudication for the R3c-2 qualification-and-promotion checkpoint (D-177(8)). The production capability table in `engine/rpc/rpc_observer.c` must equal this record exactly. A cell absent from this record stays disabled with the reason given here.
 
 This record holds no firmware bytes, addresses, signatures or classification data. Its evidence is Fable's private, local qualification legs, named here by leg identifier only. They ran on the Mac through `rpc_runner` and the test-flagged plan core, with the test-flag override set to the profile values below.
 
@@ -74,7 +74,7 @@ The disc evidence covers the disc A and disc B cells.
 
 ## Cost
 
-Measured on the Odin3 with cells as above (`observer_cells=252`), on the authored hot workload against pinned `98bb162`. The result is recorded in D-181 and `docs/build-log.md`.
+Measured on the Odin3 with cells as above (`observer_cells=252`) at run E `686b1b7`, on the authored hot workload against pinned `98bb162` (realtime, two ABBA orders of six 300 s runs): p50 +1.56 % and +0.82 %, p95 within 3 % (D-180, D-181).
 
 ## Not qualified
 
