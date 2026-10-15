@@ -2,6 +2,7 @@
 """Confined fresh frontend directory; native Windows and host. GPL-2.0-only."""
 import subprocess
 import sys
+sys.dont_write_bytecode=True
 import tempfile
 import shutil
 import hashlib
@@ -21,5 +22,6 @@ with tempfile.TemporaryDirectory(prefix='arcdroid-rpc-observer-frontend-') as di
         assert model not in seen;seen.add(model)
         image=(Path(directory)/f'digest-{model}.rom').read_bytes()
         assert int(size)==len(image) and crc==f'{zlib.crc32(image):08x}' and sha1==hashlib.sha1(image).hexdigest(),line
-    assert seen==set(range(4)),seen
-    print('copied-image digest: four CPUs match independent Python size/CRC32/SHA-1; source replacement and retirement checked')
+    focused=len(sys.argv)>4 and (sys.argv[4].startswith(('h-','sanitizer-disc-')) or sys.argv[4]=='sanitizer-extended')
+    assert seen==(set() if focused else set(range(4))),seen
+    if seen: print('copied-image digest: four CPUs match independent Python size/CRC32/SHA-1; source replacement and retirement checked')

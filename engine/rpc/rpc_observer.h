@@ -33,6 +33,10 @@ typedef struct {
     uint16_t registers, results;
     unsigned kinds;
     ArcRpcObserveCallback callback; void *opaque;
+    /* Optional bounded, host-owned list; it must outlive the filter. Numbers
+     * ignore X, while swi/swi_mask still admit exact decorations. Count zero
+     * preserves the ordinary mask-only subscription. */
+    const uint32_t *swis; unsigned swi_count;
 } ArcRpcObserveFilter;
 typedef enum { ARC_RPC_CAP_OBSERVE, ARC_RPC_CAP_COMPLETE,
                ARC_RPC_CAP_REPLACE, ARC_RPC_CAP_OBSERVE_B, ARC_RPC_CAP_REPLACE_B } ArcRpcObserverCapability;
@@ -100,6 +104,8 @@ typedef struct {
     void *opaque;
 } ArcRpcHostWorkHandler;
 bool arc_rpc_observer_queue(const ArcRpcHostWork *);
+/* Drop only matching copied payloads, preserving other identities/order. */
+void arc_rpc_observer_drop_queued(ArcRpcObserver,unsigned,const void *,size_t);
 void arc_rpc_observer_host_handler(ArcRpcObserver, const ArcRpcHostWorkHandler *);
 bool arc_rpc_observer_in_host(void);
 void arc_rpc_observer_drain(void); /* Frame boundary only, never guest execution. */
@@ -136,5 +142,7 @@ RETRO_API uint64_t arc_rpc_observer_test_epoch(void);
 uint64_t arc_rpc_observer_test_attempts(void);
 ArcRpcObservation arc_rpc_observer_test_origin(void); /* Captured metadata only. */
 uint64_t arc_rpc_observer_test_events(void);
+uint64_t arc_rpc_observer_test_captures(void);
+uint64_t arc_rpc_observer_test_number_checks(void);
 #endif
 #endif

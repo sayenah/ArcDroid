@@ -411,3 +411,42 @@ Digest evidence compares the actual copied-image session digest with Python's
 independently computed SHA-1 and CRC32 of the authored input image. Tests use
 varied bytes across all copy units and require the size, SHA-1 and CRC32 to
 agree. No catalogue injection or firmware material is needed.
+
+### Run H: adjudicated queue, hint and production refinements
+
+D-187 promotes the ordinary error-number class (bit 31 clear) on the same seven
+revision-1 tuples. Serious numbers remain observation-only. Cell references
+include the graphical and ordinary-number legs in the adopted record; boot and
+launch remain disabled. Qualification tests compare table values and evidence
+identifiers, rather than narrative wording.
+
+RPC signal B retains a copied triggered observation after BUSY, including its
+continuation, stack, candidate, epoch and both media generations. At later host
+boundaries it retries only while that identity, generation and trigger remain
+valid. A completed commit or hint ends retrying. Found objects synchronously drop queued misses for only the same canonical
+object. Their history retirement and lifecycle observations use the same ordered
+host queue; lifecycle events resolve preceding misses before clearing history,
+while preserving a later call still live across the boundary. Signal A still supersedes queued B work synchronously. Queue
+overflow retires the queue generation without erasing identity history or the
+trigger latch. No resolver or frontend callback runs inside guest execution.
+First-observation logging reads the copied callback identity.
+
+Synchronous bit-8 forms may carry category/high bits, but bits 5 and 6 still
+exclude them. They receive a recognised-open manual hint and no answers. A
+pending or consumed answer retains its answerable hint until the generation
+ends; snapshot answer availability still means a fresh answer can be queued.
+RPC reset retires hints, answers and disc watches before execution resumes and
+clears frontend swap ownership, previous index, time and pending notices.
+Helper paths are bounded before mount, so rejection leaves the drive intact.
+
+The cost matrix adds an authored user-mode SWI-density workload. Production
+subscriptions may select explicit normalised SWI numbers before event capture;
+trace selection remains independent, and watch deadlines still count every
+attempt. All four shared pure observers belong to the RPC host-service and
+termination guard surface.
+
+The SWI-number interest union is rebuilt only when subscriptions change. A cached
+three-word set rejects common OS and Wimp numbers before per-owner matching;
+other number ranges and mask-only subscriptions retain the generic path. Trace
+subscriptions independently bypass this rejection. The optional bounded list
+is host-owned for the lifetime of its filter and does not replace raw SWI masks.

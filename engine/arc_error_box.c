@@ -32,7 +32,7 @@ const char *arc_error_swi(ArcErrorBox *box, uint32_t swi, uint32_t r0,
          box->recognised_open = true;
          /* Enumerated synchronous forms: low five bits, or bit-8 custom
           * forms observed manually. Immediate/close forms are never armed. */
-         if ((r1 & 0x60u) || (r1 & ~0x11fu))
+         if ((r1 & 0x60u) || (!(r1 & 0x100u) && (r1 & ~0x1fu)))
          { box->recognised_open = false; box->modal_unknown = true; return "unqualified-form"; }
          box->stage = ARC_ERROR_POLL;
          box->ok = box->cancel = box->default_cancel = false;

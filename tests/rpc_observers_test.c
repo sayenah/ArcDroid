@@ -115,7 +115,7 @@ static void error_cases(CPUModel model)
     arc_rpc_observer_retire(false);assert(box().modal_unknown && !arc_rpc_observers_answer(ARC_ERROR_OK));
 }
 static unsigned resolve_count,observe_count,trigger_count;
-static char resolved[16][208];
+static char resolved[128][256];
 static unsigned resolve_disc(void *opaque,const char *path,ArcDiscOperation operation)
 { (void)opaque;assert(operation==ARC_DISC_CATALOGUE);strcpy(resolved[resolve_count++],path);return 1; }
 static bool observe_disc(void *opaque,const char *path,unsigned candidate,unsigned observation,bool trigger)
@@ -194,6 +194,168 @@ static void disc_cases(CPUModel model)
     start(model,0);assert(!arc_rpc_observers_replace(ARC_DISC_SIGNAL_A));
     arc_rpc_observers_bind(0,model);assert(!arc_rpc_observers_test_disc_devices(1));
 }
+static void miss_mode(const char *path,uint32_t pc,unsigned mode,bool found)
+{
+    strcpy((char *)ram00,path);issue(pc,mode,8,5,0x10000000,0,0,0x10008000);
+    arm.reg[0]=found?1:0;arc_rpc_arm_exec_count(2);
+}
+static unsigned retry_attempts,retry_insertions;
+static bool busy_observation(void *opaque,const char *path,unsigned candidate,unsigned observation,bool trigger)
+{
+    (void)opaque;assert(candidate==1 && observation && !strcmp(path,"$.Later"));
+    if(!trigger)return false;
+    ArcDiscRequest copied;arc_rpc_observers_disc_snapshot(&copied);
+    assert(copied.continuation==0x104 && copied.sp==0x10008000);
+    ++retry_attempts;
+    if(!arc_rpc_observers_replace(ARC_DISC_SIGNAL_B))return true;
+    ++retry_insertions;return false;
+}
+static void adjudicated_cases(CPUModel model)
+{
+    number_subscriptions(model);
+    start(model,252);updatemode(19);arm.reg[16]=19;
+    uint64_t captures=arc_rpc_observer_test_captures(),events=arc_rpc_observer_test_events(),checks=arc_rpc_observer_test_number_checks();
+    issue(0x180,19,0x42,0,0,0,0,0x10001000);
+    assert(arc_rpc_observer_test_captures()==captures && arc_rpc_observer_test_events()==events+1);
+    ArcRpcObservation before=arc_rpc_observer_test_origin();
+    assert(!arc_rpc_observe_swi_at(0xef000042,0x1c0,rom));
+    ArcRpcObservation after=arc_rpc_observer_test_origin();
+    assert(before.pc==after.pc && before.instruction==after.instruction && before.ns==after.ns);
+    assert(arc_rpc_observer_test_captures()==captures && arc_rpc_observer_test_events()==events+2);
+    assert(arc_rpc_observer_test_number_checks()==checks);
+    start(model,252);arc_rpc_observers_test_watch_budget(3);report(3);
+    for(unsigned i=0;i<5;++i)issue(0x180,19,0x42,0,0,0,0,0x10001000);
+    assert(box().modal_unknown && !box().answer_available);
+
+    for(unsigned mode=0;mode<=16;mode+=16){
+        start(model,252);
+        issue(0x100,mode,0x400df,0x10000400,3,0,0,0x10008000);
+        poll(0x18c,19,0,0,0x10001000);assert(box().answer_available);
+        assert(arc_rpc_observers_answer(ARC_ERROR_CANCEL));poll(0x18c,19,0,0,0x10001000);assert(arm.reg[1]==27);
+        start(model,252);resolve_count=observe_count=trigger_count=0;
+        arc_rpc_observers_disc_configure(true,"AuthDisc",resolve_disc,observe_disc,NULL);
+        miss_mode("ADFS::AuthDisc.$.Both",0x100,mode,false);
+        miss_mode("ADFS::AuthDisc.$.Both",0x100,mode,false);
+        arc_rpc_observer_drain();assert(resolve_count==2 && trigger_count==1);
+    }
+    for(unsigned flags=0x501;flags<=0x903;flags+=0x402){
+        start(model,252);report(flags);poll(0x18c,19,0,0,0x10001000);
+        assert(box().recognised_open && !box().modal_unknown && !box().answer_available);
+    }
+    for(unsigned scenario=0;scenario<3;++scenario){
+        start(model,252);resolve_count=observe_count=trigger_count=0;
+        arc_rpc_observers_disc_configure(true,"AuthDisc",resolve_disc,observe_disc,NULL);
+        ArcDiscRequest shared={0};unsigned shared_triggers=0;
+        for(unsigned iteration=0;iteration<2;++iteration){
+            ArcDiscSwi input={.swi=8,.r0=5,.mode=0,.address=0x100,.user_sp=0x10008000,
+                .name_readable=true,.name="ADFS::AuthDisc.$.Level2"};
+            arc_disc_request_swi(&shared,&input,"AuthDisc");
+            ArcDiscResult result=arc_disc_request_continue(&shared,0x104,0,0x10008000,0,false,false,0,0);
+            shared_triggers+=result.trigger;
+            miss("ADFS::AuthDisc.$.Level2",0x100);
+            if(scenario!=1){
+                input.address=0x140;input.name=scenario==0?"ADFS::AuthDisc.$.Music":"ADFS::AuthDisc.$.Level2";
+                arc_disc_request_swi(&shared,&input,"AuthDisc");
+                (void)arc_disc_request_continue(&shared,0x144,0,0x10008000,1,false,false,0,0);
+                miss_mode(input.name,0x140,16,true);
+            }
+            if(scenario==0 || iteration==1){arc_rpc_observer_drain();assert(trigger_count==shared_triggers);if(scenario==2)assert(resolve_count==0);}
+            if(scenario==1 && iteration==1){
+                /* Shared Arculator counts these two before the lifecycle SWI. */
+                assert(result.trigger);
+            }
+        }
+        if(scenario==1){
+            /* Repeat with the lifecycle in the very same guest frame. */
+            start(model,252);resolve_count=observe_count=trigger_count=0;
+            arc_rpc_observers_disc_configure(true,"AuthDisc",resolve_disc,observe_disc,NULL);
+            miss("ADFS::AuthDisc.$.Level2",0x100);miss("ADFS::AuthDisc.$.Level2",0x100);
+            issue(0x180,16,0x400c7,0,0,0,0,0x10008000);arc_rpc_observer_drain();
+            assert(resolve_count==2 && trigger_count==1);
+            ArcDiscRequest cleared;arc_rpc_observers_disc_snapshot(&cleared);assert(!cleared.identities[0].occupied);
+        }
+    }
+    /* A disqualifying return is not a found-object observation. It must not
+     * cancel an earlier copied miss for that canonical object. */
+    start(model,252);resolve_count=observe_count=trigger_count=0;
+    arc_rpc_observers_disc_configure(true,"AuthDisc",resolve_disc,observe_disc,NULL);
+    miss("ADFS::AuthDisc.$.Valid",0x100);
+    strcpy((char *)ram00,"ADFS::AuthDisc.$.Valid");issue(0x140,16,8,5,0x10000000,0,0,0x10008000);
+    arm.reg[0]=1;arm.reg[14]=0x148;arc_rpc_arm_exec_count(2);arc_rpc_observer_drain();
+    assert(resolve_count==1 && !strcmp(resolved[0],"$.Valid"));
+    miss("ADFS::AuthDisc.$.Valid",0x100);arc_rpc_observer_drain();assert(trigger_count==1);
+    start(model,252);resolve_count=observe_count=trigger_count=0;
+    arc_rpc_observers_disc_configure(true,"AuthDisc",resolve_disc,observe_disc,NULL);
+    miss("ADFS::AuthDisc.$.Valid",0x100);
+    strcpy((char *)ram00,"ADFS::AuthDisc.$.Valid");issue(0x140,16,8,5,0x10000000,0,0,0x10008000);
+    strcpy((char *)ram00,"RAM::Other.$.Valid");issue(0x140,16,8,5,0x10000000,0,0,0x10008000);
+    arm.reg[0]=1;arc_rpc_arm_exec_count(2);arc_rpc_observer_drain();
+    assert(resolve_count==1 && !strcmp(resolved[0],"$.Valid"));
+    /* Lifecycle retirement also belongs to A-only qualification profiles. */
+    start(model,52);arc_rpc_observers_disc_configure(true,"AuthDisc",resolve_disc,observe_disc,NULL);
+    strcpy((char *)ram00,"NextDisc");issue(0x180,19,0x20033,2,8,0x10000000,UINT32_MAX,0x10001000);
+    arc_rpc_observers_disc_notified();issue(0x184,19,0x20033,4,8,0x10000000,UINT32_MAX,0x10001000);
+    arc_rpc_observer_drain();ArcDiscRequest retired_a;arc_rpc_observers_disc_snapshot(&retired_a);
+    assert(!retired_a.a_active && !retired_a.a_notified && !retired_a.a_name[0]);
+    issue(0x180,19,0x20033,2,8,0x10000000,UINT32_MAX,0x10001000);
+    arc_rpc_observers_disc_snapshot(&retired_a);assert(retired_a.a_active && !retired_a.a_notified);
+    start(model,52);arc_rpc_observers_disc_configure(true,"AuthDisc",resolve_disc,observe_disc,NULL);
+    strcpy((char *)ram00,"NextDisc");issue(0x180,19,0x20033,2,8,0x10000000,UINT32_MAX,0x10001000);
+    arc_rpc_observers_disc_notified();issue(0x184,19,0x20033,4,8,0x10000000,UINT32_MAX,0x10001000);
+    issue(0x180,19,0x20033,2,8,0x10000000,UINT32_MAX,0x10001000);
+    arc_rpc_observers_disc_snapshot(&retired_a);assert(retired_a.a_active && !retired_a.a_notified);
+    start(model,252);resolve_count=observe_count=trigger_count=0;
+    arc_rpc_observers_disc_configure(true,"AuthDisc",resolve_disc,observe_disc,NULL);
+    miss("ADFS::AuthDisc.$.Before",0x100);arc_rpc_observer_drain();
+    arc_rpc_observers_override(52,0,0,UINT32_MAX);
+    issue(0x184,16,0x400c7,0,0,0,0,0x10008000);arc_rpc_observer_drain();
+    arc_rpc_observers_override(252,0,0,UINT32_MAX);
+    miss("ADFS::AuthDisc.$.Before",0x100);arc_rpc_observer_drain();assert(!trigger_count);
+    for(unsigned triggered=0;triggered<2;++triggered){
+        start(model,252);resolve_count=observe_count=trigger_count=0;
+        arc_rpc_observers_disc_configure(true,"AuthDisc",resolve_disc,observe_disc,NULL);
+        miss("ADFS::AuthDisc.$.Before",0x100);arc_rpc_observer_drain();
+        if(triggered){miss("ADFS::AuthDisc.$.Before",0x100);arc_rpc_observer_drain();}
+        for(unsigned i=0;i<17;++i)miss("ADFS::AuthDisc.$.Overflow",0x140);
+        arc_rpc_observer_drain();ArcDiscRequest kept;arc_rpc_observers_disc_snapshot(&kept);
+        assert(kept.identities[0].occupied && !strcmp(kept.identities[0].object,"$.Before") && kept.b_triggered==(triggered!=0));
+        miss("ADFS::AuthDisc.$.Before",0x100);arc_rpc_observer_drain();assert(trigger_count==1);
+    }
+    start(model,252);retry_attempts=retry_insertions=0;
+    arc_rpc_observers_disc_configure(true,"AuthDisc",resolve_disc,busy_observation,NULL);
+    miss("ADFS::AuthDisc.$.Later",0x100);miss("ADFS::AuthDisc.$.Later",0x100);report(3);
+    arc_rpc_observer_drain();assert(retry_attempts==1 && !retry_insertions);
+    arc_rpc_observers_frame(1);assert(retry_attempts==2 && !retry_insertions);
+    arm.reg[14]=0x104;arm.spsr[3]=16;arm.reg[15]=16;arc_rpc_arm_exec_count(2);
+    assert(!box().recognised_open && !box().modal_unknown);
+    arc_rpc_observers_frame(2);assert(retry_insertions==1);arc_rpc_observers_frame(3);assert(retry_insertions==1);
+    for(unsigned drive=0;drive<2;++drive){
+        start(model,252);retry_attempts=retry_insertions=0;
+        arc_rpc_observers_disc_configure(true,"AuthDisc",resolve_disc,busy_observation,NULL);
+        miss("ADFS::AuthDisc.$.Later",0x100);miss("ADFS::AuthDisc.$.Later",0x100);report(3);
+        arc_rpc_observer_drain();assert(retry_attempts==1 && !retry_insertions);
+        ++media[drive];arc_rpc_observers_frame(1);assert(retry_attempts==1);
+    }
+    start(model,252);resolve_count=observe_count=trigger_count=0;
+    arc_rpc_observers_disc_configure(true,"AuthDisc",resolve_disc,observe_disc,NULL);
+    miss("ADFS::AuthDisc.$.BeforePoll",0x100);
+    issue(0x180,16,0x400c7,0,0,0,0,0x10008000);
+    strcpy((char *)ram00,"ADFS::AuthDisc.$.AfterPoll");issue(0x140,16,8,5,0x10000000,0,0,0x10008000);
+    arc_rpc_observer_drain();assert(resolve_count==1);
+    arm.reg[0]=0;arc_rpc_arm_exec_count(2);arc_rpc_observer_drain();
+    assert(resolve_count==2 && !strcmp(resolved[1],"$.AfterPoll"));
+    start(model,252);arc_rpc_observers_disc_configure(true,"AuthDisc",resolve_disc,observe_disc,NULL);
+    strcpy((char *)ram00,"NextDisc");issue(0x180,19,0x20033,2,7,0x10000000,UINT32_MAX,0x10001000);
+    ArcDiscRequest d;arc_rpc_observers_disc_snapshot(&d);assert(!d.a_active);
+    updatemode(19);arm.reg[16]=19;arm.reg[15]=0x10000188;arm.reg[0]=2;arm.reg[1]=8;
+    arm.reg[2]=0x10000000;arm.reg[3]=UINT32_MAX;ram00[0x180/4]=0xef020033;
+    arc_rpc_arm_exec_count(1);arc_rpc_observers_disc_snapshot(&d);assert(!d.a_active);
+    issue(0x180,19,0x20033,2,8,0x10000000,UINT32_MAX,0x10001000);
+    arc_rpc_observers_disc_snapshot(&d);assert(d.a_active);
+    issue(0x184,19,0x20033,4,8,0x10000000,UINT32_MAX,0x10001000);
+    arc_rpc_observers_disc_snapshot(&d);assert(!d.a_active);
+}
+
 static void sustained_error_cases(CPUModel model)
 {
     start(model,252);arc_rpc_observers_test_watch_budget(8);report(3);
@@ -354,17 +516,31 @@ static void production_cases(unsigned catalogue,CPUModel model)
             }
         }else assert(!arc_rpc_observers_answer(ARC_ERROR_OK) && !arc_rpc_observers_answer(ARC_ERROR_CANCEL));
     }
-    /* Zero is the record's only exercised error number. Nonzero/unreadable
-     * headers cannot claim calibrated buttons, even with qualified flags. */
+    production_start(catalogue,model);arc_rpc_observers_test_cells(252u & ~ARC_RPC_CELL_ANSWER);
+    report(3);poll(0x18c,19,0,0,0x10001000);
+    assert(box().recognised_open && !box().answer_available && !arc_rpc_observers_answer(ARC_ERROR_OK));
+    for(unsigned pending=0;pending<2;++pending){
+        production_start(catalogue,model);
+        arc_rpc_observers_disc_configure(true,"AuthDisc",resolve_disc,observe_disc,NULL);
+        strcpy((char *)ram00,"NextDisc");issue(0x180,19,0x20033,2,8,0x10000000,UINT32_MAX,0x10001000);
+        report(3);poll(0x18c,19,0,0,0x10001000);assert(box().answer_available);
+        if(pending)assert(arc_rpc_observers_answer(ARC_ERROR_OK));
+        arc_rpc_observer_retire(false);arc_rpc_observers_rebase(model);
+        ArcDiscRequest retired;arc_rpc_observers_disc_snapshot(&retired);
+        assert(!box().recognised_open && !box().modal_unknown && !box().answer_available && box().pending==ARC_ERROR_NONE && !retired.a_active);
+        assert(!arc_rpc_observers_answer(ARC_ERROR_OK) && !arc_rpc_observer_context);
+        unsigned cat,cpu;arc_rpc_observers_test_binding(&cat,&cpu);assert(cat==catalogue && cpu==(unsigned)model);
+    }
+    /* Serious/unreadable headers cannot claim calibrated buttons. */
     for(unsigned invalid=0;invalid<2;++invalid)for(unsigned flags=3;flags<=14;flags+=11){
-        production_start(catalogue,model);ram00[0]=1;
+        production_start(catalogue,model);ram00[0]=0x80000123;
         issue(0x100,16,0x400df,invalid?0x03000000:0x10000000,flags,0,0,0x10008000);
         poll(0x18c,19,0,0,0x10001000);
         assert(box().recognised_open && !box().answer_available && !box().ok && !box().cancel);
     }
     production_start(catalogue,model);report(0x100);poll(0x18c,19,0,0,0x10001000);
     assert(box().recognised_open && !box().answer_available);
-    production_start(catalogue,model);ram00[0]=0;
+    production_start(catalogue,model);ram00[0]=0x123;
     issue(0x100,16,0x400df,0x10000000,3,0,0,0x10008000);poll(0x18c,19,0,0,0x10001000);
     assert(box().answer_available);
     production_start(catalogue,model);
@@ -420,7 +596,7 @@ int main(int argc,char **argv)
         if(production_pair(catalogue,cpu))production_cases(catalogue,(CPUModel)cpu);
         else {production_start(catalogue,(CPUModel)cpu);assert(!arc_rpc_observer_active && !arc_rpc_observers_capability(252));report(3);assert(box().modal_unknown && !box().recognised_open);}
     }
-    for(unsigned model=0;model<4;++model){error_cases((CPUModel)model);disc_cases((CPUModel)model);
+    for(unsigned model=0;model<4;++model){error_cases((CPUModel)model);disc_cases((CPUModel)model);adjudicated_cases((CPUModel)model);
         resolve_count=observe_count=trigger_count=0;sustained_error_cases((CPUModel)model);number_cases((CPUModel)model);phase_cases((CPUModel)model);}
     arc_rpc_observer_retire(false);arc_rpc_memory_close();puts("RPC observers: authored four-CPU error/disc/phase matrix");return 0;
 }
