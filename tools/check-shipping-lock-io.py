@@ -27,6 +27,7 @@ def code_only(source):
 def violations(sources):
     errors = []
     for name, source in sources.items():
+        name = name.replace('\\', '/')
         lines = source.splitlines()
         code_lines = code_only(source).splitlines()
         if name == MODULE:
@@ -52,12 +53,21 @@ def require(condition, message):
 
 def self_test():
     original = Path(MODULE).read_text()
-    require(not violations({MODULE: original}), 'actual lock module refused')
+    def variants(sources):
+        for windows_paths in (False, True):
+            for crlf in (False, True):
+                yield {(name.replace('/', '\\') if windows_paths else name):
+                       (text.replace('\n', '\r\n') if crlf else text)
+                       for name, text in sources.items()}
+
+    for sources in variants({MODULE: original, 'engine/arculator/src/arc.h': ARC_COMMENT}):
+        require(not violations(sources), 'actual lock module/header exemption refused')
     rejected = 0
 
     def reject(sources, label):
         nonlocal rejected
-        require(bool(violations(sources)), f'guard mutant survived: {label}')
+        for variant in variants(sources):
+            require(bool(violations(variant)), f'guard mutant survived: {label}')
         rejected += 1
 
     for line in (POSIX_OPEN, WINDOWS_OPEN):
@@ -82,8 +92,10 @@ def self_test():
         reject({MODULE: original + f'\nvoid injected(void) {{ {name}(0); }}'}, name)
     for name in ('F_SETLK', 'F_SETLKW', 'F_OFD_SETLKW'):
         reject({MODULE: original + f'\nvoid injected(void) {{ fcntl(0,{name},0); }}'}, name)
-    require(not violations({'libretro/adapter.c': 'vfs->stat(p, n); vfs->close(h); backend.read(h);'}), 'VFS callbacks refused')
-    print(f'shipping lock I/O self-test: {rejected} negative inputs rejected; exact-once module and VFS callbacks admitted')
+    for sources in variants({'libretro/adapter.c': 'vfs->stat(p, n); vfs->close(h); backend.read(h);'}):
+        require(not violations(sources), 'VFS callbacks refused')
+    print(f'shipping lock I/O self-test: {rejected} negative inputs rejected; '
+          'exact-once module and VFS callbacks admitted in POSIX/Windows path forms and LF/CRLF text')
 
 
 def main():

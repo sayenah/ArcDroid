@@ -291,3 +291,23 @@ Required open/lock, same-process/two-process contention, crash/kill release,
 identity checks following successful mutation, and nonzero/non-directory/root
 refusals retain their assertions. A successful probe with unqualified legs is
 not evidence that those optional capabilities work on that filesystem.
+
+### Guard portability audit (Run D)
+
+Written before the Run D guard corrections, after merging `ea8bfde` at
+`7fd079f`. Both dormancy and shipping-I/O guards compare repository-relative
+names using forward slashes regardless of the host's separator. Normalization
+changes separators only; exemption names and their case remain exact. The
+dormancy scan emits POSIX-form relative keys, and both checkers also normalize
+input keys so Windows-form test inputs exercise the same exemption logic.
+The dormant header-reference check recognizes header-name case variants because
+Windows can resolve `ARC_LOCK.H` to `arc_lock.h`. C identifiers and exemption
+filenames retain exact case. Additional uppercase/mixed-case include mutants
+exercise this rule with both path separators and line endings.
+
+Every existing migration/I-O negative input is checked with POSIX and Windows
+path forms and with LF and CRLF text. The dormant primitive and arc_io exemptions
+must pass in both forms; shipping callers outside them must still fail. The
+native Windows process/unit tests retain their Windows branches and CRLF pipe
+normalization. POSIX-only capability/native-contract/mutant tests remain excluded
+from Windows by CMake. No production or process-probe behavior changes in Run D.
