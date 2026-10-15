@@ -9,7 +9,7 @@ import tempfile
 sys.dont_write_bytecode=True
 from rpc_ninja_commands import rebuild_commands,same_path
 from rpc_session_hygiene_test import run
-build,exe,core,fixtures,session,video=map(Path,sys.argv[1:])
+build,exe,core,fixtures,session,video,observer=map(Path,sys.argv[1:])
 build=build.resolve();exe=exe.resolve();core=core.resolve();fixtures=fixtures.resolve()
 root=Path(__file__).resolve().parents[1]
 cache=(build/'CMakeCache.txt').read_text()
@@ -28,7 +28,15 @@ mutants=[
  ('rpc-max-geometry','libretro/arcdroid_libretro.c','info->geometry.max_width = 4096u;','info->geometry.max_width = arc_kind == ARC_SESSION_KIND_RISCPC ? 2048u : 4096u;'),
  ('raw-deleted-refusal','engine/rpc/rpc_floppy.c','{refused(d,r,"deleted-data");return ARC_RPC_FLOPPY_WRITE_PROTECT;}','{return ARC_RPC_FLOPPY_WRITE_PROTECT;}'),
  ('raw-storage-warning','engine/rpc/rpc_floppy.c','storage_failures|=1u<<drive;','',2),
+ ('rpc-error-policy-owner','libretro/arcdroid_libretro.c','bool rpc_error=(arc_kind == ARC_SESSION_KIND_RISCPC);','bool rpc_error=false;'),
+ ('rpc-reset-policy-owner','libretro/arcdroid_libretro.c','if((arc_kind == ARC_SESSION_KIND_RISCPC) && arc_engine_active()) {','if((arc_kind != ARC_SESSION_KIND_RISCPC) && arc_engine_active()) {'),
+ ('rpc-disc-log-policy-owner','libretro/arcdroid_libretro.c','if(!(arc_kind == ARC_SESSION_KIND_RISCPC) || !arc_log)return;','if((arc_kind == ARC_SESSION_KIND_RISCPC) || !arc_log)return;'),
 ]
+observer_profiles={'rpc-error-policy-owner':'h-error','rpc-reset-policy-owner':'h-error','rpc-disc-log-policy-owner':'h-b'}
+def observer_command(library,profile):
+    return [sys.executable,str(root/'tests/rpc_observers_frontend_test.py'),str(observer.resolve()),str(library),str(fixtures),profile]
+for profile in sorted(set(observer_profiles.values())):
+    subprocess.run(observer_command(core,profile),check=True,capture_output=True,text=True,timeout=60)
 with tempfile.TemporaryDirectory(prefix='arc-session-mutants-') as directory:
     temp=Path(directory)
     for row in mutants:
@@ -46,7 +54,10 @@ with tempfile.TemporaryDirectory(prefix='arc-session-mutants-') as directory:
         link=['-Wl,--out-implib,'+str(temp/'mutant.dll.a') if x.startswith('-Wl,--out-implib,') else x for x in link]
         subprocess.run(cc,cwd=build,check=True,capture_output=True,timeout=90)
         subprocess.run(link,cwd=build,check=True,capture_output=True,timeout=90)
-        if label in ('stopped-fault-text','failed-start-diagnostics'):
+        if label in observer_profiles:
+            result=subprocess.run(observer_command(library,observer_profiles[label]),capture_output=True,text=True,timeout=60)
+            killed=result.returncode!=0
+        elif label in ('stopped-fault-text','failed-start-diagnostics'):
             result=subprocess.run([str(session),str(library),'--lifecycle'],capture_output=True,text=True,timeout=60)
             killed=result.returncode!=0
         elif label=='rpc-log-callback':

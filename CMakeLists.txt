@@ -2267,7 +2267,7 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
       "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_session_mutants.py"
       "${CMAKE_CURRENT_BINARY_DIR}" $<TARGET_FILE:rpc_session_hygiene_test>
       $<TARGET_FILE:arcdroid_rpcplan_libretro> "${FIXTURE_DIR}"
-      $<TARGET_FILE:rpc_session_test> $<TARGET_FILE:rpc_video_test>)
+      $<TARGET_FILE:rpc_session_test> $<TARGET_FILE:rpc_video_test> $<TARGET_FILE:rpc_observers_frontend_test>)
     set_tests_properties(rpc-session-hygiene-mutants PROPERTIES TIMEOUT 900 RUN_SERIAL TRUE)
   endif()
   add_test(NAME rpc-session-switch COMMAND "${Python3_EXECUTABLE}"

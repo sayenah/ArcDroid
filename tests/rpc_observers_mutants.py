@@ -146,7 +146,7 @@ if frontend:
       ('b-log-identity','engine/rpc/rpc_observers.c','*out=disc_observation?*disc_observation:state.disc;','*out=state.disc;'),
       ('b-replace-cell','engine/rpc/rpc_observers.c','signal==ARC_DISC_SIGNAL_A?ARC_RPC_CELL_REPLACE_A:ARC_RPC_CELL_REPLACE_B','signal==ARC_DISC_SIGNAL_A?ARC_RPC_CELL_REPLACE_A:ARC_RPC_CELL_REPLACE_A'),
       ('b-commit-signal','libretro/arcdroid_libretro.c','arc_disc_watch_generation, ARC_DISC_SIGNAL_B);','arc_disc_watch_generation, ARC_DISC_SIGNAL_A);'),
-      ('b-replace-capability','libretro/arcdroid_libretro.c','arc_engine_is_rpc() && !arc_engine_rpc_observers_capability(ARC_RPC_CELL_REPLACE_B)','false'),
+      ('b-replace-capability','libretro/arcdroid_libretro.c','(arc_kind == ARC_SESSION_KIND_RISCPC) && !arc_engine_rpc_observers_capability(ARC_RPC_CELL_REPLACE_B)','false'),
       ('b-replace-exclusion','engine/rpc/rpc_observers.c','state.disc.b_triggered && !excluded(state.inserted)','state.disc.b_triggered'),
       ('b-work-exclusion','engine/rpc/rpc_observers.c','copy.signal>=DISC_FOUND || !excluded(copy.signal==ARC_DISC_SIGNAL_A?copy.object:state.inserted)','copy.signal!=ARC_DISC_SIGNAL_A || !excluded(copy.object)'),
       ('hint-after-answer','libretro/arcdroid_libretro.c','bool hint_answerable=error_box.answer_available || answered;','bool hint_answerable=error_box.answer_available;'),
