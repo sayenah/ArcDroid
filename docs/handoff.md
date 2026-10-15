@@ -6,19 +6,10 @@
 - Ultracode is on in ArcDroid windows: keep up the pace, orchestrate substantive work with workflows (adversarial review, design panels, multi-agent research), run independent workstreams and several Sol instances in parallel (D-182). A receiving window uses the Workflow tool only once the Founder confirms ultracode in that window; until then it uses subagents.
 - Workflows are read-only helpers. Their findings are evidence for Fable to adjudicate. Implementation goes only through Sol, and QA only through `arcdroid-opus-qa`.
 
-**Running (S65).** All belong to this session; see the ledger.
-- W1: Opus QA re-check of run J (`.work/s65/qa-r3c2-j/`).
-- W2: Sol R3d-3 `slice/r3d3-own` run A (clone `.work/s65/r3d3-own/clone`).
+**Running (S65).** All belong to this session; see `.work/s65/LEDGER.md`.
+- Sol: R3c-3a merge with `main` (conflict resolution), R3d-1 run B (re-verify after merge), 6b-P0i re-verify after merge.
 
-**W1 — R3c-2 observers.** PR #408, `slice/r3c2-observers`, head `6c8204f` (run J: host 399/399, sanitizer 33/33, 216 mutants). **Stage:** QA (re-check of run J against the H/I QA report `.work/s65/qa-r3c2-hi/QA-REPORT.md` and its adjudication). **Owner:** Opus. **Next (Opus):** review `756295c..6c8204f`; confirm MEDIUM-1 cannot recur for any interleaving of lifecycle SWIs, misses and FOUND items with or without overflow, and that the LOW-1 guard mutants are killed; run the affected tests and mutants. Then Fable: the Odin3 cost legs, CI, merge.
-- **Evidence (S65).** QA re-check of F and G: PASS WITH LOWS (adjudication `.work/s65/qa-r3c2/adjudication-FG.md`; run I prompt `.work/s65/w1/promptR3c2-I.md`). Odin3 R-H at run G: p50 +1.75 %/+1.31 %, p95 +1.88 %/+1.33 % (D-180 PASS on the hot workload). Override-free seven-pair rerun on run G, trace off: production binds on real firmware, 149/151 guest frames byte-identical to the override qualification legs, the 2 differing are the ordinary-number controls (no answer under zero-only, as expected at run G). Run H: host 399/399, sanitizer 33/33.
-- **Open cost question (D-180 on real SWI-dense workloads).** Run H's Mac SWI-dense leg (one SWI per 35 instructions) is +7.0 % p50 after SWI-number filtering. The R3c-3a AC-7 desktop legs (run F observers live, unfiltered) are +3.9–4.5 % on the Odin3 and +4.4–6.1 % on Windows against `686b1b7`. 031 gameplay makes one SWI per about 2,500 instructions.
-- **Next (W1):**
-  1. When run I returns: review, commit, push; CI on all five jobs.
-  2. Re-dispatch `arcdroid-opus-qa` for runs H and I.
-  3. **Odin3 (and Windows) cost at run H/I:** hot, SWI-dense, the desktop leg and 031 gameplay with observers on versus off, D-181 recipe. Then rule on D-180's scope: if gameplay and hot stay within 3 %, record SWI-dense and desktop as reported upper bounds; otherwise send a cost run to Sol.
-  4. Override-free ordinary-number legs (`gna`/`gnb` style) on the run H/I build.
-  5. Merge PR #408 under §12.11; record R3c-2 in `docs/build-log.md`. Then merge `main` into R3c-3a, R3c-3b, R3d-1 and 6b-P0i.
+**W1 — R3c-2 observers: MERGED** (`eebfc01`, PR #408; build log; D-194). **Follow-up run K** (`slice/r3c2-k`, PR #429: Arculator-parity fixes for signal B after QA run J). **Stage:** QA. **Owner:** Opus. **Next (Opus):** review PR #429 (`6c8204f..` the K commit) against `.work/s65/qa-r3c2-j/QA-REPORT.md`, its adjudication and the run K prompts (`.work/s65/w1/promptR3c2-K*.md`): ArcDroid never triggers signal B where the shared Arculator observer does not (FOUND order, post-overflow suppression and its recovery events, BUSY retry); run the differential test and mutants. Then CI and merge.
 
 **W2 — R3c-3 launch delivery (D-184, D-185, D-190) and R3d (D-186).**
 - **R3c-3a.** `slice/r3c3a-gate`, head `bdc455f`. **AC-6 PASS** (112 legs, seven pairs, no overrides; `.work/s64/r3c3a/clone/.evidence/fable-s65-ac6/`). **AC-7 functional PASS** on the Odin3 and native Windows (Windows gate timings identical to the Mac); helper generation and attachment costs small; the steady desktop cost difference belongs to R3c-2's observers (W1). **Next:** open the PR once R3c-2 merges (base `main`), CI, Opus QA, merge.
