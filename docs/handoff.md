@@ -2,19 +2,33 @@
 
 **S64 close (arcdroid-41).** Workstreams run in parallel (D-182). Each one has its own Stage, Owner, Next, review, CI, QA and merge. Private evidence is indexed in `.work/s64/LEDGER.md`.
 
-**Running at close.** These belong to S64, and the next holder now owns them. Never stop any other process.
-- **Codex Sol runs.** Each is detached and writes `final*.md` when it ends.
-  - **W1, R3c-2 run G:** PID 34277, thread `01a139e9-6d03-7690-8663-c08acabdd1b8`, clone `.work/s64/r3c2/clone`, prompt `promptR3c2-G.md`, output `finalG.md`.
-  - **W2, R3c-3a run B:** PID 38960, thread `01a13bb3-3968-7021-aec8-87d3f8cbb524`, clone `.work/s64/r3c3a/clone`, prompt `promptR3c3a-B.md`, output `finalB.md`.
-  - **W3, 6b-P0i:** PID 66407, thread `01a13baf-51d1-7332-8769-29f41581d64a`, clone `.work/s64/p0i/clone`, prompt `promptP0i.md`, output `final.md`.
-- **Watchdogs.** Each Codex run has a `wait-run.sh` watchdog writing `watch*.txt` beside it. A STALLED line can be a long silent ctest; check that the child processes still use CPU before treating it as a hang.
-- **Fable's private legs.** `.work/s64/q/nbox5.sh` runs the ordinary error number 291 on five pairs; its log is `q/nbox5.log`.
-- **S64's three workflows.** If they did not finish before the close, they died with the S64 window, and their partial journals sit under the S64 session's `subagents/workflows/` directory. Finished results are saved to `.work/s64/review/WF-*.md`.
-  - **R3c-2 deep review:** eight dimensions, three skeptics per finding.
-  - **R3d design:** area maps, three drafts, judges, synthesis and a critic.
-  - **6b Phase 1 candidates:** exact interpreter optimisations, vetted.
+**Founder instructions (S64).**
+- Ultracode is on in ArcDroid windows. Keep up the pace and make full use of it. Orchestrate substantive work with workflows: adversarial review, design panels, multi-agent research. Run independent workstreams and several Sol instances in parallel (D-182).
+- Workflows are read-only helpers. Their findings are evidence for Fable to adjudicate. Implementation still goes only through Sol, and QA only through `arcdroid-opus-qa`.
 
-**W1 — R3c-2 observers.** PR #408, `slice/r3c2-observers`, head `ac43e85` (runs A–F). **Stage:** IMPLEMENTATION (run G), then QA re-check. **Owner:** Sol, then Opus.
+**Running at close.** These belong to S64, and the next holder now owns them. Never stop any other process.
+- **W2, R3c-3a run B:** Codex Sol PID 38960, thread `01a13bb3-3968-7021-aec8-87d3f8cbb524`, clone `.work/s64/r3c3a/clone`, prompt `promptR3c3a-B.md`, output `finalB.md`.
+  - At close it was running Sol's private gate legs, with a child `rpc_runner` busy.
+  - Its watchdog flagged STALLED at 9004 s only because the output was silent.
+  - Re-arm a watchdog on it: `~/dev/agent-tools/wait-run.sh 38960 .work/s64/r3c3a/streamB.jsonl .work/s64/r3c3a/finalB.md`.
+- **Nothing else is running.** Runs G and 6b-P0i finished and are committed, and the private legs are done.
+
+**Workflow results (S64, saved; adjudicate them, never apply them verbatim).**
+- `.work/s64/review/WF-r3c2-deep-review.md`: 117 agents reviewed `ac43e85`. Of 36 findings raised, 29 survived three skeptics.
+  - Two MEDIUM test gaps: signal B is never driven through the RPC frontend, and no USR26 user-SWI test exists.
+  - LOW defects: the B trigger is lost on BUSY; overflow wipes the request; categorised new-style forms get no hint; the hint flips during an answer; the swap time is stale after reset.
+  - The record should cite the `ga/gb` legs.
+- `.work/s64/review/WF-r3d-design.md`: the R3d draft work order. It covers:
+  - R3d-0 to R3d-6;
+  - milestones M1 (gated ordinary loads, delivery unavailable) and M2 (launch);
+  - an ownership split with R3c-3b part 2;
+  - a completeness critic and the judges' scores.
+- `.work/s64/review/WF-r6b-phase1.md`: ranked exact interpreter candidates and a Phase 1a draft.
+  - The candidates are E0 (enabler), L1 (lookup hint: 031 −14.9 % cycles, byte-identical, on a loaded Mac), S1, D1/D2, A1 and F1.
+  - Together they give about 20–25 % on 031, so the block/exit foundation is still needed to reach AC-10.
+- Each workflow's per-agent journal is next to its result (`*.journal.jsonl`).
+
+**W1 — R3c-2 observers.** PR #408, `slice/r3c2-observers`, head `9a0ef41` (runs A–G). **Stage:** QA re-check (runs F and G), with run H to follow. **Owner:** Opus, then Sol.
 - **State.**
   - **Runs A–E:** Opus QA returned PASS WITH LOWS (`.work/s64/qa-r3c2/QA-REPORT.md`, adjudication `adjudication.md`). MEDIUM-1, plus LOW-2 to LOW-4, go to run G.
   - **Run F `ac43e85`:** promotes the 42 cells in `docs/riscpc-observer-qualification.md` (D-181). It answers error number 0 only, and fixes the "refused" log wording. Host 394/394.
@@ -30,12 +44,16 @@
     - **Serious number &80000123:** RISC OS turns the box into "may have gone wrong… Describe/Quit/Continue", so serious errors stay observation-only.
   - **Odin3 R-H at run E:** PASS (D-181).
   - **Arculator library A/B:** PASS.
+- **Since the first close.**
+  - **Run G is committed as `9a0ef41`.** Host 394/394, sanitizers 28, mutants, MinGW and Android, guards and the pinned comparison all pass.
+  - **Run G's Mac cost check was noisy.** The no-watch p95 came in at +3.64 % on retry while the Mac was heavily loaded. **Rerun the Odin3 R-H at `9a0ef41` before merge** (D-180), with `odin/rh64.sh` and an Android run-G build in `cand`.
+  - **Ordinary error number 291 passed on all seven pairs** (graphical box; `q/mn2r.png`, `q/mn5.png`).
 - **Next (W1).**
-  1. When run G ends, review its diff and commit it verbatim, push, and watch CI on all five jobs.
+  1. Watch CI at `9a0ef41` on all five jobs. Run the Odin3 R-H at `9a0ef41`.
   2. Re-dispatch Opus QA with the `arcdroid-opus-qa` agent in a fresh clone. It re-checks runs F and G against `QA-REPORT.md`, the adjudication, D-181 and the qualification record: table-to-record equality, the MEDIUM-1 fix, and enabled behaviour without overrides.
   3. **Fable's override-free private rerun.** Use `q/boxpairs.sh`, `q/gboxpairs.sh`, `q/discpairs.sh` and `q/discBpairs.sh` with the `--plan observer_*` lines removed and `QB` pointed at a run-G build. It confirms the real firmware binds and the cells act on all seven pairs.
-  4. **Ordinary error numbers.** If `nbox5` passes on all pairs, add `gna/gnb` and `ga/gb` to the record (with an "ordinary numbers" class), record a D entry, and send Sol a run H that sets production to "ordinary numbers" with a table test. QA re-checks it.
-  5. Adjudicate the deep-review workflow's surviving findings (`.work/s64/review/WF-r3c2-deep-review.md`, if it was saved) into run H.
+  4. **Ordinary error numbers.** These passed on all seven pairs. Add `gna/gnb` and `ga/gb` to the record (with an "ordinary numbers" class), record a D entry, and send Sol a run H that sets production to "ordinary numbers" with a table test. QA re-checks it.
+  5. **Adjudicate the deep review.** Take the surviving findings in `WF-r3c2-deep-review.md` into run H: the two MEDIUM test gaps, the LOW defects, and the test gaps worth closing now. Re-dispatch QA once run H is done.
   6. Merge PR #408 under §12.11 once CI is green on all five jobs and QA passes.
   7. Record R3c-2 in `docs/build-log.md`.
 
@@ -49,15 +67,16 @@
 - **R3c-3b.** Branch `slice/r3c3b-launch`, head `7b11b47`: part 1 `6775d8e` (host-side plan v2, attempt state machines, store identity, boot records), merged with R3c-3a.
   - Fable checked the merged tree: the build passes and 16/16 affected tests pass.
   - **Next:** after R3c-3a run B, write and dispatch part 2: the controller on run B's model and transport, the frontend and preparation integration points, profiles and cost, and qualification. The work order is below.
-- **R3d.** **Next:** take the R3d design workflow result (`.work/s64/review/WF-r3d-design.md`, if saved; otherwise rerun the design), draft the work order, then run Astra stages 1 and 2 on a fresh thread.
+- **R3d.** **Next:** adjudicate `WF-r3d-design.md` into the R3d plan, recording the sequencing change it proposes as a D entry. Run Astra stages 1 and 2 on a fresh thread, then dispatch R3d-1 and R3d-2 to Sol in parallel. Those two need neither R3c-3b nor the gate freeze.
 
-**W3 — item 6b Phase 0 completion.** Branch `slice/6b-p0i-profile` (stacked on `686b1b7`). **Stage:** IMPLEMENTATION, 6b-P0i (work order below). **Owner:** Sol.
+**W3 — item 6b Phase 0 completion.** Branch `slice/6b-p0i-profile`, head `1bb22aa` (6b-P0i committed and pushed; no PR yet). **Stage:** REVIEW, then CI and QA. **Owner:** Fable.
+- **Note.** With profiling on, the hot workload runs +208 % slower. Counts are exact, but the host-cost split is distorted for tiny scopes. Read the cost split with that in mind.
 - **Next:**
-  1. When 6b-P0i ends, commit, review, CI and QA.
+  1. Review 6b-P0i (`.work/s64/p0i/clone/SOL-REPORT-6B-P0I.md`). Open its PR once W1 merges, then CI and QA.
   2. Profile 031 gameplay on the Mac and the Odin3 with the S61 kit (`.work/s61/ac10/run031.sh`, `cold031-odin.arcplan`) and a 3D title.
   3. Close Phase 0's open items in `docs/riscpc-translator.md`.
   4. Put Q1 (the design objective) to the Founder.
-  5. Draft 6b Phase 1a from the profile and the workflow's candidates (`.work/s64/review/WF-r6b-phase1.md`, if saved), then run Astra.
+  5. Draft 6b Phase 1a from the profile and `WF-r6b-phase1.md`, then run Astra. That report already needs one D-146 ruling, for S1, and says plainly that Phase 1a alone cannot meet AC-10.
 
 **Device kit (Odin3).** `/data/local/tmp/arcdroid-s64/`:
 - `base` (98bb162) and `cand` (run E) Android runner and plan core;
@@ -1072,7 +1091,7 @@ The R1 work order and implementation record are in git history (`docs/handoff.md
 - **Founder instruction (S54, relayed S55):** never stack shell commands — no `&&`, `;` or pipes chaining git steps; run each command separately (stacked commands get denied). Put multi-step work in a script file under the scratchpad instead.
 - **Used windows (never relay to these; each closing holder adds its own name):** `arcdroid-d9` (S33), `arcdroid-6c` (S43), `ArcDroid-45` (S45), `arcdroid-83` (2026-10-02 governance edit), `ArcDroid-49` (S49), `arcdroid-d4` (S50), `arcdroid-10` (S51), `arcdroid-1b` (S52), `ArcDroid-52` (S53), `arcdroid-df` (S54), `arcdroid-7e` (S55), `arcdroid-25` (S56), `arcdroid-ba` (S57), `arcdroid-99` (S58), `arcdroid-db` (S60; the S59 window crashed before recording its name), `arcdroid-b5` (S61), `arcdroid-e5` (S62), `arcdroid-e7` (S63), `arcdroid-41` (S64). Earlier holders were not recorded; window names change between days.
 
-**Relay brief:** "ArcDroid baton handoff from <window> (S<n>), for /Users/mac0918/dev/ArcDroid only. Before anything else, run the receipt checks in docs/protocol.md §18: you must be Claude Opus 5.5 at reasoning effort 15 (high) or above, your working directory must be /Users/mac0918/dev/ArcDroid, and this must be the first message in your window. If any check fails, change nothing, tell the Founder in your window which check failed (for a wrong model or effort: run /model claude-opus-5-5 and /effort high, then say \"pick up from handoff\"), send a PushNotification, and stop. If all pass, take the baton without asking the Founder to confirm, number yourself S<n+1>, read CLAUDE.md and docs/handoff.md, take the active Next (never a workstream under Waiting on the Founder until its answer is recorded), and work towards the Founder vision D-073. Founder instruction (S54): never stack shell commands (no `&&`, `;` or pipes chaining git steps) — run each command separately. Close by protocol §18: relay only to one idle arcdroid- window, never another project's session; if no ArcDroid window is eligible, stop all work and close. Repeat this rule in your own relay."
+**Relay brief:** "ArcDroid baton handoff from <window> (S<n>), for /Users/mac0918/dev/ArcDroid only. Founder (S64): ultracode is on — keep up the pace and make full use of it (workflows for substantive work, several Sol instances in parallel per D-182). Before anything else, run the receipt checks in docs/protocol.md §18: you must be Claude Opus 5.5 at reasoning effort 15 (high) or above, your working directory must be /Users/mac0918/dev/ArcDroid, and this must be the first message in your window. If any check fails, change nothing, tell the Founder in your window which check failed (for a wrong model or effort: run /model claude-opus-5-5 and /effort high, then say \"pick up from handoff\"), send a PushNotification, and stop. If all pass, take the baton without asking the Founder to confirm, number yourself S<n+1>, read CLAUDE.md and docs/handoff.md, take the active Next (never a workstream under Waiting on the Founder until its answer is recorded), and work towards the Founder vision D-073. Founder instruction (S54): never stack shell commands (no `&&`, `;` or pipes chaining git steps) — run each command separately. Close by protocol §18: relay only to one idle arcdroid- window, never another project's session; if no ArcDroid window is eligible, stop all work and close. Repeat this rule in your own relay."
 
 ## State (carried)
 - **Role note (Founder S26–S28, S38, D-115, D-116):** earlier orchestrators ran Claude Opus 5.5 or Claude Fable 5.1 (each session outcome above names its model). **Every baton holder is Claude Opus 5.5 at effort high (D-116; D-115 briefly named Fable 5.1 and was corrected the same day).** QA independence is kept by dispatching QA to a separate `arcdroid-opus-qa` agent (effort high) with a fresh clone and no conversation context; the orchestrator does not write implementation or tests.
