@@ -7,37 +7,32 @@
 - Workflows are read-only helpers. Their findings are evidence for Fable to adjudicate. Implementation goes only through Sol, and QA only through `arcdroid-opus-qa`.
 
 **Running (S65).** All belong to this session; see the ledger for PIDs, logs and watchdogs.
-- W1: Sol R3c-2 run H (resuming thread `01a139e9-…`, clone `.work/s64/r3c2/clone`); Opus QA re-check of runs F and G (`.work/s65/qa-r3c2/`); Odin3 R-H at run G (`.work/s65/odin/`); Fable's override-free seven-pair rerun on run G (`.work/s65/q/`).
-- W2: Sol R3c-3b part 2 (resuming `01a13c0b-…`, clone `.work/s64/r3c3b/clone`); Fable's R3c-3a AC-6 seven-pair legs (`.work/s64/r3c3a/clone/.evidence/fable-s65-ac6/`).
-- W3: 031 profiling on the Mac (`.work/s65/p031/`).
+- W1: Sol R3c-2 run I (resuming `01a139e9-…`, clone `.work/s64/r3c2/clone`).
+- W2: Sol R3c-3b part 2 run B (resuming `01a13c0b-…`, clone `.work/s64/r3c3b/clone`); Sol R3d-2 run B (resuming `01a13e11-7e0a-…`, clone `.work/s65/r3d2/clone`).
 
-**W1 — R3c-2 observers.** PR #408, `slice/r3c2-observers`, head `9a0ef41` (runs A–G; CI green on all five jobs). **Stage:** IMPLEMENTATION (run H) with QA re-check of F and G in parallel. **Owner:** Sol, Opus.
-- **Run H (D-187):** ordinary error numbers in production; the deep review's defects 3–10 and test gaps 1, 2, 14–21, 24, 25; a SWI-dense cost leg; table-value assertions in the qualification test. Fable's amendment of `docs/riscpc-observer-qualification.md` is uncommitted in the run H clone and is committed with run H.
+**W1 — R3c-2 observers.** PR #408, `slice/r3c2-observers`, head `5955a52` (run H, committed verbatim with Fable's record amendment; CI running). **Stage:** IMPLEMENTATION (run I), then QA re-check of H and I. **Owner:** Sol, then Opus.
+- **Evidence (S65).** QA re-check of F and G: PASS WITH LOWS (adjudication `.work/s65/qa-r3c2/adjudication-FG.md`; run I prompt `.work/s65/w1/promptR3c2-I.md`). Odin3 R-H at run G: p50 +1.75 %/+1.31 %, p95 +1.88 %/+1.33 % (D-180 PASS on the hot workload). Override-free seven-pair rerun on run G, trace off: production binds on real firmware, 149/151 guest frames byte-identical to the override qualification legs, the 2 differing are the ordinary-number controls (no answer under zero-only, as expected at run G). Run H: host 399/399, sanitizer 33/33.
+- **Open cost question (D-180 on real SWI-dense workloads).** Run H's Mac SWI-dense leg (one SWI per 35 instructions) is +7.0 % p50 after SWI-number filtering. The R3c-3a AC-7 desktop legs (run F observers live, unfiltered) are +3.9–4.5 % on the Odin3 and +4.4–6.1 % on Windows against `686b1b7`. 031 gameplay makes one SWI per about 2,500 instructions.
 - **Next (W1):**
-  1. Commit run H verbatim (with the record amendment), review it, push; CI on all five jobs.
-  2. Adjudicate the QA re-check of F and G (`.work/s65/qa-r3c2/QA-REPORT-FG.md`); fold validated findings into a run I if needed; re-dispatch QA for run H (and I).
-  3. Read the Odin3 R-H at run G against D-180 (both orders, p50 and p95 within 3 %); if run H changes the cost path (SWI filtering), repeat it at run H.
-  4. Read the override-free rerun (`.work/s65/q/`): every enabled cell acts on all seven pairs with no override and tracing off; the `zgna` legs show no answer under production zero-only at run G. Add the result to the record's confirmation evidence.
-  5. Merge PR #408 under §12.11; record R3c-2 in `docs/build-log.md`.
+  1. When run I returns: review, commit, push; CI on all five jobs.
+  2. Re-dispatch `arcdroid-opus-qa` for runs H and I.
+  3. **Odin3 (and Windows) cost at run H/I:** hot, SWI-dense, the desktop leg and 031 gameplay with observers on versus off, D-181 recipe. Then rule on D-180's scope: if gameplay and hot stay within 3 %, record SWI-dense and desktop as reported upper bounds; otherwise send a cost run to Sol.
+  4. Override-free ordinary-number legs (`gna`/`gnb` style) on the run H/I build.
+  5. Merge PR #408 under §12.11; record R3c-2 in `docs/build-log.md`. Then merge `main` into R3c-3a, R3c-3b, R3d-1 and 6b-P0i.
 
-**W2 — R3c-3 launch delivery (D-184, D-185) and R3d (D-186).**
-- **R3c-3a.** `slice/r3c3a-gate`, head `bdc455f` (run B committed verbatim and pushed; Fable reviewed the design note and report). No PR yet. **Stage:** Fable's AC-6/AC-7 legs. **Owner:** Fable.
-  - **Next:** read the seven-pair legs (`log-*.txt`, `behaviour.json` per leg: entry/return within 120 s, expected summary, no dialogue, normal unrelated request, unchanged active CMOS, controller diagnostics, release/reuse); then AC-7 Odin3 and native Windows legs and the pinned cost (commands in `SOL-REPORT-R3C3A.md`, run B section); open the PR once R3c-2 merges (base `main`), CI, Opus QA, merge.
-- **R3c-3b.** `slice/r3c3b-launch`, head `efafff9` (part 1 `6775d8e` plus R3c-3a run B). **Stage:** IMPLEMENTATION (part 2). **Owner:** Sol.
-  - Part 2's prompt is `.work/s65/r3c3b/promptR3c3b-2.md`; the R3d ownership split and the corrected reset transaction are in the clone's `.evidence/R3D-OWNERSHIP.md` (the CORRECTION section supersedes the prompt's reset and setter text: R3d-3 owns pending setter rejection; part 2 owns cancellation after admission).
-  - **Next:** when part 2 returns, check it against the CORRECTION (two reset branches, admission-policy helper restoration, session-ID integration AC); commit verbatim; review; Fable's seven-pair AC-6 legs; promotion run; rebase after R3c-2 merges.
-- **R3d.** Plan adopted (D-186, `docs/riscpc-ordinary-load-plan.md`; Astra stages 1 and 2, thread `01a13e01-2f7a-70e3-a895-58284f108295`). **R3d-1:** committed `60457bc` on `slice/r3d1-session`, draft PR #417 (stacked on R3c-2); Fable reviewed it. **R3d-2:** committed on `slice/r3d2-locator`, PR #418 (base `main`); Fable reviewed it; private legs done (real dumps renamed, nested and duplicated, and the Founder's full 17-file ROM folder: all verified, within the scan budget; Odin3 shared storage warm scan 46 ms, scan plus selected read 51–56 ms). **R3d-0** (Fable): decisions and E0 probes P1–P9 (P9 answered: repository private; record the artifact audience), serial with other Odin3 work.
-  - **Next:** (1) R3d-2: CI on PR #418, Opus QA (Stage QA below), merge. (2) R3d-1: after R3c-2 merges, merge `main` into its branch, Sol repeats the census and switching matrix, Fable's library A/B and Odin3/Windows switching legs, CI, Opus QA. (3) R3d-0's probes and the R3d-3 work order (its own Astra stage 2).
+**W2 — R3c-3 launch delivery (D-184, D-185, D-190) and R3d (D-186).**
+- **R3c-3a.** `slice/r3c3a-gate`, head `bdc455f`. **AC-6 PASS** (112 legs, seven pairs, no overrides; `.work/s64/r3c3a/clone/.evidence/fable-s65-ac6/`). **AC-7 functional PASS** on the Odin3 and native Windows (Windows gate timings identical to the Mac); helper generation and attachment costs small; the steady desktop cost difference belongs to R3c-2's observers (W1). **Next:** open the PR once R3c-2 merges (base `main`), CI, Opus QA, merge.
+- **R3c-3b.** `slice/r3c3b-launch`, head `35a7318` (part 2 run A, committed verbatim; acceptance incomplete). **Stage:** IMPLEMENTATION (part 2 run B: D-190 two-floppy CMOS defaults, writable-media record binding, exhaustive mutants, fresh full suite). **Owner:** Sol. **Next:** review run B; rebase after R3c-2 merges; Fable's seven-pair AC-6 (including the 084 install and cold product relaunch) and AC-7; promotion run; QA.
+- **R3d.** Plan D-186 (amended by the R3d-2 QA adjudication at its end). **R3d-1:** `60457bc`, draft PR #417, waits for R3c-2. **R3d-2:** PR #418, QA PASS WITH LOWS (`.work/s65/qa-r3d2/adjudication.md`); run B (three mock tests, one doc fix) with Sol. **Next:** R3d-2 run B → commit → CI → merge; R3d-1 after R3c-2; R3d-0 probes and the R3d-3 work order.
 
-**W3 — item 6b Phase 0 completion.** `slice/6b-p0i-profile`, head `1bb22aa`. Fable's review: accepted (OFF builds byte-identical in all 23 RPC plan objects, pinned projections identical, imported-file hooks a marked patch). **Stage:** PR after W1 merges, then CI and QA. **Owner:** Fable.
-- **Note.** With profiling on, the hot workload runs about +208 % slower; counts are exact, small-scope host-cost splits are probe-dominated.
-- **Done (S65):** 031 profiled on the Mac and the Odin3 (`.work/s65/p031/`); Phase 0 evidence recorded in `docs/riscpc-translator.md`; **Q1 answered: design for capacity of about 200 MIPS (D-188)**, so Phase 1 beyond 1a plans native backends on arm64 and x64 and a cycle-timing review. Phase 1a draft and Astra stage 1 (ACCEPT WITH CHANGES, all seven adopted): `.work/s65/6b/PHASE1A-DRAFT.md`, `report1.md`.
+**W3 — item 6b (D-188 ~200 MIPS capacity; D-189 production work starts now, in parallel with R3).** `slice/6b-p0i-profile`, head `1bb22aa` (reviewed; PR after R3c-2 merges and rebase).
+- **Done (S65):** 031 profiled (Phase 0 evidence in `docs/riscpc-translator.md`); Phase 1a draft plus Astra stage 1 (`.work/s65/6b/`); 6b design workflow for after Phase 1a (`.work/s65/review/WF-6b-phase1b-design.md`: tracks A platform probes, M measurement and lockstep harness, B portable block foundation, X arm64/x64 emitters, C cycle-timing review; synthesis, completeness critic and judges).
 - **Next:**
-  1. Once R3c-2 merges and 6b-P0i is rebased onto it: write the reconciled Phase 1a work order from `PHASE1A-DRAFT.md` (with its Astra adjudication), record rulings R-a to R-d and the D-182 scheduling decision, run Astra stage 2, dispatch 1a-0 (E0). Phase 1a alone cannot meet AC-10.
-  2. Plan Phase 1b/2 for D-188: block/exit foundation that carries timing and fetch across runs, sub-page invalidation, arm64 and x64 backends, cycle-timing review; answer Q3 before any copied helper.
-  3. Profile a 3D title the same way; measure churn at allocation-plus-offset granularity.
+  1. Once R3c-2 merges and 6b-P0i is rebased: reconciled Phase 1a work order, rulings R-a to R-d, Astra stage 2, dispatch 1a-0 (E0).
+  2. Adjudicate `WF-6b-phase1b-design.md` (with its critic's twelve amendments, notably the block key's PC virtual address, P1 digests, idle and dirtybuffer obligations) into a 6b plan document; Astra stage 1; then track A probes and M.
+  3. Profile a 3D title; churn at allocation-plus-offset granularity; correct the stale "Q-3 still open" line in `docs/riscpc-translator.md` (Q-3 merged as `44d007e`).
 
-**Device kit (Odin3).** `/data/local/tmp/arcdroid-s64/`: `base` (98bb162), `cand` and `candE` (run E), `candG` (run G, Android Release plan core and runner), `hot/` with `hot.arcplan`, `hot-obs.arcplan`, `rh64.sh`, `rh65.sh` (takes TAG then legs). The S63 and S62 kits are still on the device.
+**Device kit (Odin3).** `/data/local/tmp/arcdroid-r3c3a-b/` (R3c-3a AC-7 kit and results), `/data/local/tmp/arcdroid-p0i/` (6b-P0i on/off kit), `/data/local/tmp/arcdroid-r3d2/` (firmware probe), and `/data/local/tmp/arcdroid-s64/`: `base` (98bb162), `cand` and `candE` (run E), `candG` (run G, Android Release plan core and runner), `hot/` with `hot.arcplan`, `hot-obs.arcplan`, `rh64.sh`, `rh65.sh` (takes TAG then legs). The S63 and S62 kits are still on the device.
 
 **Lessons (S64, S65).**
 - **Trace allowlist:** a register outside the allowlist is recorded as zero (D-179).
@@ -50,7 +45,7 @@
 
 ## R3d-1 and R3d-2 work orders (D-186)
 
-**R3d-2 Stage:** QA. **Owner:** Opus. **Next (Opus):** review PR #418 (`slice/r3d2-locator`) against the R3d-2 work order below, D-186 (A-4, A-6) and D-165/D-166, in a fresh clone; run the affected tests and mutants. Sol's report is `.work/s65/r3d2/clone/SOL-REPORT-R3D-2.md`; Fable's private legs are in `.work/s65/r3d2/priv/`.
+**R3d-2 Stage:** IMPLEMENTATION (run B, QA Lows). **Owner:** Sol. Opus QA passed it with Lows (`.work/s65/qa-r3d2/QA-REPORT.md`, adjudication `adjudication.md`).
 
 **R3d-1 Stage:** implemented, awaiting rebase onto merged R3c-2. **Owner:** Fable.
 
