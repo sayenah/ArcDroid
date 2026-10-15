@@ -55,6 +55,8 @@ mutants = [
 
 inventory_mutants = [
     ("stat-before-open", "if (!wanted) return;", "if (false) return;"),
+    ("file-stats-directory", " || metadata == ARC_IO_METADATA_DIRECTORY", ""),
+    ("slash-entry-name", "if (strchr(name,'/'))", "if (false)"),
     ("entry-budget", "s->entries == ARC_RPC_SCAN_ENTRIES", "false"),
     ("byte-budget", "length > ARC_RPC_SCAN_BYTES - s->bytes", "false"),
     ("byte-budget-early", "length > ARC_RPC_SCAN_BYTES - s->bytes", "length >= ARC_RPC_SCAN_BYTES - s->bytes"),
@@ -72,6 +74,14 @@ inventory_mutants = [
     ("locator-sha", "strcmp(digest.sha1, locator->fingerprint.sha1)", "false"),
     ("locator-close", "if (!arc_io_close_file(h)) ok = false;", "if (!arc_io_close_file(h)) ok = true;"),
 ]
+
+# Equivalent locator guards for scanner-produced inventories (Opus L-1,
+# adjudicated by Fable): state is always SCANNED; bounded scans clear installed
+# bits and locators; an unset installed bit has an empty locator, also refused
+# by the path check; populated paths are NUL-terminated and fingerprints are
+# at most ARC_RPC_IMAGE_BYTES. Removing those redundant checks cannot admit a
+# read. This does not claim equivalence for caller-fabricated inventories or
+# for the independent null/output, OS-range and VFS-availability guards.
 
 
 def main():
@@ -167,6 +177,8 @@ def main():
         cases = [(name, "core/rpc_selection.c", old, new) for name, old, new in mutants]
     elif args.mode == "inventory":
         cases = [(name, "libretro/rpc_inventory.c", old, new) for name, old, new in inventory_mutants]
+        cases.append(("character-special", "libretro/arc_io.c",
+                      "if (flags & RETRO_VFS_STAT_IS_CHARACTER_SPECIAL) return ARC_IO_METADATA_OTHER;", ""))
     else:
         cases = [
             ("cpu-shift", "core/rpc_selection.c", "(flags >> 8u)", "(flags >> 9u)"),

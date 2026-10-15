@@ -284,7 +284,7 @@ When D-163 is satisfied, the release changes the default and nothing else, so th
 #### R3d-2 implementation contract (before code)
 
 The pinned comparison base is `be44b0afd1bbf23e006a52ab6ca07a8c61704e66`
-(Founder dispatch supersedes the older AC-5 hash in the handoff).
+(Fable's dispatch supersedes the older AC-5 hash in the handoff).
 The shipping scan and locator use only `arc_io`; a narrow metadata primitive
 preserves VFS validity, directory type and size rather than collapsing them
 through `arc_io_file_size`. No callback or route outside this slice changes.

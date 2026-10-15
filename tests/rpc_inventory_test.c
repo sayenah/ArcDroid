@@ -9,6 +9,7 @@
 typedef struct { char path[4096]; const uint8_t *data; size_t size; bool directory; } Entry;
 static Entry entries[1100]; static unsigned count;
 static int fail_open,fail_size,fail_read,fail_close,fail_stat,fail_name,fail_allocation;
+static int stat_directory,stat_special,slash_name;
 static bool fail_dir_open,fail_dir_close,silent_end,root_invalid,root_file,negative_stat;
 static bool reverse_order,short_read,grow_after_read,long_dirent;
 static unsigned opens,closes,attempts,dir_opens,dir_closes,reads,allocations,live_buffers,stats;
@@ -31,7 +32,8 @@ static int32_t stat_path(const char *p,int32_t *size)
    if(!strcmp(p,"/firmware")){if(size)*size=0;return root_invalid?0:RETRO_VFS_STAT_IS_VALID|(root_file?0:RETRO_VFS_STAT_IS_DIRECTORY);}
    int i=index_of(p);if(i<0||i==fail_stat)return 0;
    if(size)*size=negative_stat?-1:(int32_t)entries[i].size;
-   return RETRO_VFS_STAT_IS_VALID|(entries[i].directory?RETRO_VFS_STAT_IS_DIRECTORY:0);
+   return RETRO_VFS_STAT_IS_VALID|((entries[i].directory||i==stat_directory)?RETRO_VFS_STAT_IS_DIRECTORY:0)|
+      (i==stat_special?RETRO_VFS_STAT_IS_CHARACTER_SPECIAL:0);
 }
 static struct retro_vfs_file_handle *open_file(const char *p,unsigned mode,unsigned hints)
 {
@@ -67,6 +69,7 @@ static const char *dir_name(struct retro_vfs_dir_handle *d)
 {
    static char oversized[4087];
    if(long_dirent){memset(oversized,'x',sizeof(oversized)-1);oversized[sizeof(oversized)-1]=0;return oversized;}
+   if((int)d->current==slash_name)return "nested/candidate";
    return (int)d->current==fail_name?NULL:strrchr(entries[d->current].path,'/')+1;
 }
 static bool dir_is_dir(struct retro_vfs_dir_handle *d){return entries[d->current].directory;}
@@ -77,6 +80,7 @@ static struct retro_vfs_interface vfs={.open=open_file,.close=close_file,.size=s
 static void reset(void)
 {
    assert(!live_buffers);count=0;fail_open=fail_size=fail_read=fail_close=fail_stat=fail_name=fail_allocation=-1;
+   stat_directory=stat_special=slash_name=-1;
    fail_dir_open=fail_dir_close=silent_end=root_invalid=root_file=negative_stat=false;
    reverse_order=short_read=grow_after_read=long_dirent=false;
    opens=closes=attempts=dir_opens=dir_closes=reads=allocations=stats=0;arc_io_set_vfs(&vfs);
@@ -162,6 +166,32 @@ static void metadata(void)
    reset();directory(".");directory("..");add("good",3);r=scan();
    assert(r.installed==16&&!r.bounded&&!r.vfs_failure&&dir_opens==1&&opens==1);
    reset();add("",0);assert(scan().vfs_failure);
+}
+static void file_became_directory(void)
+{
+   /* The file listed by readdir was replaced by a directory before stat. */
+   reset();stat_directory=(int)add("candidate",0);
+   ArcRpcFirmwareInventory r=scan();
+   assert(r.vfs_failure&&!r.bounded&&!r.installed&&!attempts&&!allocations);
+   assert(selection(&r,4,4).reason==ARC_RPC_SELECTION_UNREADABLE_INVENTORY);
+}
+static void character_special(void)
+{
+   /* A device reporting a catalogue size must never be opened or recognised. */
+   reset();stat_special=(int)add("device",0);
+   ArcRpcFirmwareInventory r=scan();
+   assert(!r.vfs_failure&&!r.bounded&&!r.installed&&!attempts&&!allocations);
+   assert(selection(&r,4,4).reason==ARC_RPC_SELECTION_MISSING_FIRMWARE);
+}
+static void slash_entry_name(void)
+{
+   /* A malformed leaf must not reach a real candidate through an injected
+    * path. The nested candidate is otherwise unreachable from this listing. */
+   reset();slash_name=(int)add("listed",0);add("nested/candidate",0);
+   ArcRpcFirmwareInventory r=scan();
+   assert(r.vfs_failure&&!r.bounded&&!r.installed&&!attempts&&!allocations);
+   assert(stats==1&&dir_opens==1); /* Root metadata only; no injected path stat. */
+   assert(selection(&r,4,4).reason==ARC_RPC_SELECTION_UNREADABLE_INVENTORY);
 }
 static void locator_failures(void)
 {
@@ -262,6 +292,7 @@ int main(void)
 {
    for(unsigned i=0;i<4;++i){for(unsigned j=0;j<40;++j)data[i][j]=(uint8_t)(i*40+j);
       digests[i]=arc_digest(data[i],32+i);table[i]=(ArcRpcFirmwareFingerprint){(ArcRpcSelectionOs)(i+1),digests[i].size,digests[i].crc32,digests[i].sha1};}
-   permutations();metadata();locator_failures();bounds();resources();
+   permutations();metadata();file_became_directory();character_special();slash_entry_name();
+   locator_failures();bounds();resources();
    puts("R3d-2 inventory: exact locator bytes, canonical permutations, failure/metadata matrix, bounded refusal precedence and ownership passed");return 0;
 }
