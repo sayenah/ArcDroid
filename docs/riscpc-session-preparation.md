@@ -216,8 +216,10 @@ Pre-OFD kernels refuse RiscPC per D-192; sdcardfs remains unverified.
 P10b expectations (Fable qualifies devices after 12a merges): two processes and
 two same-process acquisitions conflict; kill and reap the holder, then acquire
 on the first POSIX attempt (Windows retries within W, count and time recorded).
-Rename-over and deletion trigger POSIX identity loss; Windows refuses both with
-sharing violation. Reacquire after release and alias/case legs must pass. Run on
+Rename-over and deletion trigger POSIX identity loss; Windows must refuse both
+and ownership must remain held. Record each operation's actual error code;
+neither operation is required to return one particular code. Reacquire after
+release and alias/case legs must pass. Run on
 Mac APFS, Windows NTFS, Odin3 shared storage, internal app-private storage and
 external `Android/data` storage. Android partners must be app processes or prove
 matching mount views; record each partner's mountinfo, OS/kernel, MediaProvider
@@ -234,3 +236,27 @@ The governing R-10 research and adjudications are in
 `docs/riscpc-r3d3-work-order.md`; the supplied P10a research is in
 `.evidence/LOCK-RESEARCH.md` (its earlier fallback/share-delete suggestions are
 superseded by R-10 and D-193).
+
+### Windows probe contract audit (Run B)
+
+Written before the Run B probe correction. Fable's Windows 11 / NTFS probe
+observed `MoveFileExW(..., MOVEFILE_REPLACE_EXISTING)` fail with
+`ERROR_ACCESS_DENIED` (5), and `DeleteFileW` fail with
+`ERROR_SHARING_VIOLATION` (32); the holder's verify still reported held.
+[MoveFileExW](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-movefileexw)
+and [DeleteFileW](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-deletefilew)
+document a zero result on failure and extended information from `GetLastError`.
+They do not promise the same error code for these operations. The probe captures
+the error immediately, logs it, and asserts failure plus continued ownership.
+
+The remaining Windows assertions are retained after this audit:
+
+| Probe leg | Microsoft contract and assertion |
+|---|---|
+| Deny-sharing opener | [CreateFileW](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-createfilew) explicitly specifies `ERROR_SHARING_VIOLATION` for conflicting access/sharing modes. The fixture's share mode zero conflicts with the primitive's read/write request: transient, then successful retry after fixture close. This error-code mapping does not apply to rename/delete. |
+| Inheritance | NULL security attributes make the sentinel handle non-inheritable per `CreateFileW`. [GetHandleInformation](https://learn.microsoft.com/en-us/windows/win32/api/handleapi/nf-handleapi-gethandleinformation) exposes `HANDLE_FLAG_INHERIT`; it must be clear. [CreateProcessW](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-createprocessw) with inheritance enabled inherits handles marked inheritable, allowing the fixture pipes without inheriting the sentinel. |
+| Kill and reap | [TerminateProcess](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-terminateprocess) initiates termination asynchronously. The probe waits on the process with [WaitForSingleObject](https://learn.microsoft.com/en-us/windows/win32/api/synchapi/nf-synchapi-waitforsingleobject) before reading its exit status or attempting reacquisition. [GetExitCodeProcess](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-getexitcodeprocess) reports the supplied termination code (98) after exit; the crash fixture instead exits with 97. The holder handshake ensures the kill target is live and awaiting input. |
+| Post-death release | [LockFileEx](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-lockfileex) allows OS-dependent release delay. Windows therefore retries contention after reap, recording attempts and elapsed time, rather than requiring the first attempt to succeed. The 5 s reap timeout and 10 s acquisition budget are probe qualification limits, not API timing guarantees. |
+
+No production lock behavior changes in Run B. Native Windows execution of the
+rebuilt probe remains a separate P10b device leg.

@@ -231,6 +231,8 @@ static void reply(Child *child, const char *expected)
 static void reap(Child *child, bool killed, int expected_exit)
 {
     if (killed) assert(TerminateProcess(child->process, 98));
+    /* TerminateProcess is asynchronous. This is the probe's reap budget,
+     * not an OS termination-time guarantee; only a signaled process is reaped. */
     assert(WaitForSingleObject(child->process, 5000) == WAIT_OBJECT_0);
     DWORD code; assert(GetExitCodeProcess(child->process, &code));
     assert(code == (DWORD)(killed ? 98 : expected_exit));
@@ -284,7 +286,13 @@ static void replacement(const char *save, bool remove_it)
 #if defined(_WIN32)
     WCHAR held[4096], replacement[4096]; wide_path(first.path, held); wide_path(replacement_path, replacement);
     BOOL result = remove_it ? DeleteFileW(held) : MoveFileExW(replacement, held, MOVEFILE_REPLACE_EXISTING);
-    assert(!result && GetLastError() == ERROR_SHARING_VIOLATION);
+    DWORD error = result ? ERROR_SUCCESS : GetLastError();
+    /* Rename-over can report ACCESS_DENIED while delete reports
+     * SHARING_VIOLATION (Windows 11 / NTFS). Test protection, log the error. */
+    printf("windows-%s: succeeded=%d error=%lu\n", remove_it ? "delete" : "rename-over",
+        (int)result, (unsigned long)error);
+    fflush(stdout);
+    assert(!result);
     assert(arc_lock_verify(&first) == ARC_LOCK_HELD);
     assert(DeleteFileW(replacement));
 #else
