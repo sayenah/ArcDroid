@@ -260,3 +260,34 @@ The remaining Windows assertions are retained after this audit:
 
 No production lock behavior changes in Run B. Native Windows execution of the
 rebuilt probe remains a separate P10b device leg.
+
+### Android/FUSE probe capability audit (Run C)
+
+Written before the Run C probe changes. Fable's Odin3 (Android 15, kernel
+6.6.87-android15, shell UID 2000) reported `ENOSYS` (38) for symlink creation on
+MediaProvider shared storage; the required dot-root contention leg had passed.
+The diagnostic `flock` also returned ENOSYS; it remains diagnostic only and
+does not select or qualify the production OFD backend. Fable reports the Run B
+probe completed every Windows/NTFS leg with exit zero.
+
+POSIX optional fixture operations accept `ENOSYS`, `ENOTSUP`, `EOPNOTSUPP`,
+`EPERM` and `EACCES` as capability/permission refusals, recording the actual
+errno and marking that leg unqualified. Other errors still fail the probe.
+These are probe classifications, not changes to production error mapping.
+Linux documents filesystem/permission limits for [symlink](https://man7.org/linux/man-pages/man2/symlink.2.html),
+[chmod](https://man7.org/linux/man-pages/man2/chmod.2.html),
+[rename](https://man7.org/linux/man-pages/man2/rename.2.html) and
+[unlink](https://man7.org/linux/man-pages/man2/unlink.2.html); the ENOSYS
+observation above is the supplied device evidence.
+
+| Optional leg | Qualification and retained lock assertion |
+|---|---|
+| Symlink (the probe has no hard-link fixture) | Success or an existing alias still requires contention through that alias. Refusal is unqualified and reported. Dot-root contention remains mandatory regardless. |
+| Supplied POSIX case/spelling alias | Stat the roots first. A missing, inaccessible, unsupported or distinct root is unqualified and reported, without creating a second namespace. Matching device/inode still requires contention. Windows retains its existing required alias check. |
+| Rename-over / delete | Success still requires sticky identity loss and no held ownership. An unsupported/refused operation instead requires held verification and a contended second acquisition, and is reported unqualified. Unsupported fixture cleanup is reported separately. Release/reacquire and zero-byte checks still run. |
+| Chmod / read-only | Unsupported chmod, ignored modes, or an unsupported permission-check open are reported unqualified. Actual write-open permission denial still requires the primitive's create-error refusal. Mode-restoration capability failures are reported rather than hidden; use disposable roots. |
+
+Required open/lock, same-process/two-process contention, crash/kill release,
+identity checks following successful mutation, and nonzero/non-directory/root
+refusals retain their assertions. A successful probe with unqualified legs is
+not evidence that those optional capabilities work on that filesystem.

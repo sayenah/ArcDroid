@@ -278,8 +278,24 @@ static void reap(Child *child, bool killed, int expected_exit)
 }
 #endif
 
+#if !defined(_WIN32)
+static bool optional_unavailable(int error)
+{
+    return error == ENOSYS || error == ENOTSUP || error == EOPNOTSUPP ||
+        error == EPERM || error == EACCES;
+}
+static void cleanup_fixture(const char *path)
+{
+    int result = unlink(path), error = errno;
+    if (result) {
+        assert(optional_unavailable(error));
+        printf("fixture-cleanup: unqualified errno=%d (fixture retained)\n", error);
+    }
+}
+#endif
 static void replacement(const char *save, bool remove_it)
 {
+    bool qualified = true;
     assert(initialize(&first, save, content) == ARC_LOCK_HELD);
     char replacement_path[4200]; snprintf(replacement_path, sizeof(replacement_path), "%s.replacement", first.path);
     empty_file(replacement_path);
@@ -296,14 +312,24 @@ static void replacement(const char *save, bool remove_it)
     assert(arc_lock_verify(&first) == ARC_LOCK_HELD);
     assert(DeleteFileW(replacement));
 #else
-    assert((remove_it ? unlink(first.path) : rename(replacement_path, first.path)) == 0);
-    assert(arc_lock_verify(&first) == ARC_LOCK_IDENTITY_LOST && !arc_lock_held(&first));
-    if (remove_it) assert(unlink(replacement_path) == 0);
+    int result = remove_it ? unlink(first.path) : rename(replacement_path, first.path), error = errno;
+    if (!result) {
+        assert(arc_lock_verify(&first) == ARC_LOCK_IDENTITY_LOST && !arc_lock_held(&first));
+    } else {
+        assert(optional_unavailable(error));
+        assert(arc_lock_verify(&first) == ARC_LOCK_HELD);
+        assert(initialize(&second, save, content) == ARC_LOCK_CONTENDED);
+        arc_lock_release(&second);
+        qualified = false;
+        printf("%s-identity: unqualified errno=%d; ownership held and second acquisition contended\n",
+            remove_it ? "delete" : "rename-over", error);
+    }
+    if (remove_it || result) cleanup_fixture(replacement_path);
 #endif
     arc_lock_release(&first);
     assert(initialize(&first, save, content) == ARC_LOCK_HELD);
     arc_lock_release(&first); zero_file(first.path);
-    printf("%s: passed\n", remove_it ? "delete-identity" : "rename-over-identity");
+    if (qualified) printf("%s: passed\n", remove_it ? "delete-identity" : "rename-over-identity");
 }
 static void self_test(const char *save, const char *alias)
 {
@@ -320,7 +346,21 @@ static void self_test(const char *save, const char *alias)
     /* Closing a non-owner never releases the first description. */
     assert(initialize(&second, save, content) == ARC_LOCK_CONTENDED); arc_lock_release(&second);
     if (alias) {
-        assert(initialize(&second, alias, content) == ARC_LOCK_CONTENDED); arc_lock_release(&second);
+#if !defined(_WIN32)
+        struct stat root_stat, alias_stat;
+        assert(stat(save, &root_stat) == 0);
+        int result = stat(alias, &alias_stat), error = errno;
+        if (result) {
+            assert(error == ENOENT || optional_unavailable(error));
+            printf("supplied-alias: unqualified errno=%d; alias root unavailable\n", error);
+        } else if (root_stat.st_dev != alias_stat.st_dev || root_stat.st_ino != alias_stat.st_ino) {
+            puts("supplied-alias: unqualified (distinct root; no case/spelling alias)");
+        } else
+#endif
+        {
+            assert(initialize(&second, alias, content) == ARC_LOCK_CONTENDED); arc_lock_release(&second);
+            puts("supplied-alias: passed");
+        }
     }
 #if !defined(_WIN32)
     char dotted[4200]; snprintf(dotted, sizeof(dotted), "%s/.", save);
@@ -333,8 +373,8 @@ static void self_test(const char *save, const char *alias)
     } else {
         /* Emulated Android shared storage can prohibit symlinks. The dot-root
          * alias above still exercises two spellings of the same sentinel. */
-        assert(link_error == EPERM || link_error == EACCES || link_error == ENOTSUP || link_error == EOPNOTSUPP);
-        printf("symlink-alias: unavailable errno=%d; dot-root alias passed\n", link_error);
+        assert(optional_unavailable(link_error));
+        printf("symlink-alias: unqualified (unavailable errno=%d); dot-root alias passed\n", link_error);
     }
 #endif
     arc_lock_release(&first); zero_file(first.path);
@@ -396,17 +436,26 @@ static void self_test(const char *save, const char *alias)
          * write access. Qualify the actual native-open failure, not mode bits. */
         int permission_probe = open(first.path, O_RDWR|O_CLOEXEC);
         if (permission_probe < 0) {
-            assert(errno == EACCES || errno == EROFS);
-            assert(initialize(&first, save, content) == ARC_LOCK_CREATE_ERROR);
-            puts("read-only-open: refused as create-error");
+            int error = errno;
+            if (error == EACCES || error == EPERM || error == EROFS) {
+                assert(initialize(&first, save, content) == ARC_LOCK_CREATE_ERROR);
+                puts("read-only-open: refused as create-error");
+            } else {
+                assert(optional_unavailable(error));
+                printf("read-only-open: unqualified (permission-check open errno=%d)\n", error);
+            }
         } else {
             assert(close(permission_probe) == 0);
             puts("read-only-open: not qualified (filesystem/UID/ACL permits write-open)");
         }
-        assert(chmod(first.path, 0600) == 0);
+        int restored = chmod(first.path, 0600), restore_error = errno;
+        if (restored) {
+            assert(optional_unavailable(restore_error));
+            printf("mode-restoration: unqualified errno=%d (disposable fixture)\n", restore_error);
+        }
     } else {
-        assert(mode_error == EPERM || mode_error == EACCES || mode_error == ENOTSUP || mode_error == EOPNOTSUPP);
-        printf("read-only-open: not qualified (chmod unavailable errno=%d)\n", mode_error);
+        assert(optional_unavailable(mode_error));
+        printf("read-only-open: unqualified (chmod unavailable errno=%d)\n", mode_error);
     }
 #endif
     arc_lock_release(&first); zero_file(first.path);
