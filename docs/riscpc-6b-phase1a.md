@@ -16,7 +16,7 @@ Status: **adopted (D-191)** with Astra stage 1's seven corrections (end of this 
 5. **B3, B2, B4**: only with Odin3 evidence of gain.
 6. **New vetting item:** the rational continuation table for ARM710/ARM7500 (the area maps flagged it; ARM710 is the preferred CPU, D-164(2), and never uses integer batches). It needs a vetting round and its own exactness argument before entering 1a.
 
-## Proposed rulings (to record as a D entry after this challenge)
+## Rulings (recorded as D-195, S66; slice 1a-0's work order is `docs/riscpc-6b-1a0.md`)
 - **R-a** admit timing-service exact items into Phase 1a beside the fetch path, in the order above (amends D-146's "starts with fetch-path overhead").
 - **R-b** a single shared inline hit-and-permit check on live DACR, ctrl, memmode and rw per access counts as keeping every per-fetch check; no F3, R1 or R2 in 1a.
 - **R-c** the §2.2 host-only exclusions, E2 wording, citation refresh and D5(b) re-record as drafted.
