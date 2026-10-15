@@ -7361,8 +7361,8 @@ static bool arc_load_game(const struct retro_game_info *game, bool negotiate)
       rpc_discs[i] = arc_media[i].compatibility;
       if (arc_riscpc_notice_required(rpc_discs[i])) rpc_scan_needed = true;
    }
-   ArcRpcFirmwareInventory rpc_inventory = {0};
-   if (rpc_scan_needed) rpc_inventory = arc_riscpc_inventory_scan(arc_vfs,
+   ArcRpcFirmwareInventory rpc_inventory = {.state=ARC_RPC_INVENTORY_SKIPPED};
+   if (rpc_scan_needed) rpc_inventory = arc_riscpc_inventory_scan(
       firmware_dir, rpc_table, rpc_count);
    ArcRpcSelection rpc_selection = arc_riscpc_select(rpc_discs, arc_media_count,
       &rpc_inventory, ARC_RPC_SELECT_AUTO, ARC_RPC_OS_AUTO);
