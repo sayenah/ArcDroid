@@ -38,7 +38,7 @@
 
 **R3d-2 Stage:** IMPLEMENTATION (run B, QA Lows). **Owner:** Sol. Opus QA passed it with Lows (`.work/s65/qa-r3d2/QA-REPORT.md`, adjudication `adjudication.md`).
 
-**R3d-1 Stage:** implemented, awaiting rebase onto merged R3c-2. **Owner:** Fable.
+**R3d-1 Stage:** QA. **Owner:** Opus. PR #417 (`slice/r3d1-session`, run B `0343939` re-verified against merged R3c-2 `eebfc01`: census unchanged, host 404/404, sanitizer 38/38). Fable's library A/B against `main` passed (pkg 218 and nopkg 44: only known-variance titles 105/133/205 differ). The Odin3/Windows in-process switching legs (E0 P4) move to R3d-0's probe set and are repeated in R3d-3/R3d-4 qualification. **Next (Opus):** review PR #417 against the R3d-1 work order above, D-186 (A-6 baseline, session-ID contract, Q8), and Sol's report `.work/s65/r3d1/clone/SOL-REPORT-R3D-1.md` (runs A and B); run the affected tests, the switching matrix and the session mutants.
 
 These reconcile §6.1 and §6.2 of the R3d plan (`docs/riscpc-ordinary-load-plan.md`) with its amendments and both Astra adjudications (D-186). The plan governs anything not restated here. Provenance (every slice): no ROM, boot-archive or title bytes, private screenshots or logs in commits, CI or artifacts; only the four committed fingerprint tuples (D-090); no `engine/rpcemu/` change.
 
