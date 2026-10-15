@@ -219,10 +219,9 @@ These ranges are research targets, not predictions (Astra S58):
   - A block foundation on its own covers little: with runs of four instructions, block entry and exit overhead is paid every few instructions. Its value is in carrying timing and fetch work across a run, not in dispatch alone.
   - The S64 Phase 1a candidate set (exact optimisations, about 20–25 % on 031) is consistent with this, and confirms that Phase 1a alone cannot reach AC-10.
 
-**Still open in Phase 0:**
+**Still open in Phase 0** (the Q-3 oracle fix merged earlier as `44d007e`; later 6b work is planned in `docs/riscpc-6b-phase1a.md` and `docs/riscpc-6b-plan.md`, D-191):
 - a 3D title, profiled the same way;
 - code churn at allocation-plus-offset granularity;
-- the Q-3 oracle fix.
 
 ## Founder decisions
 - **Q1, design objective — answered S65 (D-188): capacity for a ceiling of about 200 MIPS.** Native backends on arm64 and x64 and a cycle-timing review follow Phase 1a. The original question: Is the translator designed for headroom at 100 MIPS, or for the capacity to support a ceiling of about 200 MIPS? This decides whether the portable path is enough and whether a Windows backend may be needed. The actual rate stays a Phase 3 decision.
