@@ -28,16 +28,22 @@ for at,text in enumerate(ops):
     elif text.startswith(('BEQ ','BNE ')):
         op,label=text.split();words.append((0x0a000000 if op=='BEQ' else 0x1a000000)|((labels[label]-at-2)&0xffffff))
     else:
-        words.append({'MOVEQ R0,#0':0x03a00000,'MVNEQ R0,#0':0x03e00000,
+        words.append({'STMFD R13!,{R0}':0xe92d0001,'LDR R0,[R12]':0xe59c0000,
+            'LDMFD R13!,{R0}':0xe8bd0001,'MOVEQ R0,#0':0x03a00000,'MVNEQ R0,#0':0x03e00000,
             'LDMEQFD R13!,{PC}':0x08bd8000,'MOVS PC,R14':0xe1b0f00e}[text])
 with tempfile.TemporaryDirectory(prefix='arc-gate-vector-') as tmp:
     root=Path(tmp);(root/'seed').write_bytes(bytes(256))
     for model in ('arm610','sa110'):
-        for reason,fs,expected,intercept in ((1,8,0xffffffff,True),(2,8,0xffffffff,True),
+        cases=((1,8,0xffffffff,True),(2,8,0xffffffff,True),
                 (1,7,1,False),(2,7,2,False),(3,8,3,False),(4,8,4,True),
-                (256,8,0,True),(257,8,257,False)):
+                (256,8,0,True),(257,8,257,False))
+        for active,reason,fs,expected,intercept in ([(1,*c) for c in cases]+[(0,r,f,r,False) for r,f,_,_ in cases]):
             g=Guest();g.literal(0,0x70);g.emit(0xee010f10);g.literal(0,0xd3);g.emit(0xe121f000,0xe161f000)
             for i,w in enumerate(words):g.write(0x10021000+i*4,w)
+            # Residual handler/workspace outlive reused application storage.
+            g.write(0x10023000,active);g.literal(12,0x10023000)
+            if not active:
+                for i in range(16):g.write(0x10024000+4*i,0xdeadbeef)
             g.write(0x10020200,0);stack_literal=len(g.w)-1
             g.literal(13,0x10020200);g.literal(0,reason);g.literal(1,fs);g.literal(3,0xffffffff)
             g.literal(4,0x10021000);g.literal(14,0);link_literal=len(g.w)-1;g.emit(0xe1a0f004)

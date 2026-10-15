@@ -2465,6 +2465,14 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
     $<TARGET_FILE:rpc_runner> $<TARGET_FILE:arcdroid_rpcplan_libretro>
     "${CMAKE_CURRENT_SOURCE_DIR}/assets/riscpc-boot/ArcGate")
   set_tests_properties(rpc-launch-gate-vector PROPERTIES TIMEOUT 90)
+  add_test(NAME rpc-launch-release-fault COMMAND "${Python3_EXECUTABLE}" -B
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_gate_release_fault_test.py"
+    $<TARGET_FILE:rpc_runner> $<TARGET_FILE:arcdroid_rpcplan_libretro>)
+  set_tests_properties(rpc-launch-release-fault PROPERTIES TIMEOUT 90)
+  add_test(NAME rpc-launch-status-transport COMMAND "${Python3_EXECUTABLE}" -B
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_status_transport_test.py"
+    $<TARGET_FILE:rpc_runner> $<TARGET_FILE:arcdroid_rpcplan_libretro>)
+  set_tests_properties(rpc-launch-status-transport PROPERTIES TIMEOUT 90)
   add_test(NAME rpc-launch-helper-guest COMMAND "${Python3_EXECUTABLE}" -B
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_launch_helper_guest_test.py"
     $<TARGET_FILE:rpc_runner> $<TARGET_FILE:arcdroid_rpcplan_libretro> $<TARGET_FILE:rpc_launch_helper_test>)

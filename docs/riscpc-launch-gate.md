@@ -4,6 +4,93 @@ This note fixes the interface before implementation. All guest code is
 ArcDroid-authored GPL-2.0-only. Ordinary loads and Arculator remain unchanged.
 Revision eligibility is provenance, never evidence of delivery.
 
+## Run B freeze decisions (D-185; specified before code)
+
+The returning CALL is a **live controller extent**, not a short wrapper around
+StartTask. BASIC owns the application slot and the image/plan/return-summary
+allocations until CALL returns. The helper saves the BASIC callee-saved
+registers and SP, enters in USR, calls Wimp_Initialise (version 200, TASK
+identifier, helper-owned name), and owns that Wimp task throughout its polling
+loop. Wimp maps this same slot back before returning control to this task.
+The controller never resizes or replaces its own slot, returns while registered,
+or lends pointers to children. Child tasks have their own Wimp domains/slots.
+It issues Wimp_StartTask only after Initialise/Poll has returned control in USR.
+Nonzero StartTask return means a child is still alive, not terminated. A blocked
+StartTask leaves the controller suspended; R3c-3b's host observer owns prompt
+recognition during that interval. The controller copies any asynchronously
+needed child data into child-owned storage; it never publishes borrowed gate
+pointers. It polls until its own shutdown policy is satisfied, closes down with
+its exact task handle and TASK identifier, clears the handle, restores registers
+and returns to BASIC. The gate performs only bounded kernel diagnostics then
+END/OS_Exit; it makes no further Wimp call. Errors after registration join the
+same CloseDown-before-return path. If CloseDown itself fails, the controller
+terminates through OS_Exit with the Wimp-installed Exit handler still in place;
+it never returns a registered task to BASIC. That fatal path has no gate-return
+notification and cannot establish delivery. It creates no application replacement
+or surviving pointer into the gate. Normal shutdown closes the exact task before
+returning; the later BASIC END is its immediate process termination.
+R3c-3b may keep CALL live for its controller lifetime without changing gate
+bytes. The 120-second qualification limit applies to this slice's no-op and
+stub, not to a future command's execution lifetime. This model requires private
+proof on both requested pairs before the bytes are offered for freeze.
+[Wimp contract](https://www.riscos.com/support/developers/prm/wimp.html).
+
+All unallocated authored UpCall notifications are removed. Transport is passive
+observation of the existing **XOS_Byte 0, R1=1, R2=0** machine-type query. The kernel
+and ByteV receive an ordinary documented query, with its normal machine-type result and
+interrupt behaviour; R3..R6 are caller-owned preserved registers. R3 points to
+an aligned 64-byte block, R4=0x53435241 (ARCS), R5=64 and R6=role. Neither the
+kernel nor other compliant ByteV claimants interpret those registers as a new
+reason. The host observes at SWI entry without completing or changing the call.
+
+The block is sixteen little-endian u32 words: magic ARCS, version 1, length 64,
+role, token low/high, epoch low/high, event, sequence, detail 0/1, four zeros.
+Role 0 is qualification diagnostics: zero token/epoch; events 1 entry, 2 return,
+3 helper-return summary, 4 controller registered, 5 child start returned,
+6 controller poll returned, 7 controller closed. Sequence is nonzero; details
+are scalar result/count values. Entry/return detail 0 is monotonic centiseconds;
+return detail 1 reports a release failure. Role 1 reserves authoritative attempt events
+1..15, with nonzero 64-bit token/epoch and sequence. Their transition meanings,
+origin binding, consumption and replay checks belong to R3c-3b; a role-0 event
+can never consume an attempt or establish an outcome. The existing 32-byte
+ACK1 CALL return summary remains separate and is not an event transport.
+Qualification selects tagged OS_Byte queries, suppressing unrelated ByteV
+traffic before inspection or recording. Other selected SWIs remain observable.
+Each emitter owns its block while issuing the synchronous query; the observer
+copies/validates only these scalar fields before the call continues. It cannot
+retain a guest pointer. Trace capture admits only RAM/VRAM, alignment/range,
+magic/version/size/role/event/binding/reserved-field checks; no arbitrary memory
+dump or path is added. Invalid blocks produce no status record. A ByteV
+claimant coexistence fixture must see a normal query and preserve its results.
+[OS_Byte contract](https://www.riscos.com/support/developers/prm/restkernel.html).
+
+The UpCall guard's code and active word move to **one 256-byte RMA allocation**
+owned by the gate for the guest OS lifetime, cached in numeric ArcGate$Guard.
+This allocation is retained even after successful release, reused on subsequent
+gate calls, and reclaimed by machine reset. Its sixteen-byte header is AGR1 (0x31524741), version 1,
+allocation length 256 and a zero word; code starts at +16 and the active word
+is at +252. The numeric variable must have exactly four bytes and number type,
+and the entire aligned allocation must lie in the OS_ReadDynamicArea(1) RMA
+range before any header read. Its header/version/range are checked before reuse; malformed cached ownership refuses instead of allocating again.
+Fresh code is assembled/synchronized before publishing ownership and claiming.
+Existing code is never rewritten while a residual claim might refer to it.
+The workspace is a single RMA active word, with no application pointer. An
+inactive handler passes every reason unchanged. Cleanup closes the file while
+active, **clears active before XOS_Release**, and checks its error result. A
+release failure suppresses helper invocation and leaves an inactive, callable
+RMA handler. Application exit, remapping or reuse cannot invalidate it. A later
+OS_Claim of the identical code/workspace removes any duplicate residual claim;
+there is no unbounded retry or per-invocation retained allocation. The guard
+never owns controller data. Fault injection must skip release, reuse application
+storage, and invoke the remaining vector, proving pass-through and continued
+RMA ownership. Normal and error paths both deactivate before application exit.
+[RMA](https://www.riscos.com/support/developers/prm/modules.html),
+[vector identity/lifetime](https://www.riscos.com/support/developers/prm/softvecs.html).
+
+The descriptor, entry ABI, receipt tuples and attachment policy below remain
+unchanged. These Run B decisions supersede Run A's application-resident guard
+and diagnostic/acknowledgement UpCalls; those mechanisms are not frozen.
+
 The final command of `!Boot.ArcTasks` is `BASIC -quit ADFS::4.$.ArcGate`.
 The gate's source and pathname are frozen for authored revision 2. It reads
 only `ADFS::1.$.ArcHelper`, then calls its validated in-memory ARM entry as a
@@ -30,17 +117,16 @@ per [the BASIC SYS documentation](https://www.riscos.com/support/users/firstprog
 covers Escape and language errors, closes a captured handle while interception
 is still installed, then releases the exact (code, workspace) claim. Normal,
 short-read, oversize, missing-file and malformed-descriptor paths join the same
-cleanup. No helper code executes until the exact claim is released. Escape is acknowledged in cleanup. Cleanup uses X calls for close/acknowledgement and then OS_Release for the known valid claim; there is no documented error return for that release. Numeric XOS_PlatformFeatures uses the documented older-OS fallback (no sync
-requirement). Where required, code-area synchronization precedes vector
-claim and helper invocation
-([Acorn StrongARM support notes](https://www.riscos.com/support/developers/strongarm/sasupport.htm)); a reported synchronization failure returns without
-execution. These bounded kernel operations fit the miscellaneous ceiling.
-The entry marker precedes allocation and assembly. The gate does not
-replace Error, Escape or Exit environment handlers. No OS_Exit or application
-replacement is issued while a claim exists. Hardware reset clears vector
-claims. OS_Release has no documented error exit for the valid vector and
-exact code/workspace pair held here. Release occurs synchronously before
-anything can free or replace that storage.
+cleanup. No helper code executes until the exact claim is released. Escape is acknowledged in cleanup. Cleanup uses X calls, deactivates the RMA guard before XOS_Release, and
+refuses helper invocation if release reports V. The retained inactive allocation
+has no reference to BASIC storage. Fresh allocations not yet published are
+freed on failure; a published allocation is reused until OS reset. Numeric
+XOS_PlatformFeatures uses the documented older-OS fallback (no sync requirement).
+Where required, code synchronization precedes publishing/claiming and helper
+invocation ([Acorn StrongARM support notes](https://www.riscos.com/support/developers/strongarm/sasupport.htm)).
+The diagnostic entry precedes guard allocation and assembly, after allocating
+its own bounded scalar block. The gate does not replace Error, Escape or Exit
+environment handlers. Hardware reset clears vector claims and gate ownership.
 
 Primary contracts: [software vectors](https://www.riscos.com/support/developers/prm/softvecs.html)
 and [UpCalls](https://www.riscos.com/support/developers/prm/comms.html).
@@ -97,13 +183,11 @@ and must not replace the application or retain any pointer into gate memory.
 The gate owns the image and acknowledgement until return. All lookup resources
 are already closed/released. R3c-3a supplies a returning authored no-op only.
 
-Reserved notification: `XOS_UpCall` R0=0xA3C300, R1=acknowledgement pointer,
-R2=32, R3=attempt token. The helper emits it while the borrowed block is valid;
-the future host copies and validates the block synchronously and revalidates
-its token/epoch before any deferred action. R3c-3a implements no host status
-consumer. The helper installs its plan-owned attempt token before notification;
-token zero denotes this slice's no-attempt no-op. The gate can reuse the block
-after helper return, so future helpers must notify before returning.
+Reserved notification uses the role-1 ARCS block and ordinary OS_Byte query
+specified above. The emitter must keep that block valid throughout the SWI;
+R3c-3b owns token/epoch validation and deferred-action revalidation. R3c-3a
+implements no host status consumer. The ACK1 block is only the CALL return
+summary; it is never emitted as an authoritative attempt event.
 
 Reserved acknowledgement layout (eight u32): magic `0x314b4341` (`ACK1`),
 ABI 1, plan-owned attempt token, status, detail, and three zero words. The gate
@@ -113,14 +197,11 @@ handoff and waiting for input for R3c-3b. This slice's no-op reports returned
 or rejected. No host delivery-success claim is derived from eligibility,
 startup-file presence or attachment; R3c-3b owns attempt binding and observation.
 
-Authored diagnostic UpCalls 0xA3C301 and 0xA3C302 mark gate entry and return.
-0xA3C310 plus the status marks helper return. They use XOS_UpCall, contain no
-message or private data, and are not a host delivery acknowledgement. The
-gate also leaves numeric `ArcGate$Entry` and `ArcGate$Return` diagnostic
-variables containing monotonic centiseconds; these are qualification evidence
-only, never host delivery authority. Their memory-only X SWIs run outside the
-claim and fit the miscellaneous-operation ceiling. The existing test trace
-can select SWIs 0x33 and 0x20033 to measure these markers.
+Role-0 ARCS notifications mark entry, helper return and gate return. Numeric
+`ArcGate$Entry` and `ArcGate$Return` remain qualification-only monotonic
+centisecond variables. Trace selection uses SWIs 0x6 and 0x20006; the added
+status fields contain validated scalars only. Neither these diagnostics nor
+the return summary establishes delivery authority.
 
 ## Receipt and attachment policy
 

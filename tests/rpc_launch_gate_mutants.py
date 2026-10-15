@@ -13,7 +13,8 @@ mutants={'magic':('memcmp(p,"ARCRHLP1",8)','false'),
     'plan-alignment':('(at&3)','false'),'plan-length':('bytes>n-at','false'),
     'action':('0x03500000','0xe1a00000'),'plan-size':('0xe3530008','0xe3530004')}
 gate=(root/'assets/riscpc-boot/ArcGate').read_text()
-vector_mutants={'filesystem':('CMP R1,#8','CMP R1,#7'),
+vector_mutants={'inactive-lifetime':('86 CMP R0,#0','86 CMP R0,#1'),
+    'filesystem':('CMP R1,#8','CMP R1,#7'),
     'first-miss':('CMP R0,#1','CMP R0,#5'),'unknown-media':('160 CMP R0,#2','160 CMP R0,#5'),
     'cancel-result':('MVNEQ R0,#0','MOVEQ R0,#0'),
     'cancel-intercept':('210 LDMEQFD R13!,{PC}','210 MOVS PC,R14'),

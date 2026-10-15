@@ -8,6 +8,9 @@
 #include "rpc/rpc_observers.h"
 #include "rpc/rpc_floppy.h"
 #include "rpc_launch_helper.h"
+#include "rpc/rpc_namespace.h"
+#include "rpcemu/src/arm.h"
+#include "rpcemu/src/mem.h"
 static unsigned notices,terminal_notices,clears,attach_calls;
 static char last_notice[512];
 static uint64_t clock_value,clock_delta;
@@ -435,6 +438,30 @@ static void construction_and_attachments(const uint8_t *rom,size_t size)
     assert(!arc_engine_rpc_start_begin(4,rom,size,seed,946684800,false,error,sizeof(error)));
     assert(!arc_engine_active());
 }
+static void helper_exclusion(bool attached)
+{
+    /* Real generated/mounted helper identity, production qualified cells, no
+     * test override. Synthesize only authored SWI metadata at the adapter. */
+    arc_rpc_observers_bind(ARC_RPC_OS_350,0);
+    assert(arc_rpc_observers_capability(ARC_RPC_CELL_DISC_A));
+    assert(arc_rpc_observers_capability(ARC_RPC_CELL_REPLACE_A));
+    arc_rpc_observers_disc_configure(true,"Other",NULL,NULL,NULL);
+    ARMState saved=arm;
+    strcpy((char *)ram00+0x20000,"ArcDroid");
+    arm.mode=19;arm.reg[16]=19;arm.reg[15]=0x108;arm.reg[0]=2;arm.reg[1]=8;
+    arm.reg[2]=0x10020000;arm.reg[3]=UINT32_MAX;arm.reg[13]=0x10021000;
+    assert(!arc_rpc_observe_swi_at(0xef020033,0x100,rom));
+    ArcDiscRequest request;arc_rpc_observers_disc_snapshot(&request);
+    ArcRpcDiscStatus status;arc_rpc_observers_disc_status(&status);
+    assert(request.a_active==!attached);
+    assert(!strcmp(status.gate,attached?"helper-excluded":"seen"));
+    assert(arc_rpc_observers_replace(ARC_DISC_SIGNAL_A)==!attached);
+    strcpy((char *)ram00+0x20000,"Unrelated");
+    assert(!arc_rpc_observe_swi_at(0xef020033,0x100,rom));
+    arc_rpc_observers_disc_snapshot(&request);assert(request.a_active);
+    assert(arc_rpc_observers_replace(ARC_DISC_SIGNAL_A));
+    arm=saved;arc_rpc_observers_bind(0,0);
+}
 static void helper_ownership(const uint8_t *rom,size_t size,ArcRpcPreparationHost host)
 {
     for(unsigned explicit_empty=0;explicit_empty<2;++explicit_empty){
@@ -442,8 +469,10 @@ static void helper_ownership(const uint8_t *rom,size_t size,ArcRpcPreparationHos
         ArcRpcPreparation *p=new_request(rom,size,true,false,host);settle(p);
         assert(arc_riscpc_preparation_state(p)==ARC_RPC_PREP_RUNNING);
         assert(helper_construction_bytes==(explicit_empty?0:ARC_RPC_HELPER_SIZE));
+        helper_exclusion(!explicit_empty);
         char h[11],d[11];assert(arc_rpc_observers_identities(h,d));assert(!strcmp(h,explicit_empty?"":"ArcDroid"));
         assert(arc_riscpc_preparation_reset(p));assert(arc_rpc_observers_identities(h,d));assert(!strcmp(h,explicit_empty?"":"ArcDroid"));
+        helper_exclusion(!explicit_empty);
         finish(p);assert(!arc_engine_active());
     }
     helper_override=false;
