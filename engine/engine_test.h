@@ -5,6 +5,19 @@
 #if defined(ARCDROID_TEST_FAULTS)
 #include "libretro.h"
 #include "rpc/rpc_observer.h"
+typedef struct {
+    uint64_t id;
+    unsigned kind, retained, frontend_allocations;
+    bool engine_rpc, fault, fault_text;
+    ArcEngineCapabilities capabilities;
+} ArcFrontendHygiene;
+RETRO_API void arc_libretro_test_hygiene(ArcFrontendHygiene *);
+/* Existing direct-engine AV/input component tests explicitly admit a frontend
+ * identity. Actual switching evidence uses retro_load_game on the plan core. */
+RETRO_API bool arc_libretro_test_rpc_admit(void);
+RETRO_API bool arc_libretro_test_disc_name(unsigned,ArcGuestName *);
+RETRO_API uint64_t arc_libretro_test_journal_filter_cost(unsigned);
+RETRO_API void arc_libretro_test_plant_cmos(const char *);
 RETRO_API bool arc_engine_test_observers_disc_devices(unsigned forms);
 RETRO_API bool arc_engine_test_observers_error_numbers(ArcErrorNumberClass);
 RETRO_API bool arc_engine_test_observers_firmware(ArcDigest *);

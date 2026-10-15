@@ -31,6 +31,8 @@ static void audit(const char *p,unsigned mode)
     if(strstr(p,".tmp") && (mode&RETRO_VFS_FILE_ACCESS_WRITE))++tmp_writes;
     if(strstr(p,"/arcdroid/cmos-riscpc/")){++rpc_accesses;assert(audit_mode!=2);}
     if(strstr(p,"/arcdroid/cmos/")){++arc_accesses;assert(audit_mode!=1);}
+    if(audit_mode==1 && (mode&RETRO_VFS_FILE_ACCESS_WRITE))
+        assert(!strstr(p,"/arcdroid/hd/") && !strstr(p,"/arcdroid/launch/"));
 }
 #define ARC_RUNNER_VFS_AUDIT(path,mode) audit(path,mode)
 #include "../tools/rpc_runner_vfs.h"

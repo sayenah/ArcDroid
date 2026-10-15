@@ -22,3 +22,9 @@ EXPORTS
   arc_libretro_test_fail_disc_preflight
   arc_engine_test_observers_error_numbers
   arc_engine_test_observers_firmware
+
+  arc_libretro_test_hygiene
+  arc_libretro_test_plant_cmos
+  arc_libretro_test_disc_name
+  arc_libretro_test_journal_filter_cost
+  arc_libretro_test_rpc_admit
