@@ -207,11 +207,21 @@ These ranges are research targets, not predictions (Astra S58):
 - **Release note:** with Smart App Control on, an unsigned ArcDroid-built executable was blocked (see the handoff's item 5 notes).
 - **Not covered:** inside RetroArch on Windows (RetroArch is not installed on the box).
 
+**Representative gameplay (S65, 6b-P0i `1bb22aa`).** 031 from a cold start into racing gameplay (the S61 AC-10 inputs), 8000 frames, flat pacing, 3.71 SA-110 at 100 MIPS, on the Odin3 and the Mac. Profiling legs at sample strides 1024 and 1021, and two unprofiled legs on the Odin3 before and after. Guest output and the frame-7000 image are byte-identical across every leg and across both platforms. Private evidence: `.work/s65/p031/`.
+- **Instruction mix:** 9.45 × 10⁹ instructions in 151.8 guest seconds (62 MIPS executed on average; the rest is idle). ALU 49.7 %, loads 21.7 %, branches 21.0 %, LDM/STM 4.1 %, stores 2.2 %, multiplies 1.3 %, status/coprocessor/SWI under 0.2 %.
+- **Blocks are short.** Dynamic straight-line runs average 4.1 instructions (median 3, 90th percentile 8, 99th 26, longest 193). Only 37 % of instructions sit in runs of 8 or more, and 12 % in runs of 16 or more. Taken branches and PC writes (E1) end 197 runs per 1000 instructions.
+- **Exit causes per 1000 instructions:** E1 197, E3 (helper call inside an instruction) 39, E4 (side exit) 10.4, E9 (store into a recently executed page, page granularity) 7.7, E5 6.0, E10 0.3, E11 0.2. 94.4 % of instructions are candidates for a minimal block foundation; the fetch memo hits 84.4 %.
+- **Code churn is high at page granularity.** 0.9 % of instructions write into a page executed within the last 10⁶ instructions. Invalidation keyed by 4 KiB page would thrash; a translator needs finer-grained (allocation plus offset, D-142(3)) or data/code-separated invalidation, and the churn has to be re-measured at that granularity before any cache design.
+- **Host cost split (sampled, probe-bias corrected, profiling bookkeeping excluded):** timing service 51 % (Odin3) / 58 % (Mac), fetch translation 16 % / 17–20 %, dispatch 16 % / 15 %, bus service 16 % / 6–9 %, devices under 1 %. Both strides agree within a few points. With profiling on, small scopes are probe-dominated; read the split as a ranking, not a ledger.
+- **Odin3 frame cost, unprofiled (T = 19.97 ms, the 50 Hz field).** Two runs agree within 1 %: start-up 32.0 ms p50; loading and menus 30.4 ms p50, 56.3 ms p95; sustained racing (frames 6000–8000) **29.5 ms p50 (1.48 T), 34.0 ms p95 (1.70 T)**, about 28.5 host ns per executed instruction. The AC-10 frame gate (p95 ≤ 0.80 T) needs about **2.1×** on sustained gameplay, and more on the loading tails.
+- **What this means for the plan.**
+  - Exact interpreter work has to attack the timing service first; it is half of the host cost on the Odin3.
+  - A block foundation on its own covers little: with runs of four instructions, block entry and exit overhead is paid every few instructions. Its value is in carrying timing and fetch work across a run, not in dispatch alone.
+  - The S64 Phase 1a candidate set (exact optimisations, about 20–25 % on 031) is consistent with this, and confirms that Phase 1a alone cannot reach AC-10.
+
 **Still open in Phase 0:**
-- representative gameplay (after R2c, with AC-10);
-- the block-length distribution, fallback frequency and code churn, which need block instrumentation;
-- cold-start against sustained frame tails;
-- repeated runs on the Odin3 (done on Windows);
+- a 3D title, profiled the same way;
+- code churn at allocation-plus-offset granularity;
 - the Q-3 oracle fix.
 
 ## Founder decisions (none needed now)
