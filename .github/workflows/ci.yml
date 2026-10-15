@@ -43,6 +43,12 @@ jobs:
         run: ctest --test-dir build/host --output-on-failure
       - name: Export guard
         run: tools/check-exports.sh build/host/arcdroid_libretro.so
+      - name: Configure profiling test build
+        run: cmake -S . -B build/profile -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DARCDROID_RPC_PROFILE=ON -DCMAKE_C_COMPILER_LAUNCHER=ccache
+      - name: Build profiling tests
+        run: cmake --build build/profile --target rpc_profile_test rpc_runner arcdroid_rpcplan_libretro arcdroid_libretro rpc-plan-fixtures
+      - name: Profiling counts, transparency and mutants
+        run: ctest --test-dir build/profile --output-on-failure -R '^rpc-profile-'
       - name: ccache statistics
         if: always()
         run: ccache -s
@@ -62,7 +68,7 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-host-sanitizers-gcc-${{ hashFiles('CMakeLists.txt') }}-
       - name: Configure ASan and UBSan
-        run: cmake -S . -B build/sanitize -G Ninja -DCMAKE_BUILD_TYPE=Debug -DARCDROID_SANITIZERS=ON -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+        run: cmake -S . -B build/sanitize -G Ninja -DCMAKE_BUILD_TYPE=Debug -DARCDROID_SANITIZERS=ON -DARCDROID_RPC_PROFILE=ON -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
       - name: Build ASan and UBSan
         run: cmake --build build/sanitize --verbose
       - name: Host tests under ASan and UBSan

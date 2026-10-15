@@ -33,6 +33,8 @@
 #include "mem.h"
 #include "rpc_memory.h"
 #include "rpc_observer.h"
+/* ArcDroid modification (2026-10-14, profiling-6b-p0i): scoped fetch sampling. */
+#include "rpc_profile.h"
 #include "rpc_mem_timing.h"
 /* ArcDroid modification (2026-10-07): retain descriptor B/C and connect
  * permission-checked fetch, cache maintenance and SA clock-switch timing. */
@@ -160,9 +162,16 @@ static void cp15_tlb_flush_all(void)
 void
 cp15_write(uint32_t opcode, uint32_t val)
 {
+    ARC_RPC_PROFILE(side_exit());
 	const uint32_t crn = RN;
 	const uint32_t crm = RM;
 	const uint32_t opc2 = (opcode >> 5) & 7;
+#if defined(ARCDROID_RPC_PROFILE)
+    if(crn==7 && (cp15.cpu_model!=CPUModel_SA110 ||
+        (opc2==0 && (crm==5 || crm==6 || crm==7)) ||
+        (opc2==1 && (crm==6 || crm==10)) || (opc2==4 && crm==10)))
+        arc_rpc_profile_maintenance();
+#endif
     arc_rpc_mem_maintenance(crn, opc2, crm, val);
 
 	switch (crn) {
@@ -290,6 +299,7 @@ cp15_write(uint32_t opcode, uint32_t val)
 uint32_t
 cp15_read(uint32_t opcode)
 {
+    ARC_RPC_PROFILE(side_exit());
 	const uint32_t crn = RN;
 
 	switch (crn) {
@@ -444,6 +454,10 @@ uint32_t translateaddress2(uint32_t addr, int rw, int prefetch)
     return entry ? entry->physical | (addr & 0x3ffu) : 0;
 }
 
+#if defined(ARCDROID_RPC_PROFILE)
+#undef getpccache
+#define getpccache arc_rpc_getpccache_profile_body
+#endif
 const uint32_t *getpccache(uint32_t addr)
 {
     ArcRpcTlbEntry *entry = mmu ? checked_translation(addr, 0, 1) : NULL;
@@ -453,9 +467,29 @@ const uint32_t *getpccache(uint32_t addr)
     }
     uint32_t physical = entry ? entry->physical | (addr & 0x3ffu) : addr;
     const uint32_t *code = entry ? entry->code : arc_rpc_phys_page(physical);
+#if defined(ARCDROID_RPC_PROFILE)
+    int previous=arc_rpc_profile_enter(ARC_RPC_COST_TIMING);
+#endif
     arc_rpc_mem_fetch(addr, physical, arc_rpc_cp15_attributes(), code != NULL);
+#if defined(ARCDROID_RPC_PROFILE)
+    arc_rpc_profile_leave(previous);
+#endif
     return code;
 }
+#if defined(ARCDROID_RPC_PROFILE)
+#undef getpccache
+#define getpccache arc_rpc_getpccache
+
+const uint32_t *
+getpccache(uint32_t addr)
+{
+
+    int previous=arc_rpc_profile_enter(ARC_RPC_COST_FETCH);
+    const uint32_t * result = arc_rpc_getpccache_profile_body(addr);
+    arc_rpc_profile_leave(previous);
+    return result;
+}
+#endif
 
 /* ArcDroid modification (2026-10-13, observation-r3c1): pure inspection
  * honours stale tagged entries but never installs a translation or touches

@@ -31,6 +31,8 @@
 /* ArcDroid modification (2026-10-13, observation-r3c1): gated original-fetch,
  * continuation and completed-transition hooks; no timing service or yield. */
 #include "rpc_observer.h"
+/* ArcDroid modification (2026-10-14, profiling-6b-p0i): test-only hooks. */
+#include "rpc_profile.h"
 #include <stdio.h>
 #include <string.h>
 #include <stdint.h>
@@ -499,6 +501,7 @@ shift4(uint32_t opcode)
 void
 exception(uint32_t mmode, uint32_t address, uint32_t diff)
 {
+    ARC_RPC_PROFILE(exception(address));
     arc_rpc_mem_branch();
 	uint32_t link;
 	uint32_t irq_disable;
@@ -589,6 +592,8 @@ ARC_RPC_ARM_LOOP(unsigned count, ArcRpcCpuBatch *batch)
         if(arc_rpc_mem_fast.integer_batch)++arc_rpc_observer_integer_attempts;
 #endif
 #endif
+        ARC_RPC_PROFILE(begin(PC,arm.mode,ARM_MODE_32(arm.mode)?arm.reg[16]&0xc0u:(arm.reg[15]>>20)&0xc0u));
+        ARC_RPC_PROFILE(stage(ARC_RPC_COST_TIMING));
         arc_rpc_mem_instruction_begin();
         /* Fetch checks permission at every instruction, including a cached
          * translation hit and a 1 KiB boundary within the same 4 KiB page. */
@@ -601,6 +606,9 @@ ARC_RPC_ARM_LOOP(unsigned count, ArcRpcCpuBatch *batch)
         }
         opcode = pccache2[(PC & 0x3ffu) >> 2];
         arc_rpc_mem_opcode(opcode);
+        ARC_RPC_PROFILE(stage(ARC_RPC_COST_PROFILE));
+        ARC_RPC_PROFILE(fetched(pccache2,opcode,flaglookup[opcode >> 28][(*pcpsr) >> 28]!=0));
+        ARC_RPC_PROFILE(stage(ARC_RPC_COST_DISPATCH));
 #if ARC_RPC_ARM_OBSERVING == 1
         if(observing)arc_rpc_observe_fetched(pccache2);
 #endif
@@ -1948,7 +1956,10 @@ instruction_done:
 #elif ARC_RPC_ARM_OBSERVING == 2
         if(arm.mode!=observed_mode){arc_rpc_observe_unsubscribed_mode(observed_mode);observed_mode=arm.mode;}
 #endif
+        ARC_RPC_PROFILE(stage(ARC_RPC_COST_TIMING));
         arc_rpc_mem_instruction_end(PC);
+        ARC_RPC_PROFILE(stage(ARC_RPC_COST_PROFILE));
+        ARC_RPC_PROFILE(end(PC,arm.mode,ARM_MODE_32(arm.mode)?arm.reg[16]&0xc0u:(arm.reg[15]>>20)&0xc0u,arc_rpc_cpu_idle));
         if (batch && (linecyc + 1 == (int)count ||
             !arc_rpc_mem_batch_next(batch, arc_rpc_cpu_idle))) {
             ++linecyc;
@@ -1959,6 +1970,7 @@ instruction_done:
     arc_rpc_observe_advance((unsigned)linecyc-accounted);
     arc_rpc_observe_batch_end();
 #endif
+    ARC_RPC_PROFILE(batch((unsigned)linecyc==count,arc_rpc_cpu_idle,arc_rpc_mem_fast.test_stop));
 	inscount += (unsigned)linecyc;
     if (arc_rpc_mem_fast.integer_batch) arc_rpc_mem_batch_flush();
 

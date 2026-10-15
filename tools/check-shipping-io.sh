@@ -38,6 +38,7 @@ engine/arculator_backend.c
 engine/rpc/rpc_observer.c
 engine/rpc/rpc_observers.c
 engine/rpc/rpc_inspector.c
+engine/rpc/rpc_profile.c
 engine/rpc/rpc_session.c
 engine/rpc/rpc_audio.c
 engine/rpc/rpc_input.c
@@ -132,6 +133,7 @@ pattern='(^|[^[:alnum:]_>.])(fopen|open|_wfopen|gz[a-z]*|CreateFile[A-Za-z]*)[[:
 rpc_sources='engine/rpc/rpc_observer.c
 engine/rpc/rpc_observers.c
 engine/rpc/rpc_inspector.c
+engine/rpc/rpc_profile.c
 engine/rpc/rpc_session.c engine/rpc/rpc_audio.c engine/rpc/rpc_input.c engine/rpc/rpc_timing.c engine/rpc/rpc_mem_timing.c
 engine/rpc/rpc_floppy.c engine/rpc/rpc_scheduler.c engine/rpc/rpc_rtc.c
 engine/rpcemu/src/arm.c engine/rpcemu/src/arm_common.c engine/rpcemu/src/cp15.c

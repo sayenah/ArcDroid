@@ -407,3 +407,13 @@ ends that batch after normal instruction/event processing. Subscribed mode/trace
 or live-watch execution selects the checked instantiation. Inactive code remains
 the original run B instantiation. Policy, counters and lazy metadata construction
 remain in the owned adapter; no upstream hash or licence attribution changes.
+
+### 6b-P0i profiling (test-only)
+
+`profiling-6b-p0i` (`src/arm.c`, `src/cp15.c`, `src/mem.c`): compile-time
+attempt/class/exception, fetch and successful backing-write hooks plus sampled
+host scopes. Only the non-installed plan RPC object enables them; shipping and
+option-OFF preprocessing retain the original paths. No speculative fetch,
+translation walk, guest timing change, observer selection or fault boundary.
+Owned aggregation lives in `engine/rpc/rpc_profile.*`; JSON is runner-owned.
+Original hashes and licence headers remain unchanged.

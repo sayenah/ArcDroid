@@ -4,6 +4,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include "rpc_scheduler.h"
+#include "rpc_profile.h"
 
 /* Public only to the owned interpreter batch shortcut. Exact service can
  * complete locally before a boundary; intervening events return to the driver. */
@@ -134,10 +135,13 @@ static inline void arc_rpc_mem_fetch(uint32_t va, uint32_t physical,
      * this virtual-line memo. Match the slow path's pre-lookup eligibility. */
     uint32_t pa = physical & 0x1fffffffu;
     if (backed && (pa < 0x03000000u || pa >= 0x10000000u) &&
-        f->memo_valid && f->memo_line == (va >> f->memo_shift)) { ++f->fetch_hits; return; }
+        f->memo_valid && f->memo_line == (va >> f->memo_shift)) { ++f->fetch_hits; ARC_RPC_PROFILE(memo()); return; }
     arc_rpc_mem_fetch_slow(va, physical, attributes, backed);
 }
 
+#if defined(ARCDROID_RPC_PROFILE)
+#define arc_rpc_mem_batch_next arc_rpc_mem_batch_next_profile_body
+#endif
 static inline bool arc_rpc_mem_batch_next(ArcRpcCpuBatch *batch, bool idle)
 {
     ArcRpcMemFast *m = &arc_rpc_mem_fast;
@@ -160,4 +164,15 @@ static inline bool arc_rpc_mem_batch_next(ArcRpcCpuBatch *batch, bool idle)
     m->issue_floor = m->due_floor; m->issue_fraction = m->due_fraction;
     return true;
 }
+#if defined(ARCDROID_RPC_PROFILE)
+#undef arc_rpc_mem_batch_next
+static inline bool arc_rpc_mem_batch_next(ArcRpcCpuBatch *batch, bool idle)
+{
+    int previous=arc_rpc_profile_enter(ARC_RPC_COST_TIMING);
+    bool result=arc_rpc_mem_batch_next_profile_body(batch,idle);
+    arc_rpc_profile_leave(previous);
+    return result;
+}
+#endif
+
 #endif

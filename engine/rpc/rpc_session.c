@@ -4,6 +4,7 @@
  * state; cleanup cancels events before releasing owned memory. */
 #include "engine_backend.h"
 #include "rpc_session.h"
+#include "rpc_profile.h"
 #include "rpc_observer.h"
 #include "rpc_observers.h"
 #include "rpc_timing.h"
@@ -104,6 +105,7 @@ void fatal(const char *format, ...)
     vsnprintf(arc_rpc_fault_text, sizeof(arc_rpc_fault_text), format, args);
     va_end(args);
     arc_rpc_fault = true;
+    ARC_RPC_PROFILE(fault());
     arc_rpc_observer_retire(false);
     arc_rpc_observers_retire();
     arc_rpc_sound_purge();
@@ -136,6 +138,7 @@ static void arc_rpc_stop(void)
 {
     arc_rpc_observer_retire(false);
     arc_rpc_observers_retire();
+    ARC_RPC_PROFILE(reset());
     arc_rpc_ide_set_backend(NULL);
     arc_rpc_fdc_close();
     arc_rpc_sound_purge();
@@ -158,6 +161,7 @@ static void arc_rpc_stop(void)
 }
 static void arc_rpc_reset_devices(void)
 {
+    ARC_RPC_PROFILE(reset());
     arc_rpc_fdc_rebase();
     arc_rpc_scheduler_init(&arc_rpc_scheduler, arc_rpc_rate);
     arc_rpc_timing_bind(&arc_rpc_scheduler);
@@ -324,6 +328,9 @@ static bool arc_rpc_reset(char *failure, size_t failure_size)
 /* Events due at a boundary precede its instruction. MMIO applies immediately
  * at that instruction's timestamp. Idle skips directly to the next event,
  * discards CPU credit, and wakes when either interrupt line is asserted. */
+#if defined(ARCDROID_RPC_PROFILE)
+#define arc_rpc_deliver arc_rpc_deliver_profile_body
+#endif
 static void arc_rpc_deliver(ArcRpcEvent event)
 {
 #if defined(ARCDROID_TEST_FAULTS)
@@ -360,6 +367,18 @@ static void arc_rpc_deliver(ArcRpcEvent event)
     default: break; /* Reserved absent IDE slot. */
     }
 }
+#if defined(ARCDROID_RPC_PROFILE)
+#undef arc_rpc_deliver
+
+static void
+arc_rpc_deliver(ArcRpcEvent event)
+{
+    arc_rpc_profile_event((unsigned)event);
+    int previous=arc_rpc_profile_enter(ARC_RPC_COST_DEVICES);
+    arc_rpc_deliver_profile_body(event);
+    arc_rpc_profile_leave(previous);
+}
+#endif
 static bool arc_rpc_advance_internal(uint64_t elapsed_ns, bool stop_at_field)
 {
     if (!arc_rpc_live || arc_rpc_fault || arc_rpc_observer_in_host() || elapsed_ns > 16666667u ||
