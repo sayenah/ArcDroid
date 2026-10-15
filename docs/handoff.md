@@ -7,10 +7,10 @@
 - Workflows are read-only helpers. Their findings are evidence for Fable to adjudicate. Implementation goes only through Sol, and QA only through `arcdroid-opus-qa`.
 
 **Running (S65).** All belong to this session; see the ledger.
-- W1: Sol R3c-2 run J (resuming `01a139e9-…`, clone `.work/s64/r3c2/clone`).
+- W1: Opus QA re-check of run J (`.work/s65/qa-r3c2-j/`).
 - W2: Sol R3d-3 `slice/r3d3-own` run A (clone `.work/s65/r3d3-own/clone`).
 
-**W1 — R3c-2 observers.** PR #408, `slice/r3c2-observers`, head `756295c` (runs H `5955a52` and I `756295c`). **Stage:** IMPLEMENTATION (run J). **Owner:** Sol. Opus QA re-check of H and I: **FAIL** on one Medium (queue overflow drops lifecycle clear markers, so signal B can auto-insert after a Wimp_Poll where Arculator and run G do not) plus Low test gaps; adjudication `.work/s65/qa-r3c2-hi/adjudication.md`, run J prompt `.work/s65/w1/promptR3c2-J.md`. **Next:** review and commit run J; CI; Opus QA re-check of J; the Odin3 cost legs (Next 3 below); merge.
+**W1 — R3c-2 observers.** PR #408, `slice/r3c2-observers`, head `6c8204f` (run J: host 399/399, sanitizer 33/33, 216 mutants). **Stage:** QA (re-check of run J against the H/I QA report `.work/s65/qa-r3c2-hi/QA-REPORT.md` and its adjudication). **Owner:** Opus. **Next (Opus):** review `756295c..6c8204f`; confirm MEDIUM-1 cannot recur for any interleaving of lifecycle SWIs, misses and FOUND items with or without overflow, and that the LOW-1 guard mutants are killed; run the affected tests and mutants. Then Fable: the Odin3 cost legs, CI, merge.
 - **Evidence (S65).** QA re-check of F and G: PASS WITH LOWS (adjudication `.work/s65/qa-r3c2/adjudication-FG.md`; run I prompt `.work/s65/w1/promptR3c2-I.md`). Odin3 R-H at run G: p50 +1.75 %/+1.31 %, p95 +1.88 %/+1.33 % (D-180 PASS on the hot workload). Override-free seven-pair rerun on run G, trace off: production binds on real firmware, 149/151 guest frames byte-identical to the override qualification legs, the 2 differing are the ordinary-number controls (no answer under zero-only, as expected at run G). Run H: host 399/399, sanitizer 33/33.
 - **Open cost question (D-180 on real SWI-dense workloads).** Run H's Mac SWI-dense leg (one SWI per 35 instructions) is +7.0 % p50 after SWI-number filtering. The R3c-3a AC-7 desktop legs (run F observers live, unfiltered) are +3.9–4.5 % on the Odin3 and +4.4–6.1 % on Windows against `686b1b7`. 031 gameplay makes one SWI per about 2,500 instructions.
 - **Next (W1):**
