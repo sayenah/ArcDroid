@@ -388,6 +388,20 @@ static void busy_fixture(CPUModel model)
 }
 static void retry_guard_cases(CPUModel model)
 {
+    /* Run L: FOUND retires the matching BUSY retry before frame, while its
+     * history/latch effects still wait for the drain. Both sites and modes;
+     * unrelated FOUND and no-FOUND controls retain the successful retry. */
+    for(unsigned mode=0;mode<=16;mode+=16)for(unsigned scenario=0;scenario<4;++scenario){
+        busy_fixture(model);
+        if(scenario<3)miss_mode(scenario==2?"ADFS::AuthDisc.$.Other":"ADFS::AuthDisc.$.Later",
+            scenario==1?0x140:0x100,mode,true);
+        bool cancelled=scenario<2;
+        assert(arc_rpc_observers_test_retry(NULL)==!cancelled);
+        ArcDiscRequest before;arc_rpc_observers_disc_snapshot(&before);assert(before.b_triggered);
+        arc_rpc_observers_frame(clock_ns/1000);arc_rpc_observer_drain();
+        assert(retry_attempts==(cancelled?1u:2u) && retry_insertions==!cancelled);
+        arc_rpc_observers_frame(clock_ns/1000+1);assert(retry_insertions==!cancelled);
+    }
     /* Presentation calls frame BEFORE drain. Entry must retire the BUSY
      * retry immediately, even though its history clear is still queued. */
     for(unsigned which=0;which<8;++which){
@@ -445,13 +459,24 @@ typedef struct {
 } DiscExpected;
 static DiscExpected disc_expected[64];
 static bool disc_exact;
+static bool disc_boundary;
+static const ArcDiscRequest *disc_oracle;
 static unsigned diff_model,diff_seed,diff_frame;
 static unsigned differential_triggers,differential_events,differential_overflows;
+static unsigned differential_busy,differential_retries;
 static unsigned differential_resolve(void *opaque,const char *path,ArcDiscOperation operation)
 { (void)opaque;(void)path;assert(operation==ARC_DISC_CATALOGUE || operation==ARC_DISC_OPEN_DIR);return 1; }
 static bool differential_observe(void *opaque,const char *path,unsigned candidate,unsigned observation,bool trigger)
 {
     (void)opaque;assert(candidate==1);ArcDiscRequest copy;arc_rpc_observers_disc_snapshot(&copy);
+    if(disc_boundary){
+        /* A BUSY retry is not a new miss/trigger. The shared observer has
+         * already seen this frame's guest events, including FOUND/clears. */
+        assert(trigger && observation==2 && disc_oracle->b_triggered);
+        assert(!strcmp(path,disc_oracle->triggered_object));
+        assert(copy.continuation==disc_oracle->triggered_continuation && copy.sp==disc_oracle->triggered_sp);
+        ++differential_retries;return diff_frame%3!=0;
+    }
     const ArcDiscIdentity *identity=NULL;
     for(unsigned i=0;i<ARC_DISC_IDENTITY_CAPACITY;++i){
         const ArcDiscIdentity *item=&copy.identities[i];
@@ -467,7 +492,8 @@ static bool differential_observe(void *opaque,const char *path,unsigned candidat
             diff_model,diff_seed,diff_frame,event,path,expected->pc,expected->sp,expected->observation,observation);
         assert(!trigger || expected->trigger);
     }
-    differential_triggers+=trigger;return false; /* A hint leaves the latch set. */
+    differential_triggers+=trigger;
+    bool busy=trigger && ((event+diff_seed)&1);differential_busy+=busy;return busy;
 }
 static uint32_t disc_random(uint32_t *state)
 { uint32_t value=*state;value^=value<<13;value^=value>>17;value^=value<<5;return *state=value; }
@@ -478,6 +504,7 @@ static void differential_cases(CPUModel model,unsigned seeds,unsigned frames)
         bool overflow=leg==1;
         disc_fixture(model);arc_rpc_observers_disc_configure(true,"AuthDisc",differential_resolve,differential_observe,NULL);
         ArcDiscRequest shared={0};ArcRpcScheduler stamp={0};uint32_t random=initial[seed];uint64_t bias=0;
+        disc_oracle=&shared;
         /* Timestamp-only fixture clock: memory timing remains disabled.
          * Copied identities carry the original event tag through the drain. */
         assert(!arc_rpc_mem_fast.enabled);arc_rpc_mem_fast.clock=&stamp;
@@ -521,10 +548,11 @@ static void differential_cases(CPUModel model,unsigned seeds,unsigned frames)
                 }
                 ++differential_events;
             }
-            arc_rpc_observers_frame(bias+(uint64_t)frame*64+length);arc_rpc_observer_drain();
+            disc_boundary=true;arc_rpc_observers_frame(bias+(uint64_t)frame*64+length);disc_boundary=false;
+            arc_rpc_observer_drain();
             if(disc_exact)for(unsigned event=1;event<=length;++event)assert(disc_expected[event].seen==disc_expected[event].miss);
         }
-        arc_rpc_mem_fast.clock=NULL;
+        arc_rpc_mem_fast.clock=NULL;disc_oracle=NULL;
     }
 }
 static void ordered_found_cases(CPUModel model)
@@ -682,6 +710,22 @@ static void quiet_recovery_cases(CPUModel model)
     for(unsigned i=0;i<17;++i)miss(a,0x100);arc_rpc_observer_drain();
     stamp.now_ns=0;miss(b,0x100);miss(b,0x100);arc_rpc_observer_drain();
     assert(!observe_count && !trigger_count);arc_rpc_mem_fast.clock=NULL;
+}
+static void quiet_overflow_found_case(CPUModel model)
+{
+    disc_fixture(model);ArcDiscRequest oracle={0};ArcRpcScheduler stamp={0};arc_rpc_mem_fast.clock=&stamp;
+    for(unsigned i=0;i<16;++i){
+        const char *path="ADFS::AuthDisc.$.Old";miss(path,0x100);(void)shared_miss(&oracle,path,false);
+    }
+    stamp.now_ns=UINT64_C(100000000000);
+    miss_mode("ADFS::AuthDisc.$.Found",0x140,16,true);
+    (void)shared_miss(&oracle,"ADFS::AuthDisc.$.Found",true);
+    arc_rpc_observer_drain();assert(!observe_count && !trigger_count);
+    /* Last miss was at zero, not the overflowing FOUND at 100 seconds. */
+    assert(!quiet_event(&oracle,&stamp,"ADFS::AuthDisc.$.Fresh",120000001,false,true));
+    assert(observe_count==1);
+    assert(quiet_event(&oracle,&stamp,"ADFS::AuthDisc.$.Fresh",120000002,false,true));
+    assert(observe_count==2 && trigger_count==1);arc_rpc_mem_fast.clock=NULL;
 }
 static void adjudicated_cases(CPUModel model)
 {
@@ -1072,13 +1116,15 @@ int main(int argc,char **argv)
     config.mem_size=64;config.vram_size=2;mem_init();
     if(argc==2 && !strcmp(argv[1],"--qualification")){qualification_dump();arc_rpc_observer_retire(false);arc_rpc_memory_close();return 0;}
     if(argc==2 && !strcmp(argv[1],"--recovery-positive")){
-        for(unsigned model=0;model<4;++model){suppression_recovery_cases((CPUModel)model);quiet_recovery_cases((CPUModel)model);}
+        for(unsigned model=0;model<4;++model){suppression_recovery_cases((CPUModel)model);quiet_recovery_cases((CPUModel)model);quiet_overflow_found_case((CPUModel)model);}
         arc_rpc_observer_retire(false);arc_rpc_memory_close();puts("RPC suppression: global-clear/quiet-expiry liveness on four CPUs; A unaffected");return 0;
     }
     if(argc>=2 && !strcmp(argv[1],"--differential")){
         bool sanitizer=argc==3 && !strcmp(argv[2],"sanitizer");
         for(unsigned model=0;model<4;++model)differential_cases((CPUModel)model,sanitizer?2:4,sanitizer?64:256);
-        printf("RPC disc differential: %u events, %u triggers, %u overflow frames; four CPUs\n",differential_events,differential_triggers,differential_overflows);
+        assert(differential_busy && differential_retries);
+        printf("RPC disc differential: %u events, %u triggers, %u overflow frames, %u BUSY deferrals, %u retries; four CPUs\n",
+            differential_events,differential_triggers,differential_overflows,differential_busy,differential_retries);
         arc_rpc_observer_retire(false);arc_rpc_memory_close();return 0;
     }
     for(unsigned catalogue=0;catalogue<=5;++catalogue)for(unsigned cpu=0;cpu<4;++cpu)
@@ -1095,7 +1141,8 @@ int main(int argc,char **argv)
     for(unsigned model=0;model<4;++model){error_cases((CPUModel)model);disc_cases((CPUModel)model);adjudicated_cases((CPUModel)model);
         queue_loss_cases((CPUModel)model);retry_guard_cases((CPUModel)model);
         ordered_found_cases((CPUModel)model);overflow_eviction_cases((CPUModel)model);
-        suppression_recovery_cases((CPUModel)model);quiet_recovery_cases((CPUModel)model);differential_cases((CPUModel)model,1,8);
+        suppression_recovery_cases((CPUModel)model);quiet_recovery_cases((CPUModel)model);quiet_overflow_found_case((CPUModel)model);
+        differential_cases((CPUModel)model,1,8);
         resolve_count=observe_count=trigger_count=0;sustained_error_cases((CPUModel)model);number_cases((CPUModel)model);phase_cases((CPUModel)model);}
     arc_rpc_observer_retire(false);arc_rpc_memory_close();puts("RPC observers: authored four-CPU error/disc/phase matrix");return 0;
 }

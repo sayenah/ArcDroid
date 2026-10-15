@@ -441,21 +441,25 @@ can trigger again. FOUND never drops earlier queued misses; their observations
 and triggers precede FOUND, including when they concern the same object. This uses
 bounded copied-data inspection, never guest path resolution. No resolver or
 frontend callback runs inside guest execution.
-First-observation logging reads the copied callback identity.
+First-observation logging reads the copied callback identity. FOUND classification
+also retires an existing BUSY retry for that canonical object synchronously:
+presentation runs retries before the drain. This cancellation does not advance
+FOUND's queued history/latch effects or retire retries for other objects.
 
 After every overflow, signal B is "possibly latched": RPC suppresses B
 observation callbacks, new triggers, hints and replacement eligibility. Lifting
 a dropped BUSY retry's old latch does not bypass suppression. Recovery requires
-a global history/latch clear: an applied lifecycle marker, `disc_clear` or media
-reconfiguration, reset, or a new epoch. FOUND only retires its own object and
-never releases suppression. A lifecycle marker that itself overflows is applied
+a global history/latch clear: an applied lifecycle marker, an admitted signal A,
+`disc_clear` or media reconfiguration, reset, or a new epoch. FOUND only retires
+its own object and never releases suppression. A lifecycle marker that itself overflows is applied
 synchronously; an earlier lost marker clears old history/latch, while later
 lost items remain uncertain. Signal A's existing global history clear,
 supersession and replacement route are unchanged.
 
 Quiet recovery is also safe strictly beyond 120 seconds of guest time without
 any signal-B miss. Every miss, including an unresolved one, updates the source
-timestamp. Each copied work item retains its predecessor's timestamp alongside
+timestamp. Non-miss items, including an overflowing FOUND, do not refresh it.
+Each copied work item retains its predecessor's timestamp alongside
 its own, so recovery occurs in guest order even when later misses are already
 queued. Recovery is checked before candidate resolution; suppressed misses do
 not rebuild partial history. At that point every shared identity and possible

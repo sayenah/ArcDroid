@@ -257,7 +257,7 @@ static void queue_disc(const ArcRpcObservation *e,unsigned kind)
      * This is bounded copied-data inspection, never host resolution or I/O. */
     bool clear=kind==DISC_CLEAR || arc_rpc_observer_queued(ARC_RPC_OBS_DISC,DISC_CLEAR);
     if(!arc_rpc_observer_queue(&work)){
-        state.disc_suppressed=true;state.disc_last_miss_ns=e->ns;
+        state.disc_suppressed=true;
         if(clear){arc_disc_request_clear(&state.disc);state.disc.profile=&state.disc_profile;state.retry_pending=false;}
         else {
             memset(state.disc.identities,0,sizeof(state.disc.identities));
@@ -291,6 +291,9 @@ static void disc_event(void *opaque,const ArcRpcObservation *e)
         else if(e->matched && !(e->nzcv&0x10000000u) &&
             (state.disc.operation==ARC_DISC_LOAD || e->registers[0]!=0))
         {
+            /* Presentation retries before draining: finding this object ends
+             * an existing BUSY retry now, without advancing queued history. */
+            if(state.retry_pending && !strcmp(state.disc.object,(const char *)state.retry_work.bytes))state.retry_pending=false;
             queue_disc(e,DISC_FOUND);
         }
         state.disc_watch=0;return;
