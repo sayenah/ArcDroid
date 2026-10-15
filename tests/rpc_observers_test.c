@@ -335,10 +335,11 @@ static void queue_loss_cases(CPUModel model)
         }
         arc_rpc_observer_drain();resolve_count=0;unsigned before_trigger=trigger_count;
         miss(x,0x100);arc_rpc_observer_drain();assert(trigger_count==before_trigger);
+        lifecycle(0);arc_rpc_observer_drain();miss(x,0x100);arc_rpc_observer_drain();
         ArcDiscRequest got;arc_rpc_observers_disc_snapshot(&got);assert(got.observations==1);
     }
-    /* FOUND can be either queued or the item that overflows. It retires X,
-     * while unrelated Y history survives without a lifecycle barrier. */
+    /* Every overflow clears X and Y history, whether FOUND was queued or
+     * was the overflowing item. A lost FOUND conservatively keeps a latch. */
     for(unsigned slot=0;slot<=16;++slot){
         disc_fixture(model);miss(x,0x100);miss(y,0x140);arc_rpc_observer_drain();
         for(unsigned i=0;i<17;++i){
@@ -346,16 +347,21 @@ static void queue_loss_cases(CPUModel model)
             else miss("ADFS::AuthDisc.$.Noise",0x1c0);
         }
         arc_rpc_observer_drain();miss(x,0x100);arc_rpc_observer_drain();assert(!trigger_count);
-        miss(y,0x140);arc_rpc_observer_drain();assert(trigger_count==1);
+        miss(y,0x140);arc_rpc_observer_drain();assert(!trigger_count);
+        miss(y,0x140);arc_rpc_observer_drain();assert(!trigger_count);
+        lifecycle(0);arc_rpc_observer_drain();miss(y,0x140);miss(y,0x140);arc_rpc_observer_drain();assert(trigger_count==1);
     }
     for(unsigned slot=0;slot<=16;slot+=16){
         disc_fixture(model);miss(x,0x100);miss(x,0x100);arc_rpc_observer_drain();assert(trigger_count==1);
         for(unsigned i=0;i<17;++i){
             if(i==slot)miss_mode(x,0x100,16,true);else miss(y,0x140);
         }
-        arc_rpc_observer_drain();ArcDiscRequest got;arc_rpc_observers_disc_snapshot(&got);assert(!got.b_triggered);
-        miss(x,0x100);arc_rpc_observer_drain();assert(trigger_count==1);
-        miss(x,0x100);arc_rpc_observer_drain();assert(trigger_count==2);
+        arc_rpc_observer_drain();ArcDiscRequest got;arc_rpc_observers_disc_snapshot(&got);assert(got.b_triggered);
+        miss(x,0x100);miss(x,0x100);arc_rpc_observer_drain();assert(trigger_count==1);
+        miss_mode(x,0x100,16,true);arc_rpc_observer_drain();
+        miss(x,0x100);miss(x,0x100);arc_rpc_observer_drain();assert(trigger_count==1);
+        lifecycle(0);arc_rpc_observer_drain();
+        miss(x,0x100);miss(x,0x100);arc_rpc_observer_drain();assert(trigger_count==2);
     }
     for(unsigned triggered=0;triggered<2;++triggered){
         disc_fixture(model);miss(x,0x100);arc_rpc_observer_drain();
@@ -364,10 +370,12 @@ static void queue_loss_cases(CPUModel model)
         arc_rpc_observer_drain();ArcDiscRequest got;arc_rpc_observers_disc_snapshot(&got);
         assert(!got.b_triggered);
         miss(x,0x100);arc_rpc_observer_drain();assert(trigger_count==triggered);
-        /* A drained/lost marker must not cause a subsequent pure-miss
-         * overflow to clear new history. */
+        /* Every overflow clears new history, while lifecycle retirement
+         * above still prevents a pre-clear trigger latch surviving. */
         for(unsigned i=0;i<17;++i)miss(y,0x140);
-        arc_rpc_observer_drain();miss(x,0x100);arc_rpc_observer_drain();assert(trigger_count==triggered+1);
+        arc_rpc_observer_drain();miss(x,0x100);arc_rpc_observer_drain();assert(trigger_count==triggered);
+        miss(x,0x100);arc_rpc_observer_drain();assert(trigger_count==triggered);
+        lifecycle(0);arc_rpc_observer_drain();miss(x,0x100);miss(x,0x100);arc_rpc_observer_drain();assert(trigger_count==triggered+1);
     }
 }
 static void busy_fixture(CPUModel model)
@@ -431,6 +439,250 @@ static void retry_guard_cases(CPUModel model)
     arc_rpc_observers_override(252,0,0,UINT32_MAX);assert(!box().modal_unknown);
     report(3);poll(0x18c,19,0,0,0x10001000);assert(!box().modal_unknown && box().answer_available);
 }
+/* Run K: event-by-event oracle, including callbacks that do not insert. */
+typedef struct {
+    bool miss,seen,trigger;unsigned observation;uint32_t pc,sp;char object[256];
+} DiscExpected;
+static DiscExpected disc_expected[64];
+static bool disc_exact;
+static unsigned diff_model,diff_seed,diff_frame;
+static unsigned differential_triggers,differential_events,differential_overflows;
+static unsigned differential_resolve(void *opaque,const char *path,ArcDiscOperation operation)
+{ (void)opaque;(void)path;assert(operation==ARC_DISC_CATALOGUE || operation==ARC_DISC_OPEN_DIR);return 1; }
+static bool differential_observe(void *opaque,const char *path,unsigned candidate,unsigned observation,bool trigger)
+{
+    (void)opaque;assert(candidate==1);ArcDiscRequest copy;arc_rpc_observers_disc_snapshot(&copy);
+    const ArcDiscIdentity *identity=NULL;
+    for(unsigned i=0;i<ARC_DISC_IDENTITY_CAPACITY;++i){
+        const ArcDiscIdentity *item=&copy.identities[i];
+        if(item->occupied && item->continuation==copy.continuation && item->sp==copy.sp && !strcmp(item->object,path))identity=item;
+    }
+    assert(identity);unsigned event=(unsigned)(identity->observed_us%64);
+    assert(event && event<64);DiscExpected *expected=&disc_expected[event];
+    assert(expected->miss && !expected->seen && !strcmp(expected->object,path));
+    assert(expected->pc+4==copy.continuation && expected->sp==copy.sp);expected->seen=true;
+    if(disc_exact)assert(trigger==expected->trigger && observation==expected->observation);
+    else if(trigger && !expected->trigger){
+        fprintf(stderr,"disc subset mismatch: CPU=%u seed=%u frame=%u event=%u object=%s pc=%x sp=%x oracle-observation=%u RPC-observation=%u\n",
+            diff_model,diff_seed,diff_frame,event,path,expected->pc,expected->sp,expected->observation,observation);
+        assert(!trigger || expected->trigger);
+    }
+    differential_triggers+=trigger;return false; /* A hint leaves the latch set. */
+}
+static uint32_t disc_random(uint32_t *state)
+{ uint32_t value=*state;value^=value<<13;value^=value>>17;value^=value<<5;return *state=value; }
+static void differential_cases(CPUModel model,unsigned seeds,unsigned frames)
+{
+    static const uint32_t initial[]={0x51c07,0x8a91,0x235719,0x643201};
+    for(unsigned leg=0;leg<3;++leg)for(unsigned seed=0;seed<seeds;++seed){
+        bool overflow=leg==1;
+        disc_fixture(model);arc_rpc_observers_disc_configure(true,"AuthDisc",differential_resolve,differential_observe,NULL);
+        ArcDiscRequest shared={0};ArcRpcScheduler stamp={0};uint32_t random=initial[seed];uint64_t bias=0;
+        /* Timestamp-only fixture clock: memory timing remains disabled.
+         * Copied identities carry the original event tag through the drain. */
+        assert(!arc_rpc_mem_fast.enabled);arc_rpc_mem_fast.clock=&stamp;
+        if(leg==2){
+            /* Prove liveness after a global clear, including arbitrary FOUND,
+             * lifecycle and miss sequences after the suppressed prefix. */
+            for(unsigned i=0;i<17;++i)miss("ADFS::AuthDisc.$.Lost",0x100);
+            arc_rpc_observer_drain();lifecycle(seed%8);arc_rpc_observer_drain();
+        }
+        disc_exact=!overflow;diff_model=model;diff_seed=initial[seed];
+        for(unsigned frame=0;frame<frames;++frame){
+            if(frame%17==16)bias+=UINT64_C(120000064); /* >120 s, preserves event tags. */
+            diff_frame=frame;
+            memset(disc_expected,0,sizeof(disc_expected));
+            unsigned length=1+disc_random(&random)%(overflow?48:16);
+            differential_overflows+=length>16;
+            for(unsigned event=1;event<=length;++event){
+                uint64_t time=bias+(uint64_t)frame*64+event;stamp.now_ns=clock_ns=time*1000;
+                unsigned kind=disc_random(&random)%32,mode=(disc_random(&random)&1)?16:0;
+                uint32_t pc=0x100+0x40*(disc_random(&random)%3),sp=0x10008000+16*(disc_random(&random)&1);
+                if(kind>=30){
+                    static const uint32_t swis[]={0x400c7,0x400e1,0x400c0,0x400dd,0x400de,0x11,0x40,0x33};
+                    unsigned which=disc_random(&random)%8;
+                    ArcDiscSwi input={.swi=swis[which],.r0=which==7?4:0};
+                    arc_disc_request_swi(&shared,&input,"AuthDisc");
+                    issue(0x1c0,mode,input.swi,input.r0,0,0,0,sp);
+                }else{
+                    unsigned bound=(disc_random(&random)&3)?3:12;
+                    unsigned object=disc_random(&random)%bound;
+                    char path[64];snprintf(path,sizeof(path),"ADFS::AuthDisc.$.O%u",object);
+                    bool found=kind>=24,find=(disc_random(&random)&1)!=0;
+                    ArcDiscSwi input={.swi=find?13:8,.r0=find?0x40:5,.mode=0,.address=pc,.user_sp=sp,
+                        .name_readable=true,.name=path,.candidate=1};
+                    arc_disc_request_swi(&shared,&input,"AuthDisc");
+                    ArcDiscResult result=arc_disc_request_continue(&shared,pc+4,0,sp,found?1:0,false,false,0,time);
+                    DiscExpected *expected=&disc_expected[event];expected->miss=!found;
+                    expected->trigger=result.trigger;expected->observation=result.observation;expected->pc=pc;expected->sp=sp;
+                    assert(arc_disc_request_name(path,"AuthDisc",expected->object));
+                    strcpy((char *)ram00,path);issue(pc,mode,input.swi,input.r0,0x10000000,0,0,sp);
+                    arm.reg[0]=found?1:0;arc_rpc_arm_exec_count(2);
+                }
+                ++differential_events;
+            }
+            arc_rpc_observers_frame(bias+(uint64_t)frame*64+length);arc_rpc_observer_drain();
+            if(disc_exact)for(unsigned event=1;event<=length;++event)assert(disc_expected[event].seen==disc_expected[event].miss);
+        }
+        arc_rpc_mem_fast.clock=NULL;
+    }
+}
+static void ordered_found_cases(CPUModel model)
+{
+    disc_fixture(model);ArcDiscRequest shared={0};unsigned expected=0;
+    const char *a="ADFS::AuthDisc.$.A",*b="ADFS::AuthDisc.$.B";
+    miss(b,0x100);expected+=shared_miss(&shared,b,false).trigger;
+    miss(a,0x100);expected+=shared_miss(&shared,a,false).trigger;
+    miss(a,0x100);expected+=shared_miss(&shared,a,false).trigger;
+    arc_rpc_observer_drain();assert(trigger_count==expected && expected==1);
+    miss(b,0x100);expected+=shared_miss(&shared,b,false).trigger;
+    miss_mode(a,0x100,16,true);expected+=shared_miss(&shared,a,true).trigger;
+    arc_rpc_observer_drain();assert(trigger_count==expected && expected==1); /* cumulative, no new frame-1 trigger */
+    /* Earlier same-object misses must also produce their trigger before FOUND. */
+    disc_fixture(model);miss(a,0x100);miss(a,0x100);miss_mode(a,0x100,16,true);
+    arc_rpc_observer_drain();assert(trigger_count==1);ArcDiscRequest copy;arc_rpc_observers_disc_snapshot(&copy);assert(!copy.b_triggered);
+    /* Retirement of an arm before its matching return must not manufacture
+     * a FOUND marker that clears previously drained history. */
+    disc_fixture(model);miss(a,0x100);arc_rpc_observer_drain();
+    strcpy((char *)ram00,a);issue(0x100,16,8,5,0x10000000,0,0,0x10008000);
+    arc_rpc_observers_disc_snapshot(&copy);assert(copy.armed);copy.armed=false;
+    arc_rpc_observers_test_disc_state(&copy);arm.reg[0]=1;arc_rpc_arm_exec_count(2);
+    arc_rpc_observer_drain();miss(a,0x100);arc_rpc_observer_drain();assert(trigger_count==1);
+}
+static void overflow_eviction_cases(CPUModel model)
+{
+    const char *y="ADFS::AuthDisc.$.Y";
+    for(unsigned n=8;n<=40;++n){
+        disc_fixture(model);ArcDiscRequest shared={0};unsigned expected=0;
+        miss(y,0x100);expected+=shared_miss(&shared,y,false).trigger;arc_rpc_observer_drain();
+        for(unsigned i=0;i<n;++i){char path[64];snprintf(path,sizeof(path),"ADFS::AuthDisc.$.N%u",i);
+            miss(path,0x100);expected+=shared_miss(&shared,path,false).trigger;}
+        arc_rpc_observer_drain();miss(y,0x100);expected+=shared_miss(&shared,y,false).trigger;arc_rpc_observer_drain();
+        assert(!expected && !trigger_count);
+    }
+    /* The overflowing lifecycle item itself positively retires a prior
+     * completed trigger, even though it cannot enter the full queue. */
+    for(unsigned which=0;which<8;++which){
+        disc_fixture(model);miss(y,0x100);miss(y,0x100);arc_rpc_observer_drain();assert(trigger_count==1);
+        for(unsigned i=0;i<16;++i)miss("ADFS::AuthDisc.$.Noise",0x140);
+        lifecycle(which);arc_rpc_observer_drain();ArcDiscRequest copy;arc_rpc_observers_disc_snapshot(&copy);assert(!copy.b_triggered);
+        miss(y,0x100);miss(y,0x100);arc_rpc_observer_drain();assert(trigger_count==2);
+    }
+    /* A hint/failed commit leaves a latch. Overflow must not create a new
+     * notice each frame, even after rebuilding two observations. */
+    disc_fixture(model);miss(y,0x100);miss(y,0x100);arc_rpc_observer_drain();assert(trigger_count==1);
+    for(unsigned frame=0;frame<20;++frame){
+        resolve_count=0;for(unsigned i=0;i<17;++i)miss("ADFS::AuthDisc.$.Noise",0x140);
+        arc_rpc_observer_drain();miss(y,0x100);miss(y,0x100);arc_rpc_observer_drain();assert(trigger_count==1);
+    }
+    for(unsigned overflow=0;overflow<2;++overflow){
+        busy_fixture(model);
+        if(overflow){for(unsigned i=0;i<17;++i)miss("ADFS::AuthDisc.$.Noise",0x140);
+            assert(!arc_rpc_observers_test_retry(NULL));ArcDiscRequest copy;arc_rpc_observers_disc_snapshot(&copy);assert(!copy.b_triggered);}
+        arc_rpc_observer_drain();arc_rpc_observers_frame(1);
+        if(overflow){assert(!retry_insertions);miss("ADFS::AuthDisc.$.Later",0x100);miss("ADFS::AuthDisc.$.Later",0x100);arc_rpc_observer_drain();
+            assert(!retry_insertions);lifecycle(0);arc_rpc_observer_drain();
+            miss("ADFS::AuthDisc.$.Later",0x100);miss("ADFS::AuthDisc.$.Later",0x100);arc_rpc_observer_drain();}
+        assert(retry_insertions==1);arc_rpc_observers_frame(2);assert(retry_insertions==1);
+    }
+}
+static void suppression_recovery_cases(CPUModel model)
+{
+    static const uint32_t swis[]={0x400c7,0x400e1,0x400c0,0x400dd,0x400de,0x11,0x40,0x33};
+    const char *a="ADFS::AuthDisc.$.A",*b="ADFS::AuthDisc.$.B";
+    for(unsigned recovery=0;recovery<13;++recovery){
+        disc_fixture(model);ArcDiscRequest oracle={0};ArcRpcScheduler stamp={0};
+        arc_rpc_mem_fast.clock=&stamp;
+        for(unsigned i=0;i<17;++i){char path[64];
+            if(i<2)strcpy(path,a);else snprintf(path,sizeof(path),"ADFS::AuthDisc.$.N%u",i);
+            miss(path,0x100);(void)shared_miss(&oracle,path,false);
+        }
+        arc_rpc_observer_drain();assert(!trigger_count && !observe_count);
+        miss(b,0x100);miss(b,0x100);arc_rpc_observer_drain();
+        assert(!trigger_count && !observe_count); /* No new B hint either. */
+        (void)shared_miss(&oracle,b,false);(void)shared_miss(&oracle,b,false);
+        if(recovery<8){
+            ArcDiscSwi input={.swi=swis[recovery],.r0=recovery==7?4:0};
+            arc_disc_request_swi(&oracle,&input,"AuthDisc");lifecycle(recovery);arc_rpc_observer_drain();
+        }else if(recovery==8){arc_disc_request_clear(&oracle);arc_rpc_observers_disc_clear();}
+        else if(recovery==9){++media[0];arc_disc_request_clear(&oracle);
+            arc_rpc_observers_disc_configure(true,"AuthDisc",resolve_disc,observe_disc,NULL);}
+        else if(recovery==10){arc_disc_request_clear(&oracle);arc_rpc_observer_retire(false);arc_rpc_observers_rebase(model);}
+        else if(recovery==11){arc_disc_request_clear(&oracle);arc_rpc_observers_rebase(model);}
+        else stamp.now_ns=UINT64_C(120000001000); /* Quiet since time zero. */
+        /* After recovery these events have identical history in both policies:
+         * an explicit global clear, or every old identity is beyond its window. */
+        for(unsigned event=0;event<8;++event){
+            unsigned before=trigger_count;const char *path=event<4?b:a;
+            ArcDiscSwi input={.swi=8,.r0=5,.mode=0,.address=0x100,.user_sp=0x10008000,
+                .name_readable=true,.name=path,.candidate=1};
+            arc_disc_request_swi(&oracle,&input,"AuthDisc");
+            ArcDiscResult result=arc_disc_request_continue(&oracle,0x104,0,0x10008000,0,false,false,0,stamp.now_ns/1000);
+            miss(path,0x100);arc_rpc_observer_drain();assert(trigger_count-before==result.trigger);
+        }
+        assert(trigger_count==1 && observe_count==8);arc_rpc_mem_fast.clock=NULL;
+    }
+    /* Suppression also gates a retained completed latch; signal A keeps its
+     * existing independent admission and supersession behavior. */
+    disc_fixture(model);miss(a,0x100);miss(a,0x100);arc_rpc_observer_drain();assert(trigger_count==1);
+    for(unsigned i=0;i<17;++i)miss("ADFS::AuthDisc.$.Noise",0x140);
+    assert(!arc_rpc_observers_replace(ARC_DISC_SIGNAL_B));
+    assert(request_a());
+}
+static unsigned quiet_resolve(void *opaque,const char *path,ArcDiscOperation operation)
+{ (void)opaque;(void)operation;return !strcmp(path,"$.Unmapped")?UINT_MAX:1; }
+static bool quiet_event(ArcDiscRequest *oracle,ArcRpcScheduler *stamp,const char *path,uint64_t time,bool found,bool exact)
+{
+    stamp->now_ns=time*1000;clock_ns=stamp->now_ns;
+    ArcDiscSwi input={.swi=8,.r0=5,.mode=0,.address=0x100,.user_sp=0x10008000,
+        .name_readable=true,.name=path,.candidate=strstr(path,".Unmapped")?UINT_MAX:1};
+    arc_disc_request_swi(oracle,&input,"AuthDisc");
+    ArcDiscResult result=arc_disc_request_continue(oracle,0x104,0,0x10008000,found?1:0,false,false,0,time);
+    unsigned before=trigger_count;
+    miss_mode(path,0x100,16,found);arc_rpc_observer_drain();bool actual=trigger_count!=before;
+    assert(!actual || result.trigger);if(exact)assert(actual==result.trigger);return actual;
+}
+static void quiet_recovery_cases(CPUModel model)
+{
+    const char *a="ADFS::AuthDisc.$.A",*b="ADFS::AuthDisc.$.B";
+    /* Different lost histories, including a retained B observation beside the
+     * lost A latch. FOUND of A or C cannot realign either history. */
+    for(unsigned scenario=0;scenario<3;++scenario){
+        disc_fixture(model);arc_rpc_observers_disc_configure(true,"AuthDisc",quiet_resolve,observe_disc,NULL);
+        ArcDiscRequest oracle={0};ArcRpcScheduler stamp={0};arc_rpc_mem_fast.clock=&stamp;
+        for(unsigned i=0;i<17;++i){char path[64];
+            if(i<2)strcpy(path,a);else if(scenario==2 && i==16)strcpy(path,b);else snprintf(path,sizeof(path),"ADFS::AuthDisc.$.N%u",i);
+            (void)shared_miss(&oracle,path,false);miss(path,0x100);
+        }
+        arc_rpc_observer_drain();assert(!observe_count);
+        const char *found=scenario==2?a:"ADFS::AuthDisc.$.C";
+        assert(!quiet_event(&oracle,&stamp,found,1,true,false));
+        assert(!quiet_event(&oracle,&stamp,b,2,false,false));
+        assert(!quiet_event(&oracle,&stamp,b,3,false,false));assert(!observe_count);
+        /* A miss of any object, even unresolved, postpones expiry. */
+        assert(!quiet_event(&oracle,&stamp,a,100000000,false,false));
+        assert(!quiet_event(&oracle,&stamp,b,120000001,false,false));assert(!observe_count);
+        assert(!quiet_event(&oracle,&stamp,"ADFS::AuthDisc.$.Unmapped",180000000,false,false));
+        assert(!quiet_event(&oracle,&stamp,b,240000002,false,false));assert(!observe_count);
+        /* Inclusive shared window is still suppressed and itself resets quiet. */
+        assert(!quiet_event(&oracle,&stamp,b,360000002,false,false));assert(!observe_count);
+        uint64_t time=480000003;
+        for(unsigned i=0;i<32;++i){char path[64];snprintf(path,sizeof(path),"ADFS::AuthDisc.$.N%u",i%12);
+            (void)quiet_event(&oracle,&stamp,i<2?b:path,time+i,false,true);
+        }
+        assert(trigger_count==1 && observe_count==32);arc_rpc_mem_fast.clock=NULL;
+    }
+    /* Two misses after quiet in one frame must recover at the first item's
+     * timestamp, despite the second already having updated the latest arm. */
+    disc_fixture(model);ArcRpcScheduler stamp={0};arc_rpc_mem_fast.clock=&stamp;
+    for(unsigned i=0;i<17;++i)miss(a,0x100);arc_rpc_observer_drain();
+    stamp.now_ns=UINT64_C(120000001000);miss(b,0x100);++stamp.now_ns;miss(b,0x100);
+    arc_rpc_observer_drain();assert(trigger_count==1 && observe_count==2);arc_rpc_mem_fast.clock=NULL;
+    disc_fixture(model);stamp.now_ns=UINT64_C(100000000000);arc_rpc_mem_fast.clock=&stamp;
+    for(unsigned i=0;i<17;++i)miss(a,0x100);arc_rpc_observer_drain();
+    stamp.now_ns=0;miss(b,0x100);miss(b,0x100);arc_rpc_observer_drain();
+    assert(!observe_count && !trigger_count);arc_rpc_mem_fast.clock=NULL;
+}
 static void adjudicated_cases(CPUModel model)
 {
     control_cases(model);number_subscriptions(model);
@@ -480,7 +732,7 @@ static void adjudicated_cases(CPUModel model)
                 (void)arc_disc_request_continue(&shared,0x144,0,0x10008000,1,false,false,0,0);
                 miss_mode(input.name,0x140,16,true);
             }
-            if(scenario==0 || iteration==1){arc_rpc_observer_drain();assert(trigger_count==shared_triggers);if(scenario==2)assert(resolve_count==0);}
+            if(scenario==0 || iteration==1){arc_rpc_observer_drain();assert(trigger_count==shared_triggers);if(scenario==2)assert(resolve_count==2);}
             if(scenario==1 && iteration==1){
                 /* Shared Arculator counts these two before the lifecycle SWI. */
                 assert(result.trigger);
@@ -539,8 +791,12 @@ static void adjudicated_cases(CPUModel model)
         if(triggered){miss("ADFS::AuthDisc.$.Before",0x100);arc_rpc_observer_drain();}
         for(unsigned i=0;i<17;++i)miss("ADFS::AuthDisc.$.Overflow",0x140);
         arc_rpc_observer_drain();ArcDiscRequest kept;arc_rpc_observers_disc_snapshot(&kept);
-        assert(kept.identities[0].occupied && !strcmp(kept.identities[0].object,"$.Before") && kept.b_triggered==(triggered!=0));
-        miss("ADFS::AuthDisc.$.Before",0x100);arc_rpc_observer_drain();assert(trigger_count==1);
+        for(unsigned i=0;i<ARC_DISC_IDENTITY_CAPACITY;++i)assert(!kept.identities[i].occupied);
+        assert(!kept.next_order && !kept.observations && kept.b_triggered==(triggered!=0));
+        miss("ADFS::AuthDisc.$.Before",0x100);arc_rpc_observer_drain();assert(trigger_count==triggered);
+        miss("ADFS::AuthDisc.$.Before",0x100);arc_rpc_observer_drain();assert(trigger_count==triggered);
+        lifecycle(0);arc_rpc_observer_drain();miss("ADFS::AuthDisc.$.Before",0x100);miss("ADFS::AuthDisc.$.Before",0x100);
+        arc_rpc_observer_drain();assert(trigger_count==triggered+1);
     }
     start(model,252);retry_attempts=retry_insertions=0;
     arc_rpc_observers_disc_configure(true,"AuthDisc",resolve_disc,busy_observation,NULL);
@@ -815,6 +1071,16 @@ int main(int argc,char **argv)
     arm_init();protected=1;if(setjmp(boundary))return 1;
     config.mem_size=64;config.vram_size=2;mem_init();
     if(argc==2 && !strcmp(argv[1],"--qualification")){qualification_dump();arc_rpc_observer_retire(false);arc_rpc_memory_close();return 0;}
+    if(argc==2 && !strcmp(argv[1],"--recovery-positive")){
+        for(unsigned model=0;model<4;++model){suppression_recovery_cases((CPUModel)model);quiet_recovery_cases((CPUModel)model);}
+        arc_rpc_observer_retire(false);arc_rpc_memory_close();puts("RPC suppression: global-clear/quiet-expiry liveness on four CPUs; A unaffected");return 0;
+    }
+    if(argc>=2 && !strcmp(argv[1],"--differential")){
+        bool sanitizer=argc==3 && !strcmp(argv[2],"sanitizer");
+        for(unsigned model=0;model<4;++model)differential_cases((CPUModel)model,sanitizer?2:4,sanitizer?64:256);
+        printf("RPC disc differential: %u events, %u triggers, %u overflow frames; four CPUs\n",differential_events,differential_triggers,differential_overflows);
+        arc_rpc_observer_retire(false);arc_rpc_memory_close();return 0;
+    }
     for(unsigned catalogue=0;catalogue<=5;++catalogue)for(unsigned cpu=0;cpu<4;++cpu)
         for(unsigned owner=0;owner<4;++owner)for(unsigned capability=0;capability<=ARC_RPC_CAP_REPLACE_B;++capability){
             ArcRpcObserverQualification q=arc_rpc_observer_qualification(catalogue,cpu,(ArcRpcObserver)owner,(ArcRpcObserverCapability)capability);
@@ -828,6 +1094,8 @@ int main(int argc,char **argv)
     }
     for(unsigned model=0;model<4;++model){error_cases((CPUModel)model);disc_cases((CPUModel)model);adjudicated_cases((CPUModel)model);
         queue_loss_cases((CPUModel)model);retry_guard_cases((CPUModel)model);
+        ordered_found_cases((CPUModel)model);overflow_eviction_cases((CPUModel)model);
+        suppression_recovery_cases((CPUModel)model);quiet_recovery_cases((CPUModel)model);differential_cases((CPUModel)model,1,8);
         resolve_count=observe_count=trigger_count=0;sustained_error_cases((CPUModel)model);number_cases((CPUModel)model);phase_cases((CPUModel)model);}
     arc_rpc_observer_retire(false);arc_rpc_memory_close();puts("RPC observers: authored four-CPU error/disc/phase matrix");return 0;
 }
