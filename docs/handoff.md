@@ -7,10 +7,10 @@
 - Workflows are read-only helpers. Their findings are evidence for Fable to adjudicate. Implementation goes only through Sol, and QA only through `arcdroid-opus-qa`.
 
 **Running (S65).** All belong to this session; see the ledger for PIDs, logs and watchdogs.
-- W1: Sol R3c-2 run I (resuming `01a139e9-…`, clone `.work/s64/r3c2/clone`).
+- W1: Opus QA re-check of runs H and I (`.work/s65/qa-r3c2-hi/`).
 - W2: Sol R3c-3b part 2 run B (resuming `01a13c0b-…`, clone `.work/s64/r3c3b/clone`); Sol R3d-2 run B (resuming `01a13e11-7e0a-…`, clone `.work/s65/r3d2/clone`).
 
-**W1 — R3c-2 observers.** PR #408, `slice/r3c2-observers`, head `5955a52` (run H, committed verbatim with Fable's record amendment; CI running). **Stage:** IMPLEMENTATION (run I), then QA re-check of H and I. **Owner:** Sol, then Opus.
+**W1 — R3c-2 observers.** PR #408, `slice/r3c2-observers`, head `756295c` (run H `5955a52` with Fable's record amendment, then run I `756295c`: host 399/399, sanitizer 33/33, 146 mutants killed). **Stage:** QA (re-check of runs H and I in a fresh clone). **Owner:** Opus. **Next (Opus):** review `9a0ef41..756295c` against D-187, the deep-review adjudication in run H's prompt (`.work/s65/w1/promptR3c2-H.md`), the F/G adjudication (`.work/s65/qa-r3c2/adjudication-FG.md`) and the amended qualification record; run the affected tests and mutants.
 - **Evidence (S65).** QA re-check of F and G: PASS WITH LOWS (adjudication `.work/s65/qa-r3c2/adjudication-FG.md`; run I prompt `.work/s65/w1/promptR3c2-I.md`). Odin3 R-H at run G: p50 +1.75 %/+1.31 %, p95 +1.88 %/+1.33 % (D-180 PASS on the hot workload). Override-free seven-pair rerun on run G, trace off: production binds on real firmware, 149/151 guest frames byte-identical to the override qualification legs, the 2 differing are the ordinary-number controls (no answer under zero-only, as expected at run G). Run H: host 399/399, sanitizer 33/33.
 - **Open cost question (D-180 on real SWI-dense workloads).** Run H's Mac SWI-dense leg (one SWI per 35 instructions) is +7.0 % p50 after SWI-number filtering. The R3c-3a AC-7 desktop legs (run F observers live, unfiltered) are +3.9–4.5 % on the Odin3 and +4.4–6.1 % on Windows against `686b1b7`. 031 gameplay makes one SWI per about 2,500 instructions.
 - **Next (W1):**
