@@ -12,7 +12,7 @@ static unsigned checks;
 static ArcRpcSelection select_set(const ArcRpcCompatibility *d, size_t n, unsigned installed,
    bool failure, unsigned m, unsigned f)
 {
-   ArcRpcFirmwareInventory i = {.installed=installed,.vfs_failure=failure};
+   ArcRpcFirmwareInventory i = {.installed=installed,.vfs_failure=failure,.state=ARC_RPC_INVENTORY_SCANNED};
    ++checks;
    return arc_riscpc_select(d,n,&i,(ArcRpcSelectionModel)m,(ArcRpcSelectionOs)f);
 }
@@ -38,6 +38,11 @@ static void public_tuples(void)
       d.sha1[0]^=1;assert(!arc_riscpc_firmware_recognize(&d,t,n));
    }
    assert(!arc_riscpc_firmware_recognize(NULL,t,n));
+   ArcDigest authored=arc_digest("authored",8);
+   ArcRpcFirmwareFingerprint invalid={ARC_RPC_OS_AUTO,authored.size,authored.crc32,authored.sha1};
+   assert(!arc_riscpc_firmware_recognize(&authored,&invalid,1));
+   invalid.os=(ArcRpcSelectionOs)5;
+   assert(!arc_riscpc_firmware_recognize(&authored,&invalid,1));
    /* Persistence tags must keep their pre-R3a values. */
    assert(ARC_OS_UNKNOWN==0 && ARC_OS_TEST==1 && ARC_OS_RISCOS_311==2 && ARC_OS_RISCOS_310==3 &&
       ARC_OS_RISCOS_319==4 && ARC_OS_RISCOS_300==5 && ARC_OS_RISCOS_201==6 && ARC_OS_RISCOS_200==7 &&
@@ -122,11 +127,20 @@ static void boundaries(void)
    ds[0]=(ArcRpcCompatibility){16,8};
    ArcRpcSelection s=select_set(ds,1,8,true,0,0);
    assert(s.reason==ARC_RPC_SELECTION_SELECTED&&s.incomplete&&s.os==ARC_RPC_OS_370);
-   ArcRpcFirmwareInventory i={.bounded=true};
+   ArcRpcFirmwareInventory i={.bounded=true,.state=ARC_RPC_INVENTORY_SCANNED};
    s=arc_riscpc_select(ds,1,&i,0,0);
-   assert(s.reason==ARC_RPC_SELECTION_MISSING_FIRMWARE&&s.incomplete&&s.needed==24);
+   assert(s.reason==ARC_RPC_SELECTION_INCOMPLETE_SCAN&&s.incomplete&&s.needed==24);
+   i.installed=30;s=arc_riscpc_select(ds,1,&i,0,0);
+   assert(s.reason==ARC_RPC_SELECTION_INCOMPLETE_SCAN&&!s.model&&!s.os&&s.incomplete);
    char text[256];arc_riscpc_selection_diagnostic(&s,text,sizeof(text));
    assert(strstr(text,"needed=3.70,3.71")&&strstr(text,"inventory=incomplete"));
+   i.bounded=false;i.resource_failure=true;i.installed=0;
+   s=arc_riscpc_select(ds,1,&i,0,0);
+   assert(s.reason==ARC_RPC_SELECTION_MISSING_FIRMWARE&&s.incomplete);
+   arc_riscpc_selection_diagnostic(&s,text,sizeof(text));assert(strstr(text,"inventory=incomplete"));
+   i=(ArcRpcFirmwareInventory){.state=ARC_RPC_INVENTORY_SKIPPED};
+   s=arc_riscpc_select(NULL,0,&i,0,0);arc_riscpc_selection_diagnostic(&s,text,sizeof(text));
+   assert(s.reason==ARC_RPC_SELECTION_LEGACY&&strstr(text,"inventory=skipped"));
    ArcRpcCompatibility a=arc_riscpc_compatibility(true,0xffffffff);
    assert(a.cpu==63&&a.os==127);
    a=arc_riscpc_compatibility(false,0xffffffff);assert(!a.cpu&&!a.os);

@@ -8,7 +8,7 @@ import zipfile
 from generate_fixtures import build_extended_jfd
 import struct
 
-exe, core, rom, target = sys.argv[1:]
+exe, core, rom, target = sys.argv[1:5]
 out = pathlib.Path(target)
 if out.exists():
     shutil.rmtree(out)
@@ -23,4 +23,4 @@ for name, entries in [("set.zip", [("1.jfd", disc(20,12,1,2)), ("2.jfd",disc(20,
     with zipfile.ZipFile(out / name, "w", compression=zipfile.ZIP_DEFLATED) as z:
         for member, data in entries:
             z.writestr(member,data)
-subprocess.run([exe,core,rom,str(out)],check=True)
+subprocess.run([exe,core,rom,str(out),*sys.argv[5:]],check=True)
