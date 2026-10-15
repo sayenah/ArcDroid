@@ -123,6 +123,17 @@ bool arc_engine_rpc_start(unsigned model, const uint8_t *rom, size_t size,
 bool arc_engine_rpc_attach(const ArcEngineMedia *media, const ArcEngineMedia *helper,
     const ArcIdeBackend *ide, char *, size_t);
 bool arc_engine_rpc_ide(const ArcIdeBackend *ide);
+/* Per-cell RPC authority; ordinary loads still route to Arculator. */
+enum { ARC_RPC_CELL_BOOT=1, ARC_RPC_CELL_LAUNCH=2, ARC_RPC_CELL_ERROR=4,
+   ARC_RPC_CELL_ANSWER=8, ARC_RPC_CELL_DISC_A=16, ARC_RPC_CELL_REPLACE_A=32,
+   ARC_RPC_CELL_DISC_B=64, ARC_RPC_CELL_REPLACE_B=128 };
+void arc_engine_rpc_observers_bind(unsigned verified_catalogue);
+bool arc_engine_rpc_observers_replace(ArcDiscSignal signal);
+/* Copied RPC signal and boundary gate diagnostics; no guest pointers or I/O. */
+typedef struct { char name[11]; const char *signal, *gate, *replacement, *last_signal, *last_reason; bool active, notified; } ArcRpcDiscStatus;
+void arc_engine_rpc_disc_status(ArcRpcDiscStatus *);
+bool arc_engine_rpc_observers_capability(unsigned bit);
+void arc_engine_rpc_diagnostics(void);
 bool arc_engine_rpc_mount(unsigned drive, const ArcEngineMedia *, char *, size_t);
 void arc_engine_rpc_eject(unsigned drive);
 bool arc_engine_rpc_capture_schedule(uint64_t deadline_ns, uint64_t delete_ns);

@@ -6,6 +6,7 @@
 #include "rpc_hd_store.h"
 #include "rpc_preparation.h"
 #include <ctype.h>
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -34,6 +35,15 @@ static void (*plan_log)(const char *);
 static unsigned pending_rate;
 static bool observation_final_failure;
 RETRO_API bool arc_test_plan_observation_complete(void) { return !observation_final_failure; }
+static unsigned observer_cells;
+static unsigned observer_disc_devices=ARC_DISC_DEVICE_UNSPECIFIED;
+static ArcErrorNumberClass observer_error_numbers=ARC_ERROR_NUMBER_ZERO;
+static uint32_t observer_poll_r1,observer_poll_r2,observer_forms;
+static uint32_t observer_buttons[3];static bool observer_buttons_set;
+static char observer_launch[256];
+static bool observer_boot,observer_armed;
+static uint64_t observer_arm_frame;
+static unsigned observer_last_status=UINT_MAX;static uint64_t observer_last_generation=UINT64_MAX;
 static bool observation_unmatched;
 static unsigned observation_quota=200;
 static ArcRpcTraceSelection observation_selection={.classes=ARC_RPC_OBS_SWI,.capacity=ARC_RPC_TRACE_LIMIT};
@@ -73,7 +83,7 @@ static void observation_start(void)
 {
     arc_engine_test_observation_profile(observation_unmatched,observation_quota);
     if(!observation_enabled)return;
-    observation_file=arc_io_create_file(observation_path);
+    if(!observation_file)observation_file=arc_io_create_file(observation_path);
     observation_failed=observation_file==NULL;
     arc_engine_test_observation_trace(true,observation_paths);
     (void)arc_engine_test_observation_select(&observation_selection);
@@ -116,7 +126,32 @@ static void preparation_notice(void *opaque,const char *s,bool error)
 static void preparation_log(void *opaque,const char *s)
 { (void)opaque;if(plan_log)plan_log(s); }
 static void preparation_started(void *opaque,bool factory)
-{ (void)opaque;if(!factory)arc_engine_test_plan_rate(pending_rate); }
+{ (void)opaque;if(!factory)arc_engine_test_plan_rate(pending_rate);else observation_start(); }
+static void preparation_diagnostics(void *opaque) { (void)opaque;observation_frame(); }
+static void observer_start(void)
+{
+    if(observer_cells){arc_engine_test_observers_override(observer_cells,observer_poll_r1,observer_poll_r2,observer_forms);
+        (void)arc_engine_test_observers_disc_devices(observer_disc_devices);
+        (void)arc_engine_test_observers_error_numbers(observer_error_numbers);
+        if(observer_buttons_set)arc_engine_test_observers_buttons(observer_buttons[0],observer_buttons[1],observer_buttons[2]);
+        if(plan_log){char line[256];snprintf(line,sizeof(line),
+            "RPC observers: TEST OVERRIDE; unqualified candidate profile revision=1 cells=0x%02x poll-r1=%u poll-r2=%u forms=0x%08x disc-devices=0x%x error-numbers=%s",
+            observer_cells,observer_poll_r1,observer_poll_r2,observer_forms,observer_disc_devices,
+            observer_error_numbers==ARC_ERROR_NUMBER_ORDINARY?"ordinary":"zero");plan_log(line);}}
+    observer_armed=false;observer_last_status=UINT_MAX;observer_last_generation=UINT64_MAX;
+}
+static void preparation_attached(void *opaque) { (void)opaque;observer_start(); }
+static void observer_status(void)
+{
+    if(!observer_cells && !observer_launch[0] && !observer_boot)return;
+    ArcErrorBox box;ArcLaunchOutcome launch;arc_engine_error_snapshot(&box);arc_engine_launch_outcome_snapshot(&launch);
+    unsigned status=(box.recognised_open?1u:0u)|(box.answer_available?2u:0u)|(box.modal_unknown?4u:0u)|
+        ((unsigned)launch.state<<3)|((unsigned)arc_engine_boot_watch_state()<<7);
+    if((status!=observer_last_status || box.generation!=observer_last_generation) && plan_log){char line[256];snprintf(line,sizeof(line),
+        "RPC observers: recognised-open=%u answer-available=%u modal-unknown=%u generation=%llu launch=%u boot=%u",
+        box.recognised_open,box.answer_available,box.modal_unknown,(unsigned long long)box.generation,launch.state,arc_engine_boot_watch_state());plan_log(line);}
+    observer_last_status=status;observer_last_generation=box.generation;
+}
 static bool preparation_attach(void *opaque,char *e,size_t n)
 {
     (void)opaque;
@@ -142,9 +177,9 @@ bool arc_test_plan_pending(void)
 { return preparation && arc_riscpc_preparation_state(preparation)!=ARC_RPC_PREP_RUNNING; }
 void arc_test_plan_hd_begin_frame(void)
 { arc_engine_test_frame_begin();if(hd_cost_enabled)memset(&hd_cost,0,sizeof(hd_cost)); }
+void arc_test_plan_diagnostics(void) { observation_frame();observer_status(); }
 void arc_test_plan_hd_frame(void)
 {
-    observation_frame();
     hard_disc=arc_riscpc_preparation_disc(preparation);
     if(!preparation)return;
     ArcRpcHdStats stats={0};if(hard_disc)arc_riscpc_hd_stats(hard_disc,&stats);
@@ -236,6 +271,10 @@ void arc_test_plan_clear(void)
 
     }
     observation_unmatched=false;observation_quota=200;
+    observer_cells=observer_poll_r1=observer_poll_r2=observer_forms=0;observer_disc_devices=ARC_DISC_DEVICE_UNSPECIFIED;
+    observer_error_numbers=ARC_ERROR_NUMBER_ZERO;
+    observer_buttons_set=false;memset(observer_buttons,0,sizeof(observer_buttons));observer_launch[0]=0;
+    observer_boot=observer_armed=false;observer_arm_frame=0;observer_last_status=UINT_MAX;
     observation_selection=(ArcRpcTraceSelection){.classes=ARC_RPC_OBS_SWI,.capacity=ARC_RPC_TRACE_LIMIT};
     observation_file=NULL;observation_enabled=observation_paths=observation_failed=false;observation_path[0]=0;
     arc_engine_test_observation_trace(false,false);
@@ -254,9 +293,14 @@ void arc_test_plan_reset(void)
     if(script_active)arc_engine_test_plan_input_ready();
 }
 void arc_test_plan_reset_input(void)
-{ next_event=disk_next=0;script_frame=0;if(script_active)arc_engine_test_plan_input_ready(); }
+{ next_event=disk_next=0;script_frame=0;observer_armed=false;if(script_active)arc_engine_test_plan_input_ready(); }
 void arc_test_plan_input(ArcInputState *input)
 {
+    if(script_active && !observer_armed && script_frame>=observer_arm_frame){
+        observer_armed=true;
+        if(observer_launch[0])(void)arc_engine_launch_outcome_arm(observer_launch);
+        if(observer_boot)arc_engine_boot_watch_arm();
+    }
     if (!script_active) return;
     while (next_event < event_count && events[next_event].frame == script_frame) {
         Event *e = &events[next_event++];
@@ -337,8 +381,8 @@ bool arc_test_plan_load(const char *path, const char *system, const char *save, 
     arc_test_plan_clear();observation_final_failure=false;
     char *text = NULL;
     if (!text_file(path, TEXT_LIMIT, &text)) return fail(error, error_size, "Plan must be bounded ASCII text");
-    const char *keys[] = {"version", "model", "rate_mips", "firmware", "cmos", "seed", "rtc_epoch", "input", "content_id", "cmos_layout", "media", "drive1", "disk_control", "hard_disc", "hd_import", "hd_populate", "observation_trace", "observation_paths", "observation_profile", "observation_quota", "observation_classes", "observation_swis", "observation_capacity"};
-    char *values[23] = {0}; bool valid = true;
+    const char *keys[] = {"version", "model", "rate_mips", "firmware", "cmos", "seed", "rtc_epoch", "input", "content_id", "cmos_layout", "media", "drive1", "disk_control", "hard_disc", "hd_import", "hd_populate", "observation_trace", "observation_paths", "observation_profile", "observation_quota", "observation_classes", "observation_swis", "observation_capacity", "observer_cells", "observer_poll_r1", "observer_poll_r2", "observer_forms", "observer_launch", "observer_boot", "observer_arm_frame", "observer_ok_forms", "observer_cancel_forms", "observer_default_cancel_forms", "observer_disc_devices", "observer_error_numbers"};
+    char *values[35] = {0}; bool valid = true;
     for (char *line = text; line && valid;) {
         char *end = strchr(line, '\n'); if (end) *end++ = 0;
         char *s = trim(line);
@@ -346,8 +390,8 @@ bool arc_test_plan_load(const char *path, const char *system, const char *save, 
             char *equal = strchr(s, '=');
             if (!equal) { valid = false; break; }
             *equal++ = 0; s = trim(s); equal = trim(equal);
-            unsigned k; for (k = 0; k < 23 && strcmp(keys[k], s); ++k) {}
-            if (k == 23 || values[k] || !*equal) { valid = false; break; }
+            unsigned k; for (k = 0; k < 35 && strcmp(keys[k], s); ++k) {}
+            if (k == 35 || values[k] || !*equal) { valid = false; break; }
             values[k] = equal;
         }
         line = end;
@@ -409,6 +453,31 @@ bool arc_test_plan_load(const char *path, const char *system, const char *save, 
         valid=resolve(values[16],save,observation_path) && (!values[17] || !strcmp(values[17],"private"));
         observation_enabled=valid;observation_paths=values[17]!=NULL;
     }else if(values[17])valid=false;
+    for(unsigned k=23;k<=26 && valid;++k)if(values[k]){
+        char *end=NULL;unsigned long long value=strtoull(values[k],&end,0);
+        valid=*values[k]!='-' && *values[k]!='+' && end && !*end && value<=UINT32_MAX && (k!=23 || value<=255);
+        if(valid){if(k==23)observer_cells=(unsigned)value;if(k==24)observer_poll_r1=(uint32_t)value;
+            if(k==25)observer_poll_r2=(uint32_t)value;if(k==26)observer_forms=(uint32_t)value;}
+    }
+    if(valid && values[27]){size_t length=strlen(values[27]);valid=length>=6 && length<sizeof(observer_launch);if(valid)memcpy(observer_launch,values[27],length+1);}
+    if(valid && values[28]){valid=!strcmp(values[28],"launch");observer_boot=valid;}
+    if(valid && values[29])valid=number(values[29],UINT32_MAX,&observer_arm_frame);
+    if(valid && (values[30] || values[31] || values[32])){
+        valid=values[30] && values[31] && values[32];
+        for(unsigned k=30;k<33 && valid;++k){char *end=NULL;unsigned long long value=strtoull(values[k],&end,0);
+            valid=*values[k]!='-' && *values[k]!='+' && end && !*end && value<=UINT32_MAX;
+            if(valid)observer_buttons[k-30]=(uint32_t)value;}
+        observer_buttons_set=valid;
+    }
+    if(valid && values[33]){
+        char *end=NULL;unsigned long long forms=strtoull(values[33],&end,0);
+        valid=*values[33]!='-' && *values[33]!='+' && end && !*end && forms<=3;
+        if(valid)observer_disc_devices=(unsigned)forms;
+    }
+    if(valid && values[34]){
+        valid=!strcmp(values[34],"zero") || !strcmp(values[34],"ordinary");
+        if(valid)observer_error_numbers=!strcmp(values[34],"ordinary")?ARC_ERROR_NUMBER_ORDINARY:ARC_ERROR_NUMBER_ZERO;
+    }
     void *rom = NULL, *seed = NULL; size_t rom_size = 0, seed_size = 0;
     if (valid) valid = arc_io_read_all_limit(firmware, &rom, &rom_size, 8388608, NULL) &&
         (rom_size == 2097152 || rom_size == 4194304 || rom_size == 8388608) &&
@@ -422,13 +491,19 @@ bool arc_test_plan_load(const char *path, const char *system, const char *save, 
             request.seed_path=values[5]?seed_path:NULL;request.hard_disc=hd_enabled;request.populate=hd_populate;
             request.import_path=hd_import[0]?hd_import:NULL;
             ArcRpcPreparationHost host={0};host.notice=preparation_notice;host.log=preparation_log;
-            host.attach=preparation_attach;host.started=preparation_started;
+            host.attach=preparation_attach;host.started=preparation_started;host.diagnostics=preparation_diagnostics;host.attached=preparation_attached;
             pending_rate=(unsigned)rate;
             preparation=arc_riscpc_preparation_low_level(&request,&host,error,error_size);
             valid=preparation!=NULL;
         }
     }
+    if(valid && !persist){
+        ArcDigest digest=arc_digest(rom,rom_size);size_t count=0;
+        const ArcRpcFirmwareFingerprint *table=arc_riscpc_firmware_catalogue(&count);
+        const ArcRpcFirmwareFingerprint *fingerprint=arc_riscpc_firmware_recognize(&digest,table,count);
+        arc_engine_rpc_observers_bind(fingerprint?(unsigned)fingerprint->os:0);
+    }
     free(seed); free(rom); free(text);
-    if (!valid) arc_test_plan_clear(); else {script_active = !persist;if(!persist)observation_start();}
+    if (!valid) arc_test_plan_clear(); else {script_active = !persist;if(!persist){observation_start();observer_start();}}
     return valid;
 }

@@ -116,7 +116,7 @@ set(ARCDROID_ARCULATOR_SOURCES
 
 set(ARCDROID_RPC_SOURCES
   engine/rpc/rpc_observer.c engine/rpc/rpc_inspector.c
-  engine/rpc/rpc_session.c
+  engine/rpc/rpc_session.c engine/rpc/rpc_observers.c
   engine/rpc/rpc_mem_timing.c
   engine/rpc/rpc_audio.c
   engine/rpc/rpc_input.c
@@ -418,6 +418,41 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
     -include "${CMAKE_CURRENT_SOURCE_DIR}/engine/rpc/rpc_namespace.h")
   if(ARCDROID_SANITIZERS)
     target_link_libraries(rpc_observer_test PRIVATE arcdroid_sanitizer_compile arcdroid_sanitizer_link)
+  endif()
+  add_executable(rpc_observers_test tests/rpc_observers_test.c
+    engine/rpc/rpc_observers.c engine/arc_error_box.c engine/arc_disc_request.c
+    engine/arc_launch_outcome.c engine/arc_boot_watch.c
+    engine/rpc/rpc_observer.c engine/rpc/rpc_inspector.c
+    engine/rpc/rpc_mem_timing.c engine/rpc/rpc_scheduler.c
+    engine/rpcemu/src/arm.c engine/rpcemu/src/arm_common.c
+    engine/rpcemu/src/cp15.c engine/rpcemu/src/mem.c
+    "${CMAKE_CURRENT_BINARY_DIR}/generated/rpc_authored_rom.h")
+  target_include_directories(rpc_observers_test PRIVATE engine engine/rpc engine/rpcemu/src
+    core libretro libretro/include "${CMAKE_CURRENT_BINARY_DIR}/generated")
+  target_compile_definitions(rpc_observers_test PRIVATE ARCDROID_TEST_FAULTS=1 ARCDROID_OBSERVATION_TEST=1 RELEASE_BUILD=1)
+  target_compile_options(rpc_observers_test PRIVATE -UNDEBUG -Wall -Wextra -fno-strict-aliasing
+    -include "${CMAKE_CURRENT_SOURCE_DIR}/engine/rpc/rpc_namespace.h")
+  if(ARCDROID_SANITIZERS)
+    target_link_libraries(rpc_observers_test PRIVATE arcdroid_sanitizer_compile arcdroid_sanitizer_link)
+  endif()
+  add_test(NAME rpc-observers COMMAND rpc_observers_test)
+  set_tests_properties(rpc-observers PROPERTIES TIMEOUT 60)
+  add_test(NAME rpc-observers-qualification COMMAND "${Python3_EXECUTABLE}" -B
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_observer_qualification_test.py"
+    $<TARGET_FILE:rpc_observers_test> "${CMAKE_CURRENT_SOURCE_DIR}/docs/riscpc-observer-qualification.md")
+  set_tests_properties(rpc-observers-qualification PROPERTIES TIMEOUT 60)
+  if(NOT ARCDROID_SANITIZERS AND NOT CMAKE_CROSSCOMPILING AND CMAKE_GENERATOR STREQUAL "Ninja")
+    foreach(shard 0 1)
+      if(shard EQUAL 0)
+        set(mutant_test rpc-observers-mutants)
+      else()
+        set(mutant_test rpc-observers-mutants-2)
+      endif()
+      add_test(NAME ${mutant_test} COMMAND "${Python3_EXECUTABLE}" -B
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_observers_mutants.py"
+        "${CMAKE_CURRENT_BINARY_DIR}" $<TARGET_FILE:rpc_observers_test> --policy-shard=${shard})
+      set_tests_properties(${mutant_test} PROPERTIES TIMEOUT 180 RUN_SERIAL TRUE)
+    endforeach()
   endif()
   add_test(NAME rpc-observation-primitives COMMAND rpc_observer_test)
   set_tests_properties(rpc-observation-primitives PROPERTIES TIMEOUT 60)
@@ -2122,6 +2157,52 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
   if(ARCDROID_SANITIZERS)
     target_link_libraries(rpc_observer_lifecycle_test PRIVATE arcdroid_sanitizer_compile arcdroid_sanitizer_link)
   endif()
+  add_executable(rpc_observers_frontend_test tests/rpc_observers_frontend_test.c
+    "${CMAKE_CURRENT_BINARY_DIR}/generated/rpc_session_rom.h")
+  target_include_directories(rpc_observers_frontend_test PRIVATE engine engine/rpc core libretro/include
+    "${CMAKE_CURRENT_BINARY_DIR}/generated")
+  target_compile_definitions(rpc_observers_frontend_test PRIVATE ARCDROID_TEST_FAULTS=1 RETRO_IMPORT_SYMBOLS=1)
+  target_compile_options(rpc_observers_frontend_test PRIVATE -UNDEBUG -Wall -Wextra)
+  target_link_libraries(rpc_observers_frontend_test PRIVATE arcdroid_core ${CMAKE_DL_LIBS})
+  add_dependencies(rpc_observers_frontend_test arcdroid_rpcplan_libretro test-fixtures)
+  if(ARCDROID_SANITIZERS)
+    target_link_libraries(rpc_observers_frontend_test PRIVATE arcdroid_sanitizer_compile arcdroid_sanitizer_link)
+  endif()
+  if(ARCDROID_SANITIZERS)
+    # Preserve every case but bound individual Linux sanitizer test times.
+    foreach(group error disc-0 disc-1 extended)
+      if(group STREQUAL "error")
+        set(frontend_test rpc-observers-frontend)
+      else()
+        set(frontend_test rpc-observers-frontend-${group})
+      endif()
+      add_test(NAME ${frontend_test} COMMAND "${Python3_EXECUTABLE}" -B
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_observers_frontend_test.py"
+        $<TARGET_FILE:rpc_observers_frontend_test> $<TARGET_FILE:arcdroid_rpcplan_libretro> "${FIXTURE_DIR}" sanitizer-${group})
+      set_tests_properties(${frontend_test} PROPERTIES TIMEOUT 300)
+    endforeach()
+  else()
+    add_test(NAME rpc-observers-frontend COMMAND "${Python3_EXECUTABLE}" -B
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_observers_frontend_test.py"
+      $<TARGET_FILE:rpc_observers_frontend_test> $<TARGET_FILE:arcdroid_rpcplan_libretro> "${FIXTURE_DIR}" full)
+    set_tests_properties(rpc-observers-frontend PROPERTIES TIMEOUT 300)
+  endif()
+  if(NOT ARCDROID_SANITIZERS AND NOT CMAKE_CROSSCOMPILING AND CMAKE_GENERATOR STREQUAL "Ninja")
+    # Keep each native Windows mutant matrix comfortably inside its timeout.
+    # All shards validate the full baseline and every focused test profile.
+    foreach(shard 0 1 2 3)
+      if(shard EQUAL 0)
+        set(mutant_test rpc-observers-frontend-mutants)
+      else()
+        math(EXPR shard_number "${shard} + 1")
+        set(mutant_test rpc-observers-frontend-mutants-${shard_number})
+      endif()
+      add_test(NAME ${mutant_test} COMMAND "${Python3_EXECUTABLE}" -B
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_observers_mutants.py"
+        "${CMAKE_CURRENT_BINARY_DIR}" $<TARGET_FILE:rpc_observers_frontend_test> $<TARGET_FILE:arcdroid_rpcplan_libretro> ${shard})
+      set_tests_properties(${mutant_test} PROPERTIES TIMEOUT 180 RUN_SERIAL TRUE)
+    endforeach()
+  endif()
   add_test(NAME rpc-observation-lifecycle COMMAND rpc_observer_lifecycle_test $<TARGET_FILE:arcdroid_libretro_test>)
   set_tests_properties(rpc-observation-lifecycle PROPERTIES TIMEOUT 60)
   add_test(NAME rpc-session-lifecycle COMMAND rpc_session_test
@@ -2259,6 +2340,10 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
   if(ARCDROID_SANITIZERS)
     set(RPC_OBSERVATION_PROFILE sanitizer)
   endif()
+  add_test(NAME rpc-preparation-trace COMMAND "${Python3_EXECUTABLE}" -B
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_preparation_trace_test.py"
+    $<TARGET_FILE:rpc_runner> $<TARGET_FILE:arcdroid_rpcplan_libretro>)
+  set_tests_properties(rpc-preparation-trace PROPERTIES TIMEOUT 300 RUN_SERIAL TRUE)
   add_test(NAME rpc-observation-plan COMMAND "${Python3_EXECUTABLE}" -B
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_observation_plan_test.py"
     $<TARGET_FILE:rpc_runner> $<TARGET_FILE:arcdroid_rpcplan_libretro>
@@ -2267,7 +2352,8 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
 
   add_test(NAME rpc-runner-dump COMMAND "${Python3_EXECUTABLE}" -B
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_runner_dump_test.py"
-    $<TARGET_FILE:rpc_runner> $<TARGET_FILE:arcdroid_rpcplan_libretro> "${RPC_PLAN_DIR}")
+    $<TARGET_FILE:rpc_runner> $<TARGET_FILE:arcdroid_rpcplan_libretro> "${RPC_PLAN_DIR}" "${FIXTURE_DIR}")
+  set_tests_properties(rpc-runner-dump PROPERTIES TIMEOUT 180)
   add_test(NAME rpc-runner-timing-window COMMAND "${Python3_EXECUTABLE}" -B
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_runner_timing_test.py"
     $<TARGET_FILE:rpc_runner> $<TARGET_FILE:arcdroid_rpcplan_libretro> "${RPC_PLAN_DIR}")
@@ -2395,9 +2481,14 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
     ${RPC_ORCHESTRATION_PROFILE})
   set_tests_properties(rpc-session-orchestration PROPERTIES TIMEOUT 300 RUN_SERIAL TRUE)
   if(NOT ARCDROID_SANITIZERS)
+    if(WIN32)
+      set(RPC_ORCHESTRATION_MUTANT_PROFILE mutant-idle)
+    else()
+      set(RPC_ORCHESTRATION_MUTANT_PROFILE mutant)
+    endif()
     add_test(NAME rpc-orchestration-mutants COMMAND "${Python3_EXECUTABLE}" -B
       "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_orchestration_mutants.py"
-      "${CMAKE_CURRENT_BINARY_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}" "${FIXTURE_DIR}")
+      "${CMAKE_CURRENT_BINARY_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}" "${FIXTURE_DIR}" ${RPC_ORCHESTRATION_MUTANT_PROFILE})
     set_tests_properties(rpc-orchestration-mutants PROPERTIES TIMEOUT 300 RUN_SERIAL TRUE)
   endif()
   add_executable(rpc_preparation_test tests/rpc_preparation_test.c libretro/rpc_hd_store.c libretro/install_store.c libretro/arc_io.c)

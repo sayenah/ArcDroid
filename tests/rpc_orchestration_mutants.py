@@ -2,7 +2,7 @@
 from pathlib import Path
 import json,os,re,subprocess,sys,tempfile
 from rpc_ninja_commands import rebuild_commands,same_path
-build,root,fixtures=sys.argv[1:];build=Path(build).resolve();root=Path(root).resolve()
+build,root,fixtures=sys.argv[1:4];profile=sys.argv[4] if len(sys.argv)>4 else ('mutant-idle' if os.name=='nt' else 'mutant');build=Path(build).resolve();root=Path(root).resolve()
 source=root/'libretro/rpc_preparation.c'
 ninja=next(s.split('=',1)[1] for s in (build/'CMakeCache.txt').read_text().splitlines() if s.startswith('CMAKE_MAKE_PROGRAM:FILEPATH='))
 # As in rpc_qa_mutations: expand response files from Ninja's graph, including
@@ -79,7 +79,7 @@ with tempfile.TemporaryDirectory(prefix='arcdroid-orchestration-mutants-') as te
         c.write_text(text)
         subprocess.run(command,cwd=build,check=True,capture_output=True,timeout=60)
         subprocess.run(link,cwd=build,check=True,capture_output=True,timeout=60)
-        result=subprocess.run([sys.executable,'-B',str(root/'tests/rpc_orchestration_test.py'),str(exe),fixtures,'mutant'],capture_output=True,text=True,timeout=60)
+        result=subprocess.run([sys.executable,'-B',str(root/'tests/rpc_orchestration_test.py'),str(exe),fixtures,profile],capture_output=True,text=True,timeout=60)
         if label=='baseline':
             if result.returncode:raise RuntimeError('baseline: '+result.stderr[-2000:])
         elif not result.returncode:raise RuntimeError('survived: '+label)

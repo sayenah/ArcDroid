@@ -8,7 +8,7 @@ sys.dont_write_bytecode=True
 objdump,root,*libraries=sys.argv[1:]
 root=Path(root)
 required=set()
-for name in ('rpc_timing_test.c','rpc_cmos_plan_test.c'):
+for name in ('rpc_timing_test.c','rpc_cmos_plan_test.c','rpc_observers_frontend_test.c'):
     required.update(re.findall(r'LOAD\([^,]+,\s*"([^"]+)"\)',(root/'tests'/name).read_text()))
 required.update({"arc_engine_test_floppy_mount","arc_engine_test_floppy_eject","arc_engine_test_ide_backend","arc_test_plan_hd_stats","arc_test_plan_hd_write","arc_test_plan_hd_cost"})
 for library in libraries:

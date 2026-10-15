@@ -173,3 +173,317 @@ Trace-only captures never increment observer order or watch counters, and trace
 watches use trace attempt deadlines. A trace record has its own ordered identity
 even when it copies an observer event. Turning trace on, changing selection or
 losing trace records cannot change any observer-visible identity.
+
+## R3c-2 observer contract (D-177)
+
+RPC revision 1 is a parameterised profile of the shared pure observers. The
+3.1 ordered error sequence remains the Arculator default. RPC instead opens on
+a user26/user32 ReportError and owns a same-width user return watch. Old-style
+synchronous flag forms are explicitly 0x00 through 0x1f; each form has separate
+button/default and poll qualification. Bit-8 forms are observation-only; bits
+5/6 (immediate return/close control) are excluded. Unknown flags still block
+replacement as an open user report. No serious-error classification is inferred
+from an error number. A qualification must prove the effective buttons, default
+and absence of competing reads for that form; otherwise manual interaction is
+the only hint. The initial test candidate uses the ordinary low-five-bit button
+interpretation and poll R1=R2=0, pending Fable's re-recording and adjudication.
+
+Learning and consumption require the profile's exact full SVC mode (3 or 19),
+ROM fetched backing, OS_Byte 129 and exact R1/R2. The first eligible poll learns
+VA/SP; it cannot consume. Later eligible polls must match both. IRQ activity is
+neutral. Nested reports retire the parent and pending answer; no parent resumes.
+The return, disqualifying return, watch admission refusal, expiry, cancellation,
+replacement, reset, stop or fault ends eligibility synchronously. Watch loss
+leaves modal state unknown until a new bounded report, a new epoch, or
+a user-mode Wimp_Poll/Wimp_PollIdle entry with no pending user report. The
+asynchronous-control uncertainty described below additionally excludes poll recovery. Observation and
+completion are separate capabilities; completion also needs form qualification.
+
+The frontend snapshot distinguishes recognised open, answer available and modal
+unknown. Unknown forms are modal-unknown while their user return watch is pending;
+immediate-return/close-control forms retain uncertainty beyond that watch as
+described below. Accepted synchronous forms alone claim recognised-open. An
+already queued or consumed answer is no longer available. Only answer availability owns pad A/B, with the existing neutral and
+release gates. Observation-only generations retain normal keyboard, mouse, OSK
+and pad mapping and show a manual hint. Disc mutation requires a known nonmodal
+state, including before poll learning and for unanswerable user reports. Lack of
+an error observer never proves nonmodal state.
+
+Disc A admits only ROM SVC XOS_UpCall reason 1/2, filesystem 8, device R3=0xffffffff (Run D correction),
+with a terminated bare printable medium name of 1..10 bytes (12-byte inspection
+bound). Disc B admits only user OS_File/OS_Find operations already recognised
+by the shared logic, a validated ADFS::name.$ path for the inserted floppy,
+and a same-width user return watch with the existing miss semantics. A and B
+have separate observe/replace cells. Shared two-miss identity history retains
+its 120-second window. Copied deferred records contain signal, canonical name
+or object, operation, continuation/SP/watch, time, epoch, owner and both drive
+generations. A valid signal A synchronously cancels queued B work. Resolution restores this copied identity, never the latest mutable
+request. Cancellation is synchronous; validation precedes resolution and
+mutation. Overflow retires only the disc generation.
+
+Helper and IDE names come from their current FileCore disc records; missing,
+malformed, conflicting or unreadable identity disables automatic replacement.
+Identity queries before resolution and commit read only cached host memory.
+The helper name is derived at drive-1 mount/eject and reset; writable helper
+media stays unknown because its identity can change in the guest. IDE attach,
+reopen and reset derive the boot, primary-map and backup-map names once.
+An ArcDroid-owned IDE callback bridge invalidates the IDE identity before any
+write overlapping those record sectors, including failed writes, and on backend
+failure. No file or store read occurs in a frame-boundary identity query.
+After a successful write, bounded inspection of its full sector payload can
+restore the previously known identity only if every affected name and boot
+identity still agrees with the cache. Ordinary map updates therefore preserve
+replacement availability. Changed names and unsuccessful writes stay unknown.
+Invalidated, unreadable, malformed or conflicting identities keep replacement
+manual until a lifecycle refresh validates all records again; a guest rename
+can never reuse the previously cached name to resolve content media.
+ADFS::1/4, explicit device numbers, helper names and hard-disc names are refused
+by the default RPC profile. The unspecified device form is admitted (Run D).
+Replacement is drive 0 only, current generation, controller idle, unique content
+candidate, successful preflight and known nonmodal state; FileCore retries the
+UpCall without answering its box. Manual Disk Control remains independent.
+
+Launch outcome uses the production command arm/snapshot API after attachment,
+inside an explicit launch phase. Its profile sets the 600-second horizon and
+ROM provenance requirements for exit/close/poll; user-mode SWIs only. It reports
+termination, never installed-product or gameplay success. Boot uses the same
+phase arm API and profile parameters: 40-second horizon, 2-second prompt wait,
+user-mode ROM ReadLine, R0 below 0x8000. Plan/harness keys schedule these arms at
+a requested presentation frame; no machine-startup arm. Both stay test-armed
+until R3c-3; flag-free harnesses may call production arms but gain no override.
+
+The session hashes the actual owned image incrementally in the existing 32 KiB
+copy units; binding checks that digest against the verified catalogue request.
+The session binds that fingerprint, actual CPU and profile
+revision only after attachment. Run F adopts D-181's cell record in
+`docs/riscpc-observer-qualification.md`: error observation/answer and both disc
+signals' observation/replacement on exactly its seven pairs at revision 1.
+Boot and launch remain disabled with the record's exact reason; enabled cells
+carry that record's applicable leg references. Unknown/authored firmware has no authority.
+The test-fault build alone offers an explicitly labelled per-cell override and
+candidate profile parameters. Promotion is a later run changing exactly Fable's
+adjudicated cells with evidence references, followed by override-free QA.
+
+Run F's production error profile admits ROM SVC26/SVC32 polls with R1/R2 zero,
+and answers only forms 3 (OK/Cancel, default OK) and 14 (Cancel, default Cancel).
+The record exercised error number zero only and excludes serious-error
+transformations: a nonzero or unreadable error number remains observable but
+manual. The test override retains its candidate forms and parameters for further
+qualification. Signal A stays unspecified-device only; signal B is unchanged.
+Disabled/idle boundary diagnostics use `action=inactive`, preserving the gate
+and reason without announcing a refusal notice.
+
+Boundary ownership: the RPC frontend polls input/arbitrates once, then runs the
+protected frame. Engine frame return advances observer horizons and drains copied
+host work (including B resolution and commit callbacks) outside the fault boundary.
+The frontend then drains trace, performs A resolution/hints/commit, and runs
+maintenance once. The next call polls input once for its next guest frame. Preparation owns its own diagnostics
+drain after each isolated advance and before stop, with no hints, answers or
+replacement during generation. Requested-session binding/activation occurs
+only after attachment. A diagnostic sink is supplied by the client so generation
+records drain before retirement; otherwise loss is explicitly retained.
+
+Canonical translator state includes profile/identity/capabilities, phase arms,
+all four pure states, modal knowledge, learned poll identity, return-watch loss,
+pending intent, deferred copied observations and media generation. Unavailable,
+unmatched and trace-only operation retain integer batching and quotas 1/7/200.
+Enabling any observer selects R3c-1's instrumented interpreter; Fable's Odin3
+R-H comparison must enable candidate observers and arm launch/boot, not merely
+trace. No firmware addresses or bytes are part of this profile.
+
+Hardware reset preserves the verified binding/profile and host callback leases,
+then rebinds in the new epoch with all watches, intent, histories and phase arms
+empty. A test override remains session-scoped across reset; it is never promoted.
+Stop/failed start/unload clear borrowed helper/IDE metadata before a later session
+can refresh the identity epoch. A helper-free reopen cannot inherit a helper name
+or pointer from its predecessor.
+
+## Run C qualification tools and boundary diagnostics
+
+RPC error hints are keyed by generation and displayed eligibility (manual or
+answer available). A transition within a generation replaces the hint once;
+unchanged eligibility does not repeat it. Watch loss after a displayed hint
+changes it to a manual hint that states modal uncertainty, without claiming the
+box remains recognised open. The Arculator generation rule stays
+unchanged. Queued/consumed answers are unavailable in the production snapshot.
+
+The non-shipping runner supplies the libretro log callback on stderr and accepts
+`--pad-at FRAME MASK` events: decimal 16-bit RetroPad button masks for port 0,
+latched until the next event (zero releases all buttons). Frame zero is the first
+requested presentation frame after preparation; preparation always sees neutral
+pads. Events use the real libretro input callback, including mask queries. The
+plan's keyboard/mouse script remains independent and unchanged.
+
+RPC disc diagnostics copy bounded signal outcomes during guest observation and
+combine them with cached identity, media-generation and modal eligibility at the
+host boundary. No logger, filesystem or IDE read runs in the observer callback.
+Boundary logs include signal refusal, identity exclusion, candidate resolution,
+hints, controller busy and commit results. Changes print immediately; identical
+busy retries print at most once per two virtual seconds; all other unchanged
+states stay quiet (Run D). Missing signals print an
+explicit waiting state. These diagnostics neither relax predicates nor enable
+production cells. Windows test-only DLL exports explicitly include every seam
+loaded by the observer frontend harness. The orchestration mutant idle profile
+uses the authored SA-110 factory guest's existing idle instruction after its
+last CMOS write, retaining all mutants and all assertions.
+
+## Run D — corrected signal A device evidence and decision logging
+
+Fable's ruling (to be recorded as D-179) corrects the S63 evidence basis: R3
+was absent from that trace's allowlist, so its displayed zero was an artefact.
+R3-capable traces on 3.50 ARM610 and 3.71 SA-110 show ROM SVC XOS_UpCall
+R0=2, R1=8, R3=0xffffffff during both a task catalogue miss and the real disc
+install request. The RPC profile therefore admits the unspecified-device form,
+not explicit drive 0. It still replaces only content media in drive 0, with
+all existing identity, generation, preflight, controller and modal gates.
+
+The shared pure profile's admitted device forms become a two-bit parameter:
+bit 0 is explicit drive 0; bit 1 is unspecified (R3=-1). The NULL Arculator
+profile keeps its existing acceptance of both forms. RPC's default is bit 1
+only. Its test-only plan key is `observer_disc_devices=MASK`, decimal or `0x`
+hexadecimal, 0..3 inclusive: 0 admits neither, 1 tests drive 0 alone, 2 tests
+unspecified alone (the default), and 3 tests both. Drives 1 and 4 and all other
+R3 values remain refused under every mask. This override never enables cells,
+is applied after the cell override, cancels prior disc observations if it
+changes the mask, survives reset, and is cleared on a new session. The override
+label includes the selected device mask. Production cells remain disabled.
+
+Disc decision logs print when the decision changes. Only an active `busy`
+retry may repeat, at most once per two virtual seconds. Disabled, waiting,
+resolved, hinted and completed decisions never repeat unchanged. Clock rewind
+restarts the busy-repeat interval without emitting an unchanged disabled log.
+
+## Run E — observed interpreter cost (Fable ruling, to be D-180)
+
+The inactive interpreter instantiation remains unchanged. An additional
+instantiation serves active observers with no live continuation watch, no mode
+subscriber and no trace. Attempt prefixes are accounted before SWI admission
+and at batch return, so a newly armed watch's deadline includes preceding cheap
+instructions. The first SWI that changes the observation requirements ends that
+batch after its normal instruction/event work. The next fetch selects the
+checked path; no instruction or event is skipped or replayed.
+
+Real sessions already count every attempt in memory timing. Batch admission
+records that counter once; normal return closes it, and existing epoch retirement
+reconciles an unfinished prefix if a contained fault jumps past batch return.
+This adds no per-instruction counter and no unwind mechanism. The faulting
+attempt remains counted, and resource retirement still follows observer retirement.
+
+The cheap path builds context only at a condition-passed SWI, using its current
+PC, mode, instruction-start clock and actual successful fetch pointer. Mode
+changes without subscribers preserve observer ordering without constructing
+records. The checked path retains per-attempt watch checks and trace semantics,
+with a scalar origin and lazy backing/register/record construction at events.
+Watch/filter/trace changes maintain the admission gate outside the common hot
+path. Tests must cover a long cheap prefix before watch admission, exact expiry,
+condition-failed continuation and trace-independent event identities. Paired
+measurement uses the same authored hot workload for inactive, active without a
+watch and active with a real user-report watch held; no production cell is
+promoted by this cost work.
+
+## Run G — QA adjudication and error-number qualification
+
+An open report retains its original continuation identity and owner generation.
+At each valid ROM OS_Byte 129 read, the shared contextual profile validates
+R1/R2, mode, learned site and SVC stack independently of pending answer intent.
+Learning and subsequent matching polls renew the existing return watch's
+instruction deadline by the bounded watch budget. Renewal never creates a new
+watch, changes its return PC/SP/mode, or revives a lost watch. Nonmatching reads
+do not renew it; cessation of polling still expires it. This work occurs only
+at observed SWIs and adds nothing to the no-watch instruction path.
+
+After loss, a user-mode Wimp_Poll or Wimp_PollIdle entry clears modal-unknown
+only when there is no current synchronous report watch or recognised open
+report. Privileged polls and polls during a report cannot establish non-modal
+state. Until that positive evidence, both disc replacement gates stay closed.
+Disc losses are accepted only for the current disc watch ID. Before replacing
+a watch, policy removes the old ID so its synchronous loss cannot disarm the
+new request. RPC reset clears the frontend's error-hint generation, hint state
+and seen-generation keys; Arculator reset remains unchanged.
+
+The contextual error profile gains an answerable number class: `zero` or
+`ordinary` (bit 31 clear). Production remains `zero`. Both classes refuse
+serious numbers (bit 31 set) and unreadable error blocks. This is an authored
+predicate, not a firmware classification table. The test-only plan key is
+`observer_error_numbers=zero|ordinary`, case-sensitive, default `zero`; it is
+applied only with `observer_cells`, logged in the TEST OVERRIDE label, preserved
+on RPC reset and cleared on a new load. It changes neither admitted forms nor
+effective buttons. Pure Arculator logic with its NULL profile is unaffected.
+
+Digest evidence compares the actual copied-image session digest with Python's
+independently computed SHA-1 and CRC32 of the authored input image. Tests use
+varied bytes across all copy units and require the size, SHA-1 and CRC32 to
+agree. No catalogue injection or firmware material is needed.
+
+### Run H: adjudicated queue, hint and production refinements
+
+D-187 promotes the ordinary error-number class (bit 31 clear) on the same seven
+revision-1 tuples. Serious numbers remain observation-only. Cell references
+include the graphical and ordinary-number legs in the adopted record; boot and
+launch remain disabled. Qualification tests compare table values and evidence
+identifiers, rather than narrative wording.
+
+RPC signal B retains a copied triggered observation after BUSY, including its
+continuation, stack, candidate, epoch and both media generations. At later host
+boundaries it retries only while that identity, generation and trigger remain
+valid. A completed commit or hint ends retrying. Found objects synchronously drop queued misses for only the same canonical
+object. Their history retirement and lifecycle observations use the same ordered
+host queue; lifecycle events resolve preceding misses before clearing history,
+while preserving a later call still live across the boundary. Signal A still supersedes queued B work synchronously. Queue
+overflow retires the queue generation. Miss-only overflow retains identity
+history and the trigger latch. Before cancellation drops copied work, RPC records
+its retirement barriers: a lost lifecycle marker (including the overflowing
+item itself) clears history and the latch synchronously. FOUND already retires
+existing history synchronously through the shared outcome logic; its queued
+marker also retires matching history built by earlier deferred misses. This uses
+bounded copied-data inspection, never guest path resolution. No resolver or
+frontend callback runs inside guest execution.
+First-observation logging reads the copied callback identity.
+
+Synchronous bit-8 forms may carry category/high bits, but bits 5 and 6 still
+exclude them. They receive a recognised-open manual hint and no answers. A
+pending or consumed answer retains its answerable hint until the generation
+ends; snapshot answer availability still means a fresh answer can be queued.
+RPC reset retires hints, answers and disc watches before execution resumes and
+clears frontend swap ownership, previous index, time and pending notices.
+Helper paths are bounded before mount, so rejection leaves the drive intact.
+
+The cost matrix adds an authored user-mode SWI-density workload. Production
+subscriptions may select explicit normalised SWI numbers before event capture;
+trace selection remains independent, and watch deadlines still count every
+attempt. All four shared pure observers belong to the RPC host-service and
+termination guard surface.
+
+The SWI-number interest union is rebuilt only when subscriptions change. A cached
+three-word set rejects common OS and Wimp numbers before per-owner matching;
+other number ranges and mask-only subscriptions retain the generic path. Trace
+subscriptions independently bypass this rejection. The optional bounded list
+is host-owned for the lifetime of its filter and does not replace raw SWI masks.
+
+### Run I: immediate-return/close-control modal state
+
+The [RISC OS PRM, Wimp_ReportError](https://www.riscos.com/support/developers/prm/wimp.html)
+confirms that flag bit 5 may return without closing the error window; bit 6
+selects a button and closes it. It requires a close-control call before the next
+Wimp_Poll when using immediate returns. There is no contradiction with the
+adjudicated contract. No firmware classification or content is involved.
+
+A user report with either control bit sets a session-owned uncertainty latch
+from entry. It offers no answer and only the manual state-unknown hint. A
+matching immediate return, expiry, cancellation, privileged nested report or
+user Wimp_Poll/PollIdle does not clear this latch. Its bounded call watch ends
+normally, so an open asynchronous window adds no launch-long instruction watch.
+Only the matching successful return of a user close-control call, completion of
+a later recognised synchronous report, reset or a new bound epoch clears it.
+A failed/disqualifying close return is not evidence. A synchronous report used
+for recovery remains manual until it completes; unrecognised forms cannot
+supply recovery. Privileged reports keep their existing invalidation semantics
+and do not become new user-report observations.
+
+After a bit-5 report, automatic disc replacement therefore stays manual until
+positive closure, reset or a new epoch. Manual Disk Control still works.
+
+Ordinary watch-loss recovery through user Wimp_Poll/PollIdle remains unchanged
+when this control-form latch is absent. Watch-renewal failure cancels its watch
+before retiring policy eligibility. Routine disc reasons use neutral names
+(`path-other`, `outcome-not-miss`) on both shipping decision-log fields.

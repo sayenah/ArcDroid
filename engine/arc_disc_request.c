@@ -105,20 +105,37 @@ bool arc_disc_request_operation(uint32_t swi, uint32_t r0,
    return true;
 }
 
+bool arc_disc_request_signal_a(const ArcDiscProfile *profile,const ArcDiscSwi *event)
+{
+   unsigned device_form=!event?0u:event->r3==0u?ARC_DISC_DEVICE_0:
+      event->r3==UINT32_MAX?ARC_DISC_DEVICE_UNSPECIFIED:0u;
+   if(!event || (event->swi&~UINT32_C(0x20000))!=0x33u || !event->in_rom ||
+      (profile ? event->mode>=32 || !(profile->svc_modes&(UINT32_C(1)<<event->mode)) : event->mode!=3u) ||
+      (profile && profile->require_x && !(event->swi&0x20000u)) ||
+      (event->r0!=1u && event->r0!=2u) || event->r1!=8u ||
+      !(device_form & (profile?profile->device_forms:(ARC_DISC_DEVICE_0|ARC_DISC_DEVICE_UNSPECIFIED))) ||
+      !event->name_readable || !event->name)return false;
+   size_t length=0;
+   while(length<11 && event->name[length] && (unsigned char)event->name[length]>=0x20u &&
+         (unsigned char)event->name[length]<=0x7eu){
+      if(profile && profile->strict_bare && strchr(".:/\\@^$<>#*;|",event->name[length]))return false;
+      ++length;
+   }
+   return length && length<=10 && (unsigned char)event->name[length]<0x20u;
+}
+
 void arc_disc_request_swi(ArcDiscRequest *request, const ArcDiscSwi *event,
                           const char *inserted_name)
 {
    if (!request || !event) return;
+   const ArcDiscProfile *profile=request->profile;
    uint32_t swi = event->swi & ~UINT32_C(0x20000);
    if (swi == 0x400c7u || swi == 0x400e1u || swi == 0x400c0u ||
        swi == 0x400ddu || swi == 0x400deu || swi == 0x11u || swi == 0x40u)
    { arc_disc_request_clear(request); return; }
    if (swi == 0x33u && event->r0 == 4u)
    { arc_disc_request_clear(request); return; }
-   if (swi == 0x33u && event->in_rom && event->mode == 3u &&
-       (event->r0 == 1u || event->r0 == 2u) && event->r1 == 8u &&
-       (event->r3 == 0u || event->r3 == UINT32_MAX) &&
-       event->name_readable && event->name)
+   if (arc_disc_request_signal_a(profile,event))
    {
       size_t length = 0u;
       while (length < 11u && event->name[length] &&
@@ -142,7 +159,7 @@ void arc_disc_request_swi(ArcDiscRequest *request, const ArcDiscSwi *event,
    {
       /* A new observed-class SWI never revives the previous watch. */
       request->armed = false;
-      if (request->a_active || event->mode != 0u ||
+      if (request->a_active || (profile ? event->mode>=32 || !(profile->user_modes&(UINT32_C(1)<<event->mode)) : event->mode != 0u) ||
           !event->name_readable || !event->name) return;
       char canonical[256];
       if (!arc_disc_request_name(event->name, inserted_name, canonical)) return;

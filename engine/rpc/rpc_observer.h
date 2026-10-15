@@ -11,7 +11,7 @@ enum { ARC_RPC_OBSERVERS=4, ARC_RPC_WATCHES=8, ARC_RPC_WORK_LIMIT=16,
 typedef enum { ARC_RPC_OBS_BOOT, ARC_RPC_OBS_LAUNCH, ARC_RPC_OBS_ERROR,
                ARC_RPC_OBS_DISC } ArcRpcObserver;
 typedef enum { ARC_RPC_OBS_SWI=1, ARC_RPC_OBS_CONTINUATION=2,
-               ARC_RPC_OBS_MODE=4, ARC_RPC_OBS_GAP=8 } ArcRpcObservationKind;
+               ARC_RPC_OBS_MODE=4, ARC_RPC_OBS_GAP=8, ARC_RPC_OBS_WATCH_LOST=16 } ArcRpcObservationKind;
 typedef enum { ARC_RPC_BACKING_NONE, ARC_RPC_BACKING_ROM,
                ARC_RPC_BACKING_RAM0, ARC_RPC_BACKING_RAM1,
                ARC_RPC_BACKING_VRAM } ArcRpcBackingKind;
@@ -33,9 +33,13 @@ typedef struct {
     uint16_t registers, results;
     unsigned kinds;
     ArcRpcObserveCallback callback; void *opaque;
+    /* Optional bounded, host-owned list; it must outlive the filter. Numbers
+     * ignore X, while swi/swi_mask still admit exact decorations. Count zero
+     * preserves the ordinary mask-only subscription. */
+    const uint32_t *swis; unsigned swi_count;
 } ArcRpcObserveFilter;
 typedef enum { ARC_RPC_CAP_OBSERVE, ARC_RPC_CAP_COMPLETE,
-               ARC_RPC_CAP_REPLACE } ArcRpcObserverCapability;
+               ARC_RPC_CAP_REPLACE, ARC_RPC_CAP_OBSERVE_B, ARC_RPC_CAP_REPLACE_B } ArcRpcObserverCapability;
 typedef struct {
     unsigned catalogue, cpu, profile;
     ArcRpcObserver observer; ArcRpcObserverCapability capability;
@@ -44,8 +48,19 @@ typedef struct {
 ArcRpcObserverQualification arc_rpc_observer_qualification(unsigned catalogue,
     unsigned cpu, ArcRpcObserver, ArcRpcObserverCapability);
 
+bool arc_rpc_observer_filter(ArcRpcObserver, const ArcRpcObserveFilter *);
+bool arc_rpc_observer_watch_live(ArcRpcObserver, uint64_t);
+/* Renew only a live current-generation watch from its owner's SWI callback.
+ * Continuation identity and return state are preserved. */
+bool arc_rpc_observer_watch_renew(ArcRpcObserver, uint64_t, unsigned attempts);
 /* The interpreter tests this before constructing any observation context. */
-extern bool arc_rpc_observer_active;
+extern bool arc_rpc_observer_active, arc_rpc_observer_context;
+void arc_rpc_observe_batch_begin(void);
+void arc_rpc_observe_advance(unsigned attempts);
+void arc_rpc_observe_batch_end(void);
+void arc_rpc_observe_unsubscribed_mode(uint32_t old_mode);
+bool arc_rpc_observe_swi_at(uint32_t opcode,uint32_t pc,const uint32_t *page);
+
 void arc_rpc_observe_begin(uint32_t pc);
 void arc_rpc_observe_fetched(const uint32_t *page);
 bool arc_rpc_observe_swi(uint32_t opcode);
@@ -78,8 +93,9 @@ bool arc_rpc_inspect_physical(uint32_t address, uint8_t *out);
 bool arc_rpc_inspect_translate(uint32_t va, bool privileged, uint32_t *physical);
 
 typedef struct {
-    ArcRpcObserver observer; uint64_t generation, epoch, media_generation, ns;
-    unsigned kind; size_t size; uint8_t bytes[ARC_RPC_COPY_LIMIT];
+    ArcRpcObserver observer; uint64_t generation, epoch, media_generation, helper_generation, ns;
+    unsigned kind; uint32_t operation, continuation, sp; uint64_t watch;
+    size_t size; uint8_t bytes[ARC_RPC_COPY_LIMIT];
 } ArcRpcHostWork;
 typedef struct {
     bool (*valid)(void *, const ArcRpcHostWork *);
@@ -88,12 +104,19 @@ typedef struct {
     void *opaque;
 } ArcRpcHostWorkHandler;
 bool arc_rpc_observer_queue(const ArcRpcHostWork *);
+/* Inspect copied work before a possible overflow retires its generation.
+ * No host work runs. */
+bool arc_rpc_observer_queued(ArcRpcObserver,unsigned);
+/* Drop only matching copied payloads, preserving other identities/order. */
+void arc_rpc_observer_drop_queued(ArcRpcObserver,unsigned,const void *,size_t);
 void arc_rpc_observer_host_handler(ArcRpcObserver, const ArcRpcHostWorkHandler *);
 bool arc_rpc_observer_in_host(void);
 void arc_rpc_observer_drain(void); /* Frame boundary only, never guest execution. */
 
 #if defined(ARCDROID_TEST_FAULTS)
+const ArcRpcObserverQualification *arc_rpc_observer_test_qualifications(size_t *count);
 #include "libretro.h"
+extern uint64_t arc_rpc_observer_integer_attempts;
 RETRO_API bool arc_rpc_observer_test_filter(ArcRpcObserver, const ArcRpcObserveFilter *);
 typedef struct {
     ArcRpcObservation event;
@@ -122,5 +145,7 @@ RETRO_API uint64_t arc_rpc_observer_test_epoch(void);
 uint64_t arc_rpc_observer_test_attempts(void);
 ArcRpcObservation arc_rpc_observer_test_origin(void); /* Captured metadata only. */
 uint64_t arc_rpc_observer_test_events(void);
+uint64_t arc_rpc_observer_test_captures(void);
+uint64_t arc_rpc_observer_test_number_checks(void);
 #endif
 #endif

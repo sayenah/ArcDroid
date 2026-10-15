@@ -507,3 +507,20 @@ requires a completed status-restoring PC write into that mode or controlled
 completion; trace watches use the identical rule. Trace event/attempt/watch
 counters are separate from canonical observer identities, which must compare
 equal with tracing enabled or disabled.
+
+R3c-2 adds the verified firmware tuple, actual CPU/profile revision, per-cell
+capabilities, explicit launch-phase arms and parameterised pure observer states
+(error modal knowledge, form/button qualification and learned poll identity;
+disc identities and copied misses; launch outcome and boot prompt deadlines).
+The dispatcher identity cache also carries validated helper/IDE names, the raw
+ten-byte IDE record name, known bits and its epoch. Guest IDE record writes
+invalidate it before the backend write. A successful write with unchanged names
+and valid boot identity can restore prior knowledge from its payload; changed
+names and failures stay manual until lifecycle refresh. Frame-boundary queries
+perform no I/O.
+Watch admission/expiry/cancel/replacement loss synchronously retires eligibility.
+The bounded host queue also carries each miss's copied operation, continuation,
+SP/watch and canonical object, so two same-frame misses cannot exchange identity.
+The inactive instantiation and P0-P3 timing boundaries are unchanged. Preparation
+owns diagnostic drains outside execution and before isolated-session retirement;
+requested observers bind only after attachment.

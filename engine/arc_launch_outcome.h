@@ -9,7 +9,9 @@ typedef enum {
    ARC_OUTCOME_CLOSE, ARC_OUTCOME_END, ARC_OUTCOME_POLL,
    ARC_OUTCOME_CANCEL
 } ArcOutcomeState;
+typedef struct { uint64_t horizon_us; bool exit_rom, close_rom, poll_rom; } ArcOutcomeProfile;
 typedef struct {
+   const ArcOutcomeProfile *profile;
    ArcOutcomeState state;
    uint64_t start_us;
    unsigned refused_floppy;
@@ -23,6 +25,7 @@ typedef struct {
    const char *cancel_reason;
 } ArcLaunchOutcome;
 
+bool arc_outcome_arm_profile(ArcLaunchOutcome *,const char *,uint64_t,const ArcOutcomeProfile *);
 void arc_outcome_clear(ArcLaunchOutcome *outcome);
 bool arc_outcome_arm(ArcLaunchOutcome *outcome, const char *command,
                      uint64_t now_us);

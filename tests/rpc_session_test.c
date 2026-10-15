@@ -65,7 +65,7 @@ static void cleared_capabilities(void)
     assert(c.av&&c.keyboard&&c.mouse&&c.reset);
     assert(!c.boot_watch&&!c.launch_outcome&&!c.error_box&&!c.disc_request&&c.floppy&&c.helper);
     assert(c.ide&&!c.native_joystick&&!c.power_on_input&&!c.cmos_persistence&&!c.serialisation);
-    ArcLaunchOutcome l,zero_l={0};ArcErrorBox b,zero_b={0};ArcDiscRequest d,zero_d={0};
+    ArcLaunchOutcome l,zero_l={0};ArcErrorBox b,zero_b={.modal_unknown=true};ArcDiscRequest d,zero_d={0};
     memset(&l,0xa5,sizeof(l));memset(&b,0xa5,sizeof(b));memset(&d,0xa5,sizeof(d));
     api->launch_outcome_snapshot(&l);api->error_snapshot(&b);api->disc_snapshot(&d);
     assert(!memcmp(&l,&zero_l,sizeof(l))&&!memcmp(&b,&zero_b,sizeof(b))&&!memcmp(&d,&zero_d,sizeof(d)));
