@@ -24,6 +24,7 @@ void arc_test_plan_set_log(void (*log)(const char *));
 bool arc_test_plan_pending(void);
 bool arc_test_plan_slice(char *error, size_t size);
 void arc_test_plan_hd_frame(void);
+void arc_test_plan_diagnostics(void);
 void arc_test_plan_hd_begin_frame(void);
 bool arc_test_plan_persist(char *error, size_t size);
 typedef struct {

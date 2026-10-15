@@ -7,6 +7,7 @@ void arc_error_end(ArcErrorBox *box)
    box->site = box->sp = box->lr = 0u;
    box->pending = box->consumed = ARC_ERROR_NONE;
    box->key = 0u;
+   box->recognised_open = box->answer_available = false;
 }
 
 void arc_error_discard(ArcErrorBox *box)
@@ -22,6 +23,27 @@ const char *arc_error_swi(ArcErrorBox *box, uint32_t swi, uint32_t r0,
    if (swi == 0x400dfu || swi == 0x600dfu)
    {
       arc_error_end(box);
+      if (box->profile && box->profile->contextual)
+      {
+         if (mode != 0u && mode != 16u) return "caller-mode";
+         ++box->generation;
+         box->flags = r1;
+         box->modal_unknown = false;
+         box->recognised_open = true;
+         /* Enumerated synchronous forms: low five bits, or bit-8 custom
+          * forms observed manually. Immediate/close forms are never armed. */
+         if ((r1 & 0x60u) || (!(r1 & 0x100u) && (r1 & ~0x1fu)))
+         { box->recognised_open = false; box->modal_unknown = true; return "unqualified-form"; }
+         box->stage = ARC_ERROR_POLL;
+         box->ok = box->cancel = box->default_cancel = false;
+         if (r1 <= 31u && (box->profile->answer_forms & (UINT32_C(1) << r1)))
+         {
+            box->ok = (box->profile->ok_forms & (UINT32_C(1)<<r1)) != 0;
+            box->cancel = (box->profile->cancel_forms & (UINT32_C(1)<<r1)) != 0;
+            box->default_cancel = (box->profile->default_cancel_forms & (UINT32_C(1)<<r1)) != 0;
+         }
+         return NULL;
+      }
       if (box->os != ARC_OS_RISCOS_310 && box->os != ARC_OS_RISCOS_311 &&
           box->os != ARC_OS_RISCOS_319) return "os";
       if (mode != 0u) return "caller-mode";
@@ -33,6 +55,7 @@ const char *arc_error_swi(ArcErrorBox *box, uint32_t swi, uint32_t r0,
       box->stage = ARC_ERROR_WORD;
       return NULL;
    }
+   if (box->profile && box->profile->contextual) return NULL;
    if (box->stage == ARC_ERROR_OFF || box->stage == ARC_ERROR_READY)
       return NULL;
    if (mode == 1u || mode == 2u) return NULL; /* interrupt activity */
@@ -87,7 +110,8 @@ const char *arc_error_swi(ArcErrorBox *box, uint32_t swi, uint32_t r0,
 
 bool arc_error_request(ArcErrorBox *box, ArcErrorAnswer answer)
 {
-   if (box->stage != ARC_ERROR_READY || box->pending != ARC_ERROR_NONE ||
+   if ((box->profile && box->profile->contextual && !box->answer_available) ||
+       box->stage != ARC_ERROR_READY || box->pending != ARC_ERROR_NONE ||
        box->consumed != ARC_ERROR_NONE ||
        (answer != ARC_ERROR_OK && answer != ARC_ERROR_CANCEL) ||
        (answer == ARC_ERROR_OK && !box->ok) ||
@@ -100,7 +124,8 @@ bool arc_error_request(ArcErrorBox *box, ArcErrorAnswer answer)
 bool arc_error_consume(ArcErrorBox *box, uint32_t address, uint32_t mode,
                        uint32_t sp, uint32_t lr, uint8_t *key)
 {
-   if (box->stage != ARC_ERROR_READY || box->pending == ARC_ERROR_NONE ||
+   if ((box->profile && box->profile->contextual && !box->answer_available) ||
+       box->stage != ARC_ERROR_READY || box->pending == ARC_ERROR_NONE ||
        mode != 3u || address != box->site || sp != box->sp)
       return false;
    (void)lr;
@@ -108,4 +133,39 @@ bool arc_error_consume(ArcErrorBox *box, uint32_t address, uint32_t mode,
    box->consumed = box->pending;
    arc_error_discard(box);
    return true;
+}
+
+/* Contextual profile: eligibility is checked on every read, including READY.
+ * Learning never consumes. No address, stack or firmware byte is prescribed. */
+bool arc_error_number_answerable(const ArcErrorProfile *p, uint32_t number)
+{
+   return p && !(number & UINT32_C(0x80000000)) &&
+      (number == 0 || p->numbers == ARC_ERROR_NUMBER_ORDINARY);
+}
+bool arc_error_poll_matches(const ArcErrorBox *box, uint32_t r1, uint32_t r2,
+   uint32_t address, uint32_t mode, uint32_t sp, bool in_rom)
+{
+   const ArcErrorProfile *p = box->profile;
+   return p && p->contextual && box->recognised_open && in_rom &&
+      mode <= 31 && (p->poll_modes & (UINT32_C(1)<<mode)) &&
+      r1 == p->poll_r1 && r2 == p->poll_r2 &&
+      (box->stage == ARC_ERROR_POLL || (box->stage == ARC_ERROR_READY &&
+       address == box->site && sp == box->sp && mode == box->poll_mode));
+}
+bool arc_error_poll(ArcErrorBox *box, uint32_t r1, uint32_t r2,
+   uint32_t address, uint32_t mode, uint32_t sp, bool in_rom, uint8_t *key)
+{
+   const ArcErrorProfile *p = box->profile;
+   if (!p || !p->contextual || !box->recognised_open || !in_rom ||
+       (mode>31 || !(p->poll_modes&(UINT32_C(1)<<mode))) || r1 != p->poll_r1 || r2 != p->poll_r2)
+      return false;
+   if (box->stage == ARC_ERROR_POLL)
+   {
+      box->site = address; box->sp = sp; box->poll_mode = mode;
+      box->stage = ARC_ERROR_READY;
+      box->answer_available = box->ok || box->cancel;
+      return false;
+   }
+   if (mode != box->poll_mode) return false;
+   return arc_error_consume(box, address, 3u, sp, 0, key);
 }

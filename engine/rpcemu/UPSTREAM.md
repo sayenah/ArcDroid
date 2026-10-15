@@ -399,3 +399,11 @@ admission selects the inactive or observed instantiation; the inactive body
 has no observer loads or tests. `arm_common.c/.h` expose prefixed armed-only
 SWI and status-restoring PC helpers. Timing/service/flush and exception ordering
 are unchanged. No imported file, opcode or execution policy was added.
+
+R3c-2 run E (Fable ruling to be D-180) extends the same `observation-r3c1`
+patch in `arm.c`: a third instantiation accounts no-watch instruction prefixes
+and constructs SWI context only at the condition-passed edge. Watch admission
+ends that batch after normal instruction/event processing. Subscribed mode/trace
+or live-watch execution selects the checked instantiation. Inactive code remains
+the original run B instantiation. Policy, counters and lazy metadata construction
+remain in the owned adapter; no upstream hash or licence attribution changes.

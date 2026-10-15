@@ -45,7 +45,7 @@ void arc_outcome_swi(ArcLaunchOutcome *outcome, uint32_t swi,
 {
    if (outcome->state == ARC_OUTCOME_OFF ||
        outcome->state == ARC_OUTCOME_CANCEL) return;
-   if (now_us - outcome->start_us >= ARC_OUTCOME_HORIZON_US)
+   if (now_us - outcome->start_us >= (outcome->profile ? outcome->profile->horizon_us : ARC_OUTCOME_HORIZON_US))
    { arc_outcome_cancel(outcome, "timeout"); return; }
    swi = (swi & 0x00ffffffu) & ~0x00020000u;
    if (swi == 0x11u && r1 == UINT32_C(0x58454241) && r2 != 0u)
@@ -70,16 +70,16 @@ void arc_outcome_swi(ArcLaunchOutcome *outcome, uint32_t swi,
    { arc_outcome_cancel(outcome, swi == 0x400c0u ? "initialise" : "report-error"); return; }
    if (outcome->state == ARC_OUTCOME_EXIT)
    {
-      if (swi == 0x11u && in_rom)
+      if (swi == 0x11u && (in_rom || (outcome->profile && !outcome->profile->exit_rom)))
          outcome->state = ARC_OUTCOME_CLOSE;
    }
    else if (outcome->state == ARC_OUTCOME_CLOSE)
    {
-      if (swi == 0x400ddu && in_rom && r0 == 0u)
+      if (swi == 0x400ddu && (in_rom || (outcome->profile && !outcome->profile->close_rom)) && r0 == 0u)
       { outcome->close_r1=r1; outcome->state = ARC_OUTCOME_END; }
    }
    else if (outcome->state == ARC_OUTCOME_END &&
-            (swi == 0x400c7u || swi == 0x400e1u) && in_rom)
+            (swi == 0x400c7u || swi == 0x400e1u) && (in_rom || (outcome->profile && !outcome->profile->poll_rom)))
       outcome->state = ARC_OUTCOME_POLL;
 }
 
@@ -87,6 +87,13 @@ void arc_outcome_frame(ArcLaunchOutcome *outcome, uint64_t now_us)
 {
    if (outcome->state != ARC_OUTCOME_OFF &&
        outcome->state != ARC_OUTCOME_CANCEL &&
-       now_us - outcome->start_us >= ARC_OUTCOME_HORIZON_US)
+       now_us - outcome->start_us >= (outcome->profile ? outcome->profile->horizon_us : ARC_OUTCOME_HORIZON_US))
       arc_outcome_cancel(outcome, "timeout");
+}
+
+bool arc_outcome_arm_profile(ArcLaunchOutcome *outcome,const char *command,
+   uint64_t now_us,const ArcOutcomeProfile *profile)
+{
+   if(!profile || !profile->horizon_us || !arc_outcome_arm(outcome,command,now_us))return false;
+   outcome->profile=profile;return true;
 }

@@ -36,6 +36,7 @@ core/cmos_defaults.c
 engine/arcdroid_engine.c
 engine/arculator_backend.c
 engine/rpc/rpc_observer.c
+engine/rpc/rpc_observers.c
 engine/rpc/rpc_inspector.c
 engine/rpc/rpc_session.c
 engine/rpc/rpc_audio.c
@@ -129,7 +130,9 @@ fi
 pattern='(^|[^[:alnum:]_>.])(fopen[a-z0-9_]*|open(at|64|at64)?|creat(64)?|fdopen|_wfopen[a-z0-9_]*|gz[a-z]*|CreateFile[A-Za-z0-9]*|NtCreateFile|_open[a-z0-9_]*|_wopen[a-z0-9_]*|_sopen[a-z0-9_]*|_wsopen[a-z0-9_]*|freopen[a-z0-9_]*|tmpfile[a-z0-9_]*|mkstemp[a-z0-9_]*)[[:space:]]*\(|(^|[^[:alnum:]_])dumpregs[[:space:]]*\('
 
 # Every compiled RPC source is scanned, including the session and device hooks.
-rpc_sources='engine/rpc/rpc_observer.c
+rpc_sources='engine/arc_error_box.c engine/arc_disc_request.c engine/arc_launch_outcome.c engine/arc_boot_watch.c
+engine/rpc/rpc_observer.c
+engine/rpc/rpc_observers.c
 engine/rpc/rpc_inspector.c
 engine/rpc/rpc_session.c engine/rpc/rpc_audio.c engine/rpc/rpc_input.c engine/rpc/rpc_timing.c engine/rpc/rpc_mem_timing.c
 engine/rpc/rpc_floppy.c engine/rpc/rpc_scheduler.c engine/rpc/rpc_rtc.c
@@ -218,7 +221,7 @@ case "${1:-}" in
       printf '%s\n' 'shipping I/O guard self-test: injected header dump was not rejected' >&2
       exit 1
     fi
-    for call in 'read(0,0,0)' 'write(0,0,0)' 'clock_gettime(0,0)'; do
+    for call in 'read(0,0,0)' 'write(0,0,0)' 'clock_gettime(0,0)' 'abort()' 'time(0)' 'getenv(0)'; do
       printf 'void injected(void) { (void)%s; }\n' "$call" > "$guard_tmp/rpc.c"
       if ! grep -Eq "$rpc_pattern" "$guard_tmp/rpc.c"; then
         printf 'shipping I/O guard self-test: direct RPC %s was not rejected\n' "$call" >&2

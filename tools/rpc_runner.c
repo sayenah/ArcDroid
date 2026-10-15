@@ -14,6 +14,7 @@
 #include <errno.h>
 #include <math.h>
 #include <stdio.h>
+#include <stdarg.h>
 #include <stdlib.h>
 #include <string.h>
 #if defined(_WIN32)
@@ -46,6 +47,10 @@ static double fps = 60;
 static struct { uint64_t frame; const char *path; bool written; } dumps[DUMP_LIMIT];
 static unsigned dump_count, dump_width, dump_height;
 static uint64_t runner_frame;
+#define PAD_EVENT_LIMIT 1024u
+static struct { uint64_t frame, mask; } pad_events[PAD_EVENT_LIMIT];
+static unsigned pad_event_count, pad_next;
+static uint16_t pad_mask;
 static uint32_t *dump_pixels;
 static bool dump_failed,runner_preparing;
 static void dump_video(const void *data, unsigned width, unsigned height, size_t pitch)
@@ -89,9 +94,16 @@ static bool fail_observation_close;
 #include "rpc_runner_vfs.h"
 static void hash_byte(uint64_t *hash, unsigned byte)
 { *hash = (*hash ^ (byte & 255)) * UINT64_C(1099511628211); }
+static void core_log(enum retro_log_level level, const char *format, ...)
+{
+    (void)level; va_list args; va_start(args,format);
+    vfprintf(stderr,format,args); va_end(args);
+}
 static bool environment(unsigned command, void *data)
 {
     switch (command) {
+    case RETRO_ENVIRONMENT_GET_LOG_INTERFACE:
+        ((struct retro_log_callback *)data)->log=core_log; return true;
     case RETRO_ENVIRONMENT_GET_VFS_INTERFACE: {
         struct retro_vfs_interface_info *request=data;
         if(request->required_interface_version>3)return false;
@@ -101,7 +113,7 @@ static bool environment(unsigned command, void *data)
     case RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY: *(const char **)data = system_directory; return true;
     case RETRO_ENVIRONMENT_GET_CAN_DUPE: *(bool *)data = true; return true;
     case RETRO_ENVIRONMENT_SET_PIXEL_FORMAT: return *(enum retro_pixel_format *)data == RETRO_PIXEL_FORMAT_XRGB8888;
-    case RETRO_ENVIRONMENT_GET_INPUT_DEVICE_CAPABILITIES: *(uint64_t *)data = UINT64_C(1) << RETRO_DEVICE_KEYBOARD; return true;
+    case RETRO_ENVIRONMENT_GET_INPUT_DEVICE_CAPABILITIES: *(uint64_t *)data = (UINT64_C(1) << RETRO_DEVICE_KEYBOARD) | (UINT64_C(1) << RETRO_DEVICE_JOYPAD); return true;
     case RETRO_ENVIRONMENT_GET_VARIABLE:{
         struct retro_variable *v=data;
         v->value=!strcmp(v->key,"arcdroid_disk_writes")?disk_writes:
@@ -143,7 +155,11 @@ static size_t audio(const int16_t *data, size_t frames)
 }
 static void poll(void) {}
 static int16_t input(unsigned p, unsigned d, unsigned i, unsigned id)
-{ (void)p; (void)d; (void)i; (void)id; return 0; }
+{
+    if (runner_preparing || p || d != RETRO_DEVICE_JOYPAD || i) return 0;
+    if (id == RETRO_DEVICE_ID_JOYPAD_MASK) return (int16_t)pad_mask;
+    return id < 16u ? (int16_t)((pad_mask >> id) & 1u) : 0;
+}
 static bool unsigned_number(const char *s, uint64_t max, uint64_t *out)
 {
     uint64_t n = 0;
@@ -181,6 +197,13 @@ int main(int argc, char **argv)
             if(policy ? (strcmp(value,"off")&&strcmp(value,"as-imaged")) :
                 (strcmp(value,"off")&&strcmp(value,"shadow")&&strcmp(value,"original")))goto usage;
             option_events[option_count].value=value;option_events[option_count++].policy=policy;i+=2;continue;
+        }
+        if (!strcmp(key,"--pad-at")) {
+            if (i+2 >= argc || pad_event_count == PAD_EVENT_LIMIT ||
+                !unsigned_number(argv[i+1],999999,&pad_events[pad_event_count].frame) ||
+                !unsigned_number(argv[i+2],65535,&pad_events[pad_event_count].mask) ||
+                (pad_event_count && pad_events[pad_event_count].frame <= pad_events[pad_event_count-1].frame)) goto usage;
+            ++pad_event_count; i+=2; continue;
         }
         if (!strcmp(key,"--dump-frame")) {
             if (i+2 >= argc || dump_count == DUMP_LIMIT ||
@@ -301,6 +324,8 @@ int main(int argc, char **argv)
         if (f == fault_at) fault_next();
         uint64_t frontend_start = arc_test_clock_ns();
         runner_frame = f;
+        if (pad_next < pad_event_count && pad_events[pad_next].frame == f)
+            pad_mask=(uint16_t)pad_events[pad_next++].mask;
         run();
         ArcRpcTestSnapshot s; ArcRpcAudioCounts a; ArcRpcVideoStatus v; ArcRpcCapture c;
         snapshot(&s); counts(&a); status(&v); capture(&c);
@@ -425,6 +450,6 @@ int main(int argc, char **argv)
 #endif
     return (int)result;
 usage:
-    fputs("rpc_runner --core LIB --plan FILE [--system DIR] [--save DIR] [--frames N | --warmup-seconds 120 --measure-seconds 600] [--pacing flat|burst|realtime] [--disk-writes off|shadow|original] [--jfd-policy as-imaged|off] [--jfd-policy-at FRAME VALUE] [--disk-writes-at FRAME VALUE] [--jfd-omitted strict|file-data] [--timing CSV] [--hd-cost CSV] [--preparation-timing CSV] [--vfs-flush retroarch|fsync] [--dump-frame N FILE.ppm ...] [--capture-seed FILE] [--ram-offset N --ram-words N] [--reset-at N] [--cmos] [--fail-alloc 1..5] [--fault-at N] [--reject]\n",stderr);
+    fputs("rpc_runner --core LIB --plan FILE [--system DIR] [--save DIR] [--frames N | --warmup-seconds 120 --measure-seconds 600] [--pacing flat|burst|realtime] [--disk-writes off|shadow|original] [--jfd-policy as-imaged|off] [--jfd-policy-at FRAME VALUE] [--disk-writes-at FRAME VALUE] [--jfd-omitted strict|file-data] [--timing CSV] [--hd-cost CSV] [--preparation-timing CSV] [--vfs-flush retroarch|fsync] [--dump-frame N FILE.ppm ...] [--pad-at FRAME MASK ...] [--capture-seed FILE] [--ram-offset N --ram-words N] [--reset-at N] [--cmos] [--fail-alloc 1..5] [--fault-at N] [--reject]\n",stderr);
     return 2;
 }

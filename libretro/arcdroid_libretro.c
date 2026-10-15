@@ -154,6 +154,7 @@ static bool arc_error_was_ready;
 static uint64_t arc_error_seen_generation;
 static bool arc_error_pad_levels[2];
 static uint64_t arc_error_hint_generation;
+static unsigned arc_error_hint_state;
 typedef enum {
    ARC_SESSION_EMPTY = 0,
    ARC_SESSION_PREPARED,
@@ -426,6 +427,19 @@ static unsigned arc_disc_launch_index, arc_disc_previous_index;
 static uint64_t arc_disc_swapped_us;
 static char arc_disc_notices[8][64];
 static unsigned arc_disc_notice_read, arc_disc_notice_write;
+static bool arc_disc_back_request(unsigned candidate,uint64_t now)
+{
+   return arc_disc_owned && candidate==arc_disc_previous_index && now>=arc_disc_swapped_us &&
+      now-arc_disc_swapped_us<UINT64_C(10000000);
+}
+#if defined(ARCDROID_TEST_FAULTS)
+RETRO_API bool arc_libretro_test_disc_back_request(unsigned candidate,unsigned *previous,uint64_t *time,unsigned *notices)
+{
+   *previous=arc_disc_previous_index;*time=arc_disc_swapped_us;
+   *notices=(arc_disc_notice_write+8u-arc_disc_notice_read)%8u;
+   return arc_disc_back_request(candidate,arc_engine_disc_time_us());
+}
+#endif
 static void arc_disc_invalidate(void)
 {
    ++arc_disc_generation;
@@ -1185,6 +1199,7 @@ static void arc_release_session(void)
    arc_error_seen_generation = 0u;
    arc_error_pad_levels[0] = arc_error_pad_levels[1] = false;
    arc_error_hint_generation = 0u;
+   arc_error_hint_state = 0u;
    arc_install_store_close(arc_hd_store);
    arc_hd_store = NULL;
    arc_hd_failure_noticed = false;
@@ -4825,21 +4840,27 @@ void arc_libretro_test_disc_adffs_active(bool active)
 static bool arc_test_disc_preflight_fail;
 void arc_libretro_test_fail_disc_preflight(void)
 { arc_test_disc_preflight_fail = true; }
+static void (*arc_test_disc_preflight_callback)(void);
+static bool arc_test_disc_preflight_stale;
+RETRO_API void arc_libretro_test_disc_after_preflight(void (*callback)(void),bool stale)
+{ arc_test_disc_preflight_callback=callback;arc_test_disc_preflight_stale=stale; }
 #endif
 typedef enum {
    ARC_DISC_COMMIT_INSERTED, ARC_DISC_COMMIT_BUSY, ARC_DISC_COMMIT_FAILED
 } ArcDiscCommit;
-static ArcDiscCommit arc_disc_commit(unsigned candidate, uint64_t generation)
+static ArcDiscCommit arc_disc_commit(unsigned candidate, uint64_t generation, ArcDiscSignal signal)
 {
    if (arc_disc_mode != ARC_DISC_MODE_AUTO || !arc_loaded ||
        arc_session != ARC_SESSION_RUNNING || arc_adffs_active || arc_ejected ||
-       arc_hd_mode != ARC_HD_HELPER_FLOPPY ||
+       (!arc_engine_is_rpc() && arc_hd_mode != ARC_HD_HELPER_FLOPPY) ||
        candidate >= arc_media_count || candidate == arc_image_index ||
        !arc_media[candidate].populated || generation != arc_disc_generation ||
        !arc_engine_disc_controller_idle()) return ARC_DISC_COMMIT_BUSY;
    ArcErrorBox box;
    arc_engine_error_snapshot(&box);
-   if (box.stage == ARC_ERROR_READY) return ARC_DISC_COMMIT_BUSY;
+   if(arc_engine_is_rpc()){
+      if(!arc_engine_rpc_observers_replace(signal))return ARC_DISC_COMMIT_BUSY;
+   }else if (box.stage == ARC_ERROR_READY) return ARC_DISC_COMMIT_BUSY;
    ArcMediaEntry *entry = &arc_media[candidate];
    char error[512] = {0};
 #if defined(ARCDROID_TEST_FAULTS)
@@ -4848,6 +4869,15 @@ static ArcDiscCommit arc_disc_commit(unsigned candidate, uint64_t generation)
 #endif
    if (!arc_disk_insert_entry(entry, ARC_INSERT_PREFLIGHT,
                               error, sizeof(error))) goto failed;
+#if defined(ARCDROID_TEST_FAULTS)
+   if(arc_test_disc_preflight_stale){arc_test_disc_preflight_stale=false;++arc_disc_generation;}
+   if(arc_test_disc_preflight_callback){
+      void (*callback)(void)=arc_test_disc_preflight_callback;
+      arc_test_disc_preflight_callback=NULL;callback();
+   }
+#endif
+   if(arc_engine_is_rpc() && (generation!=arc_disc_generation ||
+      !arc_engine_disc_controller_idle() || !arc_engine_rpc_observers_replace(signal)))return ARC_DISC_COMMIT_BUSY;
    unsigned old_index = arc_image_index;
    ArcEngineMedia old_media = arc_engine_media(&arc_media[old_index]);
    if (!arc_engine_media_eject()) goto failed;
@@ -4893,7 +4923,7 @@ int arc_libretro_test_disc_commit(unsigned candidate, bool stale,
    if (helper_active) arc_hd_mode = ARC_HD_HELPER_INSTALL;
    if (machine_refuse) arc_session_machine = ARC_MACHINE_A3000;
    ArcDiscCommit result = arc_disc_commit(candidate,
-      stale ? arc_disc_generation - 1u : arc_disc_generation);
+      stale ? arc_disc_generation - 1u : arc_disc_generation, ARC_DISC_SIGNAL_B);
    arc_hd_mode = saved_mode;
    arc_session_machine = saved_machine;
    return (int)result;
@@ -4924,10 +4954,9 @@ static bool arc_disc_observation(void *opaque, const char *path,
    if (trigger)
    {
       uint64_t now = arc_engine_disc_time_us();
-      bool backwards = arc_disc_owned && candidate == arc_disc_previous_index &&
-         now >= arc_disc_swapped_us &&
-         now - arc_disc_swapped_us < UINT64_C(10000000);
-      if (arc_disc_mode == ARC_DISC_MODE_HINT || backwards)
+      bool backwards = arc_disc_back_request(candidate,now);
+      if (arc_disc_mode == ARC_DISC_MODE_HINT || backwards ||
+          (arc_engine_is_rpc() && !arc_engine_rpc_observers_capability(ARC_RPC_CELL_REPLACE_B)))
       {
          char notice[64];
          snprintf(notice, sizeof(notice), "Insert disc %u with Disk Control",
@@ -4939,7 +4968,7 @@ static bool arc_disc_observation(void *opaque, const char *path,
       else if (arc_disc_mode == ARC_DISC_MODE_AUTO)
       {
          ArcDiscCommit commit = arc_disc_commit(candidate,
-                                                arc_disc_watch_generation);
+                                                arc_disc_watch_generation, ARC_DISC_SIGNAL_B);
          retry = commit == ARC_DISC_COMMIT_BUSY;
          action = commit == ARC_DISC_COMMIT_INSERTED ? "inserted" : "ignored";
          reason = commit == ARC_DISC_COMMIT_INSERTED ? "unique" :
@@ -5021,7 +5050,7 @@ static void arc_disc_setup(void)
       arc_media_count >= 2u && !arc_adffs_active && !arc_ejected &&
       arc_image_index < arc_media_count &&
       arc_session == ARC_SESSION_RUNNING &&
-      arc_hd_mode == ARC_HD_HELPER_FLOPPY;
+      (arc_engine_is_rpc() || arc_hd_mode == ARC_HD_HELPER_FLOPPY);
    ArcGuestName disc = {0};
    if (enabled && arc_disc_name(arc_image_index, &disc) && disc.length <= 10u)
    {
@@ -5051,16 +5080,44 @@ static void arc_disc_option_refresh(void)
    arc_disc_setup();
 }
 
+/* Host boundary only: a changed decision is immediate; repeats are bounded
+ * by virtual time, including busy requests that retry every frame. */
+static void arc_rpc_disc_log(const char *action,const char *reason,const char *candidate)
+{
+   static struct {char line[384];uint64_t time,generation;} history[4];
+   if(!arc_engine_is_rpc() || !arc_log)return;
+   unsigned slot=!strcmp(action,"resolved")?1u:!strcmp(action,"busy")?2u:
+      (!strcmp(action,"inserted") || !strcmp(action,"hint") || !strcmp(action,"ignored"))?3u:0u;
+   /* Waiting/terminal decisions end the previous attempt. A later retry
+    * becomes a fresh decision even when its candidate is the same. */
+   if(slot==0u || slot==3u){history[1].line[0]=0;history[2].line[0]=0;}
+   ArcRpcDiscStatus status;arc_engine_rpc_disc_status(&status);
+   char line[384];snprintf(line,sizeof(line),
+      "RPC disc: signal=%s gate=%s name=%s active=%u notified=%u replacement=%s candidate=%s action=%s reason=%s observation=%s:%s\n",
+      status.signal,status.gate,status.name,status.active,status.notified,status.replacement,candidate,action,reason,status.last_signal,status.last_reason);
+   uint64_t time=arc_engine_disc_time_us(),session=arc_engine_session_generation();
+   if(time<history[slot].time)history[slot].time=time;
+   bool busy_repeat=slot==2u && time-history[slot].time>=UINT64_C(2000000);
+   if(session!=history[slot].generation || strcmp(line,history[slot].line) || busy_repeat){
+      arc_log(RETRO_LOG_INFO,"%s",line);snprintf(history[slot].line,sizeof(history[slot].line),"%s",line);history[slot].time=time;history[slot].generation=session;
+   }
+}
+
 static void arc_disc_boundary(void)
 {
    arc_disc_option_refresh();
    arc_disc_present_notice();
    if (arc_disc_mode == ARC_DISC_MODE_OFF || arc_adffs_active ||
        arc_session != ARC_SESSION_RUNNING || arc_ejected ||
-       arc_media_count < 2u) return;
+       arc_media_count < 2u) {
+      arc_rpc_disc_log("inactive",arc_disc_mode==ARC_DISC_MODE_OFF?"option-off":arc_adffs_active?"adffs":
+         arc_session!=ARC_SESSION_RUNNING?"session":arc_ejected?"ejected":"single-media","none");return;
+   }
    ArcDiscRequest request;
    arc_engine_disc_snapshot(&request);
-   if (!request.a_active || request.a_notified) return;
+   if (!request.a_active || request.a_notified) {
+      arc_rpc_disc_log("waiting",request.a_notified?"already-notified":"signal-gate","none");return;
+   }
    unsigned candidate = UINT_MAX, count = 0u;
    bool unknown = false;
    for (unsigned i = 0u; i < arc_media_count; ++i)
@@ -5084,10 +5141,9 @@ static void arc_disc_boundary(void)
    else if (count == 1u)
    {
       uint64_t now = arc_engine_disc_time_us();
-      bool backwards = arc_disc_owned && candidate == arc_disc_previous_index &&
-         now >= arc_disc_swapped_us &&
-         now - arc_disc_swapped_us < UINT64_C(10000000);
-      if (arc_disc_mode == ARC_DISC_MODE_HINT || backwards)
+      bool backwards = arc_disc_back_request(candidate,now);
+      if (arc_disc_mode == ARC_DISC_MODE_HINT || backwards ||
+          (arc_engine_is_rpc() && !arc_engine_rpc_observers_capability(ARC_RPC_CELL_REPLACE_A)))
       {
          char notice[64];
          snprintf(notice, sizeof(notice), "Insert disc %u with Disk Control",
@@ -5098,12 +5154,19 @@ static void arc_disc_boundary(void)
       }
       else
       {
-         ArcDiscCommit commit = arc_disc_commit(candidate, arc_disc_generation);
-         if (commit == ARC_DISC_COMMIT_BUSY) return; /* Retry next boundary. */
+         arc_rpc_disc_log("resolved","unique",candidate_text);
+         uint64_t attempt_generation=arc_disc_generation;
+         ArcDiscCommit commit = arc_disc_commit(candidate, arc_disc_generation, ARC_DISC_SIGNAL_A);
+         if (commit == ARC_DISC_COMMIT_BUSY) {
+            arc_rpc_disc_log("busy",attempt_generation!=arc_disc_generation?"stale-generation":
+               !arc_engine_disc_controller_idle()?"controller-busy":"replacement-gate",candidate_text);
+            return; /* Retry next boundary. */
+         }
          action = commit == ARC_DISC_COMMIT_INSERTED ? "inserted" : "ignored";
          reason = commit == ARC_DISC_COMMIT_INSERTED ? "unique" : "commit-failed";
       }
    }
+   arc_rpc_disc_log(action,reason,candidate_text);
    if (arc_log) arc_log(RETRO_LOG_INFO,
       "Disc request: signal=A name=%s candidate=%s action=%s reason=%s\n",
       request.a_name, candidate_text, action, reason);
@@ -5871,7 +5934,9 @@ static void arc_poll_inputs(void)
       arc_left_sticks[port].polled = false;
    ArcErrorBox error_box;
    arc_engine_error_snapshot(&error_box);
-   bool error_ready = error_box.stage == ARC_ERROR_READY;
+   bool rpc_error=arc_engine_is_rpc();
+   bool error_ready = rpc_error ? error_box.answer_available : error_box.stage == ARC_ERROR_READY;
+   bool error_hint_open = rpc_error ? error_box.recognised_open : error_ready;
    if (error_ready != arc_error_was_ready ||
        (error_ready && error_box.generation != arc_error_seen_generation))
    {
@@ -5938,11 +6003,22 @@ static void arc_poll_inputs(void)
    bool error_b = error_pad && arc_input_state(0u, RETRO_DEVICE_JOYPAD, 0u,
                                   RETRO_DEVICE_ID_JOYPAD_B) != 0;
    if (!error_a && !error_b) arc_error_pad_gate = false;
-   if (error_ready && !arc_osk.visible && arc_session == ARC_SESSION_RUNNING &&
-       arc_error_hint_generation != error_box.generation)
+   bool error_hint_unknown=rpc_error && error_box.modal_unknown &&
+      (error_box.recognised_open || (error_box.flags&0x60u) ||
+       (arc_error_hint_state && arc_error_hint_generation==error_box.generation));
+   bool answered=rpc_error && (error_box.pending!=ARC_ERROR_NONE || error_box.consumed!=ARC_ERROR_NONE);
+   bool hint_answerable=error_box.answer_available || answered;
+   unsigned hint_state=error_hint_unknown?3u:hint_answerable?2u:1u;
+   if ((error_hint_open || error_hint_unknown) && !arc_osk.visible &&
+       (arc_session == ARC_SESSION_RUNNING || (rpc_error && arc_engine_active())) &&
+       (arc_error_hint_generation != error_box.generation ||
+        (rpc_error && arc_error_hint_state != hint_state)))
    {
-      arc_error_hint(&error_box);
+      if(error_hint_unknown)arc_message("Error box state unknown; use keyboard or mouse to respond.",RETRO_LOG_INFO);
+      else if(rpc_error && !hint_answerable)arc_message("Error box open; use keyboard or mouse to respond.",RETRO_LOG_INFO);
+      else arc_error_hint(&error_box);
       arc_error_hint_generation = error_box.generation;
+      arc_error_hint_state = hint_state;
    }
    bool sampled[2][10] = {{false}};
    bool desired[ARC_PAD_PORTS][ARC_INPUT_KEY_COUNT] = {{false}};
@@ -7615,12 +7691,18 @@ RETRO_API void retro_reset(void)
 {
 #if defined(ARCDROID_TEST_PLANS)
    if(arc_test_plan_pending()) {
+      arc_error_hint_generation=arc_error_seen_generation=0;arc_error_hint_state=0;
+      arc_disc_owned=false;arc_disc_previous_index=0;arc_disc_swapped_us=0;
+      arc_disc_notice_read=arc_disc_notice_write=0;
       arc_input_reset(&arc_inputs);memset(arc_keyboard_raw,0,sizeof(arc_keyboard_raw));
       arc_input_sampling_reset(false);arc_guest_time_us=0;arc_test_plan_reset();
       arc_rpc_av_attempted=false;return;
    }
 #endif
    if(arc_engine_is_rpc() && arc_engine_active()) {
+      arc_error_hint_generation=arc_error_seen_generation=0;arc_error_hint_state=0;
+      arc_disc_owned=false;arc_disc_previous_index=0;arc_disc_swapped_us=0;
+      arc_disc_notice_read=arc_disc_notice_write=0;
 #if defined(ARCDROID_TEST_PLANS)
       if(arc_test_plan_cmos_phase())arc_plan_notice("",false);
 #endif
@@ -7948,6 +8030,7 @@ static void arc_rpc_present_run(void)
          arc_core_options=updated;
       }
       (void)arc_resolve_inputs(&arc_core_options,false);
+      arc_disc_setup();
    }
 
    if (!arc_engine_get_av_info(NULL, NULL, NULL)) {
@@ -7972,6 +8055,10 @@ static void arc_rpc_present_run(void)
 #endif
    ArcEngineFrame frame;
    bool ran = arc_engine_run_frame(&arc_inputs, &frame);
+#if defined(ARCDROID_TEST_PLANS)
+   arc_test_plan_diagnostics();
+#endif
+   arc_disc_boundary();
 #if defined(ARCDROID_TEST_PLANS)
    arc_test_plan_hd_frame();
 
