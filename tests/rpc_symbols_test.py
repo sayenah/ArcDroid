@@ -182,3 +182,16 @@ print('rpc-symbol-guard: allowed FORTIFY libc families and complete multi-object
 # Bionic lowers allowed Arculator sprintf through its variadic libc service.
 check_nm('__vsprintf_chk U\n', 'arculator')
 check_nm('__vsprintf_chk U\n', 'rpc', 'unexpected rpc reference')
+
+# Shared observers execute on RPC's guest route even though their objects live
+# outside the private rpc directory. None may terminate the host process.
+for name in ('arc_error_box', 'arc_disc_request', 'arc_launch_outcome', 'arc_boot_watch'):
+    with tempfile.TemporaryDirectory(prefix='arc-shared-symbol-') as temp:
+        directory=Path(temp);(directory/'engine').mkdir()
+        source=directory/'injected.c';source.write_text('extern void abort(void); void probe(void) { abort(); }\n')
+        obj=directory/'engine'/(name+'.c.o')
+        subprocess.check_call([compiler,'-c',str(source),'-o',str(obj)])
+        try: guard.verify_outside([directory],policy,nm)
+        except ValueError as error: assert 'process termination reference' in str(error)
+        else: raise AssertionError((name,'shared termination was accepted'))
+print('rpc-symbol-guard: process termination rejected in all four shared observers')

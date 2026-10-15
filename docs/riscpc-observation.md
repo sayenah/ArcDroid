@@ -194,12 +194,15 @@ VA/SP; it cannot consume. Later eligible polls must match both. IRQ activity is
 neutral. Nested reports retire the parent and pending answer; no parent resumes.
 The return, disqualifying return, watch admission refusal, expiry, cancellation,
 replacement, reset, stop or fault ends eligibility synchronously. Watch loss
-leaves modal state unknown until a new bounded report or epoch. Observation and
+leaves modal state unknown until a new bounded report, a new epoch, or
+a user-mode Wimp_Poll/Wimp_PollIdle entry with no pending user report. The
+asynchronous-control uncertainty described below additionally excludes poll recovery. Observation and
 completion are separate capabilities; completion also needs form qualification.
 
 The frontend snapshot distinguishes recognised open, answer available and modal
-unknown. Unknown/immediate/close forms are modal-unknown while their user return
-watch is pending; accepted synchronous forms alone claim recognised-open. An
+unknown. Unknown forms are modal-unknown while their user return watch is pending;
+immediate-return/close-control forms retain uncertainty beyond that watch as
+described below. Accepted synchronous forms alone claim recognised-open. An
 already queued or consumed answer is no longer available. Only answer availability owns pad A/B, with the existing neutral and
 release gates. Observation-only generations retain normal keyboard, mouse, OSK
 and pad mapping and show a manual hint. Disc mutation requires a known nonmodal
@@ -252,11 +255,23 @@ until R3c-3; flag-free harnesses may call production arms but gain no override.
 The session hashes the actual owned image incrementally in the existing 32 KiB
 copy units; binding checks that digest against the verified catalogue request.
 The session binds that fingerprint, actual CPU and profile
-revision only after attachment. All production cells are disabled with reason
-"awaiting Fable qualification"; unknown/authored firmware has no authority.
+revision only after attachment. Run F adopts D-181's cell record in
+`docs/riscpc-observer-qualification.md`: error observation/answer and both disc
+signals' observation/replacement on exactly its seven pairs at revision 1.
+Boot and launch remain disabled with the record's exact reason; enabled cells
+carry that record's applicable leg references. Unknown/authored firmware has no authority.
 The test-fault build alone offers an explicitly labelled per-cell override and
 candidate profile parameters. Promotion is a later run changing exactly Fable's
 adjudicated cells with evidence references, followed by override-free QA.
+
+Run F's production error profile admits ROM SVC26/SVC32 polls with R1/R2 zero,
+and answers only forms 3 (OK/Cancel, default OK) and 14 (Cancel, default Cancel).
+The record exercised error number zero only and excludes serious-error
+transformations: a nonzero or unreadable error number remains observable but
+manual. The test override retains its candidate forms and parameters for further
+qualification. Signal A stays unspecified-device only; signal B is unchanged.
+Disabled/idle boundary diagnostics use `action=inactive`, preserving the gate
+and reason without announcing a refusal notice.
 
 Boundary ownership: the RPC frontend polls input/arbitrates once, then runs the
 protected frame. Engine frame return advances observer horizons and drains copied
@@ -365,3 +380,110 @@ condition-failed continuation and trace-independent event identities. Paired
 measurement uses the same authored hot workload for inactive, active without a
 watch and active with a real user-report watch held; no production cell is
 promoted by this cost work.
+
+## Run G — QA adjudication and error-number qualification
+
+An open report retains its original continuation identity and owner generation.
+At each valid ROM OS_Byte 129 read, the shared contextual profile validates
+R1/R2, mode, learned site and SVC stack independently of pending answer intent.
+Learning and subsequent matching polls renew the existing return watch's
+instruction deadline by the bounded watch budget. Renewal never creates a new
+watch, changes its return PC/SP/mode, or revives a lost watch. Nonmatching reads
+do not renew it; cessation of polling still expires it. This work occurs only
+at observed SWIs and adds nothing to the no-watch instruction path.
+
+After loss, a user-mode Wimp_Poll or Wimp_PollIdle entry clears modal-unknown
+only when there is no current synchronous report watch or recognised open
+report. Privileged polls and polls during a report cannot establish non-modal
+state. Until that positive evidence, both disc replacement gates stay closed.
+Disc losses are accepted only for the current disc watch ID. Before replacing
+a watch, policy removes the old ID so its synchronous loss cannot disarm the
+new request. RPC reset clears the frontend's error-hint generation, hint state
+and seen-generation keys; Arculator reset remains unchanged.
+
+The contextual error profile gains an answerable number class: `zero` or
+`ordinary` (bit 31 clear). Production remains `zero`. Both classes refuse
+serious numbers (bit 31 set) and unreadable error blocks. This is an authored
+predicate, not a firmware classification table. The test-only plan key is
+`observer_error_numbers=zero|ordinary`, case-sensitive, default `zero`; it is
+applied only with `observer_cells`, logged in the TEST OVERRIDE label, preserved
+on RPC reset and cleared on a new load. It changes neither admitted forms nor
+effective buttons. Pure Arculator logic with its NULL profile is unaffected.
+
+Digest evidence compares the actual copied-image session digest with Python's
+independently computed SHA-1 and CRC32 of the authored input image. Tests use
+varied bytes across all copy units and require the size, SHA-1 and CRC32 to
+agree. No catalogue injection or firmware material is needed.
+
+### Run H: adjudicated queue, hint and production refinements
+
+D-187 promotes the ordinary error-number class (bit 31 clear) on the same seven
+revision-1 tuples. Serious numbers remain observation-only. Cell references
+include the graphical and ordinary-number legs in the adopted record; boot and
+launch remain disabled. Qualification tests compare table values and evidence
+identifiers, rather than narrative wording.
+
+RPC signal B retains a copied triggered observation after BUSY, including its
+continuation, stack, candidate, epoch and both media generations. At later host
+boundaries it retries only while that identity, generation and trigger remain
+valid. A completed commit or hint ends retrying. Found objects synchronously drop queued misses for only the same canonical
+object. Their history retirement and lifecycle observations use the same ordered
+host queue; lifecycle events resolve preceding misses before clearing history,
+while preserving a later call still live across the boundary. Signal A still supersedes queued B work synchronously. Queue
+overflow retires the queue generation. Miss-only overflow retains identity
+history and the trigger latch. Before cancellation drops copied work, RPC records
+its retirement barriers: a lost lifecycle marker (including the overflowing
+item itself) clears history and the latch synchronously. FOUND already retires
+existing history synchronously through the shared outcome logic; its queued
+marker also retires matching history built by earlier deferred misses. This uses
+bounded copied-data inspection, never guest path resolution. No resolver or
+frontend callback runs inside guest execution.
+First-observation logging reads the copied callback identity.
+
+Synchronous bit-8 forms may carry category/high bits, but bits 5 and 6 still
+exclude them. They receive a recognised-open manual hint and no answers. A
+pending or consumed answer retains its answerable hint until the generation
+ends; snapshot answer availability still means a fresh answer can be queued.
+RPC reset retires hints, answers and disc watches before execution resumes and
+clears frontend swap ownership, previous index, time and pending notices.
+Helper paths are bounded before mount, so rejection leaves the drive intact.
+
+The cost matrix adds an authored user-mode SWI-density workload. Production
+subscriptions may select explicit normalised SWI numbers before event capture;
+trace selection remains independent, and watch deadlines still count every
+attempt. All four shared pure observers belong to the RPC host-service and
+termination guard surface.
+
+The SWI-number interest union is rebuilt only when subscriptions change. A cached
+three-word set rejects common OS and Wimp numbers before per-owner matching;
+other number ranges and mask-only subscriptions retain the generic path. Trace
+subscriptions independently bypass this rejection. The optional bounded list
+is host-owned for the lifetime of its filter and does not replace raw SWI masks.
+
+### Run I: immediate-return/close-control modal state
+
+The [RISC OS PRM, Wimp_ReportError](https://www.riscos.com/support/developers/prm/wimp.html)
+confirms that flag bit 5 may return without closing the error window; bit 6
+selects a button and closes it. It requires a close-control call before the next
+Wimp_Poll when using immediate returns. There is no contradiction with the
+adjudicated contract. No firmware classification or content is involved.
+
+A user report with either control bit sets a session-owned uncertainty latch
+from entry. It offers no answer and only the manual state-unknown hint. A
+matching immediate return, expiry, cancellation, privileged nested report or
+user Wimp_Poll/PollIdle does not clear this latch. Its bounded call watch ends
+normally, so an open asynchronous window adds no launch-long instruction watch.
+Only the matching successful return of a user close-control call, completion of
+a later recognised synchronous report, reset or a new bound epoch clears it.
+A failed/disqualifying close return is not evidence. A synchronous report used
+for recovery remains manual until it completes; unrecognised forms cannot
+supply recovery. Privileged reports keep their existing invalidation semantics
+and do not become new user-report observations.
+
+After a bit-5 report, automatic disc replacement therefore stays manual until
+positive closure, reset or a new epoch. Manual Disk Control still works.
+
+Ordinary watch-loss recovery through user Wimp_Poll/PollIdle remains unchanged
+when this control-form latch is absent. Watch-renewal failure cancels its watch
+before retiring policy eligibility. Routine disc reasons use neutral names
+(`path-other`, `outcome-not-miss`) on both shipping decision-log fields.

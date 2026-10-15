@@ -2770,10 +2770,14 @@ int main(int argc, char **argv)
    char system_path[4096], firmware_path[4096], save_path[4096], renamed[4096], cwd[4096], cwd_after[4096];
    char jfd_run_path[4096], cmos_run_path[4096];
    const char *data_root = argv[4];
-   if (jfd_writes || jfd_file_data_recovery || jfd_file_data_unavailable)
+   /* The full authored matrix deliberately damages a saved manifest. Keep
+    * persistence within one invocation, not across independent CTest runs. */
+   if ((media_tests && !helper_stress) || jfd_writes ||
+       jfd_file_data_recovery || jfd_file_data_unavailable)
    {
       make_directory(argv[4]);
-      assert(snprintf(jfd_run_path, sizeof(jfd_run_path), "%s/jfd-run-XXXXXX", argv[4]) < (int)sizeof(jfd_run_path));
+      assert(snprintf(jfd_run_path, sizeof(jfd_run_path), "%s/%s-XXXXXX", argv[4],
+                      media_tests ? "harness-run" : "jfd-run") < (int)sizeof(jfd_run_path));
       assert(mkdtemp(jfd_run_path));
       data_root = jfd_run_path;
    }

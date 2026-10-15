@@ -175,7 +175,9 @@ def verify_outside(directories, policy, nm, sanitized=False, errors=None):
         for path in objects(directory):
             # CMake preserves the source directory beneath the object target.
             relative = path.relative_to(directory)
-            if relative.parts[0] == "engine":
+            shared = path.name.split('.', 1)[0] in {name for name in (
+                'arc_error_box', 'arc_disc_request', 'arc_launch_outcome', 'arc_boot_watch')}
+            if relative.parts[0] == "engine" and not shared:
                 continue
             try:
                 symbols = read_symbols(path, nm, sanitized, errors)
@@ -183,6 +185,10 @@ def verify_outside(directories, policy, nm, sanitized=False, errors=None):
                 errors.append(str(error))
                 continue
             for name, undefined in symbols:
+                if shared and undefined:
+                    violation(name not in {"exit", "abort", "_exit", "assert", "__assert_fail",
+                                           "__assert_rtn", "_assert", "_wassert"},
+                              f"process termination reference: {path}: {name}", errors)
                 if undefined and name.startswith("arc_rpc_"):
                     violation(name in allowed,
                               f"outside engine references RPCEmu: {path}: {name}", errors)

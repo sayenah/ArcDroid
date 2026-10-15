@@ -17,11 +17,19 @@ typedef struct {
    uint32_t crc32;
    const char *sha1;
 } ArcRpcFirmwareFingerprint;
+#define ARC_RPC_FIRMWARE_PATH 4096u
+typedef struct {
+   char path[ARC_RPC_FIRMWARE_PATH];
+   ArcDigest fingerprint;
+} ArcRpcFirmwareLocator;
+typedef enum { ARC_RPC_INVENTORY_SKIPPED = 0, ARC_RPC_INVENTORY_SCANNED } ArcRpcInventoryState;
 typedef struct {
    uint32_t installed; /* Only recognised, whole-image fingerprints. */
    bool vfs_failure;
    bool bounded; /* Entry/depth/path/read budget exhausted, not a VFS error. */
    bool resource_failure;
+   ArcRpcInventoryState state;
+   ArcRpcFirmwareLocator locator[5]; /* OS enum index; slot zero unused. */
 } ArcRpcFirmwareInventory;
 /* Unshifted JFD categories: CPU bits 0 ARM3, 1 ARM250, 2 ARM610/710,
  * 3 ARM7500, 4 StrongARM, 5 ARMv5+; OS bits 0 RISC OS 2, 1 3.1,
@@ -30,13 +38,15 @@ typedef struct { uint8_t cpu, os; } ArcRpcCompatibility;
 typedef enum { ARC_RPC_SELECTION_LEGACY = 0, ARC_RPC_SELECTION_SELECTED,
    ARC_RPC_SELECTION_CONFLICTING_DISCS, ARC_RPC_SELECTION_UNSUPPORTED,
    ARC_RPC_SELECTION_UNQUALIFIED, ARC_RPC_SELECTION_MISSING_FIRMWARE,
-   ARC_RPC_SELECTION_UNREADABLE_INVENTORY } ArcRpcSelectionReason;
+   ARC_RPC_SELECTION_UNREADABLE_INVENTORY,
+   ARC_RPC_SELECTION_INCOMPLETE_SCAN } ArcRpcSelectionReason;
 typedef struct {
    ArcRpcSelectionReason reason;
    ArcRpcSelectionModel model;
    ArcRpcSelectionOs os;
    uint32_t needed; /* Qualified, feasible OS families, including on failure. */
    bool incomplete;
+   bool inventory_skipped;
 } ArcRpcSelection;
 
 const ArcRpcFirmwareFingerprint *arc_riscpc_firmware_catalogue(size_t *count);

@@ -10,9 +10,9 @@ extern const ArcEngineBackendOps arc_rpc_backend;
 #include "rpc_selection.h"
 #include <stdlib.h>
 #include <string.h>
+#include <stdio.h>
 #if defined(ARCDROID_TEST_FAULTS)
 #include "engine_test.h"
-#include <stdio.h>
 static uint64_t arc_test_frame_ns, arc_test_callback_ns;
 static bool arc_test_measuring;
 static ArcEngineLogCallback arc_test_log;
@@ -406,10 +406,13 @@ bool arc_engine_rpc_ide(const ArcIdeBackend *ide)
 }
 bool arc_engine_rpc_mount(unsigned drive,const ArcEngineMedia *media,char *e,size_t n)
 {
+    if(drive==1 && media && media->path && strlen(media->path)>=sizeof(rpc_helper_path)){
+        if(e && n)snprintf(e,n,"RPC helper path is too long");return false;
+    }
     bool ok = arc_engine_is_rpc() && arc_engine_active() && arc_rpc_fdc_mount(drive,media,e,n);
     if(drive==1){rpc_identity_epoch=arc_rpc_observer_epoch();rpc_helper=(ArcEngineMedia){0};
         if(ok && media){rpc_helper=*media;
-            if(media->path){size_t length=strlen(media->path);if(length>=sizeof(rpc_helper_path)){rpc_helper_known=false;return false;}
+            if(media->path){size_t length=strlen(media->path);
                 memcpy(rpc_helper_path,media->path,length+1);rpc_helper.path=rpc_helper_path;}}
         rpc_helper_derive();
     }
@@ -537,12 +540,22 @@ RETRO_API const ArcEngineBackendOps *arc_rpc_test_engine_api(void)
 #if defined(ARCDROID_TEST_FAULTS)
 RETRO_API bool arc_engine_test_observers_disc_devices(unsigned forms)
 { return arc_engine_is_rpc() && arc_rpc_observers_test_disc_devices(forms); }
+RETRO_API bool arc_engine_test_observers_error_numbers(ArcErrorNumberClass numbers)
+{ return arc_engine_is_rpc() && arc_rpc_observers_test_error_numbers(numbers); }
+RETRO_API bool arc_engine_test_observers_firmware(ArcDigest *out)
+{ return arc_engine_is_rpc() && arc_rpc_session_firmware(out); }
 RETRO_API void arc_engine_test_observers_buttons(uint32_t ok,uint32_t cancel,uint32_t defaults)
 { if(arc_engine_is_rpc())arc_rpc_observers_test_buttons(ok,cancel,defaults); }
 RETRO_API void arc_engine_test_observers_override(unsigned mask,uint32_t r1,uint32_t r2,uint32_t forms)
 { if(arc_engine_is_rpc())arc_rpc_observers_override(mask,r1,r2,forms); }
+RETRO_API unsigned arc_engine_test_observers_cells(void)
+{ unsigned cells=0;for(unsigned bit=1;bit<=128;bit<<=1)if(arc_engine_rpc_observers_capability(bit))cells|=bit;return cells; }
+RETRO_API void arc_engine_test_observers_production(unsigned catalogue,unsigned cells)
+{ if(arc_engine_is_rpc()){arc_rpc_observers_bind(catalogue,arc_rpc_session_cpu());arc_rpc_observers_test_cells(cells);} }
+RETRO_API void arc_engine_test_observers_horizon(unsigned us)
+{ if(arc_engine_is_rpc())arc_rpc_observers_test_horizon(us); }
 RETRO_API void arc_engine_test_observers_binding(unsigned requested,unsigned *catalogue,unsigned *cpu)
-{ arc_engine_rpc_observers_bind(requested);arc_rpc_observers_test_binding(catalogue,cpu); }
+{ if(requested!=UINT32_MAX)arc_engine_rpc_observers_bind(requested);arc_rpc_observers_test_binding(catalogue,cpu); }
 RETRO_API bool arc_engine_test_observers_identities(char helper[11],char hd[11])
 { return arc_rpc_observers_identities(helper,hd); }
 void arc_engine_test_observation_profile(bool unmatched,unsigned quota)
