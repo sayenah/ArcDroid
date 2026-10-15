@@ -185,49 +185,111 @@ static void disc_cases(CPUModel model)
     start(model,0);assert(!arc_rpc_observers_replace(ARC_DISC_SIGNAL_A));
     arc_rpc_observers_bind(0,model);assert(!arc_rpc_observers_test_disc_devices(1));
 }
+static ArcRpcLaunchAttempt phase_attempt;
+static uint64_t phase_session=123456788;
+static ArcRpcLaunchController phase_controller;
+static uint32_t phase_tag[3];
+static void phase_valid(void *opaque) {(void)opaque;}
+static void phase_bind(CPUModel model,unsigned cells)
+{
+    start(model,cells);
+    phase_tag[0]=0x53435241;phase_tag[1]=64;phase_tag[2]=1;
+    ArcRpcLaunchPlan plan={.action=ARC_RPC_PLAN_BOOT,.media={1}};strcpy(plan.target,"ADFS::0.$.!Boot");
+    ArcRpcAttemptToken token;assert(arc_riscpc_attempt_init(&phase_attempt,++phase_session,1));
+    assert(arc_riscpc_attempt_prepare(&phase_attempt,&plan,0,&token));
+    assert(arc_riscpc_controller_build(&plan,&token,&phase_controller));
+    memcpy((uint8_t *)ram00+0x20000,phase_controller.image,phase_controller.size);
+    ArcRpcLaunchBinding binding={&phase_attempt,&phase_controller,phase_valid,NULL};
+    assert(arc_rpc_observers_attempt(&binding));assert(!arc_rpc_observers_attempt(&binding));
+}
+static void phase_swi(uint32_t pc,uint32_t swi,uint32_t r0,uint32_t r1,uint32_t r2,uint32_t r3)
+{
+    updatemode(16);arm.reg[16]=16;arm.reg[15]=pc+8;
+    arm.reg[0]=r0;arm.reg[1]=r1;arm.reg[2]=r2;arm.reg[3]=r3;arm.reg[13]=0x10008000;
+    assert(!arc_rpc_observe_swi_at(0xef000000|swi,pc,ram00+((pc-0x10000000)&~0x3ffu)/4));
+}
+static void phase_marker(unsigned event,unsigned sequence,unsigned detail)
+{
+    uint32_t *w=ram00+(0x20000+phase_controller.status)/4;w[8]=event;w[9]=sequence;w[10]=detail;
+    arm.reg[4]=phase_tag[0];arm.reg[5]=phase_tag[1];arm.reg[6]=phase_tag[2];
+    phase_swi(0x10020000+phase_controller.query,0x20006,0,1,0,0x10020000+phase_controller.status);
+}
+static void phase_dispatch(void)
+{
+    phase_marker(1,1,0);assert(phase_attempt.delivery==ARC_RPC_DELIVERY_CONSUMED);
+    phase_marker(2,2,0x4321);phase_marker(3,3,0);assert(phase_attempt.delivery==ARC_RPC_DELIVERY_DISPATCH);
+    phase_swi(0x10020000+phase_controller.start,0x600de,0x10020000+phase_controller.command,0,0,0);
+}
 static void phase_cases(CPUModel model)
 {
-    start(model,3);issue(0x100,16,0xe,0x1000,0,0,0,0x10008000);
-    arc_rpc_observers_frame(3000000);assert(arc_rpc_observers_boot_state()==ARC_BOOT_WATCH_DISABLED);
-    arc_rpc_observers_boot_arm();issue(0x100,19,0xe,0x1000,0,0,0,0x10001000);
-    arc_rpc_observers_frame(3000000);assert(arc_rpc_observers_boot_state()==ARC_BOOT_WATCH_ARMED);
-    updatemode(16);arm.reg[16]=16;arm.reg[15]=0x10000100+8;arm.reg[0]=0x1000;
-    ram00[0x100/4]=0xef00000e;arc_rpc_arm_exec_count(1);arc_rpc_observers_frame(3000000);
-    assert(arc_rpc_observers_boot_state()==ARC_BOOT_WATCH_ARMED);
-    issue(0x100,16,0xe,0x8000,0,0,0,0x10008000);arc_rpc_observers_frame(3000000);
-    assert(arc_rpc_observers_boot_state()==ARC_BOOT_WATCH_ARMED);
-    issue(0x100,16,0xe,0x1000,0,0,0,0x10008000);arc_rpc_observers_frame(2000000);
-    assert(arc_rpc_observers_boot_state()==ARC_BOOT_WATCH_PROMPT);
-    assert(arc_rpc_observers_launch_arm("Run Authored"));strcpy((char *)ram00,"Run Other");
-    issue(0x100,16,0x400de,0x10000000,0,0,0,0x10008000);
-    ArcLaunchOutcome out;arc_rpc_observers_launch_snapshot(&out);assert(out.state==ARC_OUTCOME_WAIT);
-    strcpy((char *)ram00,"Run Authored");issue(0x100,16,0x400de,0x10000000,0,0,0,0x10008000);
-    /* Privileged launch traffic cannot match or cancel the user phase. */
-    issue(0x104,19,0x400de,0x10000000,0,0,0,0x10001000);
-    arc_rpc_observers_launch_snapshot(&out);assert(out.state==ARC_OUTCOME_EXIT);
-    /* Each terminal step requires fetched ROM provenance independently. */
-    const uint32_t terminal[]={0x11,0x400dd,0x400c7};
-    const unsigned expected[]={ARC_OUTCOME_EXIT,ARC_OUTCOME_CLOSE,ARC_OUTCOME_END};
-    for(unsigned step=0;step<3;++step){
-        updatemode(16);arm.reg[16]=16;arm.reg[15]=0x10000200+8;
-        arm.reg[0]=0;arm.reg[1]=5;arm.reg[2]=0;arm.reg[13]=0x10008000;
-        ram00[0x200/4]=0xef000000|terminal[step];arc_rpc_arm_exec_count(1);
-        arc_rpc_observers_launch_snapshot(&out);assert(out.state==expected[step]);
-        issue(0x104+4*step,16,terminal[step],0,5,0,0,0x10008000);
+    phase_bind(model,0);arc_rpc_observers_frame(120000000);
+    assert(phase_attempt.delivery==ARC_RPC_DELIVERY_PREPARED && phase_attempt.outcome==ARC_RPC_OUTCOME_UNKNOWN && !arc_rpc_observer_context);
+    assert(arc_rpc_observer_active);phase_marker(1,1,0);
+    assert(phase_attempt.delivery==ARC_RPC_DELIVERY_UNKNOWN && phase_attempt.outcome==ARC_RPC_OUTCOME_UNKNOWN && !arc_rpc_observer_active);
+    start(model,3);arc_rpc_observers_boot_arm();assert(arc_rpc_observers_boot_state()==ARC_BOOT_WATCH_DISABLED);
+    assert(!arc_rpc_observers_launch_arm("Run Authored"));
+    for(unsigned cells=0;cells<4;++cells){
+        phase_bind(model,cells);ArcRpcLaunchAttempt before=phase_attempt;
+        for(unsigned tag=0;tag<3;++tag){uint32_t value=phase_tag[tag];phase_tag[tag]=0;
+            phase_marker(1,1,0);assert(!memcmp(&before,&phase_attempt,sizeof(before)));phase_tag[tag]=value;}
+        const unsigned fields[]={0,1,2,3,4,5,6,7,11,12,13,14,15};
+        uint32_t *status=ram00+(0x20000+phase_controller.status)/4;
+        for(unsigned field=0;field<sizeof(fields)/sizeof(*fields);++field){unsigned at=fields[field];uint32_t value=status[at];status[at]^=0x10;
+            phase_marker(1,1,0);assert(!memcmp(&before,&phase_attempt,sizeof(before)));status[at]=value;}
+        ((uint8_t *)ram00)[0x20000+phase_controller.command]^=1;
+        phase_marker(1,1,0);assert(!memcmp(&before,&phase_attempt,sizeof(before)));
+        ((uint8_t *)ram00)[0x20000+phase_controller.command]^=1;
+        phase_marker(3,1,0);assert(!memcmp(&before,&phase_attempt,sizeof(before))); /* dispatch before consume */
+        phase_marker(1,2,0);assert(!memcmp(&before,&phase_attempt,sizeof(before))); /* gap */
+        uint32_t *w=ram00+(0x20000+phase_controller.status)/4;
+        w[4]^=1;phase_marker(1,1,0);assert(!memcmp(&before,&phase_attempt,sizeof(before)));w[4]^=1;
+        w[6]^=1;phase_marker(1,1,0);assert(!memcmp(&before,&phase_attempt,sizeof(before)));w[6]^=1;
+        w[12]=1;phase_marker(1,1,0);assert(!memcmp(&before,&phase_attempt,sizeof(before)));w[12]=0;
+        phase_dispatch();before=phase_attempt;
+        phase_marker(1,1,0);phase_marker(2,2,999);assert(!memcmp(&before,&phase_attempt,sizeof(before)));
+        /* Unrelated task starts/exits cannot establish an outcome. */
+        issue(0x104,16,0x400de,0,0,0,0,0x10008000);issue(0x108,16,0x11,0,0,0,0,0x10008000);
+        assert(!memcmp(&before,&phase_attempt,sizeof(before)));
+        phase_marker(4,4,99);assert(phase_attempt.start_returned && phase_attempt.outcome==ARC_RPC_OUTCOME_PENDING);
+        phase_marker(5,5,99);assert(phase_attempt.outcome==ARC_RPC_OUTCOME_PENDING); /* live child != returned */
+        phase_marker(6,5,99);
+        assert(arc_riscpc_attempt_established(&phase_attempt)==((cells&2)!=0));
+        if(cells&2)assert(phase_attempt.outcome==ARC_RPC_OUTCOME_DESKTOP);
+        phase_marker(8,6,0);arc_rpc_observers_frame(1000);
+        if(!(cells&2))assert(phase_attempt.outcome==ARC_RPC_OUTCOME_UNKNOWN);
+        before=phase_attempt;phase_marker(6,7,99);assert(!memcmp(&before,&phase_attempt,sizeof(before)));
     }
-    assert(arc_rpc_observers_launch_arm("Run Authored"));
-    issue(0x100,16,0x400de,0x10000000,0,0,0,0x10008000);
-    arc_rpc_observers_refused(0);arc_rpc_observers_refused(4);
-    issue(0x104,16,0x11,0,0x58454241,9,0,0x10008000);
-    issue(0x108,16,0x400dd,0,5,0,0,0x10008000);issue(0x10c,16,0x400c7,0,0,0,0,0x10008000);
-    arc_rpc_observers_launch_snapshot(&out);assert(out.state==ARC_OUTCOME_POLL && out.last_rc==9 && out.refused_hd==1 && out.refused_floppy==1);
-    assert(arc_rpc_observers_launch_arm("Run Authored"));issue(0x100,16,0x400de,0x10000000,0,0,0,0x10008000);
-    issue(0x104,16,0x400de,0x10000000,0,0,0,0x10008000);arc_rpc_observers_launch_snapshot(&out);assert(out.state==ARC_OUTCOME_CANCEL);
-    assert(arc_rpc_observers_launch_arm("Run Authored"));arc_rpc_observers_frame(599999999);
-    arc_rpc_observers_launch_snapshot(&out);assert(out.state==ARC_OUTCOME_WAIT);
-    arc_rpc_observers_frame(600000000);arc_rpc_observers_launch_snapshot(&out);assert(out.state==ARC_OUTCOME_CANCEL);
-    arc_rpc_observers_boot_arm();arc_rpc_observers_frame(39999999);assert(arc_rpc_observers_boot_state()==ARC_BOOT_WATCH_ARMED);
-    arc_rpc_observers_frame(40000000);assert(arc_rpc_observers_boot_state()==ARC_BOOT_WATCH_EXPIRED);
+    const uint32_t bad_read[][4]={{0x10022000,0,32,126},{0x10022000,256,32,126},
+        {0x10022000,255,0,126},{0x10022000,255,32,255},{0x50022000,255,32,126},{0,255,32,126}};
+    for(unsigned i=0;i<sizeof(bad_read)/sizeof(*bad_read);++i){
+        phase_bind(model,3);phase_dispatch();
+        phase_swi(0x10021000,0x2000e,bad_read[i][0],bad_read[i][1],bad_read[i][2],bad_read[i][3]);
+        arc_rpc_observers_frame(300000);assert(phase_attempt.outcome==ARC_RPC_OUTCOME_PENDING);
+    }
+    for(unsigned hint=0;hint<2;++hint)for(unsigned matched=0;matched<2;++matched){
+        phase_bind(model,3);phase_dispatch();rom[0x104/4]=rom[0x108/4]=0xe1a00000;
+        issue(0x100,16,0x2000e,0x10022000,255,32,126,0x10008000);
+        arc_rpc_observers_frame(hint?300000:0);assert(phase_attempt.outcome==(hint?ARC_RPC_OUTCOME_WAITING:ARC_RPC_OUTCOME_PENDING) && arc_rpc_observers_boot_state()==(hint?ARC_BOOT_WATCH_PROMPT:ARC_BOOT_WATCH_ARMED));
+        if(!matched)arm.reg[14]+=4;
+        arc_rpc_arm_exec_count(2);
+        assert(phase_attempt.outcome==ARC_RPC_OUTCOME_PENDING && arc_rpc_observers_boot_state()==ARC_BOOT_WATCH_CANCELLED);
+        assert(phase_attempt.last_event==(hint?(matched?ARC_RPC_EVENT_INPUT_RESUMED:ARC_RPC_EVENT_WAIT_UNOBSERVED):ARC_RPC_EVENT_DISPATCH));
+    }
+    phase_bind(model,3);phase_dispatch();
+    phase_swi(0x10021000,0x2000e,0x10022000,255,0,255);arc_rpc_observers_frame(300000);
+    assert(phase_attempt.outcome==ARC_RPC_OUTCOME_PENDING);
+    phase_swi(0x10021000,0x2000e,0x10022000,255,32,126);arc_rpc_observers_frame(300000);
+    assert(phase_attempt.outcome==ARC_RPC_OUTCOME_WAITING);
+    arc_rpc_observers_attempt_input();assert(phase_attempt.outcome==ARC_RPC_OUTCOME_WAITING);
+    arc_rpc_observers_frame(2000000);assert(!arc_rpc_observer_context && phase_attempt.outcome==ARC_RPC_OUTCOME_PENDING && arc_rpc_observers_boot_state()!=ARC_BOOT_WATCH_PROMPT); /* budget ends */
+    arc_rpc_observers_frame(120000000);assert(phase_attempt.outcome==ARC_RPC_OUTCOME_UNKNOWN);
+    assert(!arc_rpc_observer_context);ArcRpcLaunchAttempt stale=phase_attempt;
+    phase_marker(5,4,0);assert(!memcmp(&stale,&phase_attempt,sizeof(stale)));
+    phase_bind(model,3);phase_dispatch();phase_marker(4,4,0);phase_marker(5,5,0);
+    assert(phase_attempt.outcome==ARC_RPC_OUTCOME_RETURNED);
+    phase_marker(8,6,0);arc_rpc_observers_frame(1000);
+    phase_bind(model,3);phase_marker(1,1,0);arc_rpc_observers_attempt_interrupt(ARC_RPC_INTERRUPT_RESET);
+    stale=phase_attempt;phase_marker(2,2,1);assert(!memcmp(&stale,&phase_attempt,sizeof(stale)));
 }
 static bool production_pair(unsigned catalogue,unsigned cpu)
 { return (catalogue==1 && cpu==0) || (catalogue==2 && (cpu==1 || cpu==3)) ||

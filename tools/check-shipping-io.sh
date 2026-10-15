@@ -10,6 +10,10 @@ sources='core/adffs.c
 core/install_disc.c
 core/rpc_boot_filecore.c
 core/rpc_launch_helper.c
+core/rpc_launch_controller.c
+core/rpc_launch_plan.c
+core/rpc_launch_attempt.c
+core/rpc_boot_record.c
 core/hash.c
 core/hash_accel.inc
 core/hash_accel.h
@@ -95,6 +99,7 @@ libretro/arc_io.c
 libretro/install_store.c
 libretro/rpc_hd_store.c
 libretro/rpc_preparation.c
+libretro/rpc_launch_record_store.c
 libretro/rpc_preparation.h
 libretro/rpc_cmos_store.c
 libretro/rpc_boot.c

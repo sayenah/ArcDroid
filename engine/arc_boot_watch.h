@@ -12,7 +12,9 @@ typedef enum {
    ARC_BOOT_WATCH_PROMPT
 } ArcBootWatchState;
 
-typedef struct { uint64_t horizon_us, wait_us; uint32_t buffer_limit; bool user_only, rom; } ArcBootProfile;
+typedef struct { uint64_t horizon_us, wait_us; uint32_t buffer_limit; bool user_only, rom;
+   bool contextual; /* RPC: caller supplies a bound launch phase + return watch. */
+} ArcBootProfile;
 typedef struct {
    const ArcBootProfile *profile;
    ArcBootWatchState state;

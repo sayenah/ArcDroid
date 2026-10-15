@@ -113,6 +113,13 @@ static void apply(ArcRpcLaunchAttempt *a, const ArcRpcAttemptToken *t, ArcRpcAtt
 static void attempts(void)
 {
    ArcRpcLaunchPlan p = plan(); ArcRpcLaunchAttempt a; ArcRpcAttemptToken t, old;
+   assert(arc_riscpc_attempt_init(&a,77,1));assert(arc_riscpc_attempt_prepare(&a,&p,3,&t));
+   apply(&a,&t,ARC_RPC_EVENT_UNOBSERVED);assert(a.delivery==ARC_RPC_DELIVERY_PREPARED && a.outcome==ARC_RPC_OUTCOME_UNKNOWN && !a.capabilities);
+   assert(!arc_riscpc_attempt_prepare(&a,&p,3,&old));
+   assert(event(&a,&t,ARC_RPC_EVENT_UNOBSERVED)==ARC_RPC_TRANSITION_DUPLICATE);
+   assert(arc_riscpc_attempt_consume(&a,&t)==ARC_RPC_TRANSITION_APPLIED);
+   assert(event(&a,&t,ARC_RPC_EVENT_UNOBSERVED)==ARC_RPC_TRANSITION_REFUSED);
+   apply(&a,&t,ARC_RPC_EVENT_EXPIRE);assert(!arc_riscpc_attempt_established(&a));
    /* Every reset cut, with and without outcome capabilities. */
    for (unsigned caps = 0; caps <= 3; ++caps) for (unsigned cut = 0; cut < 4; ++cut)
    {
@@ -147,6 +154,9 @@ static void attempts(void)
    assert(!arc_riscpc_attempt_established(&a) && a.outcome == ARC_RPC_OUTCOME_PENDING);
    apply(&a, &t, ARC_RPC_EVENT_WAITING); assert(!arc_riscpc_attempt_established(&a));
    assert(event(&a, &t, ARC_RPC_EVENT_WAITING) == ARC_RPC_TRANSITION_DUPLICATE);
+   apply(&a, &t, ARC_RPC_EVENT_WAIT_UNOBSERVED);assert(a.outcome==ARC_RPC_OUTCOME_PENDING && a.start_returned);
+   assert(event(&a,&t,ARC_RPC_EVENT_WAIT_UNOBSERVED)==ARC_RPC_TRANSITION_DUPLICATE);
+   apply(&a,&t,ARC_RPC_EVENT_WAITING);
    apply(&a, &t, ARC_RPC_EVENT_INPUT_RESUMED);
    uint64_t resumed = a.last_event_serial;
    assert(arc_riscpc_attempt_event(&a, &t, resumed - 1u, ARC_RPC_EVENT_WAITING) == ARC_RPC_TRANSITION_REFUSED);

@@ -1,9 +1,10 @@
-# RiscPC launch host contract — R3c-3b part 1
+# RiscPC launch contract — R3c-3b
 
-This note fixes the host contract before implementation, under W2, D-184 and
-D-185. It adds no shipping route. The revision-2 hard-disc gate, CMOS,
-Arculator, guest code and observer profiles are unchanged. Part 2 must reconcile
-this contract with the reviewed R3c-3a run B before integration.
+This note fixes the contract before implementation, under W2, D-184 and D-185.
+Part 2 uses the frozen R3c-3a run-B CALL extent and passive ARCS query. Gate
+bytes, descriptor ABI, receipt admission and attachment policy do not change.
+Ordinary-load routing belongs to R3d. Launch and prompt cells remain disabled
+in production pending Fable's qualification and promotion.
 
 ## Helper plan 2
 
@@ -46,7 +47,7 @@ consumption. There is no Desktop restart, sibling boot or CMOS operation.
 
 ## Delivery and outcome
 
-One session owner initialises a nonzero, process-unique session ID and nonzero
+One session owner initialises a nonzero ID unique within a library load and nonzero
 epoch. Within that owner, explicit attempts receive strictly increasing u64
 serials, refusing wrap. A token contains session, epoch, serial and SHA-256 of
 the canonical plan. Tokens are identity bindings, not security credentials.
@@ -110,7 +111,7 @@ that handle. A later clean reopen permits a new observation, never restoration
 of the discarded one. This matters when recovery discards an uncommitted suffix
 and returns to identical committed bytes. There is no persistent recovery nonce
 in the existing store envelopes; irreversible record invalidation belongs to
-the future record-publication owner, and is mandatory integration coverage.
+the preparation-owned record publisher, and is mandatory integration coverage.
 Damaged, unsupported, pending, unpublished, population and read-only views also
 refuse. An offline modification that violates immutable-file/exclusive-owner
 rules is detected by existing chunk validation on use; this API does not promise
@@ -119,6 +120,20 @@ Namespace distinguishes stores; moving/copying a store to another save root
 invalidates records. No store-envelope revision or new persistent file is added.
 
 ## RPC boot records
+
+Record capture additionally requires `launch_media_immutable`: the request
+issuer certifies that the complete ordered media state represented by plan.media
+is immutable for this lease. Absent that proof, delivery remains available but
+record publication is unavailable. The current plan-core parser does not certify
+writable floppy overlays; it leaves this field false. Writable-media identity
+integration must be qualified before enabling records for that route.
+
+Revalidation compares the live 240-byte CMOS payload with the starting payload
+captured for this attempt. Both configuration hashing and revalidation exclude
+the 16 RTC bytes; configuration hashing uses the remaining 240 bytes plus
+canonical model/layout and attachment-policy bytes. Any detected payload
+or store identity mismatch permanently suppresses publication for this attempt;
+returning later to the same bytes does not restore an observation candidate.
 
 `ARCRBOOT` records use a separate fixed binary schema version 1, semantic
 revision 1, length 288 and CRC-32, unrelated to Arculator `ARCBOOT1`.
@@ -144,18 +159,163 @@ state, and a fresh explicit product attempt uses that state. Parsing enforces
 exact size/revisions/enums/reserved bytes/CRC; matching compares canonical keys.
 There is no filesystem record publication or observer wiring in part 1.
 
-## Part-2 placeholders — unresolved by this note
+Product checking during preparation is resumable. A range cache holds at most
+1 MiB and 4096 descriptors; a cache miss schedules one aligned range of at most
+5120 bytes for the next unit, using one bounded HD read command. Discovery is
+replayed against cached ranges without I/O until complete, with identity checked
+again before acceptance. This gives product work a separate 8,333,333 ns unit
+ceiling inside the existing offline budget. No guest instruction runs during
+these units. Verified firmware SHA-256 is retained from VERIFY, never rehashed
+as part of helper construction or consumption.
 
-- **Controller lifetime:** R3c-3a run B determines Wimp registration, slot,
-  code/plan/status ownership and shutdown. No BASIC-subroutine assumption.
-- **Transport:** run B determines collision-free transport, status-block
-  validation and the synchronous consume acknowledgement. No authored UpCalls.
-- **Release-failure storage:** run B determines an independent safe lifetime.
-- **Observers/cost:** qualified pending ReadLine context, exact-command outcome
-  profiles, short-watch limits and numeric active-phase cost ceilings are fixed
-  before part-2 code. No production cell or long-lived watch is added here.
-- **Integration:** reset barrier/no-op replacement, duplicate guest latch,
-  frontend input/swap policy, preparation ownership and platform/private legs
-  are checked after both prerequisite branches are rebased. Identity refusal
-  must discard persisted observations even if a later clean handle has an
-  identical identity; no caller may retry that old record.
+## Controller and transport (part 2, fixed before code)
+
+The helper owns its code, plan, command and status block in the BASIC allocation
+for the entire CALL. It preserves R4–R12, SP and the 26/32-bit return convention.
+Before Wimp registration it checks plan 2, checks a session-specific guest
+variable latch, emits CONSUME synchronously, and sets that latch with
+OS_SetVarVal. The latch is a system variable, rather than an application-slot
+word: reloading the helper must not recreate permission. A failed latch write
+rejects without registration or dispatch. A duplicate invocation returns with
+no effects. Variable names contain the complete injected session ID, epoch and serial;
+one preparation owns one explicit attempt. A subsequent explicit attempt uses
+a fresh explicit token under its session and invalidation epoch. R3d supplies
+one nonzero ID per frontend session, unique within a library load, surviving
+init/deinit and preparation recovery/Restart. No authoritative token or replay
+input survives library unload; an observation record never grants execution.
+
+The host subscribes to role 1 independently of capability cells while delivery
+is live. ARCS is an ordinary passive XOS_Byte 0 query, never a completion or an
+acknowledgement channel. Consumption is the synchronous host transition before
+the query executes. Store revalidation suppresses stale observation records;
+it does not change, complete or abort the query. Products are verified before
+being offered and before issuing their plan. Unattributable/stale queries are
+ignored. The guest latch and reset transaction supply execution exclusion.
+There is one attempt per preparation lease; replacing it requires retiring the
+old guest, so an unconsumed old helper cannot run beside a new attempt.
+
+The controller calls Wimp_Initialise in USR, emits REGISTERED, then emits
+DISPATCH immediately before Wimp_StartTask of the exact generated command.
+On successful StartTask return it emits START_RETURNED followed by RETURNED
+(R0 zero) or DESKTOP (R0 nonzero: the started task is still alive). Neither
+claims that a wrapper's children terminated. The controller closes its exact
+task with TASK magic immediately after this result; CLOSED is emitted only
+after successful CloseDown, then it returns directly to the gate. Errors after
+registration still close that exact task. CloseDown failure exits via OS_Exit
+and never returns to BASIC. No controller wait loop or whole-command return
+watch is needed. A blocked StartTask can remain live indefinitely; host expiry
+does not terminate it or retry. These interpretations follow the documented
+[Wimp_StartTask return contract](https://www.riscos.com/support/developers/prm/wimp.html).
+
+Role-1 ARCS uses the frozen 64-byte layout. Token is the nonzero session ID;
+wire epoch is `attempt epoch + attempt serial - 1`, refusing overflow. Both
+counters are monotonic under one owner, so every newly issued attempt has a
+strictly newer wire epoch, and distinct sessions have distinct tokens. The
+state machine retains the separate invalidation epoch and serial. Sequence is
+increasing u32 (no wrap); the host also
+binds the full part-1 token, plan digest, exact command, authored query PC and
+status-block location. All reserved words are zero. Events are:
+
+| Number | Meaning / emission |
+| --- | --- |
+| 1 | CONSUME: validated plan, before latch write or other effects |
+| 2 | REGISTERED: successful Wimp_Initialise; detail 0 exact task handle |
+| 3 | DISPATCH: immediately before exact-command StartTask |
+| 4 | START_RETURNED: successful StartTask return; detail 0 returned handle |
+| 5 | RETURNED: command returned, returned handle zero |
+| 6 | DESKTOP: live task handoff, returned handle nonzero |
+| 7 | REJECTED: validation/latch/registration/dispatch error |
+| 8 | CLOSED: successful exact CloseDown |
+| 9–15 | Reserved, refused by this implementation |
+
+Identical sequence/event/details repeats are inert; older, conflicting,
+out-of-order and stale bindings refuse without state mutation. Role 0 and ACK1
+are diagnostics only. WAITING and INPUT_RESUMED are host observations, not
+guest events. TERMINATED is reserved for an independently established exact
+command termination; this controller does not infer it from other tasks' exits.
+
+## Reset and frontend ownership
+
+RUNNING preparation reset performs the corrected A-3 transaction: interrupt and
+close the barrier; detach drive 1; invoke host re-stage-drive-0 callback; install
+a preparation-owned no-op only where START would generate one, or reattach an
+explicit low-level drive-1 override unchanged under reset-time write policy;
+invoke host reset/rebind-input callback and open the barrier only on complete
+success. Revision-1 and helper-free sessions gain no helper on Restart. Neither callback
+may execute guest instructions. Missing required callbacks or any failed step
+stop the engine with a terminal status. The drive-0 callback never touches
+drive 1. The second callback resets the engine and rebinds observers and input.
+Pending/FAILED reset invalidates and suppresses launch across restart of
+VERIFY/recovery; only normal START attaches backing. The preparation barrier
+also exists without an attempt. Failure reports the latest CMOS persistence
+outcome explicitly. R3d owns reset dispatch, load routing, early pending setter
+rejection and release/unload ownership.
+
+RPC input dismisses a prompt hint and preserves delivery/outcome tracking.
+Authorised in-set swaps preserve the attempt; failed rollback interrupts it.
+External replacement invalidates observation bindings. All disk setters check
+RUNNING admission before touching cancellation state. Arculator policy stays
+as before. Fault/unload invalidate the attempt; neither issues a fresh token.
+
+## Observation budgets and publication owner
+
+RPC profiles use attempt phase and exact command; legacy Arculator profiles
+retain their existing semantics. Pending OS_ReadLine recognition requires a
+user-mode, backed RAM buffer, R1 1–255, R2=32 and R3=126, during the exact
+blocked command. Its own user-return continuation has a **64,000,000 instruction
+attempt** ceiling and a **2 s virtual** ceiling; a return, disqualification,
+watch loss or competing launch ends recognition. A still-live read after
+**250 ms virtual** offers manual interaction. It never schedules a relaunch.
+At most one prompt watch exists. No mode subscription is used. Delivery has a
+**120 s virtual** observation horizon; expiry removes launch/prompt filters subject to the narrow pre-consumption exception below.
+Only a prepared delivery installs the otherwise cell-independent status filter.
+Observation expiry before consumption marks the outcome unknown and disables
+outcome capabilities while retaining prepared delivery. A narrow OS_Byte-only
+delivery filter remains until the first consumption or session retirement.
+A late first entry is consumed synchronously, then marked unknown; it is not a
+retry and cannot establish an observation. This needs no return/mode watch and
+preserves the frozen query's normal kernel/vector handling. Expiry after
+consumption needs no delivery filter. No expiry issues another token.
+
+Tracing-off cost ceilings, measured against identical helper execution with
+observation disabled: dispatch and desktop handoff **+10 % p50/p95**; blocked
+command and expired observation **+3 % p50/p95**; pending prompt **+100 %
+p50/p95** for at most the watch budget above, then **+3 %**. No-launch cost
+remains D-180's **+3 % p50/p95** on the pinned Odin3 hot workload. Mac numbers
+are development evidence; Odin3 measurements remain Fable's platform evidence.
+
+Preparation owns publication at
+`<save>/arcdroid/hd-riscpc/<content SHA-1>/launch.observation`, with a bounded
+temporary sibling and rename. Before opening a store it reads the old record
+into memory and removes the published file; failure to remove prevents store
+open/recovery. Thus recovery cannot erase its own invalidation signal while
+leaving an old record available for a later clean open. A temporary file is
+never a candidate. Only a clean matching identity may retain an in-memory old
+observation; identity refusal permanently discards it. Capture precedes token
+issuance; consume and publication revalidate all bindings. Publication rechecks
+after writing/flushing/closing the temporary file and before rename. Recovery,
+guest edits, changed media/configuration or interruption suppress publication.
+Publication failure discards the candidate; it never establishes an outcome.
+
+RPC installed-product discovery inspects root applications and one level of
+ordinary parent directories even when the boot environment contributes a root
+`!Boot` application. It retains shared name, collision, escaping and candidate
+classification rules, plus the same 77-candidate and read budgets. Root-only
+selection priority remains unchanged for Arculator disc discovery. An explicit
+product path still requires current directory identity and allocated `!Run`.
+
+A read return, competing phase, watch loss or watch budget end clears the prompt
+hint. A matched return emits INPUT_RESUMED; lost observation emits the distinct
+host-only WAIT_UNOBSERVED transition from waiting to command-pending. It claims
+no read return, termination or new execution permission. Hint dismissal alone
+keeps the pending watch and attempt; recognition can still finish normally.
+
+A failed swap rollback on a bound attempt notifies its preparation owner before
+frontend stop. The owner closes its execution barrier, saves the latest CMOS
+snapshot, and records a terminal stopped status with the snapshot outcome.
+Observer filters and the lease are retired before that owner callback runs.
+
+A preparation still marked RUNNING after an external engine stop fails Reset
+closed: no CMOS snapshot is invented from absent engine state. Its terminal
+status explicitly reports the latest snapshot unavailable. A later explicit
+recovery uses the pending/FAILED branch and retains launch suppression.

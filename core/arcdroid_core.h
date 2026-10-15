@@ -293,6 +293,10 @@ bool arc_media_is_recognised_adfs(const uint8_t *data, size_t size);
 bool arc_launch_discover(const uint8_t *data, size_t size,
                          const ArcMediaInfo *media, const ArcJfdImage *jfd,
                          ArcLaunchDiscovery *discovery);
+typedef bool (*ArcLaunchRangeRead)(void *,uint32_t offset,void *,size_t);
+/* Fixed RPC HD geometry; <= 4096 bounded range reads and <= 1 MiB total,
+ * sharing structural candidate/ambiguity/escaping policy with floppies. */
+bool arc_launch_discover_rpc(ArcLaunchRangeRead,void *,ArcLaunchDiscovery *);
 typedef enum {
    ARC_DISC_UNKNOWN, ARC_DISC_ABSENT, ARC_DISC_FILE, ARC_DISC_DIR
 } ArcDiscObject;

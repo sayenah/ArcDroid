@@ -50,6 +50,12 @@ static ArcRpcTransition event_transition(ArcRpcLaunchAttempt *a, const ArcRpcAtt
                                        ArcRpcAttemptEvent e)
 {
    if (!arc_riscpc_attempt_matches(a, t)) return ARC_RPC_TRANSITION_REFUSED;
+   if(e==ARC_RPC_EVENT_UNOBSERVED)
+   {
+      if(a->delivery!=ARC_RPC_DELIVERY_PREPARED)return ARC_RPC_TRANSITION_REFUSED;
+      if(a->outcome==ARC_RPC_OUTCOME_UNKNOWN)return ARC_RPC_TRANSITION_DUPLICATE;
+      a->outcome=ARC_RPC_OUTCOME_UNKNOWN;a->capabilities=0;return ARC_RPC_TRANSITION_APPLIED;
+   }
    if (e == ARC_RPC_EVENT_DISPATCH)
    {
       if (a->delivery == ARC_RPC_DELIVERY_DISPATCH || a->delivery == ARC_RPC_DELIVERY_OBSERVED)
@@ -87,6 +93,7 @@ static ArcRpcTransition event_transition(ArcRpcLaunchAttempt *a, const ArcRpcAtt
       case ARC_RPC_EVENT_TERMINATED: outcome = ARC_RPC_OUTCOME_TERMINATED; break;
       case ARC_RPC_EVENT_DESKTOP: outcome = ARC_RPC_OUTCOME_DESKTOP; break;
       case ARC_RPC_EVENT_WAITING: outcome = ARC_RPC_OUTCOME_WAITING; cap = ARC_RPC_ATTEMPT_PROMPT_CAP; break;
+      case ARC_RPC_EVENT_WAIT_UNOBSERVED:
       case ARC_RPC_EVENT_INPUT_RESUMED: outcome = ARC_RPC_OUTCOME_PENDING; cap = ARC_RPC_ATTEMPT_PROMPT_CAP; break;
       default: return ARC_RPC_TRANSITION_REFUSED;
    }
@@ -94,7 +101,7 @@ static ArcRpcTransition event_transition(ArcRpcLaunchAttempt *a, const ArcRpcAtt
    if ((a->delivery == ARC_RPC_DELIVERY_DISPATCH || a->delivery == ARC_RPC_DELIVERY_OBSERVED) &&
        a->outcome == outcome) return ARC_RPC_TRANSITION_DUPLICATE;
    if (a->delivery != ARC_RPC_DELIVERY_DISPATCH ||
-       (e == ARC_RPC_EVENT_INPUT_RESUMED && a->outcome != ARC_RPC_OUTCOME_WAITING))
+       ((e == ARC_RPC_EVENT_INPUT_RESUMED || e == ARC_RPC_EVENT_WAIT_UNOBSERVED) && a->outcome != ARC_RPC_OUTCOME_WAITING))
       return ARC_RPC_TRANSITION_REFUSED;
    a->outcome = outcome;
    if (outcome != ARC_RPC_OUTCOME_WAITING && outcome != ARC_RPC_OUTCOME_PENDING)

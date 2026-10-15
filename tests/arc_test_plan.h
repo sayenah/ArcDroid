@@ -17,6 +17,9 @@ typedef struct {
     bool (*select)(unsigned index);
     bool (*replace)(unsigned index,const struct retro_game_info *info);
     bool (*add)(void);
+    bool (*restage_drive0)(char *,size_t);
+    bool (*drive1_view)(ArcEngineMedia *);
+    bool (*drive1_writable)(void);
 } ArcTestPlanMedia;
 void arc_test_plan_set_media(const ArcTestPlanMedia *callbacks);
 void arc_test_plan_set_notice(void (*notice)(const char *, bool));
@@ -40,6 +43,8 @@ RETRO_API bool arc_test_plan_hd_stats(ArcRpcHdStats *out);
 RETRO_API bool arc_test_plan_hd_write(uint32_t lba,uint32_t count,const uint8_t *bytes);
 RETRO_API unsigned arc_test_plan_cmos_phase(void);
 RETRO_API void arc_test_plan_preparation_stats(ArcRpcPreparationStats *);
+RETRO_API void arc_test_plan_launch_snapshot(ArcRpcLaunchAttempt *);
+RETRO_API void arc_test_plan_preparation_restart(void);
 RETRO_API bool arc_test_plan_cmos_pacing(unsigned frames);
 void arc_test_plan_reset(void);
 void arc_test_plan_reset_input(void);

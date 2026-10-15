@@ -10,7 +10,7 @@ ninja=next(s.split('=',1)[1] for s in (build/'CMakeCache.txt').read_text().split
 commands=[r['command'] for r in json.loads(subprocess.check_output([ninja,'-C',str(build),'-t','compdb','-x'],text=True))]
 compile,link=rebuild_commands(commands,source,'rpc_orchestration_test',build,os.name=='nt')
 mutants=[
- ('helper-explicit-empty','!p->request.helper_override &&',''),
+ ('helper-explicit-empty','if(p->request.populate && !p->request.helper && !p->request.helper_override &&','if(p->request.populate && !p->request.helper &&'),
  ('helper-revision','r.authored_revision==2','r.authored_revision>=1'),
  ('helper-attachment','p->generated_helper?&p->helper:p->request.helper','p->request.helper'),
  ('helper-budget','p->stats.helper_bytes=ARC_RPC_HELPER_SIZE;','p->stats.helper_bytes=0;'),
@@ -18,7 +18,7 @@ mutants=[
  ('validation-before-candidate','arc_riscpc_boot_validation_complete(p->boot)','true'),
  ('requested-before-population','if(p->needs_population){p->state=ARC_RPC_PREP_POPULATE;p->substep=0;}','if(p->needs_population){p->state=ARC_RPC_PREP_START;p->substep=0;}'),
  ('generation-isolated-factory','if(!start(p,true))','if(!start(p,false))'),
- ('reset-recovery','release(p);restart(p);return true;','release(p);return true;'),
+ ('reset-recovery','release(p);restart(p);\n    if(p->request.hard_disc','release(p);\n    if(p->request.hard_disc'),
  ('final-attachment','(!p->host.attach||p->host.attach(p->host.opaque,p->error,sizeof(p->error)))','true'),
  ('authoritative-record','memcpy(p->seed+16,p->record.payload,240);after_cmos(p);break;','memset(p->seed+16,0,240);after_cmos(p);break;'),
  ('static-reservation','uint64_t cost=attachment||faulty?ceiling:estimate(p,kind,ns,ceiling);','uint64_t cost=ceiling;'),
@@ -28,9 +28,9 @@ mutants=[
   'uint64_t budget=generation?ARC_RPC_GENERATION_BUDGET_NS:ns||attachment?UINT64_C(8333333):ARC_RPC_PREP_OFFLINE_BUDGET_NS;'),
  ('generation-offline-budget','uint64_t budget=generation?ARC_RPC_GENERATION_BUDGET_NS:ARC_RPC_PREP_OFFLINE_BUDGET_NS;',
   'uint64_t budget=ARC_RPC_PREP_OFFLINE_BUDGET_NS;'),
- ('ordinary-ceiling','ns||attachment?ARC_RPC_PREP_NAMESPACE_UNIT_NS:ARC_RPC_PREP_UNIT_NS;',
+ ('ordinary-ceiling','ns||attachment||kind==ARC_RPC_PREP_PRODUCT_KIND?ARC_RPC_PREP_NAMESPACE_UNIT_NS:ARC_RPC_PREP_UNIT_NS;',
   'ns||attachment?ARC_RPC_PREP_NAMESPACE_UNIT_NS:UINT64_C(100000);'),
- ('namespace-ceiling','ns||attachment?ARC_RPC_PREP_NAMESPACE_UNIT_NS:ARC_RPC_PREP_UNIT_NS;',
+ ('namespace-ceiling','ns||attachment||kind==ARC_RPC_PREP_PRODUCT_KIND?ARC_RPC_PREP_NAMESPACE_UNIT_NS:ARC_RPC_PREP_UNIT_NS;',
   'ns||attachment?ARC_RPC_PREP_OFFLINE_BUDGET_NS:ARC_RPC_PREP_UNIT_NS;'),
  ('live-clock','    if(p->disc){arc_riscpc_hd_tick(p->disc);',
   '    p->host.clock(p->host.opaque);\n    if(p->disc){arc_riscpc_hd_tick(p->disc);'),
@@ -43,7 +43,7 @@ mutants=[
  ('damaged-refusal','o==ARC_RPC_HD_CORRUPT||',''),
  ('unavailable-refusal','||o==ARC_RPC_HD_UNAVAILABLE',''),
  ('legacy-refusal','p->request.populate && o==ARC_RPC_HD_LEGACY','false'),
- ('reset-clear','    notice(p,"",false);\n    if(p->state==ARC_RPC_PREP_RUNNING)','    if(p->state==ARC_RPC_PREP_RUNNING)'),
+ ('reset-clear','    notice(p,"",false);\n    p->execution_barrier','    p->execution_barrier'),
  ('unload-clear','notice(p,"",false);release(p);free(p->firmware);free(p);return ok;','release(p);free(p->firmware);free(p);return ok;'),
  ('saved-rtc-prefix','memset(p->seed,0,16);memcpy(p->seed+16,p->record.payload,240);after_cmos(p);break;}','memcpy(p->seed+16,p->record.payload,240);after_cmos(p);break;}'),
  ('requested-epoch','factory?ARC_RPC_CMOS_GENERATION_EPOCH:p->request.epoch','ARC_RPC_CMOS_GENERATION_EPOCH'),
@@ -84,7 +84,7 @@ with tempfile.TemporaryDirectory(prefix='arcdroid-orchestration-mutants-') as te
         c.write_text(text)
         subprocess.run(command,cwd=build,check=True,capture_output=True,timeout=60)
         subprocess.run(link,cwd=build,check=True,capture_output=True,timeout=60)
-        result=subprocess.run([sys.executable,'-B',str(root/'tests/rpc_orchestration_test.py'),str(exe),fixtures,profile],capture_output=True,text=True,timeout=60)
+        result=subprocess.run([sys.executable,'-B',str(root/'tests/rpc_orchestration_test.py'),str(exe),fixtures,profile],capture_output=True,text=True,timeout=120)
         if label=='baseline':
             if result.returncode:raise RuntimeError('baseline: '+result.stderr[-2000:])
         elif not result.returncode:raise RuntimeError('survived: '+label)

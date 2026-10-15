@@ -185,6 +185,8 @@ int main(int argc, char **argv)
     uint64_t frames = 1, warmup = 0, measure = 0, ram_offset = 0, ram_count = 0, reset_at = UINT64_MAX;
     bool reject = false, print_cmos = false;
     uint64_t fail_alloc = 0, fault_at = UINT64_MAX;
+    uint64_t preparation_reset_at=UINT64_MAX, reset_stage_frame=2600;
+    const char *reset_stage=NULL;
     for (int i = 1; i < argc; ++i) {
         const char *key = argv[i];
         if (!strcmp(key,"--fail-observation-close")) { fail_observation_close=true;continue; }
@@ -236,11 +238,19 @@ int main(int argc, char **argv)
         else if (!strcmp(key,"--ram-offset")) { if (!unsigned_number(v,33554428,&ram_offset) || ram_offset%4) goto usage; }
         else if (!strcmp(key,"--ram-words")) { if (!unsigned_number(v,1024,&ram_count)) goto usage; }
         else if (!strcmp(key,"--reset-at")) { if (!unsigned_number(v,1000000,&reset_at)) goto usage; }
+        else if (!strcmp(key,"--preparation-reset-at")) { if (!unsigned_number(v,1000000,&preparation_reset_at)) goto usage; }
+        else if (!strcmp(key,"--preparation-reset-stage")) {
+            if(strcmp(v,"prepared")&&strcmp(v,"consumed")&&strcmp(v,"dispatch")&&strcmp(v,"handoff"))goto usage;
+            reset_stage=v;
+        }
+        else if (!strcmp(key,"--reset-stage-frame")) {if(!unsigned_number(v,999999,&reset_stage_frame))goto usage;}
         else if (!strcmp(key,"--fault-at")) { if (!unsigned_number(v,1000000,&fault_at)) goto usage; }
         else if (!strcmp(key,"--fail-alloc")) { if (!unsigned_number(v,5,&fail_alloc) || !fail_alloc) goto usage; }
         else goto usage;
     }
-    if (!core || !plan || (!measure && warmup) || (strcmp(pacing,"flat") && strcmp(pacing,"burst") && strcmp(pacing,"realtime"))) goto usage;
+    if (!core || !plan || (!measure && warmup) ||
+        (reset_stage && (measure || preparation_reset_at!=UINT64_MAX || reset_stage_frame>=frames)) ||
+        (strcmp(pacing,"flat") && strcmp(pacing,"burst") && strcmp(pacing,"realtime"))) goto usage;
 #if defined(_WIN32)
     library = LoadLibraryA(core);
 #else
@@ -272,6 +282,11 @@ int main(int argc, char **argv)
     LOAD(capture,"arc_rpc_test_capture_status"); LOAD(read_ram,"arc_rpc_test_read_ram"); LOAD(frame_ns,"arc_engine_test_frame_ns");
     void (*cmos_snapshot)(uint8_t *), (*fault_next)(void);
     LOAD(cmos_snapshot,"arc_rpc_test_cmos_snapshot"); LOAD(fault_next,"arc_rpc_test_fault_next");
+    void (*preparation_restart)(void)=NULL;
+    bool (*advance)(uint64_t)=NULL;
+    void (*attempt_snapshot)(ArcRpcLaunchAttempt *)=NULL;
+    if(preparation_reset_at!=UINT64_MAX || reset_stage)LOAD(preparation_restart,"arc_test_plan_preparation_restart");
+    if(reset_stage){LOAD(advance,"arc_rpc_test_advance");LOAD(attempt_snapshot,"arc_test_plan_launch_snapshot");}
     unsigned (*plan_phase)(void)=NULL;
     void *phase_symbol=symbol("arc_test_plan_cmos_phase");if(phase_symbol)memcpy(&plan_phase,&phase_symbol,sizeof(plan_phase));
     if(plan_phase && plan_phase() && (print_cmos || capture_path)) {fprintf(stderr,"Persistent CMOS is never exported as bytes\n");unload();deinit(); vfs_assert_no_open_handles();return 2;}
@@ -321,6 +336,24 @@ int main(int argc, char **argv)
             variable_updated=true;
         }
         if (f == reset_at) reset();
+        if (f == preparation_reset_at) preparation_restart();
+        if(reset_stage && f==reset_stage_frame){
+            /* Test-only instruction-boundary reset. Existing engine advance
+             * respects this virtual deadline; no CPU/observer hook or guest
+             * state rewrite is needed. A missed stage fails qualification. */
+            bool hit=false;
+            for(unsigned step=0;step<50000000u;++step){
+                ArcRpcLaunchAttempt a;attempt_snapshot(&a);
+                hit=(!strcmp(reset_stage,"prepared") && a.delivery==ARC_RPC_DELIVERY_PREPARED) ||
+                    (!strcmp(reset_stage,"consumed") && a.delivery==ARC_RPC_DELIVERY_CONSUMED) ||
+                    (!strcmp(reset_stage,"dispatch") && a.delivery==ARC_RPC_DELIVERY_DISPATCH && !a.start_returned) ||
+                    (!strcmp(reset_stage,"handoff") && a.start_returned);
+                if(hit){fprintf(stderr,"preparation reset at stage=%s delivery=%u outcome=%u\n",reset_stage,a.delivery,a.outcome);
+                    preparation_restart();break;}
+                if(!a.live || a.delivery==ARC_RPC_DELIVERY_INTERRUPTED || !advance(100))break;
+            }
+            if(!hit){fprintf(stderr,"Requested preparation reset stage was not reached\n");result=1;break;}
+        }
         if (f == fault_at) fault_next();
         uint64_t frontend_start = arc_test_clock_ns();
         runner_frame = f;
@@ -450,6 +483,6 @@ int main(int argc, char **argv)
 #endif
     return (int)result;
 usage:
-    fputs("rpc_runner --core LIB --plan FILE [--system DIR] [--save DIR] [--frames N | --warmup-seconds 120 --measure-seconds 600] [--pacing flat|burst|realtime] [--disk-writes off|shadow|original] [--jfd-policy as-imaged|off] [--jfd-policy-at FRAME VALUE] [--disk-writes-at FRAME VALUE] [--jfd-omitted strict|file-data] [--timing CSV] [--hd-cost CSV] [--preparation-timing CSV] [--vfs-flush retroarch|fsync] [--dump-frame N FILE.ppm ...] [--pad-at FRAME MASK ...] [--capture-seed FILE] [--ram-offset N --ram-words N] [--reset-at N] [--cmos] [--fail-alloc 1..5] [--fault-at N] [--reject]\n",stderr);
+    fputs("rpc_runner --core LIB --plan FILE [--system DIR] [--save DIR] [--frames N | --warmup-seconds 120 --measure-seconds 600] [--pacing flat|burst|realtime] [--disk-writes off|shadow|original] [--jfd-policy as-imaged|off] [--jfd-policy-at FRAME VALUE] [--disk-writes-at FRAME VALUE] [--jfd-omitted strict|file-data] [--timing CSV] [--hd-cost CSV] [--preparation-timing CSV] [--vfs-flush retroarch|fsync] [--dump-frame N FILE.ppm ...] [--pad-at FRAME MASK ...] [--capture-seed FILE] [--ram-offset N --ram-words N] [--reset-at N] [--preparation-reset-at N | --preparation-reset-stage prepared|consumed|dispatch|handoff --reset-stage-frame N] [--cmos] [--fail-alloc 1..5] [--fault-at N] [--reject]\n",stderr);
     return 2;
 }

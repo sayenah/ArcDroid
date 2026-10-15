@@ -27,6 +27,18 @@ static ArcRpcPreparation *current;
 static unsigned test_model;
 static bool helper_override;
 static unsigned revision1_notices;
+static bool launch_test,reset_probe;
+static const char *launch_product;
+static unsigned reset_failure,reset_steps;
+static uint64_t injected_session=1000;
+static bool reset_drive0(void *opaque,char *error,size_t n)
+{(void)opaque;(void)error;(void)n;
+ if(reset_probe){assert(!arc_riscpc_preparation_execution_allowed(current));assert(reset_steps++==0);if(reset_failure==1)return false;}
+ return true;}
+static bool reset_rebind(void *opaque,char *error,size_t n)
+{(void)opaque;
+ if(reset_probe){assert(!arc_riscpc_preparation_execution_allowed(current));assert(reset_steps++==1);if(reset_failure==2)return false;}
+ return arc_engine_reset(error,n);}
 static uint64_t helper_construction_bytes;
 static ArcRpcSelectionOs test_os=ARC_RPC_OS_350;
 static const char *id="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -163,6 +175,9 @@ static ArcRpcPreparation *new_request(const uint8_t *rom,size_t size,bool seed,
     ArcRpcPreparationRequest r={0};r.firmware=rom;r.firmware_size=size;r.key.model=test_model;r.key.layout=test_os==ARC_RPC_OS_350?1:3;
     strcpy(r.key.content,id);r.save="/save";r.system="/system";r.epoch=1234567890;
     r.hard_disc=r.populate=true;r.helper_override=helper_override;
+    ArcRpcLaunchPlan launch={.action=ARC_RPC_PLAN_BOOT,.media={1}};strcpy(launch.target,"ADFS::0.$.!Boot");
+    if(launch_product){launch.action=ARC_RPC_PLAN_PRODUCT;snprintf(launch.target,sizeof(launch.target),"%s",launch_product);}
+    if(launch_test){r.launch=&launch;r.session_id=++injected_session;}
     /* PRM CMOS allocation (RO3.6), logical 5/11/16/135;
      * core/cmos_defaults.c documents n+0x40 wrapping past 255 to 16.
      * https://www.riscos.com/support/developers/prm/cmos.html
@@ -175,6 +190,7 @@ static ArcRpcPreparation *new_request(const uint8_t *rom,size_t size,bool seed,
     ArcRpcFirmwareFingerprint f={test_os,size,d.crc32,d.sha1};
     if(fingerprint){r.fingerprint=&f;r.selection=(ArcRpcSelection){.reason=ARC_RPC_SELECTION_SELECTED,.model=(ArcRpcSelectionModel)(test_model+1),.os=test_os};}
     char error[512]={0};
+    host.restage_drive0=reset_drive0;host.reset_rebind=reset_rebind;
     current=fingerprint?arc_riscpc_preparation_begin(&r,&host,error,sizeof(error)):
                         arc_riscpc_preparation_low_level(&r,&host,error,sizeof(error));
     assert(current && !error[0]);return current;
@@ -462,6 +478,88 @@ static void helper_exclusion(bool attached)
     assert(arc_rpc_observers_replace(ARC_DISC_SIGNAL_A));
     arm=saved;arc_rpc_observers_bind(0,0);
 }
+static void launch_marker(const ArcRpcLaunchController *c,unsigned event,unsigned sequence,unsigned detail)
+{
+    uint32_t *w=ram00+(0x20000+c->status)/4;w[8]=event;w[9]=sequence;w[10]=detail;
+    arm.mode=16;arm.reg[16]=16;arm.reg[15]=0x10020000+c->query+8;
+    arm.reg[0]=0;arm.reg[1]=1;arm.reg[2]=0;arm.reg[3]=0x10020000+c->status;
+    arm.reg[4]=0x53435241;arm.reg[5]=64;arm.reg[6]=1;arm.reg[13]=0x10008000;
+    assert(!arc_rpc_observe_swi_at(0xef020006,0x10020000+c->query,ram00+0x20000/4+(c->query&~0x3ffu)/4));
+}
+static bool rollback_write_failure;
+static int64_t rollback_cmos_write(struct retro_vfs_file_handle *file,const void *bytes,uint64_t n)
+{
+    if(strstr(files[file->file].path,"/cmos-riscpc/")){
+        assert(arc_engine_active() && arc_engine_is_rpc());
+        if(rollback_write_failure)return -1;
+    }
+    return test_write(file,bytes,n);
+}
+static void launch_reset_matrix(const uint8_t *rom,size_t size,ArcRpcPreparationHost host)
+{
+    restore();clock_mode=1;launch_test=true;
+    ArcRpcPreparation *pending=new_request(rom,size,true,false,host);
+    assert(arc_riscpc_preparation_reset(pending));settle(pending);
+    assert(arc_riscpc_preparation_state(pending)==ARC_RPC_PREP_RUNNING && arc_riscpc_preparation_execution_allowed(pending));
+    ArcRpcLaunchAttempt suppressed;arc_riscpc_preparation_attempt(pending,&suppressed);
+    assert(!suppressed.live && suppressed.delivery==ARC_RPC_DELIVERY_INTERRUPTED);finish(pending);
+    for(unsigned present=0;present<2;++present){
+        restore();clock_mode=1;
+        if(present){int product=find("/system/product.zip",false);assert(product>=0);
+            file_bytes("/system/arcdroid/riscpc/boot/HardDisc4.zip",files[product].data,files[product].size);}
+        launch_product="ADFS::4.$.Apps.!Example";
+        ArcRpcPreparation *product=new_request(rom,size,true,false,host);settle(product);
+        if(arc_riscpc_preparation_state(product)!=(present?ARC_RPC_PREP_RUNNING:ARC_RPC_PREP_FAILED))fprintf(stderr,"product present=%u: %s\n",present,arc_riscpc_preparation_error(product));
+        assert(arc_riscpc_preparation_state(product)==(present?ARC_RPC_PREP_RUNNING:ARC_RPC_PREP_FAILED));
+        if(present){ArcRpcLaunchAttempt a;arc_riscpc_preparation_attempt(product,&a);assert(a.delivery==ARC_RPC_DELIVERY_PREPARED);}
+        else assert(!arc_engine_active());
+        finish(product);launch_product=NULL;
+    }
+
+    for(unsigned cut=0;cut<4;++cut)for(unsigned failure=0;failure<3;++failure){
+        restore();clock_mode=1;launch_test=true;ArcRpcPreparation *p=new_request(rom,size,true,false,host);settle(p);
+        assert(arc_riscpc_preparation_state(p)==ARC_RPC_PREP_RUNNING && arc_riscpc_preparation_execution_allowed(p));
+        ArcRpcLaunchAttempt a;arc_riscpc_preparation_attempt(p,&a);assert(a.delivery==ARC_RPC_DELIVERY_PREPARED);
+        ArcRpcLaunchPlan plan={.action=ARC_RPC_PLAN_BOOT,.media={1}};strcpy(plan.target,"ADFS::0.$.!Boot");
+        ArcRpcLaunchController c;assert(arc_riscpc_controller_build(&plan,&a.token,&c));memcpy((uint8_t *)ram00+0x20000,c.image,c.size);
+        if(cut>=1){launch_marker(&c,1,1,0);arc_riscpc_preparation_attempt(p,&a);assert(a.delivery==ARC_RPC_DELIVERY_CONSUMED);}
+        if(cut>=2){launch_marker(&c,2,2,42);launch_marker(&c,3,3,0);arc_riscpc_preparation_attempt(p,&a);assert(a.delivery==ARC_RPC_DELIVERY_DISPATCH);}
+        if(cut>=3){launch_marker(&c,4,4,99);launch_marker(&c,6,5,99);launch_marker(&c,8,6,0);
+            arc_riscpc_preparation_attempt(p,&a);assert(a.start_returned && !arc_riscpc_attempt_established(&a));}
+        uint64_t epoch=a.epoch;reset_probe=true;reset_failure=failure;reset_steps=0;
+        assert(arc_riscpc_preparation_reset(p)==!failure);reset_probe=false;
+        assert(!arc_engine_active()==(failure!=0));assert(reset_steps==(failure==1?1:2));
+        arc_riscpc_preparation_attempt(p,&a);assert(a.delivery==ARC_RPC_DELIVERY_INTERRUPTED && a.epoch>epoch && a.live==!failure);
+        assert(arc_riscpc_preparation_execution_allowed(p)==!failure);
+        if(failure)assert(strstr(arc_riscpc_preparation_error(p),"latest CMOS snapshot"));
+        else {
+            ArcRpcLaunchAttempt before=a;memcpy((uint8_t *)ram00+0x20000,c.image,c.size);launch_marker(&c,1,1,0);
+            arc_riscpc_preparation_attempt(p,&a);assert(!memcmp(&before,&a,sizeof(a))); /* stale after reset */
+        }
+        finish(p);launch_test=false;
+    }
+    restore();clock_mode=1;launch_test=false;
+    ArcRpcPreparation *stopped=new_request(rom,size,true,false,host);settle(stopped);
+    arc_engine_stop();assert(!arc_riscpc_preparation_execution_allowed(stopped));
+    assert(!arc_riscpc_preparation_reset(stopped) && arc_riscpc_preparation_state(stopped)==ARC_RPC_PREP_FAILED);
+    assert(strstr(arc_riscpc_preparation_error(stopped),"latest CMOS snapshot unavailable"));finish(stopped);
+    for(unsigned save_failure=0;save_failure<2;++save_failure){
+        restore();clock_mode=1;launch_test=true;
+        ArcRpcPreparation *aborted=new_request(rom,size,true,false,host);settle(aborted);
+        uint8_t latest[256];arc_rpc_cmos_snapshot(latest);latest[69]^=4;arc_rpc_cmos_seed(latest);
+        rollback_write_failure=save_failure;vfs.write=rollback_cmos_write;
+        arc_engine_rpc_launch_interrupt(ARC_RPC_INTERRUPT_SWAP_ROLLBACK);
+        vfs.write=test_write;
+        assert(arc_riscpc_preparation_state(aborted)==ARC_RPC_PREP_FAILED && !arc_engine_active());
+        assert(!arc_riscpc_preparation_execution_allowed(aborted));
+        assert(strstr(arc_riscpc_preparation_error(aborted),save_failure?"latest CMOS snapshot could not be saved":"latest CMOS snapshot saved"));
+        reset_fault();
+        if(!save_failure){bool saved=false;for(unsigned i=0;i<TEST_FILES;++i)
+            if(files[i].present && files[i].size==512 && strstr(files[i].path,"/cmos-riscpc/") && !memcmp(files[i].data+104,latest+16,240))saved=true;
+            assert(saved);}
+        finish(aborted);launch_test=false;
+    }
+}
 static void helper_ownership(const uint8_t *rom,size_t size,ArcRpcPreparationHost host)
 {
     for(unsigned explicit_empty=0;explicit_empty<2;++explicit_empty){
@@ -570,14 +668,20 @@ int main(int argc,char **argv)
     snprintf(source,sizeof(source),"%s/arcdroid/riscpc/boot/PlingSystem.zip",argv[1]);
     file_copy("/system/arcdroid/riscpc/boot/PlingSystem.zip",source);
     snprintf(source,sizeof(source),"%s/cap.zip",argv[1]);file_copy("/system/cap.zip",source);
+    snprintf(source,sizeof(source),"%s/product.zip",argv[1]);file_copy("/system/product.zip",source);
     file_copy("/system/full.rom",argv[2]);int i=find("/system/full.rom",false);assert(i>=0);
     size_t size=files[i].size;uint8_t *rom=malloc(size);assert(rom);memcpy(rom,files[i].data,size);
     construction_and_attachments(rom,size);
     file_bytes("/system/attachment.raw","media",5);
     snapshot();ArcRpcPreparationHost host={.clock=clock_read,.notice=notice,.attach=attach,.attached=observer_attached};
+    if(!strcmp(argv[4],"launch")){
+        launch_reset_matrix(rom,size,host);free(rom);fresh_files();
+        for(unsigned j=0;j<TEST_FILES;++j){free(baseline[j].data);baseline[j].data=NULL;}
+        puts("RPC preparation: reset at four delivery points, callback failures, barrier and stale markers passed");return 0;
+    }
     /* Initial package validation precedes either CMOS generation or seed. */
     state_matrix(rom,size,host,sanitizer,!strcmp(argv[4],"mutant") || !strcmp(argv[4],"mutant-idle"));
-    helper_ownership(rom,size,host);
+    helper_ownership(rom,size,host);launch_reset_matrix(rom,size,host);
     scheduler_matrix(rom,size,host);hd_notices(rom,size,host);store_refusals(rom,size,host);
     uint8_t gold[32];
     for(unsigned mode=0;mode<3;++mode){

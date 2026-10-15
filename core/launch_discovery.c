@@ -1,5 +1,6 @@
 /* ArcDroid bounded FileCore launch discovery. GPL-2.0-only. */
 #include "arcdroid_core.h"
+#include "rpc_boot_filecore.h"
 
 #include <ctype.h>
 #include <limits.h>
@@ -15,6 +16,8 @@ typedef struct {
    unsigned density;
    bool base_only;
    bool captured_only; /* Map parsing never consumes virtual fill. */
+   ArcLaunchRangeRead range;
+   void *opaque;
 } ArcDiscReader;
 
 typedef struct {
@@ -32,6 +35,7 @@ typedef struct {
    unsigned log2_bytes_per_map_bit;
    unsigned zone_spare;
    uint32_t root_address;
+   const ArcBootLayout *rpc;
 } ArcFileCore;
 
 typedef struct {
@@ -188,6 +192,7 @@ static bool arc_reader_sector(const ArcDiscReader *reader,
 static bool arc_reader_read(const ArcDiscReader *reader, size_t offset,
                             void *output, size_t size)
 {
+   if(reader->range)return offset<=UINT32_MAX && reader->range(reader->opaque,(uint32_t)offset,output,size);
    uint8_t sector[1024];
    uint8_t *out = output;
    while (size)
@@ -1326,6 +1331,14 @@ static bool arc_object_read(const ArcFileCore *fs, uint32_t address,
                             size_t offset, void *output, size_t size)
 {
    uint8_t *out = output;
+   if(fs->rpc){
+      while(size){uint32_t physical,take;
+         if(size>UINT32_MAX || offset>UINT32_MAX ||
+             !arc_boot_layout_resolve(fs->rpc,address,(uint32_t)offset,(uint32_t)size,&physical,&take) || !take ||
+             !arc_reader_read(&fs->reader,physical,out,take))return false;
+         out+=take;offset+=take;size-=take;
+      }return true;
+   }
    if (!fs->new_map)
    {
       size_t base = (size_t)address * 256u;
@@ -1503,6 +1516,7 @@ static bool arc_entry_name(const uint8_t *source, bool old_directory,
    return true;
 }
 
+static uint8_t arc_ascii_fold(uint8_t);
 static bool arc_directory_read(const ArcFileCore *fs, uint32_t address,
                                bool root, ArcDirectoryEntry *entries,
                                unsigned *entry_count,
@@ -1542,7 +1556,7 @@ static bool arc_directory_read(const ArcFileCore *fs, uint32_t address,
       unsigned attributes = 0u;
       memset(entry, 0, sizeof(*entry));
       if (!arc_entry_name(raw, old, &entry->name, &attributes))
-      { if (strict) return false; continue; }
+      { if (strict || fs->rpc) return false; continue; }
       entry->length = arc_le32(raw + 18u);
       entry->address = arc_le24(raw + 22u);
       entry->directory = old ? (attributes & 8u) != 0u :
@@ -1554,6 +1568,20 @@ static bool arc_directory_read(const ArcFileCore *fs, uint32_t address,
       ++count;
    }
    *entry_count = count;
+   if(fs->rpc){
+      if(memcmp(directory+1,"Nick",4) || directory[5+26*count] ||
+          (root && arc_le24(directory+2010)!=fs->root_address))return false;
+      for(unsigned i=1;i<count;++i){const ArcGuestName *a=&entries[i-1].name,*b=&entries[i].name;
+         unsigned j=0;while(j<a->length && j<b->length && arc_ascii_fold(a->bytes[j])==arc_ascii_fold(b->bytes[j]))++j;
+         if(j==a->length || j==b->length){if(a->length>=b->length)return false;}
+         else if(arc_ascii_fold(a->bytes[j])>=arc_ascii_fold(b->bytes[j]))return false;
+      }
+      uint32_t check=0;unsigned end=5+count*26;
+      for(unsigned i=0;i<(end&~3u);i+=4)check=arc_le32(directory+i)^((check>>13)|(check<<19));
+      for(unsigned i=end&~3u;i<end;++i)check=directory[i]^((check>>13)|(check<<19));
+      for(unsigned i=2008;i<2044;i+=4)check=arc_le32(directory+i)^((check>>13)|(check<<19));
+      if(directory[2047]!=(uint8_t)(check^(check>>8)^(check>>16)^(check>>24)))return false;
+   }
    return true;
 }
 
@@ -1783,10 +1811,24 @@ bool arc_launch_target_compose(const ArcLaunchCandidate *candidate,
    return true;
 }
 
+static bool arc_rpc_directory_identity(const ArcFileCore *fs,const ArcDirectoryEntry *entry,uint32_t parent)
+{
+   if(!fs->rpc)return true;uint8_t tail[32];ArcGuestName actual={0};
+   if(!arc_object_read(fs,entry->address,2010,tail,sizeof(tail)) || arc_le24(tail)!=parent)return false;
+   while(actual.length<10 && tail[22+actual.length]>32)++actual.length;
+   memcpy(actual.bytes,tail+22,actual.length);return arc_name_ascii_equal(&actual,&entry->name);
+}
+static bool arc_rpc_run_valid(const ArcFileCore *fs,const ArcDirectoryEntry *entry)
+{
+   if(!fs->rpc)return true;uint32_t physical,bytes;
+   return entry->length && entry->length<=fs->disc_size &&
+       arc_boot_layout_resolve(fs->rpc,entry->address,0,1,&physical,&bytes) && bytes==1 &&
+       arc_boot_layout_resolve(fs->rpc,entry->address,entry->length-1,1,&physical,&bytes) && bytes==1;
+}
 static void arc_classify_candidate(const ArcFileCore *fs,
                                     const ArcDirectoryEntry *entry,
                                     ArcLaunchCandidate *candidate,
-                                    bool *ignored_attribute_bits)
+                                    bool *ignored_attribute_bits,uint32_t parent)
 {
    candidate->name = entry->name;
    candidate->resource =
@@ -1800,12 +1842,15 @@ static void arc_classify_candidate(const ArcFileCore *fs,
    unsigned child_count = 0u;
    if (entry->length != expected ||
        !arc_directory_read(fs, entry->address, false, child, &child_count,
-                           ignored_attribute_bits, false)) return;
+                           ignored_attribute_bits, false) || !arc_rpc_directory_identity(fs,entry,parent)) return;
    unsigned run_count = 0u, boot_count = 0u;
    for (unsigned item = 0u; item < child_count; ++item)
    {
       if (child[item].directory) continue;
-      if (arc_name_ascii_literal(&child[item].name, "!Run")) ++run_count;
+      if (arc_name_ascii_literal(&child[item].name, "!Run")) {
+         if(!arc_rpc_run_valid(fs,&child[item]))return;
+         ++run_count;
+      }
       if (arc_name_ascii_literal(&child[item].name, "!Boot")) ++boot_count;
    }
    arc_launch_candidate_classify_counts(candidate,run_count,boot_count);
@@ -1871,19 +1916,10 @@ static void arc_fingerprint(ArcLaunchDiscovery *discovery)
    arc_sha1_hex(bytes, at, discovery->candidate_fingerprint);
 }
 
-bool arc_launch_discover(const uint8_t *data, size_t size,
-                         const ArcMediaInfo *media, const ArcJfdImage *jfd,
-                         ArcLaunchDiscovery *discovery)
+static bool arc_launch_discover_fs(ArcFileCore fs,ArcLaunchDiscovery *discovery)
 {
-   ArcFileCore fs;
    ArcDirectoryEntry root[77];
-   unsigned root_count = 0u;
-   if (!discovery || (!jfd && (!data || !media))) return false;
-   memset(discovery, 0, sizeof(*discovery));
-   discovery->target_index = -1;
-   discovery->reason = ARC_LAUNCH_REASON_UNREADABLE;
-   if (!arc_filecore_init(&fs, data, size, media, jfd))
-   { discovery->scan_incomplete = true; return true; }
+   unsigned root_count=0;
    discovery->backup_map_used = fs.backup_map_used;
    discovery->old_map_clamped = fs.old_map_clamped;
    discovery->readable = true;
@@ -1906,7 +1942,7 @@ bool arc_launch_discover(const uint8_t *data, size_t size,
       if (root[i].directory && arc_candidate_name(&root[i].name))
          has_root_candidate = true;
    }
-   discovery->nested_scope = !has_root_candidate;
+   discovery->nested_scope = fs.rpc || !has_root_candidate;
 
    for (unsigned i = 0u; i < root_count && has_root_candidate; ++i)
    {
@@ -1915,20 +1951,21 @@ bool arc_launch_discover(const uint8_t *data, size_t size,
          &discovery->candidates[discovery->candidate_count++];
       candidate->addressable = true;
       arc_classify_candidate(&fs, &root[i], candidate,
-                             &discovery->ignored_attribute_bits);
+                             &discovery->ignored_attribute_bits,fs.root_address);
    }
 
-   if (!has_root_candidate)
+   if (fs.rpc || !has_root_candidate)
       for (unsigned i = 0u; i < root_count; ++i)
       {
-         if (!root[i].directory) continue;
+         if (!root[i].directory || (fs.rpc && arc_candidate_name(&root[i].name))) continue;
          ArcDirectoryEntry child[77];
          unsigned child_count = 0u;
          size_t expected = fs.new_directory ? 2048u : 1280u;
          if (root[i].length != expected ||
              !arc_directory_read(&fs, root[i].address, false, child,
                                  &child_count,
-                                 &discovery->ignored_attribute_bits, false))
+                                 &discovery->ignored_attribute_bits, false) ||
+             !arc_rpc_directory_identity(&fs,&root[i],fs.root_address))
          {
             ++discovery->unreadable_parents;
             discovery->scan_incomplete = true;
@@ -1952,7 +1989,7 @@ bool arc_launch_discover(const uint8_t *data, size_t size,
             candidate->parent_address = address;
             candidate->addressable = addressable;
             arc_classify_candidate(&fs, &child[j], candidate,
-                                   &discovery->ignored_attribute_bits);
+                                   &discovery->ignored_attribute_bits,root[i].address);
             unsigned matches = 0u;
             for (unsigned k = 0u; k < child_count; ++k)
                if (arc_name_ascii_equal(&candidate->name, &child[k].name))
@@ -1968,6 +2005,7 @@ bool arc_launch_discover(const uint8_t *data, size_t size,
 
    for (unsigned i = 0u; i < discovery->candidate_count && has_root_candidate; ++i)
    {
+      if(discovery->candidates[i].parent.length)continue;
       unsigned matches = 0u;
       for (unsigned j = 0u; j < root_count; ++j)
          if (arc_name_ascii_equal(&discovery->candidates[i].name,
@@ -2088,4 +2126,39 @@ const char *arc_launch_reason_name(ArcLaunchReason reason)
       case ARC_LAUNCH_REASON_DISC_NAME_MATCH: return "disc-name match";
       default: return "unknown";
    }
+}
+
+bool arc_launch_discover(const uint8_t *data, size_t size,
+                         const ArcMediaInfo *media, const ArcJfdImage *jfd,
+                         ArcLaunchDiscovery *discovery)
+{
+   ArcFileCore fs;
+   if (!discovery || (!jfd && (!data || !media))) return false;
+   memset(discovery, 0, sizeof(*discovery));
+   discovery->target_index = -1;
+   discovery->reason = ARC_LAUNCH_REASON_UNREADABLE;
+   if (!arc_filecore_init(&fs, data, size, media, jfd))
+   { discovery->scan_incomplete = true; return true; }
+   return arc_launch_discover_fs(fs,discovery);
+}
+
+typedef struct {ArcLaunchRangeRead read;void *opaque;size_t bytes;unsigned reads;} ArcRpcDiscoveryRead;
+static bool arc_rpc_discovery_read(void *opaque,uint32_t offset,void *out,size_t size)
+{
+   ArcRpcDiscoveryRead *r=opaque;
+   if(offset>132120576u || size>132120576u-offset || r->reads==4096 || size>1048576u-r->bytes)return false;
+   ++r->reads;r->bytes+=size;return r->read(r->opaque,offset,out,size);
+}
+bool arc_launch_discover_rpc(ArcLaunchRangeRead read,void *opaque,ArcLaunchDiscovery *discovery)
+{
+   if(!read || !discovery)return false;
+   memset(discovery,0,sizeof(*discovery));discovery->target_index=-1;discovery->reason=ARC_LAUNCH_REASON_UNREADABLE;
+   ArcRpcDiscoveryRead reader={read,opaque,0,0};uint8_t boot[512],maps[5120];ArcBootLayout layout;
+   if(!arc_rpc_discovery_read(&reader,3072,boot,sizeof(boot)) ||
+       !arc_rpc_discovery_read(&reader,ARC_BOOT_MAP_AT,maps,sizeof(maps)) ||
+       !arc_boot_layout_accept(&layout,boot,maps)){discovery->scan_incomplete=true;return true;}
+   ArcFileCore fs={0};fs.reader.range=arc_rpc_discovery_read;fs.reader.opaque=&reader;
+   fs.new_map=fs.new_directory=true;fs.disc_size=132120576;fs.root_address=0x20b;fs.rpc=&layout;fs.boot_option=boot[455];
+   arc_guest_name_trim(&fs.disc_name,boot+448+22);
+   return arc_launch_discover_fs(fs,discovery);
 }

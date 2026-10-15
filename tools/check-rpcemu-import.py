@@ -28,7 +28,8 @@ SYSTEM_HEADERS = {"assert.h", "errno.h", "limits.h", "stdarg.h", "stddef.h",
 PROJECT_HEADERS = {"engine/rpc/rpc_observer.h", "engine/rpc/rpc_ide.h", "engine/rpc/rpc_audio.h", "engine/rpc/rpc_input.h", "engine/rpc/rpc_video.h", "engine/rpc/rpc_floppy.h", "engine/rpc/rpc_memory.h", "engine/rpc/rpc_rtc.h", "engine/rpc/rpc_namespace.h", "engine/rpc/rpc_timing.h", "engine/rpc/rpc_scheduler.h", "engine/rpc/rpc_mem_timing.h"}
 # R2b typed media service: exact neutral API closure, never another backend.
 PROJECT_HEADERS |= {"core/adffs.h", "core/arcdroid_core.h", "core/hd_program.h",
-    "core/jfd.h", "engine/arc_boot_watch.h", "engine/arc_disc_request.h",
+    "core/jfd.h", "core/rpc_launch_plan.h", "core/rpc_launch_attempt.h",
+    "core/rpc_launch_helper.h", "core/rpc_launch_controller.h", "engine/arc_boot_watch.h", "engine/arc_disc_request.h",
     "engine/arc_error_box.h", "engine/arc_launch_outcome.h", "engine/arc_storage.h",
     "engine/arcdroid_engine.h", "libretro/arc_io.h", "libretro/include/libretro.h"}
 

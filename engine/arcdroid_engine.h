@@ -8,6 +8,7 @@
 #include "adffs.h"
 #include "arc_boot_watch.h"
 #include "arc_launch_outcome.h"
+#include "rpc_launch_controller.h"
 #include "arc_error_box.h"
 #include "arc_disc_request.h"
 
@@ -128,6 +129,21 @@ enum { ARC_RPC_CELL_BOOT=1, ARC_RPC_CELL_LAUNCH=2, ARC_RPC_CELL_ERROR=4,
    ARC_RPC_CELL_ANSWER=8, ARC_RPC_CELL_DISC_A=16, ARC_RPC_CELL_REPLACE_A=32,
    ARC_RPC_CELL_DISC_B=64, ARC_RPC_CELL_REPLACE_B=128 };
 void arc_engine_rpc_observers_bind(unsigned verified_catalogue);
+/* Preparation-owned attempt lease. Observation revalidation is pure and
+ * synchronous, with no I/O or guest execution; it never grants/denies the
+ * passive query. One explicit attempt per lease. */
+typedef struct {
+   ArcRpcLaunchAttempt *attempt;
+   const ArcRpcLaunchController *controller;
+   void (*revalidate)(void *);
+   void *opaque;
+   void (*media_changed)(void *);
+   void (*aborted)(void *,ArcRpcAttemptInterrupt);
+} ArcRpcLaunchBinding;
+bool arc_engine_rpc_launch_bind(const ArcRpcLaunchBinding *);
+void arc_engine_rpc_launch_input(void);
+void arc_engine_rpc_launch_interrupt(ArcRpcAttemptInterrupt);
+void arc_engine_rpc_launch_media_changed(void);
 bool arc_engine_rpc_observers_replace(ArcDiscSignal signal);
 /* Copied RPC signal and boundary gate diagnostics; no guest pointers or I/O. */
 typedef struct { char name[11]; const char *signal, *gate, *replacement, *last_signal, *last_reason; bool active, notified; } ArcRpcDiscStatus;
