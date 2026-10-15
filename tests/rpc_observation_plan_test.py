@@ -124,24 +124,23 @@ with tempfile.TemporaryDirectory(prefix='arc-observation-plan-') as temp:
     # Shipping admission remains unavailable, with no test trace symbol/profile.
     r=subprocess.run([runner,'--core',shipping,'--plan',str(plan),'--reject'],capture_output=True,text=True,timeout=30)
     if r.returncode:raise RuntimeError('shipping trace admission')
-# The local baseline leg additionally compares persisted guest writes, not
-# merely frame hashes. Reuse the authored PIO guest and ordinary seed API.
-if baseline:
-    with tempfile.TemporaryDirectory(prefix='arc-observer-persist-parity-') as temp:
-        folder=Path(temp);header=folder/'pio.h'
-        subprocess.run([sys.executable,'-B',str(Path(__file__).with_name('rpc_ide_rom.py')),str(header)],check=True)
-        words=[int(x,16) for x in re.findall(r'0x([0-9a-f]{8})u',header.read_text())]
-        data=struct.pack('<'+'I'*len(words),*words);rom_path=folder/'pio.rom'
-        rom_path.write_bytes(data+bytes(2097152-len(data)));(folder/'seed').write_bytes(bytes(256))
-        original=f'version=2\nmodel=sa110\nfirmware={rom_path}\ncmos=persist\nseed={folder/"seed"}\ncmos_layout=ro370\ncontent_id={"a"*40}\nrtc_epoch=0\nhard_disc=on\n'
-        expected=None;expected_files=None
-        for name,library,suffix in [('main',baseline,''),('off',core,''),('active',core,'observer_cells=255\nobserver_forms=0xffffffff\nobserver_launch=Run Unmatched\nobserver_boot=launch\n')]:
-            save=folder/name;save.mkdir();plan=folder/(name+'.arcplan');plan.write_text(original+suffix)
-            result=run(plan,save,library=library,frames=5,extra=['--ram-words','7'])
-            files={str(path.relative_to(save)):path.read_bytes() for path in save.rglob('*') if path.is_file()}
-            projected=projection(result.stdout)
-            if expected is None:expected,expected_files=projected,files
-            elif projected!=expected or files!=expected_files:raise RuntimeError((name,'persisted projection differs from main'))
-        if not expected_files or not any('hd-riscpc' in name for name in expected_files):raise RuntimeError('persistence leg produced no hard-disc evidence')
-    print('main/off/active: identical PIO guest projection, CMOS records, hard-disc manifests/chunks/journal bytes')
+# Always compare off/active persisted writes in CTest; only the pinned core
+# is an optional local leg. Reuse the authored PIO guest and ordinary seed API.
+with tempfile.TemporaryDirectory(prefix='arc-observer-persist-parity-') as temp:
+    folder=Path(temp);header=folder/'pio.h'
+    subprocess.run([sys.executable,'-B',str(Path(__file__).with_name('rpc_ide_rom.py')),str(header)],check=True)
+    words=[int(x,16) for x in re.findall(r'0x([0-9a-f]{8})u',header.read_text())]
+    data=struct.pack('<'+'I'*len(words),*words);rom_path=folder/'pio.rom'
+    rom_path.write_bytes(data+bytes(2097152-len(data)));(folder/'seed').write_bytes(bytes(256))
+    original=f'version=2\nmodel=sa110\nfirmware={rom_path}\ncmos=persist\nseed={folder/"seed"}\ncmos_layout=ro370\ncontent_id={"a"*40}\nrtc_epoch=0\nhard_disc=on\n'
+    expected=None;expected_files=None
+    for name,library,suffix in ([('main',baseline,'')] if baseline else [])+[('off',core,''),('active',core,'observer_cells=255\nobserver_forms=0xffffffff\nobserver_launch=Run Unmatched\nobserver_boot=launch\n')]:
+        save=folder/name;save.mkdir();plan=folder/(name+'.arcplan');plan.write_text(original+suffix)
+        result=run(plan,save,library=library,frames=5,extra=['--ram-words','7'])
+        files={str(path.relative_to(save)):path.read_bytes() for path in save.rglob('*') if path.is_file()}
+        projected=projection(result.stdout)
+        if expected is None:expected,expected_files=projected,files
+        elif projected!=expected or files!=expected_files:raise RuntimeError((name,'persisted projection differs from first leg'))
+    if not expected_files or not any('hd-riscpc' in name for name in expected_files):raise RuntimeError('persistence leg produced no hard-disc evidence')
+print(('main/off/active' if baseline else 'off/active')+': identical PIO guest projection, CMOS records, hard-disc manifests/chunks/journal bytes')
 print('observation plan: 4 CPUs, quotas 1/7/200, off/unmatched/trace parity; schema, allowlist, overflow and failed sink')

@@ -656,6 +656,33 @@ static void identity_equality(CPUModel model)
 }
 
 
+static void number_subscriptions(CPUModel model)
+{
+    fixture(model,19,0x100);
+    static const uint32_t bytes[]={6},files[]={8},other[]={0x123456},oversized[33]={6};
+    ArcRpcObserveFilter f={.modes=~0u,.kinds=ARC_RPC_OBS_SWI,.callback=observe,.swis=bytes,.swi_count=1};
+    assert(arc_rpc_observer_test_filter(ARC_RPC_OBS_ERROR,&f));
+    f.swis=files;assert(arc_rpc_observer_test_filter(ARC_RPC_OBS_DISC,&f));
+    const uint32_t numbers[]={6,8,0x42,0x20006,0x123456};
+    for(unsigned fallback=0;fallback<2;++fallback){
+        if(fallback){f.swis=other;assert(arc_rpc_observer_test_filter(ARC_RPC_OBS_BOOT,&f));}
+        for(unsigned n=0;n<5;++n){
+            seen_count=0;updatemode(19);arm.reg[16]=19;arm.reg[15]=0x108;arm.event=0;
+            rom[0x100/4]=0xef000000|numbers[n];arc_rpc_arm_exec_count(1);
+            unsigned expected=n==2?0:n==4?fallback:1;
+            assert(seen_count==expected);if(expected)assert(seen[0].swi==numbers[n]);
+        }
+    }
+    f.swis=bytes;f.swi=0x20000;f.swi_mask=0x20000;
+    assert(arc_rpc_observer_test_filter(ARC_RPC_OBS_ERROR,&f));
+    f.swis=oversized;f.swi_count=33;assert(!arc_rpc_observer_test_filter(ARC_RPC_OBS_ERROR,&f));
+    f.swis=NULL;f.swi_count=1;assert(!arc_rpc_observer_test_filter(ARC_RPC_OBS_ERROR,&f));
+    for(unsigned x=0;x<2;++x){
+        seen_count=0;updatemode(19);arm.reg[16]=19;arm.reg[15]=0x108;arm.event=0;
+        rom[0x100/4]=0xef000006|(x?0x20000:0);arc_rpc_arm_exec_count(1);assert(seen_count==x);
+    }
+}
+
 #ifndef ARC_RPC_OBSERVERS_TEST
 int main(int argc,char **argv)
 {
@@ -669,7 +696,7 @@ int main(int argc,char **argv)
         }
         arc_rpc_observer_retire(false);arc_rpc_memory_close();return 0;
     }
-    for(unsigned model=0;model<4;++model){interpreter_equivalence((CPUModel)model);cheap_events((CPUModel)model);watch_boundaries((CPUModel)model);identity_equality((CPUModel)model);identity_guest((CPUModel)model,true);events((CPUModel)model);timing_events((CPUModel)model);completion((CPUModel)model);inspector((CPUModel)model);services((CPUModel)model);trace_interrupt_burst((CPUModel)model);}
+    for(unsigned model=0;model<4;++model){number_subscriptions((CPUModel)model);interpreter_equivalence((CPUModel)model);cheap_events((CPUModel)model);watch_boundaries((CPUModel)model);identity_equality((CPUModel)model);identity_guest((CPUModel)model,true);events((CPUModel)model);timing_events((CPUModel)model);completion((CPUModel)model);inspector((CPUModel)model);services((CPUModel)model);trace_interrupt_burst((CPUModel)model);}
     for(unsigned model=0;model<4;++model)cheap_fault((CPUModel)model);
     arc_rpc_observer_retire(false);arc_rpc_memory_close();puts("RPC observation: four CPUs, events, inspector values/purity, completion, generations, queue and trace");return 0;
 }

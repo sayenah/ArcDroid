@@ -29,10 +29,16 @@ bool arc_rpc_observers_capability(unsigned bit);
 bool arc_rpc_observers_identities(char helper[11],char hd[11]);
 #if defined(ARCDROID_TEST_FAULTS)
 bool arc_rpc_observers_test_error_numbers(ArcErrorNumberClass);
+void arc_rpc_observers_test_cells(unsigned);
+void arc_rpc_observers_test_horizon(unsigned);
 void arc_rpc_observers_test_binding(unsigned *,unsigned *);
 bool arc_rpc_observers_test_disc_devices(unsigned forms);
 void arc_rpc_observers_test_buttons(uint32_t,uint32_t,uint32_t);
 void arc_rpc_observers_test_watch_budget(unsigned);
+/* White-box snapshots isolate retry guards that the final replace gate also
+ * protects. Only test builds can restore a deliberately stale disc identity. */
+bool arc_rpc_observers_test_retry(ArcRpcHostWork *);
+void arc_rpc_observers_test_disc_state(const ArcDiscRequest *);
 void arc_rpc_observers_override(unsigned mask,uint32_t r1,uint32_t r2,uint32_t forms);
 #endif
 #endif

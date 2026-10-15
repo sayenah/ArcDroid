@@ -10,12 +10,66 @@ from rpc_ninja_commands import rebuild_commands
 sys.dont_write_bytecode = True
 root=Path(__file__).resolve().parents[1]
 build=Path(sys.argv[1]).resolve();target=Path(sys.argv[2]).resolve()
-frontend=len(sys.argv)>3
+frontend=len(sys.argv)>3 and not sys.argv[3].startswith("--policy-shard=")
 core=Path(sys.argv[3]).resolve() if frontend else None
 cache=(build/'CMakeCache.txt').read_text()
 ninja=next(x.split('=',1)[1] for x in cache.splitlines() if x.startswith('CMAKE_MAKE_PROGRAM:FILEPATH='))
 commands=[x['command'] for x in json.loads(subprocess.check_output([ninja,'-t','compdb','-x'],cwd=build,text=True))]
 mutants=[
+ ('control-close-v','engine/rpc/rpc_observers.c','e->matched && !(e->nzcv&0x10000000u) && state.error_return_closes','e->matched && true && state.error_return_closes'),
+ ('control-immediate','engine/rpc/rpc_observers.c','(e->registers[1]&0x60u)!=0','(e->registers[1]&0x40u)!=0'),
+ ('control-close-loss','engine/rpc/rpc_observers.c','(e->registers[1]&0x60u)!=0','(e->registers[1]&0x20u)!=0'),
+ ('control-poll','engine/rpc/rpc_observers.c','!state.error_unbounded && !state.error_watch','!state.error_watch'),
+ ('control-return','engine/rpc/rpc_observers.c','state.error.modal_unknown=state.error_unbounded ||','state.error.modal_unknown=false ||'),
+ ('control-close-return','engine/rpc/rpc_observers.c','(e->registers[1]&0x40u)!=0 || state.error.recognised_open','false || state.error.recognised_open'),
+ ('control-ordinary-return','engine/rpc/rpc_observers.c','(e->registers[1]&0x40u)!=0 || state.error.recognised_open','(e->registers[1]&0x40u)!=0 || false'),
+ ('control-close-match','engine/rpc/rpc_observers.c','e->kind==ARC_RPC_OBS_CONTINUATION && e->matched && !(e->nzcv&0x10000000u) && state.error_return_closes','e->kind==ARC_RPC_OBS_CONTINUATION && true && !(e->nzcv&0x10000000u) && state.error_return_closes'),
+ ('control-unknown-return','engine/rpc/rpc_observers.c','(e->registers[1]&0x40u)!=0 || state.error.recognised_open','true'),
+ ('control-reset','engine/rpc/rpc_observers.c','arc_rpc_observers_bind(catalogue,cpu);\n#if defined(ARCDROID_TEST_FAULTS)','bool stale_control=state.error_unbounded;arc_rpc_observers_bind(catalogue,cpu);state.error_unbounded=stale_control;state.error.modal_unknown|=stale_control;\n#if defined(ARCDROID_TEST_FAULTS)'),
+ ('control-epoch','engine/rpc/rpc_observers.c','memset(&state,0,sizeof(state));','bool stale_control=state.error_unbounded;memset(&state,0,sizeof(state));state.error_unbounded=stale_control;'),
+ ('renew-cancel','engine/rpc/rpc_observers.c','arc_rpc_observer_cancel(ARC_RPC_OBS_ERROR);error_loss();return;','error_loss();return;'),
+ ('user26','engine/rpc/rpc_observers.c','return mode==0u || mode==16u;','return mode==16u;'),
+ ('a-filesystem','engine/rpc/rpc_observers.c','e->registers[1]!=8?"filesystem":NULL','false?"filesystem":NULL'),
+ ('a-rom','engine/rpc/rpc_observers.c','e->backing.kind!=ARC_RPC_BACKING_ROM?"non-rom":','false?"non-rom":'),
+ ('a-upcall4','engine/rpc/rpc_observers.c','(swi==0x33u && e->registers[0]==4u)','false'),
+ ('b-busy-latch','engine/rpc/rpc_observers.c','state.retry_pending=true;state.retry_work=*w;','state.retry_pending=false;state.retry_work=*w;'),
+ ('b-busy-retry','engine/rpc/rpc_observers.c','if(state.retry_pending){','if(false){'),
+ ('found-return-armed','engine/rpc/rpc_observers.c','if(!state.disc.armed){state.disc_watch=0;return;}','(void)0;'),
+ ('found-return-match','engine/rpc/rpc_observers.c','else if(e->matched && !(e->nzcv','else if(!(e->nzcv'),
+ ('found-queued-identity','engine/rpc/rpc_observers.c','arc_rpc_observer_drop_queued(ARC_RPC_OBS_DISC,ARC_DISC_SIGNAL_B,state.disc.object,strlen(state.disc.object)+1);','arc_rpc_observer_cancel(ARC_RPC_OBS_DISC);'),
+ ('found-queued-same','engine/rpc/rpc_observers.c','arc_rpc_observer_drop_queued(ARC_RPC_OBS_DISC,ARC_DISC_SIGNAL_B,state.disc.object,strlen(state.disc.object)+1);','(void)0;'),
+ ('lifecycle-a-fields','engine/rpc/rpc_observers.c','state.disc.a_notified=false;state.disc.a_name[0]=0;','(void)0;'),
+ ('lifecycle-a-cell','engine/rpc/rpc_observers.c','(arc_rpc_observers_capability(ARC_RPC_CELL_DISC_A) || arc_rpc_observers_capability(ARC_RPC_CELL_DISC_B))','arc_rpc_observers_capability(ARC_RPC_CELL_DISC_B)'),
+ ('lifecycle-later-arm','engine/rpc/rpc_observers.c','if(observation.armed){','if(false){'),
+ ('lifecycle-queued-order','engine/rpc/rpc_observers.c','queue_disc(e,DISC_CLEAR);state.disc.armed=false;','arc_rpc_observers_disc_clear();state.disc.armed=false;'),
+ ('overflow-history','engine/rpc/rpc_observers.c','if(!arc_rpc_observer_queue(&work)){','if(!arc_rpc_observer_queue(&work)){arc_disc_request_clear(&state.disc);'),
+ ('overflow-lifecycle-pending','engine/rpc/rpc_observers.c','kind==DISC_CLEAR || arc_rpc_observer_queued(ARC_RPC_OBS_DISC,DISC_CLEAR)','kind==DISC_CLEAR'),
+ ('overflow-lifecycle-current','engine/rpc/rpc_observers.c','kind==DISC_CLEAR || arc_rpc_observer_queued(ARC_RPC_OBS_DISC,DISC_CLEAR)','arc_rpc_observer_queued(ARC_RPC_OBS_DISC,DISC_CLEAR)'),
+ ('overflow-lifecycle-clear','engine/rpc/rpc_observers.c','if(clear){arc_disc_request_clear(&state.disc);','if(false){arc_disc_request_clear(&state.disc);'),
+ ('overflow-lifecycle-scan','engine/rpc/rpc_observer.c','if(w->observer==owner && w->kind==kind)return true;','if(i)return false;if(w->observer==owner && w->kind==kind)return true;'),
+ ('retry-lifecycle-entry','engine/rpc/rpc_observers.c','state.disc_watch=0;state.retry_pending=false;return;','state.disc_watch=0;return;'),
+ ('retry-lifecycle-mutate','engine/rpc/rpc_observers.c','        state.retry_pending=false;return;','        return;'),
+ ('retry-found-mutate','engine/rpc/rpc_observers.c','if(!state.disc.b_triggered)state.retry_pending=false;','(void)0;'),
+ ('retry-generation','engine/rpc/rpc_observers.c','bool valid=work.generation==arc_rpc_observer_generation(ARC_RPC_OBS_DISC) && work_valid','bool valid=true && work_valid'),
+ ('retry-trigger','engine/rpc/rpc_observers.c','state.disc.b_triggered && state.disc.triggered_continuation==work.continuation','true && state.disc.triggered_continuation==work.continuation'),
+ ('retry-site','engine/rpc/rpc_observers.c','state.disc.triggered_continuation==work.continuation &&','true &&'),
+ ('retry-stack','engine/rpc/rpc_observers.c','state.disc.triggered_sp==work.sp &&','true &&'),
+ ('retry-object','engine/rpc/rpc_observers.c','!strcmp(state.disc.triggered_object,(const char *)work.bytes) &&','true &&'),
+ ('retry-window','engine/rpc/rpc_observers.c','time-state.disc.triggered_us<=UINT64_C(120000000)','true'),
+ ('retry-clock','engine/rpc/rpc_observers.c','time>=state.disc.triggered_us && time-state.disc.triggered_us<=UINT64_C(120000000)','(time<state.disc.triggered_us || time-state.disc.triggered_us<=UINT64_C(120000000))'),
+ ('drop-queued-kind','engine/rpc/rpc_observer.c','w->observer==owner && w->kind==kind && w->size==size','w->observer==owner && w->size==size'),
+ ('override-control','engine/rpc/rpc_observers.c','arc_error_end(&state.error);state.error_unbounded=false;state.error.modal_unknown=!(mask&ARC_RPC_CELL_ERROR);','arc_error_end(&state.error);state.error.modal_unknown=!(mask&ARC_RPC_CELL_ERROR);'),
+ ('category-form','engine/arc_error_box.c','(!(r1 & 0x100u) && (r1 & ~0x1fu))','(r1 & ~0x11fu)'),
+ ('production-answer-gates','engine/rpc/rpc_observers.c',('out->consumed==ARC_ERROR_NONE &&\n        arc_rpc_observers_capability(ARC_RPC_CELL_ANSWER)','return arc_rpc_observers_capability(ARC_RPC_CELL_ANSWER) && state.error_watch'),('out->consumed==ARC_ERROR_NONE','return state.error_watch')),
+ ('reset-open-error','engine/rpc/rpc_observers.c','arc_rpc_observers_bind(catalogue,cpu);\n#if defined(ARCDROID_TEST_FAULTS)','ArcErrorBox stale=state.error;arc_rpc_observers_bind(catalogue,cpu);state.error=stale;state.error.profile=&state.error_profile;\n#if defined(ARCDROID_TEST_FAULTS)'),
+ ('reset-open-disc','engine/rpc/rpc_observers.c',('unsigned catalogue=state.catalogue,cpu=actual_cpu;','arc_rpc_observers_disc_configure(enabled,inserted,resolve,observe,opaque);'),('ArcDiscRequest stale_disc=state.disc;uint64_t stale_media=state.disc_media,stale_helper=state.helper_media;unsigned catalogue=state.catalogue,cpu=actual_cpu;','arc_rpc_observers_disc_configure(enabled,inserted,resolve,observe,opaque);state.disc=stale_disc;state.disc_media=stale_media;state.helper_media=stale_helper;')),
+ ('swi-cache','engine/rpc/rpc_observer.c','if(!wanted && !swi_interest.unrestricted && !cached_swi','if(false && !swi_interest.unrestricted && !cached_swi'),
+ ('swi-list-owner','engine/rpc/rpc_observer.c','if(!f->swi_count)return true;','return true;'),
+ ('swi-list-bound','engine/rpc/rpc_observer.c','filter->swi_count>32','false'),
+ ('swi-list-null','engine/rpc/rpc_observer.c','(filter->swi_count && !filter->swis)','false'),
+ ('swi-metadata','engine/rpc/rpc_observer.c','if(!swi_wanted(opcode)){if(observers_active)++observer.order;return false;}\n    observer.origin.instruction','observer.origin.pc=pc;if(!swi_wanted(opcode)){if(observers_active)++observer.order;return false;}\n    observer.origin.instruction'),
+ ('swi-capture','engine/rpc/rpc_observer.c','static bool swi_wanted(uint32_t opcode)\n{','static bool swi_wanted(uint32_t opcode)\n{ return true;'),
+ ('production-graphical-evidence','engine/rpc/rpc_observer.c','ga-*, gb-*, gna-*, gnb-*, ','ga-*, gb-*, '),
  ('production-table','engine/rpc/rpc_observer.c','ARC_RPC_OBS_ERROR,ARC_RPC_CAP_OBSERVE,true,error','ARC_RPC_OBS_ERROR,ARC_RPC_CAP_OBSERVE,false,error'),
  ('production-reason','engine/rpc/rpc_observer.c','awaiting R3c-3 launch hook','awaiting a different hook'),
  ('production-duplicate-row','engine/rpc/rpc_observer.c','PAIR(4,3,ERROR_EVIDENCE,DISC_A_EVIDENCE)\n};','PAIR(4,3,ERROR_EVIDENCE,DISC_A_EVIDENCE),PAIR(1,0,ERROR_EVIDENCE,DISC_A_EVIDENCE)\n};'),
@@ -32,7 +86,7 @@ mutants=[
  ('modal-recovery-idle','engine/rpc/rpc_observers.c','(swi==0x400c7u || swi==0x400e1u) && user(e->mode)','swi==0x400c7u && user(e->mode)'),
  ('disc-loss-identity','engine/rpc/rpc_observers.c','if(e->kind==ARC_RPC_OBS_WATCH_LOST){\n        if(e->watch!=state.disc_watch)return;','if(e->kind==ARC_RPC_OBS_WATCH_LOST){'),
  ('disc-replacement-identity','engine/rpc/rpc_observers.c','state.disc_watch=0; /* Replacement loss belongs to the superseded request. */','(void)0;'),
- ('production-number-class','engine/rpc/rpc_observers.c','.numbers=ARC_ERROR_NUMBER_ZERO};','.numbers=ARC_ERROR_NUMBER_ORDINARY};'),
+ ('production-number-class','engine/rpc/rpc_observers.c','.numbers=ARC_ERROR_NUMBER_ORDINARY};','.numbers=ARC_ERROR_NUMBER_ZERO};'),
  ('number-zero','engine/arc_error_box.c','(number == 0 || p->numbers == ARC_ERROR_NUMBER_ORDINARY)','true'),
  ('number-ordinary','engine/arc_error_box.c','(number == 0 || p->numbers == ARC_ERROR_NUMBER_ORDINARY)','number == 0'),
  ('number-serious','engine/arc_error_box.c','!(number & UINT32_C(0x80000000))','true'),
@@ -81,8 +135,34 @@ mutants=[
  ('boot-horizon','engine/rpc/rpc_observers.c','{40000000u,2000000u,0x8000u,true,true}','{40000001u,2000000u,0x8000u,true,true}'),
  ('boot-rom','engine/rpc/rpc_observers.c','0x8000u,true,true','0x8000u,true,false'),
 ]
+if not frontend and len(sys.argv)>3:
+    shard=int(sys.argv[3].split('=',1)[1]);assert shard in (0,1)
+    mutants=mutants[shard::2]
 if frontend:
     mutants=[
+      ('b-log-path-word','engine/rpc/rpc_observers.c','"path-other"','"path-refused"'),
+      ('b-log-outcome-word','engine/rpc/rpc_observers.c','"outcome-not-miss"','"outcome-refused"'),
+      ('control-hint','libretro/arcdroid_libretro.c','error_box.recognised_open || (error_box.flags&0x60u) ||','error_box.recognised_open || false ||'),
+      ('b-log-identity','engine/rpc/rpc_observers.c','*out=disc_observation?*disc_observation:state.disc;','*out=state.disc;'),
+      ('b-replace-cell','engine/rpc/rpc_observers.c','signal==ARC_DISC_SIGNAL_A?ARC_RPC_CELL_REPLACE_A:ARC_RPC_CELL_REPLACE_B','signal==ARC_DISC_SIGNAL_A?ARC_RPC_CELL_REPLACE_A:ARC_RPC_CELL_REPLACE_A'),
+      ('b-commit-signal','libretro/arcdroid_libretro.c','arc_disc_watch_generation, ARC_DISC_SIGNAL_B);','arc_disc_watch_generation, ARC_DISC_SIGNAL_A);'),
+      ('b-replace-capability','libretro/arcdroid_libretro.c','arc_engine_is_rpc() && !arc_engine_rpc_observers_capability(ARC_RPC_CELL_REPLACE_B)','false'),
+      ('b-replace-exclusion','engine/rpc/rpc_observers.c','state.disc.b_triggered && !excluded(state.inserted)','state.disc.b_triggered'),
+      ('b-work-exclusion','engine/rpc/rpc_observers.c','copy.signal>=DISC_FOUND || !excluded(copy.signal==ARC_DISC_SIGNAL_A?copy.object:state.inserted)','copy.signal!=ARC_DISC_SIGNAL_A || !excluded(copy.object)'),
+      ('hint-after-answer','libretro/arcdroid_libretro.c','bool hint_answerable=error_box.answer_available || answered;','bool hint_answerable=error_box.answer_available;'),
+      ('cancel-only-pad','libretro/arcdroid_libretro.c','arc_engine_error_request(ARC_ERROR_OK);','arc_engine_error_request(error_box.ok?ARC_ERROR_OK:ARC_ERROR_CANCEL);'),
+      ('cancel-only-hint','libretro/arcdroid_libretro.c','box->ok && box->cancel ?','box->cancel ?'),
+      ('reset-binding-cpu','engine/rpc/rpc_session.c','arc_rpc_observers_rebase(arc_rpc_session_cpu());','arc_rpc_observers_rebase(0);'),
+      ('session-frame','engine/rpc/rpc_session.c','arc_rpc_observers_frame(arc_rpc_scheduler.now_ns/1000u);','(void)0;'),
+      ('session-frame-unit','engine/rpc/rpc_session.c','arc_rpc_observers_frame(arc_rpc_scheduler.now_ns/1000u);','arc_rpc_observers_frame(arc_rpc_scheduler.now_ns);'),
+      ('reset-swap-owner','libretro/arcdroid_libretro.c','arc_disc_owned=false;arc_disc_previous_index=0;arc_disc_swapped_us=0;\n      arc_disc_notice_read=arc_disc_notice_write=0;\n#if defined(ARCDROID_TEST_PLANS)','(void)0;\n#if defined(ARCDROID_TEST_PLANS)'),
+      ('hd-record-agreement','engine/arcdroid_engine.c','memcmp(boot+0x1c0+22,map+26,10) || memcmp(map+26,backup+26,10)','false'),
+      ('hd-checksum','engine/arcdroid_engine.c','sum!=boot[511] ||','false ||'),
+      ('hd-geometry','engine/arcdroid_engine.c','boot[0x1c0]!=9 || boot[0x1c1]!=63 || boot[0x1c2]!=16 ||','false ||'),
+      ('helper-writable','engine/arcdroid_engine.c','!rpc_helper.kind || rpc_helper.writable','!rpc_helper.kind'),
+      ('identity-collision','engine/arcdroid_engine.c','if(same)return false;','if(false)return false;'),
+      ('identity-case','engine/rpc/rpc_observers.c',("if(x>='A'&&x<='Z')x+='a'-'A';","if(y>='A'&&y<='Z')y+='a'-'A';"),('(void)0;','(void)0;')),
+      ('helper-long-path','engine/arcdroid_engine.c','drive==1 && media && media->path && strlen(media->path)>=sizeof(rpc_helper_path)','false'),
       ('hash-skip','engine/rpc/rpc_session.c','arc_sha1_update(&arc_rpc_firmware_hash,copied,take);','(void)0;'),
       ('hash-halve','engine/rpc/rpc_session.c','arc_sha1_update(&arc_rpc_firmware_hash,copied,take);','arc_sha1_update(&arc_rpc_firmware_hash,copied,take/2);'),
       ('reset-hint','libretro/arcdroid_libretro.c','if((arc_kind == ARC_SESSION_KIND_RISCPC) && arc_engine_active()) {\n      arc_error_hint_generation=arc_error_seen_generation=0;arc_error_hint_state=0;','if((arc_kind == ARC_SESSION_KIND_RISCPC) && arc_engine_active()) {'),
@@ -105,7 +185,12 @@ if frontend:
       ('disc-busy-repeat','libretro/arcdroid_libretro.c','slot==2u && time-history[slot].time','false && time-history[slot].time'),
       ('manual-hint','libretro/arcdroid_libretro.c','rpc_error ? error_box.recognised_open : error_ready','rpc_error ? false : error_ready'),
     ]
+    if len(sys.argv)>4:
+        shard=int(sys.argv[4]);assert shard in (0,1,2,3)
+        mutants=mutants[shard::4]
     subprocess.run([sys.executable,str(root/'tests/rpc_observers_frontend_test.py'),str(target),str(core),str(build/"tests/fixtures/generated")],check=True,cwd=build,timeout=60,capture_output=True)
+    for focus in ('h-error','h-b','h-identity','h-session'):
+        subprocess.run([sys.executable,str(root/'tests/rpc_observers_frontend_test.py'),str(target),str(core),str(build/"tests/fixtures/generated"),focus],check=True,cwd=build,timeout=60,capture_output=True)
 else:
     subprocess.run([str(target)],check=True,cwd=build,timeout=30,capture_output=True)
 for name,relative,old,new in mutants:
@@ -124,7 +209,12 @@ for name,relative,old,new in mutants:
         for command in (compile,link):
             result=subprocess.run(command,cwd=build,capture_output=True,text=True,timeout=60)
             if result.returncode:raise RuntimeError((name,'build failure',result.stderr))
-        argv=[sys.executable,str(root/'tests/rpc_observers_frontend_test.py'),str(target),str(binary),str(build/"tests/fixtures/generated")] if frontend else [str(binary)]
+        focus='mutant'
+        if name.startswith('b-') or name=='reset-swap-owner' or name=='identity-case': focus='h-b'
+        if name in ('control-hint','hint-after-answer','cancel-only-pad','cancel-only-hint','reset-binding-cpu'): focus='h-error'
+        if name.startswith('session-frame'): focus='h-session'
+        if name in ('hd-record-agreement','hd-checksum','hd-geometry','helper-writable','identity-collision','helper-long-path'): focus='h-identity'
+        argv=[sys.executable,str(root/'tests/rpc_observers_frontend_test.py'),str(target),str(binary),str(build/"tests/fixtures/generated"),focus] if frontend else [str(binary)]
         result=subprocess.run(argv,cwd=build,capture_output=True,text=True,timeout=60)
         if not result.returncode and not frontend:
             result=subprocess.run([sys.executable,'-B',str(root/'tests/rpc_observer_qualification_test.py'),str(binary),str(root/'docs/riscpc-observer-qualification.md')],cwd=build,capture_output=True,text=True,timeout=30)

@@ -291,6 +291,73 @@ When D-163 is satisfied, the release changes the default and nothing else, so th
 
 ### 6.2 R3d-2: firmware locator, D-166(4) and R3a Lows
 
+#### R3d-2 implementation contract (before code)
+
+The pinned comparison base is `be44b0afd1bbf23e006a52ab6ca07a8c61704e66`
+(Fable's dispatch supersedes the older AC-5 hash in the handoff).
+The shipping scan and locator use only `arc_io`; a narrow metadata primitive
+preserves VFS validity, directory type and size rather than collapsing them
+through `arc_io_file_size`. No callback or route outside this slice changes.
+
+Metadata outcomes: invalid root metadata (including a missing path) is
+**unreadable-inventory**, because VFS validity flags cannot establish absence
+versus inaccessibility. A valid non-directory root is an established empty
+inventory (**missing-firmware**). Missing required callbacks, invalid candidate
+metadata/size, failed directory open, invalid entry name and failed directory
+close mark VFS uncertainty. Without a usable candidate this is unreadable;
+with one it preserves D-165's selection and `inventory=incomplete`. Boolean
+readdir EOF cannot report silent truncation; no detection is claimed. Only a
+stat-confirmed regular file of a catalogue size is opened. An unrelated
+unreadable file with valid, non-catalogue size therefore stays missing-firmware.
+
+All declared limits invalidate the entire inventory: 1024 directory entries
+(including dot entries), 64 MiB of attempted candidate bytes, eight nested
+directory levels, 4095 path bytes excluding NUL, and 4 MiB per image. A limit
+hit clears every recognition and locator, and produces **incomplete-scan**
+where selection requires the inventory, regardless of enumeration or failure
+order. LEGACY, conflicting discs, unsupported requirements and unqualified
+pairs retain precedence because they are established without inventory.
+VFS/resource failures alone do not trigger that refusal. The diagnostic stays
+generic and deterministic; eventual player text must name these scan limits
+and advise removing unrelated files or reducing nesting/path length.
+
+Each recognised OS family owns a fixed-size path and a copied fingerprint
+(size, CRC-32, SHA-1), with no borrowed catalogue strings and no owned firmware
+buffer. Successful copies choose the bytewise-smallest full path (`strcmp`),
+independent of directory order, spelling conventions or file extension.
+Only a successfully closed file supplies recognition. A locator read allocates
+at most 4 MiB, re-stats, checks opened length, reads the exact image, checks
+length again, verifies all three fingerprint fields and requires successful
+close. On failure it frees its temporary buffer and returns null/zero outputs;
+it never searches another copy or lower-ranked pair. On success the caller
+owns and frees the returned buffer. Replacement with byte-identical content
+is interchangeable; identity means the fingerprint, not an inode. Concurrent
+mutation after verification is outside this synchronous snapshot contract.
+
+Enumerated AC-5 diagnostic deltas (no other ordinary-load changes):
+1. A scan that did not run says `inventory=skipped`, formerly `complete`.
+2. A valid unrelated non-catalogue-size file is not opened by this scanner;
+   its open failure no longer changes missing-firmware to unreadable-inventory.
+3. A valid non-directory root becomes empty/missing-firmware. Invalid root
+   metadata remains uncertainty/unreadable; absence cannot be proved by VFS.
+   Missing stat and candidate-stat/size failures now report uncertainty;
+   explicitly reported directory failures retain their former semantics.
+4. Any declared limit now says `reason=incomplete-scan model=none os=none
+   inventory=incomplete`, discarding prefix recognitions. The independently
+   established reasons listed above retain precedence.
+
+The comparison projection retains every other log and notice byte, load
+result, media compatibility/identity, and persisted file byte. The authored
+ordinary-load harness counts firmware directory opens, file opens and metadata
+calls before the diagnostic:
+non-RPC loads must remain zero. `diagnostic-only` remains until R3d-4.
+The public scanner wrapper substitutes a 4 KiB byte budget (with a compile-time
+assertion pinning production's 64 MiB) to exercise the same exhaustion logic
+without repeatedly hashing hundreds of MiB under sanitizers and mutation.
+The former allocation-failure-file-leak mutant is equivalent after this change:
+image allocation precedes opening, so that failure owns no handle to leak;
+read/close cleanup and zero outstanding image allocations are tested directly.
+
 **Objective.** Production can obtain the selected firmware's bytes by fingerprint, with bounded, order-independent I/O. The inventory reports what is missing truthfully. There is no player-visible change.
 
 **Base.** `main`. Independent of everything in flight.
@@ -866,3 +933,5 @@ The frontend's `retro_reset` dispatch routes every RPC reset to the preparation 
 ## Astra stage 2 (S65, ACCEPT WITH CHANGES): adjudication
 
 Report `.work/s65/astra/report2.md`. All eight findings incorporated: A-3 is corrected above (two reset branches; helper restoration under the admission policy; R3d-3 owns pending setter rejection; M1 execution barrier without an attempt object). A-9 is corrected above (distribution decided by audience, not privacy). The R3d-1 and R3d-2 work orders in the handoff carry the rest: the scanner's metadata outcomes and refusal precedence, LOW-4's separate RPC notice obligation, reachable switching evidence, behavioural site mutants and capability queries outside a running session, session-ID allocation and the part 2 integration AC, and pinned branch bases with a run-H boundary.
+
+**R3d-2 QA adjudication (S65).** (1) A-4/A-6 are amended: a firmware root whose metadata is invalid (which is what RetroArch reports for a folder that does not exist) gives the uncertainty-aware "missing or unreadable" outcome, not missing-firmware; there is no missing-folder delta. R3d-4's notice for that outcome covers both causes: "ArcDroid cannot find or read <system>/arcdroid/firmware/. Create that folder and add your RiscPC firmware, or check that it is readable." (2) When the inventory's resource-failure flag is set, R3d-4's notice says ArcDroid ran out of memory while checking firmware, never "add firmware". (3) R3d-4 never branches on the `vfs_failure` or `resource_failure` flags once `bounded` is set (they are order-dependent then). (4) R3d-3 and R3d-4 add no second large by-value inventory to the load path (the scan already peaks near 110 KB of stack).

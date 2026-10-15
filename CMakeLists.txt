@@ -456,10 +456,17 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
     $<TARGET_FILE:rpc_observers_test> "${CMAKE_CURRENT_SOURCE_DIR}/docs/riscpc-observer-qualification.md")
   set_tests_properties(rpc-observers-qualification PROPERTIES TIMEOUT 60)
   if(NOT ARCDROID_SANITIZERS AND NOT CMAKE_CROSSCOMPILING AND CMAKE_GENERATOR STREQUAL "Ninja")
-    add_test(NAME rpc-observers-mutants COMMAND "${Python3_EXECUTABLE}" -B
-      "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_observers_mutants.py"
-      "${CMAKE_CURRENT_BINARY_DIR}" $<TARGET_FILE:rpc_observers_test>)
-    set_tests_properties(rpc-observers-mutants PROPERTIES TIMEOUT 180 RUN_SERIAL TRUE)
+    foreach(shard 0 1)
+      if(shard EQUAL 0)
+        set(mutant_test rpc-observers-mutants)
+      else()
+        set(mutant_test rpc-observers-mutants-2)
+      endif()
+      add_test(NAME ${mutant_test} COMMAND "${Python3_EXECUTABLE}" -B
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_observers_mutants.py"
+        "${CMAKE_CURRENT_BINARY_DIR}" $<TARGET_FILE:rpc_observers_test> --policy-shard=${shard})
+      set_tests_properties(${mutant_test} PROPERTIES TIMEOUT 180 RUN_SERIAL TRUE)
+    endforeach()
   endif()
   add_test(NAME rpc-observation-primitives COMMAND rpc_observer_test)
   set_tests_properties(rpc-observation-primitives PROPERTIES TIMEOUT 60)
@@ -1235,7 +1242,7 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
     target_link_libraries(rpc_selection_test PRIVATE arcdroid_sanitizer_link)
   endif()
   add_test(NAME rpc-selection-matrix COMMAND rpc_selection_test)
-  add_executable(rpc_inventory_test tests/rpc_inventory_test.c tests/rpc_inventory_scan.c)
+  add_executable(rpc_inventory_test tests/rpc_inventory_test.c tests/rpc_inventory_scan.c libretro/arc_io.c)
   target_include_directories(rpc_inventory_test PRIVATE libretro)
   target_link_libraries(rpc_inventory_test PRIVATE arcdroid_core)
   target_compile_options(rpc_inventory_test PRIVATE
@@ -2175,19 +2182,40 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
   if(ARCDROID_SANITIZERS)
     target_link_libraries(rpc_observers_frontend_test PRIVATE arcdroid_sanitizer_compile arcdroid_sanitizer_link)
   endif()
-  set(RPC_OBSERVERS_FRONTEND_PROFILE full)
   if(ARCDROID_SANITIZERS)
-    set(RPC_OBSERVERS_FRONTEND_PROFILE sanitizer)
+    # Preserve every case but bound individual Linux sanitizer test times.
+    foreach(group error disc-0 disc-1 extended)
+      if(group STREQUAL "error")
+        set(frontend_test rpc-observers-frontend)
+      else()
+        set(frontend_test rpc-observers-frontend-${group})
+      endif()
+      add_test(NAME ${frontend_test} COMMAND "${Python3_EXECUTABLE}" -B
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_observers_frontend_test.py"
+        $<TARGET_FILE:rpc_observers_frontend_test> $<TARGET_FILE:arcdroid_rpcplan_libretro> "${FIXTURE_DIR}" sanitizer-${group})
+      set_tests_properties(${frontend_test} PROPERTIES TIMEOUT 300)
+    endforeach()
+  else()
+    add_test(NAME rpc-observers-frontend COMMAND "${Python3_EXECUTABLE}" -B
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_observers_frontend_test.py"
+      $<TARGET_FILE:rpc_observers_frontend_test> $<TARGET_FILE:arcdroid_rpcplan_libretro> "${FIXTURE_DIR}" full)
+    set_tests_properties(rpc-observers-frontend PROPERTIES TIMEOUT 300)
   endif()
-  add_test(NAME rpc-observers-frontend COMMAND "${Python3_EXECUTABLE}" -B
-    "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_observers_frontend_test.py"
-    $<TARGET_FILE:rpc_observers_frontend_test> $<TARGET_FILE:arcdroid_rpcplan_libretro> "${FIXTURE_DIR}" "${RPC_OBSERVERS_FRONTEND_PROFILE}")
-  set_tests_properties(rpc-observers-frontend PROPERTIES TIMEOUT 300)
   if(NOT ARCDROID_SANITIZERS AND NOT CMAKE_CROSSCOMPILING AND CMAKE_GENERATOR STREQUAL "Ninja")
-    add_test(NAME rpc-observers-frontend-mutants COMMAND "${Python3_EXECUTABLE}" -B
-      "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_observers_mutants.py"
-      "${CMAKE_CURRENT_BINARY_DIR}" $<TARGET_FILE:rpc_observers_frontend_test> $<TARGET_FILE:arcdroid_rpcplan_libretro>)
-    set_tests_properties(rpc-observers-frontend-mutants PROPERTIES TIMEOUT 180 RUN_SERIAL TRUE)
+    # Keep each native Windows mutant matrix comfortably inside its timeout.
+    # All shards validate the full baseline and every focused test profile.
+    foreach(shard 0 1 2 3)
+      if(shard EQUAL 0)
+        set(mutant_test rpc-observers-frontend-mutants)
+      else()
+        math(EXPR shard_number "${shard} + 1")
+        set(mutant_test rpc-observers-frontend-mutants-${shard_number})
+      endif()
+      add_test(NAME ${mutant_test} COMMAND "${Python3_EXECUTABLE}" -B
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_observers_mutants.py"
+        "${CMAKE_CURRENT_BINARY_DIR}" $<TARGET_FILE:rpc_observers_frontend_test> $<TARGET_FILE:arcdroid_rpcplan_libretro> ${shard})
+      set_tests_properties(${mutant_test} PROPERTIES TIMEOUT 180 RUN_SERIAL TRUE)
+    endforeach()
   endif()
   add_test(NAME rpc-observation-lifecycle COMMAND rpc_observer_lifecycle_test $<TARGET_FILE:arcdroid_libretro_test>)
   set_tests_properties(rpc-observation-lifecycle PROPERTIES TIMEOUT 60)
@@ -2375,6 +2403,10 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
   if(ARCDROID_SANITIZERS)
     set(RPC_OBSERVATION_PROFILE sanitizer)
   endif()
+  add_test(NAME rpc-preparation-trace COMMAND "${Python3_EXECUTABLE}" -B
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_preparation_trace_test.py"
+    $<TARGET_FILE:rpc_runner> $<TARGET_FILE:arcdroid_rpcplan_libretro>)
+  set_tests_properties(rpc-preparation-trace PROPERTIES TIMEOUT 300 RUN_SERIAL TRUE)
   add_test(NAME rpc-observation-plan COMMAND "${Python3_EXECUTABLE}" -B
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_observation_plan_test.py"
     $<TARGET_FILE:rpc_runner> $<TARGET_FILE:arcdroid_rpcplan_libretro>
@@ -2421,6 +2453,18 @@ if(TARGET arcdroid_libretro_test)
   if(ANDROID)
     set_target_properties(arcdroid_rpcplan_libretro PROPERTIES OUTPUT_NAME arcdroid_rpcplan_libretro_android)
     target_link_options(arcdroid_rpcplan_libretro PRIVATE "-Wl,-z,defs" "-Wl,-z,max-page-size=16384")
+  endif()
+endif()
+
+# Non-shipping driver for the R3d-2 private Mac/Android VFS cost legs.
+if(BUILD_TESTING OR ARCDROID_ANDROID_TEST_CORE)
+  add_executable(rpc_firmware_probe tests/rpc_firmware_probe.c libretro/rpc_inventory.c libretro/arc_io.c)
+  target_include_directories(rpc_firmware_probe PRIVATE libretro)
+  target_link_libraries(rpc_firmware_probe PRIVATE arcdroid_core)
+  target_compile_options(rpc_firmware_probe PRIVATE
+    $<$<C_COMPILER_ID:GNU,Clang,AppleClang>:-UNDEBUG;-Wall;-Wextra;-Wpedantic>)
+  if(ARCDROID_SANITIZERS)
+    target_link_libraries(rpc_firmware_probe PRIVATE arcdroid_sanitizer_compile arcdroid_sanitizer_link)
   endif()
 endif()
 

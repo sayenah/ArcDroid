@@ -441,6 +441,19 @@ static unsigned arc_disc_launch_index, arc_disc_previous_index;
 static uint64_t arc_disc_swapped_us;
 static char arc_disc_notices[8][64];
 static unsigned arc_disc_notice_read, arc_disc_notice_write;
+static bool arc_disc_back_request(unsigned candidate,uint64_t now)
+{
+   return arc_disc_owned && candidate==arc_disc_previous_index && now>=arc_disc_swapped_us &&
+      now-arc_disc_swapped_us<UINT64_C(10000000);
+}
+#if defined(ARCDROID_TEST_FAULTS)
+RETRO_API bool arc_libretro_test_disc_back_request(unsigned candidate,unsigned *previous,uint64_t *time,unsigned *notices)
+{
+   *previous=arc_disc_previous_index;*time=arc_disc_swapped_us;
+   *notices=(arc_disc_notice_write+8u-arc_disc_notice_read)%8u;
+   return arc_disc_back_request(candidate,arc_engine_disc_time_us());
+}
+#endif
 static void arc_disc_invalidate(void)
 {
    ++arc_disc_generation;
@@ -4991,9 +5004,7 @@ static bool arc_disc_observation(void *opaque, const char *path,
    if (trigger)
    {
       uint64_t now = arc_engine_disc_time_us();
-      bool backwards = arc_disc_owned && candidate == arc_disc_previous_index &&
-         now >= arc_disc_swapped_us &&
-         now - arc_disc_swapped_us < UINT64_C(10000000);
+      bool backwards = arc_disc_back_request(candidate,now);
       if (arc_disc_mode == ARC_DISC_MODE_HINT || backwards ||
           ((arc_kind == ARC_SESSION_KIND_RISCPC) && !arc_engine_rpc_observers_capability(ARC_RPC_CELL_REPLACE_B)))
       {
@@ -5180,9 +5191,7 @@ static void arc_disc_boundary(void)
    else if (count == 1u)
    {
       uint64_t now = arc_engine_disc_time_us();
-      bool backwards = arc_disc_owned && candidate == arc_disc_previous_index &&
-         now >= arc_disc_swapped_us &&
-         now - arc_disc_swapped_us < UINT64_C(10000000);
+      bool backwards = arc_disc_back_request(candidate,now);
       if (arc_disc_mode == ARC_DISC_MODE_HINT || backwards ||
           ((arc_kind == ARC_SESSION_KIND_RISCPC) && !arc_engine_rpc_observers_capability(ARC_RPC_CELL_REPLACE_A)))
       {
@@ -6044,16 +6053,19 @@ static void arc_poll_inputs(void)
    bool error_b = error_pad && arc_input_state(0u, RETRO_DEVICE_JOYPAD, 0u,
                                   RETRO_DEVICE_ID_JOYPAD_B) != 0;
    if (!error_a && !error_b) arc_error_pad_gate = false;
-   bool error_hint_unknown=rpc_error && error_box.modal_unknown && arc_error_hint_state &&
-      arc_error_hint_generation==error_box.generation;
-   unsigned hint_state=error_hint_unknown?3u:error_box.answer_available?2u:1u;
+   bool error_hint_unknown=rpc_error && error_box.modal_unknown &&
+      (error_box.recognised_open || (error_box.flags&0x60u) ||
+       (arc_error_hint_state && arc_error_hint_generation==error_box.generation));
+   bool answered=rpc_error && (error_box.pending!=ARC_ERROR_NONE || error_box.consumed!=ARC_ERROR_NONE);
+   bool hint_answerable=error_box.answer_available || answered;
+   unsigned hint_state=error_hint_unknown?3u:hint_answerable?2u:1u;
    if ((error_hint_open || error_hint_unknown) && !arc_osk.visible &&
        (arc_session == ARC_SESSION_RUNNING || (rpc_error && arc_engine_active())) &&
        (arc_error_hint_generation != error_box.generation ||
         (rpc_error && arc_error_hint_state != hint_state)))
    {
       if(error_hint_unknown)arc_message("Error box state unknown; use keyboard or mouse to respond.",RETRO_LOG_INFO);
-      else if(rpc_error && !error_box.answer_available)arc_message("Error box open; use keyboard or mouse to respond.",RETRO_LOG_INFO);
+      else if(rpc_error && !hint_answerable)arc_message("Error box open; use keyboard or mouse to respond.",RETRO_LOG_INFO);
       else arc_error_hint(&error_box);
       arc_error_hint_generation = error_box.generation;
       arc_error_hint_state = hint_state;
@@ -7430,8 +7442,8 @@ static bool arc_load_game(const struct retro_game_info *game, bool negotiate)
       rpc_discs[i] = arc_media[i].compatibility;
       if (arc_riscpc_notice_required(rpc_discs[i])) rpc_scan_needed = true;
    }
-   ArcRpcFirmwareInventory rpc_inventory = {0};
-   if (rpc_scan_needed) rpc_inventory = arc_riscpc_inventory_scan(arc_vfs,
+   ArcRpcFirmwareInventory rpc_inventory = {.state=ARC_RPC_INVENTORY_SKIPPED};
+   if (rpc_scan_needed) rpc_inventory = arc_riscpc_inventory_scan(
       firmware_dir, rpc_table, rpc_count);
    ArcRpcSelection rpc_selection = arc_riscpc_select(rpc_discs, arc_media_count,
       &rpc_inventory, ARC_RPC_SELECT_AUTO, ARC_RPC_OS_AUTO);
@@ -7773,6 +7785,8 @@ RETRO_API void retro_reset(void)
 #if defined(ARCDROID_TEST_PLANS)
    if(arc_test_plan_pending()) {
       arc_error_hint_generation=arc_error_seen_generation=0;arc_error_hint_state=0;
+      arc_disc_owned=false;arc_disc_previous_index=0;arc_disc_swapped_us=0;
+      arc_disc_notice_read=arc_disc_notice_write=0;
       arc_input_reset(&arc_inputs);memset(arc_keyboard_raw,0,sizeof(arc_keyboard_raw));
       arc_input_sampling_reset(false);arc_guest_time_us=0;arc_test_plan_reset();
       arc_rpc_av_attempted=false;return;
@@ -7780,6 +7794,8 @@ RETRO_API void retro_reset(void)
 #endif
    if((arc_kind == ARC_SESSION_KIND_RISCPC) && arc_engine_active()) {
       arc_error_hint_generation=arc_error_seen_generation=0;arc_error_hint_state=0;
+      arc_disc_owned=false;arc_disc_previous_index=0;arc_disc_swapped_us=0;
+      arc_disc_notice_read=arc_disc_notice_write=0;
 #if defined(ARCDROID_TEST_PLANS)
       if(arc_test_plan_cmos_phase())arc_plan_notice("",false);
 #endif
