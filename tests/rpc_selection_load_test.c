@@ -35,6 +35,9 @@ static char root[4096],system_path[4096],firmware_path[4096],diagnostic[256],log
 static char identity[41],persistent_path[4096];
 static const char *machine_option="Auto",*os_option="Auto";
 static unsigned log_count,notice_count,mask_count;
+static FILE *projection;
+static bool baseline_projection;
+static unsigned firmware_stats,diagnostic_stats;
 static unsigned firmware_dirs,firmware_files,diagnostic_dirs,diagnostic_files;
 static ArcRpcCompatibility masks[32];
 static bool root_failure,close_failure,read_failure,name_failure,silent_listing,budget_listing;
@@ -44,6 +47,8 @@ static struct retro_vfs_interface wrapper;
 static struct retro_vfs_file_handle *test_open(const char *p,unsigned mode,unsigned hints)
 {if(!strncmp(p,firmware_path,strlen(firmware_path))&&p[strlen(firmware_path)]=='/')++firmware_files;
    return vfs_open(p,mode,hints);}
+static int32_t test_stat(const char *p,int32_t *size)
+{if(!strncmp(p,firmware_path,strlen(firmware_path)))++firmware_stats;return vfs_stat(p,size);}
 static int64_t test_read(struct retro_vfs_file_handle *h,void *data,uint64_t size)
 {if(read_failure&&size==35)return -1;return vfs_read(h,data,size);}
 static struct retro_vfs_dir_handle *test_opendir(const char *p,bool hidden)
@@ -73,7 +78,7 @@ static void log_line(enum retro_log_level level,const char *format,...)
    (void)level;char line[4096];va_list a;va_start(a,format);vsnprintf(line,sizeof(line),format,a);va_end(a);
    if(!strncmp(line,"RPC selection:",14)){
       ++log_count;snprintf(diagnostic,sizeof(diagnostic),"%s",line);mask_count=0;
-      diagnostic_dirs=firmware_dirs;diagnostic_files=firmware_files;
+      diagnostic_dirs=firmware_dirs;diagnostic_files=firmware_files;diagnostic_stats=firmware_stats;
       for(unsigned i=0;i<32;++i){ArcRpcCompatibility m;if(!media_masks(i,&m))break;masks[mask_count++]=m;}
    }else if(strlen(logs)+strlen(line)<sizeof(logs))strcat(logs,line);
 }
@@ -118,16 +123,26 @@ static void make_jfd(const char *leaf,unsigned cpu,unsigned os,bool legacy,unsig
 static bool prepare(const char *leaf,const char *reason,const char *model,const char *os)
 {
    diagnostic[0]=logs[0]=notices[0]=0;notice_count=log_count=mask_count=0;
-   firmware_dirs=firmware_files=diagnostic_dirs=diagnostic_files=0;
+   firmware_dirs=firmware_files=diagnostic_dirs=diagnostic_files=firmware_stats=diagnostic_stats=0;
    listing_armed=true;char file[4096];path(file,root,leaf);
    struct retro_game_info g={.path=file};bool ok=load_core(&g);
+   if(projection){
+      /* Keep the complete diagnostic; the A/B driver admits only exact,
+       * enumerated substitutions for this projection. */
+      fprintf(projection,"CASE %s RESULT %u\n%s",leaf,ok,diagnostic);
+      if(!strcmp(reason,"reason=legacy"))fprintf(projection,"IO dirs=%u files=%u stats=%u\n",diagnostic_dirs,diagnostic_files,diagnostic_stats);
+      fprintf(projection,"%sNOTICES\n%sMASKS %u",logs,notices,mask_count);
+      for(unsigned i=0;i<mask_count;++i)fprintf(projection," %u:%u",masks[i].cpu,masks[i].os);
+      fprintf(projection,"\n");
+   }
+   if(baseline_projection&&!strcmp(reason,"reason=incomplete-scan"))reason="reason=missing-firmware";
    if(log_count!=1||!strstr(diagnostic,reason)||!strstr(diagnostic,model)||!strstr(diagnostic,os)){
       fprintf(stderr,"load %s -> %d diag=%s logs=%s\n",leaf,ok,diagnostic,logs);assert(0);}
    if(!strcmp(reason,"reason=legacy")){
       /* At the diagnostic line no firmware has been touched. The one later
        * directory walk belongs to the unchanged legacy firmware search. */
-      assert(diagnostic_dirs==0&&diagnostic_files==0&&firmware_dirs==1);
-      assert(strstr(diagnostic,"inventory=complete")&&!strstr(notices,"RiscPC-class"));
+      assert(diagnostic_dirs==0&&diagnostic_files==0&&diagnostic_stats==0&&firmware_dirs==1);
+      assert(strstr(diagnostic,baseline_projection?"inventory=complete":"inventory=skipped")&&!strstr(notices,"RiscPC-class"));
    }else assert(diagnostic_dirs==1&&firmware_dirs==2);
    return ok;
 }
@@ -148,7 +163,8 @@ static void require_legacy(const char *leaf,const char *reason,const char *model
 }
 int main(int argc,char **argv)
 {
-   assert(argc==4);
+   assert(argc==4||argc==6);
+   if(argc==6){projection=fopen(argv[4],"wb");assert(projection);baseline_projection=!strcmp(argv[5],"base");}
 #if defined(_WIN32)
    library=LoadLibraryA(argv[1]);
 #else
@@ -179,7 +195,7 @@ int main(int argc,char **argv)
       digests[i]=arc_digest(authored[i],32+i);table[i]=(ArcRpcFirmwareFingerprint){(ArcRpcSelectionOs)(i+1),digests[i].size,digests[i].crc32,digests[i].sha1};
       snprintf(leaf,sizeof(leaf),"rpc-%u",i);write_bytes(firmware_path,leaf,authored[i],32+i);}
    write_bytes(firmware_path,"rpc-copy",authored[3],35);write_bytes(firmware_path,"tiny","x",1);
-   wrapper=vfs;wrapper.open=test_open;wrapper.read=test_read;wrapper.opendir=test_opendir;wrapper.readdir=test_readdir;wrapper.dirent_get_name=test_dir_name;wrapper.closedir=test_closedir;
+   wrapper=vfs;wrapper.stat=test_stat;wrapper.open=test_open;wrapper.read=test_read;wrapper.opendir=test_opendir;wrapper.readdir=test_readdir;wrapper.dirent_get_name=test_dir_name;wrapper.closedir=test_closedir;
    set_environment(environment);init_core();set_catalogue(table,4);
    make_jfd("rpc.jfd",20,12,false,1,1);make_jfd("sa.jfd",16,8,false,1,1);
    make_jfd("first.jfd",4,4,false,1,2);make_jfd("later.jfd",16,8,false,2,2);
@@ -231,7 +247,7 @@ int main(int argc,char **argv)
    require_legacy("sa.jfd","reason=selected","model=SA-110","os=3.70");assert(strstr(diagnostic,"incomplete"));unload_core();reset_faults();
    name_failure=true;require_legacy("rpc.jfd","reason=unreadable-inventory","model=none","os=none");unload_core();reset_faults();
    silent_listing=true;require_legacy("rpc.jfd","reason=missing-firmware","model=none","os=none");assert(strstr(diagnostic,"inventory=complete"));unload_core();reset_faults();
-   budget_listing=true;require_legacy("rpc.jfd","reason=missing-firmware","model=none","os=none");assert(strstr(diagnostic,"incomplete"));unload_core();reset_faults();
+   budget_listing=true;require_legacy("rpc.jfd","reason=incomplete-scan","model=none","os=none");assert(strstr(diagnostic,"incomplete"));unload_core();reset_faults();
    /* Existing manual legacy options do not become manual RPC choices. */
    machine_option="A3010";os_option="RISC OS 3.11";
    assert(!prepare("rpc.jfd","reason=selected","model=ARM710","os=3.71"));
@@ -258,7 +274,7 @@ int main(int argc,char **argv)
    assert(!prepare("rpc.jfd","reason=missing-firmware","model=none","os=none"));
    assert(strstr(notices,"Unrecognised firmware size 2097152 bytes; nearest expected size is 2097152 bytes."));
    assert(rename(hidden,legacy_file)==0);
-   deinit_core();vfs_assert_no_open_handles();
+   deinit_core();vfs_assert_no_open_handles();if(projection)assert(fclose(projection)==0);
 #if defined(_WIN32)
    FreeLibrary(library);
 #else

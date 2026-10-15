@@ -1193,7 +1193,7 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
     target_link_libraries(rpc_selection_test PRIVATE arcdroid_sanitizer_link)
   endif()
   add_test(NAME rpc-selection-matrix COMMAND rpc_selection_test)
-  add_executable(rpc_inventory_test tests/rpc_inventory_test.c tests/rpc_inventory_scan.c)
+  add_executable(rpc_inventory_test tests/rpc_inventory_test.c tests/rpc_inventory_scan.c libretro/arc_io.c)
   target_include_directories(rpc_inventory_test PRIVATE libretro)
   target_link_libraries(rpc_inventory_test PRIVATE arcdroid_core)
   target_compile_options(rpc_inventory_test PRIVATE
@@ -2304,6 +2304,18 @@ if(TARGET arcdroid_libretro_test)
   if(ANDROID)
     set_target_properties(arcdroid_rpcplan_libretro PROPERTIES OUTPUT_NAME arcdroid_rpcplan_libretro_android)
     target_link_options(arcdroid_rpcplan_libretro PRIVATE "-Wl,-z,defs" "-Wl,-z,max-page-size=16384")
+  endif()
+endif()
+
+# Non-shipping driver for the R3d-2 private Mac/Android VFS cost legs.
+if(BUILD_TESTING OR ARCDROID_ANDROID_TEST_CORE)
+  add_executable(rpc_firmware_probe tests/rpc_firmware_probe.c libretro/rpc_inventory.c libretro/arc_io.c)
+  target_include_directories(rpc_firmware_probe PRIVATE libretro)
+  target_link_libraries(rpc_firmware_probe PRIVATE arcdroid_core)
+  target_compile_options(rpc_firmware_probe PRIVATE
+    $<$<C_COMPILER_ID:GNU,Clang,AppleClang>:-UNDEBUG;-Wall;-Wextra;-Wpedantic>)
+  if(ARCDROID_SANITIZERS)
+    target_link_libraries(rpc_firmware_probe PRIVATE arcdroid_sanitizer_compile arcdroid_sanitizer_link)
   endif()
 endif()
 

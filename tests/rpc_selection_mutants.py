@@ -16,6 +16,9 @@ import tempfile
 from rpc_ninja_commands import split_command
 
 mutants = [
+    ("os-range", "table[i].os >= ARC_RPC_OS_350 && table[i].os <= ARC_RPC_OS_371 &&", "true &&"),
+    ("resource-policy", " || inventory->resource_failure", ""),
+    ("budget-refusal", "feasible && qualified && inventory && inventory->bounded", "false"),
     ("crc-required", "d->crc32 == table[i].crc32 &&", "true &&"),
     ("sha-required", "!strcmp(d->sha1, table[i].sha1)", "true"),
     ("size-required", "d->size == table[i].size &&", "true &&"),
@@ -51,14 +54,23 @@ mutants = [
 ]
 
 inventory_mutants = [
+    ("stat-before-open", "if (!wanted) return;", "if (false) return;"),
+    ("entry-budget", "s->entries == ARC_RPC_SCAN_ENTRIES", "false"),
+    ("byte-budget", "length > ARC_RPC_SCAN_BYTES - s->bytes", "false"),
+    ("byte-budget-early", "length > ARC_RPC_SCAN_BYTES - s->bytes", "length >= ARC_RPC_SCAN_BYTES - s->bytes"),
+    ("path-budget", "(size_t)n>=sizeof(child)", "false"),
     ("depth-unbounded", "if (depth) scan_directory(s,child,depth-1);",
      "if (true) scan_directory(s,child,depth ? depth-1 : 0);"),
     ("depth-too-shallow", "scan_directory(&s,directory,ARC_RPC_SCAN_DEPTH)", "scan_directory(&s,directory,1)"),
     ("depth-not-flagged", "else s->result.bounded = true;", "else s->result.bounded = false;"),
-    ("dot-recursion", ' || !strcmp(name,".") || !strcmp(name,"..")', ""),
-    ("resource-not-reported", "if (!data) s->result.resource_failure = true;", "if (!data) s->result.resource_failure = false;"),
-    ("resource-leaks-file", "if (!data) s->result.resource_failure = true;", "if (!data) { s->result.resource_failure = true; return; }"),
-    ("resource-as-vfs-failure", "if (!data) s->result.resource_failure = true;", "if (!data) s->result.vfs_failure = true;"),
+    ("dot-recursion", 'if (!strcmp(name,".") || !strcmp(name,"..")) continue;', "if (false) continue;"),
+    ("resource-not-reported", "if (resource) s->result.resource_failure = true;", "if (resource) s->result.resource_failure = false;"),
+    ("resource-as-vfs-failure", "if (resource) s->result.resource_failure = true;", "if (resource) s->result.vfs_failure = true;"),
+    ("prefix-recognition", "s.result.installed = 0;", "s.result.installed = 16;"),
+    ("canonical-copy", "strcmp(path, locator->path) < 0", "strcmp(path, locator->path) > 0"),
+    ("locator-crc", "digest.crc32 != locator->fingerprint.crc32 ||", "false ||"),
+    ("locator-sha", "strcmp(digest.sha1, locator->fingerprint.sha1)", "false"),
+    ("locator-close", "if (!arc_io_close_file(h)) ok = false;", "if (!arc_io_close_file(h)) ok = true;"),
 ]
 
 
@@ -102,13 +114,15 @@ def main():
 
     def must_pass(command):
         result = run(command)
-        assert result.returncode == 0, (command, result.stdout, result.stderr)
+        if result.returncode != 0:
+            raise RuntimeError((command, result.stdout, result.stderr))
 
     def binary(relative, old, new, folder, label):
         source = root / relative
         text = source.read_text()
         if old is not None:
-            assert text.count(old) == 1, (label, "missing or ambiguous recipe")
+            if text.count(old) != 1:
+                raise RuntimeError((label, "missing or ambiguous recipe"))
             text = text.replace(old, new, 1)
         copied = folder / source.name
         copied.write_text(text)
@@ -117,7 +131,8 @@ def main():
             # the copied scanner; the production scanner gains no test hooks.
             source = root / "tests/rpc_inventory_scan.c"
             wrapper = folder / source.name
-            wrapper.write_text(source.read_text().replace('"../libretro/rpc_inventory.c"',
+            wrapper.write_text(source.read_text().replace('"rpc_inventory_limits.h"',
+                                                         '"' + (root / 'tests/rpc_inventory_limits.h').as_posix() + '"').replace('"../libretro/rpc_inventory.c"',
                                                          '"' + copied.as_posix() + '"'))
             copied = wrapper
         compile_command = next(row for item in inputs if item in graph
@@ -170,9 +185,11 @@ def main():
                        if args.mode == "integration" else [executable])
             result = run(command)
             if name == "control":
-                assert result.returncode == 0, (result.stdout, result.stderr)
+                if result.returncode != 0:
+                    raise RuntimeError((result.stdout, result.stderr))
             else:
-                assert result.returncode != 0, (name, "SURVIVED", result.stdout)
+                if result.returncode == 0:
+                    raise RuntimeError((name, "SURVIVED", result.stdout))
             print(name + ": " + ("PASS" if name == "control" else "KILLED"), flush=True)
     print(f"{len(cases)}/{len(cases)} {args.mode} mutants killed; control passed")
 
