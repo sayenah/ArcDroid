@@ -16,6 +16,18 @@ cache=(build/'CMakeCache.txt').read_text()
 ninja=next(x.split('=',1)[1] for x in cache.splitlines() if x.startswith('CMAKE_MAKE_PROGRAM:FILEPATH='))
 commands=[x['command'] for x in json.loads(subprocess.check_output([ninja,'-t','compdb','-x'],cwd=build,text=True))]
 mutants=[
+ ('control-close-v','engine/rpc/rpc_observers.c','e->matched && !(e->nzcv&0x10000000u) && state.error_return_closes','e->matched && true && state.error_return_closes'),
+ ('control-immediate','engine/rpc/rpc_observers.c','(e->registers[1]&0x60u)!=0','(e->registers[1]&0x40u)!=0'),
+ ('control-close-loss','engine/rpc/rpc_observers.c','(e->registers[1]&0x60u)!=0','(e->registers[1]&0x20u)!=0'),
+ ('control-poll','engine/rpc/rpc_observers.c','!state.error_unbounded && !state.error_watch','!state.error_watch'),
+ ('control-return','engine/rpc/rpc_observers.c','state.error.modal_unknown=state.error_unbounded ||','state.error.modal_unknown=false ||'),
+ ('control-close-return','engine/rpc/rpc_observers.c','(e->registers[1]&0x40u)!=0 || state.error.recognised_open','false || state.error.recognised_open'),
+ ('control-ordinary-return','engine/rpc/rpc_observers.c','(e->registers[1]&0x40u)!=0 || state.error.recognised_open','(e->registers[1]&0x40u)!=0 || false'),
+ ('control-close-match','engine/rpc/rpc_observers.c','e->kind==ARC_RPC_OBS_CONTINUATION && e->matched && !(e->nzcv&0x10000000u) && state.error_return_closes','e->kind==ARC_RPC_OBS_CONTINUATION && true && !(e->nzcv&0x10000000u) && state.error_return_closes'),
+ ('control-unknown-return','engine/rpc/rpc_observers.c','(e->registers[1]&0x40u)!=0 || state.error.recognised_open','true'),
+ ('control-reset','engine/rpc/rpc_observers.c','arc_rpc_observers_bind(catalogue,cpu);\n#if defined(ARCDROID_TEST_FAULTS)','bool stale_control=state.error_unbounded;arc_rpc_observers_bind(catalogue,cpu);state.error_unbounded=stale_control;state.error.modal_unknown|=stale_control;\n#if defined(ARCDROID_TEST_FAULTS)'),
+ ('control-epoch','engine/rpc/rpc_observers.c','memset(&state,0,sizeof(state));','bool stale_control=state.error_unbounded;memset(&state,0,sizeof(state));state.error_unbounded=stale_control;'),
+ ('renew-cancel','engine/rpc/rpc_observers.c','arc_rpc_observer_cancel(ARC_RPC_OBS_ERROR);error_loss();return;','error_loss();return;'),
  ('user26','engine/rpc/rpc_observers.c','return mode==0u || mode==16u;','return mode==16u;'),
  ('a-filesystem','engine/rpc/rpc_observers.c','e->registers[1]!=8?"filesystem":NULL','false?"filesystem":NULL'),
  ('a-rom','engine/rpc/rpc_observers.c','e->backing.kind!=ARC_RPC_BACKING_ROM?"non-rom":','false?"non-rom":'),
@@ -112,6 +124,9 @@ if not frontend and len(sys.argv)>3:
     mutants=mutants[shard::2]
 if frontend:
     mutants=[
+      ('b-log-path-word','engine/rpc/rpc_observers.c','"path-other"','"path-refused"'),
+      ('b-log-outcome-word','engine/rpc/rpc_observers.c','"outcome-not-miss"','"outcome-refused"'),
+      ('control-hint','libretro/arcdroid_libretro.c','error_box.recognised_open || (error_box.flags&0x60u) ||','error_box.recognised_open || false ||'),
       ('b-log-identity','engine/rpc/rpc_observers.c','*out=disc_observation?*disc_observation:state.disc;','*out=state.disc;'),
       ('b-replace-cell','engine/rpc/rpc_observers.c','signal==ARC_DISC_SIGNAL_A?ARC_RPC_CELL_REPLACE_A:ARC_RPC_CELL_REPLACE_B','signal==ARC_DISC_SIGNAL_A?ARC_RPC_CELL_REPLACE_A:ARC_RPC_CELL_REPLACE_A'),
       ('b-commit-signal','libretro/arcdroid_libretro.c','arc_disc_watch_generation, ARC_DISC_SIGNAL_B);','arc_disc_watch_generation, ARC_DISC_SIGNAL_A);'),
@@ -180,7 +195,7 @@ for name,relative,old,new in mutants:
             if result.returncode:raise RuntimeError((name,'build failure',result.stderr))
         focus='mutant'
         if name.startswith('b-') or name=='reset-swap-owner' or name=='identity-case': focus='h-b'
-        if name in ('hint-after-answer','cancel-only-pad','cancel-only-hint','reset-binding-cpu'): focus='h-error'
+        if name in ('control-hint','hint-after-answer','cancel-only-pad','cancel-only-hint','reset-binding-cpu'): focus='h-error'
         if name.startswith('session-frame'): focus='h-session'
         if name in ('hd-record-agreement','hd-checksum','hd-geometry','helper-writable','identity-collision','helper-long-path'): focus='h-identity'
         argv=[sys.executable,str(root/'tests/rpc_observers_frontend_test.py'),str(target),str(binary),str(build/"tests/fixtures/generated"),focus] if frontend else [str(binary)]

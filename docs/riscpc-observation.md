@@ -194,12 +194,15 @@ VA/SP; it cannot consume. Later eligible polls must match both. IRQ activity is
 neutral. Nested reports retire the parent and pending answer; no parent resumes.
 The return, disqualifying return, watch admission refusal, expiry, cancellation,
 replacement, reset, stop or fault ends eligibility synchronously. Watch loss
-leaves modal state unknown until a new bounded report or epoch. Observation and
+leaves modal state unknown until a new bounded report, a new epoch, or
+a user-mode Wimp_Poll/Wimp_PollIdle entry with no pending user report. The
+asynchronous-control uncertainty described below additionally excludes poll recovery. Observation and
 completion are separate capabilities; completion also needs form qualification.
 
 The frontend snapshot distinguishes recognised open, answer available and modal
-unknown. Unknown/immediate/close forms are modal-unknown while their user return
-watch is pending; accepted synchronous forms alone claim recognised-open. An
+unknown. Unknown forms are modal-unknown while their user return watch is pending;
+immediate-return/close-control forms retain uncertainty beyond that watch as
+described below. Accepted synchronous forms alone claim recognised-open. An
 already queued or consumed answer is no longer available. Only answer availability owns pad A/B, with the existing neutral and
 release gates. Observation-only generations retain normal keyboard, mouse, OSK
 and pad mapping and show a manual hint. Disc mutation requires a known nonmodal
@@ -450,3 +453,28 @@ three-word set rejects common OS and Wimp numbers before per-owner matching;
 other number ranges and mask-only subscriptions retain the generic path. Trace
 subscriptions independently bypass this rejection. The optional bounded list
 is host-owned for the lifetime of its filter and does not replace raw SWI masks.
+
+### Run I: immediate-return/close-control modal state
+
+The [RISC OS PRM, Wimp_ReportError](https://www.riscos.com/support/developers/prm/wimp.html)
+confirms that flag bit 5 may return without closing the error window; bit 6
+selects a button and closes it. It requires a close-control call before the next
+Wimp_Poll when using immediate returns. There is no contradiction with the
+adjudicated contract. No firmware classification or content is involved.
+
+A user report with either control bit sets a session-owned uncertainty latch
+from entry. It offers no answer and only the manual state-unknown hint. A
+matching immediate return, expiry, cancellation, privileged nested report or
+user Wimp_Poll/PollIdle does not clear this latch. Its bounded call watch ends
+normally, so an open asynchronous window adds no launch-long instruction watch.
+Only the matching successful return of a user close-control call, completion of
+a later recognised synchronous report, reset or a new bound epoch clears it.
+A failed/disqualifying close return is not evidence. A synchronous report used
+for recovery remains manual until it completes; unrecognised forms cannot
+supply recovery. Privileged reports keep their existing invalidation semantics
+and do not become new user-report observations.
+
+Ordinary watch-loss recovery through user Wimp_Poll/PollIdle remains unchanged
+when this control-form latch is absent. Watch-renewal failure cancels its watch
+before retiring policy eligibility. Routine disc reasons use neutral names
+(`path-other`, `outcome-not-miss`) on both shipping decision-log fields.

@@ -8,6 +8,7 @@
 static struct {
     unsigned catalogue,cpu,cells;
     uint64_t epoch,error_watch,disc_watch,disc_media,helper_media;
+    bool error_unbounded,error_return_closes;
     ArcErrorProfile error_profile;
     ArcDiscProfile disc_profile;
     ArcErrorBox error;
@@ -51,20 +52,24 @@ void arc_rpc_observers_retire(void)
 static void error_loss(void)
 {
     arc_error_end(&state.error);state.error.modal_unknown=true;state.error_watch=0;
+    state.error_return_closes=false;
 }
 static void error_event(void *opaque,const ArcRpcObservation *e)
 {
     (void)opaque;
     if(e->kind==ARC_RPC_OBS_WATCH_LOST || e->kind==ARC_RPC_OBS_CONTINUATION){
         if(e->watch!=state.error_watch)return;
+        if(e->kind==ARC_RPC_OBS_CONTINUATION && e->matched && !(e->nzcv&0x10000000u) && state.error_return_closes)
+            state.error_unbounded=false;
         arc_error_end(&state.error);state.error_watch=0;
-        state.error.modal_unknown=e->kind==ARC_RPC_OBS_WATCH_LOST || !e->matched;
+        state.error.modal_unknown=state.error_unbounded || e->kind==ARC_RPC_OBS_WATCH_LOST || !e->matched;
+        state.error_return_closes=false;
         return;
     }
     if(e->kind!=ARC_RPC_OBS_SWI)return;
     uint32_t swi=e->swi&~0x20000u;
     if((swi==0x400c7u || swi==0x400e1u) && user(e->mode) &&
-        !state.error_watch && !state.error.recognised_open){
+        !state.error_unbounded && !state.error_watch && !state.error.recognised_open){
         state.error.modal_unknown=false;return;
     }
     if(swi==0x400dfu){
@@ -74,6 +79,12 @@ static void error_event(void *opaque,const ArcRpcObservation *e)
         arc_rpc_observer_cancel(ARC_RPC_OBS_ERROR);
         arc_error_swi(&state.error,e->swi,e->registers[0],e->registers[1],e->registers[2],
             e->pc,e->mode,e->registers[13],e->registers[14],e->backing.kind==ARC_RPC_BACKING_ROM,false,0);
+        /* PRM bits 5/6 do not bound the window's lifetime to this call. Only
+         * a matching close or later synchronous sequence proves closure. */
+        state.error_unbounded|=(e->registers[1]&0x60u)!=0;
+        state.error_return_closes=(e->registers[1]&0x40u)!=0 || state.error.recognised_open;
+        state.error.modal_unknown|=state.error_unbounded;
+        if(state.error_unbounded)state.error.ok=state.error.cancel=state.error.default_cancel=false;
         /* Production admits the qualified ordinary class. Serious errors
          * and unreadable blocks remain manual under every test override. */
         if(state.error.ok || state.error.cancel){
@@ -83,8 +94,7 @@ static void error_event(void *opaque,const ArcRpcObservation *e)
                 state.error.ok=state.error.cancel=state.error.default_cancel=false;
         }
         state.error_watch=arc_rpc_observer_watch(ARC_RPC_OBS_ERROR,e->pc+4,e->mode,e->registers[13],watch_budget);
-        /* Track every user report, even unknown/asynchronous flag forms:
-         * this conservatively blocks replacement until its return. */
+        /* The call watch is bounded even when its window is not. */
         if(!state.error_watch){error_loss();return;}
         return;
     }
@@ -94,7 +104,7 @@ static void error_event(void *opaque,const ArcRpcObservation *e)
     if(arc_error_poll_matches(&state.error,e->registers[1],e->registers[2],e->pc,e->mode,
         e->registers[13],e->backing.kind==ARC_RPC_BACKING_ROM) &&
         !arc_rpc_observer_watch_renew(ARC_RPC_OBS_ERROR,state.error_watch,watch_budget)){
-        error_loss();return;
+        arc_rpc_observer_cancel(ARC_RPC_OBS_ERROR);error_loss();return;
     }
     if(arc_error_poll(&state.error,e->registers[1],e->registers[2],e->pc,e->mode,
         e->registers[13],e->backing.kind==ARC_RPC_BACKING_ROM,&key)){
@@ -247,7 +257,7 @@ static void disc_event(void *opaque,const ArcRpcObservation *e)
         uint32_t error=0;bool valid=arc_rpc_inspect_word(e->registers[0],false,&error);
         ArcDiscResult result=arc_disc_request_outcome(&state.disc,e->matched?state.disc.continuation:UINT32_MAX,
             0,e->registers[13],e->registers[0],(e->nzcv&0x10000000u)!=0,valid,error);
-        state.disc_reason=result.needs_resolution?"miss-queued":"outcome-refused";
+        state.disc_reason=result.needs_resolution?"miss-queued":"outcome-not-miss";
         if(result.needs_resolution)queue_disc(e,ARC_DISC_SIGNAL_B);
         else if(e->matched && !(e->nzcv&0x10000000u) &&
             (state.disc.operation==ARC_DISC_LOAD || e->registers[0]!=0))
@@ -299,7 +309,7 @@ static void disc_event(void *opaque,const ArcRpcObservation *e)
     ArcDiscSwi input={.swi=e->swi,.r0=e->registers[0],.mode=e->mode,.address=e->pc,.user_sp=e->registers[13],
         .name_readable=true,.name=path,.now_us=e->ns/1000u};
     state.disc.profile=&state.disc_profile;arc_disc_request_swi(&state.disc,&input,state.inserted);
-    state.disc_reason=state.disc.armed?"armed":"path-refused";
+    state.disc_reason=state.disc.armed?"armed":"path-other";
     if(state.disc.armed){
         state.disc_watch=0; /* Replacement loss belongs to the superseded request. */
         state.disc_watch=arc_rpc_observer_watch(ARC_RPC_OBS_DISC,e->pc+4,e->mode,e->registers[13],watch_budget);

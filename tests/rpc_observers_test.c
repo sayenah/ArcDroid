@@ -199,6 +199,79 @@ static void miss_mode(const char *path,uint32_t pc,unsigned mode,bool found)
     strcpy((char *)ram00,path);issue(pc,mode,8,5,0x10000000,0,0,0x10008000);
     arm.reg[0]=found?1:0;arc_rpc_arm_exec_count(2);
 }
+/* PRM control forms do not make window lifetime equal call lifetime. */
+static void report_return_status(unsigned mode,bool matched,uint32_t flags)
+{
+    unsigned svc=mode|3u;updatemode(svc);arm.reg[16]=svc;
+    arm.reg[14]=(matched?0x104u:0x108u)|(mode<16?flags:0);arm.spsr[3]=mode|flags;
+    arm.reg[15]=16|(svc<16?svc:0);arm.event=0;arc_rpc_arm_exec_count(2);
+}
+static void report_return(unsigned mode,bool matched)
+{ report_return_status(mode,matched,0); }
+static bool request_a(void)
+{
+    strcpy((char *)ram00,"NextDisc");issue(0x180,19,0x20033,2,8,0x10000000,UINT32_MAX,0x10001000);
+    return arc_rpc_observers_replace(ARC_DISC_SIGNAL_A);
+}
+static void control_report(unsigned mode,unsigned flags)
+{ issue(0x100,mode,0x400df,0x10000400,flags,0,0,0x10008000); }
+static void control_cases(CPUModel model)
+{
+    for(unsigned mode=0;mode<=16;mode+=16){
+        const unsigned forms[]={0x23,0x41,0x63};
+        for(unsigned n=0;n<3;++n){
+            start(model,252);arc_rpc_observers_disc_configure(true,"AuthDisc",resolve_disc,observe_disc,NULL);
+            assert(request_a());control_report(mode,forms[n]);
+            assert(box().modal_unknown && !box().recognised_open && !box().answer_available);
+            assert(!arc_rpc_observers_answer(ARC_ERROR_OK) && !arc_rpc_observers_answer(ARC_ERROR_CANCEL));
+            assert(!request_a());report_return(mode,true);
+            assert(box().modal_unknown==(n==0));assert(request_a()==(n!=0));
+            if(n==0){
+                for(unsigned idle=0;idle<2;++idle){
+                    issue(0x1c0,mode,idle?0x600e1:0x400c7,0,0,0,0,0x10008000);
+                    assert(box().modal_unknown && !request_a());
+                }
+                /* An unrelated/unknown report return cannot close it. */
+                control_report(mode,0x80);report_return(mode,true);assert(box().modal_unknown && !request_a());
+                control_report(mode,0x41);assert(box().modal_unknown);report_return(mode,true);
+                assert(!box().modal_unknown && request_a());
+            }
+        }
+        /* A mismatched close return remains unknown; a later recognised
+         * synchronous sequence, including an observation-only form, recovers. */
+        for(unsigned form=3;form<=0x100;form=0x100){
+            start(model,252);arc_rpc_observers_disc_configure(true,"AuthDisc",resolve_disc,observe_disc,NULL);
+            control_report(mode,0x23);report_return(mode,true);
+            control_report(mode,0x41);report_return(mode,false);assert(box().modal_unknown && !request_a());
+            issue(0x1c0,mode,0x400c7,0,0,0,0,0x10008000);assert(box().modal_unknown && !request_a());
+            control_report(mode,0x41);report_return_status(mode,true,0x10000000u);
+            assert(box().modal_unknown && !request_a());
+            control_report(mode,form);assert(box().modal_unknown && !box().answer_available);
+            poll(0x18c,mode|3u,0,0,0x10001000);assert(!box().answer_available && !arc_rpc_observers_answer(ARC_ERROR_OK));
+            report_return(mode,true);assert(!box().modal_unknown && request_a());
+            if(form==0x100)break;
+        }
+        for(unsigned close=0;close<2;++close){
+            start(model,252);arc_rpc_observers_disc_configure(true,"AuthDisc",resolve_disc,observe_disc,NULL);
+            arc_rpc_observers_test_watch_budget(2);control_report(mode,close?0x41:0x23);
+            for(unsigned i=0;i<4;++i)issue(0x180,19,0x42,0,0,0,0,0x10001000);
+            assert(!arc_rpc_observer_context && box().modal_unknown);
+            issue(0x1c0,mode,0x400c7,0,0,0,0,0x10008000);assert(box().modal_unknown && !request_a());
+        }
+        start(model,252);control_report(mode,0x80);
+        issue(0x1c0,mode,0x400c7,0,0,0,0,0x10008000);
+        assert(box().modal_unknown); /* Non-control pending watch still gates poll recovery. */
+        for(unsigned epoch=0;epoch<2;++epoch){
+            start(model,252);control_report(mode,0x23);report_return(mode,true);assert(box().modal_unknown);
+            if(epoch)arc_rpc_observer_retire(false);
+            arc_rpc_observers_rebase(model);assert(!box().modal_unknown && !box().recognised_open);
+            control_report(mode,3);assert(!box().modal_unknown);poll(0x18c,mode|3u,0,0,0x10001000);assert(box().answer_available);
+        }
+    }
+    start(model,12);report(3);poll(0x18c,19,0,0,0x10001000);
+    assert(arc_rpc_observer_context);arc_rpc_observers_test_watch_budget(0);
+    poll(0x18c,19,0,0,0x10001000);assert(box().modal_unknown && !arc_rpc_observer_context);
+}
 static unsigned retry_attempts,retry_insertions;
 static bool busy_observation(void *opaque,const char *path,unsigned candidate,unsigned observation,bool trigger)
 {
@@ -212,7 +285,7 @@ static bool busy_observation(void *opaque,const char *path,unsigned candidate,un
 }
 static void adjudicated_cases(CPUModel model)
 {
-    number_subscriptions(model);
+    control_cases(model);number_subscriptions(model);
     start(model,252);updatemode(19);arm.reg[16]=19;
     uint64_t captures=arc_rpc_observer_test_captures(),events=arc_rpc_observer_test_events(),checks=arc_rpc_observer_test_number_checks();
     issue(0x180,19,0x42,0,0,0,0,0x10001000);

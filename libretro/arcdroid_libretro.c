@@ -6003,8 +6003,9 @@ static void arc_poll_inputs(void)
    bool error_b = error_pad && arc_input_state(0u, RETRO_DEVICE_JOYPAD, 0u,
                                   RETRO_DEVICE_ID_JOYPAD_B) != 0;
    if (!error_a && !error_b) arc_error_pad_gate = false;
-   bool error_hint_unknown=rpc_error && error_box.modal_unknown && arc_error_hint_state &&
-      arc_error_hint_generation==error_box.generation;
+   bool error_hint_unknown=rpc_error && error_box.modal_unknown &&
+      (error_box.recognised_open || (error_box.flags&0x60u) ||
+       (arc_error_hint_state && arc_error_hint_generation==error_box.generation));
    bool answered=rpc_error && (error_box.pending!=ARC_ERROR_NONE || error_box.consumed!=ARC_ERROR_NONE);
    bool hint_answerable=error_box.answer_available || answered;
    unsigned hint_state=error_hint_unknown?3u:hint_answerable?2u:1u;

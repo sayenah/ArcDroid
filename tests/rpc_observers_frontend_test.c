@@ -12,6 +12,7 @@
 #include <io.h>
 #endif
 static unsigned vfs_reads;
+static bool termination_log;
 static bool sanitizer_cpu_profile;
 #include "../tools/rpc_runner_vfs.h"
 static int64_t counted_read(struct retro_vfs_file_handle *handle,void *bytes,uint64_t size)
@@ -33,6 +34,7 @@ static void collide_hd(void);
 static void block_replacement(void) { override_cells(20,0,0,0); }
 static void log_line(enum retro_log_level level,const char *format,...)
 { va_list args;va_start(args,format);char line[512];vsnprintf(line,sizeof(line),format,args);va_end(args);
+  if(termination_log)printf("termination-log\t%s",line);
   if(strstr(line,"RPC disc:")){++disc_logs;if(strstr(line,"action=busy"))++busy_logs;if(strstr(line,"action=resolved"))++resolved_logs;if(strstr(line,"gate=device"))saw_device_refusal=true;if(strstr(line,"action=inserted"))saw_disc_insert=true;if(strstr(line,"identity-unknown"))saw_identity_unknown=true;}
   if(strstr(line,"Disc request:") && strstr(line,"observation=1"))++b_first_logs;
   if(level>=RETRO_LOG_WARN)fputs(line,stderr); }
@@ -461,6 +463,23 @@ extended:;
         }
         unload();
     }
+    if(!focus || !strcmp(focus,"h-error"))for(unsigned control=0;control<2;++control){
+        observer_guest(control?0x41:0x23);
+        /* A real bounded control call spans frames before its return. */
+        const uint32_t delayed_return[]={0xe3a06801,0xe2566001,0x1afffffd,0xe1b0f00e};
+        for(unsigned i=0;i<4;++i)put_word(0x180+4*i,delayed_return[i]);
+        write_file("guest.rom",rom,2097152);
+        count=snprintf(plan,sizeof(plan),"version=1\nmodel=sa110\nrate_mips=1\nfirmware=%s/guest.rom\ncmos=seed\nseed=%s/seed\nrtc_epoch=0\n",directory,directory);
+        write_file("test.arcplan",plan,(size_t)count);pad_a=pad_b=0;hints=manual_hints=0;last_error_hint[0]=0;
+        assert(load(&game));production(4,252);run();run();api->error_snapshot(&box);
+        assert(box.modal_unknown && !box.answer_available && !box.recognised_open);
+        assert(hints==1 && manual_hints==1 && strstr(last_error_hint,"state unknown"));
+        pad_a=1;run();pad_a=0;pad_b=1;run();pad_b=0;
+        assert(!api->error_request(ARC_ERROR_CANCEL));
+        for(unsigned f=0;f<20;++f)run();api->error_snapshot(&box);
+        assert(box.modal_unknown==!control && hints==1 && manual_hints==1);
+        reset();api->error_snapshot(&box);assert(!box.modal_unknown && !box.answer_available);unload();
+    }
     if(!focus || !strcmp(focus,"h-session")){
     /* Session frame hook: boot and a shortened launch horizon expire through
      * retro_run; no direct call to the observer's frame function. */
@@ -522,6 +541,19 @@ extended:;
         if(scenario>=4 && scenario<=7)assert(!b_first_logs);
         after_preflight(NULL,false);
         unload();free(helper_data);hd_record_store=false;
+    }
+    /* Same termination-notice predicate as the HD runner, now on a real
+     * multi-disc waiting path with unrelated and successful B activity. */
+    if(!focus || !strcmp(focus,"h-b"))for(unsigned found=0;found<2;++found){
+        disc_b_guest(16,false,false);
+        if(found)put_word(0xa04,0x03a00001);
+        else {memset(rom+0x900,0,64);memcpy(rom+0x900,"ADFS::Other.$.!Demo",sizeof("ADFS::Other.$.!Demo"));}
+        write_file("guest.rom",rom,2097152);
+        count=snprintf(plan,sizeof(plan),"version=2\nmodel=sa110\nrate_mips=1\nfirmware=%s/guest.rom\ncmos=persist\nseed=%s/seed\ncmos_layout=ro350\ncontent_id=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nhard_disc=off\nrtc_epoch=0\nmedia=%s/disc-request/Set.m3u\nobserver_cells=204\n",directory,directory,argv[3]);
+        write_file("test.arcplan",plan,(size_t)count);termination_log=true;disc_logs=0;
+        assert(load(&game));for(unsigned f=0;phase()!=2 && f<10000;++f)run();assert(phase()==2);
+        for(unsigned f=0;f<6;++f)run();assert(disks.get_image_index()==0 && disc_logs);
+        unload();termination_log=false;
     }
     /* Identity derivation failures use a different requested disc name: a
      * conflicting 'Clash' HD must not accidentally pass by excluding 'Two'. */
