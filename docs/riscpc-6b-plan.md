@@ -216,7 +216,7 @@ Every new host-only structure is listed as a §2.2 exclusion and reset at every 
 **M1 (6b-P0j): measurement extension, including the C-0 guest-time ledger.**
 
 - **Objective.** Supply the numbers that R-e, R-g, B-5, B-7, the burst-ROM exclusion and C-5 depend on.
-- **Scope (counters):**
+- **Scope (counters):** (D-195: slice 1a-0 owns the data and fetch walks in item 2, the `batch_service` entry classes in item 4 and the integer against rational share in item 5; M1 cites them and does not re-add them.)
   1. **Churn** at word, 16 B, 32 B, 1 KiB and 4 KiB granularity, within 10⁴, 10⁵ and 10⁶ instructions, keyed by (allocation, offset). Plus write-then-execute: a fetched word whose value changed since its previous fetch.
   2. **Translation:** code-slot evictions caused by data installs (denied ones included); data and fetch walks per instruction; DACR class of executed code.
   3. **Exits:** E1 split into direct and indirect.
