@@ -109,10 +109,13 @@ with tempfile.TemporaryDirectory(prefix='arc-observation-plan-') as temp:
     if not any(x['kind']==1 for x in rows[gap+1:]):raise RuntimeError('recording did not resume')
     if r.stderr.count('RPC observation:')!=1 or 'incomplete loss' not in r.stderr:raise RuntimeError('exit loss summary')
     struct.pack_into('<I',rom,0x134,0x1afffffc);(folder/'trace.rom').write_bytes(rom)
-    for suffix in ('observation_classes=bogus','observation_classes=swi,swi','observation_swis=0x1000000','observation_swis=7,7','observation_capacity=0'):
+    for suffix in ('observation_classes=bogus','observation_classes=swi,swi','observation_swis=0x1000000','observation_swis=7,7','observation_capacity=0','observation_status=invalid'):
         plan.write_text(original+'observation_trace=invalid.jsonl\n'+suffix+'\n')
         rejected=subprocess.run([runner,'--core',core,'--plan',str(plan),'--system',str(fixtures),'--save',str(folder),'--frames','1'],capture_output=True,text=True,timeout=30)
         if rejected.returncode==0:raise RuntimeError(('invalid selection accepted',suffix))
+    plan.write_text(original+'observation_status=authored\n')
+    rejected=subprocess.run([runner,'--core',core,'--plan',str(plan),'--system',str(fixtures),'--save',str(folder),'--frames','1'],capture_output=True,text=True,timeout=30)
+    if rejected.returncode==0:raise RuntimeError('status selection without trace accepted')
     # Failure to open/write has its own explicit diagnostic and unchanged guest.
     plan.write_text(original+'observation_trace=missing/trace.jsonl\n');r=run(plan,folder,frames=1)
     if projection(r.stdout)!=off or 'incomplete write-failure' not in r.stderr:raise RuntimeError(('write failure parity/marker',r.stderr,r.stdout,projection(r.stdout)==off))

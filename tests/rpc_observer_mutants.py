@@ -70,6 +70,23 @@ mutants = [
  ('trace-upcall-name-bound','engine/rpc/rpc_observer.c','swi==0x33?12:sizeof(t.path)','swi==0x33?256:sizeof(t.path)'),
  ('trace-return-eligibility','engine/rpc/rpc_observer.c','trace.watches[i].wait_return || arm.mode','false || arm.mode'),
 
+ ('status-selection','engine/rpc/rpc_observer.c','!trace.selection.authored_status ||','true ||'),
+ ('status-magic','engine/rpc/rpc_observer.c','w[0]!=0x53435241u','false'),
+ ('status-version','engine/rpc/rpc_observer.c','w[1]!=1','false'),
+ ('status-length','engine/rpc/rpc_observer.c','w[2]!=64','false'),
+ ('status-role','engine/rpc/rpc_observer.c','w[3]>1','false'),
+ ('status-role-register','engine/rpc/rpc_observer.c','w[3]!=e->registers[6]','false'),
+ ('status-sequence','engine/rpc/rpc_observer.c','!w[9]','false'),
+ ('status-reserved','engine/rpc/rpc_observer.c','w[12] || w[13] || w[14] || w[15]','false'),
+ ('status-diagnostic-binding','engine/rpc/rpc_observer.c','token || epoch || w[8]<1','false || w[8]<1'),
+ ('status-attempt-binding','engine/rpc/rpc_observer.c','!token || !epoch || w[8]<1','false || w[8]<1'),
+ ('status-diagnostic-events','engine/rpc/rpc_observer.c','w[8]>7','false'),
+ ('status-attempt-events','engine/rpc/rpc_observer.c','w[8]>15','false'),
+ ('status-token-high','engine/rpc/rpc_observer.c','w[4]|((uint64_t)w[5]<<32)','w[4]'),
+ ('status-epoch-high','engine/rpc/rpc_observer.c','w[6]|((uint64_t)w[7]<<32)','w[6]'),
+ ('status-tag','engine/rpc/rpc_observer.c','e->registers[4]==0x53435241u','true'),
+ ('status-pointer-privacy','engine/rpc/rpc_observer.c','mask=7;trace_status','mask=15;trace_status'),
+
 ]
 subprocess.run([str(target)],check=True,cwd=build,timeout=30,capture_output=True)
 off=subprocess.check_output([str(target),'--identity','0'],cwd=build,timeout=30)
