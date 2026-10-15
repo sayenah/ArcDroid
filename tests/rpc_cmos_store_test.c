@@ -52,6 +52,19 @@ static void fresh(void){step=fail_step=kill_step=write_open_step=0;killed=false;
 static void crc(File *f){uint32_t crc=arc_crc32(f->bytes,508);for(unsigned i=0;i<4;++i)f->bytes[508+i]=(uint8_t)(crc>>(i*8));}
 int main(void)
 {
+    for(unsigned layout=1;layout<=3;++layout)for(unsigned field=0;field<256;++field){
+        uint8_t before[240],after[240];unsigned sum=1;
+        for(unsigned i=0;i<240;++i)before[i]=(uint8_t)(i*13u+layout);
+        before[183]=(uint8_t)field;
+        for(unsigned i=0;i<240;++i)if(i!=47)sum+=before[i];before[47]=(uint8_t)sum;
+        memcpy(after,before,240);assert(arc_riscpc_cmos_two_floppies(layout,after));
+        assert(after[183]==((field&248u)|2u) && arc_riscpc_cmos_checksum(after));
+        for(unsigned i=0;i<240;++i)if(i!=47 && i!=183)assert(after[i]==before[i]);
+        assert(!arc_riscpc_cmos_two_floppies(0,before));
+        assert(!arc_riscpc_cmos_two_floppies(4,before));
+        before[47]^=1;assert(!arc_riscpc_cmos_two_floppies(layout,before));
+    }
+    assert(!arc_riscpc_cmos_two_floppies(1,NULL));
     arc_io_set_vfs(&vfs);ArcRpcCmosKey key={0};memset(key.content,'a',40);memset(key.firmware,'b',64);key.layout=1;
     ArcRpcCmosStore s,t;uint8_t p[240]={0},q[240]={0},r[240]={0};p[47]=1;q[0]=7;q[47]=8;r[0]=9;r[47]=10;
     assert(arc_riscpc_cmos_store_load(&s,"/save",&key,error,sizeof(error))==ARC_RPC_CMOS_MISSING);
@@ -144,10 +157,19 @@ int main(void)
     uint8_t bad[240];memcpy(bad,p,240);bad[47]^=1;assert(!arc_riscpc_cmos_oracle(2,bad,&e));
     arc_riscpc_cmos_required(1,e.mask);
     e.last_write++;assert(!arc_riscpc_cmos_oracle(1,p,&e));e.last_write--;e.mask[3]=0;assert(!arc_riscpc_cmos_oracle(1,p,&e));arc_riscpc_cmos_required(1,e.mask);
+    assert(arc_riscpc_cmos_two_floppies(1,p));
     assert(arc_riscpc_cmos_store_load(&s,"/save",&key,error,sizeof(error))==ARC_RPC_CMOS_MISSING);assert(arc_riscpc_cmos_store_put(&s,p,&e,error,sizeof(error)));
     assert(arc_riscpc_cmos_store_load(&t,"/save",&key,error,sizeof(error))==ARC_RPC_CMOS_FOUND&&t.evidence.writes==240&&t.evidence.last_write==e.last_write);
     for(unsigned revision=0;revision<2;++revision){ArcRpcCmosKey other=key;if(revision)++other.timing;else ++other.procedure;assert(arc_riscpc_cmos_store_load(&t,"/save",&other,error,sizeof(error))==ARC_RPC_CMOS_MISSING);}
     memcpy(baseline,files,sizeof(files));
+    for(unsigned i=0;i<64;++i)if(files[i].exists){
+        files[i].bytes[104+183]=1;--files[i].bytes[104+47];
+        char sha[65];arc_sha256_hex(files[i].bytes+104,240,sha);
+        for(unsigned b=0;b<32;++b){unsigned value;assert(sscanf(sha+2*b,"%2x",&value)==1);files[i].bytes[448+b]=(uint8_t)value;}
+        crc(&files[i]);
+    }
+    assert(arc_riscpc_cmos_store_load(&t,"/save",&key,error,sizeof(error))==ARC_RPC_CMOS_REFUSED);
+    memcpy(files,baseline,sizeof(files));fresh();
     const unsigned offsets[]={344,348,352,356,368,376,384,392,400,416,416+2,448,480,507,360};
     for(unsigned at=0;at<sizeof(offsets)/sizeof(*offsets);++at){unsigned offset=offsets[at];
         memcpy(files,baseline,sizeof(files));fresh();for(unsigned i=0;i<64;++i)if(files[i].exists){if(offset==360){uint64_t outside=UINT64_C(13569465600);for(unsigned byte=0;byte<8;++byte)files[i].bytes[360+byte]=(uint8_t)(outside>>(8*byte));}else if(offset==400){memset(files[i].bytes+400,0,8);files[i].bytes[400]=1;}else files[i].bytes[offset]^=1;crc(&files[i]);}

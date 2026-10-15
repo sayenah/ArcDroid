@@ -40,8 +40,9 @@ struct ArcRpcPreparation {
     ArcRpcLaunchAttempt attempt;
     ArcRpcLaunchController controller;
     ArcRpcBootKey launch_key;
+    uint8_t launch_media_identity[32];
     bool launch_captured,launch_prepared;
-    bool launch_suppressed,execution_barrier;
+    bool launch_suppressed,execution_barrier,launch_unconfigured;
     ArcRpcLaunchRecordStore observations;
     bool record_attempted;
     uint8_t firmware_digest[32];
@@ -121,7 +122,7 @@ static bool copied(char out[1024],const char *in)
 }
 static void restart(ArcRpcPreparation *p)
 {
-    p->launch_prepared=p->launch_captured=p->record_attempted=false;
+    p->launch_prepared=p->launch_captured=p->record_attempted=p->launch_unconfigured=false;
     memset(&p->record,0,sizeof(p->record));memset(&p->defaults,0,sizeof(p->defaults));
     p->state=ARC_RPC_PREP_VERIFY;p->substep=0;p->verify_at=0;p->crc=0;p->verified_catalogue=0;
     p->lba=0;p->io_pending=false;p->needs_population=p->receipted=false;p->refusal_reported=false;
@@ -237,13 +238,15 @@ static int product_step(ArcRpcPreparation *p)
 static bool launch_bindings(ArcRpcPreparation *p,ArcRpcBootKey *key)
 {
     ArcRpcHdIdentity identity;
-    if(!p->request.launch || !p->request.launch_media_immutable || !arc_riscpc_hd_identity(p->disc,&identity))return false;
+    if(!p->request.launch || !p->host.media_identity || !arc_riscpc_hd_identity(p->disc,&identity))return false;
     memset(key,0,sizeof(*key));key->cpu=p->request.key.model+1;key->plan_revision=2;key->profile_revision=ARC_RPC_LAUNCH_PROFILE_REVISION;key->action=p->launch.action;
+    if(!p->host.media_identity(p->host.opaque,p->launch_media_identity))return false;
     memcpy(key->firmware,p->firmware_digest,32);
-    uint8_t config[248]={0};memcpy(config,p->seed+16,240);
+    uint8_t config[280]={0};memcpy(config,p->seed+16,240);
     config[240]=(uint8_t)p->request.key.model;config[241]=(uint8_t)p->request.key.layout;
     config[242]=p->request.hard_disc;config[243]=p->request.populate;config[244]=p->request.helper_override;
     config[245]=p->request.media && p->request.media->writable;
+    memcpy(config+248,p->launch_media_identity,32);
     digest(config,sizeof(config),key->configuration);
     digest(p->request.key.content,40,key->content);memcpy(key->media,p->launch.media,32);memcpy(key->store,identity.bytes,32);
     if(!arc_riscpc_plan_digest(&p->launch,key->plan))return false;
@@ -261,6 +264,7 @@ static bool launch_record_valid(ArcRpcPreparation *p)
     uint8_t live[240];snapshot_cmos(live);
     bool valid=!memcmp(live,p->seed+16,240) && arc_riscpc_hd_identity(p->disc,&identity) &&
         !memcmp(identity.bytes,p->launch_key.store,32);
+    if(valid && p->host.media_identity){uint8_t media[32];valid=p->host.media_identity(p->host.opaque,media) && !memcmp(media,p->launch_media_identity,32);}
     if(!valid)p->launch_captured=false;
     return valid;
 }
@@ -291,9 +295,11 @@ static bool next_namespace(ArcRpcPreparation *p)
     case ARC_RPC_PREP_VALIDATE:return arc_riscpc_boot_next_namespace(p->boot);
     case ARC_RPC_PREP_RECORD:case ARC_RPC_PREP_SAVE_RECORD:return cmos_namespace(&p->record);
     case ARC_RPC_PREP_DEFAULTS:case ARC_RPC_PREP_SAVE_DEFAULT:return cmos_namespace(&p->defaults);
-    case ARC_RPC_PREP_START:
-        return p->substep==2 && p->request.launch && !p->launch_suppressed && p->disc &&
-            arc_riscpc_hd_next_namespace(p->disc,0);
+    case ARC_RPC_PREP_START:{
+        if(p->substep!=2 || !p->request.launch || p->launch_suppressed || !p->disc)return false;
+        ArcRpcHdStats store;arc_riscpc_hd_stats(p->disc,&store);
+        return store.state!=ARC_RPC_HD_IDLE && store.state<ARC_RPC_HD_READ_ONLY;
+    }
     case ARC_RPC_PREP_POPULATE:
         if(p->boot)return arc_riscpc_boot_next_namespace(p->boot);
         if(p->io_pending)return arc_riscpc_hd_next_namespace(p->disc,1);
@@ -449,6 +455,9 @@ static void unit(ArcRpcPreparation *p)
         if(s!=2||now!=ARC_RPC_CMOS_CAPTURE_NS||!arc_riscpc_cmos_oracle(p->request.key.layout,p->captured+16,&p->evidence)){
             failed(p,"RiscPC settings generation failed: required mask, stability or checksum");break;
         }
+        if(!arc_riscpc_cmos_two_floppies(p->request.key.layout,p->captured+16)){
+            failed(p,"RiscPC generated helper-drive configuration failed");break;
+        }
         arc_engine_stop();
         if(!arc_riscpc_cmos_store_put_begin(&p->defaults,p->captured+16,&p->evidence,p->error,sizeof(p->error)))failed(p,p->error);
         else p->state=ARC_RPC_PREP_SAVE_DEFAULT;
@@ -468,6 +477,9 @@ static void unit(ArcRpcPreparation *p)
             break;
         }
         if(p->substep==2){
+            if(p->request.launch && !p->launch_suppressed && (p->seed[199]&7u)<2){
+                p->launch_suppressed=p->launch_unconfigured=true;
+            }
             if(p->request.launch && !p->launch_suppressed && p->disc){
                 ArcRpcHdStats store;arc_riscpc_hd_stats(p->disc,&store);
                 if(store.state!=ARC_RPC_HD_IDLE && store.state<ARC_RPC_HD_READ_ONLY){arc_riscpc_hd_tick(p->disc);break;}
@@ -486,7 +498,6 @@ static void unit(ArcRpcPreparation *p)
                         ArcRpcAttemptToken candidate={.session=p->attempt.session,.epoch=p->attempt.epoch,.serial=p->attempt.last_serial+1},issued;
                         built=arc_riscpc_plan_digest(&p->launch,candidate.plan) &&
                             arc_riscpc_controller_build(&p->launch,&candidate,&p->controller);
-                        p->launch_captured=built && launch_bindings(p,&p->launch_key);
                         built=built && arc_riscpc_attempt_prepare(&p->attempt,&p->launch,0,&issued) &&
                             issued.serial==candidate.serial &&
                             arc_riscpc_helper_carrier(p->generated_helper,ARC_RPC_HELPER_SIZE,p->controller.image,p->controller.size);
@@ -515,10 +526,13 @@ static void unit(ArcRpcPreparation *p)
         if(!attached){failed(p,p->error);break;}
         arc_engine_rpc_observers_bind(p->verified_catalogue);
         if(p->host.attached)p->host.attached(p->host.opaque);
+        p->launch_captured=p->launch_prepared && launch_bindings(p,&p->launch_key);
         if(p->launch_prepared){ArcRpcLaunchBinding binding={&p->attempt,&p->controller,launch_revalidate,p,launch_media_changed,launch_aborted};
             if(!arc_engine_rpc_launch_bind(&binding)){failed(p,"RiscPC launch binding failed");break;}}
         p->state=ARC_RPC_PREP_RUNNING;p->execution_barrier=false;
-        if(!p->refusal_reported)notice(p,"",false);p->status=NULL;break;
+        if(!p->refusal_reported)notice(p,"",false);
+        if(p->launch_unconfigured)notice(p,"RiscPC launch delivery is unavailable: helper drive :1 is unconfigured. Manual input remains available.",false);
+        p->status=NULL;break;
     }
     default:break;
     }

@@ -9,6 +9,11 @@ static void write_file(const char *path,const void *bytes,size_t n)
 int main(int argc,char **argv)
 {
     ArcRpcLaunchPlan p={.action=ARC_RPC_PLAN_BOOT,.media={1}};strcpy(p.target,"ADFS::0.$.!Boot");
+    if(argc==4 && !strcmp(argv[1],"--bound")){
+        uint8_t wire[64+ARC_RPC_PLAN_TARGET_MAX];FILE *f=fopen(argv[3],"rb");assert(f);
+        size_t n=fread(wire,1,sizeof(wire),f);assert(fgetc(f)==EOF && !ferror(f));assert(!fclose(f));
+        assert(arc_riscpc_plan_decode(wire,n,&p)==ARC_RPC_PLAN_OK);
+    }
     if(argc>1 && !strcmp(argv[1],"--write-ramfs"))p.flags=ARC_RPC_PLAN_RAMFS;
     if(argc>2 && !strcmp(argv[1],"--app")){p.action=ARC_RPC_PLAN_APPLICATION;snprintf(p.target,sizeof(p.target),"ADFS::0.$.%s",argv[2]);}
     ArcRpcLaunchAttempt attempt;ArcRpcAttemptToken token;ArcRpcLaunchController c;
@@ -19,6 +24,7 @@ int main(int argc,char **argv)
     uint32_t entry;assert(arc_riscpc_helper_descriptor(c.image,c.size,&entry) && entry==64);
     assert(!memcmp(c.image+c.plan,"ARCRLPLN\2\0\0\0",12));
     assert(!strcmp((char *)c.image+c.command,c.text));
+    if(argc==4 && !strcmp(argv[1],"--bound")){write_file(argv[2],c.image,c.size);return 0;}
     if(argc>2 && (!strcmp(argv[1],"--write") || !strcmp(argv[1],"--write-ramfs"))){write_file(argv[2],c.image,c.size);return 0;}
     if(argc>3 && !strcmp(argv[1],"--app")){uint8_t *disc=malloc(ARC_RPC_HELPER_SIZE);assert(disc);
         assert(arc_riscpc_helper_carrier(disc,ARC_RPC_HELPER_SIZE,c.image,c.size));write_file(argv[3],disc,ARC_RPC_HELPER_SIZE);free(disc);return 0;}

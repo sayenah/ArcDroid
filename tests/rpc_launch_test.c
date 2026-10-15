@@ -113,6 +113,34 @@ static void apply(ArcRpcLaunchAttempt *a, const ArcRpcAttemptToken *t, ArcRpcAtt
 static void attempts(void)
 {
    ArcRpcLaunchPlan p = plan(); ArcRpcLaunchAttempt a; ArcRpcAttemptToken t, old;
+   assert(!arc_riscpc_attempt_init(NULL,1,1));
+   assert(!arc_riscpc_attempt_prepare(NULL,&p,0,&t));
+   assert(arc_riscpc_attempt_init(&a,77,1));
+   assert(!arc_riscpc_attempt_prepare(&a,&p,0,NULL));
+   assert(!arc_riscpc_attempt_prepare(&a,&p,4,&t));
+   assert(!arc_riscpc_attempt_prepare(&a,NULL,0,&t));
+   assert(!arc_riscpc_attempt_interrupt(NULL,ARC_RPC_INTERRUPT_RESET));
+   assert(!arc_riscpc_attempt_interrupt(&a,(ArcRpcAttemptInterrupt)-1));
+   assert(!arc_riscpc_attempt_interrupt(&a,(ArcRpcAttemptInterrupt)99));
+   assert(!arc_riscpc_attempt_noop_ready(NULL,true));
+   assert(!arc_riscpc_attempt_noop_ready(&a,true));
+   assert(arc_riscpc_attempt_interrupt(&a,ARC_RPC_INTERRUPT_UNLOAD));
+   assert(!arc_riscpc_attempt_prepare(&a,&p,0,&t));
+   assert(!arc_riscpc_attempt_interrupt(&a,ARC_RPC_INTERRUPT_RESET));
+   assert(!arc_riscpc_attempt_matches(NULL,&t) && !arc_riscpc_attempt_matches(&a,NULL));
+   for(unsigned cut=0;cut<4;++cut){
+      assert(arc_riscpc_attempt_init(&a,77,1));assert(arc_riscpc_attempt_prepare(&a,&p,3,&t));
+      if(cut){assert(arc_riscpc_attempt_consume(&a,&t)==ARC_RPC_TRANSITION_APPLIED);
+         assert(!arc_riscpc_attempt_prepare(&a,&p,3,&old));}
+      if(cut>1){apply(&a,&t,ARC_RPC_EVENT_DISPATCH);
+         assert(arc_riscpc_attempt_consume(&a,&t)==ARC_RPC_TRANSITION_DUPLICATE);
+         assert(!arc_riscpc_attempt_prepare(&a,&p,3,&old));}
+      if(cut>2)apply(&a,&t,ARC_RPC_EVENT_DESKTOP);
+      assert(event(&a,&t,ARC_RPC_EVENT_REJECTED)==(cut<2?ARC_RPC_TRANSITION_APPLIED:ARC_RPC_TRANSITION_REFUSED));
+      if(cut<2){assert(a.outcome==ARC_RPC_OUTCOME_REJECTED);
+         assert(event(&a,&t,ARC_RPC_EVENT_REJECTED)==ARC_RPC_TRANSITION_DUPLICATE);}
+      if(cut>2)assert(event(&a,&t,ARC_RPC_EVENT_DISPATCH)==ARC_RPC_TRANSITION_DUPLICATE);
+   }
    assert(arc_riscpc_attempt_init(&a,77,1));assert(arc_riscpc_attempt_prepare(&a,&p,3,&t));
    apply(&a,&t,ARC_RPC_EVENT_UNOBSERVED);assert(a.delivery==ARC_RPC_DELIVERY_PREPARED && a.outcome==ARC_RPC_OUTCOME_UNKNOWN && !a.capabilities);
    assert(!arc_riscpc_attempt_prepare(&a,&p,3,&old));
@@ -170,11 +198,12 @@ static void attempts(void)
    assert(event(&a, &t, ARC_RPC_EVENT_RETURNED) == ARC_RPC_TRANSITION_REFUSED);
    assert(event(&a, &t, ARC_RPC_EVENT_EXPIRE) == ARC_RPC_TRANSITION_REFUSED);
    old = t; assert(arc_riscpc_attempt_prepare(&a, &p, 0, &t));
+   assert(a.outcome==ARC_RPC_OUTCOME_NONE && !a.start_returned);
    assert(event(&a, &old, ARC_RPC_EVENT_TERMINATED) == ARC_RPC_TRANSITION_REFUSED);
    assert(arc_riscpc_attempt_consume(&a, &t) == ARC_RPC_TRANSITION_APPLIED); apply(&a, &t, ARC_RPC_EVENT_DISPATCH);
    assert(event(&a, &t, ARC_RPC_EVENT_TERMINATED) == ARC_RPC_TRANSITION_REFUSED);
    assert(event(&a, &t, ARC_RPC_EVENT_WAITING) == ARC_RPC_TRANSITION_REFUSED);
-   apply(&a, &t, ARC_RPC_EVENT_EXPIRE); assert(a.delivery == ARC_RPC_DELIVERY_UNKNOWN && !arc_riscpc_attempt_established(&a));
+   apply(&a, &t, ARC_RPC_EVENT_EXPIRE); assert(a.delivery == ARC_RPC_DELIVERY_UNKNOWN && a.outcome==ARC_RPC_OUTCOME_UNKNOWN && !arc_riscpc_attempt_established(&a));
    assert(arc_riscpc_attempt_consume(&a, &t) == ARC_RPC_TRANSITION_DUPLICATE);
    assert(event(&a, &t, ARC_RPC_EVENT_DISPATCH) == ARC_RPC_TRANSITION_REFUSED);
    assert(arc_riscpc_attempt_prepare(&a, &p, 0, &t)); apply(&a, &t, ARC_RPC_EVENT_REJECTED);
@@ -192,6 +221,8 @@ static void attempts(void)
    assert(arc_riscpc_attempt_init(&a, 77, 1)); a.last_serial = UINT64_MAX;
    assert(!arc_riscpc_attempt_prepare(&a, &p, 0, &t));
    assert(!arc_riscpc_attempt_init(&a, 0, 1) && !arc_riscpc_attempt_init(&a, 1, 0));
+   assert(arc_riscpc_attempt_init(&a,77,1));assert(arc_riscpc_attempt_prepare(&a,&p,3,&t));
+   apply(&a,&t,ARC_RPC_EVENT_REJECTED);assert(!arc_riscpc_attempt_established(&a));
    puts("RPC attempt: reset cuts, synchronous consume without capabilities, duplicates, stale tokens, pending child, unknown expiry and shutdown barriers");
 }
 static ArcRpcBootKey key(const ArcRpcLaunchPlan *p)
@@ -205,6 +236,9 @@ static void records(void)
 {
    ArcRpcLaunchPlan p = plan(); ArcRpcBootKey k = key(&p), changed; ArcRpcLaunchAttempt a;
    ArcRpcAttemptToken t; ArcRpcBootRecord r, decoded; uint8_t wire[289], original[288];
+   assert(!arc_riscpc_boot_record_encode(NULL,wire,sizeof(wire)));
+   assert(!arc_riscpc_boot_record_decode(NULL,288,&decoded));
+   assert(!arc_riscpc_boot_record_matches(NULL,&k));
    const ArcRpcAttemptEvent events[] = {ARC_RPC_EVENT_RETURNED, ARC_RPC_EVENT_TERMINATED, ARC_RPC_EVENT_DESKTOP};
    for (unsigned i = 0; i < 3; ++i)
    {

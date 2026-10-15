@@ -2404,6 +2404,15 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
     set(RPC_CMOS_PLAN_PROFILE sanitizer)
   endif()
   foreach(model RANGE 0 3)
+    if(model GREATER 0)
+      set(default_families 350 360 370 371)
+      list(GET default_families ${model} family)
+      add_test(NAME rpc-cmos-plan-${model}-ro${family} COMMAND "${Python3_EXECUTABLE}" -B
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_cmos_plan_test.py" $<TARGET_FILE:rpc_cmos_plan_test>
+        $<TARGET_FILE:arcdroid_rpcplan_libretro> $<TARGET_FILE:rpc_runner>
+        $<TARGET_FILE:arcdroid_libretro> "${FIXTURE_DIR}" ${model} ro${family} ${RPC_CMOS_PLAN_PROFILE})
+      set_tests_properties(rpc-cmos-plan-${model}-ro${family} PROPERTIES TIMEOUT 900)
+    endif()
     add_test(NAME rpc-cmos-seed-${model} COMMAND "${Python3_EXECUTABLE}" -B
       "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_cmos_seed_plan_test.py" $<TARGET_FILE:rpc_cmos_plan_test>
       $<TARGET_FILE:arcdroid_rpcplan_libretro> ${model})
@@ -2551,6 +2560,14 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_launch_controller_guest.py"
     $<TARGET_FILE:rpc_runner> $<TARGET_FILE:arcdroid_rpcplan_libretro> $<TARGET_FILE:rpc_launch_controller_test>)
   set_tests_properties(rpc-launch-controller-guest PROPERTIES TIMEOUT 600)
+  add_test(NAME rpc-launch-publication COMMAND "${Python3_EXECUTABLE}" -B
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_launch_publication_test.py"
+    $<TARGET_FILE:rpc_runner> $<TARGET_FILE:arcdroid_rpcplan_libretro>
+    $<TARGET_FILE:rpc_launch_controller_test> "${FIXTURE_DIR}")
+  set_tests_properties(rpc-launch-publication PROPERTIES TIMEOUT 600)
+  add_test(NAME rpc-launch-mutation-inventory COMMAND "${Python3_EXECUTABLE}" -B
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_launch_predicates.py"
+    "${CMAKE_CURRENT_BINARY_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}" "${FIXTURE_DIR}")
   add_dependencies(rpc_launch_test test-fixtures)
   target_link_libraries(rpc_launch_test PRIVATE arcdroid_core)
   target_compile_options(rpc_launch_test PRIVATE -UNDEBUG -Wall -Wextra)

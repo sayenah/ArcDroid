@@ -144,6 +144,8 @@ static bool preparation_reset_rebind(void *opaque,char *error,size_t n)
     (void)opaque;if(!arc_engine_reset(error,n))return false;
     arc_engine_rpc_observers_bind(verified_catalogue);arc_test_plan_reset_input();return true;
 }
+static bool preparation_media_identity(void *opaque,uint8_t identity[32])
+{(void)opaque;return media_callbacks.media_identity && media_callbacks.media_identity(identity);}
 static void observer_start(void)
 {
     if(observer_cells){arc_engine_test_observers_override(observer_cells,observer_poll_r1,observer_poll_r2,observer_forms);
@@ -584,6 +586,7 @@ bool arc_test_plan_load(const char *path, const char *system, const char *save, 
             ArcRpcPreparationHost host={0};host.notice=preparation_notice;host.log=preparation_log;
             host.attach=preparation_attach;host.started=preparation_started;host.diagnostics=preparation_diagnostics;host.attached=preparation_attached;
             host.restage_drive0=preparation_restage;host.reset_rebind=preparation_reset_rebind;
+            host.media_identity=preparation_media_identity;
             pending_rate=(unsigned)rate;
             preparation=valid?arc_riscpc_preparation_low_level(&request,&host,error,error_size):NULL;
             valid=preparation!=NULL;

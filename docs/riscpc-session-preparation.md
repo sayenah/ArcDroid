@@ -123,3 +123,26 @@ Pinned plan baseline: `d374114`. V1 device/AV/input/factory goldens must remain
 unchanged. V2 gains preparation black/silent frames and preparation reset now
 restarts recovery; requested virtual traces and published bytes remain identical.
 Each affected expectation is updated individually; no fixture regeneration.
+
+## R3c-3b run B: generated helper-drive configuration (D-190)
+
+Procedure revision 4 retains the isolated 45 s capture and its complete-mask,
+stability and checksum oracle. After that oracle, while still in GENERATE and
+before SAVE_DEFAULT, the host changes only logical CMOS byte 135 bits 0–2 to
+2. On the RPC PCF8583 mapping this is raw byte 199, payload offset 183.
+Recompute the existing checksum at raw byte 63/payload offset 47 as one plus
+the sum of the other 239 payload bytes modulo 256. The upper five drive-count
+bits, all other payload bytes, RTC and guest capture evidence are unchanged.
+The public [CMOS allocation](https://www.riscos.com/support/developers/prm/cmos.html)
+specifies the floppy-count field; the existing RTC mapping/checksum code supplies
+the physical mapping. Authored fixtures and private 3.50/3.60/3.70/3.71 captures
+verify this same two-byte-only transformation.
+
+The defaults path's procedure key advances from p3 to p4. Old defaults remain
+untouched and cannot satisfy a p4 lookup; the next request needing defaults
+regenerates them. An authoritative per-content record still bypasses defaults
+and is never repaired or rewritten by this policy. If its count is less than
+two, preparation leaves it unchanged, attaches only the admitted default no-op,
+issues no launch token and reports delivery unavailable with reason
+`unconfigured`. The frozen gate retains its quick return. Drive :1 remains
+read-only and excluded from drive-0 Disk Control/automation.

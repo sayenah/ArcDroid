@@ -5177,7 +5177,7 @@ static bool arc_disk_rpc_pending(void)
 #ifdef ARCDROID_TEST_PLANS
    if (arc_test_plan_pending()) return true;
 #endif
-   return arc_engine_is_rpc() && (!arc_loaded || arc_session != ARC_SESSION_RUNNING || arc_adffs_active);
+   return false; /* Ordinary-route pending admission belongs to R3d-3. */
 }
 static bool arc_disk_set_eject(bool ejected)
 {
@@ -7607,6 +7607,29 @@ static bool arc_rpc_plan_drive1_view(ArcEngineMedia *view)
 }
 static bool arc_rpc_plan_drive1_writable(void)
 {return arc_plan.disk_writes!=ARC_DISK_WRITES_OFF;}
+static bool arc_rpc_plan_media_identity(uint8_t out[32])
+{
+    /* Writable members have no maintained exact current-state fingerprint.
+     * Never replace it with a base digest or a mount counter. */
+    if(!out || !arc_loaded || arc_plan.disk_writes!=ARC_DISK_WRITES_OFF ||
+        !arc_media_count || arc_media_count>ARC_PLAYLIST_MAX_ENTRIES || arc_image_index>arc_media_count)return false;
+    ArcSha256 hash;arc_sha256_init(&hash);
+    static const char domain[]="ArcDroid RPC read-only media 1";
+    arc_sha256_update(&hash,domain,sizeof(domain));
+    const uint8_t policy[]={1,(uint8_t)arc_media_count,(uint8_t)arc_image_index,arc_ejected,
+        (uint8_t)arc_core_options.jfd_write_policy,arc_core_options.short_tail_zero,arc_core_options.jfd_omitted_strict};
+    arc_sha256_update(&hash,policy,sizeof(policy));
+    for(unsigned i=0;i<arc_media_count;++i){const ArcMediaEntry *entry=&arc_media[i];
+        if(!entry->populated)return false;
+        const ArcJfdOverlay *overlay=entry->jfd.overlay;
+        if(overlay && (overlay->visible || overlay->damaged || overlay->failed))return false;
+        uint8_t presentation[12]={(uint8_t)i,(uint8_t)entry->info.kind,(uint8_t)entry->info.geometry,entry->zero_tail_presentation};
+        for(unsigned k=0;k<8;++k)presentation[4+k]=(uint8_t)((uint64_t)entry->effective_extent>>(8*k));
+        arc_sha256_update(&hash,presentation,sizeof(presentation));
+        arc_sha256_update(&hash,entry->digest.sha1,40);
+    }
+    arc_sha256_final(&hash,out);return true;
+}
 static bool arc_rpc_plan_reset_media(char *error,size_t size)
 {
     if(!arc_loaded)return true;
@@ -7714,7 +7737,7 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game)
       arc_test_plan_set_notice(arc_plan_notice);
       arc_test_plan_set_log(arc_plan_log);
       const ArcTestPlanMedia callbacks={arc_rpc_plan_media,arc_disk_set_eject,arc_disk_set_index,arc_disk_replace,arc_disk_add,
-         arc_rpc_plan_restage_drive0,arc_rpc_plan_drive1_view,arc_rpc_plan_drive1_writable};
+         arc_rpc_plan_restage_drive0,arc_rpc_plan_drive1_view,arc_rpc_plan_drive1_writable,arc_rpc_plan_media_identity};
       arc_test_plan_set_media(&callbacks);
       if (!arc_test_plan_load(game->path, system, save, error, sizeof(error))) {
          arc_message(error, RETRO_LOG_ERROR); arc_release_session(); return false;

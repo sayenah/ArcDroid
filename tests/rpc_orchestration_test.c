@@ -26,6 +26,7 @@ static unsigned last_kind;
 static ArcRpcPreparation *current;
 static unsigned test_model;
 static bool helper_override;
+static const ArcEngineMedia *explicit_helper;
 static unsigned revision1_notices;
 static bool launch_test,reset_probe;
 static const char *launch_product;
@@ -133,7 +134,7 @@ static bool attach(void *opaque,char *e,size_t n)
     assert(disc && arc_riscpc_hd_receipt(disc,NULL));
     char helper[11],hd[11];assert(arc_rpc_observers_identities(helper,hd));
     ArcRpcHdReceipt r;assert(arc_riscpc_hd_receipt(disc,&r));
-    assert(!strcmp(helper,helper_override||r.authored_revision==1?"":"ArcDroid"));
+    assert(!strcmp(helper,(helper_override&&!explicit_helper)||r.authored_revision==1?"":"ArcDroid"));
     if(attachment_io || attachment_fail){
         void *data=NULL;size_t bytes=0;
         if(!arc_io_read_all_limit(attachment_fail?"/missing-media":"/system/attachment.raw",&data,&bytes,5,NULL)){
@@ -174,7 +175,7 @@ static ArcRpcPreparation *new_request(const uint8_t *rom,size_t size,bool seed,
 {
     ArcRpcPreparationRequest r={0};r.firmware=rom;r.firmware_size=size;r.key.model=test_model;r.key.layout=test_os==ARC_RPC_OS_350?1:3;
     strcpy(r.key.content,id);r.save="/save";r.system="/system";r.epoch=1234567890;
-    r.hard_disc=r.populate=true;r.helper_override=helper_override;
+    r.hard_disc=r.populate=true;r.helper_override=helper_override;r.helper=explicit_helper;
     ArcRpcLaunchPlan launch={.action=ARC_RPC_PLAN_BOOT,.media={1}};strcpy(launch.target,"ADFS::0.$.!Boot");
     if(launch_product){launch.action=ARC_RPC_PLAN_PRODUCT;snprintf(launch.target,sizeof(launch.target),"%s",launch_product);}
     if(launch_test){r.launch=&launch;r.session_id=++injected_session;}
@@ -497,12 +498,18 @@ static int64_t rollback_cmos_write(struct retro_vfs_file_handle *file,const void
 }
 static void launch_reset_matrix(const uint8_t *rom,size_t size,ArcRpcPreparationHost host)
 {
-    restore();clock_mode=1;launch_test=true;
+    for(unsigned recovery=0;recovery<2;++recovery){
+    restore();clock_mode=recovery?3:1;launch_test=true;
     ArcRpcPreparation *pending=new_request(rom,size,true,false,host);
+    if(recovery){
+        while(arc_riscpc_preparation_state(pending)!=ARC_RPC_PREP_RECOVER)frame(pending);
+        frame(pending); /* An open cache scan is owned by this preparation. */
+    }
     assert(arc_riscpc_preparation_reset(pending));settle(pending);
     assert(arc_riscpc_preparation_state(pending)==ARC_RPC_PREP_RUNNING && arc_riscpc_preparation_execution_allowed(pending));
     ArcRpcLaunchAttempt suppressed;arc_riscpc_preparation_attempt(pending,&suppressed);
     assert(!suppressed.live && suppressed.delivery==ARC_RPC_DELIVERY_INTERRUPTED);finish(pending);
+    }
     for(unsigned present=0;present<2;++present){
         restore();clock_mode=1;
         if(present){int product=find("/system/product.zip",false);assert(product>=0);
@@ -562,18 +569,48 @@ static void launch_reset_matrix(const uint8_t *rom,size_t size,ArcRpcPreparation
 }
 static void helper_ownership(const uint8_t *rom,size_t size,ArcRpcPreparationHost host)
 {
+    ArcEngineMedia empty={0};
+    assert(!arc_riscpc_preparation_helper_override(NULL,&empty));
+    assert(!arc_riscpc_preparation_helper_write_policy(NULL,false));
     for(unsigned explicit_empty=0;explicit_empty<2;++explicit_empty){
         restore();helper_override=explicit_empty;clock_mode=1;helper_construction_bytes=0;
-        ArcRpcPreparation *p=new_request(rom,size,true,false,host);settle(p);
+        ArcRpcPreparation *p=new_request(rom,size,true,false,host);
+        assert(!arc_riscpc_preparation_helper_override(p,&empty));
+        assert(!arc_riscpc_preparation_helper_write_policy(p,false));
+        for(unsigned i=0;arc_riscpc_preparation_state(p)!=ARC_RPC_PREP_START;++i){assert(i<100000);frame(p);}
+        assert(!arc_riscpc_preparation_helper_override(p,NULL));
+        if(explicit_empty){
+            char oversized[2048];memset(oversized,'x',sizeof(oversized)-1);oversized[sizeof(oversized)-1]=0;
+            ArcEngineMedia view={.path=oversized};assert(!arc_riscpc_preparation_helper_override(p,&view));
+            assert(arc_riscpc_preparation_helper_override(p,&empty));
+        }else assert(!arc_riscpc_preparation_helper_override(p,&empty));
+        finish(p);restore();clock_mode=1;helper_construction_bytes=0;
+        p=new_request(rom,size,true,false,host);
+        settle(p);
         assert(arc_riscpc_preparation_state(p)==ARC_RPC_PREP_RUNNING);
+        assert(!arc_riscpc_preparation_helper_override(p,&empty));
+        assert(!arc_riscpc_preparation_helper_write_policy(p,false));
         assert(helper_construction_bytes==(explicit_empty?0:ARC_RPC_HELPER_SIZE));
         helper_exclusion(!explicit_empty);
         char h[11],d[11];assert(arc_rpc_observers_identities(h,d));assert(!strcmp(h,explicit_empty?"":"ArcDroid"));
+        uint64_t generation=arc_rpc_fdc_media_generation(1);
         assert(arc_riscpc_preparation_reset(p));assert(arc_rpc_observers_identities(h,d));assert(!strcmp(h,explicit_empty?"":"ArcDroid"));
+        assert(arc_rpc_fdc_media_generation(1)==generation+(explicit_empty?1:2));
         helper_exclusion(!explicit_empty);
         finish(p);assert(!arc_engine_active());
     }
     helper_override=false;
+    restore();clock_mode=1;
+    uint8_t *carrier=malloc(ARC_RPC_HELPER_SIZE);assert(carrier && arc_riscpc_helper_build(carrier,ARC_RPC_HELPER_SIZE));
+    ArcEngineMedia borrowed={.kind=ARC_MEDIA_ADL_640K,.geometry=ARC_GEOMETRY_640K_L,.data=carrier,
+        .size=ARC_RPC_HELPER_SIZE,.effective_extent=ARC_MEDIA_EXTENT_UNRESTRICTED};
+    explicit_helper=&borrowed;helper_override=true;
+    ArcRpcPreparation *explicit=new_request(rom,size,true,false,host);settle(explicit);
+    assert(arc_riscpc_preparation_state(explicit)==ARC_RPC_PREP_RUNNING);
+    uint64_t generation=arc_rpc_fdc_media_generation(1);
+    assert(arc_riscpc_preparation_reset(explicit));
+    assert(arc_rpc_fdc_media_generation(1)==generation+2);
+    finish(explicit);explicit_helper=NULL;helper_override=false;free(carrier);
     /* A revision-1 root remains manual without opening even invalid packages. */
     restore();clock_mode=1;ArcRpcPreparation *p=new_request(rom,size,true,false,host);settle(p);finish(p);
     unsigned changed=0;
@@ -675,7 +712,7 @@ int main(int argc,char **argv)
     file_bytes("/system/attachment.raw","media",5);
     snapshot();ArcRpcPreparationHost host={.clock=clock_read,.notice=notice,.attach=attach,.attached=observer_attached};
     if(!strcmp(argv[4],"launch")){
-        launch_reset_matrix(rom,size,host);free(rom);fresh_files();
+        helper_ownership(rom,size,host);launch_reset_matrix(rom,size,host);free(rom);fresh_files();
         for(unsigned j=0;j<TEST_FILES;++j){free(baseline[j].data);baseline[j].data=NULL;}
         puts("RPC preparation: reset at four delivery points, callback failures, barrier and stale markers passed");return 0;
     }

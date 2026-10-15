@@ -39,6 +39,9 @@ typedef struct {
      * first re-stages drive 0 only; the second resets/rebinds observers/input. */
     bool (*restage_drive0)(void *,char *,size_t);
     bool (*reset_rebind)(void *,char *,size_t);
+    /* Exact ordered media/policy lease: no I/O/allocation; <=32768 metadata bytes.
+     * False refuses observation publication, never command delivery. */
+    bool (*media_identity)(void *,uint8_t[32]);
     void *opaque;
 } ArcRpcPreparationHost;
 typedef struct {
@@ -54,7 +57,6 @@ typedef struct {
     bool hard_disc, populate;
     bool helper_override; /* Explicit drive1, including empty, suppresses generation. */
     const ArcRpcLaunchPlan *launch; /* NULL: delivery unavailable/no plan. Copied. */
-    bool launch_media_immutable; /* Complete ordered plan.media is immutable for this lease; required for records. */
     uint64_t session_id; /* Injected; unique per library load, kept across Restart; not RTC epoch. */
 } ArcRpcPreparationRequest;
 typedef struct ArcRpcPreparation ArcRpcPreparation;

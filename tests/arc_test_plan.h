@@ -20,6 +20,7 @@ typedef struct {
     bool (*restage_drive0)(char *,size_t);
     bool (*drive1_view)(ArcEngineMedia *);
     bool (*drive1_writable)(void);
+    bool (*media_identity)(uint8_t[32]);
 } ArcTestPlanMedia;
 void arc_test_plan_set_media(const ArcTestPlanMedia *callbacks);
 void arc_test_plan_set_notice(void (*notice)(const char *, bool));

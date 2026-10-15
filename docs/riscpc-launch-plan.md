@@ -121,12 +121,10 @@ invalidates records. No store-envelope revision or new persistent file is added.
 
 ## RPC boot records
 
-Record capture additionally requires `launch_media_immutable`: the request
-issuer certifies that the complete ordered media state represented by plan.media
-is immutable for this lease. Absent that proof, delivery remains available but
-record publication is unavailable. The current plan-core parser does not certify
-writable floppy overlays; it leaves this field false. Writable-media identity
-integration must be qualified before enabling records for that route.
+Record capture requires the host's bounded `media_identity` callback for the
+complete ordered current presentation. The plan frontend supplies it for read-only
+sets; writable raw/JFD presentations refuse under the Run B contract below.
+The original unused immutable-media boolean is replaced by this verified lease.
 
 Revalidation compares the live 240-byte CMOS payload with the starting payload
 captured for this attempt. Both configuration hashing and revalidation exclude
@@ -291,8 +289,8 @@ into memory and removes the published file; failure to remove prevents store
 open/recovery. Thus recovery cannot erase its own invalidation signal while
 leaving an old record available for a later clean open. A temporary file is
 never a candidate. Only a clean matching identity may retain an in-memory old
-observation; identity refusal permanently discards it. Capture precedes token
-issuance; consume and publication revalidate all bindings. Publication rechecks
+observation; identity refusal permanently discards it. Capture occurs after final
+attachment, before requested guest instructions; consumption and publication revalidate all bindings. Publication rechecks
 after writing/flushing/closing the temporary file and before rename. Recovery,
 guest edits, changed media/configuration or interruption suppress publication.
 Publication failure discards the candidate; it never establishes an outcome.
@@ -319,3 +317,60 @@ A preparation still marked RUNNING after an external engine stop fails Reset
 closed: no CMOS snapshot is invented from absent engine state. Its terminal
 status explicitly reports the latest snapshot unavailable. A later explicit
 recovery uses the pending/FAILED branch and retains launch suppression.
+
+## Run B closure contract
+
+D-190's generated-defaults procedure is fixed in
+`riscpc-session-preparation.md`. A preserved zero/one-drive record suppresses
+this attempt before issuance, reports `unconfigured`, and keeps the default
+no-op attachment policy. No gate or descriptor change is required.
+
+Record capture moves to the final attached state, before any requested guest
+instruction. The host may provide a synchronous `media_identity` callback.
+It must perform no I/O or allocation, inspect at most 32768 metadata bytes,
+and identify the current complete ordered presentation, including selected
+member/ejection, write policy, native JFD policy and tail presentation. Its fingerprint joins the configuration digest; the record media field retains
+the canonical ordered-source SHA-256, so the pure attempt/media binding remains
+unchanged. Reacquire and compare the fingerprint at consumption and every publication/reuse check. Media mutations
+still suppress publication permanently for the attempt. This replaces the unused run-A immutable-media assertion; an identity callback
+is required from every publication owner.
+
+The plan frontend implements this callback only for Disk Writes Off. It hashes
+a domain, ordered validated source digests and presentation metadata, alongside
+the canonical plan's full ordered-source SHA-256 binding. Stores/overlays must
+be hidden; loaded visible/damaged/failed JFD state refuses. Guest write attempts
+cannot change the read-only presentations. External edits that violate the
+exclusive immutable-file lease are outside the identity guarantee, as for the
+HD API. Capture after attachment observes the policy actually mounted.
+
+Writable raw/JFD media refuse publication. The existing ordered-media API
+`arc_boot_media_digest` reads each staged raw file and reparses/loads unselected
+JFD overlays; its current-state hashes are not maintained at every write.
+Those operations exceed the fixed zero-I/O, 32768-byte acquisition budget and
+cannot safely run in the synchronous consume callback. A mount generation or
+base-image digest omits acknowledged writes and is not an exact substitute.
+Supporting writable media requires a separately maintained, complete ordered
+fingerprint/lease; this run uses B-2's explicit refusal alternative rather than
+asserting such an identity. Tests require positive established publication for
+read-only sets, no publication for writable sets or unestablished outcomes,
+revalidation before rename, invalidation after media edits, and clean reopen.
+
+Pending-state setter rejection remains scoped to the test plan route. The
+ordinary-route admission predicate and its future pending state belong to
+R3d-3, per the ownership correction; cancellation after admission remains here.
+
+The run-B scheduling audit found that START's checkpoint wait asked the HD
+store's open-only namespace predictor. A waited maintenance tick now reserves
+the namespace ceiling whenever the current store is non-IDLE and writable.
+This is conservative across every checkpoint substep, including creation,
+rename and retirement. IDLE helper construction retains its ordinary class;
+product verification retains its separate class. The query reads resident
+statistics only, performs no I/O and creates no live maintenance subscription.
+
+Mutation qualification enumerates each new atomic guard and state transition
+in a checked inventory, including guards whose removal is equivalent because
+an independent bound or invariant still rejects. The runner executes every
+non-equivalent mutant against observable tests and rejects surviving mutants.
+No compilation failure counts as a killed mutant. Final full-suite and sanitizer
+runs use the completed tree; later production/test changes require a fresh full
+host run again.

@@ -7,7 +7,6 @@ import struct, subprocess, sys, tempfile
 from rpc_controller_stub import Arm
 from rpc_video_rom import Guest
 
-runner, core, builder = sys.argv[1:4]
 
 def firmware(image, child=0, close_error=False, ram_size=0, failure=None):
     # A minimal authored kernel: only the documented SWI contracts used by
@@ -66,33 +65,37 @@ def firmware(image, child=0, close_error=False, ram_size=0, failure=None):
     data=a.finish();struct.pack_into('<I',data,0,0xea000000|((main-8)//4))
     return data+struct.pack('<I',0xeafffffe)*((2097152-len(data))//4)
 
-with tempfile.TemporaryDirectory(prefix='arc-controller-') as tmp:
-    root=Path(tmp);raw=root/'helper';subprocess.run([builder,'--write',str(raw)],check=True)
-    image=raw.read_bytes();(root/'seed').write_bytes(bytes(256))
-    for model in ('arm610','arm710','sa110','arm7500'):
-        for kind,child,error,ram_size in [('returned',0,False,0),('desktop',99,False,0),('close-error',0,True,0),
-                ('ramfs-absent',0,False,0),('ramfs-present',0,False,32768),('bad-plan',0,False,0),('latch-error',0,False,0),('init-error',0,False,0),
-                ('start-error',0,False,0),('ramfs-read-error',0,False,0),('ramfs-create-error',0,False,0)]:
-            ramfs=kind.startswith('ramfs')
-            subprocess.run([builder,'--write-ramfs' if ramfs else '--write',str(raw)],check=True)
-            image=bytearray(raw.read_bytes())
-            if kind=='bad-plan':image[struct.unpack_from('<I',image,44)[0]+8]=3
-            (root/'authored.rom').write_bytes(firmware(image,child,error,ram_size,kind))
-            outputs=[]
-            for cells in (0,3):
-                plan=root/'case.arcplan';plan.write_text(f'version=1\nmodel={model}\nfirmware={root/"authored.rom"}\ncmos=seed\nseed={root/"seed"}\nrtc_epoch=0\nobserver_cells={cells}\n')
-                p=subprocess.run([runner,'--core',core,'--plan',str(plan),'--system',str(root),'--save',str(root),
-                    '--frames','1','--ram-offset',str(0x31000),'--ram-words','11'],capture_output=True,text=True,timeout=30)
-                assert p.returncode==0,(model,kind,p.stderr)
-                line=next(line for line in p.stdout.splitlines() if line.startswith('ram='));outputs.append(line)
-                words=[int(w,16) for w in line[4:].split(',')]
-                expected=[1,1,0x4321,0x6e755225,0x4b534154,0 if error else 1,1 if ramfs and not ram_size else 0,1,0,0,0 if error else 1]
-                if kind=='bad-plan':expected=[0,0,0,0,0,1,0,0,0,2,0]
-                if kind=='latch-error':expected=[0,0,0,0,0,1,0,2,0,2,0]
-                if kind=='init-error':expected=[1,0,0,0,0,1,0,1,0,1,0]
-                if kind=='start-error':expected[9]=1
-                if kind=='ramfs-read-error':expected=[0,0,0,0,0,1,0,1,0,1,0]
-                if kind=='ramfs-create-error':expected=[0,0,0,0,0,1,1,1,0,1,0]
-                assert words==expected,(model,kind,words)
-            assert outputs[0]==outputs[1],(model,kind,'observation changed guest effects')
-    print('controller: four CPUs, one dispatch across duplicate CALL, exact CloseDown, fatal close failure, observation equivalence')
+def main():
+    runner, core, builder = sys.argv[1:4]
+    with tempfile.TemporaryDirectory(prefix='arc-controller-') as tmp:
+        root=Path(tmp);raw=root/'helper';subprocess.run([builder,'--write',str(raw)],check=True)
+        image=raw.read_bytes();(root/'seed').write_bytes(bytes(256))
+        for model in ('arm610','arm710','sa110','arm7500'):
+            for kind,child,error,ram_size in [('returned',0,False,0),('desktop',99,False,0),('close-error',0,True,0),
+                    ('ramfs-absent',0,False,0),('ramfs-present',0,False,32768),('bad-plan',0,False,0),('latch-error',0,False,0),('init-error',0,False,0),
+                    ('start-error',0,False,0),('ramfs-read-error',0,False,0),('ramfs-create-error',0,False,0)]:
+                ramfs=kind.startswith('ramfs')
+                subprocess.run([builder,'--write-ramfs' if ramfs else '--write',str(raw)],check=True)
+                image=bytearray(raw.read_bytes())
+                if kind=='bad-plan':image[struct.unpack_from('<I',image,44)[0]+8]=3
+                (root/'authored.rom').write_bytes(firmware(image,child,error,ram_size,kind))
+                outputs=[]
+                for cells in (0,3):
+                    plan=root/'case.arcplan';plan.write_text(f'version=1\nmodel={model}\nfirmware={root/"authored.rom"}\ncmos=seed\nseed={root/"seed"}\nrtc_epoch=0\nobserver_cells={cells}\n')
+                    p=subprocess.run([runner,'--core',core,'--plan',str(plan),'--system',str(root),'--save',str(root),
+                        '--frames','1','--ram-offset',str(0x31000),'--ram-words','11'],capture_output=True,text=True,timeout=30)
+                    assert p.returncode==0,(model,kind,p.stderr)
+                    line=next(line for line in p.stdout.splitlines() if line.startswith('ram='));outputs.append(line)
+                    words=[int(w,16) for w in line[4:].split(',')]
+                    expected=[1,1,0x4321,0x6e755225,0x4b534154,0 if error else 1,1 if ramfs and not ram_size else 0,1,0,0,0 if error else 1]
+                    if kind=='bad-plan':expected=[0,0,0,0,0,1,0,0,0,2,0]
+                    if kind=='latch-error':expected=[0,0,0,0,0,1,0,2,0,2,0]
+                    if kind=='init-error':expected=[1,0,0,0,0,1,0,1,0,1,0]
+                    if kind=='start-error':expected[9]=1
+                    if kind=='ramfs-read-error':expected=[0,0,0,0,0,1,0,1,0,1,0]
+                    if kind=='ramfs-create-error':expected=[0,0,0,0,0,1,1,1,0,1,0]
+                    assert words==expected,(model,kind,words)
+                assert outputs[0]==outputs[1],(model,kind,'observation changed guest effects')
+        print('controller: four CPUs, one dispatch across duplicate CALL, exact CloseDown, fatal close failure, observation equivalence')
+
+if __name__=='__main__':main()

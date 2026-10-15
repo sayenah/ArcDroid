@@ -24,7 +24,9 @@ with tempfile.TemporaryDirectory(prefix='arcdroid-boot-plan-') as temp:
     def seed(directory):
         base=directory/'arcdroid/cmos-riscpc';base.mkdir(parents=True,exist_ok=True)
         record=bytearray(512);record[:8]=b'ARCRPCM1';struct.pack_into('<IIIIQ',record,8,1,512,1,0x10003,1)
-        record[32:72]=content.encode();record[72:104]=digest;struct.pack_into('<I',record,508,zlib.crc32(record[:508]))
+        record[32:72]=content.encode();record[72:104]=digest
+        record[104+183]=2;record[104+47]=3  # Launch fixture configures the helper drive.
+        struct.pack_into('<I',record,508,zlib.crc32(record[:508]))
         (base/f'{content}-m1-{digest.hex()}.1').write_bytes(record)
     seed(save);plan=root/'test.arcplan'
     text=f'version=2\nmodel=arm610\nfirmware={firmware}\ncmos=persist\ncmos_layout=ro370\ncontent_id={content}\nrtc_epoch=946684800\nhd_populate=on\n'

@@ -13,11 +13,26 @@ static ArcRpcBootRecord record(void)
 int main(void)
 {
     fresh_files();ArcRpcLaunchRecordStore s;ArcRpcBootRecord r=record();
+    assert(!arc_riscpc_launch_record_begin(&s,NULL,id));
+    assert(!arc_riscpc_launch_record_begin(&s,"/save",NULL));
+    assert(!arc_riscpc_launch_record_begin(&s,"content://unsupported",id));
+    char content[41];memset(content,'a',40);content[40]=0;
+    assert(arc_riscpc_launch_record_begin(&s,"/save",content));
+    const char invalid[]={'/','G','g',':','`','z'};
+    for(unsigned at=0;at<40;++at)for(unsigned i=0;i<sizeof(invalid);++i){
+        content[at]=invalid[i];assert(!arc_riscpc_launch_record_begin(&s,"/save",content));content[at]='a';
+    }
+    arc_riscpc_launch_record_close(NULL);memset(&s,0,sizeof(s));arc_riscpc_launch_record_close(&s);
+    assert(!arc_riscpc_launch_record_namespace(NULL));
+    for(unsigned phase=0;phase<=17;++phase){s.phase=phase;assert(arc_riscpc_launch_record_namespace(&s)==(phase==5||phase==7||phase==15||phase==16));}
+    assert(arc_riscpc_launch_record_begin(&s,"/save",id));fail_at=steps+1;
+    bool missing_done=false;assert(arc_riscpc_launch_record_recover(&s,&missing_done));
+    assert(missing_done && s.ready && s.phase==6 && !s.have_old);reset_fault();
     assert(!arc_riscpc_launch_record_begin(NULL,"/save",id));assert(!arc_riscpc_launch_record_begin(&s,"/save","bad"));
     assert(arc_riscpc_launch_record_begin(&s,"/save",id));recover(&s);assert(!s.have_old && s.ready);
     assert(!arc_riscpc_launch_record_publish_begin(&s,NULL));assert(arc_riscpc_launch_record_publish_begin(&s,&r));
     bool done=false;while(!done)assert(arc_riscpc_launch_record_publish_step(&s,true,&done));
-    assert(s.published && find(s.path,false)>=0);test_vfs_no_open_handles();snapshot();
+    assert(s.published && s.phase==6 && find(s.path,false)>=0);test_vfs_no_open_handles();snapshot();
     /* Reopen steals the published candidate before any store recovery. */
     assert(arc_riscpc_launch_record_begin(&s,"/save",id));recover(&s);assert(s.have_old && find(s.path,false)<0);
     assert(arc_riscpc_boot_record_matches(&s.old,&r.key));arc_riscpc_launch_record_discard(&s);assert(!s.have_old);
@@ -38,13 +53,13 @@ int main(void)
         assert(arc_riscpc_launch_record_begin(&s,"/save",id));recover(&s);assert(!s.have_old && find(s.temporary,false)<0);
         assert(arc_riscpc_launch_record_publish_begin(&s,&r));
         for(unsigned i=0;i<cut;++i){done=false;assert(arc_riscpc_launch_record_publish_step(&s,true,&done));}
-        done=false;assert(arc_riscpc_launch_record_publish_step(&s,false,&done));assert(done && !s.have_old && find(s.path,false)<0);
+        done=false;assert(arc_riscpc_launch_record_publish_step(&s,false,&done));assert(done && s.phase==6 && !s.have_old && find(s.path,false)<0);
         test_vfs_no_open_handles();
     }
     for(unsigned cut=1;cut<=5;++cut){
         restore();assert(arc_riscpc_launch_record_begin(&s,"/save",id));recover(&s);
         assert(arc_riscpc_launch_record_publish_begin(&s,&r));fail_at=steps+cut;
-        bool ok=true;done=false;while(ok && !done)ok=arc_riscpc_launch_record_publish_step(&s,true,&done);
+        bool ok=true;done=false;while(ok && !done){ok=arc_riscpc_launch_record_publish_step(&s,true,&done);if(s.failed)assert(!ok);}
         assert(!ok && s.failed && !s.published && find(s.path,false)<0);reset_fault();
         arc_riscpc_launch_record_close(&s);test_vfs_no_open_handles();
     }
@@ -52,5 +67,20 @@ int main(void)
     restore();assert(arc_riscpc_launch_record_begin(&s,"/save",id));
     done=false;while(s.phase!=5)assert(arc_riscpc_launch_record_recover(&s,&done));
     fail_at=steps+1;assert(!arc_riscpc_launch_record_recover(&s,&done));assert(s.failed && !s.ready && find(s.path,false)>=0);
-    reset_fault();fresh_files();puts("RPC records: steal-before-recovery, bounded publication, all interruption/revalidation cuts and failed invalidation passed");return 0;
+    reset_fault();
+    for(unsigned temporary=0;temporary<2;++temporary)for(unsigned cut=1;cut<40;++cut){
+        restore();assert(arc_riscpc_launch_record_begin(&s,"/save",id));
+        if(temporary)assert(find(s.temporary,true)>=0);
+        assert(test_mkdir(s.directory)==0);fail_at=steps+cut;done=false;
+        for(unsigned tries=0;!done && !s.failed;++tries){assert(tries<100);
+            bool ok=arc_riscpc_launch_record_recover(&s,&done);if(s.failed)assert(!ok);
+        }
+        reset_fault();arc_riscpc_launch_record_close(&s);test_vfs_no_open_handles();
+    }
+    restore();assert(arc_riscpc_launch_record_begin(&s,"/save",id));assert(test_mkdir(s.directory)==0);
+    fail_at=steps+1;done=false;assert(!arc_riscpc_launch_record_recover(&s,&done) && s.failed && !done);
+    reset_fault();arc_riscpc_launch_record_close(&s);
+    memset(&s,0,sizeof(s));s.phase=14;done=false;
+    assert(!arc_riscpc_launch_record_publish_step(&s,true,&done) && s.failed && !done);
+    fresh_files();puts("RPC records: steal-before-recovery, bounded publication, all interruption/revalidation cuts and failed invalidation passed");return 0;
 }

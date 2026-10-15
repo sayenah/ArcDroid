@@ -149,6 +149,11 @@ int main(int argc, char **argv)
    arc_boot_watch_observe(&rpc,0x2000e,0x10020000,255,32,126,0,16,false,0);
    arc_boot_watch_frame(&rpc,249999);assert(rpc.state==ARC_BOOT_WATCH_ARMED && rpc.pending);
    arc_boot_watch_frame(&rpc,250000);assert(rpc.state==ARC_BOOT_WATCH_PROMPT);
+   for(unsigned mode=0;mode<32;++mode){
+      arc_boot_watch_arm_profile(&rpc,0,&profile);
+      arc_boot_watch_observe(&rpc,0x2000e,0x10020000,255,32,126,0,mode,false,0);
+      assert(rpc.pending==(mode==0 || mode==16));
+   }
    puts("boot-watch: passed");
    return 0;
 }
