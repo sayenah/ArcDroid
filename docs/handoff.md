@@ -31,10 +31,11 @@
 
 **W3 — item 6b Phase 0 completion.** `slice/6b-p0i-profile`, head `1bb22aa`. Fable's review: accepted (OFF builds byte-identical in all 23 RPC plan objects, pinned projections identical, imported-file hooks a marked patch). **Stage:** PR after W1 merges, then CI and QA. **Owner:** Fable.
 - **Note.** With profiling on, the hot workload runs about +208 % slower; counts are exact, small-scope host-cost splits are probe-dominated.
-- **Done (S65):** 031 profiled on the Mac and the Odin3 (`.work/s65/p031/`); Phase 0 evidence recorded in `docs/riscpc-translator.md`; Q1 put to the Founder (Waiting list).
+- **Done (S65):** 031 profiled on the Mac and the Odin3 (`.work/s65/p031/`); Phase 0 evidence recorded in `docs/riscpc-translator.md`; **Q1 answered: design for capacity of about 200 MIPS (D-188)**, so Phase 1 beyond 1a plans native backends on arm64 and x64 and a cycle-timing review. Phase 1a draft and Astra stage 1 (ACCEPT WITH CHANGES, all seven adopted): `.work/s65/6b/PHASE1A-DRAFT.md`, `report1.md`.
 - **Next:**
-  1. Draft 6b Phase 1a from the profile and `.work/s64/review/WF-r6b-phase1.md`, with the timing service as the first target; run Astra. Phase 1a alone cannot meet AC-10 (needs a D-146 ruling for S1).
-  2. Profile a 3D title the same way; measure churn at allocation-plus-offset granularity.
+  1. Once R3c-2 merges and 6b-P0i is rebased onto it: write the reconciled Phase 1a work order from `PHASE1A-DRAFT.md` (with its Astra adjudication), record rulings R-a to R-d and the D-182 scheduling decision, run Astra stage 2, dispatch 1a-0 (E0). Phase 1a alone cannot meet AC-10.
+  2. Plan Phase 1b/2 for D-188: block/exit foundation that carries timing and fetch across runs, sub-page invalidation, arm64 and x64 backends, cycle-timing review; answer Q3 before any copied helper.
+  3. Profile a 3D title the same way; measure churn at allocation-plus-offset granularity.
 
 **Device kit (Odin3).** `/data/local/tmp/arcdroid-s64/`: `base` (98bb162), `cand` and `candE` (run E), `candG` (run G, Android Release plan core and runner), `hot/` with `hot.arcplan`, `hot-obs.arcplan`, `rh64.sh`, `rh65.sh` (takes TAG then legs). The S63 and S62 kits are still on the device.
 
@@ -516,10 +517,7 @@ Slice order (D-133 as amended by D-163): R1–R3 → item 6b faster CPU work →
 **Item 5 grounding (S55, paused at a safe point: nothing committed, no branch).** `main` `c725bd6`: CI builds Android arm64 only, which is the whole Android target (D-135: no armeabi-v7a); the `.info` is copied into the build tree (`configure_file`) and installed by `install(FILES …)` but no CI artifact bundles core + `.info` + `COPYING` + `THIRD_PARTY_NOTICES.md`; the version lives in three places (`project(… VERSION 0.1.0)`, `ARCDROID_VERSION` fallback in `libretro/arcdroid_libretro.c:28`, `display_version` in `arcdroid_libretro.info`). (armeabi-v7a was found to build unmodified, but is out of scope by D-135.) Android devices: the Odin3 (`arm64-v8a` only) and a second Snapdragon 8 Gen 2 device (Founder S55). **Windows signing risk (S60):** Smart App Control, on by default for many Windows 11 installs, blocked one unsigned ArcDroid-built probe executable on the Founder's box while allowing the unsigned runner and plan core. Item 5 must decide whether an unsigned `arcdroid_libretro.dll` is acceptable, or whether it needs signing or a documented workaround. No shipping source uses `__FILE__`/`__DATE__`/`__TIME__` or a runtime `assert` (the Slice 8 note on embedded paths is unverified — check with a two-path build comparison). The GPL corresponding-source mechanism for distributed binaries (D-016) stays tied to publication (D-100). Scratch: S55 scratchpad `s55/` (`a/`, `second-checkout-b/` clones, `build-android.sh`).
 
 ## Waiting on the Founder (protocol §18, D-124)
-- **Q1, item 6b design objective (asked S65).** Phase 0's representative-gameplay profile is in (`docs/riscpc-translator.md`, *Representative gameplay (S65)*): on the Odin3, 031's sustained racing runs at 1.70 T p95 at today's 100 MIPS rate, so the frame gate (p95 ≤ 0.80 T) already needs about 2.1×. Options:
-  - **(a) Headroom at 100 MIPS (Fable recommends).** Design Phase 1 and the later arm64 backend to meet the frame gate at today's rate on the Odin3 and Windows, without precluding a higher rate later. Smaller scope; the portable path plus an arm64 backend may suffice, and Windows may still need an x64 backend if its margin stays thin.
-  - **(b) Capacity for about 200 MIPS.** Design for roughly 4–4.5× over today, which effectively commits to native code generation on both platforms (arm64 and x64) and a cycle-timing review; much larger scope and a later first gain. A higher ceiling still cannot promise native frame rates for bus-limited titles (R2a has no cycle model).
-  - **Parks:** only 6b Phase 1 beyond 1a (block-foundation scope and backends). Phase 1a (exact interpreter optimisations) is the same under both answers and continues.
+- None. (Q1 answered S65: design for capacity of about 200 MIPS, D-188.)
 
 **S63 (Claude Opus 5.5 effort 15; window `arcdroid-e7`; baton by relay from `arcdroid-e5`).**
 - **Planned R3c** with Astra (stage 1 and two stage 2s): D-174, D-175, D-177. **Merged:** R3c-1 (`ea3503d`). **Decisions:** D-174 to D-178.
