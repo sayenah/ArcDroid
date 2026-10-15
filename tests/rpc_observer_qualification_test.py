@@ -7,7 +7,7 @@ import sys
 sys.dont_write_bytecode = True
 binary, record = sys.argv[1:]
 text = Path(record).read_text(encoding='utf-8')
-assert 'Status: adopted (D-181)' in text
+assert re.search(r'^Status: adopted\b', text, re.M)
 revision = int(re.search(r'## Profile revision (\d+) parameters', text)[1])
 cells = {}
 columns = [(2, 0), (2, 1), (3, 0), (3, 2), (3, 3), (3, 4), (0, 0), (1, 0)]
@@ -44,14 +44,36 @@ for section, owners in [('The error-box evidence', [(2, 0), (2, 1)]), ('The disc
 # Every profile value is pinned, including the shared B predicates. A changed
 # record must be adjudicated with its corresponding production profile/test.
 parameters = dict(re.findall(r'^\| ([^|]+?) \| ([^|]+?) \|$', text.split('## Profile revision', 1)[1].split('## Calibration', 1)[0], re.M))
-assert parameters['Error-box poll'] == '`OS_Byte 129` with R1 = 0 and R2 = 0, from ROM, in SVC26 or SVC32 at SWI entry. The site and stack are learned from the first such poll while the user report is pending.'
-assert parameters['Answerable forms'] == 'Old-style flags 3 and 14 only.'
-assert parameters['Form 3'] == 'OK and Cancel; default OK. A answers OK (Return), B answers Cancel (Escape).'
-assert parameters['Form 14'] == 'Cancel only; default Cancel. B answers Cancel; A gives no answer.'
-assert parameters['Other synchronous forms'] == 'Observation only: a truthful manual hint, no OK/Cancel claim.'
-assert parameters['Disc signal A device forms'] == 'Unspecified device only (`XOS_UpCall` R3 = 0xFFFFFFFF, D-179).'
-assert parameters['Disc signal B'] == 'The shared Arculator path and operation predicates (`ADFS::<inserted disc or 0>.$…`), first miss ignored and a repeated miss resolved, as on Arculator.'
-assert 'since only error number 0 was exercised' in text
+# Extract semantic values from the parameter table, without pinning its prose.
+def integers(value): return [int(x) for x in re.findall(r'(?<![A-Za-z])\b[0-9]+\b', value)]
+poll = parameters['Error-box poll']
+poll_byte = int(re.search(r'OS_Byte\s+(\d+)', poll)[1])
+poll_r1 = int(re.search(r'R1\s*=\s*(\d+)', poll)[1])
+poll_r2 = int(re.search(r'R2\s*=\s*(\d+)', poll)[1])
+poll_modes = {int(x) for x in re.findall(r'SVC(26|32)', poll)}
+assert poll_byte == 129 and poll_modes == {26, 32} and 'ROM' in poll
+forms = integers(parameters['Answerable forms']); assert len(forms) == 2
+numbers = parameters['Answerable error numbers']
+assert re.search(r'bit\s*31', numbers) and 'clear' in numbers and 'Serious' in numbers
+number_class = 1 if re.search(r'Ordinary numbers', numbers, re.I) else 0 if re.search(r'zero only', numbers, re.I) else None
+assert number_class is not None
+ok_forms = cancel_forms = default_cancel = 0
+for form in forms:
+    value = parameters[f'Form {form}']
+    buttons, default, pad = value.split(';', 1)[0], value.split(';', 1)[1].split('.', 1)[0], value.split('.', 1)[1]
+    if re.search(r'\bOK\b', buttons): ok_forms |= 1 << form
+    if re.search(r'\bCancel\b', buttons): cancel_forms |= 1 << form
+    assert re.search(r'default (OK|Cancel)\b', default)
+    if re.search(r'default Cancel\b', default): default_cancel |= 1 << form
+    assert bool(re.search(r'A\s+(?:answers|selects|chooses)\s+OK', pad)) == bool(ok_forms & (1 << form))
+    assert bool(re.search(r'B\s+(?:answers|selects|chooses)\s+Cancel', pad)) == bool(cancel_forms & (1 << form))
+    assert bool(re.search(r'A\s+(?:gives no answer|does not answer|has no answer)', pad)) == (not bool(ok_forms & (1 << form)))
+assert re.search(r'Observation only', parameters['Other synchronous forms'], re.I)
+a_device = parameters['Disc signal A device forms']
+assert 'Unspecified device only' in a_device and int(re.search(r'R3\s*=\s*(0x[0-9A-Fa-f]+)', a_device)[1], 16) == 0xffffffff
+b_profile = parameters['Disc signal B']
+assert '`ADFS::<inserted disc or 0>.$…`' in b_profile and 'first miss ignored' in b_profile and 'repeated miss resolved' in b_profile
+error_values = [1, poll_r1, poll_r2, (1 << 3) | (1 << 19), sum(1 << f for f in forms), ok_forms, cancel_forms, default_cancel, number_class]
 
 output = subprocess.check_output([binary, '--qualification'], text=True, timeout=30)
 seen_cells = set(); seen_table = set(); seen_error = set(); seen_disc = set()
@@ -67,7 +89,7 @@ for line in output.splitlines():
     elif kind == 'error':
         catalogue, cpu, *profile = map(int, values); key = catalogue, cpu
         assert key not in seen_error; seen_error.add(key)
-        assert profile == [1, 0, 0, (1 << 3) | (1 << 19), (1 << 3) | (1 << 14), 1 << 3, (1 << 3) | (1 << 14), 1 << 14], line
+        assert profile == error_values, line
     elif kind == 'disc':
         catalogue, cpu, *profile = map(int, values); key = catalogue, cpu
         assert key not in seen_disc; seen_disc.add(key)

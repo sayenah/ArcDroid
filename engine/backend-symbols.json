@@ -764,7 +764,7 @@
     "arc_disc_request_swi",
     "arc_error_discard",
     "arc_error_end",
-    "arc_error_poll",
+    "arc_error_poll", "arc_error_poll_matches", "arc_error_number_answerable",
     "arc_error_request",
     "arc_error_swi",
     "arc_outcome_arm",

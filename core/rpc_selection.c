@@ -47,6 +47,7 @@ ArcRpcSelection arc_riscpc_select(const ArcRpcCompatibility *discs, size_t count
    ArcRpcSelectionOs manual_os)
 {
    ArcRpcSelection r = {0};
+   r.inventory_skipped = !inventory || inventory->state == ARC_RPC_INVENTORY_SKIPPED;
    r.incomplete = inventory && (inventory->vfs_failure || inventory->bounded || inventory->resource_failure);
    unsigned cpu = 0x3fu, os = 0x7fu;
    bool rpc_notice = false;
@@ -87,6 +88,12 @@ ArcRpcSelection arc_riscpc_select(const ArcRpcCompatibility *discs, size_t count
          }
       }
    }
+   /* These outcomes depend only on disc hints and qualification. Limits
+    * override every inventory-dependent answer, including a prefix candidate. */
+   if (feasible && qualified && inventory && inventory->bounded) {
+      r.reason = ARC_RPC_SELECTION_INCOMPLETE_SCAN;
+      r.model = ARC_RPC_SELECT_AUTO; r.os = ARC_RPC_OS_AUTO; return r;
+   }
    if (r.reason == ARC_RPC_SELECTION_SELECTED) return r;
    r.reason = !feasible ? ARC_RPC_SELECTION_UNSUPPORTED :
       !qualified ? ARC_RPC_SELECTION_UNQUALIFIED :
@@ -97,7 +104,8 @@ ArcRpcSelection arc_riscpc_select(const ArcRpcCompatibility *discs, size_t count
 const char *arc_riscpc_selection_reason_name(ArcRpcSelectionReason r)
 {
    static const char *const names[] = {"legacy", "selected", "conflicting-discs",
-      "unsupported-requirement", "unqualified-pair", "missing-firmware", "unreadable-inventory"};
+      "unsupported-requirement", "unqualified-pair", "missing-firmware", "unreadable-inventory",
+      "incomplete-scan"};
    return (unsigned)r < sizeof(names)/sizeof(names[0]) ? names[r] : "unsupported-requirement";
 }
 const char *arc_riscpc_selection_model_name(ArcRpcSelectionModel m)
@@ -121,5 +129,5 @@ void arc_riscpc_selection_diagnostic(const ArcRpcSelection *s, char *text, size_
    snprintf(text, capacity, "RPC selection: diagnostic-only reason=%s model=%s os=%s needed=%s inventory=%s\n",
       arc_riscpc_selection_reason_name(s->reason), arc_riscpc_selection_model_name(s->model),
       arc_riscpc_selection_os_name(s->os), families[0] ? families : "none",
-      s->incomplete ? "incomplete" : "complete");
+      s->inventory_skipped ? "skipped" : s->incomplete ? "incomplete" : "complete");
 }
