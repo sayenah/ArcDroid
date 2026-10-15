@@ -123,3 +123,114 @@ Pinned plan baseline: `d374114`. V1 device/AV/input/factory goldens must remain
 unchanged. V2 gains preparation black/silent frames and preparation reset now
 restarts recovery; requested virtual traces and published bytes remain identical.
 Each affected expectation is updated individually; no fixture regeneration.
+
+## Concurrent-writer ownership primitive (R3d-3, D-192, D-193)
+
+This section is written before the 12a implementation, against `7b5a87a`.
+`libretro/arc_lock.c` is dormant: preparation, stores and shipping frontend
+paths do not call it. Enforcement and migration of every caller belong together
+on `slice/r3d3-host` (12b). Existing store and preparation contracts are unchanged
+by 12a. No lease, owner record, entropy, automatic breaking or file deletion is
+involved.
+
+Each independent acquisition opens a dedicated sentinel and asks the OS for an
+exclusive, non-blocking lock. Two opens in one process must conflict through the
+backend itself; there is no library-static owner registry. Closing the last
+description/handle or process death releases ownership. Release never removes
+the sentinel. Descriptors carry no data: no read, write, truncation or extension.
+
+| Platform | Open and lock | Lifetime |
+|---|---|---|
+| Linux / Android | `open` with `O_RDWR\|O_CREAT\|O_CLOEXEC`, mode `0600`; `fcntl(F_OFD_SETLK)`, `F_WRLCK`, `SEEK_SET`, start/length/pid zero | Last close or process death; compile fails without OFD declarations, runtime refusal without OFD support. No classic-lock or Linux `flock` fallback. |
+| Windows | UTF-8 converted strictly with `MultiByteToWideChar(CP_UTF8)`; `CreateFileW` read/write, share read/write only, NULL security attributes, `OPEN_ALWAYS`, normal attributes; `LockFileEx` exclusive + fail-immediately, byte 0 length 1 | Non-inheritable synchronous handle. No delete sharing; explicit unlock then close. Release after process termination can be delayed by the OS. |
+| macOS (development) | Same POSIX open flags/mode; `flock(LOCK_EX\|LOCK_NB)` | Independent open descriptions conflict; last close or process death releases. |
+
+The public flag-free backend table supplies open, try-lock, identity, unlock and
+close operations, plus the error-number domain (OFD, macOS, Windows). NULL selects
+the native backend. Tests inject raw errors through the same mapping used by the
+native backend. A token is an owned, non-copyable object, initialized once before
+use and released before reinitialization. There is no state across library loads.
+
+Content keys are exactly `c-<content40>.lock`; defaults keys are exactly
+`d-<fw64>-m<N>-p<proc>-t<timing>.lock`, with model index 0–3 encoded as 1–4 to
+match the CMOS store. Hex keys are validated and normalized to lowercase. Paths
+are under `<save>/arcdroid/locks-riscpc/` only. Absolute native roots are required:
+POSIX `/…`, or Windows drive-absolute / UNC with server and share. Relative,
+scheme, malformed, invalid-key and overlong paths are refused before any I/O.
+Trailing root separators are normalized; other aliases resolve through the OS.
+The same store reached through a save-root symlink, spelling or case alias must
+reach the same sentinel when its keys agree.
+
+`arc_io_mkdir` calls VFS mkdir directly, without a prior stat, returning created,
+exists (`-2`) or error. Acquisition creates one parent per step, checking that an
+exists result names a valid directory. POSIX root, Windows drive and UNC
+server/share prefixes are not created. `arc_lock_next_namespace` identifies these
+steps for the future scheduler; they count in the VFS census. Existing
+`arc_io_make_path_step` is untouched. A directory step returns transient until
+the native attempt is ready. Each subsequent acquire call makes at most one
+open and one non-blocking lock attempt; an open handle survives contention and
+transient lock errors. No loop, wait, sleep, clock or deadline lives in the
+primitive. Its host will attempt before checking W, using an injected monotonic
+clock (10 s content, 120 s defaults), and will never displace a paused holder.
+
+| Raw result | Primitive outcome / future notice |
+|---|---|
+| Lock succeeds and identity/stat agree | held |
+| OFD `EAGAIN`, macOS `EWOULDBLOCK`, Windows `ERROR_LOCK_VIOLATION` | contended; host eventually N-14 / N-16 |
+| POSIX `EINTR` (open or lock), open `EEXIST`, Windows open `ERROR_SHARING_VIOLATION` | transient; host retries within W, then N-15 `lock-create` |
+| OFD `EINVAL`, POSIX `ENOSYS` / `ENOLCK` / `EOPNOTSUPP` / `ENOTSUP`, Windows `ERROR_INVALID_FUNCTION` / `ERROR_NOT_SUPPORTED` | unsupported; N-15 `lock-unsupported` |
+| Root validation or post-lock VFS stat not a regular zero-byte file | root refused; N-15 `lock-root` |
+| mkdir or other native open failure (including read-only sentinel) | create error; N-15 `lock-create` |
+| Other lock error, including OFD `EACCES` | lock error; N-15 `lock-error` |
+| Identity mismatch immediately after lock | unlock, close, transient; reopen next attempt |
+| Identity mismatch while held | identity lost, held query false, unlock/close; sticky until release; N-18 |
+
+On POSIX, after each successful lock and on explicit verify, compare `fstat(fd)`
+to `stat(path)`: both must have at least one link and agree on device and inode.
+Failed identity syscalls fail closed. On
+Windows, omitted delete sharing prevents rename-over and deletion while held;
+the native identity callback therefore needs no polling syscall. On every
+platform, a VFS stat after acquisition must report a regular zero-byte file.
+This is a consistency check, not proof that VFS and native I/O resolve one
+object. Identity/stat refusal closes the handle before returning. Held-state
+loss cannot silently reacquire; release is explicit. Repeated release is safe.
+
+12b must acquire content ownership before any recovery/open, then defaults
+ownership only while holding content ownership. It must verify every maintenance
+frame and at every publication begin, stop all mutation on loss, and release
+only after final persist, fault drain and store close. It must also implement
+the re-check's no-dirty-buffered-handle invariant and publication-phase oracle.
+None of those store integrations belongs to this dormant primitive.
+
+The guarantee is conditional on cooperating clients using a stable sentinel in
+a shared, stable namespace. Residuals: network filesystems and synced replicas
+are outside the guarantee; aliases below `arcdroid/` can share stores with
+different sentinels; different Android mount views need not conflict. POSIX
+replacement between verification and a later write is detected, not excluded;
+a new opener can lock the replacement in that window. A fork without exec can
+retain an inherited OFD description until the child exits. Hung FUSE calls,
+debuggers and live crash-reporting processes retain locks. Non-blocking lock
+requests do not bound filesystem syscall latency on an unhealthy filesystem.
+Pre-OFD kernels refuse RiscPC per D-192; sdcardfs remains unverified.
+
+P10b expectations (Fable qualifies devices after 12a merges): two processes and
+two same-process acquisitions conflict; kill and reap the holder, then acquire
+on the first POSIX attempt (Windows retries within W, count and time recorded).
+Rename-over and deletion trigger POSIX identity loss; Windows refuses both with
+sharing violation. Reacquire after release and alias/case legs must pass. Run on
+Mac APFS, Windows NTFS, Odin3 shared storage, internal app-private storage and
+external `Android/data` storage. Android partners must be app processes or prove
+matching mount views; record each partner's mountinfo, OS/kernel, MediaProvider
+versionCode and observed diagnostic `flock` result (never used by production).
+Windows also needs a transient-open leg with antivirus or sync activity. Device
+results are separate from cross-build evidence. A shared-storage exclusion
+failure goes to the Founder before 12b; the second Android device is additional
+evidence when available.
+
+Primary sources checked for the implementation: [Linux OFD locks](https://man7.org/linux/man-pages/man2/fcntl_locking.2.html),
+[Microsoft LockFileEx](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-lockfileex),
+and [macOS flock](https://keith.github.io/xcode-man-pages/flock.2.html).
+The governing R-10 research and adjudications are in
+`docs/riscpc-r3d3-work-order.md`; the supplied P10a research is in
+`.evidence/LOCK-RESEARCH.md` (its earlier fallback/share-delete suggestions are
+superseded by R-10 and D-193).

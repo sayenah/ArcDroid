@@ -1,5 +1,6 @@
 #include <limits.h>
 #include <assert.h>
+#include <errno.h>
 /* Non-shipping confined runner VFS. GPL-2.0-only. */
 /* Reads remain unrestricted. Mutations require an existing canonical parent
  * below --save; existing symlinks/junctions must also resolve below that root. */
@@ -126,10 +127,11 @@ static int vfs_mkdir(const char *p)
 {
     if(!writable(p))return -1;
 #if defined(_WIN32)
-    return _mkdir(p);
+    int result = _mkdir(p);
 #else
-    return mkdir(p,0700);
+    int result = mkdir(p,0700);
 #endif
+    return result == 0 ? 0 : errno == EEXIST ? -2 : -1;
 }
 struct retro_vfs_dir_handle {
     char path[4096], name[4096];bool directory;
