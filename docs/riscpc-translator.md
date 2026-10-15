@@ -224,10 +224,10 @@ These ranges are research targets, not predictions (Astra S58):
 - code churn at allocation-plus-offset granularity;
 - the Q-3 oracle fix.
 
-## Founder decisions (none needed now)
-- **Q1, design objective — at the end of Phase 0.** Is the translator designed for headroom at 100 MIPS, or for the capacity to support a ceiling of about 200 MIPS? This decides whether the portable path is enough and whether a Windows backend may be needed. The actual rate stays a Phase 3 decision.
+## Founder decisions
+- **Q1, design objective — answered S65 (D-188): capacity for a ceiling of about 200 MIPS.** Native backends on arm64 and x64 and a cycle-timing review follow Phase 1a. The original question: Is the translator designed for headroom at 100 MIPS, or for the capacity to support a ceiling of about 200 MIPS? This decides whether the portable path is enough and whether a Windows backend may be needed. The actual rate stays a Phase 3 decision.
   - A higher instruction ceiling is not a 202 MHz SA-110: R2a excludes pipeline and per-class cycle modelling. A cycle model would be a separate timing-contract decision. Doubling the ceiling cannot promise native frame rates for bus-limited workloads.
-- **Q2, platform parity — with Q1.** Cross-platform trace equality is a hard requirement, so the question is how to meet one common guest rate on both platforms (the portable path, or a later x64 backend). Per-platform rates are outside the current contract.
+- **Q2, platform parity — answered with Q1 (D-188): native backends on both platforms.** Cross-platform trace equality is a hard requirement, so the question is how to meet one common guest rate on both platforms (the portable path, or a later x64 backend). Per-platform rates are outside the current contract.
 - **Q3, the fork — before the first copied or adapted helper, including in disposable probes.** Reference only, or selective copying of `rpcemu-extended` helpers (GPL-2.0-or-later, compatible with the project's GPL-2.0-only distribution).
   - If copying is chosen, record the exact commit, files and functions, dependencies, original notices and modifications through the existing provenance machinery. Every copied encoder gets independent encoding and bounds checks: several fork helpers mask operands rather than reject invalid ranges.
   - melonDS is GPL-3.0-or-later and stays conceptual reference only.
