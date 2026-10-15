@@ -26,8 +26,8 @@
 - **R3c-3b.** `slice/r3c3b-launch`, head `efafff9` (part 1 `6775d8e` plus R3c-3a run B). **Stage:** IMPLEMENTATION (part 2). **Owner:** Sol.
   - Part 2's prompt is `.work/s65/r3c3b/promptR3c3b-2.md`; the R3d ownership split and the corrected reset transaction are in the clone's `.evidence/R3D-OWNERSHIP.md` (the CORRECTION section supersedes the prompt's reset and setter text: R3d-3 owns pending setter rejection; part 2 owns cancellation after admission).
   - **Next:** when part 2 returns, check it against the CORRECTION (two reset branches, admission-policy helper restoration, session-ID integration AC); commit verbatim; review; Fable's seven-pair AC-6 legs; promotion run; rebase after R3c-2 merges.
-- **R3d.** Plan adopted (D-186, `docs/riscpc-ordinary-load-plan.md`; Astra stages 1 and 2, thread `01a13e01-2f7a-70e3-a895-58284f108295`). **R3d-1 and R3d-2: Stage IMPLEMENTATION, Owner Sol** (work orders below), dispatched in parallel. **R3d-0** (Fable): decisions and E0 probes P1–P9 (P9 answered: repository private; record the artifact audience), serial with other Odin3 work.
-  - **Next:** review R3d-1 and R3d-2 when they return; run their private legs; then R3d-0's probes and the R3d-3 work order (its own Astra stage 2).
+- **R3d.** Plan adopted (D-186, `docs/riscpc-ordinary-load-plan.md`; Astra stages 1 and 2, thread `01a13e01-2f7a-70e3-a895-58284f108295`). **R3d-1:** committed `60457bc` on `slice/r3d1-session`, draft PR #417 (stacked on R3c-2); Fable reviewed it. **R3d-2:** committed on `slice/r3d2-locator`, PR #418 (base `main`); Fable reviewed it; private legs done (real dumps renamed, nested and duplicated, and the Founder's full 17-file ROM folder: all verified, within the scan budget; Odin3 shared storage warm scan 46 ms, scan plus selected read 51–56 ms). **R3d-0** (Fable): decisions and E0 probes P1–P9 (P9 answered: repository private; record the artifact audience), serial with other Odin3 work.
+  - **Next:** (1) R3d-2: CI on PR #418, Opus QA (Stage QA below), merge. (2) R3d-1: after R3c-2 merges, merge `main` into its branch, Sol repeats the census and switching matrix, Fable's library A/B and Odin3/Windows switching legs, CI, Opus QA. (3) R3d-0's probes and the R3d-3 work order (its own Astra stage 2).
 
 **W3 — item 6b Phase 0 completion.** `slice/6b-p0i-profile`, head `1bb22aa`. Fable's review: accepted (OFF builds byte-identical in all 23 RPC plan objects, pinned projections identical, imported-file hooks a marked patch). **Stage:** PR after W1 merges, then CI and QA. **Owner:** Fable.
 - **Note.** With profiling on, the hot workload runs about +208 % slower; counts are exact, small-scope host-cost splits are probe-dominated.
@@ -49,7 +49,9 @@
 
 ## R3d-1 and R3d-2 work orders (D-186)
 
-**Stage:** IMPLEMENTATION (both, in parallel). **Owner:** Sol (two instances). **Next (Sol):** implement the work order for your slice on its named branch; update the relevant design note before code; run the affected tests and the full host suite, the sanitizer selection, MinGW and Android builds and the guards; do not commit or push; write `SOL-REPORT-R3D-1.md` or `SOL-REPORT-R3D-2.md`.
+**R3d-2 Stage:** QA. **Owner:** Opus. **Next (Opus):** review PR #418 (`slice/r3d2-locator`) against the R3d-2 work order below, D-186 (A-4, A-6) and D-165/D-166, in a fresh clone; run the affected tests and mutants. Sol's report is `.work/s65/r3d2/clone/SOL-REPORT-R3D-2.md`; Fable's private legs are in `.work/s65/r3d2/priv/`.
+
+**R3d-1 Stage:** implemented, awaiting rebase onto merged R3c-2. **Owner:** Fable.
 
 These reconcile §6.1 and §6.2 of the R3d plan (`docs/riscpc-ordinary-load-plan.md`) with its amendments and both Astra adjudications (D-186). The plan governs anything not restated here. Provenance (every slice): no ROM, boot-archive or title bytes, private screenshots or logs in commits, CI or artifacts; only the four committed fingerprint tuples (D-090); no `engine/rpcemu/` change.
 
