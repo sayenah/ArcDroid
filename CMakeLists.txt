@@ -461,6 +461,10 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
       "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_observer_mutants.py"
       "${CMAKE_CURRENT_BINARY_DIR}" $<TARGET_FILE:rpc_observer_test>)
     set_tests_properties(rpc-observation-mutants PROPERTIES TIMEOUT 180 RUN_SERIAL TRUE)
+    if(WIN32)
+      # Windows CI reached 130.34 s; allow twice that, rounded up to a minute.
+      set_property(TEST rpc-observation-mutants PROPERTY TIMEOUT 300)
+    endif()
   endif()
   add_test(NAME rpc-cpu-mmu-memory COMMAND rpc_cpu_test)
   add_test(NAME rpc-fetch-memo-rewalk COMMAND rpc_cpu_test --fetch-memo)
