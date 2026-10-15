@@ -16,7 +16,7 @@ Status: **adopted (D-191)** with Astra stage 1's seven corrections (end of this 
 5. **B3, B2, B4**: only with Odin3 evidence of gain.
 6. **New vetting item:** the rational continuation table for ARM710/ARM7500 (the area maps flagged it; ARM710 is the preferred CPU, D-164(2), and never uses integer batches). It needs a vetting round and its own exactness argument before entering 1a.
 
-## Proposed rulings (to record as a D entry after this challenge)
+## Rulings (recorded as D-195, S66; slice 1a-0's work order is `docs/riscpc-6b-1a0.md`)
 - **R-a** admit timing-service exact items into Phase 1a beside the fetch path, in the order above (amends D-146's "starts with fetch-path overhead").
 - **R-b** a single shared inline hit-and-permit check on live DACR, ctrl, memmode and rw per access counts as keeping every per-fetch check; no F3, R1 or R2 in 1a.
 - **R-c** the §2.2 host-only exclusions, E2 wording, citation refresh and D5(b) re-record as drafted.
@@ -225,3 +225,11 @@ Report `.work/s65/6b/report1.md`. All seven findings incorporated; the reconcile
 6. **Baseline and sequencing.** Every production slice starts from the reconciled, merged R3c-2 plus 6b-P0i baseline (P0i rebased after R3c-2 merges) and compares against both its immediate predecessor and the cumulative baseline. Order: E0 → L1/S1 (order set by E0's counters) → A1 → F1; D1/D2 a small independent slice; B3/B2 separately justified; B4 dropped unless measured benefit warrants it. D-180 holds on the integrated tree as 3 % total, rechecked after any change to shared execution cost, held-watch cost included. Starting Phase 1a implementation before R3 completes is recorded as a D-182 scheduling decision (D-163's order otherwise holds). D-181's recipe is cited from `main`.
 7. **Benefit rule frozen before measuring.** Workload inputs, initial persistent state, observer configuration, measured windows, device settings, repetitions and the noise/retest rule are fixed in the work order; the unprofiled shipping-shaped core decides benefit; a regression criterion also applies on native Windows. A1 is ranked by executed-access counts (P0i class counts include condition-failed instructions). The 20–25 % aggregate is a hypothesis until cumulative measurements support it.
 - **Rational continuation table:** vet now (exactness of every canonical time field, bus-carried fractions, overflow, rebind lifecycle); not admitted to 1a yet.
+
+# Rational continuation vetting (S66): Fable's ruling
+
+Read-only vetting at `1f4bbae` with scratch prototypes on a loaded Mac (`.work/s66/rct/RCT-VETTING.md`; numbers are estimates).
+- A table that still writes every timing field per instruction is exact but costs about 2.9 more host instructions per guest instruction: **rejected**.
+- A **lazy rational batch** (the integer-batch scheme extended to rational bases, with a table step indexed by fraction, built per rate, model and SA clock at bind and selected in `arc_rpc_mem_control`) matched the reference in 7,200 prototype cases and fired the overflow fatal at the same instruction in 576 edge cases. It needs a separate host-only lazy flag (not `integer_batch`, a compared field), exactly the integer flush sites, no re-admission after service, the integer step kept for integral bases, a widened P0 projection rule and a D-180 re-run. Two prototype mutants survived (dropped alignment check; omitted flush before bus-busy service) and need white-box cases.
+- Benefit: about 72 instead of 84 host instructions per guest instruction on request-free ARM710 code, falling with request density; estimated 0.5–3 % on ARM710 titles; nothing on 031 (SA-110 on the integer path).
+- **Ruling:** not admitted to Phase 1a. It belongs to Track B regime B-2 (`docs/riscpc-6b-plan.md`), with the exclusions above. It returns as a 1a slice after S1 only if 1a-0 or 6b-P0j counters show at least about 30 % request-free-prefix share on an ARM710 workload, or if the Founder's SA rate (F-g) does not divide 1000, which would put SA-110 on the rational path.
