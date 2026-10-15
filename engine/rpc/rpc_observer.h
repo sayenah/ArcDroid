@@ -104,6 +104,9 @@ typedef struct {
     void *opaque;
 } ArcRpcHostWorkHandler;
 bool arc_rpc_observer_queue(const ArcRpcHostWork *);
+/* Inspect copied work before a possible overflow retires its generation.
+ * No host work runs. */
+bool arc_rpc_observer_queued(ArcRpcObserver,unsigned);
 /* Drop only matching copied payloads, preserving other identities/order. */
 void arc_rpc_observer_drop_queued(ArcRpcObserver,unsigned,const void *,size_t);
 void arc_rpc_observer_host_handler(ArcRpcObserver, const ArcRpcHostWorkHandler *);

@@ -520,6 +520,15 @@ bool arc_rpc_observer_take_answer(ArcRpcObserver owner,uint32_t *value)
         observer.current_order<=observer.owners[owner].answer_order)return false;
     *value=observer.owners[owner].value;observer.owners[owner].answer=false;return true;
 }
+bool arc_rpc_observer_queued(ArcRpcObserver owner,unsigned kind)
+{
+    if((unsigned)owner>=ARC_RPC_OBSERVERS)return false;
+    for(unsigned i=0;i<observer.work_count;++i){
+        const ArcRpcHostWork *w=&observer.work[i];
+        if(w->observer==owner && w->kind==kind)return true;
+    }
+    return false;
+}
 void arc_rpc_observer_drop_queued(ArcRpcObserver owner,unsigned kind,const void *bytes,size_t size)
 {
     if((unsigned)owner>=ARC_RPC_OBSERVERS || !bytes || !size || size>ARC_RPC_COPY_LIMIT)return;

@@ -430,8 +430,14 @@ valid. A completed commit or hint ends retrying. Found objects synchronously dro
 object. Their history retirement and lifecycle observations use the same ordered
 host queue; lifecycle events resolve preceding misses before clearing history,
 while preserving a later call still live across the boundary. Signal A still supersedes queued B work synchronously. Queue
-overflow retires the queue generation without erasing identity history or the
-trigger latch. No resolver or frontend callback runs inside guest execution.
+overflow retires the queue generation. Miss-only overflow retains identity
+history and the trigger latch. Before cancellation drops copied work, RPC records
+its retirement barriers: a lost lifecycle marker (including the overflowing
+item itself) clears history and the latch synchronously. FOUND already retires
+existing history synchronously through the shared outcome logic; its queued
+marker also retires matching history built by earlier deferred misses. This uses
+bounded copied-data inspection, never guest path resolution. No resolver or
+frontend callback runs inside guest execution.
 First-observation logging reads the copied callback identity.
 
 Synchronous bit-8 forms may carry category/high bits, but bits 5 and 6 still
@@ -473,6 +479,9 @@ A failed/disqualifying close return is not evidence. A synchronous report used
 for recovery remains manual until it completes; unrecognised forms cannot
 supply recovery. Privileged reports keep their existing invalidation semantics
 and do not become new user-report observations.
+
+After a bit-5 report, automatic disc replacement therefore stays manual until
+positive closure, reset or a new epoch. Manual Disk Control still works.
 
 Ordinary watch-loss recovery through user Wimp_Poll/PollIdle remains unchanged
 when this control-form latch is absent. Watch-renewal failure cancels its watch

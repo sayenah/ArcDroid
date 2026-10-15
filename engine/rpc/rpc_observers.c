@@ -240,9 +240,14 @@ static void queue_disc(const ArcRpcObservation *e,unsigned kind)
         .epoch=e->epoch,.media_generation=state.disc_media,.helper_generation=state.helper_media,.ns=e->ns,.kind=kind,.size=length+1,
         .operation=copy.operation,.continuation=copy.continuation,.sp=copy.sp,.watch=copy.watch};
     memcpy(work.bytes,copy.object,length+1);
-    /* The queue already retires its generation on overflow. History and the
-     * trigger latch belong to the session and must survive that retirement. */
-    if(!arc_rpc_observer_queue(&work)){state.disc.armed=false;state.disc_watch=0;}
+    /* Overflow discards copied misses, but must not discard their retirement
+     * barriers. Capture those barriers before the queue cancels its owner.
+     * This is bounded copied-data inspection, never host resolution or I/O. */
+    bool clear=kind==DISC_CLEAR || arc_rpc_observer_queued(ARC_RPC_OBS_DISC,DISC_CLEAR);
+    if(!arc_rpc_observer_queue(&work)){
+        if(clear){arc_disc_request_clear(&state.disc);state.disc.profile=&state.disc_profile;state.retry_pending=false;}
+        state.disc.armed=false;state.disc_watch=0;
+    }
 }
 static void disc_event(void *opaque,const ArcRpcObservation *e)
 {
@@ -384,6 +389,10 @@ bool arc_rpc_observers_test_error_numbers(ArcErrorNumberClass numbers)
 }
 void arc_rpc_observers_test_watch_budget(unsigned attempts)
 { watch_budget=attempts<=ARC_RPC_WATCH_ATTEMPT_LIMIT?attempts:ARC_RPC_WATCH_ATTEMPT_LIMIT; }
+bool arc_rpc_observers_test_retry(ArcRpcHostWork *work)
+{ if(work)*work=state.retry_work;return state.retry_pending; }
+void arc_rpc_observers_test_disc_state(const ArcDiscRequest *disc)
+{ state.disc=*disc;state.disc.profile=&state.disc_profile; }
 void arc_rpc_observers_override(unsigned mask,uint32_t r1,uint32_t r2,uint32_t forms)
 {
     state.overridden=true;state.cells=mask&255u;state.epoch=arc_rpc_observer_epoch();
@@ -396,7 +405,7 @@ void arc_rpc_observers_override(unsigned mask,uint32_t r1,uint32_t r2,uint32_t f
         if(cancel && (!ok || (flags&4u)))state.error_profile.default_cancel_forms|=bit;
     }
     state.error.profile=&state.error_profile;state.boot.profile=&boot_profile;state.launch.profile=&launch_profile;
-    arc_error_end(&state.error);state.error.modal_unknown=!(mask&ARC_RPC_CELL_ERROR);
+    arc_error_end(&state.error);state.error_unbounded=false;state.error.modal_unknown=!(mask&ARC_RPC_CELL_ERROR);
     filters();
 }
 #endif
