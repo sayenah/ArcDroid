@@ -2064,6 +2064,9 @@ int arc_rpc_arm_exec_batch(unsigned count, ArcRpcCpuBatch *batch)
 #endif
 #if defined(ARCDROID_TEST_FAULTS)
     arc_rpc_exercise_path=arc_rpc_observer_active?(arc_rpc_observer_context?1:2):0;
+    /* ArcDroid modification (2026-10-16, 6b-1a0 run C): keep counter
+     * admission in the common wrapper, outside all three compiled loops. */
+    arc_rpc_mem_exercise_begin(batch != NULL);
 #endif
     int executed = arc_rpc_observer_active ? (arc_rpc_observer_context?arc_rpc_arm_exec_observed(count,batch):arc_rpc_arm_exec_cheap(count,batch)) :
         arc_rpc_arm_exec_unobserved(count,batch);

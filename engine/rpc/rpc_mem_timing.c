@@ -64,7 +64,9 @@ void arc_rpc_mem_exercise_begin(bool batched)
     exercise_batch.start=arc_rpc_mem_fast.instructions;
     exercise_batch.integer=exercise_batch.services=0;
     exercise_batch.live=arc_rpc_mem_fast.enabled;
-    exercise_batch.integral=arc_rpc_mem_fast.integer_batch;
+    /* Begin precedes dispatch/batch_begin. A flush counts an integral prefix
+     * only while integer_batch is live; this latch prevents recounting it. */
+    exercise_batch.integral=true;
     exercise_batch.batched=batched;
 }
 void arc_rpc_mem_exercise_end(void)
@@ -108,6 +110,11 @@ void arc_rpc_mem_interval(ArcRpcMemInterval *out) { if (out) *out = interval; }
 bool arc_rpc_mem_endpoint(uint64_t first, uint64_t last, bool drained)
 {
     if ((!first && last) || (first && (last < first || first <= arc_rpc_mem_fast.instructions))) return false;
+    /* An unarmed request-free completion is not retained. Do not promise a
+     * window whose predecessor can no longer be captured. Pending requests
+     * still deliver their exact completion through complete(). */
+    if (first > 1 && first - 1 == arc_rpc_mem_fast.instructions &&
+        !arc_rpc_mem_fast.pending) return false;
     arc_rpc_mem_measure(first, last, drained);
     arc_rpc_mem_fast.test_measure = false;
     endpoint_mode = first != 0;

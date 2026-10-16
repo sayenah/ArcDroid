@@ -88,6 +88,11 @@ kill('swap-data-fetch','rpc_endpoint_cpu_test','engine/rpcemu/src/cp15.c',conten
     'prefetch?ARC_RPC_COUNT_tlb_data_walk:ARC_RPC_COUNT_tlb_fetch_walk'))
 text=(root/'engine/rpc/rpc_mem_timing.c').read_text()
 mutants=[
+ ('drain-no-interval-exercise','interval.end_ticks = at; interval.done = true; pending_end = false;\n    interval_exercise_end=arc_rpc_exercise;\n}',
+  'interval.end_ticks = at; interval.done = true; pending_end = false;\n}'),
+ ('s1-boundary-inclusive','due<visible(m.finish) && due<boundary)','due<visible(m.finish) && due<=boundary)'),
+ ('s1-drop-now-lt-due','m.cycle_active && now<due && due<visible(m.finish)','m.cycle_active && due<visible(m.finish)'),
+ ('shortcut-fill-any-region','if(packet->fill && memory_region(region(packet->address[0])))','if(packet->fill)'),
  ('stale-previous','previous_completion = at; previous_valid = true;','previous_completion = 0; previous_valid = true;'),
  ('issue-plus-base-start','interval.start_ticks = previous_completion;','interval.start_ticks = arc_rpc_mem_fast.issue_ticks-arc_rpc_mem_fast.base_ticks;'),
  ('premature-drained','if (!measure_drained || (!m.count && !m.bcount))','if (true)'),
@@ -96,6 +101,8 @@ mutants=[
 for name,old,new in mutants:
     if text.count(old)!=1:raise RuntimeError((name,'anchor',text.count(old)))
     kill(name,'rpc_endpoint_test','tests/rpc_endpoint_test.c',content=text.replace(old,new))
+kill('rational-ignores-services','rpc_endpoint_cpu_test','engine/rpc/rpc_mem_timing.c',content=text.replace(
+    'if(exercise_batch.batched) rational-=exercise_batch.services;', 'if(exercise_batch.batched) (void)0;'))
 kill('maintenance-caller','rpc_endpoint_test','tests/rpc_endpoint_test.c',content=text.replace(
     'LOOKUP(&m.data, va, true)', 'LOOKUP(&m.data, va, false)'))
 kill('swap-service-classes','rpc_endpoint_test','tests/rpc_endpoint_test.c',content=text.replace(
@@ -134,4 +141,4 @@ def capture_guard(source):
 if not capture_guard(text):raise RuntimeError('capture guard fails on original')
 if capture_guard(text.replace('if (!endpoint_mode) return count;','if (!endpoint_mode) return count;\n    arc_rpc_mem_batch_flush();')):raise RuntimeError('capture flush mutant survived')
 print('capture-induced-flush: killed by no-canonicalisation guard')
-print(f'{2*len(names)+24} endpoint/counter mutants killed; no compile errors counted')
+print(f'{2*len(names)+29} endpoint/counter mutants killed; no compile errors counted')

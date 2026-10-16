@@ -25,6 +25,31 @@ static bool (*endpoint)(uint64_t,uint64_t,bool);
 static void (*interval)(ArcRpcMemInterval *);
 static void (*rate)(unsigned);
 static void (*snapshot)(ArcRpcTestSnapshot *);
+static void late_arming(void)
+{
+    uint8_t *rom=calloc(1,2097152),seed[256]={0};char error[256];assert(rom);
+    for(unsigned i=0;i<64;++i){rom[4*i]=1;rom[4*i+2]=0x80;rom[4*i+3]=0xe2;}
+    rom[256]=0xfe;rom[257]=0xff;rom[258]=0xff;rom[259]=0xea;
+    unsigned accepted=0,refused=0;
+    for(unsigned model=0;model<4;++model)for(uint64_t ns=1;ns<4000;ns+=13){
+            bool drained=(ns/13)&1u;
+            assert(start((ArcRpcModel)model,rom,2097152,seed,0,error,sizeof(error)));rate(100);
+            assert(advance(ns));ArcRpcTestSnapshot before;snapshot(&before);
+            uint64_t first=before.executed+1;
+            bool armed=endpoint(first,first+1,drained!=0);
+            assert(advance(100000));ArcRpcTestSnapshot after;snapshot(&after);assert(!after.faulted);
+            if(!armed){++refused;continue;}
+            ++accepted;ArcRpcMemInterval actual;interval(&actual);
+            assert(actual.started && actual.done && actual.end.instructions==first+1);
+            assert(start((ArcRpcModel)model,rom,2097152,seed,0,error,sizeof(error)));rate(100);
+            assert(advance(ns));measure(first,first+1,drained!=0);assert(advance(100000));
+            ArcRpcMemInterval expected;interval(&expected);
+            assert(expected.done && !memcmp(&actual,&expected,sizeof(actual)));
+        }
+    assert(accepted && refused);
+    printf("late endpoint arming: four models x 308 times, alternating drain modes; %u exact, %u refused, zero faults\n",accepted,refused);
+    free(rom);
+}
 int main(int argc,char **argv)
 {
     assert(argc>=2);
@@ -38,6 +63,7 @@ int main(int argc,char **argv)
     LOAD(measure,"arc_rpc_test_timing_measure"); LOAD(interval,"arc_rpc_test_timing_interval");
     LOAD(endpoint,"arc_rpc_test_timing_endpoint");LOAD(exercise,"arc_rpc_test_interval_exercise");
     LOAD(rate,"arc_rpc_session_test_rate"); LOAD(snapshot,"arc_rpc_test_snapshot");
+    if(argc==3 && !strcmp(argv[2],"--late-arm")){late_arming();return 0;}
     uint8_t *rom=malloc(2097152); assert(rom); uint8_t seed[256]={0}; char error[256];
     unsigned tested=0;
     uint64_t integer=0,rational=0,s1=0;

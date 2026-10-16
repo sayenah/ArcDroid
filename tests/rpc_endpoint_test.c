@@ -32,7 +32,7 @@ static void issue(bool store,bool read)
 {
     while(!arc_rpc_mem_ready(false)) service(false);
     assert(arc_rpc_mem_endpoint_admit(1)==1);
-    arc_rpc_mem_batch_begin(NULL);arc_rpc_mem_instruction_begin();
+    arc_rpc_mem_exercise_begin(false);arc_rpc_mem_batch_begin(NULL);arc_rpc_mem_instruction_begin();
     arc_rpc_mem_opcode(store?0xe5801000:0xe1a00000);
     if(store || read)arc_rpc_mem_access(0x10008000,0x10008000,4,store,false,store?4:0,true);
     arc_rpc_mem_instruction_end(4);arc_rpc_mem_endpoint_return();
@@ -51,11 +51,18 @@ static void intervals(void)
         while(!interval.done)service(true);
         assert(interval.end_ticks==28000+5*87500 && interval.end.words==1);
         init(2,100);assert(arc_rpc_mem_endpoint(2,2,drained));issue(true,false);
+        ArcRpcExercise before=arc_rpc_exercise;
         issue(false,false);
-        if(drained){assert(!interval.done && pending_end);while(!interval.done)service(true);}
+        if(drained){assert(!interval.done && pending_end);
+            ARC_RPC_COUNT(service_s1,7); /* included only by the drain snapshot */
+            while(!interval.done)service(true);}
         assert(interval.done && interval.start_ticks==28000);
         assert(interval.end_ticks==(drained?28000+5*87500:56000));
         assert(interval.end.instructions==2);
+        ArcRpcExercise window;assert(arc_rpc_mem_exercise_interval(&window));
+        for(unsigned i=0;i<ARC_RPC_COUNT_TOTAL;++i)
+            assert(window.values[i]==arc_rpc_exercise.values[i]-before.values[i]);
+        assert(window.values[ARC_RPC_COUNT_service_s1]==(drained?7u:0u));
     }
     /* C(1) survives a video hold separating completion from the next issue. */
     init(2,100);assert(arc_rpc_mem_endpoint(2,2,false));issue(false,false);
@@ -76,6 +83,12 @@ static void intervals(void)
 }
 static void measurement_state(void)
 {
+    init(2,100);issue(false,false);
+    ArcRpcMeasureState before,after;arc_rpc_mem_measure_state(&before);
+    assert(!arc_rpc_mem_endpoint(2,3,false));arc_rpc_mem_measure_state(&after);
+    assert(arc_rpc_mem_measure_equal(&before,&after));
+    assert(arc_rpc_mem_endpoint(3,3,false));issue(false,false);issue(false,false);
+    assert(interval.done && interval.start_ticks==56000 && interval.end_ticks==84000);
     init(2,100);assert(!arc_rpc_mem_endpoint(0,3,false));assert(!arc_rpc_mem_endpoint(3,2,false));
     assert(arc_rpc_mem_endpoint(2,3,true));
     ArcRpcMeasureState a,b;arc_rpc_mem_measure_state(&a);assert(arc_rpc_mem_measure_equal(&a,&a));
@@ -152,17 +165,18 @@ static void fill_counts(void)
         for(unsigned i=ARC_RPC_COUNT_fill_fetch_memory;i<=ARC_RPC_COUNT_fill_data_rom;++i)
             assert(value(i)==(i==index));
     }
-    for(unsigned commit=0;commit<2;++commit){
+    for(unsigned memory=0;memory<2;++memory)for(unsigned commit=0;commit<2;++commit){
         init(2,100);while(!arc_rpc_mem_ready(false))service(false);
         arc_rpc_mem_instruction_begin();arc_rpc_mem_opcode(0xe5901000);
-        arc_rpc_mem_access(0x10008000,0x10008000,4,false,false,8,true);
+        uint32_t address=memory?0x10008000:0x8000;
+        arc_rpc_mem_access(address,address,4,false,false,8,true);
         arc_rpc_mem_instruction_end(4);
         ArcRpcCpuBatch batch={&clock_state,NULL,commit?10000:11};
         assert(arc_rpc_mem_batch_service(&batch)==(commit!=0));
         assert(value(ARC_RPC_COUNT_shortcut_attempts)==1);
         assert(value(ARC_RPC_COUNT_shortcut_commits)==commit);
         assert(value(ARC_RPC_COUNT_shortcut_rollbacks)==!commit);
-        assert(value(ARC_RPC_COUNT_shortcut_memory_fills)==commit);
+        assert(value(ARC_RPC_COUNT_shortcut_memory_fills)==(memory?commit:0u));
     }
 }
 static void service_counts(void)
@@ -181,6 +195,21 @@ static void service_counts(void)
         assert(value(ARC_RPC_COUNT_service_finish_valid)==(kind>=1 && kind<=3));
         assert(value(ARC_RPC_COUNT_service_finish_invalid)==!(kind>=1 && kind<=3));
     }
+    /* Each strict edge independently excludes S1, including an overdue due
+     * time and both sources of the service boundary. */
+    const unsigned edges[][3]={{10,20,21},{10,20,20},{10,20,19},
+        {20,20,1000},{21,20,1000},{19,20,1000}};
+    for(unsigned event=0;event<2;++event)for(unsigned k=0;k<6;++k){
+        init(2,100);clock_state.now_ns=edges[k][0];
+        arc_rpc_mem_fast.cpu_due_ns=edges[k][1];
+        m.cycle_active=true;m.finish=280000;arc_rpc_mem_fast.bus_busy=true;
+        clock_state.next_ns=event?edges[k][2]:1000;
+        ArcRpcCpuBatch batch={&clock_state,NULL,event?1000:edges[k][2]};
+        (void)arc_rpc_mem_batch_service(&batch);
+        bool eligible=k==0 || k==5;
+        assert(value(ARC_RPC_COUNT_service_s1)==eligible);
+        assert(value(ARC_RPC_COUNT_service_busy)==!eligible);
+    }
 }
 static void excluded_counters(void)
 {
@@ -198,4 +227,3 @@ static void excluded_counters(void)
 }
 int main(void) { intervals();measurement_state();lookup_counts();maintenance_callsite();fill_counts();endpoint_shortcut();service_counts();excluded_counters();
     puts("exercise counters: lookup outcomes/ways/probes, service classes/finish validity, fill regions, shortcut commit/rollback, exclusion/reset");return 0; }
-

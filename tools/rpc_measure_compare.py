@@ -4,7 +4,8 @@
 
 Use identically configured builds. No disassembly address masking, relocation
 masking or golden regeneration is performed. Measurement's selected RPC objects
-must match shipping in full; the per-event exception is confined to session.c.
+must match shipping in full. Session event counts and retained observer policy
+APIs are outside that set; their AC-9 caveat is in the design note and runbook.
 """
 import argparse
 import json
@@ -19,6 +20,7 @@ import tempfile
 sys.dont_write_bytecode=True
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/"tests"))
 from rpc_ninja_commands import split_command
+from rpc_test_loop_compare import compare as compare_test_loops
 
 
 def run(args):
@@ -134,8 +136,11 @@ def main():
     p=argparse.ArgumentParser(__doc__)
     p.add_argument('--base',type=Path,required=True);p.add_argument('--candidate',type=Path,required=True)
     p.add_argument('--readobj',default=shutil.which('llvm-readobj'))
+    p.add_argument('--objdump',default=shutil.which('llvm-objdump'))
+    p.add_argument('--test-loops',action='store_true',help='also run the separate R-e0-1 TEST_FAULTS loop proof')
     args=p.parse_args()
     if not args.readobj:raise RuntimeError('llvm-readobj is required')
+    if args.test_loops and not args.objdump:raise RuntimeError('llvm-objdump is required for the TEST_FAULTS loop proof')
     for target in ('arcdroid_libretro_arculator','arcdroid_libretro_rpc','arcdroid_libretro','arcdroid_core','arcdroid_zlib'):
         compare_objects(objects(args.base,target),objects(args.candidate,target),args.readobj,'AC-5(a) '+target)
     commands=json.loads((args.candidate/'compile_commands.json').read_text())
@@ -160,6 +165,8 @@ def main():
         outer=layout(args.candidate,'arcdroid_rpcmeasure_libretro',args.readobj,Path(tmp),True)
         if outer!=a[:FAST_LAYOUT_COUNT]:raise RuntimeError('measurement frontend/RPC shared layout mismatch')
         print(f'AC-5(b) measurement frontend/RPC ArcRpcMemFast: {len(outer)} values identical')
-        print('unarmed measurement hot objects also match the pinned shipping base; no extra per-instruction work')
+        print('AC-5: selected measurement hot objects match shipping and the pinned shipping base; endpoint hooks are absent from this core')
+    if args.test_loops:compare_test_loops(args.base,args.candidate,args.objdump)
+    else:print('R-e0-1 TEST_FAULTS loop proof not requested (use --test-loops); AC-5 alone does not prove it')
 
 if __name__=='__main__':main()

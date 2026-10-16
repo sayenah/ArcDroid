@@ -2267,6 +2267,11 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
     add_test(NAME rpc-memory-timing-${model} COMMAND rpc_timing_test
       $<TARGET_FILE:arcdroid_libretro_test> ${model})
   endforeach()
+  add_test(NAME rpc-endpoint-late-arm COMMAND rpc_timing_test
+    $<TARGET_FILE:arcdroid_libretro_test> --late-arm)
+  set_tests_properties(rpc-endpoint-late-arm PROPERTIES TIMEOUT 1800)
+  add_test(NAME rpc-test-loop-guard COMMAND "${Python3_EXECUTABLE}" -B
+    "${CMAKE_CURRENT_SOURCE_DIR}/tools/rpc_test_loop_compare.py" --self-test)
   add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/rpc_session_rom.h"
     COMMAND "${Python3_EXECUTABLE}" -B "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_session_rom.py"
       "${CMAKE_CURRENT_BINARY_DIR}/generated/rpc_session_rom.h"
@@ -2570,6 +2575,14 @@ if(TARGET arcdroid_libretro_test)
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_measure_core_test.py" $<TARGET_FILE:rpc_runner>
     $<TARGET_FILE:arcdroid_rpcplan_libretro> $<TARGET_FILE:arcdroid_rpcmeasure_libretro>)
   set_tests_properties(rpc-measurement-core PROPERTIES TIMEOUT 240)
+  if(TARGET rpc_observers_frontend_test)
+    foreach(observer_core IN ITEMS plan measure)
+      add_test(NAME rpc-observers-off-${observer_core} COMMAND "${Python3_EXECUTABLE}" -B
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_observers_frontend_test.py"
+        $<TARGET_FILE:rpc_observers_frontend_test> $<TARGET_FILE:arcdroid_rpc${observer_core}_libretro> "${FIXTURE_DIR}" off)
+      set_tests_properties(rpc-observers-off-${observer_core} PROPERTIES TIMEOUT 120)
+    endforeach()
+  endif()
   add_test(NAME rpc-endpoint-plan-prefix COMMAND "${Python3_EXECUTABLE}" -B
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_endpoint_plan_test.py" $<TARGET_FILE:rpc_runner>
     $<TARGET_FILE:arcdroid_rpcplan_libretro> "${RPC_PLAN_DIR}")

@@ -505,11 +505,44 @@ and `rpc_mem_timing.c` between measurement and shipping. This includes all
 three interpreter loops and the named timing/translation/fetch functions and
 inline callers. Every shared timing/cache/packet member offset, size and
 alignment is checked by compiling a constant probe with those targets' flags.
-No code, relocation, constant or address masking is used. Event diagnostics
-are confined to the enumerated session exception. Comparing the measurement
-hot objects with the pinned shipping base proves no added unarmed
-per-instruction work. Keep source identity pinned identically for archive
+No code, relocation, constant or address masking is used. The separate
+R-e0-1 check (`--test-loops`) compares the endpoint-containing `arcdroid_libretro_test_rpc`
+with the base: all three preprocessed loops and reachable local/inline helpers
+match; exercise-begin is in the common wrapper before dispatch. Emitted
+instruction counts do not grow and RPC relocation references match. Build the
+ordinary test core in both trees, and supply `--test-loops --objdump LLVM_OBJDUMP` as well
+as `--readobj LLVM_READOBJ` if they are not on PATH. Its CTest self-test is
+`rpc-test-loop-guard`. Keep source identity pinned identically for archive
 builds (`-DARCDROID_SOURCE_REVISION=<base revision>`).
+
+AC-9 observer caveat (Run C's authorized F-4 fallback): the four compared
+CPU/timing/translation objects match shipping; observer objects are outside
+that identity claim. `rpc_observer.c` adds API functions without changing the
+production source (host QA found existing functions instruction-identical).
+In `rpc_observers.c`, `state.overridden` shifts offsets
+for inserted-media, callback, candidate, retry and suppression state. Observer
+events/frame/status functions addressing them use those shifted offsets.
+`error_event` and `disc_event` load the mutable `watch_budget` instead of
+shipping's constant 1,000,000,000 attempts for watch/renew calls. This is the
+watch-budget API, not the launch horizon. The horizon API separately makes
+`state.launch.profile` redirectable for launch/frame handling; rebase saves
+and restores test override policy per reset. Full observer-object identity
+would require redesigning the current API/state boundary, removing retained
+policy capabilities, or changing shipping state/reset code. Run C keeps these
+APIs and shipping identity and uses the authorized documentation fallback.
+Record this per-event cost caveat with
+AC-9 results; no such work is added per instruction.
+
+For AC-9 on **any** pair, including qualified 031 firmware, write a copy of the
+plan with `observer_cells=off` for the unobserved leg. Confirm the distinct
+`RPC observers: TEST OFF; all cells disabled (observer_cells=off)` log. Use an
+absent `observer_cells` key for the production leg. Numeric zero still means
+no candidate override and is not an off switch. Omit observation trace and
+`observation_profile=unmatched` in both cost legs; those are separate diagnostic
+subscriptions. Both plan and measurement cores support the off setting,
+including attachment/reset. `rpc-observers-off-plan` and
+`rpc-observers-off-measure` exercise all cells off on a qualified 3.71/SA110
+binding via the existing trusted table seam, with absent/zero controls.
 
 Windows cross-build on the development host:
 

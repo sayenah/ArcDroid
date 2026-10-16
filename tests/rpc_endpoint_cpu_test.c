@@ -91,11 +91,23 @@ static void ranking_reset(void)
     arc_rpc_mem_bind(NULL,0,0);arc_rpc_profile_snapshot(&p);assert(p.ranking_epoch==2 && !p.ranking_attempts && !p.ranking_fetched && !p.al);
     for(unsigned i=0;i<ARC_RPC_COUNT_TOTAL;++i)assert(!p.ranking.values[i] && !arc_rpc_exercise.values[i]);
 }
+static void service_continuation(CPUModel model)
+{
+    for(unsigned path=0;path<3;++path){
+        execution_init(model,35,path);arm.reg[0]=0x10008000;
+        rom[64]=0xe5901000; /* LDR r1,[r0]: one service continuation */
+        ready();ArcRpcCpuBatch batch={&endpoint_clock,NULL,100000};
+        assert(arc_rpc_arm_exec_batch(3,&batch)==3);
+        assert(arc_rpc_exercise.values[ARC_RPC_COUNT_service_pending]>0);
+        assert(arc_rpc_exercise.values[ARC_RPC_COUNT_rational_unobserved+path]==1);
+        count_equal();
+    }
+}
 int main(void)
 {
     arm_init();protected=1;if(setjmp(boundary))return 1;
     config.mem_size=64;config.vram_size=2;mem_init();
-    for(unsigned model=0;model<4;++model){translation_counts((CPUModel)model);endpoint_execution((CPUModel)model);}
+    for(unsigned model=0;model<4;++model){translation_counts((CPUModel)model);endpoint_execution((CPUModel)model);service_continuation((CPUModel)model);}
     ranking_reset();arc_rpc_mem_bind(NULL,0,0);arc_rpc_memory_close();
     puts("endpoint CPU: four models, three loops, integral/rational counts, prefix parity, NULL stop, TLB denied/pending/opportunity, schema-2 totals");return 0;
 }

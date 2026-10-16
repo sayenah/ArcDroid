@@ -107,9 +107,6 @@ static inline void arc_rpc_mem_batch_begin(ArcRpcCpuBatch *batch)
         && !f->test_measure
 #endif
         ;
-#if defined(ARCDROID_TEST_FAULTS) && !defined(ARCDROID_RPC_MEASUREMENT)
-    arc_rpc_mem_exercise_begin(batch != 0);
-#endif
 }
 static inline void arc_rpc_mem_opcode(uint32_t opcode)
 { if (arc_rpc_mem_fast.recording) arc_rpc_mem_fast.opcode=opcode; }

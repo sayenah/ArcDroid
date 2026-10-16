@@ -386,6 +386,12 @@ the pinned base, in addition to shipping object sections and the three separate
 AC-1 comparisons. Admission/return work is outside the instruction loop. A
 flag branch newly executed on every unarmed instruction is not accepted proof.
 
+Late arming refuses without changing measurement state when `first > 1`,
+`first - 1 == instructions`, and the preceding instruction is no longer
+pending: its unarmed completion was not retained. A pending predecessor can
+still supply its exact completion; a more distant first instruction is also
+accepted. This prevents accepting a window that would fault at next admission.
+
 The macro split retains `ARCDROID_TEST_FAULTS` as the hot-hook part and adds
 `ARCDROID_TEST_API` for test APIs. Ordinary TEST_FAULTS implies the API part.
 `ARCDROID_RPC_MEASUREMENT` selects the API/plan-only measurement target.
@@ -399,7 +405,9 @@ The macro split retains `ARCDROID_TEST_FAULTS` as the hot-hook part and adds
 | Measurement (non-installed) | yes / yes | no | no | no | yes / yes |
 
 Measurement has shipping optimisation, visibility and shared hot layouts.
-Its sole hot-code exception is per-event diagnostic counting. Intrusive and
+The four named CPU/timing/translation objects match shipping. The exceptions
+outside that set are session event counting and the observer API differences
+listed below. Intrusive and
 endpoint measurements, observer trace, quota clamp, allocation injection and
 exercise/ranking counter requests refuse explicitly. Runner capability checks
 produce a nonzero exit naming the absent facility. Production observer
@@ -460,8 +468,50 @@ The implementation adds `arc_rpc_test_capabilities` so the runner never queries
 absent trace diagnostics as if they were available. Unsupported direct trace
 APIs latch a refusal too; ordinary measurement-plan cleanup does not request
 those APIs. The final test target retains frontend test APIs while its forced
-RPC namespace header clears TEST_FAULTS and retains TEST_API. Thus the RPC hot
-objects have precisely the shipping preprocessor shape.
+RPC namespace header clears TEST_FAULTS and retains TEST_API. The four named
+CPU/timing/translation objects therefore have the shipping preprocessor shape;
+this is not a claim about every RPC object.
+
+Run C observer comparison caveat (AC-9): `rpc_observer.c` appends API-only
+functions without changing the production source (host QA found those existing
+functions instruction-identical).
+`rpc_observers.c` retains API-controlled policy and reset restoration, so its
+object does not match shipping. The test-only `state.overridden` member shifts
+the offsets of `inserted`, the callbacks/opaque pointer, resolved candidate,
+retry/suppression fields and copied retry work. Event handlers and frame/status
+code addressing those members use the shifted offsets. In `error_event` and
+`disc_event`, the watch/renew budget is loaded from mutable `watch_budget`
+instead of using shipping's constant 1,000,000,000 instruction attempts (the
+`test_watch_budget` API causes this; it is not the launch time horizon).
+The separate `test_horizon` API can redirect `state.launch.profile` to a mutable
+profile for `arc_outcome_frame`/launch handling. Bind/override/rebase retain
+that API state and reset restoration; rebase adds save/restore work per reset.
+These differences add no per-instruction hook, but observer-event code is not
+shipping-identical. With the current single-translation-unit ownership, full
+identity would require an API/state-boundary redesign, removing retained policy
+APIs, or changing shipping state/reset code. Run C keeps those APIs and the
+AC-5(a) shipping identity and uses the authorized documentation fallback: AC-9 measures this
+same measurement core with production cells versus `observer_cells=off`, and
+records these per-event differences as a caveat, not as shipping-object proof.
+
+`observer_cells=off` explicitly disables all eight cells on every firmware/CPU
+pair, including a qualified pair, and logs `RPC observers: TEST OFF; all cells
+disabled (observer_cells=off)`. It applies at attachment and after reset.
+An absent key or numeric `observer_cells=0` retains production qualification;
+a nonzero numeric mask retains the existing candidate override semantics.
+The same setting is supported by plan and measurement cores. Observer trace
+and `observation_profile=unmatched` are separate diagnostic subscriptions;
+omit both for the unobserved AC-9 leg.
+
+`rpc_measure_compare.py --test-loops` checks R-e0-1 on `arcdroid_libretro_test_rpc`,
+which contains the endpoint mechanism: the three preprocessed loop bodies and
+their reachable local/inline helpers must match the pinned base. The single
+`arc_rpc_mem_exercise_begin` call stays in the common dispatch wrapper before
+all three instantiations. Each emitted loop must have no more instructions
+than the base and the same RPC relocation-reference multiset. The
+committed guard self-test rejects added inline work, a new loop call and moving
+batch entry into the instruction loop. Measurement/shipping object identity
+alone does not prove this test-core property.
 
 `--prefix-instructions N` captures an authored functional prefix at the normal
 interpreter return. `--single-step-prefix` supplies the independent unarmed
