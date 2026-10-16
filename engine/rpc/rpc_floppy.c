@@ -6,6 +6,13 @@
 #include <stdio.h>
 #include <string.h>
 
+static void (*raw_refusal)(unsigned,unsigned,unsigned,unsigned);
+static unsigned storage_failures;
+void arc_rpc_floppy_refusal_callback_set(void (*callback)(unsigned,unsigned,unsigned,unsigned))
+{ raw_refusal=callback; }
+unsigned arc_rpc_floppy_storage_failure_take(void)
+{ unsigned pending=storage_failures;storage_failures=0;return pending; }
+
 void arc_rpc_floppy_init(ArcRpcFloppy *f,uint64_t session)
 {
     memset(f,0,sizeof(*f)); f->session_generation=session;
@@ -119,6 +126,7 @@ static void refused(const ArcRpcFloppyDrive *d,const ArcRpcFloppyRequest *r,cons
 {
     const ArcJfdOverlay *o=d->jfd?d->jfd->overlay:NULL;
     if(o&&o->log_refusal)o->log_refusal(o->image_number,r->cylinder,r->head,r->r,why);
+    if(!d->jfd && raw_refusal)raw_refusal(r->drive,r->cylinder,r->head,r->r);
 }
 static unsigned density(const ArcRpcFloppyRequest *r)
 { return r->encoding==ARC_RPC_FLOPPY_FM?1:r->rate_kbps==500?4:r->rate_kbps==1000?8:2; }
@@ -177,7 +185,7 @@ ArcRpcFloppyResult arc_rpc_floppy_select(ArcRpcFloppy *f,const ArcRpcFloppyReque
         if(r->head>=d->sides || den!=d->density)return ARC_RPC_FLOPPY_NOT_FOUND;
         if(format){
             uint64_t format_ns=(146u+(uint64_t)r->sc*(62u+d->bytes+r->gpl))*UINT64_C(8000000)/r->rate_kbps;
-            if(r->n!=size_code(d->bytes)||r->sc!=d->sectors || format_ns>ARC_RPC_FLOPPY_REV_NS)return ARC_RPC_FLOPPY_WRITE_PROTECT;
+            if(r->n!=size_code(d->bytes)||r->sc!=d->sectors || format_ns>ARC_RPC_FLOPPY_REV_NS){refused(d,r,"format-mismatch");return ARC_RPC_FLOPPY_WRITE_PROTECT;}
             out->bytes=d->bytes;out->delay_ns=(ARC_RPC_FLOPPY_REV_NS-phase)%ARC_RPC_FLOPPY_REV_NS;return ARC_RPC_FLOPPY_OK;}
         unsigned id=r->r;
         if(any){
@@ -198,7 +206,7 @@ ArcRpcFloppyResult arc_rpc_floppy_select(ArcRpcFloppy *f,const ArcRpcFloppyReque
         if(!any && r->c!=out->c)return ARC_RPC_FLOPPY_WRONG_CYLINDER;
         if(!any && r->h!=out->h)return ARC_RPC_FLOPPY_NOT_FOUND;
         if(!any && r->n!=out->n)return ARC_RPC_FLOPPY_NOT_FOUND;
-        if(write&&r->deleted)return ARC_RPC_FLOPPY_WRITE_PROTECT; /* Raw has no DAM storage. */
+        if(write&&r->deleted){refused(d,r,"deleted-data");return ARC_RPC_FLOPPY_WRITE_PROTECT;} /* Raw has no DAM storage. */
         if(d->raw)memcpy(out->data,d->raw+out->raw_offset,d->bytes);
         else if(arc_io_seek_file(d->file,(int64_t)out->raw_offset,RETRO_VFS_SEEK_POSITION_START)<0 ||
             arc_io_read_file(d->file,out->data,d->bytes)!=d->bytes)return ARC_RPC_FLOPPY_NOT_FOUND;
@@ -228,7 +236,7 @@ ArcRpcFloppyResult arc_rpc_floppy_commit(ArcRpcFloppy *f,ArcRpcFloppySector *s,
         if(!ok){d->writable=false;refused(d,&s->request,"store-failure");return ARC_RPC_FLOPPY_WRITE_PROTECT;}
     }else if(!d->file || arc_io_seek_file(d->file,(int64_t)s->raw_offset,RETRO_VFS_SEEK_POSITION_START)<0 ||
         arc_io_write_file(d->file,pending,s->bytes)!=s->bytes || !arc_io_flush_file(d->file)){
-        d->writable=false;return ARC_RPC_FLOPPY_WRITE_PROTECT;
+        d->writable=false;storage_failures|=1u<<drive;refused(d,&s->request,"store-failure");return ARC_RPC_FLOPPY_WRITE_PROTECT;
     }
     s->committed=true;return ARC_RPC_FLOPPY_OK;
 }
@@ -238,7 +246,7 @@ ArcRpcFloppyResult arc_rpc_floppy_format(ArcRpcFloppy *f,ArcRpcFloppySector *s,
     unsigned drive=s->request.drive;
     if(!arc_rpc_floppy_valid(f,drive,s->generation))return ARC_RPC_FLOPPY_CANCELLED;
     ArcRpcFloppyDrive *d=&f->drives[drive];
-    if(d->jfd||!d->writable||count!=d->sectors)return ARC_RPC_FLOPPY_WRITE_PROTECT;
+    if(d->jfd||!d->writable||count!=d->sectors){refused(d,&s->request,"format-mismatch");return ARC_RPC_FLOPPY_WRITE_PROTECT;}
     uint8_t n=size_code(d->bytes);
     /* D-143: raw offsets identify sectors, not the supplied rotational order.
      * Validate the entire ID set before changing any bytes. */
@@ -246,7 +254,7 @@ ArcRpcFloppyResult arc_rpc_floppy_format(ArcRpcFloppy *f,ArcRpcFloppySector *s,
     for(unsigned i=0;i<count;++i){
         unsigned r=ids[i*4+2];
         if(ids[i*4]!=(uint8_t)d->cylinder || ids[i*4+1]!=s->request.head || r>=d->sectors || ids[i*4+3]!=n || (seen&(1u<<r)))
-            return ARC_RPC_FLOPPY_WRITE_PROTECT;
+            {refused(d,&s->request,"format-mismatch");return ARC_RPC_FLOPPY_WRITE_PROTECT;}
         seen|=1u<<r;
     }
     size_t offset=((size_t)d->cylinder*d->sides+s->request.head)*d->sectors*d->bytes;
@@ -255,7 +263,7 @@ ArcRpcFloppyResult arc_rpc_floppy_format(ArcRpcFloppy *f,ArcRpcFloppySector *s,
     uint8_t buffer[20*1024];memset(buffer,fill,length);
     if(!d->file || arc_io_seek_file(d->file,(int64_t)offset,RETRO_VFS_SEEK_POSITION_START)<0 ||
         arc_io_write_file(d->file,buffer,length)!=length || !arc_io_flush_file(d->file)){
-        d->writable=false;return ARC_RPC_FLOPPY_WRITE_PROTECT;}
+        d->writable=false;storage_failures|=1u<<drive;refused(d,&s->request,"store-failure");return ARC_RPC_FLOPPY_WRITE_PROTECT;}
     return ARC_RPC_FLOPPY_OK;
 }
 void arc_rpc_floppy_missing(ArcRpcFloppy *f,const ArcRpcFloppyRequest *r)

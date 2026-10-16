@@ -4,7 +4,7 @@ dma-state=06,06,02,07,07,03,06,02,03,06,02,00,07,03,06,07 quads=8 pairs=32 wrap=
 pressure generated=2400 accepted=1066 discarded=1334 queued=0 recovery=800
 frontend generated=2400 accepted=2400 hash=7dd35bf1592db600
 overflow generated=9600 discarded=1408 queued=8192 recovered=8192
-fault silence=960 frozen=1 purge=1 reset=1 stop=1
+fault silence=800 frozen=1 purge=1 reset=1 stop=1
 keyboard make=1c repeat=1c,1c break=f0,1c shared=held reset=released
 typematic param=00 make=1c repeat=1c,1c,1c,1c,1c,1c,1c,1c break=f0,1c
 pad space=29,f0,29 mouse=quadrature=12,7 buttons=30,70

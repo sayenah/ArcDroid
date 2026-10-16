@@ -141,6 +141,7 @@ static void arc_rpc_stop(void)
     ARC_RPC_PROFILE(reset());
     arc_rpc_ide_set_backend(NULL);
     arc_rpc_fdc_close();
+    (void)arc_rpc_floppy_storage_failure_take();
     arc_rpc_sound_purge();
     arc_rpc_input_service = NULL;
     arc_rpc_input_factory(false);
@@ -515,7 +516,8 @@ static bool arc_rpc_release(uint64_t *t, bool *a) { if (t) *t=0; if (a) *a=false
 static uint64_t arc_rpc_disc_time(void) { return arc_rpc_time_ns()/1000; }
 static bool arc_rpc_controller_idle(void) { return arc_rpc_live && !arc_rpc_fault && arc_rpc_fdc_idle(0); }
 
-static void arc_rpc_refusal(void (*c)(unsigned,unsigned,unsigned,unsigned)) { (void)c; }
+static void arc_rpc_refusal(void (*c)(unsigned,unsigned,unsigned,unsigned))
+{ arc_rpc_floppy_refusal_callback_set(c); }
 static size_t arc_rpc_audio(int16_t *o,size_t n)
 {
     if(arc_rpc_live && arc_rpc_fault && o)arc_rpc_sound_fault_silence(n);

@@ -110,7 +110,8 @@ def trace(model):
     pcm,_,_=expected(model,end=50000001)
     lines.append(f'frontend generated=2400 accepted=2400 hash={fnv(pcm):016x}')
     lines.append('overflow generated=9600 discarded=1408 queued=8192 recovered=8192')
-    lines.append('fault silence=960 frozen=1 purge=1 reset=1 stop=1')
+    # R3d-1: a new RPC session starts at 60 Hz until its first field.
+    lines.append('fault silence=800 frozen=1 purge=1 reset=1 stop=1')
     lines.append('keyboard make=1c repeat=1c,1c break=f0,1c shared=held reset=released')
     lines.append('typematic param=00 make=1c repeat=1c,1c,1c,1c,1c,1c,1c,1c break=f0,1c')
     lines.append('pad space=29,f0,29 mouse='+('ps2=fa,09,00,00,09,0c,07,08,00,00' if model==3 else 'quadrature=12,7 buttons=30,70'))
