@@ -2,6 +2,8 @@
 
 # ArcDroid Handoff
 
+**S67 (Claude Opus 5.5 effort 15; baton by relay from `arcdroid-2c`, S66).** S67 re-armed both Sol watchdogs, re-dispatched Opus QA of PR #458 (`.work/s67/qa-r3d3-own-lows/`), and adjudicated R3d-1 run C's QA (F-1 and S-3 to Sol run C2).
+
 **S66 close (window `arcdroid-2c`; baton by relay from `arcdroid-2a`).** Workstreams run in parallel (D-182). Private evidence: `.work/s66/LEDGER.md`; **private operating details (box, device, library): `.work/PRIVATE.md`**. S66 merged R3c-2 K/L (`ffac6d0`), W4 (`176d06d`), R3d-1 (`206d51f`), R3d-3 own (`c0d6d45`), 6b-P0i (`d826825`), W5 (`53f4177`), the README and banner; decisions D-195 to D-197. **The repository is public (D-196):** write nothing private into commits, PR text, CI logs or artifacts.
 
 **Founder instructions (S64–S66).**
@@ -11,8 +13,8 @@
 **Running at close (owned by the next holder; never stop any other process).**
 - **Sol 6b slice 1a-0:** codex PID 27175, thread `01a144f0-16c2-7c33-8efe-fa952cfb584c`, clone `.work/s66/1a0/clone` (`slice/6b-1a0-measure`), output `.work/s66/1a0/finalB.md`. Re-arm: `~/dev/agent-tools/wait-run.sh 27175 .work/s66/1a0/streamB.jsonl .work/s66/1a0/finalB.md`.
 - **Sol R3c-3a run D** (Windows live-heap census): codex PID 79699, fresh thread, clone `.work/s64/r3c3a/clone` (latest `main` merged locally, unpushed), output `.work/s64/r3c3a/finalD.md`. Re-arm likewise with `streamD.jsonl`.
-- **Opus QA of R3d-3 own run E (PR #458)** was an in-session subagent; if `.work/s66/qa-r3d3-own-lows/QA-REPORT.md` has no verdict, re-dispatch `arcdroid-opus-qa` with the checks in `.work/s66/r3d3-own-lows-prompt.md` (clone `.work/s66/qa-r3d3-own-lows/clone`).
-- **R3d-1 run C (PR #457):** Opus QA **PASS WITH FINDINGS** (`.work/s66/qa-r3d1-lows/QA-REPORT.md`): one Low, F-1 (`rpc_orchestration_test` lacks a dependency on the build-time identity header; a fresh target-only build fails). Next: adjudicate (fix F-1 as a one-line Sol run C2 or accept as follow-up), CI, merge.
+- **Opus QA of R3d-3 own run E (PR #458):** the S66 attempt left no verdict; S67 re-dispatched `arcdroid-opus-qa` (in-session subagent; prompt and report in `.work/s67/qa-r3d3-own-lows/`, clone = PR head merged with `main` `b517cd5`). The S66 attempt's build and test processes under `.work/s66/qa-r3d3-own-lows/` and `.work/s66/qa-r3d1-lows/` were still running at S67 start; S67 did not start them and leaves them alone.
+- **R3d-1 run C (PR #457):** Opus QA **PASS WITH FINDINGS** (`.work/s66/qa-r3d1-lows/QA-REPORT.md`); adjudicated S67 (`adjudication.md` beside it): F-1 and S-3 fixed in run C2 (below), S-1 and S-2 follow-up Lows.
 - **CI:** PR #462 (W5b, QA confirmed) — merge when green.
 
 **Lessons (S66).**
@@ -29,7 +31,7 @@
 - **R3c-3b.** `slice/r3c3b-launch`, head `3fdb812` (part 2 runs A and B: controller, D-190 two-floppy defaults, media-bound records, 823 mutants, host 415/415). A merge with `main` conflicts in five files (observer docs and tests, `rpc_observers.c`, `tests/arc_test_plan.c`); do it after R3c-3a merges, as a Sol run that also converts part 2's `arc_engine_is_rpc(` sites to session kind once R3d-1 merges (D-193 precondition). Then Fable's seven-pair AC-6 (including the 084 install and cold product relaunch) and AC-7, promotion run, QA.
 - **R3d.** Plan D-186; R3d-3 work order `docs/riscpc-r3d3-work-order.md` (D-193).
   - **R3d-2 merged** (`0beb7a8`).
-  - **R3d-1: MERGED** (`206d51f`). **R3d-1 run C (QA Lows):** PR #457 (`slice/r3d1-lows`; host 417/417, sanitizer 47/47, 45 mutation checks). **Stage:** QA. **Owner:** Opus. **Next (Opus):** review PR #457 against the six dispositions in `.work/s65/qa-r3d1/adjudication.md`; then CI; merge.
+  - **R3d-1: MERGED** (`206d51f`). **R3d-1 run C (QA Lows):** PR #457 (`slice/r3d1-lows`; host 417/417, sanitizer 47/47, 45 mutation checks); Opus QA PASS WITH FINDINGS, all six dispositions met. **Run C2** (on `slice/r3d1-lows`, merged with `main`). **Stage:** IMPLEMENTATION. **Owner:** Sol. **Next (Sol):** (1) F-1: every target that compiles a source including the build-time identity header (`arc_build_identity.h`) depends on the identity step, by one mechanism new targets inherit where CMake allows; an automated check (CTest) fails if any such target lacks the dependency, and a fresh configure followed by a target-only build of each such target succeeds (`rpc_orchestration_test` fails today). (2) S-3: the identity step's git commands take no optional locks; the existing identity transitions (checkout, tracked and untracked dirty, clean, no-op build, archive with and without override) still pass. **Non-goals:** no change to identity content, shipping code or other tests. **Evidence:** the new check fails on a mutant that drops one dependency; host full suite; MinGW and Android builds with their guards; new authored files carry `SPDX-License-Identifier: GPL-2.0-only`; report in `SOL-REPORT-R3D1-C2.md` at the clone root (not committed). Then a short Opus confirmation (protocol §17), CI on all five jobs, merge.
   - **R3d-3 `slice/r3d3-own`: MERGED** (`c0d6d45`, PR #426; Opus QA PASS with Lows). **Run E (QA Lows):** PR #458 (`slice/r3d3-own-lows`; host 415/415, focused sanitizers 9/9, 105 mutants). **Stage:** QA. **Owner:** Opus. **Next (Opus):** review PR #458 against `.work/s66/qa-r3d3-own/adjudication.md`; then CI; merge.
   - **R3d-3 `slice/r3d3-host`:** DESIGN; waits for R3c-3b part 2's merged head, P10b app-context evidence, and the frozen N-13 to N-18 texts; pre-dispatch probes P1, P1b, P3, P8 and the hold table (work order's table).
 
