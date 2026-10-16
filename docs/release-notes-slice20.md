@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: GPL-2.0-only -->
+
 # Slice 20 — native JFD omitted file data
 
 On the native JFD path, ArcDroid now presents an omitted standard D- or E-format sector as 1024 zero bytes when the image's own valid FileCore map and reachable directory tree prove that the sector intersects a file or directory's logical data. The proof reads only original captured bytes. Saved replacements, created sectors, free space, whole slack sectors, map data, irregular tracks, and unproved areas retain their existing behavior. Writable JFD images retain C-11c; ADFFS and install sessions are unchanged. This narrows the native Record-Not-Found rule in D-066 and D-067 for these proved file-data sectors.

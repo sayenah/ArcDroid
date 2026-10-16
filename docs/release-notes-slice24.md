@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: GPL-2.0-only -->
+
 # Slice 24 release notes
 
 Automatic input layout selection and the one title-specific input preset are removed. Every

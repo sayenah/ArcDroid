@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: GPL-2.0-only -->
+
 # Arculator upstream snapshot
 
 - Project: Arculator
@@ -44,6 +46,13 @@ src/wd1770.c src/wd1770.h
 
 This is an allowlisted copy, not a subtree. ArcDroid modifications carry an
 explicit notice in each modified upstream file.
+
+`arculator/upstream-blobs.json` records the original Git blob IDs from this
+pinned commit (GitHub's recursive tree API), with the two authored JFD
+replacements declared separately from the imported files.
+`tools/check-arculator-import.py` compares the working tree against those IDs
+offline, tolerating Git's LF/CRLF checkout conventions, and requires dated
+ArcDroid notices for modified imports. No network access is needed in CI.
 
 Slice 14 adds one marked passive call at the entry of `src/arm.c`'s `opSWI`.
 It passes scalar SWI context to the ArcDroid-owned boot observer; the upstream
@@ -187,18 +196,20 @@ credits are preserved in the imported `README.md`.
 
 ## Founder-accepted binaries without source
 
-Decision D-018 expressly accepts only these upstream-distributed assets. Hashes
+Decision D-018, amended by D-197, accepts only these upstream-distributed assets. Hashes
 are SHA-256 over the exact files at the pinned commit.
 
 | Path | Size | SHA-256 |
 |---|---:|---|
-| `arculator/roms/arcrom_ext` | 65,536 | `c181c7fbbd0f0038f6adf2976a9cd03cb4ad58be3bd32074719fd516d1ddae98` |
 | `arculator/cmos/arthur/cmos.bin` | 256 | `7dd1775b3a54da74abd2e74a1f5fedf573361c33c132030792ae51f554938219` |
 | `arculator/cmos/riscos2/cmos.bin` | 256 | `7d1b2c6ac95cd5ea1020f6397a20f4cb3b2d8f896f0266a6ce2a9acd52cf4002` |
 | `arculator/cmos/riscos3_new/cmos.bin` | 256 | `855a7a33f559d03e4f66010ee493307a75a6e2c80729df3f98cb08f95dd862e9` |
 | `arculator/cmos/riscos3_old/cmos.bin` | 256 | `d809253f16f4e865a4e966133032dc430ee0a4b0df2a71caf7c0ce7a075e81c8` |
 
-The support ROM is retained for future HostFS work but is not wired into Slice 1.
+D-197 removes the unused `arculator/roms/arcrom_ext` HostFS support binary.
+Its retained upstream loader is excluded from the ArcDroid build; the core
+loads user-supplied firmware through its own boundary. The four CMOS images
+above remain unchanged.
 
 Slice 22 removed the ArcDroid install-completion doorbell include and call from
 `82c711_fdc.c` and `wd1770.c`; the remaining controller modifications and

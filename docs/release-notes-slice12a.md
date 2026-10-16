@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: GPL-2.0-only -->
+
 # Slice 12a — launch discovery
 
 ArcDroid now launches a discovered application when a disc has a boot option but no root `!Boot` object. A root `!Boot` file or directory still gives the disc control of its own boot sequence.

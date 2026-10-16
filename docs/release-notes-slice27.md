@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: GPL-2.0-only -->
+
 # Slice 27 — left stick controls
 
 Each controller’s left analog stick now acts as that port’s D-pad by default.

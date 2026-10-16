@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: GPL-2.0-only -->
+
 # Slice 16: native JFD track-side quarantine
 
 ArcDroid now opens a structurally valid JFD even when a track-side contains

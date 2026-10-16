@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: GPL-2.0-only -->
+
 # R3d-3: production preparation host and concurrent-writer ownership
 
 **Status (S65, D-193):** adopted after Astra stage 2 (REJECT of v1), Fable's rulings and the stage 2 re-check (adjudication at the end). `slice/r3d3-own` is dispatched to Sol now; `slice/r3d3-host` waits for its base (R3c-3b part 2 merged), P10b and the frozen notice texts. The pending-decision wording below about the `F_SETLK` fallback and the Android floor is settled: Fable confirmed the removal, and the Founder decided D-192.

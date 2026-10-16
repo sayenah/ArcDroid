@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: GPL-2.0-only -->
+
 # Slice 9
 
 ADFFS boot is available on A3010, A3020, and A4000 when the usual single-disc

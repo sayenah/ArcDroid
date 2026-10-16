@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: GPL-2.0-only -->
+
 # Authored plan expectations
 
 These expectations are declared from the ARM instruction/exception rules and

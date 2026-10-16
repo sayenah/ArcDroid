@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: GPL-2.0-only -->
+
 # Contained session expectations (C2)
 
 The instruction arrays in `rpc_session_rom.py` are authored for these tests;

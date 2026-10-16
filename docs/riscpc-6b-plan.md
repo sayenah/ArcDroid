@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: GPL-2.0-only -->
+
 # Item 6b plan after Phase 1a (D-188, D-189)
 
 Status: **adopted (D-191)**, S65, after Astra stage 1 (ACCEPT WITH CHANGES, all eleven findings incorporated at the end). Each slice gets its own work order and Astra stage 2 before implementation. Fable's adjudication of the S65 6b design workflow (read-only research over `1bb22aa`: four area maps, three angled drafts, three judges, a synthesis and a completeness critic; `.work/s65/review/WF-6b-phase1b-design.md`). The synthesis is adopted as the starting plan. Every amendment from the completeness critic is adopted (section **Amendments (incorporated)** at the end) and governs where it differs from the body. Founder decisions since the synthesis: D-188 (design for about 200 MIPS capacity) and **D-189 (6b production work starts now, in parallel with R3)**, which settles the critic's amendment 2. The synthesis's section 0 list of Founder items is superseded by the section **Founder items (Fable's adjudication)** below.

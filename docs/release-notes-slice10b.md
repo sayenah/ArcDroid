@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: GPL-2.0-only -->
+
 # Slice 10b — persisted install hard disc
 
 Exact-profile install recipes for three library titles
