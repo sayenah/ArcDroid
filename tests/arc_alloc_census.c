@@ -11,6 +11,7 @@
 #include <stdio.h>
 #include <assert.h>
 #include <errno.h>
+#include <string.h>
 #ifndef __has_feature
 #define __has_feature(x) 0
 #endif
@@ -80,6 +81,22 @@ void *arc_alloc_census_realloc(void *ptr, size_t size, const char *file, unsigne
 __declspec(dllexport)
 #endif
 ArcAllocCensus arc_alloc_census_snapshot(void) { return live; }
+#if defined(_WIN32)
+__declspec(dllexport)
+#endif
+ArcAllocCensus arc_alloc_census_rpc_snapshot(void)
+{
+    ArcAllocCensus rpc = {0};
+    for (size_t i = 0; i < SLOTS; ++i) if (entries[i].ptr) {
+        const char *file = entries[i].file;
+        /* __FILE__ is supplied by the compiler, including on MinGW. */
+        if (strstr(file, "/engine/rpc/") || strstr(file, "/engine/rpcemu/") ||
+            strstr(file, "\\engine\\rpc\\") || strstr(file, "\\engine\\rpcemu\\")) {
+            rpc.bytes += entries[i].size; ++rpc.blocks;
+        }
+    }
+    return rpc;
+}
 #if defined(_WIN32)
 __declspec(dllexport)
 #endif

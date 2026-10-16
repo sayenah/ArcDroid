@@ -13,6 +13,8 @@ void *arc_alloc_census_calloc(size_t count, size_t size, const char *file, unsig
 void *arc_alloc_census_realloc(void *ptr, size_t size, const char *file, unsigned line);
 void arc_alloc_census_free(void *ptr);
 ArcAllocCensus arc_alloc_census_snapshot(void);
+/* Live blocks allocated by RPC glue or RPCEmu, independent of session reset. */
+ArcAllocCensus arc_alloc_census_rpc_snapshot(void);
 void arc_alloc_census_dump(void);
 
 #if defined(ARC_ALLOC_CENSUS_INTERCEPT)

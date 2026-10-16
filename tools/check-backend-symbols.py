@@ -35,7 +35,7 @@ def finish(errors):
         raise ValueError("\n".join(errors))
 
 
-def read_symbols(path, nm, sanitized=False, errors=None):
+def read_symbols(path, nm, sanitized=False, errors=None, keep_sanitizer_references=False):
     local = errors is None
     if local:
         errors = []
@@ -68,7 +68,8 @@ def read_symbols(path, nm, sanitized=False, errors=None):
         if form == "elf" and sanitized:
             if kind == "B" and re.fullmatch(r"__odr_asan\.[A-Za-z_][A-Za-z0-9_.$]*", name):
                 continue
-            if kind == "U" and re.fullmatch(r"__(?:asan|ubsan)_[A-Za-z0-9_]+", name):
+            if (kind == "U" and not keep_sanitizer_references and
+                    re.fullmatch(r"__(?:asan|ubsan)_[A-Za-z0-9_]+", name)):
                 continue
         # Compiler bookkeeping is not an engine variable. Apple ASan emits
         # this one shared registration flag as a common even with -fno-common.
@@ -202,20 +203,71 @@ def verify_outside(directories, policy, nm, sanitized=False, errors=None):
         print(f"backend symbols: outside engine: {count} objects passed")
 
 
-def verify_census(directories, nm, sanitized, errors):
-    """Fail closed if any linked object bypasses the exact allocation census."""
-    allocators = {"malloc", "calloc", "realloc", "free", "strdup", "strndup",
-                  "aligned_alloc", "posix_memalign", "_aligned_malloc", "_aligned_free"}
-    for directory in directories:
-        for path in objects(directory):
-            if path.name.split('.', 1)[0] == "arc_alloc_census":
-                continue  # The single bridge to the real allocator.
-            for name, undefined in read_symbols(path, nm, sanitized, errors):
-                referent = name.removeprefix("__imp_")
-                violation(not undefined or referent not in allocators,
-                          f"allocation census bypass: {path}: {name}", errors)
+# Census-only external services, reviewed independently of the backend policy:
+# that policy deliberately permits raw allocators in ordinary cores. Resolve
+# internal references against actual linked definitions, never a name prefix.
+# New external APIs require review here, including allocating libc/Win32 APIs.
+CENSUS_SERVICES = {
+    # Non-owning libc/string/math services and the existing stdio diagnostics.
+    "acos", "asin", "atan", "atexit", "bzero", "ceil", "cos", "exp", "floor",
+    "fmod", "fprintf", "getenv", "hypotl", "isalnum", "isalpha", "isdigit",
+    "isspace", "localtime", "log", "log10", "longjmp", "memchr", "memcmp",
+    "memcpy", "memmove", "memset", "memset_pattern16", "printf", "puts", "qsort",
+    "setjmp", "sin", "snprintf", "sprintf", "sqrt", "sscanf", "strcat", "strchr",
+    "strcmp", "strcpy", "strlen", "strncmp", "strrchr", "strstr", "strtol",
+    "strtoul", "strtoull", "tan", "time", "tolower", "vsnprintf",
+    # Darwin/glibc runtime, locale and process/profile clocks.
+    "_DefaultRuneLocale", "__assert_rtn", "__assert_fail", "__error",
+    "__errno_location", "__maskrune", "__stderrp", "__tolower", "stderr",
+    "__ctype_b_loc", "__ctype_tolower_loc", "__isoc99_sscanf", "__isoc23_sscanf",
+    "__isoc23_strtol", "__isoc23_strtoul", "__isoc23_strtoull",
+    "clock_gettime", "sysctlbyname",
+    # Existing dormant native lock module: handles/fds, never heap ownership.
+    "close", "flock", "fstat", "open", "stat", "fcntl",
+    # MinGW runtime and existing test-only exception locator. The locator's
+    # handler registration is paired with RemoveVectoredExceptionHandler.
+    "_assert", "_wassert", "_errno", "__acrt_iob_func", "__iob_func",
+    "_localtime64", "_time64", "GetLocalTime", "AddVectoredExceptionHandler",
+    "RemoveVectoredExceptionHandler", "CloseHandle", "CreateFileW",
+    "FlushFileBuffers", "GetCurrentProcess", "GetCurrentThreadId", "GetLastError",
+    "GetModuleFileNameA", "GetStdHandle", "LockFileEx", "MultiByteToWideChar",
+    "QueryPerformanceCounter", "QueryPerformanceFrequency", "ReadProcessMemory",
+    "RtlLookupFunctionEntry", "RtlVirtualUnwind", "UnlockFileEx", "VirtualQuery",
+    "WriteFile",
+}
+CENSUS_ALLOCATORS = {"malloc", "calloc", "realloc", "free"}
+
+
+def verify_census(directories, nm, sanitized, errors, policy):
+    """Allow only reviewed external services in every census-linked object."""
+    services = CENSUS_SERVICES | set(policy["compiler_services"])
+    if sanitized:
+        runtime = set(policy["sanitizer_services"])
+        # GCC's recovery/abort variants of the same finite runtime services.
+        services |= runtime | {name + "_abort" for name in runtime
+                               if name.startswith("__ubsan_handle_")}
+        services |= {name + "_noabort" for name in runtime
+                     if name.startswith("__asan_report_")}
+        services |= {"__asan_stack_free_8", "__asan_stack_free_10"}
+    # Preserve GCC runtime imports here: the ordinary backend reader accepts
+    # runtime families, but this external-service allowlist must check each name.
+    rows = [(path, read_symbols(path, nm, sanitized, errors, keep_sanitizer_references=True))
+            for directory in directories for path in objects(directory)]
+    own = {name for _, symbols in rows for name, undefined in symbols if not undefined}
+    for path, symbols in rows:
+        bridge = path.name.split('.', 1)[0] == "arc_alloc_census"
+        for name, undefined in symbols:
+            if not undefined:
+                continue
+            referent = name.removeprefix("__imp_")
+            fortified = re.fullmatch(r"__([A-Za-z][A-Za-z0-9_]*)_chk", referent)
+            fortify_ok = (object_format(path) in {"elf", "macho"} and
+                          fortified is not None and fortified[1] in CENSUS_SERVICES)
+            violation(name in own or referent in services or fortify_ok or
+                      (bridge and referent in CENSUS_ALLOCATORS),
+                      f"allocation census bypass: unreviewed external reference: {path}: {name}", errors)
     if not errors:
-        print("allocation census: all linked objects use the instrumented allocator")
+        print("allocation census: all linked objects import only reviewed services; raw allocators confined to bridge")
 
 
 def main():
@@ -240,7 +292,7 @@ def main():
         if args.outside:
             verify_outside(args.outside, policy, args.nm, args.sanitized, errors)
         if args.allocation_census:
-            verify_census(args.arculator + args.rpc + args.outside, args.nm, args.sanitized, errors)
+            verify_census(args.arculator + args.rpc + args.outside, args.nm, args.sanitized, errors, policy)
         finish(errors)
     except (ValueError, KeyError, OSError, subprocess.CalledProcessError) as error:
         print(f"backend symbol guard: {error}", file=sys.stderr)

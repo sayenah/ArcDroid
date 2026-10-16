@@ -50,5 +50,17 @@ int main(void)
     expect(2048, 2048);
     for (size_t i = 1; i < 4096; i += 2) free(many[i]);
     expect(0, 0);
+    /* The RPC view survives loss of the owner's pointer/reset of its logical
+     * counter, and tracks actual frees rather than session teardown. */
+    void *rpc = arc_alloc_census_malloc(32, "/src/engine/rpc/rpc_session.c", 1);
+    void *vendored = arc_alloc_census_malloc(7, "C:\\src\\engine\\rpcemu\\src\\mem.c", 1);
+    void *frontend = malloc(5);
+    ArcAllocCensus r = arc_alloc_census_rpc_snapshot();
+    assert(r.bytes == 39 && r.blocks == 2);
+    free(rpc); r = arc_alloc_census_rpc_snapshot();
+    assert(r.bytes == 7 && r.blocks == 1);
+    free(vendored); r = arc_alloc_census_rpc_snapshot();
+    assert(!r.bytes && !r.blocks);
+    free(frontend); expect(0, 0);
     return 0;
 }

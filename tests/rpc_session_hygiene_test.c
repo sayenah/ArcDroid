@@ -22,7 +22,7 @@ extern size_t __sanitizer_get_current_allocated_bytes(void);
 #include "arc_session.h"
 #include "arc_alloc_census.h"
 #include <stdarg.h>
-static ArcAllocCensus (*h_census)(void);
+static ArcAllocCensus (*h_census)(void),(*h_rpc_census)(void);
 static void (*h_census_dump)(void);
 
 /* Keep every lifecycle/fault case under sanitizers; the host suite owns the
@@ -188,7 +188,7 @@ int main(int argc,char **argv)
     }
     LOAD(h_hygiene,"arc_libretro_test_hygiene");LOAD(h_plant,"arc_libretro_test_plant_cmos");LOAD(h_fault,"arc_rpc_test_fault_next");LOAD(h_alloc_fail,"arc_rpc_test_fail_alloc");LOAD(phase,"arc_test_plan_cmos_phase");LOAD(snapshot,"arc_rpc_test_snapshot");
     if(strcmp(argv[5],"fresh") && strcmp(argv[5],"probe")){
-        LOAD(h_census,"arc_alloc_census_snapshot");LOAD(h_census_dump,"arc_alloc_census_dump");
+        LOAD(h_census,"arc_alloc_census_snapshot");LOAD(h_rpc_census,"arc_alloc_census_rpc_snapshot");LOAD(h_census_dump,"arc_alloc_census_dump");
     }
     const ArcEngineBackendOps *(*get_api)(void);LOAD(get_api,"arc_rpc_test_engine_api");h_api=get_api();
     LOAD(h_name,"arc_libretro_test_disc_name");LOAD(h_filter_cost,"arc_libretro_test_journal_filter_cost");LOAD(h_ram,"arc_rpc_test_read_ram");
@@ -268,8 +268,8 @@ int main(int argc,char **argv)
         }
         if(strcmp(argv[5],"probe")){
         /* Count every core-owned allocation, including both engines, preparation,
-         * core services and zlib. Process heaps also contain CRT/OS allocations
-         * and allocator bookkeeping; retain those totals as diagnostic evidence.
+         * core services and zlib. Also retain the exact process-heap oracle
+         * on platforms with stable CRT/OS bookkeeping after warmup.
          * Warm both routes before freezing the exact bytes AND blocks baseline. */
         struct retro_game_info g=h_game(argv[2]);
         size_t floor=0,ceiling=0,blocks_floor=0,blocks_ceiling=0,process_floor=0,process_ceiling=0;
@@ -289,9 +289,17 @@ int main(int argc,char **argv)
             }
         }
         /* No tolerance: even a zero-byte allocation leak changes the block count. */
-        printf("switch-cycles=%u heap-live-min=%zu max=%zu delta=%zu handles=0 rpc-allocations=0 frontend-allocations=0\n",h_cycle_count,floor,ceiling,ceiling-floor);
+        ArcFrontendHygiene measured=h_state();ArcAllocCensus rpc=h_rpc_census();
+        printf("switch-cycles=%u heap-live-min=%zu max=%zu delta=%zu handles=%u rpc-allocations=%zu frontend-allocations=%u\n",h_cycle_count,floor,ceiling,ceiling-floor,vfs_open_handles+vfs_open_directories,rpc.blocks,measured.frontend_allocations);
         printf("allocation-blocks-min=%zu max=%zu process-heap-min=%zu max=%zu\n",blocks_floor,blocks_ceiling,process_floor,process_ceiling);fflush(stdout);
         assert(ceiling==floor);assert(blocks_floor==blocks_ceiling);
+#if !defined(_WIN32) || defined(ARCDROID_SESSION_SANITIZER_PROFILE)
+        assert(process_ceiling==process_floor);
+#else
+        /* Windows CRT/OS busy-heap bookkeeping varied by 1,048 bytes over
+         * 200 cycles on CI. Its cause is unresolved, so this total is print-only
+         * here; the exact core-owned byte/block census above remains required. */
+#endif
         /* 10,000 actual frontend admissions; reset/recovery preserves the ID;
          * init/deinit deliberately occur in the same loaded library. */
         if(strcmp(argv[5],"leak-check")){
