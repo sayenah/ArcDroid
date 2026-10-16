@@ -16,12 +16,13 @@ import subprocess
 import sys
 
 OCTET = r"(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)"
+PATH_END = r"""(?=[/\s.`'")\],:;]|$)"""
 PATTERNS = {
     "private-ipv4": re.compile(r"(?<![\w.])(?:10\." + OCTET + r"|172\.(?:1[6-9]|2\d|3[01])|192\.168)\."
-                               + OCTET + r"\." + OCTET + r"(?![\w.])"),
-    "mac-user-path": re.compile(r"/Users/[\w. -]+/", re.I),
-    "windows-user-path": re.compile(r"[a-z]:[\\/]+Users[\\/]+", re.I),
-    "android-volume": re.compile(r"/storage/[a-f0-9]{4}-[a-f0-9]{4}/", re.I),
+                               + OCTET + r"\." + OCTET + r"(?!\w|\.\d)"),
+    "mac-user-path": re.compile(r"/Users/[\w. -]+" + PATH_END, re.I),
+    "windows-user-path": re.compile(r"[a-z]:[\\/]+Users(?:[\\/]+|" + PATH_END + r")", re.I),
+    "android-volume": re.compile(r"/(?:storage|mnt/media_rw)/[a-f0-9]{4}-[a-f0-9]{4}" + PATH_END, re.I),
 }
 
 

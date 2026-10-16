@@ -6,6 +6,7 @@ import hashlib
 import json
 from pathlib import Path
 import re
+import subprocess
 import sys
 
 PIN = "7d3d2679589bba759197e3a9288a12749c797381"
@@ -32,11 +33,13 @@ def verify(root):
         raise ValueError("pinned upstream provenance mismatch")
     files = manifest["files"]
     actual = set()
-    for path in directory.rglob("*"):
+    tracked = subprocess.check_output(
+        ["git", "ls-files", "-z", "--cached", "--", "engine/arculator/"], cwd=root)
+    for name in filter(None, tracked.decode().split("\0")):
+        path = root / name
         if path.is_symlink():
             raise ValueError("symlink in upstream tree")
-        if path.is_file():
-            actual.add(path.relative_to(directory).as_posix())
+        actual.add(path.relative_to(directory).as_posix())
     if actual != set(files) | REPLACEMENTS | METADATA:
         raise ValueError("Arculator tree differs from import allowlist")
     changed = []
@@ -63,7 +66,7 @@ def main():
     args = parser.parse_args()
     try:
         count, changed = verify(args.root)
-    except (OSError, ValueError, KeyError) as error:
+    except (OSError, ValueError, KeyError, subprocess.CalledProcessError) as error:
         print(f"Arculator import guard: {error}", file=sys.stderr)
         return 1
     print(f"Arculator import guard: {count} pinned blobs; {len(changed)} dated modifications; "

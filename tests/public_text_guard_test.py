@@ -23,13 +23,20 @@ def positives():
     private = [".".join(map(str, parts)) for parts in
                [(10, 0, 0, 1), (10, 255, 255, 255), (172, 16, 0, 1),
                 (172, 31, 255, 255), (192, 168, 0, 1)]]
+    homes = ["/" + "Users/" + "example", "/" + "users/example",
+             "/" + "Users/" + "Example User"]
+    windows = ["C:" + "\\Users", "C:" + "\\Users\\" + "example",
+               "c:" + "\\\\users\\\\" + "example", "D:" + "/Users/" + "example"]
+    volumes = [prefix + "ABCD" + "-" + "1234"
+               for prefix in ("/storage/", "/mnt/media_rw/")]
     return {
-        "private-ipv4": private,
-        "mac-user-path": ["/" + "Users/" + "example/fixture", "/" + "users/example/",
-                          "/" + "Users/" + "Example User/fixture"],
-        "windows-user-path": ["C:" + "\\Users\\" + "example\\fixture",
-                              "c:" + "\\\\users\\\\" + "example", "D:" + "/Users/" + "example"],
-        "android-volume": ["/storage/" + "ABCD" + "-" + "1234/fixture"],
+        "private-ipv4": [address + ending for address in private for ending in ("", ".", ".md")],
+        "mac-user-path": [home + ending for home in homes
+                          for ending in ("", "/fixture", ".", " next")],
+        "windows-user-path": [home + ending for home in windows
+                              for ending in ("", "\\fixture", ".", " next")],
+        "android-volume": [volume + ending for volume in volumes
+                           for ending in ("", "/fixture", ".", " next")],
     }
 
 
@@ -42,10 +49,16 @@ class GuardTest(unittest.TestCase):
                         with self.subTest(kind=kind, path=path):
                             hits = GUARD.scan(path, "prefix " + example + ending, [])
                             self.assertIn(kind, [item[2] for item in hits])
+                # Also exercise a bare shape at the exact end of text.
+                self.assertIn(kind, [item[2] for item in GUARD.scan(path, example, [])])
         for safe in ("192.0.2.1", "198.51.100.2", "203.0.113.3", "127.0.0.1",
                      "/Users/<name>/", "C:" + "\\example\\", "/storage/emulated/0/",
                      "172.15.0.1", "172.32.0.1", "192.169.0.1", "110.0.0.1",
-                     "10.0.0.999", "10.0.0.1.2"):
+                     ".".join(map(str, (10, 0, 0, 999))),
+                     ".".join(map(str, (10, 0, 0, 1, 2))),
+                     ".".join(map(str, (1, 10, 0, 0, 1))),
+                     "C:" + "\\UsersExtra", "/storage/" + "ABCD" + "-" + "12345",
+                     "/mnt/media_rw/" + "ABCD" + "-" + "1234more"):
             self.assertEqual(GUARD.scan("example", safe, []), [])
 
     def test_reviewed_allowlist_is_scoped_to_the_match(self):
@@ -72,16 +85,42 @@ class GuardTest(unittest.TestCase):
             target.write_text("safe\n")
             subprocess.run(["git", "-C", str(root), "add", "."], check=True)
             for kind, examples in positives().items():
-                target.write_text(examples[0] + "\n")
-                result = subprocess.run([sys.executable, str(ROOT / "tools/check-public-text.py"),
-                                         "--root", str(root)], capture_output=True, text=True)
-                self.assertEqual(result.returncode, 1, kind)
-                self.assertIn(kind, result.stderr)
-                self.assertNotIn(examples[0], result.stderr)
+                for example in examples:
+                    with self.subTest(kind=kind):
+                        target.write_text("at " + example)
+                        result = subprocess.run([sys.executable, str(ROOT / "tools/check-public-text.py"),
+                                                 "--root", str(root)], capture_output=True, text=True)
+                        self.assertEqual(result.returncode, 1, kind)
+                        self.assertIn(kind, result.stderr)
+                        self.assertNotIn(example, result.stderr)
             target.write_text("safe\n")
             result = subprocess.run([sys.executable, str(ROOT / "tools/check-public-text.py"),
                                      "--root", str(root)], capture_output=True, text=True)
             self.assertEqual(result.returncode, 0)
+
+    def test_cli_ipv4_in_tracked_filenames(self):
+        with tempfile.TemporaryDirectory(prefix="arcdroid-public-filenames-") as directory:
+            root = Path(directory)
+            (root / "tools").mkdir()
+            (root / "tools/public-text-allowlist.json").write_text('{"entries": []}\n')
+            subprocess.run(["git", "init", "-q", str(root)], check=True)
+            examples = [(".".join(map(str, parts)), 1) for parts in
+                        ((10, 0, 0, 5), (172, 16, 0, 5), (192, 168, 0, 5))]
+            examples += [(".".join(map(str, (10, 0, 0, 1, 2))), 0), ("192.0.2.1", 0)]
+            for address, expected in examples:
+                name = "example-" + address + ".md"
+                path = root / name
+                path.write_text("safe\n")
+                subprocess.run(["git", "-C", str(root), "add", "--", name], check=True)
+                result = subprocess.run([sys.executable, str(ROOT / "tools/check-public-text.py"),
+                                         "--root", str(root)], capture_output=True, text=True)
+                self.assertEqual(result.returncode, expected)
+                if expected:
+                    self.assertIn("private-ipv4", result.stderr)
+                    self.assertNotIn(address, result.stderr)
+                    self.assertNotIn(name, result.stderr)
+                subprocess.run(["git", "-C", str(root), "rm", "--cached", "-q", "--", name], check=True)
+                path.unlink()
 
 
 if __name__ == "__main__":
