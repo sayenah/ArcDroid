@@ -1,6 +1,7 @@
 #!/bin/sh
 # ArcDroid asset-guard regression. GPL-2.0-only.
 set -eu
+unset GIT_INDEX_FILE
 
 guard=$1
 guard_tmp=$(mktemp -d "${TMPDIR:-/tmp}/arcdroid-asset-guard.XXXXXX")
@@ -36,3 +37,17 @@ case "$output" in
   *) printf 'asset guard failed without identifying payload.zip: %s\n' "$output" >&2; exit 1 ;;
 esac
 printf 'asset guard self-test: extensionless binary and zip extension rejected\n'
+git rm --cached -q payload.zip
+rm payload.zip
+mkdir -p engine/arculator/roms tests/fixtures/generated
+for asset in engine/arculator/roms/arcrom_ext tests/fixtures/generated/unlisted.bin; do
+  printf '\000ArcDroid synthetic binary\001' > "$asset"
+  git add "$asset"
+  if "$guard" >/dev/null 2>&1; then
+    printf 'asset guard accepted a retired or unlisted generated binary\n' >&2
+    exit 1
+  fi
+  git rm --cached -q "$asset"
+  rm "$asset"
+done
+printf 'asset guard self-test: retired support ROM and tracked generated binary rejected\n'

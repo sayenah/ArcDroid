@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: GPL-2.0-only -->
+
 # R1 D1 independent video expectations
 
 The committed generator emits authored ARM instructions, never firmware. All

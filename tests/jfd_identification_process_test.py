@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-2.0-only
 """Guest and store proof for a writable, G5-admitted omitted DD sector."""
 import hashlib
 from pathlib import Path

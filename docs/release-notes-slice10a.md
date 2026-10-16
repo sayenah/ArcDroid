@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: GPL-2.0-only -->
+
 # Slice 10a — native JFD disc writes
 
 RW-flagged extended JFD images can now keep native-path sector writes in the

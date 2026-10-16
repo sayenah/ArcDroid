@@ -1,4 +1,5 @@
 #!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-only
 set -eu
 
 command -v grep >/dev/null 2>&1 || {
@@ -39,6 +40,7 @@ engine/arculator_backend.c
 engine/rpc/rpc_observer.c
 engine/rpc/rpc_observers.c
 engine/rpc/rpc_inspector.c
+engine/rpc/rpc_profile.c
 engine/rpc/rpc_session.c
 engine/rpc/rpc_audio.c
 engine/rpc/rpc_input.c
@@ -92,6 +94,7 @@ platform/arcdroid_joystick.c
 platform/arcdroid_sound.c
 platform/arcdroid_video.c
 libretro/arc_io.c
+libretro/arc_lock.c
 libretro/arc_session.c
 libretro/install_store.c
 libretro/rpc_hd_store.c
@@ -128,13 +131,14 @@ if [ -z "${ARCDROID_SHIPPING_IO_SOURCES:-}" ]; then
   done
 fi
 
-pattern='(^|[^[:alnum:]_>.])(fopen|open|_wfopen|gz[a-z]*|CreateFile[A-Za-z]*)[[:space:]]*\(|(^|[^[:alnum:]_])dumpregs[[:space:]]*\('
+pattern='(^|[^[:alnum:]_>.])(fopen[a-z0-9_]*|open(at|64|at64)?|creat(64)?|fdopen|_wfopen[a-z0-9_]*|gz[a-z]*|CreateFile[A-Za-z0-9]*|NtCreateFile|_open[a-z0-9_]*|_wopen[a-z0-9_]*|_sopen[a-z0-9_]*|_wsopen[a-z0-9_]*|freopen[a-z0-9_]*|tmpfile[a-z0-9_]*|mkstemp[a-z0-9_]*)[[:space:]]*\(|(^|[^[:alnum:]_])dumpregs[[:space:]]*\('
 
 # Every compiled RPC source is scanned, including the session and device hooks.
 rpc_sources='engine/arc_error_box.c engine/arc_disc_request.c engine/arc_launch_outcome.c engine/arc_boot_watch.c
 engine/rpc/rpc_observer.c
 engine/rpc/rpc_observers.c
 engine/rpc/rpc_inspector.c
+engine/rpc/rpc_profile.c
 engine/rpc/rpc_session.c engine/rpc/rpc_audio.c engine/rpc/rpc_input.c engine/rpc/rpc_timing.c engine/rpc/rpc_mem_timing.c
 engine/rpc/rpc_floppy.c engine/rpc/rpc_scheduler.c engine/rpc/rpc_rtc.c
 engine/rpcemu/src/arm.c engine/rpcemu/src/arm_common.c engine/rpcemu/src/cp15.c
@@ -155,20 +159,9 @@ if grep -En "$rpc_pattern" $rpc_sources; then
   exit 1
 fi
 scan_sources=${ARCDROID_SHIPPING_IO_SOURCES:-$sources}
-if all_matches=$(grep -En "$pattern" $scan_sources); then
-  matches=$(printf '%s\n' "$all_matches" | grep -Ev '^engine/arculator/src/arc\.h:[0-9]+:[[:space:]]*\*[[:space:]]*dumpregs\(\), and its obsolete declaration was removed from this header\. \*/$' || true)
-  if [ -n "$matches" ]; then
-    printf '%s\n' "$matches" >&2
-    printf '%s\n' 'shipping I/O guard: forbidden CWD/debug file path found' >&2
-    exit 1
-  fi
-else
-  status=$?
-  if [ "$status" -ne 1 ]; then
-    printf 'shipping I/O guard: grep failed with status %s\n' "$status" >&2
-    exit "$status"
-  fi
-fi
+# D-193: path-keyed, exact-once opens; lock/identity confinement and no data
+# access on sentinel descriptors. The helper scans the same complete allowlist.
+python3 -B tools/check-shipping-lock-io.py $scan_sources
 
 # zlib is compiled with Z_SOLO, which removes its gz/file API declarations and
 # code-generator branches. Preprocess the exact vendored allowlist under that
@@ -218,6 +211,7 @@ case "${1:-}" in
   '') ;;
   --scan-only) ;;
   --self-test)
+    python3 -B tools/check-shipping-lock-io.py --self-test
     guard_tmp=$(mktemp -d "${TMPDIR:-/tmp}/arcdroid-shipping-io.XXXXXX")
     trap 'rm -rf "$guard_tmp"' EXIT HUP INT TERM
     for call in 'fopen("x","r")' 'open("x",0)' '_wfopen(0,0)' 'gzopen("x","r")' 'CreateFileW(0,0,0,0,0,0,0)'; do
@@ -251,4 +245,4 @@ case "${1:-}" in
     exit 2
     ;;
 esac
-printf '%s\n' 'shipping I/O guard: no file/gzip/platform-open or register-dump path outside the VFS bridge/harness'
+printf '%s\n' 'shipping I/O guard: no native file path outside the VFS bridge and the exact D-193 sentinel exception'

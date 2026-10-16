@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-only
 """Compare the no-request guest frame trace with main 933c28f."""
 import subprocess
 import sys

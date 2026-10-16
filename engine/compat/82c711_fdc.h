@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
 #ifndef ARCDROID_82C711_FDC_STUB_H
 #define ARCDROID_82C711_FDC_STUB_H
 #include <stdint.h>

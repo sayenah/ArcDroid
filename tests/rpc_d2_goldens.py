@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-2.0-only
 """Independent timeline model for D2 goldens; never runs or reads the core.
 Virtual source edges hold the next DMA word; 48 kHz edges sample that hold.
 MMIO after tied source/output edges. All clocks are exact Fractions.

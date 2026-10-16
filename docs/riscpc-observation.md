@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: GPL-2.0-only -->
+
 # RPC observation primitives (R3c-1, D-174/D-175)
 
 The adapter is owned by the single RPC session. Production enables only individually qualified firmware/CPU/profile cells;

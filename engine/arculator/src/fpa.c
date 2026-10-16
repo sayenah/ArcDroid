@@ -1,7 +1,7 @@
 /*Arculator 2.2 by Sarah Walker
   FPA emulation*/
 
-/* ArcDroid R1: register the process-exit diagnostic once per loaded library,
+/* ArcDroid modification (2026-10-16): notice dated for R1; register the process-exit diagnostic once per loaded library,
  * not once per guest CPU reset. FPA reset state and execution are unchanged. */
 
 #include <math.h>

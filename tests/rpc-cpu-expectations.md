@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: GPL-2.0-only -->
+
 # Authored R1 component expectations
 
 These are component checks, not a qualified RPCEmu session. `rpc_cpu_rom.py`

@@ -253,6 +253,14 @@ static bool arc_io_is_directory(const char *path)
 bool arc_io_existing_directory(const char *path)
 { return path && arc_io_is_directory(path); }
 
+ArcIoMkdirResult arc_io_mkdir(const char *path)
+{
+   if (!path || !*path || !arc_io_vfs || !arc_io_vfs->mkdir) return ARC_IO_MKDIR_ERROR;
+   int result = arc_io_vfs->mkdir(path);
+   return result == 0 ? ARC_IO_MKDIR_CREATED :
+      result == -2 ? ARC_IO_MKDIR_EXISTS : ARC_IO_MKDIR_ERROR;
+}
+
 bool arc_io_make_path_step(const char *path, size_t *cursor, bool *done,
                           uint64_t *operations, uint64_t *namespace_operations)
 {

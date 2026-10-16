@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: GPL-2.0-only -->
+
 # Slice 25: controller answers for RISC OS error boxes
 
 When a supported RISC OS 3.10, 3.11 or 3.19 `Wimp_ReportError` box reaches its

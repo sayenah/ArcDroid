@@ -1,0 +1,13 @@
+{
+  "_license": "SPDX-License-Identifier: GPL-2.0-only",
+  "entries": [
+    {
+      "paths": [
+        "docs/handoff.md"
+      ],
+      "context": "`(?P<token>[A-Z]:\\\\Users\\\\)`",
+      "reason": "Generic Windows path prefix naming the forbidden class.",
+      "class": "windows-user-path"
+    }
+  ]
+}

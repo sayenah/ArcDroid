@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: GPL-2.0-only -->
+
 # R2b authored floppy expectations
 
 Authority: SMSC FDC37C665GT datasheet, printed pages 43–45, command tables on

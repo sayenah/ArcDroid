@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: GPL-2.0-only -->
+
 # R1 non-shipping plan core and runner
 
 The shipping core stays dormant. `arcdroid_libretro_test` retains the existing
@@ -372,3 +374,67 @@ changes the core's acknowledgement checks or promises directory/power-loss
 durability. Always record the save path and flush mode alongside timing.
 The two modes are checked by `rpc-vfs-conformance`; the real kill sweeps keep
 the default sync mode. Reject other `--vfs-flush` values.
+
+## 6b-P0i profiling (test-only)
+
+`ARCDROID_RPC_PROFILE` defaults OFF. ON instruments only the non-installed
+plan core and runner; the shipping core remains uninstrumented. Schema 1,
+counter definitions, sampling limits and measured Mac overhead are in
+[the instrumentation design](../docs/riscpc-translator.md#6b-p0i-instrumentation-design-s64).
+Use a copy of the same initial save store for each ON/OFF leg. Keep private
+plans, ROMs, saves and logs local. Profiling never controls guest progression.
+
+Mac build and run, from the clone root (replace the three private paths):
+
+```sh
+cmake -S . -B build/profile -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DARCDROID_RPC_PROFILE=ON
+cmake --build build/profile --target rpc_runner arcdroid_rpcplan_libretro -j 4
+P0I_PLAN='/absolute/private/private.arcplan'
+P0I_SYSTEM='/absolute/private/system'
+P0I_SAVE='/absolute/private/copied-save'
+mkdir -p .evidence/p0i-mac
+build/profile/rpc_runner --core "$PWD/build/profile/arcdroid_rpcplan_libretro.dylib" \
+  --plan "$P0I_PLAN" --system "$P0I_SYSTEM" --save "$P0I_SAVE" \
+  --frames 18001 --pacing flat --profile .evidence/p0i-mac/profile.json \
+  --profile-interval 60 --profile-sample-stride 1024 \
+  --timing .evidence/p0i-mac/frames.csv --preparation-timing .evidence/p0i-mac/preparation.csv \
+  > .evidence/p0i-mac/guest.txt 2> .evidence/p0i-mac/runner.log
+```
+
+Odin3 build and run, after Fable finishes other serial device work and confirms
+the device is available. This kit does not replace an installed RetroArch core.
+The device plan, system and copied save directory must already exist; private
+paths below are placeholders. Path variables must contain no single quotes
+because they are quoted inside the remote shell command.
+
+```sh
+P0I_NDK=/opt/homebrew/share/android-commandlinetools/ndk/29.0.14206865
+cmake -S . -B build/android-on -G Ninja -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_TOOLCHAIN_FILE="$P0I_NDK/build/cmake/android.toolchain.cmake" \
+  -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-21 \
+  -DARCDROID_ANDROID_TEST_CORE=ON -DARCDROID_RPC_PROFILE=ON
+cmake --build build/android-on --target rpc_runner arcdroid_rpcplan_libretro -j 4
+P0I_ADB=/opt/homebrew/share/android-commandlinetools/platform-tools/adb
+"$P0I_ADB" -s cf0be0f3 shell mkdir -p /data/local/tmp/arcdroid-p0i
+"$P0I_ADB" -s cf0be0f3 push build/android-on/rpc_runner /data/local/tmp/arcdroid-p0i/rpc_runner
+"$P0I_ADB" -s cf0be0f3 push build/android-on/arcdroid_rpcplan_libretro_android.so /data/local/tmp/arcdroid-p0i/plan.so
+"$P0I_ADB" -s cf0be0f3 shell chmod 755 /data/local/tmp/arcdroid-p0i/rpc_runner
+P0I_DEVICE_PLAN=/storage/emulated/0/RetroArch/private.arcplan
+P0I_DEVICE_SYSTEM=/storage/emulated/0/BIOS
+P0I_DEVICE_SAVE=/storage/emulated/0/arcdroid-p0i-save
+"$P0I_ADB" -s cf0be0f3 shell "/data/local/tmp/arcdroid-p0i/rpc_runner --core /data/local/tmp/arcdroid-p0i/plan.so --plan '$P0I_DEVICE_PLAN' --system '$P0I_DEVICE_SYSTEM' --save '$P0I_DEVICE_SAVE' --frames 18001 --pacing flat --profile /data/local/tmp/arcdroid-p0i/profile.json --profile-interval 60 --profile-sample-stride 1024 --timing /data/local/tmp/arcdroid-p0i/frames.csv --preparation-timing /data/local/tmp/arcdroid-p0i/preparation.csv > /data/local/tmp/arcdroid-p0i/guest.txt 2> /data/local/tmp/arcdroid-p0i/runner.log"
+# Check the preceding exit status before accepting results.
+mkdir -p .evidence/p0i-odin
+"$P0I_ADB" -s cf0be0f3 pull /data/local/tmp/arcdroid-p0i/profile.json .evidence/p0i-odin/
+"$P0I_ADB" -s cf0be0f3 pull /data/local/tmp/arcdroid-p0i/frames.csv .evidence/p0i-odin/
+"$P0I_ADB" -s cf0be0f3 pull /data/local/tmp/arcdroid-p0i/preparation.csv .evidence/p0i-odin/
+"$P0I_ADB" -s cf0be0f3 pull /data/local/tmp/arcdroid-p0i/runner.log .evidence/p0i-odin/
+```
+
+Repeat with strides 1021 and 0, restoring the initial save store each time.
+Build OFF into a separate directory with `-DARCDROID_RPC_PROFILE=OFF`; omit
+all `--profile*` options for that leg. Alternate both orders and record machine,
+load, settings, thermal state, toolchain and binary hashes. Compare guest
+projections and persisted bytes. Use OFF frame timings for actual headroom;
+compare cold and sustained windows by guest second in the profile and CSV.
+Preparation timing is separate from requested-session profiling.

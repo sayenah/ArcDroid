@@ -10,6 +10,9 @@
 #include "rpc_session.h"
 #include "arc_test_plan.h"
 #include "rpc_observer.h"
+#if defined(ARCDROID_RPC_PROFILE)
+#include "rpc_profile_json.h"
+#endif
 #include <inttypes.h>
 #include <errno.h>
 #include <math.h>
@@ -183,6 +186,11 @@ int main(int argc, char **argv)
 #endif
     const char *core = NULL, *plan = NULL, *pacing = "flat", *timing_path = NULL, *capture_path = NULL, *hd_cost_path = NULL, *preparation_path=NULL;
     uint64_t frames = 1, warmup = 0, measure = 0, ram_offset = 0, ram_count = 0, reset_at = UINT64_MAX;
+#if defined(ARCDROID_RPC_PROFILE)
+    const char *profile_path=NULL;
+    uint64_t profile_interval=60,profile_stride=1024;
+    bool profile_options=false;
+#endif
     bool reject = false, print_cmos = false;
     uint64_t fail_alloc = 0, fault_at = UINT64_MAX;
     for (int i = 1; i < argc; ++i) {
@@ -223,6 +231,11 @@ int main(int argc, char **argv)
         else if (!strcmp(key,"--jfd-omitted")) {if(strcmp(v,"strict")&&strcmp(v,"file-data"))goto usage;jfd_omitted=v;}
         else if (!strcmp(key,"--pacing")) pacing = v;
         else if (!strcmp(key,"--timing")) timing_path = v;
+#if defined(ARCDROID_RPC_PROFILE)
+        else if (!strcmp(key,"--profile")) {if(!*v)goto usage;profile_path=v;}
+        else if (!strcmp(key,"--profile-interval")) {profile_options=true;if(!unsigned_number(v,1000000,&profile_interval)||!profile_interval)goto usage;}
+        else if (!strcmp(key,"--profile-sample-stride")) {profile_options=true;if(!unsigned_number(v,1048576,&profile_stride))goto usage;}
+#endif
         else if (!strcmp(key,"--hd-cost")) hd_cost_path = v;
         else if (!strcmp(key,"--vfs-flush")) {
             if(strcmp(v,"retroarch")&&strcmp(v,"fsync"))goto usage;
@@ -240,6 +253,9 @@ int main(int argc, char **argv)
         else if (!strcmp(key,"--fail-alloc")) { if (!unsigned_number(v,5,&fail_alloc) || !fail_alloc) goto usage; }
         else goto usage;
     }
+#if defined(ARCDROID_RPC_PROFILE)
+    if(profile_options && !profile_path)goto usage;
+#endif
     if (!core || !plan || (!measure && warmup) || (strcmp(pacing,"flat") && strcmp(pacing,"burst") && strcmp(pacing,"realtime"))) goto usage;
 #if defined(_WIN32)
     library = LoadLibraryA(core);
@@ -312,6 +328,25 @@ int main(int argc, char **argv)
     if (timing) fputs("frame,core_ns,T_ns,measured,guest_instructions,guest_ns\n", timing);
     uint64_t *times = calloc(1000000, sizeof(*times));
     if (!times) { free(dump_pixels); if(timing)fclose(timing); if(hd_cost_file)fclose(hd_cost_file); unload(); deinit(); vfs_assert_no_open_handles(); return 2; }
+#if defined(ARCDROID_RPC_PROFILE)
+    FILE *profile_file=NULL;uint64_t *profile_times=NULL;
+    size_t profile_frames=0;uint64_t profile_second=0,profile_epoch=0,last_frame=0,last_ns=0;
+    unsigned profile_records=0;
+    void (*profile_snapshot)(ArcRpcProfile *)=NULL;
+    void (*profile_probes)(uint64_t *)=NULL;
+    if(profile_path){
+        void (*configure)(unsigned,uint64_t (*)(void))=NULL;
+        void *config_symbol=symbol("arc_rpc_profile_configure"),*snapshot_symbol=symbol("arc_rpc_profile_snapshot");
+        if(!config_symbol || !snapshot_symbol){fprintf(stderr,"Core lacks RPC profiling\n");free(times);free(dump_pixels);if(timing)fclose(timing);if(hd_cost_file)fclose(hd_cost_file);unload();deinit();vfs_assert_no_open_handles();return 2;}
+        memcpy(&configure,&config_symbol,sizeof(configure));memcpy(&profile_snapshot,&snapshot_symbol,sizeof(profile_snapshot));
+        void *probe_symbol=symbol("arc_rpc_profile_probe_snapshot");
+        if(probe_symbol)memcpy(&profile_probes,&probe_symbol,sizeof(profile_probes));
+        profile_file=fopen(profile_path,"w");profile_times=calloc(1000000,sizeof(*profile_times));
+        if(!profile_file || !profile_times){if(profile_file)fclose(profile_file);free(profile_times);free(times);free(dump_pixels);if(timing)fclose(timing);if(hd_cost_file)fclose(hd_cost_file);unload();deinit();return 2;}
+        fprintf(profile_file,"{\"schema\":1,\"sample_stride\":%" PRIu64 ",\"recent_attempts\":%u,\"records\":[\n",profile_stride,ARC_RPC_PROFILE_RECENT);
+        configure((unsigned)profile_stride,arc_test_clock_ns);
+    }
+#endif
     size_t sample_count = 0; unsigned result = 0; uint64_t period_ns = 0;
     uint64_t benchmark_start = arc_test_clock_ns(), benchmark_elapsed = 0;
     uint64_t prior_instructions=0,prior_guest_ns=0,measured_instructions=0,measured_guest_ns=0,measured_core_ns=0;
@@ -332,6 +367,20 @@ int main(int argc, char **argv)
         if(plan_phase && plan_phase()==3){result=1;break;}
         uint64_t elapsed = frame_ns();
         period_ns = (uint64_t)llround(1000000000.0 / fps);
+#if defined(ARCDROID_RPC_PROFILE)
+        if(profile_file){
+            ArcRpcProfile p;profile_snapshot(&p);profile_times[profile_frames++]=elapsed;
+            last_frame=f;last_ns=s.now_ns;
+            uint64_t second=s.now_ns/1000000000u;
+            if((f+1)%profile_interval==0 || second!=profile_second || p.epoch!=profile_epoch){
+                if(profile_records++)fputs(",\n",profile_file);
+                uint64_t probes[ARC_RPC_COST_COUNT+2]={0};if(profile_probes)profile_probes(probes);
+                arc_runner_profile_json(profile_file,&p,f,s.now_ns,"interval",profile_times,profile_frames,probes);
+                profile_frames=0;profile_second=second;profile_epoch=p.epoch;
+                if(fflush(profile_file) || ferror(profile_file)){fprintf(stderr,"RPC profile write failed\n");result=2;break;}
+            }
+        }
+#endif
         /* Frontend wall-clock windows measure sustained device conditions.
          * Host time controls only when the frontend stops requesting frames,
          * never guest execution, clocks, input or per-frame engine duration. */
@@ -424,6 +473,19 @@ int main(int argc, char **argv)
         }
     }
     if (dump_failed) result = 2;
+#if defined(ARCDROID_RPC_PROFILE)
+    if(profile_file){
+        ArcRpcProfile p;profile_snapshot(&p);
+        if(profile_records)fputs(",\n",profile_file);
+        uint64_t probes[ARC_RPC_COST_COUNT+2]={0};if(profile_probes)profile_probes(probes);
+        arc_runner_profile_json(profile_file,&p,last_frame,last_ns,"exit",profile_times,profile_frames,probes);
+        fputs("\n]}\n",profile_file);
+        if(ferror(profile_file))result=2;
+        if(fclose(profile_file))result=2;
+        if(result==2)fprintf(stderr,"RPC profile output failed\n");
+    }
+    free(profile_times);
+#endif
     free(dump_pixels);
     free(times); if(hd_cost_file){if(ferror(hd_cost_file))result=2;if(fclose(hd_cost_file))result=2;
         fprintf(stderr,"hd-cost frames=%" PRIu64 " max_ns=%" PRIu64 " over_D161=%" PRIu64 " budget=%s\n",hd_cost_frames,hd_cost_max,hd_cost_over,hd_cost_over?"exceeded":"passed");}
@@ -450,6 +512,9 @@ int main(int argc, char **argv)
 #endif
     return (int)result;
 usage:
+#if defined(ARCDROID_RPC_PROFILE)
+    fputs("Profile build: --profile FILE [--profile-interval FRAMES] [--profile-sample-stride 0..1048576]\n",stderr);
+#endif
     fputs("rpc_runner --core LIB --plan FILE [--system DIR] [--save DIR] [--frames N | --warmup-seconds 120 --measure-seconds 600] [--pacing flat|burst|realtime] [--disk-writes off|shadow|original] [--jfd-policy as-imaged|off] [--jfd-policy-at FRAME VALUE] [--disk-writes-at FRAME VALUE] [--jfd-omitted strict|file-data] [--timing CSV] [--hd-cost CSV] [--preparation-timing CSV] [--vfs-flush retroarch|fsync] [--dump-frame N FILE.ppm ...] [--pad-at FRAME MASK ...] [--capture-seed FILE] [--ram-offset N --ram-words N] [--reset-at N] [--cmos] [--fail-alloc 1..5] [--fault-at N] [--reject]\n",stderr);
     return 2;
 }

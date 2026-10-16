@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: GPL-2.0-only -->
+
 # 6b Phase 0 — timing-contract amendments: exit contract and guard invariants
 
 Status: Accepted as the item 6b Phase-0 basis (D-146) after the S59 Astra check (ACCEPT WITH CHANGES, all incorporated). Not an implementation authorisation.
