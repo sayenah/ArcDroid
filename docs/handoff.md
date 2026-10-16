@@ -2,16 +2,25 @@
 
 # ArcDroid Handoff
 
-**S66 (baton by relay from `arcdroid-2a`, S65).** Workstreams run in parallel (D-182). Private evidence: `.work/s66/LEDGER.md` (S66) and `.work/s65/LEDGER.md` (S65). S65 merged R3d-2 (`0beb7a8`) and R3c-2 (`eebfc01`) and recorded D-186 to D-194.
+**S66 close (window `arcdroid-2c`; baton by relay from `arcdroid-2a`).** Workstreams run in parallel (D-182). Private evidence: `.work/s66/LEDGER.md`; **private operating details (box, device, library): `.work/PRIVATE.md`**. S66 merged R3c-2 K/L (`ffac6d0`), W4 (`176d06d`), R3d-1 (`206d51f`), R3d-3 own (`c0d6d45`), 6b-P0i (`d826825`), W5 (`53f4177`), the README and banner; decisions D-195 to D-197. **The repository is public (D-196):** write nothing private into commits, PR text, CI logs or artifacts.
 
-**Founder instructions (S64, S65).**
-- Ultracode is on in ArcDroid windows (confirmed again by the Founder in S65): keep up the pace, use workflows for substantive work (adversarial review, design panels, multi-agent research), and run several Sol instances in parallel (D-182). A receiving window uses the Workflow tool once the harness confirms ultracode there; until then it uses subagents.
-- Workflows are read-only helpers; their findings are evidence for Fable to adjudicate. Implementation only through Sol; QA only through `arcdroid-opus-qa`.
+**Founder instructions (S64–S66).**
+- Ultracode is on (confirmed by the Founder and the harness in S66): use workflows for substantive work and several Sol instances in parallel (D-182). Workflows are read-only helpers; implementation only through Sol; QA only through `arcdroid-opus-qa`.
+- Course: follow the roadmap as ordered (D-163): R3 → 6b → R4 → release baseline → save states.
 
-**Running (S66; the S66 ledger lists PIDs; never stop any other process).**
-- **Opus re-check of 6b-P0i run D** (same QA agent as the first pass; report `.work/s66/qa-p0i/QA-REPORT.md`).
-- **Opus re-check of R3c-3a run C** (same QA agent; report `.work/s66/qa-r3c3a/QA-REPORT.md`).
-- **Sol W5** (public hygiene; clone `.work/s66/w5/clone`).
+**Running at close (owned by the next holder; never stop any other process).**
+- **Sol 6b slice 1a-0:** codex PID 27175, thread `01a144f0-16c2-7c33-8efe-fa952cfb584c`, clone `.work/s66/1a0/clone` (`slice/6b-1a0-measure`), output `.work/s66/1a0/finalB.md`. Re-arm: `~/dev/agent-tools/wait-run.sh 27175 .work/s66/1a0/streamB.jsonl .work/s66/1a0/finalB.md`.
+- **Sol R3c-3a run D** (Windows live-heap census): codex PID 79699, fresh thread, clone `.work/s64/r3c3a/clone` (latest `main` merged locally, unpushed), output `.work/s64/r3c3a/finalD.md`. Re-arm likewise with `streamD.jsonl`.
+- **Opus QA of R3d-3 own run E (PR #458)** was an in-session subagent; if `.work/s66/qa-r3d3-own-lows/QA-REPORT.md` has no verdict, re-dispatch `arcdroid-opus-qa` with the checks in `.work/s66/r3d3-own-lows-prompt.md` (clone `.work/s66/qa-r3d3-own-lows/clone`).
+- **R3d-1 run C (PR #457):** Opus QA **PASS WITH FINDINGS** (`.work/s66/qa-r3d1-lows/QA-REPORT.md`): one Low, F-1 (`rpc_orchestration_test` lacks a dependency on the build-time identity header; a fresh target-only build fails). Next: adjudicate (fix F-1 as a one-line Sol run C2 or accept as follow-up), CI, merge.
+- **CI:** PR #462 (W5b, QA confirmed) — merge when green.
+
+**Lessons (S66).**
+- Move the handoff to `Stage: IMPLEMENTATION` before sending Sol any QA fix (Sol refused correctly three times), and to `Stage: QA` before any QA (re-)check.
+- Sol cannot write `.git`: Fable starts a conflicting merge and Sol resolves the working tree.
+- The Codex service refused R3c-3a run C twice on content grounds; a fresh thread with plain wording completed it.
+- After any merge to `main`, re-test open branches that touch the same files before merging them (R3c-3a + R3d-1 failed only together, on Windows).
+- Docs-only PRs now run the `public-text` job: never quote a private-looking path or a URL with a `users` segment in governance text.
 
 **W1 — R3c-2 observers: MERGED** (`eebfc01`). **Follow-up PR #429** (`slice/r3c2-k`, head `ec43117`: runs K and L, Arculator-parity fixes for signal B; host 401/401, sanitizer 35/35, 185 mutants). Opus re-check of run L (S66, effort 15): **PASS**, no defects (`.work/s65/qa-r3c2-l/QA-REPORT.md`, adjudication `adjudication.md`: two follow-up Lows — retry liveness in `--differential`, case-sensitive object names on both backends; ruling that a BUSY retry re-delivers a trigger the oracle already issued). **Next:** merge PR #429 when CI is green on all five jobs. Run K/L adjudications: `.work/s65/qa-r3c2-j/`, `.work/s65/qa-r3c2-k/`; rulings in `.work/s65/w1/promptR3c2-K*.md` (never trigger signal B where the shared Arculator observer does not; after an overflow, suppression until a global clear or 120 s with no B miss).
 
@@ -1116,7 +1125,7 @@ The R1 work order and implementation record are in git history (`docs/handoff.md
   - **Clones and probes:** Sol, Astra and QA clones and scratch probes live under this project's own scratchpad (`/private/tmp/claude-501/-Users-<user>-dev-ArcDroid/…`), which the deny list does not cover. Sol's own build directories (`/private/tmp/arcdroid-r2*`) are outside `claude-501` and are confined by the Codex sandbox.
   - **Sibling directory `~/dev/ArcDroid-evidence`:** denied by the generated list, like every other sibling. If it holds this project's evidence, exempt it by removing its three lines.
 - **Founder instruction (S54, relayed S55):** never stack shell commands — no `&&`, `;` or pipes chaining git steps; run each command separately (stacked commands get denied). Put multi-step work in a script file under the scratchpad instead.
-- **Used windows (never relay to these; each closing holder adds its own name):** `arcdroid-d9` (S33), `arcdroid-6c` (S43), `ArcDroid-45` (S45), `arcdroid-83` (2026-10-02 governance edit), `ArcDroid-49` (S49), `arcdroid-d4` (S50), `arcdroid-10` (S51), `arcdroid-1b` (S52), `ArcDroid-52` (S53), `arcdroid-df` (S54), `arcdroid-7e` (S55), `arcdroid-25` (S56), `arcdroid-ba` (S57), `arcdroid-99` (S58), `arcdroid-db` (S60; the S59 window crashed before recording its name), `arcdroid-b5` (S61), `arcdroid-e5` (S62), `arcdroid-e7` (S63), `arcdroid-41` (S64), `arcdroid-2a` (S65). Earlier holders were not recorded; window names change between days.
+- **Used windows (never relay to these; each closing holder adds its own name):** `arcdroid-d9` (S33), `arcdroid-6c` (S43), `ArcDroid-45` (S45), `arcdroid-83` (2026-10-02 governance edit), `ArcDroid-49` (S49), `arcdroid-d4` (S50), `arcdroid-10` (S51), `arcdroid-1b` (S52), `ArcDroid-52` (S53), `arcdroid-df` (S54), `arcdroid-7e` (S55), `arcdroid-25` (S56), `arcdroid-ba` (S57), `arcdroid-99` (S58), `arcdroid-db` (S60; the S59 window crashed before recording its name), `arcdroid-b5` (S61), `arcdroid-e5` (S62), `arcdroid-e7` (S63), `arcdroid-41` (S64), `arcdroid-2a` (S65), `arcdroid-2c` (S66). Earlier holders were not recorded; window names change between days.
 
 **Relay brief:** "ArcDroid baton handoff from <window> (S<n>), for ~/dev/ArcDroid only. Founder (S64, confirmed S65): ultracode is on — keep up the pace and make full use of it (workflows for substantive work, several Sol instances in parallel per D-182). Before anything else, run the receipt checks in docs/protocol.md §18: you must be Claude Opus 5.5 at reasoning effort 15 (high) or above, your working directory must be ~/dev/ArcDroid (the Founder's ArcDroid checkout), and this must be the first message in your window. If any check fails, change nothing, tell the Founder in your window which check failed (for a wrong model or effort: run /model claude-opus-5-5 and /effort high, then say \"pick up from handoff\"), send a PushNotification, and stop. If all pass, take the baton without asking the Founder to confirm, number yourself S<n+1>, read CLAUDE.md and docs/handoff.md, take the active Next (never a workstream under Waiting on the Founder until its answer is recorded), and work towards the Founder vision D-073. Founder instruction (S54): never stack shell commands (no `&&`, `;` or pipes chaining git steps) — run each command separately. Close by protocol §18: relay only to one idle arcdroid- window, never another project's session; if no ArcDroid window is eligible, stop all work and close. Repeat this rule in your own relay."
 
