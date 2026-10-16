@@ -92,6 +92,7 @@ platform/arcdroid_sound.c
 platform/arcdroid_video.c
 libretro/arc_io.c
 libretro/arc_lock.c
+libretro/arc_session.c
 libretro/install_store.c
 libretro/rpc_hd_store.c
 libretro/rpc_preparation.c

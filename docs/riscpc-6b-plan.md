@@ -16,7 +16,7 @@ Status: **adopted (D-191)**, S65, after Astra stage 1 (ACCEPT WITH CHANGES, all 
 
 # Item 6b after Phase 1a under D-188: final synthesized plan
 
-Clone: `/Users/mac0918/dev/ArcDroid/.work/s65/6b/clone` at `1bb22aa`, read-only. Nothing was built, run or edited. Labels: **[C]** means I re-checked it in code or docs in this run. **[M]** means a recorded measurement in the canonical docs. **[E]** is an estimate (a research target, not a gate). **[U]** means I could not verify it inside the clone.
+Clone: `.work/s65/6b/clone` at `1bb22aa`, read-only. Nothing was built, run or edited. Labels: **[C]** means I re-checked it in code or docs in this run. **[M]** means a recorded measurement in the canonical docs. **[E]** is an estimate (a research target, not a gate). **[U]** means I could not verify it inside the clone.
 
 ## 0. What is waiting on the Founder (the relayed question)
 
@@ -592,23 +592,23 @@ Every B slice must show that the default path gains no per-instruction cost (an 
 - **No build, test or device run was performed.**
 
 Files relied on:
-- /Users/mac0918/dev/ArcDroid/.work/s65/6b/clone/D-188.md
-- /Users/mac0918/dev/ArcDroid/.work/s65/6b/clone/TRANSLATOR-MAIN.md
-- /Users/mac0918/dev/ArcDroid/.work/s65/6b/clone/PHASE1A-DRAFT.md
-- /Users/mac0918/dev/ArcDroid/.work/s65/6b/clone/ASTRA-PHASE1A-1.md
-- /Users/mac0918/dev/ArcDroid/.work/s65/6b/clone/docs/riscpc-translator-invariants.md
-- /Users/mac0918/dev/ArcDroid/.work/s65/6b/clone/docs/decision-log.md
-- /Users/mac0918/dev/ArcDroid/.work/s65/6b/clone/engine/rpcemu/src/arm.c
-- /Users/mac0918/dev/ArcDroid/.work/s65/6b/clone/engine/rpcemu/src/cp15.c
-- /Users/mac0918/dev/ArcDroid/.work/s65/6b/clone/engine/rpcemu/src/mem.c
-- /Users/mac0918/dev/ArcDroid/.work/s65/6b/clone/engine/rpc/rpc_mem_timing.c
-- /Users/mac0918/dev/ArcDroid/.work/s65/6b/clone/engine/rpc/rpc_mem_timing.h
-- /Users/mac0918/dev/ArcDroid/.work/s65/6b/clone/engine/rpc/rpc_session.c
-- /Users/mac0918/dev/ArcDroid/.work/s65/6b/clone/engine/arc_fault_jump.h
-- /Users/mac0918/dev/ArcDroid/.work/s65/6b/clone/libretro/include/libretro.h
-- /Users/mac0918/dev/ArcDroid/.work/s65/6b/clone/libretro/rpc_cmos_store.c
-- /Users/mac0918/dev/ArcDroid/.work/s65/6b/clone/libretro/rpc_preparation.c
-- /Users/mac0918/dev/ArcDroid/.work/s65/6b/clone/.github/workflows/ci.yml
+- .work/s65/6b/clone/D-188.md
+- .work/s65/6b/clone/TRANSLATOR-MAIN.md
+- .work/s65/6b/clone/PHASE1A-DRAFT.md
+- .work/s65/6b/clone/ASTRA-PHASE1A-1.md
+- .work/s65/6b/clone/docs/riscpc-translator-invariants.md
+- .work/s65/6b/clone/docs/decision-log.md
+- .work/s65/6b/clone/engine/rpcemu/src/arm.c
+- .work/s65/6b/clone/engine/rpcemu/src/cp15.c
+- .work/s65/6b/clone/engine/rpcemu/src/mem.c
+- .work/s65/6b/clone/engine/rpc/rpc_mem_timing.c
+- .work/s65/6b/clone/engine/rpc/rpc_mem_timing.h
+- .work/s65/6b/clone/engine/rpc/rpc_session.c
+- .work/s65/6b/clone/engine/arc_fault_jump.h
+- .work/s65/6b/clone/libretro/include/libretro.h
+- .work/s65/6b/clone/libretro/rpc_cmos_store.c
+- .work/s65/6b/clone/libretro/rpc_preparation.c
+- .work/s65/6b/clone/.github/workflows/ci.yml
 
 ---
 
@@ -734,7 +734,7 @@ The other premises I re-checked hold:
 - env 83/84 and 74;
 - `arcdroid_engine.c:474`, `arc_test_plan.c:407` and `rpc_cmos_store.h:11`.
 
-Main files: `/Users/mac0918/dev/ArcDroid/.work/s65/6b/clone/docs/riscpc-translator-invariants.md`, `/Users/mac0918/dev/ArcDroid/.work/s65/6b/clone/engine/rpcemu/src/cp15.c`, `/Users/mac0918/dev/ArcDroid/.work/s65/6b/clone/engine/rpc/rpc_session.c`, `/Users/mac0918/dev/ArcDroid/.work/s65/6b/clone/engine/rpc/rpc_scheduler.c`, `/Users/mac0918/dev/ArcDroid/.work/s65/6b/clone/.github/workflows/ci.yml`, `/Users/mac0918/dev/ArcDroid/.work/s65/6b/clone/tools/test-retroarch-windows.ps1`.
+Main files: `.work/s65/6b/clone/docs/riscpc-translator-invariants.md`, `.work/s65/6b/clone/engine/rpcemu/src/cp15.c`, `.work/s65/6b/clone/engine/rpc/rpc_session.c`, `.work/s65/6b/clone/engine/rpc/rpc_scheduler.c`, `.work/s65/6b/clone/.github/workflows/ci.yml`, `.work/s65/6b/clone/tools/test-retroarch-windows.ps1`.
 
 ---
 

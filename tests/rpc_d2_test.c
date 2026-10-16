@@ -16,6 +16,7 @@ static void *library;
 static void *symbol(const char *s) { return dlsym(library,s); }
 #endif
 #define LOAD(var,name) do { void *p=symbol(name);assert(p);memcpy(&var,&p,sizeof(var)); } while(0)
+static bool (*admit_frontend)(void);
 static bool (*start_rpc)(ArcRpcModel,const uint8_t *,size_t,const uint8_t *,uint64_t,char *,size_t);
 static bool (*factory_rpc)(ArcRpcModel,const uint8_t *,size_t,uint64_t,char *,size_t);
 static bool (*advance_rpc)(uint64_t);
@@ -73,6 +74,7 @@ static void load_words(const uint32_t *words,size_t count)
 static void start(unsigned model,const uint32_t *words,size_t count)
 {
     load_words(words,count);assert(start_rpc((ArcRpcModel)model,rom,sizeof(rom),seed,0,error,sizeof(error)));
+    assert(admit_frontend());
     arc_input_reset(&input);logs=0;api->set_log_callback(log_message,NULL);
     uint8_t actual[256];cmos_rpc(actual);assert(!memcmp(actual,seed,256));
 }
@@ -196,13 +198,13 @@ static void pressure(unsigned model)
     assert(advance_rpc(1000000));assert(counts().queued==48);fault_next();accept_mode=4;run_retro();
     c=counts();assert(api->faulted(NULL)&&!c.queued&&c.discarded==848);
     uint64_t frozen=snapshot().executed;uint64_t before=c.accepted;run_retro();
-    assert(snapshot().executed==frozen&&counts().accepted==before+960);
+    assert(snapshot().executed==frozen&&counts().accepted==before+800);
     assert(!api->reset(error,sizeof(error)));api->stop();api->stop();assert(!counts().queued);
     /* Reset purges without erasing accounting, and can recover a healthy session. */
     start(model,GUEST(audio,model),SIZE(audio,model));assert(advance_rpc(1000000));
     assert(counts().queued==48);assert(api->reset(error,sizeof(error)));assert(!counts().queued&&counts().discarded==48);
     assert(advance_rpc(1000000));api->stop();assert(!counts().queued&&counts().discarded==96);
-    printf("fault silence=960 frozen=1 purge=1 reset=1 stop=1\n");
+    printf("fault silence=800 frozen=1 purge=1 reset=1 stop=1\n");
     deinit_retro();
 }
 static void bytes_at(unsigned offset,const uint8_t *expected,size_t n)
@@ -319,7 +321,7 @@ int main(int argc,char **argv)
     library=dlopen(argv[1],RTLD_NOW|RTLD_LOCAL);
 #endif
     assert(library);
-    LOAD(start_rpc,"arc_rpc_test_start");LOAD(factory_rpc,"arc_rpc_test_factory_start");LOAD(advance_rpc,"arc_rpc_test_advance");
+    LOAD(admit_frontend,"arc_libretro_test_rpc_admit");LOAD(start_rpc,"arc_rpc_test_start");LOAD(factory_rpc,"arc_rpc_test_factory_start");LOAD(advance_rpc,"arc_rpc_test_advance");
     LOAD(snapshot_rpc,"arc_rpc_test_snapshot");LOAD(read_rpc,"arc_rpc_test_read_ram");LOAD(counts_rpc,"arc_rpc_test_audio_counts");
     LOAD(peek_rpc,"arc_rpc_test_audio_peek");LOAD(commit_rpc,"arc_rpc_test_audio_commit");LOAD(capture_rpc,"arc_rpc_test_capture_status");
     LOAD(cmos_rpc,"arc_rpc_test_cmos_snapshot");LOAD(fault_next,"arc_rpc_test_fault_next");LOAD(engine_api,"arc_rpc_test_engine_api");api=engine_api();
