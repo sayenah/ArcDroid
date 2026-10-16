@@ -14,6 +14,7 @@ import time
 compiler, root = sys.argv[1:3]
 root = Path(root).resolve()
 original = (root / 'libretro/arc_lock.c').read_text()
+probe_original = (root / 'tests/rpc_lock_process.c').read_text()
 io_original = (root / 'libretro/arc_io.c').read_text()
 unit = (root / 'tests/rpc_lock_test.c').read_text()
 native = (root / 'tests/rpc_lock_native_test.c').read_text()
@@ -51,6 +52,7 @@ add('windows-not-supported', 'error == 50', 'false')
 add('ofd-contention', 'platform == ARC_LOCK_OFD && error == EAGAIN', 'false')
 add('flock-contention', 'platform == ARC_LOCK_FLOCK && error == EWOULDBLOCK', 'false')
 add('open-vs-lock-error', 'return opening ? ARC_LOCK_CREATE_ERROR : ARC_LOCK_ERROR;', 'return ARC_LOCK_CONTENDED;')
+add('null-initialization', 'if (!lock) return ARC_LOCK_ROOT_REFUSED;', '')
 add('windows-open-lock-domain', 'if (platform == ARC_LOCK_WINDOWS) {', 'if (false) {')
 add('no-root-validation', 'if (!lock->cursor || !key)', 'if (!key)')
 add('no-scheme-check', '!n || strstr(save, "://")', '!n')
@@ -176,3 +178,66 @@ with tempfile.TemporaryDirectory(prefix='arcdroid-lock-mutants-') as temp:
             'missing OFD SDK did not trigger the required compile refusal')
     print('missing OFD declaration: compile refused by D-192 #error', flush=True)
     print(f'rpc-lock-mutants: {len(cases) + 4} behavioral mutants killed (plus guard negative inputs)', flush=True)
+
+    # The reporting oracle must kill QA's unconditional-pass mutant and every
+    # other optional leg's false qualification without changing native locks.
+    reports = [('qa-unconditional-identity-pass', probe_original.replace('if (qualified) printf', 'printf')),
+               ('reused-probe-directory', probe_original.replace('if (!result) { printf("probe-root=',
+                   'if (!result || result == -2) { printf("probe-root='))]
+    for leg in ('symlink-alias', 'supplied-alias', 'read-only-open', 'mode-restoration', 'fixture-cleanup'):
+        anchor = next(line for line in probe_original.splitlines() if leg + ': unqualified' in line)
+        reports.append((leg + '-false-pass', probe_original.replace(anchor, f'        puts("{leg}: passed");\n' + anchor, 1)))
+    anchor = next(line for line in probe_original.splitlines() if 'read-only-open: not qualified' in line)
+    reports.append(('ignored-mode-false-pass', probe_original.replace(anchor, '            puts("read-only-open: passed");\n' + anchor, 1)))
+    for label, mutated in reports:
+        test.write_text(mutated)
+        result = subprocess.run([sys.executable, '-B', str(root / 'tests/rpc_lock_probe_capabilities.py'),
+            compiler, str(root), '--source', str(test)], capture_output=True, text=True, timeout=60)
+        require(result.returncode != 0 and 'AssertionError' in result.stderr,
+                f'probe-report mutant survived or failed before its assertion: {label}\n{result.stdout}\n{result.stderr}')
+        print('killed probe report mutant: ' + label, flush=True)
+
+    for script, label, old, new, arguments in (
+        ('tests/rpc_lock_source_guard.py', 'qa-type-only', r'|\bArcLock\w*\b', '', [str(root)]),
+        ('tests/rpc_lock_source_guard.py', 'qa-arc-io-exemption',
+         "if name in ('libretro/arc_lock.c', 'libretro/arc_lock.h'):",
+         "if name in ('libretro/arc_lock.c', 'libretro/arc_lock.h', 'libretro/arc_io.c'):", [str(root)]),
+        ('tests/rpc_lock_source_guard.py', 'qa-narrowed-scan',
+         "for folder in ('core', 'engine', 'platform', 'libretro')", "for folder in ('libretro',)", [str(root)]),
+        ('tools/check-shipping-lock-io.py', 'qa-comments-strings', 'GENERAL.search(line)', 'GENERAL.search(code)', ['--self-test']),
+        ('tools/check-shipping-lock-io.py', 'module-allowlist',
+         "errors.extend(f'{name}: {error}' for error in module_calls(source))", 'pass', ['--self-test']),
+        ('tools/check-shipping-lock-io.py', 'native-census', 'if counts != Counter(NATIVE_CALLS):', 'if False:', ['--self-test']),
+        ('tools/check-shipping-lock-io.py', 'ofd-fields',
+         "errors.append('OFD lock fields must retain the whole-file zero-initialized contract')", 'pass', ['--self-test']),
+        ('tools/check-shipping-lock-io.py', 'lstat-confinement', 'CONFINED.search(code)',
+         "CONFINED.search(code) and 'lstat' not in code", ['--self-test']),
+    ):
+        text = (root / script).read_text()
+        require(text.count(old) == 1, label + ': guard mutation anchor')
+        mutated = temp / 'guard.py'; mutated.write_text(text.replace(old, new))
+        result = subprocess.run([sys.executable, '-B', str(mutated), *arguments], cwd=root,
+                                capture_output=True, text=True, timeout=60)
+        require(result.returncode != 0 and ('mutant survived' in result.stdout + result.stderr),
+                f'guard mutant not killed by its self-test: {label}\n{result.stdout}\n{result.stderr}')
+        print('killed guard mutant: ' + label, flush=True)
+
+    # Existing-directory observation must precede confinement, while creation
+    # outside --save stays refused. Run in the isolated directory, not the repo.
+    runner = (root / 'tools/rpc_runner_vfs.h').read_text()
+    runner_test = (root / 'tests/rpc_vfs_test.c').read_text()
+    header = temp / 'rpc_runner_vfs.h'
+    test.write_text(runner_test.replace('#include "../tools/rpc_runner_vfs.h"', f'#include "{header}"'))
+    for label, old, new in (
+        ('runner-existing-directory', 'if(vfs_stat(p,NULL)&RETRO_VFS_STAT_IS_DIRECTORY)return -2;', ''),
+        ('runner-mkdir-confinement', 'if(!writable(p))return -1;', ''),
+    ):
+        require(runner.count(old) == 1, label + ': runner mutation anchor')
+        header.write_text(runner.replace(old, new))
+        result = subprocess.run([compiler, '-std=c17', '-UNDEBUG', *includes, str(test), '-o', str(binary)],
+                                capture_output=True, text=True, timeout=60)
+        require(result.returncode == 0, result.stderr)
+        result = subprocess.run([str(binary), str(temp / 'runner-save')], cwd=temp,
+                                capture_output=True, text=True, timeout=15)
+        require(result.returncode != 0, label + ': runner mutant survived')
+        print('killed runner mutant: ' + label, flush=True)

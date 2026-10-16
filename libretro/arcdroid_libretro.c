@@ -7721,7 +7721,7 @@ RETRO_API bool retro_load_game(const struct retro_game_info *game)
 {
 #if defined(ARCDROID_TEST_PLANS)
    if (game && arc_test_plan_path(game->path)) {
-      arc_boot_persist_seed(); arc_persist_cmos();
+      if (arc_loaded) arc_persist_cmos();
       arc_loaded = false;
       arc_release_session();
       arc_video_width = ARC_WIDTH; arc_video_height = ARC_HEIGHT; arc_video_rate = 60.0;
@@ -8585,6 +8585,9 @@ RETRO_API void arc_libretro_test_hygiene(ArcFrontendHygiene *out)
       (arc_disc_notice_read!=arc_disc_notice_write?4u:0u);
    for(unsigned i=0;i<RETROK_LAST;++i)if(arc_keyboard_raw[i])out->retained|=8u;
    for(unsigned p=0;p<2;++p)for(unsigned i=0;i<10;++i)if(arc_pad_keys[p][i])out->retained|=16u;
+#if defined(ARCDROID_TEST_PLANS)
+   if(arc_plan_terminal[0] || arc_plan_terminal_refresh)out->retained|=32u;
+#endif
    out->frontend_allocations=(arc_firmware?1u:0u)+(arc_osk_surface?1u:0u)+
       (arc_hd_store?1u:0u)+(arc_adffs_carrier?1u:0u)+(arc_adffs_support?1u:0u);
    for(unsigned i=0;i<ARC_PLAYLIST_MAX_ENTRIES;++i)
@@ -8594,6 +8597,52 @@ RETRO_API void arc_libretro_test_hygiene(ArcFrontendHygiene *out)
  * when cleanup is separately broken. No corresponding shipping seam exists. */
 RETRO_API void arc_libretro_test_plant_cmos(const char *path)
 { snprintf(arc_cmos_path,sizeof(arc_cmos_path),"%s",path); }
+/* Exercise each boundary in isolation: a valid retained Arculator machine and
+ * plan, with only the frontend kind changed. No release or downstream guard is
+ * needed by the oracle (boot publication is observed at its media read). */
+RETRO_API bool arc_libretro_test_persistence_guard(unsigned site, unsigned phase,
+                                                 const char *path)
+{
+   ArcSessionKind previous=arc_kind;
+   bool changed=false;
+   uint8_t before[ARC_CMOS_RECORD_SIZE];
+   char result[ARC_MEDIA_PATH_CAPACITY]="guard-probe";
+   char error[256]={0};
+   if(!phase){
+      snprintf(arc_cmos_path,sizeof(arc_cmos_path),"%s",path);
+      arc_cmos_last_written_valid=false;
+      if(site==0 || site==9)memset(arc_cmos_record,0,sizeof(arc_cmos_record));
+      if(site==1)memset(arc_cmos_prepared,0,sizeof(arc_cmos_prepared));
+      if(site==3)arc_boot_post_chooser=true;
+      if(site==4)snprintf(arc_hd_reason,sizeof(arc_hd_reason),"guard-probe");
+      if(site==5){
+         arc_boot_stamp_ready=arc_boot_stamp(&arc_boot_start_stamp);
+         arc_boot_record_suppressed=false;
+         if(!arc_boot_stamp_ready)return true; /* Invalid fixture must fail. */
+      }
+      if(site==6)arc_hd_reset_cancel_pending=true;
+      return false;
+   }
+   memcpy(before,site==1?arc_cmos_prepared:arc_cmos_record,sizeof(before));
+   arc_kind=phase==2?ARC_SESSION_KIND_ARCULATOR:ARC_SESSION_KIND_RISCPC;
+   switch(site){
+      case 0:arc_sync_cmos();break;
+      case 1:arc_seed_cmos();break;
+      case 2:arc_persist_cmos();break;
+      case 3:arc_boot_persist_seed();break;
+      case 4:arc_hd_reconcile();changed=strcmp(arc_hd_reason,"guard-probe")!=0;break;
+      case 5:arc_boot_record_publish();break;
+      case 6:(void)arc_hd_outcome_boundary();changed=!arc_hd_reset_cancel_pending;break;
+      case 7:changed=arc_boot_record_path(result,true) || strcmp(result,"guard-probe");break;
+      case 8:changed=arc_launch_binding_publish(path,false,(const uint8_t *)"probe",5);break;
+      case 9:(void)arc_construct_machine(arc_machine_descriptor(arc_plan.machine),NULL,error,sizeof(error));break;
+      default:changed=true;break;
+   }
+   if(site==0 || site==1 || site==9)
+      changed=memcmp(before,site==1?arc_cmos_prepared:arc_cmos_record,sizeof(before))!=0;
+   arc_kind=previous;
+   return changed;
+}
 RETRO_API bool arc_libretro_test_disc_name(unsigned index,ArcGuestName *name)
 { return arc_disc_name(index,name); }
 RETRO_API uint64_t arc_libretro_test_journal_filter_cost(unsigned count)

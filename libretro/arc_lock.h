@@ -38,7 +38,9 @@ typedef struct {
     bool valid, opened, held, lost, parents_done;
 } ArcLock;
 
-/* No I/O during initialization. Invalid keys/roots produce ROOT_REFUSED.
+/* NULL tokens are tolerated by every entry point: result functions return
+ * ROOT_REFUSED, queries return false, release is a no-op. No I/O occurs.
+ * No I/O during initialization. Invalid keys/roots produce ROOT_REFUSED.
  * model is the same zero-based index as ArcRpcCmosKey (0..3). */
 ArcLockResult arc_lock_content(ArcLock *, const char *save, const char *content40,
                                const ArcLockBackend *, void *opaque);

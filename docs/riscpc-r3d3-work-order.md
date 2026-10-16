@@ -243,7 +243,7 @@ The plan core becomes a thin client that keeps only its low-level modes (D-168(6
 - **Precedent.** Shipping code already makes native calls: `rpc_preparation.c:11-29` uses `QueryPerformanceCounter`/`clock_gettime`.
 
 **CI.**
-- Runners: ubuntu-latest (host and sanitizers) and windows-latest (MinGW and the RetroArch 1.22.2 package).
+- Runners: ubuntu-24.04 (host and sanitizers; pinned by W7), ubuntu-24.04-arm (host-arm64, W6) and windows-latest (MinGW and the RetroArch 1.22.2 package).
 - The sanitizer job selects tests by the regex at `.github/workflows/ci.yml:72`, which includes `rpc-.*`.
 - No macOS runner exists.
 
@@ -870,7 +870,7 @@ New tests are named `rpc-*`, so the sanitizer selection at `.github/workflows/ci
 
 **AC-12a Ownership primitive, real processes [1][P].**
 - **Where it runs.** The ownership process binary runs on one directory tree:
-  - in CI on ubuntu-latest (OFD) and windows-latest (`LockFileEx`);
+  - in CI on ubuntu-24.04 and ubuntu-24.04-arm (OFD) and windows-latest (`LockFileEx`);
   - Mac-local for `flock` (no CI runner);
   - on the Odin3, Windows and the Mac in P10b.
 - **Cases:**
@@ -1092,7 +1092,7 @@ New tests are named `rpc-*`, so the sanitizer selection at `.github/workflows/ci
 
 - **`slice/r3d3-own`:**
   - a flag-free ownership test executable for AC-11a;
-  - the ownership process binary for AC-12a, in CTest on ubuntu-latest and windows-latest;
+  - the ownership process binary for AC-12a, in CTest on ubuntu-24.04, ubuntu-24.04-arm and windows-latest;
   - the guard self-tests;
   - goldens compared against its pinned `main`.
 - **Host and module (`slice/r3d3-host`):** a flag-free module test executable for AC-1, AC-3, AC-4, AC-6, AC-7, AC-10 and AC-11b, with an injected clock, the injectable lock backend and an authored fingerprint through production begin.

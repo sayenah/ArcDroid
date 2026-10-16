@@ -128,6 +128,7 @@ static int32_t vfs_stat(const char *p,int32_t *size)
 }
 static int vfs_mkdir(const char *p)
 {
+    if(vfs_stat(p,NULL)&RETRO_VFS_STAT_IS_DIRECTORY)return -2;
     if(!writable(p))return -1;
 #if defined(_WIN32)
     int result = _mkdir(p);
