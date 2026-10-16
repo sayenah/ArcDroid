@@ -469,6 +469,10 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
       "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_observer_mutants.py"
       "${CMAKE_CURRENT_BINARY_DIR}" $<TARGET_FILE:rpc_observer_test>)
     set_tests_properties(rpc-observation-mutants PROPERTIES TIMEOUT 180 RUN_SERIAL TRUE)
+    if(WIN32)
+      # Windows CI reached 130.34 s; allow twice that, rounded up to a minute.
+      set_property(TEST rpc-observation-mutants PROPERTY TIMEOUT 300)
+    endif()
   endif()
   add_test(NAME rpc-cpu-mmu-memory COMMAND rpc_cpu_test)
   add_test(NAME rpc-fetch-memo-rewalk COMMAND rpc_cpu_test --fetch-memo)
@@ -2115,6 +2119,10 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
       --ide $<TARGET_FILE:rpc_ide_test> --runner $<TARGET_FILE:rpc_runner>
       --plan $<TARGET_FILE:arcdroid_rpcplan_libretro> --cpu $<TARGET_FILE:rpc_cpu_test>)
     set_tests_properties(rpc-qa-mutations PROPERTIES TIMEOUT 600 RUN_SERIAL TRUE)
+    if(WIN32)
+      # Windows CI reached 414 s; allow twice that, rounded up to a minute.
+      set_property(TEST rpc-qa-mutations PROPERTY TIMEOUT 840)
+    endif()
   endif()
   foreach(rate IN ITEMS 60 99)
     foreach(pacing IN ITEMS 0 1)
@@ -2498,6 +2506,10 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
       "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_orchestration_mutants.py"
       "${CMAKE_CURRENT_BINARY_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}" "${FIXTURE_DIR}" ${RPC_ORCHESTRATION_MUTANT_PROFILE})
     set_tests_properties(rpc-orchestration-mutants PROPERTIES TIMEOUT 300 RUN_SERIAL TRUE)
+    if(WIN32)
+      # Windows CI timed out at 300.16 s; twice that rounds up to 660 s.
+      set_property(TEST rpc-orchestration-mutants PROPERTY TIMEOUT 660)
+    endif()
   endif()
   add_executable(rpc_preparation_test tests/rpc_preparation_test.c libretro/rpc_hd_store.c libretro/install_store.c libretro/arc_io.c)
   target_include_directories(rpc_preparation_test PRIVATE core engine libretro libretro/include)
@@ -2565,6 +2577,9 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
   if(ARCDROID_SANITIZERS)
     set(RPC_BOOT_FAULTS_PROFILE sanitizer)
     set(RPC_BOOT_FAULTS_TIMEOUT 900)
+  elseif(WIN32)
+    # Windows CI reached 3355 s; allow twice that, rounded up to a minute.
+    set(RPC_BOOT_FAULTS_TIMEOUT 6720)
   endif()
   add_test(NAME rpc-boot-budget COMMAND "${Python3_EXECUTABLE}" -B
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_boot_budget_test.py" $<TARGET_FILE:rpc_boot_test>
