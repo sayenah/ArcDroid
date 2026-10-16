@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-2.0-only
 """Endpoint, exercise and schema-2 ranking mutation evidence. Never edits source."""
+import argparse
 import json
 import os
 from pathlib import Path
@@ -9,7 +10,11 @@ import sys
 import tempfile
 sys.dont_write_bytecode=True
 from rpc_ninja_commands import rebuild_commands
-root=Path(__file__).resolve().parents[1];build=Path(sys.argv[1]).resolve()
+parser=argparse.ArgumentParser(description=__doc__)
+parser.add_argument('build',type=Path)
+parser.add_argument('group',choices=('ordinary','profile'))
+args=parser.parse_args()
+root=Path(__file__).resolve().parents[1];build=args.build.resolve()
 cache=(build/'CMakeCache.txt').read_text()
 ninja=next(x.split('=',1)[1] for x in cache.splitlines() if x.startswith('CMAKE_MAKE_PROGRAM:FILEPATH='))
 commands=[x['command'] for x in json.loads(subprocess.check_output([ninja,'-t','compdb','-x'],cwd=build,text=True))]
@@ -43,9 +48,16 @@ def kill(name,target,source,header=None,content=None):
         if r.returncode==0:raise RuntimeError((name,'SURVIVED'))
         print(name+': killed',flush=True)
 
-for target in ('rpc_endpoint_test','rpc_counter_profile_test','rpc_endpoint_cpu_test','rpc_profile_test'):
+targets=('rpc_profile_test',) if args.group=='profile' else ('rpc_endpoint_test','rpc_counter_profile_test','rpc_endpoint_cpu_test')
+for target in targets:
     r=subprocess.run([str(build/(target+exe))],capture_output=True,text=True,timeout=30)
     if r.returncode:raise RuntimeError(('original fixture fails',target,r.stderr))
+if args.group=='profile':
+    profile=(root/'engine/rpc/rpc_profile.c').read_text()
+    kill('AL-increment','rpc_profile_test','engine/rpc/rpc_profile.c',content=profile.replace(
+        'if((op>>28)==14)++profile.counts.al;', '((void)0);'))
+    print('1 profile-dependent measurement mutant killed; no compile errors counted')
+    sys.exit(0)
 header=(root/'engine/rpc/rpc_exercise.h').read_text()
 import re
 names=re.findall(r' X\((\w+)\)',header)
@@ -72,8 +84,6 @@ for maintenance in (0,1):
     kill('ranking-hit-way-'+str(maintenance),'rpc_counter_profile_test','engine/rpc/rpc_profile.c',content=profile)
 
 profile=(root/'engine/rpc/rpc_profile.c').read_text()
-kill('AL-increment','rpc_profile_test','engine/rpc/rpc_profile.c',content=profile.replace(
-    'if((op>>28)==14)++profile.counts.al;', '((void)0);'))
 kill('ranking-denominator','rpc_endpoint_cpu_test','engine/rpc/rpc_profile.c',content=profile.replace(
     '++profile.counts.ranking_attempts;', '((void)0);'))
 kill('ranking-epoch','rpc_endpoint_cpu_test','engine/rpc/rpc_profile.c',content=profile.replace(
@@ -141,4 +151,4 @@ def capture_guard(source):
 if not capture_guard(text):raise RuntimeError('capture guard fails on original')
 if capture_guard(text.replace('if (!endpoint_mode) return count;','if (!endpoint_mode) return count;\n    arc_rpc_mem_batch_flush();')):raise RuntimeError('capture flush mutant survived')
 print('capture-induced-flush: killed by no-canonicalisation guard')
-print(f'{2*len(names)+29} endpoint/counter mutants killed; no compile errors counted')
+print(f'{2*len(names)+28} ordinary endpoint/counter mutants killed; no compile errors counted')

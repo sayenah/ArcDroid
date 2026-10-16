@@ -2215,7 +2215,7 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
   add_test(NAME rpc-counter-profile-directed COMMAND rpc_counter_profile_test)
   if(CMAKE_GENERATOR STREQUAL "Ninja" AND NOT ARCDROID_SANITIZERS)
     add_test(NAME rpc-measurement-mutants COMMAND "${Python3_EXECUTABLE}" -B
-      "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_measure_mutants.py" "${CMAKE_CURRENT_BINARY_DIR}")
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_measure_mutants.py" "${CMAKE_CURRENT_BINARY_DIR}" ordinary)
     set_tests_properties(rpc-measurement-mutants PROPERTIES TIMEOUT 900 RUN_SERIAL TRUE)
   endif()
 
@@ -3043,6 +3043,10 @@ if(ARCDROID_RPC_PROFILE AND BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32
     $<TARGET_FILE:arcdroid_libretro> "${RPC_PLAN_DIR}" $<TARGET_FILE:rpc_profile_lifecycle_test>)
   set_tests_properties(rpc-profile-counts rpc-profile-runner PROPERTIES TIMEOUT 120)
   if(CMAKE_GENERATOR STREQUAL "Ninja" AND NOT ARCDROID_SANITIZERS)
+    # AL-increment uses rpc_profile_test, already built by rpc-profile-tests.
+    add_test(NAME rpc-profile-measurement-mutants COMMAND "${Python3_EXECUTABLE}" -B
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_measure_mutants.py" "${CMAKE_CURRENT_BINARY_DIR}" profile)
+    set_tests_properties(rpc-profile-measurement-mutants PROPERTIES TIMEOUT 900 RUN_SERIAL TRUE)
     add_test(NAME rpc-profile-mutants COMMAND "${Python3_EXECUTABLE}" -B
       "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_profile_mutants.py"
       "${CMAKE_CURRENT_BINARY_DIR}" $<TARGET_FILE:rpc_profile_test> $<TARGET_FILE:rpc_runner>
