@@ -237,6 +237,40 @@ The governing R-10 research and adjudications are in
 `.evidence/LOCK-RESEARCH.md` (its earlier fallback/share-delete suggestions are
 superseded by R-10 and D-193).
 
+### QA follow-up contract (Run E)
+
+Written before the Run E implementation. The primitive remains dormant. A NULL
+token is tolerated consistently: initialization, acquisition and verification
+return root-refused; held/namespace queries return false; release does nothing.
+No backend or VFS operation occurs for a NULL token.
+
+The shipping guard admits only explicitly enumerated calls in the lock module.
+Native open, lock/unlock, identity and close expressions are pinned with their
+arguments, occurrence counts and platform preprocessor context. Windows permits
+the existing strict UTF-8 conversion and error query as supporting operations.
+Pure string/memory utilities, internal helpers, the exact backend callbacks and
+the existing VFS mkdir/metadata operations are separately enumerated; no other
+call is admitted. In particular there is no sentinel data, descriptor mutation,
+classic lock, blocking lock, or alternate namespace operation. Stat-family
+identity operations, including lstat, remain confined to this module. Raw
+open/dump references in comments and strings remain forbidden, except for the
+existing exact arc.h comment; other comment/string text is not executable I/O.
+Guard self-tests exercise type-only dormancy references, arc_io itself, every
+shipping source tree, comments, strings and both separator/newline forms.
+
+Each self-test creates an exclusive new child directory below its supplied
+root, using PID plus a collision counter (no OS entropy). It reports that path;
+stale sentinels and read-only fixtures from an interrupted earlier run are left
+alone. A supplied alias is mapped to the same child when its parent names the
+same directory. Explicit try/hold commands still share the exact supplied root.
+Every unqualified optional leg must lack that leg's passed result, including
+permission checks, alias checks, restoration and cleanup; mandatory lock and
+identity assertions are unchanged. The runner VFS reports -2 for an existing
+directory before checking mutation confinement, so walking existing ancestors
+does not grant permission to create anything outside --save. This matches the
+existing-directory result in [RetroArch 1.22.2's mkdir implementation](https://github.com/libretro/RetroArch/blob/v1.22.2/libretro-common/vfs/vfs_implementation.c#L1055-L1131),
+which maps an EEXIST result to -2.
+
 ### Windows probe contract audit (Run B)
 
 Written before the Run B probe correction. Fable's Windows 11 / NTFS probe

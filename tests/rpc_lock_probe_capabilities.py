@@ -3,13 +3,15 @@
 from pathlib import Path
 import errno
 import os
+import re
 import subprocess
 import sys
 import tempfile
 
 compiler, root = sys.argv[1:3]
 root = Path(root).resolve()
-source = (root / 'tests/rpc_lock_process.c').read_text()
+source_path = Path(sys.argv[sys.argv.index('--source') + 1]) if '--source' in sys.argv else root / 'tests/rpc_lock_process.c'
+source = source_path.read_text()
 # Replace fixture operations only. arc_lock.c is compiled unchanged, so every
 # acquisition, contention, identity check and process-death release uses the OS.
 hooks = {
@@ -21,6 +23,7 @@ hooks = {
     'unlink(path)': 'fixture_unlink(path)',
     'open(first.path, O_RDWR|O_CLOEXEC)': 'fixture_open(first.path, O_RDWR|O_CLOEXEC)',
     'stat(alias, &alias_stat)': 'fixture_stat(alias, &alias_stat)',
+    'int result = vfs_mkdir(save);': 'int result = fixture_mkdir(save);',
 }
 for old, new in hooks.items():
     assert source.count(old) == 1, old
@@ -34,6 +37,7 @@ static int fixture_rename(const char *, const char *);
 static int fixture_unlink(const char *);
 static int fixture_open(const char *, int);
 static int fixture_stat(const char *, struct stat *);
+static int fixture_mkdir(const char *);
 '''
 definitions = '''
 static int fixture_error(const char *key)
@@ -65,6 +69,15 @@ static int fixture_open(const char *path, int flags)
 { return fixture_error("PROBE_OPEN") ? -1 : open(path, flags); }
 static int fixture_stat(const char *path, struct stat *s)
 { return fixture_error("PROBE_ALIAS_STAT") ? -1 : stat(path, s); }
+static int fixture_mkdir(const char *path)
+{
+    static int calls;
+    if (getenv("PROBE_MKDIR_COLLISION") && !calls++) {
+        assert(mkdir(path, 0700) == 0);
+        printf("occupied-probe-root=%s\\n", path); return -2;
+    }
+    return vfs_mkdir(path);
+}
 '''
 with tempfile.TemporaryDirectory(prefix='arcdroid-lock-capabilities-') as directory:
     temp = Path(directory)
@@ -77,11 +90,18 @@ with tempfile.TemporaryDirectory(prefix='arcdroid-lock-capabilities-') as direct
                     '-o', str(binary)], check=True, capture_output=True, text=True)
     count = 0
 
-    def run(label, settings=None, expected=(), fail=False, alias='same'):
+    used_roots = set()
+    def run(label, settings=None, expected=(), fail=False, alias='same', stale=None):
         global count
         count += 1
         save = temp / str(count)
         save.mkdir()
+        if stale:
+            sentinel = save / 'arcdroid/locks-riscpc/c-0123456789abcdef0123456789abcdef01234567.lock'
+            sentinel.parent.mkdir(parents=True)
+            sentinel.write_bytes(b'x' if stale == 'nonzero' else b'')
+            if stale == 'readonly':
+                sentinel.chmod(0o400)
         alternate = str(save / '.')
         if alias == 'distinct':
             other = temp / (str(count) + '-other')
@@ -95,10 +115,31 @@ with tempfile.TemporaryDirectory(prefix='arcdroid-lock-capabilities-') as direct
         if not fail:
             for text in (*expected, 'rpc-lock-process: passed'):
                 assert text in result.stdout, (label, text, result.stdout)
+            # Qualify each optional leg separately: a mandatory dot-root pass
+            # on a symlink-unavailable line does not qualify the symlink leg.
+            for leg in re.findall(r'^([\w-]+): (?:unqualified|not qualified)\b', result.stdout, re.M):
+                assert not re.search(r'^' + re.escape(leg) + r': passed\b', result.stdout, re.M), (label, leg, result.stdout)
+            actual_root = Path(re.search(r'^probe-root=(.+)$', result.stdout, re.M)[1])
+            assert actual_root.parent == save and actual_root not in used_roots
+            used_roots.add(actual_root)
+            occupied = re.search(r'^occupied-probe-root=(.+)$', result.stdout, re.M)
+            if occupied:
+                assert actual_root != Path(occupied[1]), (label, result.stdout)
+            if stale:
+                assert sentinel.read_bytes() == (b'x' if stale == 'nonzero' else b'')
+                if stale == 'readonly':
+                    assert sentinel.stat().st_mode & 0o777 == 0o400
+                again = subprocess.run([str(binary), 'self-test', str(save)], capture_output=True, text=True, timeout=15, env=env)
+                assert again.returncode == 0, (label, again.stdout, again.stderr)
+                next_root = Path(re.search(r'^probe-root=(.+)$', again.stdout, re.M)[1])
+                assert next_root != actual_root and next_root.parent == save
         print('probe-capability:', label, 'passed', flush=True)
 
     run('available fixtures', expected=('supplied-alias: passed', 'symlink-alias: passed',
                                        'rename-over-identity: passed', 'delete-identity: passed'))
+    run('stale nonzero sentinel and repeated root', stale='nonzero')
+    run('stale readonly sentinel and repeated root', stale='readonly')
+    run('occupied PID-counter directory', {'PROBE_MKDIR_COLLISION': 1})
     for code in sorted({errno.ENOSYS, errno.ENOTSUP, errno.EOPNOTSUPP, errno.EPERM, errno.EACCES}):
         run('optional errno ' + str(code),
             {key: code for key in ('PROBE_SYMLINK', 'PROBE_CHMOD', 'PROBE_RENAME', 'PROBE_UNLINK', 'PROBE_ALIAS_STAT')},

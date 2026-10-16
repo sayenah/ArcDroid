@@ -3,6 +3,7 @@
 from pathlib import Path
 import re
 import sys
+import tempfile
 
 root = Path(sys.argv[1]).resolve()
 
@@ -21,8 +22,25 @@ def check(sources):
     return errors
 
 
-sources = {p.relative_to(root).as_posix(): p.read_text() for folder in ('core', 'engine', 'platform', 'libretro')
-           for p in (root / folder).rglob('*') if p.suffix in ('.c', '.h')}
+def collect(directory):
+    return {p.relative_to(directory).as_posix(): p.read_text() for folder in ('core', 'engine', 'platform', 'libretro')
+            for p in (directory / folder).rglob('*') if p.suffix in ('.c', '.h')}
+
+
+# Exercise the collector itself, including recursive paths and headers. Merely
+# passing synthetic names to check() would miss a narrowed shipping-tree scan.
+with tempfile.TemporaryDirectory(prefix='arc-lock-dormancy-') as directory:
+    fixture = Path(directory)
+    for name in ('core/probe.c', 'engine/nested/probe.h', 'platform/probe.c', 'libretro/probe.h'):
+        path = fixture / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text('ArcLockResult injected;\n')
+        found = collect(fixture)
+        if name not in found or not check({name: found[name]}):
+            raise SystemExit(f'dormancy collector mutant survived: {name}')
+
+sources = collect(root)
+rejected = 0
 for windows_paths in (False, True):
     for crlf in (False, True):
         variant = {(name.replace('/', '\\') if windows_paths else name):
@@ -32,16 +50,26 @@ for windows_paths in (False, True):
         if errors:
             raise SystemExit('\n'.join(errors))
         for name in ('libretro/rpc_preparation.c', 'libretro/rpc_hd_store.c', 'libretro/rpc_cmos_store.c',
-                     'libretro/rpc_launch_record_store.c', 'libretro/arcdroid_libretro.c'):
+                     'libretro/rpc_launch_record_store.c', 'libretro/arcdroid_libretro.c',
+                     'libretro/arc_io.c', 'libretro/arc_io.h', 'core/probe.c',
+                     'engine/nested/probe.h', 'platform/probe.c'):
             path = name.replace('/', '\\') if windows_paths else name
             for injected in ('\n#include "arc_lock.h"\n', '\n#include "../libretro/arc_lock.h"\n',
                              '\nvoid injected(void) { arc_lock_acquire(0); }\n',
                              '\nvoid injected(void) { arc_io_mkdir("/save"); }\n',
                              '\n#include "ARC_LOCK.H"\n',
-                             '\n#include "..\\libretro\\Arc_Lock.h"\n'):
+                             '\n#include "..\\libretro\\Arc_Lock.h"\n',
+                             '\nArcLockResult type_only;\n',
+                             '\n/* arc_lock_held(0) */\n',
+                             '\nconst char *commentary = "ArcLockResult";\n'):
+                # arc_io owns the VFS mkdir adapter, but never a lock caller.
+                if name in ('libretro/arc_io.c', 'libretro/arc_io.h') and 'arc_io_mkdir' in injected:
+                    continue
                 if crlf:
                     injected = injected.replace('\n', '\r\n')
-                if not check({**variant, path: variant.get(path, '') + injected}):
+                if not check({path: injected}):
                     raise SystemExit(f'dormancy mutant survived: {path}')
+                rejected += 1
 print('rpc-lock-dormancy: no shipping caller or store enforcement; 20 migration mutants refused '
-      'in POSIX/Windows path forms and LF/CRLF text; 10 header-case mutants also refused')
+      'plus type, arc_io, source-tree and documentary references; '
+      f'{rejected} negative checks in POSIX/Windows path forms and LF/CRLF text')
