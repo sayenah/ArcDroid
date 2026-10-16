@@ -221,6 +221,35 @@ CENSUS_SERVICES = {
     "trunc",  # Round a double toward zero; no allocation.
     "truncf",  # Round a float toward zero; no allocation.
     "truncl",  # Round a long double toward zero; no allocation.
+    # GCC libgcc soft-fp binary128 (TFmode), used by aarch64 Linux long double.
+    "__addtf3",  # Add binary128 values; no allocation.
+    "__subtf3",  # Subtract binary128 values; no allocation.
+    "__multf3",  # Multiply binary128 values; no allocation.
+    "__divtf3",  # Divide binary128 values; no allocation.
+    "__negtf2",  # Negate a binary128 value; no allocation.
+    "__eqtf2",  # Binary128 equality comparison; no allocation.
+    "__netf2",  # Binary128 inequality comparison; no allocation.
+    "__getf2",  # Binary128 greater-or-equal comparison; no allocation.
+    "__gttf2",  # Binary128 greater-than comparison; no allocation.
+    "__letf2",  # Binary128 less-or-equal comparison; no allocation.
+    "__lttf2",  # Binary128 less-than comparison; no allocation.
+    "__unordtf2",  # Binary128 unordered comparison; no allocation.
+    "__fixtfsi",  # Binary128 to signed SI integer; no allocation.
+    "__fixtfdi",  # Binary128 to signed DI integer; no allocation.
+    "__fixtfti",  # Binary128 to signed TI integer; no allocation.
+    "__fixunstfsi",  # Binary128 to unsigned SI integer; no allocation.
+    "__fixunstfdi",  # Binary128 to unsigned DI integer; no allocation.
+    "__fixunstfti",  # Binary128 to unsigned TI integer; no allocation.
+    "__floatsitf",  # Signed SI integer to binary128; no allocation.
+    "__floatditf",  # Signed DI integer to binary128; no allocation.
+    "__floattitf",  # Signed TI integer to binary128; no allocation.
+    "__floatunsitf",  # Unsigned SI integer to binary128; no allocation.
+    "__floatunditf",  # Unsigned DI integer to binary128; no allocation.
+    "__floatuntitf",  # Unsigned TI integer to binary128; no allocation.
+    "__extendsftf2",  # Extend binary32 to binary128; no allocation.
+    "__extenddftf2",  # Extend binary64 to binary128; no allocation.
+    "__trunctfsf2",  # Narrow binary128 to binary32; no allocation.
+    "__trunctfdf2",  # Narrow binary128 to binary64; no allocation.
     # Darwin/glibc runtime, locale and process/profile clocks.
     "_DefaultRuneLocale", "__assert_rtn", "__assert_fail", "__error",
     "__errno_location", "__maskrune", "__stderrp", "__tolower", "stderr",
