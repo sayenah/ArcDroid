@@ -57,9 +57,14 @@ def symbol_entry(schema,source,name):
 
 
 def check_symbols(schema,source,symbols):
-    rows=[];identities=set()
+    rows=[];identities=set();classified={};indicators=[]
     for name in symbols:
         if ignored_symbol(name): continue
+        # GCC and Clang ELF ASan ODR indicators inherit a classified global's
+        # identity only within this object. They cannot approve absent storage.
+        if name.startswith(('__odr_asan.','__odr_asan_gen_')):
+            indicators.append(name)
+            continue
         identity,entry=symbol_entry(schema,source,name)
         require(entry is not None,(source,'unclassified data/bss symbol',name))
         require(identity not in identities,(source,'ambiguous duplicate symbol identity',identity,name))
@@ -68,6 +73,12 @@ def check_symbols(schema,source,symbols):
         rows.append(dict(source=source,symbol=name,identity=identity,
                          classification=entry['classification'],
                          roots=entry.get('roots',[entry.get('root')]),citation=entry['citation']))
+        classified[name]=rows[-1]
+    for name in indicators:
+        prefix='__odr_asan.' if name.startswith('__odr_asan.') else '__odr_asan_gen_'
+        target=name.removeprefix(prefix)
+        require(target in classified,(source,'ASan indicator lacks classified same-object global',name,target))
+        rows.append(dict(classified[target],symbol=name,alias_of=target))
     return rows
 
 
@@ -88,6 +99,38 @@ def self_test(schema):
     try:check_symbols(schema,source,['shortened.0','shortened.1'])
     except RuntimeError:print('rejected ambiguous function-local suffix identities')
     else:raise RuntimeError('colliding local-static identities silently classified')
+    # Sanitizer-shaped nm tables: ELF/COFF have no ABI underscore; Mach-O
+    # removes exactly one. Marker-before-global order must also work.
+    source='engine/rpc/rpc_session.c';global_name='arc_rpc_bus_ns'
+    for label,apple,table in (
+        ('GCC ELF',False,'__odr_asan.arc_rpc_bus_ns B 0 1\narc_rpc_bus_ns B 8 8\n'),
+        ('Clang ELF',False,'__odr_asan_gen_arc_rpc_bus_ns B 0 1\narc_rpc_bus_ns B 8 8\n'),
+        ('Apple ABI GCC',True,'00000000 (__DATA,__bss) external ___odr_asan.arc_rpc_bus_ns\n'
+            '00000008 (__DATA,__bss) external _arc_rpc_bus_ns\n'),
+        ('Apple ABI Clang',True,'00000000 (__DATA,__bss) external ___odr_asan_gen_arc_rpc_bus_ns\n'
+            '00000008 (__DATA,__bss) external _arc_rpc_bus_ns\n')):
+        symbols=parse_symbols(table,apple);rows=check_symbols(schema,source,symbols)
+        require(len(rows)==2 and rows[1]['alias_of']==global_name and
+                rows[1]['identity']==rows[0]['identity'] and
+                rows[1]['classification']==rows[0]['classification'],'ASan alias identity/class')
+        for bad in ([symbols[0]], # Known in schema, absent from this object.
+                    [symbols[0],'lockstep_unclassified_static'],
+                    ['__odr_asan.lockstep_unclassified_static','lockstep_unclassified_static'],
+                    ['__odr_asan_gen_lockstep_unclassified_static','lockstep_unclassified_static'],
+                    [symbols[0],global_name+'x'],
+                    ['__odr_asan.__odr_asan.'+global_name,symbols[0],global_name]):
+            try:check_symbols(schema,source,bad)
+            except RuntimeError:pass
+            else:raise RuntimeError(('ASan same-object control survived',label,bad))
+        print('ASan same-object identity and rejection controls:',label)
+    # Apple Clang also emits descriptors and an object-wide registry flag.
+    # These are not ODR aliases; keep them unclassified pending a ruling.
+    for name in ('___asan_globals_registered','__asan_binder_'+global_name,
+                 '__asan_global_'+global_name):
+        try:check_symbols(schema,source,[global_name,name])
+        except RuntimeError:pass
+        else:raise RuntimeError(('unreviewed sanitizer metadata accepted',name))
+    print('unreviewed Apple/Clang ASan metadata remains rejected')
 
 
 def object_control(schema,build,compiler,nm,apple):

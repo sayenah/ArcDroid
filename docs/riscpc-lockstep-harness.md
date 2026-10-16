@@ -278,6 +278,24 @@ same-named local in a second function requires an explicit reviewed mapping.
 Compiler aggregate symbols have explicit schema mappings; nm cannot
 recover storage eliminated or merged without a separately named symbol.
 
+Run D R-1: GCC ASan `__odr_asan.<global>` and Clang ASan
+`__odr_asan_gen_<global>` indicators inherit the global's identity, class,
+roots and citation only if that exact global is present and independently
+classified in the same object. The exported indicator row records `alias_of`;
+it is an instrumentation alias, not a second guest-state allocation. An
+orphan indicator, unknown global or chain of indicators fails. Mach-O ABI
+underscore removal precedes this rule; no sanitizer-name wildcard is ignored.
+Synthetic tables exercise both spellings and ABI forms independently of
+whether the local compiler enables ODR indicators.
+Run D R-1b: the inventory classifies guest state; sanitizer instrumentation
+is not guest state. Therefore `rpc-lockstep-inventory` is not registered when
+`ARCDROID_SANITIZERS` is on. This covers Clang registry flags, per-global
+descriptors (`__asan_binder_*`, `__asan_global_*`) and assembler metadata, and
+GCC init/term markers (`Mod.init`) and sanitizer labels. Inventory coverage
+remains on Linux GCC ELF in CI's `host` and `host-arm64` jobs, MinGW COFF in
+`windows`, and Mach-O locally. The ODR alias mapping and self-tests remain;
+the earlier local sanitizer symbol-subset audit is not a full inventory pass.
+
 After an engine merge, build the plan-core object target and run the inventory
 with `--write-inventory` into the external build tree. This committed tool emits
 current object, raw symbol, normalised identity, class and schema-root mappings;
@@ -295,6 +313,16 @@ without changing its reviewed contract fails validation. `cp15.tlbs` and
 `cp15.flushes` are canonical under Run C / Q-10; `arm.unpredictable_count` is
 excluded diagnostic state. Cross-quota driver projections are schema data,
 including the booked NULL-batch attempt and remaining work/scanout budgets.
+
+Run D R-2: the comparator test additionally pins the complete reviewed lists
+in `tests/rpc_lockstep_reviewed_policy.json`, outside the schema. This includes
+each conditional/permanent/mode exclusion's fields, rule and citation, the
+cross-quota projection expressions, and A-33's stdout rule. Class validation
+alone cannot approve an edit to those lists: a schema-only policy edit fails
+the independent test. A new adjudicated rule requires reviewing both files;
+the test never regenerates the policy fixture. Controls self-approve each of
+QA's four exclusions in the schema and verify that the independent pin rejects
+them even though class validation accepts them.
 
 Event counterexamples perturb one field at a time, keeping time equal except
 for the timestamp test. RAM/MMIO cross-order and direction are separate tests,

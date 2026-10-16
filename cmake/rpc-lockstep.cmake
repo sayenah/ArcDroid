@@ -73,7 +73,11 @@ add_test(NAME rpc-lockstep-generator-mutants COMMAND "${Python3_EXECUTABLE}" -B
   "${RPC_LOCKSTEP_PY}/rpc_lockstep_corpus_test.py" $<TARGET_FILE:rpc_runner>
   $<TARGET_FILE:arcdroid_rpcplan_libretro> "${RPC_LOCKSTEP_DIR}" --model 2 --quick --generator-mutants)
 set_tests_properties(rpc-lockstep-generator-mutants PROPERTIES TIMEOUT 60 RUN_SERIAL TRUE)
-if(CMAKE_NM)
+# Run D R-1b: inventory classifies guest state, not sanitizer instrumentation
+# (Clang registry/descriptors/assembler metadata; GCC init/term markers/labels).
+# Coverage remains Linux GCC ELF in CI host/host-arm64, MinGW COFF in windows,
+# and Mach-O locally. Keep ODR alias controls in the inventory tool.
+if(CMAKE_NM AND NOT ARCDROID_SANITIZERS)
   set(rpc_lockstep_nm_args --nm "${CMAKE_NM}")
   if(APPLE)
     list(APPEND rpc_lockstep_nm_args --apple)

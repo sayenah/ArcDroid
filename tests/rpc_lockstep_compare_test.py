@@ -22,8 +22,18 @@ def require(ok, message):
         raise RuntimeError(message)
 
 
+def reviewed_policy(schema):
+    # Independent review boundary: a schema cannot approve its own exclusion.
+    # This fixture is maintained only when a ruling changes the reviewed policy.
+    policy=json.loads((ROOT/'tests/rpc_lockstep_reviewed_policy.json').read_text())
+    for section in ('reviewed_conditions','reviewed_exclusions','reviewed_mode_exclusions',
+                    'cross_quota_projections','stdout_projection'):
+        require(schema[section]==policy[section], 'unreviewed schema policy: '+section)
+
+
 def suite(c=reference, stress=False):
     schema, sh = c.load_schema()
+    reviewed_policy(schema)
     base = w.defaults(schema)
     fields = {f['name']: f for f in schema['fields']}
     checks = 0
@@ -169,6 +179,28 @@ def suite(c=reference, stress=False):
         try: c.validate_schema(mutant)
         except c.Invalid: pass
         else: raise RuntimeError('schema semantics variant accepted: '+label)
+        checks += 1
+    # R-2: these changes pass class semantics by self-approving in the schema.
+    # The independent policy pin must reject all four, without relying on a
+    # stream perturbation happening to exercise the changed field.
+    for name in ('scheduler.cpu_delta','rpc_session.arc_rpc_bus_ns','memory.count',
+                 'scheduler.rate_mips'):
+        mutant=copy.deepcopy(schema)
+        field=next(f for f in mutant['fields'] if f['name']==name)
+        if name=='scheduler.rate_mips':
+            field['mode_exclusions']['cross-quota']='QA self-approved exclusion'
+            mutant['reviewed_mode_exclusions'].append(dict(mode='cross-quota',fields=[name],
+                reason='QA self-approved exclusion',citation='QA self-approved citation'))
+        else:
+            field.update({'class':'diagnostic','condition':False})
+            mutant['reviewed_exclusions'].append(dict(field=name,**{'class':'diagnostic'},
+                reason='QA self-approved exclusion',citation='QA self-approved citation'))
+        c.validate_schema(mutant)
+        try:reviewed_policy(mutant)
+        except RuntimeError as error:
+            require('unreviewed schema policy:' in str(error),'wrong policy rejection')
+        else:raise RuntimeError('self-approved schema exclusion accepted: '+name)
+        print('rejected self-approved schema exclusion:',name)
         checks += 1
     projection_fields=schema['cross_quota_projections']['fields']
     require(c.projection_value(projection_fields['driver.instruction_work']['null_batch']['P0'],{'stored_instruction_work':10,'booked_null_attempt':1})==9 and
