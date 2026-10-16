@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: GPL-2.0-only -->
+
 # Native hard-disc applications
 
 On an A3020 native session with `Hard Disc: Auto` and `Launch: Auto`, ArcDroid

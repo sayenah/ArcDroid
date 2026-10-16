@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-only
 engine/arculator/src/*.c whitespace=cr-at-eol
 engine/arculator/src/*.h whitespace=cr-at-eol
 # Authored boot sources stay LF; embedding selects guest CR/LF explicitly.

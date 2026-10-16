@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: GPL-2.0-only -->
+
 # RPCEmu upstream snapshot
 
 - Source: http://www.marutan.net/rpcemu/ (also named in upstream `readme.txt`).

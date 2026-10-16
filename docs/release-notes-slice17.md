@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: GPL-2.0-only -->
+
 # Slice 17 — Native launch RAM disc
 
 Native application launches through ArcDroid's desktop helper now request a 32 KiB RAM disc when RISC OS 3 has none. The request runs before the helper boots any application. An existing RAM disc is left at its current size, and a failed request does not stop the application launch.

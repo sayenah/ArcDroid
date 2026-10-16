@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-only
 """Executed-ROM cold observation and CMOS-dependent two-phase boot checks."""
 from pathlib import Path
 import subprocess

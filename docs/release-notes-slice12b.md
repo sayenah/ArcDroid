@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: GPL-2.0-only -->
+
 # Slice 12b — JFD identification track
 
 Native JFD discs whose first track-side omits standard sector IDs can now identify

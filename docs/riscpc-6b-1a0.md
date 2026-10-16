@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: GPL-2.0-only -->
+
 # 6b Phase 1a — slice 1a-0 (measurement enabler)
 
 Governing: D-142, D-146, D-180, D-181, D-182, D-188, D-189, D-191, D-195; `docs/riscpc-6b-phase1a.md` (draft, re-rank, Astra stage 1 adjudication); `docs/riscpc-6b-plan.md` (CG gates, Track M); `docs/riscpc-translator-invariants.md`. Grounding at `1f4bbae` (6b-P0i merged with `main` after R3c-2): `.work/s66/1a/E0-GROUNDING.md`. Astra stage 2 (S66, ACCEPT WITH CHANGES, seven findings, all incorporated below): `.work/s66/1a/report3.md`. The slice is **1a-0** (the R3d workstream already uses "E0").

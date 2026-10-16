@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-only
 """Plain ADFFS never arms the boot observer."""
 from pathlib import Path
 import subprocess

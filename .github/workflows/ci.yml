@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-only
 name: CI
 on:
   push:
@@ -14,16 +15,19 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+permissions:
+  contents: read
+
 jobs:
   host:
     runs-on: ubuntu-latest
     env:
       CCACHE_DIR: ${{ github.workspace }}/.ccache
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Install build tools
         run: sudo apt-get update && sudo apt-get install -y cmake ninja-build python3 ccache
-      - uses: actions/cache@v4
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ${{ env.CCACHE_DIR }}
           key: ${{ runner.os }}-host-gcc-${{ hashFiles('CMakeLists.txt') }}-${{ github.run_id }}-${{ github.run_attempt }}
@@ -31,6 +35,8 @@ jobs:
             ${{ runner.os }}-host-gcc-${{ hashFiles('CMakeLists.txt') }}-
       - name: RPCEmu import guard
         run: python3 tools/check-rpcemu-import.py
+      - name: Arculator import guard
+        run: python3 tools/check-arculator-import.py
       - name: Asset guard
         run: tools/check-assets.sh
       - name: Configure
@@ -52,10 +58,10 @@ jobs:
     env:
       CCACHE_DIR: ${{ github.workspace }}/.ccache
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Install build tools
         run: sudo apt-get update && sudo apt-get install -y cmake ninja-build python3 ccache
-      - uses: actions/cache@v4
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ${{ env.CCACHE_DIR }}
           key: ${{ runner.os }}-host-sanitizers-gcc-${{ hashFiles('CMakeLists.txt') }}-${{ github.run_id }}-${{ github.run_attempt }}
@@ -82,13 +88,13 @@ jobs:
       run:
         shell: msys2 {0}
     steps:
-      - uses: actions/checkout@v4
-      - uses: msys2/setup-msys2@v2
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: msys2/setup-msys2@ec48f7c5447b3140e2b088413ae3a55687bccb6e # v2
         with:
           msystem: UCRT64
           update: true
           install: git mingw-w64-ucrt-x86_64-binutils mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-cmake mingw-w64-ucrt-x86_64-ninja mingw-w64-ucrt-x86_64-ccache mingw-w64-ucrt-x86_64-python
-      - uses: actions/cache@v4
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ${{ env.CCACHE_DIR }}
           key: ${{ runner.os }}-windows-ucrt64-gcc-${{ hashFiles('CMakeLists.txt') }}-${{ github.run_id }}-${{ github.run_attempt }}
@@ -118,7 +124,7 @@ jobs:
         run: tools/check-windows.sh build/windows/arcdroid_libretro.dll
       - name: Upload matching Windows RPC crash diagnostics
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: arcdroid-windows-rpc-diagnostics
           path: |
@@ -220,7 +226,7 @@ jobs:
             build/windows/tests/fixtures/generated/disc-request/Two.adf \
             build/windows/tests/fixtures/generated/disc-request/Set.m3u \
             build/windows/retroarch-package/disc-request/
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: arcdroid-windows-retroarch-input
           path: build/windows/retroarch-package/
@@ -233,8 +239,8 @@ jobs:
     needs: windows
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: arcdroid-windows-retroarch-input
           path: build/retroarch-input
@@ -251,7 +257,7 @@ jobs:
       - name: Slice 28 guarded old-map JFD persistence and refusal
         shell: pwsh
         run: tools/test-retroarch-windows.ps1 -InputDirectory build/retroarch-input -WorkDirectory build/retroarch-native-guard -GuardedJfdOnly
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
           name: arcdroid-windows-retroarch-evidence
@@ -263,8 +269,8 @@ jobs:
   android-arm64:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: nttld/setup-ndk@v1
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: nttld/setup-ndk@ed92fe6cadad69be94a966a7ee3271275e62f779 # v1
         id: setup-ndk
         with:
           ndk-version: r29

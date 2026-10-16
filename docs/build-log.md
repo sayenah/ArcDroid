@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: GPL-2.0-only -->
+
 # ArcDroid Build Log
 
 Record only material completed build or repository-governance facts.

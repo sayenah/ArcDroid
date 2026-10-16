@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-only
 cmake_minimum_required(VERSION 3.20)
 project(ArcDroid VERSION 0.1.0 LANGUAGES C)
 
@@ -359,6 +360,20 @@ if(ANDROID AND ARCDROID_ANDROID_TEST_CORE)
 endif()
 
 if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
+  add_test(NAME arculator-import-guard COMMAND "${Python3_EXECUTABLE}" -B
+    "${CMAKE_CURRENT_SOURCE_DIR}/tools/check-arculator-import.py")
+  add_test(NAME arculator-import-guard-self-test COMMAND "${Python3_EXECUTABLE}" -B
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/arculator_import_guard_test.py")
+  add_test(NAME public-text-guard COMMAND "${Python3_EXECUTABLE}" -B
+    "${CMAKE_CURRENT_SOURCE_DIR}/tools/check-public-text.py")
+  add_test(NAME public-text-guard-self-test COMMAND "${Python3_EXECUTABLE}" -B
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/public_text_guard_test.py")
+  add_test(NAME license-guard COMMAND "${Python3_EXECUTABLE}" -B
+    "${CMAKE_CURRENT_SOURCE_DIR}/tools/check-licenses.py")
+  add_test(NAME license-guard-self-test COMMAND "${Python3_EXECUTABLE}" -B
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/license_guard_test.py")
+  add_test(NAME input-source-retirement-self-test COMMAND "${Python3_EXECUTABLE}" -B
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/input_source_retirement_test.py")
   add_test(NAME rpc-import-guard COMMAND "${Python3_EXECUTABLE}"
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_import_test.py"
     "${CMAKE_CURRENT_SOURCE_DIR}")

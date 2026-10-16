@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: GPL-2.0-only -->
+
 # Slice 28 — guarded writes on old-map JFD discs
 
 RW-flagged D-format JFD discs can now save changes when their only layout

@@ -1,0 +1,21 @@
+# SPDX-License-Identifier: GPL-2.0-only
+name: Public text
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  public-text:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Public text guard and authored rejection cases
+        run: |
+          python3 tools/check-public-text.py
+          python3 -B tests/public_text_guard_test.py
+      - name: Authored file license guard
+        run: python3 tools/check-licenses.py

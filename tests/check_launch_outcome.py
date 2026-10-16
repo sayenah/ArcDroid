@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-2.0-only
 """Run authored ROM SWI sequences through the libretro harness."""
 import pathlib
 import subprocess

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-only
 """End-to-end remembered prompt checks using executed synthetic SWIs."""
 from pathlib import Path
 import os

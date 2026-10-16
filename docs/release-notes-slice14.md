@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: GPL-2.0-only -->
+
 # Slice 14 — boot-outcome fallback
 
 With **Launch: Auto**, a disc whose own startup leaves RISC OS waiting at the

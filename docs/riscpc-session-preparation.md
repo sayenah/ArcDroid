@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: GPL-2.0-only -->
+
 # RiscPC session preparation (D-168, D-170, D-171, D-172)
 
 Written before implementation, against `d374114`. Shipping ordinary loads keep

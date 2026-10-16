@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-only
 """Executed-SWI boot recovery smoke checks against the libretro harness."""
 from pathlib import Path
 import hashlib

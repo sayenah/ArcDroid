@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-2.0-only
 """Seed an invented product through the store and check a fresh process."""
 from pathlib import Path
 import os

@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: GPL-2.0-only -->
+
 # ArcDroid Decision Log
 
 Record only durable decisions that constrain future work.

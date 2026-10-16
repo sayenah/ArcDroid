@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: GPL-2.0-only -->
+
 # Slice 19 — native-writable JFD boot
 
 With `JFD Boot: Auto`, a single-image JFD for disc 1 of 1 now boots natively

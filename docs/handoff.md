@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: GPL-2.0-only -->
+
 # ArcDroid Handoff
 
 **S66 (baton by relay from `arcdroid-2a`, S65).** Workstreams run in parallel (D-182). Private evidence: `.work/s66/LEDGER.md` (S66) and `.work/s65/LEDGER.md` (S65). S65 merged R3d-2 (`0beb7a8`) and R3c-2 (`eebfc01`) and recorded D-186 to D-194.

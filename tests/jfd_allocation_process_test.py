@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-2.0-only
 """Guest map probe/veto, fresh-process claim and zero read on both FDCs."""
 import hashlib
 from pathlib import Path
