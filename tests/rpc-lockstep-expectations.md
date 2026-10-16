@@ -73,3 +73,14 @@ allocation/fatal cleanup under lockstep. The oracle-only reset/allocation-fault
 legs remain here. Deferred mechanisms already have ROMs and independent
 expectations above; their evidence level is awaiting emitter or awaiting
 candidate mechanism, never demonstrated.
+
+
+Run C evidence qualification: G-6's `data-fill-no-memo-eviction` and
+G-10/E11's `c7-no-op` are **detected by differential only**: their independent
+RAM signatures pass, and the observed difference is the frame instruction
+count. No independent timing recurrence is claimed for those rows yet.
+`ROMCR-after-drain` is also noticed differentially by G-8 and is independently
+rejected by `rpc_lockstep_timing_test.py` at **AC-M2-burst-0**, using
+`rpc_timing_oracle.duration`. `idle-no-drain` is detected by a **terminal fault
+exit** (`rc=1`, `fault=1`), before the stale-read-after-wake expectation can be
+checked. The sensitivity matrix records each actual oracle and its row.

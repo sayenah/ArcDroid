@@ -103,6 +103,129 @@ def suite(c=reference, stress=False):
             for n, v in kw.items(): values[n] = v
         return apply
 
+    p0,p1,p2,p3=key(),key(phase=1,site=1),key(phase=2),key(phase=3)
+    compact=(2,p0,w.checkpoint(p0,schema,compact=True))
+    ft=(5,p3,w.fatal(p3))
+    good=w.header(sh,True,1)+cp(p0)[2]+w.end(1)
+    candidate=w.header(sh,False,1)+cp(p0)[2]+w.end(1)
+    import struct
+    # L-1: each malformed case is independently invalid even when both inputs
+    # carry it; a mere header cross-check or first mismatching field cannot kill it.
+    def refused(left, right, label, reason=None):
+        nonlocal checks
+        try: c.compare(io.BytesIO(left), io.BytesIO(right), schema, sh)
+        except c.Invalid as error:
+            if reason:require(reason in str(error),('wrong refusal',label,str(error)))
+        else: raise RuntimeError('malformed stream accepted: '+label)
+        checks += 1
+
+    for offset,label in ((13,'both stale versions'),(17,'both stale schema hashes')):
+        left,right=bytearray(good),bytearray(candidate)
+        left[offset] ^= 1; right[offset] ^= 1
+        refused(left,right,label)
+    for label,kwargs in (('model',{'model':1}),('configuration',{'configuration':bytes([1])*32}),
+                         ('plan',{'plan':bytes([1])*32}),('seed',{'seed':2}),
+                         ('schedule',{'schedule':bytes([1])*32})):
+        other=w.header(sh,False,1,0,**kwargs)+cp(p0)[2]+w.end(1)
+        refused(good,other,'header '+label)
+    for name,left,right in (
+        ('end counts',good[:-24]+struct.pack('<3Q',0,0,0),candidate[:-24]+struct.pack('<3Q',0,0,0)),
+        ('trailing bytes',good+b'x',candidate+b'x')):
+        refused(left,right,name)
+    for seq in (1,2):
+        events=w.event(p1,seq) if seq==1 else w.event(p1,0)+w.event(p2,2)
+        count=1 if seq==1 else 2
+        refused(w.header(sh,True)+events+w.end(0,count),
+                w.header(sh,False)+events+w.end(0,count),'event sequence '+str(seq))
+    after=w.fatal(p3)+cp(key(2))[2]+w.end(1)
+    refused(w.header(sh,True,1)+after,w.header(sh,False,1)+after,'record after fatal')
+    run([ft],[(5,p3,w.fatal(p3,reason=2))],False,'fatal')
+    for i,group in enumerate(schema['groups']):
+        hashes=[0]*len(schema['groups']); hashes[i]=1
+        run([compact],[(2,key(),w.checkpoint(key(),schema,hashes,compact=True))],False,'group.'+group)
+    pointer='rpc_observers.state.resolve'
+    for value,label,reason in (([255,0],'unmapped allocation','unmapped pointer identity'),
+                               ([2,0],'wrong allocation class','wrong pointer allocation class'),
+                               ([0,1],'null offset','nonzero null-pointer offset')):
+        values=copy.deepcopy(base);values[pointer]=value
+        record=w.checkpoint(p0,schema,values)
+        refused(w.header(sh,True,1)+record+w.end(1),w.header(sh,False,1)+record+w.end(1),label,reason)
+    refused(w.header(sh,True,2)+cp(p0)[2]*2+w.end(2),candidate,'baseline duplicate')
+    values=copy.deepcopy(base);values['tlb.valid'][0]=1;values['tlb.physical'][0]=77
+    run([cp(p0)],[cp(p0,values)],False,'tlb.physical[0]')
+    for name in ('cp15.tlbs','cp15.flushes'):
+        require(fields[name]['class']=='canonical','M-4 counter class')
+        perturb(name)
+    require(fields['arm.unpredictable_count']['class']=='diagnostic','M-4 diagnostic class')
+    # M-3: independently mutate just the field, keeping its reviewed contract.
+    schema_variants=[('canonical-condition','rpc_session.arc_rpc_bus_until','condition',False),
+        ('unruled-mode','scheduler.rate_mips','mode_exclusions',{'cross-quota':'QA over-wide exclusion'}),
+        ('canonical-phase','memory.count','phases',[0]),
+        ('cpu-due-ns-widened','fast.cpu_due_ns','condition',{'not':[{'field':'fast.pending'}]}),
+        ('unruled-diagnostic','cp15.tlbs','class','diagnostic')]
+    for label,name,attribute,value in schema_variants:
+        mutant=copy.deepcopy(schema)
+        next(f for f in mutant['fields'] if f['name']==name)[attribute]=value
+        try: c.validate_schema(mutant)
+        except c.Invalid: pass
+        else: raise RuntimeError('schema semantics variant accepted: '+label)
+        checks += 1
+    projection_fields=schema['cross_quota_projections']['fields']
+    require(c.projection_value(projection_fields['driver.instruction_work']['null_batch']['P0'],{'stored_instruction_work':10,'booked_null_attempt':1})==9 and
+            c.projection_value(projection_fields['rpc_session.arc_rpc_executed']['batch']['P2'],{'base_executed':100,'prior_completed':7,'current_completed':1})==108 and
+            all('remaining' in projection_fields[n] for n in ('driver.instruction_work','driver.event_work',
+                'driver.video_start.pixels','driver.video_start.fields')), 'L-3 projection data missing')
+
+    projection_inputs=dict(base_executed=100,prior_completed=7,current_completed=1,
+        batch_completed=8,base_instruction_work=10,stored_instruction_work=18,
+        booked_null_attempt=1,projected_instruction_work=18,device_deliveries=9,
+        current_pixels=120,pixels_since_entry=20,current_fields=5,fields_since_entry=1)
+    for phase,expected in (('P0',107),('P1',107),('P2',108),('P3',108)):
+        require(c.projection_value(projection_fields['rpc_session.arc_rpc_executed']['batch'][phase],projection_inputs)==expected,'executed phase projection')
+        checks += 1
+    for name,expected in (('driver.instruction_work',1666649),('driver.event_work',524279),
+                          ('driver.video_start.pixels',33554412),('driver.video_start.fields',0)):
+        require(c.projection_value(projection_fields[name]['remaining'],projection_inputs)==expected,('remaining budget',name))
+        checks += 1
+    # One shared chronology, sparse packaging, order, timestamp, identity and agent.
+    ev = (3, p1, w.event(p1, 0, time=19))
+    ev2 = (3, p2, w.event(p2, 1, time=20, kind=1, direction=0))
+    stream = [cp(p0), ev, cp(p1), ev2, cp(p2), cp(p3)]
+    run(stream, [ev, cp(p1), ev2, cp(p3)], spans=[(0, 1, 1)])
+    for opts in ({'time':20}, {'agent':1}, {'value':4}, {'address':0x10000004},
+                 {'size':2}, {'kind':1}):
+        values = dict(time=19); values.update(opts)
+        different = (3, p1, w.event(p1, 0, **values))
+        run([ev], [different], False, 'event')
+    for index in range(7):
+        raw=bytearray(ev[2]);words=list(struct.unpack('<14Q',raw[5:]));words[index]+=1
+        raw[5:]=struct.pack('<14Q',*words)
+        left=w.header(sh,True)+ev[2]+w.end(0,1)
+        right=w.header(sh,False)+bytes(raw)+w.end(0,1)
+        try: result=c.compare(io.BytesIO(left),io.BytesIO(right),schema,sh)
+        except c.Invalid: pass
+        else:require(not result['ok'],('event identity field ignored',index))
+        checks += 1
+    # MMIO direction is isolated; RAM direction=0 would merely be malformed.
+    mmio = (3,p1,w.event(p1,0,time=19,kind=1,direction=1))
+    run([mmio],[(3,p1,w.event(p1,0,time=19,kind=1,direction=0))],False,'event')
+    run([ev], [], False, 'density')
+    run([], [ev], False, 'candidate.key')
+    equal_time = [(3,p1,w.event(p1,0,time=19)),(3,p2,w.event(p2,1,time=19,kind=1))]
+    swapped = [(3,p1,w.event(p1,0,time=19,kind=1)),(3,p2,w.event(p2,1,time=19))]
+    run(equal_time, swapped, False, 'event')
+    physical = [(3,p1,w.event(p1,0,time=19,value=11)),
+                (3,p2,w.event(p2,1,time=19,kind=1,address=0x03000000,value=22))]
+    physical_swapped = [(3,p1,w.event(p1,0,time=19,kind=1,address=0x03000000,value=22)),
+                        (3,p2,w.event(p2,1,time=19,value=11))]
+    run(physical,physical_swapped,False,'event')
+    page = (4, p3, w.page(p3)); otherpage = (4, p3, w.page(p3, contents=b'changed'))
+    run([page], [otherpage], False, 'page')
+    ft = (5, p3, w.fatal(p3)); ft2 = (5, key(2, 3), w.fatal(key(2, 3)))
+    run([page, ft], [page, ft]); run([ft], [ft2], False)
+    # A changed represented write restored later still fails its ordered log.
+    run([ev, ev2], [(3, p1, w.event(p1, 0, time=19, value=99)), ev2], False, 'event')
+
     # The full schema, not a private test schema, supplies phase/mode conditions.
     run([cp(key())], [cp(key())])
     compact=(2,key(),w.checkpoint(key(),schema,compact=True))
@@ -122,6 +245,9 @@ def suite(c=reference, stress=False):
         ('memory.command.address', 'memory.command.count', 128, 0, False),
         ('memory.buffer.kind', 'memory.bcount', 1, 0, False),
         ('fast.cpu_due_ticks', 'fast.pending', 1, 0, True),
+        ('fast.cpu_due_ns', 'fast.pending', 1, 0, True),
+        ('fast.due_floor', 'fast.pending', 1, 0, True),
+        ('fast.due_fraction', 'fast.pending', 1, 0, True),
     ]
     for name, control, count, index, inverted in pairs:
         for enabled in (False, True):
@@ -144,6 +270,18 @@ def suite(c=reference, stress=False):
             v['observer.work_count']=1
             v['observer.work.size']=[int(enabled)]*16
         perturb('observer.work.bytes',setup=work_setup,should_pass=not enabled)
+    # Separate witnesses for packet/ring slots and live packet lanes. Activating
+    # one condition never relies on a second untested validity change.
+    for name,control,count,extra in (
+        ('memory.command.kind','memory.count',1,{}),
+        ('memory.command.width','memory.command.count',128,{'memory.count':1}),
+        ('memory.buffer.width','memory.buffer.count',8,{'memory.bcount':1}),
+        ('memory.active.width','memory.active.count',1,{'memory.active_valid':1})):
+        for enabled in (False,True):
+            def witness(v,enabled=enabled,control=control,count=count,extra=extra):
+                v.update(extra)
+                v[control]=[int(enabled)]*count if count>1 else int(enabled)
+            perturb(name,setup=witness,should_pass=not enabled)
     # All phase axes and included classes; mode exclusions must be inert in strict.
     for phase in range(4):
         for name in ('cpu.reg', 'cp15.ctrl', 'fast.instructions', 'fast.fetch_hits', 'memory.stats.hits', 'driver.instruction_work', 'fast.test_measure'):
@@ -152,7 +290,8 @@ def suite(c=reference, stress=False):
         for field_class in ('diagnostic', 'host-only/excluded'):
             excluded=next(f for f in schema['fields'] if f['class']==field_class and f['condition'] is False)
             perturb(excluded['name'], phase, should_pass=True)
-        perturb('fast.cpu_due_ticks', phase, setv(**{'fast.pending': 1}), should_pass=phase == 2)
+        for name in ('fast.cpu_due_ticks','fast.cpu_due_ns','fast.due_floor','fast.due_fraction'):
+            perturb(name, phase, setv(**{'fast.pending': 1}), should_pass=phase == 2)
     def active_observers(v):
         v['observer.owners.armed'] = [1]*4
         v['observer.watches.live'] = [1]*8
@@ -180,24 +319,6 @@ def suite(c=reference, stress=False):
     require(first['key'] == p0 and first['last_matching'] is None, 'reported last divergence')
     for bad in ((2, 0, 1, 0, 0, 0), (1, 1, 1, 0, 0, 0)):
         run([cp(p0)], [cp(bad)], False)
-    # One shared chronology, sparse packaging, order, timestamp, identity and agent.
-    ev = (3, p1, w.event(p1, 0, time=19))
-    ev2 = (3, p2, w.event(p2, 1, time=20, kind=1, direction=0))
-    stream = [cp(p0), ev, cp(p1), ev2, cp(p2), cp(p3)]
-    run(stream, [ev, cp(p1), ev2, cp(p3)], spans=[(0, 1, 1)])
-    for opts in ({'time': 20}, {'agent': 1}, {'value': 4}, {'kind': 1, 'direction': 0}):
-        different = (3, p1, w.event(p1, 0, **opts))
-        run([ev], [different], False, 'event')
-    run([ev], [], False, 'density')
-    run([], [ev], False, 'candidate.key')
-    swapped = [(3, p1, w.event(p1, 0, kind=1, direction=0)), (3, p2, w.event(p2, 1))]
-    run([ev, ev2], swapped, False, 'event')
-    page = (4, p3, w.page(p3)); otherpage = (4, p3, w.page(p3, contents=b'changed'))
-    run([page], [otherpage], False, 'page')
-    ft = (5, p3, w.fatal(p3)); ft2 = (5, key(2, 3), w.fatal(key(2, 3)))
-    run([page, ft], [page, ft]); run([ft], [ft2], False)
-    # A changed represented write restored later still fails its ordered log.
-    run([ev, ev2], [(3, p1, w.event(p1, 0, value=99)), ev2], False, 'event')
     require(not c.reproduced(first, {'ok': True}), 'non-reproducing rerun passed')
     require(c.reproduced(first, first), 'reproducing rerun failed')
     # Ordinary compiled fetch omission requires a checked count; full audit forbids it.
@@ -289,6 +410,7 @@ def main():
     if '--mutants' in sys.argv:
         from rpc_lockstep_compare_mutants import mutations
         original = (ROOT/'tools/rpc_lockstep_compare.py').read_text()
+        survivors = []
         for label, old, new in mutations():
             require(original.count(old) == 1, ('mutant anchor not unique', label))
             module = type(reference)('lockstep_mutant')
@@ -297,7 +419,10 @@ def main():
             exec(compile(original.replace(old, new), module.__file__, 'exec'), module.__dict__)
             try: suite(module)
             except (RuntimeError, module.Invalid): print('killed comparator', label)
-            else: raise RuntimeError('comparator mutant survived: '+label)
+            else:
+                survivors.append(label)
+                print('SURVIVED comparator', label, flush=True)
+        require(not survivors, ('comparator sensitivity variants survived',survivors))
 
 
 if __name__ == '__main__': main()

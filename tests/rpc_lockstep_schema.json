@@ -11380,8 +11380,8 @@
         3
       ],
       "condition": false,
-      "exclusion_reason": "\u00a72.2 diagnostic trace/counters",
-      "citation": "engine/rpcemu/src/arm.c:63",
+      "exclusion_reason": "Run C M-4: unpredictable-instruction diagnostic log rate limit, excluded.",
+      "citation": "engine/rpcemu/src/arm.c:63; Run C M-4",
       "source": "engine/rpcemu/src/arm.c",
       "mode_exclusions": {}
     },
@@ -11677,16 +11677,16 @@
       "group": "cp15",
       "type": "u64",
       "count": 1,
-      "class": "diagnostic",
+      "class": "canonical",
       "phases": [
         0,
         1,
         2,
         3
       ],
-      "condition": false,
-      "exclusion_reason": "\u00a72.2 diagnostic trace/counters",
-      "citation": "engine/rpcemu/src/cp15.c:1",
+      "condition": true,
+      "exclusion_reason": "None: guest-determined table walk/flush count; Q-10 evidence (Run C M-4).",
+      "citation": "engine/rpcemu/src/cp15.c; docs/riscpc-translator-invariants.md:Q-10; Run C M-4",
       "source": "engine/rpcemu/src/cp15.c",
       "mode_exclusions": {}
     },
@@ -11695,16 +11695,16 @@
       "group": "cp15",
       "type": "u64",
       "count": 1,
-      "class": "diagnostic",
+      "class": "canonical",
       "phases": [
         0,
         1,
         2,
         3
       ],
-      "condition": false,
-      "exclusion_reason": "\u00a72.2 diagnostic trace/counters",
-      "citation": "engine/rpcemu/src/cp15.c:1",
+      "condition": true,
+      "exclusion_reason": "None: guest-determined table walk/flush count; Q-10 evidence (Run C M-4).",
+      "citation": "engine/rpcemu/src/cp15.c; docs/riscpc-translator-invariants.md:Q-10; Run C M-4",
       "source": "engine/rpcemu/src/cp15.c",
       "mode_exclusions": {}
     },
@@ -20607,18 +20607,18 @@
       "source": "engine/rpcemu/src/cp15.c",
       "symbol": "arc_rpc_tlbs",
       "root": "cp15.tlbs",
-      "classification": "excluded with ruling",
-      "ruling": "\u00a72.2 diagnostic trace/counters",
-      "citation": "engine/rpcemu/src/cp15.c:1"
+      "classification": "contents-compared",
+      "ruling": "Run C M-4: canonical walk/flush count (Q-10)",
+      "citation": "engine/rpcemu/src/cp15.c:1; Run C M-4"
     },
     {
       "category": "static-root",
       "source": "engine/rpcemu/src/cp15.c",
       "symbol": "arc_rpc_flushes",
       "root": "cp15.flushes",
-      "classification": "excluded with ruling",
-      "ruling": "\u00a72.2 diagnostic trace/counters",
-      "citation": "engine/rpcemu/src/cp15.c:1"
+      "classification": "contents-compared",
+      "ruling": "Run C M-4: canonical walk/flush count (Q-10)",
+      "citation": "engine/rpcemu/src/cp15.c:1; Run C M-4"
     },
     {
       "category": "static-root",
@@ -21989,32 +21989,6 @@
       "citation": "engine/rpcemu/src/arm.c:575-584; docs/riscpc-6b-m2a.md:A-25,A-29"
     }
   ],
-  "source_sha256": {
-    "engine/rpc/rpc_observer.c": "e1726f53ee24aa647d4f3c4b20ab69d26a84bda9e83183330ea8beab7fc076e3",
-    "engine/rpc/rpc_inspector.c": "fd81d6a4f4b5e1b827882fb541d0fccd87fcf768f241e40404d18d57ed2e3d50",
-    "engine/rpc/rpc_session.c": "132f69e3170e87fb8a07f870046d5179740d6858abc1df44ba49019e81b818ba",
-    "engine/rpc/rpc_observers.c": "63a5df5d7618ae8188cd74ae86f0775e55bce0990136b4197a63a3dd9997c559",
-    "engine/rpc/rpc_mem_timing.c": "23ce4daae53f535da221b9a4a5bec8235e7c4a6eb070d9d92ed55b0d8e5583b3",
-    "engine/rpc/rpc_audio.c": "bbf3e9e13f0987d6416f5a82a7b7a12f7b8e555c776adc6731d386b56d1fa705",
-    "engine/rpc/rpc_input.c": "f1977da769ef12455232140d0e21ce5bf0d472cf437f39a1113d7f11efa90541",
-    "engine/rpc/rpc_timing.c": "9cc9794ea3d7e951805f8f9fbb9addd2b09385cde8d006e7f77df46a30cbaf88",
-    "engine/rpc/rpc_scheduler.c": "f35946a5a789da3b3a4e2c9b4d87019e86b7e6d65ac1dd4f94dff0722821ec43",
-    "engine/rpc/rpc_floppy.c": "854fcb5c66b988e8692ee527b1fdee62f69c343c02b6238811e82071fdd0ee97",
-    "engine/rpc/rpc_rtc.c": "fde27aa962a34034533be522fafc53ba97e21ce1cf0d86350c67c5a4de4148e7",
-    "engine/rpcemu/src/arm.c": "059632548c0b521d08776f2caf74b2a51aabfa880d1b9f210a4af31f88b92595",
-    "engine/rpcemu/src/arm_common.c": "bc40b967052f9c653e31f6f481034a098c7ea97eec3adb1fc79bee2417e5a626",
-    "engine/rpcemu/src/cp15.c": "62c3b5fd1d1dbb1093285af491bb1df51528ce59529375702bf8dd7e25dd280f",
-    "engine/rpcemu/src/mem.c": "b1f6c2cf14f495e0445796534c244f542b785e2a4bdfb0a2d8c8eca56f5b33a6",
-    "engine/rpcemu/src/cmos.c": "33fee1993ede71c174f051e5b187a8e02e5a33a185e11b73df1afbf533d48153",
-    "engine/rpcemu/src/iomd.c": "b2d7a83b459ad3e971acaa946b354b12fe00ed0b37ce3445e1e3b3bed776618b",
-    "engine/rpcemu/src/keyboard.c": "b031e53f6bd1d98a7c491a56d8c1454d7ee82e59321e12f5f9337d3550f6550a",
-    "engine/rpcemu/src/superio.c": "e2b28c84a0df17b54a3b47dd43ef2b78198e83fc6e72c58557ecd42a28d3b430",
-    "engine/rpcemu/src/i8042.c": "d633ec5de4d19a0d875aa12bb07cd14b786c16e0a3b9d4f4b30f0166a808f8ff",
-    "engine/rpcemu/src/vidc20.c": "6b13f3959226f0e82656c2b4f7dfc4931a4862c1b3264be9aa48f5eb94195cbb",
-    "engine/rpcemu/src/fdc.c": "92024066b817a685aa683337e35bddb138ec3a0a6685939990ec2b16a0273e76",
-    "engine/rpcemu/src/ide.c": "0b5545b150567f159b56fc952f35e9a60f8fe1ac250605525625fb3ae67c8bf6",
-    "engine/rpc/rpc_profile.c": "e0ff31b336458acd1c3eeea6f3073ceb96590347fe26bd55e8c265c928d4a141"
-  },
   "object_symbols": {
     "engine/rpc/rpc_observer.c": {
       "_MergedGlobals": {
@@ -22098,60 +22072,6 @@
         ],
         "citation": "docs/riscpc-6b-m2a.md:A-3/A-29",
         "meaning": "Source root"
-      },
-      "ltmp3": {
-        "classification": "contents-compared",
-        "roots": [
-          "rpc_observer.arc_rpc_observer_active",
-          "rpc_observer.arc_rpc_observer_context",
-          "rpc_observer.host_active",
-          "rpc_observer.observers_active",
-          "observer",
-          "rpc_observer.trace",
-          "rpc_observer.arc_rpc_observer_integer_attempts",
-          "rpc_observer.event_captures",
-          "rpc_observer.number_checks",
-          "rpc_observer.swi_interest",
-          "rpc_observer.qualifications"
-        ],
-        "citation": "docs/riscpc-6b-m2a.md:A-3/A-29",
-        "meaning": "Compiler aggregate/section label; member roots are individually inventoried"
-      },
-      "ltmp5": {
-        "classification": "contents-compared",
-        "roots": [
-          "rpc_observer.arc_rpc_observer_active",
-          "rpc_observer.arc_rpc_observer_context",
-          "rpc_observer.host_active",
-          "rpc_observer.observers_active",
-          "observer",
-          "rpc_observer.trace",
-          "rpc_observer.arc_rpc_observer_integer_attempts",
-          "rpc_observer.event_captures",
-          "rpc_observer.number_checks",
-          "rpc_observer.swi_interest",
-          "rpc_observer.qualifications"
-        ],
-        "citation": "docs/riscpc-6b-m2a.md:A-3/A-29",
-        "meaning": "Compiler aggregate/section label; member roots are individually inventoried"
-      },
-      "ltmp6": {
-        "classification": "contents-compared",
-        "roots": [
-          "rpc_observer.arc_rpc_observer_active",
-          "rpc_observer.arc_rpc_observer_context",
-          "rpc_observer.host_active",
-          "rpc_observer.observers_active",
-          "observer",
-          "rpc_observer.trace",
-          "rpc_observer.arc_rpc_observer_integer_attempts",
-          "rpc_observer.event_captures",
-          "rpc_observer.number_checks",
-          "rpc_observer.swi_interest",
-          "rpc_observer.qualifications"
-        ],
-        "citation": "docs/riscpc-6b-m2a.md:A-3/A-29",
-        "meaning": "Compiler aggregate/section label; member roots are individually inventoried"
       }
     },
     "engine/rpc/rpc_inspector.c": {},
@@ -22241,190 +22161,6 @@
         ],
         "citation": "docs/riscpc-6b-m2a.md:A-3/A-29",
         "meaning": "Source root"
-      },
-      "ltmp2": {
-        "classification": "contents-compared",
-        "roots": [
-          "rpc_session.config",
-          "rpc_session.machine",
-          "rpc_session.arc_rpc_registry",
-          "scheduler",
-          "rpc_session.arc_rpc_jump",
-          "rpc_session.arc_rpc_live",
-          "rpc_session.arc_rpc_fault",
-          "rpc_session.arc_rpc_fault_text",
-          "rpc_session.arc_rpc_epoch",
-          "rpc_session.arc_rpc_rtc_offset",
-          "rpc_session.arc_rpc_executed",
-          "rpc_session.arc_rpc_idle_ns",
-          "rpc_session.arc_rpc_allocations",
-          "rpc_session.arc_rpc_live_allocations",
-          "rpc_session.arc_rpc_rate",
-          "rpc_session.arc_rpc_bus_until",
-          "rpc_session.arc_rpc_bus_ns",
-          "rpc_session.arc_rpc_logger",
-          "rpc_session.arc_rpc_logger_opaque",
-          "rpc_session.arc_rpc_input_service",
-          "rpc_session.arc_rpc_input_retire",
-          "rpc_session.arc_rpc_capture",
-          "rpc_session.arc_rpc_capture_deadline",
-          "rpc_session.arc_rpc_start_rom",
-          "rpc_session.arc_rpc_start_size",
-          "rpc_session.arc_rpc_start_at",
-          "rpc_session.arc_rpc_start_seed",
-          "rpc_session.arc_rpc_start_phase",
-          "rpc_session.arc_rpc_start_pending",
-          "rpc_session.arc_rpc_start_factory",
-          "rpc_session.arc_rpc_generation",
-          "rpc_session.arc_rpc_firmware_hash",
-          "rpc_session.arc_rpc_firmware_digest",
-          "rpc_session.arc_rpc_firmware_valid",
-          "rpc_session.arc_rpc_fail_alloc",
-          "rpc_session.arc_rpc_test_quota",
-          "rpc_session.arc_rpc_fail_entry",
-          "rpc_session.arc_rpc_observation",
-          "rpc_session.arc_rpc_backend"
-        ],
-        "citation": "docs/riscpc-6b-m2a.md:A-3/A-29",
-        "meaning": "Compiler aggregate/section label; member roots are individually inventoried"
-      },
-      "ltmp3": {
-        "classification": "contents-compared",
-        "roots": [
-          "rpc_session.config",
-          "rpc_session.machine",
-          "rpc_session.arc_rpc_registry",
-          "scheduler",
-          "rpc_session.arc_rpc_jump",
-          "rpc_session.arc_rpc_live",
-          "rpc_session.arc_rpc_fault",
-          "rpc_session.arc_rpc_fault_text",
-          "rpc_session.arc_rpc_epoch",
-          "rpc_session.arc_rpc_rtc_offset",
-          "rpc_session.arc_rpc_executed",
-          "rpc_session.arc_rpc_idle_ns",
-          "rpc_session.arc_rpc_allocations",
-          "rpc_session.arc_rpc_live_allocations",
-          "rpc_session.arc_rpc_rate",
-          "rpc_session.arc_rpc_bus_until",
-          "rpc_session.arc_rpc_bus_ns",
-          "rpc_session.arc_rpc_logger",
-          "rpc_session.arc_rpc_logger_opaque",
-          "rpc_session.arc_rpc_input_service",
-          "rpc_session.arc_rpc_input_retire",
-          "rpc_session.arc_rpc_capture",
-          "rpc_session.arc_rpc_capture_deadline",
-          "rpc_session.arc_rpc_start_rom",
-          "rpc_session.arc_rpc_start_size",
-          "rpc_session.arc_rpc_start_at",
-          "rpc_session.arc_rpc_start_seed",
-          "rpc_session.arc_rpc_start_phase",
-          "rpc_session.arc_rpc_start_pending",
-          "rpc_session.arc_rpc_start_factory",
-          "rpc_session.arc_rpc_generation",
-          "rpc_session.arc_rpc_firmware_hash",
-          "rpc_session.arc_rpc_firmware_digest",
-          "rpc_session.arc_rpc_firmware_valid",
-          "rpc_session.arc_rpc_fail_alloc",
-          "rpc_session.arc_rpc_test_quota",
-          "rpc_session.arc_rpc_fail_entry",
-          "rpc_session.arc_rpc_observation",
-          "rpc_session.arc_rpc_backend"
-        ],
-        "citation": "docs/riscpc-6b-m2a.md:A-3/A-29",
-        "meaning": "Compiler aggregate/section label; member roots are individually inventoried"
-      },
-      "ltmp6": {
-        "classification": "contents-compared",
-        "roots": [
-          "rpc_session.config",
-          "rpc_session.machine",
-          "rpc_session.arc_rpc_registry",
-          "scheduler",
-          "rpc_session.arc_rpc_jump",
-          "rpc_session.arc_rpc_live",
-          "rpc_session.arc_rpc_fault",
-          "rpc_session.arc_rpc_fault_text",
-          "rpc_session.arc_rpc_epoch",
-          "rpc_session.arc_rpc_rtc_offset",
-          "rpc_session.arc_rpc_executed",
-          "rpc_session.arc_rpc_idle_ns",
-          "rpc_session.arc_rpc_allocations",
-          "rpc_session.arc_rpc_live_allocations",
-          "rpc_session.arc_rpc_rate",
-          "rpc_session.arc_rpc_bus_until",
-          "rpc_session.arc_rpc_bus_ns",
-          "rpc_session.arc_rpc_logger",
-          "rpc_session.arc_rpc_logger_opaque",
-          "rpc_session.arc_rpc_input_service",
-          "rpc_session.arc_rpc_input_retire",
-          "rpc_session.arc_rpc_capture",
-          "rpc_session.arc_rpc_capture_deadline",
-          "rpc_session.arc_rpc_start_rom",
-          "rpc_session.arc_rpc_start_size",
-          "rpc_session.arc_rpc_start_at",
-          "rpc_session.arc_rpc_start_seed",
-          "rpc_session.arc_rpc_start_phase",
-          "rpc_session.arc_rpc_start_pending",
-          "rpc_session.arc_rpc_start_factory",
-          "rpc_session.arc_rpc_generation",
-          "rpc_session.arc_rpc_firmware_hash",
-          "rpc_session.arc_rpc_firmware_digest",
-          "rpc_session.arc_rpc_firmware_valid",
-          "rpc_session.arc_rpc_fail_alloc",
-          "rpc_session.arc_rpc_test_quota",
-          "rpc_session.arc_rpc_fail_entry",
-          "rpc_session.arc_rpc_observation",
-          "rpc_session.arc_rpc_backend"
-        ],
-        "citation": "docs/riscpc-6b-m2a.md:A-3/A-29",
-        "meaning": "Compiler aggregate/section label; member roots are individually inventoried"
-      },
-      "ltmp7": {
-        "classification": "contents-compared",
-        "roots": [
-          "rpc_session.config",
-          "rpc_session.machine",
-          "rpc_session.arc_rpc_registry",
-          "scheduler",
-          "rpc_session.arc_rpc_jump",
-          "rpc_session.arc_rpc_live",
-          "rpc_session.arc_rpc_fault",
-          "rpc_session.arc_rpc_fault_text",
-          "rpc_session.arc_rpc_epoch",
-          "rpc_session.arc_rpc_rtc_offset",
-          "rpc_session.arc_rpc_executed",
-          "rpc_session.arc_rpc_idle_ns",
-          "rpc_session.arc_rpc_allocations",
-          "rpc_session.arc_rpc_live_allocations",
-          "rpc_session.arc_rpc_rate",
-          "rpc_session.arc_rpc_bus_until",
-          "rpc_session.arc_rpc_bus_ns",
-          "rpc_session.arc_rpc_logger",
-          "rpc_session.arc_rpc_logger_opaque",
-          "rpc_session.arc_rpc_input_service",
-          "rpc_session.arc_rpc_input_retire",
-          "rpc_session.arc_rpc_capture",
-          "rpc_session.arc_rpc_capture_deadline",
-          "rpc_session.arc_rpc_start_rom",
-          "rpc_session.arc_rpc_start_size",
-          "rpc_session.arc_rpc_start_at",
-          "rpc_session.arc_rpc_start_seed",
-          "rpc_session.arc_rpc_start_phase",
-          "rpc_session.arc_rpc_start_pending",
-          "rpc_session.arc_rpc_start_factory",
-          "rpc_session.arc_rpc_generation",
-          "rpc_session.arc_rpc_firmware_hash",
-          "rpc_session.arc_rpc_firmware_digest",
-          "rpc_session.arc_rpc_firmware_valid",
-          "rpc_session.arc_rpc_fail_alloc",
-          "rpc_session.arc_rpc_test_quota",
-          "rpc_session.arc_rpc_fail_entry",
-          "rpc_session.arc_rpc_observation",
-          "rpc_session.arc_rpc_backend"
-        ],
-        "citation": "docs/riscpc-6b-m2a.md:A-3/A-29",
-        "meaning": "Compiler aggregate/section label; member roots are individually inventoried"
       }
     },
     "engine/rpc/rpc_observers.c": {
@@ -22455,60 +22191,6 @@
         "meaning": "Source root"
       },
       "l___const.filters.handler": {
-        "classification": "contents-compared",
-        "roots": [
-          "rpc_observers.state",
-          "rpc_observers.disc_observation",
-          "rpc_observers.watch_budget",
-          "rpc_observers.default_disc_profile",
-          "rpc_observers.default_error_profile",
-          "rpc_observers.launch_profile",
-          "rpc_observers.boot_profile",
-          "rpc_observers.bits",
-          "rpc_observers.error_swis",
-          "rpc_observers.disc_swis",
-          "rpc_observers.arc_rpc_observers_test_horizon.shortened"
-        ],
-        "citation": "docs/riscpc-6b-m2a.md:A-3/A-29",
-        "meaning": "Compiler aggregate/section label; member roots are individually inventoried"
-      },
-      "ltmp2": {
-        "classification": "contents-compared",
-        "roots": [
-          "rpc_observers.state",
-          "rpc_observers.disc_observation",
-          "rpc_observers.watch_budget",
-          "rpc_observers.default_disc_profile",
-          "rpc_observers.default_error_profile",
-          "rpc_observers.launch_profile",
-          "rpc_observers.boot_profile",
-          "rpc_observers.bits",
-          "rpc_observers.error_swis",
-          "rpc_observers.disc_swis",
-          "rpc_observers.arc_rpc_observers_test_horizon.shortened"
-        ],
-        "citation": "docs/riscpc-6b-m2a.md:A-3/A-29",
-        "meaning": "Compiler aggregate/section label; member roots are individually inventoried"
-      },
-      "ltmp5": {
-        "classification": "contents-compared",
-        "roots": [
-          "rpc_observers.state",
-          "rpc_observers.disc_observation",
-          "rpc_observers.watch_budget",
-          "rpc_observers.default_disc_profile",
-          "rpc_observers.default_error_profile",
-          "rpc_observers.launch_profile",
-          "rpc_observers.boot_profile",
-          "rpc_observers.bits",
-          "rpc_observers.error_swis",
-          "rpc_observers.disc_swis",
-          "rpc_observers.arc_rpc_observers_test_horizon.shortened"
-        ],
-        "citation": "docs/riscpc-6b-m2a.md:A-3/A-29",
-        "meaning": "Compiler aggregate/section label; member roots are individually inventoried"
-      },
-      "ltmp6": {
         "classification": "contents-compared",
         "roots": [
           "rpc_observers.state",
@@ -22558,36 +22240,6 @@
         ],
         "citation": "docs/riscpc-6b-m2a.md:A-3/A-29",
         "meaning": "Source root"
-      },
-      "ltmp2": {
-        "classification": "contents-compared",
-        "roots": [
-          "memory",
-          "fast",
-          "rpc_mem_timing.measure_first",
-          "rpc_mem_timing.measure_last",
-          "rpc_mem_timing.measure_drained",
-          "rpc_mem_timing.interval",
-          "rpc_mem_timing.cycle.simple",
-          "rpc_mem_timing.cycle.pc"
-        ],
-        "citation": "docs/riscpc-6b-m2a.md:A-3/A-29",
-        "meaning": "Compiler aggregate/section label; member roots are individually inventoried"
-      },
-      "ltmp3": {
-        "classification": "contents-compared",
-        "roots": [
-          "memory",
-          "fast",
-          "rpc_mem_timing.measure_first",
-          "rpc_mem_timing.measure_last",
-          "rpc_mem_timing.measure_drained",
-          "rpc_mem_timing.interval",
-          "rpc_mem_timing.cycle.simple",
-          "rpc_mem_timing.cycle.pc"
-        ],
-        "citation": "docs/riscpc-6b-m2a.md:A-3/A-29",
-        "meaning": "Compiler aggregate/section label; member roots are individually inventoried"
       }
     },
     "engine/rpc/rpc_audio.c": {
@@ -22659,89 +22311,10 @@
         ],
         "citation": "docs/riscpc-6b-m2a.md:A-3/A-29",
         "meaning": "Source root"
-      },
-      "ltmp1": {
-        "classification": "contents-compared",
-        "roots": [
-          "rpc_audio.soundaddr",
-          "rpc_audio.soundinited",
-          "rpc_audio.soundlatch",
-          "rpc_audio.soundcount",
-          "rpc_audio.arc_rpc_pcm",
-          "rpc_audio.arc_rpc_read",
-          "rpc_audio.arc_rpc_count",
-          "rpc_audio.arc_rpc_counts",
-          "rpc_audio.arc_rpc_quad",
-          "rpc_audio.arc_rpc_quad_pos",
-          "rpc_audio.arc_rpc_frequency",
-          "rpc_audio.arc_rpc_format",
-          "rpc_audio.arc_rpc_enabled",
-          "rpc_audio.arc_rpc_ready",
-          "rpc_audio.arc_rpc_unsupported",
-          "rpc_audio.arc_rpc_notice",
-          "rpc_audio.arc_rpc_left",
-          "rpc_audio.arc_rpc_right",
-          "rpc_audio.arc_rpc_source_due",
-          "rpc_audio.arc_rpc_output_due",
-          "rpc_audio.arc_rpc_source_fraction",
-          "rpc_audio.arc_rpc_output_fraction"
-        ],
-        "citation": "docs/riscpc-6b-m2a.md:A-3/A-29",
-        "meaning": "Compiler aggregate/section label; member roots are individually inventoried"
-      },
-      "ltmp2": {
-        "classification": "contents-compared",
-        "roots": [
-          "rpc_audio.soundaddr",
-          "rpc_audio.soundinited",
-          "rpc_audio.soundlatch",
-          "rpc_audio.soundcount",
-          "rpc_audio.arc_rpc_pcm",
-          "rpc_audio.arc_rpc_read",
-          "rpc_audio.arc_rpc_count",
-          "rpc_audio.arc_rpc_counts",
-          "rpc_audio.arc_rpc_quad",
-          "rpc_audio.arc_rpc_quad_pos",
-          "rpc_audio.arc_rpc_frequency",
-          "rpc_audio.arc_rpc_format",
-          "rpc_audio.arc_rpc_enabled",
-          "rpc_audio.arc_rpc_ready",
-          "rpc_audio.arc_rpc_unsupported",
-          "rpc_audio.arc_rpc_notice",
-          "rpc_audio.arc_rpc_left",
-          "rpc_audio.arc_rpc_right",
-          "rpc_audio.arc_rpc_source_due",
-          "rpc_audio.arc_rpc_output_due",
-          "rpc_audio.arc_rpc_source_fraction",
-          "rpc_audio.arc_rpc_output_fraction"
-        ],
-        "citation": "docs/riscpc-6b-m2a.md:A-3/A-29",
-        "meaning": "Compiler aggregate/section label; member roots are individually inventoried"
       }
     },
     "engine/rpc/rpc_input.c": {
       "_MergedGlobals": {
-        "classification": "contents-compared",
-        "roots": [
-          "rpc_input.arc_rpc_letters",
-          "rpc_input.arc_rpc_digits",
-          "rpc_input.arc_rpc_function",
-          "rpc_input.arc_rpc_keypad",
-          "rpc_input.arc_rpc_held",
-          "rpc_input.arc_rpc_sent",
-          "rpc_input.arc_rpc_scanning",
-          "rpc_input.arc_rpc_factory",
-          "rpc_input.arc_rpc_delete",
-          "rpc_input.arc_rpc_repeat_key",
-          "rpc_input.arc_rpc_repeat_param",
-          "rpc_input.arc_rpc_repeat_due",
-          "rpc_input.arc_rpc_repeat_fraction",
-          "rpc_input.arc_rpc_factory_release"
-        ],
-        "citation": "docs/riscpc-6b-m2a.md:A-3/A-29",
-        "meaning": "Compiler aggregate/section label; member roots are individually inventoried"
-      },
-      "ltmp2": {
         "classification": "contents-compared",
         "roots": [
           "rpc_input.arc_rpc_letters",
@@ -22771,28 +22344,11 @@
         ],
         "citation": "docs/riscpc-6b-m2a.md:A-3/A-29",
         "meaning": "Source root"
-      },
-      "ltmp1": {
-        "classification": "contents-compared",
-        "roots": [
-          "rpc_timing.arc_rpc_clock"
-        ],
-        "citation": "docs/riscpc-6b-m2a.md:A-3/A-29",
-        "meaning": "Compiler aggregate/section label; member roots are individually inventoried"
       }
     },
     "engine/rpc/rpc_scheduler.c": {},
     "engine/rpc/rpc_floppy.c": {
       "_MergedGlobals": {
-        "classification": "contents-compared",
-        "roots": [
-          "rpc_floppy.raw_refusal",
-          "rpc_floppy.storage_failures"
-        ],
-        "citation": "docs/riscpc-6b-m2a.md:A-3/A-29",
-        "meaning": "Compiler aggregate/section label; member roots are individually inventoried"
-      },
-      "ltmp3": {
         "classification": "contents-compared",
         "roots": [
           "rpc_floppy.raw_refusal",
@@ -22895,66 +22451,6 @@
         ],
         "citation": "docs/riscpc-6b-m2a.md:A-3/A-29",
         "meaning": "Source root"
-      },
-      "ltmp4": {
-        "classification": "contents-compared",
-        "roots": [
-          "cpu",
-          "arm.blockend",
-          "arm.inscount",
-          "arm.cpsr",
-          "arm.pcpsr",
-          "arm.flaglookup",
-          "arm.usrregs",
-          "arm.prog32",
-          "arm.unpredictable_count",
-          "arm.pccache",
-          "arm.pccache2",
-          "arm.stmlookup",
-          "arm.countbitstable"
-        ],
-        "citation": "docs/riscpc-6b-m2a.md:A-3/A-29",
-        "meaning": "Compiler aggregate/section label; member roots are individually inventoried"
-      },
-      "ltmp6": {
-        "classification": "contents-compared",
-        "roots": [
-          "cpu",
-          "arm.blockend",
-          "arm.inscount",
-          "arm.cpsr",
-          "arm.pcpsr",
-          "arm.flaglookup",
-          "arm.usrregs",
-          "arm.prog32",
-          "arm.unpredictable_count",
-          "arm.pccache",
-          "arm.pccache2",
-          "arm.stmlookup",
-          "arm.countbitstable"
-        ],
-        "citation": "docs/riscpc-6b-m2a.md:A-3/A-29",
-        "meaning": "Compiler aggregate/section label; member roots are individually inventoried"
-      },
-      "ltmp7": {
-        "classification": "contents-compared",
-        "roots": [
-          "cpu",
-          "arm.blockend",
-          "arm.inscount",
-          "arm.cpsr",
-          "arm.pcpsr",
-          "arm.flaglookup",
-          "arm.usrregs",
-          "arm.prog32",
-          "arm.unpredictable_count",
-          "arm.pccache",
-          "arm.pccache2",
-          "arm.stmlookup",
-          "arm.countbitstable"
-        ],
-        "citation": "docs/riscpc-6b-m2a.md:A-3/A-29",
-        "meaning": "Compiler aggregate/section label; member roots are individually inventoried"
       }
     },
     "engine/rpcemu/src/arm_common.c": {},
@@ -22991,7 +22487,7 @@
         "meaning": "Source root"
       },
       "arc_rpc_flushes": {
-        "classification": "excluded with ruling",
+        "classification": "contents-compared",
         "roots": [
           "cp15.flushes"
         ],
@@ -22999,7 +22495,7 @@
         "meaning": "Source root"
       },
       "arc_rpc_tlbs": {
-        "classification": "excluded with ruling",
+        "classification": "contents-compared",
         "roots": [
           "cp15.tlbs"
         ],
@@ -23013,36 +22509,6 @@
         ],
         "citation": "docs/riscpc-6b-m2a.md:A-3/A-29",
         "meaning": "Source root"
-      },
-      "ltmp1": {
-        "classification": "contents-compared",
-        "roots": [
-          "cp15.arc_rpc_cpu_idle",
-          "cp15.dcache",
-          "tlb",
-          "cp15.tlbs",
-          "cp15.flushes",
-          "cp15",
-          "cp15.icache",
-          "cp15.arc_rpc_attributes"
-        ],
-        "citation": "docs/riscpc-6b-m2a.md:A-3/A-29",
-        "meaning": "Compiler aggregate/section label; member roots are individually inventoried"
-      },
-      "ltmp3": {
-        "classification": "contents-compared",
-        "roots": [
-          "cp15.arc_rpc_cpu_idle",
-          "cp15.dcache",
-          "tlb",
-          "cp15.tlbs",
-          "cp15.flushes",
-          "cp15",
-          "cp15.icache",
-          "cp15.arc_rpc_attributes"
-        ],
-        "citation": "docs/riscpc-6b-m2a.md:A-3/A-29",
-        "meaning": "Compiler aggregate/section label; member roots are individually inventoried"
       }
     },
     "engine/rpcemu/src/mem.c": {
@@ -23147,50 +22613,6 @@
         ],
         "citation": "docs/riscpc-6b-m2a.md:A-3/A-29",
         "meaning": "Source root"
-      },
-      "ltmp1": {
-        "classification": "contents-compared",
-        "roots": [
-          "mem.ram00",
-          "mem.ram01",
-          "mem.ram1",
-          "mem.rom",
-          "mem.vram",
-          "mem.mmu",
-          "mem.memmode",
-          "mem.mem_rammask",
-          "mem.mem_vrammask",
-          "mem.ramb00",
-          "mem.ramb01",
-          "mem.ramb1",
-          "mem.romb",
-          "mem.vramb",
-          "mem.phys_space_mask"
-        ],
-        "citation": "docs/riscpc-6b-m2a.md:A-3/A-29",
-        "meaning": "Compiler aggregate/section label; member roots are individually inventoried"
-      },
-      "ltmp3": {
-        "classification": "contents-compared",
-        "roots": [
-          "mem.ram00",
-          "mem.ram01",
-          "mem.ram1",
-          "mem.rom",
-          "mem.vram",
-          "mem.mmu",
-          "mem.memmode",
-          "mem.mem_rammask",
-          "mem.mem_vrammask",
-          "mem.ramb00",
-          "mem.ramb01",
-          "mem.ramb1",
-          "mem.romb",
-          "mem.vramb",
-          "mem.phys_space_mask"
-        ],
-        "citation": "docs/riscpc-6b-m2a.md:A-3/A-29",
-        "meaning": "Compiler aggregate/section label; member roots are individually inventoried"
       }
     },
     "engine/rpcemu/src/cmos.c": {
@@ -23254,93 +22676,6 @@
         ],
         "citation": "docs/riscpc-6b-m2a.md:A-3/A-29",
         "meaning": "Source root"
-      },
-      "ltmp2": {
-        "classification": "contents-compared",
-        "roots": [
-          "cmos.i2cclock",
-          "cmos.i2cdata",
-          "cmos.cmosram",
-          "cmos.cmos_writes",
-          "cmos.arc_rpc_cmos_total_writes",
-          "cmos.arc_rpc_cmos_written",
-          "cmos.arc_rpc_cmos_last_write",
-          "cmos.arc_rpc_cmos_write_clock",
-          "cmos.i2c_devices",
-          "cmos.pcf8583_ops",
-          "cmos.pcf_s",
-          "cmos.pcf",
-          "cmos.pcf8583_s",
-          "cmos.pcf8583",
-          "cmos.spd_data",
-          "cmos.spd_ops",
-          "cmos.spd_s",
-          "cmos.spd",
-          "cmos.spd_i2c_s",
-          "cmos.spd_i2c",
-          "cmos.serdes_s",
-          "cmos.serdes"
-        ],
-        "citation": "docs/riscpc-6b-m2a.md:A-3/A-29",
-        "meaning": "Compiler aggregate/section label; member roots are individually inventoried"
-      },
-      "ltmp4": {
-        "classification": "contents-compared",
-        "roots": [
-          "cmos.i2cclock",
-          "cmos.i2cdata",
-          "cmos.cmosram",
-          "cmos.cmos_writes",
-          "cmos.arc_rpc_cmos_total_writes",
-          "cmos.arc_rpc_cmos_written",
-          "cmos.arc_rpc_cmos_last_write",
-          "cmos.arc_rpc_cmos_write_clock",
-          "cmos.i2c_devices",
-          "cmos.pcf8583_ops",
-          "cmos.pcf_s",
-          "cmos.pcf",
-          "cmos.pcf8583_s",
-          "cmos.pcf8583",
-          "cmos.spd_data",
-          "cmos.spd_ops",
-          "cmos.spd_s",
-          "cmos.spd",
-          "cmos.spd_i2c_s",
-          "cmos.spd_i2c",
-          "cmos.serdes_s",
-          "cmos.serdes"
-        ],
-        "citation": "docs/riscpc-6b-m2a.md:A-3/A-29",
-        "meaning": "Compiler aggregate/section label; member roots are individually inventoried"
-      },
-      "ltmp6": {
-        "classification": "contents-compared",
-        "roots": [
-          "cmos.i2cclock",
-          "cmos.i2cdata",
-          "cmos.cmosram",
-          "cmos.cmos_writes",
-          "cmos.arc_rpc_cmos_total_writes",
-          "cmos.arc_rpc_cmos_written",
-          "cmos.arc_rpc_cmos_last_write",
-          "cmos.arc_rpc_cmos_write_clock",
-          "cmos.i2c_devices",
-          "cmos.pcf8583_ops",
-          "cmos.pcf_s",
-          "cmos.pcf",
-          "cmos.pcf8583_s",
-          "cmos.pcf8583",
-          "cmos.spd_data",
-          "cmos.spd_ops",
-          "cmos.spd_s",
-          "cmos.spd",
-          "cmos.spd_i2c_s",
-          "cmos.spd_i2c",
-          "cmos.serdes_s",
-          "cmos.serdes"
-        ],
-        "citation": "docs/riscpc-6b-m2a.md:A-3/A-29",
-        "meaning": "Compiler aggregate/section label; member roots are individually inventoried"
       }
     },
     "engine/rpcemu/src/iomd.c": {
@@ -23372,32 +22707,6 @@
         ],
         "citation": "docs/riscpc-6b-m2a.md:A-3/A-29",
         "meaning": "Source root"
-      },
-      "ltmp3": {
-        "classification": "contents-compared",
-        "roots": [
-          "iomd.iomd",
-          "iomd.cinit",
-          "iomd.iomds",
-          "iomd.iomd_type",
-          "iomd.flyback",
-          "iomd.timer_due"
-        ],
-        "citation": "docs/riscpc-6b-m2a.md:A-3/A-29",
-        "meaning": "Compiler aggregate/section label; member roots are individually inventoried"
-      },
-      "ltmp5": {
-        "classification": "contents-compared",
-        "roots": [
-          "iomd.iomd",
-          "iomd.cinit",
-          "iomd.iomds",
-          "iomd.iomd_type",
-          "iomd.flyback",
-          "iomd.timer_due"
-        ],
-        "citation": "docs/riscpc-6b-m2a.md:A-3/A-29",
-        "meaning": "Compiler aggregate/section label; member roots are individually inventoried"
       }
     },
     "engine/rpcemu/src/keyboard.c": {
@@ -23440,54 +22749,6 @@
         ],
         "citation": "docs/riscpc-6b-m2a.md:A-3/A-29",
         "meaning": "Source root"
-      },
-      "ltmp2": {
-        "classification": "contents-compared",
-        "roots": [
-          "keyboard.kcallback",
-          "keyboard.mcallback",
-          "keyboard.kbd",
-          "keyboard.mouse",
-          "keyboard.msenable",
-          "keyboard.msreset",
-          "keyboard.msstat",
-          "keyboard.msdata",
-          "keyboard.mousepoll",
-          "keyboard.msincommand",
-          "keyboard.justsent",
-          "keyboard.msqueue",
-          "keyboard.mouse_type",
-          "keyboard.mouse_detect_state",
-          "keyboard.arc_rpc_kbd_parameter",
-          "keyboard.oldmouseb",
-          "keyboard.oldz"
-        ],
-        "citation": "docs/riscpc-6b-m2a.md:A-3/A-29",
-        "meaning": "Compiler aggregate/section label; member roots are individually inventoried"
-      },
-      "ltmp4": {
-        "classification": "contents-compared",
-        "roots": [
-          "keyboard.kcallback",
-          "keyboard.mcallback",
-          "keyboard.kbd",
-          "keyboard.mouse",
-          "keyboard.msenable",
-          "keyboard.msreset",
-          "keyboard.msstat",
-          "keyboard.msdata",
-          "keyboard.mousepoll",
-          "keyboard.msincommand",
-          "keyboard.justsent",
-          "keyboard.msqueue",
-          "keyboard.mouse_type",
-          "keyboard.mouse_detect_state",
-          "keyboard.arc_rpc_kbd_parameter",
-          "keyboard.oldmouseb",
-          "keyboard.oldz"
-        ],
-        "citation": "docs/riscpc-6b-m2a.md:A-3/A-29",
-        "meaning": "Compiler aggregate/section label; member roots are individually inventoried"
       }
     },
     "engine/rpcemu/src/superio.c": {
@@ -23507,35 +22768,10 @@
         ],
         "citation": "docs/riscpc-6b-m2a.md:A-3/A-29",
         "meaning": "Compiler aggregate/section label; member roots are individually inventoried"
-      },
-      "ltmp3": {
-        "classification": "contents-compared",
-        "roots": [
-          "superio.super_type",
-          "superio.configmode",
-          "superio.configregs665",
-          "superio.configregs672",
-          "superio.configreg",
-          "superio.scratch",
-          "superio.linectrl",
-          "superio.gp_index",
-          "superio.gp_regs",
-          "superio.printstat"
-        ],
-        "citation": "docs/riscpc-6b-m2a.md:A-3/A-29",
-        "meaning": "Compiler aggregate/section label; member roots are individually inventoried"
       }
     },
     "engine/rpcemu/src/i8042.c": {
       "_MergedGlobals": {
-        "classification": "contents-compared",
-        "roots": [
-          "i8042.i8042"
-        ],
-        "citation": "docs/riscpc-6b-m2a.md:A-3/A-29",
-        "meaning": "Compiler aggregate/section label; member roots are individually inventoried"
-      },
-      "ltmp1": {
         "classification": "contents-compared",
         "roots": [
           "i8042.i8042"
@@ -23607,68 +22843,6 @@
         ],
         "citation": "docs/riscpc-6b-m2a.md:A-3/A-29",
         "meaning": "Source root"
-      },
-      "ltmp2": {
-        "classification": "contents-compared",
-        "roots": [
-          "vidc20.vidc",
-          "vidc20.dirty",
-          "vidc20.dirtybuffer",
-          "vidc20.presentation",
-          "vidc20.rows",
-          "vidc20.row_border",
-          "vidc20.video",
-          "vidc20.raster",
-          "vidc20.bit_offset",
-          "vidc20.crop_width",
-          "vidc20.crop_height",
-          "vidc20.serial_quad",
-          "vidc20.vram_last",
-          "vidc20.xorigin",
-          "vidc20.yorigin",
-          "vidc20.initial_border",
-          "vidc20.line_fraction",
-          "vidc20.fraction_clock",
-          "vidc20.control_written",
-          "vidc20.line_armed",
-          "vidc20.begun",
-          "vidc20.new_field",
-          "vidc20.clip_pending",
-          "vidc20.scan_line.depths"
-        ],
-        "citation": "docs/riscpc-6b-m2a.md:A-3/A-29",
-        "meaning": "Compiler aggregate/section label; member roots are individually inventoried"
-      },
-      "ltmp3": {
-        "classification": "contents-compared",
-        "roots": [
-          "vidc20.vidc",
-          "vidc20.dirty",
-          "vidc20.dirtybuffer",
-          "vidc20.presentation",
-          "vidc20.rows",
-          "vidc20.row_border",
-          "vidc20.video",
-          "vidc20.raster",
-          "vidc20.bit_offset",
-          "vidc20.crop_width",
-          "vidc20.crop_height",
-          "vidc20.serial_quad",
-          "vidc20.vram_last",
-          "vidc20.xorigin",
-          "vidc20.yorigin",
-          "vidc20.initial_border",
-          "vidc20.line_fraction",
-          "vidc20.fraction_clock",
-          "vidc20.control_written",
-          "vidc20.line_armed",
-          "vidc20.begun",
-          "vidc20.new_field",
-          "vidc20.clip_pending",
-          "vidc20.scan_line.depths"
-        ],
-        "citation": "docs/riscpc-6b-m2a.md:A-3/A-29",
-        "meaning": "Compiler aggregate/section label; member roots are individually inventoried"
       }
     },
     "engine/rpcemu/src/fdc.c": {
@@ -23706,44 +22880,6 @@
         ],
         "citation": "docs/riscpc-6b-m2a.md:A-3/A-29",
         "meaning": "Source root"
-      },
-      "ltmp3": {
-        "classification": "contents-compared",
-        "roots": [
-          "fdc.media",
-          "fdc.media_initialized",
-          "fdc.media_session_generation",
-          "fdc.fdc",
-          "fdc.fdccallback",
-          "fdc.motoron",
-          "fdc.byte_ns.rates",
-          "fdc.byte_deadline.rates",
-          "fdc.step_time.rates",
-          "fdc.head_load.rates",
-          "fdc.finish.rates",
-          "fdc.request.rates"
-        ],
-        "citation": "docs/riscpc-6b-m2a.md:A-3/A-29",
-        "meaning": "Compiler aggregate/section label; member roots are individually inventoried"
-      },
-      "ltmp4": {
-        "classification": "contents-compared",
-        "roots": [
-          "fdc.media",
-          "fdc.media_initialized",
-          "fdc.media_session_generation",
-          "fdc.fdc",
-          "fdc.fdccallback",
-          "fdc.motoron",
-          "fdc.byte_ns.rates",
-          "fdc.byte_deadline.rates",
-          "fdc.step_time.rates",
-          "fdc.head_load.rates",
-          "fdc.finish.rates",
-          "fdc.request.rates"
-        ],
-        "citation": "docs/riscpc-6b-m2a.md:A-3/A-29",
-        "meaning": "Compiler aggregate/section label; member roots are individually inventoried"
       }
     },
     "engine/rpcemu/src/ide.c": {
@@ -23754,14 +22890,6 @@
         ],
         "citation": "docs/riscpc-6b-m2a.md:A-3/A-29",
         "meaning": "Source root"
-      },
-      "ltmp3": {
-        "classification": "contents-compared",
-        "roots": [
-          "ide.ide"
-        ],
-        "citation": "docs/riscpc-6b-m2a.md:A-3/A-29",
-        "meaning": "Compiler aggregate/section label; member roots are individually inventoried"
       }
     },
     "engine/rpc/rpc_profile.c": {
@@ -23771,19 +22899,9 @@
           "profile"
         ],
         "citation": "docs/decision-log.md:D-195"
-      },
-      "ltmp2": {
-        "classification": "excluded with ruling",
-        "roots": [
-          "profile"
-        ],
-        "citation": "docs/decision-log.md:D-195; Darwin section-start alias of profile, same address"
       }
     }
   },
-  "optional_profile_sources": [
-    "engine/rpc/rpc_profile.c"
-  ],
   "stdout_projection": {
     "prefixes": [
       "frame=",
@@ -23809,5 +22927,1350 @@
         "reason": "Post-fatal diagnostic count: fatal unwind skips batch-return accounting; exclude only cpu on the first fault=1 frame in cross-quota comparison."
       }
     ]
+  },
+  "local_static_symbols": {
+    "engine/rpc/rpc_observers.c": [
+      {
+        "function": "arc_rpc_observers_test_horizon",
+        "name": "shortened",
+        "citation": "engine/rpc/rpc_observers.c:397; Run C H-1"
+      }
+    ]
+  },
+  "reviewed_conditions": [
+    {
+      "name": "a10_condition_1",
+      "fields": [
+        "observer.owners.filter.swi",
+        "observer.owners.filter.swi_mask",
+        "observer.owners.filter.modes",
+        "observer.owners.filter.registers",
+        "observer.owners.filter.results",
+        "observer.owners.filter.kinds",
+        "observer.owners.filter.callback",
+        "observer.owners.filter.opaque",
+        "observer.owners.filter.swis",
+        "observer.owners.filter.swi_count",
+        "observer.owners.answer",
+        "observer.owners.value",
+        "observer.owners.answer_order"
+      ],
+      "condition": {
+        "field": "observer.owners.armed",
+        "index": "i"
+      },
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "citation": "docs/riscpc-6b-m2a.md:A-10; docs/riscpc-translator-invariants.md:2.2"
+    },
+    {
+      "name": "a10_condition_2",
+      "fields": [
+        "observer.watches.wait_return",
+        "observer.watches.owner",
+        "observer.watches.id",
+        "observer.watches.generation",
+        "observer.watches.deadline",
+        "observer.watches.pc",
+        "observer.watches.mode",
+        "observer.watches.sp"
+      ],
+      "condition": {
+        "field": "observer.watches.live",
+        "index": "i"
+      },
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "citation": "docs/riscpc-6b-m2a.md:A-10; docs/riscpc-translator-invariants.md:2.2"
+    },
+    {
+      "name": "a10_condition_3",
+      "fields": [
+        "observer.work.observer",
+        "observer.work.generation",
+        "observer.work.epoch",
+        "observer.work.media_generation",
+        "observer.work.helper_generation",
+        "observer.work.ns",
+        "observer.work.previous_ns",
+        "observer.work.kind",
+        "observer.work.operation",
+        "observer.work.continuation",
+        "observer.work.sp",
+        "observer.work.watch",
+        "observer.work.size"
+      ],
+      "condition": {
+        "lt": [
+          {
+            "div": [
+              {
+                "index": true
+              },
+              1
+            ]
+          },
+          {
+            "field": "observer.work_count"
+          }
+        ]
+      },
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "citation": "docs/riscpc-6b-m2a.md:A-10; docs/riscpc-translator-invariants.md:2.2"
+    },
+    {
+      "name": "a10_condition_4",
+      "fields": [
+        "observer.work.bytes"
+      ],
+      "condition": {
+        "and": [
+          {
+            "lt": [
+              {
+                "div": [
+                  {
+                    "index": true
+                  },
+                  256
+                ]
+              },
+              {
+                "field": "observer.work_count"
+              }
+            ]
+          },
+          {
+            "lt": [
+              {
+                "mod": [
+                  {
+                    "index": true
+                  },
+                  256
+                ]
+              },
+              {
+                "field": "observer.work.size",
+                "index": {
+                  "div": [
+                    {
+                      "index": true
+                    },
+                    256
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "citation": "docs/riscpc-6b-m2a.md:A-10; docs/riscpc-translator-invariants.md:2.2"
+    },
+    {
+      "name": "a10_condition_5",
+      "fields": [
+        "scheduler.deadlines"
+      ],
+      "condition": {
+        "field": "scheduler.armed",
+        "index": "i"
+      },
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "citation": "docs/riscpc-6b-m2a.md:A-10; docs/riscpc-translator-invariants.md:2.2"
+    },
+    {
+      "name": "a10_condition_6",
+      "fields": [
+        "memory.instruction.tags.va",
+        "memory.instruction.tags.physical",
+        "memory.instruction.tags.dirty"
+      ],
+      "condition": {
+        "field": "memory.instruction.tags.valid",
+        "index": "i"
+      },
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "citation": "docs/riscpc-6b-m2a.md:A-10; docs/riscpc-translator-invariants.md:2.2"
+    },
+    {
+      "name": "a10_condition_7",
+      "fields": [
+        "memory.data.tags.va",
+        "memory.data.tags.physical",
+        "memory.data.tags.dirty"
+      ],
+      "condition": {
+        "field": "memory.data.tags.valid",
+        "index": "i"
+      },
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "citation": "docs/riscpc-6b-m2a.md:A-10; docs/riscpc-translator-invariants.md:2.2"
+    },
+    {
+      "name": "a10_condition_8",
+      "fields": [
+        "memory.command.kind",
+        "memory.command.count",
+        "memory.command.index",
+        "memory.command.writes",
+        "memory.command.force_n",
+        "memory.command.locked",
+        "memory.command.fetch",
+        "memory.command.fill"
+      ],
+      "condition": {
+        "lt": [
+          {
+            "mod": [
+              {
+                "add": [
+                  {
+                    "div": [
+                      {
+                        "index": true
+                      },
+                      1
+                    ]
+                  },
+                  128,
+                  {
+                    "neg": [
+                      {
+                        "field": "memory.head"
+                      }
+                    ]
+                  }
+                ]
+              },
+              128
+            ]
+          },
+          {
+            "field": "memory.count"
+          }
+        ]
+      },
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "citation": "docs/riscpc-6b-m2a.md:A-10; docs/riscpc-translator-invariants.md:2.2"
+    },
+    {
+      "name": "a10_condition_9",
+      "fields": [
+        "memory.command.width",
+        "memory.command.address"
+      ],
+      "condition": {
+        "and": [
+          {
+            "lt": [
+              {
+                "mod": [
+                  {
+                    "add": [
+                      {
+                        "div": [
+                          {
+                            "index": true
+                          },
+                          16
+                        ]
+                      },
+                      128,
+                      {
+                        "neg": [
+                          {
+                            "field": "memory.head"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  128
+                ]
+              },
+              {
+                "field": "memory.count"
+              }
+            ]
+          },
+          {
+            "lt": [
+              {
+                "mod": [
+                  {
+                    "index": true
+                  },
+                  16
+                ]
+              },
+              {
+                "field": "memory.command.count",
+                "index": {
+                  "div": [
+                    {
+                      "index": true
+                    },
+                    16
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "citation": "docs/riscpc-6b-m2a.md:A-10; docs/riscpc-translator-invariants.md:2.2"
+    },
+    {
+      "name": "a10_condition_10",
+      "fields": [
+        "memory.buffer.kind",
+        "memory.buffer.count",
+        "memory.buffer.index",
+        "memory.buffer.writes",
+        "memory.buffer.force_n",
+        "memory.buffer.locked",
+        "memory.buffer.fetch",
+        "memory.buffer.fill"
+      ],
+      "condition": {
+        "lt": [
+          {
+            "mod": [
+              {
+                "add": [
+                  {
+                    "div": [
+                      {
+                        "index": true
+                      },
+                      1
+                    ]
+                  },
+                  8,
+                  {
+                    "neg": [
+                      {
+                        "field": "memory.bhead"
+                      }
+                    ]
+                  }
+                ]
+              },
+              8
+            ]
+          },
+          {
+            "field": "memory.bcount"
+          }
+        ]
+      },
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "citation": "docs/riscpc-6b-m2a.md:A-10; docs/riscpc-translator-invariants.md:2.2"
+    },
+    {
+      "name": "a10_condition_11",
+      "fields": [
+        "memory.buffer.width",
+        "memory.buffer.address"
+      ],
+      "condition": {
+        "and": [
+          {
+            "lt": [
+              {
+                "mod": [
+                  {
+                    "add": [
+                      {
+                        "div": [
+                          {
+                            "index": true
+                          },
+                          16
+                        ]
+                      },
+                      8,
+                      {
+                        "neg": [
+                          {
+                            "field": "memory.bhead"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  8
+                ]
+              },
+              {
+                "field": "memory.bcount"
+              }
+            ]
+          },
+          {
+            "lt": [
+              {
+                "mod": [
+                  {
+                    "index": true
+                  },
+                  16
+                ]
+              },
+              {
+                "field": "memory.buffer.count",
+                "index": {
+                  "div": [
+                    {
+                      "index": true
+                    },
+                    16
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "citation": "docs/riscpc-6b-m2a.md:A-10; docs/riscpc-translator-invariants.md:2.2"
+    },
+    {
+      "name": "a10_condition_12",
+      "fields": [
+        "memory.active.kind",
+        "memory.active.count",
+        "memory.active.index",
+        "memory.active.writes",
+        "memory.active.force_n",
+        "memory.active.locked",
+        "memory.active.fetch",
+        "memory.active.fill"
+      ],
+      "condition": {
+        "field": "memory.active_valid"
+      },
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "citation": "docs/riscpc-6b-m2a.md:A-10; docs/riscpc-translator-invariants.md:2.2"
+    },
+    {
+      "name": "a10_condition_13",
+      "fields": [
+        "memory.active.width",
+        "memory.active.address"
+      ],
+      "condition": {
+        "and": [
+          {
+            "field": "memory.active_valid"
+          },
+          {
+            "lt": [
+              {
+                "index": true
+              },
+              {
+                "field": "memory.active.count"
+              }
+            ]
+          }
+        ]
+      },
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "citation": "docs/riscpc-6b-m2a.md:A-10; docs/riscpc-translator-invariants.md:2.2"
+    },
+    {
+      "name": "a10_condition_14",
+      "fields": [
+        "memory.finish"
+      ],
+      "condition": {
+        "or": [
+          {
+            "field": "memory.cycle_active"
+          },
+          {
+            "field": "memory.video_active"
+          }
+        ]
+      },
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "citation": "docs/riscpc-6b-m2a.md:A-10; docs/riscpc-translator-invariants.md:2.2"
+    },
+    {
+      "name": "a10_condition_15",
+      "fields": [
+        "fast.memo_line"
+      ],
+      "condition": {
+        "field": "fast.memo_valid"
+      },
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "citation": "docs/riscpc-6b-m2a.md:A-10; docs/riscpc-translator-invariants.md:2.2"
+    },
+    {
+      "name": "a10_condition_16",
+      "fields": [
+        "fast.cpu_due_ticks",
+        "fast.cpu_due_ns",
+        "fast.due_floor",
+        "fast.due_fraction"
+      ],
+      "condition": {
+        "or": [
+          {
+            "ne": [
+              {
+                "phase": true
+              },
+              2
+            ]
+          },
+          {
+            "not": [
+              {
+                "field": "fast.pending"
+              }
+            ]
+          }
+        ]
+      },
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "citation": "docs/riscpc-6b-m2a.md:A-10; docs/riscpc-translator-invariants.md:2.2"
+    },
+    {
+      "name": "a10_condition_17",
+      "fields": [
+        "cpu.reg",
+        "cpu.mode",
+        "cpu.mmask",
+        "cpu.r15_mask",
+        "cpu.event",
+        "cpu.user_reg",
+        "cpu.fiq_reg",
+        "cpu.irq_reg",
+        "cpu.super_reg",
+        "cpu.abort_reg",
+        "cpu.undef_reg",
+        "cpu.spsr",
+        "cpu.r15_diff",
+        "cpu.abort_base_restored",
+        "cpu.stm_writeback_at_end",
+        "cpu.arch_v4"
+      ],
+      "condition": {
+        "not": [
+          {
+            "field": "terminal.fatal"
+          }
+        ]
+      },
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "citation": "docs/riscpc-6b-m2a.md:A-10; docs/riscpc-translator-invariants.md:2.2"
+    },
+    {
+      "name": "a10_condition_18",
+      "fields": [
+        "tlb.code",
+        "tlb.tag",
+        "tlb.physical",
+        "tlb.domain",
+        "tlb.ap",
+        "tlb.page",
+        "tlb.attributes"
+      ],
+      "condition": {
+        "field": "tlb.valid",
+        "index": "i"
+      },
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "citation": "docs/riscpc-6b-m2a.md:A-10; docs/riscpc-translator-invariants.md:2.2"
+    }
+  ],
+  "reviewed_mode_exclusions": [
+    {
+      "mode": "guest-output",
+      "fields": [
+        "rpc_observer.arc_rpc_observer_active",
+        "rpc_observer.arc_rpc_observer_context",
+        "rpc_observer.host_active",
+        "rpc_observer.qualifications"
+      ],
+      "reason": "A-25(c): observer admission/host state varies with subscriptions; guest-output compares guest-visible state only",
+      "citation": "docs/riscpc-6b-m2a.md:A-25"
+    },
+    {
+      "mode": "guest-output",
+      "fields": [
+        "rpc_observer.observers_active",
+        "observer.epoch",
+        "observer.order",
+        "observer.instruction",
+        "observer.watch_id",
+        "observer.batch.live",
+        "observer.batch.start",
+        "observer.batch.accounted",
+        "observer.origin.instruction",
+        "observer.origin.epoch",
+        "observer.origin.ns",
+        "observer.origin.pc",
+        "observer.origin.mode",
+        "observer.origin.word",
+        "observer.owners.filter.swi",
+        "observer.owners.filter.swi_mask",
+        "observer.owners.filter.modes",
+        "observer.owners.filter.registers",
+        "observer.owners.filter.results",
+        "observer.owners.filter.kinds",
+        "observer.owners.filter.callback",
+        "observer.owners.filter.opaque",
+        "observer.owners.filter.swis",
+        "observer.owners.filter.swi_count",
+        "observer.owners.generation",
+        "observer.owners.armed",
+        "observer.owners.answer",
+        "observer.owners.value",
+        "observer.owners.answer_order",
+        "observer.watches.live",
+        "observer.watches.wait_return",
+        "observer.watches.owner",
+        "observer.watches.id",
+        "observer.watches.generation",
+        "observer.watches.deadline",
+        "observer.watches.pc",
+        "observer.watches.mode",
+        "observer.watches.sp",
+        "observer.work.observer",
+        "observer.work.generation",
+        "observer.work.epoch",
+        "observer.work.media_generation",
+        "observer.work.helper_generation",
+        "observer.work.ns",
+        "observer.work.previous_ns",
+        "observer.work.kind",
+        "observer.work.operation",
+        "observer.work.continuation",
+        "observer.work.sp",
+        "observer.work.watch",
+        "observer.work.size",
+        "observer.work.bytes",
+        "observer.work_count",
+        "observer.handlers.valid",
+        "observer.handlers.resolve",
+        "observer.handlers.mutate",
+        "observer.handlers.opaque",
+        "observer.in_swi",
+        "observer.completed",
+        "observer.current_owner",
+        "observer.current_order",
+        "observer.current_generation",
+        "observer.current_results",
+        "observer.current_kind",
+        "rpc_observer.swi_interest.low",
+        "rpc_observer.swi_interest.wimp",
+        "rpc_observer.swi_interest.unrestricted",
+        "rpc_observers.state.catalogue",
+        "rpc_observers.state.cpu",
+        "rpc_observers.state.cells",
+        "rpc_observers.state.epoch",
+        "rpc_observers.state.error_watch",
+        "rpc_observers.state.disc_watch",
+        "rpc_observers.state.disc_media",
+        "rpc_observers.state.helper_media",
+        "rpc_observers.state.error_unbounded",
+        "rpc_observers.state.error_return_closes",
+        "rpc_observers.state.error_profile.contextual",
+        "rpc_observers.state.error_profile.poll_r1",
+        "rpc_observers.state.error_profile.poll_r2",
+        "rpc_observers.state.error_profile.poll_modes",
+        "rpc_observers.state.error_profile.answer_forms",
+        "rpc_observers.state.error_profile.ok_forms",
+        "rpc_observers.state.error_profile.cancel_forms",
+        "rpc_observers.state.error_profile.default_cancel_forms",
+        "rpc_observers.state.error_profile.numbers",
+        "rpc_observers.state.disc_profile.user_modes",
+        "rpc_observers.state.disc_profile.svc_modes",
+        "rpc_observers.state.disc_profile.device_forms",
+        "rpc_observers.state.disc_profile.require_x",
+        "rpc_observers.state.disc_profile.strict_bare",
+        "rpc_observers.state.arc_rpc_error.generation",
+        "rpc_observers.state.arc_rpc_error.os",
+        "rpc_observers.state.arc_rpc_error.stage",
+        "rpc_observers.state.arc_rpc_error.ok",
+        "rpc_observers.state.arc_rpc_error.cancel",
+        "rpc_observers.state.arc_rpc_error.default_cancel",
+        "rpc_observers.state.arc_rpc_error.site",
+        "rpc_observers.state.arc_rpc_error.sp",
+        "rpc_observers.state.arc_rpc_error.lr",
+        "rpc_observers.state.arc_rpc_error.pending",
+        "rpc_observers.state.arc_rpc_error.consumed",
+        "rpc_observers.state.arc_rpc_error.key",
+        "rpc_observers.state.arc_rpc_error.profile",
+        "rpc_observers.state.arc_rpc_error.recognised_open",
+        "rpc_observers.state.arc_rpc_error.answer_available",
+        "rpc_observers.state.arc_rpc_error.modal_unknown",
+        "rpc_observers.state.arc_rpc_error.flags",
+        "rpc_observers.state.arc_rpc_error.poll_mode",
+        "rpc_observers.state.launch.profile",
+        "rpc_observers.state.launch.state",
+        "rpc_observers.state.launch.start_us",
+        "rpc_observers.state.launch.refused_floppy",
+        "rpc_observers.state.launch.refused_hd",
+        "rpc_observers.state.launch.failed_exits",
+        "rpc_observers.state.launch.last_rc",
+        "rpc_observers.state.launch.close_r1",
+        "rpc_observers.state.launch.has_rc",
+        "rpc_observers.state.launch.matched",
+        "rpc_observers.state.launch.command",
+        "rpc_observers.state.launch.cancel_reason",
+        "rpc_observers.state.boot.profile",
+        "rpc_observers.state.boot.state",
+        "rpc_observers.state.boot.armed_us",
+        "rpc_observers.state.boot.read_us",
+        "rpc_observers.state.boot.last_event_us",
+        "rpc_observers.state.boot.pending",
+        "rpc_observers.state.disc.profile",
+        "rpc_observers.state.disc.armed",
+        "rpc_observers.state.disc.a_active",
+        "rpc_observers.state.disc.b_triggered",
+        "rpc_observers.state.disc.a_notified",
+        "rpc_observers.state.disc.a_name",
+        "rpc_observers.state.disc.object",
+        "rpc_observers.state.disc.continuation",
+        "rpc_observers.state.disc.sp",
+        "rpc_observers.state.disc.candidate",
+        "rpc_observers.state.disc.observations",
+        "rpc_observers.state.disc.triggered_slot",
+        "rpc_observers.state.disc.operation",
+        "rpc_observers.state.disc.identities.occupied",
+        "rpc_observers.state.disc.identities.object",
+        "rpc_observers.state.disc.identities.continuation",
+        "rpc_observers.state.disc.identities.sp",
+        "rpc_observers.state.disc.identities.observed_us",
+        "rpc_observers.state.disc.identities.order",
+        "rpc_observers.state.disc.triggered_object",
+        "rpc_observers.state.disc.triggered_continuation",
+        "rpc_observers.state.disc.triggered_sp",
+        "rpc_observers.state.disc.next_order",
+        "rpc_observers.state.disc.triggered_us",
+        "rpc_observers.state.disc_enabled",
+        "rpc_observers.state.disc_signal",
+        "rpc_observers.state.disc_reason",
+        "rpc_observers.state.overridden",
+        "rpc_observers.state.inserted",
+        "rpc_observers.state.resolve",
+        "rpc_observers.state.observe",
+        "rpc_observers.state.opaque",
+        "rpc_observers.state.resolved_candidate",
+        "rpc_observers.state.retry_pending",
+        "rpc_observers.state.disc_suppressed",
+        "rpc_observers.state.disc_last_miss_ns",
+        "rpc_observers.state.retry_work.observer",
+        "rpc_observers.state.retry_work.generation",
+        "rpc_observers.state.retry_work.epoch",
+        "rpc_observers.state.retry_work.media_generation",
+        "rpc_observers.state.retry_work.helper_generation",
+        "rpc_observers.state.retry_work.ns",
+        "rpc_observers.state.retry_work.previous_ns",
+        "rpc_observers.state.retry_work.kind",
+        "rpc_observers.state.retry_work.operation",
+        "rpc_observers.state.retry_work.continuation",
+        "rpc_observers.state.retry_work.sp",
+        "rpc_observers.state.retry_work.watch",
+        "rpc_observers.state.retry_work.size",
+        "rpc_observers.state.retry_work.bytes",
+        "rpc_observers.state.retry_candidate",
+        "rpc_observers.disc_observation",
+        "rpc_observers.watch_budget",
+        "rpc_observers.default_disc_profile",
+        "rpc_observers.default_error_profile",
+        "rpc_observers.launch_profile",
+        "rpc_observers.boot_profile",
+        "rpc_observers.bits",
+        "rpc_observers.error_swis",
+        "rpc_observers.disc_swis",
+        "rpc_observers.arc_rpc_observers_test_horizon.shortened.horizon_us",
+        "rpc_observers.arc_rpc_observers_test_horizon.shortened.exit_rom",
+        "rpc_observers.arc_rpc_observers_test_horizon.shortened.close_rom",
+        "rpc_observers.arc_rpc_observers_test_horizon.shortened.poll_rom"
+      ],
+      "reason": "A-25(c): semantic subscription/owner configurations legitimately differ",
+      "citation": "docs/riscpc-6b-m2a.md:A-25"
+    },
+    {
+      "mode": "cross-quota",
+      "fields": [
+        "fast.integer_batch",
+        "fast.test_stop",
+        "fast.test_measure",
+        "rpc_mem_timing.measure_first",
+        "rpc_mem_timing.measure_last",
+        "rpc_mem_timing.measure_drained",
+        "rpc_mem_timing.interval.started",
+        "rpc_mem_timing.interval.done",
+        "rpc_mem_timing.interval.start_ticks",
+        "rpc_mem_timing.interval.end_ticks",
+        "rpc_mem_timing.interval.start.instructions",
+        "rpc_mem_timing.interval.start.words",
+        "rpc_mem_timing.interval.start.fills",
+        "rpc_mem_timing.interval.start.dirty_halves",
+        "rpc_mem_timing.interval.start.packets",
+        "rpc_mem_timing.interval.start.hits",
+        "rpc_mem_timing.interval.start.completed_ticks",
+        "rpc_mem_timing.interval.start.buffer_wait_ticks",
+        "rpc_mem_timing.interval.start.buffered_words",
+        "rpc_mem_timing.interval.start.buffered_packets",
+        "rpc_mem_timing.interval.start.denominator",
+        "rpc_mem_timing.interval.end.instructions",
+        "rpc_mem_timing.interval.end.words",
+        "rpc_mem_timing.interval.end.fills",
+        "rpc_mem_timing.interval.end.dirty_halves",
+        "rpc_mem_timing.interval.end.packets",
+        "rpc_mem_timing.interval.end.hits",
+        "rpc_mem_timing.interval.end.completed_ticks",
+        "rpc_mem_timing.interval.end.buffer_wait_ticks",
+        "rpc_mem_timing.interval.end.buffered_words",
+        "rpc_mem_timing.interval.end.buffered_packets",
+        "rpc_mem_timing.interval.end.denominator"
+      ],
+      "reason": "A-25(b): batch representation only; remaining budgets compared after projection",
+      "citation": "docs/riscpc-6b-m2a.md:A-25"
+    },
+    {
+      "mode": "guest-output",
+      "fields": [
+        "fast.integer_batch",
+        "fast.test_stop",
+        "fast.test_measure",
+        "rpc_mem_timing.measure_first",
+        "rpc_mem_timing.measure_last",
+        "rpc_mem_timing.measure_drained",
+        "rpc_mem_timing.interval.started",
+        "rpc_mem_timing.interval.done",
+        "rpc_mem_timing.interval.start_ticks",
+        "rpc_mem_timing.interval.end_ticks",
+        "rpc_mem_timing.interval.start.instructions",
+        "rpc_mem_timing.interval.start.words",
+        "rpc_mem_timing.interval.start.fills",
+        "rpc_mem_timing.interval.start.dirty_halves",
+        "rpc_mem_timing.interval.start.packets",
+        "rpc_mem_timing.interval.start.hits",
+        "rpc_mem_timing.interval.start.completed_ticks",
+        "rpc_mem_timing.interval.start.buffer_wait_ticks",
+        "rpc_mem_timing.interval.start.buffered_words",
+        "rpc_mem_timing.interval.start.buffered_packets",
+        "rpc_mem_timing.interval.start.denominator",
+        "rpc_mem_timing.interval.end.instructions",
+        "rpc_mem_timing.interval.end.words",
+        "rpc_mem_timing.interval.end.fills",
+        "rpc_mem_timing.interval.end.dirty_halves",
+        "rpc_mem_timing.interval.end.packets",
+        "rpc_mem_timing.interval.end.hits",
+        "rpc_mem_timing.interval.end.completed_ticks",
+        "rpc_mem_timing.interval.end.buffer_wait_ticks",
+        "rpc_mem_timing.interval.end.buffered_words",
+        "rpc_mem_timing.interval.end.buffered_packets",
+        "rpc_mem_timing.interval.end.denominator",
+        "driver.successful_continuations",
+        "driver.linecyc"
+      ],
+      "reason": "A-25(c): host batching/measurement representation is not guest output; strict comparison still includes it",
+      "citation": "docs/riscpc-6b-m2a.md:A-25"
+    },
+    {
+      "mode": "cross-quota",
+      "fields": [
+        "driver.successful_continuations"
+      ],
+      "reason": "A-25(b): actual successful batch continuations depend on quota; no remaining budget is excluded",
+      "citation": "docs/riscpc-6b-m2a.md:A-25"
+    },
+    {
+      "mode": "cross-quota",
+      "fields": [
+        "driver.linecyc"
+      ],
+      "reason": "A-25(b): raw local batch position depends on quota; projected completion and remaining budgets remain compared",
+      "citation": "docs/riscpc-6b-m2a.md:A-25"
+    }
+  ],
+  "reviewed_exclusions": [
+    {
+      "field": "rpc_observer.trace",
+      "class": "diagnostic",
+      "citation": "engine/rpc/rpc_observer.c:34",
+      "reason": "\u00a72.2 diagnostic trace/counters"
+    },
+    {
+      "field": "rpc_observer.arc_rpc_observer_integer_attempts",
+      "class": "diagnostic",
+      "citation": "engine/rpc/rpc_observer.c:35",
+      "reason": "\u00a72.2 diagnostic trace/counters"
+    },
+    {
+      "field": "rpc_observer.event_captures",
+      "class": "diagnostic",
+      "citation": "engine/rpc/rpc_observer.c:36",
+      "reason": "\u00a72.2 diagnostic trace/counters"
+    },
+    {
+      "field": "rpc_observer.number_checks",
+      "class": "diagnostic",
+      "citation": "engine/rpc/rpc_observer.c:36",
+      "reason": "\u00a72.2 diagnostic trace/counters"
+    },
+    {
+      "field": "rpc_session.arc_rpc_jump",
+      "class": "host-only/excluded",
+      "citation": "engine/rpc/rpc_session.c:50; docs/riscpc-6b-m2a.md:A-34",
+      "reason": "Host continuation used only to unwind a fatal; no guest-visible state; host addresses legitimately differ between processes; rebound by the frontend at session start (A-34)."
+    },
+    {
+      "field": "rpc_session.arc_rpc_logger",
+      "class": "host-only/excluded",
+      "citation": "engine/rpc/rpc_session.c:57; docs/riscpc-6b-m2a.md:A-34",
+      "reason": "Frontend log callback; no guest-visible state; host addresses legitimately differ between processes; rebound by the frontend at session start (A-34)."
+    },
+    {
+      "field": "rpc_session.arc_rpc_logger_opaque",
+      "class": "host-only/excluded",
+      "citation": "engine/rpc/rpc_session.c:58; docs/riscpc-6b-m2a.md:A-34",
+      "reason": "Frontend log callback context; no guest-visible state; host addresses legitimately differ between processes; rebound by the frontend at session start (A-34)."
+    },
+    {
+      "field": "arm.unpredictable_count",
+      "class": "diagnostic",
+      "citation": "engine/rpcemu/src/arm.c:63; Run C M-4",
+      "reason": "Run C M-4: unpredictable-instruction diagnostic log rate limit, excluded."
+    },
+    {
+      "field": "vidc20.dirty",
+      "class": "host-only/excluded",
+      "citation": "engine/rpcemu/src/vidc20.c:73",
+      "reason": "Q-5 write-only state"
+    },
+    {
+      "field": "vidc20.dirtybuffer",
+      "class": "host-only/excluded",
+      "citation": "engine/rpcemu/src/vidc20.c:1",
+      "reason": "Q-5 write-only state"
+    },
+    {
+      "field": "profile",
+      "class": "diagnostic",
+      "citation": "docs/decision-log.md:D-195",
+      "reason": "D-195 R-c: profile counters excluded"
+    }
+  ],
+  "cross_quota_projections": {
+    "modes": [
+      "cross-quota"
+    ],
+    "citation": "docs/riscpc-6b-m2a.md:A-29; docs/riscpc-lockstep-harness.md:Run C",
+    "inputs": {
+      "base_executed": "executed count at batch entry",
+      "prior_completed": "completed attempts before current attempt",
+      "current_completed": "one only after current attempt completes",
+      "base_instruction_work": "driver work count at batch entry",
+      "stored_instruction_work": "stored driver work count",
+      "booked_null_attempt": "one for the pre-incremented NULL-batch path",
+      "projected_instruction_work": "phase-correct projected work count",
+      "device_deliveries": "device deliveries since advance entry, including tied deliveries",
+      "current_pixels": "current video pixel count",
+      "pixels_since_entry": "pixels serviced since advance entry",
+      "current_fields": "current video field count",
+      "fields_since_entry": "fields serviced since advance entry",
+      "batch_completed": "total completed attempts at P3, including the final completed attempt"
+    },
+    "fields": {
+      "rpc_session.arc_rpc_executed": {
+        "batch": {
+          "P0": {
+            "add": [
+              {
+                "input": "base_executed"
+              },
+              {
+                "input": "prior_completed"
+              }
+            ]
+          },
+          "P1": {
+            "add": [
+              {
+                "input": "base_executed"
+              },
+              {
+                "input": "prior_completed"
+              }
+            ]
+          },
+          "P2": {
+            "add": [
+              {
+                "input": "base_executed"
+              },
+              {
+                "input": "prior_completed"
+              },
+              {
+                "input": "current_completed"
+              }
+            ]
+          },
+          "P3": {
+            "add": [
+              {
+                "input": "base_executed"
+              },
+              {
+                "input": "batch_completed"
+              }
+            ]
+          }
+        },
+        "null_batch": {
+          "P0": {
+            "input": "base_executed"
+          },
+          "P1": {
+            "input": "base_executed"
+          },
+          "P2": {
+            "add": [
+              {
+                "input": "base_executed"
+              },
+              {
+                "input": "current_completed"
+              }
+            ]
+          },
+          "P3": {
+            "add": [
+              {
+                "input": "base_executed"
+              },
+              {
+                "input": "batch_completed"
+              }
+            ]
+          }
+        },
+        "fatal": "current_completed is zero unless the attempt completed; M2b defines exact fatal capture (A-29)"
+      },
+      "driver.instruction_work": {
+        "batch": {
+          "P0": {
+            "add": [
+              {
+                "input": "base_instruction_work"
+              },
+              {
+                "input": "prior_completed"
+              }
+            ]
+          },
+          "P1": {
+            "add": [
+              {
+                "input": "base_instruction_work"
+              },
+              {
+                "input": "prior_completed"
+              }
+            ]
+          },
+          "P2": {
+            "add": [
+              {
+                "input": "base_instruction_work"
+              },
+              {
+                "input": "prior_completed"
+              },
+              {
+                "input": "current_completed"
+              }
+            ]
+          },
+          "P3": {
+            "add": [
+              {
+                "input": "base_instruction_work"
+              },
+              {
+                "input": "batch_completed"
+              }
+            ]
+          }
+        },
+        "null_batch": {
+          "P0": {
+            "sub": [
+              {
+                "input": "stored_instruction_work"
+              },
+              {
+                "input": "booked_null_attempt"
+              }
+            ]
+          },
+          "P1": {
+            "sub": [
+              {
+                "input": "stored_instruction_work"
+              },
+              {
+                "input": "booked_null_attempt"
+              }
+            ]
+          },
+          "P2": {
+            "add": [
+              {
+                "sub": [
+                  {
+                    "input": "stored_instruction_work"
+                  },
+                  {
+                    "input": "booked_null_attempt"
+                  }
+                ]
+              },
+              {
+                "input": "current_completed"
+              }
+            ]
+          },
+          "P3": {
+            "input": "stored_instruction_work"
+          }
+        },
+        "remaining": {
+          "sub": [
+            1666667,
+            {
+              "input": "projected_instruction_work"
+            }
+          ]
+        }
+      },
+      "driver.event_work": {
+        "P0": {
+          "input": "device_deliveries"
+        },
+        "P1": {
+          "input": "device_deliveries"
+        },
+        "P2": {
+          "input": "device_deliveries"
+        },
+        "P3": {
+          "input": "device_deliveries"
+        },
+        "remaining": {
+          "sub": [
+            524288,
+            {
+              "input": "device_deliveries"
+            }
+          ]
+        }
+      },
+      "driver.video_start.pixels": {
+        "P0": {
+          "sub": [
+            {
+              "input": "current_pixels"
+            },
+            {
+              "input": "pixels_since_entry"
+            }
+          ]
+        },
+        "P1": {
+          "sub": [
+            {
+              "input": "current_pixels"
+            },
+            {
+              "input": "pixels_since_entry"
+            }
+          ]
+        },
+        "P2": {
+          "sub": [
+            {
+              "input": "current_pixels"
+            },
+            {
+              "input": "pixels_since_entry"
+            }
+          ]
+        },
+        "P3": {
+          "sub": [
+            {
+              "input": "current_pixels"
+            },
+            {
+              "input": "pixels_since_entry"
+            }
+          ]
+        },
+        "remaining": {
+          "sub": [
+            33554432,
+            {
+              "input": "pixels_since_entry"
+            }
+          ]
+        }
+      },
+      "driver.video_start.fields": {
+        "P0": {
+          "sub": [
+            {
+              "input": "current_fields"
+            },
+            {
+              "input": "fields_since_entry"
+            }
+          ]
+        },
+        "P1": {
+          "sub": [
+            {
+              "input": "current_fields"
+            },
+            {
+              "input": "fields_since_entry"
+            }
+          ]
+        },
+        "P2": {
+          "sub": [
+            {
+              "input": "current_fields"
+            },
+            {
+              "input": "fields_since_entry"
+            }
+          ]
+        },
+        "P3": {
+          "sub": [
+            {
+              "input": "current_fields"
+            },
+            {
+              "input": "fields_since_entry"
+            }
+          ]
+        },
+        "remaining": {
+          "sub": [
+            1,
+            {
+              "input": "fields_since_entry"
+            }
+          ]
+        },
+        "stop_at_field": "field remaining applies only while stop_at_field is enabled"
+      }
+    },
+    "owner": "M2b serialises these non-mutating projected values into compared fields; M2a has no emitter"
   }
 }

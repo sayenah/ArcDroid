@@ -66,6 +66,12 @@ DEFERRED=[
 EMITTER_ONLY = {'CLKCTL-after-drain': 'Pending-buffer repricing needs the A-8 stream-state channel; frame-level output did not distinguish this variant.'}
 
 
+def port_anchors():
+    # Old-side changed-line intervals, generated from the reviewed 1a-0 diff.
+    # Committed data makes CI independent of unmerged/shallow git history.
+    return json.loads((ROOT/'tests/rpc_lockstep_port_1a0.json').read_text())['hunks']
+
+
 def main():
     p=argparse.ArgumentParser();p.add_argument('build',type=Path);p.add_argument('runner');p.add_argument('core');p.add_argument('fixtures',type=Path)
     p.add_argument('--only',default='');p.add_argument('--matrix',type=Path);a=p.parse_args();build=a.build.resolve()
@@ -73,6 +79,7 @@ def main():
     ninja=next(x.split('=',1)[1] for x in cache.splitlines() if x.startswith('CMAKE_MAKE_PROGRAM:FILEPATH='))
     commands=[r['command'] for r in json.loads(subprocess.check_output([ninja,'-t','compdb','-x'],cwd=build,text=True))]
     manifest=json.loads((a.fixtures/'manifest.json').read_text());matrix=[];survivors=[]
+    hunks=port_anchors()
     for label,relative,old,new,prefixes in RECIPES:
         if a.only and a.only not in label:continue
         text=(ROOT/relative).read_text()
@@ -94,7 +101,7 @@ def main():
             for command in (compile,link):
                 result=subprocess.run(command,cwd=build,capture_output=True,text=True,timeout=180)
                 if result.returncode:raise RuntimeError((label,'build error (not a kill)',result.stderr[-1800:]))
-            killed=[]
+            killed=[];independent=[]
             if prefixes==('@G-1-limit',):
                 harness=build/('rpc_lockstep_boundary.exe' if os.name=='nt' else 'rpc_lockstep_boundary')
                 write_item(folder,'limit',0,[0xea00003e]+[0xeafffffe]*64)
@@ -104,7 +111,9 @@ def main():
                     if base.returncode:raise RuntimeError((label,'baseline boundary failure',base.stderr))
                     variant=subprocess.run([str(harness),str(library),*args],capture_output=True,text=True,timeout=30)
                     if 'missing API' in variant.stderr:raise RuntimeError((label,'infrastructure failure',variant.stderr))
-                    if variant.returncode!=base.returncode or variant.stdout!=base.stdout:killed.append('G-1-NULL-'+str(model))
+                    if variant.returncode!=base.returncode or variant.stdout!=base.stdout:
+                        killed.append('G-1-NULL-'+str(model))
+                        if variant.returncode:independent.append(dict(row='G-1-NULL-'+str(model),oracle='independent boundary assertion'))
             for item in manifest['items']:
                 if not any(item['name'].startswith(prefix) for prefix in prefixes):continue
                 plan=a.fixtures/(item['name']+'.arcplan')
@@ -113,9 +122,25 @@ def main():
                 mutant=execute(a.runner,str(library),a.fixtures,plan,folder,len(item['expected']))
                 if any(x in mutant.stderr for x in ('Cannot load core','Missing required symbol')):raise RuntimeError((label,'infrastructure failure',mutant.stderr))
                 if mutant.returncode!=base.returncode or projection(mutant.stdout)!=projection(base.stdout):killed.append(item['name'])
+                try:expectation(item,mutant)
+                except RuntimeError as error:
+                    independent.append(dict(row=item['name'],oracle='terminal fault exit' if mutant.returncode and 'fault=1' in mutant.stdout else 'independent RAM/register expectation',exit=mutant.returncode,fault='fault=1' in mutant.stdout,reason=str(error)))
+            if label=='ROMCR-after-drain':
+                harness=build/('rpc_lockstep_interval.exe' if os.name=='nt' else 'rpc_lockstep_interval')
+                interval=subprocess.run([sys.executable,'-B',str(ROOT/'tests/rpc_lockstep_timing_test.py'),str(harness),str(library)],capture_output=True,text=True,timeout=90)
+                if interval.returncode==0 or 'AC-M2-burst-0' not in interval.stderr or 'independent interval disagreement' not in interval.stderr:
+                    raise RuntimeError(('ROMCR independent interval control failed',interval.returncode,interval.stderr))
+                independent.append(dict(row='AC-M2-burst-0',oracle='independent interval disagreement',reason=interval.stderr.split('RuntimeError:')[-1].strip()))
             entry=dict(variant=label,source=relative,line=changed_lines[0],expected_rows=list(prefixes),result='behaviour change reported' if killed else 'no behaviour change reported',owner='M2a',level='demonstrated' if killed else 'awaiting emitter',kills=killed,single_item=len(killed)==1,
                        first_field={'masked-reg16':'cpu.reg[16]','carry-F':'cpu.reg[15]','denied-no-eviction':'tlb.tag','CLKCTL-after-drain':'memory.finish'}.get(label,'runner stdout / RAM signature'),
-                       port_1a0=relative in (ARM,CP,TIM))
+                       port_1a0=any(first<=changed_lines[0]<=last for first,last in hunks.get(relative,[])),
+                       port_anchor=dict(base='43c804a',candidate='38eae498c1c890d4ad5a02ce98118e129cef0714',line=changed_lines[0],hunks=hunks.get(relative,[])),
+                       independent=independent,detection='independent expectation' if independent else 'detected by differential only' if killed else 'awaiting emitter')
+            entry['differential_only_rows']=[row for row in killed if row not in {x['row'] for x in independent}]
+            if label in ('data-fill-no-memo-eviction','c7-no-op'):
+                entry['first_field']='frame.cpu (detected by differential only)'
+            elif label=='ROMCR-after-drain':entry['first_field']='interval ticks (AC-M2-burst-0); G-8 frame.cpu differential'
+            elif label=='idle-no-drain':entry['first_field']='terminal.fault / process exit'
             matrix.append(entry)
             print(json.dumps(entry,sort_keys=True),flush=True)
             if not killed and label not in EMITTER_ONLY:survivors.append(label)

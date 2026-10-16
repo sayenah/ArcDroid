@@ -77,6 +77,47 @@ def validate_schema(schema):
         require(set(f.get('mode_exclusions', {})) <= set(MODES) - {'strict'}, 'strict-mode exclusion')
         require('condition' in f, 'missing condition')
         expression(f['condition'])
+        # Class is executable policy, not a documentary tag. Review lists are
+        # exact field/condition contracts: a broad exclusion cannot self-authorise.
+        require(f['phases'] == [0, 1, 2, 3], 'unreviewed phase restriction ' + f['name'])
+        if f['class'] == 'phase-conditional':
+            rules = [r for r in schema['reviewed_conditions'] if f['name'] in r['fields']]
+            require(len(rules) == 1 and rules[0].get('citation') and
+                    rules[0]['condition'] == f['condition'] and rules[0]['phases'] == f['phases'],
+                    'unreviewed conditional exclusion ' + f['name'])
+        elif f['class'] in ('canonical', 'batch-local', 'measurement'):
+            require(f['condition'] is True, 'excluded included-class field ' + f['name'])
+            require(not any(f['name'] in r['fields'] for r in schema['reviewed_conditions']),
+                    'conditional class changed ' + f['name'])
+        else:
+            rules = [r for r in schema['reviewed_exclusions'] if r['field'] == f['name']]
+            require(f['condition'] is False and len(rules) == 1 and
+                    rules[0]['class'] == f['class'] and rules[0].get('citation'),
+                    'unreviewed permanent exclusion ' + f['name'])
+        for mode, reason in f['mode_exclusions'].items():
+            rules = [r for r in schema['reviewed_mode_exclusions']
+                     if r['mode'] == mode and f['name'] in r['fields']]
+            require(len(rules) == 1 and rules[0].get('citation') and rules[0]['reason'] == reason,
+                    'unreviewed mode exclusion ' + f['name'])
+    projections = schema['cross_quota_projections']
+    require(projections.get('citation') and projections.get('owner') and projections['modes']==['cross-quota'] and
+            all(name in names for name in projections['fields']), 'driver projection contract')
+    def projection_expression(e):
+        if type(e) is int: return
+        require(isinstance(e,dict) and len(e)==1,'projection expression')
+        if 'input' in e:
+            require(e['input'] in projections['inputs'],'unknown projection input')
+        else:
+            op,args=next(iter(e.items()))
+            require(op in ('add','sub') and isinstance(args,list) and len(args)>=2 and
+                    (op!='sub' or len(args)==2),'projection arithmetic')
+            for arg in args:projection_expression(arg)
+    for spec in projections['fields'].values():
+        for path in ('batch','null_batch') if 'batch' in spec else (None,):
+            phases=spec[path] if path else spec
+            require(all(p in phases for p in ('P0','P1','P2','P3')),'projection phases')
+            for phase in ('P0','P1','P2','P3'):projection_expression(phases[phase])
+        if 'remaining' in spec:projection_expression(spec['remaining'])
     require(sum(f['count'] * (2 if f['type'] == 'allocation-offset' else 1) * 8 for f in schema['fields']) + 48 <= MAX_FRAME, 'detail frame exceeds bound')
     return schema
 
@@ -84,6 +125,15 @@ def validate_schema(schema):
 def load_schema(path=DEFAULT_SCHEMA):
     raw = Path(path).read_bytes()
     return validate_schema(json.loads(raw)), hashlib.sha256(raw).digest()
+
+
+def projection_value(expression, inputs):
+    """Reference arithmetic only; M2b supplies and serialises actual inputs."""
+    if type(expression) is int: return expression
+    if 'input' in expression: return inputs[expression['input']]
+    op,args=next(iter(expression.items()))
+    values=[projection_value(arg,inputs) for arg in args]
+    return sum(values) if op=='add' else values[0]-values[1]
 
 
 def stdout_projection(text, mode='strict', schema=None):

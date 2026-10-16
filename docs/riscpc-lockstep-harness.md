@@ -260,3 +260,87 @@ No production source/object, existing generator, workflow or shared fixture
 dependency is changed. All new host-only structures (reader cursors, hash
 accumulators, schedule state, density counters) are excluded from guest state
 and reset on each epoch. No emitter is backported to the Phase 1a anchor.
+
+
+## Run C review contract and re-grounding
+
+Fable's Run C adjudication governs the following refinements. The inventory
+classification tool (`tests/rpc_lockstep_inventory.py`) enumerates the current
+built RPC/RPCEmu objects every run; engine-source SHA-256 pins are removed.
+The schema records reviewed source/symbol identities, not a compiler's spelling
+or a blanket approval of new storage. Mach-O's ABI underscore is removed;
+reviewed function-local statics use `function::name`, accepting GCC's terminal
+`.N` suffix and Clang's `function.name` spelling only for that reviewed local.
+COFF section symbols and format-specific local labels are ignored by explicit
+rules. All other data/bss symbols must classify, including unknown suffixed
+names. Two raw names collapsing to one identity fail as ambiguous; adding a
+same-named local in a second function requires an explicit reviewed mapping.
+Compiler aggregate symbols have explicit schema mappings; nm cannot
+recover storage eliminated or merged without a separately named symbol.
+
+After an engine merge, build the plan-core object target and run the inventory
+with `--write-inventory` into the external build tree. This committed tool emits
+current object, raw symbol, normalised identity, class and schema-root mappings;
+unclassified entries remain errors. Review each new identity, add its static
+root and field/storage classification with citations, and update only reviewed
+aliases if the compiler changed a spelling. Re-run host and MinGW inventories
+and their unknown-symbol controls. No source-byte change alone invalidates an
+inventory. When 1a-0 merges, classify its new measurement statics under R-e0-2.
+
+Schema validation enforces class semantics. Canonical state is unconditional
+and present at every phase; amendment-authorised mode exclusions and conditional
+rules are enumerated with exact expressions, member names and citations in
+reviewed schema lists. Changing a field's condition, phase set or exclusion
+without changing its reviewed contract fails validation. `cp15.tlbs` and
+`cp15.flushes` are canonical under Run C / Q-10; `arm.unpredictable_count` is
+excluded diagnostic state. Cross-quota driver projections are schema data,
+including the booked NULL-batch attempt and remaining work/scanout budgets.
+
+Event counterexamples perturb one field at a time, keeping time equal except
+for the timestamp test. RAM/MMIO cross-order and direction are separate tests,
+as are the agent, address, size and value. Additional malformed-stream controls
+cover both-input stale metadata, every header identity, EOF accounting,
+chronology, fatal termination/reason, every compact group, record pointers,
+baseline duplicates and asymmetric field inclusion.
+
+G-6 and G-10/E11 sensitivity is labelled **detected by differential only**
+unless an independent expectation fails. ROMCR-after-drain additionally runs
+the independent interval oracle (AC-M2-burst-0). Idle-no-drain's actual channel
+is a terminal fault, not an independently observed stale read. Port-to-1a-0
+annotations refer to changed anchors within its diff hunks, not whole files.
+Timeouts follow W4: whole minutes, at least twice measured worst costs; the
+one-minute minimum explains ratios above ten for sub-six-second tests.
+
+
+Re-grounding command examples after building the current plan core:
+
+```sh
+python3 -B tests/rpc_lockstep_inventory.py /private/tmp/arcdroid-m2a-host --apple --probe-compiler /usr/bin/cc --write-inventory /private/tmp/arcdroid-m2a-host/rpc-lockstep-inventory.json
+python3 -B tests/rpc_lockstep_inventory.py /private/tmp/arcdroid-m2a-run-c-mingw --nm x86_64-w64-mingw32-nm --probe-compiler x86_64-w64-mingw32-gcc --write-inventory /private/tmp/arcdroid-m2a-run-c-mingw/rpc-lockstep-inventory.json
+```
+
+On ELF/Linux, omit `--apple` and use the build's native `nm` and C compiler.
+The normal CTest invokes the same classifier/export tool and compiled controls.
+It discovers all current `.c.o` / `.c.obj` files in the plan-core RPC object
+target, including a newly built source TU; it does not iterate a frozen source
+hash manifest. Its inline probe tests real data/common symbols and a function
+local, in addition to format fixtures for ELF/COFF/Mach-O section/label parsing.
+No compiler suffix is stripped from an unknown variable stem. The generated
+inventory belongs in the build tree, not in the repository.
+
+`tests/rpc_lockstep_port_1a0.json` records the old-side changed-line ranges
+between `43c804a` and the reviewed 1a-0 head `38eae49`; it is porting metadata,
+not a semantic-baseline or engine-source hash pin. Pure insertion hunks do not
+replace an unchanged original anchor line. The per-variant output records the
+changed line, intersecting hunk data and port flag, without needing that
+unmerged revision in CI's shallow checkout.
+
+
+The projection section uses reviewed `input`, `add` and `sub` expression trees,
+with P0/P1/P2/P3 and normal/NULL-batch paths explicit. The comparator validates
+the expression grammar and offers reference arithmetic; known-answer tests
+exercise 100+7 completed attempts, the final completion, booked NULL work,
+event limits and pixel/field budgets. M2b must provide the actual input values
+and serialise the projections. M2a does not claim to observe driver locals.
+The ELF parser also passed a locally cross-compiled Clang ELF probe; Linux GCC
+plan-core inventory and runtime evidence remain CI's decision.
