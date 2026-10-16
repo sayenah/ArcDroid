@@ -27,6 +27,19 @@ foreach(cmos_name IN ITEMS arthur riscos2 riscos3_old riscos3_new)
 endforeach()
 file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/generated")
 configure_file(core/cmos_defaults_data.h.in generated/cmos_defaults_data.h @ONLY)
+set(ARCDROID_SOURCE_REVISION "" CACHE STRING "Exact source revision for git-archive builds")
+if(NOT ARCDROID_SOURCE_REVISION AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/.git")
+  execute_process(COMMAND git rev-parse --short=12 HEAD
+    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+    OUTPUT_VARIABLE ARCDROID_SOURCE_REVISION OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+endif()
+if(NOT ARCDROID_SOURCE_REVISION)
+  set(ARCDROID_SOURCE_REVISION "unknown")
+endif()
+configure_file(libretro/arc_build_identity.h.in generated/arc_build_identity.h @ONLY)
+set_source_files_properties(libretro/arcdroid_libretro.c PROPERTIES COMPILE_DEFINITIONS
+  "ARC_BUILD_TARGET=\"$<TARGET_PROPERTY:NAME>\";ARC_BUILD_CONFIG=\"$<IF:$<BOOL:$<CONFIG>>,$<CONFIG>,unspecified>\";ARC_BUILD_SUBSTITUTIONS=\"$<TARGET_PROPERTY:ARCDROID_BUILD_SUBSTITUTIONS>\"")
+
 
 add_library(arcdroid_zlib STATIC
   third_party/zlib/adler32.c
@@ -146,6 +159,7 @@ set(ARCDROID_LIBRETRO_SOURCES
   engine/arc_error_box.c
   engine/arc_disc_request.c
   libretro/arc_io.c
+  libretro/arc_session.c
   libretro/rpc_inventory.c
   libretro/jfd_store.c
   libretro/install_store.c
@@ -2238,6 +2252,55 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
   set_tests_properties(rpc-observation-lifecycle PROPERTIES TIMEOUT 60)
   add_test(NAME rpc-session-lifecycle COMMAND rpc_session_test
     $<TARGET_FILE:arcdroid_libretro_test> --lifecycle)
+  add_executable(rpc_session_hygiene_test tests/rpc_session_hygiene_test.c)
+  target_include_directories(rpc_session_hygiene_test PRIVATE engine engine/rpc core libretro libretro/include)
+  target_compile_definitions(rpc_session_hygiene_test PRIVATE ARCDROID_TEST_FAULTS=1 RETRO_IMPORT_SYMBOLS=1)
+  target_compile_options(rpc_session_hygiene_test PRIVATE -UNDEBUG -Wall -Wextra)
+  target_link_libraries(rpc_session_hygiene_test PRIVATE ${CMAKE_DL_LIBS})
+  set(RPC_SESSION_HYGIENE_PROFILE full)
+  if(ARCDROID_SANITIZERS)
+    set(RPC_SESSION_HYGIENE_PROFILE sanitizer)
+    target_compile_definitions(rpc_session_hygiene_test PRIVATE ARCDROID_SESSION_SANITIZER_PROFILE=1)
+    target_link_libraries(rpc_session_hygiene_test PRIVATE arcdroid_sanitizer_compile arcdroid_sanitizer_link)
+  endif()
+  add_test(NAME rpc-session-frontend-switch COMMAND "${Python3_EXECUTABLE}" -B
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_session_hygiene_test.py"
+    $<TARGET_FILE:rpc_session_hygiene_test> $<TARGET_FILE:arcdroid_rpcplan_libretro> "${FIXTURE_DIR}" "${RPC_SESSION_HYGIENE_PROFILE}")
+  set_tests_properties(rpc-session-frontend-switch PROPERTIES TIMEOUT 900 RUN_SERIAL TRUE)
+  set(ARCDROID_EXHAUSTION_SOURCES ${ARCDROID_LIBRETRO_SOURCES})
+  list(REMOVE_ITEM ARCDROID_EXHAUSTION_SOURCES libretro/arc_session.c)
+  add_executable(rpc_session_exhaustion_test tests/rpc_session_exhaustion_test.c
+    ${ARCDROID_EXHAUSTION_SOURCES}
+    $<TARGET_OBJECTS:arcdroid_libretro_arculator> $<TARGET_OBJECTS:arcdroid_libretro_rpc>)
+  target_include_directories(rpc_session_exhaustion_test PRIVATE engine core libretro platform libretro/include third_party/zlib)
+  target_compile_definitions(rpc_session_exhaustion_test PRIVATE RELEASE_BUILD=1)
+  target_compile_options(rpc_session_exhaustion_test PRIVATE -UNDEBUG -Wall -Wextra -fno-strict-aliasing)
+  target_link_libraries(rpc_session_exhaustion_test PRIVATE arcdroid_core)
+  if(UNIX)
+    target_link_libraries(rpc_session_exhaustion_test PRIVATE m)
+  endif()
+  if(ARCDROID_SANITIZERS)
+    target_link_libraries(rpc_session_exhaustion_test PRIVATE arcdroid_sanitizer_compile arcdroid_sanitizer_link)
+  endif()
+  set_property(TARGET rpc_session_exhaustion_test PROPERTY ARCDROID_BUILD_SUBSTITUTIONS "session-id-exhaustion")
+  add_test(NAME rpc-session-exhaustion COMMAND rpc_session_exhaustion_test)
+  add_executable(rpc_session_id_test tests/rpc_session_id_test.c libretro/arc_session.c)
+  target_include_directories(rpc_session_id_test PRIVATE libretro)
+  target_compile_options(rpc_session_id_test PRIVATE -UNDEBUG -Wall -Wextra)
+  if(ARCDROID_SANITIZERS)
+    target_link_libraries(rpc_session_id_test PRIVATE arcdroid_sanitizer_compile arcdroid_sanitizer_link)
+  endif()
+  add_test(NAME rpc-session-ids COMMAND rpc_session_id_test)
+  add_test(NAME rpc-session-source-guard COMMAND "${Python3_EXECUTABLE}" -B
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_session_source_guard.py" "${CMAKE_CURRENT_SOURCE_DIR}")
+  if(NOT ARCDROID_SANITIZERS AND NOT CMAKE_CROSSCOMPILING AND CMAKE_GENERATOR STREQUAL "Ninja")
+    add_test(NAME rpc-session-hygiene-mutants COMMAND "${Python3_EXECUTABLE}" -B
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_session_mutants.py"
+      "${CMAKE_CURRENT_BINARY_DIR}" $<TARGET_FILE:rpc_session_hygiene_test>
+      $<TARGET_FILE:arcdroid_rpcplan_libretro> "${FIXTURE_DIR}"
+      $<TARGET_FILE:rpc_session_test> $<TARGET_FILE:rpc_video_test> $<TARGET_FILE:rpc_observers_frontend_test>)
+    set_tests_properties(rpc-session-hygiene-mutants PROPERTIES TIMEOUT 900 RUN_SERIAL TRUE)
+  endif()
   add_test(NAME rpc-session-switch COMMAND "${Python3_EXECUTABLE}"
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_session_switch_test.py"
     $<TARGET_FILE:rpc_session_test> $<TARGET_FILE:arcdroid_libretro_test>

@@ -70,6 +70,8 @@ typedef struct {
 ArcRpcFloppyEvent arc_rpc_floppy_event(const ArcRpcFloppy *f,
     const ArcRpcFloppySector *sector,ArcRpcFloppyEventKind kind,
     unsigned position,ArcRpcFloppyResult result);
+void arc_rpc_floppy_refusal_callback_set(void (*callback)(unsigned,unsigned,unsigned,unsigned));
+unsigned arc_rpc_floppy_storage_failure_take(void);
 void arc_rpc_floppy_init(ArcRpcFloppy *f,uint64_t session);
 void arc_rpc_floppy_close(ArcRpcFloppy *f);
 bool arc_rpc_floppy_mount(ArcRpcFloppy *f,unsigned drive,const ArcEngineMedia *media,
