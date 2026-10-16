@@ -48,9 +48,15 @@ require('session=arc_session_id;' in front,'disc log lifetime')
 require('static uint64_t input_generation' not in front,'function-local stale input owner')
 require(front.count('arc_engine_session_generation()')==2,'RPC restart generation query census')
 require('info->geometry.max_width = 4096u;' in front,'stable maximum geometry')
-for name in ['arc_sync_cmos','arc_seed_cmos','arc_persist_cmos','arc_boot_persist_seed','arc_hd_reconcile','arc_boot_record_publish','arc_hd_outcome_boundary']:
-    body=front.split(name+'(void)\n{',1)[1].split('\n}',1)[0]
-    require('arc_kind != ARC_SESSION_KIND_ARCULATOR' in body,f'{name}: Arculator persistence guard')
+for name in ['arc_sync_cmos','arc_seed_cmos','arc_persist_cmos','arc_boot_persist_seed',
+             'arc_hd_reconcile','arc_boot_record_publish','arc_hd_outcome_boundary',
+             'arc_boot_record_path','arc_launch_binding_publish','arc_construct_machine']:
+    guard=re.search(r'if\s*\((.*?)\)\s*return(?:\s+false)?\s*;',body(name),re.S)
+    require(guard is not None,f'{name}: missing early persistence guard')
+    condition=guard.group(1)
+    require(condition=='arc_kind != ARC_SESSION_KIND_ARCULATOR' or
+            condition.startswith('arc_kind != ARC_SESSION_KIND_ARCULATOR || '),
+            f'{name}: Arculator persistence guard must be an unconditional kind exclusion')
 # No serialization/boot/store writer references frontend ID/source types. Part
 # 2 must extend this with its attempt/helper/guest-memory integration evidence.
 for directory in ('core','libretro'):
