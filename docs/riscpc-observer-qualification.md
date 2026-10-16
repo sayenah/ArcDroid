@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: GPL-2.0-only -->
+
 # RiscPC observer qualification record (R3c-2)
 
 Status: adopted (D-181; amended by D-187 for ordinary error numbers). Fable's adjudication for the R3c-2 qualification-and-promotion checkpoint (D-177(8)). The production capability table in `engine/rpc/rpc_observer.c` must equal this record exactly. A cell absent from this record stays disabled with the reason given here.

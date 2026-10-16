@@ -1,3 +1,4 @@
+/* ArcDroid modification (2026-10-16): notice added for existing ArcDroid typed media, bounded extents and write-intent interfaces. */
 #include "timer.h"
 #include "arcdroid_core.h"
 #include "jfd.h"

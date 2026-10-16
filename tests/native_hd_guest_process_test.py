@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-only
 """Two-process synthetic native IDE save/readback, with an Off control."""
 from pathlib import Path
 import re

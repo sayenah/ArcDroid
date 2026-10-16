@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: GPL-2.0-only -->
+
 # RiscPC hard-disc store contract (D-139)
 
 Status: **accepted by Fable (D-145)**. Run A at `b4bc633`, amended by D-147 (R2c-1) for run B

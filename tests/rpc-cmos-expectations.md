@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: GPL-2.0-only -->
+
 # Run E CMOS recovery and fixed generation epoch
 
 Only `.0` and `.1` are published recovery roots. A `.tmp` is an unpublished

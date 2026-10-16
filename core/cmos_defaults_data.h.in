@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
 /* Generated at configure time from the four Founder-accepted D-018 CMOS dumps. */
 #define ARC_CMOS_ARTHUR_BYTES @cmos_arthur_bytes@
 #define ARC_CMOS_RISCOS2_BYTES @cmos_riscos2_bytes@

@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: GPL-2.0-only -->
+
 # RiscPC ordinary-load integration plan (R3d)
 
 Status: **adopted (D-186)**, S65. Fable's adjudication of the S64 R3d design workflow (read-only research), challenged by Astra in two stages on a fresh thread (both ACCEPT WITH CHANGES, every finding incorporated). The body is the workflow's synthesis; the sections **Amendments (incorporated)**, **Astra stage 1** and **Astra stage 2** at the end govern where they differ from it, later sections over earlier ones. Each slice still needs its own work order in `docs/handoff.md` (and, from R3d-3 on, its own Astra stage 2) before implementation.

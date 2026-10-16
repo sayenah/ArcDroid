@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: GPL-2.0-only -->
+
 # Slice 18 — CMOS Boot flag and power-on Shift
 
 RISC OS 3.00, 3.10, 3.11 and 3.19 now start with the guest's CMOS Boot flag intact. When that flag is clear, ArcDroid holds left Shift from machine construction so RISC OS performs its normal Shift-Break boot. The core releases Shift after one second of emulated time or the guest's first `OS_FSControl 15`, whichever happens first. The same behavior applies to ordinary, helper, ADFFS, install, reset and recovery constructions.

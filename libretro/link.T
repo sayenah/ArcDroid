@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
 {
   global:
     retro_api_version;

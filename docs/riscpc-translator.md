@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: GPL-2.0-only -->
+
 # RiscPC faster CPU translator (roadmap item 6b) — evaluation and plan (D-133, D-141)
 
 Status: **evaluation, research and design only** (D-141, amended by D-142 after the S58 Astra challenge). No translator code lands before R4 qualifies the RiscPC core and the release baseline (item 5) is done, unless the Founder reorders. Private evidence: S57 scratchpad `s57/6b/` (the evaluation report and a fork clone at `94f7c9a`).

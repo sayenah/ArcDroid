@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: GPL-2.0-only -->
+
 # Third-party notices
 
 ## Arculator
@@ -8,6 +10,9 @@ and the repository-root `COPYING`.
 Slice 10b adds the pinned upstream `src/ide.c` and `src/ide.h` under the same
 license. ArcDroid replaces their desktop file access with an in-memory bounded
 block backend and transaction handling; modification notices are in both files.
+The unused upstream `arcrom_ext` HostFS binary is excluded (D-197). Only the
+four accepted CMOS default data images remain; their provenance is recorded
+in `engine/UPSTREAM.md`.
 
 ## RPCEmu
 
