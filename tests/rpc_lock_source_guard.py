@@ -67,9 +67,11 @@ for windows_paths in (False, True):
                     continue
                 if crlf:
                     injected = injected.replace('\n', '\r\n')
-                if not check({path: injected}):
+                # Append to the real source so a truncated scan cannot pass by
+                # recognizing only a short, isolated injection.
+                if not check({path: variant.get(path, '') + injected}):
                     raise SystemExit(f'dormancy mutant survived: {path}')
                 rejected += 1
-print('rpc-lock-dormancy: no shipping caller or store enforcement; 20 migration mutants refused '
-      'plus type, arc_io, source-tree and documentary references; '
-      f'{rejected} negative checks in POSIX/Windows path forms and LF/CRLF text')
+print('rpc-lock-dormancy: no shipping caller or store enforcement; '
+      f'{rejected} migration, type, arc_io, source-tree and documentary negative checks '
+      'in POSIX/Windows path forms and LF/CRLF text')

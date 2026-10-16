@@ -49,11 +49,38 @@ ADAPTER_CALLS = {
     'lock->backend->close_handle(lock->opaque,lock->handle)',
 }
 CALL = re.compile(r'\b\w+(?:(?:\s*->\s*|\s*\.\s*)\w+)*\s*\(')
+# Pin the whole directive sequence, including includes and branch conditions.
+# Otherwise a macro can hide a call from the census or change a pinned flag.
+MODULE_DIRECTIVES = (
+    '#ifndef _GNU_SOURCE', '#define _GNU_SOURCE 1', '#endif',
+    '#include "arc_lock.h"', '#include "arc_io.h"',
+    '#include <errno.h>', '#include <stdio.h>', '#include <string.h>',
+    '#if defined(_WIN32)', '#include <windows.h>', '#else',
+    '#include <fcntl.h>', '#include <sys/stat.h>', '#include <unistd.h>',
+    '#if defined(__APPLE__)', '#include <sys/file.h>',
+    '#elif !defined(F_OFD_SETLK)',
+    '#error "RiscPC ownership requires F_OFD_SETLK (D-192); no classic-lock fallback"',
+    '#endif', '#endif',
+    '#if defined(_WIN32)', '#define NATIVE_PLATFORM ARC_LOCK_WINDOWS', '#else',
+    '#if defined(__APPLE__)', '#else', '#endif',
+    '#if defined(__APPLE__)', '#else', '#endif',
+    '#if defined(__APPLE__)', '#define NATIVE_PLATFORM ARC_LOCK_FLOCK', '#else',
+    '#define NATIVE_PLATFORM ARC_LOCK_OFD', '#endif', '#endif',
+)
 
 
 def module_calls(source):
     """Small lexical call census, not a C preprocessor or a denylist of APIs."""
+    # Recognize C's alternative #/backslash spellings, then splice continued
+    # lines before interpreting comments and directives.
+    source = source.replace('??=', '#').replace('??/', '\\')
+    source = re.sub(r'\\\r?\n', '', source)
     code = code_only(source)
+    directives = tuple(line.strip() for line, tokens in
+                       zip(source.splitlines(), code.splitlines())
+                       if re.match(r'\s*(?:#|%:)', tokens))
+    if directives != MODULE_DIRECTIVES:
+        return ['module preprocessor directives changed']
     contexts, stack, offset = {}, [], 0
     for line in code.splitlines(keepends=True):
         directive = re.match(r'\s*#\s*(if|ifdef|ifndef|elif|else|endif)\b(.*)', line)
@@ -68,8 +95,8 @@ def module_calls(source):
                 stack.pop()
         contexts[offset] = tuple(stack)
         offset += len(line)
-    # Directives aren't calls, but their branch context above is part of the
-    # native-call key. Preserve offsets while excluding their tokens.
+    # Only the pinned directives remain; their branch context above is part of
+    # the native-call key. Preserve offsets while excluding their tokens.
     code = re.sub(r'(?m)^\s*#[^\n]*', lambda m: ''.join('\n' if c == '\n' else ' ' for c in m[0]), code)
     counts, errors = Counter(), []
     for match in CALL.finditer(code):
@@ -185,6 +212,34 @@ def self_test():
                  'arc_io_remove(lock->path)', 'arc_io_write_all(lock->path,0,0)',
                  'lstat(path,0)', 'unexpected_future_io(fd)', '(*callback)(fd)'):
         reject({MODULE: original + f'\nvoid injected(void) {{ {call}; }}'}, call)
+    for call in ('lockf(fd,F_TLOCK,0)', 'unlink(lock->path)',
+                 'write((int)lock->handle,"x",1)'):
+        for definition, use in ((f'#define QA_IO {call}', ''),
+                                (f'#define QA_IO {call}', 'QA_IO;'),
+                                (f'#define QA_IO() {call}', 'QA_IO();')):
+            reject({MODULE: original + f'\n{definition}\nvoid injected(void) {{ {use} }}'},
+                   'macro body: ' + definition + ' ' + use)
+    for flag, value in (('F_OFD_SETLK', 'F_SETLKW'),
+                        ('LOCKFILE_FAIL_IMMEDIATELY', '0'), ('LOCK_NB', '0'),
+                        ('O_CLOEXEC', '0'), ('FILE_SHARE_READ', '0'),
+                        ('FILE_SHARE_WRITE', '(0x2|0x4)'), ('FILE_SHARE_DELETE', '0')):
+        for directive in (f'#undef {flag}', f'#define {flag} {value}',
+                          f'#undef {flag}\n#define {flag} {value}'):
+            reject({MODULE: original + '\n' + directive + '\n'}, directive)
+    for directive in ('#define QA_FLAG LOCK_NB', '#define QA_ALIAS unlink',
+                      '#include "other.h"', '#pragma include_alias("arc_lock.h", "other.h")',
+                      '#if 0\n#endif', '#endif',
+                      '#de\\\nfine QA_IO unlink(lock->path)',
+                      '%:define QA_IO unlink(lock->path)',
+                      '??=define LOCK_NB 0', '#de??/\nfine LOCK_NB 0',
+                      '/* comment */ #define QA_IO unlink(lock->path)'):
+        reject({MODULE: original + '\n' + directive + '\n'}, directive)
+    for old, new in (('#define _GNU_SOURCE 1', '#define _GNU_SOURCE 0'),
+                     ('#define NATIVE_PLATFORM ARC_LOCK_OFD',
+                      '#define NATIVE_PLATFORM ARC_LOCK_FLOCK'),
+                     ('#include "arc_io.h"', '#include "other.h"')):
+        require(old in original, 'directive mutation anchor missing')
+        reject({MODULE: original.replace(old, new)}, new)
     for old, new in (
         ('LOCKFILE_EXCLUSIVE_LOCK|LOCKFILE_FAIL_IMMEDIATELY', 'LOCKFILE_EXCLUSIVE_LOCK'),
         ('LOCK_EX|LOCK_NB', 'LOCK_EX'),
@@ -207,6 +262,9 @@ def self_test():
     for sources in variants({MODULE: original + '\n/* write(fd,0,0); lstat(0,0); */\n',
                              'libretro/adapter.c': '/* close(0); lstat(0,0); */ const char *s="stat(0,0) close(read)";'}):
         require(not violations(sources), 'non-executable identity/data text refused')
+    for sources in variants({MODULE: original + '\n/*\n#define QA_IO unlink(0)\n*/\n'
+                             '// #undef LOCK_NB\nconst char *s = "#define LOCK_NB 0";\n'}):
+        require(not violations(sources), 'non-executable directive text refused')
     for sources in variants({'libretro/adapter.c': 'vfs->stat(p, n); vfs->close(h); backend.read(h);'}):
         require(not violations(sources), 'VFS callbacks refused')
     print(f'shipping lock I/O self-test: {rejected} negative inputs rejected; '
