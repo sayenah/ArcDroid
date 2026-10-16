@@ -27,16 +27,8 @@ foreach(cmos_name IN ITEMS arthur riscos2 riscos3_old riscos3_new)
 endforeach()
 file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/generated")
 configure_file(core/cmos_defaults_data.h.in generated/cmos_defaults_data.h @ONLY)
-set(ARCDROID_SOURCE_REVISION "" CACHE STRING "Exact source revision for git-archive builds")
-if(NOT ARCDROID_SOURCE_REVISION AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/.git")
-  execute_process(COMMAND git rev-parse --short=12 HEAD
-    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
-    OUTPUT_VARIABLE ARCDROID_SOURCE_REVISION OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
-endif()
-if(NOT ARCDROID_SOURCE_REVISION)
-  set(ARCDROID_SOURCE_REVISION "unknown")
-endif()
-configure_file(libretro/arc_build_identity.h.in generated/arc_build_identity.h @ONLY)
+include(cmake/ArcBuildIdentity.cmake)
+arc_build_identity_setup()
 set_source_files_properties(libretro/arcdroid_libretro.c PROPERTIES COMPILE_DEFINITIONS
   "ARC_BUILD_TARGET=\"$<TARGET_PROPERTY:NAME>\";ARC_BUILD_CONFIG=\"$<IF:$<BOOL:$<CONFIG>>,$<CONFIG>,unspecified>\";ARC_BUILD_SUBSTITUTIONS=\"$<TARGET_PROPERTY:ARCDROID_BUILD_SUBSTITUTIONS>\"")
 
@@ -229,6 +221,7 @@ function(arcdroid_add_libretro target shipping)
   endif()
   add_library(${target} SHARED ${ARCDROID_LIBRETRO_SOURCES}
     $<TARGET_OBJECTS:${target}_arculator> $<TARGET_OBJECTS:${target}_rpc>)
+  add_dependencies(${target} arc_build_identity)
   set_property(TARGET ${target} APPEND PROPERTY LINK_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/tools/check-backend-symbols.py"
     "${CMAKE_CURRENT_SOURCE_DIR}/engine/backend-symbols.json")
@@ -2311,11 +2304,17 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_session_hygiene_test.py"
     $<TARGET_FILE:rpc_session_hygiene_test> $<TARGET_FILE:arcdroid_rpcplan_libretro> "${FIXTURE_DIR}" "${RPC_SESSION_HYGIENE_PROFILE}")
   set_tests_properties(rpc-session-frontend-switch PROPERTIES TIMEOUT 900 RUN_SERIAL TRUE)
+  add_test(NAME rpc-session-qa-lows COMMAND "${Python3_EXECUTABLE}" -B
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_session_hygiene_test.py"
+    $<TARGET_FILE:rpc_session_hygiene_test> $<TARGET_FILE:arcdroid_rpcplan_libretro>
+    "${FIXTURE_DIR}" "${RPC_SESSION_HYGIENE_PROFILE}" qa-lows)
+  set_tests_properties(rpc-session-qa-lows PROPERTIES TIMEOUT 180)
   set(ARCDROID_EXHAUSTION_SOURCES ${ARCDROID_LIBRETRO_SOURCES})
   list(REMOVE_ITEM ARCDROID_EXHAUSTION_SOURCES libretro/arc_session.c)
   add_executable(rpc_session_exhaustion_test tests/rpc_session_exhaustion_test.c
     ${ARCDROID_EXHAUSTION_SOURCES}
     $<TARGET_OBJECTS:arcdroid_libretro_arculator> $<TARGET_OBJECTS:arcdroid_libretro_rpc>)
+  add_dependencies(rpc_session_exhaustion_test arc_build_identity)
   target_include_directories(rpc_session_exhaustion_test PRIVATE engine core libretro platform libretro/include third_party/zlib)
   target_compile_definitions(rpc_session_exhaustion_test PRIVATE RELEASE_BUILD=1)
   target_compile_options(rpc_session_exhaustion_test PRIVATE -UNDEBUG -Wall -Wextra -fno-strict-aliasing)
@@ -2337,6 +2336,12 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
   add_test(NAME rpc-session-ids COMMAND rpc_session_id_test)
   add_test(NAME rpc-session-source-guard COMMAND "${Python3_EXECUTABLE}" -B
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_session_source_guard.py" "${CMAKE_CURRENT_SOURCE_DIR}")
+  if(NOT CMAKE_CROSSCOMPILING)
+    add_test(NAME rpc-session-build-identity COMMAND "${Python3_EXECUTABLE}" -B
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/build_identity_test.py"
+      "${CMAKE_COMMAND}" "${CMAKE_C_COMPILER}" "${CMAKE_MAKE_PROGRAM}")
+    set_tests_properties(rpc-session-build-identity PROPERTIES TIMEOUT 120)
+  endif()
   if(NOT ARCDROID_SANITIZERS AND NOT CMAKE_CROSSCOMPILING AND CMAKE_GENERATOR STREQUAL "Ninja")
     add_test(NAME rpc-session-hygiene-mutants COMMAND "${Python3_EXECUTABLE}" -B
       "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_session_mutants.py"
