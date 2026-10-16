@@ -24,6 +24,8 @@ static struct {
     ArcDiscResolveCallback resolve; ArcDiscObservationCallback observe; void *opaque;
     unsigned resolved_candidate;
     bool retry_pending;
+    bool disc_suppressed;
+    uint64_t disc_last_miss_ns;
     ArcRpcHostWork retry_work;
     unsigned retry_candidate;
 } state;
@@ -163,7 +165,7 @@ bool arc_rpc_observers_replace(ArcDiscSignal signal)
     if(!arc_rpc_observers_capability(bit) || !known_nonmodal() ||
         state.disc_media!=arc_rpc_fdc_media_generation(0) || state.helper_media!=arc_rpc_fdc_media_generation(1))return false;
     if(signal==ARC_DISC_SIGNAL_A)return state.disc.a_active && !excluded(state.disc.a_name);
-    return state.disc.b_triggered && !excluded(state.inserted);
+    return !state.disc_suppressed && state.disc.b_triggered && !excluded(state.inserted);
 }
 static bool work_valid(void *opaque,const ArcRpcHostWork *w)
 {
@@ -183,6 +185,11 @@ static bool work_resolve(void *opaque,const ArcRpcHostWork *w)
     (void)opaque;DiscCopy copy=disc_copy(w);
     if(copy.signal>=DISC_FOUND)return true;
     if(copy.signal!=ARC_DISC_SIGNAL_B || !state.resolve)return false;
+    /* Every miss, including one with no candidate, can refresh an unknown
+     * shared latch. Use this work item's copied predecessor, not the latest
+     * mutable timestamp: later misses may already be queued in this frame. */
+    if(state.disc_suppressed && w->ns/1000u>=w->previous_ns/1000u &&
+        w->ns/1000u-w->previous_ns/1000u>UINT64_C(120000000))state.disc_suppressed=false;
     state.resolved_candidate=state.resolve(state.opaque,copy.object,(ArcDiscOperation)copy.operation);
     state.disc_reason=state.resolved_candidate!=UINT_MAX?"candidate-resolved":"no-candidate";
     return state.resolved_candidate!=UINT_MAX;
@@ -198,7 +205,7 @@ static void work_mutate(void *opaque,const ArcRpcHostWork *w)
         if(observation.armed){state.disc.armed=true;strcpy(state.disc.object,observation.object);
             state.disc.continuation=observation.continuation;state.disc.sp=observation.sp;
             state.disc.operation=observation.operation;state.disc.candidate=observation.candidate;}
-        state.retry_pending=false;return;
+        state.disc_suppressed=false;state.retry_pending=false;return;
     }
     if(copy.signal==DISC_FOUND){
         memcpy(observation.object,copy.object,sizeof(observation.object));
@@ -210,6 +217,9 @@ static void work_mutate(void *opaque,const ArcRpcHostWork *w)
         if(!state.disc.b_triggered)state.retry_pending=false;
         return;
     }
+    /* A lost miss may have latched an unobserved object. No B hint or
+     * trigger is safe until recovery or the shared quiet-window expiry. */
+    if(state.disc_suppressed)return;
     /* Restore the copied identity, not the later SWI's mutable arm. */
     strcpy(observation.object,copy.object);observation.continuation=copy.continuation;
     observation.sp=copy.sp;observation.operation=(ArcDiscOperation)copy.operation;
@@ -239,13 +249,23 @@ static void queue_disc(const ArcRpcObservation *e,unsigned kind)
     ArcRpcHostWork work={.observer=ARC_RPC_OBS_DISC,.generation=arc_rpc_observer_generation(ARC_RPC_OBS_DISC),
         .epoch=e->epoch,.media_generation=state.disc_media,.helper_generation=state.helper_media,.ns=e->ns,.kind=kind,.size=length+1,
         .operation=copy.operation,.continuation=copy.continuation,.sp=copy.sp,.watch=copy.watch};
+    work.previous_ns=state.disc_last_miss_ns;
+    if(kind==ARC_DISC_SIGNAL_B)state.disc_last_miss_ns=e->ns;
     memcpy(work.bytes,copy.object,length+1);
     /* Overflow discards copied misses, but must not discard their retirement
      * barriers. Capture those barriers before the queue cancels its owner.
      * This is bounded copied-data inspection, never host resolution or I/O. */
     bool clear=kind==DISC_CLEAR || arc_rpc_observer_queued(ARC_RPC_OBS_DISC,DISC_CLEAR);
     if(!arc_rpc_observer_queue(&work)){
+        state.disc_suppressed=true;
         if(clear){arc_disc_request_clear(&state.disc);state.disc.profile=&state.disc_profile;state.retry_pending=false;}
+        else {
+            memset(state.disc.identities,0,sizeof(state.disc.identities));
+            state.disc.next_order=state.disc.observations=0;
+            if(state.retry_pending)arc_disc_request_retry(&state.disc);
+        }
+        if(kind==DISC_CLEAR)state.disc_suppressed=false;
+        state.retry_pending=false;
         state.disc.armed=false;state.disc_watch=0;
     }
 }
@@ -260,14 +280,20 @@ static void disc_event(void *opaque,const ArcRpcObservation *e)
         if(e->watch!=state.disc_watch)return;
         if(!state.disc.armed){state.disc_watch=0;return;}
         uint32_t error=0;bool valid=arc_rpc_inspect_word(e->registers[0],false,&error);
-        ArcDiscResult result=arc_disc_request_outcome(&state.disc,e->matched?state.disc.continuation:UINT32_MAX,
+        /* Classify the return without retiring history ahead of earlier
+         * copied misses. FOUND's effects belong to its queued position. */
+        ArcDiscRequest outcome=state.disc;
+        ArcDiscResult result=arc_disc_request_outcome(&outcome,e->matched?state.disc.continuation:UINT32_MAX,
             0,e->registers[13],e->registers[0],(e->nzcv&0x10000000u)!=0,valid,error);
+        state.disc.armed=outcome.armed;
         state.disc_reason=result.needs_resolution?"miss-queued":"outcome-not-miss";
         if(result.needs_resolution)queue_disc(e,ARC_DISC_SIGNAL_B);
         else if(e->matched && !(e->nzcv&0x10000000u) &&
             (state.disc.operation==ARC_DISC_LOAD || e->registers[0]!=0))
         {
-            arc_rpc_observer_drop_queued(ARC_RPC_OBS_DISC,ARC_DISC_SIGNAL_B,state.disc.object,strlen(state.disc.object)+1);
+            /* Presentation retries before draining: finding this object ends
+             * an existing BUSY retry now, without advancing queued history. */
+            if(state.retry_pending && !strcmp(state.disc.object,(const char *)state.retry_work.bytes))state.retry_pending=false;
             queue_disc(e,DISC_FOUND);
         }
         state.disc_watch=0;return;
@@ -300,6 +326,7 @@ static void disc_event(void *opaque,const ArcRpcObservation *e)
                 !((e->registers[3]==0?ARC_DISC_DEVICE_0:e->registers[3]==UINT32_MAX?ARC_DISC_DEVICE_UNSPECIFIED:0u)&state.disc_profile.device_forms)?"device":"bare-name";return;}
         state.disc_reason="seen";
         arc_rpc_observer_cancel(ARC_RPC_OBS_DISC); /* A supersedes copied B misses synchronously. */
+        state.disc_suppressed=false;
         state.disc.profile=&state.disc_profile;arc_disc_request_swi(&state.disc,&input,state.inserted);
         state.disc_media=arc_rpc_fdc_media_generation(0);state.helper_media=arc_rpc_fdc_media_generation(1);
         return;
@@ -472,7 +499,7 @@ void arc_rpc_observers_refused(unsigned drive) { arc_outcome_refused(&state.laun
 void arc_rpc_observers_launch_snapshot(ArcLaunchOutcome *out)
 { if(out){*out=state.launch;if(!arc_rpc_observers_capability(ARC_RPC_CELL_LAUNCH))memset(out,0,sizeof(*out));} }
 void arc_rpc_observers_disc_clear(void)
-{ arc_rpc_observer_cancel(ARC_RPC_OBS_DISC);arc_disc_request_clear(&state.disc);state.disc_watch=0;state.retry_pending=false; }
+{ arc_rpc_observer_cancel(ARC_RPC_OBS_DISC);arc_disc_request_clear(&state.disc);state.disc_watch=0;state.retry_pending=false;state.disc_suppressed=false; }
 void arc_rpc_observers_disc_configure(bool enabled,const char *inserted,ArcDiscResolveCallback resolve,ArcDiscObservationCallback observe,void *opaque)
 {
     arc_rpc_observers_disc_clear();state.disc_enabled=enabled;
