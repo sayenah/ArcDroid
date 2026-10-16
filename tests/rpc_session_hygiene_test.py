@@ -64,7 +64,8 @@ def run(exe,core,fixtures,mode,profile="full"):
 
 if __name__=='__main__':
     exe,core,fixtures=sys.argv[1:4];profile=sys.argv[4] if len(sys.argv)>4 else "full"
-    fresh,_,_=run(exe,core,fixtures,'fresh',profile);switched,output,_=run(exe,core,fixtures,'switch',profile)
+    baseline=sys.argv[5] if len(sys.argv)>5 else core
+    fresh,_,_=run(exe,baseline,fixtures,'fresh',profile);switched,output,_=run(exe,core,fixtures,'switch',profile)
     check(len(fresh)==1 and fresh==switched,f'{fresh} != {switched}')
     print(output,end='')
     print('plan-core frontend: fresh-process trace, running/terminal/generation/fault, chooser/failed-load, persistence, callbacks, cycles and IDs passed')

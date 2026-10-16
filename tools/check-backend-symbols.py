@@ -101,13 +101,16 @@ def objects(directory):
     return paths
 
 
-def verify(arculator, rpc, policy, nm, sanitized=False, errors=None):
+def verify(arculator, rpc, policy, nm, sanitized=False, errors=None, allocation_census=False):
     local = errors is None
     if local:
         errors = []
     definitions = {}
     groups = []
     instrumentation = set(policy["compiler_services"])
+    if allocation_census:
+        instrumentation |= {"arc_alloc_census_" + name for name in
+                            ("malloc", "calloc", "realloc", "free")}
     if sanitized:
         instrumentation |= set(policy["sanitizer_services"])
     for engine, directories in (("arculator", arculator), ("rpc", rpc)):
@@ -199,6 +202,22 @@ def verify_outside(directories, policy, nm, sanitized=False, errors=None):
         print(f"backend symbols: outside engine: {count} objects passed")
 
 
+def verify_census(directories, nm, sanitized, errors):
+    """Fail closed if any linked object bypasses the exact allocation census."""
+    allocators = {"malloc", "calloc", "realloc", "free", "strdup", "strndup",
+                  "aligned_alloc", "posix_memalign", "_aligned_malloc", "_aligned_free"}
+    for directory in directories:
+        for path in objects(directory):
+            if path.name.split('.', 1)[0] == "arc_alloc_census":
+                continue  # The single bridge to the real allocator.
+            for name, undefined in read_symbols(path, nm, sanitized, errors):
+                referent = name.removeprefix("__imp_")
+                violation(not undefined or referent not in allocators,
+                          f"allocation census bypass: {path}: {name}", errors)
+    if not errors:
+        print("allocation census: all linked objects use the instrumented allocator")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--arculator", type=Path, action="append", default=[])
@@ -207,6 +226,8 @@ def main():
     parser.add_argument("--nm", default="nm")
     parser.add_argument("--sanitized", action="store_true",
                         help="recognise compiler-owned ASan/UBSan instrumentation")
+    parser.add_argument("--allocation-census", type=int, choices=(0, 1), default=0,
+                        help="recognise forced allocator instrumentation in the dedicated test core")
     parser.add_argument("--policy", type=Path,
                         default=Path(__file__).resolve().parents[1] / "engine/backend-symbols.json")
     args = parser.parse_args()
@@ -215,9 +236,11 @@ def main():
         policy = json.loads(args.policy.read_text())
         require(policy["schema"] == 1, "unsupported symbol policy")
         errors = []
-        verify(args.arculator, args.rpc, policy, args.nm, args.sanitized, errors)
+        verify(args.arculator, args.rpc, policy, args.nm, args.sanitized, errors, args.allocation_census)
         if args.outside:
             verify_outside(args.outside, policy, args.nm, args.sanitized, errors)
+        if args.allocation_census:
+            verify_census(args.arculator + args.rpc + args.outside, args.nm, args.sanitized, errors)
         finish(errors)
     except (ValueError, KeyError, OSError, subprocess.CalledProcessError) as error:
         print(f"backend symbol guard: {error}", file=sys.stderr)
