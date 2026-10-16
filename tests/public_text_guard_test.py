@@ -45,10 +45,11 @@ class GuardTest(unittest.TestCase):
         local = "/" + "Users/" + "example"
         for spelling in ("users", "USERS", "uSeRs"):
             self.assertEqual(GUARD.scan("example", "/" + spelling + "/example", []), [])
-        for scheme in ("https", "http", "HTTPS", "example+docs"):
+        for scheme in ("https", "http", "HTTPS"):
             for segment in ("users", "Users"):
                 url = scheme + "://docs.example.test/support/" + segment + "/example/chapter.htm"
-                for citation in (url, "(" + url + ")", '"' + url + '"', "`" + url + "`"):
+                for citation in (url, "(" + url + ")", '"' + url + '"', "'" + url + "'",
+                                 "`" + url + "`", "<" + url + ">"):
                     for ending in ("\n", "\r\n"):
                         with self.subTest(scheme=scheme, segment=segment, citation=citation):
                             self.assertEqual(GUARD.scan("docs/example.md", citation + ending, []), [])
@@ -65,10 +66,44 @@ class GuardTest(unittest.TestCase):
                 self.assertEqual(GUARD.scan("example", "(" + url + ")", []), [])
                 self.assertIn("mac-user-path", [hit[2] for hit in
                               GUARD.scan("example", "(" + url + ")" + local, [])])
+        for host in ("docs-2.example.test", "DOCS.example.TEST:443", "docs.example.test:8080"):
+            self.assertEqual(GUARD.scan("example", "https://" + host + local, []), [])
         # The URL exception applies only to the macOS class.
         for kind in ("private-ipv4", "windows-user-path", "android-volume"):
             text = "https://docs.example.test/" + positives()[kind][0]
             self.assertIn(kind, [hit[2] for hit in GUARD.scan("example", text, [])])
+
+    def test_non_web_links_invalid_hosts_and_separators(self):
+        local = "/" + "Users/" + "example/fixture"
+        rejected = [prefix + local for prefix in (
+            "vscode://file", "file://localhost", "ssh://box", "smb://box.local", "x://y",
+            "example+docs://docs.example.test", "x+https://docs.example.test")]
+        rejected += [scheme + "://" + host + local
+                     for scheme in ("http", "https")
+                     for host in ("localhost", "box", "-docs.example.test", "docs-.example.test",
+                                  "docs..example.test", "docs.example.test_bad",
+                                  "docs.example.test:port", "docs.example.test:443bad")]
+        for separator in (",", ";", "|"):
+            for path in ("", "/support", local):
+                rejected.append("https://docs.example.test" + path + separator + local)
+        with tempfile.TemporaryDirectory(prefix="arcdroid-public-web-boundaries-") as directory:
+            root = Path(directory)
+            (root / "tools").mkdir()
+            (root / "tools/public-text-allowlist.json").write_text('{"entries": []}\n')
+            target = root / "example.md"
+            target.write_text("safe\n")
+            subprocess.run(["git", "init", "-q", str(root)], check=True)
+            subprocess.run(["git", "-C", str(root), "add", "."], check=True)
+            for text in rejected:
+                with self.subTest(text=text):
+                    self.assertIn("mac-user-path", [hit[2] for hit in GUARD.scan("example", text, [])])
+                    target.write_text(text)
+                    result = subprocess.run(
+                        [sys.executable, str(ROOT / "tools/check-public-text.py"), "--root", str(root)],
+                        capture_output=True, text=True)
+                    self.assertEqual(result.returncode, 1)
+                    self.assertIn("mac-user-path", result.stderr)
+                    self.assertNotIn(local, result.stderr)
 
     def test_cli_accepts_documentation_urls(self):
         with tempfile.TemporaryDirectory(prefix="arcdroid-public-urls-") as directory:

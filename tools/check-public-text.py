@@ -17,7 +17,10 @@ import sys
 
 OCTET = r"(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)"
 PATH_END = r"""(?=[/\s.`'")\],:;]|$)"""
-URL = re.compile(r"""\b[A-Za-z][A-Za-z0-9+.-]*://[^/\s?#<>"'\x60()]+(?:[/?#][^\s<>"'\x60]*)?""")
+HOST_LABEL = r"[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?"
+URL = re.compile(
+    r"(?<![\w+.-])https?://" + HOST_LABEL + r"(?:\." + HOST_LABEL + r")+(?::[0-9]+)?"
+    r"""(?=$|[/?#\s<>"'\x60(),;|])(?:[/?#][^\s<>"'\x60,;|]*)?""", re.I)
 PATTERNS = {
     "private-ipv4": re.compile(r"(?<![\w.])(?:10\." + OCTET + r"|172\.(?:1[6-9]|2\d|3[01])|192\.168)\."
                                + OCTET + r"\." + OCTET + r"(?!\w|\.\d)"),
