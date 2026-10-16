@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: GPL-2.0-only -->
+
 # CLAUDE.md — ArcDroid Anthropic Role Boot
 
 This file configures Anthropic models working in the ArcDroid repository. It is agent guidance, not project law. `docs/protocol.md` is the binding build protocol.
@@ -163,7 +165,7 @@ If `docs/handoff.md` does not say `Stage: QA`, `Owner: Opus`, stop and return co
 
 For any run that changes governance/project state, leave branch/PR state explicit and `docs/handoff.md` as the exact current baton. Prefer git and canonical docs over conversational memory so a fresh session can recover accurately.
 
-- **On receiving a relay, check first:** you run Claude Opus 5.5 at effort 15 (`high`) or above; your working directory is `/Users/mac0918/dev/ArcDroid`; the relay is the first message in your window. If any check fails, change nothing, say which check failed, send a `PushNotification`, and stop.
+- **On receiving a relay, check first:** you run Claude Opus 5.5 at effort 15 (`high`) or above; your working directory is `/Users/<user>/dev/ArcDroid`; the relay is the first message in your window. If any check fails, change nothing, say which check failed, send a `PushNotification`, and stop.
 - **A Founder decision or Founder-only blocker** (including the Odin3) parks only its workstream: list it under **Waiting on the Founder** in the handoff, send a `PushNotification`, and continue independent work (protocol §18 defines it). Never act on a waiting workstream until its answer is recorded.
 - **Close when** a stretch is done or context runs low (case A: relay), or when every remaining workstream is waiting or blocked and no independent work exists (case B: finish unblocked in-progress work, no relay).
 - **Ritual:** merge the handoff with an exact `Next`, a current waiting list, and this window's name in its used-windows list. Leave no process you started running unless the handoff records it. Relay in case A only.

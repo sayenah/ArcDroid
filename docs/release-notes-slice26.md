@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: GPL-2.0-only -->
+
 # Slice 26 — Disc requests
 
 ArcDroid can insert a disc from the loaded multi-image set when FileCore asks for that disc by name, or when the same fully qualified floppy object lookup fails twice and the object exists on exactly one other image. A successful swap shows `Disc N inserted`.

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-2.0-only
 """D-120 guest writes, refusal recovery, merge, restart and violating v2 stores."""
 import hashlib
 from pathlib import Path

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-only
 """Synthetic write-tab matrices through both controllers and fresh processes."""
 from pathlib import Path
 import hashlib

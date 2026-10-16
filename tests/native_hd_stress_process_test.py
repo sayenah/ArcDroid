@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-only
 """Host process proof for the authored native IDE compaction stress ROM."""
 from pathlib import Path
 import re

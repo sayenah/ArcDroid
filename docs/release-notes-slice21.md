@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: GPL-2.0-only -->
+
 # Slice 21 — native hard disc
 
 Native A3020 sessions can attach a persistent, writable hard disc at `ADFS::4`.

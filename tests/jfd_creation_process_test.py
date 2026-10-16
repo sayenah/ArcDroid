@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-2.0-only
 """Fresh-process guest map/directory/omitted-data JFD save proof.
 
 Each step starts a new harness process and libretro core. The synthetic ROM

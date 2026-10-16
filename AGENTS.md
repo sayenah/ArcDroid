@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: GPL-2.0-only -->
+
 # AGENTS.md — ArcDroid OpenAI Role Boot
 
 Codex/OpenAI models read this file before work. It configures roles; it is not project law. `docs/protocol.md` is binding.
