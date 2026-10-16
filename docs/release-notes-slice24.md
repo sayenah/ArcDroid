@@ -1,6 +1,6 @@
 # Slice 24 release notes
 
-Automatic input layout selection and the `elite` preset are removed. Every
+Automatic input layout selection and the one title-specific input preset are removed. Every
 content item now starts with the same default RetroPad mapping unless the
 player has saved per-input Pad Mapping options.
 

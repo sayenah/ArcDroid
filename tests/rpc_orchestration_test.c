@@ -427,7 +427,9 @@ static void construction_and_attachments(const uint8_t *rom,size_t size)
             bool done=false;for(unsigned j=0;j<cuts[c]&&!done;++j)assert(arc_engine_rpc_start_step(&done,error,sizeof(error)));
             uint8_t b[256],m[32];uint64_t w,l,now;unsigned state;
             arc_engine_rpc_evidence(b,m,&w,&l,&now,&state);assert(now==0 && state==0);
-            arc_engine_stop();assert(!arc_engine_active());test_vfs_no_open_handles();
+            arc_engine_stop();assert(!arc_engine_active() && !arc_engine_is_rpc());
+            ArcEngineCapabilities caps=arc_engine_capabilities(),zero_caps={0};assert(!memcmp(&caps,&zero_caps,sizeof(caps)));
+            const char *fault="stale";assert(!arc_engine_faulted(&fault)&&!fault);test_vfs_no_open_handles();
         }
     ArcEngineMedia good={.kind=ARC_MEDIA_ADF_800K,.geometry=ARC_GEOMETRY_800K_E,.data=raw,.size=sizeof(raw)},bad={.kind=ARC_MEDIA_JFD};
     for(unsigned stage=0;stage<3;++stage){

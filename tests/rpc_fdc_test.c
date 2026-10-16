@@ -13,7 +13,7 @@
 struct iomd iomd;
 static ArcRpcScheduler clock_state;
 static uint8_t raw[2][819200];
-static bool fail_store;
+static bool fail_store, fail_raw_seek, fail_raw_flush;
 static unsigned commits,raw_writes;
 struct retro_vfs_file_handle { unsigned drive;size_t at;bool writable,readable; };
 static struct retro_vfs_file_handle handles[2];
@@ -26,14 +26,14 @@ static struct retro_vfs_file_handle *open_file(const char *path,unsigned mode,un
 static int close_file(struct retro_vfs_file_handle *f) { (void)f;return 0; }
 static int64_t file_size(struct retro_vfs_file_handle *f) { return f->drive?655360:819200; }
 static int64_t seek_file(struct retro_vfs_file_handle *f,int64_t at,int whence)
-{ int64_t start=whence==RETRO_VFS_SEEK_POSITION_CURRENT?(int64_t)f->at:whence==RETRO_VFS_SEEK_POSITION_END?file_size(f):0;
+{ if(fail_raw_seek)return -1;int64_t start=whence==RETRO_VFS_SEEK_POSITION_CURRENT?(int64_t)f->at:whence==RETRO_VFS_SEEK_POSITION_END?file_size(f):0;
   if(start+at<0||start+at>file_size(f))return -1;
   f->at=(size_t)(start+at);return 0; }
 static int64_t read_file(struct retro_vfs_file_handle *f,void *out,uint64_t n)
 { if(!f->readable||n>(uint64_t)file_size(f)-f->at)return -1;memcpy(out,raw[f->drive]+f->at,(size_t)n);f->at+=(size_t)n;return (int64_t)n; }
 static int64_t write_file(struct retro_vfs_file_handle *f,const void *in,uint64_t n)
 { if(fail_store||!f->writable||n>(uint64_t)file_size(f)-f->at)return -1;memcpy(raw[f->drive]+f->at,in,(size_t)n);f->at+=(size_t)n;++raw_writes;return (int64_t)n; }
-static int flush_file(struct retro_vfs_file_handle *f) { (void)f;return fail_store?-1:0; }
+static int flush_file(struct retro_vfs_file_handle *f) { (void)f;return fail_store||fail_raw_flush?-1:0; }
 void updateirqs(void) { }
 static void tick(void)
 {
@@ -412,6 +412,40 @@ static void idle_services(void)
     }
     arc_rpc_fdc_close();assert(!arc_rpc_fdc_idle(0)&&!arc_rpc_fdc_idle(2));
 }
+static unsigned raw_refusal_count;
+static void raw_refusal(unsigned drive,unsigned track,unsigned side,unsigned sector)
+{ assert(drive<2 && track==0 && side==0 && sector==0);++raw_refusal_count; }
+static void raw_refusal_contract(void)
+{
+    ArcRpcFloppy f;ArcRpcFloppySector sector;arc_rpc_floppy_init(&f,42);
+    ArcEngineMedia media={.path="raw0",.kind=ARC_MEDIA_ADF_800K,.geometry=ARC_GEOMETRY_800K_D};
+    ArcRpcFloppyRequest r={.operation=ARC_RPC_FLOPPY_WRITE,.n=3,.rate_kbps=250,.encoding=ARC_RPC_FLOPPY_MFM};
+    uint8_t bytes[1024]={0},ids[20]={0};
+    for(unsigned i=0;i<5;++i){ids[i*4+2]=(uint8_t)i;ids[i*4+3]=3;}
+    arc_rpc_floppy_refusal_callback_set(raw_refusal);raw_refusal_count=0;
+    assert(arc_rpc_floppy_mount(&f,0,&media,NULL,0));
+    assert(arc_rpc_floppy_select(&f,&r,0,&sector)==ARC_RPC_FLOPPY_WRITE_PROTECT && raw_refusal_count==1);
+    media.writable=true;assert(arc_rpc_floppy_mount(&f,0,&media,NULL,0));arc_rpc_floppy_motor(&f,0,true,0);
+    r.deleted=true;assert(arc_rpc_floppy_select(&f,&r,0,&sector)==ARC_RPC_FLOPPY_WRITE_PROTECT && raw_refusal_count==2);r.deleted=false;
+    r.operation=ARC_RPC_FLOPPY_FORMAT;r.sc=4;
+    assert(arc_rpc_floppy_select(&f,&r,0,&sector)==ARC_RPC_FLOPPY_WRITE_PROTECT && raw_refusal_count==3);
+    r.sc=5;r.gpl=0x32;assert(arc_rpc_floppy_select(&f,&r,0,&sector)==ARC_RPC_FLOPPY_OK);
+    ids[3]=2;assert(arc_rpc_floppy_format(&f,&sector,ids,5,0)==ARC_RPC_FLOPPY_WRITE_PROTECT && raw_refusal_count==4);ids[3]=3;
+    for(unsigned format=0;format<2;++format)for(unsigned failure=0;failure<3;++failure){
+        assert(arc_rpc_floppy_mount(&f,0,&media,NULL,0));arc_rpc_floppy_motor(&f,0,true,0);
+        r.operation=format?ARC_RPC_FLOPPY_FORMAT:ARC_RPC_FLOPPY_WRITE;
+        assert(arc_rpc_floppy_select(&f,&r,0,&sector)==ARC_RPC_FLOPPY_OK);
+        unsigned before=raw_refusal_count;
+        fail_raw_seek=failure==0;fail_store=failure==1;fail_raw_flush=failure==2;
+        ArcRpcFloppyResult result=format?arc_rpc_floppy_format(&f,&sector,ids,5,0):arc_rpc_floppy_commit(&f,&sector,bytes,1024,true);
+        fail_raw_seek=fail_store=fail_raw_flush=false;
+        assert(result==ARC_RPC_FLOPPY_WRITE_PROTECT && !f.drives[0].writable && raw_refusal_count==before+1);
+        assert(arc_rpc_floppy_storage_failure_take()==1 && !arc_rpc_floppy_storage_failure_take());
+    }
+    arc_rpc_floppy_refusal_callback_set(NULL);unsigned before=raw_refusal_count;
+    assert(arc_rpc_floppy_select(&f,&r,0,&sector)==ARC_RPC_FLOPPY_WRITE_PROTECT && raw_refusal_count==before);
+    arc_rpc_floppy_close(&f);
+}
 int main(int argc,char **argv)
 {
     struct retro_vfs_interface vfs={0};vfs.open=open_file;vfs.close=close_file;vfs.size=file_size;vfs.seek=seek_file;
@@ -572,6 +606,6 @@ int main(int argc,char **argv)
         request.r=1;assert(arc_rpc_floppy_select(&model,&request,0,&selected)==ARC_RPC_FLOPPY_NOT_FOUND);
     }
     arc_rpc_floppy_close(&model);assert(!arc_rpc_floppy_valid(&model,1,selected.generation));arc_rpc_fdc_close();
-    idle_services();qa_drive_isolation();qa_fifo();qa_controls();qa_mechanics();qa_refusals_waits();media_change_seek();pending_irq_cancel();arc_rpc_fdc_close();
+    raw_refusal_contract();idle_services();qa_drive_isolation();qa_fifo();qa_controls();qa_mechanics();qa_refusals_waits();media_change_seek();pending_irq_cancel();arc_rpc_fdc_close();
     puts("rpc-fdc: command fields, drive isolation, FIFO/ND, TC, media-change mechanics, pending IRQ and generations passed");return 0;
 }

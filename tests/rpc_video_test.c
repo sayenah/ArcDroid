@@ -17,6 +17,7 @@ static void *library;
 static void *symbol(const char *name) { return dlsym(library,name); }
 #endif
 #define LOAD(var,name) do { void *p=symbol(name);assert(p);memcpy(&var,&p,sizeof(var)); } while(0)
+static bool (*admit_frontend)(void);
 static bool (*start_rpc)(ArcRpcModel,const uint8_t *,size_t,const uint8_t *,uint64_t,char *,size_t);
 static void (*status_rpc)(ArcRpcVideoStatus *);
 static void (*snapshot_rpc)(ArcRpcTestSnapshot *);
@@ -39,6 +40,7 @@ static void start(unsigned model,const struct RpcVideoGuest *guest)
         for(unsigned b=0;b<4;++b)rom[i*4+b]=(uint8_t)(w>>(b*8));
     }
     assert(start_rpc((ArcRpcModel)model,rom,sizeof(rom),seed,0,error,sizeof(error)));
+    assert(admit_frontend());
     arc_input_reset(&input);logs=0;api->set_log_callback(log_message,NULL);
 }
 static ArcEngineFrame frame(void)
@@ -276,7 +278,7 @@ static bool environment(unsigned command,void *data)
     if(command==RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO||command==RETRO_ENVIRONMENT_SET_GEOMETRY) {
         if(command==RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO) {
             ++av_count;const struct retro_system_av_info *av=data;
-            assert(av->geometry.max_width==2048&&av->timing.sample_rate==48000);
+            assert(av->geometry.max_width==4096&&av->timing.sample_rate==48000);
         } else ++geometry_count;
         if(reject)++rejected;
         return !reject;
@@ -350,7 +352,7 @@ int main(int argc,char **argv)
 #else
     library=dlopen(argv[1],RTLD_NOW|RTLD_LOCAL);
 #endif
-    assert(library);LOAD(start_rpc,"arc_rpc_test_start");LOAD(status_rpc,"arc_rpc_test_video_status");
+    assert(library);LOAD(admit_frontend,"arc_libretro_test_rpc_admit");LOAD(start_rpc,"arc_rpc_test_start");LOAD(status_rpc,"arc_rpc_test_video_status");
     LOAD(bus_ns,"arc_rpc_test_video_bus_ns");LOAD(snapshot_rpc,"arc_rpc_test_snapshot");LOAD(read_ram,"arc_rpc_test_read_ram");
     LOAD(fail_alloc,"arc_rpc_test_fail_alloc");LOAD(engine_api,"arc_rpc_test_engine_api");api=engine_api();
     if(!strcmp(argv[2],"--paths"))paths(model);
