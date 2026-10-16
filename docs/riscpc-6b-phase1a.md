@@ -210,7 +210,7 @@ Each slice is its own PR, gated and measured on its own.
 - **Larger quota.** Needs the Q-7 proof and changes three coupled constants (`arm.c:571`, `rpc_mem_timing.h:86`, `rpc_session.c:396`). Not 1a.
 - **Host-pointer data cache or data permission filter.** Reopens the R1 "no host-pointer cache" rule (`mem.c:613-614`) and needs its own ruling.
 
-The scratch evidence cited above is in `/private/tmp/claude-501/arcdroid-p6b-*/` and the builds in `/Users/mac0918/dev/ArcDroid/.work/s64/review/r3d/build/p6b-*/`. The key sources are `/Users/mac0918/dev/ArcDroid/.work/s64/review/r3d/docs/riscpc-translator-invariants.md`, `/Users/mac0918/dev/ArcDroid/.work/s64/review/r3d/docs/handoff.md` (lines 219–252) and `/Users/mac0918/dev/ArcDroid/.work/s64/review/r3d/engine/rpc/rpc_mem_timing.c`.
+The scratch evidence cited above is in `/private/tmp/claude-501/arcdroid-p6b-*/` and the builds in `.work/s64/review/r3d/build/p6b-*/`. The key sources are `.work/s64/review/r3d/docs/riscpc-translator-invariants.md`, `.work/s64/review/r3d/docs/handoff.md` (lines 219–252) and `.work/s64/review/r3d/engine/rpc/rpc_mem_timing.c`.
 
 ---
 
