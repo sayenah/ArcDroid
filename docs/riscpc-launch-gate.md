@@ -75,8 +75,8 @@ range before any header read. Its header/version/range are checked before reuse;
 Fresh code is assembled/synchronized before publishing ownership and claiming.
 Existing code is never rewritten while a residual claim might refer to it.
 The workspace is a single RMA active word, with no application pointer. An
-inactive handler passes every reason unchanged. Cleanup closes the file while
-active, **clears active before XOS_Release**, and checks its error result. A
+inactive handler passes every reason unchanged. Run C's native cleanup first
+clears active, releases the vector and then closes the read-only handle. A
 release failure suppresses helper invocation and leaves an inactive, callable
 RMA handler. Application exit, remapping or reuse cannot invalidate it. A later
 OS_Claim of the identical code/workspace removes any duplicate residual claim;
@@ -100,6 +100,55 @@ versioned plan. This slice's only generated action is no-op.
 
 ## Interception and cleanup
 
+### Run C: one native claim-to-release extent (M-1)
+
+The old BASIC sequence had interruption windows after Claim and open, as well
+as in cleanup: ownership/handle assignment happened in later BASIC statements,
+and cleanup disabled its error handler before deactivation. Merely moving the
+deactivation statement does not close the Claim-to-bookkeeping window.
+
+The gate now assembles one bounded ARM routine in a separate aligned 512-byte
+BASIC allocation **before** claiming. One CALL owns Claim, open, size, read,
+deactivation, Release and close. BASIC executes no statement within this native
+extent. A keyboard or programmatic Escape sets BASIC's pending condition;
+BASIC can observe it before CALL (no claim) or after CALL (after native cleanup),
+not between the native instructions. Every kernel operation uses its X SWI;
+V, a zero handle, invalid length or a short read joins native cleanup. The
+handle is retained in a callee-saved register immediately after a successful
+open. There is no BASIC ownership or handle-assignment gap.
+
+Native cleanup starts with the workspace store of zero, before any cleanup
+SWI. It releases the exact vector/code/workspace tuple, then closes the
+read-only handle. It attempts Release even after a failed Claim, so a Claim
+return cannot bypass cleanup bookkeeping. The cleanup is idempotent: an
+inactive workspace, absent claim or zero handle cannot reactivate anything;
+the handle is cleared before close. V on Release or close suppresses execution.
+No retry, Wimp yield, Escape suppression or environment-handler replacement is
+introduced. The existing D-185 deliberately faulted Release case remains
+distinct: a failed kernel release leaves only the passive independently owned
+RMA handler and suppresses the helper. An Escape/BASIC error cannot strand an
+active claim or prevent the native Release attempt.
+
+The RMA block/header and helper handoff ABI are unchanged. Only the short-lived
+lookup routine and its scratch results belong to BASIC; the vector handler
+never points into that allocation. BASIC's cleanup is reached after native
+cleanup or before any Claim; it deactivates first and keeps an error handler
+while acknowledging Escape and freeing an unpublished allocation. Descriptor
+validation and the helper CALL happen after all lookup resources are released.
+Public tests execute the assembled routine with authored kernel failures and
+check the BASIC ordering. Private qualification injects genuine OS_Byte 125
+Escapes at native handoff/cleanup boundaries and BASIC CALL boundaries, on
+both 3.50 ARM610 and 3.71 SA-110, then checks normal media/application handling.
+
+The boundary inventory is: before Claim; after Claim, activation, open, size
+and read; cleanup entry; after deactivation, Release and close; immediately
+before native return; immediately before and after BASIC's lookup CALL;
+BASIC cleanup entry; and immediately before and after Escape acknowledgement.
+The keyboard fixture waits at these same points with
+[OS_ReadEscapeState](https://www.riscos.com/support/developers/prm/charinput.html)
+for an Escape delivered through the runner's normal keyboard input. Its waits
+and claim-entry counter are private qualification instrumentation.
+
 The gate claims UpCallV (vector 0x1d) using OS_Claim immediately before its
 synchronous drive-1 open/read/close sequence. OS_Claim inserts ahead of existing
 claimants, including the Wimp media-request routine. While the gate owns that
@@ -113,12 +162,12 @@ cancel is consumed within that sequence. UpCall 256 is rejected while claimed,
 so an application replacement cannot strand the handler.
 
 Lookup, size, read and code synchronization use X SWIs and check V (bit 0 of BASIC SYS flags,
-per [the BASIC SYS documentation](https://www.riscos.com/support/users/firstprog/chap14.htm)). A BASIC local error handler
-covers Escape and language errors, closes a captured handle while interception
-is still installed, then releases the exact (code, workspace) claim. Normal,
-short-read, oversize, missing-file and malformed-descriptor paths join the same
-cleanup. No helper code executes until the exact claim is released. Escape is acknowledged in cleanup. Cleanup uses X calls, deactivates the RMA guard before XOS_Release, and
-refuses helper invocation if release reports V. The retained inactive allocation
+per [the BASIC SYS documentation](https://www.riscos.com/support/users/firstprog/chap14.htm)). The native extent above owns the whole period of active interception;
+BASIC's error handler covers setup, its CALL boundaries and subsequent cleanup.
+Normal, short-read, oversize and missing-file paths join native cleanup;
+malformed descriptors are refused after it. No helper code executes until the
+exact claim is released and the handle closed. Escape is acknowledged in BASIC
+only after native deactivation/release. The retained inactive allocation
 has no reference to BASIC storage. Fresh allocations not yet published are
 freed on failure; a published allocation is reused until OS reset. Numeric
 XOS_PlatformFeatures uses the documented older-OS fallback (no sync requirement).

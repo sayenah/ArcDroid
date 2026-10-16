@@ -26,6 +26,8 @@ static unsigned last_kind;
 static ArcRpcPreparation *current;
 static unsigned test_model;
 static bool helper_override;
+static bool populate_request=true;
+static const ArcEngineMedia *explicit_helper;
 static unsigned revision1_notices;
 static uint64_t helper_construction_bytes;
 static ArcRpcSelectionOs test_os=ARC_RPC_OS_350;
@@ -121,7 +123,7 @@ static bool attach(void *opaque,char *e,size_t n)
     assert(disc && arc_riscpc_hd_receipt(disc,NULL));
     char helper[11],hd[11];assert(arc_rpc_observers_identities(helper,hd));
     ArcRpcHdReceipt r;assert(arc_riscpc_hd_receipt(disc,&r));
-    assert(!strcmp(helper,helper_override||r.authored_revision==1?"":"ArcDroid"));
+    assert(!strcmp(helper,explicit_helper?"Explicit":helper_override||!populate_request||r.authored_revision==1?"":"ArcDroid"));
     if(attachment_io || attachment_fail){
         void *data=NULL;size_t bytes=0;
         if(!arc_io_read_all_limit(attachment_fail?"/missing-media":"/system/attachment.raw",&data,&bytes,5,NULL)){
@@ -162,7 +164,7 @@ static ArcRpcPreparation *new_request(const uint8_t *rom,size_t size,bool seed,
 {
     ArcRpcPreparationRequest r={0};r.firmware=rom;r.firmware_size=size;r.key.model=test_model;r.key.layout=test_os==ARC_RPC_OS_350?1:3;
     strcpy(r.key.content,id);r.save="/save";r.system="/system";r.epoch=1234567890;
-    r.hard_disc=r.populate=true;r.helper_override=helper_override;
+    r.hard_disc=true;r.populate=populate_request;r.helper_override=helper_override;r.helper=explicit_helper;
     /* PRM CMOS allocation (RO3.6), logical 5/11/16/135;
      * core/cmos_defaults.c documents n+0x40 wrapping past 255 to 16.
      * https://www.riscos.com/support/developers/prm/cmos.html
@@ -465,7 +467,7 @@ static void helper_exclusion(bool attached)
 static void helper_ownership(const uint8_t *rom,size_t size,ArcRpcPreparationHost host)
 {
     for(unsigned explicit_empty=0;explicit_empty<2;++explicit_empty){
-        restore();helper_override=explicit_empty;clock_mode=1;helper_construction_bytes=0;
+        restore();helper_override=explicit_empty;clock_mode=1;helper_construction_bytes=0;revision1_notices=0;
         ArcRpcPreparation *p=new_request(rom,size,true,false,host);settle(p);
         assert(arc_riscpc_preparation_state(p)==ARC_RPC_PREP_RUNNING);
         assert(helper_construction_bytes==(explicit_empty?0:ARC_RPC_HELPER_SIZE));
@@ -473,9 +475,39 @@ static void helper_ownership(const uint8_t *rom,size_t size,ArcRpcPreparationHos
         char h[11],d[11];assert(arc_rpc_observers_identities(h,d));assert(!strcmp(h,explicit_empty?"":"ArcDroid"));
         assert(arc_riscpc_preparation_reset(p));assert(arc_rpc_observers_identities(h,d));assert(!strcmp(h,explicit_empty?"":"ArcDroid"));
         helper_exclusion(!explicit_empty);
+        assert(revision1_notices==0);
         finish(p);assert(!arc_engine_active());
     }
     helper_override=false;
+    /* An explicit image must reach drive 1, rather than merely suppress a
+     * budget counter. Give it a distinct, valid FileCore identity. */
+    uint8_t *own=malloc(ARC_RPC_HELPER_SIZE);assert(own);
+    assert(arc_riscpc_helper_build(own,ARC_RPC_HELPER_SIZE));
+    memcpy(own+247,"Epii\r",5);memcpy(own+502,"xlct\r",5);
+    for(unsigned sector=0;sector<2;++sector){unsigned sum=255;
+        for(unsigned at=255;at-->0;){if(sum>255)sum=(sum+1)&255;sum+=own[sector*256+at];}
+        own[sector*256+255]=(uint8_t)sum;
+    }
+    ArcEngineMedia own_media={.kind=ARC_MEDIA_ADL_640K,.geometry=ARC_GEOMETRY_640K_L,
+        .data=own,.size=ARC_RPC_HELPER_SIZE,.writable=false};
+    restore();explicit_helper=&own_media;clock_mode=1;helper_construction_bytes=0;revision1_notices=0;
+    ArcRpcPreparation *explicit_request=new_request(rom,size,true,false,host);settle(explicit_request);
+    assert(arc_riscpc_preparation_state(explicit_request)==ARC_RPC_PREP_RUNNING);
+    char own_name[11],own_hd[11];assert(arc_rpc_observers_identities(own_name,own_hd));
+    assert(!strcmp(own_name,"Explicit") && helper_construction_bytes==0 && revision1_notices==0);
+    finish(explicit_request);explicit_helper=NULL;free(own);
+    /* Reopen that revision-2 root both with and without population requested.
+     * Neither open emits the revision-1 notice; only population gets a helper. */
+    for(unsigned population=0;population<2;++population){
+        populate_request=population;helper_construction_bytes=0;revision1_notices=0;
+        ArcRpcPreparation *reopen=new_request(rom,size,true,false,host);settle(reopen);
+        assert(arc_riscpc_preparation_state(reopen)==ARC_RPC_PREP_RUNNING);
+        assert(arc_rpc_observers_identities(own_name,own_hd));
+        assert(!strcmp(own_name,population?"ArcDroid":""));
+        assert(helper_construction_bytes==(population?ARC_RPC_HELPER_SIZE:0) && revision1_notices==0);
+        finish(reopen);
+    }
+    populate_request=true;
     /* A revision-1 root remains manual without opening even invalid packages. */
     restore();clock_mode=1;ArcRpcPreparation *p=new_request(rom,size,true,false,host);settle(p);finish(p);
     unsigned changed=0;

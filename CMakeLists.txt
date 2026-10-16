@@ -2491,6 +2491,10 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
       "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_orchestration_mutants.py"
       "${CMAKE_CURRENT_BINARY_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}" "${FIXTURE_DIR}" ${RPC_ORCHESTRATION_MUTANT_PROFILE})
     set_tests_properties(rpc-orchestration-mutants PROPERTIES TIMEOUT 300 RUN_SERIAL TRUE)
+    # W4: 296.26 s worst observed on this branch; ceil(2*296.26/60)*60.
+    if(NOT WIN32)
+      set_tests_properties(rpc-orchestration-mutants PROPERTIES TIMEOUT 600)
+    endif()
   endif()
   if(NOT ARCDROID_SANITIZERS AND NOT CMAKE_CROSSCOMPILING)
     add_test(NAME rpc-launch-gate-mutants COMMAND "${Python3_EXECUTABLE}" -B
@@ -2509,6 +2513,15 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
     $<TARGET_FILE:rpc_runner> $<TARGET_FILE:arcdroid_rpcplan_libretro>
     "${CMAKE_CURRENT_SOURCE_DIR}/assets/riscpc-boot/ArcGate")
   set_tests_properties(rpc-launch-gate-vector PROPERTIES TIMEOUT 90)
+  add_test(NAME rpc-launch-gate-cleanup COMMAND "${Python3_EXECUTABLE}" -B
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_gate_cleanup_test.py"
+    $<TARGET_FILE:rpc_runner> $<TARGET_FILE:arcdroid_rpcplan_libretro>
+    "${CMAKE_CURRENT_SOURCE_DIR}/assets/riscpc-boot/ArcGate")
+  set_tests_properties(rpc-launch-gate-cleanup PROPERTIES TIMEOUT 90)
+  add_test(NAME rpc-launch-descriptor-drift COMMAND "${Python3_EXECUTABLE}" -B
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_gate_descriptor_test.py"
+    $<TARGET_FILE:rpc_launch_helper_test> "${CMAKE_CURRENT_SOURCE_DIR}/assets/riscpc-boot/ArcGate")
+  set_tests_properties(rpc-launch-descriptor-drift PROPERTIES TIMEOUT 30)
   add_test(NAME rpc-launch-release-fault COMMAND "${Python3_EXECUTABLE}" -B
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_gate_release_fault_test.py"
     $<TARGET_FILE:rpc_runner> $<TARGET_FILE:arcdroid_rpcplan_libretro>)
