@@ -17,10 +17,11 @@ import sys
 
 OCTET = r"(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)"
 PATH_END = r"""(?=[/\s.`'")\],:;]|$)"""
+URL = re.compile(r"""\b[A-Za-z][A-Za-z0-9+.-]*://[^/\s?#<>"'\x60()]+(?:[/?#][^\s<>"'\x60]*)?""")
 PATTERNS = {
     "private-ipv4": re.compile(r"(?<![\w.])(?:10\." + OCTET + r"|172\.(?:1[6-9]|2\d|3[01])|192\.168)\."
                                + OCTET + r"\." + OCTET + r"(?!\w|\.\d)"),
-    "mac-user-path": re.compile(r"/Users/[\w. -]+" + PATH_END, re.I),
+    "mac-user-path": re.compile(r"/Users/[\w. -]+" + PATH_END),
     "windows-user-path": re.compile(r"[a-z]:[\\/]+Users(?:[\\/]+|" + PATH_END + r")", re.I),
     "android-volume": re.compile(r"/(?:storage|mnt/media_rw)/[a-f0-9]{4}-[a-f0-9]{4}" + PATH_END, re.I),
 }
@@ -33,10 +34,30 @@ def tracked(root, include_untracked=False):
     return sorted(set(filter(None, subprocess.check_output(command, cwd=root).decode().split("\0"))))
 
 
+def url_spans(text):
+    for url in URL.finditer(text):
+        end = url.end()
+        if url.start() and text[url.start() - 1] == "(":
+            # Close a citation without treating parentheses within its URL as delimiters.
+            depth = 0
+            for offset, char in enumerate(url.group()):
+                if char == "(":
+                    depth += 1
+                elif char == ")":
+                    if not depth:
+                        end = url.start() + offset
+                        break
+                    depth -= 1
+        yield url.start(), end
+
+
 def scan(name, text, allowlist):
     failures = []
+    urls = list(url_spans(text))
     for kind, pattern in PATTERNS.items():
         for match in pattern.finditer(text):
+            if kind == "mac-user-path" and any(start <= match.start() < end for start, end in urls):
+                continue
             if any(entry["class"] == kind
                    and any(fnmatchcase(name, path) for path in entry["paths"])
                    and any(context.span("token") == match.span()
