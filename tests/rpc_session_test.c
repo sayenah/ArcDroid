@@ -76,6 +76,12 @@ static void cleared_capabilities(void)
     for(unsigned i=0;i<sizeof(cmos);++i)assert(!cmos[i]);
     assert(api->boot_watch_state()==ARC_BOOT_WATCH_DISABLED&&!api->disc_controller_idle());
 }
+static void stopped_queries(void)
+{
+    ArcEngineCapabilities c=api->capabilities(),zero={0};
+    assert(!memcmp(&c,&zero,sizeof(c)));
+    const char *message="stale";assert(!api->faulted(&message)&&message==NULL);
+}
 static void guest_test(unsigned model)
 {
     guest_rom(model);assert(start_rpc((ArcRpcModel)model,rom,2u*1024u*1024u,seed,946684800,error,sizeof(error)));
@@ -100,7 +106,7 @@ static void guest_test(unsigned model)
         model,s.rate_mips,word(0),model<2?"running":"hardware");
     assert(api->reset(error,sizeof(error)));assert(word(0)==0);
     assert(advance_rpc(8000000));assert(word(52)==0xa5);
-    api->stop();api->stop();assert(!snapshot().live_allocations&&!api->active());
+    api->stop();api->stop();stopped_queries();assert(!snapshot().live_allocations&&!api->active());
 }
 static void lifecycle(void)
 {
@@ -119,7 +125,7 @@ static void lifecycle(void)
         assert(!start_rpc((ArcRpcModel)model,rom,2097152,seed,UINT64_MAX,error,sizeof(error)));
         assert(!start_rpc(ARC_RPC_MODEL_COUNT,rom,2097152,seed,0,error,sizeof(error)));
         fault_next();assert(!start_rpc((ArcRpcModel)model,rom,2097152,seed,0,error,sizeof(error)));
-        assert(!snapshot().active&&!snapshot().live_allocations&&api->faulted(NULL));api->stop();
+        assert(!snapshot().active&&!snapshot().live_allocations&&api->faulted(NULL));api->stop();stopped_queries();
         assert(start_rpc((ArcRpcModel)model,rom,2097152,seed,0,error,sizeof(error)));
         assert(!advance_rpc(16666668)&&snapshot().now_ns==0&&!api->faulted(NULL));
         fault_next();assert(!advance_rpc(10000));
@@ -134,13 +140,13 @@ static void lifecycle(void)
         assert(start_rpc((ArcRpcModel)model,rom,2097152,seed,0,error,sizeof(error)));
         assert(advance_rpc(10000)&&!api->faulted(NULL));
         assert(api->run_frame(&input,&frame)&&!frame.pixels&&!frame.field_completed);
-        fault_next();assert(!api->reset(error,sizeof(error)));assert(api->faulted(NULL));api->stop();
+        fault_next();assert(!api->reset(error,sizeof(error)));assert(api->faulted(NULL));api->stop();stopped_queries();
     }
     /* A guest invalid mode exercises an actual interpreter failure class. */
     const uint32_t bad[]={0xe3a00070,0xee010f10,0xe3a00014,0xe121f000,0xeafffffe};
     rom_words(bad,sizeof(bad)/4);
     assert(start_rpc(ARC_RPC_SA110,rom,2097152,seed,0,error,sizeof(error)));
-    assert(!advance_rpc(10000)&&api->faulted(NULL));api->stop();
+    assert(!advance_rpc(10000)&&api->faulted(NULL));api->stop();stopped_queries();
     for(unsigned i=0;i<50;++i) {
         unsigned model=i%4;guest_rom(model);
         assert(start_rpc((ArcRpcModel)model,rom,2097152,seed,0,error,sizeof(error)));
@@ -177,7 +183,9 @@ int main(int argc,char **argv)
         for(unsigned i=0;i<sizeof(names)/sizeof(*names);++i)assert(!arc_machine_from_name(names[i]));
         puts("rpc-shipping-route: test entry absent; private models rejected by shipping registry");return 0;
     }
-    load_api();rom=malloc(2097152);assert(rom);
+    load_api();
+    { ArcEngineCapabilities c=api->capabilities(),zero={0};assert(!memcmp(&c,&zero,sizeof(c))); }
+    rom=malloc(2097152);assert(rom);
     for(unsigned i=0;i<256;++i)seed[i]=(uint8_t)(i^0x5a);
     if(!strcmp(argv[2],"--guest")) { assert(argc==4);guest_test((unsigned)atoi(argv[3])); }
     else if(!strcmp(argv[2],"--lifecycle"))lifecycle();
