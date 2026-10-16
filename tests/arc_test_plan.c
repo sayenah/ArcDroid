@@ -277,7 +277,9 @@ void arc_test_plan_clear(void)
     observer_boot=observer_armed=false;observer_arm_frame=0;observer_last_status=UINT_MAX;
     observation_selection=(ArcRpcTraceSelection){.classes=ARC_RPC_OBS_SWI,.capacity=ARC_RPC_TRACE_LIMIT};
     observation_file=NULL;observation_enabled=observation_paths=observation_failed=false;observation_path[0]=0;
+#if !defined(ARCDROID_RPC_MEASUREMENT)
     arc_engine_test_observation_trace(false,false);
+#endif
     char error[256]={0};(void)arc_riscpc_preparation_free(preparation,error,sizeof(error));preparation=NULL;hard_disc=NULL;
     hd_enabled=hd_cost_enabled=hd_populate=false;memset(&hd_cost,0,sizeof(hd_cost));memset(&hd_delegate,0,sizeof(hd_delegate));hd_save[0]=hd_content[0]=hd_import[0]=hd_system[0]=0;
     event_count=next_event=disk_count=disk_next=0;media_content[0]=media_helper[0]=0;script_frame=0;script_active=false;
@@ -448,6 +450,11 @@ bool arc_test_plan_load(const char *path, const char *system, const char *save, 
         observation_selection.capacity=(unsigned)n;
     }
     if(valid && values[18]){valid=!strcmp(values[18],"unmatched");observation_unmatched=valid;}
+#if defined(ARCDROID_RPC_MEASUREMENT)
+    if(valid && (values[16] || values[17] || values[19] || values[20] || values[21] || values[22])){
+        arc_engine_test_refuse(values[19]?"quota clamp":"observer trace");valid=false;
+    }
+#endif
     if(valid && values[19]){uint64_t q=0;valid=number(values[19],200,&q) && (q==1||q==7||q==200);observation_quota=(unsigned)q;}
     if(valid && values[16]){
         valid=resolve(values[16],save,observation_path) && (!values[17] || !strcmp(values[17],"private"));

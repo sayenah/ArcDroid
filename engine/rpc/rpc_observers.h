@@ -27,7 +27,7 @@ bool arc_rpc_observers_replace(ArcDiscSignal);
 bool arc_rpc_observers_capability(unsigned bit);
 /* Host-only identity query, supplied by the dispatcher from current media. */
 bool arc_rpc_observers_identities(char helper[11],char hd[11]);
-#if defined(ARCDROID_TEST_FAULTS)
+#if defined(ARCDROID_TEST_FAULTS) || defined(ARCDROID_TEST_API)
 bool arc_rpc_observers_test_error_numbers(ArcErrorNumberClass);
 void arc_rpc_observers_test_cells(unsigned);
 void arc_rpc_observers_test_horizon(unsigned);

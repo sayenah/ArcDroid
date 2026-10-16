@@ -191,13 +191,18 @@ int main(int argc, char **argv)
     uint64_t profile_interval=60,profile_stride=1024;
     bool profile_options=false;
 #endif
-    bool reject = false, print_cmos = false;
+    bool reject = false, print_cmos = false, print_exercise=false, print_ranking=false, endpoint_request=false;
+    uint64_t prefix_last=0;bool prefix_single=false;
+    uint64_t measure_first=0,measure_last=0;unsigned measure_drained=0;
     uint64_t fail_alloc = 0, fault_at = UINT64_MAX;
     for (int i = 1; i < argc; ++i) {
         const char *key = argv[i];
         if (!strcmp(key,"--fail-observation-close")) { fail_observation_close=true;continue; }
         if (!strcmp(key,"--fail-jfd-store")) { fail_jfd_store=true;continue; }
         if (!strcmp(key,"--reject")) { reject = true; continue; }
+        if (!strcmp(key,"--single-step-prefix")) { prefix_single=true;continue; }
+        if (!strcmp(key,"--ranking")) { print_ranking=true;continue; }
+        if (!strcmp(key,"--exercise")) { print_exercise=true;continue; }
         if (!strcmp(key,"--cmos")) { print_cmos = true; continue; }
         if (!strcmp(key,"--jfd-policy-at") || !strcmp(key,"--disk-writes-at")){
             if(i+2>=argc || option_count==2 || !unsigned_number(argv[i+1],999999,&option_events[option_count].frame))goto usage;
@@ -236,6 +241,19 @@ int main(int argc, char **argv)
         else if (!strcmp(key,"--profile-interval")) {profile_options=true;if(!unsigned_number(v,1000000,&profile_interval)||!profile_interval)goto usage;}
         else if (!strcmp(key,"--profile-sample-stride")) {profile_options=true;if(!unsigned_number(v,1048576,&profile_stride))goto usage;}
 #endif
+        else if (!strcmp(key,"--endpoint-instructions") || !strcmp(key,"--intrusive-instructions")) {
+            char parts[44];size_t length=strlen(v);uint64_t drained;
+            if(length>=sizeof(parts))goto usage;
+            memcpy(parts,v,length+1);
+            char *last=strchr(parts,':');if(!last)goto usage;*last++=0;
+            char *drain=strchr(last,':');if(!drain)goto usage;*drain++=0;
+            if(!unsigned_number(parts,UINT64_MAX,&measure_first) || !measure_first ||
+                !unsigned_number(last,UINT64_MAX,&measure_last) || measure_last<measure_first ||
+                !unsigned_number(drain,1,&drained))goto usage;
+            measure_drained=(unsigned)drained;
+            endpoint_request=!strcmp(key,"--endpoint-instructions");
+        }
+        else if (!strcmp(key,"--prefix-instructions")) {if(!unsigned_number(v,UINT64_MAX,&prefix_last)||!prefix_last)goto usage;}
         else if (!strcmp(key,"--hd-cost")) hd_cost_path = v;
         else if (!strcmp(key,"--vfs-flush")) {
             if(strcmp(v,"retroarch")&&strcmp(v,"fsync"))goto usage;
@@ -278,10 +296,15 @@ int main(int argc, char **argv)
         bool passed = !loaded && !symbol("arc_rpc_test_start") && !strstr(core_info.valid_extensions,"arcplan");
         unload(); deinit(); vfs_assert_no_open_handles(); puts(passed ? "shipping-plan rejected" : "shipping-plan rejection FAILED"); return passed ? 0 : 1;
     }
+    unsigned core_test_caps=~0u;unsigned (*test_caps)(void)=NULL;
+    void *caps_symbol=symbol("arc_rpc_test_capabilities");if(caps_symbol){memcpy(&test_caps,&caps_symbol,sizeof(test_caps));core_test_caps=test_caps();}
+    const char *(*refusal)(void)=NULL;
+    void *refusal_symbol=symbol("arc_rpc_test_refusal");if(refusal_symbol)memcpy(&refusal,&refusal_symbol,sizeof(refusal));
     if (fail_alloc) {
         void (*inject)(unsigned); LOAD(inject,"arc_rpc_test_fail_alloc"); inject((unsigned)fail_alloc);
     }
-    if (!load(&game)) { deinit(); vfs_assert_no_open_handles(); return 1; }
+    if(refusal && refusal()){fprintf(stderr,"Core refuses %s\n",refusal());deinit();vfs_assert_no_open_handles();return 2;}
+    if (!load(&game)) { if(refusal && refusal())fprintf(stderr,"Core refuses %s\n",refusal());deinit(); vfs_assert_no_open_handles(); return 1; }
     void (*snapshot)(ArcRpcTestSnapshot *), (*counts)(ArcRpcAudioCounts *), (*status)(ArcRpcVideoStatus *), (*capture)(ArcRpcCapture *);
     bool (*read_ram)(unsigned, uint32_t *); uint64_t (*frame_ns)(void);
     LOAD(snapshot,"arc_rpc_test_snapshot"); LOAD(counts,"arc_rpc_test_audio_counts"); LOAD(status,"arc_rpc_test_video_status");
@@ -310,6 +333,19 @@ int main(int argc, char **argv)
     runner_preparing=false;
     if(prep)fclose(prep);
     if(plan_phase && plan_phase()==3){unload();deinit();vfs_assert_no_open_handles();return 1;}
+    if(prefix_last){bool (*arm)(uint64_t);LOAD(arm,"arc_rpc_test_prefix_arm");
+        if(prefix_single){void (*quota)(unsigned);LOAD(quota,"arc_rpc_session_test_quota");quota(1);}
+        if(!arm(prefix_last)){fprintf(stderr,"Core refuses prefix capture\n");unload();deinit();return 2;}}
+    if(measure_first){
+        if(endpoint_request){bool (*arm)(uint64_t,uint64_t,bool);LOAD(arm,"arc_rpc_test_timing_endpoint");
+            if(!arm(measure_first,measure_last,measure_drained)){fprintf(stderr,"Core refuses endpoint measurement\n");unload();deinit();vfs_assert_no_open_handles();return 2;}}
+        else {void (*arm)(uint64_t,uint64_t,bool);LOAD(arm,"arc_rpc_test_timing_measure");arm(measure_first,measure_last,measure_drained);}
+    }
+    if(print_exercise){bool (*get)(ArcRpcExercise *);LOAD(get,"arc_rpc_test_exercise");ArcRpcExercise e;
+        if(!get(&e)){fprintf(stderr,"Core refuses exercise counters\n");unload();deinit();vfs_assert_no_open_handles();return 2;}}
+    if(print_ranking){bool (*get)(ArcRpcExercise *,uint64_t *);LOAD(get,"arc_rpc_test_ranking");ArcRpcExercise e;uint64_t attempts;
+        if(!get(&e,&attempts)){fprintf(stderr,"Core refuses ranking counters\n");unload();deinit();vfs_assert_no_open_handles();return 2;}}
+    if(refusal && refusal()){fprintf(stderr,"Core refuses %s\n",refusal());unload();deinit();vfs_assert_no_open_handles();return 2;}
     /* Pending black/silent frames are tested separately; requested goldens use
      * exactly the baseline counters and input frame-zero boundary. */
     pcm_hash=pcm_prefix_hash=UINT64_C(14695981039346656037);pcm_frames=0;
@@ -343,10 +379,12 @@ int main(int argc, char **argv)
         if(probe_symbol)memcpy(&profile_probes,&probe_symbol,sizeof(profile_probes));
         profile_file=fopen(profile_path,"w");profile_times=calloc(1000000,sizeof(*profile_times));
         if(!profile_file || !profile_times){if(profile_file)fclose(profile_file);free(profile_times);free(times);free(dump_pixels);if(timing)fclose(timing);if(hd_cost_file)fclose(hd_cost_file);unload();deinit();return 2;}
-        fprintf(profile_file,"{\"schema\":1,\"sample_stride\":%" PRIu64 ",\"recent_attempts\":%u,\"records\":[\n",profile_stride,ARC_RPC_PROFILE_RECENT);
+        fprintf(profile_file,"{\"schema\":2,\"sample_stride\":%" PRIu64 ",\"recent_attempts\":%u,\"records\":[\n",profile_stride,ARC_RPC_PROFILE_RECENT);
         configure((unsigned)profile_stride,arc_test_clock_ns);
     }
 #endif
+    const char *(*crosscheck)(uint64_t *,uint64_t *)=NULL;
+    void *crosscheck_symbol=symbol("arc_rpc_crosscheck_status");if(crosscheck_symbol)memcpy(&crosscheck,&crosscheck_symbol,sizeof(crosscheck));
     size_t sample_count = 0; unsigned result = 0; uint64_t period_ns = 0;
     uint64_t benchmark_start = arc_test_clock_ns(), benchmark_elapsed = 0;
     uint64_t prior_instructions=0,prior_guest_ns=0,measured_instructions=0,measured_guest_ns=0,measured_core_ns=0;
@@ -357,11 +395,14 @@ int main(int argc, char **argv)
         }
         if (f == reset_at) reset();
         if (f == fault_at) fault_next();
+        if(refusal && refusal()){fprintf(stderr,"Core refuses %s\n",refusal());result=2;break;}
         uint64_t frontend_start = arc_test_clock_ns();
         runner_frame = f;
         if (pad_next < pad_event_count && pad_events[pad_next].frame == f)
             pad_mask=(uint16_t)pad_events[pad_next++].mask;
         run();
+        if(crosscheck){uint64_t calls,failed;const char *field=crosscheck(&calls,&failed);
+            if(field){fprintf(stderr,"RPC cross-check mismatch: %s (%" PRIu64 "/%" PRIu64 ")\n",field,failed,calls);result=1;break;}}
         ArcRpcTestSnapshot s; ArcRpcAudioCounts a; ArcRpcVideoStatus v; ArcRpcCapture c;
         snapshot(&s); counts(&a); status(&v); capture(&c);
         if(plan_phase && plan_phase()==3){result=1;break;}
@@ -494,7 +535,27 @@ int main(int argc, char **argv)
     ArcRpcTraceStatus observation={0};
     void (*observation_status)(ArcRpcTraceStatus *)=NULL;
     void *observation_symbol=symbol("arc_engine_test_observation_status");
-    if(observation_symbol){memcpy(&observation_status,&observation_symbol,sizeof(observation_status));observation_status(&observation);}
+    if(observation_symbol && (core_test_caps&ARC_RPC_TEST_TRACE)){memcpy(&observation_status,&observation_symbol,sizeof(observation_status));observation_status(&observation);}
+    if(print_ranking){bool (*get)(ArcRpcExercise *,uint64_t *);LOAD(get,"arc_rpc_test_ranking");ArcRpcExercise e;uint64_t attempts;
+        if(!get(&e,&attempts))result=2;
+        else {fprintf(stderr,"ranking attempts=%" PRIu64 "\n",attempts);
+#define PRINT_RANKING(name) fprintf(stderr,"ranking " #name "=%" PRIu64 "\n",e.values[ARC_RPC_COUNT_##name]);
+            ARC_RPC_COUNTER_NAMES(PRINT_RANKING)
+#undef PRINT_RANKING
+        }
+    }
+    if(prefix_last){bool (*get)(ArcRpcTestPrefix *);LOAD(get,"arc_rpc_test_prefix_snapshot");ArcRpcTestPrefix p;
+        if(!get(&p)){fprintf(stderr,"Prefix ordinal was not reached\n");result=1;}
+        else fprintf(stderr,"prefix %" PRIu64 " %" PRIu64 " %" PRIu64 " %" PRIu64 " %" PRIu64 " %" PRIu64 "\n",p.instructions,p.issue_ticks,p.now_ns,p.cpu,p.memory,p.scheduler);
+    }
+    if(print_exercise){bool (*get)(ArcRpcExercise *);LOAD(get,"arc_rpc_test_exercise");ArcRpcExercise e;
+        if(!get(&e))result=2;
+        else {
+#define PRINT_EXERCISE(name) fprintf(stderr,"exercise " #name "=%" PRIu64 "\n",e.values[ARC_RPC_COUNT_##name]);
+            ARC_RPC_COUNTER_NAMES(PRINT_EXERCISE)
+#undef PRINT_EXERCISE
+        }
+    }
     unload();
     bool complete=true;
     bool (*observation_complete)(void)=NULL;void *observation_final=symbol("arc_test_plan_observation_complete");
@@ -504,6 +565,7 @@ int main(int argc, char **argv)
             observation.integer_attempts,observation.lost,
             observation.failed?"incomplete write-failure":observation.incomplete?"incomplete loss":
             !complete?"incomplete final sink/close":"complete");
+    if(refusal && refusal()){fprintf(stderr,"Core refuses %s\n",refusal());result=2;}
     deinit();vfs_assert_no_open_handles();
 #if defined(_WIN32)
     FreeLibrary(library);
@@ -515,6 +577,6 @@ usage:
 #if defined(ARCDROID_RPC_PROFILE)
     fputs("Profile build: --profile FILE [--profile-interval FRAMES] [--profile-sample-stride 0..1048576]\n",stderr);
 #endif
-    fputs("rpc_runner --core LIB --plan FILE [--system DIR] [--save DIR] [--frames N | --warmup-seconds 120 --measure-seconds 600] [--pacing flat|burst|realtime] [--disk-writes off|shadow|original] [--jfd-policy as-imaged|off] [--jfd-policy-at FRAME VALUE] [--disk-writes-at FRAME VALUE] [--jfd-omitted strict|file-data] [--timing CSV] [--hd-cost CSV] [--preparation-timing CSV] [--vfs-flush retroarch|fsync] [--dump-frame N FILE.ppm ...] [--pad-at FRAME MASK ...] [--capture-seed FILE] [--ram-offset N --ram-words N] [--reset-at N] [--cmos] [--fail-alloc 1..5] [--fault-at N] [--reject]\n",stderr);
+    fputs("rpc_runner --core LIB --plan FILE [--system DIR] [--save DIR] [--frames N | --warmup-seconds 120 --measure-seconds 600] [--pacing flat|burst|realtime] [--disk-writes off|shadow|original] [--jfd-policy as-imaged|off] [--jfd-policy-at FRAME VALUE] [--disk-writes-at FRAME VALUE] [--jfd-omitted strict|file-data] [--timing CSV] [--hd-cost CSV] [--preparation-timing CSV] [--vfs-flush retroarch|fsync] [--dump-frame N FILE.ppm ...] [--pad-at FRAME MASK ...] [--capture-seed FILE] [--ram-offset N --ram-words N] [--reset-at N] [--cmos] [--fail-alloc 1..5] [--fault-at N] [--exercise] [--ranking] [--endpoint-instructions FIRST:LAST:DRAIN | --intrusive-instructions FIRST:LAST:DRAIN] [--prefix-instructions LAST [--single-step-prefix]] [--reject]\n",stderr);
     return 2;
 }

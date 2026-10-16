@@ -1,4 +1,4 @@
-/* Runner-only JSON schema 1 writer. GPL-2.0-only. */
+/* Runner-only JSON schema 2 writer. GPL-2.0-only. */
 #ifndef ARC_RPC_PROFILE_JSON_H
 #define ARC_RPC_PROFILE_JSON_H
 #include "rpc_profile.h"

@@ -270,6 +270,9 @@ arm_init(void)
 void
 arm_reset(CPUModel cpu_model)
 {
+#if defined(ARCDROID_TEST_FAULTS)
+    (void)arc_rpc_test_prefix_arm(0);
+#endif
     inscount = 0; blockend = 0; unpredictable_count = 1000;
     pccache2 = NULL; pcpsr = &arm.reg[15];
     memset(usrregs, 0, sizeof(usrregs));
@@ -2008,10 +2011,68 @@ instruction_done:
 #include "arm.c"
 #undef ARC_RPC_ARM_LOOP
 #undef ARC_RPC_ARM_OBSERVING
+#if defined(ARCDROID_TEST_FAULTS)
+/* ArcDroid modification (2026-10-16, 6b-1a0): boundary-only authored
+ * prefix comparison. The independent unarmed reference requests quota one. */
+static uint64_t arc_rpc_prefix_last;
+static bool arc_rpc_prefix_done;
+static ArcRpcTestPrefix arc_rpc_prefix;
+RETRO_API bool arc_rpc_test_prefix_arm(uint64_t last)
+{
+    if(!last){arc_rpc_prefix_last=0;arc_rpc_prefix_done=false;memset(&arc_rpc_prefix,0,sizeof(arc_rpc_prefix));return true;}
+    if(last<=arc_rpc_mem_fast.instructions)return false;
+    arc_rpc_prefix_last=last;arc_rpc_prefix_done=false;
+    memset(&arc_rpc_prefix,0,sizeof(arc_rpc_prefix));return true;
+}
+RETRO_API bool arc_rpc_test_prefix_snapshot(ArcRpcTestPrefix *out)
+{ if(!out || !arc_rpc_prefix_done)return false;*out=arc_rpc_prefix;return true; }
+static uint64_t arc_rpc_prefix_hash(uint64_t hash,const void *data,size_t size)
+{
+    const uint8_t *bytes=data;
+    for(size_t i=0;i<size;++i){hash^=bytes[i];hash*=UINT64_C(1099511628211);}
+    return hash;
+}
+static void arc_rpc_prefix_capture(void)
+{
+    if(!arc_rpc_prefix_last || arc_rpc_mem_fast.instructions!=arc_rpc_prefix_last)return;
+    const uint64_t seed=UINT64_C(14695981039346656037);
+    arc_rpc_prefix.instructions=arc_rpc_mem_fast.instructions;
+    arc_rpc_prefix.issue_ticks=arc_rpc_mem_fast.issue_ticks;
+    ArcRpcScheduler *clock=arc_rpc_mem_fast.clock;
+    arc_rpc_prefix.now_ns=clock->now_ns;
+    arc_rpc_prefix.cpu=arc_rpc_prefix_hash(seed,&arm,sizeof(arm));
+    arc_rpc_prefix.cpu=arc_rpc_prefix_hash(arc_rpc_prefix.cpu,&memmode,sizeof(memmode));
+    uint64_t h=arc_rpc_prefix_hash(seed,ram00,32u<<20);
+    h=arc_rpc_prefix_hash(h,ram01,32u<<20);
+    if(vram)h=arc_rpc_prefix_hash(h,vram,2u<<20);
+    arc_rpc_prefix.memory=h;h=seed;
+    for(unsigned i=0;i<ARC_RPC_EVENT_COUNT;++i){
+        h=arc_rpc_prefix_hash(h,&clock->armed[i],sizeof(clock->armed[i]));
+        if(clock->armed[i])h=arc_rpc_prefix_hash(h,&clock->deadlines[i],sizeof(clock->deadlines[i]));
+    }
+    arc_rpc_prefix.scheduler=h;
+    arc_rpc_prefix_done=true;arc_rpc_prefix_last=0;
+}
+#endif
 int arc_rpc_arm_exec_batch(unsigned count, ArcRpcCpuBatch *batch)
 {
-    return arc_rpc_observer_active ? (arc_rpc_observer_context?arc_rpc_arm_exec_observed(count,batch):arc_rpc_arm_exec_cheap(count,batch)) :
+    /* ArcDroid modification (2026-10-16, 6b-1a0): armed-only admission
+     * bounds cover ordinary and NULL batches without an instruction-loop gate. */
+#if defined(ARCDROID_TEST_FAULTS)
+    count = arc_rpc_mem_endpoint_admit(count);
+    if (!count) return 0;
+#endif
+#if defined(ARCDROID_TEST_FAULTS)
+    arc_rpc_exercise_path=arc_rpc_observer_active?(arc_rpc_observer_context?1:2):0;
+#endif
+    int executed = arc_rpc_observer_active ? (arc_rpc_observer_context?arc_rpc_arm_exec_observed(count,batch):arc_rpc_arm_exec_cheap(count,batch)) :
         arc_rpc_arm_exec_unobserved(count,batch);
+#if defined(ARCDROID_TEST_FAULTS)
+    arc_rpc_mem_exercise_end();
+    arc_rpc_mem_endpoint_return();
+    arc_rpc_prefix_capture();
+#endif
+    return executed;
 }
 
 int arc_rpc_arm_exec_count(unsigned count) { return arc_rpc_arm_exec_batch(count, NULL); }

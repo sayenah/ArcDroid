@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: GPL-2.0-only
+# Authored 1a-0 recipe; generator: tools/rpc_measure_workloads.py --kind stream-arm710
+version=1
+model=arm710
+rate_mips=35
+firmware=stream-arm710-authored.rom
+cmos=seed
+seed=authored.seed
+rtc_epoch=0

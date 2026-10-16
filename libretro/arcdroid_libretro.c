@@ -6530,7 +6530,9 @@ static void arc_build_identity(void)
    if (arc_log) arc_log(RETRO_LOG_INFO,
       "ArcDroid build: version=%s commit=%s target=%s config=%s gate=closed substitutions=%s catalogue=%s init=%llu\n",
       ARCDROID_VERSION, ARC_BUILD_COMMIT, ARC_BUILD_TARGET, ARC_BUILD_CONFIG,
-#if defined(ARCDROID_TEST_PLANS)
+#if defined(ARCDROID_RPC_MEASUREMENT)
+      "measurement,test-plans",
+#elif defined(ARCDROID_TEST_PLANS)
       "test-faults,test-plans",
 #elif defined(ARCDROID_TEST_FAULTS)
       "test-faults",

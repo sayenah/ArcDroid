@@ -191,7 +191,7 @@ Runner options (profile builds only): `--profile FILE`,
 `--profile-interval FRAMES` (default 60), `--profile-sample-stride N` (default
 1024, 0..1048576). The sink opens after preparation, before requested frames; writing occurs only
 after protected execution returns. Open/write/close failures fail the runner, leaving
-guest execution unaffected. JSON schema **1**, object `schema`, `sample_stride`,
+guest execution unaffected. JSON schema **2**, object `schema`, `sample_stride`,
 `recent_attempts`, `records`: cumulative snapshots at the chosen frame interval,
 each crossed emulated second (at the first returning frontend boundary), and
 exit. Each record carries frame/guest ns, counters/classes/exits/block histogram,
@@ -346,3 +346,131 @@ no private plan or guest bytes are needed to reproduce the authored hot leg.
   - If copying is chosen, record the exact commit, files and functions, dependencies, original notices and modifications through the existing provenance machinery. Every copied encoder gets independent encoding and bounds checks: several fork helpers mask operands rather than reject invalid ranges.
   - melonDS is GPL-3.0-or-later and stays conceptual reference only.
 - **Q4, default — at qualification.** Fallback behaviour is defined earlier. Whether the translator is on by default, and the kill switch, are decided from evidence.
+
+## Slice 1a-0 measurement design (D-195, amended S66)
+
+This section freezes the implementation contract before executable edits.
+All new instrumentation is authored under SPDX-License-Identifier: GPL-2.0-only.
+The retained intrusive mode remains the independent calibration oracle.
+
+For instruction ordinal k let I(k) be its exact issue tick and C(k) its
+completion tick: I(k) for a request-free instruction, otherwise the ordinary
+`commands()`/committed-shortcut completion tick. C(0)=0. With tick denominator
+D=28×rate, visible(t)=ceil(t/D). An interval [f,l] has start=C(f−1),
+non-drained end=C(l), and drained end=max(C(l),R), where R is the retirement
+tick of the final command/buffer packet still owed at C(l). Empty queues at
+C(l) give end=C(l). Video holds can separate C(f−1) from I(f); subtracting a
+base from I(f) is not a start-time formula.
+
+Capture phases are: preserve C(f−1) on its ordinary completion; sample start
+statistics at admission of f (after prior service, before f's fetch); preserve
+C(l) on completion; and, if needed, sample end on final packet retirement.
+Fast request-free completion is projected at the ordinary batch return using
+the existing integer materialisation formulas or the rational issue tick.
+No capture calls `batch_flush`, `next_base`, service or translation. Interval
+statistics project instructions and completion tick without writing canonical
+statistics. All fields of both interval records are compared, not just elapsed
+time. Measurement state includes the mode, bounds, drained flag, saved prior
+completion, pending end and both interval snapshots. It has a separate explicit
+comparison; the raw inspector snapshot remains unmasked.
+
+The stop mechanism is R-e0-1(i): bound admission at f−1 and l while armed.
+The common interpreter entry wraps all three instantiations and the NULL-batch
+path. Existing driver ready/next gates stop subsequent issue at l while service
+continues to drain. Admission of f captures its start; return after f−1 or l
+captures request-free completion. Unarmed admission changes no quota. The
+proof compares the unarmed instruction-loop disassembly/instruction count with
+the pinned base, in addition to shipping object sections and the three separate
+AC-1 comparisons. Admission/return work is outside the instruction loop. A
+flag branch newly executed on every unarmed instruction is not accepted proof.
+
+The macro split retains `ARCDROID_TEST_FAULTS` as the hot-hook part and adds
+`ARCDROID_TEST_API` for test APIs. Ordinary TEST_FAULTS implies the API part.
+`ARCDROID_RPC_MEASUREMENT` selects the API/plan-only measurement target.
+
+| Build | API/plan | Hot test hooks / exercise | Ranking | Cross-check | Frame timer / event diagnostics |
+|---|---|---|---|---|---|
+| Shipping | no / no | no | no | no | no / no |
+| Ordinary test/calibration | yes / no | yes | no | no | yes / yes |
+| Plan | yes / yes | yes | optional profile option | optional | yes / yes |
+| Profile/cross-check | yes / target dependent | yes | profile only | cross-check option only | yes / yes |
+| Measurement (non-installed) | yes / yes | no | no | no | yes / yes |
+
+Measurement has shipping optimisation, visibility and shared hot layouts.
+Its sole hot-code exception is per-event diagnostic counting. Intrusive and
+endpoint measurements, observer trace, quota clamp, allocation injection and
+exercise/ranking counter requests refuse explicitly. Runner capability checks
+produce a nonzero exit naming the absent facility. Production observer
+subscription and the frame timer remain functional. Ordinary targets retain
+their existing APIs and forced-slow request-level tests.
+
+Exercise counters live outside both timing structs and reset at timing bind,
+including unbind before an early return: reset/stop/unload/failed start/rate
+rebind and backend switching all retire the timing binding. New ranking counters (schema 2) reset at each G-13 timing binding and report
+`ranking_epoch`, current-binding `ranking_attempts`, and successful-fetch
+`ranking_fetched`. AL resets with those counters. Legacy P0i fields retain
+their cumulative reporting and their existing lifecycle epoch/reset semantics. Neither class participates in guest
+or measurement comparisons. No counter reads guest memory or performs I/O.
+
+Counter units are unsigned integer occurrences (probes count examined ways,
+fills count packets, instructions count attempts including aborted fetches).
+Rates use the reported instruction-attempt denominator; ratios retain numerator
+and denominator separately. Mean probes/hit uses hit-probes/hits, never all
+probes/all lookups. Counter families and increment points:
+
+- Lookup: access and c7 maintenance callers separate; one empty return, searched
+  miss or hit per call; hit-way histogram indexed from zero; total probes and
+  hit probes. Empty returns have zero probes, a searched miss has `ways`, a
+  way-k hit has k+1. Beyond-way-zero hits are L1 opportunities.
+- Service: classify once at batch-service entry, before mutation. Exclusive
+  precedence is pending, video active, valid finish with due≥visible(finish),
+  S1-eligible, other busy, other. S1 is nested within busy-not-pending and
+  requires !pending, !video_active, cycle_active (valid finish), and strict
+  now<due<min(visible(finish),next event,frontend limit). Invalid finish is never
+  used in a due comparison. Report valid/invalid-finish entry counts separately.
+- Fills: increment on actual fill allocation, by fetch/data and memory/ROM.
+  Shortcut attempts increment on admission to prediction; commits only after
+  its boundary test succeeds; rollbacks after failed prediction. B3 counts
+  memory fill packets in committed shortcuts, never predicted/rolled-back fills.
+- TLB: at checked translation entry distinguish tag hit from walk, split by
+  fetch/data. On successful permission return count a hit opportunity only if
+  the entry hit on admission and no abort is pending; denied installs are walks,
+  not hit opportunities. A tag hit denied by DACR/AP or pending abort remains
+  only a raw tag hit. MMU-off accesses are neither walks nor tag hits.
+- Integer instructions: count each integral prefix at its existing flush;
+  rational continuations: successful non-service, non-integer continuation
+  edges, aggregated at batch return from executed prefix, integer prefix and
+  successful service continuations. Keep the three instantiations separate.
+  This adds no increment inside the instruction loop. Counts inside endpoint
+  windows are differences of snapshots taken at the interval boundaries. The
+  interval exercise getter returns false for intrusive windows; cumulative
+  exercise getters remain available there.
+- Profile AL: increment on a successful fetched opcode whose condition is AL,
+  regardless of condition result; denominator is successful fetches. Existing
+  condition-passed/attempt and fetched/attempt counts remain available.
+
+Cross-check is an opt-in, test-hook-only field comparison/reporting contract.
+It counts comparisons and mismatches, names a mismatching field on stderr and
+makes a mismatch fail. Its only 1a-0 client is an authored self-test; isolated
+reference execution for future paths belongs to their own slices.
+
+The implementation adds `arc_rpc_test_capabilities` so the runner never queries
+absent trace diagnostics as if they were available. Unsupported direct trace
+APIs latch a refusal too; ordinary measurement-plan cleanup does not request
+those APIs. The final test target retains frontend test APIs while its forced
+RPC namespace header clears TEST_FAULTS and retains TEST_API. Thus the RPC hot
+objects have precisely the shipping preprocessor shape.
+
+`--prefix-instructions N` captures an authored functional prefix at the normal
+interpreter return. `--single-step-prefix` supplies the independent unarmed
+quota-one reference. Comparison includes CPU/banks/mode, all RAM/VRAM, exact
+issue tick and live scheduler deadlines; hashes stay on runner stderr. The
+endpoint run intentionally stops afterward; the reference continues. This
+diagnostic is outside canonical and measurement snapshots, is cleared on CPU
+reset and allocation retirement, and is absent from the measurement core.
+
+RPC inline headers apply the same hot-part condition in every translation unit
+(`TEST_FAULTS && !RPC_MEASUREMENT`), so frontend/test-API users of those headers
+see the same shared timing layout as the measurement RPC objects. Prefix
+reference runs set the existing quota-one API; they introduce no additional
+unarmed quota mechanism.
