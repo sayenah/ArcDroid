@@ -158,6 +158,7 @@ set(ARCDROID_LIBRETRO_SOURCES
   engine/arc_error_box.c
   engine/arc_disc_request.c
   libretro/arc_io.c
+  libretro/arc_lock.c
   libretro/arc_session.c
   libretro/rpc_inventory.c
   libretro/jfd_store.c
@@ -356,6 +357,59 @@ if(ARCDROID_RPC_RUNNER AND ((BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN3
       --outside "${CMAKE_CURRENT_BINARY_DIR}/CMakeFiles/rpc_runner.dir" VERBATIM)
 endif()
 
+
+if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32 OR ANDROID))
+  # The process probe is also a standalone P10b Android arm64 executable. Neither
+  # executable carries plan/fault definitions or changes any store caller.
+  foreach(lock_target IN ITEMS rpc_lock_test rpc_lock_process)
+    add_executable(${lock_target} tests/${lock_target}.c libretro/arc_lock.c libretro/arc_io.c)
+    target_include_directories(${lock_target} PRIVATE libretro libretro/include)
+    target_compile_options(${lock_target} PRIVATE -UNDEBUG -Wall -Wextra -Werror=implicit-function-declaration)
+    if(WIN32)
+      target_link_options(${lock_target} PRIVATE -static-libgcc)
+    endif()
+    if(ARCDROID_SANITIZERS)
+      target_link_libraries(${lock_target} PRIVATE arcdroid_sanitizer_compile arcdroid_sanitizer_link)
+    endif()
+  endforeach()
+  if(NOT CMAKE_CROSSCOMPILING OR WIN32)
+    add_test(NAME rpc-lock-unit COMMAND rpc_lock_test)
+    add_test(NAME rpc-lock-process COMMAND rpc_lock_process self-test "${CMAKE_CURRENT_BINARY_DIR}/rpc-lock-save")
+    add_test(NAME rpc-lock-io-guard COMMAND "${Python3_EXECUTABLE}" -B
+      "${CMAKE_CURRENT_SOURCE_DIR}/tools/check-shipping-lock-io.py" --self-test)
+    add_test(NAME rpc-lock-dormancy COMMAND "${Python3_EXECUTABLE}" -B
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_lock_source_guard.py" "${CMAKE_CURRENT_SOURCE_DIR}")
+    set_tests_properties(rpc-lock-io-guard PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
+    set_tests_properties(rpc-lock-unit rpc-lock-io-guard PROPERTIES TIMEOUT 30)
+    set_tests_properties(rpc-lock-process PROPERTIES TIMEOUT 45)
+  endif()
+  if(NOT CMAKE_CROSSCOMPILING AND NOT WIN32)
+    set(lock_probe_capability_flags)
+    if(ARCDROID_SANITIZERS)
+      list(APPEND lock_probe_capability_flags --sanitize)
+    endif()
+    add_test(NAME rpc-lock-probe-capabilities COMMAND "${Python3_EXECUTABLE}" -B
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_lock_probe_capabilities.py"
+      "${CMAKE_C_COMPILER}" "${CMAKE_CURRENT_SOURCE_DIR}" ${lock_probe_capability_flags})
+    set_tests_properties(rpc-lock-probe-capabilities PROPERTIES TIMEOUT 90)
+    foreach(native_kind RANGE 0 2)
+      add_executable(rpc_lock_native_${native_kind} tests/rpc_lock_native_test.c libretro/arc_io.c)
+      target_include_directories(rpc_lock_native_${native_kind} PRIVATE tests/lock-shims libretro libretro/include)
+      target_compile_definitions(rpc_lock_native_${native_kind} PRIVATE ARC_LOCK_NATIVE_KIND=${native_kind})
+      target_compile_options(rpc_lock_native_${native_kind} PRIVATE -UNDEBUG -Wall -Wextra)
+      if(ARCDROID_SANITIZERS)
+        target_link_libraries(rpc_lock_native_${native_kind} PRIVATE arcdroid_sanitizer_compile arcdroid_sanitizer_link)
+      endif()
+      add_test(NAME rpc-lock-native-${native_kind} COMMAND rpc_lock_native_${native_kind})
+      set_tests_properties(rpc-lock-native-${native_kind} PROPERTIES TIMEOUT 15)
+    endforeach()
+    if(NOT ARCDROID_SANITIZERS)
+      add_test(NAME rpc-lock-mutants COMMAND "${Python3_EXECUTABLE}" -B
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_lock_mutants.py" "${CMAKE_C_COMPILER}" "${CMAKE_CURRENT_SOURCE_DIR}")
+      set_tests_properties(rpc-lock-mutants PROPERTIES TIMEOUT 300 RUN_SERIAL TRUE)
+    endif()
+  endif()
+endif()
 
 if(ANDROID AND ARCDROID_ANDROID_TEST_CORE)
   add_library(arcdroid_core_test STATIC
