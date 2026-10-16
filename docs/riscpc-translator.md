@@ -113,6 +113,121 @@ These ranges are research targets, not predictions (Astra S58):
 
 ## Phase 0 evidence (S59, private scratch probes, never Sol sources)
 
+### 6b-P0i instrumentation design (S64)
+
+`ARCDROID_RPC_PROFILE` defaults OFF. Only `arcdroid_rpcplan_libretro_rpc`,
+the non-installed runner and dedicated authored profiling fixtures compile it;
+the shipping core and other interpreter tests never acquire the definition.
+Hooks in the shared interpreter source are compile-time empty when OFF. The
+inactive/observed/cheap selection, observer helpers, quotas and service order
+are unchanged. No hook reads guest bytes beyond the actually fetched opcode,
+walks translations, flushes batches, raises faults or performs host I/O.
+
+Counters count **attempts**, including failed conditions and prefetch aborts.
+Successful fetches have mutually exclusive classes: ALU, multiply, branch,
+scalar load/store, multiple load/store, swap, half/signed transfer, status,
+coprocessor, SWI and other. Classes include failed conditions; a separate
+condition-passed count distinguishes executed bodies. Coverage is conservative:
+condition-failed instructions and ALU/multiply/branch/scalar memory bodies are
+candidates only when they encounter no barrier. It is a scope estimate, never
+proof that a guard can be hoisted or a memory access accelerated.
+
+A dynamic run includes its terminating attempt and carries across interpreter
+batch/frontend returns. A taken branch or executed PC destination ends E1
+(counted separately); slow classes end E3; mode/mask changes, idle and actual
+physical MMIO end E4; actual IRQ/FIQ, data abort, prefetch abort and SWI/Undefined
+end E6/E7a/E7b/E10; a successful write into a recently executed backing page
+ends E9. E11 counts a condition-passed CP15 c7 write whose tuple is classified
+as cache maintenance by the profiling hook: every c7 write on ARM610/710/7500;
+on SA-110, `(opc2,crm)` is `(0,5/6/7)`, `(1,6/10)` or `(4,10)`.
+This is an instruction count, independent of whether timing recording is bound,
+a targeted cache line exists, or the timing model performs work. It uses the
+CP15 CPU model, not the timing model's acceptance decision. Retaining this
+definition keeps schema-1 measurements comparable; it is not a count of
+effective invalidations, castouts or drains. Causes may overlap on one
+attempt: each cause counts once, but the length histogram closes once. E5 counts
+actual batch returns (quota, service/deadline, idle/test stop); it does not truncate
+the shape histogram. E2 is explicitly unavailable: no translator guard exists.
+E8 counts the existing session fatal and abandons the unfinished attempt through
+the existing longjmp, without adding a boundary. Histogram buckets are exact
+lengths 1..64 plus >=65, with total lengths and maximum retained; the open suffix
+is reported separately. Reset/stop suffixes are censored, with their counts and
+lengths separate from the complete-block histogram. Fetch/data/MMIO accesses, scheduled device deliveries,
+cache fills/memo hits and bus-service calls are also recorded. `bus_calls`
+counts entries into both `arc_rpc_mem_batch_service` and `arc_rpc_mem_run`,
+including the nested `batch_service` → `run` entry. It is not a count of unique
+bus transactions or an exclusive service classification.
+
+Code churn uses 4 KiB **allocation-offset** pages (ROM, RAM0, RAM1, VRAM), so
+mirrors alias. A successful fetch marks a page; a functional RAM/VRAM word or
+byte store counts as recent when that page was fetched within the preceding
+1,000,000 attempts (including the current attempt). Ignored ROM/unbacked stores
+and denied stores do not count. Distinct written recent pages and write operations
+are separate; STRH counts its two functional bytes, STM each completed word.
+Lifecycle clears page history before allocations can be reused; counters remain
+cumulative until runner configuration, with reset/fault counts exposed.
+
+Host cost uses deterministic **scoped sampling**, default stride 1024 (0 means
+counts only, 1 times every attempt/service). Sampled CPU attempts split exclusive
+wall-clock nanoseconds into fetch translation, dispatch/body, timing model,
+bus service and MMIO; independently sampled driver bus-service and device
+callbacks cover work outside attempts. Class/block bookkeeping is separately
+attributed to `profiling`; minor hook/wrapper costs remain in their enclosing
+buckets. Nested scopes charge their child once.
+Dispatch includes data translation and ordinary memory effects. Samples include
+clock/profiling overhead, reported without subtraction; `sampled_ns * stride`
+is an estimate, susceptible to periodic-workload bias, not guest timing or an
+exact cost ledger. Reports include sample counts, clock reads, charged probes
+per bucket and an 8192-iteration empty-charge calibration (outside execution).
+For an approximate bias check, subtract `probes * calibration_ns / 8192` from
+raw sampled ns, clamp to zero, then scale by stride. Raw values are preserved;
+calibration is not an exact correction and low residuals are unresolved costs. Compare
+strides and unprofiled `--timing` frame costs before drawing conclusions. Timers
+use the existing test monotonic clock, never guest time. A fatal abandons the
+unfinished scope; already recorded sample fragments stay visible and an
+abandoned-sample counter marks incomplete cost evidence.
+
+Runner options (profile builds only): `--profile FILE`,
+`--profile-interval FRAMES` (default 60), `--profile-sample-stride N` (default
+1024, 0..1048576). The sink opens after preparation, before requested frames; writing occurs only
+after protected execution returns. Open/write/close failures fail the runner, leaving
+guest execution unaffected. JSON schema **1**, object `schema`, `sample_stride`,
+`recent_attempts`, `records`: cumulative snapshots at the chosen frame interval,
+each crossed emulated second (at the first returning frontend boundary), and
+exit. Each record carries frame/guest ns, counters/classes/exits/block histogram,
+open block length, coverage and cost samples, plus interval frame p50/p95/max
+and summed core ns. Differences between successive cumulative snapshots give
+per-second counts; first/last windows may be partial. Reset clock rewinds are
+explicitly epoch-labelled. No opcode, guest address, register, ROM byte, path or
+private title is emitted. Existing runner `--timing` provides individual frame
+tails, so cold start and sustained windows can be compared without host pacing
+feeding the guest. Build/run commands are in the
+[profiling runbook](../tools/rpc-r1-runbook.md#6b-p0i-profiling-test-only).
+
+**Measured overhead (S64 final code).** On the shared development MacBook Pro
+(MacBookPro17,1, Apple M1, 8 CPU cores, 16 GB), macOS 26.6.2, Apple Clang
+21.0.0, RelWithDebInfo, three alternating ON/OFF
+pairs of the authored hot workload (601 frames, excluding frame 0) gave median
+p50 **22.295 → 68.691 ms (+208.10%)**, p95 **23.664 → 93.435 ms (+294.84%)**,
+and **13.667 → 44.631 host ns/instruction (+226.56%)** with stride 1024.
+Each measured leg executed 1,000,000,020 instructions over 10,000,000,200 guest
+ns. No competing test/performance jobs from the measuring Sol session ran;
+ambient host load and thermals were uncontrolled (no load-average sample was
+recorded). Individual pair p50 overhead ranged +139.65–208.10%; the first OFF
+leg had noisy tails. Counts-only stride 0 still cost 67.377 ms p50, and an ON
+build without a profile request cost 44.264 ms p50. Use OFF builds for headroom
+and R-H evidence. These are Mac hot-loop measurements, not Odin3 predictions.
+QA independently reproduced about +150–200% p50 on an 8-core shared Mac at
+load about 7.5 (600 frames, stride 1024).
+
+Tiny-scope clock bias is material: raw sampled ns scaled by stride summed to
+298–311 s against about 45 s measured execution; empty-charge calibration was
+23.80–39.55 ns/probe. Counts-only controls, alternate strides and unprofiled
+frame timings are required when interpreting this cost split. Low calibrated
+residuals remain unresolved costs. Private aggregate evidence stays local;
+no private plan or guest bytes are needed to reproduce the authored hot leg.
+
+
 **Executable memory inside RetroArch on the Odin3.**
 - **Setup:**
   - Android 15, RetroArch 1.22.2, process domain `untrusted_app`, 4 KiB pages.

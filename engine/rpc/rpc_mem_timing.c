@@ -2,6 +2,7 @@
  * Numeric costs and qualified fidelity limits: docs/riscpc-timing.md §§2–5.
  * Functional transfers happen atomically in the interpreter, never here. */
 #include "rpc_mem_timing.h"
+#include "rpc_profile.h"
 #include "rpcemu.h"
 #include "iomd.h"
 #include <string.h>
@@ -214,6 +215,9 @@ void arc_rpc_mem_bind(ArcRpcScheduler *clock, unsigned model, unsigned rate)
     arc_rpc_mem_control(0);
     next_base(0);
 }
+#if defined(ARCDROID_RPC_PROFILE)
+#define arc_rpc_mem_control arc_rpc_mem_control_profile_body
+#endif
 void arc_rpc_mem_control(uint32_t control)
 {
     if (!arc_rpc_mem_fast.enabled) return;
@@ -227,10 +231,34 @@ void arc_rpc_mem_control(uint32_t control)
     if (!m.clock->now_ns && !arc_rpc_mem_fast.recording && !arc_rpc_mem_fast.instructions)
         next_base(0);
 }
+#if defined(ARCDROID_RPC_PROFILE)
+#undef arc_rpc_mem_control
+void arc_rpc_mem_control(uint32_t control)
+{
+    int previous=arc_rpc_profile_enter(ARC_RPC_COST_TIMING);
+    arc_rpc_mem_control_profile_body(control);
+    arc_rpc_profile_leave(previous);
+}
+#endif
+#if defined(ARCDROID_RPC_PROFILE)
+#define arc_rpc_mem_permission_change arc_rpc_mem_permission_change_profile_body
+#endif
 void arc_rpc_mem_permission_change(void)
 {
     if (arc_rpc_mem_fast.enabled) memo_clear();
 }
+#if defined(ARCDROID_RPC_PROFILE)
+#undef arc_rpc_mem_permission_change
+void arc_rpc_mem_permission_change(void)
+{
+    int previous=arc_rpc_profile_enter(ARC_RPC_COST_TIMING);
+    arc_rpc_mem_permission_change_profile_body();
+    arc_rpc_profile_leave(previous);
+}
+#endif
+#if defined(ARCDROID_RPC_PROFILE)
+#define arc_rpc_mem_clock_switch arc_rpc_mem_clock_switch_profile_body
+#endif
 void arc_rpc_mem_clock_switch(bool enable)
 {
     if (!arc_rpc_mem_fast.enabled || m.model != 2) return;
@@ -238,6 +266,15 @@ void arc_rpc_mem_clock_switch(bool enable)
     if (enable) m.fast_clock = true;
     arc_rpc_mem_control(m.control);
 }
+#if defined(ARCDROID_RPC_PROFILE)
+#undef arc_rpc_mem_clock_switch
+void arc_rpc_mem_clock_switch(bool enable)
+{
+    int previous=arc_rpc_profile_enter(ARC_RPC_COST_TIMING);
+    arc_rpc_mem_clock_switch_profile_body(enable);
+    arc_rpc_profile_leave(previous);
+}
+#endif
 void arc_rpc_mem_begin_slow(void)
 {
     if (!arc_rpc_mem_fast.enabled) return;
@@ -282,6 +319,9 @@ void arc_rpc_mem_fetch_slow(uint32_t va, uint32_t physical, unsigned attributes,
     word(p,physical,4,false);uncached_clock();
 }
 
+#if defined(ARCDROID_RPC_PROFILE)
+#define arc_rpc_mem_access arc_rpc_mem_access_profile_body
+#endif
 void arc_rpc_mem_access(uint32_t va, uint32_t physical, unsigned bytes,
                         bool write, bool fetch, unsigned attributes, bool backed)
 {
@@ -337,7 +377,7 @@ void arc_rpc_mem_access(uint32_t va, uint32_t physical, unsigned bytes,
         c->victim[set] = (uint8_t)((way + 1) % c->ways);
         Packet *p = append(DEMAND); p->fill = true; p->fetch = fetch;
         for (unsigned n = 0; n < (1u << c->shift) / 4; ++n) word(p, t->physical + n * 4, 4, false);
-        ++m.stats.fills;
+        ++m.stats.fills; ARC_RPC_PROFILE(fill());
         if (write) t->dirty |= 1u << ((va >> 4) & 1);
         if (fetch) { memo_set(line); }
     } else if (fetch) {
@@ -362,12 +402,27 @@ void arc_rpc_mem_access(uint32_t va, uint32_t physical, unsigned bytes,
     }
     if (!write) uncached_clock();
 }
+#if defined(ARCDROID_RPC_PROFILE)
+#undef arc_rpc_mem_access
+
+void
+arc_rpc_mem_access(uint32_t va, uint32_t physical, unsigned bytes, bool write, bool fetch, unsigned attributes, bool backed)
+{
+
+    int previous=arc_rpc_profile_enter(ARC_RPC_COST_TIMING);
+    arc_rpc_mem_access_profile_body(va,physical,bytes,write,fetch,attributes,backed);
+    arc_rpc_profile_leave(previous);
+}
+#endif
 static void invalidate(Cache *c)
 {
     for (unsigned i = 0; i < c->sets * c->ways; ++i) c->tags[i].valid = c->tags[i].dirty = 0;
     c->populated = 0;
     memo_clear();
 }
+#if defined(ARCDROID_RPC_PROFILE)
+#define arc_rpc_mem_maintenance arc_rpc_mem_maintenance_profile_body
+#endif
 void arc_rpc_mem_maintenance(unsigned crn, unsigned opc2, unsigned crm, uint32_t va)
 {
     if (!arc_rpc_mem_fast.recording || crn != 7) return;
@@ -383,6 +438,15 @@ void arc_rpc_mem_maintenance(unsigned crn, unsigned opc2, unsigned crm, uint32_t
         }
     } else if (opc2 == 4 && crm == 10) append(DRAIN);
 }
+#if defined(ARCDROID_RPC_PROFILE)
+#undef arc_rpc_mem_maintenance
+void arc_rpc_mem_maintenance(unsigned crn, unsigned opc2, unsigned crm, uint32_t va)
+{
+    int previous=arc_rpc_profile_enter(ARC_RPC_COST_TIMING);
+    arc_rpc_mem_maintenance_profile_body(crn,opc2,crm,va);
+    arc_rpc_profile_leave(previous);
+}
+#endif
 void arc_rpc_mem_end_slow(void)
 {
     if (!arc_rpc_mem_fast.recording) return;
@@ -555,6 +619,9 @@ void arc_rpc_mem_video_hold(uint64_t ns)
     m.queued_video = add(m.queued_video, ticks(ns));
     arc_rpc_mem_fast.bus_busy = true;
 }
+#if defined(ARCDROID_RPC_PROFILE)
+#define arc_rpc_mem_run arc_rpc_mem_run_profile_body
+#endif
 void arc_rpc_mem_run(uint64_t now_ns)
 {
     if (!arc_rpc_mem_fast.enabled) return;
@@ -604,6 +671,18 @@ void arc_rpc_mem_run(uint64_t now_ns)
     }
     arc_rpc_mem_fast.bus_busy = m.active_valid || m.video_active || m.queued_video || m.bcount;
 }
+#if defined(ARCDROID_RPC_PROFILE)
+#undef arc_rpc_mem_run
+
+void
+arc_rpc_mem_run(uint64_t now_ns)
+{
+
+    int previous=arc_rpc_profile_enter(ARC_RPC_COST_BUS);
+    arc_rpc_mem_run_profile_body(now_ns);
+    arc_rpc_profile_leave(previous);
+}
+#endif
 uint64_t arc_rpc_mem_next(uint64_t limit_ns, bool idle)
 {
 #if defined(ARCDROID_TEST_FAULTS)
@@ -631,6 +710,9 @@ bool arc_rpc_mem_ready(bool idle)
     arc_rpc_mem_fast.issue_fraction = arc_rpc_mem_fast.due_fraction;
     return true;
 }
+#if defined(ARCDROID_RPC_PROFILE)
+#define arc_rpc_mem_batch_service arc_rpc_mem_batch_service_profile_body
+#endif
 bool arc_rpc_mem_batch_service(ArcRpcCpuBatch *batch)
 {
     /* Execute the same service transitions locally while no device or
@@ -687,6 +769,19 @@ bool arc_rpc_mem_batch_service(ArcRpcCpuBatch *batch)
         arc_rpc_mem_run(next);
     }
 }
+#if defined(ARCDROID_RPC_PROFILE)
+#undef arc_rpc_mem_batch_service
+
+bool
+arc_rpc_mem_batch_service(ArcRpcCpuBatch *batch)
+{
+
+    int previous=arc_rpc_profile_enter(ARC_RPC_COST_BUS);
+    bool result = arc_rpc_mem_batch_service_profile_body(batch);
+    arc_rpc_profile_leave(previous);
+    return result;
+}
+#endif
 void arc_rpc_mem_idle(bool idle)
 {
     if (!arc_rpc_mem_fast.enabled || idle == m.idle) return;

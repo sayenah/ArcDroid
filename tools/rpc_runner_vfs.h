@@ -12,8 +12,11 @@
 static bool vfs_flush_fsync = true;
 static char save_directory[4096];
 static unsigned vfs_open_handles,vfs_open_directories;
+#ifndef ARC_RUNNER_VFS_CHECK
+#define ARC_RUNNER_VFS_CHECK(files,dirs) assert((files)==0&&(dirs)==0)
+#endif
 static inline void vfs_assert_no_open_handles(void)
-{assert(vfs_open_handles==0&&vfs_open_directories==0);}
+{ARC_RUNNER_VFS_CHECK(vfs_open_handles,vfs_open_directories);}
 #if defined(_WIN32)
 #include <direct.h>
 #include <sys/stat.h>
