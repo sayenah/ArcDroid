@@ -109,7 +109,7 @@ D1 and D2 form a small independent slice. B3 and B2 go ahead only on evidence, a
 - Rates are 20/35/100/35 (`rpc_session.c:43-46`). Duplicate tables exist at `libretro/rpc_cmos_store.c:66` and `libretro/rpc_preparation.c:323`.
 - `arc_fault_jump.h:10-12` selects `__USE_MINGW_SETJMP_NON_SEH`.
 - Env 83/84 are at `libretro.h:2644`/`:2659`, and `GET_JIT_CAPABLE` 74 at `:2476`.
-- CI `android-arm64` runs on `ubuntu-latest` and only builds (`ci.yml:269-289`), so no job executes arm64.
+- CI `android-arm64` only builds. Since W6 (S67, D-196(2)) the `host-arm64` job runs the full host suite natively on `ubuntu-24.04-arm`, so CI executes arm64 Linux; Android itself still runs only on the Odin3.
 - The memo clear sites are `rpc_mem_timing.c:224, 248, 299, 375, 421, 437`.
 
 ## 3. Dependency graph and sequencing
