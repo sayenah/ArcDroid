@@ -467,6 +467,29 @@ static void self_test(const char *save, const char *alias)
     puts("nonzero, non-directory, relative and scheme refusal paths: passed (read-only qualification reported above)");
     printf("rpc-lock-process: passed; maximum-native-attempt-ns=%llu\n", (unsigned long long)maximum_attempt_ns);
 }
+/* Self-tests own only newly created children. Never repair a supplied root's
+ * sentinel: a different probe/holder may still be using that namespace. */
+static void fresh_root(const char *parent, char save[4096], char leaf[64])
+{
+    ArcLock setup;
+    assert(arc_lock_content(&setup, parent, content, probe_backend, NULL) == ARC_LOCK_TRANSIENT);
+    while (arc_lock_next_namespace(&setup))
+        assert(arc_lock_acquire(&setup) == ARC_LOCK_TRANSIENT);
+#if defined(_WIN32)
+    unsigned long pid = (unsigned long)GetCurrentProcessId();
+#else
+    unsigned long pid = (unsigned long)getpid();
+#endif
+    for (unsigned collision = 0; collision < 10000; ++collision) {
+        assert(snprintf(leaf, 64, "p10b-%lu-%u", pid, collision) < 64);
+        int n = snprintf(save, 4096, "%s/%s", parent, leaf);
+        assert(n > 0 && n < 4096);
+        int result = vfs_mkdir(save);
+        if (!result) { printf("probe-root=%s\n", save); return; }
+        assert(result == -2);
+    }
+    assert(!"fresh probe directory collision limit");
+}
 int main(int argc, char **argv)
 {
     if (argc < 3 || argc > 4) {
@@ -487,12 +510,27 @@ int main(int argc, char **argv)
 #endif
     if (!strcmp(mode, "info")) { info(argv[2]); return 0; }
     if (!strcmp(mode, "self-test")) {
+        char save[4096], leaf[64], alias_path[4096];
+        fresh_root(argv[2], save, leaf);
+        const char *alias = argc == 4 ? argv[3] : NULL;
+        if (alias) {
+            bool same = true;
+#if !defined(_WIN32)
+            struct stat parent, alias_parent;
+            same = stat(argv[2], &parent) == 0 && stat(alias, &alias_parent) == 0 &&
+                parent.st_dev == alias_parent.st_dev && parent.st_ino == alias_parent.st_ino;
+#endif
+            if (same) {
+                int n = snprintf(alias_path, sizeof(alias_path), "%s/%s", alias, leaf);
+                assert(n > 0 && (size_t)n < sizeof(alias_path)); alias = alias_path;
+            }
+        }
         if (probe_backend) {
-            ArcLockResult support = initialize(&first, argv[2], content); arc_lock_release(&first);
+            ArcLockResult support = initialize(&first, save, content); arc_lock_release(&first);
             if (support != ARC_LOCK_HELD) { puts(result_name(support)); return 20 + support; }
             puts("test-only macOS OFD backend selected");
         }
-        info(argv[2]); self_test(argv[2], argc == 4 ? argv[3] : NULL); return 0;
+        info(save); self_test(save, alias); return 0;
     }
     ArcLockResult result = initialize(&first, argv[2], argc == 4 ? argv[3] : content);
     puts(result_name(result)); fflush(stdout);

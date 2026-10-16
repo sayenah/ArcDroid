@@ -27,6 +27,8 @@ def run(exe,core,fixtures,mode,profile="full"):
         shutil.copyfile(fixtures/'arcdroid-test.rom',fw/'authored.data')
         shutil.copyfile(fixtures/'arcdroid-test.adf',system/'arc.adf')
         shutil.copyfile(fixtures/'arcdroid-chooser-l.adl',system/'chooser.adl')
+        arc_refusal=system/'arc-refusal/arcdroid/firmware';arc_refusal.mkdir(parents=True)
+        shutil.copyfile(fixtures/'arcdroid-boot-prompt-write.rom',arc_refusal/'authored.data')
         (system/'seed').write_bytes(bytes(256))
         (system/'spin.rom').write_bytes(bytes.fromhex('feffffea')*(2097152//4))
         common=f'model=sa110\nfirmware={system / "spin.rom"}\nrtc_epoch=946684800\n'+('rate_mips=1\n' if profile=='sanitizer' else '')
@@ -64,8 +66,14 @@ def run(exe,core,fixtures,mode,profile="full"):
 
 if __name__=='__main__':
     exe,core,fixtures=sys.argv[1:4];profile=sys.argv[4] if len(sys.argv)>4 else "full"
-    baseline=sys.argv[5] if len(sys.argv)>5 else core
-    fresh,_,_=run(exe,baseline,fixtures,'fresh',profile);switched,output,_=run(exe,core,fixtures,'switch',profile)
-    check(len(fresh)==1 and fresh==switched,f'{fresh} != {switched}')
-    print(output,end='')
-    print('plan-core frontend: fresh-process trace, running/terminal/generation/fault, chooser/failed-load, persistence, callbacks, cycles and IDs passed')
+    # The optional argument is either a focused probe mode or the independent
+    # baseline library used by the allocation-census switching comparison.
+    modes=('fresh','switch','probe','guards','qa-lows','leak-check','projection','switch-projection')
+    if len(sys.argv)>5 and sys.argv[5] in modes:
+        print(run(exe,core,fixtures,sys.argv[5],profile)[1],end='')
+    else:
+        baseline=sys.argv[5] if len(sys.argv)>5 else core
+        fresh,_,_=run(exe,baseline,fixtures,'fresh',profile);switched,output,_=run(exe,core,fixtures,'switch',profile)
+        check(len(fresh)==1 and fresh==switched,f'{fresh} != {switched}')
+        print(output,end='')
+        print('plan-core frontend: fresh-process trace, running/terminal/generation/fault, chooser/failed-load, persistence, callbacks, cycles and IDs passed')

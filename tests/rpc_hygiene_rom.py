@@ -17,16 +17,18 @@ def generate(path, formatting=False):
     g.write(9,0x28,0x10);port(0x3f2,0x3c);irq()
     for _ in range(4):command(8);result(2)
     command(3,0xf1,2);port(0x3f7,2)
-    if not formatting:
-        # Two ordinary refusals of the same raw sector before a later failed
-        # commit to that sector. The refusal record must deduplicate the log.
-        for _ in range(2):command(0x49,0,0,0,0,3,0,0x35,255);result(7)
-        g.mov(0,1);g.store(0,8)
-    # A 65536/2MHz timer period repeated 20 times leaves host boundaries
-    # between initial refusal and mutation. IRQ is masked in the guest CPSR.
+    # Masked guest IRQs; the 65536/2 MHz timer yields real frontend frames.
     for off,value in [(0x40,255),(0x44,255),(0x48,0)]:g.mov(0,value);g.store(0,9,off)
-    g.mov(7,20);at=len(g.words);g.read(0,9,0x10);g.emit(0xe3100020);g.branch(at,0)
-    g.mov(0,32);g.store(0,9,0x14);g.emit(0xe2577001);g.branch(at,1)
+    def delay(ticks):
+        g.mov(7,ticks);at=len(g.words);g.read(0,9,0x10);g.emit(0xe3100020);g.branch(at,0)
+        g.mov(0,32);g.store(0,9,0x14);g.emit(0xe2577001);g.branch(at,1)
+    if not formatting:
+        # Same-sector refusals separated by at least three frontend frames.
+        # INFO is once per session, independently of sector-log deduplication.
+        for marker in range(1,4):
+            command(0x49,0,0,0,0,3,0,0x35,255);result(7)
+            g.mov(0,marker);g.store(0,8);delay(2)
+    delay(20)
     if formatting:
         command(0x4d,0,3,5,0x32,0)
         payload=[v for sector in range(5) for v in (0,0,sector,3)]
@@ -36,7 +38,7 @@ def generate(path, formatting=False):
         at=len(g.words);g.read(0,9,0x30);g.emit(0xe3100001);g.branch(at,0)
         g.load(1,0x0302a000 if i+1==len(payload) else 0x03012000)
         g.mov(0,value);g.emit(0xe5c10000)
-    result(7);g.mov(0,2);g.store(0,8);g.emit(0xeafffffe)
+    result(7);g.mov(0,2 if formatting else 4);g.store(0,8);g.emit(0xeafffffe)
     data=struct.pack('<%dI'%len(g.words),*g.words)
     path.write_bytes(data+bytes(2097152-len(data)))
 

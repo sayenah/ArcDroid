@@ -289,8 +289,26 @@ When D-163 is satisfied, the release changes the default and nothing else, so th
 - Logs and raw-refusal callbacks bind both backends on every registration and clear both at deinit. The RPC raw callback calls the existing ADF refusal recorder, preserving its INFO line and sector deduplication for each media-entry lifetime. Raw write-protect, deleted-data and unrepresentable format operations all notify it. Commit/flush failures latch read-only and additionally queue a storage-failure bit. Frontend notices are delivered after contained execution: one INFO advisory per session for ordinary refusals, and one WARN advisory per failed drive per session for storage failures. The warning has independent deduplication, so a previous refusal cannot suppress it. Both use timed five-second notifications; unload/deinit/switch discard pending events. Text: "RiscPC disc write refused; this operation cannot be saved." and "RiscPC disc writes can no longer be saved. Check free space and storage access, then reload the content."
 - The write observer is installed when RPC content media is attached and in the RPC frame-boundary setup. Its existing exact staged-path comparison already filters HD journal/default/CMOS traffic; keep it and measure that bounded comparison per journal write. Cache invalidation remains per matching image, with no extra journal parsing or I/O.
 - Every load resets base geometry to 640×480 and rate to its route baseline (Arculator 50 Hz; RPC 60 Hz); maximum geometry stays 4096×2048. Retained frontend status and input caches clear at release. Generation-sensitive frontend state uses the frontend session ID plus the RPC engine generation where Restart requires reinitialisation.
-- G-3 logs version, configured source revision (archive builds can supply it), target, configuration, closed gate, test/plan/catalogue substitutions and a library-lifetime init counter. No wall-clock build data. Ordinary baseline projection drops only this new line. Switching corrections are stable max geometry, restored base/rate, neutral stopped identity/fault/capabilities, callback rebinding, refusal notices, write-cache invalidation and discarded session state; persisted bytes must be equal.
+- G-3 logs version, build-time source revision (archive builds can supply it; run C policy below), target, configuration, closed gate, test/plan/catalogue substitutions and a library-lifetime init counter. No wall-clock build data. Ordinary baseline projection drops only this new line. Switching corrections are stable max geometry, restored base/rate, neutral stopped identity/fault/capabilities, callback rebinding, refusal notices, write-cache invalidation and discarded session state; persisted bytes must be equal.
 - Run B, merge `e12fc7f` with pinned base `eebfc01`: the 15 frontend identity sites and preparation's one live-engine ownership check are unchanged in number. The merge preserved all frontend kind conversions. R3c-2's new hint consumers use the existing kind-derived `rpc_error`; reset ownership and disc-log decisions remain under the same kind predicates. No observer semantics need changing. Extend the source guard to census each policy function, the hint alias and both observer capability cells, and add behavioral identity-predicate mutants for error hints, running reset and disc logs. Repeat ordinary/switching projections against pristine `eebfc01`, admitting only the already listed R3d-1 corrections.
+
+**Run C QA dispositions (before code, 2026-10-16).** G-3 obtains the current
+Git revision at every build, appending `-dirty` for tracked or unignored
+untracked changes; a write-if-different header avoids needless recompilation.
+A Git checkout takes precedence over the archive revision override; an archive
+without an override reports `unknown`. No timestamp or local path is embedded.
+Plan loads use the same outgoing persistence boundary as ordinary loads:
+persist CMOS only when loaded, with no additional chooser-seed publication.
+This removes the unlisted plan-only seed delta; existing unload and chooser
+boundaries keep their seed policy. Independent guard probes retain a valid
+Arculator machine, plan, paths and records while changing only frontend kind;
+each guard is tested before release and with a positive Arculator control.
+Boot publication is checked for forbidden media reads before its downstream
+path/binding guards, rather than relying on those guards to prevent a write.
+The hygiene snapshot also exposes retained plan-terminal text/refresh state.
+Callback regression tests clear both backends at deinit, initialise with RPC
+still selected, then execute the authored Arculator refusal guest; RPC ordinary
+refusals span several frontend frames and still give one INFO per session.
 
 ### 6.2 R3d-2: firmware locator, D-166(4) and R3a Lows
 

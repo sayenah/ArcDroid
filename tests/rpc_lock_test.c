@@ -258,6 +258,14 @@ static void paths(void)
 }
 int main(void)
 {
+    fresh();
+    assert(arc_lock_content(NULL, "/save", content, &backend, &now) == ARC_LOCK_ROOT_REFUSED);
+    assert(arc_lock_defaults(NULL, "/save", firmware, 0, 1, 2, &backend, &now) == ARC_LOCK_ROOT_REFUSED);
+    assert(arc_lock_acquire(NULL) == ARC_LOCK_ROOT_REFUSED);
+    assert(arc_lock_verify(NULL) == ARC_LOCK_ROOT_REFUSED);
+    assert(!arc_lock_held(NULL) && !arc_lock_next_namespace(NULL));
+    arc_lock_release(NULL);
+    assert(!opens && !tries && !identities && !unlocks && !closes && !mkdirs && !stats);
     basic(); errors(); identity_and_vfs(); paths();
     puts("rpc-lock-unit: ownership, error domains, identity, paths and mkdir boundaries passed");
     return 0;

@@ -172,6 +172,7 @@ static bool hex_key(const char *key, size_t n, char *out)
 static ArcLockResult initialize(ArcLock *lock, const char *save, const char *key,
                                 const ArcLockBackend *backend, void *opaque)
 {
+    if (!lock) return ARC_LOCK_ROOT_REFUSED;
     memset(lock, 0, sizeof(*lock));
     lock->backend = backend ? backend : &native_backend;
     lock->opaque = opaque;
