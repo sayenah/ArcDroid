@@ -216,6 +216,11 @@ CENSUS_SERVICES = {
     "setjmp", "sin", "snprintf", "sprintf", "sqrt", "sscanf", "strcat", "strchr",
     "strcmp", "strcpy", "strlen", "strncmp", "strrchr", "strstr", "strtol",
     "strtoul", "strtoull", "tan", "time", "tolower", "vsnprintf",
+    # glibc bits/mathcalls.h: scalar results only, no heap ownership.
+    "fabs",  # Absolute value of a double; no allocation.
+    "trunc",  # Round a double toward zero; no allocation.
+    "truncf",  # Round a float toward zero; no allocation.
+    "truncl",  # Round a long double toward zero; no allocation.
     # Darwin/glibc runtime, locale and process/profile clocks.
     "_DefaultRuneLocale", "__assert_rtn", "__assert_fail", "__error",
     "__errno_location", "__maskrune", "__stderrp", "__tolower", "stderr",
@@ -242,7 +247,18 @@ def verify_census(directories, nm, sanitized, errors, policy):
     """Allow only reviewed external services in every census-linked object."""
     services = CENSUS_SERVICES | set(policy["compiler_services"])
     if sanitized:
-        runtime = set(policy["sanitizer_services"])
+        # GCC libsanitizer asan_interface_internal.h / ubsan_handlers.h:
+        # stack markers and failure diagnostics, never application allocators.
+        runtime = set(policy["sanitizer_services"]) | {
+            "__asan_poison_stack_memory",  # Mark existing stack shadow; no allocation.
+            "__asan_unpoison_stack_memory",  # Clear existing stack shadow; no allocation.
+            "__asan_alloca_poison",  # Mark existing VLA/alloca redzones; no allocation.
+            "__asan_allocas_unpoison",  # Clear existing VLA/alloca shadow; no allocation.
+            # Each UBSan diagnostic and its _abort variant returns no owned allocation.
+            "__ubsan_handle_invalid_builtin",  # Argument diagnostic; no owned allocation.
+            "__ubsan_handle_nonnull_return_v1",  # Result diagnostic; no owned allocation.
+            "__ubsan_handle_vla_bound_not_positive",  # Bound diagnostic; no owned allocation.
+        }
         # GCC's recovery/abort variants of the same finite runtime services.
         services |= runtime | {name + "_abort" for name in runtime
                                if name.startswith("__ubsan_handle_")}
