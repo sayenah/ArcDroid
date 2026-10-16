@@ -94,6 +94,7 @@ bool arc_rpc_inspect_translate(uint32_t va, bool privileged, uint32_t *physical)
 
 typedef struct {
     ArcRpcObserver observer; uint64_t generation, epoch, media_generation, helper_generation, ns;
+    uint64_t previous_ns; /* Previous source observation, copied by the owner. */
     unsigned kind; uint32_t operation, continuation, sp; uint64_t watch;
     size_t size; uint8_t bytes[ARC_RPC_COPY_LIMIT];
 } ArcRpcHostWork;

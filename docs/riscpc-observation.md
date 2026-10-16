@@ -426,19 +426,49 @@ identifiers, rather than narrative wording.
 RPC signal B retains a copied triggered observation after BUSY, including its
 continuation, stack, candidate, epoch and both media generations. At later host
 boundaries it retries only while that identity, generation and trigger remain
-valid. A completed commit or hint ends retrying. Found objects synchronously drop queued misses for only the same canonical
-object. Their history retirement and lifecycle observations use the same ordered
+valid. A completed commit or hint ends retrying. FOUND classification uses a
+copy of the current arm, leaving live history and the trigger latch untouched.
+Its retirement and lifecycle observations use the same ordered
 host queue; lifecycle events resolve preceding misses before clearing history,
 while preserving a later call still live across the boundary. Signal A still supersedes queued B work synchronously. Queue
-overflow retires the queue generation. Miss-only overflow retains identity
-history and the trigger latch. Before cancellation drops copied work, RPC records
+overflow retires the queue generation and clears identity history, including
+eviction order and observation counts. A completed trigger's latch survives.
+Before cancellation drops copied work, RPC records
 its retirement barriers: a lost lifecycle marker (including the overflowing
-item itself) clears history and the latch synchronously. FOUND already retires
-existing history synchronously through the shared outcome logic; its queued
-marker also retires matching history built by earlier deferred misses. This uses
+item itself) also clears the latch synchronously. If overflow drops a pending
+BUSY retry, the shared retry operation lifts that latch so later repeated misses
+can trigger again. FOUND never drops earlier queued misses; their observations
+and triggers precede FOUND, including when they concern the same object. This uses
 bounded copied-data inspection, never guest path resolution. No resolver or
 frontend callback runs inside guest execution.
-First-observation logging reads the copied callback identity.
+First-observation logging reads the copied callback identity. FOUND classification
+also retires an existing BUSY retry for that canonical object synchronously:
+presentation runs retries before the drain. This cancellation does not advance
+FOUND's queued history/latch effects or retire retries for other objects.
+
+After every overflow, signal B is "possibly latched": RPC suppresses B
+observation callbacks, new triggers, hints and replacement eligibility. Lifting
+a dropped BUSY retry's old latch does not bypass suppression. Recovery requires
+a global history/latch clear: an applied lifecycle marker, an admitted signal A,
+`disc_clear` or media reconfiguration, reset, or a new epoch. FOUND only retires
+its own object and never releases suppression. A lifecycle marker that itself overflows is applied
+synchronously; an earlier lost marker clears old history/latch, while later
+lost items remain uncertain. Signal A's existing global history clear,
+supersession and replacement route are unchanged.
+
+Quiet recovery is also safe strictly beyond 120 seconds of guest time without
+any signal-B miss. Every miss, including an unresolved one, updates the source
+timestamp. Non-miss items, including an overflowing FOUND, do not refresh it.
+Each copied work item retains its predecessor's timestamp alongside
+its own, so recovery occurs in guest order even when later misses are already
+queued. Recovery is checked before candidate resolution; suppressed misses do
+not rebuild partial history. At that point every shared identity and possible
+latch is beyond the shared observer's inclusive 120-second window: the first
+fresh miss counts once, and subsequent overflow-free triggers match the shared
+observer. Clock regression cannot satisfy quiet expiry. Tests retain the strict
+same-event subset assertion over overflow frames, and exact equality on
+ordinary, globally recovered and quiet-recovered stretches. All work occurs on
+observed events or the host boundary, never per instruction.
 
 Synchronous bit-8 forms may carry category/high bits, but bits 5 and 6 still
 exclude them. They receive a recognised-open manual hint and no answers. A
