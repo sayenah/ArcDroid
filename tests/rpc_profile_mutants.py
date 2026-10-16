@@ -27,6 +27,20 @@ mutants=[
  ('pc-write','engine/rpc/rpc_profile.c','profile.pc_destination=pc_write;','profile.pc_destination=false;'),
  ('reset-history','engine/rpc/rpc_profile.c','memset(profile.written,0,sizeof(profile.written));','((void)0);'),
  ('e11-hook','engine/rpcemu/src/cp15.c','        arc_rpc_profile_maintenance();','        ((void)0);'),
+ # Opus QA M-1 survivors, retained individually with directed expectations.
+ ('bucket-off-by-one','engine/rpc/rpc_profile.c','length>64?64:','length>=64?64:'),
+ ('pcw-ldr','engine/rpc/rpc_profile.c','(c==3 || c==8)','(c==8)'),
+ ('pcw-ldm','engine/rpc/rpc_profile.c','(c==5 && (op&(1u<<15)))','false'),
+ ('pcw-alu-cmp','engine/rpc/rpc_profile.c','(((op>>21)&15)<8 || ((op>>21)&15)>11)','true'),
+ ('mask-e4','engine/rpc/rpc_profile.c',' || masks!=profile.masks',''),
+ ('idle-e4','engine/rpc/rpc_profile.c',' || idle)profile.causes',')profile.causes'),
+ ('class-long-mul','engine/rpc/rpc_profile.c',' || (op&0x0f8000f0u)==0x00800090u',''),
+ ('candidate-class','engine/rpc/rpc_profile.c','c<=4','c<=3'),
+ ('reset-fetched','engine/rpc/rpc_profile.c','memset(profile.fetched_at,0,sizeof(profile.fetched_at));','((void)0);'),
+ ('vram-byte-hook','engine/rpcemu/src/mem.c','vramb[addr & mem_vrammask] = val;\n    ARC_RPC_PROFILE(store(vram,addr&mem_vrammask));','vramb[addr & mem_vrammask] = val;'),
+ ('read-byte-access','engine/rpcemu/src/mem.c','ARC_RPC_PROFILE(access(physical,false));\n    arc_rpc_mem_access(addr, physical, 1,','((void)0);\n    arc_rpc_mem_access(addr, physical, 1,'),
+ ('write-byte-access','engine/rpcemu/src/mem.c','ARC_RPC_PROFILE(access(physical,true));\n    arc_rpc_mem_access(addr, physical, 1,','((void)0);\n    arc_rpc_mem_access(addr, physical, 1,'),
+ ('cp15-read-side-exit','engine/rpcemu/src/cp15.c','cp15_read(uint32_t opcode)\n{\n    ARC_RPC_PROFILE(side_exit());','cp15_read(uint32_t opcode)\n{'),
 ]
 subprocess.run([str(target)],check=True,cwd=build,capture_output=True,timeout=30)
 for name,relative,old,new in mutants:
@@ -49,13 +63,15 @@ for name,relative,old,new in mutants:
         r=subprocess.run([str(binary)],cwd=build,capture_output=True,text=True,timeout=30)
         if r.returncode==0:raise RuntimeError((name,'SURVIVED'))
         print(name+': killed',flush=True)
-runner,core,shipping,fixtures=sys.argv[3:7]
+runner,core,shipping,fixtures,lifecycle=sys.argv[3:8]
 runtime=[
  ('device-event-hook','engine/rpc/rpc_session.c','arc_rpc_profile_event((unsigned)event);','((void)0);',None),
  ('mmio-read-hook','engine/rpcemu/src/mem.c','arc_rpc_profile_mmio(false);','((void)0);',None),
  ('data-write-hook','engine/rpcemu/src/mem.c','ARC_RPC_PROFILE(access(physical,true));','((void)0);',None),
  ('cache-fill-hook','engine/rpc/rpc_mem_timing.c','ARC_RPC_PROFILE(fill());','((void)0);',None),
  ('memo-hook','engine/rpcemu/src/cp15.c','ARC_RPC_PROFILE(memo());','((void)0);','engine/rpc/rpc_mem_timing.h'),
+ ('mmio-read8-hook','engine/rpcemu/src/mem.c','if(!io)return mem_phys_read8_profile_body(addr);\n    arc_rpc_profile_mmio(false);','if(!io)return mem_phys_read8_profile_body(addr);',None),
+ ('stop-reset-hook','engine/rpc/rpc_session.c','arc_rpc_observers_retire();\n    ARC_RPC_PROFILE(reset());','arc_rpc_observers_retire();',None),
 ]
 for name,relative,old,new,header in runtime:
     source=root/relative
@@ -77,7 +93,7 @@ for name,relative,old,new,header in runtime:
         for command in (compile,link):
             r=subprocess.run(command,cwd=build,capture_output=True,text=True,timeout=60)
             if r.returncode:raise RuntimeError((name,'build failed (not a kill)',r.stderr))
-        r=subprocess.run([sys.executable,'-B',str(root/'tests/rpc_profile_runner_test.py'),runner,str(library),shipping,fixtures],capture_output=True,text=True,timeout=60)
+        r=subprocess.run([sys.executable,'-B',str(root/'tests/rpc_profile_runner_test.py'),runner,str(library),shipping,fixtures,lifecycle],capture_output=True,text=True,timeout=60)
         if r.returncode==0:raise RuntimeError((name,'SURVIVED'))
         # Infrastructure errors are not counter kills.
         if 'RuntimeError' not in r.stderr or 'Cannot load core' in r.stderr or 'Missing required symbol' in r.stderr:raise RuntimeError((name,'not an assertion kill',r.stderr))

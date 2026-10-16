@@ -9,7 +9,7 @@ import subprocess
 import sys
 import tempfile
 sys.dont_write_bytecode=True
-runner,core,shipping,fixtures=sys.argv[1:5]
+runner,core,shipping,fixtures,lifecycle=sys.argv[1:6]
 fixtures=Path(fixtures).resolve()
 def require(ok,message):
     if not ok:raise RuntimeError(message)
@@ -72,6 +72,33 @@ with tempfile.TemporaryDirectory(prefix='arc-profile-') as temp:
     p=json.loads(out.read_text())['records'][-1]
     require(p['attempts']==4 and p['fetched']==4 and p['faults']==1 and p['exits']['E8']==1 and p['abandoned_samples']==1 and p['block_instructions']==4,'body fatal bookkeeping')
     struct.pack_into('<I',rom,0x108,0xe321f0d3)
+    (folder/'authored.rom').write_bytes(rom)
+    # Byte MMIO must reach its own wrapper; the original idle guest only used
+    # word MMIO. Same device/address and effects, with byte transfer classes.
+    struct.pack_into('<I',rom,0x110,0xe5d12000)
+    struct.pack_into('<I',rom,0x114,0xe5c12000)
+    (folder/'authored.rom').write_bytes(rom)
+    off=run(plan,folder,frames=2);out=folder/'byte-mmio.json'
+    on=run(plan,folder,['--profile',str(out),'--profile-sample-stride','0'],2)
+    p=json.loads(out.read_text())['records'][-1]
+    require(projection(off.stdout)==projection(on.stdout),'byte MMIO profile changed guest')
+    require(p['attempts']==8 and p['reads']==2 and p['writes']==1 and p['mmio_reads']==1 and p['mmio_writes']==1,'byte MMIO counts')
+    # Retain the real runner CLI and VFS, hiding only one profile symbol. The
+    # fixture asserts that the empty-handle check was actually invoked.
+    r=subprocess.run([lifecycle,'missing','--core',core,'--plan',str(plan),'--system',str(fixtures),'--save',str(folder),
+                      '--profile',str(folder/'missing.json'),'--timing',str(folder/'missing.csv')],capture_output=True,text=True,timeout=40)
+    require(r.returncode==0 and 'Core lacks RPC profiling' in r.stderr and 'checked VFS cleanup' in r.stdout,'missing API cleanup check')
+    require(not (folder/'missing.json').exists(),'missing API opened output')
+    # Plain ALU suffix remains open until the real retro_unload_game stop hook.
+    rom=bytearray(struct.pack('<I',0xe1a00000)*(2097152//4))
+    for addr in (0,0x100,0x104,0x108):struct.pack_into('<I',rom,addr,words[addr])
+    # After CPU setup, fall through NOPs for one frame without a barrier.
+    (folder/'authored.rom').write_bytes(rom)
+    r=subprocess.run([lifecycle,'stop',core,str(plan),str(folder)],capture_output=True,text=True,timeout=40)
+    require(r.returncode==0 and 'unload censored' in r.stdout,'stop profile reset hook')
+    # Restore the idle program for option and failure checks below.
+    rom=bytearray(2097152)
+    for addr,op in words.items():struct.pack_into('<I',rom,addr,op)
     (folder/'authored.rom').write_bytes(rom)
     for extra in (['--profile',str(folder)],['--profile',str(folder/'absent'/'out')],
                   ['--profile-interval','0'],['--profile-sample-stride','1048577'],

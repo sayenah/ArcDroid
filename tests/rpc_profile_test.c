@@ -95,6 +95,57 @@ static void sampling(void)
         arc_rpc_profile_leave(inner);arc_rpc_profile_leave(outer);}
     ArcRpcProfile p=counts();assert(p.samples[ARC_RPC_COST_BUS]==1 && p.samples[ARC_RPC_COST_DEVICES]==1);
 }
+/* Directed QA cases: keep barriers separate so one cause cannot hide another. */
+static void directed(void)
+{
+    for(unsigned length=64;length<=65;++length){
+        profile_fixture(0x100,0);
+        for(unsigned i=0;i<length-1;++i)rom[64+i]=0xe1a00000; /* MOV r0,r0 */
+        rom[63+length]=0xeafffffe; /* B . */
+        assert(arc_rpc_arm_exec_count(length)==length);
+        ArcRpcProfile p=counts();
+        assert(p.blocks[length-1]==1 && p.blocks[length==64?64:63]==0);
+        assert(p.block_instructions==length && p.block_max==length && !p.open_block);
+    }
+    profile_fixture(0x100,0);rom[64]=0xe59ff000;rom[66]=0x200; /* LDR pc,[pc] */
+    arc_rpc_arm_exec_count(1);ArcRpcProfile p=counts();
+    assert(p.pc_writes==1 && p.exits[ARC_RPC_EXIT_E1]==1 && p.classes[3]==1 && PC==0x200);
+    profile_fixture(0x100,0);arm.reg[1]=0x10000200;ram00[128]=0x300;
+    rom[64]=0xe8918000; /* LDMIA r1,{pc} */
+    arc_rpc_arm_exec_count(1);p=counts();
+    assert(p.pc_writes==1 && p.exits[ARC_RPC_EXIT_E1]==1 && p.exits[ARC_RPC_EXIT_E3]==1 && p.classes[5]==1 && PC==0x300);
+    /* CMP/TEQP encode Rd=15 without writing a PC destination. */
+    for(unsigned i=0;i<2;++i){
+        profile_fixture(0x100,0);rom[64]=i?0xe130f000:0xe150f000;
+        arc_rpc_arm_exec_count(1);p=counts();assert(!p.pc_writes && p.classes[0]==1);
+    }
+    profile_fixture(0x100,0);rom[64]=0xe0810392;rom[65]=0xe0e10392; /* UMULL; SMLAL */
+    arc_rpc_arm_exec_count(2);p=counts();assert(p.classes[1]==2 && p.candidates==2);
+    profile_fixture(0x100,0);arm.reg[1]=0x10000200;ram00[128]=0x7b;
+    rom[64]=0xe5d10000;rom[65]=0xe5c10001; /* LDRB; STRB */
+    arc_rpc_arm_exec_count(2);p=counts();
+    assert(p.reads==1 && p.writes==1 && p.classes[3]==1 && p.classes[4]==1);
+    assert(p.candidates==2 && !p.recent_writes && ram00[128]==0x7b7b);
+    profile_fixture(0x100,0);rom[64]=0xee100f10; /* MRC p15,0,r0,c0,c0,0 */
+    arc_rpc_arm_exec_count(1);p=counts();
+    assert(p.exits[ARC_RPC_EXIT_E4]==1 && p.classes[10]==1 && p.blocks[0]==1);
+    profile_fixture(0x100,0);rom[64]=0xe321f0d3; /* MSR: mask-only, same SVC32 mode */
+    arc_rpc_arm_exec_count(1);p=counts();assert(arm.mode==0x13 && p.exits[ARC_RPC_EXIT_E4]==1);
+    /* Idle currently follows a CP15 side exit. Isolate the end-hook's idle
+     * input to prove it closes E4 even without the overlapping CP15 cause. */
+    profile_fixture(0x100,0);arc_rpc_profile_begin(0x100,19,0);
+    arc_rpc_profile_fetched(rom,0xe1a00000,true);arc_rpc_profile_end(0x104,19,0,true);
+    p=counts();assert(p.exits[ARC_RPC_EXIT_E4]==1 && p.blocks[0]==1 && !p.candidates);
+    profile_fixture(0x02000000,0);vram[0]=0xe5c10000;arm.reg[1]=0x02200040;arm.reg[0]=0x56;
+    arc_rpc_arm_exec_count(1);p=counts();
+    assert(p.writes==1 && p.recent_writes==1 && p.recent_pages==1 && p.exits[ARC_RPC_EXIT_E9]==1 && ((uint8_t *)vram)[64]==0x56);
+    /* A post-reset store targets a previously executed page without fetching
+     * it again; the old churn test re-fetched it and hid stale history. */
+    profile_fixture(0x10000000,0);ram00[0]=0xe1a00000;arc_rpc_arm_exec_count(1);
+    arc_rpc_profile_reset();mode32(0x100,0);rom[64]=0xe5810000;arm.reg[1]=0x10000040;
+    arc_rpc_arm_exec_count(1);p=counts();
+    assert(p.resets==1 && p.epoch==1 && p.writes==1 && !p.recent_writes && !p.recent_pages && !p.exits[ARC_RPC_EXIT_E9]);
+}
 static void exits(void)
 {
     profile_fixture(0x100,0);rom[64]=0xe321f010;arc_rpc_arm_exec_count(1);
@@ -137,6 +188,6 @@ int main(void)
     /* Retained translator canonical tests run with live profiling and sampling. */
     arc_rpc_profile_configure(1,test_clock);
     for(unsigned m=0;m<4;++m){interpreter_equivalence((CPUModel)m);timing_events((CPUModel)m);identity_equality((CPUModel)m);}
-    shape();mix();churn();sampling();exits();arc_rpc_memory_close();
+    shape();mix();churn();sampling();directed();exits();arc_rpc_memory_close();
     puts("profile: exact authored classes, lengths, exits, aliases, permissions and recent-window boundaries");return 0;
 }

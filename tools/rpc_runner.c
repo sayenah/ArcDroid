@@ -337,7 +337,7 @@ int main(int argc, char **argv)
     if(profile_path){
         void (*configure)(unsigned,uint64_t (*)(void))=NULL;
         void *config_symbol=symbol("arc_rpc_profile_configure"),*snapshot_symbol=symbol("arc_rpc_profile_snapshot");
-        if(!config_symbol || !snapshot_symbol){fprintf(stderr,"Core lacks RPC profiling\n");free(times);free(dump_pixels);if(timing)fclose(timing);if(hd_cost_file)fclose(hd_cost_file);unload();deinit();return 2;}
+        if(!config_symbol || !snapshot_symbol){fprintf(stderr,"Core lacks RPC profiling\n");free(times);free(dump_pixels);if(timing)fclose(timing);if(hd_cost_file)fclose(hd_cost_file);unload();deinit();vfs_assert_no_open_handles();return 2;}
         memcpy(&configure,&config_symbol,sizeof(configure));memcpy(&profile_snapshot,&snapshot_symbol,sizeof(profile_snapshot));
         void *probe_symbol=symbol("arc_rpc_profile_probe_snapshot");
         if(probe_symbol)memcpy(&profile_probes,&probe_symbol,sizeof(profile_probes));

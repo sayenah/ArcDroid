@@ -7,6 +7,9 @@
 #if !defined(ARCDROID_TEST_FAULTS)
 #error RPC profiling requires a test build
 #endif
+#include "rpc_scheduler.h"
+#define ARC_RPC_PROFILE_EVENTS 9u
+_Static_assert(ARC_RPC_PROFILE_EVENTS == ARC_RPC_EVENT_COUNT, "profile schema 1 event count");
 #define ARC_RPC_PROFILE_CLASSES 13u
 #define ARC_RPC_PROFILE_EXITS 12u
 #define ARC_RPC_PROFILE_BUCKETS 65u
@@ -23,7 +26,7 @@ typedef struct {
     uint64_t blocks[ARC_RPC_PROFILE_BUCKETS], block_instructions, block_max, open_block, censored_blocks, censored_instructions;
     uint64_t fetch_memo_hits, cache_fills, bus_calls;
     uint64_t branches, pc_writes, reads, writes, mmio_reads, mmio_writes;
-    uint64_t recent_writes, recent_pages, events[9], resets, faults, epoch;
+    uint64_t recent_writes, recent_pages, events[ARC_RPC_PROFILE_EVENTS], resets, faults, epoch;
     uint64_t batch_quota, batch_boundary, batch_idle, batch_test_stop;
     uint64_t sampled_ns[ARC_RPC_COST_COUNT], samples[ARC_RPC_COST_COUNT], clock_reads, abandoned_samples;
 } ArcRpcProfile;

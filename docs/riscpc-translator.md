@@ -116,7 +116,7 @@ These ranges are research targets, not predictions (Astra S58):
 ### 6b-P0i instrumentation design (S64)
 
 `ARCDROID_RPC_PROFILE` defaults OFF. Only `arcdroid_rpcplan_libretro_rpc`,
-the non-installed runner and a dedicated authored profiling test compile it;
+the non-installed runner and dedicated authored profiling fixtures compile it;
 the shipping core and other interpreter tests never acquire the definition.
 Hooks in the shared interpreter source are compile-time empty when OFF. The
 inactive/observed/cheap selection, observer helpers, quotas and service order
@@ -137,7 +137,14 @@ batch/frontend returns. A taken branch or executed PC destination ends E1
 (counted separately); slow classes end E3; mode/mask changes, idle and actual
 physical MMIO end E4; actual IRQ/FIQ, data abort, prefetch abort and SWI/Undefined
 end E6/E7a/E7b/E10; a successful write into a recently executed backing page
-ends E9; accepted c7 timing maintenance ends E11. Causes may overlap on one
+ends E9. E11 counts a condition-passed CP15 c7 write whose tuple is classified
+as cache maintenance by the profiling hook: every c7 write on ARM610/710/7500;
+on SA-110, `(opc2,crm)` is `(0,5/6/7)`, `(1,6/10)` or `(4,10)`.
+This is an instruction count, independent of whether timing recording is bound,
+a targeted cache line exists, or the timing model performs work. It uses the
+CP15 CPU model, not the timing model's acceptance decision. Retaining this
+definition keeps schema-1 measurements comparable; it is not a count of
+effective invalidations, castouts or drains. Causes may overlap on one
 attempt: each cause counts once, but the length histogram closes once. E5 counts
 actual batch returns (quota, service/deadline, idle/test stop); it does not truncate
 the shape histogram. E2 is explicitly unavailable: no translator guard exists.
@@ -146,7 +153,10 @@ the existing longjmp, without adding a boundary. Histogram buckets are exact
 lengths 1..64 plus >=65, with total lengths and maximum retained; the open suffix
 is reported separately. Reset/stop suffixes are censored, with their counts and
 lengths separate from the complete-block histogram. Fetch/data/MMIO accesses, scheduled device deliveries,
-cache fills/memo hits and bus-service calls are also recorded.
+cache fills/memo hits and bus-service calls are also recorded. `bus_calls`
+counts entries into both `arc_rpc_mem_batch_service` and `arc_rpc_mem_run`,
+including the nested `batch_service` → `run` entry. It is not a count of unique
+bus transactions or an exclusive service classification.
 
 Code churn uses 4 KiB **allocation-offset** pages (ROM, RAM0, RAM1, VRAM), so
 mirrors alias. A successful fetch marks a page; a functional RAM/VRAM word or
@@ -191,7 +201,31 @@ per-second counts; first/last windows may be partial. Reset clock rewinds are
 explicitly epoch-labelled. No opcode, guest address, register, ROM byte, path or
 private title is emitted. Existing runner `--timing` provides individual frame
 tails, so cold start and sustained windows can be compared without host pacing
-feeding the guest. Commands and measured overhead are in `SOL-REPORT-6B-P0I.md`.
+feeding the guest. Build/run commands are in the
+[profiling runbook](../tools/rpc-r1-runbook.md#6b-p0i-profiling-test-only).
+
+**Measured overhead (S64 final code).** On the shared development MacBook Pro
+(MacBookPro17,1, Apple M1, 8 CPU cores, 16 GB), macOS 26.6.2, Apple Clang
+21.0.0, RelWithDebInfo, three alternating ON/OFF
+pairs of the authored hot workload (601 frames, excluding frame 0) gave median
+p50 **22.295 → 68.691 ms (+208.10%)**, p95 **23.664 → 93.435 ms (+294.84%)**,
+and **13.667 → 44.631 host ns/instruction (+226.56%)** with stride 1024.
+Each measured leg executed 1,000,000,020 instructions over 10,000,000,200 guest
+ns. No competing test/performance jobs from the measuring Sol session ran;
+ambient host load and thermals were uncontrolled (no load-average sample was
+recorded). Individual pair p50 overhead ranged +139.65–208.10%; the first OFF
+leg had noisy tails. Counts-only stride 0 still cost 67.377 ms p50, and an ON
+build without a profile request cost 44.264 ms p50. Use OFF builds for headroom
+and R-H evidence. These are Mac hot-loop measurements, not Odin3 predictions.
+QA independently reproduced about +150–200% p50 on an 8-core shared Mac at
+load about 7.5 (600 frames, stride 1024).
+
+Tiny-scope clock bias is material: raw sampled ns scaled by stride summed to
+298–311 s against about 45 s measured execution; empty-charge calibration was
+23.80–39.55 ns/probe. Counts-only controls, alternate strides and unprofiled
+frame timings are required when interpreting this cost split. Low calibrated
+residuals remain unresolved costs. Private aggregate evidence stays local;
+no private plan or guest bytes are needed to reproduce the authored hot leg.
 
 
 **Executable memory inside RetroArch on the Odin3.**

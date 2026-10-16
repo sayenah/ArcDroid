@@ -234,4 +234,4 @@ void arc_rpc_profile_batch(bool quota,bool idle,bool stopped)
     if(stopped)++profile.counts.batch_test_stop;
 }
 void arc_rpc_profile_event(unsigned event)
-{ if(profile.enabled && event<9)++profile.counts.events[event]; }
+{ if(profile.enabled && event<ARC_RPC_PROFILE_EVENTS)++profile.counts.events[event]; }

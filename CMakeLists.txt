@@ -2777,16 +2777,31 @@ if(ARCDROID_RPC_PROFILE AND BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32
     target_link_options(rpc_profile_test PRIVATE -static-libgcc)
   endif()
   add_test(NAME rpc-profile-counts COMMAND rpc_profile_test)
+  add_executable(rpc_profile_lifecycle_test tests/rpc_profile_lifecycle_test.c
+    tests/rpc_test_clock.c tools/rpc_profile_json.c)
+  target_include_directories(rpc_profile_lifecycle_test PRIVATE engine engine/rpc core libretro libretro/include tests)
+  target_compile_definitions(rpc_profile_lifecycle_test PRIVATE ARCDROID_RPC_PROFILE=1 ARCDROID_TEST_FAULTS=1 RETRO_IMPORT_SYMBOLS=1)
+  target_compile_options(rpc_profile_lifecycle_test PRIVATE -UNDEBUG -Wall -Wextra)
+  target_link_libraries(rpc_profile_lifecycle_test PRIVATE ${CMAKE_DL_LIBS})
+  if(UNIX AND NOT APPLE)
+    target_link_libraries(rpc_profile_lifecycle_test PRIVATE m)
+  endif()
+  if(WIN32)
+    target_link_options(rpc_profile_lifecycle_test PRIVATE -static-libgcc)
+  endif()
+  if(ARCDROID_SANITIZERS)
+    target_link_libraries(rpc_profile_lifecycle_test PRIVATE arcdroid_sanitizer_compile arcdroid_sanitizer_link)
+  endif()
   add_test(NAME rpc-profile-runner COMMAND "${Python3_EXECUTABLE}" -B
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_profile_runner_test.py"
     $<TARGET_FILE:rpc_runner> $<TARGET_FILE:arcdroid_rpcplan_libretro>
-    $<TARGET_FILE:arcdroid_libretro> "${RPC_PLAN_DIR}")
+    $<TARGET_FILE:arcdroid_libretro> "${RPC_PLAN_DIR}" $<TARGET_FILE:rpc_profile_lifecycle_test>)
   set_tests_properties(rpc-profile-counts rpc-profile-runner PROPERTIES TIMEOUT 120)
   if(CMAKE_GENERATOR STREQUAL "Ninja" AND NOT ARCDROID_SANITIZERS)
     add_test(NAME rpc-profile-mutants COMMAND "${Python3_EXECUTABLE}" -B
       "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_profile_mutants.py"
       "${CMAKE_CURRENT_BINARY_DIR}" $<TARGET_FILE:rpc_profile_test> $<TARGET_FILE:rpc_runner>
-      $<TARGET_FILE:arcdroid_rpcplan_libretro> $<TARGET_FILE:arcdroid_libretro> "${RPC_PLAN_DIR}")
+      $<TARGET_FILE:arcdroid_rpcplan_libretro> $<TARGET_FILE:arcdroid_libretro> "${RPC_PLAN_DIR}" $<TARGET_FILE:rpc_profile_lifecycle_test>)
     set_tests_properties(rpc-profile-mutants PROPERTIES TIMEOUT 180 RUN_SERIAL TRUE)
   endif()
 endif()
