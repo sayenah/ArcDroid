@@ -2955,3 +2955,4 @@ if(ARCDROID_RPC_PROFILE AND BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32
     set_tests_properties(rpc-profile-mutants PROPERTIES TIMEOUT 180 RUN_SERIAL TRUE)
   endif()
 endif()
+include(cmake/rpc-lockstep.cmake)

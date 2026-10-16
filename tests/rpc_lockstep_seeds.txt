@@ -1,0 +1,10 @@
+# GPL-2.0-only
+# CI subset: 1 seed x 4 models. local-full adds 7 seeds x 4 models.
+ci 0x0000000000000001
+local-full 0x0000000000000000
+local-full 0x0000000000000007
+local-full 0x0000000000000047
+local-full 0x0000000000012345
+local-full 0x0123456789abcdef
+local-full 0x8000000000000000
+local-full 0xffffffffffffffff
