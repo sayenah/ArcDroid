@@ -23,7 +23,7 @@ def positives():
     private = [".".join(map(str, parts)) for parts in
                [(10, 0, 0, 1), (10, 255, 255, 255), (172, 16, 0, 1),
                 (172, 31, 255, 255), (192, 168, 0, 1)]]
-    homes = ["/" + "Users/" + "example", "/" + "users/example",
+    homes = ["/" + "Users/" + "example", "/" + "Users/" + "another_example",
              "/" + "Users/" + "Example User"]
     windows = ["C:" + "\\Users", "C:" + "\\Users\\" + "example",
                "c:" + "\\\\users\\\\" + "example", "D:" + "/Users/" + "example"]
@@ -41,6 +41,89 @@ def positives():
 
 
 class GuardTest(unittest.TestCase):
+    def test_mac_paths_are_case_sensitive_and_urls_are_scoped(self):
+        local = "/" + "Users/" + "example"
+        for spelling in ("users", "USERS", "uSeRs"):
+            self.assertEqual(GUARD.scan("example", "/" + spelling + "/example", []), [])
+        for scheme in ("https", "http", "HTTPS"):
+            for segment in ("users", "Users"):
+                url = scheme + "://docs.example.test/support/" + segment + "/example/chapter.htm"
+                for citation in (url, "(" + url + ")", '"' + url + '"', "'" + url + "'",
+                                 "`" + url + "`", "<" + url + ">"):
+                    for ending in ("\n", "\r\n"):
+                        with self.subTest(scheme=scheme, segment=segment, citation=citation):
+                            self.assertEqual(GUARD.scan("docs/example.md", citation + ending, []), [])
+                for text in (url + " " + local, local + " " + url,
+                             "(" + url + ")" + local, "`" + url + "`" + local):
+                    self.assertEqual([hit[2] for hit in GUARD.scan("docs/example.md", text, [])],
+                                     ["mac-user-path"])
+        for prefix in ("file://", "https://", "https:", "//docs.example.test"):
+            self.assertIn("mac-user-path", [hit[2] for hit in GUARD.scan("example", prefix + local, [])])
+        for prefix in ("topic_(example)", "topic_(nested_(example))", "topic)"):
+            url = "https://docs.example.test/" + prefix + local
+            self.assertEqual(GUARD.scan("example", url, []), [])
+            if "nested" in prefix:
+                self.assertEqual(GUARD.scan("example", "(" + url + ")", []), [])
+                self.assertIn("mac-user-path", [hit[2] for hit in
+                              GUARD.scan("example", "(" + url + ")" + local, [])])
+        for host in ("docs-2.example.test", "DOCS.example.TEST:443", "docs.example.test:8080"):
+            self.assertEqual(GUARD.scan("example", "https://" + host + local, []), [])
+        # The URL exception applies only to the macOS class.
+        for kind in ("private-ipv4", "windows-user-path", "android-volume"):
+            text = "https://docs.example.test/" + positives()[kind][0]
+            self.assertIn(kind, [hit[2] for hit in GUARD.scan("example", text, [])])
+
+    def test_non_web_links_invalid_hosts_and_separators(self):
+        local = "/" + "Users/" + "example/fixture"
+        rejected = [prefix + local for prefix in (
+            "vscode://file", "file://localhost", "ssh://box", "smb://box.local", "x://y",
+            "example+docs://docs.example.test", "x+https://docs.example.test")]
+        rejected += [scheme + "://" + host + local
+                     for scheme in ("http", "https")
+                     for host in ("localhost", "box", "-docs.example.test", "docs-.example.test",
+                                  "docs..example.test", "docs.example.test_bad",
+                                  "docs.example.test:port", "docs.example.test:443bad")]
+        for separator in (",", ";", "|"):
+            for path in ("", "/support", local):
+                rejected.append("https://docs.example.test" + path + separator + local)
+        with tempfile.TemporaryDirectory(prefix="arcdroid-public-web-boundaries-") as directory:
+            root = Path(directory)
+            (root / "tools").mkdir()
+            (root / "tools/public-text-allowlist.json").write_text('{"entries": []}\n')
+            target = root / "example.md"
+            target.write_text("safe\n")
+            subprocess.run(["git", "init", "-q", str(root)], check=True)
+            subprocess.run(["git", "-C", str(root), "add", "."], check=True)
+            for text in rejected:
+                with self.subTest(text=text):
+                    self.assertIn("mac-user-path", [hit[2] for hit in GUARD.scan("example", text, [])])
+                    target.write_text(text)
+                    result = subprocess.run(
+                        [sys.executable, str(ROOT / "tools/check-public-text.py"), "--root", str(root)],
+                        capture_output=True, text=True)
+                    self.assertEqual(result.returncode, 1)
+                    self.assertIn("mac-user-path", result.stderr)
+                    self.assertNotIn(local, result.stderr)
+
+    def test_cli_accepts_documentation_urls(self):
+        with tempfile.TemporaryDirectory(prefix="arcdroid-public-urls-") as directory:
+            root = Path(directory)
+            (root / "tools").mkdir()
+            (root / "tools/public-text-allowlist.json").write_text('{"entries": []}\n')
+            target = root / "example.md"
+            urls = ["https://docs.example.test/support/" + segment + "/example/chapter.htm"
+                    for segment in ("users", "Users")]
+            target.write_text("\n".join(urls) + "\n")
+            subprocess.run(["git", "init", "-q", str(root)], check=True)
+            subprocess.run(["git", "-C", str(root), "add", "."], check=True)
+            command = [sys.executable, str(ROOT / "tools/check-public-text.py"), "--root", str(root)]
+            result = subprocess.run(command, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            target.write_text("\n".join(urls) + "\n" + "/" + "Users/" + "example")
+            result = subprocess.run(command, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 1)
+            self.assertIn("mac-user-path", result.stderr)
+
     def test_classes_and_boundaries(self):
         for kind, examples in positives().items():
             for example in examples:
