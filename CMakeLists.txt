@@ -2870,6 +2870,9 @@ if(ARCDROID_RPC_PROFILE AND BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32
   if(ARCDROID_SANITIZERS)
     target_link_libraries(rpc_profile_lifecycle_test PRIVATE arcdroid_sanitizer_compile arcdroid_sanitizer_link)
   endif()
+  # Keep the build closure beside the tests; CI builds this single target.
+  add_custom_target(rpc-profile-tests DEPENDS rpc_profile_test rpc_profile_lifecycle_test
+    rpc_runner arcdroid_rpcplan_libretro arcdroid_libretro rpc-plan-fixtures)
   add_test(NAME rpc-profile-runner COMMAND "${Python3_EXECUTABLE}" -B
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_profile_runner_test.py"
     $<TARGET_FILE:rpc_runner> $<TARGET_FILE:arcdroid_rpcplan_libretro>

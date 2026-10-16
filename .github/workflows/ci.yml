@@ -46,7 +46,7 @@ jobs:
       - name: Configure profiling test build
         run: cmake -S . -B build/profile -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DARCDROID_RPC_PROFILE=ON -DCMAKE_C_COMPILER_LAUNCHER=ccache
       - name: Build profiling tests
-        run: cmake --build build/profile --target rpc_profile_test rpc_runner arcdroid_rpcplan_libretro arcdroid_libretro rpc-plan-fixtures
+        run: cmake --build build/profile --target rpc-profile-tests
       - name: Profiling counts, transparency and mutants
         run: ctest --test-dir build/profile --output-on-failure -R '^rpc-profile-'
       - name: ccache statistics
