@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-only
 # Private local evidence only; never committed (protocol §10, PRD FR-68)
 ROMS/
 roms/private/
@@ -8,3 +9,7 @@ roms/private/
 # Local CMake/Ninja output
 build/
 out/
+
+# Private orchestration and local permissions
+.work/
+.claude/settings.local.json

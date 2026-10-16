@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: GPL-2.0-only -->
+
 # ArcDroid Build Protocol
 
 **Status:** Binding build protocol  
@@ -380,7 +382,7 @@ Every ArcDroid session ends through this section. The Founder's machine runs oth
 
 - Exactly one session holds the baton at a time; only the baton holder changes project state.
 - The baton holder is the Architect/Orchestrator and runs **Claude Opus 5.5** (`claude-opus-5-5`) at reasoning effort **`high` or above** (the model sees its effort as a number: `low` = 5, medium = 10, `high` = 15, `max` = `max`). A session cannot change its own model or effort, and `ListAgents` does not show another session's model.
-- **Receipt checks.** A session that receives a relay brief, before any other action, verifies: (1) its own model is Claude Opus 5.5 and its effort is 15 (`high`) or above; (2) its working directory is `/Users/mac0918/dev/ArcDroid`; (3) the relay brief is the first message in its conversation (the window was empty). A session the Founder starts by hand ("pick up from handoff") verifies (1) and (2).
+- **Receipt checks.** A session that receives a relay brief, before any other action, verifies: (1) its own model is Claude Opus 5.5 and its effort is 15 (`high`) or above; (2) its working directory is `/Users/<user>/dev/ArcDroid`; (3) the relay brief is the first message in its conversation (the window was empty). A session the Founder starts by hand ("pick up from handoff") verifies (1) and (2).
 - If every check passes, it takes the baton without asking the Founder to confirm and numbers itself as the next session.
 - If any check fails, it does not take the baton and changes no project state. It states in its own window which check failed. For a wrong model or effort, it tells the Founder to run `/model claude-opus-5-5` and `/effort high` and then say "pick up from handoff". It sends a `PushNotification` and stops.
 

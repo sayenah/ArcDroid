@@ -1,4 +1,5 @@
 #!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-only
 set -eu
 
 command -v grep >/dev/null 2>&1 || {

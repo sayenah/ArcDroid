@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-only
 """Actual boot-observation lookup/publication with a native IDE store."""
 from pathlib import Path
 import subprocess

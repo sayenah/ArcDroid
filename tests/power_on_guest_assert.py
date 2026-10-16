@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-only
 """Guest-visible power-on Shift checks for the authored KART boot ROMs."""
 
 POWER_ON = "Power-on: boot-flag=clear shift=held"

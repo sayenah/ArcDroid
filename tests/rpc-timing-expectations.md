@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: GPL-2.0-only -->
+
 # Memory-system calibration additions (runs E–G)
 
 `rpc_timing_oracle.py` consumes declared model, rate, address and instruction

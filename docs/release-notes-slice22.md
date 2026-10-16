@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: GPL-2.0-only -->
+
 # Slice 22 — ADFFS install path retired
 
 ArcDroid no longer uses per-title ADFFS install recipes, install launchers,

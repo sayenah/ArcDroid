@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: GPL-2.0-only -->
+
 # Slice 23 release notes
 
 - Eligible native applications whose launch ends after a refused floppy write

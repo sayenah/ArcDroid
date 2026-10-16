@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: GPL-2.0-only -->
+
 # R1 non-shipping plan core and runner
 
 The shipping core stays dormant. `arcdroid_libretro_test` retains the existing

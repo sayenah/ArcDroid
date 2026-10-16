@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: GPL-2.0-only -->
+
 # RiscPC memory-system timing contract — R2a run A (D-139)
 
 Status: **accepted by Fable (S57) with rulings**. Grounded at `7bd1f27`,

@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: GPL-2.0-only -->
+
 # 6b Phase 1a: exact interpreter optimisations (D-191)
 
 Status: **adopted (D-191)** with Astra stage 1's seven corrections (end of this file); the reconciled slice work orders go into `docs/handoff.md` once R3c-2 merges and 6b-P0i is rebased, each with its own Astra stage 2. The body below is the S64 read-only research workflow's ranked candidates and draft work order (verified against `7b11b47` by its agents with scratch prototypes on a loaded Mac; nothing in it is gate evidence). This header re-ranks it with the 6b-P0i profile of representative gameplay and states Fable's proposed rulings. Q1 (design objective) is with the Founder; Phase 1a is the same under either answer.

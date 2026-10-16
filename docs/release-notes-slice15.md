@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: GPL-2.0-only -->
+
 # Slice 15 — short raw floppy images
 
 An accepted short raw image is treated as a prefix of its declared disc. With
