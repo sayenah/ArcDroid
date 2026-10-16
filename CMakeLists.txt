@@ -166,6 +166,12 @@ set(ARCDROID_LIBRETRO_SOURCES
 )
 
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
+if(BUILD_TESTING)
+  add_test(NAME rpc-session-build-identity-dependencies COMMAND "${Python3_EXECUTABLE}" -B
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/build_identity_dependencies_test.py"
+    "${CMAKE_BINARY_DIR}/generated/identity-targets-$<CONFIG>.txt")
+  set_tests_properties(rpc-session-build-identity-dependencies PROPERTIES TIMEOUT 30)
+endif()
 set(RPC_BOOT_ASSETS ${CMAKE_CURRENT_BINARY_DIR}/generated/rpc_boot_assets.c)
 add_custom_command(OUTPUT ${RPC_BOOT_ASSETS}
   COMMAND "${Python3_EXECUTABLE}" -B "${CMAKE_CURRENT_SOURCE_DIR}/tools/embed-rpc-boot.py"
@@ -222,7 +228,6 @@ function(arcdroid_add_libretro target shipping)
   endif()
   add_library(${target} SHARED ${ARCDROID_LIBRETRO_SOURCES}
     $<TARGET_OBJECTS:${target}_arculator> $<TARGET_OBJECTS:${target}_rpc>)
-  add_dependencies(${target} arc_build_identity)
   set_property(TARGET ${target} APPEND PROPERTY LINK_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/tools/check-backend-symbols.py"
     "${CMAKE_CURRENT_SOURCE_DIR}/engine/backend-symbols.json")
@@ -2329,7 +2334,6 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
   add_executable(rpc_session_exhaustion_test tests/rpc_session_exhaustion_test.c
     ${ARCDROID_EXHAUSTION_SOURCES}
     $<TARGET_OBJECTS:arcdroid_libretro_arculator> $<TARGET_OBJECTS:arcdroid_libretro_rpc>)
-  add_dependencies(rpc_session_exhaustion_test arc_build_identity)
   target_include_directories(rpc_session_exhaustion_test PRIVATE engine core libretro platform libretro/include third_party/zlib)
   target_compile_definitions(rpc_session_exhaustion_test PRIVATE RELEASE_BUILD=1)
   target_compile_options(rpc_session_exhaustion_test PRIVATE -UNDEBUG -Wall -Wextra -fno-strict-aliasing)

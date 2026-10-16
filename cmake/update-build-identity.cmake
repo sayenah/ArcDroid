@@ -3,10 +3,10 @@ set(ARCDROID_SOURCE_REVISION "${ARC_IDENTITY_REVISION}")
 # .git can be a worktree file. Do not discover a parent checkout for archives.
 if(EXISTS "${ARC_IDENTITY_SOURCE}/.git")
   find_program(ARC_IDENTITY_GIT git REQUIRED)
-  execute_process(COMMAND "${ARC_IDENTITY_GIT}" rev-parse --short=12 HEAD
+  execute_process(COMMAND "${ARC_IDENTITY_GIT}" --no-optional-locks rev-parse --short=12 HEAD
     WORKING_DIRECTORY "${ARC_IDENTITY_SOURCE}" RESULT_VARIABLE revision_result
     OUTPUT_VARIABLE ARCDROID_SOURCE_REVISION OUTPUT_STRIP_TRAILING_WHITESPACE)
-  execute_process(COMMAND "${ARC_IDENTITY_GIT}" status --porcelain --untracked-files=normal
+  execute_process(COMMAND "${ARC_IDENTITY_GIT}" --no-optional-locks status --porcelain --untracked-files=normal
     WORKING_DIRECTORY "${ARC_IDENTITY_SOURCE}" RESULT_VARIABLE status_result
     OUTPUT_VARIABLE dirty OUTPUT_STRIP_TRAILING_WHITESPACE)
   if(NOT revision_result EQUAL 0 OR NOT status_result EQUAL 0)
