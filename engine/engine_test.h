@@ -18,6 +18,8 @@ RETRO_API bool arc_libretro_test_rpc_admit(void);
 RETRO_API bool arc_libretro_test_disc_name(unsigned,ArcGuestName *);
 RETRO_API uint64_t arc_libretro_test_journal_filter_cost(unsigned);
 RETRO_API void arc_libretro_test_plant_cmos(const char *);
+/* phase 0 prepares; phase 1 probes RPC; phase 2 is the Arculator control. */
+RETRO_API bool arc_libretro_test_persistence_guard(unsigned,unsigned,const char *);
 RETRO_API bool arc_engine_test_observers_disc_devices(unsigned forms);
 RETRO_API bool arc_engine_test_observers_error_numbers(ArcErrorNumberClass);
 RETRO_API bool arc_engine_test_observers_firmware(ArcDigest *);

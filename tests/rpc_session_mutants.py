@@ -2,6 +2,7 @@
 """Recreate defective session boundaries; run behavioural oracles. GPL-2.0-only."""
 import json
 import os
+import shutil
 from pathlib import Path
 import subprocess
 import sys
@@ -32,6 +33,26 @@ mutants=[
  ('rpc-reset-policy-owner','libretro/arcdroid_libretro.c','if((arc_kind == ARC_SESSION_KIND_RISCPC) && arc_engine_active()) {','if((arc_kind != ARC_SESSION_KIND_RISCPC) && arc_engine_active()) {'),
  ('rpc-disc-log-policy-owner','libretro/arcdroid_libretro.c','if(!(arc_kind == ARC_SESSION_KIND_RISCPC) || !arc_log)return;','if((arc_kind == ARC_SESSION_KIND_RISCPC) || !arc_log)return;'),
 ]
+# QA Lows: both Arculator callbacks, inter-frame notice lifetime, plan switch,
+# retained terminal status, and one independently observable probe per guard.
+mutants += [
+ ('arc-refusal-only-if-current','engine/arcdroid_engine.c','   arc_arculator_backend.adf_refusal_callback_set(callback);','   if (arc_backend == &arc_arculator_backend) arc_arculator_backend.adf_refusal_callback_set(callback);'),
+ ('arc-log-only-if-current','engine/arcdroid_engine.c','   arc_arculator_backend.set_log_callback(callback, opaque);','   if (arc_backend == &arc_arculator_backend) arc_arculator_backend.set_log_callback(callback, opaque);'),
+ ('refusal-info-every-frame','libretro/arcdroid_libretro.c','else if (arc_rpc_refusal_pending && !arc_rpc_refusal_noticed)','else if (arc_rpc_refusal_pending)'),
+ ('plan-clear-retains-terminal','libretro/arcdroid_libretro.c','arc_plan_terminal[0]=0;arc_plan_terminal_refresh=0;','(void)0;'),
+ ('plan-switch-loses-cmos','libretro/arcdroid_libretro.c','      if (arc_loaded) arc_persist_cmos();',''),
+ ('plan-switch-publishes-seed','libretro/arcdroid_libretro.c','      if (arc_loaded) arc_persist_cmos();','      arc_boot_persist_seed(); arc_persist_cmos();'),
+]
+import re
+front=(root/'libretro/arcdroid_libretro.c').read_text()
+for name in ['arc_sync_cmos','arc_seed_cmos','arc_persist_cmos','arc_boot_persist_seed',
+             'arc_hd_reconcile','arc_boot_record_publish','arc_hd_outcome_boundary',
+             'arc_boot_record_path','arc_launch_binding_publish','arc_construct_machine']:
+    match=re.search(r'(?m)^static [^\n;{}]*\b'+name+r'\([^;{}]*\)\s*\{',front)
+    if match is None:raise RuntimeError('missing guard function '+name)
+    end=front.index('arc_kind != ARC_SESSION_KIND_ARCULATOR',match.end())+len('arc_kind != ARC_SESSION_KIND_ARCULATOR')
+    old=front[match.start():end]
+    mutants.append(('guard-'+name,'libretro/arcdroid_libretro.c',old,old.replace('arc_kind != ARC_SESSION_KIND_ARCULATOR','false')))
 observer_profiles={'rpc-error-policy-owner':'h-error','rpc-reset-policy-owner':'h-error','rpc-disc-log-policy-owner':'h-b'}
 def observer_command(library,profile):
     return [sys.executable,str(root/'tests/rpc_observers_frontend_test.py'),str(observer.resolve()),str(library),str(fixtures),profile]
@@ -39,10 +60,22 @@ for profile in sorted(set(observer_profiles.values())):
     subprocess.run(observer_command(core,profile),check=True,capture_output=True,text=True,timeout=60)
 with tempfile.TemporaryDirectory(prefix='arc-session-mutants-') as directory:
     temp=Path(directory)
+    guard_root=temp/'source-guard'
+    for name in ('core','libretro'):
+        (guard_root/name).mkdir(parents=True)
+        for path in (root/name).glob('*.[ch]'):
+            shutil.copyfile(path,guard_root/name/path.name)
+    guard_command=[sys.executable,'-B',str(root/'tests/rpc_session_source_guard.py'),str(guard_root)]
+    subprocess.run(guard_command,check=True,capture_output=True,text=True,timeout=30)
     for row in mutants:
         label,relative,old,new=row[:4];expected=row[4] if len(row)>4 else 1
         source=root/relative;original=source.read_text()
         if original.count(old)!=expected:raise RuntimeError(f'{label}: anchor count {original.count(old)} != {expected}')
+        if label.startswith('guard-'):
+            (guard_root/relative).write_text(original.replace(old,new))
+            result=subprocess.run(guard_command,capture_output=True,text=True,timeout=30)
+            if not result.returncode:raise RuntimeError('source guard mutant survived: '+label)
+            print('source guard mutant killed: '+label,flush=True)
         target='arcdroid_rpcplan_libretro_rpc' if relative.startswith('engine/rpc/') else 'arcdroid_rpcplan_libretro'
         cc,link=rebuild_commands(commands,source,target,build,os.name=='nt')
         out=temp/(source.stem+'.o');mutated=temp/source.name;library=temp/core.name
@@ -64,7 +97,7 @@ with tempfile.TemporaryDirectory(prefix='arc-session-mutants-') as directory:
             result=subprocess.run([str(video),str(library),'--paths','0'],capture_output=True,text=True,timeout=60)
             killed=result.returncode!=0
         else:
-            try:run(exe,library,fixtures,'probe');killed=False
+            try:run(exe,library,fixtures,'guards' if label.startswith('guard-') else 'qa-lows' if label in ('arc-refusal-only-if-current','arc-log-only-if-current','plan-switch-loses-cmos','plan-switch-publishes-seed') else 'probe');killed=False
             except RuntimeError:killed=True
         if not killed:raise RuntimeError('session mutant survived: '+label)
         print('session mutant killed: '+label,flush=True)
@@ -83,4 +116,4 @@ with tempfile.TemporaryDirectory(prefix='arc-session-id-mutants-') as directory:
         result=subprocess.run([str(binary)],capture_output=True,timeout=30)
         if not result.returncode:raise RuntimeError('allocator mutant survived: '+label)
         print('session allocator mutant killed: '+label,flush=True)
-print('Equivalent isolated reversions: frontend policy predicates to the lifecycle-aware engine query after successful admission; raw observer installation at either one of its two RPC sites; CMOS persistence guard (the retained record cannot decode against the RPC plan and sync is guarded); sync/seed/HD/boot/outcome guards behind the admission and dispatch guards. These cannot recreate stale backend identity alone; the stopped/failed-start/chooser behavioural mutations above and the source guard cover their boundaries.')
+print('Equivalent isolated reversions: frontend policy predicates to the lifecycle-aware engine query after successful admission; raw observer installation at either one of its two RPC sites; these cannot recreate stale backend identity alone. The ten persistence guard reversions now have independent behavioural killers. Removing only the explicit RPC release notice clear is masked by preparation_free calling the same clear; the retained-terminal mutation tests that operation directly; the stopped/failed-start/chooser behavioural mutations above and the source guard cover their boundaries.')

@@ -27,6 +27,14 @@ int main(int argc,char **argv)
     (void)mkdir(argv[1],0700);
 #endif
     assert(canonical(argv[1],save_directory));
+    /* Existing ancestors are observations, not permission to mutate outside
+     * --save. The lock namespace walk relies on RetroArch's -2 result. */
+    char ancestor[4096];
+    assert(canonical(".",ancestor) && !below_save(ancestor));
+    assert(vfs.mkdir(ancestor)==-2 && vfs.mkdir(save_directory)==-2);
+    char denied[4096];
+    assert(snprintf(denied,sizeof(denied),"%s/arcdroid-vfs-refused-child",ancestor)<(int)sizeof(denied));
+    assert(vfs.stat(denied,NULL)==0 && vfs.mkdir(denied)==-1 && vfs.stat(denied,NULL)==0);
     char path[4096];int n=snprintf(path,sizeof(path),"%s/size-test",argv[1]);
     assert(n>0&&(size_t)n<sizeof(path));
     uint8_t data[32]={0};
