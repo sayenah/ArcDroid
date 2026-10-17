@@ -960,6 +960,10 @@ static uint64_t phase_session=123456788;
 static ArcRpcLaunchController phase_controller;
 static uint32_t phase_tag[3];
 static unsigned phase_revalidations,phase_changes,phase_aborts;
+static unsigned phase_consumptions,phase_boundaries;
+static bool phase_retirement_callbacks,phase_boundary_missing,phase_boundary_result;
+static void phase_consumed(void *opaque) {(void)opaque;++phase_consumptions;}
+static bool phase_boundary(void *opaque) {(void)opaque;++phase_boundaries;return phase_boundary_result;}
 static void phase_valid(void *opaque) {(void)opaque;++phase_revalidations;}
 static void phase_changed(void *opaque) {(void)opaque;++phase_changes;}
 static void phase_aborted(void *opaque,ArcRpcAttemptInterrupt reason)
@@ -973,6 +977,8 @@ static void phase_prepare(void)
     assert(arc_riscpc_controller_build(&plan,&token,&phase_controller));
     memcpy((uint8_t *)ram00+0x20000,phase_controller.image,phase_controller.size);
     ArcRpcLaunchBinding binding={&phase_attempt,&phase_controller,phase_valid,NULL,phase_changed,phase_aborted};
+    if(phase_retirement_callbacks){binding.consumed=phase_consumed;
+        if(!phase_boundary_missing)binding.boundary=phase_boundary;}
     assert(arc_rpc_observers_attempt(&binding));assert(!arc_rpc_observers_attempt(&binding));
 }
 static void phase_bind(CPUModel model,unsigned cells)
@@ -988,6 +994,30 @@ static void phase_marker(unsigned event,unsigned sequence,unsigned detail)
     uint32_t *w=ram00+(0x20000+phase_controller.status)/4;w[8]=event;w[9]=sequence;w[10]=detail;
     arm.reg[4]=phase_tag[0];arm.reg[5]=phase_tag[1];arm.reg[6]=phase_tag[2];
     phase_swi(0x10020000+phase_controller.query,0x20006,0,1,0,0x10020000+phase_controller.status);
+}
+static void phase_retirement(CPUModel model)
+{
+    /* An unowned or refused consume creates no retirement. An applied one
+     * calls its owner exactly once, independently of cells, and propagates
+     * the boundary's success/failure while clearing the obligation. */
+    phase_bind(model,0);phase_marker(1,1,0);
+    assert(phase_attempt.delivery==ARC_RPC_DELIVERY_CONSUMED && !arc_rpc_observer_boundary_pending);
+    phase_retirement_callbacks=true;
+    for(unsigned kind=0;kind<3;++kind){
+        phase_boundary_missing=kind==2;phase_boundary_result=kind==0;
+        phase_bind(model,kind==1?3:0);phase_consumptions=phase_boundaries=0;
+        assert(arc_rpc_observers_boundary() && !phase_boundaries);
+        phase_marker(1,1,1); /* Refused detail, still PREPARED. */
+        assert(!phase_consumptions && !arc_rpc_observer_boundary_pending);
+        phase_marker(1,1,0);
+        assert(phase_attempt.delivery==ARC_RPC_DELIVERY_CONSUMED && phase_consumptions==1);
+        assert(arc_rpc_observer_boundary_pending);
+        assert(arc_rpc_observers_boundary()==(kind==0));
+        assert(!arc_rpc_observer_boundary_pending && phase_boundaries==(kind==2?0u:1u));
+        assert(arc_rpc_observers_boundary() && phase_boundaries==(kind==2?0u:1u));
+        phase_marker(1,1,0);assert(phase_consumptions==1 && !arc_rpc_observer_boundary_pending);
+    }
+    phase_retirement_callbacks=phase_boundary_missing=false;
 }
 static void phase_dispatch(void)
 {
@@ -1357,6 +1387,6 @@ int main(int argc,char **argv)
         ordered_found_cases((CPUModel)model);overflow_eviction_cases((CPUModel)model);
         suppression_recovery_cases((CPUModel)model);quiet_recovery_cases((CPUModel)model);quiet_overflow_found_case((CPUModel)model);
         differential_cases((CPUModel)model,1,8);
-        resolve_count=observe_count=trigger_count=0;sustained_error_cases((CPUModel)model);number_cases((CPUModel)model);phase_cases((CPUModel)model);phase_refusals((CPUModel)model);phase_retry_cases((CPUModel)model);}
+        resolve_count=observe_count=trigger_count=0;sustained_error_cases((CPUModel)model);number_cases((CPUModel)model);phase_cases((CPUModel)model);phase_refusals((CPUModel)model);phase_retry_cases((CPUModel)model);phase_retirement((CPUModel)model);}
     arc_rpc_observer_retire(false);arc_rpc_memory_close();puts("RPC observers: authored four-CPU error/disc/phase matrix");return 0;
 }

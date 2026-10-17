@@ -8322,6 +8322,96 @@
       "replacement": "(void)0;",
       "transition": "rollback terminal stopped transition",
       "verified": "killed"
+    },
+    {
+      "source": "engine/rpc/rpc_observers.c",
+      "group": "adapter",
+      "function": "status_event",
+      "line": 186,
+      "start": 9722,
+      "end": 9730,
+      "expression": "accepted",
+      "verified": "killed"
+    },
+    {
+      "source": "engine/rpc/rpc_observers.c",
+      "group": "adapter",
+      "function": "status_event",
+      "line": 186,
+      "start": 9734,
+      "end": 9756,
+      "expression": "state.binding.consumed",
+      "verified": "killed"
+    },
+    {
+      "source": "engine/rpc/rpc_observers.c",
+      "group": "adapter",
+      "function": "arc_rpc_observers_boundary",
+      "line": 632,
+      "start": 36998,
+      "end": 37032,
+      "expression": "!arc_rpc_observer_boundary_pending",
+      "verified": "killed"
+    },
+    {
+      "source": "engine/rpc/rpc_observers.c",
+      "group": "adapter",
+      "function": "arc_rpc_observers_boundary",
+      "line": 634,
+      "start": 37102,
+      "end": 37124,
+      "expression": "state.binding.boundary",
+      "verified": "killed"
+    },
+    {
+      "source": "engine/rpc/rpc_observers.c",
+      "group": "adapter",
+      "function": "arc_rpc_observers_boundary",
+      "line": 634,
+      "start": 37128,
+      "end": 37172,
+      "expression": "state.binding.boundary(state.binding.opaque)",
+      "verified": "killed"
+    },
+    {
+      "source": "libretro/rpc_preparation.c",
+      "group": "preparation",
+      "function": "launch_boundary",
+      "line": 297,
+      "start": 15762,
+      "end": 15784,
+      "expression": "!p->retirement_pending",
+      "verified": "killed"
+    },
+    {
+      "source": "libretro/rpc_preparation.c",
+      "group": "preparation",
+      "function": "launch_boundary",
+      "line": 298,
+      "start": 15805,
+      "end": 15825,
+      "expression": "!p->generated_helper",
+      "verified": "killed"
+    },
+    {
+      "source": "libretro/rpc_preparation.c",
+      "group": "preparation",
+      "function": "launch_boundary",
+      "line": 298,
+      "start": 15829,
+      "end": 15894,
+      "expression": "!arc_riscpc_helper_build(p->generated_helper,ARC_RPC_HELPER_SIZE)",
+      "verified": "killed"
+    },
+    {
+      "source": "libretro/rpc_preparation.c",
+      "group": "preparation",
+      "function": "launch_boundary",
+      "line": 299,
+      "start": 15906,
+      "end": 15967,
+      "expression": "!arc_engine_rpc_mount(1,&p->helper,p->error,sizeof(p->error))",
+      "verified": "killed"
     }
   ],
   "equivalent": {},
@@ -8358,7 +8448,7 @@
     "tests/rpc_launch_record_store_test.c": "a58387c7a037c09df62d45e1258b578d0546e2b3063769ab0c313cf91abaabc7"
   },
   "verified_counts": {
-    "killed": 822,
+    "killed": 831,
     "killed-timeout": 1
   },
   "audit_inputs_latest": {
@@ -8375,5 +8465,31 @@
     "tests/rpc_launch_product_test.c": "4c41a0db9154710683e5310f80ae657704c6649f9913d986892baf7ddf47309c",
     "tests/rpc_launch_test.c": "a234337b41b7f42bc243b8f9202b2b7dbf29390df9da8bf935e20b1398a96091",
     "tests/rpc_launch_record_store_test.c": "a58387c7a037c09df62d45e1258b578d0546e2b3063769ab0c313cf91abaabc7"
+  },
+  "audit_run_f": {
+    "operator": "negation",
+    "ids": [
+      823,
+      824,
+      825,
+      826,
+      827,
+      828,
+      829,
+      830,
+      831
+    ],
+    "compiled": 9,
+    "killed": 9,
+    "existing_entries_unchanged": 823,
+    "source_pins_unchanged": 14,
+    "inputs": {
+      "tests/rpc_launch_predicates.py": "c8f87d3dce1ed5e76d4a56d6ea02c5bd190529863f07026b700a70e579d9cadf",
+      "tests/rpc_observers_test.c": "f21cee30094d7fb34f7fb5c3331608c8aa79ac4b819a9b1f5126566c2f4cedc6",
+      "tests/rpc_orchestration_test.c": "a6149439ad5f9ba526aebf07c0150d4267a75fa759d0cc396abf4a0bdf3422a8",
+      "tests/rpc_launch_frame_test.py": "dd0ae50a8368fb606e4059b5da8a5358a8ff5ae30234e4d3a8dc469bb5cdfbc4",
+      "tests/rpc_launch_controller_test.c": "5aa360ff0193e1fc558c9dc5470089fad398212568eaff63150800787d166562",
+      "tests/rpc_launch_delivery_mutants.py": "e648660d969d1eb77b29b170aea029a0fe0029d3c6091f71b12007188157fc9d"
+    }
   }
 }

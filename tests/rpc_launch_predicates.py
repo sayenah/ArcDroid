@@ -18,9 +18,9 @@ SCOPE={
  'libretro/rpc_cmos_store.c':('cmos',{'arc_riscpc_cmos_two_floppies'}),
  'engine/arc_boot_watch.c':('boot',set()),
  'engine/arc_launch_outcome.c':('outcome',set()),
- 'engine/rpc/rpc_observers.c':('adapter',{'ram','authored','status_event','attempt_event','prompt_end','arc_rpc_observers_attempt','arc_rpc_observers_attempt_input','arc_rpc_observers_attempt_interrupt'}),
+ 'engine/rpc/rpc_observers.c':('adapter',{'ram','authored','status_event','attempt_event','prompt_end','arc_rpc_observers_boundary','arc_rpc_observers_attempt','arc_rpc_observers_attempt_input','arc_rpc_observers_attempt_interrupt'}),
  'core/launch_discovery.c':('product',{'arc_rpc_directory_identity','arc_rpc_run_valid','arc_rpc_discovery_read','arc_launch_discover_rpc'}),
- 'libretro/rpc_preparation.c':('preparation',{'product_read','product_step','launch_aborted','arc_riscpc_preparation_reset','arc_riscpc_preparation_helper_override','arc_riscpc_preparation_helper_write_policy','arc_riscpc_preparation_execution_allowed','arc_riscpc_preparation_interrupt'}),
+ 'libretro/rpc_preparation.c':('preparation',{'product_read','product_step','launch_aborted','launch_boundary','arc_riscpc_preparation_reset','arc_riscpc_preparation_helper_override','arc_riscpc_preparation_helper_write_policy','arc_riscpc_preparation_execution_allowed','arc_riscpc_preparation_interrupt'}),
  'libretro/arcdroid_libretro.c':('frontend',{'arc_rpc_plan_media_identity'}),
  'core/rpc_boot_filecore.c':('filecore',{'read_bits','arc_boot_layout_accept'}),
  'core/rpc_launch_helper.c':('carrier',{'arc_riscpc_helper_carrier'}),
@@ -148,6 +148,7 @@ def main():
   write_inventory(root,a.inventory,entries)
  else:
   entries=checked_inventory(root)
+  audited=json.loads((root/'tests/rpc_launch_predicates.json').read_text(encoding='utf-8'))
  if not a.results:return
  audit_files=[Path(__file__).resolve(),*sorted((root/'tests').glob('rpc_*audit.inc')),
   *[root/'tests'/name for name in ('rpc_launch_publication_test.py','rpc_launch_controller_guest.py','rpc_orchestration_test.c','core_tests.c','rpc_observers_frontend_test.c','rpc_launch_product_test.c','rpc_launch_test.c','rpc_launch_record_store_test.c')]]

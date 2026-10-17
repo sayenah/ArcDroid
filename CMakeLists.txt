@@ -2832,8 +2832,10 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
       "${CMAKE_CURRENT_BINARY_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}" "${FIXTURE_DIR}" ${RPC_ORCHESTRATION_MUTANT_PROFILE})
     set_tests_properties(rpc-orchestration-mutants PROPERTIES RUN_SERIAL TRUE)
     if(WIN32)
-      # W4: Windows CI timed out at 300.16 s; ceil(2*300.16/60)*60.
-      set_property(TEST rpc-orchestration-mutants PROPERTY TIMEOUT 660)
+      # W4, run E (8d8a0dd, CI 39060700553): host/arm64/Windows
+      # 357.28/302.30/456.96 s. Windows exceeds 60% of 660 s;
+      # ceil(2*456.96/60)*60 = 960 s. Never reduce an existing bound.
+      set_property(TEST rpc-orchestration-mutants PROPERTY TIMEOUT 960)
     else()
       # W4: 296.26 s worst observed in CI; ceil(2*296.26/60)*60.
       set_property(TEST rpc-orchestration-mutants PROPERTY TIMEOUT 600)
@@ -2946,6 +2948,11 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
     $<TARGET_FILE:rpc_runner> $<TARGET_FILE:arcdroid_rpcplan_libretro>
     $<TARGET_FILE:rpc_launch_controller_test> "${FIXTURE_DIR}")
   set_tests_properties(rpc-launch-publication PROPERTIES TIMEOUT 600)
+  add_test(NAME rpc-launch-frame-retirement COMMAND "${Python3_EXECUTABLE}" -B
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_launch_frame_test.py"
+    $<TARGET_FILE:rpc_runner> $<TARGET_FILE:arcdroid_rpcplan_libretro>
+    $<TARGET_FILE:rpc_launch_controller_test> $<TARGET_FILE:rpc_launch_helper_test>)
+  set_tests_properties(rpc-launch-frame-retirement PROPERTIES TIMEOUT 600)
   add_test(NAME rpc-launch-mutation-inventory COMMAND "${Python3_EXECUTABLE}" -B
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_launch_predicates.py"
     "${CMAKE_CURRENT_BINARY_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}" "${FIXTURE_DIR}")

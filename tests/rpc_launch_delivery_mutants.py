@@ -58,6 +58,13 @@ groups = [
  ('engine/rpcemu/src/arm.c', 'rpc_orchestration_test', None, [
   ('retirement-instruction-yield','if(arc_rpc_observer_boundary_pending)count=(unsigned)linecyc+1;', '(void)0;'),
  ]),
+ ('engine/rpc/rpc_session.c', 'arcdroid_rpcplan_libretro', 'frame', [
+  ('frame-skips-boundary', 'arc_rpc_advance(16666667u, true)', 'arc_rpc_advance_internal(16666667u, true)'),
+  ('session-batch-break', 'if (completed || arc_rpc_observer_boundary_pending) break;', 'if (completed) break;'),
+ ]),
+ ('core/rpc_launch_helper.c', 'rpc_launch_controller_test', [], [
+  ('carrier-oldid', 'out[507]=0x45;', ''),
+ ]),
  ('engine/rpc/rpc_observers.c', 'rpc_orchestration_test', None, [
   ('abort-owner-notification', 'if(old.aborted)old.aborted(old.opaque,reason);', ''),
  ]),
@@ -83,19 +90,21 @@ with tempfile.TemporaryDirectory(prefix='arc-launch-mutants-') as temp:
  temp = Path(temp)
  for relative, target, args, mutants in groups:
   source = root/relative
-  test_source = source if args=='plan' else root/'tests'/('rpc_launch_test.c' if target == 'rpc_launch_test' else target+'.c')
+  test_source = root/'tests/arc_test_plan.c' if args=='frame' else source if args=='plan' else root/'tests'/('rpc_launch_test.c' if target == 'rpc_launch_test' else target+'.c')
   _, link = rebuild_commands(commands, test_source, target, build, os.name == 'nt')
   compile = next(r.copy() for r in rows if '-c' in r and
                  same_path(r[r.index('-c')+1], source, build, os.name == 'nt') and
                  (relative.startswith('core/') or any(same_path(x,r[r.index('-o')+1],build,os.name=='nt') for x in link if x.endswith(('.o','.obj')))))
   original = source.read_text(); old_obj = compile[compile.index('-o')+1]
-  obj = temp/'mutant.o'; c = temp/source.name; exe = temp/('mutant.dll' if args=='plan' and os.name=='nt' else 'mutant.exe' if os.name == 'nt' else 'mutant')
+  obj = temp/'mutant.o'; c = temp/source.name; exe = temp/('mutant.dll' if args in ('plan','frame') and os.name=='nt' else 'mutant.exe' if os.name == 'nt' else 'mutant')
   compile[compile.index('-c')+1] = str(c); compile[compile.index('-o')+1] = str(obj)
+  compile += ['-I', str(source.parent)]
   if '-MF' in compile: compile[compile.index('-MF')+1] = str(temp/'mutant.d')
   direct = any(same_path(x, old_obj, build, os.name == 'nt') for x in link if x.endswith(('.o','.obj')))
   if direct: link = [str(obj) if same_path(x, old_obj, build, os.name == 'nt') else x for x in link]
   else: link.insert(link.index('-o'), str(obj))
   link[link.index('-o')+1] = str(exe)
+  link = ['-Wl,--out-implib,'+str(temp/'mutant.dll.a') if x.startswith('-Wl,--out-implib,') else x for x in link]
   for label, old, new in [('baseline', None, None), *mutants]:
    text = original
    if old:
@@ -106,6 +115,11 @@ with tempfile.TemporaryDirectory(prefix='arc-launch-mutants-') as temp:
    subprocess.run(link, cwd=build, check=True, capture_output=True)
    extension='.dll' if os.name=='nt' else '.dylib' if sys.platform=='darwin' else '.so'
    command = [sys.executable,'-B',str(root/'tests/rpc_boot_plan_test.py'),str(build/('rpc_cmos_plan_test.exe' if os.name=='nt' else 'rpc_cmos_plan_test')),str(exe),str(build/('rpc_runner.exe' if os.name=='nt' else 'rpc_runner')),str(build/('arcdroid_libretro'+extension)),str(root/'tests/rpc_ide_rom.py'),str(fixtures)] if args=='plan' else [sys.executable,'-B',str(root/'tests/rpc_launch_controller_guest.py'),str(build/'rpc_runner'),str(build/('arcdroid_rpcplan_libretro'+extension)),str(exe)] if args=='guest' else [str(exe), *args] if args is not None else [sys.executable, '-B', str(root/'tests/rpc_orchestration_test.py'), str(exe), str(fixtures), 'launch']
+   if args=='frame':
+    command = [sys.executable, '-B', str(root/'tests/rpc_launch_frame_test.py'),
+     str(build/('rpc_runner.exe' if os.name=='nt' else 'rpc_runner')), str(exe),
+     str(build/('rpc_launch_controller_test.exe' if os.name=='nt' else 'rpc_launch_controller_test')),
+     str(build/('rpc_launch_helper_test.exe' if os.name=='nt' else 'rpc_launch_helper_test'))]
    injected=label.startswith('inject-retirement-')
    if injected:command[-1]='retirement-failure'
    result = subprocess.run(command, cwd=build, capture_output=True, text=True, timeout=180)

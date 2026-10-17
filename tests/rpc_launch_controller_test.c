@@ -24,6 +24,12 @@ int main(int argc,char **argv)
     uint32_t entry;assert(arc_riscpc_helper_descriptor(c.image,c.size,&entry) && entry==64);
     assert(!memcmp(c.image+c.plan,"ARCRLPLN\2\0\0\0",12));
     assert(!strcmp((char *)c.image+c.command,c.text));
+    /* D-204: pin each OldId independently of allocation/checksum differences. */
+    uint8_t *carrier=malloc(ARC_RPC_HELPER_SIZE);assert(carrier);
+    assert(arc_riscpc_helper_carrier(carrier,ARC_RPC_HELPER_SIZE,c.image,c.size));
+    assert(carrier[507]==0x45 && carrier[508]==0x41);
+    assert(arc_riscpc_helper_build(carrier,ARC_RPC_HELPER_SIZE));
+    assert(carrier[507]==0x44 && carrier[508]==0x41);free(carrier);
     if(argc==4 && !strcmp(argv[1],"--bound")){write_file(argv[2],c.image,c.size);return 0;}
     if(argc>2 && (!strcmp(argv[1],"--write") || !strcmp(argv[1],"--write-ramfs"))){write_file(argv[2],c.image,c.size);return 0;}
     if(argc>3 && !strcmp(argv[1],"--app")){uint8_t *disc=malloc(ARC_RPC_HELPER_SIZE);assert(disc);

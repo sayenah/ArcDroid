@@ -539,6 +539,7 @@ static void retirement_cases(const uint8_t *rom,size_t size,ArcRpcPreparationHos
         uint8_t controller_sector[256],id_before[256],id_after[256];
         helper_sector(7,controller_sector);assert(!memcmp(controller_sector,c.image,256));
         helper_sector(1,id_before);
+        assert(id_before[251]==0x45 && id_before[252]==0x41);
         assert(!arc_rpc_observer_boundary_pending); /* never retire PREPARED */
         memcpy((uint8_t *)ram00+0x20000,c.image,c.size);
         if(kind==1)arc_rpc_observers_frame(UINT64_C(120000000));
@@ -600,6 +601,7 @@ static void retirement_cases(const uint8_t *rom,size_t size,ArcRpcPreparationHos
             arm=saved;pccache=UINT32_MAX;
         }
         mounted_noop();helper_sector(1,id_after);assert(memcmp(id_before,id_after,256));
+        assert(id_after[251]==0x44 && id_after[252]==0x41);
         /* Status validation keeps the controller object even after remount. */
         if(kind!=1 && kind!=3){launch_marker(&c,2,2,42);launch_marker(&c,3,3,0);
             arc_riscpc_preparation_attempt(p,&a);assert(a.delivery==ARC_RPC_DELIVERY_DISPATCH);}
