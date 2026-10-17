@@ -5,6 +5,7 @@
 #endif
 #include "rpc_preparation.h"
 #include "install_disc.h"
+#include "rpc_launch_helper.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -33,6 +34,7 @@ struct ArcRpcPreparation {
     ArcRpcFirmwareFingerprint fingerprint;
     unsigned verified_catalogue;
     char sha1[41],save[1024],system[1024],source[1024],media_path[1024],helper_path[1024],seed_path[1024],error[512];
+    uint8_t *generated_helper;
     uint8_t *firmware,seed[256],captured[256],block[131072];
     ArcEngineMedia media,helper;
     ArcRpcCmosStore record,defaults;
@@ -80,6 +82,7 @@ static void snapshot_cmos(uint8_t payload[240])
 static void release(ArcRpcPreparation *p)
 {
     arc_engine_stop(); /* Detach IDE and both borrowed media before any free. */
+    free(p->generated_helper);p->generated_helper=NULL;
     if (p->boot) { arc_riscpc_boot_free(p->boot); p->boot=NULL; }
     if (p->import) { (void)arc_io_close_file(p->import);p->import=NULL; }
     if (p->disc) { arc_riscpc_hd_close(p->disc);p->disc=NULL; }
@@ -223,6 +226,9 @@ static void unit(ArcRpcPreparation *p)
         if(o==ARC_RPC_HD_UNSUPPORTED||o==ARC_RPC_HD_CORRUPT||o==ARC_RPC_HD_UNAVAILABLE){failed(p,arc_riscpc_hd_outcome_notice(o));break;}
         if(p->request.populate && o==ARC_RPC_HD_LEGACY){failed(p,"The RiscPC hard disc is without a creation receipt; files have been preserved.");break;}
         if(p->source[0] && o!=ARC_RPC_HD_UNPUBLISHED){failed(p,"RiscPC hd_import refused: published store");break;}
+        ArcRpcHdReceipt receipt;
+        if(arc_riscpc_hd_receipt(p->disc,&receipt) && receipt.authored_revision==1)
+            notice(p,"This RiscPC hard disc uses startup revision 1; launch delivery is unavailable. Manual input remains available.",false);
         p->needs_population=o==ARC_RPC_HD_UNPUBLISHED;p->receipted=o==ARC_RPC_HD_RECEIPTED;
         if(p->request.populate && p->needs_population){
             p->boot=arc_riscpc_boot_begin(p->disc,p->system,p->error,sizeof(p->error));
@@ -342,9 +348,25 @@ static void unit(ArcRpcPreparation *p)
             else if(done){if(p->host.started)p->host.started(p->host.opaque,false);p->substep=2;}
             break;
         }
+        if(p->substep==2){
+            ArcRpcHdReceipt r;
+            if(p->request.populate && !p->request.helper && !p->request.helper_override &&
+               arc_riscpc_hd_receipt(p->disc,&r) && r.authored_revision==2){
+                p->generated_helper=malloc(ARC_RPC_HELPER_SIZE);
+                if(!p->generated_helper || !arc_riscpc_helper_build(p->generated_helper,ARC_RPC_HELPER_SIZE)){
+                    failed(p,"RiscPC helper construction failed");break;
+                }
+                p->stats.helper_bytes=ARC_RPC_HELPER_SIZE;
+                p->helper=(ArcEngineMedia){.writable=false,.kind=ARC_MEDIA_ADL_640K,
+                    .geometry=ARC_GEOMETRY_640K_L,.data=p->generated_helper,.size=ARC_RPC_HELPER_SIZE,
+                    .effective_extent=ARC_MEDIA_EXTENT_UNRESTRICTED};
+            }
+            p->substep=3;break;
+        }
+        const ArcEngineMedia *helper=p->generated_helper?&p->helper:p->request.helper;
         ArcIdeBackend ide={0};if(p->disc)arc_riscpc_hd_backend(p->disc,&ide);
         arc_io_measure_begin();
-        bool attached=arc_engine_rpc_attach(p->request.media,p->request.helper,p->disc?&ide:NULL,p->error,sizeof(p->error)) &&
+        bool attached=arc_engine_rpc_attach(p->request.media,helper,p->disc?&ide:NULL,p->error,sizeof(p->error)) &&
             (!p->host.attach||p->host.attach(p->host.opaque,p->error,sizeof(p->error)));
         if(!attached)arc_engine_stop(); /* Include partial media cleanup in the census. */
         ArcIoMeasurement io=arc_io_measure_end();
@@ -384,12 +406,12 @@ ArcRpcPreparationState arc_riscpc_preparation_frame(ArcRpcPreparation *p)
     bool generation=p->state==ARC_RPC_PREP_GENERATE,faulty=false;
     p->stats.steps=p->stats.generation_quanta=p->stats.namespace_units=p->stats.attachment_units=0;p->stats.namespace_attempts=0;
     p->stats.attachment_operations=p->stats.attachment_bytes=p->stats.attachment_namespace=0;
-    p->stats.estimated_ns=0;
+    p->stats.estimated_ns=0;p->stats.helper_bytes=0;
     p->stats.budget_ns=generation?ARC_RPC_GENERATION_BUDGET_NS:ARC_RPC_PREP_OFFLINE_BUDGET_NS;
     refresh(p,true);
     while(p->state<ARC_RPC_PREP_RUNNING && p->stats.steps<ARC_RPC_PREP_STEPS){
         if((p->state==ARC_RPC_PREP_GENERATE)!=generation)break;
-        bool ns=next_namespace(p),attachment=p->state==ARC_RPC_PREP_START && p->substep==2;
+        bool ns=next_namespace(p),attachment=p->state==ARC_RPC_PREP_START && p->substep==3;
         bool advance=generation && p->substep==1;
         unsigned kind=cost_kind(p,advance);
         uint64_t ceiling=advance?ARC_RPC_GENERATION_UNIT_NS:ns||attachment?ARC_RPC_PREP_NAMESPACE_UNIT_NS:ARC_RPC_PREP_UNIT_NS;

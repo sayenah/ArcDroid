@@ -562,6 +562,30 @@ RETRO_API void arc_engine_test_observers_binding(unsigned requested,unsigned *ca
 { if(requested!=UINT32_MAX)arc_engine_rpc_observers_bind(requested);arc_rpc_observers_test_binding(catalogue,cpu); }
 RETRO_API bool arc_engine_test_observers_identities(char helper[11],char hd[11])
 { return arc_rpc_observers_identities(helper,hd); }
+static bool gate_release_failed;
+static void gate_release_fault(void *opaque,const ArcRpcObservation *e)
+{
+    (void)opaque;
+    if(gate_release_failed || e->registers[0]!=0x1d)return;
+    uint32_t active=1,magic=0,version=0,length=0;
+    uint32_t workspace=e->registers[2];
+    if(workspace<252 || e->registers[1]!=workspace-236 ||
+        !arc_rpc_inspect_word(workspace-252,e->privileged,&magic) || magic!=0x31524741u ||
+        !arc_rpc_inspect_word(workspace-248,e->privileged,&version) || version!=1 ||
+        !arc_rpc_inspect_word(workspace-244,e->privileged,&length) || length!=256 ||
+        !arc_rpc_inspect_word(workspace,e->privileged,&active) || active)return;
+    uint32_t result[13]={0};
+    if(arc_rpc_observer_complete(ARC_RPC_OBS_BOOT,e->order,e->epoch,
+        arc_rpc_observer_generation(ARC_RPC_OBS_BOOT),1,result,0x10000000u))gate_release_failed=true;
+}
+void arc_engine_test_gate_release_fault(bool enabled)
+{
+    gate_release_failed=false;
+    if(!enabled || !arc_engine_is_rpc())return;
+    ArcRpcObserveFilter f={.swi=0x20020,.swi_mask=0xffffff,.modes=UINT32_MAX,
+        .registers=7,.results=1,.kinds=ARC_RPC_OBS_SWI,.callback=gate_release_fault};
+    (void)arc_rpc_observer_test_filter(ARC_RPC_OBS_BOOT,&f);
+}
 bool arc_engine_test_refuse(const char *facility) { return arc_rpc_test_refuse(facility); }
 void arc_engine_test_observation_profile(bool unmatched,unsigned quota)
 {

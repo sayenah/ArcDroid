@@ -1,0 +1,186 @@
+10 REM ArcDroid revision-2 startup gate; GPL-2.0-only.
+20 REM Fixed ABI, RMA ownership and bounds: docs/riscpc-launch-gate.md.
+30 DIM imageblock% 8195,ackblock% 35,diagblock% 67,lookupblock% 515
+32 image%=(imageblock%+3) AND NOT 3:ack%=(ackblock%+3) AND NOT 3:diag%=(diagblock%+3) AND NOT 3
+33 lookup%=(lookupblock%+3) AND NOT 3
+34 valid%=0:bytes%=0:flags%=0:guard%=0:workspace%=0:fresh%=0:published%=0:releasebad%=0:sequence%=0
+35 FOR i%=0 TO 60 STEP 4:diag%!i%=0:NEXT
+36 !diag%=&53435241:diag%!4=1:diag%!8=64
+37 ON ERROR GOTO 700
+38 SYS "XOS_ReadMonotonicTime" TO now%:!ack%=now%
+39 SYS "XOS_SetVarVal","ArcGate$Entry",ack%,4,0,1:PROCdiag(1,now%,0)
+40 SYS "XOS_ReadVarVal","ArcGate$Guard",ack%,&80000000,0,0 TO ,,got%;flags%
+41 IF got%=0 THEN GOTO 45
+42 IF got%<>-5 THEN GOTO 950
+43 SYS "XOS_ReadVarVal","ArcGate$Guard",ack%,4,0,0 TO ,,got%,,type%;flags%
+44 IF (flags% AND 1)<>0 OR got%<>4 OR type%<>1 THEN GOTO 950 ELSE GOTO 400
+45 SYS "XOS_Module",6,,,256 TO ,,guard%;flags%
+46 IF (flags% AND 1)<>0 THEN guard%=0:GOTO 950
+47 fresh%=1:code%=guard%+16:workspace%=guard%+252:!workspace%=0
+48 !guard%=&31524741:guard%!4=1:guard%!8=256:guard%!12=0
+50 FOR pass%=0 TO 2 STEP 2
+60 P%=code%
+70 [OPT pass%
+80 .upcall
+82 STMFD R13!,{R0}
+84 LDR R0,[R12]
+86 CMP R0,#0
+88 LDMFD R13!,{R0}
+89 BEQ onward
+90 CMP R0,#256
+100 MOVEQ R0,#0
+110 LDMEQFD R13!,{PC}
+120 CMP R0,#4
+130 LDMEQFD R13!,{PC}
+140 CMP R0,#1
+150 BEQ medium
+160 CMP R0,#2
+170 BNE onward
+180 .medium
+190 CMP R1,#8
+200 MVNEQ R0,#0
+210 LDMEQFD R13!,{PC}
+220 .onward
+230 MOVS PC,R14
+240 ]
+250 NEXT
+260 SYS &2006D,0 TO features%;flags%
+263 IF (flags% AND 1)<>0 THEN features%=0
+270 flags%=0:IF fresh%<>0 AND (features% AND 1)<>0 THEN SYS &2006E,1,code%,P%-4 TO ;flags%
+275 IF (flags% AND 1)<>0 THEN GOTO 700
+276 IF fresh%=0 THEN GOTO 280
+277 !ack%=guard%:SYS "XOS_SetVarVal","ArcGate$Guard",ack%,4,0,1 TO ;flags%
+278 IF (flags% AND 1)<>0 THEN GOTO 700
+279 published%=1
+280 PROCassemblelookup
+285 flags%=0:IF (features% AND 1)<>0 THEN SYS &2006E,1,lookup%,lookupend%-4 TO ;flags%
+287 IF (flags% AND 1)<>0 THEN GOTO 700
+290 A%=image%:B%=workspace%:C%=ack%
+300 CALL lookup%
+310 bytes%=!ack%:valid%=ack%!4:releasebad%=ack%!8
+370 GOTO 700
+400 guard%=!ack%
+410 SYS "XOS_ReadDynamicArea",1 TO rma%,rmasize%;flags%
+420 IF (flags% AND 1)<>0 OR (guard% AND 3)<>0 OR guard%<rma% OR guard%>rma%+rmasize%-256 THEN guard%=0:GOTO 950
+430 IF !guard%<>&31524741 OR guard%!4<>1 OR guard%!8<>256 OR guard%!12<>0 THEN guard%=0:GOTO 950
+440 code%=guard%+16:workspace%=guard%+252:published%=1:!workspace%=0:GOTO 260
+700 REM Native lookup has already deactivated, released and closed.
+705 IF workspace%<>0 THEN !workspace%=0
+710 ON ERROR GOTO 700
+715 SYS "XOS_Byte",124
+735 IF guard%<>0 AND published%=0 THEN oldguard%=guard%:guard%=0:workspace%=0:SYS "XOS_Module",7,,oldguard%
+750 REM An injected ReleaseV failure leaves only passive independently owned RMA.
+760 ON ERROR GOTO 950
+770 IF valid%=0 THEN GOTO 950
+780 IF !image%<>&52435241 OR image%!4<>&31504C48 THEN GOTO 950
+790 IF image%!8<>1 OR image%!12<>64 OR image%!16<>bytes% THEN GOTO 950
+800 IF image%!20<>1 OR image%!24<>1 THEN GOTO 950
+810 entry%=image%!28:plan%=image%!44:plen%=image%!48
+820 IF entry%<64 OR entry%>bytes%-4 OR (entry% AND 3)<>0 THEN GOTO 950
+830 IF image%!32<>1 OR image%!36<>1 OR image%!40<>1 THEN GOTO 950
+840 IF plan%<entry%+4 OR plan%>bytes% OR (plan% AND 3)<>0 THEN GOTO 950
+850 IF plen%<0 OR plen%>bytes%-plan% THEN GOTO 950
+860 IF image%!52<>0 OR image%!56<>0 OR image%!60<>0 THEN GOTO 950
+870 FOR i%=0 TO 28 STEP 4:ack%!i%=0:NEXT
+880 !ack%=&314B4341:ack%!4=1
+885 flags%=0:IF (features% AND 1)<>0 THEN SYS &2006E,1,image%,image%+bytes%-4 TO ;flags%
+887 IF (flags% AND 1)<>0 THEN GOTO 950
+890 A%=image%:B%=bytes%:C%=ack%:D%=1
+900 CALL image%+entry%
+910 result%=ack%!12:IF result%<0 OR result%>7 THEN result%=0
+920 PROCdiag(3,result%,0)
+950 ON ERROR OFF
+951 SYS "XOS_ReadMonotonicTime" TO now%:!ack%=now%
+952 SYS "XOS_SetVarVal","ArcGate$Return",ack%,4,0,1
+954 PROCdiag(2,now%,releasebad%)
+960 END
+1000 DEF PROCdiag(event%,detail0%,detail1%)
+1010 sequence%+=1:diag%!32=event%:diag%!36=sequence%:diag%!40=detail0%:diag%!44=detail1%
+1020 SYS "XOS_Byte",0,1,0,diag%,&53435241,64,0
+1030 ENDPROC
+1100 DEF PROCassemblelookup
+1110 FOR pass%=0 TO 2 STEP 2
+1120 P%=lookup%
+1130 [OPT pass%
+1140 .lookup
+1150 STMFD R13!,{R4-R12,R14}
+1160 MOV R6,R0
+1170 MOV R5,R1
+1180 MOV R7,R2
+1190 MOV R8,#0
+1200 MOV R9,#0
+1210 MOV R10,#0
+1220 MOV R11,#0
+1230 MOV R0,#&1D
+1240 SUB R1,R5,#236
+1250 MOV R2,R5
+1260 SWI &2001F
+1270 BVS cleanup
+1280 .claimed
+1290 MOV R0,#1
+1300 STR R0,[R5]
+1310 .active
+1320 MOV R0,#&4F
+1330 ADR R1,helperpath
+1340 SWI &2000D
+1350 BVS cleanup
+1360 .opened
+1370 MOV R8,R0
+1380 CMP R8,#0
+1390 BEQ cleanup
+1400 MOV R0,#2
+1410 MOV R1,R8
+1420 SWI &20009
+1430 BVS cleanup
+1440 .sized
+1450 MOV R9,R2
+1460 CMP R9,#68
+1470 BCC cleanup
+1480 CMP R9,#8192
+1490 BHI cleanup
+1500 TST R9,#3
+1510 BNE cleanup
+1520 MOV R0,#4
+1530 MOV R1,R8
+1540 MOV R2,R6
+1550 MOV R3,R9
+1560 MOV R4,#0
+1570 SWI &2000C
+1580 BVS cleanup
+1590 .read
+1600 CMP R3,#0
+1610 MOVEQ R10,#1
+1620 .cleanup
+1630 MOV R0,#0
+1640 STR R0,[R5]
+1650 .deactivated
+1660 MOV R0,#&1D
+1670 SUB R1,R5,#236
+1680 MOV R2,R5
+1690 SWI &20020
+1700 MOVVS R11,#1
+1710 MOVVS R10,#0
+1720 .released
+1730 CMP R8,#0
+1740 BEQ finished
+1750 MOV R1,R8
+1760 MOV R8,#0
+1770 MOV R0,#0
+1780 SWI &2000D
+1790 MOVVS R10,#0
+1800 .closed
+1810 .finished
+1820 STR R9,[R7]
+1830 STR R10,[R7,#4]
+1840 STR R11,[R7,#8]
+1850 LDMFD R13!,{R4-R12,R14}
+1860 EQUD &E10F3000
+1870 TST R3,#16
+1880 MOVEQS PC,R14
+1890 MOVNE PC,R14
+1900 .helperpath
+1910 EQUS "ADFS::1.$.ArcHelper"+CHR$(0)
+1920 ]
+1930 P%=(P%+3) AND NOT 3:lookupend%=P%
+1940 NEXT
+1950 ENDPROC

@@ -2,8 +2,8 @@
 
 # RPC observation primitives (R3c-1, D-174/D-175)
 
-The adapter is owned by the single RPC session. Production has an empty
-qualification table: firmware recognition is never observation authority.
+The adapter is owned by the single RPC session. Production enables only individually qualified firmware/CPU/profile cells;
+firmware recognition alone is never observation authority.
 Observer slots are boot, launch, error and disc; sub-capabilities are observation,
 answer completion and media replacement. Records key catalogue entry, CPU pair,
 profile and sub-capability, and carry an explicit disabled reason. Test profiles
@@ -519,3 +519,29 @@ Ordinary watch-loss recovery through user Wimp_Poll/PollIdle remains unchanged
 when this control-form latch is absent. Watch-renewal failure cancels its watch
 before retiring policy eligibility. Routine disc reasons use neutral names
 (`path-other`, `outcome-not-miss`) on both shipping decision-log fields.
+
+## R3c-3a Run B: authored scalar status transport
+
+The test trace passively recognizes XOS_Byte/OS_Byte's documented machine-type
+query (R0=0, R1=1, R2=0), with R4=ARCS and R5=64. R3 points to the aligned,
+bounded ARCS block specified in `riscpc-launch-gate.md`; R6 must match its role.
+Only after all sixteen RAM/VRAM words validate does schema 2 set `status_valid`
+and copy role, event, sequence, 64-bit token/epoch and two scalar details into
+`status`. Invalid blocks leave those fields zero. No status pointer, block bytes,
+ROM data or path is emitted. Registers R3..R12 remain zero in these trace rows.
+The kernel and ByteV chain still execute their ordinary query unchanged.
+Role 0 diagnostics and role 1 reserved attempt events remain distinct; the
+trace does not implement an attempt consumer or infer delivery.
+
+The test-only `gate_release_fail=once` plan key injects V on the first exact
+UpCallV XOS_Release after its workspace is already inactive. The injector uses
+the existing synchronous completion boundary through the engine test interface;
+it introduces no fault jump or shipping API. Persistent test plans bind the
+recognized firmware's existing qualification table after final attachment,
+matching seed plans; low-level production preparation admission is unchanged.
+
+`observation_status=authored` is an optional test trace selector that suppresses
+untagged OS_Byte traffic before recording or inspection. Other explicitly
+selected SWIs are unchanged. It requires trace admission and accepts no other
+value. Qualification uses it to avoid collecting ordinary error-box key polls;
+the public fixture verifies identical guest results and identical status data.

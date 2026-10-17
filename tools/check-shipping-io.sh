@@ -10,6 +10,7 @@ command -v grep >/dev/null 2>&1 || {
 sources='core/adffs.c
 core/install_disc.c
 core/rpc_boot_filecore.c
+core/rpc_launch_helper.c
 core/hash.c
 core/hash_accel.inc
 core/hash_accel.h

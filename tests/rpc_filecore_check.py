@@ -56,19 +56,22 @@ def directory_checksum(data, count):
     return (value ^ (value >> 8) ^ (value >> 16) ^ (value >> 24)) & 255
 
 
-def filename(raw):
+def filename(raw, guest=False):
     # CR padding; allow all printable Latin-1 except FileCore path/syntax chars.
     name = raw.split(b'\r', 1)[0]
+    if guest:
+        name = raw[:next((i for i, c in enumerate(raw) if c <= 32), len(raw))]
     require(name and len(name) <= 10, 'name length')
-    require(raw[len(name):] == b'\r' * (len(raw) - len(name)), 'name padding')
+    require(guest or raw[len(name):] == b'\r' * (len(raw) - len(name)), 'name padding')
     require(all(c >= 33 and c != 127 and c not in b'.:*#$&@^%\\' for c in name),
             'name characters')
     return name.decode('latin1')
 
 
 class Reader:
-    def __init__(self, read):
+    def __init__(self, read, guest=False):
         self.read = read
+        self.guest = guest
         self.extents = []  # (zone, start bit, end bit, id, physical byte)
         self.used = []
         self.tree = {}
@@ -117,7 +120,10 @@ class Reader:
         require(integer(record, 44) == 0, 'format version')
         data = self.exact(MAP, 2560)
         require(data == self.exact(MAP + 2560, 2560), 'map copies')
-        require(data[4:64] == record, 'disc-record copies / boot option')
+        map_record = data[4:64]
+        require(map_record == record if not self.guest else
+                map_record[:20] == record[:20] and map_record[22:] == record[22:],
+                'disc-record copies / boot option')
         require(data[3] ^ data[515] ^ data[1027] ^ data[1539] ^ data[2051] == 255,
                 'map cross-check')
         free_bytes = 0
@@ -192,22 +198,25 @@ class Reader:
     def walk(self, address=0x20b, path='$', parent=0x20b, depth=0):
         require(depth <= 32 and path not in self.tree, 'directory depth / cycle')
         data = self.object_data(address, 2048)
-        require(data[:5] == b'\x01Nick' and data[2042:2047] == b'\x01Nick',
+        require(data[1:5] == b'Nick' and data[2043:2047] == b'Nick' and
+                data[0] == data[2042] and (self.guest or data[0] == 1),
                 'directory signature / sequence')
         require(integer(data, 2010, 3) == parent, 'directory parent')
-        name = filename(data[2032:2042]) if path != '$' else '$'
+        name = filename(data[2032:2042], self.guest) if path != '$' else '$'
         require(name == path.rsplit('.', 1)[-1], 'directory name')
         count = 0
         while count < 77 and data[5 + count * 26]:
             count += 1
-        require(not any(data[5 + count * 26:2008]), 'directory end / 78 entries')
+        require(data[5 + count * 26] == 0 and
+                (self.guest or not any(data[5 + count * 26:2008])),
+                'directory end / 78 entries')
         require(data[2047] == directory_checksum(data, count), 'directory checksum')
         self.tree[path] = {'directory': True}
         self.claim(address, 2048, path, parent, True)
         previous = b''
         for entry in range(count):
             raw = data[5 + entry * 26:31 + entry * 26]
-            name = filename(raw[:10])
+            name = filename(raw[:10], self.guest)
             folded = raw[:len(name)].upper()
             require(previous < folded, 'FileCore order / duplicate')
             previous = folded
@@ -263,8 +272,8 @@ class Reader:
             require(len({e[4] for e in neighbours}) <= 1, 'sharing across parents')
 
 
-def check(read, boot_option=0):
-    reader = Reader(read).maps().walk()
+def check(read, boot_option=0, guest=False):
+    reader = Reader(read, guest=guest).maps().walk()
     require(reader.boot_option == boot_option, 'boot option')
     require({e[3] for e in reader.extents} == {e[2] for e in reader.used},
             'unreferenced allocated object')

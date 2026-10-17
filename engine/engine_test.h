@@ -37,6 +37,7 @@ void arc_engine_test_observation_trace(bool,bool);
 bool arc_engine_test_observation_select(const ArcRpcTraceSelection *);
 bool arc_engine_test_refuse(const char *);
 void arc_engine_test_observation_profile(bool,unsigned);
+void arc_engine_test_gate_release_fault(bool);
 void arc_engine_test_observation_drain(ArcRpcTraceSink,void *);
 RETRO_API void arc_engine_test_observation_status(ArcRpcTraceStatus *);
 /* Model order: ARM610, ARM710, SA-110, ARM7500. Rate zero selects the

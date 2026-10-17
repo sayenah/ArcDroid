@@ -66,10 +66,14 @@ def run(exe,core,fixtures,mode,profile="full"):
 
 if __name__=='__main__':
     exe,core,fixtures=sys.argv[1:4];profile=sys.argv[4] if len(sys.argv)>4 else "full"
-    if len(sys.argv)>5:
+    # The optional argument is either a focused probe mode or the independent
+    # baseline library used by the allocation-census switching comparison.
+    modes=('fresh','switch','probe','guards','qa-lows','leak-check','projection','switch-projection')
+    if len(sys.argv)>5 and sys.argv[5] in modes:
         print(run(exe,core,fixtures,sys.argv[5],profile)[1],end='')
     else:
-        fresh,_,_=run(exe,core,fixtures,'fresh',profile);switched,output,_=run(exe,core,fixtures,'switch',profile)
+        baseline=sys.argv[5] if len(sys.argv)>5 else core
+        fresh,_,_=run(exe,baseline,fixtures,'fresh',profile);switched,output,_=run(exe,core,fixtures,'switch',profile)
         check(len(fresh)==1 and fresh==switched,f'{fresh} != {switched}')
         print(output,end='')
         print('plan-core frontend: fresh-process trace, running/terminal/generation/fault, chooser/failed-load, persistence, callbacks, cycles and IDs passed')
