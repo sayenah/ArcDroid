@@ -5,7 +5,7 @@
 #include "rpc_profile.h"
 static uint64_t test_clock(void) { static uint64_t now;return now+=10; }
 static ArcRpcProfile counts(void)
-{ ArcRpcProfile p;arc_rpc_profile_snapshot(&p);return p; }
+{ ArcRpcProfile p;arc_rpc_profile_snapshot_v3(&p,ARC_RPC_COUNTER_ABI,sizeof(p));return p; }
 static void profile_fixture(uint32_t pc,unsigned stride)
 {
     arc_rpc_observer_retire(false);arc_rpc_mem_bind(NULL,0,0);

@@ -106,7 +106,7 @@ static void measurement_state(void)
 
 static uint64_t value(unsigned index) {
 #if defined(ARCDROID_RPC_PROFILE)
-    ArcRpcProfile p;arc_rpc_profile_snapshot(&p);
+    ArcRpcProfile p;arc_rpc_profile_snapshot_v3(&p,ARC_RPC_COUNTER_ABI,sizeof(p));
     assert(p.ranking.values[index]==arc_rpc_exercise.values[index]);
 #endif
     return arc_rpc_exercise.values[index];
@@ -114,26 +114,48 @@ static uint64_t value(unsigned index) {
 static void lookup_counts(void)
 {
     for(unsigned maintenance=0;maintenance<2;++maintenance){
-        init(2,100);Cache c={0};c.sets=1;c.ways=4;c.shift=4;
+        init(2,100);Cache *c=&m.data;
         unsigned base=maintenance?ARC_RPC_COUNT_lookup_maintenance_empty:ARC_RPC_COUNT_lookup_access_empty;
-        assert(!LOOKUP(&c,0x100,maintenance));assert(value(base)==1 && !value(base+3));
-        c.populated=1;c.tags[3]=(Tag){0x10,0x100,1,0};
-        assert(LOOKUP(&c,0x100,maintenance)==&c.tags[3]);
+        assert(!LOOKUP(c,0x1000,maintenance));assert(value(base)==1 && !value(base+3));
+        c->populated=1;tag_write(c,3,(Tag){0x80,0x1000,1,0});
+        assert(LOOKUP(c,0x1000,maintenance)==&c->tags[3]);
         assert(value(base+2)==1 && value(base+3)==4 && value(base+4)==4 && value(base+5)==1);
         unsigned ways=maintenance?ARC_RPC_COUNT_MAINTENANCE_WAYS:ARC_RPC_COUNT_ACCESS_WAYS;
         assert(value(ways+3)==1);
-        assert(!LOOKUP(&c,0x200,maintenance));assert(value(base+1)==1 && value(base+3)==8);
+        assert(!LOOKUP(c,0x2000,maintenance));assert(value(base+1)==1 && value(base+3)==36);
     }
+}
+static void l1_counts(void)
+{
+    init(0,100);Cache *c=&m.instruction;c->populated=1;
+    tag_write(c,3,(Tag){0,0,1,0});
+    assert(LOOKUP(c,0,false)==&c->tags[3]);
+    assert(value(ARC_RPC_COUNT_l1_hint_accepted)==1);
+    lookup_side(c)->hints[hint_index(c,0)]=255;
+    assert(LOOKUP(c,0,false)==&c->tags[3]);
+    assert(value(ARC_RPC_COUNT_l1_hint_rejected)==1);
+    assert(value(ARC_RPC_COUNT_l1_mirror_search)==1);
+    /* Recheck failures are unreachable with an exact mirror. This explicit
+     * white-box corruption tests its diagnostic increment, never poison mode. */
+    lookup_side(c)->keys[0]=0;lookup_side(c)->hints[hint_index(c,0)]=255;
+    assert(!LOOKUP(c,0,false));
+    assert(value(ARC_RPC_COUNT_l1_mirror_recheck_failed)==1);
+    lookup_side(c)->keys[0]=UINT32_MAX;lookup_side(c)->gate=1;
+    lookup_side(c)->hints[hint_index(c,0)]=255;
+    assert(LOOKUP(c,0,false)==&c->tags[3]);
+    assert(value(ARC_RPC_COUNT_l1_linear_fallback)==1);
+    assert(value(ARC_RPC_COUNT_l1_hint_rejected)==3);
+    assert(value(ARC_RPC_COUNT_l1_mirror_search)==2);
 }
 static void maintenance_callsite(void)
 {
     init(2,100);arc_rpc_mem_fast.recording=true;
     arc_rpc_mem_maintenance(7,1,6,0x10008000);
     assert(value(ARC_RPC_COUNT_lookup_maintenance_empty)==1);
-    m.data.populated=1;m.data.tags[3]=(Tag){0x10008000>>5,0x10008000,1,0};
+    m.data.populated=1;tag_write(&m.data,3,(Tag){0x10008000>>5,0x10008000,1,0});
     arc_rpc_mem_maintenance(7,1,6,0x10008000);
     assert(value(ARC_RPC_COUNT_lookup_maintenance_hit)==1 && value(ARC_RPC_COUNT_lookup_maintenance_hit_probes)==4);
-    m.data.populated=1;m.data.tags[3]=(Tag){0,0,1,0};
+    m.data.populated=1;tag_write(&m.data,3,(Tag){0,0,1,0});
     arc_rpc_mem_maintenance(7,1,6,0x10008000);
     assert(value(ARC_RPC_COUNT_lookup_maintenance_miss)==1 && value(ARC_RPC_COUNT_lookup_maintenance_probes)==36);
 }
@@ -216,6 +238,7 @@ static void excluded_counters(void)
     init(2,100);ArcRpcMeasureState a,b;arc_rpc_mem_measure_state(&a);
     unsigned char before[sizeof(m)+sizeof(arc_rpc_mem_fast)],after[sizeof(before)];
     assert(arc_rpc_mem_observation_snapshot(before,sizeof(before))==sizeof(before));
+    assert(arc_rpc_mem_l1_state(false));assert(!arc_rpc_mem_l1_state(true));
     ARC_RPC_COUNT(service_s1,1);arc_rpc_mem_measure_state(&b);
     assert(arc_rpc_mem_measure_equal(&a,&b));
     assert(arc_rpc_mem_observation_snapshot(after,sizeof(after))==sizeof(after));
@@ -223,7 +246,8 @@ static void excluded_counters(void)
     assert(arc_rpc_mem_endpoint(2,3,true));issue(false,false);
     arc_rpc_exercise_path=2;arc_rpc_mem_bind(NULL,0,0);
     arc_rpc_mem_measure_state(&b);assert(arc_rpc_mem_measure_equal(&a,&b));assert(!arc_rpc_exercise_path);
+    assert(arc_rpc_mem_l1_state(false));
     for(unsigned i=0;i<ARC_RPC_COUNT_TOTAL;++i)assert(!value(i));
 }
-int main(void) { intervals();measurement_state();lookup_counts();maintenance_callsite();fill_counts();endpoint_shortcut();service_counts();excluded_counters();
+int main(void) { intervals();measurement_state();lookup_counts();l1_counts();maintenance_callsite();fill_counts();endpoint_shortcut();service_counts();excluded_counters();
     puts("exercise counters: lookup outcomes/ways/probes, service classes/finish validity, fill regions, shortcut commit/rollback, exclusion/reset");return 0; }

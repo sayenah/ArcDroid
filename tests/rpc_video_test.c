@@ -17,6 +17,15 @@ static void *library;
 static void *symbol(const char *name) { return dlsym(library,name); }
 #endif
 #define LOAD(var,name) do { void *p=symbol(name);assert(p);memcpy(&var,&p,sizeof(var)); } while(0)
+static const char *(*reference_status)(uint64_t *,uint64_t *);
+static void reference_check(void)
+{
+    if(reference_status){
+        uint64_t calls,failed;const char *field=reference_status(&calls,&failed);
+        if(field || failed){fprintf(stderr,"RPC cross-check mismatch: %s (%llu/%llu)\n",
+            field?field:"unnamed",(unsigned long long)failed,(unsigned long long)calls);abort();}
+    }
+}
 static bool (*admit_frontend)(void);
 static bool (*start_rpc)(ArcRpcModel,const uint8_t *,size_t,const uint8_t *,uint64_t,char *,size_t);
 static void (*status_rpc)(ArcRpcVideoStatus *);
@@ -31,7 +40,7 @@ static ArcInputState input;
 static char error[256];
 static unsigned logs;
 static void log_message(void *p,const char *s) { (void)p;assert(strstr(s,"clipped"));++logs; }
-static ArcRpcVideoStatus status(void) { ArcRpcVideoStatus s;status_rpc(&s);return s; }
+static ArcRpcVideoStatus status(void) { ArcRpcVideoStatus s;reference_check();status_rpc(&s);return s; }
 static uint32_t ram(unsigned offset) { uint32_t w;assert(read_ram(0x20000+offset,&w));return w; }
 static void start(unsigned model,const struct RpcVideoGuest *guest)
 {
@@ -49,7 +58,7 @@ static ArcEngineFrame frame(void)
     /* Uncached A7000 setup may span several ordinary frontend frames. The
      * oracle qualifies complete fields; no raster is omitted after startup. */
     unsigned attempts=0;
-    do { assert(api->run_frame(&input,&f)); assert(++attempts<=16); } while(!f.field_completed);
+    do { assert(api->run_frame(&input,&f)); reference_check();assert(++attempts<=16); } while(!f.field_completed);
     assert(f.field_completed&&f.pixels&&f.width&&f.height&&f.pitch==8192);
     assert(!api->faulted(NULL));return f;
 }
@@ -352,7 +361,10 @@ int main(int argc,char **argv)
 #else
     library=dlopen(argv[1],RTLD_NOW|RTLD_LOCAL);
 #endif
-    assert(library);LOAD(admit_frontend,"arc_libretro_test_rpc_admit");LOAD(start_rpc,"arc_rpc_test_start");LOAD(status_rpc,"arc_rpc_test_video_status");
+    assert(library);
+    void *reference=symbol("arc_rpc_crosscheck_status");
+    if(reference)memcpy(&reference_status,&reference,sizeof(reference_status));
+    LOAD(admit_frontend,"arc_libretro_test_rpc_admit");LOAD(start_rpc,"arc_rpc_test_start");LOAD(status_rpc,"arc_rpc_test_video_status");
     LOAD(bus_ns,"arc_rpc_test_video_bus_ns");LOAD(snapshot_rpc,"arc_rpc_test_snapshot");LOAD(read_ram,"arc_rpc_test_read_ram");
     LOAD(fail_alloc,"arc_rpc_test_fail_alloc");LOAD(engine_api,"arc_rpc_test_engine_api");api=engine_api();
     if(!strcmp(argv[2],"--paths"))paths(model);

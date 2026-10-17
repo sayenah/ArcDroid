@@ -240,13 +240,13 @@ Read-only vetting at `1f4bbae` with scratch prototypes on a loaded Mac (`.work/s
 
 The draft table retains its explicitly labelled `7b11b47` prototype locations
 and results. For follow-on work use the current definitions below, refreshed
-with 1a-0; no fast path is implemented here.
+at the L1 implementation (2026-10-17); S1 will shift them again.
 
 | Candidate | Current reference path |
 |---|---|
-| L1 | `engine/rpc/rpc_mem_timing.c:293` (lookup), `engine/rpc/rpc_mem_timing.c:518` (access caller), `engine/rpc/rpc_mem_timing.c:604` (maintenance caller) |
-| S1 / B2 | `engine/rpc/rpc_mem_timing.c:894` (service), `engine/rpc/rpc_mem_timing.c:768` (commands), `engine/rpc/rpc_mem_timing.c:802` (resumable run) |
-| B3 | `engine/rpc/rpc_mem_timing.c:660`, `engine/rpc/rpc_mem_timing.c:943`, `engine/rpc/rpc_mem_timing.c:964` |
+| L1 | `engine/rpc/rpc_mem_timing.c:367` (lookup), `engine/rpc/rpc_mem_timing.c:647` (access caller), `engine/rpc/rpc_mem_timing.c:749` (maintenance caller) |
+| S1 / B2 | `engine/rpc/rpc_mem_timing.c:1047` (service), `engine/rpc/rpc_mem_timing.c:921` (commands), `engine/rpc/rpc_mem_timing.c:955` (resumable run) |
+| B3 | `engine/rpc/rpc_mem_timing.c:813`, `engine/rpc/rpc_mem_timing.c:1096`, `engine/rpc/rpc_mem_timing.c:1117` |
 | A1 / F1 | `engine/rpcemu/src/cp15.c:390`, `engine/rpcemu/src/cp15.c:471` |
 | A1 accesses | `engine/rpcemu/src/mem.c:704`, `engine/rpcemu/src/mem.c:722` |
 | D1 / D2 | `engine/rpcemu/src/arm.c:619`, `engine/rpcemu/src/arm.c:620` |
