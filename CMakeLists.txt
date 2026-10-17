@@ -3196,3 +3196,4 @@ if(ANDROID AND ARCDROID_ANDROID_TEST_CORE)
   target_compile_options(rpc_endpoint_cpu_test PRIVATE -UNDEBUG -fno-strict-aliasing
     -include ${CMAKE_CURRENT_SOURCE_DIR}/engine/rpc/rpc_namespace.h)
 endif()
+include(cmake/rpc-lockstep.cmake)

@@ -1,0 +1,1444 @@
+{
+  "license": "GPL-2.0-only",
+  "review": "Run D R-2: independent reviewed policy. Update only with an adjudicated rule change, never regenerate as part of a test.",
+  "reviewed_conditions": [
+    {
+      "name": "a10_condition_1",
+      "fields": [
+        "observer.owners.filter.swi",
+        "observer.owners.filter.swi_mask",
+        "observer.owners.filter.modes",
+        "observer.owners.filter.registers",
+        "observer.owners.filter.results",
+        "observer.owners.filter.kinds",
+        "observer.owners.filter.callback",
+        "observer.owners.filter.opaque",
+        "observer.owners.filter.swis",
+        "observer.owners.filter.swi_count",
+        "observer.owners.answer",
+        "observer.owners.value",
+        "observer.owners.answer_order"
+      ],
+      "condition": {
+        "field": "observer.owners.armed",
+        "index": "i"
+      },
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "citation": "docs/riscpc-6b-m2a.md:A-10; docs/riscpc-translator-invariants.md:2.2"
+    },
+    {
+      "name": "a10_condition_2",
+      "fields": [
+        "observer.watches.wait_return",
+        "observer.watches.owner",
+        "observer.watches.id",
+        "observer.watches.generation",
+        "observer.watches.deadline",
+        "observer.watches.pc",
+        "observer.watches.mode",
+        "observer.watches.sp"
+      ],
+      "condition": {
+        "field": "observer.watches.live",
+        "index": "i"
+      },
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "citation": "docs/riscpc-6b-m2a.md:A-10; docs/riscpc-translator-invariants.md:2.2"
+    },
+    {
+      "name": "a10_condition_3",
+      "fields": [
+        "observer.work.observer",
+        "observer.work.generation",
+        "observer.work.epoch",
+        "observer.work.media_generation",
+        "observer.work.helper_generation",
+        "observer.work.ns",
+        "observer.work.previous_ns",
+        "observer.work.kind",
+        "observer.work.operation",
+        "observer.work.continuation",
+        "observer.work.sp",
+        "observer.work.watch",
+        "observer.work.size"
+      ],
+      "condition": {
+        "lt": [
+          {
+            "div": [
+              {
+                "index": true
+              },
+              1
+            ]
+          },
+          {
+            "field": "observer.work_count"
+          }
+        ]
+      },
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "citation": "docs/riscpc-6b-m2a.md:A-10; docs/riscpc-translator-invariants.md:2.2"
+    },
+    {
+      "name": "a10_condition_4",
+      "fields": [
+        "observer.work.bytes"
+      ],
+      "condition": {
+        "and": [
+          {
+            "lt": [
+              {
+                "div": [
+                  {
+                    "index": true
+                  },
+                  256
+                ]
+              },
+              {
+                "field": "observer.work_count"
+              }
+            ]
+          },
+          {
+            "lt": [
+              {
+                "mod": [
+                  {
+                    "index": true
+                  },
+                  256
+                ]
+              },
+              {
+                "field": "observer.work.size",
+                "index": {
+                  "div": [
+                    {
+                      "index": true
+                    },
+                    256
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "citation": "docs/riscpc-6b-m2a.md:A-10; docs/riscpc-translator-invariants.md:2.2"
+    },
+    {
+      "name": "a10_condition_5",
+      "fields": [
+        "scheduler.deadlines"
+      ],
+      "condition": {
+        "field": "scheduler.armed",
+        "index": "i"
+      },
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "citation": "docs/riscpc-6b-m2a.md:A-10; docs/riscpc-translator-invariants.md:2.2"
+    },
+    {
+      "name": "a10_condition_6",
+      "fields": [
+        "memory.instruction.tags.va",
+        "memory.instruction.tags.physical",
+        "memory.instruction.tags.dirty"
+      ],
+      "condition": {
+        "field": "memory.instruction.tags.valid",
+        "index": "i"
+      },
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "citation": "docs/riscpc-6b-m2a.md:A-10; docs/riscpc-translator-invariants.md:2.2"
+    },
+    {
+      "name": "a10_condition_7",
+      "fields": [
+        "memory.data.tags.va",
+        "memory.data.tags.physical",
+        "memory.data.tags.dirty"
+      ],
+      "condition": {
+        "field": "memory.data.tags.valid",
+        "index": "i"
+      },
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "citation": "docs/riscpc-6b-m2a.md:A-10; docs/riscpc-translator-invariants.md:2.2"
+    },
+    {
+      "name": "a10_condition_8",
+      "fields": [
+        "memory.command.kind",
+        "memory.command.count",
+        "memory.command.index",
+        "memory.command.writes",
+        "memory.command.force_n",
+        "memory.command.locked",
+        "memory.command.fetch",
+        "memory.command.fill"
+      ],
+      "condition": {
+        "lt": [
+          {
+            "mod": [
+              {
+                "add": [
+                  {
+                    "div": [
+                      {
+                        "index": true
+                      },
+                      1
+                    ]
+                  },
+                  128,
+                  {
+                    "neg": [
+                      {
+                        "field": "memory.head"
+                      }
+                    ]
+                  }
+                ]
+              },
+              128
+            ]
+          },
+          {
+            "field": "memory.count"
+          }
+        ]
+      },
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "citation": "docs/riscpc-6b-m2a.md:A-10; docs/riscpc-translator-invariants.md:2.2"
+    },
+    {
+      "name": "a10_condition_9",
+      "fields": [
+        "memory.command.width",
+        "memory.command.address"
+      ],
+      "condition": {
+        "and": [
+          {
+            "lt": [
+              {
+                "mod": [
+                  {
+                    "add": [
+                      {
+                        "div": [
+                          {
+                            "index": true
+                          },
+                          16
+                        ]
+                      },
+                      128,
+                      {
+                        "neg": [
+                          {
+                            "field": "memory.head"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  128
+                ]
+              },
+              {
+                "field": "memory.count"
+              }
+            ]
+          },
+          {
+            "lt": [
+              {
+                "mod": [
+                  {
+                    "index": true
+                  },
+                  16
+                ]
+              },
+              {
+                "field": "memory.command.count",
+                "index": {
+                  "div": [
+                    {
+                      "index": true
+                    },
+                    16
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "citation": "docs/riscpc-6b-m2a.md:A-10; docs/riscpc-translator-invariants.md:2.2"
+    },
+    {
+      "name": "a10_condition_10",
+      "fields": [
+        "memory.buffer.kind",
+        "memory.buffer.count",
+        "memory.buffer.index",
+        "memory.buffer.writes",
+        "memory.buffer.force_n",
+        "memory.buffer.locked",
+        "memory.buffer.fetch",
+        "memory.buffer.fill"
+      ],
+      "condition": {
+        "lt": [
+          {
+            "mod": [
+              {
+                "add": [
+                  {
+                    "div": [
+                      {
+                        "index": true
+                      },
+                      1
+                    ]
+                  },
+                  8,
+                  {
+                    "neg": [
+                      {
+                        "field": "memory.bhead"
+                      }
+                    ]
+                  }
+                ]
+              },
+              8
+            ]
+          },
+          {
+            "field": "memory.bcount"
+          }
+        ]
+      },
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "citation": "docs/riscpc-6b-m2a.md:A-10; docs/riscpc-translator-invariants.md:2.2"
+    },
+    {
+      "name": "a10_condition_11",
+      "fields": [
+        "memory.buffer.width",
+        "memory.buffer.address"
+      ],
+      "condition": {
+        "and": [
+          {
+            "lt": [
+              {
+                "mod": [
+                  {
+                    "add": [
+                      {
+                        "div": [
+                          {
+                            "index": true
+                          },
+                          16
+                        ]
+                      },
+                      8,
+                      {
+                        "neg": [
+                          {
+                            "field": "memory.bhead"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  8
+                ]
+              },
+              {
+                "field": "memory.bcount"
+              }
+            ]
+          },
+          {
+            "lt": [
+              {
+                "mod": [
+                  {
+                    "index": true
+                  },
+                  16
+                ]
+              },
+              {
+                "field": "memory.buffer.count",
+                "index": {
+                  "div": [
+                    {
+                      "index": true
+                    },
+                    16
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "citation": "docs/riscpc-6b-m2a.md:A-10; docs/riscpc-translator-invariants.md:2.2"
+    },
+    {
+      "name": "a10_condition_12",
+      "fields": [
+        "memory.active.kind",
+        "memory.active.count",
+        "memory.active.index",
+        "memory.active.writes",
+        "memory.active.force_n",
+        "memory.active.locked",
+        "memory.active.fetch",
+        "memory.active.fill"
+      ],
+      "condition": {
+        "field": "memory.active_valid"
+      },
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "citation": "docs/riscpc-6b-m2a.md:A-10; docs/riscpc-translator-invariants.md:2.2"
+    },
+    {
+      "name": "a10_condition_13",
+      "fields": [
+        "memory.active.width",
+        "memory.active.address"
+      ],
+      "condition": {
+        "and": [
+          {
+            "field": "memory.active_valid"
+          },
+          {
+            "lt": [
+              {
+                "index": true
+              },
+              {
+                "field": "memory.active.count"
+              }
+            ]
+          }
+        ]
+      },
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "citation": "docs/riscpc-6b-m2a.md:A-10; docs/riscpc-translator-invariants.md:2.2"
+    },
+    {
+      "name": "a10_condition_14",
+      "fields": [
+        "memory.finish"
+      ],
+      "condition": {
+        "or": [
+          {
+            "field": "memory.cycle_active"
+          },
+          {
+            "field": "memory.video_active"
+          }
+        ]
+      },
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "citation": "docs/riscpc-6b-m2a.md:A-10; docs/riscpc-translator-invariants.md:2.2"
+    },
+    {
+      "name": "a10_condition_15",
+      "fields": [
+        "fast.memo_line"
+      ],
+      "condition": {
+        "field": "fast.memo_valid"
+      },
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "citation": "docs/riscpc-6b-m2a.md:A-10; docs/riscpc-translator-invariants.md:2.2"
+    },
+    {
+      "name": "a10_condition_16",
+      "fields": [
+        "fast.cpu_due_ticks",
+        "fast.cpu_due_ns",
+        "fast.due_floor",
+        "fast.due_fraction"
+      ],
+      "condition": {
+        "or": [
+          {
+            "ne": [
+              {
+                "phase": true
+              },
+              2
+            ]
+          },
+          {
+            "not": [
+              {
+                "field": "fast.pending"
+              }
+            ]
+          }
+        ]
+      },
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "citation": "docs/riscpc-6b-m2a.md:A-10; docs/riscpc-translator-invariants.md:2.2"
+    },
+    {
+      "name": "a10_condition_17",
+      "fields": [
+        "cpu.reg",
+        "cpu.mode",
+        "cpu.mmask",
+        "cpu.r15_mask",
+        "cpu.event",
+        "cpu.user_reg",
+        "cpu.fiq_reg",
+        "cpu.irq_reg",
+        "cpu.super_reg",
+        "cpu.abort_reg",
+        "cpu.undef_reg",
+        "cpu.spsr",
+        "cpu.r15_diff",
+        "cpu.abort_base_restored",
+        "cpu.stm_writeback_at_end",
+        "cpu.arch_v4"
+      ],
+      "condition": {
+        "not": [
+          {
+            "field": "terminal.fatal"
+          }
+        ]
+      },
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "citation": "docs/riscpc-6b-m2a.md:A-10; docs/riscpc-translator-invariants.md:2.2"
+    },
+    {
+      "name": "a10_condition_18",
+      "fields": [
+        "tlb.code",
+        "tlb.tag",
+        "tlb.physical",
+        "tlb.domain",
+        "tlb.ap",
+        "tlb.page",
+        "tlb.attributes"
+      ],
+      "condition": {
+        "field": "tlb.valid",
+        "index": "i"
+      },
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "citation": "docs/riscpc-6b-m2a.md:A-10; docs/riscpc-translator-invariants.md:2.2"
+    }
+  ],
+  "reviewed_exclusions": [
+    {
+      "field": "rpc_observer.trace",
+      "class": "diagnostic",
+      "citation": "engine/rpc/rpc_observer.c:34",
+      "reason": "§2.2 diagnostic trace/counters"
+    },
+    {
+      "field": "rpc_observer.arc_rpc_observer_integer_attempts",
+      "class": "diagnostic",
+      "citation": "engine/rpc/rpc_observer.c:35",
+      "reason": "§2.2 diagnostic trace/counters"
+    },
+    {
+      "field": "rpc_observer.event_captures",
+      "class": "diagnostic",
+      "citation": "engine/rpc/rpc_observer.c:36",
+      "reason": "§2.2 diagnostic trace/counters"
+    },
+    {
+      "field": "rpc_observer.number_checks",
+      "class": "diagnostic",
+      "citation": "engine/rpc/rpc_observer.c:36",
+      "reason": "§2.2 diagnostic trace/counters"
+    },
+    {
+      "field": "rpc_session.arc_rpc_jump",
+      "class": "host-only/excluded",
+      "citation": "engine/rpc/rpc_session.c:50; docs/riscpc-6b-m2a.md:A-34",
+      "reason": "Host continuation used only to unwind a fatal; no guest-visible state; host addresses legitimately differ between processes; rebound by the frontend at session start (A-34)."
+    },
+    {
+      "field": "rpc_session.arc_rpc_logger",
+      "class": "host-only/excluded",
+      "citation": "engine/rpc/rpc_session.c:57; docs/riscpc-6b-m2a.md:A-34",
+      "reason": "Frontend log callback; no guest-visible state; host addresses legitimately differ between processes; rebound by the frontend at session start (A-34)."
+    },
+    {
+      "field": "rpc_session.arc_rpc_logger_opaque",
+      "class": "host-only/excluded",
+      "citation": "engine/rpc/rpc_session.c:58; docs/riscpc-6b-m2a.md:A-34",
+      "reason": "Frontend log callback context; no guest-visible state; host addresses legitimately differ between processes; rebound by the frontend at session start (A-34)."
+    },
+    {
+      "field": "arm.unpredictable_count",
+      "class": "diagnostic",
+      "citation": "engine/rpcemu/src/arm.c:63; Run C M-4",
+      "reason": "Run C M-4: unpredictable-instruction diagnostic log rate limit, excluded."
+    },
+    {
+      "field": "vidc20.dirty",
+      "class": "host-only/excluded",
+      "citation": "engine/rpcemu/src/vidc20.c:73",
+      "reason": "Q-5 write-only state"
+    },
+    {
+      "field": "vidc20.dirtybuffer",
+      "class": "host-only/excluded",
+      "citation": "engine/rpcemu/src/vidc20.c:1",
+      "reason": "Q-5 write-only state"
+    },
+    {
+      "field": "profile",
+      "class": "host-only/excluded",
+      "citation": "engine/rpc/rpc_profile.c:9; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
+      "reason": "D-195 R-c: profile counters excluded"
+    },
+    {
+      "field": "rpc_mem_timing.arc_rpc_exercise.values",
+      "class": "host-only/excluded",
+      "citation": "engine/rpc/rpc_mem_timing.c:59; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
+      "reason": "D-195 R-c: exercise/ranking/profile/cross-check host bookkeeping excluded"
+    },
+    {
+      "field": "rpc_mem_timing.interval_exercise_start.values",
+      "class": "host-only/excluded",
+      "citation": "engine/rpc/rpc_mem_timing.c:87; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
+      "reason": "D-195 R-c: exercise/ranking/profile/cross-check host bookkeeping excluded"
+    },
+    {
+      "field": "rpc_mem_timing.interval_exercise_end.values",
+      "class": "host-only/excluded",
+      "citation": "engine/rpc/rpc_mem_timing.c:87; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
+      "reason": "D-195 R-c: exercise/ranking/profile/cross-check host bookkeeping excluded"
+    },
+    {
+      "field": "rpc_mem_timing.arc_rpc_exercise_path",
+      "class": "host-only/excluded",
+      "citation": "engine/rpc/rpc_mem_timing.c:60; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
+      "reason": "D-195 R-c: exercise/ranking/profile/cross-check host bookkeeping excluded"
+    },
+    {
+      "field": "rpc_mem_timing.exercise_batch.start",
+      "class": "host-only/excluded",
+      "citation": "engine/rpc/rpc_mem_timing.c:61; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
+      "reason": "D-195 R-c: exercise/ranking/profile/cross-check host bookkeeping excluded"
+    },
+    {
+      "field": "rpc_mem_timing.exercise_batch.integer",
+      "class": "host-only/excluded",
+      "citation": "engine/rpc/rpc_mem_timing.c:61; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
+      "reason": "D-195 R-c: exercise/ranking/profile/cross-check host bookkeeping excluded"
+    },
+    {
+      "field": "rpc_mem_timing.exercise_batch.services",
+      "class": "host-only/excluded",
+      "citation": "engine/rpc/rpc_mem_timing.c:61; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
+      "reason": "D-195 R-c: exercise/ranking/profile/cross-check host bookkeeping excluded"
+    },
+    {
+      "field": "rpc_mem_timing.exercise_batch.live",
+      "class": "host-only/excluded",
+      "citation": "engine/rpc/rpc_mem_timing.c:61; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
+      "reason": "D-195 R-c: exercise/ranking/profile/cross-check host bookkeeping excluded"
+    },
+    {
+      "field": "rpc_mem_timing.exercise_batch.integral",
+      "class": "host-only/excluded",
+      "citation": "engine/rpc/rpc_mem_timing.c:61; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
+      "reason": "D-195 R-c: exercise/ranking/profile/cross-check host bookkeeping excluded"
+    },
+    {
+      "field": "rpc_mem_timing.exercise_batch.batched",
+      "class": "host-only/excluded",
+      "citation": "engine/rpc/rpc_mem_timing.c:61; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
+      "reason": "D-195 R-c: exercise/ranking/profile/cross-check host bookkeeping excluded"
+    },
+    {
+      "field": "rpc_crosscheck.comparisons",
+      "class": "host-only/excluded",
+      "citation": "engine/rpc/rpc_crosscheck.c:5; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
+      "reason": "D-195 R-c: exercise/ranking/profile/cross-check host bookkeeping excluded"
+    },
+    {
+      "field": "rpc_crosscheck.mismatches",
+      "class": "host-only/excluded",
+      "citation": "engine/rpc/rpc_crosscheck.c:5; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
+      "reason": "D-195 R-c: exercise/ranking/profile/cross-check host bookkeeping excluded"
+    },
+    {
+      "field": "rpc_crosscheck.first_field",
+      "class": "host-only/excluded",
+      "citation": "engine/rpc/rpc_crosscheck.c:6; docs/riscpc-6b-1a0.md:R-e0-2; docs/decision-log.md:D-195 R-c; docs/riscpc-translator-invariants.md:2.2",
+      "reason": "D-195 R-c: exercise/ranking/profile/cross-check host bookkeeping excluded"
+    }
+  ],
+  "reviewed_mode_exclusions": [
+    {
+      "mode": "guest-output",
+      "fields": [
+        "rpc_observer.arc_rpc_observer_active",
+        "rpc_observer.arc_rpc_observer_context",
+        "rpc_observer.host_active",
+        "rpc_observer.qualifications"
+      ],
+      "reason": "A-25(c): observer admission/host state varies with subscriptions; guest-output compares guest-visible state only",
+      "citation": "docs/riscpc-6b-m2a.md:A-25"
+    },
+    {
+      "mode": "guest-output",
+      "fields": [
+        "rpc_observer.observers_active",
+        "observer.epoch",
+        "observer.order",
+        "observer.instruction",
+        "observer.watch_id",
+        "observer.batch.live",
+        "observer.batch.start",
+        "observer.batch.accounted",
+        "observer.origin.instruction",
+        "observer.origin.epoch",
+        "observer.origin.ns",
+        "observer.origin.pc",
+        "observer.origin.mode",
+        "observer.origin.word",
+        "observer.owners.filter.swi",
+        "observer.owners.filter.swi_mask",
+        "observer.owners.filter.modes",
+        "observer.owners.filter.registers",
+        "observer.owners.filter.results",
+        "observer.owners.filter.kinds",
+        "observer.owners.filter.callback",
+        "observer.owners.filter.opaque",
+        "observer.owners.filter.swis",
+        "observer.owners.filter.swi_count",
+        "observer.owners.generation",
+        "observer.owners.armed",
+        "observer.owners.answer",
+        "observer.owners.value",
+        "observer.owners.answer_order",
+        "observer.watches.live",
+        "observer.watches.wait_return",
+        "observer.watches.owner",
+        "observer.watches.id",
+        "observer.watches.generation",
+        "observer.watches.deadline",
+        "observer.watches.pc",
+        "observer.watches.mode",
+        "observer.watches.sp",
+        "observer.work.observer",
+        "observer.work.generation",
+        "observer.work.epoch",
+        "observer.work.media_generation",
+        "observer.work.helper_generation",
+        "observer.work.ns",
+        "observer.work.previous_ns",
+        "observer.work.kind",
+        "observer.work.operation",
+        "observer.work.continuation",
+        "observer.work.sp",
+        "observer.work.watch",
+        "observer.work.size",
+        "observer.work.bytes",
+        "observer.work_count",
+        "observer.handlers.valid",
+        "observer.handlers.resolve",
+        "observer.handlers.mutate",
+        "observer.handlers.opaque",
+        "observer.in_swi",
+        "observer.completed",
+        "observer.current_owner",
+        "observer.current_order",
+        "observer.current_generation",
+        "observer.current_results",
+        "observer.current_kind",
+        "rpc_observer.swi_interest.low",
+        "rpc_observer.swi_interest.wimp",
+        "rpc_observer.swi_interest.unrestricted",
+        "rpc_observers.state.catalogue",
+        "rpc_observers.state.cpu",
+        "rpc_observers.state.cells",
+        "rpc_observers.state.epoch",
+        "rpc_observers.state.error_watch",
+        "rpc_observers.state.disc_watch",
+        "rpc_observers.state.disc_media",
+        "rpc_observers.state.helper_media",
+        "rpc_observers.state.error_unbounded",
+        "rpc_observers.state.error_return_closes",
+        "rpc_observers.state.error_profile.contextual",
+        "rpc_observers.state.error_profile.poll_r1",
+        "rpc_observers.state.error_profile.poll_r2",
+        "rpc_observers.state.error_profile.poll_modes",
+        "rpc_observers.state.error_profile.answer_forms",
+        "rpc_observers.state.error_profile.ok_forms",
+        "rpc_observers.state.error_profile.cancel_forms",
+        "rpc_observers.state.error_profile.default_cancel_forms",
+        "rpc_observers.state.error_profile.numbers",
+        "rpc_observers.state.disc_profile.user_modes",
+        "rpc_observers.state.disc_profile.svc_modes",
+        "rpc_observers.state.disc_profile.device_forms",
+        "rpc_observers.state.disc_profile.require_x",
+        "rpc_observers.state.disc_profile.strict_bare",
+        "rpc_observers.state.arc_rpc_error.generation",
+        "rpc_observers.state.arc_rpc_error.os",
+        "rpc_observers.state.arc_rpc_error.stage",
+        "rpc_observers.state.arc_rpc_error.ok",
+        "rpc_observers.state.arc_rpc_error.cancel",
+        "rpc_observers.state.arc_rpc_error.default_cancel",
+        "rpc_observers.state.arc_rpc_error.site",
+        "rpc_observers.state.arc_rpc_error.sp",
+        "rpc_observers.state.arc_rpc_error.lr",
+        "rpc_observers.state.arc_rpc_error.pending",
+        "rpc_observers.state.arc_rpc_error.consumed",
+        "rpc_observers.state.arc_rpc_error.key",
+        "rpc_observers.state.arc_rpc_error.profile",
+        "rpc_observers.state.arc_rpc_error.recognised_open",
+        "rpc_observers.state.arc_rpc_error.answer_available",
+        "rpc_observers.state.arc_rpc_error.modal_unknown",
+        "rpc_observers.state.arc_rpc_error.flags",
+        "rpc_observers.state.arc_rpc_error.poll_mode",
+        "rpc_observers.state.launch.profile",
+        "rpc_observers.state.launch.state",
+        "rpc_observers.state.launch.start_us",
+        "rpc_observers.state.launch.refused_floppy",
+        "rpc_observers.state.launch.refused_hd",
+        "rpc_observers.state.launch.failed_exits",
+        "rpc_observers.state.launch.last_rc",
+        "rpc_observers.state.launch.close_r1",
+        "rpc_observers.state.launch.has_rc",
+        "rpc_observers.state.launch.matched",
+        "rpc_observers.state.launch.command",
+        "rpc_observers.state.launch.cancel_reason",
+        "rpc_observers.state.boot.profile",
+        "rpc_observers.state.boot.state",
+        "rpc_observers.state.boot.armed_us",
+        "rpc_observers.state.boot.read_us",
+        "rpc_observers.state.boot.last_event_us",
+        "rpc_observers.state.boot.pending",
+        "rpc_observers.state.disc.profile",
+        "rpc_observers.state.disc.armed",
+        "rpc_observers.state.disc.a_active",
+        "rpc_observers.state.disc.b_triggered",
+        "rpc_observers.state.disc.a_notified",
+        "rpc_observers.state.disc.a_name",
+        "rpc_observers.state.disc.object",
+        "rpc_observers.state.disc.continuation",
+        "rpc_observers.state.disc.sp",
+        "rpc_observers.state.disc.candidate",
+        "rpc_observers.state.disc.observations",
+        "rpc_observers.state.disc.triggered_slot",
+        "rpc_observers.state.disc.operation",
+        "rpc_observers.state.disc.identities.occupied",
+        "rpc_observers.state.disc.identities.object",
+        "rpc_observers.state.disc.identities.continuation",
+        "rpc_observers.state.disc.identities.sp",
+        "rpc_observers.state.disc.identities.observed_us",
+        "rpc_observers.state.disc.identities.order",
+        "rpc_observers.state.disc.triggered_object",
+        "rpc_observers.state.disc.triggered_continuation",
+        "rpc_observers.state.disc.triggered_sp",
+        "rpc_observers.state.disc.next_order",
+        "rpc_observers.state.disc.triggered_us",
+        "rpc_observers.state.disc_enabled",
+        "rpc_observers.state.disc_signal",
+        "rpc_observers.state.disc_reason",
+        "rpc_observers.state.overridden",
+        "rpc_observers.state.inserted",
+        "rpc_observers.state.resolve",
+        "rpc_observers.state.observe",
+        "rpc_observers.state.opaque",
+        "rpc_observers.state.resolved_candidate",
+        "rpc_observers.state.retry_pending",
+        "rpc_observers.state.disc_suppressed",
+        "rpc_observers.state.disc_last_miss_ns",
+        "rpc_observers.state.retry_work.observer",
+        "rpc_observers.state.retry_work.generation",
+        "rpc_observers.state.retry_work.epoch",
+        "rpc_observers.state.retry_work.media_generation",
+        "rpc_observers.state.retry_work.helper_generation",
+        "rpc_observers.state.retry_work.ns",
+        "rpc_observers.state.retry_work.previous_ns",
+        "rpc_observers.state.retry_work.kind",
+        "rpc_observers.state.retry_work.operation",
+        "rpc_observers.state.retry_work.continuation",
+        "rpc_observers.state.retry_work.sp",
+        "rpc_observers.state.retry_work.watch",
+        "rpc_observers.state.retry_work.size",
+        "rpc_observers.state.retry_work.bytes",
+        "rpc_observers.state.retry_candidate",
+        "rpc_observers.disc_observation",
+        "rpc_observers.watch_budget",
+        "rpc_observers.default_disc_profile",
+        "rpc_observers.default_error_profile",
+        "rpc_observers.launch_profile",
+        "rpc_observers.boot_profile",
+        "rpc_observers.bits",
+        "rpc_observers.error_swis",
+        "rpc_observers.disc_swis",
+        "rpc_observers.arc_rpc_observers_test_horizon.shortened.horizon_us",
+        "rpc_observers.arc_rpc_observers_test_horizon.shortened.exit_rom",
+        "rpc_observers.arc_rpc_observers_test_horizon.shortened.close_rom",
+        "rpc_observers.arc_rpc_observers_test_horizon.shortened.poll_rom"
+      ],
+      "reason": "A-25(c): semantic subscription/owner configurations legitimately differ",
+      "citation": "docs/riscpc-6b-m2a.md:A-25"
+    },
+    {
+      "mode": "cross-quota",
+      "fields": [
+        "fast.integer_batch",
+        "fast.test_stop",
+        "fast.test_measure",
+        "rpc_mem_timing.measure_first",
+        "rpc_mem_timing.measure_last",
+        "rpc_mem_timing.measure_drained",
+        "rpc_mem_timing.interval.started",
+        "rpc_mem_timing.interval.done",
+        "rpc_mem_timing.interval.start_ticks",
+        "rpc_mem_timing.interval.end_ticks",
+        "rpc_mem_timing.interval.start.instructions",
+        "rpc_mem_timing.interval.start.words",
+        "rpc_mem_timing.interval.start.fills",
+        "rpc_mem_timing.interval.start.dirty_halves",
+        "rpc_mem_timing.interval.start.packets",
+        "rpc_mem_timing.interval.start.hits",
+        "rpc_mem_timing.interval.start.completed_ticks",
+        "rpc_mem_timing.interval.start.buffer_wait_ticks",
+        "rpc_mem_timing.interval.start.buffered_words",
+        "rpc_mem_timing.interval.start.buffered_packets",
+        "rpc_mem_timing.interval.start.denominator",
+        "rpc_mem_timing.interval.end.instructions",
+        "rpc_mem_timing.interval.end.words",
+        "rpc_mem_timing.interval.end.fills",
+        "rpc_mem_timing.interval.end.dirty_halves",
+        "rpc_mem_timing.interval.end.packets",
+        "rpc_mem_timing.interval.end.hits",
+        "rpc_mem_timing.interval.end.completed_ticks",
+        "rpc_mem_timing.interval.end.buffer_wait_ticks",
+        "rpc_mem_timing.interval.end.buffered_words",
+        "rpc_mem_timing.interval.end.buffered_packets",
+        "rpc_mem_timing.interval.end.denominator"
+      ],
+      "reason": "A-25(b): batch representation only; remaining budgets compared after projection",
+      "citation": "docs/riscpc-6b-m2a.md:A-25"
+    },
+    {
+      "mode": "guest-output",
+      "fields": [
+        "fast.integer_batch",
+        "fast.test_stop",
+        "fast.test_measure",
+        "rpc_mem_timing.measure_first",
+        "rpc_mem_timing.measure_last",
+        "rpc_mem_timing.measure_drained",
+        "rpc_mem_timing.interval.started",
+        "rpc_mem_timing.interval.done",
+        "rpc_mem_timing.interval.start_ticks",
+        "rpc_mem_timing.interval.end_ticks",
+        "rpc_mem_timing.interval.start.instructions",
+        "rpc_mem_timing.interval.start.words",
+        "rpc_mem_timing.interval.start.fills",
+        "rpc_mem_timing.interval.start.dirty_halves",
+        "rpc_mem_timing.interval.start.packets",
+        "rpc_mem_timing.interval.start.hits",
+        "rpc_mem_timing.interval.start.completed_ticks",
+        "rpc_mem_timing.interval.start.buffer_wait_ticks",
+        "rpc_mem_timing.interval.start.buffered_words",
+        "rpc_mem_timing.interval.start.buffered_packets",
+        "rpc_mem_timing.interval.start.denominator",
+        "rpc_mem_timing.interval.end.instructions",
+        "rpc_mem_timing.interval.end.words",
+        "rpc_mem_timing.interval.end.fills",
+        "rpc_mem_timing.interval.end.dirty_halves",
+        "rpc_mem_timing.interval.end.packets",
+        "rpc_mem_timing.interval.end.hits",
+        "rpc_mem_timing.interval.end.completed_ticks",
+        "rpc_mem_timing.interval.end.buffer_wait_ticks",
+        "rpc_mem_timing.interval.end.buffered_words",
+        "rpc_mem_timing.interval.end.buffered_packets",
+        "rpc_mem_timing.interval.end.denominator",
+        "driver.successful_continuations",
+        "driver.linecyc"
+      ],
+      "reason": "A-25(c): host batching/measurement representation is not guest output; strict comparison still includes it",
+      "citation": "docs/riscpc-6b-m2a.md:A-25"
+    },
+    {
+      "mode": "cross-quota",
+      "fields": [
+        "driver.successful_continuations"
+      ],
+      "reason": "A-25(b): actual successful batch continuations depend on quota; no remaining budget is excluded",
+      "citation": "docs/riscpc-6b-m2a.md:A-25"
+    },
+    {
+      "mode": "cross-quota",
+      "fields": [
+        "driver.linecyc"
+      ],
+      "reason": "A-25(b): raw local batch position depends on quota; projected completion and remaining budgets remain compared",
+      "citation": "docs/riscpc-6b-m2a.md:A-25"
+    }
+  ],
+  "cross_quota_projections": {
+    "modes": [
+      "cross-quota"
+    ],
+    "citation": "docs/riscpc-6b-m2a.md:A-29; docs/riscpc-lockstep-harness.md:Run C",
+    "inputs": {
+      "base_executed": "executed count at batch entry",
+      "prior_completed": "completed attempts before current attempt",
+      "current_completed": "one only after current attempt completes",
+      "base_instruction_work": "driver work count at batch entry",
+      "stored_instruction_work": "stored driver work count",
+      "booked_null_attempt": "one for the pre-incremented NULL-batch path",
+      "projected_instruction_work": "phase-correct projected work count",
+      "device_deliveries": "device deliveries since advance entry, including tied deliveries",
+      "current_pixels": "current video pixel count",
+      "pixels_since_entry": "pixels serviced since advance entry",
+      "current_fields": "current video field count",
+      "fields_since_entry": "fields serviced since advance entry",
+      "batch_completed": "total completed attempts at P3, including the final completed attempt"
+    },
+    "fields": {
+      "rpc_session.arc_rpc_executed": {
+        "batch": {
+          "P0": {
+            "add": [
+              {
+                "input": "base_executed"
+              },
+              {
+                "input": "prior_completed"
+              }
+            ]
+          },
+          "P1": {
+            "add": [
+              {
+                "input": "base_executed"
+              },
+              {
+                "input": "prior_completed"
+              }
+            ]
+          },
+          "P2": {
+            "add": [
+              {
+                "input": "base_executed"
+              },
+              {
+                "input": "prior_completed"
+              },
+              {
+                "input": "current_completed"
+              }
+            ]
+          },
+          "P3": {
+            "add": [
+              {
+                "input": "base_executed"
+              },
+              {
+                "input": "batch_completed"
+              }
+            ]
+          }
+        },
+        "null_batch": {
+          "P0": {
+            "input": "base_executed"
+          },
+          "P1": {
+            "input": "base_executed"
+          },
+          "P2": {
+            "add": [
+              {
+                "input": "base_executed"
+              },
+              {
+                "input": "current_completed"
+              }
+            ]
+          },
+          "P3": {
+            "add": [
+              {
+                "input": "base_executed"
+              },
+              {
+                "input": "batch_completed"
+              }
+            ]
+          }
+        },
+        "fatal": "current_completed is zero unless the attempt completed; M2b defines exact fatal capture (A-29)"
+      },
+      "driver.instruction_work": {
+        "batch": {
+          "P0": {
+            "add": [
+              {
+                "input": "base_instruction_work"
+              },
+              {
+                "input": "prior_completed"
+              }
+            ]
+          },
+          "P1": {
+            "add": [
+              {
+                "input": "base_instruction_work"
+              },
+              {
+                "input": "prior_completed"
+              }
+            ]
+          },
+          "P2": {
+            "add": [
+              {
+                "input": "base_instruction_work"
+              },
+              {
+                "input": "prior_completed"
+              },
+              {
+                "input": "current_completed"
+              }
+            ]
+          },
+          "P3": {
+            "add": [
+              {
+                "input": "base_instruction_work"
+              },
+              {
+                "input": "batch_completed"
+              }
+            ]
+          }
+        },
+        "null_batch": {
+          "P0": {
+            "sub": [
+              {
+                "input": "stored_instruction_work"
+              },
+              {
+                "input": "booked_null_attempt"
+              }
+            ]
+          },
+          "P1": {
+            "sub": [
+              {
+                "input": "stored_instruction_work"
+              },
+              {
+                "input": "booked_null_attempt"
+              }
+            ]
+          },
+          "P2": {
+            "add": [
+              {
+                "sub": [
+                  {
+                    "input": "stored_instruction_work"
+                  },
+                  {
+                    "input": "booked_null_attempt"
+                  }
+                ]
+              },
+              {
+                "input": "current_completed"
+              }
+            ]
+          },
+          "P3": {
+            "input": "stored_instruction_work"
+          }
+        },
+        "remaining": {
+          "sub": [
+            1666667,
+            {
+              "input": "projected_instruction_work"
+            }
+          ]
+        }
+      },
+      "driver.event_work": {
+        "P0": {
+          "input": "device_deliveries"
+        },
+        "P1": {
+          "input": "device_deliveries"
+        },
+        "P2": {
+          "input": "device_deliveries"
+        },
+        "P3": {
+          "input": "device_deliveries"
+        },
+        "remaining": {
+          "sub": [
+            524288,
+            {
+              "input": "device_deliveries"
+            }
+          ]
+        }
+      },
+      "driver.video_start.pixels": {
+        "P0": {
+          "sub": [
+            {
+              "input": "current_pixels"
+            },
+            {
+              "input": "pixels_since_entry"
+            }
+          ]
+        },
+        "P1": {
+          "sub": [
+            {
+              "input": "current_pixels"
+            },
+            {
+              "input": "pixels_since_entry"
+            }
+          ]
+        },
+        "P2": {
+          "sub": [
+            {
+              "input": "current_pixels"
+            },
+            {
+              "input": "pixels_since_entry"
+            }
+          ]
+        },
+        "P3": {
+          "sub": [
+            {
+              "input": "current_pixels"
+            },
+            {
+              "input": "pixels_since_entry"
+            }
+          ]
+        },
+        "remaining": {
+          "sub": [
+            33554432,
+            {
+              "input": "pixels_since_entry"
+            }
+          ]
+        }
+      },
+      "driver.video_start.fields": {
+        "P0": {
+          "sub": [
+            {
+              "input": "current_fields"
+            },
+            {
+              "input": "fields_since_entry"
+            }
+          ]
+        },
+        "P1": {
+          "sub": [
+            {
+              "input": "current_fields"
+            },
+            {
+              "input": "fields_since_entry"
+            }
+          ]
+        },
+        "P2": {
+          "sub": [
+            {
+              "input": "current_fields"
+            },
+            {
+              "input": "fields_since_entry"
+            }
+          ]
+        },
+        "P3": {
+          "sub": [
+            {
+              "input": "current_fields"
+            },
+            {
+              "input": "fields_since_entry"
+            }
+          ]
+        },
+        "remaining": {
+          "sub": [
+            1,
+            {
+              "input": "fields_since_entry"
+            }
+          ]
+        },
+        "stop_at_field": "field remaining applies only while stop_at_field is enabled"
+      }
+    },
+    "owner": "M2b serialises these non-mutating projected values into compared fields; M2a has no emitter"
+  },
+  "stdout_projection": {
+    "prefixes": [
+      "frame=",
+      "regs=",
+      "video=",
+      "pcm=",
+      "first-raster=",
+      "ram=",
+      "cmos="
+    ],
+    "rules": [
+      {
+        "name": "q9_first_fatal_frame_cpu",
+        "modes": [
+          "cross-quota"
+        ],
+        "record_prefix": "frame=",
+        "field": "cpu",
+        "first_frame_where": {
+          "fault": "1"
+        },
+        "citation": "docs/riscpc-translator-invariants.md:Q-9; docs/riscpc-6b-m2a.md:A-33",
+        "reason": "Post-fatal diagnostic count: fatal unwind skips batch-return accounting; exclude only cpu on the first fault=1 frame in cross-quota comparison."
+      }
+    ]
+  }
+}
