@@ -410,3 +410,28 @@ Every finding below is incorporated as a binding correction and overrides confli
 - **AS-L1-6 (Astra 6) ABI handshake and predecessor comparison.** Every structure-copy test API (ranking, exercise, interval exercise and profile snapshots, since `ArcRpcProfile` embeds `ArcRpcExercise`) checks a schema revision and structure size before copying and refuses a mismatch, with a mismatch test for each. Comparisons against the predecessor use two explicit runner/core pairs. L1's inventory additions change only the inventory metadata hash, not M2b's wire-compatibility hash (M2b AS-6).
 - **AS-L1-7 (Astra 7) Exact mirror; poison hints only.** The mirror stays exact, sentinel-maintained and first-match. The poison mode corrupts **hints only**; mirror integrity is tested by invariant assertions (in cross-check builds) and by mutants on every mirror writer (fill, invalidate, full invalidate, bind reset). Mutants that remove a now-redundant recheck from an exact mirror are reclassified as equivalent with their proof, not counted as kills.
 - **AS-L1-8 (Astra 8) Gate table before dispatch (Fable's obligation).** L1 is not dispatched until Fable adds to this order: the candidate gate configurations per geometry (unified ARM610, ARM710, ARM7500; SA-110 I and D), the per-geometry selection workloads with their hit-way histograms from the plan-core ranking, the selection, tie and fallback rules, and the fixed ARM610 and ARM7500 gates. Selection data and the fresh confirmation ABBA data are kept separate. The A/A bands and the cumulative D-180 gate are unchanged.
+
+## Gate table (Fable, S67, AS-L1-8; frozen before any L1 measurement)
+
+**Evidence (plan-core ranking, 1a-0 profile build at `38eae49`; authored synthetics 1200 flat frames, window 200–1199; 031 window 6400–7400).** Lookups per instruction, way-0 share of hits, probes per hit, probe iterations per instruction:
+
+| Workload / model | lookups/instr | way-0 share | probes/hit | probe iterations/instr |
+|---|---:|---:|---:|---:|
+| warm / ARM610 | 1.242 | 0.098 | 1.98 | 2.455 |
+| warm / ARM710, ARM7500 | 1.242 | 0.220 | 1.78 | 2.212 |
+| warm / SA-110 | 1.121 | 1.000 | 1.00 | 1.121 |
+| stream-sa110, stream-arm710 / ARM610 | 0.333 (misses) | — | — | 21.332 |
+| stream-sa110, stream-arm710 / ARM710, ARM7500 | 0.333 (misses) | — | — | 1.333 |
+| stream-sa110, stream-arm710 / SA-110 | 0 (stores bypass the lookup) | — | — | 0 |
+| ldm-stm8 / ARM610, ARM710, ARM7500 | 5.333 | 0.500 | 1.50 | 8.000 |
+| ldm-stm8 / SA-110 | 5.333 | 1.000 | 1.00 | 5.333 |
+| 031 / SA-110 | 0.549 | 0.032 | 16.56 | 9.745 |
+
+The ranking counts lookups per access caller, not per SA-110 cache (I and D are not separated); the SA-110 gate therefore applies to both caches together.
+
+**Rules (binding).**
+1. **ARM710 (128×4) and ARM7500 (64×4): fixed linear** (no hint, no mirror). A 4-way hit averages at most 1.78 probes and a searched miss costs 4, so a hint's own validation consumes most of any saving, and the preferred CPU (ARM710, D-164(2)) carries no regression risk. Their AC-8 workloads (hot, stream-arm710) must show no regression only.
+2. **ARM610 (4×64): fixed hint plus mirror.** Searched misses scan 64 ways (about 21 probe iterations per instruction on the streaming synthetics), which is the case the mirror accelerates; there is no frozen ARM610 benefit workload, so this is fixed from these counters, and exactness rests on the ACs.
+3. **SA-110 (16×32, I and D): selected by measurement** among linear, hint-only and hint plus mirror. **Selection workloads:** 031 (deciding gain) and the SA-110 way-0 synthetics warm and ldm-stm8 (regression guards). **Selection run:** the 1a-0 AC-8 procedure (two six-run orders, measurement core, Odin3) on these three workloads only, with variant cores built per finding 4, **separate from the confirmation run**. **Rule:** choose the configuration with the largest 031 p50 gain beyond its A/A band (band₅₀) such that neither warm nor ldm-stm8 regresses beyond its band at p50 or p95 in either order. **Tie** (031 gains within each other's band₅₀): the configuration with fewer mechanisms. **Fallback:** if no configuration gains beyond band₅₀ on 031, SA-110 stays linear.
+4. **Confirmation:** after selection, a fresh AC-8 run of the chosen configuration on every frozen workload (hot, the four synthetics, 031) decides merge under the frozen benefit rule (gain on 031, no regression elsewhere), and D-180 is rechecked on hot and 031 with observers genuinely off; the selection data is not reused.
+5. The gate is computed at bind from the bound `sets` and `ways` (finding 15), not from the model name.
