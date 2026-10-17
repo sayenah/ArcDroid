@@ -3,6 +3,7 @@ from pathlib import Path
 import struct,subprocess,sys,tempfile
 from rpc_boot_packages_test import inputs, package, BASE
 from rpc_cmos_factory_rom import generate, factory
+from rpc_launch_controller_guest import firmware
 exe,fixtures,profile=sys.argv[1:]
 with tempfile.TemporaryDirectory(prefix='arcdroid-orchestration-') as temp:
     root=Path(temp)
@@ -13,6 +14,8 @@ with tempfile.TemporaryDirectory(prefix='arcdroid-orchestration-') as temp:
     products=dict(BASE);products['HardDisc4/Apps/!Example/!Run']=(b'authored installed command',0xffffff00,0,3)
     package(system/'product.zip',products)
     roms=generate(root/'roms')
+    (system/'guest-return.rom').write_bytes(firmware(b''))
+    (system/'guest-reset.rom').write_bytes(firmware(b'',failure='reset-during'))
     if profile in ('sanitizer','mutant-idle'):
         # Keep the complete factory write sequence and 45 s oracle, but idle
         # on a production SA-110 after the last payload write. The ordinary

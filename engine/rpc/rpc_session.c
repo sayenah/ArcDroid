@@ -439,7 +439,7 @@ static bool arc_rpc_advance_internal(uint64_t elapsed_ns, bool stop_at_field)
             instruction_work += executed; arc_rpc_executed += executed;
             /* Yield even when service is empty: MMIO may have armed a device
              * at the issue instant. The next iteration delivers it first. */
-            if (completed) break;
+            if (completed || arc_rpc_observer_boundary_pending) break;
             continue;
         }
         if (completed) break;
@@ -474,7 +474,23 @@ static bool arc_rpc_advance_internal(uint64_t elapsed_ns, bool stop_at_field)
 
 
 
-bool arc_rpc_session_advance(uint64_t ns) { return arc_rpc_advance_internal(ns, false); }
+/* A service yield preserves the requested deadline and flyback boundary.
+ * The protected execution stack has returned before preparation can detach. */
+static bool arc_rpc_advance(uint64_t ns,bool field)
+{
+    if(ns>16666667u || arc_rpc_scheduler.now_ns>UINT64_MAX-ns)return false;
+    uint64_t end=arc_rpc_scheduler.now_ns+ns;
+    ArcRpcVideoStatus before,after;arc_rpc_video_status(&before);
+    do {
+        if(!arc_rpc_observers_boundary())return false;
+        if(!arc_rpc_advance_internal(end-arc_rpc_scheduler.now_ns,field))return false;
+        if(!arc_rpc_observers_boundary())return false;
+        arc_rpc_video_status(&after);
+        if((field && after.fields!=before.fields) || arc_rpc_capture.state==ARC_RPC_CAPTURE_DONE)break;
+    }while(arc_rpc_scheduler.now_ns<end);
+    return true;
+}
+bool arc_rpc_session_advance(uint64_t ns) { return arc_rpc_advance(ns, false); }
 
 static ArcEngineCapabilities arc_rpc_capabilities(void)
 {
@@ -505,7 +521,7 @@ static bool arc_rpc_frame(ArcInputState *input, ArcEngineFrame *frame)
     /* At most six budgeted chunks (100 ms): even a stopped/disabled display
      * cannot trap the frontend in an unbounded wait for flyback. */
     for (unsigned chunk = 0; chunk < 6u; ++chunk) {
-        if (!arc_rpc_advance_internal(16666667u, true)) { arc_rpc_input_service=NULL;return false; }
+        if (!arc_rpc_advance(16666667u, true)) { arc_rpc_input_service=NULL;return false; }
         arc_rpc_video_status(&after);
         if (after.fields != before.fields || !vidc_get_xsize() || !vidc_get_ysize()) break;
     }

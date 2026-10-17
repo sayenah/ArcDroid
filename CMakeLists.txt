@@ -2813,7 +2813,10 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_orchestration_test.py"
     $<TARGET_FILE:rpc_orchestration_test> "${CMAKE_CURRENT_BINARY_DIR}/tests/fixtures/generated"
     ${RPC_ORCHESTRATION_PROFILE})
-  set_tests_properties(rpc-session-orchestration PROPERTIES TIMEOUT 1200 RUN_SERIAL TRUE)
+  # W4 baseline: 300 s; host Run C observed 66.91 s (twofold headroom).
+  # Keep the original session bound; the blanket 1200 s merge override was
+  # unsupported by a duration measurement. The W4 session bound is unchanged.
+  set_tests_properties(rpc-session-orchestration PROPERTIES TIMEOUT 300 RUN_SERIAL TRUE)
   add_test(NAME rpc-launch-preparation COMMAND "${Python3_EXECUTABLE}" -B
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_orchestration_test.py"
     $<TARGET_FILE:rpc_orchestration_test> "${CMAKE_CURRENT_BINARY_DIR}/tests/fixtures/generated" launch)
@@ -2827,7 +2830,14 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
     add_test(NAME rpc-orchestration-mutants COMMAND "${Python3_EXECUTABLE}" -B
       "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_orchestration_mutants.py"
       "${CMAKE_CURRENT_BINARY_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}" "${FIXTURE_DIR}" ${RPC_ORCHESTRATION_MUTANT_PROFILE})
-    set_tests_properties(rpc-orchestration-mutants PROPERTIES TIMEOUT 1200 RUN_SERIAL TRUE)
+    set_tests_properties(rpc-orchestration-mutants PROPERTIES RUN_SERIAL TRUE)
+    if(WIN32)
+      # W4: Windows CI timed out at 300.16 s; ceil(2*300.16/60)*60.
+      set_property(TEST rpc-orchestration-mutants PROPERTY TIMEOUT 660)
+    else()
+      # W4: 296.26 s worst observed in CI; ceil(2*296.26/60)*60.
+      set_property(TEST rpc-orchestration-mutants PROPERTY TIMEOUT 600)
+    endif()
   endif()
   if(NOT ARCDROID_SANITIZERS AND NOT CMAKE_CROSSCOMPILING)
     add_test(NAME rpc-launch-delivery-mutants COMMAND "${Python3_EXECUTABLE}" -B

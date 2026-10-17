@@ -1114,6 +1114,78 @@ static void phase_cases(CPUModel model)
     phase_swi(0x10021000,0x2000e,0x10022000,255,32,126);arc_rpc_observers_frame(300000);
     assert(phase_attempt.outcome==ARC_RPC_OUTCOME_PENDING);
 }
+/* L-2: isolate each refusal; other guards remain valid in every subject. */
+static void phase_refusals(CPUModel model)
+{
+    for(unsigned bad=0;bad<5;++bad){
+        phase_bind(model,3);
+        uint32_t base=0x10020000;
+        ArcRpcObservation e={.kind=ARC_RPC_OBS_SWI,.mode=16,.swi=0x20006};
+        uint32_t *w=ram00+(0x20000+phase_controller.status)/4;
+        w[8]=1;w[9]=1;w[10]=0;
+        e.pc=base+phase_controller.query;
+        e.registers[1]=1;e.registers[3]=base+phase_controller.status;
+        e.registers[4]=0x53435241;e.registers[5]=64;e.registers[6]=1;
+        if(bad==0)e.mode=19;
+        if(bad==1)e.registers[0]=1;
+        if(bad==2){memcpy((uint8_t *)ram00+0x40000,w,64);e.registers[3]=0x10040000;}
+        if(bad==3){memcpy((uint8_t *)rom+0x20000,(uint8_t *)ram00+0x20000,phase_controller.size);
+            e.pc=0x20000+phase_controller.query;e.registers[3]=0x20000+phase_controller.status;}
+        if(bad==4){
+            phase_marker(1,1,0);
+            memcpy((uint8_t *)ram00+0x40000,(uint8_t *)ram00+0x20000,phase_controller.size);
+            w=ram00+(0x40000+phase_controller.status)/4;w[8]=2;w[9]=2;w[10]=42;
+            e.pc=0x10040000+phase_controller.query;e.registers[3]=0x10040000+phase_controller.status;
+        }
+        ArcRpcLaunchAttempt before=phase_attempt;arc_rpc_observers_test_status(&e);
+        assert(!memcmp(&before,&phase_attempt,sizeof(before)));
+        if(bad==4){
+            /* REGISTERED has only recogniser-local effects. A following
+             * dispatch at the relocated base must still be refused. */
+            w[8]=3;w[9]=3;w[10]=0;arc_rpc_observers_test_status(&e);
+            assert(!memcmp(&before,&phase_attempt,sizeof(before)));
+            phase_marker(2,2,42);phase_marker(3,3,0);assert(phase_attempt.delivery==ARC_RPC_DELIVERY_DISPATCH);}
+        else {phase_marker(1,1,0);assert(phase_attempt.delivery==ARC_RPC_DELIVERY_CONSUMED);}
+    }
+    phase_bind(model,3);phase_dispatch();
+    phase_marker(8,4,0); /* CLOSED before an outcome must not advance sequence. */
+    phase_marker(4,4,0);assert(phase_attempt.start_returned);
+    phase_marker(5,5,0);assert(phase_attempt.outcome==ARC_RPC_OUTCOME_RETURNED);
+    for(unsigned desktop=0;desktop<2;++desktop){
+        phase_bind(model,3);phase_dispatch();phase_marker(4,4,desktop?99:42);
+        ArcRpcLaunchAttempt before=phase_attempt;
+        phase_marker(desktop?6:5,5,desktop?98:0);assert(!memcmp(&before,&phase_attempt,sizeof(before)));
+        phase_marker(desktop?6:6,5,desktop?99:42);assert(phase_attempt.outcome==ARC_RPC_OUTCOME_DESKTOP);
+    }
+    for(unsigned bad=0;bad<3;++bad){
+        phase_bind(model,3);phase_marker(1,1,0);phase_marker(2,2,42);phase_marker(3,3,0);
+        uint32_t command=0x10020000+phase_controller.command;
+        if(bad==1){strcpy((char *)ram00+0x40000,phase_controller.text);command=0x10040000;}
+        if(bad==2)((char *)ram00)[0x20000+phase_controller.command]^=1;
+        phase_swi(0x10020000+phase_controller.start+(bad==0?4:0),0x600de,command,0,0,0);
+        phase_swi(0x10021000,0x2000e,0x10022000,255,32,126);arc_rpc_observers_frame(250000);
+        assert(phase_attempt.outcome==ARC_RPC_OUTCOME_PENDING && !arc_rpc_observer_context);
+    }
+    /* A competing task cancels a live recognised prompt. */
+    phase_bind(model,3);phase_dispatch();phase_swi(0x10021000,0x2000e,0x10022000,255,32,126);
+    arc_rpc_observers_frame(250000);assert(phase_attempt.outcome==ARC_RPC_OUTCOME_WAITING);
+    phase_swi(0x10021000,0x600de,0x10020000+phase_controller.command,0,0,0);
+    assert(!arc_rpc_observer_context && phase_attempt.outcome==ARC_RPC_OUTCOME_PENDING);
+    phase_swi(0x10021000,0x2000e,0x10022000,255,32,126);arc_rpc_observers_frame(300000);
+    assert(phase_attempt.outcome==ARC_RPC_OUTCOME_PENDING);
+    phase_bind(model,3);phase_dispatch();phase_swi(0x10021000,0x2000e,0x10022000,255,32,126);
+    phase_marker(4,4,0);assert(!arc_rpc_observer_context);
+    arc_rpc_observers_frame(250000);assert(phase_attempt.outcome==ARC_RPC_OUTCOME_PENDING);
+    phase_bind(model,3);phase_dispatch();phase_swi(0x10021000,0x2000e,0x10022000,255,32,126);
+    phase_swi(0x10021004,0x2000e,0x10023000,255,32,126);
+    arc_rpc_observers_frame(250000);assert(!arc_rpc_observer_context && phase_attempt.outcome==ARC_RPC_OUTCOME_PENDING);
+    phase_bind(model,3);phase_dispatch();phase_swi(0x10021000,0x2000e,0x10022000,255,32,126);
+    /* Advance the adapter's instruction clock without executing 64M NOPs.
+     * The first instruction at the exact ceiling is still admitted. */
+    arc_rpc_observe_advance(63999999u);
+    issue(0x300,19,6,129,0,0,0,0x10001000);assert(arc_rpc_observer_context);
+    issue(0x300,19,6,129,0,0,0,0x10001000);assert(!arc_rpc_observer_context);
+}
 static bool production_pair(unsigned catalogue,unsigned cpu)
 { return (catalogue==1 && cpu==0) || (catalogue==2 && (cpu==1 || cpu==3)) ||
     (catalogue==3 && cpu==2) || (catalogue==4 && (cpu==1 || cpu==2 || cpu==3)); }
@@ -1285,6 +1357,6 @@ int main(int argc,char **argv)
         ordered_found_cases((CPUModel)model);overflow_eviction_cases((CPUModel)model);
         suppression_recovery_cases((CPUModel)model);quiet_recovery_cases((CPUModel)model);quiet_overflow_found_case((CPUModel)model);
         differential_cases((CPUModel)model,1,8);
-        resolve_count=observe_count=trigger_count=0;sustained_error_cases((CPUModel)model);number_cases((CPUModel)model);phase_cases((CPUModel)model);phase_retry_cases((CPUModel)model);}
+        resolve_count=observe_count=trigger_count=0;sustained_error_cases((CPUModel)model);number_cases((CPUModel)model);phase_cases((CPUModel)model);phase_refusals((CPUModel)model);phase_retry_cases((CPUModel)model);}
     arc_rpc_observer_retire(false);arc_rpc_memory_close();puts("RPC observers: authored four-CPU error/disc/phase matrix");return 0;
 }

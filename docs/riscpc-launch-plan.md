@@ -73,15 +73,15 @@ no effect. Expiry makes delivery/outcome unknown, never failed or retried.
 Normal input, prompt-hint dismissal, authorised swaps and successful rollback
 do not change the token or cancel observation.
 
-Reset at any phase, failed swap rollback, fault and unload invalidate the epoch
-synchronously and interrupt the attempt. Reset closes a resume barrier. The
+Host reset at any phase, failed swap rollback, fault and unload invalidate the
+epoch synchronously and interrupt the attempt. Host reset closes a resume barrier. The
 host may open it only after successful replacement with a no-op helper; failure
 leaves it closed and requires stopping the guest. Fault/unload close the session.
 Part 1 models these transitions but performs no engine or media calls. Part 2
 must replace/detach the backing before any resumed instruction, and provide a
 guest-owned latch that refuses duplicate invocation in the same guest boot.
 After interruption/expiry, only a new explicit attempt can issue a token.
-The guarantee is at-most-once automated execution, not execution across reset.
+The guarantee is at-most-once automated execution; a host reset does not guarantee execution.
 
 ## Store identity API and acquisition budget
 
@@ -190,7 +190,7 @@ acknowledgement channel. Consumption is the synchronous host transition before
 the query executes. Store revalidation suppresses stale observation records;
 it does not change, complete or abort the query. Products are verified before
 being offered and before issuing their plan. Unattributable/stale queries are
-ignored. The guest latch and reset transaction supply execution exclusion.
+ignored. The guest latch, consume-triggered retirement and host reset transaction supply execution exclusion.
 There is one attempt per preparation lease; replacing it requires retiring the
 old guest, so an unconsumed old helper cannot run beside a new attempt.
 
@@ -376,3 +376,52 @@ non-equivalent mutant against observable tests and rejects surviving mutants.
 No compilation failure counts as a killed mutant. Final full-suite and sanitizer
 runs use the completed tree; later production/test changes require a fresh full
 host run again.
+
+## Guest reboot and helper retirement (D-204)
+
+The host reset transaction above interrupts the attempt, closes its barrier,
+restages drive 0, replaces drive 1, and resets/rebinds the engine and input.
+A guest reboot (`OS_Reset`, Ctrl-Break or a restart initiated by a command)
+performs none of that host transaction. Before consumption it keeps the
+prepared attempt, which may subsequently consume once. After consumption it
+leaves delivery/outcome unchanged; a command that resets while executing can
+still expire to unknown. No reboot or expiry creates a new token.
+
+On APPLIED consume, the synchronous preparation callback records
+`retirement_pending`. This is independent of observation cells, filters,
+queued work and delivery/outcome: same-frame CLOSED and late consume after
+expiry cannot cancel it. The CPU completes that SWI instruction and yields.
+The session returns from protected execution, then services the preparation
+obligation before another guest instruction. Thus the bound is **zero later
+guest instructions**, rather than the ordinary frame drain (up to six chunks,
+about 100 ms of guest time). A reset issued by the very next instruction
+therefore sees retired media. The same boundary handles raw advances and
+frames, preserving the requested deadline/flyback boundary on resume. ARCS
+remains a passive query with its ordinary kernel handling; no media is mutated
+inside its observer and no acknowledgement is added.
+
+Service rebuilds the preparation-owned no-op and uses only the drive-1 mount
+primitive. It does not interrupt the attempt, restage drive 0 or rebind any
+observer/input service. The original controller object remains available for
+status validation. Product commands have the same obligation. Explicit
+low-level drive-1 overrides are outside this guarantee. A successful host
+reset satisfies a pending obligation; unload and fault discard it with the
+stopped session. Build/mount failure stops the engine, retains a terminal
+preparation failure and permits no further guest execution or automatic retry.
+
+The generated controller carrier uses old-map OldId `0x4145`; the no-op uses
+`0x4144`. Both retain the frozen `ArcDroid` disc name and valid helper descriptor.
+The replacement signals a disc cycle, so a warm directory/file cache cannot
+identify the no-op as the previous controller disc. Authored orchestration
+warms drive 1, retires it, reloads through the FDC and executes the reloaded
+no-op. The real FileCore/gate warm-cache and minimum reboot-to-helper interval
+are also part of Fable's seven-pair requalification; they are not inferred from
+host state alone.
+
+Authored kernel reboot subjects implement the documented non-returning
+[OS_Reset contract](https://www.riscos.com/support/developers/prm/misc.html)
+(SWI `0x6A`) and discard the system-variable latch. They cover a returning
+command followed by reboot, reboot inside StartTask, and reboot before consume,
+with cells off/on, exactly one consumption/execution and the reloaded no-op.
+The reset-while-executing subject expires to unknown. These synthetic kernel
+contracts complement Fable's firmware legs; they do not replace them.

@@ -40,7 +40,8 @@
         "cpu-smlal-modulo",
         "observation-r3c1",
         "profiling-6b-p0i",
-        "measurement-6b-1a0"
+        "measurement-6b-1a0",
+        "launch-retirement-d204"
       ]
     },
     {
@@ -503,6 +504,14 @@
         "src/mem.c"
       ],
       "reason": "D-195 endpoint bounds at common batch admission/return and test-only TLB exercise/ranking counters; shipping preprocessing and hot code retained."
+    },
+    {
+      "id": "launch-retirement-d204",
+      "group": "host boundary",
+      "files": [
+        "src/arm.c"
+      ],
+      "reason": "D-204: yield the observing CPU after the consuming instruction; service preparation-owned retirement outside the SWI callback before another guest instruction."
     }
   ],
   "adapted_sources": [

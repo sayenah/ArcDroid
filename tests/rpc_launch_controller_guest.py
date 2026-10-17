@@ -17,7 +17,7 @@ def firmware(image, child=0, close_error=False, ram_size=0, failure=None):
     a.label('handler');a.emit(0xe92d5ff0,0xe14fc000,0xe3ccc201,0xe168f00c)
     a.emit(0xe51ec004,0xe3ccc4ff)
     for swi,label in [(0x20006,'query'),(0x20023,'readvar'),(0x20024,'setvar'),(0x600c0,'init'),
-                      (0x600de,'start'),(0x600dd,'close'),(0x2005c,'ramread'),(0x2002a,'ramcreate'),(0x11,'exit')]:
+                      (0x600de,'start'),(0x600dd,'close'),(0x2005c,'ramread'),(0x2002a,'ramcreate'),(0x11,'exit'),(0x6a,'reset')]:
         a.literal(4,swi);a.emit(0xe15c0004);a.branch(label,condition=0)
     a.branch('return')
     a.label('query');a.emit(0xe5934020)
@@ -41,12 +41,18 @@ def firmware(image, child=0, close_error=False, ram_size=0, failure=None):
     if failure=='init-error':a.emit(0xe14fc000,0xe38cc201,0xe168f00c)
     a.branch('return')
     a.label('start');a.literal(4,0x10031004);a.emit(0xe5945000,0xe2855001,0xe5845000,0xe5905000,0xe5845008)
+    if failure=='reset-during':a.branch('reset')
     a.literal(0,child)
     if failure=='start-error':a.emit(0xe14fc000,0xe38cc201,0xe168f00c)
     a.branch('return')
     a.label('close');a.literal(4,0x10031008);a.emit(0xe5840000,0xe5841008)
     if close_error:a.emit(0xe14fc000,0xe38cc201,0xe168f00c)
     a.branch('return')
+    # Authored OS_Reset contract (PRM Miscellaneous kernel items, SWI &6A):
+    # reset discards system variables and never returns to its caller.
+    a.label('reset');a.literal(4,0x10032000);a.emit(0xe3a05000,0xe5845000)
+    a.literal(4,0x1003102c);a.emit(0xe5945000,0xe2855001,0xe5845000)
+    a.label('reset-idle');a.branch('reset-idle')
     a.label('exit');a.branch('exit')
     a.label('return');a.emit(0xe8fd9ff0)
     # Bootstrap SVC stack, MMU disabled, then invoke the helper twice from USR.

@@ -41,7 +41,7 @@ struct ArcRpcPreparation {
     ArcRpcLaunchController controller;
     ArcRpcBootKey launch_key;
     uint8_t launch_media_identity[32];
-    bool launch_captured,launch_prepared;
+    bool launch_captured,launch_prepared,retirement_pending;
     bool launch_suppressed,execution_barrier,launch_unconfigured;
     ArcRpcLaunchRecordStore observations;
     bool record_attempted;
@@ -96,6 +96,7 @@ static void snapshot_cmos(uint8_t payload[240])
 static void release(ArcRpcPreparation *p)
 {
     if(p->attempt.live)arc_riscpc_attempt_interrupt(&p->attempt,ARC_RPC_INTERRUPT_UNLOAD);
+    p->retirement_pending=false;
     arc_engine_stop(); /* Detach IDE and both borrowed media before any free. */
     arc_riscpc_launch_record_close(&p->observations);
     free(p->generated_helper);p->generated_helper=NULL;
@@ -107,6 +108,7 @@ static void release(ArcRpcPreparation *p)
 }
 static void failed(ArcRpcPreparation *p,const char *s)
 {
+    p->retirement_pending=false;
     if(p->attempt.live)arc_riscpc_attempt_interrupt(&p->attempt,ARC_RPC_INTERRUPT_FAULT);
     arc_engine_rpc_diagnostics();if(p->host.diagnostics)p->host.diagnostics(p->host.opaque);
     if (s && s != p->error) snprintf(p->error,sizeof(p->error),"%s",s);
@@ -284,6 +286,20 @@ static void launch_aborted(void *opaque,ArcRpcAttemptInterrupt reason)
     bool saved=arc_riscpc_cmos_store_put(&p->record,latest,NULL,error,sizeof(error));
     snprintf(p->error,sizeof(p->error),"RiscPC disc rollback failed; session stopped; latest CMOS snapshot %s",saved?"saved":"could not be saved");
     failed(p,p->error);
+}
+/* This lease is preparation-owned, never queued observer work. The loaded
+ * controller image remains intact for subsequent status validation. */
+static void launch_consumed(void *opaque)
+{ArcRpcPreparation *p=opaque;p->retirement_pending=true;}
+static bool launch_boundary(void *opaque)
+{
+    ArcRpcPreparation *p=opaque;
+    if(!p->retirement_pending)return true;
+    if(!p->generated_helper || !arc_riscpc_helper_build(p->generated_helper,ARC_RPC_HELPER_SIZE) ||
+        !arc_engine_rpc_mount(1,&p->helper,p->error,sizeof(p->error))){
+        failed(p,"RiscPC helper retirement failed; session stopped");return false;
+    }
+    p->retirement_pending=false;return true;
 }
 static bool cmos_namespace(const ArcRpcCmosStore *s)
 { return s->phase==0 || s->phase==12 || s->phase==14 || s->phase==15; }
@@ -527,7 +543,7 @@ static void unit(ArcRpcPreparation *p)
         arc_engine_rpc_observers_bind(p->verified_catalogue);
         if(p->host.attached)p->host.attached(p->host.opaque);
         p->launch_captured=p->launch_prepared && launch_bindings(p,&p->launch_key);
-        if(p->launch_prepared){ArcRpcLaunchBinding binding={&p->attempt,&p->controller,launch_revalidate,p,launch_media_changed,launch_aborted};
+        if(p->launch_prepared){ArcRpcLaunchBinding binding={&p->attempt,&p->controller,launch_revalidate,p,launch_media_changed,launch_aborted,launch_consumed,launch_boundary};
             if(!arc_engine_rpc_launch_bind(&binding)){failed(p,"RiscPC launch binding failed");break;}}
         p->state=ARC_RPC_PREP_RUNNING;p->execution_barrier=false;
         if(!p->refusal_reported)notice(p,"",false);
@@ -678,7 +694,7 @@ bool arc_riscpc_preparation_reset(ArcRpcPreparation *p)
             char cause[256];snprintf(cause,sizeof(cause),"%s",*p->error?p->error:"RiscPC reset transaction failed");
             snprintf(p->error,sizeof(p->error),"%s; session stopped; latest CMOS snapshot %s",cause,saved?"saved":"could not be saved");
             failed(p,p->error);
-        }else p->execution_barrier=false;
+        }else {p->retirement_pending=false;p->execution_barrier=false;}
         return ok;
     }
     release(p);restart(p);

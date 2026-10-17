@@ -16,6 +16,7 @@ def subject(kind):
     g.emit(0x63a05000,0x75915000,0xe2855001,0xe5815000)
     g.literal(0,0x8a00);g.literal(2,4);g.literal(3,0);g.literal(4,1);g.emit(0xef020024)
     if kind=='returning':g.emit(0xef000011)
+    elif kind=='resetting':g.emit(0xef00006a) # PRM OS_Reset; never returns
     elif kind=='blocked':g.emit(0xeafffffe)
     elif kind=='prompt':
         g.literal(0,0x8c00);g.emit(0xef000002)
@@ -43,7 +44,7 @@ def main():
     p.add_argument('--firmware',required=True);p.add_argument('--archives',required=True)
     p.add_argument('--cpu',required=True,choices=['arm610','arm710','sa110','arm7500'])
     p.add_argument('--layout',required=True,choices=['ro350','ro360','ro370'])
-    p.add_argument('--work',required=True);p.add_argument('--case',default='returning',choices=['returning','desktop','blocked','prompt'])
+    p.add_argument('--work',required=True);p.add_argument('--case',default='returning',choices=['returning','desktop','blocked','prompt','resetting'])
     p.add_argument('--media');p.add_argument('--input');p.add_argument('--disk-control')
     p.add_argument('--action',default='boot',choices=['boot','application','product']);p.add_argument('--target');p.add_argument('--index',type=int)
     p.add_argument('--frames',type=int,default=3600);p.add_argument('--cells',type=int,default=3)

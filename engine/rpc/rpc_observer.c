@@ -6,6 +6,7 @@
 #include <string.h>
 
 bool arc_rpc_observer_active, arc_rpc_observer_context;
+bool arc_rpc_observer_boundary_pending;
 static bool host_active, observers_active;
 bool arc_rpc_observer_in_host(void) { return host_active; }
 static struct {
@@ -134,6 +135,7 @@ void arc_rpc_observer_cancel(ArcRpcObserver owner)
 }
 void arc_rpc_observer_retire(bool retain_trace)
 {
+    arc_rpc_observer_boundary_pending=false;
     /* A contained fault can jump past the interpreter's batch return. The
      * existing timing counter has already counted its faulting attempt. */
     if(observer.batch.live && observers_active)

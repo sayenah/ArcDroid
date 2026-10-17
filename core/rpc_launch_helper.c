@@ -57,6 +57,8 @@ bool arc_riscpc_helper_carrier(uint8_t *out,size_t capacity,const uint8_t *image
     if(!arc_riscpc_helper_descriptor(image,size,NULL) || !arc_riscpc_helper_build(out,capacity))return false;
     unsigned end=7u+(unsigned)((size+255)/256);
     u24(out,end);u24(out+256,2560-end);
+    /* Controller OldId differs from the no-op even with warm FileCore caches. */
+    out[507]=0x45;
     out[255]=checksum(out);out[511]=checksum(out+256);
     put(out+physical(2)+5+18,(uint32_t)size);
     for(size_t at=0;at<size;){size_t take=size-at;if(take>256)take=256;

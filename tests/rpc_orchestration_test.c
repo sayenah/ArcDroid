@@ -11,6 +11,7 @@
 #include "rpc/rpc_namespace.h"
 #include "rpcemu/src/arm.h"
 #include "rpcemu/src/mem.h"
+#include "rpcemu/src/fdc.h"
 static unsigned notices,terminal_notices,clears,attach_calls;
 static char last_notice[512];
 static uint64_t clock_value,clock_delta;
@@ -30,6 +31,7 @@ static bool populate_request=true;
 static const ArcEngineMedia *explicit_helper;
 static unsigned revision1_notices;
 static bool launch_test,reset_probe;
+static bool guest_cells,guest_subject;
 static const char *launch_product;
 static unsigned reset_failure,reset_steps;
 static uint64_t injected_session=1000;
@@ -116,6 +118,7 @@ static void notice(void *opaque,const char *s,bool terminal)
 static void observer_attached(void *opaque)
 {
     (void)opaque;
+    if(guest_subject){arc_rpc_observers_bind(guest_cells?(test_model==0?1:4):0,test_model);return;}
     /* Flag-free harness reaches the production arms/snapshots. No override
      * exists in this executable; every unqualified cell refuses authority. */
     arc_engine_boot_watch_arm();assert(arc_engine_boot_watch_state()==ARC_BOOT_WATCH_DISABLED);
@@ -490,6 +493,163 @@ static void launch_marker(const ArcRpcLaunchController *c,unsigned event,unsigne
     arm.reg[4]=0x53435241;arm.reg[5]=64;arm.reg[6]=1;arm.reg[13]=0x10008000;
     assert(!arc_rpc_observe_swi_at(0xef020006,0x10020000+c->query,ram00+0x20000/4+(c->query&~0x3ffu)/4));
 }
+/* Read the actual mounted drive through the production controller. This also
+ * warms the drive/cache before replacement, rather than inspecting a builder. */
+static void helper_sector(unsigned sector,uint8_t out[256])
+{
+    ARMState saved=arm;arm.mode=19;arm.reg[16]=0xd3;arm.reg[15]=0x200004;
+    fdc_write(0x3f2,0x3d);assert(arc_engine_rpc_advance(1000000));
+    fdc_write(0x3f5,3);fdc_write(0x3f5,0xf1);fdc_write(0x3f5,3);fdc_write(0x3f7,2);
+    const uint8_t command[]={0x46,1,0,0,(uint8_t)sector,1,(uint8_t)sector,0x35,255};
+    for(unsigned i=0;i<sizeof(command);++i)fdc_write(0x3f5,command[i]);
+    unsigned count=0,steps=0;
+    while(count<256){
+        assert(++steps<40000);
+        unsigned msr=fdc_read(0x3f4)&0xf0;
+        assert(msr!=0xd0);
+        if(msr==0xf0)out[count++]=fdc_read(0x3f5);
+        else assert(arc_engine_rpc_advance(16000));
+    }
+    for(steps=0;(fdc_read(0x3f4)&0xf0)!=0xd0;++steps){assert(steps<1000);assert(arc_engine_rpc_advance(16000));}
+    for(unsigned i=0;i<7;++i){unsigned b=fdc_read(0x3f5);if(i<3)assert(b==(i==0?0x41u:i==1?0x80u:0u));}
+    arm=saved;
+}
+static void mounted_noop(void)
+{
+    uint8_t actual[256],expected[ARC_RPC_HELPER_SIZE];
+    assert(arc_riscpc_helper_build(expected,sizeof(expected)));
+    helper_sector(7,actual);assert(!memcmp(actual,expected+7*256,256));
+    /* Run the bytes reloaded from drive 1, not a retained builder image. */
+    ARMState saved=arm;memcpy((uint8_t *)ram00+0x40000,actual,144);
+    updatemode(16);arm.reg[16]=0xd0;arm.reg[15]=0x10040048;pccache=UINT32_MAX;
+    arm.reg[0]=0x10040000;arm.reg[1]=144;arm.reg[2]=0x10050000;arm.reg[14]=0x200000;
+    ram00[0x5000c/4]=0;extern int arc_rpc_arm_exec_count(unsigned);
+    assert(arc_engine_rpc_advance(10000));assert(ram00[0x5000c/4]==2);arm=saved;pccache=UINT32_MAX;
+}
+static void retirement_cases(const uint8_t *rom,size_t size,ArcRpcPreparationHost host,bool injection)
+{
+    /* Cells are disabled in this flag-free authored session. Neither expiry
+     * nor CLOSED/filter removal owns the retirement obligation. */
+    for(unsigned kind=0;kind<(injection?1u:7u);++kind){
+        restore();clock_mode=1;launch_test=true;
+        ArcRpcPreparation *p=new_request(rom,size,true,false,host);settle(p);
+        ArcRpcLaunchAttempt a;arc_riscpc_preparation_attempt(p,&a);
+        ArcRpcLaunchPlan plan={.action=ARC_RPC_PLAN_BOOT,.media={1}};strcpy(plan.target,"ADFS::0.$.!Boot");
+        ArcRpcLaunchController c;assert(arc_riscpc_controller_build(&plan,&a.token,&c));
+        uint8_t controller_sector[256],id_before[256],id_after[256];
+        helper_sector(7,controller_sector);assert(!memcmp(controller_sector,c.image,256));
+        helper_sector(1,id_before);
+        assert(!arc_rpc_observer_boundary_pending); /* never retire PREPARED */
+        memcpy((uint8_t *)ram00+0x20000,c.image,c.size);
+        if(kind==1)arc_rpc_observers_frame(UINT64_C(120000000));
+        uint8_t *drive0_bytes=NULL;
+        if(kind==2){
+            drive0_bytes=malloc(ARC_RPC_HELPER_SIZE);assert(drive0_bytes);memset(drive0_bytes,0xa5,ARC_RPC_HELPER_SIZE);
+            ArcEngineMedia media={.kind=ARC_MEDIA_ADL_640K,.geometry=ARC_GEOMETRY_640K_L,
+                .data=drive0_bytes,.size=ARC_RPC_HELPER_SIZE,.effective_extent=ARC_MEDIA_EXTENT_UNRESTRICTED};
+            char error[256];assert(arc_engine_rpc_mount(0,&media,error,sizeof(error)));arc_engine_rpc_launch_media_changed();
+            fdc_write(0x3f2,0x3c);fdc_write(0x3f5,3);fdc_write(0x3f5,0xf1);fdc_write(0x3f5,3);fdc_write(0x3f7,2);
+            const uint8_t command[]={0x46,0,0,0,7,1,7,0x35,255};
+            for(unsigned i=0;i<sizeof(command);++i)fdc_write(0x3f5,command[i]);
+            assert(!arc_rpc_fdc_idle(0));
+        }
+        if(kind==4){
+            ArcRpcObserveFilter mode={.swi=0xffffff,.swi_mask=0xffffff,.modes=~0u,.kinds=ARC_RPC_OBS_MODE};
+            assert(arc_rpc_observer_filter(ARC_RPC_OBS_ERROR,&mode));assert(arc_rpc_observer_context);
+        }
+        if((kind==0 || kind==4) && !injection){
+            uint32_t *w=ram00+(0x20000+c.status)/4;w[8]=1;w[9]=1;w[10]=0;
+            updatemode(16);arm.reg[16]=0xd0;arm.reg[15]=0x10020000+c.query+8;pccache=UINT32_MAX;
+            arm.reg[0]=0;arm.reg[1]=1;arm.reg[2]=0;arm.reg[3]=0x10020000+c.status;
+            arm.reg[4]=0x53435241;arm.reg[5]=64;arm.reg[6]=1;arm.reg[13]=0x10008000;
+            /* Worst position: first instruction of a maximum CPU batch. No
+             * kernel/reset/helper-load instruction may follow before service. */
+            extern int arc_rpc_arm_exec_count(unsigned);assert(arc_rpc_arm_exec_count(200)==1);
+        }else launch_marker(&c,1,1,0);
+        assert(arc_rpc_observer_boundary_pending);
+        if(kind==5 || kind==6){
+            if(kind==5)arc_riscpc_preparation_cancel(p);
+            else arc_engine_rpc_launch_interrupt(ARC_RPC_INTERRUPT_SWAP_ROLLBACK);
+            assert(!arc_rpc_observer_boundary_pending && !arc_engine_active());
+            assert(arc_riscpc_preparation_state(p)==(kind==5?ARC_RPC_PREP_CANCELLED:ARC_RPC_PREP_FAILED));
+            assert(arc_rpc_observers_boundary());finish(p);continue;
+        }
+        if(kind==3){launch_marker(&c,2,2,42);launch_marker(&c,3,3,0);launch_marker(&c,4,4,0);launch_marker(&c,5,5,0);launch_marker(&c,8,6,0);
+            arc_rpc_observers_frame(1000); /* same-frame CLOSED removes launch filter */
+            assert(arc_rpc_observer_boundary_pending);
+        }
+        arc_riscpc_preparation_attempt(p,&a);ArcRpcLaunchAttempt before=a;
+        uint64_t drive0=arc_rpc_fdc_media_generation(0),drive1=arc_rpc_fdc_media_generation(1);
+        unsigned restages=reset_steps;
+        bool ok=arc_rpc_observers_boundary();
+        if(injection){assert(!ok && arc_riscpc_preparation_state(p)==ARC_RPC_PREP_FAILED);
+            assert(!arc_riscpc_preparation_execution_allowed(p) && !arc_engine_active());
+            assert(!arc_engine_rpc_advance(1000));assert(arc_rpc_observers_boundary());
+            assert(strstr(last_notice,"retirement failed") && last_kind==2);finish(p);continue;}
+        assert(ok && !arc_rpc_observer_boundary_pending);
+        assert(arc_rpc_fdc_media_generation(0)==drive0 && arc_rpc_fdc_media_generation(1)>drive1 && reset_steps==restages);
+        arc_riscpc_preparation_attempt(p,&a);assert(!memcmp(&before,&a,sizeof(a)));
+        if(kind==2){
+            assert(!arc_rpc_fdc_idle(0));ARMState saved=arm;updatemode(19);arm.reg[16]=0xd3;arm.reg[15]=0x200004;pccache=UINT32_MAX;
+            unsigned count=0;
+            for(unsigned i=0;count<256;++i){assert(i<40000);
+                if((fdc_read(0x3f4)&0xf0)==0xf0){assert(fdc_read(0x3f5)==0xa5);++count;}
+                else assert(arc_engine_rpc_advance(16000));}
+            for(unsigned i=0;(fdc_read(0x3f4)&0xf0)!=0xd0;++i){assert(i<1000);assert(arc_engine_rpc_advance(16000));}
+            for(unsigned i=0;i<7;++i)(void)fdc_read(0x3f5);
+            arm=saved;pccache=UINT32_MAX;
+        }
+        mounted_noop();helper_sector(1,id_after);assert(memcmp(id_before,id_after,256));
+        /* Status validation keeps the controller object even after remount. */
+        if(kind!=1 && kind!=3){launch_marker(&c,2,2,42);launch_marker(&c,3,3,0);
+            arc_riscpc_preparation_attempt(p,&a);assert(a.delivery==ARC_RPC_DELIVERY_DISPATCH);}
+        finish(p);free(drive0_bytes);
+    }
+    launch_test=false;
+}
+static void guest_call(const uint8_t *image,size_t size,bool reset_after)
+{
+    memcpy((uint8_t *)ram00+0x20000,image,size);
+    ram00[0x60000/4]=reset_after?0xef00006a:0xeafffffe;
+    ram00[0x60004/4]=0xeafffffe;
+    updatemode(19);arm.reg[16]=0xd3;arm.reg[13]=0x10070000;
+    updatemode(16);arm.reg[16]=0xd0;arm.reg[13]=0x10068000;
+    arm.reg[15]=0x10020048;arm.reg[0]=0x10020000;arm.reg[1]=(uint32_t)size;
+    arm.reg[2]=0x10050000;arm.reg[3]=1;arm.reg[14]=0x10060000;
+    arm.event=0;pccache=UINT32_MAX;
+    assert(arc_engine_rpc_advance(1000000));
+}
+static void guest_reboots(ArcRpcPreparationHost host)
+{
+    for(unsigned cells=0;cells<2;++cells)for(unsigned kind=0;kind<3;++kind){
+        restore();clock_mode=1;launch_test=guest_subject=true;guest_cells=cells!=0;
+        const char *name=kind==1?"/system/guest-reset.rom":"/system/guest-return.rom";
+        int index=find(name,false);assert(index>=0);
+        ArcRpcPreparation *p=new_request(files[index].data,files[index].size,true,false,host);settle(p);
+        ArcRpcLaunchAttempt a;arc_riscpc_preparation_attempt(p,&a);
+        ArcRpcLaunchPlan plan={.action=ARC_RPC_PLAN_BOOT,.media={1}};strcpy(plan.target,"ADFS::0.$.!Boot");
+        ArcRpcLaunchController c;assert(arc_riscpc_controller_build(&plan,&a.token,&c));
+        if(kind==2){ /* A guest reboot while PREPARED leaves the token intact. */
+            ram00[0x60000/4]=0xef00006a;updatemode(19);arm.reg[13]=0x10070000;
+            updatemode(16);arm.reg[16]=0xd0;arm.reg[15]=0x10060008;pccache=UINT32_MAX;
+            assert(arc_engine_rpc_advance(1000000));
+            ArcRpcLaunchAttempt before=a;arc_riscpc_preparation_attempt(p,&a);assert(!memcmp(&before,&a,sizeof(a)));
+        }
+        guest_call(c.image,c.size,kind==0);
+        assert(ram00[0x3101c/4]==1 && ram00[0x31004/4]==1); /* consume and execution */
+        assert(ram00[0x3102c/4]==1 && ram00[0x32000/4]==(kind==2?1u:0u)); /* guest reset cleared latch */
+        arc_riscpc_preparation_attempt(p,&a);ArcRpcLaunchAttempt before=a;
+        if(kind==0)assert(a.start_returned && a.outcome==(cells?ARC_RPC_OUTCOME_RETURNED:ARC_RPC_OUTCOME_PENDING));
+        if(kind==1)assert(!a.start_returned && a.delivery==ARC_RPC_DELIVERY_DISPATCH);
+        uint8_t image[256];helper_sector(7,image);guest_call(image,144,false);
+        assert(ram00[0x5000c/4]==2); /* no-op actually executed after reboot */
+        assert(ram00[0x3101c/4]==1 && ram00[0x31004/4]==1 && ram00[0x3102c/4]==1);
+        arc_riscpc_preparation_attempt(p,&a);assert(!memcmp(&before,&a,sizeof(a)));
+        if(kind==1){arc_rpc_observers_frame(UINT64_C(120000000));arc_riscpc_preparation_attempt(p,&a);assert(a.outcome==ARC_RPC_OUTCOME_UNKNOWN);}
+        finish(p);
+    }
+    guest_subject=guest_cells=launch_test=false;
+}
 static bool rollback_write_failure;
 static int64_t rollback_cmos_write(struct retro_vfs_file_handle *file,const void *bytes,uint64_t n)
 {
@@ -521,7 +681,10 @@ static void launch_reset_matrix(const uint8_t *rom,size_t size,ArcRpcPreparation
         ArcRpcPreparation *product=new_request(rom,size,true,false,host);settle(product);
         if(arc_riscpc_preparation_state(product)!=(present?ARC_RPC_PREP_RUNNING:ARC_RPC_PREP_FAILED))fprintf(stderr,"product present=%u: %s\n",present,arc_riscpc_preparation_error(product));
         assert(arc_riscpc_preparation_state(product)==(present?ARC_RPC_PREP_RUNNING:ARC_RPC_PREP_FAILED));
-        if(present){ArcRpcLaunchAttempt a;arc_riscpc_preparation_attempt(product,&a);assert(a.delivery==ARC_RPC_DELIVERY_PREPARED);}
+        if(present){ArcRpcLaunchAttempt a;arc_riscpc_preparation_attempt(product,&a);assert(a.delivery==ARC_RPC_DELIVERY_PREPARED);
+            ArcRpcLaunchPlan plan={.action=ARC_RPC_PLAN_PRODUCT,.media={1}};strcpy(plan.target,launch_product);
+            ArcRpcLaunchController c;assert(arc_riscpc_controller_build(&plan,&a.token,&c));memcpy((uint8_t *)ram00+0x20000,c.image,c.size);
+            launch_marker(&c,1,1,0);assert(arc_rpc_observers_boundary());mounted_noop();}
         else assert(!arc_engine_active());
         finish(product);launch_product=NULL;
     }
@@ -541,8 +704,10 @@ static void launch_reset_matrix(const uint8_t *rom,size_t size,ArcRpcPreparation
         assert(!arc_engine_active()==(failure!=0));assert(reset_steps==(failure==1?1:2));
         arc_riscpc_preparation_attempt(p,&a);assert(a.delivery==ARC_RPC_DELIVERY_INTERRUPTED && a.epoch>epoch && a.live==!failure);
         assert(arc_riscpc_preparation_execution_allowed(p)==!failure);
+        assert(a.resume_allowed==!failure);
         if(failure)assert(strstr(arc_riscpc_preparation_error(p),"latest CMOS snapshot"));
         else {
+            mounted_noop();
             ArcRpcLaunchAttempt before=a;memcpy((uint8_t *)ram00+0x20000,c.image,c.size);launch_marker(&c,1,1,0);
             arc_riscpc_preparation_attempt(p,&a);assert(!memcmp(&before,&a,sizeof(a))); /* stale after reset */
         }
@@ -732,12 +897,18 @@ int main(int argc,char **argv)
     file_copy("/system/arcdroid/riscpc/boot/PlingSystem.zip",source);
     snprintf(source,sizeof(source),"%s/cap.zip",argv[1]);file_copy("/system/cap.zip",source);
     snprintf(source,sizeof(source),"%s/product.zip",argv[1]);file_copy("/system/product.zip",source);
+    snprintf(source,sizeof(source),"%s/guest-return.rom",argv[1]);file_copy("/system/guest-return.rom",source);
+    snprintf(source,sizeof(source),"%s/guest-reset.rom",argv[1]);file_copy("/system/guest-reset.rom",source);
     file_copy("/system/full.rom",argv[2]);int i=find("/system/full.rom",false);assert(i>=0);
     size_t size=files[i].size;uint8_t *rom=malloc(size);assert(rom);memcpy(rom,files[i].data,size);
     construction_and_attachments(rom,size);
     file_bytes("/system/attachment.raw","media",5);
     snapshot();ArcRpcPreparationHost host={.clock=clock_read,.notice=notice,.attach=attach,.attached=observer_attached};
+    if(!strcmp(argv[4],"retirement-failure")){
+        retirement_cases(rom,size,host,true);free(rom);fresh_files();return 0;
+    }
     if(!strcmp(argv[4],"launch")){
+        guest_reboots(host);retirement_cases(rom,size,host,false);
         helper_ownership(rom,size,host);launch_reset_matrix(rom,size,host);free(rom);fresh_files();
         for(unsigned j=0;j<TEST_FILES;++j){free(baseline[j].data);baseline[j].data=NULL;}
         puts("RPC preparation: reset at four delivery points, callback failures, barrier and stale markers passed");return 0;

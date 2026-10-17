@@ -183,6 +183,10 @@ static void status_event(const ArcRpcObservation *e)
         if(state.sequence || w[10])break;
         if(state.binding.revalidate)state.binding.revalidate(state.binding.opaque);
         accepted=arc_riscpc_attempt_consume(a,&a->token)==ARC_RPC_TRANSITION_APPLIED;
+        if(accepted && state.binding.consumed){
+            state.binding.consumed(state.binding.opaque);
+            arc_rpc_observer_boundary_pending=true;
+        }
         if(accepted && state.observation_finished){attempt_event(ARC_RPC_EVENT_EXPIRE);arc_rpc_observer_filter(ARC_RPC_OBS_LAUNCH,NULL);}
         break;
     case ARC_RPC_STATUS_REGISTERED:
@@ -513,6 +517,8 @@ void arc_rpc_observers_bind(unsigned catalogue,unsigned cpu)
     state.error.modal_unknown=!(state.cells&ARC_RPC_CELL_ERROR);filters();
 }
 #if defined(ARCDROID_TEST_FAULTS) || defined(ARCDROID_TEST_API)
+void arc_rpc_observers_test_status(const ArcRpcObservation *event)
+{ status_event(event); }
 void arc_rpc_observers_test_cells(unsigned cells)
 { state.cells&=cells;filters(); }
 void arc_rpc_observers_test_horizon(unsigned us)
@@ -620,6 +626,12 @@ disc_retry:
             if(retry && work.generation==arc_rpc_observer_generation(ARC_RPC_OBS_DISC))state.retry_pending=true;
         }
     }
+}
+bool arc_rpc_observers_boundary(void)
+{
+    if(!arc_rpc_observer_boundary_pending)return true;
+    arc_rpc_observer_boundary_pending=false;
+    return state.binding.boundary && state.binding.boundary(state.binding.opaque);
 }
 bool arc_rpc_observers_attempt(const ArcRpcLaunchBinding *binding)
 {

@@ -55,10 +55,19 @@ groups = [
   ('product-name', 'return arc_name_ascii_equal(&actual,&entry->name);', 'return true;'),
   ('product-run-allocation', 'arc_rpc_run_valid(fs,&child[item])', 'true'),
  ]),
+ ('engine/rpcemu/src/arm.c', 'rpc_orchestration_test', None, [
+  ('retirement-instruction-yield','if(arc_rpc_observer_boundary_pending)count=(unsigned)linecyc+1;', '(void)0;'),
+ ]),
  ('engine/rpc/rpc_observers.c', 'rpc_orchestration_test', None, [
   ('abort-owner-notification', 'if(old.aborted)old.aborted(old.opaque,reason);', ''),
  ]),
  ('libretro/rpc_preparation.c', 'rpc_orchestration_test', None, [
+  ('skip-retirement','if(!p->retirement_pending)return true;', 'return true;'),
+  ('retirement-before-consume','p->state=ARC_RPC_PREP_RUNNING;p->execution_barrier=false;', 'p->state=ARC_RPC_PREP_RUNNING;p->execution_barrier=false;launch_consumed(p);(void)launch_boundary(p);'),
+  ('reset-keeps-controller','p->generated_helper && arc_riscpc_helper_build(p->generated_helper,ARC_RPC_HELPER_SIZE)', 'p->generated_helper'),
+  ('reset-noop-ready-skipped','arc_riscpc_attempt_noop_ready(&p->attempt,true)', 'true'),
+  ('inject-retirement-build','!arc_riscpc_helper_build(p->generated_helper,ARC_RPC_HELPER_SIZE) ||', 'true ||'),
+  ('inject-retirement-mount','!arc_engine_rpc_mount(1,&p->helper,p->error,sizeof(p->error))', 'true'),
   ('rollback-snapshot-order','p->execution_barrier=true;p->launch_suppressed=true;p->launch_captured=false;', 'p->execution_barrier=true;p->launch_suppressed=true;p->launch_captured=false;arc_engine_stop();'),
   ('reset-dead-engine', 'if(!arc_engine_active() || !arc_engine_is_rpc()){', 'if(false){'),
   ('rollback-owner','if(reason!=ARC_RPC_INTERRUPT_SWAP_ROLLBACK)return;', 'return;'),
@@ -66,7 +75,7 @@ groups = [
   ('reset-interruption', 'arc_riscpc_preparation_interrupt(p,ARC_RPC_INTERRUPT_RESET);', ''),
   ('reset-drive0-result', 'p->host.restage_drive0 && p->host.restage_drive0(p->host.opaque,p->error,sizeof(p->error))', '(p->host.restage_drive0(p->host.opaque,p->error,sizeof(p->error)),true)'),
   ('reset-rebind-result', 'p->host.reset_rebind && p->host.reset_rebind(p->host.opaque,p->error,sizeof(p->error))', '(p->host.reset_rebind(p->host.opaque,p->error,sizeof(p->error)),true)'),
-  ('reset-barrier', 'else p->execution_barrier=false;', 'else p->execution_barrier=true;'),
+  ('reset-barrier', 'else {p->retirement_pending=false;p->execution_barrier=false;}', 'else {p->retirement_pending=false;p->execution_barrier=true;}'),
  ]),
 ]
 
@@ -97,7 +106,9 @@ with tempfile.TemporaryDirectory(prefix='arc-launch-mutants-') as temp:
    subprocess.run(link, cwd=build, check=True, capture_output=True)
    extension='.dll' if os.name=='nt' else '.dylib' if sys.platform=='darwin' else '.so'
    command = [sys.executable,'-B',str(root/'tests/rpc_boot_plan_test.py'),str(build/('rpc_cmos_plan_test.exe' if os.name=='nt' else 'rpc_cmos_plan_test')),str(exe),str(build/('rpc_runner.exe' if os.name=='nt' else 'rpc_runner')),str(build/('arcdroid_libretro'+extension)),str(root/'tests/rpc_ide_rom.py'),str(fixtures)] if args=='plan' else [sys.executable,'-B',str(root/'tests/rpc_launch_controller_guest.py'),str(build/'rpc_runner'),str(build/('arcdroid_rpcplan_libretro'+extension)),str(exe)] if args=='guest' else [str(exe), *args] if args is not None else [sys.executable, '-B', str(root/'tests/rpc_orchestration_test.py'), str(exe), str(fixtures), 'launch']
+   injected=label.startswith('inject-retirement-')
+   if injected:command[-1]='retirement-failure'
    result = subprocess.run(command, cwd=build, capture_output=True, text=True, timeout=180)
-   if label == 'baseline' and result.returncode: raise RuntimeError('baseline '+relative+': '+result.stderr[-1500:])
-   if label != 'baseline' and not result.returncode: raise RuntimeError('survived: '+label)
-   print(relative, label, 'passed' if label == 'baseline' else 'killed', flush=True)
+   if (label == 'baseline' or injected) and result.returncode: raise RuntimeError('baseline '+relative+': '+result.stderr[-1500:])
+   if label != 'baseline' and not injected and not result.returncode: raise RuntimeError('survived: '+label)
+   print(relative, label, 'injected failure passed' if injected else 'passed' if label == 'baseline' else 'killed', flush=True)

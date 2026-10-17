@@ -20861,6 +20861,154 @@
       },
       "c_type": "bool",
       "meaning": "R3c-3b contextual profile flag; mutable test profile is included even when not selected."
+    },
+    {
+      "name": "rpc_observer.arc_rpc_observer_boundary_pending",
+      "group": "session",
+      "type": "u64",
+      "count": 1,
+      "class": "canonical",
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "condition": true,
+      "exclusion_reason": "None: canonical state",
+      "citation": "docs/decision-log.md:D-204; docs/riscpc-launch-plan.md:Guest reboot and helper retirement",
+      "source": "engine/rpc/rpc_observer.c",
+      "mode_exclusions": {},
+      "c_type": "bool",
+      "meaning": "Applied-consume service yield survives filter removal; cleared only by service or session retirement."
+    },
+    {
+      "name": "rpc_observers.state.binding.consumed",
+      "group": "session",
+      "type": "allocation-offset",
+      "count": 1,
+      "class": "canonical",
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "condition": true,
+      "exclusion_reason": "None: R3c-3b launch delivery and prompt state affect guest execution",
+      "citation": "docs/decision-log.md:D-204; docs/riscpc-launch-plan.md:Guest reboot and helper retirement",
+      "source": "engine/rpc/rpc_observers.c",
+      "mode_exclusions": {},
+      "c_type": "void (*)(void *)",
+      "meaning": "launch_consumed: synchronously records the preparation obligation",
+      "allowed_allocations": [
+        0,
+        11
+      ],
+      "normalization": "A-29: allocation/owner-relative identity, never a process address; unknown identities fail"
+    },
+    {
+      "name": "rpc_observers.state.binding.boundary",
+      "group": "session",
+      "type": "allocation-offset",
+      "count": 1,
+      "class": "canonical",
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "condition": true,
+      "exclusion_reason": "None: R3c-3b launch delivery and prompt state affect guest execution",
+      "citation": "docs/decision-log.md:D-204; docs/riscpc-launch-plan.md:Guest reboot and helper retirement",
+      "source": "engine/rpc/rpc_observers.c",
+      "mode_exclusions": {},
+      "c_type": "bool (*)(void *)",
+      "meaning": "launch_boundary: builds and mounts no-op before CPU resume",
+      "allowed_allocations": [
+        0,
+        11
+      ],
+      "normalization": "A-29: allocation/owner-relative identity, never a process address; unknown identities fail"
+    },
+    {
+      "name": "rpc_observers.state.binding.opaque.retirement_pending",
+      "group": "session",
+      "type": "u64",
+      "count": 1,
+      "class": "canonical",
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "condition": true,
+      "exclusion_reason": "None: R3c-3b launch delivery and prompt state affect guest execution",
+      "citation": "docs/decision-log.md:D-204; docs/riscpc-launch-plan.md:Guest reboot and helper retirement",
+      "source": "libretro/rpc_preparation.c",
+      "mode_exclusions": {},
+      "c_type": "bool",
+      "meaning": "Preparation-owned persistent obligation. APPLIED consume sets; successful mount/reset satisfies; fault/unload discards. Must be traversed through binding.opaque."
+    },
+    {
+      "name": "driver.service.end",
+      "group": "driver",
+      "type": "u64",
+      "count": 1,
+      "class": "batch-local",
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "condition": true,
+      "exclusion_reason": "None: canonical state",
+      "citation": "docs/decision-log.md:D-204; engine/rpc/rpc_session.c:arc_rpc_advance",
+      "source": "engine/rpc/rpc_session.c",
+      "mode_exclusions": {},
+      "meaning": "Absolute requested advance deadline retained across a retirement service yield; compare as driver.limit is compared."
+    },
+    {
+      "name": "driver.service.field",
+      "group": "driver",
+      "type": "u64",
+      "count": 1,
+      "class": "batch-local",
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "condition": true,
+      "exclusion_reason": "None: canonical state",
+      "citation": "docs/decision-log.md:D-204; engine/rpc/rpc_session.c:arc_rpc_advance",
+      "source": "engine/rpc/rpc_session.c",
+      "mode_exclusions": {},
+      "meaning": "Whether a completed video field ends this advance.",
+      "c_type": "bool"
+    },
+    {
+      "name": "driver.service.before.fields",
+      "group": "driver",
+      "type": "u64",
+      "count": 1,
+      "class": "batch-local",
+      "phases": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "condition": true,
+      "exclusion_reason": "None: canonical state",
+      "citation": "docs/decision-log.md:D-204; engine/rpc/rpc_session.c:arc_rpc_advance",
+      "source": "engine/rpc/rpc_session.c",
+      "mode_exclusions": {},
+      "meaning": "Outer advance field baseline retained across retirement, not the restarted inner chunk baseline."
     }
   ],
   "inventory": [
@@ -23847,6 +23995,63 @@
       "classification": "contents-compared",
       "ruling": "A-29: traverse preparation-owned pointees; identify callbacks by semantic owner, never by host address; no host-only exclusion",
       "citation": "docs/handoff.md:W2 Run C; docs/riscpc-6b-m2a.md:A-3/A-29; engine/rpc/rpc_observers.c:18-22"
+    },
+    {
+      "category": "static-root",
+      "source": "engine/rpc/rpc_observer.c",
+      "symbol": "arc_rpc_observer_boundary_pending",
+      "classification": "contents-compared",
+      "ruling": "D-204: retirement controls whether guest execution can resume; compare contents, no exclusion",
+      "citation": "docs/decision-log.md:D-204; docs/riscpc-launch-plan.md:Guest reboot and helper retirement",
+      "root": "rpc_observer.arc_rpc_observer_boundary_pending"
+    },
+    {
+      "category": "reachable-storage",
+      "source": "engine/rpc/rpc_observers.c",
+      "symbol": "rpc_observers.state.binding.consumed",
+      "classification": "contents-compared",
+      "ruling": "D-204: retirement controls whether guest execution can resume; compare contents, no exclusion",
+      "citation": "docs/decision-log.md:D-204; docs/riscpc-launch-plan.md:Guest reboot and helper retirement"
+    },
+    {
+      "category": "reachable-storage",
+      "source": "engine/rpc/rpc_observers.c",
+      "symbol": "rpc_observers.state.binding.boundary",
+      "classification": "contents-compared",
+      "ruling": "D-204: retirement controls whether guest execution can resume; compare contents, no exclusion",
+      "citation": "docs/decision-log.md:D-204; docs/riscpc-launch-plan.md:Guest reboot and helper retirement"
+    },
+    {
+      "category": "reachable-storage",
+      "source": "libretro/rpc_preparation.c",
+      "symbol": "rpc_observers.state.binding.opaque.retirement_pending",
+      "classification": "contents-compared",
+      "ruling": "D-204: retirement controls whether guest execution can resume; compare contents, no exclusion",
+      "citation": "docs/decision-log.md:D-204; docs/riscpc-launch-plan.md:Guest reboot and helper retirement"
+    },
+    {
+      "category": "live-control-local",
+      "source": "engine/rpc/rpc_session.c",
+      "symbol": "arc_rpc_advance::end",
+      "classification": "contents-compared",
+      "ruling": "D-204: retained caller deadline/field controls remain live across the service yield; compare contents without exclusion",
+      "citation": "docs/decision-log.md:D-204; engine/rpc/rpc_session.c:arc_rpc_advance"
+    },
+    {
+      "category": "live-control-local",
+      "source": "engine/rpc/rpc_session.c",
+      "symbol": "arc_rpc_advance::field",
+      "classification": "contents-compared",
+      "ruling": "D-204: retained caller deadline/field controls remain live across the service yield; compare contents without exclusion",
+      "citation": "docs/decision-log.md:D-204; engine/rpc/rpc_session.c:arc_rpc_advance"
+    },
+    {
+      "category": "live-control-local",
+      "source": "engine/rpc/rpc_session.c",
+      "symbol": "arc_rpc_advance::before.fields",
+      "classification": "contents-compared",
+      "ruling": "D-204: retained caller deadline/field controls remain live across the service yield; compare contents without exclusion",
+      "citation": "docs/decision-log.md:D-204; engine/rpc/rpc_session.c:arc_rpc_advance"
     }
   ],
   "object_symbols": {
@@ -23864,7 +24069,8 @@
           "rpc_observer.event_captures",
           "rpc_observer.number_checks",
           "rpc_observer.swi_interest",
-          "rpc_observer.qualifications"
+          "rpc_observer.qualifications",
+          "rpc_observer.arc_rpc_observer_boundary_pending"
         ],
         "citation": "docs/riscpc-6b-m2a.md:A-3/A-29",
         "meaning": "Compiler aggregate/section label; member roots are individually inventoried"
@@ -23932,6 +24138,14 @@
         ],
         "citation": "docs/riscpc-6b-m2a.md:A-3/A-29",
         "meaning": "Source root"
+      },
+      "arc_rpc_observer_boundary_pending": {
+        "classification": "contents-compared",
+        "roots": [
+          "rpc_observer.arc_rpc_observer_boundary_pending"
+        ],
+        "citation": "docs/decision-log.md:D-204; docs/riscpc-launch-plan.md:Guest reboot and helper retirement",
+        "meaning": "D-204 service request"
       }
     },
     "engine/rpc/rpc_inspector.c": {},

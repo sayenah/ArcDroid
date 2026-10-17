@@ -143,6 +143,10 @@ typedef struct {
    void *opaque;
    void (*media_changed)(void *);
    void (*aborted)(void *,ArcRpcAttemptInterrupt);
+   /* APPLIED consume records an obligation synchronously. Service runs after
+    * the consuming instruction, outside the SWI callback, before CPU resume. */
+   void (*consumed)(void *);
+   bool (*boundary)(void *);
 } ArcRpcLaunchBinding;
 bool arc_engine_rpc_launch_bind(const ArcRpcLaunchBinding *);
 void arc_engine_rpc_launch_input(void);
