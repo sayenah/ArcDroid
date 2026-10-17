@@ -193,7 +193,7 @@ Each slice is its own PR, gated and measured on its own.
 - **D3 (PC kept in a local).** Exact, but it saves about one host instruction net, grows the cheap loop by 12 % and doubles its spills, and E3 would need a narrow invariant. Rejected.
 - **D4 (force-inline the shift and flag helpers).** Gains at most 0.3 % of instructions even on shift-dense code, adds 2.4–12 KB to each of the three loops, and the prototype workloads never ran shift3. Revisit only if an Odin3 or Windows profile shows the helpers above 2 %.
 - **D5a (threaded dispatch).** Unproven, duplicates the whole tail in three loops against the D-180 limit, and gains at most 2 % on cache-hot code. Rejected.
-- **D5b (pccache2 as a local).** It does not change guest behaviour; the earlier record saying otherwise is wrong. It needs a one-line §2.2 change and saves one store per instruction. Defer to the block-foundation contract.
+- **D5b (pccache2 as a local).** Guest-exact, deferred for low value (D-195). It needs a §2.2 projection change and saves one store per instruction; defer it to the block-foundation contract.
 - **D5c (lazy NZCV).** Not exact as an interpreter change: the flags live in reg[15] in 26-bit modes, the raw +4 can carry into V (Q-6), and capture_event reads the flags at G-12 barriers. This is translator work.
 - **D1 extra (`unreachable` default).** It becomes undefined behaviour if a case label is ever removed, and it is unmeasured. Not in 1a.
 - **F3 (permission table).** Exact, but it is a precomputed verdict needing classification, and it costs about 2 extra instructions per access in manager domains, which is every perf fixture. Revisit only on P0i domain data.
@@ -235,3 +235,18 @@ Read-only vetting at `1f4bbae` with scratch prototypes on a loaded Mac (`.work/s
 - A **lazy rational batch** (the integer-batch scheme extended to rational bases, with a table step indexed by fraction, built per rate, model and SA clock at bind and selected in `arc_rpc_mem_control`) matched the reference in 7,200 prototype cases and fired the overflow fatal at the same instruction in 576 edge cases. It needs a separate host-only lazy flag (not `integer_batch`, a compared field), exactly the integer flush sites, no re-admission after service, the integer step kept for integral bases, a widened P0 projection rule and a D-180 re-run. Two prototype mutants survived (dropped alignment check; omitted flush before bus-busy service) and need white-box cases.
 - Benefit: about 72 instead of 84 host instructions per guest instruction on request-free ARM710 code, falling with request density; estimated 0.5–3 % on ARM710 titles; nothing on 031 (SA-110 on the integer path).
 - **Ruling:** not admitted to Phase 1a. It belongs to Track B regime B-2 (`docs/riscpc-6b-plan.md`), with the exclusions above. It returns as a 1a slice after S1 only if 1a-0 or 6b-P0j counters show at least about 30 % request-free-prefix share on an ARM710 workload, or if the Founder's SA rate (F-g) does not divide 1000, which would put SA-110 on the rational path.
+
+## 1a-0 current code anchors
+
+The draft table retains its explicitly labelled `7b11b47` prototype locations
+and results. For follow-on work use the current definitions below, refreshed
+with 1a-0; no fast path is implemented here.
+
+| Candidate | Current reference path |
+|---|---|
+| L1 | `engine/rpc/rpc_mem_timing.c:293` (lookup), `engine/rpc/rpc_mem_timing.c:518` (access caller), `engine/rpc/rpc_mem_timing.c:604` (maintenance caller) |
+| S1 / B2 | `engine/rpc/rpc_mem_timing.c:894` (service), `engine/rpc/rpc_mem_timing.c:768` (commands), `engine/rpc/rpc_mem_timing.c:802` (resumable run) |
+| B3 | `engine/rpc/rpc_mem_timing.c:660`, `engine/rpc/rpc_mem_timing.c:943`, `engine/rpc/rpc_mem_timing.c:964` |
+| A1 / F1 | `engine/rpcemu/src/cp15.c:390`, `engine/rpcemu/src/cp15.c:471` |
+| A1 accesses | `engine/rpcemu/src/mem.c:704`, `engine/rpcemu/src/mem.c:722` |
+| D1 / D2 | `engine/rpcemu/src/arm.c:619`, `engine/rpcemu/src/arm.c:620` |

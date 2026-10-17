@@ -17,7 +17,7 @@ static struct {
     ArcDiscRequest disc;
     bool disc_enabled;
     const char *disc_signal, *disc_reason;
-#if defined(ARCDROID_TEST_FAULTS)
+#if defined(ARCDROID_TEST_FAULTS) || defined(ARCDROID_TEST_API)
     bool overridden;
 #endif
     char inserted[11];
@@ -389,7 +389,7 @@ void arc_rpc_observers_bind(unsigned catalogue,unsigned cpu)
     }
     state.error.modal_unknown=!(state.cells&ARC_RPC_CELL_ERROR);filters();
 }
-#if defined(ARCDROID_TEST_FAULTS)
+#if defined(ARCDROID_TEST_FAULTS) || defined(ARCDROID_TEST_API)
 void arc_rpc_observers_test_cells(unsigned cells)
 { state.cells&=cells;filters(); }
 void arc_rpc_observers_test_horizon(unsigned us)
@@ -443,11 +443,11 @@ void arc_rpc_observers_rebase(unsigned actual_cpu)
     unsigned catalogue=state.catalogue,cpu=actual_cpu;
     bool enabled=state.disc_enabled;char inserted[11];memcpy(inserted,state.inserted,sizeof(inserted));
     ArcDiscResolveCallback resolve=state.resolve;ArcDiscObservationCallback observe=state.observe;void *opaque=state.opaque;
-#if defined(ARCDROID_TEST_FAULTS)
+#if defined(ARCDROID_TEST_FAULTS) || defined(ARCDROID_TEST_API)
     bool overridden=state.overridden;unsigned cells=state.cells,devices=state.disc_profile.device_forms;ArcErrorProfile profile=state.error_profile;
 #endif
     arc_rpc_observers_bind(catalogue,cpu);
-#if defined(ARCDROID_TEST_FAULTS)
+#if defined(ARCDROID_TEST_FAULTS) || defined(ARCDROID_TEST_API)
     if(overridden){arc_rpc_observers_override(cells,profile.poll_r1,profile.poll_r2,profile.answer_forms);
         arc_rpc_observers_test_buttons(profile.ok_forms,profile.cancel_forms,profile.default_cancel_forms);
         (void)arc_rpc_observers_test_error_numbers(profile.numbers);

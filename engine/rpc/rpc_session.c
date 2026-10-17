@@ -85,7 +85,23 @@ extern uint64_t arc_rpc_cmos_write_evidence(uint8_t mask[32]);
 static unsigned arc_rpc_fail_alloc;
 static unsigned arc_rpc_test_quota=200;
 static bool arc_rpc_fail_entry;
+#endif
+#if defined(ARCDROID_TEST_FAULTS) || defined(ARCDROID_TEST_API)
 static ArcRpcTestSnapshot arc_rpc_observation;
+static const char *arc_rpc_refused;
+RETRO_API unsigned arc_rpc_test_capabilities(void)
+{
+    unsigned caps=ARC_RPC_TEST_EVENT_DIAGNOSTICS|ARC_RPC_TEST_FRAME_TIMER;
+#if defined(ARCDROID_TEST_FAULTS)
+    caps|=ARC_RPC_TEST_TRACE|ARC_RPC_TEST_HOT;
+#endif
+#if defined(ARCDROID_RPC_PROFILE)
+    caps|=ARC_RPC_TEST_RANKING;
+#endif
+    return caps;
+}
+RETRO_API const char *arc_rpc_test_refusal(void) { return arc_rpc_refused; }
+bool arc_rpc_test_refuse(const char *facility) { arc_rpc_refused=facility;return false; }
 #endif
 
 void *arc_rpc_alloc(size_t bytes)
@@ -185,7 +201,7 @@ static void arc_rpc_reset_devices(void)
     arc_rpc_input_service = NULL;
     arc_rpc_executed = arc_rpc_idle_ns = 0;
     arc_rpc_bus_until = arc_rpc_bus_ns = 0;
-#if defined(ARCDROID_TEST_FAULTS)
+#if defined(ARCDROID_TEST_FAULTS) || defined(ARCDROID_TEST_API)
     memset(&arc_rpc_observation, 0, sizeof(arc_rpc_observation));
 #endif
 }
@@ -334,7 +350,7 @@ static bool arc_rpc_reset(char *failure, size_t failure_size)
 #endif
 static void arc_rpc_deliver(ArcRpcEvent event)
 {
-#if defined(ARCDROID_TEST_FAULTS)
+#if defined(ARCDROID_TEST_FAULTS) || defined(ARCDROID_TEST_API)
     ++arc_rpc_observation.events[event];
     unsigned t = arc_rpc_observation.trace_count;
     if (t < 64) {
@@ -554,13 +570,65 @@ const ArcEngineBackendOps arc_rpc_backend = {
     .session_generation=arc_rpc_session_generation,.audio_peek=arc_rpc_audio_peek,
     .audio_commit=arc_rpc_audio_commit,.audio_fault_silence=arc_rpc_sound_fault_silence
 };
+#if defined(ARCDROID_TEST_FAULTS) || defined(ARCDROID_TEST_API)
+RETRO_API void arc_rpc_session_test_quota(unsigned quota)
+{
 #if defined(ARCDROID_TEST_FAULTS)
-void arc_rpc_session_test_quota(unsigned quota)
-{ if(quota==1 || quota==7 || quota==200)arc_rpc_test_quota=quota; }
+    if(quota==1 || quota==7 || quota==200)arc_rpc_test_quota=quota;
+#else
+    (void)quota;arc_rpc_test_refuse("quota clamp");
+#endif
+}
 RETRO_API void arc_rpc_test_timing_measure(uint64_t first, uint64_t last, bool drained)
-{ arc_rpc_mem_measure(first,last,drained); }
+{
+#if defined(ARCDROID_TEST_FAULTS)
+    arc_rpc_mem_measure(first,last,drained);
+#else
+    (void)first;(void)last;(void)drained;arc_rpc_test_refuse("intrusive measurement");
+#endif
+}
+RETRO_API bool arc_rpc_test_exercise(ArcRpcExercise *out)
+{
+#if defined(ARCDROID_TEST_FAULTS)
+    if(!out)return false;
+    *out=arc_rpc_exercise;return true;
+#else
+    (void)out;return arc_rpc_test_refuse("exercise counters");
+#endif
+}
+RETRO_API bool arc_rpc_test_ranking(ArcRpcExercise *out,uint64_t *attempts)
+{
+#if defined(ARCDROID_RPC_PROFILE)
+    if(!out || !attempts)return false;
+    ArcRpcProfile p;arc_rpc_profile_snapshot(&p);*out=p.ranking;*attempts=p.ranking_attempts;return true;
+#else
+    (void)out;(void)attempts;return arc_rpc_test_refuse("ranking counters");
+#endif
+}
+RETRO_API bool arc_rpc_test_interval_exercise(ArcRpcExercise *out)
+{
+#if defined(ARCDROID_TEST_FAULTS)
+    return arc_rpc_mem_exercise_interval(out);
+#else
+    (void)out;return arc_rpc_test_refuse("exercise counters");
+#endif
+}
+RETRO_API bool arc_rpc_test_timing_endpoint(uint64_t first, uint64_t last, bool drained)
+{
+#if defined(ARCDROID_TEST_FAULTS)
+    return arc_rpc_mem_endpoint(first,last,drained);
+#else
+    (void)first;(void)last;(void)drained;return arc_rpc_test_refuse("endpoint measurement");
+#endif
+}
 RETRO_API void arc_rpc_test_timing_interval(ArcRpcMemInterval *out)
-{ arc_rpc_mem_interval(out); }
+{
+#if defined(ARCDROID_TEST_FAULTS)
+    arc_rpc_mem_interval(out);
+#else
+    (void)out;arc_rpc_test_refuse("measurement interval");
+#endif
+}
 void arc_rpc_session_test_input_ready(void) { arc_rpc_input_retire=false; }
 void arc_rpc_session_test_rate(unsigned rate)
 {
@@ -579,8 +647,20 @@ RETRO_API size_t arc_rpc_test_audio_peek(int16_t *out,size_t n) { return arc_rpc
 RETRO_API void arc_rpc_test_audio_commit(size_t n,size_t a) { arc_rpc_audio_commit(n,a); }
 RETRO_API void arc_rpc_test_video_status(ArcRpcVideoStatus *out) { if(out)arc_rpc_video_status(out); }
 RETRO_API uint64_t arc_rpc_test_video_bus_ns(void) { return arc_rpc_bus_ns; }
-RETRO_API void arc_rpc_test_fail_alloc(unsigned stage) { arc_rpc_fail_alloc=stage; }
-RETRO_API void arc_rpc_test_fault_next(void) { arc_rpc_fail_entry=true; }
+RETRO_API void arc_rpc_test_fail_alloc(unsigned stage) {
+#if defined(ARCDROID_TEST_FAULTS)
+    arc_rpc_fail_alloc=stage;
+#else
+    (void)stage;arc_rpc_test_refuse("allocation fault injection");
+#endif
+}
+RETRO_API void arc_rpc_test_fault_next(void) {
+#if defined(ARCDROID_TEST_FAULTS)
+    arc_rpc_fail_entry=true;
+#else
+    arc_rpc_test_refuse("entry fault injection");
+#endif
+}
 RETRO_API void arc_rpc_test_fdc_hold_reset(void) { fdc_write(0x3f2,0); }
 RETRO_API bool arc_rpc_test_advance(uint64_t ns) { return arc_rpc_session_advance(ns); }
 RETRO_API uint64_t arc_rpc_test_session_generation(void) { return arc_rpc_generation; }

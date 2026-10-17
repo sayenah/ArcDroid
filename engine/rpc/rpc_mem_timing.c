@@ -3,6 +3,9 @@
  * Functional transfers happen atomically in the interpreter, never here. */
 #include "rpc_mem_timing.h"
 #include "rpc_profile.h"
+#if defined(ARCDROID_RPC_CROSSCHECK)
+#include "rpc_crosscheck.h"
+#endif
 #include "rpcemu.h"
 #include "iomd.h"
 #include <string.h>
@@ -53,25 +56,153 @@ static struct {
 } m;
 ArcRpcMemFast arc_rpc_mem_fast;
 #if defined(ARCDROID_TEST_FAULTS)
+ArcRpcExercise arc_rpc_exercise;
+unsigned arc_rpc_exercise_path;
+static struct { uint64_t start, integer, services; bool live, integral, batched; } exercise_batch;
+void arc_rpc_mem_exercise_begin(bool batched)
+{
+    exercise_batch.start=arc_rpc_mem_fast.instructions;
+    exercise_batch.integer=exercise_batch.services=0;
+    exercise_batch.live=arc_rpc_mem_fast.enabled;
+    /* Begin precedes dispatch/batch_begin. A flush counts an integral prefix
+     * only while integer_batch is live; this latch prevents recounting it. */
+    exercise_batch.integral=true;
+    exercise_batch.batched=batched;
+}
+void arc_rpc_mem_exercise_end(void)
+{
+    if(!exercise_batch.live)return;
+    uint64_t n=arc_rpc_mem_fast.instructions-exercise_batch.start;
+    uint64_t integral=exercise_batch.integer;
+    uint64_t rational=n ? n-1 : 0;
+    if(integral) rational-=integral-1;
+    if(exercise_batch.batched) rational-=exercise_batch.services;
+    else rational=0;
+    arc_rpc_exercise_add(ARC_RPC_COUNT_rational_unobserved+arc_rpc_exercise_path,rational);
+    exercise_batch.live=false;
+}
 static uint64_t measure_first, measure_last;
 static bool measure_drained;
 static ArcRpcMemInterval interval;
+static ArcRpcExercise interval_exercise_start, interval_exercise_end;
+bool arc_rpc_mem_exercise_interval(ArcRpcExercise *out)
+{
+    if(!out || !interval.done || arc_rpc_mem_fast.test_measure)return false;
+    for(unsigned i=0;i<ARC_RPC_COUNT_TOTAL;++i)out->values[i]=interval_exercise_end.values[i]-interval_exercise_start.values[i];
+    return true;
+}
+/* Measurement state is deliberately outside both raw inspector structures. */
+static bool endpoint_mode, previous_valid, pending_end;
+static uint64_t previous_completion, end_completion;
+static void endpoint_complete(uint64_t at);
+static void endpoint_drain(uint64_t at);
 void arc_rpc_mem_measure(uint64_t first, uint64_t last, bool drained)
 {
+    memset(&interval_exercise_start,0,sizeof(interval_exercise_start));
+    memset(&interval_exercise_end,0,sizeof(interval_exercise_end));
+    endpoint_mode = previous_valid = pending_end = false;
+    previous_completion = end_completion = 0;
     arc_rpc_mem_fast.test_measure = first != 0;
     arc_rpc_mem_fast.test_stop = false;
     measure_first = first; measure_last = last; measure_drained = drained; memset(&interval, 0, sizeof(interval));
 }
 void arc_rpc_mem_interval(ArcRpcMemInterval *out) { if (out) *out = interval; }
+bool arc_rpc_mem_endpoint(uint64_t first, uint64_t last, bool drained)
+{
+    if ((!first && last) || (first && (last < first || first <= arc_rpc_mem_fast.instructions))) return false;
+    /* An unarmed request-free completion is not retained. Do not promise a
+     * window whose predecessor can no longer be captured. Pending requests
+     * still deliver their exact completion through complete(). */
+    if (first > 1 && first - 1 == arc_rpc_mem_fast.instructions &&
+        !arc_rpc_mem_fast.pending) return false;
+    arc_rpc_mem_measure(first, last, drained);
+    arc_rpc_mem_fast.test_measure = false;
+    endpoint_mode = first != 0;
+    previous_valid = first == 1;
+    return true;
+}
+void arc_rpc_mem_measure_state(ArcRpcMeasureState *out)
+{
+    if (!out) return;
+    memset(out, 0, sizeof(*out));
+    out->first = measure_first; out->last = measure_last;
+    out->drained = measure_drained; out->endpoint = endpoint_mode;
+    out->intrusive = arc_rpc_mem_fast.test_measure;out->stopped = arc_rpc_mem_fast.test_stop;
+    out->previous_completion = previous_completion; out->previous_valid = previous_valid;
+    out->end_completion = end_completion; out->pending_end = pending_end;
+    out->interval = interval;
+}
+bool arc_rpc_mem_measure_equal(const ArcRpcMeasureState *a, const ArcRpcMeasureState *b)
+{
+    return a && b && a->first == b->first && a->last == b->last &&
+        a->drained == b->drained && a->endpoint == b->endpoint && a->intrusive == b->intrusive && a->stopped == b->stopped &&
+        a->previous_completion == b->previous_completion && a->previous_valid == b->previous_valid &&
+        a->end_completion == b->end_completion && a->pending_end == b->pending_end &&
+        a->interval.started == b->interval.started && a->interval.done == b->interval.done &&
+        a->interval.start_ticks == b->interval.start_ticks && a->interval.end_ticks == b->interval.end_ticks &&
+        a->interval.start_fetch_hits == b->interval.start_fetch_hits && a->interval.end_fetch_hits == b->interval.end_fetch_hits &&
+        !memcmp(&a->interval.start, &b->interval.start, sizeof(a->interval.start)) &&
+        !memcmp(&a->interval.end, &b->interval.end, sizeof(a->interval.end));
+}
+unsigned arc_rpc_mem_endpoint_admit(unsigned count)
+{
+    if (!endpoint_mode) return count;
+    uint64_t n = arc_rpc_mem_fast.instructions;
+    if (n >= measure_last) return 0;
+    if (n == measure_first - 1 && !interval.started) {
+        if (!previous_valid) fatal("RPC endpoint missing previous completion");
+        arc_rpc_mem_stats(&interval.start);
+        interval.start_fetch_hits=arc_rpc_mem_fast.fetch_hits;
+        interval.start.completed_ticks = previous_completion;
+        interval.start_ticks = previous_completion; interval.started = true;
+        interval_exercise_start=arc_rpc_exercise;
+    }
+    uint64_t bound = measure_last;
+    if (n < measure_first - 1) bound = measure_first - 1;
+    return bound - n < count ? (unsigned)(bound - n) : count;
+}
+static void endpoint_drain(uint64_t at)
+{
+    if (!endpoint_mode || !pending_end || m.count || m.bcount) return;
+    interval.end_fetch_hits=arc_rpc_mem_fast.fetch_hits;
+    arc_rpc_mem_stats(&interval.end);
+    interval.end.completed_ticks = at;
+    interval.end_ticks = at; interval.done = true; pending_end = false;
+    interval_exercise_end=arc_rpc_exercise;
+}
+static void endpoint_complete(uint64_t at)
+{
+    if (!endpoint_mode) return;
+    uint64_t n = arc_rpc_mem_fast.instructions;
+    if (n == measure_first - 1) { previous_completion = at; previous_valid = true; }
+    if (n != measure_last || !interval.started || interval.done) return;
+    end_completion = at; pending_end = true;
+    if (!measure_drained || (!m.count && !m.bcount)) {
+        interval.end_fetch_hits=arc_rpc_mem_fast.fetch_hits;
+    arc_rpc_mem_stats(&interval.end); interval.end.completed_ticks = at;
+        interval.end_ticks = at; interval.done = true; pending_end = false;
+    interval_exercise_end=arc_rpc_exercise;
+    }
+}
+void arc_rpc_mem_endpoint_return(void)
+{
+    if (!endpoint_mode) return;
+    /* The interpreter has already performed its ordinary quota-return flush.
+     * Rational issue_ticks and the materialised integer issue retain fractions. */
+    if (!arc_rpc_mem_fast.pending) endpoint_complete(arc_rpc_mem_fast.issue_ticks);
+    arc_rpc_mem_fast.test_stop = arc_rpc_mem_fast.instructions >= measure_last;
+}
 #endif
 static void complete(uint64_t at)
 {
     m.stats.instructions = arc_rpc_mem_fast.instructions;
     m.stats.completed_ticks = at;
 #if defined(ARCDROID_TEST_FAULTS)
-    if (interval.started && !interval.done && m.stats.instructions == measure_last && (!measure_drained || !m.bcount)) {
-        arc_rpc_mem_stats(&interval.end); interval.end_ticks = at; interval.done = true;
+    if (!endpoint_mode && interval.started && !interval.done && m.stats.instructions == measure_last && (!measure_drained || !m.bcount)) {
+        interval.end_fetch_hits=arc_rpc_mem_fast.fetch_hits;
+    arc_rpc_mem_stats(&interval.end); interval.end_ticks = at; interval.done = true;
     }
+    endpoint_complete(at);
 #endif
 }
 
@@ -150,17 +281,50 @@ static Cache *cache_for(bool fetch)
 {
     return m.model == 2 && !fetch ? &m.data : &m.instruction;
 }
-static Tag *lookup(Cache *c, uint32_t va)
+#if defined(ARCDROID_TEST_FAULTS)
+#define LOOKUP(c,va,maintenance) lookup(c,va,maintenance)
+static void lookup_count(bool maintenance,unsigned result,unsigned probes,unsigned way)
+{
+    unsigned base=maintenance?ARC_RPC_COUNT_lookup_maintenance_empty:ARC_RPC_COUNT_lookup_access_empty;
+    arc_rpc_exercise_add(base+result,1);
+    arc_rpc_exercise_add(base+3,probes);
+    if(result==2){
+        arc_rpc_exercise_add(base+4,probes);
+        if(way)arc_rpc_exercise_add(base+5,1);
+        arc_rpc_exercise_add((maintenance?ARC_RPC_COUNT_MAINTENANCE_WAYS:ARC_RPC_COUNT_ACCESS_WAYS)+way,1);
+    }
+}
+#else
+#define LOOKUP(c,va,maintenance) lookup(c,va)
+#endif
+static Tag *lookup(Cache *c, uint32_t va
+#if defined(ARCDROID_TEST_FAULTS)
+    , bool maintenance
+#endif
+)
 {
     /* Disabling allocation retains tags. Only a genuinely empty cache can
      * omit its way search, including reset-time uncached instruction fetch. */
-    if (!c->populated) return NULL;
+    if (!c->populated) {
+#if defined(ARCDROID_TEST_FAULTS)
+        lookup_count(maintenance,0,0,0);
+#endif
+        return NULL;
+    }
     uint32_t line = va >> c->shift;
     unsigned base = (line & (c->sets - 1u)) * c->ways;
     for (unsigned way = 0; way < c->ways; ++way) {
         Tag *t = &c->tags[base + way];
-        if (t->valid && t->va == line) return t;
+        if (t->valid && t->va == line) {
+#if defined(ARCDROID_TEST_FAULTS)
+            lookup_count(maintenance,2,way+1,way);
+#endif
+            return t;
+        }
     }
+#if defined(ARCDROID_TEST_FAULTS)
+    lookup_count(maintenance,1,c->ways,0);
+#endif
     return NULL;
 }
 static Packet *append(unsigned kind)
@@ -196,8 +360,16 @@ static void castout(Tag *t)
 void arc_rpc_mem_bind(ArcRpcScheduler *clock, unsigned model, unsigned rate)
 {
     memset(&m, 0, sizeof(m)); memset(&arc_rpc_mem_fast, 0, sizeof(arc_rpc_mem_fast));
+#if defined(ARCDROID_RPC_CROSSCHECK)
+    arc_rpc_crosscheck_reset();
+#endif
 #if defined(ARCDROID_TEST_FAULTS)
+#if defined(ARCDROID_RPC_PROFILE)
+    arc_rpc_profile_rank_reset();
+#endif
     arc_rpc_mem_measure(0, 0, false);
+    memset(&arc_rpc_exercise,0,sizeof(arc_rpc_exercise));arc_rpc_exercise_path=0;
+    memset(&exercise_batch,0,sizeof(exercise_batch));
 #endif
     if (!clock) return;
     if (model > 3 || !rate || rate > 100) fatal("Invalid RPC memory clock");
@@ -282,6 +454,7 @@ void arc_rpc_mem_begin_slow(void)
     m.stats.instructions = arc_rpc_mem_fast.instructions - 1;
 #if defined(ARCDROID_TEST_FAULTS)
     if (m.stats.instructions + 1 == measure_first) {
+        interval.start_fetch_hits=arc_rpc_mem_fast.fetch_hits;
         interval.start = m.stats; interval.start.hits += arc_rpc_mem_fast.fetch_hits;
         interval.start_ticks = m.stats.completed_ticks;
         interval.started = true;
@@ -349,7 +522,7 @@ void arc_rpc_mem_access(uint32_t va, uint32_t physical, unsigned bytes,
     bool eligible = backed && cache_region(r) && (!swp || mapped_swap);
     Tag *t = NULL;
     uint32_t line = va >> c->shift;
-    if (eligible) t = lookup(c, va);
+    if (eligible) t = LOOKUP(c, va, false);
     bool cached_swap = mapped_swap && (t || (m.control & 5) == 5);
     bool locked = swp && !cached_swap;
     if (locked) { eligible = false; t = NULL; }
@@ -378,6 +551,10 @@ void arc_rpc_mem_access(uint32_t va, uint32_t physical, unsigned bytes,
         Packet *p = append(DEMAND); p->fill = true; p->fetch = fetch;
         for (unsigned n = 0; n < (1u << c->shift) / 4; ++n) word(p, t->physical + n * 4, 4, false);
         ++m.stats.fills; ARC_RPC_PROFILE(fill());
+#if defined(ARCDROID_TEST_FAULTS)
+        unsigned fill_index=fetch?ARC_RPC_COUNT_fill_fetch_memory:ARC_RPC_COUNT_fill_data_memory;
+        arc_rpc_exercise_add(fill_index+(memory_region(r)?0:1),1);
+#endif
         if (write) t->dirty |= 1u << ((va >> 4) & 1);
         if (fetch) { memo_set(line); }
     } else if (fetch) {
@@ -431,7 +608,7 @@ void arc_rpc_mem_maintenance(unsigned crn, unsigned opc2, unsigned crm, uint32_t
         if (crm == 5 || crm == 7) invalidate(&m.instruction);
         if (crm == 6 || crm == 7) invalidate(&m.data);
     } else if (opc2 == 1 && (crm == 6 || crm == 10)) {
-        Tag *t = lookup(&m.data, va);
+        Tag *t = LOOKUP(&m.data, va, true);
         if (t) {
             if (crm == 10) castout(t);
             else { t->valid = t->dirty = 0; --m.data.populated; memo_clear(); }
@@ -468,6 +645,13 @@ void arc_rpc_mem_batch_flush(void)
 {
     ArcRpcMemFast *f = &arc_rpc_mem_fast;
     if (!f->integer_batch) return;
+#if defined(ARCDROID_TEST_FAULTS)
+    if(exercise_batch.live && exercise_batch.integral){
+        exercise_batch.integer=f->instructions-exercise_batch.start;
+        arc_rpc_exercise_add(ARC_RPC_COUNT_integer_unobserved+arc_rpc_exercise_path,exercise_batch.integer);
+        exercise_batch.integral=false;
+    }
+#endif
     f->integer_batch = false;
     f->issue_floor = f->clock->now_ns - (f->issue_fraction != 0);
     f->issue_ticks = add(ticks(f->issue_floor), f->issue_fraction);
@@ -643,9 +827,10 @@ void arc_rpc_mem_run(uint64_t now_ns)
                 }
                 m.active_valid = false;
 #if defined(ARCDROID_TEST_FAULTS)
-                if (measure_drained && interval.started && !interval.done &&
+                if (!endpoint_mode && measure_drained && interval.started && !interval.done &&
                     m.stats.instructions == measure_last && !m.count && !m.bcount)
                     complete(m.cursor);
+                endpoint_drain(m.cursor);
 #endif
             } else if (m.grant_left || !m.queued_video) { start_cycle(); continue; }
         }
@@ -720,6 +905,19 @@ bool arc_rpc_mem_batch_service(ArcRpcCpuBatch *batch)
      * which delivers every tied event before release, grant or CPU issue. */
     uint64_t boundary = batch->clock->next_ns < batch->limit_ns ?
         batch->clock->next_ns : batch->limit_ns;
+#if defined(ARCDROID_TEST_FAULTS)
+    bool valid=m.cycle_active || m.video_active;
+    arc_rpc_exercise_add(valid?ARC_RPC_COUNT_service_finish_valid:ARC_RPC_COUNT_service_finish_invalid,1);
+    uint64_t due=arc_rpc_mem_fast.cpu_due_ns, now=batch->clock->now_ns;
+    unsigned kind;
+    if(arc_rpc_mem_fast.pending)kind=ARC_RPC_COUNT_service_pending;
+    else if(m.video_active)kind=ARC_RPC_COUNT_service_video;
+    else if(valid && due>=visible(m.finish))kind=ARC_RPC_COUNT_service_due_finish;
+    else if(m.cycle_active && now<due && due<visible(m.finish) && due<boundary)kind=ARC_RPC_COUNT_service_s1;
+    else if(arc_rpc_mem_fast.bus_busy)kind=ARC_RPC_COUNT_service_busy;
+    else kind=ARC_RPC_COUNT_service_other;
+    arc_rpc_exercise_add(kind,1);
+#endif
     if (batch->clock->now_ns >= boundary) return false;
     if (m.count && !m.bcount && !m.active_valid && !m.video_active && !m.queued_video &&
         m.cursor <= UINT64_MAX / 2 && m.bus_cursor <= UINT64_MAX / 2) {
@@ -729,6 +927,7 @@ bool arc_rpc_mem_batch_service(ArcRpcCpuBatch *batch)
          * ROM history if a deadline requires the resumable path instead.
          * Keep the resumable path near overflow: bounded commands cannot
          * exhaust the upper half, so prediction never faults prematurely. */
+        ARC_RPC_COUNT(shortcut_attempts,1);
         unsigned words = 0, n = 0;
         uint64_t at = m.cursor < m.bus_cursor ? m.bus_cursor : m.cursor;
         bool restart = m.restart, sequential = arc_rpc_mem_fast.rom_sequential;
@@ -748,6 +947,13 @@ bool arc_rpc_mem_batch_service(ArcRpcCpuBatch *batch)
             uint64_t floor = divide(due, &fraction);
             uint64_t ns = floor + (fraction != 0);
             if (ns < boundary) {
+                ARC_RPC_COUNT(shortcut_commits,1);
+#if defined(ARCDROID_TEST_FAULTS)
+                for(unsigned k=0;k<m.count;++k){
+                    Packet *packet=&m.command[(m.head+k)%COMMANDS];
+                    if(packet->fill && memory_region(region(packet->address[0])))ARC_RPC_COUNT(shortcut_memory_fills,1);
+                }
+#endif
                 m.cursor = m.bus_cursor = m.finish = at;
                 m.stats.words += words; m.head = (m.head + m.count) % COMMANDS; m.count = 0;
                 m.grant_left = 0; f->pending = false;
@@ -755,14 +961,24 @@ bool arc_rpc_mem_batch_service(ArcRpcCpuBatch *batch)
                 complete(at);
                 f->cpu_due_ticks = due; f->due_floor = floor; f->due_fraction = fraction;
                 batch->clock->now_ns = f->cpu_due_ns = ns;
-                return arc_rpc_mem_ready(false);
+                bool ready=arc_rpc_mem_ready(false);
+#if defined(ARCDROID_TEST_FAULTS)
+                if(ready)++exercise_batch.services;
+#endif
+                return ready;
             }
         }
+        ARC_RPC_COUNT(shortcut_rollbacks,1);
         m.restart = restart; m.last_rom = last; arc_rpc_mem_fast.rom_sequential = sequential;
     }
     arc_rpc_mem_run(batch->clock->now_ns);
     for (;;) {
-        if (arc_rpc_mem_ready(false)) return true;
+        if (arc_rpc_mem_ready(false)) {
+#if defined(ARCDROID_TEST_FAULTS)
+            ++exercise_batch.services;
+#endif
+            return true;
+        }
         uint64_t next = arc_rpc_mem_next(boundary, false);
         if (next >= boundary) return false;
         batch->clock->now_ns = next;

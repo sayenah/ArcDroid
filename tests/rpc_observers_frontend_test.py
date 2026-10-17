@@ -16,6 +16,9 @@ with tempfile.TemporaryDirectory(prefix='arcdroid-rpc-observer-frontend-') as di
     result=subprocess.run([sys.argv[1],sys.argv[2],directory,*sys.argv[3:]],timeout=240,capture_output=True,text=True)
     sys.stdout.write(result.stdout);sys.stderr.write(result.stderr)
     result.check_returncode()
+    if len(sys.argv)>4 and sys.argv[4]=='off':
+        if 'observers off: qualified' not in result.stdout:raise RuntimeError('missing off scenario')
+        sys.exit(0)
     termination_lines=[line.split('\t',1)[1] for line in result.stdout.splitlines() if line.startswith('termination-log\t')]
     profile=sys.argv[4] if len(sys.argv)>4 else 'full'
     if profile in ('full','h-b','sanitizer','sanitizer-extended'): assert termination_lines, 'multi-disc log scenario did not run'
