@@ -77,6 +77,11 @@ bool arc_rpc_memory_load_rom(const uint8_t *bytes, size_t size)
 
 void arc_rpc_memory_close(void)
 {
+    /* ArcDroid modification (2026-10-16, 6b-1a0): retire the authored
+     * prefix diagnostic before guest allocations can be reused. */
+#if defined(ARCDROID_TEST_FAULTS)
+    (void)arc_rpc_test_prefix_arm(0);
+#endif
     free(rom); free(vram); free(ram00); free(ram01); free(ram1);
     rom = vram = ram00 = ram01 = ram1 = NULL;
     romb = ramb00 = ramb01 = ramb1 = vramb = NULL;

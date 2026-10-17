@@ -13,6 +13,7 @@
 #endif
 static unsigned vfs_reads;
 static bool termination_log;
+static unsigned off_logs;
 static bool sanitizer_cpu_profile;
 #include "../tools/rpc_runner_vfs.h"
 static int64_t counted_read(struct retro_vfs_file_handle *handle,void *bytes,uint64_t size)
@@ -35,6 +36,7 @@ static void block_replacement(void) { override_cells(20,0,0,0); }
 static void log_line(enum retro_log_level level,const char *format,...)
 { va_list args;va_start(args,format);char line[512];vsnprintf(line,sizeof(line),format,args);va_end(args);
   if(termination_log)printf("termination-log\t%s",line);
+  if(strstr(line,"RPC observers: TEST OFF; all cells disabled (observer_cells=off)"))++off_logs;
   if(strstr(line,"RPC disc:")){++disc_logs;if(strstr(line,"action=busy"))++busy_logs;if(strstr(line,"action=resolved"))++resolved_logs;if(strstr(line,"gate=device"))saw_device_refusal=true;if(strstr(line,"action=inserted"))saw_disc_insert=true;if(strstr(line,"identity-unknown"))saw_identity_unknown=true;}
   if(strstr(line,"Disc request:") && strstr(line,"observation=1"))++b_first_logs;
   if(level>=RETRO_LOG_WARN)fputs(line,stderr); }
@@ -239,7 +241,6 @@ int main(int argc,char **argv)
     void (*set_env)(retro_environment_t),(*set_video)(retro_video_refresh_t),(*set_audio)(retro_audio_sample_batch_t),
         (*set_poll)(retro_input_poll_t),(*set_input)(retro_input_state_t),(*init)(void),(*deinit)(void),(*run)(void),(*unload)(void),(*reset)(void);
     bool (*load)(const struct retro_game_info *),(*pad_level)(unsigned,unsigned);
-    LOAD(pad_level,"arc_libretro_test_pad_source_level");
     LOAD(set_env,"retro_set_environment");LOAD(set_video,"retro_set_video_refresh");LOAD(set_audio,"retro_set_audio_sample_batch");
     LOAD(set_poll,"retro_set_input_poll");LOAD(set_input,"retro_set_input_state");LOAD(init,"retro_init");LOAD(deinit,"retro_deinit");
     LOAD(run,"retro_run");LOAD(unload,"retro_unload_game");LOAD(load,"retro_load_game");LOAD(reset,"retro_reset");
@@ -255,6 +256,31 @@ int main(int argc,char **argv)
     char path[2048],plan[4096];snprintf(path,sizeof(path),"%s/test.arcplan",directory);
     struct retro_game_info game={path,NULL,0,NULL};
     int count;ArcErrorBox box;ArcLaunchOutcome launch;
+    if(argc==5 && !strcmp(argv[4],"off")){
+        void (*production)(unsigned,unsigned);unsigned (*cells)(void);
+        LOAD(production,"arc_engine_test_observers_production");LOAD(cells,"arc_engine_test_observers_cells");
+        observer_guest(3);write_file("guest.rom",rom,2097152);
+        const char *settings[]={"","observer_cells=0\n","observer_cells=off\n"};
+        for(unsigned setting=0;setting<3;++setting){
+            count=snprintf(plan,sizeof(plan),"version=1\nmodel=sa110\nrate_mips=1\nfirmware=%s/guest.rom\ncmos=seed\nseed=%s/seed\nrtc_epoch=0\n%s",directory,directory,settings[setting]);
+            write_file("test.arcplan",plan,(size_t)count);off_logs=0;assert(load(&game));
+            assert(off_logs==(setting==2));
+            /* Existing trusted table seam: bind an actual qualified tuple,
+             * then reset through the plan with that binding still present. */
+            production(4,252);assert(cells()==252);
+            unsigned catalogue,cpu;binding(UINT32_MAX,&catalogue,&cpu);
+            assert(catalogue==4 && cpu==2);
+            reset();binding(UINT32_MAX,&catalogue,&cpu);
+            assert(catalogue==4 && cpu==2);
+            assert(cells()==(setting==2?0u:252u));
+            assert(off_logs==(setting==2?2u:0u));
+            run();run();api->error_snapshot(&box);
+            assert(box.recognised_open==(setting!=2));
+            assert(cells()==(setting==2?0u:252u));unload();
+        }
+        deinit();free(rom);puts("observers off: qualified 3.71/SA110 binding, all cells disabled across reset; absent/zero retain production; distinct TEST OFF log");return 0;
+    }
+    LOAD(pad_level,"arc_libretro_test_pad_source_level");
     unsigned (*phase)(void);void (*preflight_fail)(void);bool (*attach_ide)(const ArcIdeBackend *);
     LOAD(phase,"arc_test_plan_cmos_phase");LOAD(preflight_fail,"arc_libretro_test_fail_disc_preflight");
     LOAD(attach_ide,"arc_engine_test_ide_backend");attach_ide_hook=attach_ide;

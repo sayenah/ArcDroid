@@ -23,7 +23,7 @@ static void shape(void)
         rom[64]=0xe3a00001;rom[65]=0xe2800001;rom[66]=0xea000000;
         assert(arc_rpc_arm_exec_count(2)==2);assert(counts().open_block==2);
         assert(arc_rpc_arm_exec_count(1)==1);
-        ArcRpcProfile p=counts();assert(p.attempts==3 && p.fetched==3 && p.condition_passed==3);
+        ArcRpcProfile p=counts();assert(p.attempts==3 && p.fetched==3 && p.condition_passed==3 && p.al==3);
         assert(p.classes[0]==2 && p.classes[2]==1 && p.candidates==3);
         assert(p.blocks[2]==1 && p.block_instructions==3 && p.block_max==3 && !p.open_block);
         assert(p.exits[ARC_RPC_EXIT_E1]==1 && p.exits[ARC_RPC_EXIT_E5]==2 && p.branches==1);

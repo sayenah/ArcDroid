@@ -39,7 +39,8 @@
         "scheduler-mmu-batching",
         "cpu-smlal-modulo",
         "observation-r3c1",
-        "profiling-6b-p0i"
+        "profiling-6b-p0i",
+        "measurement-6b-1a0"
       ]
     },
     {
@@ -96,7 +97,8 @@
         "containment-device-scheduler",
         "scheduler-mmu-batching",
         "observation-r3c1",
-        "profiling-6b-p0i"
+        "profiling-6b-p0i",
+        "measurement-6b-1a0"
       ]
     },
     {
@@ -208,7 +210,8 @@
         "devices-board-cmos-gate",
         "session-preparation-r3b2b",
         "observation-r3c1",
-        "profiling-6b-p0i"
+        "profiling-6b-p0i",
+        "measurement-6b-1a0"
       ]
     },
     {
@@ -490,6 +493,16 @@
         "src/mem.c"
       ],
       "reason": "Compile-time attempt/class/exit, backing-write and scoped timing hooks; off by default, no guest intervention or observer selection changes."
+    },
+    {
+      "id": "measurement-6b-1a0",
+      "group": "test-only measurement",
+      "files": [
+        "src/arm.c",
+        "src/cp15.c",
+        "src/mem.c"
+      ],
+      "reason": "D-195 endpoint bounds at common batch admission/return and test-only TLB exercise/ranking counters; shipping preprocessing and hot code retained."
     }
   ],
   "adapted_sources": [

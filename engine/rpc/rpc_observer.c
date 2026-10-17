@@ -652,3 +652,32 @@ RETRO_API bool arc_rpc_observer_test_clean(void)
     return trace.status.count==0;
 }
 #endif
+
+#if defined(ARCDROID_TEST_API) && !defined(ARCDROID_TEST_FAULTS)
+/* API-only measurement core: explicit refusal, never successful trace no-ops. */
+extern bool arc_rpc_test_refuse(const char *facility);
+RETRO_API bool arc_rpc_observer_test_filter(ArcRpcObserver o,const ArcRpcObserveFilter *f)
+{ return arc_rpc_observer_filter(o,f); }
+RETRO_API void arc_rpc_observer_trace(bool enabled,bool private_paths)
+{ (void)enabled;(void)private_paths;arc_rpc_test_refuse("observer trace"); }
+RETRO_API bool arc_rpc_observer_trace_select(const ArcRpcTraceSelection *selection)
+{ (void)selection;return arc_rpc_test_refuse("observer trace"); }
+RETRO_API void arc_rpc_observer_trace_status(ArcRpcTraceStatus *out)
+{ if(out)*out=(ArcRpcTraceStatus){.failed=true,.incomplete=true};arc_rpc_test_refuse("observer trace"); }
+RETRO_API size_t arc_rpc_observer_trace_read(ArcRpcObservationTrace *out,size_t n)
+{ (void)out;(void)n;arc_rpc_test_refuse("observer trace");return 0; }
+RETRO_API void arc_rpc_observer_trace_drain(ArcRpcTraceSink sink,void *opaque)
+{ (void)sink;(void)opaque;arc_rpc_test_refuse("observer trace"); }
+RETRO_API void arc_rpc_observer_test_seed_pending(void)
+{ arc_rpc_test_refuse("observer fault injection"); }
+RETRO_API bool arc_rpc_observer_test_clean(void)
+{
+    if(observer.work_count || observer.in_swi || observer.batch.live)return false;
+    for(unsigned i=0;i<ARC_RPC_OBSERVERS;++i)if(observer.owners[i].armed || observer.owners[i].answer)return false;
+    for(unsigned i=0;i<ARC_RPC_WATCHES;++i)if(observer.watches[i].live)return false;
+    return true;
+}
+RETRO_API uint64_t arc_rpc_observer_test_epoch(void) { return observer.epoch; }
+const ArcRpcObserverQualification *arc_rpc_observer_test_qualifications(size_t *count)
+{ *count=sizeof(qualifications)/sizeof(qualifications[0]);return qualifications; }
+#endif

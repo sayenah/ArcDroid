@@ -393,6 +393,13 @@ static inline ArcRpcTlbEntry *checked_translation(uint32_t addr, int rw, int pre
      * should not evict one another simply because their low offsets match. */
     uint32_t tag = addr >> 10;
     ArcRpcTlbEntry *entry = &tlb[(tag ^ (tag >> 10) ^ (tag >> 18)) & (TLBCACHESIZE - 1)];
+    /* ArcDroid modification (2026-10-16, 6b-1a0): test-only reference
+     * opportunities distinguish raw tags, walks and successful permissions. */
+#if defined(ARCDROID_TEST_FAULTS)
+    bool arc_rpc_tag_hit=entry->valid && entry->tag==(addr>>10);
+    unsigned arc_rpc_counter_base=prefetch?ARC_RPC_COUNT_tlb_fetch_walk:ARC_RPC_COUNT_tlb_data_walk;
+    arc_rpc_exercise_add(arc_rpc_counter_base+(arc_rpc_tag_hit?1:0),1);
+#endif
     uint32_t domain = 0, fault_code;
     if (!entry->valid || entry->tag != (addr >> 10)) {
         uint32_t fld = mem_phys_read32(cp15.translation_table | ((addr >> 18) & 0x3ffcu));
@@ -436,6 +443,9 @@ static inline ArcRpcTlbEntry *checked_translation(uint32_t addr, int rw, int pre
         fault_code = entry->page ? CP15_FAULT_PERMISSION_PAGE : CP15_FAULT_PERMISSION_SECTION;
         goto do_fault;
     }
+#if defined(ARCDROID_TEST_FAULTS)
+    if(arc_rpc_tag_hit && !(arm.event&0x40))arc_rpc_exercise_add(arc_rpc_counter_base+2,1);
+#endif
     arc_rpc_attributes = entry->attributes;
     return entry;
 

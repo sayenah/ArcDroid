@@ -5,6 +5,20 @@
 #ifndef ARC_RPC_NAMESPACE_H
 #define ARC_RPC_NAMESPACE_H
 
+/* API-only measurement RPC objects retain shipping hot preprocessing. */
+#if defined(ARCDROID_RPC_MEASUREMENT)
+#define ARCDROID_TEST_API 1
+#undef ARCDROID_TEST_FAULTS
+#elif defined(ARCDROID_TEST_FAULTS)
+#define ARCDROID_TEST_API 1
+#endif
+
+/* 1a-0 owned services are already arc_rpc_-prefixed: exercise/path and
+ * mem_exercise_*, mem_endpoint*, mem_measure_state/equal, profile_rank*,
+ * crosscheck_*, test_exercise/interval_exercise/ranking/capabilities/refusal,
+ * test_refuse/timing_endpoint/prefix_*. Declarations live in rpc_*.h and their
+ * explicit service names are registered in engine/backend-symbols.json;
+ * no second renaming alias or outside-engine exception is needed. */
 #define UNIMPLEMENTEDFL arc_rpc_UNIMPLEMENTEDFL
 #define addpodule arc_rpc_addpodule
 #define arm arc_rpc_arm

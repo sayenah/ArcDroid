@@ -36,6 +36,7 @@ static unsigned pending_rate;
 static bool observation_final_failure;
 RETRO_API bool arc_test_plan_observation_complete(void) { return !observation_final_failure; }
 static unsigned observer_cells;
+static bool observers_off;
 static unsigned observer_disc_devices=ARC_DISC_DEVICE_UNSPECIFIED;
 static ArcErrorNumberClass observer_error_numbers=ARC_ERROR_NUMBER_ZERO;
 static uint32_t observer_poll_r1,observer_poll_r2,observer_forms;
@@ -130,7 +131,10 @@ static void preparation_started(void *opaque,bool factory)
 static void preparation_diagnostics(void *opaque) { (void)opaque;observation_frame(); }
 static void observer_start(void)
 {
-    if(observer_cells){arc_engine_test_observers_override(observer_cells,observer_poll_r1,observer_poll_r2,observer_forms);
+    if(observers_off){
+        arc_engine_test_observers_override(0,0,0,0);
+        if(plan_log)plan_log("RPC observers: TEST OFF; all cells disabled (observer_cells=off)");
+    }else if(observer_cells){arc_engine_test_observers_override(observer_cells,observer_poll_r1,observer_poll_r2,observer_forms);
         (void)arc_engine_test_observers_disc_devices(observer_disc_devices);
         (void)arc_engine_test_observers_error_numbers(observer_error_numbers);
         if(observer_buttons_set)arc_engine_test_observers_buttons(observer_buttons[0],observer_buttons[1],observer_buttons[2]);
@@ -271,13 +275,16 @@ void arc_test_plan_clear(void)
 
     }
     observation_unmatched=false;observation_quota=200;
+    observers_off=false;
     observer_cells=observer_poll_r1=observer_poll_r2=observer_forms=0;observer_disc_devices=ARC_DISC_DEVICE_UNSPECIFIED;
     observer_error_numbers=ARC_ERROR_NUMBER_ZERO;
     observer_buttons_set=false;memset(observer_buttons,0,sizeof(observer_buttons));observer_launch[0]=0;
     observer_boot=observer_armed=false;observer_arm_frame=0;observer_last_status=UINT_MAX;
     observation_selection=(ArcRpcTraceSelection){.classes=ARC_RPC_OBS_SWI,.capacity=ARC_RPC_TRACE_LIMIT};
     observation_file=NULL;observation_enabled=observation_paths=observation_failed=false;observation_path[0]=0;
+#if !defined(ARCDROID_RPC_MEASUREMENT)
     arc_engine_test_observation_trace(false,false);
+#endif
     char error[256]={0};(void)arc_riscpc_preparation_free(preparation,error,sizeof(error));preparation=NULL;hard_disc=NULL;
     hd_enabled=hd_cost_enabled=hd_populate=false;memset(&hd_cost,0,sizeof(hd_cost));memset(&hd_delegate,0,sizeof(hd_delegate));hd_save[0]=hd_content[0]=hd_import[0]=hd_system[0]=0;
     event_count=next_event=disk_count=disk_next=0;media_content[0]=media_helper[0]=0;script_frame=0;script_active=false;
@@ -293,7 +300,9 @@ void arc_test_plan_reset(void)
     if(script_active)arc_engine_test_plan_input_ready();
 }
 void arc_test_plan_reset_input(void)
-{ next_event=disk_next=0;script_frame=0;observer_armed=false;if(script_active)arc_engine_test_plan_input_ready(); }
+{ next_event=disk_next=0;script_frame=0;observer_armed=false;
+    if(observers_off)observer_start();
+    if(script_active)arc_engine_test_plan_input_ready(); }
 void arc_test_plan_input(ArcInputState *input)
 {
     if(script_active && !observer_armed && script_frame>=observer_arm_frame){
@@ -448,12 +457,18 @@ bool arc_test_plan_load(const char *path, const char *system, const char *save, 
         observation_selection.capacity=(unsigned)n;
     }
     if(valid && values[18]){valid=!strcmp(values[18],"unmatched");observation_unmatched=valid;}
+#if defined(ARCDROID_RPC_MEASUREMENT)
+    if(valid && (values[16] || values[17] || values[19] || values[20] || values[21] || values[22])){
+        arc_engine_test_refuse(values[19]?"quota clamp":"observer trace");valid=false;
+    }
+#endif
     if(valid && values[19]){uint64_t q=0;valid=number(values[19],200,&q) && (q==1||q==7||q==200);observation_quota=(unsigned)q;}
     if(valid && values[16]){
         valid=resolve(values[16],save,observation_path) && (!values[17] || !strcmp(values[17],"private"));
         observation_enabled=valid;observation_paths=values[17]!=NULL;
     }else if(values[17])valid=false;
     for(unsigned k=23;k<=26 && valid;++k)if(values[k]){
+        if(k==23 && !strcmp(values[k],"off")){observers_off=true;continue;}
         char *end=NULL;unsigned long long value=strtoull(values[k],&end,0);
         valid=*values[k]!='-' && *values[k]!='+' && end && !*end && value<=UINT32_MAX && (k!=23 || value<=255);
         if(valid){if(k==23)observer_cells=(unsigned)value;if(k==24)observer_poll_r1=(uint32_t)value;

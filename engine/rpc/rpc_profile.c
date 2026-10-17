@@ -19,6 +19,16 @@ static struct {
 } profile;
 
 
+void arc_rpc_profile_rank_reset(void)
+{
+    if(!profile.enabled)return;
+    memset(&profile.counts.ranking,0,sizeof(profile.counts.ranking));
+    profile.counts.ranking_attempts=0;
+    profile.counts.ranking_fetched=0;profile.counts.al=0;
+    ++profile.counts.ranking_epoch;
+}
+void arc_rpc_profile_rank(unsigned index,uint64_t amount)
+{ if(profile.enabled)profile.counts.ranking.values[index]+=amount; }
 static uint64_t clock_read(void)
 { ++profile.counts.clock_reads; return profile.clock_ns(); }
 static void charge(void)
@@ -114,7 +124,7 @@ void arc_rpc_profile_begin(uint32_t pc,uint32_t mode,uint32_t masks)
     if(!profile.enabled)return;
     bool sampling=profile.stride && profile.counts.attempts%profile.stride==0;
     if(sampling)profile.stamp=clock_read();
-    ++profile.counts.attempts;++profile.counts.open_block;
+    ++profile.counts.attempts;++profile.counts.ranking_attempts;++profile.counts.open_block;
     profile.pc=pc;profile.mode=mode;profile.masks=masks;
     profile.causes=0;profile.attempt=true;profile.passed=profile.fetched=false;
     profile.instruction_class=12;profile.pc_destination=false;
@@ -149,6 +159,8 @@ static unsigned backing_page(const void *base,uint32_t offset)
 void arc_rpc_profile_fetched(const uint32_t *page,uint32_t op,bool passed)
 {
     if(!profile.enabled)return;
+    if((op>>28)==14)++profile.counts.al;
+    ++profile.counts.ranking_fetched;
     ++profile.counts.fetched;profile.fetched=true;profile.passed=passed;
     unsigned c=classify(op);profile.instruction_class=c;++profile.counts.classes[c];
     if(passed)++profile.counts.condition_passed;

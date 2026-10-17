@@ -35,6 +35,7 @@ RETRO_API void arc_engine_test_observers_binding(unsigned,unsigned *,unsigned *)
 RETRO_API bool arc_engine_test_observers_identities(char[11],char[11]);
 void arc_engine_test_observation_trace(bool,bool);
 bool arc_engine_test_observation_select(const ArcRpcTraceSelection *);
+bool arc_engine_test_refuse(const char *);
 void arc_engine_test_observation_profile(bool,unsigned);
 void arc_engine_test_observation_drain(ArcRpcTraceSink,void *);
 RETRO_API void arc_engine_test_observation_status(ArcRpcTraceStatus *);

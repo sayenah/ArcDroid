@@ -562,10 +562,15 @@ RETRO_API void arc_engine_test_observers_binding(unsigned requested,unsigned *ca
 { if(requested!=UINT32_MAX)arc_engine_rpc_observers_bind(requested);arc_rpc_observers_test_binding(catalogue,cpu); }
 RETRO_API bool arc_engine_test_observers_identities(char helper[11],char hd[11])
 { return arc_rpc_observers_identities(helper,hd); }
+bool arc_engine_test_refuse(const char *facility) { return arc_rpc_test_refuse(facility); }
 void arc_engine_test_observation_profile(bool unmatched,unsigned quota)
 {
     if(!arc_engine_is_rpc())return;
+#if !defined(ARCDROID_RPC_MEASUREMENT)
     arc_rpc_session_test_quota(quota);
+#else
+    if(quota!=200)arc_rpc_session_test_quota(quota);
+#endif
     ArcRpcObserveFilter f={.modes=~0u,.swi=0xffffff,.swi_mask=0xffffff,.kinds=ARC_RPC_OBS_SWI};
     arc_rpc_observer_test_filter(ARC_RPC_OBS_BOOT,unmatched?&f:NULL);
 }
