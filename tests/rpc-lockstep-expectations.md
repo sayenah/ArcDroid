@@ -37,9 +37,9 @@ bytes or per-seed golden hash pins belong in source control.
 | G-14 | SA c15 wait (`cp15.c:280`) and ARM7500 SUSMODE sleep with buffered stores. Timer0 expires after `(999+1)/2 MHz=500 us`; the read after wake must see the chosen value. A pending force IRQ also wakes while I is masked. ARM610/710 have no corresponding sleep instruction. |
 | VA key | One physical body is mapped at 0x00418000 and 0x00518000, then executed through MMU-off 0x12018000. ADR and BL link each yield entry VA+8; LDR-literal yields 0x71; B preserves control flow. A future VA-less compiled key must fail these distinct values. |
 | AC-M2 | Combines PC-next SMC, ordinary alias SMC, denied fetch-entry displacement and a ROMCR=0x19 burst of 32 ADDs (result 32). A separate eight-instruction burst interval uses the independent sequential/nonsequential ROM recurrence. |
-| AC-H2 | Combines DACR permission/fault paths, mode changes, buffered writes and SA slow/fast clock transitions (`cp15.c:281–283`). Models include integral and fractional base timing. Counter split, fault attributes and one-tick chronology corruptions await M2b; masked-reg[16] corruption is already observable through G-3. |
+| AC-H2 | Combines DACR permission/fault paths, mode changes, buffered writes and SA slow/fast clock transitions (`cp15.c:281–283`). Models include integral and fractional base timing. M2b demonstrates counter split, fault attributes and one-tick chronology corruptions through its real-C emitter mutant matrix; masked-reg[16] corruption remains observable through G-3. |
 | Observable descriptor walks | TTBR lies in physical SuperIO space. The guest commits 0xcafe before enabling the MMU, then repeatedly prefetch-aborts on invalid descriptors. It ends in ABT32, low CPSR 0xd7. Profile MMIO reads equal prefetch-abort exits and are positive. Exact walk ordering/timestamps and absence of speculative extra walks are differential-only until M2b's physical-dispatch event log. |
-| E8 bad mode | A STR commits 0xface to RAM before MSR requests illegal mode 0x14. The terminal fault must be reported. Diagnostic registers remain checked: r0=0x14 (illegal mode), r1=0xface (store operand), r15=last-instruction-address+8=0x140, reg[16]=0x14 (status written by MSR). These checks do not establish the RAM write. The independently specified RAM expectation is **awaiting emitter** (A-32): `arc_rpc_session_read_ram` refuses access when `arc_rpc_fault` is true. The item remains in every oracle run. Named schema rule `q9_first_fatal_frame_cpu` excludes only the first fatal frame's `cpu=` in cross-quota mode (A-33, Q-9); strict mode retains it, and all other fields and frames stay compared. |
+| E8 bad mode | A STR commits 0xface to RAM before MSR requests illegal mode 0x14. The terminal fault must be reported. Diagnostic registers remain checked: r0=0x14 (illegal mode), r1=0xface (store operand), r15=last-instruction-address+8=0x140, reg[16]=0x14 (status written by MSR). The M2a diagnostic checks did not establish the RAM write because `arc_rpc_session_read_ram` refuses access when `arc_rpc_fault` is true. The independently specified RAM expectation is now **demonstrated** by M2b (A-32), through the committed write log and independently computed page hash described below. The item remains in every oracle run. Named schema rule `q9_first_fatal_frame_cpu` excludes only the first fatal frame's `cpu=` in cross-quota mode (A-33, Q-9); strict mode retains it, and all other fields and frames stay compared. |
 
 All corpus items and interval/boundary legs run observer off, unmatched, trace
 and active configurations. The corpus additionally compares quotas 1, 7 and
@@ -63,16 +63,96 @@ code cannot directly set that time. The denominator is 28×rate
 76 emulated days, or 395 million maximum-size advance calls. That long-running
 case has not been exercised for lack of execution time; this is a missing
 fatal-path check, not a proof that overflow is globally guest-unreachable.
-These fatal ROMs are absent, with the limits reported rather
-than lowered budgets or fabricated failures. If Fable requires a different
-reachability ruling, that part remains unimplemented pending the ruling.
+The three budget-fatal ROMs remain absent. R-M2b-S2 authorizes **injected**
+evidence in the lockstep core alone: request, packet and instruction failures
+are forced through their existing checks at a chosen key, with unchanged
+budgets. `rpc-lockstep-emitter-fatal` checks the fatal phase, preceding full
+RAM/VRAM page frames, committed write log and End. These paths are **injected**,
+never described as guest-reachable. Clock-time overflow remains unexercised.
 
-M2b owns independent write observation at P3, exact transient/buffer reach and
-the full-audit compiled-fetch experiment. M2c owns G-13, reload-after-fatal and
+The bad-mode RAM expectation is **demonstrated** by the same M2b test on all
+four models: the write event records `0xface` at `0x10040000`, and allocation 2,
+page 64 has the independently computed SHA-256 of that committed word followed
+by zero bytes. This evidence comes from the stream before observer retirement;
+the faulted-session RAM-read API continues to refuse access.
+
+M2b's fatal evidence/kill matrix uses these explicit labels and six-word keys:
+
+| Probe | Reachability label | Fatal key | Committed word |
+|---|---|---|---|
+| Bad mode, each of four models | guest-reachable authored ROM | `(1,2,11,5,1,0)` | `0xface` |
+| Request budget, kind 1 at k=12 | **injected**, lockstep class only | `(1,2,12,5,1,0)` | `0x2a` |
+| Packet budget, kind 2 at k=12 | **injected**, lockstep class only | `(1,2,12,5,1,0)` | `0x2a` |
+| Instruction budget, kind 3 at k=12 | **injected**, lockstep class only | `(1,2,12,5,3,1)` | `0x2a` |
+| Clock-time overflow | unexercised limit | no demonstrated key | none claimed |
+
+The outside-attempt instruction-budget fatal retains the last maintained
+site/sequence in dedicated phase 5 (critic H2 overrides draft phase 4).
+Every demonstrated probe checks preceding page frames and committed log, End,
+and P1-on/off equality. The three injected paths are coverage probes, not three
+additional mutant kills. `fatal-after-retire` is a separate real-C mutant killed
+by the guest-reachable bad-mode item.
+
+`rpc_lockstep_emitter_mutants.py` supplies the M2b digest evidence that the
+M2a-only matrix could not report: all four AC-H2 corruptions, omitted/extra P1,
+projection/ordinal/fatal errors, delayed CLKCTL, replay/exception/quota, and
+buffer/video chronology. Its generated matrix marks every single-item kill.
+The M2a runner retains its historical evidence scope and does not claim to have
+executed that companion suite. Block-key, VA-key and G-10 generation remain
+awaiting candidate mechanism; compiled-fetch coverage is deferred to the first
+compiling slice (A-26).
+
+M2b demonstrates independent write observation at P3 and exact
+transient/buffer reach. The full-audit compiled-fetch experiment remains with
+the first compiling slice (A-26); no compiled path exists in M2b. M2c owns
+G-13, reload-after-fatal and
 allocation/fatal cleanup under lockstep. The oracle-only reset/allocation-fault
 legs remain here. Deferred mechanisms already have ROMs and independent
 expectations above; their evidence level is awaiting emitter or awaiting
 candidate mechanism, never demonstrated.
+
+The M2b reach check supplies A-8's actual field evidence on each model: an
+authored conditional eight-word STM reaches `memory.bwords=8` (ARM610/710/7500)
+or `memory.bcount=8` (SA110); G-8's timing-register data-write exit retains a
+pending command; G-9's PC-next store keeps the old opcode at P2 and captures the
+stored opcode at the next fetch. The implementation report records those keys.
+Actual-stream RAM/MMIO cross-order and physical-time mutations fail comparison
+after an unchanged control passes. These are observed guest states, not injected
+capacity or timing values.
+
+M2b's per-item P1 counts use the separate no-emitter profile core plus the
+declared guest instruction structure (`rpc_lockstep_site_counts_test.py`).
+Fetches use the fetched counter; accessor counts add the declared aborted
+accesses to successful read/write counters and require paired entry/exit.
+Exception counters and the authored MRC/MCR/SWI/mode sequences supply the
+remaining expected sites. All 92 local-full items pass on all four models.
+During derivation, the separate prefetch/FIQ guest's FIQ-mask STR was initially
+classified as a read abort. Inspection of its unmapped section 0x32 and authored
+data-abort trampoline corrected the expectation to one write abort. No item or
+field was excluded to obtain those counts. This correction is independent of
+the cross-quota representation rulings below.
+
+Fable S67 PR #504 resolves the three checkpoint oracle findings only in mode
+(b). R-M2b-O1 excludes the requested `rpc_session.arc_rpc_test_quota` as the
+independent test configuration. R-M2b-O2 compares `memory.active_kind` only
+while `memory.active_valid` is true; validity stays compared. R-M2b-O3 projects
+`arm.inscount` to raw counter plus unbooked batch P2 credit modulo 2^32 at
+P0/P1/P2, retaining the already booked raw count at P3, as defined in
+`docs/riscpc-lockstep-harness.md`. Strict keeps all three raw values.
+The reviewed policy and schema pin their reasons. Mode-scope vectors check
+inactive and active requests, validity changes, strict quota/counter changes,
+guest-register sensitivity and projected completion sensitivity. A real C
+`projected-inscount-one-completion` and `raw-inscount-delta` mutants must fail
+mode (b) on that projected field, after the unmodified candidate passes.
+
+Full checkpoint consistency compares quotas 1, 7 and 200 for every selected
+authored item, including every local-full seed. Each run reaches the separately
+derived RAM/feature/CPSR endpoint and both frontend periods; fatal items retain
+their committed logs, page frames and End. No event-only equality substitutes
+for checkpoint equality. The CPU and CMOS standalone goldens are accepted
+component-only coverage under PR #504, with no sink attachment claimed.
+Windows runtime durations and W4 timeout evidence come from the PR's CI
+durations; no Windows timing is inferred from this host.
 
 
 Run C evidence qualification: G-6's `data-fill-no-memo-eviction` and

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Classify live object symbols; export reviewable inventory. GPL-2.0-only."""
 import argparse
+import hashlib
 import json
 from pathlib import Path
 import re
@@ -161,11 +162,18 @@ def main():
     p.add_argument('--write-inventory',type=Path,help='export current classified object symbols; never auto-approve unknown symbols')
     p.add_argument('--probe-compiler',help='compile real unknown-symbol/local-static controls outside the clone')
     a=p.parse_args();schema=json.loads((ROOT/'tests/rpc_lockstep_schema.json').read_text())
+    policy=json.loads((ROOT/'tests/rpc_lockstep_reviewed_policy.json').read_text())
+    inventory={k:hashlib.sha256(json.dumps(schema[k],sort_keys=True,separators=(',',':')).encode()).hexdigest()
+        for k in ('inventory','object_symbols','local_static_symbols')}
+    require(inventory==schema['reviewed_inventory']==policy['reviewed_inventory'],
+            'inventory metadata changed without independent review')
     for entry in schema['inventory']:
         require(entry['classification'] in CLASSES and entry.get('citation') and entry.get('ruling'),'incomplete inventory entry')
     self_test(schema)
     if a.probe_compiler:object_control(schema,a.build,a.probe_compiler,a.nm,a.apple)
-    base=a.build/'CMakeFiles/arcdroid_rpcplan_libretro_rpc.dir'
+    base=a.build/('CMakeFiles/arcdroid_rpclockstep_libretro_rpc.dir' if
+        (a.build/'CMakeFiles/arcdroid_rpclockstep_libretro_rpc.dir').is_dir() else
+        'CMakeFiles/arcdroid_rpcplan_libretro_rpc.dir')
     objects=sorted([*base.rglob('*.c.o'),*base.rglob('*.c.obj')])
     require(objects,('no built inventory objects',base))
     rows=[];sources=set()

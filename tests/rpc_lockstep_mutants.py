@@ -50,7 +50,9 @@ RECIPES=[
  ('permission-hit-skipped',CP,'    if (access == 1 && cp15_check_permissions(entry->ap, rw)) {',
   '    static uint32_t previous_walks; bool hit=previous_walks==tlbs; previous_walks=tlbs; if (access == 1 && !hit && cp15_check_permissions(entry->ap, rw)) {',('g-4-',)),
 ]
-# Explicit ownership for mechanisms that do not exist at this head.
+# M2a-only evidence ownership. The M2b companion emitter suite reports its own
+# demonstrated kills; this runner never claims a companion test it did not run.
+# See tests/rpc-lockstep-expectations.md and SOL-REPORT-6B-M2B.md for the merge.
 DEFERRED=[
  ('hits/fetch_hits swapped','M2b','memory.stats.hits / fast.fetch_hits','awaiting emitter'),
  ('attributes stored on fault','M2b','cp15.arc_rpc_attributes','awaiting emitter'),

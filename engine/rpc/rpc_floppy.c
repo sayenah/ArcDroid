@@ -1,26 +1,37 @@
 /* ArcDroid-owned floppy mechanics/presentation. GPL-2.0-only.
  * 300 RPM and JFD descriptor positions use the accepted D-139 model. Raw
  * layouts retain validated geometry/prefix bounds. No host latency is charged. */
+#include "rpc_lockstep.h"
 #include "rpc_floppy.h"
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
 
+#if defined(ARCDROID_RPC_LOCKSTEP)
+#define malloc arc_rpc_lockstep_alloc
+#define free arc_rpc_lockstep_free
+#endif
+
 static void (*raw_refusal)(unsigned,unsigned,unsigned,unsigned);
 static unsigned storage_failures;
 void arc_rpc_floppy_refusal_callback_set(void (*callback)(unsigned,unsigned,unsigned,unsigned))
-{ raw_refusal=callback; }
+{
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_rpc_floppy)); raw_refusal=callback; }
 unsigned arc_rpc_floppy_storage_failure_take(void)
-{ unsigned pending=storage_failures;storage_failures=0;return pending; }
+{
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_rpc_floppy)); unsigned pending=storage_failures;storage_failures=0;return pending; }
 
 void arc_rpc_floppy_init(ArcRpcFloppy *f,uint64_t session)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_rpc_floppy));
     memset(f,0,sizeof(*f)); f->session_generation=session;
     for(unsigned i=0;i<2;++i){f->drives[i].changed=true;f->drives[i].mount_generation=1;}
 }
-void arc_rpc_floppy_cancel(ArcRpcFloppy *f) { ++f->command_generation; }
+void arc_rpc_floppy_cancel(ArcRpcFloppy *f) {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_rpc_floppy)); ++f->command_generation; }
 void arc_rpc_floppy_eject(ArcRpcFloppy *f,unsigned drive)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_rpc_floppy));
     if(drive>=2)return;
     ArcRpcFloppyDrive *d=&f->drives[drive];
     ++d->mount_generation; /* Before any release. */
@@ -29,14 +40,17 @@ void arc_rpc_floppy_eject(ArcRpcFloppy *f,unsigned drive)
     d->writable=false;d->changed=true;d->loaded=false;
 }
 void arc_rpc_floppy_close(ArcRpcFloppy *f)
-{ ++f->session_generation;arc_rpc_floppy_eject(f,0);arc_rpc_floppy_eject(f,1); }
+{
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_rpc_floppy)); ++f->session_generation;arc_rpc_floppy_eject(f,0);arc_rpc_floppy_eject(f,1); }
 bool arc_rpc_floppy_valid(const ArcRpcFloppy *f,unsigned drive,ArcRpcFloppyGeneration g)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_rpc_floppy));
     return drive<2 && g.session==f->session_generation &&
         g.mount==f->drives[drive].mount_generation && g.command==f->command_generation;
 }
 static bool geometry(ArcRpcFloppyDrive *d,ArcMediaGeometry g)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_rpc_floppy));
     d->sides=2;d->density=2;
     switch(g){
     case ARC_GEOMETRY_320K:d->sides=1;d->sectors=16;d->bytes=256;break;
@@ -48,6 +62,7 @@ static bool geometry(ArcRpcFloppyDrive *d,ArcMediaGeometry g)
 }
 bool arc_rpc_floppy_mount(ArcRpcFloppy *f,unsigned drive,const ArcEngineMedia *m,char *error,size_t size)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_rpc_floppy));
     if(drive>=2)return false;
     ArcRpcFloppyDrive candidate={0}; bool ok=m!=NULL;
     if(ok && m->kind==ARC_MEDIA_JFD){
@@ -93,12 +108,14 @@ bool arc_rpc_floppy_mount(ArcRpcFloppy *f,unsigned drive,const ArcEngineMedia *m
 }
 uint64_t arc_rpc_floppy_phase(const ArcRpcFloppy *f,unsigned drive,uint64_t now)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_rpc_floppy));
     if(drive>=2)return 0;
     const ArcRpcFloppyDrive *d=&f->drives[drive];
     return d->motor?(now-d->motor_epoch+d->stopped_phase)%ARC_RPC_FLOPPY_REV_NS:d->stopped_phase;
 }
 void arc_rpc_floppy_motor(ArcRpcFloppy *f,unsigned drive,bool on,uint64_t now)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_rpc_floppy));
     if(drive>=2)return;
     ArcRpcFloppyDrive *d=&f->drives[drive];
     if(d->motor==on)return;
@@ -107,6 +124,7 @@ void arc_rpc_floppy_motor(ArcRpcFloppy *f,unsigned drive,bool on,uint64_t now)
 }
 void arc_rpc_floppy_step(ArcRpcFloppy *f,unsigned drive,int delta)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_rpc_floppy));
     if(drive>=2 || !delta)return;
     ArcRpcFloppyDrive *d=&f->drives[drive];
     int64_t target=(int64_t)d->cylinder+delta;
@@ -116,6 +134,7 @@ void arc_rpc_floppy_step(ArcRpcFloppy *f,unsigned drive,int delta)
 }
 ArcRpcFloppySignals arc_rpc_floppy_signals(const ArcRpcFloppy *f,unsigned drive,uint64_t now)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_rpc_floppy));
     if(drive>=2)return (ArcRpcFloppySignals){false,true,false,false};
     const ArcRpcFloppyDrive *d=&f->drives[drive];
     return (ArcRpcFloppySignals){d->cylinder==0,d->changed||!d->present,
@@ -124,17 +143,21 @@ ArcRpcFloppySignals arc_rpc_floppy_signals(const ArcRpcFloppy *f,unsigned drive,
 }
 static void refused(const ArcRpcFloppyDrive *d,const ArcRpcFloppyRequest *r,const char *why)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_rpc_floppy));
     const ArcJfdOverlay *o=d->jfd?d->jfd->overlay:NULL;
     if(o&&o->log_refusal)o->log_refusal(o->image_number,r->cylinder,r->head,r->r,why);
     if(!d->jfd && raw_refusal)raw_refusal(r->drive,r->cylinder,r->head,r->r);
 }
 static unsigned density(const ArcRpcFloppyRequest *r)
-{ return r->encoding==ARC_RPC_FLOPPY_FM?1:r->rate_kbps==500?4:r->rate_kbps==1000?8:2; }
+{
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_rpc_floppy)); return r->encoding==ARC_RPC_FLOPPY_FM?1:r->rate_kbps==500?4:r->rate_kbps==1000?8:2; }
 static uint8_t size_code(unsigned bytes)
-{ unsigned n=0;while(n<7 && (128u<<n)<bytes)++n;return (uint8_t)n; }
+{
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_rpc_floppy)); unsigned n=0;while(n<7 && (128u<<n)<bytes)++n;return (uint8_t)n; }
 ArcRpcFloppyResult arc_rpc_floppy_select(ArcRpcFloppy *f,const ArcRpcFloppyRequest *r,
     uint64_t now,ArcRpcFloppySector *out)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_rpc_floppy));
     memset(out,0,sizeof(*out));out->request=*r;
     if(r->drive>=2)return ARC_RPC_FLOPPY_NO_MEDIA;
     ArcRpcFloppyDrive *d=&f->drives[r->drive];
@@ -216,6 +239,7 @@ ArcRpcFloppyResult arc_rpc_floppy_select(ArcRpcFloppy *f,const ArcRpcFloppyReque
 ArcRpcFloppyResult arc_rpc_floppy_commit(ArcRpcFloppy *f,ArcRpcFloppySector *s,
     const uint8_t *bytes,unsigned consumed,bool tc)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_rpc_floppy));
     unsigned drive=s->request.drive;
     if(!arc_rpc_floppy_valid(f,drive,s->generation))return ARC_RPC_FLOPPY_CANCELLED;
     ArcRpcFloppyDrive *d=&f->drives[drive];
@@ -243,6 +267,7 @@ ArcRpcFloppyResult arc_rpc_floppy_commit(ArcRpcFloppy *f,ArcRpcFloppySector *s,
 ArcRpcFloppyResult arc_rpc_floppy_format(ArcRpcFloppy *f,ArcRpcFloppySector *s,
     const uint8_t *ids,unsigned count,uint8_t fill)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_rpc_floppy));
     unsigned drive=s->request.drive;
     if(!arc_rpc_floppy_valid(f,drive,s->generation))return ARC_RPC_FLOPPY_CANCELLED;
     ArcRpcFloppyDrive *d=&f->drives[drive];
@@ -268,6 +293,7 @@ ArcRpcFloppyResult arc_rpc_floppy_format(ArcRpcFloppy *f,ArcRpcFloppySector *s,
 }
 void arc_rpc_floppy_missing(ArcRpcFloppy *f,const ArcRpcFloppyRequest *r)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_rpc_floppy));
     if(r->drive>=2)return;
     ArcRpcFloppyDrive *d=&f->drives[r->drive];
     ArcJfdOverlay *o=d->jfd?d->jfd->overlay:NULL;
@@ -285,6 +311,7 @@ ArcRpcFloppyEvent arc_rpc_floppy_event(const ArcRpcFloppy *f,
     const ArcRpcFloppySector *s,ArcRpcFloppyEventKind kind,
     unsigned position,ArcRpcFloppyResult result)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_rpc_floppy));
     ArcRpcFloppyEvent e={s->generation,kind,result,s->request.drive,
         s->c,s->h,s->r,s->n,0};
     if(!arc_rpc_floppy_valid(f,e.drive,e.generation))e.result=ARC_RPC_FLOPPY_CANCELLED;
@@ -294,3 +321,7 @@ ArcRpcFloppyEvent arc_rpc_floppy_event(const ArcRpcFloppy *f,
     }
     return e;
 }
+
+#if defined(ARCDROID_RPC_LOCKSTEP)
+ARC_RPC_LS_SERIALIZE_rpc_floppy
+#endif

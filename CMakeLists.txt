@@ -8,6 +8,11 @@ set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS ON)
 
 option(ARCDROID_RPC_CROSSCHECK "Build test-only RPC canonical field cross-check reporting" OFF)
+option(ARCDROID_RPC_LOCKSTEP "Build the non-installed RPC lockstep core (host only)" OFF)
+if(ARCDROID_RPC_LOCKSTEP)
+  # Owning-TU layout probes reuse the configured compiler commands.
+  set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+endif()
 option(ARCDROID_RPC_PROFILE "Build test-only RPC interpreter profiling" OFF)
 option(ARCDROID_SANITIZERS "Enable host AddressSanitizer and UndefinedBehaviorSanitizer" OFF)
 if(ARCDROID_SANITIZERS)
@@ -242,6 +247,7 @@ function(arcdroid_add_libretro target shipping)
       --nm "${CMAKE_NM}"
       ${ARCDROID_SYMBOL_CHECK_FLAGS}
       --allocation-census=$<BOOL:$<TARGET_PROPERTY:ARCDROID_ALLOC_CENSUS>>
+      --shipping=$<BOOL:${shipping}>
       --arculator "${CMAKE_CURRENT_BINARY_DIR}/CMakeFiles/${target}_arculator.dir"
       --rpc "${CMAKE_CURRENT_BINARY_DIR}/CMakeFiles/${target}_rpc.dir"
       --outside "${CMAKE_CURRENT_BINARY_DIR}/CMakeFiles/${target}.dir"
@@ -2231,10 +2237,14 @@ if(BUILD_TESTING AND (NOT CMAKE_CROSSCOMPILING OR WIN32))
   add_test(NAME rpc-qa-command-parsing COMMAND "${Python3_EXECUTABLE}" -B
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_ninja_commands_test.py")
   if(WIN32)
+    set(rpc_lockstep_export_library)
+    if(ARCDROID_RPC_LOCKSTEP)
+      set(rpc_lockstep_export_library $<TARGET_FILE:arcdroid_rpclockstep_libretro>)
+    endif()
     add_test(NAME rpc-windows-test-exports COMMAND "${Python3_EXECUTABLE}" -B
       "${CMAKE_CURRENT_SOURCE_DIR}/tests/rpc_windows_exports_test.py" "${CMAKE_OBJDUMP}"
       "${CMAKE_CURRENT_SOURCE_DIR}" $<TARGET_FILE:arcdroid_libretro_test>
-      $<TARGET_FILE:arcdroid_rpcplan_libretro> $<TARGET_FILE:arcdroid_rpcmeasure_libretro>)
+      $<TARGET_FILE:arcdroid_rpcplan_libretro> $<TARGET_FILE:arcdroid_rpcmeasure_libretro> ${rpc_lockstep_export_library})
   endif()
   # Mutation kills are checked by the ordinary host/Windows builds. Sanitizer
   # builds retain the unmutated regression tests, without recompiling mutants.
@@ -2580,6 +2590,36 @@ endif()
 # A plan-enabled test core has its own metadata/content contract. The existing
 # fault-test core keeps the exact interface asserted by unchanged harnesses.
 if(TARGET arcdroid_libretro_test)
+  if(ARCDROID_RPC_LOCKSTEP AND NOT ANDROID)
+    arcdroid_add_libretro(arcdroid_rpclockstep_libretro FALSE arcdroid_core_test)
+    target_compile_definitions(arcdroid_rpclockstep_libretro PRIVATE
+      ARCDROID_TEST_FAULTS=1 ARCDROID_TEST_PLANS=1 ARCDROID_RPC_LOCKSTEP=1)
+    target_sources(arcdroid_rpclockstep_libretro PRIVATE tests/hd_product_seed.c)
+    target_sources(arcdroid_rpclockstep_libretro_rpc PRIVATE engine/rpc/rpc_lockstep.c)
+    set(RPC_LOCKSTEP_TABLE_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated/rpc-lockstep-tables")
+    add_custom_command(OUTPUT "${RPC_LOCKSTEP_TABLE_DIR}/rpc_lockstep_generated.h"
+        "${RPC_LOCKSTEP_TABLE_DIR}/rpc_lockstep_tables.h"
+        "${RPC_LOCKSTEP_TABLE_DIR}/rpc_lockstep_codegen.json"
+      COMMAND "${Python3_EXECUTABLE}" -B "${CMAKE_CURRENT_SOURCE_DIR}/tools/rpc_lockstep_codegen.py"
+        "${RPC_LOCKSTEP_TABLE_DIR}"
+      DEPENDS tools/rpc_lockstep_codegen.py tests/rpc_lockstep_schema.json
+        tests/rpc_lockstep_reviewed_policy.json tests/rpc_lockstep_observer_vectors.json
+        ${ARCDROID_RPC_SOURCES}
+      VERBATIM)
+    add_custom_target(rpc-lockstep-tables
+      COMMAND "${Python3_EXECUTABLE}" -B "${CMAKE_CURRENT_SOURCE_DIR}/tools/rpc_lockstep_codegen.py"
+        "${RPC_LOCKSTEP_TABLE_DIR}" --check
+      DEPENDS "${RPC_LOCKSTEP_TABLE_DIR}/rpc_lockstep_generated.h"
+      "${RPC_LOCKSTEP_TABLE_DIR}/rpc_lockstep_tables.h")
+    add_dependencies(arcdroid_rpclockstep_libretro_rpc rpc-lockstep-tables)
+    target_include_directories(arcdroid_rpclockstep_libretro_rpc PRIVATE "${RPC_LOCKSTEP_TABLE_DIR}")
+    target_compile_options(arcdroid_rpclockstep_libretro_rpc PRIVATE
+      "SHELL:-include \"${RPC_LOCKSTEP_TABLE_DIR}/rpc_lockstep_generated.h\""
+      -Werror=missing-field-initializers)
+    if(WIN32)
+      target_sources(arcdroid_rpclockstep_libretro PRIVATE tests/rpc_crash_locator.c)
+    endif()
+  endif()
   arcdroid_add_libretro(arcdroid_rpcplan_libretro FALSE arcdroid_core_test)
   target_compile_definitions(arcdroid_rpcplan_libretro PRIVATE ARCDROID_TEST_FAULTS=1 ARCDROID_TEST_PLANS=1)
   target_sources(arcdroid_rpcplan_libretro PRIVATE tests/hd_product_seed.c)

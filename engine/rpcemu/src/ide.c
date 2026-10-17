@@ -18,9 +18,12 @@
   Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
+/* ArcDroid modification (2026-10-17, lockstep-6b-m2b): test-class-only checkpoints, events and field serialization. */
+
 /* ArcDroid modification (2026-10-09), devices-r2c-ide: single ATA
  * master through ArcIdeBackend, bounded transactional PIO, virtual scheduler,
  * nIEN/status/reset containment; no host files, slave or ATAPI. */
+#include "rpc_lockstep.h"
 #include "ide.h"
 #include "iomd.h"
 #include "rpcemu.h"
@@ -46,30 +49,40 @@ static struct {
     uint32_t lba;
     bool active, writing, irq, resetting, refused;
 } ide;
-static bool master(void) { return ide.backend.read&&ide.backend.sectors&&!(ide.head&0x10); }
+static bool master(void) {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_ide)); return ide.backend.read&&ide.backend.sectors&&!(ide.head&0x10); }
 static void irq_update(void)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_ide));
     if(master()&&ide.irq&&!(ide.control&2))iomd.irqb.status|=IOMD_IRQB_IDE;
     else iomd.irqb.status&=~IOMD_IRQB_IDE;
     updateirqs();
 }
-static void irq_set(bool value) { ide.irq=value;irq_update(); }
+static void irq_set(bool value) {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_ide)); ide.irq=value;irq_update(); }
 void arc_rpc_ide_cancel(void)
-{ arc_rpc_event_cancel(ARC_RPC_EVENT_IDE);ide.active=ide.writing=ide.resetting=false;ide.position=ide.total=ide.transferred=0;irq_set(false); }
-bool arc_rpc_ide_pending(void) { return ide.active||ide.resetting; }
+{
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_ide)); arc_rpc_event_cancel(ARC_RPC_EVENT_IDE);ide.active=ide.writing=ide.resetting=false;ide.position=ide.total=ide.transferred=0;irq_set(false); }
+bool arc_rpc_ide_pending(void) {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_ide)); return ide.active||ide.resetting; }
 void resetide(void)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_ide));
     ArcIdeBackend b=ide.backend;bool refused=ide.refused;arc_rpc_ide_cancel();memset(&ide,0,sizeof(ide));
     ide.backend=b;ide.refused=refused;ide.count=ide.sector=1;ide.head=0xa0;ide.heads=16;ide.spt=63;ide.cylinders=256;ide.status=READY;
     irq_update();
 }
 void arc_rpc_ide_set_backend(const ArcIdeBackend *backend)
-{ arc_rpc_ide_cancel();memset(&ide,0,sizeof(ide));if(backend)ide.backend=*backend;resetide(); }
+{
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_ide)); arc_rpc_ide_cancel();memset(&ide,0,sizeof(ide));if(backend)ide.backend=*backend;resetide(); }
 static void fail(uint8_t error)
-{ arc_rpc_ide_cancel();ide.error=error;ide.status=READY|ERR;irq_set(true); }
-static void delay(void) { ide.status=READY|BUSY;arc_rpc_event_after(ARC_RPC_EVENT_IDE,PIO_DELAY_NS); }
+{
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_ide)); arc_rpc_ide_cancel();ide.error=error;ide.status=READY|ERR;irq_set(true); }
+static void delay(void) {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_ide)); ide.status=READY|BUSY;arc_rpc_event_after(ARC_RPC_EVENT_IDE,PIO_DELAY_NS); }
 static bool address(unsigned count,uint32_t *lba)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_ide));
     if(!master()||!count||count>256)return false;
     uint32_t first;
     if(ide.head&0x40)first=((uint32_t)(ide.head&15)<<24)|((uint32_t)ide.high<<16)|((uint32_t)ide.low<<8)|ide.sector;
@@ -80,16 +93,20 @@ static bool address(unsigned count,uint32_t *lba)
 }
 static void advance(void)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_ide));
     uint32_t next=ide.lba+ide.transferred;
     if(ide.head&0x40){ide.sector=(uint8_t)next;ide.low=(uint8_t)(next>>8);ide.high=(uint8_t)(next>>16);ide.head=(uint8_t)((ide.head&0xf0)|(next>>24&15));}
     else{uint32_t cylinder=next/(ide.spt*ide.heads);ide.sector=(uint8_t)(next%ide.spt+1);ide.head=(uint8_t)((ide.head&0xf0)|(next/ide.spt%ide.heads));ide.low=(uint8_t)cylinder;ide.high=(uint8_t)(cylinder>>8);}
     ide.count=(uint8_t)(ide.total-ide.transferred);
 }
-static void word(unsigned at,uint16_t value) { ide.data[at*2]=(uint8_t)value;ide.data[at*2+1]=(uint8_t)(value>>8); }
+static void word(unsigned at,uint16_t value) {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_ide)); ide.data[at*2]=(uint8_t)value;ide.data[at*2+1]=(uint8_t)(value>>8); }
 static void identify_string(unsigned at,unsigned words,const char *text)
-{ for(unsigned i=0;i<words;++i){uint8_t a=*text?(uint8_t)*text++:' ',b=*text?(uint8_t)*text++:' ';word(at+i,(uint16_t)((a<<8)|b));} }
+{
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_ide)); for(unsigned i=0;i<words;++i){uint8_t a=*text?(uint8_t)*text++:' ',b=*text?(uint8_t)*text++:' ';word(at+i,(uint16_t)((a<<8)|b));} }
 static void identify(void)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_ide));
     memset(ide.data,0,512);word(0,0x40);word(1,256);word(3,16);word(6,63);
     identify_string(10,10,"ARCDROID-RPC-00000001");identify_string(23,4,"1.0");identify_string(27,20,"ArcDroid RiscPC Hard Disc");
     word(49,0x200);word(50,0x4000);word(53,1);word(54,(uint16_t)ide.cylinders);word(55,(uint16_t)ide.heads);word(56,(uint16_t)ide.spt);
@@ -99,6 +116,7 @@ static void identify(void)
 }
 void callbackide(void)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_ide));
     if(!ide.backend.read||!ide.backend.sectors||(ide.control&4))return;
     if(ide.resetting){ide.resetting=false;ide.error=1;ide.count=ide.sector=1;ide.low=ide.high=0;ide.status=READY;return;}
     if(!master())return;
@@ -134,6 +152,7 @@ void callbackide(void)
 }
 static uint8_t read_data(void)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_ide));
     if(!(ide.status&DRQ)||ide.writing||ide.position>=512){fail(ABRT);return 0xff;}
     uint8_t value=ide.data[ide.position++];
     if(ide.position==512){ide.position=0;
@@ -143,15 +162,19 @@ static uint8_t read_data(void)
 }
 static void write_data(uint8_t value)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_ide));
     if(!(ide.status&DRQ)||!ide.active||!ide.writing||ide.position>=512){fail(ABRT);return;}
     ide.transaction[ide.transferred*512+ide.position++]=value;
     if(ide.position==512){ide.position=0;++ide.transferred;advance();delay();}
 }
 uint16_t readidew(void)
-{ if(!master())return 0xffff;uint16_t low=read_data();if(!(ide.status&ERR))low|=(uint16_t)read_data()<<8;else low|=0xff00;return low; }
-void writeidew(uint16_t value) { if(!master())return;write_data((uint8_t)value);if(!(ide.status&ERR))write_data((uint8_t)(value>>8)); }
+{
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_ide)); if(!master())return 0xffff;uint16_t low=read_data();if(!(ide.status&ERR))low|=(uint16_t)read_data()<<8;else low|=0xff00;return low; }
+void writeidew(uint16_t value) {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_ide)); if(!master())return;write_data((uint8_t)value);if(!(ide.status&ERR))write_data((uint8_t)(value>>8)); }
 uint8_t readide(uint16_t addr)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_ide));
     if(!master())return addr==0x1f7||addr==0x3f6?0:0xff;
     switch(addr){case 0x1f0:return read_data();case 0x1f1:return ide.error;case 0x1f2:return ide.count;
     case 0x1f3:return ide.sector;case 0x1f4:return ide.low;case 0x1f5:return ide.high;case 0x1f6:return ide.head;
@@ -159,6 +182,7 @@ uint8_t readide(uint16_t addr)
 }
 void writeide(uint16_t addr,uint8_t value)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_ide));
     if(!ide.backend.read||!ide.backend.sectors)return;
     if(addr==0x1f6){if((value^ide.head)&0x10)arc_rpc_ide_cancel();ide.head=value;irq_update();return;}
     if(addr==0x3f6){if(value&4){arc_rpc_ide_cancel();ide.status=BUSY;}
@@ -182,3 +206,7 @@ void writeide(uint16_t addr,uint8_t value)
         fail(ABRT);return;
     }default:return;}
 }
+
+#if defined(ARCDROID_RPC_LOCKSTEP)
+ARC_RPC_LS_SERIALIZE_ide
+#endif

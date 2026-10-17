@@ -5,11 +5,12 @@ import re
 import subprocess
 import sys
 import tempfile
+from rpc_lockstep_golden import run as golden_run
 
 runner,core,directory,mode=sys.argv[1:5]
 directory=Path(directory).resolve()
 def run(name,frames=2,extra=(),success=True,pacing='flat'):
-    r=subprocess.run([runner,'--core',core,'--plan',str(directory/(name+'.arcplan')),
+    r=golden_run([runner,'--core',core,'--plan',str(directory/(name+'.arcplan')),
         '--system',str(directory),'--frames',str(frames),'--pacing',pacing,*extra],capture_output=True,text=True)
     assert (r.returncode==0)==success,r.stderr+r.stdout
     return r.stdout

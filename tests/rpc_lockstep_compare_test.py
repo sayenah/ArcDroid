@@ -29,7 +29,7 @@ def reviewed_policy(schema, path=None):
     path = path or ROOT/'tests/rpc_lockstep_reviewed_policy.json'
     policy=json.loads(path.read_text(encoding='utf-8'))
     for section in ('reviewed_conditions','reviewed_exclusions','reviewed_mode_exclusions',
-                    'cross_quota_projections','stdout_projection'):
+                    'cross_quota_projections','stdout_projection','observer_projections','wire','output_compared','reviewed_inventory','reachable_types'):
         require(schema[section]==policy[section], 'unreviewed schema policy: '+section)
 
 
@@ -111,12 +111,9 @@ def suite(c=reference, stress=False):
     def run(records_a, records_b, expected=True, field=None, mode='strict', spans=(), omissions=0, full=False):
         nonlocal checks
         def data(records, baseline):
-            counts = [sum(kind in (1, 2) and k[3] == p for kind, k, _ in records) for p in (0, 2)]
-            payload = b''.join(data for _, _, data in records)
-            return w.header(sh, baseline, *counts, spans=() if baseline else spans,
-                            mode=c.MODES.index(mode), full=full, omissions=omissions if not baseline else 0) + payload + w.end(
-                                sum(kind in (1, 2) for kind, _, _ in records),
-                                sum(kind == 3 for kind, _, _ in records), sum(kind == 4 for kind, _, _ in records))
+            return w.stream(sh,[data for _,_,data in records],baseline,
+                spans=() if baseline else spans,mode=c.MODES.index(mode),full=full,
+                omissions=omissions if not baseline else 0)
         result = c.compare(io.BytesIO(data(records_a, True)), io.BytesIO(data(records_b, False)), schema, sh, mode)
         require(result['ok'] == expected, ('wrong verdict', field, result))
         if field is not None and not expected:
@@ -170,7 +167,7 @@ def suite(c=reference, stress=False):
         other=w.header(sh,False,1,0,**kwargs)+cp(p0)[2]+w.end(1)
         refused(good,other,'header '+label)
     for name,left,right in (
-        ('end counts',good[:-24]+struct.pack('<3Q',0,0,0),candidate[:-24]+struct.pack('<3Q',0,0,0)),
+        ('end counts',good[:-64]+struct.pack('<3Q',0,0,0)+good[-40:],candidate[:-64]+struct.pack('<3Q',0,0,0)+candidate[-40:]),
         ('trailing bytes',good+b'x',candidate+b'x')):
         refused(left,right,name)
     for seq in (1,2):
@@ -299,8 +296,9 @@ def suite(c=reference, stress=False):
     physical_swapped = [(3,p1,w.event(p1,0,time=19,kind=1,address=0x03000000,value=22)),
                         (3,p2,w.event(p2,1,time=19,value=11))]
     run(physical,physical_swapped,False,'event')
-    page = (4, p3, w.page(p3)); otherpage = (4, p3, w.page(p3, contents=b'changed'))
-    run([page], [otherpage], False, 'page')
+    page = (4, p3, w.page(p3,allocation=0))
+    ram_page=(4,p3,w.page(p3,allocation=2));otherpage=(4,p3,w.page(p3,allocation=2,contents=b'changed'))
+    run([page,ram_page], [page,otherpage], False, 'page')
     ft = (5, p3, w.fatal(p3)); ft2 = (5, key(2, 3), w.fatal(key(2, 3)))
     run([page, ft], [page, ft]); run([ft], [ft2], False)
     # A changed represented write restored later still fails its ordered log.
@@ -416,9 +414,9 @@ def suite(c=reference, stress=False):
         except c.Invalid: pass
         else: raise RuntimeError('header mismatch accepted')
     invalid_density=[
-        w.header(sh,False,0,0,spans=[(0,1,1)],every=True)+w.end(0),
-        w.header(sh,False,1,0,spans=[(1,1,1)],full=True)+cp(p0)[2]+w.end(1),
-        w.header(sh,False,1,0,omissions=1)+cp(p0)[2]+w.end(1),
+        w.stream(sh,[],spans=[(0,1,1)],every=True),
+        w.stream(sh,[cp(p0)[2]],spans=[(1,1,1)],full=True),
+        w.stream(sh,[cp(p0)[2]],omissions=1),
     ]
     for bad in invalid_density:
         try:c.compare(io.BytesIO(good),io.BytesIO(bad),schema,sh)
@@ -427,7 +425,7 @@ def suite(c=reference, stress=False):
     counters = bytearray(candidate)
     # Independent wire offset: magic + frame prefix + fields before P0 count.
     import struct
-    struct.pack_into('<Q', counters, 8+5+148, 2)
+    struct.pack_into('<Q', counters, len(counters)-64+24, 2)
     try: c.compare(io.BytesIO(good), io.BytesIO(counters), schema, sh)
     except c.Invalid: pass
     else: raise RuntimeError('unchecked sparse declaration')

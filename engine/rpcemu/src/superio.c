@@ -18,6 +18,8 @@
   Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
+/* ArcDroid modification (2026-10-17, lockstep-6b-m2b): test-class-only checkpoints, events and field serialization. */
+
 /* ArcDroid modification (2026-10-06): contained static reset and explicit virtual device timing; desktop services removed. */
 
 
@@ -29,6 +31,7 @@
     Serial
     Parallel
  */
+#include "rpc_lockstep.h"
 #include <string.h>
 #include <stdio.h>
 #include <stdint.h>
@@ -88,6 +91,7 @@ static uint8_t printstat = 0;
 static void
 superio_smi_update(void)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_superio));
 	if ((gp_regs[0xe] & gp_regs[0xc]) || (gp_regs[0xf] & gp_regs[0xd])) {
 		iomd.irqb.status |= IOMD2_IRQB_SUPERIO_SMI;
 	} else {
@@ -99,6 +103,7 @@ superio_smi_update(void)
 void
 superio_smi_setint1(uint8_t i)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_superio));
 	gp_regs[0x0e] |= i;
 	superio_smi_update();
 }
@@ -106,6 +111,7 @@ superio_smi_setint1(uint8_t i)
 void
 superio_smi_setint2(uint8_t i)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_superio));
 	gp_regs[0x0f] |= i;
 	superio_smi_update();
 }
@@ -113,6 +119,7 @@ superio_smi_setint2(uint8_t i)
 void
 superio_smi_clrint1(uint8_t i)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_superio));
 	gp_regs[0x0f] &= ~i;
 	superio_smi_update();
 }
@@ -120,6 +127,7 @@ superio_smi_clrint1(uint8_t i)
 void
 superio_smi_clrint2(uint8_t i)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_superio));
 	gp_regs[0x0f] &= ~i;
 	superio_smi_update();
 }
@@ -134,6 +142,7 @@ superio_smi_clrint2(uint8_t i)
 static void
 superio_config_reg_write(uint8_t configreg, uint8_t val)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_superio));
 	/* Check for various configurations that we don't handle yet */
 	switch (configreg) {
 	case 1:
@@ -203,6 +212,7 @@ superio_config_reg_write(uint8_t configreg, uint8_t val)
 void
 superio_reset(SuperIOType chosen_super_type)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_superio));
 	if (chosen_super_type != SuperIOType_FDC37C665GT && chosen_super_type != SuperIOType_FDC37C672) fatal("Unsupported SuperIO configuration");
 	memset(configregs665, 0, sizeof(configregs665));
 	memset(configregs672, 0, sizeof(configregs672));
@@ -250,6 +260,7 @@ superio_reset(SuperIOType chosen_super_type)
 void
 superio_write(uint32_t addr, uint32_t val)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_superio));
         /* Convert memory-mapped address to IO port */
         addr = (addr >> 2) & 0x3ff;
 
@@ -367,6 +378,7 @@ superio_write(uint32_t addr, uint32_t val)
 uint8_t
 superio_read(uint32_t addr)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_superio));
         /* Convert memory-mapped address to IO port */
         addr = (addr >> 2) & 0x3ff;
 
@@ -450,3 +462,7 @@ superio_read(uint32_t addr)
 
 	return 0;
 }
+
+#if defined(ARCDROID_RPC_LOCKSTEP)
+ARC_RPC_LS_SERIALIZE_superio
+#endif

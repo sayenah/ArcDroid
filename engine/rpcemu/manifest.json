@@ -40,7 +40,8 @@
         "cpu-smlal-modulo",
         "observation-r3c1",
         "profiling-6b-p0i",
-        "measurement-6b-1a0"
+        "measurement-6b-1a0",
+        "lockstep-6b-m2b"
       ]
     },
     {
@@ -77,7 +78,8 @@
       "licence_header": "/*\n  RPCEmu - An Acorn system emulator\n\n  Copyright (C) 2005-2010 Sarah Walker\n\n  This program is free software; you can redistribute it and/or modify\n  it under the terms of the GNU General Public License as published by\n  the Free Software Foundation; either version 2 of the License, or\n  (at your option) any later version.\n\n  This program is distributed in the hope that it will be useful,\n  but WITHOUT ANY WARRANTY; without even the implied warranty of\n  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the\n  GNU General Public License for more details.\n\n  You should have received a copy of the GNU General Public License\n  along with this program; if not, write to the Free Software\n  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.\n */",
       "patches": [
         "containment-cmos-rtc",
-        "audio-input-capture"
+        "audio-input-capture",
+        "lockstep-6b-m2b"
       ]
     },
     {
@@ -98,7 +100,8 @@
         "scheduler-mmu-batching",
         "observation-r3c1",
         "profiling-6b-p0i",
-        "measurement-6b-1a0"
+        "measurement-6b-1a0",
+        "lockstep-6b-m2b"
       ]
     },
     {
@@ -121,7 +124,8 @@
         "devices-fdc-control-status",
         "devices-fdc-reset-readiness",
         "devices-r2b-floppy",
-        "observation-r3c1"
+        "observation-r3c1",
+        "lockstep-6b-m2b"
       ]
     },
     {
@@ -139,7 +143,8 @@
       "sha256": "0908032e9303d8d2d7c8e61611973e03dc635853675fe94998e1cfb372c06aa3",
       "licence_header": "/*\n  RPCEmu - An Acorn system emulator\n\n  Copyright (C) 2005-2010 Sarah Walker\n\n  This program is free software; you can redistribute it and/or modify\n  it under the terms of the GNU General Public License as published by\n  the Free Software Foundation; either version 2 of the License, or\n  (at your option) any later version.\n\n  This program is distributed in the hope that it will be useful,\n  but WITHOUT ANY WARRANTY; without even the implied warranty of\n  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the\n  GNU General Public License for more details.\n\n  You should have received a copy of the GNU General Public License\n  along with this program; if not, write to the Free Software\n  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.\n */",
       "patches": [
-        "containment-device-scheduler"
+        "containment-device-scheduler",
+        "lockstep-6b-m2b"
       ]
     },
     {
@@ -169,7 +174,8 @@
         "audio-input-capture",
         "devices-fiq-mask-level",
         "devices-board-cmos-gate",
-        "video-control-readback"
+        "video-control-readback",
+        "lockstep-6b-m2b"
       ]
     },
     {
@@ -190,7 +196,8 @@
         "containment-device-scheduler",
         "audio-input-capture",
         "devices-keyboard-reset-held",
-        "devices-keyboard-reset-progress"
+        "devices-keyboard-reset-progress",
+        "lockstep-6b-m2b"
       ]
     },
     {
@@ -211,7 +218,8 @@
         "session-preparation-r3b2b",
         "observation-r3c1",
         "profiling-6b-p0i",
-        "measurement-6b-1a0"
+        "measurement-6b-1a0",
+        "lockstep-6b-m2b"
       ]
     },
     {
@@ -250,7 +258,8 @@
       "sha256": "f96b7eca38685e22efea90d9dce61d60a705fbe6e5e9acf99f8d4d0e06df6d85",
       "licence_header": "/*\n  RPCEmu - An Acorn system emulator\n\n  Copyright (C) 2005-2010 Sarah Walker\n\n  This program is free software; you can redistribute it and/or modify\n  it under the terms of the GNU General Public License as published by\n  the Free Software Foundation; either version 2 of the License, or\n  (at your option) any later version.\n\n  This program is distributed in the hope that it will be useful,\n  but WITHOUT ANY WARRANTY; without even the implied warranty of\n  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the\n  GNU General Public License for more details.\n\n  You should have received a copy of the GNU General Public License\n  along with this program; if not, write to the Free Software\n  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.\n */",
       "patches": [
-        "containment-device-scheduler"
+        "containment-device-scheduler",
+        "lockstep-6b-m2b"
       ]
     },
     {
@@ -270,7 +279,8 @@
         "vidc-line-scanout",
         "audio-input-capture",
         "video-control-readback",
-        "video-hardware-work-bounds"
+        "video-hardware-work-bounds",
+        "lockstep-6b-m2b"
       ]
     },
     {
@@ -286,7 +296,8 @@
       "sha256": "0c86b5f5e3677cfef725ed275086345cf4dedf425413c83fc8f1022a87f4cd62",
       "licence_header": "/*\n  RPCEmu - An Acorn system emulator\n\n  Copyright (C) 2005-2010 Sarah Walker\n\n  This program is free software; you can redistribute it and/or modify\n  it under the terms of the GNU General Public License as published by\n  the Free Software Foundation; either version 2 of the License, or\n  (at your option) any later version.\n\n  This program is distributed in the hope that it will be useful,\n  but WITHOUT ANY WARRANTY; without even the implied warranty of\n  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the\n  GNU General Public License for more details.\n\n  You should have received a copy of the GNU General Public License\n  along with this program; if not, write to the Free Software\n  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.\n */",
       "patches": [
-        "devices-r2c-ide"
+        "devices-r2c-ide",
+        "lockstep-6b-m2b"
       ]
     }
   ],
@@ -503,6 +514,24 @@
         "src/mem.c"
       ],
       "reason": "D-195 endpoint bounds at common batch admission/return and test-only TLB exercise/ranking counters; shipping preprocessing and hot code retained."
+    },
+    {
+      "id": "lockstep-6b-m2b",
+      "group": "test-only lockstep emitter",
+      "files": [
+        "src/arm.c",
+        "src/cmos.c",
+        "src/cp15.c",
+        "src/fdc.c",
+        "src/i8042.c",
+        "src/iomd.c",
+        "src/keyboard.c",
+        "src/mem.c",
+        "src/superio.c",
+        "src/vidc20.c",
+        "src/ide.c"
+      ],
+      "reason": "D-200: compiled-out phase/helper/event hooks and per-TU schema serialization; no shipping change."
     }
   ],
   "adapted_sources": [

@@ -1,4 +1,5 @@
 /* ArcDroid arbitrated input to PS/2 set 2 and model-correct mouse. GPL-2.0-only. */
+#include "rpc_lockstep.h"
 #include "rpc_input.h"
 #include "rpc_timing.h"
 #include "rpcemu.h"
@@ -20,6 +21,7 @@ static uint64_t arc_rpc_repeat_due, arc_rpc_repeat_fraction;
 static uint64_t arc_rpc_factory_release;
 static bool arc_rpc_scan(unsigned code, uint8_t bytes[8])
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_rpc_input));
     memset(bytes,0,8);
     if(code>=RETROK_a&&code<=RETROK_z)bytes[0]=arc_rpc_letters[code-RETROK_a];
     else if(code>=RETROK_0&&code<=RETROK_9)bytes[0]=arc_rpc_digits[code-RETROK_0];
@@ -47,9 +49,11 @@ static bool arc_rpc_scan(unsigned code, uint8_t bytes[8])
     return true;
 }
 static bool arc_rpc_effective(unsigned key)
-{ return arc_rpc_held[key] || (key==RETROK_DELETE && arc_rpc_delete); }
+{
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_rpc_input)); return arc_rpc_held[key] || (key==RETROK_DELETE && arc_rpc_delete); }
 static void arc_rpc_input_arm(void)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_rpc_input));
     /* Poll tick bounds ingestion and repeat reconciliation; scheduler time only.
      * The exact factory release replaces a tick if it falls between ticks. */
     uint64_t now=arc_rpc_time_ns(), due=now+1000000;
@@ -59,31 +63,39 @@ static void arc_rpc_input_arm(void)
 }
 void arc_rpc_input_reset(void)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_rpc_input));
     memset(arc_rpc_held,0,sizeof(arc_rpc_held));memset(arc_rpc_sent,0,sizeof(arc_rpc_sent));
     arc_rpc_scanning=true;arc_rpc_factory=arc_rpc_delete=false;
     arc_rpc_repeat_key=0;arc_rpc_repeat_param=0x2b;arc_rpc_repeat_fraction=0;
     arc_rpc_input_arm();
 }
 void arc_rpc_input_typematic(unsigned value)
-{ arc_rpc_repeat_param=value&127;arc_rpc_repeat_fraction=0; }
+{
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_rpc_input)); arc_rpc_repeat_param=value&127;arc_rpc_repeat_fraction=0; }
 void arc_rpc_input_scanning(bool enabled)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_rpc_input));
     arc_rpc_scanning=enabled;
     if(!enabled){memset(arc_rpc_sent,0,sizeof(arc_rpc_sent));arc_rpc_repeat_key=0;}
 }
 void arc_rpc_input_key(unsigned key,bool down)
-{ if(key<ARC_INPUT_KEY_COUNT)arc_rpc_held[key]=down; }
+{
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_rpc_input)); if(key<ARC_INPUT_KEY_COUNT)arc_rpc_held[key]=down; }
 void arc_rpc_input_factory(bool enabled)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_rpc_input));
     arc_rpc_factory=arc_rpc_delete=enabled;
     arc_rpc_factory_release=arc_rpc_time_ns()+UINT64_C(12000000000);
     if(enabled)arc_rpc_input_event(); /* Internal Delete exists at time zero. */
 }
-bool arc_rpc_input_delete_held(void) { return arc_rpc_delete; }
+bool arc_rpc_input_delete_held(void) {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_rpc_input)); return arc_rpc_delete; }
 void arc_rpc_input_factory_release(uint64_t release_ns)
-{ arc_rpc_factory_release=release_ns; }
+{
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_rpc_input)); arc_rpc_factory_release=release_ns; }
 void arc_rpc_input_event(void)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_rpc_input));
     uint64_t now=arc_rpc_time_ns();
     if(arc_rpc_factory&&arc_rpc_delete&&now>=arc_rpc_factory_release)arc_rpc_delete=false;
     if(arc_rpc_scanning) {
@@ -111,3 +123,7 @@ void arc_rpc_input_event(void)
     }
     arc_rpc_input_arm();
 }
+
+#if defined(ARCDROID_RPC_LOCKSTEP)
+ARC_RPC_LS_SERIALIZE_rpc_input
+#endif

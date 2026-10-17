@@ -26,6 +26,7 @@
  * Bounded quadword copies replace upstream's host-threaded buffer producer.
  * Rational clocks use ceiling deadlines; tied source precedes 48 kHz output.
  * Resampling is zero-order hold (no floating-point or host-rate feedback). */
+#include "rpc_lockstep.h"
 #include "rpc_audio.h"
 #include "rpc_timing.h"
 #include "rpc_memory.h"
@@ -48,6 +49,7 @@ static uint64_t arc_rpc_source_due, arc_rpc_output_due;
 static uint64_t arc_rpc_source_fraction, arc_rpc_output_fraction;
 static uint64_t arc_rpc_tick(uint64_t *fraction, uint64_t numerator, unsigned denominator)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_rpc_audio));
     uint64_t old = *fraction;
     uint64_t total = old + numerator;
     *fraction = total % denominator;
@@ -55,12 +57,14 @@ static uint64_t arc_rpc_tick(uint64_t *fraction, uint64_t numerator, unsigned de
 }
 static void arc_rpc_sound_arm(void)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_rpc_audio));
     uint64_t due = arc_rpc_output_due;
     if (arc_rpc_enabled && arc_rpc_source_due < due) due = arc_rpc_source_due;
     arc_rpc_event_after(ARC_RPC_EVENT_SOUND, due - arc_rpc_time_ns());
 }
 static void arc_rpc_put(int16_t left, int16_t right)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_rpc_audio));
     if (arc_rpc_count == ARC_RPC_AUDIO_QUEUE) {
         arc_rpc_read = (arc_rpc_read + 1) % ARC_RPC_AUDIO_QUEUE;
         --arc_rpc_count; ++arc_rpc_counts.discarded;
@@ -71,6 +75,7 @@ static void arc_rpc_put(int16_t left, int16_t right)
 }
 void arc_rpc_sound_purge(void)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_rpc_audio));
     arc_rpc_counts.discarded += arc_rpc_count;
     arc_rpc_read = arc_rpc_count = 0;
     arc_rpc_left = arc_rpc_right = 0;
@@ -78,6 +83,7 @@ void arc_rpc_sound_purge(void)
 }
 void arc_rpc_sound_reset(bool fresh)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_rpc_audio));
     arc_rpc_sound_purge();
     if (fresh) memset(&arc_rpc_counts, 0, sizeof(arc_rpc_counts));
     memset(soundaddr, 0, sizeof(soundaddr));
@@ -91,6 +97,7 @@ void arc_rpc_sound_reset(bool fresh)
 }
 static void arc_rpc_restart_source(void)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_rpc_audio));
     arc_rpc_source_fraction = 0;
     unsigned clock = (arc_rpc_format & 1) ? 250000 : 176400;
     arc_rpc_source_due = arc_rpc_time_ns() + arc_rpc_tick(&arc_rpc_source_fraction,
@@ -98,6 +105,7 @@ static void arc_rpc_restart_source(void)
 }
 void arc_rpc_sound_format(unsigned frequency, unsigned control)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_rpc_audio));
     bool changed = frequency != arc_rpc_frequency || control != arc_rpc_format;
     arc_rpc_frequency = frequency & 255; arc_rpc_format = control & 3;
     if (!(control & 2)) arc_rpc_left = arc_rpc_right = 0;
@@ -108,15 +116,18 @@ void arc_rpc_sound_format(unsigned frequency, unsigned control)
     arc_rpc_sound_arm();
 }
 /* Legacy external signature retained; the VIDC hook uses the exact ratio. */
-void sound_samplefreq_change(int frequency) { soundlatch = frequency; }
+void sound_samplefreq_change(int frequency) {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_rpc_audio)); soundlatch = frequency; }
 static void arc_rpc_sound_irq(void)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_rpc_audio));
     if (iomd.sndstat & IOMD_DMA_STATUS_INTERRUPT) iomd.irqdma.status |= IOMD_IRQDMA_SOUND_0;
     else iomd.irqdma.status &= ~IOMD_IRQDMA_SOUND_0;
     updateirqs();
 }
 void arc_rpc_sound_pointer(unsigned index, uint32_t value)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_rpc_audio));
     soundaddr[index] = value;
     if (index & 1) {
         unsigned bank = index / 2;
@@ -139,6 +150,7 @@ void arc_rpc_sound_pointer(unsigned index, uint32_t value)
 }
 void arc_rpc_sound_control(uint8_t value)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_rpc_audio));
     if (value & 0x80) {
         memset(arc_rpc_ready, 0, sizeof(arc_rpc_ready));
         arc_rpc_quad_pos = 4; arc_rpc_left = arc_rpc_right = 0;
@@ -158,6 +170,7 @@ void arc_rpc_sound_control(uint8_t value)
 }
 static void arc_rpc_dma_sample(void)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_rpc_audio));
     if (arc_rpc_quad_pos == 4) {
         unsigned bank = iomd.sndstat & IOMD_DMA_STATUS_BUFFER;
         if (!arc_rpc_ready[bank]) { arc_rpc_left = arc_rpc_right = 0; return; }
@@ -189,6 +202,7 @@ static void arc_rpc_dma_sample(void)
 }
 void arc_rpc_sound_event(void)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_rpc_audio));
     uint64_t now = arc_rpc_time_ns();
     if (arc_rpc_enabled && arc_rpc_source_due == now) {
         arc_rpc_dma_sample();
@@ -203,6 +217,7 @@ void arc_rpc_sound_event(void)
 }
 size_t arc_rpc_audio_peek(int16_t *output, size_t capacity)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_rpc_audio));
     if (!output) return 0;
     size_t count = capacity < arc_rpc_count ? capacity : arc_rpc_count;
     for (size_t i = 0; i < count; ++i) {
@@ -213,6 +228,7 @@ size_t arc_rpc_audio_peek(int16_t *output, size_t capacity)
 }
 void arc_rpc_audio_commit(size_t offered, size_t accepted)
 {
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_rpc_audio));
     if (offered > arc_rpc_count) offered = arc_rpc_count;
     if (accepted > offered) accepted = offered;
     arc_rpc_counts.accepted += accepted;
@@ -221,8 +237,22 @@ void arc_rpc_audio_commit(size_t offered, size_t accepted)
     arc_rpc_count -= offered;
 }
 void arc_rpc_audio_counts(ArcRpcAudioCounts *out)
-{ if (out) { *out = arc_rpc_counts; out->queued = arc_rpc_count; } }
+{
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_rpc_audio)); if (out) { *out = arc_rpc_counts; out->queued = arc_rpc_count; } }
 bool arc_rpc_sound_take_unsupported(void)
-{ bool result = arc_rpc_notice; arc_rpc_notice = false; return result; }
+{
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_rpc_audio)); bool result = arc_rpc_notice; arc_rpc_notice = false; return result; }
 void arc_rpc_sound_fault_silence(size_t frames)
-{ if (frames > ARC_RPC_AUDIO_QUEUE) frames = ARC_RPC_AUDIO_QUEUE; for (size_t i=0;i<frames;++i) arc_rpc_put(0,0); }
+{
+    ARC_RPC_LOCKSTEP(dirty(ARC_RPC_LS_TU_rpc_audio)); if (frames > ARC_RPC_AUDIO_QUEUE) frames = ARC_RPC_AUDIO_QUEUE; for (size_t i=0;i<frames;++i) arc_rpc_put(0,0); }
+
+#if defined(ARCDROID_RPC_LOCKSTEP)
+ARC_RPC_LS_SERIALIZE_rpc_audio
+void arc_rpc_lockstep_audio_output(void)
+{
+    arc_rpc_lockstep_output_word(arc_rpc_count);
+    for(size_t i=0;i<arc_rpc_count;++i){size_t at=(arc_rpc_read+i)%ARC_RPC_AUDIO_QUEUE;
+        arc_rpc_lockstep_output_word((uint64_t)(int64_t)arc_rpc_pcm[at*2]);
+        arc_rpc_lockstep_output_word((uint64_t)(int64_t)arc_rpc_pcm[at*2+1]);}
+}
+#endif

@@ -18,3 +18,7 @@ void arc_rpc_response(ArcRpcEvent event, int *counter, unsigned units)
         (event == ARC_RPC_EVENT_FDC ? 1000u : 250000u));
     else arc_rpc_event_cancel(event);
 }
+
+#if defined(ARCDROID_RPC_LOCKSTEP)
+ARC_RPC_LS_SERIALIZE_rpc_timing
+#endif
