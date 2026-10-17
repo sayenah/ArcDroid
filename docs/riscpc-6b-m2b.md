@@ -646,3 +646,11 @@ Run B's authored point ROM shows three quota 1 against quota 200 differences in 
 - **R-M2b-O3 `arm.inscount`:** in the RPC engine it is only incremented at batch return and reset at start (`engine/rpcemu/src/arm.c:279,2007`); nothing reads it, so it cannot affect the guest, and its value at a point depends on batch structure. Mode (b) compares a defined projection of it (stated in the harness note) instead of the raw per-point value.
 
 Also ruled: the two standalone component goldens (CPU and CMOS executables) have no core sink surface and are recorded as component-only coverage; Windows runtime and W4 timeouts are taken from the PR's CI durations by W4's rule (at least twice the worst observed, whole minutes) in a follow-up run if CI shows them short.
+
+## Fable's rulings after the first CI run (S67)
+
+CI at `6dd297f` (PR #506) was green except `windows`, where `rpc-lockstep-inventory` failed with "inventory metadata changed without independent review". Fable traced it: `tests/rpc_lockstep_inventory.py` reads the schema and policy with the platform default encoding; run B added non-ASCII text to the schema, so on Windows (cp1252) the reviewed-inventory hash differs, while under UTF-8 it matches. The run also showed that CI never builds the lockstep class, so none of M2b's emitter tests ran in CI.
+
+- **R-M2b-C1 Encoding.** Every lockstep tool and test reads and writes its text files (schema, policy, inventory, expectations, streams' text metadata) as UTF-8 explicitly; a regression test runs the inventory and schema checks under a simulated cp1252 default.
+- **R-M2b-C2 Host CI.** The `host` CI job (Linux) builds the lockstep class and runs M2b's CI subset: the directed corpus, the CI seed subset (AC-8), full-audit on directed ROMs at the smallest RAM configuration (scope item), the emitter, layout, field, codegen, API, driver and consistency tests and the emitter mutants, with timeouts by W4's rule set from that job's measured durations (worst at most 60 % of the timeout, AC-15). The 75 golden-density checks and the local-full items remain local evidence in the report.
+- **R-M2b-C3 Windows.** Lockstep execution in Windows CI, and AC-15's Windows half, belong to M2c ("cross-platform CI", non-goals). M2b keeps the MinGW compile, layout and export proofs; the existing M2a lockstep tests keep running on Windows.
