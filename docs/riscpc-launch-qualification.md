@@ -110,7 +110,7 @@ integration repeat after that slice merges.
 `INSTALL_084` is the work order's `.work/s62/ac5/i7-084` directory. The
 installer's existing input script is reused only for the baseline manual
 installation route. Remove its manual disk-control script to exercise automatic
-exchange, including **Please insert disc 'FlyingH2'**. Preparation must validate
+exchange, including the installer's request for disc 2. Preparation must validate
 the resulting product independently of the installer returning.
 
 ```sh
