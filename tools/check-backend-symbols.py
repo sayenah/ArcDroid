@@ -256,6 +256,7 @@ CENSUS_SERVICES = {
     "__ctype_b_loc", "__ctype_tolower_loc", "__isoc99_sscanf", "__isoc23_sscanf",
     "__isoc23_strtol", "__isoc23_strtoul", "__isoc23_strtoull",
     "clock_gettime", "sysctlbyname",
+    "getauxval",  # Linux/Android hash HWCAP query; no allocation.
     # Existing dormant native lock module: handles/fds, never heap ownership.
     "close", "flock", "fstat", "open", "stat", "fcntl",
     # MinGW runtime and existing test-only exception locator. The locator's
