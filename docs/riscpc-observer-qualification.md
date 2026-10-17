@@ -30,8 +30,8 @@ Shared by every enabled pair below.
 | Other synchronous forms | Observation only: a truthful manual hint, no OK/Cancel claim. |
 | Disc signal A device forms | Unspecified device only (`XOS_UpCall` R3 = 0xFFFFFFFF, D-179). |
 | Disc signal B | The shared Arculator path and operation predicates (`ADFS::<inserted disc or 0>.$…`), first miss ignored and a repeated miss resolved, as on Arculator. |
-| Launch outcome | Bound to the explicit attempt and its exact generated command. Role-1 authored status on `XOS_Byte 0` in the frozen 64-byte layout (consume, registered, dispatch, start returned, returned, desktop, rejected, closed). A StartTask return with a live child stays pending. Delivery observation horizon 120 s virtual; expiry is unknown, never a retry. |
-| Boot watch | A pending user-mode `OS_ReadLine` during the exact blocked command: R1 1–255, R2 = 32, R3 = 126, backed RAM buffer. Return continuation ceiling 64,000,000 instructions and 2 s virtual; manual interaction offered after 250 ms virtual; at most one watch; no mode subscription; never a relaunch. |
+| Launch outcome (launch-profile revision 2) | Bound to the explicit attempt and its exact generated command. Role-1 authored status on `XOS_Byte 0` in the frozen 64-byte layout (consume, registered, dispatch, start returned, returned, desktop, rejected, closed). A StartTask return with a live child stays pending. Delivery observation horizon 120 s virtual; expiry is unknown, never a retry. |
+| Boot watch (launch-profile revision 2) | A pending user-mode `OS_ReadLine` during the exact blocked command: R1 1–255, R2 = 32, R3 = 126, backed RAM buffer. Return continuation ceiling 64,000,000 instructions and 2 s virtual; manual interaction offered after 250 ms virtual; at most one watch; no mode subscription; never a relaunch. |
 
 ## Calibration evidence
 
@@ -55,7 +55,7 @@ Pairs are written catalogue × CPU, using the indices in `core/rpc_selection.h` 
 | 3.71 ARM7500 (4 × 3) | on | on | on | on | on | on | on | on |
 | 3.71 SA-110 (4 × 2) | on | on | on | on | on | on | on | on |
 
-**Boot and launch (all pairs, D-203):** enabled at profile revision 1 on the R3c-3b evidence below. The route that issues launch attempts stays behind the closed compile-time gate until R3d-4 (D-186); production routing and session-ID allocation are re-verified there.
+**Boot and launch (all pairs, D-203):** enabled at launch-profile revision 2 (`ARC_RPC_LAUNCH_PROFILE_REVISION`, the R3c-3b launch and boot profiles that the evidence below exercised); the error and disc cells stay at profile revision 1. The route that issues launch attempts stays behind the closed compile-time gate until R3d-4 (D-186); production routing and session-ID allocation are re-verified there.
 
 ## Evidence per cell
 
